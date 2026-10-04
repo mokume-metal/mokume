@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import simd
 
 @testable import MokumeCore
 
@@ -693,32 +694,6 @@ struct StoppedUpscaleOutletsTests {
         }
     }
 
-    /// フレームの中で自分のフレームを描いている本体を置く形は、この直しの範囲の外で、絵を動かさない
-    /// ([#2042] 完了条件 5)。細かさ 1 は途中まで描いた絵、0.5 は前のフレームの絵が出る (どちらへ揃える
-    /// かは「`endDraw()` の前に置くと 1 フレーム前の絵」の説明から決める別の判断である)。
-    ///
-    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
-    @Test(
-        "フレームの中で描き切らせた本体を置いた絵は、細かさで分かれたまま動かない",
-        arguments: [Float(0.5), 1])
-    func placingInsideTheBodysFrameIsUnchanged(density: Float) throws {
-        let box = LayerBox()
-        try Self.withStoppedSketch(density: density, configure: { sketch in
-            sketch.onLaterFrame = { sketch in
-                DrawOut.rectThenGet.apply(to: sketch)
-                Self.placeIntoNewLayer(sketch, by: .image, box: box)
-            }
-        }) { _, _, press in
-            try press("r")
-            let point = try #require(box.canvas).output.readPixels()[40, 40]
-            if density < 1 {
-                #expect(Self.isBackdrop(point), "細かさ 0.5 で前のフレームの絵が出ていない: \(point)")
-            } else {
-                #expect(Self.isRed(point.red, point.green, point.blue), "細かさ 1 で途中まで描いた絵が出ていない: \(point)")
-            }
-        }
-    }
-
     /// 置く口の追い付きは、本体を描き切らせたときだけ積む ([#2042] 完了条件 5・ADR-0023 決定 5)。
     ///
     /// 変えていない本体を置いても、拡大も書き戻しも積まない。描き切らせてから何度置いても、広げるのは
@@ -1014,79 +989,366 @@ struct StoppedUpscaleOutletsTests {
         arguments: [Float(0.5), 1], Repeated.allCases)
     func placingPastTheCopyLimitKeepsEachPicture(density: Float, kind: Repeated) throws {
         let box = LayerBox()
-        let rounds = Canvas.placedPictureCopyLimit + 2
         try Self.withStoppedSketch(density: density, configure: { sketch in
-            sketch.onKey["k"] = { sketch in
-                let body = sketch.canvas
-                guard let layer = try? sketch.createGraphics(160, 160),
-                    let shader = try? layer.makeShader(
-                        """
-                        float4 paint(Fragment in, Values values, Surfaces surfaces) {
-                            return mokume_sample(surfaces.body, fract(in.place * 4.0));
-                        }
-                        """,
-                        surfaces: ["body": .graphics(body)])
-                else { return }
-                box.canvas = layer
-                layer.beginDraw()
-                layer.noStroke()
-                layer.fill(.linear(red: 1, green: 1, blue: 1))
-                // 形は 1 度だけ記録する (記録の中では置いた記録を取らない)
-                let held: Shape? =
-                    switch kind {
-                    case .heldFlat:
-                        layer.createShape {
-                            layer.texture(body)
-                            layer.rect(0, 0, 40, 40)
-                            layer.noTexture()
-                        }
-                    case .heldPaint:
-                        layer.createShape {
-                            layer.shader(shader)
-                            layer.rect(0, 0, 40, 40)
-                            layer.resetShader()
-                        }
-                    case .heldSolid:
-                        layer.createShape {
-                            layer.texture(body)
-                            layer.box(40, 40, 2)
-                            layer.noTexture()
-                        }
-                    case .image, .keptShader: nil
-                    }
-                // 断片は 1 つを当て続ける (記録の控えが効く形)
-                if kind == .keptShader { layer.shader(shader) }
-                for round in 0..<rounds {
-                    DrawOut.rectThenGet.apply(
-                        to: sketch,
-                        colour: round.isMultiple(of: 2)
-                            ? StoppedUpscaleOutletsTests.red : StoppedUpscaleOutletsTests.blue)
-                    let x = Float(round % 4) * 40
-                    let y = Float(round / 4) * 40
-                    switch kind {
-                    case .image: layer.image(body, x, y, 40, 40)
-                    case .keptShader: layer.rect(x, y, 40, 40)
-                    case .heldFlat, .heldPaint: layer.shape(held!, x, y)
-                    case .heldSolid: layer.shape(held!, x + 20, y + 20)
-                    }
-                }
-                layer.endDraw()
-            }
+            sketch.onKey["k"] = { sketch in Self.placeRepeatedly(sketch, kind: kind, box: box) }
         }) { _, _, press in
             try press("k")
+            try Self.expectEachPlacedPicture(in: try #require(box.canvas))
+        }
+    }
+
+    /// 写しの上限を越えて描き切らせては置く回数。
+    private static var repeatedRounds: Int { Canvas.placedPictureCopyLimit + 2 }
+
+    /// 本体を赤と青へ交互に描き換えて描き切らせては、新しい描き場所の 40×40 の升へ順に置いて閉じる。
+    private static func placeRepeatedly(_ sketch: StoppedPainter, kind: Repeated, box: LayerBox) {
+        let body = sketch.canvas
+        guard let layer = try? sketch.createGraphics(160, 160),
+            let shader = try? layer.makeShader(
+                """
+                float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                    return mokume_sample(surfaces.body, fract(in.place * 4.0));
+                }
+                """,
+                surfaces: ["body": .graphics(body)])
+        else { return }
+        box.canvas = layer
+        layer.beginDraw()
+        layer.noStroke()
+        layer.fill(.linear(red: 1, green: 1, blue: 1))
+        // 形は 1 度だけ記録する (記録の中では置いた記録を取らない)
+        let held: Shape? =
+            switch kind {
+            case .heldFlat:
+                layer.createShape {
+                    layer.texture(body)
+                    layer.rect(0, 0, 40, 40)
+                    layer.noTexture()
+                }
+            case .heldPaint:
+                layer.createShape {
+                    layer.shader(shader)
+                    layer.rect(0, 0, 40, 40)
+                    layer.resetShader()
+                }
+            case .heldSolid:
+                layer.createShape {
+                    layer.texture(body)
+                    layer.box(40, 40, 2)
+                    layer.noTexture()
+                }
+            case .image, .keptShader: nil
+            }
+        // 断片は 1 つを当て続ける (記録の控えが効く形)
+        if kind == .keptShader { layer.shader(shader) }
+        for round in 0..<repeatedRounds {
+            DrawOut.rectThenGet.apply(
+                to: sketch,
+                colour: round.isMultiple(of: 2)
+                    ? StoppedUpscaleOutletsTests.red : StoppedUpscaleOutletsTests.blue)
+            let x = Float(round % 4) * 40
+            let y = Float(round / 4) * 40
+            switch kind {
+            case .image: layer.image(body, x, y, 40, 40)
+            case .keptShader: layer.rect(x, y, 40, 40)
+            case .heldFlat, .heldPaint: layer.shape(held!, x, y)
+            case .heldSolid: layer.shape(held!, x + 20, y + 20)
+            }
+        }
+        layer.endDraw()
+    }
+
+    /// ``placeRepeatedly(_:kind:box:)`` が置いた升ごとに、置いた時点の色 (赤と青の交互) が出ているか。
+    private static func expectEachPlacedPicture(in layer: Canvas) throws {
+        #expect(layer.placedPictureCopyLimitReached > 0, "検査の前提: 写しの上限に達していない")
+        let picture = try layer.output.readPixels()
+        for round in 0..<repeatedRounds {
+            let point = picture[(round % 4) * 40 + 20, (round / 4) * 40 + 20]
+            if round.isMultiple(of: 2) {
+                #expect(Self.leansRed(point), "\(round) 回目に置いた分が赤でない: \(point)")
+            } else {
+                #expect(
+                    point.blue > 0.5 && point.red < 0.2 && point.green < 0.2,
+                    "\(round) 回目に置いた分が青でない: \(point)")
+            }
+        }
+    }
+
+    // MARK: - フレームの中で置く本体 (#2103)
+
+    /// フレームの中で本体を描き切らせる口。
+    enum InFrameDrawOut: CaseIterable, CustomTestStringConvertible {
+        /// 四角を置いて `get()` で描き切らせる。
+        case get
+        /// 四角を置いて `loadPixels()` で描き切らせる。
+        case loadPixels
+
+        var testDescription: String {
+            switch self {
+            case .get: "四角を置いて get"
+            case .loadPixels: "四角を置いて loadPixels"
+            }
+        }
+
+        func apply(to sketch: StoppedPainter, colour: LinearRGBA = StoppedUpscaleOutletsTests.red) {
+            sketch.noStroke()
+            sketch.fill(colour)
+            sketch.rect(60, 60, 40, 40)
+            switch self {
+            case .get: _ = sketch.get(0, 0)
+            case .loadPixels: sketch.loadPixels()
+            }
+        }
+    }
+
+    /// 本体の細かさ × 拡大の 1 通り。細かさ 1 には拡大の段が無いので、拡大を分けるのは 0.5 だけ。
+    struct Body: CustomTestStringConvertible {
+        let density: Float
+        let upscale: Upscale
+
+        var testDescription: String {
+            "細かさ \(density)" + (density < 1 ? (upscale == .temporal ? "・時間方向" : "・空間方向") : "")
+        }
+
+        nonisolated static var all: [Body] {
+            [
+                Body(density: 1, upscale: .spatial), Body(density: 0.5, upscale: .spatial),
+                Body(density: 0.5, upscale: .temporal),
+            ]
+        }
+
+        nonisolated static var reduced: [Body] { all.filter { $0.density < 1 } }
+    }
+
+    /// 自分の `draw()` の中で途中まで描き切らせた本体を描き場所へ置くと、どの細かさ・拡大でも途中まで
+    /// 描いた絵が出る ([#2103] 完了条件 1)。
+    ///
+    /// 置くのは「そのとき描き切れている絵」で、フレームの中でも外でも同じである。細かさを下げた本体は
+    /// 途中の描き切りで描く先だけが変わるので、置く口がフレームの中でも出す先を追い付かせる。追い付かせ
+    /// ないと、細かさ 1 は途中の絵・0.5 は前のフレームの絵に分かれる (#2042 の時点の形)。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test(
+        "フレームの中で描き切らせた本体を置くと、どの細かさ・拡大でも途中まで描いた絵が出る",
+        arguments: Body.all, InFrameDrawOut.allCases)
+    func placingInsideTheBodysFrameShowsTheDrawnOutPicture(body: Body, drawOut: InFrameDrawOut) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: body.density, upscale: body.upscale, configure: { sketch in
+            sketch.onLaterFrame = { sketch in
+                drawOut.apply(to: sketch)
+                Self.placeIntoNewLayer(sketch, by: .image, box: box)
+            }
+        }) { _, _, press in
+            try press("r")
+            let point = try #require(box.canvas).output.readPixels()[40, 40]
+            #expect(Self.isRed(point.red, point.green, point.blue), "置いた先に途中まで描いた絵が出ていない: \(point)")
+        }
+    }
+
+    /// 区切り (途中の描き切り) なしで描いている最中の本体を置くと、どの細かさでも前のフレームの絵が出て、
+    /// 描き切る前に置いたと警告する ([#2103] 完了条件 2)。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test(
+        "区切りなしで描いている最中の本体を置くと、どの細かさでも前のフレームの絵が出て警告が出る",
+        arguments: Body.all)
+    func placingTheBodyWithoutABreakShowsThePreviousFrame(body: Body) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: body.density, upscale: body.upscale, configure: { sketch in
+            sketch.onLaterFrame = { sketch in
+                sketch.noStroke()
+                sketch.fill(StoppedUpscaleOutletsTests.red)
+                sketch.rect(60, 60, 40, 40)
+                Self.placeIntoNewLayer(sketch, by: .image, box: box)
+            }
+        }) { _, _, press in
+            try press("r")
             let layer = try #require(box.canvas)
-            #expect(layer.placedPictureCopyLimitReached > 0, "検査の前提: 写しの上限に達していない")
-            let picture = try layer.output.readPixels()
-            for round in 0..<rounds {
-                let point = picture[(round % 4) * 40 + 20, (round / 4) * 40 + 20]
-                if round.isMultiple(of: 2) {
-                    #expect(Self.leansRed(point), "\(round) 回目に置いた分が赤でない: \(point)")
-                } else {
-                    #expect(
-                        point.blue > 0.5 && point.red < 0.2 && point.green < 0.2,
-                        "\(round) 回目に置いた分が青でない: \(point)")
+            let point = try layer.output.readPixels()[40, 40]
+            #expect(Self.isBackdrop(point), "区切りなしで置いた先に前のフレームの絵が出ていない: \(point)")
+            // 警告は置いた側 (描き場所) が出す
+            #expect(layer.warnings.hasWarned(.placingWhileDrawing), "描き切る前に置いたと警告していない")
+        }
+    }
+
+    /// 置いた後に本体を描き換えて描き切らせ、同じ描き場所へもう一度置くと、先に置いた分は置いた時点の
+    /// 絵、後に置いた分は描き換えた絵が出る ([#2103]・[#1656])。フレームの中で追い付くときも、出す先を
+    /// 書く前に先に置いた分を写しへ差し替える。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test(
+        "フレームの中で置いた後に本体を描き換えて置き直しても、置いた分ごとに置いた時点の絵が出る",
+        arguments: Body.all, Door.allCases)
+    func eachPlacementInsideTheBodysFrameKeepsItsOwnPicture(body: Body, door: Door) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: body.density, upscale: body.upscale, configure: { sketch in
+            sketch.onLaterFrame = { sketch in
+                InFrameDrawOut.get.apply(to: sketch)
+                Self.placeIntoNewLayer(sketch, by: door, box: box) { layer in
+                    InFrameDrawOut.get.apply(to: sketch, colour: StoppedUpscaleOutletsTests.blue)
+                    door.place(sketch.canvas, into: layer, at: 80, 80)
                 }
             }
+        }) { _, _, press in
+            try press("r")
+            let picture = try #require(box.canvas).output.readPixels()
+            let first = picture[40, 40]
+            #expect(Self.isRed(first.red, first.green, first.blue), "先に置いた分が置いた時点の赤でない: \(first)")
+            let second = picture[120, 120]
+            #expect(Self.isBlue(second.red, second.green, second.blue), "後に置いた分が描き換えた青でない: \(second)")
+        }
+    }
+
+    /// フレームの中で写しの上限を越えて描き切らせては置いても、置いた分ごとに置いた時点の絵が出る
+    /// ([#2103]・[#2042] の反証 3)。
+    ///
+    /// 置いた側の写しの代わりの描き切りは、置く口の内側では起こさない
+    /// (``Canvas/keepPictureWithoutFlushing(placedFrom:)``)。だから細かさを下げた本体のフレームの中の
+    /// 途中の描き切りも、細かさ 1 と同じくその時点で置いた側へ写させる。写させないと、上限に達した後は
+    /// 置く口が追い付きを見送り、前に追い付いた絵が出る。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test(
+        "フレームの中で描き切らせては置くを写しの上限を越えてくり返しても、置いた分ごとに置いた時点の絵が出る",
+        arguments: Body.all, Repeated.allCases)
+    func placingInsideTheBodysFramePastTheCopyLimitKeepsEachPicture(body: Body, kind: Repeated) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: body.density, upscale: body.upscale, configure: { sketch in
+            sketch.onLaterFrame = { sketch in Self.placeRepeatedly(sketch, kind: kind, box: box) }
+        }) { _, _, press in
+            try press("r")
+            try Self.expectEachPlacedPicture(in: try #require(box.canvas))
+        }
+    }
+
+    /// 細かさを下げた本体で、フレームの中で出す先を読む (`canvas.output.readPixels()`) のを挟んでも
+    /// 挟まなくても、続けて置いた絵は同じになる ([#2103] 完了条件 3)。読む口と置く口は、同じ時点で
+    /// 同じ揺らしの追い付きを通る。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test(
+        "フレームの中で出す先を読むのを挟んでも挟まなくても、続けて置いた絵は同じになる",
+        arguments: Body.reduced)
+    func readingTheOutputInsideTheFrameDoesNotChangeThePlacement(body: Body) throws {
+        func placedPicture(readingFirst: Bool) throws -> PixelBuffer {
+            let box = LayerBox()
+            try Self.withStoppedSketch(density: body.density, upscale: body.upscale, configure: { sketch in
+                sketch.onLaterFrame = { sketch in
+                    InFrameDrawOut.get.apply(to: sketch)
+                    if readingFirst { _ = try? sketch.canvas.output.readPixels() }
+                    Self.placeIntoNewLayer(sketch, by: .image, box: box)
+                }
+            }) { _, _, press in try press("r") }
+            return try #require(box.canvas).output.readPixels()
+        }
+        let placed = try placedPicture(readingFirst: false)
+        let placedAfterReading = try placedPicture(readingFirst: true)
+        #expect(
+            placed == placedAfterReading,
+            "出す先を読むのを挟むと、置いた絵が変わった: 中央 \(placed[40, 40]) / \(placedAfterReading[40, 40])")
+        let centre = placed[40, 40]
+        #expect(Self.isRed(centre.red, centre.green, centre.blue), "置いた先に途中まで描いた絵が出ていない: \(centre)")
+    }
+
+    /// 時間方向・細かさ 0.5 で、フレームの中で追い付いた出す先の図形は、そのフレームの終わりの拡大と同じ
+    /// 位置に出る ([#2103] 完了条件 4)。
+    ///
+    /// フレームの中の描く先は、このフレームの揺らし (``UpscaleStage/jitter``) で描いてあり、フレームの
+    /// 終わりの拡大はそれを戻す。フレームの中の追い付きが最後のフレームの揺らし
+    /// (``UpscaleStage/lastJitterInSource``) を戻すと、2 つの揺らしの差だけずれる。比べるのは下地からの
+    /// 変わり方の重心で、フレームの終わりの絵は前の結果と混ぜてある (重み 0.2) が、前の結果は一様な
+    /// 下地なので重心は変わらない。揺らしの差が描く画素 0.5 個を越える 3 枚目で見る。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test("時間方向で、フレームの中で追い付いた出す先の図形は、フレームの終わりの拡大と同じ位置に出る")
+    func aTemporalCatchUpInsideTheFrameMatchesTheFramesEnd() throws {
+        var caughtUp: PixelBuffer?
+        var jitters: (now: SIMD2<Float>, last: SIMD2<Float>)?
+        try Self.withStoppedSketch(density: 0.5, upscale: .temporal, configure: { sketch in
+            sketch.onLaterFrame = { sketch in
+                guard sketch.frameCount == 3 else { return }
+                if let stage = sketch.canvas.upscaleStage { jitters = (stage.jitter, stage.lastJitter) }
+                InFrameDrawOut.get.apply(to: sketch)
+                caughtUp = try? sketch.canvas.output.readPixels()
+            }
+        }) { runtime, _, press in
+            try press("r")
+            try press("r")
+            let (now, last) = try #require(jitters)
+            #expect(simd_length(now - last) > 0.5, "検査の前提: 2 つの揺らしの差が描く画素 0.5 個を越えていない")
+            let inFrame = Self.centroidOfChange(in: try #require(caughtUp))
+            let framesEnd = Self.centroidOfChange(in: try runtime.canvas.output.readPixels())
+            // 出す画素 2 個が描く画素 1 個 (細かさ 0.5)
+            let gap = simd_length(inFrame - framesEnd) / 2
+            #expect(gap < 0.5, "フレームの中の追い付きが、フレームの終わりと描く画素 \(gap) 個ずれた")
+        }
+    }
+
+    /// 下地 (左上の隅の画素) からの緑の減り方で重みを付けた重心 (出す画素)。赤い図形の位置を、補間の
+    /// ぼけによらず画素より細かく読む。
+    private static func centroidOfChange(in picture: PixelBuffer) -> SIMD2<Double> {
+        let backdrop = picture[0, 0].green
+        var sum = SIMD2<Double>.zero
+        var total = 0.0
+        for y in 0..<picture.height {
+            for x in 0..<picture.width {
+                let weight = Double(backdrop - picture[x, y].green)
+                sum += SIMD2(Double(x) + 0.5, Double(y) + 0.5) * weight
+                total += weight
+            }
+        }
+        return sum / total
+    }
+
+    /// 置く口のフレームの中の追い付きも書き戻さない ([#2103] 完了条件 5)。書いただけの画素は置いた先に
+    /// 出ず、先に描き切らせた隅の四角は出る。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test("フレームの中で置いても、書いただけの画素は置いた先に出ない", arguments: Body.all)
+    func writtenOnlyPixelsAreNotPlacedInsideTheFrame(body: Body) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: body.density, upscale: body.upscale, configure: { sketch in
+            sketch.onLaterFrame = { sketch in
+                sketch.noStroke()
+                sketch.fill(StoppedUpscaleOutletsTests.green)
+                sketch.rect(0, 0, 20, 20)
+                _ = sketch.get(0, 0)
+                let centre = sketch.pixelWidth / 2
+                for y in centre - 2..<centre + 2 {
+                    for x in centre - 2..<centre + 2 { sketch.set(x, y, StoppedUpscaleOutletsTests.red) }
+                }
+                Self.placeIntoNewLayer(sketch, by: .image, box: box)
+            }
+        }) { _, _, press in
+            try press("r")
+            let picture = try #require(box.canvas).output.readPixels()
+            #expect(Self.isBackdrop(picture[40, 40]), "書いただけの画素が置いた先に出た: \(picture[40, 40])")
+            let corner = picture[3, 3]
+            #expect(corner.green > 0.9 && corner.red < 0.1, "描き切らせた隅の四角が出ていない: \(corner)")
+        }
+    }
+
+    /// 出す先を読む口はフレームの中でも書き戻す ([#2103] 完了条件 5)。書いただけの画素も、読んだ絵には
+    /// 出る。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test("フレームの中で出す先を読むと、書いただけの画素も出る", arguments: Body.all)
+    func readingTheOutputInsideTheFrameWritesBack(body: Body) throws {
+        var read: PixelBuffer?
+        try Self.withStoppedSketch(density: body.density, upscale: body.upscale, configure: { sketch in
+            sketch.onLaterFrame = { sketch in
+                let centre = sketch.pixelWidth / 2
+                for y in centre - 2..<centre + 2 {
+                    for x in centre - 2..<centre + 2 { sketch.set(x, y, StoppedUpscaleOutletsTests.red) }
+                }
+                read = try? sketch.canvas.output.readPixels()
+            }
+        }) { _, _, press in
+            try press("r")
+            let point = try #require(read)[80, 80]
+            #expect(Self.isRed(point.red, point.green, point.blue), "読んだ絵に書いた画素が出ていない: \(point)")
         }
     }
 
