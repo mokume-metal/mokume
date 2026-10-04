@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/check-adrs.sh の検査 (#500 / #545)。
+"""scripts/check-adrs.sh の検査 (#500 / #545 / #1946)。
 
 このスクリプトが守るのは 2 つ — **番号が重複したら赤い** (#490 と #491 が並走して
 両方 0026 を取ったとき、別ファイルなので git も CI も止めなかった) ことと、
-**本文に改訂があるのに状態欄が名乗っていなければ赤い** (29 本中 27 本の状態欄が
+**改訂を抱えているのに状態欄が印を持たなければ赤い** (29 本中 27 本の状態欄が
 `採用` のままで、節が情報を運んでいなかった) こと。どちらも通す側へ倒れれば同じ
 ことがまた起きるので、赤くなる条件を先に固定する (ADR-0002 決定 4 の
 「壊しても緑の検査は検査ではない」)。
+
+状態欄の印は一字一句固定で 1 度だけ置き、改訂の正本は本文の日付入り見出しにある
+(#1946)。状態欄に改訂を書き足す形では、同じ ADR を改訂する 2 本の PR が状態欄の
+1 行で必ず衝突した。並んだ 2 本が衝突しないことは ParallelRevisionTest が固定する。
 
 状態欄の側でとくに固定したいのは**誤検出しないこと**である。日付を持たない
 「〜は改訂しない」という散文は改訂ではない (ADR-0006 決定 6 が実例)。ここを
@@ -106,8 +110,11 @@ class AdrNumbersTest(unittest.TestCase):
         self.assertIn("ok:", r.stdout)
 
 
+MARKER = "改訂あり (本文の「改訂 (日付)」見出し)"
+
+
 class AdrStatusTest(unittest.TestCase):
-    """状態欄が本文の改訂に追随しているか (#545)。"""
+    """改訂を抱えた ADR の状態欄が印を持つか (#545 / #1946)。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -126,22 +133,25 @@ class AdrStatusTest(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8"
         )
 
-    def test_決定見出しに併記した改訂が状態欄に無ければ赤い(self):
+    # --- (a) 改訂を抱えているのに印が無い ---
+
+    def test_決定見出しに併記した改訂があるのに印が無ければ赤い(self):
         self.place("採用 (2026-08-26)",
                    "### 4. `required_approving_review_count` は 0 のままにする (2026-08-28 改訂)")
         r = self.run_script()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        # 日付を名指しする。名指しが無いと、どの改訂が漏れたかを本文から探す
-        # ことになる (改訂を 4 つ抱えた ADR-0003 が実在する)
-        self.assertIn("2026-08-28", r.stderr)
+        # どの ADR の・どの見出しが印を求めたかを名指しし、足す綴りまで出す。
+        # 綴りを書き手に思い出させると、並んだ 2 本が別々の綴りで足して衝突する
         self.assertIn("0003-agent-identity-separation.md", r.stderr)
+        self.assertIn("2026-08-28", r.stderr)
+        self.assertIn(MARKER, r.stderr)
 
-    def test_追記節として立てた改訂が状態欄に無ければ赤い(self):
+    def test_追記節として立てた改訂があるのに印が無ければ赤い(self):
         self.place("採用 (2026-08-26)",
-                   "#### 改訂 (2026-08-30) — CODEOWNERS を畳む")
+                   "#### 改訂 (2026-10-06) — CODEOWNERS を畳む")
         r = self.run_script()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("2026-08-30", r.stderr)
+        self.assertIn("2026-10-06", r.stderr)
 
     def test_追補も同じに扱う(self):
         self.place("採用 (2026-08-27)", "## 追補 — 手段は自前の補間にする (2026-08-29)")
@@ -149,20 +159,35 @@ class AdrStatusTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("2026-08-29", r.stderr)
 
-    def test_複数の改訂は漏れたぶんだけ挙がる(self):
-        self.place("採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4",
-                   "### 4. …… (2026-08-28 改訂)",
-                   "#### 改訂 (2026-08-30) — CODEOWNERS を畳む")
+    def test_凍結した改訂の並びがあるのに印が無ければ赤い(self):
+        # ADR-0020 は改訂の見出しを持たないまま状態欄で「決定 7 を追加」と名乗って
+        # いる。見出しが無くても、状態欄の並びが改訂を抱えている証拠になる
+        self.place("採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加", "### 7. 数の道具")
         r = self.run_script()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("2026-08-30", r.stderr)
-        # 名乗れているほうを蒸し返さない
-        self.assertNotIn("本文の改訂: 2026-08-28", r.stderr)
+        self.assertIn("印が無い", r.stderr)
 
-    def test_状態欄が名乗っていれば緑(self):
-        self.place("採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 / 改訂 (2026-08-30): 決定 4",
+    def test_印の綴りが違えば赤い(self):
+        # 一字一句固定である。言い換えを通すと、並んだ 2 本が別々の綴りで足して
+        # 状態欄が衝突する
+        self.place("採用 (2026-08-26) / 改訂あり",
+                   "#### 改訂 (2026-10-06) — CODEOWNERS を畳む")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("印が無い", r.stderr)
+
+    def test_印があれば見出しの日付が状態欄に無くても緑(self):
+        # 2 回目以降の改訂は状態欄に触れない。見出しの日付を状態欄に求めると、
+        # 共有の 1 行に書き足す形へ戻る (#1946)
+        self.place("採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 / " + MARKER,
                    "### 4. …… (2026-08-28 改訂)",
-                   "#### 改訂 (2026-08-30) — CODEOWNERS を畳む")
+                   "#### 改訂 (2026-10-06) — CODEOWNERS を畳む",
+                   "#### 改訂 (2026-10-07) — 決定 5 の報告先")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_改訂の無いADRは印が無くても緑(self):
+        self.place("採用 (2026-08-26)", "### 1. 決定")
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
@@ -175,10 +200,23 @@ class AdrStatusTest(unittest.TestCase):
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
-    def test_状態欄が見出しより多く名乗るのは正常(self):
-        # ADR-0020 は改訂の見出しを持たないまま「決定 7 を追加」と名乗っている。
-        # 向きは片方向で、状態欄の側が厚いことを咎めない
-        self.place("採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加", "### 7. 数の道具")
+    # --- (b) 切り替えの日より後の改訂を状態欄に書き足している ---
+
+    def test_切り替えの後の改訂を状態欄に足せば赤い(self):
+        self.place("採用 (2026-08-26) / " + MARKER + " / 改訂 (2026-10-06): 決定 4",
+                   "#### 改訂 (2026-10-06) — 決定 4")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("2026-10-06", r.stderr)
+        # 直し方 (見出しに書く) まで出す
+        self.assertIn("#### 改訂 (2026-10-06)", r.stderr)
+
+    def test_切り替えの日までの改訂の並びは凍結として緑(self):
+        # 境界: 切り替えの日 (2026-10-05) そのものは咎めない。M1 で凍結した並びの
+        # 最後の日付まで消さずに残す
+        self.place("採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 / "
+                   "改訂 (2026-10-05): 決定 5 / " + MARKER,
+                   "### 4. …… (2026-08-28 改訂)")
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
@@ -222,6 +260,106 @@ class AdrStatusTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("状態欄が読めない", r.stderr)
 
+
+class ParallelRevisionTest(unittest.TestCase):
+    """完了条件 3 (#1946): 同じ ADR を並んで改訂する 2 本が、状態欄で衝突しない。
+
+    #1668 を閉じた #1856 の ParallelMergeTest と同じ形で、同じ base から切った 2 本の
+    うち先の 1 本が main に入った後、後の 1 本を `git merge-tree --write-tree` で
+    合わせる。merge queue が後の 1 本を外すかどうかは、この合流が衝突するかで決まる。
+    """
+
+    BASE = (
+        "# ADR-0021: 見出し\n\n## 状態\n\n{status}\n\n## 文脈\n\n文脈。\n\n## 決定\n\n"
+        "### 1. 一つ目\n\n本文 1。\n\n### 2. 二つ目\n\n本文 2。\n\n"
+        "### 3. 三つ目\n\n本文 3。\n\n### 4. 四つ目\n\n本文 4。\n\n## 影響\n\n影響。\n"
+    )
+    NAME = "0021-solid-space-and-frame-assembly.md"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.git("init", "-q", "-b", "main")
+        # 使い捨てのリポジトリは手元の署名設定を継ぐ (#344)
+        self.git("config", "commit.gpgsign", "false")
+        self.git("config", "user.name", "test")
+        self.git("config", "user.email", "test@example.invalid")
+
+    def git(self, *args, check=True):
+        r = subprocess.run(["git", "-C", str(self.root), *args],
+                           capture_output=True, text=True, encoding="utf-8")
+        if check and r.returncode != 0:
+            raise AssertionError(f"git {' '.join(args)} が失敗した: {r.stdout}{r.stderr}")
+        return r
+
+    def commit(self, text, message):
+        (self.root / self.NAME).write_text(text, encoding="utf-8")
+        self.git("add", self.NAME)
+        self.git("commit", "-q", "-m", message)
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def revise(self, text, decision, heading):
+        """決定 N の本文の直後に改訂の見出しを立てる。"""
+        anchor = f"本文 {decision}。\n"
+        return text.replace(anchor, f"{anchor}\n{heading}\n\n差し替えた。\n")
+
+    def merge_second_after_first(self, first_text, second_text, base_text):
+        base = self.commit(base_text, "base")
+        self.git("checkout", "-q", "-b", "first", base)
+        first = self.commit(first_text, "first")
+        self.git("checkout", "-q", "-b", "second", base)
+        second = self.commit(second_text, "second")
+        # 先の 1 本が main に入る (squash と同じく、main は first の木になる)
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--ff-only", first)
+        return self.git("merge-tree", "--write-tree", "main", second, check=False)
+
+    def assert_merged_cleanly_and_green(self, merged):
+        self.assertEqual(merged.returncode, 0, "衝突した:\n" + merged.stdout)
+        tree = merged.stdout.splitlines()[0]
+        text = self.git("show", f"{tree}:{self.NAME}").stdout
+        # 2 本の改訂がどちらも残り、合流後の木を make adrs が通す
+        self.assertIn("決定 2 の手段", text)
+        self.assertIn("決定 4 の手段", text)
+        self.assertEqual(text.count(MARKER), 1, text)
+        check_dir = self.root / "check"
+        check_dir.mkdir()
+        subprocess.run(["git", "init", "-q", "."], cwd=check_dir, check=True)
+        subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=check_dir, check=True)
+        (check_dir / self.NAME).write_text(text, encoding="utf-8")
+        r = subprocess.run(["/bin/bash", str(SCRIPT), str(check_dir)],
+                           capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_印のあるADRの別々の決定を改訂する2本は衝突しない(self):
+        # 2 回目以降の改訂: どちらも状態欄に触れず、本文に見出しを立てるだけ
+        base = self.BASE.format(status="採用 (2026-08-28) / " + MARKER)
+        first = self.revise(base, 2, "#### 改訂 (2026-10-06) — 決定 2 の手段")
+        second = self.revise(base, 4, "#### 改訂 (2026-10-06) — 決定 4 の手段")
+        self.assert_merged_cleanly_and_green(self.merge_second_after_first(first, second, base))
+
+    def test_初めての改訂が2本並んでも同じ印を足すので衝突しない(self):
+        # どちらも状態欄の同じ行を、一字一句同じ文字に書き換える
+        base = self.BASE.format(status="採用 (2026-08-28)")
+        marked = base.replace("採用 (2026-08-28)\n", "採用 (2026-08-28) / " + MARKER + "\n")
+        first = self.revise(marked, 2, "#### 改訂 (2026-10-06) — 決定 2 の手段")
+        second = self.revise(marked, 4, "#### 改訂 (2026-10-06) — 決定 4 の手段")
+        self.assert_merged_cleanly_and_green(self.merge_second_after_first(first, second, base))
+
+    def test_状態欄に改訂を書き足す形は衝突する(self):
+        # 対照: #1946 までの形。上の 2 本が緑なのは合流の手順が甘いからではなく、
+        # 状態欄の書き方が違うからであることを、同じ手順で赤くなる側で確かめる
+        base = self.BASE.format(status="採用 (2026-08-28)")
+        first = self.revise(
+            base.replace("採用 (2026-08-28)\n", "採用 (2026-08-28) / 改訂 (2026-10-02): 決定 2\n"),
+            2, "#### 改訂 (2026-10-02) — 決定 2 の手段")
+        second = self.revise(
+            base.replace("採用 (2026-08-28)\n", "採用 (2026-08-28) / 改訂 (2026-10-02): 決定 4\n"),
+            4, "#### 改訂 (2026-10-02) — 決定 4 の手段")
+        merged = self.merge_second_after_first(first, second, base)
+        self.assertEqual(merged.returncode, 1, merged.stdout)
+        self.assertIn(self.NAME, merged.stdout)
 
 if __name__ == "__main__":
     unittest.main()
