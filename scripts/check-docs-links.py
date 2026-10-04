@@ -13,6 +13,10 @@
 したときに CI の木になるもの」で、未追跡を見ないと `git add` 前の手元の緑が push 後の
 CI で赤になる。
 
+**リンク先が在るかも同じ木で見る (#2072)。** 作業ツリーに在るだけでは足りない —
+無視されたファイル (`.build/` の生成物・手元の書き捨て) へのリンクは、手元では
+在るので緑になり、CI の木には無いので赤になる。リポジトリの外を指すリンクも同じ。
+
 **コード塊の中は見ない。** 規範文書はコマンド例を大量に含み、その中の
 `![]()` のような**書き方の例示**まで拾うと、直しようのない赤が出る
 (実際に .claude/skills/visual-evidence/SKILL.md に 1 件ある)。フェンスと
@@ -32,6 +36,7 @@ CI で赤になる。
 踏んだ人が出力だけで書き直せる形にしておく。
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -177,8 +182,49 @@ def unquote(target: str) -> str:
     return re.sub(r"%([0-9A-Fa-f]{2})", lambda m: chr(int(m.group(1), 16)), target)
 
 
-def check(root: Path, files: list[str]) -> tuple[list[str], int]:
+def tree_paths(tree: list[str]) -> set[str]:
+    """木のファイルと、それを含むディレクトリの経路 (ルートからの相対・`/` 区切り)。
+
+    ディレクトリを指すリンク (`[ADR](docs/decisions/)`) は、その下に木のファイルが
+    1 つでもあれば在ると読む — git はディレクトリを持たないので、CI の木で在るとは
+    そういうことである。ルート自身は `.` で表す
+    """
+    paths = {"."}
+    for name in tree:
+        parts = name.split("/")
+        for i in range(1, len(parts) + 1):
+            paths.add("/".join(parts[:i]))
+    return paths
+
+
+def check(root: Path, files: list[str], tree: set[str]) -> tuple[list[str], int]:
+    """`tree` は `tree_paths` の返り値。リンク先の存在はこの木を基準に見る。"""
     anchor_cache: dict[Path, list[str] | None] = {}
+    real_root = root.resolve()
+    by_folded = {p.casefold(): p for p in tree}
+
+    def why_not_in_tree(rel: str | None) -> str:
+        """手元に在るのに木に無いリンク先が、なぜ木に無いかを名乗る。
+
+        理由を決め打ちしない。大文字小文字を区別しない FS (macOS の既定) では綴りの
+        違うリンクも `exists()` が真になり、「無視されている」と名乗ると直す先を誤らせる
+        """
+        if rel is None:
+            return "リポジトリの外を指している"
+        folded = by_folded.get(rel.casefold())
+        if folded is not None:
+            return (
+                f"木のパスと大文字小文字が違う (木では {folded}。"
+                "GitHub と CI の木は区別するので切れる)"
+            )
+        # 無視かどうかは git に聞く (`out/` の形の規則も、ディレクトリなら掛かる)
+        ignored = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--", rel],
+            capture_output=True,
+        )
+        if ignored.returncode == 0:
+            return "git に無視されていて CI の木に入らない"
+        return "CI の木に無い (git の持たない空のディレクトリ等)"
 
     def anchors_for(path: Path) -> list[str] | None:
         if path not in anchor_cache:
@@ -213,6 +259,19 @@ def check(root: Path, files: list[str]) -> tuple[list[str], int]:
                 target = (base / path_part.lstrip("/")).resolve()
                 if not target.exists():
                     problems.append(f"{name}:{line}: 参照先が無い → {raw}")
+                    continue
+                # 手元に在るだけでは足りない。無視されたファイル (生成物・手元の書き捨て)
+                # は `git add -A` しても CI の木に入らず、手元で緑・CI で赤になる (#2072)。
+                # symlink は resolve() で先へ辿ってから比べる (.agents/skills/* の形)
+                rel = (
+                    target.relative_to(real_root).as_posix()
+                    if target.is_relative_to(real_root)
+                    else None
+                )
+                if rel not in tree:
+                    problems.append(
+                        f"{name}:{line}: 参照先が{why_not_in_tree(rel)} → {raw}"
+                    )
                     continue
             else:
                 target = source
@@ -253,7 +312,10 @@ def main() -> int:
     # 残り、エディタの退避リンクは先が無いまま未追跡で残る。どちらも add -A の後の木に
     # 現れないので、読んで「読めない」と名乗る前に落とす。名前は -z で割る (非 ASCII
     # の名前は C 引用符つきで返り、実在するファイルを読めなくなる)
-    files = [
+    #
+    # 同じ木がリンク先の存在の基準にもなる (#2072)。検査する Markdown はこの木の
+    # 部分集合なので、1 度だけ列挙して両方を取る
+    tree = [
         f
         for f in subprocess.run(
             [
@@ -265,14 +327,15 @@ def main() -> int:
                 "--cached",
                 "--others",
                 "--exclude-standard",
-                "*.md",
-                "*.markdown",
             ],
             capture_output=True,
             text=True,
             check=True,
         ).stdout.split("\0")
-        if f and (root / f).is_file()
+        if f and os.path.lexists(root / f)
+    ]
+    files = [
+        f for f in tree if f.endswith((".md", ".markdown")) and (root / f).is_file()
     ]
 
     # 検査対象が 0 件なら、通っていることに意味が無い (git の出力形式が変わった、
@@ -282,7 +345,7 @@ def main() -> int:
         print("Markdown が 1 つも見つからない — 検査が成立していない", file=sys.stderr)
         return 1
 
-    problems, total = check(root, files)
+    problems, total = check(root, files, tree_paths(tree))
     if problems:
         print("ドキュメントのリンクが切れている:", file=sys.stderr)
         for p in problems:

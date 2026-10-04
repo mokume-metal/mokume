@@ -68,8 +68,24 @@ if [ ! -d "$DIR" ]; then
 fi
 
 # 先頭 4 桁を持つ .md だけを数える。番号を名乗らないファイル (README 等) は
-# 参照の綴りを持ちようがないので、この検査の対象ではない
-numbered=$(find "$DIR" -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.md' | sort)
+# 参照の綴りを持ちようがないので、この検査の対象ではない。
+#
+# 見る木は「git add -A したときに CI の木になるもの」(追跡 + 未追跡 − 無視・#2072)。
+# 作業ツリーを find で見ると、無視された手元の下書きが状態欄の指し先として数えられ、
+# 手元で緑・CI で赤になる。index にだけ残る旧パス (git rm していない削除) は -f で落とす。
+# 名前は -z で割る (非 ASCII の名前は C 引用符つきで返る)
+if ! listed=$(git -C "$DIR" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n'); then
+  echo "ADR の置き場が git の作業ツリーの中に無い: $DIR" >&2
+  exit 1
+fi
+# パターンを `(` で開く — macOS の /bin/bash (3.2) は $( ) の中の case の `)` を
+# コマンド置換の閉じと読み違える
+numbered=$(while IFS= read -r name; do
+  case "$name" in
+    (*/*) ;;
+    ([0-9][0-9][0-9][0-9]-*.md) if [ -f "$DIR/$name" ]; then printf '%s\n' "$DIR/$name"; fi ;;
+  esac
+done <<<"$listed" | sort)
 
 if [ -z "$numbered" ]; then
   echo "ok: 番号付きの ADR が無い ($DIR)"
@@ -145,7 +161,8 @@ while IFS= read -r path; do
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
     number="${ref#ADR-}"
-    if [ -z "$(find "$DIR" -maxdepth 1 -name "$number-*.md")" ]; then
+    # 指し先も上と同じ木から引く (無視された下書きを在ると数えない)
+    if ! grep -q "/$number-[^/]*\.md\$" <<<"$numbered"; then
       echo "状態欄が実在しない ADR を指している: $path" >&2
       echo "  指し先: $ref" >&2
       failed=1
