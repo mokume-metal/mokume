@@ -56,8 +56,11 @@ def answered(
     **読めない `report.json` は「まだ来ていない」と読む。** 書き換えの途中を掴んだ場合と
     まだ存在しない場合を分ける意味が無い — どちらも次の周回で読み直せばよい。
     """
-    limit = time.time() + deadline
-    while time.time() < limit:
+    # 期限は眠っている間は進まない時計で測る。壁時計 (`time.time`) だと、待っている最中に
+    # 眠ると起きた瞬間に期限を越え、応答を待たずに None を返す (#1940)。道具側の対
+    # (`Facets.exchange`) も同じ種類の時計で測る
+    limit = time.monotonic() + deadline
+    while time.monotonic() < limit:
         try:
             report = json.loads((facet / "report.json").read_text())
             if report.get("id") == identifier:

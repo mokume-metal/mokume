@@ -94,8 +94,8 @@ struct SketchApplicationRenderTests {
     /// 返事を待たせていれば決着まで見に来て、畳む。**待つ側が期限を持つ。**
     private func finishTerminating(_ application: SketchApplication, _ ending: Ending) throws {
         if ending.reply == .terminateLater {
-            let deadline = Date().addingTimeInterval(60)
-            while !ending.replied, Date() < deadline {
+            let deadline = DispatchTime.now() + 60
+            while !ending.replied, DispatchTime.now() < deadline {
                 application.pollTermination()
                 if !ending.replied { Thread.sleep(forTimeInterval: 0.005) }
             }

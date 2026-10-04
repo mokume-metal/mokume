@@ -260,9 +260,9 @@ struct BuildDeadlineTests {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        let started = Date()
+        let started = ProcessInfo.processInfo.systemUptime
         let result = try BuildProcess.run(process, reading: pipe, within: 0.5)
-        let waited = Date().timeIntervalSince(started)
+        let waited = ProcessInfo.processInfo.systemUptime - started
 
         #expect(result.killed, "期限を越えたのに殺されていない")
         #expect(result.status != 0, "殺されたのに、終わり方が成功を名乗っている")

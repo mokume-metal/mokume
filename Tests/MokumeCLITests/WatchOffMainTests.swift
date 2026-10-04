@@ -321,8 +321,8 @@ struct WatchOffMainTests {
         _ condition: @MainActor () -> Bool, within seconds: Double = 5,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while await !condition(), Date() < deadline {
+        let deadline = DispatchTime.now() + seconds
+        while await !condition(), DispatchTime.now() < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
         try #require(

@@ -574,8 +574,8 @@ extension RenderDevice {
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     func awaitNoticesWithoutYielding() -> Bool {
-        let deadline = Date().addingTimeInterval(Double(Self.waitLimitSeconds))
-        while arrivedNoticeCount < Int(submissionCount), Date() < deadline {
+        let deadline = DispatchTime.now() + Double(Self.waitLimitSeconds)
+        while arrivedNoticeCount < Int(submissionCount), DispatchTime.now() < deadline {
             Thread.sleep(forTimeInterval: 0.01)
         }
         return arrivedNoticeCount == Int(submissionCount)

@@ -642,8 +642,11 @@ struct FrameSyncTests {
 
     @Test("描画の土台を手放すときは、実行中のコマンドが終わるのを待つ")
     func droppingTheDeviceWaitsForInFlightWork() throws {
-        // まず回転 1 回ぶんの長さを、同じ絵で測る (機械ごとに違うので自分で測る)
-        let clock = ContinuousClock()
+        // まず回転 1 回ぶんの長さを、同じ絵で測る (機械ごとに違うので自分で測る)。
+        // **時計は眠っている間は進まない種類で、2 つの測りとも同じものを使う** — 眠りの間も
+        // 進む時計 (`ContinuousClock`) だと、回転の測りの最中に眠ったときだけ回転が膨らみ、
+        // 比べが偽の赤になる (#1940)
+        let clock = SuspendingClock()
         let reference = try makeBench()
         let measured = clock.now
         try reference.canvas.draw { reference.keepGPUBusy() }
@@ -924,8 +927,8 @@ struct FrameSyncTests {
         _ condition: () -> Bool, within seconds: Double = Double(RenderDevice.waitLimitSeconds),
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !condition(), Date() < deadline {
+        let deadline = DispatchTime.now() + seconds
+        while !condition(), DispatchTime.now() < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(condition(), "\(seconds) 秒待っても届かなかった", sourceLocation: sourceLocation)
