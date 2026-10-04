@@ -26,8 +26,9 @@
     門番 (render-turn.sh の yield) の判定は積む前の 1 回だけで、queue が空いている間に
     積まれた render-pr は、後からできた先頭の render と専用機を取り合う (#2064)。走っている
     render-pr と、render-pr の job がまだ無い run (門番の中) には触らない
-11. **今のグループが無ければ render-pr に触らない。jobs を読めなければ触らず、非 0 で終える。**
-    待たせる相手が居ないのに退かせても失うだけで、判定できないものは生きている側に倒す
+11. **render.yml の今のグループの run が無ければ render-pr に触らない。jobs を読めなければ
+    触らず、非 0 で終える。** 待たせる相手が居ないのに退かせても失うだけで (ci.yml だけが
+    残る group では門番も render-pr を通す)、判定できないものは生きている側に倒す
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は絞り込みそのものを踏む (stall_watch_test.py と同じ理由)。
@@ -114,13 +115,18 @@ class QueueSweepTest(unittest.TestCase):
         self.calls = root / "gh-calls.txt"
         self.calls.write_text("", encoding="utf-8")
 
-    def add_run(self, run_id, branch, sha, status="in_progress"):
+    def add_run(self, run_id, branch, sha, status="in_progress", workflow="ci.yml"):
         path = self.data / f"runs-{status}.json"
         payload = {"workflow_runs": []}
         if path.exists():
             payload = json.loads(path.read_text(encoding="utf-8"))
         payload["workflow_runs"].append(
-            {"id": run_id, "head_branch": branch, "head_sha": sha}
+            {
+                "id": run_id,
+                "head_branch": branch,
+                "head_sha": sha,
+                "path": f".github/workflows/{workflow}",
+            }
         )
         path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -140,7 +146,8 @@ class QueueSweepTest(unittest.TestCase):
         )
 
     def live_group(self):
-        self.add_run(100, LIVE, "tip", status="queued")
+        """render.yml の今のグループの run を置く (門番が見送りに使うのと同じ範囲)。"""
+        self.add_run(100, LIVE, "tip", status="queued", workflow="render.yml")
         self.add_ref(LIVE, "tip")
 
     def add_ref(self, branch, sha):
@@ -292,6 +299,17 @@ class QueueSweepTest(unittest.TestCase):
         self.assertNotIn("306", result.stdout)
         self.assertEqual(len(self.cancels()), 1)
         self.assertIn("actions/runs/106/cancel", self.cancels()[0])
+
+    def test_leaves_render_pr_alone_when_only_ci_runs_of_the_group_remain(self):
+        # group の render は終わり、ci.yml だけが走っている間は、門番も render-pr を通す
+        self.add_run(110, LIVE, "tip", workflow="ci.yml")
+        self.add_ref(LIVE, "tip")
+        self.add_pr_run(311, "feat/queued", "queued")
+        result = self.run_sweep()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"110 keep {LIVE}", result.stdout)
+        self.assertNotIn("311", result.stdout)
+        self.assertEqual(self.cancels(), [])
 
     def test_does_not_cancel_render_pr_when_jobs_cannot_be_read(self):
         self.live_group()

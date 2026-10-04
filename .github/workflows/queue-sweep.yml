@@ -4,8 +4,9 @@ name: Queue sweep
 # 今のグループがある間は、専用機でまだ拾われていない render-pr の run も cancel する
 # (#2064)。render.yml の門番の判断は専用機へ積む前の 1 回だけで、queue が空いている間に
 # 積まれた render-pr は、後からできた先頭の render と専用機を取り合う。グループができる
-# 瞬間に走るここが、その render-pr を専用機の queue から退かせる。走っている 1 本と
-# 定期の scheduled-* には触らない (判断と理由は scripts/queue-sweep.sh の冒頭・ADR-0019 決定 7)
+# 瞬間に走るここが、その render-pr を専用機の queue から退かせる。既に走っている render-pr と
+# 定期の scheduled-* には触らない (判断・残る競り合いと理由は scripts/queue-sweep.sh の冒頭・
+# ADR-0019 決定 7)
 #
 # merge queue はグループを作り直したり PR を外したりしても、古いグループの run を
 # cancel しない。捨てられた run は macOS の枠 (ci.yml の ci-check と test-release) を
