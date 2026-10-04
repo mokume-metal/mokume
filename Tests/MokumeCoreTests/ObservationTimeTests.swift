@@ -180,9 +180,9 @@ struct ObservationTimeTests {
         try request(#"{"id":"a","time":3}"#, to: path)
         try runtime.advance()
         #expect(try report(path)["appliedTime"] as? Double == 3)
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = DispatchTime.now() + 5
         var closed = runtime.closePlugins(.peek)
-        while !closed, Date() < deadline {
+        while !closed, DispatchTime.now() < deadline {
             Thread.sleep(forTimeInterval: 0.005)
             closed = runtime.closePlugins(.peek)
         }

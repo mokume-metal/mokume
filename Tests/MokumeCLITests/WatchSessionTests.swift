@@ -325,6 +325,23 @@ struct WatchSessionTests {
         }
     }
 
+    /// **本物の時計は、眠っている間は進まない時計である** ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
+    ///
+    /// 記録の所要時間 (`detect_ms` など) は 2 つの読みの差で、壁時計だと眠りを挟んだ差が眠った
+    /// 分だけ膨らみ、時刻の巻き戻しで負になる (記録の形は 0 以上を約束している)。眠りも
+    /// 時刻の書き換えも検査の中では起こせないので、**起点で見分ける** — 起動からの経過
+    /// (`systemUptime`) と同じ目盛りなら、1970 年からの壁時計ではない。
+    @Test("本物の時計は、壁時計ではなく眠りで進まない時計で読む")
+    func theLiveClockIsNotTheWallClock() {
+        let nowhere = FileManager.default.temporaryDirectory
+        let hooks = WatchSession.Hooks.live(in: nowhere, invocation: Invocation())
+
+        let reading = hooks.now()
+        let uptime = ProcessInfo.processInfo.systemUptime
+        #expect(abs(reading - uptime) < 5, "壁時計で読んでいる (読み \(reading)、起動からの経過 \(uptime))")
+        #expect(hooks.now() >= reading, "時計が戻った")
+    }
+
     @Test("壊れたままのソースで、作り直しを繰り返さない")
     func doesNotRetryTheSameBrokenSource() async throws {
         let recorder = Recorder()
@@ -481,11 +498,11 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(child.isRunning)
 
-        let started = Date()
+        let started = ProcessInfo.processInfo.systemUptime
         #expect(session.stop() == .killed)
         #expect(!child.isRunning)
         // 数字は「戻ってきた」ことの確認でしかない — 期限が効いていなければ戻らないので
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(ProcessInfo.processInfo.systemUptime - started < 2)
     }
 
     /// **差し替えも同じ経路を通る。** 期限が無いと、終われないだけでなく**保存のたびに**
@@ -609,8 +626,8 @@ struct WatchSessionTests {
     /// あれは検査の走り出しからの時計で測るので、無関係な検査が増えた日にここが赤くなる
     /// ([#564](https://github.com/mokume-metal/mokume/issues/564))。
     private func waitUntilGone(_ process: Process, timeout: TimeInterval = 2) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
+        let deadline = DispatchTime.now() + timeout
+        while process.isRunning, DispatchTime.now() < deadline { Thread.sleep(forTimeInterval: 0.005) }
     }
 
     @Test("自分から終わった子は、1 度だけ名乗られる")

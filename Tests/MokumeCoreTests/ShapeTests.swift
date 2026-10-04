@@ -250,9 +250,9 @@ struct ShapeTests {
     private func measure(_ body: () throws -> Void) rethrows -> Double {
         var best = Double.infinity
         for _ in 0..<5 {
-            let started = Date()
+            let started = ProcessInfo.processInfo.systemUptime
             try body()
-            best = min(best, Date().timeIntervalSince(started))
+            best = min(best, ProcessInfo.processInfo.systemUptime - started)
         }
         return best
     }

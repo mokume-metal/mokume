@@ -48,8 +48,8 @@ struct RunCommandTests {
 
     /// 書かれた番号を読む。**期限までに書かれなければ `nil`** (期限は安全網・#564)。
     private nonisolated static func waitForPID(in marker: URL) -> pid_t? {
-        let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline {
+        let deadline = DispatchTime.now() + 30
+        while DispatchTime.now() < deadline {
             if let text = try? String(contentsOf: marker, encoding: .utf8),
                 let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
             {
@@ -199,8 +199,8 @@ struct RunCommandTests {
                 return
             }
             kill(getpid(), stopSignal)
-            let gone = Date().addingTimeInterval(10)
-            while kill(pid, 0) == 0, Date() < gone {
+            let gone = DispatchTime.now() + 10
+            while kill(pid, 0) == 0, DispatchTime.now() < gone {
                 Thread.sleep(forTimeInterval: 0.005)
             }
             if kill(pid, 0) == 0 {
@@ -531,8 +531,8 @@ struct RunCommandTests {
             ).status
         }
         // **待つ側が期限を持つ** (#564)。期限は安全網である
-        let deadline = Date().addingTimeInterval(30)
-        while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
+        let deadline = DispatchTime.now() + 30
+        while !FileManager.default.fileExists(atPath: marker.path), DispatchTime.now() < deadline {
             Thread.sleep(forTimeInterval: 0.005)
         }
 

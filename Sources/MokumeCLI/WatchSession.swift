@@ -39,7 +39,13 @@ final class WatchSession {
         var rebuild: (URL) async throws(CommandFailure) -> RunCommand.Rebuilt
         /// 走らせる。世代の刻印と、速さの名乗り (一緒に出す構成の名前) を渡す。
         var launch: (URL, URL, String?, String?) -> Process?
-        /// いまの時刻 (秒)。
+        /// 時計の読み (秒)。**取るのは 2 つの読みの差だけである** — 記録に載るのは所要時間
+        /// (`detect_ms` など) で、時刻そのものは書かない。
+        ///
+        /// **眠っている間は進まない時計で読む** (本番は `systemUptime`)。壁時計だと、眠りを
+        /// 挟んだ所要時間が眠った分だけ膨らみ、時刻の巻き戻しで負になる — 記録の形
+        /// (`Schemas/build-status.schema.json`) は 4 つの所要時間とも 0 以上を約束している
+        /// ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
         var now: () -> Double
         /// 監視しているソースの世代。
         var stamp: (URL) -> String?
@@ -105,7 +111,7 @@ final class WatchSession {
                         stamp: stamp, reportingRate: rate)
                     return (try? process.run()) == nil ? nil : process
                 },
-                now: { Date().timeIntervalSince1970 },
+                now: { ProcessInfo.processInfo.systemUptime },
                 stamp: { SourceStamp.current(for: $0) },
                 stopRebuild: { running.stop() })
         }
@@ -540,16 +546,27 @@ final class WatchSession {
 
     /// 終わるのを、期限まで待つ。
     ///
+    /// **期限は、眠っている間は進まない時計 (`DispatchTime`) で測る。** 壁時計 (`Date`)
+    /// は機械が眠っている間も進むので、待っている最中に蓋を閉じて開けると、起きた瞬間に
+    /// 期限を越えたと読み、後始末の途中の子を `SIGKILL` で落とす ([#1940])。待つ相手の
+    /// 時計も同じ種類である — 動画を閉じる側 (`MovieWriter`) も背圧の待ち (`Backpressure`)
+    /// も `DispatchTime` で期限を置くので、``defaultFinishTimeout`` がそれを覆う関係は、
+    /// 待つ側が同じ種類の時計で測ってはじめて眠りを挟んでも崩れない ([#1219])。
+    ///
     /// **時計は ``Hooks`` に載せない。** 差し替えられた時計で測ると、期限が永久に来ないか
     /// 即座に来るかのどちらかになる (検査の時計は 0 を返す) — ここで見ているのは
-    /// 「実際にどれだけ待ったか」であって、記録に載る所要時間ではない。
+    /// 「実際にどれだけ待ったか」であって、記録に載る所要時間 (``Hooks/now``) ではない。
+    /// 本番では両方とも眠りで進まない時計だが、検査が差し替えるのは後者だけである。
     ///
     /// - Parameter timeout: 待つ上限 (秒)。
     /// - Returns: 期限までに終わったか。
+    ///
+    /// [#1940]: https://github.com/mokume-metal/mokume/issues/1940
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     private func waitForExit(_ child: Process, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = DispatchTime.now() + timeout
         while child.isRunning {
-            if Date() >= deadline { return false }
+            if DispatchTime.now() >= deadline { return false }
             // **細かく刻む。** 差し替えのときもここを通るので、粗いと保存の反映が
             // そのぶん遅れて見える
             Thread.sleep(forTimeInterval: 0.005)

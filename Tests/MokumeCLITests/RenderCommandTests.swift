@@ -263,8 +263,8 @@ struct RenderCommandTests {
         let sender = Sender()
         Thread.detachNewThread {
             defer { sender.done.signal() }
-            let started = Date().addingTimeInterval(30)
-            while Date() < started {
+            let deadline = DispatchTime.now() + 30
+            while DispatchTime.now() < deadline {
                 if let text = try? String(contentsOf: marker, encoding: .utf8),
                     let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
                 {
@@ -285,8 +285,8 @@ struct RenderCommandTests {
                 return
             }
             kill(getpid(), SIGINT)
-            let gone = Date().addingTimeInterval(10)
-            while kill(pid, 0) == 0, Date() < gone {
+            let gone = DispatchTime.now() + 10
+            while kill(pid, 0) == 0, DispatchTime.now() < gone {
                 Thread.sleep(forTimeInterval: 0.005)
             }
             if kill(pid, 0) == 0 {
