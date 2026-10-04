@@ -136,6 +136,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 | ブランチ保護の正本 | 正本は `.github/rulesets/*.json` (ADR-0006)。管理画面ではなく定義ファイルの PR で変え、merge 後の適用 (`scripts/apply-rulesets.sh --apply`) はメンテナが行う。必須チェックを消すときだけ適用を merge より先にする (消す PR 自身がそのチェックを満たせなくなる) |
 | sub-issue の使い方 | `scripts/sub-issue.sh <親番号> <タイトル>` で作る。階層は 2〜3 段までにし、独立した Issue を無理にツリーにしない。open の子を残して親を畳むなら not planned で close する (completed だと Parent guard が開き直す) |
 | 進捗の公開ロードマップ | Org の Project「mokume Roadmap」は Issue の投影で、項目の出し入れは手でしない。人が触るのはフェーズ親 Issue の Start / Target だけで、Iteration・Milestone・独自の status は足さない |
+| 手元機が落ちた・画面が固まった | GPU の検査の起動元は `scripts/gpu-slot.py` の冒頭「起動元の記録」の手順で引く (#2052) |
 | 手元に残ったプロセス | `bash scripts/orphan-processes.sh` が出所つきで一覧する。止めるかどうかは人が決める |
 | エージェント環境の設定 | 変更は ADR-0017、導入は [環境](docs/agent-environment.md) |
 | 無人セッションの起動 | 起動する側が `MOKUME_UNATTENDED=1` を立てる (ADR-0036 決定 2。何が変わるかは `scripts/plan-record.sh` の冒頭) |
