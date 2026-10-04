@@ -194,7 +194,10 @@ class GpuSlotTest(unittest.TestCase):
         self.assertEqual(lineage[0]["pid"], process.pid)
         self.assertEqual(lineage[0]["ppid"], os.getpid())
         self.assertEqual(lineage[1]["pid"], os.getpid())
-        self.assertIn("gpu_slot_test", lineage[1]["command"])
+        own = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(os.getpid())], capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"}
+        ).stdout.strip()
+        self.assertEqual(lineage[1]["command"], own[:4000])  # Python.app の中の python も切らずに残す
 
     def test_the_agent_session_is_recorded(self):
         process, started, release = self._start(

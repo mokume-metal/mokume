@@ -139,7 +139,8 @@ EXIT_USAGE = 2
 # 起動元の記録 (上の「## 起動元の記録」)
 LOG_LIMIT_BYTES = 4_000_000
 # Claude のシェルは先頭に snapshot の source (この機械で約 280 字) を持つので、本題のコマンドまで
-# 届く長さにする。アプリ本体 (.app の中) は名前が分かれば足りるので短く切る
+# 届く長さにする。Claude のアプリ本体は名前が分かれば足りるので短く切る (Homebrew の Python も
+# Python.app の中にあるので、.app で一律には切らない — 切ると python3 - <<EOF の本文が落ちる)
 LINEAGE_COMMAND_CHARACTERS = 4000
 LINEAGE_APP_CHARACTERS = 200
 # 起動元を名乗る環境変数。値が無いものは記録に載せない。エージェントの見分け方は
@@ -219,7 +220,8 @@ def _lineage():
             break
         parent = int(fields[0])
         command = fields[6] if len(fields) > 6 else ""
-        limit = LINEAGE_APP_CHARACTERS if ".app/Contents/" in command.split(" -", 1)[0] else LINEAGE_COMMAND_CHARACTERS
+        executable = command.split(" -", 1)[0].lower()
+        limit = LINEAGE_APP_CHARACTERS if "/claude.app/" in executable else LINEAGE_COMMAND_CHARACTERS
         chain.append({"pid": pid, "ppid": parent, "started": " ".join(fields[1:6]), "command": command[:limit]})
         pid = parent
     return chain
