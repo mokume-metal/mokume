@@ -467,7 +467,8 @@ struct HeldTexture: Equatable {
     /// 読む直前に整える。持ち主が画像なら、書き換えた画素の送りをここで頼む。
     ///
     /// **送りは ``Picture/prepare()`` に任せる** — 送りの入口を 1 つに保つためで、
-    /// 送り方が変わってもこちらは書き換えずに済む。描き場所と字形の頁は整えるものが無い。
+    /// 送り方が変わってもこちらは書き換えずに済む。字形の頁は整えるものが無い。描き場所は
+    /// ここではなく、置いた時点で置く口の記録 (``Canvas/note(placing:)``) が追い付かせる (#2042)。
     func prepare() {
         if let image = owner as? Image { Picture.loaded(image).prepare() }
     }

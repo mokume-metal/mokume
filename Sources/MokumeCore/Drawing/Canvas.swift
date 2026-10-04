@@ -3048,6 +3048,12 @@ public final class Canvas {
                     + "texture() or a shader's surfaces. What comes out is the frame as it stood "
                     + "before it was finished. Call endDraw() on it before placing what reads it")
         }
+        // **置いた時点で、相手の出す先を描き切れている絵へ追い付かせる** ([#2042])。置く口はどれも
+        // ここを通るので、追い付きもこの 1 か所に置く (口ごとに書かない)。記録より前に通す — 追い付きは
+        // 出す先を書く前に、先に置いた分へ置いた時点の絵を写させ、その記録を落とす
+        //
+        // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+        graphics.catchUpOutputForPlacing()
         // **記録済みなら相手へは載せ直さない** (#1683 の反証 2 回目)。貼る絵の記録は置くたびに
         // 来るので、相手の `placers` を毎回探さない。こちらの記録と相手の `placers` は組で、
         // 相手が `placers` を空にするときはこちらの記録も落とす (``keepPicture(placedFrom:)``)
@@ -3571,6 +3577,14 @@ public final class Canvas {
             targetChangedSinceUpscale = !assembled.upscaled
         } else if upscaleStage != nil, hasDrawing || assembled.wroteBack {
             targetChangedSinceUpscale = true
+            // **フレームの外なら、自分を置いた面に断片の面の記録を取り直させる** ([#2042])。置く口の
+            // 追い付き (``catchUpOutputForPlacing()``) は記録の口を通るが、断片の面は記録済みなら
+            // 記録を飛ばす (``paintSurfacesNoted``)。この描き切りは出す先を変えないので置いた記録も
+            // 落ちず、控えが外れないまま次に置いた図形が追い付く前の出す先を読む。フレームの中は追い
+            // 付かせないので取り直させない
+            //
+            // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+            if !isDrawing { for entry in placers { entry.canvas?.paintSurfacesNoted = nil } }
         }
         gpu.pendingUploads.markUploaded(assembled.uploaded)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }

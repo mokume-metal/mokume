@@ -140,10 +140,15 @@ extension Canvas {
     /// されない。書き込み待ちも印も残るので、次の出力段がやり直す。**古い絵を黙って返さない**よう、
     /// 拡大の段のように握り潰さず、出力段が投げる。
     ///
+    /// **置く口の追い付きは書き戻さない** (`writingBackPixels: false`・[#2042])。置くのは「そのとき
+    /// 描き切れている絵」で、書いただけの画素は細かさ 1 の面でも置いた先に出ない。書き戻すと、細かさを
+    /// 下げた面だけ書いただけの画素が出る。書き込み待ちは残り、出す先を読む口がこれまでどおり戻す。
+    ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
-    func catchUpOutput() throws(RenderFailure) {
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    func catchUpOutput(writingBackPixels: Bool = true) throws(RenderFailure) {
         guard let stage = upscaleStage else { return }
         // **コマンドを開く前に通す。** 置いた側の描き切り (写せないときの代わり) が、このコマンドの
         // 組み立ての中に入らない
@@ -153,7 +158,7 @@ extension Canvas {
         let pipeline = try effectPipeline()
         let offset = stage.lastJitterInSource
         let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
-            let wroteBack = try encodePixelWriteBackKeepingCarry(into: commands)
+            let wroteBack = writingBackPixels ? try encodePixelWriteBackKeepingCarry(into: commands) : false
             try encodeEnlargement(using: pipeline, offset: offset, into: commands)
             gpu.commit(commands)
             return wroteBack
@@ -161,6 +166,39 @@ extension Canvas {
         frameRing.noteSubmission()
         if wroteBack { target.markPixelsWrittenBack() }
         targetChangedSinceUpscale = false
+    }
+
+    /// 置く口が、置いた時点でこの面の出す先を描き切れている絵へ追い付かせる ([#2042])。
+    /// **失敗しても投げない。**
+    ///
+    /// 描き場所に面を置く口 (``note(placing:)`` を通る口のすべて) は、出す先のテクスチャを直に読む。
+    /// 細かさを下げた面の出す先は、持ち越しの区間 (`setup()`・止まっている間のコールバック) で描き
+    /// 切らせても追い付かず、ランタイムが追い付くのはコールバックを返した後なので、同じコールバックの
+    /// 中で置いて閉じた描き場所は古い絵を読む。細かさ 1 の面は描く先が出す先そのものなので、もとから
+    /// 描き切れている絵が出る。この食い違いを、置く口の 1 点で揃える。
+    ///
+    /// - **置いた時点で追い付く。** 置いた側の描き切りの時点で追い付くと、置いた後に描き換えた分まで
+    ///   出る (置いた時点の絵 [#1656] が破れる)。追い付きは出す先を書く前に置いた側へ写させる
+    ///   (``settlePlacersBeforeChange()``) ので、先に置いた分は置いた時点の絵のまま残る
+    /// - **書き戻さない** (``catchUpOutput(writingBackPixels:)``)。書いただけの画素は、細かさ 1 と
+    ///   同じく置いた先に出ない
+    /// - **フレームの中の面は追い付かせない。** 自分のフレームを描いている面を置いたときの絵は、
+    ///   「`endDraw()` の前に置くと 1 フレーム前の絵」の説明とどちらへ揃えるかが決まっていないので、
+    ///   これまでどおりにする
+    /// - 描き切らせていなければ何も積まない (ADR-0023 決定 5)
+    ///
+    /// 失敗しても印 (``targetChangedSinceUpscale``) は残るので、次に置くときと出す先を読む口が
+    /// やり直す。置いた先には古い絵が出る。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    func catchUpOutputForPlacing() {
+        guard upscaleStage != nil, targetChangedSinceUpscale, !isDrawing else { return }
+        do {
+            try catchUpOutput(writingBackPixels: false)
+        } catch {
+            warnOnce(.upscaleFailed, "Could not run the upscale: \(error.headline)")
+        }
     }
 
     /// 描く先が出す先そのものの面 (細かさ 1) で、まだ描く先へ戻していない画素の書き込みを
