@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883)) / 改訂 (2026-09-09): 決定 3 が 3D をまだ無いものとして書いていた箇所を、実装が入った後の姿に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-09-09): 決定 1 に、手本に倣う射程 (名前と引数の順序まで) の段を追加 ([#1082](https://github.com/mokume-metal/mokume/issues/1082)) / 改訂 (2026-09-22): 決定 7 が保留していた `lerp` / `constrain` を足した ([#1281](https://github.com/mokume-metal/mokume/issues/1281))
+採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883)) / 改訂 (2026-09-09): 決定 3 が 3D をまだ無いものとして書いていた箇所を、実装が入った後の姿に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-09-09): 決定 1 に、手本に倣う射程 (名前と引数の順序まで) の段を追加 ([#1082](https://github.com/mokume-metal/mokume/issues/1082)) / 改訂 (2026-09-22): 決定 7 が保留していた `lerp` / `constrain` を足した ([#1281](https://github.com/mokume-metal/mokume/issues/1281)) / 改訂あり (本文の「改訂 (日付)」見出し)
 
 ## 文脈
 
