@@ -182,8 +182,9 @@ public final class SketchRuntime {
     /// 揺らぎ (``Canvas/noiseSeed(_:)``) と違って断片へは届かない。断片には列が無く
     /// (画素どうしが独立している)、**値の一致がそもそも定義できない**ためである。
     var randomness = Randomness()
-    /// 形の組み立ての中で書いた乱数の種の控え。出口で ``randomness`` を戻す
-    /// (`SketchRuntime+ShapeSeed.swift`・[#1936](https://github.com/mokume-metal/mokume/issues/1936))。
+    /// 形の組み立ての中で書いた乱数の種と揺らぎの設定の控え。出口で ``randomness`` と、本体の面の
+    /// 揺らぎの設定を戻す (`SketchRuntime+ShapeSeed.swift`・
+    /// [#1936](https://github.com/mokume-metal/mokume/issues/1936)・[#2041](https://github.com/mokume-metal/mokume/issues/2041))。
     var seedScopes = SeedScopes()
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
@@ -1436,9 +1437,12 @@ public final class SketchRuntime {
     /// 面ごとに付けると、ランタイムが付けていない面 (直に作った面とそこから作った描き場所) で
     /// 中で書いた種が漏れる。
     ///
+    /// **検査がランタイムを差すときも、ここを通す** (`private` にしない理由)。``runningSketch`` だけを
+    /// 手で差すと知らせる先が差さらず、検査の中の組み立てで書いた種が漏れたまま黙る。
+    ///
     /// [#1367]: https://github.com/mokume-metal/mokume/issues/1367
     /// [#2041]: https://github.com/mokume-metal/mokume/issues/2041
-    private func withActiveRuntime(_ body: () -> Void) {
+    func withActiveRuntime(_ body: () -> Void) {
         let previous = runningSketch
         let previousListener = shapeAssemblyListener
         runningSketch = self

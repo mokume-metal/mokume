@@ -33,7 +33,12 @@ protocol ShapeAssemblyListener: AnyObject {
 /// 公開の init で直に作った面 (``Canvas/init(target:gpu:)``) とそこから作った描き場所は、走っている
 /// スケッチの中で使えば列があるのに、知らせる先を持たず、中で書いた種が外へ漏れていた ([#2041])。
 /// そこで書く鍵と同じ寿命の 1 口に揃える。差して外すのは、ランタイムが `runningSketch` を差す所
-/// (`SketchRuntime.withActiveRuntime(_:)`) だけである。
+/// (`SketchRuntime.withActiveRuntime(_:)`) だけである。`runningSketch` を差すのもそこだけで、検査が
+/// ランタイムを差すときも同じ口を通す — `runningSketch` だけを手で差すと、こちらが差さらない。
+///
+/// 揺らぎの種と細かさも同じ相手が戻す。スケッチの口 (``Sketch/noiseSeed(_:)``) が書くのは本体の面の
+/// 置き場で、組み立てている面の出口 (``Canvas/Manner``) が戻すのは組み立てている面の置き場だから
+/// である (直に作った面では別物・``SeedScopes``)。
 ///
 /// ``Canvas`` が知るのはこのプロトコルだけで、スケッチの層 (`runningSketch`) は読まない。ランタイムの
 /// 外で直に回す面では `nil` のままで、組み立ては今までどおり動く — そこには乱数の列も無い。

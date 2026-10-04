@@ -284,6 +284,66 @@ struct ShapeSeedExitTests {
         #expect(afterOuter == value(seed: 1, at: 2), "外側の中で引いた 1 つぶんが、外の列に数えられていない")
     }
 
+    /// 揺らぎの設定 `seed`・`octaves`・`falloff`。実行の外で直に作る。
+    private func noise(seed: UInt32, octaves: Int = 4, falloff: Float = 0.5) -> ValueNoise {
+        var settings = ValueNoise()
+        settings.seed = seed
+        settings.octaves = octaves
+        settings.falloff = falloff
+        return settings
+    }
+
+    /// 揺らぎの種と細かさも、組み立ての中で書くと抜けたときに戻る (`createShape` の説明)。スケッチの
+    /// `noiseSeed()` / `noiseDetail()` が書くのは本体の面の置き場で、乱数と同じく組み立てている面の
+    /// 置き場とは限らない — 直に作った面と、そこから作った描き場所は別の置き場を持つ (#2041 の兄弟)。
+    @Test(
+        "中で揺らぎの種と細かさを書いても、抜けた後は組み立ての前の設定で引く (#2041)",
+        arguments: Entrance.allCases, Phase.allCases)
+    func noiseSettingsWrittenInsideDoNotLeak(entrance: Entrance, phase: Phase) throws {
+        var inside: ValueNoise?
+        var after: ValueNoise?
+        var outside: Float = -1
+        try run(phase) { probe in
+            probe.noiseSeed(1)
+            probe.noiseDetail(4, 0.5)
+            _ = probe.build(entrance) { surface in
+                probe.noiseSeed(42)
+                probe.noiseDetail(8, 0.25)
+                inside = probe.canvas.noiseSettings
+                surface.circle(probe.noise(0.3) * 10, 8, 4)
+            }
+            after = probe.canvas.noiseSettings
+            outside = probe.noise(0.3)
+        }
+        let before = noise(seed: 1)
+        #expect(inside == noise(seed: 42, octaves: 8, falloff: 0.25), "中で書いた揺らぎの設定が効いていない")
+        #expect(after == before, "中で書いた揺らぎの種と細かさが、組み立ての外へ残った")
+        #expect(outside == before.value(0.3, 0, 0), "抜けた後の noise() が、組み立ての前の設定で引いていない")
+    }
+
+    @Test(
+        "入れ子の組み立てで、内側を抜けた直後の揺らぎは外側の組み立ての設定である (#2041)",
+        arguments: Nesting.all, Phase.allCases)
+    func aNestedBuildReturnsToTheOuterBuildsNoise(nesting: Nesting, phase: Phase) throws {
+        let (outer, inner) = (nesting.outer, nesting.inner)
+        var afterInner: ValueNoise?
+        var afterOuter: ValueNoise?
+        try run(phase) { probe in
+            probe.noiseSeed(1)
+            _ = probe.build(outer) { _ in
+                probe.noiseSeed(7)
+                _ = probe.build(inner) { _ in
+                    probe.noiseSeed(42)
+                    probe.noiseDetail(8, 0.25)
+                }
+                afterInner = probe.canvas.noiseSettings
+            }
+            afterOuter = probe.canvas.noiseSettings
+        }
+        #expect(afterInner == noise(seed: 7), "内側を抜けた後が、外側の組み立てで書いた揺らぎの設定に戻っていない")
+        #expect(afterOuter == noise(seed: 1), "外側を抜けた後が、組み立ての前の揺らぎの設定に戻っていない")
+    }
+
     /// ランタイムの「戻す」に分けた状態を**全部汚してから抜け、全部が戻ったかを見る** — `Canvas` の側の
     /// ``ShapeExitTests/everyRestoredStateIsBackAfterTheBuild(insideAFrame:)`` と同じ形で、表
     /// (``ShapeExit/runtimeTable``) に足した状態の戻し落としが黙らない。
