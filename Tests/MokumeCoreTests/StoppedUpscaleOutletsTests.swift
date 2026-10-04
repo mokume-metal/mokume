@@ -594,8 +594,9 @@ struct StoppedUpscaleOutletsTests {
     /// ([#2042] 完了条件 3)。
     ///
     /// 断片の面は、記録済みなら図形を積むたびの記録を飛ばす。細かさを下げた本体の途中の描き切りは
-    /// 出す先を変えず置いた記録も落とさないので、取り直させないと、後に塗った分が追い付く前の出す先を
-    /// 読む。断片を作り直すと記録も取り直すので、ここでは 1 つの断片を当て続ける。
+    /// 出す先を変えないので、そこで置いた側へ写させて記録を落とさないと、後に塗った分が追い付きを
+    /// 通らず追い付く前の出す先を読む。断片を作り直すと記録も取り直すので、ここでは 1 つの断片を
+    /// 当て続ける。
     ///
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     @Test(
@@ -755,6 +756,282 @@ struct StoppedUpscaleOutletsTests {
                 canvas.effectPassesEncoded - passes == (density < 1 ? 1 : 0),
                 "描き切らせた本体を何度も置いて、広げたのが 1 度でない")
             #expect(canvas.target.pixelWriteBacksEncoded == writeBacks, "描き切らせただけで書き戻しを積んだ")
+        }
+    }
+
+    /// 畳む口の外で本体を置く経路。`Door` の 3 口は `rect` がどれも畳む口に入るので、ここで残りを通す
+    /// ([#2042] の反証 8)。どれも本体の全面を、描き場所の (0, 0) から 80×80 へ置く。
+    enum Route: CaseIterable, CustomTestStringConvertible {
+        /// `createShape` で `texture(canvas)` を貼った `rect` を記録し、`shape()` で置き直す
+        /// (`replaying` → `useTexture`)。
+        case heldFlat
+        /// `createShape` で `texture(canvas)` を貼った `box` を記録し、`shape()` で置き直す
+        /// (`replaying` の立体の区間 → `beginSolids` → `useTexture`。粒の板も同じ口を通る)。
+        case heldSolid
+        /// 断片の面を読む塗りの `rect` を記録し、`shape()` で置き直す (記録した塗りの面)。
+        case heldPaint
+        /// `texture(canvas)` を貼った `box` (その場の立体)。
+        case box
+        /// `texture(canvas)` を貼った `beginShape` / `vertex(x, y, u, v)` (畳まない平面)。
+        case vertices
+
+        var testDescription: String {
+            switch self {
+            case .heldFlat: "保持した平面を置き直す"
+            case .heldSolid: "保持した立体を置き直す"
+            case .heldPaint: "断片の面で塗った保持した形を置き直す"
+            case .box: "その場の立体"
+            case .vertices: "beginShape と vertex"
+            }
+        }
+
+        func place(_ body: Canvas, into layer: Canvas) {
+            layer.noStroke()
+            layer.fill(.linear(red: 1, green: 1, blue: 1))
+            switch self {
+            case .heldFlat:
+                let shape = layer.createShape {
+                    layer.texture(body)
+                    layer.rect(0, 0, 80, 80)
+                }
+                layer.noTexture()
+                layer.shape(shape)
+            case .heldSolid:
+                let shape = layer.createShape {
+                    layer.texture(body)
+                    layer.box(80, 80, 2)
+                }
+                layer.noTexture()
+                layer.push()
+                layer.translate(40, 40)
+                layer.shape(shape)
+                layer.pop()
+            case .heldPaint:
+                guard
+                    let shader = try? layer.makeShader(
+                        """
+                        float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                            return mokume_sample(surfaces.body, fract(in.place * 2.0));
+                        }
+                        """,
+                        surfaces: ["body": .graphics(body)])
+                else { return }
+                let shape = layer.createShape {
+                    layer.shader(shader)
+                    layer.rect(0, 0, 80, 80)
+                    layer.resetShader()
+                }
+                layer.shape(shape)
+            case .box:
+                layer.texture(body)
+                layer.push()
+                layer.translate(40, 40)
+                layer.box(80, 80, 2)
+                layer.pop()
+                layer.noTexture()
+            case .vertices:
+                layer.texture(body)
+                layer.beginShape()
+                layer.vertex(0, 0, 0, 0)
+                layer.vertex(80, 0, 160, 0)
+                layer.vertex(80, 80, 160, 160)
+                layer.vertex(0, 80, 0, 160)
+                layer.endShape(.close)
+                layer.noTexture()
+            }
+        }
+    }
+
+    /// 赤が勝っているか。立体は陰りを受けうるので、色の向きだけを見る (下地は 235 の灰)。
+    private static func leansRed(_ point: LinearRGBA) -> Bool {
+        point.red > 0.5 && point.green < 0.2 && point.blue < 0.2
+    }
+
+    /// 畳む口の外の経路でも、止まっている間に描き切らせた本体を置くと、どの細かさでも描き切った絵が
+    /// 出る ([#2042] の反証 8)。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    @Test(
+        "保持した形・立体・畳まない平面で置いても、止まっている間に描き切らせた本体の絵が出る",
+        arguments: [Float(0.5), 1], Route.allCases)
+    func everyRoutePlacesTheDrawnOutBody(density: Float, route: Route) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: density, configure: { sketch in
+            sketch.onKey["k"] = { sketch in
+                DrawOut.rectThenGet.apply(to: sketch)
+                guard let layer = try? sketch.createGraphics(160, 160) else { return }
+                box.canvas = layer
+                layer.beginDraw()
+                route.place(sketch.canvas, into: layer)
+                layer.endDraw()
+            }
+        }) { _, _, press in
+            try press("k")
+            let point = try #require(box.canvas).output.readPixels()[40, 40]
+            #expect(Self.leansRed(point), "置いた先に描き切った絵が出ていない: \(point)")
+        }
+    }
+
+    /// 置く口の追い付きに失敗しても、次に置くときにやり直す ([#2042] の反証 2)。
+    ///
+    /// 失敗した回に置いた分は古い絵 (下地) のまま、直った後に置いた分は描き切った赤になる。断片の面は
+    /// 記録済みなら記録を飛ばすので、失敗した回に控えを取ると、同じ断片で次に置いても追い付かない。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    @Test(
+        "置く口の追い付きに失敗しても、次に置くときにやり直す",
+        arguments: [Door.image, Door.shader])
+    func aFailedPlacingCatchUpIsRetried(door: Door) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: 0.5, configure: { sketch in
+            sketch.onKey["k"] = { sketch in
+                DrawOut.rectThenGet.apply(to: sketch)
+                guard let layer = try? sketch.createGraphics(160, 160),
+                    let shader = try? layer.makeShader(
+                        """
+                        float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                            return mokume_sample(surfaces.body, fract(in.place * 2.0));
+                        }
+                        """,
+                        surfaces: ["body": .graphics(sketch.canvas)])
+                else { return }
+                box.canvas = layer
+                let place: (Float) -> Void = { at in
+                    switch door {
+                    case .shader: layer.rect(at, at, 80, 80)
+                    default: layer.image(sketch.canvas, at, at, 80, 80)
+                    }
+                }
+                layer.beginDraw()
+                layer.noStroke()
+                if door == .shader { layer.shader(shader) }
+                sketch.canvas.failEffectPassForTesting = 0
+                place(0)
+                sketch.canvas.failEffectPassForTesting = nil
+                place(80)
+                layer.endDraw()
+            }
+        }) { runtime, _, press in
+            try press("k")
+            #expect(runtime.canvas.warnings.hasWarned(.upscaleFailed), "検査の前提: 追い付きが失敗していない")
+            let picture = try #require(box.canvas).output.readPixels()
+            #expect(Self.isBackdrop(picture[40, 40]), "失敗した回に置いた分が古い絵でない: \(picture[40, 40])")
+            let retried = picture[120, 120]
+            #expect(Self.isRed(retried.red, retried.green, retried.blue), "直った後に置いた分が追い付いていない: \(retried)")
+        }
+    }
+
+    /// 写しの上限を越えてくり返し置く形の、置き方 ([#2042] の反証 3)。保持した形は前置き (記録した面・
+    /// 塗り・立体の区間) を済ませてから記録の口へ来るので、置く口の内側で置いた側が描き切られると壊れる。
+    enum Repeated: CaseIterable, CustomTestStringConvertible {
+        /// `image(canvas, x, y, 40, 40)`。
+        case image
+        /// 当て続けた 1 つの断片で `rect(x, y, 40, 40)`。
+        case keptShader
+        /// `texture(canvas)` を貼った `rect` を記録した形を、`shape()` で置き直す。
+        case heldFlat
+        /// 断片の面で塗った `rect` を記録した形を、`shape()` で置き直す (記録した塗りの面)。
+        case heldPaint
+        /// `texture(canvas)` を貼った `box` を記録した形を、`shape()` で置き直す (立体の区間)。
+        case heldSolid
+
+        var testDescription: String {
+            switch self {
+            case .image: "image で置く"
+            case .keptShader: "当て続けた断片で塗る"
+            case .heldFlat: "保持した平面を置き直す"
+            case .heldPaint: "断片の面で塗った保持した形を置き直す"
+            case .heldSolid: "保持した立体を置き直す"
+            }
+        }
+    }
+
+    /// 本体を描き換えて描き切らせては置く、を写しの上限 (``Canvas/placedPictureCopyLimit``) を越えて
+    /// くり返しても、どの細かさでも置いた分ごとに置いた時点の絵が出る ([#2042] の反証 3)。
+    ///
+    /// 上限を越えると、置いた側は写しの代わりに描き切られる (フレームの途中で区切られる)。細かさ 1 では
+    /// 本体の描き切りがそれを起こし、細かさを下げた本体も同じ時点 (本体の描き切り) で起こす — 置く口の
+    /// 内側では起こさない。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    @Test(
+        "描き切らせては置くを写しの上限を越えてくり返しても、置いた分ごとに置いた時点の絵が出る",
+        arguments: [Float(0.5), 1], Repeated.allCases)
+    func placingPastTheCopyLimitKeepsEachPicture(density: Float, kind: Repeated) throws {
+        let box = LayerBox()
+        let rounds = Canvas.placedPictureCopyLimit + 2
+        try Self.withStoppedSketch(density: density, configure: { sketch in
+            sketch.onKey["k"] = { sketch in
+                let body = sketch.canvas
+                guard let layer = try? sketch.createGraphics(160, 160),
+                    let shader = try? layer.makeShader(
+                        """
+                        float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                            return mokume_sample(surfaces.body, fract(in.place * 4.0));
+                        }
+                        """,
+                        surfaces: ["body": .graphics(body)])
+                else { return }
+                box.canvas = layer
+                layer.beginDraw()
+                layer.noStroke()
+                layer.fill(.linear(red: 1, green: 1, blue: 1))
+                // 形は 1 度だけ記録する (記録の中では置いた記録を取らない)
+                let held: Shape? =
+                    switch kind {
+                    case .heldFlat:
+                        layer.createShape {
+                            layer.texture(body)
+                            layer.rect(0, 0, 40, 40)
+                            layer.noTexture()
+                        }
+                    case .heldPaint:
+                        layer.createShape {
+                            layer.shader(shader)
+                            layer.rect(0, 0, 40, 40)
+                            layer.resetShader()
+                        }
+                    case .heldSolid:
+                        layer.createShape {
+                            layer.texture(body)
+                            layer.box(40, 40, 2)
+                            layer.noTexture()
+                        }
+                    case .image, .keptShader: nil
+                    }
+                // 断片は 1 つを当て続ける (記録の控えが効く形)
+                if kind == .keptShader { layer.shader(shader) }
+                for round in 0..<rounds {
+                    DrawOut.rectThenGet.apply(
+                        to: sketch,
+                        colour: round.isMultiple(of: 2)
+                            ? StoppedUpscaleOutletsTests.red : StoppedUpscaleOutletsTests.blue)
+                    let x = Float(round % 4) * 40
+                    let y = Float(round / 4) * 40
+                    switch kind {
+                    case .image: layer.image(body, x, y, 40, 40)
+                    case .keptShader: layer.rect(x, y, 40, 40)
+                    case .heldFlat, .heldPaint: layer.shape(held!, x, y)
+                    case .heldSolid: layer.shape(held!, x + 20, y + 20)
+                    }
+                }
+                layer.endDraw()
+            }
+        }) { _, _, press in
+            try press("k")
+            let layer = try #require(box.canvas)
+            #expect(layer.placedPictureCopyLimitReached > 0, "検査の前提: 写しの上限に達していない")
+            let picture = try layer.output.readPixels()
+            for round in 0..<rounds {
+                let point = picture[(round % 4) * 40 + 20, (round / 4) * 40 + 20]
+                if round.isMultiple(of: 2) {
+                    #expect(Self.leansRed(point), "\(round) 回目に置いた分が赤でない: \(point)")
+                } else {
+                    #expect(
+                        point.blue > 0.5 && point.red < 0.2 && point.green < 0.2,
+                        "\(round) 回目に置いた分が青でない: \(point)")
+                }
+            }
         }
     }
 

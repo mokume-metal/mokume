@@ -140,7 +140,7 @@ extension RenderTarget {
     ///
     /// **描き場所に面を置く口** (`image(canvas)`・`texture(canvas)`・断片の面) も配っている最中に
     /// 出す先を読むが、ここは通らない。置いた時点で、置く口の記録 (``Canvas/note(placing:)``) が
-    /// 書き戻さずに広げ直す (``Canvas/catchUpOutputForPlacing()``・[#2042]) — 置くのは描き切れて
+    /// 書き戻さずに広げ直す (``Canvas/catchUpOutputForPlacing(by:)``・[#2042]) — 置くのは描き切れて
     /// いる絵で、書いただけの画素は細かさ 1 の面でも出ないからである。
     ///
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882

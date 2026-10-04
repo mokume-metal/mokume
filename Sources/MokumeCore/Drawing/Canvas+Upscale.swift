@@ -168,6 +168,13 @@ extension Canvas {
         targetChangedSinceUpscale = false
     }
 
+    /// 置く口が追い付かせる要があるか ([#2042])。拡大の段があり、フレームの外で描き切らせて描く先が
+    /// 出す先より進んでいるとき。``catchUpOutputForPlacing(by:)`` と、断片の面の記録の控え
+    /// (``paintSurfacesNoted``) が読む。
+    var needsCatchUpForPlacing: Bool {
+        upscaleStage != nil && targetChangedSinceUpscale && !isDrawing
+    }
+
     /// 置く口が、置いた時点でこの面の出す先を描き切れている絵へ追い付かせる ([#2042])。
     /// **失敗しても投げない。**
     ///
@@ -178,8 +185,11 @@ extension Canvas {
     /// 描き切れている絵が出る。この食い違いを、置く口の 1 点で揃える。
     ///
     /// - **置いた時点で追い付く。** 置いた側の描き切りの時点で追い付くと、置いた後に描き換えた分まで
-    ///   出る (置いた時点の絵 [#1656] が破れる)。追い付きは出す先を書く前に置いた側へ写させる
-    ///   (``settlePlacersBeforeChange()``) ので、先に置いた分は置いた時点の絵のまま残る
+    ///   出る (置いた時点の絵 [#1656] が破れる)。先に置いた分は、描き切らせた時点で写しへ差し替わって
+    ///   いる (``flush(applyingEffects:mirroringPixels:)``)。追い付きも出す先を書く前に置いた側へ
+    ///   写させる (``settlePlacersBeforeChange()``)
+    /// - **置く側自身は描き切らせない** (``keepPictureWithoutFlushing(placedFrom:)``)。ここは置く口の
+    ///   内側なので、置く側自身の写しを取れなければ、今回は追い付かずに古い絵を置く
     /// - **書き戻さない** (``catchUpOutput(writingBackPixels:)``)。書いただけの画素は、細かさ 1 と
     ///   同じく置いた先に出ない
     /// - **フレームの中の面は追い付かせない。** 自分のフレームを描いている面を置いたときの絵は、
@@ -187,13 +197,14 @@ extension Canvas {
     ///   これまでどおりにする
     /// - 描き切らせていなければ何も積まない (ADR-0023 決定 5)
     ///
-    /// 失敗しても印 (``targetChangedSinceUpscale``) は残るので、次に置くときと出す先を読む口が
-    /// やり直す。置いた先には古い絵が出る。
+    /// 失敗しても印 (``targetChangedSinceUpscale``) は残るので、次に置くとき (断片の面も、追い付くまで
+    /// 記録の控えを取らない) と出す先を読む口がやり直す。失敗した回に置いた先には古い絵が出る。
     ///
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
-    func catchUpOutputForPlacing() {
-        guard upscaleStage != nil, targetChangedSinceUpscale, !isDrawing else { return }
+    func catchUpOutputForPlacing(by placer: Canvas) {
+        guard needsCatchUpForPlacing else { return }
+        guard placer.keepPictureWithoutFlushing(placedFrom: self) else { return }
         do {
             try catchUpOutput(writingBackPixels: false)
         } catch {

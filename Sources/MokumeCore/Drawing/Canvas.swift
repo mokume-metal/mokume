@@ -3053,7 +3053,7 @@ public final class Canvas {
         // 出す先を書く前に、先に置いた分へ置いた時点の絵を写させ、その記録を落とす
         //
         // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
-        graphics.catchUpOutputForPlacing()
+        graphics.catchUpOutputForPlacing(by: self)
         // **記録済みなら相手へは載せ直さない** (#1683 の反証 2 回目)。貼る絵の記録は置くたびに
         // 来るので、相手の `placers` を毎回探さない。こちらの記録と相手の `placers` は組で、
         // 相手が `placers` を空にするときはこちらの記録も落とす (``keepPicture(placedFrom:)``)
@@ -3081,9 +3081,12 @@ public final class Canvas {
     /// **この列挙は出す先を書く口の登録簿で**、通し忘れは、出す先を書く最下層が呼ぶ検算
     /// (`RenderTarget.assertPlacersSettledBeforeWriting()`) が debug の検査で捕まえる。
     /// 写しを取るのは出す先が実際に変わる口だけで、変えていない口は呼ばない (ADR-0023 決定 5)。
+    /// 細かさを下げた面のフレームの外の途中の描き切りは、出す先を読まれる前に必ず広げ直すので、変わる口に
+    /// 数える ([#2042]・``flush(applyingEffects:mirroringPixels:)``)。
     ///
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     func settlePlacersBeforeChange() {
         guard !placers.isEmpty else { return }
         // **先に空にする。** 描き切らせた先から置き直されることがあるので、
@@ -3133,6 +3136,41 @@ public final class Canvas {
             Diagnostics.warn(
                 "Could not finish drawing before the drawing target changed: \(error.headline)")
         }
+    }
+
+    /// 置く口の内側から、自分が溜めている `graphics` の置いた時点の絵を写しへ取る ([#2042])。
+    /// **描き切りへは逃げない。**
+    ///
+    /// 置く口の追い付き (``catchUpOutputForPlacing(by:)``) は、出す先を書く前に置いた側へ写させる。
+    /// 置く側自身もそこに居ると、``keepPicture(placedFrom:)`` の逃げ道 (写しの上限・写しの失敗での
+    /// 描き切り) が置く口の内側で走り、前置きを済ませてから記録へ来る呼び手を壊す。置く側自身の分は
+    /// ここで写しだけを試し、写せなければ追い付きを見送らせる。
+    ///
+    /// 置く側自身が溜めているのは、追い付きが前に失敗した後に置いた分だけである — フレームの外の途中の
+    /// 描き切りは、その時点で置いた側へ写させている (``flush(applyingEffects:mirroringPixels:)``)。
+    ///
+    /// - Returns: 溜めていないか、写しへ差し替えたら `true`。写せなければ `false` で、記録は残す
+    ///   (追い付いた後に読む口が、置く口の外から写させる)。
+    func keepPictureWithoutFlushing(placedFrom graphics: Canvas) -> Bool {
+        let placed = ObjectIdentifier(graphics)
+        guard placedGraphics.contains(placed) else { return true }
+        guard !isFlushing, !recordingShape else { return false }
+        do {
+            guard try copyPlacedPicture(graphics.output.texture) else {
+                placedPictureCopyLimitReached += 1
+                return false
+            }
+        } catch {
+            Diagnostics.warn(
+                "Could not keep a copy of a drawing target before it changed, so it is placed as "
+                    + "it stood before it was drawn out: \(error.headline)")
+            return false
+        }
+        // 相手の `placers` とこちらの記録は組なので、両方から落とす (``settlePlacersBeforeChange()`` と同じ)
+        placedGraphics.remove(placed)
+        placedGraphicsDrops &+= 1
+        graphics.placers.removeAll { $0.canvas === self }
+        return true
     }
 
     /// `source` を読む溜めた列があれば、`source` のいまの絵を写しへ取り、その列が読む面を写しに
@@ -3373,7 +3411,16 @@ public final class Canvas {
         // 描き切りは描く先だけを変える)。写させないなら置いた記録も残し、変わる描き切りで写させる。
         // **描き切りの外で出す先を書く口は、それぞれ自分の頭で通る** (#1942。数え上げは
         // ``settlePlacersBeforeChange()``)
-        if applyingEffects || upscaleStage == nil { settlePlacersBeforeChange() }
+        //
+        // **フレームの外では、細かさを下げた面の途中の描き切りでも写させる** ([#2042])。出す先はここでは
+        // 変わらないが、フレームの外で変えた描く先は、読まれる前に必ず出す先へ広げ直される (置く口の
+        // 追い付き ``catchUpOutputForPlacing(by:)``・コールバックを配った直後の追い付き・出す先を読む口)。
+        // 写させるのを置く口の追い付きまで待つと、置く側自身の写しの代わりの描き切り
+        // (``keepPicture(placedFrom:)``) が置く口の内側で走り、前置き (列・貼る絵・塗り) を済ませてから
+        // 記録へ来る呼び手を壊す。ここなら細かさ 1 の面と同じ時点・同じ作法になる
+        //
+        // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+        if applyingEffects || upscaleStage == nil || !isDrawing { settlePlacersBeforeChange() }
         isFlushing = true
         defer { isFlushing = false }
         // CPU 上の列を確定し、実際に読む直前の画像更新を拾う (#1766)。配置後の
@@ -3577,14 +3624,6 @@ public final class Canvas {
             targetChangedSinceUpscale = !assembled.upscaled
         } else if upscaleStage != nil, hasDrawing || assembled.wroteBack {
             targetChangedSinceUpscale = true
-            // **フレームの外なら、自分を置いた面に断片の面の記録を取り直させる** ([#2042])。置く口の
-            // 追い付き (``catchUpOutputForPlacing()``) は記録の口を通るが、断片の面は記録済みなら
-            // 記録を飛ばす (``paintSurfacesNoted``)。この描き切りは出す先を変えないので置いた記録も
-            // 落ちず、控えが外れないまま次に置いた図形が追い付く前の出す先を読む。フレームの中は追い
-            // 付かせないので取り直させない
-            //
-            // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
-            if !isDrawing { for entry in placers { entry.canvas?.paintSurfacesNoted = nil } }
         }
         gpu.pendingUploads.markUploaded(assembled.uploaded)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
