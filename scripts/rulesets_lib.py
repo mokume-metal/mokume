@@ -39,6 +39,22 @@ REQUIRED = ("name", "target", "enforcement", "conditions", "rules", "bypass_acto
 TARGETS = {"branch", "tag", "push"}
 ENFORCEMENTS = {"active", "evaluate", "disabled"}
 
+# pull_request の required_reviewers が 1 つのレビュアーに持てるパターンの数 (#2075)。
+# REST の文書にも OpenAPI の定義にも無く、越えると PUT が 422
+# (`Exceeded limit of 15 file patterns per required reviewer`) で落ちる。
+# 形の検査で見ないと、適用できない定義が merge されて保護が古いまま残る。
+MAX_FILE_PATTERNS = 15
+
+
+def reviewer_pattern_counts(body):
+    """pull_request の各 required_reviewers が持つ file_patterns の数。"""
+    for rule in body.get("rules") or []:
+        if not isinstance(rule, dict) or rule.get("type") != "pull_request":
+            continue
+        for reviewer in (rule.get("parameters") or {}).get("required_reviewers") or []:
+            if isinstance(reviewer, dict):
+                yield len(reviewer.get("file_patterns") or [])
+
 
 def canon(ruleset):
     """比較できる形に落とす。
@@ -122,6 +138,16 @@ def check_shape(defs_dir):
         if body.get("enforcement") not in ENFORCEMENTS:
             print(f"NG: {path} の enforcement が不正: {body.get('enforcement')!r}", file=sys.stderr)
             status = 1
+
+        for count in reviewer_pattern_counts(body):
+            if count > MAX_FILE_PATTERNS:
+                print(
+                    f"NG: {path} の required_reviewers の file_patterns が {count} 個ある。"
+                    f"API はレビュアー 1 つにつき {MAX_FILE_PATTERNS} 個までしか受け取らない (#2075)"
+                    " — 同じ場所のファイルは名前の glob (`scripts/*guard*.sh`) で畳む",
+                    file=sys.stderr,
+                )
+                status = 1
 
         # ファイル名と name の一致 — 照合は name で突き合わせるので、ずれていると
         # 「どのファイルが何を定義しているか」がディレクトリから読めなくなる

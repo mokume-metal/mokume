@@ -84,13 +84,19 @@ for f in "$DEFS"/*.json; do
   # 表から id を引く。**タブで区切って名前の完全一致を見る** — 名前に空白が入りうる
   id=$(awk -F'\t' -v want="$name" '$1 == want { print $2 }' "$live/index.tsv")
 
+  # 断られたときの理由は応答の本文 (stdout) にしか無い。捨てると「Validation Failed」しか
+  # 残らず、何が通らなかったのかを打ち直して調べることになる (#2075)
   if [ -n "$id" ]; then
-    gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f" >/dev/null
-    echo "更新: $name (id $id)"
+    verb=更新 out=$(gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f" 2>&1) || failed=1
   else
-    gh api -X POST "repos/$REPO/rulesets" --input "$f" >/dev/null
-    echo "作成: $name"
+    verb=作成 out=$(gh api -X POST "repos/$REPO/rulesets" --input "$f" 2>&1) || failed=1
   fi
+  if [ "${failed:-0}" = 1 ]; then
+    echo "NG: $name の${verb}を API が断った。応答:" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "${verb}: $name${id:+ (id $id)}"
 done
 
 # 定義に無いルールセットが残っていても消さない。存在だけ知らせる
