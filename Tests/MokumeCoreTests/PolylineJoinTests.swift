@@ -561,9 +561,8 @@ struct PolylineJoinTests {
     /// **潰れた腕の角は、見えている帯の端になる** (#1903 の決定・案 R)。物差しは条件 1 と同じで、
     /// 同じ視点で 2 点 A→B だけを描いた絵と一致する。4 点の形は同じ平面に載る折り返し
     /// (A・B・C・D で B–C が視線に沿い、C→D が A へ戻る) で、B と C から出る帯が同じ向きなので
-    /// 1 本と数え、端の円板 (48 頂点) を置く。記録の間の部品は視点によらず点ごとに積み、
-    /// 頂点の数を置く先の形の上限で揃えるので、組み直しで 1 点へ畳まれない
-    /// (`rebuiltSolidStroke` の頂点の数の照合を通る)。
+    /// 1 本と数え、端の円板を置く。記録した線は置くときに、点と繋がりからその場の線と同じ手順で
+    /// 組み直すので (``SolidStrokePiece``)、記録したときと置く先とで積む三角形の数が違ってよい。
     ///
     /// 逆の組 (記録したときに潰れ、置く先では潰れない) は、その場で同じ視点で描いた 3 点 / 4 点の
     /// 絵と一致する。
@@ -919,5 +918,165 @@ struct PolylineJoinTests {
         }
         #expect(drawn.count > 0)
         #expect(mismatched == 0)
+    }
+
+    // MARK: - 画面で重なる点の群 (#1893 の反証)
+
+    /// 画面で重なる点は、何段続いても 1 つの群にまとめ、群に 1 度だけ形を置く。決まりは網の骨
+    /// (`strokeNet`) の 1 か所にあり、周も網も、その場で描いても記録して置いても同じ骨を通る。
+    /// 経路ごとに写して持っていた頃は、記録した形が潰れた辺の先を 1 段しか引けず、2 段以上
+    /// 潰れると軸の正方形や欠けが出た。
+
+    /// 平行投影で B・C・D が視線に沿って並ぶ折れ線 (端が 2 段潰れる)。記録したときは透視で
+    /// 潰れず、置く先で潰れる。物差しは同じ視点で 2 点 A→B だけを描いた絵。
+    @Test(
+        "記録した折れ線の端が画面で 2 段潰れても、見えている帯の端になる",
+        arguments: [StrokeCap.project, .square, .round])
+    func aRetainedEndCollapsingTwiceEndsTheVisibleBand(_ cap: StrokeCap) throws {
+        let path: [SIMD3<Float>] = [SIMD3(-60, -40, 0), SIMD3(0, 0, 0), SIMD3(0, 0, -30), SIMD3(0, 0, -60)]
+        func draw(_ canvas: Canvas, _ points: [SIMD3<Float>]) {
+            canvas.stroke(255, 250)
+            canvas.strokeCap(cap)
+            canvas.beginShape()
+            for point in points { canvas.vertex(point.x, point.y, point.z) }
+            canvas.endShape()
+        }
+        let placed = try render { canvas in
+            let shape = canvas.createShape { draw(canvas, path) }
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            canvas.shape(shape)
+        }
+        let direct = try render { canvas in
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            draw(canvas, Array(path.prefix(2)))
+        }
+        #expect(direct.count > 0)
+        #expect(placed.differing(from: direct) == 0, "違う画素 \(placed.differing(from: direct))")
+    }
+
+    /// 平行投影で B・C・D・E の 4 点が視線に沿って並ぶ折れ線 (途中が 3 段潰れる)。山の頂は
+    /// 3 点 A・B・F の折れ目になる。記録して置いても同じ。
+    @Test(
+        "画面で重なる点が 4 つ続く折れ線も、潰れた辺を除いた折れ線の折れ目になる",
+        arguments: [StrokeJoin.miter, .bevel], ["その場", "記録して置く"])
+    func fourCoincidentPointsKeepTheJoin(_ join: StrokeJoin, _ route: String) throws {
+        let path: [SIMD3<Float>] = [
+            SIMD3(-60, -40, 0), SIMD3(0, 0, 0), SIMD3(0, 0, -20), SIMD3(0, 0, -40), SIMD3(0, 0, -60),
+            SIMD3(60, -40, -60),
+        ]
+        func draw(_ canvas: Canvas, _ points: [SIMD3<Float>]) {
+            canvas.stroke(255, 250)
+            canvas.strokeJoin(join)
+            canvas.strokeCap(.square)
+            canvas.beginShape()
+            for point in points { canvas.vertex(point.x, point.y, point.z) }
+            canvas.endShape()
+        }
+        let drawn = try render { canvas in
+            let shape = route == "記録して置く" ? canvas.createShape { draw(canvas, path) } : nil
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            if let shape { canvas.shape(shape) } else { draw(canvas, path) }
+        }
+        let three = try render { canvas in
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            draw(canvas, [path[0], path[1], path[5]])
+        }
+        #expect(three.count > 0)
+        #expect(drawn.differing(from: three) == 0, "違う画素 \(drawn.differing(from: three))")
+    }
+
+    /// 稜線の 3 点が一直線に並ぶ形 (``ModelFixture/ridge``) を、視線をその直線に沿わせて見る。
+    /// 3 点が画面の 1 点に重なり、1 つの群として折れ目を 1 つ置く。記録して置いた絵は、同じ視点で
+    /// その場で描いた絵と一致する。真ん中の点は番号が最も小さく群の代表になるので、潰れた辺の先を
+    /// 1 段しか引かない組み直しでは、誰も置かなかった。
+    @Test("記録した稜線で 3 点が画面で重なっても、その場で描いたのと同じ形になる", arguments: [StrokeJoin.miter, .bevel])
+    func aRetainedNetWithThreeCoincidentPoints(_ join: StrokeJoin) throws {
+        func draw(_ canvas: Canvas, _ model: Model) {
+            canvas.stroke(255, 250)
+            canvas.strokeJoin(join)
+            canvas.strokeCap(.square)
+            canvas.model(model)
+        }
+        func view(_ canvas: Canvas) {
+            canvas.camera(280, 80, 0, 80, 80, 0, 0, 1, 0)
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            canvas.scale(40, 40, 40)
+        }
+        let placed = try render { canvas in
+            let model = try! canvas.loadModel(ModelFixture.ridge, normalize: false)
+            let shape = canvas.createShape { draw(canvas, model) }
+            view(canvas)
+            canvas.shape(shape)
+        }
+        let direct = try render { canvas in
+            let model = try! canvas.loadModel(ModelFixture.ridge, normalize: false)
+            view(canvas)
+            draw(canvas, model)
+        }
+        #expect(direct.count > 0)
+        #expect(placed.differing(from: direct) == 0, "違う画素 \(placed.differing(from: direct))")
+    }
+
+    /// 描いた立体の頂点の数 (描き切る前の溜め場)。線の三角形の数を見る。
+    private func solidVertexCount(_ body: (Canvas) -> Void) throws -> Int {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
+        var count = 0
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.strokeWeight(weight)
+            let start = canvas.solidVertices.count
+            body(canvas)
+            canvas.closeBatch()
+            count = canvas.solidVertices.count - start
+        }
+        return count
+    }
+
+    /// 途中の辺 B–C が潰れる折れ線では、重なる B と C を 1 点とみなし、折れ目を 1 度だけ置く。
+    /// 2 度置くと、半透明の線の折れ目だけが 2 回混ざって濃くなる (奥の折れ目を先に置いたとき、
+    /// 手前の折れ目が奥行きで弾かれずに重なる)。
+    ///
+    /// 見るのは積んだ頂点の数である。帯どうしの重なりの混ざり方は奥行きの順で変わる (#1561 の
+    /// 範囲) ので、画素の値では折れ目の枚数を切り分けられない。その場で描いた 4 点の線は、潰れた
+    /// 辺を除いた 3 点 A・B・D の線と同じ数を積み (帯 2 本と折れ目 1 つ)、記録して置いた線は、
+    /// 同じ視点でその場で描いた線と同じ数を積む。並べる向きを逆にした組も見る。
+    @Test("画面で重なる点の折れ目は 1 度だけ置く", arguments: ["A から", "D から"])
+    func coincidentPointsPlaceTheJoinOnce(_ order: String) throws {
+        let forward: [SIMD3<Float>] = [SIMD3(-60, -40, 0), SIMD3(0, 0, 0), SIMD3(0, 0, -60), SIMD3(60, -40, -60)]
+        let path = order == "A から" ? forward : forward.reversed()
+        func draw(_ canvas: Canvas, _ points: [SIMD3<Float>]) {
+            canvas.stroke(255, 128)
+            canvas.strokeJoin(.miter)
+            canvas.strokeCap(.square)
+            canvas.beginShape()
+            for point in points { canvas.vertex(point.x, point.y, point.z) }
+            canvas.endShape()
+        }
+        func view(_ canvas: Canvas) {
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+        }
+        let four = try solidVertexCount { canvas in
+            view(canvas)
+            draw(canvas, path)
+        }
+        let three = try solidVertexCount { canvas in
+            view(canvas)
+            draw(canvas, [forward[0], forward[1], forward[3]])
+        }
+        let placed = try solidVertexCount { canvas in
+            let shape = canvas.createShape { draw(canvas, path) }
+            view(canvas)
+            canvas.shape(shape)
+        }
+        #expect(three > 0)
+        #expect(four == three, "4 点 \(four)・3 点 \(three)")
+        #expect(placed == four, "記録して置いた線 \(placed)・その場 \(four)")
     }
 }

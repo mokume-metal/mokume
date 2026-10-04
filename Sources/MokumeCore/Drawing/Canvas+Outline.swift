@@ -3,9 +3,14 @@
 
 import simd
 
-// 周を太さのある帯でなぞる。**骨は 1 本で、平面と立体が共有する** — 違うのは点を
-// 帯や円板に変えるところだけである。骨が持つのは端と折れ目の規則、すなわち
+// 周を太さのある帯でなぞる。**端と折れ目の規則は 1 つで、平面と立体が共有する** — 違うのは
+// 点を帯や円板に変えるところだけである。骨が持つのは端と折れ目の規則、すなわち
 // 「どこに帯を置き、どこを角として埋め、どこを端として仕上げるか」だけ。
+//
+// 平面の周は周の骨 (`strokeRing`) を、立体の周と稜線は網の骨 (`strokeNet`) を通る。立体では
+// 画面で重なる点 (視線に沿う辺の両端) を何段でも 1 つの群にまとめて、群に 1 度だけ形を置く
+// 必要があり (#1893)、それを持つのは網の骨だけにする。周は隣り合う点を辺で結んだ網で、網の骨は
+// 周の骨と同じ端と折れ目の形を置く。
 //
 // 骨が 2 本あったころは、`strokeCap` / `strokeJoin` の扱いを平面だけ直しても
 // `vertex(x, y, z)` を並べた形には届かなかった。**利用者からは同じ設定に見えるのに
@@ -130,7 +135,8 @@ extension Canvas {
         }
     }
 
-    /// 辺の網を輪郭としてなぞる骨。立体の稜線がこれを通る。
+    /// 辺の網を輪郭としてなぞる骨。立体の稜線と、立体の周 (隣り合う点を辺で結んだ網) がこれを
+    /// 通る。保持した形を置くときの組み直しも同じくここを通る (``SolidStrokePiece``)。
     ///
     /// 周と同じ規則を網へ広げただけである — **点に 2 本以上の辺が来ればそこは折れ目、
     /// 1 本しか来なければ端**。周は全ての点に 2 本が来る網 (閉じた周) か、両端だけ
@@ -140,8 +146,9 @@ extension Canvas {
     /// である。球の極には一周ぶんの経線が集まるが、置く円板は 1 枚で済む。
     ///
     /// **画面で重なる点は 1 点として形を置く** ([#1893])。画面で潰れた (長さがちょうど 0 の)
-    /// 辺で結ばれた点を 1 つの群にまとめ、群の外へ出る辺だけを腕として数える。周の骨が同じ位置の
-    /// 点を飛ばすのと同じ扱いを、画面での同じ位置へ延ばしたものである。形は腕の画面での向きの
+    /// 辺で結ばれた点を、何段続いても 1 つの群にまとめ、群の外へ出る辺だけを腕として数える。周の
+    /// 骨が同じ位置の点を飛ばすのと同じ扱いを、画面での同じ位置へ延ばしたものである (世界で同じ
+    /// 位置の点を結ぶ長さ 0 の辺も、画面での長さが 0 なので同じ群に入る)。形は腕の画面での向きの
     /// 数で決まり (``screenCorner(arms:origins:isEnd:join:cap:)``)、辺が 3 本以上集まる点も、
     /// 180° を越える間を挟む 2 本の折れ目になる ([#1889])。群には、いちばん小さい番号の点の
     /// 位置で 1 度だけ置く。
@@ -152,6 +159,11 @@ extension Canvas {
     /// - Parameters:
     ///   - count: 点の数
     ///   - edges: 点の添字の対。同じ辺が 2 度現れないこと
+    ///   - curveSteps: 点ごとに、折れ目の形によらず円板で埋めるか (曲線の刻みの点・``strokeRing(count:isClosed:curveSteps:samePlace:endSquare:band:disc:square:corner:)``
+    ///     と同じ)。空ならどの点も角
+    ///   - samePoint: 添字 2 つの点が世界で同じ位置か。同じ位置の点から出た腕は、同じ点から出た
+    ///     腕として数える (``screenCorner(arms:origins:isEnd:join:cap:)``)。周で同じ位置の点を
+    ///     続けて置いたときに当たる
     ///   - toward: 1 つ目の添字の点から 2 つ目の添字の点へ、画面で進む向き (長さ 1)。画面での
     ///     長さがちょうど 0 なら `nil` (潰れた辺)
     ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向きに沿った正方形を置く
@@ -161,7 +173,8 @@ extension Canvas {
     ///   - corner: 1 つ目の添字の点に、2 本の腕の折れ目の形を置く。腕は (出る点, 向こうの点) の
     ///     添字の対で、出る点は 1 つ目の添字の点と画面で重なる
     func strokeNet(
-        count: Int, edges: [(Int, Int)],
+        count: Int, edges: [(Int, Int)], curveSteps: [Bool] = [],
+        samePoint: (Int, Int) -> Bool = { _, _ in false },
         toward: (Int, Int) -> SIMD2<Float>?,
         endSquare: (Int, Int) -> Void,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void,
@@ -218,14 +231,21 @@ extension Canvas {
             towards.removeAll(keepingCapacity: true)
             origins.removeAll(keepingCapacity: true)
             let group = members[center] ?? [center]
+            // 曲線の刻みの継ぎ目は角ではない。折れ目の形によらず円板で埋める (#1409)
+            if group.contains(where: { $0 < curveSteps.count && curveSteps[$0] }) {
+                disc(center)
+                continue
+            }
             var isEnd = false
             for origin in group {
                 if starts[origin + 1] - starts[origin] == 1 { isEnd = true }
+                // 世界で同じ位置の点は同じ点として数える。群の中で最初に出てくる同じ位置の点の番号
+                let same = group.first { samePoint($0, origin) } ?? origin
                 for link in links[starts[origin]..<starts[origin + 1]] where root(link.far) != center {
                     guard let direction = directions[link.edge] else { continue }
                     arms.append((origin, link.far))
                     towards.append(direction * link.sign)
-                    origins.append(origin)
+                    origins.append(same)
                 }
             }
             let shape = Self.screenCorner(
