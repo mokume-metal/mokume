@@ -94,10 +94,12 @@ WindowServer が止まることで分かる。そのときは、toolchain の `T
 
 - `event` (`take` / `release` / `timeout`)・時刻・枠・自分の pid・cwd・子のコマンド・終了コード・所要
 - `lineage`: 親プロセスを launchd の手前まで辿った各段の pid / ppid / 起動時刻 / コマンドラインの先頭。
-  #2052 の形なら、ここに `zsh -c … python3 - <<EOF …` が載り、起動元がその場で分かる
+  枠を待つ前に取る。#2052 の形なら、ここに `zsh -c … python3 - <<EOF …` の先頭が載る。ただし
+  コマンドが長ければ、実行されてしまった箇所は切った先にありうる (各段 4000 字まで)
 - `agent`: 環境にあるエージェントの出所 (`CLAUDE_CODE_SESSION_ID`・`MOKUME_AGENT_NAME` など)
 
-**書けなくても検査は止めない** (1 行名乗るだけ)。大きさが上限 (1 MB) を越えたら、新しい半分だけを残す。
+**書けなくても検査は止めない** (1 行名乗るだけ)。行ごとにディスクまで落とす (パニックの直前の行が
+いちばん欲しい)。大きさが上限 (4 MB) を越えたら、同じファイルの中で新しい半分だけを残す。
 キャッシュの置き場と分けるのは、消してよい場所に調査の記録を置かないためである。
 
 **手元機が落ちた・画面が固まったときの読み方:**
@@ -106,10 +108,13 @@ WindowServer が止まることで分かる。そのときは、toolchain の `T
    `.spin` の `swiftpm-testing-helper` のうち、GPU のドライバの中で止まったスレッドを持つものを探す。
    起動時刻は、`.spin` の先頭の時刻から `Time Since Fork` を引けば出る
 2. その時刻の前後の `take` を、この記録から引く。cwd (どの worktree か) で絞る
-3. `lineage` のコマンドラインと `agent` から、起動したセッションを特定する。セッションの操作記録は
-   `~/.claude/projects/<cwd を - で繋いだ名前>/<session_id>.jsonl` にある
+3. `lineage` のコマンドラインと `agent` から、起動したセッションを特定する。Claude のセッションの操作
+   記録は `find ~/.claude/projects -name '<CLAUDE_CODE_SESSION_ID>.jsonl'` で引ける (置き場の名前は
+   セッションを始めたときの cwd から作られ、gpu-slot の cwd とずれうる)。その時刻の Bash の
+   tool_use を読めば、何を打って起動したかが分かる
 
-**この記録に載らないもの:** 枠を通らない実行 (素の `swift test`・窓つきのスケッチ・`mokume watch`)。
+**この記録に載らないもの:** 枠を通らない実行 (素の `swift test`・ShadowTests の負荷の手順・
+`make reference-shots`・`scripts/measure-frame-rate.sh`・窓つきのスケッチ・`mokume watch`)。
 GPU を使っていたのにここに無ければ、それは枠の外の実行である (上の「範囲の外」・#2052)。
 
 子の終了コードは、そのまま返す。SIGINT / SIGTERM は子へ渡す。取り直しの間隔
@@ -131,18 +136,26 @@ DEFAULT_WAIT_SECONDS = 5400
 EXIT_TIMED_OUT = 75
 EXIT_USAGE = 2
 
-# 並列の幅の口と既定 (上の「## 並列の幅」)
-LOG_LIMIT_BYTES = 1_000_000
-# Claude のシェルは先頭に snapshot の source を持つので、本題のコマンドまで届く長さにする
-LINEAGE_COMMAND_CHARACTERS = 1000
-# 起動元を名乗る環境変数。値が無いものは記録に載せない
+# 起動元の記録 (上の「## 起動元の記録」)
+LOG_LIMIT_BYTES = 4_000_000
+# Claude のシェルは先頭に snapshot の source (この機械で約 280 字) を持つので、本題のコマンドまで
+# 届く長さにする。アプリ本体 (.app の中) は名前が分かれば足りるので短く切る
+LINEAGE_COMMAND_CHARACTERS = 4000
+LINEAGE_APP_CHARACTERS = 200
+# 起動元を名乗る環境変数。値が無いものは記録に載せない。エージェントの見分け方は
+# scripts/comment.sh の判定と揃える
 AGENT_VARIABLES = (
+    "CLAUDECODE",
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_CODE_ENTRYPOINT",
-    "MOKUME_AGENT_NAME",
-    "CODEX_SESSION_ID",
+    "CODEX_SANDBOX",
+    "CODEX_HOME",
     "CODEX_THREAD_ID",
+    "MOKUME_AGENT_NAME",
+    "MOKUME_UNATTENDED",
 )
+
+# 並列の幅の口と既定 (上の「## 並列の幅」)
 PARALLELIZATION_WIDTH_VARIABLE = "SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH"
 DEFAULT_PARALLELIZATION_WIDTH = "16"
 
@@ -185,68 +198,78 @@ def _log_path():
 
 
 def _lineage():
-    """自分から launchd の手前まで、親プロセスを辿る。各段の pid・ppid・起動時刻・コマンドラインを返す。"""
+    """自分から launchd の手前まで、親プロセスを辿る。各段の pid・ppid・起動時刻・コマンドラインを返す。
+
+    起動時刻 (lstart) はロケールで形が変わる (ja_JP では日付が 4 語になる) ので、C ロケールで読む。
+    コマンドラインは UTF-8 でないバイトを含みうるので、置き換えて読む。
+    """
     chain = []
     pid = os.getpid()
     seen = set()
+    environment = {**os.environ, "LC_ALL": "C"}
     while pid > 1 and pid not in seen and len(chain) < 32:
         seen.add(pid)
-        try:
-            out = subprocess.run(
-                ["ps", "-o", "ppid=,lstart=,command=", "-p", str(pid)],
-                capture_output=True, text=True, timeout=5,
-            ).stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            break
-        # lstart は "Sun Oct  4 13:29:27 2026" の 5 語
+        out = subprocess.run(
+            ["ps", "-o", "ppid=,lstart=,command=", "-p", str(pid)],
+            capture_output=True, timeout=5, env=environment,
+        ).stdout.decode("utf-8", errors="replace").strip()
+        # C ロケールの lstart は "Sun Oct  4 13:29:27 2026" の 5 語
         fields = out.split(None, 6)
         if len(fields) < 6 or not fields[0].isdigit():
             break
         parent = int(fields[0])
-        chain.append({
-            "pid": pid,
-            "ppid": parent,
-            "started": " ".join(fields[1:6]),
-            "command": (fields[6] if len(fields) > 6 else "")[:LINEAGE_COMMAND_CHARACTERS],
-        })
+        command = fields[6] if len(fields) > 6 else ""
+        limit = LINEAGE_APP_CHARACTERS if ".app/Contents/" in command.split(" -", 1)[0] else LINEAGE_COMMAND_CHARACTERS
+        chain.append({"pid": pid, "ppid": parent, "started": " ".join(fields[1:6]), "command": command[:limit]})
         pid = parent
     return chain
 
 
-def _record(event, **fields):
-    """起動元の記録へ 1 行追記する。書けなくても検査は止めない。"""
-    path = _log_path()
-    entry = {
-        "event": event,
-        "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "pid": os.getpid(),
-        "cwd": os.getcwd(),
-        **fields,
-    }
-    if event != "release":
-        entry["lineage"] = _lineage()
-        entry["agent"] = {name: os.environ[name] for name in AGENT_VARIABLES if os.environ.get(name)}
+def _origin():
+    """起動元: 親プロセスの連鎖とエージェントの出所。枠を待つ前に取る — 待つ間に起動したシェルが
+    終わると、連鎖は launchd に付け替えられて途切れる。"""
     try:
+        lineage = _lineage()
+    except Exception as error:  # 記録のための読み取りで検査を止めない
+        lineage = [{"error": repr(error)}]
+    agent = {name: os.environ[name] for name in AGENT_VARIABLES if os.environ.get(name)}
+    return {"lineage": lineage, "agent": agent}
+
+
+def _record(event, **fields):
+    """起動元の記録へ 1 行追記する。**何が起きても例外を外へ出さない** — 記録のために検査を止めたり、
+    子の終了コードや期限切れの 75 を置き換えたりしない。"""
+    path = _log_path()
+    try:
+        try:
+            cwd = os.getcwd()
+        except OSError as error:
+            cwd = f"<読めない: {error}>"
+        entry = {"event": event, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "pid": os.getpid(), "cwd": cwd, **fields}
+        line = (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8", errors="replace")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as handle:
+        # 置き換え (os.replace) で切り詰めると、ロックを待っていた他のプロセスが名前の外れた古い
+        # ファイルへ書き、その行が消える。同じファイルの中で切り詰める
+        with open(path, "ab+") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            handle.write(line)
             handle.flush()
             if handle.tell() > LOG_LIMIT_BYTES:
-                _trim(path)
-    except OSError as error:
-        _say(f"起動元の記録 {path} に書けなかった ({error})。検査はそのまま走らせる")
-
-
-def _trim(path):
-    """上限を越えた記録を、新しい半分だけにする。呼ぶ側が排他のロックを持っている。"""
-    data = path.read_bytes()
-    keep = data[len(data) - LOG_LIMIT_BYTES // 2:]
-    newline = keep.find(b"\n")
-    keep = keep[newline + 1:] if newline >= 0 else b""
-    temporary = path.with_name(path.name + ".trim")
-    temporary.write_bytes(keep)
-    os.replace(temporary, path)
+                handle.seek(0)
+                data = handle.read()
+                keep = data[len(data) - LOG_LIMIT_BYTES // 2:]
+                keep = keep[keep.find(b"\n") + 1:]
+                handle.truncate(0)
+                handle.write(keep)
+                handle.flush()
+            # パニックの直前の行がいちばん欲しいので、ディスクまで落とす (macOS の fsync は
+            # ドライブのキャッシュに留まりうる)
+            try:
+                fcntl.fcntl(handle.fileno(), fcntl.F_FULLFSYNC)
+            except (AttributeError, OSError):
+                os.fsync(handle.fileno())
+    except Exception as error:
+        _say(f"起動元の記録 {path} に書けなかった ({error!r})。検査はそのまま走らせる")
 
 
 def _try_take(path):
@@ -287,7 +310,7 @@ def _holders(paths):
     return lines
 
 
-def _acquire(slots, wait_seconds, poll, report_every):
+def _acquire(slots, wait_seconds, poll, report_every, origin):
     """枠を 1 つ取る。取れた枠を返す。置き場を使えなければ None を返す。期限を越えたら抜ける。"""
     directory = _slot_dir()
     try:
@@ -309,9 +332,11 @@ def _acquire(slots, wait_seconds, poll, report_every):
                     f"GPU の枠 ({slots}) が {_span(wait_seconds)}空かなかったので、検査を走らせずに抜ける。"
                     " 持ち主が固まっていないか確かめる (MOKUME_GPU_SLOT_WAIT で期限を変えられる):"
                 )
-                for line in _holders(paths):
+                holders = _holders(paths)
+                for line in holders:
                     print(line, file=sys.stderr, flush=True)
-                _record("timeout", waited_seconds=round(now - started, 1), holders=_holders(paths))
+                print(f"  (持ち主の起動元は {_log_path()} の take の行にある)", file=sys.stderr, flush=True)
+                _record("timeout", waited_seconds=round(now - started, 1), holders=holders, **origin)
                 sys.exit(EXIT_TIMED_OUT)
             if now - last_report >= report_every:
                 last_report = now
@@ -351,9 +376,10 @@ def main(argv):
     wait_seconds = _number("MOKUME_GPU_SLOT_WAIT", DEFAULT_WAIT_SECONDS, integer=False)
     poll = _number("MOKUME_GPU_SLOT_POLL", 2.0, integer=False)
     report_every = _number("MOKUME_GPU_SLOT_REPORT", 60.0, integer=False)
-    slot = _acquire(slots, wait_seconds, poll, report_every)
+    origin = _origin()
+    slot = _acquire(slots, wait_seconds, poll, report_every, origin)
     slot_name = Path(slot.name).name if slot is not None else None
-    _record("take", slot=slot_name, command=argv[1:])
+    _record("take", slot=slot_name, command=argv[1:], **origin)
     started = time.monotonic()
     code = None
     try:
