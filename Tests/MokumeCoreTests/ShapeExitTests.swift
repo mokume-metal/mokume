@@ -129,6 +129,7 @@ enum ShapeExit {
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進める",
+            "shapeListener": "組み立ての入口と出口の通知先 (弱い参照)。出口の仕組みそのもので、ランタイムが持つ乱数の種を戻す (#1936・`runtimeTable`)",
             "vertexStorage": resource, "flatInstanceStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,
             "solidIndexStorage": resource, "solidInstanceStorage": resource,
@@ -261,6 +262,70 @@ enum ShapeExit {
 
 typealias ShapeExitFixture = ShapeExit.Fixture
 
+/// `SketchRuntime` の格納の、組み立ての出口での扱い ([#1936])。
+///
+/// 組み立ての中で書けて形に焼き付く状態は、`Canvas` の外にもある — 乱数の列 (`randomSeed()`) で、
+/// 持ち主はランタイムである。`Canvas` の表 (``ShapeExit/table``) は `Canvas` と `Style` の格納だけを
+/// 数えるので、ランタイムの状態は別の表で分ける。分けは 2 つしかない — 戻すか、触らないか。
+/// 切り離す・断るは `Canvas` の溜め場と、シーンの記述の口の話で、ランタイムには無い。
+///
+/// [#1936]: https://github.com/mokume-metal/mokume/issues/1936
+enum RuntimeExit {
+    /// 出口で組み立て前の値へ戻す。手順は組み立ての中でその状態を汚し、読み方は綴りを返す
+    case restore(dirty: (any Sketch) -> Void, read: (SketchRuntime) -> String)
+    /// 出口では扱わない。理由を書く
+    case untouched(String)
+}
+
+extension ShapeExit {
+    /// ランタイムの格納の分類。名前は格納の名前 (`lazy var` は綴りの接頭辞を外した名前)。
+    ///
+    /// **「触らない」は、形に焼き付く値を生まないもの** — 実行の制御と時計・観測・保存と録り・
+    /// 差込口・入力・視点の道具。組み立ての中で呼んでもそれぞれの持ち主の約束のままで、出口で戻すと
+    /// かえって壊れる (中で呼んだ `noLoop()` を出口で戻すと、止めたつもりのスケッチが動き続ける)。
+    static var runtimeTable: [(name: String, exit: RuntimeExit)] {
+        let construction = "組み立てのときに決まり、ランタイムと同じだけ生きる"
+        let control = "実行の制御と時計。形に焼き付く値を生まず、組み立ての中で呼んでも外の制御としてそのまま効く"
+        let seam = "差込口の付け外しと巡回の印。形に焼き付く値を生まない (Sketch+Seams)"
+        let recording = "保存と録り。形に焼き付く値を生まない (Sketch+Save)"
+        let observation = "観測 (差し出した値・測った値)。形に焼き付く値を生まない (Sketch+Expose)"
+        let untouched: [String: String] = [
+            "sketch": construction, "canvas": construction, "declaredFrameRate": construction,
+            "launchFrameRate": construction, "observer": construction, "inbox": construction,
+            "relayed": construction, "params": construction, "paramRegistry": construction,
+            "paramStore": construction,
+            "input": "入力の合流点。窓と外から書かれ、形に焼き付く値を生まない",
+            "timing": control, "now": control, "tempo": control, "firstAdvanceAt": control,
+            "lastFrameAt": control, "drawnThrough": control, "isAdvancingFrame": control,
+            "hasSetUp": control, "isPaused": control, "isLooping": control,
+            "redrawRequested": control, "observingAtTime": control, "presence": control,
+            "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
+            "seamsClosed": seam, "outletJoinedAt": seam,
+            "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,
+            "pendingOutletFrame": recording, "warnedEncodeFailed": recording, "capture": recording,
+            "exposedValues": observation, "measuredValues": observation,
+            "orbit": "視点を操る道具の状態。フレームを越える。`orbit = …` の setter は組み立ての中でも断られず、出口でも戻らない。形には焼き付かない — 視点を書くのは `camera` で、`camera` は組み立ての中では断られる (`orbitControl()` は視点を書く前に断る・#1670)",
+            "orbitAdvancedAt": "orbit と同じ (道具を最後に進めたフレーム)。`orbitControl()` が書く",
+            "seedScopes": "組み立ての入れ子ごとの乱数の控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936)",
+        ]
+        let restored: (String, RuntimeExit) = (
+            "randomness",
+            .restore(
+                dirty: { $0.randomSeed(42) },
+                // 綴りは `Randomness(state: …)` — 列のどこにいるかが分かる
+                read: { String(describing: $0.randomness) })
+        )
+        return [restored] + untouched.map { ($0.key, .untouched($0.value)) }
+    }
+}
+
+/// ランタイムを立てるためだけの、何も描かないスケッチ。
+final class RuntimeBlank: Sketch {
+    var settings = SketchSettings(width: 8, height: 8)
+    init() {}
+    func draw() {}
+}
+
 @Suite(
     "形の組み立ての出口",
     .enabled(
@@ -302,6 +367,38 @@ struct ShapeExitTests {
                 #expect(labels.contains(name), "\(name) は Canvas の格納に無い (表から消す)")
             }
         }
+    }
+
+    /// 組み立ての中で書ける状態は `Canvas` の外にもある — ランタイムが持つ乱数の列で、上の表が
+    /// 数える `Canvas` の格納と `Style` には原理的に引っかからなかった (#1936)。**ランタイムの格納も
+    /// 1 つ残らずここで分ける。** 格納を足したら、ここで止まる。
+    @Test("SketchRuntime の格納は、組み立ての出口での扱いがどれか 1 つに決まっている (#1936)")
+    func everyRuntimeStorageHasAnExit() throws {
+        let runtime = try SketchRuntime(sketch: RuntimeBlank(), gpu: RenderDevice())
+        // 最初に触ったときに作る格納 (`lazy var`) は、反射の綴りが `$__lazy_storage_$_<名前>` になる
+        let lazyPrefix = "$__lazy_storage_$_"
+        let labels = Mirror(reflecting: runtime).children.compactMap(\.label).map {
+            $0.hasPrefix(lazyPrefix) ? String($0.dropFirst(lazyPrefix.count)) : $0
+        }
+        var seen: Set<String> = []
+        for entry in ShapeExit.runtimeTable {
+            #expect(seen.insert(entry.name).inserted, "\(entry.name) が表に 2 度載っている")
+        }
+        for label in labels {
+            #expect(
+                seen.contains(label),
+                "\(label) が SketchRuntime の出口の表 (ShapeExit.runtimeTable) に無い。戻す (汚す手順つき)・触らない (理由つき) のどちらかに載せる")
+        }
+        for name in seen {
+            #expect(labels.contains(name), "\(name) は SketchRuntime の格納に無い (表から消す)")
+        }
+        // 乱数の列が「戻す」に載っていること自体を縛る。表から消せば上の 2 つが赤くなるが、
+        // 理由を付けて「触らない」へ移す書き換えは通ってしまう
+        let restored = Set(
+            ShapeExit.runtimeTable.compactMap { entry -> String? in
+                if case .restore = entry.exit { entry.name } else { nil }
+            })
+        #expect(restored.contains("randomness"), "乱数の列は出口で戻す (中で書いた種は外へ残らない・#1936)")
     }
 
     /// 戻す状態を**全部汚してから抜け、全部が戻ったかを見る** — 1 例ずつの検査では、次に足した

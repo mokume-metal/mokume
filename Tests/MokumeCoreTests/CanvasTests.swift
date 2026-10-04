@@ -1877,6 +1877,7 @@ struct CanvasTests {
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進め、描き場所は作った面と共有する (#1467)",
+            "shapeListener": "形の組み立ての入口と出口の通知先 (弱い参照)。ランタイムが付け、描き場所は作った面から引き継ぐ。フレームとは関わらない (#1936)",
             "vertexStorage": resource, "flatInstanceStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,
             "solidIndexStorage": resource, "solidInstanceStorage": resource,

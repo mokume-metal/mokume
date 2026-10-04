@@ -28,7 +28,11 @@ extension Sketch {
     ///
     /// **列は ``draw()`` を越えて進み続ける。** フレームの頭で戻したいなら、
     /// そのフレームの頭でこれを呼ぶ。
-    public func randomSeed(_ seed: Int) { Self.requireRuntime().randomness = Randomness(seed: seed) }
+    ///
+    /// **形の組み立て (``createShape(_:)``) の中で書いた種は、抜けると外へ残らない。** 中で書くと、
+    /// そこから抜けるまでは中で決めた列で引き、抜けた後の列は**最初に書く直前**の状態から続く。
+    /// 種を書く前に中で引いた分と、種を書かずに引いた分は、外で引いたのと同じく列を進める。
+    public func randomSeed(_ seed: Int) { Self.requireRuntime().writeSeed(seed) }
 
     /// その座標の揺らぎ (0…1)。**近い座標には近い値**が返る、なめらかな乱れ。
     ///
