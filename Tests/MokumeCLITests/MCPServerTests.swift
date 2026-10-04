@@ -246,6 +246,86 @@ struct MCPServerTests {
         #expect(request["scale"] as? Double == 0.5)
     }
 
+    /// スキーマの外の組は窓口の外から届きうる (エージェントがスキーマを守るとは限らない)。
+    /// 丸めずに掛けると Int が溢れ、窓口のプロセスごと落ちる (#2045)。
+    @Test("スキーマの外の枚数・間隔でも、待ちの見積もりは撮る側が丸めた組で数えて溢れない")
+    func extraWaitClampsLikeTheShootingSide() {
+        let (top, step) = (ObservationRequest.maximumCount, ObservationRequest.maximumEvery)
+        // (頼んだ枚数, 頼んだ間隔, 撮る側が撮る枚数, 撮る間隔)
+        let cases: [(Int?, Int?, Int, Int)] = [
+            (3, Int.max, 3, step),
+            (Int.max, 3, top, 3),
+            (Int.max, Int.max, top, step),
+            (Int.min, Int.min, 1, 1),
+            (top + 1, step + 1, top, step),
+            (nil, nil, 1, 1),
+        ]
+        for (count, every, shots, gap) in cases {
+            // 撮る側の丸めとも突き合わせる。写した式どうしを比べるだけでは、ずれに気付けない
+            let limits = ObservationRequest(id: "", count: count ?? 1, every: every ?? 1).clamped()
+            #expect((limits.count, limits.every) == (shots, gap))
+            #expect(
+                Tools.extraWait(count: count, every: every) == Double((shots - 1) * gap + 1) / 30,
+                "count \(String(describing: count)), every \(String(describing: every))")
+        }
+    }
+
+    @Test("範囲の中の枚数・間隔は、撮り終えるまでに進むフレームを 30fps で換算する")
+    func extraWaitInsideTheRangeCountsTheFrames() {
+        // 3 枚を 2 フレームおき: 1 枚目 + 2 × 2 = 5 フレーム
+        #expect(Tools.extraWait(count: 3, every: 2) == 5.0 / 30)
+        #expect(Tools.extraWait(count: 1, every: 1) == 1.0 / 30)
+    }
+
+    /// JSON の数は、整数でも小数でも文字列でも届く。黙って 1 へ倒すと、頼みが毎フレーム
+    /// 1 枚に化けて撮る側の警告にも載らない (#2045)。
+    @Test("枚数・間隔の引数は、整数なら範囲で切らずに読み、整数でなければ断る")
+    func readsTheSeriesArgumentsAsWholeNumbers() throws {
+        let json = #"{"a": 3, "b": 3.0, "c": 0, "d": -5, "e": 1e19, "f": 9223372036854775808,"#
+            + #" "g": -9223372036854775809, "h": 2.5, "i": 1e300, "j": "3", "k": true}"#
+        let values = try #require(
+            try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let refused = Tools.SeriesArgument.refused("count must be a whole number")
+        let expected: [(String, Tools.SeriesArgument)] = [
+            ("a", .value(3)), ("b", .value(3)), ("c", .value(0)), ("d", .value(-5)),
+            // 1e300 も整数 (大きな浮動小数はみな整数) で、上限より大きい側に寄る
+            ("e", .value(.max)), ("f", .value(.max)), ("g", .value(.min)), ("i", .value(.max)),
+            ("h", refused), ("j", refused), ("k", refused),
+        ]
+        for (key, answer) in expected {
+            #expect(Tools.seriesArgument(values[key], key: "count") == answer, "\(key)")
+        }
+        #expect(Tools.seriesArgument(nil, key: "count") == .omitted)
+    }
+
+    @Test("範囲の外の枚数・間隔は切らずに要求へ置き、撮る側が切ったことを名乗れるようにする")
+    func passesOutOfRangeSeriesThrough() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        // 誰も応えないので上限まで待って諦めるが、要求は置かれている
+        _ = tools.call("observe", arguments: ["count": 0, "every": -5])
+
+        let request = try #require(
+            try JSONSerialization.jsonObject(
+                with: try Data(
+                    contentsOf: directory.appendingPathComponent(".mokume/observe/request.json")))
+                as? [String: Any])
+        #expect(request["count"] as? Int == 0)
+        #expect(request["every"] as? Int == -5)
+    }
+
+    @Test("整数でない枚数・間隔は、要求を置かずに断る")
+    func refusesSeriesThatAreNotWholeNumbers() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call("observe", arguments: ["count": 3, "every": 2.5])
+        #expect(outcome.isError)
+        #expect(outcome.text == "every must be a whole number")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/observe/request.json").path))
+    }
+
     /// このリポジトリの `Schemas/`。**検査の実行ファイルからは辿れない** (道具の実行ファイルと
     /// 深さが違う) ので、ソースの位置から引く。
     private func schemasRoot() -> URL {
