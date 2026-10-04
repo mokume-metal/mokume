@@ -354,6 +354,292 @@ struct StoppedUpscaleTests {
         #expect(abs(after.top - before.top) < 0.3, "上の縁が動いた: \(before.top) → \(after.top)")
     }
 
+    // MARK: - 時間方向の位置: フレームの外で描いた図形 (#1913)
+
+    /// 揺らしを掛けて描く列の種類。`rg -n "jittered\(" Sources` が見つけていた口 (列を閉じる 4 か所)
+    /// に当たる図形を 1 つずつ選ぶ。面の置き換え (`background()` の周囲) は面全体を覆うので、縁を測れない。
+    enum JitteredPath: CaseIterable, CustomTestStringConvertible {
+        /// 基本図形の列 (`rect`)。
+        case form
+        /// 平面の列 (`triangle`)。
+        case flat
+        /// 立体の列 (保持した形の `plane`)。
+        case solid
+
+        var testDescription: String {
+            switch self {
+            case .form: "基本図形"
+            case .flat: "平面"
+            case .solid: "立体"
+            }
+        }
+    }
+
+    /// 黒い 60×30 の `plane` を保持した形。保持した形は組み立てた時点の塗りを持つので、塗りも中で決める。
+    private static func darkPlane(on canvas: Canvas) -> Shape {
+        canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+            canvas.plane(60, 30)
+        }
+    }
+
+    /// 左上の角が (`x`, `y`) で、そこから右へ 60・下へ 30 の縁を持つ黒い図形を置く。`plane` は保持した
+    /// 形を真ん中へ置く — 変換はフレームの外では効かないが、形を置く位置は効く。
+    private static func placeDark(
+        _ path: JitteredPath, on canvas: Canvas, plane: Shape, x: Float, y: Float
+    ) {
+        canvas.noStroke()
+        canvas.fill(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+        switch path {
+        case .form: canvas.rect(x, y, 60, 30)
+        case .flat: canvas.triangle(x, y, x + 60, y, x, y + 30)
+        case .solid: canvas.shape(plane, x + 30, y + 15)
+        }
+    }
+
+    /// 縁の位置 (出す画素・小数)。`row` の行の `xs` と、`column` の列の `ys` で、暗い所の量を縁から
+    /// の距離に直す (``edges(of:)`` と同じ測り方)。
+    private static func edges(
+        of image: DisplayImage, row: Int, xs: Range<Int>, column: Int, ys: Range<Int>
+    ) -> (left: Double, top: Double) {
+        func dark(_ x: Int, _ y: Int) -> Double { 1 - Double(image[x, y].red) / 255 }
+        let left = xs.reduce(0.0) { $0 + dark($1, row) }
+        let top = ys.reduce(0.0) { $0 + dark(column, $1) }
+        return (Double(xs.upperBound) - left, Double(ys.upperBound) - top)
+    }
+
+    /// 完了条件 1 — 時間方向で、止まっている間に置いて描き切らせた矩形は、同じ矩形をフレームの中で
+    /// 描いた面と同じ位置に出る。
+    ///
+    /// 止まっている間の描き切りの絵は、追い付きが最後のフレームの揺らしを戻して広げる (#1914)。直す前は
+    /// 次のフレームの揺らしで描いていたので、2 つの揺らしの差だけずれた (実測で最大 横 1.6・縦 1.2
+    /// 出す画素。式から見込んだのは 横 0.8125・縦 0.556 描く画素)。
+    ///
+    /// 基本図形は縁を画素の内側で塗り分けるので、揺らしの差がそのまま縁の位置に出る。平面・立体は
+    /// 縁を画素の中心で切るので、何枚も重ねた絵と 1 枚の絵は揺らしの選び方によらず食い違う — そちらは
+    /// 同じ絵の中で揃うかを見る (``temporalShapesDrawnWhileStoppedLineUpWithTheLastFrame(path:frames:)``)。
+    @Test(
+        "時間方向: 止まっている間に置いて描き切らせた矩形は、フレームの中で描いたのと同じ位置に出る",
+        // 揺らしの 1 周 (``UpscaleStage/jitterPeriod``)
+        arguments: 1...8)
+    func temporalRectDrawnWhileStoppedLinesUp(frames: Int) throws {
+        func edges(placedWhileStopped: Bool) throws -> (left: Double, top: Double) {
+            let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+            let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+            for _ in 0..<frames {
+                try canvas.draw {
+                    canvas.background(255)
+                    guard !placedWhileStopped else { return }
+                    canvas.noStroke()
+                    canvas.fill(black)
+                    canvas.rect(40, 50, 60, 40)
+                }
+            }
+            if placedWhileStopped {
+                Self.whileStopped(canvas) {
+                    canvas.noStroke()
+                    canvas.fill(black)
+                    canvas.rect(40, 50, 60, 40)
+                    _ = canvas.get(0, 0)
+                }
+            }
+            return Self.edges(of: try Self.shown(canvas))
+        }
+        let inFrame = try edges(placedWhileStopped: false)
+        #expect(
+            abs(inFrame.left - 40) < 2 && abs(inFrame.top - 50) < 2, "前提: 縁が矩形の位置にある \(inFrame)")
+        let stopped = try edges(placedWhileStopped: true)
+
+        #expect(abs(stopped.left - inFrame.left) < 0.3, "左の縁がずれた: \(inFrame.left) → \(stopped.left)")
+        #expect(abs(stopped.top - inFrame.top) < 0.3, "上の縁がずれた: \(inFrame.top) → \(stopped.top)")
+    }
+
+    /// 完了条件 2 — 揺らしを掛ける口のすべて (基本図形・平面・立体) で、止まっている間に置いて描き切らせた
+    /// 図形は、最後のフレームに描いた同じ図形と、追い付いた出す先の上で揃う。
+    ///
+    /// 最後のフレームで上に図形を描き、止まっている間にちょうど 60 下 (描く画素 30 個) へ同じ図形を置いて
+    /// 描き切らせる。同じ揺らしで描いて同じ揺らしで戻すなら、2 つの縁は同じ位置に出る。縁は描く画素の
+    /// 中心 (出す画素の奇数) に置く — 平面・立体は縁を画素の中心で切るので、そこに置かないと揺らしの差が
+    /// 絵に出ない。
+    @Test(
+        "時間方向: 止まっている間に置いて描き切らせた図形は、最後のフレームに描いた絵と揃う",
+        arguments: JitteredPath.allCases, 1...8)
+    func temporalShapesDrawnWhileStoppedLineUpWithTheLastFrame(path: JitteredPath, frames: Int) throws {
+        let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+        let plane = Self.darkPlane(on: canvas)
+        for _ in 0..<frames {
+            try canvas.draw {
+                canvas.background(255)
+                Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 21)
+            }
+        }
+        Self.whileStopped(canvas) {
+            Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 81)
+            _ = canvas.get(0, 0)
+        }
+        let image = try Self.shown(canvas)
+        let drawn = Self.edges(of: image, row: 26, xs: 31..<51, column: 50, ys: 11..<31)
+        let placed = Self.edges(of: image, row: 86, xs: 31..<51, column: 50, ys: 71..<91)
+        #expect(
+            abs(drawn.left - 41) < 2 && abs(drawn.top - 21) < 2, "前提: 縁が図形の位置にある \(drawn)")
+
+        #expect(abs(placed.left - drawn.left) < 0.3, "左の縁がずれた: \(drawn.left) → \(placed.left)")
+        #expect(
+            abs(placed.top - 60 - drawn.top) < 0.3, "上の縁がずれた: \(drawn.top) → \(placed.top - 60)")
+    }
+
+    /// 完了条件 3 — 止まっている間に置いても描き切らせなければ、図形は次のフレームの描き切りで描かれ、
+    /// そのフレームの終わりの拡大が戻す揺らしで揃う。止まっている間に列を閉じても (混ぜ方の切り替え)
+    /// 同じである。
+    ///
+    /// **揺らしを選ぶのは、列を閉じる時点ではなく描き切る時点である。** 閉じる時点の状態 (持ち越しの
+    /// 区間か) で最後のフレームの揺らしを選ぶと、ここが新しくずれる。フレームの中で置いた面と同じ操作に
+    /// なるので、出す先の絵はバイト単位で一致する。縁は完了条件 2 と同じく描く画素の中心に置く。
+    @Test(
+        "時間方向: 止まっている間に置いて次のフレームで描いた図形は、フレームの中で置いたのと同じ絵になる",
+        arguments: JitteredPath.allCases, [false, true])
+    func temporalShapesCarriedOverLineUp(path: JitteredPath, closesWhileStopped: Bool) throws {
+        func shown(frames: Int, placedWhileStopped: Bool) throws -> DisplayImage {
+            let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+            let plane = Self.darkPlane(on: canvas)
+            for _ in 0..<frames { try canvas.draw { canvas.background(255) } }
+            if placedWhileStopped {
+                Self.whileStopped(canvas) {
+                    Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 51)
+                    if closesWhileStopped {
+                        canvas.blendMode(.multiply)
+                        canvas.blendMode(.blend)
+                    }
+                }
+                try canvas.draw {}
+            } else {
+                try canvas.draw { Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 51) }
+            }
+            return try Self.shown(canvas)
+        }
+        // ずれの大きい枚 (横は 2・7、縦は 2・8)
+        for frames in [2, 7, 8] {
+            let inFrame = try shown(frames: frames, placedWhileStopped: false)
+            #expect(inFrame[70, 60].red < 255, "前提: 図形が出ている (\(frames) 枚)")
+            let carried = try shown(frames: frames, placedWhileStopped: true)
+            #expect(carried == inFrame, "フレームの中で置いた絵と違う (\(frames) 枚)")
+        }
+    }
+
+    /// ``edges(of:)`` を、図形の中 (70, 70) の暗さで割ったもの。**図形が履歴と混ざって薄いとき**に使う —
+    /// 暗い所の量は暗さに比例するので、割らないと縁のずれも同じ割合で縮んで見える。
+    private static func scaledEdges(of image: DisplayImage) -> (left: Double, top: Double) {
+        let inside = 1 - Double(image[70, 70].red) / 255
+        let edges = edges(of: image)
+        return (50 - (50 - edges.left) / inside, 60 - (60 - edges.top) / inside)
+    }
+
+    /// 止まっている間に描き切らせた図形は、**描く先の上で、最後のフレームに描いた図形と同じ絵になる**
+    /// (反証の指摘 1〜3)。
+    ///
+    /// 描く先に残った絵は、次に描くフレームの終わりの拡大が描く先の全体を同じ量 (次のフレームの揺らし)
+    /// だけ戻して広げる。だから描く先で同じ絵なら、追い付きでも、塗り直さない次のフレームでも、効果の
+    /// 前の控え (同じ列・同じ値で描く) でも、奥行き (同じ描き切りが書く) でも、最後のフレームの絵と
+    /// 同じに扱われる。直す前は次のフレームの揺らしで描いたので、ここが食い違った。
+    @Test(
+        "時間方向: 止まっている間に描き切らせた図形は、描く先の上で最後のフレームに描いた図形と同じ絵になる",
+        arguments: JitteredPath.allCases, [2, 7, 8])
+    func temporalShapesDrawnWhileStoppedMatchTheLastFrameOnTheTarget(
+        path: JitteredPath, frames: Int
+    ) throws {
+        func drawn(placedWhileStopped: Bool) throws -> PixelBuffer {
+            let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+            let plane = Self.darkPlane(on: canvas)
+            for index in 0..<frames {
+                try canvas.draw {
+                    canvas.background(255)
+                    if !placedWhileStopped && index == frames - 1 {
+                        Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 51)
+                    }
+                }
+            }
+            if placedWhileStopped {
+                Self.whileStopped(canvas) {
+                    Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 51)
+                    _ = canvas.get(0, 0)
+                }
+            }
+            return try canvas.target.readPixels()
+        }
+        let lastFrame = try drawn(placedWhileStopped: false)
+        #expect(lastFrame[35, 30].red < 0.01, "前提: 図形が描く先にある")
+        #expect(try drawn(placedWhileStopped: true) == lastFrame, "最後のフレームに描いた絵と違う")
+    }
+
+    /// 止まっている間に描き切らせた図形は、**塗り直さない次のフレームでは、描く先に残った絵と一緒に
+    /// 揺らしの差だけずれる** (反証の指摘 1)。時間方向の代償で、直さない。
+    ///
+    /// 時間方向の拡大は履歴を位置で合わせ直さない (`Builtin.metal` の `kEffectAccumulate` は、その回の
+    /// 揺らしを戻して広げた絵と前の結果を混ぜるだけ)。だから塗り直さないスケッチでは、前のフレームに
+    /// 描いて描く先に残った絵は、次のフレームで「描いたときの揺らし − 次の揺らし」だけずれて混ざる。
+    /// 止まっている間に描き切らせた図形もその 1 つになる (直す前は、止まっている間の絵の上で同じ大きさ
+    /// だけ逆にずれていた)。ここでは、その量が 2 つの揺らしの差 (出す画素へ 2 倍) どおりであることを
+    /// 固定する。基本図形だけを見る — 縁を画素の内側で塗り分けるので、ずれがそのまま縁に出る。
+    @Test(
+        "時間方向: 止まっている間に描き切らせた図形は、塗り直さない次のフレームで、残った絵と同じだけずれる",
+        arguments: [2, 7, 8])
+    func temporalShapesDrawnWhileStoppedShiftWithTheOldPictureNextFrame(frames: Int) throws {
+        func edges(placedWhileStopped: Bool) throws -> (
+            edges: (left: Double, top: Double), shift: SIMD2<Float>
+        ) {
+            let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+            let plane = Self.darkPlane(on: canvas)
+            for _ in 0..<frames { try canvas.draw { canvas.background(255) } }
+            let stage = try #require(canvas.upscaleStage)
+            // 描く先に残った絵が次のフレームでずれる量 (出す画素)
+            let shift = (stage.lastJitter - stage.jitter) * 2
+            if placedWhileStopped {
+                Self.whileStopped(canvas) {
+                    Self.placeDark(.form, on: canvas, plane: plane, x: 40, y: 50)
+                    _ = canvas.get(0, 0)
+                }
+                try canvas.draw {}
+            } else {
+                // 比べる相手: 次のフレームの中で同じ図形を描く (ずれない)
+                try canvas.draw { Self.placeDark(.form, on: canvas, plane: plane, x: 40, y: 50) }
+            }
+            return (Self.scaledEdges(of: try Self.shown(canvas)), shift)
+        }
+        let (inFrame, shift) = try edges(placedWhileStopped: false)
+        let (stopped, _) = try edges(placedWhileStopped: true)
+        let moved = (left: stopped.left - inFrame.left, top: stopped.top - inFrame.top)
+
+        #expect(
+            abs(moved.left - Double(shift.x)) < 0.35,
+            "横のずれが揺らしの差と違う: \(moved.left) (揺らしの差 \(shift.x))")
+        #expect(
+            abs(moved.top - Double(shift.y)) < 0.35,
+            "縦のずれが揺らしの差と違う: \(moved.top) (揺らしの差 \(shift.y))")
+    }
+
+    /// 完了条件 4 — フレームの外の描き切りの揺らしが変わるのは、時間方向で 1 枚以上広げた後だけである。
+    /// 空間方向は揺らさず、1 枚も広げる前の時間方向は最後のフレームの揺らしが次のものと同じなので、
+    /// 落とす行列はバイト単位でこれまでと同じになる。
+    @Test("空間方向と 1 枚も広げる前の時間方向では、フレームの外の描き切りもフレームの中と同じ揺らしで描く")
+    func jitterOutsideAFrameDiffersOnlyAfterAnUpscale() throws {
+        let spatial = try Self.makeCanvas(density: 0.5, upscale: .spatial)
+        try Self.firstFrame(spatial, effects: false)
+        #expect(spatial.jitter(drawingInFrame: false) == .zero)
+        #expect(spatial.jitter(drawingInFrame: true) == .zero)
+
+        let temporal = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+        let stage = try #require(temporal.upscaleStage)
+        #expect(stage.framesScaled == 0)
+        #expect(temporal.jitter(drawingInFrame: false) == temporal.jitter(drawingInFrame: true))
+
+        // 1 枚広げた後は、フレームの外の描き切りだけが最後のフレームの揺らしで描く
+        try Self.firstFrame(temporal, effects: false)
+        #expect(temporal.jitter(drawingInFrame: true) == stage.jitter)
+        #expect(temporal.jitter(drawingInFrame: false) == stage.lastJitter)
+        #expect(stage.lastJitter != stage.jitter)
+    }
+
     // MARK: - 拡大が積めなかったフレーム
 
     /// フレームの終わりの拡大は、失敗しても投げない。**積めなかったのに「広げた」ことにしない** —

@@ -1395,7 +1395,10 @@ public final class Canvas {
     struct Batch {
         var run: Shape.Run
         var clip: ClipRect?
-        /// この列を描画先の座標へ落とす行列。
+        /// この列を描画先の座標へ落とす行列。**揺らす前のもの**で、時間方向の揺らしは描き切りが
+        /// 列ごとの値を置くときに足す (``Canvas/jittered(_:drawingInFrame:)``・[#1913])。
+        ///
+        /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
         var matrix: simd_float4x4
         /// この列に効く光が、置き場のどこから何個あるか。
         var lightRange: Range<Int>
@@ -2306,7 +2309,7 @@ public final class Canvas {
                     mode: .replace, texture: atlas.held, paint: .builtIn, source: .solid,
                     start: vertexStart, count: 6, indexStart: 0, indexCount: 0),
                 clip: style.clip,
-                matrix: jittered(viewProjection),
+                matrix: viewProjection,
                 lightRange: 0..<0,
                 material: .default,
                 viewer: viewer,
@@ -3502,7 +3505,12 @@ public final class Canvas {
         // (`applyingEffects`)
         //
         // [#1834]: https://github.com/mokume-metal/mokume/issues/1834
-        let startsFrame = passesThisFrame == 0 && (isDrawing || applyingEffects)
+        //
+        // **時間方向の揺らしも、フレームの描き切りかで選ぶ** ([#1913]・``jitter(drawingInFrame:)``)
+        //
+        // [#1913]: https://github.com/mokume-metal/mokume/issues/1913
+        let drawsInFrame = isDrawing || applyingEffects
+        let startsFrame = passesThisFrame == 0 && drawsInFrame
         let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
         // **止まっている間に変えた分は、効果を通す前の絵にも同じように加える** ([#1524])。効果を
         // 通したフレームの後、次のフレームが控えを戻すまでの間 (止まっている間のコールバック) は、
@@ -3579,7 +3587,7 @@ public final class Canvas {
                 throw .encoderUnavailable
             }
 
-            let prepared = try prepareBatches(shadow: bakedShadow)
+            let prepared = try prepareBatches(shadow: bakedShadow, drawingInFrame: drawsInFrame)
             let drawsEncoded = encodeBatches(into: encoder, prepared: prepared)
 
             drawCallsInLastFrame = hasPendingGeometry ? batches.count : 0
@@ -3698,15 +3706,15 @@ public final class Canvas {
     }
 
     /// 溜めた列の置き場を取る。列が無ければ `nil`。
-    private func prepareBatches(shadow bakedShadow: BakedShadow?) throws(RenderFailure)
-        -> PreparedBatches?
-    {
+    private func prepareBatches(
+        shadow bakedShadow: BakedShadow?, drawingInFrame: Bool
+    ) throws(RenderFailure) -> PreparedBatches? {
         guard hasPendingGeometry else { return nil }
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
         return PreparedBatches(
             geometry: try uploadGeometry(reusing: bakedShadow?.solidUploads),
-            perBatch: try uploadPerBatch(shadow: bakedShadow))
+            perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame))
     }
 
     /// 溜めた列をエンコーダへ積む。返すのは積んだ描く呼び出しの数 (``drawsEncodedInLastFrame``)。
@@ -3884,9 +3892,9 @@ public final class Canvas {
     /// 止まっている間に描き切るものを、効果を通す前の絵の控え (``EffectPipeline/carry()``) へも
     /// 描くパスを積む ([#1524])。
     ///
-    /// **描く先へのパスと同じ列・同じ置き場で描く** (``prepareBatches(shadow:)`` は 1 回だけ取る)。
-    /// 塗り直し (`background()`) は控えも塗り直す。奥行きは、描く先へのパスの前に写したもの
-    /// (``encodeCarryDepthCopy(into:)``) から始め、塗り直すなら消してから始める。引き継ぐ奥行きが
+    /// **描く先へのパスと同じ列・同じ置き場で描く** (``prepareBatches(shadow:drawingInFrame:)`` は
+    /// 1 回だけ取る)。塗り直し (`background()`) は控えも塗り直す。奥行きは、描く先へのパスの前に
+    /// 写したもの (``encodeCarryDepthCopy(into:)``) から始め、塗り直すなら消してから始める。引き継ぐ奥行きが
     /// 無い描き切りでは写していないので、`continuingDepth` を偽にして消してから始める ([#1888])。
     /// 控えは次のフレームの頭で描く先へ戻され、その入りになる。
     ///
@@ -4075,10 +4083,16 @@ public final class Canvas {
     }
 
     /// 列ごとの値と、フレームに 1 つの値 (時刻・面の大きさ・影・揺らぎ) を置く。
+    ///
+    /// - Parameter drawingInFrame: フレームの描き切りか。時間方向の揺らしを選ぶ
+    ///   (``jitter(drawingInFrame:)``・[#1913])。
+    ///
+    /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
     private func uploadPerBatch(
-        shadow bakedShadow: BakedShadow?
+        shadow bakedShadow: BakedShadow?, drawingInFrame: Bool
     ) throws(RenderFailure) -> BatchBuffers {
-        // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
+        // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入り、揺らしだけは
+        // 描き切りの時点で足す — 止まっている間に閉じた列も、描くのがどの描き切りかで揺らしが決まる
         let matrices = try matrixStorage.buffer(holding: batches.count)
         let unitsPerDrawnPixel = self.unitsPerDrawnPixel
         let readsCoverage: UInt32 = coverageSpans.isEmpty ? 0 : 1
@@ -4086,7 +4100,7 @@ public final class Canvas {
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
             var frame = FlatFrame(
-                projection: batch.matrix,
+                projection: jittered(batch.matrix, drawingInFrame: drawingInFrame),
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
                 strokeShift: Self.solidStrokeShift(width: width, height: height),
                 unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage)
