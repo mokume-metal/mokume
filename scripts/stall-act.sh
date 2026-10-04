@@ -48,7 +48,8 @@
 # GitHub ホストの門番 (render-turn) を通ってから専用機に積まれる。ジョブ単位の rerun は
 # 門番を走らせ直さないので、merge queue の render が専用機を待っている最中でも render-pr を
 # 専用機へ直に積み、先頭の render と取り合わせる。render-pr は必須ではなく、rerun しなくても
-# merge は止まらない。cancel された render-pr (stall-watch の読み分け 10 で退かせたもの) が、
+# merge は止まらない。cancel された render-pr (queue-sweep が group のできた瞬間に退かせた
+# もの・#2064、stall-watch の読み分け 10 で人が退かせたもの) が、
 # 別の check の stale-checks の巻き添えで戻ってくるのも、これで止まる。
 #
 # 検査は scripts/tests/stall_watch_test.py。

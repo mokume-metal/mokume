@@ -6,7 +6,7 @@
 ADR-0019 決定 7 は、専用機に届くきっかけを 3 つ (merge_group・同じリポジトリの PR・
 schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権限の 1 行が崩れると、理由ごと
 外れる** — しかも崩れても run は緑のままで、気付くのは専用機に想定外のものが届いた後になる。
-ここで固定するのは次の 7 つ:
+ここで固定するのは次の 10 個:
 
   1. schedule の cron は 6 時間おきで、毎時 0 分を避けている (このリポジトリの慣習)
   2. `render` (必須) と `render-pr` は schedule では起動しない — 必須チェックの結論を
@@ -24,6 +24,10 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
      しまう (#2062)
   9. 門番は GitHub ホストで、`actions: read` だけを持つ。待ちの上限は門番が自分で守り
      (job の timeout より内側)、merge_group の上限は queue の期限より手前にある
+ 10. schedule で起動する専用機のジョブは `scheduled-debug` / `scheduled-release` だけで、
+     `needs` の鎖で 1 本ずつ並び、どれも `wait` の門番の後ろにいる。門番より前に積まれた
+     定期の job を退かせないことを受け入れる根拠 — 先頭の render と並ぶのは定期の job 1 本
+     まで — がこの形である (#2064・ADR-0019 決定 7)。3 本目を足すと、ここが赤になる
 
 PyYAML は入れていない (標準の Python だけで回す) ので、`jobs:` の直下の 2 字下げの
 キーでジョブを切り、本文を行で読む。YAML の構文そのものは actionlint が見る。
@@ -67,6 +71,14 @@ def split(text):
             if job is not None:
                 jobs[job].append(ln)
     return {k: "\n".join(v) for k, v in top.items()}, {k: "\n".join(v) for k, v in jobs.items()}
+
+
+def needs(body):
+    """ジョブの `needs:` (1 つでも並びでも、名前の集合で返す)。無ければ空。"""
+    m = re.search(r"(?m)^    needs:\s*(.+?)\s*$", body)
+    if not m:
+        return set()
+    return {n.strip() for n in m.group(1).strip("[]").split(",") if n.strip()}
 
 
 def condition(body):
@@ -125,6 +137,46 @@ class RenderWorkflowTest(unittest.TestCase):
         # always() ではなく !cancelled() — cancel された run で専用機に積まない
         self.assertIn("!cancelled()", condition(self.jobs["scheduled-release"]))
         self.assertNotIn("always()", condition(self.jobs["scheduled-release"]))
+
+    def test_定期の専用機のジョブは_1_本ずつ並び_wait_の門番の後ろにいる(self):
+        # schedule で起動する専用機のジョブを、名前の一覧に頼らず本文から拾う
+        scheduled = {
+            name
+            for name, body in self.jobs.items()
+            if "runs-on: [self-hosted" in body
+            and "github.event_name == 'schedule'" in condition(body)
+        }
+        self.assertEqual(scheduled, set(SCHEDULED_RUNNER_JOBS))
+
+        def ancestors(name):
+            seen, todo = set(), list(needs(self.jobs[name]))
+            while todo:
+                n = todo.pop()
+                if n not in seen:
+                    seen.add(n)
+                    todo.extend(needs(self.jobs[n]))
+            return seen
+
+        # どの 2 本も、片方がもう片方の後に積まれる (1 つの run の中で同時に queue に並ばない)
+        names = sorted(scheduled)
+        for i, a in enumerate(names):
+            for b in names[i + 1 :]:
+                self.assertTrue(
+                    a in ancestors(b) or b in ancestors(a), f"{a} と {b} が needs で並んでいない"
+                )
+
+        # どれも、直前の needs に wait の門番を持つ (merge_group の run が残る間は積まれない)
+        def waits(gate):
+            body = self.jobs[gate]
+            return "schedule) bash scripts/render-turn.sh wait" in body or (
+                "run: bash scripts/render-turn.sh wait" in body
+            )
+
+        for name in names:
+            self.assertTrue(
+                any(waits(g) for g in needs(self.jobs[name]) if g in TURN_JOBS),
+                f"{name} の直前に wait の門番が無い",
+            )
 
     def test_専用機のジョブは権限を広げず秘密を持たない(self):
         # 専用機のジョブごとに permissions を書くと、そこで広げられる。workflow 既定の
