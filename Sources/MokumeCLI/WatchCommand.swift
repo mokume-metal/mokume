@@ -141,7 +141,7 @@ enum WatchCommand {
     /// 初めて呼んだ回に必ず空振りし、道具ごとに 1 回ずつ起動し直すことになる ([#464])。
     /// 置くのは要求を置く側 (`Facets.exchange`) だが、それでは間に合わない。
     ///
-    /// **`viewport` は入れない。** あれは在ると窓を開かず共有面へ差し出す区画なので、
+    /// **`viewport` は入れない。** 見張りの子はあれが在ると窓を開かず共有面へ差し出すので、
     /// 窓が出せなかった回に置くと絵がどこにも出ない ([ADR-0032] 決定 1)。置く場所は
     /// `openViewer` の中が正しい。
     ///
@@ -180,8 +180,9 @@ enum WatchCommand {
         allowThrottling()
         finish(session)
         viewer?.close()
-        // **置いていかない。** 区画は「画面の出口は共有面」という合図なので、残すと
-        // 次に `run` で走らせたスケッチまで窓を開かなくなる — しかも黙って開かない
+        // **置いていかない。** 区画は面の番号を置く場所で、置いた見張りが居なくなれば
+        // 指す先も無い。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
+        // 窓の持ち主から起こされていない」と名乗らせることになる (#2028)
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
         for facet in created { try? FileManager.default.removeItem(at: facet) }
     }
@@ -308,8 +309,7 @@ enum WatchCommand {
 
     /// 与えた基準の下の、絵を渡す区画の場所。
     ///
-    /// **綴りはここ 1 つ。** 置くのは見張りだが、`run` も「区画が残っていないか」を同じ
-    /// 場所へ見に行く — 別々に組むと、片方だけが基準を取り違えても誰も気付けない
+    /// **綴りはここ 1 つ。** 区画の基準を取り違えると、子は見張りと別の場所を見る
     /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
     static func viewportFacet(under base: URL) -> URL {
         WorkDirectory.facet(StartupReads.viewport.key, under: base)

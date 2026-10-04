@@ -107,8 +107,12 @@ final class WatchSession {
                     // 観測は刻印を応答へそのまま載せる。読み手は刻印の変化で「保存した
                     // 内容が反映されたか」を待ち時間ではなく判定できる。組み立ては
                     // RunCommand が持つ — 子へ渡す環境の作り方を 2 通りにしない
+                    //
+                    // **窓の持ち主は自分だと伝える** (ADR-0032 決定 1)。子が共有面へ差し出し
+                    // 上の管を読むのは、これと区画 `viewport` が揃ったときだけである。区画は
+                    // 窓を出せたときだけ置くので、出せなかった回の子は自分の窓を開く (#2028)
                     process.environment = RunCommand.childEnvironment(
-                        stamp: stamp, reportingRate: rate)
+                        stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName)
                     return (try? process.run()) == nil ? nil : process
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
@@ -195,6 +199,9 @@ final class WatchSession {
     let context: BuildContext
     /// 名乗るときの構成の名前。選ばれていなければ既定の名前。
     var configurationName: String { context.configurationName }
+
+    /// 子の窓を持つ道具としての名乗り (`StartupReads.viewportOwner` の値)。
+    nonisolated static let viewportOwnerName = "\(Command.name) \(Command.Verb.watch.rawValue)"
     private var hooks: Hooks
 
     /// いま走らせている子。

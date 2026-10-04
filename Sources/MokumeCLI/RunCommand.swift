@@ -177,16 +177,21 @@ enum RunCommand {
             capturing: true, errors: .discard)
     }
 
-    /// 画面の出口が共有する面になっていることを名乗る 1 行。区画が無ければ `nil`。
+    /// 見張りの区画が残っている場所で `run` したときに名乗る 1 行。区画が無ければ `nil`。
     ///
-    /// **黙って窓が出ないことを許さない。** 区画が在ればスケッチは窓を開かず共有面へ
-    /// 差し出す。置いたのはふつう見張りで、見張りは終わるときに畳む — 残っているのは
-    /// 畳めずに終わったときなので、そう言わないと「起動したのに何も出ない」になる。
+    /// **走らせるスケッチのライブラリの版で、起きることが違う** ([#2028])。いまの
+    /// ライブラリは窓の持ち主の合図 (`StartupReads.viewportOwner`) が無ければ区画を見ずに
+    /// 自分の窓を開き、そのことを自分で名乗る。合図を知らない古いライブラリは区画だけを
+    /// 見て共有面へ差し出すので、**窓が出ず、ライブラリの側からは何も言わない** — 黙って
+    /// 窓が出ないことを許さない (#791) ために、道具の側でも 1 行言う。いまのライブラリと
+    /// 名乗りが 2 行重なるのは、版を推し量って黙るより害が小さい (どの版で変わったかを
+    /// 道具は版の番号から言い切れない)。
     ///
     /// **見に行く先は、見張りが置く先と同じ計算から出す。** ここが自前で場所を組んで
-    /// いたために、`MOKUME_WORK_DIR` を与えた環境ではまさにその「起動したのに何も
-    /// 出ない」が名乗られないまま起きていた
-    /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
+    /// いたために、`MOKUME_WORK_DIR` を与えた環境では「起動したのに何も出ない」が
+    /// 名乗られないまま起きていた ([#791](https://github.com/mokume-metal/mokume/issues/791))。
+    ///
+    /// [#2028]: https://github.com/mokume-metal/mokume/issues/2028
     static func sharedSurfaceNotice(
         for invocation: Invocation, workDirectory: URL? = WorkDirectory.given
     ) -> String? {
@@ -195,8 +200,9 @@ enum RunCommand {
         guard FileManager.default.fileExists(atPath: facet.path) else { return nil }
         // **在処をそのまま出す。** 基準は環境変数が動かせるので、`.mokume/…` とだけ
         // 言うとスケッチの場所を探して「無い」と読まれる (#791)
-        return "The display output goes to a shared surface (\(facet.path) is there) —"
-            + " no window opens. Remove that facet to get a window"
+        return "\(facet.path) is there (left by mokume watch). A sketch on the current "
+            + "mokume opens its own window anyway; one on an older mokume hands its frames "
+            + "there and no window opens — update the mokume it depends on, or remove that facet"
     }
 
     /// 1 回の作り直しの結果。
@@ -381,7 +387,7 @@ enum RunCommand {
 
     /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。
     ///
-    /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:)``)。
+    /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:viewportOwner:)``)。
     ///   **何を載せるかは口が決める** — `run` は速さの名乗りと × の確認を、`render` は書き出しの
     ///   頼みを載せる。待ち方と合図の運び方は口によらず同じなので、ここは 1 本にする。
     /// - Parameter signals: 道具が受けて子へ渡す合図。既定は ``stopSignals(sigint:)`` で、
@@ -464,26 +470,35 @@ enum RunCommand {
     ///
     /// **読むのではなく運ぶ。** 親の環境をそのまま複製し、道具が決めるものだけを載せる —
     /// 世代の刻印 (観測が応答へ載せる) と、速さの名乗り (一緒に出す構成の名前)、窓の × を
-    /// 確かめさせる合図、そして書き出しの頼み。渡されなかったものは**置かない**ので、受け取る
-    /// 側は「無ければ黙る」だけで済む。
+    /// 確かめさせる合図、書き出しの頼み、そして窓の持ち主。渡されなかったものは**置かない**
+    /// ので、受け取る側は「無ければ黙る」だけで済む。
     ///
     /// - Parameter confirmingCloseFor: 窓の × を押した人に確かめさせるなら、**自分の
     ///   名乗り**。見張り (`watch`) は渡さない — 子は窓を持たず、確認は道具の側が出す
     ///   ([ADR-0032] 決定 1)。
     /// - Parameter rendering: 窓を開かずに書き出させるなら、その頼み (`render` だけが渡す)。
     ///   値の形は読み手と同じ型 (`RenderRequest`) が組むので、ここでは綴らない。
+    /// - Parameter viewportOwner: 子の窓を道具が持つなら、**自分の名乗り** (`watch` だけが
+    ///   渡す)。子は区画 `viewport` も在れば窓を開かずに共有面へ差し出し、標準入力の管を
+    ///   読む ([ADR-0032] 決定 1・4)。
+    ///
+    ///   **渡さなければ、親の環境に在っても落とす。** 窓の持ち主は起こした道具にしか
+    ///   決められないので、見張りの子が起こした孫や、見張りの子の環境から打った `run` へ
+    ///   継がせると、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る
+    ///   ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func childEnvironment(
         _ base: [String: String] = ProcessInfo.processInfo.environment,
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
-        rendering request: RenderRequest? = nil
+        rendering request: RenderRequest? = nil, viewportOwner: String? = nil
     ) -> [String: String] {
         var environment = base
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
         if let tool { environment[StartupReads.closeConfirmation.key] = tool }
         if let request { environment[StartupReads.render.key] = request.environmentValue }
+        environment[StartupReads.viewportOwner.key] = viewportOwner
         return environment
     }
 

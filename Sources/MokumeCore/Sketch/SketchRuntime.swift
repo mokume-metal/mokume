@@ -155,8 +155,11 @@ public final class SketchRuntime {
     private let observer: FrameObserver?
     /// 外から送られる入力の受け口。区画が無ければ `nil`。
     private let inbox: InputInbox?
-    /// 道具の窓が拾った出来事の受け口。見張りから起こされたときだけ在る。
-    private let relayed: StandardInputEvents?
+    /// 道具の窓が拾った出来事の受け口。**窓を持つ道具に起こされた ``SketchApplication`` が
+    /// 渡したときだけ在る** (``relayToolInput(from:)``)。窓を持たない `SketchRuntime` は
+    /// 共有面へ差し出さないので、標準入力に触らない
+    /// ([#2024](https://github.com/mokume-metal/mokume/issues/2024))。
+    private var relayed: StandardInputEvents?
     /// つまみの面 (区画が在るときだけ働く)。
     private let params: ParamSurface?
     /// 合わせた値の保存。**区画とは無関係に既定で効く** (ADR-0030 決定 6)。
@@ -274,7 +277,9 @@ public final class SketchRuntime {
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
-        self.relayed = StandardInputEvents.makeIfDriven()
+        // **管はここで開かない。** 開いてよいかは出口で決まり、出口を決めるのは窓を持つ
+        // 側である (``relayToolInput(from:)``・#2024)
+        self.relayed = nil
         // 索引は 1 度だけ引き、保存と面と窓が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         self.paramRegistry = registry
@@ -666,11 +671,23 @@ public final class SketchRuntime {
         paramStore?.tick()
     }
 
+    /// 道具の窓が拾った出来事を、管から受け始める。
+    ///
+    /// **呼ぶのは、窓を持つ道具に起こされ、区画も在った ``SketchApplication`` だけである**
+    /// ([ADR-0032] 決定 1・4)。共有面を用意できずに窓へ倒れた回も呼ぶ — 道具が去ったことに
+    /// 気付く口はこの管しか無い。書き出す経路と窓を持たない `SketchRuntime` は呼ばない
+    /// ので、標準入力に触らず、閉じていても終わらない (#2024・#2025)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    func relayToolInput(from events: StandardInputEvents) {
+        relayed = events
+    }
+
     /// 起こした道具が居なくなっていたら 1 度だけ `true` を返す (``StandardInputEvents/takeDeparture()``)。
     ///
     /// **見張りから起こされていなければ、常に `false`。** 管を読むのはそのときだけなので
-    /// (``StandardInputEvents/makeIfDriven(by:descriptor:)``)、`mokume run` や直に走らせた子の
-    /// 標準入力 (端末) が閉じても終わらない。
+    /// (``relayToolInput(from:)``)、`mokume run`・`mokume render` や直に走らせた子の
+    /// 標準入力 (端末・閉じた入力) が閉じても終わらない。
     func takeDriverDeparture() -> Bool {
         relayed?.takeDeparture() ?? false
     }

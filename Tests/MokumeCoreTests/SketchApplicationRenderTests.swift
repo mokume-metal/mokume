@@ -214,7 +214,9 @@ struct SketchApplicationRenderTests {
     // MARK: - 窓を開かない (完了条件 5)
 
     /// 区画 `viewport` は見張りが畳めずに終わると残る。残っていても、書き出す経路は共有面へ
-    /// 差し出さない — 面の番号の名乗り (manifest) も置かない。
+    /// 差し出さない — 面の番号の名乗り (manifest) も置かない。**窓を持つ道具の合図が来ていても
+    /// 同じである** — 書き出す経路は区画と合図より先に決まっている (#2025)。区画を本番と同じ
+    /// 場所へ置く形は `LaunchedByToolTests` が見る。
     @Test("書き出す経路は窓を開かず、区画 viewport が残っていても共有面へ差し出さない")
     func renderingOpensNoWindowEvenWithAViewportFacet() async throws {
         try await withTemporaryDirectory("mokume-render-headless") { directory in
@@ -227,7 +229,7 @@ struct SketchApplicationRenderTests {
             let windowsBefore = NSApplication.shared.windows.count
 
             let application = try makeApplication(Sweep(), request, ending)
-            application.resolveOutlet(at: facet)
+            application.resolveOutlet(at: facet, owner: "mokume watch")
             application.didFinishLaunching()
             fire(application, times: 5)
 

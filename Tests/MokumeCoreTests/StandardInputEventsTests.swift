@@ -222,20 +222,36 @@ struct StandardInputEventsTests {
 
     /// 直に走らせた子の標準入力 (端末) を横取りしないことは、**合図が 1 つ**であること
     /// から従う ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1・4)。
-    @Test("道具が動かしていなければ、標準入力に触らない")
-    func staysAwayWhenNotDriven() {
-        #expect(StandardInputEvents.makeIfDriven(by: false) == nil)
-        #expect(StandardInputEvents.makeIfDriven(by: true) != nil)
+    /// 管を作るのは出口を共有面に決めた `SketchApplication` だけで、起こし方を読むのは
+    /// ``SharedFrameSurface/launchOwner`` 1 つである。
+    ///
+    /// **区画の在る無しは合図にならない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
+    /// 区画は同じ場所の誰からも見えるので、在るだけで「道具に起こされた」と読むと、居合わせた
+    /// 実行が道具の窓と管を奪う。区画が在っても合図が無ければ、共有面へは差し出さない。
+    @Test("合図は窓を持つ道具が渡す名乗りで、区画が在るだけでは共有面にならない")
+    func theSignalIsTheOwnerTheToolPasses() throws {
+        let key = StartupReads.viewportOwner.key
+        #expect(SharedFrameSurface.owner(environment: [:]) == nil)
+        #expect(SharedFrameSurface.owner(environment: [key: "  "]) == nil, "空白だけの名乗りを合図と読んだ")
+        #expect(SharedFrameSurface.owner(environment: [key: " mokume watch "]) == "mokume watch")
+
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        #expect(!SharedFrameSurface.isEnabled(at: facet, owner: nil))
+        #expect(!SharedFrameSurface.isEnabled(at: facet, owner: "mokume watch"), "区画が無いのに共有面にした")
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: facet) }
+        #expect(!SharedFrameSurface.isEnabled(at: facet, owner: nil), "区画が在るだけで道具に起こされたと読んだ")
+        #expect(SharedFrameSurface.isEnabled(at: facet, owner: "mokume watch"))
     }
 
-    /// 合図そのものは**区画が在るかどうか**で、見る場所は 1 つに寄せてある。
-    @Test("合図は、画面の出口が共有する面になっていること")
-    func theSignalIsTheViewportFacet() throws {
-        let absent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-absent-\(UUID().uuidString)", isDirectory: true)
-        #expect(!SharedFrameSurface.isEnabled(at: absent))
-        try FileManager.default.createDirectory(at: absent, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: absent) }
-        #expect(SharedFrameSurface.isEnabled(at: absent))
+    /// **合図の名前と出どころは一覧が正典** (#380)。道具が決め、環境変数で子へ渡す —
+    /// `StartupReads.Decider.tool` の定義どおりである。
+    @Test("合図は、道具が環境変数で渡すものとして一覧に載っている")
+    func theSignalIsListedAsTheToolsEnvironmentVariable() {
+        let entry = StartupReads.viewportOwner
+        #expect(entry.origin == .environment)
+        #expect(entry.decidedBy == .tool)
+        #expect(StartupReads.all.contains(entry))
     }
 }
