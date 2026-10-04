@@ -22,8 +22,7 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
   8. 専用機のジョブはすべて門番 (`render-turn` / `scheduled-release-turn`) の後に積まれ、
      門番が赤でも走る (`!cancelled()`)。render が skipped になると必須チェックを満たして
      しまう (#2062)
-  9. 門番は GitHub ホストで、`actions: read` だけを持つ。merge_group の待ちの上限は
-     queue の期限より短い
+  9. 門番は GitHub ホストで、`actions: read` だけを持つ
 
 PyYAML は入れていない (標準の Python だけで回す) ので、`jobs:` の直下の 2 字下げの
 キーでジョブを切り、本文を行で読む。YAML の構文そのものは actionlint が見る。
@@ -39,8 +38,6 @@ WORKFLOW = REPO / ".github" / "workflows" / "render.yml"
 
 RUNNER_JOBS = ("render", "render-pr", "scheduled-debug", "scheduled-release")
 TURN_JOBS = ("render-turn", "scheduled-release-turn")
-TURN_SCRIPT = REPO / "scripts" / "render-turn.sh"
-RULESET = REPO / ".github" / "rulesets" / "main-protection.json"
 SCHEDULED_RUNNER_JOBS = ("scheduled-debug", "scheduled-release")
 
 
@@ -121,8 +118,10 @@ class RenderWorkflowTest(unittest.TestCase):
             r"(?m)^    needs: \[scheduled-debug, scheduled-release-turn\]\s*$",
         )
         self.assertRegex(self.jobs["scheduled-release-turn"], r"(?m)^    needs: scheduled-debug\s*$")
-        # debug が赤でも release は走らせる。always() が無いと skipped になって赤を覆い隠す
-        self.assertIn("always()", condition(self.jobs["scheduled-release"]))
+        # debug が赤でも release は走らせる。状態の関数が無いと skipped になって赤を覆い隠す。
+        # always() ではなく !cancelled() — cancel された run で専用機に積まない
+        self.assertIn("!cancelled()", condition(self.jobs["scheduled-release"]))
+        self.assertNotIn("always()", condition(self.jobs["scheduled-release"]))
 
     def test_専用機のジョブは権限を広げず秘密を持たない(self):
         # 専用機のジョブごとに permissions を書くと、そこで広げられる。workflow 既定の
@@ -165,9 +164,12 @@ class RenderWorkflowTest(unittest.TestCase):
     def test_門番が赤でも専用機のジョブは走る(self):
         # needs が落ちると、if に状態の関数が無いジョブは skipped になる。render の skipped は
         # 必須チェックを満たすので、描かずに merge される
+        # always() ではなく !cancelled() — always() は cancel された run (queue-sweep が捨てた
+        # group など) でも専用機に積み、取り合いを増やす
         for name in RUNNER_JOBS:
             cond = condition(self.jobs[name])
-            self.assertTrue("!cancelled()" in cond or "always()" in cond, name)
+            self.assertIn("!cancelled()", cond, name)
+            self.assertNotIn("always()", cond, name)
         # render は門番の結論を読まない。読めば、門番の出力ひとつで必須の検査が飛ぶ
         self.assertNotIn("needs.", condition(self.jobs["render"]))
         # render は捨てられた group (queue-sweep が cancel した run) で専用機に積まない
@@ -189,16 +191,6 @@ class RenderWorkflowTest(unittest.TestCase):
             self.assertRegex(body, r"actions:\s*read", name)
             self.assertNotRegex(body, r":\s*write", name)
             self.assertIn("scripts/render-turn.sh", body, name)
-
-    def test_merge_group_の待ちの上限は_queue_の期限より短い(self):
-        # 期限まで待てば、自分の render が走る前に弾かれる
-        script = TURN_SCRIPT.read_text(encoding="utf-8")
-        limit = re.search(r"mode=merge_group base=\$2 limit_default=(\d+)", script)
-        self.assertIsNotNone(limit)
-        timeout = re.search(r'"check_response_timeout_minutes":\s*(\d+)', RULESET.read_text(encoding="utf-8"))
-        self.assertIsNotNone(timeout)
-        # 自分の render (7〜8 分) が走りきる余地を残す
-        self.assertLessEqual(int(limit.group(1)) + 15, int(timeout.group(1)))
 
 
 class SplitterTest(unittest.TestCase):

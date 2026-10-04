@@ -4,7 +4,7 @@
 #
 # 専用機へ job を積む順番を決める門番 (#2062)。
 #
-#   render-turn.sh merge_group <base sha>
+#   render-turn.sh merge_group <base sha> [<base ref>]
 #   render-turn.sh yield
 #   render-turn.sh wait
 #
@@ -22,8 +22,8 @@
 # ## mode
 #
 #   merge_group  自分の base sha を head に持つ merge_group の run (1 つ前の group) が
-#                終わるまで待つ。無ければ自分が先頭なので待たない。group は queue の順に
-#                1 本ずつ専用機に積まれる
+#                終わるまで待つ。base sha が base ref (既定 refs/heads/main) の先端なら、
+#                自分が先頭なので待たない。group は queue の順に 1 本ずつ専用機に積まれる
 #   yield        merge_group の run が 1 本でも終わっていなければ go=false を出して抜ける
 #                (render-pr は見送る。必須ではないので merge の可否は変わらない)
 #   wait         merge_group の run が 1 本でも終わっていなければ、終わるまで待つ
@@ -33,13 +33,25 @@
 # in_progress なので、「専用機に積まれる予定の render」まで数えられる。job で見ると、
 # 前の render が終わってから次の門番が気付くまでの隙間に render-pr が入り込む。
 #
+# ## 前の group の run が見つからないとき
+#
+# 先頭でないのに前の group の run が見つからないのは、queue が group をまとめて作り直した
+# 直後で、前の group の run がまだ作られていないときである。**先頭と取り違えて通すと、
+# 組み直しの場面そのもので順番が崩れる** ので、base ref の先端と比べて分ける。先頭でなく
+# run も無いままなら、作られるのを猶予 (5 分) だけ待ってから通す。
+#
 # ## 上限
 #
-# merge_group は 40 分、wait は 60 分 (RENDER_TURN_LIMIT で差し替え)。越えたら通す。
-# merge_group の上限は queue の期限 (.github/rulesets/main-protection.json の
-# check_response_timeout_minutes) より短くなければならない — 越えて待てば、自分の
-# render が走る前に期限で弾かれる。render 1 本は 7〜8 分なので、5 番目の group でも
-# 前の 4 本を約 30 分待って自分の 8 分を足し、60 分に収まる。
+# **merge_group は上限で放さない。** 前の group が終わらないまま待ちが長引くのは、専用機が
+# 他の job (最大 30 分) を走らせているときで、そこで放すと後ろの group がそろって専用機に
+# 積まれ、期限に近い前の group と取り合う — 元の症状に戻る。前の group の run は、自分の
+# render が 30 分で切れ、queue から外れれば queue-sweep が cancel するので、待ちには終わりが
+# ある。最後の歯止めは render.yml の門番の timeout-minutes である。
+#
+# wait (定期の検査) は 60 分 (RENDER_TURN_LIMIT で差し替え) で通す。定期の検査は queue の
+# 期限を持たないが、走らないまま日をまたぐほうが重い。
+#
+# 待った時間は壁時計 ($SECONDS) で測る。sleep の合計で数えると API の待ちが入らない。
 #
 # ## 判定できないときは通す
 #
@@ -68,11 +80,11 @@ case "${1:-}" in
     exit 0
     ;;
   merge_group)
-    [ $# -eq 2 ] && [ -n "$2" ] || {
+    { [ $# -eq 2 ] || [ $# -eq 3 ]; } && [ -n "$2" ] || {
       usage
       exit 2
     }
-    mode=merge_group base=$2 limit_default=40
+    mode=merge_group base=$2 base_ref=${3:-refs/heads/main} limit_default=""
     ;;
   yield)
     [ $# -eq 1 ] || {
@@ -97,7 +109,14 @@ esac
 REPO="$(this_repo)"
 RUNS="repos/$REPO/actions/workflows/render.yml/runs"
 INTERVAL="${RENDER_TURN_INTERVAL:-30}"
-LIMIT_SECONDS=$((${RENDER_TURN_LIMIT:-$limit_default} * 60))
+# merge_group は上限を持たない (上の「上限」)
+if [ "$mode" = merge_group ]; then
+  LIMIT_SECONDS=""
+else
+  LIMIT_SECONDS=$((${RENDER_TURN_LIMIT:-$limit_default} * 60))
+fi
+# 先頭でないのに前の group の run が無いとき、作られるのを待つ猶予 (秒)
+MISSING_GRACE="${RENDER_TURN_MISSING_GRACE:-300}"
 
 # 「まだ終わっていない」run の status。一覧 API の status は 1 つしか取らないので並べて引く
 # (queue-sweep.sh と同じ)
@@ -119,14 +138,23 @@ unreadable() { # $1=何を読めなかったか
   finish true
 }
 
-# 終わっていない run を 1 行ずつ「<id> <head_branch>」で出す。読めなければ非 0
+# 待つ相手を 1 行ずつ「<id> <head_branch>」で出す。読めなければ非 0
 blocking_runs() {
-  local active got out=""
+  local active got out="" tip
   case "$mode" in
     merge_group)
       got=$(gh api "$RUNS?event=merge_group&head_sha=$base&per_page=100" \
-        --jq '.workflow_runs[] | select(.status != "completed") | "\(.id) \(.head_branch)"') || return 1
-      out=$got
+        --jq '.workflow_runs[] | "\(.id) \(.status) \(.head_branch)"') || return 1
+      if [ -z "$got" ]; then
+        # 前の group の run が無い。先頭か、まだ作られていないかを base ref の先端で分ける
+        tip=$(gh api "repos/$REPO/git/matching-refs/${base_ref#refs/}" \
+          --jq ".[] | select(.ref == \"$base_ref\") | .object.sha") || return 1
+        if [ "$tip" != "$base" ] && [ "$SECONDS" -lt "$MISSING_GRACE" ]; then
+          echo "- (前の group の run がまだ作られていない: head_sha=${base:0:8})"
+        fi
+        return 0
+      fi
+      out=$(awk '$2 != "completed" { print $1, $3 }' <<<"$got")
       ;;
     *)
       for active in $ACTIVE_STATUSES; do
@@ -139,14 +167,13 @@ blocking_runs() {
   printf '%s' "$out" | sed '/^$/d' | sort -u
 }
 
-waited=0
 while :; do
   blockers=$(blocking_runs) || unreadable "merge queue の render の run"
 
   if [ -z "$blockers" ]; then
     case "$mode" in
-      merge_group) say "前の group の render は終わっている (または自分が先頭)。$((waited / 60)) 分待った" ;;
-      *) say "merge queue の render は走っていない。$((waited / 60)) 分待った" ;;
+      merge_group) say "前の group の render は終わっている (または自分が先頭)。$((SECONDS / 60)) 分待った" ;;
+      *) say "merge queue の render は走っていない。$((SECONDS / 60)) 分待った" ;;
     esac
     finish true
   fi
@@ -157,7 +184,7 @@ while :; do
     finish false
   fi
 
-  if [ "$waited" -ge "$LIMIT_SECONDS" ]; then
+  if [ -n "$LIMIT_SECONDS" ] && [ "$SECONDS" -ge "$LIMIT_SECONDS" ]; then
     echo "::warning::$((LIMIT_SECONDS / 60)) 分待っても順番が来ないので通す (#2062)"
     say "$((LIMIT_SECONDS / 60)) 分待っても順番が来ないので通した。待っていた相手:"
     say "$(sed 's/^/- run /' <<<"$blockers")"
@@ -166,5 +193,4 @@ while :; do
 
   echo "待っている相手: $(tr '\n' ' ' <<<"$blockers")"
   sleep "$INTERVAL"
-  waited=$((waited + INTERVAL))
 done

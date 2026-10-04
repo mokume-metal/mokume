@@ -199,8 +199,8 @@ SPDX-License-Identifier: MIT
 
 拾う順は GitHub が決めるので変えられない。そこで**専用機に同時に積む job を絞る**。専用機の各ジョブの前に GitHub ホストの門番ジョブ (`render-turn`・判断は `scripts/render-turn.sh`) を置く:
 
-- `render` は、1 つ前の group の run が終わるまで積まない。group は queue の順に 1 本ずつ専用機に載る。待つ上限 (40 分) は queue の期限より短く保つ
-- `render-pr` は、merge_group の run が 1 本でも残っていれば見送る。必須ではないので merge の可否は変わらない (代償: queue が混んでいる間は、PR の時点で早く気付く情報が出ない)
+- `render` は、1 つ前の group の run が終わるまで積まない。group は queue の順に 1 本ずつ専用機に載る。**上限で放さない** — 放すと後ろの group がそろって積まれ、期限に近い前の group と取り合って元の症状に戻る。前の group の run は 30 分で切れるか、queue から外れて cancel されるので、待ちには終わりがある
+- `render-pr` は、merge_group の run が 1 本でも残っていれば見送る。必須ではないので merge の可否は変わらない (代償: queue が混んでいる間は、PR の時点で早く気付く情報が出ない。**例の絵の前後の比較 (#1986) を持つのは `render-pr` だけ**なので、実装だけが変わって絵が古くなったことの名指しもその間は出ない。見送りは run の要約に名乗る)
 - 定期の検査 (D) は、merge_group の run が残っている間は待つ
 
 門番は `actions: read` だけを持ち、GitHub ホストで走る。**専用機のジョブは権限も秘密も持たないまま**で、上の前提は動かない。門番が赤でも専用機のジョブは走らせる。`render` が skipped になると、skipped は必須チェックを満たしてしまうので、順番が乱れるほうを軽く取る。

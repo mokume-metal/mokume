@@ -44,6 +44,13 @@
 # ci.yml を読んで「可変欄を env へ流しているジョブが、このリストに載っているか」を見る
 # (#801 と同じ形)。
 #
+# **もう 1 つの基準は「門番の後ろに居るジョブか」** (#2062)。render.yml の render-pr は、
+# GitHub ホストの門番 (render-turn) を通ってから専用機に積まれる。ジョブ単位の rerun は
+# 門番を走らせ直さないので、merge queue の render が専用機を待っている最中でも render-pr を
+# 専用機へ直に積み、先頭の render と取り合わせる。render-pr は必須ではなく、rerun しなくても
+# merge は止まらない。cancel された render-pr (stall-watch の読み分け 10 で退かせたもの) が、
+# 別の check の stale-checks の巻き添えで戻ってくるのも、これで止まる。
+#
 # 検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail
 
@@ -54,7 +61,7 @@ set -euo pipefail
 REPO="$(this_repo)"
 
 # rerun を打ってはならないジョブ。**readonly にしない** — 検査が差し替えて回すため
-RERUN_EXCLUDED=${RERUN_EXCLUDED:-"pr-title"}
+RERUN_EXCLUDED=${RERUN_EXCLUDED:-"pr-title render-pr"}
 
 LOG="${1:?stall-watch.sh の出力ファイルが必要}"
 [ -f "$LOG" ] || {
@@ -99,7 +106,7 @@ rerun_stale_jobs() { # $1=PR 番号
   while read -r name id; do
     [ -n "${id:-}" ] || continue
     if excluded "$name"; then
-      say "#$n: $name は rerun しない (凍結されたペイロードを読むジョブ・#699)"
+      say "#$n: $name は rerun しない (凍結されたペイロードを読む #699 か、門番の後ろに居る #2062)"
       continue
     fi
     if gh run rerun --repo "$REPO" --job "$id" >/dev/null 2>&1; then

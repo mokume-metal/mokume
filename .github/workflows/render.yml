@@ -90,7 +90,8 @@ permissions:
 
 jobs:
   # 専用機へ積む順番を決める門番 (#2062・上の「専用機へ積む順番」)。待つ上限は
-  # render-turn.sh が持ち (merge_group 40 分・schedule 60 分)、timeout はその外側に置く
+  # render-turn.sh が持つ (merge_group は前の group が終わるまで・schedule は 60 分)。
+  # timeout は最後の歯止めで、queue の期限 (60 分) より外に置く
   render-turn:
     if: >-
       github.event_name == 'merge_group'
@@ -112,9 +113,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
         run: |
           case "$EVENT" in
-            merge_group) bash scripts/render-turn.sh merge_group "$BASE_SHA" ;;
+            merge_group) bash scripts/render-turn.sh merge_group "$BASE_SHA" "$BASE_REF" ;;
             pull_request) bash scripts/render-turn.sh yield ;;
             schedule) bash scripts/render-turn.sh wait ;;
           esac
@@ -295,7 +297,8 @@ jobs:
     # この job は debug が終わり、門番を通ってから queue に入る (上の「1 本の長いジョブに
     # しない」)
     needs: [scheduled-debug, scheduled-release-turn]
-    if: always() && github.event_name == 'schedule'
+    # always() にしない: cancel された定期の run で専用機に積まない (render と同じ理由)
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
     concurrency:

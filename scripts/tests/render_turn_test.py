@@ -5,10 +5,12 @@
 
 固定したいのは七つ。
 
-1. **先頭の group は待たない。** 1 つ前の group の run が無いか終わっていれば、すぐに通す
+1. **先頭の group は待たない。** base sha が main の先端なら、すぐに通す
 2. **1 つ前の group の run が終わるまで待つ。** 待つ相手は自分の base sha を head に持つ
-   render.yml の merge_group の run で、門番で待っている間の run も数える
-3. **上限を越えたら通す。** 越えて待てば、自分の render が走る前に queue の期限で弾かれる
+   render.yml の merge_group の run で、門番で待っている間の run も数える。**上限で放さない**
+   (放すと後ろの group がそろって積まれ、前の group と取り合う)
+3. **先頭でないのに前の run が無ければ、作られるまで猶予だけ待つ。** 組み直しの直後は、前の
+   group の run がまだ作られていない。先頭と取り違えると、組み直しの場面で順番が崩れる
 4. **API が読めなければ通す (go=true・終了 0)。** 門番の失敗で検査が走らないほうが重い
 5. **yield は merge_group の run が 1 本でも残っていれば go=false。** status が queued でも
    in_progress でも見送る (門番で待っている group の run は in_progress)
@@ -49,6 +51,7 @@ case "$all" in
   *"/actions/workflows/render.yml/runs?event=merge_group&head_sha="*) kind=prev ;;
   *"/actions/workflows/render.yml/runs?event=merge_group&status="*)
     kind=${all#*status=}; kind=${kind%%&*} ;;
+  *"/git/matching-refs/heads/main"*) kind=tip ;;
   *) echo "偽 gh が知らない呼び出し: $*" >&2; exit 1 ;;
 esac
 
@@ -60,7 +63,9 @@ file=""
 for ((i = n; i >= 1; i--)); do
   if [ -f "$DATA/$kind-$i.json" ]; then file="$DATA/$kind-$i.json"; break; fi
 done
-if [ -n "$file" ]; then jq -r "$filter" < "$file"; else echo '{"workflow_runs":[]}' | jq -r "$filter"; fi
+if [ -n "$file" ]; then jq -r "$filter" < "$file"
+elif [ "$kind" = tip ]; then echo '[]' | jq -r "$filter"
+else echo '{"workflow_runs":[]}' | jq -r "$filter"; fi
 """
 
 BASE = "354c03f3f696172be44123d56c4cdfc90d536bb6"
@@ -90,6 +95,15 @@ class RenderTurnTest(unittest.TestCase):
         self.calls.write_text("", encoding="utf-8")
         self.output = root / "output.txt"
         self.summary = root / "summary.md"
+        # 既定では自分の base が main の先端 (= 自分が先頭)
+        self.main_tip(BASE)
+
+    def main_tip(self, sha):
+        refs = [
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            {"ref": "refs/heads/main-old", "object": {"sha": "other"}},
+        ]
+        (self.data / "tip-1.json").write_text(json.dumps(refs), encoding="utf-8")
 
     def answer(self, kind, round_no, runs):
         """<kind> の <round_no> 回目以降の応答を置く。"""
@@ -158,13 +172,35 @@ class RenderTurnTest(unittest.TestCase):
         self.assertEqual(self.go(), "true")
         self.assertEqual(len(self.calls_of("head_sha=")), 1, r.stdout)
 
-    def test_上限を越えたら通す(self):
+    def test_merge_group_は上限で放さない(self):
         self.answer("prev", 1, [run_of(11, PREV, "in_progress")])
+        self.answer("prev", 3, [run_of(11, PREV, "completed", "success")])
         r = self.turn("merge_group", BASE, RENDER_TURN_LIMIT=0)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.go(), "true")
-        self.assertIn("::warning::", r.stdout)
-        self.assertIn(PREV, self.summary.read_text(encoding="utf-8"))
+        self.assertEqual(len(self.calls_of("head_sha=")), 3, r.stdout)
+        self.assertNotIn("::warning::", r.stdout)
+
+    def test_先頭でないのに前の_run_が無ければ作られるまで待つ(self):
+        self.main_tip("f" * 40)
+        self.answer("prev", 2, [run_of(11, PREV, "in_progress")])
+        self.answer("prev", 3, [run_of(11, PREV, "completed", "success")])
+        r = self.turn("merge_group", BASE)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.go(), "true")
+        self.assertEqual(len(self.calls_of("head_sha=")), 3, r.stdout)
+        self.assertIn("まだ作られていない", r.stdout)
+
+    def test_前の_run_が猶予を越えても作られなければ通す(self):
+        self.main_tip("f" * 40)
+        r = self.turn("merge_group", BASE, RENDER_TURN_MISSING_GRACE=0)
+        self.assertEqual(self.go(), "true")
+        self.assertEqual(len(self.calls_of("head_sha=")), 1, r.stdout)
+
+    def test_base_ref_を名指しすればその先端と比べる(self):
+        r = self.turn("merge_group", BASE, "refs/heads/main")
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(len(self.calls_of("matching-refs/heads/main")), 1)
 
     def test_API_が読めなければ通す(self):
         r = self.turn("merge_group", BASE, GH_FAIL=1)
@@ -216,7 +252,7 @@ class RenderTurnTest(unittest.TestCase):
     # --- 使い方 --------------------------------------------------------------
 
     def test_使い方の誤りは_2_で終わり_go_を書かない(self):
-        for args in [(), ("merge_group",), ("merge_group", ""), ("yield", "x"), ("nope",)]:
+        for args in [(), ("merge_group",), ("merge_group", ""), ("merge_group", "a", "b", "c"), ("yield", "x"), ("nope",)]:
             r = self.turn(*args)
             self.assertEqual(r.returncode, 2, args)
         self.assertFalse(self.output.exists())
