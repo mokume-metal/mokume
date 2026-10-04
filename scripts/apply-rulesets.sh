@@ -18,6 +18,14 @@
 # こちらは保護そのものが古い形に戻り、実設定に履歴は無い。だから照合 (名乗るだけ) と違い、
 # **手元が古いと判定できたときは --apply を止める**。逃げ道は用意しない。直し方は 1 行で、
 # 既定が dry-run である以上、打ち直せば済むからである。
+#
+# **適用の後に、承認が要るのに依頼の残っていない open な PR を名乗る** (#1758)。native の
+# Team 宛て依頼は PR の作成と ready の時点でしか出ない (#1621) ので、その後の適用で
+# required_reviewers の対象に入った PR は、Reviewers が空のまま承認待ちになる (#1731)。
+# 稼働中の対象が変わる口はここ 1 つで、打つのは承認者本人だから、宛先・名義・権限を
+# 新たに選ばずに目に入れられる。**依頼そのものは作らない** — App や GITHUB_TOKEN は Team へ
+# 明示依頼できず、メンテナ自身の依頼は本人に通知されない (rerequest-review.sh 冒頭・#1621)。
+# 名乗りを読んだ後に Approve するか Team へ依頼を出すかは人が決める。
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -30,6 +38,68 @@ DEFS=.github/rulesets
 # REPO / DEFS を読むので、代入の後に置く
 # shellcheck source=scripts/rulesets-freshness.sh
 source scripts/rulesets-freshness.sh
+
+# 「承認が要るパスに触れるか」の照合と、PR の変更ファイルの取り方 (#1758)。どちらも写しを
+# 持たず既存の 1 か所を借りる (照合は review-gate と同じ読みになる)。**照合の相手は、
+# いま送った定義** — 適用の直後なので稼働中と一致する。定義と稼働中がずれる適用前の窓での
+# 読み手の扱い (#1991) には踏み込まない
+RULESET_FILE="$DEFS/main-protection.json"
+# shellcheck source=scripts/protected-paths.sh
+. "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
+# shellcheck source=scripts/pr-files.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
+
+# 適用で承認が要るようになりうる open な PR を名乗る (#1758)。名乗るのは、承認が要る
+# パスに触れ・承認が付いておらず (落とされた承認は数えない)・
+#   - Draft でなければ、Team / User いずれの依頼も残っていないもの
+#   - Draft なら、依頼の有無を問わず別の行で (Draft には依頼が出ず、ready で出る — #1621)
+# 依頼や承認で除けるものを先に除き、残りだけ変更ファイルを引く (PR 1 本につき 1 回)。
+#
+# 依頼の有無は件数だけを見る。App の token では Team の依頼の中身が null で返る
+# (rerequest-review.sh 冒頭の実測) が、件数は残る。中身が落ちても名乗りが増える側に倒れる。
+#
+# 引けなかったときは「確かめていない」と名乗って通す。適用はもう済んでいて、ここで
+# 止めても戻すものが無い。黙って「無い」と言わないことだけを守る
+name_unrequested_prs() {
+  echo
+  echo "== 承認が要るのに依頼の無い open な PR =="
+  local list
+  if ! list=$(gh pr list --repo "$REPO" --state open --limit 1000 \
+      --json number,isDraft,baseRefName,latestReviews,reviewRequests); then
+    echo "注意: open な PR を引けず、確かめていない。手で見る: gh pr list --state open"
+    return 0
+  fi
+
+  local number draft base files suffix found=0 unread=0
+  while IFS=$'\t' read -r number draft base; do
+    [ -n "$number" ] || continue
+    if ! files=$(pr_files "$REPO" "$number"); then
+      echo "注意: #$number の変更ファイルを引けず、確かめていない"
+      unread=1
+      continue
+    fi
+    printf '%s\n' "$files" | touches_protected_path || continue
+    suffix=""
+    [ "$base" = main ] || suffix=" (base は ${base}。承認が要るのは main へ移ってから)"
+    if [ "$draft" = true ]; then
+      echo "#$number Draft — 承認が要る。ready にすると Team 宛ての依頼が出る$suffix"
+    else
+      echo "#$number 承認が要るのに依頼が無い (Team / User のどちらも残っていない)$suffix"
+    fi
+    found=1
+  done < <(jq -r '
+    .[]
+    | select([.latestReviews[]? | select(.state == "APPROVED")] | length == 0)
+    | select(.isDraft or ((.reviewRequests // []) | length == 0))
+    | [.number, .isDraft, .baseRefName] | @tsv
+  ' <<<"$list")
+
+  if [ "$found" = 1 ]; then
+    echo "上の PR は Reviewers が空のまま承認を待っている。Approve するか、Team へ依頼を出す"
+  elif [ "$unread" = 0 ]; then
+    echo "無い (承認が要る open な PR は、どれも承認済みか依頼が残っている)"
+  fi
+}
 
 apply=false
 case "${1:-}" in
@@ -118,4 +188,9 @@ fi
 
 echo
 echo "== 適用後の照合 =="
-bash scripts/check-rulesets.sh
+# 照合が赤でも名乗りは出す。適用はもう済んでいて、対象に入った PR は赤とは無関係に残る
+check_status=0
+bash scripts/check-rulesets.sh || check_status=$?
+
+name_unrequested_prs
+exit "$check_status"
