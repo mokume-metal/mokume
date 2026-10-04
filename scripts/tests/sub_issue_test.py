@@ -36,7 +36,11 @@ case "$*" in
   *"issue create"*) printf 'https://github.com/mokume-metal/mokume/issues/99\\n' ;;
   # 紐づけを断らせる (#1661)。綴りは既に親を持つ子を繋ごうとしたときの GitHub の応答
   *"api -X POST"*)
-    if [ -n "${FAKE_LINK_ERROR:-}" ]; then printf '%s\\n' "$FAKE_LINK_ERROR" >&2; exit 1; fi
+    if [ -n "${FAKE_LINK_ERROR:-}" ]; then
+      # 本物の gh api と同じく、本文 (errors を含む) は stdout・要約は stderr (#2075)
+      printf '%s\\n' "${FAKE_LINK_BODY:-}"
+      printf '%s\\n' "$FAKE_LINK_ERROR" >&2; exit 1
+    fi
     printf '99\\n' ;;
   *"api "*)         printf '4242\\n' ;;
 esac
@@ -56,12 +60,13 @@ class SubIssueTest(unittest.TestCase):
         self.log = Path(self.tmp.name) / "gh.log"
         self.log.touch()
 
-    def run_sub_issue(self, *args, parent_type="", link_error=""):
+    def run_sub_issue(self, *args, parent_type="", link_error="", link_body=""):
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_GH_LOG"] = str(self.log)
         env["FAKE_PARENT_TYPE"] = parent_type
         env["FAKE_LINK_ERROR"] = link_error
+        env["FAKE_LINK_BODY"] = link_body
         proc = subprocess.run(
             ["/bin/bash", str(SCRIPT), "74", *args],
             capture_output=True,
@@ -137,7 +142,8 @@ class SubIssueTest(unittest.TestCase):
         proc, calls = self.run_sub_issue(
             "--attach",
             "55",
-            link_error="gh: Sub issue may only have one parent (HTTP 422)",
+            link_error="gh: Validation Failed (HTTP 422)",
+            link_body='{"message":"Validation Failed","errors":["Sub issue may only have one parent"]}',
         )
         self.assertNotEqual(proc.returncode, 0, "断られたのに成功を返している")
         self.assertIn("繋げなかった", proc.stderr)

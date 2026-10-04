@@ -136,9 +136,11 @@ for who in $targets; do
   args+=(-f "reviewers[]=$who")
 done
 
-if gh api --method POST "repos/$REPO/pulls/$PR/requested_reviewers" "${args[@]}" >/dev/null; then
+# 断られた理由 (errors) は応答の本文 (stdout) にしか無いので、捨てずに名乗る (#2075)
+if out=$(gh api --method POST "repos/$REPO/pulls/$PR/requested_reviewers" "${args[@]}" 2>&1); then
   echo "#$PR: $targets へレビュー依頼を出し直した"
 else
-  echo "#$PR: レビュー依頼を出し直せなかった ($targets)" >&2
+  echo "#$PR: レビュー依頼を出し直せなかった ($targets)。応答:" >&2
+  printf '%s\n' "$out" >&2
   exit 1
 fi

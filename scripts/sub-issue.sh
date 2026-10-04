@@ -50,10 +50,14 @@ usage_error() { # $1=何が悪かったか
 # **set -e に頼らない。** `if ! link_to_parent …` の形で呼ぶと、関数の中では set -e が
 # 効かない — id を引けなかったまま、空の id で紐づけへ進んでしまう
 link_to_parent() { # $1=子の番号
-  local child_id
+  local child_id out
   child_id=$(gh api "repos/$REPO/issues/$1" --jq .id) || return 1
-  gh api -X POST "repos/$REPO/issues/$PARENT/sub_issues" -F sub_issue_id="$child_id" \
-    --jq .number >/dev/null
+  # 断られた理由 (errors) は応答の本文 (stdout) にしか無いので、捨てずに名乗る (#2075)
+  if ! out=$(gh api -X POST "repos/$REPO/issues/$PARENT/sub_issues" \
+    -F sub_issue_id="$child_id" 2>&1); then
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
 }
 
 PARENT="${1:?親 Issue 番号が必要}"; shift

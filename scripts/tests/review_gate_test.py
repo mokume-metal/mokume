@@ -637,6 +637,39 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    def test_a_wildcard_in_the_name_matches_the_files_it_names(self):
+        """名前の中のワイルドカード (`scripts/*guard*.sh`) で畳んだパターン (#2075)。
+
+        ルールセットはレビュアー 1 つにつきパターンを 15 個までしか受け取らないので、
+        ファイルを名指しする代わりに名前の glob で畳む。照合がこの形を読めないと、
+        柵のスクリプトに触れる PR を承認不要と読み、誰も承認できない PR を通す。
+        """
+        globbed = json.loads(RULESET)
+        params = globbed["rules"][0]["parameters"]
+        params["required_reviewers"][0]["file_patterns"] = ["scripts/*guard*.sh"]
+        touched = self.run_gate(
+            pr_json(author=MAINTAINER, files=["scripts/parent-guard.sh"]),
+            issue_json(TRIAGED),
+            ruleset=json.dumps(globbed),
+        )
+        self.assert_blocked(touched, "誰も承認できない")
+        untouched = self.run_gate(
+            pr_json(author=MAINTAINER, files=["scripts/guarded.py", "scripts/foo.sh"]),
+            issue_json(TRIAGED),
+            ruleset=json.dumps(globbed),
+        )
+        self.assertEqual(untouched.returncode, 0, untouched.stderr)
+
+    def test_the_real_ruleset_still_covers_the_folded_names(self):
+        # 畳んだ実物の定義で、畳む前に名指ししていたファイルがまだ承認の対象に当たる
+        real = (REPO / ".github" / "rulesets" / "main-protection.json").read_text()
+        for path in ("scripts/guard-lib.sh", "scripts/agent-comment-guard.sh",
+                     "scripts/drawing-paths.txt", "scripts/drawing-paths.sh"):
+            proc = self.run_gate(
+                pr_json(author=MAINTAINER, files=[path]), issue_json(TRIAGED), ruleset=real
+            )
+            self.assert_blocked(proc, "誰も承認できない")
+
     def test_an_existing_approval_proves_the_pr_was_approvable(self):
         # 現に承認が付いているなら詰んでいない (自己承認はできないので他人が付けた)
         proc = self.run_gate(
