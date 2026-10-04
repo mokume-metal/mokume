@@ -60,6 +60,13 @@ nonisolated enum CommandFailure: Error, Equatable {
     case identityUnreadable(path: String)
     /// 名乗りに、名乗れる中身が揃っていない。
     case identityIncomplete(path: String, missing: [String])
+    /// カメラを使うスケッチなのに、名乗りに許可の文言が無い。
+    ///
+    /// **束ねずに止める。** 出来た包みは、触れた時点で OS に止められる — 作った手元では
+    /// 動くので、気付くのは配った先になる ([ADR-0042] 決定 8)。
+    ///
+    /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+    case cameraUsageMissing(path: String, files: [String])
     /// 宣言された資材の包みが、組み上がりに入っていない。
     case bundledResourceMissing(name: String, path: String)
     /// 区画へ要求を置けなかった。
@@ -146,6 +153,20 @@ nonisolated enum CommandFailure: Error, Equatable {
             Absent or empty: \(missing.joined(separator: " / "))
 
             \(AppIdentity.example)
+            """
+        case .cameraUsageMissing(let path, let files):
+            """
+            The sketch opens the camera, but the identity has no text for the permission prompt: \(path)
+            Opened in:
+            \(files.map { "  \($0)" }.joined(separator: "\n"))
+
+            Add one line saying why the work needs it:
+
+              "cameraUsage": "Grain uses the camera to draw what it sees"
+
+            Without it, macOS stops the bundled app the moment it first touches the camera:
+            the other side gets no prompt and no drawing, and nothing that points at why.
+            The text is what the prompt shows to whoever opens the app, so write it for them.
             """
         case .bundledResourceMissing(let name, let path):
             """
