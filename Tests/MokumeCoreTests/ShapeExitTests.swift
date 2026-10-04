@@ -129,7 +129,6 @@ enum ShapeExit {
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進める",
-            "shapeListener": "組み立ての入口と出口の通知先 (弱い参照)。出口の仕組みそのもので、ランタイムが持つ乱数の種を戻す (#1936・`runtimeTable`)",
             "vertexStorage": resource, "flatInstanceStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,
             "solidIndexStorage": resource, "solidInstanceStorage": resource,

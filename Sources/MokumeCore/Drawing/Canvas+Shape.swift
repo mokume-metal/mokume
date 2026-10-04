@@ -18,8 +18,13 @@ extension Canvas {
         // **入口と出口は、ランタイムが持つ乱数の列へも知らせる** (#1936)。中で書いた種は ``Manner`` の
         // 外 (`Canvas` の外) にあるので、出口の戻しはそちらが受ける。早い抜け方 (下の空の形) でも
         // 対で呼ぶよう、`defer` で置く
-        shapeListener?.shapeAssemblyBegan()
-        defer { shapeListener?.shapeAssemblyEnded() }
+        //
+        // **知らせる先は面ではなく、いま走っているランタイムと同じ寿命の 1 口から引く** (#2041)。
+        // 面の作り方 (直に作った面・描き場所) に依らず、種を書く先と同じランタイムへ届く。入口で
+        // 1 度だけ引いて控え、出口も同じ相手へ知らせる
+        let listener = shapeAssemblyListener
+        listener?.shapeAssemblyBegan()
+        defer { listener?.shapeAssemblyEnded() }
         closeBatch()
         let vertexStart = vertices.count
         let solidStart = solidVertices.count

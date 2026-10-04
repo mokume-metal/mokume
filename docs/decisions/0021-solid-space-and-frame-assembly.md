@@ -237,7 +237,9 @@ SPDX-License-Identifier: MIT
 
 **入口で常に写して出口で戻す案は採らなかった。** 種を書かずに中で引いた分まで外へ残らなくなり、`createShape` を繰り返すと同じ値で同じ形を量産する。
 
-実装は、組み立ての入口と出口を `Canvas.createShape` の 1 か所から通知し ([`ShapeAssemblyListener`](../../Sources/MokumeCore/Drawing/ShapeAssemblyListener.swift))、段ごとの控えを [`SeedScopes`](../../Sources/MokumeCore/Random/SeedScopes.swift) が持ち、[`SketchRuntime+ShapeSeed`](../../Sources/MokumeCore/Sketch/SketchRuntime+ShapeSeed.swift) が種を書く口と出入口を結ぶ。ランタイムの格納はすべて出口の扱いに分け、分けていない格納を足すと `ShapeExitTests` が名指しで赤にする。
+実装は、組み立ての入口と出口を `Canvas.createShape` の 1 か所から通知し ([`ShapeAssemblyListener`](../../Sources/MokumeCore/Drawing/ShapeAssemblyListener.swift))、段ごとの控えを [`SeedScopes`](../../Sources/MokumeCore/Random/SeedScopes.swift) が持ち、[`SketchRuntime+ShapeSeed`](../../Sources/MokumeCore/Sketch/SketchRuntime+ShapeSeed.swift) が種を書く口と出入口を結ぶ。**知らせる先は面ごとに持たず、ランタイムが「いま走っているランタイム」(`runningSketch`) を差すのと同じ所で差して外す 1 口から引く。** 種を書く先はいま走っているランタイムなので、出口で戻す先も同じ寿命に揃える。`Canvas` が知るのはプロトコルだけで、スケッチの層は読まない。ランタイムの格納はすべて出口の扱いに分け、分けていない格納を足すと `ShapeExitTests` が名指しで赤にする。
+
+当初の実装は、知らせる先を面ごとに持ち、ランタイムが本体の面に付け、描き場所は作った面から引き継いでいた。書く鍵 (走っているランタイム) と戻す鍵 (面が持つ知らせる先) が 2 つあったため、公開の init で直に作った面と、そこから作った描き場所では知らせる先が無く、走っているスケッチの中で使うと中で書いた種が外へ漏れた ([#2041](https://github.com/mokume-metal/mokume/issues/2041))。約束はどの面にも例外を書いていないので、直に作った面を約束の外とする案と、直に作った面で種を書くのを断る案は採らなかった — どちらも採択済みの約束を狭めるか、利用者に見える振る舞いを変える新しい選択になる。
 
 > 破れたとき: 組み立ての中で書いた種が外の列を決め、`createShape` を書き足しただけで、外で引く値と絵が変わる。`noiseSeed()` は戻るので、利用者からは「乱数だけ組み立ての外へ漏れる」としか見えない。
 

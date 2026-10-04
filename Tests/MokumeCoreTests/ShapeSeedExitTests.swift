@@ -11,13 +11,15 @@ import Testing
 /// (``Canvas/Manner``・#1684) には載らなかった。約束は 1 つで、**組み立ての中で書いた種は外へ
 /// 残らず、種を書かずに引いた値は、外で引いたのと同じく 1 本の列を進める。**
 ///
-/// 組み立ての入口は 2 つある。スケッチの `createShape` と、描き場所 (`createGraphics` が返す
-/// ``Canvas``) の `createShape` で、後者は ``SketchRuntime`` を経ない。描き場所は本体から作る 1 段目
-/// だけでなく、**描き場所から作る描き場所** (通知先が 2 段で引き継がれる) もあるので、入れて数える。
-/// どれも `setup()` と `draw()` の両方で確かめる。期待する値は、実行の外で ``Randomness`` を直に
+/// 組み立ての入口は 2 つある。スケッチの `createShape` と、``Canvas`` の `createShape` で、後者は
+/// ``SketchRuntime`` を経ない。``Canvas`` は面の作り方で 4 通りに数える — 本体から作った描き場所
+/// (`createGraphics`)・**描き場所から作った描き場所**・**公開の init で直に作った面**・**直に作った面から
+/// 作った描き場所** (1 段目と 2 段目)。乱数の列は面ではなくいま走っているランタイムに付くので、
+/// 約束は面の作り方に依らない ([#2041])。どれも `setup()` と `draw()` の両方で確かめる。期待する値は、実行の外で ``Randomness`` を直に
 /// 引いて作る — 検査の対象と同じ口から期待を作らない。
 ///
 /// [#1936]: https://github.com/mokume-metal/mokume/issues/1936
+/// [#2041]: https://github.com/mokume-metal/mokume/issues/2041
 @Suite(
     "形の組み立ての中の乱数の種",
     .enabled(
@@ -31,15 +33,27 @@ struct ShapeSeedExitTests {
         case sketch
         /// 描き場所の `createShape` (``Canvas/createShape(_:)``)。ランタイムを経ない
         case graphics
-        /// **描き場所から作った描き場所**の `createShape`。通知先は本体の面から 2 段で引き継がれる
-        /// (``Canvas/createGraphics(_:_:)`` が作った面へ写す 1 行が、親の側でも効いていること)
+        /// **描き場所から作った描き場所**の `createShape`
         case childGraphics
+        /// **公開の init で直に作った面** (``Canvas/init(target:gpu:)``) の `createShape`。ランタイムも
+        /// `createGraphics` も経ない (#2041)
+        case direct
+        /// 出す先と細かさを指定して直に作った面 (``Canvas/init(output:gpu:pixelDensity:upscale:)``)
+        case directOutput
+        /// **直に作った面から作った描き場所**の `createShape`
+        case directGraphics
+        /// 直に作った面から作った描き場所から、さらに作った描き場所の `createShape`
+        case directChildGraphics
 
         var testDescription: String {
             switch self {
             case .sketch: "スケッチの createShape"
             case .graphics: "描き場所の createShape"
             case .childGraphics: "描き場所から作った描き場所の createShape"
+            case .direct: "直に作った面 (target:gpu:) の createShape"
+            case .directOutput: "直に作った面 (output:gpu:pixelDensity:upscale:) の createShape"
+            case .directGraphics: "直に作った面から作った描き場所の createShape"
+            case .directChildGraphics: "直に作った面から作った描き場所の、さらに描き場所の createShape"
             }
         }
     }
@@ -71,6 +85,11 @@ struct ShapeSeedExitTests {
         var layer: Canvas?
         /// `layer` から作った描き場所。`setup()` で作る
         var childLayer: Canvas?
+        /// 公開の init で直に作った面と、そこから作った描き場所 (1 段目・2 段目)。`setup()` で作る
+        var direct: Canvas?
+        var directOutput: Canvas?
+        var directLayer: Canvas?
+        var directChildLayer: Canvas?
         var phase = Phase.draw
         var script: ((Probe) -> Void)?
         /// 走らせているランタイム。ランタイムの状態を読む台本のために、`run` が差す
@@ -81,6 +100,13 @@ struct ShapeSeedExitTests {
         func setup() {
             layer = try? createGraphics(16, 16)
             childLayer = try? layer?.createGraphics(16, 16)
+            let gpu = canvas.gpu
+            direct = try? Canvas(target: RenderTarget(gpu: gpu, width: 16, height: 16), gpu: gpu)
+            directOutput = try? Canvas(
+                output: RenderTarget(gpu: gpu, width: 16, height: 16), gpu: gpu, pixelDensity: 0.5,
+                upscale: .spatial)
+            directLayer = try? direct?.createGraphics(16, 16)
+            directChildLayer = try? directLayer?.createGraphics(16, 16)
             if phase == .setup { script?(self) }
         }
         func draw() {
@@ -93,13 +119,19 @@ struct ShapeSeedExitTests {
             case .sketch:
                 let surface = canvas
                 return createShape { body(surface) }
-            case .graphics:
-                guard let layer else { return .empty }
-                return layer.createShape { body(layer) }
-            case .childGraphics:
-                guard let childLayer else { return .empty }
-                return childLayer.createShape { body(childLayer) }
+            case .graphics: return build(on: layer, body)
+            case .childGraphics: return build(on: childLayer, body)
+            case .direct: return build(on: direct, body)
+            case .directOutput: return build(on: directOutput, body)
+            case .directGraphics: return build(on: directLayer, body)
+            case .directChildGraphics: return build(on: directChildLayer, body)
             }
+        }
+
+        /// 面 `surface` の `createShape` で組み立てる。面を作れていなければ空の形を返す。
+        private func build(on surface: Canvas?, _ body: (Canvas) -> Void) -> Shape {
+            guard let surface else { return .empty }
+            return surface.createShape { body(surface) }
         }
     }
 
@@ -113,6 +145,10 @@ struct ShapeSeedExitTests {
         runtime.start()
         try runtime.advance()
         #expect(probe.layer != nil && probe.childLayer != nil, "描き場所を作れていない")
+        #expect(
+            probe.direct != nil && probe.directOutput != nil && probe.directLayer != nil
+                && probe.directChildLayer != nil,
+            "直に作った面と、そこから作った描き場所を作れていない")
     }
 
     /// 種 `seed` の列の `count` 番目 (1 から数える)。実行の外で直に引く。
@@ -222,6 +258,32 @@ struct ShapeSeedExitTests {
         #expect(afterOuter == value(seed: 1, at: 1), "外側を抜けた後が、組み立ての前の種 1 の列から続いていない")
     }
 
+    /// 外側が種を書かない入れ子では、内側を抜けた直後の列は組み立ての前の列の続きになる (#2041 の条件 4)。
+    /// 外側の段は何も控えていないので、戻すのは内側の段だけである。
+    @Test(
+        "入れ子で外側が種を書かなければ、内側を抜けた直後の列は組み立ての前の列の続きである",
+        arguments: Nesting.all, Phase.allCases)
+    func aNestedBuildWithoutAnOuterSeedReturnsToTheLineBeforeTheBuild(
+        nesting: Nesting, phase: Phase
+    ) throws {
+        let (outer, inner) = (nesting.outer, nesting.inner)
+        var afterInner: Float = -1
+        var afterOuter: Float = -1
+        try run(phase) { probe in
+            probe.randomSeed(1)
+            _ = probe.build(outer) { _ in
+                _ = probe.build(inner) { _ in
+                    probe.randomSeed(42)
+                    _ = probe.random()
+                }
+                afterInner = probe.random()
+            }
+            afterOuter = probe.random()
+        }
+        #expect(afterInner == value(seed: 1, at: 1), "内側を抜けた後が、組み立ての前の種 1 の列から続いていない")
+        #expect(afterOuter == value(seed: 1, at: 2), "外側の中で引いた 1 つぶんが、外の列に数えられていない")
+    }
+
     /// ランタイムの「戻す」に分けた状態を**全部汚してから抜け、全部が戻ったかを見る** — `Canvas` の側の
     /// ``ShapeExitTests/everyRestoredStateIsBackAfterTheBuild(insideAFrame:)`` と同じ形で、表
     /// (``ShapeExit/runtimeTable``) に足した状態の戻し落としが黙らない。
@@ -282,5 +344,21 @@ struct ShapeSeedExitTests {
         #expect(shape.isEmpty, "形が空にならなかった (この検査は出口の途中の抜け道を通っていない)")
         #expect(next == value(seed: 1, at: 1), "空の形を返す経路で、書いた種が外へ残った")
         #expect(later == value(seed: 1, at: 2), "続く組み立ての後で、列が戻っていない")
+    }
+
+    /// 知らせる先は、ランタイムがスケッチのコードを走らせる間だけ差さる (#2041)。ランタイムの外で直に
+    /// 回す面 (`RenderDevice` の説明の使い方) には知らせる先が無く、それでも組み立ては今までどおり
+    /// 形を返す。ランタイムが返った後に残っていると、外で回す面の組み立てが、もう走っていない
+    /// ランタイムの控えを積む。
+    @Test("ランタイムの外で直に回す面の組み立ては、知らせる先が無くても形を返す (#2041)")
+    func aDirectCanvasOutsideARuntimeStillBuilds() throws {
+        try run(.draw) { probe in
+            #expect(shapeAssemblyListener === probe.runtime, "走っている間の知らせる先が、そのランタイムでない")
+        }
+        #expect(shapeAssemblyListener == nil, "ランタイムが返った後も、知らせる先が残っている")
+        let gpu = try RenderDevice()
+        let surface = try Canvas(target: RenderTarget(gpu: gpu, width: 16, height: 16), gpu: gpu)
+        let shape = surface.createShape { surface.circle(8, 8, 4) }
+        #expect(!shape.isEmpty, "知らせる先の無い面で、形が組み立てられていない")
     }
 }

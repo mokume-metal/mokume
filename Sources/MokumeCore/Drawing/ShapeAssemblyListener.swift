@@ -10,10 +10,10 @@
 /// (``SketchRuntime``) である。``Canvas`` はランタイムを参照しない (描画の層がスケッチの層を知らない
 /// 向きを保つ) ので、知らせる口を ``Canvas`` の側に置き、ランタイムが受ける。
 ///
-/// **入口の数だけ口を置かない。** 組み立ての入口は ``Sketch/createShape(_:)`` と、描き場所
-/// (``Canvas/createGraphics(_:_:)``) の ``Canvas/createShape(_:)`` の 2 つで、後者はランタイムを
-/// 経ない。どちらも最後は ``Canvas/createShape(_:)`` を通るので、通知はそこ 1 か所で出す。描き場所は
-/// 作った面の通知先を引き継ぐ (``Canvas/shapeListener``)。
+/// **入口の数だけ口を置かない。** 組み立ての入口は ``Sketch/createShape(_:)`` と、``Canvas`` の
+/// ``Canvas/createShape(_:)`` の 2 つで、後者はランタイムを経ない。どちらも最後は
+/// ``Canvas/createShape(_:)`` を通るので、通知はそこ 1 か所で出す。知らせる先は面ごとに持たず、
+/// ``shapeAssemblyListener`` の 1 口から引く (下の「知らせる先は面に付けない」)。
 ///
 /// [#1936]: https://github.com/mokume-metal/mokume/issues/1936
 @MainActor
@@ -24,3 +24,22 @@ protocol ShapeAssemblyListener: AnyObject {
     /// (組み立ての中で描き切ったとき・#1588) でも。
     func shapeAssemblyEnded()
 }
+
+/// いま形の組み立てを知らせる先 ([#2041])。
+///
+/// **知らせる先は面に付けない。** 乱数の種を書く口 (``Sketch/randomSeed(_:)``) が書くのは、面の
+/// 列ではなく**いま走っているランタイム** (`runningSketch`) の列である。知らせる先を面ごとに持つと
+/// 鍵が 2 つになり、ランタイムが付けた面 (本体の面と、そこから作った描き場所) でしか戻らなかった —
+/// 公開の init で直に作った面 (``Canvas/init(target:gpu:)``) とそこから作った描き場所は、走っている
+/// スケッチの中で使えば列があるのに、知らせる先を持たず、中で書いた種が外へ漏れていた ([#2041])。
+/// そこで書く鍵と同じ寿命の 1 口に揃える。差して外すのは、ランタイムが `runningSketch` を差す所
+/// (`SketchRuntime.withActiveRuntime(_:)`) だけである。
+///
+/// ``Canvas`` が知るのはこのプロトコルだけで、スケッチの層 (`runningSketch`) は読まない。ランタイムの
+/// 外で直に回す面では `nil` のままで、組み立ては今までどおり動く — そこには乱数の列も無い。
+///
+/// ADR-0010 決定 2 のとおり、main actor に隔離した明示のグローバルとして置く。
+///
+/// [#2041]: https://github.com/mokume-metal/mokume/issues/2041
+@MainActor
+var shapeAssemblyListener: (any ShapeAssemblyListener)?

@@ -28,9 +28,6 @@ extension Canvas {
         graphics.timebase = timebase
         // 本体のフレームを進めるとき、閉じ忘れたフレームを捨てる相手として置き場に載せる (#1834)
         timebase.add(layer: graphics)
-        // **形の組み立ての入口と出口の通知先も引き継ぐ** (#1936)。描き場所の `createShape` は
-        // ランタイムを経ないので、繋がないと中で書いた乱数の種が出口で戻らない
-        graphics.shapeListener = shapeListener
         // **揺らぎの種と細かさも同じ置き場を指す** (#1503)。繋がないと、本体で決めた種が
         // 描き場所の断片に届かず、描き場所で決めた種は本体に届かない — 種はスケッチに 1 つ
         graphics.noiseStore = noiseStore
