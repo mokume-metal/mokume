@@ -58,7 +58,10 @@ if [ "$1 $2" = "api graphql" ]; then emit "$PR_DIR/pr.json"; exit 0; fi
 
 case "$*" in
   *requested_reviewers*)
-    [ -z "${POST_FAILS:-}" ] || { echo "gh: HTTP 422" >&2; exit 1; }
+    # 本物の gh api と同じく、断った理由 (errors) は応答の本文 (stdout) にしか無い (#2075)
+    [ -z "${POST_FAILS:-}" ] || {
+      echo '{"message":"Validation Failed","errors":["reviewer is not a collaborator"]}'
+      echo "gh: Validation Failed (HTTP 422)" >&2; exit 1; }
     echo '{}'
     exit 0 ;;
 esac
@@ -195,6 +198,7 @@ class RerequestReviewTest(unittest.TestCase):
         result = self.run_script(POST_FAILS="1")
         self.assertEqual(result.returncode, 1)
         self.assertIn("出し直せなかった", result.stderr)
+        self.assertIn("not a collaborator", result.stderr, "GitHub の理由を捨てている")
 
 
 if __name__ == "__main__":

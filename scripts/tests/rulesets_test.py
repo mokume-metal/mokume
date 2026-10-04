@@ -414,7 +414,10 @@ class ScriptTest(unittest.TestCase):
         r = run(["/bin/bash", str(APPLY), "--apply"], env=self.env)
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("Exceeded limit of 15 file patterns", r.stderr)
-        self.assertIn("signed-commits", r.stderr)
+        # 差分の出力にも名前は出るので、断られたことを名乗る行そのものを見る
+        self.assertIn("main-protection の更新を API が断った", r.stderr)
+        # 1 本が断られても、残りの定義は適用を試みる (巻き添えで止めない)
+        self.assertEqual(self.calls().count("PUT"), 3, self.calls())
 
     def test_apply_は差分が無ければ何もしない(self):
         r = run(["/bin/bash", str(APPLY), "--apply"], env=self.env)
@@ -784,7 +787,8 @@ class JudgeSourcesNeedApprovalTest(unittest.TestCase):
         self.assertEqual(
             missing, [],
             "判定の中身が承認の外にある。.github/rulesets/main-protection.json の "
-            "required_reviewers の file_patterns に足す (#2003)")
+            "required_reviewers の file_patterns に足す (#2003)。パターンは 15 個までなので、"
+            "同じ場所のファイルは名前の glob (`scripts/*guard*.sh`) で畳む (#2075)")
 
 
 if __name__ == "__main__":

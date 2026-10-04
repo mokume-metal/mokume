@@ -79,6 +79,8 @@ fi
 
 echo
 echo "== 適用 =="
+# 1 本が断られても残りは試みる。断られた定義と無関係な差分まで巻き添えで止めない
+rejected=()
 for f in "$DEFS"/*.json; do
   name=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$f")
   # 表から id を引く。**タブで区切って名前の完全一致を見る** — 名前に空白が入りうる
@@ -86,15 +88,17 @@ for f in "$DEFS"/*.json; do
 
   # 断られたときの理由は応答の本文 (stdout) にしか無い。捨てると「Validation Failed」しか
   # 残らず、何が通らなかったのかを打ち直して調べることになる (#2075)
+  failed=0
   if [ -n "$id" ]; then
     verb=更新 out=$(gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f" 2>&1) || failed=1
   else
     verb=作成 out=$(gh api -X POST "repos/$REPO/rulesets" --input "$f" 2>&1) || failed=1
   fi
-  if [ "${failed:-0}" = 1 ]; then
+  if [ "$failed" = 1 ]; then
     echo "NG: $name の${verb}を API が断った。応答:" >&2
     echo "$out" >&2
-    exit 1
+    rejected+=("$name")
+    continue
   fi
   echo "${verb}: $name${id:+ (id $id)}"
 done
@@ -106,6 +110,11 @@ while IFS=$'\t' read -r name _; do
     echo "注意: 実設定の $name は定義に無い (このスクリプトは削除しない)" >&2
   fi
 done < "$live/index.tsv"
+
+if [ "${#rejected[@]}" -gt 0 ]; then
+  echo "NG: 適用できなかった定義がある: ${rejected[*]} (理由は上の応答)" >&2
+  exit 1
+fi
 
 echo
 echo "== 適用後の照合 =="
