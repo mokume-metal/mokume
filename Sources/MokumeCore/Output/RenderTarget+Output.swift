@@ -76,6 +76,14 @@ extension RenderTarget {
         //
         // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
         let keeper = drawer?.target === self ? drawer : nil
+        // **書き戻す前に、この面を出す先に持つ描き場所を置いた側へ、置いた時点の絵を写させる**
+        // ([#1942]・``Canvas/settlePlacersBeforeChange()``)。書き戻しは描き切りを通らずに出す先を
+        // 書くので、描き切りの頭の関所を通らない。書き込み待ちが無ければ何も書かないので、通さない。
+        // **コマンドを開く前に通す** — 置いた側の描き切り (写せないときの代わり) が、この出力段の
+        // コマンドの組み立ての中に入らない
+        //
+        // [#1942]: https://github.com/mokume-metal/mokume/issues/1942
+        if hasPendingPixelWrites { drawer?.settlePlacersBeforeChange() }
         let assembled = try gpu.withCommands { commands throws(RenderFailure) in
             // **CPU が画素へ書いたものがあれば、読む前に描画先へ戻す。** 描き切りを挟まずに
             // `pixels` へ書いてここへ来る経路 (フレームの外で書いて書き出す) のため (#753)
