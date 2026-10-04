@@ -699,11 +699,10 @@ struct LoopTests {
         #expect(runtime.target.encodePassCount == 1)
     }
 
-    /// 作者の口は走っているランタイムを通るので、検査からもそれを差してから呼ぶ。
+    /// 作者の口は走っているランタイムを通るので、検査からもそれを差してから呼ぶ。**差すのは製品と同じ
+    /// 口 (`withActiveRuntime`) で行う** — `runningSketch` だけを手で差すと、形の組み立てを知らせる先
+    /// (`shapeAssemblyListener`) が差さらず、組み立ての中で書いた種が漏れたまま黙る (#2041)。
     private func runSketch(_ runtime: SketchRuntime, _ body: () -> Void) {
-        let previous = runningSketch
-        runningSketch = runtime
-        defer { runningSketch = previous }
-        body()
+        runtime.withActiveRuntime(body)
     }
 }

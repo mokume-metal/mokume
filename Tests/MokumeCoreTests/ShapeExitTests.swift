@@ -129,7 +129,6 @@ enum ShapeExit {
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進める",
-            "shapeListener": "組み立ての入口と出口の通知先 (弱い参照)。出口の仕組みそのもので、ランタイムが持つ乱数の種を戻す (#1936・`runtimeTable`)",
             "vertexStorage": resource, "flatInstanceStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,
             "solidIndexStorage": resource, "solidInstanceStorage": resource,
@@ -306,7 +305,7 @@ extension ShapeExit {
             "exposedValues": observation, "measuredValues": observation,
             "orbit": "視点を操る道具の状態。フレームを越える。`orbit = …` の setter は組み立ての中でも断られず、出口でも戻らない。形には焼き付かない — 視点を書くのは `camera` で、`camera` は組み立ての中では断られる (`orbitControl()` は視点を書く前に断る・#1670)",
             "orbitAdvancedAt": "orbit と同じ (道具を最後に進めたフレーム)。`orbitControl()` が書く",
-            "seedScopes": "組み立ての入れ子ごとの乱数の控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936)",
+            "seedScopes": "組み立ての入れ子ごとの乱数と揺らぎの控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936・#2041)",
         ]
         let restored: (String, RuntimeExit) = (
             "randomness",

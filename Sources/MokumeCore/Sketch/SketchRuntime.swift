@@ -182,8 +182,9 @@ public final class SketchRuntime {
     /// 揺らぎ (``Canvas/noiseSeed(_:)``) と違って断片へは届かない。断片には列が無く
     /// (画素どうしが独立している)、**値の一致がそもそも定義できない**ためである。
     var randomness = Randomness()
-    /// 形の組み立ての中で書いた乱数の種の控え。出口で ``randomness`` を戻す
-    /// (`SketchRuntime+ShapeSeed.swift`・[#1936](https://github.com/mokume-metal/mokume/issues/1936))。
+    /// 形の組み立ての中で書いた乱数の種と揺らぎの設定の控え。出口で ``randomness`` と、本体の面の
+    /// 揺らぎの設定を戻す (`SketchRuntime+ShapeSeed.swift`・
+    /// [#1936](https://github.com/mokume-metal/mokume/issues/1936)・[#2041](https://github.com/mokume-metal/mokume/issues/2041))。
     var seedScopes = SeedScopes()
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
@@ -280,7 +281,6 @@ public final class SketchRuntime {
         let store = ParamStore.makeIfNeeded(for: registry)
         self.paramStore = store
         self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
-        canvas.shapeListener = self
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -312,7 +312,6 @@ public final class SketchRuntime {
         self.paramRegistry = ParamRegistry(of: sketch)
         self.params = params
         self.paramStore = paramStore
-        canvas.shapeListener = self
     }
 
     // MARK: - 進める
@@ -1433,11 +1432,25 @@ public final class SketchRuntime {
     /// 外れた後もこの面へ読み込めるようにするためである ([#1367])。束ねた値は範囲を出れば
     /// 自動で戻る。
     ///
+    /// **形の組み立てを知らせる先 (``shapeAssemblyListener``) も、同じ所で差して外す** ([#2041])。
+    /// 乱数の種を書く鍵は ``runningSketch`` なので、組み立ての出口で戻す鍵も同じ寿命に揃える。
+    /// 面ごとに付けると、ランタイムが付けていない面 (直に作った面とそこから作った描き場所) で
+    /// 中で書いた種が漏れる。
+    ///
+    /// **検査がランタイムを差すときも、ここを通す** (`private` にしない理由)。``runningSketch`` だけを
+    /// 手で差すと知らせる先が差さらず、検査の中の組み立てで書いた種が漏れたまま黙る。
+    ///
     /// [#1367]: https://github.com/mokume-metal/mokume/issues/1367
-    private func withActiveRuntime(_ body: () -> Void) {
+    /// [#2041]: https://github.com/mokume-metal/mokume/issues/2041
+    func withActiveRuntime(_ body: () -> Void) {
         let previous = runningSketch
+        let previousListener = shapeAssemblyListener
         runningSketch = self
-        defer { runningSketch = previous }
+        shapeAssemblyListener = self
+        defer {
+            runningSketch = previous
+            shapeAssemblyListener = previousListener
+        }
         LaunchingSketch.$canvas.withValue(canvas, operation: body)
     }
 }
