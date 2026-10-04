@@ -196,7 +196,7 @@ class ParallelizationWidthTest(unittest.TestCase):
         return result.stdout.strip()
 
     def test_the_child_runs_with_width_1_by_default(self):
-        # 幅 4 以上では、MTL4CommandQueue の解放の直後の仕事が落ちる (#2007)
+        # 幅 4・16・100000 では GPU の仕事が打ち切られ、幅 1 では出なかった (#2007)
         self.assertEqual(self._child_sees({}), "1")
 
     def test_a_width_given_by_the_caller_is_kept(self):
