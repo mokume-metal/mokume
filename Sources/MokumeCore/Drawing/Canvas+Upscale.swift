@@ -124,8 +124,8 @@ extension Canvas {
     ///   (`accumulate` は重み 0.2 で変えた分を薄める)、履歴も揺らしの位相 (`framesScaled`) も
     ///   動かさない。次に描くフレームは、これまでどおり履歴と混ぜる。**描く先の絵が載っている揺らしは
     ///   戻す** — 戻さないと、変えていない場所まで最大で描く画素 0.5 個ずれる。フレームの外 (止まって
-    ///   いる間) なら最後のフレームの揺らし (``UpscaleStage/lastJitterInSource``)、フレームの中なら
-    ///   このフレームの揺らし (``UpscaleStage/jitterInSource``・[#2103]) で、描き切りが図形を描く揺らし
+    ///   いる間) なら最後のフレームの揺らし (``UpscaleStage/lastJitterInSource``)、フレームの中で 1 度でも
+    ///   描き切った後ならこのフレームの揺らし (``UpscaleStage/jitterInSource``・[#2103]) で、描き切りが図形を描く揺らし
     ///   (``jitter(drawingInFrame:)``・[#1913]) と対にする。だから止まっている間に置いて描き切らせた
     ///   図形は既にある絵と揃い、フレームの中で追い付いた絵はフレームの終わりの拡大と同じ位置に出る。
     ///   代償は、揺らして重ねて収束した絵が、変えた瞬間に 1 枚ぶんの三次補間に落ちること (次に描く
@@ -161,8 +161,11 @@ extension Canvas {
         try frameRing.advance()
         stagePassesUsed = 0
         let pipeline = try effectPipeline()
-        // 描く先の絵が載っている揺らしを戻す (``jitter(drawingInFrame:)`` と対・[#2103])
-        let offset = isDrawing ? stage.jitterInSource : stage.lastJitterInSource
+        // 描く先の絵が載っている揺らしを戻す (``jitter(drawingInFrame:)`` と対・[#2103])。フレームの中でも、
+        // まだ 1 度も描き切っていなければ描く先は前のフレームの絵のままなので、最後のフレームの揺らしを戻す
+        // (前のフレームの終わりの拡大が揺らしを進めてから失敗し、印が立ったまま入ってきた形)
+        let offset =
+            isDrawing && passesThisFrame > 0 ? stage.jitterInSource : stage.lastJitterInSource
         let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
             let wroteBack = writingBackPixels ? try encodePixelWriteBackKeepingCarry(into: commands) : false
             try encodeEnlargement(using: pipeline, offset: offset, into: commands)

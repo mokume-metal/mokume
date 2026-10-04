@@ -808,9 +808,11 @@ public final class Canvas {
     var carriesPictureBeforeEffects = false
     /// 描く先が、最後に拡大した後に変わったか ([#1882])。**細かさを下げた面の出す先は、描く先を
     /// 拡大の段が広げて書いた絵**で、拡大が積まれるのはフレームの終わりの描き切りだけである。
-    /// 止まっている間の描き切り (図形・絵・背景を描く、書いた画素を書き戻す) はその後に描く先
-    /// だけを変えるので、立っている間、出す先は変わる前の絵を映している。出力段が読む前に広げ直して
-    /// 下ろす (``catchUpOutput()``)。
+    /// 途中の描き切り (フレームの中でも、止まっている間でも) はその後に描く先だけを変えるので、立って
+    /// いる間、出す先は変わる前の絵を映している。出す先を読む口と置く口が読む前に広げ直して下ろす
+    /// (``catchUpOutput()``)。**立てるのは、描き切りが描く先を変えたとき**で、変えたかは描き切りの頭の
+    /// 1 か所で数える (図形・絵・背景を描く・書いた画素を書き戻す・フレームの最初の描き切りで効果を通す
+    /// 前の絵を戻す。``flush(applyingEffects:mirroringPixels:)``・[#2103])。
     ///
     /// 立てるのも下ろすのも投入の後だけ ([#1183] と同じ作法)。**下ろすのは、拡大が積めたときだけ**
     /// — フレームの終わりの拡大は失敗しても投げない (``applyUpscale(into:)``) ので、積めなかった
@@ -819,6 +821,7 @@ public final class Canvas {
     ///
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     var targetChangedSinceUpscale = false
     /// 置く口の追い付き (``catchUpOutputForPlacing(by:)``) を、この面が次に描き切るまで見送るか ([#2042])。
     ///
@@ -1050,7 +1053,7 @@ public final class Canvas {
 
     /// このフレームで描き切った回数。**フレームの最初の描き切りかの判定に使う** (効果を通す前の絵を
     /// 戻すのはそこ)。奥行きを引き継ぐかは数えず、``depthIsHeld`` が持つ。
-    private var passesThisFrame = 0
+    private(set) var passesThisFrame = 0
 
     /// 奥行きの面が、前の描き切りが書き出した奥行きを持っているか ([#1888])。**引き継ぐ奥行きが
     /// あるときだけ立つ** — 次の描き切りは、立っていれば読み込み、立っていなければ消して始める。
@@ -3438,19 +3441,41 @@ public final class Canvas {
         // その面には「置いた時点の絵」が残る (#1656)。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
         //
-        // **置かれるのは出す先 (``output``) だが、細かさを下げた面の途中の描き切りでも写させる**
-        // ([#2042]・[#2103])。出す先はここでは変わらない (途中の描き切りは描く先だけを変える) が、変えた
-        // 描く先は、フレームの中でも外でも読まれる前に必ず出す先へ広げ直される (置く口の追い付き
+        // **この描き切りが描く先を変えるかは、ここで 1 度だけ数える** ([#2103])。変える操作は 3 つ:
+        // 図形・背景を描く (`hasPendingDrawing`)・CPU が書いた画素を書き戻す (`hasPendingPixelWrites`)・
+        // フレームの最初の描き切りで効果を通す前の絵を戻す (`restoresCarry`・[#1469])。置いた側へ写させるか
+        // (すぐ下) と、拡大より後に描く先が変わった印 (``targetChangedSinceUpscale``) は、どちらもこれを
+        // 読む。**描く先を変える操作を足すときは、ここへ数える** — 数え漏らすと、細かさを下げた面だけ
+        // 追い付かずに前の絵が出る (戻しを数えていなかったのが #2103 の反証で見つかった)
+        //
+        // `drawsInFrame` ほかの意味は、下の組み立ての前の説明 (#1834・[#1913]) にある
+        let drawsInFrame = isDrawing || applyingEffects
+        let startsFrame = passesThisFrame == 0 && drawsInFrame
+        let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
+        let changesTarget = hasPendingDrawing || target.hasPendingPixelWrites || restoresCarry
+        //
+        // **置かれるのは出す先 (``output``) なので、出す先が変わる描き切りで写させる** (#1656)。細かさを
+        // 下げた面の出す先は、描き切りの中ではフレームの終わりの拡大でしか変わらない (途中の描き切りは描く
+        // 先だけを変える) が、途中の描き切りでも描く先を変えるなら写させる ([#2042]・[#2103])。変えた描く
+        // 先は、フレームの中でも外でも読まれる前に必ず出す先へ広げ直される (置く口の追い付き
         // ``catchUpOutputForPlacing(by:)``・コールバックを配った直後の追い付き・出す先を読む口・フレームの
         // 終わりの拡大)。写させるのを置く口の追い付きまで待つと、置く側自身の写しの代わりの描き切り
         // (``keepPicture(placedFrom:)``) が置く口の内側で走り、前置き (列・貼る絵・塗り) を済ませてから
         // 記録へ来る呼び手を壊す — 走らせなければ、写しの上限に達した後は追い付きを見送って前の絵を置く。
-        // ここなら細かさ 1 の面と同じ時点・同じ作法になる。**描き切りの外で出す先を書く口は、それぞれ
-        // 自分の頭で通る** (#1942。数え上げは ``settlePlacersBeforeChange()``)
+        // ここなら細かさ 1 の面と同じ時点・同じ作法になる
         //
+        // **フレームの中で描く先を変えない途中の描き切り (何も溜めずに `get()` を呼ぶ) は写させない**
+        // ([#2103])。出す先も変わらないので要らない写しで、写しの上限 (``placedPictureCopyLimit``) を
+        // 食えば、置いた側に利用者が呼んでいない区切りが入る (#1656)。フレームの外ではこれまでどおり
+        // 写させる。**描き切りの外で出す先を書く口は、それぞれ自分の頭で通る** (#1942。数え上げは
+        // ``settlePlacersBeforeChange()``)
+        //
+        // [#1469]: https://github.com/mokume-metal/mokume/issues/1469
         // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
         // [#2103]: https://github.com/mokume-metal/mokume/issues/2103
-        settlePlacersBeforeChange()
+        if applyingEffects || upscaleStage == nil || !isDrawing || changesTarget {
+            settlePlacersBeforeChange()
+        }
         isFlushing = true
         defer { isFlushing = false }
         // CPU 上の列を確定し、実際に読む直前の画像更新を拾う (#1766)。配置後の
@@ -3511,9 +3536,9 @@ public final class Canvas {
         // **時間方向の揺らしも、フレームの描き切りかで選ぶ** ([#1913]・``jitter(drawingInFrame:)``)
         //
         // [#1913]: https://github.com/mokume-metal/mokume/issues/1913
-        let drawsInFrame = isDrawing || applyingEffects
-        let startsFrame = passesThisFrame == 0 && drawsInFrame
-        let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
+        //
+        // (`drawsInFrame`・`startsFrame`・`restoresCarry` は、描く先が変わるかと一緒に頭で数えた)
+        //
         // **止まっている間に変えた分は、効果を通す前の絵にも同じように加える** ([#1524])。効果を
         // 通したフレームの後、次のフレームが控えを戻すまでの間 (止まっている間のコールバック) は、
         // 描く先 (効果を通した絵・画面と読む画素はこれ) と控え (効果を通す前の絵・次のフレームの
@@ -3650,15 +3675,15 @@ public final class Canvas {
         if assembled.wroteBack { target.markPixelsWrittenBack() }
         // **拡大より後に描く先が変わったかを憶える** ([#1882])。フレームの終わりの描き切りは、
         // 拡大が積めたなら下ろす。**積めなかったなら (拡大は失敗を握り潰して警告だけ出す) 立てる**
-        // — 下ろすと、出す先が古い絵のまま追い付き直されない。途中の描き切りは、図形・背景を
-        // 描いたか (`hasDrawing`。片付けの前に捕った、この描き切りが描いたもの) 画素を書き戻した
-        // ときに立てる
+        // — 下ろすと、出す先が古い絵のまま追い付き直されない。途中の描き切りは、描く先を変えたときに
+        // 立てる (頭で数えた `changesTarget`・[#2103]。書き戻しは実際に積んだかでも見る)
         //
         // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+        // [#2103]: https://github.com/mokume-metal/mokume/issues/2103
         if applyingEffects {
             targetChangedSinceUpscale = !assembled.upscaled
             placingCatchUpDeferred = false
-        } else if upscaleStage != nil, hasDrawing || assembled.wroteBack {
+        } else if upscaleStage != nil, changesTarget || assembled.wroteBack {
             targetChangedSinceUpscale = true
             placingCatchUpDeferred = false
         }

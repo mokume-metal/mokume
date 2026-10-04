@@ -428,15 +428,45 @@ struct MidFrameCutTests {
         #expect(gap == 0, "安全網の後で \\(gap) 画素違う")
     }
 
-    /// 細かさを下げた面のフレームの中の途中の描き切りも、細かさ 1 と同じくその時点で置いた側へ写させる
-    /// ([#2103])。出す先はその時点では変わらないが、変えた描く先は読まれる前に必ず出す先へ広げ直される
-    /// (置く口・出す先を読む口のフレームの中の追い付き、フレームの終わりの拡大)。写させるのを置く口の
-    /// 追い付きまで待つと、置く側自身の写しの代わりの描き切りが置く口の内側で走れない。写すのは 1 度
-    /// きりで、フレームの終わりの描き切りは記録が落ちているので写し直さない。
+    /// 細かさを下げた面のフレームの中の途中の描き切りは、描く先を変えないなら置いた側に写させない
+    /// ([#2103])。出す先も変わらないので要らない写しで、写しの上限を食えば置いた側に利用者が呼んでいない
+    /// 区切りが入る。写すのはフレームの終わりの描き切り (出す先が変わる) の 1 度だけ。
     ///
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
-    @Test("細かさを下げた面のフレームの中の途中の描き切りで、置いた側は 1 度だけ写す")
-    func aCutOfAReducedDensityCanvasCopiesOnce() throws {
+    @Test("細かさを下げた面のフレームの中の途中の描き切りが描く先を変えなければ、置いた側は写さない")
+    func aCutThatLeavesTheTargetAloneCopiesNothing() throws {
+        let gpu = try RenderDevice()
+        let placer = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+        let placed = try Canvas(
+            output: try RenderTarget(gpu: gpu, width: 64, height: 64), gpu: gpu,
+            pixelDensity: 0.5, upscale: .spatial)
+        try placed.draw { placed.background(.linear(red: 0, green: 0, blue: 1)) }
+        var copiedByTheCut = -1
+        try placer.draw {
+            placer.background(.linear(red: 0, green: 0, blue: 0))
+            placer.image(placed, 0, 0)
+            try? placed.draw {
+                _ = placed.get(0, 0)
+                copiedByTheCut = placer.placedPicturesCopied
+                placed.background(.linear(red: 1, green: 0, blue: 0))
+            }
+        }
+        #expect(copiedByTheCut == 0, "描く先を変えない途中の描き切りで写した")
+        #expect(placer.placedPicturesCopied == 1, "出す先が変わる描き切りで写していない")
+        // 置いた時点の絵 (青) が出る
+        let point = try placer.output.encodeForDisplay()[8, 8]
+        #expect(point.blue > 200 && point.red < 30, "置いた時点の絵が出ていない: \(point)")
+    }
+
+    /// 細かさを下げた面のフレームの中の途中の描き切りが描く先を変えるなら、細かさ 1 と同じくその時点で
+    /// 置いた側へ写させる ([#2103])。変えた描く先は、読まれる前に必ず出す先へ広げ直される (置く口・出す
+    /// 先を読む口のフレームの中の追い付き、フレームの終わりの拡大)。写させるのを置く口の追い付きまで待つと、
+    /// 置く側自身の写しの代わりの描き切りが置く口の内側で走れない。写すのは 1 度きりで、フレームの終わりの
+    /// 描き切りは記録が落ちているので写し直さない。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test("細かさを下げた面のフレームの中の途中の描き切りが描く先を変えれば、置いた側は 1 度だけ写す")
+    func aCutThatChangesTheTargetCopiesOnce() throws {
         let gpu = try RenderDevice()
         let placer = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
         let placed = try Canvas(
@@ -453,11 +483,11 @@ struct MidFrameCutTests {
                 copiedByTheCut = placer.placedPicturesCopied
             }
         }
-        #expect(copiedByTheCut == 1, "フレームの中の途中の描き切りで写していない")
+        #expect(copiedByTheCut == 1, "描く先を変える途中の描き切りで写していない")
         #expect(placer.placedPicturesCopied == 1, "フレームの終わりの描き切りで写し直した")
         // 置いた時点の絵 (青) が出る
         let point = try placer.output.encodeForDisplay()[8, 8]
-        #expect(point.blue > 200 && point.red < 30, "置いた時点の絵が出ていない: \\(point)")
+        #expect(point.blue > 200 && point.red < 30, "置いた時点の絵が出ていない: \(point)")
     }
 
     // MARK: - 描き切りの外で出す先を書く口 (#1942)

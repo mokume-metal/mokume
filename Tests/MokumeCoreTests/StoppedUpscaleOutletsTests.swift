@@ -1352,6 +1352,91 @@ struct StoppedUpscaleOutletsTests {
         }
     }
 
+    /// 効果を掛けた本体で、`draw()` の頭でまだ何も描かずに区切っても、置いた先と読んだ絵はどの細かさでも
+    /// 効果を通す前の絵になる ([#2103] の反証 1)。
+    ///
+    /// フレームの最初の描き切りは、描く先を効果を通す前の前のフレームの絵へ戻す ([#1469])。描く先を
+    /// 変えるのは図形や書き戻しだけではないので、この戻しも「描く先が変わった」に数えないと、細かさを
+    /// 下げた本体だけ追い付かず、効果を通した前のフレームの絵 (周辺減光で隅が暗い) が出る。細かさ 1 では
+    /// 描く先が出す先そのものなので、もとから効果を通す前の絵が出る。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test(
+        "効果を掛けた本体をフレームの頭で何も描かずに区切ると、どの細かさでも置いた先と読んだ絵に効果を通す前の絵が出る",
+        arguments: Body.all, [false, true])
+    func aCutThatRestoresThePictureBeforeEffectsIsPlacedAndRead(body: Body, loadsPixels: Bool) throws {
+        let box = LayerBox()
+        var read: PixelBuffer?
+        try Self.withStoppedSketch(
+            density: body.density, vignette: true, upscale: body.upscale,
+            configure: { sketch in
+                sketch.onLaterFrame = { sketch in
+                    if loadsPixels { sketch.loadPixels() } else { _ = sketch.get(0, 0) }
+                    Self.placeIntoNewLayer(sketch, by: .image, box: box)
+                    read = try? sketch.canvas.output.readPixels()
+                }
+            }
+        ) { _, _, press in
+            try press("r")
+            // 周辺減光が掛かっていれば隅が中央より暗い。掛かっていなければ下地一色
+            let placed = try #require(box.canvas).output.readPixels()
+            let placedGap = abs(placed[40, 40].green - placed[1, 1].green)
+            #expect(placedGap < 0.02, "置いた先に効果を通した絵が出た (中央と隅の差 \(placedGap))")
+            let picture = try #require(read)
+            let readGap = abs(picture[80, 80].green - picture[2, 2].green)
+            #expect(readGap < 0.02, "読んだ絵に効果を通した絵が出た (中央と隅の差 \(readGap))")
+        }
+    }
+
+    /// 時間方向・細かさ 0.5 で、前のフレームの終わりの拡大が揺らしを進めてから失敗し、描く先が出す先より
+    /// 進んだままフレームへ入ったとき、まだ描き切る前に読んだ絵は、止まっている間に読んだ絵と同じになる
+    /// ([#2103] の反証 3)。
+    ///
+    /// フレームの中でもまだ 1 度も描き切っていなければ、描く先は前のフレームの絵のままで、それは最後の
+    /// フレームの揺らしで描いてある。このフレームの揺らしで戻すと、最大で描く画素 1 個弱ずれる。
+    ///
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
+    @Test("前のフレームの終わりの拡大が失敗したまま入ったフレームで、描き切る前に読んだ絵は、止まっている間に読んだ絵と同じ")
+    func aCatchUpBeforeTheFirstCutReturnsTheLastFramesJitter() throws {
+        /// 2 枚目に赤い四角を描いてその終わりの拡大を失敗させ、`readInThirdFrame` なら 3 枚目の頭で、
+        /// そうでなければ 2 枚目の後に止まったまま出す先を読む。
+        func picture(readInThirdFrame: Bool) throws -> (PixelBuffer, behind: Bool) {
+            var read: PixelBuffer?
+            var behind = false
+            try Self.withStoppedSketch(density: 0.5, upscale: .temporal, configure: { sketch in
+                sketch.onLaterFrame = { sketch in
+                    switch sketch.frameCount {
+                    case 2:
+                        sketch.noStroke()
+                        sketch.fill(StoppedUpscaleOutletsTests.red)
+                        sketch.rect(50, 50, 60, 60)
+                        // 拡大の最初の段 (混ぜる段) で投げる。投げるのは揺らしを進めた後
+                        sketch.canvas.failEffectPassForTesting = 0
+                    default:
+                        sketch.canvas.failEffectPassForTesting = nil
+                        behind = sketch.canvas.targetChangedSinceUpscale
+                        read = try? sketch.canvas.output.readPixels()
+                    }
+                }
+            }) { runtime, _, press in
+                try press("r")
+                if readInThirdFrame {
+                    try press("r")
+                } else {
+                    runtime.canvas.failEffectPassForTesting = nil
+                    behind = runtime.canvas.targetChangedSinceUpscale
+                    read = try runtime.canvas.output.readPixels()
+                }
+            }
+            return (try #require(read), behind)
+        }
+        let paused = try picture(readInThirdFrame: false)
+        let inFrame = try picture(readInThirdFrame: true)
+        #expect(paused.behind && inFrame.behind, "検査の前提: 描く先が出す先より進んだままになっていない")
+        #expect(inFrame.0 == paused.0, "描き切る前のフレームの中で読んだ絵が、止まっている間に読んだ絵と違う")
+    }
+
     // MARK: - 失敗
 
     /// 配った直後の追い付きが失敗しても `advance()` は投げない (観測に応える前に投げると、失敗した
