@@ -2940,8 +2940,18 @@ public final class Canvas {
     /// 受けない)。代わりに置いた側が、いまの絵を写しへ取って読む面を差し替える
     /// (``keepPicture(placedFrom:)``)。
     ///
+    /// **自分の出す先 (``output``) を書く口は、書く前に必ずここを通る** ([#1942])。描き切り
+    /// (``flush(applyingEffects:mirroringPixels:)``) のほかに、描き切りの外で出す先を書く口が 4 つある:
+    /// 細かさを下げた面の追い付き (``catchUpOutput()``)・細かさ 1 の面の書き戻し
+    /// (``writeBackPendingPixels()``)・出力段の書き戻し (``RenderTarget/encodeToImage()`` ほか)・
+    /// 出す先を直に塗る ``RenderTarget/fill(with:)``。新しい口を足すときは、書く前にここを通す。
+    /// **この列挙は出す先を書く口の登録簿で**、通し忘れは、出す先を書く最下層が呼ぶ検算
+    /// (`RenderTarget.assertPlacersSettledBeforeWriting()`) が debug の検査で捕まえる。
+    /// 写しを取るのは出す先が実際に変わる口だけで、変えていない口は呼ばない (ADR-0023 決定 5)。
+    ///
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
-    private func settlePlacersBeforeChange() {
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
+    func settlePlacersBeforeChange() {
         guard !placers.isEmpty else { return }
         // **先に空にする。** 描き切らせた先から置き直されることがあるので、
         // 走らせたあとに消すと、そのフレームの記録まで一緒に落ちる
@@ -3226,8 +3236,10 @@ public final class Canvas {
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
         //
         // **置かれるのは出す先 (``output``) なので、出す先が変わる描き切りでだけ写させる** (#1656)。
-        // 細かさを下げた面の出す先は、フレームの終わりの描き切りの拡大でしか変わらない (途中の
-        // 描き切りは描く先だけを変える)。写させないなら置いた記録も残し、変わる描き切りで写させる
+        // 細かさを下げた面の出す先は、描き切りの中ではフレームの終わりの拡大でしか変わらない (途中の
+        // 描き切りは描く先だけを変える)。写させないなら置いた記録も残し、変わる描き切りで写させる。
+        // **描き切りの外で出す先を書く口は、それぞれ自分の頭で通る** (#1942。数え上げは
+        // ``settlePlacersBeforeChange()``)
         if applyingEffects || upscaleStage == nil { settlePlacersBeforeChange() }
         isFlushing = true
         defer { isFlushing = false }

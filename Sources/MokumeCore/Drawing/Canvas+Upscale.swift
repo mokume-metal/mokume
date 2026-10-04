@@ -47,6 +47,7 @@ extension Canvas {
     private func encodeUpscale(_ stage: UpscaleStage, into commands: any MTL4CommandBuffer)
         throws(RenderFailure)
     {
+        output.assertPlacersSettledBeforeWriting()
         let pipeline = try effectPipeline()
         defer { stage.advance() }
 
@@ -86,6 +87,7 @@ extension Canvas {
     private func encodeEnlargement(
         using pipeline: EffectPipeline, offset: SIMD2<Float>, into commands: any MTL4CommandBuffer
     ) throws(RenderFailure) {
+        output.assertPlacersSettledBeforeWriting()
         let index = takeStagePass()
         try pipeline.reservePasses(index + upscalePassCount)
         try encode(
@@ -129,14 +131,23 @@ extension Canvas {
     /// 環を 1 つ進めてから積む — 拡大の段は CPU が置き場へ書くので、描き切りと同じく、そのスロットを
     /// 最後に読んだ投入が終わっていなければならない。
     ///
+    /// **出す先を書く前に、置いた側へ置いた時点の絵を写させる** ([#1942]・
+    /// ``settlePlacersBeforeChange()``)。追い付きは描き切りを通らずに出す先を書くので、描き切りの
+    /// 頭の関所を通らない。通さないと、置いた側が追い付いた後の絵を読む (描き場所が開いたまま
+    /// コールバックをまたぐ形・追い付いた後に置いた側が描き切る形)。
+    ///
     /// **記帳は投入の後だけ** ([#1183])。組み立てが投げれば、コマンドは捨てられて書き戻しも
     /// されない。書き込み待ちも印も残るので、次の出力段がやり直す。**古い絵を黙って返さない**よう、
     /// 拡大の段のように握り潰さず、出力段が投げる。
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     func catchUpOutput() throws(RenderFailure) {
         guard let stage = upscaleStage else { return }
+        // **コマンドを開く前に通す。** 置いた側の描き切り (写せないときの代わり) が、このコマンドの
+        // 組み立ての中に入らない
+        settlePlacersBeforeChange()
         try frameRing.advance()
         stagePassesUsed = 0
         let pipeline = try effectPipeline()
@@ -164,14 +175,21 @@ extension Canvas {
     /// 環は進めない。積むのは写しからの blit と控えへの写しだけで、CPU が環の置き場へ書かない
     /// (出力段が書き戻すときと同じ)。
     ///
+    /// **書き戻す前に、置いた側へ置いた時点の絵を写させる** ([#1942]・
+    /// ``settlePlacersBeforeChange()``)。細かさ 1 の面は描く先が出す先そのものなので、書き戻しは
+    /// 出す先を書く。書き込み待ちが無ければ何も書かないので、関所も通らない。
+    ///
     /// **記帳は投入の後だけ** ([#1183])。組み立てが投げれば、コマンドは捨てられて書き込み待ちが
     /// 残るので、次のリフレッシュか出力段がやり直す。
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     func writeBackPendingPixels() throws(RenderFailure) {
         guard target.hasPendingPixelWrites else { return }
+        // コマンドを開く前に通す (``catchUpOutput()`` と同じ)
+        settlePlacersBeforeChange()
         let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
             let wroteBack = try encodePixelWriteBackKeepingCarry(into: commands)
             gpu.commit(commands)

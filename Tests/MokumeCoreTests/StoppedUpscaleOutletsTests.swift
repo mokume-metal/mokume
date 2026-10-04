@@ -49,6 +49,11 @@ struct StoppedUpscaleOutletsTests {
         func keyPressed() { onKey[key]?(self) }
     }
 
+    /// キーのコールバックが開いた描き場所を、検査へ渡す入れ物。
+    final class LayerBox {
+        var canvas: Canvas?
+    }
+
     /// 止まっている間に変える口。画素を書く口は 3 つとも CPU の写しへ書く ([#1906])。
     ///
     /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
@@ -102,7 +107,7 @@ struct StoppedUpscaleOutletsTests {
 
     /// 実ランタイムに、止まっている間のキーを配る場を作って渡す。後片付けまで面倒を見る。
     private static func withStoppedSketch(
-        density: Float, vignette: Bool = false,
+        density: Float, vignette: Bool = false, layer: LayerBox? = nil,
         _ body: (SketchRuntime, RenderDevice, (String) throws -> Void) throws -> Void
     ) throws {
         let directory = FileManager.default.temporaryDirectory
@@ -133,6 +138,18 @@ struct StoppedUpscaleOutletsTests {
             sketch.circle(80, 80, 40)
             _ = sketch.get(0, 0)
         }
+        // 描き場所を開き、本体を置いて、本体の画素を書く。**描き場所は開いたままコールバックを終える**
+        // (閉じるのは次のコールバック "e")。本体の画素は読み込み済みにしてから置く — 書く前に読み込む
+        // 描き切りを挟むと、そこで置いた側へ写させてしまう
+        sketch.onKey["a"] = { sketch in
+            _ = sketch.get(0, 0)
+            guard let opened = try? sketch.createGraphics(160, 160) else { return }
+            layer?.canvas = opened
+            opened.beginDraw()
+            opened.image(sketch.canvas, 0, 0)
+            sketch.onKey["w"]?(sketch)
+        }
+        sketch.onKey["e"] = { _ in layer?.canvas?.endDraw() }
         // 読むだけ (描く先を変えない)
         sketch.onKey["g"] = { sketch in _ = sketch.get(40, 40) }
         sketch.onKey["r"] = { sketch in sketch.redraw() }
@@ -308,6 +325,37 @@ struct StoppedUpscaleOutletsTests {
                 canvas.effectPassesEncoded - passesAfterFirstFrame == enlargements, "追い付いた後に広げ足した")
             #expect(
                 canvas.target.pixelWriteBacksEncoded - writeBacksAfterFirstFrame == 1, "追い付いた後に書き戻し足した")
+        }
+    }
+
+    // MARK: - 置いた側の絵 (#1942)
+
+    /// 配った直後の追い付きは、出す先を書く前に、置いた側へ置いた時点の絵を写させる ([#1942])。
+    ///
+    /// 描き場所がコールバックをまたいで開いたままで、本体を置いた後に本体の画素を書くと、追い付きは
+    /// 描き場所が閉じる前に本体の出す先を書く。写させないと、次のコールバックで閉じた描き場所に、
+    /// 置いた時点ではなく書いた後の絵が出る。細かさを下げた面は ``Canvas/catchUpOutput()``、細かさ 1
+    /// の面は ``Canvas/writeBackPendingPixels()`` を通る。
+    ///
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
+    @Test(
+        "配った直後の追い付きの後に描き場所を閉じても、置いた側には置いた時点の本体の絵が出る",
+        arguments: [Float(0.5), 1])
+    func aPlacerKeepsThePictureAcrossTheCatchUp(density: Float) throws {
+        let box = LayerBox()
+        try Self.withStoppedSketch(density: density, layer: box) { runtime, gpu, press in
+            try press("a")
+            // 追い付いた後の本体の出す先には、書いた画素が出ている
+            let body = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
+            #expect(Self.isRed(body.red, body.green, body.blue), "本体の出す先に書いた画素が出ていない: \(body)")
+
+            try press("e")
+            let layer = try #require(box.canvas)
+            let placed = try layer.output.encodeForDisplay()[80, 80]
+            // 置いた時点の本体は下地 (235) だけで、書いた画素は載っていない
+            #expect(
+                placed.red > 200 && placed.green > 200 && placed.blue > 200,
+                "置いた時点の絵が出ていない (書いた後の絵が出た): \(placed)")
         }
     }
 

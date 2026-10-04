@@ -423,6 +423,255 @@ struct MidFrameCutTests {
         #expect(point.blue > 200 && point.red < 30, "置いた時点の絵が出ていない: \\(point)")
     }
 
+    // MARK: - 描き切りの外で出す先を書く口 (#1942)
+
+    private static let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private static let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+
+    /// 置いた時点の絵 (青) が出ているか。
+    private static func isBlue(_ point: (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8)) -> Bool {
+        point.blue > 200 && point.red < 30 && point.green < 30
+    }
+
+    /// 置いた側に出るのは置いた時点の絵である ([#1656] の案 A2) — **出す先を書く口が、描き切り
+    /// (`flush`) の外にもある**。その口も、書く前に置いた側へ置いた時点の絵を写させる。
+    ///
+    /// 面 (`Canvas`) が自分の出す先を書く口は、描き切りのほかに 4 つある: 細かさを下げた面の追い付き
+    /// (`catchUpOutput()`)・細かさ 1 の面の書き戻し (`writeBackPendingPixels()`)・出力段の書き戻し
+    /// (`RenderTarget.encode(into:)`)・出す先を直に塗る `fill(with:)`。ここはその口ごとに 1 本置く。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    @Test("細かさを下げた面の出す先を読む口が追い付いても、置いた側には置いた時点の絵が出る (#1942)")
+    func catchingUpTheOutputKeepsThePlacedPicture() throws {
+        let gpu = try RenderDevice()
+        let placer = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+        let placed = try Canvas(
+            output: try RenderTarget(gpu: gpu, width: 64, height: 64), gpu: gpu,
+            pixelDensity: 0.5, upscale: .spatial)
+        try placed.draw { placed.background(Self.blue) }
+        try placer.draw {
+            placer.background(Self.black)
+            placer.image(placed, 0, 0)
+            try? placed.draw {
+                placed.background(Self.red)
+                // 途中の描き切り: 描く先だけが赤になる (出す先は青のまま。置いた側は写さない)
+                _ = placed.get(0, 0)
+                // 読む口が追い付く: 出す先が赤になる。**書く前に置いた側へ写させる**
+                _ = try? placed.output.readPixels()
+            }
+        }
+        let point = try placer.output.encodeForDisplay()[8, 8]
+        #expect(Self.isBlue(point), "置いた時点の絵が出ていない: \(point)")
+        // 置いた側が持つのは置いた時点の絵で、描き場所の絵は赤に変わっている
+        let placed8 = try placed.output.encodeForDisplay()[8, 8]
+        #expect(placed8.red > 200 && placed8.blue < 30, "描き場所の絵が変わっていない: \(placed8)")
+    }
+
+    @Test("細かさ 1 の面を出力段が書き戻しても、置いた側には置いた時点の絵が出る (#1942)")
+    func writingBackFromTheOutputStageKeepsThePlacedPicture() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+        let pg = try canvas.createGraphics(16, 16)
+        try canvas.draw {
+            canvas.background(Self.black)
+            pg.beginDraw()
+            pg.background(Self.blue)
+            pg.loadPixels()  // 描き切り (まだ誰も置いていない)
+            canvas.image(pg, 0, 0)  // 置いた時点の絵 = 青
+            pg.set(0, 0, Self.red)  // 読み込み済みなので描き切らない。書き込み待ちになる
+            // 出力段が書き戻す: 描き場所の出す先の (0, 0) が赤になる。**書く前に置いた側へ写させる**
+            _ = try? pg.output.encodeForDisplay()
+            pg.endDraw()
+        }
+        let point = try canvas.output.encodeForDisplay()[0, 0]
+        #expect(Self.isBlue(point), "置いた時点の絵が出ていない: \(point)")
+        let written = try pg.output.encodeForDisplay()[0, 0]
+        #expect(written.red > 200 && written.blue < 30, "描き場所の絵に書いた画素が出ていない: \(written)")
+    }
+
+    @Test("出す先を直に塗っても、置いた側には置いた時点の絵が出る (#1942)")
+    func fillingTheOutputKeepsThePlacedPicture() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+        let pg = try canvas.createGraphics(16, 16)
+        try pg.draw { pg.background(Self.blue) }
+        try canvas.draw {
+            canvas.background(Self.black)
+            canvas.image(pg, 0, 0)  // 置いた時点の絵 = 青
+            // 出す先を直に塗る。**塗る前に置いた側へ写させる**
+            try? pg.output.fill(with: Self.red)
+        }
+        let point = try canvas.output.encodeForDisplay()[8, 8]
+        #expect(Self.isBlue(point), "置いた時点の絵が出ていない: \(point)")
+        let filled = try pg.output.encodeForDisplay()[8, 8]
+        #expect(filled.red > 200 && filled.blue < 30, "塗った絵が出す先に出ていない: \(filled)")
+    }
+
+    @Test("出す先が変わらない口は、置いた側に写させない (#1942)")
+    func readingWithoutAChangeCopiesNothing() throws {
+        let gpu = try RenderDevice()
+        let placer = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+        let spatial = try Canvas(
+            output: try RenderTarget(gpu: gpu, width: 64, height: 64), gpu: gpu,
+            pixelDensity: 0.5, upscale: .spatial)
+        let pg = try placer.createGraphics(16, 16)
+        try spatial.draw { spatial.background(Self.blue) }
+        try pg.draw { pg.background(Self.blue) }
+        var copied = -1
+        try placer.draw {
+            placer.background(Self.black)
+            placer.image(spatial, 0, 0)
+            placer.image(pg, 32, 0)
+            // どちらも変えていない。読む口は、追い付かず書き戻さず、置いた側へ写させない
+            _ = try? spatial.output.readPixels()
+            _ = try? pg.output.encodeForDisplay()
+            _ = try? pg.output.readPixels()
+            copied = placer.placedPicturesCopied
+        }
+        #expect(copied == 0, "出す先が変わらないのに、置いた側へ写させた")
+        #expect(placer.placedPicturesCopied == 0)
+    }
+
+    /// 出す先を書く口 ([#1942])。**描き切りの外に 4 つある。**
+    enum Outlet: CaseIterable, CustomTestStringConvertible {
+        /// 細かさを下げた面を、出す先を読む口 (`readPixels()`) で追い付かせる (`catchUpOutput()`)。
+        case catchUp
+        /// 細かさ 1 の描き場所の書き込み待ちを、出力段 (`encodeForDisplay()`) が書き戻す。
+        case outputStage
+        /// 細かさ 1 の描き場所の書き込み待ちを、配った直後の追い付き (`catchUpOutputWithoutThrowing()`)
+        /// が書き戻す (`writeBackPendingPixels()`)。
+        case writeBack
+        /// 出す先を直に塗る (`fill(with:)`)。
+        case fill
+
+        var testDescription: String {
+            switch self {
+            case .catchUp: "細かさ 0.5 の追い付き"
+            case .outputStage: "出力段の書き戻し"
+            case .writeBack: "配った直後の書き戻し"
+            case .fill: "出す先を直に塗る"
+            }
+        }
+
+        /// 書き込み待ちを作る口か。描き場所を開いたまま、読み込んでから画素を書く。
+        var writesPixels: Bool { self == .outputStage || self == .writeBack }
+    }
+
+    /// 口の 1 つを、置いたあとに踏む面。**青く描いた面を置き、置いた後に口を踏んで赤く変える。**
+    /// 変わる画素は (0, 0) で、置いた側のその位置に青 (置いた時点の絵) が出るはずである。
+    private final class Face {
+        let canvas: Canvas
+        let outlet: Outlet
+
+        init(outlet: Outlet, gpu: RenderDevice, parent: Canvas) throws {
+            self.outlet = outlet
+            switch outlet {
+            case .catchUp:
+                canvas = try Canvas(
+                    output: try RenderTarget(gpu: gpu, width: 16, height: 16), gpu: gpu,
+                    pixelDensity: 0.5, upscale: .spatial)
+                try canvas.draw { canvas.background(MidFrameCutTests.blue) }
+            case .fill:
+                canvas = try parent.createGraphics(16, 16)
+                try canvas.draw { canvas.background(MidFrameCutTests.blue) }
+            case .outputStage, .writeBack:
+                canvas = try parent.createGraphics(16, 16)
+            }
+        }
+
+        /// 置く前。書き込み待ちを作る口は、描き場所を開いて読み込んでおく (読み込み済みなら、画素を
+        /// 書いても描き切らず、描き切りの頭の関所を通らない)。
+        func prepare() {
+            guard outlet.writesPixels else { return }
+            canvas.beginDraw()
+            canvas.background(MidFrameCutTests.blue)
+            canvas.loadPixels()
+        }
+
+        /// 置いた後。出す先を書く口を踏む。**関所を通らなければ、置いた側に赤が出る。**
+        func change() {
+            switch outlet {
+            case .catchUp:
+                try? canvas.draw {
+                    canvas.background(MidFrameCutTests.red)
+                    // 途中の描き切り: 描く先だけが赤になる (出す先は青のまま)
+                    _ = canvas.get(0, 0)
+                    // 読む口が追い付く: 出す先が赤になる
+                    _ = try? canvas.output.readPixels()
+                }
+            case .outputStage:
+                canvas.set(0, 0, MidFrameCutTests.red)
+                _ = try? canvas.output.encodeForDisplay()
+            case .writeBack:
+                canvas.set(0, 0, MidFrameCutTests.red)
+                canvas.catchUpOutputWithoutThrowing()
+            case .fill:
+                try? canvas.output.fill(with: MidFrameCutTests.red)
+            }
+        }
+
+        func finish() {
+            if outlet.writesPixels { canvas.endDraw() }
+        }
+    }
+
+    @Test(
+        "写しの上限を越えて出す先を書いても、置いた側は描き切られ、置いた時点の絵が出る (#1942)",
+        arguments: Outlet.allCases)
+    func everyOutletFallsBackToDrawingOutAtTheLimit(outlet: Outlet) throws {
+        // 写しを取れない (上限に達した) ときの関所は、置いた側を描き切らせる (#1656)。出す先を書く
+        // 口が通す関所でも同じに働く。**描き切りはコマンドを開く前に走る** ので、入れ子にならない。
+        // 置いた側が持てる写しは上限 (4) までで、越えた分の口は置いた側を描き切らせる
+        let gpu = try RenderDevice()
+        let board = try CanvasFixture.make(gpu: gpu, width: 120, height: 16)
+        let rounds = Canvas.placedPictureCopyLimit + 2
+        let faces = try (0..<rounds).map { _ in try Face(outlet: outlet, gpu: gpu, parent: board) }
+        try board.draw {
+            board.background(Self.black)
+            for (index, face) in faces.enumerated() {
+                face.prepare()
+                board.image(face.canvas, Float(index * 20), 0)
+                face.change()
+                face.finish()
+            }
+        }
+        #expect(board.placedPictureCopyLimitReached > 0, "上限に達していない (検査の前提)")
+        let image = try board.output.encodeForDisplay()
+        for index in 0..<rounds {
+            let point = image[index * 20, 0]
+            #expect(Self.isBlue(point), "\(index) 番目に置いた時点の絵が出ていない: \(point)")
+        }
+    }
+
+    @Test(
+        "同じ描き場所を置いた側が複数いても、どの置いた側にも置いた時点の絵が出る (#1942)",
+        arguments: Outlet.allCases)
+    func everyPlacerKeepsThePlacedPicture(outlet: Outlet) throws {
+        let gpu = try RenderDevice()
+        let first = try CanvasFixture.make(gpu: gpu, width: 32, height: 16)
+        let second = try CanvasFixture.make(gpu: gpu, width: 32, height: 16)
+        let face = try Face(outlet: outlet, gpu: gpu, parent: first)
+        try first.draw {
+            try? second.draw {
+                first.background(Self.black)
+                second.background(Self.black)
+                face.prepare()
+                first.image(face.canvas, 0, 0)
+                second.image(face.canvas, 8, 0)
+                // 口を踏む。**置いた側ごとに、書く前に写させる**
+                face.change()
+                face.finish()
+            }
+        }
+        let one = try first.output.encodeForDisplay()[0, 0]
+        let two = try second.output.encodeForDisplay()[8, 0]
+        #expect(Self.isBlue(one), "1 つ目の置いた側に置いた時点の絵が出ていない: \(one)")
+        #expect(Self.isBlue(two), "2 つ目の置いた側に置いた時点の絵が出ていない: \(two)")
+        #expect(first.placedPicturesCopied == 1, "1 つ目の置いた側が写していない")
+        #expect(second.placedPicturesCopied == 1, "2 つ目の置いた側が写していない")
+    }
+
     @Test("組み立ての途中の面を守るのは、自分を直に置いた面だけ (写しで止まる先は見ない)")
     func onlyDirectPlacersGuardAShapeInProgress() throws {
         let gpu = try RenderDevice()
