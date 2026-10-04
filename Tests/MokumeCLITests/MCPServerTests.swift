@@ -246,6 +246,37 @@ struct MCPServerTests {
         #expect(request["scale"] as? Double == 0.5)
     }
 
+    /// スキーマの外の組は窓口の外から届きうる (エージェントがスキーマを守るとは限らない)。
+    /// 丸めずに掛けると Int が溢れ、窓口のプロセスごと落ちる (#2045)。
+    @Test("スキーマの外の枚数・間隔でも、待ちの見積もりは撮る側と同じ端へ丸めて溢れない")
+    func extraWaitClampsLikeTheShootingSide() {
+        let (top, step) = (ObservationRequest.maximumCount, ObservationRequest.maximumEvery)
+        let (bottom, shortest) = (ObservationRequest.minimumCount, ObservationRequest.minimumEvery)
+        // (頼んだ枚数, 頼んだ間隔, 撮る側が丸めた枚数, 丸めた間隔)
+        let cases = [
+            (3, Int.max, 3, step),
+            (Int.max, 3, top, 3),
+            (Int.max, Int.max, top, step),
+            (Int.min, Int.min, bottom, shortest),
+            (top + 1, step + 1, top, step),
+        ]
+        for (count, every, clampedCount, clampedEvery) in cases {
+            #expect(
+                Tools.extraWait(count: count, every: every)
+                    == Tools.extraWait(count: clampedCount, every: clampedEvery),
+                "count \(count), every \(every)")
+        }
+    }
+
+    @Test("範囲の中の枚数・間隔は、撮り終えるまでに進むフレームを 30fps で換算する")
+    func extraWaitInsideTheRangeCountsTheFrames() {
+        // 3 枚を 2 フレームおき: 1 枚目 + 2 × 2 = 5 フレーム
+        #expect(Tools.extraWait(count: 3, every: 2) == 5.0 / 30)
+        #expect(Tools.extraWait(count: 1, every: 1) == 1.0 / 30)
+        let (count, every) = (ObservationRequest.maximumCount, ObservationRequest.maximumEvery)
+        #expect(Tools.extraWait(count: count, every: every) == Double((count - 1) * every + 1) / 30)
+    }
+
     /// このリポジトリの `Schemas/`。**検査の実行ファイルからは辿れない** (道具の実行ファイルと
     /// 深さが違う) ので、ソースの位置から引く。
     private func schemasRoot() -> URL {

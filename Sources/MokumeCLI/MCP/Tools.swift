@@ -272,8 +272,17 @@ struct Tools {
     /// その古い目録を掴む。
     ///
     /// フレームレートは分からないので、遅い側 (30fps) を見込んで換算する。
+    ///
+    /// **掛ける前に、撮る側と同じ範囲へ丸める** (#2045)。撮る側は範囲の外の頼みを断らず
+    /// 端へ丸めて撮る (範囲の正本は `ObservationRequest.clamped()`) ので、待つ長さも丸めた
+    /// 値で見積もる。丸めずに掛けると、スキーマの外の値 (`every = Int.max` など) で Int が
+    /// 溢れ、窓口のプロセスごと落ちる。
     static func extraWait(count: Int, every: Int) -> TimeInterval {
-        Double((count - 1) * every + 1) / 30
+        let count = min(
+            max(count, ObservationRequest.minimumCount), ObservationRequest.maximumCount)
+        let every = min(
+            max(every, ObservationRequest.minimumEvery), ObservationRequest.maximumEvery)
+        return Double((count - 1) * every + 1) / 30
     }
 
     private func buildStatus() -> (String, Bool) {
