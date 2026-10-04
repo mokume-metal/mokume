@@ -58,10 +58,23 @@ name: Render
 #     ジョブの結論と記録の artifact を読むだけ (ruleset-drift.yml と同じ形)
 # 範囲は debug の build・test・gpu-ran (台帳を含む) と、台帳を外した release
 # (Makefile の test-release-scheduled)。release で台帳を外す理由は #1736。
-# **1 本の長いジョブにしない。** 専用機は 1 台で、必須の render (queue の期限 60 分) が
-# 定期の run の後ろに並ぶ。release は debug の終了後に queue へ入れ (needs)、その間に
-# 待っている render が割り込めるようにする。各 30 分。初回の run で所要と render の
+# **1 本の長いジョブにしない。** release は debug の終了後に門番を通して queue へ入れ
+# (needs)、その間に待っている render を先に通す。各 30 分。初回の run で所要と render の
 # 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。
+#
+# **専用機へ積む順番は、GitHub ホストの門番 (render-turn) が決める** (#2062)。専用機は
+# 1 台で、runner は queued の job を先着順に拾わない — queue の先頭の render が、後から
+# 積まれた render-pr や後ろの group の render に抜かれ続け、期限 (60 分) で弾かれた。
+# 拾う順は変えられないので、積む job を絞る。判断は scripts/render-turn.sh が持つ:
+#   - render (merge_group) — 1 つ前の group の run が終わるまで積まない。group は queue の
+#     順に 1 本ずつ専用機に載る
+#   - render-pr — merge_group の run が 1 本でも残っていれば見送る (必須ではない)
+#   - scheduled-* — merge_group の run が残っている間は待つ
+# 門番は GitHub ホストにだけ置き、actions: read だけを持つ。専用機の job は引き続き権限も
+# 秘密も持たない。**門番が赤でも専用機の job は走らせる (`!cancelled()`)。** needs が
+# 落ちて render が skipped になると、skipped は必須チェックを満たしてしまう — 描かずに
+# merge される。順番が乱れるほうが軽い。`always()` にしないのは、queue-sweep が cancel した
+# 捨てられた group の run で render を専用機に積まないため
 
 on:
   pull_request:
@@ -76,8 +89,39 @@ permissions:
   contents: read
 
 jobs:
+  # 専用機へ積む順番を決める門番 (#2062・上の「専用機へ積む順番」)。待つ上限は
+  # render-turn.sh が持ち (merge_group 40 分・schedule 60 分)、timeout はその外側に置く
+  render-turn:
+    if: >-
+      github.event_name == 'merge_group'
+      || github.event_name == 'schedule'
+      || (github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read # checkout
+      actions: read # merge queue の render の run を読む
+    outputs:
+      go: ${{ steps.turn.outputs.go }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: turn
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            merge_group) bash scripts/render-turn.sh merge_group "$BASE_SHA" ;;
+            pull_request) bash scripts/render-turn.sh yield ;;
+            schedule) bash scripts/render-turn.sh wait ;;
+          esac
+
   render:
-    if: github.event_name == 'merge_group'
+    needs: render-turn
+    if: ${{ !cancelled() && github.event_name == 'merge_group' }}
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
     steps:
@@ -120,10 +164,14 @@ jobs:
           retention-days: 14
 
   render-pr:
+    needs: render-turn
+    # 門番が見送ったときだけ外す。門番が赤なら走らせる (go が空になる)
     if: >-
-      github.event_name == 'pull_request'
+      !cancelled()
+      && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
       && !github.event.pull_request.draft
+      && needs.render-turn.outputs.go != 'false'
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
     # 同じ PR へ push し直したら、古い実行は捨てる。専用機は 1 台なので、古い木の検査で
@@ -188,7 +236,8 @@ jobs:
           python3 scripts/example-shots.py --drift HEAD^1
 
   scheduled-debug:
-    if: github.event_name == 'schedule'
+    needs: render-turn
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
     # 同じ定期の run が重ならないようにする。古いものは捨てずに待つ
@@ -226,10 +275,26 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
+  # debug の後に、もう一度 merge queue の render を先に通す (上の「専用機へ積む順番」)
+  scheduled-release-turn:
+    needs: scheduled-debug
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read # checkout
+      actions: read # merge queue の render の run を読む
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/render-turn.sh wait
+
   scheduled-release:
     # debug が赤でも release は走らせる (別の赤を覆い隠さない)。needs は順序のためで、
-    # この job は debug が終わってから queue に入る (上の「1 本の長いジョブにしない」)
-    needs: scheduled-debug
+    # この job は debug が終わり、門番を通ってから queue に入る (上の「1 本の長いジョブに
+    # しない」)
+    needs: [scheduled-debug, scheduled-release-turn]
     if: always() && github.event_name == 'schedule'
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30

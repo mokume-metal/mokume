@@ -55,6 +55,16 @@
 #      してから、その定義の PR を出す — 必須チェックを消すときは適用を merge より先にする
 #      (AGENTS.md「ブランチ保護の正本」)。戻すときは逆順 (PR を merge してから適用) にする。
 #      外している間は描画を誰も見ないので、戻した後の最初の merge_group の render を確かめる
+#  10. 専用機は online で busy なのに、queue の先頭の render だけが queued のまま進まない
+#      原因: 専用機は queued の job を先着順に拾わない (#2062)。先頭の render が後から
+#      積まれた render-pr や後ろの group の render に抜かれ続け、60 分の期限で弾かれる。
+#      render.yml の門番 (render-turn) が積む順番を絞るので、普段は起きない。起きたら
+#      門番が効いていない (render-turn が赤・上限で通した) か、門番の前に積まれた job が残っている
+#      対処: 先頭の group の render-turn の要約を読む (待った相手と、上限で通したか)。
+#      専用機で走っている・queued の job が render-pr なら、gh run cancel で退かせてよい
+#      (必須ではなく、後で rerun すれば戻る)。弾かれた先頭は 5 と同じく予約を掛け直す。
+#      9 との見分け: 9 は runner が offline で、どの render も走らない。10 は runner が
+#      busy で、後ろの render や render-pr は走っている
 #
 # 読むときの注意:
 #
