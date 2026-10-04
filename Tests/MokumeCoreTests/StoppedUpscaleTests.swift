@@ -527,6 +527,97 @@ struct StoppedUpscaleTests {
         }
     }
 
+    /// ``edges(of:)`` を、図形の中 (70, 70) の暗さで割ったもの。**図形が履歴と混ざって薄いとき**に使う —
+    /// 暗い所の量は暗さに比例するので、割らないと縁のずれも同じ割合で縮んで見える。
+    private static func scaledEdges(of image: DisplayImage) -> (left: Double, top: Double) {
+        let inside = 1 - Double(image[70, 70].red) / 255
+        let edges = edges(of: image)
+        return (50 - (50 - edges.left) / inside, 60 - (60 - edges.top) / inside)
+    }
+
+    /// 止まっている間に描き切らせた図形は、**描く先の上で、最後のフレームに描いた図形と同じ絵になる**
+    /// (反証の指摘 1〜3)。
+    ///
+    /// 描く先に残った絵は、次に描くフレームの終わりの拡大が描く先の全体を同じ量 (次のフレームの揺らし)
+    /// だけ戻して広げる。だから描く先で同じ絵なら、追い付きでも、塗り直さない次のフレームでも、効果の
+    /// 前の控え (同じ列・同じ値で描く) でも、奥行き (同じ描き切りが書く) でも、最後のフレームの絵と
+    /// 同じに扱われる。直す前は次のフレームの揺らしで描いたので、ここが食い違った。
+    @Test(
+        "時間方向: 止まっている間に描き切らせた図形は、描く先の上で最後のフレームに描いた図形と同じ絵になる",
+        arguments: JitteredPath.allCases, [2, 7, 8])
+    func temporalShapesDrawnWhileStoppedMatchTheLastFrameOnTheTarget(
+        path: JitteredPath, frames: Int
+    ) throws {
+        func drawn(placedWhileStopped: Bool) throws -> PixelBuffer {
+            let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+            let plane = Self.darkPlane(on: canvas)
+            for index in 0..<frames {
+                try canvas.draw {
+                    canvas.background(255)
+                    if !placedWhileStopped && index == frames - 1 {
+                        Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 51)
+                    }
+                }
+            }
+            if placedWhileStopped {
+                Self.whileStopped(canvas) {
+                    Self.placeDark(path, on: canvas, plane: plane, x: 41, y: 51)
+                    _ = canvas.get(0, 0)
+                }
+            }
+            return try canvas.target.readPixels()
+        }
+        let lastFrame = try drawn(placedWhileStopped: false)
+        #expect(lastFrame[35, 30].red < 0.01, "前提: 図形が描く先にある")
+        #expect(try drawn(placedWhileStopped: true) == lastFrame, "最後のフレームに描いた絵と違う")
+    }
+
+    /// 止まっている間に描き切らせた図形は、**塗り直さない次のフレームでは、描く先に残った絵と一緒に
+    /// 揺らしの差だけずれる** (反証の指摘 1)。時間方向の代償で、直さない。
+    ///
+    /// 時間方向の拡大は履歴を位置で合わせ直さない (`Builtin.metal` の `kEffectAccumulate` は、その回の
+    /// 揺らしを戻して広げた絵と前の結果を混ぜるだけ)。だから塗り直さないスケッチでは、前のフレームに
+    /// 描いて描く先に残った絵は、次のフレームで「描いたときの揺らし − 次の揺らし」だけずれて混ざる。
+    /// 止まっている間に描き切らせた図形もその 1 つになる (直す前は、止まっている間の絵の上で同じ大きさ
+    /// だけ逆にずれていた)。ここでは、その量が 2 つの揺らしの差 (出す画素へ 2 倍) どおりであることを
+    /// 固定する。基本図形だけを見る — 縁を画素の内側で塗り分けるので、ずれがそのまま縁に出る。
+    @Test(
+        "時間方向: 止まっている間に描き切らせた図形は、塗り直さない次のフレームで、残った絵と同じだけずれる",
+        arguments: [2, 7, 8])
+    func temporalShapesDrawnWhileStoppedShiftWithTheOldPictureNextFrame(frames: Int) throws {
+        func edges(placedWhileStopped: Bool) throws -> (
+            edges: (left: Double, top: Double), shift: SIMD2<Float>
+        ) {
+            let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+            let plane = Self.darkPlane(on: canvas)
+            for _ in 0..<frames { try canvas.draw { canvas.background(255) } }
+            let stage = try #require(canvas.upscaleStage)
+            // 描く先に残った絵が次のフレームでずれる量 (出す画素)
+            let shift = (stage.lastJitter - stage.jitter) * 2
+            if placedWhileStopped {
+                Self.whileStopped(canvas) {
+                    Self.placeDark(.form, on: canvas, plane: plane, x: 40, y: 50)
+                    _ = canvas.get(0, 0)
+                }
+                try canvas.draw {}
+            } else {
+                // 比べる相手: 次のフレームの中で同じ図形を描く (ずれない)
+                try canvas.draw { Self.placeDark(.form, on: canvas, plane: plane, x: 40, y: 50) }
+            }
+            return (Self.scaledEdges(of: try Self.shown(canvas)), shift)
+        }
+        let (inFrame, shift) = try edges(placedWhileStopped: false)
+        let (stopped, _) = try edges(placedWhileStopped: true)
+        let moved = (left: stopped.left - inFrame.left, top: stopped.top - inFrame.top)
+
+        #expect(
+            abs(moved.left - Double(shift.x)) < 0.35,
+            "横のずれが揺らしの差と違う: \(moved.left) (揺らしの差 \(shift.x))")
+        #expect(
+            abs(moved.top - Double(shift.y)) < 0.35,
+            "縦のずれが揺らしの差と違う: \(moved.top) (揺らしの差 \(shift.y))")
+    }
+
     /// 完了条件 4 — フレームの外の描き切りの揺らしが変わるのは、時間方向で 1 枚以上広げた後だけである。
     /// 空間方向は揺らさず、1 枚も広げる前の時間方向は最後のフレームの揺らしが次のものと同じなので、
     /// 落とす行列はバイト単位でこれまでと同じになる。

@@ -121,7 +121,8 @@ final class UpscaleStage {
     var lastJitterInSource: SIMD2<Float> { inSource(lastJitter) }
 
     /// 最後に広げたフレームの揺らし (描く先の画素・[#1913])。フレームの外の描き切りは、これで描く
-    /// (``Canvas/jitter(drawingInFrame:)``) — その絵を出す先へ広げるのは、これを戻す追い付きである。
+    /// (``Canvas/jitter(drawingInFrame:)``) — 描く先に残る最後のフレームの絵と同じ揺らしで、止まっている
+    /// 間にそれを出す先へ広げるのは、これを戻す追い付きである。
     ///
     /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
     var lastJitter: SIMD2<Float> {
