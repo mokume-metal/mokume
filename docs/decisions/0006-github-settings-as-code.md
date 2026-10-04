@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 改訂 (2026-08-27): 決定 5 が検査専用の App をやめる / 改訂 (2026-08-29): 決定 4 がドリフト検査の契機を増やす / 改訂 (2026-08-31): 決定 3 に削除時の適用順序を足す
+採用 (2026-08-27) / 改訂 (2026-08-27): 決定 5 が検査専用の App をやめる / 改訂 (2026-08-29): 決定 4 がドリフト検査の契機を増やす / 改訂 (2026-08-31): 決定 3 に削除時の適用順序を足す / 改訂 (2026-10-04): 決定 7 に三本それぞれが守るものを足す
 
 ## 文脈
 
@@ -124,6 +124,14 @@ GET の応答から次の鍵を落としたものを正規形とする: `id` / `
 ### 7. 当面の対象はルールセット三本に限る
 
 [#6](https://github.com/mokume-metal/mokume/issues/6) で同時に適用したリポジトリ設定 (squash only・delete-branch-on-merge・auto-merge 許可・secret scanning・Actions の既定権限) は対象外とする。これらは依然 GitHub 側が正本である。必要になったら同じ形で足せる。
+
+三本それぞれが守るもの (2026-10-04 改訂で足した — `signed-commits` だけ残す理由がどこにも書かれていなかった。[#2080](https://github.com/mokume-metal/mokume/issues/2080)):
+
+| ルールセット | 守るもの |
+| --- | --- |
+| `main-protection` | main へは merge queue と必須チェックを通ったものだけが入る ([ADR-0001](0001-founding-principles.md) 原則 8)。重要パスにはメンテナの承認が要る ([ADR-0003](0003-agent-identity-separation.md)・[ADR-0007](0007-approvability-invariant.md)) |
+| `signed-commits` | ブランチへ積まれるコミットは、鍵の持ち主が署名したものに限られる。PR を作る主体は App に分けたが、push の主体は分けていない ([ADR-0003](0003-agent-identity-separation.md) 決定 6)。コミットを書いたのが鍵の持ち主であることを GitHub が検証できるのは、この署名だけである (App の token で push しても署名は verified のまま) |
+| `release-tags` | 版はタグだけで表すので (`scripts/release.py` の冒頭)、出した版のタグを消したり動かしたりさせない |
 
 ### 8. 既製ツールには乗らない
 
