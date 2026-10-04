@@ -15,6 +15,11 @@ import simd
 extension Canvas {
     /// 形を組み立てて保持する。
     public func createShape(_ body: () -> Void) -> Shape {
+        // **入口と出口は、ランタイムが持つ乱数の列へも知らせる** (#1936)。中で書いた種は ``Manner`` の
+        // 外 (`Canvas` の外) にあるので、出口の戻しはそちらが受ける。早い抜け方 (下の空の形) でも
+        // 対で呼ぶよう、`defer` で置く
+        shapeListener?.shapeAssemblyBegan()
+        defer { shapeListener?.shapeAssemblyEnded() }
         closeBatch()
         let vertexStart = vertices.count
         let solidStart = solidVertices.count
@@ -175,11 +180,15 @@ extension Canvas {
     /// 既定へ戻した値を、出口が閉じたフレームの値で書き戻していた。フレームの頭はこの 3 つを
     /// 戻さないので、次のフレームへ持ち越された (#1671 が塞いだのと同じ破れ方・#1684 の反証)。
     ///
+    /// **`Canvas` の外にある状態は、ここではなく ``ShapeAssemblyListener`` が受ける** (乱数の種・
+    /// [#1936])。
+    ///
     /// **項目を足すときは、検査の表 (`ShapeExitTests`) の「戻す」に汚す手順も足す。** 表が
     /// 汚して、出口の直後に戻ったかを見る。「断る」に載る `Style` のフィールドは、組み立ての中で
     /// フレームを閉じた後に書き戻されないかを表が見る。
     ///
     /// [#1684]: https://github.com/mokume-metal/mokume/issues/1684
+    /// [#1936]: https://github.com/mokume-metal/mokume/issues/1936
     struct Manner {
         let style: Style
         let transform: Transform

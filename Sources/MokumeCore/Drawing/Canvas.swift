@@ -1594,6 +1594,17 @@ public final class Canvas {
     /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
     var timebase = Timebase()
 
+    /// 形の組み立て (``createShape(_:)``) の入口と出口を知らせる先 ([#1936])。**弱く持つ** — 面を
+    /// 持つのはスケッチの側で、面が持ち主を生かす筋合いは無い。
+    ///
+    /// ランタイムが本体の面に付け、描き場所は作った面のものを引き継ぐ (``createGraphics(_:_:)``)。
+    /// ``Canvas`` の外にある、組み立ての中で書ける状態 (乱数の種) を出口で戻すための口で、
+    /// 理由と作りは ``ShapeAssemblyListener`` が持つ。直に作った面 (``init(target:gpu:)``) は
+    /// 持たない — ランタイムが無い面には乱数の列も無い。
+    ///
+    /// [#1936]: https://github.com/mokume-metal/mokume/issues/1936
+    weak var shapeListener: (any ShapeAssemblyListener)?
+
     /// 時刻と刻み。**面どうしで共有するための参照型**で、値そのものは ``time`` と
     /// ``deltaTime``・``frameStep`` の説明が持つ。
     final class Timebase {

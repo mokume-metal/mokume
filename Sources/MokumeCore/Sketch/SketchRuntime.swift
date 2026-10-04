@@ -182,6 +182,9 @@ public final class SketchRuntime {
     /// 揺らぎ (``Canvas/noiseSeed(_:)``) と違って断片へは届かない。断片には列が無く
     /// (画素どうしが独立している)、**値の一致がそもそも定義できない**ためである。
     var randomness = Randomness()
+    /// 形の組み立ての中で書いた乱数の種の控え。出口で ``randomness`` を戻す
+    /// (`SketchRuntime+ShapeSeed.swift`・[#1936](https://github.com/mokume-metal/mokume/issues/1936))。
+    var seedScopes = SeedScopes()
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
     /// スケッチが測った値 (``measure(_:_:)``)。**フレームを越えて残る** — 同じ名前で
@@ -277,6 +280,7 @@ public final class SketchRuntime {
         let store = ParamStore.makeIfNeeded(for: registry)
         self.paramStore = store
         self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
+        canvas.shapeListener = self
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -308,6 +312,7 @@ public final class SketchRuntime {
         self.paramRegistry = ParamRegistry(of: sketch)
         self.params = params
         self.paramStore = paramStore
+        canvas.shapeListener = self
     }
 
     // MARK: - 進める
