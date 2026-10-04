@@ -154,7 +154,8 @@ nonisolated public enum StartupReads {
     /// は、区画が在っても自分の窓を開き、標準入力にも目録にも触らない ([#2028])。
     ///
     /// 値は**渡した道具の名乗り**である (``closeConfirmation`` と同じ形)。空白だけの値は
-    /// 渡されていないものとして扱う。
+    /// 渡されていないものとして扱う。**受け取った子は読んだ時点で自分の環境から消す** —
+    /// 合図はその子 1 つのもので、スケッチがさらに起こすプロセスへは継がせない。
     ///
     /// [#2028]: https://github.com/mokume-metal/mokume/issues/2028
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md

@@ -64,7 +64,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// 分岐は「ビューアあり / なし」というモードではなく、**与えられた出口の構成**である
     /// ([ADR-0032] 決定 1)。決めるのは起こし方で、窓を持つ道具に起こされたか
-    /// (``SharedFrameSurface/owner(environment:)``) を読む場所は 1 つである。窓を開かない
+    /// (``SharedFrameSurface/launchOwner``) を読む場所は 1 つである。窓を開かない
     /// ことも、標準入力の管を読むことも、決まった出口から従う。
     ///
     /// **その 1 つの決定を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
@@ -304,6 +304,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、窓を
     /// 開かずに決めた枚数を書き出す。その経路の時刻はフレーム番号から導く。
     public convenience init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
+        // **窓の持ち主の合図を、ここで読んで環境から消す** (``SharedFrameSurface/launchOwner``)。
+        // スケッチが `setup()` で子を起こしても、合図はもう継がれない
+        _ = SharedFrameSurface.launchOwner
         try self.init(sketch: sketch, gpu: gpu, render: RenderRequest.startup())
     }
 
@@ -409,9 +412,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 区画の在処と起こした道具の名乗りを受けるのは同じ理由で、既定は本番の場所と本番の
     /// 環境である (`WorkDirectory.resolve(environment:)` などと同じ、既定引数で口を開ける形)。
     ///
-    /// **共有面へ差し出すと決めたときだけ、標準入力の管を読み始める** ([ADR-0032] 決定 4)。
-    /// 窓の経路と書き出す経路は管に触らない — 区画が在っても、閉じた標準入力を「道具が
-    /// 去った」と読まず (#2025)、端末に `O_NONBLOCK` を残さない (#2024)。
+    /// **窓を持つ道具に起こされ、区画も在るときだけ、標準入力の管を読み始める**
+    /// ([ADR-0032] 決定 4)。窓の経路と書き出す経路は管に触らない — 区画が在っても、閉じた
+    /// 標準入力を「道具が去った」と読まず (#2025)、端末に `O_NONBLOCK` を残さない (#2024)。
+    ///
+    /// **共有面を用意できずに窓へ倒れた回も、管は読む。** 管を引いたのは見張りで、見張りが
+    /// 去ったことに気付く口はこの管しか無い ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
+    /// 出口が倒れたことと、起こした者が誰かは別の話である。
     ///
     /// **活動の方針 (`setActivationPolicy`) はここに置かない。** 呼んだプロセス全体に
     /// 効くので、検査から呼べる場所に混ぜると検査の走るプロセスの方針まで動く。
@@ -422,7 +429,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     func resolveOutlet(
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
-        owner: String? = SharedFrameSurface.owner()
+        owner: String? = SharedFrameSurface.launchOwner
     ) {
         // **書き出す経路は区画より先に決まっている。** 見張りが畳めずに残した区画が在っても
         // 共有面へは差し出さない — その経路の出口は撮る係だけである
@@ -430,9 +437,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         if let notice = SharedFrameSurface.strayFacetNotice(at: directory, owner: owner) {
             announce(notice)
         }
-        guard let shared = attachSharedSurface(at: directory, owner: owner) else { return }
-        outlet = .shared(shared)
+        guard SharedFrameSurface.isEnabled(at: directory, owner: owner) else { return }
         runtime.relayToolInput(from: StandardInputEvents(descriptor: toolInput))
+        if let shared = attachSharedSurface(at: directory, owner: owner) { outlet = .shared(shared) }
     }
 
     /// 道具の窓が拾った出来事が来る管。**本番は標準入力** — 見張りが子の標準入力に引く

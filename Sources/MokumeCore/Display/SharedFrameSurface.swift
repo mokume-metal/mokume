@@ -197,17 +197,43 @@ final class SharedFrameSurface {
     /// **作れなかったときは `nil` を返す。** 呼ぶ側は窓を開く側へ倒す — 面も窓も無い
     /// 実行は、何が起きたのか外から見て「動いていない」としか見えない。
     ///
-    /// - Parameter owner: 起こした道具の名乗り (``owner(environment:)``)。
+    /// - Parameter owner: 起こした道具の名乗り (``launchOwner``)。
     static func makeIfEnabled(
         gpu: RenderDevice, width: Int, height: Int,
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
-        owner: String? = SharedFrameSurface.owner()
+        owner: String? = SharedFrameSurface.launchOwner
     ) -> SharedFrameSurface? {
         guard isEnabled(at: directory, owner: owner) else { return nil }
         return try? SharedFrameSurface(gpu: gpu, width: width, height: height, at: directory)
     }
 
-    /// 窓を持つ道具に起こされたなら、その道具の名乗り。**起こされていなければ `nil`。**
+    /// このプロセスを起こした、窓を持つ道具の名乗り。**起こされていなければ `nil`。**
+    ///
+    /// **初めて読んだ瞬間に環境から消す** (``takeOwner(from:unset:)``)。合図はこのプロセスを
+    /// 起こした道具が渡したもので、このプロセスがさらに起こす子 (スケッチが `Process` で直に
+    /// 走らせる別の実行ファイルなど) のものではない — 継がせると、孫まで見張りの窓と管を
+    /// 持っているかのように振る舞う ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
+    /// 読むのは ``SketchApplication`` の組み立てで、スケッチの `setup()` より前である。
+    static let launchOwner: String? = takeOwner()
+
+    /// 合図を読み、環境から消す。**呼ぶのは ``launchOwner`` の 1 度だけ** (検査は口を差し替える)。
+    ///
+    /// - Parameters:
+    ///   - environment: 読む環境。
+    ///   - unset: 環境から変数を消す口。既定は `unsetenv` — `Process` が既定で継がせるのは
+    ///     プロセスの環境そのものなので、ここから消せば子孫へ渡らない。
+    static func takeOwner(
+        from environment: [String: String] = ProcessInfo.processInfo.environment,
+        unset: (String) -> Void = { unsetenv($0) }
+    ) -> String? {
+        let taken = owner(environment: environment)
+        if environment[StartupReads.viewportOwner.key] != nil {
+            unset(StartupReads.viewportOwner.key)
+        }
+        return taken
+    }
+
+    /// 環境に載った合図を解く。**起こされていなければ `nil`。**
     ///
     /// **「誰に起こされたか」を読むのはここ 1 つである** ([ADR-0032] 決定 1)。窓を開かない
     /// ことも、道具から来る出来事を標準入力から受けることも ([ADR-0032] 決定 4)、目録を
@@ -223,9 +249,7 @@ final class SharedFrameSurface {
     /// 空白だけの値は渡されていないものとして扱う (``CloseConfirmation`` と同じ)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    static func owner(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> String? {
+    static func owner(environment: [String: String]) -> String? {
         guard let given = environment[StartupReads.viewportOwner.key] else { return nil }
         let trimmed = given.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -241,10 +265,10 @@ final class SharedFrameSurface {
     /// ``WorkDirectory/directoryExists(at:)`` が持つ — 5 箇所が同じ 3 行を書いていた
     /// ([#988](https://github.com/mokume-metal/mokume/issues/988))。
     ///
-    /// - Parameter owner: 起こした道具の名乗り (``owner(environment:)``)。
+    /// - Parameter owner: 起こした道具の名乗り (``launchOwner``)。
     static func isEnabled(
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
-        owner: String? = SharedFrameSurface.owner()
+        owner: String? = SharedFrameSurface.launchOwner
     ) -> Bool {
         owner != nil && WorkDirectory.directoryExists(at: directory)
     }
@@ -258,11 +282,15 @@ final class SharedFrameSurface {
     /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
     static func strayFacetNotice(
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
-        owner: String? = SharedFrameSurface.owner()
+        owner: String? = SharedFrameSurface.launchOwner
     ) -> String? {
         guard owner == nil, WorkDirectory.directoryExists(at: directory) else { return nil }
+        // **古い見張りに起こされた回も、ここへ来る。** 古い見張りは合図を渡さないので、
+        // 「誰にも起こされていない」とだけ言うと、見張りの窓が空のまま理由へ辿り着けない
         return "\(directory.path) is there, but no tool that owns a window started this run "
-            + "(\(StartupReads.viewportOwner.key) is unset) — opening the sketch's own window"
+            + "(\(StartupReads.viewportOwner.key) is unset) — opening the sketch's own window. "
+            + "If mokume watch started it, the tool is older than the mokume this sketch "
+            + "depends on: update them together"
     }
 
     init(gpu: RenderDevice, width: Int, height: Int, at directory: URL) throws(RenderFailure) {

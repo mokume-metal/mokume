@@ -64,6 +64,7 @@ enum RunCommand {
         // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
         // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
         print("Tool: \(ToolVersion.describe())")
+        if let notice = sharedSurfaceNotice(for: invocation) { print(notice) }
 
         // **置き場は 1 度だけ決めて持ち回る。** 作り直しと実行ファイルの解決へ別々に
         // 判断を渡すと、片方が共有・片方がパッケージ直下という組み合わせになる
@@ -174,6 +175,34 @@ enum RunCommand {
         _ = try? swift(
             ["package", "resolve", "--scratch-path", store.path], in: directory,
             capturing: true, errors: .discard)
+    }
+
+    /// 見張りの区画が残っている場所で `run` したときに名乗る 1 行。区画が無ければ `nil`。
+    ///
+    /// **走らせるスケッチのライブラリの版で、起きることが違う** ([#2028])。いまの
+    /// ライブラリは窓の持ち主の合図 (`StartupReads.viewportOwner`) が無ければ区画を見ずに
+    /// 自分の窓を開き、そのことを自分で名乗る。合図を知らない古いライブラリは区画だけを
+    /// 見て共有面へ差し出すので、**窓が出ず、ライブラリの側からは何も言わない** — 黙って
+    /// 窓が出ないことを許さない (#791) ために、道具の側でも 1 行言う。いまのライブラリと
+    /// 名乗りが 2 行重なるのは、版を推し量って黙るより害が小さい (どの版で変わったかを
+    /// 道具は版の番号から言い切れない)。
+    ///
+    /// **見に行く先は、見張りが置く先と同じ計算から出す。** ここが自前で場所を組んで
+    /// いたために、`MOKUME_WORK_DIR` を与えた環境では「起動したのに何も出ない」が
+    /// 名乗られないまま起きていた ([#791](https://github.com/mokume-metal/mokume/issues/791))。
+    ///
+    /// [#2028]: https://github.com/mokume-metal/mokume/issues/2028
+    static func sharedSurfaceNotice(
+        for invocation: Invocation, workDirectory: URL? = WorkDirectory.given
+    ) -> String? {
+        let base = invocation.facetBase(workDirectory: workDirectory)
+        let facet = WatchCommand.viewportFacet(under: base)
+        guard FileManager.default.fileExists(atPath: facet.path) else { return nil }
+        // **在処をそのまま出す。** 基準は環境変数が動かせるので、`.mokume/…` とだけ
+        // 言うとスケッチの場所を探して「無い」と読まれる (#791)
+        return "\(facet.path) is there (left by mokume watch). A sketch on the current "
+            + "mokume opens its own window anyway; one on an older mokume hands its frames "
+            + "there and no window opens — update the mokume it depends on, or remove that facet"
     }
 
     /// 1 回の作り直しの結果。

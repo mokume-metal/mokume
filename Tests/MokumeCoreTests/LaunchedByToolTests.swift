@@ -214,7 +214,7 @@ struct LaunchedByToolTests {
                 application.announce = { said.append($0) }
 
                 // 本番と同じ既定引数 — 検査のプロセスには合図が渡っていない
-                #expect(SharedFrameSurface.owner() == nil, "検査のプロセスに合図が立っている")
+                #expect(SharedFrameSurface.launchOwner == nil, "検査のプロセスに合図が立っている")
                 application.resolveOutlet()
 
                 #expect(application.endsAfterLastWindowClosed, "窓の経路になっていない")
@@ -226,6 +226,8 @@ struct LaunchedByToolTests {
                     "見張りの目録を書き換えた")
                 #expect(said.count == 1, "区画が在るのに窓を開くことを名乗っていない (\(said))")
                 #expect(said.first?.contains(facet.path) == true, "名乗りが区画の在処を言わない")
+                // 古い見張りは合図を渡さないので、見張りから起こした人を版のずれへ導く
+                #expect(said.first?.contains("mokume watch") == true, "版のずれを疑わせる手掛かりが無い")
                 #expect(Self.standardInputIsNonBlocking == before, "標準入力に O_NONBLOCK を立てた")
                 #expect(!application.driverDeparted())
             }
@@ -274,5 +276,65 @@ struct LaunchedByToolTests {
             try pipe.fileHandleForWriting.close()
             #expect(application.driverDeparted(), "道具が管を畳んだのに気付かない")
         }
+    }
+    /// **共有面を用意できずに窓へ倒れても、見張りの子は管を読む。** 管を引いたのは見張りで、
+    /// 見張りが去ったことに気付く口はこの管しか無い ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
+    /// 区画に目録を書けない形 (書き込めない区画) で倒す。
+    @Test("合図と区画が揃っていれば、共有面を用意できずに窓へ倒れても、管を読んで道具の去ったことに気付く")
+    func aChildThatFallsBackToAWindowStillWatchesTheTool() throws {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-viewport-locked-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: facet.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)
+            try? FileManager.default.removeItem(at: facet)
+        }
+        let pipe = Pipe()
+        let application = try makeApplication()
+        defer { application.willTerminate() }
+        application.toolInput = pipe.fileHandleForReading.fileDescriptor
+
+        application.resolveOutlet(at: facet, owner: "mokume watch")
+
+        #expect(application.endsAfterLastWindowClosed, "目録を書けないのに共有面の経路になった")
+        let flags = fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFL)
+        #expect(flags & O_NONBLOCK != 0, "窓へ倒れた見張りの子が、道具の管を読んでいない")
+        #expect(!application.driverDeparted())
+        try pipe.fileHandleForWriting.close()
+        #expect(application.driverDeparted(), "窓へ倒れた見張りの子が、道具の去ったことに気付かない")
+    }
+
+    // MARK: - 合図を子孫へ継がせない
+
+    /// **合図はこのプロセスを起こした道具のもので、このプロセスが起こす子のものではない。**
+    /// 見張りの子のスケッチが `Process` で別の実行ファイルを直に起こすと、継いだ孫まで見張りの
+    /// 窓と管を持っているかのように振る舞う (#2028)。読んだら環境から消す。
+    @Test("合図は読んだときに環境から消え、起こした子へは継がれない")
+    func theSignalIsNotInheritedByChildren() throws {
+        let key = StartupReads.viewportOwner.key
+        // 控えを先に確定させる — 下で立てる合図を、この検査のプロセスの控えにしない
+        _ = SharedFrameSurface.launchOwner
+        setenv(key, "mokume watch", 1)
+        defer { unsetenv(key) }
+
+        #expect(SharedFrameSurface.takeOwner() == "mokume watch")
+        #expect(getenv(key) == nil, "読んだ合図が環境に残っている")
+
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sh")
+        child.arguments = ["-c", "printf '%s' \"${\(key)-unset}\""]
+        let output = Pipe()
+        child.standardOutput = output
+        try child.run()
+        child.waitUntilExit()
+        let seen = String(
+            data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        #expect(seen == "unset", "起こした子が合図を継いだ (\(seen ?? "?"))")
+
+        // 載っていなければ消しに行かない (他の変数に触らない)
+        var unsetCalls = 0
+        #expect(SharedFrameSurface.takeOwner(from: [:], unset: { _ in unsetCalls += 1 }) == nil)
+        #expect(unsetCalls == 0)
     }
 }

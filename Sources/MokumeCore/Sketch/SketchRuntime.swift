@@ -155,7 +155,7 @@ public final class SketchRuntime {
     private let observer: FrameObserver?
     /// 外から送られる入力の受け口。区画が無ければ `nil`。
     private let inbox: InputInbox?
-    /// 道具の窓が拾った出来事の受け口。**出口を共有面に決めた ``SketchApplication`` が
+    /// 道具の窓が拾った出来事の受け口。**窓を持つ道具に起こされた ``SketchApplication`` が
     /// 渡したときだけ在る** (``relayToolInput(from:)``)。窓を持たない `SketchRuntime` は
     /// 共有面へ差し出さないので、標準入力に触らない
     /// ([#2024](https://github.com/mokume-metal/mokume/issues/2024))。
@@ -674,8 +674,9 @@ public final class SketchRuntime {
 
     /// 道具の窓が拾った出来事を、管から受け始める。
     ///
-    /// **呼ぶのは、窓を持つ道具に起こされて出口を共有面に決めた ``SketchApplication`` だけ
-    /// である** ([ADR-0032] 決定 1・4)。書き出す経路と窓を持たない `SketchRuntime` は呼ばない
+    /// **呼ぶのは、窓を持つ道具に起こされ、区画も在った ``SketchApplication`` だけである**
+    /// ([ADR-0032] 決定 1・4)。共有面を用意できずに窓へ倒れた回も呼ぶ — 道具が去ったことに
+    /// 気付く口はこの管しか無い。書き出す経路と窓を持たない `SketchRuntime` は呼ばない
     /// ので、標準入力に触らず、閉じていても終わらない (#2024・#2025)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md

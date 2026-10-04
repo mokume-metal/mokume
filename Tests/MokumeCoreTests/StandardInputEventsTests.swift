@@ -223,7 +223,7 @@ struct StandardInputEventsTests {
     /// 直に走らせた子の標準入力 (端末) を横取りしないことは、**合図が 1 つ**であること
     /// から従う ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1・4)。
     /// 管を作るのは出口を共有面に決めた `SketchApplication` だけで、起こし方を読むのは
-    /// ``SharedFrameSurface/owner(environment:)`` 1 つである。
+    /// ``SharedFrameSurface/launchOwner`` 1 つである。
     ///
     /// **区画の在る無しは合図にならない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     /// 区画は同じ場所の誰からも見えるので、在るだけで「道具に起こされた」と読むと、居合わせた
