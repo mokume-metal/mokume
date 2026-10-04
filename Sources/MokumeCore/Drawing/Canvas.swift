@@ -3031,6 +3031,19 @@ public final class Canvas {
     // MARK: - 置いた時点の絵を守る
 
     /// 描き場所を置いたことを、両側に覚えさせる。
+    ///
+    /// **置く口の追い付きもここが持つ** ([#2042])。描き場所の出す先を読む口のうち、面を置く口
+    /// (`image(canvas)`・`texture(canvas)`・断片の面・畳む口) はどれもここを通り、置いた時点で相手の
+    /// 出す先を描き切れている絵へ追い付かせる。**出す先を読む口の登録簿は、原文を読む検査
+    /// (`StoppedUpscaleOutletReadersTests`) が持つ** ([#2104]) — 出す先を読む行はどれも、ここ (置く口)・
+    /// 読む口 (``RenderTarget/catchUpWithDrawnPicture()``)・ランタイムの配った後・わざと古い、のどれで
+    /// 追い付くかを名乗る。出す先を書く側の関所 (``settlePlacersBeforeChange()`` と、最下層の検算
+    /// `RenderTarget.assertPlacersSettledBeforeWriting()`) と対になる読む側の守りで、置く口を足すときは
+    /// ここを通し、一覧に名乗りごと足す。ここを通し忘れると、相手の `placers` が空のままなので書く側の
+    /// 検算も黙る。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    /// [#2104]: https://github.com/mokume-metal/mokume/issues/2104
     func note(placing graphics: Canvas) {
         // **面に載らない区間では記録しない。注意もしない** ([#1672])。記録は置いた時点の絵を
         // 守るためのもので、区間の外では置いたもの自体が断られる (``canPlace``)。`setup()` で
