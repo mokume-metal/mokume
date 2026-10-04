@@ -84,14 +84,16 @@ final class FrameRecorder: Outlet {
     /// **`save()` の 1 枚ものは流れではない** ([#1626])。書き損じは知らせが来たフレームで
     /// 1 回だけ載せ、次のフレームには持ち越さない。持ち越すと後に何も来ないので二度と消えず、
     /// 以後のフレームすべてで「続けて転んだ」と数えられて、同居している動画ごと外れる。
-    /// 「このフレームには新しい知らせが無い」を差込口の報せ (`String?`) が表せないことが根で、
-    /// それは #1708 で扱う。
+    /// 「このフレームには新しい知らせが無い」を差込口の報せ (`String?`) が表せないことが根だが、
+    /// 報せは 2 値のまま受け入れた ([#1708] で決めた)。代償として、毎フレーム転ぶ `save()` の
+    /// 知らせが 1 フレーム遅れると、数えが 0 に戻って撮る係が外れないことがある。
     ///
     /// 幾つかあるときは並べて 1 つの理由にする (#789)。差込口が持てる理由は 1 つだが、
     /// ``SeamHealth`` が見るのは `nil` かどうかだけなので、繋いでも数え方は変わらない。
     ///
     /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    /// [#1708]: https://github.com/mokume-metal/mokume/issues/1708
     var failure: String? {
         let reasons = [shotFailure, sequenceFailure, movieFailure].compactMap { $0 }
         return reasons.isEmpty ? nil : reasons.joined(separator: " / ")
