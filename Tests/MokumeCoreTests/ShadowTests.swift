@@ -929,6 +929,170 @@ struct ShadowTests {
         }
         #expect(perFrame == [1, 1, 1])
     }
+
+    // MARK: - 持ち越した列の粒 (#2023)
+
+    /// 粒の板を溜め場の先頭から離す立体。**どちらも影を落とさない。**
+    ///
+    /// 離さない (置き直す前の位置が 0) と、詰め直した区画の頭と位置が重なって、置き直す前の位置で
+    /// 読んでも割れない。立体は形ごとに頂点を置くので、寸法を変えて数を稼ぐ。落とさない
+    /// (`castShadow(false)`) のは、持ち越す落とす列を粒の 1 列だけにして、床の影が粒のものだと
+    /// 言えるようにするため。
+    enum Decoy: String, CaseIterable, CustomTestStringConvertible {
+        /// 頂点 108 個 (約 10 KiB)。持ち越した区画 (最小 64 KiB) の中を指すので、読み違えても
+        /// 区画の中の空きを読む。
+        case boxes
+        /// 頂点 4800 個 (約 450 KiB)。区画の最小を越えるので、読み違えると区画の外を読む。
+        case sphere
+
+        var testDescription: String { rawValue }
+    }
+
+    /// 粒を落とす側に含む場面を、途中の描き切りを入れて (`cut`)・入れずに描く。GPU は呼び手が
+    /// 渡す — 場面ごとに作って捨てる回数を増やさない (全検査の負荷の下で GPU の仕事が打ち切られる
+    /// 形が、GPU を作っては捨てる経路に出ると調べている最中である・
+    /// [#2007](https://github.com/mokume-metal/mokume/issues/2007))。
+    ///
+    /// `decoysFirst` を偽にすると、立体を粒の後に置く (粒の板が溜め場の先頭に来る)。立体は隅の
+    /// 小さな形で粒と重ならないので、置く順を入れ替えても、頂点を正しく読めていれば絵は変わらない。
+    ///
+    /// - Returns: 絵と、粒の板を置く直前の溜め場の頂点の数 (置き直す前の位置)・GPU が書いた
+    ///   描き引数の `vertexStart`。
+    private func carriedParticleScene(
+        _ decoy: Decoy, on gpu: RenderDevice, shadows: Bool = true, cut: Bool = false,
+        decoysFirst: Bool = true
+    ) throws -> (image: DisplayImage, start: Int, argumentStart: Int) {
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 96, height: 96)
+        let dust = try canvas.makeParticles(count: 64)
+        var randomness = Randomness(seed: 2023)
+        var start = 0
+        func placeDecoys() {
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
+            canvas.push()
+            canvas.translate(8, 8, 0)
+            switch decoy {
+            case .boxes:
+                for size: Float in [2, 3, 4] { canvas.box(size) }
+            case .sphere:
+                canvas.sphere(3, detail: 40)
+            }
+            canvas.pop()
+        }
+        func placeParticles() {
+            canvas.castShadow(true)
+            canvas.emit(
+                dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
+                using: &randomness)
+            start = canvas.solidVertices.count
+            canvas.particles(dust)
+            if cut { canvas.loadPixels() }
+        }
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.camera(48, -36, 120, 48, 48, 0, 0, 1, 0)
+            canvas.lights()
+            canvas.shadows(shadows)
+            canvas.noStroke()
+            if decoysFirst {
+                placeDecoys()
+                placeParticles()
+            } else {
+                placeParticles()
+                placeDecoys()
+            }
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+            canvas.push()
+            canvas.translate(48, 72, 0)
+            canvas.box(96, 4, 96)
+            canvas.pop()
+        }
+        let image = try canvas.target.encodeForDisplay()
+        let arguments = canvas.read(dust.arguments)
+        return (image, start, Int(arguments[2].bitPattern))
+    }
+
+    /// **持ち越した粒の影は、区切らずに焼いた影と同じ所に落ちる** ([#2023])。
+    ///
+    /// 持ち越した落とす列は頂点を区画の頭へ詰め直す (``Canvas/frameCasters``) が、粒の列が読む位置は
+    /// GPU が書いた描き引数が決める。引数が置き直す前の位置を指していると、持ち越した列だけが
+    /// ずれた所を読んで、後に置いた床に粒の影が落ちない。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
+    @Test("持ち越した粒の影は、区切らずに描いた影と同じ絵になる", arguments: Decoy.allCases)
+    func carriedParticlesCastTheSameShadowAsUncutOnes(decoy: Decoy) throws {
+        let gpu = try RenderDevice()
+        let plain = try carriedParticleScene(decoy, on: gpu, cut: false)
+        let cut = try carriedParticleScene(decoy, on: gpu, cut: true)
+        let unshadowed = try carriedParticleScene(decoy, on: gpu, shadows: false, cut: false)
+        // **この検査が見ている場面であることを先に言う。** 粒の板が溜め場の先頭に無く、
+        // 区切らなくても床に粒の影が落ちている
+        #expect(plain.start > 0, "検査の前提: 粒の板が溜め場の先頭に無い (置き直す前の位置が 0)")
+        var darker = 0
+        for y in 0..<plain.image.height {
+            for x in 0..<plain.image.width
+            where Int(unshadowed.image[x, y].red) - Int(plain.image[x, y].red) > 20 { darker += 1 }
+        }
+        #expect(darker > 50, "検査の前提: 区切らなくても床に影が落ちている (\(darker) 画素)")
+
+        var gap = 0
+        for y in 0..<plain.image.height {
+            for x in 0..<plain.image.width where plain.image[x, y] != cut.image[x, y] { gap += 1 }
+        }
+        #expect(gap == 0, "区切ると持ち越した粒の影が \(gap) 画素違う")
+    }
+
+    /// **粒は、溜め場のどこに置いても同じ絵で出る** ([#2023])。画面と影 (区切らない焼き付け) の両方。
+    ///
+    /// 粒の板の頂点を読む位置は、頂点の置き場へ束ねる番地 (``Canvas/Batch/vertexBaseShift``) が
+    /// 決める。**番地を足し忘れると、描き引数の頭は 0 なので溜め場の先頭 (別の立体の頂点) を
+    /// 読む** — 粒の板が先頭にあるときだけは合うので、先頭に置いた絵と、立体を先に置いて先頭から
+    /// 離した絵を比べる。持ち越した列の検査 (上の 2 本) は、区切った絵と区切らない絵が同じ行を
+    /// 通るので、この足し忘れでは割れない。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
+    @Test("粒の板が溜め場の先頭になくても、粒と粒の影は先頭にあるときと同じ絵になる", arguments: Decoy.allCases)
+    func particlesDrawTheSameWhereverTheirQuadSits(decoy: Decoy) throws {
+        let gpu = try RenderDevice()
+        let first = try carriedParticleScene(decoy, on: gpu, decoysFirst: false)
+        let behind = try carriedParticleScene(decoy, on: gpu)
+        let unshadowed = try carriedParticleScene(decoy, on: gpu, shadows: false)
+        // **この検査が見ている場面であることを先に言う。** 板の位置が先頭と先頭でない所に分かれ、
+        // 粒が見えていて、床に粒の影が落ちている
+        #expect(first.start == 0, "検査の前提: 比べる側の板が溜め場の先頭にある (\(first.start))")
+        #expect(behind.start > 0, "検査の前提: 粒の板が溜め場の先頭に無い (置き直す前の位置が 0)")
+        #expect(behind.image[40, 42].red > 200, "検査の前提: 粒が見えている")
+        var darker = 0
+        for y in 0..<behind.image.height {
+            for x in 0..<behind.image.width
+            where Int(unshadowed.image[x, y].red) - Int(behind.image[x, y].red) > 20 { darker += 1 }
+        }
+        #expect(darker > 50, "検査の前提: 床に粒の影が落ちている (\(darker) 画素)")
+
+        var gap = 0
+        for y in 0..<first.image.height {
+            for x in 0..<first.image.width where first.image[x, y] != behind.image[x, y] { gap += 1 }
+        }
+        #expect(gap == 0, "粒の板の位置が先頭でないと、絵が \(gap) 画素違う")
+    }
+
+    /// **粒の列の描き引数は、頂点の頭から数える** ([#2023])。
+    ///
+    /// 粒の板の位置を引数に書くと、置き直した後の列 (詰め直した区画) が同じ位置を指さない。
+    /// 引数の `vertexStart` は 0 に置き、頂点の置き場へ束ねる番地を列の頭へ進める
+    /// (``Canvas/Batch/vertexBaseShift``)。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
+    @Test("粒の描き引数は、頂点の置き場の頭から数える", arguments: Decoy.allCases)
+    func particleDrawArgumentsCountFromTheVertexBase(decoy: Decoy) throws {
+        let scene = try carriedParticleScene(decoy, on: RenderDevice(), cut: true)
+        #expect(scene.start > 0, "検査の前提: 粒の板が溜め場の先頭に無い")
+        #expect(
+            scene.argumentStart == 0,
+            "描き引数の vertexStart が \(scene.argumentStart) (置き直す前の位置は \(scene.start))")
+    }
 }
 
 /// 混ませて繰り返す回数。`MOKUME_SHADOW_STRESS` に入れた数だけ回す。

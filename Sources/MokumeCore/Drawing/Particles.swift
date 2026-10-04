@@ -140,8 +140,8 @@ public final class Particles {
     /// `Shaders/Computations/Particles.metal` の冒頭にある。
     ///
     ///   [0…15] いまの変換 (4x4) / [16] 1 フレームの長さ / [17] フレーム番号 /
-    ///   [18] 効かせる力の数 / [19] スキャンの段の数 / [20] 描く頂点の頭 /
-    ///   [21] 描く頂点の数 / [22…26] 段 0…4 の置き場の頭 /
+    ///   [18] 効かせる力の数 / [19] スキャンの段の数 / [20] 予備 (かつての描く頂点の頭。
+    ///   いまは使わない — 下の `write`) / [21] 描く頂点の数 / [22…26] 段 0…4 の置き場の頭 /
     ///   [27…35] 視点の枠 (横・上・手前を 3 つずつ。``Camera/basis``) / [36…39] 予備 /
     ///   [40…] 力 (1 つ ``Force/slotCount`` 個)
     ///
@@ -660,15 +660,21 @@ public final class Particles {
     /// 形で組み立てるビルド時のシェーダ検査から外れてしまう — 組み込みの計算こそ、
     /// 走らせる前に壊れていることが分かってほしい。
     ///
-    /// `vertexStart` / `vertexCount` は描く側が四角を置いた区間で、GPU がそのまま描く引数へ
-    /// 写す。参照の経路 (CPU が置く) では使われないので 0 でよい。
+    /// `vertexCount` は描く側が置いた四角の頂点の数で、GPU がそのまま描く引数へ写す。参照の経路
+    /// (CPU が置く) では使われないので 0 でよい。
+    ///
+    /// **描く引数の頂点の頭は書かない (いつも 0)。** 四角の頭の位置を引数に書くと、頂点を詰め直して
+    /// 頭を置き直した列 (``Canvas/frameCasters``) が、置き直す前の位置のずれた所を読む ([#2023])。
+    /// 頭は描く側が頂点の置き場へ束ねる番地で指す (``Canvas/Batch/vertexBaseShift``)。
     ///
     /// `basis` は視点の枠 (``Camera/basis``) で、GPU が板をそれに沿って置く。
     ///
     /// **待たない。** 粒を置くのと同じく控えに積み、描き切りが届ける (#749)。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
     func write(
         into draw: Draw, transform: simd_float4x4, basis: simd_float3x3, step: Float, frame: Int,
-        forces: [Force], vertexStart: Int, vertexCount: Int
+        forces: [Force], vertexCount: Int
     ) {
         if forces.count > Self.maximumForces { warnTooManyForces(forces.count) }
         let used = min(forces.count, Self.maximumForces)
@@ -683,7 +689,8 @@ public final class Particles {
             values[18] = Float(used)
             // 整数は **ビット列のまま**置く (上の `headerFloats` の理由)
             values[19] = Float(bitPattern: UInt32(scanCount))
-            values[20] = Float(bitPattern: UInt32(clamping: vertexStart))
+            // 予備 (かつての描く頂点の頭)。全部を書く約束なので、読まれなくても 0 を置く
+            values[20] = 0
             values[21] = Float(bitPattern: UInt32(clamping: vertexCount))
             for slot in 0..<Self.maximumLevels {
                 let offset = slot < levelOffsets.count ? levelOffsets[slot] : 0
