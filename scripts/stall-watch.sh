@@ -62,11 +62,14 @@
 #      原因: 専用機は queued の job を先着順に拾わない (#2062)。先頭の render が後から
 #      積まれた render-pr や後ろの group の render に抜かれ続け、60 分の期限で弾かれる。
 #      render.yml の門番 (render-turn) が積む順番を絞るので、普段は起きない。起きたら
-#      門番が効いていない (render-turn が赤) か、門番より前に積まれた job が残っている
-#      対処: 先頭の group と、専用機で走っている job の run の render-turn の要約を読む
-#      (待った相手・見送ったか・読めずに通したか)。専用機で走っている・queued の job が
-#      render-pr なら、gh run cancel で退かせてよい (必須ではなく、stall-act も rerun しない —
-#      戻すなら queue が空いてから push し直す)。弾かれた先頭は 5 と同じく予約を掛け直す。
+#      門番が効いていない (render-turn が赤) か、門番より前に積まれた job が残っている。
+#      門番より前に積まれた render-pr のうち、まだ拾われていないものは、group ができた
+#      瞬間に queue-sweep が cancel する (#2064)。残りうるのは、走っている render-pr と
+#      定期の scheduled-* (1 本まで・退かせない) と、queue-sweep が赤で掃除できなかった回
+#      対処: 先頭の group と、専用機で走っている job の run の render-turn の要約と、先頭の
+#      group の queue-sweep の出力 (render-pr の cancel 行) を読む。専用機で走っている・
+#      queued の job が render-pr なら、gh run cancel で退かせてよい (必須ではなく、stall-act
+#      も rerun しない — 戻すなら queue が空いてから push し直す)。弾かれた先頭は 5 と同じく予約を掛け直す。
 #      9 との見分け: 9 は runner が offline で、どの render も走らない。10 は runner が
 #      busy で、後ろの render や render-pr は走っている。runner が online なのに専用機の
 #      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 9 と名乗る)、

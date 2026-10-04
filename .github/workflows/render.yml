@@ -70,6 +70,10 @@ name: Render
 #     順に 1 本ずつ専用機に載る
 #   - render-pr — merge_group の run が 1 本でも残っていれば見送る (必須ではない)
 #   - scheduled-* — merge_group の run が残っている間は待つ
+# 門番の判断は積む前の 1 回だけで、queue が空いている間に積まれた job は後から group が
+# できても引き下がらない。そのうち**まだ拾われていない render-pr は、group ができた瞬間に
+# queue-sweep.yml が cancel する** (#2064)。scheduled-* は needs の鎖で 1 本ずつしか積まれ
+# ないので退かせない (ADR-0019 決定 7)
 # 門番は GitHub ホストにだけ置き、actions: read だけを持つ。専用機の job は引き続き権限も
 # 秘密も持たない。**門番が赤でも専用機の job は走らせる (`!cancelled()`)。** needs が
 # 落ちて render が skipped になると、skipped は必須チェックを満たしてしまう — 描かずに
