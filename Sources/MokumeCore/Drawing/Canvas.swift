@@ -1357,7 +1357,8 @@ public final class Canvas {
         /// 描く個数を GPU が書いた引数。`nil` なら `instanceCount` で描く (いつもの経路)。
         ///
         /// 粒だけがここを使う — 生きている粒の数は CPU が知らないので、数えた GPU が
-        /// 書いた引数をそのまま indirect draw に渡す。
+        /// 書いた引数をそのまま indirect draw に渡す。**引数の `vertexStart` はいつも 0** で、
+        /// 頂点の頭は束ねる番地が指す (``vertexBaseShift``)。
         var indirectArguments: Numbers?
         /// 輪郭の頂点が始まる位置 (並び全体での番号)。**平面だけが使う。**
         ///
@@ -1491,6 +1492,22 @@ public final class Canvas {
 
         /// 頂点を溜め場ではなく自分の置き場から読むなら、その置き場。
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
+
+        /// 頂点の置き場へ束ねる番地へ足す、列の頭までのバイト数。**描く個数を GPU が書く列 (粒) だけが
+        /// 0 でない値を持つ。**
+        ///
+        /// 引数を GPU が書く列は、頂点の頭を引数の `vertexStart` ではなく**束ねる番地**で指す。
+        /// 引数に頭の位置を書かせると、詰め直して頭を置き直した列 (``Canvas/frameCasters``) が、
+        /// 置き直す前の位置のまま、詰め直した区画のずれた所を読む ([#2023])。引数の `vertexStart` は
+        /// いつも 0 で、列の頭が置き場所と同じく「列の先頭から」数える。**詰め直す列は頭が 0 になる**
+        /// ので、持ち越した列の下駄は 0、区画の頭がそのまま束ねる番地になる。
+        ///
+        /// 引数を CPU が決める列 (その他すべて) は、描く呼び出しの `vertexStart` で頭を指すので 0。
+        ///
+        /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
+        var vertexBaseShift: UInt64 {
+            indirectArguments == nil ? 0 : UInt64(run.start * MemoryLayout<SolidVertex>.stride)
+        }
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -3556,8 +3573,10 @@ public final class Canvas {
                         .drawing(batch))
                 encoder.setDepthStencilState(
                     batch.replacesSurface ? pipeline.replaceDepthState : pipeline.solidDepthState)
+                // 引数を GPU が書く列 (粒) は、列の頭までを番地へ足す (``Batch/vertexBaseShift``)
                 pipeline.argumentTable.setAddress(
-                    (batch.ownVertices ?? geometry.solidVertices).gpuAddress,
+                    (batch.ownVertices ?? geometry.solidVertices).gpuAddress
+                        + batch.vertexBaseShift,
                     index: ShapePipeline.vertexBufferIndex)
                 // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
                 // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
@@ -4095,6 +4114,12 @@ public final class Canvas {
     /// 頂点は列が読む区間だけ — 添字で読む列は添字の最小から最大まで、そうでない列は自分の区間。
     /// 自分の頂点の置き場を持つ列 (線の骨・モデルの塗り) は頂点を写さない。外の置き場所 (粒) を読む
     /// 列は置き場所を写さない。
+    ///
+    /// **頂点の頭 (`run.start`) は 0 へ置き直す。** 描く個数を GPU が書く列 (粒) も同じで、その列は
+    /// 頭を引数の `vertexStart` ではなく束ねる番地が指すので (``Batch/vertexBaseShift``)、
+    /// 置き直した頭で読む場所が合う ([#2023])。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
     private func compact(_ batch: Batch) -> CompactCaster {
         var moved = batch
         var vertices: ArraySlice<SolidVertex> = []
@@ -4391,8 +4416,11 @@ public final class Canvas {
     ) {
         encoder.setRenderPipelineState(
             batch.strokeGeometry == nil ? pipeline.shadowState : pipeline.solidStrokeShadowState)
+        // 持ち越した列は詰め直した区画の頭を、溜め場の列は溜め場の頭を渡す。引数を GPU が書く列 (粒) は、
+        // そこから列の頭までを足す (``Batch/vertexBaseShift``)。持ち越した列は詰め直すときに頭が 0 へ
+        // 置き直されるので、足すのは 0 で、区画の頭がそのまま束ねる番地になる
         pipeline.argumentTable.setAddress(
-            batch.ownVertices?.gpuAddress ?? source.vertices,
+            (batch.ownVertices?.gpuAddress ?? source.vertices) + batch.vertexBaseShift,
             index: ShapePipeline.vertexBufferIndex)
         pipeline.argumentTable.setAddress(source.values, index: ShapePipeline.valuesBufferIndex)
         pipeline.argumentTable.setAddress(

@@ -83,6 +83,9 @@ struct MidFrameCutTests {
         /// 落とす立体を置くたびに区切る (4 回)。区切りごとに、前の区切りで焼いた面へその回の立体を
         /// 足して焼く形 (持ち越した列を焼き直さない) でも、分けずに描いた影と一致する。
         case casterPerCut
+        /// 落とさない立体の後ろに粒を置く。粒の板の頂点が溜め場の先頭に来ないので、持ち越した列が
+        /// 置き直す前の位置の頂点を読む誤りが、後の面に落ちる粒の影の欠けで割れる (#2023)。
+        case particlesAfterSolids
 
         var testDescription: String { rawValue }
     }
@@ -269,6 +272,33 @@ struct MidFrameCutTests {
                 canvas.translate(48, 72, 0)
                 canvas.box(96, 4, 96)
                 canvas.pop()
+            case .particlesAfterSolids:
+                canvas.camera(48, -36, 120, 48, 48, 0, 0, 1, 0)
+                canvas.lights()
+                canvas.shadows(shadows)
+                canvas.noStroke()
+                canvas.castShadow(false)
+                canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
+                // 形ごとに頂点を置くので、寸法を変えて、粒の板の頂点を溜め場の先頭から離す
+                for size: Float in [2, 3, 4] {
+                    canvas.push()
+                    canvas.translate(8, 8, 0)
+                    canvas.box(size)
+                    canvas.pop()
+                }
+                canvas.castShadow(true)
+                canvas.emit(
+                    dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                    life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
+                    using: &randomness)
+                canvas.particles(dust)
+                cut()
+                canvas.castShadow(false)
+                canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+                canvas.push()
+                canvas.translate(48, 72, 0)
+                canvas.box(96, 4, 96)
+                canvas.pop()
             }
         }
     }
@@ -312,7 +342,7 @@ struct MidFrameCutTests {
     }
 
     @Test("影の場面は、区切らなくても床に影が落ちている (比べる側が影を持つ)",
-        arguments: [Scene.shadow, .particlesTwice])
+        arguments: [Scene.shadow, .particlesTwice, .particlesAfterSolids])
     func theShadowSceneHasAShadow(scene: Scene) throws {
         // **比べる側に影が無いと、上の一致は何も見ていない。** 影を切った絵と比べて床が暗い
         let gpu = try RenderDevice()

@@ -33,7 +33,7 @@
 //   [17]    フレーム番号
 //   [18]    効かせる力の数
 //   [19]    スキャンの段の数 L (uint のビット列)
-//   [20]    描く頂点の頭 (uint のビット列)
+//   [20]    予備 (かつての描く頂点の頭。引数の頭はいつも 0 で、読まない)
 //   [21]    描く頂点の数 (uint のビット列)
 //   [22…26] 段 0…4 の置き場の頭 (uint のビット列)。段 L が生存数 1 個ぶん
 //   [27…35] 視点の枠 (横・上・手前を 3 つずつ)
@@ -178,7 +178,10 @@ kernel void mokume_particles(
         uint top = as_type<uint>(parameters[22 + levelCount]);
         arguments->vertexCount = as_type<uint>(parameters[21]);
         arguments->instanceCount = levels[top];
-        arguments->vertexStart = as_type<uint>(parameters[20]);
+        // **頂点の頭は書かない (いつも 0)。** 四角の位置を引数に書くと、頂点を詰め直して頭を
+        // 置き直した列 (影へ持ち越した落とす列) が、置き直す前の位置のずれた所を読む (#2023)。
+        // 頭は描く側が、頂点の置き場へ束ねる番地を進めて指す
+        arguments->vertexStart = 0u;
         arguments->baseInstance = 0;
     }
 
