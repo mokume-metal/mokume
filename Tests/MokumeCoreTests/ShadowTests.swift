@@ -1093,6 +1093,109 @@ struct ShadowTests {
             scene.argumentStart == 0,
             "描き引数の vertexStart が \(scene.argumentStart) (置き直す前の位置は \(scene.start))")
     }
+
+    // MARK: - 持ち越した列の位置から導く値 (#2043)
+
+    /// 列が描く単位 (添字の列なら読む順の並び、そうでなければ頂点の並び) での区間。
+    private func drawnRange(of run: Shape.Run) -> Range<Int> {
+        run.isIndexed
+            ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
+    }
+
+    /// **持ち越した列は、粒の列も含めて、束ねる番地へ下駄を足さない** ([#2043])。
+    ///
+    /// 詰め直すときに頭を 0 へ置き直す条件 (``Canvas/Batch/readsPooledVertices``) と、番地へ頭を
+    /// 足す条件 (``Canvas/Batch/addressesVertexHead``) が食い違うと、持ち越した粒の列が置き直す前の
+    /// 頭のぶん区画の先を読む。粒の板を溜め場の先頭から離して (先に立体を置いて) 持ち越し、
+    /// 持ち越した列の下駄がどれも 0 であることを見る。
+    ///
+    /// [#2043]: https://github.com/mokume-metal/mokume/issues/2043
+    @Test("持ち越した列は、粒の列も含めて束ねる番地へ下駄を足さない")
+    func carriedRunsAddNoVertexBaseShift() throws {
+        let canvas = try makeCanvas(width: 64, height: 64)
+        let dust = try canvas.makeParticles(count: 16)
+        var randomness = Randomness(seed: 2043)
+        var start = 0
+        var carried: [Canvas.Batch] = []
+        try canvas.draw {
+            canvas.lights()
+            canvas.shadows(true)
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
+            for size: Float in [2, 3, 4] { canvas.box(size) }
+            canvas.emit(
+                dust, from: .point(32, 32), rate: 600, speed: 0...0, angle: 0...0,
+                life: 5...5, size: 8...8, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
+                using: &randomness)
+            start = canvas.solidVertices.count
+            canvas.particles(dust)
+            canvas.loadPixels()
+            carried = canvas.frameCasters.casters.map(\.batch)
+        }
+        // **この検査が見ている場面であることを先に言う。** 粒の列を持ち越していて、その板は
+        // 溜め場の先頭に無い (置き直さなければ下駄が 0 にならない)
+        #expect(start > 0, "検査の前提: 粒の板が溜め場の先頭に無い")
+        #expect(
+            carried.contains { $0.indirectArguments != nil }, "検査の前提: 粒の列を持ち越している")
+        for batch in carried {
+            #expect(
+                batch.vertexBaseShift == 0,
+                "持ち越した列の下駄が \(batch.vertexBaseShift) B (頭 \(batch.run.start))")
+        }
+    }
+
+    /// **持ち越した列の、裏 → 表で描く部品は、置き直した列の区間の中に同じ位置で残る** ([#2043])。
+    ///
+    /// 部品の区間 (``Canvas/Batch/backFaceParts``) は溜め場の中の位置で持つ。詰め直すときに列の
+    /// 位置だけを置き直して部品をずらさないと、部品が列の区間の外を指し、裏 → 表で描く側
+    /// (`encodeBackThenFront`) が黙って読み飛ばす。持ち越した列の焼き付けは今は裏 → 表に
+    /// 分けないので絵には出ない — 分ける口を足した日に壊れないことを、列の値で見る。
+    ///
+    /// [#2043]: https://github.com/mokume-metal/mokume/issues/2043
+    @Test("持ち越した列の、裏 → 表で描く部品は、置き直した列の区間の中に同じ位置で残る")
+    func carriedBackFacePartsFollowTheRelocatedRun() throws {
+        let canvas = try makeCanvas(width: 64, height: 64)
+        var before: [Canvas.Batch] = []
+        var carried: [Canvas.Batch] = []
+        try canvas.draw {
+            canvas.lights()
+            canvas.shadows(true)
+            canvas.noStroke()
+            // 落とさない立体を先に置いて、半透明の箱の列を溜め場の先頭から離す
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
+            canvas.box(4)
+            canvas.castShadow(true)
+            canvas.fill(255, 255, 255, 128)
+            canvas.translate(32, 32, 0)
+            canvas.box(20)
+            canvas.closeBatch()
+            before = canvas.batches.filter(\.castsShadow)
+            canvas.loadPixels()
+            carried = canvas.frameCasters.casters.map(\.batch)
+        }
+        // **この検査が見ている場面であることを先に言う。** 裏 → 表で描く列を 1 つだけ持ち越し、
+        // その列は溜め場の先頭に無い (置き直すと位置が動く)
+        try #require(before.count == 1 && carried.count == 1, "検査の前提: 落とす列が 1 つ")
+        let (original, moved) = (before[0], carried[0])
+        #expect(original.drawsBackThenFront, "検査の前提: 裏 → 表で描く列")
+        let from = drawnRange(of: original.run)
+        let to = drawnRange(of: moved.run)
+        #expect(from.lowerBound > 0, "検査の前提: 列が溜め場の先頭に無い (\(from))")
+        #expect(to.lowerBound == 0, "検査の前提: 持ち越した列は区画の頭へ置き直される (\(to))")
+
+        #expect(moved.drawsBackThenFront, "持ち越した列が裏 → 表で描く部品を失った")
+        #expect(moved.backFaceParts.count == original.backFaceParts.count)
+        for (part, source) in zip(moved.backFaceParts, original.backFaceParts) {
+            #expect(
+                part.range.lowerBound - to.lowerBound == source.range.lowerBound - from.lowerBound
+                    && part.range.count == source.range.count,
+                "部品 \(source.range) (列 \(from)) が、置き直した列 \(to) で \(part.range) を指す")
+            #expect(
+                to.contains(part.range.lowerBound) && part.range.upperBound <= to.upperBound,
+                "部品 \(part.range) が置き直した列 \(to) の外にある")
+        }
+    }
 }
 
 /// 混ませて繰り返す回数。`MOKUME_SHADOW_STRESS` に入れた数だけ回す。
