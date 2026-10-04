@@ -102,26 +102,89 @@ extension Canvas {
     /// 帯の面積は太さ × 長さで、写すと `|det|` 倍になる。長さは `|D·向き|` 倍になるので、
     /// 写した帯の太さは `太さ × |det| / |D·向き|`。向きが決まらない (長さ 0) ときは、どの向き
     /// にもならした値 (面積の倍率の平方根) を使う。
+    ///
+    /// 1 をわずかに割る値は 1 に丸める (``roundedDrawnWeight(_:)``・#2039)。
     static func drawnWeight(
         _ weight: Float, along direction: SIMD2<Float>, by linear: simd_float2x2
     ) -> Float {
         let area = abs(simd_determinant(linear))
         let length = simd_length(direction)
-        guard length > 0, length.isFinite else { return weight * area.squareRoot() }
+        guard length > 0, length.isFinite else { return drawnPointWeight(weight, by: linear) }
         let stretched = simd_length(linear * (direction / length))
         guard stretched > 0 else { return 0 }
-        return weight * area / stretched
+        return roundedDrawnWeight(weight * area / stretched)
+    }
+
+    /// 向きを持たない点 1 つの、描く画素での太さ (面積の倍率の平方根を掛けた値)。
+    /// 1 をわずかに割る値は 1 に丸める (``roundedDrawnWeight(_:)``・#2039)。
+    static func drawnPointWeight(_ weight: Float, by linear: simd_float2x2) -> Float {
+        roundedDrawnWeight(weight * abs(simd_determinant(linear)).squareRoot())
     }
 
     /// どの向きの線でもいちばん細くなるときの描く画素での太さ (2x2 の最小の特異値を掛けた値)。
     /// これが 1 以上なら、どの片も補わない。
+    ///
+    /// **1 をわずかに割る値は 1 に丸める** (``roundedDrawnWeight(_:)``・#2039)。最小の特異値は
+    /// 倍精度で、打ち消しの無い形で解く (``smallestSingularValue(of:)``)。
     static func thinnestDrawnWeight(_ weight: Float, by linear: simd_float2x2) -> Float {
-        let product = linear.transpose * linear
-        let trace = product.columns.0.x + product.columns.1.y
-        let determinant = simd_determinant(product)
-        let gap = max(trace * trace / 4 - determinant, 0).squareRoot()
-        return weight * max(trace / 2 - gap, 0).squareRoot()
+        roundedDrawnWeight(Float(Double(weight) * smallestSingularValue(of: linear)))
     }
+
+    /// 2x2 の最小の特異値 (どの向きでも、これ以上は縮まない)。**丸めない** — 2 つの行列に分けて
+    /// 測る見積もり (``Shape/thinnestRecordedWeight``) は、丸めた値を掛け合わせると、合成の行列で
+    /// 測ったときより細さを甘く見る。丸めるのは、補うかを決める最後の 1 度だけにする。
+    ///
+    /// **倍精度で、2 乗の差を引かない形で解く** (#2039)。`DᵀD` の固有値の `trace²/4 − det` を
+    /// 引いてから平方根を取ると、回すだけの変換 (両方の特異値が 1) で打ち消しの誤差 1e-7 ほどが
+    /// 平方根で 3e-4 ほどに膨らみ、太さ 1 の線が約 29% の角度で 0.9998 ほどに細く見えていた。
+    /// ``splitScale(of:)`` と同じく `σ₁ ± σ₂ = √(trace ± 2|det|)` から大きいほうを出し、小さいほうは
+    /// `|det| / σ₁` で出す (σ₁ σ₂ = |det|。σ₂ ≪ σ₁ でも桁が落ちない)。回すだけの単精度の行列は
+    /// `trace − 2|det| = (a − d)² + (b + c)²` がちょうど 0 になり、σ₁ = σ₂ = √|det| (1 ± 6e-8) が出る。
+    static func smallestSingularValue(of linear: simd_float2x2) -> Double {
+        let a = Double(linear.columns.0.x)
+        let b = Double(linear.columns.0.y)
+        let c = Double(linear.columns.1.x)
+        let d = Double(linear.columns.1.y)
+        let trace = a * a + b * b + c * c + d * d
+        let area = abs(a * d - b * c)
+        let largest = ((trace + 2 * area).squareRoot() + max(trace - 2 * area, 0).squareRoot()) / 2
+        // 潰れきった変換は 0。数でない・無限の成分は数でない値のまま返し、1 未満とは比べさせない
+        if largest == 0 { return 0 }
+        return area / largest
+    }
+
+    /// 描く画素での太さ `drawn` のうち、1 を誤差の幅 (``thinStrokeTolerance``) の内側でだけ割る値を、
+    /// ちょうど 1 に丸める (#2039)。補うのは、丸めた値が 1 を割る線だけである。
+    ///
+    /// 回すだけ・映すだけの変換は太さを変えないはずだが、単精度の行列は成分が丸められ、描く画素での
+    /// 太さは 1 ± 1e-7 ほどに揺れる。そのまま比べると、`rotate` だけで置いた太さ 1 の線が角度によって
+    /// 補いの経路へ入り (被覆が 0.9999999 の帯に組み直され)、頂点の数が角度で変わっていた。
+    ///
+    /// **丸めるのは特異値ではなく、太さを掛けた後の値である。** 揺れは変換の大きさに対して相対で
+    /// 乗るので、`scale(2)` の下の太さ 0.5 や、細かさ 0.5 の太さ 2 の線も、描く画素では 1 ± 1e-7 に
+    /// なる。特異値を 1 の付近で丸めても、これらは拾えない。
+    ///
+    /// **幅 (``thinStrokeTolerance``) は、単精度の揺れだけを吸う狭さにする。** 分割数の拡大率の
+    /// 丸め (``splitScaleTolerance``・相対 1e-3) と同じ幅にはしない — 丸めの帰結が違うからである。
+    /// 拡大率の丸めは、半径を最大 0.1% 小さく見積もるだけで、絵は 0.25 画素の保証の内側に残る。
+    /// こちらは、丸めた線が補いの経路を外れ、元の太さのまま AA の無い帯を組む。描く画素で 1 より
+    /// わずかに細い軸に沿った帯は、被覆を掛けずに満濃度で出るうえ、縁が画素の中心の内側に入るので、
+    /// 中心が画素の境目に乗ると**どの画素の中心も跨がず消えうる** (太さ 0.9995 の横線の帯
+    /// [10.50025, 11.49975] は、中心 10.5 と 11.5 を外す。手元の GPU ではずれがラスタライザの格子への
+    /// 寄せより小さく、消えずに満濃度で出たが、その精度には頼らない)。「1 画素より細い線は、置く位置に
+    /// よらず太さに比例した濃さで出る」(`strokeWeight` の説明) を守るには、本当に細い線を丸めない。
+    ///
+    /// 幅は実測で選んだ (`RotatedThinStrokeFormulaTests`)。回転 1 つ・2 つの合成・平行移動と鏡映を
+    /// 挟んだ合成・拡大や細かさとの組・立体の線の細かさでは、1 からの揺れは最大 2.4e-7。小さい回転を
+    /// 1000 回重ねると 1.0014e-5 まで積もる。1e-5 では、この積み重ねが単精度で幅の端にちょうど
+    /// 乗って余裕が無いので、1 桁広い 1e-4 にする。補いを外れるのは描く画素で [0.9999, 1) の太さの
+    /// 線だけになる (`strokeWeight(0.9995)` は幅の外で、これまでどおり補う)。
+    static func roundedDrawnWeight(_ drawn: Float) -> Float {
+        drawn < 1 && drawn >= Float(1 - thinStrokeTolerance) ? 1 : drawn
+    }
+
+    /// 細い線とみなさない幅 (相対・``roundedDrawnWeight(_:)``)。単精度の揺れだけを吸う。
+    static let thinStrokeTolerance = 1e-4
 
     /// 円板と周の分割数を決めるときの、形自身の座標から画面への拡大率 (#1645)。
     /// 行列の 2x2 (平面の点が写る先) の最大の特異値で、**どの向きでも、これ以上は伸びない**。
@@ -175,9 +238,17 @@ extension Canvas {
 
     /// 立体の線の描く画素での太さ。**立体の線の太さは出す画素**で書かれている
     /// (視線に正対させて画面の画素で組む) ので、変換によらず、**置く面の細かさ**だけで決まる。
+    ///
+    /// 1 をわずかに割る値は 1 に丸める (``roundedDrawnWeight(_:)``・#2039)。細かさの比
+    /// (幅 / 刻む幅) は単精度で丸められるので、細かさ 0.55・出す先 200 の太さ `1 / 0.55` は
+    /// 0.99999994 になる。丸めないと、同じ絵の平面の線 (1 に丸まって補わない) と判断が食い違う。
     func drawnSolidWeight(_ weight: Float) -> Float {
-        let units = unitsPerDrawnPixel
-        return weight / (units.x * units.y).squareRoot()
+        Self.drawnSolidWeight(weight, unitsPerDrawnPixel: unitsPerDrawnPixel)
+    }
+
+    /// ``drawnSolidWeight(_:)`` の式 (描く画素 1 つが `units` の土台)。
+    static func drawnSolidWeight(_ weight: Float, unitsPerDrawnPixel units: SIMD2<Float>) -> Float {
+        roundedDrawnWeight(weight / (units.x * units.y).squareRoot())
     }
 
     // MARK: - 平面の輪郭
@@ -225,7 +296,7 @@ extension Canvas {
         if count == 1 {
             guard
                 let thin = ThinStroke(
-                    drawnWeight: weight * abs(determinant).squareRoot(), isPoint: true)
+                    drawnWeight: Self.drawnPointWeight(weight, by: linear), isPoint: true)
             else { return nil }
             return ThinOutline(
                 linear: linear, inverse: linear.inverse, bandWeight: [], bandHalf: [],
@@ -554,12 +625,13 @@ struct ThinStrokeRecipe {
     var mayRescale: Bool { outline.ring != nil || discSegments > 0 }
 
     /// 記録のときの変換を掛けた後の、いちばん細くなる向きの太さ (入れ子の外側の行列も含む)。
-    /// 形の中で最も細い線を見つけるのに使う。
+    /// 形の中で最も細い線を見つけるのに使う。**丸めない** — 置くときの行列と掛け合わせた後で、
+    /// 1 度だけ丸める (``Canvas/smallestSingularValue(of:)``・#2039)。
     var recordedWeight: Float {
         let columns = transform.matrix.columns
         let linear = simd_float2x2(
             SIMD2(columns.0.x, columns.0.y), SIMD2(columns.1.x, columns.1.y))
-        return Canvas.thinnestDrawnWeight(weight, by: linear)
+        return Float(Double(weight) * Canvas.smallestSingularValue(of: linear))
     }
 
     /// 別の保持した形の中で置かれた輪郭。行列と色を合成する (置くときに判断するのは同じ)。
