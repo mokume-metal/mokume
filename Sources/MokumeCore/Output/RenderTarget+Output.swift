@@ -143,8 +143,15 @@ extension RenderTarget {
     /// 書き戻さずに広げ直す (``Canvas/catchUpOutputForPlacing(by:)``・[#2042]) — 置くのは描き切れて
     /// いる絵で、書いただけの画素は細かさ 1 の面でも出ないからである。
     ///
+    /// **出す先を読む口の登録簿は、原文を読む検査 (`StoppedUpscaleOutletReadersTests`) が持つ** ([#2104])。
+    /// 出す先を読む行はどれも、ここ (読む口)・置く口の記録・ランタイムの配った後・わざと古い、の
+    /// どれで追い付くかを名乗る。出す先を書く側の関所 (``Canvas/settlePlacersBeforeChange()`` と、
+    /// 最下層の検算 ``assertPlacersSettledBeforeWriting()``) と対になる読む側の守りで、読む口を足す
+    /// ときは頭でここを通し、一覧に名乗りごと足す。
+    ///
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    /// [#2104]: https://github.com/mokume-metal/mokume/issues/2104
     func catchUpWithDrawnPicture() throws(RenderFailure) {
         guard let drawer, drawer.target !== self, drawer.needsOutputEnlargement else { return }
         try drawer.catchUpOutput()

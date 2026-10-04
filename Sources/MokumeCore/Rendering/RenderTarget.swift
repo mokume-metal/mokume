@@ -83,9 +83,11 @@ import MokumeDiagnostics
     /// 画素の書き戻し (``encodePixelWriteBack(into:)``)・``Canvas`` の拡大 (`encodeUpscale`・
     /// `encodeEnlargement`)。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
     /// ことを確かめる。関所はコマンドを開く前に通す要があり、最下層の中へ畳めないので、口ごとに
-    /// 呼ぶ形が残る。その足し忘れを、ここが捕まえる。
+    /// 呼ぶ形が残る。その足し忘れを、ここが捕まえる。出す先を**読む**口の登録簿は対になる側で、
+    /// ``catchUpWithDrawnPicture()`` が指す ([#2104])。
     ///
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
+    /// [#2104]: https://github.com/mokume-metal/mokume/issues/2104
     func assertPlacersSettledBeforeWriting() {
         assert(
             drawer?.placers.isEmpty ?? true,
