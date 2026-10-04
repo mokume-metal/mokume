@@ -201,6 +201,30 @@ def check(root: Path, files: list[str], tree: set[str]) -> tuple[list[str], int]
     """`tree` は `tree_paths` の返り値。リンク先の存在はこの木を基準に見る。"""
     anchor_cache: dict[Path, list[str] | None] = {}
     real_root = root.resolve()
+    by_folded = {p.casefold(): p for p in tree}
+
+    def why_not_in_tree(rel: str | None) -> str:
+        """手元に在るのに木に無いリンク先が、なぜ木に無いかを名乗る。
+
+        理由を決め打ちしない。大文字小文字を区別しない FS (macOS の既定) では綴りの
+        違うリンクも `exists()` が真になり、「無視されている」と名乗ると直す先を誤らせる
+        """
+        if rel is None:
+            return "リポジトリの外を指している"
+        folded = by_folded.get(rel.casefold())
+        if folded is not None:
+            return (
+                f"木のパスと大文字小文字が違う (木では {folded}。"
+                "GitHub と CI の木は区別するので切れる)"
+            )
+        # 無視かどうかは git に聞く (`out/` の形の規則も、ディレクトリなら掛かる)
+        ignored = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--", rel],
+            capture_output=True,
+        )
+        if ignored.returncode == 0:
+            return "git に無視されていて CI の木に入らない"
+        return "CI の木に無い (git の持たない空のディレクトリ等)"
 
     def anchors_for(path: Path) -> list[str] | None:
         if path not in anchor_cache:
@@ -245,12 +269,9 @@ def check(root: Path, files: list[str], tree: set[str]) -> tuple[list[str], int]
                     else None
                 )
                 if rel not in tree:
-                    where = (
-                        "リポジトリの外を指している"
-                        if rel is None
-                        else "git に無視されていて CI の木に入らない"
+                    problems.append(
+                        f"{name}:{line}: 参照先が{why_not_in_tree(rel)} → {raw}"
                     )
-                    problems.append(f"{name}:{line}: 参照先が{where} → {raw}")
                     continue
             else:
                 target = source

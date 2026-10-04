@@ -239,6 +239,7 @@ class DocsLinksTest(unittest.TestCase):
         r = self.run_check()
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("a.md:3", r.stderr)
+        self.assertIn("無視", r.stderr)
 
     def test_link_to_ignored_markdown_anchor_is_reported(self):
         # アンカーを見る前に木を見る。見出しが在っても CI の木に無ければ赤
@@ -248,6 +249,29 @@ class DocsLinksTest(unittest.TestCase):
         r = self.run_check()
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("a.md:3", r.stderr)
+
+    def test_link_with_wrong_case_is_reported_as_case_not_ignored(self):
+        # 大文字小文字を区別しない FS (macOS の既定) では手元に在ると読めてしまうが、
+        # GitHub と CI の木は区別するので切れている。理由を「無視」と名乗らない
+        self.write("docs/Guide.md", "# guide\n")
+        self.write("a.md", "# a\n\n[案内](docs/guide.md)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("a.md:3", r.stderr)
+        self.assertNotIn("無視", r.stderr)
+        if (self.root / "docs" / "guide.md").exists():
+            # 区別しない FS でだけ「在るのに木に無い」の分岐を通る
+            self.assertIn("大文字小文字", r.stderr)
+            self.assertIn("docs/Guide.md", r.stderr)
+
+    def test_link_to_empty_directory_is_not_reported_as_ignored(self):
+        # 空のディレクトリは手元に在るが git が持たない。無視されているわけではない
+        (self.root / "empty").mkdir()
+        self.write("a.md", "# a\n\n[空](empty/)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("a.md:3", r.stderr)
+        self.assertNotIn("無視", r.stderr)
 
     def test_link_outside_repository_is_reported(self):
         outside = tempfile.TemporaryDirectory()

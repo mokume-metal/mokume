@@ -30,32 +30,49 @@ status=0
 pairs=$(mktemp)
 trap 'rm -f "$pairs"' EXIT
 
-for schema in "$SCHEMA_DIR"/*.schema.json; do
-  [ -e "$schema" ] || continue
+# 見るファイルは「git add -A したときに CI の木になるもの」(追跡 + 未追跡 − 無視・#2072)。
+# glob で作業ツリーを見ると、無視された手元の例がスキーマの代表例として数えられ、手元で
+# 緑・CI で「例が 1 つも無い」赤になる。index にだけ残る旧パス (git rm していない削除) は
+# -f で落とす。名前は -z で割る (非 ASCII の名前は C 引用符つきで返る)
+tree=$(
+  git ls-files -z --cached --others --exclude-standard -- "$SCHEMA_DIR" |
+    while IFS= read -r -d '' path; do
+      if [ -f "$path" ]; then printf '%s\n' "$path"; fi
+    done | sort
+)
+schemas=$(grep -E "^$SCHEMA_DIR/[^/]+\\.schema\\.json\$" <<<"$tree" || true)
+examples=$(grep -E "^$EXAMPLE_DIR/[^/]+\\.json\$" <<<"$tree" || true)
+
+while IFS= read -r schema; do
+  [ -n "$schema" ] || continue
   base=$(basename "$schema" .schema.json)
   found=0
-  for example in "$EXAMPLE_DIR/$base".json "$EXAMPLE_DIR/$base"-*.json; do
-    [ -e "$example" ] || continue
+  while IFS= read -r example; do
+    case "$example" in
+      "$EXAMPLE_DIR/$base".json | "$EXAMPLE_DIR/$base"-*.json) ;;
+      *) continue ;;
+    esac
     found=1
     printf '%s\t%s\n' "$example" "$schema" >> "$pairs"
-    if check-jsonschema --schemafile "$schema" "$example" >/dev/null; then
+    # 標準入力は外の列挙を読んでいるので、検証側に食わせない
+    if check-jsonschema --schemafile "$schema" "$example" >/dev/null </dev/null; then
       echo "ok: $example ← $(basename "$schema")"
     else
       # 失敗の詳細をもう一度出す (上は静かに走らせている)
-      check-jsonschema --schemafile "$schema" "$example" || true
+      check-jsonschema --schemafile "$schema" "$example" </dev/null || true
       status=1
     fi
-  done
+  done <<<"$examples"
   if [ "$found" -eq 0 ]; then
     echo "例が 1 つも無いスキーマ: $schema" >&2
     echo "  $EXAMPLE_DIR/$base.json を置く (正典だけあって代表例が無い状態を許さない)" >&2
     status=1
   fi
-done
+done <<<"$schemas"
 
 # 孤児 (どのスキーマにも掛からない例) と、曖昧 (複数に掛かる例) を見る
-for example in "$EXAMPLE_DIR"/*.json; do
-  [ -e "$example" ] || continue
+while IFS= read -r example; do
+  [ -n "$example" ] || continue
   hits=$(awk -F'\t' -v e="$example" '$1 == e' "$pairs" | wc -l | tr -d ' ')
   if [ "$hits" -eq 0 ]; then
     echo "どのスキーマにも掛からない例: $example" >&2
@@ -66,7 +83,7 @@ for example in "$EXAMPLE_DIR"/*.json; do
     awk -F'\t' -v e="$example" '$1 == e { print "  " $2 }' "$pairs" >&2
     status=1
   fi
-done
+done <<<"$examples"
 
 # 版の据え置きを見る (段 2)。origin/main との分岐点と突き合わせるので、比較の相手を引けない
 # 環境では黙って通る — 見ていないことは、あちらの出力が名乗る

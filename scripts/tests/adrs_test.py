@@ -14,7 +14,8 @@
 「〜は改訂しない」という散文は改訂ではない (ADR-0006 決定 6 が実例)。ここを
 拾ってしまう検査は、正しい ADR を赤くして書き手に嘘の宿題を出す。
 
-一時ディレクトリを位置引数で渡すので、git も認証もネットワークも要らない。
+一時ディレクトリを `git init` して位置引数で渡すので、認証もネットワークも要らない
+(検査は ADR を `git ls-files` で集める・#2072)。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -27,11 +28,21 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "check-adrs.sh"
 
 
+def _git_init(path):
+    # 検査は ADR を `git ls-files` で集める (追跡 + 未追跡 − 無視・#2072) ので、置き場を
+    # git の作業ツリーにする
+    subprocess.run(["git", "init", "-q", "."], cwd=path, check=True)
+    # 使い捨てのリポジトリは手元の署名設定を継ぐ (#344)。ここは commit を
+    # 打たないので効き目は無いが、抜けを人の記憶で守らないための規約に従う
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=path, check=True)
+
+
 class AdrNumbersTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
+        _git_init(self.dir)
 
     def place(self, *names):
         for name in names:
@@ -69,6 +80,14 @@ class AdrNumbersTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("1 本検査", r.stdout)
 
+    def test_無視されたファイルは番号の重複に数えない(self):
+        # CI の木に無いものは ADR-00NN の綴りの指し先になりようがない (#2072)
+        self.place("0026-plugin-repository-alignment.md", "0026-local-draft.md")
+        (self.dir / ".gitignore").write_text("*-local-draft.md\n", encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("1 本検査", r.stdout)
+
     def test_置き場が無ければ赤い(self):
         # 既定の置き場を打ち間違えたまま緑を返すと、検査が「何も見ていない」ことを
         # 緑で答えることになる
@@ -94,6 +113,7 @@ class AdrStatusTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
+        _git_init(self.dir)
 
     def place(self, status, *body, name="0003-agent-identity-separation.md"):
         text = "# ADR-0003: 見出し\n\n## 状態\n\n" + status + "\n\n## 決定\n\n"
@@ -172,6 +192,26 @@ class AdrStatusTest(unittest.TestCase):
         self.place("採用 (2026-08-26) / 一部置換 (→ ADR-0004): 決定 1", "### 1. 決定")
         (self.dir / "0004-issue-classification-by-issue-type.md").write_text(
             "# ADR-0004\n\n## 状態\n\n採用 (2026-08-26)\n", encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    # --- 見る木: git add -A したときに CI の木になるもの (#2072) ---
+    # 作業ツリーに在るだけでは足りない。無視されたファイルは CI の木に無い
+
+    def test_状態欄が指す先が無視されたファイルだけなら赤い(self):
+        self.place("採用 (2026-08-26) / 一部置換 (→ ADR-0031): 決定 4", "### 4. 決定")
+        (self.dir / ".gitignore").write_text("0031-*.md\n", encoding="utf-8")
+        (self.dir / "0031-local-draft.md").write_text(
+            "# ADR-0031\n\n## 状態\n\n提案\n", encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("ADR-0031", r.stderr)
+
+    def test_状態欄が指す先が未追跡でも無視されていなければ緑(self):
+        # git add -A で CI の木に入る
+        self.place("採用 (2026-08-26) / 一部置換 (→ ADR-0031): 決定 4", "### 4. 決定")
+        (self.dir / "0031-new.md").write_text(
+            "# ADR-0031\n\n## 状態\n\n採用 (2026-08-26)\n", encoding="utf-8")
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
