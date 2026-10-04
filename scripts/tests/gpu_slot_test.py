@@ -3,17 +3,20 @@
 # SPDX-License-Identifier: MIT
 """`scripts/gpu-slot.py` — GPU の検査を、機械全体で共有する枠を取ってから走らせる包みの検査 (#1898)。
 
-守るのは 4 つ。
+守るのは 5 つ。
 - 枠の数より多くは同時に走らない
 - 持ち主が殺されれば、枠が返る
 - 待つ側が期限を持つ
 - 子の終了コードをそのまま返す
+- 起動元 (親プロセスの連鎖・エージェントの出所) を、再起動で消えない記録に残す (#2059)
 
 Swift も GPU も要らない。子には、合図のファイルを待つだけの小さな Python を走らせる。
-置き場は検査ごとの一時ディレクトリで、本物の枠 (`~/Library/Caches/mokume/gpu-slots`) には触らない。
+置き場は検査ごとの一時ディレクトリで、本物の枠 (`~/Library/Caches/mokume/gpu-slots`) にも
+本物の記録 (`~/Library/Logs/mokume/gpu-slot.jsonl`) にも触らない。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import json
 import os
 import signal
 import subprocess
@@ -51,6 +54,7 @@ class GpuSlotTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.slots = self.root / "slots"
+        self.log = self.root / "log" / "gpu-slot.jsonl"
         self.running = []
 
     def tearDown(self):
@@ -70,6 +74,7 @@ class GpuSlotTest(unittest.TestCase):
         environment.update(
             {
                 "MOKUME_GPU_SLOT_DIR": str(self.slots),
+                "MOKUME_GPU_SLOT_LOG": str(self.log),
                 "MOKUME_GPU_SLOTS": slots,
                 "MOKUME_GPU_SLOT_WAIT": wait,
                 "MOKUME_GPU_SLOT_POLL": "0.02",
@@ -163,6 +168,81 @@ class GpuSlotTest(unittest.TestCase):
         self.assertEqual(process.returncode, 0)
         self.assertIn("枠を取らずに走らせる", error)
 
+    def _entries(self):
+        return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
+
+    def test_take_and_release_are_recorded_with_the_child_and_its_exit(self):
+        process, started, release = self._start("recorded", code=3)
+        self.assertTrue(_wait_for(started.exists))
+        release.touch()
+        self.assertEqual(process.wait(timeout=10), 3)
+        take, done = self._entries()
+        self.assertEqual(take["event"], "take")
+        self.assertEqual(take["pid"], process.pid)
+        self.assertEqual(take["slot"], "slot-0.lock")
+        self.assertEqual(take["command"][0], sys.executable)
+        self.assertEqual(done["event"], "release")
+        self.assertEqual(done["exit_code"], 3)
+
+    def test_the_lineage_reaches_the_process_that_started_it(self):
+        # #2052: 起動元は、包みの親 (ここでは検査の Python) を辿って分かる
+        process, started, release = self._start("lineage")
+        self.assertTrue(_wait_for(started.exists))
+        release.touch()
+        process.wait(timeout=10)
+        lineage = self._entries()[0]["lineage"]
+        self.assertEqual(lineage[0]["pid"], process.pid)
+        self.assertEqual(lineage[0]["ppid"], os.getpid())
+        self.assertEqual(lineage[1]["pid"], os.getpid())
+        self.assertIn("gpu_slot_test", lineage[1]["command"])
+
+    def test_the_agent_session_is_recorded(self):
+        process, started, release = self._start(
+            "agent", extra={"CLAUDE_CODE_SESSION_ID": "session-for-test", "MOKUME_AGENT_NAME": ""}
+        )
+        self.assertTrue(_wait_for(started.exists))
+        release.touch()
+        process.wait(timeout=10)
+        agent = self._entries()[0]["agent"]
+        self.assertEqual(agent["CLAUDE_CODE_SESSION_ID"], "session-for-test")
+        self.assertNotIn("MOKUME_AGENT_NAME", agent)  # 空の値は載せない
+
+    def test_giving_up_at_the_deadline_is_recorded(self):
+        holder, holder_started, _ = self._start("holder", slots="1")
+        self.assertTrue(_wait_for(holder_started.exists))
+        waiter, _, _ = self._start("waiter", slots="1", wait="0.3")
+        waiter.communicate(timeout=10)
+        timeouts = [entry for entry in self._entries() if entry["event"] == "timeout"]
+        self.assertEqual(len(timeouts), 1)
+        self.assertEqual(timeouts[0]["pid"], waiter.pid)
+        self.assertIn(f"pid {holder.pid}", " ".join(timeouts[0]["holders"]))
+
+    def test_an_unwritable_record_still_runs_the_child_and_says_so(self):
+        blocker = self.root / "blocker"
+        blocker.write_text("")  # ファイルの下にディレクトリは作れない
+        process, started, release = self._start(
+            "unrecorded", code=4, extra={"MOKUME_GPU_SLOT_LOG": str(blocker / "log" / "gpu-slot.jsonl")}
+        )
+        self.assertTrue(_wait_for(started.exists), "記録に書けないと子が走らない")
+        release.touch()
+        _, error = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 4)
+        self.assertIn("起動元の記録", error)
+
+    def test_an_oversized_record_keeps_only_the_newer_half(self):
+        self.log.parent.mkdir(parents=True)
+        old = json.dumps({"event": "old", "padding": "x" * 200}) + "\n"
+        self.log.write_text(old * 6000, encoding="utf-8")  # 約 1.2 MB
+        process, started, release = self._start("trim")
+        self.assertTrue(_wait_for(started.exists))
+        release.touch()
+        process.wait(timeout=10)
+        self.assertLess(self.log.stat().st_size, 1_000_000)
+        entries = self._entries()  # 行の途中で切れていない
+        self.assertEqual(entries[-1]["event"], "release")
+        self.assertEqual(entries[-2]["event"], "take")
+        self.assertEqual(entries[0]["event"], "old")
+
     def test_usage_without_a_command(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT)], env=self._environment(), capture_output=True, text=True, timeout=10
@@ -182,7 +262,11 @@ class ParallelizationWidthTest(unittest.TestCase):
 
     def _child_sees(self, extra):
         environment = {key: value for key, value in os.environ.items() if key != self.VARIABLE}
-        environment.update({"MOKUME_GPU_SLOT_DIR": self.temporary.name, "MOKUME_GPU_SLOT_POLL": "0.02"})
+        environment.update({
+            "MOKUME_GPU_SLOT_DIR": self.temporary.name,
+            "MOKUME_GPU_SLOT_LOG": str(Path(self.temporary.name) / "gpu-slot.jsonl"),
+            "MOKUME_GPU_SLOT_POLL": "0.02",
+        })
         environment.update(extra)
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--", sys.executable, "-c",

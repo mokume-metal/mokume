@@ -84,12 +84,41 @@ GPU は画面の描画 (WindowServer) と共有なので、全検査が重なっ
 全検査の同時の発行口が数十本を越えて戻ること (#1999 の計り方)、または同じ機械の全検査の重なりで
 WindowServer が止まることで分かる。そのときは、toolchain の `Testing` の文字列から今の名前を引く。
 
+## 起動元の記録
+
+**枠を取った・返した・期限で抜けたときに、起動元を 1 行の JSON で追記する** (#2059)。置き場は
+`$MOKUME_GPU_SLOT_LOG` (既定 `~/Library/Logs/mokume/gpu-slot.jsonl`)。枠のロックは次の持ち主に
+上書きされるうえ、`pid / cwd / 時刻` しか持たない。#2052 のパニックでは、GPU を塞いだ全検査を
+誰が起動したかを割り出すのに 1 時間かかった。正体は、エージェントのコマンドの引用符なしの heredoc
+の中のバッククォートが、`make test-release` として実行されたものだった。記録には次を残す:
+
+- `event` (`take` / `release` / `timeout`)・時刻・枠・自分の pid・cwd・子のコマンド・終了コード・所要
+- `lineage`: 親プロセスを launchd の手前まで辿った各段の pid / ppid / 起動時刻 / コマンドラインの先頭。
+  #2052 の形なら、ここに `zsh -c … python3 - <<EOF …` が載り、起動元がその場で分かる
+- `agent`: 環境にあるエージェントの出所 (`CLAUDE_CODE_SESSION_ID`・`MOKUME_AGENT_NAME` など)
+
+**書けなくても検査は止めない** (1 行名乗るだけ)。大きさが上限 (1 MB) を越えたら、新しい半分だけを残す。
+キャッシュの置き場と分けるのは、消してよい場所に調査の記録を置かないためである。
+
+**手元機が落ちた・画面が固まったときの読み方:**
+
+1. `/Library/Logs/DiagnosticReports/` の `panic-full-*.panic` と `WindowServer_*.spin` を開く。
+   `.spin` の `swiftpm-testing-helper` のうち、GPU のドライバの中で止まったスレッドを持つものを探す。
+   起動時刻は、`.spin` の先頭の時刻から `Time Since Fork` を引けば出る
+2. その時刻の前後の `take` を、この記録から引く。cwd (どの worktree か) で絞る
+3. `lineage` のコマンドラインと `agent` から、起動したセッションを特定する。セッションの操作記録は
+   `~/.claude/projects/<cwd を - で繋いだ名前>/<session_id>.jsonl` にある
+
+**この記録に載らないもの:** 枠を通らない実行 (素の `swift test`・窓つきのスケッチ・`mokume watch`)。
+GPU を使っていたのにここに無ければ、それは枠の外の実行である (上の「範囲の外」・#2052)。
+
 子の終了コードは、そのまま返す。SIGINT / SIGTERM は子へ渡す。取り直しの間隔
 (`$MOKUME_GPU_SLOT_POLL` 秒) と名乗る間隔 (`$MOKUME_GPU_SLOT_REPORT` 秒) は、検査が短く回す
 ための口である。検査は scripts/tests/gpu_slot_test.py。
 """
 
 import fcntl
+import json
 import os
 import signal
 import subprocess
@@ -103,6 +132,17 @@ EXIT_TIMED_OUT = 75
 EXIT_USAGE = 2
 
 # 並列の幅の口と既定 (上の「## 並列の幅」)
+LOG_LIMIT_BYTES = 1_000_000
+# Claude のシェルは先頭に snapshot の source を持つので、本題のコマンドまで届く長さにする
+LINEAGE_COMMAND_CHARACTERS = 1000
+# 起動元を名乗る環境変数。値が無いものは記録に載せない
+AGENT_VARIABLES = (
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "MOKUME_AGENT_NAME",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+)
 PARALLELIZATION_WIDTH_VARIABLE = "SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH"
 DEFAULT_PARALLELIZATION_WIDTH = "16"
 
@@ -135,6 +175,78 @@ def _slot_dir():
     if configured:
         return Path(configured)
     return Path.home() / "Library" / "Caches" / "mokume" / "gpu-slots"
+
+
+def _log_path():
+    configured = os.environ.get("MOKUME_GPU_SLOT_LOG")
+    if configured:
+        return Path(configured)
+    return Path.home() / "Library" / "Logs" / "mokume" / "gpu-slot.jsonl"
+
+
+def _lineage():
+    """自分から launchd の手前まで、親プロセスを辿る。各段の pid・ppid・起動時刻・コマンドラインを返す。"""
+    chain = []
+    pid = os.getpid()
+    seen = set()
+    while pid > 1 and pid not in seen and len(chain) < 32:
+        seen.add(pid)
+        try:
+            out = subprocess.run(
+                ["ps", "-o", "ppid=,lstart=,command=", "-p", str(pid)],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            break
+        # lstart は "Sun Oct  4 13:29:27 2026" の 5 語
+        fields = out.split(None, 6)
+        if len(fields) < 6 or not fields[0].isdigit():
+            break
+        parent = int(fields[0])
+        chain.append({
+            "pid": pid,
+            "ppid": parent,
+            "started": " ".join(fields[1:6]),
+            "command": (fields[6] if len(fields) > 6 else "")[:LINEAGE_COMMAND_CHARACTERS],
+        })
+        pid = parent
+    return chain
+
+
+def _record(event, **fields):
+    """起動元の記録へ 1 行追記する。書けなくても検査は止めない。"""
+    path = _log_path()
+    entry = {
+        "event": event,
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "pid": os.getpid(),
+        "cwd": os.getcwd(),
+        **fields,
+    }
+    if event != "release":
+        entry["lineage"] = _lineage()
+        entry["agent"] = {name: os.environ[name] for name in AGENT_VARIABLES if os.environ.get(name)}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            handle.flush()
+            if handle.tell() > LOG_LIMIT_BYTES:
+                _trim(path)
+    except OSError as error:
+        _say(f"起動元の記録 {path} に書けなかった ({error})。検査はそのまま走らせる")
+
+
+def _trim(path):
+    """上限を越えた記録を、新しい半分だけにする。呼ぶ側が排他のロックを持っている。"""
+    data = path.read_bytes()
+    keep = data[len(data) - LOG_LIMIT_BYTES // 2:]
+    newline = keep.find(b"\n")
+    keep = keep[newline + 1:] if newline >= 0 else b""
+    temporary = path.with_name(path.name + ".trim")
+    temporary.write_bytes(keep)
+    os.replace(temporary, path)
 
 
 def _try_take(path):
@@ -199,6 +311,7 @@ def _acquire(slots, wait_seconds, poll, report_every):
                 )
                 for line in _holders(paths):
                     print(line, file=sys.stderr, flush=True)
+                _record("timeout", waited_seconds=round(now - started, 1), holders=_holders(paths))
                 sys.exit(EXIT_TIMED_OUT)
             if now - last_report >= report_every:
                 last_report = now
@@ -239,9 +352,15 @@ def main(argv):
     poll = _number("MOKUME_GPU_SLOT_POLL", 2.0, integer=False)
     report_every = _number("MOKUME_GPU_SLOT_REPORT", 60.0, integer=False)
     slot = _acquire(slots, wait_seconds, poll, report_every)
+    slot_name = Path(slot.name).name if slot is not None else None
+    _record("take", slot=slot_name, command=argv[1:])
+    started = time.monotonic()
+    code = None
     try:
-        return _run(argv[1:])
+        code = _run(argv[1:])
+        return code
     finally:
+        _record("release", slot=slot_name, exit_code=code, seconds=round(time.monotonic() - started, 1))
         if slot is not None:
             slot.close()
 
