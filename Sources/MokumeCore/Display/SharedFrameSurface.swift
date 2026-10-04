@@ -192,32 +192,77 @@ final class SharedFrameSurface {
     /// 表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている 1 枚は数えない。**
     private(set) var frameNumber = 0
 
-    /// 区画があるときだけ作る。**区画の名前は ``StartupReads`` が正典** (#380)。
+    /// 窓を持つ道具に起こされ、区画もあるときだけ作る。**綴りは ``StartupReads`` が正典** (#380)。
     ///
     /// **作れなかったときは `nil` を返す。** 呼ぶ側は窓を開く側へ倒す — 面も窓も無い
     /// 実行は、何が起きたのか外から見て「動いていない」としか見えない。
+    ///
+    /// - Parameter owner: 起こした道具の名乗り (``owner(environment:)``)。
     static func makeIfEnabled(
         gpu: RenderDevice, width: Int, height: Int,
-        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key)
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.owner()
     ) -> SharedFrameSurface? {
-        guard isEnabled(at: directory) else { return nil }
+        guard isEnabled(at: directory, owner: owner) else { return nil }
         return try? SharedFrameSurface(gpu: gpu, width: width, height: height, at: directory)
     }
 
-    /// 画面の出口が共有する面になっているか。
+    /// 窓を持つ道具に起こされたなら、その道具の名乗り。**起こされていなければ `nil`。**
     ///
-    /// **合図はこれ 1 つである** ([ADR-0032] 決定 1)。窓を開かないことも、道具から来る
-    /// 出来事を標準入力から受けることも ([ADR-0032] 決定 4)、同じ合図から従う — 経路
-    /// ごとに合図を持つと、片方だけが効いている状態が作れてしまう。
+    /// **「誰に起こされたか」を読むのはここ 1 つである** ([ADR-0032] 決定 1)。窓を開かない
+    /// ことも、道具から来る出来事を標準入力から受けることも ([ADR-0032] 決定 4)、目録を
+    /// 書くことも、この答えから従う — 経路ごとに合図を持つと、片方だけが効いている状態が
+    /// 作れてしまう。
+    ///
+    /// **区画の在る無しでは代用しない。** 区画は同じ場所の誰からも見えるので、居合わせた
+    /// 別の実行 (直に走らせる・`run`・`render`・窓を持たない `SketchRuntime`) まで、道具の
+    /// 窓と管を持っているかのように振る舞っていた
+    /// ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。起こし方は起こした
+    /// 道具にしか分からないので、道具が環境変数で渡す (``StartupReads/viewportOwner``)。
+    ///
+    /// 空白だけの値は渡されていないものとして扱う (``CloseConfirmation`` と同じ)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static func owner(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        guard let given = environment[StartupReads.viewportOwner.key] else { return nil }
+        let trimmed = given.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// 画面の出口が共有する面になっているか。**道具に起こされ、かつ区画が在るときだけ。**
+    ///
+    /// 区画が要るのは、面の番号を置く場所だからである。見張りは窓を出せたときだけ区画を
+    /// 置くので、出せなかった回の子は合図を受けていても自分の窓を開く。
     ///
     /// 読む場所を 1 つに保つため、**viewport の区画を渡すのはここだけ**にする (一覧が
     /// 名指ししているのもこのファイルである)。判定そのものの綴りは
     /// ``WorkDirectory/directoryExists(at:)`` が持つ — 5 箇所が同じ 3 行を書いていた
     /// ([#988](https://github.com/mokume-metal/mokume/issues/988))。
-    static func isEnabled(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key))
-        -> Bool
-    {
-        WorkDirectory.directoryExists(at: directory)
+    ///
+    /// - Parameter owner: 起こした道具の名乗り (``owner(environment:)``)。
+    static func isEnabled(
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.owner()
+    ) -> Bool {
+        owner != nil && WorkDirectory.directoryExists(at: directory)
+    }
+
+    /// 区画が在るのに、窓を持つ道具に起こされていないときに名乗る 1 行。**それ以外は `nil`。**
+    ///
+    /// **黙って窓を開くと、区画を置いた側と食い違って見える。** 区画が在る場所で走らせた人は、
+    /// 見張りの窓に絵が出ると思っているかもしれない。開くのは正しいので止めはしないが、
+    /// なぜ開いたかを 1 度だけ言う。**在処をそのまま出す** — 基準は環境変数が動かせるので、
+    /// `.mokume/…` とだけ言うとスケッチの場所を探して「無い」と読まれる
+    /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
+    static func strayFacetNotice(
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.owner()
+    ) -> String? {
+        guard owner == nil, WorkDirectory.directoryExists(at: directory) else { return nil }
+        return "\(directory.path) is there, but no tool that owns a window started this run "
+            + "(\(StartupReads.viewportOwner.key) is unset) — opening the sketch's own window"
     }
 
     init(gpu: RenderDevice, width: Int, height: Int, at directory: URL) throws(RenderFailure) {

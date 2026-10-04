@@ -1174,4 +1174,51 @@ struct FrameRateHandoffTests {
         #expect(RunCommand.childEnvironment(["A": "1"])["A"] == "1", "親の環境は運ぶ")
     }
 
+    /// **窓の持ち主は、起こした道具にしか決められない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
+    /// 渡したときだけ載り、渡さなければ親の環境に在っても落とす — 見張りの子の環境から
+    /// 打った `run` や `render` が継ぐと、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る。
+    @Test("窓の持ち主は渡したときだけ載り、親の環境からは継がない")
+    func theViewportOwnerLandsOnlyWhenGiven() throws {
+        let key = StartupReads.viewportOwner.key
+        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(RunCommand.childEnvironment([key: "mokume watch"])[key] == nil, "親の合図を継いだ")
+        #expect(
+            RunCommand.childEnvironment(
+                [key: "mokume watch"], reportingRate: "debug", confirmingCloseFor: "mokume run")[key]
+                == nil,
+            "run が渡す組み合わせで窓の持ち主が載っている")
+        let request = try #require(
+            RenderRequest(frameRate: 30, frameCount: 3, destination: "/tmp/out.mov"))
+        #expect(
+            RunCommand.childEnvironment([key: "mokume watch"], rendering: request)[key] == nil,
+            "render が渡す組み合わせで窓の持ち主が載っている")
+        #expect(
+            RunCommand.childEnvironment([:], viewportOwner: "mokume watch")[key] == "mokume watch")
+    }
+
+    /// **本物の起こす口が、窓の持ち主として名乗りを渡す。** 替え玉の起こす口は環境を
+    /// 組まないので、`live` の側で渡し忘れても上の検査は緑のままになる。環境を書き留める
+    /// だけの子を起こして見る。
+    @Test("本物の起こす口は、窓の持ち主として自分の名乗りを子へ渡す")
+    func theLiveLaunchPassesItselfAsTheViewportOwner() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-owner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seen = directory.appendingPathComponent("seen")
+        let executable = directory.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            printf '%s' "$\(StartupReads.viewportOwner.key)" > '\(seen.path)'
+            """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
+        let child = try #require(hooks.launch(executable, directory, nil, nil))
+        child.waitUntilExit()
+        #expect(try String(contentsOf: seen, encoding: .utf8) == WatchSession.viewportOwnerName)
+        #expect(WatchSession.viewportOwnerName.hasSuffix(" watch"))
+    }
+
 }

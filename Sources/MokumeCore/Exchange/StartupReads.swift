@@ -119,24 +119,54 @@ nonisolated public enum StartupReads {
 
     /// 絵を渡す面の区画。
     ///
-    /// **在ることの意味を道具が決めるのは、この区画だけである。** 画面の出口をどこに
-    /// 置くかは、子を起こした側にしか決められないからで、見張り (`watch`) は窓を出せた
-    /// ときだけこれを作る ([ADR-0032] 決定 1)。
+    /// **在ることの意味を道具が決める区画は、これだけである。** 画面の出口をどこに置くかは、
+    /// 子を起こした側にしか決められないからで、見張り (`watch`) は窓を出せたときだけこれを
+    /// 作る ([ADR-0032] 決定 1)。
+    ///
+    /// **ただし、在るだけでは決まらない。** 区画は同じ場所の誰からも見えるので、在ることは
+    /// 「誰が起こしたか」を表さない — 居合わせた別の実行まで窓を開かずに走っていた
+    /// ([#2028])。起こし方は ``viewportOwner`` が環境変数で子へ伝え、区画は面の番号を置く
+    /// 場所の役目に戻った。共有面へ差し出すのは、両方が揃ったときだけである。
     ///
     /// 見張りは窓口が使う区画 (`observe` / `input` / `params`) も子を起こす前に置くが
     /// ([#464])、あれは初めて呼んだ回に空振りさせないための先回りで、**在っても振る舞いは
-    /// 変わらない**。こちらは在ると窓を開かず共有面へ差し出すので、置くこと自体が決定に
-    /// なる。
+    /// 変わらない**。
     ///
     /// [#464]: https://github.com/mokume-metal/mokume/issues/464
+    /// [#2028]: https://github.com/mokume-metal/mokume/issues/2028
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     public static let viewport = Entry(
         name: "Viewport facet", origin: .facet, key: "viewport", decidedBy: .tool,
-        note: "Present at launch hands baked frames to a shared surface instead of opening "
-            + "a window. Creating it while the sketch runs has no effect",
+        note: "Where the tool that owns the window takes the frames from. Present at launch "
+            + "together with \(viewportOwnerKey), it hands baked frames to a shared surface "
+            + "instead of opening a window. Without that variable the sketch opens its own "
+            + "window and says so. Creating it while the sketch runs has no effect",
         readSite: "Sources/MokumeCore/Display/SharedFrameSurface.swift",
         // 一方通行の面なので応答を持たない。仕様が名乗るのは置いた面の番号である
         schemaName: "viewport-surface")
+
+    /// 窓を持つ道具に起こされたか — 画面の出口と、標準入力の管の持ち主。
+    ///
+    /// **起こし方は、起こした道具にしか分からない** ([ADR-0032] 決定 1)。見張り (`watch`) は
+    /// 子を起こすときにだけこれを渡す。受け取った子は、区画 ``viewport`` も在れば窓を
+    /// 開かずに共有面へ差し出し、道具の窓が拾った出来事を標準入力の管から受ける。
+    /// 渡されていない実行 — 直に走らせる・`run`・`render`・窓を持たない `SketchRuntime` —
+    /// は、区画が在っても自分の窓を開き、標準入力にも目録にも触らない ([#2028])。
+    ///
+    /// 値は**渡した道具の名乗り**である (``closeConfirmation`` と同じ形)。空白だけの値は
+    /// 渡されていないものとして扱う。
+    ///
+    /// [#2028]: https://github.com/mokume-metal/mokume/issues/2028
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    public static let viewportOwner = Entry(
+        name: "Viewport owner", origin: .environment, key: viewportOwnerKey, decidedBy: .tool,
+        note: "Says the tool that started the sketch owns its window: with the viewport facet "
+            + "present, frames go to a shared surface and the tool's events arrive on standard "
+            + "input. The value is the name of that tool, and the tool passes it only for watch",
+        readSite: "Sources/MokumeCore/Display/SharedFrameSurface.swift")
+
+    /// ``viewportOwner`` の綴り。``viewport`` の説明からも名指すので、1 つに置く。
+    private static let viewportOwnerKey = "MOKUME_VIEWPORT_OWNER"
 
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
@@ -177,7 +207,7 @@ nonisolated public enum StartupReads {
 
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
-        workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, observe, input,
-        params, viewport,
+        workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
+        observe, input, params, viewport,
     ]
 }

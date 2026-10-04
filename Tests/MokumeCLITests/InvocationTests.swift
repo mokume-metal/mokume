@@ -96,12 +96,12 @@ struct InvocationTests {
         #expect(Invocation.facetBase(under: sketch, workDirectory: nil).path == sketch.path)
     }
 
-    /// `run` が見る区画と `watch` が置く区画が別々に組まれていて、`MOKUME_WORK_DIR` の
-    /// 下で割れていた ([#791](https://github.com/mokume-metal/mokume/issues/791))。
-    /// **黙って窓が出ない**のに、そう言うための名乗りだけが基準を取り違えていた。
+    /// `watch` が置く区画が、`MOKUME_WORK_DIR` の下で子の見る場所と割れていた
+    /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。子は基準の下を見るので、
+    /// 見張りも同じ基準の下へ置く。
     @MainActor
-    @Test("基準を与えても、run は watch が置いた区画を見つけて名乗る")
-    func runLooksWhereWatchPlacesTheViewport() throws {
+    @Test("基準を与えると、watch は区画をスケッチの場所ではなく基準の下へ置く")
+    func watchPlacesTheViewportUnderTheGivenBase() throws {
         let sketch = try Self.directory()
         let work = try Self.directory()
         defer {
@@ -117,20 +117,12 @@ struct InvocationTests {
             directory: sketch, context: testContext(), facetBase: invocation.facetBase(workDirectory: given))
         let placed = WatchCommand.viewportFacet(for: session)
         #expect(placed.path.hasPrefix(work.path), "見張りはスケッチの場所ではなく基準の下へ置く")
-        try FileManager.default.createDirectory(at: placed, withIntermediateDirectories: true)
-
-        let notice = RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: given)
+        // 子は与えられた基準の下の区画を見る (`WorkDirectory.facet` と同じ規則)
+        #expect(placed == WorkDirectory.facet(StartupReads.viewport.key, under: work))
+        // 基準が与えられていなければ、スケッチの場所 (いままでどおり)
         #expect(
-            notice != nil,
-            "見張りが置いた区画を run が見つけられていない (窓が出ないことを名乗れない)")
-        // 在処をそのまま出す — `.mokume/…` とだけ言うとスケッチの場所を探すことになる
-        #expect(notice?.contains(placed.path) == true)
-
-        // 基準が与えられていなければ、スケッチの場所を見る (いままでどおり)
-        #expect(RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: nil) == nil)
-        try FileManager.default.createDirectory(
-            at: WatchCommand.viewportFacet(under: sketch), withIntermediateDirectories: true)
-        #expect(RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: nil) != nil)
+            WatchCommand.viewportFacet(under: invocation.facetBase(workDirectory: nil))
+                == WorkDirectory.facet(StartupReads.viewport.key, under: sketch))
     }
 
     static func directory() throws -> URL {

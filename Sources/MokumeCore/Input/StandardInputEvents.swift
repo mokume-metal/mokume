@@ -23,10 +23,16 @@ import Foundation
 ///
 /// ## 合図を増やさない
 ///
-/// 読むのは**共有面へ差し出しているときだけ**である。区画 (`viewport`) の在ることが
-/// 既に「見張りから起こされた子」を表しているので ([ADR-0032] 決定 1)、直に走らせた
-/// 子の標準入力 (端末) を横取りしないことも同じ合図から従う。**区画を見るのは
-/// ``SharedFrameSurface/isEnabled(at:)`` だけ**で、こちらはその答えを受け取る。
+/// 読むのは**共有面へ差し出しているときだけ**である。差し出すのは窓を持つ道具に起こされた
+/// 子だけなので ([ADR-0032] 決定 1)、直に走らせた子の標準入力 (端末) を横取りしないことも
+/// 同じ決定から従う。**作るのは出口を共有面に決めた ``SketchApplication`` だけ**で、起こし方を
+/// 読むのは ``SharedFrameSurface/owner(environment:)`` 1 つである — こちらはその答えから
+/// 決まった出口を受け取る。
+///
+/// **区画の在る無しを合図にしていた頃は、居合わせた実行まで管を開いた**
+/// ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。`O_NONBLOCK` は端末を
+/// 共有する親のシェルにも残り (#2024)、書き出しは閉じた標準入力を「道具が去った」と読んで
+/// 0 枚で止まった (#2025)。
 ///
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
@@ -56,18 +62,12 @@ final class StandardInputEvents {
     /// 畳まれたことを、既に ``takeDeparture()`` で返したか。
     private var hasReportedDeparture = false
 
-    /// 共有面へ差し出しているときだけ働く。
+    /// 管を読み始める。**読み口に `O_NONBLOCK` を立て、戻さない** — 管は起こした道具が
+    /// 引いたものなので、立てたまま終わってよい。
     ///
-    /// **合図を自分では見ない。** 見る場所は ``SharedFrameSurface/isEnabled(at:)`` 1 つに
-    /// してある — 経路ごとに合図を持つと、窓は道具のものなのに触っても効かない、という
-    /// 片側だけ効いた状態が作れてしまう。
-    static func makeIfDriven(
-        by isDriven: Bool = SharedFrameSurface.isEnabled(),
-        descriptor: Int32 = FileHandle.standardInput.fileDescriptor
-    ) -> StandardInputEvents? {
-        isDriven ? StandardInputEvents(descriptor: descriptor) : nil
-    }
-
+    /// **合図を自分では見ない。** 作ってよいかは出口を決めた側が知っている
+    /// (``SketchApplication``・上の「合図を増やさない」)。経路ごとに合図を持つと、窓は道具の
+    /// ものなのに触っても効かない、という片側だけ効いた状態が作れてしまう。
     init(descriptor: Int32) {
         self.descriptor = descriptor
         // **塞がないようにする。** これを忘れると、次の 1 件が来るまでフレームが進まない

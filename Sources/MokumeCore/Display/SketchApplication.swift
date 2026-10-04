@@ -63,10 +63,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 画面の出口。
     ///
     /// 分岐は「ビューアあり / なし」というモードではなく、**与えられた出口の構成**である
-    /// ([ADR-0032] 決定 1)。合図は 1 つ (区画があるか) で、窓を開かないことも同じ合図から
-    /// 従う。
+    /// ([ADR-0032] 決定 1)。決めるのは起こし方で、窓を持つ道具に起こされたか
+    /// (``SharedFrameSurface/owner(environment:)``) を読む場所は 1 つである。窓を開かない
+    /// ことも、標準入力の管を読むことも、決まった出口から従う。
     ///
-    /// **その 1 つの合図を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
+    /// **その 1 つの決定を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
     /// 4 つの Optional で持っており、片方だけ書き換えれば「窓も出るし面へも書く」が
     /// 型として作れた — どちらの経路もそれを想定していないのに、である
     /// ([#955](https://github.com/mokume-metal/mokume/issues/955))。
@@ -405,27 +406,52 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 検査から通せず、**窓 0 枚の経路の振る舞いを 1 つも見られない**
     /// ([#1102](https://github.com/mokume-metal/mokume/issues/1102) がそこで見過ごされた)。
     ///
-    /// 区画の在処を受けるのは同じ理由で、既定は本番の場所である
-    /// (`WorkDirectory.resolve(environment:)` などと同じ、既定引数で口を開ける形)。
+    /// 区画の在処と起こした道具の名乗りを受けるのは同じ理由で、既定は本番の場所と本番の
+    /// 環境である (`WorkDirectory.resolve(environment:)` などと同じ、既定引数で口を開ける形)。
+    ///
+    /// **共有面へ差し出すと決めたときだけ、標準入力の管を読み始める** ([ADR-0032] 決定 4)。
+    /// 窓の経路と書き出す経路は管に触らない — 区画が在っても、閉じた標準入力を「道具が
+    /// 去った」と読まず (#2025)、端末に `O_NONBLOCK` を残さない (#2024)。
     ///
     /// **活動の方針 (`setActivationPolicy`) はここに置かない。** 呼んだプロセス全体に
     /// 効くので、検査から呼べる場所に混ぜると検査の走るプロセスの方針まで動く。
-    func resolveOutlet(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key)) {
+    ///
+    /// - Parameter owner: 起こした道具の名乗り。**無ければ区画が在っても自分の窓を開き、
+    ///   そのことを 1 度名乗る** (#2026)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    func resolveOutlet(
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.owner()
+    ) {
         // **書き出す経路は区画より先に決まっている。** 見張りが畳めずに残した区画が在っても
         // 共有面へは差し出さない — その経路の出口は撮る係だけである
         guard case .pendingWindow = outlet else { return }
-        if let shared = attachSharedSurface(at: directory) { outlet = .shared(shared) }
+        if let notice = SharedFrameSurface.strayFacetNotice(at: directory, owner: owner) {
+            announce(notice)
+        }
+        guard let shared = attachSharedSurface(at: directory, owner: owner) else { return }
+        outlet = .shared(shared)
+        runtime.relayToolInput(from: StandardInputEvents(descriptor: toolInput))
     }
+
+    /// 道具の窓が拾った出来事が来る管。**本番は標準入力** — 見張りが子の標準入力に引く
+    /// (`WatchSession`)。**検査から差し替える**: 既定のまま共有面の経路を通すと、検査を
+    /// 走らせている端末の標準入力に `O_NONBLOCK` が立つ。
+    var toolInput: Int32 = FileHandle.standardInput.fileDescriptor
+
+    /// 人へ 1 行伝える口。**検査から差し替える** (言ったかどうかを数えるため)。
+    var announce: @MainActor (String) -> Void = { Diagnostics.warn($0) }
 
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
     /// **区画が在るのに用意できなかったときは、窓を開く側へ倒す** — 面も窓も無い実行は、
     /// 外から見て「動いていない」としか見えない。倒したことは黙らずに言う。
-    private func attachSharedSurface(at directory: URL) -> SharedFrameSurface? {
+    private func attachSharedSurface(at directory: URL, owner: String?) -> SharedFrameSurface? {
         guard
             let shared = SharedFrameSurface.makeIfEnabled(
                 gpu: gpu, width: runtime.target.width, height: runtime.target.height,
-                at: directory)
+                at: directory, owner: owner)
         else { return nil }
         do {
             try shared.publishManifest()
@@ -699,8 +725,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let signalled = StopSignals.takeRequest()
         let departed = driverDeparted()
         guard signalled || departed, !isTerminating else { return }
-        // **道具が居なくなって終わることは名乗る。** 黙って消えると、区画が残ったまま標準入力を
-        // 閉じて走らせた回などで、なぜ終わったのかが読めない
+        // **道具が居なくなって終わることは名乗る。** 黙って消えると、道具が後始末を通らずに
+        // 消えた回 (捕まえない合図・`SIGKILL`) などで、なぜ終わったのかが読めない
         if departed, !signalled {
             Diagnostics.warn(
                 "The tool that started this sketch is gone (its input pipe closed) — ending,"

@@ -134,7 +134,12 @@ struct SketchApplicationTests {
         try withFacet { facet in
             let application = try makeApplication(Blank())
             defer { application.willTerminate() }
-            application.resolveOutlet(at: facet)
+            // 管は検査の側で張る — 既定のままだと、検査を走らせている標準入力を読みに行く
+            let pipe = Pipe()
+            defer { try? pipe.fileHandleForWriting.close() }
+            application.toolInput = pipe.fileHandleForReading.fileDescriptor
+            // 窓を持つ道具に起こされた子と同じ形 (#2028)
+            application.resolveOutlet(at: facet, owner: "mokume watch")
 
             let delegate = SketchApplicationDelegate(application: application)
             #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(.shared))
@@ -149,8 +154,8 @@ struct SketchApplicationTests {
             .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
         let application = try makeApplication(Blank())
         defer { application.willTerminate() }
-        // 区画が無いので、出口は窓のまま
-        application.resolveOutlet(at: missing)
+        // 区画が無いので、窓を持つ道具に起こされていても出口は窓のまま
+        application.resolveOutlet(at: missing, owner: "mokume watch")
 
         let delegate = SketchApplicationDelegate(application: application)
         #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(.shared))
