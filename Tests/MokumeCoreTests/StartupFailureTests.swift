@@ -42,6 +42,7 @@ struct StartupFailureTests {
         ("invalidSize", .invalidSize(width: 0, height: 120)),
         ("invalidPixelDensity", .invalidPixelDensity(1.5)),
         ("invalidFrameRate", .invalidFrameRate(0)),
+        ("invalidWindowScale", .invalidWindowScale(0)),
         ("invalidCount", .invalidCount(-1)),
         ("shaderSourceMissing", .shaderSourceMissing(name: "Shapes.metal")),
         (

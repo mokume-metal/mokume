@@ -101,6 +101,40 @@ public final class SketchRuntime {
     /// 1 を割る値が届かないことを構造で保証できる。
     let declaredFrameRate: Int
 
+    /// ランタイムが 1 度だけ言う注意の種類。
+    enum Warning: Hashable {
+        /// 走っている最中に ``SketchSettings/frameRate`` が起動のときの値から変わった。
+        case frameRateChangedWhileRunning
+    }
+
+    /// 1 度だけ言った注意の控え。**検査が読む。**
+    private(set) var warnings = WarningLog<Warning>()
+
+    /// 走っている最中の ``SketchSettings/frameRate`` への代入を、1 度だけ警告して断る
+    /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
+    ///
+    /// 速さは起動のときに 1 度だけ読む (``declaredFrameRate``)。`var settings` と持てば
+    /// 代入は通り、読み返しても代入した値が返るので、**黙っていると変えられたように見える**
+    /// ([ADR-0020] 決定 5 の「黙って変えない」)。枚数・`time`・`deltaTime` は起動のときの
+    /// まま変えず、変わっていないことを言うだけにする。
+    ///
+    /// 見るのはフレームを進める呼び出しの終わりで、`setup()`・`draw()`・入力のコールバック
+    /// のどこで代入しても、止めている間でも、その呼び出しのうちに気付く。計算型の
+    /// `settings` が読むたびに違う値を返すスケッチでは、代入していなくても言うことがある
+    /// (`SketchApplication` の #1642 の注)。そのときも値は使っていないことに変わりはない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    private func warnIfFrameRateWasReassigned() {
+        guard !warnings.hasWarned(.frameRateChangedWhileRunning) else { return }
+        let current = sketch.settings.frameRate
+        guard current != declaredFrameRate else { return }
+        warnings.warnOnce(
+            .frameRateChangedWhileRunning,
+            "settings.frameRate is read only at launch, so changing it to \(current) while"
+                + " running has no effect; frames, time and deltaTime keep following"
+                + " \(declaredFrameRate) fps")
+    }
+
     /// 組み立てで受け取る刻みを検める。**宣言 (``SketchSettings/frameRate``) も、差し替えた
     /// 時計の刻み (``Clock/frameIndex(frameRate:)``) も 1 以上でなければ断る。**
     ///
@@ -118,6 +152,23 @@ public final class SketchRuntime {
         if case .frameIndex(let frameRate) = clock, frameRate < 1 {
             throw .invalidFrameRate(frameRate)
         }
+    }
+
+    /// 組み立てで検めた、窓を開く倍率 (``checkWindowScale(_:)`` を越えた値)。
+    ///
+    /// **窓を開く側はこれを読む** (`SketchApplication`)。``declaredFrameRate`` と同じく、
+    /// `settings` を読み直すと検めた値と使う値が別物になりうる。
+    let windowScale: Float
+
+    /// 組み立てで窓を開く倍率を検める。**0 より大きい有限の数でなければ断る**
+    /// ([ADR-0020] 決定 5 の 2 行目)。
+    ///
+    /// 窓を開かない実行でも断る — 書き出しで通った作品が、窓を開く起こし方に移って初めて
+    /// 落ちる形にしない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    static func checkWindowScale(_ scale: Float) throws(RenderFailure) {
+        guard scale.isFinite, scale > 0 else { throw .invalidWindowScale(scale) }
     }
 
     /// 撮る係へ渡す刻みを、時計から決める (``launchFrameRate``)。
@@ -265,9 +316,11 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
+        try Self.checkWindowScale(settings.windowScale)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
+        self.windowScale = settings.windowScale
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
@@ -301,9 +354,11 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
+        try Self.checkWindowScale(settings.windowScale)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
+        self.windowScale = settings.windowScale
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
@@ -498,6 +553,7 @@ public final class SketchRuntime {
         defer {
             isAdvancingFrame = false
             lastFrameAt = now()
+            warnIfFrameRateWasReassigned()
         }
         guard !isPaused else {
             // **外から止めている間も、出す先が描く先に追い付いていなければ追い付く** ([#1906])。

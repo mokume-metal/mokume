@@ -27,7 +27,8 @@ nonisolated struct WarningLog<Key: Hashable> {
     ///
     /// 集合ではなく対応表で持つ。**出した文面をそのまま控える**ためで、こうすると
     /// 「1 度しか言わない」も「何と言ったか」も、標準エラーを覗かずに確かめられる。
-    /// 控えるのは高々鍵の種類の数で、フレームでは増えない。
+    /// 控えるのは高々鍵の種類の数で、フレームでは増えない (鍵が値を持つ注意は、呼ぶ側が
+    /// 言う数に上限を置く — ``count(where:)``)。
     private var said: [Key: String] = [:]
 
     /// まだ言っていなければ、その注意を 1 度だけ言う。2 度目からは何もしない。
@@ -47,4 +48,10 @@ nonisolated struct WarningLog<Key: Hashable> {
 
     /// その注意で出した文面。まだ言っていなければ `nil`。**検査が文言を読む。**
     func message(for key: Key) -> String? { said[key] }
+
+    /// 言った注意のうち、条件に合う鍵の数。
+    ///
+    /// 鍵が値を持つ注意 (行き先ごとに 1 度言う書き損じ・``FrameRecorder``) の、言った数に
+    /// 上限を置くためにある。数を別に持つと、控えと数の 2 つを揃えて空に戻す必要が出る。
+    func count(where isIncluded: (Key) -> Bool) -> Int { said.keys.count(where: isIncluded) }
 }

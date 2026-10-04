@@ -311,14 +311,15 @@ struct ClosingFailureTests {
             try Data("not a directory".utf8).write(to: blocker)
 
             let recorder = FrameRecorder()
+            let last = blocker.appendingPathComponent("last.png").path
             recorder.writer.write(
                 DisplayImage(width: 8, height: 8, bytes: [UInt8](repeating: 200, count: 8 * 8 * 4)),
-                to: blocker.appendingPathComponent("last.png").path)
+                to: last)
 
             recorder.close()
 
             let said = try #require(
-                recorder.warnings.message(for: .imageFailure),
+                recorder.imageFailureMessage(for: last),
                 "撮り終わりの書き損じが誰にも読まれていない")
             #expect(said.contains("last.png"))
         }
@@ -413,7 +414,8 @@ struct LateFailureTests {
             // **黙らない。** 外れないので、外したときの診断は出ない
             #expect(recorder.hasFailedToWrite)
             let said = try #require(
-                recorder.warnings.message(for: .imageFailure), "1 度きりの書き損じを誰にも言っていない")
+                recorder.imageFailureMessage(for: blocker.appendingPathComponent("still.png").path),
+                "1 度きりの書き損じを誰にも言っていない")
             #expect(said.contains("still.png"))
 
             for _ in 0..<SeamHealth.limit + 2 {
@@ -449,7 +451,9 @@ struct LateFailureTests {
             recorder.absorbOutcomes()
             #expect(recorder.failure?.contains("a.png") == true, "後の成功に上書きされて、書き損じが読まれていない")
             #expect(recorder.hasFailedToWrite)
-            #expect(recorder.warnings.message(for: .imageFailure)?.contains("a.png") == true)
+            #expect(
+                recorder.imageFailureMessage(for: blocker.appendingPathComponent("a.png").path)?
+                    .contains("a.png") == true)
         }
     }
 
@@ -541,7 +545,8 @@ struct LateFailureTests {
             recorder.startAfresh()
             #expect(recorder.hasFailedToWrite, "捨てた書き損じが、書き出しの穴として残っていない")
             let said = try #require(
-                recorder.warnings.message(for: .imageFailure), "捨てた書き損じを誰にも言っていない")
+                recorder.imageFailureMessage(for: blocker.appendingPathComponent("a.png").path),
+                "捨てた書き損じを誰にも言っていない")
             #expect(said.contains("a.png"))
 
             recorder.close()
@@ -594,6 +599,117 @@ struct LateFailureTests {
             recorder.save(directory.appendingPathComponent("c.png").path, at: 2)
             #expect(recorder.failure != nil)
 
+            recorder.close()
+        }
+    }
+}
+
+/// 静止画・連番の書き損じを名乗る単位 ([#1709])。GPU を要さない。
+///
+/// 名乗りは種類ごとではなく行き先ごとに 1 度で、名乗る行き先の数には上限
+/// (``FrameRecorder/imageFailureLimit``) がある。越えた分は閉じるときに 1 行にまとまる。
+/// フレームの代わりに ``FrameRecorder/absorbOutcomes()`` を直接呼ぶ (``LateFailureTests`` と同じ)。
+///
+/// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
+@Suite("書き損じを名乗る単位")
+struct ImageFailureNamingTests {
+    private let picture = DisplayImage(
+        width: 8, height: 8, bytes: [UInt8](repeating: 200, count: 8 * 8 * 4))
+
+    /// 書けない行き先を `names` の数だけ用意し、1 枚ずつ別のフレームで転ばせる。
+    private func failOneByOne(
+        _ recorder: FrameRecorder, into blocker: URL, names: [String]
+    ) -> [String] {
+        names.map { name in
+            let path = blocker.appendingPathComponent(name).path
+            recorder.writeShot(picture, to: path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            return path
+        }
+    }
+
+    /// **録らずに `save()` だけを使うスケッチ**の形である。控えは録りを始めるまで空に戻らない
+    /// ので、種類ごとに 1 度だった頃は走り全体で 2 つ目以降が黙った。
+    @Test("録らずに違う 2 つの行き先で書き損じると、2 つとも名乗る")
+    func twoDestinationsAreBothNamed() throws {
+        try withTemporaryDirectory("mokume-naming-two") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            let paths = failOneByOne(recorder, into: blocker, names: ["1.png", "2.png"])
+
+            #expect(recorder.namedImageFailures == 2, "2 つ目の行き先の書き損じが黙った")
+            for path in paths {
+                let name = URL(fileURLWithPath: path).lastPathComponent
+                #expect(recorder.imageFailureMessage(for: path)?.contains(name) == true, "\(name) を名乗っていない")
+            }
+            recorder.close()
+            #expect(!recorder.warnings.hasWarned(.unnamedImageFailures), "上限の内なのに、まとめの行が出た")
+        }
+    }
+
+    @Test("同じ行き先で続けて書き損じても、名乗りは 1 度だけである")
+    func oneDestinationIsNamedOnce() throws {
+        try withTemporaryDirectory("mokume-naming-same") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            _ = failOneByOne(recorder, into: blocker, names: ["same.png", "same.png", "same.png"])
+
+            #expect(recorder.namedImageFailures == 1)
+            recorder.close()
+            #expect(!recorder.warnings.hasWarned(.unnamedImageFailures), "名乗った行き先の繰り返しを、まとめに数えた")
+        }
+    }
+
+    /// 毎フレーム違う名前へ転ぶ形 (連番・`save("shots/\(frameCount).png")`) でも、出る行は
+    /// 上限 + 1 行で止まる。
+    @Test("上限を越えた行き先は名乗らず、閉じるときに越えた枚数を 1 行で言う")
+    func destinationsBeyondTheLimitAreSummedUpOnClose() throws {
+        try withTemporaryDirectory("mokume-naming-limit") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            let limit = FrameRecorder.imageFailureLimit
+            let paths = failOneByOne(
+                recorder, into: blocker, names: (0..<limit + 3).map { "shot-\($0).png" })
+
+            #expect(recorder.namedImageFailures == limit)
+            #expect(recorder.imageFailureMessage(for: paths[limit]) == nil, "上限を越えた行き先を名乗った")
+            #expect(!recorder.warnings.hasWarned(.unnamedImageFailures), "閉じる前にまとめた")
+
+            recorder.close()
+            let said = try #require(
+                recorder.warnings.message(for: .unnamedImageFailures), "越えた分を閉じるときに言っていない")
+            #expect(said.hasPrefix("3 more images"), "越えた枚数が違う: \(said)")
+            #expect(recorder.hasFailedToWrite)
+        }
+    }
+
+    /// 知らせの器 (``OutcomeSlot``) は、書き損じどうしで後のものが前を上書きしていた。同じ
+    /// 取り出しの間に 2 枚転ぶと、最後の 1 枚しか名乗られなかった。
+    @Test("同じ取り出しの間に違う行き先で 2 枚転んでも、2 枚とも名乗る")
+    func twoFailuresInOneTakeAreBothNamed() throws {
+        try withTemporaryDirectory("mokume-naming-one-take") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            let first = blocker.appendingPathComponent("first.png").path
+            let second = blocker.appendingPathComponent("second.png").path
+            recorder.writeShot(picture, to: first)
+            recorder.writeShot(picture, to: second)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+
+            #expect(recorder.imageFailureMessage(for: first) != nil, "前に転んだ 1 枚が上書きで消えた")
+            #expect(recorder.imageFailureMessage(for: second) != nil)
+            #expect(recorder.failure?.contains("first.png") == true)
+            #expect(recorder.failure?.contains("second.png") == true)
             recorder.close()
         }
     }

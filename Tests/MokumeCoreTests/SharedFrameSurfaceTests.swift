@@ -99,6 +99,29 @@ struct SharedFrameManifestTests {
             #expect(manifest.ids == [7, 8, 9])
             #expect(manifest.width == 960)
             #expect(manifest.height == 540)
+            // 倍率を書かない子 (古いライブラリ) の目録も読む。窓の大きさには触らない
+            #expect(manifest.windowScale == nil)
+        }
+    }
+
+    /// **倍率は絵の出る出ないに関わらない。** 開けない値を理由に目録ごと捨てると、窓の
+    /// 大きさの話で絵が消える (#1624)。
+    @Test("窓の倍率を読み、開けない値は頼まれていないものとして読む")
+    func readsTheWindowScale() throws {
+        try withManifest(
+            #"{"schemaVersion":1,"ids":[7],"width":320,"height":180,"windowScale":4}"#
+        ) {
+            #expect(SharedFrameSurface.readManifest(at: $0)?.windowScale == 4)
+        }
+        for bad in ["0", "-1", "\"big\"", "null"] {
+            try withManifest(
+                #"{"schemaVersion":1,"ids":[7],"width":16,"height":8,"windowScale":"#
+                    + bad + "}"
+            ) {
+                let manifest = try #require(
+                    SharedFrameSurface.readManifest(at: $0), "倍率 \(bad) で目録ごと捨てた")
+                #expect(manifest.windowScale == nil, "倍率 \(bad)")
+            }
         }
     }
 
