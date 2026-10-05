@@ -65,7 +65,7 @@ AI エージェントは、このリポジトリへの発言 (コメント・`gh
 
 - Conventional Commits (`<type>(<scope>): <要約>`、type は feat / fix / docs / refactor / test / chore / ci / perf / build)。要約は日本語でよい。PR タイトルも同じ形で書く (squash のコミットになる)
 - 1 コミット 1 関心。1 PR は 1 つの説明で筋が通る範囲 (同じ親の sub-issue 群や、作業中に起票した障害もまとめて閉じてよい)
-- 検証の入口は `make ci-check`。手元では触った範囲の段 (`make <段>`) を通して push し、全段は CI に任せる
+- 検証の入口は `make ci-check`。手元では触った範囲の段 (`make <段>`。触ったものごとの段は `Makefile` の `CI_CHECK_STEPS` の注釈) を通して push し、全段は CI に任せる
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 つ置く (CHANGELOG を直接編集しない)
 - PR・コミットはメンテナ自身の `gh` 認証と署名で作る (外部の人は自分の名義)
 
