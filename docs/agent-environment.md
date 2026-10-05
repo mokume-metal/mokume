@@ -17,9 +17,9 @@ Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/
 
 ## 認証と証跡
 
-エージェントを起動する環境から `gh auth status` を確認する。PR 用の App 認証は AGENTS.md
-「エージェントの identity」に従う。`MOKUME_APP_PRIVATE_KEY_CMD` と証跡用の
-`MOKUME_GYAZO_TOKEN_CMD` は、利用する秘密管理から取得するコマンドを起動環境で渡す。
+エージェントを起動する環境から `gh auth status` を確認する。PR もその認証 (メンテナ自身) で
+作る (AGENTS.md「エージェントの identity」)。証跡用の `MOKUME_GYAZO_TOKEN_CMD` は、
+利用する秘密管理から取得するコマンドを起動環境で渡す。
 値や秘密の在処をリポジトリに書かない。署名の自動検出が効かない環境は
 `MOKUME_AGENT_NAME` (必要なら `MOKUME_AGENT_URL`) を明示する。
 
@@ -31,7 +31,7 @@ Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/
 ## フック
 
 Claude Code の接続は `.claude/settings.json`。Codex の接続は `.codex/config.toml`。
-どちらもコメント・PR identity の同じスクリプトを呼ぶ。各製品の設定を読み替えない。
+どちらもコメントの同じスクリプトを呼ぶ。各製品の設定を読み替えない。
 
 Codex はプロジェクトを信頼し、さらにフックを確認して信頼した場合にだけ動かす。
 CLI では `/hooks` で読込元と信頼状態を確認する。変更後のフックも再確認が必要になる。
@@ -44,11 +44,8 @@ Codex CLI 0.158.0-alpha.2.1 のシェル実行 (`exec_command`) とコード実�
 コマンドの認識は Claude Code と同じスクリプトが持つので、判定の範囲も同じである。
 `gh` の手前の予約語・リダイレクト・環境変数の代入・`env`・パスや引用・行継続
 (`for …; do gh`・`PATH=… gh`・`/opt/homebrew/bin/gh`・`gh \`) も認識し、前置の
-`GH_TOKEN` / `GH_REPO` / `env -u` / `env -i` と、`gh` より前に置いた token の発行・export・
-unset は名義と宛先の判定に渡す (#1729)。token は、発行の成功と export が `gh` の時点で必ず
-済んでいるときだけ installation token と見立てる。並びは bash の結合の順 (パイプと
-`{ …; }`・`( … )` などの複合コマンドは `&&` より強い) で読み、置換の中の発行は置換の終了コードが
-発行の成否を伝えるときだけ数える。`gh` より前に文としての `cd`・`pushd`・`popd`、
+`GH_REPO` / `env -u` / `env -i` は宛先の判定に渡す (#1729)。`gh` より前に文としての
+`cd`・`pushd`・`popd`、
 `GH_REPO` を変える文 (`export GH_REPO=`・`unset GH_REPO`・`read GH_REPO`・`for GH_REPO in …` など)、
 git がリポジトリを探し remote を読むのに効く変数 (`GIT_DIR`・`GIT_COMMON_DIR`・`GIT_CONFIG_GLOBAL`
 など) があれば、宛先は値を追わずに「決められない」として止める側へ倒す (`builtin` / `command` の
@@ -57,7 +54,7 @@ git がリポジトリを探し remote を読むのに効く変数 (`GIT_DIR`・
 `sudo` など別のコマンドを起動するコマンドの後ろの `gh` と、`$GH` のように実行時に
 決まる語は追わない (範囲の線は `scripts/guard-lib.sh` の冒頭)。
 別の版では読込と実際の発火を確かめる。
-フックを提供しない環境でも、Issue へのプラン記録・コメントのラッパー・App identity は
+フックを提供しない環境でも、Issue へのプラン記録・コメントのラッパーは
 AGENTS.md に従って実行する。フックが黙っていることを検証済みの印にしない。
 個人のプラグイン・モデル・権限設定はこのリポジトリから変更しない。
 
@@ -67,7 +64,7 @@ Claude の desktop アプリは、セッションに結び付いた PR の CI �
 レビューコメントを受けて同じセッションを起こし、直して push させる (PR ごとの Auto-fix)。
 これは [ADR-0017](decisions/0017-agent-support-locality.md) 決定 3 が言う「リポジトリの外の、
 設計を知らない機構」に当たる。mokume は CI の見届けを要求しない。見届けが拾うべき赤は
-merge queue と `stall-watch` で足りている (#377)。外の見張りが承認待ちを異常と読んで
+merge queue と `stall-watch` で足りている (#377)。外の見張りが当時の承認待ちを異常と読んで
 空回りした前例もある (#194)。使うかどうかは使う人が決める。
 
 ON にするなら、次の赤と状態は**コードを直して push しても消えない** (#1994)。
@@ -80,11 +77,8 @@ ON にするなら、次の赤と状態は**コードを直して push しても
 | `pr-title` | タイトルを直す。rerun しない (`stall-watch.sh` の読み分け表の 6) |
 | `render-pr` が見送られた・cancel された | 必須ではないので直すものは無い。rerun しない — 門番を通らずに専用機へ積まれ、merge queue の `render` と取り合う (#2062)。要るなら queue が空いてから push し直す |
 | `render` の台帳の不一致 | 2 回描いても一致しないなら決定論が壊れている。台帳を書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
-| 承認待ちで進まない (`BLOCKED`) | 正常な状態で、直すものは無い |
 | `BEHIND` | 何もしない。"Update branch" を押すと auto-merge だけが外れる |
 
-重要パス (`.github/rulesets/main-protection.json` の `required_reviewers`) に触れて承認済みの
-PR へ push すると、`dismiss_stale_reviews_on_push` で承認が落ち、Approve の取り直しになる。
 直してよいのは、check が 1 本も付かない本物の衝突 (AGENTS.md「マージの判断基準」) と、
 コードの不具合による `ci-check` の赤である。後者は再実行の前に `.build/test-log.txt` を
 退避する。

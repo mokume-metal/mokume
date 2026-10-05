@@ -5,7 +5,7 @@
 
 守りたいのは 1 つ — **gh がコマンドとして実行される位置にあるときだけ検出する**。
 広すぎると地の文 (コミットメッセージ・説明文) で差し戻して guard を迂回する手癖がつき、
-狭すぎるとコマンド置換の中を見逃してメンテナ名義の PR が作られる (ADR-0007)。
+狭すぎるとコマンド置換の中を見逃して規約を素通りさせる。
 
 判定はコマンド文字列だけを見るので、ネットワークも gh も要らない。
 実行は make ci-check (CI もこれを呼ぶ)。
@@ -45,7 +45,7 @@ def judge(command, subcommand, body=None):
 
 # フックと同じ形で読む — gh の呼び出しごとに、その断片がサブコマンドか (#1729)
 ANY_INVOCATION_IS = """
-while IFS=$'\\t' read -r token repo chdir place fragment; do
+while IFS=$'\\t' read -r repo chdir place fragment; do
   gh_fragment_is "$fragment" "$2" && exit 0
 done < <(gh_invocations "$1")
 exit 1
@@ -55,7 +55,7 @@ exit 1
 EVERY_INVOCATION_IS_OTHER = """
 cwd=${2:-$PWD}
 any=1
-while IFS=$'\\t' read -r token repo chdir place fragment; do
+while IFS=$'\\t' read -r repo chdir place fragment; do
   any=0
   invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$cwd" || exit 1
 done < <(gh_invocations "$1")
@@ -115,7 +115,7 @@ class IsGhSubcommandTest(unittest.TestCase):
     # --- 以前は見逃していた形 (#128 の穴) -------------------------------
 
     def test_command_substitution(self):
-        """url=$(gh pr create …) が素通りすると、メンテナ名義の PR が作られる。"""
+        """コマンド置換の中で実行される gh も拾う。"""
         self.assert_hit(f"url=$(gh pr {CREATE} --fill)", f"pr[[:space:]]+{CREATE}")
 
     def test_backticks(self):
@@ -142,7 +142,7 @@ class IsGhSubcommandTest(unittest.TestCase):
     def test_assignment_prefix(self):
         """#122 で足した検出。断片が `" gh …` の形になるので先頭のクォートを落とす。"""
         self.assert_hit(
-            f'GH_TOKEN="$(bash scripts/gh-app-token.sh)" gh pr {CREATE} --fill',
+            f'GH_TOKEN="$(cat t)" gh pr {CREATE} --fill',
             f"pr[[:space:]]+{CREATE}",
         )
 
@@ -295,10 +295,9 @@ class IsGhSubcommandTest(unittest.TestCase):
         self.assert_hit(f'gh issue {COMMENT} 1 --body "日本語の本文"', f"issue[[:space:]]+{COMMENT}")
         self.assert_hit(f'echo "件名" && gh issue {COMMENT} 1 --body x', f"issue[[:space:]]+{COMMENT}")
 
-    def test_safe_token_form(self):
-        """#122 で正典にした安全な形。"""
+    def test_after_an_and_chain_of_statements(self):
         self.assert_hit(
-            f'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN'
+            f'T="$(cat t)" && export T'
             f" && gh pr {CREATE} --fill",
             f"pr[[:space:]]+{CREATE}",
         )
@@ -571,7 +570,7 @@ class TargetsOtherRepoTest(unittest.TestCase):
             self.assert_other(f"env -u GH_REPO gh pr {CREATE} --fill", cwd=str(there))
 
     def test_inherited_gh_repo_is_the_destination(self):
-        """打つシェルから継いだ GH_REPO も宛先 (GH_TOKEN を継ぐのと同じ・#1729 の 2 回目の反証)。"""
+        """打つシェルから継いだ GH_REPO も宛先 (#1729 の 2 回目の反証)。"""
         with tempfile.TemporaryDirectory() as tmp:
             here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
             there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
@@ -639,7 +638,7 @@ class TargetsOtherRepoTest(unittest.TestCase):
 
 
 def invocations(command, **env):
-    """gh_invocations の行を (GH_TOKEN, GH_REPO, chdir, 置き場, 断片) の組で返す。"""
+    """gh_invocations の行を (GH_REPO, chdir, 置き場, 断片) の組で返す。"""
     proc = subprocess.run(
         ["/bin/bash", "-c", f'. "{LIB}"\ngh_invocations "$1"', "_", command],
         capture_output=True,
@@ -647,241 +646,64 @@ def invocations(command, **env):
         env={**os.environ, **env},
     )
     assert proc.returncode == 0 and not proc.stderr, proc.stderr
-    return [tuple(line.split("\t", 4)) for line in proc.stdout.splitlines()]
-
-
-ISSUE = 'GH_TOKEN="$(bash scripts/gh-app-token.sh)"'
+    return [tuple(line.split("\t", 3)) for line in proc.stdout.splitlines()]
 
 
 class GhInvocationsTest(unittest.TestCase):
-    """gh の呼び出しごとに、その gh に渡る環境を読む (#1729 の反証)。
+    """gh の呼び出しごとに、その gh の宛先に効く前置と文を読む (#1729 の反証)。
 
-    名義と宛先の判定は、前置 (GH_TOKEN= / GH_REPO= / env -u / env -i) と、**gh より前に
-    置いた**文 (発行・export・unset・再代入) だけから決まる。コマンド全体への部分一致だと、
-    gh の後ろに書いた発行まで「渡した」と読む。
+    宛先の判定は、前置 (GH_REPO= / env -u / env -i / env -C) と、**gh より前に置いた**文
+    (cd・GH_REPO や git の変数を変える文) だけから決まる。コマンド全体への部分一致だと、
+    gh の後ろに書いた文まで効いたと読む。
     """
 
-    def token_of(self, command):
+    def repo_of(self, command):
         rows = invocations(command)
         self.assertEqual(len(rows), 1, rows)
         return rows[0][0]
 
     def test_no_prefix_inherits(self):
-        self.assertEqual(self.token_of(f"gh pr {CREATE} --fill"), "inherit")
-        self.assertEqual(self.token_of(f"PATH=/x gh pr {CREATE} --fill"), "inherit")
+        self.assertEqual(self.repo_of(f"gh pr {CREATE} --fill"), "=")
+        self.assertEqual(self.repo_of(f"PATH=/x gh pr {CREATE} --fill"), "=")
 
-    def test_safe_issue_and_export_before_gh(self):
-        self.assertEqual(
-            self.token_of(f"{ISSUE} && export GH_TOKEN && git push && gh pr {CREATE} --fill"),
-            "installation",
-        )
-        self.assertEqual(self.token_of(f"{ISSUE} && gh pr {CREATE} --fill"), "unexported")
-        self.assertEqual(self.token_of(f"{ISSUE}; export GH_TOKEN; gh pr {CREATE} --fill"), "unsafe")
-        self.assertEqual(
-            self.token_of(f'export GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr {CREATE} --fill'),
-            "unsafe",
-        )
-
-    def test_issue_export_and_gh_must_be_one_and_list(self):
-        """発行から gh までが 1 つの && の並びでなければ、発行の失敗が gh へ伝わらない (#1823)。
-
-        #122 が塞いだ形 (発行の直後が && でない) の続きで、見ていたのは発行の直後の区切り
-        だけだった。形を 1 つ足すなら行を 1 つ足す。
-        """
-        t = 't="$(bash scripts/gh-app-token.sh)"'
-        gh = f"gh pr {CREATE} --fill"
-        for command, expected in (
-            # 並びが崩れている → unsafe
-            (f"{ISSUE} && export GH_TOKEN; {gh}", "unsafe"),
-            (f"{ISSUE} && export GH_TOKEN\ngit push -u origin HEAD\n{gh}", "unsafe"),
-            (f"{ISSUE} && export GH_TOKEN || {gh}", "unsafe"),
-            (f"{ISSUE} && export GH_TOKEN && true || {gh}", "unsafe"),
-            (f"true || {ISSUE} && export GH_TOKEN && {gh}", "unsafe"),
-            (f"false && {ISSUE} && export GH_TOKEN && true; {gh}", "unsafe"),
-            (f"{ISSUE} && export GH_TOKEN & {gh}", "unsafe"),
-            (f"{ISSUE} && export GH_TOKEN && echo | true; {gh}", "unsafe"),
-            # パイプラインの中の発行・export は子で走るので、外の gh へ渡らない
-            (f"{ISSUE} | cat && export GH_TOKEN && {gh}", "unsafe"),
-            (f"{ISSUE} && export GH_TOKEN | cat && {gh}", "unsafe"),
-            # ! は成否を裏返すので、発行が失敗すると後段が走る
-            (f"! {ISSUE} && export GH_TOKEN && {gh}", "unsafe"),
-            # if の条件の発行は本体へ運ばない (#1823 の D の 19 と同じ線。止める側の誤検知)
-            (f"if {ISSUE}; then export GH_TOKEN; {gh}; fi", "unsafe"),
-            # { … } の終了コードは最後の文のもの。最後が失敗を握り潰すなら外へ運ばない
-            (f"{{ {ISSUE}; true; }} && export GH_TOKEN && {gh}", "unsafe"),
-            (f"{{ {ISSUE} && export GH_TOKEN; }} || {gh}", "unsafe"),
-            # ループの中で gh の後ろに置いた、token を変える文は次の周の gh に効く (反証 2-3)
-            (f"{ISSUE} && export GH_TOKEN && for i in 1 2; do {gh}; unset GH_TOKEN; done", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && while :; do {gh}; GH_TOKEN=gho_x; done", "unknown"),
-            # ループ変数で GH_TOKEN を書く (反証 2-1)
-            (f"{ISSUE} && export GH_TOKEN && for GH_TOKEN in gho_x; do {gh}; done", "unknown"),
-            (f"{ISSUE} && x=1 || y=2 && export GH_TOKEN && {gh}", "unsafe"),
-            (f"{ISSUE} && export GH_TOKEN && (true); {gh}", "unsafe"),
-            (f"{ISSUE}; export GH_TOKEN && {gh}", "unsafe"),
-            (f"{t} && true; GH_TOKEN=\"$t\" {gh}", "unsafe"),
-            (f"true || {t} && GH_TOKEN=\"$t\" {gh}", "unsafe"),
-            (f"{t} && GH_TOKEN=$t; export GH_TOKEN && {gh}", "unsafe"),
-            # 1 つの && の並び → installation
-            (f"{ISSUE} && export GH_TOKEN && git push -u origin HEAD && {gh}", "installation"),
-            (f"{ISSUE} && export GH_TOKEN &&\n{gh}", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && (true) && {gh}", "installation"),
-            (f"cd /tmp && {ISSUE} && export GH_TOKEN && {gh}", "installation"),
-            (f"echo start; {ISSUE} && export GH_TOKEN && {gh}", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && url=$({gh})", "installation"),
-            (f"{t} && GH_TOKEN=\"$t\" {gh}", "installation"),
-            (f"{t} && GH_TOKEN=$t && export GH_TOKEN && {gh}", "installation"),
-            # 反証 #7: パイプラインと複合コマンドは && より強く結合する (並びの 1 段になる)
-            (f"{ISSUE} && export GH_TOKEN && echo | {gh}", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && printf '%s' body | {gh} --body-file -", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && {gh} |& tee log", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && {{ git push -u origin HEAD; {gh}; }}", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && if true; then {gh}; fi", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && (false || {gh})", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && ! {gh}", "installation"),
-            # 反証 #8 (a): || が発行より前 (左) にあるだけなら、発行の失敗は gh へ伝わる
-            (f"git fetch || true && {ISSUE} && export GH_TOKEN && {gh}", "installation"),
-            (f"git fetch || true && {t} && GH_TOKEN=\"$t\" {gh}", "installation"),
-            # 反証 #8 (b): 先に済ませた export は、後の代入の値も gh へ渡す
-            (f"export GH_TOKEN; {ISSUE} && {gh}", "installation"),
-            # 反証 2-6: { … } の終了コードは最後の文のものなので、中で済ませた発行と export を
-            # 外の段へ運ぶ (main の判定に戻す)。( … ) の中の export は外へ出ないので運ばない
-            (f"{{ {ISSUE} && export GH_TOKEN; }} && {gh}", "installation"),
-            (f"{{ {ISSUE}; }} && export GH_TOKEN && {gh}", "installation"),
-            (f"{{ {ISSUE} && export GH_TOKEN\n}} && {gh}", "installation"),
-            # ループの中でも、token を変える文が無ければ今までどおり
-            (f"{ISSUE} && export GH_TOKEN && for i in 1 2; do {gh}; done", "installation"),
-            (f"{ISSUE} && export GH_TOKEN && for i in 1 2; do {gh}; (unset GH_TOKEN); done", "installation"),
-            # 直書きの ghs_ は発行が失敗しえないので、並びを問わない
-            (f"GH_TOKEN=ghs_x; export GH_TOKEN; {gh}", "installation"),
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(self.token_of(command), expected)
-
-    def test_issue_is_judged_by_the_status_of_the_substitution(self):
-        """発行したかは、置換の終了コードが gh-app-token.sh のものかで決める (反証 #5)。
-
-        置換の中に gh-app-token.sh の綴りがあるだけでは足りない。`|| true`・`| tr`・`; true`
-        の後ろでは、発行が失敗しても置換は 0 を返し、代入の後ろの && が切れない。
-        """
-        gh = f"gh pr {CREATE} --fill"
-        for issue, expected in (
-            ('"$(bash scripts/gh-app-token.sh || true)"', "unsafe"),
-            ("\"$(bash scripts/gh-app-token.sh | tr -d '\\n')\"", "unsafe"),
-            ('"$(bash scripts/gh-app-token.sh; true)"', "unsafe"),
-            ('"`bash scripts/gh-app-token.sh || true`"', "unsafe"),
-            ('"$(bash scripts/gh-app-token.sh)"', "installation"),
-            ('"$(bash scripts/gh-app-token.sh 2>/dev/null)"', "installation"),
-            ('"$(cd /tmp && bash scripts/gh-app-token.sh)"', "installation"),
-            ('"`bash scripts/gh-app-token.sh`"', "installation"),
-        ):
-            for command in (
-                f"GH_TOKEN={issue} && export GH_TOKEN && {gh}",
-                f"t={issue} && GH_TOKEN=\"$t\" {gh}",
-            ):
-                with self.subTest(command=command):
-                    self.assertEqual(self.token_of(command), expected)
-
-    def test_statements_after_gh_do_not_count(self):
-        """#1729 の 2 回目の反証 — 発行と export が gh の後ろにある。"""
-        self.assertEqual(
-            self.token_of(f"gh pr {CREATE} --fill; {ISSUE} && export GH_TOKEN && true"), "inherit"
-        )
-        self.assertEqual(
-            self.token_of(f'GH_TOKEN="$t" gh pr {CREATE} --fill; t="$(bash scripts/gh-app-token.sh)" && echo'),
-            "other",
-        )
-
-    def test_statements_that_change_the_token_before_gh(self):
-        self.assertEqual(
-            self.token_of(f't="$(bash scripts/gh-app-token.sh)" && t=gho_x && GH_TOKEN="$t" gh pr {CREATE} --fill'),
-            "other",
-        )
-        self.assertEqual(
-            self.token_of(f"{ISSUE} && export GH_TOKEN && unset GH_TOKEN && gh pr {CREATE} --fill"),
-            "removed",
-        )
-        self.assertEqual(
-            self.token_of(f"{ISSUE} && export GH_TOKEN && export GH_TOKEN=gho_x && gh pr {CREATE} --fill"),
-            "other",
-        )
-        # 反証 #4: token を消す・export を外す文も、宛先の側と同じ読み方をする
-        for command, expected in (
-            (f"{ISSUE} && export GH_TOKEN && export -n GH_TOKEN && gh pr {CREATE} --fill", "unexported"),
-            (f"{ISSUE} && export GH_TOKEN && builtin unset GH_TOKEN && gh pr {CREATE} --fill", "removed"),
-            (f"{ISSUE} && export GH_TOKEN && command unset GH_TOKEN && gh pr {CREATE} --fill", "removed"),
-            (f"{ISSUE} && builtin export GH_TOKEN && gh pr {CREATE} --fill", "installation"),
-            (f"{ISSUE} && export -f GH_TOKEN && gh pr {CREATE} --fill", "unexported"),
-            # 反証 2-4: 名前を取って GH_TOKEN に書く builtin は、読めない書き換え
-            (f"{ISSUE} && export GH_TOKEN && read -r GH_TOKEN <<< x && gh pr {CREATE} --fill", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && printf -v GH_TOKEN %s x && gh pr {CREATE} --fill", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && declare GH_TOKEN=gho_x && gh pr {CREATE} --fill", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && local GH_TOKEN=gho_x && gh pr {CREATE} --fill", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && typeset GH_TOKEN= && gh pr {CREATE} --fill", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && declare +x GH_TOKEN && gh pr {CREATE} --fill", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && mapfile GH_TOKEN < /dev/null && gh pr {CREATE} --fill", "unknown"),
-            (f"{ISSUE} && export GH_TOKEN && let GH_TOKEN=0 && gh pr {CREATE} --fill", "unknown"),
-            # 名前として書いていなければ読まない
-            (f"{ISSUE} && export GH_TOKEN && read -r x <<< GH_TOKEN_ && gh pr {CREATE} --fill", "installation"),
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(self.token_of(command), expected)
-
-    def test_statements_inside_a_subshell_do_not_leak(self):
-        self.assertEqual(
-            self.token_of(f"({ISSUE} && export GH_TOKEN) && gh pr {CREATE} --fill"), "inherit"
-        )
-
-    def test_prefix_sets_the_token(self):
-        self.assertEqual(self.token_of(f"GH_TOKEN=ghs_x gh pr {CREATE} --fill"), "installation")
-        self.assertEqual(
-            self.token_of(f't="$(bash scripts/gh-app-token.sh)" && GH_TOKEN="$t" gh pr {CREATE} --fill'),
-            "installation",
-        )
-        self.assertEqual(self.token_of(f"{ISSUE} gh pr {CREATE} --fill"), "unsafe")
-        self.assertEqual(self.token_of(f"GH_TOKEN= gh pr {CREATE} --fill"), "other")
-        self.assertEqual(self.token_of(f'GH_TOKEN="$X" gh pr {CREATE} --fill'), "other")
-        self.assertEqual(self.token_of(f'GH_TOKEN="$GH_TOKEN" gh pr {CREATE} --fill'), "inherit")
-        self.assertEqual(self.token_of(f"env GH_TOKEN=gho_x gh pr {CREATE} --fill"), "other")
-
-    def test_env_removes_the_token(self):
+    def test_env_removes_the_repo(self):
         for command in (
-            f"env -u GH_TOKEN gh pr {CREATE} --fill",
-            f"env -uGH_TOKEN gh pr {CREATE} --fill",
-            f"env --unset=GH_TOKEN gh pr {CREATE} --fill",
+            f"env -u GH_REPO gh pr {CREATE} --fill",
+            f"env -uGH_REPO gh pr {CREATE} --fill",
+            f"env --unset=GH_REPO gh pr {CREATE} --fill",
             f"env -i PATH=/x gh pr {CREATE} --fill",
             f"env - PATH=/x gh pr {CREATE} --fill",
-            f"{ISSUE} && export GH_TOKEN && env -u GH_TOKEN gh pr {CREATE} --fill",
         ):
             with self.subTest(command=command):
-                self.assertEqual(self.token_of(command), "removed")
+                self.assertEqual(self.repo_of(command), "-")
         # 消した後に渡し直せば、その値
-        self.assertEqual(self.token_of(f"env -i GH_TOKEN=ghs_x gh pr {CREATE} --fill"), "installation")
+        self.assertEqual(self.repo_of(f"env -i GH_REPO=a/b gh pr {CREATE} --fill"), "+a/b")
 
     def test_unreadable_change_is_marked(self):
-        self.assertEqual(self.token_of(f"GH_TOKEN+=x gh pr {CREATE} --fill"), "unknown")
+        self.assertEqual(self.repo_of(f"GH_REPO+=x gh pr {CREATE} --fill"), "?")
 
     def test_each_invocation_carries_its_own_prefix(self):
-        rows = invocations(f"GH_TOKEN=ghs_x gh pr view 1 && gh pr {CREATE} --fill")
-        self.assertEqual([r[0] for r in rows], ["installation", "inherit"])
+        rows = invocations(f"GH_REPO=a/b gh pr view 1 && gh pr {CREATE} --fill")
+        self.assertEqual([r[0] for r in rows], ["+a/b", "="])
 
     def test_chdir_and_place_are_marked(self):
-        self.assertEqual(invocations(f"env -C /tmp gh pr {CREATE} --fill")[0][2], "1")
-        self.assertEqual(invocations(f"gh pr {CREATE} --fill")[0][2:4], ("0", "top"))
-        self.assertEqual(invocations(f'echo "`gh issue {COMMENT}`"')[0][3], "sub")
+        self.assertEqual(invocations(f"env -C /tmp gh pr {CREATE} --fill")[0][1], "1")
+        self.assertEqual(invocations(f"gh pr {CREATE} --fill")[0][1:3], ("0", "top"))
+        self.assertEqual(invocations(f'echo "`gh issue {COMMENT}`"')[0][2], "sub")
         # 文として cwd・GH_REPO を変えたら、env -C・読めない GH_REPO と同じ印 (#1823)
-        self.assertEqual(invocations(f"cd /tmp && gh pr {CREATE} --fill")[0][1:3], ("=", "1"))
-        self.assertEqual(invocations(f"export GH_REPO=x/y && gh pr {CREATE} --fill")[0][1:3], ("?", "0"))
-        self.assertEqual(invocations(f"unset GH_REPO; GH_REPO=x/y gh pr {CREATE} --fill")[0][1], "+x/y")
-        self.assertEqual(invocations(f"(cd /tmp) && gh pr {CREATE} --fill")[0][2], "0")
-        self.assertEqual(invocations(f"gh pr view 1 && cd /tmp && gh pr {CREATE} --fill")[0][2], "0")
+        self.assertEqual(invocations(f"cd /tmp && gh pr {CREATE} --fill")[0][0:2], ("=", "1"))
+        self.assertEqual(invocations(f"export GH_REPO=x/y && gh pr {CREATE} --fill")[0][0:2], ("?", "0"))
+        self.assertEqual(invocations(f"unset GH_REPO; GH_REPO=x/y gh pr {CREATE} --fill")[0][0], "+x/y")
+        self.assertEqual(invocations(f"(cd /tmp) && gh pr {CREATE} --fill")[0][1], "0")
+        self.assertEqual(invocations(f"gh pr view 1 && cd /tmp && gh pr {CREATE} --fill")[0][1], "0")
         # 反証 #1〜#3 の形も同じ印
-        self.assertEqual(invocations(f"GIT_COMMON_DIR=/tmp gh pr {CREATE} --fill")[0][2], "1")
-        self.assertEqual(invocations(f"builtin cd /tmp && gh pr {CREATE} --fill")[0][2], "1")
-        self.assertEqual(invocations(f"read GH_REPO <<< x/y && gh pr {CREATE} --fill")[0][1], "?")
+        self.assertEqual(invocations(f"GIT_COMMON_DIR=/tmp gh pr {CREATE} --fill")[0][1], "1")
+        self.assertEqual(invocations(f"builtin cd /tmp && gh pr {CREATE} --fill")[0][1], "1")
+        self.assertEqual(invocations(f"read GH_REPO <<< x/y && gh pr {CREATE} --fill")[0][0], "?")
 
     def test_quoted_words_keep_their_spaces_out_of_the_flags(self):
         """引用の中の空白は伏せる。本文に書いた -R や --help を旗と取り違えない。"""
-        (_, _, _, _, fragment), = invocations(f'gh issue {COMMENT} 1 --body "see -R x/y --help"')
+        (_, _, _, fragment), = invocations(f'gh issue {COMMENT} 1 --body "see -R x/y --help"')
         self.assertNotIn(" -R ", fragment)
         self.assertNotIn(" --help", fragment)
 
@@ -909,7 +731,7 @@ class HeredocTest(unittest.TestCase):
 
     def test_two_heredocs_on_one_line(self):
         command = f"cat <<A <<'B'\ngh issue {COMMENT} 1\nA\ngh pr {CREATE}\nB\ngh pr view 1"
-        self.assertEqual([r[4] for r in invocations(command)], ["gh pr view 1"])
+        self.assertEqual([r[3] for r in invocations(command)], ["gh pr view 1"])
 
     def test_herestring_is_not_a_heredoc(self):
         self.assertEqual(judge(f"cat <<< x\ngh issue {COMMENT} 1 -b x", f"issue[[:space:]]+{COMMENT}"), 0)
@@ -936,7 +758,7 @@ class LengthTest(unittest.TestCase):
     MEASURED = """
 out=$(mktemp)
 gh_invocations "$1" > "$out"
-while IFS=$'\\t' read -r token repo chdir place fragment; do
+while IFS=$'\\t' read -r repo chdir place fragment; do
   gh_fragment_is "$fragment" "$2" && { rm -f "$out"; exit 0; }
 done < "$out"
 rm -f "$out"
@@ -982,22 +804,21 @@ exit 1
 class WiringTest(unittest.TestCase):
     """配線 — 書いただけで guard から使われていなければ効かない。"""
 
-    def test_both_guards_source_the_lib(self):
-        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
-            text = (REPO / "scripts" / name).read_text()
-            self.assertIn("guard-lib.sh", text, f"{name} が共有ヘルパを読んでいない")
+    GUARD = REPO / "scripts" / "agent-comment-guard.sh"
 
-    def test_both_guards_use_the_shared_destination_check(self):
-        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
-            text = (REPO / "scripts" / name).read_text()
-            # 呼び出しごとの口を、その呼び出しの列で呼んでいるか。関数名の部分一致だけだと、
-            # 使っていない口の名前でも通ってしまう (#1729 の 2 回目の反証)
-            self.assertRegex(
-                text,
-                r'invocation_targets_other_repo "\$fragment" "\$repo" "\$chdir" "\$cwd"',
-                f"{name} が宛先を見ていない",
-            )
-            self.assertRegex(text, r'< <\(gh_invocations "\$command"\)', f"{name} が呼び出しを読んでいない")
+    def test_guard_sources_the_lib(self):
+        self.assertIn("guard-lib.sh", self.GUARD.read_text(), "guard が共有ヘルパを読んでいない")
+
+    def test_guard_uses_the_shared_destination_check(self):
+        text = self.GUARD.read_text()
+        # 呼び出しごとの口を、その呼び出しの列で呼んでいるか。関数名の部分一致だけだと、
+        # 使っていない口の名前でも通ってしまう (#1729 の 2 回目の反証)
+        self.assertRegex(
+            text,
+            r'invocation_targets_other_repo "\$fragment" "\$repo" "\$chdir" "\$cwd"',
+            "guard が宛先を見ていない",
+        )
+        self.assertRegex(text, r'< <\(gh_invocations "\$command"\)', "guard が呼び出しを読んでいない")
 
     def test_the_library_has_no_mouth_without_a_caller(self):
         """コマンド全体を 1 回で問う口は、フックが呼ばなくなったので持たない (#1729)。"""
@@ -1011,34 +832,26 @@ class WiringTest(unittest.TestCase):
         self.assertIn("repo-slug.sh", text, "guard-lib.sh が repo-slug.sh を読んでいない")
         self.assertNotIn("remote get-url", text, "guard-lib.sh が自前で origin を剥がしている")
 
-    def test_guards_do_not_extract_the_repo_option_themselves(self):
+    def test_guard_does_not_extract_the_repo_option_itself(self):
         """複製が残っていると、片方だけ直す事故が起きる (#128 と同じ理由)。"""
-        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
-            text = (REPO / "scripts" / name).read_text()
-            self.assertNotIn("--repo)", text, f"{name} に自前の -R 抽出が残っている")
+        self.assertNotIn("--repo)", self.GUARD.read_text(), "guard に自前の -R 抽出が残っている")
 
-    def test_both_guards_pass_the_working_directory(self):
+    def test_guard_passes_the_working_directory(self):
         """cwd を渡さないと、-R が無いコマンドの宛先を決められない (#611)。
 
         payload から取り出すのは hook_payload の仕事になった (#815) ので、guard 側で
         見るのは「共有の口から受け取っているか」である。
         """
         self.assertIn(".cwd", LIB.read_text(), "guard-lib.sh が payload の cwd を読んでいない")
-        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
-            text = (REPO / "scripts" / name).read_text()
-            self.assertIn("HOOK_CWD", text, f"{name} が cwd を宛先の判定へ渡していない")
+        self.assertIn("HOOK_CWD", self.GUARD.read_text(), "guard が cwd を宛先の判定へ渡していない")
 
-    def test_both_guards_show_the_shared_escape_hatch(self):
+    def test_guard_shows_the_shared_escape_hatch(self):
         """逃げ道の文面を書き分けると片方だけ古くなる (#611)。"""
-        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
-            text = (REPO / "scripts" / name).read_text()
-            self.assertIn("other_repo_hint", text, f"{name} が逃げ道を案内していない")
+        self.assertIn("other_repo_hint", self.GUARD.read_text(), "guard が逃げ道を案内していない")
 
-    def test_guards_do_not_keep_their_own_copy(self):
+    def test_guard_does_not_keep_its_own_copy(self):
         """複製が残っていると、片方だけ直す事故が起きる。"""
-        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
-            text = (REPO / "scripts" / name).read_text()
-            self.assertNotIn("readonly GH=", text, f"{name} に古い正規表現が残っている")
+        self.assertNotIn("readonly GH=", self.GUARD.read_text(), "guard に古い正規表現が残っている")
 
 
 # --- フックの入口と出口 -------------------------------------------------------
@@ -1170,7 +983,7 @@ class HookSurfaceTest(unittest.TestCase):
 class HookExitIsSharedTest(unittest.TestCase):
     """**フックの出口が 1 箇所であることを構造で見る (#815)。**
 
-    #160 は `pr-identity-guard.sh` が bash 3.2 のパースに失敗して JSON を返さず、
+    #160 は当時のフックの 1 本が bash 3.2 のパースに失敗して JSON を返さず、
     PreToolUse フックとしては**素通しと同じ**になった事故である。あのときフックは
     1 本だったから気付けた。綴りが 3 本に散った状態で仕様が動けば、直し漏れた 1 本は
     黙って効かなくなる。
@@ -1191,7 +1004,7 @@ class HookExitIsSharedTest(unittest.TestCase):
 
         **glob より広い。** 配線されていれば名前が `-guard.sh` でなくても掛かる。
         逆に配線されていないフックは**そもそも効いていない**ので、その出口の綴りを
-        見張る意味が無い (同じ読み方の前例は pr_identity_guard_test.py の WiringTest)。
+        見張る意味が無い。
         """
         settings = json.loads((REPO / ".claude" / "settings.json").read_text())
         found = set()

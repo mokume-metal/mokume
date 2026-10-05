@@ -521,9 +521,8 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
 - **束ねる道具**: `img2webp` (`brew install webp`) と `ffmpeg`。退避路でも同じものを使う
 - **Gyazo のアクセストークン**: https://gyazo.com/oauth/applications でアプリを登録すると出せる
   (OAuth フローは要らず、developer ページで出せる 1 本でよい)。環境変数 **`MOKUME_GYAZO_TOKEN_CMD`** へ
-  「トークンを標準出力に出すコマンド」を渡し、手元の秘密管理から読ませる。App の秘密鍵
-  (AGENTS.md「エージェントの identity」) と同じ流儀で、**値も在処もリポジトリに書かない** —
-  値そのものを環境変数にも置かない
+  「トークンを標準出力に出すコマンド」を渡し、手元の秘密管理から読ませる。**値も在処も
+  リポジトリに書かない** — 値そのものを環境変数にも置かない
 - **窓の一覧 (B)**: Gyazo の MCP サーバーが要る (開発者向けプレビュー版・公式サポート対象外で、
   仕様が変わることがある)
 - **セッション**: 無人でも通る。ただし**隔離 worktree のサブエージェントでは打たず、親が打つ** (「上げる」節の頭)
