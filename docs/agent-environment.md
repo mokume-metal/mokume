@@ -18,7 +18,7 @@ Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/
 ## 認証と証跡
 
 エージェントを起動する環境から `gh auth status` を確認する。PR もその認証 (メンテナ自身) で
-作る (AGENTS.md「エージェントの identity」)。証跡用の `MOKUME_GYAZO_TOKEN_CMD` は、
+作る (AGENTS.md「コミット・PR の規約」)。証跡用の `MOKUME_GYAZO_TOKEN_CMD` は、
 利用する秘密管理から取得するコマンドを起動環境で渡す。
 値や秘密の在処をリポジトリに書かない。署名の自動検出が効かない環境は
 `MOKUME_AGENT_NAME` (必要なら `MOKUME_AGENT_URL`) を明示する。
