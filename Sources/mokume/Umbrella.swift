@@ -7,6 +7,7 @@
 //
 // モジュールが増えたら、ここに 1 行足す。
 
+@_exported import MokumeAudio
 @_exported import MokumeCamera
 @_exported import MokumeCore
 
