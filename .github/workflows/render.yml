@@ -344,12 +344,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # ビルドで落ちて記録が上がらなかった回も起票する。artifact が無くても止まらない
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: scheduled-debug-record
           path: record/debug
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: scheduled-release-record
