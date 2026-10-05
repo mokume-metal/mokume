@@ -225,7 +225,8 @@ class ReviewGateTest(unittest.TestCase):
         stub.chmod(0o755)
 
     def run_gate(self, pr, issue=None, all_files=None, record_calls=None,
-                 issues=None, issue_fail=None, agents=None, compare_fail=None):
+                 issues=None, issue_fail=None, agents=None, compare_fail=None,
+                 run_id=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
@@ -237,6 +238,8 @@ class ReviewGateTest(unittest.TestCase):
         `agents` は (merge-base の AGENTS.md, head の AGENTS.md) の組 (#1668)。base の
         先端 (BASE_REF) にはどちらとも長さの違う本文を置くので、先端と比べれば数が狂う。
         `compare_fail` を渡すと compare API がその文言を名乗って失敗する。
+
+        `run_id` は Actions の中で立つ GITHUB_RUN_ID (#2134)。渡さなければ環境から外す。
         """
         contents = Path(self.tmp.name) / "contents"
         contents.mkdir(exist_ok=True)
@@ -263,6 +266,10 @@ class ReviewGateTest(unittest.TestCase):
         env["GH_CALLS"] = str(record_calls) if record_calls else "/dev/null"
         # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
         env["GITHUB_REPOSITORY"] = f"{REPO_OWNER}/{REPO_NAME}"
+        # 差し戻しの文面へ埋まる (#2134)。CI の中で回しても結果が変わらないよう、渡すとき以外は外す
+        env.pop("GITHUB_RUN_ID", None)
+        if run_id is not None:
+            env["GITHUB_RUN_ID"] = run_id
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
         )
@@ -494,6 +501,44 @@ class ReviewGateTest(unittest.TestCase):
             pr_json(), json.dumps({"labels": [{"name": TRIAGED}]})
         )
         self.assert_blocked(proc, "issueType が無い")
+
+    # --- 差し戻しの文面が約束してよいこと (#2134) ---------------------------
+    #
+    # 本文を直すと新しい run は走るが、赤かった run の ci-gate は同じコミットに赤く残り、
+    # 新しい run が緑でも必須チェックを固定する (#259)。かつての文面 (対応表・反証の 2 つ) は
+    # 「本文を編集すれば CI は自動で再評価されます」と約束していて、直したのに必須チェックが
+    # 赤のまま止まった。文面は、再評価が走ることと、必須チェックが緑になることを分けて言い、
+    # 打ち直しまで案内する。どちらの差し戻しも同じ末尾を持つので、両方で固定する
+
+    def blocked_messages(self, **kwargs):
+        """対応表が無い差し戻しと、反証が無い差し戻しの stderr を、名前付きで返す。"""
+        table = self.run_gate(pr_json(verified=()), issue_json(TRIAGED), **kwargs)
+        refute = self.run_gate(pr_json(), issue_json(TRIAGED, issue_type="Bug"), **kwargs)
+        self.assertEqual(table.returncode, 1, table.stdout)
+        self.assertEqual(refute.returncode, 1, refute.stdout)
+        return {"対応表": table.stderr, "反証": refute.stderr}
+
+    def test_a_blocked_message_does_not_promise_automatic_reevaluation(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertNotRegex(err, r"自動(で|的に)?再(評価|実行)", "約束が戻っている:\n" + err)
+                # 新しい run が走ることまでは言えるが、それが必須チェックを緑にするとは言わない
+                self.assertIn("新しい run が", err)
+                self.assertIn("必須チェックを固定します", err)
+
+    def test_a_blocked_message_names_the_rerun_that_clears_a_red_ci_gate(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertIn("ci-gate", err)
+                self.assertRegex(err, r"gh run rerun \S+ --failed", "打ち直しの手を案内していない:\n" + err)
+
+    def test_the_rerun_names_this_run_inside_actions_and_a_placeholder_outside(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name + " (手元)"):
+                self.assertIn("gh run rerun <run-id> --failed", err)
+        for name, err in self.blocked_messages(run_id="424242").items():
+            with self.subTest(name + " (Actions)"):
+                self.assertIn("gh run rerun 424242 --failed", err)
 
     # --- 5. 変更要求 -------------------------------------------------------
 

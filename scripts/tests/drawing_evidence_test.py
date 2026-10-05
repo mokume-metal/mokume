@@ -75,6 +75,8 @@ class DrawingEvidenceTest(unittest.TestCase):
         )
         self.env.pop("GITHUB_REPOSITORY", None)
         self.env.pop("PR_NUMBER", None)
+        # 差し戻しの文面へ埋まるので、CI の中で回しても結果が変わらないよう外す (#2134)
+        self.env.pop("GITHUB_RUN_ID", None)
 
     def run_script(self, *, body="", labels=(), files=DRAWING_FILES, args=("101",),
                    all_files=None, **env):
@@ -111,6 +113,45 @@ class DrawingEvidenceTest(unittest.TestCase):
     def test_画像でないURLは絵として数えない(self):
         r = self.run_script(body="詳細は https://github.com/mokume-metal/mokume/issues/306 を参照")
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+
+    # --- 差し戻しの文面が約束してよいこと (#2134) -------------------------
+    #
+    # 本文の編集やラベルの付け外しで新しい run は走る。しかし赤かった run の ci-gate は
+    # 同じコミットに赤く残り、新しい run が緑でも必須チェックを固定する (#259)。かつての文面は
+    # 「CI は自動で再評価します」と約束し、後付けのラベルで ci-gate が赤のまま止まった
+    # (2026-09-23 に描画 PR 13 本のうち 3 本)。文面は 3 つを守る — 作成と同時に付ける形を先に
+    # 案内する・後付けなら赤い ci-gate が残ることと打ち直しを案内する・自動で直ると約束しない
+
+    def rejection(self, **env):
+        r = self.run_script(body="## 目的\n\nCloses #1\n\n## 確認方法\n\nmake ci-check", **env)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        return r.stderr
+
+    def test_差し戻しは作成と同時にラベルを付ける形を先に案内する(self):
+        err = self.rejection()
+        create = err.find("gh pr create --label no-visual-change")
+        edit = err.find("gh pr edit <番号> --add-label no-visual-change")
+        self.assertNotEqual(create, -1, "作成と同時に付ける形を案内していない:\n" + err)
+        self.assertNotEqual(edit, -1, "作ってしまった PR への付け方を案内していない:\n" + err)
+        self.assertLess(create, edit, "後付けの形が、作成と同時の形より先に出ている")
+
+    def test_差し戻しは後付けで赤の_ci_gate_が残ることと打ち直しを案内する(self):
+        err = self.rejection()
+        self.assertIn("ci-gate", err, "必須チェックが赤で残りうることを言っていない:\n" + err)
+        self.assertRegex(err, r"gh run rerun \S+ --failed", "打ち直しの手を案内していない:\n" + err)
+
+    def test_差し戻しは自動で再評価すると約束しない(self):
+        err = self.rejection()
+        self.assertNotRegex(err, r"自動(で|的に)?再(評価|実行)", "約束が戻っている:\n" + err)
+        # 新しい run が走ることまでは言えるが、それが必須チェックを緑にするとは言わない
+        self.assertIn("新しい run が走って", err)
+        self.assertIn("必須チェックを固定します", err)
+
+    def test_差し戻しの打ち直しはCIの中ではそのrunのidで示す(self):
+        # 手元で打ったときは、実在しない id を出さず穴埋めの印で示す
+        self.assertIn("gh run rerun <run-id> --failed", self.rejection())
+        # run_script は env を残すので、id を入れるのは後にする
+        self.assertIn("gh run rerun 424242 --failed", self.rejection(GITHUB_RUN_ID="424242"))
 
     # --- 絵として数える形 -------------------------------------------------
 

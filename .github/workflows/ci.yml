@@ -18,7 +18,8 @@ run-name: "${{ github.event_name == 'merge_group' && format('merge queue: {0}', 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
-  # レビューの投稿・却下でも review-gate を自動再評価する (変更要求が残っていないかを見るため)
+  # レビューの投稿・却下でも review-gate の run を新しく起こす (変更要求が残っていないかを
+  # 見るため)。**起こした run が緑でも、先の run の赤い ci-gate は消えない** (ci-gate の上のコメント)
   pull_request_review:
     types: [submitted, dismissed]
   merge_group:
@@ -171,7 +172,8 @@ jobs:
           fi
 
   # ADR-0002 / ADR-0031 のマージ判定 (実体は scripts/review-gate.sh)。
-  # 本文の編集・ラベルの付け外し・レビューの投稿で自動的に再評価される。
+  # 本文の編集・ラベルの付け外し・レビューの投稿で新しい run が走り、判定が付け直される
+  # (先の run の赤い ci-gate までは消えない — ci-gate の上のコメント)。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
   #
   # **終了コードは 0 か 1 だけである。** かつては承認待ちを 20 で表し、approval-signal
@@ -219,8 +221,10 @@ jobs:
   # **ci-check ジョブには相乗りさせない。** あのジョブは PR の中の任意のコード
   # (Makefile・検査) を走らせるので、GH_TOKEN を持ち込まない。
   #
-  # 本文を編集しても逃がしラベルを付け外ししても自動で再評価される
-  # (on.pull_request.types に edited / labeled / unlabeled が入っている)。
+  # 本文を編集しても逃がしラベルを付け外ししても新しい run が走り、判定が付け直される
+  # (on.pull_request.types に edited / labeled / unlabeled が入っている)。**ただし、赤かった
+  # 先の run の ci-gate は消えない** (ci-gate の上のコメント)。逃がしラベルは PR の作成と
+  # 同時に付けると、最初の run から通る (#2134)。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
   #
   # **判定するスクリプトは既定ブランチの版で走らせる。** 理由と脱出口は review-gate と
@@ -251,6 +255,17 @@ jobs:
   # この ci-gate と、専用機の描画ジョブ render (render.yml・#878) の 2 本である。
   # 手元の実行の報告 local-render は、render が合流後の木を直接描くようになって畳んだ
   # (#879)。
+  #
+  # **新しい run が走って緑になっても、先の run の赤い ci-gate は消えない** (#2134)。
+  # review-gate・drawing-evidence が赤だった run の ci-gate は、同じコミットに赤く残り、
+  # 新しい run の ci-gate が緑でも必須チェックを固定する (#259 の実測)。本文の編集・ラベルの
+  # 付け外し・レビューの却下が起こすのは判定の付け直しであって、必須チェックが緑になることでは
+  # ない。消すのは、赤い run の失敗ジョブの打ち直し (gh run rerun <run-id> --failed) で、
+  # review-gate と drawing-evidence は実行のたびに API から本文とラベルを読むので打ち直せば
+  # 通る。打たなくても stall-watch が数時間おきに打つ (scripts/stall-act.sh・Draft を除く)。
+  # **pr-title は打たない** — 元のイベントを再生して古いタイトルで判定する (#699)。
+  # 作成と同時に付ければ赤い run が出ないので、差し戻しの文面はその形を先に案内する
+  # (scripts/check-drawing-evidence.sh)。
   ci-gate:
     if: always()
     needs: [ci-check, test-release, pr-title, review-gate, drawing-evidence]
