@@ -28,7 +28,7 @@ fork から出してよい。**リポジトリへの書き込み権限が要る�
 2. fork して枝を切り、触った範囲の検査 (`make test` など。段の並びは Makefile の `CI_CHECK_STEPS`) を通してから PR を出す。全段は CI が回す (手元なら `make ci-check`)。本文はテンプレートを埋める
 3. 残りはメンテナが引き取る:
    - ラベル (`verify: triaged` / `no-issue` / `no-visual-change`) を付け、検査を再評価させる
-   - doc コメントの例を直した場合の撮り直し (`make example-shots`)
+   - doc コメントの例を直した場合の撮り直し (`make example-shots`)。Gyazo の鍵が無くて撮れない例は、説明文の下に `// shot: 後で撮る` を添えれば検査は通る (`scripts/example-shots.py` の冒頭)
    - merge queue へ入れる
 
 赤い検査が残っていても、上の 3 つに当たるものなら直さなくてよい。

@@ -35,6 +35,94 @@
 指紋が出る。説明文と宣言の間に置いてよいことは確かめてある — `api-surface.py` の
 `slash_doc` は上に `///` があれば空を返すので、説明文の検査と衝突しない。
 
+## 公開メンバが例か宣言を持つか (#2116)
+
+**囲みがあるなら正しいか、だけでは足りない。囲みの無い口を名指しして赤にする。** 見るのは
+`Sources/MokumeCore/Sketch/Sketch+*.swift` の `extension Sketch` に書かれた公開メンバで、
+数える単位は **overload ごと = 参照の面の 1 ページ**。各メンバは次のどれかを持つ。
+
+| 持つもの | 書き方 |
+| --- | --- |
+| 例と絵 | 説明文に ```swift の例と囲み (上) |
+| 撮れない宣言 | `// shot: 撮れない <理由>` |
+| 別の口の絵への参照 | `// shot: 参照 <口>` |
+
+どれも持たず、許容一覧にも載っていない口は、ファイルと行つきで名指しして赤になる。
+
+**宣言は説明文 (`///`) と宣言の間の `//` の行に書く** — `///` に書くと公開される文章に
+指紋が出る (ADR-0027 決定 2)。撮影の記録 (`// shot: 1 snippet=…`) と同じ置き場で、
+記録と並べてよい。説明文の下に `//` を積んでも、`slash_doc` が上の `///` を説明文と読む
+ことは変わらない。
+
+    /// 絵を書き出す。
+    /// …
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func save(_ path: String) {
+
+- **撮れない <理由>** — 絵にして示せない理由を 1 行で書く。**理由の無い宣言は赤**
+  (理由は空にできない)。書けるのは「絵として示せない理由」(機材や外の資源に依る・
+  結果がファイルになる・値を返すだけ) で、足すのが面倒なだけのものは理由にならない
+- **参照 <口>** — 同じ例で足りる overload が、別の overload の絵を指す
+  (`fill(_ gray:)` が `fill(_:_:_:_:)` を指す)。`<口>` は参照の面の見出しと同じ
+  `fill(_:_:_:_:)` の綴りで、同名の口が複数ある (`fill(_:_:)` は 2 本ある) ときは、
+  許容一覧と同じ `fill(_:_:) (LinearRGBA, some ScalarConvertible)` で指す。
+  **参照先が無い・複数ある・絵を持たない (別の宣言だけを持つ) と赤**
+- 絵を持つ口に、撮れない宣言や参照は付けない (どちらかが古い)。宣言は 1 つだけ。
+  知らない `// shot:` の宣言 (綴りの誤り) も赤にする — 黙って普通のコメントになると、
+  宣言したつもりの口が「宣言が無い」としか言われない
+
+**Gyazo の鍵を持たない人 (外の貢献者を含む) は、`// shot: 後で撮る` の印で通す。** 例と
+囲みは書き、撮るのだけを鍵を持つ人に任せる印で、絵が無いことの赤 (「まだ撮っていない」・
+「撮り直していない」) が外れる。**撮れない宣言や許容一覧への追加で逃げる口ではない** —
+印は例と囲みの実物を要求する (囲みの無い口に付けると赤) ので、撮れば絵になるものしか
+入らない。
+
+    /// ```swift
+    /// circle(200, 150, 160)
+    /// ```
+    /// <!-- shot: 中央の円 -->
+    /// <!-- /shot -->
+    // shot: 後で撮る
+    public func …
+
+- **どこで追うか**: `make example-shots-check` の出力が `後で撮る: N 本` と、印の場所
+  (ファイルと行) を 1 行ずつ出す。ソースからは `grep -rn '// shot: 後で撮る' Sources`
+- **どう外れるか**: 鍵を持つ人が `make example-shots` で撮ると、書き戻しが印を外す。
+  撮れているのに印が残っていれば赤 (外す)
+
+## 許容一覧 (`scripts/example-shots-gaps.txt`)
+
+**既存の穴は許容一覧に載せて緑のまま通す。一覧は減る方向にしか動かない (ラチェット)。**
+一覧は「いま例も宣言も持たない口」の全部で、1 行 1 口 (`ファイル: 口`)。口の綴りは
+`名前 (引数の型, …)` — `api-surface.py` が overload を見分ける鍵 (`title` と `signature`)
+と同じで、引数の名前や既定値を動かしても綴りは動かない。
+
+- **新しい口は載せない。** 載っていない穴は赤 — 例か宣言を足す
+- **載っている口に例か宣言が付いたら、一覧から消さないと赤。** 残すと、後で例や宣言を
+  外したときに穴が黙って戻る — 知らないうちに一覧が増えたのと同じになる
+- **ソースに無い口が載っていれば赤。** 引数の型を変えた・口を消したときは、その行を
+  書き直す (消す)。数を足す書き直しではない
+- **一覧への追加そのものは、検査では止めていない** (行を足せば緑になる)。足せば diff に
+  出るので、レビューが「足さない」を守らせる。base との差分で止める道は新しい機構に
+  なるので足していない (ADR-0008 決定 1・5。実害が出たら足す)
+
+## 公開メンバの拾い方
+
+**ソースの字面で拾う。** 公開の判定はシンボルグラフが正確だが (`api-surface.py`)、組み
+上げを要する。この段は組まずに走るので (GPU も鍵も ffmpeg も要らない)、`extension Sketch`
+の本体の直下にある `public` の `func` / `var` / `subscript` / `init` を字面で読む
+(`public extension Sketch` の中は、`private` などと書かれていなければ公開)。説明文の上下
+の読み方は `slash_doc` と揃える — 宣言の直前の属性 (`@…`) を跨ぎ、その上の `//` の塊を
+跨いで、`///` の塊を説明文とする。
+
+**拾えた口が 1 本も無ければ赤。** 読み方が壊れても緑で通る空回りを隠さない。許容一覧の
+口がソースから拾えなくなっても赤になるので、拾う数が減ったことは一覧も気付かせる。
+
+**範囲は `Sketch/` の下の `Sketch+*.swift` で、#526 の 8 束が見た範囲と同じ。**
+`Sketch/` の外の `extension Sketch` (Input・Orbit・Expose・Params・Capture) と
+`Sketch` プロトコルそのものは、まだ見ていない。広げるときは、拾える口を許容一覧へ
+載せ直す。
+
 ## 指紋が見ていない範囲
 
 指紋の材料は**スニペットと撮影設定だけ**で、実装は入らない。つまり実装だけが変わって
@@ -145,8 +233,17 @@ from example_wrapping import (  # noqa: E402
 OPEN = re.compile(r"^(?P<indent>\s*)///\s*<!--\s*shot:\s*(?P<alt>[^|]*?)\s*(?:\|\s*(?P<attributes>[^>]*?)\s*)?-->\s*$")
 CLOSE = re.compile(r"^\s*///\s*<!--\s*/shot\s*-->\s*$")
 DOC = re.compile(r"^\s*///")
-# 撮影の記録。書くのも読むのもこの 1 行だけ
+# 撮影の記録。**機械が書く** (書き戻しが塊ごとに置き換える)
 RECORD = re.compile(r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)\s*$")
+# `//` の行 (`///` は含まない)。説明文の直後に積まれる記録と宣言は、この行の連なり
+SLASH = re.compile(r"^\s*//(?!/)")
+# 人が書く宣言 (#2116)。**記録と同じ `// shot:` の名前空間** に置き、`grep '// shot:'` で
+# 絵にまつわる行が全部引ける。記録は `shot:` の次が数字、宣言は種類の語
+STATEMENT = re.compile(r"^\s*//(?!/)\s*shot:\s*(?P<kind>[^\s\d]\S*)(?:\s+(?P<rest>.*?))?\s*$")
+KIND_SKIP = "撮れない"
+KIND_REFER = "参照"
+KIND_LATER = "後で撮る"
+STATEMENT_KINDS = (KIND_SKIP, KIND_REFER, KIND_LATER)
 IMAGE = re.compile(r"^\s*///\s*!\[")
 # 囲みの上を遡るときに跨ぐ行 — 空の説明文行と、2 段組の足場
 SCAFFOLD = re.compile(r"^\s*(///\s*(@Row\b.*|@Column\b.*|\}|)\s*)?$")
@@ -197,6 +294,8 @@ class Shot:
     index: int  # 同じ説明文の中で何番目か (記録の鍵)
     record_line: int | None
     record_snippet: str | None
+    # 「後で撮る」の印の行 (0 起点)。**塊ごとに 1 つ** — 同じ説明文の囲みは全部が同じ印を持つ (#2116)
+    deferred_line: int | None = None
 
     @property
     def name(self) -> str:
@@ -306,19 +405,45 @@ def context_above(lines: list[str], open_line: int) -> list[str]:
     return found
 
 
-def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str, str]]:
-    """説明文の塊の直後に積まれた記録。鍵は説明文の中での番号。"""
-    index = close_line + 1
-    while index < len(lines) and DOC.match(lines[index]):
-        index += 1
+def run_after(lines: list[str], close_line: int) -> tuple[int, int]:
+    """説明文の塊の直後に続く `//` の行 → (最初の行, 最後の次の行)。
+
+    **記録と宣言が積まれる置き場。** 説明文の塊は `close_line` の先も `///` が続きうるので、
+    まず塊の終わりまで進む。属性 (`@…`) や宣言は `//` ではないので、そこで連なりは終わる。
+    """
+    start = close_line + 1
+    while start < len(lines) and DOC.match(lines[start]):
+        start += 1
+    end = start
+    while end < len(lines) and SLASH.match(lines[end]):
+        end += 1
+    return start, end
+
+
+def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str]]:
+    """説明文の塊の直後に積まれた記録。鍵は説明文の中での番号。
+
+    **連なりの中なら位置を問わない** — 記録の前後に人が宣言 (`// shot: 後で撮る`) を
+    置いても読める (#2116)。
+    """
+    start, end = run_after(lines, close_line)
     found: dict[int, tuple[int, str]] = {}
-    while index < len(lines):
-        match = RECORD.match(lines[index])
-        if not match:
-            break
-        found[int(match["index"])] = (index, match["snippet"])
-        index += 1
+    for index in range(start, end):
+        if match := RECORD.match(lines[index]):
+            found[int(match["index"])] = (index, match["snippet"])
     return found
+
+
+def is_later(line: str) -> bool:
+    """「後で撮る」の印の行か。"""
+    match = STATEMENT.match(line)
+    return bool(match) and match["kind"] == KIND_LATER
+
+
+def deferred_after(lines: list[str], close_line: int) -> int | None:
+    """説明文の塊の直後の連なりにある「後で撮る」の印の行。無ければ None。"""
+    start, end = run_after(lines, close_line)
+    return next((index for index in range(start, end) if is_later(lines[index])), None)
 
 
 def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
@@ -361,9 +486,11 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
     for shot in pending:
         siblings = [other for other in pending if _same_block(lines, other, shot)]
         shot.index = siblings.index(shot) + 1
-        records = records_after(lines, max(other.close_line for other in siblings))
+        block_end = max(other.close_line for other in siblings)
+        records = records_after(lines, block_end)
         if record := records.get(shot.index):
             shot.record_line, shot.record_snippet = record
+        shot.deferred_line = deferred_after(lines, block_end)
         found.append(shot)
     return found
 
@@ -386,27 +513,277 @@ def collect(root: pathlib.Path) -> list[Shot]:
     return shots
 
 
+# ---------------------------------------------------------------- 公開メンバが例か宣言を持つか (#2116)
+
+# 見る範囲。**#526 の 8 束が見た範囲と同じ** (冒頭の「公開メンバの拾い方」)
+MEMBER_FILES = "Sources/MokumeCore/Sketch/Sketch+*.swift"
+# 許容一覧。1 行 1 口 (`ファイル: 口`)。# で始まる行と空行は読まない
+GAPS_FILE = "scripts/example-shots-gaps.txt"
+
+# `extension Sketch` の頭。`public extension Sketch` なら中の口は既定で公開になる
+EXTENSION = re.compile(
+    r"^\s*(?P<mods>(?:(?:public|open|package|internal|private|fileprivate|@\w+(?:\([^)]*\))?)\s+)*)"
+    r"extension\s+Sketch\b"
+)
+# 口の頭。属性・修飾語・種類。`private(set)` のような括弧つきの修飾も 1 語として読む
+MEMBER = re.compile(
+    r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*"
+    r"(?P<mods>(?:[a-z]+(?:\(\w+\))?\s+)*)"
+    r"(?P<kind>func|var|let|subscript|init)\b"
+)
+HIDDEN = {"private", "fileprivate", "internal", "package"}
+STRING = re.compile(r'"(?:\\.|[^"\\])*"')
+VARIABLE = re.compile(r"\b(?:var|let)\s+(?P<name>[A-Za-z_]\w*)")
+FUNCTION = re.compile(r"\b(?P<kind>func|init|subscript)\s*(?P<name>[^\s<(]*)")
+
+
+@dataclasses.dataclass
+class Statement:
+    """説明文の下の `//` の行に書かれた宣言 1 本。"""
+
+    line: int  # 0 起点
+    kind: str
+    rest: str
+
+
+@dataclasses.dataclass
+class Member:
+    """`Sketch` の公開メンバ 1 本 (overload ごと = 参照の面の 1 ページ)。"""
+
+    path: pathlib.Path  # 根からの相対
+    line: int  # 宣言の行 (0 起点)
+    title: str  # `fill(_:_:)` / `currentCamera`
+    types: tuple[str, ...]  # 引数の型 (同名の overload を見分ける鍵)
+    shots: int  # 説明文の中の囲みの数
+    has_doc: bool  # 説明文 (`///`) があるか
+    statements: list[Statement]
+
+    @property
+    def key(self) -> str:
+        """口の綴り。許容一覧と参照が使う。引数の名前と既定値は入らない。"""
+        return f"{self.title} ({', '.join(self.types)})" if self.types else self.title
+
+    @property
+    def where(self) -> str:
+        return f"{self.path}:{self.line + 1}"
+
+
+def code_of(line: str) -> str:
+    """波括弧と括弧を数えるための、コメントと文字列を除いた行。"""
+    if SLASH.match(line) or DOC.match(line):
+        return ""
+    return STRING.sub('""', line).split("//", 1)[0]
+
+
+def split_top_level(text: str, separator: str) -> list[str]:
+    """括弧の外の `separator` で切る。`->` の `>` は閉じ括弧に数えない。"""
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "-" and text[index + 1 : index + 2] == ">":
+            current.append("->")
+            index += 2
+            continue
+        if char in "([<":
+            depth += 1
+        elif char in ")]>":
+            depth -= 1
+        if char == separator and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    parts.append("".join(current))
+    return parts
+
+
+def parse_declaration(lines: list[str], line: int, kind: str) -> tuple[str, tuple[str, ...]] | None:
+    """口の頭の行から (名前 `fill(_:_:)`, 引数の型) を読む。読めなければ None。
+
+    **引数の型まで取る** — 名前だけでは同名の overload が潰れる (`fill(_:_:)` は 2 本ある)。
+    `api-surface.py` が畳み込みの鍵に `title` と `signature` を使うのと同じ理由。
+    """
+    if kind in {"var", "let"}:
+        match = VARIABLE.search(code_of(lines[line]))
+        return (match["name"], ()) if match else None
+    text = ""
+    depth = 0
+    started = False
+    for index in range(line, len(lines)):
+        piece = code_of(lines[index])
+        text += piece + "\n"
+        for char in piece:
+            if char == "(":
+                depth += 1
+                started = True
+            elif char == ")":
+                depth -= 1
+        if started and depth <= 0:
+            break
+    head = FUNCTION.search(text)
+    if not head or "(" not in text[head.end() :]:
+        return None
+    base = head["name"] if head["kind"] == "func" else head["kind"]
+    opened = head.end() + text[head.end() :].index("(")
+    close, depth = opened, 0
+    for position in range(opened, len(text)):
+        depth += {"(": 1, ")": -1}.get(text[position], 0)
+        if depth == 0:
+            close = position
+            break
+    labels: list[str] = []
+    types: list[str] = []
+    for parameter in split_top_level(text[opened + 1 : close], ","):
+        if not parameter.strip():
+            continue
+        names, _, annotation = parameter.partition(":")
+        labels.append((names.split() or ["_"])[0])
+        types.append(" ".join(split_top_level(annotation, "=")[0].split()))
+    return f"{base}({''.join(f'{label}:' for label in labels)})", tuple(types)
+
+
+def doc_and_statements(lines: list[str], line: int) -> tuple[bool, int, list[Statement]]:
+    """口の頭の行の上を読む → (説明文があるか, 囲みの数, 宣言)。
+
+    `api-surface.py` の `slash_doc` と同じ順に上へ辿る — 属性 (`@…`) を跨ぎ、`//` の塊を
+    跨いで、`///` の塊に着く。空行で切れる (宣言から離れた説明文は説明文ではない)。
+    """
+    index = line - 1
+    while index >= 0 and lines[index].lstrip().startswith("@"):
+        index -= 1
+    run_end = index
+    while index >= 0 and SLASH.match(lines[index]):
+        index -= 1
+    run_start = index + 1
+    doc_end = index
+    while index >= 0 and DOC.match(lines[index]):
+        index -= 1
+    doc = lines[index + 1 : doc_end + 1]
+    statements: list[Statement] = []
+    for number in range(run_start, run_end + 1):
+        if RECORD.match(lines[number]):
+            continue
+        if match := STATEMENT.match(lines[number]):
+            statements.append(Statement(number, match["kind"], (match["rest"] or "").strip()))
+    return bool(doc), sum(1 for text in doc if OPEN.match(text)), statements
+
+
+def members_in(root: pathlib.Path, path: pathlib.Path) -> list[Member]:
+    """`path` (根からの相対) の `extension Sketch` の本体の直下にある公開メンバ。
+
+    波括弧の深さで「本体の直下」を決める (コメントと文字列の中の括弧は数えない)。
+    """
+    lines = (root / path).read_text(encoding="utf-8").split("\n")
+    members: list[Member] = []
+    depth = 0
+    body: int | None = None  # 本体の深さ
+    waiting = False  # `extension Sketch` の `{` が次の行以降にある
+    public_extension = False
+    for number, line in enumerate(lines):
+        code = code_of(line)
+        if body is None:
+            head = EXTENSION.match(code)
+            if head or waiting:
+                if head:
+                    public_extension = bool(re.search(r"\b(public|open)\b", head["mods"]))
+                if "{" in code:
+                    body, waiting = depth + 1, False
+                else:
+                    waiting = True
+        elif depth == body and (match := MEMBER.match(code)):
+            mods = set(re.sub(r"\(\w+\)", "", match["mods"]).split())
+            exposed = bool(mods & {"public", "open"}) or (public_extension and not mods & HIDDEN)
+            if exposed:
+                declared = parse_declaration(lines, number, match["kind"])
+                if not declared:
+                    # **読めない口を黙って落とさない。** 落とすと、その口は検査の外に出る
+                    raise SystemExit(f"{path}:{number + 1} の公開メンバの宣言が読めない: {line.strip()}")
+                has_doc, shots, statements = doc_and_statements(lines, number)
+                title, types = declared
+                members.append(Member(path, number, title, types, shots, has_doc, statements))
+        depth += code.count("{") - code.count("}")
+        if body is not None and depth < body:
+            body = None
+    return members
+
+
+def collect_members(root: pathlib.Path) -> list[Member]:
+    members: list[Member] = []
+    for path in sorted(root.glob(MEMBER_FILES)):
+        members += members_in(root, path.relative_to(root))
+    return members
+
+
+def load_gaps(text: str, name: str = GAPS_FILE) -> tuple[dict[str, int], list[str]]:
+    """許容一覧 → ({`ファイル: 口`: 行番号 (1 起点)}, 読めなかった行の指摘)。"""
+    gaps: dict[str, int] = {}
+    problems: list[str] = []
+    for number, raw in enumerate(text.split("\n"), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        path, separator, member = line.partition(": ")
+        if not separator or not path.endswith(".swift") or not member.strip():
+            problems.append(f"{name}:{number}: 読めない行 (`ファイル: 口` の形で書く): {line}")
+        elif line in gaps:
+            problems.append(f"{name}:{number}: 同じ口が重なっている: {line}")
+        else:
+            gaps[line] = number
+    return gaps, problems
+
+
+def gap_entry(member: Member) -> str:
+    return f"{member.path}: {member.key}"
+
+
 # ---------------------------------------------------------------- 検査
 
 
 def check(shots: list[Shot]) -> list[str]:
     problems: list[str] = []
+    # 「後で撮る」の印が付いた塊で、絵がまだ追いついていないもの (#2116)。赤にしない
+    pending: list[Shot] = []
     for shot in shots:
         if not shot.alt:
             problems.append(f"{shot.where}: 絵の一文の説明が空 (`<!-- shot: … -->` に書く)")
         if not shot.snippet:
             problems.append(f"{shot.where}: 囲みの直前に ```swift の塊が無い")
+        stale = shot.record_snippet is not None and shot.record_snippet != shot.fingerprint
+        if shot.deferred_line is not None and (shot.record_snippet is None or stale):
+            pending.append(shot)
+            continue
         if shot.record_snippet is None:
             problems.append(f"{shot.where}: まだ撮っていない (make example-shots で撮る)")
             continue
-        if shot.record_snippet != shot.fingerprint:
+        if stale:
             problems.append(
                 f"{shot.where}: 例を書き換えたのに撮り直していない "
                 f"(記録 {shot.record_snippet} / いま {shot.fingerprint})"
             )
             continue
 
+    # 印は絵が追いついていない間だけ立つ。塊の絵が全部撮れているのに残っていれば外す
+    pending_ids = {id(shot) for shot in pending}
+    marks: dict[tuple[pathlib.Path, int], list[Shot]] = {}
+    for shot in shots:
+        if shot.deferred_line is not None:
+            marks.setdefault((shot.path, shot.deferred_line), []).append(shot)
+    for (path, line), group in sorted(marks.items()):
+        if not any(id(shot) in pending_ids for shot in group):
+            problems.append(
+                f"{path}:{line + 1}: 絵は撮れているのに「後で撮る」の印が残っている (印の行を消す)"
+            )
+
     print(f"例の絵: {len(shots)} 本 (動き {sum(1 for s in shots if s.is_motion)} 本)")
+    if pending:
+        # **印で入った口を追う場所はここ** — 鍵を持つ人が `make example-shots` で撮る分
+        print(f"  後で撮る: {len(pending)} 本 (鍵を持つ人が make example-shots で撮ると印が外れる)")
+        for shot in pending:
+            print(f"    {shot.path}:{(shot.deferred_line or 0) + 1}: {shot.alt}")
     # **見ていないことを名乗る** (#671)。かつてここには「N 本は撮影後に実装が動いている」
     # が出ていたが、常に全数が該当して 1 本も絞れていなかった。数を出せないなら、境目を
     # 1 行で言うほうが正確である。実装だけの変化は render-pr が名指しする (#1986)
@@ -414,6 +791,145 @@ def check(shots: list[Shot]) -> list[str]:
     print("  (描画のパスに触れる PR では render-pr が前後の描画で名指しする・警告のみ。")
     print("   merge queue が専用機を待っている間は render-pr ごと見送られるか止まる — #2062・#2064)")
     return problems
+
+
+def resolve_reference(member: Member, target: str, members: list[Member]) -> str | None:
+    """`// shot: 参照 <口>` の行き先を引く。引けなければ理由を返す (引けたら None)。
+
+    `<口>` は名前 (`fill(_:_:_:_:)`) か、型まで添えた口の綴り (`fill(_:_:) (LinearRGBA, …)`)。
+    **行き先は絵を持つ口 1 本に決まらなければならない** — 無い・複数ある・絵が無いは、
+    どれも「同じ絵で足りる」の裏が取れていない。
+    """
+    candidates = [other for other in members if other is not member and target in (other.title, other.key)]
+    if not candidates:
+        return f"参照先 {target} が無い (`extension Sketch` の公開メンバに無い綴り)"
+    if len(candidates) > 1:
+        listed = " / ".join(other.key for other in candidates)
+        return f"参照先 {target} が複数ある (型まで添えて指す): {listed}"
+    if candidates[0].shots == 0:
+        return f"参照先 {candidates[0].key} が絵を持たない (参照は絵を持つ口にしか向けられない)"
+    return None
+
+
+def classify(member: Member, members: list[Member]) -> tuple[str | None, list[str]]:
+    """口 1 本が何を持つか → (持つもの, 指摘)。
+
+    持つものは `shot` (例と絵) / `skip` (撮れない宣言) / `refer` (参照) / None (どれも無い)。
+    **宣言が壊れている口は `broken`** — 指摘は宣言の側で言い、「宣言が無い」とは重ねて言わない。
+    """
+    problems: list[str] = []
+    known = [s for s in member.statements if s.kind in STATEMENT_KINDS]
+    for statement in member.statements:
+        if statement.kind not in STATEMENT_KINDS:
+            problems.append(
+                f"{member.path}:{statement.line + 1}: 知らない宣言 `// shot: {statement.kind}` "
+                f"(書けるのは {' / '.join(STATEMENT_KINDS)})"
+            )
+    if known and not member.has_doc:
+        problems.append(
+            f"{member.where}: {member.key} に説明文 (`///`) が無い — 宣言は説明文の下に置く"
+        )
+    skips = [s for s in known if s.kind == KIND_SKIP]
+    refers = [s for s in known if s.kind == KIND_REFER]
+    laters = [s for s in known if s.kind == KIND_LATER]
+    if member.shots:
+        for statement in skips + refers:
+            problems.append(
+                f"{member.path}:{statement.line + 1}: 絵を持つ {member.key} に "
+                f"`// shot: {statement.kind}` が付いている (どちらかが古い)"
+            )
+        return ("broken" if problems else "shot"), problems
+    for statement in laters:
+        problems.append(
+            f"{member.path}:{statement.line + 1}: {member.key} に「後で撮る」の印があるが、"
+            "撮る囲みが無い (例と囲みを書いてから印を付ける)"
+        )
+    if len(skips) + len(refers) > 1:
+        problems.append(f"{member.where}: {member.key} の宣言は 1 つだけ (撮れない / 参照)")
+    elif skips:
+        if not skips[0].rest:
+            problems.append(
+                f"{member.path}:{skips[0].line + 1}: 撮れない宣言に理由が無い "
+                "(`// shot: 撮れない <理由>`)"
+            )
+        elif not problems:
+            return "skip", problems
+    elif refers:
+        if not refers[0].rest:
+            problems.append(
+                f"{member.path}:{refers[0].line + 1}: 参照の宣言に参照先が無い "
+                "(`// shot: 参照 <口>`)"
+            )
+        elif reason := resolve_reference(member, refers[0].rest, members):
+            problems.append(f"{member.path}:{refers[0].line + 1}: {reason}")
+        elif not problems:
+            return "refer", problems
+    return ("broken" if problems else None), problems
+
+
+def check_members(
+    members: list[Member], gaps: dict[str, int], gaps_name: str = GAPS_FILE
+) -> list[str]:
+    """公開メンバが、例か宣言を持つか許容一覧に載っているか。"""
+    if not members:
+        # **空回りを緑で隠さない。** 読み方が壊れても、拾えなければ何も言わずに通ってしまう
+        return [
+            f"{MEMBER_FILES} から公開メンバが 1 本も拾えなかった "
+            "(ファイルが動いたか、読み方が壊れている)"
+        ]
+    problems: list[str] = []
+    counts = {"shot": 0, "skip": 0, "refer": 0, "gap": 0}
+    seen: set[str] = set()
+    for member in sorted(members, key=lambda m: (str(m.path), m.line)):
+        held, found = classify(member, members)
+        problems += found
+        entry = gap_entry(member)
+        seen.add(entry)
+        if held is None:
+            if entry in gaps:
+                counts["gap"] += 1
+            else:
+                problems.append(
+                    f"{member.where}: {member.key} に例も撮れない宣言も無く、許容一覧にも無い"
+                )
+        elif held != "broken":
+            counts[held] += 1
+            if entry in gaps:
+                problems.append(
+                    f"{gaps_name}:{gaps[entry]}: {entry} は例か宣言が付いた — "
+                    "許容一覧から消す (残すと、後で外したときに穴が黙って戻る)"
+                )
+    for entry, number in sorted(gaps.items(), key=lambda item: item[1]):
+        if entry not in seen:
+            problems.append(
+                f"{gaps_name}:{number}: {entry} はソースに無い — 口を消したなら行を消し、"
+                "引数の型を変えたなら行を書き直す"
+            )
+    print(
+        f"公開メンバ: {len(members)} 口 — 例と絵 {counts['shot']} / 撮れない宣言 {counts['skip']} / "
+        f"参照 {counts['refer']} / 許容一覧 {counts['gap']}"
+    )
+    print(f"  許容一覧 ({gaps_name}) は減る方向にしか動かない。いま {len(gaps)} 口")
+    return problems
+
+
+MEMBER_HELP = """\
+例も宣言も無い口は、説明文の下に次のどれかを足す (書き方は scripts/example-shots.py の冒頭):
+  例と絵        説明文に ```swift の例と <!-- shot: … --> の囲みを書き、make example-shots で撮る
+                Gyazo の鍵が無ければ、`// shot: 後で撮る` を添えて通す (鍵を持つ人が撮る)
+  撮れない      // shot: 撮れない <理由>
+  参照          // shot: 参照 <口>   (同じ例で足りる overload が別の口の絵を指す)
+許容一覧 (scripts/example-shots-gaps.txt) へは足さない — 減る方向にしか動かない。\
+"""
+
+
+def members_problems(root: pathlib.Path) -> list[str]:
+    """作業ツリーの公開メンバを許容一覧と突き合わせる。"""
+    path = root / GAPS_FILE
+    if not path.is_file():
+        return [f"許容一覧 {GAPS_FILE} が無い"]
+    gaps, problems = load_gaps(path.read_text(encoding="utf-8"))
+    return problems + check_members(collect_members(root), gaps)
 
 
 # ---------------------------------------------------------------- 撮る
@@ -1029,16 +1545,18 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str]) -> i
             # 2 段組の中にあると両者は違う
             indent = re.match(r"^(\s*)", lines[block[0].open_line]).group(1)
             end = max(shot.close_line for shot in block)
-            after = end + 1
-            while after < len(lines) and DOC.match(lines[after]):
-                after += 1
-            records_end = after
-            while records_end < len(lines) and RECORD.match(lines[records_end]):
-                records_end += 1
+            # 説明文の直後の `//` の連なりを組み直す。記録は新しいものを先頭へ置き、
+            # 古い記録と「後で撮る」の印 (絵が撮れたので役目を終える) は落とす。
+            # **人が書いたほかの `//` の行は、順を保って残す** (#2116)
+            after, records_end = run_after(lines, end)
+            kept = [
+                line for line in lines[after:records_end]
+                if not RECORD.match(line) and not is_later(line)
+            ]
             lines[after:records_end] = [
                 f"{indent}// shot: {shot.index} snippet={shot.fingerprint}"
                 for shot in block
-            ]
+            ] + kept
             for shot in reversed(block):
                 prefix = lines[shot.open_line].split("<!--")[0]
                 image = f"{prefix}![{shot.alt}]({urls[shot.name]})"
@@ -1110,13 +1628,23 @@ def main(
 
     if not arguments.render and not arguments.capture:
         problems = check(shots)
+        member_problems = members_problems(root)
         if problems:
             print("例の絵が揃っていない:", file=sys.stderr)
             for problem in problems:
                 print(f"  {problem}", file=sys.stderr)
             print("\n撮り直しは make example-shots。", file=sys.stderr)
+        if member_problems:
+            print("例も宣言も無い口がある (#2116):", file=sys.stderr)
+            for problem in member_problems:
+                print(f"  {problem}", file=sys.stderr)
+            print(f"\n{MEMBER_HELP}", file=sys.stderr)
+        if problems or member_problems:
             return 1
-        print("ok: 例の絵は全部そろっていて、撮った後にスニペットが動いていない")
+        print(
+            "ok: 例の絵は全部そろっていて、撮った後にスニペットが動いていない。"
+            "公開メンバはどれも例か宣言を持つか、許容一覧に載っている"
+        )
         return 0
 
     if not shots:
