@@ -27,7 +27,7 @@ fork から出してよい。**リポジトリへの書き込み権限が要る�
 1. 大きな変更は、先に Issue で相談すると早い。小さな修正なら PR から始めてよい (AGENTS.md **進め方** の 2)
 2. fork して枝を切り、触った範囲の検査 (`make test` など。段の並びは Makefile の `CI_CHECK_STEPS`) を通してから PR を出す。全段は CI が回す (手元なら `make ci-check`)。本文はテンプレートを埋める
 3. 残りはメンテナが引き取る:
-   - ラベル (`verify: triaged` / `no-issue` / `no-visual-change`) を付け、検査を再評価させる
+   - ラベル (`verify: triaged` / `no-issue` / `no-visual-change`) を付け、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (新しい run は判定を付け直すだけで、赤い run の `ci-gate` は残る。fork の PR は stall-watch の当番が打たない。`verify: triaged` は Issue 側の操作で PR の run が起きないので、打ち直しが要る)
    - doc コメントの例を直した場合の撮り直し (`make example-shots`)。Gyazo の鍵が無くて撮れない例は、説明文の下に `// shot: 後で撮る` を添えれば検査は通る (`scripts/example-shots.py` の冒頭)
    - merge queue へ入れる
 

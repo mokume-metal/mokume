@@ -225,7 +225,8 @@ class ReviewGateTest(unittest.TestCase):
         stub.chmod(0o755)
 
     def run_gate(self, pr, issue=None, all_files=None, record_calls=None,
-                 issues=None, issue_fail=None, agents=None, compare_fail=None):
+                 issues=None, issue_fail=None, agents=None, compare_fail=None,
+                 run_id=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
@@ -237,6 +238,8 @@ class ReviewGateTest(unittest.TestCase):
         `agents` は (merge-base の AGENTS.md, head の AGENTS.md) の組 (#1668)。base の
         先端 (BASE_REF) にはどちらとも長さの違う本文を置くので、先端と比べれば数が狂う。
         `compare_fail` を渡すと compare API がその文言を名乗って失敗する。
+
+        `run_id` は Actions の中で立つ GITHUB_RUN_ID (#2134)。渡さなければ環境から外す。
         """
         contents = Path(self.tmp.name) / "contents"
         contents.mkdir(exist_ok=True)
@@ -263,6 +266,10 @@ class ReviewGateTest(unittest.TestCase):
         env["GH_CALLS"] = str(record_calls) if record_calls else "/dev/null"
         # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
         env["GITHUB_REPOSITORY"] = f"{REPO_OWNER}/{REPO_NAME}"
+        # 差し戻しの文面へ埋まる (#2134)。CI の中で回しても結果が変わらないよう、渡すとき以外は外す
+        env.pop("GITHUB_RUN_ID", None)
+        if run_id is not None:
+            env["GITHUB_RUN_ID"] = run_id
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
         )
@@ -494,6 +501,110 @@ class ReviewGateTest(unittest.TestCase):
             pr_json(), json.dumps({"labels": [{"name": TRIAGED}]})
         )
         self.assert_blocked(proc, "issueType が無い")
+
+    # --- 差し戻しの文面が約束してよいこと (#2134) ---------------------------
+    #
+    # 本文を直すと新しい run は走るが、赤かった run の ci-gate は同じコミットに残って必須
+    # チェックを赤のままにする (古い赤が新しい緑を固定する場合もある — #259)。かつての文面
+    # (対応表・反証の 2 つ) は「本文を編集すれば CI は自動で再評価されます」と約束していて、
+    # 直したのに必須チェックが赤のまま止まった。文面は、再評価が走ることと、必須チェックが
+    # 緑になることを分けて言い、打ち直しまで案内する。変更要求の解除・no-issue ラベルの付与
+    # も新しい run を起こすだけで同じなので、共通の末尾 (rerun_note) を持つ 4 つの差し戻しで
+    # 固定する。verify: の差し戻しだけは Issue 側の操作で run が起きないので、別に固定する
+
+    @staticmethod
+    def squash(text):
+        """空白と改行を外した本文。折り返しの位置に左右されず、語句を探すため。"""
+        return re.sub(r"\s+", "", text)
+
+    def assertSays(self, err, phrase):
+        self.assertIn(self.squash(phrase), self.squash(err), f"文面に「{phrase}」が無い:\n{err}")
+
+    def blocked_messages(self, **kwargs):
+        """共通の末尾 (rerun_note) を持つ差し戻し 4 つの stderr を、名前付きで返す。"""
+        cases = {
+            "対応表": (pr_json(verified=()), issue_json(TRIAGED)),
+            "反証": (pr_json(), issue_json(TRIAGED, issue_type="Bug")),
+            "変更要求": (pr_json(reviews=["CHANGES_REQUESTED"]), issue_json(TRIAGED)),
+            "no-issue の不在": (pr_json(body="Issue に触れていない本文", closes=()), None),
+        }
+        messages = {}
+        for name, (pr, issue) in cases.items():
+            proc = self.run_gate(pr, issue, **kwargs)
+            self.assertEqual(proc.returncode, 1, f"{name}: 差し戻されていない: {proc.stdout}")
+            messages[name] = proc.stderr
+        return messages
+
+    def test_a_blocked_message_does_not_promise_automatic_reevaluation(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertNotRegex(self.squash(err), r"自動(で|的に)?再(評価|実行)", "約束が戻っている:\n" + err)
+                # 新しい run が走ることまでは言えるが、それが必須チェックを緑にするとは言わない。
+                # 機構は 1 つに断定せず、赤が残ること (と、古い赤が固定する場合もあること) を言う
+                self.assertSays(err, "新しい run が走って")
+                self.assertSays(err, "必須チェックを赤のままにします")
+                self.assertSays(err, "古い赤が新しい緑を固定する場合もあります")
+
+    def test_a_blocked_message_names_the_rerun_that_clears_a_red_ci_gate(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertIn("ci-gate", err)
+                self.assertRegex(err, r"gh run rerun \S+ --failed", "打ち直しの手を案内していない:\n" + err)
+
+    def test_the_rerun_names_this_run_inside_actions_and_a_placeholder_outside(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name + " (手元)"):
+                self.assertIn("gh run rerun <run-id> --failed", err)
+        for name, err in self.blocked_messages(run_id="424242").items():
+            with self.subTest(name + " (Actions)"):
+                self.assertIn("gh run rerun 424242 --failed", err)
+
+    def test_a_blocked_message_says_the_watch_skips_fork_prs(self):
+        """当番 (stall-watch) は isCrossRepository を外す。「いずれ打ち直す」は fork の PR に当たらない。"""
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertSays(err, "同じリポジトリの PR は、打たなくても stall-watch の当番がいずれ打ち直します")
+                self.assertSays(err, "fork の PR は当番の対象外なので、メンテナが打ちます")
+
+    def test_a_blocked_message_does_not_rerun_pr_title(self):
+        # 打ち直すと元のタイトルを再生して同じ赤を返す (#699)。直す手は新しいコミット
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertSays(err, "pr-title も赤い run は、打ち直すと元のタイトルを再生して同じ赤を返します")
+                self.assertSays(err, "新しいコミットを push して run を作り直してください")
+
+    def test_the_missing_issue_message_names_create_time_label_first_and_not_as_a_guarantee(self):
+        err = self.blocked_messages()["no-issue の不在"]
+        self.assertIn("gh pr create --label no-issue", err)
+        self.assertSays(err, "通常は最初の run から通ります")
+        self.assertSays(err, "まれに作成の run が先にラベルを読んで赤くなり")
+        # 後付けの案内 (打ち直し) は、作成と同時の案内より後に出る
+        self.assertLess(err.find("gh pr create --label no-issue"), err.find("gh run rerun"))
+        # 約束のような言い方 (旧: 付けて再実行します) に戻っていない
+        self.assertNotIn(self.squash("付けて再実行します"), self.squash(err))
+
+    def test_the_changes_requested_message_says_a_dismissal_starts_a_run_but_needs_a_rerun(self):
+        err = self.blocked_messages()["変更要求"]
+        self.assertSays(err, "変更要求を解いてもらう")
+        self.assertSays(err, "解かれると新しい run が走りますが、変更要求で赤くなった run は打ち直しが要ります")
+
+    def test_the_missing_verify_label_message_names_the_rerun_unit(self):
+        """Issue 側のラベル操作は PR の run を起こさない — 新しい緑は付かず、当番も拾わない。
+
+        だから共通の末尾 (rerun_note) を使わず、打ち直しを直に案内する。画面の「Re-run all
+        jobs」は成功済みの pr-title まで元のタイトルで走らせ直す (#699) ので、単位は
+        失敗したジョブだけ (`--failed`) である。
+        """
+        proc = self.run_gate(pr_json(), issue_json("status: in progress"))
+        self.assert_blocked(proc, "verify: ラベルが無い")
+        err = proc.stderr
+        self.assertRegex(err, r"gh run rerun \S+ --failed")
+        self.assertSays(err, "Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない")
+        self.assertSays(err, "「Re-run all jobs」は成功済みの pr-title まで元のタイトルで走らせ直す")
+        # 当番は拾わない (新しい緑が付かない) ので、「いずれ打ち直す」と言わない
+        self.assertNotIn("stall-watch", err)
+        # 単位の無い言い方 (旧: Actions の re-run か空 push) に戻っていない
+        self.assertNotIn(self.squash("Actions の re-run か空 push"), self.squash(err))
 
     # --- 5. 変更要求 -------------------------------------------------------
 

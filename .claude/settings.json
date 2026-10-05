@@ -41,6 +41,17 @@
             "statusMessage": "コメントの投稿経路を確認中"
           }
         ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/plan-record.sh\" precheck",
+            "timeout": 20,
+            "statusMessage": "プランの現況・約束と範囲を承認の前に確認中"
+          }
+        ]
       }
     ],
     "PostToolUse": [

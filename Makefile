@@ -53,6 +53,30 @@ check: setup
 # 変わらない。build を外しても examples / params / api / reference は prerequisite の build を
 # 自分で走らせるので、合流後の木での検査は残る
 CI_CHECK_SKIP ?=
+
+# **手元で回す段は、触ったものから選ぶ。** AGENTS.md「コミット・PR の規約」の「触った範囲の段」は
+# ここを指す (#2133)。段の名前からは「触ったもの → 回す段」が引けず、取り違えた PR が queue で
+# 赤になった。**取り違えて実害が出た 3 つだけをここに置く** — 置いていないものは、下の並びの
+# 段名と、各段の定義の直前の注釈 (何を見るか) から選ぶ。全段を通すときは make ci-check。
+#
+#   1. public な宣言の doc コメント (`///`) → make reference
+#      `///` の中の記号リンクを解くのは、docc を --warnings-as-errors で通すこの段だけで、
+#      build・test・docs-links・api は見ない。内部の記号や面から外した型 (REFERENCE_OMIT) へ
+#      二重バッククォートでリンクすると、ここでだけ赤になる。この段を回さずに push した
+#      PR #1987 は、ci-check の reference で止まって 1 往復した
+#
+#   2. Sources/ → make test の全段。swift test --filter で周辺の suite に絞らない
+#      格納を数える網羅検査 (ShapeExitTests) は GPU を要るので PR の ci-check では飛び、
+#      周辺の suite にも入らない。絞った実行では落ちていることに気付けず、専用機の render
+#      (merge queue の合流後の木) で初めて赤になって queue から外れる (PR #2097)。
+#      GPU の枠 (scripts/gpu-slot.py) は make test が自分で取る
+#
+#   3. テストの赤の読み方 → 記録の失敗を全件抜いて見る。端末の出力の先頭で切らない
+#      記録は .build/test-results-swift-testing.xml (TEST_RECORD)。件数は
+#      python3 scripts/read-test-record.py --failures <記録>、名前と文面は同じく
+#      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤
+#      (他のセッションの GPU 負荷など) が約 70 本並ぶ中に本物が 1 本混ざることがあり、
+#      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした
 CI_CHECK_STEPS := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に

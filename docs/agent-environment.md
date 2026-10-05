@@ -72,9 +72,9 @@ ON にするなら、次の赤と状態は**コードを直して push しても
 
 | 赤・状態 | 直す先 |
 | --- | --- |
-| `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2) |
-| `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を付ける |
-| `pr-title` | タイトルを直す。rerun しない (`stall-watch.sh` の読み分け表の 6) |
+| `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2)。直したあと、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (新しい run は判定を付け直すだけで、赤い run の `ci-gate` は残る — `ci.yml` の `ci-gate` の上のコメント) |
+| `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を、PR の作成と同時に付ける。載せた (付けた) あと、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (同上) |
+| `pr-title` | タイトルを直し、新しいコミットを push して run を作り直す。rerun しない (元のタイトルを読んで同じ赤を返す — `stall-watch.sh` の読み分け表の 6) |
 | `render-pr` が見送られた・cancel された | 必須ではないので直すものは無い。rerun しない — 門番を通らずに専用機へ積まれ、merge queue の `render` と取り合う (#2062)。要るなら queue が空いてから push し直す |
 | `render` の台帳の不一致 | 2 回描いても一致しないなら決定論が壊れている。台帳を書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
 | `BEHIND` | 何もしない。"Update branch" を押すと auto-merge だけが外れる |
@@ -110,3 +110,65 @@ GitHub の投稿を読む。入力・終了コードの詳細は `bash scripts/p
 明示登録の投稿前の一時材料は `.build/mokume-plan-records/` に置く。`.git` の保護を緩める
 必要はない。`.build` を消した場合は再登録する。経過の正典は投稿先の GitHub であり、
 ローカルの記録だけを引き継ぎに使わない。
+
+## 使い捨ての Draft PR (専用機の計測・CI の条件式の検証)
+
+専用機には SSH で入れない (#1767)。専用機で測る手段は、使い捨ての Draft PR に計測の
+ワークフロー (`runs-on: [self-hosted, mokume-render]`) を足し、CI で走らせて artifact を
+取ることだけである。CI の条件式 (`if:`) も、本体の PR では確かめられない。作成後すぐ merge
+queue に入り、base を変えると queue から外れるうえ、actionlint は式の構文と型しか見ない。
+どちらも main から切った使い捨ての Draft PR で行う。前例は、専用機の計測が #1922
+(`.github/workflows/cost-probe-1813.yml`)、別の枝の振る舞いを hosted の CI で見る検証が #1919、
+条件式が #1861 (空コミットの Draft で base を切り替え、#1852 の `if` を確かめた)。
+
+始める前に、専用機が空いているかを見る (runner の一覧はメンテナの権限が要る)。
+`busy` が `true` か queue に entry があるなら、計測のジョブは待たされる。
+
+```bash
+gh api repos/mokume-metal/mokume/actions/runners --jq '.runners[] | [.name, .status, .busy] | @tsv'
+gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQueue(branch:"main"){entries(first:10){totalCount}}}}' --jq '.data.repository.mergeQueue.entries.totalCount'
+```
+
+1. **Draft のまま置き、queue に入れない。** `git push -u origin HEAD` のあと
+   `gh pr create --draft --label no-issue` で作る (ラベルは作成と同時に付ける)。本文の先頭に
+   「使い捨て。マージしない・auto-merge を掛けない」と書く (#1922)。Ready にしない・
+   `gh pr merge --auto` を打たない。入れると、計測のワークフローや検証用のコミットが main へ
+   入る。AGENTS.md「マージの判断基準」の「queue に入れてよい」は、この PR には当てはまらない。
+2. **起動した `render-pr` と `CI` を、作った直後と push のたびに取り消す。** hosted の `CI`
+   (macOS の `ci-check`・`test-release`) は Draft でも起動する。`Render` の `render-pr` は
+   Draft では skipped だが (render.yml の `!github.event.pull_request.draft`)、Ready の間は
+   専用機に積まれ、計測が待たされる (#1922 では起動した `render-pr` を取り消した)。
+   `gh run list --branch <枝>` で run を見つけ、`gh run cancel <run-id>` で取り消す。反映に
+   30 秒ほどかかる。取り消すのは計測のワークフロー以外である。計測のワークフローには、
+   render.yml と同じ `if: github.event.pull_request.head.repo.full_name == github.repository`
+   と、push し直したら古い実行を捨てる `concurrency` (`cancel-in-progress: true`) を置く。
+3. **計測は 1 本ずつ走らせる。** テストは `swift test --filter "Suite/test"` を 1 本ずつ
+   順に回す (#1922 の `for` ループ)。Swift Testing は既定で並列に走り、同じプロセスの
+   `getrusage` と符号化のプロセス (`VTEncoderXPCService`) の CPU は、機械上の他のテストや
+   他のセッションの符号化と混ざる。M3 Max では同じ計測が日によって食い違った (RGB 乱数
+   1920×1080 の CPU 比が 36 倍と 22 倍・#1813)。専用機は 1 台で merge queue の `render` と
+   共有なので、計測の PR も同時に複数立てず、上の確認で空いてから始める。ジョブが 20〜40 分
+   待たされることがあるので、結果を待つ側には期限を付ける。結果は
+   `gh run download <run-id> -n <artifact 名>` で取る。
+4. **base の切り替えは `gh api -X PATCH` で行う。** 条件式の検証では、空コミットだけの Draft
+   (重要パスに触れない) を作り、main と同じ SHA の一時ブランチへ base を向け、main へ戻す。
+   `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。切り替えのたびに `edited`
+   の run ができる。`changes.base` が効いて `ci-check`・`test-release` が積まれる
+   (skipped にならない) ことを、本文だけの編集 (対照・skipped になる) と並べて読む。
+   読み終えた macOS のジョブは 2 と同じく取り消す。
+
+   ```bash
+   SHA=$(git rev-parse origin/main)
+   git push origin "${SHA}:refs/heads/tmp/base-switch-<N>" # zsh では波括弧が要る ($SHA:refs の :r が修飾子になる)
+   gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=tmp/base-switch-<N>
+   gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=main
+   gh run view <run-id> --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'
+   ```
+
+5. **使い終えたら close して枝を消す。** 結果は置き場 (Issue か本体の PR) に載せ、この PR に
+   閉じる旨を `bash scripts/comment.sh pr <番号> --body-file <ファイル>` で書いてから
+   `gh pr close <番号>` で閉じる。**worktree から `gh pr close --delete-branch` を打たない。**
+   gh が main へ切り替えようとして (main は別の worktree が使用中で) 失敗し、PR は閉じても
+   枝が残る。枝は `git push origin --delete <枝>` で消す。一時ブランチ
+   (`tmp/base-switch-<N>`) も同じである。消えたことは `git ls-remote --heads origin <枝>` が
+   空なことで確かめる。

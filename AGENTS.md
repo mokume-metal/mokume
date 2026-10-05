@@ -46,6 +46,7 @@ PR に付けるのは CI の判定を変える `no-issue` (Issue を閉じない
 
 PR 本文が揃い `ci-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で queue に入れてよい。承認はどの PR にも要らない (`.github/`・`.claude/` を変える PR も)。queue が合流後に再検証するので、手で merge しない。マージ後は main に戻って pull する。
 
+- **後からコミットを足す予定の PR は、足し終えるまで auto-merge を掛けない。** `ci-gate` が green になった瞬間に queue へ入り、足す前に merge される。掛けたなら green になる前に `gh pr merge --disable-auto` で外す
 - **`BEHIND` でも "Update branch" は押さない。** 得るものが無く、auto-merge だけが外れる
 - check が 1 本も付かないのは main との衝突で、手元で解いて push する。他の止まり方は `bash scripts/stall-watch.sh` が読み分ける
 
@@ -65,7 +66,7 @@ AI エージェントは、このリポジトリへの発言 (コメント・`gh
 
 - Conventional Commits (`<type>(<scope>): <要約>`、type は feat / fix / docs / refactor / test / chore / ci / perf / build)。要約は日本語でよい。PR タイトルも同じ形で書く (squash のコミットになる)
 - 1 コミット 1 関心。1 PR は 1 つの説明で筋が通る範囲 (同じ親の sub-issue 群や、作業中に起票した障害もまとめて閉じてよい)
-- 検証の入口は `make ci-check`。手元では触った範囲の段 (`make <段>`) を通して push し、全段は CI に任せる
+- 検証の入口は `make ci-check`。手元では触った範囲の段 (`make <段>`。触ったものごとの段は `Makefile` の `CI_CHECK_STEPS` の注釈) を通して push し、全段は CI に任せる
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 つ置く (CHANGELOG を直接編集しない)
 - PR・コミットはメンテナ自身の `gh` 認証と署名で作る (外部の人は自分の名義)
 
