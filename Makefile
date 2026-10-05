@@ -386,7 +386,7 @@ params: build
 # 公開 API を見るモジュール。**アンブレラが再エクスポートする自前のモジュールを全部並べる**
 # (ADR-0042 決定 3)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
 # 黙って抜ける — 参照の面の REFERENCE_MODULES と同じ並びに保つ
-API_MODULES := MokumeCore MokumeCamera
+API_MODULES := MokumeCore MokumeCamera MokumeAudio
 
 api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
 	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m))
