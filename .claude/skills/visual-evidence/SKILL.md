@@ -112,7 +112,7 @@ CAPTURE
 **置き方と待ち方をここに写さない** ([#817](https://github.com/mokume-metal/mokume/issues/817))。
 実装は `scripts/observe_lib.py` の 1 つで、`scripts/check-observation-roundtrip.sh` と
 `scripts/measure-frame-rate.sh` も同じものを読む — 以前はこの 3 か所と文章の 4 通りに散っており、
-ADR-0018 決定 3 の正典がどれなのか誰にも分からなかった。**形式の正典は `Schemas/` の
+どれが正典なのか誰にも分からなかった。**形式の正典は `Schemas/` の
 `observe-request` / `observe-report`** である (絵のファイル名も応答の `image` が名乗る — 決め打ちしない)。
 
 > **応答が返らなかった回は直前の絵で埋める。抜けを詰めない。** 詰めると「面が黙った」ことが動きから
@@ -249,10 +249,10 @@ PR / Issue へ WebP を使うのは、同じ絵で GIF より小さく、色数�
 **参照の面は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする。
 
 **上げ先が本線でも退避路でも、動きの形式は同じ WebP でよい** — 上げ先が切り替わっても束ね直しが
-要らない。退避路で測り直した結果と、当初は退避路だけ GIF と決めていた経緯は
-[ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2 の「形式は面ごとに違う」が持つ。
+要らない (退避路で測り直した結果と、当初は退避路だけ GIF と決めていた経緯:
+[ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2「形式は面ごとに違う」)。
 
-> **落ち方が「無言」である**ことを実測で確かめてある ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
+> **落ち方が「無言」である**ことを実測で確かめてある (実測: [ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 > の「測ったこと」)。WebP を指した参照は本文から丸ごと消え、周りの文だけが残る — ビルドは緑・警告も
 > 無しなので、**公開された面を見るまで気付けない**。
 >

@@ -112,9 +112,8 @@ PR 本文の「## 確認方法」節に、閉じる Issue ごとに **完了条�
   | --- | --- | --- |
   | 1. …… | まだ有効 | `make ci-check` が緑 (…) |
 
-**見ているのは番号が現れることだけで、中身の正しさは見ていません** (絵の検査と同じ形
-— ADR-0019 決定 1)。防いでいるのは書き忘れであって、正しさの担い手は読む人間と AI の
-目です。
+**見ているのは番号が現れることだけで、中身の正しさは見ていません。** 防いでいるのは
+書き忘れで、正しさの担い手は読む人間と AI の目です (理由: ADR-0019 決定 1)。
 
 Issue を閉じない例外 PR なら no-issue ラベルを付けてください (この検査ごと外れます)。
 
@@ -126,7 +125,7 @@ EOF
 missing_refute_message() {
   cat <<'EOF'
 閉じる Issue に Bug が含まれる PR は、本文に「## 反証」節を置き、独立した反証役の
-指摘と、それぞれへの応えを書いてください (ADR-0040 決定 4)。
+指摘と、それぞれへの応えを書いてください。
 
   ## 反証
 
@@ -137,12 +136,13 @@ missing_refute_message() {
   | 根ではなく症状を塞いでいる | Sources/…/Baz.swift:88 | 当たらない: 理由 |
 
 反証役はプランも完了条件も渡されないサブエージェントで、Issue の症状と差分だけから
-兄弟の口・壊しうる経路・根か症状かを探します。起動手順は
-.claude/skills/bug-refute/SKILL.md にあります。指摘が 1 件も無かったなら、そう書けば
-空ではありません。
+兄弟の口・壊しうる経路・根か症状かを探します。**自分で兼ねてはいけません** (プランを
+知る目は独立ではありません)。起動手順は .claude/skills/bug-refute/SKILL.md にあります。
+指摘が 1 件も無かったなら、そう書けば空ではありません。
 
 **見ているのは節があって中身が空でないことだけで、中身の正しさは見ていません**
-(確認方法の対応表と同じ形 — ADR-0019 決定 1)。HTML コメントだけの節は空とみなします。
+(HTML コメントだけの節は空とみなします)。防いでいるのは反証役の起こし忘れです
+(理由: ADR-0040 決定 4・ADR-0019 決定 1)。
 
 EOF
   rerun_note
@@ -276,7 +276,7 @@ for n in $issues; do
     echo "review-gate: #$n はトリアージ済み"
   else
     fail "対象 Issue #$n に verify: ラベルが無い (完了条件が未確定のまま実装に入っている)" \
-         "Issue で議論して完了条件を本文に固め、verify: triaged を付けてから、赤い run の失敗ジョブを打ち直す (gh run rerun ${GITHUB_RUN_ID:-<run-id>} --failed。空 push でもよい)。Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない。Actions の画面の「Re-run all jobs」は成功済みの pr-title まで元のタイトルで走らせ直す (#699) ので、失敗したジョブだけを打つ"
+         "Issue 本文に完了条件を固める (調べて本文に書くところまではしてよい)。**verify: triaged を付けてよいのは完了条件を知る起票者だけ**で、エージェントは自分で起票し条件を書いた Issue に限る (AGENTS.md「進め方」2)。他の人が起票した Issue なら自分では付けず、本文に固めたことを Issue にコメントして、付与を起票者 (メンテナ) に頼む。付いたら、赤い run の失敗ジョブを打ち直す (gh run rerun ${GITHUB_RUN_ID:-<run-id>} --failed。空 push でもよい)。Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない。Actions の画面の「Re-run all jobs」は成功済みの pr-title まで元のタイトルで走らせ直す (#699) ので、失敗したジョブだけを打つ"
   fi
 done
 
@@ -343,12 +343,12 @@ if [ -n "$bug_issues" ]; then
   # 抜けたときに書き手が SIGPIPE で止まり、長い本文ほど条件が裏返る
   body=$(jq -r '.body // ""' <<<"$pr_json")
   if ! grep -Eq '^#+[[:space:]].*反証' <<<"$body"; then
-    fail "閉じる Bug (${bug_issues# }) の PR 本文に「反証」の節が無い (ADR-0040 決定 4)" \
+    fail "閉じる Bug (${bug_issues# }) の PR 本文に「反証」の節が無い" \
          "$(missing_refute_message)"
   fi
   refute_text=$(strip_html_comments <<<"$refute")
   if ! grep -q '[^[:space:]]' <<<"$refute_text"; then
-    fail "閉じる Bug (${bug_issues# }) の PR 本文の「反証」の節が空 (ADR-0040 決定 4)" \
+    fail "閉じる Bug (${bug_issues# }) の PR 本文の「反証」の節が空" \
          "$(missing_refute_message)"
   fi
   echo "review-gate: 反証の節を確認 (${bug_issues# })"
