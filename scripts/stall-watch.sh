@@ -38,8 +38,14 @@
 #      (当番は auto-merge-dropped として掛け直す)。PR 側で直すものなら直して push する
 #   6. pr-title が落ちた
 #      原因: タイトルが Conventional Commits ではない (design は Issue Type であって型ではない)
-#      対処: タイトルを直す。**rerun しない** — pull_request の rerun は元のイベントを再生する
-#      ので古いタイトルで判定し、打つ前より悪くなる (#699)。直せば edited で新しい run が走る
+#      対処: タイトルを直し、**新しいコミットを push して run を作り直す** (空コミットでよい)。
+#      **rerun しない** — pull_request の rerun は元のイベントを再生するので古いタイトルで判定し、
+#      打つ前より悪くなる (#699)。タイトルを直すと edited で新しい run が走り pr-title は緑に
+#      なるが、先の run の赤い pr-title と、それを受けた赤い ci-gate は同じコミットに残って必須
+#      チェックを赤のままにし、rerun でも消えない (元のタイトルを読んで同じ赤を返す)。新しい
+#      コミットは head の sha を変えるので、古い赤が丸ごと外れる (#2134)。直した後も、古い赤い
+#      pr-title が rollup に残る間はここが bad-title を名乗り続ける (failing_names は名前ごとの
+#      最新を見ない) — 新しいコミットを push すれば消える
 #   7. close して作り直した PR が、全 check 緑なのに赤い
 #      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
 #      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)。
@@ -336,7 +342,7 @@ for n in $numbers; do
   if contains_name "$failing" pr-title; then
     mins=$(minutes_since "${failed_at:-$updated}")
     say_line "$n" bad-title name "$mins" \
-      "タイトルが Conventional Commits でない — 直す (rerun は打たない・#699)"
+      "タイトルが Conventional Commits でない — 直して、新しいコミットを push する (rerun は打たない・#699)"
     [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
     continue
   fi

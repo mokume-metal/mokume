@@ -72,9 +72,9 @@ ON にするなら、次の赤と状態は**コードを直して push しても
 
 | 赤・状態 | 直す先 |
 | --- | --- |
-| `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2) |
-| `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を付ける |
-| `pr-title` | タイトルを直す。rerun しない (`stall-watch.sh` の読み分け表の 6) |
+| `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2)。直したあと、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (新しい run は判定を付け直すだけで、赤い run の `ci-gate` は残る — `ci.yml` の `ci-gate` の上のコメント) |
+| `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を、PR の作成と同時に付ける。載せた (付けた) あと、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (同上) |
+| `pr-title` | タイトルを直し、新しいコミットを push して run を作り直す。rerun しない (元のタイトルを読んで同じ赤を返す — `stall-watch.sh` の読み分け表の 6) |
 | `render-pr` が見送られた・cancel された | 必須ではないので直すものは無い。rerun しない — 門番を通らずに専用機へ積まれ、merge queue の `render` と取り合う (#2062)。要るなら queue が空いてから push し直す |
 | `render` の台帳の不一致 | 2 回描いても一致しないなら決定論が壊れている。台帳を書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
 | `BEHIND` | 何もしない。"Update branch" を押すと auto-merge だけが外れる |

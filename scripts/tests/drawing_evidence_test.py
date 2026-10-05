@@ -16,6 +16,7 @@ gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワ�
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -117,15 +118,25 @@ class DrawingEvidenceTest(unittest.TestCase):
     # --- 差し戻しの文面が約束してよいこと (#2134) -------------------------
     #
     # 本文の編集やラベルの付け外しで新しい run は走る。しかし赤かった run の ci-gate は
-    # 同じコミットに赤く残り、新しい run が緑でも必須チェックを固定する (#259)。かつての文面は
-    # 「CI は自動で再評価します」と約束し、後付けのラベルで ci-gate が赤のまま止まった
-    # (2026-09-23 に描画 PR 13 本のうち 3 本)。文面は 3 つを守る — 作成と同時に付ける形を先に
-    # 案内する・後付けなら赤い ci-gate が残ることと打ち直しを案内する・自動で直ると約束しない
+    # 同じコミットに残って必須チェックを赤のままにする (古い赤が新しい緑を固定する場合もある —
+    # #259)。かつての文面は「CI は自動で再評価します」と約束し、後付けのラベルで ci-gate が
+    # 赤のまま止まった (2026-09-23 に描画 PR 13 本のうち 3 本)。文面は次を守る — 作成と同時に
+    # 付ける形を先に案内する (ただし保証とは言わない)・赤い ci-gate が残ることと打ち直しを
+    # 案内する (絵を貼る経路も含む)・自動で直ると約束しない・当番は fork の PR を打たない・
+    # pr-title の赤は打ち直しでは消えない
 
     def rejection(self, **env):
         r = self.run_script(body="## 目的\n\nCloses #1\n\n## 確認方法\n\nmake ci-check", **env)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         return r.stderr
+
+    @staticmethod
+    def squash(text):
+        """空白と改行を外した本文。折り返しの位置に左右されず、語句を探すため。"""
+        return re.sub(r"\s+", "", text)
+
+    def assertSays(self, err, phrase):
+        self.assertIn(self.squash(phrase), self.squash(err), f"文面に「{phrase}」が無い:\n{err}")
 
     def test_差し戻しは作成と同時にラベルを付ける形を先に案内する(self):
         err = self.rejection()
@@ -142,10 +153,37 @@ class DrawingEvidenceTest(unittest.TestCase):
 
     def test_差し戻しは自動で再評価すると約束しない(self):
         err = self.rejection()
-        self.assertNotRegex(err, r"自動(で|的に)?再(評価|実行)", "約束が戻っている:\n" + err)
-        # 新しい run が走ることまでは言えるが、それが必須チェックを緑にするとは言わない
-        self.assertIn("新しい run が走って", err)
-        self.assertIn("必須チェックを固定します", err)
+        self.assertNotRegex(self.squash(err), r"自動(で|的に)?再(評価|実行)", "約束が戻っている:\n" + err)
+        # 新しい run が走ることまでは言えるが、それが必須チェックを緑にするとは言わない。
+        # 機構は 1 つに断定せず、赤が残ること (と、古い赤が固定する場合もあること) を言う
+        self.assertSays(err, "新しい run が走って")
+        self.assertSays(err, "必須チェックを赤のままにします")
+        self.assertSays(err, "古い赤が新しい緑を固定する場合もあります")
+
+    def test_差し戻しは作成と同時のラベルを保証と言わない(self):
+        """gh は PR を作ってからラベルを付ける。作成の run が先に API を読めば赤くなる。"""
+        err = self.rejection()
+        self.assertSays(err, "通常は最初の run から通る")
+        self.assertSays(err, "まれに作成の run が先にラベルを読んで赤くなります")
+        # 赤くなる理由は本文ではなく、API 上のラベル (と絵) の有無である
+        self.assertNotIn(self.squash("ラベルが付く前の本文"), self.squash(err))
+        self.assertSays(err, "API 上に絵もラベルも無ければ赤くなり")
+
+    def test_差し戻しは絵を貼った後にも打ち直しが要ると言う(self):
+        """絵を貼る経路は構造的に PR 作成後の本文の編集で、ラベルの話では済まない。"""
+        err = self.rejection()
+        self.assertSays(err, "貼ったあと (本文を編集したあと) も、赤い run があれば")
+        self.assertSays(err, "絵を貼った・ラベルを付けたあと")
+
+    def test_差し戻しは当番がforkのPRを打たないと言う(self):
+        err = self.rejection()
+        self.assertSays(err, "同じリポジトリの PR は、打たなくても stall-watch の当番がいずれ打ち直します")
+        self.assertSays(err, "fork の PR は当番の対象外なので、メンテナが打ちます")
+
+    def test_差し戻しはpr_titleの赤を打ち直さず新しいコミットを案内する(self):
+        err = self.rejection()
+        self.assertSays(err, "pr-title も赤い run は、打ち直すと元のタイトルを再生して同じ赤を返します")
+        self.assertSays(err, "新しいコミットを push して run を作り直してください")
 
     def test_差し戻しの打ち直しはCIの中ではそのrunのidで示す(self):
         # 手元で打ったときは、実在しない id を出さず穴埋めの印で示す

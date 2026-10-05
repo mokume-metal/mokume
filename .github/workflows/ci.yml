@@ -167,7 +167,8 @@ jobs:
             echo "PR タイトルが Conventional Commits ではない: $TITLE" >&2
             echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2
             echo 'design は Issue Type であって type ではない。' >&2
-            echo 'タイトルを直せば新しい run が走る。この run は rerun しない (元のイベントを再生するので古いタイトルで判定する — #699)。' >&2
+            echo 'タイトルを直すと新しい run が走り pr-title は緑になるが、この run の赤い pr-title と、それを受けた赤い ci-gate は残って必須チェックを赤のままにする。' >&2
+            echo 'この run は rerun しない (元のイベントを再生するので古いタイトルで判定し、同じ赤を返す — #699)。タイトルを直したうえで、新しいコミットを push して run を作り直す (空コミットでよい)。' >&2
             exit 1
           fi
 
@@ -224,7 +225,9 @@ jobs:
   # 本文を編集しても逃がしラベルを付け外ししても新しい run が走り、判定が付け直される
   # (on.pull_request.types に edited / labeled / unlabeled が入っている)。**ただし、赤かった
   # 先の run の ci-gate は消えない** (ci-gate の上のコメント)。逃がしラベルは PR の作成と
-  # 同時に付けると、最初の run から通る (#2134)。
+  # 同時に付けると、通常は最初の run から通る — 保証ではない (gh は PR を作ってからラベルを
+  # 付けるので、まれに opened の run が先に API を読んで赤くなる。上の ci-check のコメント)
+  # (#2134)。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
   #
   # **判定するスクリプトは既定ブランチの版で走らせる。** 理由と脱出口は review-gate と
@@ -256,15 +259,27 @@ jobs:
   # 手元の実行の報告 local-render は、render が合流後の木を直接描くようになって畳んだ
   # (#879)。
   #
-  # **新しい run が走って緑になっても、先の run の赤い ci-gate は消えない** (#2134)。
-  # review-gate・drawing-evidence が赤だった run の ci-gate は、同じコミットに赤く残り、
-  # 新しい run の ci-gate が緑でも必須チェックを固定する (#259 の実測)。本文の編集・ラベルの
-  # 付け外し・レビューの却下が起こすのは判定の付け直しであって、必須チェックが緑になることでは
-  # ない。消すのは、赤い run の失敗ジョブの打ち直し (gh run rerun <run-id> --failed) で、
-  # review-gate と drawing-evidence は実行のたびに API から本文とラベルを読むので打ち直せば
-  # 通る。打たなくても stall-watch が数時間おきに打つ (scripts/stall-act.sh・Draft を除く)。
-  # **pr-title は打たない** — 元のイベントを再生して古いタイトルで判定する (#699)。
-  # 作成と同時に付ければ赤い run が出ないので、差し戻しの文面はその形を先に案内する
+  # **新しい run が走って緑になっても、赤い run の ci-gate は残る** (#2134)。
+  # review-gate・drawing-evidence が赤だった run の ci-gate は、同じコミットに残って必須
+  # チェックを赤のままにする。新しい run の ci-gate が緑でも、古い赤が必須チェックを固定する
+  # ことがある (#259 の実測)。ラベルを数分以内に後付けする典型の場面では、先の run の ci-gate は
+  # ci-check (macOS・約 10 分) を待って終わり、labeled の run は ci-check を飛ばして先に緑に
+  # なる — 終わる順でも固定でも、赤が残る点は同じなので、機構は 1 つに断定しない。本文の編集・
+  # ラベルの付け外し・レビューの却下が起こすのは判定の付け直しであって、必須チェックが緑に
+  # なることではない。
+  #
+  # 消すのは、赤い run の失敗ジョブの打ち直し (gh run rerun <run-id> --failed) で、
+  # review-gate と drawing-evidence は実行のたびに API から本文・ラベル・レビューを読むので
+  # 打ち直せば通る。打たなくても stall-watch が数時間おきに打つ (scripts/stall-act.sh)。
+  # ただし対象は同じリポジトリの Draft でない PR だけで (stall-watch.sh が isDraft と
+  # isCrossRepository を外す)、fork の PR はメンテナが打つ。
+  #
+  # **pr-title の赤は打ち直しでは消えない。** 元のイベントを再生して古いタイトルで判定する
+  # ので同じ赤を返し (#699)、先の run の赤い ci-gate も pr-title を受けて赤のままになる。
+  # タイトルを直したうえで、新しいコミットを push して run を作り直す (head の sha が変わり、
+  # 古い赤が丸ごと外れる)。
+  #
+  # 作成と同時に付ければ、通常は赤い run が出ない。差し戻しの文面はその形を先に案内する
   # (scripts/check-drawing-evidence.sh)。
   ci-gate:
     if: always()
