@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// スケッチが、許可の要る機材 (カメラ) を使っているかを見る。
+/// スケッチが、許可の要る機材 (カメラ・マイク) を使っているかを見る。
 ///
 /// ## なぜ束ねる前に止めるのか
 ///
@@ -21,27 +21,37 @@ import Foundation
 ///
 /// ## 見ないもの
 ///
-/// - スケッチ自身の `Sources/` の外 (依存パッケージの中でカメラを使うもの)
+/// - スケッチ自身の `Sources/` の外 (依存パッケージの中で機材を使うもの)
 /// - 別名や変数を介した呼び出し
 ///
 /// 見落としたときは今までと同じで、使うなら文言を書く (文書に書いてある)。
 ///
-/// マイクは**まだ見ない** — 使う口が無い ([#1978])。口を足す変更が、ここへ足す。
-///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
-/// [#1978]: https://github.com/mokume-metal/mokume/issues/1978
 nonisolated enum DeviceUse {
-    /// 文言が無いのにカメラを使っていれば投げる。
+    /// 文言が無いのにカメラかマイクを使っていれば投げる。両方欠けていれば、カメラから言う。
     static func check(in root: URL, identity: AppIdentity) throws(CommandFailure) {
-        guard identity.cameraUsage == nil else { return }
-        let users = cameraUsers(in: root)
-        guard !users.isEmpty else { return }
-        throw .cameraUsageMissing(
-            path: root.appendingPathComponent(AppIdentity.fileName).path, files: users)
+        let path = root.appendingPathComponent(AppIdentity.fileName).path
+        if identity.cameraUsage == nil {
+            let users = cameraUsers(in: root)
+            if !users.isEmpty { throw .cameraUsageMissing(path: path, files: users) }
+        }
+        if identity.microphoneUsage == nil {
+            let users = microphoneUsers(in: root)
+            if !users.isEmpty { throw .microphoneUsageMissing(path: path, files: users) }
+        }
     }
 
     /// カメラを開く呼び出しを持つ Swift ファイル (スケッチからの相対・並べ替え済み)。
     static func cameraUsers(in root: URL) -> [String] {
+        users(in: root, matching: opensCamera)
+    }
+
+    /// マイクを開く呼び出しを持つ Swift ファイル (スケッチからの相対・並べ替え済み)。
+    static func microphoneUsers(in root: URL) -> [String] {
+        users(in: root, matching: opensMicrophone)
+    }
+
+    private static func users(in root: URL, matching opens: (String) -> Bool) -> [String] {
         let sources = root.appendingPathComponent("Sources", isDirectory: true)
         guard let walker = FileManager.default.enumerator(atPath: sources.path) else { return [] }
 
@@ -50,7 +60,7 @@ nonisolated enum DeviceUse {
             guard relative.hasSuffix(".swift"), !isHidden(relative) else { continue }
             let url = sources.appendingPathComponent(relative)
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            if opensCamera(text) { found.append("Sources/\(relative)") }
+            if opens(text) { found.append("Sources/\(relative)") }
         }
         return found.sorted()
     }
@@ -63,10 +73,24 @@ nonisolated enum DeviceUse {
     ///
     /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
     static func opensCamera(_ source: String) -> Bool {
-        let code = source.replacingOccurrences(
-            of: #"/\*[\s\S]*?\*/|//[^\n]*"#, with: " ", options: .regularExpression)
-        return code.range(
+        withoutComments(source).range(
             of: #"\bcreateCapture\s*\((?!\s*frames\s*:)"#, options: .regularExpression) != nil
+    }
+
+    /// 1 本のソースが、マイクを開くかどうか (検査から呼べる形)。
+    ///
+    /// **`createAudioIn(file:)` と `createAudioIn(samples:sampleRate:)` は数えない。** 手元の音を
+    /// 解析するだけで、機材も許可も使わない (``opensCamera(_:)`` の `frames:` と同じ理由)。
+    static func opensMicrophone(_ source: String) -> Bool {
+        withoutComments(source).range(
+            of: #"\bcreateAudioIn\s*\((?!\s*(file|samples)\s*:)"#, options: .regularExpression)
+            != nil
+    }
+
+    /// 注釈を空白に置き換える。注釈の中の名前は数えない。
+    private static func withoutComments(_ source: String) -> String {
+        source.replacingOccurrences(
+            of: #"/\*[\s\S]*?\*/|//[^\n]*"#, with: " ", options: .regularExpression)
     }
 
     /// 隠れたファイル・ディレクトリの下 (エディタの退避など) は見ない。
