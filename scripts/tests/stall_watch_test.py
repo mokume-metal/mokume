@@ -511,6 +511,38 @@ class RerunExclusionTest(unittest.TestCase):
             " — stall-act.sh の RERUN_EXCLUDED へ足す (#699)",
         )
 
+    # --- pr-title の赤の直し方 (#2134) ---------------------------------------
+    #
+    # タイトルを直すと edited の run で pr-title は緑になる。しかし先の run の赤い pr-title と、
+    # それを受けた赤い ci-gate は同じコミットに残り、rerun しても元のタイトルを読んで同じ赤を
+    # 返す。だから「直せば新しい run が走る」で止めず、直し方は「タイトルを直したうえで、新しい
+    # コミットを push して run を作り直す」である。説明する 2 か所 (失敗したときの文面と、読み分け
+    # 表の 6) が揃っていることを固定する
+
+    @staticmethod
+    def squash(text):
+        return re.sub(r"\s+", "", text)
+
+    def pr_title_step_text(self):
+        text = CI_WORKFLOW.read_text(encoding="utf-8")
+        start = text.index("\n  pr-title:\n")
+        end = text.index("\n  review-gate:", start)
+        return text[start:end]
+
+    def test_pr_title_の失敗文面は新しいコミットを案内し_rerun_を勧めない(self):
+        step = self.squash(self.pr_title_step_text())
+        self.assertIn(self.squash("この run は rerun しない"), step)
+        self.assertIn(self.squash("タイトルを直したうえで、新しいコミットを push して run を作り直す"), step)
+        self.assertIn(self.squash("赤い ci-gate は残って必須チェックを赤のままにする"), step)
+        # 旧文面は「直せば新しい run が走る」で止まっていた
+        self.assertNotIn(self.squash("タイトルを直せば新しい run が走る。"), step)
+
+    def test_読み分け表の_6_は新しいコミットを案内する(self):
+        header = self.squash(WATCH.read_text(encoding="utf-8").split("set -euo pipefail")[0])
+        self.assertIn(self.squash("新しいコミットを push して run を作り直す"), header)
+        self.assertIn(self.squash("rerun でも消えない"), header)
+        self.assertNotIn(self.squash("直せば edited で新しい run が走る"), header)
+
 
 if __name__ == "__main__":
     unittest.main()
