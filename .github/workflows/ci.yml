@@ -105,8 +105,8 @@ jobs:
 
   # release のテストビルドと実行を、人が打たなくても走らせる (#1096)。
   #
-  # **ci-check には足さない。** #761 完了条件 2 と AGENTS.md「性能は release で測る。入口は
-  # make test-release の 1 つ」が決めた形は動かさず、ci-check の外に別の入口を置く。別ジョブ
+  # **ci-check には足さない。** #761 完了条件 2 と AGENTS.md「性能は release で測る
+  # (`make test-release`)」が決めた形は動かさず、ci-check の外に別の入口を置く。別ジョブ
   # なので ci-check と並列に走り、make ci-check を打ったときの所要時間は 1 秒も変わらない。
   #
   # 塞ぐのは release 側で起きて**誰にも見えない 2 つの赤**である (実害 3 件は #761 / #1021 /
