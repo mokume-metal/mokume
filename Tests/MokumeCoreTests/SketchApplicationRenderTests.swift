@@ -41,6 +41,10 @@ struct SketchApplicationRenderTests {
 
         /// このフレームで `noLoop()` を呼ぶ。`nil` なら呼ばない。
         var stopsAtFrame: Int?
+        /// このフレームで `pauseTime()` を呼ぶ。`nil` なら呼ばない。
+        var pausesTimeAtFrame: Int?
+        /// このフレームで `jumpTime(_:)` を呼ぶ (フレーム, 秒)。`nil` なら呼ばない。
+        var jumpsTimeAt: (frame: Int, seconds: Float)?
         /// このフレームを描けなかったことにする (検査の穴 `failureForTesting`)。
         var failsAtFrame: Int?
         private(set) var seen: [Moment] = []
@@ -57,6 +61,8 @@ struct SketchApplicationRenderTests {
             // 時刻の純関数。フレームごとに絵が変わるので、2 回の一致が中身の一致を意味する
             rect(time * 60, 8, 6, 8)
             if frameCount == stopsAtFrame { noLoop() }
+            if frameCount == pausesTimeAtFrame { pauseTime() }
+            if let jump = jumpsTimeAt, frameCount == jump.frame { jumpTime(jump.seconds) }
         }
     }
 
@@ -337,6 +343,51 @@ struct SketchApplicationRenderTests {
             #expect(ending.exitStatus == 1)
             let movie = try await decodeMovie(path)
             #expect(movie.times.count == 3)
+        }
+    }
+
+    /// **時刻だけを止めても、書き出しは枚数を数えて終わる** ([#1286])。止めた後の枚は、
+    /// 止めた秒の同じ絵になる。
+    ///
+    /// [#1286]: https://github.com/mokume-metal/mokume/issues/1286
+    @Test("書き出しの最中に pauseTime() で時刻を止めても、枚数と終わり方は変わらず、止めた後の枚は同じ時刻")
+    func pausingTimeKeepsTheRenderCount() async throws {
+        try await withTemporaryDirectory("mokume-render-pausetime") { directory in
+            let path = directory.appendingPathComponent("pausetime.mov").path
+            let sketch = Sweep()
+            sketch.pausesTimeAtFrame = 3
+            let ending = try render(sketch, frameRate: 30, frames: 6, to: path)
+
+            #expect(ending.finishedCalls == 1)
+            #expect(ending.exitStatus == nil, "揃ったのに 0 以外で終わった")
+            #expect(sketch.seen.map(\.frame) == Array(1...6))
+            let held = Float(2.0 / 30)
+            #expect(sketch.seen.map(\.time) == [0, Float(1.0 / 30), held, held, held, held])
+            #expect(sketch.seen.suffix(3).map(\.deltaTime) == [0, 0, 0])
+            // 動画の並びの時刻は作品の time ではなく枚の位置から決まる
+            let movie = try await decodeMovie(path)
+            #expect(movie.times.count == 6)
+            for (index, time) in movie.times.enumerated() {
+                #expect(abs(time - Double(index) / 30) < 1e-4, "\(index) 枚目の時刻が \(time)")
+            }
+        }
+    }
+
+    @Test("書き出しの最中に jumpTime(_:) で後ろへ飛んでも、開ける動画が枚数ぶん残る")
+    func jumpingBackKeepsTheMovieOrdered() async throws {
+        try await withTemporaryDirectory("mokume-render-jumptime") { directory in
+            let path = directory.appendingPathComponent("jumptime.mov").path
+            let sketch = Sweep()
+            sketch.jumpsTimeAt = (frame: 4, seconds: 0)
+            let ending = try render(sketch, frameRate: 30, frames: 6, to: path)
+
+            #expect(ending.exitStatus == nil, "揃ったのに 0 以外で終わった")
+            #expect(sketch.seen.map(\.time)[4] == 0, "飛んだ先の秒で描いていない")
+            let movie = try await decodeMovie(path)
+            #expect(movie.times.count == 6)
+            for (index, time) in movie.times.enumerated() {
+                #expect(abs(time - Double(index) / 30) < 1e-4, "\(index) 枚目の時刻が \(time)")
+            }
         }
     }
 

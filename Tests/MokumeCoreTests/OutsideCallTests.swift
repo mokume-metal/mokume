@@ -6,7 +6,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// 呼び出しの外から頼まれたときに言う 6 通を、**実装とは別の場所に写して突き合わせる**。
+/// 呼び出しの外から頼まれたときに言う 11 通を、**実装とは別の場所に写して突き合わせる**。
 ///
 /// 以前の断りは「the sketch is not running」と言っていた。`draw()` が回り続けている最中に
 /// `Task` から頼むとこれが出て、呼ぶ側は「起動に失敗したのか」「もう終わったのか」を
@@ -26,6 +26,18 @@ private let outsideCallNotices: [OutsideCall: String] = [
     .redraw:
         "redraw() is only accepted from inside setup(), draw() or an input callback such as "
             + "mousePressed(). This call was made from outside them, so it was ignored. A Task "
+            + "started in one of them runs after it returns, and counts as outside",
+    .pauseTime:
+        "pauseTime() is only accepted from inside setup(), draw() or an input callback such as "
+            + "keyPressed(). This call was made from outside them, so it was ignored. A Task "
+            + "started in one of them runs after it returns, and counts as outside",
+    .playTime:
+        "playTime() is only accepted from inside setup(), draw() or an input callback such as "
+            + "keyPressed(). This call was made from outside them, so it was ignored. A Task "
+            + "started in one of them runs after it returns, and counts as outside",
+    .jumpTime:
+        "jumpTime() is only accepted from inside setup(), draw() or an input callback such as "
+            + "keyPressed(). This call was made from outside them, so it was ignored. A Task "
             + "started in one of them runs after it returns, and counts as outside",
     .save:
         "save() is only accepted from inside setup(), draw() or an input callback such as "
@@ -52,7 +64,7 @@ private let outsideCallNotices: [OutsideCall: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("呼び出しの外から頼んだときの文面")
 struct OutsideCallNoticeTests {
-    @Test("8 つとも原文のまま")
+    @Test("11 通とも原文のまま")
     func noticesKeepTheirWording() {
         for (call, original) in outsideCallNotices {
             #expect(call.notice == original, "\(call) の文面が変わっている")
