@@ -180,6 +180,30 @@ merge queue が専用機を待っている間は render-pr ごと見送られる
 **この穴は絵を見比べても発見できない。** 人は「それらしい絵」を見ると納得してしまう。
 測り方と境目の当て方は `mirror_ratio` と `INDISTINGUISHABLE` が持つ。
 
+## 動く絵が動いているか (#2117)
+
+**動き (`frames=N`) でいちばん起こりやすい欠陥は、止まった GIF である** — 時刻を読み
+損ねて、全フレームが同じ絵になる。動きの全部を見比べないと気付けず、`--mirror-report` も
+真ん中の 1 枚しか見ない。撮った直後に、隣り合う 2 枚ずつの差を測る。
+
+**全部の組が下限 (`MOTION_FLOOR`) を下回れば、名指しして止まる** (`--capture` も
+`--render` も 1 で抜ける)。上げる前に止まるので、Gyazo へも上げず、説明文へも書き戻さない。
+反転と違って止めるのは、止まっているのが正しい動きは少なく、分かっているものは
+撮影設定で黙らせられるからである:
+
+    /// <!-- shot: 時刻を止めている間は、円がその場に留まる | frames=60 still=止めた時刻の絵が続くことを示す -->
+
+- **見るのは「全部の組」で、一部ではない。** 往復する動きは折り返し (sin の山と谷) で
+  1 フレームの差がほとんど 0 になる。既存の動く絵 2 本にもその区間がある。止まる区間が
+  一部にあるのは普通で、全体を占めたときだけが止まった GIF である
+- **still=<理由> の理由は空にできない** (`// shot: 撮れない <理由>` と同じ)。空白を含む
+  理由は引用符で包む (`still="noLoop() の例"`)。静止画 (`frames` 無し) には付けられない —
+  黙らせる相手が無い。指紋には入らない (`symmetric=` と同じく、足しても絵は変わらない)
+- **差は自前の PNG の読みで測る** (前後の木の比べと同じ `decode_rgba`)。バイトが同じ
+  2 枚は復号せずに 0 と分かるので、止まった動きはそれだけで済む。動いている絵は、下限に
+  届く組が見つかった所で測るのをやめる
+- 測る量と下限の値、その根拠は `MOTION_FLOOR` の上に書いてある
+
 ## 撮る側
 
 スニペット全部で**実行ファイルを 1 個**作る (`Sketches/main.swift` と同じ形)。1 本ごとに
@@ -204,6 +228,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -272,6 +297,27 @@ SHIFT_CROPS = {"x": ("iw-1:ih:0:0", "iw-1:ih:1:0"), "y": ("iw:ih-1:0:0", "iw:ih-
 # 対称な絵が毎回鳴り、上へ外すと**黙らせようのない警告**が出る (本当に見分けが付く絵に
 # `symmetric=` を足すのは嘘になる)。両端は `--mirror-report` を付けて撮ると 1 本ずつ見られる (境目を決め直すときの道具で、Makefile からは渡していない)。
 INDISTINGUISHABLE = 2.2
+
+# **隣り合う 2 枚が「動いた」と言える差の下限** (#2117)。単位は `frame_change` の値で、
+# 「2 枚の間で違う画素の割合」(0…1)。
+#
+# 実測から決めてある。既存の動く絵 2 本を `--render` で撮り (60 枚ずつ)、隣り合う 59 組
+# ずつ、計 118 組を測ると (2026-10-06・手元の Apple Silicon):
+#
+# - 止まった側 — **時刻を読み損ねた動きは、全部の組が厳密に 0 になる。** 描画は決定的で、
+#   同じ木を 2 回描いても画素は変わらない (#1986)。撮る側は時刻をフレームに紐づけるので、
+#   動かない例は同じバイトの PNG を 60 枚書く
+# - 動いている側 — **最小は 0.117% (400×300 の 140 画素)**。扇形 (`Sketch+Primitives`) の
+#   口の折り返しで、口の縁が 1 フレームに 0.1 画素も動かない組 — 見た目には止まっているが、
+#   縁の AA が動くので画素は変わる。扇形は中央 0.318%・最大 0.367%、混ぜ方 (`Sketch+Style`)
+#   は最小 0.777% (折り返し)・中央 2.57%・最大 3.37%
+#
+# **谷 (0 と 0.117%) は広い。** 境目はその中の、止まった側へ寄せた 0.01% (400×300 で
+# 12 画素) に置く。外れたときの費用が左右で違うからである — 動いている絵を止まったと
+# 言うと、黙らせる正直な理由が無いまま**撮影全体が止まる** (1 本の誤報で、ほかの絵も
+# 上がらない)。止まった側は 0 なので、低く置いても見逃さない。既存のどの組も、折り返しの
+# 止まって見える組まで含めて、下限から 10 倍以上離れている
+MOTION_FLOOR = 0.0001
 GYAZO_UPLOAD = "https://upload.gyazo.com/api/upload"
 
 
@@ -287,6 +333,9 @@ class Shot:
     # 反転しても見分けが付かないことが**分かっている**軸 (#481)。指紋には入らない —
     # 黙らせる指定を足しても絵は 1 画素も変わらないので、撮り直しを起こさない
     symmetric: str
+    # 動きが止まっていても黙らせる理由 (#2117)。空なら黙らせない。指紋に入らない理由は
+    # `symmetric` と同じ
+    still: str
     snippet: list[str]
     # 例が前提にしているものの宣言 (<!-- example: 文脈 … -->)。読者には見せない補いで、
     # 組めることを見る側 (check-examples.py) が前から渡していたもの (#667)
@@ -325,16 +374,18 @@ class Shot:
         return f"{self.path}:{self.open_line + 1}"
 
 
-def parse_attributes(text: str | None) -> tuple[int, int, int, str]:
-    """`frames=90 size=400x400 symmetric=x` → (幅, 高さ, 枚数, 黙らせる軸)。
+def parse_attributes(text: str | None) -> tuple[int, int, int, str, str]:
+    """`frames=90 size=400x400 symmetric=x still=理由` → (幅, 高さ, 枚数, 黙らせる軸, 止まる理由)。
 
     知らない鍵は落とす前に名乗る。`symmetric` は**反転しても見分けが付かないことが
-    分かっている軸**で、真円・正方形・放射状のものに付く (#481)。
+    分かっている軸**で、真円・正方形・放射状のものに付く (#481)。`still` は**動きが
+    止まっていても正しい理由**で、空にはできない (#2117)。空白を含む理由は引用符で包む。
     """
     width, height = DEFAULT_SIZE
     frames = 0
     symmetric = ""
-    for token in (text or "").split():
+    still = ""
+    for token in shlex.split(text or ""):
         key, _, value = token.partition("=")
         if key == "frames":
             frames = int(value)
@@ -342,9 +393,15 @@ def parse_attributes(text: str | None) -> tuple[int, int, int, str]:
             width, height = (int(part) for part in value.lower().split("x"))
         elif key == "symmetric":
             symmetric = normalize_axes(value)
+        elif key == "still":
+            still = value.strip()
+            if not still:
+                raise ValueError("still= に理由が無い (still=<止まっていて正しい理由>)")
         else:
             raise ValueError(f"知らない撮影設定: {token}")
-    return width, height, frames, symmetric
+    if still and not frames:
+        raise ValueError(f"still= は動き (frames=N) にだけ付ける — 静止画には黙らせる相手が無い: still={still}")
+    return width, height, frames, symmetric, still
 
 
 def normalize_axes(value: str) -> str:
@@ -464,7 +521,11 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
             close += 1
         if close >= len(lines):
             raise SystemExit(f"{path}:{number + 1} の囲みが閉じていない (<!-- /shot -->)")
-        width, height, frames, symmetric = parse_attributes(match["attributes"])
+        try:
+            width, height, frames, symmetric, still = parse_attributes(match["attributes"])
+        except ValueError as error:
+            # 場所を添える。撮影設定の誤りは囲みの数だけありうる
+            raise ValueError(f"{path}:{number + 1}: {error}") from error
         pending.append(
             Shot(
                 path=path,
@@ -475,6 +536,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
                 height=height,
                 frames=frames,
                 symmetric=symmetric,
+                still=still,
                 snippet=snippet_above(lines, number),
                 context=context_above(lines, number),
                 index=0,
@@ -1178,6 +1240,94 @@ def report_mirrors(out: pathlib.Path, shots: list[Shot], verbose: bool = False) 
         print(f"  {line}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------- 動いているか (#2117)
+
+
+def frame_change(before: bytes, after: bytes) -> float:
+    """同じ大きさの 2 枚 (1 画素 4 バイトの RGBA) → 違う画素の割合 (0…1)。
+
+    **数え方は前後の木の比べと同じ `difference_stats`** — どれかの色成分が 1 階調でも違う
+    画素を 1 つと数える。明るさが同じで色だけ違う画素も数えるし、同じ画素の複数の成分を
+    重ねて数えることもない。
+    """
+    if len(before) != len(after):
+        raise ValueError(f"2 枚の長さが違う: {len(before)} と {len(after)}")
+    pixels = len(before) // 4
+    if not pixels:
+        return 0.0
+    changed, _ = difference_stats(absolute_difference(before, after))
+    return changed / pixels
+
+
+def largest_change(frames: list[pathlib.Path], enough: float = MOTION_FLOOR) -> float:
+    """連番の隣り合う 2 枚ずつの差 (`frame_change`) の最大。`enough` に届いたら打ち切る。
+
+    **判定に要るのは「下限に届く組が 1 つでもあるか」だけ**なので、動いている絵は最初の
+    数組で済み、全部の組を測るのは止まっている疑いのある絵だけになる。バイトが同じ 2 枚は
+    復号せずに 0 とする — 時刻を読み損ねた動きは、全部の組がここで済む。
+    """
+    largest = 0.0
+    previous: tuple[pathlib.Path, bytes, bytes | None] | None = None  # (枚, PNG のバイト, 画素)
+    for frame in frames:
+        data = frame.read_bytes()
+        pixels: bytes | None = None
+        if previous is not None:
+            before, before_data, before_pixels = previous
+            if data != before_data:
+                if before_pixels is None:
+                    before_pixels = decode_rgba(before)[1]
+                pixels = decode_rgba(frame)[1]
+                largest = max(largest, frame_change(before_pixels, pixels))
+                if largest >= enough:
+                    return largest
+            else:
+                pixels = before_pixels
+        previous = (frame, data, pixels)
+    return largest
+
+
+def frozen_motion(name: str, where: str, pairs: int, largest: float, still: str) -> str | None:
+    """止まった動きを 1 行で名指しする。動いているか、黙らせてあれば None。
+
+    **全部の組が下限を下回るときだけ言う** (冒頭の「動く絵が動いているか」)。純関数に
+    してあるのは、境目の当て方を絵を撮らずに検められるようにするためである
+    (`mirror_warnings` と同じ)。組が 1 つも無い (1 枚だけの動き) ものは、測った最大が 0 の
+    ままなので、止まっている側に入る — 動いているかを確かめられない。
+    """
+    if still or largest >= MOTION_FLOOR:
+        return None
+    measured = (
+        f"隣り合う {pairs} 組のどれも、違う画素が下限 {MOTION_FLOOR:.2%} に届かない (最大 {largest:.4%})"
+        if pairs
+        else "1 枚しか無く、隣り合う組が無い"
+    )
+    return (
+        f"{where}: {name} は動きが止まっている — {measured}。"
+        "時刻を読み損ねて全フレームが同じ絵になっていないか、例を確かめる。"
+        "止まっているのが正しいなら撮影設定へ still=<理由> を足す"
+    )
+
+
+def check_motion(out: pathlib.Path, shots: list[Shot]) -> list[str]:
+    """撮れた動きのうち、止まっているものを名指しする (#2117)。**呼ぶ側が止める。**"""
+    problems: list[str] = []
+    motions = [shot for shot in shots if shot.is_motion]
+    for shot in motions:
+        frames = sorted((out / shot.name).glob("f.*.png"))
+        if not frames:
+            raise SystemExit(f"{shot.name} の連番が無い")
+        # 黙らせた動きは測らない。測っても言わないので、復号の手間だけが残る
+        largest = 0.0 if shot.still else largest_change(frames)
+        if problem := frozen_motion(shot.name, shot.where, len(frames) - 1, largest, shot.still):
+            problems.append(problem)
+    if motions and not problems:
+        print(
+            f"ok: 動く絵 {len(motions)} 本は、どれも隣り合う枚で違う画素が"
+            f"下限 {MOTION_FLOOR:.2%} に届く組を持つ"
+        )
+    return problems
+
+
 # ---------------------------------------------------------------- 前後の木で描き比べる (#1986)
 
 
@@ -1228,11 +1378,14 @@ def image_difference(base: pathlib.Path, head: pathlib.Path) -> tuple[int, int, 
     head_size, head_pixels = decode_rgba(head)
     if base_size != head_size:
         raise SystemExit(f"{base.name} の大きさが前後で違う: {base_size} と {head_size}")
-    difference = bytes(
-        x - y if x >= y else y - x for x, y in zip(base_pixels, head_pixels)
-    )
+    difference = absolute_difference(base_pixels, head_pixels)
     pixels, largest = difference_stats(difference)
     return pixels, len(difference) // 4, largest
+
+
+def absolute_difference(a: bytes, b: bytes) -> bytes:
+    """同じ長さの 2 つの画素の並び → バイトごとの `|a - b|`。"""
+    return bytes(x - y if x >= y else y - x for x, y in zip(a, b))
 
 
 def decode_rgba(image: pathlib.Path) -> tuple[tuple[int, int], bytes]:
@@ -1655,6 +1808,13 @@ def main(
     render(root, shots, out)
     # **撮った直後に測る。** 上げてしまってからでは、直すのに撮り直しが要る
     report_mirrors(out, shots, verbose=arguments.mirror_report)
+    # **止まった動きは、上げる前に止める** (#2117)。反転と違って警告で済ませない
+    if frozen := check_motion(out, shots):
+        print(f"動きが止まっている絵が {len(frozen)} 本 — 上げも書き戻しもせずに止める:", file=sys.stderr)
+        for line in frozen:
+            print(f"  {line}", file=sys.stderr)
+        print(f"撮った絵は {out} に残してある", file=sys.stderr)
+        return 1
     if not arguments.capture:
         print(f"書き出した: {out}")
         return 0

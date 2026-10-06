@@ -32,6 +32,10 @@
   名指しの形・警告だけで止めないこと。**実装だけが変わって絵が古くなっても機械が何も
   言わない**のが、これを足した理由で、ここが緩むと無言に戻る
 
+- **動く絵が動いているか** (#2117) — 全フレームが同じ絵の動きを名指しして、上げる前に
+  止めること・止まる区間が一部なら通すこと・下限の当て方・`still=<理由>` で黙らせること。
+  **止まった GIF は見比べても気付けない**のが足した理由で、緩むと止まった絵が黙って上がる
+
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -670,7 +674,8 @@ class NeededToolsTest(unittest.TestCase):
 
     探す先は `main(which=...)` で差し替える。本物の `--render` は GPU とビルドが要るので、
     組む入口 (`render`) と測る入口 (`report_mirrors`) は呼ばれたかだけを記録する偽物に
-    替える — 見たいのは「組む前に止まるか」で、組めるかではない。
+    替える — 見たいのは「組む前に止まるか」で、組めるかではない。動きの測り
+    (`check_motion`) も、測る絵が無いので何も言わない偽物にする。
     """
 
     def run_main(self, argv, which):
@@ -678,6 +683,7 @@ class NeededToolsTest(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(shots, "render", lambda *a: self.built.append(a)), \
                 mock.patch.object(shots, "report_mirrors", lambda *a, **k: None), \
+                mock.patch.object(shots, "check_motion", lambda *a: []), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = shots.main(argv, which=which)
         return code, out.getvalue(), err.getvalue()
@@ -727,6 +733,230 @@ class NeededToolsTest(unittest.TestCase):
             env={**os.environ, "PATH": path},
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+# ---------------------------------------------------------------- 動く絵が動いているか (#2117)
+
+BLACK = (0, 0, 0, 255)
+
+
+def moving_rows(index, width=20, height=10):
+    """`index` 枚目の絵。灰色の下地を、黒い縦の帯 (幅 1) が 1 枚ごとに右へ 1 画素進む。"""
+    return grey_rows(width, height, changed={(index % width, y): BLACK for y in range(height)})
+
+
+class MotionTest(unittest.TestCase):
+    """撮った動きの隣り合う 2 枚ずつを比べ、全部の組が下限を下回れば名指しする。
+
+    絵は撮らずに `write_png` で連番を置く。測る側 (`check_motion`) が読むのは置き場の
+    PNG だけなので、GPU も ffmpeg も要らない。
+    """
+
+    FRAMES = 4
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.root / "Sources").mkdir()
+        self.path = self.root / "Sources" / "Sketch.swift"
+        self.out = self.root / "out"
+        self.use_attributes(f"frames={self.FRAMES}")
+
+    def use_attributes(self, attributes):
+        """1 本目の囲みを、`attributes` の撮影設定を持つ動きにする。2 本目は静止画のまま。"""
+        source = SOURCE.replace("<!-- shot: 中央の橙色の円 -->", f"<!-- shot: 動く円 | {attributes} -->")
+        self.path.write_text(source, encoding="utf-8")
+        self.shots = shots.collect(self.root)
+        self.motion = next(shot for shot in self.shots if shot.is_motion)
+
+    def put_frames(self, rows_of):
+        """`rows_of(index)` が返す絵を、撮る側と同じ置き場と名前 (`<name>/f.NNNN.png`) に置く。"""
+        folder = self.out / self.motion.name
+        folder.mkdir(parents=True, exist_ok=True)
+        for index in range(self.motion.frames):
+            write_png(folder / f"f.{index:04d}.png", rows_of(index))
+
+    def check(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            problems = shots.check_motion(self.out, self.shots)
+        self.check_output = output.getvalue()
+        return problems
+
+    # ---- 判定
+
+    def test_全フレームが同じ絵なら名指しして赤い(self):
+        self.put_frames(lambda index: grey_rows(20, 10))
+        problems = self.check()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(self.motion.where, problems[0])
+        self.assertIn(self.motion.name, problems[0])
+        self.assertIn(f"隣り合う {self.FRAMES - 1} 組", problems[0])
+        self.assertIn("still=", problems[0])
+        self.assertNotIn("ok:", self.check_output)
+
+    def test_動いていれば通る(self):
+        self.put_frames(moving_rows)
+        self.assertEqual(self.check(), [])
+        self.assertIn("ok: 動く絵 1 本", self.check_output)
+
+    def test_止まる区間が一部なら通る(self):
+        # 往復する動きの折り返しのように、終わりの 1 組だけが動く
+        last = self.FRAMES - 1
+        self.put_frames(lambda index: moving_rows(1) if index == last else moving_rows(0))
+        self.assertEqual(self.check(), [])
+
+    def test_下限に届かない差だけなら止まっている側(self):
+        # 違う画素が 1 つしか無い組だけが続く。絵の大きさは、その 1 画素が下限の半分に
+        # なるように取る — 画素は違うが、動いたとは言えない
+        width, height = int(2 / shots.MOTION_FLOOR) // 100, 100
+        nudged = {(0, 0): (129, 128, 128, 255)}
+        self.put_frames(lambda index: grey_rows(width, height, changed=nudged if index % 2 else None))
+        problems = self.check()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertNotIn("最大 0.0000%", problems[0], "差は 0 ではなく、下限に届かないだけのはず")
+
+    def test_黙らせた動きは止まっていても言わない(self):
+        self.use_attributes(f"frames={self.FRAMES} still=止めた時刻の絵が続くことを示す")
+        self.put_frames(lambda index: grey_rows(20, 10))
+        self.assertEqual(self.check(), [])
+
+    def test_連番が無ければ名乗って落ちる(self):
+        with self.assertRaises(SystemExit):
+            self.check()
+
+    # ---- 境目の当て方 (純関数)
+
+    def test_下限ちょうどは動いている(self):
+        floor = shots.MOTION_FLOOR
+        self.assertIsNone(shots.frozen_motion("shot-1", "Sketch.swift:10", 59, floor, ""))
+
+    def test_下限をわずかに下回れば止まっている(self):
+        floor = shots.MOTION_FLOOR
+        line = shots.frozen_motion("shot-1", "Sketch.swift:10", 59, floor * 0.99, "")
+        self.assertIsNotNone(line)
+        self.assertTrue(line.startswith("Sketch.swift:10: shot-1 "), line)
+
+    def test_1_枚だけの動きは確かめられないので止まっている側(self):
+        line = shots.frozen_motion("shot-1", "Sketch.swift:10", 0, 0.0, "")
+        self.assertIsNotNone(line)
+        self.assertIn("1 枚しか無く", line)
+
+    def test_黙らせてあれば言わない(self):
+        self.assertIsNone(shots.frozen_motion("shot-1", "Sketch.swift:10", 59, 0.0, "理由"))
+
+    # ---- 差の測り方
+
+    def test_同じ画素の差は_0(self):
+        pixels = bytes(GREY) * 6
+        self.assertEqual(shots.frame_change(pixels, pixels), 0.0)
+
+    def test_違う画素の割合を言う(self):
+        # 白へ変わった 1 画素は 3 成分が違うが、数えるのは 1 画素
+        before = bytes(BLACK) * 4
+        after = bytes((255, 255, 255, 255)) + bytes(BLACK) * 3
+        self.assertEqual(shots.frame_change(before, after), 0.25)
+
+    def test_1_階調の違いも_1_画素に数える(self):
+        # 前後の木の比べ (`difference_stats`) と同じ数え方
+        before = bytes(GREY) * 4
+        after = bytes((128, 129, 128, 255)) + bytes(GREY) * 3
+        self.assertEqual(shots.frame_change(before, after), 0.25)
+
+    def test_明るさが同じで色だけ違う画素も数える(self):
+        before = bytes((255, 0, 0, 255)) * 2
+        after = bytes((0, 0, 255, 255)) + bytes((255, 0, 0, 255))
+        self.assertEqual(shots.frame_change(before, after), 0.5)
+
+    def test_長さの違う_2_枚は落ちる(self):
+        with self.assertRaises(ValueError):
+            shots.frame_change(bytes(8), bytes(4))
+
+    def test_バイトが同じ_2_枚は復号しない(self):
+        self.put_frames(lambda index: grey_rows(20, 10))
+        frames = sorted((self.out / self.motion.name).glob("f.*.png"))
+        with mock.patch.object(shots, "decode_rgba", side_effect=AssertionError("復号した")):
+            self.assertEqual(shots.largest_change(frames), 0.0)
+
+    def test_下限に届いた所で測るのをやめる(self):
+        # 3 枚目からは PNG ですらない。最初の組で下限に届けば、そこは読まれない
+        self.put_frames(moving_rows)
+        frames = sorted((self.out / self.motion.name).glob("f.*.png"))
+        for frame in frames[2:]:
+            frame.write_bytes(b"not a png")
+        self.assertGreaterEqual(shots.largest_change(frames), shots.MOTION_FLOOR)
+
+    # ---- 撮影設定
+
+    def test_黙らせる理由を読む(self):
+        self.use_attributes(f"frames={self.FRAMES} still=止めた時刻の絵が続く")
+        self.assertEqual(self.motion.still, "止めた時刻の絵が続く")
+
+    def test_空白を含む理由は引用符で包める(self):
+        self.use_attributes(f'frames={self.FRAMES} still="noLoop() の例" symmetric=y')
+        self.assertEqual((self.motion.still, self.motion.symmetric), ("noLoop() の例", "y"))
+
+    def test_黙らせない動きは理由を持たない(self):
+        self.assertEqual(self.motion.still, "")
+
+    def test_理由の無い黙らせは場所を名乗って落ちる(self):
+        for attributes in (f"frames={self.FRAMES} still=", f'frames={self.FRAMES} still=""'):
+            with self.subTest(attributes=attributes), self.assertRaises(ValueError) as caught:
+                self.use_attributes(attributes)
+            self.assertIn("理由が無い", str(caught.exception))
+            self.assertIn("Sources/Sketch.swift:", str(caught.exception))
+
+    def test_静止画は黙らせられない(self):
+        with self.assertRaises(ValueError) as caught:
+            self.use_attributes("still=理由")
+        self.assertIn("frames=N", str(caught.exception))
+
+    def test_黙らせる指定は指紋を動かさない(self):
+        before = self.motion.fingerprint
+        self.use_attributes(f"frames={self.FRAMES} still=理由")
+        self.assertEqual(self.motion.fingerprint, before)
+
+    # ---- 入口: 上げる前に止まる
+
+    def run_capture(self, rows_of):
+        """`--capture` を通す。組む・上げる・書き戻すは偽物で、呼ばれたかだけを記録する。"""
+        uploaded, written = [], []
+
+        def render(root, found, out):
+            self.out = out
+            self.put_frames(rows_of)
+
+        def upload(image, token, alt):
+            uploaded.append(image)
+            return f"https://example.invalid/{image.name}"
+
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as out, \
+                mock.patch.object(shots, "collect", lambda root: self.shots), \
+                mock.patch.object(shots, "render", render), \
+                mock.patch.object(shots, "report_mirrors", lambda *a, **k: None), \
+                mock.patch.object(shots, "upload", upload), \
+                mock.patch.object(shots, "write_back", lambda *a: written.append(a) or 0), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = shots.main(
+                ["--capture", "--render", out, "--token-command", "echo token"],
+                which=lambda name: f"/opt/tools/{name}",
+            )
+        return code, uploaded, written, err.getvalue()
+
+    def test_止まった動きがあれば上げも書き戻しもせずに止まる(self):
+        code, uploaded, written, err = self.run_capture(lambda index: grey_rows(20, 10))
+        self.assertEqual(code, 1, err)
+        self.assertEqual((uploaded, written), ([], []))
+        self.assertIn(self.motion.where, err)
+        self.assertIn("上げも書き戻しもせずに止める", err)
+
+    def test_動いていれば上げて書き戻す(self):
+        code, uploaded, written, err = self.run_capture(moving_rows)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(uploaded), len(self.shots))
+        self.assertEqual(len(written), 1)
 
 
 
