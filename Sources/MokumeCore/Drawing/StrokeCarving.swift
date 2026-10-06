@@ -29,10 +29,11 @@ import simd
 /// 座標は変換を掛ける前の形自身の座標で持つ。平面の変換は位置を線形に写すだけなので、
 /// 重なりは変換の後も同じである。
 ///
-/// **立体の線は網として引く** ([#1561]・``init(net:edges:lengths:weight:)``)。片は画面へ写した
+/// **立体の線は網として引く** ([#1561]・``init(net:edges:lengths:weight:limit:)``)。片は画面へ写した
 /// 凸多角形で、線に沿った隔たりは網の辺を辿った道のり (画面での長さ) で測る。稜線の網の 1 点に
 /// 集まる帯と点の形は隔たり 0 で互いに引き、網を辿って太さより離れた稜 (奥行きの違う稜が画面で
-/// 交わる所) は引かずに 2 回混ぜる。周は点が 1 列に並ぶ網で、道のりは弧長と同じになる。
+/// 交わる所) は引かずに重ねて積む。周は点が 1 列に並ぶ網で、道のりは弧長と同じになる。奥行きで
+/// 決めること (どちらを残すか・奥行きの離れた片を引かない) は呼ぶ側 (``SolidStrokeCarving``) が持つ。
 ///
 /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
 /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
@@ -111,19 +112,26 @@ nonisolated struct StrokeCarving {
     /// 間の最短の道のり (端を共有すれば 0) で、これが `weight` 以内の片だけを引く。点ごとに、道のりが
     /// `weight` 以内に届く点を先に 1 度だけ求めておく (道のりで打ち切る最短路)。
     ///
+    /// **届く点の表が `limit` 件を越えたら、組まずに `nil` を返す** (#1561 の反証 3)。画面で小さく
+    /// 写る細かい網に太い線を引くと、どの点からも網のほぼ全部に届き、表は点の数の 2 乗で膨らむ
+    /// (`sphere(10, detail: 64)` に太さ 20 で約 314 万件・約 50 MB)。呼ぶ側は引かずに重ねて積む。
+    ///
     /// - Parameters:
     ///   - lengths: 辺ごとの長さ (片と同じ座標で測る)。辿れない辺は無限大
     ///   - weight: 線の太さ。網を辿ってこれ以内の片を引く
+    ///   - limit: 届く点の表の件数の上限 (``netReachLimit``)
     ///
     /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
-    init(net count: Int, edges: [(Int, Int)], lengths: [Float], weight: Float) {
+    init?(net count: Int, edges: [(Int, Int)], lengths: [Float], weight: Float, limit: Int = netReachLimit) {
+        guard let net = NetReach(count: count, edges: edges, lengths: lengths, weight: weight, limit: limit)
+        else { return nil }
         pointCount = count
         segmentCount = edges.count
         isClosed = false
         self.weight = weight
         wholeOutline = false
         positions = []
-        net = NetReach(count: count, edges: edges, lengths: lengths, weight: weight)
+        self.net = net
         bandPieces = [Int](repeating: -1, count: edges.count)
         pointPieces = [Int](repeating: -1, count: count)
         let pieceBound = edges.count + count
@@ -132,6 +140,13 @@ nonisolated struct StrokeCarving {
         pieces.points.reserveCapacity(pieceBound * 4)
         anchors.reserveCapacity(pieceBound)
     }
+
+    /// 網で引くときの、届く点の表の件数の上限 (``init(net:edges:lengths:weight:limit:)``)。1 件 16 バイトで
+    /// 4 MiB。既定の細かさ (24) の球は、画面で半径 10 画素に太さ 20 でも約 5.7 万件で収まる。
+    static let netReachLimit = 1 << 18
+
+    /// 網で引くときの、届く点の表の件数 (検査用)。周で引くときは 0。
+    var netReachCount: Int { net?.reached.count ?? 0 }
 
     /// 網の点ごとの隣の辺と、網を辿って太さ以内に届く点 (道のりつき)。どちらも点ごとの区間を
     /// `starts` で引く詰めた並び。
@@ -144,7 +159,7 @@ nonisolated struct StrokeCarving {
 
         func ends(of edge: Int) -> (Int, Int) { edges[edge] }
 
-        init(count: Int, edges: [(Int, Int)], lengths: [Float], weight: Float) {
+        init?(count: Int, edges: [(Int, Int)], lengths: [Float], weight: Float, limit: Int) {
             self.edges = edges
             var starts = [Int](repeating: 0, count: count + 1)
             for (a, b) in edges {
@@ -178,6 +193,8 @@ nonisolated struct StrokeCarving {
                     while let (distance, point) = heap.pop() {
                         guard distance <= distances[point] else { continue }
                         reached.append((point, distance))
+                        // 上限を越えたら、表を組み切る前に諦める (2 乗の表を一時的にも持たない)
+                        if reached.count > limit { return nil }
                         for slot in starts[point]..<starts[point + 1] {
                             let edge = incident[slot]
                             let (a, b) = edges[edge]
@@ -311,7 +328,11 @@ nonisolated struct StrokeCarving {
     /// 隣り合う三角形が同じ端点の辺を分け合うようにする。差し込んだ周は、周の点と一直線に
     /// 並ばない重心を要にして扇に割る — 最初の点から割ると、差し込んだ点を含む辺が面積 0 の
     /// 三角形に落ち、分け合うはずの辺が消える。
+    ///
+    /// `relates` が偽を返す組 (片の番号の組・後の片, 先の片) は、線に沿って太さ以内でも引かない
+    /// (重ねて積む)。立体の線が、奥行きの離れた片どうしを引かないのに使う (``SolidStrokeCarving``)。
     func carved(
+        relates: (_ piece: Int, _ earlier: Int) -> Bool = { _, _ in true },
         _ emit: (
             _ points: [SIMD2<Float>], _ rim: Range<Int>, _ hub: SIMD2<Float>?, _ coverage: Float,
             _ piece: Int
@@ -339,7 +360,8 @@ nonisolated struct StrokeCarving {
             work.append(pieces.points, pieces.ranges[index], box: pieces.boxes[index])
             var rest = pieces.boxes[index]
             for (_, other) in candidates {
-                guard rest.grown(by: tolerance).overlaps(pieces.boxes[other]) else { continue }
+                guard rest.grown(by: tolerance).overlaps(pieces.boxes[other]), relates(index, other)
+                else { continue }
                 next.removeAll()
                 var touched = false
                 for fragment in 0..<work.ranges.count {

@@ -14,8 +14,10 @@ import Testing
 ///
 /// - 1 つの形の線のうち、線に沿って太さ以内で繋がる片どうし (帯・折れ目・端の形・曲線の刻みの
 ///   円板、稜線の網の同じ点に集まる帯と形) は 1 回だけ混ぜる
-/// - 奥行きの違う稜が画面で交わる所は、別々の線と同じく 2 回混ぜる。手前の半透明の稜の向こうに
-///   奥の稜が透けて見えるのが正しい
+/// - 奥行きの違う稜が画面で交わる所は、別々の線と同じく重ねて混ぜる (奥の稜を先に積んだ所は 2 回。
+///   手前の稜を先に積んだ所は、奥の稜が奥行きで捨てられて 1 回 — 積む順によらず奥の稜を透かすかは
+///   #2183)。網では繋がるが奥行きの離れた片 (平行投影で正面を向けた箱の前後の稜) も同じ
+/// - 引いて残すのは手前の片 (塗りのある形で、面の奥の片が手前の片を削って線が欠けない)
 ///
 /// ## 読み方
 ///
@@ -222,7 +224,7 @@ struct SolidStrokeOverlapTests {
     }
 
     /// 回した箱では、手前の稜と奥の稜が画面で交わる。交わる所は投影から求める: 端を共有しない
-    /// 2 本の稜の線分の交点。網を辿ると太さより離れているので、**交わりは引かない**。
+    /// 2 本の稜の線分の交点。網を辿ると太さより離れていて、奥行きも離れているので、**交わりは引かない**。
     ///
     /// - 重ね塗りの画素は、そうした 2 本の両方から太さの半分 + 1 画素の内にある画素に限る
     ///   (稜の集まる角には残らない)
@@ -290,6 +292,26 @@ struct SolidStrokeOverlapTests {
         #expect(twiceSeen > 0, "奥の稜を先に積む交点が無い (2 回の交わりを確かめていない)")
     }
 
+    /// 平行投影で正面に近い箱では、前の面の稜と後ろの面の稜が画面でほぼ重なり、奥行きの辺は画面で
+    /// 4 画素ほどになる。網を辿ると太さ以内で繋がるが、奥行きが離れているので引かない (端の点の
+    /// 奥行きの差が、線を見ている側へ寄せる量を越える片どうし)。奥の稜を先に積んだ所は 2 回混ざる。
+    /// 引いてしまうと、重なりはどこも 1 回になる (#1561 の反証 6)。
+    ///
+    /// 半周回して (`rotateY(π + 0.05)`) 奥の面の稜を先に積む向きにする。`rotateY(0.05)` では手前の
+    /// 面の稜を先に積むので、引かなくても奥の稜が奥行きで捨てられ、重なりは 1 回になる (#2183)。
+    @Test("平行投影で正面に近い箱の半透明の稜線は、前後の面の稜の重なりを引かずに重ねて積む")
+    func frontAndBackEdgesOfAFacingBoxAreNotCarved() throws {
+        let pixels = try translucent { canvas in
+            canvas.ortho()
+            canvas.strokeWeight(4)
+            canvas.translate(80, 80, 0)
+            canvas.rotateY(Float.pi + 0.05)
+            canvas.box(80)
+        }.pixels
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count > 0, "前後の稜の重なりが 1 回しか混ざっていない")
+    }
+
     // MARK: - 条件 9: 起票時の曲線を立体の経路で
 
     /// `vertex` に `z` を 1 度でも渡すと、`z = 0` でも立体の経路へ落ちる (`shapeHasDepth`)。
@@ -305,6 +327,107 @@ struct SolidStrokeOverlapTests {
         }.pixels
         #expect(painted(pixels) > 0)
         #expect(overpainted(pixels).count <= 5, "重ね塗り \(overpainted(pixels).count)・塗った \(painted(pixels))")
+    }
+
+    // MARK: - 塗りのある形 (反証 1)
+
+    /// 塗りのある形では、線の片のうち面の奥にある所は面に隠れる。引き算で手前の片を削り、
+    /// 面の奥の片を残すと、手前で見えていた画素から線が消える (直す前は、回した `box(70)` の太さ 4 /
+    /// 12 で 88 / 266 画素、平行投影で裏を向けた `box(80)` の太さ 10 で 1500 / 1810 画素)。
+    /// 重ねて積んだ不透明の線で見えていた画素は、引いて積んだ半透明の線でも見えなければならない
+    /// (面の色は青、線の色は赤なので、赤が出ている画素が線の見える所)。
+    ///
+    /// 逆向き (引いた線だけが見える画素) は数えない。重ねて積んだ線は、面の縁で帯の内側の半分が
+    /// 面と奥行きを取り合い、1 行に 1 画素ほど面に食われることがある (`liftedTowardViewer`)。
+    /// 引いた線は三角形の割り方が違うので、同じ画素が食われるとは限らない。
+    @Test("塗りのある箱の半透明の稜線は、不透明の同じ稜線が見える画素で欠けない", arguments: 0..<4)
+    func filledBoxStrokeStaysVisible(_ setting: Int) throws {
+        func draw(_ canvas: Canvas) {
+            canvas.fill(0, 0, 255)
+            switch setting {
+            case 0, 1:
+                canvas.strokeWeight(setting == 0 ? 4 : 12)
+                canvas.translate(80, 80, 0)
+                canvas.rotateX(0.5)
+                canvas.rotateY(0.6)
+                canvas.box(70)
+            default:
+                canvas.ortho()
+                canvas.strokeWeight(10)
+                canvas.translate(80, 80, 0)
+                canvas.rotateY(setting == 2 ? Float.pi : Float.pi + 0.05)
+                canvas.box(80)
+            }
+        }
+        let carved = try translucent { draw($0) }.pixels
+        // 物差しは CPU の帯で重ねて積んだ不透明の線 (`lightest` は GPU の骨に入らず、不透明なら重なっても
+        // 同じ色なので引かない)。青い面の上でも赤の成分は線の赤 (1) になる
+        let stacked = try translucent { canvas in
+            canvas.blendMode(.lightest)
+            canvas.stroke(255, 0, 0)
+            draw(canvas)
+        }.pixels
+        #expect(painted(stacked) > 0)
+        let lost = differingRegion(carved, stacked).filter { carved[$0.x, $0.y].red <= 0.05 }
+        #expect(lost.isEmpty, "設定 \(setting): 重ねた線で見えていて引いた線で欠けた画素 \(lost.count): \(lost.prefix(12))")
+    }
+
+    // MARK: - 目の近くの点 (反証 2)
+
+    /// 手前の面より手前 (目の近く) の点は、画面へ写すと座標が巨大になる。その点を持つ片で線 1 本の
+    /// 許容差が膨らむと、薄い重なりを「接するだけ」と読んで引かず、切り口を遠くの角へ寄せる。
+    /// 片は手前の面で切ってから写す (切った外は GPU も描かない)。
+    @Test("目の近くまで来る奥行きを持つ線の半透明の線は、折れ目で重ねて混ぜず、不透明の同じ線と同じ画素を塗る", arguments: [Float(138.5), 138.56])
+    func strokeReachingTheEyeBlendsOnce(_ near: Float) throws {
+        func draw(_ canvas: Canvas) {
+            canvas.strokeWeight(20)
+            canvas.beginShape()
+            canvas.vertex(40, 80, 0)
+            canvas.vertex(120, 80, 0)
+            canvas.vertex(120, 80, near)
+            canvas.endShape()
+        }
+        let carved = try translucent { draw($0) }.pixels
+        let stacked = try translucent { canvas in
+            canvas.stroke(255, 0, 0)
+            draw(canvas)
+        }.pixels
+        #expect(painted(stacked) > 0)
+        #expect(overpainted(carved).count == 0, "z = \(near): 重ね塗り \(overpainted(carved).count)")
+        let differing = differingRegion(carved, stacked)
+        #expect(differing.isEmpty, "z = \(near): 塗る画素が \(differing.count) 違う: \(differing.prefix(12))")
+    }
+
+    // MARK: - 届く点の表 (反証 3)
+
+    /// 画面で半径 10 画素ほどに写る球の網へ、太さ 20 の線を引く (網の辺を画面での長さで辿る)。
+    private static func smallSphereReach(detail: Int) -> StrokeCarving? {
+        let net = SolidEdges(SolidShape.sphere(radius: 10, detail: detail).make())
+        var lengths: [Float] = []
+        for (a, b) in net.edges {
+            let offset = SIMD2(net.points[a].x - net.points[b].x, net.points[a].y - net.points[b].y)
+            lengths.append((offset * offset).sum().squareRoot())
+        }
+        return StrokeCarving(net: net.points.count, edges: net.edges, lengths: lengths, weight: 20)
+    }
+
+    /// 画面で小さく写る細かい網に太い線を引くと、どの点からも網のほぼ全部に届き、届く点の表は
+    /// 点の数の 2 乗で膨らむ (直す前は `sphere(10, detail: 64)` で約 314 万件・約 50 MB)。上限を
+    /// 越えたら組まずに諦め、線は引かずに重ねて積む。
+    @Test("網の届く点の表は上限で打ち切り、越える細かい網は引かずに重ねて積む")
+    func netReachIsBounded() throws {
+        let coarse = try #require(Self.smallSphereReach(detail: 24))
+        #expect(coarse.netReachCount > 0)
+        #expect(coarse.netReachCount <= StrokeCarving.netReachLimit)
+        #expect(Self.smallSphereReach(detail: 64) == nil)
+        #expect(Self.smallSphereReach(detail: 128) == nil)
+        // 描くと、引かずに重ねて積んだ線が出る
+        let pixels = try translucent { canvas in
+            canvas.strokeWeight(20)
+            canvas.translate(80, 80, 0)
+            canvas.sphere(10, detail: 128)
+        }.pixels
+        #expect(painted(pixels) > 0)
     }
 
     // MARK: - 塗る領域は変わらない

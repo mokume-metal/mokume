@@ -638,9 +638,11 @@ extension Canvas {
     /// **重なる所は引いて積む** ([#1561])。帯・折れ目の形・端の形・曲線の刻みの円板は互いに
     /// 重なるので、半透明の線 (重なりが絵に出る線・``solidStrokeOverlapsShow``) では、片を画面へ
     /// 写して先に置いた片との重なりを引き、残りに元の片の平面から奥行きを付け直して積む
-    /// (``SolidStrokeCarving``)。線に沿って太さ以内で繋がる片は 1 回だけ混ぜる。**線に沿って
-    /// 太さより離れた所が画面で交わると (奥行きの違う部分の交わり・折り返し)、別々の線と同じく
-    /// 重ねて混ぜる。** 重なりが絵に出ない線 (不透明の色) は、引かずに重ねたまま積む。
+    /// (``SolidStrokeCarving``)。線に沿って太さ以内で繋がる片は 1 回だけ混ぜ、重なる所は手前の片を
+    /// 残す (塗りのある形で、面の奥の片が手前の片を削らない)。**線に沿って太さより離れた所や、
+    /// 奥行きの離れた所が画面で重なると (奥行きの違う部分の交わり・折り返し)、別々の線と同じく
+    /// 重ねて混ぜる** — 2 回混ざるかは積む順で決まり、手前を先に積んだ所では奥が奥行きで隠れる。
+    /// 重なりが絵に出ない線 (不透明の色) は、引かずに重ねたまま積む。
     ///
     /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
@@ -678,9 +680,9 @@ extension Canvas {
     /// **重なる所は引いて積む** ([#1561])。半透明の稜線は GPU で広げず (``placeGPUStroke(of:mesh:)``
     /// は不透明の線だけ)、CPU の帯で組んで、稜の集まる点に集まる帯どうしと点の形の重なりを引く
     /// (``strokeSolidRing(_:shapePoints:isClosed:curveSteps:)`` と同じ手順)。線に沿った隔たりは網の
-    /// 辺を辿った道のりで測る。**奥行きの違う稜が画面で交わる所は、網を辿ると太さより離れて
-    /// いるので、引かずに重ねて混ぜる** — 手前の稜を先に積んだ所では、後から積む奥の稜は奥行きで
-    /// 隠れる ([#2183])。
+    /// 辺を辿った道のりで測る。**奥行きの違う稜が画面で交わる所 (網を辿ると太さより離れている) と、
+    /// 網では繋がるが奥行きの離れた稜 (平行投影で正面を向けた箱の前後の稜) は、引かずに重ねて
+    /// 混ぜる** — 手前の稜を先に積んだ所では、後から積む奥の稜は奥行きで隠れて 1 回になる ([#2183])。
     ///
     /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
     /// [#2183]: https://github.com/mokume-metal/mokume/issues/2183
@@ -805,9 +807,17 @@ extension Canvas {
             shape = net.points
             edges = net.edges
         }
-        if carves {
+        // 網の届く点の表が上限を越える線 (画面で小さく写る細かい網に太い線) は、引かずに重ねて積む
+        if carves,
+            var carving = SolidStrokeCarving(
+                points: world, edges: edges, weight: half * 2,
+                view: SolidStrokeCarving.View(
+                    viewProjection: viewProjection, width: width, height: height, eye: camera.eye,
+                    forward: camera.forward, isPerspective: camera.isPerspective,
+                    pixelScale: camera.scale, near: camera.near))
+        {
             return buildCarvedSolidStroke(
-                world: world, shape: shape, edges: edges, curveSteps: curveSteps, half: half,
+                &carving, world: world, shape: shape, edges: edges, curveSteps: curveSteps, half: half,
                 discUnits: discUnits, camera: camera)
         }
         strokeNet(
@@ -837,20 +847,20 @@ extension Canvas {
     ///
     /// 片は重ねて積むとき (``buildSolidStroke(_:carves:)``) と同じ骨・同じ式で組み、三角形にせず
     /// 凸多角形のまま渡す。網の 1 点に集まる帯どうしと点の形、曲線の刻みの円板と 2 つ先の帯
-    /// のように、網を辿って太さ以内で繋がる片は 1 回だけ混ぜる。奥行きの違う稜が画面で交わる所は
-    /// 網を辿ると太さより離れているので、引かずに 2 回混ぜる。線を見ている側へ寄せる扱い
+    /// のように、網を辿って太さ以内で繋がる片は 1 回だけ混ぜ、手前の片を残す。網を辿って太さより
+    /// 離れた片 (奥行きの違う稜が画面で交わる所) と、端の点を共有せず奥行きの離れた片は引かずに
+    /// 重ねて積む (2 回混ざるかは積む順と奥行きで決まる)。線を見ている側へ寄せる扱い
     /// (`liftedTowardViewer`) は、戻した点に掛ける。
     ///
-    /// 画面へ写せない片 (目の後ろへ回る点を持つ) は、引かずに重ねたまま積む。
+    /// 片は手前の面で切ってから写す (``SolidStrokeCarving``)。画面へ写せない片 (数でない座標) は、
+    /// 引かずに重ねたまま積む。
     ///
     /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
     private func buildCarvedSolidStroke(
-        world: [SIMD3<Float>], shape: [SIMD3<Float>], edges: [(Int, Int)], curveSteps: [Bool],
-        half: Float, discUnits: [SIMD2<Float>], camera: StrokeCamera
+        _ carving: inout SolidStrokeCarving, world: [SIMD3<Float>], shape: [SIMD3<Float>],
+        edges: [(Int, Int)], curveSteps: [Bool], half: Float, discUnits: [SIMD2<Float>],
+        camera: StrokeCamera
     ) {
-        var carving = SolidStrokeCarving(
-            points: world, edges: edges, weight: half * 2, viewProjection: viewProjection,
-            width: width, height: height)
         /// 片を足す。画面へ写せなければ、重ねたまま扇で積む
         func add(band: Int? = nil, point: Int? = nil, _ rim: [SIMD3<Float>], _ shapes: [SIMD3<Float>]) {
             guard !carving.addPiece(band: band, point: point, rim: rim, shapes: shapes), rim.count >= 3
@@ -898,10 +908,8 @@ extension Canvas {
                 else { return }
                 add(point: index, corners, [SIMD3<Float>](repeating: shape[index], count: corners.count))
             })
-        carving.emit { a, b, c in
-            appendSolidStrokeTriangle(
-                a.position, b.position, c.position, shape: (a.shape, b.shape, c.shape), camera: camera)
-        }
+        let (vertices, triangles) = carving.triangles(lift: { liftedTowardViewer($0, camera: camera) })
+        appendLiftedSolidStrokeTriangles(vertices, triangles)
     }
 
     /// 記録の間に CPU で積んだ組み込み立体の線を、**置くときに GPU で組める**ものなら覚える
@@ -1305,11 +1313,65 @@ extension Canvas {
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), camera: StrokeCamera
     ) {
+        appendLiftedSolidStrokeTriangle(
+            liftedTowardViewer(a, camera: camera), liftedTowardViewer(b, camera: camera),
+            liftedTowardViewer(c, camera: camera), shape: shape)
+    }
+
+    /// 見ている側へ寄せ終えた線の三角形 (頂点の番号の 3 つ組) を、まとめて積む (片の重なりを引いた線・
+    /// ``SolidStrokeCarving``)。``appendLiftedSolidStrokeTriangle(_:_:_:shape:)`` を 3 つ組ごとに呼ぶのと
+    /// 同じ頂点を同じ順に積む。面の切り替えと列を開くのは最初に 1 度だけで、間で列は変わらない。
+    private func appendLiftedSolidStrokeTriangles(
+        _ vertices: [SolidStrokeCarving.Vertex], _ triangles: [SIMD3<Int32>]
+    ) {
+        guard !triangles.isEmpty else { return }
+        if solidStrokeCapture != nil {
+            let captured = solidStrokeCapture?.count ?? 0
+            solidStrokeCapture?.reserveCapacity(captured + triangles.count * 3)
+            for triangle in triangles {
+                solidStrokeCapture?.append(vertices[Int(triangle.x)])
+                solidStrokeCapture?.append(vertices[Int(triangle.y)])
+                solidStrokeCapture?.append(vertices[Int(triangle.z)])
+            }
+            return
+        }
+        let coverage = solidStrokeCoverage
+        defer { if coverage < 1 { openBatchHasThinCoverage = true } }
+        // 面の切り替えが先 (``appendSolidVertex(position:shapePosition:normal:shapeNormal:isDerived:uv:isStroke:strokeCoverage:color:)`` と同じ)
+        useGlyphTexture()
+        openFreeformSolid()
+        let first = solidVertices.count
+        let color = style.stroke
+        let uv = whiteUV
+        solidVertices.reserveCapacity(first + triangles.count * 3)
+        func put(_ vertex: SolidStrokeCarving.Vertex) {
+            solidVertices.append(
+                SolidVertex(
+                    position: vertex.position, shapePosition: vertex.shape, normal: .zero, uv: uv,
+                    isStroke: true, strokeCoverage: coverage, color: color))
+        }
+        for triangle in triangles {
+            put(vertices[Int(triangle.x)])
+            put(vertices[Int(triangle.y)])
+            put(vertices[Int(triangle.z)])
+        }
+        openSolid?.vertexCount += solidVertices.count - first
+        // 添字の列では、並べただけの頂点も自分の番号を名乗る (``appendSolidVertex`` と同じ)
+        if openSolid?.indexStart != nil {
+            for number in first..<solidVertices.count { solidIndices.append(UInt32(number)) }
+        }
+    }
+
+    /// 見ている側へ寄せ終えた (`liftedTowardViewer`) 3 点を、線の三角形として積む。
+    private func appendLiftedSolidStrokeTriangle(
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
+        shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)
+    ) {
         // 組み直しの間は積まずに、位置と形自身の座標だけを渡す (``rebuiltSolidStroke(_:tinted:)``)
         if solidStrokeCapture != nil {
-            solidStrokeCapture?.append((liftedTowardViewer(a, camera: camera), shape.0))
-            solidStrokeCapture?.append((liftedTowardViewer(b, camera: camera), shape.1))
-            solidStrokeCapture?.append((liftedTowardViewer(c, camera: camera), shape.2))
+            solidStrokeCapture?.append((a, shape.0))
+            solidStrokeCapture?.append((b, shape.1))
+            solidStrokeCapture?.append((c, shape.2))
             return
         }
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)。名乗る値は
@@ -1317,14 +1379,14 @@ extension Canvas {
         let coverage = solidStrokeCoverage
         defer { if coverage < 1 { openBatchHasThinCoverage = true } }
         appendSolidVertex(
-            position: liftedTowardViewer(a, camera: camera), shapePosition: shape.0, normal: .zero,
-            isStroke: true, strokeCoverage: coverage, color: style.stroke)
+            position: a, shapePosition: shape.0, normal: .zero, isStroke: true,
+            strokeCoverage: coverage, color: style.stroke)
         appendSolidVertex(
-            position: liftedTowardViewer(b, camera: camera), shapePosition: shape.1, normal: .zero,
-            isStroke: true, strokeCoverage: coverage, color: style.stroke)
+            position: b, shapePosition: shape.1, normal: .zero, isStroke: true,
+            strokeCoverage: coverage, color: style.stroke)
         appendSolidVertex(
-            position: liftedTowardViewer(c, camera: camera), shapePosition: shape.2, normal: .zero,
-            isStroke: true, strokeCoverage: coverage, color: style.stroke)
+            position: c, shapePosition: shape.2, normal: .zero, isStroke: true,
+            strokeCoverage: coverage, color: style.stroke)
     }
 
     /// 線の頂点を、**見ている側へ視線に沿って**わずかに寄せる。
@@ -1374,9 +1436,9 @@ struct StrokeCamera {
     let down: SIMD3<Float>
     let isPerspective: Bool
     /// 1 画素の長さの係数。透視は `2 * tan(fov / 2)`、平行は `abs(bottom - top)`。
-    private let scale: Float
+    let scale: Float
     /// 透視の手前の面。平行では使わない。
-    private let near: Float
+    let near: Float
 
     init(_ camera: Camera) {
         eye = camera.eye
