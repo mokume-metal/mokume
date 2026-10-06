@@ -46,16 +46,24 @@ extension Canvas {
     ///   線の点の補いと同じ形)
     ///
     /// 細さは ``roundedDrawnWeight(_:)`` で丸めてから 1 と比べる (線と同じ幅)。変換が潰れている
-    /// (行列式 0) と補わない — 三角形のときも面積が無くて何も出ない。
+    /// (行列式 0) と補わない — 三角形のときも面積が無くて何も出ない。**寸法・中心が数でない・無限
+    /// なら補わない** — 周から三角形に割るこれまでの塗りへ戻す (距離関数の経路も、有限でない半径の
+    /// 形は置かずに断る・`appendForm(_:center:half:axis:arc:fills:cap:)`)。
     ///
     /// [#1934]: https://github.com/mokume-metal/mokume/issues/1934
     static func thinFillPieces(
         _ named: Outline.NamedFill, by linear: simd_float2x2
     ) -> [ThinFillPiece]? {
         let determinant = simd_determinant(linear)
-        guard determinant != 0, determinant.isFinite else { return nil }
+        guard determinant != 0, determinant.isFinite, isFinite(named) else { return nil }
         return named.isEllipse
             ? thinEllipsePieces(named, by: linear) : thinRectPieces(named, by: linear)
+    }
+
+    /// 寸法と中心がどれも有限か。
+    private static func isFinite(_ named: Outline.NamedFill) -> Bool {
+        named.half.x.isFinite && named.half.y.isFinite && named.center.x.isFinite
+            && named.center.y.isFinite
     }
 
     /// 名指しの基本図形の塗りが、2x2 `linear` で置いて描く画素で 1 画素より細い向きを持つか
@@ -63,7 +71,7 @@ extension Canvas {
     /// ごとに求める (``thinFillLinear(_:)``)。
     static func isThinFill(_ named: Outline.NamedFill, by linear: simd_float2x2) -> Bool {
         let determinant = simd_determinant(linear)
-        guard determinant != 0, determinant.isFinite else { return false }
+        guard determinant != 0, determinant.isFinite, isFinite(named) else { return false }
         if named.isEllipse {
             return roundedDrawnWeight(2 * principalAxes(ellipseLinear(named, linear)).short) < 1
         }
@@ -158,8 +166,12 @@ extension Canvas {
     private static func thinEllipsePieces(
         _ named: Outline.NamedFill, by linear: simd_float2x2
     ) -> [ThinFillPiece]? {
-        let axes = principalAxes(ellipseLinear(named, linear))
-        guard roundedDrawnWeight(2 * axes.short) < 1 else { return nil }
+        let shape = ellipseLinear(named, linear)
+        let axes = principalAxes(shape)
+        // 半径が単精度で無限へあふれた楕円も補わない (片の数を整数へ直せない)
+        guard axes.long.isFinite, axes.short.isFinite,
+            roundedDrawnWeight(2 * axes.short) < 1
+        else { return nil }
         let inverse = linear.inverse
         // 長軸も細い楕円 (1 画素より小さい円を含む) は、描く画素 1 つの正方形にする。被覆は描く
         // 画素での外接する箱の面積 (2 つの半径の積の 4 倍)
@@ -174,7 +186,12 @@ extension Canvas {
         let thin = 2 * axes.short
         let width = thin * widenedBand(thin, along: along).widen
         let long = axes.long
-        let count = min(Int((2 * long).rounded(.up)), thinEllipseSliceLimit)
+        // 片の数は、上限で切ってから整数へ直す (巨大な直径を `Int` へ直すと実行時に落ちる)
+        let span = 2 * long
+        guard span.isFinite else { return nil }
+        let count =
+            span >= Float(thinEllipseSliceLimit)
+            ? thinEllipseSliceLimit : max(1, Int(span.rounded(.up)))
         var pieces: [ThinFillPiece] = []
         pieces.reserveCapacity(count)
         func corner(_ distance: Float, _ side: Float) -> SIMD2<Float> {

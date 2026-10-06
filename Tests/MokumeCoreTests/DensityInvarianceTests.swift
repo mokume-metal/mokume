@@ -439,6 +439,37 @@ struct DensityInvarianceTests {
         #expect(broken.isEmpty, "直径 \(diameter) の shader() の円: \(broken.joined(separator: " / "))")
     }
 
+    /// **寸法や置き方が極端な細い塗りでも落ちない** (#1934 の反証 1)。細長い楕円の片の数を
+    /// 整数へ直す前に有限か確かめ、上限で切る。直径が数でない・無限の楕円は補わず、これまでどおり
+    /// 周から三角形に割る (距離関数の経路も有限でない半径は置かずに断る)。直す前は、直径 1e20 の
+    /// 楕円で片の数を `Int` へ直すところで実行時に落ちていた。
+    @Test("寸法や置き方が極端な細い shader() の楕円でも落ちない (#1934)")
+    func extremeThinEllipsesDoNotTrap() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let plain = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(plain)
+            canvas.ellipse(0, 0, 1e20, 0.5)
+            canvas.ellipse(0, 0, Float.infinity, 0.5)
+            // 同じ形を続けて置くと、2 つ目で雛形を組む (雛形の口も通す)
+            canvas.ellipse(0, 0, 1e20, 0.5)
+            canvas.ellipse(0, 0, 1e20, 0.5)
+            // 保持した形を、極端な拡大で置く
+            let shape = canvas.createShape { canvas.ellipse(0, 0, 40, 0.5) }
+            canvas.pushMatrix()
+            canvas.scale(1e19, 1)
+            canvas.shape(shape)
+            canvas.popMatrix()
+        }
+        // 落ちずに描き終え、面が読める
+        let pixels = try canvas.target.readPixels()
+        #expect(pixels.width == canvas.pixelWidth)
+    }
+
     /// **立体の線は、置く面の細かさで補う** (#1637)。細かさ 0.5 の本体で記録した `box` の稜線を
     /// 描き場所 (細かさ 1) へ置くと、太さ 1 のまま出る。逆に描き場所で記録して本体へ置くと、
     /// 本体の細かさで補う。保持した線を GPU で組む経路 (#1756) と CPU の帯の両方で見る。
