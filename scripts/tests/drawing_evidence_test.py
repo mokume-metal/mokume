@@ -238,6 +238,14 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("no-visual-change", r.stdout)
 
+    def test_逃がしのラベルでも絵が無ければ載せるよう促す(self):
+        """「絵が変わらない」は「見せるものが無い」ではない (#2195)。赤にはしない。"""
+        r = self.run_script(body="絵は変わらない", labels=["no-visual-change"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("見て分かるもの", r.stdout)
+        r = self.run_script(body="![窓](https://i.gyazo.com/a.png)", labels=["no-visual-change"])
+        self.assertNotIn("見て分かるもの", r.stdout)
+
     def test_描画に触れないPRは絵が無くても通る(self):
         r = self.run_script(body="", files=OTHER_FILES)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -442,6 +450,63 @@ class DrawingEvidenceTest(unittest.TestCase):
     def test_GITHUB_REPOSITORYがあれば宛先に渡す(self):
         self.run_script(body="![a](x.png)", GITHUB_REPOSITORY="mokume-metal/mokume")
         self.assertIn("-R mokume-metal/mokume", self.calls.read_text())
+
+
+class IssueBodyTest(unittest.TestCase):
+    """--issue-body: 描画のファイルを名指しする Issue の本文に、絵か宣言を求める (#2195)。
+
+    名前の照合はこのリポジトリの追跡ファイルと drawing-paths.txt を実物のまま使う。
+    gh は呼ばないので偽物は要らない。
+    """
+
+    def check(self, body):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False) as f:
+            f.write(body)
+        self.addCleanup(os.unlink, f.name)
+        env = {k: v for k, v in os.environ.items() if k != "DRAWING_PATHS"}
+        return subprocess.run(
+            ["/bin/bash", str(SCRIPT), "--issue-body", f.name], cwd=REPO, env=env,
+            capture_output=True, text=True, encoding="utf-8"
+        )
+
+    def test_描画のファイル名を名指しして絵が無ければ赤い(self):
+        # #2186 の形: ディレクトリを書かず、ファイルの名前だけで指す
+        r = self.check("## なぜ起きるか\n\n`Shapes.metal` の `mokume_formPaint` が見積もる")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Shapes.metal", r.stderr)
+        # 逃がしの形と撮る道具を必ず示す — 示さないと読み手は直し方が分からない
+        self.assertIn("絵: なし — <理由>", r.stderr)
+        self.assertIn("--snippet", r.stderr)
+
+    def test_描画のパスを名指しして絵が無ければ赤い(self):
+        r = self.check("Sources/MokumeCore/Drawing/Canvas.swift:42 で落ちる")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+
+    def test_絵があれば通る(self):
+        r = self.check("`Shapes.metal` の漏れ\n\n<img src=\"https://i.gyazo.com/abc.png\" width=\"480\">")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_宣言があれば通る(self):
+        for dash in ("—", "-", "--"):
+            with self.subTest(dash):
+                r = self.check(f"`Shapes.metal` の overflow\n\n絵: なし {dash} 落ちるだけで描かない")
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_理由の無い宣言は赤い(self):
+        for line in ("絵: なし", "絵: なし —", "絵: なし —   "):
+            with self.subTest(line):
+                r = self.check(f"`Shapes.metal`\n\n{line}")
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn("理由が無い", r.stderr)
+
+    def test_描画の外のファイルだけなら通る(self):
+        r = self.check("scripts/check-drawing-evidence.sh と AGENTS.md の文面を直す")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_描画の外にも同じ名前があるファイル名は数えない(self):
+        # main.swift は Sketches/ の下にも描画の外 (Sources/MokumeCLI など) にもある
+        r = self.check("main.swift の引数の読み方")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":

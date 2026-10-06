@@ -39,6 +39,12 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/agent-comment-guard.sh\"",
             "timeout": 10,
             "statusMessage": "コメントの投稿経路を確認中"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/issue-evidence-guard.sh\"",
+            "timeout": 10,
+            "statusMessage": "Issue の本文に絵か宣言があるか確認中"
           }
         ]
       },
