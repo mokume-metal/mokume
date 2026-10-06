@@ -588,12 +588,17 @@ extension Canvas {
     /// 曲線を直線の並びへ割る。**細かさは曲線の大きさから決める** — 字形の曲線は
     /// 大きさがまちまちなので、一律の本数では小さい曲線が過剰になり大きい曲線が粗くなる。
     ///
+    /// **大きさは字の座標 (文字の大きさの寸法) で測り、変換は見ない** ([#2033])。返す点は
+    /// 変換を掛けないデータで、どの変換の下で描かれるかは呼んだ時点で決まらないためである。
+    /// 拡大して描くと粗くなることは、`Sketch` の `textOutline` の説明が名乗っている。
+    ///
     /// **割る数は `Float` のまま 2…24 に締めてから Int へ直す** ([#1587])。巨大な大きさでは
     /// 曲線の長さが `2 × Int.max` を越えるか、長さを測る 2 乗が `Float` からあふれて無限になる。
     /// 点が無限どうしの差から NaN になったときは、下限の 2 に倒す (絵にならない周なので細かさは
     /// 要らない)。
     ///
     /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    /// [#2033]: https://github.com/mokume-metal/mokume/issues/2033
     private nonisolated static func appendCurve(
         _ points: inout [SIMD2<Float>], from: SIMD2<Float>, control1: SIMD2<Float>,
         control2: SIMD2<Float>, to: SIMD2<Float>
