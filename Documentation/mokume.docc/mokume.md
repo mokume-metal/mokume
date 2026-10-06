@@ -272,6 +272,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 形を保持して置く
 
 - ``Sketch/createShape(_:)``
+- ``Sketch/loadShape(_:)``
+- ``Sketch/requestShape(_:)``
 - ``Sketch/shape(_:_:_:)``
 - ``Sketch/shape(_:at:)``
 - ``Shape``

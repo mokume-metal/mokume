@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 文字列・表・JSON・XML を読む・書くときに起こりうる失敗。
+/// 文字列・表・JSON・XML・SVG を読む・書くときに起こりうる失敗。
+///
+/// SVG (``Sketch/loadShape(_:)``) は XML の文字なので同じ型で運ぶ。XML として壊れているときと、
+/// 根が `<svg>` でないときが ``malformed(path:line:reason:)`` になる。
 ///
 /// 起こりうる失敗が列挙できるので typed throws で運ぶ ([ADR-0010] 決定 7)。
 /// **読み込みと書き出しは投げる** — 失敗したら別の道を選ぶ判断が要るので、黙って既定へ
