@@ -37,6 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # タグを push し、Release を作る
+      pull-requests: read # 「この版の絵」に描画の PR の本文とラベルを読む (#2109)
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,6 +64,9 @@ jobs:
 
       - name: リリースノートを組む
         if: steps.version.outputs.skip != 'true'
+        env:
+          # 描画の PR の本文から絵を拾う (scripts/release.py の冒頭)
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 scripts/release.py notes > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
