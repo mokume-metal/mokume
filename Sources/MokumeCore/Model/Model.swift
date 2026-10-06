@@ -31,7 +31,8 @@ public struct Model: Equatable, Sendable {
     public var triangleCount: Int { mesh.triangleCount }
     /// 面が 1 つも無いか。**読めたが見えない**状態がこれにあたる。
     public var isEmpty: Bool { mesh.points.isEmpty }
-    /// 読み飛ばした行の数 (材質の指定など、いま読まないもの)。
+    /// 読み飛ばしたものの数。OBJ では読み飛ばした行 (材質の指定など、いま読まないもの)、
+    /// STL では読み飛ばした面 (座標が数でない面) を数える。
     public let skippedLines: Int
     /// 囲みの箱の大きさ。整えたあとの値。
     public let size: SIMD3<Float>

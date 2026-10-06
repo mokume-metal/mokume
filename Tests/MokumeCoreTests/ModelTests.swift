@@ -28,6 +28,21 @@ struct ModelTests {
         #expect(parsed.skippedLines == 4)
     }
 
+    /// **拡張子で読み手を選ぶようになっても、OBJ は自前の読み手で読む** (#1966)。Model I/O も
+    /// OBJ を読めるが、読み飛ばした行の数・`vt` の縦の向き・負の番号の扱いが変わる。検体の 3 つは
+    /// それぞれを含む (読み飛ばす行 / 縦を裏返す `vt` と負の番号 / 角ごとに欠けた `vt`)。
+    @Test("OBJ のファイルを読んだ結果は、自前の読み手で文字列を読んだ結果そのもの")
+    func objFilesGoThroughTheOwnReader() throws {
+        let fixtures = [
+            (ModelFixture.pyramid, ModelFixture.pyramidText),
+            (ModelFixture.unwrapped, ModelFixture.unwrappedText),
+            (ModelFixture.mixedUnwrap, ModelFixture.mixedUnwrapText),
+        ]
+        for (path, text) in fixtures {
+            #expect(try ModelFile.load(path) == ModelFile.parse(text), "\(path)")
+        }
+    }
+
     @Test("面の向きが書いてあれば、それを使う")
     func writtenNormalsAreUsed() throws {
         let parsed = ModelFile.parse(
@@ -353,14 +368,15 @@ struct ModelTests {
                 .appendingPathComponent("mokume-model-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
-            let other = directory.appendingPathComponent("thing.stl")
-            try "solid".write(to: other, atomically: true, encoding: .utf8)
+            // STL は読めるようになった (#1966) ので、まだ読まない PLY を検体にする
+            let other = directory.appendingPathComponent("thing.ply")
+            try "ply".write(to: other, atomically: true, encoding: .utf8)
 
             do {
                 _ = try canvas.loadModel(other.path)
                 Issue.record("対応していない形式を読めてしまった")
             } catch {
-                #expect(error == .unsupported(path: other.path, extensionName: "stl"))
+                #expect(error == .unsupported(path: other.path, extensionName: "ply"))
             }
         }
 

@@ -102,6 +102,99 @@ enum ModelFixture {
     /// 書き出した「一直線に並ぶ稜を持つ形」の場所。
     static let ridge: String = written(ridgeText, as: "ridge.obj")
 
+    /// ``pyramidText`` と**同じ三角形を、同じ順・同じ巻き方で**並べた ASCII の STL。底の四角形は、
+    /// OBJ の読み手と同じく扇状に割った 2 枚 (4 3 2・4 2 1) で書いてある。
+    ///
+    /// **面の向きは書いていない** (`facet normal 0 0 0`) — 読む側が巻き方から求める。OBJ の
+    /// 四角錐も向きを書いていないので、整え方の違いを除けば同じ扱いになる。
+    static let pyramidSTLText = """
+        solid pyramid
+          facet normal 0 0 0
+            outer loop
+              vertex -1 0 -1
+              vertex 1 0 -1
+              vertex 0 1.6 0
+            endloop
+          endfacet
+          facet normal 0 0 0
+            outer loop
+              vertex 1 0 -1
+              vertex 1 0 1
+              vertex 0 1.6 0
+            endloop
+          endfacet
+          facet normal 0 0 0
+            outer loop
+              vertex 1 0 1
+              vertex -1 0 1
+              vertex 0 1.6 0
+            endloop
+          endfacet
+          facet normal 0 0 0
+            outer loop
+              vertex -1 0 1
+              vertex -1 0 -1
+              vertex 0 1.6 0
+            endloop
+          endfacet
+          facet normal 0 0 0
+            outer loop
+              vertex -1 0 1
+              vertex 1 0 1
+              vertex 1 0 -1
+            endloop
+          endfacet
+          facet normal 0 0 0
+            outer loop
+              vertex -1 0 1
+              vertex 1 0 -1
+              vertex -1 0 -1
+            endloop
+          endfacet
+        endsolid pyramid
+        """
+
+    /// 書き出した STL の四角錐の場所。
+    static let pyramidSTL: String = written(pyramidSTLText, as: "pyramid.stl")
+
+    /// STL の 1 面。**向きは書いたとおりに置く** — 巻き方と合っていなくても直さない。
+    struct Facet {
+        var normal: SIMD3<Float>
+        var corners: [SIMD3<Float>]
+    }
+
+    /// 面を ASCII の STL に書く。
+    static func asciiSTL(_ facets: [Facet], name: String = "test") -> String {
+        func numbers(_ value: SIMD3<Float>) -> String { "\(value.x) \(value.y) \(value.z)" }
+        var lines = ["solid \(name)"]
+        for facet in facets {
+            lines.append("  facet normal \(numbers(facet.normal))")
+            lines.append("    outer loop")
+            for corner in facet.corners { lines.append("      vertex \(numbers(corner))") }
+            lines.append("    endloop")
+            lines.append("  endfacet")
+        }
+        lines.append("endsolid \(name)")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// 面をバイナリの STL に書く (80 バイトの見出し・面の数・面ごとに 50 バイト)。
+    static func binarySTL(_ facets: [Facet], header: String = "mokume test") -> Data {
+        var data = Data(header.utf8.prefix(80))
+        data.append(Data(count: 80 - data.count))
+        func append<T>(_ value: T) { withUnsafeBytes(of: value) { data.append(contentsOf: $0) } }
+        append(UInt32(facets.count).littleEndian)
+        for facet in facets {
+            for vector in [facet.normal] + facet.corners {
+                append(vector.x)
+                append(vector.y)
+                append(vector.z)
+            }
+            append(UInt16(0))  // 属性のバイト数 (使わない)
+        }
+        return data
+    }
+
     /// 検体を決まった場所へ 1 度だけ書き出す。
     private static func written(_ text: String, as name: String) -> String {
         let url = FileManager.default.temporaryDirectory
