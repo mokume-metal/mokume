@@ -3,8 +3,9 @@
 
 import Foundation
 
-/// 文字のファイルを読み書きする。文字列の行 (``Sketch/loadStrings(_:)``) と表
-/// (``Sketch/loadTable(_:header:)``) が共有する。
+/// 文字のファイルを読み書きする。文字列の行 (``Sketch/loadStrings(_:)``)・表
+/// (``Sketch/loadTable(_:header:)``)・JSON (``Sketch/loadJSONObject(_:)``)・XML
+/// (``Sketch/loadXML(_:)``) が共有する。
 ///
 /// **探すのは呼ぶ側** (``Sketch/assetURL(_:)``)。ここが受け取るのは場所が分かったファイルで、
 /// 名前 (`path`) は失敗を名乗るためだけに持ち回る。
@@ -22,6 +23,14 @@ nonisolated enum TextFile {
         } catch {
             throw .unreadable(path: path)
         }
+        return try text(of: data, path: path)
+    }
+
+    /// 受け取ったバイト列を UTF-8 の文字として解く。先頭の BOM は落とす。
+    ///
+    /// URL から受け取った本文 (``WebFile``) もここを通す。**ファイルと URL で読み方を
+    /// 分けない** — 同じ JSON が、置き場によって読めたり読めなかったりしないように。
+    static func text(of data: Data, path: String) throws(DataFailure) -> String {
         // Foundation の `String(data:encoding:)` ではなく標準ライブラリで解く。あちらは BOM を
         // 黙って落とすので、落とすことが読み方の約束なのか道具の都合なのかが、ここから読めない
         guard var text = String(validating: data, as: UTF8.self) else {
