@@ -17,7 +17,12 @@ import simd
     ///   外側の縁を左右へ分けるのにも読む。出っ張らせる端と向きの無い点の正方形は 1 枚目だけが置く
     /// - 円板の 8 分の 1 (`a.w` = 3): `a` が点、`b.x` が点の記録の位置、`b.y` が何番目か (0…7)。
     ///   画面で重なる点の腕を 1 本と数え、丸い端を置く点 (同じ平面に載る 4 点・``Canvas/mayMeetAsOneBand(_:_:_:_:)``)
-    ///   にだけ置く。円板は 16 枚の三角形で、CPU の `appendSolidDisc` と同じ角の並びである
+    ///   にだけ置く。円板は 16 枚の三角形で、CPU の `appendSolidDisc` の下限の分割数 (16) と同じ角の
+    ///   並びである。**骨は全部の太さで共有するので、片の数は太さで変えない** — 16 で足りない太さの
+    ///   丸い端は、骨を使わずに CPU の帯で組む (``Canvas/gpuStrokeGeometry(of:weight:cap:mesh:)``・#2011)。
+    ///   片の数 8 (`init(net:gpu:)` の `discs.count * 8` と `0..<8`) は下限 ``Canvas/solidDiscFloorSegments``
+    ///   の半分で、下限を変えるときは、`Shapes.metal` の `kSolidStrokeDisc[17]` と検査
+    ///   `SolidGPUStrokeTests.discUnitsMatchTheCPU` も揃える
     ///
     /// **点の記録は片の後ろに積む** (同じ置き場を `float4` の並びとして読む)。点 i の記録は
     /// `(点 i の位置, 辺の数)` に続けて、隣ごとに `(隣の位置, 隣の記録の位置)` を辺の順に並べる。
@@ -31,6 +36,8 @@ import simd
 
     let buffer: any MTLBuffer
     let count: Int
+    /// 端の円板の片 (`a.w` = 3) を持つか。持つのは、画面で 1 本になりうる点を持つ網だけである。
+    let placesRoundEnds: Bool
     private let gpu: RenderDevice
 
     /// 網から骨を作る。**作れなければ `nil`** — 呼ぶ側は CPU の帯へ戻る。
@@ -48,6 +55,7 @@ import simd
         else { return nil }
         let corners = points.filter { shared.degree(of: $0) > 0 }
         let discs = corners.filter { shared.mayEndAsOneBand($0) }
+        // 円板の片 8 つは下限の分割数の半分 (揃える相手は `Piece` の説明の円板の項)
         let pieceCount = net.edges.count + corners.count * 2 + discs.count * 8
         // 点の記録の位置 (`float4` の並びでの番号)
         var records = [Int](repeating: 0, count: net.points.count)
@@ -84,6 +92,7 @@ import simd
         }
         self.gpu = gpu
         count = pieces.count * 6
+        placesRoundEnds = !discs.isEmpty
         let pieceBytes = pieces.count * MemoryLayout<Piece>.stride
         buffer = try gpu.makeReadableBuffer(
             byteCount: pieceBytes + words.count * MemoryLayout<SIMD4<Float>>.stride)
@@ -180,7 +189,8 @@ extension Canvas {
     /// 既定の不透明な線だけを GPU で広げる。列を並べ替えず、既存の列の開閉を通す。
     func placeGPUStroke(of source: SolidSource, mesh: () -> SolidMesh) -> Bool {
         guard !recordingShape, gpuStrokeStyleAllows(source),
-            let (geometry, geometryScale) = gpuStrokeGeometry(of: source, mesh: mesh)
+            let (geometry, geometryScale) = gpuStrokeGeometry(
+                of: source, weight: style.strokeWeight, cap: style.strokeCap, mesh: mesh)
         else { return false }
         openGPUStroke(
             of: source, geometry: geometry, matrix: transform.matrix, weight: style.strokeWeight,
@@ -188,10 +198,35 @@ extension Canvas {
         return true
     }
 
-    /// 組み込みの形の稜線を GPU で広げる骨と、骨を元の寸法へ戻す倍率。**作れなければ `nil`**
-    /// — 呼ぶ側は CPU の帯へ戻る (開いた端の形・溶接の計算範囲の端にある球・置き場を
-    /// 確保できないとき)。
+    /// 組み込みの形の稜線を、太さ `weight`・端 `cap` で GPU で広げる骨と、骨を元の寸法へ戻す倍率。
+    /// **組めなければ `nil`** — 呼ぶ側は CPU の帯へ戻る (骨が作れない・置き場を確保できない・
+    /// 骨の円板では刻みが足りない)。その場で描く線と保持した形の線が、ここを通る。
+    ///
+    /// **骨の円板は 16 枚に決め打ちである** (``SolidStrokeGeometry/Piece``)。骨は形ごとに 1 つを
+    /// 全部の太さで共有するので、片の数を太さで変えられない。円板の片を持つ骨で、端が `.round` の
+    /// 線を組む太さ (細い線は広げた後の太さ) が下限の分割数で足りない (太さ 26.02 を超える) ときは、
+    /// CPU の帯で組む ([#2011])。CPU の円板は画面の半径で刻む (`appendSolidDisc`)。
+    ///
+    /// [#2011]: https://github.com/mokume-metal/mokume/issues/2011
     func gpuStrokeGeometry(
+        of source: SolidSource, weight: Float, cap: StrokeCap, mesh: () -> SolidMesh
+    ) -> (SolidStrokeGeometry, Float)? {
+        guard let (geometry, geometryScale) = sharedGPUStrokeGeometry(of: source, mesh: mesh) else {
+            return nil
+        }
+        if cap == .round, geometry.placesRoundEnds {
+            let built = weight * (gpuStrokeThin(weight)?.widen ?? 1)
+            guard Self.solidDiscSegments(half: built / 2) <= Self.solidDiscFloorSegments else {
+                return nil
+            }
+        }
+        return (geometry, geometryScale)
+    }
+
+    /// 組み込みの形の稜線を GPU で広げる骨と、骨を元の寸法へ戻す倍率。骨は太さによらず、形ごとに
+    /// 1 つを控えて共有する。**作れなければ `nil`** (開いた端の形・溶接の計算範囲の端にある球・
+    /// 置き場を確保できないとき)。
+    private func sharedGPUStrokeGeometry(
         of source: SolidSource, mesh: () -> SolidMesh
     ) -> (SolidStrokeGeometry, Float)? {
         let key: SolidSource
@@ -235,9 +270,7 @@ extension Canvas {
     ) {
         beginSolids()
         closeBatch()
-        // **細さは置く面で判断する** (#1637)。描く画素で 1 画素より細い線は、広げた太さで
-        // 帯を組み、被覆を置き場所に持たせる (CPU の帯と同じ補い・``ThinStroke``)
-        let thin = ThinStroke(drawnWeight: drawnSolidWeight(weight), isPoint: false)
+        let thin = gpuStrokeThin(weight)
         let placement = SolidStrokePlacement(
             matrix: matrix, camera: currentCamera, height: height,
             weight: weight * (thin?.widen ?? 1), cap: cap, color: color, uv: uv,
@@ -248,5 +281,13 @@ extension Canvas {
             strokeGeometry: geometry, strokePlacement: placement)
         solidInstances.append(.identity)
         if thin != nil { openBatchHasThinCoverage = true }
+    }
+
+    /// GPU で広げる太さ `weight` の線の補い。**細さは置く面で判断する** (#1637)。描く画素で 1 画素
+    /// より細い線は、広げた太さで帯を組み、被覆を置き場所に持たせる (CPU の帯と同じ補い・
+    /// ``ThinStroke``)。組む太さは、骨の円板で足りるか (``gpuStrokeGeometry(of:weight:cap:mesh:)``)
+    /// と置き場所 (``openGPUStroke``) の 2 か所が同じものを読む。
+    private func gpuStrokeThin(_ weight: Float) -> ThinStroke? {
+        ThinStroke(drawnWeight: drawnSolidWeight(weight), isPoint: false)
     }
 }

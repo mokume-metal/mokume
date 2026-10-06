@@ -724,6 +724,10 @@ extension Canvas {
         let shape: [SIMD3<Float>]
         let edges: [(Int, Int)]
         var curveSteps: [Bool] = []
+        let half = style.strokeWeight / 2
+        let camera = StrokeCamera(currentCamera)
+        // 円板の周の点は線 1 本で 1 度だけ求める (太さは線の中で変わらない・#2011)
+        let discUnits = Self.solidDiscUnits(half: half)
         switch source {
         case let .ring(points, shapePoints, isClosed, steps):
             world = points
@@ -732,10 +736,9 @@ extension Canvas {
             let count = points.count
             if count == 1 {
                 // 点が 1 つだけなら、向きの無い端点の形そのものを置く (平面の周と同じ)
-                let camera = StrokeCamera(currentCamera)
-                let half = style.strokeWeight / 2
                 if style.strokeCap == .round {
-                    appendSolidDisc(at: world[0], shape: shape[0], half: half, camera: camera)
+                    appendSolidDisc(
+                        at: world[0], shape: shape[0], half: half, units: discUnits, camera: camera)
                 } else {
                     appendSolidSquare(at: world[0], shape: shape[0], half: half, camera: camera)
                 }
@@ -756,8 +759,6 @@ extension Canvas {
             shape = net.points
             edges = net.edges
         }
-        let half = style.strokeWeight / 2
-        let camera = StrokeCamera(currentCamera)
         strokeNet(
             count: world.count, edges: edges, curveSteps: curveSteps,
             samePoint: { world[$0] == world[$1] },
@@ -770,7 +771,9 @@ extension Canvas {
             band: {
                 appendSolidBand(world[$0], world[$1], shape: (shape[$0], shape[$1]), half: half, camera: camera)
             },
-            disc: { appendSolidDisc(at: world[$0], shape: shape[$0], half: half, camera: camera) },
+            disc: {
+                appendSolidDisc(at: world[$0], shape: shape[$0], half: half, units: discUnits, camera: camera)
+            },
             square: { appendSolidSquare(at: world[$0], shape: shape[$0], half: half, camera: camera) },
             corner: { index, first, second in
                 buildSolidJoin(
@@ -935,13 +938,28 @@ extension Canvas {
         return camera.isPerspective ? SIMD2(-normal.y, normal.x) : SIMD2(normal.y, -normal.x)
     }
 
-    /// 視線に正対する円板を置く (丸い端点と丸い角)。
+    /// 視線に正対する円板を置く (丸い端点と丸い角・曲線の刻み)。
+    ///
+    /// **周は、画面に出る半径で刻む** ([#2011])。立体の線は太さを画面の画素 (出す画素) で測り、
+    /// 奥にあるものほど世界では広く組むので、画面の半径は太さの半分 `half` そのもので、置き場所の
+    /// 変換の拡大は掛からない。分割数は平面の円板と同じ式 (``segmentCount(forRadius:scale:)``) で
+    /// 決める — 円周と多角形の隔たりは 0.25 画素以下で、上限は 1024 である。**下限は 16 に残す**
+    /// (``solidDiscSegments(half:)``): 式が 16 未満を返す半径 13.01 画素 (太さ 26.02) 以下の円板は、
+    /// 決め打ちの 16 角形だった頃と 1 ビットも変わらない。分割数を 16 に決め打ちしていた頃は、
+    /// 太さ 60 の丸い端が画面で 0.58 画素角ばっていた。
+    ///
+    /// 周の点 `units` は、呼ぶ側が線 1 本につき 1 度だけ求めて渡す (``solidDiscUnits(half:)``)。
+    /// GPU の骨の円板は 16 角形だけを持つ (``SolidStrokeGeometry``)。16 で足りない太さの丸い端は、
+    /// GPU で組まずにここで組む (``gpuStrokeGeometry(of:weight:cap:mesh:)``)。
+    ///
+    /// [#2011]: https://github.com/mokume-metal/mokume/issues/2011
     private func appendSolidDisc(
-        at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
+        at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, units: [SIMD2<Float>],
+        camera: StrokeCamera
     ) {
         let radius = half * camera.worldPerPixel(at: center, height: height)
         var previous = center + camera.right * radius
-        for unit in Self.solidDiscUnits.dropFirst() {
+        for unit in units.dropFirst() {
             let current = center + (camera.right * unit.x + camera.down * unit.y) * radius
             appendSolidStrokeTriangle(
                 center, previous, current, shape: (shape, shape, shape), camera: camera)
@@ -949,14 +967,52 @@ extension Canvas {
         }
     }
 
-    /// 円板の周の 16 等分の点の向き (画面の横と縦の成分)。0 番は横そのもので、i 番は角 2πi/16 の
-    /// `cos` / `sin`。**GPU の骨の円板 (`Shapes.metal` の `kSolidStrokeDisc`) は、この値を書き写して
-    /// 持つ** — 三角関数は GPU と CPU で丸めが違うので、同じ角の点を同じ値で置くため (#1893)。
-    nonisolated static let solidDiscUnits: [SIMD2<Float>] = (0...16).map { step in
-        guard step > 0 else { return SIMD2(1, 0) }
-        let angle = 2 * Float.pi * Float(step) / 16
-        return SIMD2(cos(angle), sin(angle))
+    /// 立体の線の円板の、一周の分割数 ([#2011])。`half` は画面の半径 (太さの半分・出す画素)。
+    ///
+    /// 平面の円板と同じ式 (``segmentCount(forRadius:scale:)``。拡大率は 1 — 立体の線の太さは、もう
+    /// 画面の画素である) を、下限 ``solidDiscFloorSegments`` で抑える。数でない・負の半径は式が 3 を
+    /// 返すので、下限に倒れる。
+    ///
+    /// [#2011]: https://github.com/mokume-metal/mokume/issues/2011
+    static func solidDiscSegments(half: Float) -> Int {
+        max(solidDiscFloorSegments, segmentCount(forRadius: half, scale: 1))
     }
+
+    /// 立体の線の円板の分割数の下限で、GPU の骨の円板の分割数 ([#2011])。
+    ///
+    /// 下限を残すのは、細い線の円板を粗くしないためである。式どおりに決めると太さ 1 の円板は
+    /// 3 分割になり、太さ 26 以下の立体の線の絵がすべて動く。
+    ///
+    /// **GPU の骨の円板も、この数に決め打ちである。** 変えるときは、ほかの 2 か所 —
+    /// ``SolidStrokeGeometry`` の円板の片の数 (網の点ごとに 8 つ = この数の半分。`init(net:gpu:)`)
+    /// と、`Shapes.metal` の周の点の表 `kSolidStrokeDisc[17]` (この数 + 1 個) — と、検査
+    /// `SolidGPUStrokeTests.discUnitsMatchTheCPU` (表の宣言 `kSolidStrokeDisc[17]` を読む) も揃える。
+    /// 揃えなければ、その検査が赤になる。
+    nonisolated static let solidDiscFloorSegments = 16
+
+    /// 円板の周の点の向き (画面の横と縦の成分)。半径 `half` の円板を ``solidDiscSegments(half:)``
+    /// で刻んだ ``solidDiscUnits(segments:)``。下限の分割数なら、控えておいた表を返す。
+    static func solidDiscUnits(half: Float) -> [SIMD2<Float>] {
+        let segments = solidDiscSegments(half: half)
+        return segments == solidDiscFloorSegments
+            ? solidDiscFloorUnits : solidDiscUnits(segments: segments)
+    }
+
+    /// 一周を `segments` 等分した円板の周の点の向き (画面の横と縦の成分)。点は `segments + 1` 個で、
+    /// 0 番は横そのもの、i 番は角 2πi/`segments` の `cos` / `sin` (最後の点は一周した点で、0 番と
+    /// 丸めの差しか違わない)。
+    nonisolated static func solidDiscUnits(segments: Int) -> [SIMD2<Float>] {
+        (0...segments).map { step in
+            guard step > 0 else { return SIMD2(1, 0) }
+            let angle = 2 * Float.pi * Float(step) / Float(segments)
+            return SIMD2(cos(angle), sin(angle))
+        }
+    }
+
+    /// 下限の分割数 (16) の円板の周の点。**GPU の骨の円板 (`Shapes.metal` の `kSolidStrokeDisc`) は、
+    /// この値を書き写して持つ** — 三角関数は GPU と CPU で丸めが違うので、同じ角の点を同じ値で置く
+    /// ため (#1893)。GPU が円板を描くのは、分割数が下限で足りる太さだけである (#2011)。
+    nonisolated static let solidDiscFloorUnits = solidDiscUnits(segments: solidDiscFloorSegments)
 
     /// 視線に正対する、丸めない折れ目の形を置く ([#1644])。
     ///
