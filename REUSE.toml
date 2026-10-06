@@ -43,6 +43,10 @@ path = [
   "Package.resolved",
   "Schemas/examples/observe-request-time.json",
   "Schemas/examples/observe-report-time.json",
+  # 参照スケッチが読むデータ (式で合成した値)。CSV はコメントを持てず、文字のファイルは
+  # 1 行ずつ読んで描くので、ヘッダを置くと絵に出る
+  "Sketches/data/temperatures.csv",
+  "Sketches/data/temperatures.txt",
   ".claude/settings.json",
   ".github/workflows/ci.yml",
   ".github/workflows/pages.yml",
