@@ -49,13 +49,6 @@ Sources/MokumeCore/Sketch/Sketch+Particles.swift: force(_:_:) (Particles, Force.
 Sources/MokumeCore/Sketch/Sketch+Particles.swift: particles(_:) (Particles)
 Sources/MokumeCore/Sketch/Sketch+Pixels.swift: pixels
 Sources/MokumeCore/Sketch/Sketch+Pixels.swift: loadPixels()
-Sources/MokumeCore/Sketch/Sketch+Random.swift: random()
-Sources/MokumeCore/Sketch/Sketch+Random.swift: random(_:) (some ScalarConvertible)
-Sources/MokumeCore/Sketch/Sketch+Random.swift: random(_:_:) (some ScalarConvertible, some ScalarConvertible)
-Sources/MokumeCore/Sketch/Sketch+Random.swift: randomSeed(_:) (Int)
-Sources/MokumeCore/Sketch/Sketch+Random.swift: noise(_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
-Sources/MokumeCore/Sketch/Sketch+Random.swift: noiseSeed(_:) (Int)
-Sources/MokumeCore/Sketch/Sketch+Random.swift: noiseDetail(_:_:) (Int, some ScalarConvertible)
 Sources/MokumeCore/Sketch/Sketch+Save.swift: save(_:) (String)
 Sources/MokumeCore/Sketch/Sketch+Save.swift: beginRecord(_:) (String)
 Sources/MokumeCore/Sketch/Sketch+Save.swift: endRecord()
