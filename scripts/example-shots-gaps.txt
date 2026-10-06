@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 例も撮れない宣言も持たない `Sketch` の公開メンバの許容一覧 (#2116)。
+#
+# **既存の穴を載せて、検査を緑のまま通すための一覧で、減る方向にしか動かない。**
+# 読むのは scripts/example-shots.py (make example-shots-check)。書き方・見る範囲・赤に
+# なる条件は、そのスクリプトの冒頭が正典で、ここには写さない。
+#
+# 手を入れるのは次の 2 つだけである。
+#
+# - 例か撮れない宣言を付けた口の行を **消す** (消さないと検査が赤になる)
+# - 口の綴り (引数の型) を変えた・口を消したときに、その行を書き直す・消す
+#
+# **新しい口をここへ足さない。** 足せば検査は緑になるが、足すことで穴が増える。
+# 例を足せない理由があるなら、口の説明文の下に `// shot: 撮れない <理由>` と書く。
+# 例と囲みは書けるが Gyazo の鍵が無くて撮れないだけなら、`// shot: 後で撮る` で通る。
+#
+# 1 行 1 口で、`ファイル: 名前 (引数の型, …)`。# で始まる行と空行は読まない。
+# 並びはソースの順 (ファイル名、その中の宣言の順)。
+
+Sources/MokumeCore/Sketch/Sketch+Asset.swift: assetURL(_:) (String)
+Sources/MokumeCore/Sketch/Sketch+Brightness.swift: exposure(_:) (some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Brightness.swift: toneMapping(_:) (ToneMapping)
+Sources/MokumeCore/Sketch/Sketch+Camera.swift: currentCamera
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: makeNumbers(count:) (Int)
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: makeComputation(_:name:values:) (String, String, [String: ShaderValue])
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: loadComputation(_:values:) (String, [String: ShaderValue])
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: compute(_:over:reads:writes:) (Computation, Int, [Numbers], [Numbers])
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: numbers(_:) (Numbers)
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: resetNumbers()
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: compute(_:over:by:reads:writes:) (Computation, Int, Int, [Numbers], [Numbers])
+Sources/MokumeCore/Sketch/Sketch+Compute.swift: read(_:) (Numbers)
+Sources/MokumeCore/Sketch/Sketch+Effects.swift: effects(_:) ([Effect])
+Sources/MokumeCore/Sketch/Sketch+Effects.swift: makeEffect(_:name:values:) (String, String, [String: ShaderValue])
+Sources/MokumeCore/Sketch/Sketch+Effects.swift: loadEffect(_:values:) (String, [String: ShaderValue])
+Sources/MokumeCore/Sketch/Sketch+Graphics.swift: texture(_:) (Image)
+Sources/MokumeCore/Sketch/Sketch+Graphics.swift: texture(_:) (Canvas)
+Sources/MokumeCore/Sketch/Sketch+Graphics.swift: noTexture()
+Sources/MokumeCore/Sketch/Sketch+Image.swift: loadImage(_:) (String)
+Sources/MokumeCore/Sketch/Sketch+Image.swift: requestImage(_:) (String)
+Sources/MokumeCore/Sketch/Sketch+Loop.swift: noLoop()
+Sources/MokumeCore/Sketch/Sketch+Loop.swift: loop()
+Sources/MokumeCore/Sketch/Sketch+Loop.swift: redraw()
+Sources/MokumeCore/Sketch/Sketch+Model.swift: loadModel(_:normalize:) (String, Bool)
+Sources/MokumeCore/Sketch/Sketch+Model.swift: requestModel(_:normalize:) (String, Bool)
+Sources/MokumeCore/Sketch/Sketch+Model.swift: model(_:) (Model)
+Sources/MokumeCore/Sketch/Sketch+Particles.swift: makeParticles(count:) (Int)
+Sources/MokumeCore/Sketch/Sketch+Particles.swift: emit(_:from:rate:speed:angle:life:size:color:) (Particles, Emitter, Float, ClosedRange<Float>, ClosedRange<Float>, ClosedRange<Float>, ClosedRange<Float>, LinearRGBA?)
+Sources/MokumeCore/Sketch/Sketch+Particles.swift: force(_:_:) (Particles, Force...)
+Sources/MokumeCore/Sketch/Sketch+Particles.swift: particles(_:) (Particles)
+Sources/MokumeCore/Sketch/Sketch+Pixels.swift: pixels
+Sources/MokumeCore/Sketch/Sketch+Pixels.swift: loadPixels()
+Sources/MokumeCore/Sketch/Sketch+Random.swift: random()
+Sources/MokumeCore/Sketch/Sketch+Random.swift: random(_:) (some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Random.swift: random(_:_:) (some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Random.swift: randomSeed(_:) (Int)
+Sources/MokumeCore/Sketch/Sketch+Random.swift: noise(_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Random.swift: noiseSeed(_:) (Int)
+Sources/MokumeCore/Sketch/Sketch+Random.swift: noiseDetail(_:_:) (Int, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Save.swift: save(_:) (String)
+Sources/MokumeCore/Sketch/Sketch+Save.swift: beginRecord(_:) (String)
+Sources/MokumeCore/Sketch/Sketch+Save.swift: endRecord()
+Sources/MokumeCore/Sketch/Sketch+Screen.swift: screenX(_:_:) (some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Screen.swift: screenY(_:_:) (some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Screen.swift: screenX(_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Screen.swift: screenY(_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Screen.swift: screenZ(_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Screen.swift: spacePosition(screenX:screenY:depth:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Seams.swift: attach(_:) (any Inlet)
+Sources/MokumeCore/Sketch/Sketch+Seams.swift: attach(_:) (any Outlet)
+Sources/MokumeCore/Sketch/Sketch+Seams.swift: detach(_:) (any Inlet)
+Sources/MokumeCore/Sketch/Sketch+Seams.swift: detach(_:) (any Outlet)
+Sources/MokumeCore/Sketch/Sketch+Shader.swift: loadShader(_:values:surfaces:) (String, [String: ShaderValue], [String: ShaderSurface])
+Sources/MokumeCore/Sketch/Sketch+Shader.swift: makeShader(_:name:values:surfaces:) (String, String, [String: ShaderValue], [String: ShaderSurface])
+Sources/MokumeCore/Sketch/Sketch+Shader.swift: shader(_:) (Shader)
+Sources/MokumeCore/Sketch/Sketch+Shader.swift: resetShader()
+Sources/MokumeCore/Sketch/Sketch+Shape.swift: createShape(_:) (() -> Void)
+Sources/MokumeCore/Sketch/Sketch+Shape.swift: shape(_:at:) (Shape, [Placement])
+Sources/MokumeCore/Sketch/Sketch+Shape.swift: shape(_:_:_:) (Shape, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Style.swift: clip(_:_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Style.swift: noClip()
+Sources/MokumeCore/Sketch/Sketch+Style.swift: pushStyle()
+Sources/MokumeCore/Sketch/Sketch+Style.swift: popStyle()
+Sources/MokumeCore/Sketch/Sketch+Vertices.swift: vertex(_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Vertices.swift: vertex(_:_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Vertices.swift: vertex(_:_:_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)
+Sources/MokumeCore/Sketch/Sketch+Vertices.swift: normal(_:_:_:) (some ScalarConvertible, some ScalarConvertible, some ScalarConvertible)

@@ -12,8 +12,16 @@ import Testing
 /// **待たない経路 (表示) を挟んだときが本番。** 描画と読み戻しは GPU の完了まで待つので、
 /// その 2 つだけを回しても規律は勝手に守られてしまい、検査が何も見ないまま緑になる
 /// ([#222](https://github.com/mokume-metal/mokume/issues/222))。
+///
+/// **suite の中は直列に走らせる** ([#1999](https://github.com/mokume-metal/mokume/issues/1999))。
+/// GPU を長く占める `spin` を並列の検査が同時に何本も積むと、GPU が command buffer を hang と
+/// 判定して打ち切る (`kIOGPUCommandBufferCallbackErrorHang`)。立て直しでは同じ時刻に GPU に
+/// いた**別の検査の仕事まで捨てられ** (`InnocentVictim`)、関係の無い suite が赤くなる。GPU は
+/// 画面の描画と共有なので、重なれば WindowServer ごと止まる。回転を短くすると「まだ終わって
+/// いない」を構造で作れなくなるので、回数は変えずに積む本数のほうを 1 本にする。
 @Suite(
     "コマンドの置き場",
+    .serialized,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
@@ -73,6 +81,8 @@ struct CommandAllocatorTests {
     func waitsBetweenUnwaitedFlushAndPresent() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
         let gpu = try RenderDevice(device: device, slotCount: 1)
+        // 回転を投入したまま返らない (FrameSyncTests の Bench.leaveIdle と同じ・#1063・#1999)
+        defer { gpu.settleQuietly(orWarn: "検査の後片付けで GPU を待てなかった") }
         let target = try RenderTarget(gpu: gpu, width: 64, height: 64)
         let canvas = try Canvas(target: target, gpu: gpu)
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
@@ -210,7 +220,12 @@ struct CommandAllocatorTests {
         leftOpen = nil
         try target.fill(with: Self.red)
         #expect(try target.readPixels()[0, 0] == Self.red)
-        #expect(gpu.commandFaultCount == 0, "GPU が仕事を打ち切った: \(gpu.lastCommandFault ?? "")")
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。開いたまま捨てたコマンドや、
+        // GPU が読んでいる置き場を巻き戻せば、絵より先に打ち切りとして現れる。別の投入の
+        // 巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            gpu.commandFaultCount == 0,
+            "GPU が仕事を \(gpu.commandFaultCount) 回打ち切った: \(gpu.lastCommandFault ?? "")")
     }
 
     /// **実在の経路で投げる** — 描き切りの途中、組み立てを始めた後で。伸びる置き場は
@@ -246,7 +261,12 @@ struct CommandAllocatorTests {
 
         try canvas.draw { canvas.background(Self.red) }
         #expect(try target.readPixels()[0, 0] == Self.red)
-        #expect(gpu.commandFaultCount == 0, "GPU が仕事を打ち切った: \(gpu.lastCommandFault ?? "")")
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。開いたまま捨てたコマンドや、
+        // GPU が読んでいる置き場を巻き戻せば、絵より先に打ち切りとして現れる。別の投入の
+        // 巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            gpu.commandFaultCount == 0,
+            "GPU が仕事を \(gpu.commandFaultCount) 回打ち切った: \(gpu.lastCommandFault ?? "")")
     }
 
     /// **投入した後で投げたものは、捨てたことにしない。** 待つ投入 (`commitAndWait`) は

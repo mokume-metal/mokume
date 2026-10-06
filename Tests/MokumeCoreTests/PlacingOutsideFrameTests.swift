@@ -211,7 +211,8 @@ struct PlacingOutsideFrameTests {
         [
             canvas.vertices.count, canvas.solidVertices.count, canvas.solidIndices.count,
             canvas.solidInstances.count, canvas.formInstances.count, canvas.flatInstances.count,
-            canvas.recordedStrokeRanges.count, canvas.recordedSolidStrokes.count,
+            canvas.recordedStrokeRanges.count, canvas.recordedFillRanges.count,
+            canvas.recordedSolidStrokes.count,
             canvas.placedGraphics.count, canvas.hasPendingDrawing ? 1 : 0,
         ]
     }
@@ -363,8 +364,11 @@ struct PlacingOutsideFrameTests {
     }
 
     /// 描き場所で `beginDraw()` を 1 度だけ書き、`endDraw()` を忘れる。そのフレームは本体の
-    /// フレームの境目を越えた時点で区間ではなくなる (次の `beginDraw()` が捨てる・#1622)。置ける
+    /// 次のフレームの頭で描かずに捨てられ、描き場所はフレームの外に居る (#1622・#1834)。置ける
     /// ままにすると、描き切りが来ないまま溜まり続ける (#1592 と同じ形・#1672 の反証 2 回目の 1)。
+    ///
+    /// **1 枚目に置いたものも、2 枚目の頭で捨てる** (#1834)。以前は次の `beginDraw()` まで捨てず、
+    /// 1 枚目の 1 つが溜め場に残っていた。
     @Test("閉じ忘れたまま本体のフレームを越えた描き場所には、置いても溜まらない")
     func aFrameLeftOpenPastTheMainFrameTakesNothing() throws {
         let gpu = try RenderDevice()
@@ -381,10 +385,11 @@ struct PlacingOutsideFrameTests {
                 for _ in 0..<100 { layer.circle(8, 8, 6) }
                 host.image(layer, 0, 0)
             }
-            #expect(layer.formInstances.count == placedInFirst, "\(frame) 枚目で積み足した")
+            #expect(layer.formInstances.count == 0, "\(frame) 枚目で積み足した、または 1 枚目の分が残った")
         }
         #expect(placedInFirst == 1, "同じ本体のフレームの中では置ける")
         #expect(layer.warnings.hasWarned(.placingOutsideFrame))
+        #expect(layer.warnings.hasWarned(.unfinishedFrameDropped), "本体の頭で捨てていない")
     }
 
     @Test("直に使う Canvas で、draw { } の外で置いた円は次の draw { } に出ない")

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/check-docs-links.py の検査 (#90)。
+"""scripts/check-docs-links.py の検査 (#90・#2015・#2072)。
 
 この検査が守るのは 2 つで、向きが逆なので両方を固定する。
 
-- **指し先の無いリンクは赤い** — 参照先のファイルが無い、見出しが無い
+- **指し先の無いリンクは赤い** — 参照先のファイルが無い、見出しが無い、参照先が
+  `git add -A` の後の木に無い (無視されている・リポジトリの外)
 - **書き方の例示では赤くならない** — コード塊の中のリンク、外部 URL
 
 後者を落とすと直しようのない赤が出て、規範文書にコマンド例を書けなくなる。
@@ -13,11 +14,12 @@
 コマンド例を大量に含む規範文書なので、偽陽性の害は本物の切れより大きい。
 
 一時ディレクトリに小さな git リポジトリを組んで実行する (検査は
-`git ls-files` で対象を集めるため、追跡下に置かないと何も見ない)。
-実行は make hooks-test (CI もこれを呼ぶ)。
+`git ls-files` で対象を集めるため、追跡下か、追跡されていないが無視もされていない
+場所に置かないと何も見ない)。実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
 import importlib.util
+import os
 import subprocess
 import tempfile
 import unittest
@@ -54,8 +56,10 @@ class DocsLinksTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
-    def run_check(self):
-        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+    def run_check(self, add=True):
+        # 既定は `git add -A` の後 (= CI が見る木)。`add=False` は add の前の手元
+        if add:
+            subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
         return subprocess.run(
             ["python3", str(SCRIPT)], cwd=self.root, capture_output=True, text=True
         )
@@ -153,6 +157,152 @@ class DocsLinksTest(unittest.TestCase):
         self.write("a.md", "# a\n\n[空白入り](name%20with%20space.md)\n")
         self.write("name with space.md", "# n\n")
         self.assertEqual(self.run_check().returncode, 0)
+
+    # --- 列挙: git add の前後・実在しないパス・名前の癖 (#2015) ---
+    # 基準は「git add -A したときに CI の木になるもの」。手元の緑が add の有無で
+    # 変わると、push して初めて CI で赤になる
+
+    def test_untracked_markdown_is_checked_before_git_add(self):
+        self.write("docs/new.md", "# new\n\n[壊れた](./nope.md)\n")
+        before = self.run_check(add=False)
+        self.assertEqual(before.returncode, 1, before.stdout)
+        self.assertIn("docs/new.md:3", before.stderr)
+        # add の後も同じ行が赤になる
+        after = self.run_check()
+        self.assertEqual(after.returncode, 1)
+        self.assertIn("docs/new.md:3", after.stderr)
+
+    def test_ignored_markdown_is_not_checked(self):
+        # 生成物や手元の書き捨ては CI の木に入らない。拾うと他人の手元で結果が変わる
+        self.write(".gitignore", "scratch.md\n")
+        self.write("scratch.md", "# s\n\n[壊れた](nope.md)\n")
+        self.write("a.md", "# a\n")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_removed_tracked_markdown_is_skipped_not_reported_unreadable(self):
+        # `git rm` していない削除は index に旧パスが残る。読めないと名乗って赤にしない
+        self.write("a.md", "# a\n")
+        self.write("gone.md", "# gone\n")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        (self.root / "gone.md").unlink()
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("読めない", r.stderr)
+
+    def test_broken_symlink_is_skipped(self):
+        # エディタの退避リンク (`.#a.md`) は先が無いまま未追跡で残る
+        self.write("a.md", "# a\n")
+        (self.root / ".#a.md").symlink_to("nowhere.md")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("読めない", r.stderr)
+
+    def test_name_with_space_is_checked(self):
+        self.write("name with space.md", "# n\n\n[壊れた](nope.md)\n")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("name with space.md:3", r.stderr)
+
+    def test_non_ascii_name_is_checked(self):
+        # core.quotePath の既定では、非 ASCII の名前は C 引用符つきで返る。
+        # その形のまま読もうとすると、実在するファイルを「読めない」と名乗る
+        subprocess.run(
+            ["git", "config", "core.quotePath", "true"], cwd=self.root, check=True
+        )
+        self.write("日本語.md", "# n\n\n[壊れた](nope.md)\n")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("日本語.md:3", r.stderr)
+        self.assertNotIn("読めない", r.stderr)
+
+    # --- リンク先の存在: 作業ツリーではなく add -A の後の木で見る (#2072) ---
+    # 作業ツリーに在るだけでは足りない。無視されたファイルは手元に在っても CI の木に無い
+
+    def test_link_to_ignored_file_is_reported(self):
+        self.write(".gitignore", "out/\n")
+        self.write("out/report.txt", "生成物\n")
+        self.write("a.md", "# a\n\n[生成物](out/report.txt)\n")
+        before = self.run_check(add=False)
+        self.assertEqual(before.returncode, 1, before.stdout)
+        self.assertIn("a.md:3", before.stderr)
+        self.assertIn("無視", before.stderr)
+        after = self.run_check()
+        self.assertEqual(after.returncode, 1, after.stdout)
+        self.assertIn("a.md:3", after.stderr)
+
+    def test_link_to_ignored_directory_is_reported(self):
+        # ディレクトリの下に CI の木のファイルが 1 つも無ければ、CI では無い
+        self.write(".gitignore", "out/\n")
+        self.write("out/report.txt", "生成物\n")
+        self.write("a.md", "# a\n\n[生成物の置き場](out/)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("a.md:3", r.stderr)
+        self.assertIn("無視", r.stderr)
+
+    def test_link_to_ignored_markdown_anchor_is_reported(self):
+        # アンカーを見る前に木を見る。見出しが在っても CI の木に無ければ赤
+        self.write(".gitignore", "notes.md\n")
+        self.write("notes.md", "# notes\n\n## 節\n")
+        self.write("a.md", "# a\n\n[節](notes.md#節)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("a.md:3", r.stderr)
+
+    def test_link_with_wrong_case_is_reported_as_case_not_ignored(self):
+        # 大文字小文字を区別しない FS (macOS の既定) では手元に在ると読めてしまうが、
+        # GitHub と CI の木は区別するので切れている。理由を「無視」と名乗らない
+        self.write("docs/Guide.md", "# guide\n")
+        self.write("a.md", "# a\n\n[案内](docs/guide.md)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("a.md:3", r.stderr)
+        self.assertNotIn("無視", r.stderr)
+        if (self.root / "docs" / "guide.md").exists():
+            # 区別しない FS でだけ「在るのに木に無い」の分岐を通る
+            self.assertIn("大文字小文字", r.stderr)
+            self.assertIn("docs/Guide.md", r.stderr)
+
+    def test_link_to_empty_directory_is_not_reported_as_ignored(self):
+        # 空のディレクトリは手元に在るが git が持たない。無視されているわけではない
+        (self.root / "empty").mkdir()
+        self.write("a.md", "# a\n\n[空](empty/)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("a.md:3", r.stderr)
+        self.assertNotIn("無視", r.stderr)
+
+    def test_link_outside_repository_is_reported(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (Path(outside.name) / "x.md").write_text("# x\n", encoding="utf-8")
+        rel = os.path.relpath(Path(outside.name) / "x.md", self.root)
+        self.write("a.md", f"# a\n\n[外]({rel})\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("リポジトリの外", r.stderr)
+
+    def test_link_to_untracked_file_passes_before_git_add(self):
+        # 未追跡でも無視されていなければ add -A で CI の木に入る
+        self.write("a.md", "# a\n\n[新しい](new.txt)\n[新しい置き場](sub/)\n")
+        self.write("new.txt", "x\n")
+        self.write("sub/x.txt", "x\n")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_link_through_tracked_symlink_passes(self):
+        # .agents/skills/* → .claude/skills/* の形。symlink は先へ辿ってから木と比べる
+        self.write("real/doc.md", "# doc\n\n## 節\n")
+        (self.root / "alias").symlink_to("real")
+        self.write("a.md", "# a\n\n[辿る](alias/doc.md#節)\n[置き場](alias/)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_link_to_repository_root_passes(self):
+        self.write("sub/a.md", "# a\n\n[ルート](../)\n[ルート起点](/)\n")
+        r = self.run_check()
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     # --- 行番号 ---
 

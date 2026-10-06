@@ -148,8 +148,8 @@ public final class Particles {
     /// `Shaders/Computations/Particles.metal` の冒頭にある。
     ///
     ///   [0…15] いまの変換 (4x4) / [16] 1 フレームの長さ (秒) / [17] フレーム番号 /
-    ///   [18] 効かせる力の数 / [19] スキャンの段の数 / [20] 描く頂点の頭 /
-    ///   [21] 描く頂点の数 / [22…26] 段 0…4 の置き場の頭 /
+    ///   [18] 効かせる力の数 / [19] スキャンの段の数 / [20] 予備 (かつての描く頂点の頭。
+    ///   いまは使わない — 下の `write`) / [21] 描く頂点の数 / [22…26] 段 0…4 の置き場の頭 /
     ///   [27…35] 視点の枠 (横・上・手前を 3 つずつ。``Camera/basis``) /
     ///   [36] 寿命を 1 回で減らす量 (``lifeStep(of:)``) / [37…39] 予備 /
     ///   [40…] 力 (1 つ ``Force/slotCount`` 個)
@@ -206,6 +206,8 @@ public final class Particles {
     private(set) var draws: [Draw]
     /// 組ごとに、最後に使った面と、そのときの面の描き切りの印 (``Canvas/settleMark``)。
     /// 印が変わった組は、書いた指定を読む計算も、置き場所を読む列も投入か破棄を済ませている。
+    /// ただし途中の描き切りから持ち越した落とす列 (#1656) は、印が変わった後も置き場所を読むので、
+    /// 使い回す前に面へ尋ねる (``claimDraw(by:)``)。
     private var claims: [(canvas: Weak<Canvas>, mark: Canvas.SettleMark)?]
 
     /// 先頭の組の置き場所。
@@ -478,9 +480,20 @@ public final class Particles {
     ///
     /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
     func claimDraw(by canvas: Canvas) throws(RenderFailure) -> Draw {
-        let free = claims.firstIndex { claim in
-            guard let claim, let owner = claim.canvas.value else { return true }
-            return owner.settleMark != claim.mark
+        // **持ち越した落とす列が読む組は空いていない** ([#1656])。途中の描き切りの後も、フレームの
+        // 終わりの焼き付けがその組の置き場所を読む (``Canvas/keepsCaster(reading:)``)
+        //
+        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        var free: Int?
+        for (index, claim) in claims.enumerated() {
+            guard let claim, let owner = claim.canvas.value else {
+                free = index
+                break
+            }
+            if owner.settleMark != claim.mark, !owner.keepsCaster(reading: draws[index].instances) {
+                free = index
+                break
+            }
         }
         let index: Int
         if let free {
@@ -594,10 +607,12 @@ public final class Particles {
 
     /// 粒を `count` 個置く。
     ///
-    /// **待たない。** 状態の並びへの書き込みは控えに積まれ、描き切りが計算より前に
-    /// GPU 側のコピーで届ける ([#749])。前のフレームの計算がまだ同じ並びを読み書き
-    /// していても、コピーはそれが終わってから走る — かつては書く直前に投入済みの全部を
-    /// 待っていて、粒を使うフレームでは CPU と GPU が重ならなかった。
+    /// **待たない。** 状態の並びへの書き込みは控えに積まれ、次の描き切り (か読み戻し) が GPU 側の
+    /// コピーで届ける ([#749])。届くのは、書く前に頼んだ計算 (このフレームで先に呼んだ
+    /// `particles()` の刻み) の後で、書いた後に頼んだ計算の前である — 書く前に頼んだ計算は、書く口が
+    /// 先に投入する ([#1687])。先に投入した計算がまだ同じ並びを読み書きしていても、コピーはそれが
+    /// 終わってから走る (計算の最後の口が待たせる) — かつては書く直前に投入済みの全部を待っていて、
+    /// 粒を使うフレームでは CPU と GPU が重ならなかった。
     ///
     /// 枠と寿命はここで進む。控えは描き切りが待てなくても捨てずに持ち越す ([#934]) ので、
     /// 進めた枠は必ずいつか書かれる。
@@ -612,6 +627,7 @@ public final class Particles {
     ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
     /// [#1748]: https://github.com/mokume-metal/mokume/issues/1748
     private func place(
         _ count: Int, from source: Emitter, speed: ClosedRange<Float>,
@@ -734,8 +750,12 @@ public final class Particles {
     /// 形で組み立てるビルド時のシェーダ検査から外れてしまう — 組み込みの計算こそ、
     /// 走らせる前に壊れていることが分かってほしい。
     ///
-    /// `vertexStart` / `vertexCount` は描く側が四角を置いた区間で、GPU がそのまま描く引数へ
-    /// 写す。参照の経路 (CPU が置く) では使われないので 0 でよい。
+    /// `vertexCount` は描く側が置いた四角の頂点の数で、GPU がそのまま描く引数へ写す。参照の経路
+    /// (CPU が置く) では使われないので 0 でよい。
+    ///
+    /// **描く引数の頂点の頭は書かない (いつも 0)。** 四角の頭の位置を引数に書くと、頂点を詰め直して
+    /// 頭を置き直した列 (``Canvas/frameCasters``) が、置き直す前の位置のずれた所を読む ([#2023])。
+    /// 頭は描く側が頂点の置き場へ束ねる番地で指す (``Canvas/Batch/vertexBaseShift``)。
     ///
     /// `basis` は視点の枠 (``Camera/basis``) で、GPU が板をそれに沿って置く。
     ///
@@ -746,9 +766,10 @@ public final class Particles {
     /// ここでは足さず、面が計算を投入したときに足す。
     ///
     /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
     func write(
         into draw: Draw, transform: simd_float4x4, basis: simd_float3x3, step: FrameStep,
-        frame: Int, forces: [Force], vertexStart: Int, vertexCount: Int
+        frame: Int, forces: [Force], vertexCount: Int
     ) {
         if forces.count > Self.maximumForces { warnTooManyForces(forces.count) }
         let used = min(forces.count, Self.maximumForces)
@@ -763,7 +784,8 @@ public final class Particles {
             values[18] = Float(used)
             // 整数は **ビット列のまま**置く (上の `headerFloats` の理由)
             values[19] = Float(bitPattern: UInt32(scanCount))
-            values[20] = Float(bitPattern: UInt32(clamping: vertexStart))
+            // 予備 (かつての描く頂点の頭)。全部を書く約束なので、読まれなくても 0 を置く
+            values[20] = 0
             values[21] = Float(bitPattern: UInt32(clamping: vertexCount))
             for slot in 0..<Self.maximumLevels {
                 let offset = slot < levelOffsets.count ? levelOffsets[slot] : 0

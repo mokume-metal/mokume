@@ -8,9 +8,10 @@ import Testing
 
 /// 同じフレームの出口どうしが、**どんな入力でも** 同じバイトを出す (#1762)。
 ///
-/// 出口は 2 本に集まっている — CPU で変換する ``RenderTarget/encodeForDisplay(scale:)``
-/// (PNG・同期の読み出し) と、GPU で変換する ``RenderTarget/encodeToImage()`` (録画・観測・
-/// 出力の口)。描いた絵だけで比べると、量子化の境目のほぼ真上に落ちる値を踏まず、1 段の
+/// 出口は GPU の出力段の 1 本に集まっている — 同期で読む ``RenderTarget/encodeForDisplay(scale:)``
+/// (PNG・同期の読み出し・#1752) も、``RenderTarget/encodeToImage()`` (録画・観測・出力の口) も
+/// そこを通る。答えの正本は CPU の出力段 (``OutputStage``) で、ここでは GPU を通さずに求めた
+/// 参照 (``RenderTarget/encodeOnCPU(scale:)``) と比べる。描いた絵だけで比べると、量子化の境目のほぼ真上に落ちる値を踏まず、1 段の
 /// ずれが隠れる。ここでは half の全ビット列と乱数を画素へ直に置いて比べる。
 ///
 /// 比べる前に、置いた値が面に載ったことを読み戻して確かめる (#1761 — 載らなかった入力で
@@ -54,32 +55,38 @@ struct OutputAgreementTests {
         #expect(wrong == 0, "\(wrong) 成分が置いた値と違う — 比べる前提が崩れている")
     }
 
-    /// 全設定で 2 本の出口を比べ、食い違った設定ごとの報告を返す。
+    /// 全設定で GPU の口を CPU の参照と比べ、食い違った設定ごとの報告を返す。
     private func mismatches(_ canvas: Canvas, label: String) throws -> [String] {
         var reports: [String] = []
         for setting in Self.settings {
             canvas.exposure(setting.exposure)
             canvas.toneMapping(setting.toneMapping)
-            let cpu = try canvas.output.encodeForDisplay().bytes
-            let gpu = try canvas.output.encodeToImage().read().bytes
-            var differing = 0
-            var first: String?
-            for index in stride(from: 0, to: cpu.count, by: 4)
-            where cpu[index..<(index + 4)] != gpu[index..<(index + 4)] {
-                differing += 1
-                if first == nil {
-                    first = "画素 \(index / 4): CPU \(Array(cpu[index..<(index + 4)])) / GPU \(Array(gpu[index..<(index + 4)]))"
+            let cpu = try canvas.output.encodeOnCPU().bytes
+            // GPU の口は 2 つ — 出口へ渡す道と、同期で読む道 (#1752)。置き場だけが違う
+            let outlets: [(name: String, bytes: [UInt8])] = [
+                ("encodeToImage", try canvas.output.encodeToImage().read().bytes),
+                ("encodeForDisplay", try canvas.output.encodeForDisplay().bytes),
+            ]
+            for gpu in outlets {
+                var differing = 0
+                var first: String?
+                for index in stride(from: 0, to: cpu.count, by: 4)
+                where cpu[index..<(index + 4)] != gpu.bytes[index..<(index + 4)] {
+                    differing += 1
+                    if first == nil {
+                        first = "画素 \(index / 4): CPU \(Array(cpu[index..<(index + 4)])) / GPU \(Array(gpu.bytes[index..<(index + 4)]))"
+                    }
                 }
-            }
-            if differing > 0 {
-                reports.append(
-                    "\(label) 露出 \(setting.exposure) \(setting.toneMapping): \(differing) 画素 (\(first ?? "-"))")
+                if differing > 0 {
+                    reports.append(
+                        "\(label) \(gpu.name) 露出 \(setting.exposure) \(setting.toneMapping): \(differing) 画素 (\(first ?? "-"))")
+                }
             }
         }
         return reports
     }
 
-    @Test("half の全ビット列を 1 成分に置いても、2 本の出口が同じバイトを出す", arguments: [0, 1, 2])
+    @Test("half の全ビット列を 1 成分に置いても、出口が CPU の参照と同じバイトを出す", arguments: [0, 1, 2])
     func everyHalfAgrees(channel: Int) throws {
         let canvas = try makeCanvas()
         var reports: [String] = []
@@ -111,10 +118,10 @@ struct OutputAgreementTests {
         #expect(reports.isEmpty, "\(reports.joined(separator: "\n"))")
     }
 
-    @Test("4 成分とも乱数の画素でも、2 本の出口が同じバイトを出す")
+    @Test("4 成分とも乱数の画素でも、出口が CPU の参照と同じバイトを出す")
     func randomPixelsAgree() throws {
         let canvas = try makeCanvas()
-        var random = SplitMix(seed: 1762)
+        var random = OutputSplitMix(seed: 1762)
         var reports: [String] = []
         for round in 0..<6 {
             var placed: [SIMD4<Float>] = []
@@ -140,7 +147,7 @@ struct OutputAgreementTests {
 
     /// 描く細かさを下げた面で、止まっている間に変えた後 (#1882)。出す先は描く先を広げた絵で、
     /// 出す先を読む口はどれも読む前に広げ直す。CPU の口が先に読んでも、GPU の口と食い違わない。
-    @Test("細かさを下げた面で止まっている間に変えた後も、2 本の出口が同じバイトを出す", arguments: [false, true])
+    @Test("細かさを下げた面で止まっている間に変えた後も、出口が CPU の参照と同じバイトを出す", arguments: [false, true])
     func agreeAfterAChangeWhileStopped(circle: Bool) throws {
         let gpu = try RenderDevice()
         let output = try RenderTarget(gpu: gpu, width: 160, height: 160)
@@ -161,15 +168,17 @@ struct OutputAgreementTests {
         }
         canvas.carriesOver = false
 
-        // CPU の口を先に読む。ここに追い付きが無ければ古い絵を読み、後の GPU の口と食い違う
-        let cpu = try canvas.output.encodeForDisplay().bytes
+        // CPU の参照を先に読む。ここに追い付きが無ければ古い絵を読み、後の GPU の口と食い違う
+        let cpu = try canvas.output.encodeOnCPU().bytes
         let gpuBytes = try canvas.output.encodeToImage().read().bytes
+        let displayBytes = try canvas.output.encodeForDisplay().bytes
         let centre = (80 * 160 + 80) * 4
-        #expect(cpu[centre] > 200 && cpu[centre + 1] < 30, "変えたものが CPU の口に出ていない")
-        #expect(cpu == gpuBytes, "CPU の口と GPU の口が食い違う")
+        #expect(cpu[centre] > 200 && cpu[centre + 1] < 30, "変えたものが CPU の参照に出ていない")
+        #expect(cpu == gpuBytes, "CPU の参照と出口へ渡す道が食い違う")
+        #expect(cpu == displayBytes, "CPU の参照と同期で読む道が食い違う")
     }
 
-    @Test("起票の 3 例が、2 本の出口で同じバイトになる")
+    @Test("起票の 3 例が、出口と CPU の参照で同じバイトになる")
     func reportedExamplesAgree() throws {
         let red = Float(Float16(bitPattern: 0x377e))
         let cases: [(alpha: Float, exposure: Float)] = [(0.5, 1), (1, 2), (.infinity, 2)]
@@ -181,15 +190,20 @@ struct OutputAgreementTests {
                 canvas.set(
                     0, 0, LinearRGBA(premultipliedRed: red, green: 0.25, blue: 0.75, alpha: example.alpha))
             }
-            let cpu = try canvas.output.encodeForDisplay()[0, 0]
+            let cpu = try canvas.output.encodeOnCPU()[0, 0]
             let gpu = try canvas.output.encodeToImage().read()[0, 0]
+            let display = try canvas.output.encodeForDisplay()[0, 0]
             #expect(cpu == gpu, "α \(example.alpha) 露出 \(example.exposure): CPU \(cpu) / GPU \(gpu)")
+            #expect(
+                cpu == display,
+                "α \(example.alpha) 露出 \(example.exposure): CPU \(cpu) / 同期で読む道 \(display)")
         }
     }
 }
 
 /// 決まった列を返す乱数。検査が落ちたときに同じ入力で調べ直せるように、種から決める。
-private struct SplitMix {
+/// 出口の画素を振る検査 (`DisplayOutputTests` も) が共有する。
+struct OutputSplitMix {
     var state: UInt64
 
     init(seed: UInt64) { state = seed }

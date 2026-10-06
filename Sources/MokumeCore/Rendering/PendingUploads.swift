@@ -15,7 +15,9 @@ import Metal
 /// 待つ**しかなく、毎フレーム書くスケッチでは CPU と GPU の重なりがそこで消えていた
 /// ([#749])。書く口は CPU の控えを更新するだけにして、**届けるのは描き切りの GPU 側の
 /// コピー**に任せる。コピーは投入の順に走るので、前に投入した仕事は古い値を、後の仕事は
-/// 新しい値を読む — CPU が書いた順と同じである。
+/// 新しい値を読む。数の並びでは、これが CPU が呼んだ順と揃う — 書く前に頼まれてその並びに
+/// 触れる計算は、書く口が先に投入する (``Numbers`` の「計算には、呼んだ順に効く」・[#1687])。
+/// 画像は描き切りの時点の画素を送る約束である ([#749])。
 ///
 /// ## 約束
 ///
@@ -30,6 +32,7 @@ import Metal
 /// [#749]: https://github.com/mokume-metal/mokume/issues/749
 /// [#934]: https://github.com/mokume-metal/mokume/issues/934
 /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+/// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
 @MainActor protocol PendingUpload: AnyObject {
     /// 登録簿に載っているか。**同じ持ち主を 2 度載せないための印**で、登録簿だけが書く。
     ///

@@ -53,8 +53,8 @@ extension Sketch {
         // **道具の状態を進める前に断る** (#1670)。視点を書くのはシーンの記述で、フレームの
         // 外 (`setup()`・止まっている間のコールバック) では下の `camera` が断る。そこまで
         // 進めてから断ると、注意は出ても道具の状態 (慣性・引きずった量を食った印) だけが
-        // 1 段進み、「無視する」にならない
-        guard canvas.isDrawing else { return canvas.warnOutsideFrame(.camera) }
+        // 1 段進み、「無視する」にならない。形の組み立ての中も同じく先に断る (#1529)
+        guard canvas.admits(.camera) else { return }
         var orbit = runtime.orbit ?? Orbit.fitting(width: canvas.width, height: canvas.height)
 
         // 同じフレームで 2 度呼ばれても、引きずった量を 2 度食わない

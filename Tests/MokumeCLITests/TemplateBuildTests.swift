@@ -123,7 +123,16 @@ struct TemplateBuildTests {
         try "木目".write(
             to: root.appendingPathComponent("Sources/packed-sketch/assets/mark.txt"),
             atomically: true, encoding: .utf8)
-        try AppIdentity.example.write(
+        // 許可の文言を書いた名乗り。文言が実際の束ねを通って包みへ入るところまで見る
+        try """
+        {
+          "name": "Grain",
+          "identifier": "org.example.grain",
+          "version": "0.1.0",
+          "cameraUsage": "Grain looks at the camera to draw what it sees",
+          "microphoneUsage": "Grain listens to the room to move"
+        }
+        """.write(
             to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
             encoding: .utf8)
 
@@ -131,6 +140,17 @@ struct TemplateBuildTests {
 
         let app = root.appendingPathComponent("bundle/Grain.app", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: app.path), "包みが出来ていない")
+
+        let infoPlist = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        let plist =
+            try PropertyListSerialization.propertyList(from: infoPlist, format: nil)
+            as? [String: Any]
+        #expect(
+            plist?["NSCameraUsageDescription"] as? String
+                == "Grain looks at the camera to draw what it sees")
+        #expect(
+            plist?["NSMicrophoneUsageDescription"] as? String
+                == "Grain listens to the room to move")
 
         // 開き方は包みの**隣**に出る。中にあっては、開けない人には読めない
         let note = root.appendingPathComponent("bundle/How to open Grain.txt")
@@ -188,7 +208,7 @@ nonisolated enum BuildProcess {
     /// 期限を越えたら殺す係。
     ///
     /// **`Process` は `Sendable` ではない**が、期限を数えるのは別の走りでなければ
-    /// ならない (main actor は `waitUntilExit()` で塞がっている)。殺す 1 手と殺した
+    /// ならない (main actor は子の待ちで塞がっている)。殺す 1 手と殺した
     /// かの印だけをここへ閉じて渡す — `terminate()` は別の走りから呼んでよい。
     private final class Deadline: @unchecked Sendable {
         private let lock = NSLock()
@@ -204,11 +224,15 @@ nonisolated enum BuildProcess {
 
     /// 走らせて待つ。**越えたら殺す。**
     ///
-    /// 報告するだけでは足りない。`waitUntilExit()` は main actor を塞いだまま止まる
-    /// ので、殺さなければ後続の検査が 1 つも進まないまま run 全体が固まる。
+    /// 報告するだけでは足りない。待ちは main actor を塞いだまま止まるので、殺さなければ
+    /// 後続の検査が 1 つも進まないまま run 全体が固まる。
+    ///
+    /// **待つ間に実行ループを回さない** (``ExitWait``・#1937)。回すと、そこに載った仕事が
+    /// 待ちの中で走る。
     static func run(
         _ process: Process, reading pipe: Pipe, within seconds: Double = limit
     ) throws -> (status: Int32, output: String, killed: Bool) {
+        let exited = ExitWait(for: process)
         try process.run()
         let deadline = Deadline(process)
         let alarm = DispatchWorkItem { deadline.kill() }
@@ -219,7 +243,7 @@ nonisolated enum BuildProcess {
         // なって止まる
         let output =
             String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        process.waitUntilExit()
+        exited.wait()
         return (process.terminationStatus, output, deadline.didKill)
     }
 
@@ -256,9 +280,9 @@ struct BuildDeadlineTests {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        let started = Date()
+        let started = ProcessInfo.processInfo.systemUptime
         let result = try BuildProcess.run(process, reading: pipe, within: 0.5)
-        let waited = Date().timeIntervalSince(started)
+        let waited = ProcessInfo.processInfo.systemUptime - started
 
         #expect(result.killed, "期限を越えたのに殺されていない")
         #expect(result.status != 0, "殺されたのに、終わり方が成功を名乗っている")

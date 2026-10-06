@@ -128,7 +128,7 @@ final class MovieWriter {
                     lastTime = job.time
                     outcome.succeed()
                 } catch {
-                    outcome.fail("Could not write \(path): \(error)")
+                    outcome.fail("Could not write \(path): \(error)", at: path)
                 }
                 release()
             }
@@ -136,7 +136,7 @@ final class MovieWriter {
                 do {
                     try await file.finish(lastFrameAt: lastTime)
                 } catch {
-                    outcome.fail("Could not close \(path): \(error)")
+                    outcome.fail("Could not close \(path): \(error)", at: path)
                 }
             }
             closed.signal()

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/ready-queue.sh の検査 (#1028)。
 
-固定したいのは九つ。
+固定したいのは十。
 
 1. **何も打たない。** 判定を手元で打っただけでラベルが付いたり auto-merge が掛かったり
    すると、判定と実行を分けた意味が消える (ADR-0036 決定 1)
@@ -30,6 +30,9 @@
    busy (「根 #N で直す」) へ回し、ready の件数もそのあとで数える。open な Bug の子を持つ無印の
    Design は、子の多い順に decide として最後に出す (終了コードには数えない)。親は open な Bug か
    ready の候補があるときだけ読み、読めなければ ready は従来どおり出してそう名乗る
+10. **ready と stock の説明は Issue Type を `[Bug]` の形で先頭に置く** (#2136)。Type は題から
+   読めず、Bug は反証の節を要るので、着手の前に目に入る必要がある (#1998)。Type の無い
+   Issue は `[-]`。**番号・分類の位置は動かさない** — 既存の読み手は先頭の 2 語を読む
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
@@ -321,9 +324,50 @@ class ReadyQueueTest(unittest.TestCase):
         ]
         done, _ = self.run_queue(issues)
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout, "30 ready なにか\n32 ready なにか\n")
+        self.assertEqual(done.stdout, "30 ready [-] なにか\n32 ready [-] なにか\n")
         for mark in ("drawing?", "plain?"):
             self.assertNotIn(mark, done.stdout)
+
+    # 5b. ready と stock の説明は Type を先頭に置く (#2136)。番号・分類は動かさない
+    def test_ready_and_stock_rows_lead_with_the_issue_type(self):
+        issues = [
+            issue(70, labels=["verify: triaged"], type_="Bug", title="直す"),
+            issue(71, labels=["verify: triaged"], type_="Task", title="整える"),
+            issue(72, labels=["verify: triaged"], type_="Feature", title="足す"),
+            issue(73, labels=["verify: triaged"], title="型なし"),  # Type が付いていない
+            issue(74, type_="Docs", body=SIGNATURE, title="書く"),  # stock
+        ]
+        done, _ = self.run_queue(issues)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(
+            done.stdout.splitlines(),
+            [
+                "70 ready [Bug] 直す",
+                "71 ready [Task] 整える",
+                "72 ready [Feature] 足す",
+                "73 ready [-] 型なし",
+                "74 stock [Docs] エージェントの起票が無印のまま (書く)",
+            ],
+        )
+        # 番号・分類を先頭の 2 語で読む側は、Type が増えても同じ答えを得る
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual({n: v[0] for n, v in seen.items()}, {
+            70: "ready", 71: "ready", 72: "ready", 73: "ready", 74: "stock",
+        })
+
+    # 5c. 根へ回した子は busy のままで Type を出さず、根のほうは ready に Type つきで出る
+    def test_type_is_shown_for_the_root_that_stays_ready(self):
+        done, _ = self.run_queue(
+            [
+                issue(100, labels=["verify: triaged"], type_="Bug", title="根"),
+                issue(101, labels=["verify: triaged"], type_="Bug", title="症状"),
+            ],
+            parents={101: parent(100)},
+        )
+        self.assertEqual(
+            done.stdout.splitlines(),
+            ["100 ready [Bug] 根", "101 busy 根 #100 で直す (症状)"],
+        )
 
     # 6. 終了コードが在庫の有無を表す
     def test_exit_code_says_stock_out(self):
@@ -351,7 +395,7 @@ class ReadyQueueTest(unittest.TestCase):
         prs = [closing_pr(900), closing_pr(901)]
         done, log = self.run_queue([issue(62, type_="Bug", body=SIGNATURE)], prs=prs)
         self.assertEqual(done.returncode, 1, "在庫切れなのに 0 で終えている")
-        self.assertEqual(done.stdout, f"62 stock エージェントの起票が無印のまま (Bug・なにか)\n")
+        self.assertEqual(done.stdout, "62 stock [Bug] エージェントの起票が無印のまま (なにか)\n")
         self.assertNotIn("catch-up", done.stdout + done.stderr)
         self.assertNotIn("statusCheckRollup", log, "PR の check を読んでいる")
         # **api の呼び出しそのものは 0 にならない** — #62 は open な Bug なので、その親を読む

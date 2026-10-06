@@ -249,8 +249,11 @@ final class SketchPresence {
         guard drivesRunLoop else { return }
         // **出るまで回す。** 0 秒の pump では永久に出ないので、ここだけは待つ。
         // 実測 39〜42 ms (初回のみ 517 ms) なので、上限は余裕を見て 1 秒
-        let started = Date()
-        while Date().timeIntervalSince(started) < 1 {
+        //
+        // 上限は眠っている間は進まない時計 (`DispatchTime`) で測る — 壁時計だと、待っている
+        // 最中に眠ると起きた瞬間に上限を越えて、印が出る前に回すのをやめる (#1940)
+        let deadline = DispatchTime.now() + 1
+        while DispatchTime.now() < deadline {
             CFRunLoopRunInMode(.defaultMode, 0.002, false)
             if item.button?.window?.occlusionState.contains(.visible) == true { break }
         }

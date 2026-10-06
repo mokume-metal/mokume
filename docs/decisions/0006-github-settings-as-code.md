@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 改訂 (2026-08-27): 決定 5 が検査専用の App をやめる / 改訂 (2026-08-29): 決定 4 がドリフト検査の契機を増やす / 改訂 (2026-08-31): 決定 3 に削除時の適用順序を足す
+採用 (2026-08-27) / 改訂 (2026-08-27): 決定 5 が検査専用の App をやめる / 改訂 (2026-08-29): 決定 4 がドリフト検査の契機を増やす / 改訂 (2026-08-31): 決定 3 に削除時の適用順序を足す / 改訂 (2026-10-04): 決定 7 に三本それぞれが守るものを足す / 改訂あり (本文の「改訂 (日付)」見出し) / 一部置換 (→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md)): 決定 3・6 が根拠にしていた「エージェントの App は Administration を持たない」
 
 ## 文脈
 
@@ -52,6 +52,8 @@ GET の応答から次の鍵を落としたものを正規形とする: `id` / `
 **`bypass_actors` は空でも省略しない。** ADR-0003 決定 1 の「App を bypass list に入れない」は、書かれていて初めて検査できる。
 
 ### 3. 適用主体はメンテナ
+
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) で App を使わなくなり、エージェントもメンテナの認証で動く。** 適用の操作がエージェントにもできることを認める。定義ファイルの PR から適用する流れはそのまま。
 
 適用は `scripts/apply-rulesets.sh` で行い、**既定は dry-run**、実際に書き換えるのは `--apply` を明示したときだけとする。main の保護を書き換える操作だからである。定義に無いルールセットの**削除はしない** (存在を知らせるに留める)。
 
@@ -119,11 +121,21 @@ GET の応答から次の鍵を落としたものを正規形とする: `id` / `
 
 ### 6. ADR-0003 決定 1 の権限表は改訂しない
 
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) が ADR-0003 決定 1 ごと置き換えた。**
+
 決定 5 の帰結として、エージェントの App は `Administration: No access` のままでよい。「エージェントは自分を縛るルールセットを外せない」という ADR-0003 の主張は、そのまま生きる。
 
 ### 7. 当面の対象はルールセット三本に限る
 
 [#6](https://github.com/mokume-metal/mokume/issues/6) で同時に適用したリポジトリ設定 (squash only・delete-branch-on-merge・auto-merge 許可・secret scanning・Actions の既定権限) は対象外とする。これらは依然 GitHub 側が正本である。必要になったら同じ形で足せる。
+
+三本それぞれが守るもの (2026-10-04 改訂で足した — `signed-commits` だけ残す理由がどこにも書かれていなかった。[#2080](https://github.com/mokume-metal/mokume/issues/2080)):
+
+| ルールセット | 守るもの |
+| --- | --- |
+| `main-protection` | main へは merge queue と必須チェックを通ったものだけが入る ([ADR-0001](0001-founding-principles.md) 原則 8)。重要パスにはメンテナの承認が要る ([ADR-0003](0003-agent-identity-separation.md)・[ADR-0007](0007-approvability-invariant.md)) |
+| `signed-commits` | ブランチへ積まれるコミットは、鍵の持ち主が署名したものに限られる。PR を作る主体は App に分けたが、push の主体は分けていない ([ADR-0003](0003-agent-identity-separation.md) 決定 6)。コミットを書いたのが鍵の持ち主であることを GitHub が検証できるのは、この署名だけである (App の token で push しても署名は verified のまま) |
+| `release-tags` | 版はタグだけで表すので (`scripts/release.py` の冒頭)、出した版のタグを消したり動かしたりさせない |
 
 ### 8. 既製ツールには乗らない
 

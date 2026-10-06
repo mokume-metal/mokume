@@ -56,7 +56,7 @@ if [ "${GITHUB_EVENT_NAME:-}" = "push" ]; then
 report: 定義が main に入ったが、実設定への適用がまだである (起票はしない — #381)。
 
   bash scripts/apply-rulesets.sh          # 適用の差分を見る
-  bash scripts/apply-rulesets.sh --apply  # 適用する (メンテナのみ。ADR-0003 決定 1)
+  bash scripts/apply-rulesets.sh --apply  # 適用する (メンテナが打つ。ADR-0006 決定 3)
 
 適用したら、この workflow を Actions から workflow_dispatch で回し直すか、手元で
 `bash scripts/check-rulesets.sh` を引数なしで打つと緑に戻ることを確かめられる
@@ -78,7 +78,7 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 
 ## どちらかを選ぶ
 
-- **実設定のほうが正しくない** → 定義を適用し直す: `bash scripts/apply-rulesets.sh --apply` (メンテナのみ。ADR-0003 決定 1 によりエージェントの token では通らない)
+- **実設定のほうが正しくない** → 定義を適用し直す: `bash scripts/apply-rulesets.sh --apply` (メンテナが打つ。ADR-0006 決定 3)
 - **実設定のほうが正しい** → 変更の意図を PR に書いて定義ファイルを更新する
 
 どちらの場合も、**なぜ変わったのか**をこの Issue に残してから閉じる。管理画面での直接変更を拾うことがこの検査の目的なので、経緯が残らないと次に同じことが起きたときに区別が付かない。

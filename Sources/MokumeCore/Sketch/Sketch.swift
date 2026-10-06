@@ -193,13 +193,13 @@ public struct SketchSettings: Equatable, Sendable {
     /// ``Sketch/noLoop()`` を呼ぶ。
     ///
     /// **起動のときに読む。** 走っている最中に代入しても、画面の刻みも ``Sketch/time`` /
-    /// ``Sketch/deltaTime`` も変わらず、警告も出ない。`var settings = SketchSettings(…)` と
-    /// 持てば `draw()` の中で代入でき、読み返しても代入した値が返るので、変えられたように
-    /// 見えてしまう。
+    /// ``Sketch/deltaTime`` も変わらない。`var settings = SketchSettings(…)` と持てば
+    /// `setup()` や `draw()` の中で代入でき、読み返しても代入した値が返るので、変えられたように
+    /// 見えてしまう。**そのため、起動のときと違う値になったら、1 度だけ警告を標準エラーへ
+    /// 出す** (同じ走りの中では繰り返さない・[#1323](https://github.com/mokume-metal/mokume/issues/1323))。
     ///
     /// 手本 (Processing / p5) の `frameRate(n)` は走っている最中に呼べるが、ここには
-    /// 走っている最中に速さを変える口がまだ無い
-    /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
+    /// 走っている最中に速さを変える口が無い。
     public var frameRate: Int
     /// 窓の題名。
     public var title: String
@@ -212,8 +212,14 @@ public struct SketchSettings: Equatable, Sendable {
     ///
     /// 線の太さも出す細かさの画素で書き、描く画素では細かさの分だけ細くなる。0.5 なら
     /// `strokeWeight(1)` の線は描く画素で太さ 0.5 の線として、置く位置によらずその太さぶんの
-    /// 濃さで描かれてから拡大される。効果の半径 (``Effect/blur(radius:)`` など) も同じく
-    /// 出す細かさの画素で書き、ぼけ・にじみの幅は細かさによらない。
+    /// 濃さで描かれてから拡大される。描く画素で 1 画素より細い線は、描く経路 (距離関数の経路・
+    /// 三角形の経路・立体) によらずこうなる。それより太い線は、三角形の経路と立体では描く画素の
+    /// 格子で丸まる — たとえば 0.5 の `strokeWeight(3)` は描く画素で 1.5 になり、`triangle` や
+    /// `shader()` を付けた図形・立体の線では 1 行か 2 行で塗られる (縁を滑らかにするのは距離関数の
+    /// 経路だけである)。
+    /// 効果の半径 (``Effect/blur(radius:)`` など)・切り抜きの矩形 (``Sketch/clip(_:_:_:_:)``)・
+    /// 断片 (塗りと効果) が受け取る位置と大きさも同じく出す細かさの画素で、細かさによらない。
+    /// 違うのは描く画素 1 つより細かい所 (拡大のぼけと、描く画素の格子への丸め) だけである。
     ///
     /// 使えるのは 0 より大きく 1 以下。1 を超える指定 (出すより細かく描く) は
     /// 引き受けないので、組み立ての時点で断る。
@@ -238,10 +244,47 @@ public struct SketchSettings: Equatable, Sendable {
     ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
     public var upscale: Upscale
+    /// 窓を開く大きさ。**出す 1 画素を、窓の何点にするか**で書く。既定は 0.5 で、960x540 の
+    /// スケッチは 480x270 点の窓で開く。
+    ///
+    /// 320x180 の画素絵を 4 倍に拡大して見せる窓 (1280x720 点):
+    ///
+    /// ```swift
+    /// var settings: SketchSettings { SketchSettings(width: 320, height: 180, windowScale: 4) }
+    /// ```
+    ///
+    /// 1 にすると、手本 (Processing の `size(1280, 720)`) と同じく 1 画素 = 1 点で開く —
+    /// 隣に並べて見比べる窓が同じ大きさになる:
+    ///
+    /// ```swift
+    /// var settings: SketchSettings { SketchSettings(width: 1280, height: 720, windowScale: 1) }
+    /// ```
+    ///
+    /// ## 描く細かさは変わらない
+    ///
+    /// 決めるのは窓の大きさだけで、描く画素の数は ``width`` と ``height`` のまま変わらない。
+    /// 窓が絵より大きければ拡大して、小さければ縮めて出す。開いた後に窓を手で広げても同じで
+    /// ある。書き出す絵 (``Sketch/save(_:)``・録画) にも効かない。
+    ///
+    /// ## 指定を変えたら、覚えた大きさより指定を取る
+    ///
+    /// 窓は閉じたときの大きさと位置を覚えていて、次に開くときはそこへ戻す。ただし
+    /// **開く大きさの指定 (描く大きさ × この倍率) が前と変わっていれば、覚えた大きさと位置を
+    /// 捨てて新しい指定で開く。** 変えていなければ、手で広げた大きさと置いた位置が戻る。
+    ///
+    /// ## 使える値
+    ///
+    /// 0 より大きい有限の数。0 以下・無限大・NaN は、組み立ての時点で
+    /// ``RenderFailure/invalidWindowScale(_:)`` として断る。**画面に収まらない大きさは、
+    /// 縦横比を保って画面へ収まるまで縮めて開き**、縮めたことを 1 行言う — 同じスケッチでも
+    /// 画面が大きければ頼んだとおりに開くので、値そのものは断らない。
+    ///
+    /// **起動のときに読む。** 走っている最中に代入しても窓の大きさは変わらない。
+    public var windowScale: Float
 
     public init(
         width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume",
-        pixelDensity: Float = 1, upscale: Upscale = .spatial
+        pixelDensity: Float = 1, upscale: Upscale = .spatial, windowScale: Float = 0.5
     ) {
         self.width = width
         self.height = height
@@ -249,6 +292,7 @@ public struct SketchSettings: Equatable, Sendable {
         self.title = title
         self.pixelDensity = pixelDensity
         self.upscale = upscale
+        self.windowScale = windowScale
     }
 }
 
@@ -299,7 +343,8 @@ extension Sketch {
 
     /// 実際に刻んでいる幅 (画素)。細かさが 1 なら ``width`` と同じ。
     ///
-    /// ``pixels`` の索引と、断片が受け取る位置はこちらの数である。
+    /// ``pixels`` の索引はこちらの数である。断片 (塗りと効果) が受け取る位置と大きさは
+    /// こちらではなく、座標と同じ出す画素 (``width``) で届く。
     public var pixelWidth: Int { canvas.pixelWidth }
     /// 実際に刻んでいる高さ (画素)。
     public var pixelHeight: Int { canvas.pixelHeight }

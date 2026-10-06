@@ -20,7 +20,7 @@
 /// 元の絵に戻る、が往復の約束になる。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-public struct DisplayImage: Equatable, Sendable {
+public nonisolated struct DisplayImage: Equatable, Sendable {
     /// 幅 (画素)。
     public let width: Int
     /// 高さ (画素)。
@@ -46,24 +46,6 @@ public struct DisplayImage: Equatable, Sendable {
         self.width = width
         self.height = height
         self.bytes = bytes
-    }
-
-    /// 間引いて小さくする。**拾い方は ``NearestNeighbor`` が持つ** —
-    /// ``PixelBuffer/scaled(by:)`` と同じ実装を通る。
-    ///
-    /// 出力段は画素ごとの純関数なので、**間引いてから変換しても、変換してから間引いても
-    /// 出るバイト列は同じ**である ([#382])。だから観測は出口が受け取るのと同じ道を
-    /// 通ったうえで、ここで小さくできる。
-    ///
-    /// - Parameter factor: 縮小率 (1 = 実寸)。1 以上または 0 以下は実寸として扱う。
-    ///
-    /// [#382]: https://github.com/mokume-metal/mokume/issues/382
-    func scaled(by factor: Double) -> DisplayImage {
-        guard let small = NearestNeighbor.scaled(
-            bytes, width: width, height: height, by: factor)
-        else { return self }
-        return DisplayImage(
-            width: small.width, height: small.height, bytes: small.components)
     }
 
     /// 指定した位置の 4 成分。原点は左上。

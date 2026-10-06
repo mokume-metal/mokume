@@ -39,12 +39,20 @@ private let outsideCallNotices: [OutsideCall: String] = [
         "endRecord() is only accepted from inside setup(), draw() or an input callback such as "
             + "keyPressed(). This call was made from outside them, so no recording was stopped. "
             + "A Task started in one of them runs after it returns, and counts as outside",
+    .attach:
+        "attach() is only accepted from inside setup(), draw() or an input callback such as "
+            + "keyPressed(). This call was made from outside them, so nothing was attached. A "
+            + "Task started in one of them runs after it returns, and counts as outside",
+    .detach:
+        "detach() is only accepted from inside setup(), draw() or an input callback such as "
+            + "keyPressed(). This call was made from outside them, so nothing was detached. A "
+            + "Task started in one of them runs after it returns, and counts as outside",
 ]
 
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("呼び出しの外から頼んだときの文面")
 struct OutsideCallNoticeTests {
-    @Test("6 つとも原文のまま")
+    @Test("8 つとも原文のまま")
     func noticesKeepTheirWording() {
         for (call, original) in outsideCallNotices {
             #expect(call.notice == original, "\(call) の文面が変わっている")

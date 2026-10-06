@@ -10,9 +10,13 @@ name: Render
 # 専用機を指すジョブをこのファイルだけに閉じ込める。専用機に何が届きうるかを、この
 # ファイル 1 枚を読めば言えるようにするためである。
 #
-# **専用機に届くのは 2 つだけ** (ADR-0019 決定 7 の段階 A・B):
+# **専用機に届くのは 3 つだけ** (ADR-0019 決定 7 の段階 A・B・D):
 #   - merge_group — queue に入るのは write 権限を持つ人が入れたコードだけ
 #   - 同じリポジトリの PR — そのブランチを作れるのは write 権限を持つ人だけ
+#   - schedule — 走るのは既定ブランチ (main) の最新の定義とコードだけで、main のコードは
+#     merge_group の queue を通ったものと同じ。入力を差し込む経路が無い (#1983)。
+#     workflow_dispatch は足さない — 書き込み権限を持つ人が任意のブランチで起こせるので、
+#     B に近い別の理由が要る
 # fork の PR は各ジョブの if で弾く。fork の PR はこのファイル自体を書き換えられるので、
 # if だけでは止まらない。止めるのはリポジトリの設定 (外部の人の PR のワークフローは
 # 毎回承認を要する・approval_policy: all_external_contributors) である。
@@ -37,26 +41,104 @@ name: Render
 #   - 落ちた回は、落ちた検査の文面と台帳の書き換え後の行 (案) を run の要約へ書く
 # artifact は runner が持つ runtime の token で上げるので、contents: read のままで足りる。
 # 保持は 14 日 — 赤を直すまでの材料で、恒久の証跡は PR に載せる絵が持つ。
-# render と render-pr の step の並びは同じに保つ (ジョブの if と concurrency だけが違う)。
+# render と render-pr の step の並びは同じに保つ。違うのはジョブの if と concurrency と、
+# render-pr だけが持つ最後の 1 step (例の絵の前後の比較・#1986) である。
+#
+# **例の絵の前後の比較は render-pr だけが持つ** (#1986)。指紋 (// shot: N snippet=…) の材料は
+# 例のコードと撮影設定だけで実装は入らないので、実装だけが変わって絵が古くなっても
+# example-shots-check は緑のまま通る (#1454・#1625)。描画のパスに触れる PR で、base と head の
+# 木の両方で例の絵を描き (scripts/example-shots.py --drift)、画素が変わった絵を annotation と
+# run の要約で名指しする。**警告だけで、merge は止めない** — 撮り直して書き戻すには Gyazo の
+# 鍵が要るが、専用機は secrets を持たない。render (merge_group) には足さない: 合流後の木へ
+# 警告を出しても読む人がいないし、必須の検査の所要を延ばす。
+#
+# **定期の検査 (scheduled-*) は、専用機のジョブと起票のジョブで権限を分ける** (#1983)。
+#   - scheduled-debug / scheduled-release — 専用機。contents: read・秘密なしのまま
+#   - scheduled-report — GitHub ホスト。**issues: write を持つのはここだけ**で、専用機の
+#     ジョブの結論と記録の artifact を読むだけ (ruleset-drift.yml と同じ形)
+# 範囲は debug の build・test・gpu-ran (台帳を含む) と、台帳を外した release
+# (Makefile の test-release-scheduled)。release で台帳を外す理由は #1736。
+# **1 本の長いジョブにしない。** release は debug の終了後に門番を通して queue へ入れ
+# (needs)、その間に待っている render を先に通す。各 30 分。初回の run で所要と render の
+# 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。
+#
+# **専用機へ積む順番は、GitHub ホストの門番 (render-turn) が決める** (#2062)。専用機は
+# 1 台で、runner は queued の job を先着順に拾わない — queue の先頭の render が、後から
+# 積まれた render-pr や後ろの group の render に抜かれ続け、期限 (60 分) で弾かれた。
+# 拾う順は変えられないので、積む job を絞る。判断は scripts/render-turn.sh が持つ:
+#   - render (merge_group) — 1 つ前の group の run が終わるまで積まない。group は queue の
+#     順に 1 本ずつ専用機に載る
+#   - render-pr — merge_group の run が 1 本でも残っていれば見送る (必須ではない)
+#   - scheduled-* — merge_group の run が残っている間は待つ
+# 門番の判断は積む前の 1 回だけで、queue が空いている間に積まれた job は後から group が
+# できても引き下がらない。そのうち**まだ拾われていない render-pr は、group ができた瞬間に
+# queue-sweep.yml が cancel する** (#2064)。scheduled-* は needs の鎖で 1 本ずつしか積まれ
+# ないので退かせない (ADR-0019 決定 7)
+# 門番は GitHub ホストにだけ置き、actions: read だけを持つ。専用機の job は引き続き権限も
+# 秘密も持たない。**門番が赤でも専用機の job は走らせる (`!cancelled()`)。** needs が
+# 落ちて render が skipped になると、skipped は必須チェックを満たしてしまう — 描かずに
+# merge される。順番が乱れるほうが軽い。`always()` にしないのは、queue-sweep が cancel した
+# 捨てられた group の run で render を専用機に積まないため。実測 (#2063): 門番が timeout
+# しても render は走り、門番で待っている間に run を cancel すると render は skipped ではなく
+# cancelled で終わる (必須を満たさない。#2062 より前と同じ)
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
+  schedule:
+    # 6 時間おき (05:13 / 11:13 / 17:13 / 23:13 JST)。専用機は専用なので夜間に限らない。
+    # 毎時 0 分は避ける (このリポジトリの慣習)。schedule は遅れたり間引かれたりする
+    - cron: "13 2,8,14,20 * * *"
 
 permissions:
   contents: read
 
 jobs:
+  # 専用機へ積む順番を決める門番 (#2062・上の「専用機へ積む順番」)。待つ上限は
+  # render-turn.sh が持つ (merge_group は前の group が終わるまで・schedule は 60 分)。
+  # timeout は最後の歯止めで、queue の期限 (60 分) より外に置く
+  render-turn:
+    if: >-
+      github.event_name == 'merge_group'
+      || github.event_name == 'schedule'
+      || (github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read # checkout
+      actions: read # merge queue の render の run を読む
+    outputs:
+      go: ${{ steps.turn.outputs.go }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: turn
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
+        run: |
+          case "$EVENT" in
+            merge_group) bash scripts/render-turn.sh merge_group "$BASE_SHA" "$BASE_REF" ;;
+            pull_request) bash scripts/render-turn.sh yield ;;
+            schedule) bash scripts/render-turn.sh wait ;;
+          esac
+
   render:
-    if: github.event_name == 'merge_group'
+    needs: render-turn
+    if: ${{ !cancelled() && github.event_name == 'merge_group' }}
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査) は GitHub ホストの
-      # ci-check が同じ木で走らせている。gpu-ran は、描画の検査が「GPU が見えないので
-      # 全部飛ばした」まま緑になるのを止める。
+      # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査・examples など) は
+      # GitHub ホストの ci-check が同じ木で走らせている。ただし merge_group のホストの
+      # ci-check は build と test を外している (ci.yml の ci-check のコメント・#1985) —
+      # 合流後の木の build / test は、この専用機だけが走らせる。gpu-ran は、描画の検査が
+      # 「GPU が見えないので全部飛ばした」まま緑になるのを止める。
       #
       # CI= は Metal の検証レイヤを手元と同じく有効にするため (Makefile の
       # METAL_VALIDATION)。GitHub が立てる CI=true のままだと、検証レイヤが切れる。
@@ -90,10 +172,14 @@ jobs:
           retention-days: 14
 
   render-pr:
+    needs: render-turn
+    # 門番が見送ったときだけ外す。門番が赤なら走らせる (go が空になる)
     if: >-
-      github.event_name == 'pull_request'
+      !cancelled()
+      && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
       && !github.event.pull_request.draft
+      && needs.render-turn.outputs.go != 'false'
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
     # 同じ PR へ push し直したら、古い実行は捨てる。専用機は 1 台なので、古い木の検査で
@@ -103,6 +189,10 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
+        with:
+          # pull_request の木は合流 ref (refs/pull/N/merge) で、HEAD^1 が base・HEAD が head
+          # (この PR を足した後の木)。例の絵の前後の比較が HEAD^1 を取り出すのに要る
+          fetch-depth: 2
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
         env:
           MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
@@ -131,3 +221,151 @@ jobs:
           # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
           include-hidden-files: true
           retention-days: 14
+      # 例の絵を前後の木で描き比べる (#1986)。**警告だけ** — 描けなかったときも job は赤に
+      # しない (continue-on-error)。専用機の job は secrets も token も持ち込まない (ADR-0019
+      # 決定 7) ので、変更ファイルは GitHub の API ではなく、合流 commit の 2 つの親の差から
+      # 取る (scripts/pr-files.sh の `gh api` は GH_TOKEN が要る)。取りこぼしは無い — 大きな
+      # PR で後半が落ちる (#793) のは GraphQL の上限で、git の差には当たらない。
+      # 照合は check-drawing-evidence.sh と同じ drawing-paths.sh の 1 つを読む
+      #
+      # **手前の検査が赤でも走らせる (`!cancelled()`)。** 実装で絵が変わる PR は、台帳や
+      # 描画の検査も同じ根で赤くなる。そこで止めると、赤を直して push し直すまで名指しが
+      # 出ず、専用機の 1 周 (7 分ほど) を余計に回すことになる
+      - name: 例の絵を前後の木で描き比べる (警告のみ)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          . scripts/drawing-paths.sh
+          files=$(git diff --name-only HEAD^1 HEAD)
+          if ! touches_drawing <<<"$files"; then
+            echo "描画のパスに触れていないので、例の絵は比べない"
+            exit 0
+          fi
+          python3 scripts/example-shots.py --drift HEAD^1
+
+  scheduled-debug:
+    needs: render-turn
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    # 同じ定期の run が重ならないようにする。古いものは捨てずに待つ
+    concurrency:
+      group: render-scheduled-debug
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
+        env:
+          MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
+      - name: 落ちた検査の文面を要約へ書く
+        if: failure()
+        run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduled-debug-record
+          path: |
+            .build/test-results-swift-testing.xml
+            .build/test-log.txt
+            .build/test-vanished/
+            .build/ci-check-durations.tsv
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: scheduled-debug-ledger-shots
+          path: .build/ledger-shots/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  # debug の後に、もう一度 merge queue の render を先に通す (上の「専用機へ積む順番」)
+  scheduled-release-turn:
+    needs: scheduled-debug
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read # checkout
+      actions: read # merge queue の render の run を読む
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/render-turn.sh wait
+
+  scheduled-release:
+    # debug が赤でも release は走らせる (別の赤を覆い隠さない)。needs は順序のためで、
+    # この job は debug が終わり、門番を通ってから queue に入る (上の「1 本の長いジョブに
+    # しない」)
+    needs: [scheduled-debug, scheduled-release-turn]
+    # always() にしない: cancel された定期の run で専用機に積まない (render と同じ理由)
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    concurrency:
+      group: render-scheduled-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      # 検査の端末出力は行を落とす (#1056) ので正本は xunit の記録だが、落ちた理由を読む
+      # 手がかりとして起票の本文へ末尾を載せるため、test-log へ写しを残す
+      - run: |
+          mkdir -p .build
+          make test-release-scheduled CI= 2>&1 | tee .build/test-log.txt
+      - name: 落ちた検査の文面を要約へ書く
+        if: failure()
+        run: python3 scripts/read-test-record.py --failure-messages .build/test-results-release-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduled-release-record
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  scheduled-report:
+    needs: [scheduled-debug, scheduled-release]
+    if: >-
+      always()
+      && (needs.scheduled-debug.result == 'failure' || needs.scheduled-release.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: write # 赤のときの起票 (#1983)
+    steps:
+      - uses: actions/checkout@v7
+      # ビルドで落ちて記録が上がらなかった回も起票する。artifact が無くても止まらない
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: scheduled-debug-record
+          path: record/debug
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: scheduled-release-record
+          path: record/release
+      # 上げた記録の置き場所は、上げたファイルの共通の親で決まる (.build/ が付くか付かないかが
+      # 中身で変わる) ので、位置を決め打たず名前で探す。無ければ無いパスを渡し、呼び先が
+      # 「記録が無い」と名乗って起票する
+      - name: 赤を発信する
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          debug_xml=$(find_one record/debug test-results-swift-testing.xml)
+          debug_log=$(find_one record/debug test-log.txt)
+          release_xml=$(find_one record/release test-results-release-swift-testing.xml)
+          release_log=$(find_one record/release test-log.txt)
+          bash scripts/report-scheduled-render.sh \
+            "${debug_xml:-record/debug/none.xml}" "${debug_log:-record/debug/none.txt}" \
+            "${release_xml:-record/release/none.xml}" "${release_log:-record/release/none.txt}"

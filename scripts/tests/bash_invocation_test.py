@@ -9,7 +9,7 @@ PATH の `bash` で検査を走らせると、**3.2 でだけ壊れる書き方�
 CI で初めて落ちる**。
 
 [#160](https://github.com/mokume-metal/mokume/issues/160) はこれで踏んだ。
-`pr-identity-guard.sh` が 3.2 のパースに失敗して JSON を返さず、PreToolUse
+PR の作成主体を見ていたフック (#2112 で外した) が 3.2 のパースに失敗して JSON を返さず、PreToolUse
 フックとしては**素通しと同じ**になっていた — ガードが黙って効かなくなる形である。
 あの Issue が原因として挙げた 2 つのうち 1 つが「テストは PATH の `bash` を使う」で、
 #162 の修正で当時あった検査は `/bin/bash` へ寄せられた。その後 #499 で足した

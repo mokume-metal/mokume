@@ -49,6 +49,9 @@ struct SolidStrokePiece {
     /// (`Canvas.appendPlacedSolidVertices`)。組み直した位置も同じ並べ替えを通さないと、
     /// 頂点の形自身の座標と位置が別の角を指す。
     var isReversed: Bool = false
+    /// 点 1 つの線 (端点の形だけ) の部品か。置く面で細くなるなら、画面の軸に沿った正方形に
+    /// して面積で被覆を決める (``Canvas/rebuiltSolidStroke(_:)``・#1637)。
+    var isLonePoint: Bool = false
 
     /// 組み直すと何も積まないときに、頂点を畳む先の点。
     var anchor: SIMD3<Float> {

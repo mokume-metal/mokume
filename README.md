@@ -2,117 +2,59 @@
 
 Creative coding for Swift + Metal.
 
-![左にスケッチのコード、右に走っている絵。fill の行を書き換えて保存すると橙の円が水色に、circle の大きさを書き換えて保存すると円が大きくなる](https://i.gyazo.com/bf9796f5fcfea45e426a854e6c9e11ce.webp)
+[公式サイト](https://mokume.org) · [API リファレンス](https://mokume.org/documentation/mokume/) · [作例](Sketches) · [リリース](https://github.com/mokume-metal/mokume/releases)
 
-**コードを書き換えて保存すると、走っている絵がその場で差し替わる。** 上は `mokume watch` で
-走らせたまま、色と大きさの行を 1 つずつ書き換えたところ (左はその時点のファイルの中身)。
+![左にスケッチのコード、右に実行中の絵。fill の行を書き換えて保存すると橙の円が水色に、circle の大きさを書き換えて保存すると円が大きくなる](https://i.gyazo.com/bf9796f5fcfea45e426a854e6c9e11ce.webp)
 
-mokume は、**コードで絵や動きを作る** (クリエイティブコーディング) ための道具である。
-`background` で地を塗り、`fill` で色を選び、`circle` で円を描く — Processing や p5.js を
-手本にした書き方で、それを Mac の GPU (Metal) の上で Swift から書く。2D の図形と文字、
-立体と光、粒と力、画素の読み書き、描き終えた絵へのエフェクトまでを、**1 つのファイルから**
-始められる。
+mokume は、Processing や p5.js の書き方で絵と動きをつくる、Swift と Metal のためのクリエイティブコーディング環境です。
 
-絵と最初の 1 本は入口の 1 枚にも並んでいる: <https://mokume.org>
+- **ライブリロード** — 実行したままコードを保存すると、その場で絵が差し替わります
+- **なじみのある API** — `background` / `fill` / `circle` から、3D とライティング、パーティクル、ピクセル操作、ポストエフェクトまで、1 つのファイルで始められます
+- **Metal ネイティブ** — Apple Silicon の GPU で直接描画します
 
 ## 作例
 
-どれもこのリポジトリの [参照スケッチ](Sketches) が描いたもの。
-
 | | |
 | --- | --- |
-| <img src="https://i.gyazo.com/34337801ec22c3d5f82c6abe5b24b453.png" width="400" alt="濃い灰の地に、橙・水色・青緑・白の小さな図形が面いっぱいに並んだ見本板"><br>図形とスタイル | <img src="https://i.gyazo.com/c4b16442441d68c13a63ae69b4db81fc.gif" width="400" alt="放射状の線が回りながら、にじみの強さが周期的に強くなったり弱くなったりする"><br>描き終えた絵にエフェクトを重ねる |
-| <img src="https://i.gyazo.com/a1df70eb0294c3ee5aa50a930e898e1a.webp" width="400" alt="床の上に円柱・円錐・輪・箱・球が並び、視点が回るにつれて光の当たる面と影の向きが変わる"><br>立体と光 | <img src="https://i.gyazo.com/e3407232bafed2fe7f49bdfef740a29e.webp" width="400" alt="円の上を向かい合って回る 2 つの噴き口から橙の粒が出て、2 本の腕のような渦を描く"><br>粒と力 |
-| <img src="https://i.gyazo.com/78efcf97619760a0c8557afa54083c72.webp" width="400" alt="琥珀色の等高線の模様が流れるように形を変え、暗い窪みが移動していく"><br>GPU で計算した場を絵にする | <img src="https://i.gyazo.com/cb8df7dbe450e31edafaddf488e6c416.webp" width="400" alt="橙の六角形と緑の葉のような立体が回り、手前に小さな箱が円盤状に大量に並んで回っている"><br>まとめ描きと読み込んだモデル |
+| <img src="https://i.gyazo.com/34337801ec22c3d5f82c6abe5b24b453.png" width="400" alt="濃い灰の背景に、橙・水色・青緑・白の小さな図形が画面いっぱいに並んだ見本"><br>図形とスタイル | <img src="https://i.gyazo.com/c4b16442441d68c13a63ae69b4db81fc.gif" width="400" alt="放射状の線が回りながら、にじみの強さが周期的に強くなったり弱くなったりする"><br>ポストエフェクト |
+| <img src="https://i.gyazo.com/a1df70eb0294c3ee5aa50a930e898e1a.webp" width="400" alt="床の上に円柱・円錐・輪・箱・球が並び、視点が回るにつれて光の当たる面と影の向きが変わる"><br>3D とライティング | <img src="https://i.gyazo.com/e3407232bafed2fe7f49bdfef740a29e.webp" width="400" alt="円の上を向かい合って回る 2 つの噴き口から橙の粒が出て、2 本の腕のような渦を描く"><br>パーティクルと力 |
+| <img src="https://i.gyazo.com/78efcf97619760a0c8557afa54083c72.webp" width="400" alt="琥珀色の等高線の模様が流れるように形を変え、暗い窪みが移動していく"><br>GPU で計算した場 | <img src="https://i.gyazo.com/cb8df7dbe450e31edafaddf488e6c416.webp" width="400" alt="橙の六角形と緑の葉のような立体が回り、手前に小さな箱が円盤状に大量に並んで回っている"><br>インスタンシングと 3D モデル |
 
-## はじめる前に
+ソースはすべて [Sketches](Sketches) にあります。
 
-mokume は **Mac 専用**で、次がそろっている必要がある。
+## 必要な環境
 
-| 要るもの | 確かめ方・入れ方 |
-| --- | --- |
-| **Apple Silicon の Mac** (M1 以降) | 画面左上の  メニュー →「この Mac について」の「チップ」が `Apple M…` になっていればよい。`Intel` と出る Mac では動かない |
-| **macOS 26 (Tahoe) 以上** | 同じ画面の「macOS」の版を見る。足りなければ「システム設定」→「一般」→「ソフトウェア・アップデート」 |
-| **Xcode 26 以上** | App Store から入れ、**一度起動して**追加の構成要素のインストールと利用許諾を済ませる。Swift の道具一式がこれで入る |
-| **Metal Toolchain** | Xcode 26 からは Xcode とは別に入れる。Xcode の「Settings…」→「Components」で Metal Toolchain の「Get」を押す (ターミナルなら `xcodebuild -downloadComponent MetalToolchain`)。**入っていないと、最初に作るときに `unable to spawn process 'metal'` で止まる** |
-| **Homebrew** | Mac 用のパッケージ管理の道具。<https://brew.sh> に書かれた 1 行をターミナルに貼って入れる |
+Apple Silicon の Mac、macOS 26 以降、Xcode 26 以降と [Homebrew](https://brew.sh) が必要です。
 
-**ターミナル**は、文字でコマンドを打つためのアプリ。Finder の「アプリケーション」→
-「ユーティリティ」→「ターミナル」にある (Spotlight で「ターミナル」と打っても開ける)。
-以下の `mokume …` の行は、すべてここに打つ。
+Xcode 26 では Metal Toolchain を別にインストールします (Xcode の Settings → Components、または `xcodebuild -downloadComponent MetalToolchain`)。入っていないと、ビルドが `unable to spawn process 'metal'` で失敗します。
 
-## 入れる
+## インストール
 
 ```bash
 brew install mokume-metal/tap/mokume
 ```
 
-**入るのも打つのも `mokume`** という名前の道具ひとつ。更新は `brew upgrade mokume`。
-`mokume-cli` はこのリポジトリを自分でビルドしたときだけの名前なので、Homebrew では
-見つからない ([手元で作る](CONTRIBUTING.md#手元で作る))。
-
 <details>
-<summary>Homebrew を使わずに入れる</summary>
-
-同じ配布物を直に展開してもよい:
+<summary>Homebrew を使わない場合</summary>
 
 ```bash
 mkdir -p ~/.local/bin
 curl -fsSL https://github.com/mokume-metal/mokume/releases/latest/download/mokume-macos-arm64.tar.gz | tar xz -C ~/.local/bin
 ```
 
-道具 `mokume` と、隣に置く資源 (`mokume_*.bundle`) が展開される — **同じディレクトリに
-並んだまま使う**。`~/.local/bin` に PATH が通っていなければ通す。更新は同じコマンドを
-打ち直す。
+`mokume` と `mokume_*.bundle` は同じディレクトリに置いたまま使ってください。更新は同じコマンドの再実行です。
 
 </details>
 
-ライブラリ本体は入れなくてよい。次の `mokume new` が作るスケッチが、必要なものを自分で取ってくる。
-
-## 最初の 1 本
-
-### 1. スケッチを作る
-
-**スケッチ**は、mokume で作る 1 つの作品のこと。中身は Swift のパッケージ (フォルダ) である。
+## クイックスタート
 
 ```bash
 mokume new my-sketch
 cd my-sketch
+mokume watch
 ```
 
-`my-sketch` というフォルダができる。書き換えるのは**描く中身の 1 ファイルだけ**でよい:
-
-| ファイル | 何か |
-| --- | --- |
-| **`Sources/my-sketch/MySketch.swift`** | **絵を描くコード。ここを書き換える** |
-| `Sources/my-sketch/assets/` | 画像や音を置く場所 |
-| `Package.swift` | パッケージの設定 (mokume を使うことが書いてある)。はじめは触らなくてよい |
-| `AGENTS.md` / `CLAUDE.md` / `.mcp.json` | AI エージェントと一緒に作るときの案内 ([エージェントから使う](#エージェントから使う)) |
-
-### 2. 走らせる
-
-```bash
-mokume run
-```
-
-作ってから窓を開き、絵を動かし始める。**初回だけ、必要なライブラリの取得とビルドで
-しばらく待つ** (回線と Mac によって数十秒から数分。2 回目からは数秒)。
-
-窓には、暗い地の上を橙の円が回る絵が出る。ターミナルには速さが出続ける:
-
-```
-Rate: 58.7 fps (debug)
-```
-
-1 秒に何枚描けているかと、どの構成 (debug / release) で作ったかを並べている。速さは
-構成で数倍変わるので、**重い / 軽いは数字だけで決めない**。
-
-**止めるときは、窓を閉じるか、ターミナルで `Control` + `C`**。
-
-### 3. 読む
-
-`MySketch.swift` を好きなエディタで開く (はじめてなら Xcode でも、テキストエディットでもよい)。
-中身はこうなっている:
+初回はライブラリの取得とビルドに少し時間がかかります。ウィンドウが開いたら、`Sources/my-sketch/MySketch.swift` を編集します:
 
 ```swift
 import Foundation
@@ -120,101 +62,58 @@ import mokume
 
 @main
 final class MySketch: Sketch {
-    // 窓の大きさと題
     var settings: SketchSettings {
         SketchSettings(width: 960, height: 540, title: "my-sketch")
     }
 
-    // 1 秒に何十回も呼ばれ、そのたびに 1 枚を描く
     func draw() {
-        background(15, 18, 23)   // 地を暗い色で塗る (赤・緑・青を 0–255 で)
-        fill(242, 115, 51)       // これから描く図形の色 (橙)
-        let angle = time * 0.8   // time は走り始めてからの秒数
-        circle(width / 2 + cos(angle) * 160, height / 2 + sin(angle) * 120, 80)  // 中心 x, 中心 y, 直径
+        background(15, 18, 23)
+        fill(242, 115, 51)
+        let angle = time * 0.8
+        circle(width / 2 + cos(angle) * 160, height / 2 + sin(angle) * 120, 80)
     }
 }
 ```
 
-`draw()` が毎回呼ばれ、`time` が進むので、円の位置が少しずつずれて回って見える。
+`fill(77, 191, 242)` に変えて保存すると、ウィンドウを開き直さずに円が水色になります。ビルドに失敗したときは直前の絵が動き続け、エラーがターミナルに表示されます。
 
-### 4. 書き換えて、保存したら差し替わるのを見る
+使える API は [API リファレンス](https://mokume.org/documentation/mokume/) に、実行結果の絵つきでまとまっています。
 
-走らせ方を `watch` に変える (`run` で走っていれば、先に止める):
+## コマンド
 
-```bash
-mokume watch
-```
-
-走らせたまま `MySketch.swift` を開き、`fill` の行の数字を変えて保存する — 例えば
-`fill(77, 191, 242)` にすると、**窓を開き直さなくても円が水色に変わる**
-(冒頭の動きと同じ操作)。`circle` の最後の `80` を `140` にすれば大きくなる。
-
-保存するたびに作り直して、走っている絵を差し替える。**書き間違えて作れなかったときは、
-前の絵が走り続け、ターミナルに理由が出る** — 直して保存し直せばよい。
-
-### 5. 次に読むもの
-
-- **書ける命令の一覧と説明**は参照の面にある。1 つずつ、そのまま動く例と実行結果の絵がつく:
-  <https://mokume.org/documentation/mokume/>
-- **もっと大きな例**は [参照スケッチ](Sketches) (上の作例を描いたもの)
-
-## ことば
-
-| ことば | 意味 |
+| コマンド | |
 | --- | --- |
-| **スケッチ** | mokume で作る作品 1 つ。`mokume new` が作るフォルダ |
-| **Swift** | Apple が作ったプログラミング言語。スケッチはこれで書く |
-| **Metal** | Mac の GPU を使って絵を描くための Apple の仕組み。mokume は描く部分をこれで動かすので、書く側が直接触る必要はない |
-| **ビルド** | 書いたコードを、動くプログラムに変換すること。`mokume run` / `watch` が代わりに行う |
+| `mokume new <name>` | スケッチを作成 |
+| `mokume run` | ビルドして実行 |
+| `mokume watch` | 実行し、保存のたびに再ビルドして差し替え |
+| `mokume render` | ウィンドウを開かずに動画・連番画像へ書き出し |
+| `mokume bundle` | 配布用の `.app` を作成 |
+| `mokume doctor` | 環境とスケッチの状態を表示 |
+| `mokume mcp` | AI エージェント向けの MCP サーバを起動 |
 
-## 動かないとき
+オプションの一覧は `mokume help` で確認できます。
 
-窓が出ない・走らせたスケッチが応えないときは、スケッチのフォルダで打つ:
-
-```bash
-mokume doctor
-```
-
-**この Mac がそろえているもの** (`What the environment provides` — OS・機種・GPU・
-Swift の道具) と、**そのフォルダの状態** (`What is here` — スケッチ・ビルドの跡とその
-置き場・最後の作り直し) が 1 つの出力に並ぶ。「前提がそろっていない」のか「前提は
-そろっているが手元の状態がおかしい」のかを、ここで見分ける。
-
-**何も直さない。** 状態と読み方だけを出す。判定できなかったものは `cannot tell` と名乗る。
-
-よく踏むもの:
-
-- **`unable to spawn process 'metal'` で作れない** — Metal Toolchain が入っていない。
-  [はじめる前に](#はじめる前に) の表のとおり入れる。`mokume doctor` を打つと
-  `Shader compiler` の行が「見つからない」と名乗り、入れ方を続けて出す
-- **`command not found: mokume`** — 道具が入っていない、または PATH が通っていない。
-  `brew install` をやり直すか、ターミナルを開き直す
-
-## 動きを書き出す
-
-走らせた絵を、決まった速さの動画に書き出す。窓は開かない:
+### 動画に書き出す
 
 ```bash
 mokume render --fps 60 --seconds 4 --out motion.mov
 ```
 
-`--fps` × `--seconds` 枚 (ここでは 240 枚) を描いたら自分で終わり、書いた先と枚数を名乗る。
-スケッチから見える `time` は 1 枚ごとに `1 / fps` ずつ進むので、**重いフレームがあっても
-動きは歪まず、同じ引数からは同じ動きが出る**。作品のコードは書き換えなくてよい。
-1 枚を描く速さは画面のリフレッシュ (作品が宣言した `frameRate` が上限) のままなので、
-`--fps` が宣言と同じなら実時間と同じだけかかる (240 枚なら 4 秒ほど)。
+`time` は 1 フレームごとに `1 / fps` 秒ずつ進むので、描画の重さに左右されず、同じ引数からは同じ動きが得られます。`--out` には `.mov` (ProRes 4444) か、`out/frame-####.png` のような連番を指定します。
 
-`--out` は `.mov` (ProRes 4444) か、番号の入る場所を `#` で示した連番
-(`out/frame-####.png`)。相対パスは打った場所から解く。`fps × seconds` が整数にならない
-組は、丸めずに断る。場所・`-c`・`--scratch-path` は `run` と同じに受ける。
+<details>
+<summary>詳しい挙動</summary>
 
-途中で `Control` + `C` で止めても、それまでの枚が入った動画が残る。揃わなかったとき
-(途中で止めた・書き込めなかった) は 0 以外で終わる。
+- `fps × seconds` 枚を描き終えると終了し、書き出し先と枚数を表示します。`fps × seconds` が整数にならない組み合わせはエラーになります
+- 書き出しにかかる時間は、`--fps` がスケッチの `frameRate` と同じならほぼ実時間です
+- 相対パスは実行した場所が基準です。スケッチの場所・`-c`・`--scratch-path` は `run` と同じように指定できます
+- `Control` + `C` で中断しても、それまでの分は残ります。最後まで書き出せなかったときは 0 以外で終了します
 
-## 渡す
+</details>
 
-作った作品を、自分以外の Mac でも動く形 (`.app`) に束ねる。まず作品の名乗り
-(表示名・識別子・版) を、スケッチのフォルダの直下に `mokume-app.json` として置く:
+### アプリとして配布する
+
+スケッチのディレクトリに `mokume-app.json` を置いて `mokume bundle` を実行すると、`bundle/<name>.app` ができます。
 
 ```json
 {
@@ -224,69 +123,74 @@ mokume render --fps 60 --seconds 4 --out motion.mov
 }
 ```
 
-```bash
-mokume bundle          # bundle/<表示名>.app が出来る
+`Package.swift` で宣言したリソースも同梱されます。`mokume-app.json` は `mokume new` では作られません。識別子は macOS が権限の許可を覚えるときの鍵になるので、作品ごとに付けてください。
+
+標準では ad-hoc 署名のため、受け取った人が初めて開くときは macOS にブロックされ、「システム設定」→「プライバシーとセキュリティ」の「このまま開く」から開く必要があります。その手順を書いた `<name> を開くには.txt` が `.app` の隣にできるので、一緒に渡してください。
+
+<details>
+<summary>カメラ・マイクを使う場合</summary>
+
+許可を求めるダイアログに出す説明文を `mokume-app.json` に書きます:
+
+```json
+{
+  "name": "Grain",
+  "identifier": "org.example.grain",
+  "version": "0.1.0",
+  "cameraUsage": "Grain は、カメラに映ったものを絵にします",
+  "microphoneUsage": "Grain は、部屋の音を聞いて動きます"
+}
 ```
 
-**この名乗りはひな形に入っていない。** 書かなくても走るが、書かないまま配ると事故に
-なる — とくに識別子は macOS の権限の許可がぶら下がる鍵なので、作品ごとに書く。
+説明文は Info.plist (`NSCameraUsageDescription` / `NSMicrophoneUsageDescription`) に入り、Developer ID で署名するときは対応する entitlement (`com.apple.security.device.camera` / `com.apple.security.device.audio-input`) も付きます。
 
-束ねるものは `Package.swift` が宣言した資材で、宣言された資材が入らなかったときは
-配る前にそこで止まる。
+`Sources/` で `createCapture()` を呼んでいるのに `cameraUsage` が無いと、`mokume bundle` は足すべき 1 行を示して止まります (説明文の無いアプリは、カメラに触れた時点で macOS に止められるため)。依存パッケージの中や別名を通した呼び出しは検出しないので、その場合は自分で書いてください。`createCapture(frames:)` はカメラを使わないので不要です。マイクも同じで、`createAudioIn()` を呼んでいるのに `microphoneUsage` が無いと止まります。`createAudioIn(file:)` と `createAudioIn(samples:sampleRate:)` はマイクを使わないので不要です。
 
-**保証しているのは「別の Mac で起動して絵が出る」ところまで。** 署名は名前を持たない
-もの (ad-hoc) なので、**受け取った側では初回の起動が止められる**。二重クリックだけでは
-開けず、止められた直後にシステム設定の「プライバシーとセキュリティ」を開いて、そこに
-だけ出る「このまま開く」を押すことになる。
+許可が記録される先は実行のしかたで変わります:
 
-この往復は消えないので、代わりに開き方を書いた 1 枚が包みの隣に出る。**作品と一緒に送る**:
+| 実行のしかた | 許可の記録先 | 備考 |
+| --- | --- | --- |
+| `mokume run` など | 起動したターミナルのアプリ | 同じターミナルから実行するスケッチは 1 度の許可で済みます |
+| `.app` (ad-hoc 署名) | その `.app` | 中身で識別されるため、作り直すたびに許可が外れます |
+| `.app` (Developer ID 署名) | 署名者と識別子 | 作り直しても同じアプリとして扱われます |
 
-```
-bundle/
-  Grain.app
-  Grain を開くには.txt
-```
+制作中の確認は `mokume run` で行い、`.app` は配布の直前に作るのがおすすめです。
 
-### 自分の証明書を持っているなら
+</details>
 
-署名に使う名前を環境から与えると、**公証に出せる形**で束ねる (強化されたランタイムと
-タイムスタンプが当たる):
+<details>
+<summary>Developer ID で署名する</summary>
 
 ```bash
 MOKUME_SIGN_IDENTITY="Developer ID Application: 名前 (TEAMID)" mokume bundle
 ```
 
-与えなければ名前を持たない署名になる。どちらで署名したかは束ねた後の出力が名乗る。
+Hardened Runtime とタイムスタンプ付きで署名し、公証に提出できる形になります。公証 (`notarytool` での提出と `stapler` での添付) は `mokume bundle` の外で行ってください。どちらの署名を使ったかは出力に表示されます。
 
-**公証そのものは打たない。** 名前のある署名を当てただけでは受け取った側の往復は消えず、
-`notarytool` に提出して `stapler` で結果を添付するまでが要る — そこは道具の外にある。
-
-配る前に、自分の環境に依存したものが残っていないかを確かめる — ビルドの跡を退避してから
-起動する:
+配布前に、手元のビルド結果に依存していないかは次で確かめられます:
 
 ```bash
 mv .build .build-held && open bundle/Grain.app ; mv .build-held .build
 ```
 
-## エージェントから使う
+</details>
 
-走っているスケッチを、Claude Code などの AI エージェントが外から見て、入力を送れる。
-窓口 (MCP サーバ) を繋ぐと、絵を撮る・作り直しの結果を読む・入力を送る・書ける命令の
-一覧を読む、が使える。`mokume new` が作ったフォルダには `.mcp.json` が入っているので、
-そこで Claude Code を開き、使ってよいかを聞かれたら許可すれば繋がる。自分で足すなら:
+### AI エージェントから操作する
+
+`mokume mcp` は、実行中のスケッチのスクリーンショット・ビルド結果・マウスとキーボードの入力・API の一覧を AI エージェントに提供する MCP サーバです。`mokume new` で作ったディレクトリには `.mcp.json` が含まれているので、Claude Code ならそのまま使えます。手動で追加する場合:
 
 ```bash
 claude mcp add mokume -- mokume mcp
 ```
 
-窓口は薄い層で、能力そのものはスケッチ側にある — `.mokume/` のファイルを直に
-読み書きしても同じことができる (形の正典は [`Schemas/`](Schemas))。公開 API の
-一覧は版ごとに [Releases](https://github.com/mokume-metal/mokume/releases) の
-資産として配られ、窓口が `.mokume/reference/` へ取り置いて返す。
+### うまく動かないとき
 
-## もっと読む
+スケッチのディレクトリで `mokume doctor` を実行すると、環境 (`What the environment provides`) とスケッチの状態 (`What is here`) が表示されます。何も変更しないので、問題の切り分けに気軽に使えます。
 
-- 書ける命令の説明 (参照の面): <https://mokume.org/documentation/mokume/>
-- 入口の 1 枚: <https://mokume.org>
-- 開発の見通し: [mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)
-- mokume 自体を触る (手元で作る・貢献の入口): [CONTRIBUTING.md](CONTRIBUTING.md)
+## コントリビュート
+
+Issue と Pull Request を歓迎します。始め方とソースからのビルド手順は [CONTRIBUTING.md](CONTRIBUTING.md)、作業の規約は [AGENTS.md](AGENTS.md)、設計判断の記録は [docs/decisions](docs/decisions/) にあります。`.mokume/` のファイル形式は [Schemas](Schemas) で定義しています。脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
+
+## ライセンス
+
+[MIT](LICENSE)

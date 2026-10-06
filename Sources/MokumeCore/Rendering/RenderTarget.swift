@@ -72,6 +72,28 @@ import MokumeDiagnostics
     /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     weak var drawer: Canvas?
 
+    /// 出す先のテクスチャを書く最下層が、書く直前に呼ぶ検算 ([#1942])。
+    ///
+    /// **この面を出す先に持つ描き場所 (``drawer``) を置いた側が、もう居ないこと。**
+    /// ``Canvas/settlePlacersBeforeChange()`` を通った後は空になるので、関所を通さずに出す先を書く口は、
+    /// ここで debug の検査が落とす (release では何もしない)。
+    ///
+    /// **出す先を書く口の登録簿を兼ねる。** 呼ぶのは、出す先を書く最下層の 3 系統である。描く先への
+    /// パスの記述 (``makeRenderPass(clearColor:continuingDepth:keepingDepth:)``。描き切りと ``fill(with:)``)・
+    /// 画素の書き戻し (``encodePixelWriteBack(into:)``)・``Canvas`` の拡大 (`encodeUpscale`・
+    /// `encodeEnlargement`)。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
+    /// ことを確かめる。関所はコマンドを開く前に通す要があり、最下層の中へ畳めないので、口ごとに
+    /// 呼ぶ形が残る。その足し忘れを、ここが捕まえる。出す先を**読む**口の登録簿は対になる側で、
+    /// ``catchUpWithDrawnPicture()`` が指す ([#2104])。
+    ///
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
+    /// [#2104]: https://github.com/mokume-metal/mokume/issues/2104
+    func assertPlacersSettledBeforeWriting() {
+        assert(
+            drawer?.placers.isEmpty ?? true,
+            "A door that writes a canvas output must call Canvas.settlePlacersBeforeChange() first")
+    }
+
     /// 画素の写し。**頼まれてはじめて作り、以後は使い回す。**
     ///
     /// 出口が 1 つも無いスケッチが出力段の置き場を払わないのと同じ作法で、画素を
@@ -88,6 +110,16 @@ import MokumeDiagnostics
     /// 写しからテクスチャへ書き戻す blit を積んだ回数。``Pixels`` へ書いたフレームだけ増える。
     private(set) var pixelWriteBacksEncoded = 0
 
+    /// 書き戻しの組み立てを失敗させる差し込み (検査用)。製品の経路では常に `nil`。
+    ///
+    /// 書き戻しが投げるのは口 (encoder) を開けないときだけで、検査から自然には作れない。一方で
+    /// **失敗した回に書き込み待ちが残るか**は、止まっている間の書き戻し ([#1906]) が約束する
+    /// ことそのものなので、本物の失敗が起きる位置 (口を開く直前) に 1 つだけ穴を空けてある
+    /// (`Canvas.failureForTesting` と同じ形)。公開はしない。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    var failPixelWriteBackForTesting: RenderFailure?
+
     /// テクスチャから写しへ読み戻す blit を積んだ回数。画素を読むフレームだけ増える。
     private(set) var pixelReadbacksEncoded = 0
 
@@ -98,6 +130,14 @@ import MokumeDiagnostics
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     var encodedStorage: EncodedImage?
+    /// 同期で読む ``encodeForDisplay(scale:)`` が出力段を通した絵の置き場 ([#1752])。
+    ///
+    /// **出口へ渡す ``encodedStorage`` とは別に持つ。** あちらは次のフレームの頭まで出口へ
+    /// 渡すのを控えている (#927) ので、合間の同期の読み出しが同じ 1 枚へ組むと、控えの中身が
+    /// 書き換わる。頼まれてはじめて作り、以後は使い回す。
+    ///
+    /// [#1752]: https://github.com/mokume-metal/mokume/issues/1752
+    var displayStorage: EncodedImage?
     /// 出力段を通すパイプライン。同じく頼まれてはじめて作る。
     var outputPassStorage: OutputPass?
 
@@ -265,6 +305,8 @@ import MokumeDiagnostics
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     func encodePixelWriteBack(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
         guard let mirror = pixelMirror, mirror.hasPendingWrites else { return false }
+        if let failPixelWriteBackForTesting { throw failPixelWriteBackForTesting }
+        assertPlacersSettledBeforeWriting()
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
         }
@@ -334,6 +376,7 @@ import MokumeDiagnostics
     func makeRenderPass(
         clearColor: LinearRGBA?, continuingDepth: Bool = false, keepingDepth: Bool = false
     ) -> MTL4RenderPassDescriptor {
+        assertPlacersSettledBeforeWriting()
         let pass = MTL4RenderPassDescriptor()
         let attachment = pass.colorAttachments[0]!
         attachment.texture = texture
@@ -350,7 +393,8 @@ import MokumeDiagnostics
         // 置いた立体は必ず通り、あとから来た手前のものがそれを隠す。
         //
         // 「フレームごと」であって「パスごと」ではない。1 フレームを何回かに分けて
-        // 描き切ることがある (画素を読む・置いた描き場所が描き換わる) ので、途中の
+        // 描き切ることがある (画素を読む・揺らぎの設定を書き換える・置いた描き場所の描き換えのうち、
+        // 置いた側が形の組み立ての途中・写しの上限に達した・写しを用意できないとき) ので、途中の
         // 区切りで消すと**描いた順で決まる絵**に戻ってしまう。
         //
         // 残すのは途中の描き切りのときだけ。フレームの最後の描き切りで残すと、
@@ -379,7 +423,15 @@ import MokumeDiagnostics
     /// **効果を掛けた面の描画先 (``Canvas/output`` など) を止まっている間に塗るときは、``Canvas``
     /// の口を通す** (`background()`)。ここで塗ると、次のフレームの入りになる効果を通す前の絵には
     /// 届かない ([#1524](https://github.com/mokume-metal/mokume/issues/1524))。
+    ///
+    /// **出す先を塗る前に、置いた側へ置いた時点の絵を写させる** ([#1942])。この面を出す先に持つ
+    /// 描き場所が置かれていても、置いた側に塗った後の絵は出ない。
+    ///
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     public func fill(with color: LinearRGBA) throws(RenderFailure) {
+        // 描画先の絵が変わる前に、置いた側へ写させる (`Canvas.settlePlacersBeforeChange()`)。置いた側が
+        // 居なければ (`createGraphics` が作った直後など) 何もしない。コマンドを開く前に通す
+        drawer?.settlePlacersBeforeChange()
         // 全画素を塗り直すので、写しに残っていた CPU の書き込みは戻さず捨てる。**旗だけ下ろさず、
         // 捨てる口を通す** ([#1678] の反証 3) — 塗る投入より前に投げると、投入の番号が進まないまま
         // 捨てた値を載せた写しが読まれる

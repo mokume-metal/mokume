@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 作品を、作者以外の環境で動く形に束ねる。
 ///
@@ -62,6 +63,8 @@ enum BundleCommand {
         // 絵が出ない」形になる — しかも配った先で出る
         try ResourceDeclaration.check(in: directory)
         let identity = try AppIdentity.read(in: directory)
+        // **許可の文言も、ビルドの前に見る。** 使うのに無いと、止まるのは配った先になる
+        try DeviceUse.check(in: directory, identity: identity)
 
         // **宣言は 1 度だけ読む。** 走らせるものを決めるのにも、下限の版と資材の包みを
         // 知るのにも要る — 別々に引くと `dump-package` を 2 回起こすことになる
@@ -85,7 +88,7 @@ enum BundleCommand {
             into: out)
         try check(app, contains: declared?.declaredResourceBundles ?? [])
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
-        try sign(app, as: signature)
+        try sign(app, as: signature, entitlements: identity.entitlements)
         let note = try writeOpeningNote(for: identity, beside: app)
         print(report(for: app, note: note, signedAs: signature))
     }
@@ -198,30 +201,71 @@ enum BundleCommand {
     /// タイムスタンプは公証の前提で、後から足せない (署名し直しになる)。ただし
     /// **公証そのものは通さない** — この環境には署名できる証明書が無く、一度も走らせて
     /// いないものを道具に持たせないためである。
-    static func sign(_ app: URL, as identity: String?) throws(CommandFailure) {
+    ///
+    /// **entitlement は、強化されたランタイムを当てるとき (名前があるとき) だけ添える。**
+    /// 強化されたランタイムの下では、カメラやマイクは entitlement が無いと許可を求める
+    /// ところまで行けずに拒否される。名前を持たない署名はランタイムを当てないので、文言が
+    /// あれば許可を求められる。
+    static func sign(
+        _ app: URL, as identity: String?, entitlements: [String: Bool] = [:],
+        scratch: URL = FileManager.default.temporaryDirectory
+    ) throws(CommandFailure) {
+        var file: URL?
+        if identity != nil, !entitlements.isEmpty {
+            file = try writeEntitlements(entitlements, in: scratch)
+        }
+        // **包みの隣には置かない。** 置くと、作品と一緒に送るものに紛れる
+        defer {
+            if let file { try? FileManager.default.removeItem(at: file) }
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = signArguments(for: app, as: identity)
+        process.arguments = signArguments(for: app, as: identity, entitlements: file)
+        // **待つ間に実行ループを回さない** (``ExitWait``・#1937)
+        let exited = ExitWait(for: process)
         do {
             try process.run()
         } catch {
             throw .toolchainMissing("codesign")
         }
-        process.waitUntilExit()
+        exited.wait()
         guard process.terminationStatus == 0 else {
             throw .codesignFailed(status: process.terminationStatus)
         }
     }
 
     /// `codesign` に渡すもの (検査から呼べる形)。
-    static func signArguments(for app: URL, as identity: String?) -> [String] {
+    ///
+    /// `entitlements` は、署名に埋め込むものを書いた plist の場所。名前が無いときは
+    /// 強化されたランタイムを当てないので、渡されても使わない。
+    static func signArguments(
+        for app: URL, as identity: String?, entitlements: URL? = nil
+    ) -> [String] {
         guard let identity else {
             return ["codesign", "--force", "--sign", "-", app.path]
         }
-        return [
-            "codesign", "--force", "--options", "runtime", "--timestamp",
-            "--sign", identity, app.path,
-        ]
+        var arguments = ["codesign", "--force", "--options", "runtime", "--timestamp"]
+        if let entitlements { arguments += ["--entitlements", entitlements.path] }
+        return arguments + ["--sign", identity, app.path]
+    }
+
+    /// entitlement を、`codesign` が読める plist として一時の場所へ書く。
+    ///
+    /// `codesign` は標準入力から読めず、ファイルの場所を要る。`scratch` は置き場
+    /// (検査が、残っていないことを自分の置き場で見るために差し替える)。
+    static func writeEntitlements(
+        _ entitlements: [String: Bool], in scratch: URL = FileManager.default.temporaryDirectory
+    ) throws(CommandFailure) -> URL {
+        let url = scratch.appendingPathComponent("mokume-entitlements-\(UUID().uuidString).plist")
+        do {
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: entitlements, format: .xml, options: 0)
+            try data.write(to: url)
+        } catch {
+            throw .cannotCreate(path: url.path, reason: error.localizedDescription)
+        }
+        return url
     }
 
     // MARK: - 報告

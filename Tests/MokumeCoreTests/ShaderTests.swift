@@ -1085,8 +1085,8 @@ struct ShaderTests {
         _ condition: () -> Bool, within seconds: Double = 5,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !condition(), Date() < deadline {
+        let deadline = DispatchTime.now() + seconds
+        while !condition(), DispatchTime.now() < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(condition(), "\(seconds) 秒待っても届かなかった", sourceLocation: sourceLocation)
@@ -1186,11 +1186,11 @@ struct ShaderWatchWithoutYieldingTests {
         try Self.shaderBody("0.\(revision)").write(to: fragments.urls[0], atomically: true, encoding: .utf8)
         try Self.effectBody("0.\(revision)").write(to: fragments.urls[1], atomically: true, encoding: .utf8)
         try Self.computationBody("\(revision).0").write(to: fragments.urls[2], atomically: true, encoding: .utf8)
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = DispatchTime.now() + 5
         func arrived() -> Bool {
             zip(fragments.watchers.map(\.arrivedEventCount), before).allSatisfy { $0 > $1 }
         }
-        while !arrived(), Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        while !arrived(), DispatchTime.now() < deadline { Thread.sleep(forTimeInterval: 0.01) }
         // 1 度の保存でファイル側と親ディレクトリ側の両方が拾うので、後から届く分も待つ
         Thread.sleep(forTimeInterval: 0.1)
         try #require(arrived(), "検査の前提: 書き換えた事象が 5 秒待っても見張りに届いていない")
@@ -1321,8 +1321,8 @@ struct ShaderWatchWithoutYieldingTests {
         func touch(_ write: () throws -> Void) throws {
             let before = watcher.arrivedEventCount
             try write()
-            let deadline = Date().addingTimeInterval(5)
-            while watcher.arrivedEventCount <= before, Date() < deadline {
+            let deadline = DispatchTime.now() + 5
+            while watcher.arrivedEventCount <= before, DispatchTime.now() < deadline {
                 Thread.sleep(forTimeInterval: 0.01)
             }
             Thread.sleep(forTimeInterval: 0.05)
@@ -1372,8 +1372,8 @@ struct ShaderWatchWithoutYieldingTests {
     ) throws {
         let before = watcher.arrivedEventCount
         try write()
-        let deadline = Date().addingTimeInterval(required ? 5 : 1)
-        while watcher.arrivedEventCount <= before, Date() < deadline {
+        let deadline = DispatchTime.now() + (required ? 5 : 1)
+        while watcher.arrivedEventCount <= before, DispatchTime.now() < deadline {
             Thread.sleep(forTimeInterval: 0.01)
         }
         Thread.sleep(forTimeInterval: 0.05)
@@ -1458,7 +1458,12 @@ struct ShaderWatchWithoutYieldingTests {
             canvas.resetShader()
         }
         try canvas.gpu.settle()
-        #expect(canvas.gpu.commandFaultCount == 0)
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。入れ替えた古い状態を、それを使う
+        // フレームが走っている間に手放せば、絵より先に打ち切りとして現れる。別の投入の
+        // 巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            canvas.gpu.commandFaultCount == 0,
+            "GPU が仕事を \(canvas.gpu.commandFaultCount) 回打ち切った: \(canvas.gpu.lastCommandFault ?? "")")
     }
 
     /// 2 回目の反証 3・4。控えるのは組み立て (翻訳) の失敗だけで、それ以外は次に拾ったときに

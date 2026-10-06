@@ -20,9 +20,55 @@ import MokumeDiagnostics
 ///
 /// 書く向き (CPU → GPU) は、フレームの外でも中でも意味が変わらないのでここで開ける。
 /// **書く口は待たない** — 値は控えに積まれ、次の描き切りか読み戻しが GPU 側へ届ける
-/// ([#749])。届ける順は投入の順なので、書いた後に頼んだ計算・描いた図形は書いた値を読む。
+/// ([#749])。
+///
+/// ## 読み手ごとに、効く時刻が違う
+///
+/// 書いた値を読むものは 2 つあり、**どの時点の中身を読むかが違う**。計算は頼んだ時点、図形は
+/// 描き切りの時点である ([#1687]・[#1844])。
+///
+/// **計算には、頼んだ順に効く。** 書いた後に頼んだ計算は書いた値を、**書く前に頼んだ計算は
+/// 書く前の中身を**読む。書く前に頼んだ計算がこの並びへ書いても、後から書いた値が残る。
+/// ``Sketch/read(_:)`` を挟んでも挟まなくても、描き場所 (``Sketch/createGraphics(_:_:)``) を
+/// またいでも同じである。
+///
+/// 書く前に頼んだ計算がこの並びに触れるときだけ、書く口はその計算を先に GPU へ送る (完了は
+/// 待たない)。1 フレームに 1 度だけ書いてから頼む書き方なら、送る回数も待ちも変わらない。
+/// **同じ並びへ書いては頼むを 1 フレームに繰り返すと、2 回目からは書くたびに先の頼みを送る** —
+/// 送るたびにフレームの環を 1 つ進めるので、繰り返しが環の深さを越えると、書く口が GPU を待つ。
+/// 繰り返す値は、並びの別の番地へ書いて 1 度に頼むほうが速い。
+///
+/// **図形には、描き切りの時点の中身が効く。** ``Sketch/numbers(_:)`` で渡した並びを読む図形は、
+/// 置いた順ではなく、それを置いた面が描き切られる時点の中身で描かれる。図形は並びの値を写さず
+/// 並びそのものを持ち、書いた値は描き切りが GPU 側のコピーで届けるので、**同じフレームで
+/// 書き換えれば、先に置いた図形も後の値で描かれる**。``Image`` は、描いた後で書き換えても、その
+/// フレームには書き換えた後の絵が出る。それと同じ理屈である ([#749])。
+///
+/// <!-- example: 文脈 var level: Numbers! -->
+/// <!-- example: 文脈 var paint: Shader! -->
+/// ```swift
+/// func draw() {
+///     shader(paint)
+///     numbers(level)
+///     level.set(1, at: 0)
+///     rect(0, 0, 80, 160)
+///     level.set(0.25, at: 0)
+///     rect(80, 0, 80, 160)  // 左も右も、0.25 で描かれる
+/// }
+/// ```
+///
+/// 途中で描き切りを挟めば、その時点の中身で描き切られる。画素を読む口 (``Sketch/loadPixels()``・
+/// ``Sketch/get(_:_:)`` など) は、そこまでに置いた図形をその場で描き切るので、**挟む前に置いた
+/// 図形は、挟んだ後に書いた値を読まない**。挟まなければ読む。描き切りの時点が早まるだけで、理屈は
+/// 同じである (``Sketch/pixels`` の「いつの絵が読めるか」)。
+///
+/// **断片の値 (``Shader/set(_:_:)-(_,ShaderValue)``) とは向きが逆である。** あちらは置いた時点の
+/// 値を持つので、変える前に置いた図形は変える前の値で描かれる。値を変えながら同じ断片で描き分け
+/// たいときは、並びを別に作って、図形ごとに ``Sketch/numbers(_:)`` で渡す。
 ///
 /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+/// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
+/// [#1844]: https://github.com/mokume-metal/mokume/issues/1844
 ///
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 // `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
@@ -114,6 +160,16 @@ import MokumeDiagnostics
     /// 逃げ道で直接書いた回数。**検査が読む。**
     private(set) var directUploads = 0
 
+    /// 未投入の計算の頼みが、この並びを名指ししているかもしれない。**立ちすぎる側にしか
+    /// 間違えない印** ([#1687])。
+    ///
+    /// 頼む口 (`Canvas.compute`) が束ねる並びごとに立て、書く口が登録簿を引いて下ろす。下りて
+    /// いる間の書き込みは登録簿を引かない — 書く口は 1 フレームに何万回も呼ばれうるので、
+    /// 頼みに名指しされない並びへの書き込みは、印を 1 つ見るだけで抜ける。
+    ///
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
+    var mayBeNamedByPendingComputations = false
+
     /// 区間 `start..<(start + count)` を控えの上で書く。**書く口はすべてここを通す。**
     ///
     /// **`body` は区間を 1 つ残らず書く。** 書かなかった番地にも影の古い値が届き、GPU の
@@ -122,6 +178,9 @@ import MokumeDiagnostics
         at start: Int, count written: Int, _ body: (UnsafeMutableBufferPointer<Float>) -> Void
     ) {
         guard written > 0 else { return }
+        // **影へ書く前に、書く前に頼んだ計算を先に送る** (#1687)。早い投入は、その時点の控えを
+        // 計算より先に届けるので、送ってから影へ書けば、先の計算は書く前の中身を読む
+        if mayBeNamedByPendingComputations { submitComputationsAskedBeforeWriting() }
         if shadow.count != count {
             shadow = Array(repeating: 0, count: count)
             shadowAllocations += 1
@@ -135,6 +194,26 @@ import MokumeDiagnostics
         // 細切れすぎる書き込みだけは、ここで待って届ける。待てなければ控えに残す (#934)
         if dirty.count > dirtyRangeLimit, let uploaded = uploadDirectly() {
             markUploaded(through: uploaded)
+        }
+    }
+
+    /// この並びに触れる未投入の計算を、どの面のものでも (書いた面のものも) いま投入する ([#1687])。
+    ///
+    /// 書き込みは「この並びへ書く頼み」として登録簿を引く — 先に読んだ計算も先に書いた計算も、
+    /// 書く前に走らねばならない (``ComputeAccess/mustPrecede(_:)``)。描いていない面と、閉じ忘れて
+    /// 捨てられる描き場所の頼みは、登録簿の答え (`pendingAccess`) が除く。
+    ///
+    /// **引いたら印を下ろす。** 当たった頼みは投入されたので、残る頼みはこの並びに触れない。投入に
+    /// 失敗した面は溜めたまま残るが、そのフレームの間は試し直さない約束 (`submitPendingComputations()`)
+    /// なので、引き直しても何もしない。
+    ///
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
+    private func submitComputationsAskedBeforeWriting() {
+        mayBeNamedByPendingComputations = false
+        for holder in gpu.pendingComputationHolders.holders(
+            mustPrecede: ComputeAccess(writes: [ObjectIdentifier(self)]), except: nil)
+        {
+            holder.submitPendingComputations()
         }
     }
 
@@ -184,7 +263,13 @@ import MokumeDiagnostics
     /// **並びの外は何もしない** ([ADR-0020] 決定 5 — フレームごとに呼ばれるものは
     /// 投げない)。初回だけ理由を知らせる。
     ///
-    /// **待たない。** 書いた値は、次の描き切り (か読み戻し) が GPU 側へ届ける。
+    /// **待たない。** 書いた値は、次の描き切り (か読み戻し) が GPU 側へ届ける。書く前に
+    /// 頼んだ計算は書く前の中身を読み、書いた後に頼んだ計算は書いた値を読む。
+    ///
+    /// **図形は描き切りの時点の中身を読む。** この並びを渡して先に置いた図形も、同じフレームの
+    /// うちは書き換えた後の値で描かれる (``Image`` と同じで、置いた時点の値で描く
+    /// ``Shader/set(_:_:)-(_,ShaderValue)`` とは逆向き。型の説明の「読み手ごとに、効く時刻が違う」
+    /// が詳しい)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func set(_ value: Float, at index: Int) {
@@ -193,6 +278,9 @@ import MokumeDiagnostics
     }
 
     /// 先頭から詰める。**入り切らないぶんは捨てる** (並びの外と同じ扱い)。
+    ///
+    /// 待たないことと、計算に呼んだ順に効くこと、図形には描き切りの時点の中身が効くことは
+    /// ``set(_:at:)`` と同じ。
     public func set(_ values: [Float]) {
         if values.count > count { warnOutOfRange(values.count - 1) }
         let written = min(values.count, count)
@@ -204,6 +292,9 @@ import MokumeDiagnostics
     }
 
     /// 全部を同じ値にする。
+    ///
+    /// 待たないことと、計算に呼んだ順に効くこと、図形には描き切りの時点の中身が効くことは
+    /// ``set(_:at:)`` と同じ。
     public func fill(_ value: Float) {
         write(at: 0, count: count) { $0.update(repeating: value) }
     }

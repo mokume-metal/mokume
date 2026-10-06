@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MIT
 """scripts/site_source.py の検査 (#815)。
 
-面を検める検査は 3 本あり、`pages.yml` と `publication.yml` から**必ず一緒に**呼ばれる。
-以前はその 3 本 + `check-publication.py` が読み口・タイムアウト・`<img>` の綴りを
-それぞれ写しで持っていた。畳んだので、ここで固定するのは 2 つ:
+公開物を検める検査 (entry / published-reference / publication / external-assets) は、
+以前は読み口・タイムアウト・`<img>` の綴りをそれぞれ写しで持っていた (どの検査が
+何を使い、どこから呼ばれるかは `site_source.py` の冒頭)。畳んだので、ここで固定するのは 2 つ:
 
 1. **読み口の契約** — ディレクトリでも URL でも同じ形で引け、無いものは `None`、
    引けなかったものは `Unreachable` で名乗る (握り潰すと「置いても出ない」が緑のまま
@@ -25,6 +25,7 @@ import http.server
 import importlib.util
 import re
 import socket
+import socketserver
 import tempfile
 import threading
 import unittest
@@ -86,11 +87,13 @@ class SourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "a.txt").write_text("中身", encoding="utf-8")
             handler = functools.partial(QuietHandler, directory=tmp)
-            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            # 名前を引かないサーバで立てる。http.server の HTTPServer は bind の後に getfqdn で
+            # 名前を引き、CI の macOS のランナーではそこで約 35 秒止まる (#1714)
+            server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                source = site_source.Source(f"http://127.0.0.1:{server.server_port}")
+                source = site_source.Source(f"http://127.0.0.1:{server.server_address[1]}")
                 self.assertTrue(source.is_url)
                 self.assertEqual(source.read("a.txt"), "中身".encode())
                 # 無いものは None。**投げない** — 「置いても出ない」を呼び出し側が言う

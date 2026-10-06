@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは九つ。
+固定したいのは八つ。
 
 1. **pr-title へ rerun を打たない。** pull_request の rerun は元のイベントを再生するので、
    古いタイトルで判定され、その失敗が最新の結果になって**打つ前より悪くなる** (#699)。
@@ -12,18 +12,15 @@
    古い失敗 check が判定を固定したまま (#259 / #513) 誰も直さなくなる
 3. **凍結されたペイロードの可変欄を読むジョブが、除外リストに載っている。** いまは
    pr-title 1 本だが、同じ形のジョブが増えたときに人が気付く経路が無い (#801 と同じ形)
-4. **BLOCKED の 2 つの意味を分ける。** 承認待ちの PR に auto-merge を掛け直すのは
-   無害だが、承認待ちを「詰まっている」と名乗ると本物の詰まりが埋もれる
+4. **BLOCKED で予約が外れた PR は、重要パスに触れていても掛け直す。** 承認のゲートは
+   ADR-0044 で外れた (#2108) ので、承認待ちと読んで黙ると予約が外れたまま誰も直さない
 5. **判定は何も打たない。** 手元で様子を見るために打っただけで auto-merge が掛かると、
    判定と対処を分けた意味が消える
 6. **Draft と fork からの PR は見ない。** 作業中の PR を Draft にしておくのが opt-out で、
    fork の PR に予約を掛けるかは引き取るメンテナが決める (#1361)
 7. **猶予の中の名乗りでは赤くしない。** 走るたびに通知が飛ぶと「毎回出る注意は意味を
    失う」(#642) を踏む
-8. **落ちた承認と、新規の承認待ちを分ける。** 承認済みの PR へ push すると承認が落ちるが、
-   checks は全部緑・auto-merge も掛かったままなので**どの行にも当たらず 1 行も出なかった**
-   (#1033)。分かれ目は「落とした出来事があるか」の 1 点で、latestReviews からは読めない
-9. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
+8. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
    走らないと、描画に触れない PR も含めて queue 全体が止まる。1 台なので、他の run を
    走らせている間の queued は正常な順番待ちで、名乗ると毎回の注意になる (#642)
 
@@ -74,18 +71,9 @@ fi
 if [ "$1 $2" = "run rerun" ]; then exit 0; fi
 
 if [ "$1 $2" = "api graphql" ]; then
-  # **問い合わせは 2 種類ある。** 承認が落ちた時刻を引くほうは -F number=<n> を持つので、
-  # そこから PR 番号を取って $PR_DIR の応答へ振る (#1033)
   case "$*" in
     # 順番の判定が読む merge queue の並び (#1266)。既定は空
     *"mergeQueue{"*) printf '%s\\n' ${QUEUED_PRS:-}; exit 0 ;;
-    *REVIEW_DISMISSED_EVENT*)
-      n=""; prev=""
-      for a in "$@"; do
-        if [ "$prev" = "-F" ]; then case "$a" in number=*) n=${a#number=} ;; esac; fi
-        prev=$a
-      done
-      emit "$PR_DIR/$n.dismissed.json"; exit 0 ;;
   esac
   printf '%s\\n' "${IN_QUEUE:-false}"; exit 0
 fi
@@ -96,19 +84,24 @@ url=${2:-}
 
 case "$url" in
   # 専用機の render の run (#1774)。status の値ごとに応答を分ける。既定は空の並び
-  */actions/workflows/render.yml/runs\?*)
+  */actions/workflows/render.yml/runs\\?*)
     [ -z "${RUNS_FAIL:-}" ] || { echo "gh: 502" >&2; exit 1; }
     st=${url#*status=}; st=${st%%&*}
     f="$PR_DIR/render-runs.$st.json"
     [ -f "$f" ] || f="$PR_DIR/render-runs.none.json"
+    emit "$f"; exit 0 ;;
+  # run の job (#2062)。既定は空の並び
+  */actions/runs/*/jobs\\?*)
+    [ -z "${JOBS_FAIL:-}" ] || { echo "gh: 502" >&2; exit 1; }
+    id=${url%/jobs*}; id=${id##*/}
+    f="$PR_DIR/render-jobs.$id.json"
+    [ -f "$f" ] || { echo '{"jobs":[]}' > "$PR_DIR/render-jobs.none.json"; f="$PR_DIR/render-jobs.none.json"; }
     emit "$f"; exit 0 ;;
   */check-runs)
     sha=${url%/check-runs}; sha=${sha##*/}
     emit "$PR_DIR/${sha#sha-}.checkruns.json"; exit 0 ;;
   */files)
     n=${url%/files}; n=${n##*/}
-    # 特定の PR だけ読めない状況を作る (#1303)
-    [ "$n" != "${FILES_FAILS_FOR:-}" ] || { echo "gh: 502" >&2; exit 1; }
     emit "$PR_DIR/$n.files.json"; exit 0 ;;
 esac
 
@@ -153,9 +146,27 @@ class StallWatchTest(unittest.TestCase):
     def write(self, name, payload):
         (self.pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
 
-    def write_runs(self, status, *created):
-        """render.yml の run のうち、status のものを created の時刻で並べる。"""
-        runs = [{"status": status, "created_at": at} for at in created]
+    def write_runs(self, status, *created, job_status=None, gate="completed"):
+        """render.yml の run のうち、status のものを created の時刻で並べる。
+
+        run ごとに、専用機の job 1 本 (status は job_status・既定は run と同じ) と、GitHub
+        ホストの門番の job 1 本 (status は gate) を置く。
+        """
+        runs = []
+        for at in created:
+            self.next_run_id = getattr(self, "next_run_id", 100) + 1
+            run_id = self.next_run_id
+            runs.append({"id": run_id, "status": status, "created_at": at})
+            jobs = [
+                {"name": "render-turn", "status": gate, "created_at": at, "labels": ["ubuntu-latest"]},
+                {
+                    "name": "render",
+                    "status": job_status or status,
+                    "created_at": at,
+                    "labels": ["self-hosted", "mokume-render"],
+                },
+            ]
+            self.write(f"render-jobs.{run_id}.json", {"total_count": len(jobs), "jobs": jobs})
         self.write(f"render-runs.{status}.json", {"total_count": len(runs), "workflow_runs": runs})
 
     def add_pr(
@@ -167,8 +178,6 @@ class StallWatchTest(unittest.TestCase):
         auto=True,
         state="CLEAN",
         checks=(),
-        approved=False,
-        dismissed=None,
         updated=None,
         files=(),
     ):
@@ -186,28 +195,11 @@ class StallWatchTest(unittest.TestCase):
                 "autoMergeRequest": {"enabledAt": ago(60)} if auto else None,
                 "mergeStateStatus": state,
                 "statusCheckRollup": list(checks),
-                "latestReviews": [{"state": "APPROVED"}] if approved else [],
                 "updatedAt": updated or ago(30),
                 "headRefOid": f"sha-{number}",
             },
         )
         self.write(f"{number}.files.json", [{"filename": f} for f in files])
-        # **落とした出来事が無いときも応答は返す** (nodes が空)。本物の gh もそう返すので、
-        # 判定側の `// ""` を素通りさせない
-        self.write(
-            f"{number}.dismissed.json",
-            {
-                "data": {
-                    "repository": {
-                        "pullRequest": {
-                            "timelineItems": {
-                                "nodes": [{"createdAt": dismissed}] if dismissed else []
-                            }
-                        }
-                    }
-                }
-            },
-        )
 
     def env(self, **extra):
         env = dict(os.environ)
@@ -267,7 +259,9 @@ class StallWatchTest(unittest.TestCase):
         kind, action = self.classify(2, self.watch())
         self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
 
-    def test_承認が要る未承認の_PR_は黙るに分類される(self):
+    def test_重要パスに触れる_PR_も予約が外れていれば掛け直す(self):
+        """承認のゲートは ADR-0044 で外れた (#2108)。以前は awaiting-approval として
+        黙っていた形で、黙ると予約が外れたまま誰も掛け直さない。"""
         self.add_pr(
             3,
             auto=False,
@@ -276,33 +270,6 @@ class StallWatchTest(unittest.TestCase):
             files=[".github/workflows/ci.yml"],
         )
         kind, action = self.classify(3, self.watch())
-        self.assertEqual((kind, action), ("awaiting-approval", "quiet"))
-
-    def test_変更ファイルを読めなければ読めなかったと名乗る(self):
-        """読めなかったことを「重要パスに触れない」と読むと auto-merge-dropped に
-        落ちる (#1303) — **承認待ちの PR に予約を掛け直す当番が回る**。PR 自体を
-        読めなかった場合と同じ unreadable を名乗り、何も打たない。"""
-        self.add_pr(
-            3,
-            auto=False,
-            state="BLOCKED",
-            checks=[check("ci-gate", "SUCCESS")],
-            files=[".github/workflows/ci.yml"],
-        )
-        proc = self.watch(FILES_FAILS_FOR="3")
-        kind, action = self.classify(3, proc)
-        self.assertEqual((kind, action), ("unreadable", "name"))
-
-    def test_承認済みなら_auto_merge_が外れたと読む(self):
-        self.add_pr(
-            4,
-            auto=False,
-            state="BLOCKED",
-            approved=True,
-            checks=[check("ci-gate", "SUCCESS")],
-            files=[".github/workflows/ci.yml"],
-        )
-        kind, action = self.classify(4, self.watch())
         self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
 
     def test_queue_に居る_PR_は黙る(self):
@@ -360,70 +327,6 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch(STALL_MINUTES=60)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
 
-    def test_承認が_push_で落ちた_PR_を名乗る(self):
-        # **#1019 / #1020 の形。** auto-merge は掛かったまま・checks は全部緑・衝突も
-        # 無いので、この分岐が無いと 1 行も出なかった (#1033)
-        self.add_pr(
-            15,
-            auto=True,
-            state="BLOCKED",
-            checks=[check("ci-gate", "SUCCESS")],
-            dismissed=ago(5),
-        )
-        kind, action = self.classify(15, self.watch())
-        self.assertEqual((kind, action), ("dismissed-approval", "name"))
-
-    def test_落とした出来事が無ければ新規の承認待ちのまま(self):
-        # 分かれ目は「落とした出来事があるか」の 1 点。ここが効いていないと、
-        # まだ誰も見ていない PR まで名乗ってしまう
-        self.add_pr(
-            16,
-            auto=False,
-            state="BLOCKED",
-            checks=[check("ci-gate", "SUCCESS")],
-            files=[".github/workflows/ci.yml"],
-        )
-        kind, action = self.classify(16, self.watch())
-        self.assertEqual((kind, action), ("awaiting-approval", "quiet"))
-
-    def test_押し直された_PR_は落ちた承認と読まない(self):
-        # 落とした出来事は残ったままなので、**APPROVED があることで抜ける**
-        self.add_pr(
-            17,
-            auto=False,
-            state="BLOCKED",
-            approved=True,
-            checks=[check("ci-gate", "SUCCESS")],
-            dismissed=ago(90),
-            files=[".github/workflows/ci.yml"],
-        )
-        kind, action = self.classify(17, self.watch())
-        self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
-
-    def test_落ちた承認は猶予の中なら赤くしない(self):
-        self.add_pr(
-            18,
-            auto=True,
-            state="BLOCKED",
-            checks=[check("ci-gate", "SUCCESS")],
-            dismissed=ago(5),
-        )
-        proc = self.watch(DISMISSED_APPROVAL_MINUTES=15)
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-
-    def test_落ちた承認が猶予を超えたら赤くする(self):
-        # **既定の 60 分では #1019 も #1020 も赤くならなかった** ので、この分類だけ
-        # 猶予が短い (#1033)。STALL_MINUTES を長くしても効かないことまで固定する
-        self.add_pr(
-            19,
-            auto=True,
-            state="BLOCKED",
-            checks=[check("ci-gate", "SUCCESS")],
-            dismissed=ago(30),
-        )
-        proc = self.watch(STALL_MINUTES=600, DISMISSED_APPROVAL_MINUTES=15)
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-
     def runner_line(self, proc):
         for line in proc.stdout.splitlines():
             parts = line.split(maxsplit=4)
@@ -439,6 +342,30 @@ class StallWatchTest(unittest.TestCase):
         # 経過は最古の queued から測る
         self.assertEqual(line[1:4], ["runner-offline", "name", "30"], proc.stdout)
         self.assertEqual(proc.returncode, 1, proc.stdout)
+
+    def test_門番が走って_run_が_in_progress_でも_専用機の_job_が拾われなければ名乗る(self):
+        """render.yml の run は門番 (GitHub ホスト) が走ると in_progress になる (#2062)。
+        run の status で読むと、runner が落ちても「走っている」に倒れて黙る。"""
+        self.write_runs("in_progress", ago(30), job_status="queued")
+        self.write_runs("queued", ago(5))
+        proc = self.watch()
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1:4], ["runner-offline", "name", "30"], proc.stdout)
+
+    def test_門番の_job_が走っていても_runner_が生きている印にはしない(self):
+        self.write_runs("in_progress", ago(30), job_status="queued", gate="in_progress")
+        proc = self.watch()
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1], "runner-offline", proc.stdout)
+
+    def test_job_を読めなければ読めなかったと名乗る(self):
+        self.write_runs("queued", ago(30))
+        proc = self.watch(JOBS_FAIL=1)
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1:3], ["unreadable", "name"], proc.stdout)
 
     def test_他の_run_を走らせている間は順番待ちとして黙る(self):
         self.write_runs("queued", ago(30))
@@ -490,16 +417,26 @@ class StallWatchTest(unittest.TestCase):
         self.assertNotIn("--job 111", log, "pr-title へ rerun を打っている")
         self.assertIn("--job 222", log, "同じ run の他の失敗ジョブへ打っていない")
 
-    def test_名乗る行には何も打たない(self):
-        proc = self.act(["21 conflict name 90 main と衝突している"])
+    def test_cancel_された_render_pr_を巻き添えで_rerun_しない(self):
+        """ジョブ単位の rerun は門番 (render-turn) を通らず、専用機へ直に積む (#2062)。"""
+        self.add_pr(25)
+        self.write(
+            "25.checkruns.json",
+            {
+                "check_runs": [
+                    {"name": "render-pr", "conclusion": "cancelled", "id": 333},
+                    {"name": "ci-check", "conclusion": "failure", "id": 222},
+                ]
+            },
+        )
+        proc = self.act(["25 stale-checks act 5 古い失敗 check"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
-        self.assertNotIn("pr merge", log)
-        self.assertNotIn("run rerun", log)
+        self.assertNotIn("--job 333", log, "render-pr へ rerun を打っている")
+        self.assertIn("--job 222", log)
 
-    def test_落ちた承認には何も打たない(self):
-        # 押し直しは人の操作なので、3 列目が name である以上ここは黙る (#1033)
-        proc = self.act(["24 dismissed-approval name 30 承認が push で落ちている"])
+    def test_名乗る行には何も打たない(self):
+        proc = self.act(["21 conflict name 90 main と衝突している"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
         self.assertNotIn("pr merge", log)
@@ -573,6 +510,38 @@ class RerunExclusionTest(unittest.TestCase):
             f"凍結されたペイロードを読むのに rerun の除外に載っていない: {sorted(missing)}"
             " — stall-act.sh の RERUN_EXCLUDED へ足す (#699)",
         )
+
+    # --- pr-title の赤の直し方 (#2134) ---------------------------------------
+    #
+    # タイトルを直すと edited の run で pr-title は緑になる。しかし先の run の赤い pr-title と、
+    # それを受けた赤い ci-gate は同じコミットに残り、rerun しても元のタイトルを読んで同じ赤を
+    # 返す。だから「直せば新しい run が走る」で止めず、直し方は「タイトルを直したうえで、新しい
+    # コミットを push して run を作り直す」である。説明する 2 か所 (失敗したときの文面と、読み分け
+    # 表の 6) が揃っていることを固定する
+
+    @staticmethod
+    def squash(text):
+        return re.sub(r"\s+", "", text)
+
+    def pr_title_step_text(self):
+        text = CI_WORKFLOW.read_text(encoding="utf-8")
+        start = text.index("\n  pr-title:\n")
+        end = text.index("\n  review-gate:", start)
+        return text[start:end]
+
+    def test_pr_title_の失敗文面は新しいコミットを案内し_rerun_を勧めない(self):
+        step = self.squash(self.pr_title_step_text())
+        self.assertIn(self.squash("この run は rerun しない"), step)
+        self.assertIn(self.squash("タイトルを直したうえで、新しいコミットを push して run を作り直す"), step)
+        self.assertIn(self.squash("赤い ci-gate は残って必須チェックを赤のままにする"), step)
+        # 旧文面は「直せば新しい run が走る」で止まっていた
+        self.assertNotIn(self.squash("タイトルを直せば新しい run が走る。"), step)
+
+    def test_読み分け表の_6_は新しいコミットを案内する(self):
+        header = self.squash(WATCH.read_text(encoding="utf-8").split("set -euo pipefail")[0])
+        self.assertIn(self.squash("新しいコミットを push して run を作り直す"), header)
+        self.assertIn(self.squash("rerun でも消えない"), header)
+        self.assertNotIn(self.squash("直せば edited で新しい run が走る"), header)
 
 
 if __name__ == "__main__":

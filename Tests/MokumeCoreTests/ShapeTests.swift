@@ -250,9 +250,9 @@ struct ShapeTests {
     private func measure(_ body: () throws -> Void) rethrows -> Double {
         var best = Double.infinity
         for _ in 0..<5 {
-            let started = Date()
+            let started = ProcessInfo.processInfo.systemUptime
             try body()
-            best = min(best, Date().timeIntervalSince(started))
+            best = min(best, ProcessInfo.processInfo.systemUptime - started)
         }
         return best
     }
@@ -1464,8 +1464,8 @@ struct ShapeTests {
 
 // MARK: - 組み立ての中で効かない口 (#1588)
 
-/// 組み立ての中で効かない口が言う 3 通を、**実装とは別の場所に写して突き合わせる**
-/// (`OutsideCallTests` と同じ形)。
+/// 組み立ての中で効かない口が言う文面を、**実装とは別の場所に写して突き合わせる**
+/// (`OutsideCallTests` と同じ形)。形に焼き付かない設定の 10 通は #1529 で足した。
 private let insideShapeNotices: [Canvas.InsideShape: String] = [
     .background:
         "background() does nothing inside createShape { }. A shape cannot hold a repaint of "
@@ -1479,6 +1479,37 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
             + "target placed earlier in the frame was changed, the noise settings changed, or "
             + "endDraw() was called), so what was built up to then went into the frame and the "
             + "shape is empty. Do those before or after building the shape",
+    .camera:
+        "The camera and projection do nothing inside createShape { }. A shape cannot hold a "
+            + "camera, so place it before or after building the shape",
+    .clip:
+        "The clip does nothing inside createShape { }. A clip works in the coordinates of the "
+            + "surface, so a shape cannot hold it. Write it before or after building the shape",
+    .effects:
+        "Effects do nothing inside createShape { }. A shape cannot hold effects, so write them "
+            + "before or after building the shape",
+    .light:
+        "Lights do nothing inside createShape { }. A shape cannot hold a light, so place it "
+            + "before or after building the shape",
+    .surroundings:
+        "The surroundings do nothing inside createShape { }. A shape cannot hold them, so place "
+            + "them before or after building the shape",
+    .shadow:
+        "Shadows do nothing inside createShape { }. A shape cannot hold how shadows are cast or "
+            + "received, so write it before or after building the shape",
+    .material:
+        "Materials do nothing inside createShape { }. A shape cannot hold a material, so write "
+            + "it before or after building the shape",
+    .particles:
+        "Particles are not moved or drawn inside createShape { }. A shape cannot hold them, so "
+            + "handle them before or after building the shape",
+    .compute:
+        "Compute is not run inside createShape { }. A shape cannot hold it, so ask for it before "
+            + "or after building the shape",
+    .brightness:
+        "exposure() and toneMapping() do nothing inside createShape { }. They set the brightness "
+            + "of the whole surface, which a shape cannot hold, so call them before or after "
+            + "building the shape",
 ]
 
 /// 組み立ての中で呼ぶ、画素の口。

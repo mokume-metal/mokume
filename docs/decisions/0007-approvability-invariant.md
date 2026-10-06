@@ -7,9 +7,11 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 改訂 (2026-08-30): 承認者集合の代理を `author_association` にする / 改訂 (2026-08-30): フックの射程を実態に合わせ、回復手順に rerun を足す
+採用 (2026-08-27) / 改訂 (2026-08-30): 承認者集合の代理を `author_association` にする / 改訂 (2026-08-30): フックの射程を実態に合わせ、回復手順に rerun を足す / 改訂あり (本文の「改訂 (日付)」見出し) / 置換済み (→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md))
 
 ## 文脈
+
+> **置換済み。** 承認を要求しなくなったので、承認可能性の不変条件は守る対象を失った。PR はメンテナ名義で作る ([ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md))。以下は経緯として残す。
 
 [ADR-0003](0003-agent-identity-separation.md) はエージェントに GitHub App の identity を与え、承認を native の Approve に戻した。「PR の作成者は自分の PR を承認できない」というプラットフォーム制約が効く状態を作ったことが、承認を規約から構造へ変えた。
 

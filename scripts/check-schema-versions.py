@@ -13,8 +13,8 @@
 
 ## 何を見るか
 
-`origin/main` の同じファイルと手元の版を、**JSON ポインタをキーにした一般走査**で
-突き合わせる。見るのは 3 つだけで、どれかがあれば「破壊的」と判定する:
+`origin/main` との**分岐点**にある同じファイルと手元の版を、**JSON ポインタをキーにした
+一般走査**で突き合わせる。見るのは 3 つだけで、どれかがあれば「破壊的」と判定する:
 
   required に項目が増えた   古い書き手の応答が、新しい schema では検証を通らなくなる
   properties のキーが消えた  改名は「消えた + 増えた」として現れるので、消えた側で足りる
@@ -34,6 +34,22 @@
 
 **「名前も型も同じまま意味が変わる」も見ない。** そこはスキーマに現れないので、人と
 ADR が唯一の防壁である (ADR-0018 決定 5 の最後の行)。
+
+## 比較の相手は分岐点
+
+**先端ではなく `git merge-base` と比べる** (#2031)。先端と比べると、分岐した後に main へ
+入った変更 (キーを足して版を上げた、など) を、追随していないブランチが「キーを消して版を
+下げた」と読んで赤くなる。このブランチが変えた分だけを見るのは
+`check-agents-md-size.py` と同じ考え方である。
+
+**浅い clone (CI の合流 ref) では履歴を深めてから分岐点を引く。** 合流 ref の親は
+作った時点の main で、この段が走るまでに main は進みうるので、先端と比べると同じ
+取り違えが CI でも起きる。深められない (ネットワークが無い) ときだけ先端と比べ、
+どちらを使ったかは出力が名乗る。
+
+**分岐点より上げただけでは足りない。** 分岐の後に main も版を上げていれば、上げた番号は
+main の先端の版より大きくなければならない。同じ番号だと `const` の行は同じ書き換えに
+なって衝突せずに合流し、合流後の木は同じ版で 2 通りの形を持つ。
 
 ## 比較の相手を引けないとき
 
@@ -58,7 +74,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_BASE = "origin/main"
-DEFAULT_SCHEMA_DIR = "Schemas"
+SCHEMA_DIR = "Schemas"  # リポジトリのルートからの相対 (check-schemas.sh がルートで呼ぶ)
 
 
 def _git(args, cwd):
@@ -82,6 +98,25 @@ def resolve_base(base, cwd):
     if _git(["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"], cwd) is None:
         return None
     return "FETCH_HEAD"
+
+
+def fork_point(tip, cwd):
+    """tip (SHA) と HEAD の分岐点を返す。引けなければ None (呼び手が先端へ落とす)。
+
+    先端と比べると、分岐した後に main へ入った変更を「このブランチが戻した」と読む
+    (#2031)。**浅い clone (CI の合流 ref) は親を持たないので、履歴を深めてから引き直す。**
+    合流 ref の親は作った時点の main で、この段が走るまでに main は進みうる — そこで
+    先端と比べると、同じ取り違えが CI でも起きる。
+    """
+    commit = _git(["merge-base", tip, "HEAD"], cwd)
+    if commit:
+        return commit.strip()
+    if (_git(["rev-parse", "--is-shallow-repository"], cwd) or "").strip() != "true":
+        return None  # 履歴は全部ある。共有する祖先がそもそも無い
+    if _git(["fetch", "--quiet", "--unshallow", "origin"], cwd) is None:
+        return None
+    commit = _git(["merge-base", tip, "HEAD"], cwd)
+    return commit.strip() if commit else None
 
 
 def read_at(ref, path, cwd):
@@ -185,19 +220,9 @@ def declared_version(document):
     return const
 
 
-def _repo_prefix(cwd):
-    """cwd のリポジトリのルートからの相対を返す (ルートなら空文字)。
-
-    git show に渡す経路はルートからの相対でなければならず、--schema-dir は cwd
-    からの相対で受ける。cwd がルートでないときに両者がずれる。
-    """
-    prefix = _git(["rev-parse", "--show-prefix"], cwd)
-    return prefix.strip() if prefix else ""
-
-
-def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
+def check(base, cwd, out=sys.stdout, err=sys.stderr):
     """0 (通った / 見ていない) か 1 (据え置きが見つかった) を返す。"""
-    root = Path(schema_dir)
+    root = Path(SCHEMA_DIR)
     schemas = sorted((Path(cwd) / root).glob("*.schema.json"))
     if not schemas:
         print(f"スキーマが 1 つも見つからない: {root}/*.schema.json", file=err)
@@ -216,8 +241,15 @@ def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
         )
         return 0
 
-    print(f"版の据え置きを見る: 比較の相手は {ref}", file=out)
-    prefix = _repo_prefix(cwd)
+    # FETCH_HEAD は履歴を深める fetch で書き換わるので、先に SHA へ解いておく
+    tip = _git(["rev-parse", f"{ref}^{{commit}}"], cwd).strip()
+    fork = fork_point(tip, cwd)
+    if fork is None:
+        print(f"版の据え置きを見る: 比較の相手は {ref} の先端 (分岐点を引けない)", file=out)
+        fork = tip
+    else:
+        print(f"版の据え置きを見る: 比較の相手は {ref} との分岐点 ({fork[:7]})", file=out)
+    ref = fork
     status = 0
 
     for schema in schemas:
@@ -229,7 +261,7 @@ def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
             print(f"対象外: {name} — schemaVersion を持たない", file=out)
             continue
 
-        before = read_at(ref, f"{prefix}{root.as_posix()}/{name}", cwd)
+        before = read_at(ref, f"{root.as_posix()}/{name}", cwd)
         if before is None:
             print(f"対象外: {name} — {ref} には無い (新しい面)", file=out)
             continue
@@ -240,19 +272,36 @@ def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
             continue
 
         was = declared_version(before)
-        if was is None or version > was:
+        if was is None:
+            print(f"ok: {name} — 比較の相手は版を持たない (版は {version})", file=out)
+            continue
+        # 分岐の後に main が使った版 (#2031 の反証 1)。分岐点より上げただけでは足りない —
+        # main と同じ番号なら const の行は同じ書き換えになって衝突せずに合流し、合流後の
+        # 木は同じ版で 2 通りの形を持つ
+        taken = None if fork == tip else declared_version(
+            read_at(tip, f"{root.as_posix()}/{name}", cwd)
+        )
+        floor = max(was, taken) if taken is not None else was
+        if version > floor:
             print(f"ok: {name} — 破壊的な変化に合わせて版が上がっている ({was} → {version})", file=out)
             continue
 
         status = 1
-        print(
-            f"{name}: 破壊的な変化があるのに schemaVersion が {version} のまま", file=err
-        )
+        if version > was:
+            print(
+                f"{name}: 破壊的な変化に合わせて版を {version} へ上げたが、"
+                f"分岐の後に main の先端も {taken} を名乗っている",
+                file=err,
+            )
+        else:
+            print(
+                f"{name}: 破壊的な変化があるのに schemaVersion が {version} のまま", file=err
+            )
         for what, path, names in changes:
             print(f"  {what}  {path or '/'}  {', '.join(names)}", file=err)
         print(
-            f"  properties.schemaVersion.const を {was + 1} へ上げる"
-            " (据え置くと同じ版を名乗る応答が 2 通りになる — ADR-0018 決定 5 / #635)",
+            f"  properties.schemaVersion.const を {floor + 1} へ上げる"
+            " (重なると同じ版を名乗る応答が 2 通りになる — ADR-0018 決定 5 / #635)",
             file=err,
         )
 
@@ -269,13 +318,8 @@ def main(argv=None):
         default=DEFAULT_BASE,
         help=f"比較の相手 (既定 {DEFAULT_BASE})。引けなければ浅く fetch し、それも駄目なら黙る",
     )
-    parser.add_argument(
-        "--schema-dir",
-        default=DEFAULT_SCHEMA_DIR,
-        help=f"スキーマの置き場 (既定 {DEFAULT_SCHEMA_DIR})",
-    )
     args = parser.parse_args(argv)
-    return check(args.schema_dir, args.base, cwd=Path.cwd())
+    return check(args.base, cwd=Path.cwd())
 
 
 if __name__ == "__main__":

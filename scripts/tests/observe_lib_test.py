@@ -31,6 +31,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
@@ -149,9 +150,25 @@ class PlaceAndAnswerTest(unittest.TestCase):
 
     def test_the_deadline_is_honoured(self):
         """固まりうる待ちには待つ側が期限を持たせる (AGENTS.md)。"""
-        started = time.time()
+        started = time.monotonic()
         self.assertIsNone(observe_lib.answered(self.observe, "a", 0.1))
-        self.assertLess(time.time() - started, 2.0)
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_wall_clock_jump_does_not_cut_the_wait_short(self):
+        """**期限は、眠っている間は進まない時計で測る** (#1940)。
+
+        壁時計は眠っている間も進み、起きた瞬間にその分だけ跳ぶ。跳ぶ時計で期限を測ると、
+        応答を待たずに `None` を返す。壁時計を呼ぶたびに 1 日ずつ跳ばしても、あとから
+        置かれた応答を拾えることを見る。
+        """
+        calls = iter(range(10**6))
+        report = self.observe / "report.json"
+        later = threading.Timer(0.05, lambda: report.write_text(json.dumps({"id": "a"})))
+        later.start()
+        self.addCleanup(later.join)
+        with mock.patch.object(time, "time", side_effect=lambda: 1.7e9 + next(calls) * 86400):
+            answer = observe_lib.answered(self.observe, "a", 5)
+        self.assertEqual(answer, {"id": "a"})
 
 
 class RoundtripTest(unittest.TestCase):

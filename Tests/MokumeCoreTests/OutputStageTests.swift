@@ -285,22 +285,6 @@ struct OutputStageTests {
         }
     }
 
-    /// 完了条件「出力段が受け取る画素数が、要求した `scale` の画素数と一致する」。
-    ///
-    /// 出力段の費用は画素数にそのまま比例するので、**渡す前に減っていること**が
-    /// 捨てるぶんを変換していないことにあたる。この画素を出力段へ渡す唯一の場所が
-    /// `RenderTarget.encodeForDisplay(scale:)` である。
-    @Test("間引いた画素の数は、要求した倍率のぶんしかない")
-    func onlyTheRequestedPixelsReachTheOutputStage() {
-        let pixels = makeVariedPixels(width: 960, height: 540)
-        let small = pixels.scaled(by: 0.5)
-        #expect(small.width == 480)
-        #expect(small.height == 270)
-        #expect(small.components.count == small.width * small.height * 4)
-        // 実寸の 4 分の 1 — 出力段の費用もここまで落ちる
-        #expect(small.width * small.height == pixels.width * pixels.height / 4)
-    }
-
     @Test(
         "行の間に詰め物がある元から拾っても、詰め物の無い元と同じ寸法とバイト列になる",
         arguments: [
@@ -480,7 +464,7 @@ struct OutputEncodeTests {
         try expectEdgeCasesStored(on: canvas)
 
         let taken = try canvas.output.encodeToImage().read()
-        let readBack = try canvas.output.encodeForDisplay()
+        let readBack = try canvas.output.encodeOnCPU()
 
         #expect(taken.width == readBack.width)
         #expect(taken.height == readBack.height)
@@ -504,7 +488,7 @@ struct OutputEncodeTests {
         try expectEdgeCasesStored(on: canvas)
 
         let result = compare(
-            try canvas.output.encodeToImage().read(), try canvas.output.encodeForDisplay())
+            try canvas.output.encodeToImage().read(), try canvas.output.encodeOnCPU())
         #expect(result.mismatches == 0, "露出 \(exposure) / 丸め \(toneMapping): \(result.report)")
     }
 
@@ -572,7 +556,7 @@ struct ObservationRoadTests {
         // 道を通してから間引いた側 (観測がこれから通る経路)
         let viaRoad = try canvas.output.encodeToImage().read().scaled(by: factor)
         // 間引いてから読み戻して変換した側 (これまでの経路・オラクル)
-        let viaReadback = try canvas.output.encodeForDisplay(scale: factor)
+        let viaReadback = try canvas.output.encodeOnCPU(scale: factor)
 
         #expect(viaRoad.width == viaReadback.width)
         #expect(viaRoad.height == viaReadback.height)

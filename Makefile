@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release examples drawing-evidence entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -18,8 +18,12 @@ SHELL := /bin/bash
 # パッケージマネージャにも左右されず、ローカルと CI で同じ結果になる
 export REUSE_ENCODING_MODULE := chardet
 
+# python3 は 3.10 以上 (#2030)。scripts/ が match 文や評価時の `X | None` を使うので、
+# macOS 同梱の 3.9 (xcode-select で入るもの) では changelog-lint・hooks-test・agents-md-size が落ちる
 setup: ## 開発ツールを確認する
-	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: xcode-select --install"; exit 1; }
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: brew install python (3.10 以上)"; exit 1; }
+	@python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || { \
+		echo "python3 が 3.10 より古い ($$(python3 --version 2>&1)): brew install python で入れ、PATH の先に置く"; exit 1; }
 	@for cmd in gh jq openssl; do \
 		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd が見つからない: brew install $$cmd"; exit 1; }; \
 	done
@@ -43,7 +47,37 @@ check: setup
 # **描画の検査は、ここでは GPU のある機械でだけ実際に走る。** merge の判定としては、
 # 専用機の描画ジョブ (.github/workflows/render.yml の render) が merge queue の合流後の木で
 # build と test を走らせる (ADR-0019 決定 7)
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence
+#
+# **CI_CHECK_SKIP に挙げた段は並びから外す。** merge_group のホストの ci-check は
+# `build test` を外す (.github/workflows/ci.yml の ci-check のコメント)。既定は空で、並びは
+# 変わらない。build を外しても examples / params / api / reference は prerequisite の build を
+# 自分で走らせるので、合流後の木での検査は残る
+CI_CHECK_SKIP ?=
+
+# **手元で回す段は、触ったものから選ぶ。** AGENTS.md「コミット・PR の規約」の「触った範囲の段」は
+# ここを指す (#2133)。段の名前からは「触ったもの → 回す段」が引けず、取り違えた PR が queue で
+# 赤になった。**取り違えて実害が出た 3 つだけをここに置く** — 置いていないものは、下の並びの
+# 段名と、各段の定義の直前の注釈 (何を見るか) から選ぶ。全段を通すときは make ci-check。
+#
+#   1. public な宣言の doc コメント (`///`) → make reference
+#      `///` の中の記号リンクを解くのは、docc を --warnings-as-errors で通すこの段だけで、
+#      build・test・docs-links・api は見ない。内部の記号や面から外した型 (REFERENCE_OMIT) へ
+#      二重バッククォートでリンクすると、ここでだけ赤になる。この段を回さずに push した
+#      PR #1987 は、ci-check の reference で止まって 1 往復した
+#
+#   2. Sources/ → make test の全段。swift test --filter で周辺の suite に絞らない
+#      格納を数える網羅検査 (ShapeExitTests) は GPU を要るので PR の ci-check では飛び、
+#      周辺の suite にも入らない。絞った実行では落ちていることに気付けず、専用機の render
+#      (merge queue の合流後の木) で初めて赤になって queue から外れる (PR #2097)。
+#      GPU の枠 (scripts/gpu-slot.py) は make test が自分で取る
+#
+#   3. テストの赤の読み方 → 記録の失敗を全件抜いて見る。端末の出力の先頭で切らない
+#      記録は .build/test-results-swift-testing.xml (TEST_RECORD)。件数は
+#      python3 scripts/read-test-record.py --failures <記録>、名前と文面は同じく
+#      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤
+#      (他のセッションの GPU 負荷など) が約 70 本並ぶ中に本物が 1 本混ざることがあり、
+#      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした
+CI_CHECK_STEPS := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -65,6 +99,8 @@ file-modes:
 reuse-encoding-check:
 	bash scripts/check-reuse-encoding.sh
 
+# 帰属 (著作権とライセンス) の宣言が無いファイルは、存在した時点で落とす (ADR-0001 原則 8)。
+# 第三者の素材を宣言なしに持ち込まないための唯一の機械の関所である
 reuse-lint:
 	reuse lint
 
@@ -111,8 +147,9 @@ docs-links:
 
 # エージェント向けフック (署名の強制など) の検査。gh はスタブに差し替わるので
 # ネットワークも認証も要らない
-# ADR の形を見る。連番が一意であること (#500) と、状態欄が本文の改訂に追随して
-# いること (#545)。**docs-links とは見ているものが違う** — あちらの責務は
+# ADR の形を見る。連番が一意であること (#500) と、改訂を抱えた ADR の状態欄が
+# 「改訂あり」の印を持つこと (#545 / #1946)、本文の改訂の見出しが 5 つを超えない
+# こと (#2146・軽くし方は docs/decisions/AGENTS.md)。**docs-links とは見ているものが違う** — あちらの責務は
 # 「指し先の不在」で、番号が重複していてもファイル名が別なら全リンクが解決する。
 # 実際 #490 と #491 が両方 0026 を取ったとき docs-links は緑のまま通った
 # (ADR-0008 決定 5 の段 1 を検討した結果、責務を広げずに 1 本足している)。
@@ -129,6 +166,10 @@ adrs:
 agents-md-size:
 	python3 scripts/check-agents-md-size.py
 
+# フック・ガード・検査スクリプトの判定の退行を見る。判定が壊れると、赤くなるべきところで
+# 黙って緑になり、誰も気付かない — ガードは対象のセッションでしか動かないので、なおさらである
+# (ADR-0007 決定 3)。
+#
 # **ファイル単位で並列に走る** (#1714)。駆動役は scripts/run-hooks-tests.py で、並べる順と
 # 同時の数はその冒頭。時間の上限を持つ検査が並列で赤くなったと疑うときは
 # HOOKS_TEST_JOBS=1 make hooks-test で直列にして切り分ける
@@ -264,13 +305,19 @@ test:
 # 代表に選ぶのは、決定 3 の照合そのものがそこにあるからである。記録の読み方は
 # scripts/read-test-record.py が持つ (端末の出力は行を落とすので読まない・#1056)。
 # 検査は scripts/tests/gpu_ran_test.py
+#
+# **代表の Suite は GPU_RAN_SUITE で差し替えられる** (#1983)。台帳を外した定期の release
+# (下の test-release-scheduled) では SceneLedgerTests が記録に無いので、同じく Suite 全体が
+# GPU の有無で飛ぶ ShapeTests を代表にする。既定は台帳のまま
+GPU_RAN_SUITE ?= MokumeCoreTests.SceneLedgerTests
+
 gpu-ran:
-	@read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD) MokumeCoreTests.SceneLedgerTests); \
+	@read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD) $(GPU_RAN_SUITE)); \
 	case "$$verdict" in \
-	  passed) echo "ok: 描画の検査が走った (台帳の照合が通った・飛ばした検査 $$skipped 件)" ;; \
+	  passed) echo "ok: 描画の検査が走った ($(GPU_RAN_SUITE) が通った・飛ばした検査 $$skipped 件)" ;; \
 	  skipped) echo "描画の検査が飛ばされている — この機械で GPU (この世代のコマンド構造) が見えていない"; exit 1 ;; \
-	  absent) echo "台帳の検査 (SceneLedgerTests) が記録に無い ($(TEST_RECORD))"; exit 1 ;; \
-	  failed) echo "台帳の検査が落ちている"; exit 1 ;; \
+	  absent) echo "代表の検査 ($(GPU_RAN_SUITE)) が記録に無い ($(TEST_RECORD))"; exit 1 ;; \
+	  failed) echo "代表の検査 ($(GPU_RAN_SUITE)) が落ちている"; exit 1 ;; \
 	  *) echo "test の記録を読めない ($(TEST_RECORD))"; exit 1 ;; \
 	esac
 
@@ -287,14 +334,33 @@ gpu-ran:
 # 取り逃す — 落ちる集合が実行ごとに別物だからである (上の「正本は console ではなく」の段)。
 # `tee` は付けない。debug の tee は「人が実行中に読む先」で、こちらは計測のときに端末を
 # 見ながら打つ器なので、同じものが 2 つ要らない
+#
+# **TEST_RELEASE_ARGS は swift test へそのまま渡す追加の引数** (既定は空)。素で打ったときの
+# 動作は変えない。定期の検査 (下の test-release-scheduled) が範囲を絞る口として使う (#1983)
+TEST_RELEASE_ARGS ?=
+
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD_RELEASE)
-	python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing --xunit-output $(TEST_RECORD_RELEASE_BASE)
+	python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE)
 	@test -s $(TEST_RECORD_RELEASE) || { \
 		echo "記録が出来ていない ($(TEST_RECORD_RELEASE))。SwiftPM が --xunit-output の"; \
 		echo "綴りを変えた可能性がある — debug 側の TEST_RECORD と併せて直す"; \
 		exit 1; }
+
+# 専用機で定期に走らせる release の検査 (ADR-0019 決定 7 の段階 D・#1983)。**定期の release の
+# 範囲の正本はここ 1 箇所**で、workflow (.github/workflows/render.yml)・起票の本文
+# (scripts/report-scheduled-render.sh)・手元の再現がみなこの的を指す。
+#
+# release の台帳 (SceneLedgerTests) だけを外す。release で台帳が合うべきかは #1736 が決める
+# 途中で、素で走らせると決着するまで毎回赤になる。#1736 が決着したら、ここの --skip を外して
+# 戻す。代償: 台帳にだけ出る release の差は、定期の検査では見えない。
+#
+# 「GPU が見えないので全部飛ばした」まま緑になるのは gpu-ran が止める。代表は ShapeTests —
+# Suite 全体が GPU の有無で飛び、#1086 の速さの検査 (release でしか走らない) を含む
+test-release-scheduled: ## 定期の release の検査 (台帳を外す。専用機の schedule が走らせる)
+	$(MAKE) test-release TEST_RELEASE_ARGS='--skip MokumeCoreTests.SceneLedgerTests'
+	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE) GPU_RAN_SUITE=MokumeCoreTests.ShapeTests
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは
@@ -342,8 +408,13 @@ params: build
 #
 # **組み直さない。** build が出したシンボルグラフをそのまま読む (examples と同じ形)。
 # 材料の出どころと、置き場を 1 本にした理由は SYMBOL_GRAPHS の宣言にある
+# 公開 API を見るモジュール。**アンブレラが再エクスポートする自前のモジュールを全部並べる**
+# (ADR-0042 決定 3)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
+# 黙って抜ける — 参照の面の REFERENCE_MODULES と同じ並びに保つ
+API_MODULES := MokumeCore MokumeCamera MokumeAudio
+
 api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
-	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS)
+	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m))
 
 # 道具が話す言葉は英語 (ADR-0038 決定 1)。Sources/ の Swift でコメントの外に日本語が無いかを見る。
 # 組み上げは要らない — 字句だけを読む (#1160)
@@ -354,8 +425,8 @@ tool-language: ## Sources/ の Swift でコメントの外に日本語を置い�
 # `make test-release` がコンパイルできなくなるのに、debug も `swift build -c release`
 # (製品) も通る — **足した本人には壊れて見えない**形で 2 度起きた (#761 → #1021)。
 #
-# **段 1 を採っている** (ADR-0008 決定 5)。本物の判定はコンパイラで、それには release の
-# テストビルドを CI で回すしかないが (段 2)、その入口は #1096 が持つ。ここが引き受けるのは
+# **段 1 を採っている** (ADR-0008 決定 5)。本物の判定はコンパイラで、release のテストビルドは
+# ci.yml の test-release ジョブが毎 PR で回している (段 2・#1096)。ここが引き受けるのは
 # **赤が理由の正典まで案内すること**である — 再発の経路は「散文で書いた作法が読まれなかった」
 # 1 本なので、コンパイラの診断 (正典を指さない) では 3 度目を止められない。
 #
@@ -364,7 +435,7 @@ isolated-deinit: ## Sources/ の isolated deinit が隔離を明示した型の�
 	python3 scripts/check-isolated-deinit.py
 
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
-	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) \
+	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m)) \
 		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
 
 # 参照の面 (人が読む API の面)。**説明文 (`///`) が唯一の入力**で、面はその生成物
@@ -396,7 +467,7 @@ api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0
 # 組み立ての後に、置いたものが本当に出ているかを自分で確かめる — この道具のいちばん
 # 多い壊れ方は「変換は成功し、警告も出ず、出力にだけ存在しない」である。
 REFERENCE_CATALOG := Documentation/mokume.docc
-REFERENCE_MODULES := MokumeCore
+REFERENCE_MODULES := $(API_MODULES)
 # 面が名乗る名前。**ターゲット名ではなく、利用者が import する名前で名乗る**
 REFERENCE_SURFACE := mokume
 REFERENCE_GRAPHS := .build/reference-graphs
@@ -492,7 +563,10 @@ example-shots: ## 説明文の中の例を撮って書き戻す (OUT= 置き場)
 		$(if $(OUT),--render "$(OUT)",)
 
 # 囲みの形・一文の説明・**例を書き換えたのに撮り直していないもの**を見る。
-# 指紋が見ていない範囲 (実装の変更) は合否に混ぜず要約で言う
+# 指紋が見ていない範囲 (実装の変更) は合否に混ぜず要約で言う。
+# あわせて、`Sketch` の公開メンバが例か撮れない宣言を持つか見る (#2116)。既存の穴は
+# scripts/example-shots-gaps.txt に載せてあり、減る方向にしか動かない。書き方は
+# scripts/example-shots.py の冒頭 (Gyazo の鍵が無ければ「後で撮る」の印で通る)
 example-shots-check:
 	python3 scripts/example-shots.py
 

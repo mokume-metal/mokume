@@ -380,7 +380,6 @@ class GuardTest(unittest.TestCase):
         """他のリポジトリ宛てのコメントはこのリポジトリの規約の外。
 
         ラッパーの投稿先は mokume 固定なので、ここで差し戻すと逃げ道が無くなる。
-        pr-identity-guard.sh が同じ判定で素通ししているのと揃える。
         """
         self.assert_passed('gh issue comment 5 -R shinyaoguri/claude-plugins --body "x"')
         self.assert_passed("gh pr comment 7 --repo=other/repo -F /tmp/body.md")

@@ -261,6 +261,8 @@ struct ShaderInterfaceTests {
                     .buffer(
                         "instances", ShapePipeline.instanceBufferIndex,
                         .layout(Self.flatInstance)),
+                    // 平面の頂点ごとの被覆 (#1637)
+                    .buffer("coverages", ShapePipeline.coverageBufferIndex, .scalar(Float.self)),
                 ]),
             Entry(
                 ShapePipeline.solidVertexFunctionName,
@@ -337,7 +339,11 @@ struct ShaderInterfaceTests {
             Entry(
                 ShapePipeline.flatFragmentFunctionName,
                 common + [
-                    .buffer("mode", ShapePipeline.blendModeBufferIndex, .scalar(UInt32.self))
+                    .buffer("mode", ShapePipeline.blendModeBufferIndex, .scalar(UInt32.self)),
+                    // 細い線を広げた置き換える列も、この入口で字形の外の余白を捨てる (#1637)
+                    .buffer(
+                        "readsGlyphPage", ShapePipeline.glyphPageBufferIndex,
+                        .scalar(UInt32.self)),
                 ]),
             Entry(ShapePipeline.flatDirectFragmentFunctionName, common),
             Entry(
@@ -378,6 +384,7 @@ struct ShaderInterfaceTests {
         [
             ("projection", \.projection), ("strokeStart", \.strokeStart),
             ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
+            ("readsCoverage", \.readsCoverage),
         ])
 
     static let flatInstance = layout(
@@ -405,6 +412,7 @@ struct ShaderInterfaceTests {
             ("shadowMatrix", \.shadowMatrix), ("shadowParams", \.shadowParams),
             ("noiseSeed", \.noiseSeed), ("noiseOctaves", \.noiseOctaves),
             ("noiseFalloff", \.noiseFalloff), ("noisePadding", \.noisePadding),
+            ("unitsPerDrawnPixel", \.unitsPerDrawnPixel), ("unitsPadding", \.unitsPadding),
         ])
 
     static let lighting = layout(

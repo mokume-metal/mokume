@@ -8,6 +8,8 @@
   2. 未投稿のままセッションを終えようとすると差し戻される
   3. 投稿本文から絶対パスとホームが畳まれ、秘密らしき文字列があれば投稿が止まる
   4. 1〜3 がリポジトリ側だけで完結している (個人環境のフックに依存しない)
+承認の前に同じ検査 (現況・Bug の約束と範囲) を掛けること (#2135・precheck) は
+PreApprovalCheckTest が見る。
 
 フックの契約 (stdin の JSON → 記録ファイル + stderr の指示 + 終了コード) を
 サブプロセス経由で検証する。投稿先の解決と投稿済み判定は gh に依存するので、
@@ -18,6 +20,7 @@ PATH の先頭に偽の gh を置いて振る舞いを環境変数で決める�
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +30,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "plan-record.sh"
+
+def adr_refs_outside_reasons(text):
+    """「(… 理由: ADR-00NN …)」の括弧の外に出ている ADR の番号 (#2139)。
+
+    差し戻しや指示の文面は、ADR を開かなくても何をすればよいかが決まるように書き、ADR の
+    番号は理由を辿りたい人のための任意の参照として括弧の中に添える。
+    """
+    return re.findall(r"ADR-\d{4}", re.sub(r"\([^()]*理由:[^()]*\)", "", text))
+
 
 # 着手時の再チェック (ADR-0031 決定 4)。capture はプランに「対象 Issue の番号」と
 # 「完了条件の現況」の両方を要求するので、主題でないテストにはこれを自動で足す
@@ -303,6 +315,11 @@ class HookFixture:
     def git(self, *args):
         subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
 
+    def assertSays(self, text, phrase):
+        """空白と改行を外して語句を探す (折り返しの位置に左右されない)。"""
+        squash = lambda t: re.sub(r"\s+", "", t)
+        self.assertIn(squash(phrase), squash(text), f"文面に「{phrase}」が無い:\n{text}")
+
     def env(self, **overrides):
         env = {k: v for k, v in os.environ.items() if k not in LEAKY_ENV}
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
@@ -354,6 +371,42 @@ class HookFixture:
             **{k: v for k, v in overrides.items() if not k.isupper()},
         }
         return self.run_hook("capture", payload, **env)
+
+    def precheck_payload(self, **overrides):
+        """PreToolUse (ExitPlanMode) の payload で precheck を叩く (承認の前・#2135)。
+
+        Claude Code は ExitPlanMode の入力へ、プランファイルの中身を plan として足してから
+        フックへ渡す (normalizeToolInput)。tool_input に plan を置くのがその形。
+        """
+        env = {k: v for k, v in overrides.items() if k.isupper()}
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "ExitPlanMode",
+            "cwd": str(self.repo),
+            "session_id": "abcd1234-ef56-7890",
+            **{k: v for k, v in overrides.items() if not k.isupper()},
+        }
+        return self.run_hook("precheck", payload, **env)
+
+    def precheck(self, plan, recheck=True, **env):
+        """precheck を叩く。recheck の扱いは capture と同じ (主題でないテストに毎回書かせない)。"""
+        if recheck:
+            plan = plan + RECHECK
+        return self.precheck_payload(tool_input={"plan": plan}, **env)
+
+    def denial(self, result):
+        """差し戻された (deny の JSON が返った) ときの理由。素通しなら None。
+
+        deny は JSON で伝え、終了コードは 0 のまま (非 0 だと Claude Code はフックが壊れたと
+        読み、判定として扱わない)。
+        """
+        self.assertEqual(result.returncode, 0, result.stderr)
+        if not result.stdout.strip():
+            return None
+        out = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "PreToolUse")
+        self.assertEqual(out["permissionDecision"], "deny")
+        return out["permissionDecisionReason"]
 
     def guard(self, **env):
         return self.run_hook("guard", {"cwd": str(self.repo)}, **env)
@@ -537,7 +590,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(len(self.records()), 1, result.stderr)
         self.assertIn("scripts/comment.sh issue 12", result.stderr)
-        self.assertNotIn("ADR-0040", result.stderr)
+        self.assertNotIn("約束と範囲が見当たりません", result.stderr)
 
     def test_capture_refuses_a_bug_plan_without_the_promise_or_its_scope(self):
         """約束と範囲は別々に問う — 片方だけ書いたプランには、足りないほうだけを名乗る。
@@ -553,7 +606,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
             with self.subTest(plan=plan):
                 result = self.capture(plan, FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug")
                 self.assertEqual(result.returncode, 2)
-                self.assertIn("ADR-0040", result.stderr)
+                self.assertIn("約束と範囲が見当たりません", result.stderr)
                 self.assertIn("#12", result.stderr)
                 for word in missing:
                     self.assertIn(word, result.stderr)
@@ -563,6 +616,46 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
                 self.assertEqual(self.records(), [])
                 self.assertEqual(self.metas(), [])
                 self.assertNotIn("scripts/comment.sh issue 12", result.stderr)
+
+    # --- 差し戻し・指示の文面は ADR を開かなくても行動できる (#2139) -------------
+    # 差し戻しを読んだエージェントが ADR の番号を辿ると、1 回で 1〜2 万字の文書を読みに行く。
+    # 何をすればよいか (書く内容・打つコマンド・やり直しの手順) は文面が言い切り、ADR の番号は
+    # 「(理由: ADR-00NN)」の任意の参照に留める。理由の行 (1 行目) は ADR を引かずに言い切る
+
+    def assert_ready_without_an_adr(self, text):
+        self.assertEqual(adr_refs_outside_reasons(text), [], "ADR の番号が理由の括弧の外にある:\n" + text)
+        self.assertNotIn("ADR-", text.splitlines()[0], "差し戻しの理由の行が ADR を引いている")
+
+    def test_the_recheck_refusal_says_what_to_write_and_how_to_retry(self):
+        err = self.capture("## 方針\n\n#12 を直す。\n", recheck=False, FAKE_GH_PR="42").stderr
+        self.assert_ready_without_an_adr(err)
+        self.assertSays(err, "Issue 本文の完了条件を現行のコードと突き合わせ")
+        self.assertSays(err, "「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書いてください")
+        self.assertSays(err, "ずれていれば Issue 本文のほうを先に更新します")
+        self.assertSays(err, "プランを直してもう一度 ExitPlanMode を通してください")
+
+    def test_the_bug_scope_refusal_says_what_to_write_and_the_command_to_bundle(self):
+        err = self.capture(
+            self.BUG_PLAN + "直す。\n", FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug"
+        ).stderr
+        self.assert_ready_without_an_adr(err)
+        self.assertSays(err, "破られた約束 — 何が守られるはずだったのか")
+        self.assertSays(err, "同じ約束を負う口をどう探したか (探した式を残す)")
+        self.assertIn("bash scripts/sub-issue.sh <根> --attach <番号>", err)
+        self.assertSays(err, "プランを直してもう一度 ExitPlanMode を通してください")
+
+    def test_the_unattended_instruction_says_to_post_and_go_on_without_waiting(self):
+        err = self.capture("計画。\n", FAKE_GH_PR="42", MOKUME_UNATTENDED="1").stderr
+        self.assertEqual(adr_refs_outside_reasons(err), [], err)
+        self.assertSays(err, "承認は待ちません")
+        self.assertSays(err, "投稿したらそのまま実装へ進んでください")
+
+    def test_the_unattended_guard_says_to_post_or_delete_the_record(self):
+        self.capture("計画。\n", FAKE_GH_PR="42", MOKUME_UNATTENDED="1")
+        err = self.guard(FAKE_GH_PR="42", MOKUME_UNATTENDED="1").stderr
+        self.assert_ready_without_an_adr(err)
+        self.assertSays(err, "終了せず投稿してください")
+        self.assertSays(err, "投稿する内容が無いなら、記録ファイル (--body-file に出ているもの) を消してください")
 
     def test_capture_does_not_ask_a_plan_whose_targets_are_not_bugs(self):
         """Bug でなければ問わない。型が読めない (型の無い) Issue も問わない側へ倒す。"""
@@ -575,7 +668,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(len(self.records()), 1, result.stderr)
-                self.assertNotIn("ADR-0040", result.stderr)
+                self.assertNotIn("約束と範囲が見当たりません", result.stderr)
 
     def test_capture_asks_when_any_named_issue_is_a_bug(self):
         """投稿先が PR に確定しても、プランが名乗る Issue に Bug があれば問う。
@@ -1443,6 +1536,227 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(self.records(), [])
 
 
+class PreApprovalCheckTest(HookFixture, unittest.TestCase):
+    """承認の前の検査 (#2135・precheck)。
+
+    capture は PostToolUse (ExitPlanMode) で動くので、プランに完了条件の現況や Bug の約束と
+    範囲が足りないと、**人がプランを承認した後で**差し戻していた。書き直したプランを人は
+    もう一度承認することになり、確認は 1 点のはずが 2 回になる (#1920・#2045 で実際に起きた)。
+    precheck は PreToolUse で同じ検査を先に掛け、足りなければ承認の前に書き直させる。
+
+    守りたいのは 4 つ: 足りないプランは承認の前に差し戻る / 足りるプランは止めず、承認の後に
+    これまでどおり記録まで進む / 本文を取れない・GitHub が引けないときは通す (検査は消えず、
+    承認の後の capture が見る) / 承認の前と後で判定が食い違わない。
+    """
+
+    BUG_PLAN = PlanRecordTestCase.BUG_PLAN
+    PROMISE = PlanRecordTestCase.PROMISE
+    SCOPE = PlanRecordTestCase.SCOPE
+
+    def test_a_plan_without_a_recheck_is_sent_back_before_approval(self):
+        result = self.precheck("## 方針\n\n#12 を直す。\n", recheck=False)
+        reason = self.denial(result)
+        self.assertIsNotNone(reason, "承認の前に差し戻していない")
+        self.assertIn("承認の前", reason)
+        self.assertIn("完了条件の現況", reason)
+        # 直し方は capture と同じ文面 (再チェックの趣旨と、通し直す手順)
+        self.assertIn("付いた時点の判断しか表しません", reason)
+        self.assertIn("ExitPlanMode を通してください", reason)
+        # 記録は作らない — 承認の後の capture が、検査を通ったプランを記録する
+        self.assertEqual(self.records(), [])
+        self.assertEqual(self.metas(), [])
+
+    def test_a_denial_reason_says_what_to_do_without_opening_an_adr(self):
+        """承認の前の差し戻しも、番号を辿らずに直せる (#2139)。
+
+        現況の欠落と、Bug の約束と範囲の欠落の両方を見る (後者は現況を足して、約束と範囲だけを欠かす)。
+        """
+        for plan, recheck, extra in (
+            ("## 方針\n\n#12 を直す。\n", False, {}),
+            (self.BUG_PLAN + "直す。\n", True, {"FAKE_GH_ISSUE": "12", "FAKE_GH_ISSUE_TYPE": "Bug"}),
+        ):
+            with self.subTest(plan=plan):
+                reason = self.denial(self.precheck(plan, recheck=recheck, **extra))
+                self.assertIsNotNone(reason, "承認の前に差し戻していない")
+                self.assertEqual(adr_refs_outside_reasons(reason), [], reason)
+                self.assertNotIn("ADR-", reason.splitlines()[0])
+                self.assertSays(reason, "プランを直してもう一度 ExitPlanMode を通してください")
+
+    def test_a_plan_without_an_issue_number_is_sent_back_before_approval(self):
+        result = self.precheck("## 方針\n\n完了条件はまだ有効。\n", recheck=False)
+        reason = self.denial(result)
+        self.assertIsNotNone(reason, "承認の前に差し戻していない")
+        self.assertIn("対象 Issue の番号", reason)
+        self.assertNotIn("完了条件の現況 (", reason)  # 現況は書いてあるので名乗らない
+
+    def test_a_sufficient_plan_passes_in_silence_and_is_recorded_after_approval(self):
+        """足りるプランは止めない。記録は従来どおり、承認の後の capture が作る。"""
+        plan = "## 方針\n\n却下案: 全面書き換え。\n"
+        result = self.precheck(plan, FAKE_GH_PR="42")
+        self.assertIsNone(self.denial(result), result.stdout)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(self.records(), [])  # 承認の前は記録を作らない
+
+        captured = self.capture(plan, FAKE_GH_PR="42")
+        self.assertEqual(captured.returncode, 2, captured.stderr)
+        self.assertEqual(len(self.records()), 1, captured.stderr)
+        self.assertIn("scripts/comment.sh pr 42", captured.stderr)
+
+    def test_the_other_verdicts_pass_too(self):
+        """現況の語彙は capture と同じに広く取る (狭いと正しいプランまで止める)。"""
+        for plan in (
+            "#12 の条件 2 は既に満たされている (PR #34 が解消済み)。\n",
+            "#12 の条件 3 は現実に合わないので、Issue 本文を先に更新した。\n",
+            "#12 の完了条件を現行コードと突き合わせた。差し替えは要らない。\n",
+        ):
+            with self.subTest(plan=plan):
+                result = self.precheck(plan, recheck=False)
+                self.assertIsNone(self.denial(result), result.stdout)
+
+    def test_a_bug_plan_without_the_promise_or_its_scope_is_sent_back_before_approval(self):
+        """約束と範囲は別々に問う。足りないほうだけを名乗る (capture と同じ)。"""
+        promise, scope = "破られた約束 (", "約束が及ぶ範囲 ("
+        for plan, missing, present in (
+            (self.BUG_PLAN + "直す。\n", (promise, scope), ()),
+            (self.BUG_PLAN + self.PROMISE, (scope,), (promise,)),
+            (self.BUG_PLAN + self.SCOPE, (promise,), (scope,)),
+        ):
+            with self.subTest(plan=plan):
+                result = self.precheck(plan, FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug")
+                reason = self.denial(result)
+                self.assertIsNotNone(reason, "承認の前に差し戻していない")
+                self.assertIn("承認の前", reason)
+                self.assertIn("約束と範囲が見当たりません", reason)
+                self.assertIn("#12", reason)
+                for word in missing:
+                    self.assertIn(word, reason)
+                for word in present:
+                    self.assertNotIn(word, reason)
+                self.assertEqual(self.records(), [])
+                self.assertEqual(self.metas(), [])
+
+    def test_a_bug_plan_that_names_the_promise_and_its_scope_passes(self):
+        result = self.precheck(
+            self.BUG_PLAN + self.PROMISE + self.SCOPE,
+            FAKE_GH_ISSUE="12",
+            FAKE_GH_ISSUE_TYPE="Bug",
+        )
+        self.assertIsNone(self.denial(result), result.stdout)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_plan_whose_targets_are_not_bugs_passes(self):
+        """Bug でなければ問わない。型が読めない (型の無い) Issue も問わない側へ倒す。"""
+        for type_ in ("Task", ""):
+            with self.subTest(type_=type_):
+                result = self.precheck(
+                    self.BUG_PLAN + "直す。\n", FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE=type_
+                )
+                self.assertIsNone(self.denial(result), result.stdout)
+
+    def test_any_named_issue_being_a_bug_is_enough(self):
+        """投稿先が PR に確定しても、プランが名乗る Issue に Bug があれば問う (capture と同じ)。"""
+        result = self.precheck(
+            "# #12 座標のずれを直す\n\nRefs #13\n",
+            FAKE_GH_PR_JSON=pr_json(42, closes=[12, 13]),
+            FAKE_GH_ISSUE="12",
+            FAKE_GH_ISSUE_TYPE_13="Bug",
+        )
+        reason = self.denial(result)
+        self.assertIsNotNone(reason, "承認の前に差し戻していない")
+        self.assertIn("#13", reason)
+        self.assertIn("破られた約束", reason)
+
+    def test_github_that_cannot_be_read_lets_the_plan_through(self):
+        """型を引けないときは止めない — 記録の検査で、着手のゲートではない。
+
+        同じプランが、GitHub から Bug と読めるときは差し戻される (対の確認)。
+        """
+        plan = self.BUG_PLAN + "直す。\n"
+        env = {"FAKE_GH_ISSUE": "12", "FAKE_GH_ISSUE_TYPE": "Bug"}
+        self.assertIsNotNone(self.denial(self.precheck(plan, **env)), "前提が崩れている")
+
+        result = self.precheck(plan, FAKE_GH_MISSING="12", **env)
+        self.assertIsNone(self.denial(result), result.stdout)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_payload_without_the_plan_body_is_let_through(self):
+        """本文を取れない版・入力では検査を飛ばす。検査は消えない — 承認の後の capture が見る。"""
+        result = self.precheck_payload(
+            tool_input={"_targetMode": "auto"}, MOKUME_PLAN_RECORD_DEBUG="1"
+        )
+        self.assertIsNone(self.denial(result), result.stdout)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("承認前の検査は飛ばす", result.stderr)  # 飛ばした理由は読める
+
+        later = self.capture_payload(
+            tool_input={"_targetMode": "auto"},
+            tool_response={"plan": "## 方針\n\n#12 を直す。\n"},  # 現況が無い
+        )
+        self.assertEqual(later.returncode, 2)
+        self.assertEqual(self.records(), [])
+        self.assertIn("完了条件の現況", later.stderr)
+
+    def test_the_plan_is_read_from_the_file_when_only_the_path_is_given(self):
+        plan_file = Path(self.workdir.name) / "plan.md"
+        plan_file.write_text("## 方針\n\n#12 を直す。\n", encoding="utf-8")  # 現況が無い
+        result = self.precheck_payload(tool_input={"planFilePath": str(plan_file)})
+        reason = self.denial(result)
+        self.assertIsNotNone(reason, "ファイル越しのプランを検査していない")
+        self.assertIn("完了条件の現況", reason)
+
+    def test_it_can_be_disabled(self):
+        result = self.precheck(
+            "## 方針\n\n#12 を直す。\n", recheck=False, MOKUME_PLAN_RECORD="0"
+        )
+        self.assertIsNone(self.denial(result), result.stdout)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
+
+    def test_unattended_sessions_are_asked_the_same(self):
+        """無人でも書き直させる (capture と同じ — 承認を待たないだけで、検査は緩めない)。"""
+        result = self.precheck(
+            "## 方針\n\n#12 を直す。\n", recheck=False, MOKUME_UNATTENDED="1"
+        )
+        self.assertIsNotNone(self.denial(result), "無人で検査が外れている")
+        result = self.precheck("## 方針\n\n直す。\n", MOKUME_UNATTENDED="1")
+        self.assertIsNone(self.denial(result), result.stdout)
+
+    def test_the_deny_is_the_shared_json_and_leaves_exit_zero(self):
+        """差し戻しの JSON の綴りは guard-lib.sh の hook_deny が持つ (#815)。"""
+        result = self.precheck("## 方針\n\n#12 を直す。\n", recheck=False)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            list(json.loads(result.stdout)),
+            ["hookSpecificOutput"],
+        )
+
+    def test_it_agrees_with_capture_on_every_plan(self):
+        """承認の前に通ったプランが、承認の後で差し戻されない (人の承認を 2 回にしない)。
+
+        2 つの検査は同じ関数を呼ぶ。語彙を片方だけ変えたときの食い違いを、ここで見つける。
+        秘密情報の検査は precheck に含めないので、この表には入れない。
+        """
+        bug = {"FAKE_GH_ISSUE": "12", "FAKE_GH_ISSUE_TYPE": "Bug"}
+        for plan, env in (
+            ("## 方針\n\n#12 を直す。\n", {}),
+            ("## 方針\n\n完了条件はまだ有効。\n", {}),
+            ("## 方針\n\n#12 の完了条件はまだ有効。\n", {}),
+            ("#12 の条件 2 は既に満たされている。\n", {}),
+            (self.BUG_PLAN + "#12 の完了条件はまだ有効。\n", bug),
+            (self.BUG_PLAN + self.PROMISE + "#12 の完了条件はまだ有効。\n", bug),
+            (self.BUG_PLAN + self.PROMISE + self.SCOPE + "#12 はまだ有効。\n", bug),
+        ):
+            with self.subTest(plan=plan, env=env):
+                for f in self.records() + self.metas():
+                    f.unlink()
+                before = self.denial(self.precheck(plan, recheck=False, **env)) is not None
+                after = self.capture(plan, recheck=False, **env)
+                # capture が差し戻すときは記録を作らない (投稿の指示のときは 1 件残る)
+                sent_back_after = after.returncode == 2 and self.records() == []
+                self.assertEqual(before, sent_back_after, after.stderr)
+
+
 class ForeignRepositoryTest(HookFixture, unittest.TestCase):
     """他のリポジトリで立てたプランには手を出さない (#991)。
 
@@ -1469,6 +1783,20 @@ class ForeignRepositoryTest(HookFixture, unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertEqual(self.metas(), [], "他リポの .git に記録を置いている")
         self.assertEqual(self.records(), [])
+
+    def test_precheck_is_silent_in_another_repository(self):
+        """承認の前の検査も、他のリポジトリのプランは検査しない (capture と同じ)。"""
+        self.set_origin(self.FOREIGN)
+        result = self.precheck("# #148 別のリポジトリの話\n", recheck=False)  # 現況が無い
+        self.assertIsNone(self.denial(result), result.stdout)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
+
+    def test_precheck_still_checks_in_this_repository(self):
+        """自リポでは検査する (黙る側へ倒しすぎていないことの対)。"""
+        self.set_origin(self.OURS)
+        result = self.precheck("# #148 いつもの作業\n", recheck=False)
+        self.assertIsNotNone(self.denial(result), "自リポで検査が外れている")
 
     def test_capture_says_why_when_asked(self):
         """黙る経路は、切り分けのために理由を読めるようにしておく。"""
@@ -1558,6 +1886,14 @@ class SelfContainedTest(unittest.TestCase):
             f"ExitPlanMode に capture が配線されていない: {commands}",
         )
 
+    def test_precheck_is_wired_to_exit_plan_mode_before_approval(self):
+        """承認の前に同じ検査を掛ける (#2135)。PostToolUse だけだと承認の後の差し戻しになる。"""
+        commands = self.commands_for("PreToolUse", "ExitPlanMode")
+        self.assertTrue(
+            any("plan-record.sh" in c and "precheck" in c for c in commands),
+            f"ExitPlanMode の承認の前 (PreToolUse) に precheck が配線されていない: {commands}",
+        )
+
     def test_guard_is_wired_to_stop(self):
         commands = self.commands_for("Stop")
         self.assertTrue(
@@ -1568,7 +1904,11 @@ class SelfContainedTest(unittest.TestCase):
     def test_hooks_run_the_repository_copy(self):
         # $CLAUDE_PROJECT_DIR 経由 = リポジトリ同梱の実体。~ 起点だと
         # 個人環境のファイルに依存し、他の環境で黙って効かなくなる
-        for command in self.commands_for("PostToolUse", "ExitPlanMode") + self.commands_for("Stop"):
+        for command in (
+            self.commands_for("PreToolUse", "ExitPlanMode")
+            + self.commands_for("PostToolUse", "ExitPlanMode")
+            + self.commands_for("Stop")
+        ):
             if "plan-record.sh" in command:
                 self.assertIn("$CLAUDE_PROJECT_DIR", command)
 
@@ -1633,6 +1973,11 @@ class StdinDeadlineTest(HookFixture, unittest.TestCase):
 
     def test_capture_names_the_requirement(self):
         result = self.run_hook("capture", stdin="")
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("stdin", result.stderr)
+
+    def test_precheck_names_the_requirement(self):
+        result = self.run_hook("precheck", stdin="")
         self.assertEqual(result.returncode, 64)
         self.assertIn("stdin", result.stderr)
 

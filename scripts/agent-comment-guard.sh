@@ -106,13 +106,13 @@ EOF
 
 offending=0
 in_substitution=0
-while IFS=$'\t' read -r _token repo chdir place fragment; do
+while IFS=$'\t' read -r repo chdir place fragment; do
   is_comment_invocation "$fragment" || continue
   # 使い方を尋ねているだけなら投稿ではない (判定は guard-lib.sh が持つ)
   is_help_request "$fragment" && continue
   # 他のリポジトリ宛てのコメントはこのリポジトリの規約の外 (#188)。あちらの署名の作法は
   # 別に決まっており、ラッパーの投稿先は mokume 固定なので、ここで止めると逃げ道が無くなる。
-  # 判定は guard-lib.sh が持つ (pr-identity-guard.sh と共有する)
+  # 判定は guard-lib.sh が持つ
   invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$cwd" && continue
   offending=1
   [ "$place" = sub ] && in_substitution=1

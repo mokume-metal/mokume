@@ -18,6 +18,22 @@ struct Facets {
     static let pollInterval: TimeInterval = 0.05
     /// 走っているスケッチを待つ既定の上限。
     static let defaultWaitLimit: TimeInterval = 5
+    /// 期限へ足す待ちの長さの上限 (秒)。1 日。
+    ///
+    /// 窓口が待つ本番の最長 (撮る列の上限 120 枚 × 間隔 60 フレームを 30fps で換算して約 4 分)
+    /// より十分大きく、`DispatchTime` のナノ秒 (Int64) に収まる。**呼び手が渡す待ちは
+    /// 外から来る値で足されるので**、無限・巨大・NaN・負が `DispatchTime` の期限の計算へ
+    /// 届かないよう、足す前にここで丸める ([#1940](https://github.com/mokume-metal/mokume/issues/1940))
+    static let longestWaitSeconds: TimeInterval = 86_400
+
+    /// 待ちの長さを、`DispatchTime` へ足せる範囲 (0 以上・``longestWaitSeconds`` 以下) へ丸める。
+    ///
+    /// 範囲の外を `DispatchTime` が黙って `.forever` などへ丸める挙動は、文書に無い。
+    /// NaN と負は 0 へ — 壁時計の期限 (`Date`) だった頃も、そのときは待たずに戻っていた。
+    static func boundedWait(_ seconds: TimeInterval) -> TimeInterval {
+        guard !seconds.isNaN else { return 0 }
+        return min(max(seconds, 0), longestWaitSeconds)
+    }
 
     let directory: URL
     /// 走っているスケッチを待つ上限。検査からは短くする。
@@ -47,6 +63,9 @@ struct Facets {
     /// - Parameter extraWait: 応答が返るまでにフレームが何枚も進む要求 (続けて撮る観測
     ///   など) で、``waitLimit`` に**足す**ぶん。上書きではなく加算にしてある —
     ///   上書きにすると、検査が短く設定した上限を呼ぶ側が知らずに戻してしまう。
+    /// - Parameter now: 期限を測る時計。**眠っている間は進まない `DispatchTime` で測る** —
+    ///   壁時計 (`Date`) だと、待っている最中に機械が眠ると起きた瞬間に期限を越えて、
+    ///   スケッチの応答を待たずに「誰も応えない」を返す ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
     /// - Throws: 置けなかったときだけ。**型が付いているので、窓口は `\(error)` を
     ///   そのまま返さずに済む** — untyped だったころは `NSCocoaErrorDomain Code=513 …`
     ///   がエージェントへ届いていた。`CommandFailure` は「どの失敗にも次に何をすれば
@@ -54,7 +73,7 @@ struct Facets {
     func exchange(
         facet: URL, request: [String: Any], id: String, extraWait: TimeInterval = 0,
         sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
-        now: () -> Date = { Date() }
+        now: () -> DispatchTime = { DispatchTime.now() }
     ) throws(CommandFailure) -> [String: Any]? {
         let waitLimit = self.waitLimit + max(0, extraWait)
         let requestURL = WorkDirectory.requestURL(under: facet)
@@ -77,7 +96,7 @@ struct Facets {
         }
         let reportURL = WorkDirectory.reportURL(under: facet)
 
-        let deadline = now().addingTimeInterval(waitLimit)
+        let deadline = now() + Self.boundedWait(waitLimit)
         while now() < deadline {
             if let report = read(reportURL), report["id"] as? String == id {
                 return report

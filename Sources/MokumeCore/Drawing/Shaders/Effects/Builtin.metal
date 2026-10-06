@@ -209,10 +209,13 @@ float4 effect(Pixel in, Values values) {
     // そのまま写す。段の連なりの最後に 1 度だけ通り、入りの絵へ書き戻す
     if (kind == kEffectCopy) { return in.color; }
 
-    // ぼかし (横・縦)。半径は画素
+    // ぼかし (横・縦)。半径は**段の面の画素** (`Effect.passes` が出す画素から換算して渡す)。
+    // 1 歩は入りの面の画素で取る — `in.size` は出す画素なので、細かさ 1 未満では使えない
+    // (#1639)。ぼかしの段は入りと出りが同じ大きさなので、入りの面で測れば段の面になる
     if (kind == kEffectBlurX || kind == kEffectBlurY) {
         if (p0 <= 0.0) { return in.color; }
-        float2 step = kind == kEffectBlurX ? float2(1.0 / in.size.x, 0.0) : float2(0.0, 1.0 / in.size.y);
+        float2 texels = float2(in.source.get_width(), in.source.get_height());
+        float2 step = kind == kEffectBlurX ? float2(1.0 / texels.x, 0.0) : float2(0.0, 1.0 / texels.y);
         return mokume_blurAlong(in, step, p0);
     }
 

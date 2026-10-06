@@ -63,10 +63,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 画面の出口。
     ///
     /// 分岐は「ビューアあり / なし」というモードではなく、**与えられた出口の構成**である
-    /// ([ADR-0032] 決定 1)。合図は 1 つ (区画があるか) で、窓を開かないことも同じ合図から
-    /// 従う。
+    /// ([ADR-0032] 決定 1)。決めるのは起こし方で、窓を持つ道具に起こされたか
+    /// (``SharedFrameSurface/launchOwner``) を読む場所は 1 つである。窓を開かない
+    /// ことも、標準入力の管を読むことも、決まった出口から従う。
     ///
-    /// **その 1 つの合図を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
+    /// **その 1 つの決定を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
     /// 4 つの Optional で持っており、片方だけ書き換えれば「窓も出るし面へも書く」が
     /// 型として作れた — どちらの経路もそれを想定していないのに、である
     /// ([#955](https://github.com/mokume-metal/mokume/issues/955))。
@@ -237,8 +238,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     private let windowRelay = WindowRelay()
 
-    /// いま走らせているもの。``run()`` の間だけ入る。
+    /// いま走らせているもの。``run()`` の間だけ入る。**入っていれば 2 つ目の ``run()`` を断る** (#2027)。
     private static var running: SketchApplication?
+
+    /// 2 つ目の ``run()`` を断ったと、もう言ったか。**言うのはプロセスで 1 度だけ。**
+    private static var refusalAnnounced = false
+
+    /// 2 つ目の ``run()`` を断るときに言う 1 行。検査が読む。
+    static let secondRunRefusal =
+        "A sketch is already running in this process — this second run() does nothing (one window per process)"
 
     /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
     private var delegate: SketchApplicationDelegate?
@@ -303,6 +311,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、窓を
     /// 開かずに決めた枚数を書き出す。その経路の時刻はフレーム番号から導く。
     public convenience init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
+        // **窓の持ち主の合図を、ここで読んで環境から消す** (``SharedFrameSurface/launchOwner``)。
+        // スケッチが `setup()` で子を起こしても、合図はもう継がれない
+        _ = SharedFrameSurface.launchOwner
         try self.init(sketch: sketch, gpu: gpu, render: RenderRequest.startup())
     }
 
@@ -334,7 +345,17 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     }
 
     /// アプリケーションとして走らせる。戻らない。
+    ///
+    /// **1 プロセスに走らせられるのは 1 つだけである。** 既に走っているものが在れば、
+    /// 2 つ目の呼び出しは断ったことを 1 度だけ標準エラーへ言い、何にも触れずにすぐ戻る。
+    /// 走っている 1 つ目は何も変わらず、撮っている動画も、終わり方によらず開けるまま残る
+    /// ([#2027](https://github.com/mokume-metal/mokume/issues/2027))。
     public func run() {
+        // **2 つ目は、プロセス全体の状態に触れる前に断る** (#2027)。delegate・活動の方針・
+        // 終わりの合図はどれもプロセスに 1 つで、差し替えると 1 つ目の後始末 (書き切りを
+        // 待つ経路・#1219) が 2 つ目へ行く。区画へ差し出す用意 (`resolveOutlet()`) も外へ
+        // 名乗るので、その前で戻る
+        guard !SketchApplication.refusesSecondRun() else { return }
         let app = NSApplication.shared
         // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
         // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
@@ -376,6 +397,23 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             startFrameRateNotice(configuration: configuration)
         }
         app.run()
+        // **戻ったら、もう走っていない** (`NSApp.stop`)。外さないと、以後の ``run()`` が
+        // 「既に走っている」と言って断る (#2027)
+        SketchApplication.running = nil
+    }
+
+    /// 既に走っているものが在れば、断ったことを 1 度だけ言って `true` を返す (#2027)。
+    ///
+    /// ``run()`` と ``Sketch/main()`` が、プロセス全体の状態に触れる前に呼ぶ。`main()` は
+    /// 組み立ての前に呼ぶ — 組み立てが投げると `exit(1)` でプロセスを落とし、走っている
+    /// 1 つ目の後始末 (書き切りを待つ経路・#1219) を飛ばすからである。
+    static func refusesSecondRun() -> Bool {
+        guard running != nil else { return false }
+        if !refusalAnnounced {
+            refusalAnnounced = true
+            Diagnostics.warn(secondRunRefusal)
+        }
+        return true
     }
 
     /// 1 秒ごとに速さを名乗る。
@@ -405,27 +443,56 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 検査から通せず、**窓 0 枚の経路の振る舞いを 1 つも見られない**
     /// ([#1102](https://github.com/mokume-metal/mokume/issues/1102) がそこで見過ごされた)。
     ///
-    /// 区画の在処を受けるのは同じ理由で、既定は本番の場所である
-    /// (`WorkDirectory.resolve(environment:)` などと同じ、既定引数で口を開ける形)。
+    /// 区画の在処と起こした道具の名乗りを受けるのは同じ理由で、既定は本番の場所と本番の
+    /// 環境である (`WorkDirectory.resolve(environment:)` などと同じ、既定引数で口を開ける形)。
+    ///
+    /// **窓を持つ道具に起こされ、区画も在るときだけ、標準入力の管を読み始める**
+    /// ([ADR-0032] 決定 4)。窓の経路と書き出す経路は管に触らない — 区画が在っても、閉じた
+    /// 標準入力を「道具が去った」と読まず (#2025)、端末に `O_NONBLOCK` を残さない (#2024)。
+    ///
+    /// **共有面を用意できずに窓へ倒れた回も、管は読む。** 管を引いたのは見張りで、見張りが
+    /// 去ったことに気付く口はこの管しか無い ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
+    /// 出口が倒れたことと、起こした者が誰かは別の話である。
     ///
     /// **活動の方針 (`setActivationPolicy`) はここに置かない。** 呼んだプロセス全体に
     /// 効くので、検査から呼べる場所に混ぜると検査の走るプロセスの方針まで動く。
-    func resolveOutlet(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key)) {
+    ///
+    /// - Parameter owner: 起こした道具の名乗り。**無ければ区画が在っても自分の窓を開き、
+    ///   そのことを 1 度名乗る** (#2026)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    func resolveOutlet(
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.launchOwner
+    ) {
         // **書き出す経路は区画より先に決まっている。** 見張りが畳めずに残した区画が在っても
         // 共有面へは差し出さない — その経路の出口は撮る係だけである
         guard case .pendingWindow = outlet else { return }
-        if let shared = attachSharedSurface(at: directory) { outlet = .shared(shared) }
+        if let notice = SharedFrameSurface.strayFacetNotice(at: directory, owner: owner) {
+            announce(notice)
+        }
+        guard SharedFrameSurface.isEnabled(at: directory, owner: owner) else { return }
+        runtime.relayToolInput(from: StandardInputEvents(descriptor: toolInput))
+        if let shared = attachSharedSurface(at: directory, owner: owner) { outlet = .shared(shared) }
     }
+
+    /// 道具の窓が拾った出来事が来る管。**本番は標準入力** — 見張りが子の標準入力に引く
+    /// (`WatchSession`)。**検査から差し替える**: 既定のまま共有面の経路を通すと、検査を
+    /// 走らせている端末の標準入力に `O_NONBLOCK` が立つ。
+    var toolInput: Int32 = FileHandle.standardInput.fileDescriptor
+
+    /// 人へ 1 行伝える口。**検査から差し替える** (言ったかどうかを数えるため)。
+    var announce: @MainActor (String) -> Void = { Diagnostics.warn($0) }
 
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
     /// **区画が在るのに用意できなかったときは、窓を開く側へ倒す** — 面も窓も無い実行は、
     /// 外から見て「動いていない」としか見えない。倒したことは黙らずに言う。
-    private func attachSharedSurface(at directory: URL) -> SharedFrameSurface? {
+    private func attachSharedSurface(at directory: URL, owner: String?) -> SharedFrameSurface? {
         guard
             let shared = SharedFrameSurface.makeIfEnabled(
                 gpu: gpu, width: runtime.target.width, height: runtime.target.height,
-                at: directory)
+                windowScale: runtime.windowScale, at: directory, owner: owner)
         else { return nil }
         do {
             try shared.publishManifest()
@@ -457,20 +524,22 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         case .window: return
         case .pendingWindow: break
         }
-        let settings = runtime.sketch.settings
-        // 窓は描く解像度の半分で開く。描く解像度と窓の大きさは独立なので、
-        // どちらに合わせてもよい — 大きな絵が画面からはみ出さない側を既定にする
-        let contentSize = NSSize(width: settings.width / 2, height: settings.height / 2)
+        // 窓は描く解像度 × 倍率で開く (既定 0.5)。描く解像度と窓の大きさは独立なので、
+        // どちらに合わせてもよい — 既定は大きな絵が画面からはみ出さない側にしてある
+        let requested = WindowPlacement.requestedSize(
+            width: runtime.target.width, height: runtime.target.height, scale: runtime.windowScale)
         let window = WindowPlacement.makeWindow(
             title: title, autosaveName: WindowPlacement.autosaveName,
-            defaultSize: contentSize)
+            defaultSize: requested)
+        // **覚えた大きさより、変わった指定を取る** (#1624)。変わっていなければ何もしない
+        WindowPlacement.honour(requested, in: window, autosaveName: WindowPlacement.autosaveName)
 
         // 見張りが起こした入れ替えでは、窓を出しはするが前面は取らない (#679)
         let takesFocus = WindowPlacement.takesFocus(
             isRelaunch: WindowPlacement.isRelaunch(stamp: SourceStamp.current))
 
         let surface = SketchSurface(
-            frame: NSRect(origin: .zero, size: contentSize), device: gpu.device,
+            frame: NSRect(origin: .zero, size: window.contentLayoutRect.size), device: gpu.device,
             input: runtime.input,
             canvasSize: (runtime.target.width, runtime.target.height))
         surface.wantsLayer = true
@@ -699,8 +768,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let signalled = StopSignals.takeRequest()
         let departed = driverDeparted()
         guard signalled || departed, !isTerminating else { return }
-        // **道具が居なくなって終わることは名乗る。** 黙って消えると、区画が残ったまま標準入力を
-        // 閉じて走らせた回などで、なぜ終わったのかが読めない
+        // **道具が居なくなって終わることは名乗る。** 黙って消えると、道具が後始末を通らずに
+        // 消えた回 (捕まえない合図・`SIGKILL`) などで、なぜ終わったのかが読めない
         if departed, !signalled {
             Diagnostics.warn(
                 "The tool that started this sketch is gone (its input pipe closed) — ending,"
@@ -818,7 +887,13 @@ final class SketchApplicationDelegate: NSObject, NSApplicationDelegate {
 
 extension Sketch {
     /// スケッチを起動する (`@main` から呼ばれる)。
+    ///
+    /// **既に 1 つ走っていれば、組み立てずに戻る** (`SketchApplication.run()` と同じ断り・
+    /// [#2027](https://github.com/mokume-metal/mokume/issues/2027))。
     public static func main() {
+        // 組み立てより前に断る。組み立てが投げると下の `exit(1)` が、走っている 1 つ目を
+        // 後始末なしに落とす
+        guard !SketchApplication.refusesSecondRun() else { return }
         do {
             let gpu = try RenderDevice()
             let application = try SketchApplication(sketch: Self(), gpu: gpu)

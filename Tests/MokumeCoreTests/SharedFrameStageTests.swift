@@ -142,9 +142,9 @@ struct SharedFrameStageTests {
             作品の窓 \(SharedFrameWindow.defaultSize) とプレビュー \
             \(SharedFramePreview.defaultSize) の既定が割れている。
 
-            SharedFramePreview.nudge は自分の defaultSize の丈からずらす量を出しているので、
-            揃っていないとプレビューが作品の窓の真下に来ない。同じ 480x270 は 3 つ目があり
-            (SketchApplication の settings.width / 2 = SketchSettings の既定 960x540 の半分)、
+            既定のスケッチ (960x540・windowScale 0.5) の窓は 480x270 で開くので、作品の窓の
+            既定はそれと、プレビューの既定はそれと揃えてある。同じ 480x270 は 3 つ目があり
+            (SketchApplication の 描く大きさ × windowScale)、
             寄せる先が無いので写しのまま残している — 詳しくは SharedFrameWindow.defaultSize の
             doc と [#964](https://github.com/mokume-metal/mokume/issues/964)。
             """)
@@ -479,6 +479,141 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 開く大きさ (#1624)
+
+    /// **作品の窓は、直に走らせたときと同じ大きさで見える** ([ADR-0032] 決定 1)。差し出し元が
+    /// 名乗る倍率に合わせ、名乗りが変わらない入れ替えでは手で変えた大きさを残す (#679)。
+    /// プレビューは従わない。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    @Test("作品の窓は差し出し元の倍率に合わせ、倍率が変わらない入れ替えでは手で変えた大きさを残す")
+    func artworkWindowFollowsTheRequestedSize() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let suite = "mokume.test.stage.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+
+            var artworkLook = look(fresh())
+            artworkLook.followsRequestedSize = true
+            let artwork = try SharedFrameStage(gpu: gpu, facet: facet, look: artworkLook)
+            let preview = try SharedFrameStage(
+                gpu: gpu, facet: facet, look: look(fresh(), size: SharedFramePreview.defaultSize))
+            for stage in [artwork, preview] {
+                stage.defaults = defaults
+                stage.open()
+            }
+            defer {
+                artwork.close()
+                preview.close()
+            }
+
+            // 32x32 を 1 画素 4 点で
+            var arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 4)
+            artwork.displayLinkFired()
+            preview.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == NSSize(width: 128, height: 128))
+            #expect(preview.window?.contentLayoutRect.size == SharedFramePreview.defaultSize)
+
+            // 人が手で広げた後、同じ倍率の子へ入れ替わった (保存)
+            let resized = NSSize(width: 300, height: 200)
+            artwork.window?.setContentSize(resized)
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 4)
+            artwork.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == resized, "保存で窓が戻った")
+
+            // 倍率を変えて保存した
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 2)
+            artwork.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == NSSize(width: 64, height: 64))
+
+            // 倍率を名乗らない子 (古いライブラリ) なら触らない
+            artwork.window?.setContentSize(resized)
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            artwork.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == resized)
+            _ = arriving
+        }
+    }
+
+    /// 作品の窓とプレビューを開き、差し出し元を 1 つ来させる。
+    private func openPair(
+        facet: URL, gpu: RenderDevice, defaults: UserDefaults, width: Int, height: Int,
+        windowScale: Float
+    ) throws -> (artwork: SharedFrameStage, preview: SharedFrameStage, surface: SharedFrameSurface) {
+        var artworkLook = look(fresh())
+        artworkLook.followsRequestedSize = true
+        var previewLook = look(fresh(), size: SharedFramePreview.defaultSize)
+        previewLook.nudge = SharedFramePreview.nudge
+        previewLook.placesBeneathRequestedArtwork = true
+        let artwork = try SharedFrameStage(gpu: gpu, facet: facet, look: artworkLook)
+        let preview = try SharedFrameStage(gpu: gpu, facet: facet, look: previewLook)
+        for stage in [artwork, preview] {
+            stage.defaults = defaults
+            stage.open()
+        }
+        let surface = try SharedFrameSurface(
+            gpu: gpu, width: width, height: height, windowScale: windowScale, at: facet)
+        try surface.publishManifest()
+        try draw(surface, frame: 1, gpu: gpu, width: width, height: height)
+        artwork.displayLinkFired()
+        preview.displayLinkFired()
+        return (artwork, preview, surface)
+    }
+
+    /// **作品の窓が高いスケッチでも、プレビューはその真下に並ぶ。** 既定の 480x270 を前提に
+    /// した初めの位置のままだと、作品の窓が描く大きさ × 倍率で開いたときに 2 枚が重なる (#1624)。
+    @Test("作品の窓が頼まれた大きさで置き直されると、プレビューはその真下へ置き直す")
+    func previewMovesBeneathAResizedArtworkWindow() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let suite = "mokume.test.stage.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            // 32x16 を 1 画素 20 点で = 640x320 (既定の 270 より高い)
+            let (artwork, preview, surface) = try openPair(
+                facet: facet, gpu: gpu, defaults: defaults, width: 32, height: 16, windowScale: 20)
+            defer {
+                artwork.close()
+                preview.close()
+            }
+            let above = try #require(artwork.window?.frame)
+            let below = try #require(preview.window?.frame)
+            #expect(artwork.window?.contentLayoutRect.size == NSSize(width: 640, height: 320))
+            #expect(
+                below.maxY <= above.minY,
+                "プレビューが作品の窓に \(below.maxY - above.minY)pt 重なっている (作品の窓 \(above) / プレビュー \(below))")
+            #expect(abs(below.midX - above.midX) <= 1, "横の中央が揃っていない")
+            // 大きさは変えない
+            #expect(preview.window?.contentLayoutRect.size == SharedFramePreview.defaultSize)
+            _ = surface
+        }
+    }
+
+    /// **既定の 480x270 なら、これまでの並び (中央からのずらし量) と同じ。**
+    @Test("既定のスケッチ (960x540・倍率 0.5) では、プレビューは従来のずらし量で真下に並ぶ")
+    func defaultSketchKeepsTheFormerSpacing() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let suite = "mokume.test.stage.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let (artwork, preview, surface) = try openPair(
+                facet: facet, gpu: gpu, defaults: defaults, width: 960, height: 540,
+                windowScale: 0.5)
+            defer {
+                artwork.close()
+                preview.close()
+            }
+            let above = try #require(artwork.window?.frame)
+            let below = try #require(preview.window?.frame)
+            #expect(artwork.window?.contentLayoutRect.size == SharedFrameWindow.defaultSize)
+            #expect(abs((below.midY - above.midY) - SharedFramePreview.nudge.height) <= 1)
+            #expect(below.maxY <= above.minY)
+            _ = surface
+        }
+    }
+
     // MARK: - 手放したときの常駐
 
     // 下の 2 本は、差し替えのときは面を常駐から外すが、持ち主ごと手放したときは外して
@@ -550,10 +685,11 @@ struct SharedFrameStageTests {
     ///
     /// **同じ区画へ 2 つ作ると、目録は後から置いたほうで上書きされる** — それが子の
     /// 入れ替えで起きることそのものである。
-    private func makeSurface(in facet: URL, gpu: RenderDevice, drawing frames: Int) throws
-        -> SharedFrameSurface
-    {
-        let shared = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+    private func makeSurface(
+        in facet: URL, gpu: RenderDevice, drawing frames: Int, windowScale: Float? = nil
+    ) throws -> SharedFrameSurface {
+        let shared = try SharedFrameSurface(
+            gpu: gpu, width: 32, height: 32, windowScale: windowScale, at: facet)
         try shared.publishManifest()
         // **更新時刻を必ず動かす。** 見張りは時刻が変わったときだけ読み直すので、同じ刻みに
         // 収まると 2 つ目の目録を読まない (``WatchedFile``)
@@ -568,8 +704,11 @@ struct SharedFrameStageTests {
     ///
     /// **控えも名乗らせる。** 書き手の公開は 1 枚遅れる (#748) ので、書いただけでは読み手から
     /// 見えない — ここが見ているのは読み手の乗り換えであって、書き手の遅れ方ではない。
-    private func draw(_ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice) throws {
-        let source = try RenderTarget(gpu: gpu, width: 32, height: 32)
+    private func draw(
+        _ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice, width: Int = 32,
+        height: Int = 32
+    ) throws {
+        let source = try RenderTarget(gpu: gpu, width: width, height: height)
         try source.fill(with: .linear(red: 0, green: 0, blue: 0))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         try shared.write(

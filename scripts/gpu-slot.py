@@ -25,9 +25,9 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 ## 待つ
 
 空きが無ければ、数秒おきに取り直す。1 分おきに、何本がどこで走っているかを名乗る。
-**待つ側が期限を持つ** (AGENTS.md の「検査の待たないは待つ側が持つ」)。
+**待つ側が期限を持つ** (AGENTS.md「場面別の入口」の「待ちを含む検査を書く」)。
 `$MOKUME_GPU_SLOT_WAIT` 秒 (既定 5400 = 90 分) を越えたら、持ち主を名乗って 75 で抜ける。
-全体の test 段は 5〜7 分なので、枠 3 に 10 本並んでも 30 分ほどで回ってくる。90 分を越えて
+全体の test 段は 6〜8 分 (並列の幅を縛った後・下の「## 並列の幅」) なので、枠 3 に 10 本並んでも 30 分ほどで回ってくる。90 分を越えて
 待つのは、持ち主が固まっているときである。
 
 ## 枠を取れない環境
@@ -38,8 +38,106 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 
 ## 範囲の外
 
-`swift test --filter …` を直に打つ単独の実行は、この枠を通らない。数 suite で軽く、#1898 の
-赤はどれも全体の段が重なった回に出たためである (実害が出たら足す・ADR-0008)。
+**素の `swift test` (全検査も `--filter …` も) は、この枠にも下の並列の幅にも届かない。範囲の
+外と決めた (#2004)。** 縛りは、gpu-slot を通った実行にだけ掛かる。
+
+素の実行が縛られていないことで起きた事故は、記録に無い。#1999 の 2 件のうち、カーネルパニックは
+枠の内側の `make test-release` で起き、幅が無く 1 プロセスに発行口が並んだためで、下の並列の幅で
+塞いだ。素の `--filter … --repeat-until` で WindowServer が止まったもう 1 件は、根が同じ suite の
+中で `spin` が重なったことにあり、幅を掛けても防げなかった。そちらは suite の側で直した
+(`.serialized` と、回転を残して返らない `settle()`)。残るのは、素の全検査では同時の発行口が
+また上限なく並ぶ (debug で最大 248 本) という穴と、幅が無いことで #2007 の打ち切り (幅 4 以上で出る。
+赤になるだけで、WindowServer は止めない) も起きうることで、事故が出てから足す (ADR-0008)。
+
+**絞った実行は、gpu-slot を前置して打つ** (枠も幅も掛かる):
+
+    python3 scripts/gpu-slot.py -- swift test --filter …
+
+`make test` に絞り込みの口は無い。ビルドの指定が `make` と違えば作り直しが起きうる (Makefile の
+`SYMBOL_GRAPH_FLAGS` の節)。
+
+**枠の外のまま残す実行が 1 つある。** ShadowTests の負荷の手順は、重なりを作って遅れを炙り出す
+検出器なので、わざと 6 本を同時に走らせる。gpu-slot を前置すると 3 本ずつに下がり、検出力だけが
+落ちる。この規則の例外の置き場は、その手順の上である。
+
+**縛りを足すのは、次のどちらかが起きたとき**: 素の実行で WindowServer が止まる・パニックが起きる
+/ 下の並列の幅の口が効いていないと分かる。足すなら、縛る単位は `RenderDevice(` の呼び出し
+(Tests に 400 余り) ではなく、suite の `TestScoping` の trait である。`RenderDevice.init` は
+同期で `@MainActor` なので、中で待つと、検査が全部載っている main actor ごと止まる。GPU の suite
+には `.enabled(if: RenderDevice.isAvailable, …)` が付いていて、`GPUGateTests` がその付け忘れを
+見ているので、trait はそこへ並べる。
+
+## 並列の幅
+
+**枠が縛るのはプロセスの数で、1 プロセスの中で同時に進む検査の数は縛らない。** Swift Testing は
+GPU を待って止まった非同期の検査を上限なく並べ、それぞれが自分の `RenderDevice` (コマンドの
+発行口 1 本) を持つ。debug の全検査の 1 プロセスで、同時に生きる発行口は最大 248 本あった。
+GPU は画面の描画 (WindowServer) と共有なので、全検査が重なって GPU が詰まると WindowServer が
+ドライバの中で待たされ、watchdog が手元の機械ごと落とす (#1999。カーネルパニックまで行った)。
+
+そこで、子へ `SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH` (Swift Testing の並列の幅) を
+渡す。**既定は 1 である。** 最初は 16 にしていた (#1999。同時の発行口は 12 本に収まり、全体の所要は
+1 割ほど延びた = 366 → 401 秒)。**呼ぶ側が環境に値を持っていれば、そちらを使う** (切り分けで幅を
+変えて走らせるための口)。空の値は持っていないものとして扱う。
+
+**1 にした理由 (#2007)。** 専用機で `EffectArgumentTests` だけを回すと、幅 4・16・100000 では
+30 回中 7〜15 回で、GPU の仕事が `kIOGPUCommandBufferCallbackErrorPageFault` か `ErrorHang` で
+打ち切られた。幅 1 では 30 回で 0 だった (2・3 は測っていない)。全検査でも、#2008 以降の専用機の
+7 本中 6 本で出て、幅 1 では 2 回で 0 だった。`MTL4CommandQueue` (= `RenderDevice`) を解放しない・
+遅らせる・使い回す・解放の後に 200ms 待つ、のどれでも消えたので、引き金はキューの解放の周りにある。
+検査は main actor で直列に走る (`Package.swift` の既定の隔離) ので、幅 1 でも全体の所要は変わらない
+(専用機の全検査で、幅 16 が 287〜288 秒、幅 1 が 285〜286 秒)。
+
+**これは起きる条件を直さない、症状を避ける対処である。**
+- **幅 1 でなぜ出ないかは、分かっていない。** 幅 1 でもケースの境目では「解放 → すぐ次の仕事」が起きる。
+  ケースが同時に起動することが、解放の周りに別の仕事を重ねるのかもしれない。だとすれば、幅の外
+  (`RenderDevice` を作っては捨てる経路) でも成り立ちうる。製品の経路で起きるかは確かめていない
+- 標本は小さい。30 回の 0 は、95% で上限が約 10% にしか絞れない。キューを解放しない条件でも 1〜2/30 は
+  残ったので、別の根があるかもしれない
+- **幅 1 でも塞げない経路がある**: GPU が応答しなくなった後、`RenderDevice.waitLimitSeconds` で待ちを
+  打ち切って土台を畳み、次の検査が新しいキューを作り続けて、止まったキューが溜まる (#2052・推定)
+- **測っていないのは**、手元機 (M3 Max) の所要と、幅 1 での同時の発行口の数 (検査が 1 本ずつなので
+  1 本前後のはず) である
+
+**口の名前に EXPERIMENTAL が付いている。** toolchain の更新で名前が変われば、Swift Testing は
+知らない変数を読まないので、縛りは黙って外れる。幅の値と名前はここ 1 箇所にだけ置く。外れたかは、
+専用機の全検査で `The GPU dropped the work` (`ErrorPageFault` / `ErrorHang`) が戻ること (幅 16 のときの
+症状・#2007)、全検査の同時の発行口が数十本を越えて戻ること (#1999 の計り方)、または同じ機械の全検査の
+重なりで WindowServer が止まることで分かる。そのときは、toolchain の `Testing` の文字列から今の名前を
+引く。
+
+## 起動元の記録
+
+**枠を取った・返した・期限で抜けたときに、起動元を 1 行の JSON で追記する** (#2059)。置き場は
+`$MOKUME_GPU_SLOT_LOG` (既定 `~/Library/Logs/mokume/gpu-slot.jsonl`)。枠のロックは次の持ち主に
+上書きされるうえ、`pid / cwd / 時刻` しか持たない。#2052 のパニックでは、GPU を塞いだ全検査を
+誰が起動したかを割り出すのに 1 時間かかった。正体は、エージェントのコマンドの引用符なしの heredoc
+の中のバッククォートが、`make test-release` として実行されたものだった。記録には次を残す:
+
+- `event` (`take` / `release` / `timeout`)・時刻・枠・自分の pid・cwd・子のコマンド・終了コード・所要
+- `lineage`: 親プロセスを launchd の手前まで辿った各段の pid / ppid / 起動時刻 / コマンドラインの先頭。
+  枠を待つ前に取る。#2052 の形なら、ここに `zsh -c … python3 - <<EOF …` の先頭が載る。ただし
+  コマンドが長ければ、実行されてしまった箇所は切った先にありうる (各段 4000 字まで)
+- `agent`: 環境にあるエージェントの出所 (`CLAUDE_CODE_SESSION_ID`・`MOKUME_AGENT_NAME` など)
+
+**書けなくても検査は止めない** (1 行名乗るだけ)。行ごとにディスクまで落とす (パニックの直前の行が
+いちばん欲しい)。大きさが上限 (4 MB) を越えたら、同じファイルの中で新しい半分だけを残す。
+キャッシュの置き場と分けるのは、消してよい場所に調査の記録を置かないためである。
+
+**手元機が落ちた・画面が固まったときの読み方:**
+
+1. `/Library/Logs/DiagnosticReports/` の `panic-full-*.panic` と `WindowServer_*.spin` を開く。
+   `.spin` の `swiftpm-testing-helper` のうち、GPU のドライバの中で止まったスレッドを持つものを探す。
+   起動時刻は、`.spin` の先頭の時刻から `Time Since Fork` を引けば出る
+2. その時刻の前後の `take` を、この記録から引く。cwd (どの worktree か) で絞る
+3. `lineage` のコマンドラインと `agent` から、起動したセッションを特定する。Claude のセッションの操作
+   記録は `find ~/.claude/projects -name '<CLAUDE_CODE_SESSION_ID>.jsonl'` で引ける (置き場の名前は
+   セッションを始めたときの cwd から作られ、gpu-slot の cwd とずれうる)。その時刻の Bash の
+   tool_use を読めば、何を打って起動したかが分かる
+
+**この記録に載らないもの:** 枠を通らない実行 (素の `swift test`・ShadowTests の負荷の手順・
+`make reference-shots`・`scripts/measure-frame-rate.sh`・窓つきのスケッチ・`mokume watch`)。
+GPU を使っていたのにここに無ければ、それは枠の外の実行である (上の「範囲の外」・#2052)。
 
 子の終了コードは、そのまま返す。SIGINT / SIGTERM は子へ渡す。取り直しの間隔
 (`$MOKUME_GPU_SLOT_POLL` 秒) と名乗る間隔 (`$MOKUME_GPU_SLOT_REPORT` 秒) は、検査が短く回す
@@ -47,6 +145,7 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 """
 
 import fcntl
+import json
 import os
 import signal
 import subprocess
@@ -58,6 +157,30 @@ DEFAULT_SLOTS = 3
 DEFAULT_WAIT_SECONDS = 5400
 EXIT_TIMED_OUT = 75
 EXIT_USAGE = 2
+
+# 起動元の記録 (上の「## 起動元の記録」)
+LOG_LIMIT_BYTES = 4_000_000
+# Claude のシェルは先頭に snapshot の source (この機械で約 280 字) を持つので、本題のコマンドまで
+# 届く長さにする。Claude のアプリ本体は名前が分かれば足りるので短く切る (Homebrew の Python も
+# Python.app の中にあるので、.app で一律には切らない — 切ると python3 - <<EOF の本文が落ちる)
+LINEAGE_COMMAND_CHARACTERS = 4000
+LINEAGE_APP_CHARACTERS = 200
+# 起動元を名乗る環境変数。値が無いものは記録に載せない。エージェントの見分け方は
+# scripts/comment.sh の判定と揃える
+AGENT_VARIABLES = (
+    "CLAUDECODE",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CODEX_SANDBOX",
+    "CODEX_HOME",
+    "CODEX_THREAD_ID",
+    "MOKUME_AGENT_NAME",
+    "MOKUME_UNATTENDED",
+)
+
+# 並列の幅の口と既定 (上の「## 並列の幅」)
+PARALLELIZATION_WIDTH_VARIABLE = "SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH"
+DEFAULT_PARALLELIZATION_WIDTH = "1"
 
 
 def _say(message):
@@ -88,6 +211,89 @@ def _slot_dir():
     if configured:
         return Path(configured)
     return Path.home() / "Library" / "Caches" / "mokume" / "gpu-slots"
+
+
+def _log_path():
+    configured = os.environ.get("MOKUME_GPU_SLOT_LOG")
+    if configured:
+        return Path(configured)
+    return Path.home() / "Library" / "Logs" / "mokume" / "gpu-slot.jsonl"
+
+
+def _lineage():
+    """自分から launchd の手前まで、親プロセスを辿る。各段の pid・ppid・起動時刻・コマンドラインを返す。
+
+    起動時刻 (lstart) はロケールで形が変わる (ja_JP では日付が 4 語になる) ので、C ロケールで読む。
+    コマンドラインは UTF-8 でないバイトを含みうるので、置き換えて読む。
+    """
+    chain = []
+    pid = os.getpid()
+    seen = set()
+    environment = {**os.environ, "LC_ALL": "C"}
+    while pid > 1 and pid not in seen and len(chain) < 32:
+        seen.add(pid)
+        out = subprocess.run(
+            ["ps", "-o", "ppid=,lstart=,command=", "-p", str(pid)],
+            capture_output=True, timeout=5, env=environment,
+        ).stdout.decode("utf-8", errors="replace").strip()
+        # C ロケールの lstart は "Sun Oct  4 13:29:27 2026" の 5 語
+        fields = out.split(None, 6)
+        if len(fields) < 6 or not fields[0].isdigit():
+            break
+        parent = int(fields[0])
+        command = fields[6] if len(fields) > 6 else ""
+        executable = command.split(" -", 1)[0].lower()
+        limit = LINEAGE_APP_CHARACTERS if "/claude.app/" in executable else LINEAGE_COMMAND_CHARACTERS
+        chain.append({"pid": pid, "ppid": parent, "started": " ".join(fields[1:6]), "command": command[:limit]})
+        pid = parent
+    return chain
+
+
+def _origin():
+    """起動元: 親プロセスの連鎖とエージェントの出所。枠を待つ前に取る — 待つ間に起動したシェルが
+    終わると、連鎖は launchd に付け替えられて途切れる。"""
+    try:
+        lineage = _lineage()
+    except Exception as error:  # 記録のための読み取りで検査を止めない
+        lineage = [{"error": repr(error)}]
+    agent = {name: os.environ[name] for name in AGENT_VARIABLES if os.environ.get(name)}
+    return {"lineage": lineage, "agent": agent}
+
+
+def _record(event, **fields):
+    """起動元の記録へ 1 行追記する。**何が起きても例外を外へ出さない** — 記録のために検査を止めたり、
+    子の終了コードや期限切れの 75 を置き換えたりしない。"""
+    path = _log_path()
+    try:
+        try:
+            cwd = os.getcwd()
+        except OSError as error:
+            cwd = f"<読めない: {error}>"
+        entry = {"event": event, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "pid": os.getpid(), "cwd": cwd, **fields}
+        line = (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8", errors="replace")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # 置き換え (os.replace) で切り詰めると、ロックを待っていた他のプロセスが名前の外れた古い
+        # ファイルへ書き、その行が消える。同じファイルの中で切り詰める
+        with open(path, "ab+") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.write(line)
+            handle.flush()
+            if handle.tell() > LOG_LIMIT_BYTES:
+                handle.seek(0)
+                data = handle.read()
+                keep = data[len(data) - LOG_LIMIT_BYTES // 2:]
+                keep = keep[keep.find(b"\n") + 1:]
+                handle.truncate(0)
+                handle.write(keep)
+                handle.flush()
+            # パニックの直前の行がいちばん欲しいので、ディスクまで落とす (macOS の fsync は
+            # ドライブのキャッシュに留まりうる)
+            try:
+                fcntl.fcntl(handle.fileno(), fcntl.F_FULLFSYNC)
+            except (AttributeError, OSError):
+                os.fsync(handle.fileno())
+    except Exception as error:
+        _say(f"起動元の記録 {path} に書けなかった ({error!r})。検査はそのまま走らせる")
 
 
 def _try_take(path):
@@ -128,7 +334,7 @@ def _holders(paths):
     return lines
 
 
-def _acquire(slots, wait_seconds, poll, report_every):
+def _acquire(slots, wait_seconds, poll, report_every, origin):
     """枠を 1 つ取る。取れた枠を返す。置き場を使えなければ None を返す。期限を越えたら抜ける。"""
     directory = _slot_dir()
     try:
@@ -150,8 +356,11 @@ def _acquire(slots, wait_seconds, poll, report_every):
                     f"GPU の枠 ({slots}) が {_span(wait_seconds)}空かなかったので、検査を走らせずに抜ける。"
                     " 持ち主が固まっていないか確かめる (MOKUME_GPU_SLOT_WAIT で期限を変えられる):"
                 )
-                for line in _holders(paths):
+                holders = _holders(paths)
+                for line in holders:
                     print(line, file=sys.stderr, flush=True)
+                print(f"  (持ち主の起動元は {_log_path()} の take の行にある)", file=sys.stderr, flush=True)
+                _record("timeout", waited_seconds=round(now - started, 1), holders=holders, **origin)
                 sys.exit(EXIT_TIMED_OUT)
             if now - last_report >= report_every:
                 last_report = now
@@ -168,7 +377,11 @@ def _acquire(slots, wait_seconds, poll, report_every):
 
 
 def _run(command):
-    child = subprocess.Popen(command)
+    environment = dict(os.environ)
+    # 空の値は未設定と同じに扱う。Swift Testing が読めない値を素通しすると、縛りが黙って外れる
+    if not environment.get(PARALLELIZATION_WIDTH_VARIABLE, "").strip():
+        environment[PARALLELIZATION_WIDTH_VARIABLE] = DEFAULT_PARALLELIZATION_WIDTH
+    child = subprocess.Popen(command, env=environment)
 
     def forward(signum, _frame):
         child.send_signal(signum)
@@ -187,10 +400,17 @@ def main(argv):
     wait_seconds = _number("MOKUME_GPU_SLOT_WAIT", DEFAULT_WAIT_SECONDS, integer=False)
     poll = _number("MOKUME_GPU_SLOT_POLL", 2.0, integer=False)
     report_every = _number("MOKUME_GPU_SLOT_REPORT", 60.0, integer=False)
-    slot = _acquire(slots, wait_seconds, poll, report_every)
+    origin = _origin()
+    slot = _acquire(slots, wait_seconds, poll, report_every, origin)
+    slot_name = Path(slot.name).name if slot is not None else None
+    _record("take", slot=slot_name, command=argv[1:], **origin)
+    started = time.monotonic()
+    code = None
     try:
-        return _run(argv[1:])
+        code = _run(argv[1:])
+        return code
     finally:
+        _record("release", slot=slot_name, exit_code=code, seconds=round(time.monotonic() - started, 1))
         if slot is not None:
             slot.close()
 

@@ -131,15 +131,18 @@ struct AtomicFileTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
-    /// 走らせた子のプロセス。`waitUntilExit` まで待てば、その番号にはもう誰も居ない。
-    private func launch(_ path: String, _ arguments: [String] = []) throws -> Process {
+    /// 走らせた子のプロセスと、その終わりを待つ札。終わるまで待てば、その番号にはもう誰も居ない。
+    ///
+    /// **待つ間に実行ループを回さない** (``ExitWait``・#1937)。
+    private func launch(_ path: String, _ arguments: [String] = []) throws -> (Process, ExitWait) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        let exited = ExitWait(for: process)
         try process.run()
-        return process
+        return (process, exited)
     }
 
     /// **書いている途中に落とされた書き手の分は、次に同じ名前を書くプロセスが片付ける。**
@@ -153,9 +156,9 @@ struct AtomicFileTests {
         let facet = try makeFacet()
         let url = facet.appendingPathComponent("frame-000.png")
 
-        let gone = try launch("/usr/bin/true")
-        gone.waitUntilExit()
-        let alive = try launch("/bin/sleep", ["30"])
+        let (gone, goneExit) = try launch("/usr/bin/true")
+        goneExit.wait()
+        let (alive, _) = try launch("/bin/sleep", ["30"])
         defer { alive.terminate() }
 
         let abandoned = AtomicFile.temporaryURL(for: url, writer: gone.processIdentifier, sequence: 7)
