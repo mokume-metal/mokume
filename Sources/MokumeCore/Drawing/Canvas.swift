@@ -795,6 +795,16 @@ public final class Canvas {
     ///
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     var forcesThisFrame: [(particles: Weak<Particles>, before: Int)] = []
+    /// このフレームで頼んだ粒の進めのうち、まだ投入していないものと、その回の寿命を減らす量
+    /// ([#1710])。
+    ///
+    /// **計算を投入したときに粒へ足し (``commitParticleAdvances()``)、投入せずにフレームを捨てた
+    /// ら落とす。** 粒の上書きの注意は寿命を減らした量の累計で測る (``Particles/consumed``) ので、
+    /// 走らなかった進めを数えると、累計が GPU の寿命の先へ行く。溜めた計算
+    /// (``pendingComputations``) と同じ所で投入し、同じ所で落とす。粒は弱く持つ。
+    ///
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
+    var particleAdvancesThisFrame: [(particles: Weak<Particles>, amount: Double)] = []
     /// 効果のパイプライン。**頼まれてはじめて作る。**
     var effectPipelineStorage: EffectPipeline?
     /// 描く先に効果を通した絵があり、効果を通す前の絵が控え (``EffectPipeline/carry()``) に
@@ -1716,10 +1726,12 @@ public final class Canvas {
     }
 
     /// 1 フレームの長さ。``deltaTime`` はこれの単精度の写しである。**経過を数に変える側
-    /// (`emit` の繰り越し) が読む** — フレーム番号から導く時計では秒に直さずに渡るので、
-    /// fps によって毎秒 1 個ずれることが無い (``FrameStep``・[#1640])。
+    /// (`emit` の繰り越し・粒の寿命) が読む** — フレーム番号から導く時計では秒に直さずに
+    /// 渡るので、fps によって毎秒 1 個・寿命の 1 枚がずれることが無い (``FrameStep``・
+    /// [#1640]・[#1710])。
     ///
     /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
     var frameStep: FrameStep {
         get { timebase.step }
         set { timebase.step = newValue }
@@ -2458,6 +2470,9 @@ public final class Canvas {
         // 読み戻し (`read`)・面をまたぐ順 (#1870)・数の並びへの書き込み (#1687) が描き切りを待たずに
         // 投入した分は、このフレームが描けなくても走り終えている。落とすのは溜め場に残った分だけ
         pendingComputations.removeAll(keepingCapacity: true)
+        // 頼んだ進めも同じく越えない。投入した進めは投入した所で粒へ足してあり、ここに残るのは
+        // 走らなかった進めである (#1710)
+        particleAdvancesThisFrame.removeAll(keepingCapacity: true)
         // 力の控えもこのフレームのもの。積んだ力そのものは粒の側で次に進めるまで残る
         forcesThisFrame.removeAll(keepingCapacity: true)
         // **このフレームの数も越えない** ([#1671])。描き切れたときは flush が「直前のフレーム」の
@@ -3674,6 +3689,8 @@ public final class Canvas {
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
                 uploaded: uploaded, carried: carried, upscaled: upscaled)
         }
+        // 頼んだ計算はこの投入で流れた。粒の進めを、寿命を減らした量として数える (#1710)
+        commitParticleAdvances()
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
         // まま書いてよい」ことになる (#754)

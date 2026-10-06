@@ -21,9 +21,17 @@ struct Particle {
     var vx: Float = 0
     var vy: Float = 0
     var vz: Float = 0
-    /// 残りの寿命 (秒)。**0 以下なら死んでいる。**
+    /// 残りの寿命。**0 以下なら死んでいる。**
+    ///
+    /// 単位は刻みの数え方で違う (``Particles/lifeStep(of:)``)。秒の刻み (実時間の時計・直に
+    /// 回す面) では秒で、1 回進めるたびに刻みの秒を引く。フレーム番号から導く時計では
+    /// **あと何回進めると尽きるか**の回数で、1 回進めるたびに 1 を引く — 寿命 L 秒の粒は
+    /// ⌊L·fps⌋ + 1 で生まれ、⌊L·fps⌋ 回目の進めまで描かれる ([#1710])。整数は 2^24 まで
+    /// `Float` で厳密なので、引き算が丸まらない。
+    ///
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
     var life: Float = 0
-    /// 生まれたときの寿命。
+    /// 生まれたときの寿命 (秒。`emit` で引いた値そのもの)。
     var span: Float = 0
     /// 大きさ (1 辺の長さ)。
     var size: Float = 0
@@ -139,10 +147,11 @@ public final class Particles {
     /// 指定の置き場の頭。**並びの正本はここ** — 読む側は
     /// `Shaders/Computations/Particles.metal` の冒頭にある。
     ///
-    ///   [0…15] いまの変換 (4x4) / [16] 1 フレームの長さ / [17] フレーム番号 /
+    ///   [0…15] いまの変換 (4x4) / [16] 1 フレームの長さ (秒) / [17] フレーム番号 /
     ///   [18] 効かせる力の数 / [19] スキャンの段の数 / [20] 予備 (かつての描く頂点の頭。
     ///   いまは使わない — 下の `write`) / [21] 描く頂点の数 / [22…26] 段 0…4 の置き場の頭 /
-    ///   [27…35] 視点の枠 (横・上・手前を 3 つずつ。``Camera/basis``) / [36…39] 予備 /
+    ///   [27…35] 視点の枠 (横・上・手前を 3 つずつ。``Camera/basis``) /
+    ///   [36] 寿命を 1 回で減らす量 (``lifeStep(of:)``) / [37…39] 予備 /
     ///   [40…] 力 (1 つ ``Force/slotCount`` 個)
     ///
     /// [19…26] の整数は `UInt32` のビット列として置く (`Float` に直すと 2^24 を超えた
@@ -150,6 +159,12 @@ public final class Particles {
     static let headerFloats = 40
     /// 視点の枠の頭。
     static let basisOffset = 27
+    /// 寿命を 1 回で減らす量の置き場。
+    static let lifeStepOffset = 36
+    /// フレーム番号から導く時計で、枚数として数える寿命の上限 (2^24 − 1 枚)。**`Float` の
+    /// 寿命 (``Particle/life``) に 1 を足しても厳密に表せる最大の数**で、60 fps で約 77 時間・
+    /// 120 fps で約 39 時間にあたる。これより長い寿命はここで尽きる。
+    static let maximumFrameLife = (1 << 24) - 1
     /// スキャンの区画の大きさ。**GPU 側の `MOKUME_PARTICLE_BLOCK` と一致していなければ
     /// ならない** (一致は `ParticleTests` の「配置」が見る)。
     static let scanBlock = 256
@@ -257,11 +272,39 @@ public final class Particles {
     private var cadenceFrame: Int?
     /// `cadenceFrame` のフレームで、これまでに数えた `emit` の回数。
     private var emitsThisFrame = 0
-    /// 枠ごとの「いつまで生きるか」。
+    /// 枠ごとの「いつまで生きるか」。**寿命を減らした量の累計 (``consumed``) で測る** —
+    /// 置いたときの累計に置いた寿命 (``Particle/life``) を足した値で、累計がそこへ届くと尽きる。
     ///
     /// **CPU だけが読む。** 寿命を配ったのは CPU なので、GPU から読み戻さなくても
     /// 「まだ生きている粒を上書きした」が分かる。
-    private var deadline: [Float]
+    ///
+    /// **時刻でも、フレーム番号でも測らない** ([#1710])。GPU は呼ばれた回数だけ寿命を減らす
+    /// ので、時刻で測ると 1 フレームに 2 回呼ぶ群では尽きた粒の上書きで注意が出て、呼ばない
+    /// フレームがある群では生きている粒の上書きで出ない。フレーム番号でも同じことが起きる。
+    ///
+    /// **倍精度で持つ。** フレーム番号から導く時計では累計も寿命も整数で、GPU の単精度の
+    /// 引き算と 1 も違わない。秒の刻みでは、GPU は単精度の寿命から単精度の刻みを 1 回ずつ
+    /// 引いて丸め、CPU は同じ刻みを倍精度で丸めずに積むので、k 回引いた後の残りは
+    /// 最大で k 回ぶんの丸め (寿命の単精度の 1 目盛りの半分 × k) だけ食い違いうる。食い違うのは
+    /// 残りがちょうど次の刻みの近く (その丸めの幅の中) に落ちた粒だけで、そのときは注意が
+    /// GPU より 1 回早く (尽きる粒の上書きで) 出るか、1 回遅く (最後の 1 枚を描く粒の上書きで)
+    /// 出ない。
+    ///
+    /// **生きている粒がある間に、秒の刻みとフレーム番号の時計を入れ替えない前提に立つ** —
+    /// 単位が違う。公開の経路では時計はランタイムを組んだときに決まり、入れ替わらない。
+    /// フレーム番号の時計の途中に挟まる観測の 1 枚 (`.seconds(0)`) は粒を出さず
+    /// (``EmissionCadence``)、寿命も減らさない (0 はどちらの単位でも 0)。
+    ///
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
+    private var deadline: [Double]
+    /// 群が寿命を減らした量の累計。**GPU へ投入した進めの、寿命を減らす量 ([36]・
+    /// ``lifeStep(of:)``) の和**で、フレーム番号から導く時計では進めた回数になる。
+    ///
+    /// **書いた時点ではなく、投入した時点で足す** (``noteSubmittedAdvance(_:)``)。書いた
+    /// 後でフレームが捨てられる (描き切りの失敗 #342・閉じ忘れた描き場所 #1622) と、計算は
+    /// 走らず GPU の寿命は減らない。書いた時点で足すと、累計が GPU の先へ行き、生きている
+    /// 粒の上書きを見逃す。
+    private(set) var consumed: Double = 0
     /// この フレームで積まれた力。**進めるときに空になる。**
     private var pendingForces: [Force] = []
 
@@ -344,7 +387,7 @@ public final class Particles {
         self.flag = flag
         self.scan = scan
         self.update = update
-        self.deadline = Array(repeating: -.greatestFiniteMagnitude, count: capacity)
+        self.deadline = Array(repeating: -Double.greatestFiniteMagnitude, count: capacity)
 
         // 段の頭は容量から決まるので、**ここで 1 度だけ書く**。控えに積まれ、最初の
         // 描き切りが計算より前に届ける
@@ -513,7 +556,7 @@ public final class Particles {
     func emit(
         rate: Float, over step: FrameStep, frame: Int, from source: Emitter,
         speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
-        size: ClosedRange<Float>, color: LinearRGBA?, fill: LinearRGBA, at now: Float,
+        size: ClosedRange<Float>, color: LinearRGBA?, fill: LinearRGBA,
         using randomness: inout Randomness
     ) {
         if let refused = Self.unacceptable(
@@ -529,7 +572,7 @@ public final class Particles {
         let count = count(rate: rate, over: step, frame: frame)
         place(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
-            color: color ?? fill, at: now, using: &randomness)
+            color: color ?? fill, over: step, using: &randomness)
     }
 
     /// 受け取れない `emit` の引数の名前と、渡された値の綴り。どれも受け取れるなら `nil`。
@@ -579,6 +622,9 @@ public final class Particles {
     /// 隣り合う区間が畳まれて元から 1 本)。乱数を引く順・上書きの注意・寿命の控えは粒ごとの
     /// ままなので、書き込まれる値は 1 粒ずつ書いたときと同じである。
     ///
+    /// 寿命と上書きの注意は、刻みの数え方 (`step`) で単位を選ぶ (``Particle/life``・
+    /// ``deadline``)。
+    ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
     /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
@@ -586,9 +632,13 @@ public final class Particles {
     private func place(
         _ count: Int, from source: Emitter, speed: ClosedRange<Float>,
         angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
-        color: LinearRGBA, at now: Float, using randomness: inout Randomness
+        color: LinearRGBA, over step: FrameStep, using randomness: inout Randomness
     ) {
         guard count > 0 else { return }
+        // 上書きの注意の境目。**置いた粒は、このフレームの進めより先に状態へ届く** (控えは計算より
+        // 前に流れる) ので、上書きされる粒が次に描かれるのは、この刻みでもう 1 回進めて残りが
+        // あるときである — GPU の生き残りの判定 (`mokume_particleSurvives`) と同じ
+        let living = consumed + Double(Self.lifeStep(of: step))
         // 溜めた粒は枠 `firstSlot` から続いている。書き出したら空にする
         var firstSlot = 0
         defer { flushPlacement(from: firstSlot) }
@@ -605,7 +655,7 @@ public final class Particles {
             }
             let slot = cursor % capacity
             cursor += 1
-            if deadline[slot] > now { warnOverwrite() }
+            if deadline[slot] > living { warnOverwrite() }
 
             let heading = randomness.value(from: angle.lowerBound, to: angle.upperBound)
             let rate = randomness.value(from: speed.lowerBound, to: speed.upperBound)
@@ -620,14 +670,54 @@ public final class Particles {
                 flushPlacement(from: firstSlot)
             }
             if placement.isEmpty { firstSlot = slot }
+            let remaining: Float
+            switch step {
+            case .frame(let perSecond):
+                // 「あと何回進めると尽きるか」。n 回目の進めまで描かれ、ちょうど n 枚になる
+                remaining = Float(Self.frames(life: span, perSecond: perSecond) + 1)
+            case .seconds:
+                remaining = span
+            }
+            deadline[slot] = consumed + Double(remaining)
             placement.append(
                 Particle(
                     x: place.x, y: place.y, z: place.z,
                     vx: cos(heading) * rate, vy: sin(heading) * rate, vz: 0,
-                    life: span, span: span, size: extent,
+                    life: remaining, span: span, size: extent,
                     red: color.red, green: color.green, blue: color.blue, alpha: color.alpha,
                     seed: randomness.unitValue()))
-            deadline[slot] = now + span
+        }
+    }
+
+    /// 進めの計算 1 回ぶんを GPU へ投入した。`amount` はその回の寿命を減らす量
+    /// (``lifeStep(of:)``)。**面が、計算を投入した時点で呼ぶ** (``consumed``)。
+    func noteSubmittedAdvance(_ amount: Double) {
+        consumed += amount
+    }
+
+    /// フレーム番号から導く時計で、寿命 `span` 秒の粒が描かれる枚数 ⌊`span`·fps⌋ ([#1710])。
+    ///
+    /// **`span` は `Float` の値そのものとして数える** ([#1640] が `rate` で採った形)。積は倍精度で
+    /// 厳密なので (仮数 24 ビットと fps の積が 53 ビットに収まる)、切り捨てが丸めに左右されない。
+    /// 10 進で書いた寿命は単精度の丸めの向きに従い、`0.05` (`Float` では 0.05 よりわずかに
+    /// 大きい) は 60 fps で 3 枚になる。``maximumFrameLife`` で頭打ちにする。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
+    static func frames(life span: Float, perSecond: Int) -> Int {
+        let product = (Double(span) * Double(max(1, perSecond))).rounded(.down)
+        // **整数へ直す前に比べる** — 頭打ちを越える積を直すと溢れて止まる。数でない値は 0 枚
+        guard product >= 1 else { return 0 }
+        return product < Double(maximumFrameLife) ? Int(product) : maximumFrameLife
+    }
+
+    /// 寿命を 1 回の進めで減らす量 (指定の [36])。秒の刻みでは刻みの秒 (速度と位置の積分に
+    /// 渡す [16] と同じ値)、フレーム番号から導く時計では 1 (``Particle/life``)。時刻を
+    /// 指定して描き直す観測の 1 枚 (`.seconds(0)`) では 0 で、寿命が減らない (#1760)。
+    static func lifeStep(of step: FrameStep) -> Float {
+        switch step {
+        case .frame: 1
+        case .seconds(let seconds): Float(seconds)
         }
     }
 
@@ -671,10 +761,15 @@ public final class Particles {
     ///
     /// **待たない。** 粒を置くのと同じく控えに積み、描き切りが届ける (#749)。
     ///
+    /// `step` は刻みの数え方ごと受け取る。速度と位置の積分には単精度の秒 ([16]) を、寿命には
+    /// ``lifeStep(of:)`` ([36]) を渡す ([#1710])。寿命を減らした量の累計 (``consumed``) は
+    /// ここでは足さず、面が計算を投入したときに足す。
+    ///
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
     /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
     func write(
-        into draw: Draw, transform: simd_float4x4, basis: simd_float3x3, step: Float, frame: Int,
-        forces: [Force], vertexCount: Int
+        into draw: Draw, transform: simd_float4x4, basis: simd_float3x3, step: FrameStep,
+        frame: Int, forces: [Force], vertexCount: Int
     ) {
         if forces.count > Self.maximumForces { warnTooManyForces(forces.count) }
         let used = min(forces.count, Self.maximumForces)
@@ -684,7 +779,7 @@ public final class Particles {
                 let vector = transform[column]
                 for row in 0..<4 { values[column * 4 + row] = vector[row] }
             }
-            values[16] = step
+            values[16] = step.deltaTime
             values[17] = Float(frame)
             values[18] = Float(used)
             // 整数は **ビット列のまま**置く (上の `headerFloats` の理由)
@@ -701,6 +796,7 @@ public final class Particles {
                 for row in 0..<3 { values[Self.basisOffset + column * 3 + row] = vector[row] }
             }
             for index in (Self.basisOffset + 9)..<Self.headerFloats { values[index] = 0 }
+            values[Self.lifeStepOffset] = Self.lifeStep(of: step)
             for (index, force) in forces.prefix(used).enumerated() {
                 for (offset, value) in force.packed.enumerated() {
                     values[Self.headerFloats + index * Force.slotCount + offset] = value
