@@ -19,7 +19,10 @@ import simd
     ///   画面で重なる点の腕を 1 本と数え、丸い端を置く点 (同じ平面に載る 4 点・``Canvas/mayMeetAsOneBand(_:_:_:_:)``)
     ///   にだけ置く。円板は 16 枚の三角形で、CPU の `appendSolidDisc` の下限の分割数 (16) と同じ角の
     ///   並びである。**骨は全部の太さで共有するので、片の数は太さで変えない** — 16 で足りない太さの
-    ///   丸い端は、骨を使わずに CPU の帯で組む (``Canvas/gpuStrokeGeometry(of:weight:cap:mesh:)``・#2011)
+    ///   丸い端は、骨を使わずに CPU の帯で組む (``Canvas/gpuStrokeGeometry(of:weight:cap:mesh:)``・#2011)。
+    ///   片の数 8 (`init(net:gpu:)` の `discs.count * 8` と `0..<8`) は下限 ``Canvas/solidDiscFloorSegments``
+    ///   の半分で、下限を変えるときは、`Shapes.metal` の `kSolidStrokeDisc[17]` と検査
+    ///   `SolidGPUStrokeTests.discUnitsMatchTheCPU` も揃える
     ///
     /// **点の記録は片の後ろに積む** (同じ置き場を `float4` の並びとして読む)。点 i の記録は
     /// `(点 i の位置, 辺の数)` に続けて、隣ごとに `(隣の位置, 隣の記録の位置)` を辺の順に並べる。
@@ -52,6 +55,7 @@ import simd
         else { return nil }
         let corners = points.filter { shared.degree(of: $0) > 0 }
         let discs = corners.filter { shared.mayEndAsOneBand($0) }
+        // 円板の片 8 つは下限の分割数の半分 (揃える相手は `Piece` の説明の円板の項)
         let pieceCount = net.edges.count + corners.count * 2 + discs.count * 8
         // 点の記録の位置 (`float4` の並びでの番号)
         var records = [Int](repeating: 0, count: net.points.count)

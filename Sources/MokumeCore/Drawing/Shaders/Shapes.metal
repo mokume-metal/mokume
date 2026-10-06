@@ -248,7 +248,9 @@ float3 solidStrokeSquareCorner(uint corner, constant SolidStrokePlacement &s) {
 /// (`Canvas.solidDiscFloorUnits`。`cos` / `sin` で求める) をそのまま書き写したもの (0 番は横そのもの)。
 /// 検査 (`SolidGPUStrokeTests.discUnitsMatchTheCPU`) が CPU の値とビットで突き合わせる。CPU は円板を
 /// 画面の半径で刻む (#2011) が、16 で足りない太さの丸い端は骨を使わずに CPU で組む
-/// (`Canvas.gpuStrokeGeometry`) ので、ここに要るのは 16 等分の表だけである。
+/// (`Canvas.gpuStrokeGeometry`) ので、ここに要るのは 16 等分の表だけである。下限
+/// (`Canvas.solidDiscFloorSegments`) を変えるときは、`SolidStrokeGeometry` の円板の片の数 (8 = 下限の
+/// 半分) と、この表を読む検査 (`SolidGPUStrokeTests.discUnitsMatchTheCPU`) も揃える。
 constant float2 kSolidStrokeDisc[17] = {
     float2(1, 0),
     float2(0.92387956, 0.38268343),
@@ -534,7 +536,8 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             shape = end ? shapeB : shapeA;
         }
     } else if (piece.a.w == 3) {
-        // 端の円板の 8 分の 1 (三角形 2 枚)。CPU の `appendSolidDisc` の扇の 2 枚ずつ
+        // 端の円板の 8 分の 1 (三角形 2 枚)。CPU の `appendSolidDisc` の扇の 2 枚ずつ。8 と表の 17 点は
+        // 下限の分割数 16 から来る (揃える相手は `kSolidStrokeDisc` の説明)
         SolidStrokeCorner placed = solidStrokeCornerShape(uint(piece.b.x), true, words, s);
         if (placed.kind == 1) {
             float radius = halfWeight * solidStrokePixel(placed.center, s);

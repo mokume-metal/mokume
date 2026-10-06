@@ -982,6 +982,12 @@ extension Canvas {
     ///
     /// 下限を残すのは、細い線の円板を粗くしないためである。式どおりに決めると太さ 1 の円板は
     /// 3 分割になり、太さ 26 以下の立体の線の絵がすべて動く。
+    ///
+    /// **GPU の骨の円板も、この数に決め打ちである。** 変えるときは、ほかの 2 か所 —
+    /// ``SolidStrokeGeometry`` の円板の片の数 (網の点ごとに 8 つ = この数の半分。`init(net:gpu:)`)
+    /// と、`Shapes.metal` の周の点の表 `kSolidStrokeDisc[17]` (この数 + 1 個) — と、検査
+    /// `SolidGPUStrokeTests.discUnitsMatchTheCPU` (表の宣言 `kSolidStrokeDisc[17]` を読む) も揃える。
+    /// 揃えなければ、その検査が赤になる。
     nonisolated static let solidDiscFloorSegments = 16
 
     /// 円板の周の点の向き (画面の横と縦の成分)。半径 `half` の円板を ``solidDiscSegments(half:)``
