@@ -89,47 +89,50 @@ struct ScreenCornerTests {
         #expect(!Canvas.mayMeetAsOneBand(a, b, c, SIMD3(-40, 5, -60)))
     }
 
-    /// 網の骨 (`strokeNet`) は、群の点が**すべて**曲線の刻みの点のときだけ円板で埋める。線の端
-    /// (辺が 1 本の点 0) が刻みの点 1 と画面で重なれば、端の規則に従う (`.square` は何も置かない)。
-    @Test(
-        "刻みの点と端が画面で重なる群は、円板ではなく端の規則に従う",
-        .enabled(if: RenderDevice.isAvailable, "描き場所を作れない環境ではスキップ"))
-    func curveStepsYieldToEnds() throws {
-        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
-        var discs: [Int] = []
-        var squares: [Int] = []
-        try canvas.draw {
-            canvas.strokeCap(.square)
-            canvas.strokeJoin(.miter)
-            canvas.strokeNet(
-                count: 3, edges: [(0, 1), (1, 2)], curveSteps: [false, true, false],
-                toward: { a, b in
-                    // 辺 0–1 は画面で潰れ、辺 1–2 は右へ向かう
-                    if Set([a, b]) == [0, 1] { return nil }
-                    return a < b ? SIMD2(1, 0) : SIMD2(-1, 0)
-                },
-                endSquare: { index, _ in squares.append(index) }, band: { _, _ in },
-                disc: { discs.append($0) }, square: { squares.append($0) }, corner: { _, _, _ in })
+    /// 網の骨 (`strokeNet`) を描き場所の中で回す検査。GPU を要するので、条件を入れ子の `@Suite` に掛ける
+    /// (`GPUGateTests` の規則)。
+    @Suite("網の骨で置く形", .enabled(if: RenderDevice.isAvailable, "描き場所を作れない環境ではスキップ"))
+    struct OnTheNet {
+        /// 網の骨 (`strokeNet`) は、群の点が**すべて**曲線の刻みの点のときだけ円板で埋める。線の端
+        /// (辺が 1 本の点 0) が刻みの点 1 と画面で重なれば、端の規則に従う (`.square` は何も置かない)。
+        @Test("刻みの点と端が画面で重なる群は、円板ではなく端の規則に従う")
+        func curveStepsYieldToEnds() throws {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+            var discs: [Int] = []
+            var squares: [Int] = []
+            try canvas.draw {
+                canvas.strokeCap(.square)
+                canvas.strokeJoin(.miter)
+                canvas.strokeNet(
+                    count: 3, edges: [(0, 1), (1, 2)], curveSteps: [false, true, false],
+                    toward: { a, b in
+                        // 辺 0–1 は画面で潰れ、辺 1–2 は右へ向かう
+                        if Set([a, b]) == [0, 1] { return nil }
+                        return a < b ? SIMD2(1, 0) : SIMD2(-1, 0)
+                    },
+                    endSquare: { index, _ in squares.append(index) }, band: { _, _ in },
+                    disc: { discs.append($0) }, square: { squares.append($0) }, corner: { _, _, _ in })
+            }
+            #expect(discs.isEmpty, "円板 \(discs)")
+            #expect(squares.isEmpty)
         }
-        #expect(discs.isEmpty, "円板 \(discs)")
-        #expect(squares.isEmpty)
-    }
 
-    /// 網の骨は、群の形をいちばん手前の点 (奥行きが等しければ小さい番号) に置く。
-    @Test("群の形はいちばん手前の点に置く", .enabled(if: RenderDevice.isAvailable, "描き場所を作れない環境ではスキップ"))
-    func groupsPlaceAtTheNearestPoint() throws {
-        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
-        var placed: [Int] = []
-        try canvas.draw {
-            canvas.strokeCap(.project)
-            canvas.strokeNet(
-                count: 3, edges: [(0, 1), (1, 2)],
-                depth: { [5, 9, 1][$0] },
-                toward: { a, b in Set([a, b]) == [1, 2] ? nil : (a < b ? SIMD2(1, 0) : SIMD2(-1, 0)) },
-                endSquare: { index, _ in placed.append(index) }, band: { _, _ in },
-                disc: { _ in }, square: { _ in }, corner: { _, _, _ in })
+        /// 網の骨は、群の形をいちばん手前の点 (奥行きが等しければ小さい番号) に置く。
+        @Test("群の形はいちばん手前の点に置く")
+        func groupsPlaceAtTheNearestPoint() throws {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+            var placed: [Int] = []
+            try canvas.draw {
+                canvas.strokeCap(.project)
+                canvas.strokeNet(
+                    count: 3, edges: [(0, 1), (1, 2)],
+                    depth: { [5, 9, 1][$0] },
+                    toward: { a, b in Set([a, b]) == [1, 2] ? nil : (a < b ? SIMD2(1, 0) : SIMD2(-1, 0)) },
+                    endSquare: { index, _ in placed.append(index) }, band: { _, _ in },
+                    disc: { _ in }, square: { _ in }, corner: { _, _, _ in })
+            }
+            // 点 0 の端 (群 {0}) と、点 2 (手前) に置く群 {1, 2} の端
+            #expect(placed.sorted() == [0, 2])
         }
-        // 点 0 の端 (群 {0}) と、点 2 (手前) に置く群 {1, 2} の端
-        #expect(placed.sorted() == [0, 2])
     }
 }
