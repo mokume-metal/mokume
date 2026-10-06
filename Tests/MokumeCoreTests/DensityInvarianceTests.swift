@@ -515,6 +515,62 @@ struct DensityInvarianceTests {
             "\(isEllipse ? "楕円" : "rect"): \(broken.count) 件 — \(broken.prefix(8).joined(separator: " / "))")
     }
 
+    /// **長い向きが 10 画素以上の細い塗りは、置く位置による揺れが 12% に収まる** (#1934 の 2 回目の
+    /// 反証 2)。長い形は端の列 (楕円は中心の片) の数が置く位置で 1 つ振れるので、揺れは rect で
+    /// 1 / 長さ、楕円で 4 / (π 長さ) ほど残る (長さ 10 で 10%・12.7% が上限)。`fill(_:)` の説明が
+    /// 言う「1 割ほど」を、長さ 10 の少し上で縛る。
+    @Test(
+        "長い向きが 10 画素以上の細い shader() の塗りは、置く位置による揺れが 12% に収まる (#1934)",
+        arguments: [false, true])
+    func longThinFillsStayWithinTheirBound(_ isEllipse: Bool) throws {
+        let lengths: [Float] = [10.01, 10.5, 11]
+        let shifts: [Float] = [0, 0.1, 0.25, 0.4, 0.5, 0.75]
+        let thin: Float = 0.5
+        func light(tall: Bool, length: Float, shift: Float, shaded: Bool) throws -> Double {
+            let canvas = try Self.makeCanvas(density: 1)
+            try Self.draw(on: canvas) {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                if shaded {
+                    canvas.shader(
+                        try canvas.makeShader(
+                            "float4 paint(Fragment in, Values values) { return in.color; }"))
+                }
+                let along = 40 + shift
+                switch (tall, isEllipse) {
+                case (false, false): canvas.rect(along, 30.25, length, thin)
+                case (true, false): canvas.rect(30.25, along, thin, length)
+                case (false, true): canvas.ellipse(along, 30.5, length, thin)
+                case (true, true): canvas.ellipse(30.5, along, thin, length)
+                }
+            }
+            return Self.totalSum(try canvas.target.readPixels())
+        }
+        var broken: [String] = []
+        var worst = 0.0
+        for tall in [false, true] {
+            for length in lengths {
+                for shift in shifts {
+                    let shaded = try light(tall: tall, length: length, shift: shift, shaded: true)
+                    // rect は面積と、楕円は同じ位置の距離関数の経路と比べる
+                    let reference =
+                        isEllipse
+                        ? try light(tall: tall, length: length, shift: shift, shaded: false)
+                        : Double(length * thin)
+                    let deviation = abs(shaded - reference) / reference
+                    worst = max(worst, deviation)
+                    if deviation > 0.12 {
+                        broken.append("\(tall ? "縦" : "横")・長さ \(length)・ずらし \(shift): \(shaded) (比べる相手 \(reference))")
+                    }
+                }
+            }
+        }
+        #expect(
+            broken.isEmpty,
+            "\(isEllipse ? "楕円" : "rect") (最大のずれ \(worst)): \(broken.prefix(8).joined(separator: " / "))")
+    }
+
     /// **どの向きも描く画素で細いが形としては長い `rect` と、剪断で弦が辺の隔たりに縛られる `rect` は
     /// 補わず、三角形のまま描く** (#1934 の 2 回目の反証 1)。回した後に縦横で倍率の違う拡大や剪断を
     /// 掛けると、2 組の辺の隔たりがどちらも 1 を割ったまま形は長くなる。そこへ「小さい形」や「帯」の
