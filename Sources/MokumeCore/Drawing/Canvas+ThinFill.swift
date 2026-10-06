@@ -47,7 +47,7 @@ extension Canvas {
     /// - **長い向きが短い形** (列 (行) の向きの長さが ``thinFillShortSpan`` 未満): 上の 2 つでは、
     ///   長い向きの端が列の中心を跨ぐかどうかで、跨ぐ列の数が 1 つ振れる。長さ 1.5 の帯は 1 列か
     ///   2 列になり、光の量が倍まで振れる。そこで長い向きにも同じ手当てを当てる — 長さを整数の
-    ///   列の数へ広げ、列 1 つずつの片に切って、片ごとの被覆で光の量を配る (``ShortProfile``)。
+    ///   列の数へ広げ、被覆で光の量を配る (矩形は 1 枚の片、楕円は列 1 つずつの片・``ShortProfile``)。
     ///   配る量は、距離関数の経路が長い向きを箱フィルタで数えた量を、置く位置についてならした値
     ///   である。`rect` ではちょうど面積になる。長い形は端の 1 列の振れが 1 / 長さ に収まるので、
     ///   上の 2 つのまま描く
@@ -355,43 +355,54 @@ extension Canvas {
         }
     }
 
-    /// 長い向きが短い形を、**長い向きに列 (行) 1 つずつの片**に切る (#1934 の反証 2)。
+    /// 長い向きが短い形を、**長い向きに整数の列 (行) の数ぶんの片**にする (#1934 の反証 2)。
     ///
-    /// 片の数は長さを切り上げた整数 m で、形の中心のまわりに並べる。片はどれも長い向きにちょうど
-    /// 1 列ぶんの幅で、端は列の境目と平行 (列が切るなら縦) なので、置く位置によらず列の中心を
-    /// ちょうど 1 つずつ含む。弦の向きには、弦の中点の線のまわりにちょうど n 行 (1 か 2) の高さに
-    /// 広げる。光の量 (``ShortProfile/averagedLight``) を、片の中の弦の積分の割合で配り、被覆を
-    /// 「配った量 / n」にする。どれも置く位置に依らないので、畳みの雛形と保持した形の控えにも使える。
+    /// 長さを切り上げた整数 m 列ぶんの幅を、形の中心のまわりに置く。片の端は列の境目と平行 (列が
+    /// 切るなら縦) なので、置く位置によらず列の中心をちょうど m 個含む。弦の向きには、弦の中点の線の
+    /// まわりにちょうど n 行 (1 か 2) の高さに広げる。光の量 (``ShortProfile/averagedLight``) を
+    /// 列に配り、被覆を「列 1 つに配った量 / n」にする。どれも置く位置に依らないので、畳みの雛形と
+    /// 保持した形の控えにも使える。
+    ///
+    /// **矩形は m 列を 1 枚の片にする** — 弦が一定なので、どの列にも同じ量を配ればよい。楕円は列
+    /// 1 つずつの片に切り、片の中の弦の積分の割合で配る。
     private static func shortPieces(
         _ profile: ShortProfile, center: SIMD2<Float>, inverse: simd_float2x2
     ) -> [ThinFillPiece] {
         let count = max(1, Int((2 * profile.half).rounded(.up)))
         let light = profile.averagedLight
-        let whole = profile.integral(-profile.half, profile.half)
-        var shares: [Float] = []
-        shares.reserveCapacity(count)
-        for index in 0..<count {
-            let from = max(-Float(count) / 2 + Float(index), -profile.half)
-            let to = min(-Float(count) / 2 + Float(index + 1), profile.half)
-            shares.append(to > from && whole > 0 ? light * profile.integral(from, to) / whole : 0)
+        let left = -Float(count) / 2
+        // (片の始まり, 終わり, 列 1 つに配る量)
+        var spans: [(from: Float, to: Float, share: Float)] = []
+        if profile.isEllipse {
+            let whole = profile.integral(-profile.half, profile.half)
+            spans.reserveCapacity(count)
+            for index in 0..<count {
+                let from = left + Float(index)
+                let low = max(from, -profile.half)
+                let high = min(from + 1, profile.half)
+                let share = high > low && whole > 0 ? light * profile.integral(low, high) / whole : 0
+                if share > 0 { spans.append((from, from + 1, share)) }
+            }
+        } else {
+            spans.append((left, -left, light / Float(count)))
         }
-        let crossings: Float = (shares.max() ?? 0) <= 1 ? 1 : 2
+        var largest: Float = 0
+        for span in spans { largest = max(largest, span.share) }
+        let crossings: Float = largest <= 1 ? 1 : 2
         let axis: SIMD2<Float> = profile.byRows ? SIMD2(0, 1) : SIMD2(1, 0)
         let across: SIMD2<Float> = profile.byRows ? SIMD2(1, 0) : SIMD2(0, 1)
         func corner(_ s: Float, _ side: Float) -> SIMD2<Float> {
             center + inverse * (axis * s + across * (profile.slope * s + side))
         }
         var pieces: [ThinFillPiece] = []
-        pieces.reserveCapacity(count)
-        for (index, share) in shares.enumerated() where share > 0 {
-            let from = -Float(count) / 2 + Float(index)
-            let to = from + 1
+        pieces.reserveCapacity(spans.count)
+        for span in spans {
             pieces.append(
                 ThinFillPiece(
                     corners: (
-                        corner(from, -crossings / 2), corner(to, -crossings / 2),
-                        corner(to, crossings / 2), corner(from, crossings / 2)
-                    ), coverage: share / crossings))
+                        corner(span.from, -crossings / 2), corner(span.to, -crossings / 2),
+                        corner(span.to, crossings / 2), corner(span.from, crossings / 2)
+                    ), coverage: span.share / crossings))
         }
         return pieces
     }
