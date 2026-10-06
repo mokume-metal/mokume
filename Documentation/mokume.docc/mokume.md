@@ -391,6 +391,17 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``PNGFile``
 - ``ImageWriteFailure``
 
+### 文字列と表を読み書きする
+
+- ``Sketch/loadStrings(_:)``
+- ``Sketch/requestStrings(_:)``
+- ``Sketch/loadTable(_:header:)``
+- ``Sketch/requestTable(_:header:)``
+- ``Sketch/saveTable(_:_:)``
+- ``Table``
+- ``TableRow``
+- ``DataFailure``
+
 ### 立体を置く
 
 - ``Sketch/box(_:)``
