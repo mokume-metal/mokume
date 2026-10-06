@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/check-adrs.sh の検査 (#500 / #545 / #1946)。
+"""scripts/check-adrs.sh の検査 (#500 / #545 / #1946 / #2146)。
 
-このスクリプトが守るのは 2 つ — **番号が重複したら赤い** (#490 と #491 が並走して
+このスクリプトが守るのは 3 つ — **番号が重複したら赤い** (#490 と #491 が並走して
 両方 0026 を取ったとき、別ファイルなので git も CI も止めなかった) ことと、
 **改訂を抱えているのに状態欄が印を持たなければ赤い** (29 本中 27 本の状態欄が
-`採用` のままで、節が情報を運んでいなかった) こと。どちらも通す側へ倒れれば同じ
-ことがまた起きるので、赤くなる条件を先に固定する (ADR-0002 決定 4 の
-「壊しても緑の検査は検査ではない」)。
+`採用` のままで、節が情報を運んでいなかった) ことと、**本文の改訂の見出しが 5 つを
+超えたら赤い** (改訂が重なった ADR は 1 本 2〜3 万字になり、読む重さが残った・#2140)
+こと。どれも通す側へ倒れれば同じことがまた起きるので、赤くなる条件を先に固定する
+(ADR-0002 決定 4 の「壊しても緑の検査は検査ではない」)。
 
 状態欄の印は一字一句固定で 1 度だけ置き、改訂の正本は本文の日付入り見出しにある
 (#1946)。状態欄に改訂を書き足す形では、同じ ADR を改訂する 2 本の PR が状態欄の
@@ -259,6 +260,205 @@ class AdrStatusTest(unittest.TestCase):
         r = self.run_script()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("状態欄が読めない", r.stderr)
+
+
+class AdrRevisionCountTest(unittest.TestCase):
+    """本文の改訂・追補の見出しが 5 つを超えたら赤い (#2140 / #2146)。
+
+    数えるのは**見出しの数**で、(a) が改訂と読む行と同じ定義 (「改訂」か「追補」と日付を
+    両方持つ `##`〜`####`。日付は前でも後ろでもよい) である。挙げられた日付の種類の数に
+    すると、同じ日に 3 つの決定を改訂した ADR が 3 つに畳まれて、読む重さの代理として
+    小さすぎる。経緯を移した `history/` は番号付きの ADR として数えられず、その中の
+    見出しも数えない。
+    """
+
+    NAME = "0003-agent-identity-separation.md"
+    STATUS = "採用 (2026-08-26) / " + MARKER
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        _git_init(self.dir)
+
+    def place(self, *body, status=STATUS, name=NAME):
+        text = "# ADR-0003: 見出し\n\n## 状態\n\n" + status + "\n\n## 決定\n\n"
+        text += "\n\n".join(body) + "\n"
+        path = self.dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def run_script(self):
+        return subprocess.run(
+            ["/bin/bash", str(SCRIPT), str(self.dir)],
+            capture_output=True, text=True, encoding="utf-8"
+        )
+
+    @staticmethod
+    def revisions(n):
+        """n 個の改訂の見出し。2 通りの綴りと「追補」を混ぜ、日付はすべて違う。"""
+        forms = [
+            "### {i}. 決定 {i} の手段 (2026-08-{d:02d} 改訂)",
+            "#### 改訂 (2026-08-{d:02d}) — 決定 {i} を差し替える",
+            "## 追補 — 決定 {i} に足す (2026-08-{d:02d})",
+        ]
+        return [forms[i % 3].format(i=i + 1, d=i + 1) for i in range(n)]
+
+    # --- 境界: 5 つは通り、6 つは赤い ---
+
+    def test_5つなら緑(self):
+        self.place(*self.revisions(5))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("ok:", r.stdout)
+
+    def test_6つなら赤い(self):
+        self.place(*self.revisions(6))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        # どの ADR が・いくつで・なぜ止まったかを名指しする
+        self.assertIn(self.NAME, r.stderr)
+        self.assertIn("6 個", r.stderr)
+        self.assertIn("5 個を超えている", r.stderr)
+
+    def test_6つを超えても赤い(self):
+        self.place(*self.revisions(9))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("9 個", r.stderr)
+
+    def test_改訂が無ければ緑(self):
+        # 軽くした後の本文は 0 に戻る
+        self.place("### 1. 決定", "現行の決定。")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    # --- 何を 1 つと数えるか: (a) が改訂と読む行と同じ定義 ---
+
+    def test_日付が見出しの前にある形も数える(self):
+        # `### 4. …… (2026-08-28 改訂)` は日付が「改訂」の前。日付が後ろの形だけを
+        # 数える狭い定義だと、ADR-0032 は 16 個が 7 個になる (#2145)
+        self.place(*[f"### {i}. 決定 {i} (2026-08-{i + 10} 改訂)" for i in range(1, 7)])
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("6 個", r.stderr)
+
+    def test_追補も数える(self):
+        self.place(*[f"## 追補 — 決定 {i} に足す (2026-09-{i + 10})" for i in range(1, 7)])
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("6 個", r.stderr)
+
+    def test_同じ日の改訂も1つずつ数える(self):
+        # 日付の種類の数ではなく見出しの数。ADR-0003 は 6 つの見出しが 3 つの日付に
+        # 収まっている (2026-08-28 が 3 つ)
+        self.place(*[f"#### 改訂 (2026-10-06) — 決定 {i} の手段" for i in range(1, 7)])
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("6 個", r.stderr)
+
+    def test_1つの見出しの日付が複数あっても1つと数える(self):
+        # 上の対照: 数えるのは見出しなので、日付が見出しごとに 2 つあっても 5 つのまま
+        self.place(*[f"#### 改訂 (2026-09-{i + 10}) — 2026-09-{i + 20} に直した" for i in range(1, 6)])
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_副題だけの小見出しは数えない(self):
+        # ADR-0021 は軽くした後も、日付も「改訂」「追補」も含まない副題だけの `####` を
+        # 14 個残している (決定 4 が長く、平らにすると読めない)。数えるのは日付入りだけ
+        subtitles = [f"#### 副題 {i} — 決定の中の区切り" for i in range(1, 15)]
+        self.place("### 4. 決定", *subtitles, *self.revisions(5))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_日付を持たない改訂の見出しは数えない(self):
+        # ADR-0006 決定 6 「…は改訂しない」と同じ。日付が「改訂した」と「改訂について
+        # 語っている」を分ける
+        self.place(*[f"### {i}. 決定 {i} は改訂しない" for i in range(1, 8)])
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_見出しでない行と深すぎる見出しは数えない(self):
+        # 見出しは `##`〜`####` の行だけ (本文の散文・箇条書き・`#####` は見出しではない)
+        prose = [f"- 改訂 (2026-09-{i + 10}) で直した。" for i in range(1, 4)]
+        deep = [f"##### 改訂 (2026-09-{i + 20}) — 深い見出し" for i in range(1, 4)]
+        self.place(*prose, *deep, *self.revisions(5))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    # --- 案内: ADR を開かずに行動できる ---
+
+    def test_案内に軽くし方と経緯の置き場が出る(self):
+        self.place(*self.revisions(6))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        # 数えた見出しを挙げる (どれを移すか分かる)
+        self.assertIn("2026-08-02", r.stderr)
+        # 経緯の置き場は、番号つきで ADR の置き場の下の history/
+        self.assertIn(f"{self.dir}/history/0003.md", r.stderr)
+        # 軽くし方: 本文に残すもの・移すもの・番号を変えないこと・状態欄の印を残すこと
+        for phrase in ("番号と決定の番号は変えず", "現行の決定", "退けた案", "当初の決定",
+                       "置き換わった決定", "状態欄の印"):
+            self.assertIn(phrase, r.stderr)
+        # 全文の置き場と理由
+        self.assertIn("docs/decisions/AGENTS.md", r.stderr)
+        self.assertIn("改訂が重なった ADR を軽くする", r.stderr)
+        self.assertIn("#2140", r.stderr)
+
+    def test_上限と状態欄の印は別々に言う(self):
+        # 6 つ超えて、しかも印が無い。どちらも直すので、片方で隠さない
+        self.place(*self.revisions(6), status="採用 (2026-08-26)")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("6 個", r.stderr)
+        self.assertIn("印が無い", r.stderr)
+
+    def test_状態欄が読めなくても上限の超過を隠さない(self):
+        (self.dir / self.NAME).write_text(
+            "# ADR-0003\n\n## 決定\n\n" + "\n\n".join(self.revisions(6)) + "\n", encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("状態欄が読めない", r.stderr)
+        self.assertIn("6 個", r.stderr)
+
+    def test_複数のADRのうち超えたものだけを名指しする(self):
+        self.place(*self.revisions(6))
+        (self.dir / "0004-issue-classification-by-issue-type.md").write_text(
+            "# ADR-0004\n\n## 状態\n\n採用 (2026-08-26) / " + MARKER + "\n\n## 決定\n\n"
+            + "\n\n".join(self.revisions(5)) + "\n", encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn(self.NAME, r.stderr)
+        self.assertNotIn("0004-issue-classification", r.stderr)
+
+    # --- 軽くした後の形: 経緯は history/ にあり、番号付きの ADR として数えない ---
+
+    def test_経緯ファイルの見出しは数えずADRの本数にも入らない(self):
+        # ADR-0021 を軽くした後の姿: 本文に日付入りの見出しが無く、状態欄は凍結した
+        # 並びと印を持ち、経緯は history/0003.md にある (見出し 20 個)
+        status = ("採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 / "
+                  "改訂 (2026-09-14): 決定 1 / " + MARKER)
+        self.place("### 4. 決定", "改訂の経緯は [history/0003.md](history/0003.md) にある。",
+                   status=status)
+        history = "# ADR-0003 の経緯\n\n" + "\n\n".join(self.revisions(20)) + "\n"
+        (self.dir / "history").mkdir()
+        (self.dir / "history" / "0003.md").write_text(history, encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("1 本検査", r.stdout)
+
+    def test_経緯ファイルは番号が同じでも連番の重複に数えない(self):
+        # `history/<番号>.md` は ADR の `NNNN-*.md` と同じ番号を名乗る。番号付きの名前
+        # (`history/0003-….md`) で置かれても、直下ではないので数えない
+        self.place("### 1. 決定")
+        (self.dir / "history").mkdir()
+        for name in ("0003.md", "0003-agent-identity-separation.md"):
+            (self.dir / "history" / name).write_text(
+                "# ADR-0003 の経緯\n\n" + "\n\n".join(self.revisions(6)) + "\n", encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("重複", r.stderr)
+        self.assertIn("1 本検査", r.stdout)
 
 
 class ParallelRevisionTest(unittest.TestCase):
