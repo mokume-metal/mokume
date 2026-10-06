@@ -88,6 +88,14 @@ final class FrameTiming {
     ///
     /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
     private(set) var step: FrameStep = .seconds(0)
+    /// いまの枚が時計の上で占める位置 (秒)。**作者が止めた・飛んだぶんを含まない** —
+    /// ``time`` は作品が描く時刻で、こちらは枚が並ぶ時刻である。動画のように枚の並びに
+    /// 時刻を付ける出口はこちらを読む。止めた間の ``time`` は同じ値が続き、後ろへ飛べば
+    /// 戻るので、それを並びの時刻にすると壊れた動画になる ([#1286])。口を使わなければ
+    /// ``time`` と同じ値である。
+    ///
+    /// [#1286]: https://github.com/mokume-metal/mokume/issues/1286
+    private(set) var timeline: Double = 0
     /// 前のフレームからの経過 (秒)。``step`` の単精度の写しで、利用者に見せる値。
     var deltaTime: Float { step.deltaTime }
 
@@ -97,6 +105,18 @@ final class FrameTiming {
     private let frameInterval: Double
     /// 次の ``advance()`` の経過を ``frameInterval`` にするか。1 枚で落ちる。
     private var stepsOneFrame = false
+
+    /// 時計の生の時刻に足す、原点のずれ (秒)。作者が止めた・飛んだぶんだけ動く ([#1286])。
+    /// 0 のままなら、時刻は口が入る前と同じ値になる。
+    ///
+    /// [#1286]: https://github.com/mokume-metal/mokume/issues/1286
+    private var offset: Double = 0
+    /// いまの枚の時刻 (秒)。``time`` の倍精度の元で、止めた秒をここから取る。
+    private var seconds: Double = 0
+    /// 作者が止めた秒 (``pauseTime()``)。止めていなければ `nil`。
+    private var heldAt: Double?
+    /// 次の枚で飛ぶ先の秒 (``jumpTime(_:)``)。1 枚で落ちる。
+    private var pendingJump: Double?
 
     /// 上限を目標フレームレートから導く。**目標フレーム間隔の 10 倍。**
     ///
@@ -130,22 +150,35 @@ final class FrameTiming {
 
     /// フレームを1つ進め、時刻を更新する。指定秒があればこの枚だけ経過を0にする。
     /// 次の枚は元の時計へ戻り、実時計の経過も指定秒との差にはしない。
+    ///
+    /// 作者が飛んだ枚 (``jumpTime(_:)``) と止めている間 (``pauseTime()``) も経過は 0 で、
+    /// 原点のずれを寄せ直して、次の枚がそこから元の刻みで進むようにする。観測の指定秒は
+    /// ずれに触れない — 撮った後は作者の時計へ戻る。
     func advance(at requestedTime: Float? = nil) {
         let now = now()
         frameCount += 1
         defer { stepsOneFrame = false }
+        let raw: Double
+        switch clock {
+        case .wallClock:
+            raw = now - started
+        case .frameIndex(let frameRate):
+            // 時計の刻みも組み立てで検めている。`max(1, …)` は割り算の守り (#1642)。
+            // 最初のフレームを 0 秒にする
+            raw = Double(frameCount - 1) / Double(max(1, frameRate))
+        }
+        timeline = raw
         if let requestedTime {
             time = requestedTime
+            seconds = Double(requestedTime)
             step = .seconds(0)
             previous = now
             return
         }
         switch clock {
         case .wallClock:
-            let elapsed = now - started
-            // **時刻は絶対経過のまま。** 何枚落ちても復帰した瞬間に追いつく — 揃えたい
+            // **時刻は絶対経過のまま (`raw`)。** 何枚落ちても復帰した瞬間に追いつく — 揃えたい
             // ものがあるならこちらを読む (ADR-0025)。止めていたところから描く 1 枚も同じ
-            time = Float(elapsed)
             if stepsOneFrame {
                 // 止めていた長さによらず、回っているときの 1 枚ぶん (``stepOneFrameNext()``)
                 step = .seconds(frameInterval)
@@ -156,14 +189,39 @@ final class FrameTiming {
             }
             previous = now
         case .frameIndex(let frameRate):
-            // 時計の刻みも組み立てで検めている。`max(1, …)` は割り算の守り (#1642)
-            let rate = Double(max(1, frameRate))
-            // 最初のフレームを 0 秒にする。止めていたところから描く 1 枚も、既に 1 フレーム
-            // ぶんしか進まないので ``stepOneFrameNext()`` は効かせるものが無い
-            time = Float(Double(frameCount - 1) / rate)
-            // 見せる `deltaTime` は `Float(1 / rate)` のまま (``FrameStep/deltaTime``)
+            // 止めていたところから描く 1 枚も、既に 1 フレームぶんしか進まないので
+            // ``stepOneFrameNext()`` は効かせるものが無い。見せる `deltaTime` は
+            // `Float(1 / rate)` のまま (``FrameStep/deltaTime``)
             step = .frame(perSecond: max(1, frameRate))
         }
+        if let target = pendingJump ?? heldAt {
+            // 飛んだ枚と止めている枚。**ずれを毎枚寄せ直す** — 再開した次の枚は、
+            // 生の時刻の 1 枚ぶんの進みだけ先になる (実時計の経過へ跳ね戻らない)
+            pendingJump = nil
+            offset = target - raw
+            step = .seconds(0)
+        }
+        seconds = raw + offset
+        time = Float(seconds)
+    }
+
+    /// 次の枚から時刻を止める。止めた秒は**いまの枚の** ``time`` で、描画は続く。
+    /// 止めている間の経過は 0 である。既に止めていれば何もしない。
+    func pauseTime() {
+        // 同じ枚で先に飛ぶ先を頼まれていれば、そこで止める
+        if heldAt == nil { heldAt = pendingJump ?? seconds }
+    }
+
+    /// 止めた秒から時刻を進め直す。止めていなければ何もしない。
+    func playTime() {
+        heldAt = nil
+    }
+
+    /// 次の枚の時刻を `target` 秒にする。その枚の経過は 0 で、次の枚からは `target` から
+    /// 元の刻みで進む。止めている間なら、`target` で止まり続ける。
+    func jumpTime(_ target: Double) {
+        pendingJump = target
+        if heldAt != nil { heldAt = target }
     }
 
     /// フレームを 1 枚も進めずに時刻だけが進んだときに、起点を寄せ直す。**外から止めて

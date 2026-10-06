@@ -841,7 +841,8 @@ public final class SketchRuntime {
             Diagnostics.warn("Could not take the frame that goes to an outlet: \(error.headline)")
             return
         }
-        pendingOutletFrame = (image, timing.frameCount, Double(timing.time))
+        // 並びの時刻は作品の `time` ではなく時計の上の位置 (作者が止めても動画が壊れない・#1286)
+        pendingOutletFrame = (image, timing.frameCount, timing.timeline)
     }
 
     /// 控えてある絵を出口へ配る。控えが無ければ何もしない。
@@ -1104,6 +1105,15 @@ public final class SketchRuntime {
     ///
     /// 回っている間に呼ばれても旗を立てるだけで、そのフレームを描いた後に落ちる。
     func redraw() { redrawRequested = true }
+
+    /// 作者の口の転送 (正本は ``Sketch/pauseTime()``)。
+    func pauseTime() { timing.pauseTime() }
+
+    /// 作者の口の転送 (正本は ``Sketch/playTime()``)。
+    func playTime() { timing.playTime() }
+
+    /// 作者の口の転送 (正本は ``Sketch/jumpTime(_:)``)。
+    func jumpTime(_ seconds: Float) { timing.jumpTime(Double(seconds)) }
 
     // MARK: - 使いやすい入口
 
