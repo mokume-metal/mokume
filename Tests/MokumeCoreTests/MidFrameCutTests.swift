@@ -238,7 +238,7 @@ struct MidFrameCutTests {
                 canvas.shadows(shadows)
                 canvas.noStroke()
                 canvas.emit(
-                    dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                    dust, from: .point(36, 36), toward: .plane(0...0), rate: 600, speed: 0...0,
                     life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
                     using: &randomness)
                 canvas.particles(dust)
@@ -288,7 +288,7 @@ struct MidFrameCutTests {
                 }
                 canvas.castShadow(true)
                 canvas.emit(
-                    dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                    dust, from: .point(36, 36), toward: .plane(0...0), rate: 600, speed: 0...0,
                     life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
                     using: &randomness)
                 canvas.particles(dust)

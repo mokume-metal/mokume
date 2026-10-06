@@ -99,7 +99,7 @@ struct ForgottenLayerFrameTests {
     private func emit(_ dust: Particles, on surface: Canvas) {
         var randomness = Randomness(seed: 1)
         surface.emit(
-            dust, from: .point(8, 8), rate: 600, speed: 1...2, angle: 0...1, life: 1...2,
+            dust, from: .point(8, 8), toward: .plane(0...1), rate: 600, speed: 1...2, life: 1...2,
             size: 1...2, color: nil, using: &randomness)
     }
 

@@ -19,7 +19,7 @@ extension Sketch {
     /// (``shader(_:)``) である。`draw()` で後から ``blendMode(_:)`` / `texture()` /
     /// `shader()` を呼んでも、粒には効かない — 貼ったまま・当てたまま ``particles(_:)`` を
     /// 呼んでも、粒は作った瞬間の塗りで出る。
-    /// 色は焼き付かない — 粒ごとに ``emit(_:from:rate:speed:angle:life:size:color:)`` が渡す。
+    /// 色は焼き付かない — 粒ごとに ``emit(_:from:toward:rate:speed:life:size:color:)`` が渡す。
     ///
     /// **断片に渡した値も、作った瞬間のものが残る。** 作った後で断片の値を変えても、粒は
     /// 動かない (保持した形と同じ)。粒の塗りをフレームごとに動かすなら、作る前に断片と
@@ -87,13 +87,27 @@ extension Sketch {
     ///
     /// ## 出る場所と飛ぶ向きは別
     ///
-    /// `from` が出る場所を、`angle` が飛ぶ向き (画面の面内・ラジアン) を決める。形を
-    /// 差し替えても向きは変わらない。
+    /// `from` が出る場所 (``Emitter``) を、`toward` が飛ぶ向き (``Heading``) を決める。形を
+    /// 差し替えても向きは変わらない。`toward` を省くと、画面の面内のどの向きへも飛ぶ
+    /// (`.plane(0...(2 * Float.pi))`) ので、視点を真横へ回すと粒は 1 本の線に並ぶ。1 点から
+    /// 奥行きも含めた全方位へ吹き出させるなら `.sphere` を渡す — 視点を回しても
+    /// (``orbitControl(_:_:_:)``)、どこから見ても丸く広がる。
+    ///
+    /// <!-- example: 文脈 var dust: Particles! -->
+    /// ```swift
+    /// func draw() {
+    ///     background(0)
+    ///     orbitControl()
+    ///     emit(dust, from: .point(width / 2, height / 2), toward: .sphere, rate: 600)
+    ///     force(dust, .drag(1.2))
+    ///     particles(dust)
+    /// }
+    /// ```
     ///
     /// ## 何もかも幅で指定する
     ///
-    /// `speed` / `angle` / `life` / `size` は幅で渡す。1 つに決めたいときは `2...2` のように書く。
-    /// `color` を省くと、そのときの塗りで出る。
+    /// `speed` / `life` / `size` と、面内の向き (`toward: .plane(…)`) の角度は幅で渡す。1 つに
+    /// 決めたいときは `2...2` のように書く。`color` を省くと、そのときの塗りで出る。
     ///
     /// **幅は Swift の `...` で作るので、端が数でない値 (NaN) か、下端が上端を越えると、
     /// `emit` に届く前に Swift がプロセスごと止める。** `speed: Float.nan...1` も
@@ -125,16 +139,17 @@ extension Sketch {
     /// 値の 0 より下を 0 として、`from` の円・球の負の半径は絶対値として扱い、引数ごとに
     /// 1 度だけ知らせる。
     public func emit(
-        _ particles: Particles, from source: Emitter, rate: Float,
+        _ particles: Particles, from source: Emitter,
+        toward heading: Heading = .plane(0...(2 * Float.pi)),
+        rate: Float,
         speed: ClosedRange<Float> = 20...60,
-        angle: ClosedRange<Float> = 0...(2 * Float.pi),
         life: ClosedRange<Float> = 1...2,
         size: ClosedRange<Float> = 2...6,
         color: LinearRGBA? = nil
     ) {
         let runtime = Self.requireRuntime()
         canvas.emit(
-            particles, from: source, rate: rate, speed: speed, angle: angle, life: life,
+            particles, from: source, toward: heading, rate: rate, speed: speed, life: life,
             size: size, color: color, using: &runtime.randomness)
     }
 
@@ -177,13 +192,31 @@ extension Sketch {
     /// 描く個数は GPU が数える。生きている粒だけを枠の番号順に詰めて描くので、枠を
     /// 大きく取っても、払うのは生きている粒のぶんだけである。
     ///
+    /// 時計をフレーム番号から導く走らせ方 (ヘッドレスの書き出し) では、**寿命 `life` 秒の粒は
+    /// ⌊`life` × fps⌋ 枚描かれる** (毎フレーム 1 回呼ぶとき)。**出したフレームを 1 枚目**として
+    /// ⌊`life` × fps⌋ 枚目まで描かれ、その次の枚には描かれない — 24 fps の `life: 1...1` なら
+    /// 1〜24 枚目に描かれ、25 枚目で消える。60 fps の `life: 1...1` なら 60 枚、60 fps の
+    /// `life: 0.25...0.25` なら 15 枚。
+    /// 枚数は `life` と fps の比だけで決まり、fps によって 1 枚ずれることは無い。`life` は
+    /// 書いた 10 進の値ではなく `Float` の値そのもので数えるので、`0.05` (`Float` では 0.05
+    /// よりわずかに大きい) は 60 fps で 3 枚になる。枚数で数えるのは 2^24 − 1 枚 (60 fps で
+    /// 約 77 時間) までで、それより長い寿命はそこで尽きる。
+    ///
+    /// **1 つの群は、1 つの時計の面で進める。** 寿命の数え方は時計で違い、フレーム番号の時計では
+    /// 枚数、実時間の時計では秒で持つ。スケッチの本体と描き場所 (``createGraphics(_:_:)``) は
+    /// 同じ時計を読むので気にしなくてよいが、直に作った面 (`Canvas(target:gpu:)`) は自分の時計
+    /// (秒の刻み) を持つ。フレーム番号の時計で出した粒をそういう面で進めると、寿命が fps 倍ほど
+    /// 長くなる (逆なら短くなる)。
+    ///
     /// ## 1 回で進むのは 1 フレームぶん
     ///
     /// 進む量は ``deltaTime`` で決まる。時計をフレーム番号から導く走らせ方 (ヘッドレスの
     /// 書き出し) なら刻みが一定なので、**同じ入力から何度走らせても同じ動き**が出る。
     ///
     /// 積んだ力を足し合わせた加速度で**先に速度を**進め、減速を掛けてから、**その速度で
-    /// 位置を**進め、寿命を ``deltaTime`` だけ減らす。力の式と進め方は ``Force`` にある。
+    /// 位置を**進め、寿命を 1 フレームぶん (``deltaTime``) 減らす。フレーム番号から導く時計では、
+    /// 寿命は単精度の ``deltaTime`` を引き続けずに枚数で数える (上の ⌊`life` × fps⌋)。
+    /// 力の式と進め方は ``Force`` にある。
     ///
     /// ## 同じフレームに何度呼んでも、呼ぶたびに進んで描かれる
     ///
@@ -201,7 +234,7 @@ extension Sketch {
     /// ([#1909](https://github.com/mokume-metal/mokume/issues/1909))。
     ///
     /// 呼び出しごとに分かれるのは、積んだ力と、置き場所・描く引数である。**2 回の呼び出しの
-    /// 間で ``emit(_:from:rate:speed:angle:life:size:color:)`` した粒は、2 回目の雲から出る** — 出した粒は、
+    /// 間で ``emit(_:from:toward:rate:speed:life:size:color:)`` した粒は、2 回目の雲から出る** — 出した粒は、
     /// 呼んだ順に効く ([#1687])。置き場所は呼んだ回数の最多まで群が持ち
     /// 続けるので、大きな群を 1 フレームに K 回置くと、置き場所の確保も K 倍になる。
     ///

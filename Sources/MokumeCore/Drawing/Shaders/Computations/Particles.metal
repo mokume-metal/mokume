@@ -37,7 +37,9 @@
 //   [21]    描く頂点の数 (uint のビット列)
 //   [22…26] 段 0…4 の置き場の頭 (uint のビット列)。段 L が生存数 1 個ぶん
 //   [27…35] 視点の枠 (横・上・手前を 3 つずつ)
-//   [36…39] 予備
+//   [36]    寿命を 1 回で減らす量。秒の刻みでは [16] と同じ秒、フレーム番号から導く
+//           時計では 1 (寿命を「あと何回進めると尽きるか」の回数で持つ・#1710)
+//   [37…39] 予備
 //   [40…]   力 (1 つ 8 個)
 
 /// スキャンの区画の大きさ。**Swift 側の `Particles.scanBlock` と一致していなければならない。**
@@ -95,13 +97,17 @@ static inline float mokume_particleDrift(uint id, uint frame, uint channel) {
     return float(h & 0xffffffu) / 16777215.0;
 }
 
-/// この 1 フレームを進めたあとも生きているか。
+/// この 1 フレームを進めたあとも生きているか。`lifeStep` は寿命を 1 回で減らす量
+/// (指定の [36])。
 ///
 /// **旗を立てる側と置き場所を書く側が、同じ式で同じ入力から判定する。** 2 か所に
 /// 別々の式を書くと、丸めの違いで「数えたが置かなかった」粒が生まれ、詰めた並びの
 /// 末尾に前のフレームの置き場所が残る。
-static inline bool mokume_particleSurvives(float life, float step) {
-    return life > 0.0 && max(life - step, 0.0) > 0.0;
+///
+/// フレーム番号から導く時計では寿命も減らす量も整数なので、引き算が丸まらない —
+/// ⌊L·fps⌋ + 1 で生まれた粒は、ちょうど ⌊L·fps⌋ 回目の進めまで生き残る (#1710)。
+static inline bool mokume_particleSurvives(float life, float lifeStep) {
+    return life > 0.0 && max(life - lifeStep, 0.0) > 0.0;
 }
 
 /// 3 成分がどれも数 (有限) か。
@@ -123,9 +129,9 @@ kernel void mokume_particleFlags(
     device uint *levels [[buffer(2)]],
     uint id [[thread_position_in_grid]])
 {
-    float step = parameters[16];
+    float lifeStep = parameters[36];
     uint base = as_type<uint>(parameters[22]);
-    levels[base + id] = mokume_particleSurvives(particles[id].life, step) ? 1u : 0u;
+    levels[base + id] = mokume_particleSurvives(particles[id].life, lifeStep) ? 1u : 0u;
 }
 
 /// 2. 1 段ぶんの exclusive scan。区画 1 つを thread 1 つが順に足す。
@@ -169,9 +175,10 @@ kernel void mokume_particles(
 {
     Particle p = particles[id];
     float step = parameters[16];
+    float lifeStep = parameters[36];
     uint levelCount = as_type<uint>(parameters[19]);
     // **進める前の寿命で判定する。** 旗を立てた側が見たのと同じ値である
-    bool survives = mokume_particleSurvives(p.life, step);
+    bool survives = mokume_particleSurvives(p.life, lifeStep);
 
     // 描く引数。**生存数は最上段の 1 個**で、スキャンが全部の区画を足し上げてある
     if (id == 0) {
@@ -249,7 +256,7 @@ kernel void mokume_particles(
             p.vy = velocity.y;
             p.vz = velocity.z;
         }
-        p.life = max(p.life - step, 0.0);
+        p.life = max(p.life - lifeStep, 0.0);
         particles[id] = p;
     }
 

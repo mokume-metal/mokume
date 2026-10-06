@@ -116,9 +116,9 @@ extension Canvas {
     /// `Randomness` が内部の型なので、ここは公開しない — 面に出せる形にすると乱数の
     /// 流れが 2 系統になり、`randomSeed(_:)` が粒に効かなくなる ([ADR-0020] 決定 6)。
     func emit(
-        _ particles: Particles, from source: Emitter, rate: Float,
-        speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
-        size: ClosedRange<Float>, color: LinearRGBA?, using randomness: inout Randomness
+        _ particles: Particles, from source: Emitter, toward heading: Heading, rate: Float,
+        speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
+        color: LinearRGBA?, using randomness: inout Randomness
     ) {
         guard admits(.particles) else { return }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
@@ -126,8 +126,8 @@ extension Canvas {
         // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)。
         // 数でない値・無限は受け口 (`Particles.emit`) が検めて断る (#1623)
         particles.emit(
-            rate: rate, over: frameStep, frame: framesDrawn, from: source, speed: speed,
-            angle: angle, life: life, size: size, color: color, fill: style.fill, at: time,
+            rate: rate, over: frameStep, frame: framesDrawn, from: source, toward: heading,
+            speed: speed, life: life, size: size, color: color, fill: style.fill,
             using: &randomness)
     }
 
@@ -174,7 +174,7 @@ extension Canvas {
         // [#2023]: https://github.com/mokume-metal/mokume/issues/2023
         let placed = particleRoute == .instanced ? placeFromGPU(particles, draw) : nil
         particles.write(
-            into: draw, transform: transform.matrix, basis: currentCamera.basis, step: deltaTime,
+            into: draw, transform: transform.matrix, basis: currentCamera.basis, step: frameStep,
             frame: particleFrame,
             forces: particles.takeForces(),
             vertexCount: placed ?? 0)
@@ -226,6 +226,20 @@ extension Canvas {
             particles.update, over: particles.capacity,
             reads: [draw.parameters, particles.levels],
             writes: [particles.state, draw.instances, draw.arguments])
+        // 進めた量は、この計算を投入したときに数える (``particleAdvancesThisFrame``・#1710)
+        particleAdvancesThisFrame.append(
+            (Weak(particles), Double(Particles.lifeStep(of: frameStep))))
+    }
+
+    /// 投入した粒の進めを、寿命を減らした量として粒へ数える ([#1710])。**溜めた計算を投入した
+    /// 所で呼ぶ** — 描き切りと、溜めた計算を描き切りより先に流す口 (読み戻し・面をまたぐ順)。
+    ///
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
+    func commitParticleAdvances() {
+        for (particles, amount) in particleAdvancesThisFrame {
+            particles.value?.noteSubmittedAdvance(amount)
+        }
+        particleAdvancesThisFrame.removeAll(keepingCapacity: true)
     }
 
     /// GPU が埋めた置き場所で描く列を開く。**読み戻しが無い。** 返すのは四角の頂点の

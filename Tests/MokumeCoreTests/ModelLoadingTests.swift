@@ -59,6 +59,8 @@ struct ModelLoadingTests {
         case pyramid
         /// 三角形 2 枚。読み飛ばすのは `mtllib` の 1 行 (`vt` / `vn` は読む)
         case unwrapped
+        /// 四角錐を STL で書いたもの (#1966)。三角形 6 枚で、読み飛ばすものは無い
+        case pyramidSTL
 
         var testDescription: String { "\(self)" }
 
@@ -66,6 +68,7 @@ struct ModelLoadingTests {
             switch self {
             case .pyramid: ModelFixture.pyramid
             case .unwrapped: ModelFixture.unwrapped
+            case .pyramidSTL: ModelFixture.pyramidSTL
             }
         }
 
@@ -73,6 +76,7 @@ struct ModelLoadingTests {
             switch self {
             case .pyramid: 6
             case .unwrapped: 2
+            case .pyramidSTL: 6
             }
         }
 
@@ -80,6 +84,7 @@ struct ModelLoadingTests {
             switch self {
             case .pyramid: 4
             case .unwrapped: 1
+            case .pyramidSTL: 0
             }
         }
     }
@@ -92,5 +97,19 @@ struct ModelLoadingTests {
         // 名前は読み込んだときに渡した道筋そのもの
         #expect(model.name == known.path)
         #expect(model.skippedLines == known.skippedLines)
+    }
+
+    /// 待たない読み方は、解釈を別の仕事として回す。**STL を読む Model I/O もそこで走る**ので、
+    /// 待つ読み方と同じものが届くことを見る。
+    @Test("待たない読み方でも、STL を待つ読み方と同じに読む")
+    func requestingAnSTLMatchesLoadingIt() async throws {
+        let waited = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+            .loadModel(ModelFixture.pyramidSTL)
+        // 控え (同じ名前は読み直さない) に当たらないよう、別の面で読む
+        let requested = try await CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+            .requestModel(ModelFixture.pyramidSTL)
+        #expect(requested.triangleCount == 6)
+        #expect(requested.mesh.points.map(\.position) == waited.mesh.points.map(\.position))
+        #expect(requested.mesh.points.map(\.normal) == waited.mesh.points.map(\.normal))
     }
 }

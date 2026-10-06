@@ -16,9 +16,10 @@
 public enum ModelFailure: Error, Equatable, Sendable {
     /// その名前の資材が見つからない。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、文字として読めない。
+    /// 見つかったが、その形式として読めない。OBJ なら文字 (UTF-8) として読めない、STL なら
+    /// 文字の STL としてもバイナリの STL としても読めない (壊れている・途中で切れている・空)。
     case unreadable(path: String)
-    /// 対応していない形式。
+    /// 対応していない形式。説明に、読める形式の一覧が載る。
     case unsupported(path: String, extensionName: String)
 }
 
@@ -37,11 +38,24 @@ extension ModelFailure: CustomStringConvertible {
                 be read at run time
                 """
         case .unreadable(let path):
-            return "\"\(path)\" cannot be read as text. Check whether it is damaged"
+            // **形式ごとに言い分ける。** バイナリの STL に「文字として読めない」と言うと、
+            // 読み手を取り違えたように読める
+            switch ModelFile.Format(path: path) {
+            case .stl:
+                return """
+                    "\(path)" cannot be read as STL (neither ASCII nor binary). \
+                    Check whether it is damaged or cut short
+                    """
+            case .obj, nil:
+                return "\"\(path)\" cannot be read as text. Check whether it is damaged"
+            }
         case .unsupported(let path, let extensionName):
+            // **一覧は読み手の選び方と同じ所から引く** (``ModelFile/Format``)。別々に書くと、
+            // 形式を足したときに説明だけが古いまま残る
+            let readable = ModelFile.Format.allCases.map(\.displayName).joined(separator: ", ")
             return """
                 The format of "\(path)" (.\(extensionName)) is not supported. \
-                Only OBJ (.obj) can be read for now
+                Readable formats: \(readable)
                 """
         }
     }

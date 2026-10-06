@@ -70,10 +70,12 @@ extension Canvas {
     /// **読めなかったのとは違う。** 投げてしまうと、利用者は読み込みの側を直そうと
     /// して、実際には空のファイルを渡しているという事実に辿り着けない。
     private func warnEmptyModel(_ model: Model) {
+        // 読み飛ばしを数える単位は形式で違う (``Model/skippedLines``)
+        let unit = ModelFile.Format(path: model.name) == .stl ? "faces" : "lines"
         warnOnce(
             .emptyModel,
             "\"\(model.name)\" could be read, but it has no faces at all "
-                + "(\(model.skippedLines) lines were skipped). Placing it shows nothing")
+                + "(\(model.skippedLines) \(unit) were skipped). Placing it shows nothing")
     }
 }
 

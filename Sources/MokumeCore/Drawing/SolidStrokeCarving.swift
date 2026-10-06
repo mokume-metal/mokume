@@ -312,9 +312,14 @@ nonisolated struct SolidStrokeCarving {
             func build(_ polygon: inout [SIMD2<Float>]) {
                 for slot in range { polygon.append(screen[slot]) }
             }
-            let added =
-                piece.band.map { carving.addBand(segment: $0, build) }
-                ?? carving.addPoint(piece.anchors.0, build)
+            // 自動クロージャ (`??` の右辺・`map`) の中から mutating の口を呼ぶと、CI の Swift では
+            // 「`carving` は let 定数」と断られるので、分岐で書く
+            let added: Int?
+            if let segment = piece.band {
+                added = carving.addBand(segment: segment, build)
+            } else {
+                added = carving.addPoint(piece.anchors.0, build)
+            }
             if added != nil { owners.append(index) }
         }
         // 引いた残り: 頂点は残りの周ごとに 1 度だけ積み、三角形は番号で持つ

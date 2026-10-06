@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+<!--
+  架空の星座「柄杓」。参照スケッチ json-and-xml が loadXML で読んで描く (#2070)。
+  x と y は星座の枠の中の位置 (左上が 0・幅 500・高さ 400)、size は星の直径。
+  星は線で結ぶ順に並べてある。実在の星の位置ではない。
+-->
+<constellation>
+  <star x="50" y="80" size="9"/>
+  <star x="140" y="118" size="11"/>
+  <star x="222" y="160" size="10"/>
+  <star x="300" y="214" size="13"/>
+  <star x="318" y="326" size="10"/>
+  <star x="446" y="336" size="14"/>
+  <star x="452" y="224" size="11"/>
+</constellation>

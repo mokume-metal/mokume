@@ -22,11 +22,12 @@ public enum Clock: Equatable, Sendable {
 ///
 /// **フレーム番号から導く時計では、秒ではなく「fps 分の 1 秒」のまま持つ** ([#1640])。
 /// 1/fps は 2 進で閉じないので、秒に直した値をどの精度で足し合わせても、整数に届く
-/// はずのところでわずかに足りなかったり越えたりする。数を数える側 (`emit` の繰り越し) は、
-/// 整数の fps のまま受け取って「rate × 枚数 ÷ fps」を丸めずに数える
-/// ([ADR-0025] 決定 6 — 揃えたいものを積分で作らない)。
+/// はずのところでわずかに足りなかったり越えたりする。数を数える側 (`emit` の繰り越し・
+/// 粒の寿命) は、整数の fps のまま受け取って「rate × 枚数 ÷ fps」「⌊寿命 × fps⌋ 枚」を
+/// 丸めずに数える ([ADR-0025] 決定 6 — 揃えたいものを積分で作らない・[#1710])。
 ///
 /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+/// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 enum FrameStep: Equatable {
     /// 整数の fps の 1 フレーム。長さはちょうど 1/`perSecond` 秒。

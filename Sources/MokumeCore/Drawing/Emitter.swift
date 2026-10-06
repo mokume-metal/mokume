@@ -5,9 +5,9 @@ import simd
 
 /// 粒がどこから出るか。
 ///
-/// 使い方は ``Sketch/emit(_:from:rate:speed:angle:life:size:color:)`` にある。
+/// 使い方は ``Sketch/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
 ///
-/// **出る場所だけを決める。** どちらへ飛ぶかは `angle` が決めるので、形を差し替えても
+/// **出る場所だけを決める。** どちらへ飛ぶかは ``Heading`` が決めるので、形を差し替えても
 /// 飛ぶ向きは変わらない — 2 つを 1 つの指定へ混ぜると、形を変えた瞬間に向きまで変わる。
 public enum Emitter: Equatable, Sendable {
     /// 1 点から。

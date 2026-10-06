@@ -272,6 +272,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 形を保持して置く
 
 - ``Sketch/createShape(_:)``
+- ``Sketch/loadShape(_:)``
+- ``Sketch/requestShape(_:)``
 - ``Sketch/shape(_:_:_:)``
 - ``Sketch/shape(_:at:)``
 - ``Shape``
@@ -402,6 +404,15 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``TableRow``
 - ``DataFailure``
 
+### JSON と XML をファイルと URL から読む
+
+- ``Sketch/loadJSONObject(_:)``
+- ``Sketch/requestJSONObject(_:)``
+- ``Sketch/loadXML(_:)``
+- ``Sketch/requestXML(_:)``
+- ``JSONObject``
+- ``XML``
+
 ### 立体を置く
 
 - ``Sketch/box(_:)``
@@ -525,11 +536,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 粒を飛ばす
 
 - ``Sketch/makeParticles(count:)``
-- ``Sketch/emit(_:from:rate:speed:angle:life:size:color:)``
+- ``Sketch/emit(_:from:toward:rate:speed:life:size:color:)``
 - ``Sketch/force(_:_:)``
 - ``Sketch/particles(_:)``
 - ``Particles``
 - ``Emitter``
+- ``Heading``
 - ``Force``
 
 ### 入力を受ける
