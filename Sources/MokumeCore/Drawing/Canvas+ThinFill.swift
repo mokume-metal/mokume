@@ -492,10 +492,17 @@ extension Canvas {
 
     /// 片を、記録した頂点と同じ座標・色・読み取り位置の頂点にする (``fillThin(_:outline:)`` と
     /// 同じ割り方)。
+    ///
+    /// 読み取り位置の箱は、周の点を持つ素材 (楕円) なら周から、持たない素材 (矩形・記録のときに
+    /// 周を落とす) なら形の箱 (中心 ± 半幅・半高 = 矩形の周の囲みの箱) から作る。
     static func thinFillVertices(
         _ pieces: [ThinFillPiece], recipe: RingFillRecipe
     ) -> (vertices: [ShapeVertex], coverage: [CoverageSpan]) {
-        let uvOf = recipe.hasPicture ? boxUV(of: recipe.outline.points) : nil
+        var box = recipe.outline.points
+        if box.isEmpty, let named = recipe.outline.namedFill {
+            box = [named.center - named.half, named.center + named.half]
+        }
+        let uvOf = recipe.hasPicture ? boxUV(of: box) : nil
         var vertices: [ShapeVertex] = []
         vertices.reserveCapacity(pieces.count * 6)
         var spans: [CoverageSpan] = []

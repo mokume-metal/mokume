@@ -47,9 +47,27 @@ struct RingFillRange {
 /// 楕円・弧の周の塗りを、刻み直して頂点にする素材。**値だけで自己完結する。**
 ///
 /// 周の点の並びは図形が組んだものを共有する (記録のたびに箱を作らない)。
+///
+/// **矩形は周を持たず、細さを測る形 (``Canvas/Outline/namedFill``) だけを持つ** (#1934 の反証 7)。
+/// `shader()` / `texture()` を付けて記録した矩形はどれもこの素材を持つので、周ごと持つと、絵を
+/// 貼った矩形を何万も記録した形で、素材が頂点 (矩形 1 つに 192 バイト) より重くなる。周は値の
+/// 中に箱で持つ (楕円・弧だけが箱を作る)。
 struct RingFillRecipe {
-    /// 形自身の座標の周 (記録のときの変換を掛ける前)。**周の元を持つ** (``Canvas/Outline/ring``)。
-    let outline: Canvas.Outline
+    /// 周の持ち方。楕円・弧は刻み直すので周ごと (箱に入れる)、矩形は細さを測る形だけ。
+    private enum Source {
+        indirect case ring(Canvas.Outline)
+        case named(Canvas.Outline.NamedFill?)
+    }
+    private let source: Source
+
+    /// 形自身の座標の周 (記録のときの変換を掛ける前)。楕円・弧は**周の元を持つ** (``Canvas/Outline/ring``)。
+    /// 矩形は周の点を持たず、細さを測る形 (``Canvas/Outline/namedFill``) だけを持つ周を返す。
+    var outline: Canvas.Outline {
+        switch source {
+        case .ring(let outline): outline
+        case .named(let named): Canvas.Outline(points: [], isClosed: true, namedFill: named)
+        }
+    }
     /// 記録のときの塗りの色。
     let color: LinearRGBA
     /// 貼る絵があったか。あれば、読み取り位置は周の囲みの箱から決める。
@@ -58,6 +76,17 @@ struct RingFillRecipe {
     let transform: Transform
     /// 貼る絵が無いときの読み取り位置 (焼き場の白い区画)。
     let uv: SIMD2<Float>
+
+    init(
+        outline: Canvas.Outline, color: LinearRGBA, hasPicture: Bool, transform: Transform,
+        uv: SIMD2<Float>
+    ) {
+        source = outline.ring != nil ? .ring(outline) : .named(outline.namedFill)
+        self.color = color
+        self.hasPicture = hasPicture
+        self.transform = transform
+        self.uv = uv
+    }
 
     /// 別の保持した形の中で置かれた塗り。行列と色を合成する (刻み直すのは外側を置くとき)。
     func moved(by matrix: simd_float4x4, tint: LinearRGBA?) -> RingFillRecipe {

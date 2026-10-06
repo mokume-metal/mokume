@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Testing
+import simd
 
 @testable import MokumeCore
 
@@ -679,6 +680,25 @@ struct DensityInvarianceTests {
             }
         }
         #expect(shape.thinCache.fillsThinned == 1, "組み直した回数: \(shape.thinCache.fillsThinned)")
+    }
+
+    /// **記録のときに周を落とした矩形の素材も、貼る絵の読み取り位置を矩形の箱から作る** (#1934 の
+    /// 反証 7)。矩形の素材は細さを測る形だけを持ち、周の点を持たない。周の点から箱を作ると箱が
+    /// 空になり、広げた片の読み取り位置がどれも 0 (絵の角の 1 画素) になる。
+    @Test("周を落とした矩形の素材も、貼る絵の読み取り位置を矩形の箱から作る (#1934)")
+    func slimRectRecipesKeepTheirPictureBox() throws {
+        let named = Canvas.Outline.NamedFill(
+            isEllipse: false, center: SIMD2(10, 20), half: SIMD2(8, 0.25))
+        let recipe = RingFillRecipe(
+            outline: Canvas.Outline(points: [], isClosed: true, namedFill: named),
+            color: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1), hasPicture: true,
+            transform: .identity, uv: SIMD2(0, 0))
+        let pieces = try #require(Canvas.thinFillPieces(named, by: matrix_identity_float2x2))
+        let built = Canvas.thinFillVertices(pieces, recipe: recipe)
+        let across = built.vertices.map(\.uv.x)
+        let along = built.vertices.map(\.uv.y)
+        #expect(across.min() == 0 && across.max() == 1, "横の読み取り位置: \(across)")
+        #expect(along.min() == 0 && along.max() == 1, "縦の読み取り位置: \(along)")
     }
 
     /// **保持した形の細い塗りの控えは、頂点の総量の上限を越えず、古いものから捨てる** (#1934 の

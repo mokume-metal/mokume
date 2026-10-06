@@ -363,6 +363,7 @@ extension Canvas {
         guard recordingShape, outline.ring != nil || outline.namedFill != nil,
             vertices.count > start
         else { return }
+        // 矩形の素材は周を持たず、細さを測る形だけを持つ (``RingFillRecipe``・#1934 の反証 7)
         recordedFillRanges.append(
             RingFillRange(
                 start..<vertices.count,
