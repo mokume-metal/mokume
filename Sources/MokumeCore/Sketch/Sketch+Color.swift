@@ -31,8 +31,9 @@ extension Sketch {
     ///
     /// **不透明度は下地に重ならない。面をその色で置き換える** — 半透明の色なら、面が
     /// 半透明の色になり、前の絵は残らない。下は円を 3 つ描いた後、右半分だけを不透明度
-    /// 128 の色で塗り直したもの — 右の円は透けて残らず、左の円だけが残る。残像の作り方と、
-    /// p5.js の `background(0, 20)` との違いは ``background(_:_:)`` に書いた。
+    /// 128 の色で塗り直したもの — 右の円は透けて残らず、左の円だけが残る。残像の作り方、
+    /// p5.js の `background(0, 20)` との違い、窓での見え方 (後ろは透けない) は
+    /// ``background(_:_:)`` に書いた。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -111,6 +112,12 @@ extension Sketch {
     ///   }
     /// }
     ///
+    /// **窓では、半透明の面の後ろは透けない。** 窓は面を黒の下地に重ねた色で出す —
+    /// `background(0, 20)` は黒一色に、`background(255, 20)` は暗い灰色 (不透明度 20 の
+    /// 白を黒に重ねた色) に見え、窓の後ろにある別の窓は見えない。上の絵の右半分が透けて
+    /// 見えるのは、書き出した画像だからである。不透明度を保つのは画像・動画のほうで、
+    /// 窓は保たない ([ADR-0023] 決定 4)。
+    ///
     /// 色の値で塗る `background(_:)` と同じく、混ぜ方などの呼んだ時点の描き方は効かず、
     /// 切り抜きの中で呼べばその中だけを置き換える。
     ///
@@ -132,6 +139,7 @@ extension Sketch {
     ///   追わない ([ADR-0020] 決定 1)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     // shot: 1 snippet=724387cf
     // shot: 2 snippet=2e391461
     public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
