@@ -115,7 +115,7 @@ bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 
 **退避路が効くのは PR / Issue の一回限りの証跡までで、参照の面 (`make example-shots`) には使わない。**
 あちらは「同じ中身の絵には同じ URL が返る」という Gyazo の冪等性を借りており、**撮り直して URL が
-変わったかがそのまま絵が変わったかの判定**になっている ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
+変わったかがそのまま絵が変わったかの判定**になっている (理由: [ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 決定 2)。GitHub の添付は同じ絵でも毎回別の URL を返すので、この判定が成り立たない。参照の面は本線が戻るまで待つ。
 
 ### 通らない道 — 試して時間を落とさないために

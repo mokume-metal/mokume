@@ -45,6 +45,9 @@ struct StartupReadsTests {
             "許可を問われるアプリの名前 (__CFBundleIdentifier / TERM_PROGRAM)。読むのはカメラの"
             + "許可で止まっていると知らせるその時だけで、スケッチの振る舞いを決める値ではなく、"
             + "知らせの文面に入れる名前である (ADR-0042 決定 8)",
+        "Sources/MokumeAudio/AudioIn.swift":
+            "許可を問われるアプリの名前 (Capture.swift と同じ理由)。読むのはマイクの許可で"
+            + "止まっていると知らせるその時だけである (ADR-0042 決定 8)",
         "Sources/MokumeCLI/MCP/SchemasLocator.swift":
             "同上 — 置き場の在処を並べるために読む。規則そのものは BuildDirectory の"
             + "1 箇所にあり、ここが読んだ環境はそこへそのまま渡す",

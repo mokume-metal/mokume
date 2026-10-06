@@ -82,9 +82,12 @@ let package = Package(
         .target(
             name: "MokumeCamera", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
+        .target(
+            name: "MokumeAudio", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
-            name: "mokume", dependencies: ["MokumeCore", "MokumeCamera"], swiftSettings: .mokume),
+            name: "mokume", dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio"], swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)
         .executableTarget(
@@ -107,6 +110,9 @@ let package = Package(
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
         .testTarget(
             name: "MokumeCameraTests", dependencies: ["mokume", "MokumeCamera"],
+            swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeAudioTests", dependencies: ["mokume", "MokumeAudio"],
             swiftSettings: .mokume),
 
     ]

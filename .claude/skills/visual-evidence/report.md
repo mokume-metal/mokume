@@ -5,8 +5,8 @@ SPDX-License-Identifier: MIT
 
 # 変更を実物と具体例で報告する
 
-[AGENTS.md](../../../AGENTS.md)「説明と報告」と
-[ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 7 の手順。
+[AGENTS.md](../../../AGENTS.md)「説明と報告」の手順
+(理由: [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 7)。
 画像・動画の撮影、出所の記録、公開と表示の検算は [SKILL.md](SKILL.md) を使う。
 文字だけの変更でもここから進められる。実際の報告・返答は GitHub に置く。
 
@@ -64,8 +64,8 @@ Issue に書く。完了報告は Issue に1通という置き分けを保ち、
 観測で採った絵は、窓の位置・つまみ・入力操作の実証にはならない。過去の動画を再掲する場合も
 「今回の版で再検証した」と扱わない。証跡不足を生成画像や想像の出力で埋めない。
 
-人が新たに選ぶ範囲は [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md)
-決定 8 で読む。採択済みなら根拠と実装を対応づけ、未採択なら選択肢・推奨・移行方法と、
+人が新たに選ぶ範囲は [AGENTS.md](../../../AGENTS.md)「説明と報告」で読む
+(理由: [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 8)。採択済みなら根拠と実装を対応づけ、未採択なら選択肢・推奨・移行方法と、
 判断を待つ作業の範囲を示す。報告を出しただけで未合意の意味変更を進めない。
 たとえば検査の削除なら「CI を速くした」だけでなく、何を確かめなくなるかを示す。
 採択済みの仕様を保つ検査の修正なら、同じ選択をもう一度人へ戻さない。

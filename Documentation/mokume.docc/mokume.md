@@ -344,6 +344,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Image``
 - ``ImageFailure``
 - ``DisplayImage``
+- ``Sketch/assetURL(_:)``
+- ``AssetFailure``
 
 ### カメラを使う
 
@@ -352,6 +354,16 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/captureDevices()``
 - ``Capture``
 - ``CaptureDevice``
+
+### 音を聞く
+
+- ``Sketch/createAudioIn(device:)``
+- ``Sketch/createAudioIn(file:)``
+- ``Sketch/createAudioIn(samples:sampleRate:)``
+- ``Sketch/audioInputDevices()``
+- ``AudioIn``
+- ``AudioDevice``
+- ``AudioFailure``
 
 ### 画素を読み書きする
 
