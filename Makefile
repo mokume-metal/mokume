@@ -557,6 +557,10 @@ cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
 # **撮るのは手元だけ。** GPU と外部サービスの鍵が要るので CI では走らない
 # (描画の検査が CI で 1 本も走らないのと同じ理由・ADR-0019 決定 7)。CI が見るのは
 # 下の -check で、こちらはソースを読むだけなので GPU も鍵も要らない。
+#
+# 撮った直後に、動く絵 (frames=N) が止まっていないかを測る。全部の隣り合う枚の差が
+# 下限を下回る絵があれば、名指しして上げも書き戻しもせずに止まる (#2117。下限と根拠・
+# 黙らせ方 still=<理由> は scripts/example-shots.py の冒頭)
 example-shots: ## 説明文の中の例を撮って書き戻す (OUT= 置き場)
 	python3 scripts/example-shots.py --capture \
 		--token-command "$${MOKUME_GYAZO_TOKEN_CMD:?Gyazo のトークンを標準出力に出すコマンドを渡す}" \
