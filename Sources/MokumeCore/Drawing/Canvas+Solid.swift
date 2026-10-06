@@ -697,21 +697,16 @@ extension Canvas {
     /// スタイル) を ``recordedSolidStrokes`` に残す。置くときは、元を置いた後の点と置く時点の
     /// 視点で、その場の線と同じ手順で組み直す。
     ///
-    /// **記録の間は、何も積まない線にも面積 0 の三角形を 1 枚積む。** 区間は添字の列の中の
-    /// 位置の印でもあるので (置くときに組み直した頂点を差し込む場所)、空にしない。
+    /// **記録した視点で何も積まない線は覚えない** (線の全体が画面の 1 点に潰れて `.square` で
+    /// 切った線など)。区間は添字の列の中で組み直した頂点を差し込む位置の印でもあり、空の区間は
+    /// 位置を持たない。印のために面積 0 の三角形を積むと、公開の ``Shape/vertexCount`` が増え、
+    /// GPU で組む線としても覚えてしまう。main の部品の記録 (何も積まない部品は覚えない) と同じ。
     ///
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     private func recordingSolidStroke(_ source: SolidStrokePiece.Source, _ build: () -> Void) {
         let start = solidVertices.count
         build()
-        guard recordingShape else { return }
-        if solidVertices.count == start {
-            let camera = StrokeCamera(currentCamera)
-            let anchor = source.anchor
-            appendSolidStrokeTriangle(
-                anchor.world, anchor.world, anchor.world, shape: (anchor.shape, anchor.shape, anchor.shape),
-                camera: camera)
-        }
+        guard recordingShape, solidVertices.count > start else { return }
         recordedSolidStrokes.append(
             SolidStrokePiece(
                 source: source, weight: style.strokeWeight, join: style.strokeJoin, cap: style.strokeCap,
@@ -766,6 +761,7 @@ extension Canvas {
         strokeNet(
             count: world.count, edges: edges, curveSteps: curveSteps,
             samePoint: { world[$0] == world[$1] },
+            depth: { dot(world[$0] - camera.eye, camera.forward) },
             toward: { screenToward(world[$0], world[$1], camera: camera) },
             endSquare: {
                 appendSolidSquare(
@@ -869,8 +865,7 @@ extension Canvas {
     ) {
         guard length_squared(b - a) > 0 else { return }
         // 画面で点に潰れる線 (目を通る線・平行で視線に沿う線) は帯の幅を持たない。両端は画面で
-        // 重なる 1 点として、その先の帯との折れ目か端の形を置く (`strokeSolidRing` の `samePlace`・
-        // `strokeNet` の群・#1893)
+        // 重なる 1 点として、その先の帯との折れ目か端の形を置く (`strokeNet` の群・#1893)
         guard let side = screenAcross(a, b, camera: camera) else { return }
         let atA = side * (half * camera.worldPerPixel(at: a, height: height))
         let atB = side * (half * camera.worldPerPixel(at: b, height: height))

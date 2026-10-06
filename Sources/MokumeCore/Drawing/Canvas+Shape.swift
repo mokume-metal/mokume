@@ -647,7 +647,7 @@ extension Canvas {
     /// **立体の線を持つ区間も、置き場所ごとに頂点へ焼く** ([#1547])。線の帯は視点に
     /// 合わせて組むので、置き場所の行列を掛けただけでは向き・幅・目の側への寄せが記録した
     /// ときのまま残る。焼いた後で、線の頂点の位置だけを置いた後の点で組み直す
-    /// (``appendPlacedSolidVertices(_:indices:strokes:placedBy:)``)。線を持たない区間は並べたまま置く。
+    /// (``appendPlacedSolidVertices(_:indices:strokes:placedBy:parts:)``)。線を持たない区間は並べたまま置く。
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
@@ -833,13 +833,16 @@ extension Canvas {
                 cursor += 1
             }
         }
+        // 被覆が 1 未満の線があるか。**印は列を開いた後に立てる** — 先に立てると、頂点を積む
+        // ときに開き直す列 (`openFreeformSolid` が閉じる前の列) へ印が渡って下ろされる (#1637)
+        var thin = false
         for piece in strokes.sorted(by: { $0.vertexStart < $1.vertexStart }) {
             appendBaked(upTo: piece.vertexStart)
             var prototype = instance.placing(vertices[piece.vertexStart])
             let (corners, coverage) = rebuiltSolidStroke(piece.moved(by: instance.matrix))
             // 被覆も置く面で決まる (#1637)。線の頂点なので 0 にはならない
             prototype.stroke = coverage
-            if coverage < 1 { openBatchHasThinCoverage = true }
+            if coverage < 1 { thin = true }
             let start = placed.count
             for corner in corners {
                 var vertex = prototype
@@ -899,6 +902,7 @@ extension Canvas {
             placed[...], indices: order?[...], placedBy: .identity, parts: movedParts,
             showsBackFaces: placementShowsBackFaces(instance, styled: false),
             mirrored: instance.isMirrored)
+        if thin { openBatchHasThinCoverage = true }
     }
 
     /// 保持した形の頂点を積んで、置き場所を入れる列を開く。返すのはその列の先頭。

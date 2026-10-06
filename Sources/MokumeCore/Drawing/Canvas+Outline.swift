@@ -150,8 +150,9 @@ extension Canvas {
     /// 骨が同じ位置の点を飛ばすのと同じ扱いを、画面での同じ位置へ延ばしたものである (世界で同じ
     /// 位置の点を結ぶ長さ 0 の辺も、画面での長さが 0 なので同じ群に入る)。形は腕の画面での向きの
     /// 数で決まり (``screenCorner(arms:origins:isEnd:join:cap:)``)、辺が 3 本以上集まる点も、
-    /// 180° を越える間を挟む 2 本の折れ目になる ([#1889])。群には、いちばん小さい番号の点の
-    /// 位置で 1 度だけ置く。
+    /// 180° を越える間を挟む 2 本の折れ目になる ([#1889])。群には、いちばん手前の点 (奥行きが
+    /// 等しければ小さい番号) の位置で 1 度だけ置く — 奥の点に置くと、透視で群の点の間にある
+    /// 不透明な面に隠れる。
     ///
     /// [#1889]: https://github.com/mokume-metal/mokume/issues/1889
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
@@ -160,10 +161,12 @@ extension Canvas {
     ///   - count: 点の数
     ///   - edges: 点の添字の対。同じ辺が 2 度現れないこと
     ///   - curveSteps: 点ごとに、折れ目の形によらず円板で埋めるか (曲線の刻みの点・``strokeRing(count:isClosed:curveSteps:samePlace:endSquare:band:disc:square:corner:)``
-    ///     と同じ)。空ならどの点も角
+    ///     と同じ)。空ならどの点も角。群の点がすべて刻みの点のときだけ円板で、端の点や利用者の角が
+    ///     重なればそちらの規則に従う
     ///   - samePoint: 添字 2 つの点が世界で同じ位置か。同じ位置の点から出た腕は、同じ点から出た
     ///     腕として数える (``screenCorner(arms:origins:isEnd:join:cap:)``)。周で同じ位置の点を
     ///     続けて置いたときに当たる
+    ///   - depth: 添字の点の奥行き (視点からの、視線に沿った距離)。群の形を置く点を選ぶ
     ///   - toward: 1 つ目の添字の点から 2 つ目の添字の点へ、画面で進む向き (長さ 1)。画面での
     ///     長さがちょうど 0 なら `nil` (潰れた辺)
     ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向きに沿った正方形を置く
@@ -175,6 +178,7 @@ extension Canvas {
     func strokeNet(
         count: Int, edges: [(Int, Int)], curveSteps: [Bool] = [],
         samePoint: (Int, Int) -> Bool = { _, _ in false },
+        depth: (Int) -> Float = { _ in 0 },
         toward: (Int, Int) -> SIMD2<Float>?,
         endSquare: (Int, Int) -> Void,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void,
@@ -212,7 +216,7 @@ extension Canvas {
             directions.append(direction)
             if direction == nil {
                 let (rootA, rootB) = (root(a), root(b))
-                // いちばん小さい番号の点を群の代表にする
+                // 群の根は小さい番号の点 (形を置く点は、下で手前の点を選ぶ)
                 if rootA != rootB { parents[max(rootA, rootB)] = min(rootA, rootB) }
             }
         }
@@ -225,14 +229,21 @@ extension Canvas {
         var arms: [(origin: Int, far: Int)] = []
         var towards: [SIMD2<Float>] = []
         var origins: [Int] = []
-        for center in 0..<count where starts[center + 1] > starts[center] && root(center) == center {
-            // 群の外へ出る辺が腕。群の点の順、その中は辺の順に並べる
+        for groupRoot in 0..<count where starts[groupRoot + 1] > starts[groupRoot] && root(groupRoot) == groupRoot {
+            // 群の外へ出る辺が腕。群の代表、続けて残りの点を番号の順に、その中は辺の順に並べる
+            // (GPU の骨の `solidStrokeCornerShape` と同じ並べ方)
             arms.removeAll(keepingCapacity: true)
             towards.removeAll(keepingCapacity: true)
             origins.removeAll(keepingCapacity: true)
-            let group = members[center] ?? [center]
-            // 曲線の刻みの継ぎ目は角ではない。折れ目の形によらず円板で埋める (#1409)
-            if group.contains(where: { $0 < curveSteps.count && curveSteps[$0] }) {
+            let members = members[groupRoot] ?? [groupRoot]
+            // **形は群のいちばん手前の点に置く** (奥行きが等しければ小さい番号)。奥の点に置くと、
+            // 透視で群の点の間にある不透明な面に隠れる
+            var center = members[0]
+            for member in members.dropFirst() where depth(member) < depth(center) { center = member }
+            let group = [center] + members.filter { $0 != center }
+            // 曲線の刻みの継ぎ目は角ではない。折れ目の形によらず円板で埋める (#1409)。群の点が
+            // **すべて**刻みの点のときだけで、端の点や利用者の角が重なれば、そちらの規則に従う
+            if group.allSatisfy({ $0 < curveSteps.count && curveSteps[$0] }) {
                 disc(center)
                 continue
             }
@@ -241,7 +252,7 @@ extension Canvas {
                 if starts[origin + 1] - starts[origin] == 1 { isEnd = true }
                 // 世界で同じ位置の点は同じ点として数える。群の中で最初に出てくる同じ位置の点の番号
                 let same = group.first { samePoint($0, origin) } ?? origin
-                for link in links[starts[origin]..<starts[origin + 1]] where root(link.far) != center {
+                for link in links[starts[origin]..<starts[origin + 1]] where root(link.far) != groupRoot {
                     guard let direction = directions[link.edge] else { continue }
                     arms.append((origin, link.far))
                     towards.append(direction * link.sign)

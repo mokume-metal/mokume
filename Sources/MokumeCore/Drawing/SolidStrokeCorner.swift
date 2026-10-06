@@ -42,11 +42,19 @@ extension Canvas {
     /// 点は、画面で潰れた (長さがちょうど 0 の) 辺で結ばれた点の群である。群に集まる腕は、群の
     /// 外へ出る辺の画面での向き (長さ 1) で、潰れた辺は向きを持たないので数えない。
     ///
-    /// **同じ向きの腕は 1 本と数える。ただし別の点から出た腕どうしに限る。** 1 つの点が自分の
-    /// 2 本の腕を同じ向きへ折り返す角 (`vertex(A); vertex(B); vertex(A)`) は #1644 のまま、帯を
-    /// 延ばした形になる。同じ向きかは**値が等しいか**で見る。許容差は置かない — 画面で潰れたかを
-    /// 長さがちょうど 0 かで見ること (`screenNormal`)、同じ位置の点を飛ばすときに位置が等しいかで
-    /// 見ること (`strokeSolidRing` の `samePlace`)、2D の三角形分割で折り返す角を外積がちょうど 0
+    /// **同じ向きの腕は 1 本と数える。ただし別の点から出た腕どうしに限る。**
+    ///
+    /// - 画面で潰れた辺で繋がった**別の点**から同じ向きに出た 2 本は 1 本と数え、その帯の端に
+    ///   なる。途中の辺 B–C が視線に沿う折り返し (`vertex(A); vertex(B); vertex(C); vertex(D)` で
+    ///   B→A と C→D が画面で同じ向き) がこれに当たり、平面で A, B, B, A と描いた折り返し (帯を
+    ///   延ばした形) とは違う形になる。#1893 の案 R の帰結で、平面を真横から辺に沿って見た両端
+    ///   (#1893 の条件 5) が端の形になるのと同じ規則である
+    /// - **同じ点**が自分の 2 本の腕を同じ向きへ折り返す角 (`vertex(A); vertex(B); vertex(A)`) は
+    ///   #1644 のまま、帯を延ばした形になる。世界で同じ位置の点は同じ点として数える
+    ///
+    /// 同じ向きかは**値が等しいか**で見る。許容差は置かない — 画面で潰れたかを
+    /// 長さがちょうど 0 かで見ること (`screenNormal`)、同じ位置の点を同じ点と見るときに位置が
+    /// 等しいかで見ること (`strokeNet` の `samePoint`)、2D の三角形分割で折り返す角を外積がちょうど 0
     /// かで見ること (`Triangulation.dropFlatCorners`) に揃える。値で比べるので、外積の積和の縮約
     /// (GPU の fast-math) にも左右されない。
     ///
@@ -54,7 +62,7 @@ extension Canvas {
     ///
     /// | 向きの数 | 形 |
     /// | --- | --- |
-    /// | 0 | 向きの無い点。線の端を含む群は端の形、そうでなければ正方形 (`round` は円板) |
+    /// | 0 | 向きの無い点。線の端を含む群 (線の全体が画面の 1 点に潰れた端) は平面の周と同じ端の形 (`.square` は何も置かず、`.project` は正方形、`.round` は円板)、そうでなければ正方形 (`round` は円板) |
     /// | 1 | その帯の端 (`strokeCap`: `.square` は何も置かない・`.project` は帯の向きの正方形・`.round` は円板) |
     /// | 2 | 2 本の折れ目 (#1644) |
     /// | 3 以上 | 角度の順で 180° を越える間を挟む 2 本の折れ目。越える間が無ければ何も置かない (#1889) |
@@ -94,13 +102,17 @@ extension Canvas {
             case (.square, .none), (.project, .none): .square
             }
         }
+        // 線の全体が画面の 1 点に潰れた端 (腕が 1 本も無く、群が線の端を含む)。平面の周の骨が
+        // 隣の点を渡して端の形を置くのと同じ結果にする (#1893 の条件 4「いまのまま」): `.square` は
+        // 線の長さちょうどで切るので何も置かず、`.project` は向きの無い正方形、`.round` は円板
+        let wholeEnd: ScreenCorner = cap == .square ? .nothing : end(nil)
         if join == .round {
             guard kept.count <= 1, isEnd else { return .disc }
-            return end(kept.first)
+            return kept.first.map { end($0) } ?? wholeEnd
         }
         switch kept.count {
         case 0:
-            return isEnd ? end(nil) : .square
+            return isEnd ? wholeEnd : .square
         case 1:
             return end(kept[0])
         case 2:
@@ -133,7 +145,7 @@ extension Canvas {
         return (first, last)
     }
 
-    /// 4 点 `a`・`b`・`c`・`d` が同じ平面に載り、`b`→`a` と `c`→`d` が同じ側へ向かうか。
+    /// 4 点 `a`・`b`・`c`・`d` が同じ平面に載るか (`b`→`a` と `c`→`d` が画面で同じ向きになりうるか)。
     ///
     /// 辺 `b`–`c` が画面で潰れたとき、`b` から `a` へ・`c` から `d` へ出る 2 本の帯が画面で同じ
     /// 向きになりうるのは (別の点から出た同じ向きの腕として 1 本と数え、端の形を置く)、この 4 点が
@@ -148,7 +160,9 @@ extension Canvas {
     ) -> Bool {
         let (first, along, second) = (a - b, c - b, d - c)
         let scale = length(first) * length(along) * length(second)
-        guard scale > 0, scale.isFinite, dot(first, second) > 0 else { return false }
+        // 3D での 2 本の腕の向き (内積の符号) は問わない — 平行投影で (1, 0, −5) と (1, 0, 5) の
+        // ように、3D では逆の側へ傾いた腕も、潰れた辺に沿って見れば画面で同じ向きになる
+        guard scale > 0, scale.isFinite else { return false }
         let volume = abs(dot(cross(first, along), second))
         return volume <= Float(sin(SolidEdges.coplanarAngle)) * scale
     }

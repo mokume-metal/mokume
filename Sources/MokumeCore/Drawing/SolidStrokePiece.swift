@@ -31,17 +31,6 @@ struct SolidStrokePiece {
         /// 組み込みの立体と読み込んだモデルの稜線。網は形自身の座標のまま共有し、`matrix` で移す
         case net(SolidEdges, matrix: simd_float4x4)
 
-        /// 組んでも何も積まない線に、面積 0 の三角形を置く点 (世界の座標と形自身の座標)。
-        var anchor: (world: SIMD3<Float>, shape: SIMD3<Float>) {
-            switch self {
-            case let .ring(points, shapePoints, _, _):
-                return (points[0], shapePoints[0])
-            case let .net(net, matrix):
-                let moved = matrix * SIMD4(net.points[0], 1)
-                return (SIMD3(moved.x, moved.y, moved.z), net.points[0])
-            }
-        }
-
         func moved(by matrix: simd_float4x4) -> Source {
             switch self {
             case let .ring(points, shapePoints, isClosed, curveSteps):
@@ -67,8 +56,8 @@ struct SolidStrokePiece {
     var cap: StrokeCap
     /// この線が記録の時点で積んだ頂点の区間の先頭 (形の立体の頂点の並びの番号)。
     var vertexStart: Int
-    /// この線が記録の時点で積んだ頂点の数。**3 の倍数で、0 にはならない** — 何も積まない線も
-    /// 面積 0 の三角形を 1 枚積む (区間が添字の列の中の位置の印になる)
+    /// この線が記録の時点で積んだ頂点の数。**3 の倍数で、0 にはならない** — 記録した視点で何も
+    /// 積まない線は覚えない (`Canvas.recordingSolidStroke`)
     var vertexCount: Int
     /// 積んだ頂点の三角形の巻き方を裏返してあるか。
     ///
