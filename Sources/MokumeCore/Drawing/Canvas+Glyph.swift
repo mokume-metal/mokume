@@ -63,6 +63,8 @@ extension Canvas {
     /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
     /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
+        // 鍵に変換の拡大は入れない。`scale` で伸ばした字は焼いた画素の拡大になり、その
+        // 代償は `Sketch` の `textSize` の説明が名乗っている (#2033)
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
             glyph: resolved.glyph)
