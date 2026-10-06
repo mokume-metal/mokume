@@ -439,6 +439,81 @@ struct DensityInvarianceTests {
         #expect(broken.isEmpty, "直径 \(diameter) の shader() の円: \(broken.joined(separator: " / "))")
     }
 
+    /// **長い向きが数画素しかない細い塗りも、置く位置によらず距離関数の経路と同じ量で出る**
+    /// (#1934 の反証 2)。細い向きを広げるだけでは、長い向きの端が列 (行) の中心を跨ぐかどうかで
+    /// 量が振れる — 細かさ 1 の `shader()` の `rect(x, …, 1.5, 0.5)` は、x が 10.4 なら 2 列ぶん
+    /// (1.0)、10.6 なら 1 列ぶん (0.5) で出ていた。距離関数の経路は長い向きも箱フィルタで数える
+    /// ので、置く位置にほぼ依らない。
+    ///
+    /// 長さ 1〜10 を、長い向きに 5 通りずらして置き、横長と縦長の両方で見る。`rect` は面積とも
+    /// 比べ (回したものも)、楕円は同じ位置の `shader()` 無しの楕円と比べる (距離関数の経路も画素の
+    /// 中のいちばん太い弦を取るので、短い楕円は面積より多めに出る)。
+    @Test(
+        "長い向きが短い細い shader() の塗りも、置く位置によらず距離関数の経路と同じ量で出る (#1934)",
+        arguments: [false, true])
+    func shortThinFillsKeepTheirLight(_ isEllipse: Bool) throws {
+        let lengths: [Float] = [1, 1.5, 2, 3, 4.5, 7, 9.5, 10]
+        let shifts: [Float] = [0, 0.25, 0.4, 0.6, 0.75]
+        let thin: Float = isEllipse ? 0.4 : 0.5
+        enum Pose: CaseIterable { case wide, tall, tilted }
+        func light(_ pose: Pose, length: Float, shift: Float, shaded: Bool) throws -> Double {
+            let canvas = try Self.makeCanvas(density: 1)
+            try Self.draw(on: canvas) {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                if shaded {
+                    canvas.shader(
+                        try canvas.makeShader(
+                            "float4 paint(Fragment in, Values values) { return in.color; }"))
+                }
+                // 長い向きの位置だけをずらす。細い向きは画素の中ほどに置く
+                let along = 40 + shift
+                switch (pose, isEllipse) {
+                case (.wide, false): canvas.rect(along, 30.25, length, thin)
+                case (.tall, false): canvas.rect(30.25, along, thin, length)
+                case (.wide, true): canvas.ellipse(along, 30.5, length, thin)
+                case (.tall, true): canvas.ellipse(30.5, along, thin, length)
+                case (.tilted, _):
+                    canvas.translate(along, 64 + shift)
+                    canvas.rotate(0.3)
+                    if isEllipse {
+                        canvas.ellipse(0, 0, length, thin)
+                    } else {
+                        canvas.rect(-length / 2, -thin / 2, length, thin)
+                    }
+                }
+            }
+            return Self.totalSum(try canvas.target.readPixels())
+        }
+        var broken: [String] = []
+        for pose in Pose.allCases {
+            // 回した楕円は距離関数の経路も近似なので、回した形は rect だけを面積と比べる
+            if pose == .tilted, isEllipse { continue }
+            for length in lengths {
+                for shift in shifts {
+                    let shaded = try light(pose, length: length, shift: shift, shaded: true)
+                    let label = "\(pose)・長さ \(length)・ずらし \(shift)"
+                    if isEllipse || pose != .tilted {
+                        let plain = try light(pose, length: length, shift: shift, shaded: false)
+                        if abs(shaded - plain) > 0.1 * plain {
+                            broken.append("\(label): \(shaded) (shader() 無し \(plain))")
+                        }
+                    }
+                    if !isEllipse {
+                        let area = Double(length * thin)
+                        if abs(shaded - area) > 0.1 * area {
+                            broken.append("\(label): \(shaded) (面積 \(area))")
+                        }
+                    }
+                }
+            }
+        }
+        #expect(
+            broken.isEmpty,
+            "\(isEllipse ? "楕円" : "rect"): \(broken.count) 件 — \(broken.prefix(8).joined(separator: " / "))")
+    }
+
     /// **寸法や置き方が極端な細い塗りでも落ちない** (#1934 の反証 1)。細長い楕円の片の数を
     /// 整数へ直す前に有限か確かめ、上限で切る。直径が数でない・無限の楕円は補わず、これまでどおり
     /// 周から三角形に割る (距離関数の経路も有限でない半径は置かずに断る)。直す前は、直径 1e20 の

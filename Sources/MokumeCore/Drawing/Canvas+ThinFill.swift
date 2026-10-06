@@ -44,6 +44,13 @@ extension Canvas {
     /// - **小さい形** (どの向きも細い `rect`・長軸も細い楕円): 描く画素の軸に沿った描く画素 1 つの
     ///   正方形にし、被覆を描く画素での外接する箱の面積にする (円は直径の 2 乗・#1477 の判断 1 A。
     ///   線の点の補いと同じ形)
+    /// - **長い向きが短い形** (列 (行) の向きの長さが ``thinFillShortSpan`` 未満): 上の 2 つでは、
+    ///   長い向きの端が列の中心を跨ぐかどうかで、跨ぐ列の数が 1 つ振れる。長さ 1.5 の帯は 1 列か
+    ///   2 列になり、光の量が倍まで振れる。そこで長い向きにも同じ手当てを当てる — 長さを整数の
+    ///   列の数へ広げ、列 1 つずつの片に切って、片ごとの被覆で光の量を配る (``ShortProfile``)。
+    ///   配る量は、距離関数の経路が長い向きを箱フィルタで数えた量を、置く位置についてならした値
+    ///   である。`rect` ではちょうど面積になる。長い形は端の 1 列の振れが 1 / 長さ に収まるので、
+    ///   上の 2 つのまま描く
     ///
     /// 細さは ``roundedDrawnWeight(_:)`` で丸めてから 1 と比べる (線と同じ幅)。変換が潰れている
     /// (行列式 0) と補わない — 三角形のときも面積が無くて何も出ない。**寸法・中心が数でない・無限
@@ -59,6 +66,10 @@ extension Canvas {
         return named.isEllipse
             ? thinEllipsePieces(named, by: linear) : thinRectPieces(named, by: linear)
     }
+
+    /// 長い向きが短いとみなす、列 (行) の向きの長さの上限 (描く画素)。これ以上長い形は、端の
+    /// 列の振れ (1 列ぶん) が光の量の 1 / 長さ に収まる (#1934 の反証 2)。
+    static let thinFillShortSpan: Float = 10
 
     /// 寸法と中心がどれも有限か。
     private static func isFinite(_ named: Outline.NamedFill) -> Bool {
@@ -104,9 +115,17 @@ extension Canvas {
         if span.height < 1, span.width < 1, span.area < 1 {
             return [unitSquare(around: named.center, inverse: linear.inverse, coverage: span.area)]
         }
+        let widensHeight = span.height < 1 && (span.width >= 1 || span.height <= span.width)
+        // 長い辺 (描く画素)。上下の辺が細いなら形自身の x の向きの辺
+        let edge =
+            widensHeight
+            ? linear.columns.0 * (2 * named.half.x) : linear.columns.1 * (2 * named.half.y)
+        if let profile = ShortProfile(rectEdge: edge, area: span.area) {
+            return shortPieces(profile, center: named.center, inverse: linear.inverse)
+        }
         var half = named.half
         let coverage: Float
-        if span.height < 1, span.width >= 1 || span.height <= span.width {
+        if widensHeight {
             let band = widenedBand(span.height, along: simd_normalize(linear.columns.0))
             half.y *= band.widen
             coverage = band.coverage
@@ -181,6 +200,9 @@ extension Canvas {
                     around: named.center, inverse: inverse, coverage: 4 * axes.long * axes.short)
             ]
         }
+        if let profile = ShortProfile(ellipse: shape, longAxis: axes.direction) {
+            return shortPieces(profile, center: named.center, inverse: inverse)
+        }
         let along = axes.direction
         let across = SIMD2(-along.y, along.x)
         let thin = 2 * axes.short
@@ -244,6 +266,134 @@ extension Canvas {
             length > 0 && length.isFinite
             ? SIMD2<Float>(Float(chosen.x / length), Float(chosen.y / length)) : SIMD2<Float>(1, 0)
         return (Float(largest), Float(smallest), direction)
+    }
+
+    // MARK: - 長い向きが短い形
+
+    /// 長い向きが短い細い形の、列 (行) ごとの弦 (#1934 の反証 2・``thinFillPieces(_:by:)``)。
+    ///
+    /// 描く画素で形の中心を原点に、**長い向きの座標 `s`** で表す。帯が横寄りなら列が形を切り、
+    /// `s` は描く画素の x で、弦は縦に測る。縦寄りなら行が切り、`s` は y で、弦は横に測る。
+    /// 弦の中点は 1 本の直線に並ぶ (矩形は帯の中心線、楕円は縦 (横) の弦を二等分する直径)。
+    struct ShortProfile {
+        /// 行が形を切るか (偽なら列が切る)。
+        var byRows: Bool
+        /// 長い向きの長さの半分 (描く画素)。`s` は −half…half。
+        var half: Float
+        /// `s = 0` での弦の長さ (描く画素)。
+        var peak: Float
+        /// 楕円か。楕円なら弦は `peak × √(1 − (s / half)²)`、矩形なら一定。
+        var isEllipse: Bool
+        /// 弦の中点の並ぶ線の傾き。`s` が 1 進むと、中点が弦の向きに `slope` 動く。
+        var slope: Float
+
+        /// 矩形の長い辺 `edge` (描く画素) と描く画素での面積から。長い向きが短くなければ `nil`。
+        init?(rectEdge edge: SIMD2<Float>, area: Float) {
+            byRows = abs(edge.y) > abs(edge.x)
+            let along = byRows ? edge.y : edge.x
+            half = abs(along) / 2
+            guard half > 0, 2 * half < Canvas.thinFillShortSpan else { return nil }
+            peak = area / (2 * half)
+            isEllipse = false
+            slope = (byRows ? edge.x : edge.y) / along
+        }
+
+        /// 単位円を描く画素の楕円へ写す 2x2 `shape` と、その長軸の向きから。長い向きが短くなければ
+        /// `nil`。楕円を `S = shape · shapeᵀ` で表すと、x の幅の半分は `√S_xx`、中心を通る縦の弦は
+        /// `2 |det| / √S_xx`、縦の弦の中点は `y = (S_xy / S_xx) x` に並ぶ (行が切るなら x と y を入れ替える)。
+        init?(ellipse shape: simd_float2x2, longAxis: SIMD2<Float>) {
+            let c0 = SIMD2<Double>(Double(shape.columns.0.x), Double(shape.columns.0.y))
+            let c1 = SIMD2<Double>(Double(shape.columns.1.x), Double(shape.columns.1.y))
+            let sxx = c0.x * c0.x + c1.x * c1.x
+            let sxy = c0.x * c0.y + c1.x * c1.y
+            let syy = c0.y * c0.y + c1.y * c1.y
+            let area = abs(c0.x * c1.y - c0.y * c1.x)
+            byRows = abs(longAxis.y) > abs(longAxis.x)
+            let along = byRows ? syy : sxx
+            let extent = along.squareRoot()
+            guard extent > 0, (2 * extent).isFinite, 2 * extent < Double(Canvas.thinFillShortSpan)
+            else { return nil }
+            half = Float(extent)
+            peak = Float(2 * area / extent)
+            isEllipse = true
+            slope = Float(sxy / along)
+        }
+
+        /// 弦の、`s` から `t` までの積分 (どちらも −half…half)。
+        func integral(_ s: Float, _ t: Float) -> Float {
+            guard isEllipse else { return peak * (t - s) }
+            return peak * (unitArea(t) - unitArea(s))
+        }
+
+        /// `∫₀^s √(1 − (v / half)²) dv`
+        private func unitArea(_ s: Float) -> Float {
+            let r = min(max(s / half, -1), 1)
+            return half / 2 * (r * max(0, 1 - r * r).squareRoot() + asin(r))
+        }
+
+        /// 列の位置を一様に動かしてならした、**列ごとの「列の中でいちばん太い弦 × 列と形が重なる
+        /// 長さ」の和**。距離関数の経路が、長い向きを箱フィルタで、細い向きを画素の中で中心に
+        /// いちばん近い位置の弦で数えた量 (`mokume_thinEllipseCoverage`) の、置く位置についての平均で
+        /// ある。矩形では弦が一定なので、ちょうど面積になる。
+        ///
+        /// 列 [u, u + 1] を動かして積分する。中心を含む列は弦が `peak` で、重なりの積分は
+        /// `half ≥ 1` なら 1、そうでなければ `2 half − half²`。中心の片側にある列は、中心にいちばん
+        /// 近い端 (中心から v) の弦を取り、重なりは `min(1, half − v)` なので、
+        /// `∫₀^half f(v) · min(1, half − v) dv`。両側で 2 倍する。
+        var averagedLight: Float {
+            guard isEllipse else { return peak * 2 * half }
+            let x = half
+            let middle = peak * (x >= 1 ? 1 : 2 * x - x * x)
+            let knee = max(0, x - 1)
+            // v f(v) の原始関数: −peak (x² / 3) (1 − v² / x²)^(3/2)
+            func moment(_ v: Float) -> Float {
+                let r = v / x
+                return -peak * x * x / 3 * pow(max(0, 1 - r * r), 1.5)
+            }
+            let side = integral(0, knee) + x * integral(knee, x) - (moment(x) - moment(knee))
+            return middle + 2 * side
+        }
+    }
+
+    /// 長い向きが短い形を、**長い向きに列 (行) 1 つずつの片**に切る (#1934 の反証 2)。
+    ///
+    /// 片の数は長さを切り上げた整数 m で、形の中心のまわりに並べる。片はどれも長い向きにちょうど
+    /// 1 列ぶんの幅で、端は列の境目と平行 (列が切るなら縦) なので、置く位置によらず列の中心を
+    /// ちょうど 1 つずつ含む。弦の向きには、弦の中点の線のまわりにちょうど n 行 (1 か 2) の高さに
+    /// 広げる。光の量 (``ShortProfile/averagedLight``) を、片の中の弦の積分の割合で配り、被覆を
+    /// 「配った量 / n」にする。どれも置く位置に依らないので、畳みの雛形と保持した形の控えにも使える。
+    private static func shortPieces(
+        _ profile: ShortProfile, center: SIMD2<Float>, inverse: simd_float2x2
+    ) -> [ThinFillPiece] {
+        let count = max(1, Int((2 * profile.half).rounded(.up)))
+        let light = profile.averagedLight
+        let whole = profile.integral(-profile.half, profile.half)
+        var shares: [Float] = []
+        shares.reserveCapacity(count)
+        for index in 0..<count {
+            let from = max(-Float(count) / 2 + Float(index), -profile.half)
+            let to = min(-Float(count) / 2 + Float(index + 1), profile.half)
+            shares.append(to > from && whole > 0 ? light * profile.integral(from, to) / whole : 0)
+        }
+        let crossings: Float = (shares.max() ?? 0) <= 1 ? 1 : 2
+        let axis: SIMD2<Float> = profile.byRows ? SIMD2(0, 1) : SIMD2(1, 0)
+        let across: SIMD2<Float> = profile.byRows ? SIMD2(1, 0) : SIMD2(0, 1)
+        func corner(_ s: Float, _ side: Float) -> SIMD2<Float> {
+            center + inverse * (axis * s + across * (profile.slope * s + side))
+        }
+        var pieces: [ThinFillPiece] = []
+        pieces.reserveCapacity(count)
+        for (index, share) in shares.enumerated() where share > 0 {
+            let from = -Float(count) / 2 + Float(index)
+            let to = from + 1
+            pieces.append(
+                ThinFillPiece(
+                    corners: (
+                        corner(from, -crossings / 2), corner(to, -crossings / 2),
+                        corner(to, crossings / 2), corner(from, crossings / 2)
+                    ), coverage: share / crossings))
+        }
+        return pieces
     }
 
     // MARK: - 積む
