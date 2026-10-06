@@ -603,6 +603,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/detach(_:)-256sb``
 - ``Sketch/detach(_:)-7cw8l``
 - ``ExternalInput``
+- ``ExternalQueue``
 - ``SourceState``
 - ``SourceReport``
 - ``Arrival``
