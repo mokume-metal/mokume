@@ -244,9 +244,11 @@ float3 solidStrokeSquareCorner(uint corner, constant SolidStrokePlacement &s) {
     }
 }
 
-/// 円板の周の点の向き (画面の横と縦の成分)。CPU の `Canvas.appendSolidDisc` が `cos` / `sin` で
-/// 求める 16 等分の値をそのまま書き写したもの (0 番は横そのもの)。検査
-/// (`SolidGPUStrokeTests.discUnitsMatchTheCPU`) が CPU の値とビットで突き合わせる。
+/// 円板の周の点の向き (画面の横と縦の成分)。CPU の円板の下限の分割数 (16) の周の点
+/// (`Canvas.solidDiscFloorUnits`。`cos` / `sin` で求める) をそのまま書き写したもの (0 番は横そのもの)。
+/// 検査 (`SolidGPUStrokeTests.discUnitsMatchTheCPU`) が CPU の値とビットで突き合わせる。CPU は円板を
+/// 画面の半径で刻む (#2011) が、16 で足りない太さの丸い端は骨を使わずに CPU で組む
+/// (`Canvas.gpuStrokeGeometry`) ので、ここに要るのは 16 等分の表だけである。
 constant float2 kSolidStrokeDisc[17] = {
     float2(1, 0),
     float2(0.92387956, 0.38268343),

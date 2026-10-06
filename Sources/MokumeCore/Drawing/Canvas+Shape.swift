@@ -764,12 +764,13 @@ extension Canvas {
         var cursor = run.start
         for stroke in gpuStrokes {
             // 置き場所の色は線にも掛かる (焼いた頂点に掛かるのと同じ式)。透けたら GPU の
-            // 条件 (不透明) から外れるので、焼いた帯のまま置く
+            // 条件 (不透明) から外れるので、焼いた帯のまま置く。骨の円板で刻みが足りない太さの
+            // 丸い端 (#2011) も同じく、焼いた帯 (置くときに組み直す) のまま置く
             let color = SIMD4(stroke.color.red, stroke.color.green, stroke.color.blue, stroke.color.alpha)
                 * instance.color
             guard color.w == 1, case .mesh(let solid) = stroke.source,
                 let (geometry, geometryScale) = gpuStrokeGeometry(
-                    of: stroke.source, mesh: { solid.make() })
+                    of: stroke.source, weight: stroke.weight, cap: stroke.cap, mesh: { solid.make() })
             else { continue }
             placeBaked(cursor..<stroke.vertices.lowerBound)
             openGPUStroke(

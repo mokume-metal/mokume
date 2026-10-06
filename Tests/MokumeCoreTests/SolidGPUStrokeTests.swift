@@ -15,9 +15,10 @@ struct SolidGPUStrokeTests {
         try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
     }
 
-    /// GPU の骨の円板 (`Shapes.metal` の `kSolidStrokeDisc`) は、CPU の円板の周の点
-    /// (``Canvas/solidDiscUnits``) を書き写して持つ (#1893)。三角関数は GPU と CPU で丸めが違うので、
-    /// 値で持たないと同じ角の点がずれる。書き写しがビットで一致することを見る。
+    /// GPU の骨の円板 (`Shapes.metal` の `kSolidStrokeDisc`) は、CPU の円板の下限の分割数 (16) の
+    /// 周の点 (``Canvas/solidDiscFloorUnits``) を書き写して持つ (#1893)。三角関数は GPU と CPU で丸めが
+    /// 違うので、値で持たないと同じ角の点がずれる。書き写しがビットで一致することを見る。16 で足りない
+    /// 太さの丸い端は骨を使わない (#2011・`SolidDiscSegmentTests.gpuAndCPUAgreeOnThickRoundEnds`)。
     @Test("GPU の円板の周の点は、CPU の円板の周の点とビットで一致する")
     func discUnitsMatchTheCPU() throws {
         let source = try RenderDevice().shaders.bundledShaderSource(named: "Shapes")
@@ -32,10 +33,10 @@ struct SolidGPUStrokeTests {
             }
             if parts.count == 2 { units.append(SIMD2(parts[0], parts[1])) }
         }
-        #expect(units.count == Canvas.solidDiscUnits.count)
+        #expect(units.count == Canvas.solidDiscFloorUnits.count)
         #expect(
             units.map { [$0.x.bitPattern, $0.y.bitPattern] }
-                == Canvas.solidDiscUnits.map { [$0.x.bitPattern, $0.y.bitPattern] })
+                == Canvas.solidDiscFloorUnits.map { [$0.x.bitPattern, $0.y.bitPattern] })
     }
 
     /// 同じ直線に載る 2 本の辺が集まる点を持つ網は、視線をその直線に沿わせると潰れた辺が 2 本
