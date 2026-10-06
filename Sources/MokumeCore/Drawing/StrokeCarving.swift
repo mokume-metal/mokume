@@ -114,7 +114,9 @@ nonisolated struct StrokeCarving {
     ///
     /// **届く点の表が `limit` 件を越えたら、組まずに `nil` を返す** (#1561 の反証 3)。画面で小さく
     /// 写る細かい網に太い線を引くと、どの点からも網のほぼ全部に届き、表は点の数の 2 乗で膨らむ
-    /// (`sphere(10, detail: 64)` に太さ 20 で約 314 万件・約 50 MB)。呼ぶ側は引かずに重ねて積む。
+    /// (`sphere(10, detail: 64)` に太さ 20 で約 314 万件・約 50 MB)。**辺を持つ点が `limit` より多い網は、
+    /// 太さによらず越える** (点ごとに自分自身を 1 件積む) ので、表を組み始める前に諦める (約 26 万点を
+    /// 越える `vertex(x, y, z)` の軌跡・大きなモデルの稜線)。呼ぶ側は引かずに重ねて積む。
     ///
     /// - Parameters:
     ///   - lengths: 辺ごとの長さ (片と同じ座標で測る)。辿れない辺は無限大
@@ -167,6 +169,11 @@ nonisolated struct StrokeCarving {
                 starts[b + 1] += 1
             }
             for index in 0..<count { starts[index + 1] += starts[index] }
+            // 辺を持つ点は、それぞれ自分自身 (道のり 0) を 1 件積む。点が上限より多い網は、太さによらず
+            // 表が上限を越えるので、組み始める前に諦める (点の多い網を毎フレーム上限まで組んで捨てない)
+            var linked = 0
+            for index in 0..<count where starts[index + 1] > starts[index] { linked += 1 }
+            guard linked <= limit else { return nil }
             var cursor = Array(starts.dropLast())
             var incident = [Int](repeating: 0, count: starts[count])
             for (edge, (a, b)) in edges.enumerated() {

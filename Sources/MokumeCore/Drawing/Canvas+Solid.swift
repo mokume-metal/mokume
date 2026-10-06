@@ -807,7 +807,8 @@ extension Canvas {
             shape = net.points
             edges = net.edges
         }
-        // 網の届く点の表が上限を越える線 (画面で小さく写る細かい網に太い線) は、引かずに重ねて積む
+        // 網の届く点の表が上限を越える線 (画面で小さく写る細かい網に太い線・辺を持つ点が約 26 万より
+        // 多い網) は、引かずに重ねて積む (直す前の絵に戻る)
         if carves,
             var carving = SolidStrokeCarving(
                 points: world, edges: edges, weight: half * 2,
@@ -852,8 +853,8 @@ extension Canvas {
     /// 重ねて積む (2 回混ざるかは積む順と奥行きで決まる)。線を見ている側へ寄せる扱い
     /// (`liftedTowardViewer`) は、戻した点に掛ける。
     ///
-    /// 片は手前の面で切ってから写す (``SolidStrokeCarving``)。画面へ写せない片 (数でない座標) は、
-    /// 引かずに重ねたまま積む。
+    /// 片は手前の面の少し内側と画面の外の余白で切ってから写す (``SolidStrokeCarving``)。切っても写せない
+    /// 片 (数でなくなる座標) は、引かずに重ねたまま、骨が置いた順の位置で積む。
     ///
     /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
     private func buildCarvedSolidStroke(
@@ -861,15 +862,9 @@ extension Canvas {
         edges: [(Int, Int)], curveSteps: [Bool], half: Float, discUnits: [SIMD2<Float>],
         camera: StrokeCamera
     ) {
-        /// 片を足す。画面へ写せなければ、重ねたまま扇で積む
+        /// 片を足す (画面へ写せない片も、引かずに足した順の位置で積まれる)
         func add(band: Int? = nil, point: Int? = nil, _ rim: [SIMD3<Float>], _ shapes: [SIMD3<Float>]) {
-            guard !carving.addPiece(band: band, point: point, rim: rim, shapes: shapes), rim.count >= 3
-            else { return }
-            for index in 2..<rim.count {
-                appendSolidStrokeTriangle(
-                    rim[0], rim[index - 1], rim[index], shape: (shapes[0], shapes[index - 1], shapes[index]),
-                    camera: camera)
-            }
+            carving.addPiece(band: band, point: point, rim: rim, shapes: shapes)
         }
         // 骨は辺の順に 1 本ずつ帯を置く (`strokeNet`)。何本目かが辺の添字である
         var edge = 0

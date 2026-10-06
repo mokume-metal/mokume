@@ -398,6 +398,141 @@ struct SolidStrokeOverlapTests {
         #expect(differing.isEmpty, "z = \(near): 塗る画素が \(differing.count) 違う: \(differing.prefix(12))")
     }
 
+    /// 手前の面で切った点は、厳密には切り取り座標の z = 0 の上だが、単精度の丸めで手前の面の外
+    /// (z < 0) に落ちうる。落ちた片を「写せない」と読むと、その帯は引かずに重ねて積まれ、折れ目で
+    /// 2 回混ざる (#1561 の 2 回目の反証 2)。最後の帯が手前の面を跨ぐ奥行きを細かく振り、どれも
+    /// 1 回だけ混ぜることを見る。
+    @Test("手前の面を跨ぐ帯は、跨ぐ奥行きによらず折れ目で重ねて混ぜない")
+    func bandsCrossingTheNearPlaneBlendOnce() throws {
+        var depths: [Float] = [126.4225]
+        for step in 0...52 { depths.append(126 + Float(step) * 0.25) }
+        var doubled: [(Float, Int)] = []
+        for depth in depths {
+            let pixels = try translucent { canvas in
+                canvas.strokeWeight(20)
+                canvas.beginShape()
+                canvas.vertex(40, 80, 0)
+                canvas.vertex(120, 80, 0)
+                canvas.vertex(120, 80, depth)
+                canvas.endShape()
+            }.pixels
+            if overpainted(pixels).count > 0 { doubled.append((depth, overpainted(pixels).count)) }
+        }
+        #expect(doubled.isEmpty, "\(doubled.count) / \(depths.count) 通りで重ね塗り (z, 画素): \(doubled.prefix(12))")
+    }
+
+    /// いまの視点で、立体の線の片を引く素材を組む。
+    private static func carvingView(of canvas: Canvas) -> SolidStrokeCarving.View {
+        let camera = StrokeCamera(canvas.currentCamera)
+        return SolidStrokeCarving.View(
+            viewProjection: canvas.viewProjection, width: 160, height: 160, eye: camera.eye,
+            forward: camera.forward, isPerspective: camera.isPerspective, pixelScale: camera.scale,
+            near: camera.near)
+    }
+
+    /// 手前の面を跨ぐ帯のような四角 (幅 20) を 400 通り足す。`far` が奥行きの向こうの端を返す。
+    private static func crossingQuads(
+        _ canvas: Canvas, near: SIMD3<Float>, far: (Int) -> SIMD3<Float>
+    ) -> (uncarved: Int, extent: Float) {
+        let view = carvingView(of: canvas)
+        var uncarved = 0
+        var extent: Float = 0
+        for index in 0..<400 {
+            let a = near
+            let b = far(index)
+            guard var carving = SolidStrokeCarving(points: [a, b], edges: [(0, 1)], weight: 20, view: view)
+            else { continue }
+            let side = SIMD3<Float>(0, 10, 0)
+            carving.addPiece(band: 0, rim: [a + side, b + side, b - side, a - side], shapes: [a, b, b, a])
+            uncarved += carving.uncarvedPieceCount
+            extent = max(extent, carving.screenExtent)
+        }
+        return (uncarved, extent)
+    }
+
+    /// 手前の面で切った点が単精度で手前の面の外へ落ちると、その片は「写せない」と読まれて引かれない
+    /// (直す前は、既定の視点で手前の面を跨ぐこの 400 通りのうち 96 通り)。手前の面の少し内側で切る。
+    @Test("手前の面を跨ぐ片は、切った点の丸めによらず引く側に残る")
+    func clippedPiecesStayCarvable() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var uncarved = -1
+        try canvas.draw {
+            uncarved = Self.crossingQuads(canvas, near: SIMD3(120, 80, 0)) { index in
+                SIMD3(120 + Float(index % 7), 80 + Float(index % 5), 126 + Float(index) * 13 / 400)
+            }.uncarved
+        }
+        #expect(uncarved == 0, "引かれない片 \(uncarved) / 400")
+    }
+
+    /// 手前の面が目にごく近い視点では、手前の面で切った点が画面の遠く (直す前は横に約 11 万画素) へ
+    /// 写り、線 1 本で共有する許容差 (画面の座標の大きさ × 32 ulp) と溶接 (その 4 倍) が 0.43 画素・
+    /// 1.72 画素に膨らんでいた。画面の外を余白つき (画面の 4 倍) で切るので、1 画素よりずっと小さい。
+    @Test("目の後ろへ回る線の片は、画面の外を切ってから写し、許容差を膨らませない")
+    func clippedPiecesKeepTheToleranceSmall() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var extent: Float = .infinity
+        try canvas.draw {
+            canvas.perspective(Float.pi / 3, 1, 0.1, 10000)
+            extent = Self.crossingQuads(canvas, near: SIMD3(120, 80, 0)) { index in
+                SIMD3(80 + Float(index) * 0.25, 80, 200)
+            }.extent
+        }
+        let weld = extent * 128 * Float.ulpOfOne
+        #expect(extent > 0)
+        #expect(weld < 0.01, "画面の座標の大きさ \(extent) 画素・溶接 \(weld) 画素")
+    }
+
+    /// 手前の面が目にごく近い視点 (`perspective(π/3, 1, 0.1, 10000)`) で、目の後ろへ回る線を引く。
+    /// 手前の面で切った点は画面の遠く (横に約 10 万画素) へ写る。線 1 本で共有する許容差は画面の
+    /// 座標の大きさで決まるので、切った点が許容差を膨らませると、折れ目の切り口が粗くなる
+    /// (#1561 の 2 回目の反証 4)。画面の外を余白つきで切ってから写す。
+    @Test("目の後ろへ回る線を近い手前の面で描いても、折れ目で重ねて混ぜず、不透明の同じ線と同じ画素を塗る")
+    func strokeBehindTheEyeWithACloseNearPlaneBlendsOnce() throws {
+        func draw(_ canvas: Canvas) {
+            canvas.perspective(Float.pi / 3, 1, 0.1, 10000)
+            canvas.strokeWeight(20)
+            canvas.beginShape()
+            canvas.vertex(40, 80, 0)
+            canvas.vertex(80, 80, 0)
+            canvas.vertex(180, 80, 200)
+            canvas.endShape()
+        }
+        let carved = try translucent { draw($0) }.pixels
+        let stacked = try translucent { canvas in
+            canvas.stroke(255, 0, 0)
+            draw(canvas)
+        }.pixels
+        #expect(painted(stacked) > 0)
+        #expect(overpainted(carved).count == 0, "重ね塗り \(overpainted(carved).count)")
+        let differing = differingRegion(carved, stacked)
+        #expect(differing.isEmpty, "塗る画素が \(differing.count) 違う: \(differing.prefix(12))")
+    }
+
+    // MARK: - 画面で重なる点の群 (2 回目の反証 1)
+
+    /// 画面で潰れた辺 (視線に沿う辺) の両端は 1 つの群にまとめ、折れ目を群のいちばん手前の点に
+    /// 1 度だけ置く (#1893)。群のほかの点から出る帯は折れ目と端の点を共有しないが、画面では 1 点に
+    /// 集まる線なので、奥行きによらず互いに引く。平行投影で A(-60,-40,0) B(0,0,0) C(0,0,-60)
+    /// D(60,-40,-60) を引くと、画面では V 字 (B と C が重なる) で、折れ目は 1 つ。並べる向きを逆に
+    /// した組も見る (奥の帯を先に積む向き)。
+    @Test("画面で重なる点の群に集まる半透明の帯と折れ目は、奥行きによらず 1 回だけ混ぜる", arguments: ["A から", "D から"])
+    func coincidentPointsBlendOnce(_ order: String) throws {
+        let forward: [SIMD3<Float>] = [SIMD3(-60, -40, 0), SIMD3(0, 0, 0), SIMD3(0, 0, -60), SIMD3(60, -40, -60)]
+        let path = order == "A から" ? forward : Array(forward.reversed())
+        let pixels = try translucent { canvas in
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            canvas.strokeWeight(20)
+            canvas.strokeJoin(.miter)
+            canvas.strokeCap(.square)
+            canvas.beginShape()
+            for point in path { canvas.vertex(point.x, point.y, point.z) }
+            canvas.endShape()
+        }.pixels
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count == 0, "\(order): 重ね塗り \(overpainted(pixels).count)")
+    }
+
     // MARK: - 届く点の表 (反証 3)
 
     /// 画面で半径 10 画素ほどに写る球の網へ、太さ 20 の線を引く (網の辺を画面での長さで辿る)。
@@ -428,6 +563,25 @@ struct SolidStrokeOverlapTests {
             canvas.sphere(10, detail: 128)
         }.pixels
         #expect(painted(pixels) > 0)
+    }
+
+    /// 上限を越えて引かない線は、直す前の絵 (片を重ねて積んだ絵) へ戻る。**約束は破れたまま黙って
+    /// 残る** — 重なった所は濃い (起票時の症状そのもの) — ことを、ここで名乗っておく。塗る画素は
+    /// 不透明の同じ線と同じ。
+    @Test("届く点の表の上限を越える線は、片を重ねて積んだ絵に戻る (重なった所は濃い)")
+    func overTheReachLimitFallsBackToStacking() throws {
+        func draw(_ canvas: Canvas) {
+            canvas.strokeWeight(20)
+            canvas.translate(80, 80, 0)
+            canvas.sphere(10, detail: 64)
+        }
+        let fallen = try translucent { draw($0) }.pixels
+        let stacked = try translucent { canvas in
+            canvas.stroke(255, 0, 0)
+            draw(canvas)
+        }.pixels
+        #expect(overpainted(fallen).count > 0, "上限を越えた線が引かれている")
+        #expect(differingRegion(fallen, stacked).isEmpty)
     }
 
     // MARK: - 塗る領域は変わらない
