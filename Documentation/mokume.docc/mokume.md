@@ -534,11 +534,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 粒を飛ばす
 
 - ``Sketch/makeParticles(count:)``
-- ``Sketch/emit(_:from:rate:speed:angle:life:size:color:)``
+- ``Sketch/emit(_:from:toward:rate:speed:life:size:color:)``
 - ``Sketch/force(_:_:)``
 - ``Sketch/particles(_:)``
 - ``Particles``
 - ``Emitter``
+- ``Heading``
 - ``Force``
 
 ### 入力を受ける

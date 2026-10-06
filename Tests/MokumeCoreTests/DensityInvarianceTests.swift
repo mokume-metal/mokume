@@ -629,9 +629,9 @@ struct DensityInvarianceTests {
                 let dust = try canvas.makeParticles(count: 4)
                 var randomness = Randomness(seed: 1686)
                 canvas.emit(
-                    dust, from: .point(64.5, 60.25), rate: (4 / canvas.deltaTime).nextUp,
-                    speed: 0...0, angle: 0...0, life: 100...100, size: 20...20,
-                    color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+                    dust, from: .point(64.5, 60.25), toward: .plane(0...0),
+                    rate: (4 / canvas.deltaTime).nextUp, speed: 0...0, life: 100...100,
+                    size: 20...20, color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 canvas.particles(dust)
             case .image:
                 let picture = try canvas.createImage(8, 8)

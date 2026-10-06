@@ -68,12 +68,12 @@ final class SparksInSpace: Sketch {
             sparks, from: .circle(core.x, core.y, radius: disc),
             rate: 1500, speed: 0...10, life: 1.5...3, size: 2...5,
             color: color(110, 170, 255))
-        // 線: 床の線分から上へ。向きは画面の面内なので、幕も奥行き 0 の面に立つ
+        // 線: 床の線分から上へ。向きは画面の面内 (`.plane`) なので、幕も奥行き 0 の面に立つ
+        let up = -Float.pi / 2
         emit(
             sparks, from: .line(ground.from, ground.y, ground.to, ground.y),
-            rate: 900, speed: 150...230, angle: (-Float.pi / 2 - 0.2)...(-Float.pi / 2 + 0.2),
-            life: 2...3, size: 3...6,
-            color: color(150, 255, 190))
+            toward: .plane((up - 0.2)...(up + 0.2)), rate: 900, speed: 150...230, life: 2...3,
+            size: 3...6, color: color(150, 255, 190))
 
         // **押す力は 3 次元で効く** — 球から出た粒は奥行きの向きにも押し出される。
         // 揺らぎも 3 つの向きに揺らすので、面から出た粒にも少しずつ厚みが付く

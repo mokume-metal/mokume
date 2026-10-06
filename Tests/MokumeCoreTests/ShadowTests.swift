@@ -614,8 +614,8 @@ struct ShadowTests {
         for _ in 0..<3 {
             _ = try floorAndSphere(canvas) { canvas in
                 canvas.emit(
-                    dust, from: .point(64, 0), rate: 300, speed: 20...45,
-                    angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                    dust, from: .point(64, 0), toward: .plane(0...(2 * Float.pi)), rate: 300,
+                    speed: 20...45, life: 0.4...1.2, size: 3...6,
                     color: .linear(red: 1, green: 0.6, blue: 0.2), using: &randomness)
                 canvas.particles(dust)
             }
@@ -982,7 +982,7 @@ struct ShadowTests {
         func placeParticles() {
             canvas.castShadow(true)
             canvas.emit(
-                dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                dust, from: .point(36, 36), toward: .plane(0...0), rate: 600, speed: 0...0,
                 life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
                 using: &randomness)
             start = canvas.solidVertices.count
@@ -1124,7 +1124,7 @@ struct ShadowTests {
             canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
             for size: Float in [2, 3, 4] { canvas.box(size) }
             canvas.emit(
-                dust, from: .point(32, 32), rate: 600, speed: 0...0, angle: 0...0,
+                dust, from: .point(32, 32), toward: .plane(0...0), rate: 600, speed: 0...0,
                 life: 5...5, size: 8...8, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
                 using: &randomness)
             start = canvas.solidVertices.count
