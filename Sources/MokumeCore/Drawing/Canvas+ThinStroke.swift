@@ -730,22 +730,40 @@ final class ThinStrokeCache {
         entries[stroke, default: [:]][key] = value
     }
 
-    /// 塗り (``Shape/fillRanges`` の番号) ごとの、置いた後に細くなった名指しの基本図形の塗りを広げた
-    /// 頂点の控え (#1934・``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。鍵は描く画素へ写す
-    /// 2x2 そのもの (広げ方が帯の向きで決まるので、回転を除かない)。`nil` を控えた鍵は「細くならない」。
-    private var fillEntries: [Int: [SIMD4<Float>: Built?]] = [:]
+    /// 置いた後に細くなった名指しの基本図形の塗りを広げた頂点の控えの鍵 (#1934)。
+    struct ThinFillKey: Hashable {
+        /// ``Shape/fillRanges`` の番号。
+        var fill: Int
+        /// 描く画素へ写す 2x2 そのもの (広げ方が帯の向きで決まるので、回転を除かない)。
+        var linear: SIMD4<Float>
+    }
+
+    /// 置いた後に細くなった名指しの基本図形の塗りを広げた頂点 (#1934・
+    /// ``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。`nil` を控えた鍵は「細くならない」。
+    ///
+    /// **形 1 つにつき、頂点の総量で切る** (``thinFillBudget``・刻み直した頂点の控え ``scaled`` と同じ
+    /// 切り方)。塗りの数に上限が無く、回して置き続ける形は塗りの数 × 置いた向きの数だけ鍵が増える
+    /// うえ、細長い楕円は 1 件が最大で 6 × ``Canvas/thinEllipseSliceLimit`` 頂点になる。件数では切れ
+    /// ない (#1934 の反証 5)。細くならない答え (`nil`) も 1 と数え、鍵だけが溜まり続けないようにする。
+    private var thinFills = BoundedCache<ThinFillKey, Built?>(
+        budget: ThinStrokeCache.defaultScaledBudget,
+        weight: { max(1, $0?.vertices.count ?? 0) })
+    /// 細い塗りの控えの上限 (頂点の数)。**変えられるのは検査のため。**
+    var thinFillBudget: Int {
+        get { thinFills.budget }
+        set { thinFills.budget = newValue }
+    }
+    /// いま控えている細い塗りの頂点の数 (検査用・細くならない答えは 1 と数える)。
+    var thinFillVertexTotal: Int { thinFills.total }
     /// 細い塗りを測って組み直した回数 (検査用・細くならなかった回も数える)。控えが効いていれば、
     /// 同じ大きさ・向きで置き続けても増えない。
-    private(set) var fillsThinned = 0
+    var fillsThinned: Int { thinFills.made }
 
     func thinFill(_ fill: Int, _ key: SIMD4<Float>) -> Built?? {
-        guard let table = fillEntries[fill] else { return nil }
-        return table[key]
+        thinFills[ThinFillKey(fill: fill, linear: key)]
     }
 
     func rememberThinFill(_ value: Built?, _ fill: Int, _ key: SIMD4<Float>) {
-        fillsThinned += 1
-        if (fillEntries[fill]?.count ?? 0) >= Self.capacity { fillEntries[fill] = [:] }
-        fillEntries[fill, default: [:]][key] = value
+        thinFills.insert(value, for: ThinFillKey(fill: fill, linear: key))
     }
 }

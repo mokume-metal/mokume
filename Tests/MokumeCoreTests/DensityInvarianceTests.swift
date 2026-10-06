@@ -681,6 +681,57 @@ struct DensityInvarianceTests {
         #expect(shape.thinCache.fillsThinned == 1, "組み直した回数: \(shape.thinCache.fillsThinned)")
     }
 
+    /// **保持した形の細い塗りの控えは、頂点の総量の上限を越えず、古いものから捨てる** (#1934 の
+    /// 反証 5)。鍵は描く画素へ写す 2x2 そのものなので、回して置き続ける形は塗りの数 × 置いた向きの
+    /// 数だけ鍵が増え、細長い楕円は 1 件が数百頂点になる。件数では切れないので、刻み直した頂点の
+    /// 控え (`rescaledCacheStaysWithinItsBudget`) と同じく頂点の総量で切る。
+    @Test("保持した形の細い塗りの控えは、頂点の総量の上限を越えず、古いものから捨てる (#1934)")
+    func thinFillCacheStaysWithinItsBudget() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let plain = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        var retained: Shape?
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(plain)
+            // 長さ 40・高さ 0.5 の楕円は、片 40 個 (240 頂点) で組む
+            retained = canvas.createShape {
+                for index in 0..<4 { canvas.ellipse(Float(index) * 30, 0, 40, 0.5) }
+            }
+            canvas.resetShader()
+        }
+        let shape = try #require(retained)
+        let budget = 2_000
+        shape.thinCache.thinFillBudget = budget
+        var largest = 0
+        func place(angle: Float) throws {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.translate(64, 64)
+                canvas.rotate(angle)
+                canvas.shape(shape)
+            }
+            largest = max(largest, shape.thinCache.thinFillVertexTotal)
+        }
+        // 置くたびに向きを変える (回る形)。どの回でも、控えている頂点の数は予算に収まる
+        let angles = (0..<30).map { Float($0) * 0.05 }
+        for angle in angles { try place(angle: angle) }
+        #expect(largest <= budget, "控えた頂点は最大 \(largest) 個 (予算 \(budget))")
+        #expect(shape.thinCache.thinFillVertexTotal > 0)
+        // 古いものは捨てられている — 最初の向きへ戻ると、組み直す
+        let before = shape.thinCache.fillsThinned
+        try place(angle: angles[0])
+        #expect(shape.thinCache.fillsThinned > before, "古い控えが残っている")
+        // 予算を広げれば、同じ向きへ戻っても組み直さない
+        shape.thinCache.thinFillBudget = ThinStrokeCache.defaultScaledBudget
+        try place(angle: angles[0])
+        let settled = shape.thinCache.fillsThinned
+        try place(angle: angles[0])
+        #expect(shape.thinCache.fillsThinned == settled)
+    }
+
     /// **細い線の端は、線に沿っては元の太さの半分だけ出る** (#1637)。
     ///
     /// 帯を描く画素 1 つへ広げても、端は広げない向き (線に沿う向き) に元の太さで出す。端まで
