@@ -511,6 +511,7 @@ UNSHOWN = {
     "createCapture": "カメラの絵は機材と許可に依り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。注入の形 (frames:) はテストが回す",
     "captureDevices": "一覧は繋がっている機材に依り、絵にならない",
     "audioInputDevices": "captureDevices と同じ理由",
+    "displays": "captureDevices と同じ理由 (繋がっているディスプレイに依る。全画面の作例は SketchSettings.fullScreen の説明文が持つ・#2020)",
     "assetURL": "資材の在処を返す口で、絵にならない。正しさはテストが見る",
     "loadShader": "ファイルから読む口で、見どころの「ファイルを直すと変わる」は自己完結したスケッチでは示せない",
     "loadComputation": "loadShader と同じ理由",
@@ -733,6 +734,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "output": (READING, "描き先 (RenderTarget) を返す。作るのは面の組み立て"),
     "captureDevices": (READING, "繋がっているカメラの一覧を値で返す"),
     "audioInputDevices": (READING, "繋がっている音の入力の機材の一覧を値で返す"),
+    "displays": (READING, "繋がっているディスプレイの一覧を値で返す"),
     "assetURL": (READING, "資材の在処を値で返す。読むのは作者"),
     # 資源
     "createGraphics": RESOURCE,

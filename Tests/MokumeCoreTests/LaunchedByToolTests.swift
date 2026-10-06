@@ -277,6 +277,32 @@ struct LaunchedByToolTests {
             #expect(application.driverDeparted(), "道具が管を畳んだのに気付かない")
         }
     }
+
+    /// **全画面の頼みに応えられないことを、黙らない** ([#2020])。作品の窓は道具が持つので
+    /// ([ADR-0032] 決定 1)、子からは全画面にできない。描く大きさはディスプレイから決まっている。
+    ///
+    /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
+    @Test("全画面を頼む見張りの子は、窓を道具が持つことを 1 度名乗る")
+    func aFullScreenChildSaysTheToolHoldsTheWindow() throws {
+        try withProductionFacet(manifest: Self.watchedManifest) { _ in
+            let pipe = Pipe()
+            let application = try SketchApplication(
+                sketch: FullScreenBlank(display: 2), gpu: RenderDevice(), render: nil,
+                displays: { SmallDisplays.both })
+            application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
+            defer { application.willTerminate() }
+            var said: [String] = []
+            application.announce = { said.append($0) }
+            application.toolInput = pipe.fileHandleForReading.fileDescriptor
+
+            application.resolveOutlet(owner: "mokume watch")
+
+            #expect(!application.endsAfterLastWindowClosed, "共有面の経路になっていない")
+            #expect(said.count == 1, "\(said)")
+            #expect(said.first?.contains("full screen on display 2 (Projector)") == true)
+            #expect(said.first?.contains("mokume watch holds the window") == true)
+        }
+    }
     /// **共有面を用意できずに窓へ倒れても、見張りの子は管を読む。** 管を引いたのは見張りで、
     /// 見張りが去ったことに気付く口はこの管しか無い ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
     /// 区画に目録を書けない形 (書き込めない区画) で倒す。

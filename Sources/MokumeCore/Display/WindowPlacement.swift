@@ -252,12 +252,7 @@ enum WindowPlacement {
     static func makeWindow(
         title: String, autosaveName: String, defaultSize: NSSize, nudge: NSSize = .zero
     ) -> NSWindow {
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: defaultSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered, defer: false)
-        window.title = title
-        window.isReleasedWhenClosed = false
+        let window = bareWindow(title: title, size: defaultSize)
         if !window.setFrameUsingName(autosaveName) {
             window.center()
             if nudge != .zero {
@@ -268,5 +263,77 @@ enum WindowPlacement {
         }
         window.setFrameAutosaveName(autosaveName)
         return window
+    }
+
+    /// 枠だけの窓。**閉じても自分を解放しない** (``makeWindow(title:autosaveName:defaultSize:nudge:)``
+    /// の 1 つ目の契約)。窓を立てる 2 つの口 (覚えた位置に立てる・全画面にする) が同じ契約を
+    /// 持つので、ここに 1 つ置く。
+    @MainActor
+    private static func bareWindow(title: String, size: NSSize) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = title
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
+    // MARK: - 全画面 (#2020)
+
+    /// 全画面にする窓を、選んだ画面に立てて返す。**位置は覚えない。面は載せない。**
+    ///
+    /// ## 位置を覚えない
+    ///
+    /// 置き場所はディスプレイの番号が決めるので、覚えた位置は要らない。覚えると、同じ実行
+    /// ファイルを画面ごとに 1 本ずつ起こしたとき、名前が 1 つ (``autosaveName``) なので最後に
+    /// 閉じた 1 本の位置を全員が取り合う ([#2020] の観察)。開く大きさの指定の記憶
+    /// (``requestKey(for:)``) にも触らない — 窓で開く作品に戻したとき、そちらの記憶が残っている。
+    ///
+    /// ## 全画面を抜けたときの大きさ
+    ///
+    /// 描く大きさを画面の点へ直し、その画面の使える範囲へ収めて中央に置く。描く大きさは全画面の
+    /// 中身の大きさなので、抜けた窓はほぼ使える範囲いっぱいになる。**全画面にするのは窓を前へ
+    /// 出した後** で、ここではしない (`toggleFullScreen` は画面に出ている窓にしか効かない)。
+    ///
+    /// - Parameters:
+    ///   - title: 窓の名前。
+    ///   - screen: 全画面にする画面。窓はこの画面に立つ。
+    ///   - canvas: 描く大きさ (画素)。
+    ///
+    /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
+    @MainActor
+    static func makeFullScreenWindow(title: String, on screen: NSScreen, canvas: NSSize) -> NSWindow {
+        let scale = max(screen.backingScaleFactor, 1)
+        let points = NSSize(width: canvas.width / scale, height: canvas.height / scale)
+        let window = bareWindow(title: title, size: points)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        let visible = screen.visibleFrame
+        window.setContentSize(fitted(points, within: window.contentRect(forFrameRect: visible).size))
+        window.setFrameOrigin(centred(window.frame.size, in: visible))
+        return window
+    }
+
+    /// 全画面に入った窓の中身が、描く大きさと食い違っていれば、その 1 行。合っていれば `nil`。
+    ///
+    /// 描く大きさは、全画面の中身の大きさを OS の読みから**先に**決めたものである
+    /// (`Display.fullScreenPoints`)。測っていない構成 (メニューバーを常に隠す設定の切り欠きの
+    /// ある画面など) で外れても、絵は窓に収めて出るので帯が付くだけで、気付けない。**黙って帯を
+    /// 付けない** ために、入った後の実物と突き合わせる。
+    ///
+    /// - Parameters:
+    ///   - content: 全画面に入った窓の中身の大きさ (点)。
+    ///   - scale: 窓の 1 点あたりの画素。
+    ///   - canvasWidth: 描く幅 (画素)。
+    ///   - canvasHeight: 描く高さ (画素)。
+    static func fullScreenMismatch(
+        content: NSSize, scale: CGFloat, canvasWidth: Int, canvasHeight: Int
+    ) -> String? {
+        let width = Int((content.width * scale).rounded())
+        let height = Int((content.height * scale).rounded())
+        guard width != canvasWidth || height != canvasHeight else { return nil }
+        return "Full screen shows \(width)×\(height) pixels, but the sketch draws "
+            + "\(canvasWidth)×\(canvasHeight) — the picture is fitted with bands. Please report "
+            + "this with the display at https://github.com/mokume-metal/mokume/issues"
     }
 }

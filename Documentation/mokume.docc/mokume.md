@@ -179,6 +179,13 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/usesFrameHistory``
 - ``Upscale``
 
+### 全画面で出す
+
+- ``SketchSettings/fullScreen(_:)``
+- ``SketchSettings/fullScreenDisplay``
+- ``Sketch/displays``
+- ``Display``
+
 ### 下地と色
 
 - ``Sketch/background(_:)-2yb9n``
