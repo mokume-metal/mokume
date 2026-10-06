@@ -19,6 +19,13 @@
 /// アルファの扱いは `blend` と下地を読む側とで揃えてある (乗算済みの source-over・
 /// [ADR-0011] 決定 4) ので、アルファ 0 の規律はこの 2 つで成立し、`replace` には及ばない。
 ///
+/// **塗りと輪郭を両方持つ形 (`rect` / `ellipse` / `arc` など) の 1 画素は、どのモードでも
+/// 面積で混ぜる。** 画素の中の塗りだけの所・塗りと輪郭の重なり・輪郭だけの所を、それぞれ
+/// 混ぜた色 (重なりは塗りの上に輪郭を混ぜた色) にし、面積の比で足す。だから塗りと輪郭が
+/// 接する継ぎ目で下地が透けない。そのどれかに丸ごと入る画素は、塗りだけの形と輪郭だけの
+/// 形をこの順に描いた絵と同じで、縁と継ぎ目の画素だけが違ってよい ([#1818])。
+/// `replace` の解き方は `replace` の説明にある。
+///
 /// **どのモードがどちらへ行くかの一覧の実体は `ShapePipeline.BlendStates` の doc**
 /// ([ADR-0001] 原則 9)。ここも `Shaders/Common.metal` の `mokume_composite` もそこを指す
 /// ([#887])。
@@ -27,6 +34,7 @@
 /// [#887]: https://github.com/mokume-metal/mokume/issues/887
 /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
 /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
+/// [#1818]: https://github.com/mokume-metal/mokume/issues/1818
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// - Note: **隔離の外に置く。** ライブラリ全体が main actor を既定の隔離としているので
