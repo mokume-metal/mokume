@@ -7,6 +7,16 @@ import simd
 
 @testable import MokumeCore
 
+/// 2 つの値が、最後の数桁 (4 ulp) を除いて同じか。
+///
+/// **`cos` と `sin` は、最適化の仕方で最後の桁が揺れる。** release では同じ引数の組が `sincos` 1 回に
+/// まとめられうるが、検査の側の式は別の文脈で組まれるので、同じ値が 1 ulp 違うことがある (専用機の
+/// release の検査で、1000 本のうち 26 本が違った。debug は全部一致する)。向きの式や乱数を引く
+/// 回数・順が違えば値は桁違いに外れるので、4 ulp はそれを見逃さない。
+private func sameValue(_ a: Float, _ b: Float) -> Bool {
+    abs(a - b) <= 4 * Float.ulpOfOne * max(abs(a), abs(b))
+}
+
 /// 粒の飛ぶ向き (``Heading``) の引き方 ([#1042])。**GPU を要らない** — 引いた向きそのものを見る。
 ///
 /// [#1042]: https://github.com/mokume-metal/mokume/issues/1042
@@ -92,7 +102,10 @@ struct HeadingTests {
         for _ in 0..<1000 {
             let direction = Heading.plane(-1...2.5).sample(using: &sampled)
             let angle = replica.value(from: -1, to: 2.5)
-            if direction != SIMD3(cos(angle), sin(angle), 0) { mismatches += 1 }
+            let same =
+                sameValue(direction.x, cos(angle)) && sameValue(direction.y, sin(angle))
+                && direction.z == 0
+            if !same { mismatches += 1 }
         }
         #expect(mismatches == 0)
     }
@@ -154,7 +167,8 @@ struct HeadingEmissionTests {
     nonisolated static let planes: [ClosedRange<Float>] = [0...(2 * Float.pi), 0.3...2.9, 1...1]
 
     /// [#1042] の完了条件 3。**種を決めて面内へ撒いた粒の値が、向きを `angle` の幅で渡していた
-    /// 頃の式と 1 ビットも違わない。** 物差しは同じ種から、出していた頃の順 (場所 → 向き 1 回 →
+    /// 頃の式と同じ — 速度の x・y は `cos` と `sin` の最後の桁の揺れ (`sameValue`) を
+    /// 除いて、ほかの値は 1 ビットも違わない。** 物差しは同じ種から、出していた頃の順 (場所 → 向き 1 回 →
     /// 速さ → 寿命 → 大きさ → 種) に引き直した値で、点の噴き口は場所に 1 回も引かない。
     /// 幅が 0 (`1...1`) でも向きに 1 回引く。最後の種まで一致すれば、列がずれていない。
     ///
@@ -171,9 +185,9 @@ struct HeadingEmissionTests {
             let extent = max(0, replica.value(from: 1, to: 4))
             let seed = replica.unitValue()
             let same =
-                particle.vx == cos(heading) * rate && particle.vy == sin(heading) * rate
-                && particle.vz == 0 && particle.span == span && particle.size == extent
-                && particle.seed == seed
+                sameValue(particle.vx, cos(heading) * rate)
+                && sameValue(particle.vy, sin(heading) * rate) && particle.vz == 0
+                && particle.span == span && particle.size == extent && particle.seed == seed
             if !same { mismatches.append(index) }
         }
         #expect(mismatches.isEmpty, "今までの式と違う粒: \(mismatches.prefix(5)) ほか")
