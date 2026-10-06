@@ -379,12 +379,78 @@ struct PixelGridTests {
 
     // MARK: - 塗りと輪郭の継ぎ目
 
-    @Test("塗りと輪郭が接する所で、下地が漏れない", arguments: [Float(1), 2, 3])
-    func fillAndStrokeLeaveNoSeam(_ weight: Float) throws {
-        // 白い塗りに白い輪郭。塗りの中心は画素の角、帯の中心は画面で半画素寄る
-        // (ADR-0039 決定 2) ので、2 つは片側で接する。**塗り ∪ 帯に丸ごと入る画素**は
-        // 真っ白でなければならない — 被覆率を無関係な重なりとして掛けると、接する側で
-        // 下地が透ける (太さ 1 で最悪 25%・太さ 2 で 12% 暗くなった)
+    /// 継ぎ目の漏れを数える地・塗り・輪郭 (どれも灰の線形の値)。
+    ///
+    /// **地が、塗りだけ・重なり・帯だけに丸ごと入る画素の色 (3 つ) の外にあるように選ぶ。**
+    /// 塗り ∪ 帯に丸ごと入る画素は、4 つの面積の和の読み (ADR-0039 決定 5) ではその 3 色の
+    /// 面積の重みつきの平均で、地は混ざらない。黒地に白では、加算の重なりは 2・差と除外の
+    /// 重なりは 0 (白と白が打ち消す)・比較暗と乗算はどこも 0 になり、地との差が読めない
+    /// 混ぜ方がある。線形でない 6 つは 3 色が 1 つに揃うように、加算と減算は 3 色の範囲の
+    /// 外に地が来るように選んだ:
+    ///
+    /// | 混ぜ方 | 地 | 塗り・輪郭 | 塗りだけ / 重なり / 帯だけ |
+    /// | --- | --- | --- | --- |
+    /// | 重ねる・比較明・スクリーン | 0 | 1 | 1 / 1 / 1 |
+    /// | 加算 | 0 | 1 | 1 / 2 / 1 |
+    /// | 減算 | 1 | 0.5 | 0.5 / 0 / 0.5 |
+    /// | 比較暗・乗算 | 1 | 0 | 0 / 0 / 0 |
+    /// | 差 | 1 | 2/3 | 1/3 / 1/3 / 1/3 |
+    /// | 除外 | 0 | 0.5 | 0.5 / 0.5 / 0.5 |
+    private func seamPalette(_ mode: BlendMode) -> (ground: Float, ink: Float) {
+        switch mode {
+        case .blend, .add, .lightest, .screen, .replace: return (0, 1)
+        case .subtract: return (1, 0.5)
+        case .darkest, .multiply: return (1, 0)
+        case .difference: return (1, 2.0 / 3)
+        case .exclusion: return (0, 0.5)
+        }
+    }
+
+    @Test(
+        "塗りと輪郭が接する所で、下地が漏れない",
+        arguments: [
+            BlendMode.blend, .add, .subtract, .lightest, .darkest,
+            .difference, .exclusion, .multiply, .screen,
+        ],
+        [Float(1), 2, 3])
+    func fillAndStrokeLeaveNoSeam(_ mode: BlendMode, _ weight: Float) throws {
+        // 塗りと輪郭が同じ色の円。塗りの中心は画素の角、帯の中心は画面で半画素寄る
+        // (ADR-0039 決定 2) ので、2 つは片側で接する。**塗り ∪ 帯に丸ごと入る画素**に
+        // 地が混ざってはならない — 被覆率を無関係な重なりとして掛けると、接する側で
+        // 下地が透ける (重ねる混ぜ方の太さ 1 で最悪 25%・太さ 2 で 12% 暗くなった)。
+        // 下地を読む混ぜ方も同じ (塗りと輪郭を別々に下地と混ぜていた頃は、比較明の
+        // 太さ 1 で最悪 24%・太さ 2 で 12% 暗くなった・#1818)
+        let (groundValue, inkValue) = seamPalette(mode)
+        let ground = LinearRGBA.linear(red: groundValue, green: groundValue, blue: groundValue)
+        let ink = LinearRGBA.linear(red: inkValue, green: inkValue, blue: inkValue)
+        // 塗りだけ・重なり・帯だけに丸ごと入る画素の色は、太い輪郭の矩形を塗り → 輪郭の順に
+        // 分けて描いて読む (式を写さない)。漏れは、画素の値が 3 色の範囲から地の側へ
+        // はみ出した分を、範囲の端から地までの距離で割ったもの
+        let whole: [Float] = try {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 48, height: 48)
+            try canvas.draw {
+                canvas.background(ground)
+                canvas.blendMode(mode)
+                canvas.strokeWeight(16)
+                canvas.fill(ink)
+                canvas.noStroke()
+                canvas.rect(8, 8, 32, 32)
+                canvas.noFill()
+                canvas.stroke(ink)
+                canvas.rect(8, 8, 32, 32)
+            }
+            let pixels = try canvas.target.readPixels()
+            // 帯は x = 0.5〜16.5、塗りは x = 8〜40
+            return [pixels[24, 24].red, pixels[12, 24].red, pixels[4, 24].red]
+        }()
+        let (low, high) = (Double(whole.min() ?? 0), Double(whole.max() ?? 0))
+        let groundLevel = Double(groundValue)
+        #expect(groundLevel < low || groundLevel > high, "\(mode): 地が 3 色の範囲の中にある (\(whole))")
+        func leak(_ value: Double) -> Double {
+            groundLevel < low
+                ? max(0, low - value) / (low - groundLevel)
+                : max(0, value - high) / (groundLevel - high)
+        }
         var worst = 0.0
         var total = 0.0
         var counted = 0
@@ -393,9 +459,10 @@ struct PixelGridTests {
             let radius = 10.3 + Float(index) * 0.37
             let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 48, height: 48)
             try canvas.draw {
-                canvas.background(black)
-                canvas.fill(white)
-                canvas.stroke(white)
+                canvas.background(ground)
+                canvas.blendMode(mode)
+                canvas.fill(ink)
+                canvas.stroke(ink)
                 canvas.strokeWeight(weight)
                 canvas.circle(center.x, center.y, radius * 2)
             }
@@ -415,17 +482,18 @@ struct PixelGridTests {
                         }
                     }
                     guard inside else { continue }
-                    let leak = 1 - Double(pixels.components[(y * 48 + x) * 4])
-                    worst = max(worst, leak)
-                    total += leak
+                    let leaked = leak(Double(pixels.components[(y * 48 + x) * 4]))
+                    worst = max(worst, leaked)
+                    total += leaked
                     counted += 1
                 }
             }
         }
         // 太さ 1 は帯が 1 画素幅しか無く、縁が平行とみなせない曲がり目で 6% ほど残る
         // (直す前の main の円も同じ程度に残していた)
-        #expect(worst < (weight < 1.5 ? 0.08 : 0.02), "継ぎ目で下地が漏れる: 最悪 \(worst)")
-        #expect(total / Double(counted) < 0.001, "継ぎ目で下地が漏れる: 平均 \(total / Double(counted))")
+        #expect(worst < (weight < 1.5 ? 0.08 : 0.02), "\(mode): 継ぎ目で下地が漏れる: 最悪 \(worst)")
+        #expect(
+            total / Double(counted) < 0.001, "\(mode): 継ぎ目で下地が漏れる: 平均 \(total / Double(counted))")
     }
 
     @Test("塗りを足しても、輪郭で塗り切られる画素は輪郭の色のまま")
