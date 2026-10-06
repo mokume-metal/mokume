@@ -23,6 +23,11 @@
   「全部を撮り終えた後の traceback」だと、何が足りないかも入れ方も出ない。見るだけの
   既定の実行が道具を探さないことも、ここで固定する
 
+- **公開メンバが例か宣言を持つ** (#2116) — 例も撮れない宣言も無く許容一覧にも無い口を
+  ファイルと行つきで名指しして赤にすること・許容一覧の口に例か宣言が付いたら赤にすること
+  (一覧が増える方向に動けない)・拾えた口が 0 なら赤にすること。**どれも壊れ方が無言**で、
+  緩むと例の無い口が黙って増える。「後で撮る」の印 (鍵を持たない人用) の扱いもここで固定する
+
 - **前後の木の描き比べ** (#1986) — 画素の数え方・両方の木に在る絵だけを比べること・
   名指しの形・警告だけで止めないこと。**実装だけが変わって絵が古くなっても機械が何も
   言わない**のが、これを足した理由で、ここが緩むと無言に戻る
@@ -722,6 +727,579 @@ class NeededToolsTest(unittest.TestCase):
             env={**os.environ, "PATH": path},
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+
+# ---------------------------------------------------------------- 公開メンバが例か宣言を持つか (#2116)
+
+MEMBER_DIRECTORY = "Sources/MokumeCore/Sketch"
+MEMBER_FILE = f"{MEMBER_DIRECTORY}/Sketch+Foo.swift"
+
+# 宣言が公開される説明文に出ないこと (ADR-0027 決定 2) は、説明文を読む側 (api-surface.py の
+# `slash_doc`) で確かめる
+_api_spec = importlib.util.spec_from_file_location("api_surface", REPO / "scripts" / "api-surface.py")
+api_surface = importlib.util.module_from_spec(_api_spec)
+_api_spec.loader.exec_module(api_surface)
+
+
+def swift(*members):
+    """`extension Sketch` の本体に口を並べたソース。口は 4 字下げで書く。"""
+    return "extension Sketch {\n" + "\n".join(members) + "}\n"
+
+
+def line_of(source, needle):
+    """`needle` を含む最初の行の番号 (1 起点)。期待する行を数え間違えないために使う。"""
+    for number, line in enumerate(source.split("\n"), start=1):
+        if needle in line:
+            return number
+    raise AssertionError(f"{needle!r} が無い")
+
+
+def pictured(name, parameters="_ size: some ScalarConvertible", extra=""):
+    """例と絵 (囲み) を持つ口。`extra` は説明文と宣言の間に挟む行 (`//` の宣言など)。"""
+    return (
+        f"    /// {name} を描く。\n"
+        "    ///\n"
+        "    /// ```swift\n"
+        "    /// circle(200, 150, 160)\n"
+        "    /// ```\n"
+        f"    /// <!-- shot: {name} の絵 -->\n"
+        "    /// <!-- /shot -->\n"
+        f"{extra}"
+        f"    public func {name}({parameters}) {{}}\n"
+    )
+
+
+def bare(name, parameters="_ size: some ScalarConvertible", extra=""):
+    """説明文だけの口 (例も絵も無い)。"""
+    return f"    /// {name} を置く。\n{extra}    public func {name}({parameters}) {{}}\n"
+
+
+# 参照の面の見出し (`name(labels)`) と型の並び。許容一覧の綴りになる
+PLAIN = bare("ellipsoid", "_ size: some ScalarConvertible, _ detail: Int = 24")
+PLAIN_KEY = "ellipsoid(_:_:) (some ScalarConvertible, Int)"
+
+
+class MemberTestCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.root / MEMBER_DIRECTORY).mkdir(parents=True)
+
+    def write(self, source, name="Sketch+Foo.swift"):
+        (self.root / MEMBER_DIRECTORY / name).write_text(source, encoding="utf-8")
+
+    def members(self):
+        return shots.collect_members(self.root)
+
+    def gap(self, key, name="Sketch+Foo.swift"):
+        return f"{MEMBER_DIRECTORY}/{name}: {key}"
+
+    def judge(self, source=None, gaps=""):
+        """検査を走らせて指摘の一覧を返す。**印字は伏せる** (本物の件数と見分けが付かなくなるため)。"""
+        if source is not None:
+            self.write(source)
+        table, found = shots.load_gaps(gaps)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            problems = found + shots.check_members(self.members(), table)
+        self.output = out.getvalue()
+        return problems
+
+
+class MemberCoverageTest(MemberTestCase):
+    """3〜5 — 名指しして赤にする・一覧が増える方向に動けない・空回りを隠さない。"""
+
+    # ---- 3: 例も宣言も許容一覧も無い口
+
+    def test_例も宣言も許容一覧も無い口をファイルと行つきで名指しして赤い(self):
+        source = swift(PLAIN)
+        problems = self.judge(source)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{MEMBER_FILE}:{line_of(source, 'public func ellipsoid')}", problems[0])
+        self.assertIn(PLAIN_KEY, problems[0])
+        self.assertIn("許容一覧にも無い", problems[0])
+
+    def test_説明文だけの口を足すと赤くなる(self):
+        """#2116 の例そのもの。`///` だけで足した口は、以前は `ok` を返していた。"""
+        self.assertEqual(self.judge(swift(pictured("circle"))), [])
+        problems = self.judge(swift(pictured("circle"), bare("ellipsoid")))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("ellipsoid(_:)", problems[0])
+
+    def test_例と絵を持つ口は通る(self):
+        self.assertEqual(self.judge(swift(pictured("circle"))), [])
+        self.assertIn("例と絵 1", self.output)
+
+    def test_許容一覧に載っている口は通る(self):
+        self.assertEqual(self.judge(swift(PLAIN), gaps=self.gap(PLAIN_KEY)), [])
+        self.assertIn("許容一覧 1", self.output)
+
+    def test_許容一覧の一致はファイルも見る(self):
+        """同じ綴りの口でも、別のファイルの行は載っていないものとして赤にする。"""
+        problems = self.judge(swift(PLAIN), gaps=self.gap(PLAIN_KEY, name="Sketch+Bar.swift"))
+        self.assertTrue(any("許容一覧にも無い" in p for p in problems), problems)
+        self.assertTrue(any("ソースに無い" in p for p in problems), problems)
+
+    # ---- 4: 許容一覧に載ったまま、例か宣言が付いた口
+
+    def test_許容一覧の口に例が付いたのに消していなければ赤い(self):
+        gaps = "# 先頭の注釈は読まない\n\n" + self.gap("circle(_:) (some ScalarConvertible)")
+        problems = self.judge(swift(pictured("circle")), gaps=gaps)
+        self.assertEqual(len(problems), 1, problems)
+        # 一覧の側の行を名指しする (消す行が分かる)
+        self.assertIn(f"scripts/example-shots-gaps.txt:{line_of(gaps, 'circle')}", problems[0])
+        self.assertIn("許容一覧から消す", problems[0])
+
+    def test_許容一覧の口に撮れない宣言が付いたのに消していなければ赤い(self):
+        source = swift(bare("ellipsoid", extra="    // shot: 撮れない 値を返すだけで絵にならない\n"))
+        problems = self.judge(source, gaps=self.gap("ellipsoid(_:) (some ScalarConvertible)"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("許容一覧から消す", problems[0])
+
+    def test_消せば通る(self):
+        self.assertEqual(self.judge(swift(pictured("circle")), gaps=""), [])
+
+    def test_ソースに無い口が許容一覧に載っていれば赤い(self):
+        gaps = self.gap(PLAIN_KEY) + "\n" + self.gap("gone(_:) (Int)")
+        problems = self.judge(swift(PLAIN), gaps=gaps)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("scripts/example-shots-gaps.txt:2", problems[0])
+        self.assertIn("ソースに無い", problems[0])
+
+    def test_引数の型を変えた口は一覧の行も書き直させる(self):
+        """綴りが変われば、新しい口と古い行の両方が赤になる。数を足さずに書き直せば通る。"""
+        renamed = bare("ellipsoid", "_ size: Float")
+        problems = self.judge(swift(renamed), gaps=self.gap(PLAIN_KEY))
+        self.assertEqual(len(problems), 2, problems)
+        self.assertEqual(self.judge(swift(renamed), gaps=self.gap("ellipsoid(_:) (Float)")), [])
+
+    def test_読めない行と重なった行は赤い(self):
+        table, problems = shots.load_gaps("これは口の行ではない\n" + self.gap(PLAIN_KEY) + "\n" + self.gap(PLAIN_KEY))
+        self.assertEqual(len(table), 1)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("scripts/example-shots-gaps.txt:1", problems[0])
+        self.assertIn("同じ口が重なっている", problems[1])
+
+    # ---- 5: 空回り
+
+    def test_拾えた口が1本も無ければ赤い(self):
+        problems = self.judge("")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("1 本も拾えなかった", problems[0])
+
+    def test_ファイルが1つも無くても赤い(self):
+        table, _ = shots.load_gaps("")
+        problems = shots.check_members(self.members(), table)
+        self.assertIn("1 本も拾えなかった", problems[0])
+
+    def test_Sketch_以外の拡張だけなら赤い(self):
+        problems = self.judge("extension Canvas {\n    public func ellipsoid() {}\n}\n")
+        self.assertIn("1 本も拾えなかった", problems[0])
+
+    def test_一覧が空でなくても拾えなければ空回りとして赤い(self):
+        """一覧の行が全部「ソースに無い」と言われる代わりに、先に拾えていないことを名乗る。"""
+        problems = self.judge("", gaps=self.gap(PLAIN_KEY))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("1 本も拾えなかった", problems[0])
+
+    # ---- 拾い方
+
+    def test_公開でない口は数えない(self):
+        source = swift(
+            "    func hidden() {}\n",
+            "    internal func inside() {}\n",
+            "    private func secret() {}\n",
+            "    fileprivate func quiet() {}\n",
+            "    package func shared() {}\n",
+            PLAIN,
+        )
+        self.write(source)
+        self.assertEqual([m.key for m in self.members()], [PLAIN_KEY])
+
+    def test_public_extension_の口は既定で公開_private_は除く(self):
+        source = (
+            "public extension Sketch {\n"
+            "    func shown() {}\n"
+            "    private func hidden() {}\n"
+            "    internal func inside() {}\n"
+            "}\n"
+        )
+        self.write(source)
+        self.assertEqual([m.key for m in self.members()], ["shown()"])
+
+    def test_本体の直下だけを拾う(self):
+        """入れ子の型と、関数の中の宣言は口ではない。"""
+        source = (
+            "public struct Outside {\n    public func notMine() {}\n}\n"
+            "extension Sketch {\n"
+            "    public func mine() {\n"
+            "        func local() {}\n"
+            '        let braces = "{ {"\n'
+            "    }\n"
+            "    public struct Nested {\n        public func deeper() {}\n    }\n"
+            "    public func after() {}\n"
+            "}\n"
+        )
+        self.write(source)
+        self.assertEqual([m.title for m in self.members()], ["mine()", "after()"])
+
+    def test_extension_の波括弧が次の行にあっても拾う(self):
+        self.write("extension Sketch\n{\n    public func shown() {}\n}\n")
+        self.assertEqual([m.key for m in self.members()], ["shown()"])
+
+    def test_同名の_overload_は引数の型で見分ける(self):
+        source = swift(
+            bare("fill", "_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255"),
+            bare("fill", "_ color: LinearRGBA, _ alpha: some ScalarConvertible"),
+        )
+        problems = self.judge(source)
+        self.assertEqual(len(problems), 2, problems)
+        keys = [m.key for m in self.members()]
+        self.assertEqual(len(set(keys)), 2)
+        self.assertIn("fill(_:_:) (LinearRGBA, some ScalarConvertible)", keys)
+
+    def test_複数行の宣言と既定値と入れ子の型を読む(self):
+        source = swift(
+            "    /// 粒を出す。\n"
+            "    public func emit(\n"
+            "        _ particles: Particles,\n"
+            "        rate: Float = 1,\n"
+            "        life: ClosedRange<Float> = 0...1,\n"
+            "        body: (Int, [String: Float]) -> Void,\n"
+            "        tint: LinearRGBA? = nil,\n"
+            "        _ forces: Force...\n"
+            "    ) {}\n"
+        )
+        self.write(source)
+        (member,) = self.members()
+        self.assertEqual(member.title, "emit(_:rate:life:body:tint:_:)")
+        self.assertEqual(
+            member.types,
+            ("Particles", "Float", "ClosedRange<Float>", "(Int, [String: Float]) -> Void",
+             "LinearRGBA?", "Force..."),
+        )
+
+    def test_引数の無い口と変数を読む(self):
+        source = swift(
+            bare("noLoop", parameters=""),
+            "    /// 画素。\n    public var pixels: Pixels { Pixels() }\n",
+        )
+        self.write(source)
+        self.assertEqual([m.key for m in self.members()], ["noLoop()", "pixels"])
+
+    def test_読めない公開メンバは黙って落とさず名乗って落ちる(self):
+        """落とすと、その口は検査の外に出る。"""
+        self.write(swift("    /// 組。\n    public var (a, b) = (1, 2)\n"))
+        with self.assertRaises(SystemExit) as caught:
+            self.members()
+        self.assertIn(f"{MEMBER_FILE}:3", str(caught.exception))
+
+    def test_属性と二重斜線の行を跨いで説明文に着く(self):
+        source = swift(
+            "    /// 円を塗る。\n"
+            "    // 覚え書き\n"
+            "    @discardableResult\n"
+            "    public func circle() -> Int { 0 }\n"
+        )
+        self.write(source)
+        (member,) = self.members()
+        self.assertTrue(member.has_doc)
+
+    def test_空行で離れた説明文は説明文ではない(self):
+        self.write(swift("    /// 離れた説明文。\n\n    public func circle() {}\n"))
+        (member,) = self.members()
+        self.assertFalse(member.has_doc)
+
+    def test_実物のソースから口が拾える(self):
+        """拾い方が壊れたときに、許容一覧との突き合わせより先に気付けるように。"""
+        members = shots.collect_members(REPO)
+        self.assertGreater(len(members), 100)
+        keys = {(m.path.name, m.key) for m in members}
+        self.assertIn(("Sketch+Loop.swift", "noLoop()"), keys)
+        self.assertIn(("Sketch+Color.swift", "fill(_:_:) (LinearRGBA, some ScalarConvertible)"), keys)
+
+
+class MemberStatementTest(MemberTestCase):
+    """1・2 — 撮れない宣言と、別の口の絵への参照。"""
+
+    # ---- 1: 撮れない宣言
+
+    def test_理由つきの撮れない宣言は通る(self):
+        source = swift(bare("save", extra="    // shot: 撮れない 結果が絵ではなくファイルになる\n"))
+        self.assertEqual(self.judge(source), [])
+        self.assertIn("撮れない宣言 1", self.output)
+
+    def test_理由の無い撮れない宣言は赤い(self):
+        source = swift(bare("save", extra="    // shot: 撮れない\n"))
+        problems = self.judge(source)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{MEMBER_FILE}:{line_of(source, '// shot: 撮れない')}", problems[0])
+        self.assertIn("理由が無い", problems[0])
+
+    def test_理由が空白だけの宣言も赤い(self):
+        problems = self.judge(swift(bare("save", extra="    // shot: 撮れない   \n")))
+        self.assertIn("理由が無い", problems[0])
+
+    def test_宣言は公開される説明文に出ない(self):
+        """ADR-0027 決定 2。宣言は `//` の行なので、`slash_doc` は `///` を説明文と読み続ける。"""
+        source = swift(bare("save", extra="    // shot: 撮れない 結果がファイルになる\n"))
+        self.write(source)
+        path = self.root / MEMBER_FILE
+        line = line_of(source, "public func save") - 1
+        symbol = {"location": {"uri": path.as_uri(), "position": {"line": line}}}
+        self.assertEqual(api_surface.slash_doc(symbol), "")
+
+    def test_宣言は撮影の記録と並べて置ける(self):
+        extra = "    // shot: 1 snippet=0a1b2c3d\n    // shot: 撮れない 値を返すだけ\n"
+        self.assertEqual(self.judge(swift(bare("save", extra=extra))), [])
+
+    def test_知らない宣言は赤い(self):
+        """綴りの誤りが黙って普通のコメントになると、「宣言が無い」としか言われない。"""
+        source = swift(bare("save", extra="    // shot: 取れない 結果がファイルになる\n"))
+        problems = self.judge(source)
+        self.assertTrue(any("知らない宣言" in p and "取れない" in p for p in problems), problems)
+
+    def test_絵を持つ口に撮れない宣言を付けると赤い(self):
+        source = swift(pictured("circle", extra="    // shot: 撮れない 理由\n"))
+        problems = self.judge(source)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("どちらかが古い", problems[0])
+
+    def test_宣言は_1_つだけ(self):
+        extra = "    // shot: 撮れない 理由\n    // shot: 撮れない もう 1 つ\n"
+        problems = self.judge(swift(pictured("circle"), bare("save", extra=extra)))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("宣言は 1 つだけ", problems[0])
+
+    def test_説明文の無い口に宣言は置けない(self):
+        """`//` の宣言が説明文として読まれ、説明文の検査から消える抜け道を作らない。"""
+        source = swift("    // shot: 撮れない 理由\n    public func save() {}\n")
+        problems = self.judge(source)
+        self.assertTrue(any("説明文" in p for p in problems), problems)
+
+    # ---- 2: 別の口の絵への参照
+
+    def references(self, target, *others):
+        return swift(
+            pictured("circle"),
+            bare("disc", extra=f"    // shot: 参照 {target}\n"),
+            *others,
+        )
+
+    def test_別の口の絵を参照できる(self):
+        self.assertEqual(self.judge(self.references("circle(_:)")), [])
+        self.assertIn("参照 1", self.output)
+
+    def test_型まで添えた綴りで参照できる(self):
+        self.assertEqual(self.judge(self.references("circle(_:) (some ScalarConvertible)")), [])
+
+    def test_参照先が無ければ赤い(self):
+        source = self.references("ellipse(_:)")
+        problems = self.judge(source)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{MEMBER_FILE}:{line_of(source, '// shot: 参照')}", problems[0])
+        self.assertIn("ellipse(_:) が無い", problems[0])
+
+    def test_参照先が絵を持たなければ赤い(self):
+        source = swift(bare("circle"), bare("disc", extra="    // shot: 参照 circle(_:)\n"))
+        problems = self.judge(source, gaps=self.gap("circle(_:) (some ScalarConvertible)"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("絵を持たない", problems[0])
+
+    def test_参照の参照は赤い(self):
+        """絵は 1 歩で着く。参照を連ねると、どれが絵を持つのかが読めなくなる。"""
+        source = swift(
+            pictured("circle"),
+            bare("disc", extra="    // shot: 参照 circle(_:)\n"),
+            bare("ring", extra="    // shot: 参照 disc(_:)\n"),
+        )
+        problems = self.judge(source)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("disc(_:) (some ScalarConvertible) が絵を持たない", problems[0])
+
+    def test_自分自身は参照先にならない(self):
+        source = swift(bare("disc", extra="    // shot: 参照 disc(_:)\n"))
+        problems = self.judge(source)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("が無い", problems[0])
+
+    def test_名前が複数の口に当たるときは型まで添えさせる(self):
+        two = swift(
+            pictured("fill", "_ gray: some ScalarConvertible, _ alpha: Int"),
+            pictured("fill", "_ color: LinearRGBA, _ alpha: Int"),
+            bare("tint", extra="    // shot: 参照 fill(_:_:)\n"),
+        )
+        problems = self.judge(two)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("複数ある", problems[0])
+        precise = two.replace("参照 fill(_:_:)", "参照 fill(_:_:) (LinearRGBA, Int)")
+        self.assertEqual(self.judge(precise), [])
+
+    def test_参照先は別のファイルでもよい(self):
+        self.write(swift(pictured("circle")), name="Sketch+Bar.swift")
+        source = swift(bare("disc", extra="    // shot: 参照 circle(_:)\n"))
+        self.assertEqual(self.judge(source), [])
+
+    def test_参照先の書かれていない参照は赤い(self):
+        problems = self.judge(swift(pictured("circle"), bare("disc", extra="    // shot: 参照\n")))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("参照先が無い", problems[0])
+
+
+class DeferredShotTest(unittest.TestCase):
+    """6 — Gyazo の鍵を持たない人が、「後で撮る」の印で検査を通す。"""
+
+    MARK = "    // shot: 後で撮る\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.root / "Sources").mkdir()
+        self.path = self.root / "Sources" / "Sketch.swift"
+        self.write(SOURCE.replace("    public func circle() {}", self.MARK + "    public func circle() {}"))
+
+    def write(self, source):
+        self.path.write_text(source, encoding="utf-8")
+
+    def collect(self):
+        return shots.collect(self.root)
+
+    def check(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            problems = shots.check(self.collect())
+        self.output = out.getvalue()
+        return problems
+
+    def test_印を読む(self):
+        found = self.collect()
+        self.assertEqual({shot.deferred_line for shot in found}, {line_of(self.path.read_text(encoding="utf-8"), "後で撮る") - 1})
+
+    def test_印があれば撮っていなくても赤くならない(self):
+        self.assertEqual(self.check(), [])
+
+    def test_印が無ければ撮っていないのは赤い(self):
+        self.write(SOURCE)
+        problems = self.check()
+        self.assertEqual(len(problems), 2, problems)
+        self.assertTrue(all("まだ撮っていない" in p for p in problems), problems)
+
+    def test_印で入った口は出力で追える(self):
+        self.check()
+        number = line_of(self.path.read_text(encoding="utf-8"), "後で撮る")
+        self.assertIn("後で撮る: 2 本", self.output)
+        self.assertIn(f"Sources/Sketch.swift:{number}", self.output)
+        self.assertIn("中央の橙色の円", self.output)
+
+    def test_印が無ければ出力に後で撮るを出さない(self):
+        self.write(SOURCE)
+        self.check()
+        self.assertNotIn("後で撮る", self.output)
+
+    def test_撮れているのに印が残っていれば赤い(self):
+        shots.write_back(self.root, self.collect(), {s.name: f"https://example.invalid/{s.name}.png" for s in self.collect()})
+        self.write(self.path.read_text(encoding="utf-8").replace(
+            "    public func circle() {}", self.MARK + "    public func circle() {}"))
+        problems = self.check()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("印が残っている", problems[0])
+        self.assertIn(f"Sources/Sketch.swift:{line_of(self.path.read_text(encoding='utf-8'), '後で撮る')}", problems[0])
+
+    def test_例を書き換えたあとも印があれば撮り直しを待てる(self):
+        found = self.collect()
+        shots.write_back(self.root, found, {s.name: f"https://example.invalid/{s.name}.png" for s in found})
+        text = self.path.read_text(encoding="utf-8")
+        self.write(text.replace("circle(200, 150, 160)", "circle(200, 150, 200)").replace(
+            "    public func circle() {}", self.MARK + "    public func circle() {}"))
+        self.assertEqual(self.check(), [])
+        self.assertIn("後で撮る: 1 本", self.output)
+
+    def test_書き戻しは印を外し_ほかの二重斜線の行は残す(self):
+        note = "    // 覚え書き: この口は後で畳む\n"
+        self.write(SOURCE.replace("    public func circle() {}", note + self.MARK + "    public func circle() {}"))
+        found = self.collect()
+        urls = {s.name: f"https://example.invalid/{s.name}.png" for s in found}
+        self.assertEqual(shots.write_back(self.root, found, urls), 1)
+        text = self.path.read_text(encoding="utf-8")
+        self.assertNotIn("後で撮る", text)
+        self.assertIn(note.strip(), text)
+        self.assertIn("// shot: 1 snippet=", text)
+        self.assertEqual(self.check(), [])
+        self.assertNotIn("後で撮る", self.output)
+        # 2 回目は何も動かない (べき等)
+        self.assertEqual(shots.write_back(self.root, self.collect(), urls), 0)
+
+    def test_記録の前に印があっても古い記録を残さない(self):
+        found = self.collect()
+        urls = {s.name: f"https://example.invalid/{s.name}.png" for s in found}
+        shots.write_back(self.root, found, urls)
+        text = self.path.read_text(encoding="utf-8")
+        self.write(text.replace("    // shot: 1 snippet=", self.MARK + "    // shot: 1 snippet=", 1))
+        found = self.collect()
+        shots.write_back(self.root, found, urls)
+        text = self.path.read_text(encoding="utf-8")
+        self.assertEqual(text.count("// shot: 1 snippet="), 1)
+        self.assertEqual(text.count("// shot: 2 snippet="), 1)
+        self.assertNotIn("後で撮る", text)
+
+class DeferredMemberTest(MemberTestCase):
+    """6 — 口の側から見た「後で撮る」の印。"""
+
+    MARK = DeferredShotTest.MARK
+
+    def test_印の付いた口は例と絵を持つ口として数える(self):
+        self.assertEqual(self.judge(swift(pictured("circle", extra=self.MARK))), [])
+        self.assertIn("例と絵 1", self.output)
+
+    def test_印は撮る囲みの無い口には付けられない(self):
+        """許容一覧への追加や撮れない宣言の代わりにはならない — 撮れば絵になる口にしか付かない。"""
+        source = swift(bare("ellipsoid", extra=self.MARK))
+        problems = self.judge(source, gaps=self.gap("ellipsoid(_:) (some ScalarConvertible)"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{MEMBER_FILE}:{line_of(source, '後で撮る')}", problems[0])
+        self.assertIn("撮る囲みが無い", problems[0])
+
+    def test_印の付いた口が許容一覧に残っていれば赤い(self):
+        source = swift(pictured("circle", extra=self.MARK))
+        problems = self.judge(source, gaps=self.gap("circle(_:) (some ScalarConvertible)"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("許容一覧から消す", problems[0])
+
+
+class MemberEntryTest(unittest.TestCase):
+    """入口 — 赤なら書き方を添えて落ちる。実物の許容一覧は緑のまま通る。"""
+
+    def run_main(self, member_problems):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(shots, "members_problems", lambda root: member_problems), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shots.main([], which=lambda name: None)
+        return code, err.getvalue()
+
+    def test_口の指摘があれば落ちて書き方を添える(self):
+        code, err = self.run_main(["Sources/X.swift:3: foo() に例も撮れない宣言も無く、許容一覧にも無い"])
+        self.assertEqual(code, 1)
+        self.assertIn("Sources/X.swift:3", err)
+        for word in ("// shot: 撮れない <理由>", "// shot: 参照 <口>", "// shot: 後で撮る", "へは足さない"):
+            self.assertIn(word, err)
+
+    def test_口の指摘が無ければ通る(self):
+        code, err = self.run_main([])
+        self.assertEqual(code, 0, err)
+
+    def test_実物の許容一覧は全部の口に当たっている(self):
+        """一覧の行がソースに 1 つ残らず当たり、載っていない穴も無い。**一覧が古びれば赤くなる。**"""
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(shots.members_problems(REPO), [])
+
+    def test_許容一覧が無ければ赤い(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            problems = shots.members_problems(Path(tmp))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("許容一覧", problems[0])
 
 
 if __name__ == "__main__":

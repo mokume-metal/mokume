@@ -214,6 +214,15 @@ def refute_section(text="| 指摘 | 根拠 | 応え |\n| --- | --- | --- |\n"
     return f"\n\n## 反証\n\n{text}\n"
 
 
+def adr_refs_outside_reasons(text):
+    """「(… 理由: ADR-00NN …)」の括弧の外に出ている ADR の番号 (#2139)。
+
+    差し戻しや案内の文面は、ADR を開かなくても何をすればよいかが決まるように書き、
+    ADR の番号は理由を辿りたい人のための任意の参照として括弧の中に添える。
+    """
+    return re.findall(r"ADR-\d{4}", re.sub(r"\([^()]*理由:[^()]*\)", "", text))
+
+
 class ReviewGateTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -393,6 +402,18 @@ class ReviewGateTest(unittest.TestCase):
         text = TEMPLATE.read_text(encoding="utf-8")
         purpose = text.split("## 目的", 1)[1].split("\n## ", 1)[0]
         self.assertNotIn("Closes #", purpose)
+
+    def test_the_template_says_what_to_do_without_opening_an_adr(self):
+        """テンプレートの案内は、ADR を開かなくても書く内容が決まる (#2139)。
+
+        ADR の番号は「(理由: ADR-00NN)」の任意の参照に留め、未採択の選択や反証の応えのように
+        番号を辿らないと決まらなかった行動は、案内の本文が言い切る。
+        """
+        text = TEMPLATE.read_text(encoding="utf-8")
+        self.assertEqual(adr_refs_outside_reasons(text), [], "ADR の番号が理由の括弧の外にある")
+        self.assertSays(text, "Issue に具体例・選択肢・推奨を示して人の判断を先に待つ")
+        self.assertSays(text, "応えは 3 通り: 直した / 起票した #N / 当たらない: 理由")
+        self.assertIn(".claude/skills/bug-refute/", text)
 
     def test_no_issue_pr_is_exempt_from_the_table(self):
         # 閉じる Issue が無ければ、対応する完了条件も無い
@@ -605,6 +626,57 @@ class ReviewGateTest(unittest.TestCase):
         self.assertNotIn("stall-watch", err)
         # 単位の無い言い方 (旧: Actions の re-run か空 push) に戻っていない
         self.assertNotIn(self.squash("Actions の re-run か空 push"), self.squash(err))
+
+    # --- 差し戻しの文面は ADR を開かなくても行動できる (#2139) -------------------
+    #
+    # 差し戻しを読んだエージェントが ADR の番号を辿ると、1 回の差し戻しで 1〜2 万字の文書を
+    # 読みに行く。文面だけで何をすればよいかが決まり、ADR の番号は「(理由: ADR-00NN)」の
+    # 任意の参照として添えるだけにする (AGENTS.md が ADR を作業のために読まない文書とした
+    # のと同じ向き)。見出しの行 (差し戻しの理由) は ADR を引かずに言い切る
+
+    def every_blocked_message(self):
+        """差し戻しの文面すべて (共通の末尾を持つ 4 つ + 反証の節が空 + verify の不在)。"""
+        messages = self.blocked_messages()
+        empty = self.run_gate(
+            pr_json(body="Closes #12" + refute_section("")), issue_json(TRIAGED, issue_type="Bug")
+        )
+        messages["反証の節が空"] = empty.stderr
+        no_label = self.run_gate(pr_json(), issue_json("status: in progress"))
+        messages["verify の不在"] = no_label.stderr
+        return messages
+
+    def test_a_blocked_message_names_an_adr_only_as_an_optional_reason(self):
+        for name, err in self.every_blocked_message().items():
+            with self.subTest(name):
+                self.assertEqual(adr_refs_outside_reasons(err), [], "ADR の番号が理由の括弧の外にある:\n" + err)
+                self.assertNotIn("ADR-", err.splitlines()[0], "差し戻しの理由の行が ADR を引いている")
+
+    def test_the_missing_table_message_shows_the_table_to_write(self):
+        err = self.blocked_messages()["対応表"]
+        self.assertIn("### Closes #123", err)
+        self.assertIn("| 完了条件 | 着手時の現況 | 確かめたこと |", err)
+        self.assertSays(err, "見ているのは番号が現れることだけで、中身の正しさは見ていません")
+        self.assertSays(err, "Issue を閉じない例外 PR なら no-issue ラベルを付けてください")
+
+    def test_the_missing_refute_message_says_what_to_write_and_who_may_write_it(self):
+        for name in ("反証", "反証の節が空"):
+            err = self.every_blocked_message()[name]
+            with self.subTest(name):
+                self.assertSays(err, "## 反証")
+                for answer in ("直した", "起票した #N", "当たらない: 理由"):
+                    self.assertSays(err, answer)
+                self.assertSays(err, "プランも完了条件も渡されないサブエージェント")
+                # 自分で兼ねない (プランを知る目は独立ではない) は、番号も SKILL も辿らずに読める
+                self.assertSays(err, "自分で兼ねてはいけません")
+                self.assertIn(".claude/skills/bug-refute/SKILL.md", err)
+                self.assertSays(err, "指摘が 1 件も無かったなら、そう書けば空ではありません")
+
+    def test_the_missing_verify_label_message_says_who_may_attach_it(self):
+        """印を付けてよいのは起票者だけ。他人の Issue には、自分で付けず付与を頼む (AGENTS.md「進め方」2)。"""
+        err = self.every_blocked_message()["verify の不在"]
+        self.assertSays(err, "verify: triaged を付けてよいのは完了条件を知る起票者だけ")
+        self.assertSays(err, "他の人が起票した Issue なら自分では付けず")
+        self.assertSays(err, "付与を起票者 (メンテナ) に頼む")
 
     # --- 5. 変更要求 -------------------------------------------------------
 

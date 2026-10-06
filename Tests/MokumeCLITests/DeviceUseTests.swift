@@ -165,4 +165,67 @@ struct DeviceUseTests {
 
         #expect(throws: Never.self) { try DeviceUse.check(in: root, identity: identity) }
     }
+
+    // MARK: - マイク (#1978)
+
+    @Test("マイクを開く呼び出しを見つける")
+    func aMicrophoneCallIsFound() {
+        #expect(DeviceUse.opensMicrophone("mic = createAudioIn()"))
+        #expect(DeviceUse.opensMicrophone("mic = createAudioIn(device: devices[0])"))
+        #expect(DeviceUse.opensMicrophone("mic = self.createAudioIn ( )"))
+        #expect(DeviceUse.opensMicrophone("mic = createAudioIn() // 開く"))
+    }
+
+    /// 手元の音を解析するだけで、機材も許可も使わない。
+    @Test("ファイルや標本列を解析する形は、機材に触れない")
+    func theInjectedAudioFormsDoNotTouchTheDevice() {
+        #expect(!DeviceUse.opensMicrophone("song = try? createAudioIn(file: \"assets/song.wav\")"))
+        #expect(!DeviceUse.opensMicrophone("beat = try? createAudioIn(samples: s, sampleRate: 48_000)"))
+        #expect(
+            !DeviceUse.opensMicrophone(
+                """
+                beat = try? createAudioIn(
+                    samples : s, sampleRate: 48_000)
+                """))
+        #expect(!DeviceUse.opensMicrophone("// mic = createAudioIn()"))
+        #expect(!DeviceUse.opensMicrophone("let devices = audioInputDevices()"))
+        // カメラとマイクは別々に数える
+        #expect(!DeviceUse.opensMicrophone("camera = try? createCapture()"))
+        #expect(!DeviceUse.opensCamera("mic = createAudioIn()"))
+    }
+
+    @Test("マイクを使うのに文言が無ければ止まり、書けば通る")
+    func missingMicrophoneTextStops() throws {
+        let root = try makeSketch(files: [
+            "Sources/ear/Ear.swift": "mic = createAudioIn()",
+            "Sources/ear/Replay.swift": "song = try? createAudioIn(file: \"a.wav\")",
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent(AppIdentity.fileName).path
+
+        #expect(DeviceUse.microphoneUsers(in: root) == ["Sources/ear/Ear.swift"])
+        #expect(
+            throws: CommandFailure.microphoneUsageMissing(path: path, files: ["Sources/ear/Ear.swift"])
+        ) {
+            try DeviceUse.check(in: root, identity: identity)
+        }
+
+        var written = identity
+        written.microphoneUsage = "to listen to the room"
+        #expect(throws: Never.self) { try DeviceUse.check(in: root, identity: written) }
+        // カメラの文言はマイクの代わりにならない
+        var cameraOnly = identity
+        cameraOnly.cameraUsage = "for the drawing"
+        #expect(throws: (any Error).self) { try DeviceUse.check(in: root, identity: cameraOnly) }
+    }
+
+    @Test("マイクの文言が無くて止めるときも、足す 1 行と使っているファイルを見せる")
+    func theMicrophoneFailureShowsTheFix() {
+        let message = CommandFailure.microphoneUsageMissing(
+            path: "/work/mokume-app.json", files: ["Sources/ear/Ear.swift"]
+        ).message
+        #expect(message.contains("/work/mokume-app.json"))
+        #expect(message.contains("Sources/ear/Ear.swift"))
+        #expect(message.contains("\"microphoneUsage\""))
+    }
 }

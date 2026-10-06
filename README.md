@@ -144,7 +144,7 @@ mokume render --fps 60 --seconds 4 --out motion.mov
 
 説明文は Info.plist (`NSCameraUsageDescription` / `NSMicrophoneUsageDescription`) に入り、Developer ID で署名するときは対応する entitlement (`com.apple.security.device.camera` / `com.apple.security.device.audio-input`) も付きます。
 
-`Sources/` で `createCapture()` を呼んでいるのに `cameraUsage` が無いと、`mokume bundle` は足すべき 1 行を示して止まります (説明文の無いアプリは、カメラに触れた時点で macOS に止められるため)。依存パッケージの中や別名を通した呼び出しは検出しないので、その場合は自分で書いてください。`createCapture(frames:)` はカメラを使わないので不要です。マイクの検出はありません。
+`Sources/` で `createCapture()` を呼んでいるのに `cameraUsage` が無いと、`mokume bundle` は足すべき 1 行を示して止まります (説明文の無いアプリは、カメラに触れた時点で macOS に止められるため)。依存パッケージの中や別名を通した呼び出しは検出しないので、その場合は自分で書いてください。`createCapture(frames:)` はカメラを使わないので不要です。マイクも同じで、`createAudioIn()` を呼んでいるのに `microphoneUsage` が無いと止まります。`createAudioIn(file:)` と `createAudioIn(samples:sampleRate:)` はマイクを使わないので不要です。
 
 許可が記録される先は実行のしかたで変わります:
 

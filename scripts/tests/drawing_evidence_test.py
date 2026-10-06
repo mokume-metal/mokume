@@ -51,6 +51,11 @@ exit 0
 """
 
 
+def adr_refs_outside_reasons(text):
+    """「(… 理由: ADR-00NN …)」の括弧の外に出ている ADR の番号 (#2139)。"""
+    return re.findall(r"ADR-\d{4}", re.sub(r"\([^()]*理由:[^()]*\)", "", text))
+
+
 class DrawingEvidenceTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -190,6 +195,20 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.assertIn("gh run rerun <run-id> --failed", self.rejection())
         # run_script は env を残すので、id を入れるのは後にする
         self.assertIn("gh run rerun 424242 --failed", self.rejection(GITHUB_RUN_ID="424242"))
+
+    def test_差し戻しはADRを開かなくても行動でき番号は任意の参照に留める(self):
+        """差し戻しを読んだエージェントが番号を辿ると、1 回で 1〜2 万字の文書を読みに行く (#2139)。
+
+        何をすればよいか (撮って貼る・手順の置き場・コミットしない・逃がしのラベル) は文面が
+        言い切り、ADR の番号は理由を辿りたい人のための「(理由: ADR-00NN)」に留める。
+        """
+        err = self.rejection()
+        self.assertEqual(adr_refs_outside_reasons(err), [], "ADR の番号が理由の括弧の外にある:\n" + err)
+        self.assertNotIn("ADR-", err.splitlines()[0], "差し戻しの理由の行が ADR を引いている")
+        self.assertSays(err, "CI は絵を描けません")
+        self.assertSays(err, "貼られた絵が描画の唯一の検証記録")
+        self.assertIn(".claude/skills/visual-evidence/SKILL.md", err)
+        self.assertSays(err, "リポジトリには**コミットしない**")
 
     # --- 絵として数える形 -------------------------------------------------
 

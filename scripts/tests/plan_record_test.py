@@ -20,6 +20,7 @@ PATH の先頭に偽の gh を置いて振る舞いを環境変数で決める�
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -29,6 +30,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "plan-record.sh"
+
+def adr_refs_outside_reasons(text):
+    """「(… 理由: ADR-00NN …)」の括弧の外に出ている ADR の番号 (#2139)。
+
+    差し戻しや指示の文面は、ADR を開かなくても何をすればよいかが決まるように書き、ADR の
+    番号は理由を辿りたい人のための任意の参照として括弧の中に添える。
+    """
+    return re.findall(r"ADR-\d{4}", re.sub(r"\([^()]*理由:[^()]*\)", "", text))
+
 
 # 着手時の再チェック (ADR-0031 決定 4)。capture はプランに「対象 Issue の番号」と
 # 「完了条件の現況」の両方を要求するので、主題でないテストにはこれを自動で足す
@@ -305,6 +315,11 @@ class HookFixture:
     def git(self, *args):
         subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
 
+    def assertSays(self, text, phrase):
+        """空白と改行を外して語句を探す (折り返しの位置に左右されない)。"""
+        squash = lambda t: re.sub(r"\s+", "", t)
+        self.assertIn(squash(phrase), squash(text), f"文面に「{phrase}」が無い:\n{text}")
+
     def env(self, **overrides):
         env = {k: v for k, v in os.environ.items() if k not in LEAKY_ENV}
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
@@ -575,7 +590,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(len(self.records()), 1, result.stderr)
         self.assertIn("scripts/comment.sh issue 12", result.stderr)
-        self.assertNotIn("ADR-0040", result.stderr)
+        self.assertNotIn("約束と範囲が見当たりません", result.stderr)
 
     def test_capture_refuses_a_bug_plan_without_the_promise_or_its_scope(self):
         """約束と範囲は別々に問う — 片方だけ書いたプランには、足りないほうだけを名乗る。
@@ -591,7 +606,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
             with self.subTest(plan=plan):
                 result = self.capture(plan, FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug")
                 self.assertEqual(result.returncode, 2)
-                self.assertIn("ADR-0040", result.stderr)
+                self.assertIn("約束と範囲が見当たりません", result.stderr)
                 self.assertIn("#12", result.stderr)
                 for word in missing:
                     self.assertIn(word, result.stderr)
@@ -601,6 +616,46 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
                 self.assertEqual(self.records(), [])
                 self.assertEqual(self.metas(), [])
                 self.assertNotIn("scripts/comment.sh issue 12", result.stderr)
+
+    # --- 差し戻し・指示の文面は ADR を開かなくても行動できる (#2139) -------------
+    # 差し戻しを読んだエージェントが ADR の番号を辿ると、1 回で 1〜2 万字の文書を読みに行く。
+    # 何をすればよいか (書く内容・打つコマンド・やり直しの手順) は文面が言い切り、ADR の番号は
+    # 「(理由: ADR-00NN)」の任意の参照に留める。理由の行 (1 行目) は ADR を引かずに言い切る
+
+    def assert_ready_without_an_adr(self, text):
+        self.assertEqual(adr_refs_outside_reasons(text), [], "ADR の番号が理由の括弧の外にある:\n" + text)
+        self.assertNotIn("ADR-", text.splitlines()[0], "差し戻しの理由の行が ADR を引いている")
+
+    def test_the_recheck_refusal_says_what_to_write_and_how_to_retry(self):
+        err = self.capture("## 方針\n\n#12 を直す。\n", recheck=False, FAKE_GH_PR="42").stderr
+        self.assert_ready_without_an_adr(err)
+        self.assertSays(err, "Issue 本文の完了条件を現行のコードと突き合わせ")
+        self.assertSays(err, "「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書いてください")
+        self.assertSays(err, "ずれていれば Issue 本文のほうを先に更新します")
+        self.assertSays(err, "プランを直してもう一度 ExitPlanMode を通してください")
+
+    def test_the_bug_scope_refusal_says_what_to_write_and_the_command_to_bundle(self):
+        err = self.capture(
+            self.BUG_PLAN + "直す。\n", FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug"
+        ).stderr
+        self.assert_ready_without_an_adr(err)
+        self.assertSays(err, "破られた約束 — 何が守られるはずだったのか")
+        self.assertSays(err, "同じ約束を負う口をどう探したか (探した式を残す)")
+        self.assertIn("bash scripts/sub-issue.sh <根> --attach <番号>", err)
+        self.assertSays(err, "プランを直してもう一度 ExitPlanMode を通してください")
+
+    def test_the_unattended_instruction_says_to_post_and_go_on_without_waiting(self):
+        err = self.capture("計画。\n", FAKE_GH_PR="42", MOKUME_UNATTENDED="1").stderr
+        self.assertEqual(adr_refs_outside_reasons(err), [], err)
+        self.assertSays(err, "承認は待ちません")
+        self.assertSays(err, "投稿したらそのまま実装へ進んでください")
+
+    def test_the_unattended_guard_says_to_post_or_delete_the_record(self):
+        self.capture("計画。\n", FAKE_GH_PR="42", MOKUME_UNATTENDED="1")
+        err = self.guard(FAKE_GH_PR="42", MOKUME_UNATTENDED="1").stderr
+        self.assert_ready_without_an_adr(err)
+        self.assertSays(err, "終了せず投稿してください")
+        self.assertSays(err, "投稿する内容が無いなら、記録ファイル (--body-file に出ているもの) を消してください")
 
     def test_capture_does_not_ask_a_plan_whose_targets_are_not_bugs(self):
         """Bug でなければ問わない。型が読めない (型の無い) Issue も問わない側へ倒す。"""
@@ -613,7 +668,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(len(self.records()), 1, result.stderr)
-                self.assertNotIn("ADR-0040", result.stderr)
+                self.assertNotIn("約束と範囲が見当たりません", result.stderr)
 
     def test_capture_asks_when_any_named_issue_is_a_bug(self):
         """投稿先が PR に確定しても、プランが名乗る Issue に Bug があれば問う。
@@ -1505,11 +1560,27 @@ class PreApprovalCheckTest(HookFixture, unittest.TestCase):
         self.assertIn("承認の前", reason)
         self.assertIn("完了条件の現況", reason)
         # 直し方は capture と同じ文面 (再チェックの趣旨と、通し直す手順)
-        self.assertIn("ADR-0031", reason)
+        self.assertIn("付いた時点の判断しか表しません", reason)
         self.assertIn("ExitPlanMode を通してください", reason)
         # 記録は作らない — 承認の後の capture が、検査を通ったプランを記録する
         self.assertEqual(self.records(), [])
         self.assertEqual(self.metas(), [])
+
+    def test_a_denial_reason_says_what_to_do_without_opening_an_adr(self):
+        """承認の前の差し戻しも、番号を辿らずに直せる (#2139)。
+
+        現況の欠落と、Bug の約束と範囲の欠落の両方を見る (後者は現況を足して、約束と範囲だけを欠かす)。
+        """
+        for plan, recheck, extra in (
+            ("## 方針\n\n#12 を直す。\n", False, {}),
+            (self.BUG_PLAN + "直す。\n", True, {"FAKE_GH_ISSUE": "12", "FAKE_GH_ISSUE_TYPE": "Bug"}),
+        ):
+            with self.subTest(plan=plan):
+                reason = self.denial(self.precheck(plan, recheck=recheck, **extra))
+                self.assertIsNotNone(reason, "承認の前に差し戻していない")
+                self.assertEqual(adr_refs_outside_reasons(reason), [], reason)
+                self.assertNotIn("ADR-", reason.splitlines()[0])
+                self.assertSays(reason, "プランを直してもう一度 ExitPlanMode を通してください")
 
     def test_a_plan_without_an_issue_number_is_sent_back_before_approval(self):
         result = self.precheck("## 方針\n\n完了条件はまだ有効。\n", recheck=False)
@@ -1556,7 +1627,7 @@ class PreApprovalCheckTest(HookFixture, unittest.TestCase):
                 reason = self.denial(result)
                 self.assertIsNotNone(reason, "承認の前に差し戻していない")
                 self.assertIn("承認の前", reason)
-                self.assertIn("ADR-0040", reason)
+                self.assertIn("約束と範囲が見当たりません", reason)
                 self.assertIn("#12", reason)
                 for word in missing:
                     self.assertIn(word, reason)

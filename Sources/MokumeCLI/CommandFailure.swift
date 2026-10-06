@@ -67,6 +67,8 @@ nonisolated enum CommandFailure: Error, Equatable {
     ///
     /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
     case cameraUsageMissing(path: String, files: [String])
+    /// マイクを使うのに、許可を求める文言が書かれていない。
+    case microphoneUsageMissing(path: String, files: [String])
     /// 宣言された資材の包みが、組み上がりに入っていない。
     case bundledResourceMissing(name: String, path: String)
     /// 区画へ要求を置けなかった。
@@ -166,6 +168,20 @@ nonisolated enum CommandFailure: Error, Equatable {
 
             Without it, macOS stops the bundled app the moment it first touches the camera:
             the other side gets no prompt and no drawing, and nothing that points at why.
+            The text is what the prompt shows to whoever opens the app, so write it for them.
+            """
+        case .microphoneUsageMissing(let path, let files):
+            """
+            The sketch opens the microphone, but the identity has no text for the permission prompt: \(path)
+            Opened in:
+            \(files.map { "  \($0)" }.joined(separator: "\n"))
+
+            Add one line saying why the work needs it:
+
+              "microphoneUsage": "Grain listens to the room to move the drawing"
+
+            Without it, macOS stops the bundled app the moment it first touches the microphone:
+            the other side gets no prompt and no sound, and nothing that points at why.
             The text is what the prompt shows to whoever opens the app, so write it for them.
             """
         case .bundledResourceMissing(let name, let path):

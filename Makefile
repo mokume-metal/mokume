@@ -411,7 +411,7 @@ params: build
 # 公開 API を見るモジュール。**アンブレラが再エクスポートする自前のモジュールを全部並べる**
 # (ADR-0042 決定 3)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
 # 黙って抜ける — 参照の面の REFERENCE_MODULES と同じ並びに保つ
-API_MODULES := MokumeCore MokumeCamera
+API_MODULES := MokumeCore MokumeCamera MokumeAudio
 
 api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
 	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m))
@@ -563,7 +563,10 @@ example-shots: ## 説明文の中の例を撮って書き戻す (OUT= 置き場)
 		$(if $(OUT),--render "$(OUT)",)
 
 # 囲みの形・一文の説明・**例を書き換えたのに撮り直していないもの**を見る。
-# 指紋が見ていない範囲 (実装の変更) は合否に混ぜず要約で言う
+# 指紋が見ていない範囲 (実装の変更) は合否に混ぜず要約で言う。
+# あわせて、`Sketch` の公開メンバが例か撮れない宣言を持つか見る (#2116)。既存の穴は
+# scripts/example-shots-gaps.txt に載せてあり、減る方向にしか動かない。書き方は
+# scripts/example-shots.py の冒頭 (Gyazo の鍵が無ければ「後で撮る」の印で通る)
 example-shots-check:
 	python3 scripts/example-shots.py
 
