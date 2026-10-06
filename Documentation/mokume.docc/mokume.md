@@ -402,6 +402,15 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``TableRow``
 - ``DataFailure``
 
+### JSON と XML をファイルと URL から読む
+
+- ``Sketch/loadJSONObject(_:)``
+- ``Sketch/requestJSONObject(_:)``
+- ``Sketch/loadXML(_:)``
+- ``Sketch/requestXML(_:)``
+- ``JSONObject``
+- ``XML``
+
 ### 立体を置く
 
 - ``Sketch/box(_:)``
