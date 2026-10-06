@@ -739,6 +739,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "createImage": RESOURCE,
     "createCapture": RESOURCE,
     "createAudioIn": RESOURCE,
+    "createOSC": RESOURCE,
     "createShape": RESOURCE,
     "loadImage": RESOURCE,
     "requestImage": RESOURCE,

@@ -365,6 +365,16 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``AudioDevice``
 - ``AudioFailure``
 
+### OSC で他の道具とやりとりする
+
+- ``Sketch/createOSC(listen:send:)``
+- ``Sketch/createOSC(messages:)``
+- ``OSCPort``
+- ``OSCMessage``
+- ``OSCValue``
+- ``OSCArgument``
+- ``OSCFailure``
+
 ### 画素を読み書きする
 
 - ``Sketch/pixels``

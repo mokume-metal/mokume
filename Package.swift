@@ -85,9 +85,14 @@ let package = Package(
         .target(
             name: "MokumeAudio", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
+        // 通信 (OSC と、その下の UDP)。TCP・UDP・WebSocket の口 (#2018) も同じ層に載る
+        .target(
+            name: "MokumeNetwork", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
-            name: "mokume", dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio"], swiftSettings: .mokume),
+            name: "mokume", dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork"],
+            swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)
         .executableTarget(
@@ -115,6 +120,9 @@ let package = Package(
             swiftSettings: .mokume),
         .testTarget(
             name: "MokumeAudioTests", dependencies: ["mokume", "MokumeAudio"],
+            swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeNetworkTests", dependencies: ["mokume", "MokumeNetwork"],
             swiftSettings: .mokume),
 
     ]
