@@ -29,7 +29,11 @@
 # 判定できない事情 (PR がまだ無い・認証が無い) は理由を述べて 0 で抜ける。手元では
 # PR を作る前に make ci-check を打つこともあり、そこで赤くすると入口が塞がる。
 #
-#   0  通過・判定できず
+# **PR がまだ無いブランチでは、作る前に要否を知らせる** (#2153)。origin/main との差を
+# 描画のパスに当て、触れるなら絵を本文に載せて作る (絵が変わらないならラベルを付けて
+# 作る) よう案内する。これも 0 で抜ける — 案内であって判定ではない。
+#
+#   0  通過・判定できず・PR を作る前の案内
 #   1  描画に触れているのに絵が無い
 set -euo pipefail
 
@@ -65,6 +69,52 @@ has_evidence() {
     -e 'https://github\.com/user-attachments/'
 }
 
+# PR がまだ無いブランチで、作る前に絵とラベルの要否を知らせる (#2153)。
+#
+# 以前はここで判定ごと放棄していた。描画に触れていると知らされるのが PR を作った後になり、
+# no-visual-change を「作成と同時に」付ける規約 (AGENTS.md) を守る手段が無かった —
+# 差し戻されてから後付けすると、作成時の run の ci-gate が赤で残る (#2134)。
+#
+# **照合は drawing-paths.sh の 1 つを使い、材料だけを git から取る。** PR の変更ファイルと
+# 同じく分岐点からの差で、コミット前の手元 (追跡ファイルの変更と未追跡のファイル) まで
+# 含める — PR を出す前の make ci-check はコミット前にも打たれる。一覧の冒頭が言う
+# 「迷ったら広く取る」と同じ向きで、改名も旧新の両方を数える。
+#
+# git は呼ばれた場所のリポジトリで引き、パスは根からの素の形に揃える。未追跡の一覧は既定で
+# 呼ばれた場所からの相対になるので、:/ と --full-name で根から取る。ASCII でない名前は既定で
+# 引用符と 8 進に化けて前置きに一致しなくなるので、core.quotePath を切る。分岐点が引けなければ
+# 放棄する
+preview_without_pr() {
+  local base files touched count
+  base=$(git merge-base origin/main HEAD 2>/dev/null) \
+    || give_up "このブランチに PR が無く、origin/main との分岐点も引けない (git fetch origin main の後か、PR を出した後にもう一度打つと分かる)"
+  files=$({
+    git -c core.quotePath=false diff --name-only --no-renames "$base" &&
+      git -c core.quotePath=false ls-files --others --exclude-standard --full-name -- ':/'
+  } 2>/dev/null) \
+    || give_up "このブランチに PR が無く、origin/main との差を読めなかった"
+  touched=$(printf '%s\n' "$files" | drawing_files)
+  if [ -z "$touched" ]; then
+    say "このブランチに PR はまだ無い。origin/main との差は描画に触れない — このまま出すなら絵もラベルも要らない"
+    exit 0
+  fi
+  # 早く打ち切る書き方 (| head) は取らない — pipefail の下で SIGPIPE が落ちに化ける
+  count=$(printf '%s\n' "$touched" | wc -l | tr -d ' ')
+  say "このブランチに PR はまだ無い。origin/main との差のうち $count 件が描画に触れる:"
+  sed -n '1,5s/^/  /p' <<<"$touched"
+  if [ "$count" -gt 5 ]; then echo "  ほか $((count - 5)) 件"; fi
+  cat <<EOF
+
+PR の作成と同時に、before/after の絵を本文へ貼る (gh pr create --body-file に絵の URL を書く。
+撮り方は .claude/skills/visual-evidence/SKILL.md)。絵が変わらないなら、作成と同時にラベルを付ける:
+
+  gh pr create --label $ESCAPE_LABEL ...
+
+作った後に貼る・付けると、作成時の run の ci-gate が赤で残ることがあり、そのときは打ち直しが要る。
+EOF
+  exit 0
+}
+
 # 対象の PR。引数 → PR_NUMBER → 現在のブランチ の順に解く
 pr=${1:-${PR_NUMBER:-}}
 command -v gh >/dev/null 2>&1 || give_up "gh が無い"
@@ -77,9 +127,15 @@ args=(--json "body,labels,number")
 if [ -n "$REPO" ]; then args+=(-R "$REPO"); fi
 if [ -n "$pr" ]; then args=("$pr" "${args[@]}"); fi
 # 現在のブランチに PR が無ければ gh は失敗する。それは作業の途中というだけなので、
-# 理由を述べて 0 で抜ける (PR を出した後の make ci-check で判定が効くようになる)
-pr_json=$(gh pr view "${args[@]}" 2>/dev/null) \
-  || give_up "このブランチに PR が無い (PR を出した後にもう一度打つと判定できる)"
+# 赤くせず、作る前の案内を出して 0 で抜ける (判定は PR を出した後の実行から効く)。
+#
+# **番号を名指しされたときは差を当てない。** 手元の木がその PR の木とは限らない — CI の
+# ジョブは既定ブランチを checkout して PR_NUMBER を渡すので、API が落ちたときに差を当てると
+# 「描画に触れない」と答えてしまう。読めなかったとだけ言って放棄する
+if ! pr_json=$(gh pr view "${args[@]}" 2>/dev/null); then
+  if [ -n "$pr" ]; then give_up "PR #$pr を読めなかった"; fi
+  preview_without_pr
+fi
 
 if jq -e --arg l "$ESCAPE_LABEL" '.labels[]? | select(.name == $l)' >/dev/null <<<"$pr_json"; then
   say "$ESCAPE_LABEL による例外 PR (絵は変わらないという申告)"
