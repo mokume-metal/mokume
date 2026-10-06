@@ -99,9 +99,11 @@ let package = Package(
         // 参照スケッチ。2D の面が実際に成立していることを、使って示す。
         // product には含めない — 利用者へ配るものではなく、面を確かめるためのもの。
         // 台帳の検査 (MokumeCoreTests) がこれに依存し、全スケッチの絵を指紋にする (#1377)
+        // data/ はスケッチが読むテキスト (CSV など) で、束ねる資源ではない。参照スケッチは
+        // 入口ごとに作業ディレクトリが違うので、ソースの隣を名指しして読む (TableAndText.swift)
         .executableTarget(
             name: "reference-sketches", dependencies: ["mokume"], path: "Sketches",
-            swiftSettings: .mokume),
+            exclude: ["data"], swiftSettings: .mokume),
         .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
         .testTarget(
             name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches"],
