@@ -283,7 +283,8 @@ extension Sketch {
     ///   @Column(size: 3) {
     ///     ```swift
     ///     background(23, 26, 31)
-    ///     ambientLight(.linear(red: 0.45, green: 0.45, blue: 0.45))
+    ///     ortho()   // 3 つの球を同じ向きから見る
+    ///     ambientLight(.linear(red: 0.10, green: 0.10, blue: 0.10))
     ///     directionalLight(.linear(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
     ///     fill(242, 115, 64)
     ///     noStroke()
@@ -298,11 +299,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 球が 3 つ。左から右へ赤が抜けていき、陰の側ほど大きく変わって、右の球の陰はくすんだ緑みの暗い色になる -->
-    ///     ![球が 3 つ。左から右へ赤が抜けていき、陰の側ほど大きく変わって、右の球の陰はくすんだ緑みの暗い色になる](https://i.gyazo.com/39eec797523ad65b5324dc2f56f3b2b6.png)
+    ///     ![球が 3 つ。左から右へ赤が抜けていき、陰の側ほど大きく変わって、右の球の陰はくすんだ緑みの暗い色になる](https://i.gyazo.com/6cfa7a2feee0471cc4dc076ffbeb6098.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=9e3b2bb7
+    // shot: 1 snippet=7a515c10
     public func ambient(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         canvas.ambient(red, green, blue)
@@ -314,7 +315,8 @@ extension Sketch {
     ///   @Column(size: 3) {
     ///     ```swift
     ///     background(23, 26, 31)
-    ///     ambientLight(.linear(red: 0.45, green: 0.45, blue: 0.45))
+    ///     ortho()   // 3 つの球を同じ向きから見る
+    ///     ambientLight(.linear(red: 0.10, green: 0.10, blue: 0.10))
     ///     directionalLight(.linear(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
     ///     fill(242, 115, 64)
     ///     noStroke()
@@ -329,11 +331,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球が 3 つ。左から右へ明るい側も少し暗くなるが、陰の側はそれより大きく沈み、右の球の陰はほぼ黒い -->
-    ///     ![橙色の球が 3 つ。左から右へ明るい側も少し暗くなるが、陰の側はそれより大きく沈み、右の球の陰はほぼ黒い](https://i.gyazo.com/4e3a26b38eb65897833327857854b029.png)
+    ///     ![橙色の球が 3 つ。左から右へ明るい側も少し暗くなるが、陰の側はそれより大きく沈み、右の球の陰はほぼ黒い](https://i.gyazo.com/777e843dcfe2c10041e9b1c0fb213dac.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=1d5a7ef2
+    // shot: 1 snippet=56ca5230
     public func ambient(_ gray: some ScalarConvertible) {
         let gray = gray.asFloat
         canvas.ambient(gray)
@@ -347,6 +349,7 @@ extension Sketch {
     ///   @Column(size: 3) {
     ///     ```swift
     ///     background(23, 26, 31)
+    ///     ortho()   // 3 つの球を同じ向きから見る
     ///     ambientLight(.linear(red: 0.10, green: 0.10, blue: 0.10))
     ///     directionalLight(.linear(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
     ///     fill(242, 115, 64)
@@ -362,11 +365,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 球が 3 つ。左から右へ青みが足されていき、右の球は陰の側まで紫がかった青になる -->
-    ///     ![球が 3 つ。左から右へ青みが足されていき、右の球は陰の側まで紫がかった青になる](https://i.gyazo.com/89bcee61552d586f6d2153d168921006.png)
+    ///     ![球が 3 つ。左から右へ青みが足されていき、右の球は陰の側まで紫がかった青になる](https://i.gyazo.com/495a4a218cd582d2388c63291e255506.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=3fc61c81
+    // shot: 1 snippet=438a495e
     public func emissive(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         canvas.emissive(red, green, blue)
@@ -378,6 +381,7 @@ extension Sketch {
     ///   @Column(size: 3) {
     ///     ```swift
     ///     background(23, 26, 31)
+    ///     ortho()   // 3 つの球を同じ向きから見る
     ///     ambientLight(.linear(red: 0.10, green: 0.10, blue: 0.10))
     ///     directionalLight(.linear(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
     ///     fill(242, 115, 64)
@@ -393,11 +397,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球が 3 つ。左から右へ陰の側が明るく持ち上がり、右の球は白っぽく陰影がごく浅い -->
-    ///     ![橙色の球が 3 つ。左から右へ陰の側が明るく持ち上がり、右の球は白っぽく陰影がごく浅い](https://i.gyazo.com/69f32a00bf9ec2821a4d41b68b728da5.png)
+    ///     ![橙色の球が 3 つ。左から右へ陰の側が明るく持ち上がり、右の球は白っぽく陰影がごく浅い](https://i.gyazo.com/96dc2ff6b833f9879770a8c915212767.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a858f026
+    // shot: 1 snippet=53bc89e9
     public func emissive(_ gray: some ScalarConvertible) {
         let gray = gray.asFloat
         canvas.emissive(gray)
