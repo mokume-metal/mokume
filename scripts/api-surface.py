@@ -752,6 +752,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "requestJSONObject": (RESOURCE, "loadJSONObject と同じ理由"),
     "loadXML": (RESOURCE, "loadJSONObject と同じ理由"),
     "requestXML": (RESOURCE, "loadJSONObject と同じ理由"),
+    "loadShape": RESOURCE,
+    "requestShape": RESOURCE,
     "loadShader": RESOURCE,
     "makeShader": RESOURCE,
     "loadEffect": RESOURCE,

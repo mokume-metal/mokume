@@ -387,8 +387,9 @@ extension Sketch {
         }
     }
 
-    /// 名前を、在るファイルの場所へ解く。探し方は ``assetURL(_:)`` そのもの。
-    private func dataURL(_ path: String) throws(DataFailure) -> URL {
+    /// 名前を、在るファイルの場所へ解く。探し方は ``assetURL(_:)`` そのもの。SVG を読む口
+    /// (``loadShape(_:)``) も通る。
+    func dataURL(_ path: String) throws(DataFailure) -> URL {
         do {
             return try assetURL(path)
         } catch {
@@ -404,8 +405,9 @@ extension Sketch {
     /// `Task.detached` が走る共有の thread はスタックが小さく、`JSONSerialization` は 500 段
     /// ほどの入れ子でそれを使い切ってプロセスごと落ちる — 自分の上限 (最上位の下に 512 段) より手前で
     /// (#2070 で確かめた)。同期版は main thread の上で読むので落ちない。**同じファイルが同期版で
-    /// だけ読める、を作らない**ために、待たない版も同じ大きさのスタックで読む。
-    private static func readAway<Value: Sendable>(
+    /// だけ読める、を作らない**ために、待たない版も同じ大きさのスタックで読む。SVG を読む待たない口
+    /// (``requestShape(_:)``) も同じ理由でここを通す。
+    static func readAway<Value: Sendable>(
         _ work: @escaping @Sendable () throws(DataFailure) -> Value
     ) async throws(DataFailure) -> Value {
         let outcome = await withCheckedContinuation {
