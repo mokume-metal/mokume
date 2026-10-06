@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-26) / 一部置換 (→ [ADR-0003](0003-agent-identity-separation.md)): 決定 4 / 一部置換 (→ [ADR-0004](0004-issue-classification-by-issue-type.md)): 決定 1 の分類の表現 / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 1 のラベル分類・決定 3 のルーティング・決定 5 / 改訂 (2026-08-31): 決定 1 にエージェント自身の起票を含める / 改訂 (2026-09-07): 決定 1 追補の在庫の作り方を、着手の直前から先取りへ広げる
+採用 (2026-08-26) / 一部置換 (→ [ADR-0003](0003-agent-identity-separation.md)): 決定 4 / 一部置換 (→ [ADR-0004](0004-issue-classification-by-issue-type.md)): 決定 1 の分類の表現 / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 1 のラベル分類・決定 3 のルーティング・決定 5 / 改訂 (2026-08-31): 決定 1 にエージェント自身の起票を含める / 改訂 (2026-09-07): 決定 1 追補の在庫の作り方を、着手の直前から先取りへ広げる / 改訂 (2026-10-04): 決定 1 追補の付与者の追跡を、人とエージェントを区別しない前提へ改める / 改訂あり (本文の「改訂 (日付)」見出し) / 一部置換 (→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md)): 決定 4
 
 ## 文脈
 
@@ -54,7 +54,9 @@ SPDX-License-Identifier: MIT
 
 **トリアージが甘くても、着手時に気付く。** [ADR-0031](0031-triage-as-the-single-gate.md) 決定 4 の再チェックが、着手の瞬間に完了条件を現行のコードと突き合わせる。**起票時に同じ問いを重ねて置かない** — 材料が最も少ない時点で 2 回書かせるだけになる。
 
-**付けた者は追える。** GitHub の Issue events に actor が残るので、追跡の仕組みは足さない (#618 の調査は実際にそこから付与者を集計した)。
+**付けたのが人かエージェントかは区別しない (2026-10-04 改訂)。** 印に求めるのは目印として働くことである。付けられるのは書き込み権限を持つ者 — メンテナと、その人が動かすエージェント — に限られ、外部の人は付けられないので、誰でも意味なく付けられる状態にはならない。甘い印は上の再チェックが拾う。追跡の仕組みは足さない。
+
+当初は「付けた者は追える — GitHub の Issue events に actor が残る」としていた (#618 の調査はそこから付与者を集計した)。しかしエージェントはメンテナの認証で動くので、どちらが付けても events の actor はメンテナになる。エージェントが起票した #2064 / #2070 / #2072 / #2073 / #2075 の印は 5 件とも actor が同じメンテナで、起票から 10 分〜2 時間後に付いた 4 件は、人が付けたのかエージェントが代わりに付けたのかを記録から決められなかった ([#2079](https://github.com/mokume-metal/mokume/issues/2079))。区別するために印を App の名義で付けさせる案は採らない — メンテナの判断で、区別できて得るものが、付け方を守らせる手間に見合わない。
 
 これは着手できる Issue を作れるのがメンテナ 1 人に絞られ、印を持たない open な Issue が積み上がっていたことへの手当てである (#621 の起票時点で open 17 件中 11 件)。**在庫は着手のたびに 1 件ずつ固める** — 一括でトリアージすると、中身を見ずに印を付けることになり、この基準を正面から破る。
 
@@ -88,11 +90,13 @@ required check `review-gate` が PR ごとに判定する:
 | `verify: machine` | 検査群 (`ci-check` 等) のみで通過 |
 | Changes requested が未解消 | 赤 |
 
-**重要パスの承認要求は review-gate ではなく GitHub 側の機構が担う** ([ADR-0003](0003-agent-identity-separation.md))。要求も必須化も **`.github/rulesets/main-protection.json` の `required_reviewers`** が担い、3 パス (`docs/decisions/`・`.github/`・`.claude/`) に `minimum_approvals: 1` を課して team `maintainers` へ要求を飛ばす。当初は CODEOWNERS だけで必須化できるつもりでいたが、承認数 0 との組み合わせでは非ブロックだった ([#211](https://github.com/mokume-metal/mokume/issues/211) / ADR-0003 決定 4 の改訂)。その CODEOWNERS も要求を二重に飛ばすだけの写しだったので畳んだ ([#530](https://github.com/mokume-metal/mokume/issues/530))。公開 API 面はコードが生まれた時点でルールセットへ追加する。
+**重要パスの承認要求は review-gate ではなく GitHub 側の機構が担う** ([ADR-0003](0003-agent-identity-separation.md))。要求も必須化も **`.github/rulesets/main-protection.json` の `required_reviewers`** が担い、その `file_patterns` に当たる変更に `minimum_approvals: 1` を課して team `maintainers` へ要求を飛ばす (対象の一覧は写さない。何を対象にするかは [ADR-0031](0031-triage-as-the-single-gate.md) 決定 1)。当初は CODEOWNERS だけで必須化できるつもりでいたが、承認数 0 との組み合わせでは非ブロックだった ([#211](https://github.com/mokume-metal/mokume/issues/211) / ADR-0003 決定 4 の改訂)。その CODEOWNERS も要求を二重に飛ばすだけの写しだったので畳んだ ([#530](https://github.com/mokume-metal/mokume/issues/530))。公開 API 面はコードが生まれた時点でルールセットへ追加する。
 
 `verify: human` だけはどちらでも表現できない (パスではなく Issue の性質で決まる) ため、review-gate に残している。
 
 ### 4. 人間の承認は native の Approve レビューに一本化する
+
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) 決定 2 が置き換えた。** 承認そのものを要求しない。
 
 承認の表現は **GitHub native の Approve レビュー**とする。帰属・push による stale 化の扱い・複数メンテナへの拡張・CODEOWNERS 連携が揃った専用機構だからである。Changes requested のレビューが未解消の場合は赤のまま。
 

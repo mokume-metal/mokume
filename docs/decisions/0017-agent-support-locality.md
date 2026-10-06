@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 改訂 (2026-08-31): 決定 1 の適用範囲を、書ける場所ではなく発火する場所で定める / 改訂 (2026-09-23): 規約を判定しない汎用の道具は個人のプラグインに置き、衝突しない機構は黙らせない / 改訂 (2026-09-27): Claude の入口を維持して他エージェントへの接続を追加する
+採用 (2026-08-27) / 改訂 (2026-08-31): 決定 1 の適用範囲を、書ける場所ではなく発火する場所で定める / 改訂 (2026-09-23): 規約を判定しない汎用の道具は個人のプラグインに置き、衝突しない機構は黙らせない / 改訂 (2026-09-27): Claude の入口を維持して他エージェントへの接続を追加する / 改訂あり (本文の「改訂 (日付)」見出し)
 
 ## 文脈
 
@@ -15,7 +15,7 @@ SPDX-License-Identifier: MIT
 
 エージェントがこのリポジトリの作法どおりに動くとき、支えているのは 2 系統ある。
 
-1. **リポジトリ同梱の機構** — `scripts/plan-record.sh` (着手時プランの投稿を強制)・`scripts/agent-comment-guard.sh` (コメントの署名)・`scripts/pr-identity-guard.sh` (PR の作成主体) を `.claude/settings.json` が配線している。CI の `review-gate` もここに属する
+1. **リポジトリ同梱の機構** — `scripts/plan-record.sh` (着手時プランの投稿を強制)・`scripts/agent-comment-guard.sh` (コメントの署名) を `.claude/settings.json` が配線している (PR の作成主体を見ていた `scripts/pr-identity-guard.sh` は [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) で外した)。CI の `review-gate` もここに属する
 2. **個人環境の設定・プラグイン** — 各自の `~/.claude/` に入っているもの。汎用の作法 (プランの合意・CI の見届け・ブランチの掃除) を供給する
 
 `.claude/settings.json` は 2 系統目のうち 1 つを**リポジトリ側から宣言していた** — `extraKnownMarketplaces` と `enabledPlugins` に個人のマーケットプレイスと `repo-standards` プラグインを書いており、これは「このリポジトリで作業する全員にそのプラグインが入る」ことを意味する。

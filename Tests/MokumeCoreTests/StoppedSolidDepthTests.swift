@@ -127,8 +127,8 @@ struct StoppedSolidDepthTests {
         case none
         /// 次のフレームの頭で、塗り 1 色の背景 (`background(235)`)。色と奥行きを消して塗り直す。
         case colour
-        /// 次のフレームの頭で、周囲の背景 (`background(.sky)`)。色は塗り直さず、いちばん奥の板を
-        /// 奥行きの比較つきで置く。
+        /// 次のフレームの頭で、周囲の背景 (`background(.sky)`)。色は塗り直さず、視点が写す範囲
+        /// いっぱいの板で置き換える (奥行きは比べずに書く・#1685)。
         case sky
         /// 区間で描き切らせた後、区間の中で周囲の背景 (`background(.sky)`)。
         case skyInTheInterval
@@ -443,13 +443,17 @@ struct StoppedSolidDepthTests {
         try Self.expectSettledToMatchCarried(variant, .issue, backdrop: backdrop)
     }
 
-    /// フレームの中で描き切らせた後の `background(.sky)` は、直す前と同じく立体を覆わない。
+    /// フレームの中で描き切らせた後の `background(.sky)` も、描き切らせた立体を置き換える ([#1657])。
     ///
-    /// **この PR が変えないこと。** 周囲の背景の板が最奥で比較を受け、フレームの中で描き切らせた立体が
-    /// 背景の手前に残るのは、直す前からの挙動である (別の根: #1685・#1657)。引き継いだ奥行きを手放すのは、
-    /// 区間と、そのフレームがまだ何も描き切っていない間だけ。
-    @Test("フレームの中で描き切らせた後の周囲の背景は、立体を覆わない (変えない)", arguments: Surface.allCases)
-    func aBackdropInsideAFrameLeavesItsOwnSettledSolidsInFront(surface: Surface) throws {
+    /// #1888 の時点では、板が最奥で奥行きの比較を受け、フレームの中で描き切らせた立体が背景の手前に
+    /// 残っていた (そのときはこの検査が「変えない」と固定していた)。置き換える列は奥行きを比べずに
+    /// 書く ([#1685]) ので、引き継いだ奥行きと同じく、このフレームで描き切った奥行きにも板は落ちない。
+    /// 2 つの口を並べた検査は `BackgroundReplacementTests` が持ち、ここは区間の検査の隣で境目を見る。
+    ///
+    /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    @Test("フレームの中で描き切らせた後の周囲の背景も、描き切らせた立体を置き換える", arguments: Surface.allCases)
+    func aBackdropInsideAFrameReplacesItsOwnSettledSolids(surface: Surface) throws {
         let canvas = try surface.make()
         let plane = canvas.createShape {
             canvas.noStroke()
@@ -462,12 +466,12 @@ struct StoppedSolidDepthTests {
             canvas.shape(plane, at: [Scene.issue.middle])
         }
         let picture = try canvas.target.readPixels()
-        // 赤 (z 20) は、いちばん奥の板にも、あとから置いた緑 (z 0) にも覆われない
+        // 赤 (z 20) は背景に置き換えられ、あとから置いた緑 (z 0) が出る
         let centre = Self.pixel(picture, 80, 80)
-        #expect(Hue.red.matches(centre), "フレームの中で描き切らせた赤が背景の手前に残っていない: \(centre)")
-        // 板は赤の外を覆う (置く前の面は透明)
+        #expect(Hue.green.matches(centre), "フレームの中で描き切らせた赤が背景の手前に残っている: \(centre)")
+        // 板は緑の外を覆う (置く前の面は透明)
         let corner = Self.pixel(picture, 5, 5)
-        #expect(corner.alpha > 0.99, "周囲の背景が赤の外を覆っていない: \(corner)")
+        #expect(corner.alpha > 0.99, "周囲の背景が緑の外を覆っていない: \(corner)")
     }
 
     // MARK: - 失敗した描き切り
@@ -514,13 +518,15 @@ struct StoppedSolidDepthTests {
     enum LayerRole: CaseIterable, CustomTestStringConvertible {
         /// 本体が描き切らせた後で、描き場所が自分のフレーム (`beginDraw()`〜`endDraw()`) を走らせる。
         case ownFrameBetween
-        /// 本体が描き場所を置き、その描き場所が描き換わる直前に、本体が描き切る (`settle(before:)`)。
+        /// 本体が描き場所を置き、その描き場所を描き換える。描き換わる直前に本体を描き切らせていたが、
+        /// いまは置いた時点の絵を写しに取るので、本体は描き切られない (#1656 の案 A2)。どちらでも
+        /// 前後は変わらないことを見る。
         case forcesTheSettle
 
         var testDescription: String {
             switch self {
             case .ownFrameBetween: "描き場所が自分のフレームを走らせる"
-            case .forcesTheSettle: "描き換えの直前に本体が描き切る"
+            case .forcesTheSettle: "本体が置いた描き場所を描き換える"
             }
         }
     }
@@ -529,8 +535,8 @@ struct StoppedSolidDepthTests {
     /// 次のフレームへ引き継がれる。
     ///
     /// 描き場所の描き切りは、描き場所自身の奥行きの面で走るので、本体の引き継ぎに触れない。
-    /// 置いた描き場所が描き換わる直前の描き切り (`settle(before:)`) は、本体を奥行きを残す描き切りで
-    /// 描き切らせる。どちらでも、次のフレームの緑 (z 0) は、区間の赤 (z 20) の奥に回る。
+    /// 置いた描き場所を描き換えても、本体は描き切られない (置いた時点の絵を写しに取る・#1656)。
+    /// どちらでも、次のフレームの緑 (z 0) は、区間の赤 (z 20) の奥に回る。
     @Test(
         "描き場所を挟んでも、区間で描き切らせた立体の奥行きは次のフレームへ引き継がれる",
         arguments: Variant.all, LayerRole.allCases)

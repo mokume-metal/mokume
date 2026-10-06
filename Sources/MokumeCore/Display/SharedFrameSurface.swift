@@ -131,15 +131,25 @@ final class SharedFrameSurface {
         let ids: [UInt32]
         let width: Int
         let height: Int
+        /// 窓を開く倍率 (``SketchSettings/windowScale``)。**作品の窓の大きさを、直に走らせた
+        /// ときと揃えるために渡す** ([ADR-0032] 決定 1 の「見え方は直に走らせたときと同じ」)。
+        ///
+        /// **無くても絵は出る** ([ADR-0018] 決定 5 の表の 1 行目 — 版は据え置き)。書かない
+        /// 古いライブラリの子なら、道具の窓はこれまでどおりの大きさのまま開く。
+        ///
+        /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+        /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+        let windowScale: Float?
 
         private enum CodingKeys: String, CodingKey {
-            case schemaVersion, ids, width, height
+            case schemaVersion, ids, width, height, windowScale
         }
 
-        init(ids: [UInt32], width: Int, height: Int) {
+        init(ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil) {
             self.ids = ids
             self.width = width
             self.height = height
+            self.windowScale = windowScale
         }
 
         /// **版が違えば読まない。** 知らない形を推測で解くと、食い違いが絵の壊れ方として出る。
@@ -166,6 +176,10 @@ final class SharedFrameSurface {
                     forKey: .width, in: container,
                     debugDescription: "Not a drawable size: \(width)x\(height)")
             }
+            // **倍率は読めなくても目録ごと捨てない。** 窓の大きさは絵の出る出ないに関わらない
+            // ので、開けない値は「頼まれていない」として扱う
+            let scale = try? container.decodeIfPresent(Float.self, forKey: .windowScale)
+            windowScale = scale.flatMap { $0 }.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         }
     }
 
@@ -177,6 +191,8 @@ final class SharedFrameSurface {
 
     let width: Int
     let height: Int
+    /// 窓を開く倍率。目録に載せて道具へ渡す (``Manifest/windowScale``)。
+    let windowScale: Float?
     /// 面の番号 (書く順)。
     let ids: [UInt32]
 
@@ -192,40 +208,117 @@ final class SharedFrameSurface {
     /// 表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている 1 枚は数えない。**
     private(set) var frameNumber = 0
 
-    /// 区画があるときだけ作る。**区画の名前は ``StartupReads`` が正典** (#380)。
+    /// 窓を持つ道具に起こされ、区画もあるときだけ作る。**綴りは ``StartupReads`` が正典** (#380)。
     ///
     /// **作れなかったときは `nil` を返す。** 呼ぶ側は窓を開く側へ倒す — 面も窓も無い
     /// 実行は、何が起きたのか外から見て「動いていない」としか見えない。
+    ///
+    /// - Parameter owner: 起こした道具の名乗り (``launchOwner``)。
     static func makeIfEnabled(
-        gpu: RenderDevice, width: Int, height: Int,
-        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key)
+        gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil,
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.launchOwner
     ) -> SharedFrameSurface? {
-        guard isEnabled(at: directory) else { return nil }
-        return try? SharedFrameSurface(gpu: gpu, width: width, height: height, at: directory)
+        guard isEnabled(at: directory, owner: owner) else { return nil }
+        return try? SharedFrameSurface(
+            gpu: gpu, width: width, height: height, windowScale: windowScale, at: directory)
     }
 
-    /// 画面の出口が共有する面になっているか。
+    /// このプロセスを起こした、窓を持つ道具の名乗り。**起こされていなければ `nil`。**
     ///
-    /// **合図はこれ 1 つである** ([ADR-0032] 決定 1)。窓を開かないことも、道具から来る
-    /// 出来事を標準入力から受けることも ([ADR-0032] 決定 4)、同じ合図から従う — 経路
-    /// ごとに合図を持つと、片方だけが効いている状態が作れてしまう。
+    /// **初めて読んだ瞬間に環境から消す** (``takeOwner(from:unset:)``)。合図はこのプロセスを
+    /// 起こした道具が渡したもので、このプロセスがさらに起こす子 (スケッチが `Process` で直に
+    /// 走らせる別の実行ファイルなど) のものではない — 継がせると、孫まで見張りの窓と管を
+    /// 持っているかのように振る舞う ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
+    /// 読むのは ``SketchApplication`` の組み立てで、スケッチの `setup()` より前である。
+    static let launchOwner: String? = takeOwner()
+
+    /// 合図を読み、環境から消す。**呼ぶのは ``launchOwner`` の 1 度だけ** (検査は口を差し替える)。
+    ///
+    /// - Parameters:
+    ///   - environment: 読む環境。
+    ///   - unset: 環境から変数を消す口。既定は `unsetenv` — `Process` が既定で継がせるのは
+    ///     プロセスの環境そのものなので、ここから消せば子孫へ渡らない。
+    static func takeOwner(
+        from environment: [String: String] = ProcessInfo.processInfo.environment,
+        unset: (String) -> Void = { unsetenv($0) }
+    ) -> String? {
+        let taken = owner(environment: environment)
+        if environment[StartupReads.viewportOwner.key] != nil {
+            unset(StartupReads.viewportOwner.key)
+        }
+        return taken
+    }
+
+    /// 環境に載った合図を解く。**起こされていなければ `nil`。**
+    ///
+    /// **「誰に起こされたか」を読むのはここ 1 つである** ([ADR-0032] 決定 1)。窓を開かない
+    /// ことも、道具から来る出来事を標準入力から受けることも ([ADR-0032] 決定 4)、目録を
+    /// 書くことも、この答えから従う — 経路ごとに合図を持つと、片方だけが効いている状態が
+    /// 作れてしまう。
+    ///
+    /// **区画の在る無しでは代用しない。** 区画は同じ場所の誰からも見えるので、居合わせた
+    /// 別の実行 (直に走らせる・`run`・`render`・窓を持たない `SketchRuntime`) まで、道具の
+    /// 窓と管を持っているかのように振る舞っていた
+    /// ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。起こし方は起こした
+    /// 道具にしか分からないので、道具が環境変数で渡す (``StartupReads/viewportOwner``)。
+    ///
+    /// 空白だけの値は渡されていないものとして扱う (``CloseConfirmation`` と同じ)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static func owner(environment: [String: String]) -> String? {
+        guard let given = environment[StartupReads.viewportOwner.key] else { return nil }
+        let trimmed = given.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// 画面の出口が共有する面になっているか。**道具に起こされ、かつ区画が在るときだけ。**
+    ///
+    /// 区画が要るのは、面の番号を置く場所だからである。見張りは窓を出せたときだけ区画を
+    /// 置くので、出せなかった回の子は合図を受けていても自分の窓を開く。
     ///
     /// 読む場所を 1 つに保つため、**viewport の区画を渡すのはここだけ**にする (一覧が
     /// 名指ししているのもこのファイルである)。判定そのものの綴りは
     /// ``WorkDirectory/directoryExists(at:)`` が持つ — 5 箇所が同じ 3 行を書いていた
     /// ([#988](https://github.com/mokume-metal/mokume/issues/988))。
-    static func isEnabled(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key))
-        -> Bool
-    {
-        WorkDirectory.directoryExists(at: directory)
+    ///
+    /// - Parameter owner: 起こした道具の名乗り (``launchOwner``)。
+    static func isEnabled(
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.launchOwner
+    ) -> Bool {
+        owner != nil && WorkDirectory.directoryExists(at: directory)
     }
 
-    init(gpu: RenderDevice, width: Int, height: Int, at directory: URL) throws(RenderFailure) {
+    /// 区画が在るのに、窓を持つ道具に起こされていないときに名乗る 1 行。**それ以外は `nil`。**
+    ///
+    /// **黙って窓を開くと、区画を置いた側と食い違って見える。** 区画が在る場所で走らせた人は、
+    /// 見張りの窓に絵が出ると思っているかもしれない。開くのは正しいので止めはしないが、
+    /// なぜ開いたかを 1 度だけ言う。**在処をそのまま出す** — 基準は環境変数が動かせるので、
+    /// `.mokume/…` とだけ言うとスケッチの場所を探して「無い」と読まれる
+    /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
+    static func strayFacetNotice(
+        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+        owner: String? = SharedFrameSurface.launchOwner
+    ) -> String? {
+        guard owner == nil, WorkDirectory.directoryExists(at: directory) else { return nil }
+        // **古い見張りに起こされた回も、ここへ来る。** 古い見張りは合図を渡さないので、
+        // 「誰にも起こされていない」とだけ言うと、見張りの窓が空のまま理由へ辿り着けない
+        return "\(directory.path) is there, but no tool that owns a window started this run "
+            + "(\(StartupReads.viewportOwner.key) is unset) — opening the sketch's own window. "
+            + "If mokume watch started it, the tool is older than the mokume this sketch "
+            + "depends on: update them together"
+    }
+
+    init(
+        gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil, at directory: URL
+    ) throws(RenderFailure) {
         // 面は `makeTexture(descriptor:iosurface:plane:)` で作るので `RenderDevice.makeTexture` を
         // 通らない。寸法の関所はここで通す (上の端も含む・#1642)
         try RenderDevice.checkTextureSize(width: width, height: height)
         self.width = width
         self.height = height
+        self.windowScale = windowScale
         self.gpu = gpu
         self.manifestURL = directory.appendingPathComponent(Self.manifestName)
 
@@ -304,7 +397,9 @@ final class SharedFrameSurface {
     /// **投げる。** 置けなかったときに窓を開く側へ倒す判断は呼び手 (``SketchApplication``)
     /// が持つので、ここは名乗らない — 判断が呼び手にある口だけが `throws` である (#989)。
     func publishManifest() throws {
-        try AtomicFile.writeJSON(Manifest(ids: ids, width: width, height: height), to: manifestURL)
+        try AtomicFile.writeJSON(
+            Manifest(ids: ids, width: width, height: height, windowScale: windowScale),
+            to: manifestURL)
     }
 
     /// 描いた絵を次の面へ焼き、**前に焼いた 1 枚を差し出す。**

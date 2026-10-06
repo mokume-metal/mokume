@@ -3,19 +3,18 @@
 # SPDX-License-Identifier: MIT
 """scripts/review-gate.sh の検査 (#44 / #104 / #309 / #618 / #1662 / #1668)。
 
-このゲートが守るのは mokume 固有の六点だけ:
+このゲートが守るのは mokume 固有の五点だけ:
   1. PR が Issue に紐づいている (例外は no-issue ラベル)
   2. 対象 Issue に verify: ラベルがある (完了条件が固まっている)
   3. PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
   4. 閉じる Issue に Bug が含まれるなら、本文に空でない「反証」の節がある (ADR-0040 決定 4)
-  5. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
-  6. AGENTS.md を合流先との分岐点 (merge-base) より長くした PR は、本文の増分の宣言が
+  5. AGENTS.md を合流先との分岐点 (merge-base) より長くした PR は、本文の増分の宣言が
      実測と一致する (#1668。数え方と宣言の読み方は check-agents-md-size.py の growth が
      持ち、その細部は agents_md_size_test.py が見る。ここは材料の取り方と渡し方を見る)
 
-重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない —
-5 がその file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
-ではない。
+**承認はどこにも無い。** ルールセットは承認を要求せず (ADR-0044)、ゲートが見るのは変更要求が
+残っていないことだけである。重要パスに触れるメンテナ名義の PR を「誰も承認できない」と差し戻して
+いた節 (ADR-0007 の不変条件) も、承認のゲートと一緒に外した (#2108)。
 
 **承認待ちはもう無い。** verify: human の Issue に紐づく PR へ Approve を要求していた頃は、
 終了コード 20 で「承認待ち」を表し、それを 1 (差し戻し) と混ぜないことを固定していた
@@ -32,12 +31,12 @@ closing keyword をコードスパンの中では読まないので、緑のま�
 3 と 4 が見るのは**構造だけ**である。番号が節に現れること・節が空でないことは見るが、
 書いてある内容が正しいかは見ない (check-drawing-evidence.sh と同じ形 — ADR-0019 決定 1)。
 
-gh は PATH の先頭に置いた偽物へ差し替え、ルールセットの定義も一時ファイルへ差し替えるので、
-ネットワークも認証も実ファイルの内容も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
+gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -45,45 +44,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "review-gate.sh"
+TEMPLATE = REPO / ".github" / "pull_request_template.md"
 
-# 実物と同じ形のルールセット定義 (承認を要求するパスの正本)。
-# review-gate はここの file_patterns だけを読む
-RULESET = json.dumps(
-    {
-        "name": "main-protection",
-        "target": "branch",
-        "enforcement": "active",
-        "rules": [
-            {
-                "type": "pull_request",
-                "parameters": {
-                    "required_approving_review_count": 0,
-                    "required_reviewers": [
-                        {
-                            "file_patterns": [
-                                "docs/decisions/**",
-                                ".github/**",
-                                ".claude/**",
-                            ],
-                            "minimum_approvals": 1,
-                            "reviewer": {"id": 1, "type": "Team"},
-                        }
-                    ],
-                },
-            }
-        ],
-    }
-)
-
-# 偽 gh。review-gate が呼ぶのは 4 つだけ:
-#   gh pr view <n> -R <repo> --json body,labels,latestReviews,author,closingIssuesReferences
+# 偽 gh。review-gate が呼ぶのは 3 つだけ:
+#   gh pr view <n> -R <repo> --json body,labels,latestReviews,closingIssuesReferences
 #   gh issue view <n> -R <repo> --json labels,issueType   ← #1662 で型も同じ応答から取る
-#   gh api repos/<repo>/pulls/<n> --jq .author_association
 #   gh api repos/<repo>/pulls/<n>/files --paginate --jq .[].filename   ← #793 で分かれた
 # 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する。
 #
-# **2 つの api を綴りで分ける。** 変更ファイルの一覧は別の口になったので (#793)、
-# 一緒に返すと author_association の判定に一覧が流れ込む。
 #
 # Issue の応答は既定で全 Issue 共通 (FAKE_ISSUE_JSON)。**番号ごとに変えるときだけ**
 # FAKE_ISSUE_JSON_<番号> を置く — 複数の Issue のうち 1 つだけが Bug、を表すため (#1662)。
@@ -130,7 +98,7 @@ case "$1 $2" in
                echo "gh: Not Found (HTTP 404)" >&2
                exit 1 ;;
              *"/files"*) json=$FAKE_FILES_JSON ;;
-             *) json=$FAKE_API_JSON ;;
+             *) exit 1 ;;
            esac ;;
   *) exit 1 ;;
 esac
@@ -140,13 +108,6 @@ else
   printf '%s' "$json"
 fi
 """
-
-# author は (login, is_bot, author_association) の 3 つ組。3 つ目が承認可能性の検査に効く。
-# 値は実測 (PR #529 / #528 の App は CONTRIBUTOR、#88 のメンテナは MEMBER)
-# 既定の author は App — エージェントの常道であり、承認可能性の検査を素通しする側
-APP = ("app/mokume-agent", True, "CONTRIBUTOR")
-MAINTAINER = ("shinyaoguri", False, "MEMBER")
-OUTSIDER = ("drive-by-contributor", False, "NONE")
 
 # トリアージ済みの印。ADR-0031 より前は verify: machine / verify: human の 2 種類で、
 # 後者だけが承認を要求していた。いまラベルが表すのは「完了条件が固まっている」だけである
@@ -191,7 +152,7 @@ def verification_section(numbers):
     return f"\n\n## 確認方法\n\n{rows}\n"
 
 
-def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, files=(),
+def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), files=(),
             refs=None, verified=None):
     """偽の gh pr view 応答。
 
@@ -202,14 +163,12 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
     verified には「確認方法」節へ載せる番号を渡す。既定は closes と同じ (通常の PR は
     閉じる Issue すべてに対応表を書く)。節ごと落とすには verified=() を渡す。
     """
-    login, is_bot, assoc = author
     numbers = closes if verified is None else verified
     return json.dumps(
         {
             "body": body + verification_section(numbers),
             "labels": [{"name": n} for n in labels],
             "latestReviews": [{"state": s} for s in reviews],
-            "author": {"login": login, "is_bot": is_bot},
             "files": [{"path": p} for p in files],
             "closingIssuesReferences": (
                 closing_refs(closes) if refs is None else refs
@@ -217,8 +176,6 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
             # AGENTS.md の増分 (#1668) を比べる相手を引くのに使う
             "baseRefName": BASE_REF,
             "headRefOid": HEAD_OID,
-            # gh pr view は返さない。run_gate が偽 gh api の応答を組むために持たせる
-            "authorAssociation": assoc,
         }
     )
 
@@ -257,6 +214,15 @@ def refute_section(text="| 指摘 | 根拠 | 応え |\n| --- | --- | --- |\n"
     return f"\n\n## 反証\n\n{text}\n"
 
 
+def adr_refs_outside_reasons(text):
+    """「(… 理由: ADR-00NN …)」の括弧の外に出ている ADR の番号 (#2139)。
+
+    差し戻しや案内の文面は、ADR を開かなくても何をすればよいかが決まるように書き、
+    ADR の番号は理由を辿りたい人のための任意の参照として括弧の中に添える。
+    """
+    return re.findall(r"ADR-\d{4}", re.sub(r"\([^()]*理由:[^()]*\)", "", text))
+
+
 class ReviewGateTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -266,11 +232,10 @@ class ReviewGateTest(unittest.TestCase):
         stub = self.bindir / "gh"
         stub.write_text(FAKE_GH, encoding="utf-8")
         stub.chmod(0o755)
-        self.ruleset = Path(self.tmp.name) / "main-protection.json"
-        self.ruleset.write_text(RULESET, encoding="utf-8")
 
-    def run_gate(self, pr, issue=None, ruleset=None, all_files=None, record_calls=None,
-                 issues=None, issue_fail=None, agents=None, compare_fail=None):
+    def run_gate(self, pr, issue=None, all_files=None, record_calls=None,
+                 issues=None, issue_fail=None, agents=None, compare_fail=None,
+                 run_id=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
@@ -282,6 +247,8 @@ class ReviewGateTest(unittest.TestCase):
         `agents` は (merge-base の AGENTS.md, head の AGENTS.md) の組 (#1668)。base の
         先端 (BASE_REF) にはどちらとも長さの違う本文を置くので、先端と比べれば数が狂う。
         `compare_fail` を渡すと compare API がその文言を名乗って失敗する。
+
+        `run_id` は Actions の中で立つ GITHUB_RUN_ID (#2134)。渡さなければ環境から外す。
         """
         contents = Path(self.tmp.name) / "contents"
         contents.mkdir(exist_ok=True)
@@ -290,8 +257,6 @@ class ReviewGateTest(unittest.TestCase):
             (contents / MERGE_BASE).write_text(base_text, encoding="utf-8")
             (contents / HEAD_OID).write_text(head_text, encoding="utf-8")
             (contents / BASE_REF).write_text(base_text + "先端にだけ入った他の PR の追記\n", encoding="utf-8")
-        if ruleset is not None:
-            self.ruleset.write_text(ruleset, encoding="utf-8")
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_PR_JSON"] = pr
@@ -303,17 +268,17 @@ class ReviewGateTest(unittest.TestCase):
             env[f"FAKE_ISSUE_JSON_{n}"] = body
         if issue_fail is not None:
             env["FAKE_ISSUE_FAIL"] = issue_fail
-        env["FAKE_API_JSON"] = json.dumps(
-            {"author_association": json.loads(pr)["authorAssociation"]}
-        )
         env["FAKE_COMPARE_JSON"] = json.dumps({"merge_base_commit": {"sha": MERGE_BASE}})
         env["FAKE_CONTENTS_DIR"] = str(contents)
         if compare_fail is not None:
             env["FAKE_COMPARE_FAIL"] = compare_fail
-        env["RULESET_FILE"] = str(self.ruleset)
         env["GH_CALLS"] = str(record_calls) if record_calls else "/dev/null"
         # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
         env["GITHUB_REPOSITORY"] = f"{REPO_OWNER}/{REPO_NAME}"
+        # 差し戻しの文面へ埋まる (#2134)。CI の中で回しても結果が変わらないよう、渡すとき以外は外す
+        env.pop("GITHUB_RUN_ID", None)
+        if run_id is not None:
+            env["GITHUB_RUN_ID"] = run_id
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
         )
@@ -421,6 +386,34 @@ class ReviewGateTest(unittest.TestCase):
         body = "Closes #12" + verification_section([]) + "\n\n## 確認方法\n\n書いた\n\n## 補足\n\n#12 はここでは数えない\n"
         proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
         self.assert_blocked(proc, "対応表が無い")
+
+    def test_the_template_example_passes_the_table_check(self):
+        # 実物のテンプレートから案内 (HTML コメント) を消し、見本の #N に番号を入れただけの
+        # 本文が通ること (#1949)。見本がコメントの中にしか無いと、案内を消して書いた本文から
+        # 番号ごと消え、その場しのぎの「閉じる Issue: #N」の行が広がった
+        text = TEMPLATE.read_text(encoding="utf-8")
+        body = re.sub(r"<!--.*?-->", "", text, flags=re.S).replace("#N", "#12")
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_the_template_names_closes_only_in_the_verification_section(self):
+        # Closes #N の置き場を目的節にも案内すると、目的節に書いて確認方法節に番号が無い
+        # 本文が生まれ、上の検査で差し戻される (#1908 → #1949)
+        text = TEMPLATE.read_text(encoding="utf-8")
+        purpose = text.split("## 目的", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("Closes #", purpose)
+
+    def test_the_template_says_what_to_do_without_opening_an_adr(self):
+        """テンプレートの案内は、ADR を開かなくても書く内容が決まる (#2139)。
+
+        ADR の番号は「(理由: ADR-00NN)」の任意の参照に留め、未採択の選択や反証の応えのように
+        番号を辿らないと決まらなかった行動は、案内の本文が言い切る。
+        """
+        text = TEMPLATE.read_text(encoding="utf-8")
+        self.assertEqual(adr_refs_outside_reasons(text), [], "ADR の番号が理由の括弧の外にある")
+        self.assertSays(text, "Issue に具体例・選択肢・推奨を示して人の判断を先に待つ")
+        self.assertSays(text, "応えは 3 通り: 直した / 起票した #N / 当たらない: 理由")
+        self.assertIn(".claude/skills/bug-refute/", text)
 
     def test_no_issue_pr_is_exempt_from_the_table(self):
         # 閉じる Issue が無ければ、対応する完了条件も無い
@@ -530,63 +523,162 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assert_blocked(proc, "issueType が無い")
 
-    # --- 5. 承認可能性の不変条件 (ADR-0007 / #88) ---------------------------
+    # --- 差し戻しの文面が約束してよいこと (#2134) ---------------------------
+    #
+    # 本文を直すと新しい run は走るが、赤かった run の ci-gate は同じコミットに残って必須
+    # チェックを赤のままにする (古い赤が新しい緑を固定する場合もある — #259)。かつての文面
+    # (対応表・反証の 2 つ) は「本文を編集すれば CI は自動で再評価されます」と約束していて、
+    # 直したのに必須チェックが赤のまま止まった。文面は、再評価が走ることと、必須チェックが
+    # 緑になることを分けて言い、打ち直しまで案内する。変更要求の解除・no-issue ラベルの付与
+    # も新しい run を起こすだけで同じなので、共通の末尾 (rerun_note) を持つ 4 つの差し戻しで
+    # 固定する。verify: の差し戻しだけは Issue 側の操作で run が起きないので、別に固定する
 
-    def test_maintainer_authored_pr_touching_a_protected_path_is_blocked(self):
-        # #88 と同じ形。唯一の承認者が author 本人なので、承認は永久に来ない
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
-            issue_json(TRIAGED),
-        )
-        self.assert_blocked(proc, "誰も承認できない")
-        # ADR-0007 決定 4 — 回復手順まで示し、待てば済むと読めてはいけない
-        self.assertIn("close", proc.stderr)
-        self.assertIn("作り直して", proc.stderr)
-        self.assertIn("永久に来ません", proc.stderr)
+    @staticmethod
+    def squash(text):
+        """空白と改行を外した本文。折り返しの位置に左右されず、語句を探すため。"""
+        return re.sub(r"\s+", "", text)
 
-    def test_app_authored_pr_touching_a_protected_path_passes(self):
-        # 同じ PR を App identity で作れば通る。App は org の外なので
-        # author_association が CONTRIBUTOR になり、承認者集合に入りようがない。
-        # 承認そのものはルールセットが要求し、GitHub 側で待つ
-        proc = self.run_gate(
-            pr_json(author=APP, files=[".claude/settings.json"]), issue_json(TRIAGED)
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+    def assertSays(self, err, phrase):
+        self.assertIn(self.squash(phrase), self.squash(err), f"文面に「{phrase}」が無い:\n{err}")
 
-    def test_maintainer_authored_pr_without_required_approval_passes(self):
-        # ルールセットの file_patterns 対象外 — 承認が要らないので詰みようがない
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=["README.md", "scripts/foo.sh"]),
-            issue_json(TRIAGED),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+    def blocked_messages(self, **kwargs):
+        """共通の末尾 (rerun_note) を持つ差し戻し 4 つの stderr を、名前付きで返す。"""
+        cases = {
+            "対応表": (pr_json(verified=()), issue_json(TRIAGED)),
+            "反証": (pr_json(), issue_json(TRIAGED, issue_type="Bug")),
+            "変更要求": (pr_json(reviews=["CHANGES_REQUESTED"]), issue_json(TRIAGED)),
+            "no-issue の不在": (pr_json(body="Issue に触れていない本文", closes=()), None),
+        }
+        messages = {}
+        for name, (pr, issue) in cases.items():
+            proc = self.run_gate(pr, issue, **kwargs)
+            self.assertEqual(proc.returncode, 1, f"{name}: 差し戻されていない: {proc.stdout}")
+            messages[name] = proc.stderr
+        return messages
 
-    def test_outside_contributor_is_not_blocked(self):
-        # author が承認者集合の外 — メンテナが承認できるので詰んでいない。
-        # 「author が bot でなければ差し戻す」という近似ではここを誤って止める
-        proc = self.run_gate(
-            pr_json(author=OUTSIDER, files=["docs/decisions/0009-x.md"]),
-            issue_json(TRIAGED),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+    def test_a_blocked_message_does_not_promise_automatic_reevaluation(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertNotRegex(self.squash(err), r"自動(で|的に)?再(評価|実行)", "約束が戻っている:\n" + err)
+                # 新しい run が走ることまでは言えるが、それが必須チェックを緑にするとは言わない。
+                # 機構は 1 つに断定せず、赤が残ること (と、古い赤が固定する場合もあること) を言う
+                self.assertSays(err, "新しい run が走って")
+                self.assertSays(err, "必須チェックを赤のままにします")
+                self.assertSays(err, "古い赤が新しい緑を固定する場合もあります")
 
-    def test_a_protected_path_beyond_the_graphql_cap_is_still_seen(self):
-        """**上限を越える PR** (#793)。
+    def test_a_blocked_message_names_the_rerun_that_clears_a_red_ci_gate(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertIn("ci-gate", err)
+                self.assertRegex(err, r"gh run rerun \S+ --failed", "打ち直しの手を案内していない:\n" + err)
 
-        `gh pr view --json files` は GraphQL の接続を引くので上限があり、大きな PR では
-        後半のファイルが落ちる。落ちた先で起きるのは「保護パスに触れているのに触れて
-        いないと読む」で、**赤くならずに緩む** — 誰も承認できない PR がそのまま作られる。
+    def test_the_rerun_names_this_run_inside_actions_and_a_placeholder_outside(self):
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name + " (手元)"):
+                self.assertIn("gh run rerun <run-id> --failed", err)
+        for name, err in self.blocked_messages(run_id="424242").items():
+            with self.subTest(name + " (Actions)"):
+                self.assertIn("gh run rerun 424242 --failed", err)
 
-        ここでは `gh pr view` の側に無害な 100 件だけを持たせ、`--paginate` の側にだけ
-        保護パスを 101 件目として置く。上限のある口を読んでいれば緑で通ってしまう。
+    def test_a_blocked_message_says_the_watch_skips_fork_prs(self):
+        """当番 (stall-watch) は isCrossRepository を外す。「いずれ打ち直す」は fork の PR に当たらない。"""
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertSays(err, "同じリポジトリの PR は、打たなくても stall-watch の当番がいずれ打ち直します")
+                self.assertSays(err, "fork の PR は当番の対象外なので、メンテナが打ちます")
+
+    def test_a_blocked_message_does_not_rerun_pr_title(self):
+        # 打ち直すと元のタイトルを再生して同じ赤を返す (#699)。直す手は新しいコミット
+        for name, err in self.blocked_messages().items():
+            with self.subTest(name):
+                self.assertSays(err, "pr-title も赤い run は、打ち直すと元のタイトルを再生して同じ赤を返します")
+                self.assertSays(err, "新しいコミットを push して run を作り直してください")
+
+    def test_the_missing_issue_message_names_create_time_label_first_and_not_as_a_guarantee(self):
+        err = self.blocked_messages()["no-issue の不在"]
+        self.assertIn("gh pr create --label no-issue", err)
+        self.assertSays(err, "通常は最初の run から通ります")
+        self.assertSays(err, "まれに作成の run が先にラベルを読んで赤くなり")
+        # 後付けの案内 (打ち直し) は、作成と同時の案内より後に出る
+        self.assertLess(err.find("gh pr create --label no-issue"), err.find("gh run rerun"))
+        # 約束のような言い方 (旧: 付けて再実行します) に戻っていない
+        self.assertNotIn(self.squash("付けて再実行します"), self.squash(err))
+
+    def test_the_changes_requested_message_says_a_dismissal_starts_a_run_but_needs_a_rerun(self):
+        err = self.blocked_messages()["変更要求"]
+        self.assertSays(err, "変更要求を解いてもらう")
+        self.assertSays(err, "解かれると新しい run が走りますが、変更要求で赤くなった run は打ち直しが要ります")
+
+    def test_the_missing_verify_label_message_names_the_rerun_unit(self):
+        """Issue 側のラベル操作は PR の run を起こさない — 新しい緑は付かず、当番も拾わない。
+
+        だから共通の末尾 (rerun_note) を使わず、打ち直しを直に案内する。画面の「Re-run all
+        jobs」は成功済みの pr-title まで元のタイトルで走らせ直す (#699) ので、単位は
+        失敗したジョブだけ (`--failed`) である。
         """
-        truncated = [f"Sources/MokumeCore/Filler{i}.swift" for i in range(100)]
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=truncated),
-            issue_json(TRIAGED),
-            all_files=truncated + [".github/rulesets/main-protection.json"],
+        proc = self.run_gate(pr_json(), issue_json("status: in progress"))
+        self.assert_blocked(proc, "verify: ラベルが無い")
+        err = proc.stderr
+        self.assertRegex(err, r"gh run rerun \S+ --failed")
+        self.assertSays(err, "Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない")
+        self.assertSays(err, "「Re-run all jobs」は成功済みの pr-title まで元のタイトルで走らせ直す")
+        # 当番は拾わない (新しい緑が付かない) ので、「いずれ打ち直す」と言わない
+        self.assertNotIn("stall-watch", err)
+        # 単位の無い言い方 (旧: Actions の re-run か空 push) に戻っていない
+        self.assertNotIn(self.squash("Actions の re-run か空 push"), self.squash(err))
+
+    # --- 差し戻しの文面は ADR を開かなくても行動できる (#2139) -------------------
+    #
+    # 差し戻しを読んだエージェントが ADR の番号を辿ると、1 回の差し戻しで 1〜2 万字の文書を
+    # 読みに行く。文面だけで何をすればよいかが決まり、ADR の番号は「(理由: ADR-00NN)」の
+    # 任意の参照として添えるだけにする (AGENTS.md が ADR を作業のために読まない文書とした
+    # のと同じ向き)。見出しの行 (差し戻しの理由) は ADR を引かずに言い切る
+
+    def every_blocked_message(self):
+        """差し戻しの文面すべて (共通の末尾を持つ 4 つ + 反証の節が空 + verify の不在)。"""
+        messages = self.blocked_messages()
+        empty = self.run_gate(
+            pr_json(body="Closes #12" + refute_section("")), issue_json(TRIAGED, issue_type="Bug")
         )
-        self.assert_blocked(proc, "誰も承認できない")
+        messages["反証の節が空"] = empty.stderr
+        no_label = self.run_gate(pr_json(), issue_json("status: in progress"))
+        messages["verify の不在"] = no_label.stderr
+        return messages
+
+    def test_a_blocked_message_names_an_adr_only_as_an_optional_reason(self):
+        for name, err in self.every_blocked_message().items():
+            with self.subTest(name):
+                self.assertEqual(adr_refs_outside_reasons(err), [], "ADR の番号が理由の括弧の外にある:\n" + err)
+                self.assertNotIn("ADR-", err.splitlines()[0], "差し戻しの理由の行が ADR を引いている")
+
+    def test_the_missing_table_message_shows_the_table_to_write(self):
+        err = self.blocked_messages()["対応表"]
+        self.assertIn("### Closes #123", err)
+        self.assertIn("| 完了条件 | 着手時の現況 | 確かめたこと |", err)
+        self.assertSays(err, "見ているのは番号が現れることだけで、中身の正しさは見ていません")
+        self.assertSays(err, "Issue を閉じない例外 PR なら no-issue ラベルを付けてください")
+
+    def test_the_missing_refute_message_says_what_to_write_and_who_may_write_it(self):
+        for name in ("反証", "反証の節が空"):
+            err = self.every_blocked_message()[name]
+            with self.subTest(name):
+                self.assertSays(err, "## 反証")
+                for answer in ("直した", "起票した #N", "当たらない: 理由"):
+                    self.assertSays(err, answer)
+                self.assertSays(err, "プランも完了条件も渡されないサブエージェント")
+                # 自分で兼ねない (プランを知る目は独立ではない) は、番号も SKILL も辿らずに読める
+                self.assertSays(err, "自分で兼ねてはいけません")
+                self.assertIn(".claude/skills/bug-refute/SKILL.md", err)
+                self.assertSays(err, "指摘が 1 件も無かったなら、そう書けば空ではありません")
+
+    def test_the_missing_verify_label_message_says_who_may_attach_it(self):
+        """印を付けてよいのは起票者だけ。他人の Issue には、自分で付けず付与を頼む (AGENTS.md「進め方」2)。"""
+        err = self.every_blocked_message()["verify の不在"]
+        self.assertSays(err, "verify: triaged を付けてよいのは完了条件を知る起票者だけ")
+        self.assertSays(err, "他の人が起票した Issue なら自分では付けず")
+        self.assertSays(err, "付与を起票者 (メンテナ) に頼む")
+
+    # --- 5. 変更要求 -------------------------------------------------------
 
     def test_the_file_list_is_paginated(self):
         """一覧を引く呼び出しに `--paginate` が載っていること (#793)。
@@ -595,37 +687,12 @@ class ReviewGateTest(unittest.TestCase):
         """
         calls = self.bindir.parent / "gh-calls.txt"
         proc = self.run_gate(
-            pr_json(author=APP, files=["README.md"]),
+            pr_json(files=["README.md"]),
             issue_json(TRIAGED),
             record_calls=calls,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         assert_files_call_paginates(self, calls)
-
-    def test_protected_paths_come_from_the_ruleset_not_a_copy(self):
-        """承認が要るパスの正本はルールセットで、写しを持たない (#530)。
-
-        定義から `.claude/**` を外せば、同じ PR は承認不要として通る。CODEOWNERS を
-        代理に読んでいた頃は、同じ 3 パスが 2 ファイルに綴り違いで写されていて、
-        整合を見る検査が無かった。
-        """
-        narrowed = json.loads(RULESET)
-        params = narrowed["rules"][0]["parameters"]
-        params["required_reviewers"][0]["file_patterns"] = ["docs/decisions/**"]
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
-            issue_json(TRIAGED),
-            ruleset=json.dumps(narrowed),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    def test_an_existing_approval_proves_the_pr_was_approvable(self):
-        # 現に承認が付いているなら詰んでいない (自己承認はできないので他人が付けた)
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=[".claude/settings.json"], reviews=["APPROVED"]),
-            issue_json(TRIAGED),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_changes_requested_blocks_even_with_an_approval(self):
         proc = self.run_gate(
@@ -763,14 +830,50 @@ class ReviewGateTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, f"承認を待っている: {proc.stdout} {proc.stderr}")
         self.assertNotIn("承認待ち", proc.stdout + proc.stderr)
 
-    def test_important_paths_are_left_to_the_ruleset(self):
-        # 重要パスに触れていても、author が承認者集合の外なら通す。承認を要求するのは
-        # ルールセットの required_reviewers 側 (native の Review required)
+    def test_a_pr_touching_the_fences_needs_no_approval(self):
+        """柵 (.github/**・.claude/**) に触れる PR も、承認なしで通す (ADR-0044)。
+
+        承認のゲートを外す前は、メンテナ名義でここに触れる PR を「誰も承認できない」と
+        差し戻していた (ADR-0007)。同じ形が戻ると、メンテナ名義の PR が柵を直せなくなる。
+        """
         proc = self.run_gate(
-            pr_json(files=[".github/workflows/ci.yml"]), issue_json(TRIAGED)
+            pr_json(files=[".github/workflows/ci.yml", ".claude/settings.json"]),
+            issue_json(TRIAGED),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertNotIn("重要パス", proc.stdout + proc.stderr)
+        self.assertNotIn("承認", proc.stdout + proc.stderr)
+
+class GateRunsFromDefaultBranchTest(unittest.TestCase):
+    """判定のジョブが、PR の版ではなく既定ブランチの版のスクリプトを取ること (#2001)。
+
+    PR の版で走らせると、同じ PR の中で自分を裁く検査を書き換えて通れる
+    (ADR-0031 決定 2 の 2026-10-03 の改訂)。ジョブの範囲は字下げで切り出す
+    — 2 つ目の字下げ (ジョブ名) から、同じ字下げの次の行の手前まで。
+    """
+
+    WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+    REF = "ref: ${{ github.event.repository.default_branch }}"
+
+    def job(self, name):
+        lines = self.WORKFLOW.read_text(encoding="utf-8").splitlines()
+        start = lines.index(f"  {name}:")
+        end = next(
+            (i for i in range(start + 1, len(lines))
+             if re.match(r"  \S", lines[i])),
+            len(lines),
+        )
+        return lines[start:end]
+
+    def test_gate_jobs_check_out_the_default_branch(self):
+        for name in ("review-gate", "drawing-evidence"):
+            with self.subTest(job=name):
+                body = self.job(name)
+                checkout = [i for i, l in enumerate(body)
+                            if "actions/checkout@" in l]
+                self.assertEqual(len(checkout), 1, f"{name} の checkout は 1 つ")
+                i = checkout[0]
+                self.assertEqual(body[i + 1].strip(), "with:")
+                self.assertEqual(body[i + 2].strip(), self.REF)
 
 
 if __name__ == "__main__":

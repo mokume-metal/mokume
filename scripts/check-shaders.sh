@@ -46,25 +46,50 @@ if ! xcrun --find metal >/dev/null 2>&1; then
   exit 1
 fi
 
+# 見るファイルは「git add -A したときに CI の木になるもの」(追跡 + 未追跡 − 無視・#2072)。
+# find で作業ツリーを見ると、手元にだけ在る (無視された) 前置きで断片を組み立てて手元で
+# 通り、前置きの無い CI の木では断片が単体で組まれて落ちる。index にだけ残る旧パス
+# (git rm していない削除) は -f で落とす。名前は -z で割る (非 ASCII の名前は C 引用符
+# つきで返る)
 shaders=()
-while IFS= read -r file; do shaders+=("$file"); done < <(find Sources -name '*.metal' | sort)
+while IFS= read -r file; do shaders+=("$file"); done < <(
+  git ls-files -z --cached --others --exclude-standard -- Sources |
+    while IFS= read -r -d '' path; do
+      # パターンを `(` で開く — macOS の /bin/bash (3.2) は <( ) の中の case の `)` を
+      # プロセス置換の閉じと読み違える
+      case "$path" in
+        (*.metal) if [ -f "$path" ]; then printf '%s\n' "$path"; fi ;;
+      esac
+    done | sort
+)
 
 if [ ${#shaders[@]} -eq 0 ]; then
   echo "ok: シェーダは無い"
   exit 0
 fi
 
-kinds=$(find Sources -name 'Kinds.metal' | sed -n '1p')
+# 前置きも同じ列挙から引く (無視された手元のものを在ると数えない)
+first_named() {
+  local name="$1" shader
+  for shader in "${shaders[@]}"; do
+    if [ "$(basename "$shader")" = "$name" ]; then
+      printf '%s\n' "$shader"
+      return
+    fi
+  done
+}
 
-common=$(find Sources -name 'Common.metal' | sed -n '1p')
+kinds=$(first_named Kinds.metal)
+
+common=$(first_named Common.metal)
 common_dir=""
 if [ -n "$common" ]; then common_dir=$(dirname "$common"); fi
 
-compute=$(find Sources -name 'Compute.metal' | sed -n '1p')
+compute=$(first_named Compute.metal)
 compute_dir=""
 if [ -n "$compute" ]; then compute_dir="$(dirname "$compute")/Computations"; fi
 
-effect=$(find Sources -name 'Effect.metal' | sed -n '1p')
+effect=$(first_named Effect.metal)
 effect_dir=""
 if [ -n "$effect" ]; then effect_dir="$(dirname "$effect")/Effects"; fi
 

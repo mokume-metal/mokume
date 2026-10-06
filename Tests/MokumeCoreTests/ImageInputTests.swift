@@ -65,7 +65,12 @@ import Testing
             canvas.image(image, 0, 0, 32, 32)
         }
         #expect(try canvas.target.encodeForDisplay() == gpuOutput)
-        #expect(gpu.commandFaultCount == 0)
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。変換は GPU が読む画像と置き場の
+        // 常駐・寿命に頼るので、取り違えは絵より先に打ち切り (page fault 等) として現れる。
+        // 別の投入の巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            gpu.commandFaultCount == 0,
+            "GPU が仕事を \(gpu.commandFaultCount) 回打ち切った: \(gpu.lastCommandFault ?? "")")
     }
 
     @Test("少数編集は最後の値を保持し、送信後の編集と CPU 読みも同じ値になる")
@@ -230,7 +235,12 @@ import Testing
             #expect(actual[index].x == 11)
             #expect(actual == image.pixels)
         }
-        #expect(gpu.commandFaultCount == 0)
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。変換は GPU が読む画像と置き場の
+        // 常駐・寿命に頼るので、取り違えは絵より先に打ち切り (page fault 等) として現れる。
+        // 別の投入の巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            gpu.commandFaultCount == 0,
+            "GPU が仕事を \(gpu.commandFaultCount) 回打ち切った: \(gpu.lastCommandFault ?? "")")
     }
 
     @Test("配置後の write は描き切り時に反映し、途中の読み取りより前の絵を変えない")
@@ -367,7 +377,12 @@ import Testing
         for _ in 0..<8 { try submitAndRelease() }
         #expect(gpu.residencySet.allocationCount == settled)
         #expect(gpu.retiredResourceCount == 0 && gpu.heldResourceCount == 0)
-        #expect(gpu.commandFaultCount == 0)
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。変換は GPU が読む画像と置き場の
+        // 常駐・寿命に頼るので、取り違えは絵より先に打ち切り (page fault 等) として現れる。
+        // 別の投入の巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            gpu.commandFaultCount == 0,
+            "GPU が仕事を \(gpu.commandFaultCount) 回打ち切った: \(gpu.lastCommandFault ?? "")")
     }
 
     @Test("小さな入力は追加の GPU 段を作らない")

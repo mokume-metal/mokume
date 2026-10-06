@@ -44,6 +44,8 @@ DEFS = REPO / ".github" / "rulesets"
 # 引けなかったものとして落とす — 「判定できなかった」経路もこれで再現できる。
 #   gh api repos/X/contents/.github/rulesets?ref=main → FAKE_MAIN_DEFS_DIR の name<TAB>blob SHA
 #   gh api repos/X/commits?path=...&sha=main          → FAKE_MAIN_RULESET_COMMIT
+#
+#   PUT|POST の FAKE_WRITE_FAIL_NAMES (カンマ区切り)  → その name の定義だけ断る
 FAKE_GH = r'''#!/usr/bin/env python3
 import hashlib, json, os, pathlib, sys
 
@@ -76,6 +78,15 @@ if "/commits?" in endpoint:
     sys.exit(0)
 
 if "PUT" in args or "POST" in args:
+    fail = os.environ.get("FAKE_WRITE_FAIL")
+    src_name = json.loads(pathlib.Path(args[args.index("--input") + 1]).read_text())["name"]
+    if src_name in os.environ.get("FAKE_WRITE_FAIL_NAMES", "").split(","):
+        fail = json.dumps({"message": "Validation Failed", "errors": [src_name]})
+    if fail:
+        # 本物の gh api と同じく、応答の本文は stdout・要約は stderr に出る
+        print(fail)
+        print("gh: Validation Failed (HTTP 422)", file=sys.stderr)
+        sys.exit(1)
     src = pathlib.Path(args[args.index("--input") + 1])
     # PUT は repos/<owner>/<repo>/rulesets/<id>、POST は末尾が rulesets (新規作成)
     target = endpoint.rsplit("/", 1)[-1] if "/rulesets/" in endpoint else "new"
@@ -164,6 +175,32 @@ class ShapeTest(unittest.TestCase):
         r = self.shape()
         self.assertEqual(r.returncode, 1)
         self.assertIn("JSON として不正", r.stderr)
+
+    def set_patterns(self, count):
+        def mutate(body):
+            rule = next(r for r in body["rules"] if r["type"] == "pull_request")
+            # 定義はいま required_reviewers を持たない (ADR-0044)。上限の検査は、
+            # また置いたときに API の 422 より先に落とすために残す
+            rule["parameters"]["required_reviewers"] = [{
+                "file_patterns": [f"dir{i}/**" for i in range(count)],
+                "minimum_approvals": 1,
+                "reviewer": {"id": 1, "type": "Team"},
+            }]
+        self.rewrite("main-protection.json", mutate)
+
+    def test_file_patterns_が上限を越えると落ちる(self):
+        # 上限は API の 422 の本文にしか無い (#2075)。越えた定義は形の検査を通り、
+        # 適用の PUT で初めて落ちていた
+        self.set_patterns(16)
+        r = self.shape()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("file_patterns", r.stderr)
+        self.assertIn("15", r.stderr)
+
+    def test_file_patterns_が上限ちょうどなら通る(self):
+        self.set_patterns(15)
+        r = self.shape()
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_定義が_1_本も無ければ落ちる(self):
         for f in self.dir.glob("*.json"):
@@ -295,8 +332,8 @@ class DiffTest(unittest.TestCase):
         self.assertIn("定義に無い", r.stderr)
 
 
-class ScriptTest(unittest.TestCase):
-    """入口の 2 本 (gh は偽物に差し替える)。"""
+class ScriptFixture(unittest.TestCase):
+    """本物のリポジトリで入口を回す土台 (gh は偽物に差し替える)。それ自身は何も検査しない。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -330,6 +367,10 @@ class ScriptTest(unittest.TestCase):
 
     def calls(self):
         return self.log.read_text() if self.log.exists() else ""
+
+
+class ScriptTest(ScriptFixture):
+    """入口の 2 本。"""
 
     def test_shape_は_gh_を呼ばない(self):
         r = run(["/bin/bash", str(CHECK), "--shape"], env=self.env)
@@ -370,6 +411,24 @@ class ScriptTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("PUT", self.calls())
         self.assertEqual(json.loads(f.read_text())["enforcement"], "active")
+
+    def test_apply_は断られた理由を名乗って止まる(self):
+        # 応答の本文を捨てると「Validation Failed」しか残らず、何が上限を越えたのかを
+        # 打ち直して調べることになる (#2075)
+        f = next(f for f in self.live.glob("*.json") if "signed" in f.read_text())
+        body = json.loads(f.read_text())
+        body["enforcement"] = "disabled"
+        f.write_text(json.dumps(body))
+        self.env["FAKE_WRITE_FAIL"] = json.dumps(
+            {"message": "Validation Failed", "errors": ["Exceeded limit of 15 file patterns"]})
+
+        r = run(["/bin/bash", str(APPLY), "--apply"], env=self.env)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("Exceeded limit of 15 file patterns", r.stderr)
+        # 差分の出力にも名前は出るので、断られたことを名乗る行そのものを見る
+        self.assertIn("main-protection の更新を API が断った", r.stderr)
+        # 1 本が断られても、残りの定義は適用を試みる (巻き添えで止めない)
+        self.assertEqual(self.calls().count("PUT"), 3, self.calls())
 
     def test_apply_は差分が無ければ何もしない(self):
         r = run(["/bin/bash", str(APPLY), "--apply"], env=self.env)

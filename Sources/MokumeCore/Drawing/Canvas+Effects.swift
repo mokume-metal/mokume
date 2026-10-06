@@ -26,10 +26,10 @@ extension Canvas {
         // **効果はフレームを越えない** (ADR-0021 決定 4)。フレームの頭で捨てるので、外で
         // 決めた並びはどのフレームにも属さない。黙って捨てると「書いたのに効かない」だけが
         // 残るので、切り抜き (#1505) と同じく 1 度言って無視する (#1605)。形に焼き付かない
-        // ので、形の組み立ての間もフレームの外に数える (`isShaping` ではなく `isDrawing`)。
+        // ので、形の組み立ての中ではフレームの中でも断る (`isShaping` ではなく `admits`・#1529)。
         // **値の検めより先に断る** — どのフレームにも属さない並びの値を言っても、直す先を
         // 指さない
-        guard isDrawing else { return warnOutsideFrame(.effects) }
+        guard admits(.effects) else { return }
         pendingEffects = effects.compactMap { effect in
             guard let accepted = effect.accepted else {
                 warnOnce(
@@ -274,8 +274,9 @@ extension Canvas {
     /// **値が変わった画素**だけを控えへ写す。値で見分けるので、描く先と同じ値を書いた画素
     /// (読んだ値をそのまま書き戻した画素を含む) は、書かなかった扱いになる (甲-1)。
     ///
-    /// 描き切りの頭と出力段 (``RenderTarget/encodeToImage()``)・細かさを下げた面の出す先の追い付き
-    /// (``catchUpOutput()``) が、書き戻す口として呼ぶ。
+    /// 描き切りの頭と出力段 (``RenderTarget/encodeToImage()``)・止まっている間のコールバックを配った
+    /// 直後の追い付き (細かさを下げた面は ``catchUpOutput()``、細かさ 1 の面は
+    /// ``writeBackPendingPixels()``) が、書き戻す口として呼ぶ。
     ///
     /// - Returns: 書き戻しを積んだか。**投入してから** `markPixelsWrittenBack()` する ([#1183])。
     ///
@@ -376,10 +377,14 @@ extension Canvas {
         var control = [pass.control.0, pass.control.1]
         block.advanced(by: EffectPipeline.controlOffset)
             .copyMemory(from: &control, byteCount: 32)
-        var frame = SIMD4<Float>(
-            Float(destination.width), Float(destination.height), time, 0)
+        // 段の面の大きさと、出す大きさ。断片は位置と大きさを出す画素で受け取る (#1639) ので、
+        // ラスタの位置 (段の面の画素) に掛ける比をこの 2 つから作る。段の面は縮めた脇の面の
+        // こともあるので、``unitsPerDrawnPixel`` ではなく段ごとの大きさで割る
+        var frame = (
+            SIMD4<Float>(Float(destination.width), Float(destination.height), time, 0),
+            SIMD4<Float>(width, height, 0, 0))
         block.advanced(by: EffectPipeline.frameOffset)
-            .copyMemory(from: &frame, byteCount: 16)
+            .copyMemory(from: &frame, byteCount: EffectPipeline.frameSize)
         var values = pass.shader?.packedValues ?? [0, 0, 0, 0]
         while values.count < EffectPipeline.valueSlotCapacity { values.append(0) }
         block.advanced(by: EffectPipeline.valuesOffset)

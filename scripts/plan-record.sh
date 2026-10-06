@@ -11,11 +11,16 @@
 #   3. 投稿はフックが行わず scripts/comment.sh を打たせる (人間の目を一度通す)
 #   4. 着手の瞬間に、完了条件がまだ妥当かを問う (ADR-0031 決定 4 — recheck_missing)
 #   5. 対象が Bug なら、破られた約束とそれが及ぶ範囲を問う (ADR-0040 決定 1 — bug_scope_missing)
+#   6. 4 と 5 は**承認の前にも**問う (#2135 — precheck)。capture は承認の後に動くので、
+#      そこだけで差し戻すと、直したプランを人がもう一度承認することになる
 #
 # 明示入力: register/check は --help を参照。codex-stop は Codex Stop 用。
 # Claude の capture/guard の入力契約と記録の置き場は変えない (#1728)。
+# precheck は Claude の PreToolUse だけが呼ぶ。Codex の経路 (register/codex-stop) は変えない。
 #
 # 契約 (詳細は各関数の頭):
+#   precheck  stdin に PreToolUse (ExitPlanMode) の JSON。足りなければ承認の前に差し戻す
+#             (deny の JSON を stdout へ。足りるときは無出力で exit 0 — 記録は作らない)
 #   capture   stdin に PostToolUse (ExitPlanMode) の JSON。記録し指示を stderr へ (exit 2)
 #   guard     stdin に Stop の JSON。未投稿が残っていれば差し戻す (exit 2)
 #   sanitize  stdin の本文からパス類を落として stdout へ
@@ -82,8 +87,8 @@ STALE_DAYS=14   # 投稿先が現れないまま放置された記録を捨て�
 # **期限を持たせる。** 4 つの口はどれも呼び手が本文を即座に渡す前提で、手で打つと
 # 永遠に待つ。**固まるのは EOF が来ない stdin** である — 空を渡した場合 (< /dev/null)
 # は昔から返っていたので、端末やパイプが開いたまま打たれたときだけ無言で止まっていた
-# (実際に 40 分放置された・#636)。AGENTS.md の「固まりうる待ちには、待つ側が期限を
-# 持たせて越えたら殺す」がそのまま当たる。
+# (実際に 40 分放置された・#636)。AGENTS.md の「待つ側が期限を持ち、越えたら殺す」
+# (「待ちを含む検査を書く」) がそのまま当たる。
 #
 # 5 秒にする根拠は、呼び手 (フック) が payload を即座に書くこと — 遅い機械でも届かない。
 readonly STDIN_DEADLINE=5
@@ -103,7 +108,7 @@ explain_stdin() { # $1=口 $2=渡すもの。**その場で直せるところま
   {
     printf '%s は stdin から %s を読みます。%s 秒待って何も来ませんでした。\n\n' \
       "$1" "$2" "$STDIN_DEADLINE"
-    printf 'capture と guard はフック (.claude/settings.json) が呼ぶ口で、手で打つものでは\n'
+    printf 'precheck と capture と guard はフック (.claude/settings.json) が呼ぶ口で、手で打つものでは\n'
     printf 'ありません。sanitize は本文を渡して使います:\n\n'
     printf '    bash scripts/%s %s < <ファイル>\n' "$(basename "$0")" "$1"
   } >&2
@@ -321,6 +326,27 @@ plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行
 # 2 箇所に持たせない
 resolve_target() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" / ""
   plan_targets "$1" "$2" | sed -n '1p'
+}
+
+# 投稿先の候補を PLAN_TARGETS へ (1 行 1 件)、実在を確かめた番号の型を PLAN_TARGET_TYPES へ置く。
+#
+# 型を控えた PLAN_TARGET_TYPES を読むので、plan_targets は**今のシェルで**呼び、出力は
+# 一時ファイルで受ける ($( ) にするとサブシェルごと型が消える)。一時ファイルを作れなければ
+# 従来どおり $( ) で呼ぶ — 型が空になるので、Bug の検査 (bug_scope_rejection) は問わない側へ
+# 倒れる。**capture と precheck が同じこれを使う** (#2135)。GitHub が引けなければ候補も型も
+# 空になり、検査は問わない側へ倒れる (記録の検査で、着手のゲートではない)。
+PLAN_TARGETS=''
+load_plan_targets() { # $1=ブランチ $2=本文
+  local scratch
+  PLAN_TARGET_TYPES=''
+  PLAN_TARGETS=''
+  if scratch=$(mktemp "${TMPDIR:-/tmp}/plan-record.XXXXXX" 2>/dev/null); then
+    plan_targets "$1" "$2" >"$scratch"
+    PLAN_TARGETS=$(cat "$scratch")
+    rm -f "$scratch"
+  else
+    PLAN_TARGETS=$(plan_targets "$1" "$2")
+  fi
 }
 
 posted() { # $1=種別 $2=番号 $3=記録 ID — GitHub 側にこの記録が既にあるか
@@ -624,12 +650,30 @@ bug_scope_missing() { # stdin=プラン本文。足りないものを 1 行 1 �
     echo 'その約束が及ぶ範囲 (探した式と、見つかった兄弟・同じ根の Issue)'
 }
 
+bug_numbers() { # $1=PLAN_TARGET_TYPES → 対象の Bug の番号 (空白区切り)
+  printf '%s\n' "$1" | awk '$2 == "Bug" { printf "%s%s", sep, $1; sep = " " }'
+}
+
+# 対象に Bug があるのに約束と範囲が足りないとき、差し戻しの文面を stdout へ (足りていれば空)。
+#
+# **承認の後の capture と承認の前の precheck が同じこれを呼ぶ** (#2135)。検査を 2 か所に
+# 持つと、片方だけ語彙を広げたときに「承認の前は通ったのに後で差し戻される」(= 人の承認が
+# 2 回になる) 食い違いが黙って生まれる。PLAN_TARGET_TYPES を読むので、load_plan_targets の
+# 後に呼ぶ ($( ) の中から呼んでよい — 読むだけである)。
+bug_scope_rejection() { # $1=本文
+  local scope
+  targets_include_bug "$PLAN_TARGET_TYPES" || return 0
+  scope=$(printf '%s' "$1" | bug_scope_missing)
+  [ -n "$scope" ] || return 0
+  bug_scope_missing_message "$scope" "$(bug_numbers "$PLAN_TARGET_TYPES")"
+}
+
 # --- 差し戻しの文言と指示文 -------------------------------------------------
 #
-# **文言は関数に切り出す。** scripts/review-gate.sh と scripts/pr-identity-guard.sh が
-# 同じ形をとっており、あちらには bash 3.2 の理由がある — `f "$(cat <<'EOF' … EOF)"` と
-# 書くと 3.2 は $( … ) の中の here-document の本文まで閉じ括弧の探索対象にするので、
-# 本文に $( が現れるとネストを誤認して no closing ')' になる (#160)。
+# **文言は関数に切り出す。** scripts/review-gate.sh が同じ形をとっており、あちらには
+# bash 3.2 の理由がある — `f "$(cat <<'EOF' … EOF)"` と書くと 3.2 は $( … ) の中の
+# here-document の本文まで閉じ括弧の探索対象にするので、本文に $( が現れるとネストを
+# 誤認して no closing ')' になる (#160)。
 #
 # こちらの文言はいま $( を含まないが、**含んだ日に壊れる**のは同じである。加えて
 # capture() が 159 行あったのはこの 4 つを抱えていたからで、出すと 80 行台に落ちる
@@ -667,13 +711,14 @@ retry_plan_instruction() {
 
 recheck_missing_message() { # $1=足りないもの (1 行 1 件)
   cat <<EOF
-着手プランに、完了条件の再チェックが見当たりません (ADR-0031 決定 4)。足りないのは:
+着手プランに、完了条件の再チェックが見当たりません。足りないのは:
 
 $(printf '%s' "$1" | sed 's/^/  - /')
 
-**トリアージ済みのラベルは、付いた時点の判断しか表しません。** 着手する前に Issue 本文の
-完了条件を現行のコードと突き合わせ、各条件が「まだ有効」「既に満たされている」「差し替えが
-要る」のどれかをプランに書いてください。ずれていれば Issue 本文のほうを先に更新します。
+**トリアージ済みのラベルは、付いた時点の判断しか表しません** (理由: ADR-0031 決定 4)。
+着手する前に Issue 本文の完了条件を現行のコードと突き合わせ、各条件が「まだ有効」「既に
+満たされている」「差し替えが要る」のどれかをプランに書いてください。ずれていれば Issue
+本文のほうを先に更新します。
 
   #457 — 起票時の 3 条件は、着手時点で既に別の PR が解消していた
   #448 — 載せ替える対象は 4 つではなく 2 つだった
@@ -685,13 +730,14 @@ EOF
 
 bug_scope_missing_message() { # $1=足りないもの (1 行 1 件) $2=対象の Bug の番号 (空白区切り)
   cat <<EOF
-対象に Bug (#$(printf '%s' "$2" | sed 's/ / #/g')) があるのに、着手プランに約束と範囲が見当たりません (ADR-0040 決定 1)。足りないのは:
+対象に Bug (#$(printf '%s' "$2" | sed 's/ / #/g')) があるのに、着手プランに約束と範囲が見当たりません。足りないのは:
 
 $(printf '%s' "$1" | sed 's/^/  - /')
 
-**Bug は症状ではなく、破られた約束として直します。** 症状の 1 か所だけを直すと、同じ約束を
-破っている兄弟の口が残り、同じ根のバグが 1 件ずつ起票されては直されます (#1659 の実測で、
-直しの取りこぼしから出た後発が 15 件、見つけた兄弟を同じ PR で閉じたのは 51 件中 4 件)。
+**Bug は症状ではなく、破られた約束として直します** (理由: ADR-0040 決定 1)。症状の 1 か所
+だけを直すと、同じ約束を破っている兄弟の口が残り、同じ根のバグが 1 件ずつ起票されては
+直されます (#1659 の実測で、直しの取りこぼしから出た後発が 15 件、見つけた兄弟を同じ PR で
+閉じたのは 51 件中 4 件)。
 
 プランに次の 2 つを書いてください:
 
@@ -702,6 +748,12 @@ $(printf '%s' "$1" | sed 's/^/  - /')
 **見ているのは書いてあることだけで、範囲の探し方が正しいかは見ていません。** 記録は作って
 いないので、$(retry_plan_instruction)
 EOF
+}
+
+# precheck が差し戻しの文面の頭に足す一文 (#2135)。文面そのものは capture と同じものを
+# 使い回す — 足すのは「承認の前だった」ことだけ。
+before_approval_notice() {
+  echo '**承認の前に差し戻しています** — このプランはまだ承認されていません。承認の後に同じ検査で差し戻すと、直したプランをもう一度承認することになるため、先に掛けています。'
 }
 
 # 投稿の指示。**投稿先が確定しているかで 3 通りに分かれる** (#646)。
@@ -749,8 +801,8 @@ post_instructions() {
   echo "  - 未公開の計画や、まだ相談していない他人の名前"
   if unattended; then
     echo
-    echo "**承認は待ちません** (無人セッション — ADR-0036 決定 2)。投稿したらそのまま実装へ"
-    echo "進んでください。記録が残るので、人は後から同じものを読めます。"
+    echo "**承認は待ちません** (無人セッションなので、待つ相手が居ません。理由: ADR-0036 決定 2)。"
+    echo "投稿したらそのまま実装へ進んでください。記録が残るので、人は後から同じものを読めます。"
   fi
   if [ -n "$warns" ]; then
     echo
@@ -759,9 +811,88 @@ post_instructions() {
   fi
 }
 
+# --- precheck ---------------------------------------------------------------
+# **承認の前に、capture が承認の後で見るのと同じ検査を掛ける** (#2135)。
+#
+# capture は PostToolUse (ExitPlanMode) で動くので、プランに完了条件の現況 (recheck_missing)
+# や Bug の約束と範囲 (bug_scope_missing) が足りないと、**人がプランを承認した後で**差し戻す。
+# 書き直したプランを人はもう一度承認しなければならず、人の確認は 1 点のはずが 2 回になる
+# (#1920・#2045 で実際に起きた)。PreToolUse で同じ検査を先に掛け、足りなければ deny で
+# エージェントに書き直させる — 承認プロンプトは、検査を通ったプランにだけ出る。
+#
+# **本文を取れるときだけ検査する。** Claude Code は ExitPlanMode の入力へ、プランファイルの
+# 中身を plan として、置き場を planFilePath として足してからフックへ渡す (2.1.267 の
+# normalizeToolInput)。plan_body はそれを読むので、capture と同じ関数で同じ本文が取れる。
+# 取れない版・入力ではここを**通す** (飛ばす) — 承認の後に capture が従来どおり見るので、
+# 失うのは「承認の前に直させる」利点だけで、検査は消えない。本文を取れないことで差し戻すのは
+# capture だけである (あちらは通った後なので異常だが、こちらはまだ何も通っていない)。
+#
+# **見るのは 2 つだけ。** recheck_missing と bug_scope_missing (後者は capture と同じ
+# bug_scope_rejection で、対象の型を GitHub から引く)。秘密情報の検査 (secret_scan) は
+# 足さない — 塞ぐ実害が #2135 に無いので、必要なら別に起票する (AGENTS.md「してはならないこと」)。
+# **GitHub が引けないときは通す** — 型が空になり、bug_scope_missing は問われない
+# (記録の検査で、着手のゲートではない)。
+#
+# 記録は作らない (recheck の差し戻しと同じ)。承認の後の capture が、検査を通ったプランを
+# 記録する。MOKUME_PLAN_RECORD=0 は冒頭で効き、MOKUME_UNATTENDED=1 は capture と同じく
+# 検査には影響しない (無人でも書き直させる — 承認を待たないだけで、記録は 1 文字も減らさない)。
+precheck() {
+  local payload plan cwd root branch body recheck rejection
+
+  payload=$(read_stdin)
+  if [ -z "$payload" ]; then
+    explain_stdin precheck 'PreToolUse (ExitPlanMode) の JSON'
+    exit 64
+  fi
+  # deny の JSON の綴りと fail open は guard-lib.sh が持つ (#815)。**使うのはこの口だけ**なので
+  # ここで読む — 読めなければ素通し (capture / guard は guard-lib.sh に依らず動く)
+  # shellcheck source=scripts/guard-lib.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
+  if ! command -v jq >/dev/null 2>&1; then
+    debug 'jq が無い'
+    exit 0
+  fi
+
+  cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""')
+  [ -n "$cwd" ] && cd "$cwd" 2>/dev/null
+  # 他のリポジトリのプランには手を出さない (capture と同じ・#991)
+  if in_another_repository; then
+    debug "別のリポジトリ ($(repo_of_dir .)) — このフックは $REPO のためのもの"
+    exit 0
+  fi
+
+  plan=$(plan_body "$payload")
+  if [ -z "$plan" ]; then
+    debug 'プラン本文を取り出せない — 承認前の検査は飛ばす (承認の後に capture が見る)'
+    exit 0
+  fi
+  if ! root=$(git rev-parse --show-toplevel 2>/dev/null); then
+    debug "git リポジトリの外 (cwd=$cwd)"
+    exit 0
+  fi
+  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || { debug 'HEAD を解決できない'; exit 0; }
+
+  # capture と同じ本文を検査する (パスを畳んだ後)
+  body=$(printf '%s' "$plan" | sanitize "$root" "$(logical_root "$cwd")")
+
+  recheck=$(printf '%s' "$body" | recheck_missing)
+  if [ -n "$recheck" ]; then
+    hook_deny "$(before_approval_notice)"$'\n\n'"$(recheck_missing_message "$recheck")"
+  fi
+
+  load_plan_targets "$branch" "$body"
+  rejection=$(bug_scope_rejection "$body")
+  if [ -n "$rejection" ]; then
+    hook_deny "$(before_approval_notice)"$'\n\n'"$rejection"
+  fi
+
+  debug '承認の前の検査を通った'
+  exit 0
+}
+
 capture() {
   local payload plan cwd session root branch dir id file body findings
-  local blocks warns targets target count recheck marks mark candidate scratch scope
+  local blocks warns targets target count recheck marks mark candidate scope
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -855,29 +986,18 @@ capture() {
   # 投稿先が空でも guard は plan_targets で引き直すので、催促はそれで成り立つ
   write_meta "$dir/$id.meta" "$branch" "$id" 0 ''
 
-  # 型を控えた PLAN_TARGET_TYPES を読むので、plan_targets は**今のシェルで**呼び、出力は
-  # 一時ファイルで受ける ($( ) にするとサブシェルごと型が消える)。一時ファイルを作れなければ
-  # 従来どおり $( ) で呼ぶ — 型が空になるので、下の Bug の検査は問わない側へ倒れる
-  PLAN_TARGET_TYPES=''
-  if scratch=$(mktemp "${TMPDIR:-/tmp}/plan-record.XXXXXX" 2>/dev/null); then
-    plan_targets "$branch" "$body" >"$scratch"
-    targets=$(cat "$scratch")
-    rm -f "$scratch"
-  else
-    targets=$(plan_targets "$branch" "$body")
-  fi
+  # 型を控える (今のシェルで呼ぶ理由は load_plan_targets の頭)
+  load_plan_targets "$branch" "$body"
+  targets=$PLAN_TARGETS
 
   # 対象に Bug があれば、約束と範囲を問う (#1661 — 理由は bug_scope_missing の頭)。
   # 差し戻すなら上で書いた記録も消す。recheck_missing と同じく「記録は作らない」に揃える —
   # 残すと guard が、直す前のプランを投稿するよう催促してしまう
-  if targets_include_bug "$PLAN_TARGET_TYPES"; then
-    scope=$(printf '%s' "$body" | bug_scope_missing)
-    if [ -n "$scope" ]; then
-      rm -f "$file" "$dir/$id.meta"
-      bug_scope_missing_message "$scope" \
-        "$(printf '%s\n' "$PLAN_TARGET_TYPES" | awk '$2 == "Bug" { printf "%s%s", sep, $1; sep = " " }')" >&2
-      exit 2
-    fi
+  scope=$(bug_scope_rejection "$body")
+  if [ -n "$scope" ]; then
+    rm -f "$file" "$dir/$id.meta"
+    printf '%s\n' "$scope" >&2
+    exit 2
   fi
 
   target=$(printf '%s' "$targets" | sed -n '1p')
@@ -1004,8 +1124,8 @@ $targets"; then
   if unattended; then
     rounds="$round 回目"
     closing="$(cat <<'EOF'
-このセッションは無人です (ADR-0036 決定 2)。**回数で黙ることはしません** — 黙った先は
-「人間の判断へ返す」ですが、返す先が居ないので、そのままプランが失われます。
+このセッションは無人です。**回数で黙ることはしません** — 黙った先は「人間の判断へ返す」
+ですが、返す先が居ないので、そのままプランが失われます (理由: ADR-0036 決定 2)。
 
 投稿する内容が無いなら、記録ファイル (--body-file に出ているもの) を消してください。
 EOF
@@ -1112,13 +1232,14 @@ case "${1:-}" in
   register|check) mode=$1; shift; explicit_entry "$mode" "$@" ;;
   codex-stop) codex_stop ;;
   --help|-h) explicit_usage ;;
+  precheck) precheck ;;
   capture)  capture ;;
   guard)    guard ;;
   sanitize) sanitize "${2:-}" ;;
   *)
     {
-      echo "usage: $(basename "$0") {capture|guard|sanitize [root]}"
-      echo "  3 つの口はすべて stdin から読む (フックが渡す JSON か、プランの本文)。"
+      echo "usage: $(basename "$0") {precheck|capture|guard|sanitize [root]}"
+      echo "  4 つの口はすべて stdin から読む (フックが渡す JSON か、プランの本文)。"
       echo "  手で打つと $STDIN_DEADLINE 秒待って、何を渡すべきかを言って終わる。"
     } >&2
     exit 64

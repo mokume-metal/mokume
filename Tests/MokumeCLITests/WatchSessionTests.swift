@@ -7,7 +7,7 @@ import mokume
 
 @testable import MokumeCLI
 
-@Suite("保存したら作り直して差し替える")
+@Suite("保存したら作り直して差し替える", .signalStateKept)
 struct WatchSessionTests {
     /// 差し替えた外側の記録。
     @MainActor
@@ -325,6 +325,23 @@ struct WatchSessionTests {
         }
     }
 
+    /// **本物の時計は、眠っている間は進まない時計である** ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
+    ///
+    /// 記録の所要時間 (`detect_ms` など) は 2 つの読みの差で、壁時計だと眠りを挟んだ差が眠った
+    /// 分だけ膨らみ、時刻の巻き戻しで負になる (記録の形は 0 以上を約束している)。眠りも
+    /// 時刻の書き換えも検査の中では起こせないので、**起点で見分ける** — 起動からの経過
+    /// (`systemUptime`) と同じ目盛りなら、1970 年からの壁時計ではない。
+    @Test("本物の時計は、壁時計ではなく眠りで進まない時計で読む")
+    func theLiveClockIsNotTheWallClock() {
+        let nowhere = FileManager.default.temporaryDirectory
+        let hooks = WatchSession.Hooks.live(in: nowhere, invocation: Invocation())
+
+        let reading = hooks.now()
+        let uptime = ProcessInfo.processInfo.systemUptime
+        #expect(abs(reading - uptime) < 5, "壁時計で読んでいる (読み \(reading)、起動からの経過 \(uptime))")
+        #expect(hooks.now() >= reading, "時計が戻った")
+    }
+
     @Test("壊れたままのソースで、作り直しを繰り返さない")
     func doesNotRetryTheSameBrokenSource() async throws {
         let recorder = Recorder()
@@ -481,11 +498,11 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(child.isRunning)
 
-        let started = Date()
+        let started = ProcessInfo.processInfo.systemUptime
         #expect(session.stop() == .killed)
         #expect(!child.isRunning)
         // 数字は「戻ってきた」ことの確認でしかない — 期限が効いていなければ戻らないので
-        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(ProcessInfo.processInfo.systemUptime - started < 2)
     }
 
     /// **差し替えも同じ経路を通る。** 期限が無いと、終われないだけでなく**保存のたびに**
@@ -609,8 +626,8 @@ struct WatchSessionTests {
     /// あれは検査の走り出しからの時計で測るので、無関係な検査が増えた日にここが赤くなる
     /// ([#564](https://github.com/mokume-metal/mokume/issues/564))。
     private func waitUntilGone(_ process: Process, timeout: TimeInterval = 2) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
+        let deadline = DispatchTime.now() + timeout
+        while process.isRunning, DispatchTime.now() < deadline { Thread.sleep(forTimeInterval: 0.005) }
     }
 
     @Test("自分から終わった子は、1 度だけ名乗られる")
@@ -835,12 +852,6 @@ struct WatchSessionTests {
     /// **main が永久に塞がる** — 窓も保存の検出も合図の巡回も、まとめて止まる (#1296)。
     @Test("読まない子へ管の容量を越えて送っても、送る側は戻る")
     func sendingToAChildThatNeverReadsReturns() async throws {
-        // **`send(_:)` の約束どおり `SIGPIPE` を無視する** (実行時は `WatchCommand` が置く)。
-        // 無視しないと、期限で救出した後の書き込みで**検査の走り自体が落ちて**、塞がったのか
-        // 別の理由で死んだのかを読めない
-        let previousPipeHandler = signal(SIGPIPE, SIG_IGN)
-        defer { signal(SIGPIPE, previousPipeHandler) }
-
         let ready = Ready()
         // **読まず・眠り続ける子。** `exec` で置き換えるので `sh` は残らず、止めるのは
         // この 1 人で済む (既定のヘルパが眠りを避けているのは、置き去りを作らないため)
@@ -861,7 +872,18 @@ struct WatchSessionTests {
 
         // 1 件は約 50 バイト。管の容量 (64KB) を十分に越える数を書く
         let line = #"{"type":"mouseMoved","x":123.45,"y":678.90}"# + "\n"
-        for _ in 0..<4_000 { session.send(line) }
+        // **`send(_:)` の約束どおり `SIGPIPE` を無視する** (実行時は `WatchCommand` が置く)。
+        // 無視しないと、期限で救出した後の書き込みで**検査の走り自体が落ちて**、塞がったのか
+        // 別の理由で死んだのかを読めない
+        //
+        // **無視するのは書いている間だけ** (#1937)。受け口を持ったまま `await` を跨ぐと、
+        // 中断している間に走るほかの検査の控えと戻しが、この検査の内側に収まらない
+        do {
+            let kept = SignalState.current()
+            defer { kept.restore() }
+            signal(SIGPIPE, SIG_IGN)
+            for _ in 0..<4_000 { session.send(line) }
+        }
 
         #expect(!deadline.didKill, "読まない子への書き込みで塞がり、期限で落として戻した")
         // **救出されていない回にだけ訊く。** 落とした後の「消えている」は当たり前で、
@@ -1150,6 +1172,53 @@ struct FrameRateHandoffTests {
         #expect(carried[StartupReads.frameRateNotice.key] == "debug")
         #expect(carried[StartupReads.sourceStamp.key] == "abc")
         #expect(RunCommand.childEnvironment(["A": "1"])["A"] == "1", "親の環境は運ぶ")
+    }
+
+    /// **窓の持ち主は、起こした道具にしか決められない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
+    /// 渡したときだけ載り、渡さなければ親の環境に在っても落とす — 見張りの子の環境から
+    /// 打った `run` や `render` が継ぐと、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る。
+    @Test("窓の持ち主は渡したときだけ載り、親の環境からは継がない")
+    func theViewportOwnerLandsOnlyWhenGiven() throws {
+        let key = StartupReads.viewportOwner.key
+        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(RunCommand.childEnvironment([key: "mokume watch"])[key] == nil, "親の合図を継いだ")
+        #expect(
+            RunCommand.childEnvironment(
+                [key: "mokume watch"], reportingRate: "debug", confirmingCloseFor: "mokume run")[key]
+                == nil,
+            "run が渡す組み合わせで窓の持ち主が載っている")
+        let request = try #require(
+            RenderRequest(frameRate: 30, frameCount: 3, destination: "/tmp/out.mov"))
+        #expect(
+            RunCommand.childEnvironment([key: "mokume watch"], rendering: request)[key] == nil,
+            "render が渡す組み合わせで窓の持ち主が載っている")
+        #expect(
+            RunCommand.childEnvironment([:], viewportOwner: "mokume watch")[key] == "mokume watch")
+    }
+
+    /// **本物の起こす口が、窓の持ち主として名乗りを渡す。** 替え玉の起こす口は環境を
+    /// 組まないので、`live` の側で渡し忘れても上の検査は緑のままになる。環境を書き留める
+    /// だけの子を起こして見る。
+    @Test("本物の起こす口は、窓の持ち主として自分の名乗りを子へ渡す")
+    func theLiveLaunchPassesItselfAsTheViewportOwner() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-owner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seen = directory.appendingPathComponent("seen")
+        let executable = directory.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            printf '%s' "$\(StartupReads.viewportOwner.key)" > '\(seen.path)'
+            """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
+        let child = try #require(hooks.launch(executable, directory, nil, nil))
+        child.waitUntilExit()
+        #expect(try String(contentsOf: seen, encoding: .utf8) == WatchSession.viewportOwnerName)
+        #expect(WatchSession.viewportOwnerName.hasSuffix(" watch"))
     }
 
 }

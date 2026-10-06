@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/viewport-surface.schema.json",
   "title": "The identifiers of the surfaces frames are handed to",
-  "description": "Written by the running sketch just after launch, when the display output lives in another process. A reader looks the surfaces up by identifier and takes the one whose mokume.frame attribute is largest (ADR-0032 decision 3). The contents change only when the size changes; this is not written per frame.",
+  "description": "Written by the running sketch just after launch, when the display output lives in another process: only when the tool that owns the window started it (MOKUME_VIEWPORT_OWNER is set) and this facet exists. A sketch that finds the facet without that variable opens its own window and leaves this file alone. A reader looks the surfaces up by identifier and takes the one whose mokume.frame attribute is largest (ADR-0032 decision 3). The contents change only when the size changes; this is not written per frame.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -34,6 +34,11 @@
       "type": "integer",
       "minimum": 1,
       "description": "The surface's height in pixels. The same as the drawing resolution, with no bars included."
+    },
+    "windowScale": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How many points of the window one pixel takes (SketchSettings.windowScale). The tool's artwork window opens at width × windowScale by height × windowScale, the size the sketch's own window would open at, and follows it again only when that size changes (#1624). Optional: a reader that does not know it still shows the picture, and a writer that predates it leaves it out, in which case the window keeps its size."
     }
   }
 }

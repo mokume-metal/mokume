@@ -109,12 +109,13 @@ bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 > 1. コメント欄へ貼って URL を得る
 > 2. **その URL を含むコメントを投稿する** (`scripts/comment.sh`) — ここで公開される
 > 3. 同じ URL を PR 本文へ書く (`gh pr create --body-file` / `gh pr edit --body-file`。発言ではないのでラッパーは通さない)
+> 4. **`gh pr edit` で書いたなら、赤い `drawing-evidence` の run を打ち直す** (`gh run rerun <run-id> --failed`。run が終わってから)。本文の編集は新しい run を起こして判定を付け直すが、PR 作成時の run の赤い `ci-gate` は残って必須チェックを赤のままにする (`.github/workflows/ci.yml` の `ci-gate` の上のコメント)
 
 ### 参照の面には使わない
 
 **退避路が効くのは PR / Issue の一回限りの証跡までで、参照の面 (`make example-shots`) には使わない。**
 あちらは「同じ中身の絵には同じ URL が返る」という Gyazo の冪等性を借りており、**撮り直して URL が
-変わったかがそのまま絵が変わったかの判定**になっている ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
+変わったかがそのまま絵が変わったかの判定**になっている (理由: [ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 決定 2)。GitHub の添付は同じ絵でも毎回別の URL を返すので、この判定が成り立たない。参照の面は本線が戻るまで待つ。
 
 ### 通らない道 — 試して時間を落とさないために

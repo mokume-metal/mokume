@@ -31,6 +31,8 @@ struct FlatFrame {
     ///
     /// [#1488]: https://github.com/mokume-metal/mokume/issues/1488
     float2 unitsPerDrawnPixel;
+    /// 平面の頂点ごとの被覆 (`coverages`) を読むか。0 なら読まずに 1 とする (#1637)。
+    uint readsCoverage;
 };
 
 vertex ShapeFragmentIn shapeVertexMain(
@@ -38,7 +40,8 @@ vertex ShapeFragmentIn shapeVertexMain(
     uint instance [[instance_id]],
     constant ShapeVertex *vertices [[buffer(0)]],
     constant FlatFrame &frame [[buffer(1)]],
-    constant FlatInstance *instances [[buffer(10)]])
+    constant FlatInstance *instances [[buffer(10)]],
+    constant float *coverages [[buffer(12)]])
 {
     ShapeVertex vertex_in = vertices[index];
     FlatInstance placement = instances[instance];
@@ -71,6 +74,8 @@ vertex ShapeFragmentIn shapeVertexMain(
     // 意味の変わる値を渡すくらいなら、平面は一貫して持たない側に置く
     out.shapePosition = float3(0.0);
     out.shapeNormal = float3(0.0);
+    // 細い線を広げた頂点だけが 1 未満の被覆を持つ (#1637)。持つ頂点の無いフレームは読まない
+    out.coverage = frame.readsCoverage != 0 ? coverages[index] : 1.0;
     return out;
 }
 
@@ -106,7 +111,8 @@ struct SolidVertex {
     /// 利用者の断片へ渡す、形自身の座標での面の向き。
     float3 shapeNormal;
     float2 uv;
-    /// 1 なら**輪郭の頂点**。頂点関数が画面で半画素寄せる (Swift 側の `SolidVertex` を参照)
+    /// 0 でなければ**輪郭の頂点**で、値はその被覆 (Swift 側の `SolidVertex` を参照)。頂点関数が
+    /// 画面で半画素寄せる
     float stroke;
     float4 color;
 };
@@ -147,7 +153,9 @@ vertex ShapeFragmentIn solidVertexMain(
     // **輪郭だけを画面で半画素寄せる** (ADR-0039 決定 2)。立体の頂点は投影の後でしか
     // 画面の位置が決まらないので、切り取り座標で `w` を掛けて足す。影の焼き付けは
     // 寄せ 0 を渡す
-    out.position.xy += vertex_in.stroke * frame.strokeShift.xy * out.position.w;
+    // 寄せは輪郭なら被覆によらず 1 画素の半分 (`stroke` は被覆を兼ねる・#1637)
+    bool isStroke = vertex_in.stroke > 0.0;
+    out.position.xy += (isStroke ? 1.0 : 0.0) * frame.strokeShift.xy * out.position.w;
     out.uv = vertex_in.uv;
     // 置き場所の色は**頂点の色に掛かる**。組み込みの形は頂点が白、頂点ごとに色を
     // 変えた形は置き場所が白なので、どちらもこの 1 本で通る
@@ -160,6 +168,7 @@ vertex ShapeFragmentIn solidVertexMain(
     // 形を動かしても回しても変わらず、ここから作った模様は形の表面に留まる (#367)
     out.shapePosition = vertex_in.shapePosition;
     out.shapeNormal = vertex_in.shapeNormal;
+    out.coverage = isStroke ? vertex_in.stroke : 1.0;
     return out;
 }
 
@@ -410,7 +419,7 @@ SolidStrokeCorner solidStrokeCornerShape(
     }
     uint a = firstKept;
     uint b = secondKept;
-    uint cap = uint(s.uv.w);  // 0 丸・1 切る・2 出っ張らせる (`SolidStrokePlacement.capCode`)
+    uint cap = uint(s.right.w);  // 0 丸・1 切る・2 出っ張らせる (`SolidStrokePlacement.capCode`)
     if (kept == 0) {
         result.kind = 2;
         return result;
@@ -596,6 +605,8 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     out.isDerivedNormal = 0;
     out.shapePosition = shape;
     out.shapeNormal = float3(0);
+    // 被覆は置き場所が持つ (細い線を広げたとき 1 未満・#1637)
+    out.coverage = s.uv.w;
     return out;
 }
 
@@ -673,8 +684,68 @@ struct FormFragmentIn {
     float4 inverseRows [[flat]];
     /// 輪郭と線を評価する位置のずらし (形自身の座標)。画面の (0.5, 0.5) を写したもの (下の説明)
     float2 strokeShift [[flat]];
+    /// 塗りと輪郭を両方持つ楕円の輪郭を、塗りの距離場からずらして出してよいか。楕円の
+    /// インスタンスごとに決まる (`mokume_canShiftRing`)。0: 輪郭の位置で解き直す・
+    /// 1: 距離場そのものの勾配でずらす (`mokume_shiftedBySlope`)・2: 円なので法線でずらす
+    /// (`mokume_shifted`)
+    uint ringFromFill [[flat]];
     uint instance [[flat]];
 };
+
+/// 楕円の輪郭を塗りの距離場から 1 次の近似でずらして出すときに、許す被覆率の誤差の見積もり
+/// (`mokume_canShiftRing`)。表示の 1 段 (1/255) の半分である。
+///
+/// **見積もりは 1 次の項までで、厳密な上限ではない。** CPU の float64 のモデルで置き方を
+/// 約 15,000 組探すと、実測は見積もりの最大で 1.04〜1.06 倍だった (半径 153.8・太さの半分 1.12
+/// の円を、回して一様に 0.21 倍・細かさ 0.25 で置くと、見積もり 0.00195 に対して実測 0.00206)。
+/// 1/255 (0.0039) の半分を余裕に取ってあるので、見積もりが最大で 6% ほど甘くても 1/255 の
+/// 内側に収まる (その最悪の例で 1/255 の 0.53 倍)。実機の半精度は 1 ulp (≈ 0.0005) の差が
+/// 両側に出るので、実測はそのぶんだけさらに大きい
+constant float kFormShiftTolerance = 1.0 / 512.0;
+
+/// 楕円の輪郭を、塗りの距離場から 1 次の近似でずらして出してよいか
+/// (`mokume_shifted`・`mokume_shiftedBySlope`・[#1820](https://github.com/mokume-metal/mokume/issues/1820))。
+///
+/// **近似が落とす被覆率の誤差を 1 次の項までで見積もり、見積もりが `kFormShiftTolerance` に
+/// 収まるときだけ真を返す。** 見積もりは輪郭の**内縁の曲率半径** `R` で決まる — 形自身の座標で
+/// `短半径² / 長半径 − 太さの半分` (楕円の長軸の端で最も小さい。半径が太さの半分以下なら
+/// 内縁が無いので、常に解き直す)。ずらし `s` (画面で半画素・長さ 0.71 画素) が落とすのは、
+/// 2 次の項 `|s|² / (2R)` と、ずらしで法線が回って画素 1 つの距離が変わる項 (`|s| / R` に
+/// 比例) である。
+///
+///     誤差 ≈ |s| / (2R) · (|s| / σmin + (σmax / σmin − σmin / σmax) / 2)
+///
+/// σmin・σmax は「描く画素 → 形自身の座標」の行列の特異値で、描く画素 1 つが形自身の座標で
+/// いくらかの下限・上限である。回す・一様に拡大するだけなら σmin = σmax で、右の項は 0 になり、
+/// 画素の大きさで測れば `0.25 / R` (画素) になる。**縦横で違う拡大・剪断では向きによって
+/// 画素の大きさが違う**ので、小さいほう (σmin) で割って保守側に倒し、法線が回る項を足す。
+///
+/// この式は、楕円の距離場そのものの勾配で足す前提である (`mokume_shiftedBySlope`)。長さ 1
+/// の向きで足すと、円でない楕円の誤差は上の式より大きくなる。円は真の距離で、どちらで足しても
+/// 同じ。
+///
+/// 半径 29 の円に太さ 7 の輪郭 (R = 25.5) は見積もり 0.0098 で 1/255 (0.0039) を越え、解き直す。
+/// 画素の大きさで測るので、描く細かさを下げた面 (描く画素が粗い面) では近似を使える
+/// 範囲が広がる。**大きさが 0・壊れた変換は、割り算を避けて比べるので常に解き直す側**に倒れる。
+static inline bool mokume_canShiftRing(
+    float2 radii, float halfWeight, float2 shift, float4 drawnRows)
+{
+    float longRadius = max(max(radii.x, radii.y), 1e-30);
+    float shortRadius = min(radii.x, radii.y);
+    float innerRadius = shortRadius * shortRadius / longRadius - halfWeight;
+    // 2x2 の特異値: 大きいほうは √((F² + √(F⁴ − 4·det²)) / 2) (F は全成分の 2 乗和の平方根)、
+    // 小さいほうは |det| を大きいほうで割る (引き算の桁落ちを避ける)
+    float determinant = abs(drawnRows.x * drawnRows.w - drawnRows.y * drawnRows.z);
+    float squares = dot(drawnRows, drawnRows);
+    float largest = sqrt(
+        0.5 * (squares + sqrt(max(squares * squares - 4.0 * determinant * determinant, 0.0))));
+    float smallest = max(determinant / max(largest, 1e-30), 1e-30);
+    float rotation = 0.5 * (largest / smallest - smallest / largest);
+    float shiftLength = sqrt(dot(shift, shift));
+    return innerRadius > 0.0
+        && shiftLength * (shiftLength / smallest + rotation)
+            <= 2.0 * kFormShiftTolerance * innerRadius;
+}
 
 vertex FormFragmentIn formVertexMain(
     uint index [[vertex_id]],
@@ -740,6 +811,12 @@ vertex FormFragmentIn formVertexMain(
     // 逆行列のまま写す。三角形の経路も立体も出す画素で寄せる (`Canvas.solidStrokeShift`) ので、
     // ここだけ描く画素にすると、細かさ < 1 で経路によって同じ線がずれる
     out.strokeShift = 0.5 * float2(inverseRows.x + inverseRows.y, inverseRows.z + inverseRows.w);
+    // 楕円の輪郭を塗りの距離場からずらしてよいか。インスタンスごとの量なので、頂点で 1 度
+    // だけ出して断片へ渡す (断片で出すと、画素ごとに同じ式を解く)
+    out.ringFromFill =
+        (form.meta.x == kFormEllipse
+            && mokume_canShiftRing(form.size.xy, halfWeight, out.strokeShift, drawnRows))
+        ? (form.size.x == form.size.y ? 2u : 1u) : 0u;
     out.instance = instance;
     return out;
 }
@@ -879,6 +956,24 @@ static inline FormField mokume_ellipseField(float2 p, float2 radii) {
     return mokume_field(k1 * (k1 - 1.0) / max(k2, 1e-6), normal);
 }
 
+/// `mokume_ellipseField` が返す距離そのものの勾配 (形自身の座標)。`field` はその返り値。
+///
+/// **返り値の勾配 (`field.gradient`) は縁の法線の向きだけで、長さは 1 に揃えてある。** 距離場
+/// そのものの勾配は縁の上では同じだが、縁から離れると長さも向きもずれる — 距離が
+/// `k1 (k1 − 1) / k2` という近似で、真の距離ではないからである (円なら厳密で、ずれない)。
+/// 輪郭の帯の内縁・外縁は縁から太さの半分だけ離れているので、細長い楕円ほどずれが効く
+/// (`mokume_shiftedBySlope`)。`k1`・`k2` は `mokume_ellipseField` のもの、`n` はその法線で、
+/// `∇f = (2·k1 − 1) / k1 · n − f / k2 · n / 半径²`。
+static inline float2 mokume_ellipseSlope(float2 p, float2 radii, FormField field) {
+    float2 q = p / radii;
+    float k1 = length(q);
+    float k2 = max(length(q / radii), 1e-6);
+    // 中心そのものは距離場の勾配が定まらない。法線を返す (`mokume_ellipseField` と同じ扱い)
+    if (k1 < 1e-6) { return field.gradient; }
+    return field.gradient * ((2.0 * k1 - 1.0) / k1)
+        - field.gradient / (radii * radii) * (field.distance / k2);
+}
+
 /// 原点から `end` へ引いた線分までの距離場 (符号なし)。
 static inline FormField mokume_segmentField(float2 p, float2 end) {
     float h = saturate(dot(p, end) / max(dot(end, end), 1e-12));
@@ -935,12 +1030,22 @@ static inline FormField mokume_grown(FormField field, float amount) {
     return mokume_field(field.distance - amount, field.gradient);
 }
 
-/// `p` で出した距離場から、`p − shift` での距離場を 1 次の近似で出す。勾配は変わらない。
+/// `p` で出した距離場から、`p − shift` での距離場を 1 次の近似で出す。勾配の向きは変わらない。
 ///
 /// **塗りと輪郭を両方持つ楕円で、距離場を 1 回で済ませる**ために使う。輪郭は塗りから
 /// 画面で半画素ずらした位置で評価する (頂点関数の説明) が、式をもう 1 度解くと、面を覆う
-/// 大きな円 200 個の絵で GPU 時間が 21% 増えた (実測)。ずらしは画素の 0.7 倍以下なので、
-/// 近似の誤差は曲率に比例して、半径 2 画素の円でも 0.13 画素を超えない。
+/// 大きな円 200 個の絵で GPU 時間が 21% 増えた (実測)。
+///
+/// **誤差の見積もりは、輪郭の内縁の曲率半径 `R` (画素) で `0.25 / R` である。** ずらしの長さは
+/// 画面で 0.71 画素以下で、落とすのは 2 次の項 `sᵀ·H·s / 2`。H は評価する位置 (輪郭の帯の
+/// 内縁) での 2 階微分で、曲率の逆数になる。かつての説明は「半径 2 画素の円でも 0.13 画素」
+/// だったが、これは形の半径で数えていて、**輪郭の太さを引いていない** — 内縁は縁から太さの
+/// 半分だけ内側なので、曲率半径は `半径 − 太さの半分` になる。半径 29・太さ 7 の円は 25.5
+/// 画素で、見積もりは 0.0098 画素 (実測の被覆率 0.010)。1/255 に収めるには `R` が 64 画素ほど要る。
+/// 近似を使ってよいかは、頂点関数が楕円ごとに `mokume_canShiftRing` で決める。
+///
+/// **この式は円にしか使わない。** 距離場の勾配が縁の外でも内でも長さ 1 で、足す量が法線への
+/// 射影で済むのは、円 (真の距離) だけである。円でない楕円は `mokume_shiftedBySlope`。
 ///
 /// **勾配が形の内でも外でも外向きの距離場にしか使えない。** 勾配の向きで距離を足し引き
 /// するためである。楕円はそうなっているが、扇形の直線の辺は内側で勾配が扇の中を向く
@@ -948,6 +1053,27 @@ static inline FormField mokume_grown(FormField field, float amount) {
 /// 輪郭が逆へずれ、塗りの下に消えた (#1174) — 扇形は式を輪郭の位置で解き直す。
 static inline FormField mokume_shifted(FormField field, float2 shift) {
     return mokume_field(field.distance - dot(field.gradient, shift), field.gradient);
+}
+
+/// `mokume_shifted` の、円でない楕円の版。`slope` は `p` での距離場そのものの勾配
+/// (`mokume_ellipseSlope`)。
+///
+/// **勾配は、返り値の長さ 1 の向きではなく、距離場そのものの勾配で足す。** 楕円の距離場
+/// (`mokume_ellipseField`) は真の距離ではなく、縁から離れると勾配の長さが 1 でなくなる。
+/// 長さ 1 の向きで足すと 1 次の項が合わず、縁から太さの半分離れた内縁・外縁に、太さと
+/// 形の比に比例する誤差が、上の `0.25 / R` に**足されて**残る。短半径 40・長半径 80・太さ 14
+/// では被覆率で 0.11 (`0.25 / R` の 6 倍) になり、内縁の曲率半径をいくら大きくしても
+/// 楕円の比と太さ / 短半径が同じなら消えない (1060×530・太さ 7 で 0.0073)。距離場そのものの
+/// 勾配で足せば、残るのは 2 次の項だけで、誤差は円と同じ `0.25 / R` に収まる。
+///
+/// 縁から遠い所 (輪郭の帯が届かない・形の中心の近く) では勾配が膨らむので、足す量は、長さ 1
+/// の向きで足した量から、ずらしの 2 成分の絶対値の和の 2 倍 (長さの 2〜2√2 倍) までしか離さ
+/// ない。帯の位置には入り込まない。
+static inline FormField mokume_shiftedBySlope(FormField field, float2 slope, float2 shift) {
+    float along = dot(field.gradient, shift);
+    float reach = 2.0 * (abs(shift.x) + abs(shift.y));
+    float moved = clamp(dot(slope, shift), along - reach, along + reach);
+    return mokume_field(field.distance - moved, field.gradient);
 }
 
 /// この画素が出す塗りと輪郭 (どちらも被覆率を掛けた乗算済みの色)。
@@ -967,15 +1093,20 @@ struct FormPaint {
 /// 原稿から消える。
 ///
 /// - 継ぎ目の割り戻しを、塗りの被覆率に掛ける
-/// - 楕円の輪郭を、塗りの距離場から 1 次の近似でずらす
+/// - 楕円の輪郭を、誤差が 1/255 に収まるときだけ、塗りの距離場から 1 次の近似でずらす
 ///
 /// 偽なら、塗りだけの形と輪郭だけの形を別々に出したのと同じ被覆率になる。
 ///
-/// **だから、入口によって出す形がこの 2 つの分だけ違う。** 同じ楕円でも、重ねる・置き換える
-/// 列と下地を読む列とでは、輪郭の内縁が近似の誤差の分だけ違う (細長い楕円で最大 0.11・
-/// [#1820](https://github.com/mokume-metal/mokume/issues/1820))。
+/// **入口によって違うのは割り戻しの分だけで、輪郭の形はどの入口でも同じである。** 楕円の
+/// 輪郭の被覆率は、塗りの有無・混ぜ方によらず、輪郭だけの楕円と 1/255 以内で一致する
+/// (近似でずらすのは誤差の見積もりが収まる楕円だけで、ほかは式を輪郭の位置で解き直す —
+/// `mokume_canShiftRing`・[#1820](https://github.com/mokume-metal/mokume/issues/1820))。
+///
+/// `replacing` は、呼ぶ側が**置き換える**列か (`layered` のときだけ読む)。割り戻しで帯の下の
+/// 塗りをどれだけ見せるかが変わる — 重ねる列は輪郭が透ける分だけ、置き換える列は少しも
+/// 見せない (割り戻しの説明)。これも呼ぶ側の定数である。
 static inline FormPaint mokume_formPaint(
-    FormFragmentIn in, constant FormInstance *instances, bool layered)
+    FormFragmentIn in, constant FormInstance *instances, bool layered, bool replacing)
 {
     FormInstance form = instances[in.instance];
     float2 p = in.local;
@@ -1052,22 +1183,24 @@ static inline FormPaint mokume_formPaint(
             inner = mokume_boxField(q, extent - halfWeight);
         }
     } else if (kind == kFormEllipse) {
-        // 塗りと輪郭は評価する位置が違う。**両方を持つ列では式を 1 回だけ解き**、輪郭の側は
-        // 塗りの距離場を 1 次の近似でずらす (`mokume_shifted`。楕円の勾配は内外とも外向きなので
-        // 使える)。輪郭しか持たない列では式を輪郭の位置で解く。
+        // 塗りと輪郭は評価する位置が違う。**両方を持つ列では、輪郭の側を塗りの距離場から 1 次の
+        // 近似でずらして、式を 1 回で済ませる** (`mokume_shifted`・`mokume_shiftedBySlope`)。
+        // ただし**近似でずらしてよいのは、誤差の見積もりが 1/255 の半分に収まる楕円だけ**で、頂点関数が
+        // 楕円ごとに決める (`mokume_canShiftRing`・`ringFromFill`)。内縁の曲率半径が小さい楕円
+        // (半径 29・太さ 7 の円でも) は、輪郭しか持たない列と同じく式を輪郭の位置で解き直す。
+        // 近似でずらす誤差は円で 0.25 / R (R: 内縁の曲率半径・画素) で、これを許す範囲に収める
+        // ([#1820](https://github.com/mokume-metal/mokume/issues/1820))。
         //
         // **近似でずらすのは、塗りと輪郭を先に重ねる断片だけである** (`layered`)。下地を読む
         // 断片は、塗りだけの形の上に輪郭だけの形を重ねたのと同じ絵を出す約束 (下の割り戻しの
-        // 説明) なので、輪郭しか持たない列と同じく式を輪郭の位置で解き直す。近似のままだと
-        // 輪郭の内縁で 1 次の近似の誤差 (半径 29 の円で被覆率 0.008 ほど) が残り、加算で
-        // 表示の 1 段を越えた ([#1643](https://github.com/mokume-metal/mokume/issues/1643))。
-        // 重ねる・置き換える列にはこの誤差が残る
-        // ([#1820](https://github.com/mokume-metal/mokume/issues/1820))
+        // 説明) なので、どの楕円も輪郭の位置で解き直す。近似のままだと、輪郭の内縁に 1 次の
+        // 近似の誤差 (半径 29 の円で被覆率 0.01 ほど) が残り、加算で表示の 1 段を越えた
+        // ([#1643](https://github.com/mokume-metal/mokume/issues/1643))
         if (kFormHasFill) {
             fill = mokume_ellipseField(p, form.size.xy);
             // 1 画素より細い楕円の塗りは、`rect` の細い塗りと同じ境目で、両縁を見る積で
             // 数える (`mokume_thinEllipseCoverage`)。**距離場は細くても解く** — 輪郭の側が
-            // それを読む (下の `mokume_shifted`。塗りと輪郭を先に重ねる断片だけ)
+            // それを読む (下の `mokume_shifted`・`mokume_shiftedBySlope`。塗りと輪郭を先に重ねる断片だけ)
             if (kFormHasThinFill
                 && any(2.0 * form.size.xy * (1.0 + 2.0 * kFormSnap) < unitsPerPixel)) {
                 isThinFill = true;
@@ -1075,8 +1208,15 @@ static inline FormPaint mokume_formPaint(
             }
         }
         if (kFormHasStroke) {
-            FormField ring = (layered && kFormHasFill)
-                ? mokume_shifted(fill, in.strokeShift) : mokume_ellipseField(q, form.size.xy);
+            FormField ring;
+            if (layered && kFormHasFill && in.ringFromFill == 2) {
+                ring = mokume_shifted(fill, in.strokeShift);
+            } else if (layered && kFormHasFill && in.ringFromFill == 1) {
+                ring = mokume_shiftedBySlope(
+                    fill, mokume_ellipseSlope(p, form.size.xy, fill), in.strokeShift);
+            } else {
+                ring = mokume_ellipseField(q, form.size.xy);
+            }
             outer = mokume_grown(ring, halfWeight);
             inner = mokume_grown(ring, -halfWeight);
         }
@@ -1190,14 +1330,23 @@ static inline FormPaint mokume_formPaint(
             // 両立せず、#1643 は前者を取った。どちらを約束にするかは
             // [#1818](https://github.com/mokume-metal/mokume/issues/1818)
             //
-            // 置き換える列がこの割り戻し (輪郭 over 塗り) を使うのが正しいかも決まっていない。
-            // 三角形の経路は輪郭で上書きするので、半透明の輪郭の帯で 2 つの経路が食い違う
-            // ([#1819](https://github.com/mokume-metal/mokume/issues/1819))
+            // **置き換える列は、帯の下の塗りを少しも見せない** (`replacing`)。画素を塗りだけ
+            // `f − o`・重なり `o`・帯だけ `s − o`・どちらでもない所の 4 つの面積に分け、
+            // それぞれを混ぜた色を面積で足す — 塗りと輪郭を両方持つ形の 1 画素の約束である
+            // ([#1867](https://github.com/mokume-metal/mokume/issues/1867) 決定 1)。重ねる
+            // (over) で解くと重なりには「輪郭 over 塗り」が入り、上の重みになる。置き換えで
+            // 解くと重なりには後に置いた輪郭だけが入るので、塗りが見える重みは `f − o` で、
+            // 置く色は `S·s + F·(f − o)` になる。三角形の経路 (塗りの三角形の上に輪郭の
+            // 三角形を置き換える) と、塗りだけ → 輪郭だけの順に分けて描いた絵が帯に置く色
+            // と同じである。かつては置き換える列も重ねる重みで割り戻していたので、半透明の
+            // 輪郭の帯の内側半分に塗りが透け、透明な地では α が輪郭の不透明度を越えて
+            // 1.0 まで埋まった ([#1819](https://github.com/mokume-metal/mokume/issues/1819))。
+            // 不透明な輪郭では 2 つの重みが同じになり、絵は 1 ビットも変わらない
             float overlap = max(
                 0.0,
                 min(paint.fillCoverage, outerCoverage) - min(paint.fillCoverage, innerCoverage));
             float strokeAlpha = form.stroke.a;
-            float visible = paint.fillCoverage - overlap * strokeAlpha;
+            float visible = paint.fillCoverage - overlap * (replacing ? 1.0 : strokeAlpha);
             float behind = 1.0 - strokeAlpha * paint.strokeCoverage;
             paint.fillCoverage = behind > 1e-4 ? saturate(visible / behind) : 0.0;
         }
@@ -1211,7 +1360,9 @@ static inline FormPaint mokume_formPaint(
 ///
 /// 重ねる (`over`) は結合的なので、下地へ 2 回置くのと「先に重ねてから 1 回置く」のは
 /// 同じ式である。**下地を読まない入口はこちらを使う** — 下地に触れるのが 1 回だけに
-/// なるので、混ぜるのを固定機能のブレンドへ渡せる。
+/// なるので、混ぜるのを固定機能のブレンドへ渡せる。置き換える列も同じ式で置くが、
+/// 結合則に頼るのではなく、塗りの被覆率を置き換えの重みで割り戻してある
+/// (`mokume_formPaint` の `replacing`)。
 static inline float4 mokume_formLayered(FormPaint paint) {
     return paint.stroke + paint.fill * (1.0 - paint.stroke.a);
 }
@@ -1231,7 +1382,7 @@ fragment float4 mokume_formFragment(
     constant FormInstance *instances [[buffer(10)]],
     float4 destination [[color(0)]])
 {
-    FormPaint paint = mokume_formPaint(in, instances, false);
+    FormPaint paint = mokume_formPaint(in, instances, false, false);
     if (mokume_formIsBlank(paint)) {
         discard_fragment();
         return destination;
@@ -1257,18 +1408,26 @@ fragment float4 mokume_formFragmentBlend(
     FormFragmentIn in [[stage_in]],
     constant FormInstance *instances [[buffer(10)]])
 {
-    return mokume_formLayered(mokume_formPaint(in, instances, true));
+    return mokume_formLayered(mokume_formPaint(in, instances, true, false));
 }
 
 /// 基本図形の断片 (置き換える列)。**下地を読まないが、余白は捨てる。**
 ///
 /// 置き換える混ぜ方は下地を見ないので読む必要は無い。ただし**書けば下地が消える**ので、
-/// 形の外の余白は捨てなければならない (重ねる列との違いはここ 1 点)。
+/// 形の外の余白は捨てなければならない。
+///
+/// **置き換えるのは部品の単位である** ([#1819])。輪郭の帯では、塗りの上に輪郭を置き換えた
+/// のと同じく輪郭だけが残り、下の塗りは輪郭が半透明でも透けない。置く色は 1 つの式
+/// (`mokume_formLayered`) だが、塗りの被覆率を置き換えの重みで割り戻してある
+/// (`mokume_formPaint` の `replacing`) ので、`S·s + F·(f − o)` になる — 三角形の経路と、
+/// 塗りだけ → 輪郭だけの順に分けて描いた絵が帯に置く色である。
+///
+/// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
 fragment float4 mokume_formFragmentReplace(
     FormFragmentIn in [[stage_in]],
     constant FormInstance *instances [[buffer(10)]])
 {
-    FormPaint paint = mokume_formPaint(in, instances, true);
+    FormPaint paint = mokume_formPaint(in, instances, true, true);
     if (mokume_formIsBlank(paint)) {
         discard_fragment();
         return float4(0.0);

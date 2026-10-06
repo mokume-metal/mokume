@@ -52,11 +52,13 @@ struct WireShapeTests {
         #expect(try keys(answered) == base.union(["id"]))
     }
 
-    @Test("差し出す面の目録")
+    @Test("差し出す面の目録。**倍率を持たなければ鍵ごと出さない**")
     func manifest() throws {
+        let base: Set<String> = ["schemaVersion", "ids", "width", "height"]
+        #expect(try keys(SharedFrameSurface.Manifest(ids: [1], width: 16, height: 9)) == base)
         #expect(
-            try keys(SharedFrameSurface.Manifest(ids: [1], width: 16, height: 9))
-                == ["schemaVersion", "ids", "width", "height"])
+            try keys(SharedFrameSurface.Manifest(ids: [1], width: 16, height: 9, windowScale: 0.5))
+                == base.union(["windowScale"]))
     }
 
     @Test("撮った 1 枚。**測れていないものは出さない**")

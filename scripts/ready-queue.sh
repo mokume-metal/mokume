@@ -25,6 +25,13 @@
 #
 # 番号は Issue の番号である。
 #
+# **ready と stock の説明は、Issue Type を `[Bug]` の形で先頭に置く** (#2136)。Type は題から
+# は読めず、Bug なら反証の節 (bug-refute) が要るので、着手の前に目に入っている必要がある
+# (知らずに着手した Bug が review-gate で落ちた — #1998)。Type の無い Issue は `[-]` と出す
+# (空にすると欄がずれる。parents の列と同じ作法)。**先頭の 2 語 (番号・分類) の位置は動かさ
+# ない** — Type は説明の側に入るので、番号と分類だけを読む側は影響を受けない。dropped・busy・
+# decide は Type を出さない (着手の前に見るのは ready と stock だけ)。
+#
 # 分類は 5 つで、この順に出す:
 #
 #   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無く、親が open な Bug でない
@@ -218,8 +225,9 @@ while IFS= read -r row; do
   fi
 
   if has_label "$labels" "$TRIAGED"; then
-    # ready と決めるのは親を読んでから (下の「根と判断」)。ここでは溜めるだけ
-    ready_rows+="$n $title"$'\n'
+    # ready と決めるのは親を読んでから (下の「根と判断」)。ここでは溜めるだけ。
+    # 「<番号> <型> <タイトル>」で、型の無いものは - (型の名前は 1 語 — ADR-0004 の 5 型)
+    ready_rows+="$n ${type:--} $title"$'\n'
     continue
   fi
 
@@ -229,7 +237,7 @@ while IFS= read -r row; do
   # 未トリアージ。**B-1 の対象になるのは、完了条件を書ける見込みがあるものだけ**である
   case " $STOCK_TYPES " in *" $type "*) ;; *) continue ;; esac
   case $(jq -r '.body // ""' <<<"$row") in
-    *"$AGENT_MARK"*) stock+="$n stock エージェントの起票が無印のまま (${type}・${title})"$'\n' ;;
+    *"$AGENT_MARK"*) stock+="$n stock [$type] エージェントの起票が無印のまま ($title)"$'\n' ;;
   esac
 done < <(jq -c '.[]' <<<"$issues_json")
 
@@ -331,13 +339,13 @@ fi
 
 # (a) 親が open な Bug なら、子は根を直す側で閉じる (ADR-0040 決定 2)。子を ready に出すと
 # 症状の 1 か所だけが直され、同じ根の兄弟が残る — #1659 が数えた「深いが狭い」直しの形である
-while read -r n title; do
+while read -r n type title; do
   [ -n "$n" ] || continue
   root=$(awk -v n="$n" '$1 == n && $3 == "OPEN" && $4 == "Bug" { print $2; exit }' <<<"$parents")
   if [ -n "$root" ]; then
     busy+="$n busy 根 #$root で直す ($title)"$'\n'
   else
-    ready+="$n ready $title"$'\n'
+    ready+="$n ready [$type] $title"$'\n'
     ready_count=$((ready_count + 1))
   fi
 done <<<"$ready_rows"

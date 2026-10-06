@@ -15,8 +15,16 @@ import Testing
 /// `#require` が「何も見ていない」と名乗って赤くなる。
 ///
 /// [#727](https://github.com/mokume-metal/mokume/issues/727)
+///
+/// **suite の中は直列に走らせる** ([#1999](https://github.com/mokume-metal/mokume/issues/1999))。
+/// GPU を長く占める `spin` を並列の検査が同時に何本も積むと、GPU が command buffer を hang と
+/// 判定して打ち切る (`kIOGPUCommandBufferCallbackErrorHang`)。立て直しでは同じ時刻に GPU に
+/// いた**別の検査の仕事まで捨てられ** (`InnocentVictim`)、関係の無い suite が赤くなる。GPU は
+/// 画面の描画と共有なので、重なれば WindowServer ごと止まる。回転を短くすると「まだ終わって
+/// いない」を構造で作れなくなるので、回数は変えずに積む本数のほうを 1 本にする。
 @Suite(
     "描き切りの待ち",
+    .serialized,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
@@ -64,6 +72,20 @@ struct FrameSyncTests {
         func keepGPUBusy() {
             canvas.compute(spin, over: 1, writes: [scratch])
         }
+
+        /// **回転を積む検査は、冒頭で `defer { bench.leaveIdle() }` を置く** ([#1999])。
+        ///
+        /// 回転を投入したまま返ると、次の検査が自分の土台で積む回転と GPU の上で重なり、
+        /// ドライバがどちらかを hang と見て打ち切る。立て直しでは同じ時刻の別の検査の仕事まで
+        /// 捨てられる (下の「見終えたら GPU を空にして出る」・[#1063])。`defer` にするのは、
+        /// `#require` が途中で抜けても片付けるため。`Bench` の `deinit` に置かないのは、
+        /// 土台を手放したときの待ちを時間で測る検査が、その待ちを見なくなるため。
+        ///
+        /// [#1063]: https://github.com/mokume-metal/mokume/issues/1063
+        /// [#1999]: https://github.com/mokume-metal/mokume/issues/1999
+        func leaveIdle() {
+            gpu.settleQuietly(orWarn: "検査の後片付けで GPU を待てなかった")
+        }
     }
 
     /// - Parameter slotCount: コマンドの置き場の本数。`nil` なら既定。
@@ -84,33 +106,6 @@ struct FrameSyncTests {
         return Bench(gpu: gpu, canvas: canvas, scratch: scratch, spin: spin)
     }
 
-    /// 絵や結果が期待と違ったときに添える説明。**打ち切りが起きていれば、それを名乗る。**
-    ///
-    /// GPU が仕事を打ち切ると、その絵は 1 画素も書かれないのに合図は投入の順に進むので、
-    /// **待ちは成立したまま空の絵が読める** ([#1065])。これが無いと、症状は「絵が黒い」
-    /// 「結果が 0 のまま」としてしか残らず、原因を機械の込み具合まで辿り直すことになる —
-    /// [#1063] の 1 回がまさにそれで、落ちた表明は最後の画素 1 つだった。
-    ///
-    /// **表明を落とす条件にはしない。** 打ち切られたのが絵を作った投入とは限らず、
-    /// 差し出しも読み戻しも同じ土台を通る。条件にすると**絵が無事な回まで赤くなる**
-    /// (実測: 複数フレームを回す 2 本が、絵の食い違いなしにこれだけで落ちた)。
-    ///
-    /// [#1063]: https://github.com/mokume-metal/mokume/issues/1063
-    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
-    private func faultNote(_ gpu: RenderDevice) -> String {
-        // **少し待ってから読む。** 結末は Metal 側の糸から届くので、絵を読み終えた時点
-        // ではまだ来ていないことがある (実測: 絵が空で落ちた 4 回とも、その時点では 0 だった)。
-        // ここを通るのは**表明が既に落ちた後**だけなので、待っても普段の実行時間には出ない
-        if gpu.commandFaultCount == 0 { Thread.sleep(forTimeInterval: 0.1) }
-        guard gpu.commandFaultCount > 0 else { return "" }
-        return """
-
-            (この間に GPU は仕事を \(gpu.commandFaultCount) 回打ち切っている: \
-            \(gpu.lastCommandFault ?? "理由は届いていない")。
-            打ち切られた絵は 1 画素も書かれていないので、食い違いはそのせいかもしれない)
-            """
-    }
-
     private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
     private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
     private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
@@ -118,6 +113,7 @@ struct FrameSyncTests {
     @Test("描き切りは GPU の完了を待たずに返り、画素を読むときに待つ")
     func flushReturnsBeforeTheGPUFinishes() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         try canvas.draw {
@@ -136,14 +132,15 @@ struct FrameSyncTests {
         // 載っている」ことを言う。`red`/`green` だけでは、塗り直しの効いた黒と
         // 1 画素も書かれていない面 (`a == 0`) を分けられない — #1063 の起票は
         // そこを取り違えて「背景は載っているので後続の描画だけが落ちた」と読んでいた
-        #expect(pixels[16, 16].alpha == 1, "面に 1 画素も書かれていない\(faultNote(bench.gpu))")
-        #expect(pixels[16, 16].red == 1, "赤が載っていない\(faultNote(bench.gpu))")
-        #expect(pixels[16, 16].green == 0)
+        #expect(pixels[16, 16].alpha == 1, "面に 1 画素も書かれていない\(bench.gpu.faultNote())")
+        #expect(pixels[16, 16].red == 1, "赤が載っていない\(bench.gpu.faultNote())")
+        #expect(pixels[16, 16].green == 0, "赤のはずの画素に緑が載っている\(bench.gpu.faultNote())")
     }
 
     @Test("数の並びへ書く口は待たず、読むと書いた値が返る")
     func numbersWriteWithoutWaiting() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let numbers = try bench.canvas.makeNumbers(count: 4)
 
         try bench.canvas.draw { bench.keepGPUBusy() }
@@ -165,6 +162,7 @@ struct FrameSyncTests {
     @Test("計算の結果を読む口は、溜まりが空でも待つ")
     func readingNumbersWaitsEvenWithNothingPending() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
 
         try bench.canvas.draw { bench.keepGPUBusy() }
         try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない")
@@ -173,12 +171,13 @@ struct FrameSyncTests {
         // 「終わってから読んだ」ことになる
         let values = bench.canvas.read(bench.scratch)
         #expect(bench.gpu.isIdle)
-        #expect(values[0] != 0, "計算が終わる前の値を読んでいる\(faultNote(bench.gpu))")
+        #expect(values[0] != 0, "計算が終わる前の値を読んでいる\(bench.gpu.faultNote())")
     }
 
     @Test("画像を面へ送る口は待たず、描き切りが届ける")
     func imageUploadDoesNotWait() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
         let image = try canvas.createImage(2, 2)
 
@@ -205,6 +204,7 @@ struct FrameSyncTests {
     @Test("字形を焼く口は、焼く直前に待つ")
     func glyphBakingWaitsBeforeReplacing() throws {
         let bench = try makeBench(width: 64, height: 64)
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         try canvas.draw { bench.keepGPUBusy() }
@@ -222,6 +222,7 @@ struct FrameSyncTests {
     @Test("前のフレームの GPU が読んでいる置き場を、次のフレームの CPU が書き換えない")
     func nextFrameDoesNotOverwriteBuffersStillBeingRead() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         // フレーム N: 左半分を白く。GPU はこの頂点をしばらく読み続ける
@@ -253,7 +254,7 @@ struct FrameSyncTests {
 
         #expect(
             actual.bytes == expected.bytes,
-            "絵が食い違う\(faultNote(bench.gpu))\(faultNote(fresh.gpu))")
+            "絵が食い違う\(bench.gpu.faultNote())\(fresh.gpu.faultNote())")
     }
 
     // MARK: - フレームごとに書く置き場の環 (#754)
@@ -264,6 +265,7 @@ struct FrameSyncTests {
     @Test("GPU を占めたフレームの次のフレームは、書く前に投入済みの全完了を待たない")
     func theNextFrameWritesWithoutDrainingTheGPU() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         // **先に温める。** 置き場を初めて取るフレームは取り直しの中で待つので、
@@ -365,7 +367,7 @@ struct FrameSyncTests {
                 check: {
                     #expect(
                         canvas.read(copied) == Self.written(at: lastFrame),
-                        "計算が、そのフレームで書いた値を読んでいない\(self.faultNote(bench.gpu))")
+                        "計算が、そのフレームで書いた値を読んでいない\(bench.gpu.faultNote())")
                 })
         case .particles:
             let dust = try canvas.makeParticles(count: 256)
@@ -388,7 +390,7 @@ struct FrameSyncTests {
                     #expect(state.contains { $0 != 0 }, "粒が 1 つも置かれていない")
                     #expect(
                         state == reference.canvas.read(referenceDust.state),
-                        "GPU を回したまま進めた粒が、空けて進めた粒と食い違う\(self.faultNote(bench.gpu))")
+                        "GPU を回したまま進めた粒が、空けて進めた粒と食い違う\(bench.gpu.faultNote())")
                 })
         case .image:
             let image = try canvas.createImage(2, 2)
@@ -402,10 +404,10 @@ struct FrameSyncTests {
                 check: {
                     let pixel = try canvas.target.readPixels()[16, 16]
                     let expected: Float = lastFrame.isMultiple(of: 2) ? 0 : 1
-                    #expect(pixel.red == 1, "置いた画像が面に載っていない\(self.faultNote(bench.gpu))")
+                    #expect(pixel.red == 1, "置いた画像が面に載っていない\(bench.gpu.faultNote())")
                     #expect(
                         pixel.green == expected,
-                        "面に載ったのが、そのフレームで書いた画素ではない\(self.faultNote(bench.gpu))")
+                        "面に載ったのが、そのフレームで書いた画素ではない\(bench.gpu.faultNote())")
                 })
         }
     }
@@ -418,6 +420,7 @@ struct FrameSyncTests {
         arguments: FrameWriter.allCases)
     func frameWritersDoNotDrainTheGPU(_ writer: FrameWriter) throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
         let busyFrame = framesPastOneLap
         let scene = try makeScene(writer, on: bench, lastFrame: busyFrame + 1)
@@ -490,6 +493,7 @@ struct FrameSyncTests {
     @Test("環は、そのスロットを読む投入が終わるまで返らない")
     func advancingWaitsForTheSubmissionThatReadsTheSlot() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         // **描き切りが使う環とは別に、この検査だけの環を持つ。** 見たいのは機構そのもの
         // (進めて・記録して・1 周したら待つ) で、描き切りの都合を混ぜない
         let ring = FrameRing(gpu: bench.gpu)
@@ -520,6 +524,7 @@ struct FrameSyncTests {
         }
         // 置き場を 1 本にすると、**次の描き切りに必ず同じスロットが回ってくる**
         let gpu = try RenderDevice(device: device, slotCount: 1)
+        defer { gpu.settleQuietly(orWarn: "検査の後片付けで GPU を待てなかった") }  // Bench.leaveIdle と同じ
         let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
         let canvas = try Canvas(target: target, gpu: gpu)
         let scratch = try canvas.makeNumbers(count: 1)
@@ -562,6 +567,7 @@ struct FrameSyncTests {
             throw RenderFailure.deviceUnavailable
         }
         let gpu = try RenderDevice(device: device)
+        defer { gpu.settleQuietly(orWarn: "検査の後片付けで GPU を待てなかった") }  // Bench.leaveIdle と同じ
         let target = try RenderTarget(gpu: gpu, width: 64, height: 64)
         let canvas = try Canvas(target: target, gpu: gpu)
         let scratch = try canvas.makeNumbers(count: 1)
@@ -602,7 +608,7 @@ struct FrameSyncTests {
                 """
                 \(band) 本目の帯が壊れている (期待 \(expected)、実際 \(actual))。
                 そのフレームの置き場を、次のフレームの CPU が読まれている間に書き換えている\
-                \(faultNote(gpu))
+                \(gpu.faultNote())
                 """)
         }
     }
@@ -636,8 +642,11 @@ struct FrameSyncTests {
 
     @Test("描画の土台を手放すときは、実行中のコマンドが終わるのを待つ")
     func droppingTheDeviceWaitsForInFlightWork() throws {
-        // まず回転 1 回ぶんの長さを、同じ絵で測る (機械ごとに違うので自分で測る)
-        let clock = ContinuousClock()
+        // まず回転 1 回ぶんの長さを、同じ絵で測る (機械ごとに違うので自分で測る)。
+        // **時計は眠っている間は進まない種類で、2 つの測りとも同じものを使う** — 眠りの間も
+        // 進む時計 (`ContinuousClock`) だと、回転の測りの最中に眠ったときだけ回転が膨らみ、
+        // 比べが偽の赤になる (#1940)
+        let clock = SuspendingClock()
         let reference = try makeBench()
         let measured = clock.now
         try reference.canvas.draw { reference.keepGPUBusy() }
@@ -813,7 +822,7 @@ struct FrameSyncTests {
             // なので、1 枚ずれれば必ず食い違う)
             #expect(
                 received.level == BusyOutletSketch.brightness(atFrame: received.frame),
-                "\(received.frame) 枚目の絵が組み上がる前に配られている\(faultNote(gpu))")
+                "\(received.frame) 枚目の絵が組み上がる前に配られている\(gpu.faultNote())")
         }
     }
 
@@ -896,7 +905,7 @@ struct FrameSyncTests {
             // **名指しで待たずに名乗れば、ここに同じ面の 1 周前の色が出る**
             #expect(
                 pixel.red == sharedLevel(atFrame: newest.frame),
-                "\(newest.frame) 枚目を名乗る面に、別のフレームの絵が載っている\(faultNote(bench.gpu))")
+                "\(newest.frame) 枚目を名乗る面に、別のフレームの絵が載っている\(bench.gpu.faultNote())")
             checked += 1
         }
         #expect(checked >= SharedFrameSurface.slotCount + 2, "読み手が掴めた回数が少ない")
@@ -918,8 +927,8 @@ struct FrameSyncTests {
         _ condition: () -> Bool, within seconds: Double = Double(RenderDevice.waitLimitSeconds),
         sourceLocation: SourceLocation = #_sourceLocation
     ) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !condition(), Date() < deadline {
+        let deadline = DispatchTime.now() + seconds
+        while !condition(), DispatchTime.now() < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(condition(), "\(seconds) 秒待っても届かなかった", sourceLocation: sourceLocation)

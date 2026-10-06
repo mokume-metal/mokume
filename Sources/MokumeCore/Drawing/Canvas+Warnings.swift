@@ -100,6 +100,15 @@ extension Canvas {
         case effectFailed
         /// 拡大を通せなかった。
         case upscaleFailed
+        /// 止まっている間のコールバックが書いた画素を、配った直後に描く先へ書き戻せなかった
+        /// (細かさ 1 の面・[#1906])。書き込み待ちは残り、次のリフレッシュと出力段がやり直す。
+        ///
+        /// **``upscaleFailed`` とは鍵を分ける。** 細かさ 1 の面には拡大の段が無く、あちらの文面は
+        /// 直す先を指さない。細かさを下げた面の追い付きは書き戻しと拡大を 1 本で積むので、
+        /// あちらの鍵で言う。
+        ///
+        /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+        case pixelWriteBackFailed
 
         /// フレームの外で粒を扱った。
         case particlesOutsideFrame
@@ -143,14 +152,16 @@ extension Canvas {
         /// 同じ本体のフレームの中で ``beginDraw()`` を対にせず重ねて呼んだ。境目を越えて
         /// いないので、何もせず開いているフレームが続く。
         case alreadyDrawing
-        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま境目を越え、次の
-        /// フレームが始まった (`beginDraw()` か `draw { }`)。閉じていなかったフレームは描かずに
-        /// 捨て、描き始め直す ([#1622])。
+        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま境目を越えた。閉じて
+        /// いなかったフレームは描かずに捨てる ([#1622])。描き場所では本体の次のフレームの頭で
+        /// 捨て、本体・直に使う面では自分の次のフレーム (`beginDraw()` か `draw { }`) の頭で捨てて
+        /// 描き始め直す ([#1834])。捨てた事情は 1 つなので鍵を共有し、文面は起きたことを名乗る。
         ///
         /// **``alreadyDrawing`` とは鍵を分ける。** あちらは境目を越えていない重ね呼びで、中身を
         /// 保つ。振る舞いが違う。
         ///
         /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
         case unfinishedFrameDropped
         /// ``draw(_:)`` が開いたフレームの中で、フレームを開く・閉じる口 (``beginDraw()``・
         /// ``endDraw()``・入れ子の ``draw(_:)``) を呼んだ。フレームは開き直さず閉じもしない。
@@ -159,6 +170,14 @@ extension Canvas {
         case frameCallInsideDraw
         /// ``beginDraw()`` の前に ``endDraw()`` を呼んだ。
         case notDrawing
+        /// 描き場所で、閉じ忘れたまま本体のフレームが進んで捨てた後に ``endDraw()`` を呼んだ
+        /// ([#1834])。
+        ///
+        /// **``notDrawing`` とは鍵を分ける。** あちらは `beginDraw()` を書いていない誤りで、
+        /// こちらは `endDraw()` が遅れた誤りである。直す先が違う。
+        ///
+        /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
+        case endDrawAfterFrameDropped
         /// 描き切る前の描き場所を置いた。
         case placingWhileDrawing
         /// 持ち越しを約束する区間の外で、図形・絵・背景を置いた ([#1672])。
@@ -242,9 +261,11 @@ extension Canvas {
         case curveWithoutStart
         /// 受け取れない頂点の座標が渡された。
         case badVertex
-        /// ``curveDetail(_:)`` に 1 より小さい刻みの数が渡され、1 に丸めた ([#1698])。
+        /// ``curveDetail(_:)`` に 1…1024 の外の刻みの数が渡され、範囲の端へ丸めた
+        /// (下の端は [#1698]・上の端は [#1692])。
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        /// [#1692]: https://github.com/mokume-metal/mokume/issues/1692
         case badCurveDetail
         /// ``Canvas/index(_:)`` に、置いていない頂点の番号が渡された。
         case indexOutOfRange
@@ -291,6 +312,21 @@ extension Canvas {
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case shapeDrawnOutWhileBuilding
+        /// 形の組み立ての中で、形に焼き付かない設定を書いた ([#1529])。種類ごとに鍵を分ける
+        /// (``OutsideFrame`` と同じく、光の注意が視点の注意を黙らせない)。種類と文面は
+        /// ``InsideShape`` が持つ。
+        ///
+        /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
+        case cameraInsideShape
+        case clipInsideShape
+        case effectsInsideShape
+        case lightInsideShape
+        case surroundingsInsideShape
+        case shadowInsideShape
+        case materialInsideShape
+        case particlesInsideShape
+        case computeInsideShape
+        case brightnessInsideShape
     }
 
     /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1698])。

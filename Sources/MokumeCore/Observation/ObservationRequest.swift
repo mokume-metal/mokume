@@ -98,11 +98,13 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 切るのは要求を解いた後の別の段にしてある — 要求そのものは書き手が置いたままの
     /// 値を保ち、応答の `id` と並べて「何を頼み、何が返ったか」を突き合わせられる。
     /// **頼みの範囲を見るのはここ 1 か所である。** 撮る側 (`SketchRuntime`) は丸めた値
-    /// だけを使う。
+    /// だけを使う。MCP の窓口も、待つ長さを見積もるのにこれを呼び、範囲を写さない
+    /// (`package` に開くのはそのため。[#2045])。
     ///
     /// [#1699]: https://github.com/mokume-metal/mokume/issues/1699
     /// [#1814]: https://github.com/mokume-metal/mokume/issues/1814
-    func clamped() -> (scale: Double, count: Int, every: Int, warnings: [String]) {
+    /// [#2045]: https://github.com/mokume-metal/mokume/issues/2045
+    package func clamped() -> (scale: Double, count: Int, every: Int, warnings: [String]) {
         var warnings: [String] = []
         let scale = Self.clampScale(self.scale)
         if let reason = scale.reason {

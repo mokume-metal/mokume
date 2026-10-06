@@ -8,7 +8,7 @@ extension Canvas {
 
     // 立体を取り巻く周囲を置く。
     public func surroundings(_ surroundings: Surroundings) {
-        guard isDrawing else { return warnOutsideFrame(.surroundings) }
+        guard admits(.surroundings) else { return }
         guard surroundings.isUsable else { return warnBadSurroundings() }
         closeBatch()
         activeSurroundings = surroundings
@@ -23,33 +23,13 @@ extension Canvas {
         // 形の組み立ての中も、塗り 1 色の背景と同じ鍵で断る (#1588)
         guard !recordingShape else { return warnInsideShape(.background) }
         guard surroundings.isUsable else { return warnBadSurroundings() }
-        // 塗り 1 色の背景と同じく、溜めていたものを捨ててから置き直す
-        discardPending()
-        // 引き継いだ奥行きは手放す。板は最奥で奥行きの比較を受けるので、区間で描き切らせた立体の
-        // 画素で落ち、持ち越した立体 (上で捨てた) と絵が変わる (#1888)
-        dropInheritedDepth()
-        drawBackdrop(surroundings)
-    }
-
-    /// いまの視点が写す範囲いっぱいに、周囲そのものを出す面を置く。
-    ///
-    /// **置くのと描くのは別**である ([`surroundings(_:)`](Canvas+Surroundings.swift) を
-    /// 呼ばずにこれだけを呼べば、背景にだけ出て映り込みには効かない)。片方を呼んだら
-    /// もう片方も、という親切は入れない — 絵の理由が呼び出し 1 行から読めなくなる。
-    private func drawBackdrop(_ surroundings: Surroundings) {
-        let corners = currentCamera.backdropCorners()
-        backdrop = surroundings
-        inSolidBatch {
-            // 面の向きは持たせない。この列は光も材質も見ずに、周囲の色をそのまま出す
-            let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-            for index in [0, 1, 2, 0, 2, 3] {
-                appendSolidVertex(position: corners[index], normal: .zero, color: white)
-            }
-        }
-        // **旗を下ろす前に閉じる。** 列は閉じた時点の設定で描かれるので、先に下ろすと
-        // この面が「ただの立体」として閉じられ、周囲ではなく塗りで出る
-        closeBatch()
-        backdrop = nil
+        // 塗り 1 色の背景と同じ関所で置き換える (#1685)。呼んだ時点のスタイルも、途中の描き切りで
+        // 載った絵と奥行きも拾わず、切り抜きがあればその中だけを置き換える
+        //
+        // **置くのと描くのは別**である (``surroundings(_:)`` を呼ばずにこれだけを呼べば、背景にだけ
+        // 出て映り込みには効かない)。片方を呼んだらもう片方も、という親切は入れない — 絵の理由が
+        // 呼び出し 1 行から読めなくなる
+        replaceSurface(with: .surroundings(surroundings))
     }
 
     /// 受け取れない周囲を、初回だけ知らせる。

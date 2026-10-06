@@ -113,13 +113,21 @@ final class UpscaleStage {
     ///
     /// **フレームの外 (止まっている間) に描く先を広げ直すとき、描く先に残っているのは最後に
     /// 描いたフレームの絵**で、それは最後のフレームの揺らしでずれている。いまの ``jitterInSource``
-    /// は次のフレームの揺らしなので、戻す量を取り違える。まだ 1 枚も広げていなければ、次に描く
+    /// は次のフレームの揺らしなので、戻す量を取り違える。フレームの外で描き切った図形も同じ揺らしで
+    /// 描く (``lastJitter``) ので、戻せば既にある絵と揃う。まだ 1 枚も広げていなければ、次に描く
     /// フレームの揺らしがそのまま最後のものである。
     ///
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
-    var lastJitterInSource: SIMD2<Float> {
-        guard framesScaled > 0 else { return jitterInSource }
-        return inSource(jitter(atFrame: framesScaled - 1))
+    var lastJitterInSource: SIMD2<Float> { inSource(lastJitter) }
+
+    /// 最後に広げたフレームの揺らし (描く先の画素・[#1913])。フレームの外の描き切りは、これで描く
+    /// (``Canvas/jitter(drawingInFrame:)``) — 描く先に残る最後のフレームの絵と同じ揺らしで、止まっている
+    /// 間にそれを出す先へ広げるのは、これを戻す追い付きである。
+    ///
+    /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
+    var lastJitter: SIMD2<Float> {
+        guard framesScaled > 0 else { return jitter }
+        return jitter(atFrame: framesScaled - 1)
     }
 
     private func inSource(_ offset: SIMD2<Float>) -> SIMD2<Float> {

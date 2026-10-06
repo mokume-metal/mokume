@@ -19,7 +19,8 @@ enum MovieWriteFailure: Error, Equatable {
     case writeFailed(path: String, reason: String)
 }
 
-/// 動画を 1 本書く。**AVFoundation に触れる唯一の場所である。**
+/// 動画を 1 本書く。**MokumeCore で AVFoundation に触れる唯一の場所である** (カメラの
+/// 受け取りは本体の上に載る `MokumeCamera` が持つ — [ADR-0042] 決定 3)。
 ///
 /// ## 隔離の外に置く
 ///
@@ -36,6 +37,58 @@ enum MovieWriteFailure: Error, Equatable {
 /// 容れ物 (`mvhd`・`tkhd`・`mdhd`) の作成・更新時刻には AVFoundation が書き出した時刻の秒を
 /// 入れるので、違う秒に書いた 2 本はファイルとしては一致しない ([#1628])。配布向けの軽い
 /// 符号化は「再現を捨てて小さくする」選択なので、要る場面が出てから足す ([ADR-0008])。
+///
+/// **符号化器は、専用回路を使わない側を選ぶ** ([#1813])。ProRes 4444 を専用回路の符号化器
+/// (`appleproreshw.4444`。指定しなければこちらが選ばれる) で符号化させると、**色が細かく乱れた絵に
+/// 一様でない不透明度が重なったとき、640×360 以上で `Cannot Encode` と断られ、断られた書き手は
+/// 立ち直らないので録り全体が失われる**。色が一色・滑らかな絵は、不透明度が乱数でも通る。
+/// `AlphaChannelMode` を替えても、専用回路を必須にしても、ProRes 4444 XQ にしても避けられず、
+/// 専用回路を使わない符号化器 (`prores-4444`) だけが通った。形式は変わらず、決めているのは形式で、
+/// どの符号化器で書くかではない ([ADR-0025] 決定 3)。
+///
+/// **不透明度と水準 3 は、測った範囲で変わらない。** 断られた 4 絵柄 × 640×360 / 641×361 / 1920×1080 で、
+/// 復号した不透明度は入力と一致し、同じ入力を 2 回書くと復号した画素と時刻が全画素で一致した。
+/// 色が乱れた絵に不透明度が重なる別の絵では、半透明の画素の色が乗算されずに残った (塊の内側で
+/// 入力との差は最大 1・`MovieWriterTests`)。専用回路を使わない符号化器は複数のスレッドで並列に
+/// 符号化するので、測っていない大きさ・絵柄では言わない。
+///
+/// **代償は、符号化に使う CPU である。** 符号化は別のプロセス (`VTEncoderXPCService`) が行うので、
+/// このプロセスの CPU 時間には現れない。40 枚を初期化から `finish` まで書いた CPU 時間
+/// (このプロセス + 符号化のプロセス・ms)。release・3 ラウンドの中央値で、専用回路 → 使わない。
+/// 2 つのテストを 1 本ずつ走らせた値である:
+///
+/// | | 大きさ | 一色 | 勾配 + 不透明度が乱数 | RGB が乱数 + 不透明度 255 |
+/// | --- | --- | --- | --- | --- |
+/// | M3 Max (16 コア) | 1920×1080 | 46 → 307 | 110 → 720 | 73 → 1621 |
+/// | | 3840×2160 | 429 → 1569 | 652 → 3061 | 466 → 7071 |
+/// | 無印 M4 (10 コア) | 1920×1080 | 127 → 304 | 170 → 743 | 124 → 1806 |
+/// | | 3840×2160 | 691 → 1732 | 971 → 3404 | 704 → 7832 |
+///
+/// **絵と大きさによって 2〜22 倍になる** (1920×1080 以上。RGB が乱数の絵が最も大きく、1920×1080 で
+/// M3 Max 約 22 倍・M4 約 15 倍)。640×360 は 0.2〜3 倍で、M4 の一色では減る。壁時間は、一色と勾配では
+/// 同じか短く、RGB が乱数の絵では 1.2〜3 倍に伸びた (3840×2160 で M3 Max 258 → 550 ms・M4 286 → 862 ms)。
+/// 60 fps の実時間で送ると、1920×1080 は 3 つの絵とも両機で遅れず、3840×2160 の RGB が乱数の絵だけが
+/// M4 で追いつけない (3 秒ぶんを送る間に約 0.55 秒遅れ、``MovieWriter/write(_:frame:time:)`` の待ちが
+/// 約 30 ms)。この絵は 1 枚あたりの所要が 60 fps の枠 (16.7 ms) を挟む位置にある (40 枚の壁時間 ÷ 40:
+/// M4 約 21.6 ms・M3 Max 約 13.8 ms)。M3 Max は今回は遅れなかったが、前に測った回 (約 20.8 ms) は
+/// 0.2〜0.8 秒遅れたので、機械の負荷で結果が変わりうる。
+///
+/// **測っていない機種がある。** 無印 M4 までは測った。M1〜M3 の無印 (コア 8) は実機が無く未測で、
+/// 3840×2160 の色の細かい絵は M4 より遅れる見込みである。M1 無印は専用回路が無いとされ、指定は効かず、
+/// この不具合も出ない見込みだが、これも未測である。電力も測っていない。
+///
+/// **固定の約束ではなく、測った回避策である。** 指定は ``encoderSpecification()`` の 1 か所だけで、
+/// Apple 側が直ったら外して戻せる。戻して検査 (`MovieWriterTests` の「色の細かい絵に…」) が赤に
+/// ならなければ、直っている。そのとき `theMovieIsNotWrittenByTheHardwareEncoder` (書き上がりが
+/// 専用回路のものでないことを見る) は赤になるので外す。
+///
+/// **指定が効くと測ったのは、専用回路のある 2 台である** (M3 Max・無印の Mac mini M4。指定なしで
+/// `Cannot Encode`、指定ありで緑)。GitHub のホストの VM (`macos-26-arm64`) では、指定の有無によらず
+/// 色の細かい絵が別のエラー (`NSOSStatusErrorDomain -17913`。run ごとに落ちるセルが違う) で落ちる
+/// ので、ここでは指定が効いたかを見られない。断られていた絵を書く検査は、既定の符号化器が
+/// 専用回路である (仮想化されていない) 機械でだけ走らせ、ほかでは飛ばす (`DefaultProResEncoder`)。
+/// 機械によらず動いて赤になれるのは、書き手へ指定を渡したことを見る
+/// `theWriterIsHandedTheEncoderSpecification` だけである。
 ///
 /// ## 符号化器の用意は、読み直して待つ
 ///
@@ -79,9 +132,11 @@ enum MovieWriteFailure: Error, Equatable {
 /// [#979]: https://github.com/mokume-metal/mokume/issues/979
 /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
 /// [#1628]: https://github.com/mokume-metal/mokume/issues/1628
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+/// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 nonisolated final class MovieFile {
     /// 時刻の刻み。24 / 25 / 30 / 50 / 60 のどれで割っても整数になる値を選ぶ —
     /// 端数が出ると、フレームの時刻が刻みへ丸められるたびに少しずつずれる。
@@ -103,19 +158,33 @@ nonisolated final class MovieFile {
     /// この機械の符号化器が受け取る設定の鍵。**符号化器が無ければ nil。**
     ///
     /// 受けない鍵を渡すと AVFoundation は例外を投げ、Swift からは捕まえられない —
-    /// **プロセスごと落ちる。** 機械によって受ける鍵が違う (手元の機械は
-    /// `ExpectedFrameRate` を受けるが、仮想化された機械の符号化器は受けない) ので、
-    /// 渡す前に聞く。
+    /// **プロセスごと落ちる。** 符号化器によって受ける鍵が違う (専用回路の符号化器は
+    /// `ExpectedFrameRate` を受けるが、専用回路を使わない符号化器や、仮想化された機械の
+    /// 符号化器は受けない) ので、渡す前に**書き手と同じ符号化器に**聞く。
     static func supportedProperties(width: Int, height: Int) -> [String: Any]? {
         var encoder: CFString?
         var properties: CFDictionary?
         let status = VTCopySupportedPropertyDictionaryForEncoder(
             width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_AppleProRes4444,
-            encoderSpecification: nil, encoderIDOut: &encoder,
+            encoderSpecification: encoderSpecification() as CFDictionary, encoderIDOut: &encoder,
             supportedPropertiesOut: &properties)
         guard status == noErr else { return nil }
         return properties as? [String: Any]
+    }
+
+    /// 書き出しと問い合わせが渡す、符号化器の選び方。**2 か所で写さず、ここに 1 つだけ置く** —
+    /// 問い合わせが書き手と違う符号化器に聞くと、書き手が受けない鍵を渡してプロセスごと落ちる
+    /// (上の ``supportedProperties(width:height:)``)。
+    ///
+    /// **専用回路を使わない側を選ぶ理由と代償は、型の冒頭の「形式は選べない」の節にある**
+    /// ([#1813])。測った回避策なので、Apple 側が直ったときに戻せるよう、指定はここだけにしてある。
+    ///
+    /// `static let` の辞書は Swift 6 で Sendable にならないので、呼ぶたびに作る。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    static func encoderSpecification() -> [String: Any] {
+        [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false]
     }
 
     /// この機械で動きを書き出せるか。
@@ -130,6 +199,31 @@ nonisolated final class MovieFile {
     static var keepsStraightAlpha: Bool {
         supportedProperties(width: 640, height: 360)?[
             kVTCompressionPropertyKey_AlphaChannelMode as String] != nil
+    }
+
+    /// writer の入力へ渡す出力設定。**検査が「書き手へ符号化器の指定を渡したか」を機械によらず
+    /// 見られるよう、`init` から切り出してある** ([#1813])。専用回路の無い機械 (GitHub のホストの VM)
+    /// では、指定の有無によらず同じ結果になるので、書き上がりからは見えない。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    static func outputSettings(
+        width: Int, height: Int, compression: [String: Any]
+    ) -> [String: Any] {
+        [
+            AVVideoCodecKey: AVVideoCodecType.proRes4444,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            // **問い合わせと同じ符号化器を指す** (``encoderSpecification()``)
+            AVVideoEncoderSpecificationKey: encoderSpecification(),
+            // **色を名乗る。** 作業空間と同じ Display P3 で書き出す ([ADR-0011] 決定 1)。
+            // 名乗らないと、再生する側は狭い色域だと見なして色を寄せる
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_IEC_sRGB,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
+            AVVideoCompressionPropertiesKey: compression,
+        ]
     }
 
     init(path: String, width: Int, height: Int, frameRate: Int) throws(MovieWriteFailure) {
@@ -167,19 +261,7 @@ nonisolated final class MovieFile {
 
         input = AVAssetWriterInput(
             mediaType: .video,
-            outputSettings: [
-                AVVideoCodecKey: AVVideoCodecType.proRes4444,
-                AVVideoWidthKey: width,
-                AVVideoHeightKey: height,
-                // **色を名乗る。** 作業空間と同じ Display P3 で書き出す ([ADR-0011] 決定 1)。
-                // 名乗らないと、再生する側は狭い色域だと見なして色を寄せる
-                AVVideoColorPropertiesKey: [
-                    AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
-                    AVVideoTransferFunctionKey: AVVideoTransferFunction_IEC_sRGB,
-                    AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-                ],
-                AVVideoCompressionPropertiesKey: compression,
-            ])
+            outputSettings: Self.outputSettings(width: width, height: height, compression: compression))
         // 実時間に追いつく必要は無い。詰まったら待たせるほうが、落とすより正しい
         input.expectsMediaDataInRealTime = false
         adaptor = AVAssetWriterInputPixelBufferAdaptor(

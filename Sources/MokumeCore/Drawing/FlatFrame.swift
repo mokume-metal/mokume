@@ -30,4 +30,7 @@ struct FlatFrame {
     ///
     /// [#1488]: https://github.com/mokume-metal/mokume/issues/1488
     var unitsPerDrawnPixel: SIMD2<Float>
+    /// 平面の頂点ごとの被覆 (``Canvas/coverageSpans``) を読むか。1 なら読み、0 なら 1 とする
+    /// (#1637)。細い線を広げた頂点が無いフレームは 0 で、頂点関数は被覆の並びに触れない。
+    var readsCoverage: UInt32 = 0
 }

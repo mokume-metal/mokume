@@ -65,13 +65,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 # 同じものを読まないと、組める例と撮れる例が食い違う (#667)
 # 型検査の呼び方は swift_typecheck が持つ (#820)。**片方だけが macro の plugin 名を
 # 動的に解いている状態**を畳んだ — check-param-declarations.sh も同じ呼び方を通る
-from swift_typecheck import typecheck  # noqa: E402,F401
+from swift_typecheck import typecheck  # noqa: E402
 
 from example_wrapping import (  # noqa: E402
     FENCE_CLOSE,
     FENCE_OPEN,
     MARK,
     MARK_CONTEXT,
+    MARK_SKIP,
     dedent,
     split_imports,
     strip_doc,
@@ -100,15 +101,41 @@ class Example:
 
 
 def sources(root: pathlib.Path) -> list[pathlib.Path]:
-    """見るファイル。**追跡されているものだけ**を git に挙げさせる — 生成物や手元の
-    書き捨てを拾うと、他人の手元で結果が変わる。"""
+    """見るファイル。基準は「**`git add -A` したときに CI の木になるもの**」 —
+    追跡されているもの + 追跡されていないもの − 無視されたもの。
+
+    最初の設計 (#566) は追跡されたものだけだったが、それだと `git add` 前の手元で緑
+    だった例が、push して初めて CI で赤になる (#1998)。無視されたもの (生成物や手元の
+    書き捨て) は CI の木に入らないので、引き続き拾わない — 拾うと、他人の手元で結果が
+    変わる。
+
+    **挙がったパスが、実在するファイルとは限らない。** `git rm` していない削除・改名は
+    index に旧パスが残り、エディタの退避リンク (`.#Foo.swift`) は先が無いまま未追跡で
+    残る。どちらも `git add -A` の後の木には現れないので、読む前に落とす。名前は `-z` で
+    割る (空白を含む名前は割れ、非 ASCII の名前は C 引用符つきで返って `.swift` の判定
+    を黙って外れる)。"""
     listed = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "Sources", CATALOG],
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "Sources",
+            CATALOG,
+        ],
         capture_output=True,
         text=True,
         check=True,
-    ).stdout.split()
-    return [pathlib.Path(name) for name in listed if name.endswith((".swift", ".md"))]
+    ).stdout.split("\0")
+    return [
+        pathlib.Path(name)
+        for name in listed
+        if name.endswith((".swift", ".md")) and (root / name).is_file()
+    ]
 
 
 def examples_in(text: str, path: pathlib.Path) -> tuple[list[Example], list[str]]:
@@ -140,13 +167,13 @@ def examples_in(text: str, path: pathlib.Path) -> tuple[list[Example], list[str]
             while close < len(lines) and not FENCE_CLOSE.match(lines[close]):
                 body.append(strip_doc(lines[close]))
                 close += 1
-            skip = next((rest for kind, rest, _ in pending if kind == "組めない"), None)
+            skip = next((rest for kind, rest, _ in pending if kind == MARK_SKIP), None)
             found.append(
                 Example(
                     path=path,
                     line=index + 1,
                     body=dedent(body),
-                    context=[rest for kind, rest, _ in pending if kind == "文脈"],
+                    context=[rest for kind, rest, _ in pending if kind == MARK_CONTEXT],
                     skip=skip,
                 )
             )
@@ -212,26 +239,14 @@ def find_modules(binary: pathlib.Path) -> pathlib.Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="説明文の中の例が組めるかを見る")
-    parser.add_argument(
-        "--modules",
-        type=pathlib.Path,
-        default=None,
-        help="swift build が作った成果物の置き場 (省くと .build/debug から探す)",
-    )
-    arguments = parser.parse_args()
+    argparse.ArgumentParser(description="説明文の中の例が組めるかを見る").parse_args()
 
     root = pathlib.Path(
         subprocess.run(
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()
     )
-    if arguments.modules is None:
-        modules = find_modules(root / ".build" / "debug")
-    else:
-        modules = (
-            arguments.modules if arguments.modules.is_absolute() else root / arguments.modules
-        )
+    modules = find_modules(root / ".build" / "debug")
     if not (modules / "mokume.swiftmodule").exists():
         print(f"ng: {modules} に mokume が無い — 先に swift build (make build) を打つ")
         return 1

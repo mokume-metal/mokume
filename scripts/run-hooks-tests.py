@@ -37,6 +37,11 @@ HOOKS_TEST_JOBS=1 で直列にして切り分ける。
 make setup と CI の道具の用意に依存を 1 つ増やすので、標準ライブラリだけで書いた
 (置き換えの段)。検査の中身には触れない — scripts/ci-check.sh が段を駆動するのと同じ形。
 
+**CI でだけ極端に遅いファイルは、名前引きを疑う。** macOS 15 以降の GitHub のランナーでは、
+`socket.getfqdn()` が約 35 秒止まる (actions/runner-images#14409)。#1860 で並べた後も CI で
+縮まなかったのは、`http.server` のサーバを立てる 5 ファイルがこれで 1 本あたり 30〜35 秒
+長かったためである (#1714)。検査のサーバが名前を引かないことは run_hooks_tests_test が見る。
+
 テストは scripts/tests/run_hooks_tests_test.py。
 """
 

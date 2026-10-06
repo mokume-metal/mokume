@@ -634,6 +634,13 @@ struct ShadowTests {
     ///
     /// 仕掛けを入れると 720 回中 0 回。つまり**落ちたら本物**だが、通ったことは
     /// 「今日は出なかった」以上を意味しない。だから既定では走らせない。
+    ///
+    /// **この手順は、gpu-slot の枠 (GPU の検査の同時は 3 本まで) の外で、わざと 6 本を重ねる**
+    /// ([#2004](https://github.com/mokume-metal/mokume/issues/2004))。重ねることが検出の仕組みなので、
+    /// `scripts/gpu-slot.py` を前置すると 3 本ずつに下がり、検出力だけが落ちる。代わりに、
+    /// 他のセッションの GPU の検査が走っていないときだけ走らせる (`pgrep -fl swiftpm-testing-helper`
+    /// が空であること)。枠の規則の例外は、ここ 1 か所に置く。
+    ///
     /// フレームの組み立てを触ったときに、次の形で走らせる:
     ///
     /// ```
@@ -921,6 +928,273 @@ struct ShadowTests {
             perFrame.append(canvas.solidVertexStorage.writes - before)
         }
         #expect(perFrame == [1, 1, 1])
+    }
+
+    // MARK: - 持ち越した列の粒 (#2023)
+
+    /// 粒の板を溜め場の先頭から離す立体。**どちらも影を落とさない。**
+    ///
+    /// 離さない (置き直す前の位置が 0) と、詰め直した区画の頭と位置が重なって、置き直す前の位置で
+    /// 読んでも割れない。立体は形ごとに頂点を置くので、寸法を変えて数を稼ぐ。落とさない
+    /// (`castShadow(false)`) のは、持ち越す落とす列を粒の 1 列だけにして、床の影が粒のものだと
+    /// 言えるようにするため。
+    enum Decoy: String, CaseIterable, CustomTestStringConvertible {
+        /// 頂点 108 個 (約 10 KiB)。持ち越した区画 (最小 64 KiB) の中を指すので、読み違えても
+        /// 区画の中の空きを読む。
+        case boxes
+        /// 頂点 4800 個 (約 450 KiB)。区画の最小を越えるので、読み違えると区画の外を読む。
+        case sphere
+
+        var testDescription: String { rawValue }
+    }
+
+    /// 粒を落とす側に含む場面を、途中の描き切りを入れて (`cut`)・入れずに描く。GPU は呼び手が
+    /// 渡す — 場面ごとに作って捨てる回数を増やさない (全検査の負荷の下で GPU の仕事が打ち切られる
+    /// 形が、GPU を作っては捨てる経路に出ると調べている最中である・
+    /// [#2007](https://github.com/mokume-metal/mokume/issues/2007))。
+    ///
+    /// `decoysFirst` を偽にすると、立体を粒の後に置く (粒の板が溜め場の先頭に来る)。立体は隅の
+    /// 小さな形で粒と重ならないので、置く順を入れ替えても、頂点を正しく読めていれば絵は変わらない。
+    ///
+    /// - Returns: 絵と、粒の板を置く直前の溜め場の頂点の数 (置き直す前の位置)・GPU が書いた
+    ///   描き引数の `vertexStart`。
+    private func carriedParticleScene(
+        _ decoy: Decoy, on gpu: RenderDevice, shadows: Bool = true, cut: Bool = false,
+        decoysFirst: Bool = true
+    ) throws -> (image: DisplayImage, start: Int, argumentStart: Int) {
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 96, height: 96)
+        let dust = try canvas.makeParticles(count: 64)
+        var randomness = Randomness(seed: 2023)
+        var start = 0
+        func placeDecoys() {
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
+            canvas.push()
+            canvas.translate(8, 8, 0)
+            switch decoy {
+            case .boxes:
+                for size: Float in [2, 3, 4] { canvas.box(size) }
+            case .sphere:
+                canvas.sphere(3, detail: 40)
+            }
+            canvas.pop()
+        }
+        func placeParticles() {
+            canvas.castShadow(true)
+            canvas.emit(
+                dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
+                using: &randomness)
+            start = canvas.solidVertices.count
+            canvas.particles(dust)
+            if cut { canvas.loadPixels() }
+        }
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.camera(48, -36, 120, 48, 48, 0, 0, 1, 0)
+            canvas.lights()
+            canvas.shadows(shadows)
+            canvas.noStroke()
+            if decoysFirst {
+                placeDecoys()
+                placeParticles()
+            } else {
+                placeParticles()
+                placeDecoys()
+            }
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+            canvas.push()
+            canvas.translate(48, 72, 0)
+            canvas.box(96, 4, 96)
+            canvas.pop()
+        }
+        let image = try canvas.target.encodeForDisplay()
+        let arguments = canvas.read(dust.arguments)
+        return (image, start, Int(arguments[2].bitPattern))
+    }
+
+    /// **持ち越した粒の影は、区切らずに焼いた影と同じ所に落ちる** ([#2023])。
+    ///
+    /// 持ち越した落とす列は頂点を区画の頭へ詰め直す (``Canvas/frameCasters``) が、粒の列が読む位置は
+    /// GPU が書いた描き引数が決める。引数が置き直す前の位置を指していると、持ち越した列だけが
+    /// ずれた所を読んで、後に置いた床に粒の影が落ちない。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
+    @Test("持ち越した粒の影は、区切らずに描いた影と同じ絵になる", arguments: Decoy.allCases)
+    func carriedParticlesCastTheSameShadowAsUncutOnes(decoy: Decoy) throws {
+        let gpu = try RenderDevice()
+        let plain = try carriedParticleScene(decoy, on: gpu, cut: false)
+        let cut = try carriedParticleScene(decoy, on: gpu, cut: true)
+        let unshadowed = try carriedParticleScene(decoy, on: gpu, shadows: false, cut: false)
+        // **この検査が見ている場面であることを先に言う。** 粒の板が溜め場の先頭に無く、
+        // 区切らなくても床に粒の影が落ちている
+        #expect(plain.start > 0, "検査の前提: 粒の板が溜め場の先頭に無い (置き直す前の位置が 0)")
+        var darker = 0
+        for y in 0..<plain.image.height {
+            for x in 0..<plain.image.width
+            where Int(unshadowed.image[x, y].red) - Int(plain.image[x, y].red) > 20 { darker += 1 }
+        }
+        #expect(darker > 50, "検査の前提: 区切らなくても床に影が落ちている (\(darker) 画素)")
+
+        var gap = 0
+        for y in 0..<plain.image.height {
+            for x in 0..<plain.image.width where plain.image[x, y] != cut.image[x, y] { gap += 1 }
+        }
+        #expect(gap == 0, "区切ると持ち越した粒の影が \(gap) 画素違う")
+    }
+
+    /// **粒は、溜め場のどこに置いても同じ絵で出る** ([#2023])。画面と影 (区切らない焼き付け) の両方。
+    ///
+    /// 粒の板の頂点を読む位置は、頂点の置き場へ束ねる番地 (``Canvas/Batch/vertexBaseShift``) が
+    /// 決める。**番地を足し忘れると、描き引数の頭は 0 なので溜め場の先頭 (別の立体の頂点) を
+    /// 読む** — 粒の板が先頭にあるときだけは合うので、先頭に置いた絵と、立体を先に置いて先頭から
+    /// 離した絵を比べる。持ち越した列の検査 (上の 2 本) は、区切った絵と区切らない絵が同じ行を
+    /// 通るので、この足し忘れでは割れない。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
+    @Test("粒の板が溜め場の先頭になくても、粒と粒の影は先頭にあるときと同じ絵になる", arguments: Decoy.allCases)
+    func particlesDrawTheSameWhereverTheirQuadSits(decoy: Decoy) throws {
+        let gpu = try RenderDevice()
+        let first = try carriedParticleScene(decoy, on: gpu, decoysFirst: false)
+        let behind = try carriedParticleScene(decoy, on: gpu)
+        let unshadowed = try carriedParticleScene(decoy, on: gpu, shadows: false)
+        // **この検査が見ている場面であることを先に言う。** 板の位置が先頭と先頭でない所に分かれ、
+        // 粒が見えていて、床に粒の影が落ちている
+        #expect(first.start == 0, "検査の前提: 比べる側の板が溜め場の先頭にある (\(first.start))")
+        #expect(behind.start > 0, "検査の前提: 粒の板が溜め場の先頭に無い (置き直す前の位置が 0)")
+        #expect(behind.image[40, 42].red > 200, "検査の前提: 粒が見えている")
+        var darker = 0
+        for y in 0..<behind.image.height {
+            for x in 0..<behind.image.width
+            where Int(unshadowed.image[x, y].red) - Int(behind.image[x, y].red) > 20 { darker += 1 }
+        }
+        #expect(darker > 50, "検査の前提: 床に粒の影が落ちている (\(darker) 画素)")
+
+        var gap = 0
+        for y in 0..<first.image.height {
+            for x in 0..<first.image.width where first.image[x, y] != behind.image[x, y] { gap += 1 }
+        }
+        #expect(gap == 0, "粒の板の位置が先頭でないと、絵が \(gap) 画素違う")
+    }
+
+    /// **粒の列の描き引数は、頂点の頭から数える** ([#2023])。
+    ///
+    /// 粒の板の位置を引数に書くと、置き直した後の列 (詰め直した区画) が同じ位置を指さない。
+    /// 引数の `vertexStart` は 0 に置き、頂点の置き場へ束ねる番地を列の頭へ進める
+    /// (``Canvas/Batch/vertexBaseShift``)。
+    ///
+    /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
+    @Test("粒の描き引数は、頂点の置き場の頭から数える", arguments: Decoy.allCases)
+    func particleDrawArgumentsCountFromTheVertexBase(decoy: Decoy) throws {
+        let scene = try carriedParticleScene(decoy, on: RenderDevice(), cut: true)
+        #expect(scene.start > 0, "検査の前提: 粒の板が溜め場の先頭に無い")
+        #expect(
+            scene.argumentStart == 0,
+            "描き引数の vertexStart が \(scene.argumentStart) (置き直す前の位置は \(scene.start))")
+    }
+
+    // MARK: - 持ち越した列の位置から導く値 (#2043)
+
+    /// 列が描く単位 (添字の列なら読む順の並び、そうでなければ頂点の並び) での区間。
+    private func drawnRange(of run: Shape.Run) -> Range<Int> {
+        run.isIndexed
+            ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
+    }
+
+    /// **持ち越した列は、粒の列も含めて、束ねる番地へ下駄を足さない** ([#2043])。
+    ///
+    /// 詰め直すときに頭を 0 へ置き直す条件 (``Canvas/Batch/readsPooledVertices``) と、番地へ頭を
+    /// 足す条件 (``Canvas/Batch/addressesVertexHead``) が食い違うと、持ち越した粒の列が置き直す前の
+    /// 頭のぶん区画の先を読む。粒の板を溜め場の先頭から離して (先に立体を置いて) 持ち越し、
+    /// 持ち越した列の下駄がどれも 0 であることを見る。
+    ///
+    /// [#2043]: https://github.com/mokume-metal/mokume/issues/2043
+    @Test("持ち越した列は、粒の列も含めて束ねる番地へ下駄を足さない")
+    func carriedRunsAddNoVertexBaseShift() throws {
+        let canvas = try makeCanvas(width: 64, height: 64)
+        let dust = try canvas.makeParticles(count: 16)
+        var randomness = Randomness(seed: 2043)
+        var start = 0
+        var carried: [Canvas.Batch] = []
+        try canvas.draw {
+            canvas.lights()
+            canvas.shadows(true)
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
+            for size: Float in [2, 3, 4] { canvas.box(size) }
+            canvas.emit(
+                dust, from: .point(32, 32), rate: 600, speed: 0...0, angle: 0...0,
+                life: 5...5, size: 8...8, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
+                using: &randomness)
+            start = canvas.solidVertices.count
+            canvas.particles(dust)
+            canvas.loadPixels()
+            carried = canvas.frameCasters.casters.map(\.batch)
+        }
+        // **この検査が見ている場面であることを先に言う。** 粒の列を持ち越していて、その板は
+        // 溜め場の先頭に無い (置き直さなければ下駄が 0 にならない)
+        #expect(start > 0, "検査の前提: 粒の板が溜め場の先頭に無い")
+        #expect(
+            carried.contains { $0.indirectArguments != nil }, "検査の前提: 粒の列を持ち越している")
+        for batch in carried {
+            #expect(
+                batch.vertexBaseShift == 0,
+                "持ち越した列の下駄が \(batch.vertexBaseShift) B (頭 \(batch.run.start))")
+        }
+    }
+
+    /// **持ち越した列の、裏 → 表で描く部品は、置き直した列の区間の中に同じ位置で残る** ([#2043])。
+    ///
+    /// 部品の区間 (``Canvas/Batch/backFaceParts``) は溜め場の中の位置で持つ。詰め直すときに列の
+    /// 位置だけを置き直して部品をずらさないと、部品が列の区間の外を指し、裏 → 表で描く側
+    /// (`encodeBackThenFront`) が黙って読み飛ばす。持ち越した列の焼き付けは今は裏 → 表に
+    /// 分けないので絵には出ない — 分ける口を足した日に壊れないことを、列の値で見る。
+    ///
+    /// [#2043]: https://github.com/mokume-metal/mokume/issues/2043
+    @Test("持ち越した列の、裏 → 表で描く部品は、置き直した列の区間の中に同じ位置で残る")
+    func carriedBackFacePartsFollowTheRelocatedRun() throws {
+        let canvas = try makeCanvas(width: 64, height: 64)
+        var before: [Canvas.Batch] = []
+        var carried: [Canvas.Batch] = []
+        try canvas.draw {
+            canvas.lights()
+            canvas.shadows(true)
+            canvas.noStroke()
+            // 落とさない立体を先に置いて、半透明の箱の列を溜め場の先頭から離す
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
+            canvas.box(4)
+            canvas.castShadow(true)
+            canvas.fill(255, 255, 255, 128)
+            canvas.translate(32, 32, 0)
+            canvas.box(20)
+            canvas.closeBatch()
+            before = canvas.batches.filter(\.castsShadow)
+            canvas.loadPixels()
+            carried = canvas.frameCasters.casters.map(\.batch)
+        }
+        // **この検査が見ている場面であることを先に言う。** 裏 → 表で描く列を 1 つだけ持ち越し、
+        // その列は溜め場の先頭に無い (置き直すと位置が動く)
+        try #require(before.count == 1 && carried.count == 1, "検査の前提: 落とす列が 1 つ")
+        let (original, moved) = (before[0], carried[0])
+        #expect(original.drawsBackThenFront, "検査の前提: 裏 → 表で描く列")
+        let from = drawnRange(of: original.run)
+        let to = drawnRange(of: moved.run)
+        #expect(from.lowerBound > 0, "検査の前提: 列が溜め場の先頭に無い (\(from))")
+        #expect(to.lowerBound == 0, "検査の前提: 持ち越した列は区画の頭へ置き直される (\(to))")
+
+        #expect(moved.drawsBackThenFront, "持ち越した列が裏 → 表で描く部品を失った")
+        #expect(moved.backFaceParts.count == original.backFaceParts.count)
+        for (part, source) in zip(moved.backFaceParts, original.backFaceParts) {
+            #expect(
+                part.range.lowerBound - to.lowerBound == source.range.lowerBound - from.lowerBound
+                    && part.range.count == source.range.count,
+                "部品 \(source.range) (列 \(from)) が、置き直した列 \(to) で \(part.range) を指す")
+            #expect(
+                to.contains(part.range.lowerBound) && part.range.upperBound <= to.upperBound,
+                "部品 \(part.range) が置き直した列 \(to) の外にある")
+        }
     }
 }
 

@@ -10,12 +10,6 @@ command = 'bash "$(git rev-parse --show-toplevel)/scripts/agent-comment-guard.sh
 timeout = 10
 statusMessage = "コメントの投稿経路を確認中"
 
-[[hooks.PreToolUse.hooks]]
-type = "command"
-command = 'bash "$(git rev-parse --show-toplevel)/scripts/pr-identity-guard.sh"'
-timeout = 10
-statusMessage = "PR の作成主体を確認中"
-
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"

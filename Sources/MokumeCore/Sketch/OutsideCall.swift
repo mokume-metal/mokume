@@ -22,8 +22,10 @@ enum OutsideCall: CaseIterable {
     case save
     case beginRecord
     case endRecord
+    case attach
+    case detach
 
-    /// 言う中身。**6 通を完全な文として持つ** (ADR-0038 決定 3・``Canvas/OutsideFrame`` と同じ形)。
+    /// 言う中身。**8 通を完全な文として持つ** (ADR-0038 決定 3・``Canvas/OutsideFrame`` と同じ形)。
     ///
     /// 書き出しの 3 つは行き先 (`save("…")` の引数) を名乗らない。断る理由は呼んだ場所で、
     /// 行き先ではないためである。例に挙げるコールバックは、進行の口が `mousePressed()`
@@ -54,6 +56,14 @@ enum OutsideCall: CaseIterable {
             "endRecord() is only accepted from inside setup(), draw() or an input callback such as "
                 + "keyPressed(). This call was made from outside them, so no recording was stopped. "
                 + "A Task started in one of them runs after it returns, and counts as outside"
+        case .attach:
+            "attach() is only accepted from inside setup(), draw() or an input callback such as "
+                + "keyPressed(). This call was made from outside them, so nothing was attached. A "
+                + "Task started in one of them runs after it returns, and counts as outside"
+        case .detach:
+            "detach() is only accepted from inside setup(), draw() or an input callback such as "
+                + "keyPressed(). This call was made from outside them, so nothing was detached. A "
+                + "Task started in one of them runs after it returns, and counts as outside"
         }
     }
 }

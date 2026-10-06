@@ -18,7 +18,8 @@ run-name: "${{ github.event_name == 'merge_group' && format('merge queue: {0}', 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
-  # Approve / 却下でも review-gate を自動再評価する
+  # レビューの投稿・却下でも review-gate の run を新しく起こす (変更要求が残っていないかを
+  # 見るため)。**起こした run が緑でも、先の run の赤い ci-gate は消えない** (ci-gate の上のコメント)
   pull_request_review:
     types: [submitted, dismissed]
   merge_group:
@@ -59,6 +60,24 @@ jobs:
   # (本文・タイトルの編集では changes.body / changes.title だけ)。edited を types から
   # 外さないのは、review-gate / pr-title の再評価に要るためである (on: のコメント)。
   #
+  # **runs-on は macos-26 に固定する** (#1985)。macos-latest は GitHub が次の世代へ切り替える
+  # もので、切り替わった時点で下限 (ADR-0009 の macOS 26) の build/test が誰にも気付かれず
+  # 無くなる。ここと test-release は、下限で走らせる唯一のホストである (専用機の render は
+  # 上の世代で走る)。**下限を引き上げる (ADR-0009 を改訂する) ときは、この 2 つの runs-on も
+  # 同時に動かす。**
+  #
+  # **merge_group では build と test を外す** (#1985)。専用機の render が同じ合流後の木で
+  # build / test / gpu-ran を、GPU 付きで走らせる (上位互換)。ここでも走らせると、週に約 145 本の
+  # merge_group で約 9.7 分ずつ・約 23 時間のホストの macOS 時間が二重になり、ホストの macOS の
+  # 同時実行枠 (5 本) を通して PR のランナー待ちに効いていた。下限の担保は PR の ci-check が
+  # 担う (pull_request では CI_CHECK_SKIP が空で、26 段すべてを macOS 26 で走らせる)。失うのは
+  # 「main と合流させた木を macOS 26 で走らせる」部分だけで、合流して初めて壊れ、しかも 26 で
+  # だけ出る赤は狭い。
+  #
+  # **examples / params / api / reference は合流後の木でも残す。** build を prerequisite に持つ
+  # ので、build の段が無ければ最初の段が swift build を自分で走らせる (約 1.5 分。2 段目以降は
+  # 何もしない)。これらは render が見ない検査で、合流して初めて赤になる組み合わせ (片方の PR が
+  # API を改名し、もう片方が旧名の例を足す) を拾うのは merge queue の役目である。
   # 括弧を 1 段深くして pull_request の中に閉じ込めるのは、**merge_group に action の欄が
   # 無い**ためである。素直に並べると merge_group では null と文字列を突き合わせることに
   # なり、可否が式言語の型強制の解釈に乗る。外れたときの姿が「merge queue で ci-check が
@@ -72,7 +91,7 @@ jobs:
       || (github.event.action != 'labeled'
       && github.event.action != 'unlabeled'
       && (github.event.action != 'edited' || github.event.changes.base)))
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       # chardet も入れる: reuse の encoding 判定モジュールを固定するため (#48)。
@@ -82,11 +101,13 @@ jobs:
           pipx install reuse && pipx inject reuse chardet
           pipx install check-jsonschema
       - run: make ci-check
+        env:
+          CI_CHECK_SKIP: ${{ github.event_name == 'merge_group' && 'build test' || '' }}
 
   # release のテストビルドと実行を、人が打たなくても走らせる (#1096)。
   #
-  # **ci-check には足さない。** #761 完了条件 2 と AGENTS.md「性能は release で測る。入口は
-  # make test-release の 1 つ」が決めた形は動かさず、ci-check の外に別の入口を置く。別ジョブ
+  # **ci-check には足さない。** #761 完了条件 2 と AGENTS.md「性能は release で測る
+  # (`make test-release`)」が決めた形は動かさず、ci-check の外に別の入口を置く。別ジョブ
   # なので ci-check と並列に走り、make ci-check を打ったときの所要時間は 1 秒も変わらない。
   #
   # 塞ぐのは release 側で起きて**誰にも見えない 2 つの赤**である (実害 3 件は #761 / #1021 /
@@ -122,7 +143,7 @@ jobs:
       || (github.event.action != 'labeled'
       && github.event.action != 'unlabeled'
       && (github.event.action != 'edited' || github.event.changes.base)))
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       - run: make test-release
@@ -146,19 +167,33 @@ jobs:
             echo "PR タイトルが Conventional Commits ではない: $TITLE" >&2
             echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2
             echo 'design は Issue Type であって type ではない。' >&2
-            echo 'タイトルを直せば新しい run が走る。この run は rerun しない (元のイベントを再生するので古いタイトルで判定する — #699)。' >&2
+            echo 'タイトルを直すと新しい run が走り pr-title は緑になるが、この run の赤い pr-title と、それを受けた赤い ci-gate は残って必須チェックを赤のままにする。' >&2
+            echo 'この run は rerun しない (元のイベントを再生するので古いタイトルで判定し、同じ赤を返す — #699)。タイトルを直したうえで、新しいコミットを push して run を作り直す (空コミットでよい)。' >&2
             exit 1
           fi
 
   # ADR-0002 / ADR-0031 のマージ判定 (実体は scripts/review-gate.sh)。
-  # 本文の編集・ラベルの付け外し・レビューの投稿で自動的に再評価される。
+  # 本文の編集・ラベルの付け外し・レビューの投稿で新しい run が走り、判定が付け直される
+  # (先の run の赤い ci-gate までは消えない — ci-gate の上のコメント)。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
   #
   # **終了コードは 0 か 1 だけである。** かつては承認待ちを 20 で表し、approval-signal
   # ジョブが human-approval の commit status へ回していたが (#111 / #256 / #282)、
   # ラベル由来の承認そのものを ADR-0031 が畳んだので、待つ状態が無くなった (#618)。
-  # 承認を要求するのはルールセットの required_reviewers だけで、それは GitHub 自身が
-  # 判定する — ここで報告するものは無い。
+  # ルールセットも承認を要求しない (ADR-0044)。
+  #
+  # **判定するスクリプトは、既定ブランチ (main) の版を取って走らせる** (#2001・ADR-0031
+  # 決定 2 の 2026-10-03 の改訂)。PR の版で走らせると、同じ PR の中で自分を裁く検査を
+  # 書き換えて通れてしまう (承認なしでゲート本体を変えた PR は #1716 の集計で 6 本)。
+  # スクリプトは PR の中身 (本文・ファイル一覧・AGENTS.md・Issue) をすべて API から読み、
+  # 木から読むのは同じ scripts/ の共通部品と定義ファイルだけなので、PR の木は要らない。
+  # ref を PR の base にしないのは、base は PR の側が選べるからである。
+  #
+  # **判定を変える PR の効き目は、merge の後の PR から始まる。** その PR 自身は前の版で
+  # 裁かれる。ゲートが壊れていて、それを直す PR も同じゲートで赤になるときの脱出口は、
+  # その PR の中でこのジョブの ref の行を外すことである。外した行は後続の PR で戻す。
+  # 承認のゲートがあった頃は、この行を外すと人が一度通った。ADR-0044 が承認を外したので、
+  # 外したことは PR の diff と着手前のプランにしか現れない (同 ADR の影響に書いた代償)。
   review-gate:
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
@@ -168,6 +203,8 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - name: マージ判定
         env:
           GH_TOKEN: ${{ github.token }}
@@ -185,9 +222,16 @@ jobs:
   # **ci-check ジョブには相乗りさせない。** あのジョブは PR の中の任意のコード
   # (Makefile・検査) を走らせるので、GH_TOKEN を持ち込まない。
   #
-  # 本文を編集しても逃がしラベルを付け外ししても自動で再評価される
-  # (on.pull_request.types に edited / labeled / unlabeled が入っている)。
+  # 本文を編集しても逃がしラベルを付け外ししても新しい run が走り、判定が付け直される
+  # (on.pull_request.types に edited / labeled / unlabeled が入っている)。**ただし、赤かった
+  # 先の run の ci-gate は消えない** (ci-gate の上のコメント)。逃がしラベルは PR の作成と
+  # 同時に付けると、通常は最初の run から通る — 保証ではない (gh は PR を作ってからラベルを
+  # 付けるので、まれに opened の run が先に API を読んで赤くなる。上の ci-check のコメント)
+  # (#2134)。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
+  #
+  # **判定するスクリプトは既定ブランチの版で走らせる。** 理由と脱出口は review-gate と
+  # 同じ (#2001)。PR の木は読まない — 変更ファイルの一覧も本文も API から取る。
   drawing-evidence:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -196,6 +240,8 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - name: 描画に触れる PR に絵があるか
         env:
           GH_TOKEN: ${{ github.token }}
@@ -212,6 +258,29 @@ jobs:
   # この ci-gate と、専用機の描画ジョブ render (render.yml・#878) の 2 本である。
   # 手元の実行の報告 local-render は、render が合流後の木を直接描くようになって畳んだ
   # (#879)。
+  #
+  # **新しい run が走って緑になっても、赤い run の ci-gate は残る** (#2134)。
+  # review-gate・drawing-evidence が赤だった run の ci-gate は、同じコミットに残って必須
+  # チェックを赤のままにする。新しい run の ci-gate が緑でも、古い赤が必須チェックを固定する
+  # ことがある (#259 の実測)。ラベルを数分以内に後付けする典型の場面では、先の run の ci-gate は
+  # ci-check (macOS・約 10 分) を待って終わり、labeled の run は ci-check を飛ばして先に緑に
+  # なる — 終わる順でも固定でも、赤が残る点は同じなので、機構は 1 つに断定しない。本文の編集・
+  # ラベルの付け外し・レビューの却下が起こすのは判定の付け直しであって、必須チェックが緑に
+  # なることではない。
+  #
+  # 消すのは、赤い run の失敗ジョブの打ち直し (gh run rerun <run-id> --failed) で、
+  # review-gate と drawing-evidence は実行のたびに API から本文・ラベル・レビューを読むので
+  # 打ち直せば通る。打たなくても stall-watch が数時間おきに打つ (scripts/stall-act.sh)。
+  # ただし対象は同じリポジトリの Draft でない PR だけで (stall-watch.sh が isDraft と
+  # isCrossRepository を外す)、fork の PR はメンテナが打つ。
+  #
+  # **pr-title の赤は打ち直しでは消えない。** 元のイベントを再生して古いタイトルで判定する
+  # ので同じ赤を返し (#699)、先の run の赤い ci-gate も pr-title を受けて赤のままになる。
+  # タイトルを直したうえで、新しいコミットを push して run を作り直す (head の sha が変わり、
+  # 古い赤が丸ごと外れる)。
+  #
+  # 作成と同時に付ければ、通常は赤い run が出ない。差し戻しの文面はその形を先に案内する
+  # (scripts/check-drawing-evidence.sh)。
   ci-gate:
     if: always()
     needs: [ci-check, test-release, pr-title, review-gate, drawing-evidence]

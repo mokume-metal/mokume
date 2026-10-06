@@ -48,6 +48,8 @@ nonisolated struct StrokeCarving {
     /// 片ごとの、線に沿った位置の区間。帯は両端の点の位置、点の形は 1 点。
     private var lowers: [Float] = []
     private var uppers: [Float] = []
+    /// 片ごとの被覆 (#1637)。細い線を広げた片だけが 1 未満を持ち、引いた残りへそのまま渡る。
+    private var coverages: [Float] = []
     /// 帯の添字ごとの片の添字。帯を置かなかった線分 (長さ 0) は -1。
     private var bandPieces: [Int]
     /// 点の添字ごとの、点に置いた形の片の添字。置かなかった点は -1。
@@ -92,23 +94,28 @@ nonisolated struct StrokeCarving {
     }
 
     /// 線分 `segment` (点 `segment` から次の点まで) の帯を足す。`build` が凸多角形の周を積む。
-    mutating func addBand(segment: Int, _ build: (inout [SIMD2<Float>]) -> Void) {
+    mutating func addBand(
+        segment: Int, coverage: Float = 1, _ build: (inout [SIMD2<Float>]) -> Void
+    ) {
         guard segment < segmentCount,
-            let index = add(positions[segment], positions[segment + 1], build)
+            let index = add(positions[segment], positions[segment + 1], coverage, build)
         else { return }
         bandPieces[segment] = index
     }
 
     /// 点 `point` に置いた形 (折れ目・端・刻みの円板) を足す。`build` が凸多角形の周を積む。
-    mutating func addPoint(_ point: Int, _ build: (inout [SIMD2<Float>]) -> Void) {
+    mutating func addPoint(
+        _ point: Int, coverage: Float = 1, _ build: (inout [SIMD2<Float>]) -> Void
+    ) {
         guard point < pointCount else { return }
         let position = point < positions.count ? positions[point] : 0
-        guard let index = add(position, position, build) else { return }
+        guard let index = add(position, position, coverage, build) else { return }
         if pointPieces[point] < 0 { pointPieces[point] = index } else { unindexedPieces.append(index) }
     }
 
     private mutating func add(
-        _ lower: Float, _ upper: Float, _ build: (inout [SIMD2<Float>]) -> Void
+        _ lower: Float, _ upper: Float, _ coverage: Float,
+        _ build: (inout [SIMD2<Float>]) -> Void
     ) -> Int? {
         let start = pieces.points.count
         build(&pieces.points)
@@ -125,13 +132,15 @@ nonisolated struct StrokeCarving {
         magnitude = max(magnitude, abs(box.low).max(), abs(box.high).max())
         lowers.append(lower)
         uppers.append(upper)
+        coverages.append(coverage)
         return pieces.ranges.count - 1
     }
 
     /// 片を積む順に、先に置いた関係する片を引いた残りを返す。
     ///
     /// 残りは片ごとに 0 個以上の凸多角形で、和は片の和と同じである。`emit` には周の点の並びと
-    /// その区間 (反時計回り) と扇の要を渡す。要が `nil` なら周の最初の点から扇に割る。
+    /// その区間 (反時計回り) と扇の要と、片の被覆 (`addBand` / `addPoint` で渡した値) を渡す。
+    /// 要が `nil` なら周の最初の点から扇に割る。
     ///
     /// **相手は近い順に引く。** 線に沿って隣の片がたいてい大半を覆うので、近い順なら残りが
     /// 早く尽きて、遠い相手を見ずに済む。残りの囲みの箱に掛からない相手も飛ばす。
@@ -144,7 +153,9 @@ nonisolated struct StrokeCarving {
     /// 並ばない重心を要にして扇に割る — 最初の点から割ると、差し込んだ点を含む辺が面積 0 の
     /// 三角形に落ち、分け合うはずの辺が消える。
     func carved(
-        _ emit: (_ points: [SIMD2<Float>], _ rim: Range<Int>, _ hub: SIMD2<Float>?) -> Void
+        _ emit: (
+            _ points: [SIMD2<Float>], _ rim: Range<Int>, _ hub: SIMD2<Float>?, _ coverage: Float
+        ) -> Void
     ) {
         // 切り口の判定の許容差。点が直線からこれ以内なら「直線の上」と読む
         let tolerance = magnitude * 32 * Float.ulpOfOne
@@ -215,7 +226,7 @@ nonisolated struct StrokeCarving {
             for fragment in owner {
                 let range = carved.ranges[fragment]
                 guard !around.isEmpty || owner.count > 1 else {
-                    emit(carved.points, range, nil)
+                    emit(carved.points, range, nil, coverages[index])
                     continue
                 }
                 // 縁が接しうる残り: 自分の片のほかの残りと、相手の片の残りのうち、箱が掛かるもの
@@ -230,18 +241,18 @@ nonisolated struct StrokeCarving {
                     }
                 }
                 guard !sources.isEmpty else {
-                    emit(carved.points, range, nil)
+                    emit(carved.points, range, nil, coverages[index])
                     continue
                 }
                 Self.insert(
                     into: carved, fragment, from: sources, reach: reach, nearby: &nearby, rim: &rim,
                     onEdge: &onEdge)
                 if rim.count == range.count {
-                    emit(carved.points, range, nil)
+                    emit(carved.points, range, nil, coverages[index])
                 } else {
                     var hub = SIMD2<Float>(0, 0)
                     for point in rim { hub += point }
-                    emit(rim, 0..<rim.count, hub / Float(rim.count))
+                    emit(rim, 0..<rim.count, hub / Float(rim.count), coverages[index])
                 }
             }
         }

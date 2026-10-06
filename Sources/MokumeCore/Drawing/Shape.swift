@@ -57,6 +57,21 @@ public struct Shape {
     let strokeRanges: [StrokeRange]
     /// ``strokeRanges`` のうち、引く素材を持つ区間があるか。置くたびに区間を走査しないための印。
     let hasCarvedStrokes: Bool
+    /// ``vertices`` のうち**楕円・弧の周の塗り**の区間と、置くときに刻み直す素材 (``RingFillRange``・#1645)。
+    ///
+    /// 周は記録のときの拡大で刻んであるので、**拡大して置くと記録した多角形がそのまま拡大される**。
+    /// 置いた後の大きさで要る分割数が増えるなら、この区間を刻み直した頂点に差し替える。輪郭の側は
+    /// ``strokeRanges`` の ``StrokeRange/thin`` が同じ役を持つ。
+    let fillRanges: [RingFillRange]
+    /// 置いた後の拡大で、周か円板を刻み直す余地のある区間があるか (#1645)。拡大して置くときだけ、
+    /// 区間を走査する。縮めて置く形と、周も円板も持たない形は走査しない。
+    let mayRescale: Bool
+    /// 組み直す素材を持つ輪郭のうち、記録した後の太さがいちばん細いもの (#1637)。置く行列で
+    /// これが描く画素で 1 画素以上なら、どの輪郭も細くならないので区間を走査しない。
+    /// 組み直す輪郭が無ければ無限大。
+    let thinnestRecordedWeight: Float
+    /// 置いた後に細くなった輪郭を組み直した頂点の控え (#1637)。形 1 つに 1 つ。
+    let thinCache = ThinStrokeCache()
     /// ``solidVertices`` のうち**立体の線の頂点**の区間と、その線の元 (点と繋がり・スタイル)。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ位置のままでは
@@ -68,6 +83,15 @@ public struct Shape {
     /// ``solidStrokes`` のうち、**置くときに GPU で組める**組み込み立体の線 (#1756)。
     /// 焼いた頂点はそのまま持ち、組めるときだけその区間を積まずに GPU の列で描く。
     let gpuStrokes: [RetainedGPUStroke]
+    /// 記録した形 1 つずつの部品 (``SolidPart``)。区間は形自身の並びの番号で、添字を持つ区間なら
+    /// 読む順の並び (``solidIndices``)、持たなければ頂点の並び (``solidVertices``) で数える。
+    ///
+    /// **裏面が絵に出うるかは、記録したときのスタイルで決まる** (``SolidPart/showsBackFaces``)。
+    /// 置く側のスタイルではない — 区間の設定 (混ぜ方・貼る絵・断片) と同じく、形に焼き付く。
+    /// 置き場所の色が透けていれば、どの部品も立つ。立った部品は置き場所ごとに裏 → 表の順で描き、
+    /// 部品どうしは記録した順のまま描く
+    /// ([#1565](https://github.com/mokume-metal/mokume/issues/1565))。
+    let solidParts: [SolidPart]
 
     /// 区間を塗るもの一式。
     ///
@@ -164,8 +188,9 @@ public struct Shape {
     init(
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
-        strokeRanges: [StrokeRange] = [], solidStrokes: [SolidStrokePiece] = [],
-        gpuStrokes: [RetainedGPUStroke] = []
+        strokeRanges: [StrokeRange] = [], fillRanges: [RingFillRange] = [],
+        solidStrokes: [SolidStrokePiece] = [],
+        gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = []
     ) {
         self.vertices = vertices
         self.solidVertices = solidVertices
@@ -173,15 +198,24 @@ public struct Shape {
         self.forms = forms
         self.runs = runs
         self.strokeRanges = strokeRanges
+        self.fillRanges = fillRanges
         // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
         var carved = false
-        for stroke in strokeRanges where stroke.carved != nil {
-            carved = true
-            break
+        var thinnest = Float.infinity
+        var rescalable = !fillRanges.isEmpty
+        for stroke in strokeRanges {
+            if stroke.carved != nil { carved = true }
+            if let thin = stroke.thin {
+                thinnest = min(thinnest, thin.recordedWeight)
+                if thin.mayRescale { rescalable = true }
+            }
         }
         hasCarvedStrokes = carved
+        thinnestRecordedWeight = thinnest
+        mayRescale = rescalable
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
+        self.solidParts = solidParts
     }
 
     /// 頂点の区間 `runRange` に収まる輪郭のうち、引く素材を持つもの。頂点の並びの順。
@@ -198,6 +232,22 @@ public struct Shape {
         {
             found.append(stroke)
             floor = stroke.range.upperBound
+        }
+        return found
+    }
+
+    /// 立体の区間 `run` に収まる部品 (``solidParts``)。区間と同じ数え方 (添字の有無) のものだけ。
+    func solidParts(in run: Run) -> [SolidPart] {
+        guard run.source == .solid, !solidParts.isEmpty else { return [] }
+        let range =
+            run.isIndexed
+            ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
+        var found: [SolidPart] = []
+        for part in solidParts
+        where part.isIndexed == run.isIndexed && range.contains(part.range.lowerBound)
+            && part.range.upperBound <= range.upperBound
+        {
+            found.append(part)
         }
         return found
     }
@@ -234,8 +284,10 @@ public struct Shape {
         var forms: [FormInstance] = []
         var runs: [Run] = []
         var strokeRanges: [StrokeRange] = []
+        var fillRanges: [RingFillRange] = []
         var solidStrokes: [SolidStrokePiece] = []
         var gpuStrokes: [RetainedGPUStroke] = []
+        var solidParts: [SolidPart] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
@@ -253,6 +305,7 @@ public struct Shape {
             // 引く素材は区間の番号を持たないので、区間だけをずらして持ち越す (箱は共有する)
             strokeRanges.append(
                 contentsOf: shape.strokeRanges.map { $0.shifted(by: flatOffset) })
+            fillRanges.append(contentsOf: shape.fillRanges.map { $0.shifted(by: flatOffset) })
             solidStrokes.append(
                 contentsOf: shape.solidStrokes.map { piece in
                     var piece = piece
@@ -264,6 +317,10 @@ public struct Shape {
             for var stroke in shape.gpuStrokes {
                 stroke.vertices = (stroke.vertices.lowerBound + solidOffset)..<(stroke.vertices.upperBound + solidOffset)
                 gpuStrokes.append(stroke)
+            }
+            // 部品も、数える並びのずれだけずらして持ち越す
+            for part in shape.solidParts {
+                solidParts.append(part.shifted(by: part.isIndexed ? indexOffset : solidOffset))
             }
             for var run in shape.runs {
                 switch run.source {
@@ -278,8 +335,9 @@ public struct Shape {
         }
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
-            forms: forms, runs: runs, strokeRanges: strokeRanges, solidStrokes: solidStrokes,
-            gpuStrokes: gpuStrokes)
+            forms: forms, runs: runs, strokeRanges: strokeRanges, fillRanges: fillRanges,
+            solidStrokes: solidStrokes,
+            gpuStrokes: gpuStrokes, solidParts: solidParts)
     }
 
     /// 2 つの形を 1 つに畳む。
@@ -331,15 +389,20 @@ struct StrokeRange {
     /// 半画素寄せの前)。`nil` なら差し替えない — 半透明の線で記録した区間は記録のときに
     /// 引いてあり、`replace` は重ねても同じ色になる。
     var carved: CarvedStroke?
+    /// 置いた後に描く画素で 1 画素より細くなるなら、広げて組み直す素材 (#1637)。`nil` なら
+    /// 組み直さない (区間の一部だけを置き直したもの)。
+    var thin: ThinStrokeRecipe?
 
-    init(_ range: Range<Int>, carved: CarvedStroke? = nil) {
+    init(_ range: Range<Int>, carved: CarvedStroke? = nil, thin: ThinStrokeRecipe? = nil) {
         self.range = range
         self.carved = carved
+        self.thin = thin
     }
 
     /// 区間だけを `offset` ずらした写し。
     func shifted(by offset: Int) -> StrokeRange {
-        StrokeRange((range.lowerBound + offset)..<(range.upperBound + offset), carved: carved)
+        StrokeRange(
+            (range.lowerBound + offset)..<(range.upperBound + offset), carved: carved, thin: thin)
     }
 }
 
@@ -403,7 +466,8 @@ struct HeldTexture: Equatable {
     /// 読む直前に整える。持ち主が画像なら、書き換えた画素の送りをここで頼む。
     ///
     /// **送りは ``Picture/prepare()`` に任せる** — 送りの入口を 1 つに保つためで、
-    /// 送り方が変わってもこちらは書き換えずに済む。描き場所と字形の頁は整えるものが無い。
+    /// 送り方が変わってもこちらは書き換えずに済む。字形の頁は整えるものが無い。描き場所は
+    /// ここではなく、置いた時点で置く口の記録 (``Canvas/note(placing:)``) が追い付かせる (#2042)。
     func prepare() {
         if let image = owner as? Image { Picture.loaded(image).prepare() }
     }

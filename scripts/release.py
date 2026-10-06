@@ -109,6 +109,8 @@ def all_fragments(directory: Path | None = None) -> list[Path]:
 
     added_fragments と違って **git ではなく作業ツリーを見る** — 検査が呼ばれるのは
     push の前で、まだコミットしていない断片こそ直せたほうが早いためである。
+    無視されたファイルも読むので手元だけ赤になりうるが、逆向き (手元で緑・CI で赤)
+    にはならない (#2016)。
     """
     where = directory if directory is not None else REPO / FRAGMENT_DIR
     return sorted(p for p in where.glob("*.md") if p.name != "README.md")

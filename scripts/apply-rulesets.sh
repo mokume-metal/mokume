@@ -7,8 +7,8 @@
 #   apply-rulesets.sh            差分を見せるだけ (既定)
 #   apply-rulesets.sh --apply    実際に適用する
 #
-# **メンテナが打つ**。エージェントの GitHub App は Administration 権限を持たない
-# ため通らない (ADR-0003 決定 1 — 与えると自分を縛るルールセットを外せてしまう)。
+# **メンテナが打つ** (ADR-0006 決定 3)。エージェントもメンテナの認証で動くので打てて
+# しまうが、適用は定義ファイルの PR が merge された後にメンテナが行う (ADR-0044 の影響)。
 #
 # 既定を dry-run にしているのは、これが main の保護を書き換える操作だから。
 # 定義に無いルールセットの削除はしない (破壊的操作は人の手に残す)。
@@ -79,18 +79,28 @@ fi
 
 echo
 echo "== 適用 =="
+# 1 本が断られても残りは試みる。断られた定義と無関係な差分まで巻き添えで止めない
+rejected=()
 for f in "$DEFS"/*.json; do
   name=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$f")
   # 表から id を引く。**タブで区切って名前の完全一致を見る** — 名前に空白が入りうる
   id=$(awk -F'\t' -v want="$name" '$1 == want { print $2 }' "$live/index.tsv")
 
+  # 断られたときの理由は応答の本文 (stdout) にしか無い。捨てると「Validation Failed」しか
+  # 残らず、何が通らなかったのかを打ち直して調べることになる (#2075)
+  failed=0
   if [ -n "$id" ]; then
-    gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f" >/dev/null
-    echo "更新: $name (id $id)"
+    verb=更新 out=$(gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f" 2>&1) || failed=1
   else
-    gh api -X POST "repos/$REPO/rulesets" --input "$f" >/dev/null
-    echo "作成: $name"
+    verb=作成 out=$(gh api -X POST "repos/$REPO/rulesets" --input "$f" 2>&1) || failed=1
   fi
+  if [ "$failed" = 1 ]; then
+    echo "NG: $name の${verb}を API が断った。応答:" >&2
+    echo "$out" >&2
+    rejected+=("$name")
+    continue
+  fi
+  echo "${verb}: $name${id:+ (id $id)}"
 done
 
 # 定義に無いルールセットが残っていても消さない。存在だけ知らせる
@@ -100,6 +110,11 @@ while IFS=$'\t' read -r name _; do
     echo "注意: 実設定の $name は定義に無い (このスクリプトは削除しない)" >&2
   fi
 done < "$live/index.tsv"
+
+if [ "${#rejected[@]}" -gt 0 ]; then
+  echo "NG: 適用できなかった定義がある: ${rejected[*]} (理由は上の応答)" >&2
+  exit 1
+fi
 
 echo
 echo "== 適用後の照合 =="

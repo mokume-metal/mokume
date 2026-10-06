@@ -59,9 +59,9 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 # 読み口・相手を待つ上限・引けなかったときの向きは site_source が持つ (#815 / #865)。
-# この検査と面の 3 本は同じ公開先を見るので、値や向きが食い違うと「手元では通るが
-# 公開先だけ落ちる」が起きる
-from site_source import FETCH_TIMEOUT_SECONDS, Source, Unreachable  # noqa: E402,F401
+# この検査と面を検める検査は同じ公開先を見るので、値や向きが食い違うと「手元では
+# 通るが公開先だけ落ちる」が起きる
+from site_source import Source, Unreachable  # noqa: E402
 
 # 面を向ける先。ここが意図の正典で、GitHub 側の設定はその写し
 DOMAIN = "mokume.org"
@@ -236,12 +236,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="引く先を出して終わる (ドメインを 2 か所に書かないための口)",
     )
     parser.add_argument(
-        "--grace-seconds",
-        type=int,
-        default=GRACE_SECONDS,
-        help="公開が走っている最中を赤にしないための猶予 (秒)",
-    )
-    parser.add_argument(
         "--skip-domain",
         action="store_true",
         help="GitHub 側の設定との照合を飛ばす (gh の認証が無い手元から追随だけ見るとき)",
@@ -284,7 +278,7 @@ def main() -> int:
             head,
             commits_behind(published, head),
             int(time.time()),
-            arguments.grace_seconds,
+            GRACE_SECONDS,
         )
         problems.extend(found)
         if not found:

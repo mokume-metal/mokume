@@ -76,8 +76,18 @@ let package = Package(
                 .copy("Drawing/Shaders/Shapes.metal"),
             ],
             swiftSettings: .mokume),
+        // 層: コア依存 — 描画コアの上に載り、外とやりとりする領域 (ADR-0042 決定 3)。
+        // MokumeCore の public だけで書く。利用者が選んで import する product にはせず、
+        // アンブレラが再エクスポートする
+        .target(
+            name: "MokumeCamera", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            swiftSettings: .mokume),
+        .target(
+            name: "MokumeAudio", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
-        .target(name: "mokume", dependencies: ["MokumeCore"], swiftSettings: .mokume),
+        .target(
+            name: "mokume", dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio"], swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)
         .executableTarget(
@@ -98,6 +108,12 @@ let package = Package(
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeCameraTests", dependencies: ["mokume", "MokumeCamera"],
+            swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeAudioTests", dependencies: ["mokume", "MokumeAudio"],
+            swiftSettings: .mokume),
 
     ]
 )

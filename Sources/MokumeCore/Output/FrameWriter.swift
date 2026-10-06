@@ -109,7 +109,8 @@ final class FrameWriter {
         // **同じ行き先へは 1 本ずつ書き、書いている間に頼まれたものは最後の 1 つを残して
         // 畳む** (#1627)。畳まれた頼みは書かずに枠を返す — 後に頼んだ絵が残るので、書く
         // 必要が無い
-        Self.lanes.enqueue(Self.destination(of: path), drop: { release() }) {
+        let destination = Self.destination(of: path)
+        Self.lanes.enqueue(destination, drop: { release() }) {
             // **結果は枠を返す前に置く。** 背圧で待っていた側は、返ってきた時点で
             // 少なくとも 1 つの結果が置かれていると当てにできる
             do {
@@ -118,7 +119,7 @@ final class FrameWriter {
                 try encode(image, url)
                 lastOutcome.succeed()
             } catch {
-                lastOutcome.fail("Could not write \(path): \(error)")
+                lastOutcome.fail("Could not write \(path): \(error)", at: destination)
             }
             release()
         }
@@ -257,17 +258,36 @@ nonisolated final class WriteLanes: Sendable {
 }
 
 /// 書き込み 1 つの決着。
-enum WriteOutcome: Equatable, Sendable {
+nonisolated enum WriteOutcome: Equatable, Sendable {
     /// 書けた。
     case succeeded
-    /// 書けなかった。理由を持つ。
-    case failed(String)
+    /// 書けなかった。**同じ間に転んだ全部を、転んだ順に持つ** (``OutcomeSlot``・[#1709])。
+    ///
+    /// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
+    case failed([WriteFailure])
 
-    /// 書けなかった理由。書けたなら `nil`。
+    /// 書けなかった理由。書けたなら `nil`。幾つかあるときは並べて 1 つにする。
     var failure: String? {
-        guard case .failed(let reason) = self else { return nil }
-        return reason
+        let reasons = failures.map(\.reason)
+        return reasons.isEmpty ? nil : reasons.joined(separator: " / ")
     }
+
+    /// 書けなかった 1 枚ずつ。書けたなら空。
+    var failures: [WriteFailure] {
+        guard case .failed(let failures) = self else { return [] }
+        return failures
+    }
+}
+
+/// 書けなかった 1 枚。**行き先を持つ** — 名乗りは行き先ごとに 1 度である
+/// (``FrameRecorder``・[#1709])。
+///
+/// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
+nonisolated struct WriteFailure: Equatable, Sendable {
+    /// 同じファイルを指す綴りを揃えた行き先 (``FrameWriter/destination(of:)``)。
+    let destination: String
+    /// 名乗る文面。
+    let reason: String
 }
 
 /// 隔離の外から書かれ、main actor から読まれる、前に取り出してから決着した結果。
@@ -297,11 +317,23 @@ nonisolated final class OutcomeSlot: Sendable {
         }
     }
 
-    /// 書き損じを置く。
+    /// 書き損じを置く。**まだ読まれていない書き損じに足す。**
     ///
-    /// 書き損じどうしでは後から来たものが前を上書きする — 名乗る理由は最後の 1 つで足り、
-    /// 続けて転んでいることは差込口の健康状態が数えるので、ここに溜める理由が無い。
-    func fail(_ message: String) { value.withLock { $0 = .failed(message) } }
+    /// 書き損じどうしで上書きしない ([#1709])。後から来たものが前を消すと、同じ取り出しの
+    /// 間に違う行き先で 2 枚転んだとき、前の 1 枚が名乗られずに消える。溜まるのは取り出す
+    /// 間に決着した数までで、それは抱える枚数の上限 (背圧) で抑えられている。
+    ///
+    /// - Parameters:
+    ///   - message: 名乗る文面。
+    ///   - destination: 行き先 (``WriteFailure/destination``)。
+    ///
+    /// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
+    func fail(_ message: String, at destination: String) {
+        let failure = WriteFailure(destination: destination, reason: message)
+        value.withLock { stored in
+            stored = .failed((stored?.failures ?? []) + [failure])
+        }
+    }
 
     /// 置かれているものを取り出す。**取り出したら消える。**
     func take() -> WriteOutcome? {

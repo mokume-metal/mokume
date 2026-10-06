@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# merge queue が捨てたグループの run を cancel する (#1265)。
+# merge queue が捨てたグループの run と、専用機で先頭の render を待たせる render-pr を
+# cancel する (#1265・#2064)。
 #
 #   queue-sweep.sh [--dry-run]
 #
@@ -34,10 +35,50 @@
 # 分けることになる。git/matching-refs は無ければ空の配列を 200 で返すので、失敗は
 # そのまま「読めなかった」と読める。前方一致なので完全一致で絞る。
 #
+# ## 門番より前に積まれた render-pr を退かせる (#2064)
+#
+# 専用機は 1 台で、**runner は queued の job を先着順に拾わない** (#2062)。render.yml の
+# 門番 (scripts/render-turn.sh の yield) は、merge_group の run が残っていれば render-pr を
+# 見送る。ただし判定は **積む前の 1 回だけ**で、merge queue が空いている間に門番を通って
+# 専用機の queue に入った render-pr は、後からできた先頭の render と取り合う。2026-10-04 には
+# 08:38 と 08:50 に積まれた render-pr 2 本が、08:53 に積まれた先頭の render より先に拾われ、
+# 先頭は 37 分待って queue の期限 (60 分) の 22 分前に人の手の cancel で解けた (#2064)。
+#
+# そこで上の判定で **render.yml の今のグループの run (keep) が 1 本でもあれば**、render.yml の
+# pull_request の run を引き、render-pr の job ごとに:
+#
+#   job がまだ拾われていない (queued ほか)  → cancel (専用機の queue から退かせる)
+#   job が走っている (in_progress)          → 触らない (走っている 1 本は止めない)
+#   render-pr の job が無い・終わっている   → 触らない (まだ門番の中なら、門番が見送る)
+#   jobs を読めなかった                     → 判定できず → 触らず、非 0 で終える
+#
+# render.yml の今のグループの run が無いとき (後ろにグループが居ない PR が外れた dequeued・
+# 残った group が ci.yml だけを走らせている) は触らない。待たせる相手が居ないので、退かせても
+# 得るものが無い。門番 (render-turn.sh の yield) が見送りに使うのと同じ範囲で見る — ci.yml の
+# run も数えると、門番が正しく通した render-pr を退かせてしまう。**イベントの種類では分けない** — 上と同じく、
+# 分岐を持つとそこだけ検査の外に出る。
+#
+# render-pr は必須ではないので、cancel しても merge の可否は変わらない。cancel された
+# render-pr は scripts/stall-act.sh も走らせ直さない (RERUN_EXCLUDED)。定期の検査
+# (scheduled-*) は退かせない — 1 つの run の中では needs の鎖で 1 本ずつしか積まれず、
+# 先頭の render と並ぶのは 1 本までである。受け入れた理由は ADR-0019 決定 7。
+#
+# cancel は run 単位で打つ。jobs を読んでから cancel するまでの間 (数秒) に runner が
+# 拾った render-pr は、走り出していても止まる — 「走っている 1 本は止めない」はこの競り合い
+# では守られない (必須ではないので受け入れる)。逆の取り残しもある: 門番が通すと決めてから
+# job が queued になるまでの数秒に一覧を引くと、その render-pr は映らない。
+#
+# **見直すのは group ができた瞬間と外れた瞬間だけである。** その後に門番を通らずに専用機へ
+# 積まれた render-pr (門番が API を読めずに通した回・人が job 単位で rerun した回) は、次の
+# 契機まで残る。拾われる直前に判定し直すには専用機の job に token を渡す必要があり、
+# ADR-0019 決定 7 の「専用機の job は権限も秘密も持たない」とぶつかるので採らない (#2064 の
+# 案 A)。
+#
 # ## 出力
 #
 #   <run id> <cancel|keep|done|unknown> <head_branch> <理由>
 #
+# head_branch は、merge_group の run ならグループの ref、render-pr の run なら PR の枝である。
 # done は cancel を打つ前に run が終わっていたもの (409)。
 #
 # 終了コード: 0 = 判定できなかった run が無い、1 = ある (または cancel に失敗した)。
@@ -64,16 +105,33 @@ esac
 # 「まだ終わっていない」run の status。一覧 API の status は 1 つしか取らないので並べて引く
 ACTIVE_STATUSES="queued in_progress waiting pending requested"
 
+# run を cancel する。判定から cancel までの間に run が終わっていれば 409 が返る。
+# 捨てたかった run が既に居ないだけなので失敗にしない
+cancel_run() { # $1=run id、$2=head_branch
+  $dry_run && return 0
+  local err
+  if ! err=$(gh api -X POST "repos/$REPO/actions/runs/$1/cancel" --silent 2>&1); then
+    case "$err" in
+      *"HTTP 409"*) printf '%s done %s cancel の前に終わっていた\n' "$1" "$2" ;;
+      *)
+        printf '%s unknown %s cancel に失敗した: %s\n' "$1" "$2" "$err"
+        status=1
+        ;;
+    esac
+  fi
+}
+
 runs=""
 for active in $ACTIVE_STATUSES; do
   got=$(gh api --paginate \
     "repos/$REPO/actions/runs?event=merge_group&status=$active&per_page=100" \
-    --jq '.workflow_runs[] | [.id, .head_branch, .head_sha] | @tsv')
+    --jq '.workflow_runs[] | [.id, .head_branch, .head_sha, .path] | @tsv')
   runs+="$got"$'\n'
 done
 
 status=0
-while IFS=$'\t' read -r id branch sha; do
+live_group=false
+while IFS=$'\t' read -r id branch sha path; do
   [ -n "$id" ] || continue
 
   # merge_group の run は必ずグループの ref を持つ。形が違うものは読み違いを疑って触らない
@@ -95,6 +153,8 @@ while IFS=$'\t' read -r id branch sha; do
 
   if [ "$tip" = "$sha" ]; then
     printf '%s keep %s 今のグループ\n' "$id" "$branch"
+    # 門番が見送りに使うのは render.yml の run だけ。同じ範囲で「待たせる相手が居るか」を見る
+    [ "$path" != ".github/workflows/render.yml" ] || live_group=true
     continue
   fi
 
@@ -104,19 +164,41 @@ while IFS=$'\t' read -r id branch sha; do
     reason="ref の先端が ${tip:0:8} に変わった (作り直された)"
   fi
   printf '%s cancel %s %s\n' "$id" "$branch" "$reason"
-
-  $dry_run && continue
-  # 判定から cancel までの間に run が終わっていれば 409 が返る。捨てたかった run が
-  # 既に居ないだけなので失敗にしない
-  if ! err=$(gh api -X POST "repos/$REPO/actions/runs/$id/cancel" --silent 2>&1); then
-    case "$err" in
-      *"HTTP 409"*) printf '%s done %s cancel の前に終わっていた\n' "$id" "$branch" ;;
-      *)
-        printf '%s unknown %s cancel に失敗した: %s\n' "$id" "$branch" "$err"
-        status=1
-        ;;
-    esac
-  fi
+  cancel_run "$id" "$branch"
 done < <(printf '%s' "$runs" | sort -u)
+
+# 門番より前に積まれた render-pr を退かせる (#2064)。render.yml の今のグループの run が無ければ
+# 待たせる相手が居ない
+$live_group || exit "$status"
+
+pr_runs=""
+for active in $ACTIVE_STATUSES; do
+  got=$(gh api --paginate \
+    "repos/$REPO/actions/workflows/render.yml/runs?event=pull_request&status=$active&per_page=100" \
+    --jq '.workflow_runs[] | [.id, .head_branch] | @tsv')
+  pr_runs+="$got"$'\n'
+done
+
+while IFS=$'\t' read -r id branch; do
+  [ -n "$id" ] || continue
+
+  if ! job=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+    --jq '[.jobs[] | select(.name == "render-pr") | .status] | first // ""'); then
+    printf '%s unknown %s render-pr の job を読めなかった\n' "$id" "$branch"
+    status=1
+    continue
+  fi
+
+  case "$job" in
+    "" | completed) continue ;;
+    in_progress)
+      printf '%s keep %s render-pr が専用機で走っている\n' "$id" "$branch"
+      continue
+      ;;
+  esac
+  printf '%s cancel %s render-pr が専用機の queue で先頭の render を待たせる (%s)\n' \
+    "$id" "$branch" "$job"
+  cancel_run "$id" "$branch"
+done < <(printf '%s' "$pr_runs" | sort -u)
 
 exit "$status"

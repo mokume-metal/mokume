@@ -10,11 +10,11 @@ SPDX-License-Identifier: MIT
 
 # 未トリアージを在庫にする (B-1)
 
-**規律の正典は [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 3** で、
-ここは手順だけを持つ。決定が言っているのは 1 行である — **材料はエージェントが作り、印はメンテナが押す。**
+規律は 1 行である — **材料はエージェントが作り、印 (`verify: triaged`) はメンテナが押す。**
+手順はここで完結する (理由と退けた案: [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 3)。
 
 基準を「調査して本文を固めた者」まで広げないのは、トリアージが担っているのが完了条件だけでは
-ないからである。起票は「雑でよい・思いつき歓迎」なので (ADR-0002)、**起票は着手の意思ではない。**
+ないからである。起票は雑でよい (思いつき歓迎) ので、**起票は着手の意思ではない。**
 「やると決める」ほうは人に残っている。
 
 この仕事が変えるのは押す回数ではなく、**押す場所と時刻**である — 端末の前でプランを承認する
@@ -29,9 +29,10 @@ bash scripts/ready-queue.sh
 `stock` の行が対象である (エージェントが起票したのに無印で、型が Bug / Task / Docs のもの)。
 **1 件だけ取る。**
 
-> **一括でやらない。** [ADR-0002](../../../docs/decisions/0002-issue-lifecycle-and-merge-approval.md)
-> 決定 1 追補が禁じているのは「中身を見ずに印を付けること」で、まとめて調べれば必ずそこへ倒れる。
-> 追補の 2026-09-07 改訂が緩めたのは**着手を待つこと**だけで、1 件ずつであることは動いていない。
+> **一括でやらない。** 禁じているのは「中身を見ずに印を付けること」で、まとめて調べれば
+> 必ずそこへ倒れる。着手の直前でなくてよい (先に作ってよい) が、1 件ずつ中身を見て調べる
+> ことは動かない
+> (理由: [ADR-0002](../../../docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1 追補)。
 
 ## 2. 現況を確かめる (ここが本体)
 
@@ -50,13 +51,30 @@ git fetch origin main && git log --oneline origin/main -5
 | 前提が動いていないか | 関連する PR / ADR を読む | 起票時に正しかった観測が、いまは別の姿になっていることがある |
 | 重複が無いか | `gh issue list --search '<言葉>' --state all` | 同じことが 2 本立っていたら、片方を not planned で閉じる |
 
+### 題に「(実害待ち)」を持つ機構の提案
+
+実害の出ていない機構の提案は、題に「(実害待ち)」を付けて待たせてある
+(理由: [ADR-0008](../../../docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 2)。
+この提案は上の 4 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・
+入った PR に、その実害や同じ根に当たるものがあるか**。
+
+```bash
+gh issue list -R mokume-metal/mokume --state all --search '<言葉> created:>=<前回の棚卸しの日付>'
+gh pr list -R mokume-metal/mokume --state merged --search '<言葉> merged:>=<前回の棚卸しの日付>'
+```
+
+そのうえでメンテナに「やる / not planned / 待つ」の推奨を出す (決めるのはメンテナ)。
+**結論が前回と同じなら、コメントを足さない** —
+6 回同じ「据え置き」を書き残した [#799](https://github.com/mokume-metal/mokume/issues/799) の轍を踏まない (#2034)。
+
 **調べても分からなかったことは、分からなかったと書く。** 起票者が「原因が読めない」と書いた
 Issue は、たいてい本当に読めない — 埋めずに、**確かめられたところまで**を書く。
 
 ## 3. 型を確かめる
 
-[ADR-0004](../../../docs/decisions/0004-issue-classification-by-issue-type.md) の 5 型
-(`Bug` / `Feature` / `Task` / `Design` / `Docs`)。付いていなければ付ける (ラベルではなく Issue Type)。
+Issue Type は 5 型 (`Bug` / `Feature` / `Task` / `Design` / `Docs`。選び方は AGENTS.md「Issue の分類」)。
+付いていなければ付ける (ラベルではなく Issue Type。理由:
+[ADR-0004](../../../docs/decisions/0004-issue-classification-by-issue-type.md))。
 
 ```bash
 gh issue edit <番号> -R mokume-metal/mokume --type <型>
@@ -66,7 +84,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 
 書き方は 1 つ — **いまのコードで確かめられる言い方にする。** 「〜が改善されている」ではなく
 「〜を打つと〜が出る」「〜という検査がある」。読む人が着手時に突き合わせられなければ、
-[ADR-0031](../../../docs/decisions/0031-triage-as-the-single-gate.md) 決定 4 の再チェックが働かない。
+着手時の再チェック (AGENTS.md「進め方」3。理由: [ADR-0031](../../../docs/decisions/0031-triage-as-the-single-gate.md) 決定 4) が働かない。
 
 **起票時の記述がずれていたら、消さずに直す。** ADR の改訂と同じ作法で「**当初は〜と書かれていた**」
 を残す — 何が変わったのかが読めなくなると、次に同じ調査をやり直すことになる。
@@ -82,7 +100,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 
 ### 既存の採択で進められるかを確かめる
 
-[ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 8 に照らし、
+AGENTS.md「説明と報告」に照らし (理由: [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 8)、
 約束・移行・保証範囲・権限の新たな選択があるかを見る。既に選ばれた範囲なら、根拠の Issue / ADR
 を添える。未合意なら入力/操作と以前/以後、移行方法・提供時期、選択肢・推奨を Issue に示す。
 「条件を書けた」ことを採択に代えず、人に残った判断と、それに依存する作業の範囲を明記する。
@@ -93,7 +111,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 
 ### 型が Bug のときは、約束と範囲で書く
 
-**Bug は症状ではなく、破られた約束である** (ADR-0040 決定 1。土台は ADR-0022)。症状だけを
+**Bug は症状ではなく、破られた約束である** (理由: ADR-0040 決定 1。土台は ADR-0022)。症状だけを
 完了条件にすると、着手した人はその 1 か所を直して閉じる — 同じ約束を破っている兄弟の口は
 残り、同じ根のバグが 1 件ずつ起票されては直される ([#1659](https://github.com/mokume-metal/mokume/issues/1659)
 の実測で、直しの取りこぼしから出た後発が 15 件、見つけた兄弟を同じ PR で閉じたのは 51 件中 4 件)。
@@ -111,7 +129,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 探し切れなかったら、どの式で何を見て、どこが未確認かまでを書く (上の「分からなかったことは、
 分からなかったと書く」と同じ)。
 
-**同じ根の群は、2 件目の時点で根を親にして束ねる** (ADR-0040 決定 2)。根は既に在る Bug の
+**同じ根の群は、2 件目の時点で根を親にして束ねる** (理由: ADR-0040 決定 2)。根は既に在る Bug の
 こともあれば、直し方に判断の要る Design のこともある。子を作らずに繋ぐ口は:
 
 ```bash
@@ -126,9 +144,10 @@ bash scripts/sub-issue.sh <根の番号> --attach <番号>
 
 **`verify: triaged` を付けない。** ここで手が止まるのが正しい。
 
-> 例外は [ADR-0002](../../../docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1 追補が
-> 認めている「**自分が起票し、本文に完了条件を書けた Issue**」だけで、それは作業中に踏んで
-> その場で起票したものを指す ([ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 6)。
+> 例外は AGENTS.md「進め方」2 の「**自分で起票し、本文に完了条件を書けた Issue**」だけで、
+> それは作業中に踏んでその場で起票したものを指す
+> (理由: [ADR-0002](../../../docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1 追補・
+> [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 6)。
 > **後から調べに来た他人の Issue はここに当たらない。**
 
 ## 6. 経緯を 1 通残す
@@ -145,6 +164,6 @@ bash scripts/comment.sh issue <番号> --body-file <ファイル>
 - **直さない。** これは在庫を作る仕事で、着手ではない。直したくなったら、それは印が付いてから
   改めて着手すればよい (調べた内容は本文とコメントに残っている)
 - **完了条件を書けなかったら、書けないまま置く。** 書けないことが「判断が要る」の印である
-  (ADR-0036 決定 6 の 3 行目)。無理に埋めると、着手した人が現実と食い違う条件に当たる
+  (AGENTS.md「作業中に踏んだ問題」の 3 行目。理由: ADR-0036 決定 6)。無理に埋めると、着手した人が現実と食い違う条件に当たる
 - **型が Design / Feature のものを掘りに行かない。** `ready-queue.sh` が `stock` から外している
   のは、判断が要る側だからである

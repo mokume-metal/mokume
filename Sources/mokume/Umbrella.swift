@@ -7,6 +7,8 @@
 //
 // モジュールが増えたら、ここに 1 行足す。
 
+@_exported import MokumeAudio
+@_exported import MokumeCamera
 @_exported import MokumeCore
 
 // 三角関数は宣言単位で名指しして通す (ADR-0020 決定 7)。

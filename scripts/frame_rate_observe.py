@@ -44,10 +44,12 @@ FPS_LINE = re.compile(r"fps=([\d.]+)")
 
 
 def pressure(observe: pathlib.Path, limit: float) -> int:
-    """識別子を変えながら要求を置き続ける。呼び出し側が kill するまで戻らない。"""
-    deadline = time.time() + limit
+    """識別子を変えながら要求を置き続け、`limit` 秒で戻る。"""
+    # 期限は眠っている間は進まない時計で測る (#1940)。壁時計だと、眠りを挟むと起きた瞬間に
+    # 圧をかける周回が終わる
+    deadline = time.monotonic() + limit
     index = 0
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         index += 1
         identifier = f"m{index}"
         place(observe, {"id": identifier, "scale": 0.5})

@@ -45,8 +45,8 @@ struct ComputeAccess<ID: Hashable> {
     /// 頼みは、読み書きの集合を作る前に抜ける。
     var hasPendingComputations: Bool { get }
 
-    /// 投入していない計算が読む・書く並び。**先に頼んだ順を守る相手ではないもの (描かない間・
-    /// 閉じ忘れて捨てられるフレーム) は空を返す。**
+    /// 投入していない計算が読む・書く並び。**先に頼んだ順を守る相手ではないもの (描かない間。
+    /// 閉じ忘れたフレームは本体のフレームの頭で捨ててある) は空を返す。**
     var pendingAccess: ComputeAccess<ObjectIdentifier> { get }
 
     /// 投入していない計算を、待たずに投入する。
@@ -65,7 +65,8 @@ struct ComputeAccess<ID: Hashable> {
 /// ## 約束
 ///
 /// > ある面の未投入の計算と、いま頼まれる計算が順序を要するなら、頼まれる前に、その面の
-/// > 未投入分は投入されている。
+/// > 未投入分は投入されている。**数の並びへの CPU の書き込みも、ここでは「その並びへ書く頼み」で
+/// > ある** ([#1687]) — 書く前に、その並びに触れる未投入の計算は (書いた面のものも) 投入されている。
 ///
 /// 順序を要する頼みだけが相手を動かす。単一の面や、ぶつからない複数の面では、何も起きない。
 /// 相手の溜めは丸ごと投入する — 溜めの中の順は保たれ、面どうしの溜めは互いにぶつからない
@@ -74,6 +75,7 @@ struct ComputeAccess<ID: Hashable> {
 /// **持ち主は弱く持つ。** 持ち主は土台を強く持つので、強く持つと土台ごと畳まれなくなる
 /// (``PendingUploads`` と同じ)。
 ///
+/// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
 /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
 @MainActor final class PendingComputations {
     private struct Entry {
@@ -100,9 +102,14 @@ struct ComputeAccess<ID: Hashable> {
     ///
     /// **`asked` は引く必要があるときまで作らない** (`@autoclosure`)。単一の面では載っているのが
     /// `asker` だけで、複数の面でも相手が何も溜めていなければ、読み書きの集合を作らずに空を返す。
+    ///
+    /// `asker` が `nil` なのは、頼むのが面ではないとき — 数の並びへの CPU の書き込み
+    /// (`Numbers.write`・[#1687]) で、書く前に頼んだ計算はどの面のものでも、書いた面のものでも先に走る。
+    ///
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
     func holders(
         mustPrecede asked: @autoclosure () -> ComputeAccess<ObjectIdentifier>,
-        except asker: any PendingComputationHolder
+        except asker: (any PendingComputationHolder)?
     ) -> [any PendingComputationHolder] {
         entries.removeAll { $0.holder == nil }
         var candidates: [any PendingComputationHolder] = []

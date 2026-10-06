@@ -56,6 +56,24 @@ public final class SketchRuntime {
     private var outlets: [(seam: any Outlet, health: SeamHealth)] = []
     /// 登録された入り口。同じく宣言順。
     private var inlets: [(seam: any Inlet, health: SeamHealth)] = []
+    /// 差込口を巡回している深さ (``whileVisitingSeams(_:)``)。
+    ///
+    /// **巡回の最中に並びを変えてはいけない。** 巡回は並びを `inout` で渡しているので、
+    /// その最中に同じ並びへ足した変更は、巡回の終わりの書き戻しで消える (保留を外して
+    /// 確かめると、`supply()` の中で足した入り口が黙って並びから落ちた)。入り口の
+    /// `supply()` の中から別の入り口を足す、といった頼みはここで見分けて後へ回す (#1988)。
+    private var seamVisitDepth = 0
+    /// 巡回の最中に頼まれた足し・外し。巡回が終わってから、頼まれた順に当てる。
+    private var deferredSeamChanges: [() -> Void] = []
+    /// 差込口を閉じたか (``closePlugins(_:)``)。**閉じた後に足したものは誰にも閉じられない**
+    /// ので、足す頼みを断る。
+    private var seamsClosed = false
+    /// 実行中に足した出口が、足されたフレーム。**それより前に描いた絵は渡さない。**
+    ///
+    /// 配るのは 1 枚遅れなので (#927)、`draw()` の中で足した出口は、そのままだと同じ
+    /// フレームのうちに 1 つ前の絵を受け取る。足す前に描かれた絵は、頼んだ側から見れば
+    /// 自分の知らない絵である (撮る係が #1456 で同じ見分けを自分で持っている)。
+    private var outletJoinedAt: [ObjectIdentifier: Int] = [:]
 
     /// 絵をファイルにする組み込みの出口。**頼まれてはじめて作る。**
     ///
@@ -83,6 +101,40 @@ public final class SketchRuntime {
     /// 1 を割る値が届かないことを構造で保証できる。
     let declaredFrameRate: Int
 
+    /// ランタイムが 1 度だけ言う注意の種類。
+    enum Warning: Hashable {
+        /// 走っている最中に ``SketchSettings/frameRate`` が起動のときの値から変わった。
+        case frameRateChangedWhileRunning
+    }
+
+    /// 1 度だけ言った注意の控え。**検査が読む。**
+    private(set) var warnings = WarningLog<Warning>()
+
+    /// 走っている最中の ``SketchSettings/frameRate`` への代入を、1 度だけ警告して断る
+    /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
+    ///
+    /// 速さは起動のときに 1 度だけ読む (``declaredFrameRate``)。`var settings` と持てば
+    /// 代入は通り、読み返しても代入した値が返るので、**黙っていると変えられたように見える**
+    /// ([ADR-0020] 決定 5 の「黙って変えない」)。枚数・`time`・`deltaTime` は起動のときの
+    /// まま変えず、変わっていないことを言うだけにする。
+    ///
+    /// 見るのはフレームを進める呼び出しの終わりで、`setup()`・`draw()`・入力のコールバック
+    /// のどこで代入しても、止めている間でも、その呼び出しのうちに気付く。計算型の
+    /// `settings` が読むたびに違う値を返すスケッチでは、代入していなくても言うことがある
+    /// (`SketchApplication` の #1642 の注)。そのときも値は使っていないことに変わりはない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    private func warnIfFrameRateWasReassigned() {
+        guard !warnings.hasWarned(.frameRateChangedWhileRunning) else { return }
+        let current = sketch.settings.frameRate
+        guard current != declaredFrameRate else { return }
+        warnings.warnOnce(
+            .frameRateChangedWhileRunning,
+            "settings.frameRate is read only at launch, so changing it to \(current) while"
+                + " running has no effect; frames, time and deltaTime keep following"
+                + " \(declaredFrameRate) fps")
+    }
+
     /// 組み立てで受け取る刻みを検める。**宣言 (``SketchSettings/frameRate``) も、差し替えた
     /// 時計の刻み (``Clock/frameIndex(frameRate:)``) も 1 以上でなければ断る。**
     ///
@@ -100,6 +152,23 @@ public final class SketchRuntime {
         if case .frameIndex(let frameRate) = clock, frameRate < 1 {
             throw .invalidFrameRate(frameRate)
         }
+    }
+
+    /// 組み立てで検めた、窓を開く倍率 (``checkWindowScale(_:)`` を越えた値)。
+    ///
+    /// **窓を開く側はこれを読む** (`SketchApplication`)。``declaredFrameRate`` と同じく、
+    /// `settings` を読み直すと検めた値と使う値が別物になりうる。
+    let windowScale: Float
+
+    /// 組み立てで窓を開く倍率を検める。**0 より大きい有限の数でなければ断る**
+    /// ([ADR-0020] 決定 5 の 2 行目)。
+    ///
+    /// 窓を開かない実行でも断る — 書き出しで通った作品が、窓を開く起こし方に移って初めて
+    /// 落ちる形にしない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    static func checkWindowScale(_ scale: Float) throws(RenderFailure) {
+        guard scale.isFinite, scale > 0 else { throw .invalidWindowScale(scale) }
     }
 
     /// 撮る係へ渡す刻みを、時計から決める (``launchFrameRate``)。
@@ -137,8 +206,11 @@ public final class SketchRuntime {
     private let observer: FrameObserver?
     /// 外から送られる入力の受け口。区画が無ければ `nil`。
     private let inbox: InputInbox?
-    /// 道具の窓が拾った出来事の受け口。見張りから起こされたときだけ在る。
-    private let relayed: StandardInputEvents?
+    /// 道具の窓が拾った出来事の受け口。**窓を持つ道具に起こされた ``SketchApplication`` が
+    /// 渡したときだけ在る** (``relayToolInput(from:)``)。窓を持たない `SketchRuntime` は
+    /// 共有面へ差し出さないので、標準入力に触らない
+    /// ([#2024](https://github.com/mokume-metal/mokume/issues/2024))。
+    private var relayed: StandardInputEvents?
     /// つまみの面 (区画が在るときだけ働く)。
     private let params: ParamSurface?
     /// 合わせた値の保存。**区画とは無関係に既定で効く** (ADR-0030 決定 6)。
@@ -164,6 +236,10 @@ public final class SketchRuntime {
     /// 揺らぎ (``Canvas/noiseSeed(_:)``) と違って断片へは届かない。断片には列が無く
     /// (画素どうしが独立している)、**値の一致がそもそも定義できない**ためである。
     var randomness = Randomness()
+    /// 形の組み立ての中で書いた乱数の種と揺らぎの設定の控え。出口で ``randomness`` と、本体の面の
+    /// 揺らぎの設定を戻す (`SketchRuntime+ShapeSeed.swift`・
+    /// [#1936](https://github.com/mokume-metal/mokume/issues/1936)・[#2041](https://github.com/mokume-metal/mokume/issues/2041))。
+    var seedScopes = SeedScopes()
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
     /// スケッチが測った値 (``measure(_:_:)``)。**フレームを越えて残る** — 同じ名前で
@@ -240,9 +316,11 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
+        try Self.checkWindowScale(settings.windowScale)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
+        self.windowScale = settings.windowScale
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
@@ -252,7 +330,9 @@ public final class SketchRuntime {
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
-        self.relayed = StandardInputEvents.makeIfDriven()
+        // **管はここで開かない。** 開いてよいかは出口で決まり、出口を決めるのは窓を持つ
+        // 側である (``relayToolInput(from:)``・#2024)
+        self.relayed = nil
         // 索引は 1 度だけ引き、保存と面と窓が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         self.paramRegistry = registry
@@ -274,9 +354,11 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
+        try Self.checkWindowScale(settings.windowScale)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
+        self.windowScale = settings.windowScale
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
@@ -395,6 +477,8 @@ public final class SketchRuntime {
         params?.flushIfChanged()
         outlets.removeAll()
         inlets.removeAll()
+        outletJoinedAt.removeAll()
+        seamsClosed = true
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
         // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
         if let recorder {
@@ -469,8 +553,16 @@ public final class SketchRuntime {
         defer {
             isAdvancingFrame = false
             lastFrameAt = now()
+            warnIfFrameRateWasReassigned()
         }
         guard !isPaused else {
+            // **外から止めている間も、出す先が描く先に追い付いていなければ追い付く** ([#1906])。
+            // 配った直後の追い付き (下) が失敗した後に止められると、書き込み待ち (細かさを下げた
+            // 面なら広げ直し) が残ったまま、止めが解けるまで誰もやり直さない。門で守られている
+            // ので、追い付いていれば何も積まない
+            //
+            // [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+            canvas.catchUpOutputWithoutThrowing()
             takeFragmentChangesWithoutAFrame()
             settleWithoutAnotherFrame()
             serveObservationIfRequested(request: observation)
@@ -482,12 +574,15 @@ public final class SketchRuntime {
         if !isLooping, requestedTime == nil {
             if !redrawRequested {
                 guard deliverWhileStopped() else {
-                    // **配ったコールバックが描く先を変えたなら、ここで出す先へ広げ直す** ([#1882])。
+                    // **配ったコールバックが描く先を変えたなら、ここで出す先を追い付かせる**
+                    // (書いた画素を書き戻し、細かさを下げた面なら広げ直す・[#1882]・[#1906])。
                     // 窓・共有の面・書き出し・観測・CPU の読み出しはどれも出す先を読むので、
                     // コールバックを配る 1 点で追い付けば、どの口も同じ 1 枚を受け取る。描き直す
-                    // ときは、そのフレームの終わりの拡大が済ませる。変えていなければ何も積まない
+                    // ときは、そのフレームの頭の書き戻しと終わりの拡大が済ませる。変えていなければ
+                    // 何も積まない
                     //
                     // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+                    // [#1906]: https://github.com/mokume-metal/mokume/issues/1906
                     canvas.catchUpOutputWithoutThrowing()
                     takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()
@@ -576,10 +671,16 @@ public final class SketchRuntime {
     ///
     /// 配るのは**フレームの外**である。`draw()` を呼ばないフレームを組むと、効果や
     /// 視点の無い絵が出口へ出て、止まっている間の絵が変わってしまう。そのため
-    /// コールバックの中の `translate()` は効かない。**置いた図形・絵・背景と書いた画素は、
-    /// 持ち越しの区間 (``carryingOver(_:)``) の中なので、次に描くフレームへ溜まる** —
-    /// `redraw()` を呼べばそのフレームに出る。呼ばずに置き続けると、上限を付けずに溜まり続ける
-    /// (作者が置き続けているからである・ADR-0021 決定 4 の追補 (2026-09-27))。
+    /// コールバックの中の `translate()` は効かない。**置いた図形・絵・背景は、持ち越しの区間
+    /// (``carryingOver(_:)``) の中なので、次に描くフレームへ溜まる** — `redraw()` を呼べばその
+    /// フレームに出る。呼ばずに置き続けると、上限を付けずに溜まり続ける (作者が置き続けている
+    /// からである・ADR-0021 決定 4 の追補 (2026-09-27))。**書いた画素は溜めない。** 同じ
+    /// コールバックで `redraw()` を呼ばなければ、配った直後に面へ戻す (``runFrame()`` の追い付き・
+    /// [#1906])。窓に出した絵がそのまま残るので、後で描くフレームの描き切りが失敗しても消えない。
+    /// 同じコールバックで `redraw()` を呼べば、そのフレームの頭で戻し、描き切りが失敗すれば
+    /// 置いた図形と一緒に捨てる。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
     /// 置かれるのは変換も切り抜きも光も周囲も無い状態で、前のフレームが最後に残した分も
     /// 効かない (描き終えたところで戻す — `Canvas.endFrame()`・#1472・#1504)。
     ///
@@ -626,11 +727,23 @@ public final class SketchRuntime {
         paramStore?.tick()
     }
 
+    /// 道具の窓が拾った出来事を、管から受け始める。
+    ///
+    /// **呼ぶのは、窓を持つ道具に起こされ、区画も在った ``SketchApplication`` だけである**
+    /// ([ADR-0032] 決定 1・4)。共有面を用意できずに窓へ倒れた回も呼ぶ — 道具が去ったことに
+    /// 気付く口はこの管しか無い。書き出す経路と窓を持たない `SketchRuntime` は呼ばない
+    /// ので、標準入力に触らず、閉じていても終わらない (#2024・#2025)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    func relayToolInput(from events: StandardInputEvents) {
+        relayed = events
+    }
+
     /// 起こした道具が居なくなっていたら 1 度だけ `true` を返す (``StandardInputEvents/takeDeparture()``)。
     ///
     /// **見張りから起こされていなければ、常に `false`。** 管を読むのはそのときだけなので
-    /// (``StandardInputEvents/makeIfDriven(by:descriptor:)``)、`mokume run` や直に走らせた子の
-    /// 標準入力 (端末) が閉じても終わらない。
+    /// (``relayToolInput(from:)``)、`mokume run`・`mokume render` や直に走らせた子の
+    /// 標準入力 (端末・閉じた入力) が閉じても終わらない。
     func takeDriverDeparture() -> Bool {
         relayed?.takeDeparture() ?? false
     }
@@ -642,7 +755,23 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     private func supplyFromInlets() {
-        Self.visit(&inlets) { $0.supply() } failure: { $0.failure }
+        whileVisitingSeams {
+            Self.visit(&inlets) { $0.supply() } failure: { $0.failure }
+        }
+    }
+
+    /// 差込口の巡回を包む。**巡回の最中に頼まれた足し・外しは、終わってから当てる** (#1988)。
+    ///
+    /// 深さで数えるのは、入れ子になりうるからである — 入り口の `supply()` の中で
+    /// ``endRecord()`` を呼ぶと、出口の巡回がその中で始まる。
+    private func whileVisitingSeams(_ body: () -> Void) {
+        seamVisitDepth += 1
+        body()
+        seamVisitDepth -= 1
+        guard seamVisitDepth == 0, !deferredSeamChanges.isEmpty else { return }
+        let changes = deferredSeamChanges
+        deferredSeamChanges.removeAll()
+        for change in changes { change() }
     }
 
     /// 差込口を 1 巡し、**続けて転んだものを外す**。
@@ -735,7 +864,123 @@ public final class SketchRuntime {
             pending.image.pendingSubmission,
             orWarn: "Could not wait for the GPU before handing the frame to an outlet")
         let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
-        Self.visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
+        let joinedAt = outletJoinedAt
+        whileVisitingSeams {
+            Self.visit(&outlets) { outlet in
+                // 足される前に描いた絵は渡さない (``outletJoinedAt``)
+                if let since = joinedAt[ObjectIdentifier(outlet)], frame.frame < since { return }
+                outlet.receive(frame)
+            } failure: {
+                $0.failure
+            }
+        }
+    }
+
+    // MARK: - 実行中に差込口を足す・外す
+
+    /// 入り口を並びへ足す。転送 (正本は ``Sketch/attach(_:)-(Inlet)``)。
+    ///
+    /// - Returns: 並びに居るか (開けた・既に居た・巡回の後に回した)。
+    @discardableResult
+    public func attach(_ inlet: any Inlet) -> Bool {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.attachNow(inlet) }
+            return true
+        }
+        return attachNow(inlet)
+    }
+
+    /// 出口を並びへ足す。転送 (正本は ``Sketch/attach(_:)-(Outlet)``)。
+    @discardableResult
+    public func attach(_ outlet: any Outlet) -> Bool {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.attachNow(outlet) }
+            return true
+        }
+        return attachNow(outlet)
+    }
+
+    /// 入り口を並びから外して閉じる。転送 (正本は ``Sketch/detach(_:)-(Inlet)``)。
+    public func detach(_ inlet: any Inlet) {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.detachNow(inlet) }
+            return
+        }
+        detachNow(inlet)
+    }
+
+    /// 出口を並びから外して閉じる。転送 (正本は ``Sketch/detach(_:)-(Outlet)``)。
+    public func detach(_ outlet: any Outlet) {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.detachNow(outlet) }
+            return
+        }
+        detachNow(outlet)
+    }
+
+    @discardableResult
+    private func attachNow(_ inlet: any Inlet) -> Bool {
+        guard admits(inlet) else { return false }
+        if let index = inlets.firstIndex(where: { $0.seam === inlet }) {
+            // **居れば開き直さない** (`open()` は一度だけ)。続けて転んで外されていれば、
+            // 数え直して入れ直す (撮る係の ``rejoin(_:into:)`` と同じ)
+            if !inlets[index].health.isAttached { inlets[index].health = SeamHealth() }
+            return true
+        }
+        guard Self.open(inlet, opening: inlet.open) else { return false }
+        inlets.append((inlet, SeamHealth()))
+        return true
+    }
+
+    @discardableResult
+    private func attachNow(_ outlet: any Outlet) -> Bool {
+        guard admits(outlet) else { return false }
+        if let index = outlets.firstIndex(where: { $0.seam === outlet }) {
+            if !outlets[index].health.isAttached { outlets[index].health = SeamHealth() }
+            return true
+        }
+        guard Self.open(outlet, opening: outlet.open) else { return false }
+        outlets.append((outlet, SeamHealth()))
+        outletJoinedAt[ObjectIdentifier(outlet)] = timing.frameCount
+        return true
+    }
+
+    private func detachNow(_ inlet: any Inlet) {
+        guard let index = inlets.firstIndex(where: { $0.seam === inlet }) else { return }
+        inlets.remove(at: index)
+        inlet.close()
+    }
+
+    private func detachNow(_ outlet: any Outlet) {
+        // 撮る係は頼まれている間だけ居る係なので、外から外させない
+        guard outlet !== recorder,
+            let index = outlets.firstIndex(where: { $0.seam === outlet })
+        else { return }
+        outlets.remove(at: index)
+        outletJoinedAt[ObjectIdentifier(outlet)] = nil
+        outlet.close()
+    }
+
+    /// 足してよいか。**閉じた後は断る** — 足したものを閉じる者がもう居ない。
+    private func admits(_ seam: AnyObject) -> Bool {
+        guard seamsClosed else { return true }
+        Diagnostics.warn(
+            "Could not attach \(type(of: seam as Any)): the sketch has already closed its plugins")
+        return false
+    }
+
+    /// 開く。投げたら知らせて `false` ([ADR-0024] 決定 7 — 開くときは投げてよく、
+    /// そのときはそれだけ外して続ける)。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private static func open(_ seam: AnyObject, opening: () throws -> Void) -> Bool {
+        do {
+            try opening()
+            return true
+        } catch {
+            Diagnostics.warn("Could not open \(type(of: seam as Any)): \(error). Carrying on without it")
+            return false
+        }
     }
 
     // MARK: - 名乗り
@@ -1183,8 +1428,20 @@ public final class SketchRuntime {
                 stats: last?.stats,
                 load: RuntimeLoad.sample(tempo: tempo, now: now()),
                 values: exposedValues.isEmpty ? nil : exposedValues,
+                inputs: inputReports,
                 stamp: SourceStamp.current,
                 frames: frames, appliedTime: complete ? appliedTime.map(Double.init) : nil))
+    }
+
+    /// 名乗りを持つ入り口の状態 (``Inlet/report``)。1 つも無ければ `nil` で、応答から鍵ごと落ちる。
+    ///
+    /// **続けて転んで外された入り口も載せる。** 並びに居る限り、値が来ない理由を名乗れるのは
+    /// その入り口だけである ([ADR-0028] 決定 4)。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+    private var inputReports: [SourceReport]? {
+        let reports = inlets.compactMap { $0.seam.report }
+        return reports.isEmpty ? nil : reports
     }
 
     /// 同じフレームが並んでいたら、そのことわり。
@@ -1248,11 +1505,25 @@ public final class SketchRuntime {
     /// 外れた後もこの面へ読み込めるようにするためである ([#1367])。束ねた値は範囲を出れば
     /// 自動で戻る。
     ///
+    /// **形の組み立てを知らせる先 (``shapeAssemblyListener``) も、同じ所で差して外す** ([#2041])。
+    /// 乱数の種を書く鍵は ``runningSketch`` なので、組み立ての出口で戻す鍵も同じ寿命に揃える。
+    /// 面ごとに付けると、ランタイムが付けていない面 (直に作った面とそこから作った描き場所) で
+    /// 中で書いた種が漏れる。
+    ///
+    /// **検査がランタイムを差すときも、ここを通す** (`private` にしない理由)。``runningSketch`` だけを
+    /// 手で差すと知らせる先が差さらず、検査の中の組み立てで書いた種が漏れたまま黙る。
+    ///
     /// [#1367]: https://github.com/mokume-metal/mokume/issues/1367
-    private func withActiveRuntime(_ body: () -> Void) {
+    /// [#2041]: https://github.com/mokume-metal/mokume/issues/2041
+    func withActiveRuntime(_ body: () -> Void) {
         let previous = runningSketch
+        let previousListener = shapeAssemblyListener
         runningSketch = self
-        defer { runningSketch = previous }
+        shapeAssemblyListener = self
+        defer {
+            runningSketch = previous
+            shapeAssemblyListener = previousListener
+        }
         LaunchingSketch.$canvas.withValue(canvas, operation: body)
     }
 }

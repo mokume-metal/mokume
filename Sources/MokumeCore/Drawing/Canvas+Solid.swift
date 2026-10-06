@@ -178,7 +178,8 @@ extension Canvas {
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
-        _ source: SolidSource, isDerived: Bool = false, mesh build: () -> SolidMesh
+        _ source: SolidSource, isDerived: Bool = false,
+        winding: () -> SolidWinding = { .outward }, mesh build: () -> SolidMesh
     ) {
         // 区間の外では、立体の側へも移らない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -200,7 +201,20 @@ extension Canvas {
             for point in points {
                 vertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
             }
-            appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement)
+            // 記録した形 1 つが部品 1 つ (``SolidPart``)。置いたときのスタイルを部品へ残す —
+            // 保持した形を置くときは、記録したときのスタイルで裏 → 表に描くかが決まる。記録した
+            // 形は後で半透明の色で置かれうるので、向きはここで求める (モデルなら 1 度だけ・控える)
+            let found = winding()
+            let parts =
+                found == .unknown
+                ? []
+                : [
+                    SolidPart(
+                        range: 0..<vertices.count, isIndexed: false,
+                        showsBackFaces: placementShowsBackFaces(placement, styled: placementMayShowBackFaces),
+                        insideOut: found == .inward)
+                ]
+            appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement, parts: parts)
             return
         }
 
@@ -228,7 +242,7 @@ extension Canvas {
                     indexStart: nil, instanceStart: solidInstances.count,
                     isMirrored: placement.isMirrored, fillGeometry: geometry)
                 solidInstances.append(placement)
-                if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
+                noteMeshPlacement(placement, winding: winding)
                 return
             }
             let range: Range<Int>
@@ -252,10 +266,22 @@ extension Canvas {
         }
 
         solidInstances.append(placement)
-        // 裏面が絵に出うるスタイルで 1 つでも置いたら、この列は裏面を捨てられない
-        // (`Batch.cullMode`)。**置いたこの時点で記録する** — 列が閉じる時点のスタイルは、
-        // 置いた後で外した絵を知らない (#1564)
-        if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
+        noteMeshPlacement(placement, winding: winding)
+    }
+
+    /// いま置いた組み込みの形・モデルの置き場所 (溜め場の末尾) に、裏面が絵に出うるかの印を付ける。
+    ///
+    /// 裏面が絵に出うるスタイルで 1 つでも置いたら、この列は裏面を捨てられない (`Batch.cullMode`)。
+    /// **置いたこの時点で記録する** — 列が閉じる時点のスタイルは、置いた後で外した絵を知らない
+    /// (#1564)。印の付いた置き場所だけを裏 → 表の 2 回で描く (``OpenSolid/backFaceInstances``)。
+    /// 巻き方の向きは、初めて印が付いたときに求める (モデルなら控えを読む)。
+    private func noteMeshPlacement(_ placement: SolidInstance, winding: () -> SolidWinding) {
+        guard let open = openSolid,
+            placementShowsBackFaces(placement, styled: placementMayShowBackFaces)
+        else { return }
+        openSolid?.mayShowBackFaces = true
+        openSolid?.backFaceInstances.append(solidInstances.count - 1 - open.instanceStart)
+        if open.meshWinding == nil { openSolid?.meshWinding = winding() }
     }
 
     /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場。控えに無ければ詰めて作る。
@@ -316,16 +342,22 @@ extension Canvas {
     /// [#1446]: https://github.com/mokume-metal/mokume/issues/1446
     func appendPlacedSolidVertices(
         _ vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?,
-        placedBy placement: SolidInstance
+        placedBy placement: SolidInstance, parts: [SolidPart] = [],
+        showsBackFaces: Bool? = nil, mirrored: Bool? = nil
     ) {
+        // `showsBackFaces` と `mirrored` は、置き場所を先に掛けた頂点 (`placement` は単位) を積む
+        // ときに、元の置き場所の判定を渡す口 (保持した形の線を組み直して差し込む・#1893)
         if indices != nil { openIndexedFreeformSolid() } else { openFreeformSolid() }
         let base = solidVertices.count
+        notePlacedParts(
+            parts, vertices: vertices, indices: indices, base: base,
+            tinted: showsBackFaces ?? placementShowsBackFaces(placement, styled: false))
         // 閉包を標準ライブラリの高階関数へ渡さずにループで回す。main actor の文脈の閉包は
         // 要素ごとに隔離の実行時検査を払う (#1779)
         solidVertices.reserveCapacity(base + vertices.count)
         for vertex in vertices { solidVertices.append(placement.placing(vertex)) }
         openSolid?.vertexCount += vertices.count
-        let rewinds = placement.isMirrored
+        let rewinds = mirrored ?? placement.isMirrored
         if let indices {
             // 写した先までのずれを足す。ずれは負にもなる (切り出した位置より、溜め場の
             // 末尾が手前のことがある)
@@ -342,6 +374,41 @@ extension Canvas {
             // 参照されず、黙って消える (``appendSolidVertex`` と同じ理由)
             solidIndices.reserveCapacity(solidIndices.count + solidVertices.count - base)
             for index in base..<solidVertices.count { solidIndices.append(UInt32(index)) }
+        }
+    }
+
+    /// 焼いて積む頂点の部品を、開いている列の描く単位へ写して足す (``OpenSolid/parts``)。
+    ///
+    /// `parts` は切り出す前の並びの番号で、添字を持つ区間なら読む順の並び、持たなければ頂点の
+    /// 並びで数える (``Shape/solidParts`` と同じ)。写した先は列の描く単位で、添字を持たない頂点を
+    /// 添字の列へ積むときは、頂点が名乗る番号の位置になる (下の積み方と同じ順)。`tinted` は置き場所の
+    /// 色が透けているか — 透けていれば、記録したときのスタイルによらず裏面が絵に出うる。
+    ///
+    /// **積む前に呼ぶ** (`base` と添字の並びの末尾が、写す先の始まり)。
+    private func notePlacedParts(
+        _ parts: [SolidPart], vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?,
+        base: Int, tinted: Bool
+    ) {
+        guard !parts.isEmpty, let open = openSolid else { return }
+        let columnIndexed = open.indexStart != nil
+        let indexBase = solidIndices.count
+        // 列の部品へその場で足す (写してから戻すと、焼く置き場所の数の 2 乗で効く)
+        for part in parts {
+            var moved = part
+            if let indices {
+                guard part.isIndexed, indices.indices.contains(part.range.lowerBound),
+                    part.range.upperBound <= indices.endIndex
+                else { continue }
+                moved = part.shifted(by: indexBase - indices.startIndex)
+            } else {
+                guard !part.isIndexed, vertices.indices.contains(part.range.lowerBound),
+                    part.range.upperBound <= vertices.endIndex
+                else { continue }
+                moved = part.shifted(by: (columnIndexed ? indexBase : base) - vertices.startIndex)
+                moved.isIndexed = columnIndexed
+            }
+            if tinted { moved.showsBackFaces = true }
+            openSolid?.parts.append(moved)
         }
     }
 
@@ -378,7 +445,8 @@ extension Canvas {
     /// 点 0 が 1 つ目の点 0 を指す。
     func inSolidBatch(indexed: Bool = false, _ body: () -> Void) {
         // 区間の外では区間を開かず、`body` も走らせない (``Canvas/canPlace``・#1672)。奥行きの
-        // ある形の輪郭 (`strokeSolidRing`) と周囲の背景も、ここを通って塞がる
+        // ある形の輪郭 (`strokeSolidRing`) も、ここを通って塞がる。周囲の背景はここを通らず、
+        // 口が自分で区間の外を断る (``Canvas/replaceSurface(with:)``・#1685)
         guard canPlace else { return warnOutsideFrame(.placing) }
         beginSolids()
         if indexed {
@@ -423,12 +491,13 @@ extension Canvas {
     /// **図形は焼き場の白い区画を読む** — 白を掛けても色は変わらないので、平面と同じ
     /// 塗りをそのまま通せる (``SolidVertex/uv``)。
     ///
-    /// `uv` を渡すのは**塗り**だけで、線と点・周囲の背景は渡さない側に居続ける。
+    /// `uv` を渡すのは**塗り**だけで、線と点は渡さない側に居続ける。
     /// 渡さなければ白い区画を読むので、貼る絵は塗りにしか効かない。
     func appendSolidVertex(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
-        uv: SIMD2<Float>? = nil, isStroke: Bool = false, color: LinearRGBA
+        uv: SIMD2<Float>? = nil, isStroke: Bool = false, strokeCoverage: Float = 1,
+        color: LinearRGBA
     ) {
         // **面の切り替えが先。** 切り替えは列を閉じるので、開いてから切り替えると
         // 開いたばかりの列が閉じられ、この頂点がどの列にも属さなくなる
@@ -438,7 +507,7 @@ extension Canvas {
             SolidVertex(
                 position: position, shapePosition: shapePosition, normal: normal,
                 shapeNormal: shapeNormal, isDerived: isDerived, uv: uv ?? whiteUV,
-                isStroke: isStroke, color: color))
+                isStroke: isStroke, strokeCoverage: strokeCoverage, color: color))
         openSolid?.vertexCount += 1
         // **添字の列では、並べただけの頂点も自分の番号を名乗る。** 名乗らないと
         // 描くときに誰からも参照されず、その頂点だけが黙って消える (輪郭の帯と
@@ -562,10 +631,29 @@ extension Canvas {
     /// 群にまとめ、群に 1 度だけ形を置く決まりは網の骨 (`strokeNet`) が持つ。周と網で写して
     /// 持つと、まとめる段数と置く回数が経路ごとに食い違う。
     ///
+    /// **描く画素で 1 画素より細い線は、描く画素 1 つの太さへ広げて被覆を下げる**
+    /// (#1637・``ThinStroke``)。太さは出す画素なので、細さは置く面の細かさだけで決まる。
+    /// 記録の間は判断せず、置くときに置く面で組み直す (``rebuiltSolidStroke(_:)``)。
+    ///
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
     func strokeSolidRing(
         _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
         curveSteps: [Bool] = []
+    ) {
+        let isPoint = points.count == 1
+        let thin = thinSolidStroke(weight: style.strokeWeight, isPoint: isPoint)
+        solidStrokeIsLonePoint = isPoint
+        defer { solidStrokeIsLonePoint = false }
+        withThinSolidStroke(thin, isPoint: isPoint) {
+            strokeSolidRingAsStyled(
+                points, shapePoints: shapePoints, isClosed: isClosed, curveSteps: curveSteps)
+        }
+    }
+
+    /// いまの線の設定のまま、立体の線を帯でなぞる (細い線の補いは ``strokeSolidRing`` が当てる)。
+    private func strokeSolidRingAsStyled(
+        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
+        curveSteps: [Bool]
     ) {
         guard !points.isEmpty, shapePoints.count == points.count else { return }
         let source = SolidStrokePiece.Source.ring(
@@ -582,7 +670,15 @@ extension Canvas {
         // 区間の外では引かない。`noFill()` の立体はここだけを通る (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard style.hasStroke, style.strokeWeight > 0 else { return }
+        // **描く画素で 1 画素より細い稜線も補う** (#1637)。GPU で広げる経路は、置く時点で
+        // 自分で補う (``openGPUStroke``) ので、ここで太さを変えるのは CPU の帯だけである
         if placeGPUStroke(of: source, mesh: build) { return }
+        let thin = thinSolidStroke(weight: style.strokeWeight, isPoint: false)
+        withThinSolidStroke(thin, isPoint: false) { strokeSolidEdgesAsStyled(of: source, mesh: build) }
+    }
+
+    /// いまの線の設定のまま、置いた形の稜線を引く。
+    private func strokeSolidEdgesAsStyled(of source: SolidSource, mesh build: () -> SolidMesh) {
         let net = solidEdges(of: source, mesh: build)
         guard !net.edges.isEmpty else { return }
         // **塗りを置かなかったときも、立体の側へ移る。** 移らないと平面の列が開いた
@@ -619,7 +715,8 @@ extension Canvas {
         recordedSolidStrokes.append(
             SolidStrokePiece(
                 source: source, weight: style.strokeWeight, join: style.strokeJoin, cap: style.strokeCap,
-                vertexStart: start, vertexCount: solidVertices.count - start))
+                vertexStart: start, vertexCount: solidVertices.count - start,
+                isLonePoint: solidStrokeIsLonePoint))
     }
 
     /// 線 1 本を、いまのスタイルといまの視点で組む。積むか位置だけを受け取るかは
@@ -710,19 +807,28 @@ extension Canvas {
     /// 組むのはその場の線と同じ手順 (``buildSolidStroke(_:)``) で、太さ・折れ目・端は記録した
     /// ときのものを使う — 輪郭の形は形の中で決まり、置くときのスタイルは効かない
     /// (`Sketch/createShape(_:)`)。頂点の数は記録と違ってよい。置く側が区間ごと差し替える。
-    func rebuiltSolidStroke(_ piece: SolidStrokePiece) -> [(position: SIMD3<Float>, shape: SIMD3<Float>)] {
-        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組んだときの太さで組む
+    ///
+    /// **細さは置く面で判断する** (#1637)。線は記録したときの太さを持ち、置く面の細かさで
+    /// 描く画素で 1 画素より細くなるなら、広げた太さで組んで被覆を返す (呼ぶ側が頂点の
+    /// ``SolidVertex/stroke`` に書く)。記録した面と置く面の細かさが違っても、その場で描いた
+    /// 線と同じになる。点 1 つの線 (``SolidStrokePiece/isLonePoint``) は、細ければ画面の軸に
+    /// 沿った正方形にする (その場の線の ``withThinSolidStroke(_:isPoint:_:)`` と同じ)。
+    func rebuiltSolidStroke(
+        _ piece: SolidStrokePiece
+    ) -> (corners: [(position: SIMD3<Float>, shape: SIMD3<Float>)], coverage: Float) {
+        let thin = ThinStroke(drawnWeight: drawnSolidWeight(piece.weight), isPoint: piece.isLonePoint)
+        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組む太さで組む
         let saved = (style.strokeWeight, style.strokeJoin, style.strokeCap)
-        style.strokeWeight = piece.weight
+        style.strokeWeight = piece.weight * (thin?.widen ?? 1)
         style.strokeJoin = piece.join
-        style.strokeCap = piece.cap
+        style.strokeCap = thin != nil && piece.isLonePoint ? .square : piece.cap
         solidStrokeCapture = []
         buildSolidStroke(piece.source)
         var built = solidStrokeCapture ?? []
         solidStrokeCapture = nil
         (style.strokeWeight, style.strokeJoin, style.strokeCap) = saved
         if piece.isReversed { Self.reverseTriangles(in: &built, from: 0) }
-        return built
+        return (built, thin?.coverage ?? 1)
     }
 
     /// 稜線を使い回す。**線を引いた形にだけ作る。**
@@ -965,16 +1071,19 @@ extension Canvas {
             solidStrokeCapture?.append((liftedTowardViewer(c, camera: camera), shape.2))
             return
         }
-        // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
+        // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)。名乗る値は
+        // 被覆を兼ねる (細い線を広げたとき 1 未満・#1637)
+        let coverage = solidStrokeCoverage
+        defer { if coverage < 1 { openBatchHasThinCoverage = true } }
         appendSolidVertex(
             position: liftedTowardViewer(a, camera: camera), shapePosition: shape.0, normal: .zero,
-            isStroke: true, color: style.stroke)
+            isStroke: true, strokeCoverage: coverage, color: style.stroke)
         appendSolidVertex(
             position: liftedTowardViewer(b, camera: camera), shapePosition: shape.1, normal: .zero,
-            isStroke: true, color: style.stroke)
+            isStroke: true, strokeCoverage: coverage, color: style.stroke)
         appendSolidVertex(
             position: liftedTowardViewer(c, camera: camera), shapePosition: shape.2, normal: .zero,
-            isStroke: true, color: style.stroke)
+            isStroke: true, strokeCoverage: coverage, color: style.stroke)
     }
 
     /// 線の頂点を、**見ている側へ視線に沿って**わずかに寄せる。

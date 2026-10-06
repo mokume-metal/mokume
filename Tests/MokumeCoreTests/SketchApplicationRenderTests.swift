@@ -20,6 +20,7 @@ import Testing
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
 @Suite(
     "窓を開かずに書き出す経路",
+    .signalStateKept,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする"),
@@ -93,8 +94,8 @@ struct SketchApplicationRenderTests {
     /// 返事を待たせていれば決着まで見に来て、畳む。**待つ側が期限を持つ。**
     private func finishTerminating(_ application: SketchApplication, _ ending: Ending) throws {
         if ending.reply == .terminateLater {
-            let deadline = Date().addingTimeInterval(60)
-            while !ending.replied, Date() < deadline {
+            let deadline = DispatchTime.now() + 60
+            while !ending.replied, DispatchTime.now() < deadline {
                 application.pollTermination()
                 if !ending.replied { Thread.sleep(forTimeInterval: 0.005) }
             }
@@ -213,7 +214,9 @@ struct SketchApplicationRenderTests {
     // MARK: - 窓を開かない (完了条件 5)
 
     /// 区画 `viewport` は見張りが畳めずに終わると残る。残っていても、書き出す経路は共有面へ
-    /// 差し出さない — 面の番号の名乗り (manifest) も置かない。
+    /// 差し出さない — 面の番号の名乗り (manifest) も置かない。**窓を持つ道具の合図が来ていても
+    /// 同じである** — 書き出す経路は区画と合図より先に決まっている (#2025)。区画を本番と同じ
+    /// 場所へ置く形は `LaunchedByToolTests` が見る。
     @Test("書き出す経路は窓を開かず、区画 viewport が残っていても共有面へ差し出さない")
     func renderingOpensNoWindowEvenWithAViewportFacet() async throws {
         try await withTemporaryDirectory("mokume-render-headless") { directory in
@@ -226,7 +229,7 @@ struct SketchApplicationRenderTests {
             let windowsBefore = NSApplication.shared.windows.count
 
             let application = try makeApplication(Sweep(), request, ending)
-            application.resolveOutlet(at: facet)
+            application.resolveOutlet(at: facet, owner: "mokume watch")
             application.didFinishLaunching()
             fire(application, times: 5)
 
@@ -300,8 +303,14 @@ struct SketchApplicationRenderTests {
             application.didFinishLaunching()
             fire(application, times: 4)
 
-            sketchStopRequested = 1
-            fire(application, times: 3)
+            // **旗は立てた区間の中で閉じる** (#1937)。下の `await` を跨いで残すと、その間に
+            // 走るほかの検査が拾いうる
+            do {
+                let kept = SignalState.current()
+                defer { kept.restore() }
+                sketchStopRequested = 1
+                fire(application, times: 3)
+            }
             #expect(ending.stopCalls == 1)
             #expect(ending.finishedCalls == 0)
             #expect(sketch.seen.count == 4, "終わりに向かっている間にも描いた")

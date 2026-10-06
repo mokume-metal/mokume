@@ -76,6 +76,9 @@ struct SolidStrokePiece {
     /// (`Canvas.appendPlacedSolidVertices`)。組み直した頂点も同じ並べ替えを通さないと、
     /// 外側の記録に入れ子で置いたとき巻き方が食い違う。
     var isReversed: Bool = false
+    /// 点 1 つの線 (端点の形だけ) の部品か。置く面で細くなるなら、画面の軸に沿った正方形に
+    /// して面積で被覆を決める (``Canvas/rebuiltSolidStroke(_:)``・#1637)。
+    var isLonePoint: Bool = false
 
     /// 行列で移した線。頂点の並びの中での位置は変えない。
     func moved(by matrix: simd_float4x4) -> SolidStrokePiece {
