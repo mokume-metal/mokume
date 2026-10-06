@@ -40,8 +40,8 @@ extension Sketch {
     ///
     /// 色の不透明度も同じで、**下地に重ならず、面をその色で置き換える**。半透明の色を
     /// 渡せば面が半透明の色になり、前の絵は残らない。何も残さず透明へ戻すなら
-    /// ``LinearRGBA/transparent`` を渡す (`background(.transparent)`)。残像の作り方は
-    /// ``background(_:_:)`` に書いた。
+    /// ``LinearRGBA/transparent`` を渡す (`background(.transparent)`)。残像の作り方と、
+    /// 窓での見え方 (後ろは透けない) は ``background(_:_:)`` に書いた。
     ///
     /// **呼んだ時点の描き方は効かない。** 混ぜ方 (``blendMode(_:)``)・断片 (``shader(_:)``)・
     /// 貼る絵・影を落とすかのどれを変えたままでも、同じ色で置き換える。同じフレームで先に画素を
