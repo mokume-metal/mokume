@@ -364,7 +364,8 @@ test-release-scheduled: ## 定期の release の検査 (台帳を外す。専用
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは
-# 理由を述べて 0 で抜ける (PR を出した後の実行から効くようになる)
+# origin/main との差が描画に触れるかを案内して 0 で抜ける (#2153)。触れるなら、絵を本文に
+# 載せて (絵が変わらないなら no-visual-change を付けて) PR を作る。判定は PR を出した後の実行から効く
 drawing-evidence:
 	bash scripts/check-drawing-evidence.sh
 

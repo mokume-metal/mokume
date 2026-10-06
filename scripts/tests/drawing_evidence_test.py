@@ -9,8 +9,10 @@
 
 判定できない事情 (PR がまだ無い・認証が無い) で赤くならないことも併せて固定する。
 手元では PR を作る前に make ci-check を打つこともあり、そこで赤くすると入口が塞がる。
+PR がまだ無いブランチでは、赤くしないまま、作る前に絵とラベルの要否を案内する (#2153)。
 
 gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。
+PR の無いブランチの案内は、使い捨ての git リポジトリに origin/main を立てて確かめる。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -85,10 +87,11 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.env.pop("GITHUB_RUN_ID", None)
 
     def run_script(self, *, body="", labels=(), files=DRAWING_FILES, args=("101",),
-                   all_files=None, **env):
+                   all_files=None, cwd=None, **env):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `files` と同じ。上限を越える PR を装うときだけ別に渡す。
+        `cwd` は PR の無いブランチを装うときの git リポジトリ (既定は git の外)。
         """
         self.pr_json.write_text(json.dumps({
             "body": body,
@@ -100,7 +103,7 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.env["ALL_FILES"] = " ".join(files if all_files is None else all_files)
         self.env.update(env)
         return subprocess.run(
-            ["/bin/bash", str(SCRIPT), *args], cwd=self.root, env=self.env,
+            ["/bin/bash", str(SCRIPT), *args], cwd=cwd or self.root, env=self.env,
             capture_output=True, text=True, encoding="utf-8"
         )
 
@@ -275,15 +278,157 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.assertIn("判定しない", r.stdout)
         self.assertIn("変更ファイルを読めなかった", r.stdout)
 
-    def test_このブランチにPRが無ければ判定しない(self):
-        r = self.run_script(body="", args=(), GH_NO_PR="1")
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("PR が無い", r.stdout)
-
     def test_ghが認証されていなければ判定しない(self):
         r = self.run_script(body="", GH_UNAUTHED="1")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("認証", r.stdout)
+
+    # --- PR がまだ無いブランチ (#2153) ------------------------------------
+    #
+    # 以前は判定ごと放棄していたので、描画に触れていると知るのが PR を作った後になり、
+    # no-visual-change を「作成と同時に」付ける規約を守る手段が無かった (後付けすると作成時の
+    # run の ci-gate が赤で残る — #2134)。いまは origin/main との差を描画のパスに当て、作る前に
+    # 案内する。**どれも 0 で抜ける** — PR の無い作業途中を赤にしない
+
+    @staticmethod
+    def git(repo, *args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    @staticmethod
+    def put(repo, name, text):
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def commit(self, repo, message):
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-q", "-m", message)
+
+    def branch_repo(self, *, with_origin_main=True):
+        """origin/main から分岐した作業ブランチ。分岐点には描画のファイルと文書が 1 つずつある。"""
+        repo = Path(tempfile.mkdtemp(dir=self.root))
+        self.git(repo, "init", "-q", "-b", "main")
+        self.git(repo, "config", "user.email", "test@example.com")
+        self.git(repo, "config", "user.name", "test")
+        # 使い捨てのリポジトリは手元の署名設定を継ぐ (#344)
+        self.git(repo, "config", "commit.gpgsign", "false")
+        # 手元の global 設定に依らず、既定 (ASCII でない名前を引用符で並べる) から始める
+        self.git(repo, "config", "core.quotePath", "true")
+        self.put(repo, DRAWING_FILES[0], "// base\n")
+        self.put(repo, "docs/note.md", "base\n")
+        self.commit(repo, "base")
+        if with_origin_main:
+            self.git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git(repo, "switch", "-q", "-c", "work")
+        return repo
+
+    def preview(self, repo, *, cwd=None):
+        """番号を渡さず、現在のブランチに PR が無い形で打つ (make drawing-evidence と同じ)。"""
+        r = self.run_script(args=(), cwd=cwd or repo, GH_NO_PR="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r
+
+    def test_PRの無いブランチで描画に触れれば作る前に絵とラベルを案内する(self):
+        repo = self.branch_repo()
+        self.put(repo, DRAWING_FILES[0], "// changed\n")
+        self.commit(repo, "change drawing")
+        out = self.preview(repo).stdout
+        self.assertIn("描画に触れる", out)
+        self.assertIn(DRAWING_FILES[0], out, "どのファイルが触れたかを言っていない")
+        self.assertSays(out, "PR の作成と同時に、before/after の絵を本文へ貼る")
+        self.assertIn("gh pr create --label no-visual-change", out)
+        self.assertNotIn("判定しない", out)
+
+    def test_PRの無いブランチはコミット前の手元と描画から出す改名も数える(self):
+        """PR を出す前の make ci-check はコミット前にも打たれる。一覧と同じく広く取る。"""
+        cases = {
+            "追跡ファイルの変更": lambda repo: self.put(repo, DRAWING_FILES[0], "// wip\n"),
+            "未追跡のファイル": lambda repo: self.put(repo, "Sources/MokumeCore/New.swift", "// new\n"),
+            # git は既定で "Sources/…/\\346…" と引用符付きの 8 進で並べ、前置きに一致しなくなる
+            "ASCII でない名前 (未追跡)": lambda repo: self.put(repo, "Sources/MokumeCore/木目.swift", "// new\n"),
+            "ASCII でない名前 (コミット済み)": lambda repo: (
+                self.put(repo, "Sources/MokumeCore/木目.swift", "// new\n"),
+                self.commit(repo, "non-ascii"),
+            ),
+            # 改名として読むと新しい側 (docs/) しか出ず、描画のパスから消えたことを見落とす
+            "描画のパスから出す改名": lambda repo: (
+                self.git(repo, "mv", DRAWING_FILES[0], "docs/Canvas.swift"),
+                self.commit(repo, "move out"),
+            ),
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                repo = self.branch_repo()
+                change(repo)
+                self.assertIn("描画に触れる", self.preview(repo).stdout)
+
+    def test_PRの無いブランチを下の階層から打っても未追跡のファイルを数える(self):
+        """未追跡の一覧は既定で打った場所の下しか見ず、パスもそこからの相対になる。"""
+        repo = self.branch_repo()
+        self.put(repo, "Sources/MokumeCore/New.swift", "// new\n")
+        out = self.preview(repo, cwd=repo / "docs").stdout
+        self.assertIn("描画に触れる", out)
+        self.assertIn("Sources/MokumeCore/New.swift", out)
+
+    def test_PRの無いブランチで描画に触れなければそう言う(self):
+        repo = self.branch_repo()
+        self.put(repo, "docs/note.md", "changed\n")
+        self.commit(repo, "docs")
+        out = self.preview(repo).stdout
+        self.assertIn("描画に触れない", out)
+        self.assertNotIn("gh pr create", out)
+
+    def test_PRの無いブランチの差は分岐点から取る(self):
+        """分岐した後に main へ入った描画の変更を、このブランチの変更と数えない。"""
+        repo = self.branch_repo()
+        self.put(repo, "docs/note.md", "changed\n")
+        self.commit(repo, "docs")
+        self.git(repo, "switch", "-q", "main")
+        self.put(repo, DRAWING_FILES[0], "// main moved on\n")
+        self.commit(repo, "main moves on")
+        self.git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git(repo, "switch", "-q", "work")
+        self.assertIn("描画に触れない", self.preview(repo).stdout)
+
+    def test_PRの無いブランチで触れるファイルが多ければ件数で畳む(self):
+        repo = self.branch_repo()
+        for i in range(7):
+            self.put(repo, f"Sources/MokumeCore/F{i}.swift", "// new\n")
+        self.commit(repo, "many")
+        out = self.preview(repo).stdout
+        self.assertIn("7 件が描画に触れる", out)
+        self.assertEqual(out.count("Sources/MokumeCore/F"), 5, "並べるのは先頭の 5 件まで:\n" + out)
+        self.assertIn("ほか 2 件", out)
+
+    def test_PRの無いブランチでorigin_mainとの差が引けなければ判定しない(self):
+        cases = {
+            "origin/main が無い": lambda: self.branch_repo(with_origin_main=False),
+            "git の外": lambda: self.root,
+        }
+        for name, make_repo in cases.items():
+            with self.subTest(name):
+                repo = make_repo()
+                if repo != self.root:
+                    self.put(repo, DRAWING_FILES[0], "// changed\n")
+                    self.commit(repo, "change drawing")
+                out = self.preview(repo).stdout
+                self.assertIn("判定しない", out)
+                self.assertIn("PR が無く、origin/main との分岐点も引けない", out)
+                self.assertNotIn("描画に触れ", out)
+
+    def test_番号を名指ししたPRが読めなければ手元の差を当てない(self):
+        """CI は既定ブランチを checkout して PR_NUMBER を渡す。手元の木はその PR の木ではない。"""
+        repo = self.branch_repo()
+        self.put(repo, DRAWING_FILES[0], "// changed\n")
+        self.commit(repo, "change drawing")
+        # run_script は env を残すので、PR_NUMBER を入れるのは後にする
+        for name, kwargs in (("引数", {"args": ("101",)}), ("PR_NUMBER", {"args": (), "PR_NUMBER": "101"})):
+            with self.subTest(name):
+                r = self.run_script(cwd=repo, GH_NO_PR="1", **kwargs)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("判定しない", r.stdout)
+                self.assertIn("PR #101 を読めなかった", r.stdout)
+                self.assertNotIn("描画に触れ", r.stdout)
 
     # --- 呼び方 -----------------------------------------------------------
 
