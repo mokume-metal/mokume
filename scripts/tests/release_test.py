@@ -9,12 +9,15 @@
   3. 書いた断片がノートから黙って消えない (知らない分類も落とさない)
   4. 組めない形の断片は main に入る前に名指しで落ちる (#91)
   5. 書いた本文がまるごと 1 つの項目の中に描かれる (#446)
+  6. 描画に触れた PR の絵が「この版の絵」に並び、それ以外は載らない (#2109)
 
 git は一時リポジトリを本物で回す — 「前回のタグ以降に追加されたか」は履歴の話で、
 そこを模造すると検査が確かめたい当のものを確かめなくなる。
 """
 
+import contextlib
 import importlib.util
+import io
 import subprocess
 import tempfile
 import unittest
@@ -332,6 +335,161 @@ class HistoryTests(unittest.TestCase):
         (self.root / "changelog.d" / "README.md").write_text("案内\n", encoding="utf-8")
         self.commit("docs: 案内を置く")
         self.assertEqual(release.added_fragments(None), [])
+
+
+
+class PicturesTests(unittest.TestCase):
+    """この版の絵 (#2109)。
+
+    PR の本文とラベルは gh から来るので差し替え、履歴と描画のパスの照合は本物で回す —
+    「描画に触れたか」を模造すると、確かめたい当の照合を確かめなくなる。
+    """
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        for args in (
+            ("init", "-q", "-b", "main"),
+            ("config", "user.email", "test@example.com"),
+            ("config", "user.name", "test"),
+            ("config", "commit.gpgsign", "false"),
+            ("config", "tag.gpgsign", "false"),
+        ):
+            self.git(*args)
+        self.write("README.md")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "chore: 始める")
+        self.git("tag", "v0.1.0")
+        self.original_repo = release.REPO
+        release.REPO = self.root
+        self.pulls: dict[int, dict] = {}
+
+    def tearDown(self):
+        release.REPO = self.original_repo
+        self.directory.cleanup()
+
+    def git(self, *args: str):
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+    def write(self, path: str):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"{path}\n")
+
+    def merge(self, number: int, path: str, body: str, labels: tuple[str, ...] = ()):
+        """squash で入った PR を 1 本積む。題の末尾に GitHub と同じ `(#N)` を付ける。"""
+        self.pulls[number] = {
+            "number": number,
+            "title": f"fix: 直す {number}",
+            "url": f"https://github.com/example/repo/pull/{number}",
+            "body": body,
+            "labels": [{"name": label} for label in labels],
+        }
+        self.write(path)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", f"fix: 直す {number} (#{number})")
+
+    def section(self) -> str:
+        return release.pictures("v0.1.0", fetch=self.pulls.get)
+
+    def test_a_drawing_pull_shows_its_pictures_and_a_link(self):
+        self.merge(10, "Sources/MokumeCore/Circle.swift",
+                   "## 確認方法\n\n<img src=\"https://i.gyazo.com/a.png\" width=\"240\">\n"
+                   "![after](https://i.gyazo.com/b.png)")
+        section = self.section()
+        self.assertTrue(section.startswith("## この版の絵"))
+        self.assertIn("[#10 fix: 直す 10](https://github.com/example/repo/pull/10)", section)
+        self.assertIn('<img src="https://i.gyazo.com/a.png" width="240">', section)
+        self.assertIn("![after](https://i.gyazo.com/b.png)", section)
+
+    def test_only_drawing_pulls_without_the_escape_label_are_listed(self):
+        self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")
+        self.merge(11, "docs/guide.md", "![図](https://i.gyazo.com/doc.png)")
+        self.merge(12, "Sources/MokumeCore/Line.swift", "整えただけ", ("no-visual-change",))
+        section = self.section()
+        self.assertIn("#10", section)
+        self.assertNotIn("#11", section)
+        self.assertNotIn("doc.png", section)
+        self.assertNotIn("#12", section)
+
+    def test_no_section_without_a_drawing_pull(self):
+        self.merge(11, "docs/guide.md", "![図](https://i.gyazo.com/doc.png)")
+        self.merge(12, "Sources/MokumeCore/Line.swift", "整えただけ", ("no-visual-change",))
+        self.assertEqual(self.section(), "")
+        # 断片だけのノートは、節を足す前と 1 文字も変わらない
+        fragment = self.root / "a.feature.md"
+        fragment.write_text("足した\n", encoding="utf-8")
+        self.assertEqual(release.notes([fragment], self.section()), "## 新機能\n\n- 足した\n")
+
+    def test_the_section_follows_the_fragments(self):
+        self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")
+        fragment = self.root / "a.fix.md"
+        fragment.write_text("直した\n", encoding="utf-8")
+        notes = release.notes([fragment], self.section())
+        self.assertLess(notes.index("## 修正"), notes.index("## この版の絵"))
+
+    def test_the_release_notes_carry_the_section(self):
+        # 組み立ての部品だけでなく、Release が実際に使う notes サブコマンドまで通す
+        (self.root / "changelog.d").mkdir()
+        (self.root / "changelog.d" / "a.fix.md").write_text("直した\n", encoding="utf-8")
+        self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")
+        original_fetch = release.fetch_pull
+        release.fetch_pull = self.pulls.get
+        output = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(release.command_notes(), 0)
+        finally:
+            release.fetch_pull = original_fetch
+        self.assertIn("## 修正", output.getvalue())
+        self.assertIn("![絵](https://i.gyazo.com/a.png)", output.getvalue())
+
+    def test_an_unreadable_pull_is_named_not_dropped(self):
+        self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")
+        del self.pulls[10]
+        section = self.section()
+        self.assertIn("### #10", section)
+        self.assertIn("読めなかった", section)
+
+    def test_pulls_before_the_last_tag_are_not_listed(self):
+        self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")
+        self.git("tag", "v0.2.0")
+        self.merge(11, "Sources/MokumeCore/Line.swift", "![線](https://i.gyazo.com/b.png)")
+        section = release.pictures("v0.2.0", fetch=self.pulls.get)
+        self.assertNotIn("#10", section)
+        self.assertIn("#11", section)
+
+
+class PicturesOfTests(unittest.TestCase):
+    """本文から絵の参照を抜く。"""
+
+    def test_takes_each_form_drawing_evidence_accepts(self):
+        body = (
+            "<img src=\"https://i.gyazo.com/a.png\" width=\"240\">\n"
+            "![b](https://i.gyazo.com/b.png)\n"
+            "https://github.com/user-attachments/assets/0f1e\n"
+            "https://example.com/c.webp\n"
+        )
+        self.assertEqual(
+            release.pictures_of(body),
+            [
+                '<img src="https://i.gyazo.com/a.png" width="240">',
+                "![b](https://i.gyazo.com/b.png)",
+                "https://github.com/user-attachments/assets/0f1e",
+                "![](https://example.com/c.webp)",
+            ],
+        )
+
+    def test_a_url_inside_a_tag_is_not_taken_twice(self):
+        self.assertEqual(len(release.pictures_of('<img src="https://i.gyazo.com/a.png">')), 1)
+
+    def test_the_same_picture_appears_once(self):
+        body = "![x](https://i.gyazo.com/a.png)\n![x](https://i.gyazo.com/a.png)"
+        self.assertEqual(len(release.pictures_of(body)), 1)
+
+    def test_comments_and_code_blocks_are_not_pictures(self):
+        body = "<!-- ![例](https://i.gyazo.com/t.png) -->\n```markdown\n![例](https://i.gyazo.com/c.png)\n```\n"
+        self.assertEqual(release.pictures_of(body), [])
 
 
 if __name__ == "__main__":

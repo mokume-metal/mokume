@@ -13,6 +13,17 @@
   - 版は履歴から決める (タグが唯一の記録)
   - ノートの本文は、前回のタグ以降に**追加された** changelog.d/ の断片から組む
   - 断片が 1 つも無ければリリースしない (中身の無い版を出さない)
+  - 描画に触れた PR の絵を「この版の絵」としてノートの末尾に並べる (#2109)
+
+「この版の絵」は人が新しい絵を作家の目で見る場所である (ADR-0036 決定 7)。専用機の
+render が見るのは触っていない絵の退行だけで、新しい絵の正しさは誰も判定していない。
+**新しく撮らない。** 素材は描画の PR に drawing-evidence が既に要求している本文の絵で、
+範囲は前回のタグから今回までの squash のコミット (題の末尾の `(#N)`) である。
+  - 描画に触れたかは、そのコミットの変更ファイルを scripts/drawing-paths.sh に照らす
+    (照合の実体を 1 つに保つ。PR の files の口は上限がある — #793)
+  - `no-visual-change` の PR は載せない (絵は変わらないという申告)
+  - 本文とラベルは gh で読む。読めなかった PR は**黙って落とさず**名指しで残す
+  - 題に `(#N)` の無いコミット (PR を経ない push) は PR の本文が無いので載らない
 
 サブコマンド:
   next-version   次の版を出す。出すものが無ければ終了コード 2
@@ -20,6 +31,7 @@
   lint           断片が組める形をしているかを見る。壊れていれば終了コード 1
 """
 
+import json
 import re
 import subprocess
 import sys
@@ -44,6 +56,29 @@ FRAGMENT_NAME_PATTERN = re.compile(r"^(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.(?P<ca
 INLINE_LINK_PATTERN = re.compile(r"\[[^\]]*\]\((?P<target>[^)]*)\)")
 # `[文字][ラベル]` — 定義が別ファイルに残るのでノートでは必ず壊れる
 REFERENCE_LINK_PATTERN = re.compile(r"\[[^\]]*\]\[[^\]]*\]")
+
+# 描画に触れたかの照合。ノートは REPO を差し替えて検査するので、照合はこのスクリプトの
+# 隣から引く (照合の実体は drawing-paths.sh の 1 つ)
+DRAWING_PATHS_SCRIPT = Path(__file__).resolve().parent / "drawing-paths.sh"
+# 絵は変わらないという申告。読み手は drawing-evidence と、ここ
+ESCAPE_LABEL = "no-visual-change"
+# squash のコミットの題の末尾に GitHub が付ける PR の番号
+PULL_NUMBER_PATTERN = re.compile(r"\(#(?P<number>\d+)\)$")
+# 本文の中の絵の参照。drawing-evidence の has_evidence が通すものと同じ範囲を取る。
+# 先に来た形が勝つので、タグや画像の記法の中の URL を 2 度拾わない
+PICTURE_PATTERN = re.compile(
+    r"!\[[^\]]*\]\([^)\s]+[^)]*\)"
+    r"|<video\b[^>]*>.*?</video>"
+    r"|<(?:img|video)\b[^>]*>"
+    r"|https?://[^\s)\"'<>]+\.(?:png|jpe?g|gif|webp|avif|mp4|mov|webm)\b"
+    r"|https?://(?:i\.)?gyazo\.com/[^\s)\"'<>]+"
+    r"|https://github\.com/user-attachments/[^\s)\"'<>]+",
+    re.IGNORECASE | re.DOTALL,
+)
+# 裸の URL のうち、画像の記法に包めば絵として描かれるもの
+BARE_IMAGE_PATTERN = re.compile(r"^https?://\S+\.(?:png|jpe?g|gif|webp|avif)$", re.IGNORECASE)
+# 絵の参照として読まない所。テンプレートの注釈と、記法の例を書いたコードブロック
+UNSHOWN_PATTERN = re.compile(r"<!--.*?-->|^```.*?^```", re.DOTALL | re.MULTILINE)
 
 TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # Conventional Commits の頭。`!` は破壊的変更の印
@@ -143,8 +178,81 @@ def as_list_item(entry: str) -> str:
     return "\n".join([f"- {first}", *(f"  {line}" if line.strip() else "" for line in rest)])
 
 
-def notes(fragments: list[Path]) -> str:
-    """Release の本文を組む。"""
+def merged_pulls(since: str | None) -> list[tuple[int, list[str]]]:
+    """前回のタグ以降に squash で入った PR の番号と、そのコミットの変更ファイル。古い順。"""
+    log = git(
+        "log", "--reverse", "--format=%x00%s", "--name-only",
+        f"{since}..HEAD" if since else "HEAD",
+    )
+    pulls: list[tuple[int, list[str]]] = []
+    for chunk in log.split("\0")[1:]:
+        subject, *files = chunk.strip("\n").split("\n")
+        if match := PULL_NUMBER_PATTERN.search(subject.strip()):
+            pulls.append((int(match.group("number")), [f for f in files if f]))
+    return pulls
+
+
+def drawing_files(files: list[str]) -> list[str]:
+    """files のうち描画の場所に載っているもの。照合は drawing-paths.sh に任せる。"""
+    if not files:
+        return []
+    result = subprocess.run(
+        ["bash", "-c", '. "$1" && drawing_files', "drawing-paths", str(DRAWING_PATHS_SCRIPT)],
+        input="\n".join(files) + "\n", check=True, capture_output=True, text=True,
+    )
+    return result.stdout.split()
+
+
+def fetch_pull(number: int) -> dict | None:
+    """PR の題・URL・本文・ラベル。読めなければ None。"""
+    result = subprocess.run(
+        ["gh", "pr", "view", str(number), "--json", "number,title,url,body,labels"],
+        cwd=REPO, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return json.loads(result.stdout)
+
+
+def pictures_of(body: str) -> list[str]:
+    """本文から絵の参照を出てきた順に抜く。同じものは 1 度だけ。"""
+    found: list[str] = []
+    for match in PICTURE_PATTERN.finditer(UNSHOWN_PATTERN.sub("", body or "")):
+        picture = match.group(0)
+        if BARE_IMAGE_PATTERN.match(picture):
+            picture = f"![]({picture})"
+        if picture not in found:
+            found.append(picture)
+    return found
+
+
+def pictures(since: str | None, fetch=None) -> str:
+    """「この版の絵」の節。描画に触れた PR が 1 本も無ければ空文字列。
+
+    fetch は PR の番号から gh pr view の JSON (読めなければ None) を返す。既定は fetch_pull
+    で、検査が差し替える。
+    """
+    fetch = fetch or fetch_pull
+    lines: list[str] = []
+    for number, files in merged_pulls(since):
+        if not drawing_files(files):
+            continue
+        pull = fetch(number)
+        if pull is None:
+            lines += [f"### #{number}", "", "PR を読めなかった。絵は PR の本文を開いて見る。", ""]
+            continue
+        if ESCAPE_LABEL in {label.get("name") for label in pull.get("labels") or []}:
+            continue
+        lines += [f"### [#{number} {pull.get('title', '')}]({pull.get('url', '')})", ""]
+        lines += pictures_of(pull.get("body", "")) or ["本文に絵が見つからない。"]
+        lines.append("")
+    if not lines:
+        return ""
+    return "\n".join(["## この版の絵", "", *lines]).strip() + "\n"
+
+
+def notes(fragments: list[Path], picture_section: str = "") -> str:
+    """Release の本文を組む。picture_section は pictures() の出力で、末尾に置く。"""
     grouped: dict[str, list[str]] = {}
     for fragment in fragments:
         grouped.setdefault(category_of(fragment), []).append(body_of(fragment))
@@ -163,6 +271,8 @@ def notes(fragments: list[Path]) -> str:
         lines.append("")
         lines.extend(as_list_item(entry) for entry in grouped[name])
         lines.append("")
+    if picture_section:
+        lines.append(picture_section)
     return "\n".join(lines).strip() + "\n"
 
 
@@ -229,7 +339,7 @@ def command_notes() -> int:
     if not fragments:
         print("断片が 1 つも無い", file=sys.stderr)
         return 2
-    print(notes(fragments), end="")
+    print(notes(fragments, pictures(previous)), end="")
     return 0
 
 
