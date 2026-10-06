@@ -151,10 +151,12 @@ public final class Canvas {
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     var recordedStrokeRanges: [StrokeRange] = []
 
-    /// 保持する形を記録している間に、楕円・弧の塗りが積んだ平面の頂点の区間 (``RingFillRange``・#1645)。
+    /// 保持する形を記録している間に、楕円・弧と名指しの基本図形 (`rect`) の塗りが積んだ平面の頂点の
+    /// 区間 (``RingFillRange``・#1645・#1934)。
     ///
-    /// 周は記録のときの拡大で刻んであるので、**区間を刻み直す素材を覚えておき、置くときの拡大で
-    /// 刻み直す** (`Shape.fillRanges`)。記録を終えると `createShape` が抜く。
+    /// 周は記録のときの拡大で刻んであるので、**区間を組み直す素材を覚えておき、置くときの拡大で
+    /// 刻み直す**。置いた後に描く画素で 1 画素より細くなる名指しの基本図形の塗りは、置くときに広げる
+    /// (`Shape.fillRanges`)。記録を終えると `createShape` が抜く。
     var recordedFillRanges: [RingFillRange] = []
 
     /// 保持する形を記録している間に、立体の線が積んだ部品の元 (``SolidStrokePiece``)。

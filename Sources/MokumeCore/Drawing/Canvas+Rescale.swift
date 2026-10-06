@@ -229,7 +229,8 @@ extension Canvas {
         return vertices
     }
 
-    /// 周の元を持つ輪郭の塗りの頂点。扇で塗り (``fillInterior(_:)`` と同じ割り方・同じ式)、記録した
+    /// 周の元を持つ輪郭の塗りの頂点。扇で塗り (``fillInterior(_:thinFillMatrix:)`` が細さを補わない
+    /// ときと同じ割り方・同じ式)、記録した
     /// 頂点と同じ座標 (記録のときの変換を掛けた後・半画素寄せはしない) で返す。
     static func ringFillVertices(_ outline: Outline, recipe: RingFillRecipe) -> [ShapeVertex] {
         let points = outline.points
