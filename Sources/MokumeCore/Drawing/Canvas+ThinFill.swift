@@ -44,6 +44,12 @@ extension Canvas {
     /// - **小さい形** (どの向きも細い `rect`・長軸も細い楕円): 描く画素の軸に沿った描く画素 1 つの
     ///   正方形にし、被覆を描く画素での外接する箱の面積にする (円は直径の 2 乗・#1477 の判断 1 A。
     ///   線の点の補いと同じ形)
+    /// - **補いが成り立たない `rect` は補わない** (#1934 の 2 回目の反証 1): 回した後に縦横で倍率の
+    ///   違う拡大や剪断を掛けると、2 組の辺の隔たりがどちらも 1 を割ったまま、形は長い細い菱形に
+    ///   なる。正方形にすると潰れ、帯にすると弦がもう一組の辺に縛られて暗くなり横へ伸びるので、
+    ///   どの向きも細い `rect` は、描く画素での外接の箱が ``thinFillSmallReach`` 以内のときだけ
+    ///   小さい形にする。帯も、弦の平らな所がある (端の辺の、列 (行) の向きの長さが長い辺より短い)
+    ///   ときだけにする。それ以外は周から三角形に割る (直す前と同じ)
     /// - **長い向きが短い形** (列 (行) の向きの長さが ``thinFillShortSpan`` 未満): 上の 2 つでは、
     ///   長い向きの端が列の中心を跨ぐかどうかで、跨ぐ列の数が 1 つ振れる。長さ 1.5 の帯は 1 列か
     ///   2 列になり、光の量が倍まで振れる。そこで長い向きにも同じ手当てを当てる — 長さを整数の
@@ -86,9 +92,13 @@ extension Canvas {
         if named.isEllipse {
             return roundedDrawnWeight(2 * principalAxes(ellipseLinear(named, linear)).short) < 1
         }
-        let span = drawnRectSpans(named, by: linear)
-        return span.height < 1 || span.width < 1
+        return rectPlan(named, by: linear) != nil
     }
+
+    /// どの向きも細い `rect` を小さい形 (描く画素 1 つの正方形) とみなす、描く画素での外接の箱の
+    /// 大きさの上限。回した描く画素 1 つの正方形 (√2) が入る大きさで、これより長い形を正方形に
+    /// 潰さない (#1934 の 2 回目の反証 1)。
+    static let thinFillSmallReach: Float = 1.5
 
     // MARK: - 矩形
 
@@ -105,34 +115,70 @@ extension Canvas {
         return (height, width, 4 * named.half.x * named.half.y * area)
     }
 
+    /// 細い `rect` の補い方。
+    private enum RectPlan {
+        /// 小さい形: 描く画素 1 つの正方形。被覆は描く画素での面積。
+        case square(coverage: Float)
+        /// 帯: 1 組の辺の隔たり `span` だけが細い。`edge` は長い辺、`endAlong` は端の辺が列 (行) の
+        /// 向きにどれだけ伸びるか (描く画素)。
+        case band(widensHeight: Bool, span: Float, edge: SIMD2<Float>, endAlong: Float, area: Float)
+    }
+
+    /// 細い `rect` を、補いが成り立つ形のときだけどう補うか。細くないか、補いが成り立たない形
+    /// (``thinFillPieces(_:by:)`` の「補いが成り立たない `rect`」) なら `nil`。
+    ///
+    /// 2 本の辺は実際に描く画素へ写して測る: 形自身の x の向きの辺 `across` と y の向きの辺 `down`。
+    private static func rectPlan(
+        _ named: Outline.NamedFill, by linear: simd_float2x2
+    ) -> RectPlan? {
+        let span = drawnRectSpans(named, by: linear)
+        guard span.height < 1 || span.width < 1 else { return nil }
+        let across = linear.columns.0 * (2 * named.half.x)
+        let down = linear.columns.1 * (2 * named.half.y)
+        if span.height < 1, span.width < 1 {
+            // どの向きも細い: 外接の箱が小さく、面積も描く画素 1 つに満たないときだけ正方形にする
+            let box = abs(across) + abs(down)
+            guard box.x <= thinFillSmallReach, box.y <= thinFillSmallReach, span.area < 1
+            else { return nil }
+            return .square(coverage: span.area)
+        }
+        // 1 組だけが細い: 上下の辺が細いなら形自身の x の向きの辺が長い辺
+        let widensHeight = span.height < 1
+        let edge = widensHeight ? across : down
+        let end = widensHeight ? down : across
+        let byRows = abs(edge.y) > abs(edge.x)
+        let edgeAlong = byRows ? abs(edge.y) : abs(edge.x)
+        let endAlong = byRows ? abs(end.y) : abs(end.x)
+        // 弦の平らな所が無い (端の辺のほうが列の向きに長い) 形は、弦が端の辺に縛られる
+        guard endAlong < edgeAlong else { return nil }
+        return .band(
+            widensHeight: widensHeight, span: widensHeight ? span.height : span.width, edge: edge,
+            endAlong: endAlong, area: span.area)
+    }
+
     private static func thinRectPieces(
         _ named: Outline.NamedFill, by linear: simd_float2x2
     ) -> [ThinFillPiece]? {
-        let span = drawnRectSpans(named, by: linear)
-        guard span.height < 1 || span.width < 1 else { return nil }
-        // どの向きも細く、面積も描く画素 1 つに満たない形は、描く画素 1 つの正方形にする。強く
-        // 剪断した形はどの向きも細いまま面積が 1 を越えうるので、細いほうの向きだけを広げる
-        if span.height < 1, span.width < 1, span.area < 1 {
-            return [unitSquare(around: named.center, inverse: linear.inverse, coverage: span.area)]
+        guard let plan = rectPlan(named, by: linear) else { return nil }
+        let (widensHeight, thinSpan, edge, endAlong, area): (Bool, Float, SIMD2<Float>, Float, Float)
+        switch plan {
+        case .square(let coverage):
+            return [unitSquare(around: named.center, inverse: linear.inverse, coverage: coverage)]
+        case .band(let widens, let span, let longEdge, let along, let drawnArea):
+            (widensHeight, thinSpan, edge, endAlong, area) = (widens, span, longEdge, along, drawnArea)
         }
-        let widensHeight = span.height < 1 && (span.width >= 1 || span.height <= span.width)
-        // 長い辺 (描く画素)。上下の辺が細いなら形自身の x の向きの辺
-        let edge =
-            widensHeight
-            ? linear.columns.0 * (2 * named.half.x) : linear.columns.1 * (2 * named.half.y)
-        if let profile = ShortProfile(rectEdge: edge, area: span.area) {
+        // 長い向きが短い形の手当ては、端の辺が 1 列に収まるときだけ (剪断で端が長く伸びた形は、
+        // 長さを長い辺だけで数えると形が縮む)。収まらなければ帯のまま広げる
+        if endAlong <= 1, let profile = ShortProfile(rectEdge: edge, area: area) {
             return shortPieces(profile, center: named.center, inverse: linear.inverse)
         }
         var half = named.half
-        let coverage: Float
+        let band = widenedBand(thinSpan, along: simd_normalize(edge))
+        let coverage = band.coverage
         if widensHeight {
-            let band = widenedBand(span.height, along: simd_normalize(linear.columns.0))
             half.y *= band.widen
-            coverage = band.coverage
         } else {
-            let band = widenedBand(span.width, along: simd_normalize(linear.columns.1))
             half.x *= band.widen
-            coverage = band.coverage
         }
         let center = named.center
         return [

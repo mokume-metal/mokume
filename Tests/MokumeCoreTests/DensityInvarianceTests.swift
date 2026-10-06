@@ -515,6 +515,79 @@ struct DensityInvarianceTests {
             "\(isEllipse ? "楕円" : "rect"): \(broken.count) 件 — \(broken.prefix(8).joined(separator: " / "))")
     }
 
+    /// **どの向きも描く画素で細いが形としては長い `rect` と、剪断で弦が辺の隔たりに縛られる `rect` は
+    /// 補わず、三角形のまま描く** (#1934 の 2 回目の反証 1)。回した後に縦横で倍率の違う拡大や剪断を
+    /// 掛けると、2 組の辺の隔たりがどちらも 1 を割ったまま形は長くなる。そこへ「小さい形」や「帯」の
+    /// 手当てを当てると形が壊れる — `scale(1, 0.05)` の下で 45° 回した 4×4 の `rect` (幅 5.66 の細い
+    /// 菱形) が描く画素 1 つの正方形に潰れ、10×10 は幅 14.1 が 8 列に縮み、`scale(1, 0.02)` の
+    /// 20×20 と `shearX(atan(20))` の 10×0.9 は弦が辺の隔たりに縛られて暗くなり、横へ伸びていた。
+    /// 補いの手当てが正しいと言えない形は、補わない側へ倒す (直す前より悪くはしない)。
+    ///
+    /// 補わないことは、同じ 4 隅の `quad` (名指しの基本図形ではないので補わない・同じ割り方) と画素が
+    /// 一致することで見る。あわせて、小さい形 (回した 0.8×0.8) はこれまでどおり面積で出ることを見る。
+    @Test("どの向きも細い長い rect と剪断で弦が縛られる rect は補わず、三角形のまま描く (#1934)")
+    func longRectsThinBothWaysAreNotCollapsed() throws {
+        typealias Case = (label: String, place: (Canvas) -> Void, size: SIMD2<Float>)
+        let cases: [Case] = [
+            ("scale(1, 0.05)・rotate(π/4)・4×4", { $0.scale(1, 0.05); $0.rotate(Float.pi / 4) }, SIMD2(4, 4)),
+            ("scale(1, 0.05)・rotate(π/4)・10×10", { $0.scale(1, 0.05); $0.rotate(Float.pi / 4) }, SIMD2(10, 10)),
+            ("scale(1, 0.02)・rotate(π/4)・20×20", { $0.scale(1, 0.02); $0.rotate(Float.pi / 4) }, SIMD2(20, 20)),
+            ("shearX(atan(20))・10×0.9", { $0.shearX(atan(Float(20))) }, SIMD2(10, 0.9)),
+        ]
+        func render(_ shape: Case, shift: Float, asQuad: Bool) throws -> PixelBuffer {
+            let canvas = try Self.makeCanvas(density: 1)
+            try Self.draw(on: canvas) {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                canvas.shader(
+                    try canvas.makeShader(
+                        "float4 paint(Fragment in, Values values) { return in.color; }"))
+                canvas.translate(30 + shift, 60 + shift * 0.7)
+                shape.place(canvas)
+                let (w, h) = (shape.size.x, shape.size.y)
+                if asQuad {
+                    canvas.quad(0, 0, w, 0, w, h, 0, h)
+                } else {
+                    canvas.rect(0, 0, w, h)
+                }
+            }
+            return try canvas.target.readPixels()
+        }
+        var broken: [String] = []
+        for shape in cases {
+            for shift: Float in [0, 0.3, 0.5] {
+                let rect = try render(shape, shift: shift, asQuad: false)
+                let quad = try render(shape, shift: shift, asQuad: true)
+                var differing = 0
+                for y in 0..<rect.height {
+                    for x in 0..<rect.width where rect[x, y].red != quad[x, y].red { differing += 1 }
+                }
+                if differing > 0 { broken.append("\(shape.label)・ずらし \(shift): \(differing) 画素") }
+            }
+        }
+        #expect(broken.isEmpty, "補ってしまった: \(broken.joined(separator: " / "))")
+        // 小さい形は補い続ける: 回した 0.8×0.8 の正方形は面積 0.64 の光で出る
+        var small: [String] = []
+        for shift: Float in [0, 0.25, 0.3, 0.5] {
+            let canvas = try Self.makeCanvas(density: 1)
+            try Self.draw(on: canvas) {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                canvas.shader(
+                    try canvas.makeShader(
+                        "float4 paint(Fragment in, Values values) { return in.color; }"))
+                canvas.translate(30 + shift, 30 + shift * 0.7)
+                canvas.rotate(Float.pi / 4)
+                canvas.rect(-0.4, -0.4, 0.8, 0.8)
+            }
+            let light = Self.totalSum(try canvas.target.readPixels())
+            if abs(light - 0.64) > 0.064 { small.append("ずらし \(shift): \(light)") }
+        }
+        #expect(small.isEmpty, "回した小さい正方形 (期待 0.64): \(small.joined(separator: " / "))")
+    }
+
     /// **寸法や置き方が極端な細い塗りでも落ちない** (#1934 の反証 1)。細長い楕円の片の数を
     /// 整数へ直す前に有限か確かめ、上限で切る。直径が数でない・無限の楕円は補わず、これまでどおり
     /// 周から三角形に割る (距離関数の経路も有限でない半径は置かずに断る)。直す前は、直径 1e20 の
