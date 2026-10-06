@@ -499,7 +499,7 @@ extension Canvas {
     // MARK: - 立体の線
 
     /// 立体の線の補い。**記録の間は判断しない** — 置く面 (細かさ) が決まるのは置くときで、
-    /// 記録した部品は置くときに組み直す (``rebuiltSolidStroke(_:)``)。
+    /// 記録した部品は置くときに組み直す (``rebuiltSolidStroke(_:tinted:)``)。
     func thinSolidStroke(weight: Float, isPoint: Bool) -> ThinStroke? {
         guard !recordingShape else { return nil }
         return ThinStroke(drawnWeight: drawnSolidWeight(weight), isPoint: isPoint)

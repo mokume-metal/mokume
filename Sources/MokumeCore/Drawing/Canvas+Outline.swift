@@ -154,6 +154,13 @@ extension Canvas {
     /// 等しければ小さい番号) の位置で 1 度だけ置く — 奥の点に置くと、透視で群の点の間にある
     /// 不透明な面に隠れる。
     ///
+    /// 骨は片 (帯・点の形) を重ねたまま渡す。**重なりが絵に出る線 (半透明など) では、呼び出し側が
+    /// 重なる所を引いて積む** ([#1561]・`Canvas.buildCarvedSolidStroke`): 網を辿って太さ以内で
+    /// 繋がる片 (1 点に集まる帯と点の形・曲線の刻みの円板と 2 つ先の帯) は 1 回だけ混ぜる。
+    /// **奥行きの違う稜が画面で交わる所は、網を辿ると太さより離れているので、引かずに重ねて
+    /// 混ぜる** (別々の線が交わるのと同じ)。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
     /// [#1889]: https://github.com/mokume-metal/mokume/issues/1889
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
     ///
@@ -632,6 +639,12 @@ extension Canvas {
     /// (``StrokeRange``・``strokeOutline(_:)``・#1829)。
     var strokeOverlapsShow: Bool {
         if buildingFlatTemplate || currentShader != nil { return true }
+        return strokeColorOverlapsShow
+    }
+
+    /// いまの線の色と混ぜ方だけで、線の片の重なりが絵に出るか (``strokeOverlapsShow`` から断片と
+    /// 畳みの雛形の 2 つを除いたもの)。立体の線はこちらで決める (``solidStrokeOverlapsShow``)。
+    var strokeColorOverlapsShow: Bool {
         switch style.blendMode {
         case .replace: return false
         // 不透明なら、明るいほう・暗いほうを採る混ぜ方も 2 回目で値が変わらない
@@ -670,7 +683,7 @@ extension Canvas {
             let moved = (mapsBack ? inverse * point : point) + offset
             return strokePoint(x: moved.x, y: moved.y)
         }
-        carving.carved { polygon, range, hub, coverage in
+        carving.carved { polygon, range, hub, coverage, _ in
             let start = vertices.count
             defer { noteCoverage(coverage, in: start..<vertices.count) }
             guard let hub else {

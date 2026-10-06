@@ -633,8 +633,16 @@ extension Canvas {
     ///
     /// **描く画素で 1 画素より細い線は、描く画素 1 つの太さへ広げて被覆を下げる**
     /// (#1637・``ThinStroke``)。太さは出す画素なので、細さは置く面の細かさだけで決まる。
-    /// 記録の間は判断せず、置くときに置く面で組み直す (``rebuiltSolidStroke(_:)``)。
+    /// 記録の間は判断せず、置くときに置く面で組み直す (``rebuiltSolidStroke(_:tinted:)``)。
     ///
+    /// **重なる所は引いて積む** ([#1561])。帯・折れ目の形・端の形・曲線の刻みの円板は互いに
+    /// 重なるので、半透明の線 (重なりが絵に出る線・``solidStrokeOverlapsShow``) では、片を画面へ
+    /// 写して先に置いた片との重なりを引き、残りに元の片の平面から奥行きを付け直して積む
+    /// (``SolidStrokeCarving``)。線に沿って太さ以内で繋がる片は 1 回だけ混ぜる。**線に沿って
+    /// 太さより離れた所が画面で交わると (奥行きの違う部分の交わり・折り返し)、別々の線と同じく
+    /// 重ねて混ぜる。** 重なりが絵に出ない線 (不透明の色) は、引かずに重ねたまま積む。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
     func strokeSolidRing(
         _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
@@ -658,7 +666,7 @@ extension Canvas {
         guard !points.isEmpty, shapePoints.count == points.count else { return }
         let source = SolidStrokePiece.Source.ring(
             points: points, shapePoints: shapePoints, isClosed: isClosed, curveSteps: curveSteps)
-        recordingSolidStroke(source) { buildSolidStroke(source) }
+        recordingSolidStroke(source)
     }
 
     /// 置いた形の稜線を、いまの変換と線で引く (``SolidEdges``)。
@@ -666,6 +674,16 @@ extension Canvas {
     /// 帯は視線に合わせて**世界の座標で**組み立てるので、置き場所の変換を点へ焼き込む。
     /// 形自身の座標は稜線の点をそのまま渡す — 頂点を並べた形の輪郭と同じ約束で、
     /// 利用者の断片からは線も形の表面に留まって見える。
+    ///
+    /// **重なる所は引いて積む** ([#1561])。半透明の稜線は GPU で広げず (``placeGPUStroke(of:mesh:)``
+    /// は不透明の線だけ)、CPU の帯で組んで、稜の集まる点に集まる帯どうしと点の形の重なりを引く
+    /// (``strokeSolidRing(_:shapePoints:isClosed:curveSteps:)`` と同じ手順)。線に沿った隔たりは網の
+    /// 辺を辿った道のりで測る。**奥行きの違う稜が画面で交わる所は、網を辿ると太さより離れて
+    /// いるので、引かずに重ねて混ぜる** — 手前の稜を先に積んだ所では、後から積む奥の稜は奥行きで
+    /// 隠れる ([#2183])。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
+    /// [#2183]: https://github.com/mokume-metal/mokume/issues/2183
     func strokeSolidEdges(of source: SolidSource, mesh build: () -> SolidMesh) {
         // 区間の外では引かない。`noFill()` の立体はここだけを通る (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -687,7 +705,7 @@ extension Canvas {
         let strokeStart = solidVertices.count
         defer { rememberGPUStroke(of: source, from: strokeStart) }
         let stroke = SolidStrokePiece.Source.net(net, matrix: transform.matrix)
-        recordingSolidStroke(stroke) { buildSolidStroke(stroke) }
+        recordingSolidStroke(stroke)
     }
 
     /// 線 1 本 (周か網) を積む。**記録の間は、置くときに組み直せるよう元を覚える** ([#1547])。
@@ -702,24 +720,52 @@ extension Canvas {
     /// 位置を持たない。印のために面積 0 の三角形を積むと、公開の ``Shape/vertexCount`` が増え、
     /// GPU で組む線としても覚えてしまう。main の部品の記録 (何も積まない部品は覚えない) と同じ。
     ///
+    /// **片の重なりを引いて積むかも、記録したときのスタイルで決めて覚える** ([#1561]・
+    /// ``SolidStrokePiece/carves``)。置くときのスタイルは記録した形に効かないからで、置き場所で
+    /// 半透明の色を掛けたときは、置くときに引く (``rebuiltSolidStroke(_:tinted:)``)。
+    ///
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
-    private func recordingSolidStroke(_ source: SolidStrokePiece.Source, _ build: () -> Void) {
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
+    private func recordingSolidStroke(_ source: SolidStrokePiece.Source) {
         let start = solidVertices.count
-        build()
+        let carves = solidStrokeOverlapsShow
+        buildSolidStroke(source, carves: carves)
         guard recordingShape, solidVertices.count > start else { return }
         recordedSolidStrokes.append(
             SolidStrokePiece(
                 source: source, weight: style.strokeWeight, join: style.strokeJoin, cap: style.strokeCap,
                 vertexStart: start, vertexCount: solidVertices.count - start,
-                isLonePoint: solidStrokeIsLonePoint))
+                isLonePoint: solidStrokeIsLonePoint, carves: carves,
+                carvesWhenTinted: style.blendMode != .replace))
     }
+
+    /// 立体の線の片の重なりが絵に出るか ([#1561])。線の色と混ぜ方 (``strokeColorOverlapsShow``:
+    /// 半透明の `blend` / `lightest` / `darkest`・下地を読む混ぜ方) に、細い線を広げて被覆を下げた線
+    /// ([#1637]) を足す — 被覆が 1 未満なら、不透明の色でも重なった所が濃くなる。**出ない線は
+    /// 引かずに重ねて積む**ので、不透明の線の絵は 1 画素も変わらない。
+    ///
+    /// 平面の線と違い、**`shader()` が効いているだけでは引かない。** 引いて積むと不透明の絵でも
+    /// 縁の画素が動きうる (``strokeOverlapsShow``) うえ、立体の線では、不透明の色に `shader()` を
+    /// 付けて GPU の骨と同じ絵を CPU の帯で描くことができなくなる。断片が半透明を返す立体の線は、
+    /// 重なった所が濃いまま残る ([#2184])。GPU の骨で広げる細い稜線 (``placeGPUStroke(of:mesh:)``) も
+    /// ここを通らず、片を重ねたまま描く ([#2185])。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
+    /// [#1637]: https://github.com/mokume-metal/mokume/issues/1637
+    /// [#2184]: https://github.com/mokume-metal/mokume/issues/2184
+    /// [#2185]: https://github.com/mokume-metal/mokume/issues/2185
+    var solidStrokeOverlapsShow: Bool { strokeColorOverlapsShow || solidStrokeCoverage < 1 }
 
     /// 線 1 本を、いまのスタイルといまの視点で組む。積むか位置だけを受け取るかは
     /// ``solidStrokeCapture`` が決める。
     ///
     /// 周も網も、点と辺の網として 1 つの骨 (`strokeNet`) を通る。周の辺は隣り合う点を結んだ
     /// もの (閉じていれば最後の点から最初の点へも) で、点 1 つだけの周は端点の形そのものを置く。
-    private func buildSolidStroke(_ source: SolidStrokePiece.Source) {
+    ///
+    /// `carves` なら片の重なりを画面で引いて積む ([#1561]・``buildCarvedSolidStroke``)。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
+    private func buildSolidStroke(_ source: SolidStrokePiece.Source, carves: Bool) {
         let world: [SIMD3<Float>]
         let shape: [SIMD3<Float>]
         let edges: [(Int, Int)]
@@ -759,6 +805,11 @@ extension Canvas {
             shape = net.points
             edges = net.edges
         }
+        if carves {
+            return buildCarvedSolidStroke(
+                world: world, shape: shape, edges: edges, curveSteps: curveSteps, half: half,
+                discUnits: discUnits, camera: camera)
+        }
         strokeNet(
             count: world.count, edges: edges, curveSteps: curveSteps,
             samePoint: { world[$0] == world[$1] },
@@ -782,6 +833,77 @@ extension Canvas {
             })
     }
 
+    /// 線 1 本を、片の重なりを画面で引いて積む ([#1561]・``SolidStrokeCarving``)。
+    ///
+    /// 片は重ねて積むとき (``buildSolidStroke(_:carves:)``) と同じ骨・同じ式で組み、三角形にせず
+    /// 凸多角形のまま渡す。網の 1 点に集まる帯どうしと点の形、曲線の刻みの円板と 2 つ先の帯
+    /// のように、網を辿って太さ以内で繋がる片は 1 回だけ混ぜる。奥行きの違う稜が画面で交わる所は
+    /// 網を辿ると太さより離れているので、引かずに 2 回混ぜる。線を見ている側へ寄せる扱い
+    /// (`liftedTowardViewer`) は、戻した点に掛ける。
+    ///
+    /// 画面へ写せない片 (目の後ろへ回る点を持つ) は、引かずに重ねたまま積む。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
+    private func buildCarvedSolidStroke(
+        world: [SIMD3<Float>], shape: [SIMD3<Float>], edges: [(Int, Int)], curveSteps: [Bool],
+        half: Float, discUnits: [SIMD2<Float>], camera: StrokeCamera
+    ) {
+        var carving = SolidStrokeCarving(
+            points: world, edges: edges, weight: half * 2, viewProjection: viewProjection,
+            width: width, height: height)
+        /// 片を足す。画面へ写せなければ、重ねたまま扇で積む
+        func add(band: Int? = nil, point: Int? = nil, _ rim: [SIMD3<Float>], _ shapes: [SIMD3<Float>]) {
+            guard !carving.addPiece(band: band, point: point, rim: rim, shapes: shapes), rim.count >= 3
+            else { return }
+            for index in 2..<rim.count {
+                appendSolidStrokeTriangle(
+                    rim[0], rim[index - 1], rim[index], shape: (shapes[0], shapes[index - 1], shapes[index]),
+                    camera: camera)
+            }
+        }
+        // 骨は辺の順に 1 本ずつ帯を置く (`strokeNet`)。何本目かが辺の添字である
+        var edge = 0
+        strokeNet(
+            count: world.count, edges: edges, curveSteps: curveSteps,
+            samePoint: { world[$0] == world[$1] },
+            depth: { dot(world[$0] - camera.eye, camera.forward) },
+            toward: { screenToward(world[$0], world[$1], camera: camera) },
+            endSquare: { index, far in
+                let (right, down) = solidSquareAxes(at: world[index], awayFrom: world[far], camera: camera)
+                let (a, b, c, d) = solidSquareCorners(
+                    at: world[index], right: right, down: down, half: half, camera: camera)
+                add(point: index, [a, b, c, d], [SIMD3<Float>](repeating: shape[index], count: 4))
+            },
+            band: { a, b in
+                defer { edge += 1 }
+                guard let (p0, p1, p2, p3) = solidBandCorners(world[a], world[b], half: half, camera: camera)
+                else { return }
+                add(band: edge, [p0, p1, p2, p3], [shape[a], shape[b], shape[b], shape[a]])
+            },
+            disc: { index in
+                let rim = solidDiscRim(at: world[index], half: half, units: discUnits, camera: camera)
+                add(point: index, rim, [SIMD3<Float>](repeating: shape[index], count: rim.count))
+            },
+            square: { index in
+                let (a, b, c, d) = solidSquareCorners(
+                    at: world[index], right: camera.right, down: camera.down, half: half, camera: camera)
+                add(point: index, [a, b, c, d], [SIMD3<Float>](repeating: shape[index], count: 4))
+            },
+            corner: { index, first, second in
+                guard
+                    let corners = solidJoinCorners(
+                        at: world[index], (world[first.0], world[first.1]),
+                        (world[second.0], world[second.1]), join: style.strokeJoin, half: half,
+                        camera: camera)
+                else { return }
+                add(point: index, corners, [SIMD3<Float>](repeating: shape[index], count: corners.count))
+            })
+        carving.emit { a, b, c in
+            appendSolidStrokeTriangle(
+                a.position, b.position, c.position, shape: (a.shape, b.shape, c.shape), camera: camera)
+        }
+    }
+
     /// 記録の間に CPU で積んだ組み込み立体の線を、**置くときに GPU で組める**ものなら覚える
     /// (``RetainedGPUStroke``・#1756)。
     ///
@@ -803,7 +925,7 @@ extension Canvas {
     /// 記録した線 1 本を、**いまの視点で**組み直した頂点 (位置と形自身の座標)。
     ///
     /// 保持した形を置くときに、置いた後の点へ移した線を渡す (`placeSolid(_:of:instances:)`)。
-    /// 組むのはその場の線と同じ手順 (``buildSolidStroke(_:)``) で、太さ・折れ目・端は記録した
+    /// 組むのはその場の線と同じ手順 (``buildSolidStroke(_:carves:)``) で、太さ・折れ目・端は記録した
     /// ときのものを使う — 輪郭の形は形の中で決まり、置くときのスタイルは効かない
     /// (`Sketch/createShape(_:)`)。頂点の数は記録と違ってよい。置く側が区間ごと差し替える。
     ///
@@ -812,8 +934,15 @@ extension Canvas {
     /// ``SolidVertex/stroke`` に書く)。記録した面と置く面の細かさが違っても、その場で描いた
     /// 線と同じになる。点 1 つの線 (``SolidStrokePiece/isLonePoint``) は、細ければ画面の軸に
     /// 沿った正方形にする (その場の線の ``withThinSolidStroke(_:isPoint:_:)`` と同じ)。
+    ///
+    /// **片の重なりを引いて積むのは、重なりが絵に出る置き方だけ** ([#1561])。記録したときに
+    /// 出る線 (``SolidStrokePiece/carves``)・置き場所の色で透ける線 (`tinted`。`replace` で記録した
+    /// 線は除く)・置く面で細くなって被覆が 1 未満になる線である。色を掛けずに置く不透明の線は、
+    /// 重ねたまま積む。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
     func rebuiltSolidStroke(
-        _ piece: SolidStrokePiece
+        _ piece: SolidStrokePiece, tinted: Bool
     ) -> (corners: [(position: SIMD3<Float>, shape: SIMD3<Float>)], coverage: Float) {
         let thin = ThinStroke(drawnWeight: drawnSolidWeight(piece.weight), isPoint: piece.isLonePoint)
         // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組む太さで組む
@@ -822,7 +951,8 @@ extension Canvas {
         style.strokeJoin = piece.join
         style.strokeCap = thin != nil && piece.isLonePoint ? .square : piece.cap
         solidStrokeCapture = []
-        buildSolidStroke(piece.source)
+        buildSolidStroke(
+            piece.source, carves: piece.carves || (tinted && piece.carvesWhenTinted) || thin != nil)
         var built = solidStrokeCapture ?? []
         solidStrokeCapture = nil
         (style.strokeWeight, style.strokeJoin, style.strokeCap) = saved
@@ -866,16 +996,22 @@ extension Canvas {
         _ a: SIMD3<Float>, _ b: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>), half: Float, camera: StrokeCamera
     ) {
-        guard length_squared(b - a) > 0 else { return }
+        guard let (p0, p1, p2, p3) = solidBandCorners(a, b, half: half, camera: camera) else { return }
+        appendSolidStrokeTriangle(p0, p1, p2, shape: (shape.0, shape.1, shape.1), camera: camera)
+        appendSolidStrokeTriangle(p0, p2, p3, shape: (shape.0, shape.1, shape.0), camera: camera)
+    }
+
+    /// 帯の 4 隅 (a の側の縁・b の側の縁・b の側の反対の縁・a の側の反対の縁)。帯を持たなければ `nil`。
+    private func solidBandCorners(
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, half: Float, camera: StrokeCamera
+    ) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)? {
+        guard length_squared(b - a) > 0 else { return nil }
         // 画面で点に潰れる線 (目を通る線・平行で視線に沿う線) は帯の幅を持たない。両端は画面で
         // 重なる 1 点として、その先の帯との折れ目か端の形を置く (`strokeNet` の群・#1893)
-        guard let side = screenAcross(a, b, camera: camera) else { return }
+        guard let side = screenAcross(a, b, camera: camera) else { return nil }
         let atA = side * (half * camera.worldPerPixel(at: a, height: height))
         let atB = side * (half * camera.worldPerPixel(at: b, height: height))
-        appendSolidStrokeTriangle(
-            a + atA, b + atB, b - atB, shape: (shape.0, shape.1, shape.1), camera: camera)
-        appendSolidStrokeTriangle(
-            a + atA, b - atB, a - atA, shape: (shape.0, shape.1, shape.0), camera: camera)
+        return (a + atA, b + atB, b - atB, a - atA)
     }
 
     /// 線分を画面に写したときの垂線を、**世界の向き**で返す (長さ 1)。
@@ -958,13 +1094,36 @@ extension Canvas {
         camera: StrokeCamera
     ) {
         let radius = half * camera.worldPerPixel(at: center, height: height)
-        var previous = center + camera.right * radius
+        var previous = solidDiscPoint(center, nil, radius: radius, camera: camera)
         for unit in units.dropFirst() {
-            let current = center + (camera.right * unit.x + camera.down * unit.y) * radius
+            let current = solidDiscPoint(center, unit, radius: radius, camera: camera)
             appendSolidStrokeTriangle(
                 center, previous, current, shape: (shape, shape, shape), camera: camera)
             previous = current
         }
+    }
+
+    /// 円板の周の点 (``appendSolidDisc(at:shape:half:units:camera:)``)。`unit` が `nil` なら 0 番の点
+    /// (画面の横そのもの)。
+    private func solidDiscPoint(
+        _ center: SIMD3<Float>, _ unit: SIMD2<Float>?, radius: Float, camera: StrokeCamera
+    ) -> SIMD3<Float> {
+        guard let unit else { return center + camera.right * radius }
+        return center + (camera.right * unit.x + camera.down * unit.y) * radius
+    }
+
+    /// 円板の周 (凸多角形)。``appendSolidDisc(at:shape:half:units:camera:)`` が置く扇の周と同じ点で、
+    /// 一周した最後の点 (0 番と丸めの差しか違わない) は持たない。
+    private func solidDiscRim(
+        at center: SIMD3<Float>, half: Float, units: [SIMD2<Float>], camera: StrokeCamera
+    ) -> [SIMD3<Float>] {
+        let radius = half * camera.worldPerPixel(at: center, height: height)
+        var rim = [solidDiscPoint(center, nil, radius: radius, camera: camera)]
+        rim.reserveCapacity(units.count - 1)
+        for unit in units.dropFirst().dropLast() {
+            rim.append(solidDiscPoint(center, unit, radius: radius, camera: camera))
+        }
+        return rim
     }
 
     /// 立体の線の円板の、一周の分割数 ([#2011])。`half` は画面の半径 (太さの半分・出す画素)。
@@ -1033,11 +1192,28 @@ extension Canvas {
         at center: SIMD3<Float>, _ first: (SIMD3<Float>, SIMD3<Float>), _ second: (SIMD3<Float>, SIMD3<Float>),
         join: StrokeJoin, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
     ) {
+        guard
+            let corners = solidJoinCorners(
+                at: center, first, second, join: join, half: half, camera: camera)
+        else { return }
+        for index in 1..<(corners.count - 1) {
+            appendSolidStrokeTriangle(
+                corners[0], corners[index], corners[index + 1], shape: (shape, shape, shape),
+                camera: camera)
+        }
+    }
+
+    /// 丸めない折れ目の形の周 (凸多角形・``buildSolidJoin(at:_:_:join:shape:half:camera:)``)。周は
+    /// 角のすぐ内側の点から始まる。形を持たなければ `nil`。
+    private func solidJoinCorners(
+        at center: SIMD3<Float>, _ first: (SIMD3<Float>, SIMD3<Float>), _ second: (SIMD3<Float>, SIMD3<Float>),
+        join: StrokeJoin, half: Float, camera: StrokeCamera
+    ) -> [SIMD3<Float>]? {
         guard let across1 = screenAcross(first.1, first.0, camera: camera),
             let across2 = screenAcross(second.0, second.1, camera: camera),
             let arm1 = screenToward(first.0, first.1, camera: camera),
             let arm2 = screenToward(second.0, second.1, camera: camera)
-        else { return }
+        else { return nil }
         let (right, down) = (camera.right, camera.down)
         func onScreen(_ vector: SIMD3<Float>) -> SIMD2<Float> {
             SIMD2(dot(vector, right), dot(vector, down))
@@ -1046,7 +1222,7 @@ extension Canvas {
         // 引っ込む辺の向きを取り違え、外側の楔が埋まらない
         let rim = Self.joinRim(toward: arm1, arm2, half: 1, join: join)
         // 周は 角のすぐ内側・1 本目の外側の縁の角・(尖りか切り口)・2 本目の外側の縁の角
-        guard rim.count >= 4, let lastOffset = rim.last else { return }
+        guard rim.count >= 4, let lastOffset = rim.last else { return nil }
         let radius = half * camera.worldPerPixel(at: center, height: height)
         func placed(_ offset: SIMD2<Float>) -> SIMD3<Float> {
             center + (right * offset.x + down * offset.y) * radius
@@ -1057,11 +1233,7 @@ extension Canvas {
         var corners: [SIMD3<Float>] = [placed(rim[0]), center + side1 * radius]
         for offset in rim.dropFirst(2).dropLast() { corners.append(placed(offset)) }
         corners.append(center + side2 * radius)
-        for index in 1..<(corners.count - 1) {
-            appendSolidStrokeTriangle(
-                corners[0], corners[index], corners[index + 1], shape: (shape, shape, shape),
-                camera: camera)
-        }
+        return corners
     }
 
     /// 視線に正対し、画面の軸に沿った正方形を置く (向きの無い点の四角い端)。線の端の正方形は
@@ -1089,12 +1261,21 @@ extension Canvas {
         at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, shape: SIMD3<Float>,
         half: Float, camera: StrokeCamera
     ) {
+        let (right, down) = solidSquareAxes(at: center, awayFrom: from, camera: camera)
+        appendSolidSquare(at: center, right: right, down: down, shape: shape, half: half, camera: camera)
+    }
+
+    /// 線の端の正方形の 2 軸 (``appendSolidSquare(at:awayFrom:shape:half:camera:)``)。向きが決まらない
+    /// ときは画面の軸。
+    private func solidSquareAxes(
+        at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, camera: StrokeCamera
+    ) -> (right: SIMD3<Float>, down: SIMD3<Float>) {
         guard let right = screenAcross(from, center, camera: camera) else {
-            return appendSolidSquare(at: center, shape: shape, half: half, camera: camera)
+            return (camera.right, camera.down)
         }
         // 正方形は中心について対称なので、画面の中で 90° 回す向きはどちらでもよい
         let down = camera.right * -dot(right, camera.down) + camera.down * dot(right, camera.right)
-        appendSolidSquare(at: center, right: right, down: down, shape: shape, half: half, camera: camera)
+        return (right, down)
     }
 
     /// 視線に正対する正方形を、`right` / `down` の 2 軸で張る。
@@ -1102,20 +1283,29 @@ extension Canvas {
         at center: SIMD3<Float>, right: SIMD3<Float>, down: SIMD3<Float>, shape: SIMD3<Float>,
         half: Float, camera: StrokeCamera
     ) {
-        let radius = half * camera.worldPerPixel(at: center, height: height)
-        let a = center + (-right - down) * radius
-        let b = center + (right - down) * radius
-        let c = center + (right + down) * radius
-        let d = center + (-right + down) * radius
+        let (a, b, c, d) = solidSquareCorners(
+            at: center, right: right, down: down, half: half, camera: camera)
         appendSolidStrokeTriangle(a, b, c, shape: (shape, shape, shape), camera: camera)
         appendSolidStrokeTriangle(a, c, d, shape: (shape, shape, shape), camera: camera)
+    }
+
+    /// 正方形の 4 隅 (周の順)。
+    private func solidSquareCorners(
+        at center: SIMD3<Float>, right: SIMD3<Float>, down: SIMD3<Float>, half: Float,
+        camera: StrokeCamera
+    ) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
+        let radius = half * camera.worldPerPixel(at: center, height: height)
+        return (
+            center + (-right - down) * radius, center + (right - down) * radius,
+            center + (right + down) * radius, center + (-right + down) * radius
+        )
     }
 
     private func appendSolidStrokeTriangle(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), camera: StrokeCamera
     ) {
-        // 組み直しの間は積まずに、位置と形自身の座標だけを渡す (``rebuiltSolidStroke(_:)``)
+        // 組み直しの間は積まずに、位置と形自身の座標だけを渡す (``rebuiltSolidStroke(_:tinted:)``)
         if solidStrokeCapture != nil {
             solidStrokeCapture?.append((liftedTowardViewer(a, camera: camera), shape.0))
             solidStrokeCapture?.append((liftedTowardViewer(b, camera: camera), shape.1))

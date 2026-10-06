@@ -815,6 +815,8 @@ extension Canvas {
                 var moved = piece.moved(by: instance.matrix)
                 moved.vertexStart = base + (piece.vertexStart - vertices.startIndex)
                 if instance.isMirrored && indices == nil { moved.isReversed.toggle() }
+                // 置き場所の色は頂点に焼かれる。透けたら、外側を置くときも引いて積む (#1561)
+                if instance.color.w < 1, moved.carvesWhenTinted { moved.carves = true }
                 recordedSolidStrokes.append(moved)
             }
             return
@@ -840,7 +842,9 @@ extension Canvas {
         for piece in strokes.sorted(by: { $0.vertexStart < $1.vertexStart }) {
             appendBaked(upTo: piece.vertexStart)
             var prototype = instance.placing(vertices[piece.vertexStart])
-            let (corners, coverage) = rebuiltSolidStroke(piece.moved(by: instance.matrix))
+            // 置き場所の色で透けたら、片の重なりを引いて積む (#1561)
+            let (corners, coverage) = rebuiltSolidStroke(
+                piece.moved(by: instance.matrix), tinted: instance.color.w < 1)
             // 被覆も置く面で決まる (#1637)。線の頂点なので 0 にはならない
             prototype.stroke = coverage
             if coverage < 1 { thin = true }

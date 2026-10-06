@@ -45,7 +45,7 @@ struct CarveRecipe {
             out.append(ShapeVertex(position: b, uv: uv, color: color))
             out.append(ShapeVertex(position: c, uv: uv, color: color))
         }
-        carving.carved { polygon, range, hub, coverage in
+        carving.carved { polygon, range, hub, coverage, _ in
             let start = out.count
             defer { Canvas.CoverageSpan.note(coverage, in: start..<out.count, to: &spans) }
             guard let hub else {

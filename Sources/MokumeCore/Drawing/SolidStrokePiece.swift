@@ -66,8 +66,16 @@ struct SolidStrokePiece {
     /// 外側の記録に入れ子で置いたとき巻き方が食い違う。
     var isReversed: Bool = false
     /// 点 1 つの線 (端点の形だけ) の部品か。置く面で細くなるなら、画面の軸に沿った正方形に
-    /// して面積で被覆を決める (``Canvas/rebuiltSolidStroke(_:)``・#1637)。
+    /// して面積で被覆を決める (``Canvas/rebuiltSolidStroke(_:tinted:)``・#1637)。
     var isLonePoint: Bool = false
+    /// 片の重なりを引いて積む線か ([#1561])。記録したときのスタイルで決める
+    /// (``Canvas/solidStrokeOverlapsShow``)。記録の中で半透明の色を掛けて置き直した線も立てる。
+    ///
+    /// [#1561]: https://github.com/mokume-metal/mokume/issues/1561
+    var carves: Bool = false
+    /// 置き場所で半透明の色を掛けて置いたら、片の重なりを引いて積むか。記録したときの混ぜ方が
+    /// `replace` なら、重ねても同じ色になるので引かない。
+    var carvesWhenTinted: Bool = true
 
     /// 行列で移した線。頂点の並びの中での位置は変えない。
     func moved(by matrix: simd_float4x4) -> SolidStrokePiece {
