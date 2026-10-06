@@ -1115,6 +1115,9 @@ struct FormPaint {
     float4 stroke;
     float fillCoverage;
     float strokeCoverage;
+    /// 画素の中で塗りと輪郭の帯が重なる面積 `o` (塗りと輪郭を両方持つ形だけ。ほかは 0)。
+    /// 見積もるのは割り戻す前の塗りの被覆率からである
+    float overlap;
 };
 
 /// 距離関数で塗りと輪郭の被覆率を出す。**下地は見ない。**
@@ -1128,7 +1131,9 @@ struct FormPaint {
 /// - 継ぎ目の割り戻しを、塗りの被覆率に掛ける
 /// - 楕円の輪郭を、誤差が 1/255 に収まるときだけ、塗りの距離場から 1 次の近似でずらす
 ///
-/// 偽なら、塗りだけの形と輪郭だけの形を別々に出したのと同じ被覆率になる。
+/// 偽なら、塗りだけの形と輪郭だけの形を別々に出したのと同じ被覆率になる。どちらでも、塗りと
+/// 輪郭を両方持つ形には、画素の中で塗りと帯が重なる面積 `o` (`FormPaint.overlap`) も出す —
+/// 偽の入口 (下地を読む断片) は、それで画素を 4 つの面積に分けて混ぜる (`mokume_formFragment`)。
 ///
 /// **入口によって違うのは割り戻しの分だけで、輪郭の形はどの入口でも同じである。** 楕円の
 /// 輪郭の被覆率は、塗りの有無・混ぜ方によらず、輪郭だけの楕円と 1/255 以内で一致する
@@ -1225,10 +1230,10 @@ static inline FormPaint mokume_formPaint(
         // ([#1820](https://github.com/mokume-metal/mokume/issues/1820))。
         //
         // **近似でずらすのは、塗りと輪郭を先に重ねる断片だけである** (`layered`)。下地を読む
-        // 断片は、塗りだけの形の上に輪郭だけの形を重ねたのと同じ絵を出す約束 (下の割り戻しの
-        // 説明) なので、どの楕円も輪郭の位置で解き直す。近似のままだと、輪郭の内縁に 1 次の
-        // 近似の誤差 (半径 29 の円で被覆率 0.01 ほど) が残り、加算で表示の 1 段を越えた
-        // ([#1643](https://github.com/mokume-metal/mokume/issues/1643))
+        // 断片は、どの楕円も輪郭の位置で解き直す — 帯に丸ごと入る画素で、塗りだけの形の上に
+        // 輪郭だけの形を重ねたのと同じ絵を出す約束 (下の割り戻しの説明) があり、近似のままだと
+        // 輪郭の内縁に 1 次の近似の誤差 (半径 29 の円で被覆率 0.01 ほど) が残って、加算で表示の
+        // 1 段を越えた ([#1643](https://github.com/mokume-metal/mokume/issues/1643))
         if (kFormHasFill) {
             fill = mokume_ellipseField(p, form.size.xy);
             // 1 画素より細い楕円の塗りは、`rect` の細い塗りと同じ境目で、両縁を見る積で
@@ -1311,6 +1316,7 @@ static inline FormPaint mokume_formPaint(
     FormPaint paint;
     paint.fillCoverage = 0.0;
     paint.strokeCoverage = 0.0;
+    paint.overlap = 0.0;
     // **線と点は塗りを持たない。** 旗で列が切れるので塗りのある列には混ざらないが、
     // 種別は列の中で混ざるので、ここで名指しして外す
     if (kFormHasFill && kind != kFormLine) {
@@ -1334,40 +1340,40 @@ static inline FormPaint mokume_formPaint(
         // 被覆がそのまま残り、1 画素より細い線と点だけが別に数えた値を使う
         paint.strokeCoverage =
             isThinLine ? thinLineCoverage : max(0.0, outerCoverage - innerCoverage);
-        if (layered && kFormHasFill && kind != kFormLine) {
+        if (kFormHasFill && kind != kFormLine) {
             // **塗りと輪郭の継ぎ目で下地を漏らさない。** 2 つの被覆率をそのまま重ねると、
             // 画素の中で「塗り」と「輪郭の帯」が互いに無関係に散らばっているとみなすことに
             // なり、2 つが接する画素 (塗りの縁が帯の内縁と揃う側) で下地が透ける — 輪郭を
             // 画面で半画素寄せる約束 (ADR-0039 決定 2) では、塗りと帯の中心が半画素違うので
-            // 片側に必ず現れる (太さ 1 で最悪 25%・太さ 2 で 12% 暗くなった)。
+            // 片側に必ず現れる (重ねる混ぜ方の太さ 1 で最悪 25%・太さ 2 で 12% 暗くなった)。
             //
-            // そこで、画素の中で塗りと帯が**重なる割合**を見積もる。縁が画素の幅では平行と
-            // みなせるので、平行な半平面どうしの共通部分の被覆率は小さいほうになる:
-            // 塗り ∩ 帯 = (塗り ∩ 外縁) − (塗り ∩ 内縁)。塗りが見える重みは「帯の外の塗り
-            // は全部、帯の下の塗りは輪郭が透ける分だけ」で、それを重ねる式 (輪郭 over 塗り)
-            // で割り戻したものを塗りの被覆率とする。塗りだけ・輪郭だけの列は旗が外すので、
-            // 絵は 1 ビットも変わらない。
+            // そこで、画素の中で塗りと帯が**重なる面積** `o` を見積もる。縁が画素の幅では
+            // 平行とみなせるので、平行な半平面どうしの共通部分の被覆率は小さいほうになる:
+            // 塗り ∩ 帯 = (塗り ∩ 外縁) − (塗り ∩ 内縁)。これで画素を塗りだけ `f − o`・
+            // 重なり `o`・帯だけ `s − o`・どちらでもない所の 4 つの面積に分け、それぞれを
+            // 混ぜた色を面積で足す — 塗りと輪郭を両方持つ形の 1 画素の約束である
+            // ([#1867](https://github.com/mokume-metal/mokume/issues/1867) 決定 1・ADR-0039
+            // 決定 5)。塗りだけ・輪郭だけの列は旗が外すので、絵は 1 ビットも変わらない
+            paint.overlap = max(
+                0.0,
+                min(paint.fillCoverage, outerCoverage) - min(paint.fillCoverage, innerCoverage));
+        }
+        if (layered && kFormHasFill && kind != kFormLine) {
+            // **塗りと輪郭を先に重ねる断片は、4 つの面積の和を塗りの被覆率の割り戻しで解く**
+            // (`layered`)。重ねる (over) で解くと重なりには「輪郭 over 塗り」が入るので、
+            // 塗りが見える重みは「帯の外の塗りは全部、帯の下の塗りは輪郭が透ける分だけ」
+            // (`f − α·o`) になる。それを重ねる式 (輪郭 over 塗り) で割り戻したものを塗りの
+            // 被覆率とすると、置く色は `S·s + F·(f − α·o)` で、4 つの面積をそれぞれ over で
+            // 混ぜて足した色と項ごとに一致する。
             //
-            // **割り戻すのは、塗りと輪郭を先に重ねる断片だけである** (`layered`)。割り戻しは
-            // 「輪郭を塗りの上に重ねる (over)」前提の式で、下地を読む断片 (`mokume_formFragment`)
-            // は塗りと輪郭を別々に下地と混ぜる。そこへ持ち込むと、不透明な輪郭の帯の内側半分
-            // で分母 (帯の透ける割合) が 0 になって塗りが消え、加算で塗りが足されなかった
-            // ([#1643](https://github.com/mokume-metal/mokume/issues/1643))。別々に混ぜる
-            // 断片は割り戻す前の被覆率を使い、塗りだけの形の上に輪郭だけの形を重ねたのと
-            // 同じ絵を出す。
+            // **割り戻すのは、塗りと輪郭を先に重ねる断片だけである。** 割り戻しは「輪郭を
+            // 塗りの上に重ねる (over)」前提の式で、下地を読む断片 (`mokume_formFragment`) へ
+            // 持ち込むと、不透明な輪郭の帯の内側半分で分母 (帯の透ける割合) が 0 になって
+            // 塗りが消え、加算で塗りが足されなかった
+            // ([#1643](https://github.com/mokume-metal/mokume/issues/1643))。下地を読む断片は
+            // 割り戻す前の被覆率と `o` を受け取り、4 つの面積をそれぞれ下地と混ぜて足す。
             //
-            // **その代わり、下地を読む列には継ぎ目の漏れが戻る。** 被覆率について線形な
-            // `.add` / `.subtract` を除き、分けて重ねた絵 (三角形の経路も同じ) が持つ漏れを
-            // そのまま持つ。`.lightest` / `.screen` の白い円で、太さ 1 で最悪 24%・太さ 2 で
-            // 12% 暗い。「分けて重ねた絵と同じ」と「継ぎ目で漏れない」は線形でない混ぜ方では
-            // 両立せず、#1643 は前者を取った。どちらを約束にするかは
-            // [#1818](https://github.com/mokume-metal/mokume/issues/1818)
-            //
-            // **置き換える列は、帯の下の塗りを少しも見せない** (`replacing`)。画素を塗りだけ
-            // `f − o`・重なり `o`・帯だけ `s − o`・どちらでもない所の 4 つの面積に分け、
-            // それぞれを混ぜた色を面積で足す — 塗りと輪郭を両方持つ形の 1 画素の約束である
-            // ([#1867](https://github.com/mokume-metal/mokume/issues/1867) 決定 1)。重ねる
-            // (over) で解くと重なりには「輪郭 over 塗り」が入り、上の重みになる。置き換えで
+            // **置き換える列は、帯の下の塗りを少しも見せない** (`replacing`)。置き換えで
             // 解くと重なりには後に置いた輪郭だけが入るので、塗りが見える重みは `f − o` で、
             // 置く色は `S·s + F·(f − o)` になる。三角形の経路 (塗りの三角形の上に輪郭の
             // 三角形を置き換える) と、塗りだけ → 輪郭だけの順に分けて描いた絵が帯に置く色
@@ -1375,11 +1381,8 @@ static inline FormPaint mokume_formPaint(
             // 輪郭の帯の内側半分に塗りが透け、透明な地では α が輪郭の不透明度を越えて
             // 1.0 まで埋まった ([#1819](https://github.com/mokume-metal/mokume/issues/1819))。
             // 不透明な輪郭では 2 つの重みが同じになり、絵は 1 ビットも変わらない
-            float overlap = max(
-                0.0,
-                min(paint.fillCoverage, outerCoverage) - min(paint.fillCoverage, innerCoverage));
             float strokeAlpha = form.stroke.a;
-            float visible = paint.fillCoverage - overlap * (replacing ? 1.0 : strokeAlpha);
+            float visible = paint.fillCoverage - paint.overlap * (replacing ? 1.0 : strokeAlpha);
             float behind = 1.0 - strokeAlpha * paint.strokeCoverage;
             paint.fillCoverage = behind > 1e-4 ? saturate(visible / behind) : 0.0;
         }
@@ -1409,6 +1412,33 @@ static inline bool mokume_formIsBlank(FormPaint paint) {
 ///
 /// 使うのは固定機能のブレンドで表せない混ぜ方の列だけである
 /// (一覧は `ShapePipeline.BlendStates` の doc)。
+///
+/// **塗りと輪郭を両方持つ形の 1 画素は、4 つの面積に分けて混ぜる** ([#1818]・[#1867] 決定 1)。
+/// 塗りだけ `f − o`・重なり `o`・帯だけ `s − o`・どちらでもない `1 − (f + s − o)` の
+/// それぞれを被覆 1 で下地と混ぜ (重なりは塗りを混ぜた上に輪郭を混ぜる・どちらでもない所は
+/// 下地のまま)、面積で足す。被覆率を掛けた塗りと輪郭を順に混ぜると、線形でない混ぜ方
+/// (`.lightest` / `.screen` / `.darkest` / `.multiply` / `.difference` / `.exclusion`) では
+/// 2 つが接する継ぎ目で下地が透けた (`.lightest` の白い円で、太さ 1 で最悪 24%・太さ 2 で
+/// 12% 暗い)。重ねる列の割り戻し (`mokume_formPaint`) は、同じ読みを over で解いたものである。
+///
+/// **4 つに分けるのは、塗りの縁が帯に掛かる画素 (継ぎ目と、帯の下の塗りの縁) だけである。**
+/// `mokume_composite` は上の色の被覆率について線形 (`mix(下地, 被覆 1 で混ぜた色, 被覆率)`)
+/// なので、塗りか輪郭の片方しか掛からない画素と、塗りに丸ごと覆われた画素 (重なりが帯と
+/// 同じになる) では、4 つの面積の和は被覆率を掛けて塗り → 輪郭の順に混ぜた式と同じになる。
+/// そこは順に混ぜる式で出す — 塗りだけ・輪郭だけの形と、丸ごと覆われた画素の絵は 1 ビットも
+/// 変わらない。分ける画素では `mokume_composite` を最大 3 回呼ぶ (どちらでもない面積は下地の
+/// まま・重なりは塗りを混ぜた結果の上に輪郭を混ぜる)。
+///
+/// **呼ぶ口は、塗り → 輪郭の順に混ぜる式と分ける画素で共有し、片方しか掛からない画素は先に
+/// 1 回で返す。** 分ける画素と分けない画素が同じ SIMD の組に混ざると、別々の口は組の中で順に
+/// 走る。口を別にした形 (分ける画素だけの枝に 3 つ) は、直す前と比べた GPU 時間が、寸法違いの
+/// 小さな円 4000 個 (塗り + 輪郭・太さ 1) で +32%・直径 700 の円 200 個で +3% だった。口を
+/// 共有すると前者は +20% に下がったが、片方しか掛からない画素 (大きな形の中はほとんどこれ)
+/// まで共有の口へ流すと後者が +10% に上がった。先に 1 回で返すと +27% と +1% になる — 面を
+/// 覆う形の費用を小さく保つほうを取った (どれも release・1920×1080・[#1818])。
+///
+/// [#1818]: https://github.com/mokume-metal/mokume/issues/1818
+/// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
 fragment float4 mokume_formFragment(
     FormFragmentIn in [[stage_in]],
     constant uint &mode [[buffer(2)]],
@@ -1420,12 +1450,31 @@ fragment float4 mokume_formFragment(
         discard_fragment();
         return destination;
     }
-    // **塗りの上に輪郭**の順で、それぞれ下地と混ぜる — 塗りの三角形の上に輪郭の
-    // 三角形を置いていたときと同じ順序・同じ式。被覆 0 の側は掛けない
-    // (乗算を戻して掛け直す往復で最下位ビットが動くのを避ける)
-    float4 result = destination;
-    if (paint.fillCoverage > 0.0) { result = mokume_composite(paint.fill, result, mode); }
-    if (paint.strokeCoverage > 0.0) { result = mokume_composite(paint.stroke, result, mode); }
+    float f = paint.fillCoverage;
+    float s = paint.strokeCoverage;
+    // 片方しか掛からない画素。被覆 0 の側は掛けない (乗算を戻して掛け直す往復で最下位ビットが
+    // 動くのを避ける)。塗りだけ・輪郭だけの列はいつもここで返る
+    if (f <= 0.0 || s <= 0.0) {
+        return mokume_composite(f > 0.0 ? paint.fill : paint.stroke, destination, mode);
+    }
+    // 両方掛かる画素。**塗りの上に輪郭**の順で下地と混ぜる — 塗りの三角形の上に輪郭の三角形を
+    // 置いていたときと同じ順序。塗りに丸ごと覆われた画素は被覆率を掛けた色のまま 2 回で済み、
+    // 塗りの縁が掛かる画素 (`split`) だけ、被覆 1 の色で 4 つの面積に分ける
+    float o = paint.overlap;
+    bool split = f < 1.0;
+    float4 fillColor = paint.fill;
+    float4 strokeColor = paint.stroke;
+    if (split) {
+        FormInstance form = instances[in.instance];
+        fillColor = form.fill;
+        strokeColor = form.stroke;
+    }
+    float4 filled = mokume_composite(fillColor, destination, mode);
+    float4 stroked = filled;
+    if (!split || o > 0.0) { stroked = mokume_composite(strokeColor, filled, mode); }
+    if (!split) { return stroked; }
+    float4 result = destination * max(0.0, 1.0 - (f + s - o)) + filled * (f - o) + stroked * o;
+    if (s > o) { result += mokume_composite(strokeColor, destination, mode) * (s - o); }
     return result;
 }
 
