@@ -1424,9 +1424,18 @@ static inline bool mokume_formIsBlank(FormPaint paint) {
 /// **4 つに分けるのは、塗りの縁が帯に掛かる画素 (継ぎ目と、帯の下の塗りの縁) だけである。**
 /// `mokume_composite` は上の色の被覆率について線形 (`mix(下地, 被覆 1 で混ぜた色, 被覆率)`)
 /// なので、塗りか輪郭の片方しか掛からない画素と、塗りに丸ごと覆われた画素 (重なりが帯と
-/// 同じになる) では、4 つの面積の和は被覆率を掛けて順に混ぜた式と同じになる。そこは順に
-/// 混ぜる式で出す — 呼ぶのは 2 回までで、塗りだけ・輪郭だけの形と、丸ごと覆われた画素の
-/// 絵は 1 ビットも変わらない。分ける画素では `mokume_composite` を最大 3 回呼ぶ。
+/// 同じになる) では、4 つの面積の和は被覆率を掛けて塗り → 輪郭の順に混ぜた式と同じになる。
+/// そこは順に混ぜる式で出す — 塗りだけ・輪郭だけの形と、丸ごと覆われた画素の絵は 1 ビットも
+/// 変わらない。分ける画素では `mokume_composite` を最大 3 回呼ぶ (どちらでもない面積は下地の
+/// まま・重なりは塗りを混ぜた結果の上に輪郭を混ぜる)。
+///
+/// **呼ぶ口は、塗り → 輪郭の順に混ぜる式と分ける画素で共有し、片方しか掛からない画素は先に
+/// 1 回で返す。** 分ける画素と分けない画素が同じ SIMD の組に混ざると、別々の口は組の中で順に
+/// 走る。口を別にした形 (分ける画素だけの枝に 3 つ) は、直す前と比べた GPU 時間が、寸法違いの
+/// 小さな円 4000 個 (塗り + 輪郭・太さ 1) で +32%・直径 700 の円 200 個で +3% だった。口を
+/// 共有すると前者は +20% に下がったが、片方しか掛からない画素 (大きな形の中はほとんどこれ)
+/// まで共有の口へ流すと後者が +10% に上がった。先に 1 回で返すと +27% と +1% になる — 面を
+/// 覆う形の費用を小さく保つほうを取った (どれも release・1920×1080・[#1818])。
 ///
 /// [#1818]: https://github.com/mokume-metal/mokume/issues/1818
 /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
@@ -1443,22 +1452,29 @@ fragment float4 mokume_formFragment(
     }
     float f = paint.fillCoverage;
     float s = paint.strokeCoverage;
-    // 塗りだけ・輪郭だけの列では旗が外すので、この枝は原稿に残らない
-    if (kFormHasFill && kFormHasStroke && f > 0.0 && f < 1.0 && s > 0.0) {
-        FormInstance form = instances[in.instance];
-        float o = paint.overlap;
-        float4 filled = mokume_composite(form.fill, destination, mode);
-        float4 result = destination * max(0.0, 1.0 - (f + s - o)) + filled * (f - o);
-        if (o > 0.0) { result += mokume_composite(form.stroke, filled, mode) * o; }
-        if (s > o) { result += mokume_composite(form.stroke, destination, mode) * (s - o); }
-        return result;
+    // 片方しか掛からない画素。被覆 0 の側は掛けない (乗算を戻して掛け直す往復で最下位ビットが
+    // 動くのを避ける)。塗りだけ・輪郭だけの列はいつもここで返る
+    if (f <= 0.0 || s <= 0.0) {
+        return mokume_composite(f > 0.0 ? paint.fill : paint.stroke, destination, mode);
     }
-    // **塗りの上に輪郭**の順で、それぞれ下地と混ぜる — 塗りの三角形の上に輪郭の
-    // 三角形を置いていたときと同じ順序・同じ式。被覆 0 の側は掛けない
-    // (乗算を戻して掛け直す往復で最下位ビットが動くのを避ける)
-    float4 result = destination;
-    if (paint.fillCoverage > 0.0) { result = mokume_composite(paint.fill, result, mode); }
-    if (paint.strokeCoverage > 0.0) { result = mokume_composite(paint.stroke, result, mode); }
+    // 両方掛かる画素。**塗りの上に輪郭**の順で下地と混ぜる — 塗りの三角形の上に輪郭の三角形を
+    // 置いていたときと同じ順序。塗りに丸ごと覆われた画素は被覆率を掛けた色のまま 2 回で済み、
+    // 塗りの縁が掛かる画素 (`split`) だけ、被覆 1 の色で 4 つの面積に分ける
+    float o = paint.overlap;
+    bool split = f < 1.0;
+    float4 fillColor = paint.fill;
+    float4 strokeColor = paint.stroke;
+    if (split) {
+        FormInstance form = instances[in.instance];
+        fillColor = form.fill;
+        strokeColor = form.stroke;
+    }
+    float4 filled = mokume_composite(fillColor, destination, mode);
+    float4 stroked = filled;
+    if (!split || o > 0.0) { stroked = mokume_composite(strokeColor, filled, mode); }
+    if (!split) { return stroked; }
+    float4 result = destination * max(0.0, 1.0 - (f + s - o)) + filled * (f - o) + stroked * o;
+    if (s > o) { result += mokume_composite(strokeColor, destination, mode) * (s - o); }
     return result;
 }
 
