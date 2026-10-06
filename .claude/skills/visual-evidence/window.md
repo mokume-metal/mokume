@@ -39,7 +39,8 @@ screencapture -l <windowId> -V 5 motion.mov   # 5 秒の録画
 could not create image from window
 ```
 
-と名乗ってファイルを作らずに終わる。MCP の一覧に出ないのも同じ原因である。窓をいまの画面へ出して打ち直す:
+と名乗ってファイルを作らずに終わる。MCP の一覧に出ないのも同じ原因で、下の一覧を
+`[.optionOnScreenOnly]` で引いて消えていればこれである。窓をいまの画面へ出して打ち直す:
 
 ```bash
 osascript -e 'tell application "System Events" to set frontmost of first process whose unix id is <pid> to true'

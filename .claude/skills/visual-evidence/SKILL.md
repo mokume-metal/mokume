@@ -11,10 +11,9 @@ SPDX-License-Identifier: MIT
 
 # 視覚証跡を残す
 
-何を載せるかの規律は AGENTS.md「描画に影響する変更」が正典で、ここは手順だけを持つ。
-CI は描画を走らせられない ([#180](https://github.com/mokume-metal/mokume/issues/180)) ので、
-**PR に貼った絵が描画の唯一の検証記録になり、squash merge の後には足せない。**
-人なら入力欄へ画像を落とすだけでよく、この文書はエージェントの経路を扱う。
+何を載せるかの規律は AGENTS.md「描画に影響する変更」が正典で、ここは手順だけを持つ。CI は描画を走らせられない
+([#180](https://github.com/mokume-metal/mokume/issues/180)) ので、**PR に貼った絵が描画の唯一の検証記録になり、
+squash merge の後には足せない。** 人なら入力欄へ画像を落とすだけでよく、この文書はエージェントの経路を扱う。
 
 | 場面 | 読む先 |
 | --- | --- |
@@ -28,9 +27,8 @@ CI は描画を走らせられない ([#180](https://github.com/mokume-metal/mok
 
 ## 撮る — スケッチの絵 (経路 A)
 
-観測で撮れば、同じ条件で撮り直せ、他アプリの映り込みも窓の位置への依存も無い。
-**区画を作ってから起動する** — 観測は起動の瞬間に区画があるときだけ有効になる
-(`FrameObserver.makeIfEnabled`)。
+観測で撮れば、同じ条件で撮り直せ、他アプリの映り込みも窓の位置への依存も無い。**区画を作ってから起動する** —
+観測は起動の瞬間に区画があるときだけ有効になる (`FrameObserver.makeIfEnabled`)。
 
 ```bash
 mkdir -p <スケッチの場所>/.mokume/observe    # 起動より先に作る
@@ -43,10 +41,10 @@ swift run mokume-cli mcp <スケッチの場所>    # エージェントの窓�
 
 窓口の `observe` は絵の場所と内訳 (フレーム番号・時刻・大きさ・絵の要約・重さ・スケッチが差し出した値・
 版の刻印) を返す。**内訳はそのまま出所の記録になるので取っておく。** 刻印 (`stamp`) は `watch` で起こしたときだけ
-入り (`Sources/MokumeCLI/WatchSession.swift`)、`run` では黙って落ちる — その出所は、どの版を組んだかという
+入り (`Sources/MokumeCLI/WatchSession.swift`)、`run` では黙って落ちる。刻印が要るなら `watch` で起こす — `run` の出所は、どの版を組んだかという
 撮った本人の記録しか名乗れない ([#1091](https://github.com/mokume-metal/mokume/issues/1091))。
 窓口を立てず、`.mokume/observe/request.json` へ `{"id": "<毎回変える>"}` を原子的に置いて
-`report.json` の `id` が一致するまで待ってもよい。
+`report.json` の `id` が一致するまで待ってもよい (置き方は `scripts/observe_lib.py` の `place`)。
 
 ### 動きを撮る
 
@@ -111,7 +109,7 @@ kill "$tool"                                            # 配下のスケッチ�
 
 控え損ねたら `bash scripts/orphan-processes.sh` が PID を出所つきで出す。`pkill -f` で掃くときは、`ps` が
 見せる起動時のパス (`/tmp/…`) と `resolve()` した綴り (`/private/tmp/…`) が割れるので、
-`pkill -f '<スケッチ名>/.build'` のように綴りの割れない末尾側で照合する。
+`pkill -f '<スケッチ名>/.build'` のように綴りの割れない末尾側で照合する (外すと 1 つも当たらず全部残る)。
 
 ## 束ねる — 形式は宛先で決まる
 
@@ -146,7 +144,8 @@ BUNDLE
 **本線は 4MB を目安に収める。** 詰まるのは Gyazo (40MB) ではなく GitHub の camo である。5,242,880 バイトを
 超えると `Content length exceeded` で 404 になり、その手前でも途中で切られた側が 1 年キャッシュされる
 (実測では 3.7MB は無事、4.6MB が壊れた — [#369](https://github.com/mokume-metal/mokume/issues/369))。
-超えたら可逆の枠内で落とし、それでも収まらなければ短く / 小さくする。`-mixed` へ戻る段は作らない
+超えたら可逆の枠内で落とす — `-near_lossless` は可逆圧縮の中で値を丸めるだけで、元に無いものを足さない。
+それでも収まらなければ短く / 小さくする。`-mixed` へ戻る段は作らない
 (退避路は camo を通らず、上限も別 — [fallback.md](fallback.md) の「大きさの上限」)。
 
 ```bash
@@ -154,11 +153,13 @@ img2webp -loop 0 -near_lossless 60 -d 67 frames/f.*.png -o motion.webp   # 最�
 img2webp -loop 0 -near_lossless 40 -d 67 frames/f.*.png -o motion.webp   # 最大誤差 4 階調
 ```
 
+経路 A では `-d 67` で等間隔にせず、上の BUNDLE の `arguments` に `-near_lossless 60` を足す。
+
 ### 参照の面へ出す GIF
 
 参照の面は WebP を警告も出さずに落とし、参照ごと本文から消える (ビルドは緑)。mp4 は面の道具が `@Video` で
 扱えるが、上げる経路が無い。だからそちらへ出す動きだけ GIF にする
-(理由: [ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2)。パレットを作ってから通す:
+(理由: [ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2)。パレットを作ってから通す (例は録画 `motion.mov` から):
 
 ```bash
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos,palettegen" palette.png
@@ -168,13 +169,13 @@ ffmpeg -y -i motion.mov -i palette.png \
 
 ## 上げる
 
-**隔離 worktree (`isolation: "worktree"`) のサブエージェントは、撮る・束ねる・`desc` を組むまでで止まる。**
-ここから下 (上げる・見分ける・検算・公開の投稿・消す) は親が打つ。親へは、上げるファイルの絶対パス・`title`・
-`desc` (本文か `desc.txt` の絶対パス)・宛先の番号・撮影範囲と意図を、worktree の外で親から読める所に Issue 番号で
-分けて置いて返す (隔離 worktree は変更が無ければ消え、一時領域は兄弟と共有されうる)。ここの手順は
-ガードに止められるが、**止められた行をスクリプトへ移す・綴りを割るなどして通さない** — 検証できない
-コマンドを通さない守りを外すことになる。親は同じ行をそのまま打てる
-([#1494](https://github.com/mokume-metal/mokume/issues/1494))。
+**隔離されたサブエージェント (`isolation: "worktree"` など、ツール名によらない) は、撮る・束ねる・`desc` を
+組むまでで止まる。** ここから下 (上げる・見分ける・検算・公開の投稿・消す) は親が打ち、親が無人でも分担は
+変わらない (通せなければ [fallback.md](fallback.md) の「前提」のとおり Draft に落とす)。親へは、上げるファイルの
+絶対パス・`title`・`desc` (本文か `desc.txt` の絶対パス)・宛先の番号・撮影範囲と意図を、worktree の外で親から
+読める所に Issue 番号で分けて置いて返す (隔離 worktree は変更が無ければ消え、一時領域は兄弟と共有されうる)。
+ここの手順はガードに止められるが、**止められた行をスクリプトへ移す・綴りを割るなどして通さない** — 検証
+できないコマンドを通さない守りを外すことになる。親は同じ行をそのまま打てる ([#1494](https://github.com/mokume-metal/mokume/issues/1494))。
 
 ### 本線 — Gyazo へ上げる
 
@@ -195,7 +196,7 @@ GYAZO_TOKEN="$(eval "$MOKUME_GYAZO_TOKEN_CMD")" && curl -s \
 
 返る `url` (`https://i.gyazo.com/<id>.webp`) をそのまま貼る。
 
-`desc` は観測の応答と git から組み、画像だけ見て疑問に思うことに絞る。`metadata_is_public=true` で公開
+`desc` は観測の応答と git から組み (手で書かない)、画像だけ見て疑問に思うことに絞る。`metadata_is_public=true` で公開
 されるので、リポジトリ相対パス・SHA・版だけを載せ、手元の絶対パスやマシン名は入れない。
 **`desc` は後から直せない** (直すには消して上げ直し、URL が変わる) ので、上げる前に読み返す。
 
@@ -221,7 +222,7 @@ HEAD で足りるのは `i.gyazo.com` が転送を挟まず画像を返すから
 
 ## 貼る
 
-**コードは GitHub 側に持つ** (`desc` は直せず、画像からも読めない)。リポジトリにあるコードは行範囲つきの
+**コードは GitHub 側に持つ** (`desc` は直せず、画像からも読めない。Gyazo には画像から離れず直す必要の生じない事実だけを置く)。リポジトリにあるコードは行範囲つきの
 恒久リンクで指す。証跡のための使い捨てスケッチだけ `<details>` に全文を入れ、1 ファイルに収める —
 収まらないなら使い捨てではなく、リポジトリに入れるべきものである。
 
@@ -236,10 +237,10 @@ before / after は表で並べ、両方に同じ `width` を書く。素の `![]
 ```
 
 動きには撮影範囲と意図を文で添える: 何を撮ったか (観測したスケッチと条件、または窓)・どの操作の何秒間か・
-どこを見てほしいか。フレームを人が後から検める代わりの記録である。
+どこを見てほしいか。フレームを人が後から検める代わりの記録である (「守ること」)。
 
 **本線で貼ったら camo 側を検算する。** camo が途中で切った側はキャッシュに焼かれ、Gyazo の URL を直接
-叩いても気付けない。貼った本文から camo URL を取り、何度か叩いて原本と同じ長さが返るかを見る:
+叩いても、貼った本人の画面で見ても (どちらを引くかはエッジ次第) 気付けない。貼った本文から camo URL を取り、何度か叩いて原本と同じ長さが返るかを見る:
 
 ```bash
 gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.html+json' --jq .body_html \
@@ -295,6 +296,5 @@ GYAZO_TOKEN="$(eval "$MOKUME_GYAZO_TOKEN_CMD")" && curl -s -X DELETE \
   手元の秘密管理から読ませる。**値も在処もリポジトリに書かず、値そのものを環境変数にも置かない**
 - **窓の一覧 (経路 B)**: Gyazo の MCP サーバー (開発者向けプレビュー版で、仕様が変わることがある)
 - **セッション**: 無人でも通る (隔離 worktree のサブエージェントは「上げる」の頭)
-
-Claude Code 以外でもコマンドと規律は共通で、`allowed-tools` の MCP 名やブラウザの道具はその環境の対応物を
-確かめる。窓の一覧が無いことで止めず経路 A を使い、使えない道具があるときに公開済みと扱わない。
+- **Claude Code 以外**: コマンドと規律は共通。`allowed-tools` の MCP 名は Claude Code の接続名で、接続を
+  供給する設定ではない。窓の一覧が無くても経路 A で進め、使えない道具があるときに公開済みと扱わない
