@@ -26,6 +26,27 @@ PR に貼られた絵が描画の唯一の検証記録になり、squash merge �
 ([#1294](https://github.com/mokume-metal/mokume/issues/1294))、退避路の手順は [fallback.md](fallback.md) に
 分けてある — **本線が落ちていると分かったときにだけ読めばよい。**
 
+**撮るのは描画が変わるときだけではない。** 見た目・動きの Issue の再現、`no-visual-change` の PR でも
+見て分かるもの (窓の振る舞い・CLI や観測の出力・いまの絵) は、気軽に載せる — 文で読むより一目で分かる
+([#2195](https://github.com/mokume-metal/mokume/issues/2195))。
+
+## 最短 — コードから撮る (`--snippet`)
+
+draw() の本体に書けるもの (Issue の再現・API の振る舞い・before/after) は、スケッチを用意せず
+1 コマンドで撮れる。説明文の例を撮る機構を流用しており、撮るのは mokume の絵だけなので写り込みは無い。
+
+```bash
+python3 scripts/example-shots.py --snippet repro.swift --size 160x120          # 撮る (場所を出す)
+python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --upload \
+  --token-command "$MOKUME_GYAZO_TOKEN_CMD"                                     # 上げて Markdown を出す
+```
+
+- `--zoom K` — 最近傍で K 倍に拡げる。1 画素の継ぎ目・透け・AA の欠けは原寸では見えない
+- `--frames N` — 動きにする (可逆の WebP。`img2webp` が要る)
+- before/after は main の木と作業の木で同じファイルを撮り、下の「貼る」の表で並べる
+
+窓・GUI・`watch` の振る舞いなど、スケッチの外を見せたいときは下の経路 A / B を使う。
+
 複数の変更を人が確認する報告へ束ねるときは [report.md](report.md) を読む。画像のない
 変更にも具体例を添え、対象の全件・設計の意図・未確認事項を GitHub に残す手順である。
 
