@@ -72,12 +72,11 @@ public struct Shape {
     let thinnestRecordedWeight: Float
     /// 置いた後に細くなった輪郭を組み直した頂点の控え (#1637)。形 1 つに 1 つ。
     let thinCache = ThinStrokeCache()
-    /// ``solidVertices`` のうち**立体の線の頂点**が、どの部品から来たか。
+    /// ``solidVertices`` のうち**立体の線の頂点**の区間と、その線の元 (点と繋がり・スタイル)。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ位置のままでは
-    /// 置いた先で合わない。置くときに部品を置いた後の点といまの視点で組み直し、この
-    /// 区間の頂点の位置を上書きする (``SolidStrokePiece``・[#1547])。区間は
-    /// ``solidVertices`` の番号で、部品の点は形自身の座標である。
+    /// 置いた先で合わない。置くときに線の元を置いた後の点といまの視点で組み直し、この
+    /// 区間の代わりに差し込む (``SolidStrokePiece``・[#1547])。区間は ``solidVertices`` の番号である。
     ///
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     let solidStrokes: [SolidStrokePiece]

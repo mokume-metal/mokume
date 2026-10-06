@@ -450,7 +450,7 @@ enum Scene: String, CaseIterable, Sendable {
     ///
     /// **線は形の稜線を通る** (`SolidEdges`)。対角線が出る・継ぎ目が二重になる・
     /// 線が面と奥行きを取り合って途切れる、のどれが起きてもこの行が動く。折れ目の
-    /// 形も 2 種を振ってあるので、網の骨 (`strokeNet`) の円板と正方形の両方が通る。
+    /// 形も 2 種を振ってあるので、網の骨 (`strokeNet`) の円板と折れ目の両方が通る。
     case strokedSolids
     /// 光を当てた立体。底上げの光・向きを持つ光・広がりを持つ光を並べたもの。
     case lighting
@@ -1593,8 +1593,8 @@ enum Scene: String, CaseIterable, Sendable {
         place(106, 26, tint: (0.9, 0.75, 0.2)) { canvas.cylinder(11, 26, detail: 8) }
         place(22, 66, tint: (0.4, 0.7, 0.9)) { canvas.torus(13, 5, detail: 10) }
 
-        // 線だけの段。折れ目は削ぐ (辺が 2 本の角は二等分線に垂直に削ぎ、3 本以上の角は
-        // 正方形で埋まる・#1644)。**裏の稜線も見える**
+        // 線だけの段。折れ目は削ぐ (辺が 2 本の角は二等分線に垂直に削ぎ、3 本以上の角は画面で
+        // 180° を越える間を挟む 2 本で削ぐ・#1644・#1889)。**裏の稜線も見える**
         canvas.strokeJoin(.bevel)
         place(64, 66, tint: nil) { canvas.cone(13, 26, detail: 8) }
         place(106, 66, tint: nil) { canvas.plane(28, 22) }

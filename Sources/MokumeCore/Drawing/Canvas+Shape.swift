@@ -123,8 +123,8 @@ extension Canvas {
         }
         recordedFillRanges.removeLast(recordedFillRanges.count - fillRangeStart)
         let recordedSolid = Array(solidVertices[solidStart...])
-        // 立体の線の部品も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録
-        // なら外側の記録には、置き直した部品として `placeSolid` が積み直す)
+        // 立体の線の元も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録
+        // なら外側の記録には、置き直した線として `placeSolid` が積み直す)
         let recordedPieces = recordedSolidStrokes[solidStrokeStart...].map { piece in
             var piece = piece
             piece.vertexStart -= solidStart
@@ -647,7 +647,7 @@ extension Canvas {
     /// **立体の線を持つ区間も、置き場所ごとに頂点へ焼く** ([#1547])。線の帯は視点に
     /// 合わせて組むので、置き場所の行列を掛けただけでは向き・幅・目の側への寄せが記録した
     /// ときのまま残る。焼いた後で、線の頂点の位置だけを置いた後の点で組み直す
-    /// (``placeSolidStrokes(_:from:to:by:reversed:)``)。線を持たない区間は並べたまま置く。
+    /// (``appendPlacedSolidVertices(_:indices:strokes:placedBy:parts:)``)。線を持たない区間は並べたまま置く。
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
@@ -682,12 +682,8 @@ extension Canvas {
                 return
             }
             for instance in instances {
-                let base = solidVertices.count
                 appendPlacedSolidVertices(
-                    vertices, indices: indices, placedBy: instance, parts: parts)
-                placeSolidStrokes(
-                    pieces, from: run.start, to: base, by: instance,
-                    reversed: instance.isMirrored && indices == nil)
+                    vertices, indices: indices, strokes: pieces, placedBy: instance, parts: parts)
             }
             return
         }
@@ -728,7 +724,7 @@ extension Canvas {
 
     /// 区間の中で、置くときに GPU で組める線 (``Shape/gpuStrokes``・#1756)。組めない区間なら空。
     ///
-    /// **記録の中で置き直すときは使わない** — 外側の記録は頂点と部品で持ち歩く (入れ子)。
+    /// **記録の中で置き直すときは使わない** — 外側の記録は頂点と線の元で持ち歩く (入れ子)。
     /// 添字を持つ区間・通常以外の混ぜ方の区間も、CPU の帯のまま置く。
     private func retainedGPUStrokes(in run: Shape.Run, of shape: Shape) -> [RetainedGPUStroke] {
         guard placesRetainedStrokesOnGPU, !recordingShape, !run.isIndexed, run.mode == .blend,
@@ -757,16 +753,13 @@ extension Canvas {
     ) {
         func placeBaked(_ segment: Range<Int>) {
             guard !segment.isEmpty else { return }
-            let base = solidVertices.count
+            var inside: [SolidStrokePiece] = []
+            for piece in pieces where segment.contains(piece.vertexStart) { inside.append(piece) }
             // 区間に収まる部品だけを渡す (線で割った区間を跨ぐ部品は無い — 部品は塗りの区間で、
             // 線はその後ろに積まれる)
             appendPlacedSolidVertices(
-                shape.solidVertices[segment], indices: nil, placedBy: instance, parts: parts)
-            var inside: [SolidStrokePiece] = []
-            for piece in pieces where segment.contains(piece.vertexStart) { inside.append(piece) }
-            placeSolidStrokes(
-                inside, from: segment.lowerBound, to: base, by: instance,
-                reversed: instance.isMirrored)
+                shape.solidVertices[segment], indices: nil, strokes: inside, placedBy: instance,
+                parts: parts)
         }
         var cursor = run.start
         for stroke in gpuStrokes {
@@ -781,7 +774,7 @@ extension Canvas {
             placeBaked(cursor..<stroke.vertices.lowerBound)
             openGPUStroke(
                 of: stroke.source, geometry: geometry, matrix: instance.matrix * stroke.matrix,
-                weight: stroke.weight,
+                weight: stroke.weight, cap: stroke.cap,
                 color: LinearRGBA(
                     premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w),
                 uv: stroke.uv, geometryScale: geometryScale)
@@ -790,33 +783,126 @@ extension Canvas {
         placeBaked(cursor..<(run.start + run.count))
     }
 
-    /// 焼いて積んだ区間のうち、立体の線の頂点を置いた後の点で組み直す。
+    /// 保持した形の区間を置き場所で焼いて積み、**区間の中の立体の線は、置いた後の点で組み直して
+    /// 差し込む** ([#1547]・[#1893])。
     ///
-    /// `source` は区間の形の中での先頭、`base` は焼いた頂点の溜め場での先頭。`reversed` は
-    /// 焼くときに三角形の巻き方を裏返したか (鏡映した置き場所で、添字を持たない区間)。
+    /// 線は記録した区間を丸ごと、組み直した頂点に差し替える (``SolidStrokePiece``)。組み直すのは
+    /// その場の線と同じ手順で、頂点の数は記録と違ってよい。差し込むのは記録した区間のあった所
+    /// なので、塗りとの重ね順は変わらない。添字の列では、線の頂点は自分の番号を名乗って並んで
+    /// いる (`appendSolidVertex`) ので、その並びを組み直した頂点の番号の並びに差し替え、後ろの
+    /// 頂点を指す番号はずれのぶんだけ送る。線の頂点は置き場所の色と白い区画を、記録した区間の
+    /// 先頭の頂点から受け継ぐ (線 1 本は 1 色で積まれる)。
     ///
-    /// **組み立ての中では組み直さず、部品を外側の記録へ渡す。** 置き場所が決まるのは
-    /// 外側の形を置くときなので、そこで組み直す (``createShape(_:)``)。
-    private func placeSolidStrokes(
-        _ pieces: [SolidStrokePiece], from source: Int, to base: Int, by instance: SolidInstance,
-        reversed: Bool
+    /// 鏡映する置き場所では、添字を持たない区間の三角形を 1 枚ずつ裏返す (焼いた頂点と同じ)。
+    ///
+    /// **組み立ての中では組み直さず、焼いた頂点のまま線を外側の記録へ渡す。** 置き場所が決まる
+    /// のは外側の形を置くときなので、そこで組み直す (``createShape(_:)``)。
+    ///
+    /// - Parameter strokes: 区間の中の線。`vertexStart` は `vertices` の番号 (形の頂点の並びの番号)
+    ///
+    /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
+    /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
+    private func appendPlacedSolidVertices(
+        _ vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?, strokes: [SolidStrokePiece],
+        placedBy instance: SolidInstance, parts: [SolidPart]
     ) {
-        for piece in pieces {
-            var moved = piece.moved(by: instance.matrix)
-            moved.vertexStart = base + (piece.vertexStart - source)
-            if reversed { moved.isReversed.toggle() }
-            if recordingShape {
+        if recordingShape || strokes.isEmpty {
+            let base = solidVertices.count
+            appendPlacedSolidVertices(vertices, indices: indices, placedBy: instance, parts: parts)
+            guard recordingShape else { return }
+            for piece in strokes {
+                var moved = piece.moved(by: instance.matrix)
+                moved.vertexStart = base + (piece.vertexStart - vertices.startIndex)
+                if instance.isMirrored && indices == nil { moved.isReversed.toggle() }
                 recordedSolidStrokes.append(moved)
-                continue
             }
-            let (corners, coverage) = rebuiltSolidStroke(moved)
-            if coverage < 1 { openBatchHasThinCoverage = true }
-            for (offset, corner) in corners.enumerated() {
-                solidVertices[moved.vertexStart + offset].position = corner
-                // 被覆も置く面で決まる (#1637)。線の頂点なので 0 にはならない
-                solidVertices[moved.vertexStart + offset].stroke = coverage
+            return
+        }
+        let lower = vertices.startIndex
+        // 差し込んだ後の頂点の並び (置き場所を掛けたもの)。記録した番号 → 並びの位置。線の区間は、
+        // 先頭だけが組み直した頂点の区間の先頭を指し、残りは -1
+        var placed: [SolidVertex] = []
+        placed.reserveCapacity(vertices.count)
+        var numbers = [Int](repeating: -1, count: vertices.count)
+        var blocks: [(recorded: Range<Int>, placed: Range<Int>)] = []
+        var cursor = lower
+        func appendBaked(upTo end: Int) {
+            while cursor < end {
+                numbers[cursor - lower] = placed.count
+                placed.append(instance.placing(vertices[cursor]))
+                cursor += 1
             }
         }
+        // 被覆が 1 未満の線があるか。**印は列を開いた後に立てる** — 先に立てると、頂点を積む
+        // ときに開き直す列 (`openFreeformSolid` が閉じる前の列) へ印が渡って下ろされる (#1637)
+        var thin = false
+        for piece in strokes.sorted(by: { $0.vertexStart < $1.vertexStart }) {
+            appendBaked(upTo: piece.vertexStart)
+            var prototype = instance.placing(vertices[piece.vertexStart])
+            let (corners, coverage) = rebuiltSolidStroke(piece.moved(by: instance.matrix))
+            // 被覆も置く面で決まる (#1637)。線の頂点なので 0 にはならない
+            prototype.stroke = coverage
+            if coverage < 1 { thin = true }
+            let start = placed.count
+            for corner in corners {
+                var vertex = prototype
+                vertex.position = corner.position
+                vertex.shapePosition = corner.shape
+                placed.append(vertex)
+            }
+            numbers[piece.vertexStart - lower] = start
+            blocks.append((piece.vertexStart..<(piece.vertexStart + piece.vertexCount), start..<placed.count))
+            cursor = piece.vertexStart + piece.vertexCount
+        }
+        appendBaked(upTo: vertices.endIndex)
+
+        // 読む順も差し替える。線の頂点は自分の番号を順に名乗っているので、先頭で組み直した頂点の
+        // 番号を並べ、残りは捨てる。記録した読む順の位置 → 差し替えた位置も控える (部品を写すため)
+        var order: [UInt32]?
+        var positions: [Int] = []
+        if let indices {
+            var heads: [Int: Int] = [:]
+            for (offset, block) in blocks.enumerated() { heads[block.recorded.lowerBound] = offset }
+            var built: [UInt32] = []
+            built.reserveCapacity(indices.count)
+            positions.reserveCapacity(indices.count)
+            for index in indices {
+                positions.append(built.count)
+                let number = Int(index)
+                if let block = heads[number] {
+                    for placedIndex in blocks[block].placed { built.append(UInt32(placedIndex)) }
+                } else if numbers[number - lower] >= 0 {
+                    built.append(UInt32(numbers[number - lower]))
+                }
+            }
+            order = built
+        }
+        // 塗りの部品を差し込んだ後の位置へ写す (部品は塗りの区間で、線の区間を跨がない)
+        var movedParts: [SolidPart] = []
+        for part in parts {
+            if indices != nil {
+                guard part.isIndexed, let indices, indices.indices.contains(part.range.lowerBound),
+                    part.range.upperBound <= indices.endIndex
+                else { continue }
+                let start = positions[part.range.lowerBound - indices.startIndex]
+                movedParts.append(SolidPart(
+                    range: start..<(start + part.range.count), isIndexed: true,
+                    showsBackFaces: part.showsBackFaces, insideOut: part.insideOut))
+            } else {
+                guard !part.isIndexed, vertices.indices.contains(part.range.lowerBound),
+                    part.range.upperBound <= vertices.endIndex, numbers[part.range.lowerBound - lower] >= 0
+                else { continue }
+                let start = numbers[part.range.lowerBound - lower]
+                movedParts.append(SolidPart(
+                    range: start..<(start + part.range.count), isIndexed: false,
+                    showsBackFaces: part.showsBackFaces, insideOut: part.insideOut))
+            }
+        }
+        appendPlacedSolidVertices(
+            placed[...], indices: order?[...], placedBy: .identity, parts: movedParts,
+            showsBackFaces: placementShowsBackFaces(instance, styled: false),
+            mirrored: instance.isMirrored)
+        if thin { openBatchHasThinCoverage = true }
     }
 
     /// 保持した形の頂点を積んで、置き場所を入れる列を開く。返すのはその列の先頭。

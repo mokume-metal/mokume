@@ -78,6 +78,30 @@ enum ModelFixture {
     /// 書き出した「半分だけ展開を書いた板」の場所。
     static let mixedUnwrap: String = written(mixedUnwrapText, as: "mixed-unwrap.obj")
 
+    /// **同じ直線に載る 2 本の稜線を持つ閉じた形** (#1893)。x 軸上の 3 点 (−1, 0, 0)・(0, 0, 0)・
+    /// (1, 0, 0) を結ぶ稜を、z = 0 の 2 枚と y = 0 の 2 枚で挟み、残りを 2 枚で閉じる。真ん中の点は
+    /// 稜の 2 辺だけが集まる (z = 0 の 2 枚・y = 0 の 2 枚はそれぞれ同じ平面なので、間の辺は線に
+    /// ならない)。視線を x 軸に沿わせると、3 点が画面の 1 点に重なる。
+    ///
+    /// **真ん中の点を最初に書く** — 溶接した点の番号が最も小さくなり、3 点の群の代表になる。
+    static let ridgeText = """
+        # 3 点が一直線に並ぶ稜を持つ形
+        v 0 0 0
+        v 1 0 0
+        v 0 1 0
+        v -1 0 0
+        v 0 0 1
+        f 1 2 3
+        f 4 1 3
+        f 1 4 5
+        f 2 1 5
+        f 4 3 5
+        f 3 2 5
+        """
+
+    /// 書き出した「一直線に並ぶ稜を持つ形」の場所。
+    static let ridge: String = written(ridgeText, as: "ridge.obj")
+
     /// 検体を決まった場所へ 1 度だけ書き出す。
     private static func written(_ text: String, as name: String) -> String {
         let url = FileManager.default.temporaryDirectory

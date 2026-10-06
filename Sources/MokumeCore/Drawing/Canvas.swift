@@ -157,10 +157,10 @@ public final class Canvas {
     /// 刻み直す** (`Shape.fillRanges`)。記録を終えると `createShape` が抜く。
     var recordedFillRanges: [RingFillRange] = []
 
-    /// 保持する形を記録している間に、立体の線が積んだ部品の元 (``SolidStrokePiece``)。
+    /// 保持する形を記録している間に積んだ立体の線の元 (``SolidStrokePiece``)。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ帯は置いた先で
-    /// 合わない。**部品の元を覚えておき、置くときに組み直す** (`Shape.solidStrokes`)。
+    /// 合わない。**線の元を覚えておき、置くときに組み直す** (`Shape.solidStrokes`)。
     /// 記録を終えると `createShape` が抜く。
     var recordedSolidStrokes: [SolidStrokePiece] = []
 
@@ -171,11 +171,12 @@ public final class Canvas {
     /// 保持した形の線を、組めるものは GPU で組むか。**検査が偽にして、CPU で組む物差しを作る。**
     var placesRetainedStrokesOnGPU = true
 
-    /// 立体の線の部品を組み直している間、頂点を積む代わりに位置を受け取る先。
+    /// 立体の線を組み直している間、頂点を積む代わりに位置と形自身の座標を受け取る先。
     ///
-    /// 組み直しは即時に描くときと**同じ関数** (帯・円板・正方形) を通す。向き・幅・寄せの
-    /// 式を 2 か所に書くと、片方だけ直した誤りが保持した形でだけ現れる (#1547)。
-    var solidStrokeCapture: [SIMD3<Float>]?
+    /// 組み直しは即時に描くときと**同じ関数** (網の骨・帯・円板・正方形・折れ目) を通す。向き・
+    /// 幅・寄せの式や、画面で重なる点のまとめ方を 2 か所に書くと、片方だけ直した誤りが保持した
+    /// 形でだけ現れる (#1547・#1893)。
+    var solidStrokeCapture: [(position: SIMD3<Float>, shape: SIMD3<Float>)]?
 
     /// いま組んでいる立体の線の被覆 (細い線を広げたとき 1 未満・#1637)。線の頂点が
     /// ``SolidVertex/stroke`` に名乗る。

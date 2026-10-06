@@ -1735,12 +1735,14 @@ struct CanvasTests {
             }),
             ("recordedSolidStrokes", end, all, { c, _ in
                 c.recordedSolidStrokes.append(
-                    SolidStrokePiece(kind: .disc(.zero), weight: 1, vertexStart: 0, vertexCount: 0))
+                    SolidStrokePiece(
+                        source: .ring(points: [.zero], shapePoints: [.zero], isClosed: false, curveSteps: []),
+                        weight: 1, join: .miter, cap: .round, vertexStart: 0, vertexCount: 0))
             }),
             ("recordedGPUStrokes", end, all, { c, _ in
                 c.recordedGPUStrokes.append(
                     RetainedGPUStroke(
-                        source: .freeform, matrix: Transform.identity.matrix, weight: 1,
+                        source: .freeform, matrix: Transform.identity.matrix, weight: 1, cap: .round,
                         color: .transparent, uv: .zero, vertices: 0..<0))
             }),
             ("formInstances", end, all, { c, _ in c.rect(10, 10, 4, 4) }),

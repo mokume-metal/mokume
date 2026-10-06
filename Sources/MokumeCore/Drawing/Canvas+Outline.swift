@@ -3,9 +3,14 @@
 
 import simd
 
-// 周を太さのある帯でなぞる。**骨は 1 本で、平面と立体が共有する** — 違うのは点を
-// 帯や円板に変えるところだけである。骨が持つのは端と折れ目の規則、すなわち
+// 周を太さのある帯でなぞる。**端と折れ目の規則は 1 つで、平面と立体が共有する** — 違うのは
+// 点を帯や円板に変えるところだけである。骨が持つのは端と折れ目の規則、すなわち
 // 「どこに帯を置き、どこを角として埋め、どこを端として仕上げるか」だけ。
+//
+// 平面の周は周の骨 (`strokeRing`) を、立体の周と稜線は網の骨 (`strokeNet`) を通る。立体では
+// 画面で重なる点 (視線に沿う辺の両端) を何段でも 1 つの群にまとめて、群に 1 度だけ形を置く
+// 必要があり (#1893)、それを持つのは網の骨だけにする。周は隣り合う点を辺で結んだ網で、網の骨は
+// 周の骨と同じ端と折れ目の形を置く。
 //
 // 骨が 2 本あったころは、`strokeCap` / `strokeJoin` の扱いを平面だけ直しても
 // `vertex(x, y, z)` を並べた形には届かなかった。**利用者からは同じ設定に見えるのに
@@ -130,7 +135,8 @@ extension Canvas {
         }
     }
 
-    /// 辺の網を輪郭としてなぞる骨。立体の稜線がこれを通る。
+    /// 辺の網を輪郭としてなぞる骨。立体の稜線と、立体の周 (隣り合う点を辺で結んだ網) がこれを
+    /// 通る。保持した形を置くときの組み直しも同じくここを通る (``SolidStrokePiece``)。
     ///
     /// 周と同じ規則を網へ広げただけである — **点に 2 本以上の辺が来ればそこは折れ目、
     /// 1 本しか来なければ端**。周は全ての点に 2 本が来る網 (閉じた周) か、両端だけ
@@ -139,47 +145,128 @@ extension Canvas {
     /// 辺ごとに端を 2 つずつ置かないのは、同じ点へ集まる辺の数だけ円板が重なるから
     /// である。球の極には一周ぶんの経線が集まるが、置く円板は 1 枚で済む。
     ///
+    /// **画面で重なる点は 1 点として形を置く** ([#1893])。画面で潰れた (長さがちょうど 0 の)
+    /// 辺で結ばれた点を、何段続いても 1 つの群にまとめ、群の外へ出る辺だけを腕として数える。周の
+    /// 骨が同じ位置の点を飛ばすのと同じ扱いを、画面での同じ位置へ延ばしたものである (世界で同じ
+    /// 位置の点を結ぶ長さ 0 の辺も、画面での長さが 0 なので同じ群に入る)。形は腕の画面での向きの
+    /// 数で決まり (``screenCorner(arms:origins:isEnd:join:cap:)``)、辺が 3 本以上集まる点も、
+    /// 180° を越える間を挟む 2 本の折れ目になる ([#1889])。群には、いちばん手前の点 (奥行きが
+    /// 等しければ小さい番号) の位置で 1 度だけ置く — 奥の点に置くと、透視で群の点の間にある
+    /// 不透明な面に隠れる。
+    ///
+    /// [#1889]: https://github.com/mokume-metal/mokume/issues/1889
+    /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
+    ///
     /// - Parameters:
     ///   - count: 点の数
     ///   - edges: 点の添字の対。同じ辺が 2 度現れないこと
+    ///   - curveSteps: 点ごとに、折れ目の形によらず円板で埋めるか (曲線の刻みの点・``strokeRing(count:isClosed:curveSteps:samePlace:endSquare:band:disc:square:corner:)``
+    ///     と同じ)。空ならどの点も角。群の点がすべて刻みの点のときだけ円板で、端の点や利用者の角が
+    ///     重なればそちらの規則に従う
+    ///   - samePoint: 添字 2 つの点が世界で同じ位置か。同じ位置の点から出た腕は、同じ点から出た
+    ///     腕として数える (``screenCorner(arms:origins:isEnd:join:cap:)``)。周で同じ位置の点を
+    ///     続けて置いたときに当たる
+    ///   - depth: 添字の点の奥行き (視点からの、視線に沿った距離)。群の形を置く点を選ぶ
+    ///   - toward: 1 つ目の添字の点から 2 つ目の添字の点へ、画面で進む向き (長さ 1)。画面での
+    ///     長さがちょうど 0 なら `nil` (潰れた辺)
     ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向きに沿った正方形を置く
     ///   - band: 添字 2 つを結ぶ帯を置く
     ///   - disc: 添字の点に円板を置く
-    ///   - square: 添字の点に画面の軸に沿った正方形を置く (向きの無い点の四角い端点と、
-    ///     辺が 3 本以上集まる丸めない角)
-    ///   - corner: 1 つ目の添字の点に、2 つ目と 3 つ目の添字の点へ向かう 2 本の辺が出会う
-    ///     折れ目の形を置く (辺が 2 本だけ集まる丸めない角)
+    ///   - square: 添字の点に画面の軸に沿った正方形を置く (向きの無い点の四角い端点)
+    ///   - corner: 1 つ目の添字の点に、2 本の腕の折れ目の形を置く。腕は (出る点, 向こうの点) の
+    ///     添字の対で、出る点は 1 つ目の添字の点と画面で重なる
     func strokeNet(
-        count: Int, edges: [(Int, Int)],
+        count: Int, edges: [(Int, Int)], curveSteps: [Bool] = [],
+        samePoint: (Int, Int) -> Bool = { _, _ in false },
+        depth: (Int) -> Float = { _ in 0 },
+        toward: (Int, Int) -> SIMD2<Float>?,
         endSquare: (Int, Int) -> Void,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void,
-        corner: (Int, Int, Int) -> Void
+        corner: (Int, (Int, Int), (Int, Int)) -> Void
     ) {
-        var degrees = [Int](repeating: 0, count: count)
-        // 点ごとの、辺の向こうの点 (最初の 2 本)。端はその 1 本、折れ目は 2 本の帯の向きを決める
-        var neighbors = [Int](repeating: 0, count: count)
-        var others = [Int](repeating: 0, count: count)
+        // 点ごとの隣 (辺の順・`SolidStrokeNet` と同じ並べ方)。辺ごとの画面での向きは 1 度だけ
+        // 求め、逆向きの腕は符号を返して使う — 向きの式は 2 点を入れ替えるとちょうど符号が反る
+        // (`screenNormal` の外積と差)。画面で潰れた辺で結ばれた点は 1 つの群へまとめる
+        var starts = [Int](repeating: 0, count: count + 1)
         for (a, b) in edges {
-            band(a, b)
-            if degrees[a] == 0 { neighbors[a] = b } else if degrees[a] == 1 { others[a] = b }
-            if degrees[b] == 0 { neighbors[b] = a } else if degrees[b] == 1 { others[b] = a }
-            degrees[a] += 1
-            degrees[b] += 1
+            starts[a + 1] += 1
+            starts[b + 1] += 1
         }
-        for (index, degree) in degrees.enumerated() {
-            switch degree {
-            case 0: continue  // どの稜線にも属さない点 (面の中の継ぎ目) は線を持たない
-            case 1:
-                strokeCapShape(
-                    at: index, awayFrom: neighbors[index], disc: disc, square: square,
-                    endSquare: endSquare)
-            case 2:
-                strokeJoinShape(
-                    at: index, from: neighbors[index], to: others[index], disc: disc, corner: corner)
-            default:
-                // 3 本以上の辺が集まる点 (箱の角など) は、2 本の帯で形が決まらない。
-                // 画面の軸に沿った正方形のまま埋める (#1644 の範囲の外。形は #1889 で決める)
-                if style.strokeJoin == .round { disc(index) } else { square(index) }
+        for index in 0..<count { starts[index + 1] += starts[index] }
+        var cursor = Array(starts.dropLast())
+        var links = [(far: Int, edge: Int, sign: Float)](repeating: (0, 0, 1), count: starts[count])
+        var directions: [SIMD2<Float>?] = []
+        directions.reserveCapacity(edges.count)
+        var parents = Array(0..<count)
+        func root(_ index: Int) -> Int {
+            var index = index
+            while parents[index] != index {
+                parents[index] = parents[parents[index]]
+                index = parents[index]
+            }
+            return index
+        }
+        for (edge, (a, b)) in edges.enumerated() {
+            band(a, b)
+            links[cursor[a]] = (b, edge, 1)
+            cursor[a] += 1
+            links[cursor[b]] = (a, edge, -1)
+            cursor[b] += 1
+            let direction = toward(a, b)
+            directions.append(direction)
+            if direction == nil {
+                let (rootA, rootB) = (root(a), root(b))
+                // 群の根は小さい番号の点 (形を置く点は、下で手前の点を選ぶ)
+                if rootA != rootB { parents[max(rootA, rootB)] = min(rootA, rootB) }
+            }
+        }
+        // 群の点 (番号の順)。1 点だけの群がほとんどなので、2 点以上の群だけを並べる
+        var members: [Int: [Int]] = [:]
+        for index in 0..<count where starts[index + 1] > starts[index] {
+            let center = root(index)
+            if center != index || members[center] != nil { members[center, default: [center]].append(index) }
+        }
+        var arms: [(origin: Int, far: Int)] = []
+        var towards: [SIMD2<Float>] = []
+        var origins: [Int] = []
+        for groupRoot in 0..<count where starts[groupRoot + 1] > starts[groupRoot] && root(groupRoot) == groupRoot {
+            // 群の外へ出る辺が腕。群の代表、続けて残りの点を番号の順に、その中は辺の順に並べる
+            // (GPU の骨の `solidStrokeCornerShape` と同じ並べ方)
+            arms.removeAll(keepingCapacity: true)
+            towards.removeAll(keepingCapacity: true)
+            origins.removeAll(keepingCapacity: true)
+            let members = members[groupRoot] ?? [groupRoot]
+            // **形は群のいちばん手前の点に置く** (奥行きが等しければ小さい番号)。奥の点に置くと、
+            // 透視で群の点の間にある不透明な面に隠れる
+            var center = members[0]
+            for member in members.dropFirst() where depth(member) < depth(center) { center = member }
+            let group = [center] + members.filter { $0 != center }
+            // 曲線の刻みの継ぎ目は角ではない。折れ目の形によらず円板で埋める (#1409)。群の点が
+            // **すべて**刻みの点のときだけで、端の点や利用者の角が重なれば、そちらの規則に従う
+            if group.allSatisfy({ $0 < curveSteps.count && curveSteps[$0] }) {
+                disc(center)
+                continue
+            }
+            var isEnd = false
+            for origin in group {
+                if starts[origin + 1] - starts[origin] == 1 { isEnd = true }
+                // 世界で同じ位置の点は同じ点として数える。群の中で最初に出てくる同じ位置の点の番号
+                let same = group.first { samePoint($0, origin) } ?? origin
+                for link in links[starts[origin]..<starts[origin + 1]] where root(link.far) != groupRoot {
+                    guard let direction = directions[link.edge] else { continue }
+                    arms.append((origin, link.far))
+                    towards.append(direction * link.sign)
+                    origins.append(same)
+                }
+            }
+            let shape = Self.screenCorner(
+                arms: towards, origins: origins, isEnd: isEnd, join: style.strokeJoin, cap: style.strokeCap)
+            switch shape {
+            case .nothing: continue
+            case .disc: disc(center)
+            case .square: square(center)
+            case .endSquare(let arm): endSquare(center, arms[arm].far)
+            case .rim(let first, let second): corner(center, arms[first], arms[second])
             }
         }
     }

@@ -173,7 +173,7 @@ vertex ShapeFragmentIn solidVertexMain(
 }
 
 // 骨は形ごとに共用し、帯と角を置き場所・視点から頂点段で広げる (#1738)。
-// 片の意味は `SolidStrokeGeometry.Piece` が持つ (a.w: 0 帯・1 正方形・2 折れ目の半分)。
+// 片の意味は `SolidStrokeGeometry.Piece` が持つ (a.w: 0 帯・2 網の点の半分・3 端の円板の 8 分の 1)。
 struct SolidStrokePiece {
     float4 a;
     float4 b;
@@ -244,6 +244,265 @@ float3 solidStrokeSquareCorner(uint corner, constant SolidStrokePlacement &s) {
     }
 }
 
+/// 円板の周の点の向き (画面の横と縦の成分)。CPU の `Canvas.appendSolidDisc` が `cos` / `sin` で
+/// 求める 16 等分の値をそのまま書き写したもの (0 番は横そのもの)。検査
+/// (`SolidGPUStrokeTests.discUnitsMatchTheCPU`) が CPU の値とビットで突き合わせる。
+constant float2 kSolidStrokeDisc[17] = {
+    float2(1, 0),
+    float2(0.92387956, 0.38268343),
+    float2(0.7071068, 0.70710677),
+    float2(0.38268343, 0.9238795),
+    float2(7.54979e-08, 1.0),
+    float2(-0.38268328, 0.92387956),
+    float2(-0.70710677, 0.70710677),
+    float2(-0.9238795, 0.3826835),
+    float2(-1.0, 1.509958e-07),
+    float2(-0.9238796, -0.38268322),
+    float2(-0.707107, -0.7071066),
+    float2(-0.38268358, -0.9238795),
+    float2(1.1924881e-08, -1.0),
+    float2(0.38268316, -0.9238796),
+    float2(0.70710665, -0.7071069),
+    float2(0.9238794, -0.38268387),
+    float2(1.0, -3.019916e-07),
+};
+
+/// 骨の点の位置 (形自身の座標) を、置いた後の世界の座標へ移す。
+float3 solidStrokePlaced(float3 shape, constant SolidStrokePlacement &s) {
+    return (s.matrix * float4(shape * s.uv.z, 1)).xyz;
+}
+
+/// 頂点関数が向きを控える腕の数。辺が 4 本の格子の点と、画面で重なる 2 点 (辺 3 本 + 3 本) まで
+/// 収まる。越えた腕 (球の極・円錐の頂点) は、引くたびに求め直す
+constant uint kSolidStrokeCachedArms = 8;
+
+/// 画面で重なる点の群 (形を置く手前の点 i と、画面で潰れた辺の先の点 j)。腕は i の隣 (j を除く) を
+/// 辺の順に、続けて j の隣 (i を除く) を辺の順に並べる (CPU の `strokeNet` の、代表を先にした群の
+/// 点の順と同じ)。
+struct SolidStrokeGroup {
+    /// i と j が世界で同じ位置か。同じ位置なら同じ点として数え、腕を 1 本にまとめない
+    /// (CPU の `strokeNet` の `samePoint`)
+    bool sameOrigin;
+    uint recordI;
+    uint recordJ;
+    uint partnerAt;   // i の隣の並びでの j の位置
+    uint selfAt;      // j の隣の並びでの i の位置
+    uint armsI;       // i から出る腕の数
+    uint arms;
+    float2 toward[8];
+    bool valid[8];
+};
+
+/// 群の腕 t の、出る点と向こうの点。
+void solidStrokeArmPoints(
+    thread const SolidStrokeGroup &g, uint t, constant float4 *words, constant SolidStrokePlacement &s,
+    thread float3 &origin, thread float3 &far)
+{
+    if (t < g.armsI) {
+        uint k = t >= g.partnerAt ? t + 1 : t;
+        origin = solidStrokePlaced(words[g.recordI].xyz, s);
+        far = solidStrokePlaced(words[g.recordI + 1 + k].xyz, s);
+    } else {
+        uint u = t - g.armsI;
+        uint k = u >= g.selfAt ? u + 1 : u;
+        origin = solidStrokePlaced(words[g.recordJ].xyz, s);
+        far = solidStrokePlaced(words[g.recordJ + 1 + k].xyz, s);
+    }
+}
+
+/// 群の腕 t の画面での向き。腕が画面で潰れていれば偽 (数えない)。
+bool solidStrokeArmToward(
+    thread const SolidStrokeGroup &g, uint t, constant float4 *words, constant SolidStrokePlacement &s,
+    thread float2 &toward)
+{
+    if (t < kSolidStrokeCachedArms) {
+        toward = g.toward[t];
+        return g.valid[t];
+    }
+    float3 origin;
+    float3 far;
+    solidStrokeArmPoints(g, t, words, s, origin, far);
+    return solidStrokeToward(origin, far, s, toward);
+}
+
+/// 腕 t を数えるか。**別の点から出た同じ向きの腕は 1 本と数える** — j から出た腕は、i から出た
+/// 腕と値が等しければ数えない (CPU の `Canvas.screenCorner` と同じ)。
+bool solidStrokeArmKept(
+    thread const SolidStrokeGroup &g, uint t, constant float4 *words, constant SolidStrokePlacement &s,
+    thread float2 &toward)
+{
+    if (!solidStrokeArmToward(g, t, words, s, toward)) return false;
+    if (t < g.armsI || g.sameOrigin) return true;
+    for (uint m = 0; m < g.armsI; m++) {
+        float2 other;
+        if (solidStrokeArmToward(g, m, words, s, other) && all(other == toward)) return false;
+    }
+    return true;
+}
+
+float solidStrokeCross(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
+
+/// 骨の 2 点を結ぶ辺が画面で潰れているか。**辺の両端が同じ答えを得るよう、記録の位置が小さい点を
+/// 先にして同じ式で判定する** — 引数の順を入れ替えると、fast-math の積和の縮約で外積が 0 に
+/// なるかどうかが端ごとに食い違いうる
+bool solidStrokeEdgeCollapsed(
+    float3 p, uint recordP, float3 q, uint recordQ, constant SolidStrokePlacement &s)
+{
+    float2 normal;
+    return recordP < recordQ ? !solidStrokeNormal(p, q, s, normal) : !solidStrokeNormal(q, p, s, normal);
+}
+
+/// 骨の点の奥行き (視点からの、視線に沿った距離)。CPU の `strokeNet` に渡す奥行きと同じ式
+float solidStrokeDepth(float3 p, constant SolidStrokePlacement &s) {
+    return dot(p - s.eye.xyz, s.forward.xyz);
+}
+
+/// 網の点に置く形 (CPU の `Canvas.screenCorner` と同じ手順)。
+struct SolidStrokeCorner {
+    /// 0 何も置かない・1 円板・2 画面の軸の正方形・3 出っ張らせる端・4 折れ目
+    uint kind;
+    float3 center;
+    float3 origin1;
+    float3 far1;
+    float3 origin2;
+    float3 far2;
+};
+
+/// 点の記録 `record` の点に置く形を決める (#1889・#1893・#1903 の決定)。
+///
+/// 画面で潰れた辺で結ばれた点 (1 段まで) を群とし、群のいちばん手前の点 (奥行きが等しければ記録の
+/// 位置が小さい点) だけが置く (CPU の `strokeNet` と同じ選び方)。
+/// 群に集まる腕の画面での向きの数で、0 なら向きの無い点 (正方形)・1 なら端 (`strokeCap`)・
+/// 2 なら 2 本の折れ目・3 以上なら角度の順で 180° を越える間を挟む 2 本の折れ目 (無ければ何も
+/// 置かない)。`roundEnd` は端の円板を置く容量を持つか。持たない点では、端の円板の代わりに
+/// 2 本の腕の折り返しの形を置く。容量は画面で 1 本になりうる点 (同じ平面に載る 4 点・
+/// `Canvas.mayMeetAsOneBand`) にあり、画面で値が等しいほど揃った腕はその中に入る。
+SolidStrokeCorner solidStrokeCornerShape(
+    uint record, bool roundEnd, constant float4 *words, constant SolidStrokePlacement &s)
+{
+    SolidStrokeCorner result;
+    result.kind = 0;
+    SolidStrokeGroup g;
+    g.recordI = record;
+    float4 header = words[record];
+    uint countI = uint(header.w);
+    float3 center = solidStrokePlaced(header.xyz, s);
+    result.center = center;
+    g.partnerAt = countI;
+    g.recordJ = record;
+    g.selfAt = 0;
+    uint partners = 0;
+    for (uint k = 0; k < countI; k++) {
+        float4 entry = words[record + 1 + k];
+        if (solidStrokeEdgeCollapsed(center, record, solidStrokePlaced(entry.xyz, s), uint(entry.w), s)) {
+            if (partners == 0) {
+                g.partnerAt = k;
+                g.recordJ = uint(entry.w);
+            }
+            partners++;
+        }
+    }
+    // 潰れた辺が 2 本続く群は骨を作らない (`SolidStrokeGeometry`)。手前の点でなければ置かない
+    if (partners > 1) return result;
+    g.sameOrigin = false;
+    if (partners == 1) {
+        float3 partner = solidStrokePlaced(words[g.recordJ].xyz, s);
+        float depthI = solidStrokeDepth(center, s);
+        float depthJ = solidStrokeDepth(partner, s);
+        if (depthJ < depthI || (depthJ == depthI && g.recordJ < record)) return result;
+        g.sameOrigin = all(partner == center);
+    }
+    g.armsI = partners == 1 ? countI - 1 : countI;
+    g.arms = g.armsI;
+    if (partners == 1) {
+        uint countJ = uint(words[g.recordJ].w);
+        g.selfAt = countJ;
+        for (uint k = 0; k < countJ; k++) {
+            if (uint(words[g.recordJ + 1 + k].w) == record) {
+                g.selfAt = k;
+                break;
+            }
+        }
+        g.arms += countJ - 1;
+    }
+    for (uint t = 0; t < kSolidStrokeCachedArms; t++) {
+        g.valid[t] = false;
+        g.toward[t] = float2(0);
+        if (t < g.arms) {
+            float3 origin;
+            float3 far;
+            solidStrokeArmPoints(g, t, words, s, origin, far);
+            g.valid[t] = solidStrokeToward(origin, far, s, g.toward[t]);
+        }
+    }
+    uint kept = 0;
+    uint firstKept = 0;
+    uint secondKept = 0;
+    for (uint t = 0; t < g.arms; t++) {
+        float2 toward;
+        if (!solidStrokeArmKept(g, t, words, s, toward)) continue;
+        if (kept == 0) firstKept = t;
+        else if (kept == 1) secondKept = t;
+        kept++;
+    }
+    uint a = firstKept;
+    uint b = secondKept;
+    uint cap = uint(s.right.w);  // 0 丸・1 切る・2 出っ張らせる (`SolidStrokePlacement.capCode`)
+    if (kept == 0) {
+        result.kind = 2;
+        return result;
+    } else if (kept == 1) {
+        if (cap == 1) return result;
+        if (cap == 2) {
+            result.kind = 3;
+        } else if (roundEnd) {
+            result.kind = 1;
+            return result;
+        } else {
+            // 容量の無い点では 1 本と数えない (2 本の腕の折り返し)
+            if (g.arms < 2) return result;
+            result.kind = 4;
+            a = 0;
+            b = 1;
+        }
+    } else if (kept == 2) {
+        result.kind = 4;
+    } else {
+        // 角度を求めずに外積の符号で、時計回りの端と反時計回りの端を前から探す。等しい向きは
+        // 外積を見ない (fast-math は積和を縮約するので、等しい 2 本の外積が 0 にならない)
+        float2 first;
+        solidStrokeArmToward(g, a, words, s, first);
+        for (uint t = a + 1; t < g.arms; t++) {
+            float2 toward;
+            if (!solidStrokeArmKept(g, t, words, s, toward)) continue;
+            if (any(toward != first) && solidStrokeCross(first, toward) < 0) {
+                a = t;
+                first = toward;
+            }
+        }
+        for (uint t = 0; t < g.arms; t++) {
+            float2 toward;
+            if (t == a || !solidStrokeArmKept(g, t, words, s, toward)) continue;
+            float turn = solidStrokeCross(first, toward);
+            if (!(all(toward == first) || turn > 0 || (turn == 0 && dot(first, toward) > 0))) return result;
+        }
+        b = a;
+        float2 last = first;
+        for (uint t = 0; t < g.arms; t++) {
+            float2 toward;
+            if (!solidStrokeArmKept(g, t, words, s, toward)) continue;
+            if (any(toward != last) && solidStrokeCross(last, toward) > 0) {
+                b = t;
+                last = toward;
+            }
+        }
+        result.kind = 4;
+    }
+    solidStrokeArmPoints(g, a, words, s, result.origin1, result.far1);
+    solidStrokeArmPoints(g, b, words, s, result.origin2, result.far2);
+    return result;
+}
+
 vertex ShapeFragmentIn solidStrokeVertexMain(
     uint index [[vertex_id]],
     constant SolidStrokePiece *pieces [[buffer(0)]],
@@ -251,6 +510,8 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     constant SolidStrokePlacement &s [[buffer(5)]])
 {
     SolidStrokePiece piece = pieces[index / 6];
+    // 点の記録は片の後ろに積んである (`SolidStrokeGeometry.Piece`)
+    constant float4 *words = (constant float4 *)pieces;
     const uint corners[6] = {0, 1, 2, 0, 2, 3};
     uint corner = corners[index % 6];
     float3 shapeA = piece.a.xyz * s.uv.z;
@@ -270,31 +531,60 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             world = corner < 2 ? center + across : center - across;
             shape = end ? shapeB : shapeA;
         }
-    } else if (piece.a.w == 2) {
-        // 辺が 2 本だけ集まる角の、二等分線で割った半分 (#1644)。形は CPU の
-        // `Canvas.joinRim` の `miter` (尖りを角から √2 × 太さの半分で切る) と同じ式で、
-        // 画面に写した 2 本の帯の向きから決める。GPU で組む線は `miter` だけである
-        // (`gpuStrokeStyleAllows`)。4 隅は 角のすぐ内側・自分の側の外側の縁の角・切り口
-        // (か尖り)・二等分線の上の切り口の中点 (か尖り) で、2 枚を合わせると CPU の周になる
-        float3 own = (s.matrix * float4(piece.b.xyz * s.uv.z, 1)).xyz;
-        float3 other = (s.matrix * float4(piece.c.xyz * s.uv.z, 1)).xyz;
-        float3 acrossOwn;
-        float3 acrossOther;
-        float2 armOwn;
-        float2 armOther;
-        bool placed = solidStrokeAcross(own, a, s, acrossOwn) && solidStrokeAcross(a, other, s, acrossOther)
-            && solidStrokeToward(a, own, s, armOwn) && solidStrokeToward(a, other, s, armOther);
-        if (placed) {
-            float2 sideOwn = float2(dot(acrossOwn, s.right.xyz), dot(acrossOwn, s.down.xyz));
-            // 腕は画面に写した隣への向き (CPU の `Canvas.screenToward`)。世界での差を使うと、
-            // 透視で奥へ引っ込む辺の向きを取り違える
+    } else if (piece.a.w == 3) {
+        // 端の円板の 8 分の 1 (三角形 2 枚)。CPU の `appendSolidDisc` の扇の 2 枚ずつ
+        SolidStrokeCorner placed = solidStrokeCornerShape(uint(piece.b.x), true, words, s);
+        if (placed.kind == 1) {
+            float radius = halfWeight * solidStrokePixel(placed.center, s);
+            uint step = uint(piece.b.y) * 2 + (corner == 0 ? 0 : corner - 1);
+            float2 unit = kSolidStrokeDisc[step];
+            world = corner == 0 ? placed.center
+                : placed.center + (s.right.xyz * unit.x + s.down.xyz * unit.y) * radius;
+        }
+    } else {
+        // 網の点の半分 (#1644・#1889・#1893)。形は点の記録から決める (`solidStrokeCornerShape`)
+        bool firstHalf = piece.b.y == 0;
+        SolidStrokeCorner placed = solidStrokeCornerShape(uint(piece.b.x), piece.b.z != 0, words, s);
+        float3 center = placed.center;
+        float radius = halfWeight * solidStrokePixel(center, s);
+        world = center;
+        if (placed.kind == 2 && firstHalf) {
+            // 向きの無い点 (画面の 1 点に潰れた形の全体)。画面の軸に沿った正方形
+            world = center + solidStrokeSquareCorner(corner, s) * radius;
+        } else if (placed.kind == 3 && firstHalf) {
+            // 出っ張らせる端。CPU の `appendSolidSquare(at:awayFrom:shape:half:camera:)` と同じ 2 軸
+            float3 right;
+            if (solidStrokeAcross(placed.far1, center, s, right)) {
+                float3 down = s.right.xyz * -dot(right, s.down.xyz) + s.down.xyz * dot(right, s.right.xyz);
+                switch (corner) {
+                    case 0: world = center + (-right - down) * radius; break;
+                    case 1: world = center + (right - down) * radius; break;
+                    case 2: world = center + (right + down) * radius; break;
+                    default: world = center + (-right + down) * radius; break;
+                }
+            }
+        } else if (placed.kind == 4) {
+            // 2 本の腕の折れ目の、二等分線で割った半分 (#1644)。形は CPU の `Canvas.joinRim` の
+            // `miter` (尖りを角から √2 × 太さの半分で切る) と同じ式で、画面に写した 2 本の帯の
+            // 向きから決める。GPU で組む線は `miter` だけである (`gpuStrokeStyleAllows`)。4 隅は
+            // 角のすぐ内側・自分の側の外側の縁の角・切り口 (か尖り)・二等分線の上の切り口の中点
+            // (か尖り) で、2 枚を合わせると CPU の周になる。腕の出る点は角と画面で重なる点で、
+            // 形は角の位置に置く (CPU の `buildSolidJoin`)
+            float3 ownOrigin = firstHalf ? placed.origin1 : placed.origin2;
+            float3 own = firstHalf ? placed.far1 : placed.far2;
+            float3 otherOrigin = firstHalf ? placed.origin2 : placed.origin1;
+            float3 other = firstHalf ? placed.far2 : placed.far1;
+            float3 acrossOwn;
+            float3 acrossOther;
+            float2 armOwn;
+            float2 armOther;
+            bool built = solidStrokeAcross(own, ownOrigin, s, acrossOwn)
+                && solidStrokeAcross(otherOrigin, other, s, acrossOther)
+                && solidStrokeToward(ownOrigin, own, s, armOwn) && solidStrokeToward(otherOrigin, other, s, armOther);
             float2 inward = armOwn + armOther;
-            float radius = halfWeight * solidStrokePixel(a, s);
-            if (inward.x == 0 && inward.y == 0) {
-                world = a;  // 一直線。隙間は無い
-            } else {
-                // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.w`)
-                bool firstHalf = piece.b.w == 0;
+            if (built && !(inward.x == 0 && inward.y == 0)) {
+                float2 sideOwn = float2(dot(acrossOwn, s.right.xyz), dot(acrossOwn, s.down.xyz));
+                // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.y`)
                 float2 outerOwn = firstHalf ? float2(-armOwn.y, armOwn.x) : float2(armOwn.y, -armOwn.x);
                 if (dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
                 float2 outerOther = firstHalf ? float2(armOther.y, -armOther.x) : float2(-armOther.y, armOther.x);
@@ -317,21 +607,13 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
                 // 角のすぐ内側 (CPU の `joinRim` の周の最初の点)。角を片の内に入れる
                 float2 inner = normalize(inward) / 64;
                 switch (corner) {
-                    case 0: world = a + (s.right.xyz * inner.x + s.down.xyz * inner.y) * radius; break;
-                    case 1: world = a + edge; break;
-                    case 2: world = a + (s.right.xyz * cut.x + s.down.xyz * cut.y) * radius; break;
-                    default: world = a + (s.right.xyz * middle.x + s.down.xyz * middle.y) * radius; break;
+                    case 0: world = center + (s.right.xyz * inner.x + s.down.xyz * inner.y) * radius; break;
+                    case 1: world = center + edge; break;
+                    case 2: world = center + (s.right.xyz * cut.x + s.down.xyz * cut.y) * radius; break;
+                    default: world = center + (s.right.xyz * middle.x + s.down.xyz * middle.y) * radius; break;
                 }
             }
-        } else if (piece.b.w == 0) {
-            // 帯の横向きが決まらない角は、1 枚目が画面の軸に沿った正方形へ倒す (CPU と同じ)。
-            // 2 枚目は面積 0 にする。倒れ先の形は #1893 で決める
-            float radius = halfWeight * solidStrokePixel(a, s);
-            world = a + solidStrokeSquareCorner(corner, s) * radius;
         }
-    } else {
-        float radius = halfWeight * solidStrokePixel(a, s);
-        world = a + solidStrokeSquareCorner(corner, s) * radius;
     }
     float lift = (s.parameters.x + 1) * solidStrokePixel(world, s);
     if (s.eye.w != 0) {
