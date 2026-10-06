@@ -16,7 +16,7 @@ import Testing
 ///
 /// 範囲は受け口に渡る数のすべてで、1 例ではなく並べて回す。力は 5 種の数の成分 12 個
 /// (弱まり始める距離は別の扱いで、`ParticleForceTests` が見る)、`emit` は `rate`・
-/// `from` の成分・`color` の成分・幅 (`speed`・`angle`・`life`・`size`) の端である。
+/// `from` の成分・`color` の成分・幅 (`speed`・`toward` の面内の角度・`life`・`size`) の端である。
 /// 幅の端の数でない値は、Swift の `...` が幅を作る時点で止めるので届かない。無限だけを回す。
 ///
 /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
@@ -56,8 +56,8 @@ struct ParticleInputTests {
                 canvas.background(.display(red: 0.05, green: 0.05, blue: 0.05))
                 let up = -Float.pi / 2
                 canvas.emit(
-                    dust, from: .point(32, 58), rate: 120, speed: 40...60,
-                    angle: (up - 0.4)...(up + 0.4), life: 2...2, size: 3...3,
+                    dust, from: .point(32, 58), toward: .plane((up - 0.4)...(up + 0.4)), rate: 120,
+                    speed: 40...60, life: 2...2, size: 3...3,
                     color: .display(red: 0.94, green: 0.55, blue: 0.16), using: &randomness)
                 canvas.force(dust, [.gravity(0, 20)])
                 if frame == 2 { canvas.force(dust, [once]) }
@@ -166,8 +166,8 @@ struct ParticleInputTests {
             try canvas.draw {
                 if frame == 0 {
                     canvas.emit(
-                        dust, from: source, rate: (Float(count) * 30).nextUp, speed: 0...0,
-                        angle: 0...0, life: 100...100, size: 1...1,
+                        dust, from: source, toward: .plane(0...0), rate: (Float(count) * 30).nextUp,
+                        speed: 0...0, life: 100...100, size: 1...1,
                         color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 if !forces.isEmpty { canvas.force(dust, forces) }
@@ -243,8 +243,8 @@ struct ParticleInputTests {
             // 検めは、塗りがどの道から数でなくなっても効く守りとして残っている
             canvas.style.fill = LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1)
             canvas.emit(
-                dust, from: .point(32, 32), rate: 60, speed: 0...0, angle: 0...0, life: 1...1,
-                size: 1...1, color: nil, using: &randomness)
+                dust, from: .point(32, 32), toward: .plane(0...0), rate: 60, speed: 0...0,
+                life: 1...1, size: 1...1, color: nil, using: &randomness)
         }
         #expect(dust.cursor == 0)
         let message = try #require(dust.warnings.message(for: .unacceptableEmission))
@@ -259,7 +259,7 @@ struct ParticleInputTests {
         var rate: Float = 600
         var from: Emitter = .point(32, 32)
         var speed: ClosedRange<Float> = 0...10
-        var angle: ClosedRange<Float> = 0...1
+        var toward: Heading = .plane(0...1)
         var life: ClosedRange<Float> = 1...1
         var size: ClosedRange<Float> = 1...2
         /// 乗算済みの赤・緑・青・不透明度。色の組み立ては主の actor に載るので、数で持つ
@@ -287,7 +287,8 @@ struct ParticleInputTests {
         cases += [
             Emission(name: "speed 0...inf", speed: 0...infinity),
             Emission(name: "speed -inf...0", speed: -infinity...0),
-            Emission(name: "angle 0...inf", angle: 0...infinity),
+            Emission(name: "toward .plane(0...inf)", toward: .plane(0...infinity)),
+            Emission(name: "toward .plane(-inf...0)", toward: .plane(-infinity...0)),
             Emission(name: "life 1...inf", life: 1...infinity),
             Emission(name: "size 1...inf", size: 1...infinity),
             Emission(name: "size -inf...1", size: -infinity...1),
@@ -300,8 +301,8 @@ struct ParticleInputTests {
         let before = dust.cursor
         try canvas.draw {
             canvas.emit(
-                dust, from: emission.from, rate: emission.rate, speed: emission.speed,
-                angle: emission.angle, life: emission.life, size: emission.size,
+                dust, from: emission.from, toward: emission.toward, rate: emission.rate,
+                speed: emission.speed, life: emission.life, size: emission.size,
                 color: LinearRGBA(
                     premultipliedRed: emission.color.x, green: emission.color.y,
                     blue: emission.color.z, alpha: emission.color.w),
@@ -348,12 +349,12 @@ struct ParticleInputTests {
                 // 1 か所目: 奇数のフレームだけ断られる。偶数のフレームは毎秒 7 個
                 let first = dust.cursor
                 canvas.emit(
-                    dust, from: .point(16, 32), rate: frame.isMultiple(of: 2) ? 7 : .nan,
-                    speed: 0...0, angle: 0...0, life: 0.2...0.2, size: 1...1,
-                    color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+                    dust, from: .point(16, 32), toward: .plane(0...0),
+                    rate: frame.isMultiple(of: 2) ? 7 : .nan, speed: 0...0, life: 0.2...0.2,
+                    size: 1...1, color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 let second = dust.cursor
                 canvas.emit(
-                    dust, from: .point(48, 32), rate: 15, speed: 0...0, angle: 0...0,
+                    dust, from: .point(48, 32), toward: .plane(0...0), rate: 15, speed: 0...0,
                     life: 0.2...0.2, size: 1...1, color: .linear(red: 1, green: 1, blue: 1),
                     using: &randomness)
                 counts[0] += second - first
@@ -382,17 +383,17 @@ struct ParticleInputTests {
             canvas.force(dust, [.gravity(.nan, 0), .attract(0, 0, strength: 1, weakeningBeyond: 0)])
             for _ in 0..<(Particles.maximumForces + 1) { canvas.force(dust, [.drag(0.1)]) }
             canvas.emit(
-                dust, from: .point(.nan, 0), rate: 240, speed: 0...0, angle: 0...0,
+                dust, from: .point(.nan, 0), toward: .plane(0...0), rate: 240, speed: 0...0,
                 life: 10...10, size: 2...2, color: nil, using: &randomness)
             canvas.emit(
-                dust, from: .point(32, 32), rate: 240, speed: 0...0, angle: 0...0,
+                dust, from: .point(32, 32), toward: .plane(0...0), rate: 240, speed: 0...0,
                 life: 10...10, size: 2...2, color: nil, using: &randomness)
             _ = dust.takeForces()
         }
         // 枠 4 個を長生きする粒で埋めた後に、もう 1 個出して上書きさせる
         try canvas.draw {
             canvas.emit(
-                dust, from: .point(32, 32), rate: 60, speed: 0...0, angle: 0...0,
+                dust, from: .point(32, 32), toward: .plane(0...0), rate: 60, speed: 0...0,
                 life: 10...10, size: 2...2, color: nil, using: &randomness)
         }
         #expect(dust.warnings.hasWarned(.unacceptableForce))
