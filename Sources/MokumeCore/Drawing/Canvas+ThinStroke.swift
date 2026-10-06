@@ -729,4 +729,23 @@ final class ThinStrokeCache {
         if (entries[stroke]?.count ?? 0) >= Self.capacity { entries[stroke] = [:] }
         entries[stroke, default: [:]][key] = value
     }
+
+    /// 塗り (``Shape/fillRanges`` の番号) ごとの、置いた後に細くなった名指しの基本図形の塗りを広げた
+    /// 頂点の控え (#1934・``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。鍵は描く画素へ写す
+    /// 2x2 そのもの (広げ方が帯の向きで決まるので、回転を除かない)。`nil` を控えた鍵は「細くならない」。
+    private var fillEntries: [Int: [SIMD4<Float>: Built?]] = [:]
+    /// 細い塗りを測って組み直した回数 (検査用・細くならなかった回も数える)。控えが効いていれば、
+    /// 同じ大きさ・向きで置き続けても増えない。
+    private(set) var fillsThinned = 0
+
+    func thinFill(_ fill: Int, _ key: SIMD4<Float>) -> Built?? {
+        guard let table = fillEntries[fill] else { return nil }
+        return table[key]
+    }
+
+    func rememberThinFill(_ value: Built?, _ fill: Int, _ key: SIMD4<Float>) {
+        fillsThinned += 1
+        if (fillEntries[fill]?.count ?? 0) >= Self.capacity { fillEntries[fill] = [:] }
+        fillEntries[fill, default: [:]][key] = value
+    }
 }

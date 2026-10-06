@@ -26,7 +26,8 @@ import Testing
 /// | 線の半画素の寄せ | ``Outline/thickLine``・``Outline/thickQuad`` | 形 |
 /// | 線・輪郭・点の太さ (距離関数の経路・#1488) | ``Amount/line``・``Amount/rectOutline``・``Amount/point`` | 量 |
 /// | 細い塗り (距離関数の経路・#1477) | ``Amount/thinFill`` | 量 |
-/// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の行すべて | 量 |
+/// | 細い塗り (三角形の経路・#1934) | ``Amount/shaderFill`` ほか、三角形の経路の塗りの行すべて | 量 |
+/// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の線の行すべて | 量 |
 /// | 効果の半径 (#1545) | ``Outline/blur`` | 形 (2 つの濃さで切る) |
 /// | 効果の断片の `position` / `size` (#1639) | ``Outline/effectPosition``・``Outline/effectSize`` | 形 |
 /// | 塗りの断片の `position` / `resolution` (#1639) | ``Outline/paintPosition``・``Outline/paintResolution`` | 形 |
@@ -39,7 +40,8 @@ import Testing
 /// ## 2 つの比べ方
 ///
 /// - **量** (太さ・面積の口): 描く面 (`Canvas.target`) の線形の値を足す。線は、線を横切る列の
-///   和が「太さ × 細かさ」の ±10%、点は全体の和が「面積 × 細かさの 2 乗」の ±10%。置く位置を
+///   和が「太さ × 細かさ」の ±10%、点と軸に沿わない塗りは全体の和が「面積 × 細かさの 2 乗」の
+///   ±10%。置く位置を
 ///   出す画素で 0.5 ずつ (描く画素で 0.25 ずつ) ずらして、どの位置でも成り立つことを見る
 ///   (細かさ 1 の 1 画素より細い線も、同じ式で見る — `strokeWeight` の説明は経路も細かさも
 ///   限らない)
@@ -108,6 +110,16 @@ struct DensityInvarianceTests {
         case shaderReadsAlpha = "in.color.a の 2 乗を返す shader() の quad の輪郭 (三角形の経路)"
         // 入れ子の記録で、半透明の色を掛けて置いた輪郭も、外側を置くときに細さを測る
         case nestedTranslucent = "半透明の色で入れ子に置いた保持した形 (三角形の経路)"
+        // 三角形の経路の細い塗り (#1934)。`fill` の説明が名指す基本図形は、`shader()` /
+        // `texture()` で三角形の経路へ落ちても、距離関数の経路 (``thinFill``) と同じく面積に
+        // 比例した濃さで出る。太さの代わりに塗りの幅で書く
+        case shaderFill = "shader() の細い rect の塗り (三角形の経路)"
+        case textureFill = "texture() の細い rect の塗り (三角形の経路)"
+        case foldedFill = "shader() の細い rect を畳んだ雛形 (三角形の経路)"
+        case rotatedFill = "rotate(π/4) の shader() の細い rect (三角形の経路)"
+        case squashedFill = "scale(1, 0.1) の shader() の細い rect (三角形の経路)"
+        case retainedFill = "shader() で記録した rect を縮めて置く保持した形 (三角形の経路)"
+        case shaderEllipse = "shader() の細長い ellipse の塗り (三角形の経路)"
 
         /// 線を横切る列の和に、線の太さが何本ぶん入るか。点は 0 (全体の和で見る)。
         ///
@@ -119,7 +131,9 @@ struct DensityInvarianceTests {
         var crossings: Double {
             switch self {
             case .point, .shaderPoint, .shaderSquarePoint, .rotatedShaderPoint, .squashedShaderPoint: 0
-            case .line, .thinFill, .shaderLine: 1
+            case .line, .thinFill, .shaderLine, .shaderFill, .textureFill, .foldedFill, .squashedFill,
+                .retainedFill:
+                1
             case .triangle: 1 + (1 + Double(60 * 60) / Double(88 * 88)).squareRoot()
             case .box: 4
             case .stretchedQuad: 2 * 0.25
@@ -130,7 +144,27 @@ struct DensityInvarianceTests {
         }
 
         /// 塗りで量を出す口か (線の太さの代わりに塗りの幅で書く)。
-        var isFill: Bool { self == .thinFill }
+        var isFill: Bool {
+            switch self {
+            case .thinFill, .shaderFill, .textureFill, .foldedFill, .rotatedFill, .squashedFill,
+                .retainedFill, .shaderEllipse:
+                true
+            default: false
+            }
+        }
+
+        /// 面全体の和で見る塗りの、幅 1 のときの面積 (出す画素)。`nil` なら列か点で見る。
+        ///
+        /// 軸に沿わない帯 (回した `rect`) と、列ごとの幅が形に沿って変わる楕円は、列の和では
+        /// 量が決まらないので面全体で見る。**描く画素で幅が 1 以上の行は見ない** — 三角形の経路の
+        /// 縁には AA が無く、1 画素以上の塗りは描く画素の格子で丸まる (ADR-0039 決定 3)。
+        var fillArea: Double? {
+            switch self {
+            case .rotatedFill: 60
+            case .shaderEllipse: Double.pi / 4 * 88
+            default: nil
+            }
+        }
 
         @MainActor
         func draw(on canvas: Canvas, weight: Float, offset: Float) throws {
@@ -220,6 +254,51 @@ struct DensityInvarianceTests {
                 }
                 canvas.translate(20, y)
                 canvas.shape(outer)
+            case .shaderFill, .textureFill, .foldedFill, .rotatedFill, .squashedFill, .retainedFill,
+                .shaderEllipse:
+                try drawFill(on: canvas, weight: weight, offset: offset)
+            }
+        }
+
+        /// 三角形の経路の細い塗りの行 (#1934)。白で塗り、輪郭は持たない。
+        @MainActor
+        private func drawFill(on canvas: Canvas, weight: Float, offset: Float) throws {
+            let y = 40 + offset
+            canvas.noStroke()
+            canvas.fill(255)
+            if self == .textureFill {
+                let sheet = try canvas.createImage(2, 2)
+                sheet.fill(.linear(red: 1, green: 1, blue: 1))
+                canvas.texture(sheet)
+            } else {
+                canvas.shader(try Self.plainShader(canvas))
+            }
+            switch self {
+            case .foldedFill:
+                // 1 つ目は面の外へ置き、見るのは雛形から置いた 2 つ目である (``foldedRect`` と同じ)
+                canvas.rect(20, y - 400, 88, weight)
+                canvas.rect(20, y, 88, weight)
+            case .rotatedFill:
+                canvas.translate(64 + offset, 64 + offset)
+                canvas.rotate(Float.pi / 4)
+                canvas.rect(-30, -weight / 2, 60, weight)
+            case .squashedFill:
+                // 縦の倍率 0.1 で、描く画素での幅が `weight × 細かさ` になる
+                canvas.translate(20, y)
+                canvas.scale(1, 0.1)
+                canvas.rect(0, 0, 88, weight * 10)
+            case .retainedFill:
+                // 幅を倍で記録し、半分に縮めて置く。置いた後の幅が `weight` になる。記録の中で
+                // 効いている断片が形に焼き付く (三角形の経路で記録する)
+                let shape = canvas.createShape { canvas.rect(0, 0, 176, weight * 2) }
+                canvas.resetShader()
+                canvas.translate(20, y)
+                canvas.scale(0.5, 0.5)
+                canvas.shape(shape)
+            case .shaderEllipse:
+                canvas.ellipse(64, y, 88, weight)
+            default:
+                canvas.rect(20, y, 88, weight)
             }
         }
 
@@ -262,6 +341,8 @@ struct DensityInvarianceTests {
             if mouth.crossings == 0, Double(weight * density) * areaFactor.squareRoot() >= 1 {
                 continue
             }
+            // 面全体で見る塗りも、描く画素で幅が 1 より細いときだけ見る (``Amount/fillArea``)
+            if mouth.fillArea != nil, weight * density >= 1 { continue }
             for offset in [Float(0), 0.5, 1, 1.5] {
                 let canvas = try Self.makeCanvas(density: density)
                 try Self.draw(on: canvas) {
@@ -272,10 +353,14 @@ struct DensityInvarianceTests {
                 }
                 let pixels = try canvas.target.readPixels()
                 let drawn = Double(weight * density)
-                let (measured, expected) =
-                    mouth.crossings == 0
-                    ? (Self.totalSum(pixels), drawn * drawn * areaFactor)
-                    : (Self.columnSum(pixels, density: density), drawn * mouth.crossings)
+                let (measured, expected): (Double, Double)
+                if let area = mouth.fillArea {
+                    (measured, expected) = (Self.totalSum(pixels), area * drawn * Double(density))
+                } else if mouth.crossings == 0 {
+                    (measured, expected) = (Self.totalSum(pixels), drawn * drawn * areaFactor)
+                } else {
+                    (measured, expected) = (Self.columnSum(pixels, density: density), drawn * mouth.crossings)
+                }
                 if abs(measured - expected) > 0.1 * expected {
                     broken.append("細かさ \(density)・ずらし \(offset): \(measured) (期待 \(expected))")
                 }
@@ -310,6 +395,48 @@ struct DensityInvarianceTests {
                 abs(low - reference) < reference * 0.2,
                 "細かさ 0.5・上辺 y = \(y) の光の量 \(low) (細かさ 1 は \(reference))")
         }
+    }
+
+    /// **1 画素より小さい円は、`shader()` で三角形の経路へ落ちても、置く位置によらず外接する
+    /// 正方形の面積ぶんで出る** (#1934 完了条件 2)。置き方は距離関数の経路の同じ約束
+    /// (`FormShapeTests.subpixelCirclesKeepTheirBoundingSquare`・#1477 の判断 1 A) と同じで、
+    /// 同じ位置の `shader()` 無しの円とも ±10% で揃う。
+    ///
+    /// 直す前は、半径 0.25 以下の円が三角形 1 枚の多角形になり、画素の中心を含めば満濃度の
+    /// 1 画素、含まなければ何も出なかった。
+    @Test(
+        "1 画素より小さい shader() の円は、置く位置によらず外接する正方形の面積ぶんで出る (#1934)",
+        arguments: [Float(0.2), 0.5])
+    func subpixelShaderCirclesKeepTheirBoundingSquare(_ diameter: Float) throws {
+        let centers: [(Float, Float)] = [(20, 20), (20.25, 20), (20.5, 20.5), (20.3, 20.7)]
+        let expected = Double(diameter * diameter)
+        func light(at x: Float, _ y: Float, shaded: Bool) throws -> Double {
+            let canvas = try Self.makeCanvas(density: 1)
+            try Self.draw(on: canvas) {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                if shaded {
+                    canvas.shader(
+                        try canvas.makeShader(
+                            "float4 paint(Fragment in, Values values) { return in.color; }"))
+                }
+                canvas.circle(x, y, diameter)
+            }
+            return Self.totalSum(try canvas.target.readPixels())
+        }
+        var broken: [String] = []
+        for (x, y) in centers {
+            let shaded = try light(at: x, y, shaded: true)
+            let plain = try light(at: x, y, shaded: false)
+            if abs(shaded - expected) > 0.1 * expected {
+                broken.append("中心 (\(x), \(y)): \(shaded) (期待 \(expected))")
+            }
+            if abs(shaded - plain) > 0.1 * plain {
+                broken.append("中心 (\(x), \(y)): shader() 無しの円の和 \(plain) と食い違う (\(shaded))")
+            }
+        }
+        #expect(broken.isEmpty, "直径 \(diameter) の shader() の円: \(broken.joined(separator: " / "))")
     }
 
     /// **立体の線は、置く面の細かさで補う** (#1637)。細かさ 0.5 の本体で記録した `box` の稜線を
@@ -416,6 +543,36 @@ struct DensityInvarianceTests {
             }
         }
         #expect(canvas.thinStrokesRebuilt == 1, "組み直した回数: \(canvas.thinStrokesRebuilt)")
+    }
+
+    /// **細い塗りを補っても、同じ 2x2 の置き場所どうしは畳み、保持した形は同じ大きさ・向きで
+    /// 置き続けるかぎり 1 度しか組み直さない** (#1934)。細かさ 0.5 では高さ 1 の `rect` がいつも細い
+    /// 側に入るので、補いが速い経路を外すと、`texture()` の小さな `rect` を並べる絵がかえって遅くなる。
+    ///
+    /// 細い塗りの広げ方は帯の向きで決まるので、線 (`thinStrokesKeepTheFastRoutes`) と違って、回転
+    /// だけが違う置き場所は同じ雛形に畳まない。ここで見るのは平行移動だけが違う置き場所である。
+    @Test("細かさ 0.5 の細い塗りも、畳み・組み直しの控えの速い経路を通る (#1934)")
+    func thinFillsKeepTheFastRoutes() throws {
+        let canvas = try Self.makeCanvas(density: 0.5)
+        let plain = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        var shape = Shape.empty
+        for frame in 0..<2 {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                canvas.shader(plain)
+                for index in 0..<4 { canvas.rect(16 + Float(index) * 20, 16, 12, 1) }
+                // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開いて置き場所を足す
+                #expect(canvas.openFlat != nil, "細い塗りの rect が畳まれない")
+                #expect(canvas.flatInstances.count == 5, "畳んだ置き場所の数: \(canvas.flatInstances.count)")
+                if frame == 0 { shape = canvas.createShape { canvas.rect(0, 0, 40, 1) } }
+                canvas.resetShader()
+                for index in 0..<3 { canvas.shape(shape, 10 + Float(index) * 30, 80) }
+            }
+        }
+        #expect(shape.thinCache.fillsThinned == 1, "組み直した回数: \(shape.thinCache.fillsThinned)")
     }
 
     /// **細い線の端は、線に沿っては元の太さの半分だけ出る** (#1637)。

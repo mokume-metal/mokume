@@ -19,7 +19,13 @@ import simd
 /// 輪郭の側は ``StrokeRange/thin`` が同じ役を持つ。塗りは輪郭と違って画面で半画素寄せないので、
 /// 別の並びで持つ ([ADR-0039] 決定 2)。
 ///
+/// **名指しの基本図形 (`rect` と一周の楕円) の塗りも同じ素材で持つ** ([#1934])。置いた後に描く画素で
+/// 1 画素より細くなるなら、広げた頂点で区間を差し替える
+/// (``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。`rect` は周の元を持たないので、刻み直しは
+/// しない (``RingFillRecipe/segments(atScale:)`` が `nil`)。
+///
 /// [#1645]: https://github.com/mokume-metal/mokume/issues/1645
+/// [#1934]: https://github.com/mokume-metal/mokume/issues/1934
 /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
 struct RingFillRange {
     /// ``Shape/vertices`` の中での区間。
@@ -64,6 +70,19 @@ struct RingFillRecipe {
         return RingFillRecipe(
             outline: outline, color: color, hasPicture: hasPicture,
             transform: Transform(matrix: matrix * transform.matrix), uv: uv)
+    }
+
+    /// 名指しの基本図形の塗りの、記録のときの変換を掛けた後のいちばん細い向きの幅 (入れ子の外側の
+    /// 行列も含む・#1934)。形の中で最も細い塗りを見つけるのに使う。名指しの基本図形でなければ無限大。
+    /// **丸めない** — 置くときの行列と掛け合わせた後で 1 度だけ丸める (``ThinStrokeRecipe/recordedWeight``
+    /// と同じ)。矩形の辺の隔たりも楕円の短い直径も、最小の辺 (直径) × 最小の特異値を下回らない。
+    var recordedFillSpan: Float {
+        guard let named = outline.namedFill else { return .infinity }
+        let columns = transform.matrix.columns
+        let linear = simd_float2x2(
+            SIMD2(columns.0.x, columns.0.y), SIMD2(columns.1.x, columns.1.y))
+        return Float(
+            Double(2 * min(named.half.x, named.half.y)) * Canvas.smallestSingularValue(of: linear))
     }
 
     /// 置いた後の拡大 `scale` で要る周の分割数。記録のときより増えなければ `nil`。
