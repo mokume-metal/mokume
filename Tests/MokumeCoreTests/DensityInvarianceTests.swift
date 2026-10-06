@@ -881,6 +881,45 @@ struct DensityInvarianceTests {
         #expect(shape.thinCache.fillsThinned == settled)
     }
 
+    /// **細くならない答えも、実体の大きさで控えの予算に数える** (#1934 の 2 回目の反証 9)。形の中で
+    /// 最も細い塗りの見積もりが 1 を割ると塗りを走査し、細くならなかった塗りも「細くない」と控える。
+    /// 1 件は鍵・項目・使った順の記録で 200 バイトほどあるので、重さ 1 (頂点 1 つ・32 バイト) で
+    /// 数えると、回して置き続ける形 1 つで答えだけが予算の 6 倍ほど溜まる。
+    @Test("細くならない答えも、実体の大きさで控えの予算に数える (#1934)")
+    func thinFillCacheWeighsItsAnswers() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let plain = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        var retained: Shape?
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(plain)
+            retained = canvas.createShape { canvas.rect(0, 0, 40, 2) }
+            canvas.resetShader()
+        }
+        let shape = try #require(retained)
+        let budget = 60
+        shape.thinCache.thinFillBudget = budget
+        // `scale(0.4, 1)` の下の 40×2 は、見積もり (短い辺 2 × 0.4 = 0.8) では細くなりうるが、
+        // 実際は描く画素で 16×2 で細くない。向きを変えるたびに「細くない」の答えが 1 件増える
+        for index in 0..<50 {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.translate(64, 64)
+                canvas.rotate(Float(index) * 0.05)
+                canvas.scale(0.4, 1)
+                canvas.shape(shape)
+            }
+        }
+        let held = shape.thinCache.thinFillEntryCount
+        #expect(held >= 1, "細くないの答えを控えていない")
+        #expect(
+            held * ThinStrokeCache.thinFillEntryOverhead <= budget,
+            "答えを \(held) 件控えた (1 件 \(ThinStrokeCache.thinFillEntryOverhead) 頂点ぶん・予算 \(budget))")
+    }
+
     /// **細い線の端は、線に沿っては元の太さの半分だけ出る** (#1637)。
     ///
     /// 帯を描く画素 1 つへ広げても、端は広げない向き (線に沿う向き) に元の太さで出す。端まで
