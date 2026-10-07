@@ -1042,6 +1042,32 @@ struct GraphicsTests {
         #expect(runs[0] == runs[1], "同じ値の書き直しで列を閉じた")
     }
 
+    /// **揺らぎの書き換えで閉じるのは、揺らぎを読みうる列だけ** ([#1855] の反証 6)。揺らぎを引くのは
+    /// 利用者の断片だけで、組み込みの塗りと基本図形の列は引かない。閉じると、直す前は 1 本だった列が
+    /// 書き換えの数だけ割れ、畳み (#424) も外れる。利用者の断片で塗る列は、書き換えのたびに分かれる。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    @Test("揺らぎの書き換えは、揺らぎを読みうる列 (利用者の断片) だけを閉じる", arguments: [false, true])
+    func changingTheNoiseClosesOnlyRunsThatReadIt(withShader: Bool) throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let shader = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return float4(mokume_noise(in, float2(0.5)), 0.0, 0.0, 1.0); }"
+        )
+        try canvas.draw {
+            canvas.noStroke()
+            if withShader { canvas.shader(shader) }
+            for index in 0..<5 {
+                canvas.noiseSeed(index + 1)
+                canvas.circle(Float(index), 4, 2)
+            }
+            canvas.resetShader()
+        }
+        let expected = withShader ? 5 : 1
+        #expect(
+            canvas.drawCallsInLastFrame == expected,
+            "列の数が \(canvas.drawCallsInLastFrame) (\(expected) のはず)")
+    }
+
     /// 揺らぎを戻す出口 ([#1855])。組み立ての中で種を決め直すと、出口が外の種へ戻す。**戻すときも
     /// 描き切らない。** 組み立てより前に本体と描き場所へ置いたものは外の種で、組み立ての中で別の
     /// 描き場所へ置いたものは中の種で描かれる — どれも列が閉じた時点の設定を持ち歩く。

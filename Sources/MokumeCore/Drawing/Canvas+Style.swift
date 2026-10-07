@@ -281,6 +281,17 @@ extension Canvas {
     /// 記録した塗りが無いとき (いつもの描画) だけである。
     var effectivePaint: Shape.Paint { replayedPaint ?? livePaint }
 
+    /// 開いている列が揺らぎを読みうるか ([#1855] の反証 6)。**揺らぎを引くのは利用者の断片だけ**で、
+    /// 組み込みの塗りと基本図形の列 (塗りはいつも組み込み・``closeFormBatch()``) は引かない。揺らぎの
+    /// 書き換えが閉じるのは、これが立つ列だけ (``changeNoise(_:)``)。閉じない列は、閉じた時点の設定を
+    /// 持つが読まれない。
+    ///
+    /// 開いている列の塗りは、いまの塗り (``effectivePaint``) と同じである — 塗りを替える口
+    /// (``shader(_:)``・``usePaint(_:)`` ほか) は替える前に列を閉じる。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    var openRunReadsNoise: Bool { openSource != .form && effectivePaint.shader != nil }
+
     /// 記録した塗りへ移る。
     ///
     /// **同じなら列は閉じない**ので、続けて置いた形は前の形と同じ列に並び、描く回数は

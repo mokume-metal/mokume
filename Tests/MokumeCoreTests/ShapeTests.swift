@@ -1476,12 +1476,13 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
             + "nothing, and pixels is not read again",
     .drawnOut:
         "createShape { }: the frame was drawn out while the shape was being built (a drawing "
-            + "target placed earlier in the frame was changed after 4 such changes already in this "
-            + "frame, or this canvas started or dropped a frame), so what was built up to then went "
-            + "into the frame and the shape is empty. Do those before or after building the shape",
-    .endDraw:
-        "endDraw() was called inside createShape { } on the canvas being built on, so the frame "
-            + "closes when the shape is finished instead of here. Call endDraw() after building the "
+            + "target placed earlier was changed when this canvas could not keep one more copy of it, "
+            + "or this canvas started a frame anew), so what was built up to then was drawn into the "
+            + "frame or dropped, and the shape is empty. Do those before or after building the shape",
+    .frameEnd:
+        "createShape { }: the frame of the canvas being built on was closed inside the shape (by "
+            + "endDraw() or at the end of draw { }), so it stays open until the shape is finished "
+            + "and closes there; until then the canvas is still drawing. Close it after building the "
             + "shape",
     .camera:
         "The camera and projection do nothing inside createShape { }. A shape cannot hold a "
@@ -1560,6 +1561,22 @@ enum NoiseChangeInsideShape: CaseIterable, CustomTestStringConvertible {
         case .detailOnGraphics: graphics.noiseDetail(2, 0.3)
         }
     }
+}
+
+/// 組み立ての中で、組み立てている描き場所のフレームを開いて閉じる形 ([#1855] の反証 1)。
+///
+/// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+enum FrameInsideShape: CaseIterable, CustomTestStringConvertible {
+    /// フレームの外の描き場所で、組み立ての中に `draw { }`
+    case drawOutsideAFrame
+    /// 同じく、組み立ての中に `beginDraw()` と `endDraw()` の対 (`draw { }` と結果が揃うことの対照)
+    case beginAndEndDrawOutsideAFrame
+    /// フレームの外の描き場所で、入れ子の組み立ての内側に `draw { }`。閉じるのは一番外の出口で 1 度
+    case drawInsideANestedBuild
+    /// フレームの中の描き場所で、組み立ての中に `draw { }`。開いたフレームの続きとして走り、閉じない
+    case drawInsideAnOpenFrame
+
+    var testDescription: String { "\(self)" }
 }
 
 extension ShapeTests {
@@ -1946,7 +1963,7 @@ extension ShapeTests {
         #expect(!layer.isDrawing, "組み立ての出口の後もフレームが開いたまま")
         #expect(layer.framesDrawn == framesBefore + 1, "閉じたフレームの数が 1 でない")
         #expect(!shape.isEmpty)
-        #expect(layer.warnings.message(for: .endDrawInsideShape) == insideShapeNotices[.endDraw])
+        #expect(layer.warnings.message(for: .frameEndInsideShape) == insideShapeNotices[.frameEnd])
         #expect(!layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
         #expect(layer.get(11, 11) == Self.red, "組み立ての前に置いた三角形が出ていない")
         #expect(layer.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
@@ -1958,6 +1975,73 @@ extension ShapeTests {
         #expect(layer.get(8, 8) == Self.green, "組み立てた円が形に入っていない")
         #expect(layer.get(13, 13) == Self.blue, "endDraw() の後に組み立てた四角が形に入っていない")
         #expect(!layer.warnings.hasWarned(.notDrawing), "出口で閉じた後の endDraw() を閉じ忘れと取り違えた")
+    }
+
+    /// 経路 3 の兄弟 ([#1855] の反証 1)。`draw { }` も閉包の終わりで `endFrame()` → `flush()` と進み、
+    /// 組み立ての中で開いた `draw { }` は組み立ての区間ごと描き切って形を空にしていた。`endDraw()` と同じく
+    /// 一番外の組み立ての出口まで閉じるのを待たせ、`beginDraw()` / `endDraw()` の対と結果を揃える。
+    ///
+    /// 開いているフレームの中の `draw { }` は、そのフレームの続きとして走って閉じない (今までどおり)。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    @Test(
+        "組み立ての中でフレームを開いて閉じても、閉じるのは出口で、draw { } と beginDraw()/endDraw() の対で結果が揃う",
+        arguments: FrameInsideShape.allCases)
+    func aFrameOpenedAndClosedInsideABuildClosesAtTheExit(_ form: FrameInsideShape) throws {
+        let host = try makeCanvas(width: 16, height: 16)
+        let layer = try host.createGraphics(16, 16)
+        layer.beginDraw()
+        layer.background(Self.black)
+        layer.endDraw()
+        if form == .drawInsideAnOpenFrame { layer.beginDraw() }
+        let framesBefore = layer.framesDrawn
+        var drawingAfterTheBody = false
+        func circleAndSquare() {
+            placeCircle(layer)
+            layer.fill(Self.blue)
+            layer.rect(4, 4, 2, 2)
+        }
+        let build = {
+            layer.createShape {
+                switch form {
+                case .drawOutsideAFrame, .drawInsideANestedBuild, .drawInsideAnOpenFrame:
+                    try? layer.draw { circleAndSquare() }
+                case .beginAndEndDrawOutsideAFrame:
+                    layer.beginDraw()
+                    circleAndSquare()
+                    layer.endDraw()
+                }
+                drawingAfterTheBody = layer.isDrawing
+            }
+        }
+        let shape: Shape
+        if form == .drawInsideANestedBuild {
+            shape = layer.createShape { layer.shape(build()) }
+        } else {
+            shape = build()
+        }
+        #expect(drawingAfterTheBody, "組み立ての中でフレームを閉じた")
+        #expect(!shape.isEmpty)
+        #expect(!layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        if form == .drawInsideAnOpenFrame {
+            #expect(layer.isDrawing, "開いていたフレームを組み立ての出口で閉じた")
+            #expect(layer.framesDrawn == framesBefore)
+            #expect(!layer.warnings.hasWarned(.frameEndInsideShape), "閉じていないのに注意した")
+            layer.endDraw()
+        } else {
+            #expect(!layer.isDrawing, "組み立ての出口の後もフレームが開いたまま")
+            #expect(layer.framesDrawn == framesBefore + 1, "閉じたフレームの数が 1 でない")
+            #expect(
+                layer.warnings.message(for: .frameEndInsideShape) == insideShapeNotices[.frameEnd])
+        }
+        #expect(layer.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
+
+        layer.beginDraw()
+        layer.background(Self.black)
+        layer.shape(shape, 8, 8)
+        layer.endDraw()
+        #expect(layer.get(8, 8) == Self.green, "組み立てた円が形に入っていない")
+        #expect(layer.get(13, 13) == Self.blue, "組み立てた四角が形に入っていない")
     }
 
     /// 置いた描き場所の画素を組み立ての中で読むと、読み込みの描き切りが置いた側 (組み立ての途中の

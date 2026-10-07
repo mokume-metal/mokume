@@ -681,14 +681,16 @@ public final class Canvas {
 
     /// 揺らぎの種と細かさ。
     ///
-    /// **描画の状態として持つ。** 断片からも同じ値が引けるよう uniforms を通って
-    /// 送られるためで、置き場が 2 つに割れると CPU と断片で別の模様が出る ([#366])。
+    /// **描画の状態として持つ。** 断片からも同じ値が引けるよう、列を閉じた時点の値が列ごとの値
+    /// (``Batch/noise``・[#1855]) を通って送られるためで、置き場が 2 つに割れると CPU と断片で別の模様が
+    /// 出る ([#366])。
     ///
     /// **描き場所は作った面と同じ値を読み書きする** (``noiseStore``・[#1503])。`Canvas` に
     /// 置いたのは断片へ届けるためで、面ごとに分けるためではない — 種と細かさはスケッチに 1 つ。
     ///
     /// [#366]: https://github.com/mokume-metal/mokume/issues/366
     /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     var noiseSettings: ValueNoise {
         get { noiseStore.settings }
         set { noiseStore.settings = newValue }
@@ -736,9 +738,11 @@ public final class Canvas {
     /// 中で閉じた列は、そのまま形の区間になる。組み立ての出口が外の設定へ戻すときも同じで、組み立て
     /// より前に置いた図形は入口で閉じた列の設定 (外の設定) で引かれる。
     ///
-    /// **閉じるのはフレームの中か外かを問わない。** 持ち越しの区間 (`setup()` など) で置いた図形も、
-    /// 置いた時点の設定で次のフレームに描かれる。同じ値の書き直しでは閉じない (毎フレーム同じ種を
-    /// 決め直す書き方で、描く回数を増やさない)。描き切っている最中の面は閉じない — 列を積んでいる
+    /// **閉じるのは揺らぎを読みうる列 (利用者の断片で塗る列) だけ** (``openRunReadsNoise``)。組み込みの
+    /// 塗りと基本図形の列は揺らぎを引かないので、閉じると書き換えの数だけ列が割れ、畳み (#424) も
+    /// 外れる。**閉じるのはフレームの中か外かを問わない。** 持ち越しの区間 (`setup()` など) で置いた
+    /// 図形も、置いた時点の設定で次のフレームに描かれる。同じ値の書き直しでは閉じない (毎フレーム同じ
+    /// 種を決め直す書き方で、描く回数を増やさない)。描き切っている最中の面は閉じない — 列を積んでいる
     /// 最中に並びを変えない。
     ///
     /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
@@ -751,7 +755,9 @@ public final class Canvas {
         for entry in noiseStore.readers {
             if let reader = entry.canvas, reader !== self { readers.append(reader) }
         }
-        for reader in readers where !reader.isFlushing { reader.closeBatch() }
+        for reader in readers where !reader.isFlushing && reader.openRunReadsNoise {
+            reader.closeBatch()
+        }
         noiseSettings = next
     }
     /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
@@ -2556,8 +2562,14 @@ public final class Canvas {
     /// ``beginDraw()`` で開いたまま閉じ忘れて境目を越えたフレームは、捨ててから始める
     /// (``beginDraw()`` の説明。描き場所の閉じ忘れは、本体のフレームの頭が先に捨てている)。
     ///
+    /// **この面の形の組み立て (``createShape(_:)``) の中で開いたフレームは、閉包の終わりでは閉じない**
+    /// ([#1855])。``endDraw()`` と同じく 1 度注意して、組み立ての出口 (入れ子なら一番外) で閉じる。閉包の
+    /// 中で組み立てたものは形に入り、フレームには描かれない。描き切れなかったときは、出口から投げずに
+    /// 理由を知らせる。
+    ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     public func draw(_ body: () -> Void) throws(RenderFailure) {
         if isDrawing, !leftOpenAcrossBoundary {
             warnFrameCallInsideFrame("draw")
@@ -2566,6 +2578,11 @@ public final class Canvas {
         }
         beginFrame()
         body()
+        // **自分の形の組み立ての中では、ここで閉じない** ([#1855] の案 G を閉包の終わりにも当てる)。
+        // 閉じる描き切りが組み立ての区間を空にし、形が空になっていた (`endDraw()` と同じ場所)
+        //
+        // [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+        guard !recordingShape else { return awaitFrameEndInsideShape() }
         try endFrame()
     }
 
@@ -2675,7 +2692,9 @@ public final class Canvas {
     ///
     /// **この面の形の組み立て (``createShape(_:)``) の中で呼ぶと、そこでは閉じない** ([#1855])。1 度
     /// 注意して、組み立ての出口 (入れ子なら一番外) で閉じる。それまでに組み立てたものは形に入り、
-    /// フレームには描かれない。
+    /// フレームには描かれない。**出口までは、この面はまだ描いている扱いである** — 組み立ての残りで
+    /// ``beginDraw()`` を呼ぶと、開いたフレームが続いていると注意して何もせず、別の面へ置く
+    /// (`image(pg)` など) と、描き切る前の絵 (前のフレームまでの絵) を読む。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
@@ -2695,10 +2714,7 @@ public final class Canvas {
         // 閉じる (``closeFrameAwaitingShape()``)。それまでに置いたものも形に入る
         //
         // [#1855]: https://github.com/mokume-metal/mokume/issues/1855
-        guard !recordingShape else {
-            endDrawAwaitingShape = true
-            return warnInsideShape(.endDraw)
-        }
+        guard !recordingShape else { return awaitFrameEndInsideShape() }
         do {
             try endFrame()
         } catch {
@@ -2849,25 +2865,45 @@ public final class Canvas {
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     private(set) var droppedAtTheMainFrame = false
 
-    /// 形の組み立ての中で呼んだ自分の ``endDraw()`` を、一番外の組み立ての出口まで待たせているか
+    /// 形の組み立ての中で閉じようとした自分のフレームを、一番外の組み立ての出口まで待たせているか
     /// ([#1855] の案 G)。
     ///
-    /// 立てるのは組み立ての中の ``endDraw()`` だけで、下ろすのは一番外の出口がフレームを閉じるとき
-    /// (``closeFrameAwaitingShape()``) と、フレームの外へ出たとき (``leaveFrame()``。待たせている間に
-    /// フレームが捨てられたら、閉じるものはもう無い)。
+    /// 立てるのは組み立ての中で自分のフレームを閉じる 2 口 — ``endDraw()`` と、組み立ての中で開いた
+    /// ``draw(_:)`` の閉包の終わり — だけ (``awaitFrameEndInsideShape()``)。下ろすのは一番外の出口が
+    /// フレームを閉じるとき (``closeFrameAwaitingShape()``) と、フレームの外へ出たとき (``leaveFrame()``。
+    /// 待たせている間にフレームが捨てられたら、閉じるものはもう無い)。
     ///
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
-    private(set) var endDrawAwaitingShape = false
+    private(set) var frameEndAwaitingShape = false
 
-    /// 組み立ての中で待たせた ``endDraw()`` を、ここで呼ぶ ([#1855] の案 G)。**一番外の組み立ての出口が、
+    /// 組み立ての中で自分のフレームを閉じようとした口が、閉じずに出口まで待たせる ([#1855] の案 G)。
+    /// 1 度注意する。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    private func awaitFrameEndInsideShape() {
+        frameEndAwaitingShape = true
+        warnInsideShape(.frameEnd)
+    }
+
+    /// 組み立ての中で待たせたフレームを、ここで閉じる ([#1855] の案 G)。**一番外の組み立ての出口が、
     /// 状態を戻した後に呼ぶ** — 閉じる側 (``abandonFrame()``) が既定へ戻した値を、出口が組み立て前の
     /// 値で書き戻さない。
     ///
+    /// ``endDraw()`` を通さずに閉じる。待たせた口が `draw { }` の閉包の終わりなら、開いたのは
+    /// `draw { }` で、``endDraw()`` は「`draw { }` が閉じる」と断る。どちらの口でも、閉じるのは
+    /// ``endDraw()`` と同じく投げない (出口は投げられない) — 描き切れなければ理由を知らせ、前の絵が残る。
+    ///
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     func closeFrameAwaitingShape() {
-        guard endDrawAwaitingShape else { return }
-        endDrawAwaitingShape = false
-        endDraw()
+        guard frameEndAwaitingShape else { return }
+        frameEndAwaitingShape = false
+        do {
+            try endFrame()
+        } catch {
+            Diagnostics.warn(
+                "createShape { }: could not finish drawing the frame closed at the end of the "
+                    + "shape: \(error.headline)")
+        }
     }
 
     /// フレームの頭で、**区間の外で置いたものが溜め場に残っていないか**を見る ([#1672])。
@@ -2973,7 +3009,7 @@ public final class Canvas {
     private func leaveFrame() {
         isDrawing = false
         // 組み立ての出口まで待たせた `endDraw()` は、閉じるフレームがもう無い (#1855)
-        endDrawAwaitingShape = false
+        frameEndAwaitingShape = false
         abandonFrame()
         // **溜めたものもフレームを越えない。** 描き切りは 6 箇所から投げるので、片付けを成功経路の
         // 末尾だけに置くと、描けなかったフレームの図形が次のフレームでもう一度描かれる (#342)。

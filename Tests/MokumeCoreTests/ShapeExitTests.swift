@@ -85,8 +85,9 @@ enum ShapeExit {
             "transformStack", "styleStack", "recordingShape",
             // 一番外の組み立てが控える列の位置 (#1855 の案 E)。recordingShape と対で戻す
             "shapeRecordingRunStart",
-            // 組み立ての中の自分の endDraw() を待たせる印 (#1855 の案 G)。一番外の出口が閉じて下ろす
-            "endDrawAwaitingShape",
+            // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
+            // (#1855 の案 G)。一番外の出口が閉じて下ろす
+            "frameEndAwaitingShape",
             // 組み立て中の形 (#1607)。``CanvasTests/shapeState`` と同じ群
             "isBuildingShape", "shapeKind", "currentNormal", "shapePoints", "shapeHasDepth",
             "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
