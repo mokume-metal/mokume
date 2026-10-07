@@ -256,6 +256,13 @@ extension Canvas {
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 試作 (#2209): 列の区間に入る型板の区間を持たせる
+        let end = start + count
+        batches[batches.count - 1].stencilSections = pendingFlatStencilSections.compactMap {
+            let clamped = max($0.lowerBound, start)..<min($0.upperBound, end)
+            return clamped.isEmpty ? nil : clamped
+        }
+        pendingFlatStencilSections.removeAll(keepingCapacity: true)
     }
 
     /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
@@ -373,6 +380,16 @@ extension Canvas {
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
                 fillGeometry: open.fillGeometry))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 試作 (#2209): 添字の無い列だけが型板の区間を持つ
+        if indexCount == 0 {
+            let start = open.vertexStart
+            let end = start + open.vertexCount
+            batches[batches.count - 1].stencilSections = pendingSolidStencilSections.compactMap {
+                let clamped = max($0.lowerBound, start)..<min($0.upperBound, end)
+                return clamped.isEmpty ? nil : clamped
+            }
+        }
+        pendingSolidStencilSections.removeAll(keepingCapacity: true)
         warnIfMaterialCannotShow()
     }
 

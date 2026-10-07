@@ -445,7 +445,15 @@ extension Canvas {
         let points = outline.points
         let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
         let start = vertices.count
-        let overlaps = strokeOverlapsShow
+        // 試作 (#2209): 型板で塗る線は引かずに骨のまま積み、区間を覚える。雛形と記録の間は今のまま
+        let stenciled =
+            Self.stencilStrokes && strokeOverlapsShow && !buildingFlatTemplate && !recordingShape
+        defer {
+            if stenciled, vertices.count > start {
+                pendingFlatStencilSections.append(start..<vertices.count)
+            }
+        }
+        let overlaps = strokeOverlapsShow && !stenciled
         // 円板の分割数は、輪郭ごとに 1 度だけ決める。保持する形の記録の間も、いまの変換 (記録の
         // 中で書いた拡大) で決める — 置くときの拡大は、置くときに刻み直す (``ThinStrokeRecipe``)
         //

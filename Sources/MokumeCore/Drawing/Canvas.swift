@@ -203,6 +203,13 @@ public final class Canvas {
     /// ``Batch/thinCoverage`` へ移して下ろす。
     var openBatchHasThinCoverage = false
 
+    // 試作 (#2209): 型板で「図形の線全体を 1 回」塗る。環境変数で今の経路と切り替える
+    static let stencilStrokes = ProcessInfo.processInfo.environment["MOKUME_STENCIL_STROKES"] == "1"
+    /// 試作 (#2209): 型板で塗る平面の線の区間 (``vertices`` の番号)。閉じる列が持っていく。
+    var pendingFlatStencilSections: [Range<Int>] = []
+    /// 試作 (#2209): 型板で塗る立体の線の区間 (``solidVertices`` の番号)。閉じる列が持っていく。
+    var pendingSolidStencilSections: [Range<Int>] = []
+
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
     /// 同じ形が 2 つ目に来たら、ここに控えた周から雛形を積み直して畳む。1 つ目から
@@ -1602,6 +1609,8 @@ public final class Canvas {
         /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
         /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
         var replacesSurface = false
+        /// 試作 (#2209): 型板で 1 回だけ塗る線の区間 (頂点の並びの番号・添字の無い列だけ)。
+        var stencilSections: [Range<Int>] = []
 
         /// 頂点を溜め場ではなく自分の置き場から読むなら、その置き場。
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
@@ -1666,6 +1675,9 @@ public final class Canvas {
             let indexShift = relocated.indexStart - run.indexStart
             backFaceParts = backFaceParts.map {
                 $0.shifted(by: $0.isIndexed ? indexShift : vertexShift)
+            }
+            stencilSections = stencilSections.map {
+                ($0.lowerBound + vertexShift)..<($0.upperBound + vertexShift)
             }
             run = relocated
         }
@@ -4058,6 +4070,10 @@ public final class Canvas {
                 draws += 1
             } else if batch.drawsBackThenFront {
                 draws += encodeBackThenFront(batch, indices: geometry.solidIndices, on: encoder)
+            } else if Self.stencilStrokes, !batch.stencilSections.isEmpty, !run.isIndexed,
+                !batch.replacesSurface, batch.strokeGeometry == nil
+            {
+                draws += encodeStencilSections(batch, indices: geometry.solidIndices, on: encoder)
             } else {
                 encodeSolidDraw(
                     run, instances: 0..<batch.instanceCount, indices: geometry.solidIndices,
@@ -4182,6 +4198,50 @@ public final class Canvas {
             if cursor < whole.upperBound { draw(cursor..<whole.upperBound, batch.cullMode, only) }
         }
         if let start = waiting { draw(nil, batch.cullMode, start..<batch.instanceCount) }
+        return draws
+    }
+
+    /// 試作 (#2209): 型板で 1 回だけ塗る線の区間を持つ列を、「前・区間・後」に割って描く。
+    ///
+    /// 区間は型板が 1 でない画素だけを通して 1 を書く状態で描き (同じ区間の 2 つ目以降の片は
+    /// 落ちる)、続けて同じ区間を色を書かないパイプラインで描いて型板を 0 へ戻す。参照値を
+    /// 変えないので、数え直し (255 を越えたら消す) が要らない。返すのは積んだ描く呼び出しの数。
+    private func encodeStencilSections(
+        _ batch: Batch, indices: any MTLBuffer, on encoder: any MTL4RenderCommandEncoder
+    ) -> Int {
+        let run = batch.run
+        let isFlat = batch.source == .flat
+        let drawState =
+            isFlat
+            ? (run.paint.shader?.states ?? pipeline.states).drawing(batch)
+            : (run.paint.shader?.solidStates ?? pipeline.solidStates).drawing(batch)
+        let depthState = isFlat ? pipeline.flatDepthState : pipeline.solidDepthState
+        let markState = isFlat ? pipeline.flatStencilState : pipeline.solidStencilState
+        let eraseState = isFlat ? pipeline.flatEraseState : pipeline.solidEraseState
+        var draws = 0
+        func draw(_ range: Range<Int>) {
+            guard !range.isEmpty else { return }
+            encodeSolidDraw(
+                run, section: range, instances: 0..<batch.instanceCount, indices: indices,
+                on: encoder)
+            draws += 1
+        }
+        let end = run.start + run.count
+        var cursor = run.start
+        for section in batch.stencilSections
+        where section.lowerBound >= cursor && section.upperBound <= end && !section.isEmpty {
+            draw(cursor..<section.lowerBound)
+            encoder.setDepthStencilState(markState)
+            encoder.setStencilReferenceValue(1)
+            draw(section)
+            encoder.setRenderPipelineState(eraseState)
+            encoder.setDepthStencilState(pipeline.stencilEraseState)
+            draw(section)
+            encoder.setRenderPipelineState(drawState)
+            encoder.setDepthStencilState(depthState)
+            cursor = section.upperBound
+        }
+        draw(cursor..<end)
         return draws
     }
 

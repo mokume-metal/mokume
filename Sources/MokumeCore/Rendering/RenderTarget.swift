@@ -60,6 +60,9 @@ import MokumeDiagnostics
     /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     let depthTexture: any MTLTexture
 
+    /// 試作 (#2209): 線を 1 回だけ塗る型板の面。パスごとに 0 から始めて捨てる。
+    let stencilTexture: any MTLTexture
+
     let gpu: RenderDevice
 
     /// この面を出す先 (``Canvas/output``) に持つ描き場所。
@@ -227,6 +230,14 @@ import MokumeDiagnostics
         let depthTexture = try gpu.makeTexture(descriptor: depth)
         depthTexture.label = "mokume.target.depth"
         self.depthTexture = depthTexture
+
+        let stencil = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .stencil8, width: width, height: height, mipmapped: false)
+        stencil.usage = [.renderTarget]
+        stencil.storageMode = .private
+        let stencilTexture = try gpu.makeTexture(descriptor: stencil)
+        stencilTexture.label = "mokume.target.stencil"
+        self.stencilTexture = stencilTexture
     }
 
     /// **色と奥行きの面を常駐から退かせる** ([#795])。
@@ -241,6 +252,7 @@ import MokumeDiagnostics
     isolated deinit {
         gpu.retire(texture)
         gpu.retire(depthTexture)
+        gpu.retire(stencilTexture)
     }
 
     // MARK: - 画素として見る
@@ -479,6 +491,12 @@ import MokumeDiagnostics
             depth.clearDepth = 1
         }
         depth.storeAction = keepingDepth ? .store : .dontCare
+        // 試作 (#2209): 型板は区間ごとに 0 へ戻すので、パスごとに 0 から始めて捨てる
+        let stencil = pass.stencilAttachment!
+        stencil.texture = stencilTexture
+        stencil.loadAction = .clear
+        stencil.clearStencil = 0
+        stencil.storeAction = .dontCare
         return pass
     }
 

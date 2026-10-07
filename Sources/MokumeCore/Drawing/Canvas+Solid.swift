@@ -706,6 +706,10 @@ extension Canvas {
     private func recordingSolidStroke(_ source: SolidStrokePiece.Source, _ build: () -> Void) {
         let start = solidVertices.count
         build()
+        // 試作 (#2209): 型板で塗る線の区間を覚える
+        if Self.stencilStrokes, strokeOverlapsShow, !recordingShape, solidVertices.count > start {
+            pendingSolidStencilSections.append(start..<solidVertices.count)
+        }
         guard recordingShape, solidVertices.count > start else { return }
         recordedSolidStrokes.append(
             SolidStrokePiece(

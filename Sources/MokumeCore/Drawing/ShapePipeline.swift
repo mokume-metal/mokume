@@ -189,6 +189,15 @@ final class ShapePipeline {
     /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
     let replaceDepthState: (any MTLDepthStencilState)?
 
+    // 試作 (#2209): 型板で線を 1 回だけ塗る状態。印 (型板が 1 でない画素だけ通し、1 を書く) と、
+    // 型板を 0 へ戻す消し描き
+    let flatStencilState: (any MTLDepthStencilState)?
+    let solidStencilState: (any MTLDepthStencilState)?
+    let stencilEraseState: (any MTLDepthStencilState)?
+    /// 試作 (#2209): 色を書かずに型板だけを戻すパイプライン (平面・立体の頂点関数)。
+    let flatEraseState: any MTLRenderPipelineState
+    let solidEraseState: any MTLRenderPipelineState
+
     let argumentTable: any MTL4ArgumentTable
 
     private let vertexLibrary: any MTLLibrary
@@ -255,6 +264,49 @@ final class ShapePipeline {
         replacing.depthCompareFunction = .always
         replacing.isDepthWriteEnabled = true
         self.replaceDepthState = gpu.device.makeDepthStencilState(descriptor: replacing)
+
+        // 試作 (#2209)
+        func stencil(compare: MTLCompareFunction, pass: MTLStencilOperation) -> MTLStencilDescriptor {
+            let descriptor = MTLStencilDescriptor()
+            descriptor.stencilCompareFunction = compare
+            descriptor.stencilFailureOperation = .keep
+            descriptor.depthFailureOperation = .keep
+            descriptor.depthStencilPassOperation = pass
+            descriptor.readMask = 0xFF
+            descriptor.writeMask = 0xFF
+            return descriptor
+        }
+        let flatStencil = MTLDepthStencilDescriptor()
+        flatStencil.label = "mokume.stencil.flat"
+        flatStencil.depthCompareFunction = .always
+        flatStencil.isDepthWriteEnabled = false
+        flatStencil.frontFaceStencil = stencil(compare: .notEqual, pass: .replace)
+        flatStencil.backFaceStencil = stencil(compare: .notEqual, pass: .replace)
+        self.flatStencilState = gpu.device.makeDepthStencilState(descriptor: flatStencil)
+        let solidStencil = MTLDepthStencilDescriptor()
+        solidStencil.label = "mokume.stencil.solid"
+        solidStencil.depthCompareFunction = .lessEqual
+        solidStencil.isDepthWriteEnabled = true
+        solidStencil.frontFaceStencil = stencil(compare: .notEqual, pass: .replace)
+        solidStencil.backFaceStencil = stencil(compare: .notEqual, pass: .replace)
+        self.solidStencilState = gpu.device.makeDepthStencilState(descriptor: solidStencil)
+        let erase = MTLDepthStencilDescriptor()
+        erase.label = "mokume.stencil.erase"
+        erase.depthCompareFunction = .always
+        erase.isDepthWriteEnabled = false
+        erase.frontFaceStencil = stencil(compare: .always, pass: .zero)
+        erase.backFaceStencil = stencil(compare: .always, pass: .zero)
+        self.stencilEraseState = gpu.device.makeDepthStencilState(descriptor: erase)
+        self.flatEraseState = try Self.makeState(
+            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.stencil.erase.flat",
+            vertexFunctionName: Self.flatVertexFunctionName,
+            fragmentFunctionName: Self.flatDirectFragmentFunctionName, writesColor: false)
+        self.solidEraseState = try Self.makeState(
+            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.stencil.erase.solid",
+            vertexFunctionName: Self.solidVertexFunctionName,
+            fragmentFunctionName: Self.flatDirectFragmentFunctionName, writesColor: false)
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
@@ -429,7 +481,8 @@ final class ShapePipeline {
         vertexFunctionName: String = ShapePipeline.flatVertexFunctionName,
         fragmentFunctionName: String = "mokume_fragmentMain",
         sourceOver: Bool = false,
-        formFlags: UInt32? = nil
+        formFlags: UInt32? = nil,
+        writesColor: Bool = true
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = vertexFunctionName
@@ -470,6 +523,7 @@ final class ShapePipeline {
         } else {
             attachment.blendingState = .disabled
         }
+        if !writesColor { attachment.writeMask = [] }
 
         do {
             return try compiler.makeRenderPipelineState(descriptor: descriptor)
