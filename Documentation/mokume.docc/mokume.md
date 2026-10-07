@@ -359,6 +359,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Capture``
 - ``CaptureDevice``
 
+### 動画を流す
+
+- ``Sketch/createVideo(_:)``
+- ``Movie``
+- ``MovieFailure``
+
 ### 音を聞く
 
 - ``Sketch/createAudioIn(device:)``
