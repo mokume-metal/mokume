@@ -162,9 +162,8 @@ BUNDLE
 **本線は 4MB を目安に収める。** 詰まるのは Gyazo (40MB) ではなく GitHub の camo である。5,242,880 バイトを
 超えると `Content length exceeded` で 404 になり、その手前でも途中で切られた側が 1 年キャッシュされる
 (実測では 3.7MB は無事、4.6MB が壊れた — [#369](https://github.com/mokume-metal/mokume/issues/369))。
-超えたら可逆の枠内で落とす — `-near_lossless` は可逆圧縮の中で値を丸めるだけで、元に無いものを足さない。
-それでも収まらなければ短く / 小さくする。`-mixed` へ戻る段は作らない
-(退避路は camo を通らず、上限も別 — [fallback.md](fallback.md) の「大きさの上限」)。
+超えたら可逆の枠内で落とす — `-near_lossless` は可逆圧縮の中で値を丸めるだけで、元に無いものを足さない。それでも
+収まらなければ短く / 小さくする。`-mixed` へ戻る段は作らない (退避路は camo を通らず、上限も別 — [fallback.md](fallback.md) の「大きさの上限」)。
 
 ```bash
 img2webp -loop 0 -near_lossless 60 -d 67 frames/f.*.png -o motion.webp   # 最大誤差 2 階調
