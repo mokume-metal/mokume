@@ -410,8 +410,6 @@ struct ShaderInterfaceTests {
         [
             ("time", \.time), ("resolution", \.resolution), ("shadowBias", \.shadowBias),
             ("shadowMatrix", \.shadowMatrix), ("shadowParams", \.shadowParams),
-            ("noiseSeed", \.noiseSeed), ("noiseOctaves", \.noiseOctaves),
-            ("noiseFalloff", \.noiseFalloff), ("noisePadding", \.noisePadding),
             ("unitsPerDrawnPixel", \.unitsPerDrawnPixel), ("unitsPadding", \.unitsPadding),
         ])
 
@@ -420,6 +418,9 @@ struct ShaderInterfaceTests {
         [
             ("offset", \.offset), ("count", \.count), ("padding", \.padding),
             ("viewer", \.viewer), ("view", \.view),
+            // 揺らぎは列ごとに届く (#1855)
+            ("noiseSeed", \.noiseSeed), ("noiseOctaves", \.noiseOctaves),
+            ("noiseFalloff", \.noiseFalloff), ("noisePadding", \.noisePadding),
         ])
 
     static let light = layout(

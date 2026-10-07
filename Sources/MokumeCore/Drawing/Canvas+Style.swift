@@ -249,6 +249,7 @@ extension Canvas {
                 // 平面は面の向きを持たない (断片へは 0 が届く) ので、移す行列は効かない
                 view: matrix_identity_float4x4,
                 surroundings: bakeSurroundings(),
+                noise: noiseSettings,
                 castsShadow: false,
                 // 畳んでいない列は、何も動かさない置き場所 (添字 0) を 1 つ通る
                 instanceStart: template?.instanceStart ?? 0,
@@ -279,6 +280,17 @@ extension Canvas {
     /// **保持した形を置いている間は、記録した塗りが勝つ。** 生きている状態から作るのは、
     /// 記録した塗りが無いとき (いつもの描画) だけである。
     var effectivePaint: Shape.Paint { replayedPaint ?? livePaint }
+
+    /// 開いている列が揺らぎを読みうるか ([#1855] の反証 6)。**揺らぎを引くのは利用者の断片だけ**で、
+    /// 組み込みの塗りと基本図形の列 (塗りはいつも組み込み・``closeFormBatch()``) は引かない。揺らぎの
+    /// 書き換えが閉じるのは、これが立つ列だけ (``changeNoise(_:)``)。閉じない列は、閉じた時点の設定を
+    /// 持つが読まれない。
+    ///
+    /// 開いている列の塗りは、いまの塗り (``effectivePaint``) と同じである — 塗りを替える口
+    /// (``shader(_:)``・``usePaint(_:)`` ほか) は替える前に列を閉じる。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    var openRunReadsNoise: Bool { openSource != .form && effectivePaint.shader != nil }
 
     /// 記録した塗りへ移る。
     ///
@@ -346,6 +358,7 @@ extension Canvas {
                 viewer: viewer,
                 view: viewMatrix,
                 surroundings: bakeSurroundings(),
+                noise: noiseSettings,
                 castsShadow: style.castsShadow,
                 instanceStart: open.external == nil ? open.instanceStart : 0,
                 instanceCount: instanceCount,
