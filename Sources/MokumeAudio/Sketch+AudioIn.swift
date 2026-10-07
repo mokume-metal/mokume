@@ -72,15 +72,7 @@ extension Sketch {
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createAudioIn(file: String) throws(AudioFailure) -> AudioIn {
-        let url: URL
-        do {
-            url = try assetURL(file)
-        } catch {
-            switch error {
-            case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
-            }
-        }
-        let decoded = try AudioFile.read(url, path: file)
+        let decoded = try AudioFile.read(audioURL(file), path: file)
         return attachRecorded(
             samples: decoded.samples, sampleRate: decoded.sampleRate, name: "audio file: \(file)")
     }
@@ -126,6 +118,18 @@ extension Sketch {
     /// ```
     public func audioInputDevices() -> [AudioDevice] {
         AudioDevice.connected()
+    }
+
+    /// 音声ファイルの名前を場所へ解く。探す場所は ``assetURL(_:)`` と同じで、見つからなければ
+    /// 音の失敗として投げる。
+    func audioURL(_ file: String) throws(AudioFailure) -> URL {
+        do {
+            return try assetURL(file)
+        } catch {
+            switch error {
+            case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+            }
+        }
     }
 
     private func attachRecorded(samples: [Float], sampleRate: Float, name: String) -> AudioIn {

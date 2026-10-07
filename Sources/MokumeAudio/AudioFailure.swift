@@ -3,10 +3,11 @@
 
 import MokumeCore
 
-/// 音声ファイルや標本列から ``AudioIn`` を作れなかったこと。
+/// 音声ファイルや標本列から ``AudioIn`` や ``SoundFile`` を作れなかったこと。
 ///
 /// **作るときに投げ、フレームの間は投げない** ([ADR-0020] 決定 5)。失敗したときに別の道を
 /// 選ぶ判断が要るのは作るときだけで、作れた後に値が来ないことは ``AudioIn/state`` が名乗る。
+/// 鳴らす・止める口 (``SoundFile/play()`` ほか) も投げず、受けられない値は知らせて無視する。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public enum AudioFailure: Error, Equatable, Sendable {

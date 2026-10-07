@@ -369,6 +369,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``AudioDevice``
 - ``AudioFailure``
 
+### 音声ファイルを鳴らす
+
+- ``Sketch/loadSound(_:)``
+- ``SoundFile``
+
 ### 画素を読み書きする
 
 - ``Sketch/pixels``
