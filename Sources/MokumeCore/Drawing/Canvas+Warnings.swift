@@ -315,6 +315,11 @@ extension Canvas {
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case shapeDrawnOutWhileBuilding
+        /// 描き場所の組み立ての中で、その描き場所の `endDraw()` を呼んだ ([#1855])。フレームは閉じずに
+        /// 一番外の組み立ての出口まで待たせる。種類と文面は ``InsideShape`` が持つ。
+        ///
+        /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+        case endDrawInsideShape
         /// 形の組み立ての中で、形に焼き付かない設定を書いた ([#1529])。種類ごとに鍵を分ける
         /// (``OutsideFrame`` と同じく、光の注意が視点の注意を黙らせない)。種類と文面は
         /// ``InsideShape`` が持つ。

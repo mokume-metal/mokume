@@ -45,8 +45,9 @@ struct Light {
     float4 directionAndCone;
 };
 
-/// この列に効く光が、置き場のどこから何個あるか。と、どこから見ているか。
-/// 並びは Swift 側の `Lighting` と一致する。
+/// この列に効く光が、置き場のどこから何個あるか。と、どこから見ているか。と、どの揺らぎで引くか。
+/// 並びは Swift 側の `Lighting` と一致する。**列ごとに断片へ届く値の入れ物**で、揺らぎの設定も
+/// ここで列ごとに届く (#1855)。
 struct Lighting {
     uint offset;
     uint count;
@@ -57,6 +58,14 @@ struct Lighting {
     float4 viewer;
     /// 世界をカメラの側へ移す行列。面の向きを視点から見た向きへ移すのに使う。
     float4x4 view;
+    /// この列を引く揺らぎの種と、重ねる枚数と、1 枚ごとの弱まり。**列が閉じた時点の設定**で、
+    /// 置いた後に `noiseSeed()` / `noiseDetail()` で書き換えても、置いたものは置いた時点の設定で
+    /// 引く (#1503・#1855)。
+    uint noiseSeed;
+    uint noiseOctaves;
+    float noiseFalloff;
+    /// 16 バイト境界へ揃えるための詰め物 (Swift 側もこの位置を空けている)。
+    float noisePadding;
 };
 
 /// この列に効く周囲。並びは Swift 側の `PackedSurroundings` と一致する。
@@ -108,13 +117,6 @@ struct Uniforms {
     float4x4 shadowMatrix;
     /// x が 1 なら影が焼いてある。y は焼き付け先の 1 画素の大きさ (0…1 の尺度)。
     float4 shadowParams;
-    /// 揺らぎの種。`noiseSeed()` が決める。
-    uint noiseSeed;
-    /// 重ねる枚数と、1 枚ごとの弱まり。`noiseDetail()` が決める。
-    uint noiseOctaves;
-    float noiseFalloff;
-    /// 16 バイト境界へ揃えるための詰め物 (Swift 側もこの位置を空けている)。
-    float noisePadding;
     /// 描く画素 1 つが出す画素でいくらか。断片はラスタの位置にこれを掛けて渡す (#1639)。
     float2 unitsPerDrawnPixel;
     /// 16 バイト境界へ揃えるための詰め物 (Swift 側もこの位置を空けている)。
@@ -383,12 +385,13 @@ struct Fragment {
     float time;
     /// 面の大きさ (出す画素)。スケッチの `width` / `height` と同じで、細かさによらない。
     float2 resolution;
-    /// 揺らぎの種。`noiseSeed()` が決めたものがそのまま届く。
+    /// 揺らぎの種。この図形を置いた時点に `noiseSeed()` が決めていたものが届く。
     ///
     /// **断片が種を受け取るので、利用者は配線しなくてよい。** `noiseSeed()` を 1 度
-    /// 呼べば、CPU で引く `noise()` と断片で引く `mokume_noise()` の両方に効く。
+    /// 呼べば、CPU で引く `noise()` と断片で引く `mokume_noise()` の両方に効く。置いた後に
+    /// 決め直しても、置いた図形は置いた時点の種で引く (#1503・#1855)。
     uint noiseSeed;
-    /// 重ねる枚数と、1 枚ごとの弱まり。`noiseDetail()` が決める。
+    /// 重ねる枚数と、1 枚ごとの弱まり。置いた時点に `noiseDetail()` が決めていたもの。
     uint noiseOctaves;
     float noiseFalloff;
     /// 計算が書いた数の並び。`numbers()` で渡したものが届く。
@@ -792,9 +795,11 @@ static inline float4 mokume_shapeColor(
         * f.worldNormal;
     f.time = uniforms.time;
     f.resolution = uniforms.resolution;
-    f.noiseSeed = uniforms.noiseSeed;
-    f.noiseOctaves = uniforms.noiseOctaves;
-    f.noiseFalloff = uniforms.noiseFalloff;
+    // 揺らぎは列ごとの値から読む (#1855)。描き切りに 1 つの値だと、置いた後の書き換えが置いた
+    // 図形にまで効くので、書き換えのたびに描き切る必要があった
+    f.noiseSeed = lighting.noiseSeed;
+    f.noiseOctaves = lighting.noiseOctaves;
+    f.noiseFalloff = lighting.noiseFalloff;
     f.numbers = numbers;
 
     // **被覆は断片の後で掛ける** (#1637)。乗算済みの色なので、全成分に掛ければ画素の

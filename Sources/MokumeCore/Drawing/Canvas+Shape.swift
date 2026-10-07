@@ -65,6 +65,10 @@ extension Canvas {
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
         recordingShape = true
+        // **一番外の組み立てだけが、フレームに置いた列との境目を控える** (#1855 の案 E)。置いた描き場所が
+        // 組み立ての途中で描き換わっても、写しへ差し替えるのはここより前の列だけにする
+        let savedRecordingRunStart = shapeRecordingRunStart
+        if !savedRecording { shapeRecordingRunStart = runStart }
         // **積んだ履歴は記録の中で閉じる。** 記録の間も `push()` / `pop()` は効く
         // (`Canvas.isShaping`) ので、切り離さないと記録の中の `pop()` が記録より前に
         // 積んだ段を取り、記録の中で積んだまま抜けた段はあとの `pop()` に拾われる
@@ -92,15 +96,24 @@ extension Canvas {
         discardShapeLeftOpen()
         restoreOpenShape(savedShape)
         recordingShape = savedRecording
+        shapeRecordingRunStart = savedRecordingRunStart
         restore(savedStacks)
         closeBatch()
+        // **組み立ての中で待たせた自分の `endDraw()` を、一番外の出口で閉じる** (#1855 の案 G)。
+        // `defer` は後に書いたものから走るので、閉じるのは下の状態の戻しの後 — 閉じる側が既定へ
+        // 戻した値を、出口が組み立て前の値で書き戻さない。早い抜け方 (下の安全網) でも閉じる
+        defer { if !savedRecording { closeFrameAwaitingShape() } }
         // 状態を戻すのは、記録したぶんを溜め場から抜いた後 (下の「抜いてから状態を戻す」)
         defer { savedManner.restore(on: self) }
         // **出口の安全網** ([#1588])。記録の途中で溜め場を捨てると、上で控えた区間は溜め場の外を
-        // 指す。塗り直しと画素の口は記録の中で断るが、描き切りそのものを断れない口が残る (置いた
-        // 描き場所の描き換えが本体を描き切らせる・揺らぎの設定の書き換え)。捨てる前に記録した
-        // ものはもう描かれていて取り戻せないので、捨てた後に記録した残りも溜め場から抜き、空の形を
-        // 返す。見分けは長さではなく捨てた回数で行う (``pendingDiscards``)
+        // 指す。塗り直しと画素の口は記録の中で断り、揺らぎの書き換え・置いた描き場所の描き換え・
+        // 自分の `endDraw()` は描き切らない (#1855)。それでも描き切るか捨てる道が残る — 置いた側の
+        // 写しが上限に達した (写せなかった) ときの描き換えと、組み立ての中で自分のフレームを開き直す
+        // こと (`beginDraw()` / `draw { }` が閉じ忘れたフレームを捨てる・本体の頭が描き場所の閉じ忘れを
+        // 捨てる・フレームの外の組み立ての中でフレームを開くと頭の検めが記録を置き漏れとして捨てる)。
+        // 捨てる前に記録したものはもう描かれて (捨てる道なら消えて) いて取り戻せないので、捨てた後に
+        // 記録した残りも溜め場から抜き、空の形を返す。見分けは長さではなく捨てた回数で行う
+        // (``pendingDiscards``)
         //
         // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         guard pendingDiscards == discardsAtStart else {
@@ -210,7 +223,8 @@ extension Canvas {
         let curveDetail: Int
         let curveTightness: Float
         /// 揺らぎの種と細かさ。形に焼き付くのは、記録の中で CPU の `noise()` が返した値だけで
-        /// ある。断片の `mokume_noise` は描き切りの時点の種で引くので、形を置いたときの種を使う。
+        /// ある。断片の `mokume_noise` は列を閉じた時点の種で引き (``Canvas/Batch/noise``)、記録した
+        /// 区間 (``Shape/Run``) は種を持たないので、形を置いたときの種を使う。
         let noise: ValueNoise
 
         init(of canvas: Canvas) {
@@ -227,8 +241,9 @@ extension Canvas {
         /// 写した値へ戻す。
         ///
         /// **揺らぎは ``Canvas/changeNoise(_:)`` で戻す。** 置き場は描き場所と共有するので、中の
-        /// 設定で溜めた図形を持つ面があれば、戻す前に描き切らせる (置いた時点の種で引く・#1503)。
-        /// 書き換えていなければ何もしない。
+        /// 設定で図形を置いた面があれば、戻す前にその開いた列を閉じさせる (置いた時点の種で引く・
+        /// #1503)。描き切らないので、組み立てより前に置いた図形も入口で閉じた列の設定で引かれる
+        /// (#1855)。書き換えていなければ何もしない。
         func restore(on canvas: Canvas) {
             canvas.currentTexture = texture
             canvas.currentShader = shader
