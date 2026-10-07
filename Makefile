@@ -477,7 +477,7 @@ REFERENCE_OUT := .build/reference
 # 土台だけが触るものは人が名指しして外す (ADR-0027 決定 5 が 1 本ずつ理由を持つ)。
 # public は 1 つも動かないので、一覧も ADR-0020 の検査も全部を見たままになる
 REFERENCE_OMIT := \
-	SketchApplication SharedFrameWindow SharedFramePreview SketchRuntime Clock FrameRateNotice OutputStage \
+	SketchApplication SharedFrameWindow SharedFramePreview SketchRuntime FrameRateNotice OutputStage \
 	StartupReads WorkDirectory SourceStamp RuntimeLoad BundledShaders \
 	InputState InputEvent \
 	ObservationRequest ObservationReport ExposedValue FrameStats \

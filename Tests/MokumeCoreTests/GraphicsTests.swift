@@ -1007,24 +1007,224 @@ struct GraphicsTests {
         #expect(gap < NoiseParityTests.tolerance, "\(change.testDescription): \(gap) ずれている")
     }
 
-    /// 同じ種を書き直しても描き切らない — 毎フレーム `noiseSeed` を呼ぶ書き方
-    /// (`Sketches/KnobsAndValues.swift`) で、フレームの途中の描き切りを増やさない。
+    /// **種と細かさを書き換えても、フレームの途中で描き切らない** ([#1855] の完了条件 2・案 D)。置いた
+    /// 図形は列が閉じた時点の設定を持ち歩くので、置き場を共有する面を描き切って守る必要が無い。
+    /// 直す前は、溜めた図形のある面をどれも描き切っていた (区切りになっていた)。
+    ///
+    /// 同じ値の書き直しは列も閉じない — 毎フレーム `noiseSeed` を呼ぶ書き方
+    /// (`Sketches/KnobsAndValues.swift`) で、描く回数を増やさない ([#1503])。
     ///
     /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
-    @Test("同じ種と細かさを書き直しても、途中で描き切らない")
-    func rewritingTheSameNoiseDoesNotFlush() throws {
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    @Test("種と細かさを書き換えても、置き場を共有するどの面も途中で描き切らない")
+    func changingTheNoiseDoesNotFlush() throws {
         let canvas = try makeCanvas(width: 8, height: 8)
         let layer = try canvas.createGraphics(8, 8)
         decideNoise(on: canvas)
         var pending: [Bool] = []
+        var passes: [Int] = []
+        var runs: [Int] = []
         try canvas.draw {
             canvas.rect(0, 0, 4, 4)
+            layer.beginDraw()
+            layer.rect(0, 0, 4, 4)
+            runs.append(canvas.batches.count)
             decideNoise(on: layer)
-            pending.append(canvas.hasPendingDrawing)
+            runs.append(canvas.batches.count)
             layer.noiseSeed(Self.noiseSeed + 1)
-            pending.append(canvas.hasPendingDrawing)
+            canvas.noiseDetail(2, 0.3)
+            pending = [canvas.hasPendingDrawing, layer.hasPendingDrawing]
+            passes = [canvas.passesThisFrame, layer.passesThisFrame]
+            layer.endDraw()
         }
-        #expect(pending == [true, false], "書き直す前後で溜めた図形が \(pending)")
+        #expect(pending == [true, true], "書き換えた後に溜めた図形が \(pending)")
+        #expect(passes == [0, 0], "書き換えで描き切った回数が \(passes)")
+        #expect(runs[0] == runs[1], "同じ値の書き直しで列を閉じた")
+    }
+
+    /// **揺らぎの書き換えで閉じるのは、揺らぎを読みうる列だけ** ([#1855] の反証 6)。揺らぎを引くのは
+    /// 利用者の断片だけで、組み込みの塗りと基本図形の列は引かない。閉じると、直す前は 1 本だった列が
+    /// 書き換えの数だけ割れ、畳み (#424) も外れる。利用者の断片で塗る列は、書き換えのたびに分かれる。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    @Test("揺らぎの書き換えは、揺らぎを読みうる列 (利用者の断片) だけを閉じる", arguments: [false, true])
+    func changingTheNoiseClosesOnlyRunsThatReadIt(withShader: Bool) throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let shader = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return float4(mokume_noise(in, float2(0.5)), 0.0, 0.0, 1.0); }"
+        )
+        try canvas.draw {
+            canvas.noStroke()
+            if withShader { canvas.shader(shader) }
+            for index in 0..<5 {
+                canvas.noiseSeed(index + 1)
+                canvas.circle(Float(index), 4, 2)
+            }
+            canvas.resetShader()
+        }
+        let expected = withShader ? 5 : 1
+        #expect(
+            canvas.drawCallsInLastFrame == expected,
+            "列の数が \(canvas.drawCallsInLastFrame) (\(expected) のはず)")
+    }
+
+    /// 揺らぎを戻す出口 ([#1855])。組み立ての中で種を決め直すと、出口が外の種へ戻す。**戻すときも
+    /// 描き切らない。** 組み立てより前に本体と描き場所へ置いたものは外の種で、組み立ての中で別の
+    /// 描き場所へ置いたものは中の種で描かれる — どれも列が閉じた時点の設定を持ち歩く。
+    ///
+    /// 描き場所の列は書き換えをまたいで開いたままにする。先に置いた描き場所は組み立ての中で閉じ
+    /// (描き切りは中の設定の間)、組み立ての中で置いた描き場所の列は出口の後に閉じる (外の設定へ戻った
+    /// 後)。書き換えと戻しが置き場を共有する面の開いた列を閉じないと、どちらも違う設定で引かれる。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    @Test("組み立ての中で種を決め直しても、前に置いたものは外の種で、中で別の面に置いたものは中の種で描かれる")
+    func aBuildThatChangesTheNoiseKeepsTheSeedOfEachPlacement() throws {
+        try requireNoiseFarFromTheDefault()
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let layer = try canvas.createGraphics(8, 8)
+        let other = try canvas.createGraphics(8, 8)
+        decideNoise(on: canvas)
+        let decided = canvas.noiseSettings
+        let place = Self.noisePlaces[0]
+        // 中で決め直す設定は既定 (種 0・4 枚・0.5)。既定から離れていることは上で確かめた
+        let inside = ValueNoise()
+        func comparison(expecting value: Float) throws -> Shader {
+            try canvas.makeShader(
+                Self.noiseComparison,
+                values: [
+                    "place": .pair(place.x, place.y), "depth": .number(place.z),
+                    "expected": .number(value),
+                ])
+        }
+        let outsideShader = try comparison(expecting: decided.value(place.x, place.y, place.z))
+        let insideShader = try comparison(expecting: inside.value(place.x, place.y, place.z))
+        /// 断片で塗った矩形を置き、**列を開いたまま**にする (断片を外すと列が閉じる)。
+        func placeRect(on surface: Canvas, with shader: Shader) {
+            surface.background(.linear(red: 0, green: 0, blue: 0))
+            surface.blendMode(.replace)
+            surface.noStroke()
+            surface.shader(shader)
+            surface.rect(0, 0, 8, 8)
+        }
+        var passes: [Int] = []
+        var shape = Shape.empty
+        try canvas.draw {
+            placeRect(on: canvas, with: outsideShader)
+            layer.beginDraw()
+            placeRect(on: layer, with: outsideShader)
+            other.beginDraw()
+            shape = canvas.createShape {
+                canvas.noiseSeed(Int(inside.seed))
+                canvas.noiseDetail(inside.octaves, inside.falloff)
+                passes = [canvas, layer, other].map(\.passesThisFrame)
+                // 先に置いた描き場所を、中の設定の間に閉じる
+                layer.resetShader()
+                layer.endDraw()
+                placeRect(on: other, with: insideShader)
+                canvas.rect(0, 0, 2, 2)
+            }
+            // 中で置いた描き場所の列を、外の設定へ戻った後に閉じる
+            other.resetShader()
+            other.endDraw()
+            canvas.resetShader()
+        }
+        #expect(passes == [0, 0, 0], "組み立ての中の書き換えで描き切った回数が \(passes)")
+        #expect(!shape.isEmpty)
+        #expect(canvas.noiseSettings == decided, "出口で外の設定へ戻っていない")
+        for (name, surface) in [("本体に先に置いたもの", canvas), ("描き場所に先に置いたもの", layer)] {
+            let gap = surface.get(4, 4).red
+            #expect(gap < NoiseParityTests.tolerance, "\(name)が外の種で引かれていない (\(gap) ずれている)")
+        }
+        let gap = other.get(4, 4).red
+        #expect(gap < NoiseParityTests.tolerance, "組み立ての中で別の面に置いたものが中の種で引かれていない (\(gap))")
+    }
+
+    /// 左半分と右半分で、比べる値を分ける断片。**1 つの断片・1 組の値で 2 つの矩形を置ける**ので、
+    /// 断片や値の差し替えで列を閉じずに済む。
+    private static let noiseComparisonByHalf = """
+        float4 paint(Fragment in, Values values) {
+            float mine = mokume_noise(in, float3(values.place, values.depth));
+            float expected = in.place.x < 0.5 ? values.left : values.right;
+            return float4(abs(mine - expected), 0.0, 0.0, 1.0);
+        }
+        """
+
+    /// **開いた列の途中で揺らぎを書き換えると、列はそこで分かれる** ([#1855] の案 D)。同じ断片・同じ
+    /// 値で続けて置いた 2 つの矩形でも、左は書き換える前の設定、右は後の設定で引く。書き換えが開いた
+    /// 列を閉じないと、列が閉じた時点 (後) の設定で 2 つとも引かれる — 面を描き切っていた頃は描き切りで
+    /// 守っていた。置き場を共有する別の面 (本体) で書き換えても同じ。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    @Test(
+        "同じ断片で続けて置いても、間で揺らぎを書き換えれば前後をそれぞれの設定で引く",
+        arguments: [false, true])
+    func changingTheNoiseSplitsAnOpenRun(onAnotherSurface: Bool) throws {
+        try requireNoiseFarFromTheDefault()
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let layer = try canvas.createGraphics(8, 8)
+        decideNoise(on: canvas)
+        let decided = canvas.noiseSettings
+        let place = Self.noisePlaces[0]
+        let shader = try canvas.makeShader(
+            Self.noiseComparisonByHalf,
+            values: [
+                "place": .pair(place.x, place.y), "depth": .number(place.z),
+                "left": .number(decided.value(place.x, place.y, place.z)),
+                "right": .number(ValueNoise().value(place.x, place.y, place.z)),
+            ])
+        var passes = -1
+        try canvas.draw {
+            layer.beginDraw()
+            layer.background(.linear(red: 0, green: 0, blue: 0))
+            layer.blendMode(.replace)
+            layer.noStroke()
+            layer.shader(shader)
+            layer.rect(0, 0, 4, 8)
+            let changer = onAnotherSurface ? canvas : layer
+            changer.noiseSeed(0)
+            changer.noiseDetail(4, 0.5)
+            layer.rect(4, 0, 4, 8)
+            passes = layer.passesThisFrame
+            layer.resetShader()
+            layer.endDraw()
+        }
+        #expect(passes == 0, "書き換えで描き切った")
+        let left = layer.get(2, 4).red
+        let right = layer.get(6, 4).red
+        #expect(left < NoiseParityTests.tolerance, "書き換える前に置いた矩形が前の設定で引かれていない (\(left))")
+        #expect(right < NoiseParityTests.tolerance, "書き換えた後に置いた矩形が後の設定で引かれていない (\(right))")
+    }
+
+    /// 持ち越しの区間 (`setup()` など) で置いてから決め直しても、置いたものは**置いた時点の設定**で
+    /// 次のフレームに描かれる ([#1855])。列を閉じるのはフレームの中か外かを問わない。直す前は、
+    /// 区間では描き切らなかったので、最初のフレームを描いた時点の設定 (決め直した後) で引かれていた。
+    ///
+    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    @Test("持ち越しの区間で置いてから揺らぎを決め直しても、置いたものは置いた時点の設定で描かれる")
+    func noiseChangedAfterPlacingInACarriedRegionKeepsThePlacementSetting() throws {
+        try requireNoiseFarFromTheDefault()
+        let canvas = try makeCanvas(width: 8, height: 8)
+        decideNoise(on: canvas)
+        let place = Self.noisePlaces[0]
+        let shader = try canvas.makeShader(
+            Self.noiseComparison,
+            values: [
+                "place": .pair(place.x, place.y), "depth": .number(place.z),
+                "expected": .number(canvas.noise(place.x, place.y, place.z)),
+            ])
+        canvas.carriesOver = true
+        canvas.background(.linear(red: 0, green: 0, blue: 0))
+        canvas.blendMode(.replace)
+        canvas.noStroke()
+        canvas.shader(shader)
+        canvas.rect(0, 0, 8, 8)
+        canvas.noiseSeed(0)
+        canvas.noiseDetail(4, 0.5)
+        canvas.resetShader()
+        canvas.carriesOver = false
+        try canvas.draw {}
+        let gap = canvas.get(4, 4).red
+        #expect(gap < NoiseParityTests.tolerance, "持ち越しの区間で置いたものが置いた時点の設定で引かれていない (\(gap))")
     }
 
     /// 完了条件 4 のうち直に作った面 ([#1503])。本体を持たない面は、それぞれ自分の置き場を

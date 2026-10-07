@@ -40,13 +40,40 @@ extension RenderTarget {
         }
     }
 
+    /// 出口へ渡すのと同じ道で組み、**GPU が仕上げたかを判定してから**読む。
+    /// `SketchRuntime.renderFrame(to:)` の口 ([#1932])。
+    ///
+    /// 観測の撮影 (`SketchRuntime` の `continueCapture`) も通る。撮影は投げずに、失敗を目録の
+    /// `complete: false` と警告で伝える (ADR-0018 決定 3)。
+    ///
+    /// 判定と範囲は ``encodeForDisplay(scale:)`` と同じで、打ち切りがあれば
+    /// ``RenderFailure/workDropped(reason:)`` を投げる。出口へ渡す ``encodeToImage()`` そのものは
+    /// 投げない (毎フレーム走る口なので・[ADR-0020] 決定 5)。
+    ///
+    /// - Parameter scale: 縮小率 (``EncodedImage/read(scaledBy:)`` と同じ。1 = 実寸)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    func encodeToImageAndRead(scaledBy scale: Double = 1) throws(RenderFailure) -> DisplayImage {
+        try refuseHeldDrop()
+        let image = try encodeToImage()
+        // 出力段は最後に積んだ 1 本なので、名指しで待てば範囲の投入はすべて終わっている (#927)
+        try gpu.waitForSubmission(image.pendingSubmission)
+        try judgeDroppedWork()
+        return image.read(scaledBy: scale)
+    }
+
     /// 出力段を通した絵を、`storage` が渡す置き場へ組む。**待たずに投入して返る** (#927)。
     ///
     /// 出口へ渡す ``encodeToImage()`` と、同期で読む ``encodeForDisplay(scale:)`` が通る。
     /// 2 つは置き場だけが違い、道は同じ 1 本である ([ADR-0024] 決定 6)。置き場を受け取るのは
     /// 前の出力段を待ち終えてからで、待てずに投げたときは置き場を作らず、数えもしない。
     ///
+    /// **書き戻したときだけ、この面へ書く投入として投入する** ([#1932])。出力段そのものは面を
+    /// 読むだけで、面の中身を変えない。
+    ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private func encode(
         into storage: () throws(RenderFailure) -> EncodedImage
     ) throws(RenderFailure) -> EncodedImage {
@@ -115,12 +142,14 @@ extension RenderTarget {
             encoder.endEncoding()
             // **待たずに投入し、番号を憶える。** 中身が確定しているかを気にするのは触る側で、
             // ``EncodedImage/read()`` と出口へ渡す直前がその番号を名指しで待つ (#927)
-            return (submission: gpu.commit(commands, retaining: [image]), wroteBack: wroteBack)
+            let submission = gpu.commit(
+                commands, retaining: [image], writing: wroteBack ? [self] : [])
+            return (submission: submission, wroteBack: wroteBack)
         }
+        let submission = assembled.submission
         // **戻したことにするのは投入の後** (#1183)。組み立ての途中で投げると書き戻しは
         // 捨てられるので、次に触る段がもう一度積む (控えへの写しも、同じコマンドごと捨てられる)
-        if assembled.wroteBack { markPixelsWrittenBack() }
-        let submission = assembled.submission
+        if assembled.wroteBack { markPixelsWrittenBack(by: submission) }
         image.pendingSubmission = submission
         lastEncodeSubmission = submission
         return image
@@ -171,8 +200,16 @@ extension RenderTarget {
     /// 1 枚も頼まれて初めて作り、以後は使い回す ([ADR-0023] 決定 5)。
     ///
     /// **待てなければ投げる。** 待ち口は全画素を読み戻していたときと同じ `RenderDevice.settle()`
-    /// で、期限切れ・打ち切りは同じ ``RenderFailure`` になる — 前に組んだ絵を成功として返さない。
-    /// 出力段は最後に投入した 1 本なので、全部を待っても待つ量は名指しで待つのと変わらない。
+    /// で、期限を越えれば ``RenderFailure/timedOut(seconds:)`` (直近の結末が打ち切りなら
+    /// ``RenderFailure/workDropped(reason:)``) を投げる。出力段は最後に投入した 1 本なので、全部を
+    /// 待っても待つ量は名指しで待つのと変わらない。
+    ///
+    /// **GPU が仕上げなかった絵は返さない** ([#1932])。待ちが成り立っても、返す絵が拠った投入の
+    /// どれかを GPU が打ち切っていたら、結末が届くのを待ってから ``RenderFailure/workDropped(reason:)``
+    /// を投げる — 打ち切られた描画の前の絵も、打ち切られた出力段の置き場に残っていた前の絵も、
+    /// 成功として返さない。判定の範囲 (前に判定した読みの後に同じ土台へ積まれた投入すべてと、この
+    /// 読みの出力段)・結末の待ちの上限・投げた後の読みの扱いは ``readPixels()`` と同じで、2 つの口は
+    /// 同じ面の判定を分け合う。出力段だけが打ち切られたなら、次の呼び出しは組み直す。
     ///
     /// `scale` を 1 より小さくすると、置き場から拾う画素だけを読む (#1745)。出力段は画素ごとの
     /// 純関数で拾い方は `NearestNeighbor` の 1 つなので、間引いてから変換したのと同じバイト列に
@@ -183,7 +220,9 @@ extension RenderTarget {
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     /// [#1752]: https://github.com/mokume-metal/mokume/issues/1752
     /// [#1762]: https://github.com/mokume-metal/mokume/issues/1762
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     public func encodeForDisplay(scale: Double = 1) throws(RenderFailure) -> DisplayImage {
+        try refuseHeldDrop()
         let image = try encode { () throws(RenderFailure) in
             if let displayStorage { return displayStorage }
             let image = try EncodedImage(gpu: gpu, width: width, height: height)
@@ -191,14 +230,17 @@ extension RenderTarget {
             return image
         }
         try gpu.settle()
+        try judgeDroppedWork()
         return image.read(scaledBy: scale)
     }
 
     /// いまの内容を PNG として書き出す。**書き込みが終わってから返る。**
     ///
-    /// 出力段を 1 度だけ通す ([ADR-0011] 決定 3)。
+    /// 出力段を 1 度だけ通す ([ADR-0011] 決定 3)。絵は ``encodeForDisplay(scale:)`` から受け取るので、
+    /// GPU が仕上げなかった絵は書き出さずに同じ ``RenderFailure`` を投げる ([#1932])。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     public func writePNG(to url: URL) throws {
         try PNGFile.write(try encodeForDisplay(), to: url)
     }

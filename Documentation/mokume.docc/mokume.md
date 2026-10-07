@@ -176,6 +176,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/frameCount``
 - ``Sketch/time``
 - ``Sketch/deltaTime``
+- ``Sketch/clock``
+- ``Clock``
 - ``Sketch/usesFrameHistory``
 - ``Upscale``
 
@@ -372,6 +374,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``AudioIn``
 - ``AudioDevice``
 - ``AudioFailure``
+
+### 音声ファイルを鳴らす
+
+- ``Sketch/loadSound(_:)``
+- ``SoundFile``
 
 ### OSC で他の道具とやりとりする
 

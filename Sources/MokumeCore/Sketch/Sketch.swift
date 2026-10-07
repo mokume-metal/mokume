@@ -216,7 +216,10 @@ public struct SketchSettings: Equatable, Sendable {
     /// 三角形の経路・立体) によらずこうなる。それより太い線は、三角形の経路と立体では描く画素の
     /// 格子で丸まる — たとえば 0.5 の `strokeWeight(3)` は描く画素で 1.5 になり、`triangle` や
     /// `shader()` を付けた図形・立体の線では 1 行か 2 行で塗られる (縁を滑らかにするのは距離関数の
-    /// 経路だけである)。
+    /// 経路だけである)。塗りも同じで、`rect`・`ellipse` などの基本図形を描く画素で 1 画素より細く
+    /// 描いた塗りは、面積に比例した濃さで出る (`shader()` や `texture()` を付けた長い形は、置く位置に
+    /// よって 1 割ほど揺れる。扇形 (一周でない `arc`) は付けるかによらず約束の外で、`triangle`・`quad`・
+    /// `beginShape` は描く画素の格子で丸まる)。
     /// 効果の半径 (``Effect/blur(radius:)`` など)・切り抜きの矩形 (``Sketch/clip(_:_:_:_:)``)・
     /// 断片 (塗りと効果) が受け取る位置と大きさも同じく出す細かさの画素で、細かさによらない。
     /// 違うのは描く画素 1 つより細かい所 (拡大のぼけと、描く画素の格子への丸め) だけである。
@@ -395,6 +398,24 @@ extension Sketch {
     /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
     /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
     public var deltaTime: Float { Self.requireRuntime().deltaTime }
+    /// ``time`` がどこから来ているか。
+    ///
+    /// 窓に出して動かしている間は ``Clock/wallClock`` (実際に流れた時間) で、書き出し
+    /// (`mokume render`) と、窓を開かずに回す検査では ``Clock/frameIndex(frameRate:)``
+    /// (フレームの数え方) である。
+    ///
+    /// **外の時間で動くものを作る側が読む** — たとえば音声ファイルの再生 (`loadSound(_:)`)
+    /// は、実時間なら実際に鳴らし、フレームの数え方なら鳴らさずに再生位置をフレームの数から
+    /// 決める。書き出すたびに同じ絵になるのは後者である ([ADR-0025] の水準 2)。
+    ///
+    /// ```swift
+    /// background(0)
+    /// // 窓で見ている間だけ時刻を出し、書き出す絵には入れない
+    /// if clock == .wallClock { text("\(time)", 20, 40) }
+    /// ```
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    public var clock: Clock { Self.requireRuntime().clock }
 
     // 描画 API が Sketch+*.swift に分かれているので private にはできない。
     // 公開もしない — 利用者が触る面ではない。

@@ -66,6 +66,12 @@ extension Canvas {
         /// 点は元から刻んだ多角形で、**刻み方は置く先の拡大で決まる** (#1645)。保持した形は
         /// 記録のときの拡大で点まで組むので、置くときの拡大で刻み直せるよう、点とは別に持つ。
         var ring: Ring?
+        /// `fill(_:)` の説明が名指す基本図形 (`rect` / `square` / `ellipse` / `circle`・一周の
+        /// `arc`) の塗りの形 (``NamedFill``)。それ以外の周 (`triangle`・`quad`・`beginShape`・扇) は
+        /// `nil` で、描く画素で 1 画素より細くても補わない ([#1934])。
+        ///
+        /// [#1934]: https://github.com/mokume-metal/mokume/issues/1934
+        var namedFill: NamedFill?
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {
@@ -78,11 +84,20 @@ extension Canvas {
             var segments: Int
         }
 
+        /// 名指しの基本図形の塗りの形。形自身の座標で、中心と半幅・半高 (楕円は半径) を持つ。
+        /// 1 画素より細い塗りの補いが、ここから描く画素での細さを測る (``Canvas/thinFillPieces(_:by:)``)。
+        struct NamedFill: Equatable {
+            /// 楕円 (偽なら矩形)。
+            var isEllipse: Bool
+            var center: SIMD2<Float>
+            var half: SIMD2<Float>
+        }
+
         init(
             points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
             fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]? = nil,
             fills: Bool = true, curveSteps: [Bool] = [], cornerDiagonals: [SIMD2<Float>] = [],
-            strokesAsOneRegion: Bool = false, ring: Ring? = nil
+            strokesAsOneRegion: Bool = false, ring: Ring? = nil, namedFill: NamedFill? = nil
         ) {
             self.points = points
             self.isClosed = isClosed
@@ -93,16 +108,19 @@ extension Canvas {
             self.cornerDiagonals = cornerDiagonals
             self.strokesAsOneRegion = strokesAsOneRegion
             self.ring = ring
+            self.namedFill = namedFill
         }
 
         /// 形自身の座標で作った周を、置き場所ぶんずらす。**畳まないときの経路。**
         func moved(by offset: SIMD2<Float>) -> Outline {
+            var shiftedFill = namedFill
+            shiftedFill?.center += offset
             var moved = Outline(
                 points: points.map { $0 + offset }, isClosed: isClosed,
                 fanCenter: fanCenter.map { $0 + offset },
                 fillTriangles: fillTriangles?.map { ($0.0 + offset, $0.1 + offset, $0.2 + offset) },
                 fills: fills, curveSteps: curveSteps, cornerDiagonals: cornerDiagonals,
-                strokesAsOneRegion: strokesAsOneRegion, ring: ring)
+                strokesAsOneRegion: strokesAsOneRegion, ring: ring, namedFill: shiftedFill)
             moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
             return moved
         }
@@ -113,7 +131,10 @@ extension Canvas {
         // 区間の外では置かず、組み立てた数も数えない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         outlinesAssembledThisFrame += 1
-        if outline.fills, style.hasFill { fillInterior(outline) }
+        // 細い塗りはいまの変換で測る。記録の間は測らない — 置くときに測る (``RingFillRange``)
+        if outline.fills, style.hasFill {
+            fillInterior(outline, thinFillMatrix: recordingShape ? nil : transform.matrix)
+        }
         if style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
     }
 
@@ -156,6 +177,7 @@ extension Canvas {
             discSegments: hasStroke && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                 ? discSplitMemo.count(forRadius: style.strokeWeight / 2, scale: scale) : 0,
             strokeLinear: thinStrokeLinear(),
+            fillLinear: thinFillLinear(form),
             texture: style.hasFill ? style.picture?.held : nil)
         guard key.hasFill || key.hasStroke else { return }
 
@@ -259,13 +281,12 @@ extension Canvas {
         style.stroke = Self.unchangedTint
         buildingFlatTemplate = true
         // 細い線の雛形は、鍵の変換で細さを測って広げる (#1637・``thinStrokeMatrix``)
-        templateStrokeMatrix = key.strokeLinear.map(\.linear).map { linear in
-            simd_float4x4(
-                SIMD4(linear.x, linear.y, 0, 0), SIMD4(linear.z, linear.w, 0, 0),
-                SIMD4(0, 0, 1, 0), SIMD4(0, 0, 0, 1))
-        }
+        templateStrokeMatrix = key.strokeLinear.map { Self.placementMatrix($0.linear) }
         outlinesAssembledThisFrame += 1
-        if key.hasFill { fillInterior(outline) }
+        // 細い塗りの雛形は、鍵の変換で細さを測って広げる (#1934・``FlatKey/fillLinear``)
+        if key.hasFill {
+            fillInterior(outline, thinFillMatrix: key.fillLinear.map { Self.placementMatrix($0.linear) })
+        }
         let strokeStart = vertices.count
         // 円板の分割数は鍵が持つ。雛形は変換を掛けずに積むので、変換からは決まらない (#1645)
         if key.hasStroke { strokeOutline(outline, discSegments: key.discSegments) }
@@ -293,6 +314,13 @@ extension Canvas {
                 matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y))
     }
 
+    /// 置き場所の 2x2 (``ThinFold/linear``) を、細さを測る行列にする (平行移動は細さに効かない)。
+    static func placementMatrix(_ linear: SIMD4<Float>) -> simd_float4x4 {
+        simd_float4x4(
+            SIMD4(linear.x, linear.y, 0, 0), SIMD4(linear.z, linear.w, 0, 0),
+            SIMD4(0, 0, 1, 0), SIMD4(0, 0, 0, 1))
+    }
+
     /// 掛けても値の変わらない色。雛形の頂点はこれで積む。
     private static let unchangedTint = LinearRGBA(
         premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
@@ -311,15 +339,31 @@ extension Canvas {
     /// 貼る絵があれば、**周の囲みの箱**を 0…1 に写した読み取り位置を付ける。組み込みの
     /// 図形はどれも周だけで表されているので、ここ 1 箇所で全部に効く。
     ///
-    /// **保持する形の記録では、楕円・弧の塗りに刻み直す素材を添える** ([#1645])。置くときの拡大で
-    /// 要る分割数が記録のときより増えるなら、そこで刻み直した頂点に差し替える
-    /// (``rescaledFillVertices(_:placedBy:cache:fill:)``)。
+    /// **名指しの基本図形の塗りが、`thinFillMatrix` で置いて描く画素で 1 画素より細ければ、広げて
+    /// 被覆で掛ける** ([#1934]・``thinFillPieces(_:by:)``)。細さを測る行列は呼ぶ側が渡す — 直に
+    /// 置くときはいまの変換、畳みの雛形は鍵の変換 (``FlatKey/fillLinear``)、保持する形の記録は
+    /// `nil` (置くときに測る)。
+    ///
+    /// **保持する形の記録では、楕円・弧と名指しの基本図形の塗りに組み直す素材を添える** ([#1645]・
+    /// [#1934])。置くときの拡大で要る分割数が記録のときより増えるなら刻み直した頂点に
+    /// (``rescaledFillVertices(_:placedBy:cache:fill:)``)、置いた後に細くなるなら広げた頂点に
+    /// (``thinFillVertices(_:placedBy:cache:fill:)``) 差し替える。
     ///
     /// [#1645]: https://github.com/mokume-metal/mokume/issues/1645
-    private func fillInterior(_ outline: Outline) {
+    /// [#1934]: https://github.com/mokume-metal/mokume/issues/1934
+    private func fillInterior(_ outline: Outline, thinFillMatrix: simd_float4x4?) {
         let start = vertices.count
-        fillInteriorTriangles(outline)
-        guard recordingShape, outline.ring != nil, vertices.count > start else { return }
+        if let named = outline.namedFill, let thinFillMatrix,
+            let pieces = Self.thinFillPieces(named, by: drawnLinear(thinFillMatrix))
+        {
+            fillThin(pieces, outline: outline)
+        } else {
+            fillInteriorTriangles(outline)
+        }
+        guard recordingShape, outline.ring != nil || outline.namedFill != nil,
+            vertices.count > start
+        else { return }
+        // 矩形の素材は周を持たず、細さを測る形だけを持つ (``RingFillRecipe``・#1934 の反証 7)
         recordedFillRanges.append(
             RingFillRange(
                 start..<vertices.count,
@@ -398,11 +442,17 @@ extension Canvas {
         let arcPoints = arcPoints(
             center: SIMD2(0, 0), radiusX: ring.radiusX, radiusY: ring.radiusY, from: ring.start,
             sweep: ring.sweep, fullTurn: ring.segments)
-        let points = ring.sweep >= 2 * .pi ? arcPoints : [SIMD2(0, 0)] + arcPoints
+        let isFullTurn = ring.sweep >= 2 * .pi
+        let points = isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints
+        // 一周は楕円と同じ形で、`fill` の説明が名指す基本図形に入る。扇は入らない (#1934)
         return Outline(
             points: points, isClosed: true, fanCenter: SIMD2(0, 0),
             curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true,
-            ring: ring)
+            ring: ring,
+            namedFill: isFullTurn
+                ? Outline.NamedFill(
+                    isEllipse: true, center: SIMD2(0, 0), half: SIMD2(ring.radiusX, ring.radiusY))
+                : nil)
     }
 
     /// 弧の上の点の、中心からのずれ。**中心を足せば ``arcPoints(center:radiusX:radiusY:from:sweep:fullTurn:)``

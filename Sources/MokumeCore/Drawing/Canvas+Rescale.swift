@@ -19,7 +19,13 @@ import simd
 /// 輪郭の側は ``StrokeRange/thin`` が同じ役を持つ。塗りは輪郭と違って画面で半画素寄せないので、
 /// 別の並びで持つ ([ADR-0039] 決定 2)。
 ///
+/// **名指しの基本図形 (`rect` と一周の楕円) の塗りも同じ素材で持つ** ([#1934])。置いた後に描く画素で
+/// 1 画素より細くなるなら、広げた頂点で区間を差し替える
+/// (``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。`rect` は周の元を持たないので、刻み直しは
+/// しない (``RingFillRecipe/segments(atScale:)`` が `nil`)。
+///
 /// [#1645]: https://github.com/mokume-metal/mokume/issues/1645
+/// [#1934]: https://github.com/mokume-metal/mokume/issues/1934
 /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
 struct RingFillRange {
     /// ``Shape/vertices`` の中での区間。
@@ -41,9 +47,27 @@ struct RingFillRange {
 /// 楕円・弧の周の塗りを、刻み直して頂点にする素材。**値だけで自己完結する。**
 ///
 /// 周の点の並びは図形が組んだものを共有する (記録のたびに箱を作らない)。
+///
+/// **矩形は周を持たず、細さを測る形 (``Canvas/Outline/namedFill``) だけを持つ** (#1934 の反証 7)。
+/// `shader()` / `texture()` を付けて記録した矩形はどれもこの素材を持つので、周ごと持つと、絵を
+/// 貼った矩形を何万も記録した形で、素材が頂点 (矩形 1 つに 192 バイト) より重くなる。周は値の
+/// 中に箱で持つ (楕円・弧だけが箱を作る)。
 struct RingFillRecipe {
-    /// 形自身の座標の周 (記録のときの変換を掛ける前)。**周の元を持つ** (``Canvas/Outline/ring``)。
-    let outline: Canvas.Outline
+    /// 周の持ち方。楕円・弧は刻み直すので周ごと (箱に入れる)、矩形は細さを測る形だけ。
+    private enum Source {
+        indirect case ring(Canvas.Outline)
+        case named(Canvas.Outline.NamedFill?)
+    }
+    private let source: Source
+
+    /// 形自身の座標の周 (記録のときの変換を掛ける前)。楕円・弧は**周の元を持つ** (``Canvas/Outline/ring``)。
+    /// 矩形は周の点を持たず、細さを測る形 (``Canvas/Outline/namedFill``) だけを持つ周を返す。
+    var outline: Canvas.Outline {
+        switch source {
+        case .ring(let outline): outline
+        case .named(let named): Canvas.Outline(points: [], isClosed: true, namedFill: named)
+        }
+    }
     /// 記録のときの塗りの色。
     let color: LinearRGBA
     /// 貼る絵があったか。あれば、読み取り位置は周の囲みの箱から決める。
@@ -52,6 +76,17 @@ struct RingFillRecipe {
     let transform: Transform
     /// 貼る絵が無いときの読み取り位置 (焼き場の白い区画)。
     let uv: SIMD2<Float>
+
+    init(
+        outline: Canvas.Outline, color: LinearRGBA, hasPicture: Bool, transform: Transform,
+        uv: SIMD2<Float>
+    ) {
+        source = outline.ring != nil ? .ring(outline) : .named(outline.namedFill)
+        self.color = color
+        self.hasPicture = hasPicture
+        self.transform = transform
+        self.uv = uv
+    }
 
     /// 別の保持した形の中で置かれた塗り。行列と色を合成する (刻み直すのは外側を置くとき)。
     func moved(by matrix: simd_float4x4, tint: LinearRGBA?) -> RingFillRecipe {
@@ -64,6 +99,19 @@ struct RingFillRecipe {
         return RingFillRecipe(
             outline: outline, color: color, hasPicture: hasPicture,
             transform: Transform(matrix: matrix * transform.matrix), uv: uv)
+    }
+
+    /// 名指しの基本図形の塗りの、記録のときの変換を掛けた後のいちばん細い向きの幅 (入れ子の外側の
+    /// 行列も含む・#1934)。形の中で最も細い塗りを見つけるのに使う。名指しの基本図形でなければ無限大。
+    /// **丸めない** — 置くときの行列と掛け合わせた後で 1 度だけ丸める (``ThinStrokeRecipe/recordedWeight``
+    /// と同じ)。矩形の辺の隔たりも楕円の短い直径も、最小の辺 (直径) × 最小の特異値を下回らない。
+    var recordedFillSpan: Float {
+        guard let named = outline.namedFill else { return .infinity }
+        let columns = transform.matrix.columns
+        let linear = simd_float2x2(
+            SIMD2(columns.0.x, columns.0.y), SIMD2(columns.1.x, columns.1.y))
+        return Float(
+            Double(2 * min(named.half.x, named.half.y)) * Canvas.smallestSingularValue(of: linear))
     }
 
     /// 置いた後の拡大 `scale` で要る周の分割数。記録のときより増えなければ `nil`。
@@ -210,7 +258,8 @@ extension Canvas {
         return vertices
     }
 
-    /// 周の元を持つ輪郭の塗りの頂点。扇で塗り (``fillInterior(_:)`` と同じ割り方・同じ式)、記録した
+    /// 周の元を持つ輪郭の塗りの頂点。扇で塗り (``fillInterior(_:thinFillMatrix:)`` が細さを補わない
+    /// ときと同じ割り方・同じ式)、記録した
     /// 頂点と同じ座標 (記録のときの変換を掛けた後・半画素寄せはしない) で返す。
     static func ringFillVertices(_ outline: Outline, recipe: RingFillRecipe) -> [ShapeVertex] {
         let points = outline.points
