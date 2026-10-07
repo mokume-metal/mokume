@@ -19,7 +19,7 @@ extension Sketch {
     /// (``shader(_:)``) である。`draw()` で後から ``blendMode(_:)`` / `texture()` /
     /// `shader()` を呼んでも、粒には効かない — 貼ったまま・当てたまま ``particles(_:)`` を
     /// 呼んでも、粒は作った瞬間の塗りで出る。
-    /// 色は焼き付かない — 粒ごとに ``emit(_:from:rate:speed:angle:life:size:color:)`` が渡す。
+    /// 色は焼き付かない — 粒ごとに ``emit(_:from:toward:rate:speed:life:size:color:)`` が渡す。
     ///
     /// **断片に渡した値も、作った瞬間のものが残る。** 作った後で断片の値を変えても、粒は
     /// 動かない (保持した形と同じ)。粒の塗りをフレームごとに動かすなら、作る前に断片と
@@ -87,13 +87,27 @@ extension Sketch {
     ///
     /// ## 出る場所と飛ぶ向きは別
     ///
-    /// `from` が出る場所を、`angle` が飛ぶ向き (画面の面内・ラジアン) を決める。形を
-    /// 差し替えても向きは変わらない。
+    /// `from` が出る場所 (``Emitter``) を、`toward` が飛ぶ向き (``Heading``) を決める。形を
+    /// 差し替えても向きは変わらない。`toward` を省くと、画面の面内のどの向きへも飛ぶ
+    /// (`.plane(0...(2 * Float.pi))`) ので、視点を真横へ回すと粒は 1 本の線に並ぶ。1 点から
+    /// 奥行きも含めた全方位へ吹き出させるなら `.sphere` を渡す — 視点を回しても
+    /// (``orbitControl(_:_:_:)``)、どこから見ても丸く広がる。
+    ///
+    /// <!-- example: 文脈 var dust: Particles! -->
+    /// ```swift
+    /// func draw() {
+    ///     background(0)
+    ///     orbitControl()
+    ///     emit(dust, from: .point(width / 2, height / 2), toward: .sphere, rate: 600)
+    ///     force(dust, .drag(1.2))
+    ///     particles(dust)
+    /// }
+    /// ```
     ///
     /// ## 何もかも幅で指定する
     ///
-    /// `speed` / `angle` / `life` / `size` は幅で渡す。1 つに決めたいときは `2...2` のように書く。
-    /// `color` を省くと、そのときの塗りで出る。
+    /// `speed` / `life` / `size` と、面内の向き (`toward: .plane(…)`) の角度は幅で渡す。1 つに
+    /// 決めたいときは `2...2` のように書く。`color` を省くと、そのときの塗りで出る。
     ///
     /// **幅は Swift の `...` で作るので、端が数でない値 (NaN) か、下端が上端を越えると、
     /// `emit` に届く前に Swift がプロセスごと止める。** `speed: Float.nan...1` も
@@ -125,16 +139,17 @@ extension Sketch {
     /// 値の 0 より下を 0 として、`from` の円・球の負の半径は絶対値として扱い、引数ごとに
     /// 1 度だけ知らせる。
     public func emit(
-        _ particles: Particles, from source: Emitter, rate: Float,
+        _ particles: Particles, from source: Emitter,
+        toward heading: Heading = .plane(0...(2 * Float.pi)),
+        rate: Float,
         speed: ClosedRange<Float> = 20...60,
-        angle: ClosedRange<Float> = 0...(2 * Float.pi),
         life: ClosedRange<Float> = 1...2,
         size: ClosedRange<Float> = 2...6,
         color: LinearRGBA? = nil
     ) {
         let runtime = Self.requireRuntime()
         canvas.emit(
-            particles, from: source, rate: rate, speed: speed, angle: angle, life: life,
+            particles, from: source, toward: heading, rate: rate, speed: speed, life: life,
             size: size, color: color, using: &runtime.randomness)
     }
 
@@ -219,7 +234,7 @@ extension Sketch {
     /// ([#1909](https://github.com/mokume-metal/mokume/issues/1909))。
     ///
     /// 呼び出しごとに分かれるのは、積んだ力と、置き場所・描く引数である。**2 回の呼び出しの
-    /// 間で ``emit(_:from:rate:speed:angle:life:size:color:)`` した粒は、2 回目の雲から出る** — 出した粒は、
+    /// 間で ``emit(_:from:toward:rate:speed:life:size:color:)`` した粒は、2 回目の雲から出る** — 出した粒は、
     /// 呼んだ順に効く ([#1687])。置き場所は呼んだ回数の最多まで群が持ち
     /// 続けるので、大きな群を 1 フレームに K 回置くと、置き場所の確保も K 倍になる。
     ///

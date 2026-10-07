@@ -532,8 +532,8 @@ struct FrameGrowthTests {
 
                 // 粒。**枠は使い回される**ので、寿命が尽きても置き場は増えない
                 canvas.emit(
-                    dust, from: .point(64, 120), rate: 900, speed: 60...140,
-                    angle: (-2.4)...(-0.75), life: 0.6...1.4, size: 2...4,
+                    dust, from: .point(64, 120), toward: .plane((-2.4)...(-0.75)), rate: 900,
+                    speed: 60...140, life: 0.6...1.4, size: 2...4,
                     color: .linear(red: 1, green: 0.72, blue: 0.35), using: &randomness)
                 canvas.force(dust, [.gravity(0, 200), .drag(0.25)])
                 canvas.particles(dust)

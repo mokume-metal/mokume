@@ -698,8 +698,8 @@ enum Scene: String, CaseIterable, Sendable {
             return {
                 canvas.background(.display(red: 0.04, green: 0.05, blue: 0.08))
                 canvas.emit(
-                    dust, from: .point(64, 116), rate: 900, speed: 70...150,
-                    angle: (-2.4)...(-0.75), life: 0.5...1.2, size: 2...5,
+                    dust, from: .point(64, 116), toward: .plane((-2.4)...(-0.75)), rate: 900,
+                    speed: 70...150, life: 0.5...1.2, size: 2...5,
                     color: .linear(red: 1, green: 0.72, blue: 0.35), using: &randomness)
                 // 潰したときは力を 1 つも効かせない。**出た向きのまま飛ぶ**
                 if suppressed != .force {

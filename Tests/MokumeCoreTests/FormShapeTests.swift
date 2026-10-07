@@ -420,19 +420,101 @@ struct FormShapeTests {
         }
     }
 
+    /// 縁の画素の重みを見る、輪郭つきの矩形。太さ 12 は #1819 の場面 (画素 (26, 48) が帯の
+    /// 内側半分に入る)。太さ 1 の帯は、塗りの縁の外側に接して重ならない辺と、塗りの中に入る
+    /// 辺を持つ。
+    private static let edgeRects: [(name: String, x: Float, y: Float, width: Float, height: Float, weight: Float)] = [
+        ("rect 太さ 12", 24, 24, 48, 48, 12),
+        ("rect 小数", 20.3, 18.6, 52, 46, 7),
+        ("rect 太さ 1", 20.3, 18.6, 52, 46, 1),
+    ]
+
+    /// 輪郭つきの矩形の 1 画素を、4 つの面積に分けるための被覆率 ([#1867] 決定 1)。
+    ///
+    /// どれも同じ機械が不透明な白で黒地に描いた形の赤から読む。塗り `f` は形そのもの、帯の
+    /// 外縁・内縁は、輪郭を寄せる約束 (ADR-0039 決定 2・画面で +0.5) のとおり半画素ずらして
+    /// 太さの半分だけ太らせた・痩せさせた `rect` の塗りである。帯 `s` は外縁 − 内縁 (輪郭
+    /// だけの形とも比べる)、重なり `o` は縁が画素の幅では平行とみなした見積もり
+    /// `min(f, 外縁) − min(f, 内縁)`。太さ 1 の帯は塗りの縁の外側に接して重ならない辺と、
+    /// 塗りの中に入る辺を持つので、`min(f, s)` では見積もれない。
+    ///
+    /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
+    private struct RectAreas {
+        let fills: PixelBuffer
+        let outers: PixelBuffer
+        let inners: PixelBuffer
+        /// 輪郭だけの形 (外縁 − 内縁と比べる)
+        let strokes: PixelBuffer
+
+        /// 画素 (x, y) の塗り `f`・帯 `s`・重なり `o`
+        func at(_ x: Int, _ y: Int) -> (f: Float, s: Float, o: Float) {
+            let (f, outer, inner) = (fills[x, y].red, outers[x, y].red, inners[x, y].red)
+            return (f, max(0, outer - inner), max(0, min(f, outer) - min(f, inner)))
+        }
+
+        /// 縁の画素 (塗りか帯の被覆率が 0 と 1 の間) の数
+        var edgeCount: Int {
+            var count = 0
+            for y in 0..<fills.height {
+                for x in 0..<fills.width {
+                    let (f, s, _) = at(x, y)
+                    if (f > 0 && f < 1) || (s > 0 && s < 1) { count += 1 }
+                }
+            }
+            return count
+        }
+
+        /// 外縁 − 内縁が、輪郭だけの形と 1/255 を越えて違う画素の数
+        var bandMismatchCount: Int {
+            var count = 0
+            for y in 0..<fills.height {
+                for x in 0..<fills.width where abs(at(x, y).s - strokes[x, y].red) > 1.0 / 255 {
+                    count += 1
+                }
+            }
+            return count
+        }
+    }
+
+    private func rectAreas(
+        _ rect: (name: String, x: Float, y: Float, width: Float, height: Float, weight: Float)
+    ) throws -> RectAreas {
+        func coverage(_ body: (Canvas) -> Void) throws -> PixelBuffer {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                body(canvas)
+            }
+            return try canvas.target.readPixels()
+        }
+        func filled(grow: Float, shift: Float) throws -> PixelBuffer {
+            try coverage { canvas in
+                canvas.fill(white)
+                canvas.noStroke()
+                canvas.rect(
+                    rect.x - grow + shift, rect.y - grow + shift,
+                    rect.width + 2 * grow, rect.height + 2 * grow)
+            }
+        }
+        let half = rect.weight / 2
+        return RectAreas(
+            fills: try filled(grow: 0, shift: 0),
+            outers: try filled(grow: half, shift: 0.5),
+            inners: try filled(grow: -half, shift: 0.5),
+            strokes: try coverage { canvas in
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(rect.weight)
+                canvas.rect(rect.x, rect.y, rect.width, rect.height)
+            })
+    }
+
     /// 置き換える混ぜ方の 1 画素は、**縁の画素も** 4 つの面積の和になる ([#1819]・[#1867] 決定 1)。
     ///
     /// 帯に丸ごと入る画素だけを見る検査 (上) では、縁の重みが決まらない — 「帯に丸ごと入る
     /// ときだけ重なりを輪郭だけにする」誤りでも緑になる。そこで面全体の画素を、置き換えで
     /// 解いた式 `S·s + F·(f − o)` と比べる。形の外 (どちらでもない面積) は置き換えで透明に
-    /// なるので、透明な地に描いて 0 と比べる。
-    ///
-    /// 被覆率は、同じ機械が不透明な白で描いた塗りだけの形から読む。塗り `f` は形そのもの、
-    /// 帯の外縁・内縁は、輪郭を寄せる約束 (ADR-0039 決定 2・画面で +0.5) のとおり半画素
-    /// ずらして太さの半分だけ太らせた・痩せさせた `rect` の塗りである。帯 `s` は外縁 − 内縁
-    /// (輪郭だけの形とも比べる)、重なり `o` は縁が画素の幅では平行とみなした見積もり
-    /// `min(f, 外縁) − min(f, 内縁)`。太さ 1 の帯は塗りの縁の外側に接して重ならない辺と、
-    /// 塗りの中に入る辺を持つので、`min(f, s)` では見積もれない。
+    /// なるので、透明な地に描いて 0 と比べる。被覆率は `RectAreas`。
     ///
     /// 塗りが半透明のとき、輪郭が不透明なとき、**不透明な輪郭で記録した形を半透明の色で置く**
     /// とき (置き場所の色は輪郭の不透明度にも掛かる・`FormInstance.placed(by:tint:)`) も回す。
@@ -443,11 +525,6 @@ struct FormShapeTests {
         "置き換える混ぜ方で、塗りと輪郭を 1 回で描いた絵の縁の画素は、面積で置き換えた色になる",
         arguments: ["半透明の輪郭", "半透明の塗りと輪郭", "半透明の塗りと不透明な輪郭", "記録した形を半透明の色で置く"])
     func replaceModeWeighsEdgePixelsByArea(_ variant: String) throws {
-        let rects: [(name: String, x: Float, y: Float, width: Float, height: Float, weight: Float)] = [
-            ("rect (#1819)", 24, 24, 48, 48, 12),
-            ("rect 小数", 20.3, 18.6, 52, 46, 7),
-            ("rect 太さ 1", 20.3, 18.6, 52, 46, 1),
-        ]
         let fillAlpha: Float = variant.hasPrefix("半透明の塗り") ? 0.6 : 1
         let strokeAlpha: Float = variant == "半透明の塗りと不透明な輪郭" || variant.hasPrefix("記録") ? 1 : 0.5
         let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8, alpha: fillAlpha)
@@ -462,34 +539,8 @@ struct FormShapeTests {
                 blue: color.blue * tint.blue, alpha: color.alpha * tint.alpha)
         }
         let (fillPlaced, strokePlaced) = (placed(fillColor), placed(strokeColor))
-        for rect in rects {
-            func coverage(_ body: (Canvas) -> Void) throws -> PixelBuffer {
-                let canvas = try makeCanvas()
-                try canvas.draw {
-                    canvas.background(black)
-                    body(canvas)
-                }
-                return try canvas.target.readPixels()
-            }
-            func filled(grow: Float, shift: Float) throws -> PixelBuffer {
-                try coverage { canvas in
-                    canvas.fill(white)
-                    canvas.noStroke()
-                    canvas.rect(
-                        rect.x - grow + shift, rect.y - grow + shift,
-                        rect.width + 2 * grow, rect.height + 2 * grow)
-                }
-            }
-            let half = rect.weight / 2
-            let fills = try filled(grow: 0, shift: 0)
-            let outers = try filled(grow: half, shift: 0.5)
-            let inners = try filled(grow: -half, shift: 0.5)
-            let strokes = try coverage { canvas in
-                canvas.noFill()
-                canvas.stroke(white)
-                canvas.strokeWeight(rect.weight)
-                canvas.rect(rect.x, rect.y, rect.width, rect.height)
-            }
+        for rect in Self.edgeRects {
+            let areas = try rectAreas(rect)
             let canvas = try makeCanvas()
             var recorded = Shape.empty
             func draw() {
@@ -510,17 +561,11 @@ struct FormShapeTests {
                 }
             }
             let once = try canvas.target.readPixels()
-            var edges = 0
-            var bandMismatch = 0
             var differing = 0
             var worst = (gap: Float(0), x: 0, y: 0, f: Float(0), s: Float(0))
             for y in 0..<once.height {
                 for x in 0..<once.width {
-                    let (f, outer, inner) = (fills[x, y].red, outers[x, y].red, inners[x, y].red)
-                    let s = max(0, outer - inner)
-                    if abs(s - strokes[x, y].red) > 1.0 / 255 { bandMismatch += 1 }
-                    if (f > 0 && f < 1) || (s > 0 && s < 1) { edges += 1 }
-                    let o = max(0, min(f, outer) - min(f, inner))
+                    let (f, s, o) = areas.at(x, y)
                     let expected = [
                         strokePlaced.red * s + fillPlaced.red * (f - o),
                         strokePlaced.green * s + fillPlaced.green * (f - o),
@@ -535,32 +580,131 @@ struct FormShapeTests {
                     if gap > worst.gap { worst = (gap, x, y, f, s) }
                 }
             }
-            #expect(edges > 100, "\(rect.name): 縁の画素が少ない (\(edges))")
-            #expect(bandMismatch == 0, "\(rect.name): 外縁 − 内縁が輪郭だけの形と \(bandMismatch) 画素違う")
+            #expect(areas.edgeCount > 100, "\(rect.name): 縁の画素が少ない (\(areas.edgeCount))")
+            #expect(
+                areas.bandMismatchCount == 0,
+                "\(rect.name): 外縁 − 内縁が輪郭だけの形と \(areas.bandMismatchCount) 画素違う")
             #expect(
                 differing == 0,
                 "\(variant)・\(rect.name): \(differing) 画素が面積で置き換えた色と違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y))・f \(worst.f)・s \(worst.s))")
         }
     }
 
-    /// 下地を読む混ぜ方で、塗りと輪郭を両方持つ形を 1 回で描いた絵は、塗りだけの形の上に
-    /// 輪郭だけの形を重ねた絵と同じになる ([#1643])。
+    /// 重ねる混ぜ方と下地を読む混ぜ方の 1 画素も、**縁と継ぎ目の画素まで** 4 つの面積の和に
+    /// なる ([#1818]・[#1867] 決定 1)。
     ///
-    /// 下地を読む断片 (`mokume_formFragment`) は塗りと輪郭を別々に下地と混ぜる — 塗りの
-    /// 三角形の上に輪郭の三角形を置くのと同じ式である。継ぎ目の漏れを塞ぐ割り戻し
-    /// (ADR-0039 の改訂) は「輪郭を塗りの上に重ねる」前提の式なので、ここへ持ち込むと
-    /// 不透明な輪郭の帯の内側半分で塗りが消えていた (加算で帯の内側の青が 0.33 → 0.006)。
-    /// 輪郭の不透明度 254 と 255 の間で絵が不連続に変わっていたので、その両側も回す。
-    /// 楕円 (円を含む) の輪郭を塗りの距離場から 1 次の近似でずらすと内縁に誤差が残るので、
-    /// 細長い楕円も回す (近似のままだと、半径 29 の円でも加算で 1/255 を越えた)。下地を読む
-    /// 断片は近似を使わず、いつも輪郭の位置で解き直す。重ねる・置き換える列の楕円が近似を
-    /// 使ってよいかは `ellipseStrokeDoesNotDependOnTheFill` が見る ([#1820])。
+    /// 画素を塗りだけ `f − o`・重なり `o`・帯だけ `s − o`・どちらでもない `1 − (f + s − o)` に
+    /// 分け、それぞれに丸ごと入っていたら出す色 (塗りだけ・重なり・帯だけ・地) を面積で足した
+    /// 色と、面全体の画素を 1/255 以内で比べる。3 つの色は、太い輪郭の矩形を塗り → 輪郭の
+    /// 順に分けて描いた絵の、それぞれに丸ごと入る画素から読む (混ぜ方の式を写さない)。
+    /// 被覆率は `RectAreas`。
+    ///
+    /// - 重ねる混ぜ方は、継ぎ目の割り戻し (塗りの被覆率を「輪郭 over 塗り」の重みで割り戻す)
+    ///   が、この読みを over で解いた式と項ごとに一致する。式を変えずに通る
+    /// - 線形でない 6 つは、塗りと輪郭を別々に下地と混ぜていた頃は、継ぎ目と、帯の下の塗りの
+    ///   縁で外れた (`.lightest` の太さ 1 で継ぎ目の地が最悪 24% 透けた)
+    /// - 加算と減算は、不透明な地では別々に混ぜても同じ色になる。透けた地では、別々に混ぜると
+    ///   塗りと帯を画素の中で無関係に散らばったものとして重ねるので、継ぎ目の不透明度が外れた
+    ///
+    /// [#1818]: https://github.com/mokume-metal/mokume/issues/1818
+    /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
+    @Test(
+        "重ねる・下地を読む混ぜ方で、塗りと輪郭を 1 回で描いた絵の縁の画素は、4 つの面積に分けて混ぜた色になる",
+        arguments: [
+            BlendMode.blend, .add, .subtract, .lightest, .darkest,
+            .difference, .exclusion, .multiply, .screen,
+        ],
+        ["不透明な地", "透明な地", "半透明の輪郭", "半透明の塗り"])
+    func compositeModesWeighEdgePixelsByArea(_ mode: BlendMode, _ variant: String) throws {
+        let fillColor = LinearRGBA.display(
+            red: 0.2, green: 0.35, blue: 0.8, alpha: variant == "半透明の塗り" ? 0.6 : 1)
+        let strokeColor = LinearRGBA.display(
+            red: 0.75, green: 0.3, blue: 0.15, alpha: variant == "半透明の輪郭" ? 0.5 : 1)
+        let ground = variant == "透明な地"
+            ? LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0)
+            : LinearRGBA.display(red: 0.3, green: 0.4, blue: 0.5)
+        // 塗りだけ・重なり・帯だけ・どちらでもない所に丸ごと入る画素の色。帯は x = 8.5〜24.5、
+        // 塗りは x = 16〜80
+        let whole: (fill: LinearRGBA, both: LinearRGBA, stroke: LinearRGBA, ground: LinearRGBA) = try {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(ground)
+                canvas.blendMode(mode)
+                canvas.strokeWeight(16)
+                canvas.fill(fillColor)
+                canvas.noStroke()
+                canvas.rect(16, 16, 64, 64)
+                canvas.noFill()
+                canvas.stroke(strokeColor)
+                canvas.rect(16, 16, 64, 64)
+            }
+            let pixels = try canvas.target.readPixels()
+            return (pixels[48, 48], pixels[20, 48], pixels[12, 48], pixels[2, 2])
+        }()
+        func components(_ color: LinearRGBA) -> SIMD4<Float> {
+            SIMD4(color.red, color.green, color.blue, color.alpha)
+        }
+        for rect in Self.edgeRects {
+            let areas = try rectAreas(rect)
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(ground)
+                canvas.blendMode(mode)
+                canvas.strokeWeight(rect.weight)
+                canvas.fill(fillColor)
+                canvas.stroke(strokeColor)
+                canvas.rect(rect.x, rect.y, rect.width, rect.height)
+            }
+            let once = try canvas.target.readPixels()
+            var differing = 0
+            var worst = (gap: Float(0), x: 0, y: 0, f: Float(0), s: Float(0))
+            for y in 0..<once.height {
+                for x in 0..<once.width {
+                    let (f, s, o) = areas.at(x, y)
+                    var expected = components(whole.ground) * max(0, 1 - (f + s - o))
+                    expected += components(whole.fill) * (f - o)
+                    expected += components(whole.both) * o
+                    expected += components(whole.stroke) * (s - o)
+                    let difference = components(once[x, y]) - expected
+                    let gap = max(abs(difference.x), abs(difference.y), abs(difference.z), abs(difference.w))
+                    if gap > 1.0 / 255 { differing += 1 }
+                    if gap > worst.gap { worst = (gap, x, y, f, s) }
+                }
+            }
+            #expect(areas.edgeCount > 100, "\(rect.name): 縁の画素が少ない (\(areas.edgeCount))")
+            #expect(
+                areas.bandMismatchCount == 0,
+                "\(rect.name): 外縁 − 内縁が輪郭だけの形と \(areas.bandMismatchCount) 画素違う")
+            #expect(
+                differing == 0,
+                "\(mode)・\(variant)・\(rect.name): \(differing) 画素が 4 つの面積に分けて混ぜた色と違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y))・f \(worst.f)・s \(worst.s))")
+        }
+    }
+
+    /// 下地を読む混ぜ方で、塗りと輪郭を両方持つ形を 1 回で描いた絵は、**塗りだけ・重なり・
+    /// 帯だけのどれかに丸ごと入る画素では**、塗りだけの形の上に輪郭だけの形を重ねた絵と
+    /// 同じになる ([#1643])。加算と減算は被覆率について線形なので、縁と継ぎ目も含めて
+    /// どの画素でも同じになる。
+    ///
+    /// 線形でない 6 つの縁と継ぎ目の画素は、4 つの面積に分けて混ぜた色になり、分けて重ねた
+    /// 絵とは違ってよい (ADR-0039 決定 5・[#1818])。その重みは
+    /// `compositeModesWeighEdgePixelsByArea` が見る。丸ごと入るかは、同じ形の塗りだけと
+    /// 輪郭だけを不透明な白で描いた被覆率が、どちらも 0 か 1 かで決める。
+    ///
+    /// 継ぎ目の漏れを塞ぐ割り戻し (ADR-0039 決定 5 の重ねる列) は「輪郭を塗りの上に重ねる」
+    /// 前提の式なので、ここへ持ち込むと不透明な輪郭の帯の内側半分で塗りが消えていた (加算で
+    /// 帯の内側の青が 0.33 → 0.006)。輪郭の不透明度 254 と 255 の間で絵が不連続に変わって
+    /// いたので、その両側も回す。楕円 (円を含む) の輪郭を塗りの距離場から 1 次の近似でずらすと
+    /// 内縁に誤差が残るので、細長い楕円も回す (近似のままだと、半径 29 の円でも加算で 1/255 を
+    /// 越えた)。下地を読む断片は近似を使わず、いつも輪郭の位置で解き直す。重ねる・置き換える
+    /// 列の楕円が近似を使ってよいかは `ellipseStrokeDoesNotDependOnTheFill` が見る ([#1820])。
     /// 比べる相手も同じ機械で描くので、成分の差は表示の 1 段 (1/255) より小さい。
     ///
     /// [#1643]: https://github.com/mokume-metal/mokume/issues/1643
+    /// [#1818]: https://github.com/mokume-metal/mokume/issues/1818
     /// [#1820]: https://github.com/mokume-metal/mokume/issues/1820
     @Test(
-        "下地を読む混ぜ方でも、塗りと輪郭を 1 回で描いた絵は分けて重ねた絵と同じ",
+        "下地を読む混ぜ方でも、塗りと輪郭を 1 回で描いた絵は、丸ごと覆われた画素で分けて重ねた絵と同じ",
         arguments: [
             BlendMode.add, .subtract, .lightest, .darkest,
             .difference, .exclusion, .multiply, .screen,
@@ -575,6 +719,8 @@ struct FormShapeTests {
         ]
         let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8)
         let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha / 255)
+        // 縁と継ぎ目も比べるのは、被覆率について線形な 2 つだけ
+        let comparesEdges = mode == .add || mode == .subtract
         for shape in shapes {
             func render(split: Bool) throws -> PixelBuffer {
                 let canvas = try makeCanvas()
@@ -597,12 +743,35 @@ struct FormShapeTests {
                 }
                 return try canvas.target.readPixels()
             }
+            /// 塗りだけ・輪郭だけを不透明な白で黒地に描いた被覆率 (赤)
+            func coverage(fills: Bool) throws -> PixelBuffer {
+                let canvas = try makeCanvas()
+                try canvas.draw {
+                    canvas.background(black)
+                    canvas.strokeWeight(7)
+                    if fills {
+                        canvas.fill(white)
+                        canvas.noStroke()
+                    } else {
+                        canvas.noFill()
+                        canvas.stroke(white)
+                    }
+                    shape.draw(canvas)
+                }
+                return try canvas.target.readPixels()
+            }
+            let (fills, strokes) = (try coverage(fills: true), try coverage(fills: false))
             let once = try render(split: false)
             let split = try render(split: true)
             var differing = 0
+            var inBand = 0
             var worst = (gap: Float(0), x: 0, y: 0)
             for y in 0..<once.height {
                 for x in 0..<once.width {
+                    let (f, s) = (fills[x, y].red, strokes[x, y].red)
+                    let whole = (f == 0 || f == 1) && (s == 0 || s == 1)
+                    guard comparesEdges || whole else { continue }
+                    if s == 1 { inBand += 1 }
                     let (p, q) = (once[x, y], split[x, y])
                     let gap = max(
                         abs(p.red - q.red), abs(p.green - q.green),
@@ -611,6 +780,7 @@ struct FormShapeTests {
                     if gap > worst.gap { worst = (gap, x, y) }
                 }
             }
+            #expect(inBand > 100, "\(mode)・\(shape.name): 帯に丸ごと入る画素が少ない (\(inBand))")
             #expect(
                 differing == 0,
                 "\(mode)・\(shape.name)・輪郭の不透明度 \(Int(strokeAlpha)): \(differing) 画素違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y)))")

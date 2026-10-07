@@ -55,9 +55,8 @@ final class SparksAndForces: Sketch {
             let angle = sweep + Float(side) * Float.pi
             emit(
                 sparks, from: .point(eye.x + cos(angle) * ring, eye.y + sin(angle) * ring),
-                rate: 800, speed: 30...90, angle: 0...(2 * Float.pi), life: 2.4...4,
-                size: 1.5...4,
-                color: color(255, 173, 71))
+                toward: .plane(0...(2 * Float.pi)), rate: 800, speed: 30...90, life: 2.4...4,
+                size: 1.5...4, color: color(255, 173, 71))
         }
 
         // **積んだぶんがまとめて効く。** 4 つのうちどれを外しても、絵は別物になる。

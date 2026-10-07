@@ -672,8 +672,8 @@ struct GraphicsTests {
                 // 毎秒 30 個を 1/30 秒ぶん = 1 個。速さ 60 px/秒で右へ
                 for dust in [onScreen, onGraphics] {
                     emit(
-                        dust, from: .point(Self.start, 8), rate: 30, speed: 60...60,
-                        angle: 0...0, life: 100...100, size: 1...1)
+                        dust, from: .point(Self.start, 8), toward: .plane(0...0), rate: 30,
+                        speed: 60...60, life: 100...100, size: 1...1)
                 }
             }
             particles(onScreen)

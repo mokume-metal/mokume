@@ -94,14 +94,14 @@ struct ParticleLifetimeTests {
                     let center = Float(spacing * slot + spacing / 2)
                     // 1 枚目に毎秒 fps 個を頼むと、ちょうど 1 個出る (#1640)
                     canvas.emit(
-                        dust, from: .point(center, Float(spacing / 2)), rate: Float(fps),
-                        speed: speed...speed, angle: 0...0, life: life...life, size: 4...4,
+                        dust, from: .point(center, Float(spacing / 2)), toward: .plane(0...0),
+                        rate: Float(fps), speed: speed...speed, life: life...life, size: 4...4,
                         color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 if let rate {
                     canvas.emit(
-                        dust, from: .point(Float(spacing / 2), Float(spacing / 2)), rate: rate,
-                        speed: 0...0, angle: 0...0, life: 1...1, size: 1...1,
+                        dust, from: .point(Float(spacing / 2), Float(spacing / 2)),
+                        toward: .plane(0...0), rate: rate, speed: 0...0, life: 1...1, size: 1...1,
                         color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 canvas.particles(dust)
@@ -268,8 +268,8 @@ struct ParticleLifetimeTests {
             if !emitted {
                 emitted = true
                 emit(
-                    spark, from: .point(8, 8), rate: Float(Self.fps), speed: 0...0, angle: 0...0,
-                    life: 1...1, size: 8...8,
+                    spark, from: .point(8, 8), toward: .plane(0...0), rate: Float(Self.fps),
+                    speed: 0...0, life: 1...1, size: 8...8,
                     color: LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 1))
             }
             particles(spark)
@@ -453,7 +453,7 @@ struct ParticleLifetimeTests {
             if let life {
                 // 毎秒 60 個を `Float(1/60)` 秒 (1/60 よりわずかに長い) で数えると、ちょうど 1 個
                 canvas.emit(
-                    dust, from: .point(4, 4), rate: 60, speed: 0...0, angle: 0...0,
+                    dust, from: .point(4, 4), toward: .plane(0...0), rate: 60, speed: 0...0,
                     life: life...life, size: 4...4, color: .linear(red: 1, green: 1, blue: 1),
                     using: &randomness)
             }
