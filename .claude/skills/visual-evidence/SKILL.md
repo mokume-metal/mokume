@@ -11,7 +11,8 @@ SPDX-License-Identifier: MIT
 
 # 視覚証跡を残す
 
-何を載せるかの規律は AGENTS.md「描画に影響する変更」が正典で、ここは手順だけを持つ。CI は描画を走らせられない
+何を載せるかの規律は AGENTS.md「描画に影響する変更」が正典で (描画が変わらなくても、見て分かるものは気軽に
+載せる — [#2195](https://github.com/mokume-metal/mokume/issues/2195))、ここは手順だけを持つ。CI は描画を走らせられない
 ([#180](https://github.com/mokume-metal/mokume/issues/180)) ので、**PR に貼った絵が描画の唯一の検証記録になり、
 squash merge の後には足せない。** 人なら入力欄へ画像を落とすだけでよく、この文書はエージェントの経路を扱う。
 
@@ -25,10 +26,6 @@ squash merge の後には足せない。** 人なら入力欄へ画像を落と�
 
 **撮影と送信は分ける。** 手元に落としてから上げ、外部へ送る前に写り込みを検める。Gyazo の MCP の
 「撮って即座に上げる」道具は使わず、窓の一覧だけを取る (`allowed-tools` がそれだけなのはこのため)。
-
-**撮るのは描画が変わるときだけではない。** 見た目・動きの Issue の再現、`no-visual-change` の PR でも
-見て分かるもの (窓の振る舞い・CLI や観測の出力・いまの絵) は、気軽に載せる — 文で読むより一目で分かる
-([#2195](https://github.com/mokume-metal/mokume/issues/2195))。
 
 ## 最短 — コードから撮る (`--snippet`)
 
@@ -44,8 +41,7 @@ python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --upload \
 - `--zoom K` — 最近傍で K 倍に拡げる。1 画素の継ぎ目・透け・AA の欠けは原寸では見えない
 - `--frames N` — 動きにする (可逆の WebP。`img2webp` が要る)
 - before/after は main の木と作業の木で同じファイルを撮り、下の「貼る」の表で並べる
-
-窓・GUI・`watch` の振る舞いなど、スケッチの外を見せたいときは下の経路 A か、[window.md](window.md) の経路 B を使う。
+- スケッチの外 (窓・GUI・`watch` の振る舞い) は経路 A か [window.md](window.md) の経路 B で撮る
 
 ## 撮る — スケッチの絵 (経路 A)
 
