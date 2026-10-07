@@ -3783,13 +3783,18 @@ public final class Canvas {
             // 断片・外の置き場所) が落ちるので、GPU が終わるまで抱えておく側へ渡す —
             // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
             // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
+            //
+            // **この投入が中身を書き換える面を名乗る** (#1932)。何も描かず書き戻さない描き切り
+            // (`loadPixels()`・`get()` の読み戻しだけ) は面を書き換えないので名乗らない
             let submission = gpu.commit(
                 commands,
                 retaining: [
                     HeldFrame(
                         batches: batches, casters: frameCasters.casters, effects: pendingEffects,
                         imageInput: imageInputPass)
-                ])
+                ],
+                writing: surfacesWritten(
+                    drawing: changesTarget || wroteBack || carried, upscaling: upscaled))
             return (
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
                 uploaded: uploaded, carried: carried, upscaled: upscaled)
@@ -3808,7 +3813,7 @@ public final class Canvas {
         // 区間が、次のフレームの最初のパスに奥行きの読み込みを課さない)。立てるのも投入の後だけ
         // ([#1183] と同じ作法) — 投げたコマンドは捨てられ、奥行きは書き換わらない
         depthIsHeld = !applyingEffects && (continuesDepth || hasDrawing)
-        if assembled.wroteBack { target.markPixelsWrittenBack() }
+        if assembled.wroteBack { target.markPixelsWrittenBack(by: assembled.submission) }
         // **拡大より後に描く先が変わったかを憶える** ([#1882])。フレームの終わりの描き切りは、
         // 拡大が積めたなら下ろす。**積めなかったなら (拡大は失敗を握り潰して警告だけ出す) 立てる**
         // — 下ろすと、出す先が古い絵のまま追い付き直されない。途中の描き切りは、描く先を変えたときに
@@ -3824,6 +3829,8 @@ public final class Canvas {
             placingCatchUpDeferred = false
         }
         gpu.pendingUploads.markUploaded(assembled.uploaded)
+        // 「映した」は結末を見ずに付ける。この投入が打ち切られていたら、投げる読む口が範囲の中に
+        // 見つけて投げ、印を下ろす (`RenderTarget.markPixelsMirrored(through:)`・#1932)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
         // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
         if let shadow = assembled.shadow {
@@ -3855,6 +3862,26 @@ public final class Canvas {
         }
         discardFrame()
         if !applyingEffects { frameCasters = kept }
+    }
+
+    /// この描き場所の面のうち、投入が中身を書き換えるもの ([#1932])。
+    /// ``RenderDevice/commit(_:retaining:writing:)`` に渡す。
+    ///
+    /// 投げる読む口は、自分の面へ書いた投入の打ち切りだけを持ち越し、自分の面へ書く新しい投入で
+    /// 下ろす。**描く先を書き換えたら、出す先も一緒に名乗る** — 細かさを下げた面の出す先は描く先から
+    /// 広げ直されるので、描く先の描画が打ち切られれば出す先の絵も仕上がらず、描く先を描き直せば
+    /// 出す先も描き直される。
+    ///
+    /// - Parameters:
+    ///   - drawing: 描く先を書き換えたか (図形・背景・書き戻し・効果を通す前の絵の戻し・効果)。
+    ///   - upscaling: 出す先を広げ直したか。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    func surfacesWritten(drawing: Bool, upscaling: Bool) -> [RenderTarget] {
+        var surfaces: [RenderTarget] = []
+        if drawing { surfaces.append(target) }
+        if drawing || upscaling, output !== target { surfaces.append(output) }
+        return surfaces
     }
 
     /// 溜めた列を 1 つずつ積む。**溜めたものが 1 つも無ければ何も積まない** —
@@ -4390,7 +4417,7 @@ public final class Canvas {
     ///
     /// 列 (`Batch`) は面・数の並び・断片・外の置き場所を抱え、効果は断片を抱える。
     /// どちらも描き切りの直後に空になるので、GPU が終わるまで生かしておく入れ物と
-    /// して ``RenderDevice/commit(_:retaining:)`` へ渡す。頂点や列ごとの値の置き場は
+    /// して ``RenderDevice/commit(_:retaining:writing:)`` へ渡す。頂点や列ごとの値の置き場は
     /// この型が持ち続けるので、ここには要らない。
     private final class HeldFrame {
         let batches: [Batch]
