@@ -1853,6 +1853,10 @@ struct CanvasTests {
             "pixelMirrorsMade": count, "pixelWriteBacksEncoded": count,
             "pixelReadbacksEncoded": count, "encodedImagesMade": count, "encodePassCount": count,
             "failPixelWriteBackForTesting": "検査の差し込み。製品の経路では常に nil (#1906)",
+            "judgedThrough": "投げる読む口が GPU の打ち切りを最後に判定した投入の番号。次の判定の範囲の始まりで、フレームに属さない (#1932)",
+            "heldDrop": "判定で見つけた、この面へ書いた投入の打ち切り。面の中身が仕上がっていない印で、この面へ書く新しい投入が積まれるまで持ち越す (#1932)",
+            "lastWriteSubmission": "この面の中身を書き換えた最後の投入の番号。持ち越した打ち切りを下ろすかを決める。面の中身の印で、フレームに属さない (#1932)",
+            "clearSubmission": construction,
         ]
     }
 
@@ -1863,7 +1867,8 @@ struct CanvasTests {
         let construction = "写しを作ったときに決まり、写しと同じだけ生きる"
         return [
             "storage": construction, "gpu": construction, "bytesPerRow": construction,
-            "syncedThrough": "写しが映した投入の番号。読む口が進め、捨てる口が 0 に戻す。映した絵の印で、フレームに属さない",
+            "syncedThrough": "写しが映した投入の番号。読む口が進め、捨てる口と、打ち切りを見つけた投げる読む口 (#1932) が 0 に戻す。映した絵の印で、フレームに属さない",
+            "writtenBackBy": "CPU が書いた画素を最後に書き戻した投入の番号。書き戻しが打ち切られたときに書き込み待ちを立て直すための印で、捨てる口が 0 に戻す。フレームに属さない (#1932)",
         ]
     }
 
@@ -1956,6 +1961,8 @@ struct CanvasTests {
             "templateStrokeMatrix": transient, "openBatchHasThinCoverage": transient,
             "coverageStorage": resource, "thinStrokesRebuilt": count,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
+            "shapeRecordingRunStart": "一番外の組み立てが入口で控えた列の位置 (#1855)。recordingShape と対で入口と出口が戻す。閉包なので境目をまたがない",
+            "frameEndAwaitingShape": "組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を出口まで待たせる印 (#1855)。一番外の出口が閉じて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
             "placementsFoundOutsideRegions": count,
             "stopsOnPlacementOutsideRegions": testing,

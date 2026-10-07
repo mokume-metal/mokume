@@ -10,9 +10,10 @@ import Testing
 ///
 /// 約束は「フレームの途中で描き切っても、そのフレームの絵は、分けずに描き切ったときと変わらない」
 /// である (`loadPixels()` の説明・`RenderTarget.makeRenderPass` のコメント (#456)・影の説明)。
-/// 区切りが入る口 (画素の口 4 つ・揺らぎの書き換え・置いた描き場所の描き換え) と、`flush` が
-/// フレームで 1 度だけ決めるもの (範囲の表の行) を掛け合わせ、区切りを入れた絵と入れない絵を
-/// 比べる。**表に行を足すときは ``Scene`` に 1 つ足す** — 足した行が割れていれば、どの口でも赤になる。
+/// 区切りが入る口 (画素の口 4 つ・置いた描き場所の描き換え) と、かつて区切りだった揺らぎの書き換え
+/// (#1855 で区切りでなくなった) を、`flush` がフレームで 1 度だけ決めるもの (範囲の表の行) と
+/// 掛け合わせ、区切りを入れた絵と入れない絵を比べる。**表に行を足すときは ``Scene`` に 1 つ足す** —
+/// 足した行が割れていれば、どの口でも赤になる。
 ///
 /// 区切りより前に描いた面へ、区切りの後に置いたもの (立体の影・計算・書いた値) を効かせることは
 /// できない (描き直すしかない)。その向きは説明に書いて引き受けた (案 A)。ここでは、その向きが
@@ -46,13 +47,14 @@ struct MidFrameCutTests {
         }
         """
 
-    /// 区切りの入れ方。**途中の描き切りが入る口の全部** (#1656 の範囲)。
+    /// 区切りの入れ方。**途中の描き切りが入る口の全部** (#1656 の範囲) と、かつて入っていた口。
     enum Cut: String, CaseIterable, CustomTestStringConvertible {
         case get
         case loadPixels
         case pixels
         case set
-        /// 揺らぎの設定を書き換える (#1503 が、揺らぎを読む面を描き切らせる)。
+        /// 揺らぎの設定を書き換える。**#1855 の案 D では区切りにならない** (列が閉じた時点の設定を
+        /// 持ち歩くので、#1503 のように揺らぎを読む面を描き切らせない)。
         case noise
         /// 置いた描き場所を描き換える。**案 A2 では区切りにならない** (置いた時点の絵を写しに取る)。
         case placedLayer
@@ -238,7 +240,7 @@ struct MidFrameCutTests {
                 canvas.shadows(shadows)
                 canvas.noStroke()
                 canvas.emit(
-                    dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                    dust, from: .point(36, 36), toward: .plane(0...0), rate: 600, speed: 0...0,
                     life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
                     using: &randomness)
                 canvas.particles(dust)
@@ -288,7 +290,7 @@ struct MidFrameCutTests {
                 }
                 canvas.castShadow(true)
                 canvas.emit(
-                    dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                    dust, from: .point(36, 36), toward: .plane(0...0), rate: 600, speed: 0...0,
                     life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
                     using: &randomness)
                 canvas.particles(dust)
@@ -409,11 +411,21 @@ struct MidFrameCutTests {
                     canvas.sphere(15)
                     canvas.pop()
                     _ = canvas.get(0, 0)
-                    // 画面の外の小さな平面 (揺らぎの書き換えが描き切る溜めたもの)
+                    // 画面の外の小さな平面 (組み立ての中の描き切りが描き切る溜めたもの)
                     canvas.rect(-10, -10, 1, 1)
                     if drawsOutAShape {
-                        rig.seed += 1
-                        _ = canvas.createShape { canvas.noiseSeed(rig.seed) }
+                        // 安全網に届く経路は、置いた側の写しが上限に達した後の描き換え (#1855 の案 E の
+                        // 逃げ道)。画面の外へ置いて描き換えるのを上限の回数だけ繰り返し、写しを使い切る
+                        for _ in 0..<Canvas.placedPictureCopyLimit {
+                            canvas.image(rig.layer, -20, -20)
+                            rig.cut(.placedLayer)
+                        }
+                        canvas.image(rig.layer, -20, -20)
+                        _ = canvas.createShape {
+                            canvas.rect(-10, -10, 1, 1)
+                            rig.cut(.placedLayer)
+                        }
+                        #expect(canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いていない")
                     }
                     canvas.castShadow(false)
                     canvas.push()

@@ -107,6 +107,8 @@ extension Canvas {
                 viewer: SIMD4(0, 0, -1, 0),
                 view: matrix_identity_float4x4,
                 surroundings: .none,
+                // 断片は揺らぎを引かない (組み込みの塗りだけ) が、列の値は揃えて閉じた時点のものを持つ
+                noise: noiseSettings,
                 castsShadow: false,
                 instanceStart: open.instanceStart,
                 instanceCount: count,

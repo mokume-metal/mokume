@@ -87,11 +87,10 @@ struct ParticleForceTests {
                         // 届かず、端数として繰り越されて出ない (刻み 1/30 秒で 1 個 → 0 個)
                         canvas.emit(
                             dust, from: release.source,
+                            toward: .plane(release.angle...release.angle),
                             rate: (Float(release.count) / step).nextUp,
-                            speed: release.speed...release.speed,
-                            angle: release.angle...release.angle, life: 100...100,
-                            size: 1...1, color: .linear(red: 1, green: 1, blue: 1),
-                            using: &randomness)
+                            speed: release.speed...release.speed, life: 100...100, size: 1...1,
+                            color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                     }
                 }
                 if !forces.isEmpty { canvas.force(dust, forces) }
@@ -185,8 +184,8 @@ struct ParticleForceTests {
         let pull = Force.gravity(gravity.x, gravity.y, gravity.z)
         try canvas.draw {
             canvas.emit(
-                dust, from: .point(start.x, start.y, start.z), rate: (1 / Self.step).nextUp,
-                speed: 0...0, angle: 0...0, life: 100...100, size: 1...1,
+                dust, from: .point(start.x, start.y, start.z), toward: .plane(0...0),
+                rate: (1 / Self.step).nextUp, speed: 0...0, life: 100...100, size: 1...1,
                 color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
             if forceFirst { canvas.force(dust, [pull]) }
             canvas.particles(dust)

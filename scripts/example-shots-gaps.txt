@@ -44,7 +44,7 @@ Sources/MokumeCore/Sketch/Sketch+Model.swift: loadModel(_:normalize:) (String, B
 Sources/MokumeCore/Sketch/Sketch+Model.swift: requestModel(_:normalize:) (String, Bool)
 Sources/MokumeCore/Sketch/Sketch+Model.swift: model(_:) (Model)
 Sources/MokumeCore/Sketch/Sketch+Particles.swift: makeParticles(count:) (Int)
-Sources/MokumeCore/Sketch/Sketch+Particles.swift: emit(_:from:rate:speed:angle:life:size:color:) (Particles, Emitter, Float, ClosedRange<Float>, ClosedRange<Float>, ClosedRange<Float>, ClosedRange<Float>, LinearRGBA?)
+Sources/MokumeCore/Sketch/Sketch+Particles.swift: emit(_:from:toward:rate:speed:life:size:color:) (Particles, Emitter, Heading, Float, ClosedRange<Float>, ClosedRange<Float>, ClosedRange<Float>, LinearRGBA?)
 Sources/MokumeCore/Sketch/Sketch+Particles.swift: force(_:_:) (Particles, Force...)
 Sources/MokumeCore/Sketch/Sketch+Particles.swift: particles(_:) (Particles)
 Sources/MokumeCore/Sketch/Sketch+Pixels.swift: pixels

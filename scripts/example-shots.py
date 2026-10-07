@@ -1091,16 +1091,27 @@ def _type_name(shot: Shot) -> str:
 
 
 def render(
-    root: pathlib.Path, shots: list[Shot], out: pathlib.Path, bundle: bool = True
+    root: pathlib.Path,
+    shots: list[Shot],
+    out: pathlib.Path,
+    bundle: bool = True,
+    package: pathlib.Path | None = None,
+    log=None,
 ) -> None:
-    """`bundle` は動きの連番を GIF へ束ねるか。束ねるのは上げるためで、比べるだけなら要らない。"""
-    package = root / ".build" / "example-shots"
+    """`bundle` は動きの連番を GIF へ束ねるか。束ねるのは上げるためで、比べるだけなら要らない。
+
+    `package` は組む場所。1 本だけ撮る口 (`--snippet`) は説明文の例と場所を分ける —
+    同じ場所だと、撮っている最中の `make example-shots` と互いの生成物を消し合う。
+    `log` は組む・走らせる出力の行き先で、`--snippet` は標準出力を貼る Markdown だけに保つ。
+    """
+    package = package or root / ".build" / "example-shots"
     generate(root, shots, package)
-    subprocess.run(["swift", "build", "--package-path", str(package)], check=True)
+    subprocess.run(["swift", "build", "--package-path", str(package)], check=True, stdout=log)
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     subprocess.run(
-        ["swift", "run", "--package-path", str(package), "example-shots", str(out)], check=True
+        ["swift", "run", "--package-path", str(package), "example-shots", str(out)],
+        check=True, stdout=log, stderr=log,
     )
     for shot in shots:
         if shot.is_motion and bundle:
@@ -1721,6 +1732,128 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str]) -> i
     return changed
 
 
+# ---------------------------------------------------------------- 1 本だけ撮る (#2195)
+#
+# **Issue / PR に貼る絵を、draw() の本体から 1 コマンドで撮る。** 説明文の例を撮る機構
+# (`generate` → `render` → `upload`) をそのまま使い、囲みも書き戻しも持たない。
+#
+# 見た目・動きの Issue に絵が付かなかった (#2195 の実測で 20 件中 19 件) のは、見つけた
+# 経路がコードを読む・使い捨ての検査で数値を測るで、撮るためにスケッチを用意して起こす
+# 手間 (visual-evidence の経路 A) が数値の表より重かったためである。ここはその手間を
+# 「再現を数行に書いて 1 回打つ」まで下げる。
+#
+#   python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --zoom 8 [--frames 60] \
+#       [--upload --token-command "$MOKUME_GYAZO_TOKEN_CMD"]
+#
+# - 書き方は説明文の例と同じ (`level_of` が draw() の本体か setup() / draw() の段かを見分ける)
+# - `--zoom K` は最近傍で K 倍に拡げる。1 画素の継ぎ目・透けは原寸では見えない
+# - `--frames N` は動きにする。束ねるのは Issue / PR 向けの可逆 WebP で、参照の面向けの
+#   GIF (`_bundle_gif`) ではない (visual-evidence「動きを束ねる」)
+# - 上げるのは `--upload` を付けたときだけ。付けなければ手元の場所を出して終わるので、
+#   送る前に写り込みを検められる (撮るのは mokume の絵だけなので、写り込みは構造的に無い)
+
+
+def snippet_shot(path: pathlib.Path, width: int, height: int, frames: int, alt: str) -> Shot:
+    """draw() の本体を書いたファイルから、撮る 1 本を組む。"""
+    lines = path.read_text(encoding="utf-8").rstrip("\n").splitlines()
+    return Shot(
+        path=path, open_line=0, close_line=len(lines), alt=alt, width=width, height=height,
+        frames=frames, symmetric="", still="", snippet=lines, context=[], index=0,
+        record_line=None, record_snippet=None,
+    )
+
+
+def parse_size(text: str) -> tuple[int, int]:
+    width, _, height = text.lower().partition("x")
+    try:
+        size = int(width), int(height)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"大きさは 幅x高さ で書く (例 160x120): {text}") from None
+    if min(size) <= 0:
+        raise argparse.ArgumentTypeError(f"大きさは正の数: {text}")
+    return size
+
+
+def finish_snippet(out: pathlib.Path, shot: Shot, zoom: int) -> pathlib.Path:
+    """撮った絵を、貼る形 (拡げた PNG か、可逆の WebP) にして場所を返す。"""
+    scale = ["-vf", f"scale=iw*{zoom}:ih*{zoom}:flags=neighbor"] if zoom > 1 else []
+    if not shot.is_motion:
+        image = out / f"{shot.name}.png"
+        if not scale:
+            return image
+        target = out / f"{shot.name}-x{zoom}.png"
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(image), *scale, str(target)], check=True
+        )
+        return target
+    frames = sorted((out / shot.name).glob("f.*.png"))
+    if scale:
+        grown = out / f"{shot.name}-x{zoom}"
+        grown.mkdir(exist_ok=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(out / shot.name / "f.%04d.png"),
+             *scale, str(grown / "f.%04d.png")],
+            check=True,
+        )
+        frames = sorted(grown.glob("f.*.png"))
+    target = out / f"{shot.name}.webp"
+    # 33ms ≒ 30fps。撮ったのはフレームごとなので、等間隔に並べればスケッチの速さで動く
+    subprocess.run(["img2webp", "-loop", "0", "-d", "33", *map(str, frames), "-o", str(target)],
+                   check=True, capture_output=True)
+    return target
+
+
+def snippet_markdown(url: str, shot: Shot, zoom: int) -> str:
+    """貼る形。撮ったコードは <details> に入れる (visual-evidence「貼る」)。"""
+    detail = f"{shot.width}×{shot.height}"
+    if zoom > 1:
+        detail += f"・最近傍で {zoom} 倍"
+    if shot.is_motion:
+        detail += f"・{shot.frames} フレーム"
+    code = "\n".join(shot.snippet)
+    return (
+        f'<img src="{url}" alt="{shot.alt}" width="{shot.width * zoom}">\n\n'
+        f"<details><summary>撮ったコード ({detail})</summary>\n\n"
+        f"```swift\n{code}\n```\n\n</details>\n"
+    )
+
+
+def run_snippet(root: pathlib.Path, arguments: argparse.Namespace, which: Callable[[str], str | None]) -> int:
+    path: pathlib.Path = arguments.snippet
+    if not path.is_file():
+        print(f"{path} が無い", file=sys.stderr)
+        return 1
+    needed = dict(NEEDED_TO_SHOOT)
+    if arguments.frames:
+        needed["img2webp"] = "brew install webp"
+    for tool, install in needed.items():
+        if which(tool) is None:
+            print(f"{tool} が見つからない — 撮るのに要る。入れるには {install}", file=sys.stderr)
+            return 1
+    token_command = arguments.token_command or os.environ.get("MOKUME_GYAZO_TOKEN_CMD")
+    if arguments.upload and not token_command:
+        print("--upload には --token-command か MOKUME_GYAZO_TOKEN_CMD が要る", file=sys.stderr)
+        return 1
+
+    width, height = arguments.size
+    shot = snippet_shot(path, width, height, arguments.frames, arguments.alt or path.stem)
+    out = arguments.out or root / ".build" / "snippet-shot-out"
+    render(root, [shot], out, bundle=False, package=root / ".build" / "snippet-shot", log=sys.stderr)
+    image = finish_snippet(out, shot, arguments.zoom)
+    if not arguments.upload:
+        print(f"撮った: {image}")
+        print("貼るなら --upload を足して打ち直す (同じ絵には同じ URL が返る)")
+        return 0
+    token = subprocess.run(
+        ["bash", "-c", token_command], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    if not token:
+        print("トークンが空だった", file=sys.stderr)
+        return 1
+    print(snippet_markdown(upload(image, token, shot.alt), shot, arguments.zoom))
+    return 0
+
+
 # ---------------------------------------------------------------- 入口
 
 # **撮る側が要る道具と、その入れ方** (#1598)。ffmpeg は動きの束ね (`_bundle_gif`) と
@@ -1756,6 +1889,16 @@ def main(
         action="store_true",
         help="反転したときの差を 1 本ずつ出す (境目を決め直すときに見る)",
     )
+    shoot_one = parser.add_argument_group(
+        "1 本だけ撮る (#2195)", "Issue / PR に貼る絵を draw() の本体から撮る。説明文には書き戻さない"
+    )
+    shoot_one.add_argument("--snippet", type=pathlib.Path, help="draw() の本体を書いたファイル")
+    shoot_one.add_argument("--size", type=parse_size, default=DEFAULT_SIZE, help="幅x高さ (既定 400x300)")
+    shoot_one.add_argument("--frames", type=int, default=0, help="動きにするときの枚数 (既定 0 = 静止画)")
+    shoot_one.add_argument("--zoom", type=int, default=1, help="最近傍で拡げる倍率 (1 画素の継ぎ目を見せる)")
+    shoot_one.add_argument("--alt", help="絵の説明 (既定はファイル名)")
+    shoot_one.add_argument("--out", type=pathlib.Path, help="撮った絵の置き場 (既定 .build/snippet-shot-out)")
+    shoot_one.add_argument("--upload", action="store_true", help="Gyazo へ上げ、貼れる Markdown を出す")
     arguments = parser.parse_args(argv)
 
     # **組む前に確かめる。** 撮り終えた後で道具が無いと分かると、組んで撮った時間が
@@ -1774,6 +1917,15 @@ def main(
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()
     )
+    if arguments.snippet:
+        if arguments.render or arguments.capture or arguments.drift:
+            print("--snippet は --render / --capture / --drift と一緒に使えない", file=sys.stderr)
+            return 1
+        if arguments.frames < 0 or arguments.zoom < 1:
+            print("--frames は 0 以上、--zoom は 1 以上", file=sys.stderr)
+            return 1
+        return run_snippet(root, arguments, which)
+
     shots = collect(root)
 
     if arguments.drift:

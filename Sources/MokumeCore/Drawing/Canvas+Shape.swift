@@ -65,6 +65,10 @@ extension Canvas {
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
         recordingShape = true
+        // **一番外の組み立てだけが、フレームに置いた列との境目を控える** (#1855 の案 E)。置いた描き場所が
+        // 組み立ての途中で描き換わっても、写しへ差し替えるのはここより前の列だけにする
+        let savedRecordingRunStart = shapeRecordingRunStart
+        if !savedRecording { shapeRecordingRunStart = runStart }
         // **積んだ履歴は記録の中で閉じる。** 記録の間も `push()` / `pop()` は効く
         // (`Canvas.isShaping`) ので、切り離さないと記録の中の `pop()` が記録より前に
         // 積んだ段を取り、記録の中で積んだまま抜けた段はあとの `pop()` に拾われる
@@ -92,15 +96,26 @@ extension Canvas {
         discardShapeLeftOpen()
         restoreOpenShape(savedShape)
         recordingShape = savedRecording
+        shapeRecordingRunStart = savedRecordingRunStart
         restore(savedStacks)
         closeBatch()
+        // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`・`draw { }` の終わり) を、一番外の
+        // 出口で閉じる** (#1855 の案 G)。
+        // `defer` は後に書いたものから走るので、閉じるのは下の状態の戻しの後 — 閉じる側が既定へ
+        // 戻した値を、出口が組み立て前の値で書き戻さない。早い抜け方 (下の安全網) でも閉じる
+        defer { if !savedRecording { closeFrameAwaitingShape() } }
         // 状態を戻すのは、記録したぶんを溜め場から抜いた後 (下の「抜いてから状態を戻す」)
         defer { savedManner.restore(on: self) }
         // **出口の安全網** ([#1588])。記録の途中で溜め場を捨てると、上で控えた区間は溜め場の外を
-        // 指す。塗り直しと画素の口は記録の中で断るが、描き切りそのものを断れない口が残る (置いた
-        // 描き場所の描き換えが本体を描き切らせる・揺らぎの設定の書き換え)。捨てる前に記録した
-        // ものはもう描かれていて取り戻せないので、捨てた後に記録した残りも溜め場から抜き、空の形を
-        // 返す。見分けは長さではなく捨てた回数で行う (``pendingDiscards``)
+        // 指す。塗り直しと画素の口は記録の中で断り、揺らぎの書き換え・置いた描き場所の描き換え・
+        // 自分のフレームの終わり (`endDraw()`・`draw { }` の終わり) は描き切らない (#1855)。それでも
+        // 描き切るか捨てる道が残る — 置いた側がもう 1 枚の写しを持てない (上限・失敗) ときの描き換えと、
+        // 組み立ての中で自分のフレームを始めること (持ち主の面の `beginDraw()` / `draw { }` が閉じ忘れた
+        // フレームを捨てる・本体の頭が描き場所の閉じ忘れを捨てる・フレームの外の組み立ての中でフレームを
+        // 開くと頭の検めがそれまでの記録を置き漏れとして捨てる・#2201)。
+        // 捨てる前に記録したものはもう描かれて (捨てる道なら消えて) いて取り戻せないので、捨てた後に
+        // 記録した残りも溜め場から抜き、空の形を返す。見分けは長さではなく捨てた回数で行う
+        // (``pendingDiscards``)
         //
         // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         guard pendingDiscards == discardsAtStart else {
@@ -188,9 +203,11 @@ extension Canvas {
     ///
     /// **`Style` のうちフレームに属するフィールド (切り抜き・材質・影の落とし方と受け方) は
     /// 戻さない** (``Style/keepingFrameFields(of:)``)。組み立ての中では断るので普段は変わらないが、
-    /// 組み立ての中でフレームが閉じる (描き場所の組み立ての中の `endDraw()`) と、閉じる側が
-    /// 既定へ戻した値を、出口が閉じたフレームの値で書き戻していた。フレームの頭はこの 3 つを
-    /// 戻さないので、次のフレームへ持ち越された (#1671 が塞いだのと同じ破れ方・#1684 の反証)。
+    /// 組み立ての途中でフレームが閉じると、閉じる側が既定へ戻した値を、出口が閉じたフレームの値で
+    /// 書き戻していた。フレームの頭はこの 3 つを戻さないので、次のフレームへ持ち越された (#1671 が
+    /// 塞いだのと同じ破れ方・#1684 の反証)。組み立ての中の自分の `endDraw()` と `draw { }` の終わりは、
+    /// 今は出口でこの戻しの後に閉じる (#1855) が、途中で閉じる道は残る — 本体の頭が描き場所の閉じ
+    /// 忘れたフレームを捨てる・持ち主の面がフレームを開き直す (#2201)。
     ///
     /// **`Canvas` の外にある状態は、ここではなく ``ShapeAssemblyListener`` が受ける** (乱数の種・
     /// [#1936])。
@@ -210,7 +227,8 @@ extension Canvas {
         let curveDetail: Int
         let curveTightness: Float
         /// 揺らぎの種と細かさ。形に焼き付くのは、記録の中で CPU の `noise()` が返した値だけで
-        /// ある。断片の `mokume_noise` は描き切りの時点の種で引くので、形を置いたときの種を使う。
+        /// ある。断片の `mokume_noise` は列を閉じた時点の種で引き (``Canvas/Batch/noise``)、記録した
+        /// 区間 (``Shape/Run``) は種を持たないので、形を置いたときの種を使う。
         let noise: ValueNoise
 
         init(of canvas: Canvas) {
@@ -227,8 +245,9 @@ extension Canvas {
         /// 写した値へ戻す。
         ///
         /// **揺らぎは ``Canvas/changeNoise(_:)`` で戻す。** 置き場は描き場所と共有するので、中の
-        /// 設定で溜めた図形を持つ面があれば、戻す前に描き切らせる (置いた時点の種で引く・#1503)。
-        /// 書き換えていなければ何もしない。
+        /// 設定で図形を置いた面があれば、戻す前にその開いた列を閉じさせる (置いた時点の種で引く・
+        /// #1503)。描き切らないので、組み立てより前に置いた図形も入口で閉じた列の設定で引かれる
+        /// (#1855)。書き換えていなければ何もしない。
         func restore(on canvas: Canvas) {
             canvas.currentTexture = texture
             canvas.currentShader = shader
@@ -507,6 +526,9 @@ extension Canvas {
     ///   (``Canvas/rescaledFillVertices(_:placedBy:cache:fill:)``)。
     ///   **拡大して置くときだけ調べる**。縮めて置くときも、記録の中で置き直すときも調べない
     /// - そうでなく `carved` に含まれる輪郭は、引いて積んだ頂点 (半透明の色を掛けて置くとき)
+    /// - 置いた後に描く画素で 1 画素より細くなる名指しの基本図形の塗りは、広げて組み直した頂点
+    ///   (#1934・``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。楕円の刻み直しより先に見る。
+    ///   形の中で最も細い塗りでも細くならなければ走査しない
     ///
     /// 区間を跨ぐ輪郭は差し替えない (素材は輪郭ひとつぶんなので、一部だけは置けない)。
     private func replacements(
@@ -522,7 +544,11 @@ extension Canvas {
         // どの輪郭も増えない** (分割数は半径の単調な関数で、行列の積の最大の特異値は特異値の積を
         // 越えない)。形が周も円板も持たなければ、それも走査しない (#1645)
         let mayRescale = !recordingShape && shape.mayRescale && Self.splitScale(of: matrix) > 1
-        guard mayThin || mayRescale || !carved.isEmpty else { return [] }
+        // 細い塗りも同じ見積もりで、形の中で最も細い名指しの基本図形の塗りから測る (#1934)
+        let mayThinFill =
+            !recordingShape
+            && Self.thinnestDrawnWeight(shape.thinnestRecordedFill, by: drawnLinear(matrix)) < 1
+        guard mayThin || mayRescale || mayThinFill || !carved.isEmpty else { return [] }
         var found: [(range: Range<Int>, vertices: [ShapeVertex], coverage: [CoverageSpan])] = []
         var carvedIndex = 0
         for index in shape.strokeRanges.indices {
@@ -550,16 +576,24 @@ extension Canvas {
                 found.append((stroke.range, carved[carvedIndex].carved?.vertices ?? [], []))
             }
         }
-        if mayRescale {
+        if mayRescale || mayThinFill {
             let before = found.count
             for index in shape.fillRanges.indices {
                 let fill = shape.fillRanges[index]
                 guard !fill.range.isEmpty, fill.range.lowerBound >= runRange.lowerBound,
-                    fill.range.upperBound <= runRange.upperBound,
+                    fill.range.upperBound <= runRange.upperBound
+                else { continue }
+                if mayThinFill,
+                    let rebuilt = thinFillVertices(
+                        fill.recipe, placedBy: matrix, cache: shape.thinCache, fill: index)
+                {
+                    found.append((fill.range, rebuilt.vertices, rebuilt.coverage))
+                } else if mayRescale,
                     let rebuilt = rescaledFillVertices(
                         fill.recipe, placedBy: matrix, cache: shape.thinCache, fill: index)
-                else { continue }
-                found.append((fill.range, rebuilt, []))
+                {
+                    found.append((fill.range, rebuilt, []))
+                }
             }
             // 塗りは輪郭より先に積まれる。頂点の並びの順に直す
             if found.count > before {

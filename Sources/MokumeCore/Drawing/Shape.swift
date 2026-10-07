@@ -58,6 +58,7 @@ public struct Shape {
     /// ``strokeRanges`` のうち、引く素材を持つ区間があるか。置くたびに区間を走査しないための印。
     let hasCarvedStrokes: Bool
     /// ``vertices`` のうち**楕円・弧の周の塗り**の区間と、置くときに刻み直す素材 (``RingFillRange``・#1645)。
+    /// 名指しの基本図形 (`rect`・一周の楕円) の塗りは、置いた後に細くなったら広げる素材も兼ねる (#1934)。
     ///
     /// 周は記録のときの拡大で刻んであるので、**拡大して置くと記録した多角形がそのまま拡大される**。
     /// 置いた後の大きさで要る分割数が増えるなら、この区間を刻み直した頂点に差し替える。輪郭の側は
@@ -92,6 +93,10 @@ public struct Shape {
     /// 部品どうしは記録した順のまま描く
     /// ([#1565](https://github.com/mokume-metal/mokume/issues/1565))。
     let solidParts: [SolidPart]
+    /// ``fillRanges`` のうち名指しの基本図形の塗りで、記録した後の幅がいちばん細いもの (#1934・
+    /// ``RingFillRecipe/recordedFillSpan``)。置く行列でこれが描く画素で 1 画素以上なら、どの塗りも
+    /// 細くならないので区間を走査しない。名指しの基本図形の塗りが無ければ無限大。
+    let thinnestRecordedFill: Float
 
     /// 区間を塗るもの一式。
     ///
@@ -202,7 +207,15 @@ public struct Shape {
         // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
         var carved = false
         var thinnest = Float.infinity
-        var rescalable = !fillRanges.isEmpty
+        // 刻み直せる塗りは楕円・弧の周だけ。名指しの基本図形の `rect` は、細さを測る素材として
+        // 同じ並びに居る (#1934)
+        var rescalable = false
+        var thinnestFill = Float.infinity
+        for fill in fillRanges {
+            if fill.recipe.outline.ring != nil { rescalable = true }
+            thinnestFill = min(thinnestFill, fill.recipe.recordedFillSpan)
+        }
+        thinnestRecordedFill = thinnestFill
         for stroke in strokeRanges {
             if stroke.carved != nil { carved = true }
             if let thin = stroke.thin {

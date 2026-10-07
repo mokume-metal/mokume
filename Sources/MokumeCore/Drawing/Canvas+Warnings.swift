@@ -46,6 +46,9 @@ extension Canvas {
 
         /// 面の無いモデルを置いた。
         case emptyModel
+        /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの
+        /// 名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
+        case svgSkipped(path: String)
         /// 置けない置き場所が混ざっていた。
         case badPlacement
         /// 立体の寸法が受け取れない値だった。
@@ -307,11 +310,19 @@ extension Canvas {
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case pixelsInsideShape
-        /// 形の組み立ての途中で溜め場が描き切られ、記録したものを失って空の形を返した ([#1588])。
-        /// 置いた描き場所の描き換えと、揺らぎの設定の書き換えがここへ来る。
+        /// 形の組み立ての途中で溜め場が描き切られるか捨てられ、記録したものを失って空の形を返した
+        /// ([#1588])。来るのは、写しを持てなかった置いた描き場所の描き換えと、組み立ての中で組み立てて
+        /// いる面のフレームを始めること ([#1855] の後に残った経路)。種類と文面は ``InsideShape`` が持つ。
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
         case shapeDrawnOutWhileBuilding
+        /// 組み立ての中で、組み立てている面のフレームを閉じようとした (`endDraw()` か、組み立ての中で
+        /// 開いた `draw { }` の終わり・[#1855])。フレームは閉じずに一番外の組み立ての出口まで待たせる。
+        /// 種類と文面は ``InsideShape`` が持つ。
+        ///
+        /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+        case frameEndInsideShape
         /// 形の組み立ての中で、形に焼き付かない設定を書いた ([#1529])。種類ごとに鍵を分ける
         /// (``OutsideFrame`` と同じく、光の注意が視点の注意を黙らせない)。種類と文面は
         /// ``InsideShape`` が持つ。

@@ -350,7 +350,7 @@ struct RoundedValueWarningTests {
         let dust = try canvas.makeParticles(count: 8)
         try canvas.draw {
             canvas.emit(
-                dust, from: emission.from, rate: emission.rate, speed: 0...0, angle: 0...0,
+                dust, from: emission.from, toward: .plane(0...0), rate: emission.rate, speed: 0...0,
                 life: emission.life, size: emission.size, color: .linear(red: 1, green: 1, blue: 1),
                 using: &randomness)
         }
@@ -417,7 +417,7 @@ struct RoundedValueWarningTests {
         try canvas.draw {
             for (rate, size) in [(Float(-5), Float(2)...2), (120, -3 ... -1)] {
                 canvas.emit(
-                    dust, from: .point(16, 16), rate: rate, speed: 0...0, angle: 0...0,
+                    dust, from: .point(16, 16), toward: .plane(0...0), rate: rate, speed: 0...0,
                     life: 1...1, size: size, color: .linear(red: 1, green: 1, blue: 1),
                     using: &randomness)
             }

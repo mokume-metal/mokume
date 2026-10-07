@@ -318,6 +318,8 @@ public final class SketchRuntime {
     public var time: Float { timing.time }
     /// 前のフレームからの経過 (秒)。
     public var deltaTime: Float { timing.deltaTime }
+    /// 時刻の出どころ。意味の説明は ``Sketch/clock`` が正本。
+    var clock: Clock { timing.clock }
 
     /// スケッチとその舞台を組み立てる。
     ///
@@ -1163,11 +1165,17 @@ public final class SketchRuntime {
     /// 同じ道を通しておけば**一致が構造で保たれる** — 片方だけ直したときに黙って
     /// 食い違うことがなくなる。
     ///
+    /// **GPU が仕上げなかったフレームは書き出さない** ([#1932])。書き出す絵が拠った投入 (前にこの口か
+    /// 描画先の投げる読む口が判定した後に積まれた投入すべて) のどれかを GPU が打ち切っていたら、
+    /// 結末が届くのを待ってから ``RenderFailure/workDropped(reason:)`` を投げ、ファイルを書かない。
+    /// 範囲と投げた後の扱いは ``RenderTarget/readPixels()`` と同じである。
+    ///
     /// [#440]: https://github.com/mokume-metal/mokume/issues/440
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func renderFrame(to url: URL) throws {
         try advance()
-        try PNGFile.write(try target.encodeToImage().read(), to: url)
+        try PNGFile.write(try target.encodeToImageAndRead(), to: url)
     }
 
     // MARK: - 絵をファイルにする
@@ -1421,7 +1429,10 @@ public final class SketchRuntime {
             // **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは
             // 通した後で、出るバイト列は通す前に間引いたのと同じである (#382)
             // 原寸の配列は作らず、置き場から拾う画素だけを読む (#1745)
-            let image = try target.encodeToImage().read(scaledBy: pending.scale)
+            //
+            // **GPU が仕上げなかった絵は撮らない** (#1932)。拠った投入の打ち切りは投げる読む口と
+            // 同じく判定し、投げたら下の catch が目録を `complete: false` にして理由を警告に載せる
+            let image = try target.encodeToImageAndRead(scaledBy: pending.scale)
             let name = try observer.writeFrame(image, at: pending.frames.count)
             pending.frames.append(
                 ObservationReport.CapturedFrame(

@@ -176,6 +176,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/frameCount``
 - ``Sketch/time``
 - ``Sketch/deltaTime``
+- ``Sketch/clock``
+- ``Clock``
 - ``Sketch/usesFrameHistory``
 - ``Upscale``
 
@@ -279,6 +281,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 形を保持して置く
 
 - ``Sketch/createShape(_:)``
+- ``Sketch/loadShape(_:)``
+- ``Sketch/requestShape(_:)``
 - ``Sketch/shape(_:_:_:)``
 - ``Sketch/shape(_:at:)``
 - ``Shape``
@@ -362,6 +366,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Capture``
 - ``CaptureDevice``
 
+### 動画を流す
+
+- ``Sketch/createVideo(_:)``
+- ``Movie``
+- ``MovieFailure``
+
 ### 音を聞く
 
 - ``Sketch/createAudioIn(device:)``
@@ -371,6 +381,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``AudioIn``
 - ``AudioDevice``
 - ``AudioFailure``
+
+### 音声ファイルを鳴らす
+
+- ``Sketch/loadSound(_:)``
+- ``SoundFile``
 
 ### 画素を読み書きする
 
@@ -541,11 +556,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 粒を飛ばす
 
 - ``Sketch/makeParticles(count:)``
-- ``Sketch/emit(_:from:rate:speed:angle:life:size:color:)``
+- ``Sketch/emit(_:from:toward:rate:speed:life:size:color:)``
 - ``Sketch/force(_:_:)``
 - ``Sketch/particles(_:)``
 - ``Particles``
 - ``Emitter``
+- ``Heading``
 - ``Force``
 
 ### 入力を受ける

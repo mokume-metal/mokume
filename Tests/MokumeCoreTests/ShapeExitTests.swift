@@ -43,10 +43,9 @@ enum ShapeExit {
     /// 分類の表。名前は `Canvas` の格納の名前、`style.` で始まるものは ``Canvas/Style`` の
     /// フィールド、ほかに `.` を含むものは格納の中に降りる道 (``nestedReaders`` が読み方を持つ)。
     ///
-    /// **「戻す」は上から順に汚す。** 揺らぎの設定は先頭に置く — 記録の中で何か積んだ後に書き
-    /// 換えると、組み立ての途中の面を描き切らせる経路 (#1855) に入る。塗り・線は、外す口
-    /// (`noFill()` / `noStroke()`) より先に色を書く (色を書く口は外した印を戻す)。読む面は、輪郭を
-    /// 外してから貼る絵で置いて替える。
+    /// **「戻す」は上から順に汚す。** 揺らぎの設定はどこで書き換えても組み立ての途中の面を描き切ら
+    /// ない (#1855) が、先頭に置いたままにする。塗り・線は、外す口 (`noFill()` / `noStroke()`) より
+    /// 先に色を書く (色を書く口は外した印を戻す)。読む面は、輪郭を外してから貼る絵で置いて替える。
     static var table: [(name: String, exit: ShapeExit)] {
         let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
         let restored: [(String, (Canvas, Fixture) -> Void)] = [
@@ -84,6 +83,11 @@ enum ShapeExit {
         ]
         let detached = [
             "transformStack", "styleStack", "recordingShape",
+            // 一番外の組み立てが控える列の位置 (#1855 の案 E)。recordingShape と対で戻す
+            "shapeRecordingRunStart",
+            // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
+            // (#1855 の案 G)。一番外の出口が閉じて下ろす
+            "frameEndAwaitingShape",
             // 組み立て中の形 (#1607)。``CanvasTests/shapeState`` と同じ群
             "isBuildingShape", "shapeKind", "currentNormal", "shapePoints", "shapeHasDepth",
             "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
@@ -121,7 +125,7 @@ enum ShapeExit {
         let cache = "控え。中身は入力で決まり、組み立てとは関わらない"
         let count = "計数。数で確かめる検査が読む"
         let testing = "検査の差し込み・上限。製品の経路では既定のまま"
-        let flush = "描き切りの印。組み立ての中で描き切るのは面を描き切る 3 経路だけで、出口の安全網 (空の形と注意) が扱う (#1855)"
+        let flush = "描き切りの印。組み立ての中で描き切るのは、置いた側の写しが上限に達した後の描き換えと、組み立ての中で自分のフレームを開き直すことだけで、出口の安全網 (空の形と注意) が扱う (#1855)"
         let frame = "フレームの内外と境目の印。境目の関数だけが書く"
         let transient = "呼び出しの中でだけ立ち、抜ける前に戻る一時の値"
         let unused = "記録の間は使わない (組み込みの立体は置き場所ごとに頂点へ焼き、平面は畳まない)"
@@ -513,17 +517,34 @@ struct ShapeExitTests {
         #expect(differing == 0, "組み立ての中の curveDetail(2) で、外の曲線が \(differing) 画素違う")
     }
 
+    /// 組み立ての前後でフレームが閉じる形 (``refusedStateIsNotWrittenBackAcrossAFrameEnd(_:)``)。
+    enum FrameEndAroundABuild: CaseIterable, CustomTestStringConvertible {
+        /// 描き場所の組み立ての中で自分の `endDraw()` を呼ぶ。**閉じるのは出口で状態を戻した後**
+        /// (#1855 の案 G)
+        case endDrawInside
+        /// 描き場所の組み立ての中で本体の次のフレームを始め、本体の頭が描き場所の閉じ忘れたフレームを
+        /// 捨てる (#1834)。**組み立ての途中でフレームが閉じる、残った道**で、出口の安全網に届く (#1855)
+        case droppedByTheMainFrame
+
+        var testDescription: String { "\(self)" }
+    }
+
     /// **「断る」に分けた状態を、出口が書き戻さないこと** (#1684 の反証)。組み立ての中では断るので
-    /// 普段は変わらず、書き戻しても見分けられない。見分けられるのは、組み立ての中でフレームが
-    /// 閉じるとき (描き場所の組み立ての中の `endDraw()`) — 閉じる側が既定へ戻した値を、出口が
-    /// 閉じたフレームの値で書き戻すと、材質と影の落とし方・受け方はフレームの頭で戻らないので
-    /// 次のフレームへ持ち越される (#1671 が塞いだのと同じ破れ方)。
+    /// 普段は変わらず、書き戻しても見分けられない。見分けられるのは、組み立ての途中か出口でフレームが
+    /// 閉じるとき — 閉じる側が既定へ戻した値を、出口が閉じたフレームの値で書き戻すと、材質と影の
+    /// 落とし方・受け方はフレームの頭で戻らないので次のフレームへ持ち越される (#1671 が塞いだのと
+    /// 同じ破れ方)。
     ///
-    /// 表の「断る」で汚す手順を持つものを全部汚し、組み立ての中で閉じ、出口の直後と次のフレームで
+    /// 組み立ての中の自分の `endDraw()` は、#1855 から出口まで閉じるのを待たせる (状態を戻した後に
+    /// 閉じる)。組み立ての途中で閉じる道は、本体の頭が閉じ忘れを捨てる形が残っている。両方を通す。
+    ///
+    /// 表の「断る」で汚す手順を持つものを全部汚し、フレームを閉じ、出口の直後と次のフレームで
     /// 見る。**`Style` のフィールドは手順が必須** — 出口は `Style` を写して戻すので、ここが表と
     /// 実装の食い違いを縛る。
-    @Test("組み立ての中でフレームが閉じても、断る状態を出口が閉じたフレームの値へ書き戻さない (#1684)")
-    func refusedStateIsNotWrittenBackAcrossAFrameEnd() throws {
+    @Test(
+        "組み立ての中でフレームが閉じても、断る状態を出口が閉じたフレームの値へ書き戻さない (#1684)",
+        arguments: FrameEndAroundABuild.allCases)
+    func refusedStateIsNotWrittenBackAcrossAFrameEnd(_ end: FrameEndAroundABuild) throws {
         let host = try makeCanvas()
         let layer = try host.createGraphics(16, 16)
         let fixture = ShapeExit.Fixture(
@@ -545,19 +566,37 @@ struct ShapeExitTests {
         var closed: [String: String] = [:]
         var after: [String: String] = [:]
         var next: [String: String] = [:]
-        try host.draw {
+        func open() {
             layer.beginDraw()
             baseline = ShapeExit.fingerprint(of: layer, refused)
             for entry in ShapeExit.table {
                 if case .refuse(let dirty?) = entry.exit { dirty(layer, fixture) }
             }
             before = ShapeExit.fingerprint(of: layer, refused)
+        }
+        switch end {
+        case .endDrawInside:
+            try host.draw {
+                open()
+                _ = layer.createShape {
+                    layer.rect(0, 0, 4, 4)
+                    layer.endDraw()
+                }
+                // 閉じるのは出口で状態を戻した後なので、出口の直後が閉じた直後でもある
+                closed = ShapeExit.fingerprint(of: layer, refused)
+                after = closed
+            }
+            #expect(!layer.isDrawing, "出口でフレームが閉じていない")
+        case .droppedByTheMainFrame:
+            try host.draw { open() }
             _ = layer.createShape {
                 layer.rect(0, 0, 4, 4)
-                layer.endDraw()
+                // 本体の次のフレームの頭が、開いたままの描き場所のフレームを捨てる
+                try? host.draw {}
                 closed = ShapeExit.fingerprint(of: layer, refused)
             }
             after = ShapeExit.fingerprint(of: layer, refused)
+            #expect(layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いていない")
         }
         try host.draw {
             layer.beginDraw()

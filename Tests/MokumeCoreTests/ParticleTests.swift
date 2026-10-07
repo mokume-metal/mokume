@@ -252,8 +252,8 @@ struct ParticleTests {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 looking(canvas)
                 canvas.emit(
-                    dust, from: .point(32, 12), rate: rate, speed: 20...45,
-                    angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                    dust, from: .point(32, 12), toward: .plane(0...(2 * Float.pi)), rate: rate,
+                    speed: 20...45, life: 0.4...1.2, size: 3...6,
                     color: .linear(red: 1, green: 0.6, blue: 0.2), using: &stream)
                 canvas.force(dust, [.gravity(0, 60), .drag(0.5)])
                 canvas.particles(dust)
@@ -390,8 +390,8 @@ struct ParticleTests {
         _ dust: Particles, atHeight y: Float, on canvas: Canvas, using randomness: inout Randomness
     ) {
         canvas.emit(
-            dust, from: .point(0, y), rate: (100 / Self.twiceStep).nextUp,
-            speed: 0...0, angle: 0...0, life: 5...5, size: 20...20,
+            dust, from: .point(0, y), toward: .plane(0...0), rate: (100 / Self.twiceStep).nextUp,
+            speed: 0...0, life: 5...5, size: 20...20,
             color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
     }
 
@@ -534,7 +534,7 @@ struct ParticleTests {
             var randomness = Randomness(seed: 1649)
             try placing(state, on: canvas)({
                 canvas.emit(
-                    dust, from: .point(32, 32), rate: 3000, speed: 0...0, angle: 0...0,
+                    dust, from: .point(32, 32), toward: .plane(0...0), rate: 3000, speed: 0...0,
                     life: 5...5, size: 20...20, color: .linear(red: 1, green: 1, blue: 1),
                     using: &randomness)
                 canvas.particles(dust)
@@ -566,8 +566,8 @@ struct ParticleTests {
                 var stream = randomness
                 try frame {
                     canvas.emit(
-                        dust, from: .point(32, 12), rate: 600, speed: 20...45,
-                        angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                        dust, from: .point(32, 12), toward: .plane(0...(2 * Float.pi)), rate: 600,
+                        speed: 20...45, life: 0.4...1.2, size: 3...6,
                         color: .linear(red: 1, green: 0.6, blue: 0.2), using: &stream)
                     canvas.force(dust, [.gravity(0, 60), .drag(0.5)])
                     canvas.particles(dust)
@@ -607,7 +607,7 @@ struct ParticleTests {
             try canvas.draw {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 canvas.emit(
-                    dust, from: .point(32, 32), rate: 600, speed: 0...0, angle: 0...0,
+                    dust, from: .point(32, 32), toward: .plane(0...0), rate: 600, speed: 0...0,
                     life: 5...5, size: 20...20, color: .linear(red: 1, green: 1, blue: 1),
                     using: &randomness)
                 canvas.particles(dust)
@@ -725,8 +725,8 @@ struct ParticleTests {
             canvas.background(.display(red: 0, green: 0, blue: 0))
             looking(canvas)
             canvas.emit(
-                dust, from: .point(origin.0, origin.1), rate: 600, speed: 0...0, angle: 0...0,
-                life: 5...5, size: 12...12, color: .linear(red: 1, green: 1, blue: 1),
+                dust, from: .point(origin.0, origin.1), toward: .plane(0...0), rate: 600,
+                speed: 0...0, life: 5...5, size: 12...12, color: .linear(red: 1, green: 1, blue: 1),
                 using: &randomness)
             canvas.particles(dust)
         }
@@ -858,8 +858,8 @@ struct ParticleTests {
             try canvas.draw {
                 for source in sources {
                     canvas.emit(
-                        dust, from: source, rate: rate, speed: 20...45,
-                        angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                        dust, from: source, toward: .plane(0...(2 * Float.pi)), rate: rate,
+                        speed: 20...45, life: 0.4...1.2, size: 3...6,
                         color: .linear(red: 1, green: 0.6, blue: 0.2), using: &randomness)
                 }
             }
@@ -935,8 +935,8 @@ struct ParticleTests {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 if emitting {
                     canvas.emit(
-                        dust, from: .point(32, 32), rate: 60, speed: 0...0,
-                        angle: 0...0, life: 0.05...0.05, size: 24...24,
+                        dust, from: .point(32, 32), toward: .plane(0...0), rate: 60, speed: 0...0,
+                        life: 0.05...0.05, size: 24...24,
                         color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 canvas.particles(dust)
@@ -976,21 +976,21 @@ struct ParticleTests {
                     for (index, rate) in rates.enumerated() {
                         let before = dust.cursor
                         canvas.emit(
-                            dust, from: .point(32, 32), rate: rate, speed: 0...0, angle: 0...0,
-                            life: 0.2...0.2, size: 1...1,
+                            dust, from: .point(32, 32), toward: .plane(0...0), rate: rate,
+                            speed: 0...0, life: 0.2...0.2, size: 1...1,
                             color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                         counts[index] += dust.cursor - before
                     }
                 } else {
                     let first = dust.cursor
                     canvas.emit(
-                        dust, from: .point(16, 32), rate: rates[0], speed: 0...0, angle: 0...0,
-                        life: 0.2...0.2, size: 1...1,
+                        dust, from: .point(16, 32), toward: .plane(0...0), rate: rates[0],
+                        speed: 0...0, life: 0.2...0.2, size: 1...1,
                         color: .linear(red: 1, green: 0.5, blue: 0), using: &randomness)
                     let second = dust.cursor
                     canvas.emit(
-                        dust, from: .point(48, 32), rate: rates[1], speed: 0...0, angle: 0...0,
-                        life: 0.2...0.2, size: 1...1,
+                        dust, from: .point(48, 32), toward: .plane(0...0), rate: rates[1],
+                        speed: 0...0, life: 0.2...0.2, size: 1...1,
                         color: .linear(red: 0, green: 0.5, blue: 1), using: &randomness)
                     counts[0] += second - first
                     counts[1] += dust.cursor - second
@@ -1038,8 +1038,8 @@ struct ParticleTests {
             background(0)
             guard let dots else { return }
             emit(
-                dots, from: .point(5, 10), rate: Float(Self.fps), speed: 1200...1200,
-                angle: 0...0, life: 100...100, size: 2...2,
+                dots, from: .point(5, 10), toward: .plane(0...0), rate: Float(Self.fps),
+                speed: 1200...1200, life: 100...100, size: 2...2,
                 color: LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 1))
             particles(dots)
         }
@@ -1099,8 +1099,8 @@ struct ParticleTests {
             canvas.background(.display(red: 0, green: 0, blue: 0))
             if count > 0 {
                 canvas.emit(
-                    dust, from: .point(32, 32), rate: Float(count) * 60, speed: 0...10,
-                    angle: 0...(2 * Float.pi), life: life...life, size: 2...4,
+                    dust, from: .point(32, 32), toward: .plane(0...(2 * Float.pi)),
+                    rate: Float(count) * 60, speed: 0...10, life: life...life, size: 2...4,
                     color: .linear(red: 1, green: 0.5, blue: 0.2), using: &randomness)
             }
             canvas.particles(dust)
@@ -1201,14 +1201,14 @@ struct ParticleTests {
         // 枠 4 個に、長生きする粒を 4 個。ここではまだ上書きしていない
         try canvas.draw {
             canvas.emit(
-                dust, from: .point(32, 32), rate: 240, speed: 0...0, angle: 0...0,
+                dust, from: .point(32, 32), toward: .plane(0...0), rate: 240, speed: 0...0,
                 life: 10...10, size: 2...2, color: nil, using: &randomness)
         }
         #expect(!dust.warnings.hasWarned(.overwrite))
 
         try canvas.draw {
             canvas.emit(
-                dust, from: .point(32, 32), rate: 60, speed: 0...0, angle: 0...0,
+                dust, from: .point(32, 32), toward: .plane(0...0), rate: 60, speed: 0...0,
                 life: 10...10, size: 2...2, color: nil, using: &randomness)
         }
         #expect(dust.warnings.hasWarned(.overwrite))
@@ -1280,8 +1280,8 @@ struct ParticleTests {
         _ dust: Particles, speed: Float, on canvas: Canvas, using randomness: inout Randomness
     ) {
         canvas.emit(
-            dust, from: .point(0, 80), rate: (100 / Self.twiceStep).nextUp,
-            speed: speed...speed, angle: 0...0, life: 5...5, size: 20...20,
+            dust, from: .point(0, 80), toward: .plane(0...0), rate: (100 / Self.twiceStep).nextUp,
+            speed: speed...speed, life: 5...5, size: 20...20,
             color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
     }
 
@@ -1367,8 +1367,8 @@ struct ParticleTests {
             try canvas.draw {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 canvas.emit(
-                    dust, from: .point(32, 12), rate: 600, speed: 20...45,
-                    angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                    dust, from: .point(32, 12), toward: .plane(0...(2 * Float.pi)), rate: 600,
+                    speed: 20...45, life: 0.4...1.2, size: 3...6,
                     color: .linear(red: 1, green: 0.6, blue: 0.2), using: &stream)
                 canvas.force(dust, [.gravity(0, 60)])
                 canvas.particles(dust)
@@ -1642,8 +1642,8 @@ extension ParticleTests {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 if frame == 0 {
                     canvas.emit(
-                        dust, from: .point(10, 10), rate: 4 / Self.twiceStep, speed: 0...0,
-                        angle: 0...0, life: 100...100, size: 2...2,
+                        dust, from: .point(10, 10), toward: .plane(0...0), rate: 4 / Self.twiceStep,
+                        speed: 0...0, life: 100...100, size: 2...2,
                         color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 if frame >= layerFromFrame {
@@ -1716,8 +1716,8 @@ extension ParticleTests {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 if frame == 0 {
                     canvas.emit(
-                        dust, from: .point(10, 10), rate: 4 / Self.twiceStep, speed: 0...0,
-                        angle: 0...0, life: 100...100, size: 2...2,
+                        dust, from: .point(10, 10), toward: .plane(0...0), rate: 4 / Self.twiceStep,
+                        speed: 0...0, life: 100...100, size: 2...2,
                         color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 if let busy {

@@ -544,8 +544,8 @@ public final class Particles {
     /// 置く。**
     ///
     /// **数でない値・無限を受けたら、注意を言って 1 個も出さない** ([#1623]・ADR-0020
-    /// 決定 5)。見るのは `rate`・`source` の成分・幅の端・`color` の成分である (幅の端の
-    /// 数でない値は、Swift の `...` が幅を作る時点で止めるので届かない)。出してしまうと、
+    /// 決定 5)。見るのは `rate`・`source` の成分・幅の端 (`toward` の面内の幅を含む)・`color` の
+    /// 成分である (幅の端の数でない値は、Swift の `...` が幅を作る時点で止めるので届かない)。出してしまうと、
     /// 数でない位置や色の粒が寿命まで枠を塞ぎ、描いた画素を汚しうる。検めるのはここ
     /// 1 か所で、置く手前 (`place`) には散らさない。
     ///
@@ -555,12 +555,12 @@ public final class Particles {
     /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
     func emit(
         rate: Float, over step: FrameStep, frame: Int, from source: Emitter,
-        speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
+        toward heading: Heading, speed: ClosedRange<Float>, life: ClosedRange<Float>,
         size: ClosedRange<Float>, color: LinearRGBA?, fill: LinearRGBA,
         using randomness: inout Randomness
     ) {
         if let refused = Self.unacceptable(
-            rate: rate, from: source, speed: speed, angle: angle, life: life, size: size,
+            rate: rate, from: source, toward: heading, speed: speed, life: life, size: size,
             color: color, fill: fill)
         {
             _ = count(rate: 0, over: step, frame: frame)
@@ -571,7 +571,7 @@ public final class Particles {
         warnNegative(rate: rate, from: source, life: life, size: size)
         let count = count(rate: rate, over: step, frame: frame)
         place(
-            count, from: source, speed: speed, angle: angle, life: life, size: size,
+            count, from: source, toward: heading, speed: speed, life: life, size: size,
             color: color ?? fill, over: step, using: &randomness)
     }
 
@@ -581,8 +581,8 @@ public final class Particles {
     /// `color` を省いたときは塗り (`fill`) で出すので、塗りを見て**塗りと名指す** — `color`
     /// と言うと、渡していない引数を名乗ることになる (#1623 の反証)。
     private static func unacceptable(
-        rate: Float, from source: Emitter, speed: ClosedRange<Float>,
-        angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
+        rate: Float, from source: Emitter, toward heading: Heading,
+        speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
         color: LinearRGBA?, fill: LinearRGBA
     ) -> (name: String, value: String)? {
         func finite(_ range: ClosedRange<Float>) -> Bool {
@@ -590,8 +590,8 @@ public final class Particles {
         }
         if !rate.isFinite { return ("rate", "\(rate)") }
         if !source.numbers.allSatisfy(\.isFinite) { return ("from", "\(source)") }
+        if !heading.numbers.allSatisfy(\.isFinite) { return ("toward", "\(heading)") }
         if !finite(speed) { return ("speed", "\(speed)") }
-        if !finite(angle) { return ("angle", "\(angle)") }
         if !finite(life) { return ("life", "\(life)") }
         if !finite(size) { return ("size", "\(size)") }
         let paint = color ?? fill
@@ -630,8 +630,8 @@ public final class Particles {
     /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
     /// [#1748]: https://github.com/mokume-metal/mokume/issues/1748
     private func place(
-        _ count: Int, from source: Emitter, speed: ClosedRange<Float>,
-        angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
+        _ count: Int, from source: Emitter, toward heading: Heading,
+        speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
         color: LinearRGBA, over step: FrameStep, using randomness: inout Randomness
     ) {
         guard count > 0 else { return }
@@ -657,7 +657,9 @@ public final class Particles {
             cursor += 1
             if deadline[slot] > living { warnOverwrite() }
 
-            let heading = randomness.value(from: angle.lowerBound, to: angle.upperBound)
+            // 向き → 速さ → 寿命 → 大きさ → 種の順に引く。**向きの引く回数は種類ごとに決まって
+            // いて、面内は 1 回** (`Heading.sample`) — 向きを幅で渡していた頃と同じ列になる
+            let direction = heading.sample(using: &randomness)
             let rate = randomness.value(from: speed.lowerBound, to: speed.upperBound)
             let span = max(0, randomness.value(from: life.lowerBound, to: life.upperBound))
             let extent = max(0, randomness.value(from: size.lowerBound, to: size.upperBound))
@@ -682,7 +684,7 @@ public final class Particles {
             placement.append(
                 Particle(
                     x: place.x, y: place.y, z: place.z,
-                    vx: cos(heading) * rate, vy: sin(heading) * rate, vz: 0,
+                    vx: direction.x * rate, vy: direction.y * rate, vz: direction.z * rate,
                     life: remaining, span: span, size: extent,
                     red: color.red, green: color.green, blue: color.blue, alpha: color.alpha,
                     seed: randomness.unitValue()))

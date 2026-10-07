@@ -6,9 +6,15 @@ import simd
 
 /// モデルのファイルを、置ける形へ落とす。
 ///
-/// 読むのは **OBJ だけ**。文字で書かれているので壊れ方が読め、どの道具からでも
-/// 書き出せる。材質・テクスチャ・複数の物体は読まない — 読み込んだ色と `fill()` の
+/// 読むのは **OBJ と STL** (``Format``)。拡張子で読み手を選ぶ — OBJ は自前の読み手
+/// (``parse(_:)``)、STL は Model I/O (``loadSTL(_:path:)``)。どちらも形 (三角形と面の
+/// 向き) と展開だけを ``Parsed`` へ落とし、その先の整え方 (``Model/make(name:parsed:fitting:)``)
+/// は同じものを通る。材質・テクスチャ・複数の物体は読まない — 読み込んだ色と `fill()` の
 /// どちらが勝つかという規則が要るので、まず「読んで置ける」を通す ([ADR-0008])。
+///
+/// **OBJ を Model I/O へ回さない。** Model I/O も OBJ を読めるが、読み飛ばした行の数・
+/// `vt` の縦の向き・負の番号の扱いといった、自前の読み手が約束してきた結果が動く
+/// ([#1966](https://github.com/mokume-metal/mokume/issues/1966))。
 ///
 /// 隔離の外で走れる形にしてあるのは、待たない読み込みが解釈を別の仕事として
 /// 回すため ([ADR-0010])。
@@ -16,6 +22,30 @@ import simd
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 nonisolated enum ModelFile {
+    /// 読める形式。**読み手の選び方と、断るときの説明 (``ModelFailure``) はこの一覧から作る**
+    /// — 足せば両方が揃い、別々に書いた一覧がずれることが無い。
+    enum Format: String, CaseIterable, Sendable {
+        case obj
+        case stl
+
+        /// 拡張子から引く。**大文字小文字は問わない** (`.STL` で書き出す道具がある)。
+        init?(extensionName: String) {
+            self.init(rawValue: extensionName.lowercased())
+        }
+
+        /// 名前から引く。拡張子が無いか、読めない形式なら `nil`。
+        init?(path: String) {
+            self.init(extensionName: (path as NSString).pathExtension)
+        }
+
+        /// 人に見せる名前 (`OBJ (.obj)`)。
+        var displayName: String { "\(rawValue.uppercased()) (.\(rawValue))" }
+    }
+
+    /// 面を 1 つも持たない読み取り結果。
+    static let empty = Parsed(
+        positions: [], normals: [], uvs: [], hasWrittenNormals: false, skippedLines: 0)
+
     /// 読み取った中身。正規化する前の形。
     struct Parsed: Sendable, Equatable {
         /// 三角形の頂点の位置 (ファイルの座標のまま・3 つで 1 枚)。
@@ -39,25 +69,31 @@ nonisolated enum ModelFile {
         /// 巻き方が逆なモデルが真っ黒になるのを避けるためで、その場で並べた頂点と
         /// 同じ規則である (#290)。
         var hasWrittenNormals: Bool
-        /// 読み飛ばした行の数。**読み飛ばしたことが分かる手段**として持つ。
+        /// 読み飛ばしたものの数。**読み飛ばしたことが分かる手段**として持つ。
+        ///
+        /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) を数える。
         var skippedLines: Int
     }
 
-    /// 名前から探して読む。
+    /// 名前から探して読む。**拡張子で読み手を選ぶ** (``Format``)。
     static func load(_ path: String) throws(ModelFailure) -> Parsed {
         let searched = ImageFile.candidates(for: path)
         guard let url = searched.first(where: { FileManager.default.fileExists(atPath: $0.path) })
         else {
             throw .notFound(path: path, searched: searched.map(\.path))
         }
-        let suffix = url.pathExtension.lowercased()
-        guard suffix == "obj" else {
-            throw .unsupported(path: path, extensionName: suffix)
+        guard let format = Format(extensionName: url.pathExtension) else {
+            throw .unsupported(path: path, extensionName: url.pathExtension.lowercased())
         }
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-            throw .unreadable(path: path)
+        switch format {
+        case .obj:
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                throw .unreadable(path: path)
+            }
+            return parse(text)
+        case .stl:
+            return try loadSTL(url, path: path)
         }
-        return parse(text)
     }
 
     /// OBJ の文字列を三角形の並びへ落とす。

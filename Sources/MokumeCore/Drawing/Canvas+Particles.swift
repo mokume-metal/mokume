@@ -116,9 +116,9 @@ extension Canvas {
     /// `Randomness` が内部の型なので、ここは公開しない — 面に出せる形にすると乱数の
     /// 流れが 2 系統になり、`randomSeed(_:)` が粒に効かなくなる ([ADR-0020] 決定 6)。
     func emit(
-        _ particles: Particles, from source: Emitter, rate: Float,
-        speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
-        size: ClosedRange<Float>, color: LinearRGBA?, using randomness: inout Randomness
+        _ particles: Particles, from source: Emitter, toward heading: Heading, rate: Float,
+        speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
+        color: LinearRGBA?, using randomness: inout Randomness
     ) {
         guard admits(.particles) else { return }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
@@ -126,8 +126,8 @@ extension Canvas {
         // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)。
         // 数でない値・無限は受け口 (`Particles.emit`) が検めて断る (#1623)
         particles.emit(
-            rate: rate, over: frameStep, frame: framesDrawn, from: source, speed: speed,
-            angle: angle, life: life, size: size, color: color, fill: style.fill,
+            rate: rate, over: frameStep, frame: framesDrawn, from: source, toward: heading,
+            speed: speed, life: life, size: size, color: color, fill: style.fill,
             using: &randomness)
     }
 

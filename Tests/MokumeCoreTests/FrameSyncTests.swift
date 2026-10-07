@@ -344,8 +344,8 @@ struct FrameSyncTests {
     private func particleFrame(on canvas: Canvas, _ dust: Particles, _ randomness: inout Randomness) {
         canvas.background(black)
         canvas.emit(
-            dust, from: .point(16, 16), rate: 600, speed: 10...30, angle: 0...(2 * Float.pi),
-            life: 0.4...1.2, size: 2...4, color: white, using: &randomness)
+            dust, from: .point(16, 16), toward: .plane(0...(2 * Float.pi)), rate: 600,
+            speed: 10...30, life: 0.4...1.2, size: 2...4, color: white, using: &randomness)
         canvas.force(dust, [.gravity(0, 30)])
         canvas.particles(dust)
     }
