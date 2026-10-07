@@ -3719,6 +3719,8 @@ public final class Canvas {
             placingCatchUpDeferred = false
         }
         gpu.pendingUploads.markUploaded(assembled.uploaded)
+        // 「映した」は結末を見ずに付ける。この投入が打ち切られていたら、投げる読む口が範囲の中に
+        // 見つけて投げ、印を下ろす (`RenderTarget.markPixelsMirrored(through:)`・#1932)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
         // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
         if let shadow = assembled.shadow {

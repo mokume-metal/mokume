@@ -1127,11 +1127,17 @@ public final class SketchRuntime {
     /// 同じ道を通しておけば**一致が構造で保たれる** — 片方だけ直したときに黙って
     /// 食い違うことがなくなる。
     ///
+    /// **GPU が仕上げなかったフレームは書き出さない** ([#1932])。書き出す絵が拠った投入 (前にこの口か
+    /// 描画先の投げる読む口が判定した後に積まれた投入すべて) のどれかを GPU が打ち切っていたら、
+    /// 結末が届くのを待ってから ``RenderFailure/workDropped(reason:)`` を投げ、ファイルを書かない。
+    /// 範囲と投げた後の扱いは ``RenderTarget/readPixels()`` と同じである。
+    ///
     /// [#440]: https://github.com/mokume-metal/mokume/issues/440
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func renderFrame(to url: URL) throws {
         try advance()
-        try PNGFile.write(try target.encodeToImage().read(), to: url)
+        try PNGFile.write(try target.encodeToImageAndRead(), to: url)
     }
 
     // MARK: - 絵をファイルにする
