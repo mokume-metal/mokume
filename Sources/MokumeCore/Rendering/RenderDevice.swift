@@ -251,6 +251,13 @@ import MokumeDiagnostics
     /// [#754]: https://github.com/mokume-metal/mokume/issues/754
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     private(set) var ringWaits = 0
+    /// 診断: 投入の結末が届くのを実際に待った回数 (``droppedWork(after:through:)`` が眠った数)。
+    ///
+    /// 合図を待つ上の 3 つとは別に数える。合図が進んでも結末は遅れて届くことがあり、投げる読む口
+    /// はその分だけ余計に待つ ([#1932])。読み 1 回につき高々 1 回である。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    private(set) var outcomeWaits = 0
 
     /// GPU が積んだ仕事を打ち切ったことの記録。
     ///
@@ -280,6 +287,24 @@ import MokumeDiagnostics
     func recordCommandFaultForTesting(_ reason: String) {
         _ = commandFaults.note(reason)
     }
+
+    /// 検査から「次の投入を GPU が打ち切った」ことにする差し込み。製品の経路では常に `nil`。
+    ///
+    /// 次の ``commit(_:retaining:)`` が取って空に戻す。その投入は GPU では普通に走り、**結末の
+    /// ハンドラが届けるときに、理由をこれへ差し替える** — 結末は本物と同じく Metal 側の糸から遅れて
+    /// 届くので、投げる読む口が「届くまで待ってから判定する」([#1932] の完了条件 2) ことまで
+    /// 検査から見える。``recordCommandFaultForTesting(_:)`` は番号を持たない記録だけを作るので、
+    /// 投げる読む口の範囲には入らない。
+    ///
+    /// 打ち切りを故意に起こさない理由は ``recordCommandFaultForTesting(_:)`` と同じ ([#1065] の
+    /// 完了条件 4)。知らせ (`Diagnostics.warn`) は出さない — 検査の記録に「GPU が仕事を捨てた」の
+    /// 行が混ざると、本物の打ち切りを数える人が読み違える ([#1930] は run の記録でこの行を数えた)。
+    /// 公開はしない。
+    ///
+    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
+    /// [#1930]: https://github.com/mokume-metal/mokume/issues/1930
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    var dropsNextSubmissionForTesting: String?
 
     /// 完了の知らせを main actor へ渡す前に合体する器 ([#1594])。
     ///
@@ -325,10 +350,19 @@ import MokumeDiagnostics
     /// 投入ごとに 1 本積むと、main actor を譲らずにフレームを回す経路では 1 本も走れず、
     /// フレームに比例して溜まり続けた。
     ///
-    /// - Parameter submission: この投入の番号。終わったらここまでを刈る。
+    /// **結末は番号ごとに記す** ([#1932])。投げる読む口は、返す絵が拠った範囲の結末が届くのを
+    /// 待ち、その中に打ち切りがあれば投げる (``droppedWork(after:through:)``)。
+    ///
+    /// - Parameters:
+    ///   - submission: この投入の番号。終わったらここまでを刈る。
+    ///   - droppedForTesting: 検査がこの投入を打ち切ったことにした理由
+    ///     (``dropsNextSubmissionForTesting``)。製品の経路では常に `nil`。
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
-    private func makeCommitOptions(finishing submission: UInt64) -> MTL4CommitOptions {
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    private func makeCommitOptions(
+        finishing submission: UInt64, droppedForTesting: String?
+    ) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
             @Sendable [commandFaults, completionNotices, weak self] (feedback: any MTL4CommitFeedback) in
@@ -342,14 +376,15 @@ import MokumeDiagnostics
                     self?.releaseOnNotice(upTo: newest)
                 }
             }
-            guard let error = feedback.error else {
+            guard let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting
+            else {
                 // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
                 // 待ちの期限切れを打ち切りのせいにしない (#1343)
-                commandFaults.noteFinished()
+                commandFaults.noteFinished(submission)
                 return
             }
-            let reason = CommandFaultLog.reason(of: error)
-            guard commandFaults.note(reason) else { return }
+            guard commandFaults.note(reason, droppedAt: submission), droppedForTesting == nil
+            else { return }
             Diagnostics.warn(
                 "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
                     + " — this notice will not be repeated")
@@ -798,7 +833,8 @@ import MokumeDiagnostics
     /// **言うことは持たない。** 4 つの呼び出し側で文言が違い、`Diagnostics.warn` は標準
     /// エラーへ直に書いて控えを持たないので、畳んで壊しても確かめる手段が無い (#958 で
     /// 同じ線を引いた)。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す。
-    /// 待ちが期限を越えたときに投げる失敗。**3 つの待ち口はすべてここを通る。**
+    /// 待ちが期限を越えたときに投げる失敗。**待ち口はすべてここを通る** — 合図を待つ 3 つと、
+    /// 結末が届くのを待つ ``droppedWork(after:through:)``。
     ///
     /// 直近に届いた結末が打ち切りなら ``RenderFailure/workDropped(reason:)``、そうでなければ
     /// ``RenderFailure/timedOut(seconds:)``。打ち切りの後に待ちが越えると、`.timedOut` の文面
@@ -938,6 +974,35 @@ import MokumeDiagnostics
         }
     }
 
+    /// 番号が `floor` より大きく `last` 以下の投入のうち、GPU が打ち切ったもの (番号の昇順)。
+    /// **その範囲の結末が届くまで待つ** ([#1932])。
+    ///
+    /// 投げる読む口 (`RenderTarget` の `readPixels()`・`encodeForDisplay(scale:)` と、それを通る口) が、
+    /// 返す絵の拠った範囲を判定するのに使う。**合図が進んでも結末はまだ届いていないことがある**ので、
+    /// ``settle()`` や ``waitForSubmission(_:)`` を待ち終えた後でも、ここで結末を待つ。届いてから
+    /// 判定するので、同じ打ち切りには毎回同じ答えを返す ([#1065] の完了条件 5 が「たまに投げる」を
+    /// 退けた理由に当たらない)。
+    ///
+    /// 待つ上限は ``waitLimitSeconds`` で、越えたら他の待ち口と同じく ``waitFailure(faults:)`` を
+    /// 投げる。
+    ///
+    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    func droppedWork(after floor: UInt64, through last: UInt64) throws(RenderFailure)
+        -> [CommandFaultLog.Drop]
+    {
+        guard last > floor else { return [] }
+        let answer = commandFaults.drops(
+            after: floor, through: last, waitingUpTo: .seconds(Self.waitLimitSeconds))
+        if answer.waited { outcomeWaits += 1 }
+        guard let drops = answer.drops else {
+            Diagnostics.warn(
+                "Waited \(Self.waitLimitSeconds) seconds for the GPU to report how its work ended, with no answer")
+            throw Self.waitFailure(faults: commandFaults)
+        }
+        return drops
+    }
+
     /// 共有しているメモリへ**書く前**の待ち。待てたかを返す。
     ///
     /// **`false` を返したら書かない。** 待ちが期限切れになったことは、GPU がそのメモリを
@@ -1051,9 +1116,13 @@ import MokumeDiagnostics
         // 番号がその時点で決まっていなければならない (#1076)
         submissionCount += 1
         let submission = submissionCount
+        let droppedForTesting = dropsNextSubmissionForTesting
+        dropsNextSubmissionForTesting = nil
         // **結末を受け取るお願いを添える。** 添えなければ Metal は打ち切りを捨てるので、
         // 描き上げられなかった仕事も「終わった」としか見えない (#1065)
-        queue.commit([commands], options: makeCommitOptions(finishing: submission))
+        queue.commit(
+            [commands],
+            options: makeCommitOptions(finishing: submission, droppedForTesting: droppedForTesting))
         recordSubmission(submission, of: commands)
         // **投入した本体も、終わるまで抱える。** 記録の実体は置き場 (allocator) にあるが、
         // 本体の寿命を GPU の実行より短くしない — 投入した側は直後に手放すので、
