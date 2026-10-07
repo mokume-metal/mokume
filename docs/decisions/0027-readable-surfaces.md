@@ -213,7 +213,7 @@ SPDX-License-Identifier: MIT
 
 | 外す型 | 誰のものか |
 | --- | --- |
-| `SketchApplication` / `SketchRuntime` / `Clock` / `FrameRateNotice` / `OutputStage` | 実行の土台。書く人は `@main` と `draw()` を書くだけで、これらを名前で呼ばない |
+| `SketchApplication` / `SketchRuntime` / `FrameRateNotice` / `OutputStage` | 実行の土台。書く人は `@main` と `draw()` を書くだけで、これらを名前で呼ばない |
 | `StartupReads` / `WorkDirectory` / `SourceStamp` / `RuntimeLoad` | 道具。待ち合わせ場所・起動時に読むもの・版の刻印・走らせている重さ |
 | `BundledShaders` (2026-09-07 追加) | 道具。同梱のシェーダの原文が読めるかを切り分けの口 (`mokume doctor`) が名乗るための 1 点で、書く人は描く経路から間接に使う ([#1059](https://github.com/mokume-metal/mokume/issues/1059)) |
 | `InputState` / `InputEvent` | 道具。**外から入力を注入する口**で、書く人が触るのは `mouseX` の側である |
@@ -223,6 +223,12 @@ SPDX-License-Identifier: MIT
 **`public` は 1 つも動かさない。** 外れるのは人が読む面へ渡すグラフだけで、一覧 (`make api-list`) も [ADR-0020](0020-api-naming-and-surface.md) の検査もビルドが出したグラフを見たままである。道具・エージェント・外のパッケージは今までどおり使える。
 
 **外れないもの**もここで名指ししておく。差込口 (`Plugin` / `PluginRegistry` / `Inlet` / `Outlet` / `OutputFrame` / `RenderDevice` / `RenderTarget`) は面に残す — 相手は書く人ではないが、[ADR-0026](0026-plugin-repository-alignment.md) が外のパッケージを正規の書き手として認めており、その人の読む面がここ以外に無いからである。**「相手は 1 種類」は読者の想定を絞る言い方で、書いた説明を隠す口実にしない。**
+
+#### 改訂 (2026-10-07) — `Clock` を面に戻す
+
+**当初の決定は、`Clock` も実行の土台として外していた。** 書く人は時計を名前で呼ばない、という理由だった。
+
+音声ファイルの再生 ([#1979](https://github.com/mokume-metal/mokume/issues/1979)) で、いまの時刻が実時間かフレームの数え方かを読む口 (`Sketch.clock`) を足した。書き出しでは鳴らさずに、再生位置をフレームの数から決めるためで、外のパッケージ (音を鳴らす動画のように、書き出しでは鳴らさない出し先) も同じ判断を要る。読む型が面から外れていると、その口の説明から時計の種類へ辿れない。差込口と同じ理由 (外のパッケージを正規の書き手として認めている) で、`Clock` を面に残す側へ移した。`SketchRuntime` ほか残りの実行の土台は外したままである。
 
 #### 外す基準は人が名指しする
 
