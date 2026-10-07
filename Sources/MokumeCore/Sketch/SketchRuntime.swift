@@ -291,6 +291,8 @@ public final class SketchRuntime {
     public var time: Float { timing.time }
     /// 前のフレームからの経過 (秒)。
     public var deltaTime: Float { timing.deltaTime }
+    /// 時刻の出どころ。意味の説明は ``Sketch/clock`` が正本。
+    var clock: Clock { timing.clock }
 
     /// スケッチとその舞台を組み立てる。
     ///

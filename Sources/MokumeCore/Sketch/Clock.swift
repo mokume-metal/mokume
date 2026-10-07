@@ -72,7 +72,8 @@ enum FrameStep: Equatable {
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 @MainActor
 final class FrameTiming {
-    private let clock: Clock
+    /// 時刻の出どころ。``Sketch/clock`` が読む。
+    let clock: Clock
     /// 実時間の出どころ。検査が時間を操れるよう差し替えられる形にしてある。
     private let now: () -> Double
     private let started: Double

@@ -395,6 +395,24 @@ extension Sketch {
     /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
     /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
     public var deltaTime: Float { Self.requireRuntime().deltaTime }
+    /// ``time`` がどこから来ているか。
+    ///
+    /// 窓に出して動かしている間は ``Clock/wallClock`` (実際に流れた時間) で、書き出し
+    /// (`mokume render`) と、窓を開かずに回す検査では ``Clock/frameIndex(frameRate:)``
+    /// (フレームの数え方) である。
+    ///
+    /// **外の時間で動くものを作る側が読む** — たとえば音声ファイルの再生 (`loadSound(_:)`)
+    /// は、実時間なら実際に鳴らし、フレームの数え方なら鳴らさずに再生位置をフレームの数から
+    /// 決める。書き出すたびに同じ絵になるのは後者である ([ADR-0025] の水準 2)。
+    ///
+    /// ```swift
+    /// background(0)
+    /// // 窓で見ている間だけ時刻を出し、書き出す絵には入れない
+    /// if clock == .wallClock { text("\(time)", 20, 40) }
+    /// ```
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    public var clock: Clock { Self.requireRuntime().clock }
 
     // 描画 API が Sketch+*.swift に分かれているので private にはできない。
     // 公開もしない — 利用者が触る面ではない。

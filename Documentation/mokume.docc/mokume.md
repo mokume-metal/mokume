@@ -176,6 +176,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/frameCount``
 - ``Sketch/time``
 - ``Sketch/deltaTime``
+- ``Sketch/clock``
+- ``Clock``
 - ``Sketch/usesFrameHistory``
 - ``Upscale``
 
