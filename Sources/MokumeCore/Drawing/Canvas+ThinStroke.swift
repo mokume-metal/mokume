@@ -729,4 +729,53 @@ final class ThinStrokeCache {
         if (entries[stroke]?.count ?? 0) >= Self.capacity { entries[stroke] = [:] }
         entries[stroke, default: [:]][key] = value
     }
+
+    /// 置いた後に細くなった名指しの基本図形の塗りを広げた頂点の控えの鍵 (#1934)。
+    struct ThinFillKey: Hashable {
+        /// ``Shape/fillRanges`` の番号。
+        var fill: Int
+        /// 描く画素へ写す 2x2 そのもの (広げ方が帯の向きで決まるので、回転を除かない)。
+        var linear: SIMD4<Float>
+    }
+
+    /// 置いた後に細くなった名指しの基本図形の塗りを広げた頂点 (#1934・
+    /// ``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。`nil` を控えた鍵は「細くならない」。
+    ///
+    /// **形 1 つにつき、頂点の総量で切る** (``thinFillBudget``・刻み直した頂点の控え ``scaled`` と同じ
+    /// 切り方)。塗りの数に上限が無く、回して置き続ける形は塗りの数 × 置いた向きの数だけ鍵が増える
+    /// うえ、細長い楕円は 1 件が最大で 6 × ``Canvas/thinEllipseSliceLimit`` 頂点になる。件数では切れ
+    /// ない (#1934 の反証 5)。
+    ///
+    /// **重さは実体の大きさを頂点の数へ直して数える** (#1934 の 2 回目の反証 9)。頂点と被覆の区間の
+    /// ほかに、1 件ごとに鍵・項目・使った順の記録・辞書の余りで 200 バイトほどを持つので、頂点
+    /// ``thinFillEntryOverhead`` 個ぶんを足す。細くならない答え (`nil`) も同じだけ重い — 1 と数えて
+    /// いた頃は、回して置き続ける形 1 つで答えだけが数十 MB まで溜まりえた。
+    private var thinFills = BoundedCache<ThinFillKey, Built?>(
+        budget: ThinStrokeCache.defaultScaledBudget,
+        weight: {
+            ThinStrokeCache.thinFillEntryOverhead + ($0?.vertices.count ?? 0)
+                + ($0?.coverage.count ?? 0)
+        })
+    /// 細い塗りの控え 1 件が、頂点と被覆の区間のほかに持つ大きさ (頂点の数・頂点 1 つは 32 バイト)。
+    static let thinFillEntryOverhead = 6
+    /// いま控えている細い塗りの件数 (検査用・細くならない答えも数える)。
+    var thinFillEntryCount: Int { thinFills.count }
+    /// 細い塗りの控えの上限 (頂点の数)。**変えられるのは検査のため。**
+    var thinFillBudget: Int {
+        get { thinFills.budget }
+        set { thinFills.budget = newValue }
+    }
+    /// いま控えている細い塗りの重さの合計 (検査用・頂点の数に直した実体の大きさ)。
+    var thinFillVertexTotal: Int { thinFills.total }
+    /// 細い塗りを測って組み直した回数 (検査用・細くならなかった回も数える)。控えが効いていれば、
+    /// 同じ大きさ・向きで置き続けても増えない。
+    var fillsThinned: Int { thinFills.made }
+
+    func thinFill(_ fill: Int, _ key: SIMD4<Float>) -> Built?? {
+        thinFills[ThinFillKey(fill: fill, linear: key)]
+    }
+
+    func rememberThinFill(_ value: Built?, _ fill: Int, _ key: SIMD4<Float>) {
+        thinFills.insert(value, for: ThinFillKey(fill: fill, linear: key))
+    }
 }

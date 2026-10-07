@@ -526,6 +526,9 @@ extension Canvas {
     ///   (``Canvas/rescaledFillVertices(_:placedBy:cache:fill:)``)。
     ///   **拡大して置くときだけ調べる**。縮めて置くときも、記録の中で置き直すときも調べない
     /// - そうでなく `carved` に含まれる輪郭は、引いて積んだ頂点 (半透明の色を掛けて置くとき)
+    /// - 置いた後に描く画素で 1 画素より細くなる名指しの基本図形の塗りは、広げて組み直した頂点
+    ///   (#1934・``Canvas/thinFillVertices(_:placedBy:cache:fill:)``)。楕円の刻み直しより先に見る。
+    ///   形の中で最も細い塗りでも細くならなければ走査しない
     ///
     /// 区間を跨ぐ輪郭は差し替えない (素材は輪郭ひとつぶんなので、一部だけは置けない)。
     private func replacements(
@@ -541,7 +544,11 @@ extension Canvas {
         // どの輪郭も増えない** (分割数は半径の単調な関数で、行列の積の最大の特異値は特異値の積を
         // 越えない)。形が周も円板も持たなければ、それも走査しない (#1645)
         let mayRescale = !recordingShape && shape.mayRescale && Self.splitScale(of: matrix) > 1
-        guard mayThin || mayRescale || !carved.isEmpty else { return [] }
+        // 細い塗りも同じ見積もりで、形の中で最も細い名指しの基本図形の塗りから測る (#1934)
+        let mayThinFill =
+            !recordingShape
+            && Self.thinnestDrawnWeight(shape.thinnestRecordedFill, by: drawnLinear(matrix)) < 1
+        guard mayThin || mayRescale || mayThinFill || !carved.isEmpty else { return [] }
         var found: [(range: Range<Int>, vertices: [ShapeVertex], coverage: [CoverageSpan])] = []
         var carvedIndex = 0
         for index in shape.strokeRanges.indices {
@@ -569,16 +576,24 @@ extension Canvas {
                 found.append((stroke.range, carved[carvedIndex].carved?.vertices ?? [], []))
             }
         }
-        if mayRescale {
+        if mayRescale || mayThinFill {
             let before = found.count
             for index in shape.fillRanges.indices {
                 let fill = shape.fillRanges[index]
                 guard !fill.range.isEmpty, fill.range.lowerBound >= runRange.lowerBound,
-                    fill.range.upperBound <= runRange.upperBound,
+                    fill.range.upperBound <= runRange.upperBound
+                else { continue }
+                if mayThinFill,
+                    let rebuilt = thinFillVertices(
+                        fill.recipe, placedBy: matrix, cache: shape.thinCache, fill: index)
+                {
+                    found.append((fill.range, rebuilt.vertices, rebuilt.coverage))
+                } else if mayRescale,
                     let rebuilt = rescaledFillVertices(
                         fill.recipe, placedBy: matrix, cache: shape.thinCache, fill: index)
-                else { continue }
-                found.append((fill.range, rebuilt, []))
+                {
+                    found.append((fill.range, rebuilt, []))
+                }
             }
             // 塗りは輪郭より先に積まれる。頂点の並びの順に直す
             if found.count > before {

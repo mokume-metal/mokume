@@ -151,10 +151,12 @@ public final class Canvas {
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     var recordedStrokeRanges: [StrokeRange] = []
 
-    /// 保持する形を記録している間に、楕円・弧の塗りが積んだ平面の頂点の区間 (``RingFillRange``・#1645)。
+    /// 保持する形を記録している間に、楕円・弧と名指しの基本図形 (`rect`) の塗りが積んだ平面の頂点の
+    /// 区間 (``RingFillRange``・#1645・#1934)。
     ///
-    /// 周は記録のときの拡大で刻んであるので、**区間を刻み直す素材を覚えておき、置くときの拡大で
-    /// 刻み直す** (`Shape.fillRanges`)。記録を終えると `createShape` が抜く。
+    /// 周は記録のときの拡大で刻んであるので、**区間を組み直す素材を覚えておき、置くときの拡大で
+    /// 刻み直す**。置いた後に描く画素で 1 画素より細くなる名指しの基本図形の塗りは、置くときに広げる
+    /// (`Shape.fillRanges`)。記録を終えると `createShape` が抜く。
     var recordedFillRanges: [RingFillRange] = []
 
     /// 保持する形を記録している間に積んだ立体の線の元 (``SolidStrokePiece``)。
@@ -284,6 +286,11 @@ public final class Canvas {
         /// (``ThinFold``)。細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む
         /// (これまでどおり)。
         var strokeLinear: ThinFold?
+        /// 置き場所の変換で描く画素 1 画素より細くなる塗りを持つなら、その変換 (#1934)。細い塗りの
+        /// 広げ方は帯の向き (描く画素の軸との角度) で決まるので、**2x2 がそのまま同じ置き場所だけを
+        /// 畳む** (鍵は 2x2 そのもの・``thinFillLinear(_:)``)。細くならなければ `nil` で、これまで
+        /// どおり変換の違う置き場所も同じ雛形に畳む。
+        var fillLinear: ThinFold?
         /// 塗りに貼る絵の面。**どの絵かまで鍵に入る。** 読み取り位置が寸法から決まる
         /// うえ、面そのものが列を分けるためである。有無しか持たないと、雛形を開いた
         /// 後に絵を差し替えても畳み続けて、2 枚目以降が前の絵で描かれる ([#1298])。
@@ -297,7 +304,8 @@ public final class Canvas {
 
     /// 細い線を持つ雛形の鍵 (#1637)。**比べるのは回転に依らない部分** (``rotationFreeKey(_:)``)
     /// だけで、雛形を組むのは最初の置き場所の 2x2 (``linear``) である。片は描く画素の空間で
-    /// 組むので、回転だけが違う置き場所には同じ雛形が合う。
+    /// 組むので、回転だけが違う置き場所には同じ雛形が合う。細い塗り (#1934) は回転で広げ方が
+    /// 変わるので、``key`` に 2x2 そのものを入れる (``FlatKey/fillLinear``)。
     struct ThinFold: Equatable {
         var key: SIMD4<Float>
         var linear: SIMD4<Float>
