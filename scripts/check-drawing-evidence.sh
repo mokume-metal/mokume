@@ -24,6 +24,7 @@
 # ## 使い方
 #
 #   bash scripts/check-drawing-evidence.sh [PR番号]   # 省略時は PR_NUMBER → 現ブランチ
+#   bash scripts/check-drawing-evidence.sh --issue-body <本文のファイル>   # Issue の本文 (#2195)
 #
 # 終了コードは 2 つ。**赤くするのは「描画に触れているのに絵が無い」ときだけ**で、
 # 判定できない事情 (PR がまだ無い・認証が無い) は理由を述べて 0 で抜ける。手元では
@@ -115,6 +116,94 @@ EOF
   exit 0
 }
 
+# Issue の本文を見る (#2195)。PR の判定と違って変更ファイルが無いので、**本文が描画の
+# ファイルを名指ししているか**で「見た目・動きの Issue か」を決める。名指しは 2 つの形を数える:
+#
+#   - 描画のパスの前置きを持つパス (Sources/MokumeCore/Drawing/Canvas.swift)
+#   - 描画のパスの下で追跡しているファイルの名前 (Shapes.metal・Canvas+Shape.swift)。
+#     描画の外にも同じ名前がある名前 (main.swift など) は数えない
+#
+# 実測 (#2195) では、絵の無い見た目・動きの Issue 19 件のうち 16 件がこれで拾え、
+# それ以外の 60 件で拾ったのは 9 件だった。拾ったのに絵が変わらない Issue は、宣言の
+# 1 行 `絵: なし — <理由>` で通す (PR の no-visual-change に当たる)。行の形を固定して
+# いるのは、宣言が例外の域を出ていないかを grep で数えられるようにするため。
+#
+# 読み手は scripts/issue-evidence-guard.sh (エージェントの gh issue create / edit)。
+#   0  通過 (絵がある・宣言がある・描画のファイルを名指ししていない)
+#   1  描画のファイルを名指ししているのに、絵も宣言も無い (理由の空の宣言を含む)
+readonly DECLARATION='絵: なし'
+
+mentioned_drawing_files() { # 標準入力 = 本文
+  local body root tracked inside names
+  body=$(cat)
+  root=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null) || return 0
+  tracked=$(mktemp) inside=$(mktemp) names=$(mktemp)
+  git -C "$root" -c core.quotePath=false ls-files > "$tracked"
+  drawing_files < "$tracked" > "$inside"
+  # 名前ごとに「描画の下に居る」「外に居る」を数え、下にだけ居る名前を残す
+  awk 'FNR == NR { inside[$0] = 1; next }
+       { name = $0; sub(/.*\//, "", name); if ($0 in inside) yes[name] = 1; else no[name] = 1 }
+       END { for (name in yes) if (!(name in no)) print name }' "$inside" "$tracked" > "$names"
+  {
+    # パスの形 (前置き) は本文の語を drawing_files に通す
+    grep -oE '[A-Za-z0-9_./+-]+/[A-Za-z0-9_./+-]+' <<<"$body" | drawing_files
+    grep -oFf "$names" <<<"$body"
+  } | sort -u
+  rm -f "$tracked" "$inside" "$names"
+}
+
+check_issue_body() { # $1=本文のファイル
+  local body mentioned
+  body=$(cat "$1" 2>/dev/null) || give_up "本文 $1 を読めなかった"
+  if has_evidence <<<"$body"; then
+    say "ok: Issue の本文に絵がある"
+    exit 0
+  fi
+  if grep -Eq "(^|[[:space:]])${DECLARATION}([[:space:]]|$)" <<<"$body"; then
+    if grep -Eq "(^|[[:space:]])${DECLARATION}[[:space:]]*(—|--?)[[:space:]]*[^[:space:]]" <<<"$body"; then
+      say "ok: 絵は無いという宣言がある"
+      exit 0
+    fi
+    cat >&2 <<EOF
+drawing-evidence: 差し戻し — 「${DECLARATION}」の宣言に理由が無い
+
+宣言は 1 行で理由を添えます: ${DECLARATION} — <絵にして示せない理由>
+EOF
+    exit 1
+  fi
+  mentioned=$(mentioned_drawing_files <<<"$body")
+  if [ -z "$mentioned" ]; then
+    say "描画のファイルを名指ししていない Issue — 絵は要らない"
+    exit 0
+  fi
+  cat >&2 <<EOF
+drawing-evidence: 差し戻し — 描画のファイルを名指しする Issue の本文に絵が無い
+
+名指ししているもの:
+$(sed -n '1,5s/^/  /p' <<<"$mentioned")
+
+見た目・動きの Issue は、絵があるとぱっと見で分かります (AGENTS.md「描画に影響する変更」)。
+数値の表だけでは、読み手が頭の中で絵を組み立てることになります。
+
+  - 再現を draw() の本体に書けるなら、1 コマンドで撮って貼れる Markdown が出ます:
+      python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --zoom 4 --upload \\
+        --token-command "\$MOKUME_GYAZO_TOKEN_CMD"
+    (1 画素の継ぎ目・透けは --zoom で最近傍に拡大する。動きは --frames)
+  - 窓・GUI を見せるなら .claude/skills/visual-evidence/SKILL.md の経路 B
+
+絵にしようがない (クラッシュ・数値の取り扱い・コードを読んだだけで再現の形が未定 など) なら、
+本文に 1 行を足して通します:
+
+  ${DECLARATION} — <理由>
+EOF
+  exit 1
+}
+
+if [ "${1:-}" = --issue-body ]; then
+  [ -n "${2:-}" ] || { echo "usage: $0 --issue-body <本文のファイル>" >&2; exit 2; }
+  check_issue_body "$2"
+fi
+
 # 対象の PR。引数 → PR_NUMBER → 現在のブランチ の順に解く
 pr=${1:-${PR_NUMBER:-}}
 command -v gh >/dev/null 2>&1 || give_up "gh が無い"
@@ -139,6 +228,10 @@ fi
 
 if jq -e --arg l "$ESCAPE_LABEL" '.labels[]? | select(.name == $l)' >/dev/null <<<"$pr_json"; then
   say "$ESCAPE_LABEL による例外 PR (絵は変わらないという申告)"
+  # 絵は求めない。ただ「変わらない」は「見せるものが無い」ではないので促す (#2195)
+  if ! jq -r '.body // ""' <<<"$pr_json" | has_evidence; then
+    say "絵が変わらなくても、見て分かるもの (窓の振る舞い・出力・いまの絵) があれば本文に載せると伝わりやすい"
+  fi
   exit 0
 fi
 

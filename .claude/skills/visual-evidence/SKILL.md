@@ -17,6 +17,7 @@ squash merge の後には足せない。** 人なら入力欄へ画像を落と�
 
 | 場面 | 読む先 |
 | --- | --- |
+| draw() の短いコードから撮る (Issue の再現など) | 下の「最短」 |
 | スケッチの絵を撮る (既定) | この文書 |
 | 窓・GUI・操作そのものを撮る | [window.md](window.md) |
 | Gyazo が落ちている (「落ちているかを見分ける」で 200 が返らない) | [fallback.md](fallback.md) |
@@ -24,6 +25,27 @@ squash merge の後には足せない。** 人なら入力欄へ画像を落と�
 
 **撮影と送信は分ける。** 手元に落としてから上げ、外部へ送る前に写り込みを検める。Gyazo の MCP の
 「撮って即座に上げる」道具は使わず、窓の一覧だけを取る (`allowed-tools` がそれだけなのはこのため)。
+
+**撮るのは描画が変わるときだけではない。** 見た目・動きの Issue の再現、`no-visual-change` の PR でも
+見て分かるもの (窓の振る舞い・CLI や観測の出力・いまの絵) は、気軽に載せる — 文で読むより一目で分かる
+([#2195](https://github.com/mokume-metal/mokume/issues/2195))。
+
+## 最短 — コードから撮る (`--snippet`)
+
+draw() の本体に書けるもの (Issue の再現・API の振る舞い・before/after) は、スケッチを用意せず
+1 コマンドで撮れる。説明文の例を撮る機構を流用しており、撮るのは mokume の絵だけなので写り込みは無い。
+
+```bash
+python3 scripts/example-shots.py --snippet repro.swift --size 160x120          # 撮る (場所を出す)
+python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --upload \
+  --token-command "$MOKUME_GYAZO_TOKEN_CMD"                                     # 上げて Markdown を出す
+```
+
+- `--zoom K` — 最近傍で K 倍に拡げる。1 画素の継ぎ目・透け・AA の欠けは原寸では見えない
+- `--frames N` — 動きにする (可逆の WebP。`img2webp` が要る)
+- before/after は main の木と作業の木で同じファイルを撮り、下の「貼る」の表で並べる
+
+窓・GUI・`watch` の振る舞いなど、スケッチの外を見せたいときは下の経路 A か、[window.md](window.md) の経路 B を使う。
 
 ## 撮る — スケッチの絵 (経路 A)
 
@@ -111,7 +133,7 @@ kill "$tool"                                            # 配下のスケッチ�
 見せる起動時のパス (`/tmp/…`) と `resolve()` した綴り (`/private/tmp/…`) が割れるので、
 `pkill -f '<スケッチ名>/.build'` のように綴りの割れない末尾側で照合する (外すと 1 つも当たらず全部残る)。
 
-## 束ねる — 形式は宛先で決まる
+## 動きを束ねる — 形式は宛先で決まる
 
 | 宛先 | 静止画 | 動き | 使えないもの |
 | --- | --- | --- | --- |

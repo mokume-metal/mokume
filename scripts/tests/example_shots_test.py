@@ -1532,5 +1532,101 @@ class MemberEntryTest(unittest.TestCase):
         self.assertIn("許容一覧", problems[0])
 
 
+class SnippetTest(unittest.TestCase):
+    """--snippet: draw() の本体から 1 本だけ撮って、貼れる Markdown を出す (#2195)。
+
+    撮る (render) と上げる (upload) は差し替える — GPU も鍵も要らない。
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.snippet = self.dir / "repro.swift"
+        self.snippet.write_text("background(0)\nellipse(24, 24, 0.7, 20)\n", encoding="utf-8")
+
+    def run_main(self, *args, which=lambda tool: f"/usr/bin/{tool}", env=None):
+        out, err = io.StringIO(), io.StringIO()
+        rendered, uploaded = [], []
+
+        def fake_render(root, shot_list, out_dir, **kwargs):
+            rendered.append((shot_list, kwargs))
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"{shot_list[0].name}.png").write_bytes(b"png")
+
+        def fake_upload(image, token, alt):
+            uploaded.append((image, token, alt))
+            return "https://i.gyazo.com/abc.png"
+
+        environment = {k: v for k, v in os.environ.items() if k != "MOKUME_GYAZO_TOKEN_CMD"}
+        environment.update(env or {})
+        with mock.patch.object(shots, "render", fake_render), \
+                mock.patch.object(shots, "upload", fake_upload), \
+                mock.patch.dict(os.environ, environment, clear=True), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shots.main(
+                ["--snippet", str(self.snippet), "--out", str(self.dir / "out"), *args], which=which
+            )
+        return code, out.getvalue(), err.getvalue(), rendered, uploaded
+
+    def test_撮ったコードと大きさがそのまま1本になる(self):
+        code, out, _, rendered, uploaded = self.run_main("--size", "48x32")
+        self.assertEqual(code, 0)
+        [(shot_list, kwargs)] = rendered
+        [shot] = shot_list
+        self.assertEqual((shot.width, shot.height, shot.frames), (48, 32, 0))
+        self.assertEqual(shot.snippet, ["background(0)", "ellipse(24, 24, 0.7, 20)"])
+        # 説明文の例の置き場と分ける — 消し合わないように
+        self.assertNotEqual(kwargs["package"].name, "example-shots")
+        self.assertEqual(uploaded, [], "--upload が無いのに上げた")
+        self.assertIn("撮った:", out)
+
+    def test_上げると貼れるMarkdownだけを標準出力に出す(self):
+        code, out, _, _, uploaded = self.run_main(
+            "--size", "48x32", "--upload", "--token-command", "echo tok", "--alt", "透け"
+        )
+        self.assertEqual(code, 0)
+        [(_, token, alt)] = uploaded
+        self.assertEqual((token, alt), ("tok", "透け"))
+        self.assertTrue(out.startswith('<img src="https://i.gyazo.com/abc.png" alt="透け" width="48">'), out)
+        self.assertIn("```swift\nbackground(0)\nellipse(24, 24, 0.7, 20)\n```", out)
+        self.assertIn("48×32", out)
+
+    def test_トークンは環境変数からも読む(self):
+        code, _, _, _, uploaded = self.run_main(
+            "--upload", env={"MOKUME_GYAZO_TOKEN_CMD": "echo from-env"}
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(uploaded[0][1], "from-env")
+
+    def test_鍵が無ければ撮る前に止まる(self):
+        code, _, err, rendered, _ = self.run_main("--upload")
+        self.assertEqual(code, 1)
+        self.assertIn("MOKUME_GYAZO_TOKEN_CMD", err)
+        self.assertEqual(rendered, [], "撮ってから止まった")
+
+    def test_動きにはimg2webpが要る(self):
+        code, _, err, rendered, _ = self.run_main(
+            "--frames", "30", which=lambda tool: None if tool == "img2webp" else f"/usr/bin/{tool}"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("brew install webp", err)
+        self.assertEqual(rendered, [])
+
+    def test_拡げる倍率は表示の幅にも効く(self):
+        shot = shots.snippet_shot(self.snippet, 48, 32, 0, "a")
+        self.assertIn('width="384"', shots.snippet_markdown("u", shot, 8))
+        self.assertIn("最近傍で 8 倍", shots.snippet_markdown("u", shot, 8))
+
+    def test_おかしな指定は撮る前に断る(self):
+        for args in (("--zoom", "0"), ("--frames", "-1"), ("--capture",)):
+            with self.subTest(args):
+                code, _, _, rendered, _ = self.run_main(*args)
+                self.assertEqual(code, 1)
+                self.assertEqual(rendered, [])
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            shots.main(["--snippet", str(self.snippet), "--size", "48"])
+
+
 if __name__ == "__main__":
     unittest.main()
