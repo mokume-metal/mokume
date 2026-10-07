@@ -514,6 +514,7 @@ UNSHOWN = {
     "audioInputDevices": "captureDevices と同じ理由",
     "loadSound": "音声ファイルはリポジトリに置けず (check-no-binaries)、参照スケッチの読む資材が無い。鳴らさずに解析する形は createAudioIn(samples:) が示す。再生と解析はテストが見る",
     "clock": "時刻の出どころを名乗る口で、--render では片方 (frameIndex) しか絵に出ない (usesFrameHistory と同じ)。正しさはテストが見る",
+    "displays": "captureDevices と同じ理由 (繋がっているディスプレイに依る。全画面の作例は SketchSettings.fullScreen の説明文が持つ・#2020)",
     "assetURL": "資材の在処を返す口で、絵にならない。正しさはテストが見る",
     "loadShader": "ファイルから読む口で、見どころの「ファイルを直すと変わる」は自己完結したスケッチでは示せない",
     "loadComputation": "loadShader と同じ理由",
@@ -737,6 +738,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "output": (READING, "描き先 (RenderTarget) を返す。作るのは面の組み立て"),
     "captureDevices": (READING, "繋がっているカメラの一覧を値で返す"),
     "audioInputDevices": (READING, "繋がっている音の入力の機材の一覧を値で返す"),
+    "displays": (READING, "繋がっているディスプレイの一覧を値で返す"),
     "assetURL": (READING, "資材の在処を値で返す。読むのは作者"),
     # 資源
     "createGraphics": RESOURCE,
