@@ -64,7 +64,9 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// - **絵を返す口が、拠った投入の打ち切りを見つけた** ([#1932])。``RenderTarget/readPixels()``・
     ///   ``RenderTarget/encodeForDisplay(scale:)``・``RenderTarget/writePNG(to:)``・
     ///   `SketchRuntime.renderFrame(to:)` は、返す (書き出す) 絵が拠った投入のどれかを GPU が
-    ///   打ち切っていたら、待ちが成り立っていても絵を返さずにこれを投げる。範囲は各口の説明にある
+    ///   打ち切っていたら、待ちが成り立っていても絵を返さずにこれを投げる。範囲は各口の説明にある。
+    ///   結末の知らせが待つ上限までに届かなかった投入も、仕上がったと確かめられないので打ち切りに
+    ///   数える (`reason` がそう名乗る)
     /// - **GPU の完了を待ったが制限時間内に終わらず、直近に結末が届いた投入は GPU が打ち切って
     ///   いた**。``timedOut(seconds:)`` の代わりに出る。`.timedOut` の「描きすぎ」を出すと、読んだ人を
     ///   形や光を減らす方向へ送ってしまう ([#1343])

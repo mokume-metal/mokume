@@ -1391,7 +1391,10 @@ public final class SketchRuntime {
             // **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは
             // 通した後で、出るバイト列は通す前に間引いたのと同じである (#382)
             // 原寸の配列は作らず、置き場から拾う画素だけを読む (#1745)
-            let image = try target.encodeToImage().read(scaledBy: pending.scale)
+            //
+            // **GPU が仕上げなかった絵は撮らない** (#1932)。拠った投入の打ち切りは投げる読む口と
+            // 同じく判定し、投げたら下の catch が目録を `complete: false` にして理由を警告に載せる
+            let image = try target.encodeToImageAndRead(scaledBy: pending.scale)
             let name = try observer.writeFrame(image, at: pending.frames.count)
             pending.frames.append(
                 ObservationReport.CapturedFrame(

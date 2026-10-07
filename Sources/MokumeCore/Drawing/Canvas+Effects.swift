@@ -222,7 +222,7 @@ extension Canvas {
     /// 何も積まない。**
     ///
     /// 描き切りのコマンドの**先頭**に積む (CPU の画素の書き戻しより前)。前の投入とは投入の
-    /// 順で直列になっている (``RenderDevice/commit(_:retaining:)`` の `orderAfter`) ので、
+    /// 順で直列になっている (``RenderDevice/commit(_:retaining:writing:)`` の `orderAfter`) ので、
     /// 頭に待つ仕掛けは要らない。積んだ blit を後続の段が待つ仕掛けは、書き戻しと同じ形で
     /// ここで積む。
     ///
@@ -278,7 +278,7 @@ extension Canvas {
     /// 直後の追い付き (細かさを下げた面は ``catchUpOutput()``、細かさ 1 の面は
     /// ``writeBackPendingPixels()``) が、書き戻す口として呼ぶ。
     ///
-    /// - Returns: 書き戻しを積んだか。**投入してから** `markPixelsWrittenBack()` する ([#1183])。
+    /// - Returns: 書き戻しを積んだか。**投入してから** `markPixelsWrittenBack(by:)` する ([#1183])。
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524

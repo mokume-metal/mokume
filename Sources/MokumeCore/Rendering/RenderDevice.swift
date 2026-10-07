@@ -135,7 +135,7 @@ import MokumeDiagnostics
     let device: any MTLDevice
 
     /// **このファイルの外へ出さない** ([#845])。別のファイルから掴めると、
-    /// ``commit(_:retaining:)`` を通らずに投入する口が書ける。そうして投入された置き場は
+    /// ``commit(_:retaining:writing:)`` を通らずに投入する口が書ける。そうして投入された置き場は
     /// 番号が書き戻されず、巻き戻す側が「もう終わっている」と読んで待たない (#222 と同じく、
     /// 絵が黙って壊れる)。投入はすべて漏斗を通すこと。
     ///
@@ -254,7 +254,8 @@ import MokumeDiagnostics
     /// 診断: 投入の結末が届くのを実際に待った回数 (``droppedWork(after:through:)`` が眠った数)。
     ///
     /// 合図を待つ上の 3 つとは別に数える。合図が進んでも結末は遅れて届くことがあり、投げる読む口
-    /// はその分だけ余計に待つ ([#1932])。読み 1 回につき高々 1 回である。
+    /// はその分だけ余計に待つ ([#1932])。読み 1 回につき高々 1 回である (CPU が書いた画素を書き戻した
+    /// まま読み戻していない写しを読むときだけ、読み戻しの前にもう 1 回判定する)。
     ///
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private(set) var outcomeWaits = 0
@@ -290,7 +291,7 @@ import MokumeDiagnostics
 
     /// 検査から「次の投入を GPU が打ち切った」ことにする差し込み。製品の経路では常に `nil`。
     ///
-    /// 次の ``commit(_:retaining:)`` が取って空に戻す。その投入は GPU では普通に走り、**結末の
+    /// 次の ``commit(_:retaining:writing:)`` が取って空に戻す。その投入は GPU では普通に走り、**結末の
     /// ハンドラが届けるときに、理由をこれへ差し替える** — 結末は本物と同じく Metal 側の糸から遅れて
     /// 届くので、投げる読む口が「届くまで待ってから判定する」([#1932] の完了条件 2) ことまで
     /// 検査から見える。``recordCommandFaultForTesting(_:)`` は番号を持たない記録だけを作るので、
@@ -305,6 +306,22 @@ import MokumeDiagnostics
     /// [#1930]: https://github.com/mokume-metal/mokume/issues/1930
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     var dropsNextSubmissionForTesting: String?
+
+    /// 検査から「次の投入の結末の知らせが届かない」を作る差し込み。製品の経路では常に `false`。
+    ///
+    /// 次の ``commit(_:retaining:writing:)`` が取って下ろす。その投入は GPU で普通に走り、完了の
+    /// 合図も進むが、**結末のハンドラは記録へ何も書かない** — 知らせが 1 本欠けたときに、投げる読む
+    /// 口が欠けた番号で止まり続けないこと ([#1932] の反証 8) を検査から見るための穴である。
+    /// 公開はしない。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    var losesNextOutcomeForTesting = false
+
+    /// 投げる読む口が、範囲の結末が届くのを待つ上限 (``droppedWork(after:through:)``)。
+    ///
+    /// 製品の経路では ``waitLimitSeconds`` のまま。**検査だけが縮める** — 届かない結末を作る検査
+    /// (``losesNextOutcomeForTesting``) が、毎回 5 秒待たずに済むように。
+    var outcomeWaitLimit: Duration = .seconds(RenderDevice.waitLimitSeconds)
 
     /// 完了の知らせを main actor へ渡す前に合体する器 ([#1594])。
     ///
@@ -355,13 +372,18 @@ import MokumeDiagnostics
     ///
     /// - Parameters:
     ///   - submission: この投入の番号。終わったらここまでを刈る。
+    ///   - wrote: この投入が書く描画先の識別子。打ち切られたら記録に添える (投げる読む口が、自分の
+    ///     面へ書いた投入の打ち切りだけを持ち越すため・``CommandFaultLog/Drop/wrote``)。
     ///   - droppedForTesting: 検査がこの投入を打ち切ったことにした理由
     ///     (``dropsNextSubmissionForTesting``)。製品の経路では常に `nil`。
+    ///   - losesOutcomeForTesting: 検査がこの投入の結末を届かないことにしたか
+    ///     (``losesNextOutcomeForTesting``)。製品の経路では常に `false`。
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private func makeCommitOptions(
-        finishing submission: UInt64, droppedForTesting: String?
+        finishing submission: UInt64, wrote: [ObjectIdentifier], droppedForTesting: String?,
+        losesOutcomeForTesting: Bool
     ) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
@@ -376,6 +398,8 @@ import MokumeDiagnostics
                     self?.releaseOnNotice(upTo: newest)
                 }
             }
+            // 検査が知らせを落としたことにした投入は、記録へ何も書かない
+            guard !losesOutcomeForTesting else { return }
             guard let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting
             else {
                 // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
@@ -383,7 +407,8 @@ import MokumeDiagnostics
                 commandFaults.noteFinished(submission)
                 return
             }
-            guard commandFaults.note(reason, droppedAt: submission), droppedForTesting == nil
+            guard commandFaults.note(reason, droppedAt: submission, wrote: wrote),
+                droppedForTesting == nil
             else { return }
             Diagnostics.warn(
                 "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
@@ -523,7 +548,7 @@ import MokumeDiagnostics
 
     /// **実行中のものが終わる前に土台を畳まない。**
     ///
-    /// 投入は GPU の完了を待たずに返る (``commit(_:retaining:)``) ので、最後の投入の直後に
+    /// 投入は GPU の完了を待たずに返る (``commit(_:retaining:writing:)``) ので、最後の投入の直後に
     /// この型が手放されると、発行口・合図・常駐の集合・抱えているリソースが GPU の実行中に
     /// 消える。実測では、それが同じ GPU の**別の**発行口に積まれた仕事まで巻き添えにした —
     /// 合図は進むのに絵が空のまま読める形で、しかも負荷のかかったときだけ出る (#727 の
@@ -833,8 +858,9 @@ import MokumeDiagnostics
     /// **言うことは持たない。** 4 つの呼び出し側で文言が違い、`Diagnostics.warn` は標準
     /// エラーへ直に書いて控えを持たないので、畳んで壊しても確かめる手段が無い (#958 で
     /// 同じ線を引いた)。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す。
-    /// 待ちが期限を越えたときに投げる失敗。**待ち口はすべてここを通る** — 合図を待つ 3 つと、
-    /// 結末が届くのを待つ ``droppedWork(after:through:)``。
+    /// 合図の待ちが期限を越えたときに投げる失敗。**合図を待つ 3 つの待ち口はすべてここを通る。**
+    /// 結末が届くのを待つ ``droppedWork(after:through:)`` は通らない (合図は届いているので、
+    /// `.timedOut` の「描きすぎ」は当たらない)。
     ///
     /// 直近に届いた結末が打ち切りなら ``RenderFailure/workDropped(reason:)``、そうでなければ
     /// ``RenderFailure/timedOut(seconds:)``。打ち切りの後に待ちが越えると、`.timedOut` の文面
@@ -983,24 +1009,23 @@ import MokumeDiagnostics
     /// 判定するので、同じ打ち切りには毎回同じ答えを返す ([#1065] の完了条件 5 が「たまに投げる」を
     /// 退けた理由に当たらない)。
     ///
-    /// 待つ上限は ``waitLimitSeconds`` で、越えたら他の待ち口と同じく ``waitFailure(faults:)`` を
-    /// 投げる。
+    /// **待つ上限 (``outcomeWaitLimit``) までに届かなかった結末は、打ち切りとして答える**
+    /// (``CommandFaultLog/lostReason(after:)``)。合図は待ち終えているので、仕事は終わっていて、
+    /// 欠けたのは知らせである。``waitFailure(faults:)`` は使わない — あれは合図が来なかったときの
+    /// 名乗りで、`.timedOut` の「描きすぎ」は、合図が届いた後のここでは読んだ人を間違った方向へ
+    /// 送る (#1932 の反証 9)。欠けた番号は記録の上で先へ進めるので、以後の読みはそこで止まらない。
     ///
     /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
-    func droppedWork(after floor: UInt64, through last: UInt64) throws(RenderFailure)
-        -> [CommandFaultLog.Drop]
-    {
+    func droppedWork(after floor: UInt64, through last: UInt64) -> [CommandFaultLog.Drop] {
         guard last > floor else { return [] }
-        let answer = commandFaults.drops(
-            after: floor, through: last, waitingUpTo: .seconds(Self.waitLimitSeconds))
+        let answer = commandFaults.drops(after: floor, through: last, waitingUpTo: outcomeWaitLimit)
         if answer.waited { outcomeWaits += 1 }
-        guard let drops = answer.drops else {
+        if answer.lost {
             Diagnostics.warn(
-                "Waited \(Self.waitLimitSeconds) seconds for the GPU to report how its work ended, with no answer")
-            throw Self.waitFailure(faults: commandFaults)
+                "Waited \(outcomeWaitLimit) for the GPU to report how its finished work ended, with no answer — treating that work as dropped")
         }
-        return drops
+        return answer.drops
     }
 
     /// 共有しているメモリへ**書く前**の待ち。待てたかを返す。
@@ -1082,7 +1107,7 @@ import MokumeDiagnostics
     ///
     /// **待つ経路も待たない経路も必ずここを通す。** 通さない経路があると、その置き場は
     /// 「終わったかどうか分からないまま巻き戻してよい」ことになってしまう。漏斗は
-    /// ``commit(_:retaining:)`` 1 つで、番号もそこで 1 か所だけ進む。
+    /// ``commit(_:retaining:writing:)`` 1 つで、番号もそこで 1 か所だけ進む。
     ///
     /// **開く側の漏斗は ``withCommands(_:)`` である。** ここを通らずに組み立ての口を抜けた
     /// コマンドは、あちらが記録を消して置き場を手放す (#1180)。
@@ -1104,11 +1129,20 @@ import MokumeDiagnostics
     /// フレームを回す経路はこれで投入し、次に GPU 可視メモリへ触る直前に ``settle()``
     /// で待つ。その間の CPU の仕事 (次のフレームの頂点組み立て) が GPU と重なる。
     ///
-    /// - Parameter resources: このコマンドが読むもののうち、投入した側がすぐ手放す参照。
-    ///   終わるまでこの型が抱える。
+    /// - Parameters:
+    ///   - resources: このコマンドが読むもののうち、投入した側がすぐ手放す参照。
+    ///     終わるまでこの型が抱える。
+    ///   - surfaces: **このコマンドが中身を書き換える描画先** (図形・背景・書き戻し・効果・拡大・
+    ///     塗り)。読み戻しや出力段のように読むだけなら渡さない。投げる読む口が、自分の面へ書いた投入の
+    ///     打ち切りだけを持ち越し、自分の面へ書く新しい投入で下ろすのに使う ([#1932])。
     /// - Returns: 振った番号。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     @discardableResult
-    func commit(_ commands: any MTL4CommandBuffer, retaining resources: [AnyObject] = []) -> UInt64 {
+    func commit(
+        _ commands: any MTL4CommandBuffer, retaining resources: [AnyObject] = [],
+        writing surfaces: [RenderTarget] = []
+    ) -> UInt64 {
         commands.endCommandBuffer()
         // **増やす前に積む。** 順番が逆だと、この投入が自分自身の合図を待つ
         orderAfter(submissionCount)
@@ -1118,12 +1152,17 @@ import MokumeDiagnostics
         let submission = submissionCount
         let droppedForTesting = dropsNextSubmissionForTesting
         dropsNextSubmissionForTesting = nil
+        let losesOutcomeForTesting = losesNextOutcomeForTesting
+        losesNextOutcomeForTesting = false
         // **結末を受け取るお願いを添える。** 添えなければ Metal は打ち切りを捨てるので、
         // 描き上げられなかった仕事も「終わった」としか見えない (#1065)
         queue.commit(
             [commands],
-            options: makeCommitOptions(finishing: submission, droppedForTesting: droppedForTesting))
+            options: makeCommitOptions(
+                finishing: submission, wrote: surfaces.map(ObjectIdentifier.init),
+                droppedForTesting: droppedForTesting, losesOutcomeForTesting: losesOutcomeForTesting))
         recordSubmission(submission, of: commands)
+        for surface in surfaces { surface.noteWritten(by: submission) }
         // **投入した本体も、終わるまで抱える。** 記録の実体は置き場 (allocator) にあるが、
         // 本体の寿命を GPU の実行より短くしない — 投入した側は直後に手放すので、
         // ここで抱えなければ実行中に消える
@@ -1134,7 +1173,7 @@ import MokumeDiagnostics
     /// **投入済みのコマンドが読んでいるかもしれないもの**を、それが終わるまで抱える
     /// ([#1830] の 2 回目の反証 2)。待たずに返る。
     ///
-    /// ``commit(_:retaining:)`` が抱えるのは、投入するときに分かっているものだけである。投入の
+    /// ``commit(_:retaining:writing:)`` が抱えるのは、投入するときに分かっているものだけである。投入の
     /// **後で**持ち主が差し替えるもの — 保存し直した断片を組み直して入れ替えた古いパイプラインの
     /// 状態 — は、投入したときには参照を手放す予定が無いので誰も抱えていない。この世代のコマンドは
     /// 読む相手を保持しない (Apple の「Understanding the Metal 4 core API」はリソースについてそう
@@ -1152,10 +1191,12 @@ import MokumeDiagnostics
 
     /// 組み立てたコマンドを投入し、GPU が終わるまで待つ。
     ///
-    /// ``commit(_:retaining:)`` と ``settle()`` の合成。1 枚だけ描く経路と、読み戻すために
+    /// ``commit(_:retaining:writing:)`` と ``settle()`` の合成。1 枚だけ描く経路と、読み戻すために
     /// その場で結果が要る経路のための形。
-    func commitAndWait(_ commands: any MTL4CommandBuffer) throws(RenderFailure) {
-        commit(commands)
+    func commitAndWait(
+        _ commands: any MTL4CommandBuffer, writing surfaces: [RenderTarget] = []
+    ) throws(RenderFailure) {
+        commit(commands, writing: surfaces)
         try settle()
     }
 }
@@ -1175,7 +1216,7 @@ extension RenderDevice {
     /// 「いつ終わったか分からない」まま環へ戻り、次の巻き戻しが実行中のコマンドを
     /// 踏む ([#222](https://github.com/mokume-metal/mokume/issues/222))。
     func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) {
-        // **投入の並びは ``commit(_:retaining:)`` が持つ。** かつてはここにも同じ 5 行が
+        // **投入の並びは ``commit(_:retaining:writing:)`` が持つ。** かつてはここにも同じ 5 行が
         // 書かれていた — 並びに 1 段足して片方だけ直すと、そのコマンドが抱えられないまま
         // GPU の実行中に消える。負荷のかかったときだけ出る形である (#222 が踏んだ)
         commit(commands)

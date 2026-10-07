@@ -146,13 +146,44 @@ struct CommandFaultLogTests {
         #expect(answer.waited, "呼んだ時点で結末が揃っていた — この検査が待ちを見ていない")
     }
 
-    @Test("期限までに範囲の結末が揃わなければ、答えずに遅れたと返す")
-    func outcomesThatNeverArriveRunOutTheLimit() {
+    /// **欠けた知らせ 1 本で、以後の判定を止めない** (#1932 の反証 8)。期限までに届かなかった結末は
+    /// 打ち切りとして答えて先へ進むので、次の範囲は待たずに答える。
+    @Test("期限までに届かなかった結末は打ち切りとして答え、以後の範囲はそこで止まらない")
+    func outcomesThatNeverArriveAreAnsweredAsDroppedAndPassedOver() {
         let log = CommandFaultLog()
         log.noteFinished(1)
-        let answer = log.drops(after: 0, through: 2, waitingUpTo: .milliseconds(50))
-        #expect(answer.drops == nil)
-        #expect(answer.waited)
+        log.noteFinished(3)
+        let limit = Duration.milliseconds(50)
+        let answer = log.drops(after: 0, through: 3, waitingUpTo: limit)
+        #expect(answer.drops == [
+            CommandFaultLog.Drop(submission: 2, reason: CommandFaultLog.lostReason(after: limit))
+        ])
+        #expect(answer.waited && answer.lost)
+        // 届かなかったのは GPU の打ち切りと分かったものではないので、土台の記録には数えない
+        #expect(log.count == 0)
+        #expect(log.unresolved == nil)
+
+        log.noteFinished(4)
+        let next = log.drops(after: 3, through: 4, waitingUpTo: .zero)
+        #expect(next.drops == [] && !next.waited && !next.lost, "欠けた番号で止まったまま")
+        // 遅れて届いた欠けた番号は、もう答えを変えない
+        log.noteFinished(2)
+        #expect(log.drops(after: 0, through: 4, waitingUpTo: .zero).drops.count == 1)
+    }
+
+    /// 読む口が誰も待たない間に知らせが欠けても、順を飛ばして届いた番号を際限なく抱えない。
+    @Test("順を飛ばして届いた番号が上限を越えたら、欠けた番号を届かなかった打ち切りとして先へ進む")
+    func aheadOutcomesAreBounded() {
+        let log = CommandFaultLog()
+        log.noteFinished(1)
+        let last = UInt64(CommandFaultLog.aheadLimit + 2)
+        for submission in 3...last + 1 { log.noteFinished(submission) }
+
+        let answer = log.drops(after: 0, through: last + 1, waitingUpTo: .zero)
+        #expect(!answer.waited, "欠けた 2 番で止まったまま")
+        #expect(answer.drops == [
+            CommandFaultLog.Drop(submission: 2, reason: CommandFaultLog.skippedReason)
+        ])
     }
 
     @Test("揃っていれば待たずに答え、範囲の外の打ち切りは答えに入らない")
@@ -179,7 +210,7 @@ struct CommandFaultLogTests {
         let total = UInt64(CommandFaultLog.rememberedDrops + 10)
         for submission in 1...total { _ = log.note("\(submission) 本目", droppedAt: submission) }
 
-        let oldest = log.drops(after: 0, through: 1, waitingUpTo: .zero).drops ?? []
+        let oldest = log.drops(after: 0, through: 1, waitingUpTo: .zero).drops
         #expect(!oldest.isEmpty, "忘れた 1 本目が、範囲に入るのに答えに無い")
         let beyond = log.drops(after: 10, through: 11, waitingUpTo: .zero).drops
         #expect(beyond == [CommandFaultLog.Drop(submission: 11, reason: "11 本目")])

@@ -146,7 +146,7 @@ struct DroppedWorkReadersTests {
 
     // MARK: - 投げた後の読み (完了条件 3)
 
-    @Test("描画の打ち切りで投げた後は、新しい投入が無い限り何度読んでも投げ、何も積まない")
+    @Test("描画の打ち切りで投げた後は、この面へ書く新しい投入が無い限り何度読んでも投げ、何も積まない")
     func aDroppedDrawingStaysRefusedUntilSomethingNewIsSubmitted() throws {
         let gpu = try RenderDevice()
         let canvas = try makeCanvas(gpu)
@@ -169,12 +169,14 @@ struct DroppedWorkReadersTests {
         #expect(read[4, 4].red == 1 && read[4, 4].blue == 0)
     }
 
-    /// 投げない口 (写しの窓・出口へ渡す出力段) は、面の中身を変えない投入しか積まない。それを
-    /// 「新しい投入」に数えると、打ち切られた中身が次の投げる読みで成功として返る。
-    @Test("投げた後に投げない口が読み戻し・出力段を積んでも、投げる口は断り続ける")
-    func readOnlySubmissionsDoNotLiftTheRefusal() throws {
+    /// この面の中身を変えない投入 (投げない口の読み戻し・出口へ渡す出力段・何も描かない描き切り・
+    /// 別の面への描画) を「新しい投入」に数えると、打ち切られた中身が次の投げる読みで成功として返る
+    /// (#1932 の反証 2)。
+    @Test("投げた後に、この面を書き換えない投入が積まれても、投げる口は断り続ける")
+    func submissionsThatDoNotWriteTheSurfaceDoNotLiftTheRefusal() throws {
         let gpu = try RenderDevice()
         let canvas = try makeCanvas(gpu)
+        let other = try makeCanvas(gpu)
         try paint(canvas, Self.red)
         _ = try canvas.output.readPixels()
         gpu.dropsNextSubmissionForTesting = Self.victim
@@ -182,10 +184,140 @@ struct DroppedWorkReadersTests {
         #expect(throws: RenderFailure.workDropped(reason: Self.victim)) { _ = try canvas.output.readPixels() }
 
         let submitted = gpu.submissionCount
+        // 投げない口が積む読み戻しと出力段
         _ = canvas.output.pixels
         _ = try canvas.output.encodeToImage().read()
-        #expect(gpu.submissionCount == submitted + 2, "投げない口が読み戻しと出力段を積んでいない")
+        // 描き場所の読む口 (何も描いていないので、描き切りは読み戻しだけを積む)
+        canvas.loadPixels()
+        _ = canvas.get(4, 4)
+        _ = canvas.pixels
+        // 何も描かないフレームと、別の面への描画
+        try canvas.draw {}
+        try paint(other, Self.red)
+        #expect(gpu.submissionCount > submitted, "この面を書き換えない投入が 1 本も積まれていない")
         #expect(throws: RenderFailure.workDropped(reason: Self.victim)) { _ = try canvas.output.readPixels() }
+        #expect(throws: RenderFailure.workDropped(reason: Self.victim)) {
+            _ = try canvas.output.encodeForDisplay()
+        }
+    }
+
+    /// 打ち切られたのが面を書き換えない投入 (別の読む口の読み戻し・出口の出力段・何も描かない描き切り)
+    /// だけなら、面の中身は無事である。範囲に入った読みは 1 回投げるが、持ち越さない (#1932 の反証 3)。
+    @Test("面を書き換えない投入の打ち切りでは、範囲に入った読みが 1 回投げるだけで、次の読みは今の絵を返す",
+        arguments: ["読み戻し", "出力段", "何も描かない描き切り"])
+    func dropsOfSubmissionsThatDoNotWriteTheSurfaceAreNotHeld(kind: String) throws {
+        let gpu = try RenderDevice()
+        let canvas = try makeCanvas(gpu)
+        try paint(canvas, Self.red)
+        _ = try canvas.output.readPixels()
+        // 写しを古くしておく。投げない口が読み戻しを積むように
+        try paint(canvas, Self.blue)
+
+        gpu.dropsNextSubmissionForTesting = Self.victim
+        switch kind {
+        case "読み戻し": _ = canvas.output.pixels
+        case "出力段": _ = try canvas.output.encodeToImage().read()
+        default: canvas.loadPixels()
+        }
+        let failure = #expect(throws: RenderFailure.self) { _ = try canvas.output.readPixels() }
+        #expect(namesTheDrop(failure), "名乗りが違う: \(String(describing: failure))")
+
+        let again = try canvas.output.readPixels()
+        #expect(again[4, 4].blue == 1 && again[4, 4].red == 0)
+        #expect(try canvas.output.encodeForDisplay()[4, 4].blue == 255)
+    }
+
+    /// **CPU が書いた画素の唯一の写しを、判定が捨てない** (#1932 の反証 1)。書き戻しが打ち切られると
+    /// 書いた画素は面へ届かず、写しにしか残らない。写しの「映した」を下ろすと、次の読み戻しがそれを
+    /// 面の中身で上書きして失う。
+    @Test("CPU が書いた画素の書き戻しが打ち切られても、書いた画素は失われず、次に描くときに面へ届く")
+    func pixelsWhoseWriteBackWasDroppedAreWrittenBackAgain() throws {
+        let gpu = try RenderDevice()
+        let canvas = try makeCanvas(gpu)
+        try paint(canvas, Self.red)
+        _ = try canvas.output.readPixels()
+
+        try canvas.draw {
+            canvas.set(4, 4, Self.blue)
+            // 次の投入は、このフレームの終わりの描き切り (書いた画素の書き戻し)
+            gpu.dropsNextSubmissionForTesting = Self.victim
+        }
+        #expect(throws: RenderFailure.workDropped(reason: Self.victim)) { _ = try canvas.output.readPixels() }
+
+        // 差し込みは結末だけを打ち切りにし、GPU の書き戻しそのものは走る。だから絵ではなく、書いた
+        // 画素が写しに残って書き込み待ちへ戻ったことを見る
+        #expect(canvas.output.hasPendingPixelWrites, "書いた画素を書き込み待ちへ戻していない")
+        let mirrored = try #require(canvas.output.pixelMirror)
+        let blue = Pixels(
+            base: mirrored.storage.contents(), width: 16, height: 16,
+            bytesPerRow: mirrored.bytesPerRow, mirror: mirrored)[4, 4]
+        #expect(blue.blue == 1 && blue.red == 0, "写しの書いた画素が読み戻しで上書きされた: \(blue)")
+
+        // (4, 4) には触れずに描き足す。この描き切りが、書いた画素を書き戻し直す
+        let writeBacks = canvas.output.pixelWriteBacksEncoded
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(Self.blue)
+            canvas.rect(12, 12, 2, 2)
+        }
+        #expect(canvas.output.pixelWriteBacksEncoded == writeBacks + 1, "書き戻し直していない")
+        let read = try canvas.output.readPixels()
+        #expect(read[4, 4].blue == 1 && read[4, 4].red == 0, "書いた画素が失われた: \(read[4, 4])")
+        #expect(read[0, 0].red == 1, "描いていない所が変わった")
+    }
+
+    // MARK: - 結末の知らせが欠けたとき (#1932 の反証 8・9)
+
+    @Test("結末の知らせが欠けた投入は、待つ上限で打ち切りとして名乗り、以後の読みはそこで止まらない")
+    func aLostOutcomeIsNamedOnceAndDoesNotStallLaterReads() throws {
+        let gpu = try RenderDevice()
+        gpu.outcomeWaitLimit = .milliseconds(200)
+        let canvas = try makeCanvas(gpu)
+        try paint(canvas, Self.red)
+        _ = try canvas.output.readPixels()
+
+        gpu.losesNextOutcomeForTesting = true
+        try paint(canvas, Self.blue)
+        let failure = #expect(throws: RenderFailure.self) { _ = try canvas.output.readPixels() }
+        let reason = CommandFaultLog.lostReason(after: gpu.outcomeWaitLimit)
+        #expect(failure == .workDropped(reason: reason), "名乗りが違う: \(String(describing: failure))")
+        // 合図は届いているので、「描きすぎ」へ送らない
+        #expect(failure?.description.contains("drawing too much") == false)
+
+        // 欠けた番号で止まっていれば、次の読みも上限まで待って同じく投げる
+        try paint(canvas, Self.red)
+        let waits = gpu.outcomeWaits
+        let read = try canvas.output.readPixels()
+        #expect(read[4, 4].red == 1)
+        #expect(gpu.outcomeWaits - waits <= 1)
+    }
+
+    // MARK: - 観測の撮影 (#1932 の反証 4)
+
+    /// 揃わなかった目録は `image` を落とす — 読み手はこの鍵の有無だけで成否を言える (ADR-0018 決定 3)。
+    @Test("観測の撮影は、打ち切られたフレームの絵を撮らず、揃わなかった目録に理由を載せる")
+    func observationDoesNotCaptureADroppedFrame() throws {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-dropped-observe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let gpu = try RenderDevice()
+        let runtime = try SketchRuntime(
+            sketch: Blue(), gpu: gpu, clock: nil, now: { 0 }, observer: FrameObserver(directory: facet))
+        try runtime.advance()
+
+        try AtomicFile.write(
+            Data(#"{"id":"dropped"}"#.utf8), to: facet.appendingPathComponent("request.json"))
+        gpu.dropsNextSubmissionForTesting = Self.victim
+        try runtime.advance()
+
+        let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
+        let report = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        #expect(report["id"] as? String == "dropped")
+        #expect(report["image"] as? String == nil, "打ち切られたフレームの絵を撮った")
+        #expect((report["frames"] as? [Any])?.isEmpty == true, "打ち切られたフレームの絵を目録に載せた")
+        let warnings = report["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains(Self.victim) }, "理由が警告に無い: \(warnings)")
     }
 
     // MARK: - 範囲
