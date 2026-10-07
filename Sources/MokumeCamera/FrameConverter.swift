@@ -6,7 +6,8 @@ import CoreGraphics
 import CoreVideo
 import MokumeCore
 
-/// カメラの 1 枚 (`CVPixelBuffer`) を、本体が絵にできる形 (``DisplayImage``) にする。
+/// 外から来た 1 枚 (カメラ・動画ファイルの `CVPixelBuffer`) を、本体が絵にできる形
+/// (``DisplayImage``) にする。
 ///
 /// ## 色を作業空間の原色へ移す
 ///
@@ -29,8 +30,8 @@ import MokumeCore
 /// 大きさが頼んだものと違って届いたときは、真ん中を頼んだ縦横比で切り取ってから縮める
 /// (ゆがめない)。
 ///
-/// **スレッドを持たない。** 呼ぶのはカメラの受け取りの待ち行列 1 本だけで、この型は
-/// その上に閉じている (``CameraSource``)。
+/// **スレッドを持たない。** 1 つの変換器を呼ぶのは 1 本の流れだけで (カメラは受け取りの
+/// 待ち行列 — ``CameraSource``、動画は main actor — ``MovieReader``)、この型はその上に閉じている。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 nonisolated final class FrameConverter {
