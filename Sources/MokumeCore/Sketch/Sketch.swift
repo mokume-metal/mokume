@@ -79,7 +79,37 @@ public protocol Sketch: AnyObject {
     func mouseClicked()
 
     /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged(deltaX:deltaY:)`` が呼ばれる。
+    ///
+    /// 動いた量が要るなら ``mouseMoved(deltaX:deltaY:)`` を書く — ここの直後に続けて呼ばれる。
     func mouseMoved()
+
+    /// 押していない間に動いたとき、``mouseMoved()`` の**直後に続けて**呼ばれる。**その 1 件で
+    /// 動いた量**を受け取る。
+    ///
+    /// カーソルを捕まえて見回す一人称のスケッチは、ここで向きを回す
+    /// (``requestPointerLock()``):
+    ///
+    /// ```swift
+    /// var yaw: Float = 0
+    ///
+    /// func mouseClicked() { requestPointerLock() }
+    ///
+    /// func mouseMoved(deltaX: Float, deltaY: Float) {
+    ///     yaw += deltaX * 0.005
+    /// }
+    /// ```
+    ///
+    /// 捕まえている間は位置が動かないので、``mouseX`` の差では動きが読めない — 量はここで
+    /// 受け取る。捕まえていないときは、当てる前の位置との差が渡る。単位はどちらも描く解像度の
+    /// 画素で、縦軸は下向きである。
+    ///
+    /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれる。ここと
+    /// ``mouseDragged(deltaX:deltaY:)`` に渡った量を足すと、フレーム合計 (``movedX``) と一致
+    /// する。**``movedX`` をここで読まない** — フレームの頭から足し込む合計なので、ここから
+    /// 読むと部分累計を何度も足し込む形になる ([ADR-0034] 決定 5)。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    func mouseMoved(deltaX: Float, deltaY: Float)
 
     /// 押したまま動いたとき呼ばれる。**その 1 件で動いた量**を受け取る。
     ///
@@ -175,6 +205,7 @@ extension Sketch {
     public func mouseReleased() {}
     public func mouseClicked() {}
     public func mouseMoved() {}
+    public func mouseMoved(deltaX: Float, deltaY: Float) {}
     public func mouseDragged(deltaX: Float, deltaY: Float) {}
     public func mouseWheel(deltaX: Float, deltaY: Float) {}
     public func keyPressed() {}

@@ -39,6 +39,7 @@ extension InputEvent {
         case .mouseDown: .mouseDown
         case .mouseUp: .mouseUp
         case .mouseMoved: .mouseMoved
+        case .mouseMovedBy: .mouseMovedBy
         case .scrolled: .scrolled
         case .keyDown: .keyDown
         case .keyUp: .keyUp
@@ -52,7 +53,7 @@ extension InputEvent {
             [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button.rawValue)")]
         case .mouseMoved(let x, let y):
             [("x", Self.number(x)), ("y", Self.number(y))]
-        case .scrolled(let dx, let dy):
+        case .mouseMovedBy(let dx, let dy), .scrolled(let dx, let dy):
             [("dx", Self.number(dx)), ("dy", Self.number(dy))]
         case .keyDown(let code, let characters, let isRepeat):
             [

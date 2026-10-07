@@ -222,6 +222,12 @@ public final class SketchRuntime {
     private let paramStore: ParamStore?
     /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
+    /// カーソルを捕まえる要求 (``Sketch/requestPointerLock()``)。``Sketch/exitPointerLock()`` まで残る。
+    ///
+    /// **読むのは窓である** — 直に走らせた窓は ``SketchApplication`` が毎リフレッシュ渡し、見張りの
+    /// 子は共有面の属性に載せて道具の窓へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    /// 窓の無い実行 (書き出し・窓を持たない `SketchRuntime`) では誰も読まないので、何も起きない。
+    var pointerLockRequested = false
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
     /// 視点 (シーンの記述) と違ってフレームごとには戻らない。まだ触っていなければ `nil`。
     var orbit: Orbit?
@@ -702,6 +708,8 @@ public final class SketchRuntime {
         case .mouseReleased: sketch.mouseReleased()
         case .mouseClicked: sketch.mouseClicked()
         case .mouseMoved: sketch.mouseMoved()
+        case .mouseMovedBy(let deltaX, let deltaY):
+            sketch.mouseMoved(deltaX: deltaX, deltaY: deltaY)
         case .mouseDragged(let deltaX, let deltaY):
             sketch.mouseDragged(deltaX: deltaX, deltaY: deltaY)
         case .mouseWheel(let deltaX, let deltaY):

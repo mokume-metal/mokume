@@ -167,6 +167,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private var lastSeenFrame = 0
     /// 走っている側が数えた速さ。**自分では数えない** ([ADR-0030] 決定 7)。
     private var tempo = RemoteTempo()
+    /// 出している世代のスケッチが、カーソルを捕まえるよう頼んでいるか。**面の属性から読む**
+    /// (``SharedFrameSurface/pointerLockAttribute``・[#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    ///
+    /// 読むのは新しい枚数が来たときだけで (速さと同じ)、渡すのは毎リフレッシュである — 窓が
+    /// 前に出たか・ポインタが面の上かは、要求と関係なく変わる。**検査から読む。**
+    private(set) var pointerLockRequested = false
     /// 続けて差し出せなかった数。**始まりと終わりだけ**言うために持つ。
     private var failures = FrameFailureLog()
 
@@ -303,11 +309,16 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         onTick?()
         reloadSourceIfChanged()
         promoteIfReady()
-        guard let source, let view, let layer = view.metalLayer,
-            let newest = SharedFrameSurface.newest(among: source.ids)
-        else { return }
+        // **絵が出せない回も渡す。** 要求を読む・読まないは絵の有無に依るが、窓が退いた・
+        // 要求が消えたで放すのは、絵が来ていなくても効く必要がある (#1144)
+        defer { self.view?.followPointerLock(requested: pointerLockRequested) }
+        guard let source, let newest = SharedFrameSurface.newest(among: source.ids) else { return }
+        // **面に載ったもの (速さ・捕まえの要求) は、窓の有無と関係なく読む。** 絵を出す先が
+        // 無くても、走っている側が名乗ったことは変わらない
         readNumbers(from: newest)
-        guard newest.frame != lastFrame, let frame = source.frames[newest.id] else { return }
+        guard let view, let layer = view.metalLayer,
+            newest.frame != lastFrame, let frame = source.frames[newest.id]
+        else { return }
         do {
             // **出せた枚数だけを覚える。** 面を取れずに見送ったときに覚えると、次の
             // リフレッシュで「同じ枚数だから出さない」と判断して 1 枚落とす
@@ -330,6 +341,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private func readNumbers(from newest: (id: UInt32, frame: Int)) {
         guard newest.frame != lastSeenFrame else { return }
         lastSeenFrame = newest.frame
+        // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む
+        pointerLockRequested = SharedFrameSurface.pointerLockRequested(of: newest.id)
         guard let numbers = SharedFrameSurface.numbers(of: newest.id) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
     }
@@ -393,6 +406,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // **枚数の数え直しに備える。** 新しい子は 1 から数えるので、前の子の枚数を
         // 覚えたままだと、そこへ追い付くまで 1 枚も出さないことになる (速さも同じで、
         // 追い付くまで前の子の数字を名乗り続けることになる)
+        // 捕まえの要求も同じ理由で、新しい世代の面から読み直す (#1144)。乗り換えるのは新しい
+        // 世代が 1 枚焼いた後なので、同じリフレッシュの ``readNumbers(from:)`` が読む — 要求して
+        // いない世代なら、そこで外れる
         lastFrame = 0
         lastSeenFrame = 0
         onGenerationPromoted?()
