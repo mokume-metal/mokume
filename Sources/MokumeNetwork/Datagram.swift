@@ -23,7 +23,7 @@ import Network
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 nonisolated final class DatagramListener: @unchecked Sendable {
-    // `@unchecked Sendable`: 可変の状態 (``listener``・``senders``・``stopped``) は
+    // `@unchecked Sendable`: 可変の状態 (``listener``・``ledger``・``stopped``) は
     // ``queue`` の上でだけ触る。Network.framework の手続きもすべて ``queue`` で走らせる。
 
     /// 受け口の移り変わり。
@@ -53,21 +53,27 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     /// 新しいポートから送る相手 (使い捨てのソケットで送るスクリプトなど) が居ると、閉じない
     /// 限り際限なく増える。閉じた送り元からまた届けば、新しく作り直される。
     ///
-    /// **閉じるのは ``idleAfter`` 秒以上黙っている送り元だけである。** 届いたばかりの送り元を
-    /// 閉じると、まだ読んでいない datagram ごと捨ててしまう (多くの送り元から一度に届いたとき、
-    /// 先に着いた送り元を閉じて落とすことを検査で確かめた)。だから一度に多く届いた間は数が
-    /// これを超えてよく、黙った後の次の受け入れで戻る。
+    /// **閉じるのは、読んだ後に ``idleAfter`` 秒以上黙っている送り元だけである。** 届いたばかりの
+    /// 送り元を閉じると、まだ読んでいない datagram ごと捨ててしまう (多くの送り元から一度に
+    /// 届いたとき、先に着いた送り元を閉じて落とすことを検査で確かめた)。まだ 1 度も読んでいない
+    /// 送り元は、受け入れから何秒経っても閉じない (``SenderLedger``・#2225)。だから一度に多く
+    /// 届いた間は数がこれを超えてよく、黙った後の次の受け入れで戻る。
     static let connectionLimit = 64
 
     /// 黙っている送り元を閉じてよいとするまでの秒数 (既定)。
     static let defaultIdleAfter: TimeInterval = 5
 
+    /// 送り元の黙りを測る既定の時計 (秒)。眠っている間は進まない `systemUptime`。受け口と
+    /// OSC の出どころの既定はこれ 1 つで、検査は本番と同じこの時計でも閉じることを見る。
+    static let systemClock: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
+    private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
     private let changed: @Sendable (Event) -> Void
     private var listener: NWListener?
-    /// 送り元と、最後に届いた (受け入れた) 時刻。
-    private var senders: [(connection: NWConnection, heard: TimeInterval)] = []
+    /// 送り元と、最後に読んだ時刻 (``now`` の目盛り)。
+    private var ledger: SenderLedger<NWConnection>
     private var stopped = false
 
     /// - Parameters:
@@ -75,11 +81,14 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     ///   - host: 受けるアドレス。`nil` ならすべての口。
     ///   - retryAfter: 失敗したとき、何秒後に開き直すか。
     ///   - idleAfter: 何秒黙っていた送り元を、閉じてよいとするか。
+    ///   - now: 送り元の黙りを測る時計 (秒)。既定は ``systemClock``。検査は手で進める時計を
+    ///     渡し、受け入れの速さに依らずに黙りを決める (#2225)。``queue`` の上で呼ばれる。
     ///   - received: 届いた datagram と、届いた瞬間の host time。``queue`` の上で呼ばれる。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
     init(
         port: Int, host: String?, retryAfter: TimeInterval,
         idleAfter: TimeInterval = defaultIdleAfter,
+        now: @escaping @Sendable () -> TimeInterval = systemClock,
         received: @escaping @Sendable ([UInt8], UInt64) -> Void,
         changed: @escaping @Sendable (Event) -> Void
     ) {
@@ -87,8 +96,10 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         self.host = host
         self.retryAfter = retryAfter
         self.idleAfter = idleAfter
+        self.now = now
         self.received = received
         self.changed = changed
+        ledger = SenderLedger(limit: Self.connectionLimit, idleAfter: idleAfter)
     }
 
     /// 開き始める。待たずに返る。
@@ -97,7 +108,10 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     }
 
     /// いま持っている送り元の数 (検査が上限を確かめるため)。
-    var connectionCount: Int { queue.sync { senders.count } }
+    var connectionCount: Int { queue.sync { ledger.count } }
+
+    /// 送り元の出入りの数 (検査が「黙っていない送り元は閉じない」を確かめるため)。
+    var tally: SenderTally { queue.sync { ledger.tally } }
 
     /// 閉じる。**閉じ終わるまで待つ** — 返った後に届いたものは渡さない。
     func stop() {
@@ -105,8 +119,7 @@ nonisolated final class DatagramListener: @unchecked Sendable {
             stopped = true
             listener?.cancel()
             listener = nil
-            for sender in senders { sender.connection.cancel() }
-            senders.removeAll()
+            for connection in ledger.removeAll() { connection.cancel() }
         }
     }
 
@@ -173,20 +186,12 @@ nonisolated final class DatagramListener: @unchecked Sendable {
             connection.cancel()
             return
         }
-        let now = ProcessInfo.processInfo.systemUptime
-        if senders.count >= Self.connectionLimit {
-            senders.removeAll { sender in
-                guard now - sender.heard >= idleAfter else { return false }
-                sender.connection.cancel()
-                return true
-            }
-        }
-        senders.append((connection, now))
+        for idle in ledger.admit(connection, at: now()) { idle.cancel() }
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let self, let connection else { return }
             switch state {
             case .failed, .cancelled:
-                senders.removeAll { $0.connection === connection }
+                ledger.ended(connection)
             default:
                 break
             }
@@ -203,9 +208,7 @@ nonisolated final class DatagramListener: @unchecked Sendable {
                 connection.cancel()
                 return
             }
-            if let index = senders.firstIndex(where: { $0.connection === connection }) {
-                senders[index].heard = ProcessInfo.processInfo.systemUptime
-            }
+            ledger.heard(connection, at: now())
             received([UInt8](content), hostTime)
             receive(on: connection)
         }
@@ -222,6 +225,77 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         default:
             return .failed(error.localizedDescription)
         }
+    }
+}
+
+/// 送り元の出入りの数。
+nonisolated struct SenderTally: Sendable, Equatable {
+    /// 受け入れた送り元の数。
+    var accepted = 0
+    /// 黙っていたとして閉じた数。
+    var closedIdle = 0
+    /// 繋ぎが失敗・取り消しで終わって外れた数 (黙りで閉じたもの・受け口ごと閉じたものは数えない)。
+    var ended = 0
+}
+
+/// 受け口が持つ送り元の台帳。送り元ごとに最後に読んだ時刻を持ち、数が目安に達したときに
+/// 閉じてよい送り元を決める。
+///
+/// 繋ぎの型に依らない値で、時刻は呼ぶ側が渡す。検査は繋ぎも時計も無しに、閉じる判断を回せる。
+nonisolated struct SenderLedger<Sender: AnyObject> {
+    /// 数の目安 (``DatagramListener/connectionLimit``)。
+    let limit: Int
+    /// 何秒黙っていた送り元を、閉じてよいとするか。
+    let idleAfter: TimeInterval
+    /// 送り元と、最後に読んだ時刻。**まだ 1 度も読んでいなければ `nil` で、黙りを測らない** —
+    /// 受け入れたばかりの繋ぎには読む前の datagram が必ずある。受け入れた時刻から測ると、
+    /// 待ち行列が混んで最初に読むまでに ``idleAfter`` 秒を越えたとき、それごと捨ててしまう (#2225)。
+    private var entries: [(sender: Sender, heard: TimeInterval?)] = []
+    private(set) var tally = SenderTally()
+
+    init(limit: Int, idleAfter: TimeInterval) {
+        self.limit = limit
+        self.idleAfter = idleAfter
+    }
+
+    /// いま持っている送り元の数。
+    var count: Int { entries.count }
+
+    /// 新しい送り元を受け入れる。数が目安に達していれば、先に黙っている送り元を台帳から外して
+    /// 返す (閉じるのは呼ぶ側)。
+    mutating func admit(_ sender: Sender, at time: TimeInterval) -> [Sender] {
+        var idle: [Sender] = []
+        if entries.count >= limit {
+            entries.removeAll { entry in
+                guard let heard = entry.heard, time - heard >= idleAfter else { return false }
+                idle.append(entry.sender)
+                return true
+            }
+        }
+        entries.append((sender, nil))
+        tally.accepted += 1
+        tally.closedIdle += idle.count
+        return idle
+    }
+
+    /// 送り元から読んだ。
+    mutating func heard(_ sender: Sender, at time: TimeInterval) {
+        guard let index = entries.firstIndex(where: { $0.sender === sender }) else { return }
+        entries[index].heard = time
+    }
+
+    /// 失敗・取り消しで終わった送り元を外す。台帳に居なければ (黙りで閉じた後・受け口ごと
+    /// 閉じた後なら) 何もしない。
+    mutating func ended(_ sender: Sender) {
+        guard let index = entries.firstIndex(where: { $0.sender === sender }) else { return }
+        entries.remove(at: index)
+        tally.ended += 1
+    }
+
+    /// すべて外して返す (受け口ごと閉じるとき)。
+    mutating func removeAll() -> [Sender] {
+        defer { entries.removeAll() }
+        return entries.map(\.sender)
     }
 }
 
