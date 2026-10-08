@@ -21,9 +21,6 @@
 
 Sources/MokumeCore/Sketch/Sketch+Asset.swift: assetURL(_:) (String)
 Sources/MokumeCore/Sketch/Sketch+Camera.swift: currentCamera
-Sources/MokumeCore/Sketch/Sketch+Effects.swift: effects(_:) ([Effect])
-Sources/MokumeCore/Sketch/Sketch+Effects.swift: makeEffect(_:name:values:) (String, String, [String: ShaderValue])
-Sources/MokumeCore/Sketch/Sketch+Effects.swift: loadEffect(_:values:) (String, [String: ShaderValue])
 Sources/MokumeCore/Sketch/Sketch+Loop.swift: noLoop()
 Sources/MokumeCore/Sketch/Sketch+Loop.swift: loop()
 Sources/MokumeCore/Sketch/Sketch+Loop.swift: redraw()
@@ -31,7 +28,3 @@ Sources/MokumeCore/Sketch/Sketch+Particles.swift: makeParticles(count:) (Int)
 Sources/MokumeCore/Sketch/Sketch+Particles.swift: emit(_:from:toward:rate:speed:life:size:color:) (Particles, Emitter, Heading, Float, ClosedRange<Float>, ClosedRange<Float>, ClosedRange<Float>, LinearRGBA?)
 Sources/MokumeCore/Sketch/Sketch+Particles.swift: force(_:_:) (Particles, Force...)
 Sources/MokumeCore/Sketch/Sketch+Particles.swift: particles(_:) (Particles)
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: loadShader(_:values:surfaces:) (String, [String: ShaderValue], [String: ShaderSurface])
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: makeShader(_:name:values:surfaces:) (String, String, [String: ShaderValue], [String: ShaderSurface])
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: shader(_:) (Shader)
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: resetShader()
