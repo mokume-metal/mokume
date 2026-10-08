@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
 import Synchronization
 
@@ -24,11 +25,24 @@ import Synchronization
 /// ## 何をするか
 ///
 /// **印は一方向で、一度立てたら下ろさない。** 立てるのは、合図の待ちが期限を越えたとき
-/// (`RenderDevice` の `signalReached(_:)` — GPU の待ち 4 つがすべて通る 1 本) である。
+/// (`RenderDevice` の `signalReached(_:while:)` — GPU の待ち 4 つがすべて通る 1 本) である。
 /// 印が立つと、``makeQueue(on:)`` は作らずに ``RenderFailure/gpuNotResponding`` で断る。
 /// 回復したかを見て下ろす形は採らない。GPU が答えるようになったかを確かめるには、発行口に仕事を
 /// 積んで待つほかなく、それ自体が答えない GPU へ積み増す側に回るからである。プロセスを起こし直せば、
 /// 印も消える。
+///
+/// **重い 1 フレームでも印は立つ。** 期限を越えた待ちからは、「1 フレームが描きすぎた」(``RenderFailure/timedOut(seconds:)``
+/// が名乗る側) と「GPU が答えなくなった」を見分けられない。見分けずに立てる代償は、そのプロセスで
+/// 新しい土台を作れなくなることである。製品の経路で 1 プロセスが作る土台は 1 つなので、効くのは
+/// 土台を作り直し続ける道具と検査だけになる。だから文面 (印を立てた時の警告と
+/// ``RenderFailure/gpuNotResponding``) は、どちらの場合もあると名乗り、起こし直すよう促す。
+/// 描きすぎの側だけを名乗ると、読んだ人は減らせば済むと考えて、同じプロセスで作り直しを続ける
+/// (#2052 の反証)。
+///
+/// **最初に印を立てた待ちを控える** (``closure``)。検査は全 suite を 1 つのプロセスで走らせるので、
+/// 印が立つと以後の GPU の検査がすべて ``RenderFailure/gpuNotResponding`` で赤になる。期限切れが
+/// 土台を畳む時 (`deinit`・投げない) なら、原因の検査は記録の上で緑のまま残る。最初の赤から原因を
+/// 辿れるように、待ちの種類・期限・時刻を文面に添える (#2052 の反証)。
 ///
 /// 既にある土台は止めない。その待ちは、自分の期限で今までどおり打ち切られる。
 ///
@@ -40,8 +54,45 @@ import Synchronization
 ///
 /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
 nonisolated final class CommandQueueGate: Sendable {
+    /// 期限を越えた待ちの種類。GPU の待ちは 4 つで、どれも `RenderDevice` の `signalReached(_:while:)` を通る。
+    enum Wait: Sendable, Equatable {
+        /// 土台を畳む前の待ち (`deinit`)。**投げない**ので、待った検査は緑のまま残りうる
+        case takingDown
+        /// 投入済みの全部を待つ (`settle()`)
+        case finishing
+        /// 置き場が空くのを待つ (`waitForSlot`)
+        case allocator
+        /// 名指しの投入を待つ (`waitForSubmission`)
+        case frameSlot
+
+        /// 文面に入れる句 (`while …` に続く)。
+        var phrase: String {
+            switch self {
+            case .takingDown: "taking down a drawing foundation"
+            case .finishing: "waiting for the GPU to finish"
+            case .allocator: "waiting for a command allocator to free up"
+            case .frameSlot: "waiting for a frame slot to free up"
+            }
+        }
+    }
+
+    /// 最初に印を立てた待ち。
+    struct Closure: Sendable, Equatable {
+        let wait: Wait
+        /// その待ちの期限
+        let limit: Duration
+        /// 印を立てた時刻
+        let date: Date
+
+        /// 文面に添える句。時刻は手元の時間帯の ISO 8601 で、検査の記録 (`.build/test-log.txt`) や
+        /// gpu-slot の起動元の記録と突き合わせられる形にする。
+        var summary: String {
+            "the first was while \(wait.phrase), past \(limit), at \(date.formatted(Date.ISO8601FormatStyle(timeZone: .current)))"
+        }
+    }
+
     private struct State {
-        var closed = false
+        var closure: Closure?
         var queuesMade = 0
     }
 
@@ -64,16 +115,20 @@ nonisolated final class CommandQueueGate: Sendable {
     }
 
     /// 合図の待ちが期限を越えた。**印を立てる。** 今回立てたなら `true` を返す (既に立っていれば
-    /// `false`)。呼ぶ側は、`true` のときだけ人へ伝える。
-    func close() -> Bool {
+    /// `false`)。呼ぶ側は、`true` のときだけ人へ伝える。控えるのは最初の 1 回だけである。
+    func close(after wait: Wait, limit: Duration, at date: Date = Date()) -> Bool {
         state.withLock { state in
-            defer { state.closed = true }
-            return !state.closed
+            guard state.closure == nil else { return false }
+            state.closure = Closure(wait: wait, limit: limit, date: date)
+            return true
         }
     }
 
     /// 印が立っているか。
-    var isClosed: Bool { state.withLock { $0.closed } }
+    var isClosed: Bool { closure != nil }
+
+    /// 最初に印を立てた待ち。立っていなければ `nil`。
+    var closure: Closure? { state.withLock { $0.closure } }
 
     /// 診断: この関所を通って作った発行口の数。
     ///

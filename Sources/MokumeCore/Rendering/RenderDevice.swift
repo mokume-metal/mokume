@@ -340,7 +340,7 @@ import MokumeDiagnostics
     /// (``losesNextOutcomeForTesting``) が、毎回 5 秒待たずに済むように。
     var outcomeWaitLimit: Duration = .seconds(RenderDevice.waitLimitSeconds)
 
-    /// 完了の合図が進むのを待つ上限 (``signalReached(_:)``)。
+    /// 完了の合図が進むのを待つ上限 (``signalReached(_:while:)``)。
     ///
     /// 製品の経路では ``waitLimitSeconds`` のまま。**検査だけが縮める** — 答えの来ない投入
     /// (``addUnansweredSubmissionForTesting()``) を待つ検査が、毎回 5 秒待たずに済むように。
@@ -611,14 +611,14 @@ import MokumeDiagnostics
     /// 検査で 3 本が同時に落ちた)。畳む前に待てば、投入した側は寿命を気にしなくてよい。
     ///
     /// 詰まっていたら諦めて畳む。ここで投げる先は無いので、警告だけ残す。**諦めたことは
-    /// プロセスに残る** — 待ちが期限を越えると ``signalReached(_:)`` が関所に印を立て、以後この
+    /// プロセスに残る** — 待ちが期限を越えると ``signalReached(_:while:)`` が関所に印を立て、以後この
     /// プロセスでは新しい土台を作らない ([#2052])。畳んだ後に次の土台が答えない GPU へ発行口を
     /// 足し、止まった発行口が溜まって機械ごと止まったのが #2052 である。
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     isolated deinit {
         guard !isIdle else { return }
-        if !signalReached(submissionCount), unansweredSubmissionsForTesting == 0 {
+        if !signalReached(submissionCount, while: .takingDown), unansweredSubmissionsForTesting == 0 {
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for the GPU with no answer, and the drawing foundation is being taken down anyway")
         }
@@ -944,15 +944,27 @@ import MokumeDiagnostics
     /// 同じ線を引いた)。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す。ここが言うのは
     /// 印を立てたことだけで、言うのはプロセスで 1 回である。
     ///
+    /// **その 1 行は、描きすぎの場合もあると名乗る。** 同じ期限切れで、呼ぶ側は `.timedOut` の
+    /// 「1 フレームが描きすぎ」を出す。重い 1 フレームと答えない GPU は、ここからは見分けられない。
+    /// 片方だけを言い切ると、2 行が食い違って読んだ人を迷わせる (#1343 と同じ線・#2052 の反証)。
+    /// `wait` は、どの待ちだったかを関所に控えるためにある (``CommandQueueGate/closure``)。
+    ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
-    private func signalReached(_ value: UInt64) -> Bool {
+    private func signalReached(_ value: UInt64, while wait: CommandQueueGate.Wait) -> Bool {
         let milliseconds = UInt64((signalWaitLimit / .milliseconds(1)).rounded(.up))
         guard !completion.wait(untilSignaledValue: value, timeoutMS: milliseconds) else { return true }
-        if queueGate.close(), unansweredSubmissionsForTesting == 0 {
-            Diagnostics.warn(
-                "The GPU gave no answer within \(signalWaitLimit), so this process will set up no new drawing foundation — more queues on a GPU that is not answering can freeze the whole Mac")
+        if queueGate.close(after: wait, limit: signalWaitLimit), unansweredSubmissionsForTesting == 0 {
+            Diagnostics.warn(Self.closingNotice(after: wait, limit: signalWaitLimit))
         }
         return false
+    }
+
+    /// 関所に印を立てた時に出す 1 行。**どちらの場合もありうると名乗り、起こし直すよう促す**
+    /// (上の ``signalReached(_:while:)``)。
+    static func closingNotice(after wait: CommandQueueGate.Wait, limit: Duration) -> String {
+        "Waiting for the GPU went past \(limit) while \(wait.phrase). That can be one frame drawing too much or a GPU"
+            + " that stopped answering, and the two look the same from here, so from now on this process sets up no"
+            + " new drawing foundation — start it again to set one up"
     }
 
     /// 指定した置き場から投入したコマンドが終わるまで待つ。
@@ -974,7 +986,7 @@ import MokumeDiagnostics
         guard pending > 0, completion.signaledValue < pending else { return }
 
         slotWaits += 1
-        guard signalReached(pending) else {
+        guard signalReached(pending, while: .allocator) else {
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for a command allocator to free up, with no answer")
             throw Self.waitFailure(faults: commandFaults)
@@ -1004,7 +1016,7 @@ import MokumeDiagnostics
         guard submissionCount > 0, completion.signaledValue < submissionCount else { return }
 
         blockingWaits += 1
-        guard signalReached(submissionCount) else {
+        guard signalReached(submissionCount, while: .finishing) else {
             // **黙って捨てない。** 詰まったことが分からないと、症状 (絵が止まる・
             // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
             Diagnostics.warn(
@@ -1037,7 +1049,7 @@ import MokumeDiagnostics
         guard submission > 0, completion.signaledValue < submission else { return }
 
         ringWaits += 1
-        guard signalReached(submission) else {
+        guard signalReached(submission, while: .frameSlot) else {
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for a frame slot to free up, with no answer")
             throw Self.waitFailure(faults: commandFaults)

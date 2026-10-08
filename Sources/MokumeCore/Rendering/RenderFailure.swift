@@ -90,9 +90,13 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 続けて、カーネルパニックまで行った。
     ///
     /// ``timedOut(seconds:)`` とは分ける。あちらは待った本人が受け取り、文面は描く量を減らす方向へ
-    /// 送る。こちらは、何も待っていない新しい土台が受け取る。することはプロセスを起こし直すことで、
-    /// 減らすものは無い。既にある土台はそのまま使える (その待ちは、今までどおり `.timedOut` で
-    /// 打ち切られる)。
+    /// 送る。こちらは、何も待っていない新しい土台が受け取る。することはプロセスを起こし直すことである。
+    /// 既にある土台はそのまま使える (その待ちは、今までどおり `.timedOut` で打ち切られる)。
+    ///
+    /// **重い 1 フレームでも、ここへ来る。** 期限を越えた待ちからは、1 フレームが描きすぎたのか、GPU が
+    /// 答えなくなったのかを見分けられない。だから文面は両方の場合を名乗る。1 行目には、最初に期限を
+    /// 越えた待ちの種類・期限・時刻を添える。印が立った後の失敗はどれもこれになるので、どの失敗からも
+    /// 原因の待ちを辿れるようにするためである。
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     case gpuNotResponding
@@ -270,13 +274,7 @@ extension RenderFailure: CustomStringConvertible {
             report it with this message at https://github.com/mokume-metal/mokume/issues
             """
         case .gpuNotResponding:
-            // **1 行目に理由を入れる** (`workDropped` と同じ)。窓の経路は `headline` の 1 行しか流さない
-            // ので、そこで「資源切れ」や「描きすぎ」と読まれると切り分けを誤る (#2052)
-            """
-            The GPU stopped answering earlier in this process, so no new drawing foundation is set up in it.
-            Quit and start the process again. Each new one would queue more work onto a GPU that is \
-            not answering, and enough of that freezes the whole Mac.
-            """
+            Self.notResponding(after: CommandQueueGate.process.closure)
         case .invalidSize(let width, let height):
             """
             That is not a valid size for a render target: \(width)×\(height)
@@ -370,6 +368,27 @@ extension RenderFailure: CustomStringConvertible {
     /// [#600]: https://github.com/mokume-metal/mokume/issues/600
     nonisolated var headline: String {
         String(description.prefix { $0 != "\n" })
+    }
+
+    /// ``gpuNotResponding`` の文面。**最初に期限を越えた待ち** (`closure`) を 1 行目に添える (#2052)。
+    ///
+    /// **1 行目に理由と、最初の待ちを入れる** (`workDropped` と同じ)。窓の経路は ``headline`` の 1 行
+    /// しか流さない。検査では、印が立った後の GPU の検査がすべてこれで赤になる。最初に期限を越えた
+    /// 待ちが土台を畳む時のもの (投げない) なら、原因の検査は緑のまま残る。だから、どの赤からも
+    /// 原因の時刻と種類を読めるようにする。
+    ///
+    /// **描きすぎの場合もあると名乗る。** 期限を越えた待ちからは、重い 1 フレームと答えない GPU を
+    /// 見分けられない。どちらでも、することはプロセスを起こし直すことである (#2052 の反証)。
+    ///
+    /// 付随値は持たない。文面は、プロセスで 1 つの関所が控えた最初の待ちを読む (公開の case に足さない
+    /// ため)。検査が自前の関所を渡した土台の断りは、その関所ではなく、プロセスの関所を読む。
+    nonisolated static func notResponding(after closure: CommandQueueGate.Closure?) -> String {
+        let first = closure.map { " (\($0.summary))" } ?? ""
+        return """
+            A wait for the GPU went past its limit earlier in this process, so no new drawing foundation is set up in it\(first).
+            That can be one frame drawing too much or a GPU that stopped answering, and the two look the same from \
+            here. New work piled onto a GPU that does not answer can freeze the whole Mac, so start the process again.
+            """
     }
 
     /// GPU の資源が尽きているときに添える 1 行。
