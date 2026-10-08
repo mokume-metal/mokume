@@ -247,7 +247,10 @@ public struct SketchSettings: Equatable, Sendable {
     /// 三角形の経路・立体) によらずこうなる。それより太い線は、三角形の経路と立体では描く画素の
     /// 格子で丸まる — たとえば 0.5 の `strokeWeight(3)` は描く画素で 1.5 になり、`triangle` や
     /// `shader()` を付けた図形・立体の線では 1 行か 2 行で塗られる (縁を滑らかにするのは距離関数の
-    /// 経路だけである)。
+    /// 経路だけである)。塗りも同じで、`rect`・`ellipse` などの基本図形を描く画素で 1 画素より細く
+    /// 描いた塗りは、面積に比例した濃さで出る (`shader()` や `texture()` を付けた長い形は、置く位置に
+    /// よって 1 割ほど揺れる。扇形 (一周でない `arc`) は付けるかによらず約束の外で、`triangle`・`quad`・
+    /// `beginShape` は描く画素の格子で丸まる)。
     /// 効果の半径 (``Effect/blur(radius:)`` など)・切り抜きの矩形 (``Sketch/clip(_:_:_:_:)``)・
     /// 断片 (塗りと効果) が受け取る位置と大きさも同じく出す細かさの画素で、細かさによらない。
     /// 違うのは描く画素 1 つより細かい所 (拡大のぼけと、描く画素の格子への丸め) だけである。
@@ -311,7 +314,14 @@ public struct SketchSettings: Equatable, Sendable {
     /// 画面が大きければ頼んだとおりに開くので、値そのものは断らない。
     ///
     /// **起動のときに読む。** 走っている最中に代入しても窓の大きさは変わらない。
+    ///
+    /// 全画面 (``fullScreenDisplay``) では読まない。
     public var windowScale: Float
+
+    /// 全画面で出すディスプレイの番号 (``Display/number``)。**`nil` なら窓で開く** (既定)。
+    ///
+    /// 書き方と、全画面のときに何が変わるかは ``fullScreen(_:)`` にある。**起動のときに読む。**
+    public var fullScreenDisplay: Int?
 
     public init(
         width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume",
@@ -324,6 +334,92 @@ public struct SketchSettings: Equatable, Sendable {
         self.pixelDensity = pixelDensity
         self.upscale = upscale
         self.windowScale = windowScale
+        self.fullScreenDisplay = nil
+    }
+
+    /// 全画面で出す。番号でディスプレイを選び、省けばメニューバーのある画面 (1) に出す。
+    ///
+    /// 手本 (Processing) の `fullScreen()` / `fullScreen(display)` に当たる。展示でプロジェクタを
+    /// 2 枚目のディスプレイとして繋いだら、1 行でそちらへ全画面で出せる:
+    ///
+    /// ```swift
+    /// var settings: SketchSettings { .fullScreen(2) }
+    /// ```
+    ///
+    /// 番号は ``Display`` の「番号の振り方」のとおり、1 がメニューバーのある画面で、2 から先は
+    /// システム設定 › ディスプレイ の配置の左から振る。
+    ///
+    /// ## 描く大きさは、そのディスプレイが決める
+    ///
+    /// 全画面のときは ``width`` / ``height`` / ``windowScale`` を読まず、そのディスプレイで全画面に
+    /// したときの画素 (``Display/width`` × ``Display/height``) で描く。描いた 1 画素が画面の 1 画素に
+    /// 載るので、Retina の画面では点の 2 倍になる。スケッチの中の ``Sketch/width`` /
+    /// ``Sketch/height`` はその大きさを返す。描く側のフレームはこれまでと同じで、変わるのは大きさ
+    /// だけである。
+    ///
+    /// 画素が多くて重ければ、描く細かさ (``pixelDensity``) を下げて拡大させる。他の設定は
+    /// 返った値に代入して変える:
+    ///
+    /// ```swift
+    /// var settings: SketchSettings {
+    ///     var settings = SketchSettings.fullScreen(2)
+    ///     settings.frameRate = 30
+    ///     settings.pixelDensity = 0.5
+    ///     return settings
+    /// }
+    /// ```
+    ///
+    /// ## 選んだディスプレイが無いとき
+    ///
+    /// **起動の組み立てで断り、別の画面へは出さない** — 番号が 1 を割れば
+    /// ``RenderFailure/invalidDisplay(_:)``、繋がっていなければ
+    /// ``RenderFailure/displayNotConnected(_:connected:)`` (いま繋がっている一覧を添える)。
+    /// 繋がっていなければ窓で開く、とするなら ``Sketch/displays`` を読んで選ぶ。手元では窓で書き、
+    /// 会場でプロジェクタを繋いだら全画面になる:
+    ///
+    /// ```swift
+    /// var settings: SketchSettings {
+    ///     displays.count >= 2 ? .fullScreen(2) : SketchSettings(width: 1280, height: 720)
+    /// }
+    /// ```
+    ///
+    /// ## 画面ごとに 1 本ずつ起こす
+    ///
+    /// 同じ作品を画面の数だけ起こし、それぞれ別の画面に出すなら、出す番号を起こすときの引数で
+    /// 渡す (`Wall 2`・`Wall 3`、束ねた `.app` なら `open -n Wall.app --args 3`):
+    ///
+    /// ```swift
+    /// var settings: SketchSettings {
+    ///     .fullScreen(CommandLine.arguments.dropFirst().first.flatMap { Int($0) } ?? 2)
+    /// }
+    /// ```
+    ///
+    /// **全画面の窓は位置を覚えない。** 置き場所は番号が決めるので、何本起こしても覚えた位置を
+    /// 取り合わない (窓で開くときは、閉じたときの位置を覚えて次に戻す)。番号は配置から振るので
+    /// 繋ぐ順には左右されないが、**間の 1 台が欠けると後ろの番号が詰まる** — 欠けた 1 台に出す
+    /// はずの作品が隣の画面へ出ないよう、`displays.count` が揃っているかを確かめてから選ぶ。
+    ///
+    /// ## 窓と全画面
+    ///
+    /// 全画面は macOS の全画面 (窓の緑のボタンと同じもの) で、窓はそのディスプレイの操作スペースを
+    /// 1 つ占める。システム設定の「ディスプレイごとに個別の操作スペース」を切っていると、他の
+    /// ディスプレイは空になる。抜けるには、画面の上端へポインタを寄せて出る緑のボタンを押す。
+    /// 抜けた窓はそのディスプレイに残り、スケッチは走り続ける。
+    ///
+    /// - **走っている間にディスプレイが外れたら**、窓は macOS が残りの画面へ移す。描く大きさは
+    ///   起動のときのままで、絵は窓に収まるように縮めて出る。挿し直したときに元の画面へ戻す
+    ///   手当ては、mokume からはしない
+    /// - **`mokume watch` では、作品の窓は道具が持つ。** 描く大きさはディスプレイから決まるが、
+    ///   全画面にはしない。道具の作品の窓を手で全画面にすれば、保存しても外れない
+    ///   (そのことを起動のときに 1 行言う)
+    /// - **`mokume render` では窓を開かない。** 書き出す絵の大きさは、そのディスプレイで全画面に
+    ///   したときの大きさになる
+    /// - 複数のディスプレイにまたがる 1 枚の絵 (手本の `SPAN`) と、重なりのぼかしは持たない。
+    ///   プロジェクションマッピングの道具へ渡す仕事である
+    public static func fullScreen(_ display: Int = 1) -> SketchSettings {
+        var settings = SketchSettings()
+        settings.fullScreenDisplay = display
+        return settings
     }
 }
 
@@ -426,6 +522,24 @@ extension Sketch {
     /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
     /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
     public var deltaTime: Float { Self.requireRuntime().deltaTime }
+    /// ``time`` がどこから来ているか。
+    ///
+    /// 窓に出して動かしている間は ``Clock/wallClock`` (実際に流れた時間) で、書き出し
+    /// (`mokume render`) と、窓を開かずに回す検査では ``Clock/frameIndex(frameRate:)``
+    /// (フレームの数え方) である。
+    ///
+    /// **外の時間で動くものを作る側が読む** — たとえば音声ファイルの再生 (`loadSound(_:)`)
+    /// は、実時間なら実際に鳴らし、フレームの数え方なら鳴らさずに再生位置をフレームの数から
+    /// 決める。書き出すたびに同じ絵になるのは後者である ([ADR-0025] の水準 2)。
+    ///
+    /// ```swift
+    /// background(0)
+    /// // 窓で見ている間だけ時刻を出し、書き出す絵には入れない
+    /// if clock == .wallClock { text("\(time)", 20, 40) }
+    /// ```
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    public var clock: Clock { Self.requireRuntime().clock }
 
     // 描画 API が Sketch+*.swift に分かれているので private にはできない。
     // 公開もしない — 利用者が触る面ではない。

@@ -176,8 +176,17 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/frameCount``
 - ``Sketch/time``
 - ``Sketch/deltaTime``
+- ``Sketch/clock``
+- ``Clock``
 - ``Sketch/usesFrameHistory``
 - ``Upscale``
+
+### 全画面で出す
+
+- ``SketchSettings/fullScreen(_:)``
+- ``SketchSettings/fullScreenDisplay``
+- ``Sketch/displays``
+- ``Display``
 
 ### 下地と色
 
@@ -372,6 +381,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``AudioIn``
 - ``AudioDevice``
 - ``AudioFailure``
+
+### 音声ファイルを鳴らす
+
+- ``Sketch/loadSound(_:)``
+- ``SoundFile``
 
 ### 画素を読み書きする
 

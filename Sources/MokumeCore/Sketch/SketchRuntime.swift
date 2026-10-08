@@ -171,6 +171,33 @@ public final class SketchRuntime {
         guard scale.isFinite, scale > 0 else { throw .invalidWindowScale(scale) }
     }
 
+    /// 全画面で出すディスプレイ。**組み立てのときに選ぶ** (``SketchSettings/fullScreenDisplay``)。
+    /// 窓で開くなら `nil`。
+    ///
+    /// **窓を開く側はこれを読む** (`SketchApplication`)。``windowScale`` と同じく、`settings` を
+    /// 読み直すと、選んだディスプレイと描く大きさが別物になりうる。
+    let fullScreenDisplay: Display?
+
+    /// 描く大きさを決める。全画面ならディスプレイを選び、その全画面の大きさにする ([#2020])。
+    ///
+    /// **窓で開くなら一覧を読まない** — 全画面を頼まないスケッチの起動は、ディスプレイの顔ぶれに
+    /// 何も依らない。選べなければ型のついたエラーで断る (``Display/choose(_:from:)``)。窓を
+    /// 開かない実行 (書き出し・窓を持たない `SketchRuntime`) でも同じに選ぶ — 書き出す絵は画面に
+    /// 出る絵と同じ大きさになり、窓を開く起こし方へ移って初めて落ちる形にもならない。
+    ///
+    /// - Parameter displays: ディスプレイの一覧の出どころ。**検査から差し替える。**
+    ///
+    /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
+    static func stage(
+        for settings: SketchSettings, displays: () -> [Display]
+    ) throws(RenderFailure) -> (width: Int, height: Int, display: Display?) {
+        guard let number = settings.fullScreenDisplay else {
+            return (settings.width, settings.height, nil)
+        }
+        let display = try Display.choose(number, from: displays())
+        return (display.width, display.height, display)
+    }
+
     /// 撮る係へ渡す刻みを、時計から決める (``launchFrameRate``)。
     static func recordingFrameRate(clock: Clock, declared: Int) -> Int {
         switch clock {
@@ -297,6 +324,8 @@ public final class SketchRuntime {
     public var time: Float { timing.time }
     /// 前のフレームからの経過 (秒)。
     public var deltaTime: Float { timing.deltaTime }
+    /// 時刻の出どころ。意味の説明は ``Sketch/clock`` が正本。
+    var clock: Clock { timing.clock }
 
     /// スケッチとその舞台を組み立てる。
     ///
@@ -314,21 +343,27 @@ public final class SketchRuntime {
     }
 
     /// 実時間の出どころを差し替えられる入口 (検査用)。
+    ///
+    /// - Parameter displays: ディスプレイの一覧の出どころ (``stage(for:displays:)``)。既定は
+    ///   いま繋がっているもの。**検査と、窓を開く側 (`SketchApplication`) から渡す。**
     init(
         sketch: any Sketch,
         gpu: RenderDevice,
         clock: Clock?,
-        now: @escaping () -> Double
+        now: @escaping () -> Double,
+        displays: () -> [Display] = { Display.connected }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         try Self.checkWindowScale(settings.windowScale)
+        let stage = try Self.stage(for: settings, displays: displays)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
         self.windowScale = settings.windowScale
+        self.fullScreenDisplay = stage.display
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
-        let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
+        let target = try RenderTarget(gpu: gpu, width: stage.width, height: stage.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
@@ -356,17 +391,20 @@ public final class SketchRuntime {
         observer: FrameObserver?,
         inbox: InputInbox? = nil,
         params: ParamSurface? = nil,
-        paramStore: ParamStore? = nil
+        paramStore: ParamStore? = nil,
+        displays: () -> [Display] = { Display.connected }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         try Self.checkWindowScale(settings.windowScale)
+        let stage = try Self.stage(for: settings, displays: displays)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
         self.windowScale = settings.windowScale
+        self.fullScreenDisplay = stage.display
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
-        let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
+        let target = try RenderTarget(gpu: gpu, width: stage.width, height: stage.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
@@ -1135,11 +1173,17 @@ public final class SketchRuntime {
     /// 同じ道を通しておけば**一致が構造で保たれる** — 片方だけ直したときに黙って
     /// 食い違うことがなくなる。
     ///
+    /// **GPU が仕上げなかったフレームは書き出さない** ([#1932])。書き出す絵が拠った投入 (前にこの口か
+    /// 描画先の投げる読む口が判定した後に積まれた投入すべて) のどれかを GPU が打ち切っていたら、
+    /// 結末が届くのを待ってから ``RenderFailure/workDropped(reason:)`` を投げ、ファイルを書かない。
+    /// 範囲と投げた後の扱いは ``RenderTarget/readPixels()`` と同じである。
+    ///
     /// [#440]: https://github.com/mokume-metal/mokume/issues/440
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func renderFrame(to url: URL) throws {
         try advance()
-        try PNGFile.write(try target.encodeToImage().read(), to: url)
+        try PNGFile.write(try target.encodeToImageAndRead(), to: url)
     }
 
     // MARK: - 絵をファイルにする
@@ -1393,7 +1437,10 @@ public final class SketchRuntime {
             // **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは
             // 通した後で、出るバイト列は通す前に間引いたのと同じである (#382)
             // 原寸の配列は作らず、置き場から拾う画素だけを読む (#1745)
-            let image = try target.encodeToImage().read(scaledBy: pending.scale)
+            //
+            // **GPU が仕上げなかった絵は撮らない** (#1932)。拠った投入の打ち切りは投げる読む口と
+            // 同じく判定し、投げたら下の catch が目録を `complete: false` にして理由を警告に載せる
+            let image = try target.encodeToImageAndRead(scaledBy: pending.scale)
             let name = try observer.writeFrame(image, at: pending.frames.count)
             pending.frames.append(
                 ObservationReport.CapturedFrame(

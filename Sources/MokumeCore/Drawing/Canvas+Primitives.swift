@@ -35,7 +35,9 @@ extension Canvas {
                     SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
                 ], isClosed: true,
                 cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)],
-                strokesAsOneRegion: true)
+                strokesAsOneRegion: true,
+                namedFill: Outline.NamedFill(
+                    isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
         }
     }
 

@@ -22,9 +22,10 @@ extension SketchRuntime: ShapeAssemblyListener {
 
     func shapeAssemblyEnded() {
         guard let noise = seedScopes.exit(restoring: &randomness) else { return }
-        // **書き換えは ``Canvas/changeNoise(_:)`` を通す** — 中の設定で溜めた図形を持つ面があれば、
-        // 戻す前に描き切らせる (置いた時点の種で引く・#1503)。組み立てている面が本体と置き場を
-        // 共有していれば、面の出口が先に同じ値へ戻しているので、ここは同じ値の書き直しで何もしない
+        // **書き換えは ``Canvas/changeNoise(_:)`` を通す** — 中の設定で図形を置いた面があれば、
+        // 戻す前にその開いた列を閉じさせる (置いた時点の種で引く・#1503。描き切らない・#1855)。
+        // 組み立てている面が本体と置き場を共有していれば、面の出口が先に同じ値へ戻しているので、
+        // ここは同じ値の書き直しで何もしない
         canvas.changeNoise { $0 = noise }
     }
 

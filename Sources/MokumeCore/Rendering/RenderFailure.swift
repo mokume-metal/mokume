@@ -7,7 +7,7 @@
 ///
 /// **大半は「環境かリソースが足りない」形だが、それに限らない。** 頼んだ値が通らないもの
 /// (``invalidSize(width:height:)`` / ``invalidPixelDensity(_:)`` / ``invalidFrameRate(_:)`` /
-/// ``invalidWindowScale(_:)`` / ``invalidCount(_:)``) と、呼ぶ順序が誤っているもの
+/// ``invalidWindowScale(_:)`` / ``invalidDisplay(_:)`` / ``invalidCount(_:)``) と、呼ぶ順序が誤っているもの
 /// (``commandsAlreadyOpen``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
 /// 起きたことで、運び方を分けても受け取る場所が増えるだけだからである ([#792])。
 ///
@@ -59,18 +59,27 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 物差しにできるようにするため。
     case timedOut(seconds: Int)
 
-    /// GPU の完了を待ったが制限時間内に終わらず、**直近に結末が届いた投入は GPU が打ち切って
-    /// いた**。``timedOut(seconds:)`` の代わりに出る。
+    /// GPU が積んだ仕事を打ち切ったので、絵が仕上がっていない。出る場面は 2 つある。
     ///
-    /// 打ち切られた投入も完了の合図は進めるので、待ちの側からは打ち切りと正常が区別できない
-    /// ([#1065])。区別が付くのは結末の記録だけで、それが打ち切りのまま待ちが越えたなら、原因は
-    /// 描いている量ではなく打ち切りの側にある。`.timedOut` の「描きすぎ」を出すと、読んだ人を
-    /// 形や光を減らす方向へ送ってしまう ([#1343])。
+    /// - **絵を返す口が、拠った投入の打ち切りを見つけた** ([#1932])。``RenderTarget/readPixels()``・
+    ///   ``RenderTarget/encodeForDisplay(scale:)``・``RenderTarget/writePNG(to:)``・
+    ///   `SketchRuntime.renderFrame(to:)` は、返す (書き出す) 絵が拠った投入のどれかを GPU が
+    ///   打ち切っていたら、待ちが成り立っていても絵を返さずにこれを投げる。範囲は各口の説明にある。
+    ///   結末の知らせが待つ上限までに届かなかった投入も、仕上がったと確かめられないので打ち切りに
+    ///   数える (`reason` がそう名乗る)
+    /// - **GPU の完了を待ったが制限時間内に終わらず、直近に結末が届いた投入は GPU が打ち切って
+    ///   いた**。``timedOut(seconds:)`` の代わりに出る。`.timedOut` の「描きすぎ」を出すと、読んだ人を
+    ///   形や光を減らす方向へ送ってしまう ([#1343])
+    ///
+    /// 打ち切られた投入は 1 画素も書かないのに、完了の合図は進めるので、待ちの側からは打ち切りと
+    /// 正常が区別できない ([#1065])。区別が付くのは結末の記録だけで、原因は描いている量ではなく
+    /// 打ち切りの側にある。
     ///
     /// `reason` は Metal が名乗った打ち切りの理由 (`Caused GPU Address Fault Error (…)` など)。
     ///
     /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
     /// [#1343]: https://github.com/mokume-metal/mokume/issues/1343
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     case workDropped(reason: String)
 
     /// 描画先の大きさが正しくない (幅・高さは 1 以上、面の一辺の上限以下でなければ
@@ -107,6 +116,23 @@ public enum RenderFailure: Error, Equatable, Sendable {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     case invalidWindowScale(Float)
+
+    /// 全画面で出すディスプレイの番号が正しくない (1 以上でなければならない)。
+    ///
+    /// **繋がっていないこと (``displayNotConnected(_:connected:)``) とは分ける。** こちらは頼み方の
+    /// 誤り (番号を直す) で、あちらは機材の話 (繋ぐか、繋がっている番号を選ぶ)。同じ文面にすると、
+    /// 0 を渡した人をケーブルの確かめへ送ってしまう (``invalidCount(_:)`` と同じ分け方)。
+    case invalidDisplay(Int)
+
+    /// 全画面で出すディスプレイが繋がっていない。`connected` は、いま繋がっている一覧。
+    ///
+    /// **組み立てで断り、別の画面へは倒さない** ([ADR-0020] 決定 5 の 2 行目)。展示でプロジェクタへ
+    /// 出すつもりの作品が、黙って手元の画面を全画面で塞ぐことになるからである。繋がっていなければ
+    /// 窓で開く、としたい作品は ``Sketch/displays`` を読んで自分で選ぶ
+    /// (``SketchSettings/fullScreen(_:)`` の例)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    case displayNotConnected(Int, connected: [Display])
 
     /// 用意する数が正しくない (1 以上でなければならない)。数の並び (`makeNumbers(count:)`)
     /// と粒 (`makeParticles(count:)`) の数で出る。
@@ -220,9 +246,10 @@ extension RenderFailure: CustomStringConvertible {
             """
         case .workDropped(let reason):
             // **1 行目に理由を入れる。** 窓の経路は `headline` の 1 行しか流さないので、
-            // 2 行目へ回すと、読むべき理由が端末に 1 度も出ない (#1343)
+            // 2 行目へ回すと、読むべき理由が端末に 1 度も出ない (#1343)。**待ちが終わらなかったとは
+            // 言い切らない** — 絵を返す口は、待ちが成り立った後にも打ち切りを見つけて投げる (#1932)
             """
-            The GPU dropped work it had queued, and waiting for it never finished: \(reason)
+            The GPU dropped work it had queued, so the picture was never finished: \(reason)
             This is not how much is being drawn. If the reason is a hang, one frame's work (a \
             shader) runs too long; otherwise it is most likely a fault inside mokume — please \
             report it with this message at https://github.com/mokume-metal/mokume/issues
@@ -249,6 +276,19 @@ extension RenderFailure: CustomStringConvertible {
             That is not a valid window scale: \(scale)
             It has to be a finite number above 0 — how many points of the window one pixel of \
             the sketch takes (0.5 opens a 960×540 sketch in a 480×270 window).
+            """
+        case .invalidDisplay(let number):
+            """
+            That is not a display number: \(number)
+            Displays are numbered from 1 — 1 is the one with the menu bar, and 2 onwards follow \
+            the arrangement in System Settings › Displays from the left.
+            """
+        case .displayNotConnected(let number, let connected):
+            """
+            Display \(number) is not connected, so the sketch cannot go full screen on it.
+            Connected now: \(Self.listing(connected)). Connect it, or ask for one of these \
+            numbers — a sketch can read them from displays, and open a window when the one it \
+            wants is missing.
             """
         case .invalidCount(let count):
             """
@@ -317,4 +357,9 @@ extension RenderFailure: CustomStringConvertible {
     /// が同じであることは、その 1 文が同じであることで表す。
     private nonisolated static let exhaustedAdvice =
         "The GPU may have run out of resources — close any sketch still running and try again."
+
+    /// 繋がっているディスプレイを 1 行に並べる。1 枚も無ければ `none`。
+    private nonisolated static func listing(_ displays: [Display]) -> String {
+        displays.isEmpty ? "none" : displays.map(\.description).joined(separator: ", ")
+    }
 }

@@ -154,6 +154,41 @@ import MokumeDiagnostics
     /// 検査から数えるための目印。
     var encodedImagesMade = 0
 
+    /// 投げる読む口 (``readPixels()``・``encodeForDisplay(scale:)`` と、それを通る口) が、GPU の
+    /// 打ち切りを最後に判定した投入の番号 ([#1932])。**次の判定の範囲はこれより後から始まる。**
+    ///
+    /// 作るときは、面を塗って始める投入より前の番号にする — 塗る投入もこの面の絵の一部である。
+    /// 面を作る前の投入は範囲に入れない (土台の累計を条件にすると、絵が無事な回まで投げる)。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    private(set) var judgedThrough: UInt64
+
+    /// 判定で見つけた、**この面へ書いた投入**の打ち切り。この面へ書く新しい投入が積まれるまで
+    /// 持ち越す ([#1932])。
+    ///
+    /// 打ち切られた描画は 1 画素も書かないので、面の中身はその後も仕上がっていない。持ち越さないと、
+    /// 投げた直後に何も描かずに読み直したとき、読み戻しを積み直して (範囲はその 1 本だけになり)
+    /// 仕上がっていない中身を成功として返す。`lastWrite` は持ち越しを始めた時点の
+    /// ``lastWriteSubmission`` で、**この面へ書く投入が積まれて**それが進めば下ろす。読み戻し・
+    /// 出力段・何も描かない描き切り・別の面への投入・計算は、この面の中身を変えないので下ろさない。
+    /// 立てるのも、打ち切られた投入がこの面へ書いていたときだけ — 読むだけの投入 (別の読む口の
+    /// 読み戻しなど) の打ち切りは、その回の読みが投げるだけで持ち越さない。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    private var heldDrop: (reason: String, lastWrite: UInt64)?
+
+    /// この面の中身を書き換えた最後の投入の番号 ([#1932])。
+    ///
+    /// 書く投入を投入する口が、``RenderDevice/commit(_:retaining:writing:)`` に面を渡して進める
+    /// (描き切り・塗り・書き戻し・効果・拡大)。作ったときは、面を塗って始める投入の番号。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    private(set) var lastWriteSubmission: UInt64 = 0
+
+    /// 面を塗って始めた投入の番号。打ち切られていれば、この面へ書いた投入の打ち切りとして数える
+    /// (塗る口は面の持ち主を知らないので、打ち切りの記録に面が添えられない)。
+    private var clearSubmission: UInt64 = 0
+
     /// 出力段を通った道を通った回数。
     ///
     /// **置き場を作った回数とは別に要る。** 置き場は 1 枚を使い回すので、作った回数は
@@ -170,6 +205,8 @@ import MokumeDiagnostics
         self.gpu = gpu
         self.width = width
         self.height = height
+        // 下で塗って始める投入から、投げる読む口の範囲に入れる
+        self.judgedThrough = gpu.submissionCount
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: Self.pixelFormat, width: width, height: height, mipmapped: false)
@@ -179,6 +216,9 @@ import MokumeDiagnostics
         let texture = try gpu.makeClearedTexture(descriptor: descriptor)
         texture.label = "mokume.target"
         self.texture = texture
+        // 塗る投入は直前の 1 本である
+        clearSubmission = gpu.submissionCount
+        lastWriteSubmission = clearSubmission
 
         let depth = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: Self.depthFormat, width: width, height: height, mipmapped: false)
@@ -245,6 +285,12 @@ import MokumeDiagnostics
     ///
     /// CPU が書いたまま戻していない写しは CPU の側が最新なので、映し直さない。それ以外で、
     /// 最後に映した投入より新しい投入があれば、読み戻しを 1 本積んで終わるまで待つ。
+    ///
+    /// **「映した」の印は結末を見ずに付ける。** 結末が届くのは後なので、ここでは待たない。読み戻しが
+    /// 打ち切られていたと分かったら、投げる読む口の判定 (``judgeDroppedWork()``) が印を下ろす
+    /// ([#1932])。読み戻しは写しを書くだけで面の中身は変えないので、書く先として面を渡さない。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private func mirrorForReading() throws(RenderFailure) -> PixelMirror {
         let mirror = try mirrorHolding()
         if mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount {
@@ -284,6 +330,14 @@ import MokumeDiagnostics
     }
 
     /// 読み戻しを積んだコマンドが、番号 `submission` で投入されたことを記録する。
+    ///
+    /// **結末を見ずに記録する** — 呼ぶ 2 か所 (``mirrorForReading()`` と、描き切りの末尾に読み戻しを
+    /// 積む `Canvas` の描き切り) は投入した直後で、結末はまだ届いていない。その投入が打ち切られて
+    /// いたら、投げる読む口の判定 (``judgeDroppedWork()``) が範囲の中に見つけて投げ、
+    /// 印を下ろす ([#1932])。投げない口 (`pixels`) は印のまま読む ([ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     func markPixelsMirrored(through submission: UInt64) {
         pixelMirror?.syncedThrough = submission
     }
@@ -297,7 +351,7 @@ import MokumeDiagnostics
     /// (`Canvas.encodePixelWriteBackKeepingCarry(into:)`)。効果を掛けた面では、止まっている間に
     /// 書いた画素を効果を通す前の絵へも写す要があり、ここを直に呼ぶとそれが抜ける ([#1524])。
     ///
-    /// - Returns: 積んだら `true`。**積んだコマンドを投入したら ``markPixelsWrittenBack()``
+    /// - Returns: 積んだら `true`。**積んだコマンドを投入したら ``markPixelsWrittenBack(by:)``
     ///   で知らせる** — ここでは「戻した」ことにしない。積んだ後で組み立てが投げると
     ///   コマンドは捨てられるので、ここで下ろすと CPU の書き込みが黙って失われる ([#1183])。
     ///
@@ -330,8 +384,16 @@ import MokumeDiagnostics
     ///
     /// 積んでから投入するまでの間に CPU が写しへ書く経路は無い (どちらも main actor の上で
     /// 続けて走る) ので、ここで下ろしても書き込みは取りこぼさない。
-    func markPixelsWrittenBack() {
-        pixelMirror?.hasPendingWrites = false
+    ///
+    /// **書き戻した投入の番号を写しに残す** (``PixelMirror/writtenBackBy``)。その投入が打ち切られて
+    /// いたら、書いた画素は面へ届いていない。投げる読む口の判定がそれを見つけたとき、写しをまだ
+    /// 読み戻しで上書きしていなければ、書き込み待ちを立て直す (``judgeDroppedWork()``・[#1932])。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    func markPixelsWrittenBack(by submission: UInt64) {
+        guard let pixelMirror else { return }
+        pixelMirror.hasPendingWrites = false
+        pixelMirror.writtenBackBy = submission
     }
 
     /// CPU が写しへ書いたまま戻していないものを、**戻さずに捨てる** ([#1678])。書いていなければ
@@ -356,6 +418,8 @@ import MokumeDiagnostics
         guard let mirror = pixelMirror, mirror.hasPendingWrites else { return }
         mirror.hasPendingWrites = false
         mirror.syncedThrough = 0
+        // 前に書き戻した画素の上に捨てた画素が載っているので、書き戻しの打ち切りから立て直さない
+        mirror.writtenBackBy = 0
     }
 
     // MARK: - 描く
@@ -393,9 +457,9 @@ import MokumeDiagnostics
         // 置いた立体は必ず通り、あとから来た手前のものがそれを隠す。
         //
         // 「フレームごと」であって「パスごと」ではない。1 フレームを何回かに分けて
-        // 描き切ることがある (画素を読む・揺らぎの設定を書き換える・置いた描き場所の描き換えのうち、
-        // 置いた側が形の組み立ての途中・写しの上限に達した・写しを用意できないとき) ので、途中の
-        // 区切りで消すと**描いた順で決まる絵**に戻ってしまう。
+        // 描き切ることがある (画素を読む・置いた描き場所の描き換えのうち、置いた側の写しの上限に
+        // 達した・写しを用意できないとき) ので、途中の区切りで消すと**描いた順で決まる絵**に
+        // 戻ってしまう。
         //
         // 残すのは途中の描き切りのときだけ。フレームの最後の描き切りで残すと、
         // 分けて描き切らないスケッチまで毎フレーム書き出しを払うことになる。
@@ -446,7 +510,7 @@ import MokumeDiagnostics
                 throw .encoderUnavailable
             }
             encoder.endEncoding()
-            try gpu.commitAndWait(commands)
+            try gpu.commitAndWait(commands, writing: [self])
         }
     }
 
@@ -457,18 +521,48 @@ import MokumeDiagnostics
     /// 読み出せるのは**作業空間そのままの値**で、表示のための変換は経ていない。
     /// 表示・書き出しのための変換は出力段が 1 度だけ行う ([ADR-0011] 決定 3)。
     ///
-    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// 読むのは写し (`pixels` と同じ置き場) である。待つのは投入済みの描画が終わる
     /// まで (全部終わっていれば何もしない・#727) で、写しが古ければ読み戻しを 1 本積んで
     /// 待つ。行の間隔が幅ぶんより広いことがあるので、値としての ``PixelBuffer`` へ移す
     /// ときに詰める。
+    ///
+    /// **GPU が仕上げなかった絵は返さない** ([#1932])。返す絵が拠った投入のどれかを GPU が打ち切って
+    /// いたら、``RenderFailure/workDropped(reason:)`` を投げる。打ち切られた投入は 1 画素も書かない
+    /// のに、完了の合図は進むので、待ちが成り立っても絵は仕上がっていないことがある ([#1065])。
+    ///
+    /// - **拠った投入 (判定の範囲)**: この面で前に投げる読む口 (これと ``encodeForDisplay(scale:)``・
+    ///   ``writePNG(to:)``) が判定した後に、同じ ``RenderDevice`` へ積まれた投入すべて。この読みが
+    ///   積んだ読み戻しまでを含む。初めての読みでは、面を作ったときから。**面へ書く投入に絞らない** —
+    ///   置いた別の描き場所の描画のように、絵が拠るのに面へは書かない投入もあるためで、同じ土台の
+    ///   別の面への投入の打ち切りでも投げる
+    /// - **判定は結末が届いてから**下す。合図が進んだ後も、結末が届くまで待つ。待つ上限は
+    ///   ``RenderDevice/waitLimitSeconds`` で、合図の待ちとは別に数える (最長で合図と結末のそれぞれの
+    ///   上限ぶん待つ)。上限までに届かなかった結末は、打ち切りとして投げる (理由はそう名乗る)
+    /// - **投げた後**: この面へ書いた投入 (描画・塗り・書き戻し・効果・拡大) が打ち切られていたら、
+    ///   面の中身は仕上がっていないので、この面へ書く新しい投入が積まれるまで、何も積まずに同じ理由で
+    ///   投げる。この面へ書かない投入 (読み戻し・出力段・別の面への描画・計算) だけが打ち切られていた
+    ///   なら、その回だけ投げ、次の読みは面を読み直す。CPU が書いた画素の書き戻しが打ち切られていた
+    ///   ら、書いた画素は失わず、次にこの面へ描くときに書き戻し直す
+    ///
+    /// 毎フレーム読む口 (`pixels`・`loadPixels()`・`get`) は投げない ([ADR-0020] 決定 5)。打ち切りは
+    /// 最初の 1 回だけ警告で名乗る。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     public func readPixels() throws(RenderFailure) -> PixelBuffer {
+        try refuseHeldDrop()
         // 出す先なら、止まっている間に変わった描く先を広げ直してから読む ([#1882])
         //
         // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
         try catchUpWithDrawnPicture()
         try gpu.settle()
+        // **CPU が書いた画素を書き戻したまま、まだ読み戻していない写しは、読み戻しで上書きする前に
+        // 判定する。** 書き戻しが打ち切られていれば、書いた画素は写しにしか残っていない (#1932)
+        if let pixelMirror, pixelMirror.holdsWrittenBackPixels { try judgeDroppedWork() }
         let mirror = try mirrorForReading()
+        try judgeDroppedWork()
         let componentsPerRow = width * 4
         var components = [Float16](repeating: 0, count: componentsPerRow * height)
         let source = mirror.storage.contents()
@@ -482,6 +576,66 @@ import MokumeDiagnostics
             }
         }
         return PixelBuffer(width: width, height: height, components: components)
+    }
+
+    // MARK: - 投げる読む口の判定 (#1932)
+
+    /// 前の判定でこの面へ書いた投入の打ち切りを見つけたまま、この面へ書く新しい投入が無ければ、
+    /// 同じ理由で投げる。**投げる読む口の頭で、何かを積む前に呼ぶ。**
+    ///
+    /// この面へ書く新しい投入が積まれていれば持ち越しを下ろし、次の判定に任せる。
+    func refuseHeldDrop() throws(RenderFailure) {
+        guard let held = heldDrop else { return }
+        guard lastWriteSubmission == held.lastWrite else {
+            heldDrop = nil
+            return
+        }
+        throw .workDropped(reason: held.reason)
+    }
+
+    /// この面の中身を書き換える投入が、番号 `submission` で投入された。
+    /// ``RenderDevice/commit(_:retaining:writing:)`` が呼ぶ。
+    func noteWritten(by submission: UInt64) {
+        lastWriteSubmission = submission
+    }
+
+    /// 投げる読む口が、返す絵の拠った範囲の投入を判定する。**範囲の投入を待ち終えてから呼ぶ。**
+    ///
+    /// 範囲は ``judgedThrough`` の後から、いま土台に積まれている最後の投入まで。結末が届くのを
+    /// 待ち (``RenderDevice/droppedWork(after:through:)``)、打ち切りがあれば番号の最も小さいものの
+    /// 理由で投げる。
+    ///
+    /// 投げるときは、打ち切られた投入に合わせて写しと持ち越しを直す。
+    ///
+    /// - **この面へ書いた投入**が打ち切られていたら、持ち越す (``heldDrop``)。面の中身は仕上がって
+    ///   いない。読むだけの投入 (読み戻し・出力段) や別の面への投入だけなら持ち越さない — 面は無事で、
+    ///   次の読みは今の中身を読み直す
+    /// - **CPU が書いた画素の書き戻し**が打ち切られていて、写しをまだ読み戻しで上書きしていなければ、
+    ///   写しが書いた画素の唯一の写しである。書き込み待ちを立て直し、次にこの面へ触る投入が書き
+    ///   戻し直す
+    /// - それ以外は写しの「映した」を下ろす — 打ち切られた読み戻しの中身を、次の読みがそのまま返さ
+    ///   ないように。CPU が書いたまま戻していない写しは CPU の側が最新なので触らない
+    func judgeDroppedWork() throws(RenderFailure) {
+        let through = gpu.submissionCount
+        let drops = gpu.droppedWork(after: judgedThrough, through: through)
+        judgedThrough = through
+        guard let first = drops.first else { return }
+        let surface = ObjectIdentifier(self)
+        if let wrote = drops.first(where: {
+            $0.wrote.contains(surface) || $0.submission == clearSubmission
+        }) {
+            heldDrop = (wrote.reason, lastWriteSubmission)
+        }
+        if let pixelMirror, !pixelMirror.hasPendingWrites {
+            if pixelMirror.holdsWrittenBackPixels,
+                drops.contains(where: { $0.submission == pixelMirror.writtenBackBy })
+            {
+                pixelMirror.hasPendingWrites = true
+            } else {
+                pixelMirror.syncedThrough = 0
+            }
+        }
+        throw .workDropped(reason: first.reason)
     }
 }
 
@@ -502,8 +656,24 @@ import MokumeDiagnostics
     /// CPU が書いたまま、まだテクスチャへ戻していないか。
     var hasPendingWrites = false
     /// この番号までの投入の結果を映している。0 は面を映していない — まだ 1 度も映していないか、
-    /// 捨てた書き込みを載せている (``RenderTarget/discardPixelWrites()``)。
+    /// 捨てた書き込みを載せている (``RenderTarget/discardPixelWrites()``) か、打ち切られた読み戻しの
+    /// 中身を載せているかもしれない (``RenderTarget/judgeDroppedWork()``・#1932)。
+    ///
+    /// **積んだ時点で進め、結末は見ない** (読み戻しの結末は後から届く)。打ち切られていたと分かるのは
+    /// 投げる読む口の判定で、そこで 0 に戻す。
     var syncedThrough: UInt64 = 0
+    /// CPU が書いた画素を最後に書き戻した投入の番号。まだ書き戻していないか、書き込み待ちを捨てたら 0。
+    ///
+    /// 書き戻しが打ち切られると、書いた画素は面へ届かず、写しにしか残らない。投げる読む口の判定は、
+    /// 写しをまだ読み戻しで上書きしていなければ (``holdsWrittenBackPixels``)、書き込み待ちを立て直す
+    /// (``RenderTarget/judgeDroppedWork()``・#1932)。
+    var writtenBackBy: UInt64 = 0
+
+    /// CPU が書いた画素を書き戻した後、写しをまだ読み戻しで上書きしていないか。書き戻しと読み戻しが
+    /// 同じ投入に載る (描き切りの末尾) ときも含む — 打ち切られたなら、どちらも走っていない。
+    var holdsWrittenBackPixels: Bool {
+        !hasPendingWrites && writtenBackBy > 0 && syncedThrough <= writtenBackBy
+    }
 
     init(gpu: RenderDevice, width: Int, height: Int) throws(RenderFailure) {
         // blit の行間隔に整列の要求は無い (リニアテクスチャを置き場に載せるときの要求は

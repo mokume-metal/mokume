@@ -28,12 +28,19 @@ extension RenderDevice {
     /// **表明の文面 (`#expect` の 2 つ目の引数) の中で呼ぶ。** 文面は表明が落ちたときにだけ
     /// 組み立てられるので、下の待ちは通った表明の実行時間に出ない。
     ///
-    /// 使っている所と、まだ使っていない所の扱いは [#1930]。
+    /// **投げる読む口で読んだ絵には要らない** ([#1932])。`readPixels()`・`encodeForDisplay(scale:)`・
+    /// `writePNG(to:)`・`renderFrame(to:)` は、返す絵が拠った投入 (同じ面で前に判定した読みの後に
+    /// 積まれた投入すべて) の打ち切りを結末が届くまで待って見つけ、表明より前に `.workDropped` を
+    /// 投げる。理由は失敗の 1 行目に載るので、検査はここを呼ばなくても打ち切りを名乗る。ここが
+    /// 名乗れるのは、それ以外 — 投げない口 (`pixels`・`get`・出口の絵・観測) で読んだ値の表明と、
+    /// 範囲の外 (前の判定より前) の打ち切りである。どのファイルへ広げるかは、巻き添えらしい赤を見た
+    /// 回に、その赤を直す PR で決める ([#1930] の経緯)。
     ///
     /// [#1063]: https://github.com/mokume-metal/mokume/issues/1063
     /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
     /// [#1812]: https://github.com/mokume-metal/mokume/issues/1812
     /// [#1930]: https://github.com/mokume-metal/mokume/issues/1930
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     func faultNote() -> String {
         // **少し待ってから読む。** 結末は Metal 側の糸から届くので、絵を読み終えた時点
         // ではまだ来ていないことがある (実測: 絵が空で落ちた 4 回とも、その時点では 0 だった)。

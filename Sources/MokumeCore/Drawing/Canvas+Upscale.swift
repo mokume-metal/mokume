@@ -166,14 +166,15 @@ extension Canvas {
         // (前のフレームの終わりの拡大が揺らしを進めてから失敗し、印が立ったまま入ってきた形)
         let offset =
             isDrawing && passesThisFrame > 0 ? stage.jitterInSource : stage.lastJitterInSource
-        let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
+        let assembled = try gpu.withCommands { commands throws(RenderFailure) in
             let wroteBack = writingBackPixels ? try encodePixelWriteBackKeepingCarry(into: commands) : false
             try encodeEnlargement(using: pipeline, offset: offset, into: commands)
-            gpu.commit(commands)
-            return wroteBack
+            let submission = gpu.commit(
+                commands, writing: surfacesWritten(drawing: wroteBack, upscaling: true))
+            return (submission: submission, wroteBack: wroteBack)
         }
         frameRing.noteSubmission()
-        if wroteBack { target.markPixelsWrittenBack() }
+        if assembled.wroteBack { target.markPixelsWrittenBack(by: assembled.submission) }
         targetChangedSinceUpscale = false
         placingCatchUpDeferred = false
     }
@@ -260,12 +261,13 @@ extension Canvas {
         guard target.hasPendingPixelWrites else { return }
         // コマンドを開く前に通す (``catchUpOutput()`` と同じ)
         settlePlacersBeforeChange()
-        let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
+        let assembled = try gpu.withCommands { commands throws(RenderFailure) in
             let wroteBack = try encodePixelWriteBackKeepingCarry(into: commands)
-            gpu.commit(commands)
-            return wroteBack
+            let submission = gpu.commit(
+                commands, writing: surfacesWritten(drawing: wroteBack, upscaling: false))
+            return (submission: submission, wroteBack: wroteBack)
         }
-        if wroteBack { target.markPixelsWrittenBack() }
+        if assembled.wroteBack { target.markPixelsWrittenBack(by: assembled.submission) }
     }
 
     /// 出す先を、止まっている間に変わった描く先に追い付かせる。**失敗しても投げない。**
