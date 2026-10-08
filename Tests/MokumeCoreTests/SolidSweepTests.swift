@@ -14,7 +14,9 @@ import simd
 /// **添字の列の中身** (置き場所 1 つぶんの描く順が、置き場所ごとに描くときと同じ三角形を同じ順で残す)・
 /// **使う判定**。2 つ目は、捨て方 (`.front` / `.back` / 捨てない) と三角形の巻き方を決まった向きで
 /// 数える小さな模擬の描画で、置き場所ごとの描き方と畳んだ描き方が残す三角形の列を突き合わせる
-/// ([#1947](https://github.com/mokume-metal/mokume/issues/1947))。実際の絵の一致は
+/// ([#1947](https://github.com/mokume-metal/mokume/issues/1947))。頂点が形から求めた向きを持つときは、
+/// 残る三角形ごとに光を当てる向きを裏返すかも突き合わせる
+/// ([#2222](https://github.com/mokume-metal/mokume/issues/2222))。実際の絵の一致は
 /// `SolidSweepRenderTests` が GPU で見る。
 @Suite("裏 → 表の描き方を畳む")
 struct SolidSweepTests {
@@ -154,19 +156,26 @@ struct SolidSweepTests {
 
     // MARK: - 添字の列の中身
 
-    /// 捨て方 (`cull`) で数える模擬の描画が、1 枚の三角形を残すか。
+    /// 模擬の描画で、1 枚の三角形が表を向くか。面積 0 なら `nil` (どの捨て方でも画素を生まない)。
     ///
-    /// 位置は画面の座標 (横 → 右・縦 → 下)。表の巻き方 `front` は画面で見たときの向きで、`.front` は
-    /// 表を捨て、`.back` は裏を捨てる。面積 0 の三角形はどの捨て方でも画素を生まないので数えない。
+    /// 位置は画面の座標 (横 → 右・縦 → 下)。表の巻き方 `front` は画面で見たときの向き。
+    private func facesFront(
+        _ triangle: (Int, Int, Int), _ points: [SIMD2<Float>], front: MTLWinding
+    ) -> Bool? {
+        let (a, b, c) = (points[triangle.0], points[triangle.1], points[triangle.2])
+        // 画面の座標 (縦が下) での符号付きの面積。正なら時計回り
+        let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+        guard area != 0 else { return nil }
+        return (area > 0) == (front == .clockwise)
+    }
+
+    /// 捨て方 (`cull`) で数える模擬の描画が、1 枚の三角形を残すか。`.front` は表を捨て、`.back` は裏を
+    /// 捨てる。面積 0 の三角形は数えない。
     private func survives(
         _ triangle: (Int, Int, Int), _ points: [SIMD2<Float>], cull: MTLCullMode,
         front: MTLWinding
     ) -> Bool {
-        let (a, b, c) = (points[triangle.0], points[triangle.1], points[triangle.2])
-        // 画面の座標 (縦が下) での符号付きの面積。正なら時計回り
-        let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-        guard area != 0 else { return false }
-        let isFront = (area > 0) == (front == .clockwise)
+        guard let isFront = facesFront(triangle, points, front: front) else { return false }
         switch cull {
         case .none: return true
         case .front: return !isFront
@@ -175,16 +184,30 @@ struct SolidSweepTests {
         }
     }
 
-    /// 三角形を点の集合として比べるための印 (巻き方を入れ替えた写しと元が同じ印になる)。
-    private func mark(_ triangle: (Int, Int, Int)) -> [Int] {
-        [triangle.0, triangle.1, triangle.2].sorted()
+    /// 模擬の描画で残った三角形 1 枚。
+    private struct Drawn: Equatable, CustomStringConvertible {
+        /// 点の集合 (巻き方を入れ替えた写しと元が同じ印になる)。
+        var mark: [Int]
+        /// 光を当てる向きを、頂点に書いた向きから裏返すか。
+        var flipsNormal: Bool
+
+        init(_ triangle: (Int, Int, Int), flipsNormal: Bool) {
+            mark = [triangle.0, triangle.1, triangle.2].sorted()
+            self.flipsNormal = flipsNormal
+        }
+
+        var description: String { "\(mark)\(flipsNormal ? " 裏返す" : "")" }
     }
 
     /// 置き場所ごとに描くとき (`passes` を捨て方を替えながら描く) の、残る三角形の並び。
+    ///
+    /// `derived` なら頂点は形から求めた向きを持ち、断片は裏を向いた三角形で向きを裏返す
+    /// (`Common.metal` の `isBackOfDerived`)。
     private func perPlacement(
-        passes: [SolidSweep.Pass], indices: [UInt32]?, points: [SIMD2<Float>], front: MTLWinding
-    ) -> [[Int]] {
-        var drawn: [[Int]] = []
+        passes: [SolidSweep.Pass], indices: [UInt32]?, points: [SIMD2<Float>], front: MTLWinding,
+        derived: Bool = false
+    ) -> [Drawn] {
+        var drawn: [Drawn] = []
         for pass in passes {
             for triangle in 0..<(pass.range.count / 3) {
                 let at = pass.range.lowerBound + triangle * 3
@@ -192,7 +215,8 @@ struct SolidSweepTests {
                     indices.map { (Int($0[at]), Int($0[at + 1]), Int($0[at + 2])) }
                     ?? (at, at + 1, at + 2)
                 if survives(vertices, points, cull: pass.cull, front: front) {
-                    drawn.append(mark(vertices))
+                    let isFront = facesFront(vertices, points, front: front) ?? true
+                    drawn.append(Drawn(vertices, flipsNormal: derived && !isFront))
                 }
             }
         }
@@ -200,14 +224,25 @@ struct SolidSweepTests {
     }
 
     /// 畳んだ添字の列を `.back` 固定で描くときの、残る三角形の並び。
+    ///
+    /// 残る三角形は表を向くので、断片は向きを裏返さない。裏返すのは、添字に印
+    /// (``SolidSweep/flipsNormal``) が立っていて頂点関数が裏返すときである。点の番号は印を外して読む。
     private func swept(
         program: [UInt32], points: [SIMD2<Float>], front: MTLWinding
-    ) -> [[Int]] {
-        var drawn: [[Int]] = []
+    ) -> [Drawn] {
+        let flag = SolidSweep.flipsNormal
+        var drawn: [Drawn] = []
         var at = 0
         while at + 2 < program.count {
-            let vertices = (Int(program[at]), Int(program[at + 1]), Int(program[at + 2]))
-            if survives(vertices, points, cull: .back, front: front) { drawn.append(mark(vertices)) }
+            let vertices = (
+                Int(program[at] & ~flag), Int(program[at + 1] & ~flag), Int(program[at + 2] & ~flag)
+            )
+            let flags = [program[at], program[at + 1], program[at + 2]].map { $0 & flag != 0 }
+            if survives(vertices, points, cull: .back, front: front) {
+                // 印は三角形の 3 点で揃っていなければ、断片の補間した印と食い違う
+                #expect(Set(flags).count == 1, "印が揃わない三角形 \(vertices)")
+                drawn.append(Drawn(vertices, flipsNormal: flags[0]))
+            }
             at += 3
         }
         return drawn
@@ -223,13 +258,15 @@ struct SolidSweepTests {
         return (0..<count).map { _ in SIMD2(next() * 100, next() * 100) }
     }
 
-    /// 頂点 0…999 をそのまま使う表で、添字の列を組む。
+    /// 頂点 0…999 をそのまま使う表で、添字の列を組む。`derived` なら全部の頂点が形から求めた向きを持つ
+    /// (表の番号に ``SolidSweep/flipsNormal`` が立つ)。
     private func build(
-        _ passes: [SolidSweep.Pass], indices: [UInt32]? = nil
+        _ passes: [SolidSweep.Pass], indices: [UInt32]? = nil, derived: Bool = false
     ) -> [UInt32] {
         var program: [UInt32] = []
+        let table = (0..<UInt32(1000)).map { derived ? $0 | SolidSweep.flipsNormal : $0 }
         let usable = SolidSweep.appendProgram(
-            passes, indices: indices, vertexBase: 0, vertices: Array(0..<1000), to: &program)
+            passes, indices: indices, vertexBase: 0, vertices: table, to: &program)
         #expect(usable)
         #expect(program.count == SolidSweep.programLength(of: passes))
         return program
@@ -275,20 +312,59 @@ struct SolidSweepTests {
         #expect(SolidSweep.programLength(of: passes) == 12)
     }
 
-    @Test("描けない頂点を 1 つでも指せば、組めない")
-    func anUnusableVertexMakesTheProgramImpossible() {
-        let passes = SolidSweep.passes(whole: 0..<6, shown: [part(0..<6)], plainCull: .none)
-        var table = Array(0..<UInt32(6))
-        table[4] = SolidSweep.unusable
-        var program: [UInt32] = []
-        let usable = SolidSweep.appendProgram(
-            passes, indices: nil, vertexBase: 0, vertices: table, to: &program)
-        #expect(!usable)
-        // 描けない頂点が、使わない区間にあるだけなら組める
-        let first = SolidSweep.passes(whole: 0..<3, shown: [part(0..<3)], plainCull: .none)
-        var again: [UInt32] = []
+    // MARK: - 形から求めた向きを持つ頂点 (#2222)
+
+    @Test("形から求めた向きの頂点は、写しの三角形にだけ印が立ち、元の三角形からは外れる")
+    func derivedVerticesAreMarkedOnlyInCopies() {
+        let flag = SolidSweep.flipsNormal
+        let outward = SolidSweep.passes(whole: 0..<6, shown: [part(0..<6)], plainCull: .none)
         #expect(
-            SolidSweep.appendProgram(first, indices: nil, vertexBase: 0, vertices: table, to: &again))
+            build(outward, derived: true)
+                == [0 | flag, 2 | flag, 1 | flag, 3 | flag, 5 | flag, 4 | flag, 0, 1, 2, 3, 4, 5])
+        let inward = SolidSweep.passes(
+            whole: 0..<3, shown: [part(0..<3, insideOut: true)], plainCull: .none)
+        #expect(build(inward, derived: true) == [0, 1, 2, 0 | flag, 2 | flag, 1 | flag])
+        // 捨てない区間は [元, 写し] の対。裏を捨てる区間は元だけ、表を捨てる区間は写しだけ
+        #expect(
+            build(SolidSweep.passes(whole: 0..<3, shown: [], plainCull: .none), derived: true)
+                == [0, 1, 2, 0 | flag, 2 | flag, 1 | flag])
+        #expect(
+            build(SolidSweep.passes(whole: 0..<3, shown: [], plainCull: .back), derived: true)
+                == [0, 1, 2])
+        #expect(
+            build(SolidSweep.passes(whole: 0..<3, shown: [], plainCull: .front), derived: true)
+                == [0 | flag, 2 | flag, 1 | flag])
+        // 添字の列を指す区間も同じ (印は表から読む)
+        #expect(
+            build(
+                SolidSweep.passes(whole: 0..<3, shown: [part(0..<3, indexed: true)], plainCull: .none),
+                indices: [9, 8, 7], derived: true)
+                == [9 | flag, 7 | flag, 8 | flag, 9, 8, 7])
+    }
+
+    @Test("印が 3 点で揃わない三角形を写しにするなら組めない (写しにしない区間なら組める)")
+    func mixedTrianglesCannotBeCopied() {
+        var table = Array(0..<UInt32(6))
+        table[4] |= SolidSweep.flipsNormal
+        var program: [UInt32] = []
+        let shown = SolidSweep.passes(whole: 0..<6, shown: [part(0..<6)], plainCull: .none)
+        #expect(
+            !SolidSweep.appendProgram(shown, indices: nil, vertexBase: 0, vertices: table, to: &program))
+        program = []
+        let pairs = SolidSweep.passes(whole: 0..<6, shown: [], plainCull: .none)
+        #expect(
+            !SolidSweep.appendProgram(pairs, indices: nil, vertexBase: 0, vertices: table, to: &program))
+        // 揃わない三角形が使わない区間にあるだけなら組める
+        program = []
+        let first = SolidSweep.passes(whole: 0..<3, shown: [part(0..<3)], plainCull: .none)
+        #expect(
+            SolidSweep.appendProgram(first, indices: nil, vertexBase: 0, vertices: table, to: &program))
+        // 写しにしない区間 (裏を捨てる) は、揃わなくても印を外した元を足す
+        program = []
+        let kept = SolidSweep.passes(whole: 0..<6, shown: [], plainCull: .back)
+        #expect(
+            SolidSweep.appendProgram(kept, indices: nil, vertexBase: 0, vertices: table, to: &program))
+        #expect(program == [0, 1, 2, 3, 4, 5])
     }
 
     @Test("表の外の頂点を指せば、組めない")
@@ -330,8 +406,9 @@ struct SolidSweepTests {
     /// 組み立てた区間で、置き場所ごとに描いたときと畳んだときに残る三角形が同じ列になる。
     ///
     /// 三角形の点を画面にばらまくので、表も裏も面積 0 に近いものも混ざる。部品が 2 つ (外向きと
-    /// 内向き)・部品の外の区間・3 で割り切れない端・添字の列のどれも通す。
-    @Test("置き場所ごとに描いたときと、畳んだときで、残る三角形が同じ順に同じだけ並ぶ", arguments: [false, true], [false, true])
+    /// 内向き)・部品の外の区間・3 で割り切れない端・添字の列のどれも通す。頂点が形から求めた向きを
+    /// 持つとき (#2222) は、残る三角形ごとに光を当てる向きを裏返すかも同じになる。
+    @Test("置き場所ごとに描いたときと、畳んだときで、残る三角形と裏返す向きが同じ順に同じだけ並ぶ", arguments: [false, true], [false, true])
     func sweptProgramLeavesTheSameTrianglesInTheSameOrder(
         indexed: Bool, clockwise: Bool
     ) {
@@ -350,13 +427,18 @@ struct SolidSweepTests {
             part(130..<170, indexed: indexed),
         ]
         for cull in [MTLCullMode.none, .back] {
-            let passes = SolidSweep.passes(whole: whole, shown: list, plainCull: cull)
-            let legacy = perPlacement(passes: passes, indices: indices, points: points, front: front)
-            let program = build(passes, indices: indices)
-            #expect(
-                swept(program: program, points: points, front: front) == legacy,
-                "捨て方 \(cull.rawValue)")
-            #expect(!legacy.isEmpty)
+            for derived in [false, true] {
+                let passes = SolidSweep.passes(whole: whole, shown: list, plainCull: cull)
+                let legacy = perPlacement(
+                    passes: passes, indices: indices, points: points, front: front, derived: derived)
+                let program = build(passes, indices: indices, derived: derived)
+                #expect(
+                    swept(program: program, points: points, front: front) == legacy,
+                    "捨て方 \(cull.rawValue)・形から求めた向き \(derived)")
+                #expect(!legacy.isEmpty)
+                // 形から求めた向きなら、裏返して光を当てる三角形が実際に混ざる (見張りが空振りしない)
+                #expect(legacy.contains { $0.flipsNormal } == derived)
+            }
         }
     }
 
