@@ -45,6 +45,113 @@ extension Sketch {
     /// 中心を原点へ、いちばん長い辺を面の短いほうの半分へ (一様に。軸の比は変わらない)、
     /// 縦軸をこの面の約束 (下向き) へ。`false` を渡すと**ファイルの座標がそのまま**残る。
     ///
+    /// 下の 2 枚は同じ 2 つのファイル — 底が正方形の角錐を、大きさだけ 30 倍変えて書いた
+    /// OBJ — を、整えて読んだものと整えずに読んだものである。OBJ は文字のファイルなので、
+    /// 例はその場で書き出してから読んでいる。灰色の横線が、置いた位置 (`translate` の先) の
+    /// 高さを通る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pyramids: [Model] = [] -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         // 同じ角錐を、大きさだけ変えて 2 つの OBJ に書く (y が上向き)
+    ///         for s in [1, 30] {
+    ///             let obj = """
+    ///                 v 0 \(3 * s) 0
+    ///                 v \(-s) 0 \(-s)
+    ///                 v \(s) 0 \(-s)
+    ///                 v \(s) 0 \(s)
+    ///                 v \(-s) 0 \(s)
+    ///                 f 1 5 4
+    ///                 f 1 4 3
+    ///                 f 1 3 2
+    ///                 f 1 2 5
+    ///                 f 2 3 4 5
+    ///                 """
+    ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
+    ///             try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///             pyramids.append(try! loadModel(path))
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         stroke(90)
+    ///         line(0, 150, 400, 150)
+    ///         lights()
+    ///         noStroke()
+    ///         fill(242, 115, 64)
+    ///         for (index, pyramid) in pyramids.enumerated() {
+    ///             push()
+    ///             translate(110 + index * 180, 150, 0)
+    ///             rotateY(0.6)
+    ///             model(pyramid)
+    ///             pop()
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 大きさが 30 倍違う 2 つのファイルから読んだ橙色の角錐が、同じ大きさで左右に並ぶ。どちらも頂点が上を向き、置いた高さを示す灰色の横線が形の途中を横切る -->
+    ///     ![大きさが 30 倍違う 2 つのファイルから読んだ橙色の角錐が、同じ大きさで左右に並ぶ。どちらも頂点が上を向き、置いた高さを示す灰色の横線が形の途中を横切る](https://i.gyazo.com/2ed814ad0eed26cda63fe5391ad47390.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pyramids: [Model] = [] -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         // 同じ角錐を、大きさだけ変えて 2 つの OBJ に書く (y が上向き)
+    ///         for s in [1, 30] {
+    ///             let obj = """
+    ///                 v 0 \(3 * s) 0
+    ///                 v \(-s) 0 \(-s)
+    ///                 v \(s) 0 \(-s)
+    ///                 v \(s) 0 \(s)
+    ///                 v \(-s) 0 \(s)
+    ///                 f 1 5 4
+    ///                 f 1 4 3
+    ///                 f 1 3 2
+    ///                 f 1 2 5
+    ///                 f 2 3 4 5
+    ///                 """
+    ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
+    ///             try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///             pyramids.append(try! loadModel(path, normalize: false))
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         stroke(90)
+    ///         line(0, 150, 400, 150)
+    ///         lights()
+    ///         noStroke()
+    ///         fill(242, 115, 64)
+    ///         for (index, pyramid) in pyramids.enumerated() {
+    ///             push()
+    ///             translate(110 + index * 180, 150, 0)
+    ///             rotateY(0.6)
+    ///             model(pyramid)
+    ///             pop()
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ 2 つのファイルを整えずに読むと、左は横線のすぐ下の 2 画素ほどの点にしかならず、右は頂点が下を向いて横線から垂れ下がる -->
+    ///     ![同じ 2 つのファイルを整えずに読むと、左は横線のすぐ下の 2 画素ほどの点にしかならず、右は頂点が下を向いて横線から垂れ下がる](https://i.gyazo.com/c94b3d123abd773211e3644da9f6aefa.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// **読み込みは投げる。** 失敗したときに別の道を選ぶ判断が要るためで、見つからない
     /// ときの説明には**探した場所**が載る。同じ名前・同じ整え方なら、控えに残っている
     /// 間は読み直さない (同じモデルが返る)。
@@ -60,10 +167,8 @@ extension Sketch {
     /// - Note: 読めても面が 1 つも無いことがある (``Model/isEmpty``)。そのときは
     ///   投げずに、置いたときに警告する — 「読めなかった」と「読めたが見えない」は
     ///   別の話なので、区別できるようにしてある。
-    ///
-    /// > Note: この口には例の絵が付いていない。読む先のファイルが要るが、このリポジトリは
-    /// > 生成物・バイナリを持たないためである。手元の形で試すなら ``box(_:)`` や
-    /// > ``sphere(_:detail:)`` を見ること — そちらには絵が付いている。
+    // shot: 1 snippet=422c10b2
+    // shot: 2 snippet=c25f28d8
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
         try canvas.loadModel(path, normalize: normalize)
     }
@@ -89,7 +194,9 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// > Note: ``loadModel(_:normalize:)`` と同じ理由で、この口にも例の絵は付いていない。
+    /// > Note: 届いたモデルの整え方と見え方は ``loadModel(_:normalize:)`` と同じなので、絵は
+    /// > そちらを見ること。届くフレームは実行ごとに違うので、この口だけの絵は撮っていない。
+    // shot: 参照 loadModel(_:normalize:)
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model
     {
@@ -101,10 +208,61 @@ extension Sketch {
     ///
     /// いまの変換と塗りと線が効く。**続けて同じモデルを置いても描く回数は増えない** —
     /// 頂点は置き直されず、置き場所だけが増える。線の引かれ方は組み込みの立体と同じで、
-    /// 隣り合う面が折れているところと面の縁を通る (``box(_:)`` の但し書き)。
+    /// 隣り合う面が折れているところと面の縁を通る (``box(_:)`` の但し書き)。光や材質の
+    /// 効き方も組み込みの立体と同じである。
     ///
-    /// > Note: 置く先のモデルがこのリポジトリに無いので、この口にも例の絵は付いていない。
-    /// > 光や材質の効き方は組み込みの立体と同じなので、``sphere(_:detail:)`` の絵が
-    /// > そのまま参考になる。
+    /// 下の絵は、``loadModel(_:normalize:)`` の例と同じ角錐を 3 つ置き、塗りと線だけを
+    /// 変えている。底が見えるように、手前へ傾けて下から見上げている。底の四角は 1 つの面と
+    /// して書いてあり、置くときに三角形 2 枚へ割られるが、平らなので割った対角線に線は出ない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pyramid: Model! -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         let obj = """
+    ///             v 0 3 0
+    ///             v -1 0 -1
+    ///             v 1 0 -1
+    ///             v 1 0 1
+    ///             v -1 0 1
+    ///             f 1 5 4
+    ///             f 1 4 3
+    ///             f 1 3 2
+    ///             f 1 2 5
+    ///             f 2 3 4 5
+    ///             """
+    ///         let path = NSTemporaryDirectory() + "pyramid.obj"
+    ///         try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         pyramid = try! loadModel(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         lights()
+    ///         strokeWeight(2)
+    ///         for column in 0..<3 {
+    ///             push()
+    ///             translate(75 + column * 125, 150, 0)
+    ///             rotateY(0.6)
+    ///             rotateX(0.6)
+    ///             scale(0.5, 0.5, 0.5)
+    ///             if column == 2 { noFill() } else { fill(242, 115, 64) }
+    ///             if column == 0 { noStroke() } else { stroke(255) }
+    ///             model(pyramid)
+    ///             pop()
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 下から見上げた同じ角錐が 3 つ並ぶ。左は橙色の塗りだけ、中は塗りに白い線、右は白い線だけ。線は角錐の稜線だけを通り、中にも右にも、底の四角を割る対角線は出ていない -->
+    ///     ![下から見上げた同じ角錐が 3 つ並ぶ。左は橙色の塗りだけ、中は塗りに白い線、右は白い線だけ。線は角錐の稜線だけを通り、中にも右にも、底の四角を割る対角線は出ていない](https://i.gyazo.com/4210828318f8942f99a32979660a7e55.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=84b7a99d
     public func model(_ model: Model) { canvas.model(model) }
 }
