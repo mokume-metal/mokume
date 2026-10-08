@@ -185,7 +185,7 @@ struct OSCPortTests {
 
         let injected = OSCPort(
             port: nil, name: "osc (recorded)",
-            source: RecordedOSCSource(batches: Self.script.map { [$0] }), outbound: nil, owner: nil)
+            source: RecordedSource<OSCMessage>(batches: Self.script.map { [$0] }), outbound: nil, owner: nil)
         try injected.open()
         var replayed: [OSCMessage] = []
         for _ in Self.script {
@@ -205,7 +205,7 @@ struct OSCPortTests {
         let second = OSCMessage("/b", 2)
         let osc = OSCPort(
             port: nil, name: "osc (recorded)",
-            source: RecordedOSCSource(batches: [[first, second], [], [second]]), outbound: nil,
+            source: RecordedSource<OSCMessage>(batches: [[first, second], [], [second]]), outbound: nil,
             owner: nil)
         try osc.open()
         var frames: [[OSCMessage]] = []
@@ -324,7 +324,7 @@ struct OSCPortTests {
         let told = Told()
         let recording = RecordingSender()
         let osc = OSCPort(
-            port: 9000, name: "osc :9000", source: RecordedOSCSource(batches: []),
+            port: 9000, name: "osc :9000", source: RecordedSource<OSCMessage>(batches: []),
             outbound: recording, owner: nil, warn: told.append)
         osc.send("size", 1)
         osc.send("size", 2)
@@ -336,14 +336,14 @@ struct OSCPortTests {
         #expect(recording.sent == [try Wire.encoded(OSCMessage("/ok", 1))])
 
         let nowhere = OSCPort(
-            port: 9000, name: "osc :9000", source: RecordedOSCSource(batches: []), outbound: nil,
+            port: 9000, name: "osc :9000", source: RecordedSource<OSCMessage>(batches: []), outbound: nil,
             owner: nil, warn: told.append)
         nowhere.send("/a", 1)
         nowhere.send("/b", 1)
         #expect(told.count(containing: "has nowhere to send") == 1)
 
         let recorded = OSCPort(
-            port: nil, name: "osc (recorded)", source: RecordedOSCSource(batches: []),
+            port: nil, name: "osc (recorded)", source: RecordedSource<OSCMessage>(batches: []),
             outbound: nil, owner: nil, warn: told.append)
         recorded.send("/a", 1)
         #expect(told.count(containing: "replays recorded messages") == 1)

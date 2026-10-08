@@ -107,7 +107,7 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createOSC(messages: [[OSCMessage]]) -> OSCPort {
         let osc = OSCPort(
-            port: nil, name: "osc (recorded)", source: RecordedOSCSource(batches: messages),
+            port: nil, name: "osc (recorded)", source: RecordedSource(batches: messages),
             outbound: nil, owner: self)
         attach(osc)
         return osc

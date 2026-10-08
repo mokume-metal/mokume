@@ -75,7 +75,7 @@ public final class OSCPort: Inlet {
     public private(set) var messages: [OSCMessage] = []
 
     let input: ExternalQueue<OSCMessage>
-    let source: any OSCSource
+    let source: any MessageSource<OSCMessage>
     private let outbound: (any DatagramSending)?
     private weak var owner: (any Sketch)?
     private let warn: (String) -> Void
@@ -84,7 +84,8 @@ public final class OSCPort: Inlet {
     private var closed = false
 
     init(
-        port: Int?, name: String, source: any OSCSource, outbound: (any DatagramSending)?,
+        port: Int?, name: String, source: any MessageSource<OSCMessage>,
+        outbound: (any DatagramSending)?,
         owner: (any Sketch)?, warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
         self.port = port
