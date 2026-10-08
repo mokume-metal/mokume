@@ -1380,8 +1380,9 @@ def image_difference(base: pathlib.Path, head: pathlib.Path) -> tuple[int, int, 
     """2 枚の PNG → (違う画素の数, 比べた画素の数, 最大の差)。
 
     バイトが同じ PNG は画素も同じなので、復号せずに返す (大半の絵はここで終わる)。
-    **ffmpeg を使わない** — 専用機には入っておらず (#1986 の実機で `ffmpeg が見つからない`)、
-    比べるためだけに入れさせるより、撮る側が書く PNG を自前で読むほうが小さい。
+    **ffmpeg を使わない** — #1986 の時点で専用機には入っておらず (実機で `ffmpeg が見つからない`・
+    のちに #2009 で入れた)、比べるためだけに入れさせるより、撮る側が書く PNG を自前で読むほうが
+    小さい。入った後も、比べる道具の前提を増やさない。
     """
     if base.read_bytes() == head.read_bytes():
         return 0, _pixel_count(head), 0
