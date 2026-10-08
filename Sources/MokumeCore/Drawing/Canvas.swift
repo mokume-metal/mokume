@@ -569,6 +569,13 @@ public final class Canvas {
     /// 立体の頂点の置き場。**写した回数 (``GrowableBuffer/writes``) を検査が読む** (#1790)。
     let solidVertexStorage: GrowableBuffer
     private let solidIndexStorage: GrowableBuffer
+    /// 裏 → 表で描く置き場所の連なりを 1 回で描く添字の列の置き場 (``SolidSweep``・[#1947])。
+    /// 畳める連なりが無いフレームは写さない。
+    ///
+    /// [#1947]: https://github.com/mokume-metal/mokume/issues/1947
+    let solidSweepStorage: GrowableBuffer
+    /// 裏 → 表で描く置き場所の連なりを、添字の列で 1 回にまとめるか。検査が切り替える (``SolidSweepPolicy``)。
+    var sweepPolicy = SolidSweepPolicy.automatic
 
     /// いま開いている列が、どちらの並びから描かれるか。
     var openSource = VertexSource.flat
@@ -1534,6 +1541,13 @@ public final class Canvas {
         /// 手前の面が手前の形の裏面に捨てられる。描画パスも足さない — 同じパスの中で描く呼び出し
         /// が増えるだけで、列の数 (``Canvas/drawCallsInLastFrame``) は変わらない。
         ///
+        /// **描く呼び出しの数は、置き場所の数に比例しない** ([#1947](https://github.com/mokume-metal/mokume/issues/1947))。
+        /// 置き場所が多い連なりは、置き場所 1 つぶんの [裏 → 表] を 1 本の添字の列 (三角形の巻き方を
+        /// 入れ替えた写しと元) に並べ、連なり全体を 1 回のインスタンス描画で描く (``SolidSweep``)。
+        /// 置き場所 k の添字の列を描き切ってから k + 1 に移るので、並べ替えず、絵は変わらない。
+        /// 畳まないのは、置き場所が少ない連なり・頂点が形から求めた向きを持つ形・頂点を自分の置き場から読む列
+        /// (``Canvas/sweepPolicy``・``SolidSweep/paysOff(instances:passes:programLength:vertices:)``)。
+        ///
         /// **印を付ける所と、描き方を決める所は分かれている。** 印を付けるのは 4 か所 — 組み込みの
         /// 形・モデルをその場で置くとき、保持した形の中で置くとき (どちらも置いたスタイル)、焼いた
         /// 頂点を積むとき、保持した形を置き場所で置くとき (どちらも置き場所の色) — で、判定はどれも
@@ -1967,6 +1981,8 @@ public final class Canvas {
             stride: MemoryLayout<SolidVertex>.stride, minimum: 1024, label: "solidVertices")
         self.solidIndexStorage = storage(
             stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "solidIndices")
+        self.solidSweepStorage = storage(
+            stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "solidSweeps")
         self.flatInstanceStorage = storage(
             stride: MemoryLayout<FlatInstance>.stride, minimum: 256, label: "flatInstances")
         self.formInstanceStorage = storage(
@@ -3485,8 +3501,10 @@ public final class Canvas {
     ///
     /// **列の数 (``drawCallsInLastFrame``) とは別に数える。** 裏面が絵に出うる置き場所を持つ
     /// 立体の列は、列の中で置き場所ごと・部品ごとに裏 → 表の 2 回で描く (``Batch/backFaceParts``) ので、
-    /// 列の数は変わらずに呼び出しだけが増える。増えるのがその列だけであることを、絵ではなく
-    /// 数で確かめる ([#1549](https://github.com/mokume-metal/mokume/issues/1549))。
+    /// 列の数は変わらずに呼び出しだけが増える。置き場所が多い連なりは添字の列にして 1 回で描く
+    /// (``SolidSweep``) ので、増える数は置き場所の数に比例しない。増えるのがその列だけであることを、
+    /// 絵ではなく数で確かめる ([#1549](https://github.com/mokume-metal/mokume/issues/1549)・
+    /// [#1947](https://github.com/mokume-metal/mokume/issues/1947))。
     private(set) var drawsEncodedInLastFrame = 0
 
     /// 直前のフレームで積んだ平面の頂点の数。
@@ -3901,6 +3919,8 @@ public final class Canvas {
     private struct PreparedBatches {
         let geometry: GeometryBuffers
         let perBatch: BatchBuffers
+        /// 裏 → 表で描く置き場所の連なりを 1 回で描く添字の列 (``SolidSweep``)。
+        let sweeps: SweepUploads
     }
 
     /// 溜めた列の置き場を取る。列が無ければ `nil`。
@@ -3912,7 +3932,8 @@ public final class Canvas {
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
         return PreparedBatches(
             geometry: try uploadGeometry(reusing: bakedShadow?.solidUploads),
-            perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame))
+            perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame),
+            sweeps: try uploadSweeps())
     }
 
     /// 溜めた列をエンコーダへ積む。返すのは積んだ描く呼び出しの数 (``drawsEncodedInLastFrame``)。
@@ -4057,7 +4078,10 @@ public final class Canvas {
                     instanceCount: batch.instanceCount)
                 draws += 1
             } else if batch.drawsBackThenFront {
-                draws += encodeBackThenFront(batch, indices: geometry.solidIndices, on: encoder)
+                draws += encodeBackThenFront(
+                    batch, indices: geometry.solidIndices,
+                    sweeps: prepared.sweeps.draws(forBatch: index), sweepBuffer: prepared.sweeps.buffer,
+                    on: encoder)
             } else {
                 encodeSolidDraw(
                     run, instances: 0..<batch.instanceCount, indices: geometry.solidIndices,
@@ -4124,64 +4148,61 @@ public final class Canvas {
     /// 裏面が絵に出うる部品を持つ立体の列を、置き場所ごとに描く (``Batch/backFaceParts``)。
     /// 返すのは積んだ描く呼び出しの数。
     ///
-    /// 置き場所を置いた順に歩く。立つ部品が 1 つも無い置き場所は、続けて並んだものをまとめて
-    /// 列の捨て方 (``Batch/cullMode``) で 1 回で描く。立つ部品のある置き場所は、列の区間を記録した
-    /// 順に歩き、部品の外の区間と立っていない部品は 1 回、立っている部品は `.front` → `.back`
-    /// (内向きなら `.back` → `.front`) の 2 回で描く。部品は、置き場所に印があれば全部が、無ければ
-    /// 部品そのものに印のあるものだけが立つ。表の巻き方は列が決めてある (``Batch/frontFacing``) ので、
-    /// `.front` を捨てれば裏の面、`.back` を捨てれば表の面になる。置き場所は `baseInstance` で選ぶ —
-    /// 頂点関数の `instance_id` はこれを含むので、列の先頭から数えた番号のまま読める。
+    /// 置き場所を置いた順に歩き、描き方の同じ連なり (``SolidSweep/runs(instanceCount:marks:parts:)``)
+    /// ごとに描く。立つ部品が 1 つも無い連なりは、列の捨て方 (``Batch/cullMode``) で 1 回で描く。
+    /// 立つ部品のある連なりは、置き場所ごとに区間を記録した順に歩き
+    /// (``SolidSweep/passes(whole:shown:plainCull:)``)、部品の外の区間と立っていない部品は 1 回、立っている
+    /// 部品は `.front` → `.back` (内向きなら `.back` → `.front`) の 2 回で描く。部品は、置き場所に印があれば
+    /// 全部が、無ければ部品そのものに印のあるものだけが立つ。表の巻き方は列が決めてある
+    /// (``Batch/frontFacing``) ので、`.front` を捨てれば裏の面、`.back` を捨てれば表の面になる。置き場所は
+    /// `baseInstance` で選ぶ — 頂点関数の `instance_id` はこれを含むので、列の先頭から数えた番号のまま読める。
+    ///
+    /// **添字の列を組めた連なり (``SweepDraw``) は、置き場所ごとの描く順を 1 本の添字の列にして、連なり
+    /// 全体を 1 回で描く** ([#1947])。捨て方は `.back` に固定し、`.front` を捨てる区間は三角形の巻き方を
+    /// 入れ替えた写しで描く (``SolidSweep``)。1 つのインスタンス描画は置き場所 k を描き切ってから
+    /// k + 1 に移るので、置き場所どうしの順は置き場所ごとに描くときと同じである。
+    ///
+    /// [#1947]: https://github.com/mokume-metal/mokume/issues/1947
     private func encodeBackThenFront(
-        _ batch: Batch, indices: any MTLBuffer, on encoder: any MTL4RenderCommandEncoder
+        _ batch: Batch, indices: any MTLBuffer, sweeps: [Int: SweepDraw],
+        sweepBuffer: (any MTLBuffer)?, on encoder: any MTL4RenderCommandEncoder
     ) -> Int {
         let run = batch.run
-        let whole =
-            run.isIndexed
-            ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
-        var parts: [SolidPart] = []
-        var alwaysShown: [SolidPart] = []
-        for part in batch.backFaceParts
-        where part.isIndexed == run.isIndexed && !part.range.isEmpty
-            && whole.contains(part.range.lowerBound) && part.range.upperBound <= whole.upperBound
-        {
-            parts.append(part)
-            if part.showsBackFaces { alwaysShown.append(part) }
-        }
+        let parts = SolidSweep.Parts(run: run, backFaceParts: batch.backFaceParts)
         var draws = 0
         func draw(_ range: Range<Int>?, _ culled: MTLCullMode, _ instances: Range<Int>) {
             encoder.setCullMode(culled)
             encodeSolidDraw(run, section: range, instances: instances, indices: indices, on: encoder)
             draws += 1
         }
-        var marks = batch.backFaceInstances[...]
-        var waiting: Int?
-        for instance in 0..<batch.instanceCount {
-            var marked = false
-            while let next = marks.first, next <= instance {
-                if next == instance { marked = true }
-                marks = marks.dropFirst()
-            }
-            let shown = marked ? parts : alwaysShown
-            guard !shown.isEmpty else {
-                if waiting == nil { waiting = instance }
+        let runs = SolidSweep.runs(
+            instanceCount: batch.instanceCount, marks: batch.backFaceInstances, parts: parts)
+        for item in runs {
+            if item.kind == .plain {
+                draw(nil, batch.cullMode, item.instances)
                 continue
             }
-            if let start = waiting {
-                draw(nil, batch.cullMode, start..<instance)
-                waiting = nil
+            if let sweepBuffer, let sweep = sweeps[item.instances.lowerBound],
+                sweep.instances == item.instances
+            {
+                let stride = MemoryLayout<UInt32>.stride
+                encoder.setCullMode(.back)
+                encoder.drawIndexedPrimitives(
+                    primitiveType: .triangle, indexCount: sweep.indexCount, indexType: .uint32,
+                    indexBuffer: sweepBuffer.gpuAddress + UInt64(sweep.indexStart * stride),
+                    indexBufferLength: sweep.indexCount * stride,
+                    instanceCount: item.instances.count, baseVertex: 0,
+                    baseInstance: item.instances.lowerBound)
+                draws += 1
+                continue
             }
-            let only = instance..<(instance + 1)
-            var cursor = whole.lowerBound
-            for part in shown {
-                if part.range.lowerBound > cursor { draw(cursor..<part.range.lowerBound, batch.cullMode, only) }
-                for culled in part.insideOut ? [MTLCullMode.back, .front] : [.front, .back] {
-                    draw(part.range, culled, only)
-                }
-                cursor = part.range.upperBound
+            let passes = SolidSweep.passes(
+                whole: parts.whole, shown: parts.shown(for: item.kind), plainCull: batch.cullMode)
+            for instance in item.instances {
+                let only = instance..<(instance + 1)
+                for pass in passes { draw(pass.range, pass.cull, only) }
             }
-            if cursor < whole.upperBound { draw(cursor..<whole.upperBound, batch.cullMode, only) }
         }
-        if let start = waiting { draw(nil, batch.cullMode, start..<batch.instanceCount) }
         return draws
     }
 
