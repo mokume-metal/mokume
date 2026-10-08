@@ -65,7 +65,10 @@ extension Sketch {
     ///
     /// ## 後始末を通らずに終わったとき
     ///
-    /// `kill -9` やクラッシュで落ちると、外す処理は走らない。
+    /// `kill -9` やクラッシュで落ちると、外す処理は走らない。**それでもカーソルは戻る** —
+    /// プロセスが無くなれば OS が戻す。捕まえたまま `kill -9` で終えて戻ることを、手元の macOS で
+    /// 確かめた ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。戻すための道具は
+    /// 要らない。
     public func requestPointerLock() {
         runningSketch?.pointerLockRequested = true
     }
