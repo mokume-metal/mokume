@@ -44,6 +44,14 @@ public final class InputState {
     /// 数えるので、1 フレームにまとめて届いても取りこぼしも重複も起きない。
     public private(set) var dragX: Float = 0
     public private(set) var dragY: Float = 0
+    /// 動いた量 (このフレームぶん)。**押しているかによらず数える。**
+    ///
+    /// 足すのは移動の出来事だけで、``dragX`` と同じく**押下・解放の飛びは数えない**。位置の
+    /// 移動 (`mouseMoved`) は当てる前の位置との差を、相対の移動 (`mouseMovedBy`) はその量を
+    /// 足す — 後者は位置を動かさないので、``x`` の差からは読めない
+    /// ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    public private(set) var movedX: Float = 0
+    public private(set) var movedY: Float = 0
     /// 押されているキー。
     public private(set) var pressedKeys: Set<Key> = []
     /// 最後に押されたか離されたキー。まだ何も来ていなければ `nil`。
@@ -96,6 +104,8 @@ public final class InputState {
         scrollY = 0
         dragX = 0
         dragY = 0
+        movedX = 0
+        movedY = 0
         let events = pending
         pending.removeAll(keepingCapacity: true)
         for event in events {
@@ -130,16 +140,17 @@ public final class InputState {
             if before.isMouseDown { dispatch(.mouseClicked) }
         case .mouseMoved(let x, let y):
             // **窓にしか無い情報を使わずに、押下状態から導く。** 窓は押している間の
-            // 移動を `mouseDragged` として拾うが、合流点へは 6 種別しか流れないので
+            // 移動を `mouseDragged` として拾うが、合流点へは窓の出来事の区別が流れないので
             // (`SketchSurface` が `.mouseMoved` へ写す)、外から送れるものと同じ材料で
             // 分けられる。移動は押下状態を変えないので、当てる前と後で同じ
             //
-            // **引きずった量は当てる前との差**。dragX はフレームの頭から足し込むので、
+            // **動いた量は当てる前との差**。dragX / movedX はフレームの頭から足し込むので、
             // ここから読むとその出来事までの部分累計になる ([ADR-0034] 決定 5)
-            dispatch(
-                before.isMouseDown
-                    ? .mouseDragged(deltaX: x - before.x, deltaY: y - before.y)
-                    : .mouseMoved)
+            dispatchMotion(deltaX: x - before.x, deltaY: y - before.y, before: before, to: dispatch)
+        case .mouseMovedBy(let dx, let dy):
+            // **位置を持たない移動も、同じ分け方で配る** (#1144)。差を作らずに量そのものを
+            // 渡す — 位置は動かないので、当てる前との差は常に 0 になる
+            dispatchMotion(deltaX: dx, deltaY: dy, before: before, to: dispatch)
         case .keyDown(_, let characters, _):
             dispatch(.keyPressed)
             // **文字を生むキーだけが打鍵になる。** 矢印やファンクションキーでは呼ばない
@@ -149,6 +160,22 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             // 1 件ぶんが出来事にそのまま載っているので、控えずに渡せる
             dispatch(.mouseWheel(deltaX: dx, deltaY: dy))
+        }
+    }
+
+    /// 移動 1 件が生む呼び出し。押していれば引きずり、押していなければ移動とその量が続く。
+    ///
+    /// **`mouseMoved` の直後に量を続ける** (``InputCallback/mouseMovedBy(deltaX:deltaY:)``)。
+    /// 引数なしの `mouseMoved()` は残し、量の要る書き手は引数のある口を書く — 置き換えると、
+    /// 引数なしで書いた作品が黙って呼ばれなくなる (ADR-0034 決定 5 の追補 (2026-10-07))。
+    private func dispatchMotion(
+        deltaX: Float, deltaY: Float, before: Before, to dispatch: (InputCallback) -> Void
+    ) {
+        if before.isMouseDown {
+            dispatch(.mouseDragged(deltaX: deltaX, deltaY: deltaY))
+        } else {
+            dispatch(.mouseMoved)
+            dispatch(.mouseMovedBy(deltaX: deltaX, deltaY: deltaY))
         }
     }
 
@@ -187,13 +214,13 @@ public final class InputState {
             self.button = button
             isMouseDown = false
         case .mouseMoved(let x, let y):
-            // 押されている間の移動だけを引きずった量へ足す (押下では増やさない)
-            if isMouseDown {
-                dragX += x - self.x
-                dragY += y - self.y
-            }
+            accumulateMotion(deltaX: x - self.x, deltaY: y - self.y)
             self.x = x
             self.y = y
+        case .mouseMovedBy(let dx, let dy):
+            // **位置は動かさない** (#1144)。捕まえている間の窓は位置を名乗らないので、
+            // ここで足し込むと mouseX が捕まえた点から離れていく
+            accumulateMotion(deltaX: dx, deltaY: dy)
         case .scrolled(let dx, let dy):
             scrollX += dx
             scrollY += dy
@@ -206,6 +233,18 @@ public final class InputState {
         case .keyUp(let code):
             pressedKeys.remove(code)
             lastKey = code
+        }
+    }
+
+    /// 移動 1 件の量を足し込む。動いた量はいつも、引きずった量は押されている間だけ
+    /// (押下では増やさない)。**配る量 (``dispatchMotion(deltaX:deltaY:before:to:)``) と同じ値を
+    /// 同じ順で足す**ので、1 件ぶんの和はフレーム合計と食い違わない。
+    private func accumulateMotion(deltaX: Float, deltaY: Float) {
+        movedX += deltaX
+        movedY += deltaY
+        if isMouseDown {
+            dragX += deltaX
+            dragY += deltaY
         }
     }
 }

@@ -10,7 +10,7 @@ import Testing
 ///
 /// どの出来事がどの呼び出しになるかは ``InputState`` が決め、`InputCallbackTests` が
 /// 固めている。ここが見るのはその先 — 呼び出しを `Sketch` のメソッドへ配る `switch`
-/// (``SketchRuntime`` の `deliver`) で、**9 つのメソッドへの唯一の写し**である。
+/// (``SketchRuntime`` の `deliver`) で、**10 のメソッドへの唯一の写し**である。
 /// `keyPressed` と `keyReleased` を取り違えても、`mouseDragged` の 2 つの引数を入れ替えても
 /// 型は合うので、コンパイルは通り、`InputState` を見る検査も緑のままになる
 /// ([#1386](https://github.com/mokume-metal/mokume/issues/1386))。
@@ -34,6 +34,8 @@ struct CallbackDeliveryTests {
         case mouseReleased
         case mouseClicked
         case mouseMoved
+        /// `mouseMoved(deltaX:deltaY:)`。Swift は同じ基底名の case を 2 つ持てないので綴りを変える
+        case mouseMovedBy(deltaX: Float, deltaY: Float)
         case mouseDragged(deltaX: Float, deltaY: Float)
         case mouseWheel(deltaX: Float, deltaY: Float)
         /// どのキーが動いたかは ``Sketch/keyCode`` から読む (口の約束どおり)。
@@ -58,6 +60,9 @@ struct CallbackDeliveryTests {
         func mouseReleased() { calls.append(.mouseReleased) }
         func mouseClicked() { calls.append(.mouseClicked) }
         func mouseMoved() { calls.append(.mouseMoved) }
+        func mouseMoved(deltaX: Float, deltaY: Float) {
+            calls.append(.mouseMovedBy(deltaX: deltaX, deltaY: deltaY))
+        }
         func mouseDragged(deltaX: Float, deltaY: Float) {
             calls.append(.mouseDragged(deltaX: deltaX, deltaY: deltaY))
         }
@@ -101,6 +106,7 @@ struct CallbackDeliveryTests {
         try send(
             #"""
             {"type":"mouseMoved","x":10,"y":12},
+            {"type":"mouseMovedBy","dx":-3,"dy":7},
             {"type":"mouseDown","x":10,"y":12,"button":0},
             {"type":"mouseMoved","x":13,"y":16},
             {"type":"mouseMoved","x":8,"y":22},
@@ -118,6 +124,11 @@ struct CallbackDeliveryTests {
                 .setup,
                 .draw(frame: 1),
                 .mouseMoved,
+                // 移動の直後に、その 1 件の量が続く。横と縦を取り違えると (12, 10) になる
+                .mouseMovedBy(deltaX: 10, deltaY: 12),
+                // 位置を持たない移動も同じ 2 つを呼ぶ。位置は動かないので次の押下の量は変わらない
+                .mouseMoved,
+                .mouseMovedBy(deltaX: -3, deltaY: 7),
                 .mousePressed,
                 // 1 件で動いた量 (当てる前の位置との差)。横と縦を取り違えると (4, 3) になる
                 .mouseDragged(deltaX: 3, deltaY: 4),

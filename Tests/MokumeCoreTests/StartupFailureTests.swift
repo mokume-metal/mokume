@@ -43,6 +43,17 @@ struct StartupFailureTests {
         ("invalidPixelDensity", .invalidPixelDensity(1.5)),
         ("invalidFrameRate", .invalidFrameRate(0)),
         ("invalidWindowScale", .invalidWindowScale(0)),
+        ("invalidDisplay", .invalidDisplay(0)),
+        (
+            "displayNotConnected",
+            .displayNotConnected(
+                2,
+                connected: [
+                    Display(
+                        number: 1, name: "Built-in Retina Display", width: 3600, height: 2260,
+                        screenID: 1)
+                ])
+        ),
         ("invalidCount", .invalidCount(-1)),
         ("shaderSourceMissing", .shaderSourceMissing(name: "Shapes.metal")),
         (

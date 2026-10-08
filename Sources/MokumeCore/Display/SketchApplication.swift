@@ -323,8 +323,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **頼みは時計と画面の出口の両方を決める。** 時計だけ差し替えて窓を開くと、窓が受けた
     /// 入力が作品に届き、同じ引数から同じ動きが出なくなる (``ScreenOutlet/render(_:)``)。
     ///
-    /// - Parameter render: 書き出しの頼み。`nil` ならいつもの窓の経路。
-    init(sketch: any Sketch, gpu: RenderDevice, render: RenderRequest?) throws(RenderFailure) {
+    /// - Parameters:
+    ///   - render: 書き出しの頼み。`nil` ならいつもの窓の経路。
+    ///   - displays: ディスプレイの一覧の出どころ (全画面で出す先を選ぶ・#2020)。既定はいま
+    ///     繋がっているもの。**検査から差し替える。**
+    init(
+        sketch: any Sketch, gpu: RenderDevice, render: RenderRequest?,
+        displays: () -> [Display] = { Display.connected }
+    ) throws(RenderFailure) {
         self.gpu = gpu
         self.title = sketch.settings.title
         // **刻みは頼みから採る。** 撮る係の刻みも時計から決まる (`SketchRuntime.launchFrameRate`)
@@ -332,7 +338,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let clock: Clock = render.map { .frameIndex(frameRate: $0.frameRate) } ?? .wallClock
         self.clock = clock
         self.outlet = render.map(ScreenOutlet.render) ?? .pendingWindow
-        let runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: clock)
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
+            displays: displays)
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
@@ -473,7 +481,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
         guard SharedFrameSurface.isEnabled(at: directory, owner: owner) else { return }
         runtime.relayToolInput(from: StandardInputEvents(descriptor: toolInput))
-        if let shared = attachSharedSurface(at: directory, owner: owner) { outlet = .shared(shared) }
+        guard let shared = attachSharedSurface(at: directory, owner: owner) else { return }
+        outlet = .shared(shared)
+        // **全画面の頼みに応えられないことを、黙らない** (#2020)。作品の窓は道具が持つので
+        // ([ADR-0032] 決定 1)、こちらからは全画面にできない。描く大きさはディスプレイから
+        // 決めてあるので、道具の窓を手で全画面にすれば合う。道具が宣言に従って全画面に
+        // する扱いは #2188
+        if let display = runtime.fullScreenDisplay {
+            announce(
+                "The sketch asks for full screen on display \(display.number) (\(display.name)), "
+                    + "but \(owner ?? "the tool") holds the window — put that window into full "
+                    + "screen by hand; saving keeps it so")
+        }
     }
 
     /// 道具の窓が拾った出来事が来る管。**本番は標準入力** — 見張りが子の標準入力に引く
@@ -483,6 +502,17 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 人へ 1 行伝える口。**検査から差し替える** (言ったかどうかを数えるため)。
     var announce: @MainActor (String) -> Void = { Diagnostics.warn($0) }
+
+    /// 全画面で出すディスプレイの画面を引く口 (#2020)。外れていれば `nil`。
+    ///
+    /// **検査から差し替える** — 検査が注入した一覧のディスプレイは、この機械の画面に無い。
+    var screenForDisplay: @MainActor (Display) -> NSScreen? = { Display.screen(for: $0) }
+
+    /// 窓を全画面にする口 (#2020)。
+    ///
+    /// **検査から差し替える** — 既定のままでは、検査を走らせた機械の画面が全画面の操作
+    /// スペースへ切り替わる。
+    var enterFullScreen: @MainActor (NSWindow) -> Void = { $0.toggleFullScreen(nil) }
 
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
@@ -524,15 +554,27 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         case .window: return
         case .pendingWindow: break
         }
-        // 窓は描く解像度 × 倍率で開く (既定 0.5)。描く解像度と窓の大きさは独立なので、
-        // どちらに合わせてもよい — 既定は大きな絵が画面からはみ出さない側にしてある
-        let requested = WindowPlacement.requestedSize(
-            width: runtime.target.width, height: runtime.target.height, scale: runtime.windowScale)
-        let window = WindowPlacement.makeWindow(
-            title: title, autosaveName: WindowPlacement.autosaveName,
-            defaultSize: requested)
-        // **覚えた大きさより、変わった指定を取る** (#1624)。変わっていなければ何もしない
-        WindowPlacement.honour(requested, in: window, autosaveName: WindowPlacement.autosaveName)
+        // **全画面なら、選んだディスプレイの画面に立てる** (#2020)。位置も開く大きさの指定も
+        // 覚えない — 置き場所は番号が決める (`WindowPlacement.makeFullScreenWindow`)
+        let fullScreenScreen = runtime.fullScreenDisplay.flatMap(screenForFullScreen(_:))
+        let window: NSWindow
+        if let fullScreenScreen {
+            window = WindowPlacement.makeFullScreenWindow(
+                title: title, on: fullScreenScreen,
+                canvas: NSSize(width: runtime.target.width, height: runtime.target.height))
+        } else {
+            // 窓は描く解像度 × 倍率で開く (既定 0.5)。描く解像度と窓の大きさは独立なので、
+            // どちらに合わせてもよい — 既定は大きな絵が画面からはみ出さない側にしてある
+            let requested = WindowPlacement.requestedSize(
+                width: runtime.target.width, height: runtime.target.height,
+                scale: runtime.windowScale)
+            window = WindowPlacement.makeWindow(
+                title: title, autosaveName: WindowPlacement.autosaveName,
+                defaultSize: requested)
+            // **覚えた大きさより、変わった指定を取る** (#1624)。変わっていなければ何もしない
+            WindowPlacement.honour(
+                requested, in: window, autosaveName: WindowPlacement.autosaveName)
+        }
 
         // 見張りが起こした入れ替えでは、窓を出しはするが前面は取らない (#679)
         let takesFocus = WindowPlacement.takesFocus(
@@ -572,6 +614,42 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 窓を開く時刻は起点にしない。速さを数え始めるのは最初のフレームが
         // 来たときである ([FrameTempo]) — 進み始める前に測ったことにすると、
         // 1 枚目で「1 枚 ÷ 待っていた時間」が出て 0.0 という嘘の数字になる
+
+        // **全画面は窓を前へ出した後に頼む** — 画面に出ていない窓には効かない。駆動源は窓の
+        // 居る画面を追うので、全画面の操作スペースへ移っても張り替えは要らない
+        if fullScreenScreen != nil { goFullScreen(window) }
+    }
+
+    /// 全画面で出す画面を引く (#2020)。
+    ///
+    /// **組み立ての後にディスプレイが外れていたら、窓で開くことを 1 行言って `nil` を返す。**
+    /// 組み立てが描く大きさを決めてから窓を出すまでの間にも、抜かれうる。そこから組み立てを
+    /// やり直す道は無く、黙って別の画面を全画面で塞ぐよりは、言ったうえで窓を出す。
+    private func screenForFullScreen(_ display: Display) -> NSScreen? {
+        if let screen = screenForDisplay(display) { return screen }
+        announce(
+            "Display \(display.number) (\(display.name)) went away before the window opened — "
+                + "opening a window instead of going full screen")
+        return nil
+    }
+
+    /// 窓を全画面にし、入ったら中身の大きさを描く大きさと突き合わせる (#2020)。
+    private func goFullScreen(_ window: NSWindow) {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidEnterFullScreen(_:)),
+            name: NSWindow.didEnterFullScreenNotification, object: window)
+        enterFullScreen(window)
+    }
+
+    /// 全画面に入った。**描く大きさと中身が食い違えば 1 行言う** (`WindowPlacement.fullScreenMismatch`)。
+    @objc private func windowDidEnterFullScreen(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        if let mismatch = WindowPlacement.fullScreenMismatch(
+            content: window.contentLayoutRect.size, scale: window.backingScaleFactor,
+            canvasWidth: runtime.target.width, canvasHeight: runtime.target.height)
+        {
+            announce(mismatch)
+        }
     }
 
     /// × を押された。**確かめている間は閉じない。**
@@ -669,6 +747,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // `terminate(_:)` が重なったとき) だけで、ここが最後の砦である
         runtime.closePlugins()
         screenLink.invalidate()
+        NotificationCenter.default.removeObserver(
+            self, name: NSWindow.didEnterFullScreenNotification, object: nil)
         // **返し忘れると、プロセスが終わるまで画面が消えなくなる**
         displaySleepBlock?.release()
         displaySleepBlock = nil
@@ -720,7 +800,19 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 呼んでくるので、描けば枚数 + 1 枚目が撮る係へ届く
         guard !rendersNoMore else { return }
         advanceAndPresent()
+        followPointerLockRequest()
         finishRenderIfDone()
+    }
+
+    /// スケッチの捕まえの要求を、自分の窓の面へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    ///
+    /// **自分の窓を持つ経路だけ。** 共有面の経路は要求を面の属性に載せて道具の窓へ渡し
+    /// (``presentFrame()``)、書き出す経路には窓が無いので、要求は誰にも読まれない。
+    /// 毎リフレッシュ渡すのは、窓が前に出たか・ポインタが面の上かが、要求と関係なく変わるため
+    /// である。
+    private func followPointerLockRequest() {
+        guard case .window(_, let surface, _) = outlet else { return }
+        surface.followPointerLock(requested: runtime.pointerLockRequested)
     }
 
     /// 書き出す経路で、もう描かないか。**決めた枚数を描いた後と、終わりに向かっている間。**
@@ -809,8 +901,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // **速さも一緒に渡す。** 数えているのはこちらで、読むのは道具である
             // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない。**名乗るのは
             // 前に焼いた 1 枚**で、いま焼く絵は次のリフレッシュで出る (#748)。止めている間も
-            // ここは毎リフレッシュ通るので、控えが出ないまま残ることはない
-            try shared.write(runtime.target, using: presenter, numbers: runtime.frameNumbers)
+            // ここは毎リフレッシュ通るので、控えが出ないまま残ることはない。捕まえの要求も
+            // 同じ面に載せて渡す — 捕まえるのは道具の窓である (#1144)
+            try shared.write(
+                runtime.target, using: presenter, numbers: runtime.frameNumbers,
+                pointerLock: runtime.pointerLockRequested)
         case .window(let window, let surface, let hasPresented):
             guard let layer = surface.metalLayer,
                 FramePresenter.shouldPresent(

@@ -181,6 +181,13 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/usesFrameHistory``
 - ``Upscale``
 
+### 全画面で出す
+
+- ``SketchSettings/fullScreen(_:)``
+- ``SketchSettings/fullScreenDisplay``
+- ``Sketch/displays``
+- ``Display``
+
 ### 下地と色
 
 - ``Sketch/background(_:)-2yb9n``
@@ -580,6 +587,10 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/scrollY``
 - ``Sketch/dragX``
 - ``Sketch/dragY``
+- ``Sketch/movedX``
+- ``Sketch/movedY``
+- ``Sketch/requestPointerLock()``
+- ``Sketch/exitPointerLock()``
 - ``Sketch/isKeyDown(_:)``
 - ``Sketch/key``
 - ``Sketch/keyCode``
@@ -589,6 +600,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/mouseClicked()``
 - ``Sketch/mouseWheel(deltaX:deltaY:)``
 - ``Sketch/mouseMoved()``
+- ``Sketch/mouseMoved(deltaX:deltaY:)``
 - ``Sketch/mouseDragged(deltaX:deltaY:)``
 - ``Sketch/keyPressed()``
 - ``Sketch/keyReleased()``
