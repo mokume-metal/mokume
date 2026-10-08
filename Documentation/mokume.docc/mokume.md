@@ -432,9 +432,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 ### TCP・UDP・WebSocket で他のアプリとやりとりする
 
+- ``Sketch/createServer(_:)``
+- ``Sketch/createServer(messages:)``
 - ``Sketch/createUDP(listen:send:)``
 - ``Sketch/createUDP(messages:)``
 - ``TextPort``
+- ``Server``
 - ``UDPPort``
 - ``NetworkFailure``
 

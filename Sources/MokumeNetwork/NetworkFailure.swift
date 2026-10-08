@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// ``UDPPort`` を作れなかったこと。
+/// ``Server``・``UDPPort`` を作れなかったこと。
 ///
 /// **作るときに投げ、フレームの間は投げない** ([ADR-0020] 決定 5)。投げるのは渡した値が
 /// そもそも使えないときだけで、ポートを他のアプリが使っているときは投げずに作り、

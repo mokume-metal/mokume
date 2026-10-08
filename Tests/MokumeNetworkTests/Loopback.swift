@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Network
+import Synchronization
+import Testing
 
 @testable import MokumeNetwork
 
@@ -54,3 +57,71 @@ struct TextOutcome: Equatable {
 
 /// 送る文字列の台本。大きさを動かし、当たりを数える。
 let textScript = ["0.25", "hit", "0.75", "fade", "hit"]
+
+/// 受け始めるまで待って、実際に開いたポートを返す。
+func boundPort(of server: Server, source: StreamSource) async throws -> Int {
+    #expect(await until { server.state == .running })
+    return try #require(source.boundPort)
+}
+
+/// フレームを回すように取り出しを続け、繋いでいる相手の数が `count` になるまで (か期限まで) 待つ。
+func clients(_ server: Server, reach count: Int) async -> Bool {
+    await until {
+        server.supply()
+        return server.clientCount == count
+    }
+}
+
+/// 127.0.0.1 のポートへ TCP で繋ぐ相手 (`nc` の代わり)。届いたバイト列を溜める。
+nonisolated final class StreamClient: @unchecked Sendable {
+    // `@unchecked Sendable`: 可変の状態は錠の内側だけ。手続きは ``queue`` で走る。
+    private let queue = DispatchQueue(label: "org.mokume.test.client")
+    private let connection: NWConnection
+    private let bytes = Mutex<[UInt8]>([])
+    private let ready = Mutex(false)
+    private let ended = Mutex(false)
+
+    init(port: Int) {
+        connection = NWConnection(
+            host: "127.0.0.1", port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any, using: .tcp)
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .ready = state { self?.ready.withLock { $0 = true } }
+        }
+        connection.start(queue: queue)
+        receive()
+    }
+
+    /// 繋がったか。
+    var isReady: Bool { ready.withLock { $0 } }
+    /// 届いたバイト列を文字列にしたもの。
+    var received: String { String(decoding: bytes.withLock { $0 }, as: UTF8.self) }
+    /// 向こうが閉じたか。
+    var closedByPeer: Bool { ended.withLock { $0 } }
+
+    func send(_ text: String) { send(Array(text.utf8)) }
+
+    func send(_ raw: [UInt8]) {
+        connection.send(content: Data(raw), completion: .idempotent)
+    }
+
+    /// 送る向きを閉じる (送ったものの後に、終わりの印が届く)。受ける向きは開いたまま。
+    func finish() {
+        connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .idempotent)
+    }
+
+    /// 繋ぎを切る。
+    func close() { connection.cancel() }
+
+    private func receive() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+            [weak self] content, _, isComplete, error in
+            guard let self else { return }
+            if let content { bytes.withLock { $0 += content } }
+            if isComplete || error != nil {
+                ended.withLock { $0 = true }
+                return
+            }
+            receive()
+        }
+    }
+}

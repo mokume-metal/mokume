@@ -5,7 +5,8 @@ import Foundation
 import MokumeCore
 import MokumeDiagnostics
 
-/// 文字列で他のアプリや機械とやりとりする入り口に共通の口。``UDPPort`` (UDP) がこれを継ぐ。
+/// 文字列で他のアプリや機械とやりとりする入り口に共通の口。``Server`` (TCP) と ``UDPPort`` (UDP)
+/// がこれを継ぐ。
 ///
 /// 毎フレーム呼ぶ口は無い。`draw()` の前に、前のフレームの後に届いた文字列が**全部**、
 /// 届いた順に ``messages`` へ入っている ([ADR-0024] 決定 6)。最新の 1 つだけではないので、
@@ -13,24 +14,24 @@ import MokumeDiagnostics
 ///
 /// ```swift
 /// final class Remote: Sketch {
-///     var udp: UDPPort?
+///     var server: Server?
 ///     var size: Float = 0.5
-///     func setup() { udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
+///     func setup() { server = try? createServer(5204) }
 ///     func draw() {
-///         for text in udp?.messages ?? [] {
-///             size = Float(text) ?? size   // 0.3 のような数だけを読む
+///         for line in server?.messages ?? [] {
+///             size = Float(line) ?? size   // 0.3 のような数だけを読む
 ///         }
 ///         circle(width / 2, height / 2, size * height)
 ///     }
-///     func mousePressed() { udp?.send("hit") }
 /// }
 /// ```
 ///
 /// ## 1 つのメッセージ
 ///
-/// | 方式 | 1 つのメッセージ |
-/// | --- | --- |
-/// | UDP | 1 つの datagram |
+/// | 方式 | 1 つのメッセージ | 送る向き |
+/// | --- | --- | --- |
+/// | TCP (``Sketch/createServer(_:)``) | 改行で区切った 1 行 | ``Server/write(_:)`` — 繋いでいる相手全員へ |
+/// | UDP (``Sketch/createUDP(listen:send:)``) | 1 つの datagram | ``UDPPort/send(_:)`` — 作るときに決めた宛先へ |
 ///
 /// **末尾の改行は落とす。** `nc` で打った `0.3⏎` は、そのまま `Float(text)` で読める。
 /// **UTF-8 として読めないものは捨てる** — 推して読むと、黙って別の文字列を渡すからである。
@@ -57,10 +58,10 @@ import MokumeDiagnostics
 /// この入り口は、走っているスケッチを外から観測・操作する面 ([ADR-0018]) ではない。あちらは
 /// socket もポートも新設せず、作業ディレクトリのファイルだけでやりとりすると決めている
 /// (決定 1)。この入り口は、作品が自分で開く**外からの入力**の 1 つで、カメラや OSC と同じ入り口
-/// (``Inlet``) を通る。ポートが開くのは作品が作る口 (``Sketch/createUDP(listen:send:)`` ほか)
-/// を呼んだときだけで、mokume の実行や観測がポートを開くことはない。エージェントが値を差し込んで
-/// 絵を確かめるときは、ポートではなく観測の面と、記録した列の注入 (``Sketch/createUDP(messages:)``
-/// ほか) を使う。
+/// (``Inlet``) を通る。ポートが開くのは作品が作る口 (``Sketch/createServer(_:)`` ほか) を
+/// 呼んだときだけで、mokume の実行や観測がポートを開くことはない。エージェントが値を差し込んで
+/// 絵を確かめるときは、ポートではなく観測の面と、記録した列の注入
+/// (``Sketch/createServer(messages:)``・``Sketch/createUDP(messages:)``) を使う。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
