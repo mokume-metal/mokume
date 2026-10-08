@@ -47,6 +47,8 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 最初の適用は色相・彩度・明度で、Processing は 3 成分とも 0–255、p5 は 360 / 100 / 100 と割れていた。[ADR-0033](0033-color-specification-surface.md) 決定 5 は後者に近い側 (度と百分率) を採り、理由として CSS・Figma・Photoshop が同じ組を使うことを挙げている。
 
+次の適用は音の合成とエフェクト ([#1980](https://github.com/mokume-metal/mokume/issues/1980)) で、Processing Sound は波形・フィルタごとの型 (`SinOsc`・`LowPass`・`Reverb` ほか)、p5.sound は波形を引数で選ぶ少数の型 (`p5.Oscillator`・`p5.Noise` ほか) と割れていた。[ADR-0042](0042-camera-and-audio-standard.md) 決定 6 が到達点を「Processing Sound と並ぶところまで」と名指ししていて、Processing Sound の口とは 1 対 1 に並べられるので、その型名を採った。代償は公開の型が増えること (説明文を 1 か所に持つ基底を含めて 18)。
+
 手本が割れていない部分の判定はリファレンスを引くだけで済み、裁量が入らない。この規則により `noFill()` と `loadImage(from:)` が同じライブラリに同居することは「不統一」ではなく**二層の設計**として説明でき、新しい API を足すときの判断も自動になる。
 
 下の層が上の層の転送先である場合に限り、同じ名前・同じ引数ラベルを許す — 転送の対称性を検査で確かめられる形を保つためで、**下の層の新規 API は Guidelines に完全準拠**とする。

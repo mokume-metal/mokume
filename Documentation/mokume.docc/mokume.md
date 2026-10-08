@@ -387,6 +387,39 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/loadSound(_:)``
 - ``SoundFile``
 
+### 音を合成する
+
+- ``Sketch/createSinOsc()``
+- ``Sketch/createSqrOsc()``
+- ``Sketch/createTriOsc()``
+- ``Sketch/createSawOsc()``
+- ``Sketch/createWhiteNoise()``
+- ``Sketch/createPinkNoise()``
+- ``Sketch/createEnv()``
+- ``Sketch/createLowPass()``
+- ``Sketch/createHighPass()``
+- ``Sketch/createBandPass()``
+- ``Sketch/createReverb()``
+- ``Sketch/createDelay()``
+- ``SynthSound``
+- ``SynthSource``
+- ``Oscillator``
+- ``SinOsc``
+- ``SqrOsc``
+- ``TriOsc``
+- ``SawOsc``
+- ``Noise``
+- ``WhiteNoise``
+- ``PinkNoise``
+- ``Env``
+- ``SoundEffect``
+- ``Filter``
+- ``LowPass``
+- ``HighPass``
+- ``BandPass``
+- ``Reverb``
+- ``Delay``
+
 ### OSC で他の道具とやりとりする
 
 - ``Sketch/createOSC(listen:send:)``

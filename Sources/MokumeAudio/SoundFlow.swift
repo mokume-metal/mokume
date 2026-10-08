@@ -6,8 +6,8 @@ import AVFAudio
 /// 音の流れ。鳴らす音源の節を受け、混ぜて出力の機材へ出す。
 ///
 /// **音の流れは音のターゲットが持ち、本体に差込口を足さない** ([ADR-0042] 決定 6)。音は絵の
-/// フレームの前でも後でもなく、OS の音の時計で進むためである。再生 (``FilePlayer``) はここへ
-/// 節を入れる音源の 1 つで、合成とエフェクト (#1980) も同じ流れへ節を足す形で載る。
+/// フレームの前でも後でもなく、OS の音の時計で進むためである。再生 (``FilePlayer``) と、
+/// 合成とエフェクト (``RackPlayer``) は、ここへ節を入れる音源である。
 ///
 /// `AVAudioEngine` を持つのはここだけで、節の繋ぎ方 (混ぜる節の空いた入口へ繋ぐ) もここに閉じる。
 ///
@@ -47,6 +47,12 @@ final class SoundFlow {
         else { throw AudioFailure.invalidSampleRate(Float(sampleRate)) }
         try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: maximumFrames)
         return SoundFlow(engine: engine, isOffline: true)
+    }
+
+    /// 合成した音を作る標本化率 (Hz)。機材に出さない流れは、描かせる形式の標本化率に合わせて、
+    /// 変換を挟まない。実機へ出す流れは 48000 で、出力の機材と違えば混ぜる節が変換する。
+    var synthesisRate: Double {
+        isOffline ? engine.manualRenderingFormat.sampleRate : 48_000
     }
 
     /// 動いているか。出力の機材が替わる (標本化率やチャンネル数が変わる) と、流れは自分で止まる。
