@@ -36,7 +36,7 @@ extension Sketch {
     /// ということでもある。走らせたままファイルを差し替えれば、次の読み込みからそちらが出る。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
-    // shot: 撮れない 読む先の画像ファイルが要る (このリポジトリは画像を持たず、撮る側は例の import を通さないので、例が自分で書き出して読むこともできない)
+    // shot: 撮れない 読む先の画像ファイルが要る (このリポジトリは画像を持たず、撮る側は例の import を通さないので、例が自分で書き出して読むこともできない・#2216)
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         try canvas.loadImage(path)
     }
