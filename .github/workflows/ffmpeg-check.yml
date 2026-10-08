@@ -1,0 +1,122 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: FFmpeg check (throwaway)
+
+# #2009 の確認用の使い捨て。専用機 (self-hosted runner `mokume-render`) の job の中から
+# ffmpeg が見えるかを確かめる。結果を Issue に書いたら、この PR は閉じて枝を消す (main へは入れない)。
+# 専用機には SSH で入れない (#1767) ので、同じリポジトリの PR (ADR-0019 決定 7 の段階 B) の経路を使う。
+# 秘密も token も持たず、checkout もしない (リポジトリのコードは走らせない)。
+# リポジトリは public でログも公開されるので、ホームのパスは `~` に畳んで出す。
+
+on:
+  pull_request:
+    types: [opened]
+    paths: [.github/workflows/ffmpeg-check.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 5
+    steps:
+      # 完了条件 1。これが赤でも、ほかの step は原因を探す材料になる (if: always())
+      - name: ffmpeg -version (完了条件 1)
+        run: |
+          ffmpeg -version
+          ffprobe -version | head -1
+
+      - name: 場所と PATH の通り方 (完了条件 2)
+        if: always()
+        run: |
+          fold() { sed "s#$HOME#~#g"; }
+          echo "arch=$(uname -m) macOS=$(sw_vers -productVersion)"
+          echo "--- type -a (PATH 上の全候補)"
+          { type -a ffmpeg ffprobe 2>&1 || echo "(見つからない)"; } | fold
+          echo "--- 実体の解決先"
+          if p=$(command -v ffmpeg); then
+            python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$p" | fold
+          else
+            echo "(ffmpeg が PATH に無い)"
+          fi
+          echo "--- job の PATH"
+          echo "$PATH" | fold
+          echo "--- runner が起動時に読む PATH の定義"
+          root="$(cd "$RUNNER_TEMP/../.." && pwd)"
+          echo "runner root: $(echo "$root" | fold)"
+          if [ -f "$root/.path" ]; then
+            echo ".path: $(fold < "$root/.path")"
+          else
+            echo ".path: (無い)"
+          fi
+          if [ -f "$root/.env" ]; then
+            echo ".env の PATH 行:"
+            { grep '^PATH=' "$root/.env" || echo "(PATH 行は無い)"; } | fold
+          fi
+
+      - name: 入れた経路 (Homebrew の受領書)
+        if: always()
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1
+          echo "brew: $(command -v brew || echo '(job の PATH に無い)')"
+          p=$(command -v ffmpeg) || { echo "(ffmpeg が PATH に無い)"; exit 0; }
+          python3 - "$p" <<'PY'
+          import json, os, sys, time
+          home = os.path.expanduser("~")
+          fold = lambda s: s.replace(home, "~")
+          keg = os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[1])))
+          path = os.path.join(keg, "INSTALL_RECEIPT.json")
+          if not os.path.exists(path):
+              print("INSTALL_RECEIPT.json が無い (Homebrew 以外の入れ方):", fold(keg))
+              raise SystemExit(0)
+          r = json.load(open(path))
+          print("keg:", fold(keg))
+          print("version:", os.path.basename(keg))
+          print("tap:", r.get("source", {}).get("tap"))
+          print("installed_on_request:", r.get("installed_on_request"))
+          print("installed_as_dependency:", r.get("installed_as_dependency"))
+          print("poured_from_bottle:", r.get("poured_from_bottle"))
+          print("homebrew_version:", r.get("homebrew_version"))
+          t = r.get("time")
+          print("installed_at:", time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(t)) if t else None)
+          PY
+          if command -v brew >/dev/null; then
+            echo "--- brew list --versions ffmpeg"
+            brew list --versions ffmpeg || true
+          fi
+
+      - name: リポジトリの検査が見る形 (shutil.which) と必要な filter
+        if: always()
+        run: |
+          python3 -c 'import shutil; print("shutil.which(ffmpeg) =", shutil.which("ffmpeg")); print("shutil.which(ffprobe) =", shutil.which("ffprobe"))'
+          ffmpeg -hide_banner -filters 2>/dev/null | grep -E ' (blend|palettegen|paletteuse|scale) ' || true
+
+      # Issue が #1986 の用途として挙げた形: 画素の差を rgba の rawvideo で受けて数える
+      - name: 画素の差を rawvideo で数える煙テスト
+        if: always()
+        run: |
+          d=$(mktemp -d)
+          ffmpeg -v error -f lavfi -i "color=c=red:s=4x4,format=rgba" -frames:v 1 "$d/a.png"
+          ffmpeg -v error -f lavfi -i "color=c=blue:s=4x4,format=rgba" -frames:v 1 "$d/b.png"
+          count() {
+            ffmpeg -v error -i "$1" -i "$2" -filter_complex "blend=all_mode=difference,format=rgba" \
+              -f rawvideo -pix_fmt rgba - | python3 -c 'import sys; d=sys.stdin.buffer.read(); print(len(d), sum(1 for b in d if b))'
+          }
+          same=$(count "$d/a.png" "$d/a.png")
+          diff=$(count "$d/a.png" "$d/b.png")
+          echo "同じ絵どうし (バイト数 差のあるバイト数): $same"
+          echo "違う絵どうし (バイト数 差のあるバイト数): $diff"
+          [ "$same" = "64 0" ]
+          [ "${diff%% *}" = "64" ] && [ "${diff##* }" -gt 0 ]
+
+      # 参考。ADR-0019 決定 7「専用機はネットワークで隔離」が、入れた後に元へ戻っているかを
+      # 読む手がかり (ステータスだけを出す。期待値は決めない — 隔離の定義はメンテナが持つ)
+      - name: 外への到達 (参考)
+        if: always()
+        run: |
+          for url in https://api.github.com https://formulae.brew.sh https://example.com; do
+            code=$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' "$url" 2>&1 || true)
+            echo "$url -> $code"
+          done
