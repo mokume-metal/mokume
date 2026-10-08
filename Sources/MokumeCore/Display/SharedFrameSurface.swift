@@ -105,6 +105,20 @@ final class SharedFrameSurface {
         static let frameTimeMs = "mokume.frameTimeMs"
     }
 
+    /// スケッチがカーソルを捕まえるよう頼んでいるかを載せる属性の名前 (1 で頼んでいる)
+    /// ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    ///
+    /// **捕まえるのは道具の窓である** ([ADR-0032] 決定 4 の追補 (2026-10-07))。要求を出すのは
+    /// 子なので、どこかで子から道具へ渡す必要がある — 速さ (``TempoAttribute``) と同じく絵と
+    /// 同じ面に載せれば、通信路は 1 本も増えない (決定 3)。道具はどの面が新しいかを決めるために
+    /// 既に面の属性を引いているので、読む側の往復も増えない。
+    ///
+    /// **載っていなければ頼んでいない。** 古いライブラリの子は載せないので、道具の窓は捕まえ
+    /// ない。古い道具は知らない属性を読まないので、見張りの下では捕まえないまま動く。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static let pointerLockAttribute = "mokume.pointerLock"
+
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
@@ -203,7 +217,7 @@ final class SharedFrameSurface {
     /// 焼いたがまだ名乗っていない 1 枚。**次の書き込みの先頭で公開する** ([#748])。
     ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
-    private var pending: (slot: Int, submission: UInt64, numbers: FrameNumbers)?
+    private var pending: (slot: Int, submission: UInt64, numbers: FrameNumbers, pointerLock: Bool)?
     /// これまでに名乗った枚数。**1 から数える** — 0 は「まだ 1 枚も書いていない」を
     /// 表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている 1 枚は数えない。**
     private(set) var frameNumber = 0
@@ -409,16 +423,20 @@ final class SharedFrameSurface {
     /// 次のリフレッシュで必ず出る。
     ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
-    /// - Parameter numbers: この絵を描いたときの速さ。絵と一緒に控え、絵と一緒に載せる。
+    /// - Parameters:
+    ///   - numbers: この絵を描いたときの速さ。絵と一緒に控え、絵と一緒に載せる。
+    ///   - pointerLock: この絵を描いたときに、スケッチがカーソルを捕まえるよう頼んでいたか
+    ///     (``pointerLockAttribute``)。速さと同じく絵と一緒に載せる。
     func write(
-        _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers
+        _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
+        pointerLock: Bool = false
     ) throws(RenderFailure) {
         try publishPending()
         // **焼く面は、公開した枚数から決まる。** 控えを出した後なので、公開済みの最新面の
         // 次を踏む — 最新面そのものへは戻らない
         let index = frameNumber % slots.count
         let submission = try presenter.draw(source, into: slots[index].texture)
-        pending = (index, submission, numbers)
+        pending = (index, submission, numbers, pointerLock)
     }
 
     /// 控えている 1 枚を名乗らせる。控えが無ければ何もしない。
@@ -439,6 +457,7 @@ final class SharedFrameSurface {
         // 載せる以上まとめて差し替わることはないが、順序だけで「古い速さと新しい枚数」の
         // 組み合わせは起きなくなる
         Self.publish(written.numbers, to: slot.surface)
+        Self.publishPointerLock(written.pointerLock, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
     }
@@ -461,6 +480,30 @@ final class SharedFrameSurface {
         IOSurfaceSetValue(surface, TempoAttribute.time as CFString, NSNumber(value: numbers.time))
         set(numbers.frameRate, as: TempoAttribute.frameRate, on: surface)
         set(numbers.frameTimeMs, as: TempoAttribute.frameTimeMs, on: surface)
+    }
+
+    /// 捕まえの要求を面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、
+    /// 消さなければ前に載せた要求が残る。読み手は「載っていない」を「頼んでいない」と読む
+    /// (``pointerLockRequested(on:)``)。
+    static func publishPointerLock(_ requested: Bool, to surface: IOSurfaceRef) {
+        guard requested else {
+            IOSurfaceRemoveValue(surface, pointerLockAttribute as CFString)
+            return
+        }
+        IOSurfaceSetValue(surface, pointerLockAttribute as CFString, NSNumber(value: 1))
+    }
+
+    /// 面が名乗っている捕まえの要求。読み手の側の規則 (``publishPointerLock(_:to:)`` と対)。
+    ///
+    /// - Returns: 引けない面・載っていない面は `false` (頼んでいない)。
+    static func pointerLockRequested(of id: UInt32) -> Bool {
+        guard let surface = IOSurfaceLookup(id) else { return false }
+        return pointerLockRequested(on: surface)
+    }
+
+    /// 引いた面が名乗っている捕まえの要求。載っていなければ `false`。
+    static func pointerLockRequested(on surface: IOSurfaceRef) -> Bool {
+        number(pointerLockAttribute, on: surface)?.intValue == 1
     }
 
     /// 測れた数だけを載せる。測れていなければ**消す**。

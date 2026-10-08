@@ -25,6 +25,12 @@ enum InputCallback: Equatable, Sendable {
     case mouseClicked
     /// 押していない間に動いた。
     case mouseMoved
+    /// 押していない間に動いた量。``mouseMoved`` の直後に続き、スケッチの
+    /// `mouseMoved(deltaX:deltaY:)` に当たる。**その 1 件で動いた量**を運ぶ。
+    ///
+    /// 名前を `mouseMoved` に揃えられないのは、Swift が同じ基底名の case を 2 つ持てないため
+    /// である。
+    case mouseMovedBy(deltaX: Float, deltaY: Float)
     /// 押したまま動いた。**その 1 件で動いた量**を運ぶ。
     case mouseDragged(deltaX: Float, deltaY: Float)
     /// スクロールされた。**その 1 件ぶんの量**を運ぶ。

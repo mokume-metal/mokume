@@ -800,7 +800,19 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 呼んでくるので、描けば枚数 + 1 枚目が撮る係へ届く
         guard !rendersNoMore else { return }
         advanceAndPresent()
+        followPointerLockRequest()
         finishRenderIfDone()
+    }
+
+    /// スケッチの捕まえの要求を、自分の窓の面へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+    ///
+    /// **自分の窓を持つ経路だけ。** 共有面の経路は要求を面の属性に載せて道具の窓へ渡し
+    /// (``presentFrame()``)、書き出す経路には窓が無いので、要求は誰にも読まれない。
+    /// 毎リフレッシュ渡すのは、窓が前に出たか・ポインタが面の上かが、要求と関係なく変わるため
+    /// である。
+    private func followPointerLockRequest() {
+        guard case .window(_, let surface, _) = outlet else { return }
+        surface.followPointerLock(requested: runtime.pointerLockRequested)
     }
 
     /// 書き出す経路で、もう描かないか。**決めた枚数を描いた後と、終わりに向かっている間。**
@@ -889,8 +901,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // **速さも一緒に渡す。** 数えているのはこちらで、読むのは道具である
             // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない。**名乗るのは
             // 前に焼いた 1 枚**で、いま焼く絵は次のリフレッシュで出る (#748)。止めている間も
-            // ここは毎リフレッシュ通るので、控えが出ないまま残ることはない
-            try shared.write(runtime.target, using: presenter, numbers: runtime.frameNumbers)
+            // ここは毎リフレッシュ通るので、控えが出ないまま残ることはない。捕まえの要求も
+            // 同じ面に載せて渡す — 捕まえるのは道具の窓である (#1144)
+            try shared.write(
+                runtime.target, using: presenter, numbers: runtime.frameNumbers,
+                pointerLock: runtime.pointerLockRequested)
         case .window(let window, let surface, let hasPresented):
             guard let layer = surface.metalLayer,
                 FramePresenter.shouldPresent(

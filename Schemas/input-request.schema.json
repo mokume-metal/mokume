@@ -23,7 +23,7 @@
         "required": [
           "type"
         ],
-        "description": "Unknown keys are ignored. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the left, primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional.",
+        "description": "Unknown keys are ignored. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the left, primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional. mouseMoved says where the pointer went (x and y); mouseMovedBy says how far it moved (dx and dy) without moving the position, which is what the sketch's own window sends while it holds the pointer (requestPointerLock()).",
         "allOf": [
           {
             "if": {
@@ -75,6 +75,7 @@
               "mouseDown",
               "mouseUp",
               "mouseMoved",
+              "mouseMovedBy",
               "scrolled",
               "keyDown",
               "keyUp"
@@ -94,11 +95,11 @@
           },
           "dx": {
             "type": "number",
-            "description": "How much was scrolled, horizontally. **This is for that one event**, and the value reaches the sketch's mouseWheel(deltaX:deltaY:) unchanged."
+            "description": "For scrolled, how much was scrolled, horizontally; for mouseMovedBy, how far the pointer moved, horizontally, in canvas pixels. **This is for that one event**, and the value reaches the sketch's mouseWheel(deltaX:deltaY:) unchanged (scrolled) or its mouseMoved(deltaX:deltaY:) — mouseDragged(deltaX:deltaY:) while a button is held — and its movedX (mouseMovedBy). mouseMovedBy leaves mouseX and mouseY where they are."
           },
           "dy": {
             "type": "number",
-            "description": "How much was scrolled, vertically. For that one event, as with dx."
+            "description": "How much was scrolled, or how far the pointer moved, vertically. For that one event, as with dx. For mouseMovedBy the vertical axis points down, as the canvas coordinates do."
           },
           "code": {
             "type": "integer",

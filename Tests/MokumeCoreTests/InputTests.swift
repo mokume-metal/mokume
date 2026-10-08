@@ -308,8 +308,9 @@ struct InputCallbackTests {
         ]
         #expect(
             callbacks(from: events) == [
-                .mouseMoved, .mousePressed, .mouseDragged(deltaX: 20, deltaY: 15),
-                .mouseReleased, .mouseClicked, .mouseMoved,
+                .mouseMoved, .mouseMovedBy(deltaX: 10, deltaY: 10), .mousePressed,
+                .mouseDragged(deltaX: 20, deltaY: 15), .mouseReleased, .mouseClicked,
+                .mouseMoved, .mouseMovedBy(deltaX: 30, deltaY: 35),
             ])
     }
 
@@ -320,7 +321,10 @@ struct InputCallbackTests {
     func derivesDraggingWithoutWindowOnlyInformation() {
         let held: [InputEvent] = [.mouseDown(x: 0, y: 0, button: .left), .mouseMoved(x: 5, y: 5)]
         #expect(callbacks(from: held) == [.mousePressed, .mouseDragged(deltaX: 5, deltaY: 5)])
-        #expect(callbacks(from: [.mouseMoved(x: 5, y: 5)]) == [.mouseMoved])
+        #expect(
+            callbacks(from: [.mouseMoved(x: 5, y: 5)]) == [
+                .mouseMoved, .mouseMovedBy(deltaX: 5, deltaY: 5),
+            ])
     }
 
     @Test("キーは、押した瞬間と離した瞬間に配られる")
