@@ -8,11 +8,12 @@ extension DatagramSource where Message == String {
     static func text(
         port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
         warn: @escaping @Sendable (String) -> Void
     ) -> DatagramSource<String> {
         DatagramSource(
             label: "UDP", port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter,
-            decode: TextDecoding.datagram, warn: warn)
+            now: now, decode: TextDecoding.datagram, warn: warn)
     }
 }
 

@@ -210,6 +210,16 @@ merge queue が専用機を待っている間は render-pr ごと見送られる
 実行ファイルを作ると SwiftPM のターゲットが数百個になり、「1 回のビルドで全部を作る」
 のほうが先に壊れる。生成物は `.build/` に置いてコミットしない (原則 7)。
 
+**組める例は撮れる** (#667・#2216・#2229)。包み方は組めることを見る側 (`check-examples.py`)
+と `example_wrapping` で共有し、撮る側だけの事情は次のように扱う。
+
+- 撮る大きさは、包みに足す `settings` で決める。**例か `文脈` が自分で `settings` を宣言して
+  いれば足さず、例の宣言が大きさを決める** (撮影設定の `size=` は効かない)
+- `組めない` の印と絵の囲みを両方持つ例は撮らない。`make example-shots-check` が場所を名指しして赤にし、
+  撮る側も組む前に名乗って止まる
+- 同じ指紋の例 (例・大きさ・枚数・文脈が同じ) は 1 本にまとめて組む。絵は指紋で引くので、
+  どの囲みにも同じ絵が入る
+
 ## 見るのは作業ツリー (#2016)
 
 例を集めるのは `Sources/` の作業ツリーを丸ごと歩いた `.swift` で、git の木ではない。
@@ -249,6 +259,7 @@ from example_wrapping import (  # noqa: E402
     MARK,
     MARK_CONTEXT,
     dedent,
+    file_imports,
     level_of,
     strip_doc,
     wrap,
@@ -345,6 +356,9 @@ class Shot:
     record_snippet: str | None
     # 「後で撮る」の印の行 (0 起点)。**塊ごとに 1 つ** — 同じ説明文の囲みは全部が同じ印を持つ (#2116)
     deferred_line: int | None = None
+    # 例に付いた `組めない` の印の理由 (#2229)。印が無ければ None。組める側が外す例なので、
+    # 撮る側は撮らずに名指しする。指紋には入らない (絵の材料ではない)
+    skip: str | None = None
 
     @property
     def name(self) -> str:
@@ -433,33 +447,39 @@ def snippet_above(lines: list[str], open_line: int) -> list[str]:
     return []
 
 
-def context_above(lines: list[str], open_line: int) -> list[str]:
-    """例の直前に積まれた `文脈` の宣言。
+def marks_above(lines: list[str], open_line: int) -> tuple[list[str], str | None]:
+    """例の直前に積まれた印 → (`文脈` の宣言, `組めない` の理由。印が無ければ None)。
 
     印は `example_wrapping.MARK` の 1 本で、**あちらが読むものをこちらも読む** —
     片方だけが読むと、組める例と撮れる例がまた食い違う (#667)。かつてここには
     `文脈` だけを拾う 3 つ目の綴りがあった (#815 が畳んだ)。
+
+    **`組めない` も読む** (#2229)。組める側はその例を外すが、ここで読み捨てると撮る側は
+    そのまま組みにいき、Swift のエラーで全体が止まる (どの例かは名指しされない)。読んだ
+    理由は `check` と `generate` が名指しに使う。`組めない` は積み上がる宣言ではないので、
+    `文脈` には混ぜない。
     """
     index = open_line - 1
     while index >= 0 and SCAFFOLD.match(lines[index]):
         index -= 1
     if index < 0 or not FENCE_CLOSE.match(lines[index]):
-        return []
+        return [], None
     index -= 1
     while index >= 0 and DOC.match(lines[index]):
         if FENCE_OPEN.match(lines[index]):
             break
         index -= 1
-    found: list[str] = []
+    context: list[str] = []
+    skip: str | None = None
     index -= 1
-    while index >= 0:
-        match = MARK.match(lines[index])
-        # `組めない` の印はここで止める — 積み上がる宣言ではない
-        if not match or match["kind"] != MARK_CONTEXT:
-            break
-        found.insert(0, match["rest"] or "")
+    while index >= 0 and (match := MARK.match(lines[index])):
+        if match["kind"] == MARK_CONTEXT:
+            context.insert(0, match["rest"] or "")
+        else:
+            # 上へ遡るので、最後に読んだものが塊のいちばん上 — 組める側 (上から読んで最初の 1 本) と揃う
+            skip = (match["rest"] or "").strip()
         index -= 1
-    return found
+    return context, skip
 
 
 def run_after(lines: list[str], close_line: int) -> tuple[int, int]:
@@ -526,6 +546,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
         except ValueError as error:
             # 場所を添える。撮影設定の誤りは囲みの数だけありうる
             raise ValueError(f"{path}:{number + 1}: {error}") from error
+        context, skip = marks_above(lines, number)
         pending.append(
             Shot(
                 path=path,
@@ -538,10 +559,11 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
                 symmetric=symmetric,
                 still=still,
                 snippet=snippet_above(lines, number),
-                context=context_above(lines, number),
+                context=context,
                 index=0,
                 record_line=None,
                 record_snippet=None,
+                skip=skip,
             )
         )
     # 同じ説明文の塊に属するものへ 1 から番号を振り、記録と突き合わせる
@@ -810,6 +832,14 @@ def check(shots: list[Shot]) -> list[str]:
     # 「後で撮る」の印が付いた塊で、絵がまだ追いついていないもの (#2116)。赤にしない
     pending: list[Shot] = []
     for shot in shots:
+        if shot.skip is not None:
+            # 組める側が外す例に、絵の囲みだけがある (#2229)。撮ろうとすると Swift のエラーで
+            # 全体が止まるので、ここで場所を名指しする。ほかの言い分は印を直してから
+            problems.append(
+                f"{shot.where}: 例に「組めない」の印 ({shot.skip}) があるのに絵の囲みがある"
+                " — 組めない例は撮れない。印か囲みのどちらかを外す"
+            )
+            continue
         if not shot.alt:
             problems.append(f"{shot.where}: 絵の一文の説明が空 (`<!-- shot: … -->` に書く)")
         if not shot.snippet:
@@ -1054,8 +1084,29 @@ def generate(root: pathlib.Path, shots: list[Shot], package: pathlib.Path) -> No
         PACKAGE.format(root=root, identity=root.name.lower()), encoding="utf-8"
     )
 
-    body = ["// 生成物 — 直接編集しない (scripts/example-shots.py が書く)。", "import mokume", ""]
+    # 例が自分で書いた `import` を先頭へ集める。`wrap()` は捨てるので、ここで拾い直さないと
+    # `import Foundation` を書いた例が組めずに止まる (#2216)。集め方は組めることを見る側と同じ
+    body = [
+        "// 生成物 — 直接編集しない (scripts/example-shots.py が書く)。",
+        *file_imports(shot.snippet for shot in shots),
+        "",
+    ]
+    # **同じ指紋の例は 1 本にまとめる** (#2229)。型の名前を指紋から採るので、2 本書くと同じ名前の
+    # 型が 2 つできて組めない。指紋は例・大きさ・枚数・文脈から採るので、同じ指紋なら型も絵も
+    # 同じになる。絵の置き場 (`shot-<指紋>`)・書き戻し・前後の木の比べも指紋で引くので、どの
+    # 囲みにも同じ絵が入る。組める側は通し番号で包むので、止めるとそちらとまた食い違う
+    places: dict[str, list[str]] = {}
     for shot in shots:
+        places.setdefault(shot.name, []).append(shot.where)
+    written: dict[str, Shot] = {}
+    for shot in shots:
+        # 組める側が外す例は撮れない (#2229)。組みにいくと Swift のエラーで全体が止まり、
+        # どの例かが名指しされない。check も同じ場所を名指しして赤にする
+        if shot.skip is not None:
+            raise SystemExit(
+                f"{shot.where} の例には「組めない」の印 ({shot.skip}) がある — 組めない例は"
+                " 撮れない。印か絵の囲みのどちらかを外すこと"
+            )
         # 包み方は example_wrapping が持つ。**組めることを見る側 (check-examples) と
         # 同じ規則**にしておかないと、撮れる例と組める例が食い違う (原則 9)。
         # 段も文脈もあちらと同じに渡す — 絵を作る口はどれも投げるので、`draw()` の
@@ -1066,12 +1117,17 @@ def generate(root: pathlib.Path, shots: list[Shot], package: pathlib.Path) -> No
                 f"{shot.where} の例は型の宣言から始まっている — 撮る側は例を Sketch として"
                 " 走らせるので、型の段は撮れない。setup() / draw() の段まで下ろすこと"
             )
-        body.append(f"/// {shot.where}")
+        if shot.name in written:
+            continue
+        written[shot.name] = shot
+        body.append(f"/// {' / '.join(places[shot.name])}")
         body += wrap(
             _type_name(shot),
             shot.snippet,
             level=level,
             context=shot.context,
+            # 例か文脈が自分で `settings` を宣言していれば、wrap はこれを足さない — 絵の大きさは
+            # 例の宣言が決める (#2229・wrap の注記)
             members=[
                 f"var settings = SketchSettings(width: {shot.width}, height: {shot.height},"
                 f' title: "{shot.name}")'
@@ -1079,7 +1135,7 @@ def generate(root: pathlib.Path, shots: list[Shot], package: pathlib.Path) -> No
         )
         body.append("")
     body.append("let catalogue: [(name: String, frames: Int, make: () -> any Sketch)] = [")
-    for shot in shots:
+    for shot in written.values():
         body.append(f'    ("{shot.name}", {shot.frames}, {{ {_type_name(shot)}() }}),')
     body.append("]")
     (sources / "Shots.swift").write_text("\n".join(body) + "\n", encoding="utf-8")

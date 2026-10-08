@@ -134,6 +134,8 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unche
     let host: String?
     let retryAfter: TimeInterval
     let idleAfter: TimeInterval
+    /// 送り元の黙りを測る時計 (``DatagramListener`` へそのまま渡す)。
+    private let now: @Sendable () -> TimeInterval
     private let decode: Decode
     private let status: ListenerStatus
     private var listener: DatagramListener?
@@ -144,12 +146,14 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unche
     init(
         label: String, port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
         decode: @escaping Decode, warn: @escaping @Sendable (String) -> Void
     ) {
         self.port = port
         self.host = host
         self.retryAfter = retryAfter
         self.idleAfter = idleAfter
+        self.now = now
         self.decode = decode
         status = ListenerStatus(label: label, port: port, retryAfter: retryAfter, warn: warn)
     }
@@ -160,10 +164,13 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unche
     /// 受け口がいま持っている送り元の数 (検査が上限を確かめるため)。
     var connectionCount: Int { listener?.connectionCount ?? 0 }
 
+    /// 受け口の送り元の出入りの数 (検査が「黙っていない送り元は閉じない」を確かめるため)。
+    var tally: SenderTally { listener?.tally ?? SenderTally() }
+
     func start(into queue: ExternalQueue<Message>) {
         queue.setState(.unavailable)
         let listener = DatagramListener(
-            port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter,
+            port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter, now: now,
             received: { [decode] bytes, hostTime in
                 let decoded = decode(bytes)
                 for message in decoded.messages { queue.send(message, hostTime: hostTime) }

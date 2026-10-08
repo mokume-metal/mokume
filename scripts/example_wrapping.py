@@ -54,6 +54,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 # 例の囲み。`///` を**任意**にした綴り — カタログの `.md` の中の例は素の Markdown で
 # 書かれている
@@ -87,6 +88,18 @@ _MEMBER = re.compile(
     r"(?:func|init|deinit|subscript)\b"
 )
 _COMPUTED = re.compile(r"^(?:public\s+|internal\s+|private\s+|static\s+)*var\s+\w+\s*:\s*[^=]*\{\s*$")
+# `var` / `let` の宣言とその名前。**字下げの無い行だけを見る** — 字下げのある行は関数の中の
+# 局所変数で、型のメンバとはぶつからない
+_STORED = re.compile(
+    r"^(?:@\w+(?:\([^)]*\))?\s+)*"
+    r"(?:(?:public|internal|private|fileprivate|static|final|override|lazy|nonisolated)\s+)*"
+    r"(?:var|let)\s+(?P<name>\w+)\b"
+)
+
+
+def _declared(lines) -> set[str]:
+    """字下げの無い `var` / `let` が宣言する名前。"""
+    return {match["name"] for line in lines if (match := _STORED.match(line))}
 
 
 def strip_doc(line: str) -> str:
@@ -124,6 +137,20 @@ def split_imports(snippet: list[str]) -> tuple[list[str], list[str]]:
     return imports, rest
 
 
+def file_imports(snippets: Iterable[list[str]]) -> list[str]:
+    """組み立てたファイルの先頭に置く `import` の並び。`import mokume` を先頭に、各例が
+    自分で書いた `import` を出てきた順に、重ねずに並べる。
+
+    **集め方もここに置く** (#2216)。`wrap()` は `import` を捨てるので、集め直すのは
+    呼び出し側である — かつては組めることを見る側 (`check-examples.py`) だけが集め、
+    撮る側 (`example-shots.py`) は `import mokume` だけを書いていた。`mokume` は
+    Foundation を再輸出しないので (`Sources/mokume/Umbrella.swift`)、`import Foundation`
+    を書いた例は組めるのに撮れなかった。#667 と同じ形の食い違いである。
+    """
+    written = [line for snippet in snippets for line in split_imports(snippet)[0]]
+    return list(dict.fromkeys(["import mokume", *written]))
+
+
 def level_of(snippet: list[str]) -> str:
     """例がどの段に書かれているか。**注釈と `import` は数えない** — 例の頭に置かれた
     `// waves.metal` のような説明で段が変わってはいけない。"""
@@ -158,11 +185,21 @@ def wrap(
     - `members` — 包む側の都合で足す宣言 (撮る側の `settings` など)
 
     どちらも段に合わせた高さへ置く。
+
+    **`members` は、型のメンバの高さに同じ名前の宣言が既にあれば足さない — 例と `文脈` の
+    宣言が勝つ** (#2229)。足すのは片側 (撮る側) だけなので、ぶつかると組める例が撮る側でだけ
+    `invalid redeclaration` で落ちる。見るのは `文脈` (段によらずメンバの高さに置く) と、
+    メンバの段の例が字下げなしで書いた `var` / `let`。本体の段の例は `draw()` の中に入るので、
+    同じ名前でも局所変数でぶつからない。
     """
     level = level or level_of(snippet)
-    # `import` は呼び出し側がファイルの先頭へ集める (split_imports の注記)
+    # `import` は呼び出し側が `file_imports` でファイルの先頭へ集める (split_imports の注記)
     _, snippet = split_imports(snippet)
-    inner = _shift(list(members or []) + list(context or []), 4)
+    taken = _declared(list(context or []) + (snippet if level == LEVEL_MEMBER else []))
+    members = [
+        line for line in members or [] if not (match := _STORED.match(line)) or match["name"] not in taken
+    ]
+    inner = _shift(members + list(context or []), 4)
     if level == LEVEL_TYPE:
         return [f"enum {name} {{", *inner, *_shift(snippet, 4), "}"]
     if level == LEVEL_MEMBER:

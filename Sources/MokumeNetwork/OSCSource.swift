@@ -11,13 +11,17 @@ typealias NetworkOSCSource = DatagramSource<OSCMessage>
 
 extension DatagramSource where Message == OSCMessage {
     /// OSC のパケットを読む出どころを作る。
+    ///
+    /// `now` は送り元の黙りを測る時計で、``DatagramListener`` へそのまま渡す (#2225)。
     convenience init(
         port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
         warn: @escaping @Sendable (String) -> Void
     ) {
         self.init(
             label: "OSC", port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter,
+            now: now,
             decode: { bytes in
                 let decoded = OSCCodec.decode(bytes)
                 return (decoded.messages, decoded.readable ? 0 : 1)

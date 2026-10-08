@@ -24,16 +24,23 @@ import Metal
 /// 頂点関数が走る数は寄せたぶん減り、GPU の時間も置き場所ごとに描くときより短い (数字は
 /// ``SolidVertexSharing``)。
 ///
+/// **形から求めた向きを持つ頂点 (法線を書いていないモデル) は、写しで向きを裏返す** ([#2222])。断片は、
+/// 求めた向きの面が裏を向いていれば (`front_facing` が裏) 向きを裏返して光を当てる。写しは元が裏を
+/// 向いているときだけ表を向いて残るので、断片は裏返さない。そこで写しの三角形が指すそうした頂点の
+/// 添字に印 (``flipsNormal``) を立て、頂点関数 (`solidVertexMain`) が向きを裏返して出す。元を置き場所ごとに
+/// 描いたとき断片が裏返すのと同じ向きになり、光の当たり方は変わらない。
+///
 /// **畳まないもの** (置き場所ごとに描く):
 /// - 置き場所が少ない連なり。省ける呼び出しより添字の列を組む費用が高い (``paysOff(instances:passes:programLength:vertices:)``)。
-/// - 頂点が形から求めた向きを持つ形 (法線を書いていないモデル)。断片は求めた向きを巻き方 (`front_facing`) で
-///   裏返すので、巻き方を入れ替えた写しでは光の当たり方が変わる。
+/// - 写しにする三角形の 3 点で、向きを形から求めたかが揃わない形 (一部の頂点にだけ `normal()` を書いた
+///   `beginShape` の形など)。断片は 3 点の間で補間した印で裏返すので、頂点ごとの印では合わせられない。
 /// - 頂点を自分の置き場から読む列 (GPU が持つモデル) と、引数を GPU が書く列 (粒)。
 ///
 /// この型が持つのは GPU に触れない部分 (連なりの割り方・描く順・添字の列の組み立て・使う判定)。添字の列を
 /// 組んで置き場へ写すのは ``Canvas/uploadSweeps()``、描くのは `Canvas.encodeBackThenFront` である。
 ///
 /// [#1947]: https://github.com/mokume-metal/mokume/issues/1947
+/// [#2222]: https://github.com/mokume-metal/mokume/issues/2222
 enum SolidSweep {
     /// 描き方の違う置き場所の連なり。
     struct Run: Equatable {
@@ -201,14 +208,25 @@ enum SolidSweep {
         return length
     }
 
-    /// 描けない頂点の印 (``appendProgram(_:indices:vertexBase:vertices:to:)`` の頂点の表)。
-    static let unusable = UInt32.max
+    /// 写しで向きを裏返す頂点の印。添字の最上位の桁で、`Shapes.metal` の `kSolidFlipsNormal` と同じ値
+    /// ([#2222])。
+    ///
+    /// 頂点の表 (``appendProgram(_:indices:vertexBase:vertices:to:)`` の `vertices`) では、形から求めた向きを
+    /// 持つ頂点の番号に立てておく。添字の列には**写しの三角形にだけ**残し、元の三角形からは外して足す。
+    /// 頂点関数は桁を外した番号の頂点を読み、桁が立っていれば向きを裏返して出す。
+    ///
+    /// [#2222]: https://github.com/mokume-metal/mokume/issues/2222
+    static let flipsNormal: UInt32 = 1 << 31
 
     /// `passes` を描く順に、`.back` 固定で描く添字の列を `output` の後ろへ足す。
     ///
     /// 区間の中の三角形は、`.back` を捨てる区間なら元のまま、`.front` を捨てる区間なら 2 点目と
-    /// 3 点目を入れ替えて足す。捨てない区間 (`.none`) は、三角形ごとに [元, 写し] の対を足す — 元と
+    /// 3 点目を入れ替えた写しにして足す。捨てない区間 (`.none`) は、三角形ごとに [元, 写し] の対を足す — 元と
     /// 写しは巻き方が逆なので、どちらか一方だけが残り、三角形どうしの順は変わらない。
+    ///
+    /// **元の三角形の添字からは ``flipsNormal`` を外し、写しの三角形の添字には表のまま残す。** 写しは元が
+    /// 裏を向いているときだけ表を向いて残るので、形から求めた向きの頂点は写しの側で向きを裏返す
+    /// (``SolidSweep``)。印の無い頂点 (書かれた向き) の写しは、元と同じ添字を指す。
     ///
     /// - Parameters:
     ///   - passes: 描く区間 (``passes(whole:shown:plainCull:)``)。
@@ -216,14 +234,18 @@ enum SolidSweep {
     ///     区間の位置がそのまま頂点の番号になる。
     ///   - vertexBase: `vertices` の先頭の頂点の番号。
     ///   - vertices: 頂点ごとの、描くときに使う番号 (`vertexBase` からの並び)。同じ値の頂点を 1 つの番号へ
-    ///     寄せる (``SolidVertexSharing``)。**描けない頂点は ``unusable``**。
+    ///     寄せる (``SolidVertexSharing``)。**形から求めた向きを持つ頂点は ``flipsNormal`` を立てる**。
     ///
-    /// - Returns: 描ける形なら真。表の外の頂点か描けない頂点を 1 つでも指したら偽 (`output` は不定)。
+    /// - Returns: 描ける形なら真。表の外の頂点を 1 つでも指したとき、写しにする三角形の 3 点で
+    ///   ``flipsNormal`` が揃わないときは偽 (`output` は不定)。断片は 3 点の間で補間した印で向きを裏返すので、
+    ///   揃わない三角形の写しは、頂点ごとの印では元と同じ光の当たり方にできない。写しにしない三角形
+    ///   (`.back` を捨てる区間) は揃わなくても描ける。
     static func appendProgram(
         _ passes: [Pass], indices: [UInt32]?, vertexBase: Int, vertices: [UInt32],
         to output: inout [UInt32]
     ) -> Bool {
         output.reserveCapacity(output.count + programLength(of: passes))
+        let number = ~flipsNormal
         for pass in passes {
             let triangles = pass.range.count / 3
             for triangle in 0..<triangles {
@@ -241,21 +263,24 @@ enum SolidSweep {
                     local.2 >= 0, local.2 < vertices.count
                 else { return false }
                 let (first, second, third) = (vertices[local.0], vertices[local.1], vertices[local.2])
-                guard first != unusable, second != unusable, third != unusable else { return false }
+                // 写しにする三角形は、3 点で印が揃っていなければならない
+                let flipsAlike = (first ^ second) & flipsNormal == 0 && (first ^ third) & flipsNormal == 0
                 // 配列を作らず 1 つずつ足す (1 枚ごとに確保しない)
                 switch pass.cull {
                 case .back:
-                    output.append(first)
-                    output.append(second)
-                    output.append(third)
+                    output.append(first & number)
+                    output.append(second & number)
+                    output.append(third & number)
                 case .front:
+                    guard flipsAlike else { return false }
                     output.append(first)
                     output.append(third)
                     output.append(second)
                 default:
-                    output.append(first)
-                    output.append(second)
-                    output.append(third)
+                    guard flipsAlike else { return false }
+                    output.append(first & number)
+                    output.append(second & number)
+                    output.append(third & number)
                     output.append(first)
                     output.append(third)
                     output.append(second)

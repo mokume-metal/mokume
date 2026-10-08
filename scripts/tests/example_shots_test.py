@@ -14,8 +14,8 @@
 - **反転しても見分けが付かない絵の言い方** (#481) — 境目の当て方と、黙らせた軸の
   扱いをここで固定する。**絵を撮らずに検められる**ように、判定は純関数へ切ってある
 - **包み方が、組めることを見る側と同じである** (#667) — 段を見分けること・`文脈` を
-  渡すこと・型の段を落とすこと。ここが食い違うと、組める例が撮れない (あるいはその逆)
-  という無言の穴が空く
+  渡すこと・型の段を落とすこと・例の `import` を先頭へ集めること (#2216)。ここが
+  食い違うと、組める例が撮れない (あるいはその逆) という無言の穴が空く
 - **台帳が撮った版を持たない** (#671) — 持っていた頃は撮るたびに全数の行が動き、絵を
   数枚足す PR が台帳 163 行を巻き込んでいた。古い形を読めることと、それを名乗って
   落とすこともここで固定する
@@ -114,6 +114,25 @@ extension Sketch {
     /// <!-- shot: 左上に置かれた描き場所 -->
     /// <!-- /shot -->
     public func createGraphics() {}
+}
+"""
+
+# 自分で `settings` を宣言するメンバの段の例 (#2229)。撮る側も `settings` を足すと、
+# 組める側は通るのに撮る側だけが `invalid redeclaration of 'settings'` で止まる
+SETTINGS_SOURCE = """\
+// SPDX-FileCopyrightText: 2026 mokume-metal
+// SPDX-License-Identifier: MIT
+
+extension Sketch {
+    /// 窓の大きさを例が自分で決める。
+    ///
+    /// ```swift
+    /// var settings: SketchSettings { SketchSettings(width: 400, height: 300) }
+    /// func draw() { circle(200, 150, 60) }
+    /// ```
+    /// <!-- shot: 中央の円 -->
+    /// <!-- /shot -->
+    public func sized() {}
 }
 """
 
@@ -273,6 +292,69 @@ class ExampleShotsTest(unittest.TestCase):
         self.assertEqual(
             (package / "Package.swift").read_text(encoding="utf-8").count(".executableTarget"), 1
         )
+
+    def test_例のimportは重ねずに生成物の先頭へ集める(self):
+        """#2216。2 本の例が同じ `import` を書いても、先頭には 1 回だけ出る。"""
+        self.path.write_text(
+            SOURCE.replace("    /// circle(200, 150, ", "    /// import Foundation\n    /// circle(200, 150, "),
+            encoding="utf-8",
+        )
+        found = self.collect()
+        self.assertEqual([shot.snippet[0] for shot in found], ["import Foundation"] * 2)
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        body = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+        self.assertEqual(body.count("import Foundation"), 1, body)
+        self.assertLess(body.index("import Foundation"), body.index("final class "), body)
+
+    def generated(self, found):
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        return (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+
+    def test_settingsを宣言する例は例の宣言で組む(self):
+        """#2229 の 1。撮る側が自分の `settings` も足すと、同じ型に 2 つ並んで組めない。"""
+        self.path.write_text(SETTINGS_SOURCE, encoding="utf-8")
+        body = self.generated(self.collect())
+        self.assertIn("    var settings: SketchSettings { SketchSettings(width: 400, height: 300) }", body)
+        self.assertEqual(body.count("var settings"), 1, body)
+
+    def test_同じ指紋の例は1本にまとめて組む(self):
+        """#2229 の 3。型の名前は指紋から採るので、同じ指紋を 2 本書くと同じ名前の型が
+        2 つできて組めない。指紋が同じなら絵も同じなので、1 本にまとめる。"""
+        self.path.write_text(SOURCE.replace("circle(200, 150, 80)", "circle(200, 150, 160)"), encoding="utf-8")
+        found = self.collect()
+        self.assertEqual(len(found), 2)
+        self.assertEqual(found[0].fingerprint, found[1].fingerprint)
+        body = self.generated(found)
+        self.assertEqual(body.count(f"final class {shots._type_name(found[0])}: Sketch {{"), 1, body)
+        self.assertEqual(body.count(f'("{found[0].name}", '), 1, body)
+
+    def with_skip_mark(self, text):
+        """1 本目の例に `組めない` の印を付ける。**指紋は動かない** (印は文脈ではない)。"""
+        return text.replace(
+            "    /// ```swift\n    /// circle(200, 150, 160)",
+            "    /// <!-- example: 組めない 試しの理由 -->\n    /// ```swift\n    /// circle(200, 150, 160)",
+        )
+
+    def test_組めない印と絵の囲みを両方持つ例は検査が名指しして赤い(self):
+        """#2229 の 2。撮った後に印を足しても指紋は動かないので、印を読まなければ緑のまま。"""
+        self.write_back()
+        self.path.write_text(self.with_skip_mark(self.path.read_text(encoding="utf-8")), encoding="utf-8")
+        found = self.collect()
+        problems = self.check()
+        named = [problem for problem in problems if "組めない" in problem]
+        self.assertEqual(len(named), 1, problems)
+        self.assertTrue(named[0].startswith(f"{found[0].where}:"), named)
+
+    def test_組めない印と絵の囲みを両方持つ例は組む前に名乗って止まる(self):
+        """Swift のエラーで全体が止まると、どの例かが名指しされない。"""
+        self.path.write_text(self.with_skip_mark(SOURCE), encoding="utf-8")
+        found = self.collect()
+        with self.assertRaises(SystemExit) as caught:
+            shots.generate(self.root, found, self.root / "generated")
+        self.assertIn(found[0].where, str(caught.exception))
+        self.assertIn("組めない", str(caught.exception))
 
 
     # ---------------------------------------------------------------- 包み方 (#667)
@@ -1612,6 +1694,27 @@ class SnippetTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("brew install webp", err)
         self.assertEqual(rendered, [])
+
+    def test_例のimportが生成物のファイルの先頭に出る(self):
+        """#2216 の再現。`mokume` は Foundation を再輸出しない (Sources/mokume/Umbrella.swift)
+        ので、`URL` を使う例は `import Foundation` を自分で書く。撮る側がその行を落とすと
+        `cannot find 'URL' in scope` で組めない — 組めることを見る側 (make examples) は
+        通るのに、である。"""
+        self.snippet.write_text(
+            "import Foundation\n\n"
+            "background(23, 26, 31)\n"
+            'let u = URL(fileURLWithPath: "/tmp/x")\n'
+            "circle(200, 150, Float(u.path.count) * 10)\n",
+            encoding="utf-8",
+        )
+        shot = shots.snippet_shot(self.snippet, 400, 300, 0, "a")
+        package = self.dir / "generated"
+        shots.generate(self.dir, [shot], package)
+        lines = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8").split("\n")
+        first_type = next(index for index, line in enumerate(lines) if line.startswith("final class "))
+        self.assertIn("import Foundation", lines[:first_type], lines)
+        # 型の中へは入れられない (`declaration is only valid at file scope`)
+        self.assertNotIn("import Foundation", [line.strip() for line in lines[first_type:]], lines)
 
     def test_拡げる倍率は表示の幅にも効く(self):
         shot = shots.snippet_shot(self.snippet, 48, 32, 0, "a")

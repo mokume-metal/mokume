@@ -92,6 +92,54 @@ class 包み(unittest.TestCase):
         self.assertNotIn("import mokume", wrapping.wrap("Ex", snippet))
         self.assertEqual(wrapping.level_of(snippet), wrapping.LEVEL_TYPE)
 
+    def test_外へ出した_import_を撮る側と組める側が同じに先頭へ置く(self):
+        """#2216。`import Foundation` を書いた例が make examples を通るのに、撮る側だけが
+        その行を落として組めなかった — #667 と同じ形の食い違いが `import` で残っていた。
+        **同じ例から、両者が同じ並びをファイルの先頭に置く**ことを見る。"""
+        body = ["import Foundation", "", 'let u = URL(fileURLWithPath: "/tmp/x")', "circle(1, 2, 3)"]
+        checked, _, _ = examples.build_source(
+            [examples.Example(path=Path("Sources/A.swift"), line=1, body=body, context=[], skip=None)]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            snippet = Path(tmp) / "repro.swift"
+            snippet.write_text("\n".join(body) + "\n", encoding="utf-8")
+            package = Path(tmp) / "generated"
+            shots.generate(Path(tmp), [shots.snippet_shot(snippet, 400, 300, 0, "a")], package)
+            shot = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+        # 包んだ行は字下げされるので、行頭の `import` はファイルの先頭に置かれたものだけ
+        heads = [
+            [line for line in text.split("\n") if line.startswith("import ")] for text in (checked, shot)
+        ]
+        self.assertEqual(heads[0], ["import mokume", "import Foundation"])
+        self.assertEqual(heads[1], heads[0], "撮る側と組める側で、先頭の import が食い違う")
+
+    # 撮る側が包みに足すメンバ (#2229)。組める側は足さないので、ぶつかると撮る側だけが落ちる
+    SETTINGS_MEMBER = "var settings = SketchSettings(width: 400, height: 300)"
+
+    def test_例がメンバの高さで宣言した名前は_members_から足さない(self):
+        snippet = ["var settings: SketchSettings { SketchSettings(width: 320, height: 180) }", "func draw() {}"]
+        body = wrapping.wrap("Ex", snippet, members=[self.SETTINGS_MEMBER])
+        self.assertNotIn(f"    {self.SETTINGS_MEMBER}", body)
+        self.assertIn(f"    {snippet[0]}", body)
+
+    def test_文脈が宣言した名前も_members_から足さない(self):
+        """`文脈` は段によらずメンバの高さに置かれるので、本体の段の例でもぶつかる。"""
+        body = wrapping.wrap(
+            "Ex", ["circle(1, 2, 3)"], context=["var settings = SketchSettings(width: 1, height: 1)"],
+            members=[self.SETTINGS_MEMBER],
+        )
+        self.assertNotIn(f"    {self.SETTINGS_MEMBER}", body)
+
+    def test_draw_の中や字下げの中の同じ名前では_members_を消さない(self):
+        """局所変数はメンバとぶつからない。消すと例が既定の大きさで撮られる。"""
+        for snippet in (
+            ["let settings = 1", "circle(1, 2, 3)"],  # 本体の段: draw() の中の局所変数
+            ["func setup() {", "    let settings = 1", "}"],  # メンバの段でも、関数の中
+        ):
+            with self.subTest(snippet=snippet):
+                body = wrapping.wrap("Ex", snippet, members=[self.SETTINGS_MEMBER])
+                self.assertIn(f"    {self.SETTINGS_MEMBER}", body)
+
     def test_文脈は段に合わせた高さへ置く(self):
         body = wrapping.wrap("Ex", ["circle(1, 2, 3)"], context=["var dust: Particles!"])
         self.assertIn("    var dust: Particles!", body)
@@ -463,15 +511,20 @@ class 綴りの共有(unittest.TestCase):
                 self.assertEqual(match["rest"], "let radius = 3.0")
 
     def test_撮る側は組めない印を宣言として積まない(self):
-        """印が 1 本になっても、`組めない` を `文脈` の代わりに積んではいけない。"""
+        """印が 1 本になっても、`組めない` を `文脈` の代わりに積んではいけない。
+        **理由は別に読む** (#2229) — 読み捨てると、組める側が外す例を撮る側だけが組みにいく。"""
         lines = [
+            "/// <!-- example: 文脈 var dust: Particles! -->",
             "/// <!-- example: 組めない 投げる呼び出し -->",
             "/// ```swift",
             "/// try thing()",
             "/// ```",
             "/// <!-- shot: 絵 -->",
         ]
-        self.assertEqual(shots.context_above(lines, len(lines) - 1), [])
+        self.assertEqual(shots.marks_above(lines, len(lines) - 1), (["var dust: Particles!"], "投げる呼び出し"))
+        # 組める側も同じ 1 行を同じ理由で外す
+        found, _ = examples.examples_in("\n".join(lines), Path("Sources/A.swift"))
+        self.assertEqual((found[0].context, found[0].skip), (["var dust: Particles!"], "投げる呼び出し"))
 
 
 if __name__ == "__main__":
