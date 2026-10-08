@@ -82,6 +82,21 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     case workDropped(reason: String)
 
+    /// 同じプロセスで、GPU の完了を待つのが一度制限時間 (``RenderDevice/waitLimitSeconds``) を越えた
+    /// ので、**新しい描画の土台を作らずに断った** ([#2052])。
+    ///
+    /// 土台を作るたびに、GPU へコマンドを渡す発行口が 1 本増える。答えない GPU に発行口を足し続けると、
+    /// 止まった発行口が溜まって、画面の描画ごと Mac が止まる。#2052 では、検査が土台を作り直し
+    /// 続けて、カーネルパニックまで行った。
+    ///
+    /// ``timedOut(seconds:)`` とは分ける。あちらは待った本人が受け取り、文面は描く量を減らす方向へ
+    /// 送る。こちらは、何も待っていない新しい土台が受け取る。することはプロセスを起こし直すことで、
+    /// 減らすものは無い。既にある土台はそのまま使える (その待ちは、今までどおり `.timedOut` で
+    /// 打ち切られる)。
+    ///
+    /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
+    case gpuNotResponding
+
     /// 描画先の大きさが正しくない (幅・高さは 1 以上、面の一辺の上限以下でなければ
     /// ならない)。上限そのものは ``description`` が名乗る。
     ///
@@ -253,6 +268,14 @@ extension RenderFailure: CustomStringConvertible {
             This is not how much is being drawn. If the reason is a hang, one frame's work (a \
             shader) runs too long; otherwise it is most likely a fault inside mokume — please \
             report it with this message at https://github.com/mokume-metal/mokume/issues
+            """
+        case .gpuNotResponding:
+            // **1 行目に理由を入れる** (`workDropped` と同じ)。窓の経路は `headline` の 1 行しか流さない
+            // ので、そこで「資源切れ」や「描きすぎ」と読まれると切り分けを誤る (#2052)
+            """
+            The GPU stopped answering earlier in this process, so no new drawing foundation is set up in it.
+            Quit and start the process again. Each new one would queue more work onto a GPU that is \
+            not answering, and enough of that freezes the whole Mac.
             """
         case .invalidSize(let width, let height):
             """

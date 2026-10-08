@@ -126,13 +126,30 @@ import MokumeDiagnostics
     /// 隔離の外から呼べる形にしてあるのは、検査の実行可否を決める前提条件として
     /// 隔離の外で評価されるため。問い合わせは GPU を持ち出さないので状態を跨がない。
     ///
+    /// **同じプロセスで GPU の完了を待つのが一度 ``waitLimitSeconds`` を越えた後は、`false` を
+    /// 返す。** そのとき発行口は作らずに答える。答えない GPU に使い捨ての発行口を足すことも、
+    /// 止まった発行口を溜める側に数える ([#2052])。土台の初期化子も、同じ時点から
+    /// ``RenderFailure/gpuNotResponding`` で断る。
+    ///
     /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor-and-toolchain.md
+    /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     public nonisolated static var isAvailable: Bool {
-        guard let device = MTLCreateSystemDefaultDevice() else { return false }
-        return device.makeMTL4CommandQueue() != nil
+        isAvailable(on: MTLCreateSystemDefaultDevice(), through: .process)
+    }
+
+    /// ``isAvailable`` の中身。発行口の関所を差し替えられる形で、検査はここを呼ぶ。
+    nonisolated static func isAvailable(on device: (any MTLDevice)?, through gate: CommandQueueGate) -> Bool {
+        guard let device else { return false }
+        return (try? gate.makeQueue(on: device)) != nil
     }
 
     let device: any MTLDevice
+
+    /// 発行口を作る関所 (``CommandQueueGate``)。製品の経路ではプロセスで 1 つのもの
+    /// (``CommandQueueGate/process``) で、合図の待ちが期限を越えたら、ここに印を立てる ([#2052])。
+    ///
+    /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
+    let queueGate: CommandQueueGate
 
     /// **このファイルの外へ出さない** ([#845])。別のファイルから掴めると、
     /// ``commit(_:retaining:writing:)`` を通らずに投入する口が書ける。そうして投入された置き場は
@@ -323,6 +340,38 @@ import MokumeDiagnostics
     /// (``losesNextOutcomeForTesting``) が、毎回 5 秒待たずに済むように。
     var outcomeWaitLimit: Duration = .seconds(RenderDevice.waitLimitSeconds)
 
+    /// 完了の合図が進むのを待つ上限 (``signalReached(_:)``)。
+    ///
+    /// 製品の経路では ``waitLimitSeconds`` のまま。**検査だけが縮める** — 答えの来ない投入
+    /// (``addUnansweredSubmissionForTesting()``) を待つ検査が、毎回 5 秒待たずに済むように。
+    /// ``outcomeWaitLimit`` と同じ形である。
+    var signalWaitLimit: Duration = .seconds(RenderDevice.waitLimitSeconds)
+
+    /// 検査が足した、答えの来ない投入の数 (``addUnansweredSubmissionForTesting()``)。製品の経路では常に 0。
+    private var unansweredSubmissionsForTesting = 0
+
+    /// 検査から「GPU が答えない」を作る差し込み。製品の経路からは呼ばない。
+    ///
+    /// **番号だけを 1 つ進め、GPU には何も投入しない。** 合図はその番号へ決して届かないので、次の
+    /// 待ちは本物の期限切れになる (``signalWaitLimit`` まで待つ)。期限切れの枝 ([#2052] — 期限を越えた
+    /// プロセスでは、新しい発行口を作らない) を、GPU を詰まらせずに通すための穴である。待ちの期限切れは、
+    /// GPU が 5 秒答えないときにしか起きないので、検査から自然には作れない (``failSettleForTesting`` と
+    /// 同じ事情)。あちらは待つ前に投げるので、待ちそのものは通らない。
+    ///
+    /// **これを呼んだ土台へは、以後投入しない。** 投入は、直前の番号を GPU 側で待つ命令を積む
+    /// (``orderAfter(_:)``)。届かない番号を待つと、発行口が GPU の上で止まる。それを作る前に、
+    /// ``commit(_:retaining:writing:)`` が落とす。
+    ///
+    /// この差し込みで起きた期限切れは、知らせ (`Diagnostics.warn`) を出さない。検査の記録に「GPU が
+    /// 答えなかった」の行が混ざると、本物の止まりを探す人が読み違える (#2052 は、その行で
+    /// 起きた時刻を割り出した。``dropsNextSubmissionForTesting`` と同じ線)。公開はしない。
+    ///
+    /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
+    func addUnansweredSubmissionForTesting() {
+        submissionCount += 1
+        unansweredSubmissionsForTesting += 1
+    }
+
     /// 完了の知らせを main actor へ渡す前に合体する器 ([#1594])。
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
@@ -485,6 +534,9 @@ import MokumeDiagnostics
     private(set) var submissionCount: UInt64 = 0
 
     /// 既定の GPU で作る。
+    ///
+    /// 同じプロセスで GPU の完了を待つのが一度 ``waitLimitSeconds`` を越えた後は、作らずに
+    /// ``RenderFailure/gpuNotResponding`` で断る。``init(device:)`` も同じである。
     public convenience init() throws(RenderFailure) {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw .deviceUnavailable
@@ -497,17 +549,21 @@ import MokumeDiagnostics
         try self.init(device: device, slotCount: RenderDevice.defaultSlotCount)
     }
 
-    /// 置き場の本数を指定できる入口 (検査用)。
+    /// 置き場の本数と、発行口の関所を指定できる入口 (検査用)。
     ///
     /// 1 本にすると「待たない経路の直後に必ず同じ置き場が回ってくる」形になり、
     /// 環が実際に待っていることを検査から確かめられる。
-    init(device: any MTLDevice, slotCount: Int) throws(RenderFailure) {
+    ///
+    /// 関所は、待ちの期限切れの後を見る検査だけが自前のものを渡す (``CommandQueueGate`` の説明)。
+    init(
+        device: any MTLDevice, slotCount: Int, queueGate: CommandQueueGate = .process
+    ) throws(RenderFailure) {
         self.device = device
+        self.queueGate = queueGate
         self.shaders = ShaderLibraries(device: device)
 
-        guard let queue = device.makeMTL4CommandQueue() else {
-            throw .commandQueueUnavailable
-        }
+        // **発行口は関所を通して作る** (#2052)。GPU が一度答えなくなったプロセスでは作らずに断る
+        let queue = try queueGate.makeQueue(on: device)
         self.queue = queue
 
         var slots: [Slot] = []
@@ -554,10 +610,15 @@ import MokumeDiagnostics
     /// 合図は進むのに絵が空のまま読める形で、しかも負荷のかかったときだけ出る (#727 の
     /// 検査で 3 本が同時に落ちた)。畳む前に待てば、投入した側は寿命を気にしなくてよい。
     ///
-    /// 詰まっていたら諦めて畳む。ここで投げる先は無いので、警告だけ残す。
+    /// 詰まっていたら諦めて畳む。ここで投げる先は無いので、警告だけ残す。**諦めたことは
+    /// プロセスに残る** — 待ちが期限を越えると ``signalReached(_:)`` が関所に印を立て、以後この
+    /// プロセスでは新しい土台を作らない ([#2052])。畳んだ後に次の土台が答えない GPU へ発行口を
+    /// 足し、止まった発行口が溜まって機械ごと止まったのが #2052 である。
+    ///
+    /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     isolated deinit {
         guard !isIdle else { return }
-        if !signalReached(submissionCount) {
+        if !signalReached(submissionCount), unansweredSubmissionsForTesting == 0 {
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for the GPU with no answer, and the drawing foundation is being taken down anyway")
         }
@@ -847,17 +908,6 @@ import MokumeDiagnostics
         abandonedCommands += 1
     }
 
-    /// 完了の合図が `value` まで進むのを待つ。**越えたら `false`。**
-    ///
-    /// 持っているのは**期限そのものと、秒からミリ秒への変換**だけである。畳んだのは
-    /// この 2 つが 4 箇所に書かれていたからで、1 箇所だけ直し漏れると **1000 倍長く待つ
-    /// = 期限が無いのと同じ**になる。しかも症状は「固まった」だけで、期限を持っている
-    /// つもりのコードが持っていないことは読んでも分からない
-    /// ([#959](https://github.com/mokume-metal/mokume/issues/959))。
-    ///
-    /// **言うことは持たない。** 4 つの呼び出し側で文言が違い、`Diagnostics.warn` は標準
-    /// エラーへ直に書いて控えを持たないので、畳んで壊しても確かめる手段が無い (#958 で
-    /// 同じ線を引いた)。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す。
     /// 合図の待ちが期限を越えたときに投げる失敗。**合図を待つ 3 つの待ち口はすべてここを通る。**
     /// 結末が届くのを待つ ``droppedWork(after:through:)`` は通らない (合図は届いているので、
     /// `.timedOut` の「描きすぎ」は当たらない)。
@@ -874,9 +924,35 @@ import MokumeDiagnostics
         return .timedOut(seconds: waitLimitSeconds)
     }
 
+    /// 完了の合図が `value` まで進むのを待つ。**越えたら `false`。**
+    ///
+    /// 持っているのは**期限そのものと、秒からミリ秒への変換**だけである。畳んだのは
+    /// この 2 つが 4 箇所に書かれていたからで、1 箇所だけ直し漏れると **1000 倍長く待つ
+    /// = 期限が無いのと同じ**になる。しかも症状は「固まった」だけで、期限を持っている
+    /// つもりのコードが持っていないことは読んでも分からない
+    /// ([#959](https://github.com/mokume-metal/mokume/issues/959))。期限は ``signalWaitLimit``
+    /// (製品では ``waitLimitSeconds``) から読む。
+    ///
+    /// **越えたら、発行口の関所 (``queueGate``) に印を立てる** ([#2052])。以後このプロセスでは、
+    /// 新しい土台も、``isAvailable`` の使い捨ても、発行口を作らない。GPU の待ちは 4 つ (`deinit`・
+    /// ``settle()``・``waitForSlot(_:)``・``waitForSubmission(_:)``) で、どれもここを通るので、印を
+    /// 立てる場所はここ 1 つで足りる。結末が届くのを待つ ``droppedWork(after:through:)`` は通らない。
+    /// あちらは合図が届いた後の待ちで、GPU は答えている。
+    ///
+    /// **期限切れの文言は持たない。** 4 つの呼び出し側で文言が違い、`Diagnostics.warn` は標準
+    /// エラーへ直に書いて控えを持たないので、畳んで壊しても確かめる手段が無い (#958 で
+    /// 同じ線を引いた)。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す。ここが言うのは
+    /// 印を立てたことだけで、言うのはプロセスで 1 回である。
+    ///
+    /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     private func signalReached(_ value: UInt64) -> Bool {
-        completion.wait(
-            untilSignaledValue: value, timeoutMS: UInt64(Self.waitLimitSeconds * 1000))
+        let milliseconds = UInt64((signalWaitLimit / .milliseconds(1)).rounded(.up))
+        guard !completion.wait(untilSignaledValue: value, timeoutMS: milliseconds) else { return true }
+        if queueGate.close(), unansweredSubmissionsForTesting == 0 {
+            Diagnostics.warn(
+                "The GPU gave no answer within \(signalWaitLimit), so this process will set up no new drawing foundation — more queues on a GPU that is not answering can freeze the whole Mac")
+        }
+        return false
     }
 
     /// 指定した置き場から投入したコマンドが終わるまで待つ。
@@ -1143,6 +1219,11 @@ import MokumeDiagnostics
         _ commands: any MTL4CommandBuffer, retaining resources: [AnyObject] = [],
         writing surfaces: [RenderTarget] = []
     ) -> UInt64 {
+        // 答えの来ない番号 (検査の差し込み) の後ろに積むと、GPU 側がその番号を待って発行口ごと
+        // 止まる。止める前に落とす (`addUnansweredSubmissionForTesting()`・#2052)
+        precondition(
+            unansweredSubmissionsForTesting == 0,
+            "Submitted work after a submission that never answers — the queue would wait on it forever")
         commands.endCommandBuffer()
         // **増やす前に積む。** 順番が逆だと、この投入が自分自身の合図を待つ
         orderAfter(submissionCount)

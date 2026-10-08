@@ -39,6 +39,7 @@ struct StartupFailureTests {
             .workDropped(
                 reason: "Caused GPU Address Fault Error (0000000b:kIOGPUCommandBufferCallbackErrorPageFault)")
         ),
+        ("gpuNotResponding", .gpuNotResponding),
         ("invalidSize", .invalidSize(width: 0, height: 120)),
         ("invalidPixelDensity", .invalidPixelDensity(1.5)),
         ("invalidFrameRate", .invalidFrameRate(0)),
