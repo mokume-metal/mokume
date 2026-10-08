@@ -117,6 +117,25 @@ extension Sketch {
 }
 """
 
+# 自分で `settings` を宣言するメンバの段の例 (#2229)。撮る側も `settings` を足すと、
+# 組める側は通るのに撮る側だけが `invalid redeclaration of 'settings'` で止まる
+SETTINGS_SOURCE = """\
+// SPDX-FileCopyrightText: 2026 mokume-metal
+// SPDX-License-Identifier: MIT
+
+extension Sketch {
+    /// 窓の大きさを例が自分で決める。
+    ///
+    /// ```swift
+    /// var settings: SketchSettings { SketchSettings(width: 400, height: 300) }
+    /// func draw() { circle(200, 150, 60) }
+    /// ```
+    /// <!-- shot: 中央の円 -->
+    /// <!-- /shot -->
+    public func sized() {}
+}
+"""
+
 # 型の宣言から始まる例。`enum` に包まれて Sketch にならないので撮れない
 TYPE_SOURCE = """\
 // SPDX-FileCopyrightText: 2026 mokume-metal
@@ -287,6 +306,55 @@ class ExampleShotsTest(unittest.TestCase):
         body = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
         self.assertEqual(body.count("import Foundation"), 1, body)
         self.assertLess(body.index("import Foundation"), body.index("final class "), body)
+
+    def generated(self, found):
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        return (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+
+    def test_settingsを宣言する例は例の宣言で組む(self):
+        """#2229 の 1。撮る側が自分の `settings` も足すと、同じ型に 2 つ並んで組めない。"""
+        self.path.write_text(SETTINGS_SOURCE, encoding="utf-8")
+        body = self.generated(self.collect())
+        self.assertIn("    var settings: SketchSettings { SketchSettings(width: 400, height: 300) }", body)
+        self.assertEqual(body.count("var settings"), 1, body)
+
+    def test_同じ指紋の例は1本にまとめて組む(self):
+        """#2229 の 3。型の名前は指紋から採るので、同じ指紋を 2 本書くと同じ名前の型が
+        2 つできて組めない。指紋が同じなら絵も同じなので、1 本にまとめる。"""
+        self.path.write_text(SOURCE.replace("circle(200, 150, 80)", "circle(200, 150, 160)"), encoding="utf-8")
+        found = self.collect()
+        self.assertEqual(len(found), 2)
+        self.assertEqual(found[0].fingerprint, found[1].fingerprint)
+        body = self.generated(found)
+        self.assertEqual(body.count(f"final class {shots._type_name(found[0])}: Sketch {{"), 1, body)
+        self.assertEqual(body.count(f'("{found[0].name}", '), 1, body)
+
+    def with_skip_mark(self, text):
+        """1 本目の例に `組めない` の印を付ける。**指紋は動かない** (印は文脈ではない)。"""
+        return text.replace(
+            "    /// ```swift\n    /// circle(200, 150, 160)",
+            "    /// <!-- example: 組めない 試しの理由 -->\n    /// ```swift\n    /// circle(200, 150, 160)",
+        )
+
+    def test_組めない印と絵の囲みを両方持つ例は検査が名指しして赤い(self):
+        """#2229 の 2。撮った後に印を足しても指紋は動かないので、印を読まなければ緑のまま。"""
+        self.write_back()
+        self.path.write_text(self.with_skip_mark(self.path.read_text(encoding="utf-8")), encoding="utf-8")
+        found = self.collect()
+        problems = self.check()
+        named = [problem for problem in problems if "組めない" in problem]
+        self.assertEqual(len(named), 1, problems)
+        self.assertTrue(named[0].startswith(f"{found[0].where}:"), named)
+
+    def test_組めない印と絵の囲みを両方持つ例は組む前に名乗って止まる(self):
+        """Swift のエラーで全体が止まると、どの例かが名指しされない。"""
+        self.path.write_text(self.with_skip_mark(SOURCE), encoding="utf-8")
+        found = self.collect()
+        with self.assertRaises(SystemExit) as caught:
+            shots.generate(self.root, found, self.root / "generated")
+        self.assertIn(found[0].where, str(caught.exception))
+        self.assertIn("組めない", str(caught.exception))
 
 
     # ---------------------------------------------------------------- 包み方 (#667)

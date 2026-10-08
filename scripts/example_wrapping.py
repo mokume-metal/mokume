@@ -88,6 +88,18 @@ _MEMBER = re.compile(
     r"(?:func|init|deinit|subscript)\b"
 )
 _COMPUTED = re.compile(r"^(?:public\s+|internal\s+|private\s+|static\s+)*var\s+\w+\s*:\s*[^=]*\{\s*$")
+# `var` / `let` の宣言とその名前。**字下げの無い行だけを見る** — 字下げのある行は関数の中の
+# 局所変数で、型のメンバとはぶつからない
+_STORED = re.compile(
+    r"^(?:@\w+(?:\([^)]*\))?\s+)*"
+    r"(?:(?:public|internal|private|fileprivate|static|final|override|lazy|nonisolated)\s+)*"
+    r"(?:var|let)\s+(?P<name>\w+)\b"
+)
+
+
+def _declared(lines) -> set[str]:
+    """字下げの無い `var` / `let` が宣言する名前。"""
+    return {match["name"] for line in lines if (match := _STORED.match(line))}
 
 
 def strip_doc(line: str) -> str:
@@ -173,11 +185,21 @@ def wrap(
     - `members` — 包む側の都合で足す宣言 (撮る側の `settings` など)
 
     どちらも段に合わせた高さへ置く。
+
+    **`members` は、型のメンバの高さに同じ名前の宣言が既にあれば足さない — 例と `文脈` の
+    宣言が勝つ** (#2229)。足すのは片側 (撮る側) だけなので、ぶつかると組める例が撮る側でだけ
+    `invalid redeclaration` で落ちる。見るのは `文脈` (段によらずメンバの高さに置く) と、
+    メンバの段の例が字下げなしで書いた `var` / `let`。本体の段の例は `draw()` の中に入るので、
+    同じ名前でも局所変数でぶつからない。
     """
     level = level or level_of(snippet)
     # `import` は呼び出し側が `file_imports` でファイルの先頭へ集める (split_imports の注記)
     _, snippet = split_imports(snippet)
-    inner = _shift(list(members or []) + list(context or []), 4)
+    taken = _declared(list(context or []) + (snippet if level == LEVEL_MEMBER else []))
+    members = [
+        line for line in members or [] if not (match := _STORED.match(line)) or match["name"] not in taken
+    ]
+    inner = _shift(members + list(context or []), 4)
     if level == LEVEL_TYPE:
         return [f"enum {name} {{", *inner, *_shift(snippet, 4), "}"]
     if level == LEVEL_MEMBER:
