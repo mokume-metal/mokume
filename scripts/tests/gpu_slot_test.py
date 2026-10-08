@@ -3,12 +3,13 @@
 # SPDX-License-Identifier: MIT
 """`scripts/gpu-slot.py` — GPU の検査を、機械全体で共有する枠を取ってから走らせる包みの検査 (#1898)。
 
-守るのは 5 つ。
+守るのは 6 つ。
 - 枠の数より多くは同時に走らない
 - 持ち主が殺されれば、枠が返る
 - 待つ側が期限を持つ
 - 子の終了コードをそのまま返す
 - 起動元 (親プロセスの連鎖・エージェントの出所) を、再起動で消えない記録に残す (#2059)
+- 窓つきの計測 (`--exclusive`) は、GPU の検査と同時に走らない (#2052)
 
 Swift も GPU も要らない。子には、合図のファイルを待つだけの小さな Python を走らせる。
 置き場は検査ごとの一時ディレクトリで、本物の枠 (`~/Library/Caches/mokume/gpu-slots`) にも
@@ -16,6 +17,7 @@ Swift も GPU も要らない。子には、合図のファイルを待つだけ
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import fcntl
 import json
 import os
 import signal
@@ -49,7 +51,9 @@ def _wait_for(predicate, seconds=10.0):
     return predicate()
 
 
-class GpuSlotTest(unittest.TestCase):
+class SlotHarness(unittest.TestCase):
+    """検査ごとの一時ディレクトリに枠と記録を置き、偽の子を包みに通して走らせる下回り。検査は持たない。"""
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -82,14 +86,20 @@ class GpuSlotTest(unittest.TestCase):
             }
         )
         environment.update(extra or {})
+        # 検査そのものが計測の内側 (--exclusive の子) で走っていても、包みに枠を取らせる
+        if "MOKUME_GPU_SLOT_EXCLUSIVE" not in (extra or {}):
+            environment.pop("MOKUME_GPU_SLOT_EXCLUSIVE", None)
         return environment
 
-    def _start(self, name, code=0, **options):
-        """包みを通して子を走らせる。子が始まった印と、子を終わらせる合図のファイルを返す。"""
+    def _start(self, name, code=0, exclusive=False, **options):
+        """包みを通して子を走らせる。子が始まった印と、子を終わらせる合図のファイルを返す。
+
+        `exclusive` は窓つきの計測の口 (`--exclusive`) を通す。"""
         started = self.root / f"{name}.started"
         release = self.root / f"{name}.release"
+        mode = ["--exclusive"] if exclusive else []
         process = subprocess.Popen(
-            [sys.executable, str(SCRIPT), "--", sys.executable, "-c", CHILD, str(started), str(release), str(code)],
+            [sys.executable, str(SCRIPT), *mode, "--", sys.executable, "-c", CHILD, str(started), str(release), str(code)],
             env=self._environment(**options),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -98,6 +108,11 @@ class GpuSlotTest(unittest.TestCase):
         self.running.append(process)
         return process, started, release
 
+    def _entries(self):
+        return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
+
+
+class GpuSlotTest(SlotHarness):
     def test_no_more_than_the_slot_count_run_at_once(self):
         first, first_started, first_release = self._start("first")
         second, second_started, _ = self._start("second")
@@ -167,9 +182,6 @@ class GpuSlotTest(unittest.TestCase):
         _, error = process.communicate(timeout=10)
         self.assertEqual(process.returncode, 0)
         self.assertIn("枠を取らずに走らせる", error)
-
-    def _entries(self):
-        return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
 
     def test_take_and_release_are_recorded_with_the_child_and_its_exit(self):
         process, started, release = self._start("recorded", code=3)
@@ -315,11 +327,147 @@ class GpuSlotTest(unittest.TestCase):
         self.assertEqual(first["command"], "/bin/zsh -c make test-release")
 
     def test_usage_without_a_command(self):
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT)], env=self._environment(), capture_output=True, text=True, timeout=10
+        for arguments in ([], ["--exclusive"], ["--exclusive", "--"]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), *arguments],
+                    env=self._environment(), capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("使い方", result.stderr)
+
+
+class ExclusiveTest(SlotHarness):
+    """窓つきの計測は、GPU の検査と同時に走らない (#2052 の完了条件 2)。
+
+    計測は `--exclusive` で枠を全部取ってから走る。検査が 1 本でも枠を握っていれば計測が待ち、
+    計測が走っている間は検査が待つ。どちらの待ちも期限を持ち、待つ間は相手を名乗る。
+    """
+
+    def test_the_exclusive_waits_while_a_test_holds_a_slot_and_names_it(self):
+        holder, holder_started, holder_release = self._start("holder")
+        self.assertTrue(_wait_for(holder_started.exists))
+        measure, measure_started, measure_release = self._start("measure", exclusive=True)
+        time.sleep(0.5)
+        self.assertFalse(measure_started.exists(), "検査が枠を握っているのに、計測が走った")
+        holder_release.touch()
+        self.assertEqual(holder.wait(timeout=10), 0)
+        self.assertTrue(_wait_for(measure_started.exists), "検査が終わっても計測が走らない")
+        measure_release.touch()
+        _, error = measure.communicate(timeout=10)
+        self.assertEqual(measure.returncode, 0, error)
+        self.assertIn("計測を始めずに待っている", error)
+        self.assertIn(f"pid {holder.pid}", error)
+
+    def test_a_test_waits_while_the_exclusive_runs_and_names_it(self):
+        measure, measure_started, measure_release = self._start("measure", exclusive=True)
+        self.assertTrue(_wait_for(measure_started.exists))
+        test, test_started, test_release = self._start("test")
+        time.sleep(0.5)
+        self.assertFalse(test_started.exists(), "計測が走っているのに、検査が走った")
+        measure_release.touch()
+        self.assertEqual(measure.wait(timeout=10), 0)
+        self.assertTrue(_wait_for(test_started.exists), "計測が終わっても検査が走らない")
+        test_release.touch()
+        _, error = test.communicate(timeout=10)
+        self.assertEqual(test.returncode, 0, error)
+        self.assertIn("窓つきの計測", error)
+        self.assertIn(f"pid {measure.pid}", error)
+
+    def _gate_is_held(self):
+        try:
+            with open(self.slots / "exclusive.lock", "r") as handle:
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        except FileNotFoundError:
+            return False
+        return False
+
+    def test_a_test_that_arrives_while_the_exclusive_waits_does_not_jump_ahead(self):
+        # 計測が順番を待っている間に枠が 1 つ空いても、後から来た検査はそれを取らない。取ると、
+        # 検査が途切れない限り計測に順番が回ってこない
+        first, first_started, first_release = self._start("first")
+        second, second_started, second_release = self._start("second")
+        self.assertTrue(_wait_for(first_started.exists))
+        self.assertTrue(_wait_for(second_started.exists))
+        # 計測の取り直しは遅くする。順番待ちの印が効いていなければ、取り直しの速い後の検査が、
+        # 空いた枠を先に取る
+        measure, measure_started, measure_release = self._start(
+            "measure", exclusive=True, extra={"MOKUME_GPU_SLOT_POLL": "1"}
         )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("使い方", result.stderr)
+        self.assertTrue(_wait_for(self._gate_is_held), "計測が順番待ちの印を取らない")
+        late, late_started, late_release = self._start("late")
+        time.sleep(0.3)
+        first_release.touch()
+        self.assertEqual(first.wait(timeout=10), 0)
+        time.sleep(0.5)
+        self.assertFalse(late_started.exists(), "計測が待っている間に、後から来た検査が空いた枠を取った")
+        second_release.touch()
+        self.assertTrue(_wait_for(measure_started.exists), "先の検査が終わっても計測が走らない")
+        self.assertFalse(late_started.exists(), "計測が走っている間に、後から来た検査が走った")
+        measure_release.touch()
+        self.assertTrue(_wait_for(late_started.exists), "計測が終わっても、後から来た検査が走らない")
+        late_release.touch()
+
+    def test_the_exclusive_gives_up_at_its_deadline_and_names_the_test(self):
+        holder, holder_started, _ = self._start("holder")
+        self.assertTrue(_wait_for(holder_started.exists))
+        measure, measure_started, _ = self._start("measure", exclusive=True, wait="0.3")
+        _, error = measure.communicate(timeout=10)
+        self.assertEqual(measure.returncode, 75, error)
+        self.assertFalse(measure_started.exists(), "期限で抜けたのに計測を走らせた")
+        self.assertIn(f"pid {holder.pid}", error)
+        timeouts = [entry for entry in self._entries() if entry["event"] == "timeout"]
+        self.assertEqual([entry["pid"] for entry in timeouts], [measure.pid])
+        # 抜けた計測が取りかけた枠は返っている
+        after, after_started, after_release = self._start("after")
+        self.assertTrue(_wait_for(after_started.exists), "期限で抜けた計測が、枠を握ったまま残った")
+        after_release.touch()
+
+    def test_a_test_gives_up_at_its_deadline_and_names_the_exclusive(self):
+        measure, measure_started, _ = self._start("measure", exclusive=True)
+        self.assertTrue(_wait_for(measure_started.exists))
+        test, test_started, _ = self._start("test", wait="0.3")
+        _, error = test.communicate(timeout=10)
+        self.assertEqual(test.returncode, 75, error)
+        self.assertFalse(test_started.exists())
+        self.assertIn("窓つきの計測", error)
+        self.assertIn(f"pid {measure.pid}", error)
+
+    def test_the_exclusive_take_is_recorded_with_every_slot(self):
+        measure, measure_started, measure_release = self._start("measure", exclusive=True)
+        self.assertTrue(_wait_for(measure_started.exists))
+        measure_release.touch()
+        self.assertEqual(measure.wait(timeout=10), 0)
+        take = self._entries()[0]
+        self.assertEqual(take["event"], "take")
+        self.assertEqual(take["mode"], "exclusive")
+        self.assertEqual(take["slots"], ["slot-0.lock", "slot-1.lock"])
+
+    def test_a_command_line_that_is_not_utf8_still_runs_the_measurement(self):
+        # 計測のコマンドは順番待ちの印に書くので、書けない引数で包みが落ちないこと
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--exclusive", "--", sys.executable, "-c", "import sys; sys.exit(6)", b"\xff"],
+            env=self._environment(), capture_output=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 6, result.stderr)
+
+    def test_the_child_knows_it_runs_inside_the_exclusive_and_a_nested_one_does_not_wait(self):
+        # 包まれた計測の中から、もう一度 --exclusive を通しても (スクリプトの自分で包む口が、外から
+        # 包まれたときに当たる)、自分の親が握る枠を待たずに走る
+        nested = (
+            "import os, subprocess, sys\n"
+            "assert os.environ.get('MOKUME_GPU_SLOT_EXCLUSIVE'), 'no marker'\n"
+            "sys.exit(subprocess.run([sys.executable, sys.argv[1], '--exclusive', '--',"
+            " sys.executable, '-c', 'import sys; sys.exit(7)']).returncode)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--exclusive", "--", sys.executable, "-c", nested, str(SCRIPT)],
+            env=self._environment(wait="2"), capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertIn("既に", result.stderr)
 
 
 class ParallelizationWidthTest(unittest.TestCase):
@@ -382,6 +530,37 @@ class MakefileWiringTest(unittest.TestCase):
         self.assertTrue(builds)
         for line in builds:
             self.assertNotIn("gpu-slot.py", line)
+
+
+class MeasurementWiringTest(unittest.TestCase):
+    """窓つきの計測のスクリプトが、窓を出す前に `--exclusive` の内側へ入り直すこと (#2052)。"""
+
+    SCRIPTS = ("measure-frame-rate.sh", "check-observation-roundtrip.sh")
+    # 窓を出すスケッチを起こす行
+    LAUNCHES = ("frame-rate-probe", "./.build/debug/", "swift run ")
+
+    def test_windowed_runs_happen_inside_the_exclusive(self):
+        for name in self.SCRIPTS:
+            with self.subTest(script=name):
+                lines = [
+                    line.strip()
+                    for line in (REPO / "scripts" / name).read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+                entries = [
+                    index for index, line in enumerate(lines)
+                    if line.startswith("exec python3 scripts/gpu-slot.py --exclusive -- ")
+                ]
+                self.assertEqual(len(entries), 1, f"{name} が --exclusive の内側へ入り直していない")
+                # 内側かどうかを見ずに入り直すと、自分を包んだ計測の枠を待ち続ける
+                guard = next(line for line in reversed(lines[: entries[0]]) if line.startswith("if "))
+                self.assertIn("MOKUME_GPU_SLOT_EXCLUSIVE", guard, f"{name} の入り直しが、内側かどうかを見ていない")
+                launches = [
+                    index for index, line in enumerate(lines)
+                    if any(launch in line for launch in self.LAUNCHES)
+                ]
+                self.assertTrue(launches, f"{name} に窓を出す行が無い")
+                self.assertLess(entries[0], min(launches), f"{name} が --exclusive の外で窓を出している")
 
 
 if __name__ == "__main__":

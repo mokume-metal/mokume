@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""GPU の検査を、機械全体で共有する枠を 1 つ取ってから走らせる (#1898)。
+"""GPU の検査を、機械全体で共有する枠を 1 つ取ってから走らせる (#1898)。窓つきの計測は、
+枠を全部取ってから走らせる (#2052・下の「## 窓つきの計測」)。
 
     python3 scripts/gpu-slot.py -- swift test --skip-build …
+    python3 scripts/gpu-slot.py --exclusive -- <計測のコマンド…>
 
 **同じ機械で GPU の検査が同時に走るのは、枠の数 (既定 3) までにする。** 複数のセッション
 (並行する実装レーン) が `make test` を同時に回すと、GPU の資源切れ (`Cannot create a command
@@ -35,6 +37,40 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 置き場を作れない・ロックできないときは、**枠を取らずに子を走らせ、そうしたことを 1 行で
 名乗る**。黙って素通りはしない。検査の段を止める側には倒さない — 枠は検査の保証ではなく、
 混雑の抑えだからである。
+
+## 窓つきの計測
+
+**窓つきの計測と GPU の検査は、同じ機械で同時に走らせない** (#2052・メンテナの判断 2026-10-04)。
+窓つきの計測とは、mokume のスケッチを窓つきで動かして性能や挙動を測る実行である。#2052 では、
+枠の外で窓つきの計測 (窓 最大 8 枚・3840×2160・録画つき) が走っている間に、枠の内側の検査が GPU を
+詰まらせ、手元機がカーネルパニックで落ちた。計測の負荷だけでは止まらなかった (#2052 の再現の
+コメント) が、重なった場合については何も言えない。だから重ねない。
+
+- `--exclusive` は、まず順番待ちの印 (置き場の `exclusive.lock`) を取る。次に枠を全部
+  (`$MOKUME_GPU_SLOTS` 個) 取ってから、子を走らせる。検査が 1 本でも枠を握っていれば、空くまで待つ
+- **印が握られている間は、普段の実行は空いた枠があっても新しく取らない。** 計測が待っている間に
+  後から来た検査が枠を取ると、検査が途切れない限り、計測に順番が回ってこない。印を知らない古い版の
+  gpu-slot (他の作業ツリー) も、枠が全部埋まっているので待つ。計測どうしは印で 1 本ずつになる
+- 待ちの期限 (`$MOKUME_GPU_SLOT_WAIT`)・名乗り・起動元の記録は普段と同じである。待つ側は相手を
+  名乗る (計測なら、印に書いたコマンドの先頭も)。記録の `take` には `"mode": "exclusive"` と、
+  取った枠の一覧が載る
+- 子には `MOKUME_GPU_SLOT_EXCLUSIVE` (包みの pid) を渡す。自分で包み直すスクリプトは、これを見て
+  包み直さない。内側でもう一度 `--exclusive` を通しても、待たずにそのまま走らせる。自分の親が握る
+  枠を待ち続けないためである
+- **ビルドは包む前に済ませる。** ビルドの間も枠を握ると、検査を待たせるだけになる
+
+このリポジトリでは、`scripts/measure-frame-rate.sh` と `scripts/check-observation-roundtrip.sh` が、
+自分で `--exclusive` の内側へ入り直す。
+
+**外から計測するとき** (probes など、このリポジトリの外の道具で mokume のスケッチを窓つきで測る
+とき) は、同じ機械にある mokume の作業ツリーのこのスクリプトで、計測のコマンドを包む。枠の置き場は
+既定のまま (`MOKUME_GPU_SLOT_DIR` を変えない) にする。変えると枠が割れて、検査と重なる:
+
+    swift build -c release        # ビルドは包む前に
+    python3 <mokume の作業ツリー>/scripts/gpu-slot.py --exclusive -- <計測のコマンド…>
+
+**包まないもの:** 普段のスケッチの実行 (`mokume watch`・作品の起動)。作り手の実行を、検査の都合で
+待たせない。
 
 ## 範囲の外
 
@@ -94,8 +130,10 @@ GPU は画面の描画 (WindowServer) と共有なので、全検査が重なっ
   (`RenderDevice` を作っては捨てる経路) でも成り立ちうる。製品の経路で起きるかは確かめていない
 - 標本は小さい。30 回の 0 は、95% で上限が約 10% にしか絞れない。キューを解放しない条件でも 1〜2/30 は
   残ったので、別の根があるかもしれない
-- **幅 1 でも塞げない経路がある**: GPU が応答しなくなった後、`RenderDevice.waitLimitSeconds` で待ちを
-  打ち切って土台を畳み、次の検査が新しいキューを作り続けて、止まったキューが溜まる (#2052・推定)
+- **幅 1 では塞げなかった経路がある**: GPU が応答しなくなった後、`RenderDevice.waitLimitSeconds` で待ちを
+  打ち切って土台を畳み、次の検査が新しいキューを作り続けて、止まったキューが溜まる (#2052)。これは
+  幅ではなく `RenderDevice` の側で塞いだ。待ちが一度期限を越えたプロセスでは、新しいキューを作らない
+  (`Sources/MokumeCore/Rendering/CommandQueueGate.swift`)
 - **測っていないのは**、手元機 (M3 Max) の所要と、幅 1 での同時の発行口の数 (検査が 1 本ずつなので
   1 本前後のはず) である
 
@@ -136,8 +174,9 @@ GPU は画面の描画 (WindowServer) と共有なので、全検査が重なっ
    tool_use を読めば、何を打って起動したかが分かる
 
 **この記録に載らないもの:** 枠を通らない実行 (素の `swift test`・ShadowTests の負荷の手順・
-`make reference-shots`・`scripts/measure-frame-rate.sh`・窓つきのスケッチ・`mokume watch`)。
-GPU を使っていたのにここに無ければ、それは枠の外の実行である (上の「範囲の外」・#2052)。
+`make reference-shots`・包まずに起こした窓つきのスケッチ・`mokume watch`)。GPU を使っていたのに
+ここに無ければ、それは枠の外の実行である (上の「範囲の外」・#2052)。窓つきの計測は、包んでいれば
+`"mode": "exclusive"` の行で載る (上の「## 窓つきの計測」)。
 
 子の終了コードは、そのまま返す。SIGINT / SIGTERM は子へ渡す。取り直しの間隔
 (`$MOKUME_GPU_SLOT_POLL` 秒) と名乗る間隔 (`$MOKUME_GPU_SLOT_REPORT` 秒) は、検査が短く回す
@@ -157,6 +196,12 @@ DEFAULT_SLOTS = 3
 DEFAULT_WAIT_SECONDS = 5400
 EXIT_TIMED_OUT = 75
 EXIT_USAGE = 2
+
+# 窓つきの計測 (上の「## 窓つきの計測」)。順番待ちの印のファイル名と、子へ渡す「内側で走っている」の印
+GATE_NAME = "exclusive.lock"
+EXCLUSIVE_VARIABLE = "MOKUME_GPU_SLOT_EXCLUSIVE"
+# 印に書く計測のコマンドの長さ。待つ側が名乗るためのもので、全文は起動元の記録にある
+GATE_COMMAND_CHARACTERS = 200
 
 # 起動元の記録 (上の「## 起動元の記録」)
 LOG_LIMIT_BYTES = 4_000_000
@@ -296,8 +341,11 @@ def _record(event, **fields):
         _say(f"起動元の記録 {path} に書けなかった ({error!r})。検査はそのまま走らせる")
 
 
-def _try_take(path):
-    """枠のファイルを 1 つ排他で取る。取れたら開いたままのファイルを、取れなければ None を返す。"""
+def _try_take(path, command=None):
+    """枠のファイルを 1 つ排他で取る。取れたら開いたままのファイルを、取れなければ None を返す。
+
+    `command` を渡すと 4 つ目の欄に書く (順番待ちの印だけが書く)。枠のファイルは 3 欄のままにする —
+    印を知らない古い版の gpu-slot.py (他の作業ツリー) も、枠の持ち主を読めるように。"""
     handle = open(path, "a+")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -306,9 +354,32 @@ def _try_take(path):
         return None
     handle.seek(0)
     handle.truncate()
-    handle.write(f"{os.getpid()}\t{os.getcwd()}\t{int(time.time())}\n")
+    note = ""
+    if command is not None:
+        # UTF-8 でない引数 (surrogateescape で来る) は書けないので置き換える。欄と行は崩さない
+        text = " ".join(command).encode("utf-8", errors="replace").decode("utf-8")
+        note = "\t" + text.replace("\t", " ").replace("\n", " ")[:GATE_COMMAND_CHARACTERS]
+    handle.write(f"{os.getpid()}\t{os.getcwd()}\t{int(time.time())}{note}\n")
     handle.flush()
     return handle
+
+
+def _gate_holder(gate):
+    """順番待ちの印を握っている計測を、名乗るための行にして返す。誰も握っていなければ None。"""
+    try:
+        with open(gate, "r") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                record = handle.read().strip().split("\t", 3)
+            else:
+                return None  # 共有で取れた = 誰も持っていない
+    except OSError:
+        return None  # まだ誰も計測していない (印のファイルが無い)
+    if len(record) == 4 and record[2].isdigit():
+        minutes = int((time.time() - int(record[2])) // 60)
+        return f"  - 窓つきの計測 ({GATE_NAME}): pid {record[0]} · {record[1]} · {minutes} 分前から · {record[3]}"
+    return f"  - 窓つきの計測 ({GATE_NAME}): 持ち主を読めない"
 
 
 def _holders(paths):
@@ -334,41 +405,58 @@ def _holders(paths):
     return lines
 
 
+def _give_up(what, subject, wait_seconds, started, now, busy, origin):
+    """期限を越えた。相手を名乗り、記録に残して 75 で抜ける。"""
+    _say(
+        f"{what}が {_span(wait_seconds)}空かなかったので、{subject}を走らせずに抜ける。"
+        " 持ち主が固まっていないか確かめる (MOKUME_GPU_SLOT_WAIT で期限を変えられる):"
+    )
+    for line in busy:
+        print(line, file=sys.stderr, flush=True)
+    print(f"  (持ち主の起動元は {_log_path()} の take の行にある)", file=sys.stderr, flush=True)
+    _record("timeout", waited_seconds=round(now - started, 1), holders=busy, **origin)
+    sys.exit(EXIT_TIMED_OUT)
+
+
 def _acquire(slots, wait_seconds, poll, report_every, origin):
-    """枠を 1 つ取る。取れた枠を返す。置き場を使えなければ None を返す。期限を越えたら抜ける。"""
+    """枠を 1 つ取る。取れた枠を返す。置き場を使えなければ None を返す。期限を越えたら抜ける。
+
+    **窓つきの計測が順番待ちの印を握っている間は、空いた枠があっても取らない** (上の「## 窓つきの
+    計測」)。取ると、検査が途切れない限り計測に順番が回ってこない。"""
     directory = _slot_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
         paths = [directory / f"slot-{index}.lock" for index in range(slots)]
+        gate = directory / GATE_NAME
         started = time.monotonic()
         last_report = started
         while True:
-            for path in paths:
-                handle = _try_take(path)
-                if handle is not None:
-                    waited = time.monotonic() - started
-                    if waited >= report_every:
-                        _say(f"枠 {path.name} を取った ({_span(waited)}待った)")
-                    return handle
+            measuring = _gate_holder(gate)
+            if measuring is None:
+                for path in paths:
+                    handle = _try_take(path)
+                    if handle is not None:
+                        waited = time.monotonic() - started
+                        if waited >= report_every:
+                            _say(f"枠 {path.name} を取った ({_span(waited)}待った)")
+                        return handle
             now = time.monotonic()
+            busy = ([measuring] if measuring else []) + _holders(paths)
             if now - started >= wait_seconds:
-                _say(
-                    f"GPU の枠 ({slots}) が {_span(wait_seconds)}空かなかったので、検査を走らせずに抜ける。"
-                    " 持ち主が固まっていないか確かめる (MOKUME_GPU_SLOT_WAIT で期限を変えられる):"
-                )
-                holders = _holders(paths)
-                for line in holders:
-                    print(line, file=sys.stderr, flush=True)
-                print(f"  (持ち主の起動元は {_log_path()} の take の行にある)", file=sys.stderr, flush=True)
-                _record("timeout", waited_seconds=round(now - started, 1), holders=holders, **origin)
-                sys.exit(EXIT_TIMED_OUT)
+                _give_up(f"GPU の枠 ({slots}) ", "検査", wait_seconds, started, now, busy, origin)
             if now - last_report >= report_every:
                 last_report = now
-                _say(
-                    f"GPU の枠 ({slots}) が空くのを待っている — {_span(now - started)}経過"
-                    f" (期限 {_span(wait_seconds)})。いま走っているもの:"
-                )
-                for line in _holders(paths):
+                if measuring:
+                    _say(
+                        f"窓つきの計測が GPU の枠を全部使う (取るのを待っている) 間は、検査を始めずに待つ — "
+                        f"{_span(now - started)}経過 (期限 {_span(wait_seconds)})。相手:"
+                    )
+                else:
+                    _say(
+                        f"GPU の枠 ({slots}) が空くのを待っている — {_span(now - started)}経過"
+                        f" (期限 {_span(wait_seconds)})。いま走っているもの:"
+                    )
+                for line in busy:
                     print(line, file=sys.stderr, flush=True)
             time.sleep(poll)
     except OSError as error:
@@ -376,11 +464,65 @@ def _acquire(slots, wait_seconds, poll, report_every, origin):
         return None
 
 
-def _run(command):
+def _acquire_all(slots, wait_seconds, poll, report_every, origin, command):
+    """窓つきの計測のために、順番待ちの印と枠を全部取る。(印, [枠…]) を返す。置き場を使えなければ
+    None を返す。期限を越えたら抜ける (取りかけた枠は、抜けたときに OS が外す)。
+
+    **先に印を取る。** 取った後は普段の検査が新しく枠を取らないので、走っている検査が終わるのを
+    待てば、枠は必ず全部空く。計測どうしは印で 1 本ずつになる。枠は空いたものから取る。"""
+    directory = _slot_dir()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        paths = [directory / f"slot-{index}.lock" for index in range(slots)]
+        gate_path = directory / GATE_NAME
+        gate = None
+        held = {}
+        started = time.monotonic()
+        last_report = started
+        while True:
+            if gate is None:
+                gate = _try_take(gate_path, command)
+            if gate is not None:
+                for path in paths:
+                    if path not in held:
+                        handle = _try_take(path)
+                        if handle is not None:
+                            held[path] = handle
+                if len(held) == len(paths):
+                    waited = time.monotonic() - started
+                    if waited >= report_every:
+                        _say(f"枠を全部 ({slots}) 取った ({_span(waited)}待った)")
+                    return gate, [held[path] for path in paths]
+            now = time.monotonic()
+            # 自分が握った枠は名乗らない (同じプロセスの別の開き口からは、握られているとしか読めない)
+            other = None if gate is not None else _gate_holder(gate_path)
+            busy = ([other] if other else []) + _holders([path for path in paths if path not in held])
+            if now - started >= wait_seconds:
+                _give_up(f"GPU の枠 ({slots}) の全部", "計測", wait_seconds, started, now, busy, origin)
+            if now - last_report >= report_every:
+                last_report = now
+                waiting_for = "別の窓つきの計測" if gate is None else "GPU の検査"
+                _say(
+                    f"{waiting_for}が枠を握っているので、計測を始めずに待っている — "
+                    f"{_span(now - started)}経過 (期限 {_span(wait_seconds)})。相手:"
+                )
+                for line in busy:
+                    print(line, file=sys.stderr, flush=True)
+            time.sleep(poll)
+    except OSError as error:
+        _say(f"枠の置き場 {directory} を使えないので、枠を取らずに計測を走らせる ({error})")
+        return None
+
+
+def _run(command, exclusive=False):
     environment = dict(os.environ)
     # 空の値は未設定と同じに扱う。Swift Testing が読めない値を素通しすると、縛りが黙って外れる
     if not environment.get(PARALLELIZATION_WIDTH_VARIABLE, "").strip():
         environment[PARALLELIZATION_WIDTH_VARIABLE] = DEFAULT_PARALLELIZATION_WIDTH
+    if exclusive:
+        # 子とその孫に「計測の内側で走っている」と知らせる。自分で包み直すスクリプトは、これを見て
+        # 包み直さない。見ずに包み直すと、自分の親が握る枠を待ち続ける
+        environment[EXCLUSIVE_VARIABLE] = str(os.getpid())
     child = subprocess.Popen(command, env=environment)
 
     def forward(signum, _frame):
@@ -393,26 +535,44 @@ def _run(command):
 
 
 def main(argv):
+    exclusive = bool(argv) and argv[0] == "--exclusive"
+    if exclusive:
+        argv = argv[1:]
     if not argv or argv[0] != "--" or len(argv) < 2:
-        _say("使い方: gpu-slot.py -- <command…>")
+        _say("使い方: gpu-slot.py [--exclusive] -- <command…>")
         return EXIT_USAGE
+    command = argv[1:]
+    if exclusive and os.environ.get(EXCLUSIVE_VARIABLE):
+        _say(f"既に窓つきの計測の内側 (pid {os.environ[EXCLUSIVE_VARIABLE]} が枠を全部握っている) なので、そのまま走らせる")
+        return _run(command, exclusive=True)
     slots = _number("MOKUME_GPU_SLOTS", DEFAULT_SLOTS, integer=True)
     wait_seconds = _number("MOKUME_GPU_SLOT_WAIT", DEFAULT_WAIT_SECONDS, integer=False)
     poll = _number("MOKUME_GPU_SLOT_POLL", 2.0, integer=False)
     report_every = _number("MOKUME_GPU_SLOT_REPORT", 60.0, integer=False)
     origin = _origin()
-    slot = _acquire(slots, wait_seconds, poll, report_every, origin)
-    slot_name = Path(slot.name).name if slot is not None else None
-    _record("take", slot=slot_name, command=argv[1:], **origin)
+    if exclusive:
+        taken = _acquire_all(slots, wait_seconds, poll, report_every, origin, command)
+        handles = [] if taken is None else [*taken[1], taken[0]]
+        names = None if taken is None else [Path(handle.name).name for handle in taken[1]]
+        _record("take", mode="exclusive", slots=names, command=command, **origin)
+    else:
+        slot = _acquire(slots, wait_seconds, poll, report_every, origin)
+        handles = [] if slot is None else [slot]
+        names = None if slot is None else Path(slot.name).name
+        _record("take", slot=names, command=command, **origin)
     started = time.monotonic()
     code = None
     try:
-        code = _run(argv[1:])
+        code = _run(command, exclusive=exclusive)
         return code
     finally:
-        _record("release", slot=slot_name, exit_code=code, seconds=round(time.monotonic() - started, 1))
-        if slot is not None:
-            slot.close()
+        _record(
+            "release", **({"mode": "exclusive", "slots": names} if exclusive else {"slot": names}),
+            exit_code=code, seconds=round(time.monotonic() - started, 1),
+        )
+        # 枠を先に返し、順番待ちの印を最後に返す
+        for handle in handles:
+            handle.close()
 
 
 if __name__ == "__main__":
