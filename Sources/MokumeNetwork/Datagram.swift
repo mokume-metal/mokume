@@ -235,8 +235,18 @@ protocol DatagramSending: AnyObject, Sendable {
 
 /// UDP で 1 つの宛先 (ホストとポート) へ送る。
 ///
-/// **送れなくても投げない。** 宛先で誰も受けていない (`connection refused`) などで送れなかった
-/// ときは 1 度だけ知らせ、次に送るときに繋ぎ直す。送れたら、また知らせられるように戻す。
+/// **送れなくても投げない。** 送れないときは理由を添えて 1 度だけ知らせ、送れたら、また知らせられる
+/// ように戻す。知らせるのは 2 つの形である。
+///
+/// - **繋ぎが失敗した** (`failed`。宛先で誰も受けていない `connection refused` など) — 繋ぎを捨て、
+///   次に送るときに繋ぎ直す
+/// - **繋ぎが待っている** (`waiting`。`Network is down` など) — 繋ぎは Network.framework が自分で
+///   待ち続けるので捨てない。待っている間は送ったものの完了が 1 度も返らず、知らせなければ**黙って
+///   消える**。ネットワークが生きているのに待つなら、このアプリにローカルネットワークの許可が
+///   無いことがある (束ねた `.app` で、ダイアログが出ないまま塞がれたときに実測した — #1962)。
+///   `Network is down` は Wi-Fi が落ちているときにも出るので、許可の拒否と断定はしない
+///
+/// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
 nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態 (``connection``・``warned``) は ``queue`` の上でだけ触る。
 
@@ -259,13 +269,7 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
             connection.send(
                 content: Data(bytes),
                 completion: .contentProcessed { [weak self, weak connection] error in
-                    guard let self else { return }
-                    guard let error else {
-                        warned = false
-                        return
-                    }
-                    if let connection { drop(connection) }
-                    tell(error)
+                    self?.finished(sending: error, on: connection)
                 })
         }
     }
@@ -277,6 +281,12 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
         }
     }
 
+    /// 待ち行列の上で手続きを走らせる。検査が状態の読み替え (``changed(to:on:)``・
+    /// ``finished(sending:on:)``) を、本物の繋ぎを作らずに呼ぶための口。
+    func onQueue<Result>(_ body: () -> Result) -> Result {
+        queue.sync(execute: body)
+    }
+
     // MARK: - 待ち行列の上
 
     private func open() -> NWConnection {
@@ -284,13 +294,35 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
             host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(clamping: port)) ?? .any,
             using: .udp)
         opened.stateUpdateHandler = { [weak self, weak opened] state in
-            guard let self, let opened, case .failed(let error) = state else { return }
-            drop(opened)
-            tell(error)
+            self?.changed(to: state, on: opened)
         }
         opened.start(queue: queue)
         connection = opened
         return opened
+    }
+
+    /// 繋ぎの移り変わりを読む。送れない形なら 1 度だけ知らせる。
+    func changed(to state: NWConnection.State, on opened: NWConnection?) {
+        switch state {
+        case .waiting(let error):
+            // 繋ぎは Network.framework が自分で待ち続ける。捨てずに、送れないことだけを言う
+            tell(error, waiting: true)
+        case .failed(let error):
+            if let opened { drop(opened) }
+            tell(error, waiting: false)
+        default:
+            break
+        }
+    }
+
+    /// 1 つ送り終えた。送れたら、また知らせられるように戻す。
+    func finished(sending error: NWError?, on sent: NWConnection?) {
+        guard let error else {
+            warned = false
+            return
+        }
+        if let sent { drop(sent) }
+        tell(error, waiting: false)
     }
 
     /// 繋ぎを捨てる。次に送るときに作り直す。
@@ -299,11 +331,23 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
         if connection === failed { connection = nil }
     }
 
-    private func tell(_ error: NWError) {
+    private func tell(_ error: NWError, waiting: Bool) {
         guard !warned else { return }
         warned = true
-        warn(
-            "Could not send to \(host):\(port) (\(error.localizedDescription)). Check that something "
-                + "is listening there; the next message tries again")
+        let head = "Could not send to \(host):\(port) (\(Self.describe(error)))."
+        if waiting {
+            warn(
+                head + " If the network is up, this app may not be allowed to reach the local "
+                    + "network: check System Settings > Privacy & Security > Local Network. It keeps "
+                    + "waiting for the connection")
+        } else {
+            warn(head + " Check that something is listening there; the next message tries again")
+        }
+    }
+
+    /// 失敗の名乗り。POSIX の失敗は OS の文面 (`Network is down` など) にする。
+    static func describe(_ error: NWError) -> String {
+        guard case .posix(let code) = error else { return error.debugDescription }
+        return String(cString: strerror(code.rawValue))
     }
 }
