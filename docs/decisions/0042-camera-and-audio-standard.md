@@ -151,7 +151,7 @@ MokumeCore の中のフォルダでなく別ターゲットにする理由は 2 
 音の入力の実装 ([#1978](https://github.com/mokume-metal/mokume/issues/1978)) で、上で実装の Issue に回した使い分けを決めた。
 
 - **カメラの絵と音の解析の結果は、フレームで読む値として持つ。** `supply()` がフレームの開始時に 1 回取り出し (カメラは最新の 1 枚、音は最新の窓)、入り口の型の値 (`Capture.image`・`AudioIn.level` ほか) に書く。`AsyncSequence` にはしない
-- 取りこぼすと意味が変わる出来事の列 (OSC・MIDI のメッセージ) は、`AsyncSequence` のまま残す
+- 取りこぼすと意味が変わる出来事の列 (OSC・MIDI のメッセージ) も、フレームで読む値として持つ。落とさない列 ([ADR-0028](0028-external-inputs.md) 決定 2) に溜め、`supply()` がフレームごとに、前の取り出し以後に届いたものを全部・届いた順に渡す。この改訂の時点では `AsyncSequence` のまま残すとしていたが、OSC の実装 ([#1962](https://github.com/mokume-metal/mokume/issues/1962)) で変えた。理由は [ADR-0010](0010-concurrency-model.md) 決定 5 の改訂 (2026-10-08) に置く
 - 理由と、例を外した経緯は [ADR-0010](0010-concurrency-model.md) 決定 5 の改訂 (2026-10-06) に置く
 
 ### 5. 外の画素は `Image.write(DisplayImage)` の道を通す。GPU の道は、計測で足りなくなったら足す

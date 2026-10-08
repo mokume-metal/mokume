@@ -387,6 +387,16 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/loadSound(_:)``
 - ``SoundFile``
 
+### OSC で他の道具とやりとりする
+
+- ``Sketch/createOSC(listen:send:)``
+- ``Sketch/createOSC(messages:)``
+- ``OSCPort``
+- ``OSCMessage``
+- ``OSCValue``
+- ``OSCArgument``
+- ``OSCFailure``
+
 ### 画素を読み書きする
 
 - ``Sketch/pixels``
@@ -631,6 +641,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/detach(_:)-256sb``
 - ``Sketch/detach(_:)-7cw8l``
 - ``ExternalInput``
+- ``ExternalQueue``
 - ``SourceState``
 - ``SourceReport``
 - ``Arrival``
