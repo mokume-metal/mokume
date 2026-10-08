@@ -10,10 +10,22 @@ import mokume
 /// 別のファイルの global は最初に読まれたときに初期化される (台帳の検査が読む — #1377)。
 nonisolated struct ReferenceSketch: Sendable, CustomStringConvertible {
     let name: String
+    /// 外と実物でやりとりする (ポートを開く) か。**真なら書き出し (`--render`) と台帳では回さない。**
+    ///
+    /// 外から届いた値が絵に入りうるので、同じフレームが同じ絵になる約束 (台帳の指紋) を名乗れない
+    /// ([ADR-0028] 決定 7 — 受け口を持つシーンを台帳に入れるのは、注入の道で回すときだけ)。
+    /// 窓を開いて走らせることはできる。書けることはビルドが、受け口の正しさは検査が見る。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+    let reachesOutside: Bool
     let make: @MainActor @Sendable () -> any Sketch
 
-    init(name: String, make: @escaping @MainActor @Sendable () -> any Sketch) {
+    init(
+        name: String, reachesOutside: Bool = false,
+        make: @escaping @MainActor @Sendable () -> any Sketch
+    ) {
         self.name = name
+        self.reachesOutside = reachesOutside
         self.make = make
     }
 
@@ -45,6 +57,8 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "synth-and-filter") { SynthAndFilter() },
     ReferenceSketch(name: "table-and-text") { TableAndText() },
     ReferenceSketch(name: "json-and-xml") { JSONAndXML() },
+    // 実物のポートを開く。窓で走らせるだけで、書き出しと台帳には入れない
+    ReferenceSketch(name: "osc-and-reply", reachesOutside: true) { OSCAndReply() },
     ReferenceSketch(name: "effects-and-custom") { EffectsAndCustom() },
     // 触って確かめるためのもの。**書き出しても触っていない 1 枚しか出ない**が、台帳には
     // 「走っても落ちない」の検査として載る。カタログを 2 つに割るほどの違いではない

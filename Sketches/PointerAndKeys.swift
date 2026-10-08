@@ -48,6 +48,21 @@ import mokume
 /// {"id":"a1","events":[{"type":"mouseDown","x":480,"y":300},
 ///                      {"type":"mouseUp","x":480,"y":300}]}
 /// ```
+///
+/// ## カーソルを捕まえて見回す
+///
+/// L で「見回す」に入る。入っている間は `draw()` が**毎フレーム** `requestPointerLock()` を
+/// 呼び、面を押すとカーソルが隠れて捕まる ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+/// 捕まえている間は手を動かし続けても量が届き続け、右上の針が回る (`movedX` / `movedY` の
+/// 積算)。十字と円 (`mouseX` / `mouseY`) は捕まえた点に留まる。
+///
+/// Escape で外れる。毎フレーム頼み続けていても、**面をもう一度押すまで捕まり直さない**。
+/// Escape は普通のキーとしても届くので、左の列の「符号」が変わる。もう一度 L で
+/// `exitPointerLock()` を呼んで見回すのをやめる。
+///
+/// 下の行の「動いた量」はフレームの合計 (`movedX`)、「1 件ずつの和」はそのフレームに
+/// `mouseMoved(deltaX:deltaY:)` と `mouseDragged(deltaX:deltaY:)` へ渡った量の和で、2 つは
+/// 一致する。針は見回している間だけ描く — 触らずに書き出した絵は変わらない。
 final class PointerAndKeys: Sketch {
     var settings = SketchSettings(width: 960, height: 540, title: "pointer and keys")
 
@@ -89,6 +104,21 @@ final class PointerAndKeys: Sketch {
     /// 溜める上限。触り続けても際限なく伸びないようにする。
     static let keepAtMost = 40
 
+    /// 見回しているか (L で切り替える)。入っている間は毎フレーム捕まえを頼む。
+    var looking = false
+    /// L を押したままか。`keyPressed()` は押しっぱなしで連射されるので、space と同じく
+    /// 印が無いと押している間じゅう切り替わり続ける。
+    var lookKeyHeld = false
+    /// 見回した向き (ラジアン)。**フレーム合計 (`movedX` / `movedY`) を `draw()` で積む。**
+    var yaw: Float = 0
+    var pitch: Float = 0
+    /// 動いた量 1 画素あたりに回す角度 (ラジアン)。
+    static let turnPerPixel: Float = 0.005
+    /// このフレームに、1 件ずつの口 (`mouseMoved(deltaX:deltaY:)` / `mouseDragged(deltaX:deltaY:)`)
+    /// へ渡った量の和。`draw()` が出して 0 に戻す。
+    var deliveredX: Float = 0
+    var deliveredY: Float = 0
+
     func mousePressed() {
         pressed.append((mouseX, mouseY))
         if pressed.count > Self.keepAtMost { pressed.removeFirst() }
@@ -111,6 +141,13 @@ final class PointerAndKeys: Sketch {
         movedCount += 1
     }
 
+    /// 押さずに動いた 1 件の量。``mouseMoved()`` の直後に呼ばれる。**捕まえている間も届く** —
+    /// 位置は動かないので、量はここで受け取る。
+    func mouseMoved(deltaX: Float, deltaY: Float) {
+        deliveredX += deltaX
+        deliveredY += deltaY
+    }
+
     /// 押したまま動いた 1 件を、線分として残す。
     ///
     /// **引数が「その 1 件で動いた量」なので、引き算で始点が出る** ([#807])。`dragX` は
@@ -120,6 +157,8 @@ final class PointerAndKeys: Sketch {
     func mouseDragged(deltaX: Float, deltaY: Float) {
         dragged.append((mouseX - deltaX, mouseY - deltaY, mouseX, mouseY))
         if dragged.count > Self.keepAtMost { dragged.removeFirst() }
+        deliveredX += deltaX
+        deliveredY += deltaY
     }
 
     /// スクロールされた 1 件ぶんで大きさを積む。
@@ -155,15 +194,21 @@ final class PointerAndKeys: Sketch {
             // 回っている間は何もしない口なので、止まっているかを見ずに呼んでよい。
             // 押しっぱなしの連射は 1 枚ずつ進む送りとしてそのまま使う
             redraw()
+        case .l where !lookKeyHeld:
+            lookKeyHeld = true
+            looking.toggle()
+            // 頼むのは `draw()` (毎フレーム)。やめるときはここで取り下げる
+            if !looking { exitPointerLock() }
         default:
             break
         }
     }
 
-    /// 離したキーを覚える。space の押しっぱなしの印もここで外す。
+    /// 離したキーを覚える。space と L の押しっぱなしの印もここで外す。
     func keyReleased() {
         lastReleased = keyCode
         if keyCode == .space { spaceHeld = false }
+        if keyCode == .l { lookKeyHeld = false }
     }
 
     func draw() {
@@ -180,6 +225,15 @@ final class PointerAndKeys: Sketch {
         if isKeyDown(.arrowDown) { shipY += step }
         shipX = constrain(shipX, 0, width)
         shipY = constrain(shipY, 0, height)
+
+        // 見回している間は毎フレーム頼む。**Escape で外れた後は、頼み続けていても面を押すまで
+        // 捕まらない** — それを確かめるために、あえて 1 度ではなく毎フレーム呼ぶ。向きはフレーム
+        // 合計で積む (1 件ずつ積むなら `mouseMoved(deltaX:deltaY:)` の中で引数を使う)
+        if looking {
+            requestPointerLock()
+            yaw += movedX * Self.turnPerPixel
+            pitch = constrain(pitch + movedY * Self.turnPerPixel, -1.2, 1.2)
+        }
 
         // 描く解像度の縁。窓をどう変えてもここが動かないことが、座標系が
         // 独立していることの見え方になる
@@ -239,6 +293,23 @@ final class PointerAndKeys: Sketch {
         strokeWeight(3)
         line(pmouseX, pmouseY, mouseX, mouseY)
 
+        // 見回した向き。**見回している間だけ描く** — 触らずに書き出した絵 (台帳の 1 枚) は
+        // 変えない。横の向きは針の角度、縦の向きは針の先の点の上下で出す
+        if looking {
+            let centerX = width - 120
+            let centerY: Float = 120
+            noFill()
+            stroke(120, 230, 160, 200)
+            strokeWeight(3)
+            circle(centerX, centerY, 160)
+            let tipX = centerX + sin(yaw) * 70
+            let tipY = centerY - cos(yaw) * 70
+            line(centerX, centerY, tipX, tipY)
+            noStroke()
+            fill(120, 230, 160, 230)
+            circle(tipX, tipY + pitch * 30, 12)
+        }
+
         // 読めている値をそのまま出す。範囲外になったことも、ここに出る
         fill(230, 237, 255)
         noStroke()
@@ -269,6 +340,18 @@ final class PointerAndKeys: Sketch {
                 : "止まっている (space で再開・return で 1 枚)",
             24, 300)
         text("Δt \(String(format: "%.1f", deltaTime * 1000)) ms   フレーム \(frameCount)", 24, 332)
+        // 見回す。フレーム合計と 1 件ずつの和は一致する (`movedX` は 1 件ずつの口の中で読まない)
+        text(
+            looking
+                ? "見回している (面を押すと捕まえる・esc で外す・L でやめる)   向き \(Int(yaw * 180 / .pi))°"
+                : "L で見回す",
+            24, 364)
+        text(
+            "動いた量 \(String(format: "%.1f", movedX)), \(String(format: "%.1f", movedY))   "
+                + "1 件ずつの和 \(String(format: "%.1f", deliveredX)), \(String(format: "%.1f", deliveredY))",
+            24, 396)
+        deliveredX = 0
+        deliveredY = 0
 
         // 溜まっている出来事の数。状態ではなく、起きたことの数である
         fill(150, 165, 190)

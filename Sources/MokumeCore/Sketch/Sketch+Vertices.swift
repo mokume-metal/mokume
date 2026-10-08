@@ -349,6 +349,75 @@ extension Sketch {
     ///
     /// 1 つでもこの形で置けば、その形は最後まで立体として扱われる — 途中で
     /// ``vertex(_:_:)`` を混ぜてもよく、そちらは奥行き 0 の頂点になる。
+    ///
+    /// **立体は光を受け、平面は受けない。** 下は同じ三角形を ``lights()`` の下で 3 つ置いたもの。
+    /// 左は ``vertex(_:_:)`` だけで置いた平面で、光を受けずに塗りの色のまま出る。中央は奥行きつきの
+    /// 頂点だけで置いた立体で、光を受けるので左より少し暗く出る。右は 2 点を ``vertex(_:_:)``・
+    /// 1 点を奥行きつきで置いたもので、混ぜても中央と同じ立体になる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     lights()
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///
+    ///     beginShape()            // 平面
+    ///     vertex(30, 210)
+    ///     vertex(110, 210)
+    ///     vertex(85, 90)
+    ///     endShape(.close)
+    ///
+    ///     beginShape()            // 立体
+    ///     vertex(160, 210, 0)
+    ///     vertex(240, 210, 0)
+    ///     vertex(215, 90, 0)
+    ///     endShape(.close)
+    ///
+    ///     beginShape()            // 1 点だけ奥行きつき
+    ///     vertex(290, 210)
+    ///     vertex(370, 210)
+    ///     vertex(345, 90, 0)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ形の橙の三角形が 3 つ。左は塗りの色のままの橙で、中央と右は光を受けて左より少し暗く、この 2 つは同じ明るさ -->
+    ///     ![同じ形の橙の三角形が 3 つ。左は塗りの色のままの橙で、中央と右は光を受けて左より少し暗く、この 2 つは同じ明るさ](https://i.gyazo.com/c4a8a3fe374bc201f170def101c07746.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **奥行きは手前が正で、視点は動かない。** 同じ (`x`, `y`) でも `z` が大きいほど手前に
+    /// 来て大きく写り、`z` が 0 なら平面と同じ位置・大きさで出る。下は同じ 3 点を、`z` を
+    /// 0・100・200 と変えて 3 度置いた輪郭である。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noFill()
+    ///     strokeWeight(3)
+    ///     translate(200, 150)         // 視点が見ている面の中心を原点にする
+    ///     for z in [Float(0), 100, 200] {
+    ///         stroke(89 + z * 0.6, 191, 242 - z * 0.6)
+    ///         beginShape()
+    ///         vertex(-25, 20, z)
+    ///         vertex(25, 20, z)
+    ///         vertex(10, -30, z)
+    ///         endShape(.close)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 面の中心に、同じ形の三角形の輪郭が 3 つ入れ子になっている。内側ほど水色で小さく、外側ほど黄色に寄って大きい -->
+    ///     ![面の中心に、同じ形の三角形の輪郭が 3 つ入れ子になっている。内側ほど水色で小さく、外側ほど黄色に寄って大きい](https://i.gyazo.com/729bea8c26e7cc44742cab80651f738f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=b771c802
+    // shot: 2 snippet=06bac7b6
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.vertex(x, y, z)
@@ -365,16 +434,53 @@ extension Sketch {
     /// 模様を留めたいときに使う。組み込みの塗りは色を変えないので、断片を付けなければ
     /// 絵は書かないときと同じである。
     ///
-    /// <!-- example: 文脈 var grain: Image! -->
-    /// ```swift
-    /// texture(grain)
-    /// beginShape()
-    /// vertex(0, 0, 0, 0)                                  // 絵の左上を形の左上へ
-    /// vertex(200, 0, Float(grain.width), 0)
-    /// vertex(200, 200, Float(grain.width), Float(grain.height))
-    /// vertex(0, 200, 0, Float(grain.height))
-    /// endShape(.close)
-    /// ```
+    /// **`u`・`v` の終わりが、貼る範囲の広さを決める。** 起点 (0, 0) は絵の左上で、終わりを
+    /// 絵の幅・高さにすれば絵の全体が、小さくすれば左上の狭い範囲だけが、同じ大きさの四角へ
+    /// 引き伸ばされて出る。下は 20 画素の市松を並べた 120 画素四方の絵 (左上の 1 マスだけ橙) を、
+    /// 終わりを 120・60・30 の 3 通りで貼ったもの。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var checks: Canvas! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         checks = try! createGraphics(120, 120)
+    ///         checks.beginDraw()
+    ///         checks.background(51, 71, 102)
+    ///         checks.noStroke()
+    ///         checks.fill(89, 191, 242)
+    ///         for row in 0..<6 {
+    ///             for column in 0..<6 where (row + column) % 2 == 0 {
+    ///                 checks.rect(Float(column) * 20, Float(row) * 20, 20, 20)
+    ///             }
+    ///         }
+    ///         checks.fill(242, 115, 64)
+    ///         checks.rect(0, 0, 20, 20)
+    ///         checks.endDraw()
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         noStroke()
+    ///         texture(checks)
+    ///         for (i, end) in [Float(120), 60, 30].enumerated() {
+    ///             let x = 20 + Float(i) * 125
+    ///             beginShape()
+    ///             vertex(x, 80, 0, 0)                 // 絵の左上を、四角の左上へ
+    ///             vertex(x + 110, 80, end, 0)
+    ///             vertex(x + 110, 190, end, end)
+    ///             vertex(x, 190, 0, end)
+    ///             endShape(.close)
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ大きさの四角が 3 つ。左は 6×6 の細かい市松、中央は 3×3、右は 1 マスと少しまで大きくなり、どれも左上の角が橙 -->
+    ///     ![同じ大きさの四角が 3 つ。左は 6×6 の細かい市松、中央は 3×3、右は 1 マスと少しまで大きくなり、どれも左上の角が橙](https://i.gyazo.com/868c181847b4ae2e43491c88f1da0b18.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// <!-- example: 文脈 var stripes: Shader! -->
     /// ```swift
@@ -390,6 +496,7 @@ extension Sketch {
     /// endShape()
     /// resetShader()
     /// ```
+    // shot: 1 snippet=9de5f5b4
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
         canvas.vertex(x, y, u, v)
@@ -403,6 +510,62 @@ extension Sketch {
     /// **書かなかった頂点は、形の囲みの箱から求まる** — 横と縦の広がりを 0…1 に写す。
     /// 一部にだけ書いた形では、書いた頂点だけがそのとおりに、残りが囲みの箱から
     /// 決まるので、混ぜて書くと絵が捻れる。書くなら全部に書く。
+    ///
+    /// 下は、片側を手前へ倒した四角に絵を貼ったもの。書いた `u`・`v` の終わりはどちらも 60 で、
+    /// 絵の左上 3×3 マスを貼る。左は 4 つの頂点すべてに奥行きと読み取り位置を書いたので、3×3 の
+    /// 市松が揃って貼られる。右は右上の 1 つだけ奥行きしか書かず、そこだけ `u`・`v` が囲みの箱から
+    /// 決まる — 右上の角が絵の全体 (6×6 マス) の端を読むので、絵が引き伸ばされて捻れる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var checks: Canvas! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         checks = try! createGraphics(120, 120)
+    ///         checks.beginDraw()
+    ///         checks.background(51, 71, 102)
+    ///         checks.noStroke()
+    ///         checks.fill(89, 191, 242)
+    ///         for row in 0..<6 {
+    ///             for column in 0..<6 where (row + column) % 2 == 0 {
+    ///                 checks.rect(Float(column) * 20, Float(row) * 20, 20, 20)
+    ///             }
+    ///         }
+    ///         checks.fill(242, 115, 64)
+    ///         checks.rect(0, 0, 20, 20)
+    ///         checks.endDraw()
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         noStroke()
+    ///         texture(checks)
+    ///
+    ///         // 左: 4 つとも奥行きと読み取り位置を書く。右の辺が手前
+    ///         beginShape()
+    ///         vertex(30, 60, 0, 0, 0)
+    ///         vertex(170, 60, 80, 60, 0)
+    ///         vertex(170, 240, 80, 60, 60)
+    ///         vertex(30, 240, 0, 0, 60)
+    ///         endShape(.close)
+    ///
+    ///         // 右: 3 つは同じ。残る 1 つ (右上) は読み取り位置を書かない
+    ///         beginShape()
+    ///         vertex(230, 60, 80, 0, 0)
+    ///         vertex(370, 60, 0)
+    ///         vertex(370, 240, 0, 60, 60)
+    ///         vertex(230, 240, 80, 0, 60)
+    ///         endShape(.close)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 手前へ倒した四角が左右に 1 つずつ。左は 3×3 の市松が揃って貼られ、右は右上の角へ向かって絵が引き伸ばされ、市松が捻れている -->
+    ///     ![手前へ倒した四角が左右に 1 つずつ。左は 3×3 の市松が揃って貼られ、右は右上の角へ向かって絵が引き伸ばされ、市松が捻れている](https://i.gyazo.com/eecebcd393abe1fac727dea4a6f7229c.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=fa95d28d
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
         canvas.vertex(x, y, z, u, v)
@@ -416,24 +579,83 @@ extension Sketch {
     /// **``beginShape(_:)`` の後で書く。** 形の外で書いた向きは次の形へ持ち越されない
     /// ので、注意を出して捨てる。
     ///
-    /// ```swift
-    /// beginShape(.triangles)
-    /// normal(0, 0, 1)     // ここから置く頂点は、画面の側を向く
-    /// vertex(-30, -30, 0)
-    /// vertex(30, -30, 0)
-    /// vertex(0, 30, 0)
-    /// endShape()
-    /// ```
+    /// 下は、同じ三角形を ``lights()`` の下で 4 つ並べたもの。左から 3 つは `normal(0, 0, 1)`
+    /// (画面の側を向く)・`normal(1, 0, 0)` (右を向く)・`normal(0, 0, -1)` (画面から離れる側を
+    /// 向く) で、右端は向きを書いていない。**向きが光から背くほど暗くなり**、離れる側を向いた
+    /// 3 つ目は底上げの光だけになる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     lights()
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     for i in 0..<4 {
+    ///         let x = 52 + Float(i) * 99
+    ///         beginShape(.triangles)
+    ///         switch i {
+    ///         case 0: normal(0, 0, 1)         // ここから置く頂点は、画面の側を向く
+    ///         case 1: normal(1, 0, 0)
+    ///         case 2: normal(0, 0, -1)
+    ///         default: break                  // 書かなければ形から求まる
+    ///         }
+    ///         vertex(x - 40, 210, 0)
+    ///         vertex(x + 40, 210, 0)
+    ///         vertex(x + 15, 90, 0)
+    ///         endShape()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙の三角形が 4 つ並んでいる。左端がいちばん明るく、2 つ目は少し暗く、3 つ目はずっと暗い。右端は左端と同じ明るさに戻っている -->
+    ///     ![橙の三角形が 4 つ並んでいる。左端がいちばん明るく、2 つ目は少し暗く、3 つ目はずっと暗い。右端は左端と同じ明るさに戻っている](https://i.gyazo.com/41b716f14a70a9822de86c4ddf82a354.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// **書かなければ、形から求まる。** 頂点が属する三角形の向きを寄せ集めるので、
     /// 帯状に並べても扇状に並べても、置いた頂点すべてに向きが付く。書く必要が
     /// あるのは、隣り合う面をなめらかに繋ぎたいときや、形とは違う向きを与えたいとき。
+    /// 上の右端は、直前の `normal(0, 0, -1)` を引き継がずに (``beginShape(_:)`` で未指定へ
+    /// 戻る) 平らな三角形から向きが求まり、`normal(0, 0, 1)` と同じ明るさで出ている。
     ///
     /// 面は**どちらの側から見ても光を受ける**ので、向きの符号 (頂点を並べる向き) で
-    /// 絵が真っ黒になることはない。
+    /// 絵が真っ黒になることはない。下は同じ三角形を、左は反時計回り・右は時計回りに並べたもの
+    /// (どちらも向きは書かない)。2 つは同じ明るさで出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     lights()
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///
+    ///     beginShape()
+    ///     vertex(60, 220, 0)
+    ///     vertex(170, 220, 0)
+    ///     vertex(120, 80, 0)
+    ///     endShape(.close)
+    ///
+    ///     beginShape()            // 同じ三角形を、逆の順に並べる
+    ///     vertex(230, 220, 0)
+    ///     vertex(290, 80, 0)
+    ///     vertex(340, 220, 0)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ形の橙の三角形が左右に 1 つずつ。頂点を逆の順に並べているが、どちらも同じ明るさで塗られている -->
+    ///     ![同じ形の橙の三角形が左右に 1 つずつ。頂点を逆の順に並べているが、どちらも同じ明るさで塗られている](https://i.gyazo.com/51b222e25955c28b31d3d90716c6e5d3.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// 数でない値・無限の値・長さ 0 の向きは向きにならないので、注意を出して「書かれて
     /// いない」に倒す。その後に置く頂点の向きは、書き直すまで形から求まる。
+    // shot: 1 snippet=dce63edf
+    // shot: 2 snippet=1de4b1da
     public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.normal(x, y, z)

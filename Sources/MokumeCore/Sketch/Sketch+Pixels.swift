@@ -5,16 +5,65 @@
 extension Sketch {
     /// 描いた結果を画素として読み書きする面。
     ///
-    /// ```swift
-    /// for y in 0..<pixelHeight {
-    ///     for x in 0..<pixelWidth {
-    ///         let color = pixels[x, y]
-    ///         pixels[x, y] = LinearRGBA(
-    ///             premultipliedRed: color.green, green: color.blue, blue: color.red,
-    ///             alpha: color.alpha)
+    /// 下の例は、同じ橙色の円を 2 つ描いたあと、**左半分の画素だけ**を読んで、成分を
+    /// 1 つずつずらして書き戻している (新しい赤は元の緑、新しい緑は元の青、新しい青は元の赤)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     circle(110, 150, 140)
+    ///     circle(290, 150, 140)
+    ///
+    ///     for y in 0..<pixelHeight {
+    ///         for x in 0..<(pixelWidth / 2) {
+    ///             let color = pixels[x, y]
+    ///             pixels[x, y] = LinearRGBA(
+    ///                 premultipliedRed: color.green, green: color.blue, blue: color.red,
+    ///                 alpha: color.alpha)
+    ///         }
     ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ橙色の円が 2 つ。右はそのままで、左は成分がずれて青紫になり、下地も緑がかっている | symmetric=y -->
+    ///     ![同じ橙色の円が 2 つ。右はそのままで、左は成分がずれて青紫になり、下地も緑がかっている](https://i.gyazo.com/32eba7d571e9ab97bee2bf0a756739bf.png)
+    ///     <!-- /shot -->
+    ///   }
     /// }
-    /// ```
+    ///
+    /// 書くのも 1 画素ずつである。**書いた画素は、読み直すとその値で返る** — 下の例は
+    /// 面の中ほどの帯を 1 画素ずつ書き、右端の画素を読み直して、その色で円を塗っている。
+    /// 円は帯の右端と同じ色で出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///
+    ///     // 面の中ほどの帯を、1 画素ずつ書く。左は青、右は赤橙
+    ///     for y in 60..<120 {
+    ///         for x in 60..<340 {
+    ///             let t = Float(x - 60) / 279
+    ///             pixels[x, y] = .display(red: t, green: 0.35, blue: 1 - t)
+    ///         }
+    ///     }
+    ///
+    ///     // 書いた画素を読み直し、その色で円を塗る
+    ///     let picked = pixels[339, 90]
+    ///     noStroke()
+    ///     fill(picked)
+    ///     circle(200, 200, 100)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左が青で右が赤橙の帯が横に渡り、その下の円が帯の右端と同じ赤橙で塗られている -->
+    ///     ![左が青で右が赤橙の帯が横に渡り、その下の円が帯の右端と同じ赤橙で塗られている](https://i.gyazo.com/aed62c8b86cef8e115ecd6c049c32f3f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// ## 送り直しの手順は無い
     ///
@@ -41,6 +90,32 @@ extension Sketch {
     /// どちらも ``LinearRGBA`` — 線形・アルファ乗算済みの作業空間の値である。
     /// 変換が挟まらないので `pixels[x, y] = pixels[x, y]` は絵を変えない。
     /// 半透明の画素でも同じで、読んで書き戻すだけで色が沈むことはない。
+    ///
+    /// 下の例は、半透明の面に同じ色の円を 2 つ描き、**右半分だけ**を読んだ値のまま書き戻している。
+    /// 書き戻した右の円も、書き戻さない左の円と同じ色で出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31, 128)
+    ///     noStroke()
+    ///     fill(242, 115, 64, 128)
+    ///     circle(110, 150, 140)
+    ///     circle(290, 130, 100)
+    ///
+    ///     for y in 0..<pixelHeight {
+    ///         for x in (pixelWidth / 2)..<pixelWidth {
+    ///             pixels[x, y] = pixels[x, y]
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 半透明の面に同じ色の円が 2 つ。右の円は読んで書き戻したものだが、左の円と同じ色のまま -->
+    ///     ![半透明の面に同じ色の円が 2 つ。右の円は読んで書き戻したものだが、左の円と同じ色のまま](https://i.gyazo.com/2eaeedbaffab1ecd39e50e2399a10c2c.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// ## いつの絵が読めるか
     ///
@@ -78,6 +153,9 @@ extension Sketch {
     /// (``SketchSettings/pixelDensity``) を下げているときは ``width`` / ``height``
     /// より小さい。**読み書きするのは拡大より手前の絵**なので、ここで書いた値も
     /// 拡大を通ってから出て行く。
+    // shot: 1 snippet=0617ccbc
+    // shot: 2 snippet=ab94a2c3
+    // shot: 3 snippet=f1c90989
     public var pixels: Pixels { canvas.pixels }
 
     /// 溜めている図形を描き切り、画素を読める状態にする。
@@ -89,8 +167,71 @@ extension Sketch {
     /// 後に置いたものは区切らずに描いたときと同じに描かれるが、区切りより前に置いたものには、区切りの
     /// 後に置いた立体の影・頼んだ計算・書いた値が届かない (``pixels`` の「いつの絵が読めるか」)。
     ///
-    /// > Note: この口には例の絵が付いていない。上の区切りを除けば**呼んでも絵が変わらない**ので、
-    /// > 付けても呼ばなかった絵と見分けが付かないためである。
+    /// 下の 2 枚は、影を受けるだけの床を置いてから球を置く同じ場面で、違うのは床の後に
+    /// `loadPixels()` を呼ぶかだけである。呼ぶと床はそこで描き切られるので、**そのあとに置いた
+    /// 球の影を受けない**。呼ばなければ、床の左奥に影が落ちる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     castShadow(false)
+    ///     fill(191, 191, 199)
+    ///     push()
+    ///     translate(200, 250, -20)
+    ///     box(400, 8, 300)
+    ///     pop()
+    ///     // 床の後に loadPixels() を呼ばない
+    ///     castShadow(true)
+    ///     fill(242, 115, 64)
+    ///     push()
+    ///     translate(180, 120, 20)
+    ///     sphere(75)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の床の上に橙色の球が浮かび、床の左奥に球の影が落ちている -->
+    ///     ![灰色の床の上に橙色の球が浮かび、床の左奥に球の影が落ちている](https://i.gyazo.com/6ad2eba7dd78eb4ade8ed2e6fd2318b9.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     castShadow(false)
+    ///     fill(191, 191, 199)
+    ///     push()
+    ///     translate(200, 250, -20)
+    ///     box(400, 8, 300)
+    ///     pop()
+    ///     loadPixels()   // 床はここで描き切られる
+    ///     castShadow(true)
+    ///     fill(242, 115, 64)
+    ///     push()
+    ///     translate(180, 120, 20)
+    ///     sphere(75)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 上と同じ場面だが、床に球の影が落ちておらず、床は一様に明るい -->
+    ///     ![上と同じ場面だが、床に球の影が落ちておらず、床は一様に明るい](https://i.gyazo.com/b68b982ab4bea4d84df2aa49e761b609.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=1276c674
+    // shot: 2 snippet=2bff752d
     public func loadPixels() { canvas.loadPixels() }
 
     /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。

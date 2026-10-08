@@ -342,10 +342,13 @@ struct SceneLedgerTests {
     nonisolated static let plainTakes = Take.all.filter { !Ledger.drawsGlyphs($0.name) }
     /// 文字が主題のシーン (基準の版を持つ行)。
     nonisolated static let glyphTakes = Take.all.filter { Ledger.drawsGlyphs($0.name) }
+    /// 台帳に載せる参照スケッチ。**外と実物でやりとりするもの (ポートを開くもの) は載せない** —
+    /// 外から届いた値が絵に入りうる (ADR-0028 決定 7。``ReferenceSketch/reachesOutside``)。
+    nonisolated static let ledgerSketches = catalogue.filter { !$0.reachesOutside }
     /// 字形を置かずに採る参照スケッチ。
-    nonisolated static let plainSketches = catalogue.filter { !Ledger.drawsGlyphs(ledgerName(of: $0)) }
+    nonisolated static let plainSketches = ledgerSketches.filter { !Ledger.drawsGlyphs(ledgerName(of: $0)) }
     /// 文字が主題の参照スケッチ。
-    nonisolated static let glyphSketches = catalogue.filter { Ledger.drawsGlyphs(ledgerName(of: $0)) }
+    nonisolated static let glyphSketches = ledgerSketches.filter { Ledger.drawsGlyphs(ledgerName(of: $0)) }
 }
 
 // MARK: - 台帳の行

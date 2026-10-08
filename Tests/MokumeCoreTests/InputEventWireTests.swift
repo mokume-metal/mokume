@@ -31,6 +31,7 @@ struct InputEventWireTests {
         case .mouseDown: .mouseDown(x: 12.5, y: 30, button: .right)
         case .mouseUp: .mouseUp(x: 0, y: 0, button: .center)
         case .mouseMoved: .mouseMoved(x: -4.25, y: 719.5)
+        case .mouseMovedBy: .mouseMovedBy(dx: -3.5, dy: 12.75)
         case .scrolled: .scrolled(dx: 1.5, dy: -2.25)
         case .keyDown: .keyDown(code: .enter, characters: "a", isRepeat: true)
         case .keyUp: .keyUp(code: .escape)

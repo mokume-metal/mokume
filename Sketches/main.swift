@@ -46,7 +46,8 @@ if arguments.first == "--render" {
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let gpu = try RenderDevice()
-        for entry in catalogue {
+        // 外と実物でやりとりするものは書き出さない (ReferenceSketch.reachesOutside)
+        for entry in catalogue where !entry.reachesOutside {
             let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu)
             guard let frames else {
                 // **同じ番号のフレームを描く。** 時計はフレーム番号から導くので、

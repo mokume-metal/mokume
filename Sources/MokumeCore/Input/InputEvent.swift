@@ -10,6 +10,12 @@ public enum InputEvent: Equatable, Sendable {
     case mouseDown(x: Float, y: Float, button: MouseButton)
     case mouseUp(x: Float, y: Float, button: MouseButton)
     case mouseMoved(x: Float, y: Float)
+    /// どこへではなく、**どれだけ**動いたか (描く解像度の画素・縦軸は下向き)。位置は動かさない。
+    ///
+    /// カーソルを捕まえている間 (``Sketch/requestPointerLock()``) の窓は、位置が動かないので
+    /// これを送る ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。外から送る線
+    /// (`mouseMovedBy`) も同じ形で、捕まえていなくても量として届く。
+    case mouseMovedBy(dx: Float, dy: Float)
     case scrolled(dx: Float, dy: Float)
     case keyDown(code: Key, characters: String, isRepeat: Bool)
     case keyUp(code: Key)
@@ -28,8 +34,9 @@ public enum InputEvent: Equatable, Sendable {
 /// 壊れた 1 件が「面の左上角を押した」という正しい出来事として合流点へ入り、送り手には
 /// `accepted: 1` が返るので誰も気付けない ([#322](https://github.com/mokume-metal/mokume/issues/322))。
 ///
-/// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない、`isRepeat` の false は
-/// 押しっぱなしでない — こちらは省略が自然に読めるので埋める。
+/// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
+/// `mouseMovedBy` でも)、`isRepeat` の false は押しっぱなしでない — こちらは省略が自然に
+/// 読めるので埋める。
 ///
 /// **弾き方の機構は要らない。** `nil` を返せば知らない種別と同じ経路に乗り、
 /// ``InputInbox`` がその 1 件だけを `ignored` に数えて残りを通す。
@@ -81,6 +88,8 @@ struct RawInputEvent: Decodable {
         case .mouseMoved:
             guard let x, let y else { return nil }
             return .mouseMoved(x: x, y: y)
+        case .mouseMovedBy:
+            return .mouseMovedBy(dx: dx ?? 0, dy: dy ?? 0)
         case .scrolled:
             return .scrolled(dx: dx ?? 0, dy: dy ?? 0)
         case .keyDown:

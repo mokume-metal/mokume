@@ -420,6 +420,16 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Reverb``
 - ``Delay``
 
+### OSC で他の道具とやりとりする
+
+- ``Sketch/createOSC(listen:send:)``
+- ``Sketch/createOSC(messages:)``
+- ``OSCPort``
+- ``OSCMessage``
+- ``OSCValue``
+- ``OSCArgument``
+- ``OSCFailure``
+
 ### 画素を読み書きする
 
 - ``Sketch/pixels``
@@ -610,6 +620,10 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/scrollY``
 - ``Sketch/dragX``
 - ``Sketch/dragY``
+- ``Sketch/movedX``
+- ``Sketch/movedY``
+- ``Sketch/requestPointerLock()``
+- ``Sketch/exitPointerLock()``
 - ``Sketch/isKeyDown(_:)``
 - ``Sketch/key``
 - ``Sketch/keyCode``
@@ -619,6 +633,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/mouseClicked()``
 - ``Sketch/mouseWheel(deltaX:deltaY:)``
 - ``Sketch/mouseMoved()``
+- ``Sketch/mouseMoved(deltaX:deltaY:)``
 - ``Sketch/mouseDragged(deltaX:deltaY:)``
 - ``Sketch/keyPressed()``
 - ``Sketch/keyReleased()``
@@ -659,6 +674,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/detach(_:)-256sb``
 - ``Sketch/detach(_:)-7cw8l``
 - ``ExternalInput``
+- ``ExternalQueue``
 - ``SourceState``
 - ``SourceReport``
 - ``Arrival``

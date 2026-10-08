@@ -5,24 +5,44 @@
 extension Sketch {
     /// 形を組み立てて保持する。**毎フレーム組み立て直さずに済む。**
     ///
-    /// <!-- example: 文脈 var leaf: Shape! -->
-    /// ```swift
-    /// func setup() {
-    ///     leaf = createShape {
-    ///         noStroke()
-    ///         fill(102, 204, 89)
-    ///         beginShape()
-    ///         vertex(0, -20)
-    ///         bezierVertex(14, -14, 14, 14, 0, 20)
-    ///         bezierVertex(-14, 14, -14, -14, 0, -20)
-    ///         endShape(.close)
-    ///     }
-    /// }
+    /// 組み立てるのは `setup()` で 1 度だけ。`draw()` では、保持した形を ``shape(_:_:_:)`` で
+    /// 置くだけでよい。下は 1 枚の葉を 1 度だけ組み立てて、3 行 × 6 列に置いたもの —
+    /// 18 枚どれも、同じ形から出ている (置くときに回しているので、傾きは 1 枚ごとに違う)。
     ///
-    /// func draw() {
-    ///     for i in 0..<2000 { shape(leaf, Float(i % 50) * 8 + 10, Float(i / 50) * 8 + 10) }
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var leaf: Shape! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         leaf = createShape {
+    ///             noStroke()
+    ///             fill(102, 204, 89)
+    ///             beginShape()
+    ///             vertex(0, -20)
+    ///             bezierVertex(14, -14, 14, 14, 0, 20)
+    ///             bezierVertex(-14, 14, -14, -14, 0, -20)
+    ///             endShape(.close)
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         for i in 0..<18 {
+    ///             push()
+    ///             translate(45 + Float(i % 6) * 62, 60 + Float(i / 6) * 90)
+    ///             rotate(Float(i) * 0.35)
+    ///             shape(leaf)
+    ///             pop()
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ緑の葉が 3 行 × 6 列に並び、1 枚ずつ少しずつ傾きが違う -->
+    ///     ![同じ緑の葉が 3 行 × 6 列に並び、1 枚ずつ少しずつ傾きが違う](https://i.gyazo.com/67b35ba9702070f00b028cf108d00bbb.png)
+    ///     <!-- /shot -->
+    ///   }
     /// }
-    /// ```
     ///
     /// ## 色は形の中に焼き付く
     ///
@@ -30,6 +50,47 @@ extension Sketch {
     /// **だから塗りや輪郭は形の中で決める** — 置くときに外から ``fill(_:)`` を変えても
     /// 形の色は変わらない。組み立てるコードを読めば何色になるかが分かり、置く側の
     /// コードを読んでも分からない、という形にしてある。
+    ///
+    /// 下は、置く側で ``fill(_:)`` を橙・水色・黄と替えながら、そのつど円と葉を並べたもの。
+    /// 円は外の塗りの色に変わるが、葉は組み立てたときの緑のまま出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var leaf: Shape! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         leaf = createShape {
+    ///             noStroke()
+    ///             fill(102, 204, 89)
+    ///             beginShape()
+    ///             vertex(0, -20)
+    ///             bezierVertex(14, -14, 14, 14, 0, 20)
+    ///             bezierVertex(-14, 14, -14, -14, 0, -20)
+    ///             endShape(.close)
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         noStroke()
+    ///         fill(242, 115, 64)
+    ///         circle(70, 120, 60)
+    ///         shape(leaf, 70, 200)
+    ///         fill(89, 191, 242)
+    ///         circle(200, 120, 60)
+    ///         shape(leaf, 200, 200)
+    ///         fill(242, 217, 89)
+    ///         circle(330, 120, 60)
+    ///         shape(leaf, 330, 200)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 上に橙・水色・黄の円が 1 つずつ、その下に同じ緑の葉が 1 枚ずつ並んでいる -->
+    ///     ![上に橙・水色・黄の円が 1 つずつ、その下に同じ緑の葉が 1 枚ずつ並んでいる](https://i.gyazo.com/9acd2e3816ba96b86a54a1fb97e4622a.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// **焼き付くのは色だけではない。** 組み立ての間に効いていた ``shader(_:)`` と、
     /// そのとき渡していた値・面・数の並びも形が持ち歩く。置く前に ``resetShader()``
@@ -157,6 +218,8 @@ extension Sketch {
     ///
     /// ``Shape/group(_:)`` と `+` は形を**1 本の頂点の並びへ畳む**。子の一覧を持って
     /// 1 つずつ描く作りではないので、「保持にしたのに速くならない」が起きない。
+    // shot: 1 snippet=2caf9b37
+    // shot: 2 snippet=77b00113
     public func createShape(_ body: () -> Void) -> Shape { canvas.createShape(body) }
 
     /// 保持した形を、**置き場所ぶんだけまとめて置く**。
@@ -181,6 +244,65 @@ extension Sketch {
     ///
     /// ``Placement/fill`` を渡すと、その置き場所の色に**掛かる** (渡さなければ何も
     /// 掛からない)。
+    ///
+    /// 下は、白で記録した葉を、位置・回転・大きさの違う 5 か所に置いたもの。上の段は
+    /// まとめて渡し、中の段は `push()` / `translate()` / `rotate()` / `scale()` / `pop()` で
+    /// 1 つずつ置いている。2 つの段は同じ絵になる。下の段は、中の段と同じ置き場所に ``Placement/fill``
+    /// を渡したもので、白に掛かって色がつく。5 つ目だけは塗りを渡していないので、記録した白のまま出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var leaf: Shape! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         leaf = createShape {
+    ///             noStroke()
+    ///             fill(255)
+    ///             beginShape()
+    ///             vertex(0, -20)
+    ///             bezierVertex(14, -14, 14, 14, 0, 20)
+    ///             bezierVertex(-14, 14, -14, -14, 0, -20)
+    ///             endShape(.close)
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         let colors: [LinearRGBA?] = [
+    ///             .display(red: 0.95, green: 0.45, blue: 0.25),
+    ///             .display(red: 0.35, green: 0.75, blue: 0.95),
+    ///             .display(red: 0.95, green: 0.85, blue: 0.35),
+    ///             .display(red: 0.40, green: 0.80, blue: 0.35),
+    ///             nil,
+    ///         ]
+    ///         var plain: [Placement] = []
+    ///         var tinted: [Placement] = []
+    ///         for i in 0..<5 {
+    ///             let (x, size, turn) = (50 + Float(i) * 75, 0.8 + Float(i) * 0.2, Float(i) * 0.5)
+    ///             plain.append(Placement(x: x, y: 50, scale: size, rotation: SIMD3(0, 0, turn)))
+    ///             tinted.append(Placement(x: x, y: 250, scale: size, rotation: SIMD3(0, 0, turn), fill: colors[i]))
+    ///         }
+    ///         shape(leaf, at: plain)          // 上の段: まとめて
+    ///         shape(leaf, at: tinted)         // 下の段: 塗りも渡す
+    ///
+    ///         for i in 0..<5 {                // 中の段: 1 つずつ
+    ///             push()
+    ///             translate(50 + Float(i) * 75, 150)
+    ///             rotate(Float(i) * 0.5)
+    ///             scale(0.8 + Float(i) * 0.2, 0.8 + Float(i) * 0.2)
+    ///             shape(leaf)
+    ///             pop()
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い葉が 5 枚ずつ 3 段。右へ行くほど大きく傾いていて、上と中の段は同じ。下の段は左から橙・水色・黄・緑・白に染まっている -->
+    ///     ![白い葉が 5 枚ずつ 3 段。右へ行くほど大きく傾いていて、上と中の段は同じ。下の段は左から橙・水色・黄・緑・白に染まっている](https://i.gyazo.com/fc31d8f69860247f0699626a3de238f6.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=276142f3
     public func shape(_ shape: Shape, at placements: [Placement]) {
         canvas.shape(shape, at: placements)
     }
@@ -189,8 +311,54 @@ extension Sketch {
     ///
     /// 色は形が持っているものが使われ、置く場所といまの変換が効く。
     ///
+    /// (`x`, `y`) は形の原点の置き場所で、省けば原点 (0, 0) になる。上の段は、(`x`, `y`) だけを
+    /// 80・190・310 と動かして置いたもの。置く側の ``fill(_:)`` は橙だが、葉の色は組み立てたときの
+    /// 緑のままである (橙で塗られるのは、間に置いた円だけ)。下の段は、先に ``translate(_:_:)`` ・
+    /// ``rotate(_:)`` ・ ``scale(_:_:)`` で原点を動かし、傾けて大きくしてから、位置を省いて置いたもの —
+    /// いまの変換がそのまま効く。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var leaf: Shape! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         leaf = createShape {
+    ///             noStroke()
+    ///             fill(102, 204, 89)
+    ///             beginShape()
+    ///             vertex(0, -20)
+    ///             bezierVertex(14, -14, 14, 14, 0, 20)
+    ///             bezierVertex(-14, 14, -14, -14, 0, -20)
+    ///             endShape(.close)
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         noStroke()
+    ///         fill(242, 115, 64)              // 置く側の塗り。葉の色には効かない
+    ///         circle(200, 140, 30)
+    ///         shape(leaf, 80, 80)
+    ///         shape(leaf, 190, 80)
+    ///         shape(leaf, 310, 80)
+    ///
+    ///         translate(150, 220)
+    ///         rotate(Float.pi / 4)
+    ///         scale(2, 2)
+    ///         shape(leaf)                     // 位置を省けば、動かした原点に置かれる
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 上の段に緑の葉が 3 枚、間隔を変えて並ぶ。その下の中央に橙の小さな円、さらに下の左寄りに、斜めに傾いた大きな緑の葉が 1 枚 -->
+    ///     ![上の段に緑の葉が 3 枚、間隔を変えて並ぶ。その下の中央に橙の小さな円、さらに下の左寄りに、斜めに傾いた大きな緑の葉が 1 枚](https://i.gyazo.com/c95576c066d2deb5aaa6c2d90003230d.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// **たくさん置くときは shape(_:at:) を使う。** こちらは 1 回ごとに頂点を
     /// 置き直すので、置く数だけ描く回数が増える。
+    // shot: 1 snippet=73a8868f
     public func shape(_ shape: Shape, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.shape(shape, x, y)

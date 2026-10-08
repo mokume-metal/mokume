@@ -479,6 +479,41 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 捕まえの要求 (#1144)
+
+    /// 捕まえるのは道具の窓で、要求は子が面の属性に載せる。**保存で子が入れ替わったら、新しい
+    /// 子の面で判定し直す** — 要求していない子なら外れる。窓を開かずに、台が読んだ値を見る
+    /// (窓を開いて捕まえるのは手で確かめる)。
+    @Test("子の捕まえの要求を面から読み、入れ替わった後は新しい世代の面で読み直す")
+    func readsThePointerLockRequestPerGeneration() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let requesting = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(requesting, frame: 1, gpu: gpu, pointerLock: true)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pointer-lock"))
+            defer { stage.close() }
+
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested, "子の要求を読んでいない")
+
+            // 同じ子が取り下げた
+            try draw(requesting, frame: 2, gpu: gpu, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(!stage.pointerLockRequested, "取り下げた要求が残っている")
+
+            // 要求していた子から、要求しない子へ入れ替わる
+            try draw(requesting, frame: 3, gpu: gpu, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested)
+            let silent = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested, "焼く前の世代の要求で判定した")
+            try draw(silent, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(!stage.pointerLockRequested, "入れ替わった後も前の世代の要求が残っている")
+        }
+    }
+
     // MARK: - 開く大きさ (#1624)
 
     /// **作品の窓は、直に走らせたときと同じ大きさで見える** ([ADR-0032] 決定 1)。差し出し元が
@@ -706,13 +741,14 @@ struct SharedFrameStageTests {
     /// 見えない — ここが見ているのは読み手の乗り換えであって、書き手の遅れ方ではない。
     private func draw(
         _ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice, width: Int = 32,
-        height: Int = 32
+        height: Int = 32, pointerLock: Bool = false
     ) throws {
         let source = try RenderTarget(gpu: gpu, width: width, height: height)
         try source.fill(with: .linear(red: 0, green: 0, blue: 0))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         try shared.write(
-            source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame))
+            source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame),
+            pointerLock: pointerLock)
         try shared.publishPending()
     }
 }

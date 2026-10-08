@@ -134,4 +134,65 @@ struct SurfaceMappingTests {
                 canvasWidth: 0, canvasHeight: 0
             ).canvasPoint(x: 10, y: 10) == nil)
     }
+
+    // MARK: - 動いた量 (#1144)
+
+    /// **位置と同じ比で写す** — 同じ手つきが、捕まえる前と後で同じ量になる。比べる相手は
+    /// 位置の写し方そのもので、2 点の位置の差と量が一致することを見る。
+    @Test("動いた量は、位置を写すのと同じ比で描く解像度の画素へ写る")
+    func deltaUsesThePositionRatio() throws {
+        // 等倍・Retina・既定の半分の窓・帯のある窓
+        let mappings = [
+            exact,
+            SurfaceMapping(
+                viewWidth: 480, viewHeight: 270, drawableWidth: 960, drawableHeight: 540,
+                canvasWidth: 960, canvasHeight: 540),
+            SurfaceMapping(
+                viewWidth: 480, viewHeight: 270, drawableWidth: 480, drawableHeight: 270,
+                canvasWidth: 960, canvasHeight: 540),
+            banded,
+        ]
+        for mapping in mappings {
+            // 窓の点で右へ 30・下へ 20 (窓の座標は上向きが正なので、下へは y が減る)
+            let from = try #require(mapping.canvasPoint(x: 100, y: 200))
+            let to = try #require(mapping.canvasPoint(x: 130, y: 180))
+            // 量は下向きを正として渡す約束
+            let delta = try #require(mapping.canvasDelta(dx: 30, dy: 20))
+            #expect(abs(delta.dx - (to.x - from.x)) < 1e-3, "\(mapping)")
+            #expect(abs(delta.dy - (to.y - from.y)) < 1e-3, "\(mapping)")
+        }
+    }
+
+    @Test("下へ動いた量は、描く解像度でも下向き (正) のまま")
+    func deltaKeepsDownwardPositive() throws {
+        let half = SurfaceMapping(
+            viewWidth: 480, viewHeight: 270, drawableWidth: 960, drawableHeight: 540,
+            canvasWidth: 960, canvasHeight: 540)
+        // 点 1 つは、面の画素 2 つ・描く解像度の画素 2 つ
+        let delta = try #require(half.canvasDelta(dx: -5, dy: 3))
+        #expect(delta.dx == -10)
+        #expect(delta.dy == 6)
+    }
+
+    @Test("帯があっても、量は帯の原点を引かない")
+    func deltaIgnoresTheBandOrigin() throws {
+        // 左右に 100 画素ずつの帯。収まった矩形は 1600 画素幅で、描く解像度も 1600
+        let delta = try #require(banded.canvasDelta(dx: 0, dy: 0))
+        #expect(delta.dx == 0)
+        #expect(delta.dy == 0)
+    }
+
+    @Test("大きさが 0 のときは、量も写さない")
+    func degenerateSizesMapNoDelta() {
+        #expect(
+            SurfaceMapping(
+                viewWidth: 0, viewHeight: 540, drawableWidth: 960, drawableHeight: 540,
+                canvasWidth: 960, canvasHeight: 540
+            ).canvasDelta(dx: 10, dy: 10) == nil)
+        #expect(
+            SurfaceMapping(
+                viewWidth: 960, viewHeight: 540, drawableWidth: 0, drawableHeight: 0,
+                canvasWidth: 960, canvasHeight: 540
+            ).canvasDelta(dx: 10, dy: 10) == nil)
+    }
 }
