@@ -7,9 +7,7 @@ import Network
 
 // UDP の受け・送り。**中身のバイト列をどう読むかは持たない** — 上の層 (OSC の ``OSCCodec``・
 // 文字列の ``TextDecoding``) が決める。ポートを開く部分は TCP・WebSocket と ``PortListener`` を
-// 共有する。
-//
-// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+// 共有する (待ち行列の扱いと ADR-0042 決定 7 の条件も、そちらの冒頭に書いた)。
 
 /// UDP のポートを 1 つ開いて、届いた datagram を 1 つずつ渡す。
 ///

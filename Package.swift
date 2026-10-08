@@ -86,7 +86,7 @@ let package = Package(
         .target(
             name: "MokumeAudio", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
-        // 通信 (OSC と、その下の UDP)。TCP・UDP・WebSocket の口 (#2018) も同じ層に載る
+        // 通信 (OSC と、TCP・UDP・WebSocket の文字列。ポートを開く層を共有する)
         .target(
             name: "MokumeNetwork", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
