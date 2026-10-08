@@ -66,6 +66,15 @@ nonisolated final class Told: Sendable {
     func count(containing text: String) -> Int { lines.filter { $0.contains(text) }.count }
 }
 
+/// 検査から動かせる時計 (秒)。受け口が送り元の黙りを測る時計の代わりに渡す。
+/// どのスレッドから読まれてもよい (受け口は自分の待ち行列の上で読む)。
+nonisolated final class ManualClock: Sendable {
+    private let seconds: Mutex<TimeInterval>
+    init(_ start: TimeInterval) { seconds = Mutex(start) }
+    var provider: @Sendable () -> TimeInterval { { [self] in seconds.withLock { $0 } } }
+    func advance(by interval: TimeInterval) { seconds.withLock { $0 += interval } }
+}
+
 /// 送ったバイト列を溜める送り手。通信はしない。
 nonisolated final class RecordingSender: DatagramSending {
     private let store = Mutex<[[UInt8]]>([])
@@ -110,12 +119,13 @@ struct OSCPortTests {
     /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す。
     private func loopback(
         port: Int, told: Told, outbound: (any DatagramSending)? = nil,
-        idleAfter: TimeInterval = DatagramListener.defaultIdleAfter
+        idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) throws -> OSCPort {
         let osc = OSCPort(
             port: port, name: "osc :\(port)",
             source: NetworkOSCSource(
-                port: port, host: "127.0.0.1", retryAfter: 0.05, idleAfter: idleAfter,
+                port: port, host: "127.0.0.1", retryAfter: 0.05, idleAfter: idleAfter, now: now,
                 warn: told.append),
             outbound: outbound ?? DatagramSender(host: "127.0.0.1", port: port, warn: told.append),
             owner: nil, warn: told.append)
@@ -247,13 +257,19 @@ struct OSCPortTests {
     func manySendersAreAllHeardThenSwept() async throws {
         let told = Told()
         let port = try freeUDPPort()
-        let osc = try loopback(port: port, told: told, idleAfter: 0.2)
+        // 黙りは手で進める時計で測る。本物の時計だと、受け入れが遅い機械 (負荷のある CI) では
+        // 70 本を受け入れる途中で最初の送り元が `idleAfter` 秒黙ったことになって閉じられ、
+        // 数が受け入れの速さで揺れる (#2225)
+        let clock = ManualClock(0)
+        let idleAfter: TimeInterval = 1
+        let osc = try loopback(port: port, told: told, idleAfter: idleAfter, now: clock.provider)
         defer { osc.close() }
         #expect(await until { osc.state == .running })
         let source = try #require(osc.source as? NetworkOSCSource)
 
         // 送り手ごとに別のポートから送る (使い捨てのソケットで送るスクリプトと同じ形)。
-        // 目安の数を超えても、届いたばかりの送り元は閉じない — 閉じると読む前の datagram を捨てる
+        // 目安の数を超えても、黙っていない送り元は閉じない — 閉じると読む前の datagram を捨てる。
+        // 時計は止めたままなので、受け入れにどれだけ掛かっても黙った送り元は居ない
         let count = DatagramListener.connectionLimit + 6
         let burst = (0..<count).map { _ in
             DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
@@ -264,10 +280,16 @@ struct OSCPortTests {
         }
         let received = await collect(osc, count: count)
         #expect(Set(received.compactMap { $0.int(0) }) == Set(0..<count))
-        #expect(source.connectionCount == count)
+        // 1 本も閉じずに、目安の数を超えている。時計が止まっていて、どの送り元も同じだけ (0 秒)
+        // 黙っているので、閉じるなら目安に達したところで全部が閉じ、数は目安を下回る。
+        // 送り元の数 (70) との一致は求めない — 負荷の下では Network.framework の受け口が、ある
+        // 送り元の datagram を別の送り元の繋ぎで渡すことがあり (#2225 で実測。datagram は落ちない)、
+        // そのぶん繋ぎが 1〜2 本少なく数えられる
+        #expect(source.connectionCount > DatagramListener.connectionLimit)
 
-        // 黙った後に新しい送り元が来たら、黙っていた送り元を閉じてから受ける
-        try await Task.sleep(for: .milliseconds(400))
+        // ちょうど `idleAfter` 秒黙った後に新しい送り元が来たら、黙っていた送り元を閉じてから
+        // 受ける (閉じるのは `idleAfter` 秒「以上」黙った送り元)
+        clock.advance(by: idleAfter)
         let late = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
         defer { late.stop() }
         late.send(try Wire.encoded(OSCMessage("/late", 1)))

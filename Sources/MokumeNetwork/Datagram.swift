@@ -63,10 +63,11 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     static let defaultIdleAfter: TimeInterval = 5
 
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
+    private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
     private let changed: @Sendable (Event) -> Void
     private var listener: NWListener?
-    /// 送り元と、最後に届いた (受け入れた) 時刻。
+    /// 送り元と、最後に届いた (受け入れた) 時刻 (``now`` の目盛り)。
     private var senders: [(connection: NWConnection, heard: TimeInterval)] = []
     private var stopped = false
 
@@ -75,11 +76,15 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     ///   - host: 受けるアドレス。`nil` ならすべての口。
     ///   - retryAfter: 失敗したとき、何秒後に開き直すか。
     ///   - idleAfter: 何秒黙っていた送り元を、閉じてよいとするか。
+    ///   - now: 送り元の黙りを測る時計 (秒)。既定は眠っている間は進まない `systemUptime`。
+    ///     検査は手で進める時計を渡し、受け入れの速さに依らずに黙りを決める (#2225)。
+    ///     ``queue`` の上で呼ばれる。
     ///   - received: 届いた datagram と、届いた瞬間の host time。``queue`` の上で呼ばれる。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
     init(
         port: Int, host: String?, retryAfter: TimeInterval,
         idleAfter: TimeInterval = defaultIdleAfter,
+        now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         received: @escaping @Sendable ([UInt8], UInt64) -> Void,
         changed: @escaping @Sendable (Event) -> Void
     ) {
@@ -87,6 +92,7 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         self.host = host
         self.retryAfter = retryAfter
         self.idleAfter = idleAfter
+        self.now = now
         self.received = received
         self.changed = changed
     }
@@ -173,15 +179,15 @@ nonisolated final class DatagramListener: @unchecked Sendable {
             connection.cancel()
             return
         }
-        let now = ProcessInfo.processInfo.systemUptime
+        let accepted = now()
         if senders.count >= Self.connectionLimit {
             senders.removeAll { sender in
-                guard now - sender.heard >= idleAfter else { return false }
+                guard accepted - sender.heard >= idleAfter else { return false }
                 sender.connection.cancel()
                 return true
             }
         }
-        senders.append((connection, now))
+        senders.append((connection, accepted))
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let self, let connection else { return }
             switch state {
@@ -204,7 +210,7 @@ nonisolated final class DatagramListener: @unchecked Sendable {
                 return
             }
             if let index = senders.firstIndex(where: { $0.connection === connection }) {
-                senders[index].heard = ProcessInfo.processInfo.systemUptime
+                senders[index].heard = now()
             }
             received([UInt8](content), hostTime)
             receive(on: connection)
