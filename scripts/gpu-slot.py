@@ -55,8 +55,9 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
   名乗る (計測なら、印に書いたコマンドの先頭も)。記録の `take` には `"mode": "exclusive"` と、
   取った枠の一覧が載る
 - 子には `MOKUME_GPU_SLOT_EXCLUSIVE` (包みの pid) を渡す。自分で包み直すスクリプトは、これを見て
-  包み直さない。内側でもう一度 `--exclusive` を通しても、待たずにそのまま走らせる。自分の親が握る
-  枠を待ち続けないためである
+  包み直さない。内側でもう一度 gpu-slot を通しても (`--exclusive` でも、計測の中で打った `make test`
+  のような普段の実行でも)、枠を取らずにそのまま走らせる。枠は祖先が全部握っているので、取りに行くと
+  自分の祖先を期限まで待ち続ける
 - **ビルドは包む前に済ませる。** ビルドの間も枠を握ると、検査を待たせるだけになる
 
 このリポジトリでは、`scripts/measure-frame-rate.sh` と `scripts/check-observation-roundtrip.sh` が、
@@ -542,9 +543,11 @@ def main(argv):
         _say("使い方: gpu-slot.py [--exclusive] -- <command…>")
         return EXIT_USAGE
     command = argv[1:]
-    if exclusive and os.environ.get(EXCLUSIVE_VARIABLE):
+    if os.environ.get(EXCLUSIVE_VARIABLE):
+        # 祖先の --exclusive が順番待ちの印と枠を全部握っている。--exclusive でも普段の実行
+        # (計測の内側で打った make test) でも、取りに行けば自分の祖先を期限まで待つことになる
         _say(f"既に窓つきの計測の内側 (pid {os.environ[EXCLUSIVE_VARIABLE]} が枠を全部握っている) なので、そのまま走らせる")
-        return _run(command, exclusive=True)
+        return _run(command, exclusive=exclusive)
     slots = _number("MOKUME_GPU_SLOTS", DEFAULT_SLOTS, integer=True)
     wait_seconds = _number("MOKUME_GPU_SLOT_WAIT", DEFAULT_WAIT_SECONDS, integer=False)
     poll = _number("MOKUME_GPU_SLOT_POLL", 2.0, integer=False)

@@ -469,6 +469,22 @@ class ExclusiveTest(SlotHarness):
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertIn("既に", result.stderr)
 
+    def test_a_plain_run_inside_the_exclusive_does_not_wait_for_it(self):
+        # 計測の内側で `make test` (= 普段の `gpu-slot.py -- …`) を打っても、祖先が握る順番待ちの印と
+        # 枠を期限まで待たない (#2052 の反証)。親の --exclusive が枠を全部握っているので、そのまま走る
+        nested = (
+            "import os, subprocess, sys\n"
+            "sys.exit(subprocess.run([sys.executable, sys.argv[1], '--',"
+            " sys.executable, '-c', 'import sys; sys.exit(8)']).returncode)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--exclusive", "--", sys.executable, "-c", nested, str(SCRIPT)],
+            env=self._environment(wait="2"), capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 8, result.stderr)
+        self.assertIn("既に", result.stderr)
+        self.assertNotIn("取るのを待っている", result.stderr)
+
 
 class ParallelizationWidthTest(unittest.TestCase):
     """子の swift test へ、Swift Testing の並列の幅が届くこと (#1999)。"""
