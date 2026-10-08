@@ -477,29 +477,73 @@ struct SolidSweepRenderTests {
         #expect(differingPixels(swept.picture, separate.picture) == 0)
     }
 
-    @Test("形から求めた向きを持つ頂点の形は、畳まずに置き場所ごとに描く (光の当たり方が変わるため)")
-    func derivedNormalShapesAreNotSwept() throws {
-        // 法線を書いていない OBJ (向きを形から求める) を、保持した形に記録する
+    // MARK: - 形から求めた向きを持つ形 (#2222)
+
+    /// 一辺 18 の立方体の OBJ。**法線を書かない**ので、頂点の向きは形から求める
+    /// (`SolidVertex.normal.w` が 1)。`inward` なら面の巻き方を裏返す。
+    private static func cubeWithoutNormals(inward: Bool) -> String {
+        var lines: [String] = []
+        for (x, y, z) in [
+            (-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
+            (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1),
+        ] {
+            lines.append("v \(x * 9) \(y * 9) \(z * 9)")
+        }
+        let faces = [
+            [1, 4, 3, 2], [5, 6, 7, 8], [1, 5, 8, 4], [2, 3, 7, 6], [1, 2, 6, 5], [4, 8, 7, 3],
+        ]
+        for face in faces {
+            let ordered = inward ? Array(face.reversed()) : face
+            lines.append("f " + ordered.map(String.init).joined(separator: " "))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// 法線を書いていない立方体のモデルを記録した保持した形 (不透明の白)。
+    private func derivedNormalBox(_ canvas: Canvas, inward: Bool = false) -> Shape {
         let model = Model.make(
-            name: "cube",
-            parsed: ModelFile.parse(
-                "v -9 -9 -9\nv 9 -9 -9\nv 9 9 -9\nv -9 9 -9\nv -9 -9 9\nv 9 -9 9\nv 9 9 9\nv -9 9 9\n"
-                    + "f 1 4 3 2\nf 5 6 7 8\nf 1 5 8 4\nf 2 3 7 6\nf 1 2 6 5\nf 4 8 7 3"),
+            name: "cube", parsed: ModelFile.parse(Self.cubeWithoutNormals(inward: inward)),
             fitting: nil)
+        #expect(model.hasDerivedNormals)
+        #expect(model.winding == (inward ? .inward : .outward))
+        return canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.model(model)
+        }
+    }
+
+    @Test("形から求めた向きを持つ頂点の形も畳み、光の当たり方は置き場所ごとに描いたときと同じ", arguments: [false, true])
+    func derivedNormalShapesSweepAndCatchTheSameLight(inward: Bool) throws {
+        // 断片は、形から求めた向きの面が裏を向いていれば向きを裏返して光を当てる。巻き方を入れ替えた
+        // 写しは表を向いて残るので、写しの頂点の向きを裏返して渡さないと、透けて見える奥の面の
+        // 光の当たり方が置き場所ごとに描いたときと変わる
         func scene(_ canvas: Canvas) {
-            let box = canvas.createShape {
-                canvas.noStroke()
-                canvas.fill(255)
-                canvas.model(model)
-            }
+            let box = derivedNormalBox(canvas, inward: inward)
             canvas.lights()
             canvas.shape(box, at: self.tintedPlacements(20))
         }
         let swept = try render(.always, scene)
         let separate = try render(.never, scene)
-        #expect(swept.draws == separate.draws)
-        #expect(swept.draws == 40)
-        #expect(differingPixels(swept.picture, separate.picture) == 0)
+        #expect(swept.batches == 1)
+        #expect(swept.draws == 1, "畳めていない: \(swept.draws)")
+        // 部品 1 つ × 裏と表 × 20 か所
+        #expect(separate.draws == 20 * 2)
+        #expect(
+            differingPixels(swept.picture, separate.picture) == 0,
+            "畳んだ絵が \(differingPixels(swept.picture, separate.picture)) 画素違う")
         #expect(litPixels(swept.picture) > 200)
+    }
+
+    @Test("形から求めた向きを持つ頂点の形を 1 万か所に置いても、描く呼び出しは列 1 本につき 1 回")
+    func derivedNormalShapesDoNotGrowWithPlacements() throws {
+        // 既定 (automatic) の判定のまま。列は置き場所 8192 か所で割れて 2 本
+        let result = try render(.automatic) { canvas in
+            canvas.lights()
+            canvas.shape(self.derivedNormalBox(canvas), at: self.tintedPlacements(10_000))
+        }
+        #expect(result.batches == 2)
+        #expect(result.draws == result.batches, "描く呼び出し \(result.draws) / 列 \(result.batches)")
+        #expect(litPixels(result.picture) > 500)
     }
 }

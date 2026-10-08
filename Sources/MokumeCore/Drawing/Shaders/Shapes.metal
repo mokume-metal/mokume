@@ -126,6 +126,18 @@ struct SolidInstance {
     float4 color;
 };
 
+/// 添字の最上位の桁。**立っていれば、桁を外した番号の頂点を読み、向きを裏返して出す**
+/// ([#2222])。
+///
+/// 裏 → 表を 1 回で描く添字の列 (Swift 側の `SolidSweep.flipsNormal`) が、巻き方を入れ替えた
+/// 写しの三角形のうち、形から求めた向きを持つ頂点にだけ立てる。写しは元が裏を向いているときだけ
+/// 表を向いて残るので、断片は向きを裏返さない (`front_facing` が表)。そこで頂点の側で裏返し、
+/// 元を置き場所ごとに描いたとき断片が裏返すのと同じ向きで光を当てる。**桁の立たない添字** (ほかの
+/// 全部の描画・影の焼き付け・書かれた向きの写し) は、読む頂点も出す値も今までと変わらない。
+///
+/// [#2222]: https://github.com/mokume-metal/mokume/issues/2222
+constant uint kSolidFlipsNormal = 0x80000000u;
+
 /// 立体の頂点を落とす。
 ///
 /// **影の焼き付けもこの関数で行う** — 渡す行列だけが光から見たものになり、断片は
@@ -138,7 +150,9 @@ vertex ShapeFragmentIn solidVertexMain(
     constant FlatFrame &frame [[buffer(1)]],
     constant SolidInstance *instances [[buffer(10)]])
 {
-    SolidVertex vertex_in = vertices[index];
+    // 添字の最上位の桁は、向きを裏返す写しの印 (`kSolidFlipsNormal`)。読む番号は桁を外したもの
+    bool flipsNormal = (index & kSolidFlipsNormal) != 0u;
+    SolidVertex vertex_in = vertices[index & ~kSolidFlipsNormal];
     SolidInstance placement = instances[instance];
 
     // **形自身の座標を、置き場所の変換で世界へ移す。** 何も動かさない置き場所
@@ -163,11 +177,14 @@ vertex ShapeFragmentIn solidVertexMain(
     // 光は世界の座標で当たるので、移したあとの位置と向きを渡す
     out.worldPosition = world.xyz;
     out.normal = normalMatrix * vertex_in.normal.xyz;
+    // 写しの向きは、移した後で符号だけを裏返す。断片が `-in.normal` で裏返すのと同じ値になる。
+    // 形から求めたかの印 (`w`) はそのまま渡す
+    out.normal = flipsNormal ? -out.normal : out.normal;
     out.isDerivedNormal = vertex_in.normal.w;
     // **利用者の断片へは、移す前の値をそのまま渡す。** 置き場所を通していないので
     // 形を動かしても回しても変わらず、ここから作った模様は形の表面に留まる (#367)
     out.shapePosition = vertex_in.shapePosition;
-    out.shapeNormal = vertex_in.shapeNormal;
+    out.shapeNormal = flipsNormal ? -vertex_in.shapeNormal : vertex_in.shapeNormal;
     out.coverage = isStroke ? vertex_in.stroke : 1.0;
     return out;
 }
