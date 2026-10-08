@@ -24,12 +24,23 @@
 # のスリープは自プロセスからは作れないので `pmset displaysleepnow` で作り、復帰は
 # `caffeinate -u` で行う。測る側は --allow-display-sleep で断りを外して走らせる —
 # 断ったまま測ると「スリープを作れなかったのに緑」という嘘が出る。
+#
+# **GPU の検査と同時には走らない** (#2052)。窓つきで挙動を測る実行なので、GPU の枠を全部取って
+# から走る (scripts/gpu-slot.py の冒頭「## 窓つきの計測」)。既定の条件はひな形のスケッチを組み
+# 上げるところから枠の内側で行うので、その間も検査は待つ。
 set -euo pipefail
 
 # **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
 # (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REPO="$(pwd)"
+
+# 枠を全部取った内側で、このスクリプトを走らせ直す。この作業ツリーのビルドは枠を取る前に済ませる。
+# 内側かどうかは包みが子へ渡す印で見る
+if [ -z "${MOKUME_GPU_SLOT_EXCLUSIVE:-}" ]; then
+  swift build >/dev/null
+  exec python3 scripts/gpu-slot.py --exclusive -- "$BASH" scripts/check-observation-roundtrip.sh "$@"
+fi
 
 MINIMIZED=0
 DISPLAY_ASLEEP=0

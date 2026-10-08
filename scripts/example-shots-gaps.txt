@@ -19,10 +19,3 @@
 # 1 行 1 口で、`ファイル: 名前 (引数の型, …)`。# で始まる行と空行は読まない。
 # 並びはソースの順 (ファイル名、その中の宣言の順)。
 
-Sources/MokumeCore/Sketch/Sketch+Effects.swift: effects(_:) ([Effect])
-Sources/MokumeCore/Sketch/Sketch+Effects.swift: makeEffect(_:name:values:) (String, String, [String: ShaderValue])
-Sources/MokumeCore/Sketch/Sketch+Effects.swift: loadEffect(_:values:) (String, [String: ShaderValue])
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: loadShader(_:values:surfaces:) (String, [String: ShaderValue], [String: ShaderSurface])
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: makeShader(_:name:values:surfaces:) (String, String, [String: ShaderValue], [String: ShaderSurface])
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: shader(_:) (Shader)
-Sources/MokumeCore/Sketch/Sketch+Shader.swift: resetShader()
