@@ -66,6 +66,9 @@ nonisolated final class NetworkOSCSource: OSCSource, @unchecked Sendable {
     /// 受け口がいま持っている送り元の数 (検査が上限を確かめるため)。
     var connectionCount: Int { listener?.connectionCount ?? 0 }
 
+    /// 受け口の送り元の出入りの数 (検査が「黙っていない送り元は閉じない」を確かめるため)。
+    var tally: SenderTally { listener?.tally ?? SenderTally() }
+
     func start(into queue: ExternalQueue<OSCMessage>) {
         queue.setState(.unavailable)
         let listener = DatagramListener(
