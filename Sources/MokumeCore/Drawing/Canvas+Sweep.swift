@@ -35,9 +35,9 @@ extension Canvas {
     ///
     /// **畳めない連なりは何も足さない** — 置き場所ごとに描く (``encodeBackThenFront``)。畳めないのは、
     /// 描く呼び出しを省ける数が添字の列を組む費用に見合わないとき
-    /// (``SolidSweep/paysOff(instances:passes:programLength:vertices:)``)、頂点が形から求めた向きを
-    /// 持つとき (巻き方を入れ替えた写しでは光の当たり方が変わる)、頂点を自分の置き場から読む列
-    /// (GPU が持つモデル) と引数を GPU が書く列 (粒) のときである。
+    /// (``SolidSweep/paysOff(instances:passes:programLength:vertices:)``)、写しにする三角形の 3 点で
+    /// 向きを形から求めたかが揃わないとき (``SolidSweep/appendProgram(_:indices:vertexBase:vertices:to:)``)、
+    /// 頂点を自分の置き場から読む列 (GPU が持つモデル) と引数を GPU が書く列 (粒) のときである。
     func uploadSweeps() throws(RenderFailure) -> SweepUploads {
         guard sweepPolicy != .never else { return .none }
         var program: [UInt32] = []
@@ -119,11 +119,16 @@ extension Canvas {
     ///
     /// 添字を持たない列は、同じ値の頂点を最初の頂点の番号へ寄せる (``SolidVertexSharing``)。添字を持つ
     /// 列は作った人が頂点を使い回しているので、そのまま。**形から求めた向きを持つ頂点は
-    /// ``SolidSweep/unusable``** — 断片は求めた向きを巻き方 (`front_facing`) で裏返すので、巻き方を入れ替えた
-    /// 写しでは光の当たり方が変わる。
+    /// ``SolidSweep/flipsNormal`` を立てる** ([#2222]) — 断片は求めた向きを巻き方 (`front_facing`) で
+    /// 裏返すが、巻き方を入れ替えた写しは表を向いて残るので、写しの側は頂点関数が向きを裏返す。
+    /// 番号が印の桁に届く列は組まない (空の表を返し、置き場所ごとに描く)。
+    ///
+    /// [#2222]: https://github.com/mokume-metal/mokume/issues/2222
     private func sweepVertexTable(for run: Shape.Run) -> [UInt32] {
         let range = run.start..<(run.start + run.count)
-        guard range.lowerBound >= 0, range.upperBound <= solidVertices.count else { return [] }
+        guard range.lowerBound >= 0, range.upperBound <= solidVertices.count,
+            range.upperBound < Int(SolidSweep.flipsNormal)
+        else { return [] }
         let block = solidVertices[range]
         var table: [UInt32]
         if run.isIndexed {
@@ -134,7 +139,7 @@ extension Canvas {
             for local in table.indices { table[local] += first }
         }
         for (local, vertex) in block.enumerated() where vertex.normal.w > 0.5 {
-            table[local] = SolidSweep.unusable
+            table[local] |= SolidSweep.flipsNormal
         }
         return table
     }

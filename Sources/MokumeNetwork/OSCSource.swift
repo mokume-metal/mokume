@@ -34,6 +34,8 @@ nonisolated final class NetworkOSCSource: OSCSource, @unchecked Sendable {
     let host: String?
     let retryAfter: TimeInterval
     let idleAfter: TimeInterval
+    /// 送り元の黙りを測る時計 (``DatagramListener`` へそのまま渡す)。
+    private let now: @Sendable () -> TimeInterval
     private let warn: @Sendable (String) -> Void
     private var listener: DatagramListener?
     /// 知らせた移り変わり。同じものは 2 度言わない (受けられた後にまた言えるよう戻す)。
@@ -47,12 +49,14 @@ nonisolated final class NetworkOSCSource: OSCSource, @unchecked Sendable {
     init(
         port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
         warn: @escaping @Sendable (String) -> Void
     ) {
         self.port = port
         self.host = host
         self.retryAfter = retryAfter
         self.idleAfter = idleAfter
+        self.now = now
         self.warn = warn
     }
 
@@ -62,10 +66,13 @@ nonisolated final class NetworkOSCSource: OSCSource, @unchecked Sendable {
     /// 受け口がいま持っている送り元の数 (検査が上限を確かめるため)。
     var connectionCount: Int { listener?.connectionCount ?? 0 }
 
+    /// 受け口の送り元の出入りの数 (検査が「黙っていない送り元は閉じない」を確かめるため)。
+    var tally: SenderTally { listener?.tally ?? SenderTally() }
+
     func start(into queue: ExternalQueue<OSCMessage>) {
         queue.setState(.unavailable)
         let listener = DatagramListener(
-            port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter,
+            port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter, now: now,
             received: { bytes, hostTime in
                 let decoded = OSCCodec.decode(bytes)
                 for message in decoded.messages { queue.send(message, hostTime: hostTime) }
