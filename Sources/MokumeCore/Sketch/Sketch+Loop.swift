@@ -10,20 +10,57 @@ extension Sketch {
 
     /// 以後 ``draw()`` を呼ばない。
     ///
-    /// ```swift
-    /// func setup() {
-    ///     noLoop()
-    /// }
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     func setup() {
+    ///         noLoop()
+    ///     }
     ///
-    /// func draw() {
-    ///     background(0, 0, 0)
-    ///     line(0, height / 2, width, height / 2)  // 1 度だけ描かれて止まる
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         noStroke()
+    ///         fill(242, 115, 64)
+    ///         circle(20 + Float(frameCount) * 6, 170, 40)
+    ///         fill(255)
+    ///         textSize(28)
+    ///         text("\(frameCount)", 20, 50)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左上に 1 と出て、橙色の円が左端に描かれたまま、どの枚も変わらない | frames=60 still="setup() で止めたので、1 度だけ描いた 1 枚目が続くのが正しい" -->
+    ///     ![左上に 1 と出て、橙色の円が左端に描かれたまま、どの枚も変わらない](https://i.gyazo.com/02542072177299907cc659b432f82179.gif)
+    ///     <!-- /shot -->
+    ///   }
     /// }
-    /// ```
     ///
     /// **`setup()` で呼んでも、``draw()`` は 1 度だけ呼ばれる。** 何も描かないまま
     /// 止まると絵が出ないためで、手本と同じ振る舞いである。``draw()`` の中で呼べば、
-    /// そのフレームを描き切ってから止まる。
+    /// そのフレームを描き切ってから止まる。下は 30 枚目の ``draw()`` の中で呼んだもの。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     circle(20 + Float(frameCount) * 6, 170, 40)
+    ///     fill(255)
+    ///     textSize(28)
+    ///     text("\(frameCount)", 20, 50)
+    ///     // 30 枚目を描き切ってから止まる
+    ///     if frameCount == 30 {
+    ///         noLoop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の円が左から右へ進み、左上の数が 30 になったところで円も数も止まる | frames=60 -->
+    ///     ![橙色の円が左から右へ進み、左上の数が 30 になったところで円も数も止まる](https://i.gyazo.com/c164a40b7e8a58f7a4fb4a199c057d1c.gif)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// 止まっている間、絵は変わらない — フレーム番号も時刻も進まず、続けて書き出した
     /// 絵は同じバイト列になる。
@@ -73,6 +110,8 @@ extension Sketch {
     ///
     /// ホストが `SketchRuntime.pause()` / `resume()` で止めて再開しても、ここで止めた
     /// スケッチは止まったままである。理由は `SketchRuntime.resume()` の説明にある。
+    // shot: 1 snippet=0c47b4c6
+    // shot: 2 snippet=61f798db
     public func noLoop() {
         guard let runtime = runningSketch else {
             return Diagnostics.warn(OutsideCall.noLoop.notice)
@@ -95,6 +134,7 @@ extension Sketch {
     ///
     /// **効くのは ``setup()``・``draw()``・入力のコールバックの中から呼んだときだけ**で、
     /// そこで起こした `Task` から呼んでも回り出さない (``noLoop()`` の「呼べる場所」)。
+    // shot: 撮れない 止めた後に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、setup() / draw() で呼んでも同じ呼び出しの noLoop() を打ち消すだけで絵に違いが出ない)
     public func loop() {
         guard let runtime = runningSketch else {
             return Diagnostics.warn(OutsideCall.loop.notice)
@@ -128,6 +168,7 @@ extension Sketch {
     ///   進む。** 止めている間はフレームが進まないので、止めていた時間はどこにも現れない
     ///
     /// ``deltaTime`` の値はどちらの時計でも同じである。
+    // shot: 撮れない 止めている間に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、回っている間と draw() の中では何もせず、setup() で止めた後に呼んでも必ず描かれる 1 枚目に畳まれる)
     public func redraw() {
         guard let runtime = runningSketch else {
             return Diagnostics.warn(OutsideCall.redraw.notice)

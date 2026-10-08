@@ -22,6 +22,7 @@ extension Sketch {
     /// 外のパッケージが資材を読むときも、これを使えば利用者の置き方と食い違わない。
     ///
     /// - Throws: どこにも無いとき。説明には探した場所が載る。
+    // shot: 撮れない 返すのはファイルの場所で、解く先の資材ファイルがこのリポジトリの例には無い
     public func assetURL(_ path: String) throws(AssetFailure) -> URL {
         let searched = ImageFile.candidates(for: path)
         guard let url = searched.first(where: { FileManager.default.fileExists(atPath: $0.path) })

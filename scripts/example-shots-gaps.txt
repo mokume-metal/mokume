@@ -19,8 +19,6 @@
 # 1 行 1 口で、`ファイル: 名前 (引数の型, …)`。# で始まる行と空行は読まない。
 # 並びはソースの順 (ファイル名、その中の宣言の順)。
 
-Sources/MokumeCore/Sketch/Sketch+Asset.swift: assetURL(_:) (String)
-Sources/MokumeCore/Sketch/Sketch+Camera.swift: currentCamera
 Sources/MokumeCore/Sketch/Sketch+Compute.swift: makeNumbers(count:) (Int)
 Sources/MokumeCore/Sketch/Sketch+Compute.swift: makeComputation(_:name:values:) (String, String, [String: ShaderValue])
 Sources/MokumeCore/Sketch/Sketch+Compute.swift: loadComputation(_:values:) (String, [String: ShaderValue])
@@ -32,16 +30,9 @@ Sources/MokumeCore/Sketch/Sketch+Compute.swift: read(_:) (Numbers)
 Sources/MokumeCore/Sketch/Sketch+Effects.swift: effects(_:) ([Effect])
 Sources/MokumeCore/Sketch/Sketch+Effects.swift: makeEffect(_:name:values:) (String, String, [String: ShaderValue])
 Sources/MokumeCore/Sketch/Sketch+Effects.swift: loadEffect(_:values:) (String, [String: ShaderValue])
-Sources/MokumeCore/Sketch/Sketch+Loop.swift: noLoop()
-Sources/MokumeCore/Sketch/Sketch+Loop.swift: loop()
-Sources/MokumeCore/Sketch/Sketch+Loop.swift: redraw()
 Sources/MokumeCore/Sketch/Sketch+Model.swift: loadModel(_:normalize:) (String, Bool)
 Sources/MokumeCore/Sketch/Sketch+Model.swift: requestModel(_:normalize:) (String, Bool)
 Sources/MokumeCore/Sketch/Sketch+Model.swift: model(_:) (Model)
-Sources/MokumeCore/Sketch/Sketch+Particles.swift: makeParticles(count:) (Int)
-Sources/MokumeCore/Sketch/Sketch+Particles.swift: emit(_:from:toward:rate:speed:life:size:color:) (Particles, Emitter, Heading, Float, ClosedRange<Float>, ClosedRange<Float>, ClosedRange<Float>, LinearRGBA?)
-Sources/MokumeCore/Sketch/Sketch+Particles.swift: force(_:_:) (Particles, Force...)
-Sources/MokumeCore/Sketch/Sketch+Particles.swift: particles(_:) (Particles)
 Sources/MokumeCore/Sketch/Sketch+Save.swift: save(_:) (String)
 Sources/MokumeCore/Sketch/Sketch+Save.swift: beginRecord(_:) (String)
 Sources/MokumeCore/Sketch/Sketch+Save.swift: endRecord()

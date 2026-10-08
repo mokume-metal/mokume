@@ -122,16 +122,41 @@ extension Sketch {
     /// 視点はフレームを越えないので、**複数の視点を持ちたければ値で持つ**。初期化の
     /// ときに作っておいて、毎フレーム ``setCamera(_:)`` で当てる。
     ///
-    /// <!-- example: 組めない 視点を値で持つ形だけを示す省略記法 (`...`) -->
-    /// ```swift
-    /// var front = Camera(...)
-    /// var side = Camera(...)
+    /// 下は初期化のときに既定の視点を値で取り、見る位置だけを左上へずらした 2 つ目を
+    /// 作って、20 枚ごとに当て替えたもの。
     ///
-    /// func draw() {
-    ///     setCamera(frameCount / 60 % 2 == 0 ? front : side)
-    ///     ...
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     var views: [Camera] = []
+    ///
+    ///     func setup() {
+    ///         let front = currentCamera
+    ///         var above = front
+    ///         above.eye += SIMD3(-150, -200, 0)
+    ///         views = [front, above]
+    ///     }
+    ///
+    ///     func draw() {
+    ///         setCamera(views[frameCount / 20 % 2])
+    ///         background(23, 26, 31)
+    ///         lights()
+    ///         noStroke()
+    ///         fill(242, 115, 64)
+    ///         push()
+    ///         translate(200, 150, 0)
+    ///         box(110)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の立方体を、正面から見た四角い絵と、左上から見下ろして上と左の面が見える絵が、交互に切り替わる | frames=60 -->
+    ///     ![橙色の立方体を、正面から見た四角い絵と、左上から見下ろして上と左の面が見える絵が、交互に切り替わる](https://i.gyazo.com/d4d0c00a116c7a0eac65295a2cd901ce.gif)
+    ///     <!-- /shot -->
+    ///   }
     /// }
-    /// ```
+    // shot: 1 snippet=4861898c
     public var currentCamera: Camera { canvas.currentCamera }
 
     /// 作っておいた視点を当てる。
