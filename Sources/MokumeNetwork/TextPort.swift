@@ -5,8 +5,8 @@ import Foundation
 import MokumeCore
 import MokumeDiagnostics
 
-/// 文字列で他のアプリや機械とやりとりする入り口に共通の口。``Server`` (TCP) と ``UDPPort`` (UDP)
-/// がこれを継ぐ。
+/// 文字列で他のアプリや機械とやりとりする入り口に共通の口。``Server`` (TCP・WebSocket) と
+/// ``UDPPort`` (UDP) がこれを継ぐ。
 ///
 /// 毎フレーム呼ぶ口は無い。`draw()` の前に、前のフレームの後に届いた文字列が**全部**、
 /// 届いた順に ``messages`` へ入っている ([ADR-0024] 決定 6)。最新の 1 つだけではないので、
@@ -31,6 +31,7 @@ import MokumeDiagnostics
 /// | 方式 | 1 つのメッセージ | 送る向き |
 /// | --- | --- | --- |
 /// | TCP (``Sketch/createServer(_:)``) | 改行で区切った 1 行 | ``Server/write(_:)`` — 繋いでいる相手全員へ |
+/// | WebSocket (``Sketch/createWebSocketServer(_:)``) | 1 通 | ``Server/write(_:)`` — 繋いでいる相手全員へ 1 通ずつ |
 /// | UDP (``Sketch/createUDP(listen:send:)``) | 1 つの datagram | ``UDPPort/send(_:)`` — 作るときに決めた宛先へ |
 ///
 /// **末尾の改行は落とす。** `nc` で打った `0.3⏎` は、そのまま `Float(text)` で読める。

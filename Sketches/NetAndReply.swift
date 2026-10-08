@@ -5,18 +5,21 @@ import mokume
 
 /// 外のプロセスから送った文字列で円を動かし、クリックで送り返す。
 ///
-/// **見どころは、`nc` から送った文字列がそのまま円の大きさになること。** 円は左から TCP (5204)・
-/// UDP (6000) で、それぞれ受けた数 (0〜1) を大きさにする。円をクリックすると、その方式で `hit` を
-/// 送り返す。届いた `hit` のたびに、その円の色が入れ替わる。`draw()` はマウスの値を直には使わず、
-/// 届いた文字列だけを読む。
+/// **見どころは、`nc` やブラウザから送った文字列がそのまま円の大きさになること。** 円は左から
+/// TCP (5204)・UDP (6000)・WebSocket (8025) で、それぞれ受けた数 (0〜1) を大きさにする。円を
+/// クリックすると、その方式で `hit` を送り返す。届いた `hit` のたびに、その円の色が入れ替わる。
+/// `draw()` はマウスの値を直には使わず、届いた文字列だけを読む。
 ///
 /// 円の下の点は受け口の様子で、受けていて相手が居れば緑、受けているが相手が居なければ黄
-/// (TCP だけ。繋いでくる相手を数える)、受けていなければ灰色。
+/// (TCP と WebSocket。繋いでくる相手を数える)、受けていなければ灰色。
 ///
 /// 外から動かす:
 ///
 /// - TCP: `nc 127.0.0.1 5204` で繋いで `0.3` と打つ。クリックの `hit` は同じ端末に出る
 /// - UDP: `nc -u 127.0.0.1 6000` で `0.3` と打つ。クリックの `hit` は `nc -u -l 6001` に出る
+/// - WebSocket: ブラウザの console で
+///   `ws = new WebSocket("ws://localhost:8025"); ws.onmessage = e => console.log(e.data); ws.onopen = () => ws.send("0.3")`。
+///   続けて `ws.send("0.8")` で大きさが変わり、クリックの `hit` は console に出る
 ///
 /// **書き出しと台帳では回さない** (カタログの `reachesOutside`)。実物のポートを開くので、
 /// 外から届いた値が絵に入りうる ([ADR-0028] 決定 7)。文字列で動く絵を書き出すなら、
@@ -26,25 +29,28 @@ import mokume
 final class NetAndReply: Sketch {
     var settings = SketchSettings(width: 960, height: 540, title: "net and reply")
 
-    /// 円の並び。左から TCP・UDP。
-    private static let names = ["TCP 5204", "UDP 6000"]
+    /// 円の並び。左から TCP・UDP・WebSocket。
+    private static let names = ["TCP 5204", "UDP 6000", "WebSocket 8025"]
 
     private var server: Server?
     private var udp: UDPPort?
+    private var socket: Server?
     /// 円ごとに、届いた数 (0〜1)。直径は、円の枠に対するこの割合。
-    private var sizes: [Float] = [0.5, 0.5]
+    private var sizes: [Float] = [0.5, 0.5, 0.5]
     /// 円ごとに、届いた `hit` の数。
-    private var hits = [0, 0]
+    private var hits = [0, 0, 0]
 
     func setup() {
         server = try? createServer(5204)
         // 受けるのは 6000、送り返すのは 6001 (同じ機械の `nc -u -l 6001` で見える)
         udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001))
+        socket = try? createWebSocketServer(8025)
     }
 
     func draw() {
         for line in server?.messages ?? [] { read(line, into: 0) }
         for text in udp?.messages ?? [] { read(text, into: 1) }
+        for text in socket?.messages ?? [] { read(text, into: 2) }
 
         background(18, 18, 24)
         noStroke()
@@ -79,7 +85,8 @@ final class NetAndReply: Sketch {
             guard dx * dx + dy * dy <= radius * radius else { continue }
             switch lane {
             case 0: server?.write("hit\n")
-            default: udp?.send("hit")
+            case 1: udp?.send("hit")
+            default: socket?.write("hit")
             }
         }
     }
@@ -97,11 +104,12 @@ final class NetAndReply: Sketch {
 
     private func status(of lane: Int) -> Status {
         switch lane {
-        case 0:
-            guard server?.state == .running else { return .closed }
-            return (server?.clientCount ?? 0) > 0 ? .connected : .waiting
-        default:
+        case 1:
             return udp?.state == .running ? .connected : .closed
+        default:
+            let waiting = lane == 0 ? server : socket
+            guard let waiting, waiting.state == .running else { return .closed }
+            return waiting.clientCount > 0 ? .connected : .waiting
         }
     }
 

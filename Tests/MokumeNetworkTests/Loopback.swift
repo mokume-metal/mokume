@@ -125,3 +125,63 @@ nonisolated final class StreamClient: @unchecked Sendable {
         }
     }
 }
+
+/// 127.0.0.1 のポートへ WebSocket で繋ぐ相手 (ブラウザの代わり)。届いた text を 1 通ずつ溜める。
+nonisolated final class WebSocketClient: @unchecked Sendable {
+    // `@unchecked Sendable`: 可変の状態は錠の内側だけ。手続きは ``queue`` で走る。
+    private let queue = DispatchQueue(label: "org.mokume.test.websocket")
+    private let connection: NWConnection
+    private let texts = Mutex<[String]>([])
+    private let ended = Mutex(false)
+
+    init(port: Int, path: String = "/") {
+        let parameters = NWParameters.tcp
+        parameters.defaultProtocolStack.applicationProtocols.insert(
+            NWProtocolWebSocket.Options(), at: 0)
+        connection = NWConnection(
+            to: .url(URL(string: "ws://127.0.0.1:\(port)\(path)")!), using: parameters)
+        connection.start(queue: queue)
+        receive()
+    }
+
+    /// 届いた text。届いた順。
+    var received: [String] { texts.withLock { $0 } }
+    /// 向こうが閉じたか。
+    var closedByPeer: Bool { ended.withLock { $0 } }
+
+    /// 1 通の text として送る。
+    func send(_ text: String) {
+        send(Data(text.utf8), opcode: .text)
+    }
+
+    /// 1 通の binary として送る。
+    func sendBinary(_ bytes: [UInt8]) {
+        send(Data(bytes), opcode: .binary)
+    }
+
+    /// 繋ぎを切る。
+    func close() { connection.cancel() }
+
+    private func send(_ content: Data, opcode: NWProtocolWebSocket.Opcode) {
+        let context = NWConnection.ContentContext(
+            identifier: "message", metadata: [NWProtocolWebSocket.Metadata(opcode: opcode)])
+        connection.send(content: content, contentContext: context, isComplete: true, completion: .idempotent)
+    }
+
+    private func receive() {
+        connection.receiveMessage { [weak self] content, context, _, error in
+            guard let self else { return }
+            let metadata =
+                context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
+                as? NWProtocolWebSocket.Metadata
+            guard error == nil, let metadata, metadata.opcode != .close else {
+                ended.withLock { $0 = true }
+                return
+            }
+            if metadata.opcode == .text, let content {
+                texts.withLock { $0.append(String(decoding: content, as: UTF8.self)) }
+            }
+            receive()
+        }
+    }
+}

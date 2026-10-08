@@ -764,6 +764,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "createOSC": RESOURCE,
     "createUDP": RESOURCE,
     "createServer": RESOURCE,
+    "createWebSocketServer": RESOURCE,
     "createShape": RESOURCE,
     "loadImage": RESOURCE,
     "requestImage": RESOURCE,

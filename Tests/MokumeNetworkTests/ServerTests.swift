@@ -26,7 +26,7 @@ nonisolated final class RecordingBroadcaster: Broadcasting, Sendable {
 struct ServerTests {
     /// 127.0.0.1 の `port` (既定は OS が選ぶ) で待つ入り口を開き、受け始めるまで待つ。
     private func listening(told: Told, port: Int = 0) async throws -> (server: Server, port: Int) {
-        let source = StreamSource(port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
+        let source = StreamSource(kind: .tcp, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
         let server = Server(
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
@@ -217,7 +217,7 @@ struct ServerTests {
         let told = Told()
         let holder = try PortHolder(port: 0, stream: true)
         let port = holder.port
-        let source = StreamSource(port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
+        let source = StreamSource(kind: .tcp, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
         let server = Server(
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
@@ -251,5 +251,7 @@ struct ServerTests {
         #expect(edge.port == 65535)
         #expect(edge.state == .unavailable)
         #expect(edge.clientCount == 0)
+        #expect(edge.report?.name == "tcp :65535")
+        #expect((edge.source as? StreamSource)?.kind == .tcp)
     }
 }

@@ -4,10 +4,12 @@
 import MokumeCore
 import MokumeDiagnostics
 
-/// 繋いでくる相手を待つ入り口 (TCP)。``Sketch/createServer(_:)`` が作り、走っているスケッチへ足す。
+/// 繋いでくる相手を待つ入り口 (TCP・WebSocket)。``Sketch/createServer(_:)`` (TCP) と
+/// ``Sketch/createWebSocketServer(_:)`` が作り、走っているスケッチへ足す。
 ///
-/// 相手は何人でも繋げる。どの相手から届いた行も、届いた順に ``TextPort/messages`` へ入る。
-/// ``write(_:)`` は繋いでいる相手全員へ書く。受け方・状態・止め方は ``TextPort`` のとおり。
+/// 相手は何人でも繋げる。どの相手から届いたものも、届いた順に ``TextPort/messages`` へ入る
+/// (TCP は改行で区切った 1 行、WebSocket は 1 通が 1 つ)。``write(_:)`` は繋いでいる相手全員へ
+/// 書く。受け方・状態・止め方は ``TextPort`` のとおり。
 ///
 /// ```swift
 /// final class Remote: Sketch {
@@ -23,7 +25,8 @@ import MokumeDiagnostics
 /// ```
 ///
 /// 端末から `nc 127.0.0.1 5204` で繋いで `0.3` と打つと円が変わり、クリックの `hit` が同じ
-/// 端末に出る。
+/// 端末に出る。`createServer(5204)` を `createWebSocketServer(8025)` に替えれば、ブラウザから
+/// `new WebSocket("ws://localhost:8025")` で繋いで `send("0.3")` した値で同じように動く。
 ///
 /// ## 相手が居ないことも読める
 ///
@@ -31,8 +34,9 @@ import MokumeDiagnostics
 /// 相手が 1 人も居ないときに ``write(_:)`` しても届く先が無いので、1 度だけ診断に出す (書けたら、
 /// また言えるように戻る)。
 ///
-/// 手本は Processing の `Server` で、作る口 (`new Server(this, 5204)`)・``write(_:)``・
-/// ``clientCount``・``TextPort/stop()`` の名前と引数の順序を倣う。受けたものは、Processing の
+/// 手本は Processing の `Server` (TCP) で、作る口 (`new Server(this, 5204)`)・``write(_:)``・
+/// ``clientCount``・``TextPort/stop()`` の名前と引数の順序を倣う。WebSocket は手本に無いが、
+/// 繋いでくる相手を待って全員へ書く点が同じなので、同じ型にした。受けたものは、Processing の
 /// `available()` / `readString()` で相手ごとに引き出す形ではなく、フレームごとに ``TextPort/messages``
 /// で読む ([ADR-0010] 決定 5 — 取りこぼすと意味が変わる出来事の列は、落とさない列に溜めて
 /// フレームで読む)。
@@ -60,8 +64,9 @@ public final class Server: TextPort {
     /// server?.write("hit\n")
     /// ```
     ///
-    /// UTF-8 のバイト列をそのまま書き、**改行は足さない** (Processing の `write` と同じ)。行で
-    /// 読む相手 (`nc` や、別の mokume の ``Server``) へは `"hit\n"` と改行まで書く。
+    /// TCP では UTF-8 のバイト列をそのまま書き、**改行は足さない** (Processing の `write` と同じ)。
+    /// 行で読む相手 (`nc` や、別の mokume の ``Server``) へは `"hit\n"` と改行まで書く。WebSocket
+    /// では 1 回の `write` が 1 通の text になる (ブラウザの `onmessage` に 1 度届く)。
     ///
     /// **投げない。** 相手が 1 人も居ない・止めた後は、理由ごとに 1 度だけ知らせて何もしない。
     /// 書けなかった相手は切り、``clientCount`` から外れる。待たずに返る。
