@@ -54,6 +54,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 # 例の囲み。`///` を**任意**にした綴り — カタログの `.md` の中の例は素の Markdown で
 # 書かれている
@@ -124,6 +125,20 @@ def split_imports(snippet: list[str]) -> tuple[list[str], list[str]]:
     return imports, rest
 
 
+def file_imports(snippets: Iterable[list[str]]) -> list[str]:
+    """組み立てたファイルの先頭に置く `import` の並び。`import mokume` を先頭に、各例が
+    自分で書いた `import` を出てきた順に、重ねずに並べる。
+
+    **集め方もここに置く** (#2216)。`wrap()` は `import` を捨てるので、集め直すのは
+    呼び出し側である — かつては組めることを見る側 (`check-examples.py`) だけが集め、
+    撮る側 (`example-shots.py`) は `import mokume` だけを書いていた。`mokume` は
+    Foundation を再輸出しないので (`Sources/mokume/Umbrella.swift`)、`import Foundation`
+    を書いた例は組めるのに撮れなかった。#667 と同じ形の食い違いである。
+    """
+    written = [line for snippet in snippets for line in split_imports(snippet)[0]]
+    return list(dict.fromkeys(["import mokume", *written]))
+
+
 def level_of(snippet: list[str]) -> str:
     """例がどの段に書かれているか。**注釈と `import` は数えない** — 例の頭に置かれた
     `// waves.metal` のような説明で段が変わってはいけない。"""
@@ -160,7 +175,7 @@ def wrap(
     どちらも段に合わせた高さへ置く。
     """
     level = level or level_of(snippet)
-    # `import` は呼び出し側がファイルの先頭へ集める (split_imports の注記)
+    # `import` は呼び出し側が `file_imports` でファイルの先頭へ集める (split_imports の注記)
     _, snippet = split_imports(snippet)
     inner = _shift(list(members or []) + list(context or []), 4)
     if level == LEVEL_TYPE:

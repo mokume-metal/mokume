@@ -92,6 +92,27 @@ class 包み(unittest.TestCase):
         self.assertNotIn("import mokume", wrapping.wrap("Ex", snippet))
         self.assertEqual(wrapping.level_of(snippet), wrapping.LEVEL_TYPE)
 
+    def test_外へ出した_import_を撮る側と組める側が同じに先頭へ置く(self):
+        """#2216。`import Foundation` を書いた例が make examples を通るのに、撮る側だけが
+        その行を落として組めなかった — #667 と同じ形の食い違いが `import` で残っていた。
+        **同じ例から、両者が同じ並びをファイルの先頭に置く**ことを見る。"""
+        body = ["import Foundation", "", 'let u = URL(fileURLWithPath: "/tmp/x")', "circle(1, 2, 3)"]
+        checked, _, _ = examples.build_source(
+            [examples.Example(path=Path("Sources/A.swift"), line=1, body=body, context=[], skip=None)]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            snippet = Path(tmp) / "repro.swift"
+            snippet.write_text("\n".join(body) + "\n", encoding="utf-8")
+            package = Path(tmp) / "generated"
+            shots.generate(Path(tmp), [shots.snippet_shot(snippet, 400, 300, 0, "a")], package)
+            shot = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+        # 包んだ行は字下げされるので、行頭の `import` はファイルの先頭に置かれたものだけ
+        heads = [
+            [line for line in text.split("\n") if line.startswith("import ")] for text in (checked, shot)
+        ]
+        self.assertEqual(heads[0], ["import mokume", "import Foundation"])
+        self.assertEqual(heads[1], heads[0], "撮る側と組める側で、先頭の import が食い違う")
+
     def test_文脈は段に合わせた高さへ置く(self):
         body = wrapping.wrap("Ex", ["circle(1, 2, 3)"], context=["var dust: Particles!"])
         self.assertIn("    var dust: Particles!", body)

@@ -14,8 +14,8 @@
 - **反転しても見分けが付かない絵の言い方** (#481) — 境目の当て方と、黙らせた軸の
   扱いをここで固定する。**絵を撮らずに検められる**ように、判定は純関数へ切ってある
 - **包み方が、組めることを見る側と同じである** (#667) — 段を見分けること・`文脈` を
-  渡すこと・型の段を落とすこと。ここが食い違うと、組める例が撮れない (あるいはその逆)
-  という無言の穴が空く
+  渡すこと・型の段を落とすこと・例の `import` を先頭へ集めること (#2216)。ここが
+  食い違うと、組める例が撮れない (あるいはその逆) という無言の穴が空く
 - **台帳が撮った版を持たない** (#671) — 持っていた頃は撮るたびに全数の行が動き、絵を
   数枚足す PR が台帳 163 行を巻き込んでいた。古い形を読めることと、それを名乗って
   落とすこともここで固定する
@@ -273,6 +273,20 @@ class ExampleShotsTest(unittest.TestCase):
         self.assertEqual(
             (package / "Package.swift").read_text(encoding="utf-8").count(".executableTarget"), 1
         )
+
+    def test_例のimportは重ねずに生成物の先頭へ集める(self):
+        """#2216。2 本の例が同じ `import` を書いても、先頭には 1 回だけ出る。"""
+        self.path.write_text(
+            SOURCE.replace("    /// circle(200, 150, ", "    /// import Foundation\n    /// circle(200, 150, "),
+            encoding="utf-8",
+        )
+        found = self.collect()
+        self.assertEqual([shot.snippet[0] for shot in found], ["import Foundation"] * 2)
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        body = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+        self.assertEqual(body.count("import Foundation"), 1, body)
+        self.assertLess(body.index("import Foundation"), body.index("final class "), body)
 
 
     # ---------------------------------------------------------------- 包み方 (#667)
@@ -1612,6 +1626,27 @@ class SnippetTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("brew install webp", err)
         self.assertEqual(rendered, [])
+
+    def test_例のimportが生成物のファイルの先頭に出る(self):
+        """#2216 の再現。`mokume` は Foundation を再輸出しない (Sources/mokume/Umbrella.swift)
+        ので、`URL` を使う例は `import Foundation` を自分で書く。撮る側がその行を落とすと
+        `cannot find 'URL' in scope` で組めない — 組めることを見る側 (make examples) は
+        通るのに、である。"""
+        self.snippet.write_text(
+            "import Foundation\n\n"
+            "background(23, 26, 31)\n"
+            'let u = URL(fileURLWithPath: "/tmp/x")\n'
+            "circle(200, 150, Float(u.path.count) * 10)\n",
+            encoding="utf-8",
+        )
+        shot = shots.snippet_shot(self.snippet, 400, 300, 0, "a")
+        package = self.dir / "generated"
+        shots.generate(self.dir, [shot], package)
+        lines = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8").split("\n")
+        first_type = next(index for index, line in enumerate(lines) if line.startswith("final class "))
+        self.assertIn("import Foundation", lines[:first_type], lines)
+        # 型の中へは入れられない (`declaration is only valid at file scope`)
+        self.assertNotIn("import Foundation", [line.strip() for line in lines[first_type:]], lines)
 
     def test_拡げる倍率は表示の幅にも効く(self):
         shot = shots.snippet_shot(self.snippet, 48, 32, 0, "a")

@@ -74,7 +74,7 @@ from example_wrapping import (  # noqa: E402
     MARK_CONTEXT,
     MARK_SKIP,
     dedent,
-    split_imports,
+    file_imports,
     strip_doc,
     wrap,
 )
@@ -203,13 +203,10 @@ def collect(root: pathlib.Path) -> tuple[list[Example], list[str]]:
 def build_source(examples: list[Example]) -> tuple[str, list[int], list[Example]]:
     """全部を 1 つのファイルへ。返るのは 本文 / 各例の始まる行 / その例。"""
     # 例が自分で書いている import も集める。型の中へは入れられないので、
-    # ここでファイルの先頭へ上げる (example_wrapping.split_imports の注記)
-    imported = dict.fromkeys(
-        ["import mokume"] + [line for example in examples for line in split_imports(example.body)[0]]
-    )
+    # ここでファイルの先頭へ上げる。**集め方は撮る側と共有する** (file_imports の注記・#2216)
     lines = [
         "// 生成物 — 直接編集しない (scripts/check-examples.py が書く)。",
-        *imported,
+        *file_imports(example.body for example in examples),
         "",
     ]
     starts: list[int] = []

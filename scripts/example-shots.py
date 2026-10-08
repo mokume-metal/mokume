@@ -249,6 +249,7 @@ from example_wrapping import (  # noqa: E402
     MARK,
     MARK_CONTEXT,
     dedent,
+    file_imports,
     level_of,
     strip_doc,
     wrap,
@@ -1054,7 +1055,13 @@ def generate(root: pathlib.Path, shots: list[Shot], package: pathlib.Path) -> No
         PACKAGE.format(root=root, identity=root.name.lower()), encoding="utf-8"
     )
 
-    body = ["// 生成物 — 直接編集しない (scripts/example-shots.py が書く)。", "import mokume", ""]
+    # 例が自分で書いた `import` を先頭へ集める。`wrap()` は捨てるので、ここで拾い直さないと
+    # `import Foundation` を書いた例が組めずに止まる (#2216)。集め方は組めることを見る側と同じ
+    body = [
+        "// 生成物 — 直接編集しない (scripts/example-shots.py が書く)。",
+        *file_imports(shot.snippet for shot in shots),
+        "",
+    ]
     for shot in shots:
         # 包み方は example_wrapping が持つ。**組めることを見る側 (check-examples) と
         # 同じ規則**にしておかないと、撮れる例と組める例が食い違う (原則 9)。
