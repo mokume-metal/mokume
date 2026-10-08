@@ -24,11 +24,21 @@
 #   scripts/measure-frame-rate.sh --observe [秒数]
 #
 # 画面が要る。ヘッドレスの実行環境では走らない。
+#
+# **GPU の検査と同時には走らない** (#2052)。GPU の枠を全部取ってから測る (scripts/gpu-slot.py の
+# 冒頭「## 窓つきの計測」)。検査が枠を握っていれば測り始めずに待ち、測っている間は検査の側が待つ。
 set -euo pipefail
 
 # **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
 # (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+# 枠を全部取った内側で、このスクリプトを走らせ直す。ビルドは CPU の段なので、枠を取る前に
+# 済ませる (検査を待たせる理由が無い)。内側かどうかは包みが子へ渡す印で見る
+if [ -z "${MOKUME_GPU_SLOT_EXCLUSIVE:-}" ]; then
+  swift build >/dev/null
+  exec python3 scripts/gpu-slot.py --exclusive -- "$BASH" scripts/measure-frame-rate.sh "$@"
+fi
 
 if [ "${1:-}" = "--observe" ]; then
   shift

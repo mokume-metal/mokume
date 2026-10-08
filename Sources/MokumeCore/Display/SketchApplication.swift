@@ -936,7 +936,20 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 描けるようになったことを言う。飛ばした数を添える。
     private func noteFrameRecovery() {
         guard let skipped = frameFailures.recovered() else { return }
-        Diagnostics.warn("Drawing has recovered (\(skipped) frames were skipped)")
+        Diagnostics.warn(Self.recoveryNotice(skipped: skipped, gate: gpu.queueGate.closure))
+    }
+
+    /// 描けるようになったときの 1 行。
+    ///
+    /// **GPU の待ちが一度期限を越えていれば、関所の印が残っていることを言い添える** (#2052 の反証)。
+    /// 印は下ろさない (``CommandQueueGate``) ので、「回復した」とだけ言うと、そのプロセスで新しい土台を
+    /// 作れないことと食い違って読める。
+    static func recoveryNotice(skipped: Int, gate closure: CommandQueueGate.Closure?) -> String {
+        let recovered = "Drawing has recovered (\(skipped) frames were skipped)"
+        guard closure != nil else { return recovered }
+        return recovered
+            + " — but a wait for the GPU went past its limit, so this process still sets up no new drawing"
+            + " foundation; start it again to clear that"
     }
 
 }
