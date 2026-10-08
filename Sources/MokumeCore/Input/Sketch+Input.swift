@@ -67,6 +67,37 @@ extension Sketch {
     public var dragX: Float { Self.input.dragX }
     /// このフレームに、押したまま引きずった量 (縦)。
     public var dragY: Float { Self.input.dragY }
+    /// このフレームに動いた量 (横)。**押しているかによらず数える。**
+    ///
+    /// カーソルを捕まえている間 (``requestPointerLock()``) は ``mouseX`` が動かないので、
+    /// 手を動かした量はここで読む。単位は描く解像度の画素で、縦軸は下向きである
+    /// (``mouseY`` と同じ約束)。
+    ///
+    /// ```swift
+    /// var yaw: Float = 0
+    ///
+    /// func draw() {
+    ///     yaw += movedX * 0.005
+    /// }
+    /// ```
+    ///
+    /// **押下・解放で位置が飛んだぶんは数えない** (``dragX`` と同じ約束)。捕まえていないときは
+    /// 移動の出来事ごとの位置の差を、捕まえているときは手を動かした量そのものを足す。
+    ///
+    /// **これはフレームの合計で、`draw()` から読むためのもの。** 出来事 1 件ぶんの量は
+    /// ``Sketch/mouseMoved(deltaX:deltaY:)`` と ``Sketch/mouseDragged(deltaX:deltaY:)`` が引数で
+    /// 受け取り、両方を足すとここと一致する。あちらの中からここを読むと、その出来事までの部分
+    /// 累計を何度も足し込む形になる ([ADR-0034] 決定 5)。
+    ///
+    /// **手本 (p5.js) とは数え方が違う。** 名前は手本の `movedX` だが、p5.js 1.11 は最新の
+    /// 1 件で上書きするので、手本で `mouseMoved()` の中から `movedX` を読む書き方は 1 件ぶんに
+    /// なる。ここはフレームの合計なので、その行をそのまま写すと回りすぎる — 1 件ぶんは
+    /// ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    public var movedX: Float { Self.input.movedX }
+    /// このフレームに動いた量 (縦)。**縦軸は下向き**で、手前へ引くと正になる。
+    public var movedY: Float { Self.input.movedY }
     /// そのキーが押されているか。
     public func isKeyDown(_ key: Key) -> Bool { Self.input.pressedKeys.contains(key) }
     /// 最後に入力された文字。

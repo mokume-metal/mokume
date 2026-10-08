@@ -22,6 +22,7 @@ enum InputEventType: String, CaseIterable, Sendable {
     case mouseDown
     case mouseUp
     case mouseMoved
+    case mouseMovedBy
     case scrolled
     case keyDown
     case keyUp
