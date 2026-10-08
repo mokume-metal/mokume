@@ -63,6 +63,10 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     /// 黙っている送り元を閉じてよいとするまでの秒数 (既定)。
     static let defaultIdleAfter: TimeInterval = 5
 
+    /// 送り元の黙りを測る既定の時計 (秒)。眠っている間は進まない `systemUptime`。受け口と
+    /// OSC の出どころの既定はこれ 1 つで、検査は本番と同じこの時計でも閉じることを見る。
+    static let systemClock: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
     private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
@@ -77,15 +81,14 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     ///   - host: 受けるアドレス。`nil` ならすべての口。
     ///   - retryAfter: 失敗したとき、何秒後に開き直すか。
     ///   - idleAfter: 何秒黙っていた送り元を、閉じてよいとするか。
-    ///   - now: 送り元の黙りを測る時計 (秒)。既定は眠っている間は進まない `systemUptime`。
-    ///     検査は手で進める時計を渡し、受け入れの速さに依らずに黙りを決める (#2225)。
-    ///     ``queue`` の上で呼ばれる。
+    ///   - now: 送り元の黙りを測る時計 (秒)。既定は ``systemClock``。検査は手で進める時計を
+    ///     渡し、受け入れの速さに依らずに黙りを決める (#2225)。``queue`` の上で呼ばれる。
     ///   - received: 届いた datagram と、届いた瞬間の host time。``queue`` の上で呼ばれる。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
     init(
         port: Int, host: String?, retryAfter: TimeInterval,
         idleAfter: TimeInterval = defaultIdleAfter,
-        now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        now: @escaping @Sendable () -> TimeInterval = systemClock,
         received: @escaping @Sendable ([UInt8], UInt64) -> Void,
         changed: @escaping @Sendable (Event) -> Void
     ) {

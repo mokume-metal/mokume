@@ -120,13 +120,22 @@ struct OSCPortTests {
     private func loopback(
         port: Int, told: Told, outbound: (any DatagramSending)? = nil,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
-        now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        now: (@Sendable () -> TimeInterval)? = nil
     ) throws -> OSCPort {
+        // 時計を渡さなければ、本番 (`createOSC`) と同じく出どころの既定の時計で測る
+        let source =
+            if let now {
+                NetworkOSCSource(
+                    port: port, host: "127.0.0.1", retryAfter: 0.05, idleAfter: idleAfter, now: now,
+                    warn: told.append)
+            } else {
+                NetworkOSCSource(
+                    port: port, host: "127.0.0.1", retryAfter: 0.05, idleAfter: idleAfter,
+                    warn: told.append)
+            }
         let osc = OSCPort(
             port: port, name: "osc :\(port)",
-            source: NetworkOSCSource(
-                port: port, host: "127.0.0.1", retryAfter: 0.05, idleAfter: idleAfter, now: now,
-                warn: told.append),
+            source: source,
             outbound: outbound ?? DatagramSender(host: "127.0.0.1", port: port, warn: told.append),
             owner: nil, warn: told.append)
         try osc.open()
@@ -280,12 +289,15 @@ struct OSCPortTests {
         }
         let received = await collect(osc, count: count)
         #expect(Set(received.compactMap { $0.int(0) }) == Set(0..<count))
-        // 1 本も閉じずに、目安の数を超えている。時計が止まっていて、どの送り元も同じだけ (0 秒)
-        // 黙っているので、閉じるなら目安に達したところで全部が閉じ、数は目安を下回る。
-        // 送り元の数 (70) との一致は求めない — 負荷の下では Network.framework の受け口が、ある
-        // 送り元の datagram を別の送り元の繋ぎで渡すことがあり (#2225 で実測。datagram は落ちない)、
-        // そのぶん繋ぎが 1〜2 本少なく数えられる
-        #expect(source.connectionCount > DatagramListener.connectionLimit)
+        // 受け入れた送り元を 1 本も外していない — 黙りでも (時計が止まっていて誰も黙っていない)、
+        // 失敗でも。受け入れた数と持っている数が等しいことで、数え方の外で閉じる経路も捕まえる。
+        // 受け入れた数が送り元の数 (70) に届くことは求めない: 負荷の下では Network.framework の
+        // 受け口が、ある送り元の datagram を別の送り元の繋ぎで渡し、その送り元の繋ぎを作らない
+        // ことがある (#2225 で実測。datagram は落ちない)。閉じたのではないので、ここでは数えない
+        let tally = source.tally
+        #expect(tally.closedIdle == 0)
+        #expect(tally.ended == 0)
+        #expect(source.connectionCount == tally.accepted)
 
         // ちょうど `idleAfter` 秒黙った後に新しい送り元が来たら、黙っていた送り元を閉じてから
         // 受ける (閉じるのは `idleAfter` 秒「以上」黙った送り元)
@@ -295,6 +307,42 @@ struct OSCPortTests {
         late.send(try Wire.encoded(OSCMessage("/late", 1)))
         #expect(await collect(osc, count: 1) == [OSCMessage("/late", 1)])
         #expect(source.connectionCount == 1)
+    }
+
+    @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")
+    func idleSendersAreSweptOnTheDefaultClock() async throws {
+        let told = Told()
+        let port = try freeUDPPort()
+        // 時計は差し替えない (本番と同じ既定の時計)。前の検査は手で進める時計で回すので、既定の
+        // 時計が黙りを測れなくなる退行 (止まった時計への差し替えなど) はここでしか捕まらない
+        let osc = try loopback(port: port, told: told, idleAfter: 0.05)
+        defer { osc.close() }
+        #expect(await until { osc.state == .running })
+        let source = try #require(osc.source as? NetworkOSCSource)
+
+        // 目安の数だけの送り元から送り、全部を読ませる
+        let burst = (0..<DatagramListener.connectionLimit).map { _ in
+            DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
+        }
+        defer { for sender in burst { sender.stop() } }
+        for (index, sender) in burst.enumerated() {
+            sender.send(try Wire.encoded(OSCMessage("/from", index)))
+        }
+        #expect(await collect(osc, count: burst.count).count == burst.count)
+
+        // `idleAfter` より長く黙ってから、新しい送り元を 1 本ずつ足す。待つほど黙りは長くなる
+        // だけなので、遅い機械でも閉じる側へしか進まない。送り元の取り違えで数が目安に
+        // 届いていなければ、足すうちに届く
+        var late: [DatagramSender] = []
+        defer { for sender in late { sender.stop() } }
+        for index in 0..<20 where source.tally.closedIdle == 0 {
+            try await Task.sleep(for: .milliseconds(100))
+            let sender = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
+            late.append(sender)
+            sender.send(try Wire.encoded(OSCMessage("/late", index)))
+        }
+        #expect(await until { source.tally.closedIdle > 0 })
+        #expect(source.connectionCount < DatagramListener.connectionLimit)
     }
 
     // MARK: - ポートが使えないとき

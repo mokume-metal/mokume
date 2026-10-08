@@ -49,7 +49,7 @@ nonisolated final class NetworkOSCSource: OSCSource, @unchecked Sendable {
     init(
         port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
-        now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
         warn: @escaping @Sendable (String) -> Void
     ) {
         self.port = port
