@@ -537,7 +537,7 @@ class DifferenceStatsTest(unittest.TestCase):
 
 
 class DecodeTest(unittest.TestCase):
-    """PNG を自前で読む (専用機に ffmpeg が無いため・#1986)。符号の全種と、読めない形の名乗り。"""
+    """PNG を自前で読む (#1986 の時点で専用機に ffmpeg が無かったため・#2009 で入った後も頼らない)。符号の全種と、読めない形の名乗り。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -733,7 +733,7 @@ class DriftTest(unittest.TestCase):
         return code, built, err.getvalue()
 
     def test_drift_は_ffmpeg_を探さない(self):
-        """専用機には ffmpeg が入っていない (#1986)。比べるだけの実行は道具を探さない。"""
+        """比べるだけの実行は道具を探さない (#1986 の時点で専用機に ffmpeg が無く、#2009 で入った後も前提にしない)。"""
 
         def which(name):
             raise AssertionError(f"drift が {name} を探した")

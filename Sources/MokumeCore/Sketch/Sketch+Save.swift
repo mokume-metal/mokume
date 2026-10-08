@@ -57,6 +57,7 @@ extension Sketch {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    // shot: 撮れない 画面の絵を何も変えずにファイルを書く口で、書き終わる時点もフレームに紐づかない (確かなのは endRecord の後かスケッチの終わり) ので、書いたものを同じスケッチで読み戻して見せる絵も決まらない
     public func save(_ path: String) {
         guard let runtime = runningSketch else {
             return Diagnostics.warn(OutsideCall.save.notice)
@@ -84,6 +85,48 @@ extension Sketch {
     /// **入るのは、呼んだフレームの絵から** ``endRecord()`` を呼んだフレームの前の絵まで
     /// である。上の例なら 1 フレーム目から 119 フレーム目までの 119 枚になる。直前のフレームで
     /// ``save(_:)`` を呼んでいても、1 枚目は変わらない。
+    ///
+    /// ``endRecord()`` は全部を書き終えてから返るので、撮れたものはその場で読み戻せる。
+    /// 下の例は、円が 1 フレームに 1 つずつ増える絵を 2 フレーム目から撮り始め、5 フレーム目で
+    /// 止めて、読み戻した連番を下に並べている。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     let folder = NSTemporaryDirectory() + "record-strip/"
+    ///     var strip: [Image] = []
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         noStroke()
+    ///         fill(242, 115, 64)
+    ///         for index in 0..<min(frameCount, 6) {
+    ///             circle(40 + index * 64, 70, 48)
+    ///         }
+    ///
+    ///         if frameCount == 2 { beginRecord(folder + "frame-##.png") }
+    ///         if frameCount == 5 {
+    ///             endRecord()  // 書き終えてから返る
+    ///             strip = (0..<3).map { try! loadImage(folder + "frame-0\($0).png") }
+    ///         }
+    ///
+    ///         stroke(90)
+    ///         noFill()
+    ///         for (index, shot) in strip.enumerated() {
+    ///             image(shot, 20 + index * 125, 170, 110, 82.5)
+    ///             rect(20 + index * 125, 170, 110, 82.5)
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 上の橙色の円は 1 フレームに 1 つずつ増えて 6 つで止まる。5 フレーム目から下に灰色の枠が 3 つ並び、読み戻した 3 枚の絵には円が左から 2 つ・3 つ・4 つある | frames=30 -->
+    ///     ![上の橙色の円は 1 フレームに 1 つずつ増えて 6 つで止まる。5 フレーム目から下に灰色の枠が 3 つ並び、読み戻した 3 枚の絵には円が左から 2 つ・3 つ・4 つある](https://i.gyazo.com/661d65032fba4c70ad1f4c448f9a1cc1.gif)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// ## 連番 — 番号は撮った順に並ぶ
     ///
@@ -125,6 +168,7 @@ extension Sketch {
     /// - Parameter pattern: 行き先。`.mov` なら動画、`#` を並べれば連番。
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    // shot: 1 snippet=5f85730d
     public func beginRecord(_ pattern: String) {
         guard let runtime = runningSketch else {
             return Diagnostics.warn(OutsideCall.beginRecord.notice)
@@ -139,7 +183,8 @@ extension Sketch {
     /// **始まりだけでなく終わりも面の一部**である。
     ///
     /// 待つのはまだ書けていない枚数ぶんだけなので、撮り終わりに 1 度だけフレームが
-    /// 伸びる。
+    /// 伸びる。返った直後に連番を読み戻す例と絵は ``beginRecord(_:)`` にある。
+    // shot: 参照 beginRecord(_:)
     public func endRecord() {
         guard let runtime = runningSketch else {
             return Diagnostics.warn(OutsideCall.endRecord.notice)
