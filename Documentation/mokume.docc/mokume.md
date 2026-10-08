@@ -430,6 +430,14 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``OSCArgument``
 - ``OSCFailure``
 
+### TCP・UDP・WebSocket で他のアプリとやりとりする
+
+- ``Sketch/createUDP(listen:send:)``
+- ``Sketch/createUDP(messages:)``
+- ``TextPort``
+- ``UDPPort``
+- ``NetworkFailure``
+
 ### 画素を読み書きする
 
 - ``Sketch/pixels``

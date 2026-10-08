@@ -16,7 +16,10 @@ nonisolated func freeUDPPort() throws -> Int {
     return holder.port
 }
 
-/// UDP のソケットで 127.0.0.1 のポートを握る。他のアプリがそのポートを使っている状態を作る。
+/// 127.0.0.1 のポートを握る。他のアプリがそのポートを使っている状態を作る。
+///
+/// 既定は UDP のソケット。`stream` なら TCP のソケットで握り、待ち受けまで始める
+/// (TCP・WebSocket の受け口が使用中を見分けるのは、相手が待ち受けているときである)。
 nonisolated final class PortHolder: Sendable {
     let port: Int
     private let descriptor: Int32
@@ -26,8 +29,8 @@ nonisolated final class PortHolder: Sendable {
         let code: Int32
     }
 
-    init(port: Int) throws {
-        let descriptor = socket(AF_INET, SOCK_DGRAM, 0)
+    init(port: Int, stream: Bool = false) throws {
+        let descriptor = socket(AF_INET, stream ? SOCK_STREAM : SOCK_DGRAM, 0)
         guard descriptor >= 0 else { throw Failure(call: "socket", code: errno) }
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -43,6 +46,11 @@ nonisolated final class PortHolder: Sendable {
             let code = errno
             close(descriptor)
             throw Failure(call: "bind", code: code)
+        }
+        if stream, Darwin.listen(descriptor, 4) != 0 {
+            let code = errno
+            close(descriptor)
+            throw Failure(call: "listen", code: code)
         }
         var actual = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -86,16 +94,6 @@ final class IdleSketch: Sketch {
 /// **待つ側が期限を持つ** — 届くのを待つ検査は、期限を越えたら満たされなかったとして落ちる。
 @Suite("OSC の入り口", .serialized)
 struct OSCPortTests {
-    /// 期限まで、条件が満ちるのを待つ。満ちなければ偽。
-    private func until(_ seconds: TimeInterval = 5, _ condition: () -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return condition()
-    }
-
     /// フレームを回すように取り出しを続け、`count` 個届くまで (か期限まで) 集める。
     private func collect(_ osc: OSCPort, count: Int) async -> [OSCMessage] {
         var received: [OSCMessage] = []

@@ -56,13 +56,13 @@ extension Sketch {
     public func createOSC(
         listen port: Int, send destination: (host: String, port: Int)? = nil
     ) throws(OSCFailure) -> OSCPort {
-        guard Self.usablePorts.contains(port) else { throw .invalidPort(port) }
+        guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
         var outbound: DatagramSender?
         if let destination {
-            guard Self.usablePorts.contains(destination.port) else {
+            guard Endpoint.usablePorts.contains(destination.port) else {
                 throw .invalidPort(destination.port)
             }
-            guard !destination.host.allSatisfy(\.isWhitespace) else {
+            guard Endpoint.isUsable(host: destination.host) else {
                 throw .invalidHost(destination.host)
             }
             outbound = DatagramSender(
@@ -112,7 +112,4 @@ extension Sketch {
         attach(osc)
         return osc
     }
-
-    /// 開けるポートの番号。
-    private static var usablePorts: ClosedRange<Int> { 1...65535 }
 }
