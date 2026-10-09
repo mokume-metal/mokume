@@ -90,9 +90,14 @@ let package = Package(
         .target(
             name: "MokumeNetwork", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
+        // ゲームパッド (GameController)。映像・音・通信のどれとも依存も意味も重ならないので分ける (#1965)
+        .target(
+            name: "MokumeGamepad", dependencies: ["MokumeCore"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
-            name: "mokume", dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork"],
+            name: "mokume",
+            dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork", "MokumeGamepad"],
             swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)
@@ -124,6 +129,9 @@ let package = Package(
             swiftSettings: .mokume),
         .testTarget(
             name: "MokumeNetworkTests", dependencies: ["mokume", "MokumeNetwork"],
+            swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeGamepadTests", dependencies: ["mokume", "MokumeGamepad"],
             swiftSettings: .mokume),
 
     ]

@@ -653,6 +653,14 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/keyReleased()``
 - ``Sketch/keyTyped()``
 
+### ゲームパッドで動かす
+
+- ``Sketch/gamepads()``
+- ``Sketch/createGamepad(inputs:)``
+- ``Gamepad``
+- ``GamepadButton``
+- ``GamepadInput``
+
 ### 走らせたまま値を動かす
 
 - ``Sketch/params``
