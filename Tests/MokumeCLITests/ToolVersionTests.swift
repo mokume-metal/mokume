@@ -35,8 +35,10 @@ struct ToolVersionTests {
     func addsTheBuildTimeToALocalBuild() {
         let stamp = Date(timeIntervalSince1970: 1_756_000_000)
         let text = ToolVersion.describe(executable: url("/tmp/x/.build/debug/mokume-cli"), modified: stamp)
-        // 年だけ見る。書式そのものを固定すると、読みやすさを直すたびに検査が落ちる
-        #expect(text.contains("2025") || text.contains("2026"))
+        // 書式は ``Timestamp`` に任せる。固定すると、読みやすさを直すたびに検査が落ちる。
+        // ただし**渡した時刻であること**は見る — 年だけ見ていた頃は、現在時刻を出しても
+        // 通った (#2281)
+        #expect(text.contains(Timestamp.text(stamp)), "\(text)")
     }
 
     @Test("日時が読めなければ、そこだけ判定できずと言う")

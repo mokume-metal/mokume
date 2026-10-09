@@ -139,10 +139,19 @@ struct ArgumentsTests {
     }
 
     /// 場所は取る。2 つ目からは余りへ回る (畳む前と同じ)。
+    ///
+    /// **切り分けの口を通して見る。** 解析だけを呼ぶと、口が解析の結果のどれを場所に
+    /// 使うかを取り違えても緑のままになる (#2282)。区画の基準の行は場所から決まるので、
+    /// そこに 1 つ目が出ていれば 1 つ目を場所に取っている。
     @Test("切り分けの口も、場所は 1 つだけ取る")
     func theDoctorVerbStillTakesOnePlace() throws {
-        let parsed = try Arguments.parse(["/tmp/a", "/tmp/b"], surplus: .ignore)
-        #expect(parsed.positional == "/tmp/a")
-        #expect(parsed.ignored == ["/tmp/b"])
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-doctor-\(UUID().uuidString)", isDirectory: true)
+        let first = root.appendingPathComponent("a", isDirectory: true)
+        let second = root.appendingPathComponent("b", isDirectory: true)
+        let text = DoctorCommand.text(
+            for: [first.path, second.path], workDirectory: nil, environment: [:], home: root)
+        #expect(text.hasPrefix("Ignored unknown arguments: \(second.path)\n"), "\(text)")
+        #expect(text.contains(StartupReadsReport.baseLine(base: first, given: false)), "\(text)")
     }
 }
