@@ -56,13 +56,13 @@ extension Sketch {
     public func createOSC(
         listen port: Int, send destination: (host: String, port: Int)? = nil
     ) throws(OSCFailure) -> OSCPort {
-        guard Self.usablePorts.contains(port) else { throw .invalidPort(port) }
+        guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
         var outbound: DatagramSender?
         if let destination {
-            guard Self.usablePorts.contains(destination.port) else {
+            guard Endpoint.usablePorts.contains(destination.port) else {
                 throw .invalidPort(destination.port)
             }
-            guard !destination.host.allSatisfy(\.isWhitespace) else {
+            guard Endpoint.isUsable(host: destination.host) else {
                 throw .invalidHost(destination.host)
             }
             outbound = DatagramSender(
@@ -107,12 +107,9 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createOSC(messages: [[OSCMessage]]) -> OSCPort {
         let osc = OSCPort(
-            port: nil, name: "osc (recorded)", source: RecordedOSCSource(batches: messages),
+            port: nil, name: "osc (recorded)", source: RecordedSource(batches: messages),
             outbound: nil, owner: self)
         attach(osc)
         return osc
     }
-
-    /// 開けるポートの番号。
-    private static var usablePorts: ClosedRange<Int> { 1...65535 }
 }

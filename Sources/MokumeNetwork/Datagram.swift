@@ -5,45 +5,28 @@ import Darwin
 import Foundation
 import Network
 
-// UDP の受け・送り。**OSC 固有のものは持たない** — 中身のバイト列をどう読むかは上の層
-// (OSC の ``OSCCodec``) が決める。TCP・UDP・WebSocket の口 (#2018) も、UDP はこの層を使う
-// 前提で置く。公開の UDP の口の形はそちらが作例で決めるので、ここは internal に留める。
-//
-// Network.framework の受け口は待ち行列を引数に取る。ここはその待ち行列の上で受けて、
-// 届いたバイト列と状態を手続きへ渡すところで手を離す ([ADR-0042] 決定 7 の条件 — 受ける点
-// でしかない・境界を越えるのは `Sendable` な値だけ・利用者に漏らさない)。
-//
-// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+// UDP の受け・送り。**中身のバイト列をどう読むかは持たない** — 上の層 (OSC の ``OSCCodec``・
+// 文字列の ``TextDecoding``) が決める。ポートを開く部分は TCP・WebSocket と ``PortListener`` を
+// 共有する (待ち行列の扱いと ADR-0042 決定 7 の条件も、そちらの冒頭に書いた)。
 
 /// UDP のポートを 1 つ開いて、届いた datagram を 1 つずつ渡す。
 ///
-/// **ポートが使えなくても投げない。** 使用中・失敗のときは ``Event`` で知らせ、
-/// ``retryAfter`` 秒ごとに開き直す — 握っていた他のアプリが終われば、そこから受け始める
-/// ([ADR-0028] 決定 3 の「使えなくなったことが読める」と、起動後の抜き差しへの追随)。
-///
-/// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+/// **ポートが使えなくても投げない。** 開く・使用中を見分ける・開き直すのは ``PortListener`` の
+/// とおりで、移り変わりは ``Event`` で知らせる。
 nonisolated final class DatagramListener: @unchecked Sendable {
-    // `@unchecked Sendable`: 可変の状態 (``listener``・``ledger``・``stopped``) は
-    // ``queue`` の上でだけ触る。Network.framework の手続きもすべて ``queue`` で走らせる。
+    // `@unchecked Sendable`: 可変の状態 (``ledger``・``stopped``) は ``queue`` の上でだけ触る。
+    // Network.framework の手続きもすべて ``queue`` で走らせる (ポートを開く ``opener`` も同じ
+    // 待ち行列を使う)。
 
     /// 受け口の移り変わり。
-    enum Event: Sendable, Equatable {
-        /// 受けられる。`port` は実際に開いたポート (0 を頼んだときは OS が選んだ番号)。
-        case ready(port: Int)
-        /// 他のアプリがそのポートを使っている。開き直し続ける。
-        case portInUse
-        /// OS の方針 (ローカルネットワークの許可) で拒まれている。
-        case denied
-        /// それ以外の理由で受けられない。開き直し続ける。
-        case failed(String)
-    }
+    typealias Event = PortListener.Event
 
     /// 頼んだポート。0 なら OS が空いている番号を選ぶ。
-    let port: Int
+    var port: Int { opener.port }
     /// 受けるアドレス。`nil` ならすべての口 (別の機械からも届く)。
-    let host: String?
+    var host: String? { opener.host }
     /// 失敗したとき、何秒後に開き直すか。
-    let retryAfter: TimeInterval
+    var retryAfter: TimeInterval { opener.retryAfter }
     /// 何秒黙っていた送り元を、閉じてよいとするか。
     let idleAfter: TimeInterval
 
@@ -70,8 +53,7 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
     private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
-    private let changed: @Sendable (Event) -> Void
-    private var listener: NWListener?
+    private let opener: PortListener
     /// 送り元と、最後に読んだ時刻 (``now`` の目盛り)。
     private var ledger: SenderLedger<NWConnection>
     private var stopped = false
@@ -92,19 +74,24 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         received: @escaping @Sendable ([UInt8], UInt64) -> Void,
         changed: @escaping @Sendable (Event) -> Void
     ) {
-        self.port = port
-        self.host = host
-        self.retryAfter = retryAfter
         self.idleAfter = idleAfter
         self.now = now
         self.received = received
-        self.changed = changed
         ledger = SenderLedger(limit: Self.connectionLimit, idleAfter: idleAfter)
+        opener = PortListener(
+            port: port, host: host, retryAfter: retryAfter, queue: queue,
+            parameters: { .udp }, changed: changed)
     }
 
     /// 開き始める。待たずに返る。
     func start() {
-        queue.async { [self] in listen() }
+        opener.start { [weak self] connection in
+            guard let self else {
+                connection.cancel()
+                return
+            }
+            accept(connection)
+        }
     }
 
     /// いま持っている送り元の数 (検査が上限を確かめるため)。
@@ -117,69 +104,12 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     func stop() {
         queue.sync { [self] in
             stopped = true
-            listener?.cancel()
-            listener = nil
+            opener.cancel()
             for connection in ledger.removeAll() { connection.cancel() }
         }
     }
 
     // MARK: - 待ち行列の上
-
-    private func listen() {
-        guard !stopped else { return }
-        let parameters = NWParameters.udp
-        let wanted = NWEndpoint.Port(rawValue: UInt16(clamping: port)) ?? .any
-        let opened: NWListener
-        do {
-            if let host {
-                parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(host), port: wanted)
-                opened = try NWListener(using: parameters)
-            } else {
-                opened = try NWListener(using: parameters, on: wanted)
-            }
-        } catch {
-            fail(Self.event(for: error))
-            return
-        }
-        listener = opened
-        opened.stateUpdateHandler = { [weak self, weak opened] state in
-            guard let self, let opened else { return }
-            self.listenerChanged(opened, to: state)
-        }
-        opened.newConnectionHandler = { [weak self] connection in
-            self?.accept(connection)
-        }
-        opened.start(queue: queue)
-    }
-
-    private func listenerChanged(_ opened: NWListener, to state: NWListener.State) {
-        // 開き直した後に、前の受け口の知らせが遅れて届くことがある
-        guard !stopped, opened === listener else { return }
-        switch state {
-        case .ready:
-            changed(.ready(port: Int(opened.port?.rawValue ?? UInt16(clamping: port))))
-        case .waiting(let error):
-            // 経路を待っている間は Network.framework が自分で開き直す
-            changed(Self.event(for: error))
-        case .failed(let error):
-            // 使用中はここに来る (`EADDRINUSE`。2026-10-06 に 127.0.0.1 とすべての口の両方で実測)。
-            // 閉じて、間を空けて自分で開き直す
-            opened.cancel()
-            listener = nil
-            fail(Self.event(for: error))
-        default:
-            break
-        }
-    }
-
-    /// 知らせて、間を空けて開き直す。
-    private func fail(_ event: Event) {
-        changed(event)
-        queue.asyncAfter(deadline: .now() + retryAfter) { [weak self] in
-            guard let self, listener == nil else { return }
-            listen()
-        }
-    }
 
     private func accept(_ connection: NWConnection) {
         guard !stopped else {
@@ -211,19 +141,6 @@ nonisolated final class DatagramListener: @unchecked Sendable {
             ledger.heard(connection, at: now())
             received([UInt8](content), hostTime)
             receive(on: connection)
-        }
-    }
-
-    /// Network.framework の失敗を、受け口の移り変わりに読み替える。
-    static func event(for error: any Error) -> Event {
-        guard let error = error as? NWError else { return .failed("\(error)") }
-        switch error {
-        case .posix(let code) where code == .EADDRINUSE:
-            return .portInUse
-        case .dns(let code) where code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied):
-            return .denied
-        default:
-            return .failed(error.localizedDescription)
         }
     }
 }

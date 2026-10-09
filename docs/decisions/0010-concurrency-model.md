@@ -87,7 +87,7 @@ GPU コマンドの生成、書き出し、観測、アセット読み込みな�
 | 値の性質 | 入れ物と出し方 | 例 |
 | --- | --- | --- |
 | 新しいものが古いものを上書きして困らない。フレームごとに 1 つを取り出せば足りる | 最新の 1 つ (`ExternalInput`) に入れ、入り口が `supply()` で取り出す。スケッチは `draw()` から読む値として持つ | カメラの絵 (`Capture.image`)・音の解析の結果 (`AudioIn.level` ほか) |
-| 1 つでも取りこぼすと意味が変わる出来事の列 | 落とさない列 (`ExternalQueue`・[ADR-0028](0028-external-inputs.md) 決定 2) に溜め、`supply()` がフレームごとに、前の取り出し以後に届いたものを全部・届いた順に渡す。スケッチは `draw()` から読む | OSC のメッセージ (`OSCPort.messages`)・MIDI のメッセージ ([#1963](https://github.com/mokume-metal/mokume/issues/1963) の案)・ネットワーク経由の制御 (TCP・UDP・WebSocket — [#2018](https://github.com/mokume-metal/mokume/issues/2018) の案)・シリアルの受信 ([#1961](https://github.com/mokume-metal/mokume/issues/1961) の案) |
+| 1 つでも取りこぼすと意味が変わる出来事の列 | 落とさない列 (`ExternalQueue`・[ADR-0028](0028-external-inputs.md) 決定 2) に溜め、`supply()` がフレームごとに、前の取り出し以後に届いたものを全部・届いた順に渡す。スケッチは `draw()` から読む | OSC のメッセージ (`OSCPort.messages`)・MIDI のメッセージ ([#1963](https://github.com/mokume-metal/mokume/issues/1963) の案)・ネットワーク経由の制御 (`TextPort.messages`。TCP・UDP・WebSocket — [#2018](https://github.com/mokume-metal/mokume/issues/2018))・シリアルの受信 ([#1961](https://github.com/mokume-metal/mokume/issues/1961) の案) |
 
 ```swift
 // osc は createOSC(listen:send:) で作った入り口 (OSCPort)

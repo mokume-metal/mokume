@@ -18,11 +18,8 @@ public nonisolated enum OSCFailure: Error, Equatable, Sendable {
 extension OSCFailure: CustomStringConvertible {
     public var description: String {
         switch self {
-        case .invalidPort(let port):
-            "The port \(port) is not usable. Pass a number from 1 to 65535 (9000, for example)"
-        case .invalidHost(let host):
-            "The host \"\(host)\" is not usable. Pass a name or an address to send to "
-                + "(\"127.0.0.1\" for this machine, for example)"
+        case .invalidPort(let port): Endpoint.unusablePort(port)
+        case .invalidHost(let host): Endpoint.unusableHost(host)
         }
     }
 }
