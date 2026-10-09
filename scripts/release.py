@@ -25,6 +25,11 @@ render が見るのは触っていない絵の退行だけで、新しい絵の�
   - 本文とラベルは gh で読む。読めなかった PR は**黙って落とさず**名指しで残す
   - 題に `(#N)` の無いコミット (PR を経ない push) は PR の本文が無いので載らない
 
+節の形を知っているのはこのスクリプトだけなので、**読む側もここに置く**
+(`picture_references`)。日次の publication が、載せた絵が生きているかを Release の本文から
+引く (#2268) ので、節の見出しや記法を変えると読む側が黙って 0 本になる — 書く関数と
+読む関数が往復することは検査が留める。
+
 サブコマンド:
   next-version   次の版を出す。出すものが無ければ終了コード 2
   notes          Release の本文を組んで出す
@@ -36,6 +41,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parents[1]
 FRAGMENT_DIR = "changelog.d"
@@ -79,6 +85,15 @@ PICTURE_PATTERN = re.compile(
 BARE_IMAGE_PATTERN = re.compile(r"^https?://\S+\.(?:png|jpe?g|gif|webp|avif)$", re.IGNORECASE)
 # 絵の参照として読まない所。テンプレートの注釈と、記法の例を書いたコードブロック
 UNSHOWN_PATTERN = re.compile(r"<!--.*?-->|^```.*?^```", re.DOTALL | re.MULTILINE)
+
+# 「この版の絵」の節の見出し。書く側 (pictures) と読む側 (picture_references) が同じものを使う
+PICTURE_HEADING = "## この版の絵"
+# 節の中の PR ごとの見出し。`### [#N 題](URL)` と、PR を読めなかったときの `### #N`
+PULL_HEADING_PATTERN = re.compile(r"^### \[?#(?P<number>\d+)", re.MULTILINE)
+# 絵の参照の中の行き先。記法ごとの書き分けは PICTURE_PATTERN が持つので、ここは URL だけを抜く
+URL_PATTERN = re.compile(r"https?://[^\s)\"'<>]+")
+# 画像の記法の説明文。中に URL を書かれても行き先ではない
+IMAGE_ALT_PATTERN = re.compile(r"^!\[[^\]]*\]")
 
 TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # Conventional Commits の頭。`!` は破壊的変更の印
@@ -248,7 +263,49 @@ def pictures(since: str | None, fetch=None) -> str:
         lines.append("")
     if not lines:
         return ""
-    return "\n".join(["## この版の絵", "", *lines]).strip() + "\n"
+    return "\n".join([PICTURE_HEADING, "", *lines]).strip() + "\n"
+
+
+class PictureReference(NamedTuple):
+    """Release の本文にある絵の URL と、それを載せた PR の番号 (見出しが無ければ None)・行。"""
+
+    url: str
+    pull: int | None
+    line: int
+
+
+# 節は見出しの行から、次の `## ` (`### ` は PR ごとの見出しなので含まない) か本文の終わりまで。
+# CRLF は Release を Web で直したときに混ざりうる
+PICTURE_SECTION_PATTERN = re.compile(
+    rf"^{re.escape(PICTURE_HEADING)}[ \t\r]*$(?P<body>.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE
+)
+
+
+def picture_references(notes: str) -> list[PictureReference]:
+    """Release の本文のうち、「この版の絵」の節にある絵の URL。出てきた順で、同じ組は 1 度だけ。
+
+    **節の中だけを見る。** 断片の本文にも外部の画像は書ける (lint が通す) が、それは絵の
+    記録ではなく、死活を引く対象にしない。URL の抜き方は pictures_of と同じ PICTURE_PATTERN
+    が決めるので、書く側が通す記法は全部ここで戻る。PR を読めなかった節や、絵が見つから
+    なかった節は URL を持たない (番号だけが進む)。
+    """
+    section = PICTURE_SECTION_PATTERN.search(notes)
+    if section is None:
+        return []
+    body = section.group("body")
+    headings = [(m.start(), int(m.group("number"))) for m in PULL_HEADING_PATTERN.finditer(body)]
+    found: list[PictureReference] = []
+    for match in PICTURE_PATTERN.finditer(body):
+        pull = None
+        for start, number in headings:
+            if start < match.start():
+                pull = number
+        line = notes.count("\n", 0, section.start("body") + match.start()) + 1
+        for url in URL_PATTERN.findall(IMAGE_ALT_PATTERN.sub("", match.group(0))):
+            reference = PictureReference(url, pull, line)
+            if reference not in found:
+                found.append(reference)
+    return found
 
 
 def notes(fragments: list[Path], picture_section: str = "") -> str:

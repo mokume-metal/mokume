@@ -459,6 +459,45 @@ class PicturesTests(unittest.TestCase):
         self.assertNotIn("#10", section)
         self.assertIn("#11", section)
 
+    def test_references_read_back_every_form_the_section_wrote(self):
+        # 書く側が通す記法は全部、読む側で戻る (#2268)。記法を足すときに片側だけ直ると、
+        # 日次の死活検査は黙って 0 本になる。ノートは本物の notes() で組む
+        self.merge(10, "Sources/MokumeCore/Circle.swift",
+                   '<img src="https://i.gyazo.com/a.png" width="240">\n'
+                   "![after](https://i.gyazo.com/b.png)\n"
+                   "https://github.com/user-attachments/assets/0f1e\n"
+                   "https://example.com/c.webp\n")
+        self.merge(11, "Sources/MokumeCore/Line.swift",
+                   '<video src="https://example.com/m.mp4" poster="https://i.gyazo.com/p.png"></video>')
+        fragment = self.root / "a.fix.md"
+        fragment.write_text("直した ![断片の外部画像](https://i.example.test/fragment.png)\n", encoding="utf-8")
+        references = release.picture_references(release.notes([fragment], self.section()))
+        self.assertEqual(
+            [(r.url, r.pull) for r in references],
+            [
+                ("https://i.gyazo.com/a.png", 10),
+                ("https://i.gyazo.com/b.png", 10),
+                ("https://github.com/user-attachments/assets/0f1e", 10),
+                ("https://example.com/c.webp", 10),
+                ("https://example.com/m.mp4", 11),
+                ("https://i.gyazo.com/p.png", 11),
+            ],
+        )
+
+    def test_references_keep_the_pull_number_across_pulls_without_a_url(self):
+        # 読めなかった PR・絵が見つからなかった PR は URL を持たない。次の PR の絵を
+        # 手前の番号で名乗ると、直す側が違う PR 本文を開く
+        self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")
+        self.merge(11, "Sources/MokumeCore/Line.swift", "![線](https://i.gyazo.com/b.png)")
+        self.merge(12, "Sources/MokumeCore/Rect.swift", "絵を貼っていない")
+        self.merge(13, "Sources/MokumeCore/Dot.swift", "![点](https://i.gyazo.com/d.png)")
+        del self.pulls[11]
+        references = release.picture_references(release.notes([], self.section()))
+        self.assertEqual(
+            [(r.url, r.pull) for r in references],
+            [("https://i.gyazo.com/a.png", 10), ("https://i.gyazo.com/d.png", 13)],
+        )
+
 
 class PicturesOfTests(unittest.TestCase):
     """本文から絵の参照を抜く。"""
@@ -490,6 +529,48 @@ class PicturesOfTests(unittest.TestCase):
     def test_comments_and_code_blocks_are_not_pictures(self):
         body = "<!-- ![例](https://i.gyazo.com/t.png) -->\n```markdown\n![例](https://i.gyazo.com/c.png)\n```\n"
         self.assertEqual(release.pictures_of(body), [])
+
+
+class PictureReferencesTests(unittest.TestCase):
+    """ノートの本文から、載せた絵の URL を読む (#2268)。"""
+
+    NOTES = (
+        "## 修正\n\n- 直した ![外](https://i.example.test/fragment.png)\n\n"
+        "## この版の絵\n\n"
+        "### [#7 fix: 直す](https://github.com/example/repo/pull/7)\n\n"
+        "![a](https://i.gyazo.com/a.png)\n\n"
+        "### #8\n\n"
+        "PR を読めなかった。\n\n"
+        "## 別の節\n\n"
+        "![節の外](https://i.example.test/after.png)\n"
+    )
+
+    def urls(self, notes):
+        return [r.url for r in release.picture_references(notes)]
+
+    def test_only_the_section_is_read(self):
+        # 断片の本文の外部画像も、節の後ろの別の節の画像も、絵の記録ではない
+        self.assertEqual(self.urls(self.NOTES), ["https://i.gyazo.com/a.png"])
+
+    def test_notes_without_the_section_have_none(self):
+        self.assertEqual(self.urls("## 修正\n\n- 直した\n"), [])
+        self.assertEqual(self.urls(""), [])
+
+    def test_the_line_is_the_one_in_the_notes(self):
+        (reference,) = release.picture_references(self.NOTES)
+        self.assertEqual(self.NOTES.splitlines()[reference.line - 1], "![a](https://i.gyazo.com/a.png)")
+
+    def test_crlf_notes_are_read_too(self):
+        # Release を Web で直すと改行が CRLF になりうる
+        self.assertEqual(self.urls(self.NOTES.replace("\n", "\r\n")), ["https://i.gyazo.com/a.png"])
+
+    def test_the_url_in_an_image_description_is_not_a_picture(self):
+        notes = "## この版の絵\n\n### #1\n\n![https://i.example.test/alt.png](https://i.gyazo.com/real.png)\n"
+        self.assertEqual(self.urls(notes), ["https://i.gyazo.com/real.png"])
+
+    def test_a_relative_target_is_not_a_url_to_probe(self):
+        notes = "## この版の絵\n\n### #1\n\n![](images/local.png)\n"
+        self.assertEqual(self.urls(notes), [])
 
 
 if __name__ == "__main__":

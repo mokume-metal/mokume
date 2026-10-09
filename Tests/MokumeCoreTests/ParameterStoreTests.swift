@@ -49,6 +49,103 @@ struct ParameterStoreTests {
         for _ in 0...ParamStore.quietFrames { store.tick() }
     }
 
+    // MARK: - 書けないとき
+
+    /// 符号化の失敗を黙って捨てない (#2263)。**NaN は作品のコードから届く** —
+    /// `ParamBox.value` の setter は範囲へ収めないので、`radius = .nan` がそのまま載り、
+    /// `JSONEncoder` が非有限の数を拒む。
+    @Test("値を符号化できなければ、型と理由を 1 行言い、書かない")
+    func failingToEncodeSaysWhy() throws {
+        let url = try makeFile()
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
+        sketch.radius = .nan
+        store.flushNow()
+
+        #expect(store.writeCount == 0)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        try #require(warnings.count == 1, "符号化に失敗したのに黙っていた")
+        let line = warnings[0]
+        #expect(!line.contains("\n"))
+        #expect(line.contains("EncodingError"))
+        #expect(line.contains("nan"))
+        #expect(line.contains("`radius`"), "どの値が拒まれたかを言わない: \(line)")
+        #expect(line.contains(url.path))
+    }
+
+    /// 面からの要求は当てるたびに書くので、書けない値が残ると入力ごとに同じ行が流れる。
+    @Test("書けない理由が変わらなければ、書けるまで繰り返し言わない")
+    func theSameWriteFailureIsSaidOnce() throws {
+        let url = try makeFile()
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
+        sketch.radius = .nan
+        store.flushNow()
+        sketch.count = 5
+        store.flushNow()
+        #expect(warnings.count == 1, "同じ理由を繰り返した: \(warnings)")
+
+        // 書ければ忘れる。また書けなくなったら、また言う
+        sketch.radius = 10
+        store.flushNow()
+        #expect(store.writeCount == 1)
+        sketch.radius = .nan
+        store.flushNow()
+        #expect(warnings.count == 2)
+    }
+
+    @Test("置き場へ書けなければ、型と理由を 1 行言う")
+    func failingToWriteSaysWhy() throws {
+        let url = try makeFile()
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        }
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: Knobbed()), at: url, warn: { warnings.append($0) })
+        store.flushNow()
+
+        #expect(store.writeCount == 0)
+        let line = try #require(warnings.first, "書けなかったのに黙っていた")
+        #expect(warnings.count == 1)
+        #expect(line.contains("NSCocoaErrorDomain"), "失敗の型を名乗らない: \(line)")
+        #expect(line.contains(url.path))
+    }
+
+    @Test("保存が無ければ黙って既定値で立ち上げ、読めなければ型と理由を言う")
+    func failingToReadSaysWhyButAMissingFileIsQuiet() throws {
+        var warnings: [String] = []
+        let missing = try makeFile()
+        ParamStore(registry: ParamRegistry(of: Knobbed()), at: missing, warn: { warnings.append($0) })
+            .restore()
+        #expect(warnings.isEmpty, "初めての起動で名乗った: \(warnings)")
+
+        // 解けない中身
+        let broken = try makeFile()
+        try Data(#"{"schemaVersion": 1, "values": 3}"#.utf8).write(to: broken)
+        ParamStore(registry: ParamRegistry(of: Knobbed()), at: broken, warn: { warnings.append($0) })
+            .restore()
+        let decoding = try #require(warnings.first)
+        #expect(decoding.contains("DecodingError"), "失敗の型を名乗らない: \(decoding)")
+        #expect(decoding.contains("values"), "どこで拒まれたかを言わない: \(decoding)")
+
+        // 在るのに読めない (置き場がディレクトリ)
+        let unreadable = try makeFile()
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        ParamStore(
+            registry: ParamRegistry(of: Knobbed()), at: unreadable, warn: { warnings.append($0) }
+        ).restore()
+        #expect(warnings.count == 2, "在るのに読めない保存を黙って捨てた")
+        #expect(warnings.last?.contains("NSCocoaErrorDomain") == true)
+    }
+
     // MARK: - 往復
 
     @Test("動かした値が、次の起動で戻る")

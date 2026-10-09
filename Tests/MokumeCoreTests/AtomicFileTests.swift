@@ -86,6 +86,20 @@ struct AtomicFileTests {
         #expect(AtomicFile.hasWarned(about: other) == false)
     }
 
+    /// 符号化が拒んだ理由を落とさない (#2263)。`localizedDescription` は「正しい形式で
+    /// ない」としか言わず、何がどこで拒まれたかが消える。
+    @Test("値を符号化できずに置けなかったときは、型と、何がどこで拒まれたかを名乗る")
+    func namesWhatTheEncoderRefused() throws {
+        struct Reading: Encodable { let level: Double }
+        let url = try makeFacet().appendingPathComponent("reading.json")
+        #expect(AtomicFile.publishJSON(Reading(level: .nan), to: url, "読み") == false)
+        let line = try #require(AtomicFile.warning(about: url))
+        #expect(!line.contains("\n"))
+        #expect(line.contains("EncodingError"))
+        #expect(line.contains("nan"))
+        #expect(line.contains("level"), "拒まれた場所を言わない: \(line)")
+    }
+
     /// 区画に残っている一時ファイルの名前。
     private func temporaries(in facet: URL) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: facet.path).filter { $0.hasSuffix(".tmp") }
