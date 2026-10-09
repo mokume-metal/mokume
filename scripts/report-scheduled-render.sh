@@ -4,11 +4,20 @@
 #
 # 専用機の定期の検査の赤を発信する (#1983 / ADR-0019 決定 7 の段階 D)。
 #
-#   report-scheduled-render.sh <debug の記録> <debug の test-log> <release の記録> <release の test-log>
+#   report-scheduled-render.sh <debug の結論> <debug の記録> <debug の test-log> \
+#                              <release の結論> <release の記録> <release の test-log>
 #
-# 記録は xunit XML、test-log は検査の端末出力。どれも artifact から落とした先のパスで、
-# **無くてもよい** — ビルドで落ちた回は記録が無いので、そう名乗って起票する (黙ると赤が
-# 誰にも届かない・#1295 と同じ形)。
+# 結論は専用機の job の `needs.<job>.result` (success / failure / cancelled / skipped)。
+# 記録は xunit XML、test-log は検査の端末出力で、どれも artifact から落とした先のパスである。
+# 記録と test-log は**無くてもよい** — ビルドで落ちた回は記録が無いので、そう名乗って
+# 起票する (黙ると赤が誰にも届かない・#1295 と同じ形)。
+#
+# **結論を名乗るのは、記録が無い理由が結論で変わるからである** (#2084)。落ちて (failure)
+# 記録が無いなら、検査が走る前 (ビルドかジョブの開始) に落ちている。切れて (cancelled)
+# 記録が無いなら、検査が走っている途中で job の timeout か人の cancel に止められ、記録を
+# 書き切れなかった — どこまで走ったかは test-log の末尾にある。結論を知らずに 1 通りの
+# 案内を出すと、切れた回を「ビルドで落ちた」と読み違えさせる (#2211)。timeout と人の
+# cancel は見分けない (ADR-0019 決定 7)。
 #
 # 発信の実体は scripts/report-check-failure.sh が持ち、ここが持つのは**固定タイトルと本文**
 # だけである (report-dead-assets.sh と同じ分け方)。落ちた検査の名前と文面は
@@ -31,14 +40,16 @@ REPO="$(this_repo)"
 # AGENTS.md の「迷ったら Bug > Design > Docs > Task」に従う
 readonly TITLE="fix(render): 専用機の定期の検査が落ちている"
 
-[ $# -eq 4 ] || {
-  echo "使い方: report-scheduled-render.sh <debug の記録> <debug の test-log> <release の記録> <release の test-log>" >&2
+[ $# -eq 6 ] || {
+  echo "使い方: report-scheduled-render.sh <debug の結論> <debug の記録> <debug の test-log> <release の結論> <release の記録> <release の test-log>" >&2
   exit 64
 }
-DEBUG_RECORD="$1"
-DEBUG_LOG="$2"
-RELEASE_RECORD="$3"
-RELEASE_LOG="$4"
+DEBUG_RESULT="$1"
+DEBUG_RECORD="$2"
+DEBUG_LOG="$3"
+RELEASE_RESULT="$4"
+RELEASE_RECORD="$5"
+RELEASE_LOG="$6"
 
 here="$(dirname "${BASH_SOURCE[0]}")"
 
@@ -46,10 +57,27 @@ body=$(mktemp)
 log=$(mktemp)
 trap 'rm -f "$body" "$log"' EXIT
 
-# 落ちた検査の名前と文面。記録が無い・読めないときは read-test-record.py がそう名乗る
-failure_section() { # $1=見出し $2=記録
+# job の結論と、落ちた検査の名前と文面。記録が無い・読めないときは read-test-record.py が
+# そう名乗り、無い理由の読み方は結論ごとにここが添える (冒頭の「結論を名乗るのは」)
+job_section() { # $1=見出し $2=結論 $3=記録
   printf '### %s\n\n' "$1"
-  python3 "$here/read-test-record.py" --failure-messages "$2"
+  case "$2" in
+    cancelled)
+      printf '結論: `cancelled` — **job の timeout (`render.yml` の `timeout-minutes`) か、人の cancel で切れた。** どちらかは見分けない (ADR-0019 決定 7)。run の画面の annotation に `exceeded the maximum execution time` があれば timeout である\n\n'
+      if [ -s "$3" ]; then
+        python3 "$here/read-test-record.py" --failure-messages "$3"
+      else
+        printf '記録は、検査が書き切る前に切れたので無い (`%s`)。どこまで走ったかは、下の「検査の出力」の test-log の末尾で読む\n' "$3"
+      fi
+      ;;
+    *)
+      printf '結論: `%s`\n\n' "${2:-不明}"
+      python3 "$here/read-test-record.py" --failure-messages "$3"
+      if [ "$2" = failure ] && [ ! -s "$3" ]; then
+        printf '\n落ちて記録が無いのは、検査が走る前 — ビルドかジョブの開始で落ちている。下の「検査の出力」と run の画面を読む\n'
+      fi
+      ;;
+  esac
   printf '\n'
 }
 
@@ -72,7 +100,7 @@ log_tail() { # $1=見出し $2=test-log
 adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions/0019-drawing-verification.md"
 
 {
-  printf '専用機の定期の検査 (`.github/workflows/render.yml` の schedule・[ADR-0019](%s) 決定 7 の段階 D) が落ちた。\n\n' "$adr_url"
+  printf '専用機の定期の検査 (`.github/workflows/render.yml` の schedule・[ADR-0019](%s) 決定 7 の段階 D) が緑で終わらなかった (落ちたか、切れた)。\n\n' "$adr_url"
   cat <<'BODY'
 この検査が見ているのは、**どの PR の前提でもない、main の最新の木**である。GPU を要する検査は GitHub ホストでは飛ぶので、落ちるのは手元か専用機でだけ見える赤で、放っておくと誰にも読まれない (#1086 は 9 日間、そのまま main に残った)。
 
@@ -82,12 +110,12 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 - **release**: `make test-release-scheduled` — release の検査から台帳 (`SceneLedgerTests`) だけを外したもの。release で台帳が合うべきかは #1736 が決める途中で、素で走らせると決着するまで毎回赤になるため外してある (代償: 台帳にだけ出る release の差は、この検査では見えない)
 
 BODY
-  failure_section "debug" "$DEBUG_RECORD"
-  failure_section "release" "$RELEASE_RECORD"
+  job_section "debug" "$DEBUG_RESULT" "$DEBUG_RECORD"
+  job_section "release" "$RELEASE_RESULT" "$RELEASE_RECORD"
   cat <<'BODY'
 ## 対処
 
-1. 上の「落ちた検査」から、**どちらの実行で・どの検査が**落ちたかを読む。記録が無いと名乗っているときは、ビルドかジョブの開始で落ちている (下の「検査の出力」と run の画面を読む)
+1. 上の debug・release の節から、**どちらの実行が・どう終わったか** (落ちた検査・切れた) を読む。記録が無いときの読み方は、その節が結論ごとに添えている
 2. 手元で再現する (どちらも GPU が要る):
    - debug: `make ci-check CI_CHECK_STEPS="build test gpu-ran"`
    - release: `make test-release-scheduled`

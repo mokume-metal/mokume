@@ -5,7 +5,7 @@
 
 `scripts/report-scheduled-render.sh` が持つのは**固定タイトルと本文**だけで、起票の手続きは
 `report-check-failure.sh` が 1 つ持つ (そちらの 6 点は `report_check_failure_test.py` が
-留める)。ここで固定するのは、この検査に固有の 6 つ:
+留める)。ここで固定するのは、この検査に固有の 7 つ:
 
   1. 固定タイトルが `fix(` で始まる — triage.sh は接頭辞から型を推定するので、ここが
      崩れると型の無い Issue になる。動いていたものが赤になった事象なので Bug である
@@ -20,6 +20,9 @@
      黙らせることを動く人が読む場所へ書く
   6. 共通部品を通っている — 同名の Issue が open なら二重に立てない。ここが写しに
      なると、片方だけが直ったときに黙って壊れる (ADR-0008 決定 6)
+  7. 本文が job ごとの結論を名乗る — 切れた (`cancelled`) job は「timeout か人の cancel」と
+     名乗り、記録が無いのを「ビルドかジョブの開始で落ちた」と案内しない。その案内は、
+     落ちて (`failure`) 記録が無い job にだけ出す (#2084。#2211 はここを読み違えさせた)
 
 偽 gh は PATH の先頭に置いた同型のスタブ (`dead_assets_test.py` と同じ形)。
 実行は make hooks-test (CI もこれを呼ぶ)。
@@ -113,16 +116,30 @@ class ReportScheduledRenderTest(unittest.TestCase):
         self.log.write_text("")
         self.body = self.dir / "body.md"
 
-    def report(self, debug=DEBUG_RED, release=RELEASE_RED, issue_list="[]"):
-        """debug / release の記録 (None なら無いまま渡す) で呼ぶ。"""
-        paths = []
-        for name, content in (("debug", debug), ("release", release)):
+    def report(
+        self,
+        debug=DEBUG_RED,
+        release=RELEASE_RED,
+        issue_list="[]",
+        results=("failure", "failure"),
+        logs=None,
+    ):
+        """debug / release の結論と記録 (None なら無いまま渡す) で呼ぶ。
+
+        logs は (debug, release) の test-log を置くか。既定は記録と同じで、記録が無ければ
+        test-log も無い (ビルドで落ちた回の姿)。
+        """
+        if logs is None:
+            logs = (debug is not None, release is not None)
+        args = []
+        for name, result, content, has_log in zip(("debug", "release"), results, (debug, release), logs):
             xml = self.dir / f"{name}.xml"
             log = self.dir / f"{name}.log"
             if content is not None:
                 xml.write_text(content, encoding="utf-8")
+            if has_log:
                 log.write_text(f"{name} の端末出力の末尾\n", encoding="utf-8")
-            paths += [str(xml), str(log)]
+            args += [result, str(xml), str(log)]
         env = dict(os.environ)
         env.update(
             {
@@ -137,7 +154,7 @@ class ReportScheduledRenderTest(unittest.TestCase):
         for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL"):
             env.pop(key, None)
         return subprocess.run(
-            ["/bin/bash", str(SCRIPT), *paths],
+            ["/bin/bash", str(SCRIPT), *args],
             capture_output=True,
             text=True,
             env=env,
@@ -168,7 +185,7 @@ class ReportScheduledRenderTest(unittest.TestCase):
         self.assertIn("release 側で落ちた文面 BETA", body)
 
     def test_片方だけ赤でも起票し_緑の側は落ちた検査なしと言う(self):
-        r = self.report(debug=GREEN, release=RELEASE_RED)
+        r = self.report(debug=GREEN, release=RELEASE_RED, results=("success", "failure"))
         self.assertEqual(r.returncode, 0, r.stderr)
         body = self.body.read_text()
         self.assertIn("release 側で落ちた文面 BETA", body)
@@ -182,6 +199,32 @@ class ReportScheduledRenderTest(unittest.TestCase):
         body = self.body.read_text()
         self.assertIn("記録が無い", body)
         self.assertIn("test-log が無い", body)
+        # 落ちて記録が無いのは、検査が走る前に落ちたとき。どこを読むかを案内する
+        self.assertIn("ビルドかジョブの開始で落ち", body)
+
+    def test_切れた_job_は_cancelled_と名乗り_ビルドの案内をしない(self):
+        # 10-05 08:54Z の回 (run 37286561725) の姿。debug は緑、release は 30 分の timeout で
+        # 切れ、記録は書き切る前に切れたので無く、test-log だけが上がった。#2211 はこの形を
+        # 「記録が無い = ビルドかジョブの開始で落ちた」と案内した (#2084)
+        r = self.report(
+            debug=GREEN,
+            release=None,
+            results=("success", "cancelled"),
+            logs=(True, True),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue create", self.gh_log())
+        body = self.body.read_text()
+        release = body[body.index("### release") : body.index("## 対処")]
+        self.assertIn("`cancelled`", release)
+        self.assertIn("timeout", release)
+        self.assertIn("人の cancel", release)
+        self.assertNotIn("ビルドかジョブの開始で落ち", body)
+        # どこまで走ったかを読む手がかりは test-log の末尾にある
+        self.assertIn("release の端末出力の末尾", body)
+        # 緑の側も、結論を名乗る
+        debug = body[body.index("### debug") : body.index("### release")]
+        self.assertIn("`success`", debug)
 
     def test_本文に端末出力の末尾が載る(self):
         self.report()
