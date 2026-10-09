@@ -26,10 +26,12 @@
    閉じたものは新しいときだけ数える。**家族を渡るのは 1 段だけ**で、家族を通じて busy に
    なったものは証拠にしない。家族を読むのは候補があるときだけで、読めなければ dropped のまま
    そう名乗る
-9. **同じ根の群は根で直す** (#1661・ADR-0040 決定 2・3)。親が open な Bug の子は ready に出さず
-   busy (「根 #N で直す」) へ回し、ready の件数もそのあとで数える。open な Bug の子を持つ無印の
-   Design は、子の多い順に decide として最後に出す (終了コードには数えない)。親は open な Bug か
-   ready の候補があるときだけ読み、読めなければ ready は従来どおり出してそう名乗る
+9. **同じ根の群は根で直す** (#1661・ADR-0040 決定 2・3)。親が open な Bug の子と、親が open で
+   印の付いた Design の Bug の子 (#2228) は ready に出さず busy (「根 #N で直す」) へ回し、ready の
+   件数もそのあとで数える。Task / Feature の親の子・Design の Bug でない子・無印の Design の子は
+   ready のまま (無印の Design を待つ間は症状の直しを止めない — ADR-0040 決定 3)。open な Bug の
+   子を持つ無印の Design は、子の多い順に decide として最後に出す (終了コードには数えない)。親は
+   open な Bug か ready の候補があるときだけ読み、読めなければ ready は従来どおり出してそう名乗る
 10. **ready と stock の説明は Issue Type を `[Bug]` の形で先頭に置く** (#2136)。Type は題から
    読めず、Bug は反証の節を要るので、着手の前に目に入る必要がある (#1998)。Type の無い
    Issue は `[-]`。**番号・分類の位置は動かさない** — 既存の読み手は先頭の 2 語を読む
@@ -162,12 +164,13 @@ def family_response(families):
     return {"data": {"repository": repo}}
 
 
-def parent(number, state="OPEN", type_="Bug"):
-    """親の 1 件。GraphQL の parent と同じ形"""
+def parent(number, state="OPEN", type_="Bug", labels=()):
+    """親の 1 件。GraphQL の parent と同じ形 (印は Design の根を見分けるのに読む — #2228)"""
     return {
         "number": number,
         "state": state,
         "issueType": None if type_ is None else {"name": type_},
+        "labels": {"nodes": [{"name": name} for name in labels]},
     }
 
 
@@ -511,22 +514,90 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[101][1], "根 #100 で直す (症状)")
         self.assertIn("ready 1 /", done.stderr)
 
-    def test_child_is_ready_unless_its_parent_is_an_open_bug(self):
+    def test_child_is_ready_unless_its_root_is_open(self):
         done, _ = self.run_queue(
             [
                 issue(102, labels=["verify: triaged"]),
                 issue(103, labels=["verify: triaged"]),
                 issue(104, labels=["verify: triaged"]),
+                issue(105, labels=["verify: triaged"], type_="Bug"),
             ],
             parents={
                 102: parent(100, state="CLOSED"),  # 根は直った
-                103: parent(200, type_="Design"),  # 親は判断の Issue
+                103: parent(200, type_="Design"),  # 親は判断の Issue (子は Bug でない)
                 104: parent(201, type_=None),  # 型の無い親
+                # 印の付いた Design の根でも、閉じていれば子は自分で直す
+                105: parent(202, state="CLOSED", type_="Design", labels=["verify: triaged"]),
             },
         )
         seen = self.lines_by_number(done.stdout)
-        for n in (102, 103, 104):
+        for n in (102, 103, 104, 105):
             self.assertEqual(seen[n][0], "ready", f"#{n} を根で直す側へ回している")
+
+    def test_bug_child_of_a_triaged_design_goes_to_its_root(self):
+        """印の付いた Design を根にした Bug の子も、根で直す (#2228)。
+
+        根の Design に印が付くと (b) の decide からは外れ、根そのものが ready に出る。子を
+        ready に残すと、根を直さずに症状の 1 か所だけを閉じる直しが拾われる (#1659 の形)。
+        例は 2026-10-08 に #2209 へ束ねた #1561。根が着手中でも、子は根で直す
+        """
+        triaged = ["verify: triaged"]
+        reserved = ["verify: triaged", "status: in progress"]
+        done, _ = self.run_queue(
+            [
+                issue(2209, labels=triaged, type_="Design", title="根"),
+                issue(1561, labels=triaged, type_="Bug", title="症状"),
+                issue(500, labels=reserved, type_="Design", title="着手中の根"),
+                issue(501, labels=triaged, type_="Bug", title="着手中の根の症状"),
+            ],
+            prs=[closing_pr(90, closes=[500])],
+            parents={
+                1561: parent(2209, type_="Design", labels=triaged),
+                501: parent(500, type_="Design", labels=reserved),
+            },
+        )
+        self.assertEqual(
+            done.stdout.splitlines(),
+            [
+                "2209 ready [Design] 根",
+                "500 busy PR #90 が出ている (着手中の根)",
+                "1561 busy 根 #2209 で直す (症状)",
+                "501 busy 根 #500 で直す (着手中の根の症状)",
+            ],
+        )
+        self.assertIn("ready 1 /", done.stderr)
+
+    def test_children_that_are_not_symptoms_of_an_open_root_stay_ready(self):
+        """根で直すのは、open な Bug の子と、印の付いた open な Design の Bug の子だけ (#2228)。"""
+        triaged = ["verify: triaged"]
+        done, _ = self.run_queue(
+            [
+                issue(1767, labels=triaged, type_="Task"),
+                issue(1768, labels=triaged, type_="Task"),
+                issue(410, labels=triaged, type_="Bug"),
+                issue(420, labels=triaged, type_="Bug"),
+                issue(1663, labels=triaged, type_="Task"),
+                issue(402, type_="Design", title="無印の根"),
+                issue(430, labels=triaged, type_="Bug"),
+            ],
+            parents={
+                # 自分の作業を持たない入れ物の親は巻き込まない (#180 の子 #1767・#1768)。
+                # 子が Bug でも同じ
+                1767: parent(180, type_="Task"),
+                1768: parent(180, type_="Task"),
+                410: parent(400, type_="Task"),
+                420: parent(401, type_="Feature"),
+                # 印の付いた Design でも、Bug でない子は根の症状ではない (#1659 の子 #1663)
+                1663: parent(1659, type_="Design", labels=triaged),
+                # 無印の Design を待つ間は症状の直しを止めない (ADR-0040 決定 3)。根は decide に出る
+                430: parent(402, type_="Design"),
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        for n in (1767, 1768, 410, 420, 1663, 430):
+            self.assertEqual(seen[n][0], "ready", f"#{n} を根で直す側へ回している")
+        self.assertEqual(seen[402][0], "decide", "無印の根を人に見せていない")
+        self.assertIn("ready 6 /", done.stderr)
 
     def test_children_waiting_on_their_root_are_not_work(self):
         """ready の件数は親を読んでから数える (終了コードに効く)。"""

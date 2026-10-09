@@ -139,8 +139,10 @@ bash scripts/sub-issue.sh <根の番号> --attach <番号>
 ```
 
 既に別の親を持つ Issue は付け替えずに止まる — どちらの群に属するかを本文とコメントに書き、
-判断を待つ。束ねると `scripts/ready-queue.sh` は子を ready に出さず (「根 #N で直す」)、
-根が Design なら子の数とともに `decide` の行に出す。
+判断を待つ。束ねると、`scripts/ready-queue.sh` は根が Bug なら子を ready に出さない
+(「根 #N で直す」)。根が Design なら、無印のうちは根を子の数とともに `decide` の行に出し、
+子は根で止めない (Design を待つ間も症状の直しは止めない — ADR-0040 決定 3)。根の Design に
+印が付くと根が ready に出て、子の Bug は「根 #N で直す」に回る。
 
 ## 5. 印は付けない
 
