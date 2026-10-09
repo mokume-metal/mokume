@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て (#2054・#2251 の切り分け・merge しない)。#2022 の measure-2007.yml の形を借りる。
+# 変えるのは環境変数と --filter だけで、実行のタイミングを変える計測は入れない
+name: measure-2054
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    if: github.event.pull_request.head.ref == 'probe/2251-gpu-hang'
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: ビルド
+        run: |
+          set -o pipefail
+          swift build --build-tests 2>&1 | tail -3
+      - name: 切り分け
+        run: |
+          mkdir -p .build/measure
+          export MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=nslog
+
+          # $1=条件の名前 $2=何回目 以降= env に渡す KEY=VALUE のあと `--` のあと swift test の追加の引数
+          one() {
+            local name=$1 i=$2; shift 2
+            local envs=()
+            while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+            [ "$#" -gt 0 ] && shift
+            local log=.build/measure/$name-$i.log
+            local start; start=$(date +%s)
+            env ${envs[@]+"${envs[@]}"} python3 scripts/gpu-slot.py -- swift test --skip-build "$@" > "$log" 2>&1 || true
+            local dropped pf hang victim failed run
+            dropped=$(grep -c 'The GPU dropped the work' "$log" || true)
+            pf=$(grep 'The GPU dropped the work' "$log" | grep -c 'ErrorPageFault)' || true)
+            hang=$(grep 'The GPU dropped the work' "$log" | grep -c 'ErrorHang)' || true)
+            victim=$(grep 'The GPU dropped the work' "$log" | grep -c 'InnocentVictim)' || true)
+            failed=$(grep -c '^✘ Test .* failed' "$log" || true)
+            run=$(grep -E 'Test run with [0-9]+ tests in [0-9]+ suites' "$log" | head -1 | cut -c1-120 || true)
+            echo "$name run=$i secs=$(( $(date +%s) - start )) dropped=$dropped pagefault=$pf hang=$hang victim=$victim failed=$failed | $run" | tee -a .build/measure/summary.txt
+            if [ "$dropped" != "0" ]; then
+              grep -n 'The GPU dropped the work' "$log" | head -4 | while IFS=: read -r n _; do
+                local from=$(( n > 40 ? n - 40 : 1 ))
+                {
+                  echo "=== $name run=$i line=$n"
+                  sed -n "${from},$(( n + 10 ))p" "$log" | grep -v 'Redundant call\|Render Command Encoder Set\|swiftpm-testing-helper\|unused\.$'
+                } >> .build/measure/faults.txt
+              done
+            fi
+            rm -f "$log"
+          }
+
+          F='MokumeCoreTests.EffectArgumentTests'
+          W=SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
+          # 1. EffectArgumentTests を幅 16 で、3 周 × 10 回を条件ごとに交互に (#2054 の完了条件 1)
+          for round in 1 2 3; do
+            for k in $(seq 1 10); do
+              i=$(( (round - 1) * 10 + k ))
+              one base "$i" $W=16 -- --filter "$F"
+              one keep-queue "$i" $W=16 MOKUME_MEASURE_KEEP_QUEUE=1 -- --filter "$F"
+              one a-wait-notices "$i" $W=16 MOKUME_MEASURE_WAIT_NOTICES=1 -- --filter "$F"
+              one b-remove-sets "$i" $W=16 MOKUME_MEASURE_REMOVE_SETS=1 -- --filter "$F"
+              one c-both "$i" $W=16 MOKUME_MEASURE_WAIT_NOTICES=1 MOKUME_MEASURE_REMOVE_SETS=1 -- --filter "$F"
+              one d-ring-2 "$i" $W=16 MOKUME_MEASURE_QUEUE_RING=2 -- --filter "$F"
+            done
+          done
+          # 2. 全検査を既定の幅 1 で (#2251 の hang は幅 1 の全検査で出ている)
+          one full-w1-base 1 --
+          one full-w1-keep-queue 1 MOKUME_MEASURE_KEEP_QUEUE=1 --
+          one full-w1-c-both 1 MOKUME_MEASURE_WAIT_NOTICES=1 MOKUME_MEASURE_REMOVE_SETS=1 --
+          one full-w1-a-wait-notices 1 MOKUME_MEASURE_WAIT_NOTICES=1 --
+          one full-w1-b-remove-sets 1 MOKUME_MEASURE_REMOVE_SETS=1 --
+          {
+            echo '## 計測 (#2054)'; echo '```'; cat .build/measure/summary.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: measure-2054
+          path: .build/measure/
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 14

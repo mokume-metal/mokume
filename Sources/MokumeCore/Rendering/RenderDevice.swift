@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
 import MokumeDiagnostics
 
@@ -600,7 +601,23 @@ import MokumeDiagnostics
             throw .synchronizationUnavailable
         }
         self.completion = completion
+
+        // SCRATCH (#2054 の切り分け・merge しない)
+        if Self.measureKeepQueue { Self.measureKept.append(queue as AnyObject) }
+        if Self.measureQueueRing > 0 {
+            Self.measureRing.append(queue as AnyObject)
+            if Self.measureRing.count > Self.measureQueueRing { Self.measureRing.removeFirst() }
+        }
     }
+
+    /// SCRATCH (#2054 の切り分け・merge しない)
+    static var measureKept: [AnyObject] = []
+    static var measureRing: [AnyObject] = []
+    static let measureEnv = ProcessInfo.processInfo.environment
+    static let measureKeepQueue = measureEnv["MOKUME_MEASURE_KEEP_QUEUE"] != nil
+    static let measureQueueRing = Int(measureEnv["MOKUME_MEASURE_QUEUE_RING"] ?? "") ?? 0
+    static let measureWaitNotices = measureEnv["MOKUME_MEASURE_WAIT_NOTICES"] != nil
+    static let measureRemoveSets = measureEnv["MOKUME_MEASURE_REMOVE_SETS"] != nil
 
     /// **実行中のものが終わる前に土台を畳まない。**
     ///
@@ -617,6 +634,20 @@ import MokumeDiagnostics
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     isolated deinit {
+        defer {
+            if Self.measureWaitNotices {
+                let deadline = Date().addingTimeInterval(TimeInterval(Self.waitLimitSeconds))
+                while completionNotices.arrived < Int(submissionCount) - unansweredSubmissionsForTesting,
+                    Date() < deadline
+                {
+                    usleep(200)
+                }
+            }
+            if Self.measureRemoveSets {
+                queue.removeResidencySet(residencySet)
+                queue.removeResidencySet(drawableResidency)
+            }
+        }
         guard !isIdle else { return }
         if !signalReached(submissionCount, while: .takingDown), unansweredSubmissionsForTesting == 0 {
             Diagnostics.warn(
