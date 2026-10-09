@@ -16,7 +16,7 @@ jobs:
   measure:
     if: github.event.pull_request.head.ref == 'probe/2251-gpu-hang'
     runs-on: [self-hosted, mokume-render]
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
       - name: ビルド
@@ -57,26 +57,13 @@ jobs:
             rm -f "$log"
           }
 
-          F='MokumeCoreTests.EffectArgumentTests'
-          W=SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
-          # 1. EffectArgumentTests を幅 16 で、3 周 × 10 回を条件ごとに交互に (#2054 の完了条件 1)
-          for round in 1 2 3; do
-            for k in $(seq 1 10); do
-              i=$(( (round - 1) * 10 + k ))
-              one base "$i" $W=16 -- --filter "$F"
-              one keep-queue "$i" $W=16 MOKUME_MEASURE_KEEP_QUEUE=1 -- --filter "$F"
-              one a-wait-notices "$i" $W=16 MOKUME_MEASURE_WAIT_NOTICES=1 -- --filter "$F"
-              one b-remove-sets "$i" $W=16 MOKUME_MEASURE_REMOVE_SETS=1 -- --filter "$F"
-              one c-both "$i" $W=16 MOKUME_MEASURE_WAIT_NOTICES=1 MOKUME_MEASURE_REMOVE_SETS=1 -- --filter "$F"
-              one d-ring-2 "$i" $W=16 MOKUME_MEASURE_QUEUE_RING=2 -- --filter "$F"
-            done
+          # 2 回目: 全検査・既定の幅 1 で、基準・対照・(d) 環 8・(e) 使い回しを交互に 2 周
+          for i in 1 2; do
+            one full-w1-base "$i" --
+            one full-w1-keep-queue "$i" MOKUME_MEASURE_KEEP_QUEUE=1 --
+            one full-w1-d-ring-8 "$i" MOKUME_MEASURE_QUEUE_RING=8 --
+            one full-w1-e-pool "$i" MOKUME_MEASURE_QUEUE_POOL=1 --
           done
-          # 2. 全検査を既定の幅 1 で (#2251 の hang は幅 1 の全検査で出ている)
-          one full-w1-base 1 --
-          one full-w1-keep-queue 1 MOKUME_MEASURE_KEEP_QUEUE=1 --
-          one full-w1-c-both 1 MOKUME_MEASURE_WAIT_NOTICES=1 MOKUME_MEASURE_REMOVE_SETS=1 --
-          one full-w1-a-wait-notices 1 MOKUME_MEASURE_WAIT_NOTICES=1 --
-          one full-w1-b-remove-sets 1 MOKUME_MEASURE_REMOVE_SETS=1 --
           {
             echo '## 計測 (#2054)'; echo '```'; cat .build/measure/summary.txt; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -564,7 +564,12 @@ import MokumeDiagnostics
         self.shaders = ShaderLibraries(device: device)
 
         // **発行口は関所を通して作る** (#2052)。GPU が一度答えなくなったプロセスでは作らずに断る
-        let queue = try queueGate.makeQueue(on: device)
+        let queue: any MTL4CommandQueue
+        if Self.measureQueuePool, let pooled = Self.measurePool.popLast() {
+            queue = pooled
+        } else {
+            queue = try queueGate.makeQueue(on: device)
+        }
         self.queue = queue
 
         var slots: [Slot] = []
@@ -618,6 +623,8 @@ import MokumeDiagnostics
     static let measureQueueRing = Int(measureEnv["MOKUME_MEASURE_QUEUE_RING"] ?? "") ?? 0
     static let measureWaitNotices = measureEnv["MOKUME_MEASURE_WAIT_NOTICES"] != nil
     static let measureRemoveSets = measureEnv["MOKUME_MEASURE_REMOVE_SETS"] != nil
+    static let measureQueuePool = measureEnv["MOKUME_MEASURE_QUEUE_POOL"] != nil
+    static var measurePool: [any MTL4CommandQueue] = []
 
     /// **実行中のものが終わる前に土台を畳まない。**
     ///
@@ -642,6 +649,11 @@ import MokumeDiagnostics
                 {
                     usleep(200)
                 }
+            }
+            if Self.measureQueuePool {
+                queue.removeResidencySet(residencySet)
+                queue.removeResidencySet(drawableResidency)
+                Self.measurePool.append(queue)
             }
             if Self.measureRemoveSets {
                 queue.removeResidencySet(residencySet)
