@@ -231,16 +231,8 @@ nonisolated final class StreamListener: @unchecked Sendable {
 
     private func deliver(_ lines: [[UInt8]], overlong: Int, hostTime: UInt64) {
         guard !lines.isEmpty || overlong > 0 else { return }
-        var texts: [String] = []
-        var unreadable = overlong
-        for line in lines {
-            if let text = TextDecoding.line(line) {
-                texts.append(text)
-            } else {
-                unreadable += 1
-            }
-        }
-        received(texts, unreadable, hostTime)
+        let read = TextDecoding.lines(lines, overlong: overlong)
+        received(read.texts, read.unreadable, hostTime)
     }
 }
 

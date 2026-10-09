@@ -45,6 +45,21 @@ nonisolated enum TextDecoding {
         String(validating: bytes, as: UTF8.self)
     }
 
+    /// ``LineSplitter`` が切った行をまとめて読む。`unreadable` は、UTF-8 として読めなかった行と、
+    /// 上限を超えて捨てた行 (`overlong`) を合わせた数。
+    static func lines(_ cut: [[UInt8]], overlong: Int) -> (texts: [String], unreadable: Int) {
+        var texts: [String] = []
+        var unreadable = overlong
+        for bytes in cut {
+            if let text = line(bytes) {
+                texts.append(text)
+            } else {
+                unreadable += 1
+            }
+        }
+        return (texts, unreadable)
+    }
+
     static let newline: UInt8 = 0x0A
     static let carriageReturn: UInt8 = 0x0D
 }
