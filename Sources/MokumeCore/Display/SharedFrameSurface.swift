@@ -4,6 +4,7 @@
 import Foundation
 import IOSurface
 import Metal
+import MokumeDiagnostics
 
 /// 焼いた絵を、別のプロセスから読める面へ差し出す口。
 ///
@@ -225,17 +226,28 @@ final class SharedFrameSurface {
     /// 窓を持つ道具に起こされ、区画もあるときだけ作る。**綴りは ``StartupReads`` が正典** (#380)。
     ///
     /// **作れなかったときは `nil` を返す。** 呼ぶ側は窓を開く側へ倒す — 面も窓も無い
-    /// 実行は、何が起きたのか外から見て「動いていない」としか見えない。
+    /// 実行は、何が起きたのか外から見て「動いていない」としか見えない。**倒す理由は
+    /// 1 行言う** — 黙ると、見張りの窓に絵が来ない原因を辿れない (#2263)。
     ///
-    /// - Parameter owner: 起こした道具の名乗り (``launchOwner``)。
+    /// - Parameters:
+    ///   - owner: 起こした道具の名乗り (``launchOwner``)。
+    ///   - warn: 理由を伝える口。検査が差し替える。
     static func makeIfEnabled(
         gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil,
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
-        owner: String? = SharedFrameSurface.launchOwner
+        owner: String? = SharedFrameSurface.launchOwner,
+        warn: (String) -> Void = { Diagnostics.warn($0) }
     ) -> SharedFrameSurface? {
         guard isEnabled(at: directory, owner: owner) else { return nil }
-        return try? SharedFrameSurface(
-            gpu: gpu, width: width, height: height, windowScale: windowScale, at: directory)
+        do {
+            return try SharedFrameSurface(
+                gpu: gpu, width: width, height: height, windowScale: windowScale, at: directory)
+        } catch {
+            warn(
+                "Could not make the surfaces frames go to (RenderFailure): \(error.headline) "
+                    + "— opening a window and carrying on")
+            return nil
+        }
     }
 
     /// このプロセスを起こした、窓を持つ道具の名乗り。**起こされていなければ `nil`。**

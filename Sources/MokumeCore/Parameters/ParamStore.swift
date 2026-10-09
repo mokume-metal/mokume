@@ -50,6 +50,8 @@ final class ParamStore: DeclarationWatcher {
     private var countdown: Int?
     /// 実際に書いた回数。**まとめられていることを検査から見るために持つ。**
     private(set) var writeCount = 0
+    /// 人へ 1 行伝える口。**検査から差し替える** — 失敗の文面を標準エラーから拾わずに見る。
+    private let warn: (String) -> Void
 
     /// 保存を持たせる。宣言が 1 つも無ければ持たせない (書くものが無い)。
     static func makeIfNeeded(for registry: ParamRegistry, at url: URL = WorkDirectory.savedParams)
@@ -58,9 +60,13 @@ final class ParamStore: DeclarationWatcher {
         registry.isEmpty ? nil : ParamStore(registry: registry, at: url)
     }
 
-    init(registry: ParamRegistry, at url: URL = WorkDirectory.savedParams) {
+    init(
+        registry: ParamRegistry, at url: URL = WorkDirectory.savedParams,
+        warn: @escaping (String) -> Void = Diagnostics.warn
+    ) {
         self.registry = registry
         self.url = url
+        self.warn = warn
     }
 
     // MARK: - 戻す
@@ -78,7 +84,7 @@ final class ParamStore: DeclarationWatcher {
         guard let saved = try? JSONDecoder().decode(Saved.self, from: data) else {
             // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
             // 既定値に戻る」は理由が出ないと追えない
-            Diagnostics.warn(
+            warn(
                 "Could not read the saved values (\(url.path)). Starting from the defaults")
             return Restoration()
         }
@@ -115,7 +121,7 @@ final class ParamStore: DeclarationWatcher {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     private func announce(_ restoration: Restoration) {
         guard let notice = Self.notice(for: restoration.discarded) else { return }
-        Diagnostics.warn(notice)
+        warn(notice)
     }
 
     /// 捨てたものを人へ伝える 1 行。捨てていなければ `nil`。
@@ -192,9 +198,18 @@ final class ParamStore: DeclarationWatcher {
             values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) })
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
-        guard let data = try? encoder.encode(saved) else { return }
+        let data: Data
+        do {
+            data = try encoder.encode(saved)
+        } catch {
+            // 黙らない (#2263)。非有限の数が 1 つ載っているだけで全部が書けなくなる
+            warn(
+                "Could not encode the values as they stand to save them (\(url.path)): "
+                    + Self.encodingFailure(error))
+            return
+        }
         guard (try? AtomicFile.write(data, to: url)) != nil else {
-            Diagnostics.warn("Could not save the values as they stand (\(url.path))")
+            warn("Could not save the values as they stand (\(url.path))")
             return
         }
         writeCount += 1
@@ -202,6 +217,22 @@ final class ParamStore: DeclarationWatcher {
 }
 
 extension ParamStore {
+    /// 符号化の失敗を、型と理由の 1 行にする。
+    ///
+    /// **`localizedDescription` は使わない** — `EncodingError` では「正しい形式でない」
+    /// とだけ言い、どの値が何で拒まれたかを落とす。
+    nonisolated static func encodingFailure(_ error: any Error) -> String {
+        let detail: String
+        switch error {
+        case EncodingError.invalidValue(_, let context):
+            detail = context.debugDescription
+        default:
+            detail = String(describing: error)
+        }
+        let line = detail.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return "\(type(of: error)): \(line)"
+    }
+
     /// 戻した結果。
     struct Restoration: Equatable {
         /// 範囲へ収めて戻したもの。

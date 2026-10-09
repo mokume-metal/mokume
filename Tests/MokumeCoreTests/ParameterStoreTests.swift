@@ -49,6 +49,31 @@ struct ParameterStoreTests {
         for _ in 0...ParamStore.quietFrames { store.tick() }
     }
 
+    // MARK: - 書けないとき
+
+    /// 符号化の失敗を黙って捨てない (#2263)。**NaN は作品のコードから届く** —
+    /// `ParamBox.value` の setter は範囲へ収めないので、`radius = .nan` がそのまま載り、
+    /// `JSONEncoder` が非有限の数を拒む。
+    @Test("値を符号化できなければ、型と理由を 1 行言い、書かない")
+    func failingToEncodeSaysWhy() throws {
+        let url = try makeFile()
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
+        sketch.radius = .nan
+        store.flushNow()
+
+        #expect(store.writeCount == 0)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        try #require(warnings.count == 1, "符号化に失敗したのに黙っていた")
+        let line = warnings[0]
+        #expect(!line.contains("\n"))
+        #expect(line.contains("EncodingError"))
+        #expect(line.contains("nan"))
+        #expect(line.contains(url.path))
+    }
+
     // MARK: - 往復
 
     @Test("動かした値が、次の起動で戻る")
