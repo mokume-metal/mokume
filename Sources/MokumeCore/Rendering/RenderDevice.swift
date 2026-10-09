@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import Foundation
 import Metal
 import MokumeDiagnostics
 
@@ -564,12 +563,7 @@ import MokumeDiagnostics
         self.shaders = ShaderLibraries(device: device)
 
         // **発行口は関所を通して作る** (#2052)。GPU が一度答えなくなったプロセスでは作らずに断る
-        let queue: any MTL4CommandQueue
-        if Self.measureQueuePool, let pooled = Self.measurePool.popLast() {
-            queue = pooled
-        } else {
-            queue = try queueGate.makeQueue(on: device)
-        }
+        let queue = try queueGate.makeQueue(on: device)
         self.queue = queue
 
         var slots: [Slot] = []
@@ -606,25 +600,7 @@ import MokumeDiagnostics
             throw .synchronizationUnavailable
         }
         self.completion = completion
-
-        // SCRATCH (#2054 の切り分け・merge しない)
-        if Self.measureKeepQueue { Self.measureKept.append(queue as AnyObject) }
-        if Self.measureQueueRing > 0 {
-            Self.measureRing.append(queue as AnyObject)
-            if Self.measureRing.count > Self.measureQueueRing { Self.measureRing.removeFirst() }
-        }
     }
-
-    /// SCRATCH (#2054 の切り分け・merge しない)
-    static var measureKept: [AnyObject] = []
-    static var measureRing: [AnyObject] = []
-    static let measureEnv = ProcessInfo.processInfo.environment
-    static let measureKeepQueue = measureEnv["MOKUME_MEASURE_KEEP_QUEUE"] != nil
-    static let measureQueueRing = Int(measureEnv["MOKUME_MEASURE_QUEUE_RING"] ?? "") ?? 0
-    static let measureWaitNotices = measureEnv["MOKUME_MEASURE_WAIT_NOTICES"] != nil
-    static let measureRemoveSets = measureEnv["MOKUME_MEASURE_REMOVE_SETS"] != nil
-    static let measureQueuePool = measureEnv["MOKUME_MEASURE_QUEUE_POOL"] != nil
-    static var measurePool: [any MTL4CommandQueue] = []
 
     /// **実行中のものが終わる前に土台を畳まない。**
     ///
@@ -639,32 +615,29 @@ import MokumeDiagnostics
     /// プロセスでは新しい土台を作らない ([#2052])。畳んだ後に次の土台が答えない GPU へ発行口を
     /// 足し、止まった発行口が溜まって機械ごと止まったのが #2052 である。
     ///
+    /// **発行口は解放せず、関所へ返す** ([#2054])。待ちを済ませてから手放しても、発行口を解放した
+    /// 直後に同じプロセスの別の土台へ投入した仕事が、GPU の hang や page fault で打ち切られた。
+    /// 関所は、後から何本かが手放されるまで解放を遅らせる (``CommandQueueGate/retire(_:)``)。
+    /// 返す前に常駐の集合を発行口から外す。付けたままだと、遅らせている間、この土台の資源まで
+    /// 生き延びる。**待ちが期限を越えたときは外さない** — 実行中のコマンドが踏んでいる集合を外すと、
+    /// その結果が未定義になる (``releaseResidency(of:)`` と同じ)。
+    ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
+    /// [#2054]: https://github.com/mokume-metal/mokume/issues/2054
     isolated deinit {
-        defer {
-            if Self.measureWaitNotices {
-                let deadline = Date().addingTimeInterval(TimeInterval(Self.waitLimitSeconds))
-                while completionNotices.arrived < Int(submissionCount) - unansweredSubmissionsForTesting,
-                    Date() < deadline
-                {
-                    usleep(200)
-                }
-            }
-            if Self.measureQueuePool {
-                queue.removeResidencySet(residencySet)
-                queue.removeResidencySet(drawableResidency)
-                Self.measurePool.append(queue)
-            }
-            if Self.measureRemoveSets {
-                queue.removeResidencySet(residencySet)
-                queue.removeResidencySet(drawableResidency)
+        var finished = isIdle
+        if !finished {
+            finished = signalReached(submissionCount, while: .takingDown)
+            if !finished, unansweredSubmissionsForTesting == 0 {
+                Diagnostics.warn(
+                    "Waited \(Self.waitLimitSeconds) seconds for the GPU with no answer, and the drawing foundation is being taken down anyway")
             }
         }
-        guard !isIdle else { return }
-        if !signalReached(submissionCount, while: .takingDown), unansweredSubmissionsForTesting == 0 {
-            Diagnostics.warn(
-                "Waited \(Self.waitLimitSeconds) seconds for the GPU with no answer, and the drawing foundation is being taken down anyway")
+        if finished {
+            queue.removeResidencySet(residencySet)
+            queue.removeResidencySet(drawableResidency)
         }
+        queueGate.retire(queue)
     }
 
     // MARK: - リソース
