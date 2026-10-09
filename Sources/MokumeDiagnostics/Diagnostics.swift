@@ -8,8 +8,8 @@ import Foundation
 /// ライブラリが人へ伝えることを 1 箇所に集める。**素の `print` で書かない** —
 /// 出力先はスケッチの標準出力であり、そこはスケッチ自身のものだからである。
 ///
-/// 持っているのは ``warn(_:)`` 1 つだけで、段階も分類もまだ無い。**要るものが
-/// 分かった時点で足す** ([ADR-0001] 原則 4 / [ADR-0008] 決定 2)。
+/// 持っているのは ``warn(_:)`` と、その文面に失敗を埋める ``reason(_:)`` だけで、段階も
+/// 分類もまだ無い。**要るものが分かった時点で足す** ([ADR-0001] 原則 4 / [ADR-0008] 決定 2)。
 ///
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
@@ -34,5 +34,54 @@ public nonisolated enum Diagnostics {
     /// 流すと、本当に読むべき 1 行が埋まる。
     public static func warn(_ message: String) {
         FileHandle.standardError.write(Data("\(prefix): \(message)\n".utf8))
+    }
+
+    /// 失敗を、**型と理由の 1 行**にする。``warn(_:)`` の文面に埋める (#2263)。
+    ///
+    /// **符号化・復号の失敗に `localizedDescription` を使わない** — `EncodingError` /
+    /// `DecodingError` では「正しい形式でない」とだけ言い、どの値が何で拒まれたかを落とす。
+    /// それらは文脈の説明と、拒まれた場所 (`values[1].value` の形) を出す。他の失敗
+    /// (ファイルの読み書きなど) は `localizedDescription` が人の読む理由を持っている。
+    package static func reason(_ error: any Error) -> String {
+        let detail: String
+        switch error {
+        case EncodingError.invalidValue(_, let context):
+            detail = described(context)
+        case DecodingError.dataCorrupted(let context),
+            DecodingError.keyNotFound(_, let context),
+            DecodingError.typeMismatch(_, let context),
+            DecodingError.valueNotFound(_, let context):
+            detail = described(context)
+        default:
+            detail = error.localizedDescription
+        }
+        let line = detail.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return "\(kind(of: error)): \(line)"
+    }
+
+    /// 失敗の型。**Foundation が返す失敗は `NSError` としか名乗らない**ので、領域と番号
+    /// (`NSCocoaErrorDomain 513` の形) を出す — 型の名前だけでは何の失敗か分からない。
+    private static func kind(of error: any Error) -> String {
+        guard type(of: error) is NSError.Type else { return "\(type(of: error))" }
+        let bridged = error as NSError
+        return "\(bridged.domain) \(bridged.code)"
+    }
+
+    private static func described(_ context: EncodingError.Context) -> String {
+        context.debugDescription + place(context.codingPath)
+    }
+
+    private static func described(_ context: DecodingError.Context) -> String {
+        context.debugDescription + place(context.codingPath)
+    }
+
+    /// 拒まれた場所。配列の要素は `[n]`、鍵は `.name` で綴る。根なら何も足さない。
+    private static func place(_ path: [any CodingKey]) -> String {
+        guard !path.isEmpty else { return "" }
+        let spelled = path.enumerated().map { offset, key in
+            if let index = key.intValue { return "[\(index)]" }
+            return offset == 0 ? key.stringValue : ".\(key.stringValue)"
+        }
+        return " (at \(spelled.joined()))"
     }
 }

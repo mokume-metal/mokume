@@ -206,6 +206,26 @@ struct SharedFrameSurfaceTests {
         #expect(SharedFrameSurface.makeIfEnabled(gpu: gpu, width: 16, height: 8, at: missing) == nil)
     }
 
+    /// 作れなかった理由を黙って捨てない (#2263)。窓へ倒すのは正しいが、理由が無いと
+    /// 見張りの窓に絵が来ない原因を辿れない。**寸法の関所で落とす** — GPU の確保より
+    /// 前に投げるので、資源を食わずに失敗を注入できる。
+    @Test("区画が在るのに面を作れなければ、型と理由を 1 行言って nil を返す")
+    func failingToMakeTheSurfaceSaysWhy() throws {
+        let gpu = try RenderDevice()
+        var warnings: [String] = []
+        let made = try withFacet { directory in
+            SharedFrameSurface.makeIfEnabled(
+                gpu: gpu, width: 0, height: 8, at: directory, owner: "test",
+                warn: { warnings.append($0) })
+        }
+        #expect(made == nil)
+        try #require(warnings.count == 1, "理由を言わずに nil を返した")
+        let line = warnings[0]
+        #expect(!line.contains("\n"))
+        #expect(line.contains("RenderFailure"))
+        #expect(line.contains(RenderFailure.invalidSize(width: 0, height: 8).headline))
+    }
+
     @Test("面から読んだ画素が、同じ経路で普通のテクスチャへ書いたものと一致する")
     func surfaceMatchesTheOrdinaryDestination() throws {
         let color = LinearRGBA.linear(red: 0.25, green: 0.5, blue: 0.75)
