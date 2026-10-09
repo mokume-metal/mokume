@@ -57,12 +57,22 @@ jobs:
             rm -f "$log"
           }
 
-          # 2 回目: 全検査・既定の幅 1 で、基準・対照・(d) 環 8・(e) 使い回しを交互に 2 周
-          for i in 1 2; do
+          F='MokumeCoreTests.EffectArgumentTests'
+          W=SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
+          DB="MOKUME_MEASURE_QUEUE_RING=8 MOKUME_MEASURE_REMOVE_SETS=1"
+          # 3 回目: 本命 (d) 環 8 + (b) 集合を外す を、基準と交互に
+          # 全検査・幅 1 を 3 周
+          for i in 1 2 3; do
             one full-w1-base "$i" --
-            one full-w1-keep-queue "$i" MOKUME_MEASURE_KEEP_QUEUE=1 --
-            one full-w1-d-ring-8 "$i" MOKUME_MEASURE_QUEUE_RING=8 --
-            one full-w1-e-pool "$i" MOKUME_MEASURE_QUEUE_POOL=1 --
+            one full-w1-db "$i" $DB --
+          done
+          # EffectArgumentTests・幅 16 を 3 周 × 10 回
+          for round in 1 2 3; do
+            for k in $(seq 1 10); do
+              i=$(( (round - 1) * 10 + k ))
+              one base "$i" $W=16 -- --filter "$F"
+              one db "$i" $W=16 $DB -- --filter "$F"
+            done
           done
           {
             echo '## 計測 (#2054)'; echo '```'; cat .build/measure/summary.txt; echo '```'
