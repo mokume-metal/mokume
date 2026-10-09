@@ -27,12 +27,33 @@
 報告する**ことになる。Swift は `///` の行だけを見、Markdown はコード塊を潰してから見る
 (書き方の例示を実物と数えないため。潰し方の正典は `check-docs-links.py` にあり、写さずに
 借りている)。
+
+**リリースノートの絵も引く** (#2268)。描画に触れた PR の本文の絵は「唯一の検証記録で、
+merge の後には足せない」(AGENTS.md) が、説明文にも Markdown にも載らないので上の走査では
+見えず、[#1294](https://github.com/mokume-metal/mokume/issues/1294) で 178 本が 404 に
+なったときも、PR の絵が読めなくなったことを誰も引いていなかった。その絵は Release の
+「この版の絵」に写される (ADR-0036 決定 7) ので、**直近 `RELEASES_WATCHED` 版のノートに
+載った絵**を同じ検査で引く。読むのは Release の本文 (PR 本文を引き直さない — 読み手が見る
+のはノートの絵で、PR の数ぶん API を打たずに済む)。節の形は書く側の `release.py` が持つので、
+読む関数もそちらを借りる。
+
+**PR ごとの検査には置かない。** 外部 URL を per-PR の検査から外した判断
+([#90](https://github.com/mokume-metal/mokume/issues/90)) は動かさない — ここは日次の定期検査の
+ままで、見る場所が 2 つ (説明文 / ノートの絵の節) になっただけである。0 本なら赤にする守りは
+**説明文の側にだけ**掛ける: 描画に触れた PR の無い週はノートに絵の節が無く、それは正常だから。
+その代わり、ノートの側は版数と本数を毎回出す (0 本のときも黙らない)。
+
+**窓は直近 `RELEASES_WATCHED` 版だけ**で、窓の外に出た版 (日次のリリースなら約 1 週間後) の絵が
+切れたことは拾えない。置き場ごと止まる事象は説明文の側でも拾えるので、ノートの側が受けもつ
+のは個別の消失である。窓を広げると引く本数が版ぶん増え、置き場が応えないときの最悪の所要が
+job の上限に近づく (1 版あたり 35〜53 本)。
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import pathlib
 import re
 import ssl
@@ -48,6 +69,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 # タイムアウトと `<img>` の綴りは site_source が持つ (#815)
 from site_source import FETCH_TIMEOUT_SECONDS, HTML_IMAGE  # noqa: E402
 
+# リリースノートの「この版の絵」の節の形は、書く側の release.py が持つ (#2268)
+import release  # noqa: E402
+
 # 資産として参照している外部 URL の書き方は 2 つある。
 #   - Markdown の画像 `![説明](https://…)` — `///` の中も普通の .md も同じ書式
 #   - docc の `@Image(source: "https://…")` / `@Video(source: "https://…")`
@@ -60,6 +84,15 @@ DOCC_SOURCE = re.compile(r"@(?:Image|Video)\s*\(\s*source:\s*\"(https?://[^\"]+)
 
 # Swift の説明文。ADR-0027 決定 2 により、絵を指す行はここに置かれる
 DOC_COMMENT = re.compile(r"^\s*///")
+
+# 引くリリースノートの版数 (#2268)。日次のリリースなので約 1 週間ぶん。絵のある版は 1 版
+# あたり 35〜53 本 (2026-10-10 の実測。説明文の側は 321 本) で、窓が全部絵のある版で埋まると
+# 説明文のほぼ倍になる。広げるほど、置き場が応えないときの最悪の所要
+# (本数 × FETCH_TIMEOUT_SECONDS、引き直しで倍) が job の上限に近づく
+RELEASES_WATCHED = 7
+
+# リリースノート由来の指し先の出所の頭。dead_report が、直し方の違う出所を見分けるのに使う
+RELEASE_ORIGIN_PREFIX = "Release "
 
 # 相手が bot を弾かないように名乗る。無名の要求を落とす配信は珍しくない
 USER_AGENT = "mokume-external-assets-check (+https://github.com/mokume-metal/mokume)"
@@ -84,14 +117,16 @@ mask_code = _mask_code()
 class Reference:
     """1 本の指し先と、その出所。"""
 
-    def __init__(self, url: str, path: str, line: int) -> None:
+    def __init__(self, url: str, path: str, line: int, label: str | None = None) -> None:
         self.url = url
         self.path = path
         self.line = line
+        # ファイルの行で名乗れない出所 (Release のノート) は、名乗りをそのまま持つ
+        self.label = label
 
     @property
     def origin(self) -> str:
-        return f"{self.path}:{self.line}"
+        return self.label or f"{self.path}:{self.line}"
 
 
 def tracked_files(root: pathlib.Path) -> list[str]:
@@ -149,6 +184,52 @@ def collect(root: pathlib.Path) -> list[Reference]:
             # 読めないもの (削除済み・想定外の符号化) に指し先は書けない
             continue
         found.extend(references_in(text, name))
+    return found
+
+
+class ReleaseReadError(Exception):
+    """Release のノートを読めなかった。検査が成立していないので、呼び手は赤にする。"""
+
+
+def fetch_releases(count: int, root: pathlib.Path) -> list[tuple[str, str]]:
+    """直近 `count` 版の (タグ, ノートの本文)。新しい順。下書きは数えない。
+
+    **読めなかったことを空の一覧にしない。** 空は「絵の無い週」と同じ緑で表れる。
+    リポジトリは `root` の origin から gh が引く (`{owner}/{repo}`)。
+    """
+    try:
+        completed = subprocess.run(
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/releases?per_page={count}"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise ReleaseReadError(f"gh を起こせない: {error}") from error
+    if completed.returncode != 0:
+        raise ReleaseReadError(completed.stderr.strip() or f"gh api が {completed.returncode} で終わった")
+    try:
+        releases = json.loads(completed.stdout)
+        return [
+            (item["tag_name"], item.get("body") or "")
+            for item in releases
+            if not item.get("draft")
+        ]
+    except (ValueError, KeyError, TypeError) as error:
+        raise ReleaseReadError(f"gh api の応答を読めない: {error}") from error
+
+
+def release_references(releases: list[tuple[str, str]]) -> list[Reference]:
+    """各版のノートの「この版の絵」にある指し先。出所は `Release <タグ> (#PR)`。
+
+    節の読み方は release.py の `picture_references` が持つ (書く側と同じ記法を読む)。
+    PR の番号は、直す側が PR 本文とノートの両方を辿れるように名乗る。
+    """
+    found = []
+    for tag, body in releases:
+        for picture in release.picture_references(body):
+            where = f"{RELEASE_ORIGIN_PREFIX}{tag}" + (f" (#{picture.pull})" if picture.pull else "")
+            found.append(Reference(picture.url, f"{RELEASE_ORIGIN_PREFIX}{tag}", picture.line, where))
     return found
 
 
@@ -330,6 +411,14 @@ def dead_report(
         "撮り直しの手順は .claude/skills/visual-evidence/ が持つ。"
         "撮り直したら、指している行の URL を差し替える (ADR-0027 決定 2)。",
     ]
+    # 出所が Release のノートの絵は、同じ URL が PR 本文にも残っている。片方だけ直すと、
+    # 直した側だけが読めて、もう片方 (PR の記録か版の記録) が切れたまま残る
+    if any(where.startswith(RELEASE_ORIGIN_PREFIX) for _url, _reason, wheres in dead for where in wheres):
+        lines += [
+            f"出所が `{RELEASE_ORIGIN_PREFIX}<タグ> (#PR)` の絵は、リリースノートに写された URL である。"
+            "PR 本文 (`gh pr edit`) とそのリリースのノート (`gh release edit <タグ> --notes-file`) の"
+            "両方で差し替える。",
+        ]
     return lines
 
 
@@ -346,6 +435,13 @@ def main() -> int:
         action="store_true",
         help="引かずに、見つけた指し先とその出所を並べる",
     )
+    parser.add_argument(
+        "--releases",
+        type=int,
+        default=RELEASES_WATCHED,
+        metavar="N",
+        help=f"絵を引くリリースノートの直近の版数 (既定: {RELEASES_WATCHED}。0 で見ない)",
+    )
     arguments = parser.parse_args()
 
     references = collect(arguments.root)
@@ -357,13 +453,29 @@ def main() -> int:
         )
         return 1
 
+    print(f"外部資産の指し先: {len({r.url for r in references})} 本 ({len(references)} 箇所から)")
+
+    # ノートの側は 0 本でも赤にしない (描画に触れた PR の無い週は正常) が、読めなかったことは
+    # 赤にする。空の一覧は「絵の無い週」と同じ緑で表れてしまう
+    if arguments.releases > 0:
+        try:
+            releases = fetch_releases(arguments.releases, arguments.root)
+        except ReleaseReadError as error:
+            print(f"リリースノートを読めない — 検査が成立していない: {error}", file=sys.stderr)
+            return 1
+        pictured = release_references(releases)
+        print(
+            f"リリースノートの絵: 直近 {len(releases)} 版のうち "
+            f"{len({r.path for r in pictured})} 版に {len({r.url for r in pictured})} 本"
+        )
+        references += pictured
+
     # 同じ絵は複数の場所から指されうる。引くのは 1 回でよいが、赤くなったときは
     # 出所を全部見せる (撮り直しは指している側の全部に効く)
     origins: dict[str, list[str]] = {}
     for reference in references:
         origins.setdefault(reference.url, []).append(reference.origin)
 
-    print(f"外部資産の指し先: {len(origins)} 本 ({len(references)} 箇所から)")
     if arguments.list:
         for url, where in sorted(origins.items()):
             print(f"  {url}\n    {' / '.join(where)}")
