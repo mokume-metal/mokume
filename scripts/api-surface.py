@@ -741,6 +741,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "captureDevices": (READING, "繋がっているカメラの一覧を値で返す"),
     "audioInputDevices": (READING, "繋がっている音の入力の機材の一覧を値で返す"),
     "displays": (READING, "繋がっているディスプレイの一覧を値で返す"),
+    "serialPorts": (READING, "繋がっているシリアルポートの一覧を値で返す"),
     "assetURL": (READING, "資材の在処を値で返す。読むのは作者"),
     # 資源
     "createGraphics": RESOURCE,
@@ -765,6 +766,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "createUDP": RESOURCE,
     "createTCPServer": RESOURCE,
     "createWebSocketServer": RESOURCE,
+    "createSerial": RESOURCE,
     "createShape": RESOURCE,
     "loadImage": RESOURCE,
     "requestImage": RESOURCE,

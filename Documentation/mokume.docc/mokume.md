@@ -444,6 +444,15 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``UDPPort``
 - ``NetworkFailure``
 
+### シリアルで機材 (Arduino など) から受ける
+
+- ``Sketch/serialPorts()``
+- ``Sketch/createSerial(_:baudRate:)``
+- ``Sketch/createSerial(lines:)``
+- ``Serial``
+- ``SerialPort``
+- ``SerialFailure``
+
 ### 画素を読み書きする
 
 - ``Sketch/pixels``
