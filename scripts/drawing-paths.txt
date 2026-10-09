@@ -40,6 +40,7 @@ Sources/mokume/
 Sources/MokumeCamera/
 Sources/MokumeAudio/
 Sources/MokumeNetwork/
+Sources/MokumeGamepad/
 # 参照スケッチは、台帳の検査 (SceneLedgerTests) が全部を 45 フレーム目まで描き、その指紋を
 # sketch:<名前>@45 の行に持つ (#1377)。ここを変えると台帳の絵が動きうる。
 Sketches/
