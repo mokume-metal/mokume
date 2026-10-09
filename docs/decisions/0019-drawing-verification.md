@@ -169,7 +169,7 @@ SPDX-License-Identifier: MIT
 
 **混雑への歯止め**: 専用機は 1 台で、必須の `render` (queue の期限は 60 分) と定期の run が取り合う。そこで 1 本の長いジョブにせず、debug と release の 2 ジョブに分け、release は debug の終了後に、下の門番を通してから queue へ入れる。各ジョブは `timeout-minutes: 30`。初回の run で所要と、直後の `render` の runner 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。
 
-**赤を誰が読むか**: GitHub ホストの後続ジョブが `scripts/report-check-failure.sh` で起票する。**赤に数えるのは、専用機の job が落ちた (`failure`) 回と切れた (`cancelled`) 回である** — `timeout-minutes` で切れた job は cancelled で終わり、Actions に灰色で出るだけなので、落ちた回よりさらに見えない。timeout と人の cancel は見分けず、起票の本文が「timeout か人の cancel」と名乗る (代償: 人が定期の run を止めると 1 本立つが、止めた人はそれを知っているので閉じれば済む・下の改訂 (2026-10-10))。却下した案: `stall-watch` が名乗る (赤は Actions に出るだけで、#1086 も publication の赤 (#1295) も「Actions の赤を誰も見ない」形で起きた。夜間の赤は「止まって見える」状態を作らないので、`stall-watch` が読まれる機会も無い) / GitHub の通知メールに任せる (宛先が cron を最後に触った人で決まり、エージェントに届かない)。
+**赤を誰が読むか**: GitHub ホストの後続ジョブが `scripts/report-check-failure.sh` で起票する。**赤に数えるのは、専用機の job が落ちた (`failure`) 回と切れた (`cancelled`) 回である** — `timeout-minutes` で切れた job は cancelled で終わり、Actions に灰色で出るだけなので、落ちた回よりさらに見えない。切れる経路 (timeout・人の cancel・run をまたぐ重なりでの concurrency の置き換え) は見分けず、起票の本文がそのどれかと名乗る (代償: 人が定期の run を止めると 1 本立つが、止めた人はそれを知っているので閉じれば済む・下の改訂 (2026-10-10))。却下した案: `stall-watch` が名乗る (赤は Actions に出るだけで、#1086 も publication の赤 (#1295) も「Actions の赤を誰も見ない」形で起きた。夜間の赤は「止まって見える」状態を作らないので、`stall-watch` が読まれる機会も無い) / GitHub の通知メールに任せる (宛先が cron を最後に触った人で決まり、エージェントに届かない)。
 
 **却下した頻度と範囲**: 週に 1 度は #1086 の 9 日間に近い放置を許す。main が動いた日だけ走らせるのは、今の main がほぼ毎日動くので判定の部品を足す理由が弱い。release を台帳ごと全部走らせるのは #1736 が決着するまで毎晩赤になる。先に #1736 を切り分けるのは、いつ決着するか見えず、それまで #1086 の類が無防備のまま残る。当初の案は「毎日 1 回 (05:13 JST)・release だけ」で、「専用機は専用なので夜間に限らず広く使ってよい」という判断で、頻度と debug を含む範囲に広げた。
 
@@ -177,11 +177,13 @@ SPDX-License-Identifier: MIT
 
 **当初は、起票を落ちた (`failure`) 回に限っていた** (`scheduled-report` の `if:` が `needs.*.result == 'failure'` だけを見た)。cancelled を外す理由は書かれていなかった。2026-10-08 までの定期の run 14 回のうち 7 回は release が 30 分の timeout で cancelled になり、debug が緑だった 6 回は何も起票されずに黙って抜けた ([#2084](https://github.com/mokume-metal/mokume/issues/2084))。起票された残る 1 回 ([#2211](https://github.com/mokume-metal/mokume/issues/2211)・debug が別の理由で落ちた) も、release の節は「記録が無い」とだけ名乗り、「ビルドかジョブの開始で落ちている」と案内した。実際には検査が約 26 分走ってから切れていた。上の理由 (赤は Actions に出るだけでは誰にも読まれない) は動いていないので、赤に数える範囲だけを広げる。
 
-**起票の本文は、job ごとの結論を名乗る** (`scripts/report-scheduled-render.sh`)。記録が無い理由が、落ちた回 (検査が走る前に落ちた) と切れた回 (書き切る前に止められた) で違うためである。定期の run を cancel しうるのは timeout と人だけで、`queue-sweep` は定期の検査を退かせない (下の「定期の検査 (D) は退かせない」)。
+**起票の本文は、job ごとの結論を名乗る** (`scripts/report-scheduled-render.sh`)。記録が無い理由の候補が、落ちた回 (ビルドかジョブの開始で落ちたか、検査のプロセスが記録を残さずに消えた) と切れた回 (走っている途中か、始まる前に止められた) で違うためである。本文は test-log の有無など、材料から分かることだけを名乗り、原因を 1 つに決めつけない。定期の job が cancelled で終わる経路は 3 つある。job の timeout、人の cancel、run をまたぐ重なりである。重なりは、前の回の job が concurrency の group に残っている間に次の回の job が来ると、待っていた job を GitHub が置き換えて cancel する形で起きる (下の「定期の検査 (D) は退かせない」の、run をまたいで重なる場合)。`queue-sweep` は定期の検査を退かせない。
+
+**代償**: release が慢性的に timeout する間は、固定タイトルの Issue が開いたままになり、その間に起きた別の赤 (検査が落ちた回) は重複抑止で起票されず、`scheduled-report` の run のログに残るだけになる。開いている Issue の本文は、立てた回の job ごとの結論を名乗るので、timeout だけで立った Issue かどうかは読めば分かる。この状態が解けるのは、release の所要を [#1983](https://github.com/mokume-metal/mokume/issues/1983) / [#2074](https://github.com/mokume-metal/mokume/issues/2074) が直した後である。
 
 退けた案:
 
-- **timeout だけを起票し、人の cancel と見分ける** — 起票の job が job の annotation (`exceeded the maximum execution time`) を読むには `checks: read` が要り、`issues: write` だけだった権限が広がる。見分けて救える実害も無い (上の 14 回のうち人の cancel は 0 回)。人の cancel の起票が実害になったときに改めて決める
+- **timeout だけを起票し、ほかの cancel と見分ける** — 起票の job が job の annotation (`exceeded the maximum execution time`) を読むには `checks: read` が要り、`issues: write` だけだった権限が広がる。見分けて救える実害も無い (上の 14 回の cancelled 7 回は、どれも timeout だった)。timeout でない cancel の起票が実害になったときに改めて決める
 - **cancelled は起票せず、起票しないことをここに書く** — 上の「赤を誰が読むか」で却下した形 (赤は Actions に出るだけ) に戻る。切れた job は落ちた job より見えにくいので、却下した案よりさらに見えない
 
 #### 専用機へ積む順番は、GitHub ホストの門番が決める ([#2062](https://github.com/mokume-metal/mokume/issues/2062))
