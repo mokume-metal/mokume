@@ -12,12 +12,21 @@
 # 記録と test-log は**無くてもよい** — ビルドで落ちた回は記録が無いので、そう名乗って
 # 起票する (黙ると赤が誰にも届かない・#1295 と同じ形)。
 #
-# **結論を名乗るのは、記録が無い理由が結論で変わるからである** (#2084)。落ちて (failure)
-# 記録が無いなら、検査が走る前 (ビルドかジョブの開始) に落ちている。切れて (cancelled)
-# 記録が無いなら、検査が走っている途中で job の timeout か人の cancel に止められ、記録を
-# 書き切れなかった — どこまで走ったかは test-log の末尾にある。結論を知らずに 1 通りの
-# 案内を出すと、切れた回を「ビルドで落ちた」と読み違えさせる (#2211)。timeout と人の
-# cancel は見分けない (ADR-0019 決定 7)。
+# **結論を名乗るのは、記録が無い理由の候補が結論で変わるからである** (#2084)。結論を知らずに
+# 1 通りの案内を出すと、切れた回を「ビルドで落ちた」と読み違えさせる (#2211)。どちらの
+# 場合も、**材料から分かることだけを言い、原因を 1 つに決めつけない**:
+#
+#   落ちた (failure)・記録が無いか読めない — 検査が記録を書く前に止まった。ビルドかジョブの
+#     開始で落ちたか、検査のプロセスが記録を残さずに消えた (#1526。debug では
+#     scripts/test-vanished.sh が名乗り、材料を scheduled-debug-record の test-vanished/ に残す)
+#   切れた (cancelled) — 経路は job の timeout・人の cancel・concurrency の置き換え (run を
+#     またいで同じ group に次の job が来ると、待っていた job を GitHub が cancel する) の 3 つで、
+#     見分けない (ADR-0019 決定 7)。記録が無くても test-log があれば、ビルドか検査が走って
+#     いる途中で切れたと言える (末尾にどこまで走ったかがある)。test-log も無ければ、始まる前か
+#     test-log を書き始める前 (debug の ci-check の build 段は test-log に写さない) に切れた
+#
+# 台帳の絵の artifact は、定期の run では scheduled-debug-ledger-shots で、debug が落ちた回に
+# だけ上がる (render.yml)。render / render-pr の ledger-shots とは名前が違う。
 #
 # 発信の実体は scripts/report-check-failure.sh が持ち、ここが持つのは**固定タイトルと本文**
 # だけである (report-dead-assets.sh と同じ分け方)。落ちた検査の名前と文面は
@@ -57,24 +66,38 @@ body=$(mktemp)
 log=$(mktemp)
 trap 'rm -f "$body" "$log"' EXIT
 
+# 定期の debug が台帳の絵を上げる artifact の名前 (render.yml の scheduled-debug)
+readonly DEBUG_SHOTS="scheduled-debug-ledger-shots"
+
 # job の結論と、落ちた検査の名前と文面。記録が無い・読めないときは read-test-record.py が
 # そう名乗り、無い理由の読み方は結論ごとにここが添える (冒頭の「結論を名乗るのは」)
-job_section() { # $1=見出し $2=結論 $3=記録
+job_section() { # $1=見出し $2=結論 $3=記録 $4=test-log $5=台帳の絵の artifact
+  local form
+  form=$(python3 "$here/read-test-record.py" --failures "$3")
   printf '### %s\n\n' "$1"
   case "$2" in
     cancelled)
-      printf '結論: `cancelled` — **job の timeout (`render.yml` の `timeout-minutes`) か、人の cancel で切れた。** どちらかは見分けない (ADR-0019 決定 7)。run の画面の annotation に `exceeded the maximum execution time` があれば timeout である\n\n'
-      if [ -s "$3" ]; then
-        python3 "$here/read-test-record.py" --failure-messages "$3"
-      else
-        printf '記録は、検査が書き切る前に切れたので無い (`%s`)。どこまで走ったかは、下の「検査の出力」の test-log の末尾で読む\n' "$3"
-      fi
+      printf '結論: `cancelled` — **job の timeout (`render.yml` の `timeout-minutes`)・人の cancel・run をまたぐ重なり (concurrency の group に次の回の job が来て、待っていた job が置き換わった) のどれかで切れた。** どれかは見分けない (ADR-0019 決定 7)。run の画面の annotation に `exceeded the maximum execution time` があれば timeout である\n\n'
+      case "$form" in
+        missing | unreadable)
+          if [ -s "$4" ]; then
+            printf '記録は書き切る前に切れたので無いか、読めない (`%s`)。test-log はあるので、ビルドか検査が走っている途中で切れた。どこまで走ったかは、下の「検査の出力」の test-log の末尾で読む\n' "$3"
+          else
+            printf '記録も test-log も無い (`%s`)。job が始まる前か、test-log を書き始める前 (debug なら `make ci-check` の build 段) に切れた。どの step まで進んだかは run の画面で見る\n' "$3"
+          fi
+          ;;
+        *) python3 "$here/read-test-record.py" --failure-messages "$3" ${5:+"$5"} ;;
+      esac
       ;;
     *)
       printf '結論: `%s`\n\n' "${2:-不明}"
-      python3 "$here/read-test-record.py" --failure-messages "$3"
-      if [ "$2" = failure ] && [ ! -s "$3" ]; then
-        printf '\n落ちて記録が無いのは、検査が走る前 — ビルドかジョブの開始で落ちている。下の「検査の出力」と run の画面を読む\n'
+      python3 "$here/read-test-record.py" --failure-messages "$3" ${5:+"$5"}
+      if [ "$2" = failure ]; then
+        case "$form" in
+          missing | unreadable)
+            printf '\n落ちて記録が無いか読めないのは、検査が記録を書く前に止まったときである — ビルドかジョブの開始で落ちたか、検査のプロセスが記録を残さずに消えた (#1526)。下の「検査の出力」と run の画面で、どちらかを読む。消えた回は test-log に「検査のプロセスが要約を残さずに終わった」と出て、debug なら材料が artifact `scheduled-debug-record` の `test-vanished/` に上がる\n'
+            ;;
+        esac
       fi
       ;;
   esac
@@ -110,8 +133,9 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 - **release**: `make test-release-scheduled` — release の検査から台帳 (`SceneLedgerTests`) だけを外したもの。release で台帳が合うべきかは #1736 が決める途中で、素で走らせると決着するまで毎回赤になるため外してある (代償: 台帳にだけ出る release の差は、この検査では見えない)
 
 BODY
-  job_section "debug" "$DEBUG_RESULT" "$DEBUG_RECORD"
-  job_section "release" "$RELEASE_RESULT" "$RELEASE_RECORD"
+  job_section "debug" "$DEBUG_RESULT" "$DEBUG_RECORD" "$DEBUG_LOG" "$DEBUG_SHOTS"
+  # release は台帳を外していて (Makefile の test-release-scheduled)、絵を上げない
+  job_section "release" "$RELEASE_RESULT" "$RELEASE_RECORD" "$RELEASE_LOG" ""
   cat <<'BODY'
 ## 対処
 
@@ -119,7 +143,7 @@ BODY
 2. 手元で再現する (どちらも GPU が要る):
    - debug: `make ci-check CI_CHECK_STEPS="build test gpu-ran"`
    - release: `make test-release-scheduled`
-3. 落ちた検査が同じ根の PR で入ったものなら、その PR か Issue に戻して直す。台帳の行が動いたのなら、書き換える前に絵を目で見る (ADR-0019 決定 3)。絵は run の artifact の `ledger-shots` にある
+3. 落ちた検査が同じ根の PR で入ったものなら、その PR か Issue に戻して直す。台帳の行が動いたのなら、書き換える前に絵を目で見る (ADR-0019 決定 3)。絵は、debug が落ちた (`failure`) 回にだけ、run の artifact `scheduled-debug-ledger-shots` に上がる (切れた回には上がらない)
 
 ## 解消の判定
 

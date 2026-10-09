@@ -193,6 +193,8 @@ class ReadFailureMessagesTest(unittest.TestCase):
         self.assertIn("落ちた検査 (3 件)", out)
         block = out.split("台帳の書き換え後の行")[1].split("####")[0]
         self.assertIn("disc %s\ntext %s os=27\n" % (DIGEST, DIGEST), block)
+        # 絵の置き場の既定は render / render-pr の artifact の名前 (定期の起票は別の名前を渡す)
+        self.assertIn("artifact の `ledger-shots` にある", out)
         # 文面そのものも、台帳以外の失敗も載る
         self.assertIn("シーン disc の絵が変わった", out)
         self.assertIn("色が違う", out)
