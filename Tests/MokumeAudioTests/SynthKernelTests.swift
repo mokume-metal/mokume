@@ -333,12 +333,23 @@ struct SynthKernelTests {
         #expect((0..<1000).allSatisfy { _ in large.process(0) == 0 })
     }
 
+    /// **丸めたことは、端の値で組んだものと標本ごとに一致することで見る。** 出力の上限だけを
+    /// 見ていた頃は、wet を丸め忘れても最初の標本が -8 で上限の内に収まり、通った (#2284)。
     @Test("残響の範囲の外の値は端へ丸められ、どの設定でも発散しない")
     func reverbStaysBounded() {
-        let reverb = ReverbKernel(sampleRate: 8000)
-        reverb.configure(room: 5, damp: -3, wet: 9)
-        var peak: Float = 0
-        for index in 0..<8000 { peak = max(peak, abs(reverb.process(index == 0 ? 1 : 0))) }
-        #expect(peak < 10)
+        func impulseResponse(room: Float, damp: Float, wet: Float) -> [Float] {
+            let reverb = ReverbKernel(sampleRate: 8000)
+            reverb.configure(room: room, damp: damp, wet: wet)
+            return (0..<8000).map { reverb.process($0 == 0 ? 1 : 0) }
+        }
+        let above = impulseResponse(room: 5, damp: -3, wet: 9)
+        #expect(above == impulseResponse(room: 1, damp: 0, wet: 1))
+        // 下の端。wet が 0 だと部屋の設定が出口に出ないので、wet は分けて見る
+        #expect(
+            impulseResponse(room: -1, damp: 2, wet: 1) == impulseResponse(room: 0, damp: 1, wet: 1))
+        #expect(
+            impulseResponse(room: 0.5, damp: 0.5, wet: -1)
+                == impulseResponse(room: 0.5, damp: 0.5, wet: 0))
+        #expect(above.map(abs).max() ?? .infinity < 10)
     }
 }

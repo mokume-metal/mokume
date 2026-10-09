@@ -467,17 +467,20 @@ struct SynthRackTests {
 
     // MARK: - 上限
 
+    /// **数は上限の定数を写さず、64 と書く。** 写すと上限が変わっても通る (#2285)。
     @Test("節は 64 個まで作れて、65 個目は作れない")
     func capacityIsBounded() throws {
+        #expect(SynthRack.capacity == 64)
         let rack = makeRack()
-        for _ in 0..<SynthRack.capacity { _ = try #require(rack.addSource(.wave(.sine))) }
+        for _ in 0..<63 { _ = try #require(rack.addSource(.wave(.sine))) }
+        let last = try addSource(rack, .wave(.sine), [.frequency: 440, .amplitude: 0.5])
         #expect(rack.addSource(.wave(.sine)) == nil)
         #expect(rack.addFilter(.lowPass) == nil)
         #expect(rack.addReverb() == nil)
         #expect(rack.addDelay() == nil)
-        // 置いた節は、全部描ける
-        let heard = render(rack, 100)
-        #expect(heard.left.count == 100)
+        // 置いた節は、最後の 1 つまで描ける
+        _ = render(rack, 2000)
+        #expect(last.meter.latest(2000).map { abs($0) }.max() ?? 0 > 0.1)
     }
 
     @Test("操作の列が埋まると載せられず、描かせて空けると載せられる")
