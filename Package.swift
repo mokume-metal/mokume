@@ -86,7 +86,8 @@ let package = Package(
         .target(
             name: "MokumeAudio", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
-        // 通信 (OSC と、TCP・UDP・WebSocket の文字列。ポートを開く層を共有する)
+        // 通信 (OSC と、TCP・UDP・WebSocket・シリアルの文字列)。OSC と TCP・UDP・WebSocket はポートを開く層を
+        // 共有する。シリアルは行の切り方 (LineSplitter) と記録した列の流し方を TCP と共有するので、同じ所に置く (#1961)
         .target(
             name: "MokumeNetwork", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),

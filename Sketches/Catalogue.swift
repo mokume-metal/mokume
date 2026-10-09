@@ -60,6 +60,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     // 実物のポートを開く。窓で走らせるだけで、書き出しと台帳には入れない
     ReferenceSketch(name: "osc-and-reply", reachesOutside: true) { OSCAndReply() },
     ReferenceSketch(name: "net-and-reply", reachesOutside: true) { NetAndReply() },
+    ReferenceSketch(name: "serial-and-knob", reachesOutside: true) { SerialAndKnob() },
     ReferenceSketch(name: "effects-and-custom") { EffectsAndCustom() },
     // 触って確かめるためのもの。**書き出しても触っていない 1 枚しか出ない**が、台帳には
     // 「走っても落ちない」の検査として載る。カタログを 2 つに割るほどの違いではない
