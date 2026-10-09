@@ -42,6 +42,160 @@ extension Sketch {
     ///   **色を掛ける**。色を丸ごと差し替えたいなら、白で描いた SVG を読んで掛ける色を渡す —
     ///   白に掛けた色はそのまま出る
     ///
+    /// 下の 4 枚は、例がその場で書き出した SVG — 80×50 の `viewBox` に、橙の正方形と水色の円を
+    /// 1 つずつ描いたもの — を読んで置いたもので、1 枚ごとに SVG の中身か置き方を 1 か所だけ
+    /// 変えてある。このリポジトリは SVG のファイルを持たないので、読む先は例が自分で作っている。
+    ///
+    /// まず等倍で 2 か所に置く。白い点が、``shape(_:_:_:)`` に渡した位置である。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var mark: Shape? -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         let svg = """
+    ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
+    ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
+    ///               <circle cx="65" cy="15" r="15" fill="#59c2e6"/>
+    ///             </svg>
+    ///             """
+    ///         let path = NSTemporaryDirectory() + "mark.svg"
+    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try? loadShape(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         guard let mark else { return }
+    ///         shape(mark, 40, 40)
+    ///         shape(mark, 220, 150)
+    ///         noStroke()
+    ///         fill(242, 242, 242)
+    ///         circle(40, 40, 8)
+    ///         circle(220, 150, 8)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る -->
+    ///     ![橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る](https://i.gyazo.com/a7d69881928db10e8d13184bc1a69b56.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// SVG の `width` と `height` を `viewBox` の 2 倍にすると、同じ図案が 2 倍の大きさで置かれる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var mark: Shape? -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         let svg = """
+    ///             <svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 80 50">
+    ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
+    ///               <circle cx="65" cy="15" r="15" fill="#59c2e6"/>
+    ///             </svg>
+    ///             """
+    ///         let path = NSTemporaryDirectory() + "mark-160x100.svg"
+    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try? loadShape(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         guard let mark else { return }
+    ///         shape(mark, 40, 40)
+    ///         noStroke()
+    ///         fill(242, 242, 242)
+    ///         circle(40, 40, 8)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま -->
+    ///     ![width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま](https://i.gyazo.com/dadd62bdbc531b3d34c4415d648ae0f6.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``scale(_:_:)`` で 3 倍にしても、縁は粗くならない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var mark: Shape? -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         let svg = """
+    ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
+    ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
+    ///               <circle cx="65" cy="15" r="15" fill="#59c2e6"/>
+    ///             </svg>
+    ///             """
+    ///         let path = NSTemporaryDirectory() + "mark.svg"
+    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try? loadShape(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         guard let mark else { return }
+    ///         push()
+    ///         translate(40, 40)
+    ///         scale(3, 3)
+    ///         shape(mark)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか -->
+    ///     ![scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか](https://i.gyazo.com/eb6b95f5b69a4b76cf50a85e90fd0b1f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 白で描いた SVG なら、置き場所ごとに色を渡して染められる。置く前の ``fill(_:)`` は効かない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var mark: Shape? -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         let svg = """
+    ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
+    ///               <rect x="0" y="0" width="50" height="50" fill="white"/>
+    ///               <circle cx="65" cy="15" r="15" fill="white"/>
+    ///             </svg>
+    ///             """
+    ///         let path = NSTemporaryDirectory() + "mark-white.svg"
+    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try? loadShape(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         guard let mark else { return }
+    ///         fill(242, 115, 64)              // 置く側の塗り。図案の色には効かない
+    ///         shape(mark, at: [Placement(x: 40, y: 100, scale: 2)])
+    ///         shape(mark, at: [Placement(x: 220, y: 100, scale: 2, fill: color(242, 115, 64))])
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる -->
+    ///     ![白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる](https://i.gyazo.com/53b595fc4a7f9c2072d57df4dbfcf724.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// 呼んだときの描き方 (``fill(_:)``・``blendMode(_:)``・``shader(_:)``・``texture(_:)-(Image)`` など)
     /// には左右されない。同じファイルからは、いつ読んでも同じ形ができる。
     ///
@@ -90,7 +244,10 @@ extension Sketch {
     /// ファイルをもう一度読む。毎フレーム呼ばず、`setup()` で読んで持ち回る。
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
-    // shot: 撮れない 読む先の SVG のファイルが要るが、このリポジトリは SVG のファイルを持たない
+    // shot: 1 snippet=002b4165
+    // shot: 2 snippet=bbba0594
+    // shot: 3 snippet=b33c97d0
+    // shot: 4 snippet=8ae46fb2
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         let url = try dataURL(path)
         let drawing = try SVGFile.parse(try TextFile.read(url, path: path), path: path)
@@ -118,8 +275,12 @@ extension Sketch {
     /// 呼び方と届く前の扱いは ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、
     /// そこから呼ぶ。** 届くまでの ``draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
     ///
+    /// > Note: 届いた形の見え方は ``loadShape(_:)`` と同じなので、絵はそちらを見ること。
+    /// > 何枚目のフレームで届くかは SVG の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
+    /// > ずれうるので、この口だけの絵は撮っていない。
+    ///
     /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。
-    // shot: 撮れない 読む先の SVG のファイルが要るが、このリポジトリは SVG のファイルを持たない
+    // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
         let surface = Self.requireLoadingCanvas("requestShape(_:)")
         let url = try dataURL(path)
