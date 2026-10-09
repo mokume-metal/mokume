@@ -52,6 +52,10 @@ final class ParamStore: DeclarationWatcher {
     private(set) var writeCount = 0
     /// 人へ 1 行伝える口。**検査から差し替える** — 失敗の文面を標準エラーから拾わずに見る。
     private let warn: (String) -> Void
+    /// 最後に名乗った、書けなかった理由。**同じ理由は書けるまで繰り返さない** — 面からの
+    /// 要求は当てるたびに書く (``flushNow()``) ので、書けない値が残っていると入力 1 回ごとに
+    /// 同じ 1 行が流れる。
+    private var lastWriteFailure: String?
 
     /// 保存を持たせる。宣言が 1 つも無ければ持たせない (書くものが無い)。
     static func makeIfNeeded(for registry: ParamRegistry, at url: URL = WorkDirectory.savedParams)
@@ -80,12 +84,17 @@ final class ParamStore: DeclarationWatcher {
     @discardableResult
     func restore() -> Restoration {
         defer { watchDeclarations() }
-        guard let data = try? Data(contentsOf: url) else { return Restoration() }
-        guard let saved = try? JSONDecoder().decode(Saved.self, from: data) else {
-            // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
-            // 既定値に戻る」は理由が出ないと追えない
+        // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
+        // 既定値に戻る」は理由が出ないと追えない。**黙るのは無いときだけ** (初めての起動)
+        let saved: Saved
+        do {
+            saved = try JSONDecoder().decode(Saved.self, from: Data(contentsOf: url))
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return Restoration()
+        } catch {
             warn(
-                "Could not read the saved values (\(url.path)). Starting from the defaults")
+                "Could not read the saved values (\(url.path)): \(Diagnostics.reason(error)). "
+                    + "Starting from the defaults")
             return Restoration()
         }
 
@@ -198,41 +207,47 @@ final class ParamStore: DeclarationWatcher {
             values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) })
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
+        // 書けなければ型と理由を名乗る (#2263)。非有限の数が 1 つ載っているだけで全部が
+        // 書けなくなるので、どの値かも言う
         let data: Data
         do {
             data = try encoder.encode(saved)
         } catch {
-            // 黙らない (#2263)。非有限の数が 1 つ載っているだけで全部が書けなくなる
-            warn(
-                "Could not encode the values as they stand to save them (\(url.path)): "
-                    + Self.encodingFailure(error))
+            let offender = Self.offender(of: error, in: saved).map { ": `\($0)` was refused" }
+            sayWriteFailure(
+                "Could not encode the values as they stand to save them (\(url.path))"
+                    + (offender ?? "") + " — \(Diagnostics.reason(error))")
             return
         }
-        guard (try? AtomicFile.write(data, to: url)) != nil else {
-            warn("Could not save the values as they stand (\(url.path))")
+        do {
+            try AtomicFile.write(data, to: url)
+        } catch {
+            sayWriteFailure(
+                "Could not save the values as they stand (\(url.path)): \(Diagnostics.reason(error))")
             return
         }
+        lastWriteFailure = nil
         writeCount += 1
+    }
+
+    /// 書けなかった理由を言う。**前と同じ理由なら言わない** (``lastWriteFailure``)。
+    private func sayWriteFailure(_ message: String) {
+        defer { lastWriteFailure = message }
+        guard message != lastWriteFailure else { return }
+        warn(message)
+    }
+
+    /// 符号化が拒んだ値の名前。拒まれた場所が値の並びの中でなければ `nil`。
+    private static func offender(of error: any Error, in saved: Saved) -> String? {
+        guard case EncodingError.invalidValue(_, let context) = error,
+            let index = context.codingPath.lazy.compactMap(\.intValue).first,
+            saved.values.indices.contains(index)
+        else { return nil }
+        return saved.values[index].name
     }
 }
 
 extension ParamStore {
-    /// 符号化の失敗を、型と理由の 1 行にする。
-    ///
-    /// **`localizedDescription` は使わない** — `EncodingError` では「正しい形式でない」
-    /// とだけ言い、どの値が何で拒まれたかを落とす。
-    nonisolated static func encodingFailure(_ error: any Error) -> String {
-        let detail: String
-        switch error {
-        case EncodingError.invalidValue(_, let context):
-            detail = context.debugDescription
-        default:
-            detail = String(describing: error)
-        }
-        let line = detail.split(whereSeparator: \.isNewline).joined(separator: " ")
-        return "\(type(of: error)): \(line)"
-    }
-
     /// 戻した結果。
     struct Restoration: Equatable {
         /// 範囲へ収めて戻したもの。
