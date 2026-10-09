@@ -23,11 +23,11 @@ nonisolated final class RecordingBroadcaster: Broadcasting, Sendable {
 ///
 /// 入り口を走っているスケッチに足さず、フレームの代わりに ``TextPort/supply()`` を自分で呼ぶ。
 @Suite("TCP の入り口", .serialized)
-struct ServerTests {
+struct TCPServerTests {
     /// 127.0.0.1 の `port` (既定は OS が選ぶ) で待つ入り口を開き、受け始めるまで待つ。
-    private func listening(told: Told, port: Int = 0) async throws -> (server: Server, port: Int) {
+    private func listening(told: Told, port: Int = 0) async throws -> (server: TCPServer, port: Int) {
         let source = StreamSource(kind: .tcp, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
-        let server = Server(
+        let server = TCPServer(
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
@@ -121,7 +121,7 @@ struct ServerTests {
         defer { server.close() }
         server.write("a")
         server.write("b")
-        #expect(told.count(containing: "No client is connected to the server on port 0") == 1)
+        #expect(told.count(containing: "No client is connected to the TCP server on port 0") == 1)
         #expect(told.count(containing: "\"a\"") == 1)
 
         let peer = StreamClient(port: port)
@@ -152,15 +152,15 @@ struct ServerTests {
         #expect(await until { peer.closedByPeer })
         server.write("late\n")
         server.write("later\n")
-        #expect(told.count(containing: "This server is stopped") == 1)
+        #expect(told.count(containing: "This TCP server is stopped") == 1)
         #expect(told.count(containing: "\"late\\n\"") == 1)  // 改行は \n と書いて出す
     }
 
     @Test("記録した列を流す入り口には相手が居ない。write は 1 度だけ知らせて何も書かない")
     func recordedServerHasNoClients() throws {
         let told = Told()
-        let recorded = Server(
-            port: nil, name: "server (recorded)", source: RecordedSource<String>(batches: [["a"]]),
+        let recorded = TCPServer(
+            port: nil, name: "tcp (recorded)", source: RecordedSource<String>(batches: [["a"]]),
             clients: nil, owner: nil, warn: told.append)
         try recorded.open()
         recorded.supply()
@@ -172,7 +172,7 @@ struct ServerTests {
 
         // 書く先が居れば書き、居なければ書かない (数えは書く先が持つ)
         let present = RecordingBroadcaster(clientCount: 2)
-        let live = Server(
+        let live = TCPServer(
             port: 5204, name: "tcp :5204", source: RecordedSource<String>(batches: []),
             clients: present, owner: nil, warn: told.append)
         try live.open()
@@ -195,7 +195,7 @@ struct ServerTests {
         peer.send(textScript.map { $0 + "\n" }.joined())
         let received = await collect(live, count: textScript.count)
 
-        let injected = IdleSketch().createServer(messages: textScript.map { [$0] })
+        let injected = IdleSketch().createTCPServer(messages: textScript.map { [$0] })
         try injected.open()
         var replayed: [String] = []
         for _ in textScript {
@@ -218,7 +218,7 @@ struct ServerTests {
         let holder = try PortHolder(port: 0, stream: true)
         let port = holder.port
         let source = StreamSource(kind: .tcp, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
-        let server = Server(
+        let server = TCPServer(
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
@@ -244,10 +244,10 @@ struct ServerTests {
     @Test("ポートの番号が 1〜65535 の外なら、作るときに投げる")
     func creationRefusesUnusablePorts() throws {
         let sketch = IdleSketch()
-        #expect(throws: NetworkFailure.invalidPort(0)) { try sketch.createServer(0) }
-        #expect(throws: NetworkFailure.invalidPort(65536)) { try sketch.createServer(65536) }
+        #expect(throws: NetworkFailure.invalidPort(0)) { try sketch.createTCPServer(0) }
+        #expect(throws: NetworkFailure.invalidPort(65536)) { try sketch.createTCPServer(65536) }
         // 両端は通る (走っていないスケッチなので、ポートは開かない)
-        let edge = try sketch.createServer(65535)
+        let edge = try sketch.createTCPServer(65535)
         #expect(edge.port == 65535)
         #expect(edge.state == .unavailable)
         #expect(edge.clientCount == 0)

@@ -5,8 +5,8 @@ import Foundation
 import MokumeCore
 import MokumeDiagnostics
 
-/// 文字列で他のアプリや機械とやりとりする入り口に共通の口。``Server`` (TCP・WebSocket) と
-/// ``UDPPort`` (UDP) がこれを継ぐ。
+/// 文字列で他のアプリや機械とやりとりする入り口に共通の口。``TCPServer``・``WebSocketServer``・
+/// ``UDPPort`` がこれを継ぐ。
 ///
 /// 毎フレーム呼ぶ口は無い。`draw()` の前に、前のフレームの後に届いた文字列が**全部**、
 /// 届いた順に ``messages`` へ入っている ([ADR-0024] 決定 6)。最新の 1 つだけではないので、
@@ -14,9 +14,9 @@ import MokumeDiagnostics
 ///
 /// ```swift
 /// final class Remote: Sketch {
-///     var server: Server?
+///     var server: TCPServer?
 ///     var size: Float = 0.5
-///     func setup() { server = try? createServer(5204) }
+///     func setup() { server = try? createTCPServer(5204) }
 ///     func draw() {
 ///         for line in server?.messages ?? [] {
 ///             size = Float(line) ?? size   // 0.3 のような数だけを読む
@@ -30,9 +30,14 @@ import MokumeDiagnostics
 ///
 /// | 方式 | 1 つのメッセージ | 送る向き |
 /// | --- | --- | --- |
-/// | TCP (``Sketch/createServer(_:)``) | 改行で区切った 1 行 | ``Server/write(_:)`` — 繋いでいる相手全員へ |
-/// | WebSocket (``Sketch/createWebSocketServer(_:)``) | 1 通 | ``Server/write(_:)`` — 繋いでいる相手全員へ 1 通ずつ |
+/// | TCP (``Sketch/createTCPServer(_:)``) | 改行で区切った 1 行 | ``TCPServer/write(_:)`` — 繋いでいる相手全員へ |
+/// | WebSocket (``Sketch/createWebSocketServer(_:)``) | 1 通 | ``WebSocketServer/send(_:)`` — 繋いでいる相手全員へ 1 通ずつ |
 /// | UDP (``Sketch/createUDP(listen:send:)``) | 1 つの datagram | ``UDPPort/send(_:)`` — 作るときに決めた宛先へ |
+///
+/// **送る動詞は、区切りを誰が持つかで分ける。** TCP は流れなので、``TCPServer/write(_:)`` は
+/// 書いたバイト列をそのまま流し、行の区切り (`"\n"`) は書く側が付ける (Processing の `write` と
+/// 同じ)。WebSocket と UDP は 1 通が 1 つのメッセージなので、``WebSocketServer/send(_:)``・
+/// ``UDPPort/send(_:)`` は 1 回で 1 通を送る。
 ///
 /// **末尾の改行は落とす。** `nc` で打った `0.3⏎` は、そのまま `Float(text)` で読める。
 /// **UTF-8 として読めないものは捨てる** — 推して読むと、黙って別の文字列を渡すからである。
@@ -54,15 +59,22 @@ import MokumeDiagnostics
 ///
 /// 使用中・拒まれた・失敗したときは、1 度だけ診断に出す。
 ///
+/// ## 相手が居ないことも読める
+///
+/// 繋いでくる相手を待つ入り口 (``TCPServer``・``WebSocketServer``) の `clientCount` は、そのフレームの
+/// 頭に繋いでいた相手の数である。相手が切れれば減り、止めた後は 0 になる。相手が 1 人も居ないときに
+/// 送っても届く先が無いので、1 度だけ診断に出す (送れたら、また言えるように戻る)。止めた後と、
+/// 記録した列を流している入り口で送ったときも、1 度だけ知らせて何もしない。
+///
 /// ## 観測と操作の面とは別のもの
 ///
 /// この入り口は、走っているスケッチを外から観測・操作する面 ([ADR-0018]) ではない。あちらは
 /// socket もポートも新設せず、作業ディレクトリのファイルだけでやりとりすると決めている
 /// (決定 1)。この入り口は、作品が自分で開く**外からの入力**の 1 つで、カメラや OSC と同じ入り口
-/// (``Inlet``) を通る。ポートが開くのは作品が作る口 (``Sketch/createServer(_:)`` ほか) を
+/// (``Inlet``) を通る。ポートが開くのは作品が作る口 (``Sketch/createTCPServer(_:)`` ほか) を
 /// 呼んだときだけで、mokume の実行や観測がポートを開くことはない。エージェントが値を差し込んで
 /// 絵を確かめるときは、ポートではなく観測の面と、記録した列の注入
-/// (``Sketch/createServer(messages:)``・``Sketch/createUDP(messages:)``) を使う。
+/// (``Sketch/createTCPServer(messages:)``・``Sketch/createUDP(messages:)`` ほか) を使う。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
@@ -75,6 +87,10 @@ public class TextPort: Inlet {
 
     let input: ExternalQueue<String>
     let source: any MessageSource<String>
+    /// 繋いでくる相手へ配る先。相手を待たない入り口 (UDP) と記録した列は `nil`。
+    let clients: (any Broadcasting)?
+    /// このフレームの頭に繋いでいた相手の数。
+    private(set) var connected = 0
     private weak var owner: (any Sketch)?
     private let warn: (String) -> Void
     /// 知らせた送れない理由。同じものは 2 度言わない。
@@ -83,11 +99,13 @@ public class TextPort: Inlet {
     private(set) var closed = false
 
     init(
-        port: Int?, name: String, source: any MessageSource<String>, owner: (any Sketch)?,
-        warn: @escaping (String) -> Void
+        port: Int?, name: String, source: any MessageSource<String>,
+        clients: (any Broadcasting)? = nil, owner: (any Sketch)?,
+        warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
         self.port = port
         self.source = source
+        self.clients = clients
         self.owner = owner
         self.warn = warn
         input = ExternalQueue(name: name, state: .unavailable)
@@ -114,7 +132,7 @@ public class TextPort: Inlet {
     public func supply() {
         source.pump(into: input)
         messages = input.take()
-        refresh()
+        connected = clients?.clientCount ?? 0
     }
 
     public func close() {
@@ -123,18 +141,41 @@ public class TextPort: Inlet {
         closeOutbound()
         input.setState(.stopped)
         messages = []
-        refresh()
+        connected = 0
     }
 
     public var report: SourceReport? { input.report }
 
     // MARK: - 継ぐ型が足すもの
 
-    /// フレームの頭に、送る側の数え (繋いでいる相手の数など) を読み直す。
-    func refresh() {}
-
     /// 閉じるときに、送る側を閉じる。
     func closeOutbound() {}
+
+    /// 繋いでいる相手全員へ配る。止めた後・記録した列・相手が 0 人なら、理由ごとに 1 度だけ
+    /// 知らせて何もしない。`kind` は文面の名乗り (`TCP server` など)、`verb` は `written` か `sent`。
+    func deliver(_ text: String, by kind: String, verb: String) {
+        guard !closed else {
+            tellOnce("stopped", "This \(kind) is stopped, so \(Self.preview(text)) was not \(verb)")
+            return
+        }
+        guard let clients else {
+            tellOnce(
+                "recorded",
+                "This \(kind) replays recorded messages and has no clients, so "
+                    + "\(Self.preview(text)) was not \(verb)")
+            return
+        }
+        guard clients.clientCount > 0 else {
+            tellOnce(
+                "noClient",
+                "No client is connected to the \(kind) on port \(port ?? 0), so "
+                    + "\(Self.preview(text)) was not \(verb). It reaches the clients connected "
+                    + "when it is \(verb)")
+            return
+        }
+        forget("noClient")
+        clients.broadcast(text)
+    }
 
     /// 理由ごとに 1 度だけ知らせる。
     func tellOnce(_ key: String, _ message: String) {

@@ -16,7 +16,7 @@ import Synchronization
 //
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 
-/// 繋いでいる相手全員へ書ける出どころ (``Server`` の書く向き)。
+/// 繋いでいる相手全員へ書ける出どころ (``TCPServer``・``WebSocketServer`` の送る向き)。
 protocol Broadcasting: AnyObject {
     /// いま繋いでいる相手の数。
     var clientCount: Int { get }

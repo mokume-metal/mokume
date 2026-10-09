@@ -23,7 +23,7 @@ import mokume
 ///
 /// **書き出しと台帳では回さない** (カタログの `reachesOutside`)。実物のポートを開くので、
 /// 外から届いた値が絵に入りうる ([ADR-0028] 決定 7)。文字列で動く絵を書き出すなら、
-/// `createServer(messages:)`・`createUDP(messages:)` で記録した列を流す。
+/// `createTCPServer(messages:)`・`createUDP(messages:)`・`createWebSocketServer(messages:)` で記録した列を流す。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class NetAndReply: Sketch {
@@ -32,16 +32,16 @@ final class NetAndReply: Sketch {
     /// 円の並び。左から TCP・UDP・WebSocket。
     private static let names = ["TCP 5204", "UDP 6000", "WebSocket 8025"]
 
-    private var server: Server?
+    private var server: TCPServer?
     private var udp: UDPPort?
-    private var socket: Server?
+    private var socket: WebSocketServer?
     /// 円ごとに、届いた数 (0〜1)。直径は、円の枠に対するこの割合。
     private var sizes: [Float] = [0.5, 0.5, 0.5]
     /// 円ごとに、届いた `hit` の数。
     private var hits = [0, 0, 0]
 
     func setup() {
-        server = try? createServer(5204)
+        server = try? createTCPServer(5204)
         // 受けるのは 6000、送り返すのは 6001 (同じ機械の `nc -u -l 6001` で見える)
         udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001))
         socket = try? createWebSocketServer(8025)
@@ -86,7 +86,7 @@ final class NetAndReply: Sketch {
             switch lane {
             case 0: server?.write("hit\n")
             case 1: udp?.send("hit")
-            default: socket?.write("hit")
+            default: socket?.send("hit")
             }
         }
     }
@@ -106,10 +106,12 @@ final class NetAndReply: Sketch {
         switch lane {
         case 1:
             return udp?.state == .running ? .connected : .closed
+        case 0:
+            guard let server, server.state == .running else { return .closed }
+            return server.clientCount > 0 ? .connected : .waiting
         default:
-            let waiting = lane == 0 ? server : socket
-            guard let waiting, waiting.state == .running else { return .closed }
-            return waiting.clientCount > 0 ? .connected : .waiting
+            guard let socket, socket.state == .running else { return .closed }
+            return socket.clientCount > 0 ? .connected : .waiting
         }
     }
 

@@ -14,10 +14,10 @@ import Testing
 @Suite("WebSocket の入り口", .serialized)
 struct WebSocketServerTests {
     /// 127.0.0.1 の `port` (既定は OS が選ぶ) で待つ入り口を開き、受け始めるまで待つ。
-    private func listening(told: Told, port: Int = 0) async throws -> (server: Server, port: Int) {
+    private func listening(told: Told, port: Int = 0) async throws -> (server: WebSocketServer, port: Int) {
         let source = StreamSource(
             kind: .webSocket, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
-        let server = Server(
+        let server = WebSocketServer(
             port: port, name: "websocket :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
@@ -62,8 +62,8 @@ struct WebSocketServerTests {
 
     // MARK: - 書く
 
-    @Test("write は繋いでいる相手全員へ、1 回ごとに 1 通の text として届く")
-    func writeReachesEveryClient() async throws {
+    @Test("send は繋いでいる相手全員へ、1 回ごとに 1 通の text として届く")
+    func sendReachesEveryClient() async throws {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
@@ -73,15 +73,15 @@ struct WebSocketServerTests {
         defer { second.close() }
         #expect(await clients(server, reach: 2))
 
-        server.write("hit")
-        server.write("size 0.5\n")
+        server.send("hit")
+        server.send("size 0.5\n")
         #expect(await until { first.received.count == 2 && second.received.count == 2 })
         #expect(first.received == ["hit", "size 0.5\n"])
         #expect(second.received == ["hit", "size 0.5\n"])
         #expect(told.lines.isEmpty)
     }
 
-    @Test("相手が切れたら clientCount が減り、相手が居ないときの write は 1 度だけ知らせる")
+    @Test("相手が切れたら clientCount が減り、相手が居ないときの send は 1 度だけ知らせる")
     func disconnectedClientsAreForgotten() async throws {
         let told = Told()
         let (server, port) = try await listening(told: told)
@@ -92,18 +92,18 @@ struct WebSocketServerTests {
         #expect(await clients(server, reach: 0))
         #expect(server.state == .running)  // 受け口は開いたまま。次の相手を待つ
 
-        server.write("a")
-        server.write("b")
-        #expect(told.count(containing: "No client is connected to the server on port 0") == 1)
+        server.send("a")
+        server.send("b")
+        #expect(told.count(containing: "No client is connected to the WebSocket server on port 0") == 1)
 
         let next = WebSocketClient(port: port)
         defer { next.close() }
         #expect(await clients(server, reach: 1))
-        server.write("c")
+        server.send("c")
         #expect(await until { next.received == ["c"] })
     }
 
-    @Test("止めたら相手は切れ、state は stopped・clientCount は 0 になる")
+    @Test("止めたら相手は切れ、state は stopped・clientCount は 0 で、send は 1 度だけ知らせる")
     func stopEndsEverything() async throws {
         let told = Told()
         let (server, port) = try await listening(told: told)
@@ -115,6 +115,44 @@ struct WebSocketServerTests {
         #expect(server.state == .stopped)
         #expect(server.clientCount == 0)
         #expect(await until { peer.closedByPeer })
+        server.send("late")
+        server.send("later")
+        #expect(told.count(containing: "This WebSocket server is stopped") == 1)
+        #expect(told.count(containing: "\"late\" was not sent") == 1)
+    }
+
+    @Test("記録した列を流す入り口には相手が居ない。send は 1 度だけ知らせて何も送らない")
+    func recordedServerHasNoClients() throws {
+        let told = Told()
+        let recorded = WebSocketServer(
+            port: nil, name: "websocket (recorded)", source: RecordedSource<String>(batches: [["a"]]),
+            clients: nil, owner: nil, warn: told.append)
+        try recorded.open()
+        recorded.supply()
+        #expect(recorded.messages == ["a"])
+        #expect(recorded.clientCount == 0)
+        recorded.send("x")
+        recorded.send("y")
+        #expect(told.count(containing: "This WebSocket server replays recorded messages and has no clients") == 1)
+
+        // 送る先が居れば 1 通ずつ送り、居なければ送らない (数えは送る先が持つ)
+        let present = RecordingBroadcaster(clientCount: 2)
+        let live = WebSocketServer(
+            port: 8025, name: "websocket :8025", source: RecordedSource<String>(batches: []),
+            clients: present, owner: nil, warn: told.append)
+        try live.open()
+        live.supply()
+        #expect(live.clientCount == 2)
+        live.send("hit")
+        #expect(present.written == ["hit"])
+    }
+
+    @Test("作る口の注入は WebSocket の受け口と同じ型を返し、ポートを開かない")
+    func injectedServerIsAWebSocketServer() throws {
+        let injected: WebSocketServer = IdleSketch().createWebSocketServer(messages: [["a"], []])
+        #expect(injected.port == nil)
+        #expect(injected.report?.name == "websocket (recorded)")
+        #expect(injected.source is RecordedSource<String>)
     }
 
     // MARK: - 注入
@@ -130,7 +168,7 @@ struct WebSocketServerTests {
         for text in textScript { peer.send(text) }
         let received = await collect(live, count: textScript.count)
 
-        let injected = IdleSketch().createServer(messages: textScript.map { [$0] })
+        let injected = IdleSketch().createWebSocketServer(messages: textScript.map { [$0] })
         try injected.open()
         var replayed: [String] = []
         for _ in textScript {
@@ -152,7 +190,7 @@ struct WebSocketServerTests {
         let port = holder.port
         let source = StreamSource(
             kind: .webSocket, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
-        let server = Server(
+        let server = WebSocketServer(
             port: port, name: "websocket :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()

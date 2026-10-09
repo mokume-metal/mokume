@@ -59,16 +59,16 @@ struct TextOutcome: Equatable {
 let textScript = ["0.25", "hit", "0.75", "fade", "hit"]
 
 /// 受け始めるまで待って、実際に開いたポートを返す。
-func boundPort(of server: Server, source: StreamSource) async throws -> Int {
+func boundPort(of server: TextPort, source: StreamSource) async throws -> Int {
     #expect(await until { server.state == .running })
     return try #require(source.boundPort)
 }
 
 /// フレームを回すように取り出しを続け、繋いでいる相手の数が `count` になるまで (か期限まで) 待つ。
-func clients(_ server: Server, reach count: Int) async -> Bool {
+func clients(_ server: TextPort, reach count: Int) async -> Bool {
     await until {
         server.supply()
-        return server.clientCount == count
+        return server.connected == count
     }
 }
 
