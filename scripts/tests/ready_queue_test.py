@@ -37,7 +37,8 @@
    Issue は `[-]`。**番号・分類の位置は動かさない** — 既存の読み手は先頭の 2 語を読む
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
-検査は判定そのものを踏む。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
+検査は判定そのものを踏む。親の印 (labels) は本物と同じく問い合わせが欄を求めたときだけ
+返すので、問い合わせから欄が落ちれば Design の根の検査が赤くなる (#2228)。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
 落ちる (1 は呼び出しログと終了コードの両方で見る)。
 
 実行は make ci-check (CI もこれを呼ぶ)。
@@ -88,7 +89,16 @@ if [ "$1" = "api" ]; then
       # 見分ける (家族のほうは型を読まない)。FAIL_PARENTS で読み取りを失敗させる
       if [[ "$*" == *"issueType"* ]]; then
         [ -z "${FAIL_PARENTS:-}" ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
-        emit "$FIX/parents.json"; exit 0
+        # 親の印 (labels) は、問い合わせが欄を求めたときだけ返す — 本物も求めない欄は返さない。
+        # いつも返すと、問い合わせから欄が落ちても検査は緑のまま、本番では印が常に「無い」と
+        # 読まれて Design の根が黙って効かなくなる (#2228)
+        if [[ "$*" != *"labels("* ]]; then
+          jq 'walk(if type == "object" then del(.labels) else . end)' "$FIX/parents.json" \\
+            > "$FIX/parents-asked.json"
+        else
+          cp "$FIX/parents.json" "$FIX/parents-asked.json"
+        fi
+        emit "$FIX/parents-asked.json"; exit 0
       fi
       # 着手印の家族 (#1391)。FAIL_FAMILY で読み取りを失敗させる
       if [[ "$*" == *"subIssues"* ]]; then
