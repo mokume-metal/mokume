@@ -182,12 +182,23 @@ struct RemoteParamsTests {
         }
     }
 
+    /// **箱があった後に宣言が全部消える場面を通す。** 作ったばかりの箱は最初から空なので、
+    /// 空の応答を読ませるだけでは、宣言が 0 件になっても組み直さない退行を見逃す (#2288)。
     @Test("宣言が 1 つも無ければ、箱も無い")
     func staysEmptyWithoutDeclarations() throws {
         try withFacet { facet in
             try publish([], at: facet)
             let params = RemoteParams(directory: facet)
             params.refresh()
+            #expect(params.boxes.isEmpty)
+
+            try publish([ParamDeclaration(name: "size", value: .float(12))], revision: 2, at: facet)
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["size"])
+
+            // 宣言を持たないスケッチに替わった
+            try publish([], revision: 3, at: facet)
+            #expect(params.refresh())
             #expect(params.boxes.isEmpty)
         }
     }

@@ -30,12 +30,14 @@ struct ShadowTests {
     /// - Parameters:
     ///   - scale: 世界の大きさの倍率。1 なら面と同じ尺度、0.1 なら 10 分の 1 の世界。
     ///   - offset: 球の横のずれ (倍率を掛ける前)。
+    ///   - sphereCasts: 球を落とす側に置くか。床はいつも落とす側から外す。
     private func floorAndSphere(
         _ canvas: Canvas, shadows: Bool = true, scale: Float = 1, offset: Float = 0,
-        range: Float? = nil, extra: (Canvas) -> Void = { _ in }
+        range: Float? = nil, sphereCasts: Bool = true, extra: (Canvas) -> Void = { _ in }
     ) throws -> DisplayImage {
         try drawFloorAndSphere(
-            canvas, shadows: shadows, scale: scale, offset: offset, range: range, extra: extra)
+            canvas, shadows: shadows, scale: scale, offset: offset, range: range,
+            sphereCasts: sphereCasts, extra: extra)
         return try canvas.target.encodeForDisplay()
     }
 
@@ -45,7 +47,7 @@ struct ShadowTests {
     /// [#1868]: https://github.com/mokume-metal/mokume/issues/1868
     private func drawFloorAndSphere(
         _ canvas: Canvas, shadows: Bool = true, scale: Float = 1, offset: Float = 0,
-        range: Float? = nil, extra: (Canvas) -> Void = { _ in }
+        range: Float? = nil, sphereCasts: Bool = true, extra: (Canvas) -> Void = { _ in }
     ) throws {
         let center: Float = 64
         try canvas.draw {
@@ -69,7 +71,7 @@ struct ShadowTests {
             canvas.box(190 * scale, 8 * scale, 190 * scale)
             canvas.pop()
 
-            canvas.castShadow(true)
+            canvas.castShadow(sphereCasts)
             canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
             canvas.push()
             canvas.translate(center + offset * scale, 8 * scale, 0)
@@ -275,21 +277,29 @@ struct ShadowTests {
             "範囲を変えても影の細かさが変わっていない (\(untunedDifference))")
     }
 
+    /// **球そのものを落とす側から外す。** 以前は `extra` で外していたが、補助が球の手前で
+    /// 落とす側へ戻すので、比べる 2 枚が同じ場面になり何も見ていなかった (#2291)。
+    /// 物差しは ``shadowsDarkenTheFloor()`` と同じ (影を切った絵より 20 段以上暗い画素)。
     @Test("落とす側から外した形は、影を作らない")
     func excludedShapesCastNothing() throws {
+        let lit = try floorAndSphere(try makeCanvas(), shadows: false)
         let casting = try floorAndSphere(try makeCanvas())
-        let notCasting = try floorAndSphere(try makeCanvas()) { $0.castShadow(false) }
-        // extra は castShadow(true) より前に呼ばれるので、球は落とす側のまま。
-        // ここでは受ける側を切って確かめる
+        let notCasting = try floorAndSphere(try makeCanvas(), sphereCasts: false)
         let notReceiving = try floorAndSphere(try makeCanvas()) { $0.receiveShadow(false) }
 
-        var difference = 0
-        for y in 0..<casting.height {
-            for x in 0..<casting.width
-            where Int(casting[x, y].red) != Int(notReceiving[x, y].red) { difference += 1 }
+        func darkened(_ image: DisplayImage) -> Int {
+            var count = 0
+            for y in 0..<lit.height {
+                for x in 0..<lit.width
+                where Int(lit[x, y].red) - Int(image[x, y].red) > 20 { count += 1 }
+            }
+            return count
         }
-        #expect(difference > 100, "受ける側を切っても絵が変わらない")
-        #expect(casting.bytes == notCasting.bytes)
+        // 落とす側に置いた球は影を作る (これが無ければ下の 0 は何も見ていない)
+        #expect(darkened(casting) > 100, "球を落とす側に置いても影が無い")
+        #expect(darkened(notCasting) == 0, "落とす側から外した球が影を作っている")
+        // 受ける側を切った床にも、影は落ちない
+        #expect(darkened(notReceiving) == 0, "受ける側を切っても影が落ちている")
     }
 
     // MARK: - 寿命と作り直し
@@ -356,10 +366,15 @@ struct ShadowTests {
             canvas.shadowRange(-1)
             canvas.shadowDetail(1)
             canvas.shadowDetail(99_999)
+            // **受け付けた値を先に置いてから壊す。** 大小で見ると、∞ を受け付けても
+            // `> 0` が真になる (#2290)
+            canvas.shadowBias(0.02)
             canvas.shadowBias(Float.infinity)
+            canvas.shadowBias(Float.nan)
+            canvas.shadowBias(-1)
             #expect(canvas.shadowRangeValue == 50)
             #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
-            #expect(canvas.shadowBiasValue > 0)
+            #expect(canvas.shadowBiasValue == 0.02)
         }
     }
 

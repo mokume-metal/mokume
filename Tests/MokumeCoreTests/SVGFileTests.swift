@@ -529,8 +529,19 @@ struct SVGFileTests {
         }
     }
 
+    /// **投げた case を見る。** `parse` は `throws(DataFailure)` なので、型だけを見ると
+    /// どの case でも通る (#2289)。
     @Test("空の文字は malformed")
     func emptyTextThrowsMalformed() {
-        #expect(throws: DataFailure.self) { try SVGFile.parse("", path: "empty.svg") }
+        do {
+            _ = try SVGFile.parse("", path: "empty.svg")
+            Issue.record("空の文字を読めたことになっている")
+        } catch {
+            guard case .malformed(let path, _, _) = error else {
+                Issue.record("malformed でない: \(error)")
+                return
+            }
+            #expect(path == "empty.svg")
+        }
     }
 }
