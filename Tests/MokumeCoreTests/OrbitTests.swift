@@ -180,6 +180,34 @@ struct OrbitTests {
         #expect(firstRatio < 1)
     }
 
+    /// **3 つの感度は、それぞれの軸にだけ掛かる。** 上の検査はどれも感度 1 で呼ぶので、
+    /// 縦に横の感度を掛けても、寄りの感度を捨てても緑のままだった (#2287)。倍率を
+    /// 2・3・0.5 と軸ごとに変えて、取り違えれば比が食い違うようにする。
+    @Test("横・縦・寄りの感度は、それぞれの軸にだけ掛かる")
+    func eachSensitivityScalesItsOwnAxis() {
+        func moved(by sensitivity: SIMD3<Float>) -> (yaw: Float, pitch: Float, zoom: Float) {
+            var orbit = fitting()
+            orbit.maximumDistance = .infinity
+            orbit.minimumDistance = 0.001
+            let start = orbit
+            orbit.advance(
+                dragX: 10, dragY: 10, scroll: 2, isDragging: true, sensitivity: sensitivity)
+            return (
+                orbit.yaw - start.yaw, orbit.pitch - start.pitch,
+                log(orbit.distance / start.distance))
+        }
+        let plain = moved(by: SIMD3(1, 1, 1))
+        // 1 のときに動いていなければ、比は何も見ていない
+        #expect(plain.yaw != 0)
+        #expect(plain.pitch != 0)
+        #expect(plain.zoom != 0)
+
+        let scaled = moved(by: SIMD3(2, 3, 0.5))
+        #expect(abs(scaled.yaw / plain.yaw - 2) < 1e-4)
+        #expect(abs(scaled.pitch / plain.pitch - 3) < 1e-4)
+        #expect(abs(scaled.zoom / plain.zoom - 0.5) < 1e-4)
+    }
+
     @Test("手で書いた値も限界へ収める")
     func handWrittenValuesAreClamped() {
         var orbit = fitting()

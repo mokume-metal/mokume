@@ -1490,7 +1490,20 @@ struct TextTests {
 
     /// 色を持つ字形を検査に使う。**その字が無い環境なら見送る** — 検査の対象は
     /// 「色が失われないこと」であって、この環境に絵文字があることではない。
-    private let coloredScalar: Unicode.Scalar = "\u{1F534}"  // 🔴
+    nonisolated private static let coloredScalar: Unicode.Scalar = "\u{1F534}"  // 🔴
+    private var coloredScalar: Unicode.Scalar { Self.coloredScalar }
+
+    /// この環境に、色を持つ字形の書体があるか。**被検査の ``Typeface`` を通さず、CoreText に
+    /// 直に問う** — 見送りを被検査コードで決めていた頃は、字形を引く側が壊れると 4 本とも
+    /// 黙って合格した (#2292)。見送りは `.enabled(if:)` に出し、記録にスキップとして残す。
+    nonisolated static let hasColoredGlyphs: Bool = {
+        let base = CTFontCreateWithName("Helvetica" as CFString, 40, nil)
+        let text = String(coloredScalar) as CFString
+        let font = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        var units = Array(String(coloredScalar).utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        return CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count) && glyphs[0] != 0
+    }()
 
     /// 描いた絵の中で、いちばん彩度の高い画素。
     private func mostSaturated(_ image: DisplayImage, width: Int, height: Int) -> (
@@ -1510,13 +1523,14 @@ struct TextTests {
         return best
     }
 
-    /// 色を持つ字を 1 つ描いて読み戻す。この環境にその字が無ければ `nil`。
+    /// 色を持つ字を 1 つ描いて読み戻す。**引けなければ落とす** (環境に無いときは
+    /// ``hasColoredGlyphs`` が先に見送っている)。
     private func drawColoredGlyph(fill: LinearRGBA, background: LinearRGBA = .linear(
-        red: 0, green: 0, blue: 0)) throws -> DisplayImage? {
+        red: 0, green: 0, blue: 0)) throws -> DisplayImage {
         let canvas = try makeCanvas(width: 64, height: 64)
         canvas.noTextFont()
         canvas.textSize(40)
-        guard canvas.typeface.glyph(for: coloredScalar) != nil else { return nil }
+        _ = try #require(canvas.typeface.glyph(for: coloredScalar), "色を持つ字形を引けない")
         try canvas.draw {
             canvas.background(background)
             canvas.fill(fill)
@@ -1525,9 +1539,11 @@ struct TextTests {
         return try pixels(of: canvas)
     }
 
-    @Test("色を持つ字形は、色のまま描かれる")
+    @Test(
+        "色を持つ字形は、色のまま描かれる",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
     func aColoredGlyphKeepsItsColor() throws {
-        guard let image = try drawColoredGlyph(fill: white) else { return }
+        let image = try drawColoredGlyph(fill: white)
         let brightest = mostSaturated(image, width: 64, height: 64)
         // 塗りは白なので、色が出ているなら字形の側が持っていた色である
         #expect(brightest.saturation > 64)
@@ -1535,11 +1551,12 @@ struct TextTests {
         #expect(brightest.red > brightest.blue)
     }
 
-    @Test("色を持つ字形に、塗りの色は掛からない")
+    @Test(
+        "色を持つ字形に、塗りの色は掛からない",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
     func theFillColorDoesNotTintAColoredGlyph() throws {
-        guard let onWhite = try drawColoredGlyph(fill: white),
-            let onBlue = try drawColoredGlyph(fill: .linear(red: 0, green: 0, blue: 1))
-        else { return }
+        let onWhite = try drawColoredGlyph(fill: white)
+        let onBlue = try drawColoredGlyph(fill: .linear(red: 0, green: 0, blue: 1))
         // 塗りを青にしても、字形の色は動かない。
         // **画素の並びごとではなく代表の 1 点で比べる** — 食い違ったときに、
         // 面いっぱいのバイト列ではなく色そのものが表示に出る
@@ -1549,12 +1566,13 @@ struct TextTests {
         #expect(onWhite == onBlue)
     }
 
-    @Test("色を持つ字形にも、塗りの透明度は効く")
+    @Test(
+        "色を持つ字形にも、塗りの透明度は効く",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
     func theFillAlphaStillReachesAColoredGlyph() throws {
         let half = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
-        guard let opaque = try drawColoredGlyph(fill: white),
-            let faded = try drawColoredGlyph(fill: half)
-        else { return }
+        let opaque = try drawColoredGlyph(fill: white)
+        let faded = try drawColoredGlyph(fill: half)
         let solid = mostSaturated(opaque, width: 64, height: 64)
         let thin = mostSaturated(faded, width: 64, height: 64)
         // 黒地の上なので、薄くすれば色も彩度も引く
@@ -1577,15 +1595,16 @@ struct TextTests {
         #expect(brightest.blue < 32)
     }
 
-    @Test("焼き場は、色を持つ字形だけを色つきと見分ける")
+    @Test(
+        "焼き場は、色を持つ字形だけを色つきと見分ける",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
     func theAtlasMarksOnlyColoredGlyphs() throws {
         let canvas = try makeCanvas(width: 64, height: 64)
         canvas.noTextFont()
         canvas.textSize(40)
         let face = canvas.typeface
-        guard let colored = face.glyph(for: coloredScalar),
-            let plain = face.glyph(for: "A")
-        else { return }
+        let colored = try #require(face.glyph(for: coloredScalar), "色を持つ字形を引けない")
+        let plain = try #require(face.glyph(for: "A"))
         #expect(canvas.glyphEntry(for: colored)?.isColored == true)
         #expect(canvas.glyphEntry(for: plain)?.isColored == false)
     }
