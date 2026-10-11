@@ -81,6 +81,22 @@ struct WebSocketServerTests {
         #expect(told.lines.isEmpty)
     }
 
+    @Test("空の文字列の send は、空の 1 通の text として届く")
+    func emptySendArrivesAsAnEmptyMessage() async throws {
+        let told = Told()
+        let (server, port) = try await listening(told: told)
+        defer { server.close() }
+        let peer = WebSocketClient(port: port)
+        defer { peer.close() }
+        #expect(await clients(server, reach: 1))
+
+        server.send("")
+        server.send("x")
+        #expect(await until { peer.received.count == 2 })
+        #expect(peer.received == ["", "x"])
+        #expect(told.lines.isEmpty)
+    }
+
     @Test("相手が切れたら clientCount が減り、相手が居ないときの send は 1 度だけ知らせる")
     func disconnectedClientsAreForgotten() async throws {
         let told = Told()
