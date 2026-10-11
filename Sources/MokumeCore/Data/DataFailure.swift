@@ -16,6 +16,14 @@
 /// 壊れていたかを添えて投げる (``malformed(path:line:reason:)``)。URL から読んだ本文も
 /// 同じで、届いたが壊れている本文はファイルと同じ case で投げる。
 ///
+/// **ファイルを読めなかった事情は、どこで止まったかで分ける** — 直す所がそれぞれ違うため。
+///
+/// - 名前が在るファイルに解けない (``notFound(path:searched:)``): 置き場を直す
+/// - 解けたが開けない (``unopenable(path:reason:)``): ディレクトリだったなら置き場を、読む
+///   権利が無いなら権利を直す
+/// - 開けたが、中身が UTF-8 の文字でない (``unreadable(path:)``): UTF-8 で保存し直す
+/// - 文字だが、形が壊れている (``malformed(path:line:reason:)``): 中身を直す
+///
 /// `path` は口に渡した名前で、URL から読んだときはその URL である。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
@@ -23,7 +31,10 @@
 public enum DataFailure: Error, Equatable, Sendable {
     /// その名前のファイルが見つからない。`searched` は探した場所を、探した順に並べたもの。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、UTF-8 の文字として読めない。
+    /// 見つかったが、開けない。`reason` は OS が名乗った開けなかった事情 (ディレクトリだった・
+    /// 読む権利が無い、など)。中身の文字の符号化とは関係が無いので、直すのは置き場か権利である。
+    case unopenable(path: String, reason: String)
+    /// 中身 (開けたファイル・URL から受け取った本文) を、UTF-8 の文字として読めない。
     case unreadable(path: String)
     /// 文字としては読めたが、形が壊れている。`line` は壊れていた行で、1 から数える。
     case malformed(path: String, line: Int, reason: String)
@@ -39,6 +50,8 @@ extension DataFailure: CustomStringConvertible {
         switch self {
         case .notFound(let path, let searched):
             AssetFailure.notFound(path: path, searched: searched).description
+        case .unopenable(let path, let reason):
+            "\"\(path)\" was found but cannot be opened: \(reason)"
         case .unreadable(let path):
             "\"\(path)\" cannot be read as UTF-8 text. Check that the file is saved as UTF-8"
         case .malformed(let path, let line, let reason):
