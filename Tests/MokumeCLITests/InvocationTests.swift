@@ -68,6 +68,81 @@ struct InvocationTests {
         #expect(RunCommand.configurationArguments(invocation.configuration) == ["-c", "release"])
     }
 
+    // ------------------------------------------------------------ 構成の値 (#2316)
+
+    /// **組み立ての前に断る。** 検めずに道具立てへ渡していた頃は、`swift build
+    /// --show-bin-path -c Release` が usage を出して非 0 で終わり、その空の出力が
+    /// 「Package.swift に実行ファイルが無い」と名乗られていた
+    /// ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    ///
+    /// **大小を読み替えない。** 綴りは道具立てに合わせる (``Invocation/configurationFlags``)。
+    @Test(
+        "debug / release 以外の構成は、受け付ける値を名指しして止まる",
+        arguments: ["Release", "DEBUG", "bogus", "", " release"])
+    func refusesAnUnknownConfiguration(configuration: String) {
+        for flag in Invocation.configurationFlags {
+            let thrown = #expect(throws: CommandFailure.self) {
+                try Invocation.parse([flag, configuration, "/tmp/sketch"])
+            }
+            guard case .usage(let message) = thrown else {
+                Issue.record("使い方の誤りとして止まっていない: \(String(describing: thrown))")
+                continue
+            }
+            #expect(message.contains("debug"), "受け付ける値 (debug) を名指していない: \(message)")
+            #expect(message.contains("release"), "受け付ける値 (release) を名指していない: \(message)")
+            #expect(message.contains(": \(configuration)"), "渡した値を名乗っていない: \(message)")
+        }
+    }
+
+    /// 裏側。受け付ける値と、渡さない場合はいままでどおり通る。
+    @Test("debug・release と、構成を渡さない場合は通る")
+    func acceptsTheToolchainsConfigurations() throws {
+        for configuration in ["debug", "release"] {
+            for flag in Invocation.configurationFlags {
+                #expect(
+                    try Invocation.parse([flag, configuration])
+                        == Invocation(configuration: configuration))
+            }
+        }
+        #expect(try Invocation.parse(["/tmp/sketch"]).configuration == nil)
+    }
+
+    /// **口ごとに、`swift` を 1 本も起こす前に止まる。** 在らない場所を渡しても
+    /// 「スケッチが見つからない」(`Package.swift` を確かめる段) より先に断るので、
+    /// その後ろにある `dump-package`・`--show-bin-path`・`build` は走りようがない。
+    @Test("run・watch・render は、場所を確かめる前に構成の誤りで止まる")
+    func eachDoorRefusesBeforeLookingAtThePlace() {
+        let nowhere = "/nonexistent-\(UUID().uuidString)"
+        let doors: [(String, () throws(CommandFailure) -> Void)] = [
+            ("run", { () throws(CommandFailure) in try RunCommand.run(["-c", "Release", nowhere]) }),
+            (
+                "watch",
+                { () throws(CommandFailure) in
+                    try WatchCommand.run(["-c", "DEBUG", nowhere]) { _, _ in }
+                }
+            ),
+            (
+                "render",
+                { () throws(CommandFailure) in
+                    try RenderCommand.run([
+                        "-c", "bogus", "--fps", "10", "--seconds", "0.1", "--out", "c.mov", nowhere,
+                    ])
+                }
+            ),
+        ]
+        for (name, door) in doors {
+            do {
+                try door()
+                Issue.record("\(name) が止まらなかった")
+            } catch {
+                guard case .usage = error else {
+                    Issue.record("\(name) が構成の誤りより先に別の段で止まった: \(error)")
+                    continue
+                }
+            }
+        }
+    }
+
     /// **知らない選択肢を黙って場所にしない。** 「スケッチが見つからない: …/-c」では
     /// 何を直せばよいか分からない。
     @Test("知らない選択肢は、使い方を出して止まる")
