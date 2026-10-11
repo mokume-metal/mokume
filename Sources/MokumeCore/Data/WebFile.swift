@@ -45,32 +45,60 @@ nonisolated enum WebFile {
         return try accept(data, response, path: path)
     }
 
-    /// 本文を受け取る。**受け取るまで (届かないと分かるまで) 返らない。**
+    /// 同期の受け取り (``fetchWaiting(_:path:limit:)``) が待つ上限。**呼んでから返るまでの
+    /// 総時間で数える** (#2264)。
     ///
-    /// 同期の読み込み (``Sketch/loadJSONObject(_:)``) のための道で、待つ上限は `URLRequest` の
-    /// 既定 (60 秒)。受け取りは共有の受け口の側の仕事で返ってくるので、呼んだ側 (main actor)
-    /// を塞いで待っても詰まらない。
-    static func fetchWaiting(_ url: URL, path: String) throws(DataFailure) -> Data {
+    /// ``Sketch/loadJSONObject(_:)`` の説明が名乗る「最長 60 秒」はこの値で、変えるなら説明も
+    /// 同じく直す。`URLRequest.timeoutInterval` だけでは上限にならない — あれは音沙汰の無い間の
+    /// 期限で、データが届くたびに数え直すので、少しずつ返し続けるサーバには切れない。
+    static let waitLimit: Duration = .seconds(60)
+
+    /// 本文を受け取る。**受け取り終わるか、届かないと分かるか、`limit` が過ぎるまで返らない。**
+    ///
+    /// 同期の読み込み (``Sketch/loadJSONObject(_:)``) のための道。受け取りは共有の受け口の側の
+    /// 仕事で返ってくるので、呼んだ側 (main actor) を塞いで待っても詰まらない。
+    ///
+    /// 呼んでから `limit` までに受け取り終わらなければ、受け取りを取り消して
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる。少しずつ届き続けていても待ち続けない。
+    ///
+    /// - Parameter limit: 待つ上限。製品の経路では ``waitLimit`` のまま。**検査だけが縮める**
+    ///   — 期限を越える応答を作る検査が、毎回 60 秒待たずに済むように (`RenderDevice` の
+    ///   `signalWaitLimit` と同じ形)。
+    static func fetchWaiting(_ url: URL, path: String, limit: Duration = waitLimit) throws(DataFailure) -> Data {
         // 受け取りの仕事と待つ側の間で結果を渡す箱。**書くのは受け取りの仕事が 1 度だけで、
-        // 読むのは合図を待った後だけ** — 合図が前後を決めるので、錠は要らない
+        // 読むのは合図を待った後だけ** — 合図が前後を決めるので、錠は要らない。期限で諦めた
+        // ときは読まない (取り消した受け取りも後から書くが、もう誰も見ない)
         final class Box: @unchecked Sendable {
             var outcome: Result<Data, DataFailure>
             init(_ outcome: Result<Data, DataFailure>) { self.outcome = outcome }
         }
+        let overdue = DataFailure.unreachable(url: path, reason: "no complete answer came back within \(limit)")
         let box = Box(.failure(.unreachable(url: path, reason: "no response came back")))
         let arrived = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: URLRequest(url: url)) { data, response, error in
+        let seconds = limit / .seconds(1)
+        // 受け口の側の期限 (音沙汰の無い間) も同じ値にする。そちらが切れるのは、呼んでからの
+        // 総時間も期限を越えたときだけなので、同じ失敗として名乗る — 何も返さないサーバで、
+        // どちらが先に切れても文面が揺れない
+        var request = URLRequest(url: url)
+        request.timeoutInterval = seconds
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
             defer { arrived.signal() }
             if let error {
-                box.outcome = .failure(.unreachable(url: path, reason: reason(of: error)))
+                box.outcome = .failure(
+                    (error as? URLError)?.code == .timedOut ? overdue : .unreachable(url: path, reason: reason(of: error)))
                 return
             }
             guard let response else { return }
             box.outcome = Result { () throws(DataFailure) in
                 try accept(data ?? Data(), response, path: path)
             }
-        }.resume()
-        arrived.wait()
+        }
+        let deadline = DispatchTime.now() + seconds
+        task.resume()
+        guard arrived.wait(timeout: deadline) == .success else {
+            task.cancel()
+            throw overdue
+        }
         return try box.outcome.get()
     }
 
