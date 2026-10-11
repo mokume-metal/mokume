@@ -371,6 +371,33 @@ final class ShapePipeline {
         }
     }
 
+    /// 断片を特化する値。**渡さない値は `nil`** で、``specialized(_:_:)`` はそれを決めない。
+    struct FragmentConstants: Equatable {
+        /// 基本図形の断片へ渡す旗の組 (`kFormHas*`)。
+        var formFlags: UInt32?
+        /// 三角形の経路の断片へ渡す光の有無 (`kShapeLitValue`)。
+        var lit: Bool?
+    }
+
+    /// その列の断片へ渡す特化の値。**光の有無を決めるのはここだけ**で、``makeState`` は
+    /// 返した値をそのまま特化に渡す ([#2293])。
+    ///
+    /// 光の枝を外し損ねても色は変わらず遅くなるだけなので、絵の検査では捕まらない。
+    /// 決める箇所を 1 つにして、`UnlitFragmentTests` がここを見る。
+    ///
+    /// - 基本図形の断片 (`formFlags` あり) は旗だけを受け取り、`kShapeLitValue` を読まない
+    /// - 三角形の経路の断片は光の有無だけを受け取り、`kFormHas*` を読まない
+    ///   (値は ``shapeLit(forVertexFunction:)``)
+    ///
+    /// [#2293]: https://github.com/mokume-metal/mokume/issues/2293
+    static func fragmentConstants(
+        vertexFunctionName: String, formFlags: UInt32?
+    ) -> FragmentConstants {
+        FragmentConstants(
+            formFlags: formFlags,
+            lit: formFlags == nil ? shapeLit(forVertexFunction: vertexFunctionName) : nil)
+    }
+
     /// 断片を旗の組と光の有無で特化する記述。
     ///
     /// **渡さない値は決めない** — 三角形の経路の断片は `kFormHas*` を読まないので旗を
@@ -400,9 +427,10 @@ final class ShapePipeline {
     ///
     /// [#776]: https://github.com/mokume-metal/mokume/issues/776
     private static func specialized(
-        _ function: MTL4LibraryFunctionDescriptor, formFlags: UInt32?, lit: Bool?
+        _ function: MTL4LibraryFunctionDescriptor, _ constants: FragmentConstants
     ) -> MTL4FunctionDescriptor {
-        guard formFlags != nil || lit != nil else { return function }
+        let formFlags = constants.formFlags
+        guard formFlags != nil || constants.lit != nil else { return function }
         let values = MTLFunctionConstantValues()
         if let formFlags {
             var hasFill = (formFlags & FormInstance.fillsFlag) != 0
@@ -413,7 +441,7 @@ final class ShapePipeline {
             values.setConstantValue(
                 &hasThinFill, type: .bool, index: formHasThinFillConstantIndex)
         }
-        if var lit {
+        if var lit = constants.lit {
             values.setConstantValue(&lit, type: .bool, index: shapeLitConstantIndex)
         }
 
@@ -444,8 +472,8 @@ final class ShapePipeline {
         descriptor.vertexFunctionDescriptor = vertexFunction
         // 基本図形の断片は光の有無を読まず、三角形の経路の断片は旗を読まない
         descriptor.fragmentFunctionDescriptor = specialized(
-            fragmentFunction, formFlags: formFlags,
-            lit: formFlags == nil ? shapeLit(forVertexFunction: vertexFunctionName) : nil)
+            fragmentFunction,
+            fragmentConstants(vertexFunctionName: vertexFunctionName, formFlags: formFlags))
 
         // **固定機能のブレンドを使うのは、乗算済みの source-over だけ。** 色は
         // アルファ乗算済みなので ([ADR-0011] 決定 4)、重ねるのは
