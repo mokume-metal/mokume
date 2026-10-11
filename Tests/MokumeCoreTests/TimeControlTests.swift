@@ -134,6 +134,93 @@ struct TimeControlTests {
         #expect(timing.time == Float(4.0 / 60))
     }
 
+    // MARK: - 観測の枚でも、作者の時計は観測の秒に触れられない (#2328)
+
+    @Test("観測の枚で止めると、観測の秒ではなく作者の時計のその枚の秒で止まる")
+    func pausingOnAnObservedFrameHoldsTheAuthorsSecond() {
+        let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })
+        _ = run(timing, 3)
+        timing.advance(at: 5)
+        #expect(timing.time == 5)
+        timing.pauseTime()
+        let held = run(timing, 4)
+        #expect(held.map(\.0) == Array(repeating: Float(3.0 / 60), count: 4))
+        #expect(held.map(\.1) == [0, 0, 0, 0])
+    }
+
+    @Test("実時間の時計でも、観測の枚で止めると、飛んだぶんを含む作者の時計のその枚の秒で止まる")
+    func theWallClockPausesOnTheAuthorsSecondWhenObserved() {
+        var clock = 100.0
+        let timing = FrameTiming(clock: .wallClock, now: { clock })
+        clock += 0.125
+        timing.advance()
+        // 原点のずれを 0 でなくしておく (作者の時計 = 起動からの経過 + ずれ)
+        timing.jumpTime(10)
+        clock += 0.125
+        timing.advance()
+        #expect(timing.time == 10)
+        clock += 0.125
+        timing.advance(at: 5)
+        #expect(timing.time == 5)
+        timing.pauseTime()
+        for _ in 0..<3 {
+            clock += 0.125
+            timing.advance()
+            #expect(timing.time == 10.125, "観測の枚の作者の時計 (0.375 + ずれ 9.75) で止まる")
+            #expect(timing.deltaTime == 0)
+        }
+    }
+
+    @Test("観測の枚で飛ぶと次の枚はその秒になり、飛んでから止めればその秒で止まる")
+    func jumpingOnAnObservedFrameStillLands() {
+        let jumped = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })
+        _ = run(jumped, 3)
+        jumped.advance(at: 5)
+        jumped.jumpTime(2)
+        jumped.advance()
+        #expect(jumped.time == 2)
+        #expect(jumped.deltaTime == 0)
+
+        let paused = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })
+        _ = run(paused, 3)
+        paused.advance(at: 5)
+        paused.jumpTime(2)
+        paused.pauseTime()
+        #expect(run(paused, 3).map(\.0) == [2, 2, 2])
+    }
+
+    @Test("陰性対照: 観測の枚で止めなければ、次の枚は作者の時計へ戻る")
+    func anObservedFrameReturnsToTheAuthorsClock() {
+        let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })
+        _ = run(timing, 3)
+        timing.advance(at: 5)
+        #expect(timing.deltaTime == 0)
+        let after = run(timing, 4)
+        #expect(after.map(\.0) == (4..<8).map { Float(Double($0) / 60) })
+        #expect(after.map(\.1) == Array(repeating: Float(step), count: 4))
+    }
+
+    @Test("止めている間の観測の枚で再開してすぐ止め直すと、観測でない枚と同じく止めていた秒のまま")
+    func repausingOnAnObservedFrameKeepsTheHeldSecond() {
+        // 観測でない枚で同じ順に呼ぶと、止めていた秒のまま (比べる元)
+        let unobserved = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })
+        _ = run(unobserved, 5)
+        unobserved.pauseTime()
+        _ = run(unobserved, 3)
+        unobserved.playTime()
+        unobserved.pauseTime()
+        #expect(run(unobserved, 3).map(\.0) == Array(repeating: Float(4.0 / 60), count: 3))
+
+        let observed = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })
+        _ = run(observed, 5)
+        observed.pauseTime()
+        _ = run(observed, 2)
+        observed.advance(at: 5)
+        observed.playTime()
+        observed.pauseTime()
+        #expect(run(observed, 3).map(\.0) == Array(repeating: Float(4.0 / 60), count: 3))
+    }
+
     @Test("口を使わなければ、時刻は口が入る前と同じ値")
     func untouchedClocksKeepTheirValues() {
         let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })

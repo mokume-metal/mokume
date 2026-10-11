@@ -116,7 +116,12 @@ final class FrameTiming {
     ///
     /// [#1286]: https://github.com/mokume-metal/mokume/issues/1286
     private var offset: Double = 0
-    /// いまの枚の時刻 (秒)。``time`` の倍精度の元で、止めた秒をここから取る。
+    /// いまの枚の、**作者の時計の上の**時刻 (秒)。止めた秒をここから取る。観測の指定秒が
+    /// 描き直す枚を除けば、``time`` の倍精度の元である。観測の枚の ``time`` は指定秒になるが、
+    /// こちらには入れない — 入れると、その枚で止めた秒が観測の秒になり、撮った後も作者の
+    /// 時計へ戻らない ([#2328])。
+    ///
+    /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     private var seconds: Double = 0
     /// 作者が止めた秒 (``pauseTime()``)。止めていなければ `nil`。
     private var heldAt: Double?
@@ -163,7 +168,8 @@ final class FrameTiming {
     ///
     /// 作者が飛んだ枚 (``jumpTime(_:)``) と止めている間 (``pauseTime()``) も経過は 0 で、
     /// 原点のずれを寄せ直して、次の枚がそこから元の刻みで進むようにする。観測の指定秒は
-    /// ずれに触れない — 撮った後は作者の時計へ戻る。
+    /// ずれにも止めた秒にも触れない — 撮った後は作者の時計へ戻る。観測の枚で作者が止めても、
+    /// 止まるのは作者の時計のその枚の秒である。
     func advance(at requestedTime: Float? = nil) {
         let now = now()
         frameCount += 1
@@ -180,7 +186,9 @@ final class FrameTiming {
         timeline = raw
         if let requestedTime {
             time = requestedTime
-            seconds = Double(requestedTime)
+            // 作者の時計のこの枚の秒。この経路はずれを寄せ直さないので、止めている間は
+            // `raw + offset` が止めた秒より先へ進んでいる — 止めた秒そのものを取る
+            seconds = heldAt ?? raw + offset
             step = .seconds(0)
             previous = now
             return
@@ -215,7 +223,8 @@ final class FrameTiming {
         time = Float(seconds)
     }
 
-    /// 次の枚から時刻を止める。止めた秒は**いまの枚の** ``time`` で、描画は続く。
+    /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、
+    /// 描画は続く。ふだんは ``time`` と同じ値で、観測の指定秒が描き直す枚でだけ違う。
     /// 止めている間の経過は 0 である。既に止めていれば何もしない。
     func pauseTime() {
         // 同じ枚で先に飛ぶ先を頼まれていれば、そこで止める
