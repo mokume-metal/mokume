@@ -8,6 +8,11 @@ import MokumeDiagnostics
 ///
 /// 1 つの datagram が 1 つのメッセージになる。受け方・状態・止め方は ``TextPort`` のとおり。
 ///
+/// **1 つの datagram は 9215 バイトまで (9216 バイト未満)。** macOS の受け口は 9216 バイトを超える
+/// datagram を先頭 9216 バイトに黙って切るので、9216 バイト以上の datagram は丸ごと捨てて数え、
+/// 次のフレームで診断に出す (切れたものと見分けられないので、ちょうど 9216 バイトのものも捨てる)。
+/// ``send(_:)`` も、UTF-8 で 9216 バイト以上の文字列は送らない。
+///
 /// ```swift
 /// final class Remote: Sketch {
 ///     var udp: UDPPort?
@@ -48,10 +53,11 @@ public final class UDPPort: TextPort {
     /// udp?.send("size 0.5")
     /// ```
     ///
-    /// UTF-8 のバイト列をそのまま送り、改行は足さない。**投げない。** 送り先が無い・止めた後は、
-    /// 理由ごとに 1 度だけ知らせて何もしない。送れないとき (宛先で誰も受けていない・このアプリに
-    /// ローカルネットワークの許可が無い・ネットワークが落ちている) は 1 度だけ診断に出し、
-    /// ``TextPort/state`` には出ない。送れたら、また言えるように戻る。待たずに返る。
+    /// UTF-8 のバイト列をそのまま送り、改行は足さない。**投げない。** 送り先が無い・止めた後・
+    /// UTF-8 で 9216 バイト以上 (1 つの datagram は 9215 バイトまで) のときは、理由ごとに 1 度だけ
+    /// 知らせて何もしない。送れないとき (宛先で誰も受けていない・このアプリにローカルネットワークの
+    /// 許可が無い・ネットワークが落ちている) は 1 度だけ診断に出し、``TextPort/state`` には出ない。
+    /// 送れたら、また言えるように戻る。待たずに返る。
     ///
     /// - Parameter text: 送る文字列。
     public func send(_ text: String) {
@@ -73,7 +79,16 @@ public final class UDPPort: TextPort {
             }
             return
         }
-        outbound.send(Array(text.utf8))
+        let bytes = Array(text.utf8)
+        // 送り手へ渡せば `Message too long` で送れず、受け手が居ない見当で名乗って繋ぎを捨てる
+        guard Datagram.fits(bytes.count) else {
+            tellOnce(
+                "tooLarge",
+                "\(Self.preview(text)) was not sent because it is \(bytes.count) bytes in UTF-8, "
+                    + "and one UDP datagram carries \(Datagram.largest) bytes at most")
+            return
+        }
+        outbound.send(bytes)
     }
 
     override func closeOutbound() {

@@ -260,6 +260,31 @@ struct OSCPortTests {
         #expect(osc.input.unreadable == 1)
     }
 
+    @Test("9216 バイト以上のパケットは丸ごと捨てて数え、束の頭のメッセージだけを渡すことはしない")
+    func oversizedPacketIsDiscardedWhole() async throws {
+        let told = Told()
+        let port = try freeUDPPort()
+        let osc = try loopback(port: port, told: told)
+        defer { osc.close() }
+        #expect(await until { osc.state == .running })
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 12000 バイトの blob を 1 つ持つメッセージ (datagram は 12012 バイト)
+        let blob = try Wire.encoded(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
+        #expect(blob.count == 12012)
+        // 頭に小さなメッセージを置いた束。先頭 9216 バイトに切れたものを読むと、頭だけが読める
+        let bundle = Wire.bundle([try Wire.encoded(OSCMessage("/head", 1)), blob])
+        let next = OSCMessage("/next", 3)
+        for packet in [blob, bundle, try Wire.encoded(next)] {
+            #expect(peer.send(packet, to: port) == packet.count)
+        }
+        let received = await collect(osc, count: 1)
+        #expect(received == [next])
+        #expect(osc.input.unreadable == 2)
+        #expect(told.lines.isEmpty)
+    }
+
     @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
     func manySendersAreAllHeardThenSwept() async throws {
         let told = Told()
@@ -420,5 +445,50 @@ struct OSCPortTests {
         osc.send("/late", 1)
         #expect(recording.sent.count == 1)
         #expect(told.count(containing: "is stopped") == 1)
+    }
+
+    @Test("符号化して 9216 バイト以上になるメッセージは送り手に渡さず、大きさと上限を 1 度だけ知らせる")
+    func oversizedSendIsRefusedOnce() throws {
+        let told = Told()
+        // 送り手に渡らなければ、「受け手が居ない」見当で名乗る経路にも、繋ぎを捨てる経路にも入らない
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 9000, name: "osc :9000", source: RecordedSource<OSCMessage>(batches: []),
+            outbound: recording, owner: nil, warn: told.append)
+        let large = OSCMessage("/big", arguments: [.blob([UInt8](repeating: 7, count: 12000))])
+        osc.send(large)
+        osc.send(large)
+        #expect(recording.sent.map(\.count) == [])
+        #expect(told.lines.count == 1)
+        let line = told.lines.first ?? ""
+        #expect(line.contains("/big"))
+        #expect(line.contains("\(try Wire.encoded(large).count) bytes"))
+        #expect(line.contains("9215 bytes at most"))
+        #expect(!line.contains("listening"))
+
+        // ちょうど 9216 バイトも送らず、9215 バイトに収まるものは送る (blob の 4 バイト境界で 9212 バイト)
+        let header = try Wire.encoded(OSCMessage("/b", arguments: [.blob([])])).count
+        osc.send(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 9216 - header))]))
+        osc.send(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 9212 - header))]))
+        #expect(recording.sent.map(\.count) == [9212])
+        #expect(told.lines.count == 1)
+    }
+
+    @Test("本物の宛先でも、上限に入らないメッセージは送らず、続けて送ったメッセージは届く")
+    func oversizedSendLeavesTheDestinationReachable() async throws {
+        let told = Told()
+        let port = try freeUDPPort()
+        let osc = try loopback(port: port, told: told)
+        defer { osc.close() }
+        #expect(await until { osc.state == .running })
+
+        osc.send(OSCMessage("/big", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
+        osc.send("/after", 1)
+        let received = await collect(osc, count: 1)
+        #expect(received == [OSCMessage("/after", 1)])
+        #expect(osc.input.unreadable == 0)
+        #expect(told.lines.count == 1)
+        #expect(told.count(containing: "9215 bytes at most") == 1)
+        #expect(told.count(containing: "listening") == 0)
     }
 }
