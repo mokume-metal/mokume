@@ -226,6 +226,9 @@ struct MCPServerTests {
 
     /// 黙って空の引数に倒すと、`"arguments":"x"` が引数なしの頼みに化けて道具が走る
     /// (`observe` なら等倍で 1 枚撮る)。隣の `name is required` と同じ符号で断る (#2319)。
+    /// 空の配列 `[]` も断る — 空の連想配列を `[]` と書き出すエンコーダ (PHP の
+    /// `json_encode([])` など) では、これまで通っていた呼び出しが断られるようになる。
+    /// 変更の記録 (`changelog.d/`) がそれを名乗る。
     @Test(
         "tools/call の arguments がオブジェクトでなければ、道具を走らせずに -32602 で断る",
         arguments: [#""x""#, "[1]", "[]", "5", "true"])
@@ -526,22 +529,41 @@ struct MCPServerTests {
     }
 
     /// 数でない縮尺を黙って落とすと等倍の頼みに化け、真偽値は `NSNumber` 経由で 1 に読める。
-    /// どちらも撮る側の警告に載らない (#2319)。`null` も、`time`・`count`・`every` と同じく
-    /// 型の違いとして断る。**引数は JSON から読む** — Swift の `true` は JSON の `true` と
-    /// 違う型で届くので、リテラルで渡すと読み違いを再現できない。
+    /// どちらも撮る側の警告に載らない (#2319)。`-1e400` は JSON の読み手が `-inf` に読み、
+    /// 通すと区画を作った後で書けずに、置き場所のせいにした案内が返る。**引数は JSON から
+    /// 読む** — Swift の `true` は JSON の `true` と違う型で届き、`-inf` は JSON の外から
+    /// 渡しても読み手の癖を再現できない。
     @Test(
-        "数でない縮尺は、要求を置かずに断る",
+        "数でない・有限でない縮尺は、区画に触れずに断る",
         arguments: [
             #"{"scale":"0.5","time":1}"#, #"{"scale":true}"#, #"{"scale":false}"#,
-            #"{"scale":null}"#, #"{"scale":[0.5]}"#,
+            #"{"scale":[0.5]}"#, #"{"scale":-1e400}"#,
         ])
-    func refusesScalesThatAreNotNumbers(json: String) throws {
+    func refusesScalesThatAreNotFiniteNumbers(json: String) throws {
         let directory = try makeDirectory()
         let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
         let outcome = tools.call("observe", arguments: try decode(json))
         #expect(outcome.isError)
-        #expect(outcome.text == "scale must be a number")
-        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path))
+        #expect(outcome.text == "scale must be a finite number")
+        // 要求を置く前に断る。区画のディレクトリも作らない
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/observe").path))
+    }
+
+    /// `null` の方針は #2393 で決める。それまでは、`as? Double` が外れて省略と同じに
+    /// なっていた従来の読み方を変えない (省略できる欄に `null` を入れる呼び手が断られないように)。
+    @Test("null の縮尺は、従来どおり省いたのと同じに読む")
+    func readsANullScaleAsOmitted() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        // 誰も応えないので上限まで待って諦めるが、要求は置かれている
+        _ = tools.call("observe", arguments: try decode(#"{"scale":null}"#))
+
+        let request = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
+                as? [String: Any])
+        #expect(request.keys.sorted() == ["id"])
     }
 
     @Test("範囲の外の縮尺は切らずに要求へ置き、撮る側が切ったことを名乗れるようにする")
@@ -881,13 +903,23 @@ struct MCPServerTests {
     /// 頼み方を誤ったことに気付けない (#2319)。省いたとき一覧になるのは上の検査が見る。
     @Test(
         "文字列でない文書の名前は、一覧に倒さずに断る",
-        arguments: [#"{"name":5}"#, #"{"name":true}"#, #"{"name":null}"#, #"{"name":["api"]}"#])
+        arguments: [#"{"name":5}"#, #"{"name":true}"#, #"{"name":["api"]}"#])
     func refusesDocumentNamesThatAreNotStrings(json: String) throws {
         let tools = makeTools(directory: try makeDirectory(), fetches: Fetches())
         let outcome = tools.call("reference", arguments: try decode(json))
         #expect(outcome.isError)
         #expect(outcome.text.hasPrefix("name must be a string"))
         #expect(!outcome.text.contains("Documents this interface serves"))
+    }
+
+    /// `null` の方針は #2393 で決める。それまでは、`as? String` が外れて省略と同じに
+    /// なっていた従来の読み方を変えない。
+    @Test("null の文書の名前は、従来どおり省いたのと同じに一覧を返す")
+    func readsANullDocumentNameAsOmitted() throws {
+        let tools = makeTools(directory: try makeDirectory(), fetches: Fetches())
+        let outcome = tools.call("reference", arguments: try decode(#"{"name":null}"#))
+        #expect(!outcome.isError)
+        #expect(outcome.text.contains("Documents this interface serves"))
     }
 
     /// **組めなかった応答を空行で返さない。**

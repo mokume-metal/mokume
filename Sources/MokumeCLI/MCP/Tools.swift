@@ -159,10 +159,14 @@ struct Tools {
         var request: [String: Any] = ["id": id]
         // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
         // 真偽値は `NSNumber` 経由で 1 に読めてしまうので、型で見分ける (`time` と揃える・#2319)。
-        // 範囲では切らない — 範囲の外は撮る側が等倍で書いて警告で名乗る (observe-request の約束)
-        if let raw = arguments["scale"] {
-            guard let scale = raw as? NSNumber, CFGetTypeID(scale) != CFBooleanGetTypeID() else {
-                return ("scale must be a number", true)
+        // 有限でない数も断る — JSON の読み手は `-1e400` を `-inf` に読み、通すと区画を作った
+        // 後で書けずに、置き場所のせいにした案内が返る。範囲では切らない — 範囲の外は撮る側が
+        // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は従来どおり省略と同じに
+        // 読む (方針は #2393 で決める)
+        if let raw = arguments["scale"], !(raw is NSNull) {
+            guard let scale = raw as? NSNumber, CFGetTypeID(scale) != CFBooleanGetTypeID(),
+                scale.doubleValue.isFinite else {
+                return ("scale must be a finite number", true)
             }
             request["scale"] = scale.doubleValue
         }
@@ -397,8 +401,9 @@ struct Tools {
     private func reference(_ arguments: [String: Any]) -> (String, Bool) {
         let name = arguments["name"] as? String
         // **文字列でない名前は断る。** 「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として
-        // 返り、頼み方を誤ったことに気付けない (#2319)
-        if arguments["name"] != nil, name == nil {
+        // 返り、頼み方を誤ったことに気付けない (#2319)。`null` は従来どおり省略と同じに読む
+        // (方針は #2393 で決める)
+        if let raw = arguments["name"], !(raw is NSNull), name == nil {
             return ("name must be a string (a document's name). Omit it to get the list.", true)
         }
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
