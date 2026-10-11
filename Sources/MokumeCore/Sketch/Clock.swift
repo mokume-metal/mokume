@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeDiagnostics
 import QuartzCore
 
 /// 時刻の出どころ。
@@ -76,6 +77,8 @@ final class FrameTiming {
     let clock: Clock
     /// 実時間の出どころ。検査が時間を操れるよう差し替えられる形にしてある。
     private let now: () -> Double
+    /// 作者への知らせの出口。検査が文面と回数を受け取れるよう差し替えられる形にしてある。
+    private let warn: (String) -> Void
     private let started: Double
     private var previous: Double
 
@@ -119,6 +122,8 @@ final class FrameTiming {
     private var heldAt: Double?
     /// 次の枚で飛ぶ先の秒 (``jumpTime(_:)``)。1 枚で落ちる。
     private var pendingJump: Double?
+    /// 数でない飛び先を知らせたか (``jumpTime(_:)``)。2 回目からは言わない。
+    private var warnedJump = false
 
     /// 上限を目標フレームレートから導く。**目標フレーム間隔の 10 倍。**
     ///
@@ -136,11 +141,14 @@ final class FrameTiming {
     ///     ところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
+    ///   - warn: 作者への知らせの出口。
     init(
         clock: Clock, frameRate: Int = 60,
-        now: @escaping () -> Double = { CACurrentMediaTime() }
+        now: @escaping () -> Double = { CACurrentMediaTime() },
+        warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
         self.clock = clock
+        self.warn = warn
         self.maximumDeltaTime = Self.maximumDeltaTime(frameRate: frameRate)
         // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         self.frameInterval = 1 / Double(max(1, frameRate))
@@ -221,7 +229,20 @@ final class FrameTiming {
 
     /// 次の枚の時刻を `target` 秒にする。その枚の経過は 0 で、次の枚からは `target` から
     /// 元の刻みで進む。止めている間なら、`target` で止まり続ける。
+    ///
+    /// **数でない値・無限は受け取らない** ([#2327])。時計は飛ばずに進み (止めていれば止めた
+    /// 秒のまま)、同じ枚で先に頼んだ飛び先も取り消さない。受け取ると原点のずれが非有限になり、
+    /// 有限の秒へ飛び直すまで ``time`` が戻らない。毎フレーム呼ばれうる口なので、知らせは
+    /// この時計で 1 度だけにする ([ADR-0020] 決定 5・同じ動詞の `Movie.jump(_:)` と同じ形)。
+    ///
+    /// [#2327]: https://github.com/mokume-metal/mokume/issues/2327
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     func jumpTime(_ target: Double) {
+        guard target.isFinite else {
+            guard !warnedJump else { return }
+            warnedJump = true
+            return warn("jumpTime(): \(target) is not a time, so the time does not move")
+        }
         pendingJump = target
         if heldAt != nil { heldAt = target }
     }

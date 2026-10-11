@@ -140,6 +140,85 @@ struct TimeControlTests {
         let times = run(timing, 120).map(\.0)
         #expect(times == (0..<120).map { Float(Double($0) / 60) })
     }
+
+    // MARK: - 数でない秒へは飛ばない (#2327)
+
+    /// 時刻として受け取れない飛び先。`Float` から `Double` へ移しても非有限のまま届く。
+    private let nonFiniteTargets: [Double] = [.nan, .infinity, -.infinity]
+
+    @Test("数でない秒・無限へ飛ぼうとしても、時刻は口を呼ばなかったときと同じ列で進む")
+    func aNonFiniteJumpLeavesTheClockAlone() {
+        for target in nonFiniteTargets {
+            let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 }, warn: { _ in })
+            _ = run(timing, 2)
+            timing.jumpTime(target)
+            let after = run(timing, 6)
+            #expect(after.map(\.0) == (2..<8).map { Float(Double($0) / 60) }, "jumpTime(\(target))")
+            #expect(after.map(\.1) == Array(repeating: Float(step), count: 6), "jumpTime(\(target))")
+        }
+    }
+
+    @Test("止めている間に数でない秒へ飛ぼうとしても、止めた秒のまま動かない")
+    func aNonFiniteJumpWhilePausedKeepsTheHeldSecond() {
+        for target in nonFiniteTargets {
+            let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 }, warn: { _ in })
+            _ = run(timing, 5)
+            timing.pauseTime()
+            _ = run(timing, 2)
+            timing.jumpTime(target)
+            #expect(
+                run(timing, 3).map(\.0) == Array(repeating: Float(4.0 / 60), count: 3),
+                "jumpTime(\(target))")
+            // 再開すれば、止めた秒から元の刻みで進む
+            timing.playTime()
+            timing.advance()
+            #expect(abs(Double(timing.time) - (4.0 / 60 + step)) < 1e-6, "jumpTime(\(target))")
+        }
+    }
+
+    @Test("同じ枚で先に頼んだ飛び先は、後の数でない秒に取り消されない")
+    func aNonFiniteJumpDoesNotCancelAnEarlierOne() {
+        for target in nonFiniteTargets {
+            let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 }, warn: { _ in })
+            _ = run(timing, 3)
+            timing.jumpTime(2)
+            timing.jumpTime(target)
+            timing.advance()
+            #expect(timing.time == 2, "jumpTime(\(target))")
+            #expect(timing.deltaTime == 0, "jumpTime(\(target))")
+        }
+    }
+
+    @Test("数でない秒は 1 度だけ知らせ、文面は口の名前と渡した値を名乗る")
+    func aNonFiniteJumpIsNoticedOnce() {
+        var notices: [String] = []
+        let timing = FrameTiming(
+            clock: .frameIndex(frameRate: 60), now: { 0 }, warn: { notices.append($0) })
+        _ = run(timing, 1)
+        timing.jumpTime(.nan)
+        timing.jumpTime(.infinity)
+        _ = run(timing, 1)
+        timing.jumpTime(-.infinity)
+        _ = run(timing, 1)
+        #expect(notices == ["jumpTime(): nan is not a time, so the time does not move"])
+    }
+
+    @Test("陰性対照: 有限の秒は、負でも単精度の最大でも受けて、知らせない")
+    func finiteJumpsAreTakenWithoutNotice() {
+        var notices: [String] = []
+        let timing = FrameTiming(
+            clock: .frameIndex(frameRate: 60), now: { 0 }, warn: { notices.append($0) })
+        _ = run(timing, 2)
+        timing.jumpTime(-1)
+        let negative = run(timing, 3).map(\.0)
+        #expect(negative[0] == -1)
+        #expect(abs(Double(negative[2]) - (-1 + 2 * step)) < 1e-6, "負の秒から元の刻みで進む: \(negative)")
+
+        // 1/60 秒は単精度の最大の刻みより遥かに小さいので、進んでも同じ値に丸まる
+        timing.jumpTime(Double(Float.greatestFiniteMagnitude))
+        #expect(run(timing, 3).map(\.0) == Array(repeating: .greatestFiniteMagnitude, count: 3))
+        #expect(notices.isEmpty)
+    }
 }
 
 /// 作者の口が時計まで届くこと。GPU を要する。
