@@ -43,8 +43,9 @@ extension Sketch {
     /// 倒さない。見つからないときの説明には**探した場所**が載る。
     ///
     /// - Throws: 見つからないときに ``DataFailure/notFound(path:searched:)``、見つかったが開け
-    ///   ない (ディレクトリだった・読む権利が無い) ときに ``DataFailure/unopenable(path:reason:)``、
-    ///   UTF-8 の文字として読めないときに ``DataFailure/unreadable(path:)``。
+    ///   ない (ディレクトリだった・読む権利が無い) ときに
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)、UTF-8 の文字として
+    ///   読めないときに ``DataFailure/unreadable(path:)``。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadStrings(_ path: String) throws(DataFailure) -> [String] {
         let url = try dataURL(path)
@@ -119,8 +120,8 @@ extension Sketch {
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。
     ///
     /// - Throws: ``DataFailure``。見つからない (``DataFailure/notFound(path:searched:)``)・
-    ///   見つかったが開けない (ディレクトリだった・読む権利が無い。
-    ///   ``DataFailure/unopenable(path:reason:)``)・UTF-8 の文字として読めない
+    ///   見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る。
+    ///   ``DataFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めない
     ///   (``DataFailure/unreadable(path:)``)・CSV として壊れている
     ///   (``DataFailure/malformed(path:line:reason:)``) とき。
     // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
@@ -237,7 +238,7 @@ extension Sketch {
     ///
     /// - ファイルが見つからない: ``DataFailure/notFound(path:searched:)`` (探した場所が載る)
     /// - ファイルが見つかったが開けない (ディレクトリだった・読む権利が無い):
-    ///   ``DataFailure/unopenable(path:reason:)``
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)
     /// - URL から受け取れない (繋がらない・時間切れ・サーバが 2xx 以外の状態で答えた):
     ///   ``DataFailure/unreachable(url:reason:)``
     /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``

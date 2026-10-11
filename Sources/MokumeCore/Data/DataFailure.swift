@@ -19,8 +19,8 @@
 /// **ファイルを読めなかった事情は、どこで止まったかで分ける** — 直す所がそれぞれ違うため。
 ///
 /// - 名前が在るファイルに解けない (``notFound(path:searched:)``): 置き場を直す
-/// - 解けたが開けない (``unopenable(path:reason:)``): ディレクトリだったなら置き場を、読む
-///   権利が無いなら権利を直す
+/// - 解けたが開けない (``unopenable(path:location:reason:)``): ディレクトリだったなら置き場を、
+///   読む権利が無いなら権利を直す
 /// - 開けたが、中身が UTF-8 の文字でない (``unreadable(path:)``): UTF-8 で保存し直す
 /// - 文字だが、形が壊れている (``malformed(path:line:reason:)``): 中身を直す
 ///
@@ -31,9 +31,13 @@
 public enum DataFailure: Error, Equatable, Sendable {
     /// その名前のファイルが見つからない。`searched` は探した場所を、探した順に並べたもの。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、開けない。`reason` は OS が名乗った開けなかった事情 (ディレクトリだった・
-    /// 読む権利が無い、など)。中身の文字の符号化とは関係が無いので、直すのは置き場か権利である。
-    case unopenable(path: String, reason: String)
+    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
+    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の文字の
+    /// 符号化とは関係が無いので、直すのは `location` にあるものの置き場か権利である。
+    ///
+    /// 相対の名前は複数の場所を探して解く (``Sketch/assetURL(_:)``) ので、渡した名前 (`path`)
+    /// だけでは、どこにあるものを直せばよいかが分からない。説明には解けた場所が載る。
+    case unopenable(path: String, location: String, reason: String)
     /// 中身 (開けたファイル・URL から受け取った本文) を、UTF-8 の文字として読めない。
     case unreadable(path: String)
     /// 文字としては読めたが、形が壊れている。`line` は壊れていた行で、1 から数える。
@@ -50,8 +54,10 @@ extension DataFailure: CustomStringConvertible {
         switch self {
         case .notFound(let path, let searched):
             AssetFailure.notFound(path: path, searched: searched).description
-        case .unopenable(let path, let reason):
+        case .unopenable(let path, let location, let reason) where location == path:
             "\"\(path)\" was found but cannot be opened: \(reason)"
+        case .unopenable(let path, let location, let reason):
+            "\"\(path)\" was found at \"\(location)\" but cannot be opened: \(reason)"
         case .unreadable(let path):
             "\"\(path)\" cannot be read as UTF-8 text. Check that the file is saved as UTF-8"
         case .malformed(let path, let line, let reason):

@@ -19,15 +19,16 @@ nonisolated enum TextFile {
     ///
     /// **開けないことと、中身が UTF-8 でないことを分ける** (#2341)。場所が分かっても開けない
     /// (ディレクトリだった・読む権利が無い) のは置き場か権利の問題で、
-    /// ``DataFailure/unopenable(path:reason:)`` で OS の事情を添えて投げる。
-    /// ``DataFailure/unreadable(path:)`` (UTF-8 で保存し直せ) は、開けた中身を
+    /// ``DataFailure/unopenable(path:location:reason:)`` で、解けた場所 (`url`) と OS の事情を
+    /// 添えて投げる。``DataFailure/unreadable(path:)`` (UTF-8 で保存し直せ) は、開けた中身を
     /// ``text(of:path:)`` が解けなかったときだけである。
     static func read(_ url: URL, path: String) throws(DataFailure) -> String {
         let data: Data
         do {
             data = try Data(contentsOf: url)
         } catch {
-            throw .unopenable(path: path, reason: Self.openingReason(of: error))
+            throw .unopenable(
+                path: path, location: url.standardizedFileURL.path, reason: Self.openingReason(of: error))
         }
         return try text(of: data, path: path)
     }

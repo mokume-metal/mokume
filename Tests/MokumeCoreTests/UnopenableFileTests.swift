@@ -10,8 +10,8 @@ import Testing
 ///
 /// **開けない事情を、中身の符号化の問題と名乗らない。** ディレクトリや読む権利の無いファイルを
 /// ``DataFailure/unreadable(path:)`` (「UTF-8 で保存されているか確かめよ」) で断ると、利用者は
-/// 保存し直すという的外れな手を勧められる。開けないものは ``DataFailure/unopenable(path:reason:)``
-/// で、OS が名乗った事情を添えて断る。
+/// 保存し直すという的外れな手を勧められる。開けないものは
+/// ``DataFailure/unopenable(path:location:reason:)`` で、解けた場所と OS が名乗った事情を添えて断る。
 ///
 /// 範囲は、名前を `assetURL` で探してから `TextFile.read` で読む口すべて (``Door``)。口ごとに
 /// 検査を写さず、一覧を 1 つの手順 (``expectUnopenable(_:_:onto:)``) に回す。
@@ -107,6 +107,17 @@ struct UnopenableFileTests {
             return url.path
         }
 
+        /// 置いたものを、作業ディレクトリから辿る**相対の名前**にする。
+        ///
+        /// 読む口は相対の名前を、作業ディレクトリ・束ねた資源の置き場・実行ファイルの隣の順に
+        /// 探す (`assetURL`)。この名前は最初の作業ディレクトリの側で解ける。作業ディレクトリ
+        /// (リポジトリ) にものを置かずに済むよう、根まで上ってから一時ディレクトリへ降りる。
+        static func relativeName(of absolute: String) -> String {
+            let depth = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .pathComponents.count - 1
+            return String(repeating: "../", count: depth) + absolute.drop { $0 == "/" }
+        }
+
         /// 中身を書いたファイルを置き、その場所を返す。
         func file(_ name: String, _ bytes: Data) throws -> String {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -144,21 +155,30 @@ struct UnopenableFileTests {
         }
     }
 
-    /// 開けないものを口に渡すと、`unopenable` で、OS が名乗った事情を添え、UTF-8 に触れずに断る。
+    /// 開けないものを口に渡すと、`unopenable` で、解けた場所と OS が名乗った事情を添え、UTF-8 に
+    /// 触れずに断る。
+    ///
+    /// 同じものを**絶対の名前と相対の名前**の両方で渡す。相対の名前は探して解くので、渡した名前
+    /// だけでは、どこにある何を直せばよいかが分からない — 文面が解けた場所を名乗ることを見る。
     static func expectUnopenable(_ door: Door, _ obstacle: Obstacle, onto canvas: Canvas? = nil) async throws {
         let scratch = Scratch()
         defer { scratch.cleanUp() }
-        let path = try scratch.place(obstacle)
-        let failure = try await failure(of: door, reading: path, onto: canvas)
-        guard case .unopenable(let named, let reason) = failure else {
-            Issue.record("\(door) が \(obstacle) を unopenable で断っていない: \(String(describing: failure))")
-            return
+        let placed = try scratch.place(obstacle)
+        for name in [placed, Scratch.relativeName(of: placed)] {
+            let failure = try await failure(of: door, reading: name, onto: canvas)
+            guard case .unopenable(let named, let location, let reason) = failure else {
+                Issue.record("\(door) が \(name) (\(obstacle)) を unopenable で断っていない: \(String(describing: failure))")
+                continue
+            }
+            #expect(named == name)
+            // 置いた場所そのもの。名前が相対でも、探して解けた先を `..` を畳んで名乗る
+            #expect(location == placed)
+            #expect(reason == obstacle.reason)
+            let text = failure?.description ?? ""
+            #expect(text.contains(obstacle.reason), "\(text)")
+            #expect(text.contains("\"\(placed)\""), "解けた場所を名乗っていない: \(text)")
+            #expect(!text.contains("UTF-8"), "中身の符号化の問題と名乗っている: \(text)")
         }
-        #expect(named == path)
-        #expect(reason == obstacle.reason)
-        let text = failure?.description ?? ""
-        #expect(text.contains(obstacle.reason), "\(text)")
-        #expect(!text.contains("UTF-8"), "中身の符号化の問題と名乗っている: \(text)")
     }
 
     /// 開けるが中身が UTF-8 でないファイルは今までどおり `unreadable`、在らない名前は今までどおり
