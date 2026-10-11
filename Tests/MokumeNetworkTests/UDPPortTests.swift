@@ -97,6 +97,26 @@ struct UDPPortTests {
         #expect(told.lines.isEmpty)
     }
 
+    @Test("受けの完了の扱い: 中身は台帳に依らず渡し、中身の無いものは台帳に居る繋ぎでだけ空として渡し、終わりを名乗れば閉じる")
+    func completionIsHandledByContentFinalityAndLedger() {
+        typealias Listener = DatagramListener
+        // 中身のある datagram: isFinal に依らず渡して続ける。台帳から外した後に返っても、
+        // 届いた datagram なので渡す
+        #expect(Listener.completion(content: Data([7]), isFinal: false, failed: false, held: true) == .datagram([7]))
+        #expect(Listener.completion(content: Data([7]), isFinal: true, failed: false, held: true) == .datagram([7]))
+        #expect(Listener.completion(content: Data([7]), isFinal: false, failed: false, held: false) == .datagram([7]))
+        // 空の datagram: 終わりを名乗らなければ続け、名乗れば渡してから閉じる
+        // (閉じた流れが空を返し続けても、次の受けの error を待たずに止まる)
+        #expect(Listener.completion(content: nil, isFinal: false, failed: false, held: true) == .datagram([]))
+        #expect(Listener.completion(content: nil, isFinal: true, failed: false, held: true) == .last([]))
+        // こちらが閉じた繋ぎ (台帳に居ない) の中身の無い受けは、届いていないので渡さない
+        #expect(Listener.completion(content: nil, isFinal: true, failed: false, held: false) == .abandoned)
+        #expect(Listener.completion(content: nil, isFinal: false, failed: false, held: false) == .abandoned)
+        // 失敗は終わり
+        #expect(Listener.completion(content: nil, isFinal: false, failed: true, held: true) == .ended)
+        #expect(Listener.completion(content: Data([7]), isFinal: false, failed: true, held: true) == .ended)
+    }
+
     @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
     func oversizedDatagramIsDiscardedAndCounted() async throws {
         let told = Told()
