@@ -33,8 +33,14 @@ import MokumeDiagnostics
 /// 出すからである。読めたものだけが ``messages`` に入る。読める型は ``OSCValue`` のとおりで、
 /// 束 (bundle) は中を開いて並んだ順に渡す (束の時刻は見ない)。
 ///
-/// **捨てたことは黙らない。** 読めずに捨てたパケットの数と、溜めきれずに捨てたメッセージの
-/// 数 (1 フレームに 4096 を超えて届いたとき) は、次のフレームで診断に出る。
+/// **1 つのパケットは 9215 バイトまで (9216 バイト未満)。** macOS の受け口は 9216 バイトを超える
+/// datagram を先頭 9216 バイトに黙って切るので、9216 バイト以上のパケットは読まずに丸ごと捨てる
+/// (切れたものと見分けられないので、ちょうど 9216 バイトのものも捨てる)。先頭だけを読むと、束の
+/// 頭のメッセージだけを渡すことになるからである。``send(_:_:)`` も、符号化して 9216 バイト以上に
+/// なるメッセージ (大きな blob など) は送らない。
+///
+/// **捨てたことは黙らない。** 読めずに捨てたパケット (大きすぎて捨てたものも) の数と、溜めきれずに
+/// 捨てたメッセージの数 (1 フレームに 4096 を超えて届いたとき) は、次のフレームで診断に出る。
 ///
 /// ## 来ないことには理由がある
 ///
@@ -109,7 +115,8 @@ public final class OSCPort: Inlet {
     /// osc?.send("/layer", 2, 0.5, "fade")
     /// ```
     ///
-    /// **投げない。** 送り先が無い・宛名が `/` で始まらないときは、理由ごとに 1 度だけ知らせて
+    /// **投げない。** 送り先が無い・宛名が `/` で始まらない・符号化して 9216 バイト以上になる
+    /// (1 つのパケットは 9215 バイトまで。大きな blob など) ときは、理由ごとに 1 度だけ知らせて
     /// 何もしない。送れないとき (宛先で誰も受けていない・このアプリにローカルネットワークの許可が
     /// 無い・ネットワークが落ちている) は 1 度だけ診断に出し、``state`` には出ない。送れたら、
     /// また言えるように戻る。待たずに返る。
@@ -172,7 +179,16 @@ public final class OSCPort: Inlet {
             return
         }
         do {
-            outbound.send(try OSCCodec.encode(message))
+            let bytes = try OSCCodec.encode(message)
+            // 送り手へ渡せば `Message too long` で送れず、受け手が居ない見当で名乗って繋ぎを捨てる
+            guard Datagram.fits(bytes.count) else {
+                tellOnce(
+                    "tooLarge",
+                    "\(message.address) was not sent because it is \(bytes.count) bytes as OSC, "
+                        + "and one UDP datagram carries \(Datagram.largest) bytes at most")
+                return
+            }
+            outbound.send(bytes)
         } catch {
             tellOnce("\(error)", "Could not send OSC: \(error)")
         }

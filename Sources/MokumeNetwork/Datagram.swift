@@ -9,6 +9,29 @@ import Network
 // 文字列の ``TextDecoding``) が決める。ポートを開く部分は TCP・WebSocket と ``PortListener`` を
 // 共有する (待ち行列の扱いと ADR-0042 決定 7 の条件も、そちらの冒頭に書いた)。
 
+/// UDP の 1 つの datagram の大きさ。**受けも送りも、``sizeLimit`` バイト未満 (9215 バイトまで)
+/// だけを扱う** (#2325)。
+///
+/// macOS の Network.framework の受け口は、9216 バイトを超える datagram を先頭 9216 バイトに切り、
+/// 切れたことを知らせずに渡す (`isComplete` も真のまま。受ける長さを指定しても同じ。macOS 27.0.1 で
+/// 実測)。切れた先頭を渡すと、UDP では黙って別の文字列に、OSC では束の頭のメッセージだけになる。
+/// 切れたものとちょうど 9216 バイトのものは見分けられないので、**9216 バイト以上は切れた疑いがある
+/// として丸ごと捨てて数える** — ちょうど 9216 バイトの正しい datagram も捨てる代償は、メンテナが
+/// 受け入れた (#2325 の決定。全長を受けるには、受けを Network.framework から外すことになる)。
+///
+/// 送りも同じ数にそろえる。mokume が送ったものを mokume の受け口が捨てないためで、
+/// Network.framework の送り口が送れる大きさ (9216 バイトまで。超えると `Message too long`) にも収まる。
+nonisolated enum Datagram {
+    /// 大きさの上限 (バイト)。これ**以上**の datagram は、受けても捨てて数え、送らない。
+    static let sizeLimit = 9216
+
+    /// 扱える最大の大きさ (バイト)。診断の文面に出す。
+    static var largest: Int { sizeLimit - 1 }
+
+    /// `count` バイトの datagram を扱えるか。
+    static func fits(_ count: Int) -> Bool { count < sizeLimit }
+}
+
 /// UDP のポートを 1 つ開いて、届いた datagram を 1 つずつ渡す。
 ///
 /// **ポートが使えなくても投げない。** 開く・使用中を見分ける・開き直すのは ``PortListener`` の

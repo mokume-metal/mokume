@@ -89,6 +89,27 @@ struct UDPPortTests {
         #expect(told.lines.isEmpty)
     }
 
+    @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
+    func oversizedDatagramIsDiscardedAndCounted() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // macOS の受け口は 9216 バイトを超えるものを先頭 9216 バイトに黙って切る。切れたものと
+        // ちょうど 9216 バイトのものは見分けられないので、9216 バイトから捨てる
+        for size in [1000, 9215, 9216, 9217, 20000, 65507] {
+            #expect(peer.send([UInt8](repeating: 0x61, count: size), to: port) == size)
+        }
+        #expect(peer.send(Array("after".utf8), to: port) == 5)
+        let received = await collect(udp, count: 3)
+        #expect(received.map(\.utf8.count) == [1000, 9215, 5])
+        #expect(received.last == "after")
+        #expect(udp.input.unreadable == 4)
+        #expect(told.lines.isEmpty)
+    }
+
     @Test("受けの完了は、空の datagram と繋ぎの終わりを、文脈が終わりを名乗るかで見分ける")
     func completionTellsAnEmptyDatagramFromTheEnd() {
         // 空の datagram: content は nil で、文脈は終わりを名乗らない (実測)
@@ -138,6 +159,52 @@ struct UDPPortTests {
         let received = await collect(receiver, count: 2)
         #expect(received == ["", "x"])
         #expect(told.lines.isEmpty)
+    }
+
+    @Test("UTF-8 で 9216 バイト以上の文字列は送り手に渡さず、大きさと上限を 1 度だけ知らせる")
+    func oversizedSendIsRefusedOnce() throws {
+        let told = Told()
+        // 送り手に渡らなければ、送れなかったことを「受け手が居ない」見当で名乗る経路にも、
+        // 繋ぎを捨てる経路にも入らない
+        let recording = RecordingSender()
+        let udp = UDPPort(
+            port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: []),
+            outbound: recording, owner: nil, warn: told.append)
+        udp.send(String(repeating: "a", count: 20000))
+        udp.send(String(repeating: "a", count: 20000))
+        udp.send(String(repeating: "a", count: 9216))
+        udp.send(String(repeating: "é", count: 4608))  // 4608 字でも UTF-8 で 9216 バイト
+        #expect(recording.sent.map(\.count) == [])
+        #expect(told.lines.count == 1)
+        let line = told.lines.first ?? ""
+        #expect(line.contains("20000 bytes"))
+        #expect(line.contains("9215 bytes at most"))
+        #expect(!line.contains("listening"))
+
+        udp.send(String(repeating: "a", count: 9215))
+        #expect(recording.sent.map(\.count) == [9215])
+        #expect(told.lines.count == 1)
+    }
+
+    @Test("本物の宛先でも、上限に入らない文字列は送らず、続けて送った文字列は届く")
+    func oversizedSendLeavesTheDestinationReachable() async throws {
+        let (receiver, port) = try await listening(told: Told())
+        defer { receiver.close() }
+        let told = Told()
+        let sender = UDPPort(
+            port: 1, name: "udp :1", source: RecordedSource<String>(batches: []),
+            outbound: DatagramSender(host: "127.0.0.1", port: port, warn: told.append),
+            owner: nil, warn: told.append)
+        defer { sender.close() }
+
+        sender.send(String(repeating: "a", count: 20000))
+        sender.send("after")
+        let received = await collect(receiver, count: 1)
+        #expect(received == ["after"])
+        #expect(receiver.input.unreadable == 0)
+        #expect(told.lines.count == 1)
+        #expect(told.count(containing: "9215 bytes at most") == 1)
+        #expect(told.count(containing: "listening") == 0)
     }
 
     @Test("送れない理由は、理由ごとに 1 度だけ知らせて何も送らない")
