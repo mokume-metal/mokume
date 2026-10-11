@@ -35,9 +35,22 @@ nonisolated enum TextFile {
 
     /// 開けなかった事情を、人が読む短い句にする。OS が名乗った事情 (`Is a directory`・
     /// `Permission denied`) があればそれを、無ければ失敗そのものの説明を返す。
+    ///
+    /// **OS の事情は、失敗の番号から C の文面 (`strerror_r`) で引く。** Foundation の説明は
+    /// 言語の設定に左右されうるが、道具が話す言葉は英語で、設定で切り替えない ([ADR-0038]
+    /// 決定 1・2)。`strerror` ではなく `strerror_r` なのは、待たない口が別の thread で読むため。
+    ///
+    /// [ADR-0038]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0038-language-of-the-tool.md
     private static func openingReason(of error: any Error) -> String {
-        let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
-        return underlying?.localizedFailureReason ?? (error as NSError).localizedDescription
+        let failure = error as NSError
+        guard let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError,
+            underlying.domain == NSPOSIXErrorDomain
+        else { return failure.localizedDescription }
+        var text = [CChar](repeating: 0, count: 256)
+        guard strerror_r(Int32(underlying.code), &text, text.count) == 0 else {
+            return failure.localizedDescription
+        }
+        return text.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
     }
 
     /// 受け取ったバイト列を UTF-8 の文字として解く。先頭の BOM は落とす。

@@ -72,13 +72,17 @@ struct UnopenableFileTests {
         /// 中身の正しい CSV を `chmod 000` にしたもの。
         case noPermission
 
-        /// 文面に出るはずの、OS が名乗る事情。
-        var reason: String {
+        /// 開こうとして OS が返す番号。
+        var code: Int32 {
             switch self {
-            case .directory: "Is a directory"
-            case .noPermission: "Permission denied"
+            case .directory: EISDIR
+            case .noPermission: EACCES
             }
         }
+
+        /// 文面に出るはずの、OS が名乗る事情。**句を直書きせず、番号から C の文面を引く** —
+        /// 期待を OS の事情そのものから導き、検査が英語の言い回しに縛られないようにする。
+        var reason: String { String(cString: strerror(code)) }
     }
 
     /// 検査ごとに別の置き場。
