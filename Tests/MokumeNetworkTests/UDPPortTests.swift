@@ -86,8 +86,8 @@ struct UDPPortTests {
         received += await collect(udp, count: 1)
         #expect(received == ["a", ""])
 
-        // その流れは次の受けで終わる。閉じた後に届いたものは、新しい流れで受ける
-        _ = await until(1) { source.tally.ended >= 1 }
+        // 終わりを名乗った空を渡したら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
+        #expect(await until { source.tally.ended >= 1 })
         for text in ["b", "c"] {
             #expect(peer.send(Array(text.utf8), to: port) == 1)
         }
@@ -203,7 +203,7 @@ struct UDPPortTests {
         var received = await collect(receiver, count: 1)
         sender.send("")
         received += await collect(receiver, count: 1)
-        _ = await until(1) { source.tally.ended >= 1 }
+        #expect(await until { source.tally.ended >= 1 })
         sender.send("y")
         received += await collect(receiver, count: 1)
         #expect(received == ["x", "", "y"])

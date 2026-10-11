@@ -305,8 +305,8 @@ struct OSCPortTests {
         #expect(peer.send([], to: port) == 0)
         #expect(await until { osc.input.unreadable == 1 })
 
-        // その流れは次の受けで終わる。閉じた後に届いたものは、新しい流れで受ける
-        _ = await until(1) { source.tally.ended >= 1 }
+        // 終わりを名乗った空を数えたら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
+        #expect(await until { source.tally.ended >= 1 })
         for _ in 0..<5 {
             #expect(peer.send(packet, to: port) == packet.count)
         }
