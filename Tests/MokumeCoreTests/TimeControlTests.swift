@@ -221,6 +221,115 @@ struct TimeControlTests {
         #expect(run(observed, 3).map(\.0) == Array(repeating: Float(4.0 / 60), count: 3))
     }
 
+    /// 観測の枚は見せる時刻と経過だけを指定秒にし、作者の時計の帳簿 (飛び先の着地・止めている
+    /// 間の寄せ直し) は観測が無い枚と同じに進める。`observing` で観測の有無を切り替えて、同じ
+    /// 口の呼び方での後の枚を返す。
+    private func authorsClockAround(
+        observing: Bool, _ script: (FrameTiming, _ observe: () -> Void) -> [(Float, Float)]
+    ) -> [(Float, Float)] {
+        let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })
+        return script(timing) {
+            timing.advance(at: observing ? 5 : nil)
+            if observing {
+                #expect(timing.time == 5)
+                #expect(timing.deltaTime == 0)
+            }
+        }
+    }
+
+    @Test("前の枚で頼んだ飛び先が観測の枚をまたいでも、観測の後は観測が無いときと同じ作者の時計")
+    func aJumpAcrossAnObservedFrameKeepsTheAuthorsClock() {
+        func after(observing: Bool) -> [(Float, Float)] {
+            authorsClockAround(observing: observing) { timing, observe in
+                _ = run(timing, 3)
+                timing.jumpTime(2)  // 4 枚目に着地する
+                observe()  // 4 枚目
+                return run(timing, 2).map { ($0.0, $0.1) }  // 5・6 枚目
+            }
+        }
+        let observed = after(observing: true)
+        let unobserved = after(observing: false)
+        #expect(observed.map(\.0) == unobserved.map(\.0), "観測あり \(observed) / なし \(unobserved)")
+        #expect(observed.map(\.1) == [Float(step), Float(step)], "観測の後に経過 0 の枚が増えない")
+        #expect(abs(Double(observed[0].0) - (2 + step)) < 1e-6)
+        #expect(abs(Double(observed[1].0) - (2 + 2 * step)) < 1e-6)
+    }
+
+    @Test("止めている間の観測の枚で再開すると、観測が無いときと同じく止めた秒 + 1 枚ぶんから進む")
+    func resumingOnAnObservedFrameKeepsTheAuthorsClock() {
+        func after(observing: Bool) -> [(Float, Float)] {
+            authorsClockAround(observing: observing) { timing, observe in
+                _ = run(timing, 5)
+                timing.pauseTime()  // 4/60 で止まる
+                _ = run(timing, 2)  // 6・7 枚目
+                observe()  // 8 枚目
+                timing.playTime()
+                return run(timing, 2).map { ($0.0, $0.1) }  // 9・10 枚目
+            }
+        }
+        let observed = after(observing: true)
+        let unobserved = after(observing: false)
+        #expect(observed.map(\.0) == unobserved.map(\.0), "観測あり \(observed) / なし \(unobserved)")
+        #expect(abs(Double(observed[0].0) - 5.0 / 60) < 1e-6, "再開した枚が \(observed[0].0)")
+        #expect(observed.map(\.1) == [Float(step), Float(step)])
+    }
+
+    @Test("実時間の時計でも、観測の枚をまたぐ飛び先と観測の枚での再開は、観測が無いときと同じ作者の時計")
+    func theWallClockKeepsTheAuthorsBooksOnObservedFrames() {
+        // 1 枚ずつ 0.125 秒進める (60 fps の経過の上限 1/6 秒に当たらない幅)
+        func tick(_ timing: FrameTiming, _ advance: () -> Void) -> (Float, Float) {
+            advance()
+            return (timing.time, timing.deltaTime)
+        }
+        func jumped(observing: Bool) -> [(Float, Float)] {
+            var now = 100.0
+            let timing = FrameTiming(clock: .wallClock, now: { now })
+            now += 0.125
+            timing.advance()
+            timing.jumpTime(10)
+            now += 0.125
+            timing.advance(at: observing ? 5 : nil)  // 飛び先が着地する枚
+            return (0..<2).map { _ in
+                tick(timing) {
+                    now += 0.125
+                    timing.advance()
+                }
+            }
+        }
+        let jumpObserved = jumped(observing: true)
+        #expect(jumpObserved.map(\.0) == jumped(observing: false).map(\.0))
+        #expect(jumpObserved.map(\.0) == [10.125, 10.25])
+        #expect(jumpObserved.map(\.1) == [0.125, 0.125])
+
+        func resumed(observing: Bool) -> [(Float, Float)] {
+            var now = 100.0
+            let timing = FrameTiming(clock: .wallClock, now: { now })
+            for _ in 0..<2 {
+                now += 0.125
+                timing.advance()
+            }
+            timing.pauseTime()  // 0.25 秒で止まる
+            for _ in 0..<2 {
+                now += 0.125
+                timing.advance()
+            }
+            now += 0.125
+            timing.advance(at: observing ? 5 : nil)
+            if observing { #expect(timing.deltaTime == 0, "観測の枚の経過は 0") }
+            timing.playTime()
+            return (0..<2).map { _ in
+                tick(timing) {
+                    now += 0.125
+                    timing.advance()
+                }
+            }
+        }
+        let resumeObserved = resumed(observing: true)
+        #expect(resumeObserved.map(\.0) == resumed(observing: false).map(\.0))
+        #expect(resumeObserved.map(\.0) == [0.375, 0.5])
+        #expect(resumeObserved.map(\.1) == [0.125, 0.125])
+    }
+
     @Test("口を使わなければ、時刻は口が入る前と同じ値")
     func untouchedClocksKeepTheirValues() {
         let timing = FrameTiming(clock: .frameIndex(frameRate: 60), now: { 0 })

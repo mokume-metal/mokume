@@ -117,9 +117,9 @@ final class FrameTiming {
     /// [#1286]: https://github.com/mokume-metal/mokume/issues/1286
     private var offset: Double = 0
     /// いまの枚の、**作者の時計の上の**時刻 (秒)。止めた秒をここから取る。観測の指定秒が
-    /// 描き直す枚を除けば、``time`` の倍精度の元である。観測の枚の ``time`` は指定秒になるが、
-    /// こちらには入れない — 入れると、その枚で止めた秒が観測の秒になり、撮った後も作者の
-    /// 時計へ戻らない ([#2328])。
+    /// 描き直す枚でも作者の時計の値で、その枚の ``time`` だけが指定秒になる。指定秒を
+    /// こちらに入れると、その枚で止めた秒が観測の秒になり、撮った後も作者の時計へ戻らない
+    /// ([#2328])。観測の枚を除けば、``time`` の倍精度の元である。
     ///
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     private var seconds: Double = 0
@@ -168,8 +168,16 @@ final class FrameTiming {
     ///
     /// 作者が飛んだ枚 (``jumpTime(_:)``) と止めている間 (``pauseTime()``) も経過は 0 で、
     /// 原点のずれを寄せ直して、次の枚がそこから元の刻みで進むようにする。観測の指定秒は
-    /// ずれにも止めた秒にも触れない — 撮った後は作者の時計へ戻る。観測の枚で作者が止めても、
-    /// 止まるのは作者の時計のその枚の秒である。
+    /// ずれにも止めた秒にも触れない — 撮った後は作者の時計へ戻る。
+    ///
+    /// **観測の枚も、作者の時計の帳簿は観測が無い枚と同じに進める** ([#2328])。飛び先は
+    /// この枚に着地し、止めている間はずれを寄せ直す。指定秒が上書きするのは、見せる ``time``
+    /// と経過 (``step``) だけである。帳簿を飛ばすと、観測の枚をまたいだ飛び先の着地が 1 枚
+    /// 遅れ、止めている間に観測の枚で再開した枚が 1 枚先へ進み、観測の枚で止めた秒が作者の
+    /// 時計から外れる。代償として、飛び先の秒がこの枚に当たると、その秒の絵は出ない (この枚は
+    /// 指定秒を描く)。
+    ///
+    /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     func advance(at requestedTime: Float? = nil) {
         let now = now()
         frameCount += 1
@@ -184,15 +192,6 @@ final class FrameTiming {
             raw = Double(frameCount - 1) / Double(max(1, frameRate))
         }
         timeline = raw
-        if let requestedTime {
-            time = requestedTime
-            // 作者の時計のこの枚の秒。この経路はずれを寄せ直さないので、止めている間は
-            // `raw + offset` が止めた秒より先へ進んでいる — 止めた秒そのものを取る
-            seconds = heldAt ?? raw + offset
-            step = .seconds(0)
-            previous = now
-            return
-        }
         switch clock {
         case .wallClock:
             // **時刻は絶対経過のまま (`raw`)。** 何枚落ちても復帰した瞬間に追いつく — 揃えたい
@@ -221,6 +220,12 @@ final class FrameTiming {
         }
         seconds = raw + offset
         time = Float(seconds)
+        if let requestedTime {
+            // 観測の指定秒は、見せる時刻と経過だけを上書きする。作者の時計 (`seconds`・
+            // `offset`) は上で観測が無い枚と同じに進めてあり、次の枚はそこから続く
+            time = requestedTime
+            step = .seconds(0)
+        }
     }
 
     /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、
