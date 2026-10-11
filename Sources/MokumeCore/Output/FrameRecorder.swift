@@ -242,8 +242,9 @@ final class FrameRecorder: Outlet {
 
     /// 連番か動画を始める。**行き先の綴りが形を決める。**
     ///
-    /// `.mov` なら動画、`#` を含むなら連番。どちらでもない名前は断る — 番号の入る
-    /// 場所が無い連番を受けてしまうと全部が同じ名前になり、最後の 1 枚しか残らない。
+    /// `.mov` なら動画、ファイル名に `#` を含むなら連番 (置き場の名前の `#` は数えない・
+    /// ``FrameSequence``)。どちらでもない名前は断る — 番号の入る場所が無い連番を受けて
+    /// しまうと全部が同じ名前になり、最後の 1 枚しか残らない。
     ///
     /// - Parameter frame: 頼まれたフレームの番号。**録りの 1 枚目はこの番号の絵になる**
     ///   (``recordingFrom``)。
@@ -262,7 +263,8 @@ final class FrameRecorder: Outlet {
             warnOnce(
                 .patternWithoutNumber,
                 "beginRecord(\"\(pattern)\"): a numbered series needs somewhere for the number "
-                    + "to go (a run of # characters, as in \"out/frame-####.png\"). "
+                    + "to go (a run of # characters in the file name, "
+                    + "as in \"out/frame-####.png\"). "
                     + "Motion is written as .mov, as in \"out/motion.mov\". Not starting")
             return
         }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeDiagnostics
 import QuartzCore
 
 /// 時刻の出どころ。
@@ -76,6 +77,8 @@ final class FrameTiming {
     let clock: Clock
     /// 実時間の出どころ。検査が時間を操れるよう差し替えられる形にしてある。
     private let now: () -> Double
+    /// 作者への知らせの出口。検査が文面と回数を受け取れるよう差し替えられる形にしてある。
+    private let warn: (String) -> Void
     private let started: Double
     private var previous: Double
 
@@ -113,12 +116,19 @@ final class FrameTiming {
     ///
     /// [#1286]: https://github.com/mokume-metal/mokume/issues/1286
     private var offset: Double = 0
-    /// いまの枚の時刻 (秒)。``time`` の倍精度の元で、止めた秒をここから取る。
+    /// いまの枚の、**作者の時計の上の**時刻 (秒)。止めた秒をここから取る。観測の指定秒が
+    /// 描き直す枚でも作者の時計の値で、その枚の ``time`` だけが指定秒になる。指定秒を
+    /// こちらに入れると、その枚で止めた秒が観測の秒になり、撮った後も作者の時計へ戻らない
+    /// ([#2328])。観測の枚を除けば、``time`` の倍精度の元である。
+    ///
+    /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     private var seconds: Double = 0
     /// 作者が止めた秒 (``pauseTime()``)。止めていなければ `nil`。
     private var heldAt: Double?
     /// 次の枚で飛ぶ先の秒 (``jumpTime(_:)``)。1 枚で落ちる。
     private var pendingJump: Double?
+    /// 数でない飛び先を知らせたか (``jumpTime(_:)``)。2 回目からは言わない。
+    private var warnedJump = false
 
     /// 上限を目標フレームレートから導く。**目標フレーム間隔の 10 倍。**
     ///
@@ -136,11 +146,14 @@ final class FrameTiming {
     ///     ところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
+    ///   - warn: 作者への知らせの出口。
     init(
         clock: Clock, frameRate: Int = 60,
-        now: @escaping () -> Double = { CACurrentMediaTime() }
+        now: @escaping () -> Double = { CACurrentMediaTime() },
+        warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
         self.clock = clock
+        self.warn = warn
         self.maximumDeltaTime = Self.maximumDeltaTime(frameRate: frameRate)
         // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         self.frameInterval = 1 / Double(max(1, frameRate))
@@ -155,7 +168,16 @@ final class FrameTiming {
     ///
     /// 作者が飛んだ枚 (``jumpTime(_:)``) と止めている間 (``pauseTime()``) も経過は 0 で、
     /// 原点のずれを寄せ直して、次の枚がそこから元の刻みで進むようにする。観測の指定秒は
-    /// ずれに触れない — 撮った後は作者の時計へ戻る。
+    /// ずれにも止めた秒にも触れない — 撮った後は作者の時計へ戻る。
+    ///
+    /// **観測の枚も、作者の時計の帳簿は観測が無い枚と同じに進める** ([#2328])。飛び先は
+    /// この枚に着地し、止めている間はずれを寄せ直す。指定秒が上書きするのは、見せる ``time``
+    /// と経過 (``step``) だけである。帳簿を飛ばすと、観測の枚をまたいだ飛び先の着地が 1 枚
+    /// 遅れ、止めている間に観測の枚で再開した枚が 1 枚先へ進み、観測の枚で止めた秒が作者の
+    /// 時計から外れる。代償として、飛び先の秒がこの枚に当たると、その秒の絵は出ない (この枚は
+    /// 指定秒を描く)。
+    ///
+    /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     func advance(at requestedTime: Float? = nil) {
         let now = now()
         frameCount += 1
@@ -170,13 +192,6 @@ final class FrameTiming {
             raw = Double(frameCount - 1) / Double(max(1, frameRate))
         }
         timeline = raw
-        if let requestedTime {
-            time = requestedTime
-            seconds = Double(requestedTime)
-            step = .seconds(0)
-            previous = now
-            return
-        }
         switch clock {
         case .wallClock:
             // **時刻は絶対経過のまま (`raw`)。** 何枚落ちても復帰した瞬間に追いつく — 揃えたい
@@ -205,9 +220,16 @@ final class FrameTiming {
         }
         seconds = raw + offset
         time = Float(seconds)
+        if let requestedTime {
+            // 観測の指定秒は、見せる時刻と経過だけを上書きする。作者の時計 (`seconds`・
+            // `offset`) は上で観測が無い枚と同じに進めてあり、次の枚はそこから続く
+            time = requestedTime
+            step = .seconds(0)
+        }
     }
 
-    /// 次の枚から時刻を止める。止めた秒は**いまの枚の** ``time`` で、描画は続く。
+    /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、
+    /// 描画は続く。ふだんは ``time`` と同じ値で、観測の指定秒が描き直す枚でだけ違う。
     /// 止めている間の経過は 0 である。既に止めていれば何もしない。
     func pauseTime() {
         // 同じ枚で先に飛ぶ先を頼まれていれば、そこで止める
@@ -221,7 +243,20 @@ final class FrameTiming {
 
     /// 次の枚の時刻を `target` 秒にする。その枚の経過は 0 で、次の枚からは `target` から
     /// 元の刻みで進む。止めている間なら、`target` で止まり続ける。
+    ///
+    /// **数でない値・無限は受け取らない** ([#2327])。時計は飛ばずに進み (止めていれば止めた
+    /// 秒のまま)、同じ枚で先に頼んだ飛び先も取り消さない。受け取ると原点のずれが非有限になり、
+    /// 有限の秒へ飛び直すまで ``time`` が戻らない。毎フレーム呼ばれうる口なので、知らせは
+    /// この時計で 1 度だけにする ([ADR-0020] 決定 5・同じ動詞の `Movie.jump(_:)` と同じ形)。
+    ///
+    /// [#2327]: https://github.com/mokume-metal/mokume/issues/2327
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     func jumpTime(_ target: Double) {
+        guard target.isFinite else {
+            guard !warnedJump else { return }
+            warnedJump = true
+            return warn("jumpTime(): \(target) is not a time, so the time does not jump")
+        }
         pendingJump = target
         if heldAt != nil { heldAt = target }
     }

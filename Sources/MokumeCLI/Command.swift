@@ -92,8 +92,9 @@ enum Command {
                     """
                     Build the sketch and write its motion at a fixed frame rate, with no window.
                     The time the sketch sees steps by 1/fps per frame, so the same arguments give
-                    the same motion. --out takes a .mov, or a numbered series with a run of # for
-                    the number (out/frame-####.png). Ends by itself after fps × seconds frames
+                    the same motion. --out takes a .mov, or a numbered series with a run of # in
+                    the file name for the number (out/frame-####.png). Ends by itself after
+                    fps × seconds frames
                     """
                 )
             case .mcp:

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Synchronization
 import Testing
 
 @testable import MokumeCore
@@ -117,6 +118,35 @@ struct UDPPortTests {
         #expect(told.lines.isEmpty)
     }
 
+    @Test("前提: macOS の受け口は 9216 バイトを超える datagram を、先頭 9216 バイトに切って渡す")
+    func networkFrameworkCutsDatagramsAt9216() async throws {
+        // 上限 (Datagram.sizeLimit) の見張りを通る前の、受け口が渡す生のバイト列の長さを見る。
+        // 見張りは OS が切らなくても 9216 バイト以上を捨てるので、上の検査は OS の振る舞いが
+        // 変わっても緑のままになる。この検査はその前提だけを見張る (#2325)
+        let lengths = Mutex<[Int]>([])
+        let bound = Mutex<Int?>(nil)
+        let listener = DatagramListener(
+            port: 0, host: "127.0.0.1", retryAfter: 0.05,
+            received: { bytes, _ in lengths.withLock { $0.append(bytes.count) } },
+            changed: { event in
+                if case .ready(let port) = event { bound.withLock { $0 = port } }
+            })
+        listener.start()
+        defer { listener.stop() }
+        #expect(await until { bound.withLock { $0 } != nil })
+        let port = try #require(bound.withLock { $0 })
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        for size in [9215, 9216, 20000] {
+            #expect(peer.send([UInt8](repeating: 0x61, count: size), to: port) == size)
+        }
+        #expect(await until { lengths.withLock { $0.count } >= 3 })
+        #expect(
+            lengths.withLock { $0 } == [9215, 9216, 9216],
+            "Network.framework の切り方が変わった。#2325 の上限 (Datagram.sizeLimit) の前提を見直す")
+    }
+
     // MARK: - 送る
 
     @Test("send は作るときに決めた宛先へ、1 つの datagram として届く")
@@ -183,6 +213,25 @@ struct UDPPortTests {
         udp.send(String(repeating: "a", count: 9215))
         #expect(recording.sent.map(\.count) == [9215])
         #expect(told.lines.count == 1)
+    }
+
+    @Test("大きすぎる送りが続く間は 1 度だけ知らせ、上限以内を送れたら、次の大きすぎる送りでまた知らせる")
+    func oversizedSendIsToldAgainAfterASuccessfulSend() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let udp = UDPPort(
+            port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: []),
+            outbound: recording, owner: nil, warn: told.append)
+        let large = String(repeating: "a", count: 20000)
+        udp.send(large)
+        udp.send(large)
+        #expect(told.count(containing: "9215 bytes at most") == 1)
+
+        udp.send("small")
+        udp.send(large)
+        udp.send(large)
+        #expect(told.count(containing: "9215 bytes at most") == 2)
+        #expect(recording.sent.map(\.count) == [5])
     }
 
     @Test("本物の宛先でも、上限に入らない文字列は送らず、続けて送った文字列は届く")
