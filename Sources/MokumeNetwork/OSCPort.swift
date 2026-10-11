@@ -33,11 +33,11 @@ import MokumeDiagnostics
 /// 出すからである。読めたものだけが ``messages`` に入る。読める型は ``OSCValue`` のとおりで、
 /// 束 (bundle) は中を開いて並んだ順に渡す (束の時刻は見ない)。
 ///
-/// **1 つのパケットは 9215 バイトまで (9216 バイト未満)。** macOS の受け口は 9216 バイトを超える
-/// datagram を先頭 9216 バイトに黙って切るので、9216 バイト以上のパケットは読まずに丸ごと捨てる
-/// (切れたものと見分けられないので、ちょうど 9216 バイトのものも捨てる)。先頭だけを読むと、束の
-/// 頭のメッセージだけを渡すことになるからである。``send(_:_:)`` も、符号化して 9216 バイト以上に
-/// なるメッセージ (大きな blob など) は送らない。
+/// **1 つのパケットは 9212 バイトまで** (9216 バイト未満で、OSC のパケットは 4 バイトの倍数)。
+/// macOS の受け口は 9216 バイトを超える datagram を先頭 9216 バイトに黙って切るので、9216 バイト
+/// 以上のパケットは読まずに丸ごと捨てる (切れたものと見分けられないので、ちょうど 9216 バイトの
+/// ものも捨てる)。先頭だけを読むと、束の頭のメッセージだけを渡すことになるからである。
+/// ``send(_:_:)`` も、符号化して 9216 バイト以上になるメッセージ (大きな blob など) は送らない。
 ///
 /// **捨てたことは黙らない。** 読めずに捨てたパケット (大きすぎて捨てたものも) の数と、溜めきれずに
 /// 捨てたメッセージの数 (1 フレームに 4096 を超えて届いたとき) は、次のフレームで診断に出る。
@@ -115,11 +115,12 @@ public final class OSCPort: Inlet {
     /// osc?.send("/layer", 2, 0.5, "fade")
     /// ```
     ///
-    /// **投げない。** 送り先が無い・宛名が `/` で始まらない・符号化して 9216 バイト以上になる
-    /// (1 つのパケットは 9215 バイトまで。大きな blob など) ときは、理由ごとに 1 度だけ知らせて
-    /// 何もしない。送れないとき (宛先で誰も受けていない・このアプリにローカルネットワークの許可が
-    /// 無い・ネットワークが落ちている) は 1 度だけ診断に出し、``state`` には出ない。送れたら、
-    /// また言えるように戻る。待たずに返る。
+    /// **投げない。** 送り先が無い・宛名が `/` で始まらないときは、理由ごとに 1 度だけ知らせて
+    /// 何もしない。符号化して 9216 バイト以上になる (1 つのパケットは 9212 バイトまで。大きな blob
+    /// など) ときも送らずに知らせ、続く間は宛名ごとに 1 度だけ言う。送れないとき (宛先で誰も
+    /// 受けていない・このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は
+    /// 1 度だけ診断に出し、``state`` には出ない。どちらも、送れたら、また言えるように戻る。
+    /// 待たずに返る。
     ///
     /// - Parameters:
     ///   - address: 宛名。`/` で始める。
@@ -180,14 +181,16 @@ public final class OSCPort: Inlet {
         }
         do {
             let bytes = try OSCCodec.encode(message)
-            // 送り手へ渡せば `Message too long` で送れず、受け手が居ない見当で名乗って繋ぎを捨てる
+            // 送り手へ渡せば `Message too long` で送れず、受け手が居ない見当で名乗って繋ぎを捨てる。
+            // 大きすぎる送りが続く間は宛名ごとに 1 度だけ言い、上限以内を送れたら、また言えるように戻す
             guard Datagram.fits(bytes.count) else {
                 tellOnce(
-                    "tooLarge",
+                    Self.tooLarge + message.address,
                     "\(message.address) was not sent because it is \(bytes.count) bytes as OSC, "
-                        + "and one UDP datagram carries \(Datagram.largest) bytes at most")
+                        + "and one OSC packet over UDP carries \(Self.largestPacket) bytes at most")
                 return
             }
+            toldSending = toldSending.filter { !$0.hasPrefix(Self.tooLarge) }
             outbound.send(bytes)
         } catch {
             tellOnce("\(error)", "Could not send OSC: \(error)")
@@ -198,4 +201,11 @@ public final class OSCPort: Inlet {
         guard toldSending.insert(key).inserted else { return }
         warn(message)
     }
+
+    /// 送れる OSC のパケットの最大 (バイト)。パケットは 4 バイトの倍数なので、datagram の上限
+    /// (``Datagram/sizeLimit`` 未満) に収まる 4 の倍数のうち最大のもの (9212)。
+    static let largestPacket = (Datagram.sizeLimit - 1) / 4 * 4
+
+    /// 大きすぎて送らなかったことを知らせた鍵の頭。後ろに宛名が付く。
+    private static let tooLarge = "tooLarge "
 }

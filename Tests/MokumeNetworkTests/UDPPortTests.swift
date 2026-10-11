@@ -163,6 +163,25 @@ struct UDPPortTests {
         #expect(told.lines.count == 1)
     }
 
+    @Test("大きすぎる送りが続く間は 1 度だけ知らせ、上限以内を送れたら、次の大きすぎる送りでまた知らせる")
+    func oversizedSendIsToldAgainAfterASuccessfulSend() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let udp = UDPPort(
+            port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: []),
+            outbound: recording, owner: nil, warn: told.append)
+        let large = String(repeating: "a", count: 20000)
+        udp.send(large)
+        udp.send(large)
+        #expect(told.count(containing: "9215 bytes at most") == 1)
+
+        udp.send("small")
+        udp.send(large)
+        udp.send(large)
+        #expect(told.count(containing: "9215 bytes at most") == 2)
+        #expect(recording.sent.map(\.count) == [5])
+    }
+
     @Test("本物の宛先でも、上限に入らない文字列は送らず、続けて送った文字列は届く")
     func oversizedSendLeavesTheDestinationReachable() async throws {
         let (receiver, port) = try await listening(told: Told())

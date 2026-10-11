@@ -463,15 +463,40 @@ struct OSCPortTests {
         let line = told.lines.first ?? ""
         #expect(line.contains("/big"))
         #expect(line.contains("\(try Wire.encoded(large).count) bytes"))
-        #expect(line.contains("9215 bytes at most"))
+        #expect(line.contains("9212 bytes at most"))
         #expect(!line.contains("listening"))
 
-        // ちょうど 9216 バイトも送らず、9215 バイトに収まるものは送る (blob の 4 バイト境界で 9212 バイト)
+        // ちょうど 9216 バイトも送らず、OSC のパケットの最大 (4 バイトの倍数で 9212 バイト) は送る。
+        // 宛名が違うので、9216 バイトの /b は改めて知らせる
         let header = try Wire.encoded(OSCMessage("/b", arguments: [.blob([])])).count
         osc.send(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 9216 - header))]))
         osc.send(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 9212 - header))]))
         #expect(recording.sent.map(\.count) == [9212])
-        #expect(told.lines.count == 1)
+        #expect(told.lines.count == 2)
+        #expect(told.lines.last?.contains("/b was not sent because it is 9216 bytes") == true)
+    }
+
+    @Test("大きすぎる送りは宛名ごとに 1 度だけ知らせ、上限以内を送れたら、また知らせる")
+    func oversizedSendIsToldPerAddressAndAgainAfterASuccessfulSend() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 9000, name: "osc :9000", source: RecordedSource<OSCMessage>(batches: []),
+            outbound: recording, owner: nil, warn: told.append)
+        let blob = OSCValue.blob([UInt8](repeating: 7, count: 12000))
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        #expect(told.count(containing: "9212 bytes at most") == 1)
+        osc.send(OSCMessage("/b", arguments: [blob]))
+        #expect(told.count(containing: "9212 bytes at most") == 2)
+        #expect(told.count(containing: "/b was not sent") == 1)
+
+        osc.send("/ok", 1)
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        #expect(told.count(containing: "9212 bytes at most") == 3)
+        #expect(told.count(containing: "/a was not sent") == 2)
+        #expect(recording.sent.count == 1)
     }
 
     @Test("本物の宛先でも、上限に入らないメッセージは送らず、続けて送ったメッセージは届く")
@@ -488,7 +513,7 @@ struct OSCPortTests {
         #expect(received == [OSCMessage("/after", 1)])
         #expect(osc.input.unreadable == 0)
         #expect(told.lines.count == 1)
-        #expect(told.count(containing: "9215 bytes at most") == 1)
+        #expect(told.count(containing: "9212 bytes at most") == 1)
         #expect(told.count(containing: "listening") == 0)
     }
 }
