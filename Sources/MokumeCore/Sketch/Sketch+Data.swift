@@ -42,8 +42,10 @@ extension Sketch {
     /// **読み込みは投げる。** 読めなかったときに別の道を選ぶ判断が要るので、黙って空へ
     /// 倒さない。見つからないときの説明には**探した場所**が載る。
     ///
-    /// - Throws: 見つからないときに ``DataFailure/notFound(path:searched:)``、UTF-8 の文字と
-    ///   して読めないときに ``DataFailure/unreadable(path:)``。
+    /// - Throws: 見つからないときに ``DataFailure/notFound(path:searched:)``、見つかったが開け
+    ///   ない (ディレクトリだった・読む権利が無い) ときに
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)、UTF-8 の文字として
+    ///   読めないときに ``DataFailure/unreadable(path:)``。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadStrings(_ path: String) throws(DataFailure) -> [String] {
         let url = try dataURL(path)
@@ -117,7 +119,11 @@ extension Sketch {
     ///
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。
     ///
-    /// - Throws: 見つからない・UTF-8 の文字として読めない・CSV として壊れているとき。
+    /// - Throws: ``DataFailure``。見つからない (``DataFailure/notFound(path:searched:)``)・
+    ///   見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る。
+    ///   ``DataFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めない
+    ///   (``DataFailure/unreadable(path:)``)・CSV として壊れている
+    ///   (``DataFailure/malformed(path:line:reason:)``) とき。
     // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadTable(_ path: String, header: Bool = false) throws(DataFailure) -> Table {
         let url = try dataURL(path)
@@ -231,6 +237,8 @@ extension Sketch {
     /// 読めなかったときに別の道を選ぶ判断が要るので、黙って空へ倒さない。
     ///
     /// - ファイルが見つからない: ``DataFailure/notFound(path:searched:)`` (探した場所が載る)
+    /// - ファイルが見つかったが開けない (ディレクトリだった・読む権利が無い):
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)
     /// - URL から受け取れない (繋がらない・時間切れ・サーバが 2xx 以外の状態で答えた):
     ///   ``DataFailure/unreachable(url:reason:)``
     /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``
@@ -318,7 +326,7 @@ extension Sketch {
     ///
     /// ## 読めないときは投げる
     ///
-    /// 投げる場合は ``loadJSONObject(_:)`` と同じ 4 つで、壊れた XML (閉じない要素・閉じる名前の
+    /// 投げる場合は ``loadJSONObject(_:)`` と同じで、壊れた XML (閉じない要素・閉じる名前の
     /// 食い違い・不正な文字・要素の無い文字・深すぎる入れ子) は ``DataFailure/malformed(path:line:reason:)``
     /// で、壊れていた行を添えて投げる。
     ///

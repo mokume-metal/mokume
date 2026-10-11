@@ -123,13 +123,17 @@ enum RenderCommand {
         let destination = URL(
             fileURLWithPath: NSString(string: out).expandingTildeInPath, relativeTo: currentDirectory
         ).standardizedFileURL.path
-        guard
+        // **形は打った綴りでも見る** (#2313)。絶対パスにすると末尾の `/` と `.`・`..` が消え、
+        // 最後の部品が変わる — `take#1/` (フォルダ) が `…/take#1` になり、`take#1` の `#` を
+        // 番号にして連番として通ってしまう。書く API は `take#1/` を断るので、道具だけが通すと
+        // 同じ綴りで判定が食い違う
+        guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(
                 frameRate: frameRate, frameCount: frameCount, destination: destination)
         else {
             throw .usage(
                 "\(outFlags[0]) takes a movie ending in .mov, or a numbered series with a run of #"
-                    + " where the number goes (out/frame-####.png): \(out)")
+                    + " in the file name where the number goes (out/frame-####.png): \(out)")
         }
         return Options(invocation: invocation, request: request)
     }
