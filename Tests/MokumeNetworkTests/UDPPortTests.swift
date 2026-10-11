@@ -117,6 +117,42 @@ struct UDPPortTests {
         #expect(Listener.completion(content: Data([7]), isFinal: false, failed: true, held: true) == .ended)
     }
 
+    @Test("受け口が失敗して閉じたら、送り元を台帳から外して閉じ、待っていた受けを空のメッセージにしない")
+    func closedListenerDropsItsSenders() async throws {
+        let received = Mutex<[String]>([])
+        let bound = Mutex<Int?>(nil)
+        let listener = DatagramListener(
+            port: 0, host: "127.0.0.1", retryAfter: 0.05,
+            received: { bytes, _ in received.withLock { $0.append(String(decoding: bytes, as: UTF8.self)) } },
+            changed: { event in
+                if case .ready(let port) = event { bound.withLock { $0 = port } }
+            })
+        listener.start()
+        defer { listener.stop() }
+        #expect(await until { bound.withLock { $0 } != nil })
+        let port = try #require(bound.withLock { $0 })
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        #expect(peer.send(Array("a".utf8), to: port) == 1)
+        #expect(await until { received.withLock { $0 } == ["a"] })
+        #expect(listener.connectionCount == 1)
+
+        // 受け口が失敗して閉じたときに PortListener が呼ぶ手続きを、受け口を本当に失敗させずに呼ぶ。
+        // 閉じた繋ぎの待っていた受けは、空の datagram と同じ形で返る
+        listener.onQueue { listener.listenerClosed() }
+        #expect(listener.connectionCount == 0)
+        // 閉じた流れが片付くのを待ってから送る。直後に送ると、b は閉じた繋ぎの待っていた受けで
+        // 届くことも、閉じかけの流れに入って届かないこともある (実測)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(peer.send(Array("b".utf8), to: port) == 1)
+        #expect(await until { received.withLock { $0.count } >= 2 })
+        #expect(received.withLock { $0 } == ["a", "b"])
+        // 外した繋ぎは閉じたので、b は新しい送り元として受け直している。外した数は ended に入れない
+        #expect(listener.tally.accepted == 2)
+        #expect(listener.tally.ended == 0)
+    }
+
     @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
     func oversizedDatagramIsDiscardedAndCounted() async throws {
         let told = Told()

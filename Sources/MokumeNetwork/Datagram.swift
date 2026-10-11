@@ -76,7 +76,8 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
     private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
-    private let opener: PortListener
+    /// 受け口。閉じたときの知らせに自分を渡すので、他をすべて決めた後に作る。
+    private var opener: PortListener!
     /// 送り元と、最後に読んだ時刻 (``now`` の目盛り)。
     private var ledger: SenderLedger<NWConnection>
     private var stopped = false
@@ -103,7 +104,8 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         ledger = SenderLedger(limit: Self.connectionLimit, idleAfter: idleAfter)
         opener = PortListener(
             port: port, host: host, retryAfter: retryAfter, queue: queue,
-            parameters: { .udp }, changed: changed)
+            parameters: { .udp }, changed: changed,
+            closed: { [weak self] in self?.listenerClosed() })
     }
 
     /// 開き始める。待たずに返る。
@@ -132,7 +134,24 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         }
     }
 
+    /// 待ち行列の上で手続きを走らせる。検査が ``listenerClosed()`` を、受け口を本当に
+    /// 失敗させずに呼ぶための口。
+    func onQueue<Result>(_ body: () -> Result) -> Result {
+        queue.sync(execute: body)
+    }
+
     // MARK: - 待ち行列の上
+
+    /// 受け口 (`NWListener`) が失敗して閉じた。送り元をすべて台帳から外して閉じる。
+    ///
+    /// 開き直した受け口は、送り元ごとに繋ぎを作り直す。閉じた受け口の繋ぎを台帳に残すと、
+    /// その待っていた受けが空の datagram と同じ形 (`content == nil`・`error == nil`) で
+    /// 返ったときに、届いていない空のメッセージとして渡してしまう。外した繋ぎは
+    /// ``SenderTally`` に数えない。``PortListener`` が ``queue`` の上で呼ぶ。
+    func listenerClosed() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        for connection in ledger.removeAll() { connection.cancel() }
+    }
 
     private func accept(_ connection: NWConnection) {
         guard !stopped else {
