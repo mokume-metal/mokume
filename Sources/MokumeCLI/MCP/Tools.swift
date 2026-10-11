@@ -157,7 +157,15 @@ struct Tools {
     private func observe(_ arguments: [String: Any]) -> (String, Bool) {
         let id = makeID()
         var request: [String: Any] = ["id": id]
-        if let scale = arguments["scale"] as? Double { request["scale"] = scale }
+        // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
+        // 真偽値は `NSNumber` 経由で 1 に読めてしまうので、型で見分ける (`time` と揃える・#2319)。
+        // 範囲では切らない — 範囲の外は撮る側が等倍で書いて警告で名乗る (observe-request の約束)
+        if let raw = arguments["scale"] {
+            guard let scale = raw as? NSNumber, CFGetTypeID(scale) != CFBooleanGetTypeID() else {
+                return ("scale must be a number", true)
+            }
+            request["scale"] = scale.doubleValue
+        }
         var requestedTime: Double?
         if let raw = arguments["time"] {
             guard let value = raw as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
@@ -388,6 +396,11 @@ struct Tools {
 
     private func reference(_ arguments: [String: Any]) -> (String, Bool) {
         let name = arguments["name"] as? String
+        // **文字列でない名前は断る。** 「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として
+        // 返り、頼み方を誤ったことに気付けない (#2319)
+        if arguments["name"] != nil, name == nil {
+            return ("name must be a string (a document's name). Omit it to get the list.", true)
+        }
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
         if name == Self.apiDocument { return apiReference() }
         if name == Self.startupDocument { return (startupReference(), false) }
