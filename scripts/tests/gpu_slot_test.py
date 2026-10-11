@@ -177,12 +177,33 @@ class GpuSlotTest(SlotHarness):
         self.assertTrue(_wait_for(third_started.exists), "枠が空いても 3 本目が走らない")
 
     def test_waiting_side_names_the_holders(self):
+        # 待つ側の期限は既定 (30 秒) のまま、待っている間の名乗りを見て、見届けたら止める (#2343)。
+        # 期限を短くして終わりを待つと、待つ側が名乗る周回の前に止まった回は、期限で抜ける文面だけに
+        # なって落ちる。期限で抜ける文面 (`_give_up`) も持ち主を名乗るので、持ち主の行は「空くのを
+        # 待っている」の名乗りの直後 (次の `gpu-slot:` の行まで) に探す。期限で抜ける側の文面は
+        # test_the_waiting_side_gives_up_at_its_deadline が見る
         holder, holder_started, _ = self._start("holder", slots="1")
         self.assertTrue(_wait_for(holder_started.exists))
-        waiter, _, _ = self._start("waiter", slots="1", wait="0.5")
-        _, error = waiter.communicate(timeout=10)
-        self.assertIn("空くのを待っている", error)
-        self.assertIn(f"pid {holder.pid}", error)
+        waiter, _, _ = self._start("waiter", slots="1")
+        said = _Said(waiter)
+        holder_line = f"pid {holder.pid}"
+
+        def named_while_waiting():
+            lines = said.text().splitlines()
+            for index, line in enumerate(lines):
+                if "空くのを待っている" not in line:
+                    continue
+                for following in lines[index + 1:]:
+                    if following.startswith("gpu-slot:"):
+                        break
+                    if holder_line in following:
+                        return True
+            return False
+
+        named = _wait_for(named_while_waiting)
+        waiter.terminate()
+        tail = "\n".join(said.text().splitlines()[-6:])
+        self.assertTrue(named, f"待つ間の名乗りに持ち主 ({holder_line}) が載らない。stderr の末尾:\n{tail}")
 
     def test_a_killed_holder_gives_its_slot_back(self):
         holder, holder_started, holder_release = self._start("holder", slots="1")
