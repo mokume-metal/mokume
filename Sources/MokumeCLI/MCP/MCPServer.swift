@@ -6,8 +6,8 @@ import mokume
 
 /// エージェントの窓口。
 ///
-/// 標準入出力で行区切りの JSON-RPC をやりとりする。手続きは 3 つだけ —
-/// 繋ぎ始めの挨拶・道具立ての一覧・呼び出し。
+/// 標準入出力で行区切りの JSON-RPC をやりとりする。手続きは 4 つだけ —
+/// 繋ぎ始めの挨拶・生きているかの確かめ (`ping`)・道具立ての一覧・呼び出し。
 struct MCPServer {
     /// 名乗る版。手続きの版であって、この道具の版ではない。
     static let protocolVersion = "2024-11-05"
@@ -23,19 +23,34 @@ struct MCPServer {
         while let line = readLine() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            guard let call = JSONRPC.parse(trimmed) else {
+            switch JSONRPC.parse(trimmed) {
+            case .call(let call):
+                guard let response = respond(to: call) else { continue }
+                write(response)
+            case .refused(let reply):
                 // **1 行の壊れで繋がりを切らない。** 切ると、繋いでいる側からは
-                // 何が起きたのか分からなくなる
-                continue
+                // 何が起きたのか分からなくなる。黙りもしない — 誤りを 1 行返して次の行へ
+                // 進む。黙ると、繋いでいる側は来ない答えを待ち続ける (#2317)
+                write(reply)
             }
-            guard let response = respond(to: call) else { continue }
-            write(response)
         }
     }
 
     /// 1 つの呼び出しに答える。答えを返さない通知なら `nil`。
+    ///
+    /// **通知かどうかは、手続きの名前を見る前にここで 1 度だけ決める。** 名前ごとの枝で
+    /// 決めると、枝を足すたびに判断が漏れうる — `initialize`・`tools/list`・`tools/call`
+    /// の枝が通知にも `"id": null` で答え、`tools/call` は道具まで走らせていた (#2317)。
+    /// MCP 2024-11-05 の通知 (`notifications/` の 4 つ) に、下の枝の名前のものは無い。
+    /// 名前によらず、知らない通知と同じく黙って捨てる
     func respond(to call: JSONRPC.Call) -> String? {
+        // JSON-RPC 2.0 §4.1 — 通知には、手続きの名前によらず答えない
+        guard call.expectsResponse else { return nil }
         switch call.method {
+        case "ping":
+            // 空の結果で速やかに答える (MCP 2024-11-05 の Ping・#2318)。窓口は挨拶の
+            // 前後で状態を変えないので、挨拶の前でも同じ答えになる
+            return JSONRPC.response(id: call.id, result: [:])
         case "initialize":
             return JSONRPC.response(
                 id: call.id,
@@ -62,8 +77,6 @@ struct MCPServer {
                     "isError": outcome.isError,
                 ])
         default:
-            // 通知 (答えを待たないもの) には黙って従う
-            guard call.expectsResponse else { return nil }
             return JSONRPC.failure(
                 id: call.id, code: -32601, message: "no such method: \(call.method)")
         }

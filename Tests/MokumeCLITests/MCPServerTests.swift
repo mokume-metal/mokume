@@ -10,10 +10,13 @@ import mokume
 @Suite("エージェントの窓口")
 struct MCPServerTests {
     /// やりとりを記録する窓口を組む。
+    ///
+    /// 待ちの上限は短くしてある。道具を走らせてしまう誤り (#2317) を、検査が既定の
+    /// 5 秒を待たずに見られるようにするため。
     private func makeServer(directory: URL, input: [String]) -> (MCPServer, Recorder) {
         let recorder = Recorder(lines: input)
         let server = MCPServer(
-            tools: Tools(facets: Facets(directory: directory), makeID: { "fixed" }),
+            tools: Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" }),
             readLine: { recorder.next() },
             write: { recorder.written.append($0) })
         return (server, recorder)
@@ -36,6 +39,22 @@ struct MCPServerTests {
     private func decode(_ line: String) throws -> [String: Any] {
         try #require(
             try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+    }
+
+    /// 答えの `id` を、比べられる綴りにする (数はそのまま・文字列は引用符付き・`null`)。
+    private func idOf(_ object: [String: Any]) -> String {
+        switch object["id"] {
+        case nil: "absent"
+        case is NSNull: "null"
+        case let text as String: "\"\(text)\""
+        case let number as NSNumber: number.stringValue
+        default: "unreadable"
+        }
+    }
+
+    /// 誤りの答えの符号。誤りでなければ `nil`。
+    private func errorCode(_ object: [String: Any]) -> Int? {
+        (object["error"] as? [String: Any])?["code"] as? Int
     }
 
     @Test("繋ぎ始めの挨拶に、手続きの版と道具があることを答える")
@@ -69,26 +88,104 @@ struct MCPServerTests {
         #expect(tools.allSatisfy { ($0["description"] as? String)?.isEmpty == false })
     }
 
-    @Test("1 行の壊れで繋がりを切らない")
+    @Test("1 行の壊れで繋がりを切らず、壊れた行には誤りを 1 行返す")
     func survivesAMalformedLine() throws {
         let (server, recorder) = makeServer(
             directory: try makeDirectory(),
             input: ["これは JSON ではない", #"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#])
         server.serve()
 
-        // 壊れた行は落とすが、その次の呼び出しには答える
-        #expect(recorder.written.count == 1)
-        let answered = try #require(recorder.written.first)
-        #expect(try decode(answered)["id"] as? Int == 3)
+        // 壊れた行には id を読めないので null で -32700 を返し、その次の呼び出しにも答える。
+        // 黙ると、繋いでいる側からは答えが来ないのか遅れているのか見分けが付かない (#2317)
+        try #require(recorder.written.count == 2)
+        let refused = try decode(recorder.written[0])
+        #expect(refused["jsonrpc"] as? String == "2.0")
+        #expect(idOf(refused) == "null")
+        #expect(errorCode(refused) == -32700)
+        let answered = try decode(recorder.written[1])
+        #expect(idOf(answered) == "3")
+        #expect(answered["result"] != nil)
     }
 
-    @Test("答えを待たない通知には、何も返さない")
-    func staysSilentForNotifications() throws {
+    @Test(
+        "答えを待たない通知には、名前によらず何も返さず、道具も走らせない",
+        arguments: [
+            #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            #"{"jsonrpc":"2.0","method":"initialize","params":{}}"#,
+            #"{"jsonrpc":"2.0","method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"observe","arguments":{}}}"#,
+            #"{"jsonrpc":"2.0","method":"ping"}"#,
+        ])
+    func staysSilentForNotifications(notification: String) throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(directory: directory, input: [notification])
+        server.serve()
+        // JSON-RPC 2.0 §4.1 — 通知には、手続きの名前によらず答えない (#2317)
+        #expect(recorder.written.isEmpty)
+        // 通知の tools/call は道具を走らせない。走らせると観測の区画に要求が置かれる
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/observe/request.json").path))
+    }
+
+    @Test("id のある呼び出しには、id の形 (数・文字列・null) によらず同じ id で答える")
+    func answersWithTheCallersID() throws {
         let (server, recorder) = makeServer(
             directory: try makeDirectory(),
-            input: [#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#])
+            input: [
+                #"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":"seven","method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":null,"method":"tools/list"}"#,
+            ])
         server.serve()
-        #expect(recorder.written.isEmpty)
+
+        let answers = try recorder.written.map(decode)
+        #expect(answers.map(idOf) == ["7", "\"seven\"", "null"])
+        #expect(answers.allSatisfy { $0["result"] != nil && $0["error"] == nil })
+    }
+
+    @Test("呼び出しの形でない行には、読める id で -32600 を返し、空行は読み飛ばす")
+    func refusesLinesThatAreNotCalls() throws {
+        let (server, recorder) = makeServer(
+            directory: try makeDirectory(),
+            input: [
+                // method が文字列でない・無い。id は読めるので、その id で返す
+                #"{"jsonrpc":"2.0","id":2,"method":5}"#,
+                #"{"jsonrpc":"2.0","id":3}"#,
+                // id も読めなければ null で返す
+                #"{"jsonrpc":"2.0","method":5}"#,
+                // 束は扱わない (名乗る版 2024-11-05 は束を含まない)。中身によらず 1 行で断る
+                #"[{"jsonrpc":"2.0","id":4,"method":"tools/list"}]"#,
+                // JSON としては読めるがオブジェクトでない行も、壊れた JSON ではなく形の誤り
+                "5",
+                // 空行は従来どおり読み飛ばす
+                "",
+                "   ",
+                #"{"jsonrpc":"2.0","id":5,"method":"tools/list"}"#,
+            ])
+        server.serve()
+
+        let answers = try recorder.written.map(decode)
+        #expect(answers.map(idOf) == ["2", "3", "null", "null", "null", "5"])
+        #expect(answers.map(errorCode) == [-32600, -32600, -32600, -32600, -32600, nil])
+        #expect(answers.last?["result"] != nil)
+    }
+
+    @Test("ping には、繋ぎ始めの挨拶より前でも空の結果で答える")
+    func answersPingWithAnEmptyResult() throws {
+        let (server, recorder) = makeServer(
+            directory: try makeDirectory(),
+            input: [#"{"jsonrpc":"2.0","id":6,"method":"ping"}"#])
+        server.serve()
+
+        // MCP 2024-11-05 の Ping — 受け手は空の結果で速やかに答えなければならない (#2318)
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(answer["jsonrpc"] as? String == "2.0")
+        #expect(idOf(answer) == "6")
+        #expect(answer["error"] == nil)
+        let result = try #require(answer["result"] as? [String: Any])
+        #expect(result.isEmpty)
     }
 
     @Test("知らない手続きには、知らないと答える")
