@@ -29,6 +29,11 @@ enum JSONRPC {
         case call(Call)
         /// 呼び出しとして読めなかった。通知かどうかによらず、この誤りの 1 行で答える。
         case refused(reply: String)
+        /// 相手からの応答 (`method` が無く、`result` か `error` を持つ)。答えずに読み飛ばす。
+        ///
+        /// JSON-RPC 2.0 は応答に答えない。窓口は自分から要求を出さないので、届く応答は
+        /// 残らず余分なものである。誤りを返すと、相手の `id` の空間に別の答えが紛れうる
+        case response
     }
 
     /// JSON として読めない行の符号。
@@ -42,7 +47,11 @@ enum JSONRPC {
     /// も読めているとは限らないので、JSON-RPC 2.0 §5 は誤りを返し、`id` を読めなければ
     /// `null` にすると決めている。束 (配列) は扱わない — 名乗る版 (MCP 2024-11-05) は
     /// 束を含まないので、中身によらず 1 行で断る。JSON としては読めるがオブジェクトで
-    /// ない行 (`5` など) も、壊れた JSON ではなく形の誤りとして断る
+    /// ない行 (`5` など) も、壊れた JSON ではなく形の誤りとして断る。
+    ///
+    /// **応答の形の行は断らずに読み飛ばす** (`Line.response`)。`method` が無いことだけで
+    /// 断ると、応答にまで誤りを返してしまう。`method` も `result` も `error` も無い行
+    /// (`{"id":3}`) は応答ではないので、形の誤りとして断る
     static func parse(_ line: String) -> Line {
         guard
             let object = try? JSONSerialization.jsonObject(
@@ -58,6 +67,10 @@ enum JSONRPC {
                     id: nil, code: invalidRequest,
                     message: "invalid request: expected one JSON object (batches are not supported)"
                 ))
+        }
+        // `method` と `result` を両方持つ行は応答ではない。呼び出しとして `method` を見る
+        if fields["method"] == nil, fields["result"] != nil || fields["error"] != nil {
+            return .response
         }
         guard let method = fields["method"] as? String else {
             return .refused(

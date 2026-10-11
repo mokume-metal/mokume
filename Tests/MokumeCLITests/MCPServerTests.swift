@@ -171,6 +171,29 @@ struct MCPServerTests {
         #expect(answers.last?["result"] != nil)
     }
 
+    @Test("応答の形の行 (method が無く result か error を持つ) には答えず、読み飛ばす")
+    func ignoresResponses() throws {
+        let (server, recorder) = makeServer(
+            directory: try makeDirectory(),
+            input: [
+                // 窓口は自分から要求を出さないので、届く応答は残らず余分なもの。誤りを返すと、
+                // 相手の id の空間に別の答えが紛れうる (JSON-RPC 2.0 は応答に答えない)
+                #"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+                #"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no"}}"#,
+                #"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"no"}}"#,
+                // method と result の両方を持つ行は応答ではない。呼び出しとして method を見る
+                #"{"jsonrpc":"2.0","id":8,"method":"ping","result":{}}"#,
+                // method が文字列でなければ、result を持っていても形の誤り
+                #"{"jsonrpc":"2.0","id":9,"method":5,"result":{}}"#,
+            ])
+        server.serve()
+
+        let answers = try recorder.written.map(decode)
+        #expect(answers.map(idOf) == ["8", "9"])
+        #expect(answers.map(errorCode) == [nil, -32600])
+    }
+
+
     @Test("ping には、繋ぎ始めの挨拶より前でも空の結果で答える")
     func answersPingWithAnEmptyResult() throws {
         let (server, recorder) = makeServer(
