@@ -128,21 +128,26 @@ import simd
 struct SolidStrokePlacement {
     var matrix: simd_float4x4
     var eye: SIMD4<Float>
-    var right: SIMD4<Float>
+    var right: SIMD4<Float>  // w: 端の形の番号 (``capCode(_:)``)
+    // w: 画面の横 1 画素 ÷ 縦 1 画素の逆数 (#2176)。頂点関数に割り算を持ち込まないよう、比とその逆数を
+    // 両方持つ
     var down: SIMD4<Float>
+    // w: 画面の横 1 画素 ÷ 縦 1 画素 (世界での長さ・``Camera/pixelAspect(width:height:)``・#2176)。
+    // 縦横比を面と同じにした投影ではちょうど 1 で、線の頂点は比を持たなかった頃と同じ値になる
     var forward: SIMD4<Float>
     var parameters: SIMD4<Float>  // 太さ、2*tan(fov/2) または世界での幅、near、高さ
     var color: SIMD4<Float>
     var uv: SIMD4<Float>  // xy: 白い区画、z: 球の骨を元の半径へ戻す倍率、w: 被覆 (#1637)
 
     init(
-        matrix: simd_float4x4, camera: Camera, height: Float, weight: Float, cap: StrokeCap,
+        matrix: simd_float4x4, camera: Camera, width: Float, height: Float, weight: Float, cap: StrokeCap,
         color: LinearRGBA, uv: SIMD2<Float>, geometryScale: Float, coverage: Float = 1
     ) {
         self.matrix = matrix
+        let pixelAspect = camera.pixelAspect(width: width, height: height)
         right = SIMD4(camera.right, 0)
-        down = SIMD4(camera.down, 0)
-        forward = SIMD4(camera.forward, 0)
+        down = SIMD4(camera.down, 1 / pixelAspect)
+        forward = SIMD4(camera.forward, pixelAspect)
         switch camera.projection {
         case .perspective(let fov, _, let near, _):
             eye = SIMD4(camera.eye, 1)
@@ -272,7 +277,7 @@ extension Canvas {
         closeBatch()
         let thin = gpuStrokeThin(weight)
         let placement = SolidStrokePlacement(
-            matrix: matrix, camera: currentCamera, height: height,
+            matrix: matrix, camera: currentCamera, width: width, height: height,
             weight: weight * (thin?.widen ?? 1), cap: cap, color: color, uv: uv,
             geometryScale: geometryScale, coverage: thin?.coverage ?? 1)
         openSolid = OpenSolid(

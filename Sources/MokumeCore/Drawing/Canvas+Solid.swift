@@ -36,9 +36,9 @@ extension Canvas {
     /// 画面の縦方向 (画面の下へ向かう)。
     var viewDown: SIMD3<Float> { currentCamera.down }
 
-    /// その位置での、画面 1 画素ぶんの世界での長さ。
-    func worldPerPixel(at position: SIMD3<Float>) -> Float {
-        currentCamera.worldPerPixel(at: position, height: height)
+    /// その位置での、画面 1 画素ぶんの世界での長さ (横と縦)。
+    func worldPerPixel(at position: SIMD3<Float>) -> (x: Float, y: Float) {
+        currentCamera.worldPerPixel(at: position, width: width, height: height)
     }
 
     // MARK: - 基本の形
@@ -725,7 +725,7 @@ extension Canvas {
         let edges: [(Int, Int)]
         var curveSteps: [Bool] = []
         let half = style.strokeWeight / 2
-        let camera = StrokeCamera(currentCamera)
+        let camera = StrokeCamera(currentCamera, width: width, height: height)
         // 円板の周の点は線 1 本で 1 度だけ求める (太さは線の中で変わらない・#2011)
         let discUnits = Self.solidDiscUnits(half: half)
         switch source {
@@ -878,11 +878,15 @@ extension Canvas {
             a + atA, b - atB, a - atA, shape: (shape.0, shape.1, shape.0), camera: camera)
     }
 
-    /// 線分を画面に写したときの垂線を、**世界の向き**で返す (長さ 1)。
+    /// 線分を画面に写したときの垂線を、**世界の向き**で返す。画面の画素で長さ 1 の向きを、世界の
+    /// 向きに直したもの (`StrokeCamera.world(_:)`)。
     ///
     /// 向きは画面の横 (`camera.right`) と縦 (`camera.down`) の組み合わせ — 視線に直交する
-    /// 面の中の向きなので、そちらへ `worldPerPixel(at:)` の長さだけ動かすと、画面で
-    /// ちょうど 1 画素動く (透視でもその点の奥行きのまま動くため)。
+    /// 面の中の向きなので、そちらへ `half × worldPerPixel(at:)` (縦の 1 画素の長さ) だけ動かすと、
+    /// 画面でちょうど `half` 画素動く (透視でもその点の奥行きのまま動くため)。**画面の横と縦で 1 画素の
+    /// 世界での長さが違う投影 (縦横比を面と違えた投影・#2176) では、横の成分に比 (`StrokeCamera.pixelAspect`)
+    /// を掛けて世界の向きに直す**。画面で長さ `half` の動きが、世界では横に `half × 横の 1 画素`、
+    /// 縦に `half × 縦の 1 画素` になる。
     ///
     /// **正対させる相手はカメラ全体の軸ではなく、画面に写った線である** (#1546)。
     /// 透視投影では、奥行きのある線は画面の中心から外れるほど斜めに写るので、軸との
@@ -891,33 +895,15 @@ extension Canvas {
     /// 透視では目と線を含む平面の法線 `cross(a − eye, b − eye)` を視点の座標で取る。
     /// その横と縦の成分が、画面に写した線の垂線の向きになる — 端点を割り算で画面へ
     /// 落とさないので、目の後ろへ回る端点があっても向きが決まる。平行投影では画面の
-    /// 線は視点の座標での線そのものなので、その向きを 90° 回す。
+    /// 線は視点の座標での線そのものなので、その向きを 90° 回す。どちらも、画面の画素で
+    /// 測った向きにするため、成分に横と縦の比を掛ける (`StrokeCamera.screenNormal`)。
     ///
     /// 画面での長さが 0 の線 (透視で目を通る線・平行で視線に沿う線) には `nil` を返す。
     private func screenAcross(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float>? {
-        guard let normal = screenNormal(a, b, camera: camera) else { return nil }
-        return camera.right * normal.x + camera.down * normal.y
-    }
-
-    /// 線分 a–b を画面に写したときの垂線の、画面の横と縦の成分 (長さ 1)。`screenAcross` の
-    /// 中身で、決まらなければ `nil`。
-    private func screenNormal(
-        _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
-    ) -> SIMD2<Float>? {
-        let (right, down) = (camera.right, camera.down)
-        let normal: SIMD2<Float>
-        if camera.isPerspective {
-            let plane = cross(a - camera.eye, b - camera.eye)
-            normal = SIMD2(dot(plane, right), dot(plane, down))
-        } else {
-            let along = b - a
-            normal = SIMD2(-dot(along, down), dot(along, right))
-        }
-        let size = length(normal)
-        guard size > 0, size.isFinite else { return nil }
-        return SIMD2(normal.x / size, normal.y / size)
+        guard let normal = camera.screenNormal(a, b) else { return nil }
+        return camera.world(normal)
     }
 
     /// 線分 a → b を画面に写したときの、a から b へ進む向き (画面の横と縦の成分・長さ 1)
@@ -925,7 +911,7 @@ extension Canvas {
     ///
     /// **世界での差の横と縦の成分では代われない。** 透視投影で奥へ引っ込む辺は、画面の中心
     /// から外れた所では、世界での差と画面での動きが逆を向きうる (中心より左の点から奥へ
-    /// 引っ込む辺は、画面では右へ、中心へ寄っていく)。向きは `screenNormal` の垂線を 90° 回して
+    /// 引っ込む辺は、画面では右へ、中心へ寄っていく)。向きは `StrokeCamera.screenNormal` の垂線を 90° 回して
     /// 取る。垂線は a・b・目の張る平面の法線 (透視) か、画面の中の線を 90° 回したもの
     /// (平行) なので、回す向きは 2 つで逆になる (画面の横 × 縦 = −前 を使う)。目の手前にある
     /// 点では、どちらも画面で a から b へ進む向きになる。
@@ -934,7 +920,7 @@ extension Canvas {
     private func screenToward(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD2<Float>? {
-        guard let normal = screenNormal(a, b, camera: camera) else { return nil }
+        guard let normal = camera.screenNormal(a, b) else { return nil }
         return camera.isPerspective ? SIMD2(-normal.y, normal.x) : SIMD2(normal.y, -normal.x)
     }
 
@@ -958,9 +944,9 @@ extension Canvas {
         camera: StrokeCamera
     ) {
         let radius = half * camera.worldPerPixel(at: center, height: height)
-        var previous = center + camera.right * radius
+        var previous = center + camera.screenRight * radius
         for unit in units.dropFirst() {
-            let current = center + (camera.right * unit.x + camera.down * unit.y) * radius
+            let current = center + camera.world(unit) * radius
             appendSolidStrokeTriangle(
                 center, previous, current, shape: (shape, shape, shape), camera: camera)
             previous = current
@@ -1038,10 +1024,7 @@ extension Canvas {
             let arm1 = screenToward(first.0, first.1, camera: camera),
             let arm2 = screenToward(second.0, second.1, camera: camera)
         else { return }
-        let (right, down) = (camera.right, camera.down)
-        func onScreen(_ vector: SIMD3<Float>) -> SIMD2<Float> {
-            SIMD2(dot(vector, right), dot(vector, down))
-        }
+        func onScreen(_ vector: SIMD3<Float>) -> SIMD2<Float> { camera.onScreen(vector) }
         // 腕は画面に写した両隣への向き (`screenToward`)。世界での差を使うと、透視で奥へ
         // 引っ込む辺の向きを取り違え、外側の楔が埋まらない
         let rim = Self.joinRim(toward: arm1, arm2, half: 1, join: join)
@@ -1049,7 +1032,7 @@ extension Canvas {
         guard rim.count >= 4, let lastOffset = rim.last else { return }
         let radius = half * camera.worldPerPixel(at: center, height: height)
         func placed(_ offset: SIMD2<Float>) -> SIMD3<Float> {
-            center + (right * offset.x + down * offset.y) * radius
+            center + camera.world(offset) * radius
         }
         // 外側の縁の角は、帯の縁の角と同じ式で置く
         let side1 = dot(rim[1], onScreen(across1)) > 0 ? across1 : -across1
@@ -1070,7 +1053,7 @@ extension Canvas {
         at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
     ) {
         appendSolidSquare(
-            at: center, right: camera.right, down: camera.down, shape: shape, half: half, camera: camera)
+            at: center, right: camera.screenRight, down: camera.down, shape: shape, half: half, camera: camera)
     }
 
     /// 視線に正対し、線の向きに沿った正方形を置く (出っ張らせる端 — [#1535])。
@@ -1092,8 +1075,10 @@ extension Canvas {
         guard let right = screenAcross(from, center, camera: camera) else {
             return appendSolidSquare(at: center, shape: shape, half: half, camera: camera)
         }
-        // 正方形は中心について対称なので、画面の中で 90° 回す向きはどちらでもよい
-        let down = camera.right * -dot(right, camera.down) + camera.down * dot(right, camera.right)
+        // 正方形は中心について対称なので、画面の中で 90° 回す向きはどちらでもよい。回すのは
+        // 画面の画素で測った成分である (縦横比を面と違えた投影では、世界の向きのまま回すと菱形になる)
+        let onScreen = camera.onScreen(right)
+        let down = camera.world(SIMD2(-onScreen.y, onScreen.x))
         appendSolidSquare(at: center, right: right, down: down, shape: shape, half: half, camera: camera)
     }
 
@@ -1153,7 +1138,7 @@ extension Canvas {
     private func liftedTowardViewer(
         _ point: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float> {
-        let lift = (style.strokeWeight + 1) * camera.worldPerPixel(at: point, height: height)
+        let lift = (style.strokeWeight + 1) * camera.liftPerPixel(at: point, height: height)
         if camera.isPerspective {
             let toEye = camera.eye - point
             let distance = length(toEye)
@@ -1168,7 +1153,7 @@ extension Canvas {
 /// CPU で線を組む間に使う、視点から導いた量 ([#1785])。
 ///
 /// ``Camera`` の `forward` / `right` / `down` は読むたびに正規化し直し (`right` と `down` は
-/// `forward` もまた作り直す)、`worldPerPixel(at:height:)` は読むたびに `tan` を取る。帯 1 本で
+/// `forward` もまた作り直す)、`worldPerPixel(at:width:height:)` は読むたびに `tan` を取る。帯 1 本で
 /// 正規化が約 13 回・`tan` が約 8 回走っていた。線を組む間は視点が変わらないので、1 度だけ
 /// 求めて持ち回る。
 ///
@@ -1176,23 +1161,37 @@ extension Canvas {
 /// `2 * tan(fov / 2) * depth / height` を左から `((2 * tan) * depth) / height` と計算するので、
 /// 先に `2 * tan(fov / 2)` を求めておいても同じ値になる (Swift は浮動小数の積和を縮約しない)。
 ///
+/// **画面の横と縦で 1 画素の世界での長さが違う投影 (縦横比を面と違えた投影) に備える** ([#2176])。
+/// 線の向きと形は画面の画素で測った座標 (横・縦) で決め、世界の向きへ直すときに横の成分へ比
+/// `pixelAspect` (横の 1 画素 ÷ 縦の 1 画素) を掛ける (`world(_:)`)。長さは縦の 1 画素
+/// (`worldPerPixel(at:height:)`) の何倍かで持つ。**比がちょうど 1 のときは、掛ける・割るのが
+/// 1 ビットも値を変えないので、比を持たなかった頃と同じ値になる。**
+///
 /// [#1785]: https://github.com/mokume-metal/mokume/issues/1785
+/// [#2176]: https://github.com/mokume-metal/mokume/issues/2176
 struct StrokeCamera {
     let eye: SIMD3<Float>
     let forward: SIMD3<Float>
     let right: SIMD3<Float>
     let down: SIMD3<Float>
     let isPerspective: Bool
+    /// 画面の横 1 画素の世界での長さ ÷ 縦 1 画素の世界での長さ (``Camera/pixelAspect(width:height:)``)。
+    let pixelAspect: Float
+    /// 画面の横 1 画素ぶんを、縦 1 画素ぶんを 1 として世界の向きと長さで表したもの
+    /// (`right * pixelAspect`)。
+    let screenRight: SIMD3<Float>
     /// 1 画素の長さの係数。透視は `2 * tan(fov / 2)`、平行は `abs(bottom - top)`。
     private let scale: Float
     /// 透視の手前の面。平行では使わない。
     private let near: Float
 
-    init(_ camera: Camera) {
+    init(_ camera: Camera, width: Float, height: Float) {
         eye = camera.eye
         forward = camera.forward
         right = camera.right
         down = camera.down
+        pixelAspect = camera.pixelAspect(width: width, height: height)
+        screenRight = right * pixelAspect
         switch camera.projection {
         case let .perspective(fieldOfView, _, near, _):
             isPerspective = true
@@ -1205,10 +1204,48 @@ struct StrokeCamera {
         }
     }
 
-    /// ``Camera/worldPerPixel(at:height:)`` と同じ値。
+    /// ``Camera/worldPerPixel(at:width:height:)`` の縦 (`y`) と同じ値。横はこれに `pixelAspect` を掛ける。
     func worldPerPixel(at position: SIMD3<Float>, height: Float) -> Float {
         guard isPerspective else { return scale / height }
         let depth = max(dot(position - eye, forward), near)
         return scale * depth / height
+    }
+
+    /// 見ている側へ寄せる量の、1 画素ぶんの長さ。寄せるのは視線に沿った奥行きの向きなので、画面の
+    /// 横と縦のどちらかの太さではなく、**長いほう**で測る — 帯のどの向きの幅も、寄せた先で面の
+    /// 奥行きの差を上回る。横が縦より短い (比が 1 以下) なら縦のままで、比を持たなかった頃と同じ値になる。
+    func liftPerPixel(at position: SIMD3<Float>, height: Float) -> Float {
+        let vertical = worldPerPixel(at: position, height: height)
+        return pixelAspect > 1 ? vertical * pixelAspect : vertical
+    }
+
+    /// 画面の画素で測った成分 (横, 縦) の向きを、世界の向きにする。
+    func world(_ screen: SIMD2<Float>) -> SIMD3<Float> {
+        screenRight * screen.x + down * screen.y
+    }
+
+    /// 視線に直交する面の中の世界の向きを、画面の画素で測った成分 (横, 縦) にする。`world(_:)` の逆。
+    func onScreen(_ vector: SIMD3<Float>) -> SIMD2<Float> {
+        SIMD2(dot(vector, right) / pixelAspect, dot(vector, down))
+    }
+
+    /// 線分 a–b を画面に写したときの垂線の、画面の画素で測った成分 (横, 縦・長さ 1)。決まらなければ `nil`。
+    ///
+    /// 視点の座標で取った垂線の成分に、画面の画素へ直す比を掛けてから正規化する。透視は目と線を含む
+    /// 平面の法線の横の成分に `pixelAspect`、平行は線の向きを 90° 回した垂線の横の成分 (線の向きの縦の
+    /// 成分) に `pixelAspect` を掛ける (線の向きの画面での成分は `(横 / 横の 1 画素, 縦 / 縦の 1 画素)` で、
+    /// 法線は法線の成分を逆の比で測る)。
+    func screenNormal(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD2<Float>? {
+        let normal: SIMD2<Float>
+        if isPerspective {
+            let plane = cross(a - eye, b - eye)
+            normal = SIMD2(dot(plane, right) * pixelAspect, dot(plane, down))
+        } else {
+            let along = b - a
+            normal = SIMD2(-dot(along, down) * pixelAspect, dot(along, right))
+        }
+        let size = length(normal)
+        guard size > 0, size.isFinite else { return nil }
+        return SIMD2(normal.x / size, normal.y / size)
     }
 }
