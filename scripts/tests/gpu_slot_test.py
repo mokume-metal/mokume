@@ -61,7 +61,8 @@ class _Said:
     分かる。固定の眠りで順序を作らない。
 
     読み足すのは、読める分だけ (`select` が読めると言ったときだけ `os.read` する) なので、塞がない。
-    `finish` は、貯めた分に `communicate` の残りをつないで返す。"""
+    読んだ分は `communicate` の返りには戻らない。その包みの出力を表明するなら、`communicate` ではなく
+    `finish` (貯めた分に `communicate` の残りをつないで返す) を使う。"""
 
     def __init__(self, process):
         self._process = process
@@ -148,13 +149,19 @@ class SlotHarness(unittest.TestCase):
     def _entries(self):
         return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
 
+    # 待ちに入ってから、これだけ名乗りを重ねる間 (検査では 0.1 秒ごとなので 0.4 秒以上) 走らないのを見届ける。
+    # 最初の名乗りだけで「走っていない」を確かめると、待ち始めてしばらくして走り出す退行を見逃す
+    WAITING_ROUNDS = 5
+
     def _assert_waiting(self, said, started, marker, ran):
-        """待つ側が待ちに入って名乗った (`marker`) のを期限つきで待ち、その時点でまだ走っていないことを確かめる。
+        """待つ側が待ちに入って名乗り (`marker`)、その後も走らずに名乗り続けるのを、期限つきで見届ける。
 
         名乗りを待たずに「走っていない」だけを見ると、起動が遅くて、まだ待ちに入っていない子でも通る (#2304)。"""
-        _wait_for(lambda: said.has(marker) or started.exists())
+        _wait_for(lambda: said.count(marker) >= self.WAITING_ROUNDS or started.exists())
         self.assertFalse(started.exists(), ran)
-        self.assertTrue(said.has(marker), f"待ちに入った旨 ({marker}) を名乗らない")
+        self.assertGreaterEqual(
+            said.count(marker), self.WAITING_ROUNDS, f"待ちに入った旨 ({marker}) を {self.WAITING_ROUNDS} 回名乗らない"
+        )
 
 
 class GpuSlotTest(SlotHarness):
@@ -339,13 +346,16 @@ class GpuSlotTest(SlotHarness):
         gone.mkdir()
         waiter = subprocess.Popen(
             [sys.executable, str(SCRIPT), "--", sys.executable, "-c", "pass"],
-            env=self._environment(slots="1", wait="0.5"), cwd=gone,
+            env=self._environment(slots="1", wait="2"), cwd=gone,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         self.running.append(waiter)
-        time.sleep(0.2)
+        said = _Said(waiter)
+        # 待ちに入った (名乗った) のを待ってから消す。期限 (2 秒) までに消えれば、待つ間に消えたことになる。
+        # 固定の眠りだと、子の起動が遅ければ待つ前に消え、検査側が止まれば期限の後に消える (#2304)
+        self.assertTrue(_wait_for(lambda: said.has("空くのを待っている")), "待ちに入った旨を名乗らない")
         gone.rmdir()
-        _, error = waiter.communicate(timeout=10)
+        error = said.finish()
         self.assertEqual(waiter.returncode, 75, error)
         self.assertNotIn("枠を取らずに走らせる", error)
 
