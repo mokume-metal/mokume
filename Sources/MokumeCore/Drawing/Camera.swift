@@ -19,7 +19,8 @@ public struct Camera: Equatable, Sendable {
         ///
         /// - Parameters:
         ///   - fieldOfView: 縦方向の画角 (ラジアン)。
-        ///   - aspect: 横 ÷ 縦の比。
+        ///   - aspect: 横 ÷ 縦の比。面の縦横比と違えると、立体は伸びて写る。**立体の線の太さは
+        ///     伸びず、画面の画素のまま**である。
         ///   - near: 手前の面までの距離。これより手前は写らない。
         ///   - far: 奥の面までの距離。これより奥は写らない。
         case perspective(fieldOfView: Float, aspect: Float, near: Float, far: Float)
@@ -28,7 +29,8 @@ public struct Camera: Equatable, Sendable {
         ///
         /// 範囲は**視点から見た座標**で与える。`top` と `bottom` は画面の上端・下端を
         /// 指す — 縦軸が下向きなので `top` のほうが数として小さくなる
-        /// ([ADR-0021] 決定 1 の「画面の側を正とする」)。
+        /// ([ADR-0021] 決定 1 の「画面の側を正とする」)。範囲の横 ÷ 縦を面の縦横比と違えると、
+        /// 立体は伸びて写る。**立体の線の太さは伸びず、画面の画素のまま**である。
         case orthographic(
             left: Float, right: Float, bottom: Float, top: Float, near: Float, far: Float)
     }
@@ -131,19 +133,52 @@ public struct Camera: Equatable, Sendable {
         }
     }
 
-    /// その位置での、画面 1 画素ぶんの世界での長さ。
+    /// その位置での、画面 1 画素ぶんの世界での長さ。**横 (`right` の向き) と縦 (`down` の向き) で
+    /// 別々に測る** ([#2176])。
     ///
-    /// 線の太さは画面の画素で測る約束なので、遠いものほど世界では広く作る。
+    /// 線の太さは画面の画素で測る約束なので、遠いものほど世界では広く作る。投影の縦横比が面と
+    /// 違うとき (`perspective(_:_:_:_:)` の `aspect` や `ortho(_:_:_:_:_:_:)` の横幅が面と合わない
+    /// とき) は、立体が伸びて写るので、画素の横と縦の長さが世界で食い違う。縦だけで測ると、横の向きの
+    /// 太さが画面で `strokeWeight` にならない。
+    ///
+    /// 戻り値の縦 `y` が従来の式 (視点の縦の倍率と `height`) で、横 `x` はそれに ``pixelAspect(width:height:)``
+    /// を掛けたものである。**縦横比が面と同じなら 2 つは等しい** (比がちょうど 1 になる)。
+    ///
     /// **視点の情報はここ 1 箇所から取る** — 視点が変わっても式が散らばらない。
-    func worldPerPixel(at position: SIMD3<Float>, height: Float) -> Float {
+    ///
+    /// [#2176]: https://github.com/mokume-metal/mokume/issues/2176
+    func worldPerPixel(at position: SIMD3<Float>, width: Float, height: Float) -> (x: Float, y: Float) {
+        let y: Float
         switch projection {
         case let .perspective(fieldOfView, _, near, _):
             let depth = max(dot(position - eye, forward), near)
-            return 2 * tan(fieldOfView / 2) * depth / height
+            y = 2 * tan(fieldOfView / 2) * depth / height
         case let .orthographic(_, _, bottom, top, _, _):
             // 距離によらず同じ大きさで写るので、奥行きを見ない
-            return abs(bottom - top) / height
+            y = abs(bottom - top) / height
         }
+        return (y * pixelAspect(width: width, height: height), y)
+    }
+
+    /// 画面の横 1 画素の世界での長さを、縦 1 画素のそれで割った比 ([#2176])。位置によらない。
+    ///
+    /// 透視は `aspect` を面の縦横比 (`width / height`) で割ったもの、平行は 1 画素あたりの範囲の
+    /// 横 ÷ 縦。**面の縦横比で作った投影 (既定の投影と、`width / height` を渡した `perspective`) は、
+    /// 割る相手が `aspect` を作った式と同じなので、ちょうど 1 になる** — 線を組む式は比が 1 のとき
+    /// 1 ビットも変わらない。
+    ///
+    /// [#2176]: https://github.com/mokume-metal/mokume/issues/2176
+    func pixelAspect(width: Float, height: Float) -> Float {
+        let ratio: Float
+        switch projection {
+        case let .perspective(_, aspect, _, _):
+            ratio = aspect / (width / height)
+        case let .orthographic(left, right, bottom, top, _, _):
+            ratio = (abs(right - left) / width) / (abs(bottom - top) / height)
+        }
+        // 範囲があふれる・潰れる投影 (`abs(right - left)` が有限でも差が溢れるなど) は、投影の横も潰れて
+        // 絵に写らない。比が数でなくなって頂点を壊さないよう、比を持たない 1 へ倒す
+        return ratio.isFinite && ratio > 0 ? ratio : 1
     }
 
     /// 面を置き換える板 (`background()` の置き換える列) の 4 隅 (世界の座標・左上から時計回り)。
