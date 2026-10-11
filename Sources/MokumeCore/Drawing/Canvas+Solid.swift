@@ -30,17 +30,6 @@ extension Canvas {
     /// 断片へ渡す「世界をカメラの側へ移す行列」。
     var viewMatrix: simd_float4x4 { currentCamera.viewMatrix }
 
-    /// 画面の横方向。
-    var viewRight: SIMD3<Float> { currentCamera.right }
-
-    /// 画面の縦方向 (画面の下へ向かう)。
-    var viewDown: SIMD3<Float> { currentCamera.down }
-
-    /// その位置での、画面 1 画素ぶんの世界での長さ (横と縦)。
-    func worldPerPixel(at position: SIMD3<Float>) -> (x: Float, y: Float) {
-        currentCamera.worldPerPixel(at: position, width: width, height: height)
-    }
-
     // MARK: - 基本の形
 
     // 立方体を置く。
@@ -1135,6 +1124,14 @@ extension Canvas {
     /// ときは、傾いた面の縁で 1 行に 1 画素ずつ線が食われた)。形の裏の稜線は形の
     /// 厚みぶん奥にあるので、塗った形の向こう側が透けて見えるのは画面で数画素の
     /// 形と、稜線が表の縁から出てくる角の数画素だけである。
+    ///
+    /// **縦横比を面と違えた投影では、1 画素の長さを横と縦の長いほうで測る** ([#2176])。帯の幅は
+    /// 世界で横と縦に違う長さになるので (`StrokeCamera.world(_:)`)、寄せる量が縦の 1 画素の長さの
+    /// ままだと、横の幅の側は傾いた面の奥行きの差を上回れず、線が食われる。**代償**は、寄せる量が長い側の
+    /// 比 (`StrokeCamera.pixelAspect`) だけ増え、縦に傾いた面の奥の稜線が透けて見える範囲も、その比だけ
+    /// 広がること (比が 1 以下のときは変わらない)。
+    ///
+    /// [#2176]: https://github.com/mokume-metal/mokume/issues/2176
     private func liftedTowardViewer(
         _ point: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float> {
@@ -1172,8 +1169,10 @@ extension Canvas {
 struct StrokeCamera {
     let eye: SIMD3<Float>
     let forward: SIMD3<Float>
-    let right: SIMD3<Float>
     let down: SIMD3<Float>
+    /// 視点の横の軸。**画素の長さを持たないので、向きを世界へ直すのには使わない** — 画面の画素で測った
+    /// 成分は `world(_:)`・`screenRight` を通す (縦横比を面と違えた投影で、横が伸びないように・#2176)。
+    private let right: SIMD3<Float>
     let isPerspective: Bool
     /// 画面の横 1 画素の世界での長さ ÷ 縦 1 画素の世界での長さ (``Camera/pixelAspect(width:height:)``)。
     let pixelAspect: Float
@@ -1231,10 +1230,12 @@ struct StrokeCamera {
 
     /// 線分 a–b を画面に写したときの垂線の、画面の画素で測った成分 (横, 縦・長さ 1)。決まらなければ `nil`。
     ///
-    /// 視点の座標で取った垂線の成分に、画面の画素へ直す比を掛けてから正規化する。透視は目と線を含む
-    /// 平面の法線の横の成分に `pixelAspect`、平行は線の向きを 90° 回した垂線の横の成分 (線の向きの縦の
-    /// 成分) に `pixelAspect` を掛ける (線の向きの画面での成分は `(横 / 横の 1 画素, 縦 / 縦の 1 画素)` で、
-    /// 法線は法線の成分を逆の比で測る)。
+    /// 視点の座標で取った垂線の横の成分に `pixelAspect` を掛けてから正規化する。透視は目と線を含む
+    /// 平面の法線の横の成分に掛ける (平面の方程式 `横 × 法線の横 + 縦 × 法線の縦 + … = 0` を、画素の
+    /// 座標 `横 = 画素の横 × 横の 1 画素 / 奥行き` で書き直すと、画素の座標での法線は
+    /// `(法線の横 × 横の 1 画素, 法線の縦 × 縦の 1 画素)` に比例する)。平行は、線の向きの画面での成分が
+    /// `(横 ÷ 横の 1 画素, 縦 ÷ 縦の 1 画素)` なので、それを 90° 回した垂線も同じく、視点の座標で回した
+    /// 垂線 `(−縦, 横)` の横の成分に掛けた形に比例する。
     func screenNormal(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD2<Float>? {
         let normal: SIMD2<Float>
         if isPerspective {

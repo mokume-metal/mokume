@@ -48,7 +48,7 @@ struct StrokeCameraTests {
                 let stroke = StrokeCamera(camera, width: width, height: height)
                 #expect(stroke.eye == camera.eye)
                 #expect(stroke.forward == camera.forward)
-                #expect(stroke.right == camera.right)
+                #expect(stroke.screenRight == camera.right * stroke.pixelAspect)
                 #expect(stroke.down == camera.down)
                 #expect(
                     stroke.pixelAspect.bitPattern == camera.pixelAspect(width: width, height: height).bitPattern)
@@ -89,6 +89,20 @@ struct StrokeCameraTests {
                 #expect(length.x == length.y)
             }
         }
+    }
+
+    /// 範囲があふれる投影 (`abs(right - left)` が無限になる) は、投影の横が潰れて絵に写らない。
+    /// 比が無限や 0 になって、線の頂点が数でなくなることはない。
+    @Test("横の範囲があふれる投影でも、比は数のままで、線を組む量は有限になる")
+    func overflowingProjectionsKeepAFiniteAspect() throws {
+        var camera = Camera.fitting(width: 200, height: 200)
+        camera.projection = .orthographic(
+            left: -3e38, right: 3e38, bottom: 100, top: -100, near: 10, far: 2000)
+        #expect(camera.pixelAspect(width: 200, height: 200) == 1)
+        let stroke = StrokeCamera(camera, width: 200, height: 200)
+        let normal = try #require(stroke.screenNormal(SIMD3(80, 80, 0), SIMD3(120, 120, 0)))
+        #expect(normal.x.isFinite && normal.y.isFinite)
+        #expect(stroke.world(normal).x.isFinite)
     }
 
     @Test("縦横比を面と違えた投影では、横の 1 画素と縦の 1 画素が別々に測られる")

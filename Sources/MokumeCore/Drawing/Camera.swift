@@ -169,12 +169,16 @@ public struct Camera: Equatable, Sendable {
     ///
     /// [#2176]: https://github.com/mokume-metal/mokume/issues/2176
     func pixelAspect(width: Float, height: Float) -> Float {
+        let ratio: Float
         switch projection {
         case let .perspective(_, aspect, _, _):
-            return aspect / (width / height)
+            ratio = aspect / (width / height)
         case let .orthographic(left, right, bottom, top, _, _):
-            return (abs(right - left) / width) / (abs(bottom - top) / height)
+            ratio = (abs(right - left) / width) / (abs(bottom - top) / height)
         }
+        // 範囲があふれる・潰れる投影 (`abs(right - left)` が有限でも差が溢れるなど) は、投影の横も潰れて
+        // 絵に写らない。比が数でなくなって頂点を壊さないよう、比を持たない 1 へ倒す
+        return ratio.isFinite && ratio > 0 ? ratio : 1
     }
 
     /// 面を置き換える板 (`background()` の置き換える列) の 4 隅 (世界の座標・左上から時計回り)。

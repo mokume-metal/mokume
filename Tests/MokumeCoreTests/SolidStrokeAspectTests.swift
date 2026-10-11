@@ -38,7 +38,7 @@ struct SolidStrokeAspectTests {
         let stretch: Float
 
         var description: String {
-            "\(kind == .perspective ? "透視" : "平行")・横が\(stretch > 1 ? "2 倍" : "半分")に写る"
+            "\(kind == .perspective ? "透視" : "平行")・横が \(stretch) 倍に写る"
         }
 
         nonisolated static let all = [
@@ -75,12 +75,13 @@ struct SolidStrokeAspectTests {
 
     /// 白 (線形の赤が 0.5 以上) の画素。
     struct Ink {
-        let size: Int
+        let width: Int
+        let height: Int
         let lit: [Bool]
 
         subscript(x: Int, y: Int) -> Bool {
-            guard x >= 0, y >= 0, x < size, y < size else { return false }
-            return lit[y * size + x]
+            guard x >= 0, y >= 0, x < width, y < height else { return false }
+            return lit[y * width + x]
         }
 
         /// 行 `y` の、画面の位置 `x` の前後 `reach` 列に入る白の数。辺 1 本だけが入る窓で数える。
@@ -106,9 +107,9 @@ struct SolidStrokeAspectTests {
     private func ink(of canvas: Canvas) throws -> Ink {
         let pixels = try canvas.target.readPixels()
         var lit: [Bool] = []
-        lit.reserveCapacity(Self.size * Self.size)
-        for index in 0..<(Self.size * Self.size) { lit.append(Float(pixels.components[index * 4]) >= 0.5) }
-        return Ink(size: Self.size, lit: lit)
+        lit.reserveCapacity(pixels.width * pixels.height)
+        for index in 0..<(pixels.width * pixels.height) { lit.append(Float(pixels.components[index * 4]) >= 0.5) }
+        return Ink(width: pixels.width, height: pixels.height, lit: lit)
     }
 
     /// 200×200 の黒地に、白い線 (`stroke(255)`・塗り無し) で描く。
@@ -363,6 +364,155 @@ struct SolidStrokeAspectTests {
         let edges = Self.edges(of: try ink(of: canvas))
         for (name, count) in zip(Self.sides, edges) {
             #expect(abs(count - 6) <= 1, "\(skew): 保持した輪郭の\(name)の辺が \(count) 画素 (6 のはず)")
+        }
+    }
+
+    // MARK: - 寄せる量・端の形・正方形でない面
+
+    /// 見ている側へ寄せる量 (`liftedTowardViewer`) は、横の 1 画素が縦より長い投影 (比が 1 より大きい)
+    /// で、横と縦の長い側で測る。縦のままだと、傾いた面の縁で帯の内側が面に食われる (比 10 で、12 画素のうち
+    /// 2〜3 画素)。塗った平面 (世界で横 200) を縁が見える向きに回して置き、行 90・100・110 を横切る
+    /// 2 本の縁 (太さ 6 の 2 本で 12 画素) を数える。GPU の骨と CPU の帯の両方で同じ。
+    @Test(
+        "横が縦より大きく縮んで写る投影でも、傾いた面の縁の線は面に食われない",
+        arguments: [
+            Skew(kind: .perspective, stretch: 0.1), Skew(kind: .orthographic, stretch: 0.1),
+        ], [Float(0.85), 1.1])
+    func liftKeepsTheEdgesOfATiltedFace(_ skew: Skew, tilt: Float) throws {
+        for throughShader in [false, true] {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
+            let passThrough = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+            try canvas.draw {
+                canvas.background(0)
+                canvas.fill(90)
+                canvas.stroke(255)
+                skew.apply(to: canvas)
+                canvas.strokeWeight(6)
+                if throughShader { canvas.shader(passThrough) }
+                canvas.translate(100, 100, 0)
+                canvas.rotateY(tilt)
+                canvas.plane(200, 60)
+            }
+            let picture = try ink(of: canvas)
+            for row in [90, 100, 110] {
+                let lit = (0..<Self.size).filter { picture[$0, row] }.count
+                #expect(
+                    lit >= 12 && lit <= 13,
+                    "\(skew)・傾き \(tilt)・断片 \(throughShader): 行 \(row) の白が \(lit) 画素 (12 のはず)")
+            }
+        }
+    }
+
+    /// 端の円板 (`kind 1`)・出っ張らせる端 (`kind 3`) を GPU の骨で組む場面。平面を、視線に沿って縁だけが
+    /// 見えるように置く (`rotateY(π/2)`)。画面で 1 本の線に潰れ、平行投影では 4 隅が端になる (透視では奥行きの辺が
+    /// 画素のずれで別の向きに数えられ、折れ目の形になる — 骨の枝は端の枝と別だが、同じ絵になることは見る)。
+    @Test("縦横比を違えた投影の端は、GPU の骨と CPU の帯で同じ絵になる", arguments: Skew.all, [StrokeCap.round, .project])
+    func gpuEndsAgreeWithCPU(_ skew: Skew, cap: StrokeCap) throws {
+        var pictures: [DisplayImage] = []
+        for throughShader in [false, true] {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
+            let passThrough = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                skew.apply(to: canvas)
+                canvas.strokeWeight(16)
+                canvas.strokeCap(cap)
+                if throughShader { canvas.shader(passThrough) }
+                canvas.translate(100, 100, 0)
+                canvas.rotateY(Float.pi / 2)
+                canvas.plane(80, 60)
+                canvas.closeBatch()
+                let skeletons = canvas.batches.compactMap(\.strokeGeometry).count
+                #expect(throughShader ? skeletons == 0 : skeletons > 0, "GPU の骨を通った列の数 \(skeletons)")
+            }
+            pictures.append(try canvas.target.encodeForDisplay())
+        }
+        var different = 0
+        var lit = 0
+        for y in 0..<Self.size {
+            for x in 0..<Self.size {
+                if pictures[0][x, y] != pictures[1][x, y] { different += 1 }
+                if pictures[1][x, y].red > 127 { lit += 1 }
+            }
+        }
+        #expect(lit > 100, "端が描かれていない (白い画素 \(lit))")
+        #expect(different == 0, "\(skew)・端 \(cap): GPU と CPU で異なる画素 \(different)")
+    }
+
+    /// 2 の冪でない比 (`1 / 比` を丸める) と、正方形でない面 (`width / height` の側) で、GPU の骨と CPU の帯が
+    /// 同じ絵になる。240×160 の面に、縦横比 1 の透視 (比 2/3) と範囲 140×160 の平行 (比 0.5833) を当てる。
+    @Test("正方形でない面で、2 の冪でない比の投影を当てても、GPU の骨と CPU の帯は同じ絵になる", arguments: [true, false])
+    func gpuAndCPUAgreeOnAWideSurface(perspective: Bool) throws {
+        var pictures: [DisplayImage] = []
+        for throughShader in [false, true] {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 240, height: 160)
+            let passThrough = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+            try canvas.draw {
+                canvas.background(0)
+                canvas.fill(90)
+                canvas.stroke(255)
+                if perspective {
+                    canvas.perspective(Float.pi / 3, 1, 10, 2000)
+                } else {
+                    canvas.ortho(-70, 70, 80, -80, 10, 2000)
+                }
+                canvas.strokeWeight(3)
+                if throughShader { canvas.shader(passThrough) }
+                canvas.translate(120, 80, 0)
+                canvas.rotateX(0.45)
+                canvas.rotateY(0.7)
+                canvas.box(60)
+                canvas.closeBatch()
+                let skeletons = canvas.batches.compactMap(\.strokeGeometry).count
+                #expect(throughShader ? skeletons == 0 : skeletons > 0, "GPU の骨を通った列の数 \(skeletons)")
+            }
+            pictures.append(try canvas.target.encodeForDisplay())
+        }
+        var different = 0
+        for y in 0..<160 {
+            for x in 0..<240 where pictures[0][x, y] != pictures[1][x, y] { different += 1 }
+        }
+        #expect(different == 0, "GPU と CPU で異なる画素 \(different)")
+    }
+
+    /// 正方形でない面 (240×160) でも、投影の縦横比を違えた箱の稜は太さ 6 になる。稜の位置は投影の行列から求める。
+    @Test("正方形でない面でも、縦横比を違えた投影の箱の稜線は strokeWeight の太さになる", arguments: [true, false])
+    func edgesKeepTheirWeightOnAWideSurface(perspective: Bool) throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 240, height: 160)
+        var camera = canvas.currentCamera
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            if perspective {
+                canvas.perspective(Float.pi / 3, 0.75, 10, 2000)
+            } else {
+                canvas.ortho(-30, 30, 80, -80, 10, 2000)
+            }
+            // 視点はフレームを越えないので、描いている間に控える
+            camera = canvas.currentCamera
+            canvas.strokeWeight(6)
+            canvas.translate(120, 80, 0)
+            canvas.box(60 / 2, 60, 60)
+        }
+        let picture = try ink(of: canvas)
+        func project(_ point: SIMD3<Float>) -> SIMD2<Float> {
+            let clip = camera.viewProjection(width: 240, height: 160) * SIMD4(point + SIMD3(120, 80, 0), 1)
+            let ndc = SIMD2(clip.x, clip.y) / clip.w
+            return SIMD2((ndc.x + 1) / 2 * 240, (1 - ndc.y) / 2 * 160)
+        }
+        let left = project(SIMD3(-15, 0, 30))
+        let right = project(SIMD3(15, 0, 30))
+        let top = project(SIMD3(0, -30, 30))
+        let bottom = project(SIMD3(0, 30, 30))
+        let counts = [
+            picture.across(row: Int(left.y), near: left.x, reach: 6), picture.across(row: Int(right.y), near: right.x, reach: 6),
+            picture.down(column: Int(top.x), near: top.y, reach: 6), picture.down(column: Int(bottom.x), near: bottom.y, reach: 6),
+        ]
+        for (name, count) in zip(Self.sides, counts) {
+            #expect(abs(count - 6) <= 1, "\(perspective ? "透視" : "平行"): \(name)の稜が \(count) 画素 (6 のはず)")
         }
     }
 }
