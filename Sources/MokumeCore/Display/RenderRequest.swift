@@ -30,7 +30,7 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     package let frameRate: Int
     /// 描く枚数。描き終えたら子は自分で終わる。
     package let frameCount: Int
-    /// 書き出す先。綴りが形を決める (`.mov` なら動画、`#` の並びを含めば連番)。
+    /// 書き出す先。綴りが形を決める (`.mov` なら動画、ファイル名に `#` の並びを含めば連番)。
     ///
     /// **絶対パスで渡す。** 子の作業ディレクトリはスケッチの場所で、打った場所ではない。
     package let destination: String
@@ -38,12 +38,24 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     /// 組む。**書き出せない組は作らない** — 子が受け取ってから断ると、窓を持たない子は
     /// 何も書かずに終わることになる。行き先の規則は撮る係のもの (``FrameRecorder/accepts(_:)``)。
     package init?(frameRate: Int, frameCount: Int, destination: String) {
-        guard frameRate > 0, frameCount > 0, FrameRecorder.accepts(destination) else {
+        guard frameRate > 0, frameCount > 0, Self.accepts(destination: destination) else {
             return nil
         }
         self.frameRate = frameRate
         self.frameCount = frameCount
         self.destination = destination
+    }
+
+    /// 行き先の綴りを、書き出せる形として受けるか。規則は撮る係のもの
+    /// (``FrameRecorder/accepts(_:)``) で、組むときもこれで見る。
+    ///
+    /// **道具は、打った綴りのままもこれで見る** ([#2313])。行き先は絶対パスにしてから渡すが、
+    /// 絶対パスにすると末尾の `/` と `.`・`..` が消え、番号の場所を探す最後の部品が打った
+    /// 綴りと変わる (`take#1/` が `<打った場所>/take#1` になる)。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    package static func accepts(destination: String) -> Bool {
+        FrameRecorder.accepts(destination)
     }
 
     /// 環境変数に載せる値。

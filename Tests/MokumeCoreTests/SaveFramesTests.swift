@@ -43,6 +43,69 @@ struct FrameSequenceTests {
     func aPatternWithoutAPlaceForTheNumberIsRefused() {
         #expect(FrameSequence(pattern: "out/frame.png") == nil)
     }
+
+    /// **番号はファイル名の `#` に入る** ([#2313])。置き場のディレクトリの名前の `#` は場所の
+    /// 一部で、番号の場所ではない。パス全体から探すと番号がディレクトリへ入り、1 枚ごとに
+    /// 別の置き場 (`take01/`・`take11/`…) ができて、名前順が撮った順にならない。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test("置き場のディレクトリの名前に # があっても、番号はファイル名の # に入る")
+    func aHashInTheDirectoryIsNotWhereTheNumberGoes() {
+        var sequence = FrameSequence(pattern: "take#1/f-##.png")
+        #expect(sequence?.next() == "take#1/f-00.png")
+        #expect(sequence?.next() == "take#1/f-01.png")
+
+        var nested = FrameSequence(pattern: "/w/C#/take#1/f-#.png")
+        #expect(nested?.next() == "/w/C#/take#1/f-0.png")
+
+        // 陰性対照: 置き場の名前に `#` が無ければ、これまでどおり
+        var plain = FrameSequence(pattern: "take1/f-##.png")
+        #expect(plain?.next() == "take1/f-00.png")
+    }
+
+    /// ファイル名に `#` が無ければ、置き場の名前に `#` があっても**全部が同じ名前になる**
+    /// 指定である。番号の入る場所が無いので断る。
+    @Test(
+        "番号の入る場所がディレクトリの名前にしか無い指定は組み立てない",
+        arguments: ["take#1/still.png", "C#/frame.png", "/w/out-##/frame.png", "take#1/"])
+    func aHashOnlyInTheDirectoryIsRefused(pattern: String) {
+        #expect(FrameSequence(pattern: pattern) == nil)
+    }
+
+    /// **区切りの `/` と番号の `#` は、ファイルシステムと同じく 1 文字ずつ (Unicode scalar) で
+    /// 見る** ([#2313] の反証)。Swift の `Character` (書記素) で比べると、`/` の直後の結合文字
+    /// (U+0301 など) が `/` と 1 つの文字になって区切りを見落とし、置き場の名前の `#` を
+    /// 番号にする。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test("区切りの / の直後に結合文字があっても、区切りを見落とさない")
+    func aCombiningMarkAfterTheSlashKeepsTheSeparator() {
+        var sequence = FrameSequence(pattern: "take#1/\u{301}f-##.png")
+        #expect(sequence?.next() == "take#1/\u{301}f-00.png")
+        #expect(sequence?.next() == "take#1/\u{301}f-01.png")
+        // ファイル名に `#` が無ければ、置き場の名前の `#` で組まない
+        #expect(FrameSequence(pattern: "take#1/\u{301}still.png") == nil)
+    }
+
+    /// `#` の直後の結合文字も、番号の桁を 1 つ食わない。並んだ `#` は全部が桁で、結合文字は
+    /// 番号の後ろに残る (綴りは 1 文字ずつ、そのまま組み戻る)。
+    @Test("# の直後に結合文字があっても、並んだ # を全部桁に数える")
+    func aCombiningMarkAfterAHashDoesNotEatADigit() {
+        var sequence = FrameSequence(pattern: "f-##\u{301}.png")
+        #expect(sequence?.digits == 2)
+        #expect(sequence?.pattern == "f-##\u{301}.png")
+        #expect(sequence?.next() == "f-00\u{301}.png")
+        #expect(sequence?.next() == "f-01\u{301}.png")
+    }
+
+    /// **走らせる前に確かめる口も同じ読み方を通る** (`mokume render --out`)。
+    @Test("走らせる前に確かめる口も、置き場の名前の # だけの指定を受けない")
+    func acceptsReadsTheSameWay() {
+        #expect(!FrameRecorder.accepts("/x/take#1/still.png"))
+        #expect(FrameRecorder.accepts("/x/take#1/f-##.png"))
+        // 動画は末尾の `.mov` で決まり、置き場の名前の `#` は関わらない
+        #expect(FrameRecorder.accepts("/x/take#1/motion.mov"))
+    }
 }
 
 /// 書き出す係。GPU を要さない。
@@ -891,6 +954,34 @@ struct SaveFramesTests {
                 #expect(FileManager.default.fileExists(atPath: url.path))
             }
             #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).count == 5)
+        }
+    }
+
+    /// **置き場の名前の `#` は番号の場所ではない** ([#2313] の再現 `HashInDirectory`)。
+    /// パス全体から `#` を探すと、`take#1/` は空のまま、隣に `take01/{f-##.png}`・
+    /// `take11/{f-##.png}`・`take21/{f-##.png}` ができる。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test("置き場のディレクトリの名前に # があっても、連番はその置き場に並ぶ")
+    func aHashInTheDirectoryKeepsTheSeriesInIt() throws {
+        try withTemporaryDirectory("mokume-record-hash-in-directory") { root in
+            let take = root.appendingPathComponent("take#1", isDirectory: true)
+            try FileManager.default.createDirectory(at: take, withIntermediateDirectories: true)
+            let pattern = take.appendingPathComponent("f-##.png").path
+            let runtime = try makeRuntime { sketch in
+                sketch.background(.display(red: 0, green: 0, blue: 0))
+                if sketch.frameCount == 1 { sketch.beginRecord(pattern) }
+                if sketch.frameCount == 4 { sketch.endRecord() }
+            }
+
+            for _ in 1...5 { try runtime.advance() }
+            runtime.closePlugins()
+
+            let inside = try FileManager.default.contentsOfDirectory(atPath: take.path).sorted()
+            #expect(inside == ["f-00.png", "f-01.png", "f-02.png"])
+            // 番号がディレクトリへ入ると、ここに take01/… が並ぶ
+            let beside = try FileManager.default.contentsOfDirectory(atPath: root.path).sorted()
+            #expect(beside == ["take#1"])
         }
     }
 
