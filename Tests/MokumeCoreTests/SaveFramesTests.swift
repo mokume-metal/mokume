@@ -72,6 +72,32 @@ struct FrameSequenceTests {
         #expect(FrameSequence(pattern: pattern) == nil)
     }
 
+    /// **区切りの `/` と番号の `#` は、ファイルシステムと同じく 1 文字ずつ (Unicode scalar) で
+    /// 見る** ([#2313] の反証)。Swift の `Character` (書記素) で比べると、`/` の直後の結合文字
+    /// (U+0301 など) が `/` と 1 つの文字になって区切りを見落とし、置き場の名前の `#` を
+    /// 番号にする。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test("区切りの / の直後に結合文字があっても、区切りを見落とさない")
+    func aCombiningMarkAfterTheSlashKeepsTheSeparator() {
+        var sequence = FrameSequence(pattern: "take#1/\u{301}f-##.png")
+        #expect(sequence?.next() == "take#1/\u{301}f-00.png")
+        #expect(sequence?.next() == "take#1/\u{301}f-01.png")
+        // ファイル名に `#` が無ければ、置き場の名前の `#` で組まない
+        #expect(FrameSequence(pattern: "take#1/\u{301}still.png") == nil)
+    }
+
+    /// `#` の直後の結合文字も、番号の桁を 1 つ食わない。並んだ `#` は全部が桁で、結合文字は
+    /// 番号の後ろに残る (綴りは 1 文字ずつ、そのまま組み戻る)。
+    @Test("# の直後に結合文字があっても、並んだ # を全部桁に数える")
+    func aCombiningMarkAfterAHashDoesNotEatADigit() {
+        var sequence = FrameSequence(pattern: "f-##\u{301}.png")
+        #expect(sequence?.digits == 2)
+        #expect(sequence?.pattern == "f-##\u{301}.png")
+        #expect(sequence?.next() == "f-00\u{301}.png")
+        #expect(sequence?.next() == "f-01\u{301}.png")
+    }
+
     /// **走らせる前に確かめる口も同じ読み方を通る** (`mokume render --out`)。
     @Test("走らせる前に確かめる口も、置き場の名前の # だけの指定を受けない")
     func acceptsReadsTheSameWay() {

@@ -46,15 +46,23 @@ nonisolated struct FrameSequence {
     private(set) var index = 0
 
     /// ファイル名の `#` の並びを番号の場所として読む。**1 つも無ければ組み立てない。**
+    ///
+    /// **`/` と `#` は Unicode scalar で探す** ([#2313] の反証)。ファイルシステムは 1 文字
+    /// ずつの `/` で区切る。`Character` (書記素) で比べると、直後の結合文字 (U+0301 など) と
+    /// 1 つの文字になった `/` や `#` を見落とし、区切りを越えて置き場の名前の `#` を番号に
+    /// したり、並んだ `#` の桁を 1 つ少なく数えたりする。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
     init?(pattern: String) {
+        let scalars = pattern.unicodeScalars
         // 最後の `/` より後ろ (ファイル名) だけを探す。置き場の名前の `#` は場所の一部である
-        let name = pattern.lastIndex(of: "/").map(pattern.index(after:)) ?? pattern.startIndex
-        guard let start = pattern[name...].firstIndex(of: "#") else { return nil }
+        let name = scalars.lastIndex(of: "/").map(scalars.index(after:)) ?? scalars.startIndex
+        guard let start = scalars[name...].firstIndex(of: "#") else { return nil }
         var end = start
-        while end < pattern.endIndex, pattern[end] == "#" { end = pattern.index(after: end) }
-        prefix = String(pattern[pattern.startIndex..<start])
-        digits = pattern.distance(from: start, to: end)
-        suffix = String(pattern[end...])
+        while end < scalars.endIndex, scalars[end] == "#" { end = scalars.index(after: end) }
+        prefix = String(scalars[scalars.startIndex..<start])
+        digits = scalars.distance(from: start, to: end)
+        suffix = String(scalars[end...])
     }
 
     /// 次の 1 枚の行き先を返し、番号を 1 つ進める。
