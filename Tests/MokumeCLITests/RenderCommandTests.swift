@@ -124,6 +124,33 @@ struct RenderCommandTests {
         expectUsage(["--fps", "30", "--seconds", "2", "--out", out], mentioning: "--out")
     }
 
+    /// **打った場所の名前の `#` は番号の場所ではない** ([#2313])。`--out` は打った場所から
+    /// 絶対パスにしてから形を見るので、パス全体から `#` を探すと、`#` の無い `still.png` まで
+    /// 連番として受け、断られずに 0 で終わる。書いたものは隣の `take01/`… にできる。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test("打った場所の名前に # があっても、ファイル名に # の無い --out は止まる")
+    func aHashInWhereItWasTypedDoesNotMakeASeries() throws {
+        let typedFrom = URL(fileURLWithPath: "/tmp/take#1", isDirectory: true)
+        do {
+            _ = try RenderCommand.parse(
+                ["--fps", "10", "--seconds", "0.5", "--out", "still.png"],
+                currentDirectory: typedFrom)
+            Issue.record("止まらなかった: 打った場所 \(typedFrom.path) で --out still.png")
+        } catch {
+            guard case .usage(let text) = error else {
+                Issue.record("使い方の誤りではない: \(error)")
+                return
+            }
+            #expect(text.contains("--out"), "文面に --out が無い: \(text)")
+        }
+
+        // 同じ場所でも、ファイル名に `#` があれば連番として受け、置き場はそのまま
+        let series = try RenderCommand.parse(
+            ["--fps", "10", "--seconds", "0.5", "--out", "f-##.png"], currentDirectory: typedFrom)
+        #expect(series.request.destination == "/tmp/take#1/f-##.png")
+    }
+
     /// **`run` / `watch` の選択肢はそのまま効き、知らない選択肢は断る** (``Invocation`` と同じ規律)。
     @Test("知らない選択肢は、場所にせずに止まる")
     func anUnknownOptionIsRefused() {

@@ -30,7 +30,7 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     package let frameRate: Int
     /// 描く枚数。描き終えたら子は自分で終わる。
     package let frameCount: Int
-    /// 書き出す先。綴りが形を決める (`.mov` なら動画、`#` の並びを含めば連番)。
+    /// 書き出す先。綴りが形を決める (`.mov` なら動画、ファイル名に `#` の並びを含めば連番)。
     ///
     /// **絶対パスで渡す。** 子の作業ディレクトリはスケッチの場所で、打った場所ではない。
     package let destination: String

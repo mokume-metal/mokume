@@ -129,7 +129,7 @@ enum RenderCommand {
         else {
             throw .usage(
                 "\(outFlags[0]) takes a movie ending in .mov, or a numbered series with a run of #"
-                    + " where the number goes (out/frame-####.png): \(out)")
+                    + " in the file name where the number goes (out/frame-####.png): \(out)")
         }
         return Options(invocation: invocation, request: request)
     }
