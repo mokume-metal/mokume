@@ -285,6 +285,36 @@ struct OSCPortTests {
         #expect(told.lines.isEmpty)
     }
 
+    @Test("空の datagram は、Network.framework が送り元の流れの終わりと名乗っても読めないものとして数え、後から届いたメッセージも受ける")
+    func emptyDatagramIsCountedAndLaterMessagesArrive() async throws {
+        let told = Told()
+        let port = try freeUDPPort()
+        let osc = try loopback(port: port, told: told)
+        defer { osc.close() }
+        #expect(await until { osc.state == .running })
+        let source = try #require(osc.source as? NetworkOSCSource)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 送り元の流れができて受けを待っているところへ空を送る。この形の空の datagram を、
+        // Network.framework は毎回、流れの終わり (`isFinal`) と名乗って渡す (macOS 27.0.1 で実測)
+        let message = OSCMessage("/m", arguments: [])
+        let packet = try Wire.encoded(message)
+        #expect(peer.send(packet, to: port) == packet.count)
+        var received = await collect(osc, count: 1)
+        #expect(peer.send([], to: port) == 0)
+        #expect(await until { osc.input.unreadable == 1 })
+
+        // その流れは次の受けで終わる。閉じた後に届いたものは、新しい流れで受ける
+        _ = await until(1) { source.tally.ended >= 1 }
+        for _ in 0..<5 {
+            #expect(peer.send(packet, to: port) == packet.count)
+        }
+        received += await collect(osc, count: 5)
+        #expect(received == Array(repeating: message, count: 6))
+        #expect(osc.input.unreadable == 1)
+    }
+
     @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
     func manySendersAreAllHeardThenSwept() async throws {
         let told = Told()
@@ -330,6 +360,11 @@ struct OSCPortTests {
         late.send(try Wire.encoded(OSCMessage("/late", 1)))
         #expect(await collect(osc, count: 1) == [OSCMessage("/late", 1)])
         #expect(source.connectionCount == 1)
+
+        // 黙りで閉じた送り元の待っていた受けは、空の datagram と同じ形 (content も error も nil) で
+        // 返る。届いていない空を読めない数に足さない (#2324 の直しの反対側。実測で 70 個湧いた)
+        let phantom = await until(1) { osc.input.unreadable > 0 }
+        #expect(!phantom)
     }
 
     @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")

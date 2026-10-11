@@ -153,16 +153,33 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         receive(on: connection)
     }
 
+    /// 送り元の繋ぎから、datagram を 1 つずつ読み続ける。
+    ///
+    /// **空の datagram (0 バイト) も 1 つの datagram として渡す。** Network.framework は空の
+    /// datagram を `content == nil`・`error == nil` で渡す。送り元の流れができて受けを待っている
+    /// ところへ届いた空の datagram には、流れの終わり (`isFinal`) も名乗り、次の受けを
+    /// `ENODATA` で返して流れを閉じる (macOS 27.0.1 で実測。流れの最初の datagram と一緒に
+    /// 届いた空は、たいてい終わりを名乗らない)。だから `content` と `isFinal` で終わりを決めず、
+    /// 終わりは次の受けの `error` で知る — 空を終わりと読むと、空そのものを黙って捨てる (#2324)。
+    ///
+    /// 流れが閉じた後に届いたものは、新しい送り元として受け直す。**閉じる前にその流れへ積まれて
+    /// いたもの (空の直後 1 ミリ秒ほどの間に同じ送り元から届いたもの) は Network.framework が
+    /// 捨て、ここからは見えない** (#2324。受けを Network.framework から外さない限り避けられない)。
+    ///
+    /// 待っていた受けは、こちらが繋ぎを閉じたとき (黙った送り元を閉じたとき) にも
+    /// `content == nil`・`error == nil` で返る。届いていない空のメッセージを渡さないよう、
+    /// 台帳から外した繋ぎの受けは何も渡さない。
     private func receive(on connection: NWConnection) {
         connection.receiveMessage { [weak self, weak connection] content, _, _, error in
             let hostTime = mach_absolute_time()
             guard let self, let connection, !stopped else { return }
-            guard let content, error == nil else {
+            guard error == nil else {
                 connection.cancel()
                 return
             }
+            guard ledger.holds(connection) else { return }
             ledger.heard(connection, at: now())
-            received([UInt8](content), hostTime)
+            received(content.map { [UInt8]($0) } ?? [], hostTime)
             receive(on: connection)
         }
     }
@@ -216,6 +233,11 @@ nonisolated struct SenderLedger<Sender: AnyObject> {
         tally.accepted += 1
         tally.closedIdle += idle.count
         return idle
+    }
+
+    /// 送り元を持っているか。黙りで閉じた・失敗や取り消しで外れた・受け口ごと閉じた後は偽。
+    func holds(_ sender: Sender) -> Bool {
+        entries.contains { $0.sender === sender }
     }
 
     /// 送り元から読んだ。

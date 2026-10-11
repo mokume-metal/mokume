@@ -68,6 +68,34 @@ struct UDPPortTests {
         #expect(udp.input.unreadable == 1)
     }
 
+    @Test("空の datagram は、Network.framework が送り元の流れの終わりと名乗っても空の文字列として届き、後から届いたものも受ける")
+    func emptyDatagramIsAnEmptyString() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let source = try #require(udp.source as? DatagramSource<String>)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 送り元の流れができて受けを待っているところへ空を送る。この形の空の datagram を、
+        // Network.framework は毎回、流れの終わり (`isFinal`) と名乗って渡す (macOS 27.0.1 で実測)
+        #expect(peer.send(Array("a".utf8), to: port) == 1)
+        var received = await collect(udp, count: 1)
+        #expect(peer.send([], to: port) == 0)
+        received += await collect(udp, count: 1)
+        #expect(received == ["a", ""])
+
+        // その流れは次の受けで終わる。閉じた後に届いたものは、新しい流れで受ける
+        _ = await until(1) { source.tally.ended >= 1 }
+        for text in ["b", "c"] {
+            #expect(peer.send(Array(text.utf8), to: port) == 1)
+        }
+        received += await collect(udp, count: 2)
+        #expect(received == ["a", "", "b", "c"])
+        #expect(udp.input.unreadable == 0)
+        #expect(told.lines.isEmpty)
+    }
+
     @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
     func oversizedDatagramIsDiscardedAndCounted() async throws {
         let told = Told()
@@ -105,6 +133,30 @@ struct UDPPortTests {
         sender.send("hit")
         sender.send("size 0.5")
         #expect(await collect(receiver, count: 2) == ["hit", "size 0.5"])
+        #expect(told.lines.isEmpty)
+    }
+
+    @Test("空の文字列の send は 0 バイトの datagram になり、mokume の受け口に空の文字列として届く")
+    func emptySendArrivesAsAnEmptyString() async throws {
+        let told = Told()
+        let (receiver, port) = try await listening(told: told)
+        defer { receiver.close() }
+        let source = try #require(receiver.source as? DatagramSource<String>)
+        let sender = UDPPort(
+            port: 1, name: "udp :1", source: RecordedSource<String>(batches: []),
+            outbound: DatagramSender(host: "127.0.0.1", port: port, warn: told.append),
+            owner: nil, warn: told.append)
+        defer { sender.close() }
+
+        // 流れができてから空を送る (受け口の流れが終わりを名乗る形)
+        sender.send("x")
+        var received = await collect(receiver, count: 1)
+        sender.send("")
+        received += await collect(receiver, count: 1)
+        _ = await until(1) { source.tally.ended >= 1 }
+        sender.send("y")
+        received += await collect(receiver, count: 1)
+        #expect(received == ["x", "", "y"])
         #expect(told.lines.isEmpty)
     }
 
