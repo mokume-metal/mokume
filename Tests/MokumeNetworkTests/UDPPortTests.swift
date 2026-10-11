@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Network
 import Testing
 
 @testable import MokumeCore
@@ -68,6 +69,40 @@ struct UDPPortTests {
         #expect(udp.input.unreadable == 1)
     }
 
+    @Test("空の datagram は空の文字列として届き、その送り元の繋ぎを閉じず、続けて届いた datagram も落とさない")
+    func emptyDatagramIsAnEmptyString() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let source = try #require(udp.source as? DatagramSource<String>)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 1 つの送り元から間を空けずに送る。空の後ろの datagram は、受け口の同じ繋ぎに積まれている
+        for text in ["a", "", "b", "c"] {
+            #expect(peer.send(Array(text.utf8), to: port) == text.utf8.count)
+        }
+        let received = await collect(udp, count: 4)
+        #expect(received == ["a", "", "b", "c"])
+        #expect(udp.input.unreadable == 0)
+        #expect(source.tally.ended == 0)
+        #expect(told.lines.isEmpty)
+    }
+
+    @Test("受けの完了は、空の datagram と繋ぎの終わりを、文脈が終わりを名乗るかで見分ける")
+    func completionTellsAnEmptyDatagramFromTheEnd() {
+        // 空の datagram: content は nil で、文脈は終わりを名乗らない (実測)
+        #expect(DatagramListener.datagram(content: nil, context: .defaultMessage, error: nil) == [])
+        #expect(DatagramListener.datagram(content: Data([1, 2]), context: .defaultMessage, error: nil) == [1, 2])
+        // 受けを待っている繋ぎを閉じたとき: content も error も nil で、文脈が終わりを名乗る (実測)
+        #expect(DatagramListener.datagram(content: nil, context: .finalMessage, error: nil) == nil)
+        #expect(DatagramListener.datagram(content: nil, context: nil, error: nil) == nil)
+        #expect(DatagramListener.datagram(content: nil, context: nil, error: .posix(.ECANCELED)) == nil)
+        #expect(
+            DatagramListener.datagram(content: Data([1]), context: .defaultMessage, error: .posix(.ECANCELED))
+                == nil)
+    }
+
     // MARK: - 送る
 
     @Test("send は作るときに決めた宛先へ、1 つの datagram として届く")
@@ -84,6 +119,24 @@ struct UDPPortTests {
         sender.send("hit")
         sender.send("size 0.5")
         #expect(await collect(receiver, count: 2) == ["hit", "size 0.5"])
+        #expect(told.lines.isEmpty)
+    }
+
+    @Test("空の文字列の send は 0 バイトの datagram になり、mokume の受け口に空の文字列として届く")
+    func emptySendArrivesAsAnEmptyString() async throws {
+        let told = Told()
+        let (receiver, port) = try await listening(told: told)
+        defer { receiver.close() }
+        let sender = UDPPort(
+            port: 1, name: "udp :1", source: RecordedSource<String>(batches: []),
+            outbound: DatagramSender(host: "127.0.0.1", port: port, warn: told.append),
+            owner: nil, warn: told.append)
+        defer { sender.close() }
+
+        sender.send("")
+        sender.send("x")
+        let received = await collect(receiver, count: 2)
+        #expect(received == ["", "x"])
         #expect(told.lines.isEmpty)
     }
 

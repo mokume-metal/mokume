@@ -260,6 +260,29 @@ struct OSCPortTests {
         #expect(osc.input.unreadable == 1)
     }
 
+    @Test("空の datagram は読めないものとして数え、その送り元の繋ぎを閉じず、続けて届いたメッセージも落とさない")
+    func emptyDatagramIsCountedAndTheSenderKept() async throws {
+        let told = Told()
+        let port = try freeUDPPort()
+        let osc = try loopback(port: port, told: told)
+        defer { osc.close() }
+        #expect(await until { osc.state == .running })
+        let source = try #require(osc.source as? NetworkOSCSource)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 1 つの送り元から間を空けずに送る。空の後ろの 5 つは、受け口の同じ繋ぎに積まれている
+        let message = OSCMessage("/m", arguments: [])
+        let packet = try Wire.encoded(message)
+        for bytes in [packet, []] + Array(repeating: packet, count: 5) {
+            #expect(peer.send(bytes, to: port) == bytes.count)
+        }
+        let received = await collect(osc, count: 6)
+        #expect(received == Array(repeating: message, count: 6))
+        #expect(osc.input.unreadable == 1)
+        #expect(source.tally.ended == 0)
+    }
+
     @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
     func manySendersAreAllHeardThenSwept() async throws {
         let told = Told()
@@ -305,6 +328,11 @@ struct OSCPortTests {
         late.send(try Wire.encoded(OSCMessage("/late", 1)))
         #expect(await collect(osc, count: 1) == [OSCMessage("/late", 1)])
         #expect(source.connectionCount == 1)
+
+        // 閉じた送り元の待っていた受けは、終わりとして返る。空の datagram と取り違えて、
+        // 届いていないものを読めない数に足さない (#2324 の直しの反対側)
+        let phantom = await until(1) { osc.input.unreadable > 0 }
+        #expect(!phantom)
     }
 
     @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")

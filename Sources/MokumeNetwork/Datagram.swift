@@ -131,17 +131,36 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     }
 
     private func receive(on connection: NWConnection) {
-        connection.receiveMessage { [weak self, weak connection] content, _, _, error in
+        connection.receiveMessage { [weak self, weak connection] content, context, _, error in
             let hostTime = mach_absolute_time()
             guard let self, let connection, !stopped else { return }
-            guard let content, error == nil else {
+            guard let bytes = Self.datagram(content: content, context: context, error: error) else {
                 connection.cancel()
                 return
             }
             ledger.heard(connection, at: now())
-            received([UInt8](content), hostTime)
+            received(bytes, hostTime)
             receive(on: connection)
         }
+    }
+
+    /// 受けの完了が渡したものを、届いた datagram として読む。繋ぎの終わりなら `nil`。
+    ///
+    /// **空の datagram (0 バイト) は終わりではない。** Network.framework は空の datagram を
+    /// `content == nil` で渡す (`error` も `nil`)。受けを待っている繋ぎを閉じたときの完了も
+    /// `content == nil`・`error == nil` で来るが、こちらは文脈が終わり (`isFinal`) を名乗る。
+    /// 見分けられるのはそこだけである (macOS 27.0.1 で実測)。
+    ///
+    /// 取り違えると、どちらの向きでも約束が破れる。空を終わりと読むと、その送り元の繋ぎを
+    /// 閉じて、繋ぎに積まれていた後ろの datagram ごと黙って捨てる (#2324)。終わりを空と読むと、
+    /// 黙った送り元を閉じるたびに、届いていない空のメッセージを渡す。
+    static func datagram(
+        content: Data?, context: NWConnection.ContentContext?, error: NWError?
+    ) -> [UInt8]? {
+        guard error == nil else { return nil }
+        if let content { return [UInt8](content) }
+        guard let context, !context.isFinal else { return nil }
+        return []
     }
 }
 
