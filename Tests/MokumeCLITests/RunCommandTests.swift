@@ -461,6 +461,51 @@ struct RunCommandTests {
         #expect(rebuilt.binPath.path.contains(".build"), "道具立てが答える置き場の形をしていない")
     }
 
+    // MARK: - 置き場の答えの読み方 (#2316)
+
+    /// **終了コードを見る。** 空の出力だけを見ていた頃は、道具立てが断った回
+    /// (`--show-bin-path -c Release` が usage を出して非 0 で終わる) を「Package.swift に
+    /// 実行ファイルが無い」と名乗っていた ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    /// 原因が道具立てなのに宣言を疑わせる形は、`env` の 127 で塞いだ #1157 と同類である。
+    ///
+    /// **答えは偽の子から取る。** `binPath(in:context:)` は `/usr/bin/env swift` を書き固めて
+    /// いるので、管の配線を持つ `capture` に任意の子を渡し、その答えを同じ読み手に通す (#731)。
+    @Test("置き場を聞かれた道具立てが 0 以外で終わったら、宣言ではなく道具立ての失敗として名乗る")
+    func aRefusedBinPathIsTheToolchainsFailure() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "echo 'error: usage' >&2; exit 64"]
+        let answer = try RunCommand.capture(process, capturing: true, errors: .discard)
+        let asked = ["build", "--show-bin-path", "-c", "Release"]
+
+        let thrown = #expect(throws: CommandFailure.self) {
+            try RunCommand.binPath(from: answer, asking: asked)
+        }
+        #expect(
+            thrown == .toolchainFailed(command: "swift build --show-bin-path -c Release", status: 64))
+        let message = try #require(thrown).message
+        #expect(!message.contains("Package.swift"), "道具立ての失敗なのに宣言を疑わせている: \(message)")
+        #expect(message.contains("swift build --show-bin-path -c Release"), "何を打ったかを名乗っていない")
+        #expect(message.contains("64"), "終了コードを名乗っていない")
+    }
+
+    /// 読み方の境目。**0 以外なら、道が印字されていても読まない** — 終了コードを見ずに
+    /// 出力の有無だけで決めると、途中まで書いて断った回の道を採る。0 でも空なら答えていない。
+    @Test("置き場は 0 で終わって道を答えたときだけ読み、それ以外は道具立ての失敗にする")
+    func onlyAnAnsweredBinPathIsRead() throws {
+        let asked = ["build", "--show-bin-path"]
+        #expect(
+            try RunCommand.binPath(
+                from: (0, "/sketch/.build/arm64-apple-macosx/debug\n"), asking: asked)
+                == URL(fileURLWithPath: "/sketch/.build/arm64-apple-macosx/debug", isDirectory: true))
+        #expect(throws: CommandFailure.toolchainFailed(command: "swift build --show-bin-path", status: 1)) {
+            try RunCommand.binPath(from: (1, "/sketch/.build/debug\n"), asking: asked)
+        }
+        #expect(throws: CommandFailure.toolchainFailed(command: "swift build --show-bin-path", status: 0)) {
+            try RunCommand.binPath(from: (0, " \n"), asking: asked)
+        }
+    }
+
     /// 宣言だけを置いたディレクトリ。**中身は持たない** — 置き場を答えられれば足りる。
     private func makeDeclaredDirectory() throws -> URL {
         let directory = try makeEmptyDirectory()
