@@ -193,6 +193,32 @@ struct MCPServerTests {
         #expect(answers.map(errorCode) == [nil, -32600])
     }
 
+    @Test("id のある tools/call は、窓口越しに道具を走らせ、その id で結果を返す")
+    func runsAToolForACall() throws {
+        let directory = try makeDirectory()
+        // スケッチ側の応答を待たずに済む道具を選ぶ (作り直しの記録を読むだけ)
+        let status = directory.appendingPathComponent(".mokume/build/status.json")
+        try FileManager.default.createDirectory(
+            at: status.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"schemaVersion":1,"ok":false,"status":1,"output":"error: 何か"}"#.utf8)
+            .write(to: status)
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [
+                #"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"build_status","arguments":{}}}"#
+            ])
+        server.serve()
+
+        // 通知を落とす判断の反対側 — 要求なら道具が走り、答えが返る (#2317)
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(idOf(answer) == "11")
+        let result = try #require(answer["result"] as? [String: Any])
+        #expect(result["isError"] as? Bool == false)
+        let content = try #require(result["content"] as? [[String: Any]])
+        #expect((content.first?["text"] as? String)?.contains("error: 何か") == true)
+    }
+
 
     @Test("ping には、繋ぎ始めの挨拶より前でも空の結果で答える")
     func answersPingWithAnEmptyResult() throws {
