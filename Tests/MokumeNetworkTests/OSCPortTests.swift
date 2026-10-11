@@ -285,8 +285,8 @@ struct OSCPortTests {
         #expect(told.lines.isEmpty)
     }
 
-    @Test("空の datagram は読めないものとして数え、その送り元の繋ぎを閉じず、続けて届いたメッセージも落とさない")
-    func emptyDatagramIsCountedAndTheSenderKept() async throws {
+    @Test("空の datagram は、Network.framework が送り元の流れの終わりと名乗っても読めないものとして数え、後から届いたメッセージも受ける")
+    func emptyDatagramIsCountedAndLaterMessagesArrive() async throws {
         let told = Told()
         let port = try freeUDPPort()
         let osc = try loopback(port: port, told: told)
@@ -296,16 +296,23 @@ struct OSCPortTests {
         let peer = try RawDatagramSocket()
         defer { peer.release() }
 
-        // 1 つの送り元から間を空けずに送る。空の後ろの 5 つは、受け口の同じ繋ぎに積まれている
+        // 送り元の流れができて受けを待っているところへ空を送る。この形の空の datagram を、
+        // Network.framework は毎回、流れの終わり (`isFinal`) と名乗って渡す (macOS 27.0.1 で実測)
         let message = OSCMessage("/m", arguments: [])
         let packet = try Wire.encoded(message)
-        for bytes in [packet, []] + Array(repeating: packet, count: 5) {
-            #expect(peer.send(bytes, to: port) == bytes.count)
+        #expect(peer.send(packet, to: port) == packet.count)
+        var received = await collect(osc, count: 1)
+        #expect(peer.send([], to: port) == 0)
+        #expect(await until { osc.input.unreadable == 1 })
+
+        // その流れは次の受けで終わる。閉じた後に届いたものは、新しい流れで受ける
+        _ = await until(1) { source.tally.ended >= 1 }
+        for _ in 0..<5 {
+            #expect(peer.send(packet, to: port) == packet.count)
         }
-        let received = await collect(osc, count: 6)
+        received += await collect(osc, count: 5)
         #expect(received == Array(repeating: message, count: 6))
         #expect(osc.input.unreadable == 1)
-        #expect(source.tally.ended == 0)
     }
 
     @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
@@ -354,8 +361,8 @@ struct OSCPortTests {
         #expect(await collect(osc, count: 1) == [OSCMessage("/late", 1)])
         #expect(source.connectionCount == 1)
 
-        // 閉じた送り元の待っていた受けは、終わりとして返る。空の datagram と取り違えて、
-        // 届いていないものを読めない数に足さない (#2324 の直しの反対側)
+        // 黙りで閉じた送り元の待っていた受けは、空の datagram と同じ形 (content も error も nil) で
+        // 返る。届いていない空を読めない数に足さない (#2324 の直しの反対側。実測で 70 個湧いた)
         let phantom = await until(1) { osc.input.unreadable > 0 }
         #expect(!phantom)
     }

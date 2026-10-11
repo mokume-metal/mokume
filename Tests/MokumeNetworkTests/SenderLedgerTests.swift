@@ -55,4 +55,25 @@ struct SenderLedgerTests {
         #expect(ledger.count == 0)
         #expect(ledger.tally == SenderTally(accepted: 2, closedIdle: 1, ended: 1))
     }
+
+    @Test("持っているかは、受け入れから、黙りで閉じる・外れる・全部外すまでの間だけ真")
+    func holdsOnlyAdmittedSenders() {
+        // 受け口は、黙りで閉じた繋ぎの待っていた受けが空のように返るのを、これで見分ける
+        var ledger = SenderLedger<Peer>(limit: 1, idleAfter: 1)
+        let idle = Peer("idle")
+        let ended = Peer("ended")
+        let kept = Peer("kept")
+        #expect(!ledger.holds(idle))
+        #expect(ledger.admit(idle, at: 0).isEmpty)
+        #expect(ledger.holds(idle))
+        ledger.heard(idle, at: 0)
+        #expect(ledger.admit(ended, at: 1).map(\.name) == ["idle"])
+        #expect(!ledger.holds(idle))
+        #expect(ledger.holds(ended))
+        ledger.ended(ended)
+        #expect(!ledger.holds(ended))
+        #expect(ledger.admit(kept, at: 2).isEmpty)
+        _ = ledger.removeAll()
+        #expect(!ledger.holds(kept))
+    }
 }
