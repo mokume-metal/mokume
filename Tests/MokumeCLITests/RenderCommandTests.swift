@@ -29,18 +29,46 @@ struct RenderCommandTests {
         _ arguments: [String], mentioning needle: String,
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
+        expectUsage(arguments, mentioningAll: [needle], sourceLocation: sourceLocation)
+    }
+
+    /// 上と同じで、文面に `needles` を**全部**含むことまで見る。
+    ///
+    /// - Parameter typedFrom: 打った場所。
+    private func expectUsage(
+        _ arguments: [String], mentioningAll needles: [String],
+        typedFrom: URL = RenderCommandTests.typedFrom,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
         do {
-            _ = try parse(arguments)
-            Issue.record("止まらなかった: \(arguments)", sourceLocation: sourceLocation)
+            _ = try RenderCommand.parse(arguments, currentDirectory: typedFrom)
+            Issue.record(
+                "止まらなかった: 打った場所 \(typedFrom.path) で \(arguments)",
+                sourceLocation: sourceLocation)
         } catch {
             guard case .usage(let text) = error else {
                 Issue.record("使い方の誤りではない: \(error)", sourceLocation: sourceLocation)
                 return
             }
-            #expect(
-                text.contains(needle), "文面に \(needle) が無い: \(text)",
-                sourceLocation: sourceLocation)
+            for needle in needles {
+                #expect(
+                    text.contains(needle), "文面に \(needle) が無い: \(text)",
+                    sourceLocation: sourceLocation)
+            }
         }
+    }
+
+    /// `--out` の形が断られたか。**文面の肝まで見る** — `--out` の名と、打った綴りと、番号の
+    /// 場所がファイル名に要ること。`--out` とだけ言われても、`take#1/` の何が悪いのかは
+    /// 分からない。
+    private func expectOutRefused(
+        _ out: String, typedFrom: URL = RenderCommandTests.typedFrom,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        expectUsage(
+            ["--fps", "10", "--seconds", "0.5", "--out", out],
+            mentioningAll: ["--out", "in the file name", ": \(out)"], typedFrom: typedFrom,
+            sourceLocation: sourceLocation)
     }
 
     // MARK: - 解ける形 (完了条件 1・2)
@@ -121,7 +149,7 @@ struct RenderCommandTests {
     /// 形の規則は撮る係のもの。`.mov` か、番号の入る場所 (`#`) を持つ連番。
     @Test("行き先が動画でも連番でもなければ止まる", arguments: ["/a.png", "/a", "/a.mp4"])
     func anUnrecordableOutIsRefused(out: String) {
-        expectUsage(["--fps", "30", "--seconds", "2", "--out", out], mentioning: "--out")
+        expectOutRefused(out)
     }
 
     /// **打った場所の名前の `#` は番号の場所ではない** ([#2313])。`--out` は打った場所から
@@ -132,23 +160,28 @@ struct RenderCommandTests {
     @Test("打った場所の名前に # があっても、ファイル名に # の無い --out は止まる")
     func aHashInWhereItWasTypedDoesNotMakeASeries() throws {
         let typedFrom = URL(fileURLWithPath: "/tmp/take#1", isDirectory: true)
-        do {
-            _ = try RenderCommand.parse(
-                ["--fps", "10", "--seconds", "0.5", "--out", "still.png"],
-                currentDirectory: typedFrom)
-            Issue.record("止まらなかった: 打った場所 \(typedFrom.path) で --out still.png")
-        } catch {
-            guard case .usage(let text) = error else {
-                Issue.record("使い方の誤りではない: \(error)")
-                return
-            }
-            #expect(text.contains("--out"), "文面に --out が無い: \(text)")
-        }
+        expectOutRefused("still.png", typedFrom: typedFrom)
 
         // 同じ場所でも、ファイル名に `#` があれば連番として受け、置き場はそのまま
         let series = try RenderCommand.parse(
             ["--fps", "10", "--seconds", "0.5", "--out", "f-##.png"], currentDirectory: typedFrom)
         #expect(series.request.destination == "/tmp/take#1/f-##.png")
+    }
+
+    /// **形は打った綴りで見る** ([#2313] の反証)。絶対パスにすると末尾の `/` と `.`・`..` が
+    /// 消え、番号の場所を探す最後の部品が打った綴りと変わる。`take#1/` (フォルダを指した
+    /// つもり) が `<打った場所>/take#1` になり、`take#1` の `#` を番号にして、拡張子の無い
+    /// `take01`・`take11`… を打った場所に並べて 0 で終わっていた。書く API の側
+    /// (`beginRecord("take#1/")`) は断るので、同じ綴りで道具とスケッチの判定が食い違っていた。
+    ///
+    /// 打った場所は `#` の無い所にする (打った場所の `#` は上の検査が見る)。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test(
+        "--out がフォルダを指す綴り (末尾の /・. ・..) なら、名前に # や .mov があっても止まる",
+        arguments: ["take#1/", "out-##/", "dir/", "motion.mov/", "take#1/.", "f-##.png/.."])
+    func anOutThatNamesAFolderIsRefused(out: String) {
+        expectOutRefused(out)
     }
 
     /// **`run` / `watch` の選択肢はそのまま効き、知らない選択肢は断る** (``Invocation`` と同じ規律)。
