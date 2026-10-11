@@ -531,16 +531,25 @@ struct SVGFileTests {
             <rect class="b" width="4" height="4"/>
             <rect width="4" height="4" style="fill:red;
             stroke:blue"/>
+            <polyline points="0,0
+            5,0
+            5,5" fill="none" stroke="black"/>
             </svg>
             """
         let expected = try SVGFile.parse(svg, path: "lf.svg")
         // 規則が実際に効いている (どの書き方も、読めた値は同じ赤と青)
         let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
         let blue = SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1)
-        #expect(expected.items.count == 3)
+        #expect(expected.items.count == 4)
         #expect(expected.items[0].fill == red && expected.items[0].stroke == blue)
         #expect(expected.items[1].stroke == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 1))
         #expect(expected.items[2].fill == red && expected.items[2].stroke == blue)
+        // 改行だけで区切った点の並び (属性の値の改行は空白 1 つ。消えると点がつながる)
+        guard case .path(let subpaths) = expected.items[3].outline else {
+            Issue.record("polyline が線の集まりになっていない")
+            return
+        }
+        #expect(points(subpaths[0]) == [SIMD2(0, 0), SIMD2(5, 0), SIMD2(5, 5)])
         #expect(expected.skipped.isEmpty, "\(expected.skipped)")
         for (kind, lineBreak) in Self.lineBreaks {
             let drawing = try SVGFile.parse(
