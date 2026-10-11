@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeDiagnostics
 import Observation
 
 /// 宣言した値の置き場。``Param(name:)`` の展開が作るもので、手で書くことはない。
@@ -22,16 +23,36 @@ import Observation
 /// setter は `Value` が `Equatable` を要求しないので、展開と同じく常に通知する
 /// (`shouldNotifyObservers` が常に真になる形)。
 ///
+/// ## 非有限の数は載せない ([#2271])
+///
+/// **値を置く関所はここの 1 点である。** NaN も無限も受け取らず、**前の値を保って、1 度だけ
+/// 名乗る** ([ADR-0030] 決定 3)。作者のコードからの代入 (``value`` の setter と `_modify`)・
+/// 外からの書き込み・保存からの復元の 3 つの入口が、すべてここを通る。載せたままにすると、
+/// 保存 (`params.json`) もつまみの応答も `JSONEncoder` が非有限を拒み、**他の値も含めて全部が
+/// 書けなくなる**。出口ごとに落とし方を書く形は採らない — 出口を足すたびに書き直すことになる。
+///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
+/// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 /// [#1782]: https://github.com/mokume-metal/mokume/issues/1782
+/// [#2271]: https://github.com/mokume-metal/mokume/issues/2271
 public final class ParamBox<Value: ParamRepresentable> {
     /// いまの値。
+    ///
+    /// **非有限の数 (NaN・無限、組と色は成分のどれか) を書いても、前の値のまま**で、そのことを
+    /// 1 度だけ標準エラーへ名乗る。有限の値は範囲の外でも素通しする ([ADR-0030] 決定 3)。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public var value: Value {
         get {
             observation.access(self, keyPath: valueKeyPath)
             return storedValue
         }
         set {
+            // 置かないときは変化の通知も出さない (値は動いていない)
+            guard newValue.paramValue.hasOnlyFiniteNumbers else {
+                refuse(newValue, keeping: storedValue)
+                return
+            }
             observation.withMutation(of: self, keyPath: valueKeyPath) {
                 storedValue = newValue
             }
@@ -39,13 +60,31 @@ public final class ParamBox<Value: ParamRepresentable> {
         _modify {
             observation.access(self, keyPath: valueKeyPath)
             observation.willSet(self, keyPath: valueKeyPath)
-            defer { observation.didSet(self, keyPath: valueKeyPath) }
+            // 直に変えられた後でしか検められないので、前の値を控えて戻せるようにする
+            let previous = storedValue
+            defer {
+                if !storedValue.paramValue.hasOnlyFiniteNumbers {
+                    refuse(storedValue, keeping: previous)
+                    storedValue = previous
+                }
+                observation.didSet(self, keyPath: valueKeyPath)
+            }
             yield &storedValue
         }
     }
 
     private var storedValue: Value
     private let observation = ObservationRegistrar()
+
+    /// この置き場が 1 度だけ言う注意の種類。
+    enum Warning: Hashable {
+        /// 非有限の数を渡されて、受け取らなかった。
+        case notFinite
+    }
+
+    /// 言った注意の控え。**検査が読む** (標準エラーへ実際に出た行は検査から読めない)。
+    private(set) var warnings = WarningLog<Warning>()
+
     /// ``value`` を指す key path。**初期化で 1 度だけ作る** (型の説明を参照)。
     private let valueKeyPath: KeyPath<ParamBox, Value>
 
@@ -62,6 +101,18 @@ public final class ParamBox<Value: ParamRepresentable> {
         self.valueKeyPath = \ParamBox<Value>.value
         self.range = range
         self.choices = choices
+    }
+
+    /// 非有限の数を受け取らなかったことを、**この置き場で 1 度だけ**名乗る。
+    ///
+    /// 毎フレーム書かれうる (`radius = .nan` を `draw()` に書いた作品) ので、繰り返さない。
+    /// 名前と、渡された値と、保っている値を言う — 「どの値に何を書いて、いまいくつなのか」が
+    /// 1 行で追える。
+    private func refuse(_ offered: Value, keeping kept: Value) {
+        warnings.warnOnce(
+            .notFinite,
+            "The knob \"\(name)\" was given \(offered), which is not a finite number, so it stays at "
+                + "\(kept) (said once for this knob)")
     }
 }
 
@@ -83,6 +134,11 @@ extension ParamBox: DeclaredParam {
     /// すると値を掃引する書き手が端で毎回弾かれ、黙って収めると書いた値と読める値が
     /// 食い違う理由が分からない。
     ///
+    /// **非有限の数は収めずに拒む** (``ParamOutcome/notFinite``)。NaN は範囲に収まらず、
+    /// 無限を端へ収めると `clamped` が「範囲へ収めた」という意味から外れる。宣言の型へ読み
+    /// 替えて初めて無限になる数 (`1e300` を `Float` の値へ) も同じで、**読み替えた後で
+    /// 検める**。拒んだ値は置かず、前の値のまま。
+    ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     func write(_ incoming: ParamValue) -> ParamOutcome {
         if case .string(let text) = incoming, let choices, !choices.contains(text) {
@@ -90,6 +146,11 @@ extension ParamBox: DeclaredParam {
         }
         let (settled, clamp) = clamped(incoming)
         guard let typed = Value(paramValue: settled) else { return .typeMismatch }
+        // 入ってきた値と、読み替えた値の両方を見る。範囲へ収めると無限が端に化けるので、
+        // 収める前の値を見ないと「無限を書かれた」ことが応答から消える
+        guard incoming.hasOnlyFiniteNumbers, typed.paramValue.hasOnlyFiniteNumbers else {
+            return .notFinite
+        }
         value = typed
         return clamp
     }

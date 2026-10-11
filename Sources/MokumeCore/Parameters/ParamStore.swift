@@ -108,6 +108,8 @@ final class ParamStore: DeclarationWatcher {
                 result.discarded.append(.init(name: entry.name, reason: .typeMismatch))
             case .notInChoices:
                 result.discarded.append(.init(name: entry.name, reason: .notInChoices))
+            case .notFinite:
+                result.discarded.append(.init(name: entry.name, reason: .notFinite))
             case .applied:
                 break
             case .clamped(let requested, let applied):
@@ -139,8 +141,12 @@ final class ParamStore: DeclarationWatcher {
         let listed = discarded
             .map { "\($0.name) (\(reason(for: $0.reason)))" }
             .joined(separator: " / ")
+        // 非有限で捨てたものは宣言が変わったせいではない (保存の中身が読み替えに耐えない)
+        let declarationsChanged = discarded.contains { $0.reason != .notFinite }
         return "Threw away \(discarded.count) of the saved values: \(listed). "
-            + "The declarations have changed, so these stay at their defaults"
+            + (declarationsChanged
+                ? "The declarations have changed, so these stay at their defaults"
+                : "These stay at their defaults")
     }
 
     private static func reason(for reason: ParamReport.Rejection.Reason) -> String {
@@ -148,6 +154,7 @@ final class ParamStore: DeclarationWatcher {
         case .unknownName: "no longer declared"
         case .typeMismatch: "a different type from the declaration"
         case .notInChoices: "outside the choices that are allowed"
+        case .notFinite: "not a finite number once read as the declared type"
         }
     }
 

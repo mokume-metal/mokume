@@ -4,7 +4,8 @@
 /// つまみが動ける幅。
 ///
 /// **範囲は面のための宣言であって、値の不変条件ではない** ([ADR-0030] 決定 3)。
-/// 外から来た書き込みはここへ収めるが、作者が書いたコードからの代入は素通しする。
+/// 外から来た書き込みはここへ収めるが、作者が書いたコードからの代入は素通しする
+/// (非有限の数だけは、どちらの入口でも受け取らない)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 public struct ParamRange: Equatable, Sendable {
