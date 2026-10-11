@@ -24,9 +24,9 @@ mokume は、Processing や p5.js の書き方で絵と動きをつくる、Swif
 
 ## 必要な環境
 
-Apple Silicon の Mac、macOS 26 以降、Xcode 26 以降と [Homebrew](https://brew.sh) が必要です。
+Apple Silicon の Mac と macOS 26 以降が必要です。
 
-Xcode 26 では Metal Toolchain を別にインストールします (Xcode の Settings → Components、または `xcodebuild -downloadComponent MetalToolchain`)。入っていないと、ビルドが `unable to spawn process 'metal'` で失敗します。
+スケッチのビルドには Command Line Tools (26 以降) を使い、Xcode は要りません。Command Line Tools は [Homebrew](https://brew.sh) を入れるときに一緒に入ります。Homebrew を使わない場合は `xcode-select --install` で入れてください。
 
 ## インストール
 

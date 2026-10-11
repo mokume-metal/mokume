@@ -41,8 +41,13 @@ set -euo pipefail
 # (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-if ! xcrun --find metal >/dev/null 2>&1; then
-  echo "metal コンパイラが見つからない (Xcode のツールチェーンが要る)" >&2
+# **在処を探すだけ (`--find`) にしない。** Xcode 26 のスタブは在処を持ったまま、起こすと
+# コンポーネントが無いと言って落ちうる。探すだけだと、断片ごとに生のエラーが並ぶ
+if ! xcrun metal --version >/dev/null 2>&1; then
+  # スケッチのビルドは metal を使わない (断片は実行時に組む・#2351) ので、利用者向けの
+  # README は Metal Toolchain を案内しない。入れ方を言うのはここだけになる
+  echo "metal コンパイラが見つからない。この検査には Xcode と Metal Toolchain が要る" >&2
+  echo "  (Xcode の Settings → Components、または xcodebuild -downloadComponent MetalToolchain)" >&2
   exit 1
 fi
 
