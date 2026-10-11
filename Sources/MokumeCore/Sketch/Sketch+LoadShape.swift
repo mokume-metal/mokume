@@ -234,6 +234,8 @@ extension Sketch {
     /// 読めなかったときに別の道を選ぶ判断が要るので、黙って空の形へ倒さない。
     ///
     /// - ファイルが見つからない: ``DataFailure/notFound(path:searched:)`` (探した場所が載る)
+    /// - 見つかったが開けない (ディレクトリだった・読む権利が無い):
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)
     /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``
     /// - XML として壊れている・根が `<svg>` でない: ``DataFailure/malformed(path:line:reason:)``
     ///   (壊れていた行が載る)
