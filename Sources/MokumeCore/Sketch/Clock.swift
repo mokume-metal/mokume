@@ -255,7 +255,7 @@ final class FrameTiming {
         guard target.isFinite else {
             guard !warnedJump else { return }
             warnedJump = true
-            return warn("jumpTime(): \(target) is not a time, so the time does not move")
+            return warn("jumpTime(): \(target) is not a time, so the time does not jump")
         }
         pendingJump = target
         if heldAt != nil { heldAt = target }

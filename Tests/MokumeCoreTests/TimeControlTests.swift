@@ -396,7 +396,7 @@ struct TimeControlTests {
         _ = run(timing, 1)
         timing.jumpTime(-.infinity)
         _ = run(timing, 1)
-        #expect(notices == ["jumpTime(): nan is not a time, so the time does not move"])
+        #expect(notices == ["jumpTime(): nan is not a time, so the time does not jump"])
     }
 
     @Test("陰性対照: 有限の秒は、負でも単精度の最大でも受けて、知らせない")
