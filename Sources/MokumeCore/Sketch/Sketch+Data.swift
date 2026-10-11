@@ -230,7 +230,8 @@ extension Sketch {
     ///
     /// - 文字は UTF-8 (ファイルも URL の本文も)。先頭の BOM は読み飛ばす
     /// - **最上位はオブジェクト (`{…}`) でなければならない**
-    /// - 入れ子は、最上位の下に 512 段まで。`Double` に収まらない数 (`1e400`) は読めない
+    /// - 入れ子は、最上位の下に 512 段まで。`Double` に収まらない数 (`1e400`・`-1e400`) は、
+    ///   符号によらず読めない
     ///
     /// ## 読めないときは投げる
     ///
@@ -242,7 +243,7 @@ extension Sketch {
     /// - URL から受け取れない (繋がらない・時間切れ・サーバが 2xx 以外の状態で答えた):
     ///   ``DataFailure/unreachable(url:reason:)``
     /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``
-    /// - JSON として壊れている・最上位がオブジェクトでない:
+    /// - JSON として壊れている・`Double` に収まらない数がある・最上位がオブジェクトでない:
     ///   ``DataFailure/malformed(path:line:reason:)`` (壊れていた行が載る)
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
