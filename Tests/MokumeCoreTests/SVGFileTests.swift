@@ -415,6 +415,140 @@ struct SVGFileTests {
         #expect(Canvas.svgSkippedNotice(nothing, path: "words.svg").contains("the shape is empty"))
     }
 
+    // MARK: - XML 宣言と行の終わり (#2332・#2331)
+
+    /// 行の終わりの 3 通り。どれも 1 つの行の終わり (``TextFile/lines(of:)``)。
+    private static let lineBreaks: [(name: String, text: String)] = [
+        ("LF", "\n"), ("CRLF", "\r\n"), ("CR", "\r"),
+    ]
+
+    /// 宣言だけを替える。**ASCII でない文字を属性の値とコメントと字に持たせる** (ASCII だけなら、
+    /// 宣言が何でも libxml2 は読めてしまう)。
+    private nonisolated static let declarations: [(name: String, text: String)] = [
+        ("宣言なし", ""),
+        ("Shift_JIS", #"<?xml version="1.0" encoding="Shift_JIS"?>"#),
+        ("一重引用符", "<?xml version='1.0' encoding='Shift_JIS'?>"),
+        ("ISO-8859-1", #"<?xml version="1.0" encoding="ISO-8859-1"?>"#),
+        ("UTF-16", #"<?xml version="1.0" encoding="UTF-16"?>"#),
+        ("standalone が続く", #"<?xml version="1.0" encoding="Shift_JIS" standalone="yes"?>"#),
+    ]
+
+    @Test("宣言の encoding が何でも、UTF-8 として読んだ同じ Drawing になる", arguments: declarations)
+    func declaredEncodingIsNotRead(_ name: String, _ declaration: String) throws {
+        let body = """
+            <svg xmlns="http://www.w3.org/2000/svg" data-name="値é">
+            <!-- 星 -->
+            <text x="0" y="0">星</text>
+            <rect id="é" width="4" height="4" fill="#ff0000"/>
+            </svg>
+            """
+        let expected = try SVGFile.parse(body, path: "plain.svg")
+        let drawing = try SVGFile.parse(declaration + "\n" + body, path: "declared.svg")
+        #expect(drawing.items.count == 1, "\(name)")
+        #expect(drawing.items.first?.fill == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1), "\(name)")
+        // 宣言が使う行の数だけ下がる。字 (3 行目) を捨てたと名乗る行も、その分だけ下がる
+        let used = declaration.filter { $0 == "\n" }.count + 1
+        #expect(drawing.items == expected.items, "\(name)")
+        #expect(
+            drawing.skipped == [SVGFile.Skip(what: "<text>", count: 1, line: 3 + used)], "\(name)")
+    }
+
+    /// 捨てるものの行が、改行のどれでも同じになる SVG。字 (3 行目)・グラデーションの塗り (4 行目)・
+    /// 読めない CSS の規則 (5 行目)。
+    private static let skippingLines = """
+        <svg xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="g"/></defs>
+        <text x="0" y="0">A</text>
+        <rect width="4" height="4" fill="url(#g)"/>
+        <style>g .deep { fill: red }</style>
+        </svg>
+        """
+
+    @Test("CR・CRLF で改行した壊れていない SVG も、捨てたものの行が LF と同じになる")
+    func skippedLinesDoNotDependOnTheBreak() throws {
+        let expected = try SVGFile.parse(Self.skippingLines, path: "lf.svg")
+        let lines = Dictionary(uniqueKeysWithValues: expected.skipped.map { ($0.what, $0.line) })
+        #expect(lines == ["<text>": 3, "fill=\"url(…)\"": 4, "CSS rule \"g .deep\"": 5])
+        for (kind, lineBreak) in Self.lineBreaks {
+            let drawing = try SVGFile.parse(
+                Self.skippingLines.replacingOccurrences(of: "\n", with: lineBreak), path: "\(kind).svg")
+            #expect(drawing == expected, "\(kind)")
+        }
+    }
+
+    @Test(
+        "行の終わりが LF・CRLF・CR のどれでも、壊れた SVG と根が <svg> でない XML は同じ行を名乗る",
+        arguments: [
+            ("閉じない要素", "<svg>\n<rect width=\"1\" height=\"1\">\n</svg>\n", 3),
+            ("閉じる名前の食い違い", "<svg>\n<g>\n<rect/>\n</rect>\n</svg>", 4),
+            ("定義の無い実体", "<svg>\n<g/>\n<g x=\"&nope;\"/>\n</svg>", 3),
+            ("根が svg でない", "<?xml version=\"1.0\"?>\n<html><body/></html>", 2),
+            ("根が svg でない (3 行目)", "<!-- a -->\n\n<html/>", 3),
+        ])
+    func malformedSVGNamesTheSameLineWithAnyBreak(_ name: String, _ text: String, _ line: Int) {
+        for (kind, lineBreak) in Self.lineBreaks {
+            do {
+                _ = try SVGFile.parse(text.replacingOccurrences(of: "\n", with: lineBreak), path: "x.svg")
+                Issue.record("読めたことになっている: \(name) (\(kind))")
+            } catch {
+                guard case .malformed(_, let named, _) = error else {
+                    Issue.record("malformed でない: \(error)")
+                    continue
+                }
+                #expect(named == line, "\(name) (\(kind))")
+            }
+        }
+    }
+
+    @Test("CR だけで改行した SVG を loadShape が読めないとき、壊れた行は LF の SVG と同じ")
+    func loadShapeNamesTheLineOfACarriageReturnFile() throws {
+        let url = try written(
+            Data("<svg>\r<rect width=\"1\" height=\"1\">\r</svg>\r".utf8), as: "broken-cr.svg")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            _ = try Probe().loadShape(url.path)
+            Issue.record("壊れた XML を読めたことになっている")
+        } catch {
+            guard case .malformed(_, let line, _) = error else {
+                Issue.record("malformed でない: \(error)")
+                return
+            }
+            #expect(line == 3)
+        }
+    }
+
+    @Test("属性と <style> (CDATA を含む) の値は、行の終わりによらず同じに読む")
+    func valuesDoNotDependOnTheBreak() throws {
+        let svg = """
+            <svg xmlns="http://www.w3.org/2000/svg">
+            <style><![CDATA[
+            .a { fill: red;
+            stroke: blue }
+            ]]></style>
+            <style>.b { fill: lime;
+            stroke: black }</style>
+            <rect class="a" width="4" height="4"/>
+            <rect class="b" width="4" height="4"/>
+            <rect width="4" height="4" style="fill:red;
+            stroke:blue"/>
+            </svg>
+            """
+        let expected = try SVGFile.parse(svg, path: "lf.svg")
+        // 規則が実際に効いている (どの書き方も、読めた値は同じ赤と青)
+        let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
+        let blue = SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1)
+        #expect(expected.items.count == 3)
+        #expect(expected.items[0].fill == red && expected.items[0].stroke == blue)
+        #expect(expected.items[1].stroke == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 1))
+        #expect(expected.items[2].fill == red && expected.items[2].stroke == blue)
+        #expect(expected.skipped.isEmpty, "\(expected.skipped)")
+        for (kind, lineBreak) in Self.lineBreaks {
+            let drawing = try SVGFile.parse(
+                svg.replacingOccurrences(of: "\n", with: lineBreak), path: "\(kind).svg")
+            #expect(drawing == expected, "\(kind)")
+        }
+    }
+
     // MARK: - 塗りの規則
 
     @Test("evenodd は入れ子の深さで向きをそろえ直す (同じ向きの穴が穴になる)")
