@@ -42,7 +42,10 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 if ! xcrun --find metal >/dev/null 2>&1; then
-  echo "metal コンパイラが見つからない (Xcode のツールチェーンが要る)" >&2
+  # スケッチのビルドは metal を使わない (断片は実行時に組む・#2351) ので、利用者向けの
+  # README は Metal Toolchain を案内しない。入れ方を言うのはここだけになる
+  echo "metal コンパイラが見つからない。この検査には Xcode と Metal Toolchain が要る" >&2
+  echo "  (Xcode の Settings → Components、または xcodebuild -downloadComponent MetalToolchain)" >&2
   exit 1
 fi
 
