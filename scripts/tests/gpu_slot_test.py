@@ -20,6 +20,7 @@ Swift も GPU も要らない。子には、合図のファイルを待つだけ
 import fcntl
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -49,6 +50,42 @@ def _wait_for(predicate, seconds=10.0):
             return True
         time.sleep(0.02)
     return predicate()
+
+
+class _Said:
+    """包みの stderr を、塞がずに読み足して貯める。待つ側が待ちに入ったかを、名乗りで見るための補助 (#2304)。
+
+    「子を起こして 0.5 秒眠ってから、まだ走っていないことを確かめる」と、子の起動が 0.5 秒を越える
+    機械では、まだ枠の入口にも着いていない子に「走っていない」を確かめて素通りする。待つ側は待つ間に
+    相手を名乗る (検査では 0.1 秒ごと) ので、名乗りが出るのを期限つきで待てば、待ちに入ったことが
+    分かる。固定の眠りで順序を作らない。
+
+    読み足すのは、読める分だけ (`select` が読めると言ったときだけ `os.read` する) なので、塞がない。
+    `finish` は、貯めた分に `communicate` の残りをつないで返す。"""
+
+    def __init__(self, process):
+        self._process = process
+        self._chunks = []
+
+    def text(self):
+        descriptor = self._process.stderr.fileno()
+        while select.select([descriptor], [], [], 0)[0]:
+            data = os.read(descriptor, 65536)
+            if not data:  # 閉じた
+                break
+            self._chunks.append(data)
+        return b"".join(self._chunks).decode("utf-8", errors="replace")
+
+    def has(self, marker):
+        return marker in self.text()
+
+    def count(self, marker):
+        return self.text().count(marker)
+
+    def finish(self, timeout=10):
+        head = self.text()
+        _, rest = self._process.communicate(timeout=timeout)
+        return head + rest
 
 
 class SlotHarness(unittest.TestCase):
@@ -111,6 +148,14 @@ class SlotHarness(unittest.TestCase):
     def _entries(self):
         return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
 
+    def _assert_waiting(self, said, started, marker, ran):
+        """待つ側が待ちに入って名乗った (`marker`) のを期限つきで待ち、その時点でまだ走っていないことを確かめる。
+
+        名乗りを待たずに「走っていない」だけを見ると、起動が遅くて、まだ待ちに入っていない子でも通る (#2304)。"""
+        _wait_for(lambda: said.has(marker) or started.exists())
+        self.assertFalse(started.exists(), ran)
+        self.assertTrue(said.has(marker), f"待ちに入った旨 ({marker}) を名乗らない")
+
 
 class GpuSlotTest(SlotHarness):
     def test_no_more_than_the_slot_count_run_at_once(self):
@@ -119,8 +164,7 @@ class GpuSlotTest(SlotHarness):
         self.assertTrue(_wait_for(first_started.exists), "1 本目が走らない")
         self.assertTrue(_wait_for(second_started.exists), "2 本目が走らない")
         third, third_started, _ = self._start("third")
-        time.sleep(0.5)
-        self.assertFalse(third_started.exists(), "枠 2 なのに 3 本目が走った")
+        self._assert_waiting(_Said(third), third_started, "空くのを待っている", "枠 2 なのに 3 本目が走った")
         first_release.touch()
         self.assertEqual(first.wait(timeout=10), 0)
         self.assertTrue(_wait_for(third_started.exists), "枠が空いても 3 本目が走らない")
@@ -137,8 +181,7 @@ class GpuSlotTest(SlotHarness):
         holder, holder_started, holder_release = self._start("holder", slots="1")
         self.assertTrue(_wait_for(holder_started.exists))
         waiter, waiter_started, _ = self._start("waiter", slots="1")
-        time.sleep(0.3)
-        self.assertFalse(waiter_started.exists(), "枠 1 なのに 2 本目が走った")
+        self._assert_waiting(_Said(waiter), waiter_started, "空くのを待っている", "枠 1 なのに 2 本目が走った")
         holder.send_signal(signal.SIGKILL)
         holder.wait(timeout=10)
         self.assertTrue(_wait_for(waiter_started.exists), "持ち主が殺されても枠が返らない")
@@ -348,13 +391,14 @@ class ExclusiveTest(SlotHarness):
         holder, holder_started, holder_release = self._start("holder")
         self.assertTrue(_wait_for(holder_started.exists))
         measure, measure_started, measure_release = self._start("measure", exclusive=True)
-        time.sleep(0.5)
-        self.assertFalse(measure_started.exists(), "検査が枠を握っているのに、計測が走った")
+        said = _Said(measure)
+        # 計測が、検査の握る枠を見て待ちに入った (名乗った) のを待ってから、走っていないことを見る
+        self._assert_waiting(said, measure_started, "計測を始めずに待っている", "検査が枠を握っているのに、計測が走った")
         holder_release.touch()
         self.assertEqual(holder.wait(timeout=10), 0)
         self.assertTrue(_wait_for(measure_started.exists), "検査が終わっても計測が走らない")
         measure_release.touch()
-        _, error = measure.communicate(timeout=10)
+        error = said.finish()
         self.assertEqual(measure.returncode, 0, error)
         self.assertIn("計測を始めずに待っている", error)
         self.assertIn(f"pid {holder.pid}", error)
@@ -363,13 +407,14 @@ class ExclusiveTest(SlotHarness):
         measure, measure_started, measure_release = self._start("measure", exclusive=True)
         self.assertTrue(_wait_for(measure_started.exists))
         test, test_started, test_release = self._start("test")
-        time.sleep(0.5)
-        self.assertFalse(test_started.exists(), "計測が走っているのに、検査が走った")
+        said = _Said(test)
+        # 検査の子が、走っている計測を見て待ちに入った (名乗った) のを待ってから、計測を終わらせる
+        self._assert_waiting(said, test_started, "窓つきの計測が GPU の枠を全部使う", "計測が走っているのに、検査が走った")
         measure_release.touch()
         self.assertEqual(measure.wait(timeout=10), 0)
         self.assertTrue(_wait_for(test_started.exists), "計測が終わっても検査が走らない")
         test_release.touch()
-        _, error = test.communicate(timeout=10)
+        error = said.finish()
         self.assertEqual(test.returncode, 0, error)
         self.assertIn("窓つきの計測", error)
         self.assertIn(f"pid {measure.pid}", error)
@@ -398,11 +443,22 @@ class ExclusiveTest(SlotHarness):
         )
         self.assertTrue(_wait_for(self._gate_is_held), "計測が順番待ちの印を取らない")
         late, late_started, late_release = self._start("late")
-        time.sleep(0.3)
+        late_said = _Said(late)
+        waiting = "窓つきの計測が GPU の枠を全部使う"
+        # 後から来た検査が、計測の順番待ちの印を見て待ちに入ってから、枠を空ける (入る前に空けると、
+        # 待っている検査が空いた枠を取るかを見る検査が、来たばかりの検査が取るかを見る検査に変わる)
+        self._assert_waiting(late_said, late_started, waiting, "計測が順番を待っているのに、後から来た検査が走った")
         first_release.touch()
         self.assertEqual(first.wait(timeout=10), 0)
-        time.sleep(0.5)
+        # 枠が空いた後に、後から来た検査が空いた枠を見ても取らずに、1 周以上回った、と名乗りで確かめる。
+        # 枠は包みが終わる前に返っているので、いま以降に始まる周回は空いた枠を見ている。いま読める名乗りは
+        # 空く前に始まった周回のものでありうる (名乗りは周回の終わりに出る) ので、2 つ増えるまで待つ。
+        # 2 つめを出す周回は、1 つめの後に始まるので、必ず空いた後に始まっている。飛び越して取っていれば、
+        # 名乗りは増えずに走り出す
+        seen = late_said.count(waiting)
+        _wait_for(lambda: late_started.exists() or late_said.count(waiting) >= seen + 2)
         self.assertFalse(late_started.exists(), "計測が待っている間に、後から来た検査が空いた枠を取った")
+        self.assertGreaterEqual(late_said.count(waiting), seen + 2, "枠が空いた後に、後から来た検査が待っている旨を名乗らない")
         second_release.touch()
         self.assertTrue(_wait_for(measure_started.exists), "先の検査が終わっても計測が走らない")
         self.assertFalse(late_started.exists(), "計測が走っている間に、後から来た検査が走った")
