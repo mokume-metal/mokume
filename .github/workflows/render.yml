@@ -332,11 +332,18 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
+  # 緑で終わらなかった回を起票する。落ちた (failure) 回に加え、切れた (cancelled) 回も
+  # 起票する — 30 分の timeout で切れた job は cancelled で終わり、failure だけを見ると
+  # 何も起票されずに黙って抜けた (#2084)。切れる経路 (timeout・人の cancel・concurrency の
+  # 置き換え) は見分けず、本文がそのどれかと名乗る (ADR-0019 決定 7)。`!=` で書かない:
+  # skipped で起票する。always() を外さない: 暗黙の success() が足され、needs が赤の回に
+  # この job が skipped になる
   scheduled-report:
     needs: [scheduled-debug, scheduled-release]
     if: >-
       always()
-      && (needs.scheduled-debug.result == 'failure' || needs.scheduled-release.result == 'failure')
+      && (needs.scheduled-debug.result == 'failure' || needs.scheduled-release.result == 'failure'
+          || needs.scheduled-debug.result == 'cancelled' || needs.scheduled-release.result == 'cancelled')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
@@ -356,10 +363,13 @@ jobs:
           path: record/release
       # 上げた記録の置き場所は、上げたファイルの共通の親で決まる (.build/ が付くか付かないかが
       # 中身で変わる) ので、位置を決め打たず名前で探す。無ければ無いパスを渡し、呼び先が
-      # 「記録が無い」と名乗って起票する
+      # 「記録が無い」と名乗って起票する。記録が無い理由 (落ちた・切れた) は job の結論で
+      # 変わるので、結論も渡す
       - name: 赤を発信する
         env:
           GH_TOKEN: ${{ github.token }}
+          DEBUG_RESULT: ${{ needs.scheduled-debug.result }}
+          RELEASE_RESULT: ${{ needs.scheduled-release.result }}
         run: |
           find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
           debug_xml=$(find_one record/debug test-results-swift-testing.xml)
@@ -367,5 +377,5 @@ jobs:
           release_xml=$(find_one record/release test-results-release-swift-testing.xml)
           release_log=$(find_one record/release test-log.txt)
           bash scripts/report-scheduled-render.sh \
-            "${debug_xml:-record/debug/none.xml}" "${debug_log:-record/debug/none.txt}" \
-            "${release_xml:-record/release/none.xml}" "${release_log:-record/release/none.txt}"
+            "$DEBUG_RESULT" "${debug_xml:-record/debug/none.xml}" "${debug_log:-record/debug/none.txt}" \
+            "$RELEASE_RESULT" "${release_xml:-record/release/none.xml}" "${release_log:-record/release/none.txt}"
