@@ -25,14 +25,21 @@ extension Sketch {
     /// 値を含む。同じフレームで測った値と同じ名前を差し出すと、そのフレームだけはこちらが
     /// 載る。
     ///
+    /// **数でない値 (NaN・無限) は差し出されず、1 度だけ標準エラーへ知らせる** ([ADR-0030]
+    /// 決定 3)。応答は JSON で、非有限の数を書けない — 載せると、その枚の応答がまるごと置けなく
+    /// なる。差し出さなかった値は応答の `values` に載らず、他の値は載る。
+    ///
     /// **観測が有効でないときは何もしない。** 走らせるたびに払うものが無いので、
     /// 描画の中に置いたままにしてよい。走っていないとき (init やプロパティの初期化子)
     /// も黙って何もしない — 観測は本体の挙動を変えない。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public func expose(_ name: String, _ value: Double) {
         runningSketch?.expose(name, .float(value))
     }
 
-    /// いまの値を観測へ差し出す。
+    /// いまの値を観測へ差し出す。数でない値 (NaN・無限) は差し出されない
+    /// (``expose(_:_:)-(_,Double)``)。
     public func expose(_ name: String, _ value: Float) {
         runningSketch?.expose(name, .float(Double(value)))
     }
