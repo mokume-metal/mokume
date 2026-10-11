@@ -119,7 +119,10 @@ struct ParameterNonFiniteTests {
         sketch.pair = SIMD2(-.infinity, 5)
         #expect(sketch.pair == SIMD2(1, 2))
 
+        // 3 つの成分のどれでも (真ん中の y でも)
         sketch.triple = SIMD3(5, 6, .infinity)
+        #expect(sketch.triple == SIMD3(1, 2, 3))
+        sketch.triple = SIMD3(5, .nan, 7)
         #expect(sketch.triple == SIMD3(1, 2, 3))
         sketch.triple = SIMD3(.nan, 6, 7)
         #expect(sketch.triple == SIMD3(1, 2, 3))
