@@ -86,7 +86,7 @@ struct ScalarConvertibleTests {
         let d: Double = 0.5
         let f: Float = 3
 
-        // 数の口
+        // 数の口。`Float` で渡したときと同じ値であることと、その値そのものを見る
         let mapped: Float = map(i, 0, 10, 0, 1)
         #expect(mapped == 0.3)
         #expect(mapped == map(f, Float(0), Float(10), Float(0), Float(1)))
@@ -97,24 +97,33 @@ struct ScalarConvertibleTests {
         let ratio: Float = norm(i, 0, 10)
         #expect(ratio == 0.3)
         let eased: Float = smoothstep(0, 10, i)
+        let t: Float = 0.3
+        #expect(eased == t * t * (3 - 2 * t))
         #expect(eased == smoothstep(Float(0), Float(10), f))
         let turned: Float = radians(i)
-        #expect(turned == radians(f))
+        #expect(turned == f * Float.pi / 180)
         let read: Float = degrees(d)
-        #expect(read == degrees(Float(0.5)))
+        #expect(read == Float(0.5) * 180 / Float.pi)
 
-        // 色の口
+        // 色の口。値そのものは、別の口 (4 つの数の口・成分を読む口・間を取る計算) と突き合わせる
         let red: LinearRGBA = color(i, 0, 0)
         #expect(red == color(f, Float(0), Float(0)))
+        #expect(abs(MokumeCore.red(red) - 3) < 1e-3)
         let veil: LinearRGBA = color(i, d)
-        #expect(veil == color(f, Float(0.5)))
+        #expect(veil == color(f, f, f, Float(0.5)))
         let gray: LinearRGBA = color(i)
-        #expect(gray == color(f))
+        #expect(gray == color(f, f, f))
         let tinted: LinearRGBA = color(hue: i, saturation: 80, brightness: 90)
         #expect(tinted == color(hue: f, saturation: Float(80), brightness: Float(90)))
+        #expect(abs(hue(tinted) - 3) < 1e-2)
         let a: LinearRGBA = color(255, 170, 60)
         let b: LinearRGBA = color(40, 50, 120)
         let blended: LinearRGBA = lerpColor(a, b, d)
-        #expect(blended == lerpColor(a, b, Float(0.5)))
+        let halfway = LinearRGBA(
+            premultipliedRed: interpolate(a.red, b.red, 0.5),
+            green: interpolate(a.green, b.green, 0.5),
+            blue: interpolate(a.blue, b.blue, 0.5),
+            alpha: interpolate(a.alpha, b.alpha, 0.5))
+        #expect(blended == halfway)
     }
 }
