@@ -31,7 +31,28 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "check-entry.py"
 
-README = """\
+# 雛形 (`Sketch.swift.template`) の代わり。**埋める綴りは本物と同じ** (`{{NAME}}`・`{{TYPE}}`)
+TEMPLATE = """\
+import Foundation
+import mokume
+
+@main
+final class {{TYPE}}: Sketch {
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "{{NAME}}")
+    }
+
+    func draw() {
+        background(15, 18, 23)
+    }
+}
+"""
+
+# `mokume new my-sketch` の出力。入口と README の「はじめの 1 本」はこれを写す (#2256)
+SKETCH = TEMPLATE.replace("{{TYPE}}", "MySketch").replace("{{NAME}}", "my-sketch")
+
+README = (
+    """\
 # mokume
 
 ## 入れる
@@ -40,8 +61,17 @@ README = """\
 brew install mokume-metal/tap/mokume
 ```
 
+## はじめの 1 本
+
+```swift
+"""
+    + SKETCH
+    + """\
+```
+
 書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokumecore/>
 """
+)
 
 # 面が名乗る名前の出どころ。**カタログの入口の記号見出しが正本**で、判定はここから導く
 # (site_source.landing_of。check-published-reference.py と同じ 1 本を読む)
@@ -53,7 +83,8 @@ LANDING = """\
 
 # 属性を改行で分けて書く。**この形で拾えること**が要件で、1 行に畳んだ作り物で
 # 通しても、実物 (Documentation/site/index.html) は同じ書き方をしている
-ENTRY = """\
+ENTRY = (
+    """\
 <!doctype html>
 <html lang="ja">
   <body>
@@ -61,10 +92,15 @@ ENTRY = """\
       src="https://i.gyazo.com/aaaa.png"
       alt="絵" />
     <pre><code>brew install mokume-metal/tap/mokume</code></pre>
+    <p>できるのは、そのまま動く 1 ファイルのスケッチ:</p>
+    <pre><code>"""
+    + SKETCH.rstrip("\n")
+    + """</code></pre>
     <a href="documentation/mokumecore/">参照の面</a>
   </body>
 </html>
 """
+)
 
 
 class EntryTest(unittest.TestCase):
@@ -78,6 +114,8 @@ class EntryTest(unittest.TestCase):
         self.catalog = self.root / "mokume.docc"
         self.catalog.mkdir()
         (self.catalog / "Landing.md").write_text(LANDING, encoding="utf-8")
+        self.template = self.root / "Sketch.swift.template"
+        self.template.write_text(TEMPLATE, encoding="utf-8")
         self.out = self.root / "out"
         self.out.mkdir()
         self.write(ENTRY)
@@ -91,6 +129,7 @@ class EntryTest(unittest.TestCase):
                 "python3", str(SCRIPT), target or str(self.out),
                 "--readme", str(self.readme),
                 "--catalog", str(self.catalog),
+                "--template", str(self.template),
             ],
             capture_output=True,
             text=True,
@@ -189,6 +228,58 @@ class EntryTest(unittest.TestCase):
     def test_README_が無ければ赤い(self):
         self.readme.unlink()
         self.assertEqual(self.run_check().returncode, 1)
+
+    # --- はじめの 1 本 (#2256) --------------------------------------------
+    #
+    # **入口と README は `mokume new` の出力を写して見せる。** 写しは雛形が変わっても
+    # 追随しないので、雛形を埋めた出力と突き合わせる。入口は #555 で置いたときから、
+    # 雛形 (#215 から計算型の settings) と違う形 (格納型・import Foundation なし) を
+    # 「できるのは」として見せていた
+
+    def test_入口の例から_import_Foundation_が欠けると赤い(self):
+        self.write(ENTRY.replace("import Foundation\n", ""))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("入口", result.stderr)
+        self.assertIn("import Foundation", result.stderr)
+
+    def test_入口の例が格納型の_settings_なら赤い(self):
+        self.write(
+            ENTRY.replace(
+                'var settings: SketchSettings {\n'
+                '        SketchSettings(width: 960, height: 540, title: "my-sketch")\n'
+                '    }',
+                'var settings = SketchSettings(width: 960, height: 540, title: "my-sketch")',
+            )
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("var settings = SketchSettings", result.stderr)
+
+    def test_README_の例が雛形の出力と違えば赤い(self):
+        self.readme.write_text(
+            README.replace("background(15, 18, 23)", "background(0)"), encoding="utf-8")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("README", result.stderr)
+
+    def test_入口に雛形の出力の例が無ければ赤い(self):
+        # 0 件を緑にしない。書式が変わって拾えなくなった状態は、例が消えた状態と同じに見える
+        self.write(ENTRY.replace("@main", "@entry"))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("見つからない", result.stderr)
+
+    def test_入口の例の_HTML_の文字参照は戻してから比べる(self):
+        # 入口は HTML なので、例の中の `<` `>` `&` は文字参照で書かれる
+        template = TEMPLATE.replace("background(15, 18, 23)", "if 1 < 2 && 3 > 2 { background(15, 18, 23) }")
+        self.template.write_text(template, encoding="utf-8")
+        sketch = template.replace("{{TYPE}}", "MySketch").replace("{{NAME}}", "my-sketch")
+        self.readme.write_text(README.replace(SKETCH, sketch), encoding="utf-8")
+        escaped = sketch.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        self.write(ENTRY.replace(SKETCH.rstrip("\n"), escaped.rstrip("\n")))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     # --- 検査の空回り -----------------------------------------------------
 
