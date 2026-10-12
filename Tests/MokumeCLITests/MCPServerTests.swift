@@ -36,6 +36,11 @@ struct MCPServerTests {
         return url
     }
 
+    /// 観測の区画に置かれる要求。道具が走ったかどうかは、これが在るかで分かる。
+    private func observeRequest(in directory: URL) -> URL {
+        directory.appendingPathComponent(".mokume/observe/request.json")
+    }
+
     private func decode(_ line: String) throws -> [String: Any] {
         try #require(
             try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
@@ -219,6 +224,57 @@ struct MCPServerTests {
         #expect((content.first?["text"] as? String)?.contains("error: 何か") == true)
     }
 
+    /// 黙って空の引数に倒すと、`"arguments":"x"` が引数なしの頼みに化けて道具が走る
+    /// (`observe` なら等倍で 1 枚撮る)。隣の `name is required` と同じ符号で断る (#2319)。
+    /// 空の配列 `[]` も断る — 空の連想配列を `[]` と書き出すエンコーダ (PHP の
+    /// `json_encode([])` など) では、これまで通っていた呼び出しが断られるようになる。
+    /// 変更の記録 (`changelog.d/`) がそれを名乗る。
+    @Test(
+        "tools/call の arguments がオブジェクトでなければ、道具を走らせずに -32602 で断る",
+        arguments: [#""x""#, "[1]", "[]", "5", "true"])
+    func refusesToolArgumentsThatAreNotAnObject(value: String) throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [
+                #"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"observe","arguments":"#
+                    + value + "}}"
+            ])
+        server.serve()
+
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(idOf(answer) == "12")
+        #expect(errorCode(answer) == -32602)
+        #expect(answer["result"] == nil)
+        // 道具は走っていない。走ると観測の区画に要求が置かれる
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path))
+    }
+
+    /// 上の断りの反対側。`null` は「渡していない」以上の意図を運ばないので、省略と同じに読む。
+    @Test(
+        "tools/call の arguments を省くか null にすると、従来どおり空の引数で道具を走らせる",
+        arguments: [
+            #"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"observe"}}"#,
+            #"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"observe","arguments":null}}"#,
+        ])
+    func runsAToolWithoutArguments(line: String) throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(directory: directory, input: [line])
+        server.serve()
+
+        // 誰も応えないので道具は失敗の結果を返すが、走って要求を置いている
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(idOf(answer) == "13")
+        #expect(errorCode(answer) == nil)
+        #expect(answer["result"] != nil)
+        let request = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
+                as? [String: Any])
+        // 空の引数で走った — 縮尺も時刻も枚数も置かれていない
+        #expect(request.keys.sorted() == ["id"])
+    }
 
     @Test("ping には、繋ぎ始めの挨拶より前でも空の結果で答える")
     func answersPingWithAnEmptyResult() throws {
@@ -470,6 +526,60 @@ struct MCPServerTests {
         #expect(
             !FileManager.default.fileExists(
                 atPath: directory.appendingPathComponent(".mokume/observe/request.json").path))
+    }
+
+    /// 数でない縮尺を黙って落とすと等倍の頼みに化け、真偽値は `NSNumber` 経由で 1 に読める。
+    /// どちらも撮る側の警告に載らない (#2319)。`-1e400` は JSON の読み手が `-inf` に読み、
+    /// 通すと区画を作った後で書けずに、置き場所のせいにした案内が返る。**引数は JSON から
+    /// 読む** — Swift の `true` は JSON の `true` と違う型で届き、`-inf` は JSON の外から
+    /// 渡しても読み手の癖を再現できない。
+    @Test(
+        "数でない・有限でない縮尺は、区画に触れずに断る",
+        arguments: [
+            #"{"scale":"0.5","time":1}"#, #"{"scale":true}"#, #"{"scale":false}"#,
+            #"{"scale":[0.5]}"#, #"{"scale":-1e400}"#,
+        ])
+    func refusesScalesThatAreNotFiniteNumbers(json: String) throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call("observe", arguments: try decode(json))
+        #expect(outcome.isError)
+        #expect(outcome.text == "scale must be a finite number")
+        // 要求を置く前に断る。区画のディレクトリも作らない
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/observe").path))
+    }
+
+    /// `null` の方針は #2393 で決める。それまでは、`as? Double` が外れて省略と同じに
+    /// なっていた従来の読み方を変えない (省略できる欄に `null` を入れる呼び手が断られないように)。
+    @Test("null の縮尺は、従来どおり省いたのと同じに読む")
+    func readsANullScaleAsOmitted() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        // 誰も応えないので上限まで待って諦めるが、要求は置かれている
+        _ = tools.call("observe", arguments: try decode(#"{"scale":null}"#))
+
+        let request = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
+                as? [String: Any])
+        #expect(request.keys.sorted() == ["id"])
+    }
+
+    @Test("範囲の外の縮尺は切らずに要求へ置き、撮る側が切ったことを名乗れるようにする")
+    func passesOutOfRangeScalesThrough() throws {
+        // 範囲 (0 を越え 1 以下) の外は、撮る側が等倍で書いて警告で名乗る (observe-request の約束)
+        for (json, expected) in [(#"{"scale":0}"#, 0.0), (#"{"scale":2}"#, 2.0), (#"{"scale":-0.5}"#, -0.5)] {
+            let directory = try makeDirectory()
+            let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+            // 誰も応えないので上限まで待って諦めるが、要求は置かれている
+            _ = tools.call("observe", arguments: try decode(json))
+
+            let request = try #require(
+                try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
+                    as? [String: Any])
+            #expect(request["scale"] as? Double == expected, "\(json)")
+        }
     }
 
     /// このリポジトリの `Schemas/`。**検査の実行ファイルからは辿れない** (道具の実行ファイルと
@@ -787,6 +897,29 @@ struct MCPServerTests {
         let outcome = tools.call("reference", arguments: [:])
         #expect(!outcome.isError)
         #expect(outcome.text.contains("- api"))
+    }
+
+    /// 文字列でない名前を「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として返り、
+    /// 頼み方を誤ったことに気付けない (#2319)。省いたとき一覧になるのは上の検査が見る。
+    @Test(
+        "文字列でない文書の名前は、一覧に倒さずに断る",
+        arguments: [#"{"name":5}"#, #"{"name":true}"#, #"{"name":["api"]}"#])
+    func refusesDocumentNamesThatAreNotStrings(json: String) throws {
+        let tools = makeTools(directory: try makeDirectory(), fetches: Fetches())
+        let outcome = tools.call("reference", arguments: try decode(json))
+        #expect(outcome.isError)
+        #expect(outcome.text.hasPrefix("name must be a string"))
+        #expect(!outcome.text.contains("Documents this interface serves"))
+    }
+
+    /// `null` の方針は #2393 で決める。それまでは、`as? String` が外れて省略と同じに
+    /// なっていた従来の読み方を変えない。
+    @Test("null の文書の名前は、従来どおり省いたのと同じに一覧を返す")
+    func readsANullDocumentNameAsOmitted() throws {
+        let tools = makeTools(directory: try makeDirectory(), fetches: Fetches())
+        let outcome = tools.call("reference", arguments: try decode(#"{"name":null}"#))
+        #expect(!outcome.isError)
+        #expect(outcome.text.contains("Documents this interface serves"))
     }
 
     /// **組めなかった応答を空行で返さない。**
