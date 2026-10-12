@@ -329,8 +329,21 @@ struct DocumentLoadingTests {
         ("= の前後に空白", #"<?xml version="1.0" encoding = "Shift_JIS" ?>"#),
         ("standalone が続く", #"<?xml version="1.0" encoding="Shift_JIS" standalone="yes"?>"#),
         ("複数行にまたがる", "<?xml\n version=\"1.0\"\n encoding=\"Shift_JIS\"\n?>"),
+        ("複数行にまたがる (CRLF)", "<?xml\r\n version=\"1.0\"\r\n encoding=\"Shift_JIS\"\r\n?>"),
+        ("複数行にまたがる (CR)", "<?xml\r version=\"1.0\"\r encoding=\"Shift_JIS\"\r?>"),
+        // 名前の形 (英字で始まり、英数字と . _ -) をしていれば、知らない名前でも読む
         ("無い名前", #"<?xml version="1.0" encoding="nonsense"?>"#),
+        ("_ を含む名前", #"<?xml version="1.0" encoding="x_y.z-1"?>"#),
+    ]
+
+    /// 値が名前の形 (XML 1.0 の `EncName`) をしていない宣言。XML として壊れているので、これまでどおり
+    /// `malformed` で投げる。
+    private nonisolated static let malformedDeclarations: [(name: String, text: String)] = [
         ("空の名前", #"<?xml version="1.0" encoding=""?>"#),
+        ("数字で始まる名前", #"<?xml version="1.0" encoding="1abc"?>"#),
+        ("空白を含む名前", #"<?xml version="1.0" encoding="Shift JIS"?>"#),
+        ("ASCII でない名前", #"<?xml version="1.0" encoding="é"?>"#),
+        ("一重引用符の空の名前", "<?xml version='1.0' encoding=''?>"),
     ]
 
     @Test("宣言の encoding が何でも、UTF-8 として読んだ同じ木になる", arguments: declarations)
@@ -358,10 +371,43 @@ struct DocumentLoadingTests {
         defer { cleanUp() }
         // 宣言の後の行で壊れる (4 行目の `</c>` が閉じる名前の食い違い)。宣言が何行を使っても、
         // 宣言の行数の分だけ後ろへ下がるだけで、宣言の書き換えが行を足し引きしない
-        let used = declaration.filter { $0 == "\n" }.count
+        let used = TextFile.lines(of: declaration + "x").count - 1
         let path = try file("broken.xml", declaration + "\n<sky>\n<星/>\n</c>\n</sky>")
         let broken = malformedLine { () throws(DataFailure) in _ = try Bare().loadXML(path) }
         #expect(broken?.line == used + 4, "\(name)")
+    }
+
+    @Test("値が名前の形でない宣言は、書き換えず、これまでどおり malformed で投げる", arguments: malformedDeclarations)
+    func declarationsThatAreNotNamesStayMalformed(_ name: String, _ declaration: String) async throws {
+        defer { cleanUp() }
+        let path = try file("broken.xml", declaration + Self.starryBody)
+        let broken = malformedLine { () throws(DataFailure) in _ = try Bare().loadXML(path) }
+        #expect(broken?.line == 1, "\(name)")
+        #expect(broken?.reason.isEmpty == false, "\(name)")
+        // 待たない版も同じ失敗で投げる
+        guard let failure = #expect(throws: DataFailure.self, "\(name)", performing: { try Bare().loadXML(path) })
+        else { return }
+        await #expect(throws: failure, "\(name)") { try await Bare().requestXML(path) }
+    }
+
+    @Test("先頭に BOM が残っても、宣言の encoding を読まない。BOM が 2 つのファイルは 1 つ残る")
+    func declaredEncodingIsNotReadAfterLeftoverBOM() throws {
+        defer { cleanUp() }
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        let shiftJIS = Data((#"<?xml version="1.0" encoding="Shift_JIS"?>"# + Self.starryBody).utf8)
+        let undeclared = Data(Self.starryBody.utf8)
+        // `TextFile` は BOM を 1 つしか落とさない。BOM が 2 つのファイルでは 1 つが残り、libxml2 は
+        // それを読み飛ばしてから宣言を読む
+        for (name, count, body) in [
+            ("BOM 1 つ・Shift_JIS", 1, shiftJIS), ("BOM 2 つ・Shift_JIS", 2, shiftJIS),
+            ("BOM 1 つ・宣言なし", 1, undeclared), ("BOM 2 つ・宣言なし", 2, undeclared),
+        ] {
+            var bytes = Data()
+            for _ in 0..<count { bytes.append(bom) }
+            bytes.append(body)
+            let sky = try Bare().loadXML(try file("bom-\(name).xml", bytes))
+            #expect(sky.getChildren("星").first?.element.attributes == ["x": "値é"], "\(name)")
+        }
     }
 
     @Test("宣言が Shift_JIS でも、中身が本当に Shift_JIS のバイトなら、これまでどおり unreadable")
@@ -394,18 +440,47 @@ struct DocumentLoadingTests {
         #expect(
             passed("<?xml version='1.0'  encoding = 'ISO-8859-1' ?><a/>")
                 == "<?xml version='1.0'  encoding = 'UTF-8' ?><a/>")
+        // 先頭に残った BOM (``TextFile/text(of:path:)`` は 1 つしか落とさない) は残したまま、その後ろの
+        // 宣言を書き換える。いくつ並んでいても飛ばして探す
+        #expect(
+            passed("\u{FEFF}" + #"<?xml version="1.0" encoding="Shift_JIS"?><a/>"#)
+                == "\u{FEFF}" + #"<?xml version="1.0" encoding="UTF-8"?><a/>"#)
+        #expect(
+            passed("\u{FEFF}\u{FEFF}" + #"<?xml version="1.0" encoding="Shift_JIS"?><a/>"#)
+                == "\u{FEFF}\u{FEFF}" + #"<?xml version="1.0" encoding="UTF-8"?><a/>"#)
         // 宣言でないもの・書き換えるものが無いものは、そのまま渡す
         for same in [
             #"<?xml-stylesheet href="a.css" encoding="Shift_JIS"?><a/>"#,
-            #" <?xml version="1.0" encoding="Shift_JIS"?><a/>"#,  // 先頭でない宣言は libxml2 が断るので、触らない
+            // 空白が前にある宣言は先頭にない。libxml2 が断るので、触らない
+            #" <?xml version="1.0" encoding="Shift_JIS"?><a/>"#,
+            #"<!-- --><?xml version="1.0" encoding="Shift_JIS"?><a/>"#,
             #"<?xml version="1.0"?><a note='encoding="Shift_JIS"'/>"#,
             #"<?xml version="1.0" encoding="utf-8"?><a/>"#,
             #"<?xml version="1.0" encoding="Shift_JIS"#,  // 引用符が閉じていない
+            // 値が名前の形でない宣言は、XML として壊れている。触らず libxml2 に言わせる
+            #"<?xml version="1.0" encoding=""?><a/>"#,
+            #"<?xml version="1.0" encoding="1abc"?><a/>"#,
+            #"<?xml version="1.0" encoding="Shift JIS"?><a/>"#,
+            #"<?xml version="1.0" encoding="é"?><a/>"#,
             "<a/>",
             "",
         ] {
             #expect(passed(same) == same)
         }
+    }
+
+    @Test("宣言の書き換えと CR の LF への置き換えは、同じ文書の中で両方効く")
+    func declarationAndLineBreaksTogether() {
+        func passed(_ source: String) -> String { String(decoding: XMLFile.document(of: source), as: UTF8.self) }
+        // 宣言が CR で改行している。値の前の CR も、後ろの CR も LF になり、値だけが UTF-8 になる
+        #expect(
+            passed("<?xml\r version=\"1.0\"\r encoding=\"Shift_JIS\"\r?>\r\n<a x=\"1\r2\"/>\r")
+                == "<?xml\n version=\"1.0\"\n encoding=\"UTF-8\"\n?>\n<a x=\"1\n2\"/>\n")
+        // CR の無い文書は、元のバイトと同じ (宣言が UTF-8 でも、無くても)
+        #expect(passed("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<a/>\n") == "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<a/>\n")
+        #expect(passed("<a x=\"星\"/>\n") == "<a x=\"星\"/>\n")
+        // CR だけで宣言が無い文書も、LF になる
+        #expect(passed("<a>\r<b/>\r</a>") == "<a>\n<b/>\n</a>")
     }
 
     @Test("XMLParser に渡すバイトは、CRLF と単独の CR を LF にする (文字参照の CR は触れない)")

@@ -10,8 +10,10 @@ import Foundation
 /// - 読み解くのは `XMLParser` で、その読み方に従う。文字は UTF-8 (呼ぶ側が
 ///   ``TextFile/text(of:path:)`` で解いてから渡す)。実体参照 (`&amp;` など) は解いた値で持つ
 /// - **XML 宣言の `encoding` は読まない。** 文字は UTF-8 と決まっているので、宣言が
-///   `Shift_JIS` と名乗っていても UTF-8 として読む。**行の終わりは LF・CRLF・CR のどれでもよく**、
-///   名乗る行は ``TextFile/lines(of:)`` と同じ数え方になる (どちらも ``document(of:)``)
+///   `Shift_JIS` と名乗っていても UTF-8 として読む (値が名前の形のとき。`encoding=""` のように
+///   名前の形でない宣言は XML として壊れているので、`malformed` で投げる)。**行の終わりは
+///   LF・CRLF・CR のどれでもよく**、名乗る行は ``TextFile/lines(of:)`` と同じ数え方になる
+///   (どちらも ``document(of:)``)
 /// - **外の実体 (`SYSTEM`) は読まない** (`XMLParser` の既定)。XML の中の名前から手元の
 ///   ファイルや外の URL を読みに行かない
 /// - 持つのは要素の名前・属性・子の要素。名前空間の前置きは名前の一部として扱う (`s:b`)
@@ -47,8 +49,8 @@ nonisolated enum XMLFile {
     /// 深さと同じ数え方)。
     static let deepest = 513
 
-    /// `XMLParser` に渡すバイトを作る。**文字を UTF-8 のバイトにして、そのままは渡さない。**
-    /// 次の 2 つを整える。`XMLParser` を作る所 (``parse(_:path:)`` と ``SVGFile/parse(_:path:)``)
+    /// `XMLParser` に渡すバイトを作る。**文字を UTF-8 のバイトにして、必要なら整えて渡す。**
+    /// 整えるのは次の 2 つ。`XMLParser` を作る所 (``parse(_:path:)`` と ``SVGFile/parse(_:path:)``)
     /// はどちらもここを通すので、XML も SVG も同じ読み方になる。
     ///
     /// - **行の終わりを LF に揃える。** CRLF と単独の CR を LF に置き換える。XML 1.0 (2.11) が
@@ -57,67 +59,89 @@ nonisolated enum XMLFile {
     ///   (``TextFile/lines(of:)`` は CR も行の終わりと数える)。文字参照で書いた CR (`&#13;`) は
     ///   参照のままで、揃えない。CDATA の中の CR は、libxml2 だけなら LF に揃わずに届くが、
     ///   XML 1.0 のとおり揃う
-    /// - **XML 宣言の `encoding` を `UTF-8` にする。** 文字は呼ぶ側が UTF-8 と決めて解いて
+    /// - **XML 宣言の `encoding` の値を `UTF-8` にする。** 文字は呼ぶ側が UTF-8 と決めて解いて
     ///   渡すので、宣言が `Shift_JIS` や `ISO-8859-1` と名乗っていても、渡すバイトは UTF-8 である。
     ///   libxml2 は宣言に従ってバイトを解き直すので、そのままだと UTF-8 として読めた文書が
     ///   ``DataFailure/malformed(path:line:reason:)`` で投げられたり、投げずに文字化けした値になったりする。
-    ///   書き換えるのは文書の先頭の XML 宣言の値だけで、行は動かない。宣言の外の
-    ///   `encoding="…"` (コメント・属性の値・`<?xml-stylesheet …?>`) には触れない
+    ///   **書き換えるのは、値が名前の形 (XML 1.0 の `EncName` — 英字で始まり、英数字と `.` `_` `-`)
+    ///   をしているときだけ。** 名前の形が正しければ、`nonsense` のように知らない名前でも読む
+    ///   (「宣言の値は読まない」の内側)。`""` や `Shift JIS` のように名前の形でない宣言は、XML として
+    ///   壊れているので、触らず libxml2 に任せて `malformed` で投げる。書き換えるのは文書の先頭の
+    ///   XML 宣言の値だけで、行は動かない。宣言の外の `encoding="…"` (コメント・属性の値・
+    ///   `<?xml-stylesheet …?>`) には触れない。先頭に BOM が残っていても (``TextFile/text(of:path:)``
+    ///   は 1 つしか落とさない。libxml2 は残った BOM を読み飛ばしてから宣言を読む) 宣言を見つける
+    ///
+    /// **整えるものが無い文書 (CR を含まず、書き換える宣言も無い、ほとんどの文書) は、元のバイトを
+    /// そのまま渡す。**
     static func document(of text: String) -> Data {
-        var bytes = Array(text.utf8)
-        // CR は UTF-8 の多バイトの文字の中には現れないので、バイトで見てよい
-        if bytes.contains(0x0D) { bytes = unifyingLineBreaks(bytes) }
-        declareUTF8(&bytes)
-        return Data(bytes)
-    }
+        var text = text
+        return text.withUTF8 { bytes in
+            let encoding = declaredEncoding(in: bytes)
+            // CR は UTF-8 の多バイトの文字の中には現れないので、バイトで探してよい
+            let hasCarriageReturn = memchr(bytes.baseAddress, 0x0D, bytes.count) != nil
+            guard hasCarriageReturn || encoding != nil else { return Data(buffer: bytes) }
 
-    /// CRLF と単独の CR を LF にする。
-    private static func unifyingLineBreaks(_ bytes: [UInt8]) -> [UInt8] {
-        var unified: [UInt8] = []
-        unified.reserveCapacity(bytes.count)
-        var index = 0
-        while index < bytes.count {
-            let byte = bytes[index]
-            index += 1
-            if byte == 0x0D {
-                unified.append(0x0A)
-                if index < bytes.count, bytes[index] == 0x0A { index += 1 }
-            } else {
-                unified.append(byte)
+            var document = Data(capacity: bytes.count)
+            let replacingAt = encoding?.lowerBound ?? -1
+            // `copied` から `index` の手前までは、まだ写していない元のバイト
+            var copied = 0
+            var index = 0
+            func flush() { document.append(UnsafeBufferPointer(rebasing: bytes[copied..<index])) }
+            while index < bytes.count {
+                if index == replacingAt, let encoding {
+                    flush()
+                    document.append(contentsOf: "UTF-8".utf8)
+                    index = encoding.upperBound
+                    copied = index
+                } else if bytes[index] == 0x0D {
+                    flush()
+                    document.append(0x0A)
+                    index += 1
+                    if index < bytes.count, bytes[index] == 0x0A { index += 1 }
+                    copied = index
+                } else {
+                    index += 1
+                }
             }
+            flush()
+            return document
         }
-        return unified
     }
 
-    /// 文書の先頭の XML 宣言 (`<?xml version="1.0" encoding="…"?>`) に `encoding` があれば、
-    /// その値を `UTF-8` にする。宣言が無い・`encoding` が無い・読めない形なら、何もしない
-    /// (壊れ方は libxml2 が言う)。
-    private static func declareUTF8(_ bytes: inout [UInt8]) {
+    /// 文書の先頭の XML 宣言 (`<?xml version="1.0" encoding="…"?>`) の `encoding` の値の範囲。
+    /// **書き換えるものが無ければ `nil`** — 宣言が無い・`encoding` が無い・値が既に UTF-8・
+    /// 値が名前の形でない・宣言が読めない形 (壊れ方は libxml2 が言う)。
+    private static func declaredEncoding(in bytes: UnsafeBufferPointer<UInt8>) -> Range<Int>? {
+        var index = 0
+        // 先頭に残った BOM は飛ばす (libxml2 も飛ばしてから宣言を読む)
+        while bytes[index...].starts(with: [0xEF, 0xBB, 0xBF]) { index += 3 }
         let opening = Array("<?xml".utf8)
-        guard bytes.starts(with: opening), bytes.count > opening.count, isSpace(bytes[opening.count])
-        else { return }
-        var index = opening.count
+        guard bytes[index...].starts(with: opening), index + opening.count < bytes.count,
+            isSpace(bytes[index + opening.count])
+        else { return nil }
+        index += opening.count
         // 宣言の中は `名前 = "値"` の並び。= の前後に空白があってよく、引用符は 2 種類
         while true {
             while index < bytes.count, isSpace(bytes[index]) { index += 1 }
             let nameStart = index
             while index < bytes.count, isLetter(bytes[index]) { index += 1 }
             let name = bytes[nameStart..<index]
-            guard !name.isEmpty else { return }  // `?>` に着いたか、読めない形
+            guard !name.isEmpty else { return nil }  // `?>` に着いたか、読めない形
             while index < bytes.count, isSpace(bytes[index]) { index += 1 }
-            guard index < bytes.count, bytes[index] == UInt8(ascii: "=") else { return }
+            guard index < bytes.count, bytes[index] == UInt8(ascii: "=") else { return nil }
             index += 1
             while index < bytes.count, isSpace(bytes[index]) { index += 1 }
             guard index < bytes.count, bytes[index] == UInt8(ascii: "\"") || bytes[index] == UInt8(ascii: "'")
-            else { return }
+            else { return nil }
             let quote = bytes[index]
             let valueStart = index + 1
-            guard let valueEnd = bytes[valueStart...].firstIndex(of: quote) else { return }
+            guard let valueEnd = bytes[valueStart...].firstIndex(of: quote) else { return nil }
             if name.elementsEqual("encoding".utf8) {
-                let value = String(decoding: bytes[valueStart..<valueEnd], as: UTF8.self)
-                // 既に UTF-8 なら、バイトを作り直さない
-                if value.lowercased() != "utf-8" { bytes.replaceSubrange(valueStart..<valueEnd, with: "UTF-8".utf8) }
-                return
+                let value = bytes[valueStart..<valueEnd]
+                guard isEncodingName(value) else { return nil }
+                // 既に UTF-8 なら、書き換えない
+                if String(decoding: value, as: UTF8.self).lowercased() == "utf-8" { return nil }
+                return valueStart..<valueEnd
             }
             index = valueEnd + 1
         }
@@ -129,6 +153,15 @@ nonisolated enum XMLFile {
 
     private static func isLetter(_ byte: UInt8) -> Bool {
         (0x41...0x5A).contains(byte) || (0x61...0x7A).contains(byte)
+    }
+
+    /// XML 1.0 の `EncName` — 英字で始まり、英数字と `.` `_` `-` が続く。
+    private static func isEncodingName(_ value: Slice<UnsafeBufferPointer<UInt8>>) -> Bool {
+        guard let first = value.first, isLetter(first) else { return false }
+        return value.dropFirst().allSatisfy {
+            isLetter($0) || (0x30...0x39).contains($0) || $0 == UInt8(ascii: ".") || $0 == UInt8(ascii: "_")
+                || $0 == UInt8(ascii: "-")
+        }
     }
 
     /// XML の文字を読み解き、根の要素を返す。

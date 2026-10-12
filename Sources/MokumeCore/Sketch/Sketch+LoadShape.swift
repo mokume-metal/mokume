@@ -237,7 +237,8 @@ extension Sketch {
     /// - 見つかったが開けない (ディレクトリだった・読む権利が無い):
     ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)
     /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``。UTF-8 として読めたファイルは、
-    ///   XML 宣言の `encoding` が何を名乗っていても UTF-8 として読む
+    ///   XML 宣言の `encoding` が何を名乗っていても UTF-8 として読む (値が名前の形のとき。
+    ///   `encoding=""` など名前の形でない宣言は `malformed`)
     /// - XML として壊れている・根が `<svg>` でない: ``DataFailure/malformed(path:line:reason:)``
     ///   (壊れていた行が載る。行の終わりは LF・CRLF・CR のどれでもよく、捨てたものに添える行も同じ数え方)
     ///

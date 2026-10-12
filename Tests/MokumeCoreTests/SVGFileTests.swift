@@ -453,6 +453,50 @@ struct SVGFileTests {
             drawing.skipped == [SVGFile.Skip(what: "<text>", count: 1, line: 3 + used)], "\(name)")
     }
 
+    @Test("値が名前の形でない宣言の SVG は、書き換えず、これまでどおり malformed で投げる", arguments: ["", "1abc", "Shift JIS"])
+    func declarationThatIsNotANameStaysMalformed(_ name: String) {
+        do {
+            _ = try SVGFile.parse(
+                "<?xml version=\"1.0\" encoding=\"\(name)\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+                path: "x.svg")
+            Issue.record("読めたことになっている: \"\(name)\"")
+        } catch {
+            guard case .malformed(_, let line, _) = error else {
+                Issue.record("malformed でない: \(error)")
+                return
+            }
+            #expect(line == 1, "\"\(name)\"")
+        }
+    }
+
+    @Test("先頭に BOM が残った SVG も、宣言の encoding を読まない (loadShape と同じ道で読む)")
+    func declaredEncodingIsNotReadAfterLeftoverBOM() throws {
+        let body = """
+            <svg xmlns="http://www.w3.org/2000/svg">
+            <!-- 星 -->
+            <text x="0" y="0">星</text>
+            <rect id="é" width="4" height="4" fill="#ff0000"/>
+            </svg>
+            """
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        let shiftJIS = #"<?xml version="1.0" encoding="Shift_JIS"?>"#
+        // `loadShape` は `TextFile.read` (BOM を 1 つ落とす) の結果を `SVGFile.parse` に渡す。
+        // BOM が 2 つのファイルでは 1 つが残り、libxml2 はそれを読み飛ばしてから宣言を読む
+        for (name, count, declaration) in [
+            ("BOM 1 つ・Shift_JIS", 1, shiftJIS), ("BOM 2 つ・Shift_JIS", 2, shiftJIS),
+            ("BOM 1 つ・宣言なし", 1, ""), ("BOM 2 つ・宣言なし", 2, ""),
+        ] {
+            var bytes = Data()
+            for _ in 0..<count { bytes.append(bom) }
+            bytes.append(Data((declaration + body).utf8))
+            let url = try written(bytes, as: "bom.svg")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let drawing = try SVGFile.parse(try TextFile.read(url, path: url.path), path: url.path)
+            #expect(drawing.items.count == 1, "\(name)")
+            #expect(drawing.skipped == [SVGFile.Skip(what: "<text>", count: 1, line: 3)], "\(name)")
+        }
+    }
+
     /// 捨てるものの行が、改行のどれでも同じになる SVG。字 (3 行目)・グラデーションの塗り (4 行目)・
     /// 読めない CSS の規則 (5 行目)。
     private static let skippingLines = """
