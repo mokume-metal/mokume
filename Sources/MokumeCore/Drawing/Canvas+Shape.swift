@@ -277,6 +277,16 @@ extension Canvas {
     /// 置き場所に変換を掛けるだけで、頂点は触らない。三角形で組み立てた平面の区間だけは
     /// 置き場所ごとに頂点を展開する (その区間には置き場所の仕組みが無い)。どれも、同じ
     /// 置き場所を 1 つずつ書いたときと同じ絵になる。
+    ///
+    /// **区間が 2 つ以上で、立体以外 (平面・距離関数) の区間を含む形は、置き場所を外に回す**
+    /// ([#2305] の決定 B・``layersByPlacement(_:)``)。置き場所ごとに区間を一巡して積むので、重なる
+    /// 置き場所の前後は 1 つずつ置いたときと同じ「置き場所の順」になる。区間を外に回していた頃は、
+    /// 前の置き場所の後の区間が、後の置き場所の前の区間の上に出ていた。**代償は描く回数で**、平面と
+    /// 距離関数は列の種類が違い、区間が替わるたびに列が閉じるので、置き場所ごとに区間の数だけ描く
+    /// (1 つずつ置いたときと同じ回数)。区間が 1 つの形と立体だけの形は区間を外に回したままで、描く
+    /// 回数は区間ごとに 1 回である (立体は奥行きで前後が決まる)。
+    ///
+    /// [#2305]: https://github.com/mokume-metal/mokume/issues/2305
     private func place(_ shape: Shape, at placements: [Placement]) {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)。置き場所の検めより先に断る
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -306,20 +316,51 @@ extension Canvas {
             translucent = true
             break
         }
-        replaying(shape.runs) { run in
-            switch run.source {
-            case .flat:
-                // 差し替える輪郭は区間で決まる。置き場所ごとに求め直さない
-                let carved =
-                    translucent
-                    ? shape.carvedStrokes(within: run.start..<(run.start + run.count)) : []
-                for placement in usable { place(run, of: shape, at: placement, carved: carved) }
-            case .solid:
-                placeSolid(run, of: shape, at: usable)
-            case .form:
-                for placement in usable { placeForms(run, of: shape, at: placement) }
+        let runs = shape.runs
+        // 差し替える輪郭は区間で決まる。置き場所ごとに (置き場所を外に回すときも) 求め直さない
+        var carvedByRun: [[StrokeRange]] = []
+        if translucent {
+            carvedByRun.reserveCapacity(runs.count)
+            for run in runs {
+                carvedByRun.append(
+                    run.source == .flat
+                        ? shape.carvedStrokes(within: run.start..<(run.start + run.count)) : [])
             }
         }
+        // 置き場所を外に回すなら、区間の並びを置き場所の数だけ繰り返して 1 度に通す — 区間の設定の
+        // 出入り (``replaying(_:_:)``) は並び全体で 1 度のままにする。`turn` が何巡目のどの区間かを持つ
+        let byPlacement = usable.count > 1 && Self.layersByPlacement(runs)
+        var turn = 0
+        replaying(repeatElement(runs, count: byPlacement ? usable.count : 1).joined()) { run in
+            let index = turn % runs.count
+            let round = turn / runs.count
+            turn += 1
+            let targets = byPlacement ? usable[round...round] : usable[...]
+            switch run.source {
+            case .flat:
+                let carved = translucent ? carvedByRun[index] : []
+                for placement in targets { place(run, of: shape, at: placement, carved: carved) }
+            case .solid:
+                placeSolid(run, of: shape, at: targets)
+            case .form:
+                for placement in targets { placeForms(run, of: shape, at: placement) }
+            }
+        }
+    }
+
+    /// まとめて置くとき、置き場所を外に回す (置き場所ごとに区間を一巡して積む) 形か ([#2305])。
+    /// **区間が 2 つ以上で、立体以外 (平面・距離関数) の区間を含む形**である。
+    ///
+    /// 平面と距離関数の区間は奥行きを持たず、積んだ順に重なる。区間を外に回すと、重なる置き場所の
+    /// 前後が置き場所の順ではなく区間の順になり、1 つずつ置いた絵と変わる。立体だけの形は奥行きで前後が
+    /// 決まるので、区間ごとに置き場所の並び全体を 1 度で積んでも同じ絵になる (描く回数は区間ごとに 1 回の
+    /// まま)。区間が 1 つの形も、順の入れ替わる相手が無い。
+    ///
+    /// [#2305]: https://github.com/mokume-metal/mokume/issues/2305
+    private static func layersByPlacement(_ runs: [Shape.Run]) -> Bool {
+        guard runs.count > 1 else { return false }
+        for run in runs where run.source != .solid { return true }
+        return false
     }
 
     /// 記録した区間の設定へ移って `place` で頂点を積み、置く側の設定へ戻す。
@@ -649,7 +690,7 @@ extension Canvas {
     ///
     /// 位置と一緒に**面の向きも移す** — 移さないと、回して置いた形だけ光が付いて
     /// 回らない。位置と違って向きには軸ごとの倍率が逆に効くので、専用の行列を使う。
-    private func placeSolid(_ run: Shape.Run, of shape: Shape, at placements: [Placement]) {
+    private func placeSolid(_ run: Shape.Run, of shape: Shape, at placements: ArraySlice<Placement>) {
         // 閉包を標準ライブラリの高階関数へ渡さずにループで組む。main actor の文脈の閉包は
         // 要素ごとに隔離の実行時検査を払う (#1779)
         var instances: [SolidInstance] = []

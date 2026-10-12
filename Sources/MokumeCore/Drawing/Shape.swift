@@ -277,11 +277,18 @@ public struct Shape {
     /// 何も入っていないか。
     public var isEmpty: Bool { vertices.isEmpty && solidVertices.isEmpty && forms.isEmpty }
 
-    /// この形を描くのに要する描画の回数。
+    /// この形を 1 か所に置いて描くのに要する描画の回数 (形の区間の数)。
     ///
     /// **組にしても増えないこと**をここで確かめられる。子を 1 つずつ描く作りでは
     /// 組にするたびにここが増えるので、「保持にしたのに速くならない」を絵ではなく
-    /// 数で見つけられる。混ぜ方や読む面が形の中で変わるときだけ 2 以上になる。
+    /// 数で見つけられる。2 以上になるのは、混ぜ方・貼る絵 (`texture()`)・断片 (`shader()`) が形の中で
+    /// 変わるときと、三角形で組む図形 (`triangle`・`beginShape()` など)・距離関数で描く図形 (`rect`・
+    /// `circle`・`line` など)・立体が形の中で入れ替わるときである。
+    ///
+    /// 置き場所を並べてまとめて置く (``Sketch/shape(_:at:)``) と、2 以上の形のうち立体以外を含む
+    /// ものは、置き場所ごとにこの回数ずつ描く ([#2305])。
+    ///
+    /// [#2305]: https://github.com/mokume-metal/mokume/issues/2305
     public var drawCallCount: Int { runs.count }
 
     // MARK: - 組にする

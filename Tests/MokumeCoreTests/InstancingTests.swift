@@ -260,4 +260,185 @@ struct InstancingTests {
         #expect(around.bytes != plain.bytes, "まとめた描画に周囲が効いていない")
         #expect(shadowed.bytes != plain.bytes, "まとめた描画に影が効いていない")
     }
+
+    // MARK: - 区間が 2 つ以上の形をまとめて置く (#2305)
+    //
+    // 平面と距離関数の区間は奥行きで前後が決まらないので、重なる置き場所の前後は積んだ順で決まる。
+    // まとめて置いても、1 つずつ置いたときと同じく**置き場所の順**に重なること (`Placement` の
+    // 「1 ビットも変わらない」) を、作業空間の画素の成分のビットで見る。
+
+    /// 黒地に `body` を描いて、作業空間の画素を読む。
+    private func flatPicture(_ canvas: Canvas, _ body: (Canvas) -> Void) throws -> PixelBuffer {
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            body(canvas)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// 成分のビットが 1 つでも違う画素の数。
+    private func differingPixels(_ a: PixelBuffer, _ b: PixelBuffer) -> Int {
+        guard a.width == b.width, a.height == b.height else { return max(a.width * a.height, 1) }
+        var count = 0
+        var index = 0
+        while index < a.components.count {
+            for offset in 0..<4
+            where a.components[index + offset].bitPattern != b.components[index + offset].bitPattern {
+                count += 1
+                break
+            }
+            index += 4
+        }
+        return count
+    }
+
+    /// 形を `placements` へまとめて置いた絵と、同じ置き場所へ 1 つずつ置いた絵 (どちらも新しい面)。
+    /// 描く回数も返す。`check` は組み立てた形の前提 (区間の数) を見る。
+    private func togetherAndOneByOne(
+        size: Int = 200, _ make: (Canvas) -> Shape, at placements: [Placement],
+        check: (Shape) -> Void = { _ in }
+    ) throws -> (together: PixelBuffer, oneByOne: PixelBuffer, togetherCalls: Int, oneByOneCalls: Int) {
+        let both = try makeCanvas(width: size, height: size)
+        let together = try flatPicture(both) { canvas in
+            let shape = make(canvas)
+            check(shape)
+            canvas.shape(shape, at: placements)
+        }
+        let apart = try makeCanvas(width: size, height: size)
+        let oneByOne = try flatPicture(apart) { canvas in
+            let shape = make(canvas)
+            for placement in placements { canvas.shape(shape, at: [placement]) }
+        }
+        return (together, oneByOne, both.drawCallsInLastFrame, apart.drawCallsInLastFrame)
+    }
+
+    /// 起票の再現の形: 赤い `rect` (距離関数の区間) の上に青い `triangle` (平面の区間)。
+    private func squareAndTriangle(_ canvas: Canvas) -> Shape {
+        canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(255, 0, 0)
+            canvas.rect(0, 0, 40, 40)
+            canvas.fill(0, 0, 255)
+            canvas.triangle(0, 0, 40, 0, 0, 40)
+        }
+    }
+
+    @Test("区間が 2 つの形を重なる置き場所へまとめて置いても、1 つずつ置いた絵と同じ前後で重なる")
+    func overlappingPlacementsKeepTheirOrderAcrossRegions() throws {
+        // P1 = (120, 100) と P2 = (100, 100) は重なる。(130, 125) は P1 からは (10, 25) で矩形と三角形の
+        // 両方の内側、P2 からは (30, 25) で矩形の内側・三角形の外側。1 つずつ置けば最後に塗る矩形@P2 の
+        // 赤が出る。区間の順に積むと三角形@P1 の青が上に出る (起票時は 400 画素違った)
+        let placements = [Placement(x: 120, y: 100), Placement(x: 100, y: 100)]
+        let result = try togetherAndOneByOne(squareAndTriangle, at: placements) { shape in
+            #expect(shape.drawCallCount == 2, "前提: 矩形と三角形が別の区間になっていない")
+        }
+        #expect(differingPixels(result.together, result.oneByOne) == 0, "まとめて置いた絵が 1 つずつと違う")
+        let pixel = result.together[130, 125]
+        #expect(pixel.red > 0.5 && pixel.blue < 0.1, "後に置いた矩形の赤が上に出ていない (\(pixel))")
+    }
+
+    @Test("置き場所ごとの半透明の色でも、区間の途中で混ぜ方を変えた形でも、1 つずつ置いた絵と同じ")
+    func translucentAndBlendedRegionsKeepThePlacementOrder() throws {
+        // 半透明の色を掛けると混ざる順が絵に出る (起票時は 590 画素違った)
+        let tinted = try togetherAndOneByOne(
+            squareAndTriangle,
+            at: [
+                Placement(x: 120, y: 100, fill: LinearRGBA(premultipliedRed: 0.5, green: 0.25, blue: 0, alpha: 0.5)),
+                Placement(x: 100, y: 100, fill: LinearRGBA(premultipliedRed: 0, green: 0.25, blue: 0.5, alpha: 0.5)),
+            ])
+        #expect(differingPixels(tinted.together, tinted.oneByOne) == 0, "半透明の色で置いた絵が 1 つずつと違う")
+
+        // 平面の区間が 2 つ (普通に混ぜる三角形と、足し合わせる三角形)。足す区間を後回しにすると、
+        // 後の置き場所の不透明な三角形が前の置き場所の足した色を覆わなくなる (起票時は 800 画素違った)
+        let added = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(255, 0, 0)
+                    canvas.triangle(0, 0, 40, 0, 0, 40)
+                    canvas.blendMode(.add)
+                    canvas.fill(0, 0, 255)
+                    canvas.triangle(0, 0, 40, 0, 0, 40)
+                }
+            },
+            at: [Placement(x: 120, y: 100), Placement(x: 100, y: 100)]
+        ) { shape in
+            #expect(shape.drawCallCount == 2, "前提: 混ぜ方の違う 2 つの区間になっていない")
+        }
+        #expect(differingPixels(added.together, added.oneByOne) == 0, "混ぜ方を変えた形の絵が 1 つずつと違う")
+    }
+
+    @Test("立体と平面の区間が混ざった形も、まとめて置いた絵が 1 つずつ置いた絵と同じ")
+    func mixedSolidAndFlatRegionsKeepThePlacementOrder() throws {
+        // P2 の箱は P1 の矩形と重なる (箱は原点を中心に ±15、矩形は原点から 40)。平面の区間は奥行きで
+        // 箱と前後を決めないので、1 つずつ置けば後に置いた箱が前の矩形の上に出る
+        let result = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(0, 255, 0)
+                    canvas.box(30)
+                    canvas.fill(255, 0, 0)
+                    canvas.rect(0, 0, 40, 40)
+                }
+            },
+            at: [Placement(x: 100, y: 100), Placement(x: 130, y: 120)]
+        ) { shape in
+            #expect(shape.drawCallCount == 2, "前提: 箱と矩形が別の区間になっていない")
+        }
+        #expect(differingPixels(result.together, result.oneByOne) == 0, "立体の混ざった形の絵が 1 つずつと違う")
+    }
+
+    @Test("区間が複数の平面・距離関数の形は、置き場所ごとに区間の数だけ描く (1 つずつ置いたときと同じ回数)")
+    func flatRegionsDrawOncePerRegionAndPlacement() throws {
+        // **速さの代償を数で名乗る** (#2305 の決定 B)。前後を置き場所の順に守るため、区間が 2 つ以上で
+        // 平面・距離関数の区間を含む形は、置き場所ごとに区間を一巡して積む。平面と距離関数は列の種類が
+        // 違うので、切り替わるたびに列が閉じる。重ならない置き場所でも同じ数え方である
+        let placements = [Placement(x: 10, y: 10), Placement(x: 60, y: 10), Placement(x: 110, y: 10)]
+        let result = try togetherAndOneByOne(squareAndTriangle, at: placements)
+        #expect(result.togetherCalls == 2 * placements.count, "区間数 × 置き場所数で描いていない")
+        #expect(result.togetherCalls == result.oneByOneCalls, "1 つずつ置いたときと描く回数が違う")
+        #expect(differingPixels(result.together, result.oneByOne) == 0)
+    }
+
+    @Test("区間が 1 つの平面の形と、立体だけの形は、まとめて置いても描く回数が増えない")
+    func singleRegionAndSolidOnlyShapesStayCollapsed() throws {
+        let placements = [Placement(x: 120, y: 100), Placement(x: 100, y: 100), Placement(x: 80, y: 90)]
+        // 区間が 1 つ (三角形 2 つ・同じ塗り)。置き場所が重なっても前後は置き場所の順のまま
+        let flat = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(255, 0, 0)
+                    canvas.triangle(0, 0, 40, 0, 0, 40)
+                    canvas.fill(0, 0, 255)
+                    canvas.triangle(40, 0, 40, 40, 0, 40)
+                }
+            },
+            at: placements
+        ) { shape in
+            #expect(shape.drawCallCount == 1, "前提: 三角形 2 つが 1 つの区間になっていない")
+        }
+        #expect(flat.togetherCalls == 1, "区間が 1 つの平面の形をまとめて置いて、1 回で描いていない")
+        #expect(differingPixels(flat.together, flat.oneByOne) == 0)
+
+        // 立体だけで区間が 2 つ (混ぜ方の変わり目)。奥行きが前後を決めるので、区間ごとに置き場所の
+        // 並び全体を 1 度で積む今の速さのまま
+        let solids = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(0, 255, 0)
+                    canvas.box(20)
+                    canvas.blendMode(.add)
+                    canvas.fill(0, 0, 255)
+                    canvas.sphere(12)
+                }
+            },
+            at: placements
+        ) { shape in
+            #expect(shape.drawCallCount == 2, "前提: 箱と球が混ぜ方の違う 2 つの区間になっていない")
+        }
+        #expect(solids.togetherCalls == 2, "立体だけの形をまとめて置いて、区間ごとに 1 回で描いていない")
+    }
 }
