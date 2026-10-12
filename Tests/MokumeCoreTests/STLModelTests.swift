@@ -299,14 +299,40 @@ struct STLModelTests {
         }
     }
 
+    /// 1 行目が 83 文字 (84 バイト目が改行) の面の無い solid。Model I/O は面を見つけられず、80〜83
+    /// バイト目を面の数とするバイナリとして読み直し、でたらめな面を返す (#2391)。**名前に `facet` を
+    /// 含んでも同じ** — 面の有無を `facet` の語の有無で代用すると、ここを取りこぼす。
     @Test(
-        "面を持たない文字の STL は、名前が長く 84 バイト目が改行でも、でたらめな形ではなく空として読める (#2391)")
-    func emptySolidWithALongNameIsEmpty() throws {
-        // 1 行目が 83 文字 (84 バイト目が改行) で、後ろに空行が続く。Model I/O は面を見つけられず、
-        // 80〜83 バイト目を面の数とするバイナリとして読み直し、でたらめな面を返す
-        let text = Self.firstLine("solid ") + "\nendsolid x\n" + String(repeating: "\n", count: 100)
-        #expect(text.utf8.count > 128)
+        "面を持たない文字の STL は、名前が長く 84 バイト目が改行でも、でたらめな形ではなく空として読める",
+        arguments: ["", "facet", "faceted_part_", "endfacets_"], [0, 100])
+    func emptySolidWithALongNameIsEmpty(name: String, blankLines: Int) throws {
+        let text =
+            Self.firstLine("solid " + name) + "\nendsolid x\n"
+            + String(repeating: "\n", count: blankLines)
+        // 空行が無ければ 128 バイトに満たず (読み手が断る側)、100 行あれば 128 バイト以上 (読み手が
+        // バイナリとして読み直す側) — どちらの大きさでも空
+        #expect((text.utf8.count < 128) == (blankLines == 0))
         #expect(try read(Self.data(text, byte83: 0x0A)) == ModelFile.empty)
+    }
+
+    @Test("名前に facet・endfacet を含む文字の STL も、面があれば読める", arguments: ["faceted", "endfacets"])
+    func keywordsInTheNameDoNotHideFacets(name: String) throws {
+        let facets = Array(Self.tetrahedron.prefix(3))
+        let parsed = try read(Data(ModelFixture.asciiSTL(facets, name: name).utf8))
+        #expect(parsed.positions == facets.flatMap(\.corners))
+    }
+
+    /// 面の数 (`endfacet`) は、ファイルを少しずつ読んで数える。**区切りをまたぐ語も拾う**。
+    @Test("endfacet の数は、読む区切りの幅によらず同じ", arguments: [1, 2, 3, 5, 7, 8, 9, 16, 1 << 20])
+    func endfacetCountDoesNotDependOnTheChunk(chunk: Int) throws {
+        // 名前に `endfacet` があっても数えない (行の先頭の語だけ)
+        let contents = Data(ModelFixture.asciiSTL(Self.tetrahedron, name: "endfacet endfacet").utf8)
+        try withWritten(contents, as: "count.stl") { path in
+            let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+            defer { try? handle.close() }
+            let head = try #require(try handle.read(upToCount: 128))
+            #expect(ModelFile.endfacetCount(head: head, rest: handle, chunk: chunk) == 4)
+        }
     }
 
     /// **途中で切れたバイナリは、揃っている面だけを読む** (`loadSTL` の説明)。面の数より短い
@@ -338,9 +364,22 @@ struct STLModelTests {
         /// 128 バイトに満たない、最後の面の途中 (`endfacet` の手前) で切れた ASCII の STL。小さい文字の
         /// STL を読むようにしても、壊れたものまで読んではならない (#2335)
         case cutShortSmall
-        /// 最初の面の `facet` の語の途中で切れた、18 バイトの ASCII の STL。**128 バイトまで埋めると、
-        /// Model I/O は 128〜133 バイトを面の無い形として読み、空として読めてしまう** — 埋め方の検査
+        /// 最初の面の `facet` の語の途中で切れた、18 バイトの ASCII の STL。面を 1 つも書いていない
+        /// ので、読み手に渡さず断る
         case cutBeforeFirstFacetSmall
+        /// 同じ切れ方を、末尾の空白で 128 バイトにしたもの。**Model I/O は 128〜132 バイトの、面を読めない
+        /// 文字を「面の無い形」として返す** — 渡すと空として読めてしまう
+        case cutBeforeFirstFacetAt128
+        /// 改行が CR だけの 1 面の文字の STL。Model I/O は CR だけの改行を読めず、面の無い形を返す
+        /// — 「読めなかった」を「読めたが面が無い」と取り違えてはならない
+        case crOnlySmall
+        /// 同じく CR だけの改行の 3 面 (128 バイト以上)
+        case crOnlyThreeFacets
+        /// 84 バイト目がタブで、`endfacet` が無い (面を書き終えていない) 103 バイトの文字
+        case tabAtByte83Small
+        /// 頂点が 2 つしかない面の後ろに、正しい面が続く。読み手は後ろの面の頂点を食って、三角形を 1 枚
+        /// (形はでたらめ) しか返さない — 面の数 (2) と合わない
+        case facetMissingACorner
         /// **ここから下は、84 バイト目 (添字 83) の中身をそろえた文字のファイル** (#2336)。改行だと
         /// Model I/O はバイナリとして読み、80〜83 バイト目を面の数としてでたらめな形を返す
         /// (`indentedOnce` だけは空白で、陰性対照)。前に空白が 2 つ
@@ -373,6 +412,20 @@ struct STLModelTests {
                 return Data(small[..<cut].utf8)
             case .cutBeforeFirstFacetSmall:
                 return Data("solid t\nfacet norm".utf8)
+            case .cutBeforeFirstFacetAt128:
+                return Data(("solid t\nfacet norm" + String(repeating: " ", count: 110)).utf8)
+            case .crOnlySmall:
+                return Data(STLModelTests.smallASCII(trailing: 0).replacingOccurrences(of: "\n", with: "\r").utf8)
+            case .crOnlyThreeFacets:
+                let facets = Array(STLModelTests.tetrahedron.prefix(3))
+                return Data(ModelFixture.asciiSTL(facets).replacingOccurrences(of: "\n", with: "\r").utf8)
+            case .facetMissingACorner:
+                let missing = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nendloop\nendfacet\n"
+                let good = "facet normal 0 0 1\nouter loop\nvertex 5 5 5\nvertex 6 5 5\nvertex 5 6 5\nendloop\nendfacet\n"
+                return Data(("solid t\n" + missing + good + "endsolid t\n").utf8)
+            case .tabAtByte83Small:
+                return STLModelTests.data(
+                    STLModelTests.firstLine("solid ") + "\tfacet normal 0 0 1\n", byte83: 0x09)
             case .indentedKeyword:
                 return STLModelTests.data(
                     STLModelTests.asciiSTL(firstLine: STLModelTests.firstLine("  solid ")),
@@ -528,7 +581,7 @@ struct STLModelTests {
 
     // MARK: - Model I/O の判定 (説明が頼る事実)
 
-    // **次の 3 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
+    // **次の 4 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
     // 検査は、この挙動を前提に境目を決めている。Model I/O が変わったら、ここが赤くなって、説明と
     // `loadSTL` の見分け方の直し時を知らせる (`asciiNonNumbersBecomeZero` と同じ役)。
 
@@ -546,6 +599,31 @@ struct STLModelTests {
         #expect(read.farthest > 1e30)
         // 84 バイト目が空白なら、面の数が多すぎるとして断る
         #expect(try readByModelIO(Broken.indentedOnce.contents) == nil)
+    }
+
+    @Test("Model I/O は、読めない文字を面の無い形で返し、面の無い solid をバイナリとして読み直す")
+    func modelIOReturnsAnEmptyShapeForUnreadableText() throws {
+        func padded(_ text: String, to size: Int) -> Data {
+            Data((text + String(repeating: " ", count: max(0, size - text.utf8.count))).utf8)
+        }
+        let small = Self.smallASCII(trailing: 0)
+        // 改行が CR だけ・改行の無い・`endloop` と `endfacet` を同じ行に並べた文字は、面を書いていても
+        // 読めない。CR と改行の無い文字は面が 0 の形が返り、並べたものは断る
+        let crOnly = small.replacingOccurrences(of: "\n", with: "\r")
+        #expect(try readByModelIO(padded(crOnly, to: 256))?.triangles == 0)
+        #expect(try readByModelIO(padded(small.replacingOccurrences(of: "\n", with: " "), to: 256))?.triangles == 0)
+        #expect(try readByModelIO(padded(small.replacingOccurrences(of: "endloop\nendfacet", with: "endloop endfacet"), to: 256)) == nil)
+        // 面を読めない文字は、128〜132 バイトでは断られずに面の無い形が返り、133 バイトから断られる
+        let cut = "solid t\nfacet norm"
+        #expect(try readByModelIO(padded(cut, to: 128))?.triangles == 0)
+        #expect(try readByModelIO(padded(cut, to: 132))?.triangles == 0)
+        #expect(try readByModelIO(padded(cut, to: 133)) == nil)
+        // 面を 1 つも読まないまま endsolid まで読み切った文字は、バイナリとして読み直される
+        let facetless = try #require(try readByModelIO(Broken.solidWithoutFacets.contents))
+        #expect(facetless.triangles > 0)
+        // 面の途中で切れた文字は、読み直されずに断られる
+        let cutInFacet = Self.firstLine("solid ") + "\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\n"
+        #expect(try readByModelIO(Self.data(cutInFacet + String(repeating: " ", count: 100), byte83: 0x0A)) == nil)
     }
 
     @Test("Model I/O はバイナリの面の数が 238,609,294 までなら、揃っている分を読み、超えると断る")

@@ -7,7 +7,7 @@ import simd
 /// モデルのファイルを、置ける形へ落とす。
 ///
 /// 読むのは **OBJ と STL** (``Format``)。拡張子で読み手を選ぶ — OBJ は自前の読み手
-/// (``parse(_:)``)、STL は Model I/O (``loadSTL(_:path:)``)。どちらも形 (三角形と面の
+/// (``parse(_:)``)、STL は Model I/O (``loadSTL(_:path:scratch:)``)。どちらも形 (三角形と面の
 /// 向き) と展開だけを ``Parsed`` へ落とし、その先の整え方 (``Model/make(name:parsed:fitting:)``)
 /// は同じものを通る。材質・テクスチャ・複数の物体は読まない — 読み込んだ色と `fill()` の
 /// どちらが勝つかという規則が要るので、まず「読んで置ける」を通す ([ADR-0008])。
