@@ -111,6 +111,12 @@ struct DocumentLoadingTests {
             ("収まる数の後ろ", "{\"x\": -1e300, \"y\": -2,\n \"a\": -1e999}", 2, 7, "-1e999"),
             // 列は文字で数える (``JSONFile`` の行と列の数え方)
             ("日本語の後ろ", "{\"札幌\": -1e400}", 1, 8, "-1e400"),
+            // `JSONSerialization` は重複したキーの先の値を残し、後ろの -inf は木から落ちる
+            ("重複したキーの後ろ", "{\"a\": 1,\n\"a\": -1e400}", 2, 6, "-1e400"),
+            // 壊れた箇所が複数あれば、符号によらず文字の中で最初のものを名乗る
+            ("正の数より前", "{\"a\": -1e400,\n\"b\": 1e400}", 1, 7, "-1e400"),
+            ("負の数より前", "{\"a\": [1e400,\n-1e400]}", 1, 8, "1e400"),
+            ("配列の中で正の数より前", "[-1e400, 1e400]", 1, 2, "-1e400"),
         ])
     func negativeOverflowIsMalformed(
         _ name: String, _ text: String, _ line: Int, _ column: Int, _ literal: String
@@ -123,7 +129,7 @@ struct DocumentLoadingTests {
         #expect(broken?.reason.contains(literal) == true, "\(name): \(broken?.reason ?? "")")
     }
 
-    @Test("Double に収まらない数は、符号によらず同じ行を名乗る")
+    @Test("Double に収まらない数は、符号によらず同じ行と同じ形の文面を名乗る")
     func overflowNamesSameLineEitherSign() throws {
         defer { cleanUp() }
         let positive = try file("positive.json", "{\n\"a\": 1e400}")
@@ -132,6 +138,19 @@ struct DocumentLoadingTests {
         let down = malformedLine { () throws(DataFailure) in _ = try Bare().loadJSONObject(negative) }
         #expect(up?.line == 2)
         #expect(down?.line == up?.line)
+        #expect(up?.reason == "Number 1e400 does not fit in a Double (column 6)")
+        #expect(down?.reason == "Number -1e400 does not fit in a Double (column 6)")
+    }
+
+    @Test(
+        "数の形が崩れた綴りは、大きくても収まらない数とは名乗らない",
+        arguments: ["{\"a\": 1.e400}", "{\"a\": 01e400}", "{\"a\": -e400}", "{\"a\": 1e+}"])
+    func malformedNumbersAreNotUnfit(_ text: String) throws {
+        defer { cleanUp() }
+        let path = try file("syntax.json", text)
+        let broken = malformedLine { () throws(DataFailure) in _ = try Bare().loadJSONObject(path) }
+        #expect(broken?.line == 1)
+        #expect(broken?.reason.contains("does not fit") == false, "\(broken?.reason ?? "")")
     }
 
     @Test("Double に収まらない負の数は、待たない版でも URL の本文でも同じ失敗で投げる")
