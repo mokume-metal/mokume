@@ -108,6 +108,8 @@ final class ParamStore: DeclarationWatcher {
                 result.discarded.append(.init(name: entry.name, reason: .typeMismatch))
             case .notInChoices:
                 result.discarded.append(.init(name: entry.name, reason: .notInChoices))
+            case .notFinite:
+                result.discarded.append(.init(name: entry.name, reason: .notFinite))
             case .applied:
                 break
             case .clamped(let requested, let applied):
@@ -139,6 +141,9 @@ final class ParamStore: DeclarationWatcher {
         let listed = discarded
             .map { "\($0.name) (\(reason(for: $0.reason)))" }
             .joined(separator: " / ")
+        // 非有限で捨てたものも宣言が変わったせい: 保存はこのライブラリが書くので有限の数しか
+        // 入っておらず、読み替えて無限になるのは、宣言の型が変わったとき (`Double` で宣言していた
+        // 値を `Float` へ変えた、など。どちらも `float` を名乗るので型の違いにならない)
         return "Threw away \(discarded.count) of the saved values: \(listed). "
             + "The declarations have changed, so these stay at their defaults"
     }
@@ -148,6 +153,7 @@ final class ParamStore: DeclarationWatcher {
         case .unknownName: "no longer declared"
         case .typeMismatch: "a different type from the declaration"
         case .notInChoices: "outside the choices that are allowed"
+        case .notFinite: "not a finite number once read as the declared type"
         }
     }
 

@@ -51,17 +51,38 @@ struct ParameterStoreTests {
 
     // MARK: - 書けないとき
 
-    /// 符号化の失敗を黙って捨てない (#2263)。**NaN は作品のコードから届く** —
-    /// `ParamBox.value` の setter は範囲へ収めないので、`radius = .nan` がそのまま載り、
-    /// `JSONEncoder` が非有限の数を拒む。
+    /// 非有限の数を宣言として返す代役の置き場。
+    ///
+    /// **`@Param` は、値を書き換える口ではもう非有限を載せない** ([#2271](https://github.com/mokume-metal/mokume/issues/2271))
+    /// ので、符号化の守り (#2263) は書き換えからは踏めない。残る入口は生まれのときの値 (初期値・
+    /// `init` の中の代入・[#2394](https://github.com/mokume-metal/mokume/issues/2394)) で、
+    /// 関所を抜けた非有限が届いても保存が黙って止まらないことを、関所の外の口
+    /// (``DeclaredParam`` の別の実装) から見る。
+    @MainActor
+    final class Unbounded: DeclaredParam {
+        var number: Double = .nan
+
+        var declaration: ParamDeclaration {
+            ParamDeclaration(name: "radius", value: .float(number))
+        }
+
+        func write(_ incoming: ParamValue) -> ParamOutcome { .applied }
+    }
+
+    /// 符号化に失敗する値を 2 番目に持つスケッチ (拒まれた値の名前を、先頭以外でも引けること)。
+    final class Unencodable: Sketch {
+        @Param(1...8) var count: Int = 3
+        let radius = Unbounded()
+    }
+
+    /// 符号化の失敗を黙って捨てない (#2263)。
     @Test("値を符号化できなければ、型と理由を 1 行言い、書かない")
     func failingToEncodeSaysWhy() throws {
         let url = try makeFile()
-        let sketch = Knobbed()
+        let sketch = Unencodable()
         var warnings: [String] = []
         let store = ParamStore(
             registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
-        sketch.radius = .nan
         store.flushNow()
 
         #expect(store.writeCount == 0)
@@ -79,21 +100,20 @@ struct ParameterStoreTests {
     @Test("書けない理由が変わらなければ、書けるまで繰り返し言わない")
     func theSameWriteFailureIsSaidOnce() throws {
         let url = try makeFile()
-        let sketch = Knobbed()
+        let sketch = Unencodable()
         var warnings: [String] = []
         let store = ParamStore(
             registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
-        sketch.radius = .nan
         store.flushNow()
         sketch.count = 5
         store.flushNow()
         #expect(warnings.count == 1, "同じ理由を繰り返した: \(warnings)")
 
         // 書ければ忘れる。また書けなくなったら、また言う
-        sketch.radius = 10
+        sketch.radius.number = 10
         store.flushNow()
         #expect(store.writeCount == 1)
-        sketch.radius = .nan
+        sketch.radius.number = .nan
         store.flushNow()
         #expect(warnings.count == 2)
     }

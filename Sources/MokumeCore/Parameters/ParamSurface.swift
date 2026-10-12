@@ -72,6 +72,8 @@ struct ParamReport: Encodable {
             case typeMismatch
             /// 許した候補の外。
             case notInChoices
+            /// 有限の数でない (NaN・無限)。宣言の型へ読み替えると収まらず無限になる数も含む。
+            case notFinite
         }
     }
 
@@ -249,6 +251,8 @@ final class ParamSurface: DeclarationWatcher {
                 rejected.append(.init(name: entry.name, reason: .typeMismatch))
             case .notInChoices:
                 rejected.append(.init(name: entry.name, reason: .notInChoices))
+            case .notFinite:
+                rejected.append(.init(name: entry.name, reason: .notFinite))
             }
         }
         lastHandledID = request.id
