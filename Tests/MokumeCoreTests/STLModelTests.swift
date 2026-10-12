@@ -315,6 +315,13 @@ struct STLModelTests {
         #expect(try read(Self.data(text, byte83: 0x0A)) == ModelFile.empty)
     }
 
+    @Test("面を持たない文字の STL は、頭の 128 バイトに endsolid が入らない長い名前でも空として読める")
+    func emptySolidWithAVeryLongNameIsEmpty() throws {
+        // 頭の 128 バイトには 1 行目しか入らない。空かどうかは、ファイルの全体を見て決める
+        let text = "solid " + String(repeating: "n", count: 200) + "\nendsolid x\n"
+        #expect(try read(Data(text.utf8)) == ModelFile.empty)
+    }
+
     @Test("名前に facet・endfacet を含む文字の STL も、面があれば読める", arguments: ["faceted", "endfacets"])
     func keywordsInTheNameDoNotHideFacets(name: String) throws {
         let facets = Array(Self.tetrahedron.prefix(3))
