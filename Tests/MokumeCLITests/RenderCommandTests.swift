@@ -81,10 +81,29 @@ struct RenderCommandTests {
         ])
         #expect(
             options.invocation
-                == Invocation(place: "Cast", configuration: "release", scratchPath: ".build"))
+                == Invocation(
+                    place: "Cast", configuration: "release", scratchPath: ".build",
+                    currentDirectory: Self.typedFrom))
         #expect(options.request.frameRate == 60)
         #expect(options.request.frameCount == 2880)
         #expect(options.request.destination == "/tmp/cast.mov")
+    }
+
+    /// **場所・置き場・行き先は、どれも打った場所から解く** (#2320・#2323 の判断・案 A)。
+    /// 置き場だけがスケッチの場所から解かれていたので、`plain/` で
+    /// `render ../probe --scratch-path sp --out o.mov` と打つと、書いたものは `plain/o.mov`
+    /// なのに組み立ての置き場は `probe/sp` になっていた。
+    @Test("場所・置き場・行き先は、どれも打った場所から解く")
+    func everyPathIsResolvedFromWhereItWasTyped() throws {
+        let plain = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let options = try RenderCommand.parse(
+            [
+                "../probe", "--scratch-path", "sp", "--fps", "10", "--seconds", "0.1", "--out",
+                "o.mov",
+            ], currentDirectory: plain)
+        #expect(options.invocation.directory.path == "/work/probe")
+        #expect(options.invocation.scratchDirectory?.path == "/work/plain/sp")
+        #expect(options.request.destination == "/work/plain/o.mov")
     }
 
     /// **子の作業ディレクトリはスケッチの場所である。** 相対のまま渡すと、書いたものが
@@ -188,6 +207,23 @@ struct RenderCommandTests {
     @Test("知らない選択肢は、場所にせずに止まる")
     func anUnknownOptionIsRefused() {
         expectUsage(["--fps", "30", "--seconds", "2", "--out", "/a.mov", "-o", "x"], mentioning: "-o")
+    }
+
+    /// **構成の値も、組み立ての前に検める** ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    /// 検めずに道具立てへ渡すと、組み立てを始めてから「Package.swift に実行ファイルが無い」と
+    /// 名乗っていた。
+    @Test("構成は debug / release だけを受け、それ以外は受け付ける値を名指して止まる")
+    func anUnknownConfigurationIsRefused() throws {
+        for configuration in ["bogus", "Release", "DEBUG"] {
+            expectUsage(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"],
+                mentioningAll: ["debug", "release", ": \(configuration)"])
+        }
+        for configuration in ["debug", "release"] {
+            let options = try parse(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"])
+            #expect(options.invocation.configuration == configuration)
+        }
     }
 
     /// 解いた後にパッケージを探すので、`Package.swift` の無い場所でも使い方の誤りが先に出る。

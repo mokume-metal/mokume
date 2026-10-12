@@ -415,6 +415,45 @@ struct RunCommandTests {
         #expect(carried[StartupReads.closeConfirmation.key] == "mokume run")
     }
 
+    /// **区画の基準は、道具と子で同じ場所を指す** (#2323 の反証)。`MOKUME_WORK_DIR` が相対
+    /// パスだと、道具は自分の作業ディレクトリ (走らせた場所) から解き、子は作業ディレクトリを
+    /// スケッチに替えて起こされるので環境の相対値をスケッチから解く — `MOKUME_WORK_DIR=wd
+    /// mokume watch ../probe` で、道具は `<走らせた場所>/wd` を、子は `<probe>/wd` を見て、
+    /// 観測も入力も黙って噛み合わなくなる。子へは道具が解いた絶対パスを渡す。
+    @Test("相対の MOKUME_WORK_DIR は、道具が解いた絶対パスで子へ渡る")
+    func aRelativeWorkDirectoryReachesTheChildResolved() throws {
+        let key = StartupReads.workDirectory.key
+        let toolSide = try #require(WorkDirectory.given(environment: [key: "wd"]))
+
+        let environment = RunCommand.childEnvironment([key: "wd"])
+        #expect(environment[key] == toolSide.path)
+        #expect(environment[key]?.hasPrefix("/") == true, "相対のまま子へ渡している")
+        // 与えられていなければ、置かない (子は自分の既定に任せる)
+        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(RunCommand.childEnvironment([key: ""])[key] == "", "空は与えられていない扱いのまま運ぶ")
+
+        // 子を、道具とは別の作業ディレクトリ (スケッチ) で起こし、受け取った値を
+        // その場所から解く — 子が見る区画の基準である
+        let sketch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-workdir-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let marker = sketch.appendingPathComponent("given")
+        let child = sketch.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            printf '%s' "$\(key)" > '\(marker.path)'
+            """.write(to: child, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: child.path)
+
+        try RunCommand.launch(child, in: sketch, environment: environment)
+
+        let received = try String(contentsOf: marker, encoding: .utf8)
+        let childSide = URL(fileURLWithPath: received, isDirectory: true, relativeTo: sketch)
+            .standardizedFileURL
+        #expect(childSide.path == toolSide.standardizedFileURL.path, "子が別の区画を見る")
+    }
+
     // MARK: - 出来上がりの置き場 (#1067)
 
     /// **置き場を聞くのに `swift` を 1 本起こす。** 見張りは宣言が変わるまでそれを持ち回る
@@ -459,6 +498,55 @@ struct RunCommandTests {
             "聞いた先が別のパッケージの下になっている")
         #expect(rebuilt.binPath.lastPathComponent != "given-bin")
         #expect(rebuilt.binPath.path.contains(".build"), "道具立てが答える置き場の形をしていない")
+    }
+
+    // MARK: - 置き場の答えの読み方 (#2316)
+
+    /// **終了コードを見る。** 空の出力だけを見ていた頃は、道具立てが断った回
+    /// (`--show-bin-path -c Release` が usage を出して非 0 で終わる) を「Package.swift に
+    /// 実行ファイルが無い」と名乗っていた ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    /// 原因が道具立てなのに宣言を疑わせる形は、`env` の 127 で塞いだ #1157 と同類である。
+    ///
+    /// **答えは偽の子から取る。** `binPath(in:context:)` は `/usr/bin/env swift` を書き固めて
+    /// いるので、管の配線を持つ `capture` に任意の子を渡し、その答えを同じ読み手に通す (#731)。
+    @Test("置き場を聞かれた道具立てが 0 以外で終わったら、宣言ではなく道具立ての失敗として名乗る")
+    func aRefusedBinPathIsTheToolchainsFailure() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "echo 'error: usage' >&2; exit 64"]
+        let answer = try RunCommand.capture(process, capturing: true, errors: .discard)
+        let asked = ["build", "--show-bin-path", "-c", "Release"]
+
+        let thrown = #expect(throws: CommandFailure.self) {
+            try RunCommand.binPath(from: answer, asking: asked)
+        }
+        #expect(
+            thrown == .toolchainFailed(command: "swift build --show-bin-path -c Release", status: 64))
+        let message = try #require(thrown).message
+        #expect(!message.contains("Package.swift"), "道具立ての失敗なのに宣言を疑わせている: \(message)")
+        #expect(message.contains("swift build --show-bin-path -c Release"), "何を打ったかを名乗っていない")
+        #expect(message.contains("64"), "終了コードを名乗っていない")
+        // **見張りはこの文面を記録に載せ、窓口の読み手には端末の「上」が無い** (反証の指摘)。
+        // 理由が流れた先と、それをもう一度読む手を言う
+        #expect(!message.contains("above"), "記録の読み手に無い「上」を指している: \(message)")
+        #expect(message.contains("standard error"), "理由の行き先を名乗っていない: \(message)")
+    }
+
+    /// 読み方の境目。**0 以外なら、道が印字されていても読まない** — 終了コードを見ずに
+    /// 出力の有無だけで決めると、途中まで書いて断った回の道を採る。0 でも空なら答えていない。
+    @Test("置き場は 0 で終わって道を答えたときだけ読み、それ以外は道具立ての失敗にする")
+    func onlyAnAnsweredBinPathIsRead() throws {
+        let asked = ["build", "--show-bin-path"]
+        #expect(
+            try RunCommand.binPath(
+                from: (0, "/sketch/.build/arm64-apple-macosx/debug\n"), asking: asked)
+                == URL(fileURLWithPath: "/sketch/.build/arm64-apple-macosx/debug", isDirectory: true))
+        #expect(throws: CommandFailure.toolchainFailed(command: "swift build --show-bin-path", status: 1)) {
+            try RunCommand.binPath(from: (1, "/sketch/.build/debug\n"), asking: asked)
+        }
+        #expect(throws: CommandFailure.toolchainFailed(command: "swift build --show-bin-path", status: 0)) {
+            try RunCommand.binPath(from: (0, " \n"), asking: asked)
+        }
     }
 
     /// 宣言だけを置いたディレクトリ。**中身は持たない** — 置き場を答えられれば足りる。
