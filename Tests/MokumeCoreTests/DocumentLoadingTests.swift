@@ -509,12 +509,31 @@ struct DocumentLoadingTests {
 
     @Test("何も返さない応答も、期限で取り消して同じ unreachable で投げる")
     func silencePastLimitIsUnreachable() throws {
+        // 受け口の時計と待つ側の期限が同じ値で競る。受け口の時間切れを畳む処理
+        // (`WebFile.failure(of:path:limit:)`) を外しても、この検査は**確率でしか赤くならない**
+        // (受け口の時間切れが先に届いた回だけ赤)。畳み込みは下の「受け口の時間切れは…」が、
+        // 競り合いに依らない決まった結果で見る
         let url = CannedResponses.serve(.silent)
         let limit = Duration.milliseconds(300)
         let returned = try #require(fetchOffMain(url, limit: limit), "期限で返らず、検査の側の期限で打ち切った")
         #expect(
             returned.outcome == .failure(.unreachable(url: url, reason: "no complete answer came back within 0.3 seconds")))
         #expect(returned.took >= limit)
+    }
+
+    @Test("受け口の時間切れは、期限の間に答えが完結しなかった失敗に畳む。他の誤りは受け口の事情のまま")
+    func sessionTimeoutFoldsIntoOverdue() {
+        let url = "https://folding.test/data"
+        let overdue = DataFailure.unreachable(url: url, reason: "no complete answer came back within 60.0 seconds")
+        #expect(WebFile.overdue(path: url, limit: .seconds(60)) == overdue)
+        // 受け口は時間切れを URLError でも、NSURLErrorDomain の NSError でも渡しうる。どちらも畳む
+        #expect(WebFile.failure(of: URLError(.timedOut), path: url, limit: .seconds(60)) == overdue)
+        let timedOut = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        #expect(WebFile.failure(of: timedOut, path: url, limit: .seconds(60)) == overdue)
+        let refused = URLError(.cannotConnectToHost)
+        #expect(
+            WebFile.failure(of: refused, path: url, limit: .seconds(60))
+                == .unreachable(url: url, reason: refused.localizedDescription))
     }
 
     @Test("期限より早く刻み終える応答は、少しずつ届いても読める")

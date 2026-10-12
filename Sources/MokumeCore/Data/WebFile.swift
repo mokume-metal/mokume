@@ -72,20 +72,17 @@ nonisolated enum WebFile {
             var outcome: Result<Data, DataFailure>
             init(_ outcome: Result<Data, DataFailure>) { self.outcome = outcome }
         }
-        let overdue = DataFailure.unreachable(url: path, reason: "no complete answer came back within \(limit)")
         let box = Box(.failure(.unreachable(url: path, reason: "no response came back")))
         let arrived = DispatchSemaphore(value: 0)
         let seconds = limit / .seconds(1)
-        // 受け口の側の期限 (音沙汰の無い間) も同じ値にする。そちらが切れるのは、呼んでからの
-        // 総時間も期限を越えたときだけなので、同じ失敗として名乗る — 何も返さないサーバで、
-        // どちらが先に切れても文面が揺れない
+        // 受け口の側の期限 (音沙汰の無い間) も同じ値にする。そちらが切れたときも同じ失敗に畳む
+        // (``failure(of:path:limit:)``) ので、何も返さないサーバで、どちらが先に切れても文面が揺れない
         var request = URLRequest(url: url)
         request.timeoutInterval = seconds
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
             defer { arrived.signal() }
             if let error {
-                box.outcome = .failure(
-                    (error as? URLError)?.code == .timedOut ? overdue : .unreachable(url: path, reason: reason(of: error)))
+                box.outcome = .failure(failure(of: error, path: path, limit: limit))
                 return
             }
             guard let response else { return }
@@ -97,9 +94,31 @@ nonisolated enum WebFile {
         task.resume()
         guard arrived.wait(timeout: deadline) == .success else {
             task.cancel()
-            throw overdue
+            throw overdue(path: path, limit: limit)
         }
         return try box.outcome.get()
+    }
+
+    /// 期限 `limit` の間に答えが完結しなかったときの失敗。
+    ///
+    /// 同期の待ちが期限で諦めたときと、受け口の時計が切れたとき (``failure(of:path:limit:)``) の
+    /// 両方がこれを投げる。文面は「`limit` の間に答えが完結しなかった」とだけ名乗り、どちらの
+    /// 時計が切れたか (呼んでからの総時間か、音沙汰の無い間か) は言わない — どちらが切れても
+    /// 偽りにならない言い方である。
+    static func overdue(path: String, limit: Duration) -> DataFailure {
+        .unreachable(url: path, reason: "no complete answer came back within \(limit)")
+    }
+
+    /// 受け口が投げた誤りを、失敗にする。**受け口の時間切れ (`URLError.timedOut`) は
+    /// ``overdue(path:limit:)`` に畳む。** 他の誤りは、受け口が名乗った事情をそのまま理由にする。
+    ///
+    /// 受け口の時計 (`URLRequest.timeoutInterval`、音沙汰の無い間) は `limit` に揃えてある。それが
+    /// 切れたのなら、呼んでから `limit` 以上経って、答えはまだ完結していない。
+    static func failure(of error: any Error, path: String, limit: Duration) -> DataFailure {
+        guard (error as? URLError)?.code == .timedOut else {
+            return .unreachable(url: path, reason: reason(of: error))
+        }
+        return overdue(path: path, limit: limit)
     }
 
     /// 受け取った応答を確かめて、本文を返す。2xx 以外の状態なら投げる。
