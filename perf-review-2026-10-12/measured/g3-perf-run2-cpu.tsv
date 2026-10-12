@@ -1,0 +1,273 @@
+PERF	2370	mergeHoles holes=25 jitter=0	median	0.056625	ms
+PERF	2370	mergeHoles holes=25 jitter=0	p90	0.064792	ms
+PERF	2370	mergeHoles holes=25 jitter=0	min	0.055917	ms
+PERF	2370	triangulate holes=25 jitter=0	median	0.019625	ms
+PERF	2370	triangulate holes=25 jitter=0	p90	0.023709	ms
+PERF	2370	triangulate holes=25 jitter=0	min	0.019541	ms
+PERF	2370	splitForNonzero gate holes=25 jitter=0	median	0.008625	ms
+PERF	2370	splitForNonzero gate holes=25 jitter=0	p90	0.009666	ms
+PERF	2370	splitForNonzero gate holes=25 jitter=0	min	0.008291	ms
+PERF	2370	holes=25 jitter=0	mergedLength	154	indices
+PERF	2370	holes=25 jitter=0	triangles	63	count
+PERF	2370	holes=25 jitter=0	expectedTriangles	152	count
+PERF	2370	holes=25 jitter=0	areaRatio	0.4441923774954628	ratio
+PERF	2370	mergeHoles holes=25 jitter=1	median	0.063792	ms
+PERF	2370	mergeHoles holes=25 jitter=1	p90	0.06875	ms
+PERF	2370	mergeHoles holes=25 jitter=1	min	0.059709	ms
+PERF	2370	triangulate holes=25 jitter=1	median	0.02275	ms
+PERF	2370	triangulate holes=25 jitter=1	p90	0.023417	ms
+PERF	2370	triangulate holes=25 jitter=1	min	0.022625	ms
+PERF	2370	splitForNonzero gate holes=25 jitter=1	median	0.008041	ms
+PERF	2370	splitForNonzero gate holes=25 jitter=1	p90	0.008084	ms
+PERF	2370	splitForNonzero gate holes=25 jitter=1	min	0.007917	ms
+PERF	2370	holes=25 jitter=1	mergedLength	154	indices
+PERF	2370	holes=25 jitter=1	triangles	152	count
+PERF	2370	holes=25 jitter=1	expectedTriangles	152	count
+PERF	2370	holes=25 jitter=1	areaRatio	1.0000000158434703	ratio
+PERF	2370	mergeHoles holes=100 jitter=0	median	1.338958	ms
+PERF	2370	mergeHoles holes=100 jitter=0	p90	1.415833	ms
+PERF	2370	mergeHoles holes=100 jitter=0	min	1.256167	ms
+PERF	2370	triangulate holes=100 jitter=0	median	0.0805	ms
+PERF	2370	triangulate holes=100 jitter=0	p90	0.083125	ms
+PERF	2370	triangulate holes=100 jitter=0	min	0.080292	ms
+PERF	2370	splitForNonzero gate holes=100 jitter=0	median	0.038792	ms
+PERF	2370	splitForNonzero gate holes=100 jitter=0	p90	0.040958	ms
+PERF	2370	splitForNonzero gate holes=100 jitter=0	min	0.036125	ms
+PERF	2370	holes=100 jitter=0	mergedLength	604	indices
+PERF	2370	holes=100 jitter=0	triangles	223	count
+PERF	2370	holes=100 jitter=0	expectedTriangles	602	count
+PERF	2370	holes=100 jitter=0	areaRatio	0.3402777777777778	ratio
+PERF	2370	mergeHoles holes=100 jitter=1	median	2.151083	ms
+PERF	2370	mergeHoles holes=100 jitter=1	p90	2.233875	ms
+PERF	2370	mergeHoles holes=100 jitter=1	min	2.091042	ms
+PERF	2370	triangulate holes=100 jitter=1	median	0.120833	ms
+PERF	2370	triangulate holes=100 jitter=1	p90	0.151167	ms
+PERF	2370	triangulate holes=100 jitter=1	min	0.120125	ms
+PERF	2370	splitForNonzero gate holes=100 jitter=1	median	0.036375	ms
+PERF	2370	splitForNonzero gate holes=100 jitter=1	p90	0.037166	ms
+PERF	2370	splitForNonzero gate holes=100 jitter=1	min	0.035791	ms
+PERF	2370	holes=100 jitter=1	mergedLength	604	indices
+PERF	2370	holes=100 jitter=1	triangles	602	count
+PERF	2370	holes=100 jitter=1	expectedTriangles	602	count
+PERF	2370	holes=100 jitter=1	areaRatio	0.9999999908985537	ratio
+PERF	2370	mergeHoles holes=400 jitter=0	median	36.732167	ms
+PERF	2370	mergeHoles holes=400 jitter=0	p90	37.454625	ms
+PERF	2370	mergeHoles holes=400 jitter=0	min	36.065	ms
+PERF	2370	triangulate holes=400 jitter=0	median	0.386958	ms
+PERF	2370	triangulate holes=400 jitter=0	p90	0.459583	ms
+PERF	2370	triangulate holes=400 jitter=0	min	0.374334	ms
+PERF	2370	splitForNonzero gate holes=400 jitter=0	median	0.255292	ms
+PERF	2370	splitForNonzero gate holes=400 jitter=0	p90	0.282958	ms
+PERF	2370	splitForNonzero gate holes=400 jitter=0	min	0.25	ms
+PERF	2370	holes=400 jitter=0	mergedLength	2404	indices
+PERF	2370	holes=400 jitter=0	triangles	843	count
+PERF	2370	holes=400 jitter=0	expectedTriangles	2402	count
+PERF	2370	holes=400 jitter=0	areaRatio	0.2756535456730769	ratio
+PERF	2370	mergeHoles holes=400 jitter=1	median	94.394542	ms
+PERF	2370	mergeHoles holes=400 jitter=1	p90	96.878125	ms
+PERF	2370	mergeHoles holes=400 jitter=1	min	93.297	ms
+PERF	2370	triangulate holes=400 jitter=1	median	0.917584	ms
+PERF	2370	triangulate holes=400 jitter=1	p90	1.086375	ms
+PERF	2370	triangulate holes=400 jitter=1	min	0.855833	ms
+PERF	2370	splitForNonzero gate holes=400 jitter=1	median	0.25775	ms
+PERF	2370	splitForNonzero gate holes=400 jitter=1	p90	0.296875	ms
+PERF	2370	splitForNonzero gate holes=400 jitter=1	min	0.244375	ms
+PERF	2370	holes=400 jitter=1	mergedLength	2404	indices
+PERF	2370	holes=400 jitter=1	triangles	2402	count
+PERF	2370	holes=400 jitter=1	expectedTriangles	2402	count
+PERF	2370	holes=400 jitter=1	areaRatio	1.000000000946714	ratio
+PERF	2370	mergeHoles holes=900 jitter=0	median	274.678541	ms
+PERF	2370	mergeHoles holes=900 jitter=0	p90	279.034792	ms
+PERF	2370	mergeHoles holes=900 jitter=0	min	269.937416	ms
+PERF	2370	triangulate holes=900 jitter=0	median	0.96225	ms
+PERF	2370	triangulate holes=900 jitter=0	p90	1.061042	ms
+PERF	2370	triangulate holes=900 jitter=0	min	0.9355	ms
+PERF	2370	splitForNonzero gate holes=900 jitter=0	median	0.914791	ms
+PERF	2370	splitForNonzero gate holes=900 jitter=0	p90	0.945833	ms
+PERF	2370	splitForNonzero gate holes=900 jitter=0	min	0.890166	ms
+PERF	2370	holes=900 jitter=0	mergedLength	5404	indices
+PERF	2370	holes=900 jitter=0	triangles	1863	count
+PERF	2370	holes=900 jitter=0	expectedTriangles	5402	count
+PERF	2370	holes=900 jitter=0	areaRatio	0.25177880630008287	ratio
+PERF	2370	mergeHoles holes=900 jitter=1	median	1362.1340420000001	ms
+PERF	2370	mergeHoles holes=900 jitter=1	p90	1394.547792	ms
+PERF	2370	mergeHoles holes=900 jitter=1	min	1315.024833	ms
+PERF	2370	triangulate holes=900 jitter=1	median	2.608792	ms
+PERF	2370	triangulate holes=900 jitter=1	p90	2.7555	ms
+PERF	2370	triangulate holes=900 jitter=1	min	2.516125	ms
+PERF	2370	splitForNonzero gate holes=900 jitter=1	median	0.876792	ms
+PERF	2370	splitForNonzero gate holes=900 jitter=1	p90	0.92475	ms
+PERF	2370	splitForNonzero gate holes=900 jitter=1	min	0.845125	ms
+PERF	2370	holes=900 jitter=1	mergedLength	5404	indices
+PERF	2370	holes=900 jitter=1	triangles	5402	count
+PERF	2370	holes=900 jitter=1	expectedTriangles	5402	count
+PERF	2370	holes=900 jitter=1	areaRatio	0.9999999964560092	ratio
+PERF	2370	holes=25 opposite=true	triangles	63	count
+PERF	2370	holes=25 opposite=true	area	244.75	units2
+PERF	2370	holes=25 opposite=true	canvasRoutesToSplit	false	bool
+PERF	2370	holes=25 opposite=true	expectedTriangles	152	count
+PERF	2370	holes=25 opposite=false	triangles	88	count
+PERF	2370	holes=25 opposite=false	area	598.0	units2
+PERF	2370	holes=25 opposite=false	canvasRoutesToSplit	true	bool
+PERF	2370	holes=25 opposite=false	expectedTriangles	152	count
+PERF	2370	grid 1x1 jitter=0	triangles/expected	8/8	count
+PERF	2370	grid 1x1 jitter=0	areaRatio	1.0	ratio
+PERF	2370	grid 1x1 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 2x1 jitter=0	triangles/expected	14/14	count
+PERF	2370	grid 2x1 jitter=0	areaRatio	1.0	ratio
+PERF	2370	grid 2x1 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x2 jitter=0	triangles/expected	13/14	count
+PERF	2370	grid 1x2 jitter=0	areaRatio	1.0	ratio
+PERF	2370	grid 1x2 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 2x2 jitter=0	triangles/expected	25/26	count
+PERF	2370	grid 2x2 jitter=0	areaRatio	1.0	ratio
+PERF	2370	grid 2x2 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 5x1 jitter=0	triangles/expected	32/32	count
+PERF	2370	grid 5x1 jitter=0	areaRatio	1.0	ratio
+PERF	2370	grid 5x1 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x5 jitter=0	triangles/expected	7/32	count
+PERF	2370	grid 1x5 jitter=0	areaRatio	0.5827495621716288	ratio
+PERF	2370	grid 1x5 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 5x5 jitter=0	triangles/expected	63/152	count
+PERF	2370	grid 5x5 jitter=0	areaRatio	0.4441923774954628	ratio
+PERF	2370	grid 5x5 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 30x30 jitter=0	triangles/expected	1863/5402	count
+PERF	2370	grid 30x30 jitter=0	areaRatio	0.25177880630008287	ratio
+PERF	2370	grid 30x30 jitter=0	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x1 jitter=1	triangles/expected	8/8	count
+PERF	2370	grid 1x1 jitter=1	areaRatio	0.9999999924311563	ratio
+PERF	2370	grid 1x1 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 2x1 jitter=1	triangles/expected	14/14	count
+PERF	2370	grid 2x1 jitter=1	areaRatio	1.0000000050370121	ratio
+PERF	2370	grid 2x1 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x2 jitter=1	triangles/expected	14/14	count
+PERF	2370	grid 1x2 jitter=1	areaRatio	0.9999999905556023	ratio
+PERF	2370	grid 1x2 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 2x2 jitter=1	triangles/expected	26/26	count
+PERF	2370	grid 2x2 jitter=1	areaRatio	0.99999997253929	ratio
+PERF	2370	grid 2x2 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 5x1 jitter=1	triangles/expected	32/32	count
+PERF	2370	grid 5x1 jitter=1	areaRatio	0.999999991234803	ratio
+PERF	2370	grid 5x1 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x5 jitter=1	triangles/expected	32/32	count
+PERF	2370	grid 1x5 jitter=1	areaRatio	1.0000000200943853	ratio
+PERF	2370	grid 1x5 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 5x5 jitter=1	triangles/expected	152/152	count
+PERF	2370	grid 5x5 jitter=1	areaRatio	1.0000000244975025	ratio
+PERF	2370	grid 5x5 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 30x30 jitter=1	triangles/expected	5402/5402	count
+PERF	2370	grid 30x30 jitter=1	areaRatio	1.0000001538426004	ratio
+PERF	2370	grid 30x30 jitter=1	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x1 jitter=2	triangles/expected	8/8	count
+PERF	2370	grid 1x1 jitter=2	areaRatio	1.0000000245987428	ratio
+PERF	2370	grid 1x1 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2370	grid 2x1 jitter=2	triangles/expected	14/14	count
+PERF	2370	grid 2x1 jitter=2	areaRatio	1.0000000264443145	ratio
+PERF	2370	grid 2x1 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x2 jitter=2	triangles/expected	14/14	count
+PERF	2370	grid 1x2 jitter=2	areaRatio	0.9999999874074694	ratio
+PERF	2370	grid 1x2 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2370	grid 2x2 jitter=2	triangles/expected	26/26	count
+PERF	2370	grid 2x2 jitter=2	areaRatio	1.0000000270349643	ratio
+PERF	2370	grid 2x2 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2370	grid 5x1 jitter=2	triangles/expected	32/32	count
+PERF	2370	grid 5x1 jitter=2	areaRatio	0.9999999814192178	ratio
+PERF	2370	grid 5x1 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2370	grid 1x5 jitter=2	triangles/expected	32/32	count
+PERF	2370	grid 1x5 jitter=2	areaRatio	0.9999999902398699	ratio
+PERF	2370	grid 1x5 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2370	grid 5x5 jitter=2	triangles/expected	152/152	count
+PERF	2370	grid 5x5 jitter=2	areaRatio	0.9999999715769147	ratio
+PERF	2370	grid 5x5 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2370	grid 30x30 jitter=2	triangles/expected	5402/5402	count
+PERF	2370	grid 30x30 jitter=2	areaRatio	1.0000002574470608	ratio
+PERF	2370	grid 30x30 jitter=2	canvasRoutesToSplit	false	bool
+PERF	2377	color() integral x2000000	median	32.719917	ms
+PERF	2377	color() integral x2000000	p90	34.418041	ms
+PERF	2377	color() integral x2000000	min	32.201125	ms
+PERF	2377	color() integral	perCall	16.3599585	ns
+PERF	2377	color() fractional x2000000	median	33.049708	ms
+PERF	2377	color() fractional x2000000	p90	35.502459	ms
+PERF	2377	color() fractional x2000000	min	32.453917	ms
+PERF	2377	color() fractional	perCall	16.524854	ns
+PERF	2377	decode x3	perCall	11.6267705	ns
+PERF	2377	ColorPrimaries.working	perCall	2.0057915	ns
+PERF	2377	candidate table+Double	perCall	6.392729	ns
+PERF	2377	red()	perCall	18.4248125	ns
+PERF	2377	table vs decode	mismatches	0	count
+PERF	2377	256^3 table+Double	mismatches	0	count
+PERF	2377	256^3 table+floatMatrix	mismatches	10047696	count
+PERF	2377	color(-0,-0,-0)	redSignMinus	true	bool
+PERF	2389	1080p library-main	median	169.315	ms
+PERF	2389	1080p library-main	p90	172.618291	ms
+PERF	2389	1080p library-main	min	168.086917	ms
+PERF	2389	1080p library-main	perPixel	81.6526813271605	ns
+PERF	2389	machine	activeProcessors	16	count
+PERF	2389	machine	perflevel0Logical	12	count
+PERF	2389	machine	perflevel1Logical	4	count
+PERF	2389	1080p library-main	chunks	1	count
+PERF	2389	1080p copy-serial	median	138.745083	ms
+PERF	2389	1080p copy-serial	p90	142.379208	ms
+PERF	2389	1080p copy-serial	min	135.955167	ms
+PERF	2389	1080p copy-serial	perPixel	66.91024450231481	ns
+PERF	2389	machine	activeProcessors	16	count
+PERF	2389	machine	perflevel0Logical	12	count
+PERF	2389	machine	perflevel1Logical	4	count
+PERF	2389	1080p copy-serial	chunks	1	count
+PERF	2389	1080p copy-concurrent	median	11.323833	ms
+PERF	2389	1080p copy-concurrent	p90	12.537083	ms
+PERF	2389	1080p copy-concurrent	min	11.041625	ms
+PERF	2389	1080p copy-concurrent	perPixel	5.460953414351851	ns
+PERF	2389	machine	activeProcessors	16	count
+PERF	2389	machine	perflevel0Logical	12	count
+PERF	2389	machine	perflevel1Logical	4	count
+PERF	2389	1080p copy-concurrent	chunks	64	count
+PERF	2376	Optional.map main-actor closure	perElement	23.168625	ns
+PERF	2376	if let	perElement	0.448542	ns
+PERF	2376	Optional.map nonisolated closure	perElement	0.64925	ns
+PERF	2376	?? autoclosure (1/3 nil)	perElement	0.672375	ns
+PERF	2376	if let / else (1/3 nil)	perElement	0.644209	ns
+PERF	2209	circle points=84 wholeOutline=true	median	0.116334	ms
+PERF	2209	circle points=84 wholeOutline=true	p90	0.12575	ms
+PERF	2209	circle points=84 wholeOutline=true	min	0.115875	ms
+PERF	2209	circle points=84 wholeOutline=true	fragments	168	count
+PERF	2209	circle points=84 wholeOutline=false	median	0.12	ms
+PERF	2209	circle points=84 wholeOutline=false	p90	0.133708	ms
+PERF	2209	circle points=84 wholeOutline=false	min	0.1175	ms
+PERF	2209	circle points=84 wholeOutline=false	fragments	168	count
+PERF	2209	circle points=315 wholeOutline=true	median	0.5555	ms
+PERF	2209	circle points=315 wholeOutline=true	p90	0.585584	ms
+PERF	2209	circle points=315 wholeOutline=true	min	0.544375	ms
+PERF	2209	circle points=315 wholeOutline=true	fragments	630	count
+PERF	2209	circle points=315 wholeOutline=false	median	0.453791	ms
+PERF	2209	circle points=315 wholeOutline=false	p90	0.481084	ms
+PERF	2209	circle points=315 wholeOutline=false	min	0.445625	ms
+PERF	2209	circle points=315 wholeOutline=false	fragments	630	count
+PERF	2209	circle points=1024 wholeOutline=true	median	3.056334	ms
+PERF	2209	circle points=1024 wholeOutline=true	p90	3.145541	ms
+PERF	2209	circle points=1024 wholeOutline=true	min	3.01425	ms
+PERF	2209	circle points=1024 wholeOutline=true	fragments	2048	count
+PERF	2209	circle points=1024 wholeOutline=false	median	1.664625	ms
+PERF	2209	circle points=1024 wholeOutline=false	p90	1.69975	ms
+PERF	2209	circle points=1024 wholeOutline=false	min	1.613625	ms
+PERF	2209	circle points=1024 wholeOutline=false	fragments	2048	count
+PERF	1948	polyline points=1000 weight=2.0	median	1.863875	ms
+PERF	1948	polyline points=1000 weight=2.0	p90	1.923958	ms
+PERF	1948	polyline points=1000 weight=2.0	min	1.816416	ms
+PERF	1948	polyline points=1000 weight=2.0	fragments	3111	count
+PERF	1948	polyline points=1000 weight=2.0	perPoint	1863.875	ns
+PERF	1948	polyline points=1000 weight=8.0	median	4.787292	ms
+PERF	1948	polyline points=1000 weight=8.0	p90	5.165833	ms
+PERF	1948	polyline points=1000 weight=8.0	min	4.630292	ms
+PERF	1948	polyline points=1000 weight=8.0	fragments	4658	count
+PERF	1948	polyline points=1000 weight=8.0	perPoint	4787.292	ns
+PERF	1948	polyline points=10000 weight=2.0	median	21.9285	ms
+PERF	1948	polyline points=10000 weight=2.0	p90	22.742417	ms
+PERF	1948	polyline points=10000 weight=2.0	min	21.57075	ms
+PERF	1948	polyline points=10000 weight=2.0	fragments	31416	count
+PERF	1948	polyline points=10000 weight=2.0	perPoint	2192.85	ns
+PERF	1948	polyline points=10000 weight=8.0	median	50.2015	ms
+PERF	1948	polyline points=10000 weight=8.0	p90	51.070125	ms
+PERF	1948	polyline points=10000 weight=8.0	min	49.382709	ms
+PERF	1948	polyline points=10000 weight=8.0	fragments	46799	count
+PERF	1948	polyline points=10000 weight=8.0	perPoint	5020.15	ns

@@ -1,0 +1,138 @@
+PERF	2369	1280x720 subscript-read-write build	median	329.272125	ms
+PERF	2369	1280x720 subscript-read-write build	p90	342.247208	ms
+PERF	2369	1280x720 subscript-read-write build	min	320.619417	ms
+PERF	2369	1280x720 subscript-read-write whole	median	330.061625	ms
+PERF	2369	1280x720 subscript-read-write whole	p90	342.986208	ms
+PERF	2369	1280x720 subscript-read-write whole	min	321.147875	ms
+PERF	2369	1280x720 subscript-read-write	perPixel	357.2831217447917	ns
+PERF	2369	1280x720 subscript-read-write	settleCallsInLoop	1843200	count
+PERF	2369	1280x720 subscript-read-write	blockingWaitsInLoop	1	count
+PERF	2369	1280x720 subscript-read-write	estimate1080p	740.86228125	ms
+PERF	2369	1280x720 subscript-read build	median	131.343708	ms
+PERF	2369	1280x720 subscript-read build	p90	134.542542	ms
+PERF	2369	1280x720 subscript-read build	min	128.883	ms
+PERF	2369	1280x720 subscript-read whole	median	131.716667	ms
+PERF	2369	1280x720 subscript-read whole	p90	134.833	ms
+PERF	2369	1280x720 subscript-read whole	min	129.2615	ms
+PERF	2369	1280x720 subscript-read	perPixel	142.5170442708333	ns
+PERF	2369	1280x720 subscript-read	settleCallsInLoop	921600	count
+PERF	2369	1280x720 subscript-read	blockingWaitsInLoop	1	count
+PERF	2369	1280x720 subscript-read	estimate1080p	295.523343	ms
+PERF	2369	1280x720 hoisted-read-write build	median	85.011542	ms
+PERF	2369	1280x720 hoisted-read-write build	p90	86.798041	ms
+PERF	2369	1280x720 hoisted-read-write build	min	82.916666	ms
+PERF	2369	1280x720 hoisted-read-write whole	median	85.472167	ms
+PERF	2369	1280x720 hoisted-read-write whole	p90	87.432375	ms
+PERF	2369	1280x720 hoisted-read-write whole	min	83.35075	ms
+PERF	2369	1280x720 hoisted-read-write	perPixel	92.24342664930556	ns
+PERF	2369	1280x720 hoisted-read-write	settleCallsInLoop	1	count
+PERF	2369	1280x720 hoisted-read-write	blockingWaitsInLoop	1	count
+PERF	2369	1280x720 hoisted-read-write	estimate1080p	191.27596950000003	ms
+PERF	2369	1280x720 raw-pointer build	median	2.605	ms
+PERF	2369	1280x720 raw-pointer build	p90	2.658334	ms
+PERF	2369	1280x720 raw-pointer build	min	2.56275	ms
+PERF	2369	1280x720 raw-pointer whole	median	2.882834	ms
+PERF	2369	1280x720 raw-pointer whole	p90	3.177542	ms
+PERF	2369	1280x720 raw-pointer whole	min	2.761708	ms
+PERF	2369	1280x720 raw-pointer	perPixel	2.8266059027777777	ns
+PERF	2369	1280x720 raw-pointer	settleCallsInLoop	0	count
+PERF	2369	1280x720 raw-pointer	blockingWaitsInLoop	0	count
+PERF	2369	1280x720 raw-pointer	estimate1080p	5.86125	ms
+PERF	2376	strokeNet skeleton lines10k	median	3.978458	ms
+PERF	2376	strokeNet skeleton lines10k	p90	4.028208	ms
+PERF	2376	strokeNet skeleton lines10k	min	3.765	ms
+PERF	2376	strokeNet skeleton lines10k	perPoint	198.9229	ns
+PERF	2376	strokeNet skeleton lines10k	shapesPerRun	30000	count
+PERF	2376	strokeNet skeleton polyline10k	median	2.147625	ms
+PERF	2376	strokeNet skeleton polyline10k	p90	2.246208	ms
+PERF	2376	strokeNet skeleton polyline10k	min	2.050333	ms
+PERF	2376	strokeNet skeleton polyline10k	perPoint	214.7625	ns
+PERF	2376	strokeNet skeleton polyline10k	shapesPerRun	19999	count
+PERF	2376	strokeRing skeleton 10k open rings	median	0.672875	ms
+PERF	2376	strokeRing skeleton 10k open rings	p90	0.695	ms
+PERF	2376	strokeRing skeleton 10k open rings	min	0.670708	ms
+PERF	2376	strokeRing skeleton	perRing	67.2875	ns
+PERF	2376	thinCarving gather 10k corners	median	3.098167	ms
+PERF	2376	thinCarving gather 10k corners	p90	3.167667	ms
+PERF	2376	thinCarving gather 10k corners	min	2.848208	ms
+PERF	2376	thinCarving gather+carve 10k corners	median	10.223584	ms
+PERF	2376	thinCarving gather+carve 10k corners	p90	10.365208	ms
+PERF	2376	thinCarving gather+carve 10k corners	min	10.009791	ms
+PERF	2376	thinCarving gather	perCorner	309.8167	ns
+PERF	2376	thinCarving gather+carve	fragments	10001	count
+PERF	2376	lines10k depth=false build	median	10.356958	ms
+PERF	2376	lines10k depth=false build	p90	10.662875	ms
+PERF	2376	lines10k depth=false build	min	10.212833	ms
+PERF	2376	lines10k depth=false whole	median	11.301083	ms
+PERF	2376	lines10k depth=false whole	p90	11.632208	ms
+PERF	2376	lines10k depth=false whole	min	11.054458	ms
+PERF	2376	lines10k depth=false	drawCalls	1	count
+PERF	2376	lines10k depth=true build	median	40.108709	ms
+PERF	2376	lines10k depth=true build	p90	41.792166	ms
+PERF	2376	lines10k depth=true build	min	39.011083	ms
+PERF	2376	lines10k depth=true whole	median	42.981875	ms
+PERF	2376	lines10k depth=true whole	p90	45.245667	ms
+PERF	2376	lines10k depth=true whole	min	41.808625	ms
+PERF	2376	lines10k depth=true	drawCalls	1	count
+PERF	2370	fill column1x5	filledPixels/expected	33375/57100	px
+PERF	2370	fill column1x5	ratio	0.5845008756567426	ratio
+PERF	2370	fill grid5x5	filledPixels/expected	24480/55100	px
+PERF	2370	fill grid5x5	ratio	0.4442831215970962	ratio
+PERF	2370	fill grid5x5 jitter	filledPixels/expected	55100/55100	px
+PERF	2370	fill grid5x5 jitter	ratio	1.0	ratio
+PERF	2370	fill row5x1	filledPixels/expected	57100/57100	px
+PERF	2370	fill row5x1	ratio	1.0	ratio
+PERF	2209	polyline points=1000 opaque build	median	0.295208	ms
+PERF	2209	polyline points=1000 opaque build	p90	0.322083	ms
+PERF	2209	polyline points=1000 opaque build	min	0.284792	ms
+PERF	2209	polyline points=1000 opaque whole	median	0.569792	ms
+PERF	2209	polyline points=1000 opaque whole	p90	0.765417	ms
+PERF	2209	polyline points=1000 opaque whole	min	0.543792	ms
+PERF	2209	polyline points=1000 opaque	flatVertices	12768	count
+PERF	2209	polyline points=1000 translucent build	median	2.255833	ms
+PERF	2209	polyline points=1000 translucent build	p90	2.423917	ms
+PERF	2209	polyline points=1000 translucent build	min	2.09	ms
+PERF	2209	polyline points=1000 translucent whole	median	2.775792	ms
+PERF	2209	polyline points=1000 translucent whole	p90	3.169291	ms
+PERF	2209	polyline points=1000 translucent whole	min	2.408584	ms
+PERF	2209	polyline points=1000 translucent	flatVertices	48471	count
+PERF	2209	polyline points=10000 opaque build	median	3.009708	ms
+PERF	2209	polyline points=10000 opaque build	p90	3.1875	ms
+PERF	2209	polyline points=10000 opaque build	min	2.884917	ms
+PERF	2209	polyline points=10000 opaque whole	median	3.715625	ms
+PERF	2209	polyline points=10000 opaque whole	p90	3.99275	ms
+PERF	2209	polyline points=10000 opaque whole	min	3.335916	ms
+PERF	2209	polyline points=10000 opaque	flatVertices	127794	count
+PERF	2209	polyline points=10000 translucent build	median	24.635917	ms
+PERF	2209	polyline points=10000 translucent build	p90	25.526916	ms
+PERF	2209	polyline points=10000 translucent build	min	24.292583	ms
+PERF	2209	polyline points=10000 translucent whole	median	25.479542	ms
+PERF	2209	polyline points=10000 translucent whole	p90	26.584209	ms
+PERF	2209	polyline points=10000 translucent whole	min	25.096583	ms
+PERF	2209	polyline points=10000 translucent	flatVertices	490521	count
+PERF	2209	polylines 1000x50 opaque build	median	16.024959	ms
+PERF	2209	polylines 1000x50 opaque build	p90	16.369083	ms
+PERF	2209	polylines 1000x50 opaque build	min	15.642125	ms
+PERF	2209	polylines 1000x50 opaque whole	median	17.314459	ms
+PERF	2209	polylines 1000x50 opaque whole	p90	17.896458	ms
+PERF	2209	polylines 1000x50 opaque whole	min	16.961	ms
+PERF	2209	polylines 1000x50 translucent build	median	122.520375	ms
+PERF	2209	polylines 1000x50 translucent build	p90	126.490708	ms
+PERF	2209	polylines 1000x50 translucent build	min	118.887333	ms
+PERF	2209	polylines 1000x50 translucent whole	median	125.284166	ms
+PERF	2209	polylines 1000x50 translucent whole	p90	130.260834	ms
+PERF	2209	polylines 1000x50 translucent whole	min	121.824917	ms
+PERF	2209	circles1000 shader=false build	median	0.070041	ms
+PERF	2209	circles1000 shader=false build	p90	0.095125	ms
+PERF	2209	circles1000 shader=false build	min	0.06225	ms
+PERF	2209	circles1000 shader=false whole	median	2.364917	ms
+PERF	2209	circles1000 shader=false whole	p90	2.759708	ms
+PERF	2209	circles1000 shader=false whole	min	2.22775	ms
+PERF	2209	circles1000 shader=false	flatVertices	0	count
+PERF	2209	circles1000 shader=true build	median	119.6605	ms
+PERF	2209	circles1000 shader=true build	p90	126.060792	ms
+PERF	2209	circles1000 shader=true build	min	115.171333	ms
+PERF	2209	circles1000 shader=true whole	median	123.68125	ms
+PERF	2209	circles1000 shader=true whole	p90	130.974042	ms
+PERF	2209	circles1000 shader=true whole	min	118.350917	ms
+PERF	2209	circles1000 shader=true	flatVertices	2394978	count

@@ -1,0 +1,147 @@
+PERF	2370	mergeHoles holes=25	median	0.055666	ms
+PERF	2370	mergeHoles holes=25	p90	0.060916	ms
+PERF	2370	mergeHoles holes=25	min	0.0555	ms
+PERF	2370	triangulate holes=25	median	0.019167	ms
+PERF	2370	triangulate holes=25	p90	0.019792	ms
+PERF	2370	triangulate holes=25	min	0.019083	ms
+PERF	2370	splitForNonzero gate holes=25	median	0.010167	ms
+PERF	2370	splitForNonzero gate holes=25	p90	0.011167	ms
+PERF	2370	splitForNonzero gate holes=25	min	0.008209	ms
+PERF	2370	holes=25	mergedLength	154	indices
+PERF	2370	holes=25	triangles	63	count
+PERF	2370	holes=25	expectedTriangles	152	count
+PERF	2370	holes=25	areaRatio	0.4441923774954628	ratio
+PERF	2370	mergeHoles holes=100	median	1.315584	ms
+PERF	2370	mergeHoles holes=100	p90	1.425667	ms
+PERF	2370	mergeHoles holes=100	min	1.295083	ms
+PERF	2370	triangulate holes=100	median	0.07875	ms
+PERF	2370	triangulate holes=100	p90	0.083583	ms
+PERF	2370	triangulate holes=100	min	0.0785	ms
+PERF	2370	splitForNonzero gate holes=100	median	0.037875	ms
+PERF	2370	splitForNonzero gate holes=100	p90	0.0415	ms
+PERF	2370	splitForNonzero gate holes=100	min	0.037625	ms
+PERF	2370	holes=100	mergedLength	604	indices
+PERF	2370	holes=100	triangles	223	count
+PERF	2370	holes=100	expectedTriangles	602	count
+PERF	2370	holes=100	areaRatio	0.3402777777777778	ratio
+PERF	2370	mergeHoles holes=400	median	36.253542	ms
+PERF	2370	mergeHoles holes=400	p90	36.521584	ms
+PERF	2370	mergeHoles holes=400	min	36.042417	ms
+PERF	2370	triangulate holes=400	median	0.366084	ms
+PERF	2370	triangulate holes=400	p90	0.38575	ms
+PERF	2370	triangulate holes=400	min	0.361709	ms
+PERF	2370	splitForNonzero gate holes=400	median	0.2545	ms
+PERF	2370	splitForNonzero gate holes=400	p90	0.286833	ms
+PERF	2370	splitForNonzero gate holes=400	min	0.25125	ms
+PERF	2370	holes=400	mergedLength	2404	indices
+PERF	2370	holes=400	triangles	843	count
+PERF	2370	holes=400	expectedTriangles	2402	count
+PERF	2370	holes=400	areaRatio	0.2756535456730769	ratio
+PERF	2370	mergeHoles holes=900	median	271.592958	ms
+PERF	2370	mergeHoles holes=900	p90	275.398	ms
+PERF	2370	mergeHoles holes=900	min	268.55175	ms
+PERF	2370	triangulate holes=900	median	0.914709	ms
+PERF	2370	triangulate holes=900	p90	1.143667	ms
+PERF	2370	triangulate holes=900	min	0.897708	ms
+PERF	2370	splitForNonzero gate holes=900	median	0.919666	ms
+PERF	2370	splitForNonzero gate holes=900	p90	0.966416	ms
+PERF	2370	splitForNonzero gate holes=900	min	0.878	ms
+PERF	2370	holes=900	mergedLength	5404	indices
+PERF	2370	holes=900	triangles	1863	count
+PERF	2370	holes=900	expectedTriangles	5402	count
+PERF	2370	holes=900	areaRatio	0.25177880630008287	ratio
+PERF	2370	holes=25 opposite=true	triangles	63	count
+PERF	2370	holes=25 opposite=true	area	244.75	units2
+PERF	2370	holes=25 opposite=true	canvasRoutesToSplit	false	bool
+PERF	2370	holes=25 opposite=false	triangles	88	count
+PERF	2370	holes=25 opposite=false	area	598.0	units2
+PERF	2370	holes=25 opposite=false	canvasRoutesToSplit	true	bool
+PERF	2377	color() integral x2000000	median	32.855709	ms
+PERF	2377	color() integral x2000000	p90	33.60475	ms
+PERF	2377	color() integral x2000000	min	32.33925	ms
+PERF	2377	color() integral	perCall	16.4278545	ns
+PERF	2377	color() fractional x2000000	median	33.09975	ms
+PERF	2377	color() fractional x2000000	p90	33.697625	ms
+PERF	2377	color() fractional x2000000	min	32.633833	ms
+PERF	2377	color() fractional	perCall	16.549875	ns
+PERF	2377	decode x3	perCall	12.026354	ns
+PERF	2377	ColorPrimaries.working	perCall	2.055542	ns
+PERF	2377	candidate table+Double	perCall	6.581271	ns
+PERF	2377	red()	perCall	19.0476665	ns
+PERF	2377	table vs decode	mismatches	0	count
+PERF	2377	256^3 table+Double	mismatches	0	count
+PERF	2377	256^3 table+floatMatrix	mismatches	10047696	count
+PERF	2377	color(-0,-0,-0)	redSignMinus	true	bool
+PERF	2389	1080p library-main	median	174.662083	ms
+PERF	2389	1080p library-main	p90	178.212542	ms
+PERF	2389	1080p library-main	min	171.828667	ms
+PERF	2389	1080p library-main	perPixel	84.23132860725309	ns
+PERF	2389	machine	activeProcessors	16	count
+PERF	2389	machine	perflevel0Logical	12	count
+PERF	2389	machine	perflevel1Logical	4	count
+PERF	2389	1080p library-main	chunks	1	count
+PERF	2389	1080p copy-serial	median	139.426584	ms
+PERF	2389	1080p copy-serial	p90	178.556917	ms
+PERF	2389	1080p copy-serial	min	136.368625	ms
+PERF	2389	1080p copy-serial	perPixel	67.23890046296296	ns
+PERF	2389	machine	activeProcessors	16	count
+PERF	2389	machine	perflevel0Logical	12	count
+PERF	2389	machine	perflevel1Logical	4	count
+PERF	2389	1080p copy-serial	chunks	1	count
+PERF	2389	1080p copy-concurrent	median	26.340208	ms
+PERF	2389	1080p copy-concurrent	p90	34.302667	ms
+PERF	2389	1080p copy-concurrent	min	17.088792	ms
+PERF	2389	1080p copy-concurrent	perPixel	12.702646604938272	ns
+PERF	2389	machine	activeProcessors	16	count
+PERF	2389	machine	perflevel0Logical	12	count
+PERF	2389	machine	perflevel1Logical	4	count
+PERF	2389	1080p copy-concurrent	chunks	64	count
+PERF	2376	Optional.map main-actor closure	perElement	25.585125	ns
+PERF	2376	if let	perElement	0.526958	ns
+PERF	2376	Optional.map nonisolated closure	perElement	0.740833	ns
+PERF	2376	?? autoclosure (1/3 nil)	perElement	0.721958	ns
+PERF	2376	if let / else (1/3 nil)	perElement	0.743792	ns
+PERF	2209	circle points=84 wholeOutline=true	median	0.1285	ms
+PERF	2209	circle points=84 wholeOutline=true	p90	0.156042	ms
+PERF	2209	circle points=84 wholeOutline=true	min	0.128208	ms
+PERF	2209	circle points=84 wholeOutline=true	fragments	168	count
+PERF	2209	circle points=84 wholeOutline=false	median	0.130708	ms
+PERF	2209	circle points=84 wholeOutline=false	p90	0.144333	ms
+PERF	2209	circle points=84 wholeOutline=false	min	0.122875	ms
+PERF	2209	circle points=84 wholeOutline=false	fragments	168	count
+PERF	2209	circle points=315 wholeOutline=true	median	0.578625	ms
+PERF	2209	circle points=315 wholeOutline=true	p90	0.657125	ms
+PERF	2209	circle points=315 wholeOutline=true	min	0.576417	ms
+PERF	2209	circle points=315 wholeOutline=true	fragments	630	count
+PERF	2209	circle points=315 wholeOutline=false	median	0.49725	ms
+PERF	2209	circle points=315 wholeOutline=false	p90	0.607125	ms
+PERF	2209	circle points=315 wholeOutline=false	min	0.490584	ms
+PERF	2209	circle points=315 wholeOutline=false	fragments	630	count
+PERF	2209	circle points=1024 wholeOutline=true	median	3.335875	ms
+PERF	2209	circle points=1024 wholeOutline=true	p90	3.473334	ms
+PERF	2209	circle points=1024 wholeOutline=true	min	3.301709	ms
+PERF	2209	circle points=1024 wholeOutline=true	fragments	2048	count
+PERF	2209	circle points=1024 wholeOutline=false	median	1.720334	ms
+PERF	2209	circle points=1024 wholeOutline=false	p90	1.821333	ms
+PERF	2209	circle points=1024 wholeOutline=false	min	1.652166	ms
+PERF	2209	circle points=1024 wholeOutline=false	fragments	2048	count
+PERF	1948	polyline points=1000 weight=2.0	median	2.148417	ms
+PERF	1948	polyline points=1000 weight=2.0	p90	2.288542	ms
+PERF	1948	polyline points=1000 weight=2.0	min	1.944084	ms
+PERF	1948	polyline points=1000 weight=2.0	fragments	3111	count
+PERF	1948	polyline points=1000 weight=2.0	perPoint	2148.417	ns
+PERF	1948	polyline points=1000 weight=8.0	median	4.79625	ms
+PERF	1948	polyline points=1000 weight=8.0	p90	5.260375	ms
+PERF	1948	polyline points=1000 weight=8.0	min	4.6565	ms
+PERF	1948	polyline points=1000 weight=8.0	fragments	4658	count
+PERF	1948	polyline points=1000 weight=8.0	perPoint	4796.25	ns
+PERF	1948	polyline points=10000 weight=2.0	median	21.75525	ms
+PERF	1948	polyline points=10000 weight=2.0	p90	22.272542	ms
+PERF	1948	polyline points=10000 weight=2.0	min	21.188166	ms
+PERF	1948	polyline points=10000 weight=2.0	fragments	31416	count
+PERF	1948	polyline points=10000 weight=2.0	perPoint	2175.525	ns
+PERF	1948	polyline points=10000 weight=8.0	median	49.217083	ms
+PERF	1948	polyline points=10000 weight=8.0	p90	49.907917	ms
+PERF	1948	polyline points=10000 weight=8.0	min	48.546166	ms
+PERF	1948	polyline points=10000 weight=8.0	fragments	46799	count
+PERF	1948	polyline points=10000 weight=8.0	perPoint	4921.7083	ns
