@@ -209,6 +209,23 @@ struct RenderCommandTests {
         expectUsage(["--fps", "30", "--seconds", "2", "--out", "/a.mov", "-o", "x"], mentioning: "-o")
     }
 
+    /// **構成の値も、組み立ての前に検める** ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    /// 検めずに道具立てへ渡すと、組み立てを始めてから「Package.swift に実行ファイルが無い」と
+    /// 名乗っていた。
+    @Test("構成は debug / release だけを受け、それ以外は受け付ける値を名指して止まる")
+    func anUnknownConfigurationIsRefused() throws {
+        for configuration in ["bogus", "Release", "DEBUG"] {
+            expectUsage(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"],
+                mentioningAll: ["debug", "release", ": \(configuration)"])
+        }
+        for configuration in ["debug", "release"] {
+            let options = try parse(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"])
+            #expect(options.invocation.configuration == configuration)
+        }
+    }
+
     /// 解いた後にパッケージを探すので、`Package.swift` の無い場所でも使い方の誤りが先に出る。
     @Test("引数の誤りは、スケッチを探す前 (ビルドの前) に止まる")
     func argumentErrorsComeBeforeTheBuild() throws {

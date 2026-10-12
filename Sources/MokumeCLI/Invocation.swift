@@ -85,6 +85,13 @@ nonisolated struct Invocation: Equatable {
     /// 作ると読み替えが要る。
     static let configurationFlags = ["-c", "--configuration"]
 
+    /// 受け付ける構成。**綴りも道具立てに合わせる** — 大小を読み替えない (`Release` は断る)。
+    ///
+    /// **組み立ての前に検める。** 検めずに渡していた頃は、`swift build --show-bin-path
+    /// -c Release` が usage を出して非 0 で終わり、組み立てを始めてから「Package.swift に
+    /// 実行ファイルが無い」と名乗っていた ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    static let configurations = ["debug", "release"]
+
     /// ビルドの置き場を選ぶ綴り。構成と同じ理由で道具立てに合わせる。
     static let scratchPathFlags = ["--scratch-path"]
 
@@ -127,15 +134,23 @@ nonisolated struct Invocation: Equatable {
             arguments,
             options: [
                 Arguments.Option(configurationFlags) {
-                    "\($0) needs a configuration after it (debug / release)"
+                    "\($0) needs a configuration after it (\(configurations.joined(separator: " / ")))"
                 },
                 Arguments.Option(scratchPathFlags) {
                     "\($0) needs a build directory after it"
                 },
             ] + extra,
             surplus: .reject { "Only one directory: \($0)" })
+        let configuration = parsed.values[configurationFlags[0]]
+        // 打たれた綴りは解いた結果に残らないので、両方を名乗る
+        if let configuration, !configurations.contains(configuration) {
+            throw .usage(
+                "\(configurationFlags.joined(separator: " / ")) takes "
+                    + "\(configurations.joined(separator: " or ")), in lowercase as swift build"
+                    + " spells them: \(configuration)")
+        }
         let invocation = Invocation(
-            place: parsed.positional, configuration: parsed.values[configurationFlags[0]],
+            place: parsed.positional, configuration: configuration,
             scratchPath: parsed.values[scratchPathFlags[0]], currentDirectory: currentDirectory)
         return (invocation, parsed.values)
     }
