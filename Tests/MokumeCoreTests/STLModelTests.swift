@@ -509,6 +509,8 @@ struct STLModelTests {
         /// 頂点が 2 つしかない面の後ろに、正しい面が続く。読み手は後ろの面の頂点を食って、三角形を 1 枚
         /// (形はでたらめ) しか返さない — 面の数 (2) と合わない
         case facetMissingACorner
+        /// 名前に FF を含み、最初の面の途中で切れた小さい文字 (#2494)。制御文字があっても、壊れたものは読めない
+        case cutShortSmallWithFF
         /// 頂点が 2 つの面と 4 つの面が続く。頂点の総数 (6) は面の数 (2) の 3 倍に合うので、数だけでは
         /// 見えない。読み手は 1 枚目に 2 枚目の頂点を混ぜて返す
         case twoVerticesThenFour
@@ -579,6 +581,8 @@ struct STLModelTests {
                 let missing = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nendloop\nendfacet\n"
                 let good = "facet normal 0 0 1\nouter loop\nvertex 5 5 5\nvertex 6 5 5\nvertex 5 6 5\nendloop\nendfacet\n"
                 return Data(("solid t\n" + missing + good + "endsolid t\n").utf8)
+            case .cutShortSmallWithFF:
+                return Data("solid t\u{0C}\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\n".utf8)
             case .twoVerticesThenFour:
                 return Data(
                     ("solid t\n" + STLModelTests.facetText(vertices: 2)
