@@ -18,6 +18,11 @@ struct ShapeTests {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
+    /// スケッチを窓を出さずに回すランタイム。**GPU は条件の掛かったこの型の本体で作る** (`GPUGateTests`)。
+    private func makeRuntime(_ sketch: some Sketch) throws -> SketchRuntime {
+        try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+    }
+
     /// 4 隅を 2 枚の三角形で張った立体の面。番号で指すかを選べる。
     private func patch(_ canvas: Canvas, indexed: Bool, x: Float = 0) {
         let corners: [SIMD2<Float>] = [
@@ -2141,7 +2146,7 @@ extension ShapeTests {
         let sketch = FrameStartInsideLayerBuild()
         sketch.inSetup = inSetup
         sketch.call = call
-        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        let runtime = try makeRuntime(sketch)
         try runtime.advance()
         let layer = try #require(sketch.layer, "描き場所を作れなかった")
         #expect(sketch.built, "組み立てていない")
