@@ -81,6 +81,8 @@ struct NumberTextTests {
             "1_0", "e5", "1e", "1e+", ".", "+", "-", "--1", "+-1", "1.2.3", "1 2", "1,5", "1.5f",
             // 全角の数字・空・空白だけ・数でない文字
             "１", "", " \n ", "N/A",
+            // 数字の後ろの NUL。`Float(String)` は NUL で読むのを止めて 3 を返す
+            "3\u{0}abc",
         ])
     func otherSpellingsAreNotNumbers(_ door: Door, _ text: String) {
         let read = Self.read(text, through: door)

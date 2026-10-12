@@ -9,4 +9,4 @@ SPDX-License-Identifier: MIT
 
 `setFloat` で NaN や無限を書いたセルは `"nan"`・`"inf"` になるので、`getFloat` で読み直すと NaN と知らせになります (無限は値が変わります)。
 
-移行: 16 進や `"inf"` の文字を数として読んでいた作品は、`getString` で文字を取り出し、自分で数にしてください (例: `Float(row.getString("level"))` は Swift の綴りをそのまま受けます。16 進だけなら `Int(text.dropFirst(2), radix: 16)`)。10 進の数だけを書いたファイルを読んでいる作品は、変更の必要がありません。
+移行: 10 進の数だけを書いたファイルを読んでいる作品は、変更の必要がありません。表のセルに 16 進や `"inf"` を書いて数として読んでいた作品は、`getString` で文字を取り出し、自分で数にしてください (例: `Float(row.getString("level").trimmingCharacters(in: .whitespaces))` は、これまでの `getFloat` と同じく Swift の綴りをそのまま受けます)。**JSON の文字の値と XML の属性には、文字のまま取り出す口がありません。** そこに 16 進や `"inf"` を書いていたなら、ファイルの側を 10 進の数 (JSON なら文字でなく数の値) に書き換えてください。
