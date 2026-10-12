@@ -14,15 +14,11 @@ jobs:
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 10
     steps:
-      - name: ジョブのユーザーと、画面の持ち主・切り替えの履歴を読む
+      - name: 起動時刻・OS の版・自動ログイン・更新履歴を読む
         run: |
-          mask() { sed "s#$HOME#~#g"; }
-          echo "== job user"; id -un; id -u
-          echo "== console owner"; stat -f'%Su %u' /dev/console
-          echo "== sessions (who / last)"; who; last -20 | mask
-          echo "== hardware displays (ioreg)"; ioreg -lw0 -r -c IOMobileFramebuffer 2>/dev/null | grep -i -E '"DisplayAttributes"|ProductName|external' | head -n 10 | cut -c1-300
-          ioreg -lw0 | grep -i -E 'IODisplayConnect|AppleCLCD|DCPAVServiceProxy' | head -n 10 | cut -c1-200
-          echo "== loginwindow / session switch log around the first failure (2026-10-12 12:00-14:00 JST)"
-          log show --style compact --start "2026-10-12 12:00:00" --end "2026-10-12 14:00:00" --predicate 'process == "loginwindow" AND (eventMessage CONTAINS[c] "switch" OR eventMessage CONTAINS[c] "console" OR eventMessage CONTAINS[c] "logout" OR eventMessage CONTAINS[c] "login")' 2>&1 | tail -n 40 | mask
-          echo "== display connect/disconnect log (2026-10-12 12:00-14:00 JST)"
-          log show --style compact --start "2026-10-12 12:00:00" --end "2026-10-12 14:00:00" --predicate 'eventMessage CONTAINS[c] "hotplug" OR eventMessage CONTAINS[c] "display connected" OR eventMessage CONTAINS[c] "display disconnected"' 2>&1 | tail -n 30 | mask
+          echo "== now"; date
+          echo "== boot"; sysctl -n kern.boottime; uptime
+          echo "== sw_vers"; sw_vers
+          echo "== autoLoginUser"; defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>&1
+          echo "== console owner / job user"; stat -f'%Su' /dev/console; id -un
+          echo "== softwareupdate --history (tail)"; softwareupdate --history 2>&1 | tail -n 6
