@@ -76,7 +76,10 @@ final class WatchSession {
         /// - Parameter running: 走っている `swift` を掴む先。**導き手と同じものを渡す** —
         ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
         static func live(resolver: BuildResolver, running: RunningBuild) -> Hooks {
-            Hooks(
+            // **世代の読み手は 1 つを持ち回る。** 属性の変わらないファイルを巡回のたびに
+            // 読み直さないための控えを持つ (資材の置き場の大きなファイル・#2312)
+            let stamps = SourceStamp.Reader()
+            return Hooks(
                 rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
                     // ここで待っても main actor は空く — ADR-0010 決定 4 の「明示的に分離
@@ -116,7 +119,7 @@ final class WatchSession {
                     return (try? process.run()) == nil ? nil : process
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
-                stamp: { SourceStamp.current(for: $0) },
+                stamp: { stamps.current(for: $0) },
                 stopRebuild: { running.stop() })
         }
     }

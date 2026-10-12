@@ -1147,14 +1147,125 @@ struct SourceStampTests {
     ///
     /// 断片は走らせたまま差し替わるので、作り直して起動し直すと差し替わる様子そのものが
     /// 見られなくなる — 保存のたびに窓が開き直り、絵は最初から始まる。
-    @Test("断片を保存しても、作り直しは起きない")
-    func savingAFragmentDoesNotTriggerARebuild() throws {
+    ///
+    /// **資材の置き場 (`assets/`) の下でも同じ** — 置き場の資材は数えるようになったが
+    /// (#2312)、断片は例外のまま。
+    @Test(
+        "断片を保存しても、作り直しは起きない",
+        arguments: ["Sources/app/paint.metal", "Sources/app/assets/paint.metal"])
+    func savingAFragmentDoesNotTriggerARebuild(fragment: String) throws {
         let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
         let first = SourceStamp.current(for: sketch)
-        try "float4 paint(Fragment in, Values values) { return in.color; }".write(
-            to: sketch.appendingPathComponent("Sources/app/paint.metal"), atomically: true,
-            encoding: .utf8)
+        try write(
+            "float4 paint(Fragment in, Values values) { return in.color; }", to: fragment,
+            in: sketch)
         #expect(SourceStamp.current(for: sketch) == first)
+    }
+
+    // MARK: - 資材の置き場 (#2312)
+
+    /// スケッチの中へ書く (置き場が無ければ作る)。
+    private func write(_ text: String, to relative: String, in sketch: URL) throws {
+        let url = sketch.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// **資材もビルドに入る** — `resources: [.copy("assets")]` で束へ写され、走っている
+    /// スケッチはその写しを読む。数えないと、資材だけを変えた保存では作り直さず、古い写しを
+    /// 読み続ける ([#2312](https://github.com/mokume-metal/mokume/issues/2312))。世代は中身から
+    /// 導くので、元に戻せば元の世代に戻る。
+    @Test("資材を書き換えれば世代が変わり、元に戻せば元の世代に戻る")
+    func followsTheAssets() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        let first = SourceStamp.current(for: sketch)
+
+        try write("two", to: "Sources/app/assets/v.txt", in: sketch)
+        #expect(SourceStamp.current(for: sketch) != first, "資材を書き換えても世代が変わらない")
+
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        #expect(SourceStamp.current(for: sketch) == first, "元に戻したのに別の世代を名乗る")
+    }
+
+    @Test("資材を足しても消しても、世代が変わる")
+    func followsAssetsComingAndGoing() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        let first = SourceStamp.current(for: sketch)
+
+        // 入れ子の置き場に足す (`.copy` は置き場を丸ごと写す)
+        try write("dot", to: "Sources/app/assets/images/dot.png", in: sketch)
+        let added = SourceStamp.current(for: sketch)
+        #expect(added != first, "資材を足しても世代が変わらない")
+
+        try FileManager.default.removeItem(
+            at: sketch.appendingPathComponent("Sources/app/assets/images/dot.png"))
+        #expect(SourceStamp.current(for: sketch) == first, "足したものを消しても元の世代に戻らない")
+
+        try FileManager.default.removeItem(
+            at: sketch.appendingPathComponent("Sources/app/assets/v.txt"))
+        #expect(SourceStamp.current(for: sketch) != first, "資材を消しても世代が変わらない")
+    }
+
+    /// 境目。数えるのは置き場 (`Sources/<target>/assets/`) の下だけで、隠しファイル
+    /// (`.DS_Store` など、ビルドに入れる意図の無いもの) は数えない。
+    @Test("置き場の外の書き置きと、置き場の隠しファイルは数えない")
+    func onlyVisibleFilesInTheAssetsDirectoryCount() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        let first = SourceStamp.current(for: sketch)
+
+        try write("hidden", to: "Sources/app/assets/.DS_Store", in: sketch)
+        try write("書き置き", to: "Sources/app/notes/assets.txt", in: sketch)
+        try write("書き置き", to: "assets/v.txt", in: sketch)
+        #expect(SourceStamp.current(for: sketch) == first)
+    }
+
+    /// **巡回は 0.25 秒ごとに来るので、資材を毎回は読まない** (#2312 の完了条件 3)。資材には
+    /// 動画やモデルのような大きなファイルが入りうる。読み直すのは属性 (大きさ・更新時刻・
+    /// ファイル番号) が前回から変わったファイルだけで、世代は中身から導いたまま。
+    @Test("属性の変わらないファイルは読み直さず、変わった 1 つだけを読み直す")
+    func unchangedFilesAreNotReadAgain() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        try write(String(repeating: "x", count: 1 << 20), to: "Sources/app/assets/big.bin", in: sketch)
+
+        var reads: [String] = []
+        let reader = SourceStamp.Reader(read: { url in
+            reads.append(url.lastPathComponent)
+            return try? Data(contentsOf: url)
+        })
+
+        let first = reader.current(for: sketch)
+        #expect(
+            Set(reads) == ["Package.swift", "main.swift", "v.txt", "big.bin"],
+            "初回に読むべきものを読んでいない: \(reads)")
+
+        reads.removeAll()
+        #expect(reader.current(for: sketch) == first)
+        #expect(reads.isEmpty, "属性の変わらないファイルを読み直した: \(reads)")
+
+        // 同じ大きさで書き換える。読み直すのはその 1 つだけ
+        try write("two", to: "Sources/app/assets/v.txt", in: sketch)
+        reads.removeAll()
+        let second = reader.current(for: sketch)
+        #expect(reads == ["v.txt"], "書き換えた 1 つ以外も読み直した: \(reads)")
+        #expect(second != first)
+
+        // 控えを持たない 1 回きりの読みと、同じ世代を名乗る (控えは読む量だけを変える)
+        #expect(second == SourceStamp.current(for: sketch))
+
+        // 元に戻せば、控えのある読み手でも元の世代に戻る
+        try write("one", to: "Sources/app/assets/v.txt", in: sketch)
+        #expect(reader.current(for: sketch) == first)
     }
 }
 
