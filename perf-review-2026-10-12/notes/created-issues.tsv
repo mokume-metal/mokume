@@ -1,0 +1,27 @@
+t01	2364	perf(drawing): 列ごとに状態を全部設定し直し、使わない値まで書くので、列が多い絵で固定費が積み上がる
+t02	2365	perf(shader): 冷えた初回起動・シェーダの保存・効果の初回に、main でシェーダとパイプラインを同期に組んで窓が止まる
+t03	2366	perf(solid): 不透明な立体もブレンド有効のパイプラインで描き、TBDR の隠面除去が効かない
+t04	2367	perf(display): noLoop()・pause の間も、毎リフレッシュ写しのパスと present を出し続ける
+t05	2368	perf(display): 予備の駆動タイマーが tolerance なしで常に回り、共有面の受け手が毎リフレッシュ IOSurface を引き直す
+t06	2369	perf(pixels): pixels[x, y] が 1 画素ごとに閉包を作り、GPU の決着と書き込みの許可を判定する
+t07	2370	perf(shape): 三角形分割の穴のつなぎ (mergeHoles) が穴の数の 2 乗より速く増え、穴 900 で 218 ms かかる
+t08	2371	perf(effects): 組み込み効果が全種入りの 1 本のシェーダで、画素ごとの効果を融合せず、ぼかしは定数の重みを毎画素 exp で求める
+t09	2372	perf(output): 録画の符号化が .utility で走り main が DispatchSemaphore で待つ (優先度の逆転)。読み戻しが毎フレーム 0 埋めで確保する
+t10	2373	perf(compute): read(numbers) が、計算の投入 1 本ではなく投入済みの全仕事を 2 回待つ
+t11	2374	perf(graphics): createGraphics が作りたての透明な面をもう一度塗り、GPU の全完了を待つ
+t12	2375	perf(particles): 生存の scan が 1 スレッドで 256 個を順に読み、flag の専用パスと 128 B のインスタンスを毎フレーム払う
+t13	2376	perf(drawing): #1779 の後に入った線の経路に、要素ごとの実行時隔離検査と点ごとの配列の確保が戻っている
+t14	2377	perf(color): color() の sRGB から線形への変換が、整数の入力でも毎回 pow を 3 回呼ぶ
+t15	2378	perf(observation): 予算内の退行を測る仕組みが無い (GPU 時間を集めず、signpost が無く、probe は debug で走る)
+t16	2379	perf(audio): 鳴っている合成音ごとに、読まれない解析のために毎フレーム FFT の setup を作り直す
+t17	2380	perf(solid): GPU で広げる立体の線の頂点シェーダが、同じ角の形を 6 頂点それぞれで解き直す
+t18	2381	perf(observation): 観測の撮影で、PNG の符号化・書き込み・統計を main で同期に行いフレームが止まる
+t19	2382	perf(param): @Param を毎フレーム書くスケッチで、つまみの報告を毎フレーム JSON で書き直す
+t20	2383	perf(input): 入力管が行ごとに残りを写し (O(n²))・decoder を作り直し、外部の受け口の drain が毎フレーム容量を捨てる
+t21	2384	perf(shape): 扇形が毎画素 cos/sin を 4 回求め、インスタンスごとに一定の値を画素ごとに計算する
+d01	2385	design(solid): 塗りと線を持つ立体を並べると図形ごとに列が 2 本に割れる (ADR-0021 決定 2 の代償) をどこまで減らすか
+d02	2386	design(solid): 寸法を置き場所へ移す #1862 の考え方を、球以外の組み込みの立体へ広げるか
+d03	2387	design(rendering): 置き場 3 本と投入ごとの waitForEvent で、投入の多いフレームの CPU と GPU が直列になる
+d04	2388	design(effects): 効果のフレームの全画面の写し 2 回 (#1469 案 A の代償) を、出す面を分けて消すか
+d05	2389	design(concurrency): 値だけを扱う数と色の関数 (map・lerp・color・noise) を nonisolated にし、並列に回せるようにするか
+d06	2390	design(clock): フレームの時刻を、コールバックの時点ではなく display link の表示予定時刻で取るか
