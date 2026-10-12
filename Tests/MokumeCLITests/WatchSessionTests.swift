@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CryptoKit
 import Foundation
 import Testing
 import mokume
@@ -1228,6 +1229,17 @@ struct SourceStampTests {
         #expect(SourceStamp.current(for: sketch) == first)
     }
 
+    /// 更新時刻を 1 時間前へ戻す。**保存してから時間の経ったファイル**の形にする — 読んだ時刻に
+    /// 近い更新時刻の控えは信じない (``SourceStamp/Reader/racyWindow``) ので、書いた直後の
+    /// ファイルは毎回読み直される。
+    private func settle(_ relatives: [String], in sketch: URL) throws {
+        for relative in relatives {
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date(timeIntervalSinceNow: -3600)],
+                ofItemAtPath: sketch.appendingPathComponent(relative).path)
+        }
+    }
+
     /// **巡回は 0.25 秒ごとに来るので、資材を毎回は読まない** (#2312 の完了条件 3)。資材には
     /// 動画やモデルのような大きなファイルが入りうる。読み直すのは属性 (大きさ・更新時刻・
     /// ファイル番号) が前回から変わったファイルだけで、世代は中身から導いたまま。
@@ -1237,11 +1249,14 @@ struct SourceStampTests {
         defer { try? FileManager.default.removeItem(at: sketch) }
         try write("one", to: "Sources/app/assets/v.txt", in: sketch)
         try write(String(repeating: "x", count: 1 << 20), to: "Sources/app/assets/big.bin", in: sketch)
+        try settle(
+            ["Package.swift", "Sources/app/main.swift", "Sources/app/assets/v.txt",
+             "Sources/app/assets/big.bin"], in: sketch)
 
         var reads: [String] = []
-        let reader = SourceStamp.Reader(read: { url in
+        let reader = SourceStamp.Reader(summarize: { url in
             reads.append(url.lastPathComponent)
-            return try? Data(contentsOf: url)
+            return SourceStamp.Reader.digest(of: url)
         })
 
         let first = reader.current(for: sketch)
@@ -1266,6 +1281,57 @@ struct SourceStampTests {
         // 元に戻せば、控えのある読み手でも元の世代に戻る
         try write("one", to: "Sources/app/assets/v.txt", in: sketch)
         #expect(reader.current(for: sketch) == first)
+    }
+
+    /// **属性が揃ったままの書き換えも拾う** (反証の指摘)。更新時刻の刻みが粗いボリューム
+    /// (HFS+ は 1 秒・FAT は 2 秒) では、読んだのと同じ刻みの中で、同じ大きさのまま
+    /// ファイル番号を保つ書き方で上書きされると、属性が前回と揃う。控えが無かった頃は毎回
+    /// 中身を読んでいたので拾えていた。ここでは、更新時刻を書き換えの前と同じ値へ戻して
+    /// その状況を作る。
+    @Test("読んだ時刻に近い更新時刻の控えは信じず、属性の揃った書き換えも拾う")
+    func aFreshFileIsReadAgainEvenWithTheSameAttributes() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try write("10", to: "Sources/app/assets/v.txt", in: sketch)
+        try settle(["Package.swift", "Sources/app/main.swift"], in: sketch)
+        let v = sketch.appendingPathComponent("Sources/app/assets/v.txt")
+        // 読んだのと同じ刻みに落ちる更新時刻
+        let tick = Date()
+        try FileManager.default.setAttributes([.modificationDate: tick], ofItemAtPath: v.path)
+
+        let reader = SourceStamp.Reader()
+        let first = reader.current(for: sketch)
+
+        // 同じ大きさで、ファイル番号を保ったまま上書きし、更新時刻も同じ刻みへ戻す
+        let handle = try FileHandle(forWritingTo: v)
+        try handle.write(contentsOf: Data("20".utf8))
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: tick], ofItemAtPath: v.path)
+
+        let second = reader.current(for: sketch)
+        #expect(second != first, "属性の揃った書き換えを、控えのせいで取りこぼした")
+        #expect(second == SourceStamp.current(for: sketch))
+    }
+
+    /// 大きな資材を丸ごと記憶へ載せないために、要約は少しずつ読む。**少しずつ読んでも、
+    /// 中身そのものの要約と同じ**でなければ、世代が中身から導かれていることにならない。
+    @Test("要約は少しずつ読んでも、中身を丸ごと要約したものと同じ")
+    func theStreamedDigestMatchesTheWholeContents() throws {
+        let sketch = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        // 読む単位 (1 MiB) を 2 度越えて、端数が残る大きさ
+        let large = Data((0..<((5 << 20) / 2 + 7)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        let url = sketch.appendingPathComponent("Sources/app/assets/large.bin")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try large.write(to: url)
+        #expect(SourceStamp.Reader.digest(of: url) == Data(SHA256.hash(data: large)))
+
+        let empty = sketch.appendingPathComponent("Sources/app/assets/empty.bin")
+        try Data().write(to: empty)
+        #expect(SourceStamp.Reader.digest(of: empty) == Data(SHA256.hash(data: Data())))
+
+        #expect(SourceStamp.Reader.digest(of: sketch.appendingPathComponent("missing.bin")) == nil)
     }
 }
 
