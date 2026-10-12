@@ -128,6 +128,74 @@ struct BundleCommandTests {
         #expect(!FileManager.default.fileExists(atPath: stale.path))
     }
 
+    // MARK: - 消すのは --out の直下の自分の .app だけ (#2309)
+
+    /// **名前の検めとは別の守り。** 消してよいのは `--out` の直下にある、前の版の自分の
+    /// `.app` だけである。名乗りを通らずに組んだ `AppIdentity` (`/` を含む名前) を渡しても、
+    /// `--out` の外も中も消さずに投げる ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    ///
+    /// `..` は在るディレクトリを経てしか解けないので、`--out` を先に作っておく (本文の再現の
+    /// 「2 回目は bundle/ が在るので .. が解ける」と同じ状況)。
+    @Test(
+        "作る .app が --out の直下でなければ、何も消さずに投げる",
+        arguments: ["../victim", "AC/DC", "sub/../victim"])
+    func anAppOutsideTheOutputIsNeverRemoved(name: String) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        // `sub/../victim` が `--out` の直下の victim.app を指すように、sub も置く
+        try FileManager.default.createDirectory(
+            at: out.appendingPathComponent("sub", isDirectory: true),
+            withIntermediateDirectories: true)
+        // 消されてはならないもの: --out の外 (隣) と、--out の直下の別の .app
+        var kept: [URL] = []
+        for victim in [root.appendingPathComponent("victim.app"), out.appendingPathComponent("victim.app")] {
+            try FileManager.default.createDirectory(at: victim, withIntermediateDirectories: true)
+            let keep = victim.appendingPathComponent("keep.txt")
+            try "keep".write(to: keep, atomically: true, encoding: .utf8)
+            kept.append(keep)
+        }
+        let before = try FileManager.default.contentsOfDirectory(atPath: out.path).sorted()
+
+        let unchecked = AppIdentity(name: name, identifier: "org.example.bund", version: "0.1.0")
+        // 2 回打っても同じ (本文の再現は 2 回目で消えた)
+        for _ in 0..<2 {
+            #expect(throws: CommandFailure.self, "\(name) で投げなかった") {
+                try BundleCommand.assemble(
+                    executable: executable, identity: unchecked, minimumSystemVersion: "26.0",
+                    into: out)
+            }
+        }
+        for keep in kept {
+            #expect(FileManager.default.fileExists(atPath: keep.path), "\(name) で \(keep.path) が消えた")
+        }
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: out.path).sorted() == before,
+            "\(name) で --out の下に何かを作った")
+        #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("AC").path))
+    }
+
+    /// 裏側。**ファイル名にできる名前は、いままでどおり `--out` の直下に包みと紙ができる。**
+    @Test("/ の無い名前は、--out の直下に包みと開き方の紙ができる", arguments: ["Bund", "My Sketch", "木目"])
+    func aPlainNameLandsDirectlyInTheOutput(name: String) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let named = AppIdentity(name: name, identifier: "org.example.bund", version: "0.1.0")
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out)
+        let note = try BundleCommand.writeOpeningNote(for: named, beside: app)
+
+        #expect(app.standardizedFileURL == out.appendingPathComponent("\(name).app").standardizedFileURL)
+        #expect(note.standardizedFileURL == out.appendingPathComponent("How to open \(name).txt").standardizedFileURL)
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: out.path).sorted()
+                == ["How to open \(name).txt", "\(name).app"].sorted())
+    }
+
     @Test("宣言された包みが入っていなければ止まる")
     func aMissingDeclaredBundleStops() throws {
         let root = try makeWorkspace()
@@ -384,6 +452,39 @@ struct BundleCommandTests {
                 files: ["Sources/mirror/Mirror.swift"])
         ) {
             try BundleCommand.run([root.path])
+        }
+    }
+
+    /// **name に `/` があれば、組み立ての前に止まる** ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    /// 中身の無い `Package.swift` なので、名乗りの段を越えていれば `dump-package` で別の失敗
+    /// (`noExecutable`) になる。`../victim` は 2 回打っても、隣の `victim.app` を消さない。
+    @Test("name に / があれば、ビルドへ進まずに止まり、bundle/ の下にも隣にも触れない")
+    func bundlingStopsBeforeBuildingWithASlashInTheName() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// 中身の無い宣言\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let identityFile = root.appendingPathComponent(AppIdentity.fileName)
+        let victim = root.appendingPathComponent("victim.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: victim, withIntermediateDirectories: true)
+        let keep = victim.appendingPathComponent("keep.txt")
+        try "keep".write(to: keep, atomically: true, encoding: .utf8)
+
+        for name in ["AC/DC", "../victim"] {
+            try #"{"name": "\#(name)", "identifier": "org.example.bund", "version": "0.1.0"}"#
+                .write(to: identityFile, atomically: true, encoding: .utf8)
+            for _ in 0..<2 {
+                #expect(
+                    throws: CommandFailure.identityNameUnusable(path: identityFile.path, name: name)
+                ) {
+                    try BundleCommand.run([root.path])
+                }
+            }
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: root.appendingPathComponent(BundleCommand.defaultOutputDirectory).path),
+                "\(name) で bundle/ を作った")
+            #expect(FileManager.default.fileExists(atPath: keep.path), "\(name) で隣の victim.app を消した")
         }
     }
 
