@@ -19,6 +19,12 @@ nonisolated enum CommandFailure: Error, Equatable {
     case templatesMissing
     case templateUnreadable(name: String)
     case packageNotFound(path: String)
+    /// 渡された場所 (または作業ディレクトリ) が、ディレクトリとして在らない。
+    ///
+    /// **``packageNotFound(path:)`` と分ける。** そちらは `Package.swift` を求める口の失敗で、
+    /// 窓口 (`mcp`) は `Package.swift` の無い場所でも起こされうる
+    /// ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
+    case directoryNotFound(path: String)
     case buildFailed(status: Int32)
     /// 走らせたスケッチが 0 以外で終わった。**道具の失敗ではない。**
     case sketchExited(status: Int32)
@@ -119,6 +125,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
             Cannot find a sketch here: \(path)
             Point at a directory that has Package.swift (\(Command.name) new <name> makes one)
+            """
+        case .directoryNotFound(let path):
+            """
+            No such directory: \(path)
+            Pass a directory that exists, or leave it out to use the current one
             """
         case .resourcesNotDeclared(let directory):
             """

@@ -585,36 +585,144 @@ struct MCPServerTests {
 
     // ---------------------------------------------------------- 基準ディレクトリ
 
+    /// **場所は在るものを渡す** — 窓口は在らない場所を断る (#2321)。区画の基準
+    /// (`elsewhere`) は在らなくてよい: スケッチが書くときに作る。
     @Test("区画は環境変数が決め、パッケージの場所は引数が決める")
-    func splitsTheFacetBaseFromThePackageDirectory() {
-        let cwd = URL(fileURLWithPath: "/cwd", isDirectory: true)
-        let sketch = "/sketch"
+    func splitsTheFacetBaseFromThePackageDirectory() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cwd = root.appendingPathComponent("cwd", isDirectory: true)
+        let sketch = root.appendingPathComponent("sketch", isDirectory: true).path
+        for place in [cwd.path, sketch] {
+            try FileManager.default.createDirectory(
+                atPath: place, withIntermediateDirectories: true)
+        }
         let elsewhere = "/elsewhere"
 
         // 区画はスケッチが書く場所。スケッチは環境変数に従うので、引数より強い
-        let both = MCPCommand.directories(
+        let both = try MCPCommand.directories(
             arguments: [sketch], environment: ["MOKUME_WORK_DIR": elsewhere],
             currentDirectory: cwd)
         #expect(both.package.path == sketch)
         #expect(both.facets.path == elsewhere)
 
         // 環境変数が無ければ、渡された場所が両方を兼ねる (いままでどおり)
-        let given = MCPCommand.directories(
+        let given = try MCPCommand.directories(
             arguments: [sketch], environment: [:], currentDirectory: cwd)
         #expect(given.package.path == sketch)
         #expect(given.facets.path == sketch)
 
         // 引数も無ければ作業ディレクトリ
-        let neither = MCPCommand.directories(
+        let neither = try MCPCommand.directories(
             arguments: [], environment: [:], currentDirectory: cwd)
         #expect(neither.package.path == cwd.path)
         #expect(neither.facets.path == cwd.path)
 
         // 環境変数はパッケージの場所を動かさない (Package.swift も .build/ もそこにある)
-        let environmentOnly = MCPCommand.directories(
+        let environmentOnly = try MCPCommand.directories(
             arguments: [], environment: ["MOKUME_WORK_DIR": elsewhere], currentDirectory: cwd)
         #expect(environmentOnly.package.path == cwd.path)
         #expect(environmentOnly.facets.path == elsewhere)
+    }
+
+    // ---------------------------------------------------------- 引数の解き方 (#2321)
+
+    /// **引数を取る口は、共有の解き手を通す** (`Arguments.parse`・#680・#814)。窓口だけが
+    /// 最初の引数をそのまま場所にしていて、`mcp --help` は `--help` という場所の窓口として
+    /// 標準入力を待っていた ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
+    /// 断る文面は `run --help` と同じ形 (`Unknown option: …` と使い方)。
+    @Test("知らない選択肢は、使い方を出して止まる", arguments: ["--help", "-h", "--version", "-c"])
+    func anUnknownOptionIsRefused(option: String) throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let thrown = #expect(throws: CommandFailure.self) {
+            try MCPCommand.directories(arguments: [option], environment: [:], currentDirectory: root)
+        }
+        guard case .usage(let text) = thrown else {
+            Issue.record("使い方の誤りとして止まっていない: \(String(describing: thrown))")
+            return
+        }
+        #expect(text.hasPrefix("Unknown option: \(option)\n"), "知らない選択肢を名指していない: \(text)")
+        #expect(text.contains("Usage: "), "使い方を出していない: \(text)")
+    }
+
+    /// 位置引数は 1 つまで。`bundle` / `run` と同じ文面で、2 つ目を名指す。
+    @Test("場所は 1 つだけ受け、2 つ目を名指して止まる")
+    func onlyOneDirectoryIsTaken() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(throws: CommandFailure.usage("Only one directory: b")) {
+            try MCPCommand.directories(
+                arguments: [root.path, "b"], environment: [:], currentDirectory: root)
+        }
+        // 1 つ目が在らなくても、余りを先に言う (本文の `mcp /nonexistent a b`)
+        #expect(throws: CommandFailure.usage("Only one directory: a")) {
+            try MCPCommand.directories(
+                arguments: ["/nonexistent-\(UUID().uuidString)", "a", "b"], environment: [:],
+                currentDirectory: root)
+        }
+    }
+
+    /// **繋ぐ前に言う。** 繋がってから `observe` などが「答えが無い」と言うのでは、原因が
+    /// 場所にあると気付けない。ファイルを指したときも、ディレクトリとしては在らない。
+    @Test("在らない場所は、その道を名乗って止まる")
+    func aMissingPlaceIsRefused() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missing = root.appendingPathComponent("nonexistent", isDirectory: true)
+        let file = root.appendingPathComponent("notes.txt")
+        try "not a directory".write(to: file, atomically: true, encoding: .utf8)
+
+        for place in [missing.path, file.path] {
+            let thrown = #expect(throws: CommandFailure.self) {
+                try MCPCommand.directories(
+                    arguments: [place], environment: [:], currentDirectory: root)
+            }
+            #expect(thrown == .directoryNotFound(path: place))
+            #expect(thrown?.message.contains(place) == true, "在らない場所の道を名乗っていない")
+        }
+        // 作業ディレクトリが消えていれば、それも同じく言う
+        #expect(throws: CommandFailure.directoryNotFound(path: missing.path)) {
+            try MCPCommand.directories(arguments: [], environment: [:], currentDirectory: missing)
+        }
+    }
+
+    /// **`Package.swift` は求めない。** `claude mcp add mokume -- mokume mcp` は打った場所で
+    /// 起こすので、スケッチでない場所で起こされうる (README)。求める方向へ広げると、その
+    /// 起こし方を壊す。
+    @Test("在る場所なら、Package.swift が無くても受ける")
+    func anExistingPlaceWithoutAPackageIsTaken() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("Package.swift").path))
+        let given = try MCPCommand.directories(
+            arguments: [root.path], environment: [:], currentDirectory: root)
+        #expect(given.package.path == root.path)
+        let typedHere = try MCPCommand.directories(
+            arguments: [], environment: [:], currentDirectory: root)
+        #expect(typedHere.package.path == root.path)
+    }
+
+    /// **口そのものが、窓口を回す (標準入力を読む) 前に止まる。** 回す手続きを差し替えて、
+    /// 回されたかを見る — 本物を回すと、検査が標準入力を待って固まる。
+    @Test("引数の誤りでは、口は窓口を回さずに止まる")
+    func theDoorStopsBeforeServing() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrong = [
+            ["--help"], [root.path, "b"], [root.appendingPathComponent("nonexistent").path],
+        ]
+        for arguments in wrong {
+            var served = false
+            #expect(throws: CommandFailure.self, "\(arguments) で止まらなかった") {
+                try MCPCommand.run(arguments) { _ in served = true }
+            }
+            #expect(!served, "\(arguments) で窓口を回した")
+        }
+        // 裏側: 在る場所なら回す
+        var served = false
+        try MCPCommand.run([root.path]) { _ in served = true }
+        #expect(served)
     }
 
     @Test("区画が別の場所でも、区画は区画から・仕様はパッケージの場所から読む")
