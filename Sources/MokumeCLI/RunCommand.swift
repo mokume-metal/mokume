@@ -336,13 +336,31 @@ enum RunCommand {
     )
         throws(CommandFailure) -> URL
     {
+        let asked = ["build", "--show-bin-path"] + context.arguments
         // **愚痴を混ぜない。** 出力はファイルパスとして解くので、警告 1 行で別の
         // 場所を指すことになる (#731)
-        let output = try swift(
-            ["build", "--show-bin-path"] + context.arguments, in: directory, capturing: true,
-            errors: .inherit, running: running
-        ).output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !output.isEmpty else { throw .noExecutable(path: directory.path) }
+        let answer = try swift(
+            asked, in: directory, capturing: true, errors: .inherit, running: running)
+        return try binPath(from: answer, asking: asked)
+    }
+
+    /// `--show-bin-path` の答えを読む。**検査から偽の子の答えを渡せる形にしてある** —
+    /// 聞く側は `/usr/bin/env swift` を書き固めている (#731)。
+    ///
+    /// **終了コードを見る。** 0 で終わって道を答えたときだけ読み、それ以外は道具立てが
+    /// 答えなかったと名乗る。空の出力だけを見て ``CommandFailure/noExecutable(path:)`` と
+    /// 読んでいた頃は、道具立てが引数を断った回を「Package.swift に実行ファイルが無い」と
+    /// 言っていた ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    ///
+    /// - Parameter arguments: 聞いたときに `swift` へ渡したもの。答えなかったときに名乗る。
+    nonisolated static func binPath(
+        from answer: (status: Int32, output: String), asking arguments: [String]
+    ) throws(CommandFailure) -> URL {
+        let output = answer.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard answer.status == 0, !output.isEmpty else {
+            throw .toolchainFailed(
+                command: (["swift"] + arguments).joined(separator: " "), status: answer.status)
+        }
         return URL(fileURLWithPath: output, isDirectory: true)
     }
 

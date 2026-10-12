@@ -45,6 +45,19 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 起動することになる ([#1055](https://github.com/mokume-metal/mokume/issues/1055))。
     case productNotBuilt(product: String, path: String)
     case toolchainMissing(String)
+    /// 答えを読むために道具立てへ聞いたが、道具立てが答えなかった (0 以外で終わった・
+    /// 何も答えなかった)。`command` は打ったもの。
+    ///
+    /// **宣言 (`Package.swift`) の不備として名乗らない。** `--show-bin-path` の空の答えを
+    /// ``noExecutable(path:)`` と読んでいた頃は、道具立てが `-c Release` を断った回に
+    /// 「Package.swift に実行ファイルが無い」と言っていた
+    /// ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。原因が道具立てなのに
+    /// 宣言を疑わせる形は、`env` の 127 で塞いだ #1157 と同じである。
+    ///
+    /// **理由は道具立てが標準エラーで名乗っている** (聞く側は愚痴を混ぜずに流す — #731)。
+    /// 「上を読め」とは言わない: 見張りはこの文面を記録 (`BuildReport.output`) に載せ、窓口の
+    /// 読み手には端末の「上」が無い。打ったものを名乗るので、打ち直せば同じ理由が読める。
+    case toolchainFailed(command: String, status: Int32)
     /// 作り直しを途中で止めると決めた後に、次の `swift` を起こそうとした。
     ///
     /// **人へ届く失敗ではない。** 止めるのは見張りが終わるときだけで、この失敗を受ける
@@ -236,6 +249,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
         case .toolchainMissing(let tool):
             "Cannot find \(tool). Install the Xcode command line tools"
+        case .toolchainFailed(let command, let status):
+            """
+            The toolchain did not answer (exit code \(status)): \(command)
+            It said why on standard error; run that command in the sketch's directory to see it again
+            """
         }
     }
 }
