@@ -82,17 +82,19 @@ nonisolated enum XMLFile {
             guard hasCarriageReturn || encoding != nil else { return Data(buffer: bytes) }
 
             var document = Data(capacity: bytes.count)
-            let replacingAt = encoding?.lowerBound ?? -1
+            // まだ書き換えていない `encoding` の値。書き換えたら `nil` にして、一度きりにする
+            var pending = encoding
             // `copied` から `index` の手前までは、まだ写していない元のバイト
             var copied = 0
             var index = 0
             func flush() { document.append(UnsafeBufferPointer(rebasing: bytes[copied..<index])) }
             while index < bytes.count {
-                if index == replacingAt, let encoding {
+                if let value = pending, index == value.lowerBound {
                     flush()
                     document.append(contentsOf: "UTF-8".utf8)
-                    index = encoding.upperBound
+                    index = value.upperBound
                     copied = index
+                    pending = nil
                 } else if bytes[index] == 0x0D {
                     flush()
                     document.append(0x0A)
