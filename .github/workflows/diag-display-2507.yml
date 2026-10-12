@@ -14,18 +14,15 @@ jobs:
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 10
     steps:
-      - name: 画面を読み、起こし、読み直す
+      - name: ジョブのユーザーと、画面の持ち主・切り替えの履歴を読む
         run: |
-          screens() { osascript -l JavaScript -e 'ObjC.import("AppKit"); var s=$.NSScreen.screens; var a=[]; for (var i=0;i<s.count;i++){var f=s.objectAtIndex(i).frame; a.push(f.size.width+"x"+f.size.height)}; s.count+" "+a.join(",")' 2>&1; }
           mask() { sed "s#$HOME#~#g"; }
-          echo "== date"; date -u
-          echo "== console user / session"; stat -f%Su /dev/console; who | mask
-          echo "== pmset -g"; pmset -g | mask
-          echo "== pmset -g assertions (display)"; pmset -g assertions | grep -i -E "display|PreventUserIdle" | mask
-          echo "== display on/off log (tail)"; pmset -g log | grep -i -E "Display is turned|Wake from|Sleep  " | tail -n 30 | mask
-          echo "== system_profiler displays"; system_profiler SPDisplaysDataType | mask
-          echo "== NSScreen before"; screens
-          echo "== caffeinate -u (user activity, 5s)"; caffeinate -u -t 5
-          sleep 3
-          echo "== NSScreen after"; screens
-          echo "== system_profiler displays after"; system_profiler SPDisplaysDataType | mask
+          echo "== job user"; id -un; id -u
+          echo "== console owner"; stat -f'%Su %u' /dev/console
+          echo "== sessions (who / last)"; who; last -20 | mask
+          echo "== hardware displays (ioreg)"; ioreg -lw0 -r -c IOMobileFramebuffer 2>/dev/null | grep -i -E '"DisplayAttributes"|ProductName|external' | head -n 10 | cut -c1-300
+          ioreg -lw0 | grep -i -E 'IODisplayConnect|AppleCLCD|DCPAVServiceProxy' | head -n 10 | cut -c1-200
+          echo "== loginwindow / session switch log around the first failure (2026-10-12 12:00-14:00 JST)"
+          log show --style compact --start "2026-10-12 12:00:00" --end "2026-10-12 14:00:00" --predicate 'process == "loginwindow" AND (eventMessage CONTAINS[c] "switch" OR eventMessage CONTAINS[c] "console" OR eventMessage CONTAINS[c] "logout" OR eventMessage CONTAINS[c] "login")' 2>&1 | tail -n 40 | mask
+          echo "== display connect/disconnect log (2026-10-12 12:00-14:00 JST)"
+          log show --style compact --start "2026-10-12 12:00:00" --end "2026-10-12 14:00:00" --predicate 'eventMessage CONTAINS[c] "hotplug" OR eventMessage CONTAINS[c] "display connected" OR eventMessage CONTAINS[c] "display disconnected"' 2>&1 | tail -n 30 | mask
