@@ -78,9 +78,17 @@ struct AppIdentityTests {
     /// なる。** `/` があると `--out` の下に余計なディレクトリを作って途中で止まり、`..` と組むと
     /// `--out` の外の `.app` を消していた ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
     /// 組み立ての前 (名乗りを読む段) に、使えないものを名指して断る (メンテナの決定: 案 B)。
+    ///
+    /// **`/` が前後の文字と 1 つの書記素にまとまっても見落とさない** (反証の指摘)。ファイル
+    /// システムは `/` の 1 バイトで区切るので、結合文字 (U+0301) が後ろに付いた `/` や、
+    /// Prepend 文字 (U+0600) が前に付いた `/` も区切りになる。ファイル名に置けないもう 1 つの
+    /// NUL も同じ段で断る — 通すと、組み立ての後で `assemble` の守りに落ちる。
     @Test(
-        "name に / があれば、使えないものを名指して止まる",
-        arguments: ["AC/DC", "../victim", "/", "Bund/", "a/../b"])
+        "name に / (と NUL) があれば、使えないものを名指して止まる",
+        arguments: [
+            "AC/DC", "../victim", "/", "Bund/", "a/../b", "a/\u{301}b", "../\u{301}victim",
+            "\u{600}/x", "x\u{0}y",
+        ])
     func aNameWithASlashIsRefused(name: String) {
         let path = "/demo/mokume-app.json"
         let thrown = #expect(throws: CommandFailure.self) {

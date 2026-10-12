@@ -60,7 +60,7 @@ nonisolated enum CommandFailure: Error, Equatable {
     case identityUnreadable(path: String)
     /// 名乗りに、名乗れる中身が揃っていない。
     case identityIncomplete(path: String, missing: [String])
-    /// 名乗りの `name` に、ファイル名にできないもの (`/`) がある。
+    /// 名乗りの `name` に、ファイル名にできないもの (`/`・NUL) がある。
     ///
     /// **組み立ての前に断る** ([#2309](https://github.com/mokume-metal/mokume/issues/2309)・
     /// メンテナの決定 = 案 B)。`name` は表示名であり、包みのファイル名 (`<name>.app`) と開き方の
@@ -165,7 +165,7 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
         case .identityNameUnusable(let path, let name):
             """
-            The name in the identity cannot contain "/": \(name)
+            The name in the identity cannot contain "/" (or a NUL character): \(name)
             In: \(path)
             The name is also the file name of the bundle (<name>.app) and of the note beside it,
             and "/" would put them in another folder. Pick a name without "/".

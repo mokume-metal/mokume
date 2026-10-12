@@ -98,7 +98,12 @@ nonisolated struct AppIdentity: Equatable {
         // **名前はファイル名にもなる** (`<name>.app` と開き方の紙)。`/` は場所を動かすので、
         // 組み立ての前に断る (#2309・メンテナの決定 = 案 B)。`Info.plist` と紙の本文では表示名
         // として正しいが、そこだけ通す形は採らなかった
-        guard !name.contains("/") else {
+        //
+        // **文字 (書記素) ではなく Unicode scalar で見る。** ファイルシステムは `/` の 1 バイトで
+        // 区切るが、`Character` で比べると `/` の直後の結合文字 (`a/\u{301}b`) や直前の
+        // Prepend 文字と 1 つの文字にまとまって見落とし、組み立ての後で `assemble` の守りに
+        // 落ちる。ファイル名に置けないもう 1 つ (NUL) も同じ段で断る (反証の指摘)
+        guard !name.unicodeScalars.contains(where: { $0 == "/" || $0 == "\0" }) else {
             throw .identityNameUnusable(path: path, name: name)
         }
         return AppIdentity(
