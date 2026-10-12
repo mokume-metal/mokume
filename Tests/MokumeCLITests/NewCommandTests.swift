@@ -81,6 +81,50 @@ struct NewCommandTests {
         #expect(manifest.contains("package: \"\(identity)\""))
     }
 
+    /// **SwiftPM はパッケージの場所を実体 (symlink を解いた作業ディレクトリ) で持ち、
+    /// `.package(path:)` をそこから解く** (#2323 の反証)。字面のまま `..` を畳むと、
+    /// symlink を通って作ったスケッチでは別のディレクトリの名前になる —
+    /// `work/link -> ../real/lib` で `new foo --path link --local ..` と打つと、字面では
+    /// `link`、SwiftPM は `lib` を要る。
+    @Test("symlink を通って作るスケッチでも、依存の名前は実体の場所から解く")
+    func namesAPathDependencyFromWhereTheSketchReallyIs() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-new-link-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appendingPathComponent("real/lib", isDirectory: true)
+        let work = root.appendingPathComponent("work", isDirectory: true)
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: work.appendingPathComponent("link").path, withDestinationPath: "../real/lib")
+
+        let options = NewCommand.Options(name: "foo", path: "link", local: "..")
+        let sketch = options.root(from: work)
+        #expect(NewCommand.packageIdentity(local: "..", sketch: sketch) == "lib")
+        // 在る場所が symlink を含まなければ、いままでどおり字面と同じ
+        #expect(
+            NewCommand.packageIdentity(
+                local: "..", sketch: real.appendingPathComponent("foo", isDirectory: true))
+                == "lib")
+    }
+
+    /// SwiftPM はパスから名前を導くとき、末尾の `.git` を落とす (#2323 の反証)。
+    @Test("依存の場所の末尾が .git なら、名前から落とす")
+    func dropsTheGitSuffixFromThePackageName() throws {
+        let sketch = URL(fileURLWithPath: "/w/plain/foo", isDirectory: true)
+        #expect(NewCommand.packageIdentity(local: "../Mok.git", sketch: sketch) == "mok")
+        #expect(NewCommand.packageIdentity(local: "/a/b/mokume.git", sketch: sketch) == "mokume")
+        // `.git` で終わらなければ触らない
+        #expect(NewCommand.packageIdentity(local: "../mokume.github", sketch: sketch) == "mokume.github")
+        let manifest = try #require(
+            try NewCommand.files(
+                for: .init(name: "foo", local: "../Mok.git"),
+                base: URL(fileURLWithPath: "/w/plain", isDirectory: true)
+            ).first { $0.0 == "Package.swift" }?.1)
+        #expect(manifest.contains(#".package(path: "../Mok.git")"#))
+        #expect(manifest.contains(#"package: "mok""#))
+    }
+
     /// SwiftPM は `~/` で始まる path の依存だけを home から解く。名前も同じ規則で解く。
     @Test("~/ で始まる依存の名前は、home から解く")
     func namesAHomeRelativeDependencyFromHome() {

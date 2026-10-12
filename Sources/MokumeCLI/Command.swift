@@ -107,7 +107,10 @@ enum Command {
             case .bundle:
                 (
                     "bundle [<directory>] [--out <directory>]",
-                    "Package the sketch to run on another machine (its identity goes in \(AppIdentity.fileName))"
+                    """
+                    Package the sketch to run on another machine (its identity goes in \(AppIdentity.fileName)).
+                    Relative paths start from where you run this, --out included
+                    """
                 )
             case .doctor:
                 (
