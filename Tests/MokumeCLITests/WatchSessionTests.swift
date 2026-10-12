@@ -314,13 +314,20 @@ struct WatchSessionTests {
     /// 上の検査は替え玉が投げる形なので、`live` の側で誤りを握り潰す形に戻っても緑のまま
     /// になる (#1100 の `try?` はそこに居た)。存在しない場所では `Process` が起動の時点で
     /// 投げるので、`swift` を 1 本も起こさずにその経路を通せる。
+    ///
+    /// **投げ返すのは、起こせなかった本当の理由である** (#2314)。以前はここが
+    /// `toolchainMissing("swift")` を期待していた — 場所が無いだけなのに「swift が無い」と
+    /// 名乗る読み替えを、検査が固定していた。
     @Test("本物の作り直しの口は、起こせなかった誤りを投げ返す")
     func theLiveRebuildThrowsWhatStoppedIt() async throws {
         let nowhere = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-nowhere-\(UUID().uuidString)", isDirectory: true)
         let hooks = WatchSession.Hooks.live(in: nowhere, invocation: Invocation())
 
-        await #expect(throws: CommandFailure.toolchainMissing("swift")) {
+        await #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "swift", place: nowhere.path, reason: "no such directory")
+        ) {
             try await hooks.rebuild(nowhere)
         }
     }
