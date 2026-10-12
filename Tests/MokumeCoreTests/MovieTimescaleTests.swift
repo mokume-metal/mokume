@@ -89,19 +89,24 @@ struct MovieTimescaleTests {
         try withTemporaryDirectory("mokume-timescale-7") { directory in
             let movie = try record(fps: 7, frames: 10, in: directory)
             try #require(movie.durations.count == 10)
-            let scale = Double(MovieFile.timescale)
+            // 半刻み (と浮動小数の丸めのぶん)。式を分けて型を書く (上の `MovieBoxes.timing(of:)` と同じ理由)
+            let halfTick: Double = 0.5 / Double(MovieFile.timescale) + 1e-12
+            let mediaScale = Double(movie.mediaTimescale)
             // 各枚の始まり (0…9 枚目) と、最後の枚の終わり (10 枚目の位置)
-            let edges = movie.durations.reduce(into: [0]) { $0.append($0.last! + $1) }
+            var edges: [Int] = [0]
+            for duration in movie.durations { edges.append(edges[edges.count - 1] + duration) }
             for (index, edge) in edges.enumerated() {
-                let want = Double(index) / 7
+                let want: Double = Double(index) / 7
+                let got: Double = Double(edge) / mediaScale
                 #expect(
-                    abs(Double(edge) / Double(movie.mediaTimescale) - want) <= 0.5 / scale + 1e-12,
+                    abs(got - want) <= halfTick,
                     "\(index) 枚目の位置が \(edge)/\(movie.mediaTimescale) 秒 (\(want) 秒のはず)")
             }
             // 容れ物の長さも同じ刻みで数える。容れ物の刻みが 600 なら、ここが 1/1200 秒ずれうる
+            let length: Double = Double(movie.movieDuration) / Double(movie.movieTimescale)
+            let wantLength: Double = 10.0 / 7
             #expect(
-                abs(Double(movie.movieDuration) / Double(movie.movieTimescale) - 10.0 / 7)
-                    <= 0.5 / scale + 1e-12,
+                abs(length - wantLength) <= halfTick,
                 "動画の長さが \(movie.movieDuration)/\(movie.movieTimescale) 秒 (10/7 秒のはず)")
         }
     }
@@ -190,10 +195,13 @@ enum MovieBoxes {
         else { return nil }
         let (movieScale, movieDuration) = scaleAndDuration(data, header: movie)
         let entries = word(data, table + 4)
-        let durations = (0..<entries).flatMap { index in
-            Array(
-                repeating: word(data, table + 12 + index * 8),
-                count: word(data, table + 8 + index * 8))
+        // **式を分けて型を書く。** 1 つの式に連ねると、型検査が打ち切られて組み立てが落ちる
+        // (CI の組み立てで `unable to type-check this expression in reasonable time`)
+        var durations: [Int] = []
+        for index in 0..<entries {
+            let count: Int = word(data, table + 8 + index * 8)
+            let delta: Int = word(data, table + 12 + index * 8)
+            durations.append(contentsOf: Array(repeating: delta, count: count))
         }
         return Timing(
             movieTimescale: movieScale, movieDuration: movieDuration,
@@ -203,9 +211,14 @@ enum MovieBoxes {
     /// `mvhd` / `mdhd` の刻みと長さ。版 0 は作成・更新が 4 バイトずつ、版 1 は 8 バイトずつ。
     private static func scaleAndDuration(_ data: Data, header: Int) -> (scale: Int, duration: Int) {
         if data[header] == 1 {
-            return (word(data, header + 20), word(data, header + 24) << 32 | word(data, header + 28))
+            let scale: Int = word(data, header + 20)
+            let high: Int = word(data, header + 24)
+            let low: Int = word(data, header + 28)
+            return (scale, high << 32 | low)
         }
-        return (word(data, header + 12), word(data, header + 16))
+        let scale: Int = word(data, header + 12)
+        let duration: Int = word(data, header + 16)
+        return (scale, duration)
     }
 
     /// 箱の道 (`moov/trak/…`) を降りて、最後の箱の中身の頭の位置を返す。
@@ -216,7 +229,9 @@ enum MovieBoxes {
             var size = word(data, offset)
             var header = 8
             if size == 1 {  // 64 ビットの大きさ
-                size = word(data, offset + 8) << 32 | word(data, offset + 12)
+                let high: Int = word(data, offset + 8)
+                let low: Int = word(data, offset + 12)
+                size = high << 32 | low
                 header = 16
             }
             guard size >= header else { return nil }
@@ -233,7 +248,9 @@ enum MovieBoxes {
 
     /// 大きい側から並んだ 4 バイトの符号なし整数。
     private static func word(_ data: Data, _ at: Int) -> Int {
-        data[at..<at + 4].reduce(0) { $0 << 8 | Int($1) }
+        var value = 0
+        for byte in data[at..<at + 4] { value = value << 8 | Int(byte) }
+        return value
     }
 }
 
