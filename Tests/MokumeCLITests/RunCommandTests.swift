@@ -487,6 +487,10 @@ struct RunCommandTests {
         #expect(!message.contains("Package.swift"), "道具立ての失敗なのに宣言を疑わせている: \(message)")
         #expect(message.contains("swift build --show-bin-path -c Release"), "何を打ったかを名乗っていない")
         #expect(message.contains("64"), "終了コードを名乗っていない")
+        // **見張りはこの文面を記録に載せ、窓口の読み手には端末の「上」が無い** (反証の指摘)。
+        // 理由が流れた先と、それをもう一度読む手を言う
+        #expect(!message.contains("above"), "記録の読み手に無い「上」を指している: \(message)")
+        #expect(message.contains("standard error"), "理由の行き先を名乗っていない: \(message)")
     }
 
     /// 読み方の境目。**0 以外なら、道が印字されていても読まない** — 終了コードを見ずに
