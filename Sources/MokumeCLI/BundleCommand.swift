@@ -57,6 +57,14 @@ enum BundleCommand {
         func directory(from base: URL = GivenPath.currentDirectory) -> URL {
             GivenPath.resolve(path, from: base)
         }
+
+        /// 置き場。渡されなければ `nil` (スケッチの下の ``defaultOutputDirectory``)。
+        /// **場所と同じく、走らせた場所から解いた絶対パス** (``GivenPath``)。
+        ///
+        /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
+        func outDirectory(from base: URL = GivenPath.currentDirectory) -> URL? {
+            out.map { GivenPath.resolve($0, from: base) }
+        }
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
@@ -87,7 +95,7 @@ enum BundleCommand {
             configuration: configuration, place: .inPackage(.packaging), product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
         let out =
-            options.out.map { URL(fileURLWithPath: $0, isDirectory: true) }
+            options.outDirectory()
             ?? directory.appendingPathComponent(defaultOutputDirectory, isDirectory: true)
 
         let app = try assemble(

@@ -138,19 +138,53 @@ enum NewCommand {
     /// そのまま入り、SwiftPM はそれを**作られるスケッチの場所から**解く (CONTRIBUTING の
     /// 「作られるスケッチから見た相対」)。名前だけを走らせた場所から解いていたので、末尾が
     /// `..`・`.` の場所では 2 つが別の場所を指し、`swift package resolve` が
-    /// `unknown package` で止まっていた。`~/` で始まる場所だけは SwiftPM が home から解く
-    /// ので、ここも同じにする。
+    /// `unknown package` で止まっていた。
+    ///
+    /// **SwiftPM と同じ規則で解く** (#2323 の反証):
+    ///
+    /// - スケッチの場所は**実体** (symlink を解いたもの) — SwiftPM はパッケージの場所を
+    ///   作業ディレクトリ (`getcwd`) から持つ。字面のまま `..` を畳むと、symlink を通って
+    ///   作ったスケッチでは別のディレクトリの名前になる。まだ無い末尾 (作るスケッチ) は、
+    ///   在る祖先を解いた後に足す
+    /// - `..` と `.` は、そこから**字面で**畳む (SwiftPM の `AbsolutePath` と同じ)
+    /// - `~/` で始まる場所だけは home から解く
+    /// - 名前の末尾の `.git` は落とす
     ///
     /// - Parameter sketch: 作られるスケッチの場所 (``Options/root(from:)``)。
     static func packageIdentity(local: String?, sketch: URL) -> String {
         guard let local else { return "mokume" }
-        let base =
+        let (base, relative) =
             local.hasPrefix("~/")
-            ? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true) : sketch
-        let relative = local.hasPrefix("~/") ? String(local.dropFirst(2)) : local
-        let name = URL(fileURLWithPath: relative, isDirectory: true, relativeTo: base)
-            .standardizedFileURL.lastPathComponent
+            ? (NSHomeDirectory(), String(local.dropFirst(2))) : (onDisk(sketch).path, local)
+        var parts = relative.hasPrefix("/") ? [] : base.split(separator: "/").map(String.init)
+        for part in relative.split(separator: "/") {
+            switch part {
+            case ".": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(String(part))
+            }
+        }
+        var name = parts.last ?? ""
+        if name.hasSuffix(".git") { name.removeLast(4) }
         return name.isEmpty ? "mokume" : name.lowercased()
+    }
+
+    /// 場所の実体 (symlink を解いた絶対パス)。**まだ無い末尾は、在る祖先を解いた後に足す。**
+    ///
+    /// `realpath(3)` で解く — `resolvingSymlinksInPath()` は先頭の `/private` を落とすので、
+    /// SwiftPM が持つ場所 (`getcwd` は `/private/tmp/…` を返す) と綴りが変わる。
+    static func onDisk(_ place: URL) -> URL {
+        var existing = place.standardizedFileURL
+        var missing: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path), existing.path != "/" {
+            missing.insert(existing.lastPathComponent, at: 0)
+            existing = existing.deletingLastPathComponent()
+        }
+        guard let resolved = realpath(existing.path, nil) else { return place }
+        defer { free(resolved) }
+        return missing.reduce(URL(fileURLWithPath: String(cString: resolved), isDirectory: true)) {
+            $0.appendingPathComponent($1, isDirectory: true)
+        }
     }
 
     /// Swift の文字列リテラル (`"…"`) の中身として書ける形にする。

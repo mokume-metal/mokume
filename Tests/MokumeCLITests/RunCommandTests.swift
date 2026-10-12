@@ -415,6 +415,45 @@ struct RunCommandTests {
         #expect(carried[StartupReads.closeConfirmation.key] == "mokume run")
     }
 
+    /// **区画の基準は、道具と子で同じ場所を指す** (#2323 の反証)。`MOKUME_WORK_DIR` が相対
+    /// パスだと、道具は自分の作業ディレクトリ (走らせた場所) から解き、子は作業ディレクトリを
+    /// スケッチに替えて起こされるので環境の相対値をスケッチから解く — `MOKUME_WORK_DIR=wd
+    /// mokume watch ../probe` で、道具は `<走らせた場所>/wd` を、子は `<probe>/wd` を見て、
+    /// 観測も入力も黙って噛み合わなくなる。子へは道具が解いた絶対パスを渡す。
+    @Test("相対の MOKUME_WORK_DIR は、道具が解いた絶対パスで子へ渡る")
+    func aRelativeWorkDirectoryReachesTheChildResolved() throws {
+        let key = StartupReads.workDirectory.key
+        let toolSide = try #require(WorkDirectory.given(environment: [key: "wd"]))
+
+        let environment = RunCommand.childEnvironment([key: "wd"])
+        #expect(environment[key] == toolSide.path)
+        #expect(environment[key]?.hasPrefix("/") == true, "相対のまま子へ渡している")
+        // 与えられていなければ、置かない (子は自分の既定に任せる)
+        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(RunCommand.childEnvironment([key: ""])[key] == "", "空は与えられていない扱いのまま運ぶ")
+
+        // 子を、道具とは別の作業ディレクトリ (スケッチ) で起こし、受け取った値を
+        // その場所から解く — 子が見る区画の基準である
+        let sketch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-workdir-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let marker = sketch.appendingPathComponent("given")
+        let child = sketch.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            printf '%s' "$\(key)" > '\(marker.path)'
+            """.write(to: child, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: child.path)
+
+        try RunCommand.launch(child, in: sketch, environment: environment)
+
+        let received = try String(contentsOf: marker, encoding: .utf8)
+        let childSide = URL(fileURLWithPath: received, isDirectory: true, relativeTo: sketch)
+            .standardizedFileURL
+        #expect(childSide.path == toolSide.standardizedFileURL.path, "子が別の区画を見る")
+    }
+
     // MARK: - 出来上がりの置き場 (#1067)
 
     /// **置き場を聞くのに `swift` を 1 本起こす。** 見張りは宣言が変わるまでそれを持ち回る

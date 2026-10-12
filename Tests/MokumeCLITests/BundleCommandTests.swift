@@ -495,6 +495,22 @@ struct BundleCommandTests {
                 .standardizedFileURL.path)
     }
 
+    /// **置き場も、走らせた場所から絶対パスに解く** (#2323 の反証)。場所と同じ規則で、
+    /// help もそう言う。
+    @Test("置き場の相対パスは、走らせた場所から絶対パスに解く")
+    func theOutputDirectoryIsResolvedFromWhereItWasTyped() throws {
+        let typedFrom = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let out = try #require(
+            try BundleCommand.parse(["../bund", "--out", "../dist"]).outDirectory(from: typedFrom))
+        #expect(out.baseURL == nil)
+        #expect(out.path == "/work/dist")
+        #expect(try BundleCommand.parse(["../bund"]).outDirectory(from: typedFrom) == nil)
+
+        let entry = try #require(Command.Verb.bundle.usageEntry)
+        let help = (entry.signature + " " + entry.description).replacingOccurrences(of: "\n", with: " ")
+        #expect(help.contains("Relative paths start from where you run this"))
+    }
+
     @Test("置き場を渡せる")
     func theOutputDirectoryCanBeGiven() throws {
         #expect(try BundleCommand.parse(["sketch", "--out", "dist"]).out == "dist")
