@@ -286,9 +286,12 @@ public struct Shape {
     /// `circle`・`line` など)・立体が形の中で入れ替わるときである。
     ///
     /// 置き場所を並べてまとめて置く (``Sketch/shape(_:at:)``) と、2 以上の形のうち立体以外を含む
-    /// ものは、置き場所ごとにこの回数ずつ描く ([#2305])。
+    /// ものは、置き場所ごとにこの回数ずつ描く ([#2305])。立体だけの形はこの回数のまま描くが、そのぶん
+    /// 区間ごとに置き場所を一巡するので、重なる置き場所の半透明の所と同じ奥行きで重なる所では、1 つずつ
+    /// 置いた絵と重なりが違うことがある ([#2495])。
     ///
     /// [#2305]: https://github.com/mokume-metal/mokume/issues/2305
+    /// [#2495]: https://github.com/mokume-metal/mokume/issues/2495
     public var drawCallCount: Int { runs.count }
 
     // MARK: - 組にする

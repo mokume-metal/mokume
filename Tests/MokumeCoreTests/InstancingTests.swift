@@ -422,8 +422,9 @@ struct InstancingTests {
         #expect(flat.togetherCalls == 1, "区間が 1 つの平面の形をまとめて置いて、1 回で描いていない")
         #expect(differingPixels(flat.together, flat.oneByOne) == 0)
 
-        // 立体だけで区間が 2 つ (混ぜ方の変わり目)。奥行きが前後を決めるので、区間ごとに置き場所の
-        // 並び全体を 1 度で積む今の速さのまま
+        // 立体だけで区間が 2 つ (混ぜ方の変わり目)。区間ごとに置き場所の並び全体を 1 度で積む今の速さの
+        // まま。重なる所は奥行きが違い、奥で描かれる側が奥行きの検めで落ちるので、絵も 1 つずつと同じに
+        // なる (同じ奥行きの所・奥の半透明の所が先に奥行きを書かれて隠れる形は、区間の順に重なる — #2495)
         let solids = try togetherAndOneByOne(
             { canvas in
                 canvas.createShape {
@@ -440,5 +441,6 @@ struct InstancingTests {
             #expect(shape.drawCallCount == 2, "前提: 箱と球が混ぜ方の違う 2 つの区間になっていない")
         }
         #expect(solids.togetherCalls == 2, "立体だけの形をまとめて置いて、区間ごとに 1 回で描いていない")
+        #expect(differingPixels(solids.together, solids.oneByOne) == 0, "立体だけの形の絵が 1 つずつと違う")
     }
 }
