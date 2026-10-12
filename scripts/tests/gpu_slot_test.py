@@ -233,7 +233,9 @@ class GpuSlotTest(SlotHarness):
         self.assertEqual(waiter.returncode, 75)
         self.assertFalse(waiter_started.exists(), "期限で抜けたのに子を走らせた")
         self.assertIn("空かなかった", error)
-        self.assertIn(_holder_mark(holder.pid), error)
+        # 持ち主は、期限で抜ける文面の後ろに探す。待つ間の名乗り (0.1 秒・0.2 秒) も同じ持ち主を名乗るので、
+        # stderr 全体で探すと、期限で抜ける側が持ち主を名乗らなくても満たされる (#2343)
+        self.assertTrue(_names_after(error, "空かなかったので", holder.pid), error)
 
     def test_the_child_exit_code_is_returned(self):
         for code in (0, 1, 3):
@@ -514,7 +516,8 @@ class ExclusiveTest(SlotHarness):
         _, error = measure.communicate(timeout=10)
         self.assertEqual(measure.returncode, 75, error)
         self.assertFalse(measure_started.exists(), "期限で抜けたのに計測を走らせた")
-        self.assertIn(_holder_mark(holder.pid), error)
+        # 持ち主は、期限で抜ける文面の後ろに探す (待つ間の名乗りも同じ持ち主を名乗る。#2343)
+        self.assertTrue(_names_after(error, "空かなかったので", holder.pid), error)
         timeouts = [entry for entry in self._entries() if entry["event"] == "timeout"]
         self.assertEqual([entry["pid"] for entry in timeouts], [measure.pid])
         # 抜けた計測が取りかけた枠は返っている
@@ -530,7 +533,8 @@ class ExclusiveTest(SlotHarness):
         self.assertEqual(test.returncode, 75, error)
         self.assertFalse(test_started.exists())
         self.assertIn("窓つきの計測", error)
-        self.assertIn(_holder_mark(measure.pid), error)
+        # 持ち主は、期限で抜ける文面の後ろに探す (待つ間の名乗りも同じ持ち主を名乗る。#2343)
+        self.assertTrue(_names_after(error, "空かなかったので", measure.pid), error)
 
     def test_the_exclusive_take_is_recorded_with_every_slot(self):
         measure, measure_started, measure_release = self._start("measure", exclusive=True)
