@@ -120,7 +120,7 @@ struct ExposeNonFiniteTests {
     }
 
     @Test("有限の値だけなら、何も名乗らない")
-    func finiteValuesSaySomethingNever() throws {
+    func finiteValuesSayNothing() throws {
         let facet = try makeFacet()
         let runtime = try SketchRuntime(
             sketch: Finite(), gpu: try RenderDevice(), clock: nil, now: { 0 },
