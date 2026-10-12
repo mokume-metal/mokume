@@ -127,6 +127,18 @@ enum RenderCommand {
         // 最後の部品が変わる — `take#1/` (フォルダ) が `…/take#1` になり、`take#1` の `#` を
         // 番号にして連番として通ってしまう。書く API は `take#1/` を断るので、道具だけが通すと
         // 同じ綴りで判定が食い違う
+        //
+        // **`.mov` へは刻みより速く書けない** (#2307)。形が通る行き先でだけ見て、形の誤りは
+        // 下の `--out` の文面で名乗る
+        if RenderRequest.accepts(destination: out),
+            !RenderRequest.accepts(destination: out, frameRate: frameRate)
+        {
+            throw .usage(
+                "\(frameRateFlags[0]) takes at most \(RenderRequest.movieFrameRateLimit) frames per"
+                    + " second when writing a .mov (its time is counted in"
+                    + " 1/\(RenderRequest.movieFrameRateLimit) of a second, so faster frames would"
+                    + " land on the same time and be lost): \(rateText)")
+        }
         guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(
                 frameRate: frameRate, frameCount: frameCount, destination: destination)

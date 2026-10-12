@@ -139,6 +139,25 @@ struct RenderCommandTests {
         expectUsage(["--fps", rate, "--seconds", "2", "--out", "/a.mov"], mentioning: "--fps")
     }
 
+    /// **`.mov` の時刻は 1/90 000 秒で数える** ([#2307])。それより速いと隣の枚が同じ時刻へ
+    /// 丸まり、書く係が外れて開けない `.mov` が残っていた (`--fps 100000`)。走らせる前に、
+    /// 上限を名乗って止まる。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    @Test("--fps が .mov の刻みを越えたら、上限を名乗ってビルドの前に止まる")
+    func aFrameRateBeyondTheMovieTimescaleIsRefused() throws {
+        expectUsage(
+            ["--fps", "90001", "--seconds", "1", "--out", "/a.mov"],
+            mentioningAll: ["--fps", "90000", ": 90001"])
+        // 境目: 刻みちょうどは通る。連番は時刻を書かないので、刻みを越えても通る
+        #expect(
+            try parse(["--fps", "90000", "--seconds", "1", "--out", "/a.mov"]).request.frameRate
+                == 90_000)
+        #expect(
+            try parse(["--fps", "90001", "--seconds", "1", "--out", "/f-####.png"]).request
+                .frameRate == 90_001)
+    }
+
     @Test(
         "秒数は 0 より大きい数だけを受ける",
         arguments: ["0", "-1", "abc", "2s", "inf", "nan", "0x10"])

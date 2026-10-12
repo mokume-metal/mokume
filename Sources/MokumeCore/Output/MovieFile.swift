@@ -140,6 +140,13 @@ enum MovieWriteFailure: Error, Equatable {
 nonisolated final class MovieFile {
     /// 時刻の刻み。24 / 25 / 30 / 50 / 60 のどれで割っても整数になる値を選ぶ —
     /// 端数が出ると、フレームの時刻が刻みへ丸められるたびに少しずつずれる。
+    ///
+    /// **入力と容れ物の両方へ渡す** ([#2307])。`CMTime` をこの刻みで作るだけでは、AVFoundation は
+    /// トラックも容れ物も既定の 600 で書く。600 を割り切らない fps (48・90 など) では 1 枚の長さが
+    /// 揃わず、600 を越える fps では隣のフレームが同じ時刻へ丸まった。この刻みを越える fps は、
+    /// 撮る係が撮り始める前に断る (``FrameRecorder/movieFrameRateLimit``)。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
     static let timescale: CMTimeScale = 90_000
 
     private let path: String
@@ -245,6 +252,9 @@ nonisolated final class MovieFile {
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mov) else {
             throw .destinationUnavailable(path: path)
         }
+        // **容れ物の刻みも揃える** (#2307)。既定の 600 のままだと、動画の長さが 600 分の 1 秒へ
+        // 丸まる (7 fps の 10 枚で 1/1200 秒ずれる・90 000 fps の 3 枚は長さ 0 になる)
+        writer.movieTimeScale = Self.timescale
         self.writer = writer
 
         // **乗算していないアルファをそのまま渡す** ([ADR-0011] 決定 4 の境界)。
@@ -264,6 +274,8 @@ nonisolated final class MovieFile {
             outputSettings: Self.outputSettings(width: width, height: height, compression: compression))
         // 実時間に追いつく必要は無い。詰まったら待たせるほうが、落とすより正しい
         input.expectsMediaDataInRealTime = false
+        // **トラックの刻みを渡す** (#2307)。渡さないと各枚の時刻が 600 分の 1 秒へ丸まる
+        input.mediaTimeScale = Self.timescale
         adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
@@ -286,7 +298,7 @@ nonisolated final class MovieFile {
         guard image.width == width, image.height == height else {
             throw .writeFailed(path: path, reason: "the frame size differs from when recording began")
         }
-        let stamp = CMTime(seconds: time, preferredTimescale: Self.timescale)
+        let stamp = Self.stamp(time)
         if !hasStarted {
             writer.startSession(atSourceTime: stamp)
             hasStarted = true
@@ -324,13 +336,30 @@ nonisolated final class MovieFile {
             throw .writeFailed(path: path, reason: "not a single frame was recorded")
         }
         input.markAsFinished()
-        writer.endSession(
-            atSourceTime: CMTime(
-                seconds: time + frameDuration, preferredTimescale: Self.timescale))
+        writer.endSession(atSourceTime: Self.stamp(time + frameDuration))
         await writer.finishWriting()
         guard writer.status == .completed else {
             throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
         }
+    }
+
+    /// 秒の時刻を、刻み (``timescale``) の**いちばん近い**目盛りへ置く ([#2307])。
+    ///
+    /// `CMTime(seconds:preferredTimescale:)` は近い目盛りへ丸めず、切り捨てる側へ寄る。n/fps 秒は
+    /// 2 進の浮動小数で目盛りのわずかに手前になりうるので、1000 fps でも 1 枚の長さが 89 と 91 に
+    /// 割れ、90 000 を割り切らない fps では半刻みを越えてずれた (7 fps の 4 枚目が 51 428.57 刻みの
+    /// ところ 51 428)。
+    ///
+    /// 有限でない時刻と、目盛りの数が 64 ビットに収まらない時刻は、丸めずに `CMTime` へ任せる
+    /// (書き手がそのまま断る)。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    static func stamp(_ seconds: Double) -> CMTime {
+        let ticks = (seconds * Double(timescale)).rounded()
+        guard ticks.isFinite, abs(ticks) < 0x1p62 else {
+            return CMTime(seconds: seconds, preferredTimescale: timescale)
+        }
+        return CMTime(value: CMTimeValue(ticks), timescale: timescale)
     }
 
     /// 表示できる形の絵を、符号化器が読む並び (BGRA) へ写す。
