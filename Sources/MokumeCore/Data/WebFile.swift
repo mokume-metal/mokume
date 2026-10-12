@@ -34,13 +34,24 @@ nonisolated enum WebFile {
     }
 
     /// 本文を受け取る。**受け取るまで、他の仕事を止めない。**
-    static func fetch(_ url: URL, path: String) async throws(DataFailure) -> Data {
+    ///
+    /// 期限は受け口の側の音沙汰の無い間 (`URLRequest.timeoutInterval` = `limit`) だけで、呼んでからの
+    /// 総時間は数えない — 待つ間も窓を塞がないので、同期版 (``fetchWaiting(_:path:limit:)``) の
+    /// ような上限は要らない。切れたときは同期版と同じ失敗 (``overdue(path:limit:)``) で投げる。
+    /// 待たない読み込みの失敗は同期版と同じ、という約束 (``Sketch/requestJSONObject(_:)``) のため
+    /// である (#2264)。
+    ///
+    /// - Parameter limit: 受け口の期限。製品の経路では ``waitLimit`` のまま (`URLRequest` の既定と
+    ///   同じ 60 秒)。**検査だけが縮める。**
+    static func fetch(_ url: URL, path: String, limit: Duration = waitLimit) async throws(DataFailure) -> Data {
         let data: Data
         let response: URLResponse
+        var request = URLRequest(url: url)
+        request.timeoutInterval = limit / .seconds(1)
         do {
-            (data, response) = try await URLSession.shared.data(for: URLRequest(url: url))
+            (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            throw .unreachable(url: path, reason: reason(of: error))
+            throw failure(of: error, path: path, limit: limit)
         }
         return try accept(data, response, path: path)
     }
@@ -51,6 +62,8 @@ nonisolated enum WebFile {
     /// ``Sketch/loadJSONObject(_:)`` の説明が名乗る「最長 60 秒」はこの値で、変えるなら説明も
     /// 同じく直す。`URLRequest.timeoutInterval` だけでは上限にならない — あれは音沙汰の無い間の
     /// 期限で、データが届くたびに数え直すので、少しずつ返し続けるサーバには切れない。
+    ///
+    /// 待たない受け取り (``fetch(_:path:limit:)``) も同じ値を、音沙汰の無い間の期限にだけ使う。
     static let waitLimit: Duration = .seconds(60)
 
     /// 本文を受け取る。**受け取り終わるか、届かないと分かるか、`limit` が過ぎるまで返らない。**

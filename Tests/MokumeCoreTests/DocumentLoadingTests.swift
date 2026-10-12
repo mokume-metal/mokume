@@ -521,6 +521,27 @@ struct DocumentLoadingTests {
         #expect(returned.took >= limit)
     }
 
+    @Test("何も返さない応答には、同期版と待たない版が同じ失敗の値を投げる")
+    func silenceFailsAlikeForBothWaits() async throws {
+        let url = CannedResponses.serve(.silent)
+        let target = try #require(URL(string: url))
+        let limit = Duration.milliseconds(300)
+        let waited = try #require(fetchOffMain(url, limit: limit), "同期版が期限で返らず、検査の側の期限で打ち切った")
+        // 待たない版にも、待つ側 (この検査) が期限を持つ。越えたら応答を打ち切るので、受け口の
+        // 期限で返らない実装でも検査は止まらない (打ち切ると「取り消した」で返り、下の比べで赤になる)
+        let cutoff = DispatchWorkItem { CannedResponses.cut(url) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + (limit + .seconds(3)) / .seconds(1), execute: cutoff)
+        defer { cutoff.cancel() }
+        let requested: Result<Data, DataFailure>
+        do {
+            requested = .success(try await WebFile.fetch(target, path: url, limit: limit))
+        } catch {
+            requested = .failure(error)
+        }
+        #expect(requested == waited.outcome)
+        #expect(requested == .failure(.unreachable(url: url, reason: "no complete answer came back within 0.3 seconds")))
+    }
+
     @Test("受け口の時間切れは、期限の間に答えが完結しなかった失敗に畳む。他の誤りは受け口の事情のまま")
     func sessionTimeoutFoldsIntoOverdue() {
         let url = "https://folding.test/data"
