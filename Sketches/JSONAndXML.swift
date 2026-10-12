@@ -21,7 +21,9 @@ import mokume
 ///
 /// [#2070]: https://github.com/mokume-metal/mokume/issues/2070
 final class JSONAndXML: Sketch {
-    var settings = SketchSettings(width: 1200, height: 560, title: "json and xml")
+    var settings: SketchSettings {
+        SketchSettings(width: 1200, height: 560, title: "json and xml")
+    }
 
     /// 天気を読む街。URL は予約済みの名前 (`weather.example`) で、応答は ``CannedWeather`` が返す。
     private static let cities: [(label: String, url: String)] = [

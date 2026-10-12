@@ -21,7 +21,9 @@ import mokume
 ///
 /// [#366]: https://github.com/mokume-metal/mokume/issues/366
 final class NoiseAndSeed: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "noise and seed")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "noise and seed")
+    }
 
     /// 木目を見せる 2 枚の板の置き場 (左が CPU・右が断片)。
     private let panel = (x: Float(20), y: Float(20), width: Float(440), height: Float(420))

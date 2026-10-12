@@ -20,7 +20,9 @@ import mokume
 ///
 /// STL が読めなければ (読めない形式・壊れたファイル)、その説明を左に出す。
 final class PartsAndFormats: Sketch {
-    var settings = SketchSettings(width: 1200, height: 600, title: "parts and formats")
+    var settings: SketchSettings {
+        SketchSettings(width: 1200, height: 600, title: "parts and formats")
+    }
 
     /// 並べる 2 つ。読めたモデルか、読めなかった説明のどちらかを持つ。
     private var shelves: [(title: String, model: Model?, failure: String?)] = []

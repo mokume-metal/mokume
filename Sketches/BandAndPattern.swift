@@ -16,7 +16,9 @@ import mokume
 ///
 /// [SurfaceAndGrain]: SurfaceAndGrain
 final class BandAndPattern: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "band and pattern")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "band and pattern")
+    }
 
     /// 縞の作り。**縞の作り方は 2 つで共有し、どの座標から作るかだけを変える。**
     private static func stripes(from source: String) -> String {
