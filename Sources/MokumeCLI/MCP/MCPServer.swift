@@ -71,7 +71,17 @@ struct MCPServer {
             guard let name = call.params["name"] as? String else {
                 return JSONRPC.failure(id: call.id, code: -32602, message: "name is required")
             }
-            let arguments = call.params["arguments"] as? [String: Any] ?? [:]
+            // **オブジェクトでない引数は、道具を走らせずに断る。** 黙って空に倒すと、
+            // `"arguments":"x"` が引数なしの頼みに化けて道具が走る (#2319)。省いたときと
+            // `null` は「渡していない」と読み、従来どおり空の引数で走らせる
+            let arguments: [String: Any]
+            switch call.params["arguments"] {
+            case nil, is NSNull: arguments = [:]
+            case let object as [String: Any]: arguments = object
+            default:
+                return JSONRPC.failure(
+                    id: call.id, code: -32602, message: "arguments must be an object")
+            }
             let outcome = tools.call(name, arguments: arguments)
             return JSONRPC.response(
                 id: call.id,
