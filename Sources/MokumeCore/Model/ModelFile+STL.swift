@@ -100,12 +100,12 @@ nonisolated extension ModelFile {
     /// **文字の STL は、Model I/O が返した三角形を、書かれた面の数と照らして採る。** 読めない文字
     /// を面の無い形で返されても、空とは取り違えない (読めないとして返す)。
     ///
-    /// - Parameter scratch: 小さい文字の STL を埋めた写しを置く場所。呼ぶ側が差し替えるのは検査だけ。
+    /// - Parameter scratch: Model I/O に読ませる写しを置く場所。呼ぶ側が差し替えるのは検査だけ。
     static func loadSTL(
         _ url: URL, path: String, scratch: URL = FileManager.default.temporaryDirectory
     ) throws(ModelFailure) -> Parsed {
-        // **ファイルを丸ごとは写像しない。** 頭の 128 バイトと、文字の STL なら `endfacet` を数える
-        // ための通読だけを、少しずつ読む (読んでいる間に切り詰められても、読めた分で終わる)
+        // **ファイルを丸ごとは写像しない。** 頭の 128 バイトと、文字の STL なら面を数えるための
+        // 通読だけを、少しずつ読む (読んでいる間に切り詰められても、読めた分で終わる)
         guard let handle = try? FileHandle(forReadingFrom: url) else {
             throw .unreadable(path: path)
         }
@@ -128,21 +128,24 @@ nonisolated extension ModelFile {
             guard let parsed = askModelIO(url) else { throw .unreadable(path: path) }
             return parsed
         case .text:
-            guard let facets = endfacetCount(head: head, rest: isSmall ? nil : handle) else {
+            guard let scan = scanFacets(head: head, rest: isSmall ? nil : handle) else {
                 throw .unreadable(path: path)
             }
-            guard facets > 0 else {
+            guard scan.facets > 0 else {
                 // 面の書かれていない文字は、読み手に渡さない — 面を 1 つも読まないまま `endsolid`
                 // まで読み切ると、バイナリとして読み直されて、でたらめな面が返りうる
                 let whole = isSmall ? head : try? Data(contentsOf: url)
                 guard let whole else { throw .unreadable(path: path) }
                 return try emptyOrUnreadable(whole, path: path)
             }
-            let parsed = isSmall ? askModelIO(paddedCopyOf: head, in: scratch) : askModelIO(url)
-            // **返ってきた三角形を、文字に書かれた面と照らす。** 読み手は、読めない文字 (CR だけの
-            // 改行など) を面の無い形で返し、面を読めなかった文字をバイナリとして読み直す。
-            // どちらも、書かれた面の数と合わない
-            guard let parsed, agrees(parsed, facets: facets) else {
+            // 面の組み立てが崩れている (頂点が 3 つでない面がある) 文字は、読み手が後ろの面の頂点を
+            // 食ってでたらめな形を返しうるので、渡さない
+            guard scan.isWellFormed else { throw .unreadable(path: path) }
+            let parsed = askModelIO(
+                text: url, head: head, rest: isSmall ? nil : handle, scratch: scratch)
+            // **返ってきた三角形を、文字に書かれた面の数と照らす。** 読み手は、読めない文字 (CR だけの
+            // 改行など) を面の無い形で返す。数が合わなければ読めなかったのと同じである
+            guard let parsed, agrees(parsed, facets: scan.facets) else {
                 throw .unreadable(path: path)
             }
             return parsed
@@ -152,87 +155,129 @@ nonisolated extension ModelFile {
     /// Model I/O が断らない STL の最小の大きさ (バイト)。**これに満たない STL は中身を見ずに断る。**
     static let smallestSTLModelIOReads = 128
 
-    /// 頭の 84 バイトから見分けた、STL の形。
+    /// 頭から見分けた、STL の形。
     enum STLLayout: Sendable, Equatable {
-        /// 文字の STL (小文字の `solid` で始まり、頭がすべて文字)。
+        /// 文字の STL (小文字の `solid` で始まり、バイナリの見出しではありえない)。
         case text
-        /// バイナリの STL (頭に文字でないバイトがあり、見出しと面の数の 84 バイトが揃っている)。
+        /// バイナリの STL (84 バイトの見出しと面の数を持ち、面の数の最上位のバイトが 0)。
         case binary
-        /// どちらでもない (空・前に空白のある文字・大文字の `SOLID`・STL でない文字・84 バイトに
-        /// 満たない文字でないバイトを含むもの)。
+        /// どちらでもない (空・前に空白のある文字・大文字の `SOLID`・STL でない文字)。
         case unrecognized
     }
 
-    /// 頭の 84 バイトで、文字の STL かバイナリの STL かを見分ける。
+    /// 頭 (先頭の 84 バイト以上) で、文字の STL かバイナリの STL かを見分ける。
     ///
-    /// 文字として許すのは、印字できる文字 (0x20〜0x7E と 0x80 以上 — UTF-8 の名前を含む)・タブ・LF・CR
-    /// だけにする。**絞っておくほうが安全な側に倒れる** — 文字と見なさなければ読み手の判定に任せる
-    /// (これまでと同じ) だけで、文字と見なすと渡さずに断る。
-    static func stlLayout(of data: Data) -> STLLayout {
-        let head = data.prefix(84)
-        if head.allSatisfy(isTextByte) {
-            return head.starts(with: "solid".utf8) ? .text : .unrecognized
-        }
-        return data.count >= 84 ? .binary : .unrecognized
+    /// **バイナリの見出しの後ろの面の数 (4 バイト・添字 80〜83) は、2^24 面 (約 1,677 万面・800 MB を
+    /// 超える) に満たなければ最上位のバイト (添字 83) が 0 である。** そこが 0 でなければバイナリの
+    /// 見出しではありえないので、`solid` で始まるものは文字の STL、そうでなければ読めないとする。
+    /// 頭に制御文字 (FF・VT・DEL・ESC など) があるかどうかは見ない — 文字の STL の名前に制御文字が
+    /// あっても文字は文字で、バイナリに回すと読み手の判定 (でたらめな形を返しうる) に直に渡る。
+    /// 面の数が 2^24 以上のバイナリは、壊れているとして読めないものに入る。
+    static func stlLayout(of head: Data) -> STLLayout {
+        if head.count >= 84, head[head.startIndex + 83] == 0 { return .binary }
+        return head.starts(with: "solid".utf8) ? .text : .unrecognized
     }
 
-    private static func isTextByte(_ byte: UInt8) -> Bool {
-        (byte >= 0x20 && byte != 0x7F) || byte == 0x09 || byte == 0x0A || byte == 0x0D
+    /// 読み手が面として読む語を数えた結果。
+    struct FacetScan: Equatable {
+        /// 面の数 (行の先頭の `endfacet` の数)。
+        var facets = 0
+        /// どの面も、行の先頭の `vertex` をちょうど 3 つ持ち、最後の `endfacet` の後ろに余りが無い。
+        var isWellFormed = true
     }
 
-    /// 文字の STL が書いている面の数 (行の先頭の `endfacet` の数)。`head` は頭で、続きは `rest` から
-    /// `chunk` バイトずつ読む (`nil` なら頭がファイルの全部)。読めなければ `nil`。
+    /// 文字の STL の面を数える。`head` は頭で、続きは `rest` から `chunk` バイトずつ読む (`nil`
+    /// なら頭がファイルの全部)。読めなければ `nil`。
     ///
-    /// **行の先頭 (字下げは許す) だけを数える。** 読み手が面として読むのは、`endfacet` が行の先頭にある
-    /// 面だけである (同じ行に `endloop` と並べても、面を 1 行に詰めても読めない — 測った)。名前に
-    /// `endfacet` を含んでも数えず、数は「読み手が読みうる面の数」になる。区切りをまたぐ語と行頭の判定の
-    /// ために、手前の末尾 ``lookBehind`` バイトを持ち越す。
-    static func endfacetCount(head: Data, rest: FileHandle?, chunk: Int = 1 << 20) -> Int? {
-        var count = 0
+    /// **行の先頭 (字下げは空白・タブ・VT・FF) の `vertex` と `endfacet` だけを数え、後ろが空白・改行・
+    /// 終端の語に限る。** 読み手が面として読むのは、そう書かれた面だけである (`endloop` と並べても、
+    /// 面を 1 行に詰めても、CR だけの改行でも読めない — 測った)。名前の中の語や `endfacets` は数えず、
+    /// 数は「読み手が読みうる面の数」になる。区切りをまたぐ語と行頭の判定のために、手前の末尾
+    /// ``lookBehind`` バイトを持ち越し、語の後ろの 1 バイトが次の区切りにあるものは次の窓で数える。
+    static func scanFacets(head: Data, rest: FileHandle?, chunk: Int = 1 << 20) -> FacetScan? {
+        var scan = FacetScan()
+        var vertices = 0
         var window = head
         var carried = 0
-        while true {
-            count += lineStartWords("endfacet", in: window, after: carried)
-            guard let rest else { return count }
-            let next: Data?
-            do {
-                next = try rest.read(upToCount: chunk)
-            } catch {
-                return nil
-            }
-            guard let next, !next.isEmpty else { return count }
-            let carry = Data(window.suffix(lookBehind))
-            window = carry + next
-            carried = carry.count
+        func nextChunk() throws -> Data? {
+            guard let rest else { return nil }
+            // **読むたびに自動解放の置き場を空ける。** 空けないと、読んだ断片が外側の置き場が空くまで
+            // 消えず、ファイル全体が常駐する (74 MB の STL で 86 MB・測った)
+            let data = try autoreleasepool { try rest.read(upToCount: chunk) }
+            return (data?.isEmpty ?? true) ? nil : data
         }
+        do {
+            var upcoming = try nextChunk()
+            while true {
+                tally(window, after: carried, isLast: upcoming == nil, into: &scan, vertices: &vertices)
+                guard let more = upcoming else { break }
+                let carry = Data(window.suffix(lookBehind))
+                window = carry + more
+                carried = carry.count
+                upcoming = try nextChunk()
+            }
+        } catch {
+            return nil
+        }
+        // 最後の `endfacet` の後ろに頂点が余っている面は、書き終えていない
+        if vertices != 0 { scan.isWellFormed = false }
+        return scan
     }
 
     /// 行頭の判定で、語の手前に遡って見る長さ (バイト)。字下げがこれより長ければ、行頭と見なす。
     private static let lookBehind = 256
 
-    /// `data` のうち、**`carried` バイトより後に終わる**行頭の `word` の数。手前の `carried` バイトは
-    /// 持ち越しで、そこで終わる語は前の窓で数えている。
-    private static func lineStartWords(
-        _ word: String, in data: Data, after carried: Int
-    ) -> Int {
-        let needle = Array(word.utf8)
-        return data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Int in
-            guard let base = bytes.baseAddress else { return 0 }
-            var count = 0
-            var offset = 0
-            while offset < bytes.count,
-                let hit = memmem(base + offset, bytes.count - offset, needle, needle.count)
-            {
-                let start = base.distance(to: UnsafeRawPointer(hit))
-                offset = start + needle.count
-                guard offset > carried else { continue }
-                // 手前の空白とタブを飛ばして、行頭 (改行の直後) か。窓の頭まで空白なら、ファイルの
-                // 先頭か、字下げが ``lookBehind`` より長いかなので、行頭と見る
-                var before = start - 1
-                while before >= 0, bytes[before] == 0x20 || bytes[before] == 0x09 { before -= 1 }
-                if before < 0 || bytes[before] == 0x0A || bytes[before] == 0x0D { count += 1 }
+    private static let vertexWord = Array("vertex".utf8)
+    private static let endfacetWord = Array("endfacet".utf8)
+
+    /// 字下げに使う空白 (空白・タブ・VT・FF)。読み手は VT・FF も空白として読む。
+    private static func isBlank(_ byte: UInt8) -> Bool {
+        byte == 0x20 || byte == 0x09 || byte == 0x0B || byte == 0x0C
+    }
+
+    /// `window` に現れる行頭の `vertex` と `endfacet` を、現れる順に `scan` へ数える。**語の後ろの
+    /// 1 バイトを見て決める**ので、`carried` バイトより手前で決まった語 (前の窓で数えた) は飛ばし、後ろの
+    /// 1 バイトがまだ読めていない語 (窓の終わりで終わる語。`isLast` でなければ) は次の窓へ回す。
+    private static func tally(
+        _ window: Data, after carried: Int, isLast: Bool, into scan: inout FacetScan,
+        vertices: inout Int
+    ) {
+        var events: [(at: Int, isEnd: Bool)] = []
+        window.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            guard let base = bytes.baseAddress else { return }
+            for (word, isEnd) in [(vertexWord, false), (endfacetWord, true)] {
+                var offset = 0
+                while offset < bytes.count,
+                    let hit = memmem(base + offset, bytes.count - offset, word, word.count)
+                {
+                    let start = base.distance(to: UnsafeRawPointer(hit))
+                    offset = start + word.count
+                    guard offset >= carried else { continue }
+                    if offset == bytes.count {
+                        if !isLast { continue }
+                    } else {
+                        let after = bytes[offset]
+                        guard isBlank(after) || after == 0x0A || after == 0x0D else { continue }
+                    }
+                    var before = start - 1
+                    while before >= 0, isBlank(bytes[before]) { before -= 1 }
+                    // 窓の頭まで空白なら、ファイルの先頭か、字下げが ``lookBehind`` より長いかなので、
+                    // 行頭と見る
+                    if before < 0 || bytes[before] == 0x0A || bytes[before] == 0x0D {
+                        events.append((start, isEnd))
+                    }
+                }
             }
-            return count
+        }
+        events.sort { $0.at < $1.at }
+        for event in events {
+            if event.isEnd {
+                if vertices != 3 { scan.isWellFormed = false }
+                scan.facets += 1
+                vertices = 0
+            } else {
+                vertices += 1
+            }
         }
     }
 
@@ -263,42 +308,99 @@ nonisolated extension ModelFile {
         return triangles(of: meshes)
     }
 
-    /// 小さい文字の STL を、末尾を空白で ``smallestSTLModelIOReads`` まで埋めた写しにして、
-    /// Model I/O に読ませる。
+    /// 文字の STL を Model I/O に読ませる。**読み手が、面を読めなかった文字をバイナリとして読み直す余地
+    /// を残さない。**
     ///
-    /// 読み手はファイルの道筋からしか読めないので、一時の写しを書く。**写しは読み終えたら、読めても
-    /// 断られても消す。** 写しを書けなければ (一時の置き場が書けない) 断られたのと同じに `nil` を返す。
-    private static func askModelIO(paddedCopyOf data: Data, in scratch: URL) -> Parsed? {
-        var padded = data
-        padded.append(
-            contentsOf: repeatElement(UInt8(ascii: " "), count: smallestSTLModelIOReads - data.count))
+    /// 読み直しは、添字 80〜83 を面の数と見て、238,609,294 以下のときだけ起こる。添字 83 が 0x10 以上
+    /// なら面の数が上限を超えて、読み直しは断られる。そこで添字 83 が制御文字 (タブ・改行・CR など)
+    /// なら、**1 行目 (`solid` の行。名前は読まれない) に空白を足して**添字 83 を空白にした写しを読ませる。
+    /// 頂点にも面にも触れない。128 バイトに満たなければ、末尾を空白で 128 バイトまで埋める。
+    /// 写しが要らなければ (添字 83 が文字で、128 バイト以上) 元のファイルを読ませる。
+    ///
+    /// 写しは一時の置き場に書き、**読み終えたら、読めても断られても消す。** 写しを書けなければ、128 バイト
+    /// に満たないものは断られたのと同じに `nil` を、それ以上のものは元のファイルを読ませる。
+    private static func askModelIO(
+        text url: URL, head: Data, rest: FileHandle?, scratch: URL
+    ) -> Parsed? {
+        let prepared = readerHead(of: head)
+        guard rest == nil || prepared != head else { return askModelIO(url) }
         let directory = scratch.appendingPathComponent(
             "mokume-stl-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let copy = directory.appendingPathComponent("model.stl")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try padded.write(to: copy)
+            guard FileManager.default.createFile(atPath: copy.path, contents: nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let output = try FileHandle(forWritingTo: copy)
+            defer { try? output.close() }
+            var written = prepared.count
+            try output.write(contentsOf: prepared)
+            if let rest {
+                try rest.seek(toOffset: UInt64(head.count))
+                while true {
+                    let data = try autoreleasepool { try rest.read(upToCount: 1 << 20) }
+                    guard let data, !data.isEmpty else { break }
+                    try autoreleasepool { try output.write(contentsOf: data) }
+                    written += data.count
+                }
+            }
+            if written < smallestSTLModelIOReads {
+                let padding = Data(repeating: 0x20, count: smallestSTLModelIOReads - written)
+                try output.write(contentsOf: padding)
+            }
         } catch {
-            return nil
+            return rest == nil ? nil : askModelIO(url)
         }
         return askModelIO(copy)
     }
 
+    /// 読み手に渡す頭。添字 83 が制御文字 (1…0x0F) なら、1 行目の終わりに空白を足して、添字 83 を空白に
+    /// する (1 行目が 84 バイトより長いときは、その位置の字を空白に替える)。
+    static func readerHead(of head: Data) -> Data {
+        var bytes = [UInt8](head)
+        guard bytes.count > 83, (1...0x0F).contains(bytes[83]) else { return head }
+        if let end = bytes.firstIndex(where: { $0 == 0x0A || $0 == 0x0D }), end <= 83 {
+            bytes.insert(contentsOf: repeatElement(0x20, count: 84 - end), at: end)
+        } else {
+            bytes[83] = 0x20
+        }
+        return Data(bytes)
+    }
+
     /// 面を 1 つも持たない、形の整った STL か。
     ///
-    /// バイナリは 80 バイトの見出しと面の数 (0) だけの 84 バイト、文字は `solid` の行と
-    /// `endsolid` の行だけ。**0 バイトは含めない** — どちらの形にもなっておらず、書き出しに
-    /// 失敗したファイルであることが多い。
+    /// バイナリは 80 バイトの見出しと面の数 (0) だけの 84 バイト。文字は小文字の `solid` で始まる 1 行目
+    /// (名前は何でもよい) の後ろに、空でない行が `endsolid` で始まる 1 行だけある。**行は LF・CR で
+    /// 割り**、VT・FF は名前の中の字として扱う (読み手がそう読む)。**0 バイトは含めない** — どちらの形にも
+    /// なっておらず、書き出しに失敗したファイルであることが多い。
     static func isEmptySTL(_ data: Data) -> Bool {
         if data.count == 84, data[data.startIndex + 80..<data.endIndex].allSatisfy({ $0 == 0 }) {
             return true
         }
-        guard let text = String(data: data, encoding: .utf8) else { return false }
-        let lines = text.lines
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        return lines.count == 2 && lines[0].hasPrefix("solid") && lines[1].hasPrefix("endsolid")
+        guard data.starts(with: "solid".utf8) else { return false }
+        return data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
+            func isNewline(_ index: Int) -> Bool { bytes[index] == 0x0A || bytes[index] == 0x0D }
+            var index = 0
+            while index < bytes.count, !isNewline(index) { index += 1 }
+            var lines = 0
+            var endsolid = false
+            while index < bytes.count {
+                while index < bytes.count, isNewline(index) { index += 1 }
+                var low = index
+                while index < bytes.count, !isNewline(index) { index += 1 }
+                var high = index
+                while low < high, isBlank(bytes[low]) { low += 1 }
+                while high > low, isBlank(bytes[high - 1]) { high -= 1 }
+                guard low < high else { continue }
+                lines += 1
+                if lines > 1 { return false }
+                endsolid = UnsafeRawBufferPointer(rebasing: bytes[low..<high])
+                    .starts(with: "endsolid".utf8)
+            }
+            return lines == 1 && endsolid
+        }
     }
 
     /// Model I/O の形から、三角形の並びを写す。

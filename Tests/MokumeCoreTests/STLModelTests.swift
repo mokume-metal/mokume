@@ -61,6 +61,17 @@ struct STLModelTests {
     static let smallFacet = ModelFixture.Facet(
         normal: SIMD3(0, 0, 1), corners: [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)])
 
+    /// 字下げ付きで書いた 1 面。`vertices` で頂点の数を、`normalLine` で `facet` の行を変えられる。
+    static func facetText(
+        vertices: Int = 3, normalLine: String = "facet normal 0 0 1", indent: String = "  "
+    ) -> String {
+        let points = ["0 0 0", "1 0 0", "0 1 0", "1 1 0"]
+        var lines = [indent + normalLine, indent + indent + "outer loop"]
+        lines += points.prefix(vertices).map { indent + indent + indent + "vertex " + $0 }
+        lines += [indent + indent + "endloop", indent + "endfacet"]
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     /// 最初の行だけを `firstLine` に差し替えた、``tetrahedron`` の先頭 3 面の文字の STL。
     static func asciiSTL(firstLine: String) -> String {
         let whole = ModelFixture.asciiSTL(Array(tetrahedron.prefix(3)))
@@ -247,6 +258,79 @@ struct STLModelTests {
         #expect(parsed.positions == Self.smallFacet.corners)
     }
 
+    @Test("名前に制御文字 (FF・VT・NUL・DEL・ESC) があっても、小さい文字の STL も大きいものも読める (#2494)",
+        arguments: ["\u{0C}", "\u{0B}", "\u{0}", "\u{7F}", "\u{1B}"], [1, 3])
+    func controlBytesInTheNameDoNotMakeItBinary(control: String, facets: Int) throws {
+        let body = String(repeating: Self.facetText(indent: ""), count: facets)
+        let parsed = try read(Data(("solid t" + control + "\n" + body + "endsolid t\n").utf8))
+        #expect(parsed.positions == Array(repeating: Self.smallFacet.corners, count: facets).flatMap { $0 })
+    }
+
+    @Test("endfacet の前の字下げが VT・FF・タブでも、その面は読める", arguments: ["\u{0C}", "\u{0B}", "\t", " \u{0C} "])
+    func blanksBeforeEndfacetStillMakeAFacet(blank: String) throws {
+        let facets = Array(Self.tetrahedron)
+        var text = ModelFixture.asciiSTL(facets)
+        text = text.replacingOccurrences(of: "  endfacet\n", with: blank + "endfacet\n")
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed.positions == facets.flatMap(\.corners))
+    }
+
+    @Test("endfacets のように語が続く行は面と数えず、ほかの面は読める")
+    func aWordLikeEndfacetsIsNotAFacet() throws {
+        let facets = Array(Self.tetrahedron.prefix(2))
+        let text = ModelFixture.asciiSTL(facets).replacingOccurrences(of: "endsolid", with: "  endfacets\nendsolid")
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed.positions == facets.flatMap(\.corners))
+    }
+
+    /// 1 行目 (`solid` の行。名前は読まれない) が 83 文字で 84 バイト目が改行になる文字は、面があれば
+    /// 読める。読み手が面を読めないときに、添字 80〜83 を面の数とするバイナリとして読み直さないよう、
+    /// 読み手には 1 行目に空白を足した写しを渡す。写しは残らない。
+    @Test("名前の行がちょうど 83 文字の文字の STL も、字下げがタブで 84 バイト目がタブのものも読める")
+    func byte83ThatLooksLikeANumberDoesNotLeaveACopy() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let facets = Array(Self.tetrahedron)
+        let long = Self.data(Self.asciiSTL(firstLine: Self.firstLine("solid ")), byte83: 0x0A)
+        // 名前の行を短くして、面の字下げのタブが 84 バイト目に来るようにする
+        let tabbed = (0..<60).lazy
+            .map { ModelFixture.asciiSTL(facets, name: String(repeating: "n", count: $0)).replacingOccurrences(of: "  ", with: "\t") }
+            .first { Data($0.utf8).count > 83 && Data($0.utf8)[83] == 0x09 }
+        for contents in [long, Data(try #require(tabbed).utf8)] {
+            _ = try withWritten(contents, as: "long.stl") { path in
+                let parsed = try ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+                #expect(parsed.positions.count == (contents == long ? 9 : 12))
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
+        }
+    }
+
+    @Test("Model I/O に渡す頭は、84 バイト目 (添字 83) が制御文字なら 1 行目の終わりに空白を足して空白にする")
+    func theHeadHandedToTheReaderHasACharacterAtByte83() {
+        func head(_ text: String) -> Data { Data(text.utf8.prefix(128)) }
+        // 1 行目がちょうど 83 文字: 改行が 1 つ後ろへずれる
+        let exact = head(Self.asciiSTL(firstLine: Self.firstLine("solid ")))
+        let shifted = ModelFile.readerHead(of: exact)
+        #expect(shifted[83] == 0x20 && shifted[84] == 0x0A)
+        #expect(shifted.count == exact.count + 1)
+        // 1 行目が短く、84 バイト目が面の中のタブ: 1 行目の終わりに足して、残りは後ろへずれる
+        let short = head("solid\n" + String(repeating: "\n", count: 100))
+        let widened = ModelFile.readerHead(of: short)
+        #expect(widened[83] == 0x20 && widened.starts(with: "solid".utf8))
+        #expect(widened.count == short.count + 79)
+        // 1 行目が 84 バイトより長く、84 バイト目が名前の中のタブ: その字を空白に替える
+        let name = head("solid " + String(repeating: "x", count: 77) + "\tyy\n" + String(repeating: "x", count: 50))
+        #expect(ModelFile.readerHead(of: name)[83] == 0x20 && ModelFile.readerHead(of: name).count == name.count)
+        // 文字なら、あるいは 84 バイトに満たなければそのまま
+        let safe = head("solid " + String(repeating: "x", count: 100))
+        #expect(ModelFile.readerHead(of: safe) == safe)
+        let tiny = Data("solid t\n".utf8)
+        #expect(ModelFile.readerHead(of: tiny) == tiny)
+    }
+
     /// 埋めた写しは Model I/O に読ませるためだけのもので、読み終えたら消す。**この検査専用の置き場を
     /// 渡す** — 共有の一時の置き場を数えると、並んで走る別の検査が作っている途中の写しを拾う。
     @Test("小さい文字の STL を読んでも、一時の写しは残らない (読めても、断られても)")
@@ -315,6 +399,18 @@ struct STLModelTests {
         #expect(try read(Self.data(text, byte83: 0x0A)) == ModelFile.empty)
     }
 
+    @Test("面を持たない文字の STL は、名前に FF・VT があっても、Latin-1 の字があっても空として読める")
+    func emptySolidWithUnusualNamesIsEmpty() throws {
+        // FF・VT は名前の中の字 (行を割らない)。84 バイト目が改行で、後ろに空行が続く
+        let ff = Self.firstLine("solid \u{0C}") + "\nendsolid x\n" + String(repeating: "\n", count: 100)
+        #expect(try read(Self.data(ff, byte83: 0x0A)) == ModelFile.empty)
+        let vt = Self.firstLine("solid \u{0B}") + "\nendsolid x\n" + String(repeating: "\n", count: 100)
+        #expect(try read(Self.data(vt, byte83: 0x0A)) == ModelFile.empty)
+        // UTF-8 でない名前 (Latin-1 の é)
+        let latin1 = Data("solid caf".utf8) + Data([0xE9]) + Data(("\nendsolid caf\n" + String(repeating: " ", count: 120)).utf8)
+        #expect(try read(latin1) == ModelFile.empty)
+    }
+
     @Test("面を持たない文字の STL は、頭の 128 バイトに endsolid が入らない長い名前でも空として読める")
     func emptySolidWithAVeryLongNameIsEmpty() throws {
         // 頭の 128 バイトには 1 行目しか入らない。空かどうかは、ファイルの全体を見て決める
@@ -329,17 +425,43 @@ struct STLModelTests {
         #expect(parsed.positions == facets.flatMap(\.corners))
     }
 
-    /// 面の数 (`endfacet`) は、ファイルを少しずつ読んで数える。**区切りをまたぐ語も拾う**。
-    @Test("endfacet の数は、読む区切りの幅によらず同じ", arguments: [1, 2, 3, 5, 7, 8, 9, 16, 1 << 20])
-    func endfacetCountDoesNotDependOnTheChunk(chunk: Int) throws {
-        // 名前に `endfacet` があっても数えない (行の先頭の語だけ)
-        let contents = Data(ModelFixture.asciiSTL(Self.tetrahedron, name: "endfacet endfacet").utf8)
-        try withWritten(contents, as: "count.stl") { path in
-            let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-            defer { try? handle.close() }
-            let head = try #require(try handle.read(upToCount: 128))
-            #expect(ModelFile.endfacetCount(head: head, rest: handle, chunk: chunk) == 4)
-        }
+    /// 面は、ファイルを少しずつ読んで数える。**区切りをまたぐ語も拾い、語の後ろの 1 バイトが次の区切りに
+    /// あっても数え違えない。**
+    @Test("面の数と組み立ては、読む区切りの幅によらず同じ", arguments: [1, 2, 3, 5, 7, 8, 9, 16, 1 << 20])
+    func facetScanDoesNotDependOnTheChunk(chunk: Int) throws {
+        // 名前の中の語・行頭でない語・語の続き (`endfacets`) は数えない。字下げは空白・タブ・FF・VT
+        var text = ModelFixture.asciiSTL(Self.tetrahedron, name: "endfacet vertex endfacet")
+        text = text.replacingOccurrences(of: "endsolid", with: "  endfacets\n  vertexes 1 2 3\nendsolid")
+        text = text.replacingOccurrences(of: "  endfacet\n", with: "\u{0C}\t endfacet\n")
+        #expect(Self.scan(text, chunk: chunk) == ModelFile.FacetScan(facets: 4, isWellFormed: true))
+    }
+
+    @Test("頂点が 3 つでない面があれば、数が合っていても組み立てが崩れているとする",
+        arguments: [1, 3, 8, 1 << 20])
+    func facetScanFlagsAFacetWithoutThreeVertices(chunk: Int) throws {
+        let cancelling = "solid t\n" + Self.facetText(vertices: 2) + Self.facetText(vertices: 4) + "endsolid t\n"
+        #expect(Self.scan(cancelling, chunk: chunk) == ModelFile.FacetScan(facets: 2, isWellFormed: false))
+        // 最後の面の後ろに頂点が余る・頂点が無い
+        let dangling = "solid t\n" + Self.facetText() + "  vertex 0 0 0\nendsolid t\n"
+        #expect(Self.scan(dangling, chunk: chunk) == ModelFile.FacetScan(facets: 1, isWellFormed: false))
+        let none = "solid t\n" + Self.facetText(vertices: 0) + "endsolid t\n"
+        #expect(Self.scan(none, chunk: chunk) == ModelFile.FacetScan(facets: 1, isWellFormed: false))
+    }
+
+    /// 文字の STL を書き出し、頭の 128 バイトと続きに分けて走査する。
+    static func scan(_ text: String, chunk: Int) -> ModelFile.FacetScan? {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-stl-scan-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("scan.stl")
+        guard (try? Data(text.utf8).write(to: url)) != nil,
+            let handle = try? FileHandle(forReadingFrom: url)
+        else { return nil }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 128)) ?? Data()
+        let isSmall = head.count < 128
+        return ModelFile.scanFacets(head: head, rest: isSmall ? nil : handle, chunk: chunk)
     }
 
     /// **途中で切れたバイナリは、揃っている面だけを読む** (`loadSTL` の説明)。面の数より短い
@@ -387,6 +509,33 @@ struct STLModelTests {
         /// 頂点が 2 つしかない面の後ろに、正しい面が続く。読み手は後ろの面の頂点を食って、三角形を 1 枚
         /// (形はでたらめ) しか返さない — 面の数 (2) と合わない
         case facetMissingACorner
+        /// 頂点が 2 つの面と 4 つの面が続く。頂点の総数 (6) は面の数 (2) の 3 倍に合うので、数だけでは
+        /// 見えない。読み手は 1 枚目に 2 枚目の頂点を混ぜて返す
+        case twoVerticesThenFour
+        /// 頂点が 4 つの面
+        case fourVertices
+        /// `vertex` を `vertx` と書いた (頂点が無い面)
+        case vertexTypo
+        /// 頂点の無い面だけ
+        case facetsWithoutVertices
+        /// 前に空白のある、面の無い solid。小文字の `solid` で始まらない文字は読めない
+        case indentedEmptySolid
+        /// **頭に制御文字 (FF・VT・DEL・ESC) を含む文字でも、同じ置き方 (84 バイト目が改行) で読めない** (#2336)。
+        /// 制御文字があるだけでバイナリに回すと、読み手の判定にそのまま渡る
+        case indentedKeywordWithFF
+        case upperCaseKeywordsWithVT
+        case upperCaseKeywordsWithDEL
+        case notSTLWithESC
+        /// 改行が CR だけで、名前に FF を含む 4 面 (500 バイト)。読み手は面の無い形を返す
+        case crOnlyWithFFInTheName
+        /// **`solid` で始まる文字で、84 バイト目が改行のまま、読み手が面として読めない形** (#2336 の続き)。
+        /// 読み手は文字として読めず、バイナリとして読み直して、面の数が書かれた面と一致してもでたらめな形を返す。
+        /// `facet` の行に `normal` が無い (168 バイト)
+        case facetWithoutNormalAtByte83
+        /// `FACET NORMAL` と大文字 (181 バイト)
+        case upperCaseFacetLineAtByte83
+        /// `facet` の行が無い (162 バイト)
+        case noFacetLineAtByte83
         /// **ここから下は、84 バイト目 (添字 83) の中身をそろえた文字のファイル** (#2336)。改行だと
         /// Model I/O はバイナリとして読み、80〜83 バイト目を面の数としてでたらめな形を返す
         /// (`indentedOnce` だけは空白で、陰性対照)。前に空白が 2 つ
@@ -430,6 +579,59 @@ struct STLModelTests {
                 let missing = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nendloop\nendfacet\n"
                 let good = "facet normal 0 0 1\nouter loop\nvertex 5 5 5\nvertex 6 5 5\nvertex 5 6 5\nendloop\nendfacet\n"
                 return Data(("solid t\n" + missing + good + "endsolid t\n").utf8)
+            case .twoVerticesThenFour:
+                return Data(
+                    ("solid t\n" + STLModelTests.facetText(vertices: 2)
+                        + STLModelTests.facetText(vertices: 4) + "endsolid t\n").utf8)
+            case .fourVertices:
+                return Data(
+                    ("solid t\n" + STLModelTests.facetText(vertices: 4) + STLModelTests.facetText()
+                        + "endsolid t\n").utf8)
+            case .vertexTypo:
+                return Data(
+                    ("solid t\n" + STLModelTests.facetText().replacingOccurrences(of: "vertex", with: "vertx")
+                        + "endsolid t\n").utf8)
+            case .facetsWithoutVertices:
+                return Data(
+                    ("solid t\n" + STLModelTests.facetText(vertices: 0) + STLModelTests.facetText(vertices: 0)
+                        + "endsolid t\n").utf8)
+            case .indentedEmptySolid:
+                return Data("  solid t\nendsolid t\n".utf8)
+            case .indentedKeywordWithFF:
+                return STLModelTests.data(
+                    STLModelTests.asciiSTL(firstLine: STLModelTests.firstLine("  solid \u{0C}")),
+                    byte83: 0x0A)
+            case .upperCaseKeywordsWithVT:
+                return STLModelTests.data(
+                    STLModelTests.asciiSTL(firstLine: STLModelTests.firstLine("SOLID \u{0B}")).uppercased(),
+                    byte83: 0x0A)
+            case .upperCaseKeywordsWithDEL:
+                return STLModelTests.data(
+                    STLModelTests.asciiSTL(firstLine: STLModelTests.firstLine("SOLID \u{7F}")).uppercased(),
+                    byte83: 0x0A)
+            case .notSTLWithESC:
+                let text = STLModelTests.firstLine("this is \u{1B}not a model at all. ") + "\n"
+                    + String(repeating: "this is not a model at all. ", count: 4)
+                return STLModelTests.data(text, byte83: 0x0A)
+            case .crOnlyWithFFInTheName:
+                let text = ModelFixture.asciiSTL(STLModelTests.tetrahedron, name: "t\u{0C}t")
+                    .replacingOccurrences(of: "\n", with: "\r")
+                return Data(text.utf8)
+            case .facetWithoutNormalAtByte83:
+                return STLModelTests.data(
+                    STLModelTests.firstLine("solid ")
+                        + "\nfacet\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n",
+                    byte83: 0x0A)
+            case .upperCaseFacetLineAtByte83:
+                return STLModelTests.data(
+                    STLModelTests.firstLine("solid ")
+                        + "\nFACET NORMAL 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n",
+                    byte83: 0x0A)
+            case .noFacetLineAtByte83:
+                return STLModelTests.data(
+                    STLModelTests.firstLine("solid ")
+                        + "\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n",
+                    byte83: 0x0A)
             case .tabAtByte83Small:
                 return STLModelTests.data(
                     STLModelTests.firstLine("solid ") + "\tfacet normal 0 0 1\n", byte83: 0x09)
@@ -542,8 +744,16 @@ struct STLModelTests {
         case indentedKeyword
         case upperCaseKeyword
         case notSTL
-        /// 文字でないバイト (NUL) を含み、84 バイトに満たない
+        /// 文字でないバイト (NUL) を含み、84 バイトに満たない `solid`。バイナリの見出しにはなれない
         case shortWithNUL
+        /// 名前に FF を含む、84 バイトを超える文字。84 バイト目が文字なので、制御文字があっても文字
+        case controlByteInTheName
+        /// ESC を含む、`solid` で始まらない文字
+        case escapeInNotSTL
+        /// 面の数を 2^24 と宣言したバイナリ (84 バイト目が 1)。見出しが `solid` でなければ読めない
+        case declaresTwoToThe24Faces
+        /// 同じく、見出しが `solid` で始まる。**文字として扱われる** (面を書いていなければ読めない)
+        case declaresTwoToThe24FacesWithSolidHeader
         /// 見出しだけで 1 バイト欠けたバイナリ
         case shortBinary
         case binaryWithoutFaces
@@ -561,6 +771,18 @@ struct STLModelTests {
             case .upperCaseKeyword: return Data("SOLID t\n".utf8)
             case .notSTL: return Data(String(repeating: "this is not a model. ", count: 10).utf8)
             case .shortWithNUL: return Data("solid t\u{0}\n".utf8)
+            case .controlByteInTheName:
+                return Data(("solid t\u{0C}\n" + String(repeating: "x", count: 100)).utf8)
+            case .escapeInNotSTL:
+                return Data(("this is \u{1B}not a model. " + String(repeating: "x", count: 100)).utf8)
+            case .declaresTwoToThe24Faces:
+                var data = ModelFixture.binarySTL([])
+                data.replaceSubrange(80..<84, with: [0, 0, 0, 1])
+                return data
+            case .declaresTwoToThe24FacesWithSolidHeader:
+                var data = ModelFixture.binarySTL([], header: "solid exported")
+                data.replaceSubrange(80..<84, with: [0, 0, 0, 1])
+                return data
             case .shortBinary: return Data(ModelFixture.binarySTL([]).dropLast())
             case .binaryWithoutFaces: return ModelFixture.binarySTL([])
             case .binaryWithSolidHeader:
@@ -571,16 +793,19 @@ struct STLModelTests {
 
         var expected: ModelFile.STLLayout {
             switch self {
-            case .solidOnly, .emptySolid: return .text
+            case .solidOnly, .emptySolid, .shortWithNUL, .controlByteInTheName,
+                .declaresTwoToThe24FacesWithSolidHeader:
+                return .text
             case .binaryWithoutFaces, .binaryWithSolidHeader, .binary: return .binary
-            case .empty, .indentedKeyword, .upperCaseKeyword, .notSTL, .shortWithNUL, .shortBinary:
+            case .empty, .indentedKeyword, .upperCaseKeyword, .notSTL, .shortBinary, .escapeInNotSTL,
+                .declaresTwoToThe24Faces:
                 return .unrecognized
             }
         }
     }
 
     @Test(
-        "頭の 84 バイトで、文字の STL・バイナリの STL・どちらでもないものを見分ける",
+        "頭で、文字の STL・バイナリの STL・どちらでもないものを見分ける (面の数の最上位のバイトが 0 ならバイナリ)",
         arguments: LayoutSample.allCases)
     func layoutFollowsTheFirst84Bytes(_ sample: LayoutSample) {
         #expect(ModelFile.stlLayout(of: sample.contents) == sample.expected)
@@ -588,7 +813,7 @@ struct STLModelTests {
 
     // MARK: - Model I/O の判定 (説明が頼る事実)
 
-    // **次の 4 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
+    // **次の 6 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
     // 検査は、この挙動を前提に境目を決めている。Model I/O が変わったら、ここが赤くなって、説明と
     // `loadSTL` の見分け方の直し時を知らせる (`asciiNonNumbersBecomeZero` と同じ役)。
 
@@ -606,6 +831,25 @@ struct STLModelTests {
         #expect(read.farthest > 1e30)
         // 84 バイト目が空白なら、面の数が多すぎるとして断る
         #expect(try readByModelIO(Broken.indentedOnce.contents) == nil)
+    }
+
+    @Test("Model I/O は solid で始まる文字でも、面を読めなければバイナリとして読み直す — 84 バイト目が文字なら断る")
+    func modelIORereadsAFacetlessLookingTextAsBinary() throws {
+        let sample = Broken.facetWithoutNormalAtByte83.contents
+        let reread = try #require(try readByModelIO(sample))
+        #expect(reread.triangles == 1)
+        #expect(reread.farthest > 1e30)
+        // 1 行目に空白を足して 84 バイト目を空白にした写しは、読み直されずに断られる
+        let head = Data(sample.prefix(128))
+        let copy = ModelFile.readerHead(of: head) + sample.dropFirst(head.count)
+        #expect(try readByModelIO(copy) == nil)
+    }
+
+    @Test("Model I/O は endfacet の前の VT・FF を空白として読む")
+    func modelIOReadsFormFeedsAsBlanks() throws {
+        let text = ModelFixture.asciiSTL(Self.tetrahedron)
+            .replacingOccurrences(of: "  endfacet\n", with: "\u{0C}endfacet\n")
+        #expect(try readByModelIO(Data(text.utf8))?.triangles == 4)
     }
 
     @Test("Model I/O は、読めない文字を面の無い形で返し、面の無い solid をバイナリとして読み直す")
