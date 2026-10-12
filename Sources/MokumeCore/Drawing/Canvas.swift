@@ -1142,10 +1142,25 @@ public final class Canvas {
     /// (``discardPending()``) で、落とした後に同じ面のまま置いた形も、置いた時点で記録し直される
     /// ([#1543])。
     ///
+    /// **鍵は描き場所の通し番号 (``placementKey``) である** ([#2306])。`ObjectIdentifier` (番地) を鍵に
+    /// すると、同じフレームで置いてから捨てた描き場所の番号が記録に残り、その番地を引き継いだ描き場所を
+    /// 置いても記録済みと見なして相手の ``placers`` に載せなかった — 描き換える前に置いた時点の絵を写させる
+    /// 相手が居ないので、先に置いた所に描き換えた後の絵が出た。番号は面ごとに 1 度きりなので引き継がれない。
+    /// 記録は番号だけを持ち、**描き場所そのものは掴まない** (``placers`` が弱く持つのと同じ理由)。
+    ///
     /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
-    private(set) var placedGraphics: Set<ObjectIdentifier> = []
+    /// [#2306]: https://github.com/mokume-metal/mokume/issues/2306
+    private(set) var placedGraphics: Set<UInt64> = []
+
+    /// この面の通し番号。**作った面ごとに 1 度きりで、捨てた面の番号を後の面が引き継がない** ([#2306])。
+    /// 置いた側の記録 (``placedGraphics``) が、置いた描き場所を見分ける鍵に使う。
+    ///
+    /// [#2306]: https://github.com/mokume-metal/mokume/issues/2306
+    let placementKey: UInt64
+    /// 次に配る通し番号 (``placementKey``)。面を作るたびに進める。
+    private static var nextPlacementKey: UInt64 = 0
 
     /// 自分を置いた面。**自分の絵が変わる前に、そちらへ置いた時点の絵を写させる**
     /// (``settlePlacersBeforeChange()``)。
@@ -1953,6 +1968,8 @@ public final class Canvas {
             throw .invalidPixelDensity(pixelDensity)
         }
         self.output = output
+        Self.nextPlacementKey &+= 1
+        placementKey = Self.nextPlacementKey
         // **近いほうへ丸め、1 画素は必ず残す。** 出す先と同じ大きさになったら段は
         // 立てない — 等倍の拡大は絵を変えないのに、置き場と 1 段ぶんの費用だけ増える
         let drawn = Self.drawnSize(of: output, at: pixelDensity)
@@ -3266,7 +3283,7 @@ public final class Canvas {
         // **記録済みなら相手へは載せ直さない** (#1683 の反証 2 回目)。貼る絵の記録は置くたびに
         // 来るので、相手の `placers` を毎回探さない。こちらの記録と相手の `placers` は組で、
         // 相手が `placers` を空にするときはこちらの記録も落とす (``keepPicture(placedFrom:)``)
-        guard placedGraphics.insert(ObjectIdentifier(graphics)).inserted else { return }
+        guard placedGraphics.insert(graphics.placementKey).inserted else { return }
         graphics.note(placedBy: self)
     }
 
@@ -3323,7 +3340,7 @@ public final class Canvas {
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     private func keepPicture(placedFrom graphics: Canvas) {
-        let placed = ObjectIdentifier(graphics)
+        let placed = graphics.placementKey
         guard placedGraphics.contains(placed) else { return }
         // **相手の `placers` から外れたので、こちらの記録も落とす。** 記録が残ったままだと、
         // 次に置いたとき記録済みとして相手へ載せ直さず (``note(placing:)``)、相手が次に変わる
@@ -3367,7 +3384,7 @@ public final class Canvas {
     ///
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     func keepPictureWithoutFlushing(placedFrom graphics: Canvas) -> Bool {
-        let placed = ObjectIdentifier(graphics)
+        let placed = graphics.placementKey
         guard placedGraphics.contains(placed) else { return true }
         // **畳む雛形を組み立てている途中なら写さない。** 写すときに列を閉じるので、組み立て途中の頂点が
         // ふつうの列として閉じ、雛形から抜け落ちる
@@ -3529,7 +3546,7 @@ public final class Canvas {
     var isPlacedInAShapeInProgress: Bool {
         guard upscaleStage == nil else { return false }
         for entry in placers {
-            guard let canvas = entry.canvas, canvas.placedGraphics.contains(ObjectIdentifier(self))
+            guard let canvas = entry.canvas, canvas.placedGraphics.contains(placementKey)
             else { continue }
             if canvas.recordingShape { return true }
         }
