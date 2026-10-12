@@ -49,6 +49,20 @@ struct ExposeNonFiniteTests {
         }
     }
 
+    /// 1 枚目に `measure` で測り、2 枚目に同じ名前へ非有限を差し出す。
+    final class Remeasuring: Sketch {
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func draw() {
+            background(.display(red: 0, green: 0, blue: 0))
+            if frameCount == 1 {
+                measure("ms") {}
+            } else {
+                expose("ms", Double.nan)
+            }
+        }
+    }
+
     private func makeFacet() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-exposed-nonfinite-\(UUID().uuidString)", isDirectory: true)
@@ -131,5 +145,28 @@ struct ExposeNonFiniteTests {
         let reply = try answer(in: facet)
         #expect(Set(reply.values.keys) == ["ratio", "edge"])
         #expect(!runtime.warnings.hasWarned(.nonFiniteExposed))
+    }
+
+    /// 測った値は測り直すまで、フレームの頭で差し出し直される。同じ名前に非有限を差し出しても
+    /// 差し出されないので、測った値が載ったまま残る (説明文が名乗る例外)。
+    @Test("measure した名前に非有限を差し出すと、測った値が残る")
+    func aMeasuredNameKeepsItsMeasurement() throws {
+        let facet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: Remeasuring(), gpu: try RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+
+        try request(id: "m1", in: facet)
+        try runtime.advance()
+        let first = try answer(in: facet)
+        #expect(first.values["ms"]?["value"] as? Double == 0)
+
+        try request(id: "m2", in: facet)
+        try runtime.advance()
+        let second = try answer(in: facet)
+        #expect(second.frame == 2)
+        #expect(second.values["ms"]?["type"] as? String == "float")
+        #expect(second.values["ms"]?["value"] as? Double == 0, "測った値が残る")
+        #expect(runtime.warnings.hasWarned(.nonFiniteExposed))
     }
 }

@@ -1337,8 +1337,9 @@ public final class SketchRuntime {
     /// **非有限の数 (NaN・無限) は溜めずに、1 度だけ名乗る。** 応答は JSON で、非有限の数を
     /// 符号化できない — 溜めると、その枚の応答がまるごと置けなくなる
     /// ([#2271](https://github.com/mokume-metal/mokume/issues/2271))。差し出さなかった値は
-    /// 応答の `values` に載らない (他の値は載る)。前の枚の値が残ることはない — 差し出した値は
-    /// フレームの頭で消える (``beginFrame()``)。
+    /// 応答の `values` に載らない (他の値は載る)。前の枚の値は残らない — 差し出した値は
+    /// フレームの頭で消える (``beginFrame()``)。**例外は ``measure(_:_:)`` で測った名前**: 測った
+    /// 値はフレームの頭で差し戻されるので、その名前に非有限を差し出しても、載るのは測った値である。
     func expose(_ name: String, _ value: ExposedValue) {
         guard observer != nil else { return }
         guard value.paramValue.hasOnlyFiniteNumbers else {
