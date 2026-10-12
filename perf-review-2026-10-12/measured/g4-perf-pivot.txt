@@ -1,0 +1,236 @@
+## cpu
+2372	1920x1080	zeroFilledAllocationOnly	med 0.035 p90 0.040 min 0.035 max 0.043 n 20 ms
+2372	1920x1080	zeroFillThenRowCopy	med 0.176 p90 0.193 min 0.165 max 0.202 n 20 ms
+2372	1920x1080	uninitializedSingleCopy	med 0.134 p90 0.135 min 0.126 max 0.136 n 20 ms
+2372	3840x2160	zeroFilledAllocationOnly	med 0.144 p90 0.164 min 0.133 max 0.174 n 20 ms
+2372	3840x2160	zeroFillThenRowCopy	med 0.664 p90 0.769 min 0.643 max 0.822 n 20 ms
+2372	3840x2160	uninitializedSingleCopy	med 0.509 p90 0.596 min 0.495 max 0.696 n 20 ms
+2372	1920x1080	Data(image.bytes)	med 0.126 p90 0.137 min 0.125 max 0.149 n 20 ms
+2372	1920x1080	PNGFile.write	med 50.728 p90 51.239 min 50.584 max 51.239 n 6 ms
+2372	1920x1080	pngBytes	= 3.13627e+06 bytes
+2372	3840x2160	Data(image.bytes)	med 0.513 p90 0.603 min 0.495 max 0.666 n 20 ms
+2372	3840x2160	PNGFile.write	med 200.013 p90 212.225 min 199.130 max 212.225 n 6 ms
+2372	3840x2160	pngBytes	= 1.23568e+07 bytes
+2372	1920x1080	MovieWriter.write.mainBlocked	med 2.681 p90 3.611 min 0.002 max 52.129 n 48 ms
+2372	1920x1080	MovieWriter.write.blockedOver0.5ms	= 44 count
+2372	1920x1080	MovieWriter.peakOutstanding	= 4 frames
+2372	1920x1080	MovieWriter.finish	= 35.7264 ms
+2372	1920x1080	MovieWriter.throughput	= 216.955 fps
+2372	3840x2160	MovieWriter.write.mainBlocked	med 6.189 p90 9.690 min 0.001 max 13.644 n 24 ms
+2372	3840x2160	MovieWriter.write.blockedOver0.5ms	= 19 count
+2372	3840x2160	MovieWriter.peakOutstanding	= 4 frames
+2372	3840x2160	MovieWriter.finish	= 123.575 ms
+2372	3840x2160	MovieWriter.throughput	= 94.3605 fps
+2372	1920x1080	FrameWriter.write.mainBlocked	med 0.375 p90 51.793 min 0.042 max 53.929 n 32 ms
+2372	1920x1080	FrameWriter.drain	= 52.4591 ms
+2372	1920x1080	FrameWriter.peakOutstanding	= 4 frames
+2372	1920x1080	FrameWriter.throughput	= 74.6042 fps
+2372	3840x2160	FrameWriter.write.mainBlocked	med 0.896 p90 221.722 min 0.040 max 230.409 n 16 ms
+2372	3840x2160	FrameWriter.drain	= 250.683 ms
+2372	3840x2160	FrameWriter.peakOutstanding	= 4 frames
+2372	3840x2160	FrameWriter.throughput	= 17.2106 fps
+2372	1920x1080.utility.idle	MovieFile.throughput	= 304.253 fps
+2372	1920x1080.utility.idle	MovieFile.total	= 98.6022 ms
+2372	1920x1080.userInitiated.idle	MovieFile.throughput	= 312.844 fps
+2372	1920x1080.userInitiated.idle	MovieFile.total	= 95.8944 ms
+2372	1920x1080.utility.allCoresBusy	MovieFile.throughput	= 42.5135 fps
+2372	1920x1080.utility.allCoresBusy	MovieFile.total	= 705.658 ms
+2372	1920x1080.userInitiated.allCoresBusy	MovieFile.throughput	= 78.1486 fps
+2372	1920x1080.userInitiated.allCoresBusy	MovieFile.total	= 383.884 ms
+## gpu
+2372	1920x1080	bytesPerRow	= 7680 bytes
+2372	1920x1080	widthInBytes	= 7680 bytes
+2372	1920x1080	EncodedImage.read	med 0.177 p90 0.192 min 0.161 max 0.200 n 20 ms
+2372	3840x2160	bytesPerRow	= 15360 bytes
+2372	3840x2160	widthInBytes	= 15360 bytes
+2372	3840x2160	EncodedImage.read	med 0.689 p90 0.761 min 0.667 max 0.785 n 20 ms
+2372	1920x1080.none	advance	med 0.290 p90 0.395 min 0.127 max 0.973 n 30 ms
+2372	1920x1080.movie	advance	med 1.132 p90 2.727 min 0.578 max 41.148 n 30 ms
+2372	1920x1080.movie	endRecord	= 21.8608 ms
+2372	1920x1080.sequence	advance	med 1.304 p90 8.082 min 0.765 max 10.254 n 30 ms
+2372	1920x1080.sequence	endRecord	= 12.5045 ms
+2372	3840x2160.none	advance	med 0.824 p90 1.192 min 0.359 max 1.615 n 20 ms
+2372	3840x2160.movie	advance	med 3.300 p90 4.470 min 1.546 max 8.943 n 20 ms
+2372	3840x2160.movie	endRecord	= 43.3272 ms
+2372	3840x2160.sequence	advance	med 4.029 p90 31.262 min 1.953 max 32.300 n 20 ms
+2372	3840x2160.sequence	endRecord	= 44.8186 ms
+2375	100000.alive	scanLevels	= 3 count
+2375	100000.alive	dispatchesPerCall	= 5 count
+2375	100000.alive	stateBytes	= 5.6e+06 bytes
+2375	100000.alive	instanceBytes	= 1.28e+07 bytes
+2375	100000.alive	drawCallsInLastFrame	= 1 count
+2375	100000.alive	frameWithParticles	med 0.991 p90 1.717 min 0.723 max 2.068 n 15 ms
+2375	100000.alive	frameWithoutParticles	med 0.202 p90 0.220 min 0.176 max 0.220 n 15 ms
+2375	100000.alive	submitFloor(scanTopLevel)	med 0.199 p90 0.399 min 0.175 max 0.445 n 15 ms
+2375	100000.alive	stageFlag	med 0.190 p90 0.356 min 0.173 max 0.421 n 15 ms
+2375	100000.alive	stageScanAllLevels	med 0.255 p90 0.452 min 0.211 max 0.554 n 15 ms
+2375	100000.alive	stageScanLevel0	med 0.209 p90 0.364 min 0.194 max 0.401 n 15 ms
+2375	100000.alive	stageUpdate	med 0.211 p90 0.379 min 0.197 max 0.568 n 15 ms
+2375	100000.dead	scanLevels	= 3 count
+2375	100000.dead	dispatchesPerCall	= 5 count
+2375	100000.dead	stateBytes	= 5.6e+06 bytes
+2375	100000.dead	instanceBytes	= 1.28e+07 bytes
+2375	100000.dead	drawCallsInLastFrame	= 1 count
+2375	100000.dead	frameWithParticles	med 0.286 p90 0.466 min 0.275 max 0.475 n 15 ms
+2375	100000.dead	frameWithoutParticles	med 0.174 p90 0.436 min 0.152 max 0.452 n 15 ms
+2375	100000.dead	submitFloor(scanTopLevel)	med 0.205 p90 0.257 min 0.185 max 0.373 n 15 ms
+2375	100000.dead	stageFlag	med 0.198 p90 0.632 min 0.181 max 0.820 n 15 ms
+2375	100000.dead	stageScanAllLevels	med 0.243 p90 0.300 min 0.220 max 0.430 n 15 ms
+2375	100000.dead	stageScanLevel0	med 0.203 p90 0.449 min 0.192 max 0.450 n 15 ms
+2375	100000.dead	stageUpdate	med 0.193 p90 0.352 min 0.183 max 0.417 n 15 ms
+2375	1000000.alive	scanLevels	= 3 count
+2375	1000000.alive	dispatchesPerCall	= 5 count
+2375	1000000.alive	stateBytes	= 5.6e+07 bytes
+2375	1000000.alive	instanceBytes	= 1.28e+08 bytes
+2375	1000000.alive	drawCallsInLastFrame	= 1 count
+2375	1000000.alive	frameWithParticles	med 8.625 p90 8.927 min 3.199 max 9.027 n 15 ms
+2375	1000000.alive	frameWithoutParticles	med 0.190 p90 0.446 min 0.180 max 0.509 n 15 ms
+2375	1000000.alive	submitFloor(scanTopLevel)	med 0.198 p90 0.346 min 0.191 max 0.417 n 15 ms
+2375	1000000.alive	stageFlag	med 0.392 p90 0.493 min 0.370 max 0.814 n 15 ms
+2375	1000000.alive	stageScanAllLevels	med 0.265 p90 0.492 min 0.229 max 0.570 n 15 ms
+2375	1000000.alive	stageScanLevel0	med 0.217 p90 0.509 min 0.201 max 0.532 n 15 ms
+2375	1000000.alive	stageUpdate	med 0.609 p90 0.810 min 0.557 max 1.021 n 15 ms
+2375	1000000.dead	scanLevels	= 3 count
+2375	1000000.dead	dispatchesPerCall	= 5 count
+2375	1000000.dead	stateBytes	= 5.6e+07 bytes
+2375	1000000.dead	instanceBytes	= 1.28e+08 bytes
+2375	1000000.dead	drawCallsInLastFrame	= 1 count
+2375	1000000.dead	frameWithParticles	med 0.638 p90 0.876 min 0.600 max 0.993 n 15 ms
+2375	1000000.dead	frameWithoutParticles	med 0.189 p90 0.207 min 0.174 max 0.208 n 15 ms
+2375	1000000.dead	submitFloor(scanTopLevel)	med 0.198 p90 0.310 min 0.178 max 0.358 n 15 ms
+2375	1000000.dead	stageFlag	med 0.397 p90 0.561 min 0.316 max 0.612 n 15 ms
+2375	1000000.dead	stageScanAllLevels	med 0.262 p90 0.283 min 0.228 max 0.382 n 15 ms
+2375	1000000.dead	stageScanLevel0	med 0.219 p90 0.231 min 0.190 max 0.300 n 15 ms
+2375	1000000.dead	stageUpdate	med 0.383 p90 0.487 min 0.363 max 0.528 n 15 ms
+2381	1920x1080.scale1.0	advance.notCapturing	med 0.096 p90 0.164 min 0.087 max 1.838 n 20 ms
+2381	1920x1080.scale1.0	advance.capturing(12 frames incl. 10 shots)	med 12.507 p90 13.787 min 0.096 max 13.975 n 12 ms
+2381	1920x1080.scale1.0	report.frameTimeMs.mean	= 3.7641 ms
+2381	1920x1080.scale1.0	report.frameTimeMs.max	= 13.7938
+2381	1920x1080.scale1.0	report.frameRate	= 265.671 fps
+2381	1920x1080.scale1.0	encodeToImageAndRead	med 0.598 p90 0.857 min 0.573 max 1.164 n 10 ms
+2381	1920x1080.scale1.0	FrameStats.summarize	med 0.111 p90 0.116 min 0.110 max 0.119 n 20 ms
+2381	1920x1080.scale1.0	observer.writeFrame(PNG+AtomicFile)	med 12.040 p90 13.111 min 11.821 max 13.111 n 6 ms
+2381	3840x2160.scale1.0	advance.notCapturing	med 0.250 p90 0.306 min 0.185 max 1.369 n 20 ms
+2381	3840x2160.scale1.0	advance.capturing(12 frames incl. 10 shots)	med 44.413 p90 46.121 min 0.094 max 47.586 n 12 ms
+2381	3840x2160.scale1.0	report.frameTimeMs.mean	= 12.9144 ms
+2381	3840x2160.scale1.0	report.frameTimeMs.max	= 47.5321
+2381	3840x2160.scale1.0	report.frameRate	= 77.433 fps
+2381	3840x2160.scale1.0	encodeToImageAndRead	med 1.911 p90 2.202 min 1.676 max 2.307 n 10 ms
+2381	3840x2160.scale1.0	FrameStats.summarize	med 0.114 p90 0.124 min 0.114 max 0.130 n 20 ms
+2381	3840x2160.scale1.0	observer.writeFrame(PNG+AtomicFile)	med 40.387 p90 40.916 min 39.933 max 40.916 n 6 ms
+2381	1920x1080.scale0.5	advance.notCapturing	med 0.289 p90 0.421 min 0.185 max 1.126 n 20 ms
+2381	1920x1080.scale0.5	advance.capturing(12 frames incl. 10 shots)	med 6.382 p90 7.195 min 0.089 max 7.456 n 12 ms
+2381	1920x1080.scale0.5	report.frameTimeMs.mean	= 2.0711 ms
+2381	1920x1080.scale0.5	report.frameTimeMs.max	= 7.1968
+2381	1920x1080.scale0.5	report.frameRate	= 482.831 fps
+2381	1920x1080.scale0.5	encodeToImageAndRead	med 1.685 p90 1.936 min 1.422 max 2.023 n 10 ms
+2381	1920x1080.scale0.5	FrameStats.summarize	med 0.114 p90 0.117 min 0.113 max 0.118 n 20 ms
+2381	1920x1080.scale0.5	observer.writeFrame(PNG+AtomicFile)	med 3.506 p90 3.694 min 3.377 max 3.694 n 6 ms
+2381	3840x2160.scale0.5	advance.notCapturing	med 0.881 p90 0.972 min 0.320 max 1.572 n 20 ms
+2381	3840x2160.scale0.5	advance.capturing(12 frames incl. 10 shots)	med 17.633 p90 18.902 min 0.093 max 19.000 n 12 ms
+2381	3840x2160.scale0.5	report.frameTimeMs.mean	= 5.4573 ms
+2381	3840x2160.scale0.5	report.frameTimeMs.max	= 18.9398
+2381	3840x2160.scale0.5	report.frameRate	= 183.239 fps
+2381	3840x2160.scale0.5	encodeToImageAndRead	med 5.239 p90 5.351 min 4.921 max 5.918 n 10 ms
+2381	3840x2160.scale0.5	FrameStats.summarize	med 0.109 p90 0.114 min 0.108 max 0.123 n 20 ms
+2381	3840x2160.scale0.5	observer.writeFrame(PNG+AtomicFile)	med 11.478 p90 11.738 min 11.256 max 11.738 n 6 ms
+1792	fixedSize	pipelinedFrame	= 1.2859 ms
+1792	fixedSize	settleCallsPerFrame	= 0.0333 count
+1792	fixedSize	blockingWaitsPerFrame	= 0.0333 count
+1792	fixedSize	glyphsBakedPerFrame	= 0 count
+1792	fixedSize	pageChanges	= 0 count
+1792	fixedSize	atlasSide	= 256 px
+1792	fixedSize	atlasPageBytes	= 524288 bytes
+1792	animatedSize	pipelinedFrame	= 3.316 ms
+1792	animatedSize	settleCallsPerFrame	= 45.0667 count
+1792	animatedSize	blockingWaitsPerFrame	= 1 count
+1792	animatedSize	glyphsBakedPerFrame	= 24.8667 count
+1792	animatedSize	pageChanges	= 2 count
+1792	animatedSize	atlasSide	= 1024 px
+1792	animatedSize	atlasPageBytes	= 8.38861e+06 bytes
+ADR0042-5	1920x1080.untagged	FrameConverter.convert	med 1.011 p90 1.043 min 0.496 max 1.067 n 20 ms
+ADR0042-5	1920x1080.untagged	FrameConverter.convert(toHalf)	med 1.738 p90 1.815 min 1.250 max 1.995 n 20 ms
+ADR0042-5	1920x1080.untagged	Image.write	med 0.000 p90 0.000 min 0.000 max 0.000 n 20 ms
+ADR0042-5	1920x1080.untagged	drawWithWrittenImage.cpu	med 0.154 p90 0.175 min 0.143 max 0.195 n 20 ms
+ADR0042-5	1920x1080.untagged	drawWithWrittenImage.settle	med 0.235 p90 0.324 min 0.218 max 0.499 n 20 ms
+ADR0042-5	1920x1080.untagged	drawWithUnchangedImage.total	med 0.220 p90 0.428 min 0.186 max 0.590 n 20 ms
+ADR0042-5	1920x1080.rec709	FrameConverter.convert	med 1.011 p90 1.064 min 0.465 max 1.261 n 20 ms
+ADR0042-5	1920x1080.rec709	FrameConverter.convert(toHalf)	med 1.681 p90 1.786 min 1.251 max 1.905 n 20 ms
+ADR0042-5	3840x2160.untagged	FrameConverter.convert	med 1.969 p90 2.173 min 1.768 max 2.259 n 20 ms
+ADR0042-5	3840x2160.untagged	FrameConverter.convert(toHalf)	med 8.526 p90 8.920 min 7.865 max 9.008 n 20 ms
+ADR0042-5	3840x2160.untagged	Image.write	med 0.000 p90 0.000 min 0.000 max 0.000 n 20 ms
+ADR0042-5	3840x2160.untagged	drawWithWrittenImage.cpu	med 0.592 p90 0.633 min 0.561 max 0.660 n 20 ms
+ADR0042-5	3840x2160.untagged	drawWithWrittenImage.settle	med 0.800 p90 1.091 min 0.488 max 1.741 n 20 ms
+ADR0042-5	3840x2160.untagged	drawWithUnchangedImage.total	med 0.341 p90 0.571 min 0.303 max 0.925 n 20 ms
+ADR0042-5	3840x2160.rec709	FrameConverter.convert	med 1.884 p90 2.113 min 1.755 max 2.217 n 20 ms
+ADR0042-5	3840x2160.rec709	FrameConverter.convert(toHalf)	med 8.434 p90 8.898 min 7.925 max 8.933 n 20 ms
+1960	1920x1080.h264.gop30	steady.picture(at:)	med 1.021 p90 2.081 min 0.456 max 3.293 n 89 ms
+1960	1920x1080.h264.gop30	loopSeam(2.95->0)	med 15.743 p90 18.011 min 13.176 max 18.011 n 8 ms
+1960	1920x1080.h264.gop30	jumpBack(2.9->2.5)	med 21.986 p90 23.356 min 18.842 max 23.356 n 8 ms
+1960	1920x1080.h264.gop30	jumpAhead(0->2.5)	med 34.138 p90 34.793 min 31.375 max 34.793 n 8 ms
+1960	1920x1080.h264.gop30	jumpAheadWithin1s(0->0.9)	med 31.876 p90 33.010 min 31.179 max 33.010 n 8 ms
+1960	1920x1080.h264.gop30	restart.openAndStart	med 2.794 p90 6.846 min 2.423 max 6.846 n 8 ms
+1960	1920x1080.h264.gop30	restart.firstSampleAt2.5	med 18.787 p90 19.837 min 14.092 max 19.837 n 8 ms
+1960	3840x2160.h264.gop30	steady.picture(at:)	med 2.000 p90 7.231 min 1.696 max 9.142 n 89 ms
+1960	3840x2160.h264.gop30	loopSeam(2.95->0)	med 41.496 p90 42.545 min 40.840 max 42.545 n 8 ms
+1960	3840x2160.h264.gop30	jumpBack(2.9->2.5)	med 66.275 p90 71.823 min 64.343 max 71.823 n 8 ms
+1960	3840x2160.h264.gop30	jumpAhead(0->2.5)	med 87.818 p90 88.513 min 86.429 max 88.513 n 8 ms
+1960	3840x2160.h264.gop30	jumpAheadWithin1s(0->0.9)	med 83.100 p90 87.994 min 81.354 max 87.994 n 8 ms
+1960	3840x2160.h264.gop30	restart.openAndStart	med 12.981 p90 14.333 min 7.929 max 14.333 n 8 ms
+1960	3840x2160.h264.gop30	restart.firstSampleAt2.5	med 44.325 p90 46.480 min 42.591 max 46.480 n 8 ms
+1960	1920x1080.h264.gop90	steady.picture(at:)	med 1.109 p90 1.631 min 0.571 max 2.557 n 89 ms
+1960	1920x1080.h264.gop90	loopSeam(2.95->0)	med 16.524 p90 24.050 min 13.751 max 24.050 n 8 ms
+1960	1920x1080.h264.gop90	jumpBack(2.9->2.5)	med 38.829 p90 42.916 min 36.343 max 42.916 n 8 ms
+1960	1920x1080.h264.gop90	jumpAhead(0->2.5)	med 48.053 p90 49.703 min 45.923 max 49.703 n 8 ms
+1960	1920x1080.h264.gop90	jumpAheadWithin1s(0->0.9)	med 33.096 p90 34.327 min 31.854 max 34.327 n 8 ms
+1960	1920x1080.h264.gop90	restart.openAndStart	med 3.670 p90 7.502 min 2.604 max 7.502 n 8 ms
+1960	1920x1080.h264.gop90	restart.firstSampleAt2.5	med 30.976 p90 35.095 min 30.490 max 35.095 n 8 ms
+1960	3840x2160.h264.gop90	steady.picture(at:)	med 1.942 p90 7.373 min 1.655 max 7.826 n 89 ms
+1960	3840x2160.h264.gop90	loopSeam(2.95->0)	med 49.439 p90 57.013 min 43.250 max 57.013 n 8 ms
+1960	3840x2160.h264.gop90	jumpBack(2.9->2.5)	med 129.598 p90 132.766 min 125.451 max 132.766 n 8 ms
+1960	3840x2160.h264.gop90	jumpAhead(0->2.5)	med 154.295 p90 161.321 min 148.712 max 161.321 n 8 ms
+1960	3840x2160.h264.gop90	jumpAheadWithin1s(0->0.9)	med 82.383 p90 82.746 min 81.502 max 82.746 n 8 ms
+1960	3840x2160.h264.gop90	restart.openAndStart	med 16.531 p90 21.974 min 12.668 max 21.974 n 8 ms
+1960	3840x2160.h264.gop90	restart.firstSampleAt2.5	med 107.559 p90 109.817 min 104.497 max 109.817 n 8 ms
+1960	1920x1080.hevc.gop30	steady.picture(at:)	med 1.072 p90 2.080 min 0.577 max 3.280 n 89 ms
+1960	1920x1080.hevc.gop30	loopSeam(2.95->0)	med 14.448 p90 20.410 min 13.260 max 20.410 n 8 ms
+1960	1920x1080.hevc.gop30	jumpBack(2.9->2.5)	med 16.222 p90 16.867 min 15.518 max 16.867 n 8 ms
+1960	1920x1080.hevc.gop30	jumpAhead(0->2.5)	med 30.415 p90 31.067 min 25.369 max 31.067 n 8 ms
+1960	1920x1080.hevc.gop30	jumpAheadWithin1s(0->0.9)	med 30.082 p90 30.332 min 28.988 max 30.332 n 8 ms
+1960	1920x1080.hevc.gop30	restart.openAndStart	med 2.673 p90 6.617 min 2.335 max 6.617 n 8 ms
+1960	1920x1080.hevc.gop30	restart.firstSampleAt2.5	med 9.708 p90 10.636 min 9.194 max 10.636 n 8 ms
+1960	3840x2160.hevc.gop30	steady.picture(at:)	med 1.947 p90 7.413 min 1.688 max 7.810 n 89 ms
+1960	3840x2160.hevc.gop30	loopSeam(2.95->0)	med 40.675 p90 42.187 min 38.657 max 42.187 n 8 ms
+1960	3840x2160.hevc.gop30	jumpBack(2.9->2.5)	med 49.432 p90 51.270 min 44.149 max 51.270 n 8 ms
+1960	3840x2160.hevc.gop30	jumpAhead(0->2.5)	med 69.179 p90 70.583 min 67.134 max 70.583 n 8 ms
+1960	3840x2160.hevc.gop30	jumpAheadWithin1s(0->0.9)	med 83.195 p90 83.915 min 82.236 max 83.915 n 8 ms
+1960	3840x2160.hevc.gop30	restart.openAndStart	med 13.885 p90 18.994 min 13.305 max 18.994 n 8 ms
+1960	3840x2160.hevc.gop30	restart.firstSampleAt2.5	med 25.808 p90 30.377 min 25.259 max 30.377 n 8 ms
+## audio
+2379	analyze	total	med 15.504 p90 16.328 min 14.746 max 16.897 n ? us
+2379	analyze	dftSetupCreation	med 11.739 p90 12.161 min 11.235 max 12.572 n ? us
+2379	analyze	dftTransformOnly	med 1.321 p90 1.428 min 1.283 max 1.584 n ? us
+2379	analyze	magnitudeScalarLoop	med 0.137 p90 0.138 min 0.137 max 0.140 n ? us
+2379	analyze	spectrumLevelsMap	med 12.461 p90 13.258 min 7.907 max 13.830 n ? us
+2379	analyze	meterLatest1024	med 1.984 p90 2.055 min 1.931 max 2.080 n ? us
+2379	sounds1	rackAdvance800	med 0.007 p90 0.007 min 0.007 max 0.007 n ? ms
+2379	sounds1	analyzeAll	med 0.018 p90 0.020 min 0.017 max 0.022 n ? ms
+2379	sounds1	advanceAndAnalyzeAll	med 0.025 p90 0.038 min 0.025 max 0.108 n ? ms
+2379	sounds10	rackAdvance800	med 0.070 p90 0.071 min 0.070 max 0.215 n ? ms
+2379	sounds10	analyzeAll	med 0.172 p90 0.188 min 0.169 max 0.207 n ? ms
+2379	sounds10	advanceAndAnalyzeAll	med 0.245 p90 0.251 min 0.237 max 0.279 n ? ms
+2379	sounds50	rackAdvance800	med 0.335 p90 0.357 min 0.332 max 0.405 n ? ms
+2379	sounds50	analyzeAll	med 0.855 p90 0.884 min 0.828 max 0.933 n ? ms
+2379	sounds50	advanceAndAnalyzeAll	med 1.198 p90 1.255 min 1.164 max 1.293 n ? ms
+2379	sounds64	rackAdvance800	med 0.459 p90 0.535 min 0.427 max 0.565 n ? ms
+2379	sounds64	analyzeAll	med 1.120 p90 1.191 min 1.065 max 1.255 n ? ms
+2379	sounds64	advanceAndAnalyzeAll	med 1.526 p90 1.662 min 1.491 max 1.681 n ? ms
+## cpu-retry
+2372	1920x1080.utility.idle	MovieFile.throughput	= 39.1372 fps
+2372	1920x1080.utility.idle	MovieFile.total	= 766.534 ms
+2372	1920x1080.userInitiated.idle	MovieFile.throughput	= 104.606 fps
+2372	1920x1080.userInitiated.idle	MovieFile.total	= 286.789 ms
+2372	1920x1080.utility.allCoresBusy	MovieFile.throughput	= 33.96 fps
+2372	1920x1080.utility.allCoresBusy	MovieFile.total	= 883.391 ms
+2372	1920x1080.userInitiated.allCoresBusy	MovieFile.throughput	= 31.587 fps
+2372	1920x1080.userInitiated.allCoresBusy	MovieFile.total	= 949.758 ms

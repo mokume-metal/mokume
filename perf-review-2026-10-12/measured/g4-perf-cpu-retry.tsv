@@ -1,0 +1,8 @@
+PERF	2372	1920x1080.utility.idle	MovieFile.throughput	39.1372	fps
+PERF	2372	1920x1080.utility.idle	MovieFile.total	766.5342	ms
+PERF	2372	1920x1080.userInitiated.idle	MovieFile.throughput	104.6065	fps
+PERF	2372	1920x1080.userInitiated.idle	MovieFile.total	286.7891	ms
+PERF	2372	1920x1080.utility.allCoresBusy	MovieFile.throughput	33.9600	fps
+PERF	2372	1920x1080.utility.allCoresBusy	MovieFile.total	883.3912	ms
+PERF	2372	1920x1080.userInitiated.allCoresBusy	MovieFile.throughput	31.5870	fps
+PERF	2372	1920x1080.userInitiated.allCoresBusy	MovieFile.total	949.7575	ms
