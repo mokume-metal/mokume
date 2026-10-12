@@ -56,6 +56,13 @@ enum DoctorCommand {
         var toolchain: String?
         /// 道具自身の版。**在処から導く** (#634)。
         var tool: String = ToolVersion.describe()
+        /// 道具立てを**聞かなかった**ときの、見ている場所。聞いたなら `nil`。
+        ///
+        /// **「聞いて読めなかった」(`toolchain == nil`) とは別に持つ。** 道具立ては見ている
+        /// 場所で起こす (`Toolchain`) ので、場所が無いと `swift` はそもそも起きない。それを
+        /// 「could not launch swift」と言うと、入っている `swift` を疑わせる
+        /// ([#2314](https://github.com/mokume-metal/mokume/issues/2314)・規律 3)。
+        var toolchainUnasked: URL? = nil
     }
 
     /// 手元の状態。
@@ -94,6 +101,11 @@ enum DoctorCommand {
         /// 黙らせうるが、2 つの版が別々の節に並ぶだけでは、人が見比べないと辿れなかった
         /// ([#1230](https://github.com/mokume-metal/mokume/issues/1230))。
         var tool: String? = nil
+        /// 見ている場所が在るか。**無い・ディレクトリでないことを名乗る** (#2314)。
+        ///
+        /// 「Package.swift が無い」だけでは、打ち間違えた場所と、まだ作っていない
+        /// スケッチの区別が付かない。
+        var presence: GivenPath.Presence = .directory
     }
 
     /// 共有のビルド置き場の姿。
@@ -168,10 +180,12 @@ enum DoctorCommand {
     ///   - environment: 環境。**検査から渡せる形にしてある** — 既定のままだと打った人の
     ///     手元の共有の置き場を覗くことになり、結果が機械によって変わる。
     ///   - home: ホームディレクトリ。同上。
+    ///   - currentDirectory: 相対の場所を解く基準 (走らせた場所)。同上。
     static func text(
         for arguments: [String], workDirectory: URL? = WorkDirectory.given,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        currentDirectory: URL = GivenPath.currentDirectory
     ) -> String {
         // 引数を解く骨格も、走らせる口と同じ 1 本を通る (#814)。**切り分けの口だけは
         // 止まらない** — 知らない引数で使い方を出して終わると、いちばん要るときに読めない。
@@ -179,8 +193,9 @@ enum DoctorCommand {
         // 値を取る選択肢が無いので投げどころは無いが、万一のときも止まらない側へ倒す
         let parsed = (try? Arguments.parse(arguments, surplus: .ignore)) ?? Arguments.Parsed()
         let ignored = parsed.ignored
-        // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)
-        let invocation = Invocation(place: parsed.positional)
+        // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)。場所は走らせた
+        // 場所から絶対パスに解く (#2323)
+        let invocation = Invocation(place: parsed.positional, currentDirectory: currentDirectory)
         let directory = invocation.directory
         let base = invocation.facetBase(workDirectory: workDirectory)
         return report(
@@ -227,7 +242,7 @@ enum DoctorCommand {
             machineLine(environment.machine),
             graphicsLine(environment.canDraw),
             resourcesLine(environment.resources),
-            toolchainLine(environment.toolchain),
+            toolchainLine(environment.toolchain, unaskedIn: environment.toolchainUnasked),
             "Tool: \(environment.tool)",
         ]
     }
@@ -266,9 +281,19 @@ enum DoctorCommand {
     }
 
     /// 道具立ての行。
-    static func toolchainLine(_ toolchain: String?) -> String {
-        guard let toolchain else { return "Toolchain: \(unknown) — could not launch swift" }
-        return "Toolchain: \(toolchain)"
+    ///
+    /// **聞かなかったことと、聞いて読めなかったことを分ける** (#2314)。見ている場所が無いと
+    /// `swift` はそこで起きないので、聞いていない。それを「could not launch swift」と言うと、
+    /// 入っている `swift` を疑わせる (規律 3)。
+    ///
+    /// - Parameter place: 道具立てを聞かなかったときの、見ている場所。
+    static func toolchainLine(_ toolchain: String?, unaskedIn place: URL? = nil) -> String {
+        if let toolchain { return "Toolchain: \(toolchain)" }
+        if let place {
+            return "Toolchain: \(unknown) — not asked, since \(place.path) is not a directory"
+                + " to run swift in"
+        }
+        return "Toolchain: \(unknown) — could not launch swift"
     }
 
     /// 共有の置き場を名乗る行。**1 行目が根と合計で、続く行が部屋の内訳。**
@@ -321,7 +346,7 @@ enum DoctorCommand {
     /// 手元の状態の各行。
     static func stateLines(_ state: State) -> [String] {
         var lines = [
-            "Place: \(state.place.path)",
+            placeLine(state.place, presence: state.presence),
             sketchLine(state.hasPackage),
             dependencyLine(state.dependency, tool: state.tool),
             // **在処まで書く。** 置き場は版ごとの共有へ移りうるので、在る / 無いだけでは
@@ -338,6 +363,15 @@ enum DoctorCommand {
         }
         lines.append(lastBuildLine(last))
         return lines
+    }
+
+    /// 見ている場所の行。**無い・ディレクトリでないときは、そう名乗る** (#2314)。
+    static func placeLine(_ place: URL, presence: GivenPath.Presence) -> String {
+        switch presence {
+        case .directory: "Place: \(place.path)"
+        case .missing: "Place: \(place.path) — nothing is there (check the path you gave)"
+        case .notDirectory: "Place: \(place.path) — not a directory (point at the sketch's directory)"
+        }
     }
 
     /// スケッチの体裁があるかの行。
@@ -406,14 +440,21 @@ enum DoctorCommand {
 
     // MARK: - 読み取り
 
+    /// 環境の前提を読む。
+    ///
+    /// **見ている場所がディレクトリでなければ、道具立てを聞かない** (#2314)。`swift` は
+    /// そこで起こすので起きず、聞けば「起こせなかった」としか言えない — 入っている `swift`
+    /// を疑わせる誤った断定になる (規律 3)。
     static func probeEnvironment(in directory: URL) -> Environment {
         let version = ProcessInfo.processInfo.operatingSystemVersion
+        let askable = GivenPath.Presence.of(directory) == .directory
         return Environment(
             system: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
             machine: machine(),
             canDraw: RenderDevice.isAvailable,
             resources: BundledShaders.location,
-            toolchain: toolchain(in: directory))
+            toolchain: askable ? toolchain(in: directory) : nil,
+            toolchainUnasked: askable ? nil : directory)
     }
 
     /// 機種の名乗り。
@@ -458,7 +499,8 @@ enum DoctorCommand {
             sharedStore: sharedStore(at: root),
             lastBuild: lastBuild(under: facetBase),
             dependency: DependencyVersion.resolved(forPackageAt: directory),
-            tool: ToolVersion.release())
+            tool: ToolVersion.release(),
+            presence: GivenPath.Presence.of(directory))
     }
 
     /// 共有の置き場を読む。**何も作らず、何も消さない** (根が無ければ 0 通りと名乗る)。

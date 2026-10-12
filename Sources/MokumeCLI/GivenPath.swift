@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 利用者が打ったパスを、場所 (絶対パスの URL) へ解く。**基準は走らせた場所。**
 ///
@@ -42,6 +43,27 @@ nonisolated enum GivenPath {
         let expanded = NSString(string: given).expandingTildeInPath
         return URL(fileURLWithPath: expanded, isDirectory: isDirectory, relativeTo: base)
             .standardizedFileURL
+    }
+
+    /// 解いた場所の在り方。
+    ///
+    /// **無い・ディレクトリでないことを、子を起こす前に読み分けるために持つ** (#2314)。
+    /// `Process.run()` は作業ディレクトリが無いときも実行ファイルが無いときと同じ失敗で
+    /// 投げるので、失敗の値からは分けられない。
+    nonisolated enum Presence: Equatable {
+        /// ディレクトリとして在る。
+        case directory
+        /// 何も無い。
+        case missing
+        /// 在るが、ディレクトリではない (ファイルなど)。
+        case notDirectory
+
+        /// 場所を読んで決める。ディレクトリかの判定は ``WorkDirectory/directoryExists(at:)`` の
+        /// 1 本を使う (`ObjCBool` の受け渡しを写さない — #988)。
+        static func of(_ place: URL) -> Presence {
+            if WorkDirectory.directoryExists(at: place) { return .directory }
+            return FileManager.default.fileExists(atPath: place.path) ? .notDirectory : .missing
+        }
     }
 
     /// 案内に載せる形。**シェルにそのまま貼れる 1 語**にする。

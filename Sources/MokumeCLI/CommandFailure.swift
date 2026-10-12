@@ -45,6 +45,13 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 起動することになる ([#1055](https://github.com/mokume-metal/mokume/issues/1055))。
     case productNotBuilt(product: String, path: String)
     case toolchainMissing(String)
+    /// 子 (`swift`・スケッチ) を、その場所で起こせなかった。**子が無いのではない。**
+    ///
+    /// `Process.run()` は作業ディレクトリが無いときも、実行ファイルが無いときと同じ失敗で
+    /// 投げる。`toolchainMissing` に畳むと「Xcode を入れ直せ」と人を遠ざけていた
+    /// ([#2314](https://github.com/mokume-metal/mokume/issues/2314))。読み分けは
+    /// ``RunCommand/launchFailure(of:error:executableMissing:)`` が持つ。
+    case cannotLaunch(tool: String, place: String, reason: String)
     /// 作り直しを途中で止めると決めた後に、次の `swift` を起こそうとした。
     ///
     /// **人へ届く失敗ではない。** 止めるのは見張りが終わるときだけで、この失敗を受ける
@@ -236,6 +243,12 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
         case .toolchainMissing(let tool):
             "Cannot find \(tool). Install the Xcode command line tools"
+        case .cannotLaunch(let tool, let place, let reason):
+            """
+            Could not start \(tool) in \(place): \(reason)
+            This does not mean \(tool) is missing. Check the place you gave \
+            (a relative path starts from where you ran this)
+            """
         }
     }
 }
