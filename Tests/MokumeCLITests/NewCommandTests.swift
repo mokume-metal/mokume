@@ -86,6 +86,11 @@ struct NewCommandTests {
     func namesAHomeRelativeDependencyFromHome() {
         let sketch = URL(fileURLWithPath: "/w/plain/foo", isDirectory: true)
         #expect(NewCommand.packageIdentity(local: "~/src/Mokume", sketch: sketch) == "mokume")
+        // 末尾が `.` だと、どこから解いたかで名前が変わる (スケッチからなら `~`)
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        #expect(
+            NewCommand.packageIdentity(local: "~/.", sketch: sketch)
+                == home.standardizedFileURL.lastPathComponent.lowercased())
     }
 
     /// **場所を Swift の文字列として逃がす** (#2322)。`"` を含む場所を生のまま貼ると
