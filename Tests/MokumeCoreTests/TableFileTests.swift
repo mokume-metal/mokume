@@ -124,6 +124,18 @@ struct TableFileTests {
         #expect(try parse(text, header: true) == TableFile.Parsed(titles: ["n", "q", "l", "p", "s"], rows: rows))
     }
 
+    /// 読む側は文字の先頭の U+FEFF を BOM として落とす (``TextFile/text(of:path:)``)。囲めば
+    /// 書いた文字の頭は `"` になり、囲みの中の U+FEFF は値として残る (#2340)。
+    @Test("頭が U+FEFF のセルは囲んで書く。途中に U+FEFF があるだけのセルは囲まない")
+    func formatQuotesLeadingByteOrderMark() throws {
+        let rows = [["\u{FEFF}z", "a\u{FEFF}b"], ["\u{FEFF}", "x"]]
+        let text = TableFile.format(titles: nil, rows: rows)
+        #expect(text == "\"\u{FEFF}z\",a\u{FEFF}b\n\"\u{FEFF}\",x\n")
+        #expect(try parse(text).rows == rows)
+        // 1 列の表の、U+FEFF だけのセルも囲む (空のセルと同じく、囲まないと行が消えうる)
+        #expect(TableFile.format(titles: ["\u{FEFF}"], rows: [["1"]]) == "\"\u{FEFF}\"\n1\n")
+    }
+
     @Test("1 列の表の空のセルは \"\" と書き、読み直しても行が消えない")
     func singleEmptyCellSurvivesRoundTrip() throws {
         let rows = [["a"], [""], ["b"]]
