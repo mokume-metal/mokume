@@ -119,10 +119,10 @@ enum MCPCommand {
             arguments, surplus: .reject { "Only one directory: \($0)" })
         let package = parsed.positional.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? currentDirectory
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: package.path, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else { throw .directoryNotFound(path: package.path) }
+        // 在るかの判定は 1 本を通す (`ObjCBool` の受け渡しを写さない・#988)
+        guard WorkDirectory.directoryExists(at: package) else {
+            throw .directoryNotFound(path: package.path)
+        }
         // 区画の基準を決める計算は、走らせる口と同じ 1 つを通る (#791)
         return (
             package,

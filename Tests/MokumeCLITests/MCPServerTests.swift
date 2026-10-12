@@ -681,10 +681,13 @@ struct MCPServerTests {
             #expect(thrown == .directoryNotFound(path: place))
             #expect(thrown?.message.contains(place) == true, "在らない場所の道を名乗っていない")
         }
-        // 作業ディレクトリが消えていれば、それも同じく言う
-        #expect(throws: CommandFailure.directoryNotFound(path: missing.path)) {
+        // 作業ディレクトリが消えていれば、それも同じく言う。**場所を省いた結果なので、
+        // 省けとは勧めない** (反証の指摘)
+        let gone = #expect(throws: CommandFailure.self) {
             try MCPCommand.directories(arguments: [], environment: [:], currentDirectory: missing)
         }
+        #expect(gone == .directoryNotFound(path: missing.path))
+        #expect(gone?.message.contains("leave it out") == false, "省いた結果に省けと勧めている")
     }
 
     /// **`Package.swift` は求めない。** `claude mcp add mokume -- mokume mcp` は打った場所で

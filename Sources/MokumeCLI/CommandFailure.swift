@@ -129,7 +129,7 @@ nonisolated enum CommandFailure: Error, Equatable {
         case .directoryNotFound(let path):
             """
             No such directory: \(path)
-            Pass a directory that exists, or leave it out to use the current one
+            Point at a directory that exists
             """
         case .resourcesNotDeclared(let directory):
             """
