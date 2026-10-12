@@ -219,7 +219,7 @@ struct DataLoadingTests {
         let reread = try sketch.loadTable(out, header: header)
         #expect(reread == table)
         #expect(reread.rowCount == 2)
-        // `==` は文字の正準等価で比べるので、U+FEFF が残ったことをスカラーで見る
+        // 消えたことは `==` でも分かる。残ったのが元のスカラーの並びそのものであることも見る
         let firstCell = header ? reread.columnTitles.first : reread.rows.first?.getString(0)
         #expect(firstCell.map { Array($0.unicodeScalars) } == Array(first.unicodeScalars))
     }
