@@ -95,6 +95,12 @@ nonisolated struct AppIdentity: Equatable {
             if version == nil { missing.append("version") }
             throw .identityIncomplete(path: path, missing: missing)
         }
+        // **名前はファイル名にもなる** (`<name>.app` と開き方の紙)。`/` は場所を動かすので、
+        // 組み立ての前に断る (#2309・メンテナの決定 = 案 B)。`Info.plist` と紙の本文では表示名
+        // として正しいが、そこだけ通す形は採らなかった
+        guard !name.contains("/") else {
+            throw .identityNameUnusable(path: path, name: name)
+        }
         return AppIdentity(
             name: name, identifier: identifier, version: version,
             cameraUsage: written(wire.cameraUsage), microphoneUsage: written(wire.microphoneUsage))

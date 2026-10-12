@@ -72,6 +72,40 @@ struct AppIdentityTests {
         #expect(failure.message.contains("identifier"))
     }
 
+    // MARK: - 名前はファイル名にもなる (#2309)
+
+    /// **`name` は表示名であり、包みのファイル名 (`bundle/<name>.app`) と開き方の紙の名前にも
+    /// なる。** `/` があると `--out` の下に余計なディレクトリを作って途中で止まり、`..` と組むと
+    /// `--out` の外の `.app` を消していた ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    /// 組み立ての前 (名乗りを読む段) に、使えないものを名指して断る (メンテナの決定: 案 B)。
+    @Test(
+        "name に / があれば、使えないものを名指して止まる",
+        arguments: ["AC/DC", "../victim", "/", "Bund/", "a/../b"])
+    func aNameWithASlashIsRefused(name: String) {
+        let path = "/demo/mokume-app.json"
+        let thrown = #expect(throws: CommandFailure.self) {
+            try AppIdentity.make(
+                from: AppIdentity.Wire(
+                    name: name, identifier: "org.example.bund", version: "0.1.0"),
+                path: path)
+        }
+        #expect(thrown == .identityNameUnusable(path: path, name: name))
+        let message = thrown?.message ?? ""
+        #expect(message.contains("\"/\""), "使えないもの (/) を名指していない: \(message)")
+        #expect(message.contains(name), "渡された名前を名乗っていない: \(message)")
+        #expect(message.contains(path), "名乗りの場所を名乗っていない: \(message)")
+    }
+
+    /// 裏側。**`/` の無い名前は、空白・日本語・点だけでも通る** — `..` は `/` と組まなければ
+    /// 場所を動かさない (`...app` という名前になるだけ)。
+    @Test("/ の無い名前は、いままでどおり通る", arguments: ["Bund", "My Sketch", "木目", "..", "."])
+    func aNameWithoutASlashPasses(name: String) throws {
+        let identity = try AppIdentity.make(
+            from: AppIdentity.Wire(name: name, identifier: "org.example.bund", version: "0.1.0"),
+            path: "/demo/mokume-app.json")
+        #expect(identity.name == name)
+    }
+
     @Test("名乗りが、包みが読む一覧になる")
     func theIdentityBecomesThePropertyList() {
         let identity = AppIdentity(

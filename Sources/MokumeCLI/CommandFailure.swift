@@ -60,6 +60,13 @@ nonisolated enum CommandFailure: Error, Equatable {
     case identityUnreadable(path: String)
     /// 名乗りに、名乗れる中身が揃っていない。
     case identityIncomplete(path: String, missing: [String])
+    /// 名乗りの `name` に、ファイル名にできないもの (`/`) がある。
+    ///
+    /// **組み立ての前に断る** ([#2309](https://github.com/mokume-metal/mokume/issues/2309)・
+    /// メンテナの決定 = 案 B)。`name` は表示名であり、包みのファイル名 (`<name>.app`) と開き方の
+    /// 紙の名前にもなる。`/` があると `--out` の下に余計なディレクトリを作って途中で止まり、
+    /// `..` と組むと `--out` の外の `.app` を消していた。
+    case identityNameUnusable(path: String, name: String)
     /// カメラを使うスケッチなのに、名乗りに許可の文言が無い。
     ///
     /// **束ねずに止める。** 出来た包みは、触れた時点で OS に止められる — 作った手元では
@@ -155,6 +162,13 @@ nonisolated enum CommandFailure: Error, Equatable {
             Absent or empty: \(missing.joined(separator: " / "))
 
             \(AppIdentity.example)
+            """
+        case .identityNameUnusable(let path, let name):
+            """
+            The name in the identity cannot contain "/": \(name)
+            In: \(path)
+            The name is also the file name of the bundle (<name>.app) and of the note beside it,
+            and "/" would put them in another folder. Pick a name without "/".
             """
         case .cameraUsageMissing(let path, let files):
             """
