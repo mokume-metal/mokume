@@ -12,7 +12,9 @@ import mokume
 /// 光を取り除いたもの (`noLights()`)・3 色から自作した周囲・いまの周囲を弱めたもの
 /// (`scaled(by:)`)。光も周囲も置いた時点より後の形に効くので、1 つのフレームの中で置き直せる。
 final class MaterialsAndSurroundings: Sketch {
-    var settings = SketchSettings(width: 960, height: 680, title: "materials and surroundings")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 680, title: "materials and surroundings")
+    }
 
     /// 並べる質感。**同じ 1 本の式に入る 4 つの指定**で、それぞれ効き方が違う。
     private var knobs: [(name: String, apply: (MaterialsAndSurroundings, Float) -> Void)] {

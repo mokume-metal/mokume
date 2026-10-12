@@ -18,7 +18,9 @@ import mokume
 ///
 /// 右が p5.js の `normalMaterial()` に当たる塗りである。
 final class FacingAndView: Sketch {
-    var settings = SketchSettings(width: 960, height: 640, title: "facing and view")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 640, title: "facing and view")
+    }
 
     /// 向きの欄の名前と、絵の下に出す説明。
     private static let fields = [

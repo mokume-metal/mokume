@@ -26,7 +26,9 @@ import mokume
 /// 上半分・下半分へ割り当ててあるので、面ごとに縦の帯が並ぶ — 囲みの箱から作る位置に
 /// 倒れていれば、帯にはならず絵が 1 枚そのまま乗る ([#406](https://github.com/mokume-metal/mokume/issues/406))。
 final class CrowdAndModel: Sketch {
-    var settings = SketchSettings(width: 1200, height: 600, title: "crowd and model")
+    var settings: SketchSettings {
+        SketchSettings(width: 1200, height: 600, title: "crowd and model")
+    }
 
     /// まとめ描きに渡す形。**頂点は 1 組しか置かれない**
     private var grain: Shape?
