@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+# 使い捨て (#2507): 専用機の画面が検査から見えるかを読み、眠っていれば起こしてみる。マージしない。
+name: diag-display-2507
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/diag-display-2507.yml]
+permissions:
+  contents: read
+jobs:
+  diag:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 10
+    steps:
+      - name: 画面を読み、起こし、読み直す
+        run: |
+          screens() { osascript -l JavaScript -e 'ObjC.import("AppKit"); var s=$.NSScreen.screens; var a=[]; for (var i=0;i<s.count;i++){var f=s.objectAtIndex(i).frame; a.push(f.size.width+"x"+f.size.height)}; s.count+" "+a.join(",")' 2>&1; }
+          mask() { sed "s#$HOME#~#g"; }
+          echo "== date"; date -u
+          echo "== console user / session"; stat -f%Su /dev/console; who | mask
+          echo "== pmset -g"; pmset -g | mask
+          echo "== pmset -g assertions (display)"; pmset -g assertions | grep -i -E "display|PreventUserIdle" | mask
+          echo "== display on/off log (tail)"; pmset -g log | grep -i -E "Display is turned|Wake from|Sleep  " | tail -n 30 | mask
+          echo "== system_profiler displays"; system_profiler SPDisplaysDataType | mask
+          echo "== NSScreen before"; screens
+          echo "== caffeinate -u (user activity, 5s)"; caffeinate -u -t 5
+          sleep 3
+          echo "== NSScreen after"; screens
+          echo "== system_profiler displays after"; system_profiler SPDisplaysDataType | mask
