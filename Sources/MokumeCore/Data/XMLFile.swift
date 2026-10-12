@@ -82,30 +82,24 @@ nonisolated enum XMLFile {
             guard hasCarriageReturn || encoding != nil else { return Data(buffer: bytes) }
 
             var document = Data(capacity: bytes.count)
-            // まだ書き換えていない `encoding` の値。書き換えたら `nil` にして、一度きりにする
-            var pending = encoding
-            // `copied` から `index` の手前までは、まだ写していない元のバイト
-            var copied = 0
-            var index = 0
-            func flush() { document.append(UnsafeBufferPointer(rebasing: bytes[copied..<index])) }
-            while index < bytes.count {
-                if let value = pending, index == value.lowerBound {
-                    flush()
-                    document.append(contentsOf: "UTF-8".utf8)
-                    index = value.upperBound
-                    copied = index
-                    pending = nil
-                } else if bytes[index] == 0x0D {
-                    flush()
+            // 元のバイトの範囲を写す。CR があれば LF にする (CRLF は 1 つの LF)
+            func append(_ range: Range<Int>) {
+                var start = range.lowerBound
+                while hasCarriageReturn, let cr = bytes[start..<range.upperBound].firstIndex(of: 0x0D) {
+                    document.append(UnsafeBufferPointer(rebasing: bytes[start..<cr]))
                     document.append(0x0A)
-                    index += 1
-                    if index < bytes.count, bytes[index] == 0x0A { index += 1 }
-                    copied = index
-                } else {
-                    index += 1
+                    start = cr + 1
+                    if start < range.upperBound, bytes[start] == 0x0A { start += 1 }
                 }
+                document.append(UnsafeBufferPointer(rebasing: bytes[start..<range.upperBound]))
             }
-            flush()
+            if let encoding {
+                append(0..<encoding.lowerBound)
+                document.append(contentsOf: "UTF-8".utf8)
+                append(encoding.upperBound..<bytes.count)
+            } else {
+                append(0..<bytes.count)
+            }
             return document
         }
     }
