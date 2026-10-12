@@ -99,8 +99,10 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
         guard let value = environment[StartupReads.render.key] else { return nil }
         guard let request = RenderRequest(environmentValue: value) else {
             Diagnostics.warn(
-                "\(StartupReads.render.key) is set but cannot be read (\(value)) — running as"
-                    + " usual, with a window. Its form is <fps>:<frames>:<where to write>")
+                "\(StartupReads.render.key) is set but cannot be read, or asks for something that "
+                    + "cannot be written (\(value)) — running as usual, with a window. Its form is "
+                    + "<fps>:<frames>:<where to write>, and a .mov takes at most \(movieFrameRateLimit) "
+                    + "frames per second")
             return nil
         }
         return request

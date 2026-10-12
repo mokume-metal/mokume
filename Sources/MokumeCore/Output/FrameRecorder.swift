@@ -248,8 +248,9 @@ final class FrameRecorder: Outlet {
     /// ``FrameSequence``)。どちらでもない名前は断る — 番号の入る場所が無い連番を受けて
     /// しまうと全部が同じ名前になり、最後の 1 枚しか残らない。
     ///
-    /// **`.mov` は、fps が ``movieFrameRateLimit`` を越えるときも断る** ([#2307])。隣のフレームが
-    /// 同じ時刻へ丸まり、撮れているつもりで枚が消える形は、番号の入る場所が無い連番と同じである。
+    /// **`.mov` は、fps が ``movieFrameRateLimit`` を越えるときも断る** ([#2307])。1 フレームぶんを
+    /// 刻みで書き表せず、撮れているつもりで枚が消える (フレーム番号の時計) か最後の 1 枚の長さが
+    /// 崩れる形は、番号の入る場所が無い連番と同じである。
     ///
     /// - Parameter frame: 頼まれたフレームの番号。**録りの 1 枚目はこの番号の絵になる**
     ///   (``recordingFrom``)。
@@ -265,8 +266,8 @@ final class FrameRecorder: Outlet {
                 warnOnce(
                     .movieFrameRateTooHigh,
                     "beginRecord(\"\(pattern)\"): recording at \(frameRate) frames per second, but a .mov "
-                        + "counts time in 1/\(Self.movieFrameRateLimit) of a second, so frames would "
-                        + "land on the same time and be lost. A .mov takes at most "
+                        + "counts time in 1/\(Self.movieFrameRateLimit) of a second, which cannot hold "
+                        + "a frame that short (frames would be lost). A .mov takes at most "
                         + "\(Self.movieFrameRateLimit) frames per second. Not starting")
                 return
             }
@@ -305,8 +306,10 @@ final class FrameRecorder: Outlet {
 
     /// `.mov` に書ける fps の上限。**時刻の刻み (``MovieFile/timescale``) そのものである** ([#2307])。
     ///
-    /// 動画の時刻は 1/刻み 秒で数える。刻みより速いと隣のフレームが同じ時刻へ丸まり、枚が消えるか、
-    /// 書く係が外れて開けない `.mov` が残る。連番は時刻を書かないので、この上限は掛からない。
+    /// 動画の時刻は 1/刻み 秒で数える。刻みより速いと 1 フレームぶん (1/fps 秒) が 1 刻みより短くなり、
+    /// 書き表せない。フレーム番号の時計では隣のフレームが同じ時刻へ丸まって枚が消えるか、書く係が
+    /// 外れて開けない `.mov` が残る。実時間の時計でも、最後の 1 枚の長さ (1/fps 秒) が丸まって崩れる。
+    /// だから時計によらず断る。連番は時刻を書かないので、この上限は掛からない。
     ///
     /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
     nonisolated static let movieFrameRateLimit = Int(MovieFile.timescale)

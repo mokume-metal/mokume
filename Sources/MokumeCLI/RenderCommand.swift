@@ -136,8 +136,8 @@ enum RenderCommand {
             throw .usage(
                 "\(frameRateFlags[0]) takes at most \(RenderRequest.movieFrameRateLimit) frames per"
                     + " second when writing a .mov (its time is counted in"
-                    + " 1/\(RenderRequest.movieFrameRateLimit) of a second, so faster frames would"
-                    + " land on the same time and be lost): \(rateText)")
+                    + " 1/\(RenderRequest.movieFrameRateLimit) of a second, which cannot hold a"
+                    + " shorter frame, so frames would be lost): \(rateText)")
         }
         guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(
