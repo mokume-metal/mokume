@@ -633,12 +633,17 @@ enum RunCommand {
 
     /// 子を起こせなかった理由を読む。**実行ファイルの不在と言うのは、それが無いときだけ** (#2314)。
     ///
-    /// `Process.run()` は作業ディレクトリが無いときも、実行ファイルが無いときと同じ
-    /// `NSFileNoSuchFileError` で投げる (違うのは `NSFilePath` に入る場所だけ)。`swift` は
-    /// `/usr/bin/env` 越しに起こすので env 自体は必ず在り、起動の失敗はたいてい作業
-    /// ディレクトリの問題である — それを「swift が無い」と言うと、Xcode を入れ直す方向へ人を
-    /// 遠ざける (`DoctorCommand` の規律 3 と同じ向き)。だから失敗の値ではなく、**場所と実行
-    /// ファイルを見て**決める。
+    /// `Process.run()` の失敗は、作業ディレクトリが無いときも実行ファイルが無いときも
+    /// `NSFileNoSuchFileError` で、違うのは `NSFilePath` に名指しした場所だけである。入れない
+    /// 場所 (`chmod 000` の親の下) でも同じ「無い」になる。名指しの綴りを比べ合わせる形は
+    /// 採らない — 何が無いのかは言えても、なぜ入れないのかは載っていない。だから**失敗の後に
+    /// 場所と実行ファイルを stat し直して**決める (``GivenPath/Presence``)。`swift` は
+    /// `/usr/bin/env` 越しに起こすので env 自体は必ず在り、起動の失敗はたいてい作業ディレクトリ
+    /// の問題である — それを「swift が無い」と言うと、Xcode を入れ直す方向へ人を遠ざける
+    /// (`DoctorCommand` の規律 3 と同じ向き)。
+    ///
+    /// **限界: 起こした時点と確かめた時点の間に場所が消えたり戻ったりすると、読み分けが
+    /// 変わる** (確かめた時点の姿を名乗る)。
     ///
     /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。口ごとに名乗りが違う
     ///   (道具なら ``CommandFailure/toolchainMissing(_:)``、スケッチなら
@@ -648,13 +653,9 @@ enum RunCommand {
     ) -> CommandFailure {
         let tool = toolName(of: process)
         let place = process.currentDirectoryURL ?? GivenPath.currentDirectory
-        switch GivenPath.Presence.of(place) {
-        case .missing:
-            return .cannotLaunch(tool: tool, place: place.path, reason: "no such directory")
-        case .notDirectory:
-            return .cannotLaunch(tool: tool, place: place.path, reason: "not a directory")
-        case .directory:
-            break
+        let presence = GivenPath.Presence.of(place)
+        guard presence == .directory else {
+            return .placeUnusable(tool: tool, place: place.path, presence: presence)
         }
         guard let executable = process.executableURL,
             FileManager.default.isExecutableFile(atPath: executable.path)
@@ -662,10 +663,15 @@ enum RunCommand {
         return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
     }
 
-    /// 起こせなかった事情の文面。**POSIX の事情なら、その番号から C の文面 (`strerror_r`) を
-    /// 引く** — Foundation の説明は言語の設定に左右されうるが、道具が話す言葉は英語で、
-    /// 設定で切り替えない (ADR-0038 決定 1・2)。`strerror_r` なのは、見張りの作り直しが
-    /// 別の糸から起こすため。
+    /// 起こせなかった事情の文面 (場所でも実行ファイルの不在でもないとき)。
+    ///
+    /// **POSIX の事情 (失敗そのものか、その下の `NSUnderlyingErrorKey`) なら、その番号から
+    /// C の文面を引く** (``GivenPath/errorText(_:)``)。Foundation の説明は言語の設定に左右
+    /// されうるが、道具が話す言葉は英語である (ADR-0038 決定 1・2)。
+    ///
+    /// **例外: POSIX の事情を持たない誤り** (下に POSIX の誤りを持たない Cocoa の誤り — たとえば
+    /// `NSFileNoSuchFileError` だけのもの) は、引ける番号が無いので `localizedDescription` に
+    /// 落とす。その文面は言語の設定で変わりうる。
     nonisolated static func launchReason(of error: any Error) -> String {
         let failure = error as NSError
         let posix =
@@ -674,11 +680,7 @@ enum RunCommand {
         guard let posix, posix.domain == NSPOSIXErrorDomain else {
             return failure.localizedDescription
         }
-        var text = [CChar](repeating: 0, count: 256)
-        guard strerror_r(Int32(posix.code), &text, text.count) == 0 else {
-            return failure.localizedDescription
-        }
-        return text.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        return GivenPath.errorText(Int32(posix.code))
     }
 
     /// 道具立てを探させる口。**`PATH` を引くのは `env` に任せる。**

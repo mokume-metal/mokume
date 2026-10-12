@@ -282,16 +282,21 @@ enum DoctorCommand {
 
     /// 道具立ての行。
     ///
-    /// **聞かなかったことと、聞いて読めなかったことを分ける** (#2314)。見ている場所が無いと
-    /// `swift` はそこで起きないので、聞いていない。それを「could not launch swift」と言うと、
-    /// 入っている `swift` を疑わせる (規律 3)。
+    /// **聞かなかったことと、聞いて読めなかったことを分ける** (#2314)。見ている場所が無い・
+    /// ディレクトリでない・辿り着けないと `swift` はそこで起きないので、聞いていない。それを
+    /// 「could not launch swift」と言うと、入っている `swift` を疑わせる (規律 3)。何が
+    /// 使えないのかは `Place:` の行が言う。
+    ///
+    /// **代償: その間は、道具立てが本当に無いことも見えない** (場所を打ち間違えたうえに
+    /// Command Line Tools も入っていない組では、場所を直してから初めて分かる)。断定できない
+    /// ことを言い切らない向きを採った。
     ///
     /// - Parameter place: 道具立てを聞かなかったときの、見ている場所。
     static func toolchainLine(_ toolchain: String?, unaskedIn place: URL? = nil) -> String {
         if let toolchain { return "Toolchain: \(toolchain)" }
         if let place {
-            return "Toolchain: \(unknown) — not asked, since \(place.path) is not a directory"
-                + " to run swift in"
+            return "Toolchain: \(unknown) — not asked, since swift cannot start in \(place.path)"
+                + " (see Place below)"
         }
         return "Toolchain: \(unknown) — could not launch swift"
     }
@@ -371,6 +376,8 @@ enum DoctorCommand {
         case .directory: "Place: \(place.path)"
         case .missing: "Place: \(place.path) — nothing is there (check the path you gave)"
         case .notDirectory: "Place: \(place.path) — not a directory (point at the sketch's directory)"
+        // **在るが辿り着けない場所を「無い」と言わない** — 在る場所を探させることになる
+        case .unreachable(let reason): "Place: \(place.path) — cannot be reached: \(reason)"
         }
     }
 

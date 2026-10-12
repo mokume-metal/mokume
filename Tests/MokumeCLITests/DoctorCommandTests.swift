@@ -112,6 +112,37 @@ struct DoctorCommandTests {
         #expect(!text.contains("could not launch swift"))
     }
 
+    /// **入れない場所を「無い」と言わない** (#2314 の反証)。`fileExists` は入れない場所も
+    /// 宛先の無い symlink も false にするので、それだけで「nothing is there」と言うと、在る
+    /// 場所を探させる。
+    @Test(
+        "入れない場所・宛先の無い symlink を渡すと、無いとは言わずに辿り着けない理由を言う",
+        arguments: ["locked", "dangling"])
+    func anUnreachablePlaceIsNamedWithItsReason(kind: String) throws {
+        let root = try Self.emptyDirectory()
+        let locked = root.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: locked.appendingPathComponent("child", isDirectory: true),
+            withIntermediateDirectories: true)
+        let dangling = root.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(
+            atPath: dangling.path, withDestinationPath: root.appendingPathComponent("nowhere").path)
+        chmod(locked.path, 0)
+        defer {
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let (place, reason) =
+            kind == "locked"
+            ? (locked.appendingPathComponent("child").path, String(cString: strerror(EACCES)))
+            : (dangling.path, "a symbolic link to something that is not there")
+
+        let text = DoctorCommand.text(for: [place], workDirectory: nil, environment: Self.isolated())
+        #expect(text.contains("Place: \(place) — cannot be reached: \(reason)"))
+        #expect(!text.contains("nothing is there"))
+        #expect(!text.contains("could not launch swift"))
+    }
+
     /// 裏側。場所が在れば、いままでどおり道具立てを聞いて名乗る — `..` で始まる場所でも、
     /// 走らせた場所から解いた場所で聞く (#2314 の完了条件 1)。
     @Test("`..` で始まる場所でも、そこで道具立てを読んで名乗る")
@@ -136,8 +167,8 @@ struct DoctorCommandTests {
         let place = URL(fileURLWithPath: "/nowhere", isDirectory: true)
         #expect(
             DoctorCommand.toolchainLine(nil, unaskedIn: place)
-                == "Toolchain: \(DoctorCommand.unknown) — not asked, since /nowhere is not a"
-                + " directory to run swift in")
+                == "Toolchain: \(DoctorCommand.unknown) — not asked, since swift cannot start in"
+                + " /nowhere (see Place below)")
         #expect(
             DoctorCommand.toolchainLine(nil)
                 == "Toolchain: \(DoctorCommand.unknown) — could not launch swift")
@@ -145,6 +176,9 @@ struct DoctorCommandTests {
         #expect(DoctorCommand.placeLine(place, presence: .missing).contains("nothing is there"))
         #expect(
             DoctorCommand.placeLine(place, presence: .notDirectory).contains("not a directory"))
+        let unreachable = DoctorCommand.placeLine(
+            place, presence: .unreachable(reason: "Permission denied"))
+        #expect(unreachable == "Place: /nowhere — cannot be reached: Permission denied")
     }
 
     /// 同梱の断片は実行時に組むので、スケッチのビルドは `metal` を起こさない。並べると

@@ -150,27 +150,125 @@ struct RunCommandTests {
     @Test("作業ディレクトリが無くて swift を起こせなければ、道具が無いとは言わない")
     func aMissingPlaceIsNotAMissingTool() {
         let missing = missingPlace()
-        #expect(
-            throws: CommandFailure.cannotLaunch(
-                tool: "swift", place: missing.path, reason: "no such directory")
-        ) {
+        let expected = CommandFailure.placeUnusable(
+            tool: "swift", place: missing.path, presence: .missing)
+        #expect(throws: expected) {
             try RunCommand.swift(["--version"], in: missing, capturing: true, errors: .discard)
         }
-        let message = CommandFailure.cannotLaunch(
-            tool: "swift", place: missing.path, reason: "no such directory"
-        ).message
-        #expect(message.contains(missing.path))
-        #expect(!message.contains("Install the Xcode"), "道具の入れ直しへ案内している")
+        #expect(expected.message.contains("\(missing.path): no such directory"))
+        #expect(!expected.message.contains("Install the Xcode"), "道具の入れ直しへ案内している")
+        #expect(expected.message.contains("Check the place you gave"))
     }
 
     @Test("作業ディレクトリがファイルなら、ディレクトリでないと言う")
     func aFileAsThePlaceIsNamed() throws {
         let executable = try makeExecutable(exiting: 0)
         #expect(
-            throws: CommandFailure.cannotLaunch(
-                tool: "swift", place: executable.path, reason: "not a directory")
+            throws: CommandFailure.placeUnusable(
+                tool: "swift", place: executable.path, presence: .notDirectory)
         ) {
             try RunCommand.swift(["--version"], in: executable, capturing: true, errors: .discard)
+        }
+    }
+
+    /// **入れない場所を「無い」と言わない** (#2314 の反証)。`Process.run()` は、`chmod 000` の
+    /// 親の下を作業ディレクトリにしても `NSFileNoSuchFileError` で投げる (実測)。在る場所を
+    /// 「no such directory」と言うと、在る場所を探させる。
+    @Test("入れない場所で swift を起こせなければ、無いとは言わずに入れない理由を言う")
+    func anUnreachablePlaceIsNotCalledMissing() throws {
+        let locked = try makeLockedParent()
+        defer { unlock(locked) }
+        let place = locked.appendingPathComponent("child", isDirectory: true)
+        let reason = String(cString: strerror(EACCES))
+        let expected = CommandFailure.placeUnusable(
+            tool: "swift", place: place.path, presence: .unreachable(reason: reason))
+        #expect(throws: expected) {
+            try RunCommand.swift(["--version"], in: place, capturing: true, errors: .discard)
+        }
+        #expect(!expected.message.contains("no such directory"))
+        #expect(expected.message.contains(reason))
+    }
+
+    /// **場所に関わらない理由で、場所を疑わせない** (#2314 の反証)。場所はディレクトリで
+    /// 実行ファイルも在るのに起こせなかった回 (ここでは中身が実行形式でない `ENOEXEC`) は、
+    /// 「渡した場所を確かめよ」と言わない。
+    @Test("場所でも実行ファイルの不在でもない理由なら、OS の事情を言い、場所を確かめよとは言わない")
+    func aNonPlaceReasonDoesNotBlameThePlace() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-noexec-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let garbage = directory.appendingPathComponent("sketch")
+        try Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE]).write(to: garbage)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: garbage.path)
+
+        let expected = CommandFailure.cannotLaunch(
+            tool: "sketch", place: directory.path, reason: String(cString: strerror(ENOEXEC)))
+        #expect(throws: expected) {
+            try RunCommand.launch(garbage, in: directory)
+        }
+        #expect(!expected.message.contains("Check the place you gave"), "場所を疑わせている")
+        #expect(!expected.message.contains("no such directory"))
+    }
+
+    // MARK: - 場所の在り方 (#2314 の反証)
+
+    /// 検索の権利を外した親 (`chmod 000`) を作る。**戻すのは呼び手** (`unlock`)。
+    private func makeLockedParent() throws -> URL {
+        let locked = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-locked-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: locked.appendingPathComponent("child", isDirectory: true),
+            withIntermediateDirectories: true)
+        chmod(locked.path, 0)
+        return locked
+    }
+
+    private func unlock(_ locked: URL) {
+        chmod(locked.path, 0o755)
+        try? FileManager.default.removeItem(at: locked)
+    }
+
+    /// **「無い」は `ENOENT` のときだけ。** 入れない・symlink が巡る・symlink の宛先が無い、は
+    /// 理由を言う。`.directory` になるのは ``WorkDirectory/directoryExists(at:)`` が `true` を
+    /// 返すときだけ (同じ判定であること)。
+    @Test("場所の在り方は、無い・ディレクトリでない・辿り着けないを分け、ディレクトリの判定は WorkDirectory と同じ")
+    func presenceTellsMissingFromUnreachable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-presence-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("file")
+        try "".write(to: file, atomically: true, encoding: .utf8)
+        let dangling = root.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(
+            atPath: dangling.path, withDestinationPath: root.appendingPathComponent("nowhere").path)
+        let loopA = root.appendingPathComponent("loop-a")
+        let loopB = root.appendingPathComponent("loop-b")
+        try FileManager.default.createSymbolicLink(atPath: loopA.path, withDestinationPath: loopB.path)
+        try FileManager.default.createSymbolicLink(atPath: loopB.path, withDestinationPath: loopA.path)
+        let linkToDirectory = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(atPath: linkToDirectory.path, withDestinationPath: root.path)
+        let locked = try makeLockedParent()
+        defer { unlock(locked) }
+        let behindLock = locked.appendingPathComponent("child", isDirectory: true)
+
+        let cases: [(URL, GivenPath.Presence)] = [
+            (root, .directory),
+            (linkToDirectory, .directory),
+            (file, .notDirectory),
+            (root.appendingPathComponent("nope"), .missing),
+            (behindLock, .unreachable(reason: String(cString: strerror(EACCES)))),
+            (loopA, .unreachable(reason: String(cString: strerror(ELOOP)))),
+            (dangling, .unreachable(reason: "a symbolic link to something that is not there")),
+        ]
+        for (place, expected) in cases {
+            let presence = GivenPath.Presence.of(place)
+            #expect(presence == expected, "\(place.lastPathComponent)")
+            #expect(
+                (presence == .directory) == WorkDirectory.directoryExists(at: place),
+                "WorkDirectory と判定が割れた: \(place.lastPathComponent)")
         }
     }
 
@@ -191,8 +289,8 @@ struct RunCommandTests {
         let executable = try makeExecutable(exiting: 0)
         let missing = missingPlace()
         #expect(
-            throws: CommandFailure.cannotLaunch(
-                tool: "sketch", place: missing.path, reason: "no such directory")
+            throws: CommandFailure.placeUnusable(
+                tool: "sketch", place: missing.path, presence: .missing)
         ) {
             try RunCommand.launch(executable, in: missing)
         }

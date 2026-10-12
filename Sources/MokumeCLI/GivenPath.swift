@@ -47,23 +47,69 @@ nonisolated enum GivenPath {
 
     /// 解いた場所の在り方。
     ///
-    /// **無い・ディレクトリでないことを、子を起こす前に読み分けるために持つ** (#2314)。
-    /// `Process.run()` は作業ディレクトリが無いときも実行ファイルが無いときと同じ失敗で
-    /// 投げるので、失敗の値からは分けられない。
+    /// **無い・ディレクトリでない・入れないことを読み分けるために持つ** (#2314)。子を
+    /// 起こせなかったとき、`Process.run()` の失敗はどれも同じ形 (`NSFileNoSuchFileError` で、
+    /// 違うのは `NSFilePath` に名指しした場所だけ) になり、入れない場所でも「無い」と
+    /// 言う (実測: `chmod 000` の親の下を作業ディレクトリにすると `NSFileNoSuchFileError`)。
+    /// だから失敗の値ではなく、**失敗の後にこちらで場所を stat し直して**決める。
+    ///
+    /// **限界: 読み直す前に場所が消えたり戻ったりすると、読み分けが変わる** (起こした時点と
+    /// 確かめた時点の間の競合)。その回は、確かめた時点の姿を名乗る。
+    ///
+    /// **「無い」と言うのは、stat が `ENOENT` を返し、symlink でもないときだけ。** 入れない
+    /// (`EACCES`)・symlink が巡る (`ELOOP`)・symlink の宛先が無い、は場所は在るので
+    /// ``unreachable(reason:)`` で理由を言う — 「nothing is there」と言うと、在る場所を
+    /// 探させることになる。
     nonisolated enum Presence: Equatable {
         /// ディレクトリとして在る。
         case directory
-        /// 何も無い。
+        /// 何も無い (`ENOENT`)。
         case missing
         /// 在るが、ディレクトリではない (ファイルなど)。
         case notDirectory
+        /// 辿り着けない。`reason` は C の文面 (`strerror_r`) か、symlink の宛先が無いこと。
+        case unreachable(reason: String)
 
-        /// 場所を読んで決める。ディレクトリかの判定は ``WorkDirectory/directoryExists(at:)`` の
-        /// 1 本を使う (`ObjCBool` の受け渡しを写さない — #988)。
+        /// 場所を読んで決める。stat (symlink を辿る) の結果と `errno` で分ける。
+        ///
+        /// **``WorkDirectory/directoryExists(at:)`` と同じ判定である** — あちらも symlink を
+        /// 辿った stat でディレクトリかを見るので、`.directory` になるのはあちらが `true` を
+        /// 返すときだけ (検査が両方を突き合わせる)。あちらは真偽しか返さないので、辿り着けない
+        /// 理由はここで読む。
         static func of(_ place: URL) -> Presence {
-            if WorkDirectory.directoryExists(at: place) { return .directory }
-            return FileManager.default.fileExists(atPath: place.path) ? .notDirectory : .missing
+            var info = stat()
+            guard stat(place.path, &info) == 0 else {
+                let code = errno
+                guard code == ENOENT else { return .unreachable(reason: GivenPath.errorText(code)) }
+                // 名前は在るのに辿ると無い — 宛先の無い symlink である
+                var link = stat()
+                return lstat(place.path, &link) == 0
+                    ? .unreachable(reason: "a symbolic link to something that is not there")
+                    : .missing
+            }
+            return (info.st_mode & S_IFMT) == S_IFDIR ? .directory : .notDirectory
         }
+
+        /// 名乗るときの句。**場所に関わる理由だけを持つ** (``directory`` は名乗らない)。
+        var reason: String {
+            switch self {
+            case .directory: "a directory"
+            case .missing: "no such directory"
+            case .notDirectory: "not a directory"
+            case .unreachable(let reason): reason
+            }
+        }
+    }
+
+    /// `errno` の C の文面 (`strerror_r`)。
+    ///
+    /// **Foundation の説明は言語の設定に左右されうるが、道具が話す言葉は英語で、設定で
+    /// 切り替えない** (ADR-0038 決定 1・2)。`strerror` でなく `strerror_r` なのは、見張りの
+    /// 作り直しが別の糸から呼ぶため。
+    static func errorText(_ code: Int32) -> String {
+        var text = [CChar](repeating: 0, count: 256)
+        guard strerror_r(code, &text, text.count) == 0 else { return "error \(code)" }
+        return text.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
     }
 
     /// 案内に載せる形。**シェルにそのまま貼れる 1 語**にする。

@@ -325,8 +325,8 @@ struct WatchSessionTests {
         let hooks = WatchSession.Hooks.live(in: nowhere, invocation: Invocation())
 
         await #expect(
-            throws: CommandFailure.cannotLaunch(
-                tool: "swift", place: nowhere.path, reason: "no such directory")
+            throws: CommandFailure.placeUnusable(
+                tool: "swift", place: nowhere.path, presence: .missing)
         ) {
             try await hooks.rebuild(nowhere)
         }
