@@ -141,12 +141,11 @@ final class ParamStore: DeclarationWatcher {
         let listed = discarded
             .map { "\($0.name) (\(reason(for: $0.reason)))" }
             .joined(separator: " / ")
-        // 非有限で捨てたものは宣言が変わったせいではない (保存の中身が読み替えに耐えない)
-        let declarationsChanged = discarded.contains { $0.reason != .notFinite }
+        // 非有限で捨てたものも宣言が変わったせい: 保存はこのライブラリが書くので有限の数しか
+        // 入っておらず、読み替えて無限になるのは、宣言の型が変わったとき (`Double` で宣言していた
+        // 値を `Float` へ変えた、など。どちらも `float` を名乗るので型の違いにならない)
         return "Threw away \(discarded.count) of the saved values: \(listed). "
-            + (declarationsChanged
-                ? "The declarations have changed, so these stay at their defaults"
-                : "These stay at their defaults")
+            + "The declarations have changed, so these stay at their defaults"
     }
 
     private static func reason(for reason: ParamReport.Rejection.Reason) -> String {

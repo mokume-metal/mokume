@@ -25,11 +25,17 @@ import Observation
 ///
 /// ## 非有限の数は載せない ([#2271])
 ///
-/// **値を置く関所はここの 1 点である。** NaN も無限も受け取らず、**前の値を保って、1 度だけ
-/// 名乗る** ([ADR-0030] 決定 3)。作者のコードからの代入 (``value`` の setter と `_modify`)・
-/// 外からの書き込み・保存からの復元の 3 つの入口が、すべてここを通る。載せたままにすると、
-/// 保存 (`params.json`) もつまみの応答も `JSONEncoder` が非有限を拒み、**他の値も含めて全部が
-/// 書けなくなる**。出口ごとに落とし方を書く形は採らない — 出口を足すたびに書き直すことになる。
+/// **値が変わる入口の関所は、ここの 1 点である。** NaN も無限も受け取らず、**前の値を保って、
+/// 1 度だけ名乗る** ([ADR-0030] 決定 3)。作者のコードからの代入 (``value`` の setter と
+/// `_modify`)・外からの書き込み・保存からの復元の 3 つの入口が、すべてここを通る。載せたままに
+/// すると、保存 (`params.json`) もつまみの応答も `JSONEncoder` が非有限を拒み、**他の値も含めて
+/// 全部が書けなくなる**。出口ごとに落とし方を書く形は採らない — 出口を足すたびに書き直すことに
+/// なる。
+///
+/// **生まれのときの値は検めない。** 宣言の初期値 (`= .nan`) も、`init` の中の代入
+/// (`init() { radius = .nan }`) も、マクロの init accessor を通って ``init(name:value:range:choices:)``
+/// へ入り、setter は走らない。前の値が無いので「保つ」が成り立たず、何を既定にするかは
+/// 判断が要る ([#2394](https://github.com/mokume-metal/mokume/issues/2394))。
 ///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
@@ -39,7 +45,12 @@ public final class ParamBox<Value: ParamRepresentable> {
     /// いまの値。
     ///
     /// **非有限の数 (NaN・無限、組と色は成分のどれか) を書いても、前の値のまま**で、そのことを
-    /// 1 度だけ標準エラーへ名乗る。有限の値は範囲の外でも素通しする ([ADR-0030] 決定 3)。
+    /// 1 度だけ標準エラーへ名乗る。置かなかったときは変化の通知も出さない (値が動いていない)。
+    /// 有限の値は範囲の外でも素通しする ([ADR-0030] 決定 3)。
+    ///
+    /// この関所が塞ぐのは、値が**変わる**入口 (setter・`_modify`・``write(_:)``) である。
+    /// 置き場が**生まれる**ときの値 (宣言の初期値・`init` の中の代入) は検めない
+    /// ([#2394](https://github.com/mokume-metal/mokume/issues/2394))。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public var value: Value {
@@ -59,17 +70,19 @@ public final class ParamBox<Value: ParamRepresentable> {
         }
         _modify {
             observation.access(self, keyPath: valueKeyPath)
-            observation.willSet(self, keyPath: valueKeyPath)
-            // 直に変えられた後でしか検められないので、前の値を控えて戻せるようにする
-            let previous = storedValue
-            defer {
-                if !storedValue.paramValue.hasOnlyFiniteNumbers {
-                    refuse(storedValue, keeping: previous)
-                    storedValue = previous
+            // 直に変えられた後でしか検められないので、写しを変えさせて、有限だと確かめてから置く。
+            // 拒むときは willSet も打たない (打ってから戻すと、見張りの印が立って、値の変わらない
+            // 応答が版を進めて書き直される)。展開の `_modify` のように置き場そのものを yield する
+            // 形ではなくなるが、値は小さく、通知の順 (willSet → 置く → didSet) は同じである
+            var working = storedValue
+            yield &working
+            if working.paramValue.hasOnlyFiniteNumbers {
+                observation.withMutation(of: self, keyPath: valueKeyPath) {
+                    storedValue = working
                 }
-                observation.didSet(self, keyPath: valueKeyPath)
+            } else {
+                refuse(working, keeping: storedValue)
             }
-            yield &storedValue
         }
     }
 

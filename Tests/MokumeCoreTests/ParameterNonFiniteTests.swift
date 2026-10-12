@@ -35,6 +35,13 @@ struct ParameterNonFiniteTests {
         @Param var pair: SIMD2<Float> = SIMD2(1, 2)
         @Param var triple: SIMD3<Float> = SIMD3(1, 2, 3)
         @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
+        @Param var count: Int = 3
+    }
+
+    /// `Double` で宣言していた値を `Float` へ変えたあとのスケッチ (宣言が変わった例)。
+    final class Narrowed: Sketch {
+        @Param var number: Float = 2
+        @Param var count: Int = 3
     }
 
     /// 範囲を宣言した `Float`。
@@ -259,6 +266,79 @@ struct ParameterNonFiniteTests {
         #expect(report.clamped.count == 1)
     }
 
+    // MARK: - 組と色の成分の桁あふれ (面から)
+
+    /// 要求を置いて、応えを取る。
+    private func answer(_ request: String, from surface: ParamSurface, in facet: URL) throws
+        -> ParamReport
+    {
+        try request.write(
+            to: facet.appendingPathComponent("request.json"), atomically: true, encoding: .utf8)
+        return try #require(surface.drain(), "要求が無言で捨てられた: \(request)")
+    }
+
+    /// `Float` で読むと `JSONDecoder` が文書ごと断り、要求が応答も警告もなしに捨てられていた。
+    /// 同じ要求の他の値も入らない。**型で扱いが割れていた** (`float` の `1e300` は 1 件だけ拒まれる)。
+    @Test("組の成分が Float に収まらなければ、その値だけを拒み、同じ要求の他の値は入る", arguments: [
+        (#"{"type":"vec2","value":[1e300,0]}"#, "pair"),
+        (#"{"type":"vec2","value":[0,-1e39]}"#, "pair"),
+        (#"{"type":"vec3","value":[0,0,1e39]}"#, "triple"),
+        (#"{"type":"color","value":{"red":1e300,"green":0,"blue":0,"alpha":1}}"#, "tint"),
+        (#"{"type":"color","value":{"red":0,"green":0,"blue":0,"alpha":-1e39}}"#, "tint"),
+    ])
+    func aComponentOverflowIsRefusedAlone(wire: String, name: String) throws {
+        let facet = try makeDirectory()
+        let sketch = Typed()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+
+        let report = try answer(
+            #"{"id":"w1","values":[{"name":"count","type":"int","value":7},{"name":"\#(name)",\#(wire.dropFirst())]}"#,
+            from: surface, in: facet)
+
+        #expect(report.rejected == [.init(name: name, reason: .notFinite)])
+        #expect(sketch.count == 7, "同じ要求の他の値は入る")
+        #expect(sketch.pair == SIMD2(1, 2))
+        #expect(sketch.triple == SIMD3(1, 2, 3))
+        #expect(sketch.tint == LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
+        // 応答は置かれ、要求の識別子を echo する
+        let reply = try jsonObject(at: facet.appendingPathComponent("report.json"))
+        #expect(reply["id"] as? String == "w1")
+    }
+
+    @Test("組と色の成分が Float の最大なら、受け取る")
+    func theLargestFloatComponentIsAccepted() throws {
+        let facet = try makeDirectory()
+        let sketch = Typed()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+
+        let report = try answer(
+            #"{"id":"w2","values":[{"name":"pair","type":"vec2","value":[3.4028235e38,-3.4028235e38]},{"name":"tint","type":"color","value":{"red":3.4028235e38,"green":0,"blue":0,"alpha":1}}]}"#,
+            from: surface, in: facet)
+
+        #expect(report.rejected.isEmpty)
+        #expect(sketch.pair == SIMD2(.greatestFiniteMagnitude, -.greatestFiniteMagnitude))
+        #expect(sketch.tint.red == .greatestFiniteMagnitude)
+    }
+
+    @Test("保存の組の成分が Float に収まらなければ、その値だけを捨て、他の値は戻す")
+    func anOverflowingSavedComponentIsDiscardedAlone() throws {
+        let url = try makeDirectory().appendingPathComponent("params.json")
+        try #"{"schemaVersion":1,"values":[{"name":"pair","type":"vec2","value":[1e300,0]},{"name":"count","type":"int","value":7}]}"#
+            .write(to: url, atomically: true, encoding: .utf8)
+        let sketch = Typed()
+        var warnings: [String] = []
+        let restoration = ParamStore(
+            registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) }
+        ).restore()
+
+        #expect(restoration.discarded == [.init(name: "pair", reason: .notFinite)])
+        #expect(sketch.count == 7, "保存の他の値は戻る")
+        #expect(sketch.pair == SIMD2(1, 2))
+        #expect(warnings.count == 1 && warnings[0].contains("pair"), "読めない保存として丸ごと捨てた: \(warnings)")
+    }
+
     // MARK: - 保存からの復元 (面と同じ口)
 
     @Test("保存に Float へ桁あふれする値があれば、捨てて既定のまま")
@@ -277,22 +357,37 @@ struct ParameterNonFiniteTests {
         #expect(restoration.clamped.isEmpty)
     }
 
-    /// 捨てた理由が宣言の変更でないときに、「宣言が変わった」と言わない。
-    @Test("復元で非有限のために捨てたことは、宣言が変わったとは言わずに名乗る")
-    func theNoticeNamesTheRealReason() throws {
-        let alone = try #require(ParamStore.notice(for: [.init(name: "radius", reason: .notFinite)]))
-        #expect(alone.contains("radius"))
-        #expect(alone.contains("not a finite number"))
-        #expect(!alone.contains("declarations have changed"), "宣言のせいではない: \(alone)")
-        #expect(alone.contains("defaults"))
+    /// 保存はこのライブラリが書くので、有限の数しか入っていない。復元で `notFinite` が出る現実の
+    /// 経路は、`Double` で宣言していた値を `Float` へ変えたとき (どちらも `float` を名乗るので
+    /// 型の違いにはならない)。宣言が変わったケースなので、そう言う。
+    @Test("Double で宣言していた値を Float へ変えると、桁あふれる保存は捨てられ、宣言が変わったと言う")
+    func aNarrowedDeclarationDiscardsAnOverflowingValue() async throws {
+        final class Wide: Sketch {
+            @Param var number: Double = 2
+            @Param var count: Int = 3
+        }
+        let url = try makeDirectory().appendingPathComponent("params.json")
+        let wide = Wide()
+        let saving = ParamStore(registry: ParamRegistry(of: wide), at: url, warn: { _ in })
+        wide.number = 1e300
+        wide.count = 7
+        saving.flushNow()
+        #expect(saving.writeCount == 1)
 
-        // 宣言の変更で捨てたものと混ざるときは、そちらの理由も言う
-        let mixed = try #require(
-            ParamStore.notice(for: [
-                .init(name: "radius", reason: .notFinite), .init(name: "count", reason: .unknownName),
-            ]))
-        #expect(mixed.contains("not a finite number"))
-        #expect(mixed.contains("declarations have changed"))
+        let narrowed = Narrowed()
+        var warnings: [String] = []
+        let restoration = ParamStore(
+            registry: ParamRegistry(of: narrowed), at: url, warn: { warnings.append($0) }
+        ).restore()
+
+        #expect(restoration.discarded == [.init(name: "number", reason: .notFinite)])
+        #expect(narrowed.number == 2, "既定のまま")
+        #expect(narrowed.count == 7)
+        let line = try #require(warnings.first, "捨てたのに黙っていた")
+        #expect(warnings.count == 1)
+        #expect(line.contains("number"))
+        #expect(line.contains("not a finite number"))
+        #expect(line.contains("The declarations have changed"), "宣言が変わったケースである: \(line)")
     }
 
     // MARK: - 名乗り
@@ -367,6 +462,48 @@ struct ParameterNonFiniteTests {
         // 有限の値は通知する (見張りが死んでいないことの対照)
         sketch.radius = 11
         #expect(notified.fired)
+    }
+
+    /// `_modify` は yield の前に willSet を打つ形だと、拒んでも見張りの印が立ち、値の変わらない
+    /// 応答が版を進めて書き直される。拒むときは通知を出さない。
+    @Test("置き場の value を直に変える書き方 (_modify) も、拒んだときは変化として通知しない")
+    func aRefusedModifyDoesNotNotify() {
+        let box = ParamBox<Float>(name: "radius", value: 10)
+        let notified = Notice()
+        withObservationTracking {
+            _ = box.value
+        } onChange: {
+            notified.fire()
+        }
+        box.value += .nan
+        #expect(box.value == 10)
+        #expect(!notified.fired)
+        // 有限の値は通知する (見張りが死んでいないことの対照)
+        box.value += 1
+        #expect(box.value == 11)
+        #expect(notified.fired)
+    }
+
+    /// 見張りの印が立たなければ、値が変わっていない応答を書き直さない (版が進まない)。
+    @Test("拒んだ _modify は、つまみの応答を書き直させない")
+    func aRefusedModifyDoesNotRewriteTheReply() async throws {
+        let facet = try makeDirectory()
+        let sketch = Tuned()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+        let box = try #require(ParamRegistry(of: sketch).knobs.first as? ParamBox<Float>)
+        // 譲るループ (窓) の形で回す。知らせは譲らなくても届く (#1704)
+        await Task.yield()
+        #expect(surface.drain() == nil)
+
+        box.value += .nan
+        await Task.yield()
+        #expect(surface.drain() == nil, "値が変わらないのに応答を書き直した")
+
+        // 有限の値なら書き直す (対照)
+        box.value += 1
+        await Task.yield()
+        #expect(surface.drain() != nil)
     }
 
     // MARK: - 面からの書き込みを受ける口 (ParamBox.write)
