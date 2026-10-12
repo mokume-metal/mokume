@@ -379,18 +379,25 @@ class GpuSlotTest(SlotHarness):
         gone.mkdir()
         waiter = subprocess.Popen(
             [sys.executable, str(SCRIPT), "--", sys.executable, "-c", "pass"],
-            env=self._environment(slots="1", wait="2"), cwd=gone,
+            env=self._environment(slots="1", wait="5"), cwd=gone,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         self.running.append(waiter)
         said = _Said(waiter)
-        # 待ちに入った (名乗った) のを待ってから消す。期限 (2 秒) までに消えれば、待つ間に消えたことになる。
-        # 固定の眠りだと、子の起動が遅ければ待つ前に消え、検査側が止まれば期限の後に消える (#2304)
+        # 待ちに入った (名乗った) のを待ってから消す。期限 (5 秒) までに消えれば、待つ間に消えたことになる。
+        # 固定の眠りだと、子の起動が遅ければ待つ前に消え、検査側が止まれば期限の後に消える (#2304)。
+        # 期限は抜けるのを確かめるために有限に置くしかないので、両側の止まりに余裕を持たせて 5 秒にする。
+        # 待つ側は期限の判定を名乗りより先に行うので、最初の名乗りの前に期限まで止まると名乗らずに抜ける (#2343)
         self.assertTrue(_wait_for(lambda: said.has("空くのを待っている")), "待ちに入った旨を名乗らない")
         gone.rmdir()
         error = said.finish()
         self.assertEqual(waiter.returncode, 75, error)
         self.assertNotIn("枠を取らずに走らせる", error)
+        # 消したのが期限より前だった (= 待つ間に消えた) ことを、期限で抜けたときの記録の cwd で確かめる。
+        # 検査の側が消す前に期限を越えて止まると、待つ側は cwd が残ったまま抜け、上の 2 つは素通りする
+        timeouts = [entry for entry in self._entries() if entry["event"] == "timeout"]
+        self.assertEqual([entry["pid"] for entry in timeouts], [waiter.pid], error)
+        self.assertTrue(timeouts[0]["cwd"].startswith("<読めない:"), f"期限で抜けた時点で cwd が残っていた: {timeouts[0]['cwd']}")
 
     def test_the_start_time_is_read_in_the_c_locale(self):
         # 反証の指摘: ja_JP の lstart は 10〜31 日に 4 語になり、コマンドラインの先頭が欄からずれた
