@@ -81,10 +81,29 @@ struct RenderCommandTests {
         ])
         #expect(
             options.invocation
-                == Invocation(place: "Cast", configuration: "release", scratchPath: ".build"))
+                == Invocation(
+                    place: "Cast", configuration: "release", scratchPath: ".build",
+                    currentDirectory: Self.typedFrom))
         #expect(options.request.frameRate == 60)
         #expect(options.request.frameCount == 2880)
         #expect(options.request.destination == "/tmp/cast.mov")
+    }
+
+    /// **場所・置き場・行き先は、どれも打った場所から解く** (#2320・#2323 の判断・案 A)。
+    /// 置き場だけがスケッチの場所から解かれていたので、`plain/` で
+    /// `render ../probe --scratch-path sp --out o.mov` と打つと、書いたものは `plain/o.mov`
+    /// なのに組み立ての置き場は `probe/sp` になっていた。
+    @Test("場所・置き場・行き先は、どれも打った場所から解く")
+    func everyPathIsResolvedFromWhereItWasTyped() throws {
+        let plain = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let options = try RenderCommand.parse(
+            [
+                "../probe", "--scratch-path", "sp", "--fps", "10", "--seconds", "0.1", "--out",
+                "o.mov",
+            ], currentDirectory: plain)
+        #expect(options.invocation.directory.path == "/work/probe")
+        #expect(options.invocation.scratchDirectory?.path == "/work/plain/sp")
+        #expect(options.request.destination == "/work/plain/o.mov")
     }
 
     /// **子の作業ディレクトリはスケッチの場所である。** 相対のまま渡すと、書いたものが

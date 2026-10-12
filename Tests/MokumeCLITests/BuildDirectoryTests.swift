@@ -429,20 +429,40 @@ struct BuildPlacementTests {
     }
 
     /// **明示されたら理由を確かめない。** 既定を変えたので、戻す口が要る。
-    @Test("置き場を明示すれば、そこを使う")
+    ///
+    /// **相対パスは走らせた場所から解く** (#2323 の判断・案 A)。スケッチの外 (`work/`) で
+    /// `run probe --scratch-path sp` と打てば置き場は `work/sp` — 隣に並ぶ `render --out` と
+    /// 同じ基準である。スケッチの中で打てば、いままでどおりスケッチの下になる。
+    @Test("置き場を明示すれば、走らせた場所から解いてそこを使う")
     func anExplicitScratchPathWins() throws {
         let store = try BuildDirectoryTests.directory()
         let sketch = try Self.sketch(pinning: "0.7.1")
-        let context = try RunCommand.context(
+        let work = try BuildDirectoryTests.directory()
+        let environment = [BuildDirectory.environmentKey: store.path]
+
+        // スケッチの外で、場所を渡して打った
+        let outside = try RunCommand.context(
             in: sketch,
-            invocation: Invocation(place: sketch.path, scratchPath: ".build"),
-            environment: [BuildDirectory.environmentKey: store.path])
+            invocation: Invocation(place: sketch.path, scratchPath: "sp", currentDirectory: work),
+            environment: environment)
+        guard case .outside(let url, given: true) = outside.place else {
+            Issue.record("明示した置き場を使っていない: \(outside.place)")
+            return
+        }
+        #expect(url.path == work.appendingPathComponent("sp").standardizedFileURL.path)
+        #expect(outside.place.arguments == ["--scratch-path", url.path])
+        // 明示した人へ理由を説かない
+        #expect(outside.place.notice == nil)
+
+        // スケッチの中で打てば、スケッチの下 (従来の `--scratch-path .build`)
+        let inside = try RunCommand.context(
+            in: sketch,
+            invocation: Invocation(scratchPath: ".build", currentDirectory: sketch),
+            environment: environment)
         #expect(
-            context.place == .outside(
+            inside.place == .outside(
                 sketch.appendingPathComponent(".build", isDirectory: true).standardizedFileURL,
                 given: true))
-        // 明示した人へ理由を説かない
-        #expect(context.place.notice == nil)
     }
 
     // MARK: - 作り直しの結果の読み方

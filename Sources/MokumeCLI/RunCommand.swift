@@ -114,14 +114,12 @@ enum RunCommand {
         let declared = try dumpPackage(in: directory)
         let product = declared?.executableProductName
 
-        // **明示されたら理由を確かめない。** 選んだのは人である
-        if let given = invocation.scratchPath {
-            let url = URL(
-                fileURLWithPath: NSString(string: given).expandingTildeInPath, isDirectory: true,
-                relativeTo: directory)
+        // **明示されたら理由を確かめない。** 選んだのは人である。解く基準は走らせた場所で、
+        // 解くのは ``Invocation`` の 1 か所 (#2323)
+        if let given = invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
-                place: .outside(url.standardizedFileURL, given: true), product: product)
+                place: .outside(given, given: true), product: product)
         }
 
         // **宣言が読めないことを、断る理由にしない。** 壊した状態から直していく途中は

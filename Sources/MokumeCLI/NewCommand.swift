@@ -10,13 +10,22 @@ enum NewCommand {
         /// 作る場所 (親ディレクトリ)。
         var path: String = "."
         /// ライブラリをパスで指すときの場所。開発時に使う。
+        ///
+        /// **相対なら、作られるスケッチから見た相対である** (CONTRIBUTING)。`Package.swift` の
+        /// `.package(path:)` へそのまま入り、SwiftPM はそれをパッケージの場所から解く。
         var local: String?
+
+        /// 作るスケッチの場所。`--path` を走らせた場所から解き、名前を足す (#2323)。
+        ///
+        /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
+        func root(from base: URL = GivenPath.currentDirectory) -> URL {
+            GivenPath.resolve(path, from: base).appendingPathComponent(name, isDirectory: true)
+        }
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let options = try parse(arguments)
-        let root = URL(fileURLWithPath: options.path, isDirectory: true)
-            .appendingPathComponent(options.name, isDirectory: true)
+        let root = options.root()
         guard !FileManager.default.fileExists(atPath: root.path) else {
             throw .directoryExists(path: root.path)
         }
@@ -30,13 +39,21 @@ enum NewCommand {
                 throw .cannotCreate(path: url.path, reason: "\(error)")
             }
         }
-        print(
-            """
-            Created \(root.path)
+        print(guidance(for: root))
+    }
 
-              cd \(options.name)
-              \(Command.name) run
-            """)
+    /// 作った後に言うこと。
+    ///
+    /// **案内は、走らせた場所からそのまま貼って動く形にする** (#2320)。`cd <名前>` では
+    /// `--path` を付けたときに入れず、空白を含む場所なら引用も要った。作った場所を絶対
+    /// パスで名指しし、シェルの 1 語に包む (``GivenPath/shellWord(_:)``)。
+    static func guidance(for root: URL) -> String {
+        """
+        Created \(root.path)
+
+          cd \(GivenPath.shellWord(root))
+          \(Command.name) run
+        """
     }
 
     /// 引数を解く。骨格は ``Arguments`` が持ち、ここは宣言だけを書く。
@@ -55,12 +72,19 @@ enum NewCommand {
     }
 
     /// 作るファイルと中身。
-    static func files(for options: Options) throws(CommandFailure) -> [(String, String)] {
+    ///
+    /// - Parameter base: 走らせた場所。`--local` の名前を作る場所から解くのに要る。
+    static func files(for options: Options, base: URL = GivenPath.currentDirectory)
+        throws(CommandFailure) -> [(String, String)]
+    {
         let target = options.name
         let type = typeName(for: options.name)
+        // **`--local` から来る値は Swift の文字列として逃がす** (#2322)。生のまま貼ると、
+        // `"` を含む場所で Package.swift が読めなくなる。名前 (`NAME`・`TARGET`) は
+        // ``isValid(name:)`` が `"` を通さないので逃がす必要が無い
         let dependency =
             if let local = options.local {
-                ".package(path: \"\(local)\")"
+                ".package(path: \"\(swiftStringContents(local))\")"
             } else {
                 """
                 .package(
@@ -73,7 +97,8 @@ enum NewCommand {
             "TARGET": target,
             "TYPE": type,
             "DEPENDENCY": dependency,
-            "PACKAGE": packageIdentity(local: options.local),
+            "PACKAGE": swiftStringContents(
+                packageIdentity(local: options.local, sketch: options.root(from: base))),
         ]
         return [
             ("Package.swift", try Templates.render("Package.swift.template", values)),
@@ -108,11 +133,42 @@ enum NewCommand {
     ///
     /// **パスで指すときは末尾のディレクトリ名が identity になる** — リポジトリの
     /// 名前ではない。作業用の複製 (worktree) を指したときに食い違うので、パスから導く。
-    static func packageIdentity(local: String?) -> String {
+    ///
+    /// **`.package(path:)` と同じ基準で解く** (#2322)。`--local` は `.package(path:)` へ
+    /// そのまま入り、SwiftPM はそれを**作られるスケッチの場所から**解く (CONTRIBUTING の
+    /// 「作られるスケッチから見た相対」)。名前だけを走らせた場所から解いていたので、末尾が
+    /// `..`・`.` の場所では 2 つが別の場所を指し、`swift package resolve` が
+    /// `unknown package` で止まっていた。`~/` で始まる場所だけは SwiftPM が home から解く
+    /// ので、ここも同じにする。
+    ///
+    /// - Parameter sketch: 作られるスケッチの場所 (``Options/root(from:)``)。
+    static func packageIdentity(local: String?, sketch: URL) -> String {
         guard let local else { return "mokume" }
-        let name = URL(fileURLWithPath: local, isDirectory: true)
+        let base =
+            local.hasPrefix("~/")
+            ? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true) : sketch
+        let relative = local.hasPrefix("~/") ? String(local.dropFirst(2)) : local
+        let name = URL(fileURLWithPath: relative, isDirectory: true, relativeTo: base)
             .standardizedFileURL.lastPathComponent
         return name.isEmpty ? "mokume" : name.lowercased()
+    }
+
+    /// Swift の文字列リテラル (`"…"`) の中身として書ける形にする。
+    ///
+    /// `\` と `"` を逃がし、改行などの制御文字は `\u{…}` にする — 生のまま入ると、
+    /// 文字列が閉じるか、行をまたいで読めなくなる。
+    static func swiftStringContents(_ text: String) -> String {
+        var escaped = ""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\\": escaped += "\\\\"
+            case "\"": escaped += "\\\""
+            case _ where scalar.value < 0x20 || scalar.value == 0x7F:
+                escaped += "\\u{\(String(scalar.value, radix: 16))}"
+            default: escaped.unicodeScalars.append(scalar)
+            }
+        }
+        return escaped
     }
 
     /// 名前として使えるか。パッケージ名にもディレクトリ名にもなるので、両方で

@@ -148,9 +148,82 @@ struct BundleCommandTests {
     func theReportTellsHowToCheck() {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
+            package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
             note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
         #expect(report.contains("/tmp/Demo.app"))
         #expect(report.contains(".build"))
+    }
+
+    /// **確かめ方の行は、走らせた場所からそのまま貼って動く** (#2320)。`mv .build …` と
+    /// 書いていたので、スケッチの親で `bundle <dir>` を打った人が貼ると、親に `.build` は
+    /// 無く、何も確かめずに失敗していた。動かすのはスケッチの `.build` である (束ねるときの
+    /// 置き場はパッケージ直下に固定 — `BuildDirectory.Fallback.packaging`)。
+    ///
+    /// `open` は偽物を `PATH` の先に置き、呼ばれた時点で `.build` が退避されているかを
+    /// 書き残させる — 本物の `.app` を開かずに、手順の順序まで見る。
+    @Test(
+        "確かめ方の行は、スケッチの親から貼っても、スケッチの .build を退避して戻す",
+        arguments: ["bund", "bund with space", "it's bund"])
+    func theCheckCanBePastedFromTheParent(name: String) throws {
+        let parent = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let sketch = parent.appendingPathComponent(name, isDirectory: true)
+        let build = sketch.appendingPathComponent(".build", isDirectory: true)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        try "".write(to: build.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        let app = sketch.appendingPathComponent("bundle/Bund.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+
+        let tools = parent.appendingPathComponent("tools", isDirectory: true)
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        let record = parent.appendingPathComponent("opened")
+        let open = tools.appendingPathComponent("open")
+        try """
+            #!/bin/sh
+            { printf '%s\\n' "$1"
+              if [ -e '\(sketch.path.replacingOccurrences(of: "'", with: #"'\''"#))/.build' ]
+              then echo present; else echo held; fi; } > '\(record.path)'
+            """.write(to: open, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: open.path)
+
+        let report = BundleCommand.report(
+            for: app, package: sketch, note: parent.appendingPathComponent("How to open Bund.txt"),
+            signedAs: nil)
+        let line = try #require(
+            report.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { $0.hasPrefix("mv ") })
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", line]
+        process.currentDirectoryURL = parent
+        process.environment = ["PATH": "\(tools.path):/usr/bin:/bin"]
+        let result = try RunCommand.capture(process, capturing: true, errors: .inherit)
+
+        #expect(result.status == 0, "確かめ方の行が通らない: \(line)")
+        // `open` の時点でスケッチの .build は退避されていて、開いたのは束ねた .app
+        #expect(
+            try String(contentsOf: record, encoding: .utf8) == "\(app.path)\nheld\n",
+            "打った行: \(line)")
+        // 終わった後は戻っている
+        #expect(FileManager.default.fileExists(atPath: build.appendingPathComponent("marker").path))
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: sketch.appendingPathComponent(".build-held").path))
+    }
+
+    /// 文面の固定。スケッチの `.build` と `.app` を、引用した絶対パスで名指しする。
+    @Test("確かめ方の行は、スケッチの .build と .app を引用した絶対パスで名指しする")
+    func theCheckNamesTheQuotedPlaces() {
+        let report = BundleCommand.report(
+            for: URL(fileURLWithPath: "/work/bund with space/bundle/Bund.app"),
+            package: URL(fileURLWithPath: "/work/bund with space", isDirectory: true),
+            note: URL(fileURLWithPath: "/work/bund with space/bundle/How to open Bund.txt"),
+            signedAs: nil)
+        #expect(
+            report.contains(
+                "  mv '/work/bund with space/.build' '/work/bund with space/.build-held'"
+                    + " && open '/work/bund with space/bundle/Bund.app'"
+                    + " ; mv '/work/bund with space/.build-held' '/work/bund with space/.build'\n"))
     }
 
     /// 受け取った側の往復は消せない。消せない代わりに、説明を**送り手の記憶から外す** —
@@ -172,6 +245,7 @@ struct BundleCommandTests {
     func theReportPointsAtTheOpeningNote() {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
+            package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
             note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
         #expect(report.contains("/tmp/How to open Demo.txt"))
         #expect(report.contains("Send it along with the work"))
@@ -391,14 +465,34 @@ struct BundleCommandTests {
     @Test("報せが、どちらの段で署名したかを名乗る")
     func theReportNamesTheSigningTier() {
         let app = URL(fileURLWithPath: "/tmp/Demo.app")
+        let package = URL(fileURLWithPath: "/tmp/demo", isDirectory: true)
         let note = URL(fileURLWithPath: "/tmp/Demo を開くには.txt")
 
-        #expect(BundleCommand.report(for: app, note: note, signedAs: nil).contains("ad-hoc"))
+        #expect(
+            BundleCommand.report(for: app, package: package, note: note, signedAs: nil)
+                .contains("ad-hoc"))
 
         let named = BundleCommand.report(
-            for: app, note: note, signedAs: "Developer ID Application: X")
+            for: app, package: package, note: note, signedAs: "Developer ID Application: X")
         #expect(named.contains("Developer ID Application: X"))
         #expect(named.contains("has not been notarized yet"))
+    }
+
+    /// **場所は走らせた場所から絶対パスに解く** (#2323)。相対の `URL` のまま
+    /// `swift package dump-package` の作業ディレクトリへ渡ると、先頭の `..` が落ちる (#2314)。
+    @Test("スケッチの場所は、走らせた場所から絶対パスに解く")
+    func theSketchIsResolvedFromWhereItWasTyped() throws {
+        let typedFrom = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        for (given, expected) in [("../bund", "/work/bund"), ("..", "/work"), ("bund", "/work/plain/bund")] {
+            let directory = try BundleCommand.parse([given]).directory(from: typedFrom)
+            #expect(directory.baseURL == nil)
+            #expect(directory.path == expected)
+        }
+        // 渡さなければ走らせた場所
+        #expect(
+            try BundleCommand.parse([]).directory().standardizedFileURL.path
+                == URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .standardizedFileURL.path)
     }
 
     @Test("置き場を渡せる")
