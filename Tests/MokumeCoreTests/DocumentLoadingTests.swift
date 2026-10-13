@@ -789,4 +789,122 @@ struct DocumentLoadingTests {
             try Bare().loadJSONObject("https://")
         }
     }
+
+    // MARK: - URL を待つ期限 (#2264)
+
+    /// 同期の受け取り (``WebFile/fetchWaiting(_:path:limit:)``) を、期限を `limit` に縮めて別の糸で
+    /// 走らせ、結果とかかった時間を返す。
+    ///
+    /// **待つ側 (この検査) も期限を持つ。** `limit` に 3 秒足した時間を越えたら、応答を打ち切って
+    /// (``CannedResponses/cut(_:)``) `nil` を返す — 期限で返らない実装でも、検査は止まらずに赤になる。
+    /// `.timeLimit` は使わない (main actor の上で検査全体の秒数を縛るため)。
+    private func fetchOffMain(_ url: String, limit: Duration) -> (outcome: Result<Data, DataFailure>, took: Duration)? {
+        // 受け取りの糸が書き、合図を待った後にだけ読む (打ち切ったときは読まない)
+        nonisolated final class Box: @unchecked Sendable {
+            var outcome: Result<Data, DataFailure>?
+            var took = Duration.zero
+        }
+        guard let target = URL(string: url) else {
+            Issue.record("URL として組めない: \(url)")
+            return nil
+        }
+        let box = Box()
+        let returned = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            let clock = ContinuousClock()
+            let start = clock.now
+            box.outcome = Result { () throws(DataFailure) in try WebFile.fetchWaiting(target, path: url, limit: limit) }
+            box.took = clock.now - start
+            returned.signal()
+        }
+        let patience = (limit + .seconds(3)) / .seconds(1)
+        guard returned.wait(timeout: .now() + patience) == .success else {
+            CannedResponses.cut(url)
+            _ = returned.wait(timeout: .now() + patience)
+            return nil
+        }
+        return box.outcome.map { ($0, box.took) }
+    }
+
+    @Test("少しずつ返し続ける応答でも、呼んでからの総時間が期限を越えたら取り消して unreachable で投げる")
+    func tricklePastLimitIsUnreachable() throws {
+        // 20 ミリ秒ごとに 1 バイト。音沙汰の無い間は期限に届かないので、受け口の時間切れでは切れない
+        let url = CannedResponses.serve(.trickle(body: Data(repeating: 0x20, count: 100_000), every: .milliseconds(20)))
+        let limit = Duration.milliseconds(300)
+        let returned = try #require(fetchOffMain(url, limit: limit), "期限で返らず、検査の側の期限で打ち切った")
+        #expect(
+            returned.outcome == .failure(.unreachable(url: url, reason: "no complete answer came back within 0.3 seconds")))
+        #expect(returned.took >= limit)
+        #expect(CannedResponses.delivered(url) >= 2, "期限までの間に、本文は届き続けていた")
+        // 諦めた受け取りは取り消すので、受け口が応答を止める。止めるのは受け口の糸で少し遅れる
+        // ので、待つ側が 2 秒の期限を持って待つ
+        let until = ContinuousClock.now + .seconds(2)
+        while !CannedResponses.stopped(url), ContinuousClock.now < until { Thread.sleep(forTimeInterval: 0.01) }
+        #expect(CannedResponses.stopped(url), "期限を越えた受け取りを取り消していない")
+    }
+
+    @Test("何も返さない応答も、期限で取り消して同じ unreachable で投げる")
+    func silencePastLimitIsUnreachable() throws {
+        // 受け口の時計と待つ側の期限が同じ値で競る。受け口の時間切れを畳む処理
+        // (`WebFile.failure(of:path:limit:)`) を外しても、この検査は**確率でしか赤くならない**
+        // (受け口の時間切れが先に届いた回だけ赤)。畳み込みは下の「受け口の時間切れは…」が、
+        // 競り合いに依らない決まった結果で見る
+        let url = CannedResponses.serve(.silent)
+        let limit = Duration.milliseconds(300)
+        let returned = try #require(fetchOffMain(url, limit: limit), "期限で返らず、検査の側の期限で打ち切った")
+        #expect(
+            returned.outcome == .failure(.unreachable(url: url, reason: "no complete answer came back within 0.3 seconds")))
+        #expect(returned.took >= limit)
+    }
+
+    @Test("何も返さない応答には、同期版と待たない版が同じ失敗の値を投げる")
+    func silenceFailsAlikeForBothWaits() async throws {
+        let url = CannedResponses.serve(.silent)
+        let target = try #require(URL(string: url))
+        let limit = Duration.milliseconds(300)
+        let waited = try #require(fetchOffMain(url, limit: limit), "同期版が期限で返らず、検査の側の期限で打ち切った")
+        // 待たない版にも、待つ側 (この検査) が期限を持つ。越えたら応答を打ち切るので、受け口の
+        // 期限で返らない実装でも検査は止まらない (打ち切ると「取り消した」で返り、下の比べで赤になる)
+        let cutoff = DispatchWorkItem { CannedResponses.cut(url) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + (limit + .seconds(3)) / .seconds(1), execute: cutoff)
+        defer { cutoff.cancel() }
+        let requested: Result<Data, DataFailure>
+        do {
+            requested = .success(try await WebFile.fetch(target, path: url, limit: limit))
+        } catch {
+            requested = .failure(error)
+        }
+        #expect(requested == waited.outcome)
+        #expect(requested == .failure(.unreachable(url: url, reason: "no complete answer came back within 0.3 seconds")))
+    }
+
+    @Test("受け口の時間切れは、期限の間に答えが完結しなかった失敗に畳む。他の誤りは受け口の事情のまま")
+    func sessionTimeoutFoldsIntoOverdue() {
+        let url = "https://folding.test/data"
+        let overdue = DataFailure.unreachable(url: url, reason: "no complete answer came back within 60.0 seconds")
+        #expect(WebFile.overdue(path: url, limit: .seconds(60)) == overdue)
+        // 受け口は時間切れを URLError でも、NSURLErrorDomain の NSError でも渡しうる。どちらも畳む
+        #expect(WebFile.failure(of: URLError(.timedOut), path: url, limit: .seconds(60)) == overdue)
+        let timedOut = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        #expect(WebFile.failure(of: timedOut, path: url, limit: .seconds(60)) == overdue)
+        let refused = URLError(.cannotConnectToHost)
+        #expect(
+            WebFile.failure(of: refused, path: url, limit: .seconds(60))
+                == .unreachable(url: url, reason: refused.localizedDescription))
+    }
+
+    @Test("期限より早く刻み終える応答は、少しずつ届いても読める")
+    func trickleWithinLimitIsRead() throws {
+        let body = Data(#"{"t": 1}"#.utf8)
+        let url = CannedResponses.serve(.trickle(body: body, every: .milliseconds(10)))
+        let returned = try #require(fetchOffMain(url, limit: .seconds(2)), "期限で返らず、検査の側の期限で打ち切った")
+        #expect(returned.outcome == .success(body))
+        #expect(CannedResponses.delivered(url) == body.count)
+    }
+
+    @Test("同期の待ちの期限は、loadJSONObject の説明が名乗る「最長 60 秒」と同じ数")
+    func waitLimitIsTheDocumentedSixtySeconds() {
+        // 変えるなら、`loadJSONObject(_:)` の説明 (Sketch+Data.swift) の秒数も同じ PR で直す
+        #expect(WebFile.waitLimit == .seconds(60))
+    }
 }
