@@ -51,6 +51,22 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 起動することになる ([#1055](https://github.com/mokume-metal/mokume/issues/1055))。
     case productNotBuilt(product: String, path: String)
     case toolchainMissing(String)
+    /// 子 (`swift`・スケッチ) を起こす場所が使えなかった — 無い・ディレクトリでない・入れない。
+    /// **子が無いのではない。**
+    ///
+    /// `Process.run()` の失敗は、作業ディレクトリが無いときも実行ファイルが無いときも同じ形
+    /// (`NSFileNoSuchFileError`) で、`toolchainMissing` に畳むと「Xcode を入れ直せ」と人を
+    /// 遠ざけていた ([#2314](https://github.com/mokume-metal/mokume/issues/2314))。何が
+    /// 使えないのかは、失敗の後に場所を stat し直して決める
+    /// (``RunCommand/launchFailure(of:error:executableMissing:)``・``GivenPath/Presence``)。
+    case placeUnusable(tool: String, place: String, presence: GivenPath.Presence)
+    /// 場所はディレクトリで、実行ファイルも在るのに、子を起こせなかった (`ENOEXEC`・
+    /// `EBADARCH`・`E2BIG`・`EAGAIN` など)。`reason` は OS の事情。
+    ///
+    /// **場所を疑わせない。** ``placeUnusable(tool:place:presence:)`` と文面を分けるのは、
+    /// 場所に関わらない理由で「渡した場所を確かめよ」と言うと、確かめても直らない所へ人を
+    /// 向かわせるからである。
+    case cannotLaunch(tool: String, place: String, reason: String)
     /// 答えを読むために道具立てへ聞いたが、道具立てが答えなかった (0 以外で終わった・
     /// 何も答えなかった)。`command` は打ったもの。
     ///
@@ -274,6 +290,14 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
         case .toolchainMissing(let tool):
             "Cannot find \(tool). Install the Xcode command line tools"
+        case .placeUnusable(let tool, let place, let presence):
+            """
+            Could not start \(tool) in \(place): \(presence.reason)
+            This does not mean \(tool) is missing. Check the place you gave \
+            (a relative path starts from where you ran this)
+            """
+        case .cannotLaunch(let tool, let place, let reason):
+            "Could not start \(tool) in \(place): \(reason)"
         case .toolchainFailed(let command, let status):
             """
             The toolchain did not answer (exit code \(status)): \(command)
