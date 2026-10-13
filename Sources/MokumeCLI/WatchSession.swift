@@ -529,8 +529,10 @@ final class WatchSession {
             !isBringingDown(gone)
         else { return nil }
         hasNamedDeparture = true
-        return Departure(
-            status: gone.terminationStatus, wasSignalled: gone.terminationReason == .uncaughtSignal)
+        switch ChildEnding(of: gone) {
+        case .exited(let status): return Departure(status: status, wasSignalled: false)
+        case .signalled(let signal): return Departure(status: signal, wasSignalled: true)
+        }
     }
 
     /// 走らせているものを終わらせる。
@@ -634,7 +636,8 @@ final class WatchSession {
             // **終わっていない子の終了コードは読まない** (読むと例外で落ちる)。置いていった回と、
             // 走っている子が無かった回は、止めた合図の慣習の値で書く
             let status =
-                running.flatMap { $0.isRunning ? nil : $0.terminationStatus } ?? (128 + SIGINT)
+                running.flatMap { $0.isRunning ? nil : ChildEnding(of: $0).shellStatus }
+                ?? (128 + SIGINT)
             let report = BuildReport(
                 ok: false, status: status, output: Self.stoppedRebuildNotice, stamp: self.lastStamp,
                 configuration: self.configurationName, launched: false,

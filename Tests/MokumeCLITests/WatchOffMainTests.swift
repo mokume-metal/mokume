@@ -489,6 +489,43 @@ struct WatchOffMainTests {
         _ = await building.value
     }
 
+    /// **合図で落ちた作り直しの数は `128 + 番号` で記録する** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// 合図の番号のまま (`terminationStatus`) 書くと、2 で終わった回と SIGINT で落ちた回を
+    /// 取り違える — 同じ関数の中で、走っていなかった回は `128 + SIGINT` と書くのに、落ちた回は
+    /// 生の番号が載って慣習が割れていた。
+    @Test("SIGINT で落ちた作り直しの記録の数は、130 で書く")
+    @MainActor
+    func aRebuildEndedBySignalIsRecordedAsShellStatus() async throws {
+        let recorder = WatchSessionTests.Recorder()
+        let gate = Gate()
+        recorder.whileBuilding = { await gate.wait() }
+
+        // **既定の SIGINT の扱いで落ちる子。** 罠を張らないので、合図でそのまま終わる
+        let build = Process()
+        build.executableURL = URL(fileURLWithPath: "/bin/sh")
+        build.arguments = ["-c", "echo ready; read line"]
+        let output = Pipe()
+        build.standardInput = Pipe()
+        build.standardOutput = output
+        build.standardError = FileHandle.nullDevice
+        try build.run()
+        defer { if build.isRunning { kill(build.processIdentifier, SIGKILL) } }
+        _ = output.fileHandleForReading.availableData
+
+        var hooks = recorder.hooks()
+        hooks.stopRebuild = { build }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 5)
+        let building = Task { await session.start() }
+        try await waitUntil { gate.isWaiting }
+
+        #expect(await session.stopRebuilding() == .terminated)
+        #expect(session.lastReport?.status == 128 + SIGINT, "合図で落ちた作り直しの数が生の番号のまま")
+
+        gate.open()
+        _ = await building.value
+    }
+
     /// **口から通す。** 止める判断が在っても、終えるときに呼ばれなければ `swift build` は残る。
     @Test("見張りを終えると、走っている作り直しも止まる")
     @MainActor

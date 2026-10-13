@@ -504,6 +504,33 @@ struct BundleCommandTests {
         #expect(status != 0 && status != 127)
     }
 
+    /// **合図で落ちた `codesign` を、終了コードの形で名乗らない** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// `terminationStatus` を直に読むと SIGKILL の 9 が「Signing failed (exit code 9)」になり、
+    /// `exit(9)` で終わった回と見分けがつかない。`PATH` の先に置いた偽の `codesign` で、自分で
+    /// 終わる回と合図で落ちる回を作り、`sign` が名乗る数を見る。
+    @Test("codesign が合図で落ちたら、128 + 番号で名乗る。自分で終わったら、終了コードのまま")
+    func aSignalledCodesignIsNamedByShellStatus() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+        let tools = root.appendingPathComponent("tools", isDirectory: true)
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        let fake = tools.appendingPathComponent("codesign")
+        try "#!/bin/sh\n".write(to: fake, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+        let environment = ["PATH": "\(tools.path):/usr/bin:/bin"]
+
+        for (script, status) in [
+            ("exit 9", Int32(9)), ("kill -s KILL $$", 128 + SIGKILL), ("kill -s TRAP $$", 128 + SIGTRAP),
+        ] {
+            // 実行ビットを保つため、同じファイルへ書き足す (置き換えない)
+            try "#!/bin/sh\n\(script)\n".write(to: fake, atomically: false, encoding: .utf8)
+            #expect(throws: CommandFailure.codesignFailed(status: status), "\(script)") {
+                try BundleCommand.sign(app, as: nil, environment: environment)
+            }
+        }
+    }
+
     /// **道具立てが答えなかった回を、宣言の不備と名乗らない** (#2483)。`dump-package` は
     /// 宣言を道具立てが読めない (`Package.swift` が壊れている) と 0 以外で終わり、`bundle` は
     /// それを「Package.swift が実行ファイルを宣言していない」と名乗っていた。打ったコマンドと
