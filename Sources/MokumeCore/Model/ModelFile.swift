@@ -218,24 +218,39 @@ nonisolated enum ModelFile {
 
     /// 3 つの数を読む。
     private static func vector(_ fields: ArraySlice<Substring>) -> SIMD3<Float>? {
-        let numbers = fields.prefix(3).compactMap { Float($0) }
-        guard numbers.count == 3, numbers.allSatisfy(\.isFinite) else { return nil }
+        let numbers = fields.prefix(3).compactMap(number)
+        guard numbers.count == 3 else { return nil }
         return SIMD3(numbers[0], numbers[1], numbers[2])
     }
 
     /// 読み取り位置を読む (`u v [w]`)。
     ///
     /// **3 つ目 (w) は読み飛ばさず無視する。** 立体的な読み取りを書いたモデルでも、
-    /// 手前の 2 つは正しい展開なので使える。`v` が無い行は 0 として読む。
+    /// 手前の 2 つは正しい展開なので使える。`v` が無い行は 0 として読む — **書いてあって
+    /// 読めない `v` は無いのではない**ので、行ごと読み飛ばす ([#2514])。
     ///
     /// **縦はここで裏返す。** OBJ の `v` は絵の下から上へ数え、この面の読み取り位置は
     /// 上から下へ数える (``SolidMesh/Point/uv``)。裏返さないと、貼った絵が上下逆に乗る。
+    ///
+    /// [#2514]: https://github.com/mokume-metal/mokume/issues/2514
     private static func texture(_ fields: ArraySlice<Substring>) -> SIMD2<Float>? {
-        let numbers = fields.prefix(2).compactMap { Float($0) }
-        guard let u = numbers.first, u.isFinite else { return nil }
+        let written = fields.prefix(2)
+        let numbers = written.compactMap(number)
+        guard let u = numbers.first, numbers.count == written.count else { return nil }
         let v = numbers.count >= 2 ? numbers[1] : 0
-        guard v.isFinite else { return nil }
         return SIMD2(u, 1 - v)
+    }
+
+    /// 頂点の 1 つの数を読む。**10 進の綴りで、有限の数だけ** — 読めなければ `nil`。
+    ///
+    /// 綴りの判定は値を取り出す口と共有する (``DecimalText``)。Swift の `Float(String)` に
+    /// 任せると、OBJ の文法に無い 16 進 (`0x10`) が数として置かれ、読めない行が数えられない
+    /// ([#2514])。10 進でも `Float` に収まらない数 (`1e39`) は無限なので、ここで断る。
+    ///
+    /// [#2514]: https://github.com/mokume-metal/mokume/issues/2514
+    private static func number(_ field: Substring) -> Float? {
+        guard let value = DecimalText.float(String(field)), value.isFinite else { return nil }
+        return value
     }
 
     /// 面の 1 つの角 (`位置/読み取り位置/向き`) を読む。

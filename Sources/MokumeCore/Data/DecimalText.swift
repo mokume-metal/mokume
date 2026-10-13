@@ -4,7 +4,8 @@
 import Foundation
 
 /// 値を数として取り出す口 (``JSONObject/getFloat(_:)``・``XML/getFloat(_:)``・
-/// ``TableRow/getFloat(_:)-(String)``) が共有する、文字を数にする読み方 (#2330)。
+/// ``TableRow/getFloat(_:)-(String)``) が共有する、文字を数にする読み方 (#2330)。OBJ の読み手
+/// (``ModelFile/parse(_:)``) も頂点の数をこれで読む (#2514)。
 ///
 /// - **前後の空白は落とす。** 空白には改行 (LF・CR・U+2028 など) も含める — 表のセルや
 ///   JSON の文字の末尾に改行が残っていても、数として読む (Processing の `getFloat` と同じ)
