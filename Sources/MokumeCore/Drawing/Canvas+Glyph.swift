@@ -33,12 +33,13 @@ extension Canvas {
         if let found = typefaces[request] { return found }
         let face = Typeface(request: request)
         typefaces.insert(face, for: request)
-        // 面が無ければ元の面のまま描く。黙ると、効かない指定を効いたように見せる (#2444)
+        // 面が無ければ引けた面で描く。黙ると、効かない指定を効いたように見せる (#2444)
         if face.lacksRequestedStyle {
             warnOnce(
                 .missingTypefaceStyle,
-                "textStyle(): the typeface \"\(CTFontCopyPostScriptName(face.base) as String)\" "
-                    + "has no \(request.style) face in this environment, so its regular face is used")
+                "textStyle(): the typeface family \"\(CTFontCopyFamilyName(face.base) as String)\" "
+                    + "has no \(request.style) face in this environment, so "
+                    + "\"\(CTFontCopyPostScriptName(face.base) as String)\" is used")
         }
         return face
     }

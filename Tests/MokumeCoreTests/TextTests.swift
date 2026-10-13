@@ -362,6 +362,23 @@ struct TextTests {
         #expect(!canvas.warnings.hasWarned(.missingFont), "\(face.name) を無いと断った")
     }
 
+    /// 濁点を分けて綴った名前 (NFD。ファイル名やコピーした文字列で起きる) を、CoreText は
+    /// 引けない。合わせた綴り (NFC) に直してから引く。
+    @Test("濁点を分けて綴った名前でも、合わせた綴りと同じ書体を引く", arguments: [
+        "ヒラギノ角ゴシック W3".precomposedStringWithCanonicalMapping,
+        "ヒラギノ角ゴシック W3".decomposedStringWithCanonicalMapping,
+    ])
+    func aDecomposedNameIsTakenLikeItsComposedSpelling(_ name: String) throws {
+        let composed = name.precomposedStringWithCanonicalMapping
+        try #require(
+            Self.postScriptName(resolving: composed) == "HiraginoSans-W3",
+            "前提: この環境の CoreText は合わせた綴りを HiraginoSans-W3 に引く")
+        let canvas = try makeCanvas()
+        canvas.textFont(name)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "HiraginoSans-W3")
+        #expect(!canvas.warnings.hasWarned(.missingFont), "\(name.unicodeScalars.count) スカラの綴りを断った")
+    }
+
     /// 無い名前。CoreText はどれも黙って `Helvetica` へ倒す — 判定はそれを見抜かなければならない。
     /// `游明朝`・`Hiragino` は在る書体の名前の一部で、それだけでは書体を指さない。
     @Test("無い名前は、いまどおり警告して書体を変えない", arguments: ["NoSuchFont", "游明朝", "Hiragino"])
@@ -391,21 +408,49 @@ struct TextTests {
     }
 
     /// その書体が、その太さ・傾きの面を持っているか。被検査の `Typeface` を通さない。
+    ///
+    /// **写しが返っても、面があるとは限らない。** `CTFontCreateCopyWithSymbolicTraits` は、
+    /// 頼んだ面が無いとき nil を返すこともあれば、元の面や片方の性質だけの面を返すこともある
+    /// (Kefa III の斜体は `KefaIII-Regular`、太斜体は `KefaIII-Bold`)。返った面の性質で見る。
     nonisolated private static func hasFace(_ name: String, _ traits: CTFontSymbolicTraits) -> Bool {
         let base = CTFontCreateWithName(name as CFString, 12, nil)
-        return CTFontCreateCopyWithSymbolicTraits(base, 12, nil, traits, traits) != nil
+        guard let styled = CTFontCreateCopyWithSymbolicTraits(base, 12, nil, traits, traits) else {
+            return false
+        }
+        return CTFontGetSymbolicTraits(styled).contains(traits)
     }
 
-    @Test("斜体の面を持たない書体を斜体にすると、立体のまま描き、そのことを警告する")
-    func aMissingItalicFaceIsWarned() throws {
-        try #require(!Self.hasFace("HiraginoSans-W3", .traitItalic), "前提: ヒラギノ角ゴシック W3 は斜体の面を持たない")
+    /// 面を持たない組。上は写しが nil で返る書体、下 3 つは写しが面を持たないまま返る書体
+    /// (元の面か、片方の性質だけの面)。どれも macOS に同梱 (`/System/Library/Fonts/Supplemental`)。
+    nonisolated static var missingFaces: [(font: String, style: TextStyle, drawn: String)] {
+        [
+            ("HiraginoSans-W3", .italic, "HiraginoSans-W3"),
+            ("Kefa III", .italic, "KefaIII-Regular"),
+            ("Kefa III", .boldItalic, "KefaIII-Bold"),
+            ("Noto Sans Syriac", .italic, "NotoSansSyriac-Regular"),
+        ]
+    }
+
+    @Test("太さ・傾きの面を持たない書体は、引けた面で描き、そのことを警告する", arguments: missingFaces)
+    func aMissingFaceIsWarned(_ item: (font: String, style: TextStyle, drawn: String)) throws {
+        let traits: CTFontSymbolicTraits =
+            switch item.style {
+            case .normal: []
+            case .bold: .traitBold
+            case .italic: .traitItalic
+            case .boldItalic: [.traitBold, .traitItalic]
+            }
+        try #require(
+            Self.postScriptName(resolving: item.font) != "Helvetica",
+            "前提: この環境に \(item.font) がある")
+        try #require(!Self.hasFace(item.font, traits), "前提: \(item.font) は \(item.style) の面を持たない")
         let canvas = try makeCanvas()
-        canvas.textFont("HiraginoSans-W3")
-        canvas.textStyle(.italic)
-        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "HiraginoSans-W3")
-        #expect(canvas.warnings.hasWarned(.missingTypefaceStyle))
+        canvas.textFont(item.font)
+        canvas.textStyle(item.style)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == item.drawn)
+        #expect(canvas.warnings.hasWarned(.missingTypefaceStyle), "\(item.font) \(item.style) で鳴らない")
         #expect(
-            canvas.warnings.message(for: .missingTypefaceStyle)?.contains("HiraginoSans-W3") == true,
+            canvas.warnings.message(for: .missingTypefaceStyle)?.contains(item.drawn) == true,
             "\(canvas.warnings.message(for: .missingTypefaceStyle) ?? "")")
     }
 
@@ -413,6 +458,7 @@ struct TextTests {
         ("Helvetica", TextStyle.italic, "Helvetica-Oblique"),
         ("Helvetica", TextStyle.boldItalic, "Helvetica-BoldOblique"),
         ("HiraginoSans-W3", TextStyle.bold, "HiraginoSans-W6"),
+        ("Kefa III", TextStyle.bold, "KefaIII-Bold"),
     ])
     func aPresentFaceIsUsedWithoutWarning(_ name: String, _ style: TextStyle, _ face: String) throws {
         try #require(
