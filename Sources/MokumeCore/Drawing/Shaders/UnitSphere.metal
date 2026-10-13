@@ -91,7 +91,11 @@ vertex ShapeFragmentIn unitSphereVertexMain(
         placement.normal0.xyz, placement.normal1.xyz, placement.normal2.xyz);
 
     ShapeFragmentIn out;
-    out.position = frame.projection * world;
+    // Projection uses a different accumulation order. Oblique views expose the
+    // difference even when the default camera's rendered colors are identical.
+    out.position = fma(frame.projection[3], world.w,
+        fma(frame.projection[2], world.z,
+            fma(frame.projection[1], world.y, frame.projection[0] * world.x)));
     // **輪郭だけを画面で半画素寄せる** (ADR-0039 決定 2)。立体の頂点は投影の後でしか
     // 画面の位置が決まらないので、切り取り座標で `w` を掛けて足す。影の焼き付けは
     // 寄せ 0 を渡す

@@ -5,8 +5,9 @@
 
 先にreleaseをビルドする。ビルドや別のGPU検査と同時に使わない。
 python3 scripts/probe-unit-sphere-variants-1862.py plain
-選択: plain / volatile / noinline / contract_off / explicit_world / fma0..11 / mutant
-fma0 は保存した専用シェーダの方式。fma1..5 は平行移動から始める順列、
+選択: plain / volatile / noinline / contract_off / explicit_world / fma0..11 / projection3012 / projection0123 / final / mutant
+fma0 はworldだけを明示する途中候補。final はworldと投影の両方を明示する。
+fma1..5 は平行移動から始める順列、
 fma6..11 は平行移動を最後に足す順列。初回実測では fma6,8,10,7,9,11,0 の順で試した。
 MOKUME_SPHERE_OUTPUT と MOKUME_SPHERE_SCENES は主runnerへ渡す。
 """
@@ -23,6 +24,7 @@ root = Path(__file__).resolve().parent.parent
 mode = sys.argv[1]
 original = (root / "Sources/MokumeCore/Drawing/Shaders/UnitSphere.metal").read_text()
 source = re.sub(r"    float4 world = fma[\s\S]*?;", "    float4 world = placement.matrix * float4(vertex_in.position, 1.0);", original, count=1)
+source = re.sub(r"    out.position = fma[\s\S]*?;", "    out.position = frame.projection * world;", source, count=1)
 assert source != original
 if mode == "volatile":
     source = source.replace("float3 scaled =", "volatile float3 scaled =")
@@ -46,6 +48,17 @@ elif mode.startswith("fma"):
         i, j, h = order
         expr = f"(fma(placement.matrix[{h}], {terms[h]}, fma(placement.matrix[{j}], {terms[j]}, placement.matrix[{i}] * {terms[i]})) + placement.matrix[3])"
     source = source.replace("placement.matrix * float4(vertex_in.position, 1.0)", expr)
+elif mode.startswith("projection"):
+    source = original
+    order = [int(x) for x in mode[len("projection"):]]
+    assert sorted(order) == [0, 1, 2, 3]
+    coords = ["x", "y", "z", "w"]
+    expr = f"frame.projection[{order[0]}] * world.{coords[order[0]]}"
+    for i in order[1:]:
+        expr = f"fma(frame.projection[{i}], world.{coords[i]}, {expr})"
+    source = re.sub(r"    out.position = fma[\s\S]*?;", "    out.position = " + expr + ";", source, count=1)
+elif mode == "final":
+    source = original
 elif mode == "mutant":
     source = original.replace("vertex_in.shapePosition = scaled;", "vertex_in.shapePosition = scaled;\n    vertex_in.shapePosition.x = as_type<float>(as_type<uint>(scaled.x) ^ 1u);")
 elif mode != "plain":

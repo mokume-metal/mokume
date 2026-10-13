@@ -62,7 +62,8 @@ struct UnitSpherePrototypeTests {
                 c.translate(0.091, -0.173, Float(i % 13) * 4.73 - 20)
                 c.scale(0.31 + Float(i % 7) * 0.19, 0.27 + Float(i % 11) * 0.21, 0.43 + Float(i % 5) * 0.39)
             }
-            c.sphere(r, detail: detail)
+            if scene == "interleaved" && i % 2 == 1 { c.box(r * 2) }
+            else { c.sphere(r, detail: detail) }
             c.pop()
         }
     }
@@ -191,9 +192,9 @@ struct UnitSpherePrototypeTests {
             }
         }
         try draw()
+        #expect(c.drawCallsInLastFrame == 4)
         let first = try c.target.readPixels()
         for i in 0..<4 { #expect(c.get(i * 20 + 10, 16) == .linear(red: 1, green: 0, blue: 0)) }
-        #expect(c.drawCallsInLastFrame == 4)
         try write("0.0, 1.0, 0.0")
         shader.reload()
         #expect(shader.failure == nil)
@@ -225,7 +226,8 @@ struct UnitSpherePrototypeTests {
         try report.write(to: output.appendingPathComponent("setup.csv"), atomically: true, encoding: .utf8)
     }
 
-    @Test("releaseで交互に従来と試作を測る")
+    @Test("releaseで交互に従来と試作を測る",
+          .enabled(if: !isDebugBuild, "性能はreleaseで測る"))
     func performance() throws {
         #if DEBUG
         throw NSError(domain: "release build required", code: 1)
@@ -236,7 +238,7 @@ struct UnitSpherePrototypeTests {
         let scenes = ProcessInfo.processInfo.environment["MOKUME_SPHERE_SCENES"]?.split(separator: ",").map(String.init)
             ?? ["light", "shadow", "alpha", "stroke", "retained", "transform"]
         for scene in scenes {
-            for radii in (scene == "light" ? ["same", "fixed", "moving"] : ["fixed"]) {
+            for radii in (scene == "light" ? ["same", "fixed", "moving"] : (scene == "interleaved" ? ["same", "fixed"] : ["fixed"])) {
                 let a = try CanvasFixture.make(gpu: gpu, width: width, height: height)
                 let b = try CanvasFixture.make(gpu: gpu, width: width, height: height)
                 b.prototypeUnitSpheres = ProcessInfo.processInfo.environment["MOKUME_SPHERE_CONTROL"] != "1"

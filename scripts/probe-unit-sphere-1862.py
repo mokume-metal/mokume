@@ -4,10 +4,11 @@
 """#1862 の試作専用。main へマージしない。
 
 先に swift build --build-tests -c release -Xswiftc -enable-testing を行う。
-実行: python3 scripts/probe-unit-sphere-1862.py {compatibility|performance|validation|all}
+実行: python3 scripts/probe-unit-sphere-1862.py {compatibility|performance|validation|setupCost|all}
 
 MOKUME_SPHERE_OUTPUT: CSV・生の画素・PNG の出力先 (既定 /private/tmp/mokume-sphere-1862/results)
 MOKUME_SPHERE_SCENES: 例 light,shadow,alpha,stroke,retained,transform,zero,unit
+MOKUME_SPHERE_DETAIL: 細かさ (既定24)。追加場面 orbit,ortho,random,add,replace,mixed も選べる。
 MOKUME_SPHERE_CONTROL=1: 比較の両側を従来方式にする。
 MOKUME_SPHERE_REFERENCE: main版で作った出力先。compatibility終了後に全ビットを照合し、
 差があれば比較記録を保存して終了コード2。試作内の2経路が一致してもmainとの一致とは限らない。
