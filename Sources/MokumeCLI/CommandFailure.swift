@@ -141,7 +141,7 @@ nonisolated enum CommandFailure: Error, Equatable {
             "The sketch needs a name: \(Command.name) new <name>"
         case .invalidName(let name):
             """
-            That name has characters a sketch cannot use: \(name)
+            \(name.isEmpty ? "The name is empty" : "That name has characters a sketch cannot use: \(name)")
             Use letters, digits, hyphens and underscores, and start with a letter
             """
         case .directoryExists(let path):

@@ -114,10 +114,21 @@ struct EmptyPlaceTests {
             usageMessage { _ = try NewCommand.parse(["sketch", "--path", ""]) }, naming: "--path")
     }
 
+    /// **`--local` も場所である** (反証の指摘)。値は `.package(path:)` へ書かれ、依存の名前
+    /// (`packageIdentity`) も `""` を作るスケッチ自身の名前にするので、空のまま通すと自分に依存する
+    /// 壊れた `Package.swift` が黙って作られる。解き方は変えず、空かどうかだけを見る。
+    @Test("new --local の値が空なら、止まる")
+    func anEmptyNewLocalIsRefused() {
+        expectRefused(
+            usageMessage { _ = try NewCommand.parse(["sketch-x", "--local", ""]) },
+            naming: "--local")
+    }
+
     // ------------------------------------------------------------ 変わらないこと
 
     /// 空でなければ、いままでどおり受ける。**場所でない値は対象外**: `new` の名前は名前の規則で
-    /// 断られ (`invalidName`)、`--local` は場所として解かない。
+    /// 断られる (`invalidName`・空の名前は空だったと名乗る)。`--local` は空でなければ打ったとおり
+    /// `.package(path:)` へ書く (解き方は変えない)。
     @Test("空でない値と、場所でない値は、いままでどおり")
     func nonEmptyValuesAndNonPlacesAreUnchanged() throws {
         #expect(try Invocation.parse(["."]) == Invocation(place: "."))
@@ -126,7 +137,14 @@ struct EmptyPlaceTests {
         #expect(try BundleCommand.parse(["--out", "dist"]).out == "dist")
         #expect(try NewCommand.parse(["s", "--path", "."]).path == ".")
         #expect(throws: CommandFailure.invalidName("")) { try NewCommand.parse([""]) }
-        #expect(try NewCommand.parse(["s", "--local", ""]).local == "")
+        #expect(CommandFailure.invalidName("").message.hasPrefix("The name is empty\n"))
+        #expect(CommandFailure.invalidName("a b").message.contains("characters a sketch cannot use: a b"))
+        // `--local` の空でない値は、打ったとおり `.package(path:)` へ書かれる
+        let options = try NewCommand.parse(["s", "--local", "../lib dir/x"])
+        #expect(options.local == "../lib dir/x")
+        let manifest = try #require(
+            try NewCommand.files(for: options).first { $0.0 == "Package.swift" }?.1)
+        #expect(manifest.contains(#".package(path: "../lib dir/x")"#))
     }
 
     // ------------------------------------------------------------ doctor (完了条件 3)

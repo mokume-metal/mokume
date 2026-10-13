@@ -62,7 +62,7 @@ enum NewCommand {
             arguments,
             options: [
                 Arguments.Option(["--path"], takesPlace: true) { "\($0) needs a directory after it" },
-                Arguments.Option(["--local"]) { "\($0) needs the library's path after it" },
+                Arguments.Option(["--local"], takesPlace: true) { "\($0) needs the library's path after it" },
             ],
             surplus: .reject { "Only one name: \($0)" })
         guard let name = parsed.positional else { throw .nameMissing }
