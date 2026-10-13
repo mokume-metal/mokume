@@ -461,7 +461,12 @@ enum WatchCommand {
                 Task<Void, Never> {
                     if !state.started {
                         state.started = true
-                        report(await session.start(), on: viewer)
+                        let outcome = await session.start()
+                        // **終われと言われた後に戻ってきた最初の結果は名乗らない。** どう
+                        // 終えたかは抜ける側 (``finish(_:)``) が名乗る — ここでも言うと、
+                        // 始めなかった・止めた作り直しを「Build failed」と言うことになる
+                        guard !session.stopRequested else { return }
+                        report(outcome, on: viewer)
                         return
                     }
                     if await step(session, viewer: viewer) { return }
