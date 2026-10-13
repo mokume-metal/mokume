@@ -439,6 +439,147 @@ struct SVGFileTests {
         #expect(isClose(transform.apply(sample.1), sample.2), "\(sample.0): \(transform.apply(sample.1))")
     }
 
+    /// 長さを取る口に `auto` 以外の読めない値を書くと、書いていないのと同じに読んだうえで**名乗る**
+    /// ([#2556])。`auto` と書いていない口は名乗らない。
+    ///
+    /// [#2556]: https://github.com/mokume-metal/mokume/issues/2556
+    @Test(
+        "根の幅・高さの読めない値は、書いていないものとして読んで skipped に載る (#2556)",
+        arguments: [
+            // (根の属性, 載るはずの名乗り, viewBox の右下の角の写った先)
+            (#"width="50" height="abc" viewBox="0 0 10 20""#, #"<svg height="abc">"#, SIMD2<Float>(50, 100)),
+            (#"width="abc" height="100" viewBox="0 0 10 20""#, #"<svg width="abc">"#, SIMD2<Float>(50, 100)),
+            // 空・16 進・読めない単位
+            (#"width="50" height="" viewBox="0 0 10 20""#, #"<svg height="">"#, SIMD2(50, 100)),
+            (#"width="50" height="0x10" viewBox="0 0 10 20""#, #"<svg height="0x10">"#, SIMD2(50, 100)),
+            (#"width="50" height="10em" viewBox="0 0 10 20""#, #"<svg height="10em">"#, SIMD2(50, 100)),
+            // 両方が読めなければ、どちらも書いていないのと同じ (等倍)
+            (#"width="abc" height="abc" viewBox="0 0 10 20""#, #"<svg width="abc">"#, SIMD2(10, 20)),
+        ])
+    func unreadableRootSizeIsNamed(_ sample: (String, String, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.first?.what == sample.1, "\(sample.0): \(drawing.skipped)")
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(SIMD2(10, 20)), sample.2), "\(sample.0): \(transform.apply(SIMD2(10, 20)))")
+    }
+
+    @Test(
+        "根の幅・高さが auto・空白つきの AUTO・書いていないときは、名乗らない (#2556 の陰性対照)",
+        arguments: [
+            #"width="50" height="auto" viewBox="0 0 10 20""#,
+            #"width=" AUTO " height="100" viewBox="0 0 10 20""#,
+            #"width="50" viewBox="0 0 10 20""#,
+            #"viewBox="0 0 10 20""#,
+        ])
+    func autoAndAbsentRootSizeAreNotNamed(_ attributes: String) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(attributes)>")
+        #expect(drawing.skipped.isEmpty, "\(attributes): \(drawing.skipped)")
+    }
+
+    @Test("入れ子の <svg> の x・y・width・height の読めない値も名乗る。auto は width・height だけ許す (#2556)")
+    func unreadableNestedSvgLengthsAreNamed() throws {
+        let drawing = try document(
+            #"<svg x="abc" y="0x1" width="xyz" height="auto"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(
+            drawing.skipped.map(\.what) == [#"<svg x="abc">"#, #"<svg y="0x1">"#, #"<svg width="xyz">"#],
+            "\(drawing.skipped)")
+        // x・y は auto を取らない
+        let autoPosition = try document(
+            #"<svg x="auto"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(autoPosition.skipped.map(\.what) == [#"<svg x="auto">"#])
+        // 読めた値・書いていない値は名乗らない
+        let readable = try document(
+            #"<svg x="5" y="10px" width="auto"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(readable.skipped.isEmpty, "\(readable.skipped)")
+    }
+
+    @Test("rect の rx・ry の読めない値は名乗り、書いていないものとして読む。auto・書いていない・負の値は名乗らない (#2556)")
+    func unreadableCornerRadiusIsNamed() throws {
+        let bad = try document(#"<rect width="10" height="10" rx="abc"/>"#)
+        #expect(bad.skipped.map(\.what) == [#"<rect rx="abc">"#], "\(bad.skipped)")
+        // 角は丸めない (rx を書いていないのと同じ)
+        #expect(bad.items[0].outline == .rect(x: 0, y: 0, width: 10, height: 10))
+        // ry だけ読めなければ、読めた rx がもう片方にも使われる
+        let half = try document(#"<rect width="10" height="10" rx="2" ry="0x3"/>"#)
+        #expect(half.skipped.map(\.what) == [#"<rect ry="0x3">"#], "\(half.skipped)")
+        guard case .path = half.items[0].outline else {
+            Issue.record("角が丸まっていない: \(half.items[0].outline)")
+            return
+        }
+        for radii in [#"rx="auto""#, #"rx="auto" ry=" Auto ""#, "", #"rx="-3""#, #"ry="2""#] {
+            let clean = try document(#"<rect width="10" height="10" \#(radii)/>"#)
+            #expect(clean.skipped.isEmpty, "\(radii): \(clean.skipped)")
+        }
+    }
+
+    /// SVG 2 では `width` / `height` は CSS の性質でもあるので、根の大きさを `style` 属性や `<style>` で
+    /// 書いた SVG は属性と同じに効く。重なれば CSS が属性に勝つ ([#2557])。
+    ///
+    /// [#2557]: https://github.com/mokume-metal/mokume/issues/2557
+    @Test(
+        "根の幅・高さを CSS で書いても、属性と同じに効き、CSS が属性に勝つ (#2557)",
+        arguments: [
+            // (根の属性, <style> の中身, viewBox の右下の角, 写った先)
+            (#"viewBox="0 0 10 20" style="width:50px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 20 10" style="height:50px""#, "", SIMD2<Float>(20, 10), SIMD2<Float>(100, 50)),
+            (#"viewBox="0 0 10 20" style="width: 50px; height: 100px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20""#, "svg { width: 50px }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20""#, "* { width: 50px }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20" class="logo""#, ".logo { width: 50px; }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // 割合は viewBox に対して読む (根の決まり)
+            (#"viewBox="0 0 10 20" style="width:500%""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // CSS が属性に勝つ
+            (#"viewBox="0 0 10 20" width="10" style="width:50px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20" width="10""#, "svg { width: 50px }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // !important の規則は、重なる style 属性にも勝つ
+            (#"viewBox="0 0 10 20" style="width:10px""#, "svg { width: 50px !important }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // 属性で書いた片方と、CSS で書いたもう片方 (両方が揃えば縦横比は導かない)
+            (#"viewBox="0 0 10 20" width="50" style="height:50px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(37.5, 50)),
+        ])
+    func rootSizeWrittenInCSSIsRead(_ sample: (String, String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            "<style>\(sample.1)</style><rect width=\"1\" height=\"1\"/>",
+            root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.isEmpty, "\(sample.0) \(sample.1): \(drawing.skipped)")
+        let transform = drawing.items[0].transform
+        #expect(
+            isClose(transform.apply(sample.2), sample.3), "\(sample.0) \(sample.1): \(transform.apply(sample.2))")
+    }
+
+    @Test("根の幅・高さを CSS で読めない値に書けば名乗り、auto に書けば属性の値も消える (#2557)")
+    func unreadableOrAutoRootSizeInCSS() throws {
+        let bad = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20" style="width:abc">"#)
+        #expect(bad.skipped.map(\.what) == [#"<svg width="abc">"#], "\(bad.skipped)")
+        #expect(isClose(bad.items[0].transform.apply(SIMD2(10, 20)), SIMD2(10, 20)))
+        // calc() など、読まない書き方も名乗る
+        let calc = try document(
+            "<style>svg { height: calc(50px + 1px) }</style><rect width=\"1\" height=\"1\"/>",
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20">"#)
+        #expect(calc.skipped.map(\.what) == [#"<svg height="calc(50px + 1px)">"#], "\(calc.skipped)")
+        // CSS の auto は属性の width="50" に勝つ: どちらも書いていないのと同じ (等倍)
+        let auto = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20" width="50" style="width:auto">"#)
+        #expect(auto.skipped.isEmpty, "\(auto.skipped)")
+        #expect(isClose(auto.items[0].transform.apply(SIMD2(10, 20)), SIMD2(10, 20)))
+    }
+
+    @Test("CSS の width は svg 以外の要素の大きさを変えない (#2557 の陰性対照)")
+    func cssWidthDoesNotTouchOtherElements() throws {
+        let drawing = try document(
+            #"<style>rect { width: 50px }</style><rect width="10" height="10"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">"#)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items[0].outline == .rect(x: 0, y: 0, width: 10, height: 10))
+    }
+
     @Test("書き方の優先は 属性 < 要素名の規則 < クラスの規則 < style 属性")
     func cascadeOrder() throws {
         let drawing = try document(

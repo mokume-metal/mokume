@@ -326,7 +326,7 @@ nonisolated enum SVGFile {
             }
 
             if SVGFile.silentElements.contains(name) { return push(.inert) }
-            guard let (resolved, lost) = resolve(parent.context, attributes: attributes, name: name, line: line)
+            guard let (resolved, lost, sizes) = resolve(parent.context, attributes: attributes, name: name, line: line)
             else { return push(.inert) }
             var context = resolved
             if SVGFile.reportedElements.contains(name) {
@@ -336,7 +336,9 @@ nonisolated enum SVGFile {
             for what in lost { tally.note(what, line: line) }
             switch name {
             case "svg":
-                guard let viewport = viewport(of: attributes, in: context, isRoot: stack.isEmpty, line: line)
+                guard
+                    let viewport = viewport(
+                        of: attributes, sizes: sizes, in: context, isRoot: stack.isEmpty, line: line)
                 else { return push(.inert) }
                 context.transform = context.transform * viewport.transform
                 context.viewport = viewport.size
@@ -369,9 +371,11 @@ nonisolated enum SVGFile {
         /// ときは、下の宣言の値が残り、CSS とは違う (#2410)。
         /// **`display="none"` なら `nil`** (中身ごと描かない。書き手の意図なので数えない)。
         /// 描けない効果 (`clip-path` など) は、要素を描くと決まってから名乗れるよう返す。
+        /// **`svg` の `width` / `height` は、属性と CSS (`<style>`・`style` 属性) を同じ順位で重ねて**、勝った
+        /// 宣言の文字を `sizes` に返す (SVG 2 では CSS の性質でもあるので、CSS で書いた根の大きさも効く)。
         private mutating func resolve(
             _ inherited: Context, attributes: [String: String], name: String, line: Int
-        ) -> (Context, lost: [String])? {
+        ) -> (Context, lost: [String], sizes: [String: String])? {
             var context = inherited
             var own = Own()
             var candidates: [(rank: Rank, declaration: Declaration)] = []
@@ -381,7 +385,9 @@ nonisolated enum SVGFile {
                     order: candidates.count)
                 candidates.append((rank, declaration))
             }
-            for (property, value) in attributes where SVGFile.properties.contains(property) {
+            for (property, value) in attributes
+            where SVGFile.properties.contains(property) || (name == "svg" && SVGFile.sizeProperties.contains(property))
+            {
                 collect(Declaration(name: property, value: value, isImportant: false), from: .attribute)
             }
             let classes = Set((attributes["class"] ?? "").split(whereSeparator: \.isWhitespace).map(String.init))
@@ -398,7 +404,7 @@ nonisolated enum SVGFile {
             }
             guard own.isDisplayed else { return nil }
             context.opacity *= own.opacity
-            return (context, own.lost)
+            return (context, own.lost, own.sizes)
         }
 
         /// 受け継がない描き方。要素ごとに初めの値から始まる。
@@ -407,6 +413,8 @@ nonisolated enum SVGFile {
             var isDisplayed = true
             /// 描けないので名乗るもの (`clip-path` など)。
             var lost: [String] = []
+            /// 勝った `width` / `height` の宣言の文字。読むのは `svg` だけ。
+            var sizes: [String: String] = [:]
         }
 
         /// 描き方を 1 つ書き換える。読めない値は、受け継いだ値のまま名乗る (CSS で読めない
@@ -485,6 +493,8 @@ nonisolated enum SVGFile {
                 context.isVisible = lowered == "visible"
             case "display":
                 own.isDisplayed = lowered != "none"
+            case "width", "height":
+                own.sizes[property] = trimmed
             case "clip-path", "mask", "filter":
                 if lowered != "none" { own.lost.append(property) }
             case "marker", "marker-start", "marker-mid", "marker-end":
@@ -518,9 +528,28 @@ nonisolated enum SVGFile {
             return transform
         }
 
+        /// 長さの値 1 つを読む。**書いていなければ `nil` で、名乗らない**。`auto` は書き手の意図なので、
+        /// 許される口 (`allowsAuto`) では書いていないのと同じに `nil` で、名乗らない。ほかの読めない値
+        /// (`abc`・空・読めない単位) も `nil` だが、**名乗る**。
+        private mutating func optionalLength(
+            _ text: String?, element: String, key: String, reference: Float, allowsAuto: Bool, line: Int
+        ) -> Float? {
+            guard let text else { return nil }
+            if allowsAuto, text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "auto" {
+                return nil
+            }
+            guard let value = SVGFile.parseLength(text, reference: reference) else {
+                tally.note("<\(element) \(key)=\"\(text)\">", line: line)
+                return nil
+            }
+            return value
+        }
+
         /// `svg` が作る座標の決まり。幅か高さが 0 以下なら描かない (SVG の約束) ので `nil`。
+        /// `sizes` は属性と CSS を重ねて勝った `width` / `height` の文字 (`resolve` が返す)。
         private mutating func viewport(
-            of attributes: [String: String], in context: Context, isRoot: Bool, line: Int
+            of attributes: [String: String], sizes: [String: String], in context: Context, isRoot: Bool,
+            line: Int
         ) -> (transform: Affine, size: SIMD2<Float>)? {
             var box: [Float]?
             if let text = attributes["viewBox"] {
@@ -534,13 +563,15 @@ nonisolated enum SVGFile {
             }
             // 根の幅と高さの割合は、viewBox (無ければ 100) に対して読む。入れ子は親の座標の決まりに対して
             let reference = isRoot ? SIMD2(box?[2] ?? 100, box?[3] ?? 100) : context.viewport
-            // 書いていない・`auto` (SVG 2 では書いていないのと同じ)・読めない値は `nil`
-            func length(_ name: String, _ against: Float) -> Float? {
-                guard let text = attributes[name] else { return nil }
-                return SVGFile.parseLength(text, reference: against)
+            // 書いていない・`auto` (SVG 2 では書いていないのと同じ) は `nil` で名乗らない。読めない値も
+            // `nil` だが名乗る (#2556)。`x` / `y` は `auto` を取らないので、`auto` も読めない値
+            func length(_ key: String, _ text: String?, _ against: Float, allowsAuto: Bool = false) -> Float? {
+                optionalLength(text, element: "svg", key: key, reference: against, allowsAuto: allowsAuto, line: line)
             }
-            let x = isRoot ? 0 : length("x", reference.x) ?? 0
-            let y = isRoot ? 0 : length("y", reference.y) ?? 0
+            let x = isRoot ? 0 : length("x", attributes["x"], reference.x) ?? 0
+            let y = isRoot ? 0 : length("y", attributes["y"], reference.y) ?? 0
+            let writtenWidth = length("width", sizes["width"], reference.x, allowsAuto: true)
+            let writtenHeight = length("height", sizes["height"], reference.y, allowsAuto: true)
             // 根の片方だけなら、書いていない側は viewBox の縦横比から決まる (CSS Images 3 の
             // 既定の大きさの決め方。ブラウザの <img>・resvg・librsvg の大きさ) (#2333)。
             // 比を先に取るのは、途中の積 (書いた側 × viewBox の辺) があふれないようにするため。
@@ -552,7 +583,7 @@ nonisolated enum SVGFile {
             }
             let width: Float
             let height: Float
-            switch (length("width", reference.x), length("height", reference.y)) {
+            switch (writtenWidth, writtenHeight) {
             case (let written?, let other?):
                 (width, height) = (written, other)
             case (let written?, nil):
@@ -607,10 +638,13 @@ nonisolated enum SVGFile {
                 let h = length("height", height)
                 guard !unreadable, w > 0, h > 0 else { return nil }
                 // 片方だけ書いた角の半径は、もう片方にも使う。負の値は書いていないものとして読む
-                let rawX = attributes["rx"].flatMap { SVGFile.parseLength($0, reference: width) }
-                    .flatMap { $0 >= 0 ? $0 : nil }
-                let rawY = attributes["ry"].flatMap { SVGFile.parseLength($0, reference: height) }
-                    .flatMap { $0 >= 0 ? $0 : nil }
+                // 書いていない・`auto` は名乗らず、読めない値は名乗って書いていないものとして読む (#2556)
+                let rawX = optionalLength(
+                    attributes["rx"], element: name, key: "rx", reference: width, allowsAuto: true, line: line
+                ).flatMap { $0 >= 0 ? $0 : nil }
+                let rawY = optionalLength(
+                    attributes["ry"], element: name, key: "ry", reference: height, allowsAuto: true, line: line
+                ).flatMap { $0 >= 0 ? $0 : nil }
                 let rx = min(rawX ?? rawY ?? 0, w / 2)
                 let ry = min(rawY ?? rawX ?? 0, h / 2)
                 outline =
@@ -690,6 +724,9 @@ nonisolated enum SVGFile {
         "display", "clip-path", "mask", "filter", "marker", "marker-start", "marker-mid",
         "marker-end", "mix-blend-mode",
     ]
+
+    /// `svg` だけが、属性にも CSS にも書ける大きさの名前 (SVG 2 では CSS の性質でもある)。
+    private static let sizeProperties: Set<String> = ["width", "height"]
 
     // MARK: - 座標の決まり
 
