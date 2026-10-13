@@ -81,7 +81,9 @@ nonisolated enum ModelFile {
         var derivedNormals: [Bool]
         /// 読み飛ばしたものの数。**読み飛ばしたことが分かる手段**として持つ。
         ///
-        /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) を数える。
+        /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) と、Model I/O が
+        /// 返した形のうち写せなかった要素 (位置を持たない mesh・三角形でない submesh・3 つに
+        /// 満たない余りの番号など) を数える。数える単位は形式と要素で違い、面の数ではない。
         /// **OBJ は行を丸ごと読み飛ばす** — 面の行に位置の番号が読めない角 (範囲の外・0・
         /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。行末のコメント
         /// (`#` から後) と継ぎ文字 (`\`) は角でない字で、読めない角に数えない。
@@ -130,7 +132,12 @@ nonisolated enum ModelFile {
                 guard let point = vector(values) else { skipped += 1; continue }
                 positions.append(point)
             case "vn":
-                guard let point = vector(values) else { skipped += 1; continue }
+                // **向きは 3 つの数まで** (`vn i j k`)。4 つ目以降があれば読めない行 (#2566)。
+                // `v` の 4 つ目 (w・色) と `vt` の 3 つ目 (w) は仕様にある欄なので、それは読み捨てる
+                guard values.count <= 3, let point = vector(values) else {
+                    skipped += 1
+                    continue
+                }
                 normals.append(point)
             case "vt":
                 guard let point = texture(values) else { skipped += 1; continue }

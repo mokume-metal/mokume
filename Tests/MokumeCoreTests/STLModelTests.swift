@@ -305,6 +305,7 @@ struct STLModelTests {
                 name: "余りのある submesh が 2 つ",
                 submeshes: [.init(indices: [0, 1, 2, 3]), .init(indices: [1, 2, 3, 0])],
                 triangles: 2, skipped: 2),
+            .init(name: "submesh を持たない mesh", submeshes: [], triangles: 0, skipped: 1),
             .init(
                 name: "位置を持たない mesh", hasPositions: false,
                 submeshes: [.init(indices: [0, 1, 2])], triangles: 0, skipped: 1),
@@ -332,6 +333,15 @@ struct STLModelTests {
         let parsed = ModelFile.triangles(of: [built])
         #expect(parsed.positions.count == example.triangles * 3, "\(example.name)")
         #expect(parsed.skippedLines == example.skipped, "\(example.name)")
+    }
+
+    @Test("mesh でない物は、読み飛ばしたものとして数え、mesh は変わらず読む")
+    func nonMeshObjectsAreCounted() {
+        let built = mesh(submeshes: [(indices: [0, 1, 2], geometry: .triangles)])
+        let parsed = ModelFile.triangles(of: [MDLObject(), built, MDLObject()])
+        #expect(parsed.positions.count == 3)
+        #expect(parsed.skippedLines == 2)
+        #expect(ModelFile.triangles(of: [built]).skippedLines == 0)
     }
 
     // MARK: - 読める形式と説明
