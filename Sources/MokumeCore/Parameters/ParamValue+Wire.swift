@@ -136,8 +136,15 @@ extension ParamDeclaration: Codable {
         // 値は型の名乗りを持たない (この宣言の type がそれを言っている)
         try container.encode(ParamValue.Body(value), forKey: .value)
         if let range {
-            try container.encode(range.lowerBound, forKey: .min)
-            try container.encode(range.upperBound, forKey: .max)
+            if case .int = value, let bounds = range.integerBounds {
+                // **整数の宣言の端は整数のまま出す。** `Double` で出すと `Int.max` は 2^63 になり、
+                // 読み手が端を `int` の値として書き戻すと `Int` に収まらない数になる (#2478)
+                try container.encode(bounds.lowerBound, forKey: .min)
+                try container.encode(bounds.upperBound, forKey: .max)
+            } else {
+                try container.encode(range.lowerBound, forKey: .min)
+                try container.encode(range.upperBound, forKey: .max)
+            }
         }
         if let choices {
             try container.encode(choices, forKey: .choices)
