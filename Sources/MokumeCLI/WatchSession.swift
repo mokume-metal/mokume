@@ -382,10 +382,29 @@ final class WatchSession {
     /// 最初の 1 回。変化を待たずに作って走らせる。
     ///
     /// **最初の世代も main actor の外で取る** (#2518)。初回は控えが無いので、資材をすべて読む。
+    ///
+    /// **世代を待って戻ったら、終われと言われていないかを見直す** (``tick()`` と同じ)。最初の
+    /// 世代を待つのはいちばん長い回で、その間に来た合図を見ないと、終われと言われた後に
+    /// 作り直しを始めると名乗って `swift build` を起こす。始めなかったことは記録に書く —
+    /// 書かないと区画には前の見張りの記録が残る (#1147 と同じ理由)。
     @discardableResult
     func start() async -> BuildReport {
-        await rebuildAndReplace(stamp: await takeStamp(), initial: true)
+        let stamp = await takeStamp()
+        guard !stopRequested else {
+            return finish(
+                BuildReport(
+                    ok: false, status: 128 + SIGINT, output: Self.notStartedNotice,
+                    stamp: lastStamp, configuration: configurationName, launched: false,
+                    timings: .init(detectMs: nil, buildMs: 0, relaunchMs: nil)))
+        }
+        return await rebuildAndReplace(stamp: stamp, initial: true)
     }
+
+    /// 最初の作り直しを始める前に終われと言われた回の記録の本文。**失敗とは違う言葉で始める**
+    /// (``stoppedRebuildNotice`` と同じ理由)。
+    static let notStartedNotice =
+        "Nothing was built, because watching ended before the first build started — this is not "
+        + "a build failure"
 
     /// 世代を取る。**取っている間は印を立てる** (``isStamping``)。
     ///

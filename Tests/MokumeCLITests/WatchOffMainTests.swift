@@ -297,6 +297,35 @@ struct WatchOffMainTests {
         #expect(recorder.launches == 1, "終われと言われた後に子を起こした")
     }
 
+    /// **最初の世代を待つのはいちばん長い回である** (控えが無く資材を全部読む)。その間に来た
+    /// 合図を見直さないと、終われと言われた後に「作り直しを始める」と名乗って `swift build` を
+    /// 起こし、「途中で止めた」記録が書かれうる (#2518 の反証)。
+    @Test("最初の世代を待っている間に終われと言われたら、作り直しを始めず、始めなかったと記録する")
+    @MainActor
+    func aStopRequestedWhileTheStartTakesTheStampStartsNothing() async throws {
+        let recorder = WatchSessionTests.Recorder()
+        let gate = Gate()
+        recorder.whileStamping = { await gate.wait() }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        var announced = 0
+        session.willRebuild = { _ in announced += 1 }
+
+        let starting = Task { await session.start() }
+        try await waitUntil { gate.isWaiting }
+        #expect(await !WatchCommand.step(session, stopped: { true }), "抜けていない")
+
+        gate.open()
+        let report = await starting.value
+        #expect(recorder.builds == 0, "終われと言われた後に作り直した")
+        #expect(announced == 0, "終われと言われた後に、作り直しを始めると名乗った")
+        #expect(recorder.launches == 0, "終われと言われた後に子を起こした")
+        #expect(!report.ok)
+        #expect(!report.launched)
+        #expect(report.output == WatchSession.notStartedNotice)
+        #expect(try writtenOutput(of: session) == WatchSession.notStartedNotice, "始めなかったことを記録していない")
+    }
+
     /// **本物の口が外で読むこと。** 上の検査は替え玉の `stamp` が関門で待つ形なので、
     /// `live` の側で main actor のまま読む形に戻っても緑のままになる。ここでは本物の読み手の
     /// 要約の中から、2 つを見る:
