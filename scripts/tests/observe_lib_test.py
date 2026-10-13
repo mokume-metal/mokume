@@ -54,11 +54,13 @@ class Sketch:
 
     **本物と同じ経路を通す** — 要求は原子的に置かれ、応答は識別子で照合される。
     frame は毎回 1 つ進める (数える側が「フレームが進んでいる」と読めるように)。
+    `delay` 秒だけ応答を遅らせられる (CPU が混んで偽スケッチの応答が遅れた回を作る)。
     """
 
-    def __init__(self, *facets: Path, answer=True, frame=None):
+    def __init__(self, *facets: Path, answer=True, frame=None, delay=0.0):
         self.facets = facets
         self.answer = answer
+        self.delay = delay
         # **面ごとに覚える。** 観測と入力には同じ識別子が置かれるので、まとめて
         # 覚えると 2 面目が「もう見た」で素通りする
         self.seen: dict[Path, list[str]] = {f: [] for f in facets}
@@ -94,6 +96,9 @@ class Sketch:
                 self.seen[facet].append(identifier)
                 if not self.answer:
                     continue
+                # 止めるときは待たずに抜ける (`__exit__` の join を遅らせない)
+                if self.delay and self._stop.wait(self.delay):
+                    return
                 self.frames += 1
                 frame = self.frames if self.frozen is None else self.frozen
                 (facet / "report.json").write_text(
@@ -223,25 +228,71 @@ class RoundtripTest(unittest.TestCase):
         # 応答そのものは返っている — 分けて読めることが要点
         self.assertIn("ok 観測 2/2", proc.stdout)
 
+    # 圧をかける側に渡す窓。検査が 2 件目を見て止めるので、窓が閉じるのを待つことは無い
+    PRESSURE_WINDOW_SECONDS = "60"
+    # 2 件目が置かれるのを待つ側の期限。越えたら圧をかける側を殺して赤にする
+    PLACED_DEADLINE_SECONDS = 15
+
     def test_pressure_keeps_placing_requests(self):
-        with Sketch(self.observe) as sketch:
-            proc = subprocess.run(
-                [
-                    sys.executable,
-                    str(SCRIPTS / "frame_rate_observe.py"),
-                    "pressure",
-                    str(self.observe),
-                    # 窓の中で 2 件目が置かれることを見る。CPU が混むと 1 件目の応答が
-                    # 遅れるので、窓には余裕を持たせる (#1857)
-                    "1.5",
-                ],
-                capture_output=True,
-                text=True,
-            )
+        """識別子を変えながら**続けて**置いていること (1 回で終わっていない) を見る。
+
+        **窓の長さに頼らない** (#2396)。固定の窓 (`limit`) の中で 2 件目が置かれることに頼ると、
+        偽スケッチの応答が窓より遅れただけで赤になる (#1857 で窓を広げても形は残っていた)。
+        圧をかける側には長い窓を渡し、待つ側が期限付きで 2 件目を待ってから止める。応答が
+        1.6 秒遅れる回 (旧来の窓 1.5 秒を越える) も同じ検査で固定する。
+        """
+        for delay in (0.0, 1.6):
+            with self.subTest(answer_delay=delay):
+                (observe,) = facets(self.root / f"delay-{delay}", "observe")
+                with Sketch(observe, delay=delay) as sketch:
+                    pressing, stderr = self.press_until_placed(observe, sketch, 2)
+                self.assertGreater(len(sketch.placed), 1, f"置かれた要求が {sketch.placed}\n{stderr}")
+                self.assertTrue(pressing, f"2 件目を置く前に圧をかける側が戻った\n{stderr}")
+                self.assertEqual(sketch.placed[0], "m1")
+
+    def press_until_placed(self, observe, sketch, count):
+        """`pressure` を走らせ、`count` 件置かれるか、自分で戻るか、期限を越えるまで待って止める。
+
+        返すのは (止めた時点でまだ走っていたか, stderr)。**待つ側が期限を持ち、越えたら殺す**
+        (AGENTS.md「待ちを含む検査を書く」)。
+        """
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                str(SCRIPTS / "frame_rate_observe.py"),
+                "pressure",
+                str(observe),
+                self.PRESSURE_WINDOW_SECONDS,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            deadline = time.monotonic() + self.PLACED_DEADLINE_SECONDS
+            while (
+                len(sketch.placed) < count
+                and proc.poll() is None
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            pressing = proc.poll() is None
+        finally:
+            proc.kill()
+            _, stderr = proc.communicate(timeout=10)
+        return pressing, stderr
+
+    def test_pressure_returns_when_its_window_closes(self):
+        """`limit` 秒で戻る口 (`measure-frame-rate.sh` が使う) は残っている。窓が 0 秒なら
+        1 件も置かずに 0 で戻る。"""
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS / "frame_rate_observe.py"), "pressure", str(self.observe), "0"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        # 識別子を変えながら**続けて**置いていること (1 回で終わっていない)
-        self.assertGreater(len(sketch.placed), 1, f"置かれた要求が {sketch.placed}")
-        self.assertEqual(sketch.placed[0], "m1")
+        self.assertFalse((self.observe / "request.json").exists())
 
 
 class JudgementTest(unittest.TestCase):
