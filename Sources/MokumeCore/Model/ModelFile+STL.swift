@@ -70,7 +70,13 @@ nonisolated extension ModelFile {
     }
 
     /// Model I/O の形から、三角形の並びを写す。
-    private static func triangles(of meshes: [MDLMesh]) -> Parsed {
+    ///
+    /// **写せなかった要素は、黙って捨てず `skipped` に数える** ([#2566]): 位置を持たない mesh・
+    /// 三角形でない submesh を 1 つずつ、3 つに満たない余りの番号を submesh ごとに 1 つ。
+    /// 面ごとの読み飛ばし (範囲の外の番号・座標が数でない) と同じ単位で並べる。
+    ///
+    /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
+    static func triangles(of meshes: [MDLMesh]) -> Parsed {
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
         var derivedNormals: [Bool] = []
@@ -80,11 +86,18 @@ nonisolated extension ModelFile {
             guard
                 let placed = mesh.vertexAttributeData(
                     forAttributeNamed: MDLVertexAttributePosition, as: .float3)
-            else { continue }
+            else {
+                skipped += 1
+                continue
+            }
             let facing = mesh.vertexAttributeData(
                 forAttributeNamed: MDLVertexAttributeNormal, as: .float3)
             let submeshes = (mesh.submeshes as? [MDLSubmesh]) ?? []
-            for submesh in submeshes where submesh.geometryType == .triangles {
+            for submesh in submeshes {
+                guard submesh.geometryType == .triangles else {
+                    skipped += 1
+                    continue
+                }
                 // **番号の置き場も、その写しも、読み終わるまで手放さない。** 型を変えた番号の
                 // 置き場は新しく作られ、写し (`map`) はそれを持ち続けない — 一時の値のまま
                 // 写すと、指した先がすぐに消えて番号がでたらめになる
@@ -94,7 +107,8 @@ nonisolated extension ModelFile {
                     let indices = UnsafeBufferPointer(
                         start: map.bytes.assumingMemoryBound(to: UInt32.self),
                         count: submesh.indexCount)
-                    // 3 つに満たない余りは面にならない
+                    // 3 つに満たない余りは面にならない。捨てるが、数える
+                    if indices.count % 3 != 0 { skipped += 1 }
                     for start in stride(from: 0, to: indices.count - 2, by: 3) {
                         let corners = (0..<3).map { Int(indices[start + $0]) }
                         guard corners.allSatisfy({ $0 < mesh.vertexCount }) else {

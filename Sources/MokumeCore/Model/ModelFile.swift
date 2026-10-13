@@ -287,7 +287,9 @@ nonisolated enum ModelFile {
         _ field: Substring, positions: Int, textures: Int, normals: Int
     ) -> (position: Int, texture: Int?, normal: Int?)? {
         let parts = field.split(separator: "/", omittingEmptySubsequences: false)
-        guard let first = parts.first, let raw = Int(first) else { return nil }
+        // **欄は最大 3 つ** (`位置/読み取り位置/向き`)。4 つ目以降があれば読めない角で、黙って
+        // 捨てて三角形にはしない — 面の行ごと読み飛ばして数える (#2566・#2339)
+        guard parts.count <= 3, let first = parts.first, let raw = Int(first) else { return nil }
         guard let position = resolve(raw, count: positions) else { return nil }
         // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)
         var texture: Int?
