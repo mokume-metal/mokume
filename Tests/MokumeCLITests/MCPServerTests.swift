@@ -1067,8 +1067,24 @@ struct MCPServerTests {
         #expect(!outcome.text.contains("SECRET"))
     }
 
+    /// 先頭が区切りの名前は、置き場の外には出ないが、`<置き場>/<name>.schema.json` への繋ぎが
+    /// 区切りを 1 つに畳むので、**一覧の綴りと違うまま置き場の中を読める** (`/observe-report` は
+    /// `observe-report` と同じファイルを開く)。直す前に赤になる綴り。絶対パスそのもの
+    /// (`/private/…/outside`) は繋ぎの後も置き場の中の在らない場所を指すので、直す前から
+    /// 読めず、この検査の入力にはならない。
+    @Test(
+        "先頭が区切りの名前は、一覧の綴りと違うので、置き場の中を指していても読まずに断る",
+        arguments: ["/observe-report", "//observe-report", "/nested/inner", "Observe-Report"])
+    func refusesNamesThatOnlyResolveToAListedFile(name: String) throws {
+        let (tools, _) = try consumerWithStrayDocuments()
+        let outcome = tools.call("reference", arguments: ["name": name])
+        #expect(outcome.isError)
+        #expect(outcome.text == "There is no document by that name: \(name)")
+    }
+
     @Test("絶対パスで置き場の外のファイルを指す名前も、読まずに断る")
     func refusesAnAbsolutePathName() throws {
+        // 繋ぎが置き場の中へ畳むので、直す前でも読めない (守りの検査。赤になる入力は上の表)
         let (tools, outside) = try consumerWithStrayDocuments()
         let name = String(outside.path.dropLast(".schema.json".count))
         let outcome = tools.call("reference", arguments: ["name": name])
