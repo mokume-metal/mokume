@@ -41,11 +41,12 @@
 #      対処: タイトルを直し、**新しいコミットを push して run を作り直す** (空コミットでよい)。
 #      **rerun しない** — pull_request の rerun は元のイベントを再生するので古いタイトルで判定し、
 #      打つ前より悪くなる (#699)。タイトルを直すと edited で新しい run が走り pr-title は緑に
-#      なるが、先の run の赤い pr-title と、それを受けた赤い ci-gate は同じコミットに残って必須
-#      チェックを赤のままにし、rerun でも消えない (元のタイトルを読んで同じ赤を返す)。新しい
-#      コミットは head の sha を変えるので、古い赤が丸ごと外れる (#2134)。直した後も、古い赤い
-#      pr-title が rollup に残る間はここが bad-title を名乗り続ける (failing_names は名前ごとの
-#      最新を見ない) — 新しいコミットを push すれば消える
+#      なる。先の run の赤い pr-title と、それを受けた赤い ci-gate は同じコミットに残り、rerun でも消えない (#2134)。
+#      **新しい run の pr-title が緑なら、その先の run の赤は凍結された古い赤として判定の入力
+#      から外す** — この赤のまま merge され、queue にも入る (#2568)。新旧は完了時刻ではなく
+#      run の id で決める (先の run の ci-gate は直した後の run より遅く終わる)。**いまの
+#      pr-title が赤い PR だけ**がここで名乗る。直しても名乗り続けるなら、新しいコミットを
+#      push すれば古い赤が丸ごと外れる
 #   7. close して作り直した PR が、全 check 緑なのに赤い
 #      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
 #      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)。
@@ -209,14 +210,34 @@ minutes_since() { # $1=ISO8601 (空可)
   echo $(((now - moment) / 60))
 }
 
-# PR の checks を {name,result,at} の並びへ均す。CheckRun と StatusContext で
-# 欄の名前が違うので、ここで 1 つの形にしておく
+# PR の checks を {name,result,at,run} の並びへ均す。CheckRun と StatusContext で
+# 欄の名前が違うので、ここで 1 つの形にしておく。
+#
+# **run は「どちらが新しいか」の基準である。** at (完了時刻) では測れない — タイトルを直す
+# 前の run の ci-gate は、同じ run の pr-title が赤いので失敗で終わるが、test-release を
+# 待つ分だけ直した後の run より遅く完了し、古い赤が時刻の上では最新に見える (#2568)。run の
+# id は単調に増えるので、detailsUrl の /actions/runs/<id> を新旧の順にする。読めなければ 0
+# (StatusContext など。そのときは at だけで並ぶ)
+#
+# **凍結された古い run の赤は、ここで入力から外す。** 赤い pr-title があり、それより新しい run
+# の pr-title が緑なら、その古い run は「タイトルを直す前の run」である。同じ run が付けた赤
+# (pr-title と、それを受けた ci-gate) は今の状態を表さない (この赤のまま #2543 は merge され、
+# 他の 7 本も queue に入った)。以降の判定は、外した後の並びだけを読む
 normalize_checks() { # 標準入力=PR の JSON
-  jq -c '[.statusCheckRollup[]? | {
-    name: (.name // .context // ""),
-    result: (.conclusion // .state // ""),
-    at: (.completedAt // .startedAt // .createdAt // "")
-  }]'
+  jq -c --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
+    def red: .result as $r | (($unsettled | index($r)) == null) and (($passed | index($r)) == null);
+    def green: .result as $r | ($passed | index($r)) != null;
+    [.statusCheckRollup[]? | {
+      name: (.name // .context // ""),
+      result: (.conclusion // .state // ""),
+      at: (.completedAt // .startedAt // .createdAt // ""),
+      run: ((.detailsUrl // .targetUrl // "")
+            | (capture("/actions/runs/(?<id>[0-9]+)") | .id | tonumber) // 0)
+    }]
+    | . as $all
+    | [ $all[] | select(.name == "pr-title" and .run > 0 and red) | .run
+        | select(. as $r | any($all[]; .name == "pr-title" and green and .run > $r)) ] as $frozen
+    | [ $all[] | select((red and (.run as $r | $frozen | index($r)) != null) | not) ]'
 }
 
 # 失敗している check の名前 (重複を畳む)
@@ -244,7 +265,7 @@ stale_names() { # 標準入力=均した checks
   jq -r --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
     [ group_by(.name)[]
       | . as $group
-      | ($group | sort_by(.at) | last) as $latest
+      | ($group | sort_by([.run, .at]) | last) as $latest
       | select(($passed | index($latest.result)) != null)
       | select([$group[] | . as $c
                           | select(($unsettled | index($c.result)) == null)
