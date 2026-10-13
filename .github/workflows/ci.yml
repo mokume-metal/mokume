@@ -167,7 +167,7 @@ jobs:
         env:
           TITLE: ${{ github.event.pull_request.title }}
         run: |
-          if printf '%s' "$TITLE" | grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([^)]+\))?!?: .+'; then
+          if grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([^)]+\))?!?: .+' <<<"$TITLE"; then
             echo "ok: $TITLE"
           else
             echo "PR タイトルが Conventional Commits ではない: $TITLE" >&2
@@ -297,7 +297,9 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS"
-          if printf '%s' "$RESULTS" | grep -Eq '"result": *"(failure|cancelled)"'; then
+          # パイプにしない (#2609)。pipefail の下では、grep -q が一致して先に抜けたときに
+          # 書き終えていない printf が SIGPIPE で落ち、if が偽 (= 落ちていない) と読む
+          if grep -Eq '"result": *"(failure|cancelled)"' <<<"$RESULTS"; then
             echo "必須ジョブが落ちている" >&2
             exit 1
           fi
