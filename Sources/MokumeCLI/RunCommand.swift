@@ -221,6 +221,13 @@ enum RunCommand {
         /// 名乗ると、`Package.swift` で product を改名した回に**前の名前**を出すことに
         /// なる ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
         let product: String?
+        /// 宣言を読み直したときに、道具立てが答えなかった・答えが読めなかった理由。**それ以外は `nil`。**
+        ///
+        /// **`product == nil` が 3 つを混ぜていた** (#2575): 宣言に実行ファイルが無い・宣言が読めない・
+        /// 道具立てが答えなかった。人へ見せる口は、この理由があればそれを名乗り、「Package.swift を
+        /// 見よ」とは言わない。持ち回った `nil` (見張りを続けるための値) とは別に、**この回に読み直して
+        /// 分かったことだけ**を持つ。
+        var declarationFailure: CommandFailure? = nil
     }
 
     /// 作り直して、走らせるものの場所を返す。
@@ -285,10 +292,11 @@ enum RunCommand {
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
         // (先に消せていないので「いま建った」までは言えないが、他人の産物も居ない)
-        let product = try productAfterBuild(context: context, in: directory, running: running)
+        let (product, declarationFailure) = try productAfterBuild(
+            context: context, in: directory, running: running)
         guard let product else {
             return Rebuilt(status: result.status, output: result.output, executable: nil,
-                binPath: bin, product: nil)
+                binPath: bin, product: nil, declarationFailure: declarationFailure)
         }
         return Rebuilt(
             status: result.status, output: result.output,
@@ -299,13 +307,21 @@ enum RunCommand {
     ///
     /// **読めなかった理由を捨てない** (#2575)。`try?` は起こせなかった・場所が使えない失敗を
     /// `nil` に化かし、人には「走らせるものが無い (Package.swift を見よ)」と届いた。道具立てが
-    /// 答えなかった回 (0 以外での終了) は従来どおり `nil` — 宣言が読めないまま進む形である。
+    /// 答えなかった回・答えが読めなかった回は、名前を `nil` のまま、**その理由を返す** — 宣言が
+    /// 読めないまま進む形は変えず (作り直しは通っている)、人へ見せる口が「Package.swift を見よ」と
+    /// 言う代わりに理由を名乗れるようにする。
+    ///
+    /// - Parameter declaring: 宣言を読む口。**検査から偽の答えを渡せる形にしてある。**
     nonisolated static func productAfterBuild(
-        context: BuildContext, in directory: URL, running: RunningBuild? = nil
-    ) throws(CommandFailure) -> String? {
-        // `??` で畳まない。右辺が投げるので、誤りの型が `any Error` へ落ちる (ADR-0010 決定 7)
-        if let known = context.product { return known }
-        return try dumpPackage(in: directory, running: running)?.executableProductName
+        context: BuildContext, in directory: URL, running: RunningBuild? = nil,
+        declaring: (URL, RunningBuild?) throws(CommandFailure) -> Declaration = {
+            directory, running throws(CommandFailure) in
+            try declaration(in: directory, running: running)
+        }
+    ) throws(CommandFailure) -> (product: String?, failure: CommandFailure?) {
+        if let known = context.product { return (known, nil) }
+        let read = try declaring(directory, running)
+        return (read.package?.executableProductName, read.failure)
     }
 
     /// 作り直しが先に消してよい、置き場 `bin` の直下にある自分の前の産物。
@@ -391,6 +407,9 @@ enum RunCommand {
             // 名前が分からないままだったのなら、宣言が読めていない — 走らせるものを
             // 決められないという、別の失敗である
             guard let product = result.product else {
+                // 読み直して分かった理由があれば、それを名乗る (#2575)。無ければ、宣言に実行
+                // ファイルが無い
+                if let failure = result.declarationFailure { throw failure }
                 throw .noExecutable(path: directory.path)
             }
             // **在るのに起こせないものを「建っていない」と言わない** (#2521)。作り直しは
@@ -484,10 +503,14 @@ enum RunCommand {
         /// 0 で終わったが、出力が宣言として読めなかった (道具立てが JSON の形を変えた日)。
         case unreadable
 
-        /// 道具立てが答えなかった回の名乗り。**宣言の不備として名乗らない** (#2483)。
+        /// 読めなかった回の名乗り。**宣言の不備として名乗らない** (#2483)。読めたなら `nil`。
         var failure: CommandFailure? {
-            guard case .unanswered(let status) = self else { return nil }
-            return .toolchainFailed(command: RunCommand.dumpCommand, status: status)
+            switch self {
+            case .declared: nil
+            case .unanswered(let status):
+                .toolchainFailed(command: RunCommand.dumpCommand, status: status)
+            case .unreadable: .declarationUnreadable(command: RunCommand.dumpCommand)
+            }
         }
 
         /// 読めた宣言。**読めなければ `nil`** — 見張りが宣言の壊れた状態でも続けるための形。
@@ -545,6 +568,13 @@ enum RunCommand {
 
     /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。
     ///
+    /// **前提: 渡す実行ファイルは、呼び元が作り直して建ったことを確かめたものだけである**
+    /// (`run`・`render` は ``buildAndResolve(in:context:)``、`watch` は ``rebuild(in:context:capturing:running:binPath:)``
+    /// の直後)。だから起こす時点で無ければ、宣言のせいではなく消えたのであり、
+    /// ``CommandFailure/executableVanished(path:)`` が「build の直後には在った」と名乗る
+    /// ([#2522](https://github.com/mokume-metal/mokume/issues/2522))。**作り直しを通らない呼び元を足す
+    /// ときは、この名乗りが成り立つかを確かめる** — 成り立たなければ呼び元が名乗りを選べる形にする。
+    ///
     /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:viewportOwner:)``)。
     ///   **何を載せるかは口が決める** — `run` は速さの名乗りと × の確認を、`render` は書き出しの
     ///   頼みを載せる。待ち方と合図の運び方は口によらず同じなので、ここは 1 本にする。
@@ -571,7 +601,8 @@ enum RunCommand {
             // **起こせなかった理由を、走らせるものの不在と決めつけない** (#2314 — 道具の側と
             // 同じ読み替え)。ここへ来る実行ファイルは宣言済みで、作り直しの直後に建ったことを
             // 確かめたものなので、無いなら消えたのであって、`Package.swift` の宣言のせいではない
-            // (#2522)
+            // (#2522)。**この前提は今の呼び元 (`run`・`render`・`watch`) のもの** — 作り直しを通らない
+            // 呼び元が増えたら、ここと ``CommandFailure/executableVanished(path:)`` の文面を見直す
             throw launchFailure(
                 of: process, error: error,
                 executableMissing: .executableVanished(path: executable.path))

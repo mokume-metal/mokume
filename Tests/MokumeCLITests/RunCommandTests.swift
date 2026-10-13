@@ -1193,7 +1193,9 @@ struct RunCommandTests {
         let unreadable = RunCommand.declaration(from: (0, "not json"))
         #expect(unreadable == .unreadable)
         #expect(unreadable.package == nil)
-        #expect(unreadable.failure == nil)
+        #expect(
+            unreadable.failure == .declarationUnreadable(command: "swift package dump-package"))
+        #expect(!(try #require(unreadable.failure)).message.contains("Package.swift"))
 
         // 0 で終わって宣言に実行ファイルが無い — 従来どおり、読めて、product が無いだけ
         let library = RunCommand.declaration(
@@ -1219,7 +1221,55 @@ struct RunCommandTests {
         // 名前が分かっていれば、読み直さない (起こさないので、場所が無くても投げない)
         let known = BuildContext(
             configuration: nil, place: .inPackage(.unreadableManifest), product: "probe")
-        #expect(try RunCommand.productAfterBuild(context: known, in: missing) == "probe")
+        let kept = try RunCommand.productAfterBuild(context: known, in: missing)
+        #expect(kept.product == "probe")
+        #expect(kept.failure == nil)
+    }
+
+    /// **`product == nil` が 3 つを混ぜない** (#2575)。宣言に実行ファイルが無い・道具立てが答えなかった・
+    /// 答えが読めなかったは、人へ見せるときの名乗りが違う。作り直しの戻りは、読み直して分かった
+    /// 理由を運び、`run` / `render` の `executable(from:)` がそれを投げる (「Package.swift を見よ」と
+    /// 言わない)。見張りの側の名乗りは `WatchSessionTests.anUnansweredDeclarationIsNotAMissingProduct`。
+    @Test("作り直しの後に宣言を読めなかった回は、読めなかった理由を運び、実行ファイルが無いとは言わない")
+    func aDeclarationUnreadAfterTheBuildKeepsItsReason() throws {
+        let place = URL(fileURLWithPath: "/sketch", isDirectory: true)
+        let unknown = BuildContext(
+            configuration: nil, place: .inPackage(.unreadableManifest), product: nil)
+        func read(_ answer: RunCommand.Declaration) throws -> (product: String?, failure: CommandFailure?) {
+            try RunCommand.productAfterBuild(
+                context: unknown, in: place,
+                declaring: { _, _ throws(CommandFailure) in answer })
+        }
+
+        let refused = try read(.unanswered(status: 1))
+        #expect(refused.product == nil)
+        #expect(refused.failure == .toolchainFailed(command: "swift package dump-package", status: 1))
+        let garbled = try read(.unreadable)
+        #expect(garbled.product == nil)
+        #expect(garbled.failure == .declarationUnreadable(command: "swift package dump-package"))
+        // 宣言に実行ファイルが無い (読めている) — 理由は無い。`noExecutable` に届く
+        let library = try #require(
+            SwiftPM.package(
+                inDumpOf: #"{"name": "lib", "products": [{"name": "lib", "type": {"library": ["automatic"]}}]}"#))
+        let declared = try read(.declared(library))
+        #expect(declared.product == nil)
+        #expect(declared.failure == nil)
+
+        // 人へ見せる口: 理由があればそれを投げ、無ければ従来の `noExecutable`
+        func rebuilt(_ failure: CommandFailure?) -> RunCommand.Rebuilt {
+            RunCommand.Rebuilt(
+                status: 0, output: "", executable: nil, binPath: place, product: nil,
+                declarationFailure: failure)
+        }
+        #expect(throws: try #require(refused.failure)) {
+            try RunCommand.executable(from: rebuilt(refused.failure), in: place)
+        }
+        #expect(throws: try #require(garbled.failure)) {
+            try RunCommand.executable(from: rebuilt(garbled.failure), in: place)
+        }
+        #expect(throws: CommandFailure.noExecutable(path: place.path)) {
+            try RunCommand.executable(from: rebuilt(nil), in: place)
+        }
     }
 
     /// 宣言だけを置いたディレクトリ。**中身は持たない** — 置き場を答えられれば足りる。
