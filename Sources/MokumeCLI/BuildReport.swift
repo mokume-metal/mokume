@@ -109,6 +109,40 @@ struct BuildReport: Encodable, Equatable {
         return lead + parts.joined(separator: " ")
     }
 
+    /// 作り直しは通ったのに子を起こさなかった回の、理由の頭 1 行。**それ以外の回は `nil`。**
+    ///
+    /// 読み手 (プレビューと `doctor`) が `(ok, launched)` の片方だけを見て、この回を成功と同じ
+    /// に扱っていた ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。理由の
+    /// 取り出し方をここ 1 つに置き、読み手が本文の規約 (``WatchSession/notLaunchedReason(of:)``)
+    /// を各自で解かないようにする。型は理由の無い `launched: false` も作れるので、理由が
+    /// 無ければ空の文字列を返す (`nil` は「この回は該当しない」の意味で使う)。
+    var notStartedHead: String? {
+        Self.notStartedHead(ok: ok, launched: launched, output: output)
+    }
+
+    /// ``notStartedHead`` の、記録 (JSON) から読んだ値でも使える形。
+    ///
+    /// - Parameter launched: 記録に無ければ `nil` (この欄を持たない古い書き手の記録)。
+    ///   **`ok` だけで読む** — 起こせなかったと断じる材料が無い。
+    static func notStartedHead(ok: Bool, launched: Bool?, output: String) -> String? {
+        guard ok, launched == false else { return nil }
+        let reason = WatchSession.notLaunchedReason(of: output)
+        return reason.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init)
+            ?? ""
+    }
+
+    /// プレビューへ重ねる、起こせなかった回の 1 行。**該当しない回は `nil`。**
+    ///
+    /// 要約 (``summary``) の頭と同じ言葉で言う — 端末が正で、プレビューはそれを映す。
+    /// **終われと言われて起こさなかった回は、その文をそのまま出す** (#2521)。「起こせなかった」
+    /// を前に付けると、起きたこととは別のことを言う。
+    var notStartedNotice: String? {
+        guard let head = notStartedHead else { return nil }
+        if output.hasPrefix(Self.stopRequestedNotice) { return head }
+        let lead = "Rebuilt, but could not start it"
+        return head.isEmpty ? lead : lead + ": " + head
+    }
+
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由 (本文の頭に置く)。
     static let stopRequestedNotice =
         "Not started, because watching was ending — the build itself succeeded"

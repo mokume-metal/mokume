@@ -164,6 +164,12 @@ enum DoctorCommand {
         var ok: Bool?
         /// いつ書かれたか。
         var at: Date
+        /// 差し替えたスケッチが立ち上がったか。**記録に無ければ (この欄を持たない古い書き手)
+        /// `nil`** — 作り直せたことだけで読む。
+        var launched: Bool?
+        /// 作り直しは通ったのに起こさなかった回の、理由の頭 1 行 (``BuildReport/notStartedHead``)。
+        /// 起こさなかった回以外は `nil`。
+        var notStarted: String?
     }
 
     static func run(_ arguments: [String]) {
@@ -442,6 +448,18 @@ enum DoctorCommand {
     /// 最後の作り直しの行。**結果ごとに文を持つ。**
     static func lastBuildLine(_ last: LastBuild) -> String {
         let at = Timestamp.text(last.at, seconds: true)
+        // **通ったが起こせなかった回を「succeeded」と言わない** (#2574)。切り分けの口が
+        // 成功と言うと、止まっている絵の原因から人を遠ざける
+        if last.ok == true, last.launched == false {
+            let head = last.notStarted ?? ""
+            // **終われと言われて起こさなかった回は、その文をそのまま言う** (#2521)
+            if head.hasPrefix(BuildReport.stopRequestedNotice) {
+                return "Last build: built at \(at); \(head)"
+            }
+            return head.isEmpty
+                ? "Last build: built at \(at), but not started"
+                : "Last build: built at \(at), but not started: \(head)"
+        }
         return switch last.ok {
         case true: "Last build: succeeded at \(at)"
         case false: "Last build: failed at \(at)"
@@ -626,7 +644,14 @@ enum DoctorCommand {
         else { return nil }
         let object = (try? Data(contentsOf: url))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-        return LastBuild(ok: object?["ok"] as? Bool, at: at)
+        let ok = object?["ok"] as? Bool
+        let launched = object?["launched"] as? Bool
+        return LastBuild(
+            ok: ok, at: at, launched: launched,
+            notStarted: ok.flatMap {
+                BuildReport.notStartedHead(
+                    ok: $0, launched: launched, output: object?["output"] as? String ?? "")
+            })
     }
 
     private static func exists(_ url: URL) -> Bool {

@@ -249,10 +249,44 @@ struct WatchCommandTests {
         #expect(line.contains(WatchCommand.holdingLine))
     }
 
-    private func report(ok: Bool) -> BuildReport {
+    /// 作り直しは通ったが子を起こせなかった回 (`ok: true, launched: false`) を、成功と同じに
+    /// 畳まない ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。畳むと窓の側は
+    /// 「保存した → 絵が止まっている → 何も出ない」になる。
+    @Test("起こせなかった回は、重ねる行に起こせなかったことと理由の頭 1 行を出す")
+    func namesTheReasonWhenTheBuildPassedButNothingStarted() throws {
+        let reason = "Cannot start sketch: permission denied: /stub/.build/debug/sketch"
+        let line = try #require(
+            WatchCommand.notice(
+                for: report(
+                    ok: true, launched: false,
+                    output: WatchSession.notLaunched(reason + "\nsecond line", "[1/2] Compiling…"))))
+        #expect(line == "Rebuilt, but could not start it: " + reason)
+        // 起こせた回は畳む (従来どおり)
+        #expect(WatchCommand.notice(for: report(ok: true, launched: true)) == nil)
+    }
+
+    /// 型は理由の無い `launched: false` も作れる。**それでも、起こせなかったことは名乗る。**
+    @Test("理由の無い起こせなかった回も、起こせなかったことだけは出す")
+    func namesTheFailureEvenWithoutAReason() throws {
+        let line = try #require(WatchCommand.notice(for: report(ok: true, launched: false)))
+        #expect(line == "Rebuilt, but could not start it")
+    }
+
+    /// 終われと言われて起こさなかった回を「起こせなかった」と言わない (#2521 の規律)。
+    @Test("終われと言われて起こさなかった回は、起こせなかったと言わない")
+    func doesNotCallAnEndingWatchAFailureToStart() throws {
+        let output = WatchSession.notLaunched(
+            WatchSession.stopRequestedNotice, "[1/1] Compiling…")
+        let line = try #require(
+            WatchCommand.notice(for: report(ok: true, launched: false, output: output)))
+        #expect(line == WatchSession.stopRequestedNotice)
+        #expect(!line.contains("could not"))
+    }
+
+    private func report(ok: Bool, launched: Bool? = nil, output: String = "") -> BuildReport {
         BuildReport(
-            ok: ok, status: ok ? 0 : 1, output: "", stamp: nil, configuration: "debug",
-            launched: ok,
+            ok: ok, status: ok ? 0 : 1, output: output, stamp: nil, configuration: "debug",
+            launched: launched ?? ok,
             timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
     }
 

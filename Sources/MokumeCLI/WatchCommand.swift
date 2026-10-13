@@ -648,10 +648,13 @@ enum WatchCommand {
     /// プレビューへ重ねる 1 行。**端末に出ている言葉だけで組む** — プレビューは端末の
     /// 代わりではないので、ここだけで名乗る事実を作らない。
     ///
-    /// - Returns: 通ったら `nil` (畳む)。通らなかったら**出したままにする行** — 消すと
+    /// - Returns: 通って起こせたら `nil` (畳む)。通らなかったら**出したままにする行** — 消すと
     ///   「保存したのに絵が変わらない」が「変えた結果が同じだった」と見分けられない。
+    ///   **通って起こせなかった回も同じ理由で出す** — 畳むと、窓の側では「保存した → 絵が
+    ///   止まっている → 何も出ない」になる ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。
     static func notice(for outcome: BuildReport) -> String? {
-        outcome.ok ? nil : "The build failed — " + holdingLine
+        guard outcome.ok else { return "The build failed — " + holdingLine }
+        return outcome.notStartedNotice
     }
 
     /// 道具が出す窓。
