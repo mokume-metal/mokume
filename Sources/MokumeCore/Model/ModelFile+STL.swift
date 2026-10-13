@@ -26,9 +26,13 @@ nonisolated extension ModelFile {
     /// STL を読む。
     ///
     /// **面の向き**: 書かれた向き (有限で長さが 0 でない) はそのまま使う — OBJ の `vn` と同じ扱い
-    /// (``Parsed/hasWrittenNormals``)。`0 0 0` の面は巻き方から求め、OBJ で向きを求めた形と同じく
-    /// 両面として扱う。**点を共有しないので、どちらも面ごとに平らに光る** — OBJ で向きを書かない
-    /// 形は、点を共有する面どうしで向きが均される。
+    /// (``Parsed/derivedNormals``)。`0 0 0` の面は巻き方から求め、OBJ で向きを求めた形と同じく
+    /// 両面として扱う。**どちらにするかは面ごとに決める** — 向きを書いた面と `0 0 0` の面が
+    /// 混ざったファイルでも、`0 0 0` の面だけが両面になり、書いた面は片面のまま ([#2342])。
+    /// **点を共有しないので、どちらも面ごとに平らに光る** — OBJ で向きを書かない形は、点を
+    /// 共有する面どうしで向きが均される。
+    ///
+    /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
     ///
     /// **座標が数でない面は読み飛ばし、面の数として数える** (``Parsed/skippedLines``)。残すと
     /// 囲みの箱も整え方も壊れる。
@@ -69,7 +73,7 @@ nonisolated extension ModelFile {
     private static func triangles(of meshes: [MDLMesh]) -> Parsed {
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
-        var hasWrittenNormals = false
+        var derivedNormals: [Bool] = []
         var skipped = 0
 
         for mesh in meshes {
@@ -109,9 +113,10 @@ nonisolated extension ModelFile {
                             let written = facing.map { vector($0, at: corner) }
                             if let written, isFinite(written), length_squared(written) > 0 {
                                 normals.append(written)
-                                hasWrittenNormals = true
+                                derivedNormals.append(false)
                             } else {
                                 normals.append(derived)
+                                derivedNormals.append(true)
                             }
                         }
                     }
@@ -121,7 +126,7 @@ nonisolated extension ModelFile {
         return Parsed(
             positions: positions, normals: normals,
             uvs: [SIMD2<Float>?](repeating: nil, count: positions.count),
-            hasWrittenNormals: hasWrittenNormals, skippedLines: skipped)
+            derivedNormals: derivedNormals, skippedLines: skipped)
     }
 
     /// 頂点の属性を 1 つ読む。

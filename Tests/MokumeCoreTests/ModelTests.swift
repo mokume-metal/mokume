@@ -22,7 +22,7 @@ struct ModelTests {
         let parsed = try ModelFile.load(ModelFixture.pyramid)
         // 四角錐は側面 4 枚 (三角形 4) + 底 1 枚 (三角形 2) = 6 枚
         #expect(parsed.positions.count == 18)
-        #expect(parsed.hasWrittenNormals == false)
+        #expect(parsed.derivedNormals == Array(repeating: true, count: 18))
         #expect(parsed.normals.allSatisfy { length_squared($0) > 0.9 })
         // 読み飛ばした行 (mtllib / o / s / usemtl) を数えている
         #expect(parsed.skippedLines == 4)
@@ -53,7 +53,7 @@ struct ModelTests {
             vn 0 0 1
             f 1//1 2//1 3//1
             """)
-        #expect(parsed.hasWrittenNormals)
+        #expect(parsed.derivedNormals == [false, false, false])
         #expect(parsed.normals.allSatisfy { $0 == SIMD3(0, 0, 1) })
     }
 
@@ -261,7 +261,7 @@ struct ModelTests {
         #expect(parsed.uvs[0...2].allSatisfy { $0 != nil })
         #expect(parsed.uvs[3...5].allSatisfy { $0 == nil })
         // 向きのほうは 2 枚目も書かれているので、形から求めていない
-        #expect(parsed.hasWrittenNormals)
+        #expect(!parsed.derivedNormals.contains(true))
     }
 
     @Test("vt は u だけでも読め、3 つ目 (w) は無視する")
@@ -281,6 +281,87 @@ struct ModelTests {
         // 3 つ目があっても手前の 2 つは正しい展開なので使う
         #expect(parsed.uvs[1] == SIMD2(0.25, 0.5))
         #expect(parsed.skippedLines == 0)
+    }
+
+    // MARK: - 向きを書いた面と書かない面が混ざる (#2342)
+
+    /// #2337 の再現の形。B (1..3) は平面 x + z = 0 の三角形で、形から求めた向きは (1,0,1)/√2。
+    /// A (4..6) は離れた所の正面向きの三角形で、B と点を共有しない。
+    static let mixedNormalsVertices = """
+        v 0 0 0
+        v 1 0 -1
+        v 0 1 0
+        v -2 0 0
+        v -1 0 0
+        v -2 1 0
+        vn 0 0 1
+        vn 0.70710678 0 0.70710678
+        """
+
+    /// 約束: 面の向きは角ごとに扱う。**書かれていない角は形から求め、両面にする** ([#2342])。
+    /// ファイルに `vn` が 1 つでもあると形から求めなかった頃は、`vn` の無い B が (0, 0, 1) へ
+    /// 倒れていた ([#2337])。書いた面と点を共有しない面は、どの面にも `vn` が無いファイルと
+    /// 1 ビットも違わない。範囲の外の `vn` 番号は書いていない角と同じに読む (#2349 の扱いのまま)。
+    ///
+    /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
+    /// [#2337]: https://github.com/mokume-metal/mokume/issues/2337
+    @Test(
+        "vn のある面と無い面が混ざっても、無い面の向きは形から求め、その角だけが両面の印を持つ",
+        arguments: ["f 1 2 3", "f 1//99 2//99 3//99"])
+    func mixedNormalsAreDerivedPerCorner(unwritten: String) throws {
+        let mixed = ModelFile.parse(Self.mixedNormalsVertices + "\nf 4//1 5//1 6//1\n" + unwritten)
+        let none = ModelFile.parse(Self.mixedNormalsVertices + "\nf 4 5 6\nf 1 2 3")
+        let expected = normalize(SIMD3<Float>(1, 0, 1))
+        #expect(mixed.normals[3..<6].allSatisfy { distance($0, expected) < 1e-6 }, "\(mixed.normals)")
+        #expect(Array(mixed.normals[3..<6]) == Array(none.normals[3..<6]))
+        // 書いた A はそのまま
+        #expect(mixed.normals[0..<3].allSatisfy { $0 == SIMD3(0, 0, 1) })
+        #expect(mixed.derivedNormals == [false, false, false, true, true, true])
+        #expect(none.derivedNormals == Array(repeating: true, count: 6))
+    }
+
+    /// 約束: 長さ 0 の向きは書いていないのと同じ (STL の `facet normal 0 0 0`・`normal(0, 0, 0)` と
+    /// 同じ扱い)。書いたと読むと、形から求めず両面にもならず、向き 0 の頂点として光を受けない。
+    @Test(
+        "長さ 0 の vn は書いていない角として、形から求めて両面の印を付ける",
+        arguments: [
+            // (面の行, 両面の印)
+            ("f 4//1 5//1 6//1\nf 1//3 2//3 3//3", [false, false, false, true, true, true]),
+            ("f 1//3 2//3 3//3", [true, true, true]),
+            ("f 1//2 2//3 3", [false, true, true]),
+        ])
+    func zeroLengthNormalsReadAsUnwritten(faces: String, marks: [Bool]) throws {
+        let parsed = ModelFile.parse(Self.mixedNormalsVertices + "\nvn 0 0 0\n" + faces)
+        #expect(parsed.derivedNormals == marks)
+        let expected = normalize(SIMD3<Float>(1, 0, 1))
+        let derivedB = zip(parsed.normals.suffix(3), marks.suffix(3)).filter { $0.1 }.map(\.0)
+        #expect(derivedB.allSatisfy { distance($0, expected) < 1e-6 }, "\(parsed.normals)")
+        #expect(parsed.normals.allSatisfy { length_squared($0) > 0.9 })
+    }
+
+    @Test("1 つの面の中で vn のある角と無い角が混ざっても、角ごとに決める")
+    func normalsAreDecidedPerCornerWithinAFace() throws {
+        let parsed = ModelFile.parse(Self.mixedNormalsVertices + "\nf 1//2 2 3")
+        #expect(parsed.derivedNormals == [false, true, true])
+        #expect(parsed.normals[0] == SIMD3(0.70710678, 0, 0.70710678))
+        let expected = normalize(SIMD3<Float>(1, 0, 1))
+        #expect(parsed.normals[1...].allSatisfy { distance($0, expected) < 1e-6 })
+    }
+
+    @Test("整えて巻き方を戻しても、両面の印は角に付いたまま動く", arguments: [nil, 60] as [Float?])
+    func derivedMarksTravelWithTheirCorners(fitting: Float?) throws {
+        // B の真ん中の角だけが向きを書いている
+        let parsed = ModelFile.parse(Self.mixedNormalsVertices + "\nf 4//1 5//1 6//1\nf 1 2//2 3")
+        let model = Model.make(name: "mixed.obj", parsed: parsed, fitting: fitting)
+        // 整えると三角形ごとに 2 点目と 3 点目を入れ替える。印は位置・向きと一緒に動く
+        let marks =
+            fitting == nil
+            ? [false, false, false, true, false, true] : [false, false, false, true, true, false]
+        #expect(model.mesh.points.map(\.isDerivedNormal) == marks)
+        let written = model.mesh.points[3...].filter { !$0.isDerivedNormal }
+        #expect(written.count == 1)
+        // 書いた向き (y が 0 なので縦の裏返しでも変わらない) がそのまま付いている
+        #expect(written.first?.normal == SIMD3(0.70710678, 0, 0.70710678))
     }
 
     // MARK: - 整え方
@@ -661,6 +742,147 @@ struct ModelTests {
                     "f \(first)//\(first) \(first + 1)//\(first + 1) \(first + 2)//\(first + 2)")
             }
             return lines.joined(separator: "\n")
+        }
+
+        // MARK: - 向きを書いた面と書かない面が混ざる (#2342)
+
+        /// 塗りの頂点が通る 3 つの経路。どれも同じ点から頂点を作る。
+        enum FillRoute: String, CaseIterable, Sendable {
+            /// 保持する形を記録している間 (置き場所を頂点へ焼く)。
+            case recording
+            /// 溜め場 (GPU の控えを持たない — 予算 0)。
+            case staging
+            /// GPU の控え (#1749)。
+            case retained
+        }
+
+        /// 約束: 両面の印は角ごとに頂点へ届く ([#2342])。モデル単位の 1 つの印で決めていた頃は、
+        /// 混ざったモデルの頂点がどれも片面 (0) だった。
+        ///
+        /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
+        @Test("混ざったモデルを置くと、書かれていなかった角の頂点だけが両面の印を持つ", arguments: FillRoute.allCases)
+        func derivedMarksReachTheVerticesPerCorner(_ route: FillRoute) throws {
+            let canvas = try makeCanvas()
+            let model = Model.make(
+                name: "mixed.obj",
+                parsed: ModelFile.parse(ModelTests.mixedNormalsVertices + "\nf 4//1 5//1 6//1\nf 1 2//2 3"),
+                fitting: nil)
+            let expected: [Float] = [0, 0, 0, 1, 0, 1]
+            var marks: [Float] = []
+            switch route {
+            case .recording:
+                let shape = canvas.createShape {
+                    canvas.noStroke()
+                    canvas.model(model)
+                }
+                marks = shape.solidVertices.map(\.normal.w)
+            case .staging, .retained:
+                if route == .staging { canvas.modelFills.budget = 0 }
+                try canvas.draw {
+                    canvas.noStroke()
+                    canvas.model(model)
+                    if route == .staging {
+                        marks = canvas.solidVertices.map(\.normal.w)
+                    } else if let geometry = canvas.openSolid?.fillGeometry {
+                        let vertices = UnsafeBufferPointer(
+                            start: geometry.buffer.contents().assumingMemoryBound(to: SolidVertex.self),
+                            count: geometry.count)
+                        marks = vertices.map(\.normal.w)
+                    }
+                }
+            }
+            #expect(marks == expected, "\(route)")
+        }
+
+        /// 混ざったファイルの B の明るさが、B に正しい向きを書いたときと、どの面も向きを書かない
+        /// ときと揃う ([#2337]・[#2338] の再現と同じ構図)。光は (-1, 0, -1) へ進み、向き (1,0,1)/√2
+        /// の B に真正面から当たる。
+        ///
+        /// [#2337]: https://github.com/mokume-metal/mokume/issues/2337
+        /// [#2338]: https://github.com/mokume-metal/mokume/issues/2338
+        private func brightnessOfB(
+            _ contents: Data, as name: String, light: SIMD3<Float> = SIMD3(-1, 0, -1)
+        ) throws -> Float {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let url = directory.appendingPathComponent(name)
+            try contents.write(to: url)
+
+            let canvas = try makeCanvas(width: 200, height: 200)
+            let model = try canvas.loadModel(url.path, normalize: false)
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                canvas.directionalLight(255, 255, 255, light.x, light.y, light.z)
+                canvas.translate(100, 100, 0)
+                canvas.scale(60, 60, 60)
+                canvas.model(model)
+            }
+            let image = try canvas.target.readPixels()
+            var sum: Float = 0
+            var count = 0
+            // B の内側 (x + z = 0 の三角形を正面から見た所)
+            for y in 106..<125 {
+                for x in 106..<118 {
+                    let color = image[x, y]
+                    sum += (color.red + color.green + color.blue) / 3
+                    count += 1
+                }
+            }
+            return sum / Float(count)
+        }
+
+        @Test("OBJ で vn のある面と無い面が混ざっても、無い面は形から求めた向きで光を受ける")
+        func mixedOBJNormalsCatchTheLightLikeDerived() throws {
+            let vertices = ModelTests.mixedNormalsVertices + "\n"
+            let mixed = try brightnessOfB(
+                Data((vertices + "f 4//1 5//1 6//1\nf 1 2 3\n").utf8), as: "mixed.obj")
+            let written = try brightnessOfB(
+                Data((vertices + "f 4//1 5//1 6//1\nf 1//2 2//2 3//2\n").utf8), as: "written.obj")
+            let none = try brightnessOfB(Data((vertices + "f 4 5 6\nf 1 2 3\n").utf8), as: "none.obj")
+            // 物差し: 正しい向きなら真正面から光を受ける
+            #expect(written > 0.9, "B に光が当たっていない (\(written))")
+            #expect(abs(mixed - written) <= 0.05, "混ざった \(mixed)・書いた \(written)")
+            #expect(abs(mixed - none) <= 0.05, "混ざった \(mixed)・どれも無い \(none)")
+        }
+
+        @Test("STL で向き 0 0 0 の面は、向きを書いた面と混ざっても両面として光を受ける")
+        func mixedSTLZeroNormalsStayTwoSided() throws {
+            // B は見る側と逆に巻き、向きを 0 0 0 にする。両面なら裏から見ても光を受ける
+            let a = SIMD3<Float>(0, 0, 0), b = SIMD3<Float>(1, 0, -1), c = SIMD3<Float>(0, 1, 0)
+            let reversedB = ModelFixture.Facet(normal: .zero, corners: [a, c, b])
+            let corners: [SIMD3<Float>] = [SIMD3(-2, 0, 0), SIMD3(-1, 0, 0), SIMD3(-2, 1, 0)]
+            let mixed = try brightnessOfB(
+                ModelFixture.binarySTL([reversedB, .init(normal: SIMD3(0, 0, 1), corners: corners)]),
+                as: "mixed.stl")
+            let allZero = try brightnessOfB(
+                ModelFixture.binarySTL([reversedB, .init(normal: .zero, corners: corners)]),
+                as: "zero.stl")
+            #expect(allZero > 0.9, "どの面も 0 0 0 の B に光が当たっていない (\(allZero))")
+            #expect(abs(mixed - allZero) <= 0.05, "混ざった \(mixed)・どれも 0 0 0 \(allZero)")
+        }
+
+        /// OBJ の `vn 0 0 0` も、STL の `facet normal 0 0 0` と同じく書いていない向きとして形から
+        /// 求め、両面にする。書いたと読むと、向き 0 の頂点は光を受けず塗りの色そのまま (1.0) に
+        /// なる。**光は斜め (-1, 0, 0) から当てる** — 正面から当てると、光を受けた明るさも
+        /// ほぼ 1 で見分けが付かない。B は見る側と逆に巻くので、両面でなければ裏から見て暗い。
+        @Test(
+            "OBJ で長さ 0 の vn を書いた面は、形から求めた向きで両面として光を受ける",
+            arguments: [false, true])
+        func zeroLengthOBJNormalsAreDerivedAndTwoSided(mixed: Bool) throws {
+            let vertices = ModelTests.mixedNormalsVertices + "\nvn 0 0 0\n"
+            let a = mixed ? "f 4//1 5//1 6//1\n" : ""
+            let light = SIMD3<Float>(-1, 0, 0)
+            let zero = try brightnessOfB(
+                Data((vertices + a + "f 1//3 3//3 2//3\n").utf8), as: "zero-vn.obj", light: light)
+            let none = try brightnessOfB(
+                Data((vertices + a + "f 1 3 2\n").utf8), as: "none.obj", light: light)
+            // 物差し: 向き (1,0,1)/√2 に 45° で当たる明るさ (cos 45° ≈ 0.707)。1 なら光を受けていない
+            #expect(abs(none - 0.707) <= 0.05, "向きを書いていない B の明るさ (\(none))")
+            #expect(abs(zero - none) <= 0.05, "vn 0 0 0 \(zero)・書いていない \(none)")
         }
 
         // MARK: - 別の Canvas で読んだモデル (#1846)

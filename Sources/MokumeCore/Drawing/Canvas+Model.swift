@@ -40,10 +40,8 @@ extension Canvas {
         guard style.hasFill || style.hasStroke else { return }
         guard !model.isEmpty else { return warnEmptyModel(model) }
         if style.hasFill {
-            placeMesh(
-                .model(identity: model.identity), isDerived: model.hasDerivedNormals,
-                winding: { model.winding }
-            ) {
+            // 向きを形から求めたか (両面か) は角ごとに点が持つ (#2342)
+            placeMesh(.model(identity: model.identity), winding: { model.winding }) {
                 model.mesh
             }
         }
