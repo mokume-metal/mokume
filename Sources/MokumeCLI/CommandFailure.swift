@@ -28,6 +28,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     case buildFailed(status: Int32)
     /// 走らせたスケッチが 0 以外で終わった。**道具の失敗ではない。**
     case sketchExited(status: Int32)
+    /// 走らせたスケッチが、合図で落ちた (`fatalError` の SIGTRAP・SIGSEGV など)。**道具の失敗ではない。**
+    ///
+    /// **`sketchExited` と分ける。** `Process.terminationStatus` は合図で落ちた子には合図の番号を
+    /// 返すので、まとめると SIGTRAP (5) を「exited with code 5」と言い、`exit(5)` で自分から終わった
+    /// 回と見分けがつかない ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// 終了コードはシェルの `$?` と同じ `128 + 番号` (``ChildEnding``)。道具自身が止めた回
+    /// (``stopped(signal:)``) とは、止めたのが誰かで分かれる。
+    case sketchSignalled(signal: Int32)
     /// 道具が終わりの合図を受け、走らせていたスケッチも止めて終わった。
     ///
     /// **`sketchExited` と分ける。** 子の終了コードは止めた合図で決まり、スケッチ自身の
@@ -41,7 +49,9 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// **`sketchExited` と分ける。** `render` の終了コードは「書けたか」を意味するので、
     /// 呼ぶ側が読みたいのはどこが欠けたかであって、スケッチの成否ではない
     /// ([#1282](https://github.com/mokume-metal/mokume/issues/1282))。
-    case renderIncomplete(destination: String, status: Int32)
+    ///
+    /// **終わり方を持つ。** 子が合図で落ちた回を「exited with code N」と名乗らない (#2315)。
+    case renderIncomplete(destination: String, ending: ChildEnding)
     case noExecutable(path: String)
     /// 作り直しは通ったのに、走らせるものが建っていない。
     ///
@@ -124,10 +134,12 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// なくスケッチの成否なので、そのまま通す。ほかは道具自身の失敗なので 1 でよい。
     ///
     /// **合図で止めた回は慣習の `128 + 番号` を返す。** 止めた側が読みたいのは
-    /// 「合図で終わった」ことで、スケッチの成否ではない。
+    /// 「合図で終わった」ことで、スケッチの成否ではない。スケッチが合図で落ちた回
+    /// (``sketchSignalled(signal:)``) も同じ値で、シェルで子を直に走らせたときの `$?` と揃う。
     var exitCode: Int32 {
         switch self {
         case .sketchExited(let status): status
+        case .sketchSignalled(let signal): 128 + signal
         case .stopped(let signal): 128 + signal
         default: 1
         }
@@ -270,12 +282,17 @@ nonisolated enum CommandFailure: Error, Equatable {
             The sketch exited with code \(status).
             This is not a failure the tool added — the reason is in the sketch's own output
             """
+        case .sketchSignalled(let signal):
+            """
+            The sketch was ended by signal \(ChildEnding.describe(signal: signal)).
+            This is not a failure the tool added — the reason is in the sketch's own output
+            """
         case .stopped(let signal):
             "Stopped by signal \(signal) — the running sketch was stopped too"
-        case .renderIncomplete(let destination, let status):
+        case .renderIncomplete(let destination, let ending):
             """
             Rendering did not complete: \(destination) is missing frames or was not written.
-            The sketch said why above (it exited with code \(status))
+            The sketch said why above — it \(ending.phrase)
             """
         case .noExecutable(let path):
             """

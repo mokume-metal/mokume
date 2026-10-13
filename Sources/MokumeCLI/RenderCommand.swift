@@ -70,8 +70,16 @@ enum RenderCommand {
                 executable, in: directory,
                 environment: RunCommand.childEnvironment(rendering: request))
         } catch {
-            guard case .sketchExited(let status) = error else { throw error }
-            throw .renderIncomplete(destination: request.destination, status: status)
+            // **合図で落ちた回も揃わなかった回である** (#2315)。名乗るのは終わり方そのもの
+            switch error {
+            case .sketchExited(let status):
+                throw .renderIncomplete(destination: request.destination, ending: .exited(status))
+            case .sketchSignalled(let signal):
+                throw .renderIncomplete(
+                    destination: request.destination, ending: .signalled(signal))
+            default:
+                throw error
+            }
         }
     }
 

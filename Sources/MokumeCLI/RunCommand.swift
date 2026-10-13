@@ -518,8 +518,12 @@ enum RunCommand {
         // 済ませて 0 で終わることも、済ませずに 15 で落ちることもある (#1219)。後者を
         // `sketchExited` で名乗ると「スケッチ自身の出力を読め」になる
         if runStopSignal != 0 { throw .stopped(signal: runStopSignal) }
-        if process.terminationStatus != 0 {
-            throw .sketchExited(status: process.terminationStatus)
+        switch ChildEnding(of: process) {
+        case .exited(0): return
+        case .exited(let status): throw .sketchExited(status: status)
+        // **合図の番号を終了コードとして名乗らない** (#2315)。`terminationStatus` は合図で落ちた子に
+        // 合図の番号を返すので、`fatalError` の SIGTRAP が「code 5」になり、`exit(5)` と見分けがつかない
+        case .signalled(let signal): throw .sketchSignalled(signal: signal)
         }
     }
 
@@ -702,10 +706,13 @@ enum RunCommand {
         // 見逃すと空の出力が「宣言が読めない」「走らせるものが無い」と読まれ、原因が
         // 道具立てなのに Package.swift を疑わせる
         // ([#1157](https://github.com/mokume-metal/mokume/issues/1157))
-        if process.executableURL == envURL, process.terminationStatus == commandNotFound {
+        let ending = ChildEnding(of: process)
+        if process.executableURL == envURL, ending == .exited(commandNotFound) {
             throw .toolchainMissing(toolName(of: process))
         }
-        return (process.terminationStatus, output)
+        // **合図で落ちた子は `128 + 番号` で返す** (#2315)。呼び手は終了コードとして名乗り・記録する
+        // (`buildFailed`・`build-status` の `status`)。合図の番号のままだと、5 で終わった回と区別がつかない
+        return (ending.shellStatus, output)
     }
 
     /// 子を起こせなかった理由を読む。**実行ファイルの不在と言うのは、それが無いときだけ** (#2314)。
