@@ -28,8 +28,9 @@ extension ParamValue: Codable {
     /// 要求が応答も警告もなしに捨てられる (同じ要求の他の値も入らない)。`Double` で読んで
     /// `Float` へ読み替えれば、桁あふれは無限になり、置き場がその値だけを拒む
     /// (``ParamOutcome/notFinite``・[#2271](https://github.com/mokume-metal/mokume/issues/2271))。
-    /// `Double` にも収まらない数 (`1e400`) は `JSONDecoder` が数そのものを読めず、これは
-    /// 今までどおり要求ごと断られる。
+    /// `Double` にも収まらない数 (`1e400`) は `JSONDecoder` が数そのものを読めずここで断るが、
+    /// 要求の 1 件ずつの読み (``ParamRequest/Entry``) が受けて、その 1 件だけを
+    /// ``ParamOutcome/notFinite`` と同じ理由で拒む ([#2496](https://github.com/mokume-metal/mokume/issues/2496))。
     private struct WideWireColor: Decodable {
         let red: Double
         let green: Double

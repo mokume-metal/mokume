@@ -14,7 +14,7 @@
     },
     "values": {
       "type": "array",
-      "description": "The values to write. **Whatever does not go in appears in the reply's rejected, with a reason** — an unknown name, a type that differs, a value outside the choices: none of them is dropped in silence.",
+      "description": "The values to write. **Whatever does not go in appears in the reply's rejected, with a reason** — an unknown name, a type that differs, a value outside the choices, and **a write that cannot be read at all** (an unknown type, a value of the wrong shape, a number too large to read such as 1e400): none of them is dropped in silence, and the other writes in the same request still go in. A request is answered with nothing only when its frame cannot be read: an id that is missing or not a string, a values that is missing or not an array, or text that is not JSON.",
       "items": {
         "type": "object",
         "required": ["name", "type", "value"],
