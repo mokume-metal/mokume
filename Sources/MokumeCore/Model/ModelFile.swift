@@ -74,7 +74,8 @@ nonisolated enum ModelFile {
         /// 混ざったファイル (OBJ の `vn` のある面と無い面・STL の `facet normal 0 0 0` の面と
         /// 書いた面) があり、1 つの印に畳むと、書かない面の向きを求めない (OBJ) か、求めた
         /// 面が両面にならない (STL)。OBJ の 1 つの面の中で `vn` のある角と無い角が混ざって
-        /// いても、角ごとに決める (その場で並べた頂点と同じ)。
+        /// いても、角ごとに決める (その場で並べた頂点と同じ)。**長さ 0 の向き** (OBJ の
+        /// `vn 0 0 0`・STL の `facet normal 0 0 0`) は書いていないものとして扱う。
         ///
         /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
         var derivedNormals: [Bool]
@@ -164,8 +165,17 @@ nonisolated enum ModelFile {
         // あると求めなかった頃は、`vn` の無い面が既定の (0, 0, 1) へ倒れていた。足し込むのは
         // すべての面で、向きを書いた面も形としては点の周りの面である。どの面も書いていない
         // ファイルは、いままでと 1 ビットも違わない
+        //
+        // **長さ 0 の `vn` は書いていないのと同じ** (#2342 の反証)。書いたと読むと、形から求めず
+        // 両面にもならず、向き 0 の頂点として光を受けない。STL の `facet normal 0 0 0` と
+        // `normal(0, 0, 0)` も同じく書いていない側へ倒している (非有限の `vn` は行ごと読み
+        // 飛ばすので、ここには届かない)
+        func written(_ corner: (position: Int, texture: Int?, normal: Int?)) -> Int? {
+            guard let index = corner.normal, length_squared(normals[index]) > 0 else { return nil }
+            return index
+        }
         var derived = [SIMD3<Float>](repeating: .zero, count: positions.count)
-        if faces.contains(where: { $0.contains { $0.normal == nil } }) {
+        if faces.contains(where: { $0.contains { written($0) == nil } }) {
             for face in faces {
                 let corners = face.map { positions[$0.position] }
                 let facing = newell(corners)
@@ -185,7 +195,7 @@ nonisolated enum ModelFile {
                     placedUVs.append(corner.texture.map { textures[$0] })
                     // 番号は ``corner(_:positions:textures:normals:)`` が範囲を確かめてある。
                     // 範囲の外の番号は「書いていない」として届く
-                    if let written = corner.normal {
+                    if let written = written(corner) {
                         placedNormals.append(normals[written])
                         placedDerived.append(false)
                     } else {
