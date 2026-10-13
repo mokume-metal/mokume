@@ -258,7 +258,7 @@ struct WatchSessionTests {
         let report = await session.start()
         let reason = recorder.launchFailure.message
         #expect(reason.contains("\n"), "理由が 1 行では、複数行の区切りを確かめられない")
-        #expect(WatchSession.notLaunchedReason(of: report.output) == reason)
+        #expect(report.notStartedReason == reason)
         let lines = WatchCommand.reportLines(report, holdingPrevious: false)
         #expect(lines == [report.summary, reason])
         #expect(!lines.joined().contains("Compiling"), "作り直しの出力を端末へ流した")

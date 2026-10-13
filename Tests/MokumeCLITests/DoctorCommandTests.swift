@@ -288,6 +288,112 @@ struct DoctorCommandTests {
         #expect(DoctorCommand.stateLines(unreadable).joined().contains(DoctorCommand.unknown))
     }
 
+    /// 作り直しは通ったが子を起こせなかった回 (`ok: true, launched: false`) を「succeeded」と
+    /// 言わない ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。`doctor` は
+    /// 「なぜ絵が止まっているか」を切り分ける口なので、そこで成功と言うと原因から遠ざかる。
+    @Test("最後の作り直しが通っても起こせなかったなら、succeeded と言わず理由の頭を言う")
+    func theLastBuildThatCouldNotStartIsNotCalledSucceeded() throws {
+        let place = URL(fileURLWithPath: "/tmp/demo", isDirectory: true)
+        let reason = "Cannot start sketch: permission denied: /stub/.build/debug/sketch"
+        var state = Self.state(place)
+        state.lastBuild = DoctorCommand.LastBuild(
+            ok: true, at: Date(timeIntervalSince1970: 0), launched: false,
+            notStarted: reason)
+        let text = DoctorCommand.stateLines(state).joined(separator: "\n")
+        #expect(!text.contains("succeeded"))
+        #expect(text.contains("built at"))
+        #expect(text.contains("but not started: " + reason))
+
+        // 起こせた回・`launched` を持たない古い記録は、従来どおり
+        state.lastBuild = DoctorCommand.LastBuild(
+            ok: true, at: Date(timeIntervalSince1970: 0), launched: true)
+        #expect(DoctorCommand.stateLines(state).joined().contains("succeeded at"))
+        state.lastBuild = DoctorCommand.LastBuild(ok: true, at: Date(timeIntervalSince1970: 0))
+        #expect(DoctorCommand.stateLines(state).joined().contains("succeeded at"))
+    }
+
+    /// 記録 (JSON) から読んで、理由の頭が行まで届く。**読み手が `launched` を読み落とした
+    /// 日に落ちる** — 行を組む側だけを見ると、記録を読む口の取りこぼしを見逃す。
+    @Test("watch が置いた起こせなかった回の記録を、doctor が理由つきで読む")
+    func theLastBuildIsReadWithItsLaunchedFlag() throws {
+        let work = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let reason = "Cannot start sketch: permission denied"
+        let report = BuildReport.notStarted(
+            reason: reason, buildOutput: "[1/1] Compiling…", stamp: nil,
+            configuration: "debug",
+            timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+        let status = BuildReport.statusURL(under: work)
+        try AtomicFile.writeJSON(report, to: status)
+
+        let last = try #require(DoctorCommand.lastBuild(under: work))
+        #expect(last.launched == false)
+        #expect(last.notStarted == reason)
+        let line = DoctorCommand.lastBuildLine(last)
+        #expect(!line.contains("succeeded"))
+        #expect(line.contains(reason))
+    }
+
+    /// **理由の欄を持たない古い記録の最初の行を、理由と読まない。** 欄ができる前の記録は、本文の頭が
+    /// 理由ではなく作り直しの出力で、「but not started: Building for debugging...」と断定すると
+    /// 誤りになる。理由が書かれていないことを言い、出力の在処を示す。
+    @Test("理由を持たない古い起こせなかった記録は、理由を断定せず出力の在処を言う")
+    func anOldNotStartedRecordDoesNotInventAReason() throws {
+        let work = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let status = BuildReport.statusURL(under: work)
+        try FileManager.default.createDirectory(
+            at: status.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let old =
+            #"{"schemaVersion":1,"ok":true,"status":0,"launched":false,"configuration":"debug","#
+            + #""output":"Building for debugging...\n\nBuild complete!","timings":{"buildMs":1}}"#
+        try Data(old.utf8).write(to: status)
+
+        let last = try #require(DoctorCommand.lastBuild(under: work))
+        #expect(last.launched == false)
+        #expect(last.notStarted == nil)
+        let line = DoctorCommand.lastBuildLine(last)
+        #expect(!line.contains("Building for debugging"), "出力の最初の行を理由と読んでいる")
+        #expect(!line.contains("succeeded"))
+        #expect(line.contains("but not started"))
+        #expect(line.contains("no reason"))
+        #expect(line.contains(BuildReport.statusRelativePath))
+    }
+
+    /// **作り直しの失敗ではない記録を「failed」と言わない。** 見張りを終えたときの最後の記録は
+    /// `ok: false` だが、本文の頭が失敗ではないと名乗っている (#1147)。普通の失敗は従来どおり。
+    @Test("見張りを終えたときの記録は、作り直しの失敗と言わない")
+    func aStoppedRebuildIsNotCalledAFailure() throws {
+        for (output, expected) in [
+            (WatchSession.stoppedRebuildNotice, BuildReport.Interruption.rebuildStopped),
+            (WatchSession.notStartedNotice, BuildReport.Interruption.beforeFirstBuild),
+        ] {
+            let work = try Self.emptyDirectory()
+            defer { try? FileManager.default.removeItem(at: work) }
+            let report = BuildReport.failed(
+                status: 130, output: output, stamp: nil, configuration: "debug",
+                timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+            try AtomicFile.writeJSON(report, to: BuildReport.statusURL(under: work))
+
+            let last = try #require(DoctorCommand.lastBuild(under: work))
+            #expect(last.interruption == expected)
+            let line = DoctorCommand.lastBuildLine(last)
+            #expect(!line.contains("failed"), "失敗ではない記録を failed と言っている: \(line)")
+            #expect(line.contains("not a build failure"))
+        }
+
+        // 普通の失敗は、従来どおり failed
+        let work = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let broken = BuildReport.failed(
+            status: 1, output: "error: boom", stamp: nil, configuration: "debug",
+            timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+        try AtomicFile.writeJSON(broken, to: BuildReport.statusURL(under: work))
+        let last = try #require(DoctorCommand.lastBuild(under: work))
+        #expect(last.interruption == nil)
+        #expect(DoctorCommand.lastBuildLine(last).contains("failed at"))
+    }
+
     /// #464 と同じ状況 — 作ったばかりで区画がまだ無い。**出力を読むだけでそこへ到達できる。**
     @Test("区画が無い状況が、出力から読み取れる")
     func missingFacetsAreVisible() throws {

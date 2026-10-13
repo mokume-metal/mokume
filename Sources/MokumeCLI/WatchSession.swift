@@ -428,9 +428,9 @@ final class WatchSession {
         let stamp = await takeStamp()
         guard !stopRequested else {
             return finish(
-                BuildReport(
-                    ok: false, status: 128 + SIGINT, output: Self.notStartedNotice,
-                    stamp: lastStamp, configuration: configurationName, launched: false,
+                .failed(
+                    status: 128 + SIGINT, output: Self.notStartedNotice, stamp: lastStamp,
+                    configuration: configurationName,
                     timings: .init(detectMs: nil, buildMs: 0, relaunchMs: nil)))
         }
         return await rebuildAndReplace(stamp: stamp, initial: true)
@@ -638,9 +638,9 @@ final class WatchSession {
             let status =
                 running.flatMap { $0.isRunning ? nil : ChildEnding(of: $0).shellStatus }
                 ?? (128 + SIGINT)
-            let report = BuildReport(
-                ok: false, status: status, output: Self.stoppedRebuildNotice, stamp: self.lastStamp,
-                configuration: self.configurationName, launched: false,
+            let report = BuildReport.failed(
+                status: status, output: Self.stoppedRebuildNotice, stamp: self.lastStamp,
+                configuration: self.configurationName,
                 timings: .init(
                     detectMs: nil,
                     buildMs: self.rebuildStartedAt.map { (self.hooks.now() - $0) * 1000 } ?? 0,
@@ -967,9 +967,9 @@ final class WatchSession {
             let failure = CommandFailure.cannotLaunch(
                 tool: product, place: directory.path, reason: reason)
             return finish(
-                BuildReport(
-                    ok: true, status: 0, output: Self.notLaunched(failure.message, rebuilt.output),
-                    stamp: stamp, configuration: configurationName, launched: false,
+                .notStarted(
+                    reason: failure.message, buildOutput: rebuilt.output, stamp: stamp,
+                    configuration: configurationName,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
 
@@ -981,10 +981,10 @@ final class WatchSession {
             // **走っているものは落とさない。** 直前の版が動き続けるのが、
             // 作り直しが失敗したときに最も助かる振る舞いである
             return finish(
-                BuildReport(
-                    ok: false, status: rebuilt.status,
+                .failed(
+                    status: rebuilt.status,
                     output: unbuiltNotice(rebuilt) ?? rebuilt.output, stamp: stamp,
-                    configuration: configurationName, launched: false,
+                    configuration: configurationName,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
 
@@ -996,10 +996,9 @@ final class WatchSession {
         // 起こせなかった回と見分けが付かない
         func notStartedForStopping() -> BuildReport {
             finish(
-                BuildReport(
-                    ok: true, status: 0,
-                    output: Self.notLaunched(Self.stopRequestedNotice, rebuilt.output), stamp: stamp,
-                    configuration: configurationName, launched: false,
+                .notStarted(
+                    reason: Self.stopRequestedNotice, buildOutput: rebuilt.output, stamp: stamp,
+                    configuration: configurationName,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
         guard !stopRequested else { return notStartedForStopping() }
@@ -1042,14 +1041,20 @@ final class WatchSession {
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
         awaitingPromotion = overlapsGenerations && child != nil
 
+        let timings = BuildReport.Timings(
+            detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)
+        let report: BuildReport =
+            if let launchFailure {
+                .notStarted(
+                    reason: launchFailure.message, buildOutput: rebuilt.output, stamp: stamp,
+                    configuration: configurationName, timings: timings)
+            } else {
+                .launched(
+                    output: rebuilt.output, stamp: stamp, configuration: configurationName,
+                    timings: timings)
+            }
         return finish(
-            BuildReport(
-                ok: true, status: 0,
-                output: launchFailure.map { Self.notLaunched($0.message, rebuilt.output) }
-                    ?? rebuilt.output,
-                stamp: stamp, configuration: configurationName, launched: child != nil,
-                timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)),
-            firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
+            report, firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
     }
 
     /// 前の子を止めている間に、作り直しを止める・見張りを終える頼みが来ていないかを見る。
@@ -1097,21 +1102,17 @@ final class WatchSession {
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由。
     ///
     /// **起こせなかった回と言葉を分ける** (#2521)。どちらも `ok: true, launched: false` で、
-    /// 違いは本文にしか出ない。要約 (``BuildReport/summary``) もこれで始まる本文を見て言い分ける。
+    /// 違いは理由にしか出ない。要約 (``BuildReport/summary``) もこの理由を見て言い分ける。
     static var stopRequestedNotice: String { BuildReport.stopRequestedNotice }
 
     /// 起こさなかった (起こせなかった) 理由を頭に置き、作り直しの出力を後に続ける。
     ///
     /// **理由を先に置き、最初の空行で区切る。** 作り直しの出力は長く、末尾に置いた理由は
     /// 読まれない。理由は空行を含まない (複数行のことはある・`placeUnusable` は 2 行) ので、
-    /// 最初の空行までが理由になる (``notLaunchedReason(of:)``・schema の `output` の説明)。
+    /// 最初の空行までが理由になる (schema の `output` の説明)。**組むのは
+    /// ``BuildReport/notStarted(reason:buildOutput:stamp:configuration:timings:)`` だけである。**
     static func notLaunched(_ reason: String, _ buildOutput: String) -> String {
         buildOutput.isEmpty ? reason : reason + "\n\n" + buildOutput
-    }
-
-    /// ``notLaunched(_:_:)`` で組んだ本文から、理由 (最初の空行の前) を取り出す。
-    static func notLaunchedReason(of output: String) -> String {
-        output.range(of: "\n\n").map { String(output[..<$0.lowerBound]) } ?? output
     }
 
     /// 前の版がまだ走っていて、画面に出ているか。**終われと言われた後は数えない。**
