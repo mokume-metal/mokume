@@ -13,6 +13,7 @@ extension Canvas {
     /// **この環境に無い名前は効かない。** 名前を取り違えても別の書体が返るだけで
     /// 気付けないので、無い名前は警告して指定を変えない。
     public func textFont(_ name: String) {
+        let name = Typeface.canonicalName(name)
         guard Typeface.exists(name: name) else {
             warnMissingFontOnce(name)
             return

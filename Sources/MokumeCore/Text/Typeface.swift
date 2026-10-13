@@ -78,15 +78,21 @@ final class Typeface {
     /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
     var placed: [Unicode.Scalar: PlacedGlyph] = [:]
 
+    /// 頼まれた太さ・傾きの面を、書体が持っていなかったか ([#2444])。持っていなければ ``base`` は
+    /// 元の面か、引けた片方の性質だけの面で、それを知らせるのは書体を作らせた側 (`Canvas`) である。
+    ///
+    /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
+    let lacksRequestedStyle: Bool
+
     init(request: TypefaceRequest) {
         self.request = request
-        self.base = Self.makeFont(request)
+        (self.base, self.lacksRequestedStyle) = Self.makeFont(request)
         self.ascent = Float(CTFontGetAscent(base))
         self.descent = Float(CTFontGetDescent(base))
     }
 
-    /// 名前と大きさと太さから書体を作る。
-    private static func makeFont(_ request: TypefaceRequest) -> CTFont {
+    /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、引けた面と「無かった」を返す。
+    private static func makeFont(_ request: TypefaceRequest) -> (font: CTFont, lacksStyle: Bool) {
         let size = CGFloat(request.size)
         let base: CTFont
         if let name = request.name {
@@ -100,20 +106,58 @@ final class Typeface {
         var traits: CTFontSymbolicTraits = []
         if request.style == .bold || request.style == .boldItalic { traits.insert(.traitBold) }
         if request.style == .italic || request.style == .boldItalic { traits.insert(.traitItalic) }
-        guard !traits.isEmpty else { return base }
-        return CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits) ?? base
+        guard !traits.isEmpty else { return (base, false) }
+        // **写しが返っても、頼んだ面とは限らない。** 面が無いとき、nil を返す書体もあれば、元の
+        // 面や片方の性質だけの面を返す書体もある (Kefa III の斜体は `KefaIII-Regular`、太斜体は
+        // `KefaIII-Bold`)。返った面の性質で見る。引けた面 (太字だけの面など) はそのまま使う
+        guard let styled = CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits)
+        else { return (base, true) }
+        return (styled, !CTFontGetSymbolicTraits(styled).contains(traits))
+    }
+
+    /// 書体の名前を、CoreText に渡す綴りへ直す。**濁点を分けた綴り (NFD) を合わせた綴り (NFC) に
+    /// する** ([#2444]) — CoreText の名前の索引は合わせた綴りで、`ヒ` + 濁点のように分けて
+    /// 綴った名前 (ファイル名やコピーした文字列で起きる) は引けない。
+    ///
+    /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
+    static func canonicalName(_ name: String) -> String {
+        name.precomposedStringWithCanonicalMapping
     }
 
     /// その名前の書体がこの環境にあるか。
     ///
     /// **無い名前を渡しても書体は返ってくる** — この環境は黙って別の書体へ倒すので、
     /// 返ってきた書体の名前と突き合わせないと「指定が効かなかった」ことに気付けない。
+    ///
+    /// **フルネームと各言語の名前は、CoreText に名前で探させて確かめる** ([#2444])。
+    /// `ヒラギノ角ゴシック W3`・`Helvetica Neue Bold` は、返った書体のファミリー名とも
+    /// PostScript 名とも一致しない。返った書体の地域化した名前と比べると、比べられるのは
+    /// いまの表示言語の名前 1 つだけで、表示言語によって在る名前を断ってしまう。名前を必須に
+    /// して探させれば、無い名前では何も見つからず、CoreText の名前の索引に載った名前は表示言語に
+    /// 依らず見つかる。索引に載らない名前 (後から入れた書体の表示名など) は、どの経路でも引けない。
+    ///
+    /// **`.` で始まる名前は探させない。** システムの内部名 (`.SFNS-Regular` など) は、CoreText が
+    /// 別の書体へ差し替えたうえで「見つかった」と答えるので、名前の一致だけで決める。
+    ///
+    /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
     static func exists(name: String) -> Bool {
         let font = CTFontCreateWithName(name as CFString, 12, nil)
         let family = CTFontCopyFamilyName(font) as String
         let postScript = (CTFontCopyPostScriptName(font) as String?) ?? ""
-        return family.compare(name, options: .caseInsensitive) == .orderedSame
+        if family.compare(name, options: .caseInsensitive) == .orderedSame
             || postScript.compare(name, options: .caseInsensitive) == .orderedSame
+        {
+            return true
+        }
+        guard !name.hasPrefix(".") else { return false }
+        let wanted = CTFontDescriptorCreateWithNameAndSize(name as CFString, 12)
+        let mandatory: Set<String> = [kCTFontNameAttribute as String]
+        guard
+            let found = CTFontDescriptorCreateMatchingFontDescriptor(wanted, mandatory as CFSet),
+            let foundName = CTFontDescriptorCopyAttribute(found, kCTFontNameAttribute) as? String
+        else { return false }
+        // 見つかった書体が、名前で引いた書体そのものであること
+        return foundName == postScript
     }
 
     /// 1 文字ぶんを引き当てる。字形が無ければ `nil`。
