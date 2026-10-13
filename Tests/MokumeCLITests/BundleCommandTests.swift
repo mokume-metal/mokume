@@ -475,6 +475,72 @@ struct BundleCommandTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
     }
 
+    /// **`codesign` が無いことを、署名の失敗と取り違えない** (#2483・#2575)。`env` 越しに起こす
+    /// ので、`PATH` に無い回は `env` が 127 で終わる。それを「Signing failed (exit code 127)」と
+    /// 名乗ると、Xcode の道具を入れ直す方へ向かわず、署名の中身を疑わせる (#1157・#2314 の逆向き)。
+    @Test("codesign が PATH に無ければ、署名の失敗ではなく codesign が無いと名乗る")
+    func aMissingCodesignIsAMissingTool() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+
+        #expect(throws: CommandFailure.toolchainMissing("codesign")) {
+            try BundleCommand.sign(app, as: nil, environment: ["PATH": "/nonexistent"])
+        }
+    }
+
+    /// 裏側。`codesign` が起きて 0 以外で終わった回は、いままでどおり署名の失敗である。
+    @Test("codesign が起きて失敗したときは、いままでどおり署名の失敗と名乗る")
+    func aFailingCodesignIsStillASigningFailure() {
+        let nowhere = URL(
+            fileURLWithPath: "/nonexistent-\(UUID().uuidString)/Demo.app", isDirectory: true)
+        let failure = #expect(throws: CommandFailure.self) {
+            try BundleCommand.sign(nowhere, as: nil)
+        }
+        guard case .codesignFailed(let status) = failure else {
+            Issue.record("署名の失敗と名乗らなかった: \(String(describing: failure))")
+            return
+        }
+        #expect(status != 0 && status != 127)
+    }
+
+    /// **道具立てが答えなかった回を、宣言の不備と名乗らない** (#2483)。`dump-package` は
+    /// 宣言を道具立てが読めない (`Package.swift` が壊れている) と 0 以外で終わり、`bundle` は
+    /// それを「Package.swift が実行ファイルを宣言していない」と名乗っていた。打ったコマンドと
+    /// 終了コードを名乗る形 (`binPath` の #2316 と同じ) にする。
+    @Test("宣言を道具立てが読めなかった回は、宣言に実行ファイルが無いとは名乗らない")
+    func anUnreadableManifestIsTheToolchainsFailureNotAMissingProduct() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "this is not a manifest\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try #"{"name": "Demo", "identifier": "org.example.demo", "version": "0.1.0"}"#.write(
+            to: root.appendingPathComponent(AppIdentity.fileName), atomically: true, encoding: .utf8)
+
+        let thrown = #expect(throws: CommandFailure.self) {
+            try BundleCommand.run([root.path])
+        }
+        guard let failure = thrown, case .toolchainFailed(let command, let status) = failure else {
+            Issue.record("道具立ての失敗と名乗らなかった: \(String(describing: thrown))")
+            return
+        }
+        #expect(command == "swift package dump-package")
+        #expect(status != 0)
+        #expect(!failure.message.contains("declares an executable"))
+    }
+
+    /// 署名の前まで組んだ包み (本物の Mach-O を主実行ファイルにする)。
+    private func makeApplicationToSign(in root: URL) throws -> URL {
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let executable = bin.appendingPathComponent("demo")
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: "/usr/bin/true"), to: executable)
+        return try BundleCommand.assemble(
+            executable: executable, identity: identity, minimumSystemVersion: "26.0",
+            into: root.appendingPathComponent("out", isDirectory: true))
+    }
+
     /// 本物の Mach-O を主実行ファイルにした包みを組んで、`sign` を通す。
     private func makeSignedApplication(
         identity signature: String?, entitlements: [String: Bool],
@@ -553,7 +619,7 @@ struct BundleCommandTests {
 
     /// **name に `/` があれば、組み立ての前に止まる** ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
     /// 中身の無い `Package.swift` なので、名乗りの段を越えていれば `dump-package` で別の失敗
-    /// (`noExecutable`) になる。`../victim` は 2 回打っても、隣の `victim.app` を消さない。
+    /// (`toolchainFailed`) になる。`../victim` は 2 回打っても、隣の `victim.app` を消さない。
     @Test("name に / があれば、ビルドへ進まずに止まり、bundle/ の下にも隣にも触れない")
     func bundlingStopsBeforeBuildingWithASlashInTheName() throws {
         let root = try makeWorkspace()

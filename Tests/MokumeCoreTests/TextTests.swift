@@ -407,6 +407,24 @@ struct TextTests {
         #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Helvetica")
     }
 
+    /// CoreText の名前の索引に載らない名前 (書体の `name` 表にある別の言語の名前) も、`textFont` は
+    /// 面に解く (#2563)。macOS 同梱の Verdana の太字が持つスペイン語の名前で、前提は頭で確かめる。
+    /// 表示言語に依る例 (`ヒラギノ角ゴ 簡体中文 W3`) は、英語表示の機械で赤くなるので使わない。
+    @Test("索引に載らない各言語の名前でも、書体を指定でき、警告が出ない")
+    func aNameMissingFromTheIndexIsTakenByTextFont() throws {
+        let name = "Verdana Negrita"
+        try #require(
+            Self.postScriptName(resolving: name) != "Verdana-Bold",
+            "前提: この環境の CoreText の索引は \(name) を Verdana-Bold に引かない")
+        try #require(
+            Self.postScriptName(resolving: "Verdana-Bold") == "Verdana-Bold", "前提: この環境に Verdana-Bold がある")
+        let canvas = try makeCanvas()
+        canvas.textFont("Courier")
+        canvas.textFont(name)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Verdana-Bold")
+        #expect(!canvas.warnings.hasWarned(.missingFont), "\(name) を無いと断った")
+    }
+
     /// その書体が、その太さ・傾きの面を持っているか。被検査の `Typeface` を通さない。
     ///
     /// **写しが返っても、面があるとは限らない。** `CTFontCreateCopyWithSymbolicTraits` は、

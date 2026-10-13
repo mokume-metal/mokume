@@ -136,9 +136,12 @@ final class WatchSession {
                         // **起こせなかった理由を捨てない** (#2521)。読み分けは `run` の口と同じ
                         // 1 つを使う — 場所が使えないのか・走らせるものが無いのか・在るのに
                         // 起こせないのか (#2314)
+                        //
+                        // **消えた、と名乗ってよいのは、渡される実行ファイルが作り直しの直後に建てた
+                        // ものだけだから** (#2522・`RunCommand.launch` の前提と同じ)
                         throw RunCommand.launchFailure(
                             of: process, error: error,
-                            executableMissing: .noExecutable(path: executable.path))
+                            executableMissing: .executableVanished(path: executable.path))
                     }
                     return process
                 },
@@ -155,7 +158,7 @@ final class WatchSession {
     }
 
     /// 子を止めた結果。
-    enum StopOutcome: Equatable {
+    nonisolated enum StopOutcome: Equatable, Sendable {
         /// 居なかった (まだ起こしていない・既に死んでいた)。
         case notRunning
         /// 頼んだら止まった。
@@ -244,6 +247,16 @@ final class WatchSession {
     private(set) var child: Process? {
         didSet { hasNamedDeparture = false }
     }
+
+    /// 止めている最中の ``child``。**死んでから ``child`` を外すまでの間、``departed()`` が
+    /// 「勝手に消えた」と名乗らないための印である** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+    private var stoppingChild: Process?
+
+    /// 作り直し (`hooks.rebuild`) の中か。**止められる作り直しは、ここに居る間だけである。**
+    ///
+    /// ``isRebuilding`` は子の差し替えまで含めて立つので、差し替えの最中に作り直しを止めようと
+    /// すると、走っている作り直しが無いのに「止めた」記録が建ち終えた回に付く。
+    private var isBuilding = false
 
     /// 退役待ちの子。**画面が新しい世代へ入れ替わるまで、走らせておく。**
     ///
@@ -357,6 +370,14 @@ final class WatchSession {
         self.stopTimeout = stopTimeout
         self.finishTimeout = finishTimeout
     }
+
+    /// 見張りを終える手続き (``WatchCommand/finish(_:)``) がどこまで進んだか。
+    ///
+    /// **終わりの経路は 2 つある** (巡回を抜けるとき・道具立ての終了)。どちらからも、止める待ちを
+    /// 窓を開いたまま (main actor を塞がずに) 済ませてから抜けるので、2 度目の呼び手は
+    /// 済んだことを知る必要がある ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+    enum FinishStage { case idle, running, done }
+    var finishStage = FinishStage.idle
 
     /// 世代を待っているか。
     ///
@@ -493,15 +514,20 @@ final class WatchSession {
     /// ([#1103](https://github.com/mokume-metal/mokume/issues/1103))。
     ///
     /// **道具が自分で止めた回は返らない。** 終わるときも保存による差し替えも ``stop()``
-    /// を通り、そこは必ず ``child`` を `nil` にする。だから**「子は居るのに走っていない」
-    /// だけが、誰も頼んでいない消え方**である。
+    /// を通り、そこは止め終えたら ``child`` を `nil` にする。止めている最中 (待つあいだは
+    /// 子が死んでも ``child`` が残る) は ``stoppingChild`` と止めている子の一覧で弾く。だから
+    /// **「子は居るのに走っていない」だけが、誰も頼んでいない消え方**である。
     ///
     /// **1 度きりなのは、巡回が 0.25 秒ごとに回るからである。** 消えた状態はそのまま続く
     /// ので、印を持たないと同じ 1 行を毎秒 4 回出し続ける。印は子が入れ替われば下りる。
     ///
     /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。
     func departed() -> Departure? {
-        guard let gone = child, !gone.isRunning, !hasNamedDeparture else { return nil }
+        // **道具が止めている最中の子は、消えたと名乗らない。** 止める待ちが main actor を塞がなく
+        // なったので、子が死んでから ``child`` を外すまでの間に巡回が来る (#2576)
+        guard let gone = child, !gone.isRunning, !hasNamedDeparture, gone !== stoppingChild,
+            !isBringingDown(gone)
+        else { return nil }
         hasNamedDeparture = true
         return Departure(
             status: gone.terminationStatus, wasSignalled: gone.terminationReason == .uncaughtSignal)
@@ -514,9 +540,14 @@ final class WatchSession {
     /// 保存のたびに固まる**: 差し替えもこの経路を通るからである
     /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
     ///
+    /// **待つあいだ main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+    /// 応えない子では最大 3.5 秒かかるので、main の上で眠って待つと、保存のたびに窓の描き直しも
+    /// × の問いも止まる。**戻るのは止め終えてからである** — 止めてから次の子を起こす順序は
+    /// 呼ぶ側が持つ。
+    ///
     /// - Returns: 3 通りの結果。呼ぶ側はそれぞれを別の出来事として名乗れる。
     @discardableResult
-    func stop() -> StopOutcome { stop(timeout: stopTimeout) }
+    func stop() async -> StopOutcome { await stop(timeout: stopTimeout) }
 
     /// 見張りを**終えるときに**、走らせているものを終わらせる。
     ///
@@ -526,12 +557,46 @@ final class WatchSession {
     ///
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     @discardableResult
-    func end() -> StopOutcome { stop(timeout: finishTimeout) }
+    func end() async -> StopOutcome { await stop(timeout: finishTimeout) }
 
-    private func stop(timeout: TimeInterval) -> StopOutcome {
-        // **退役待ちも置いていかない。** 入れ替わりの合図が来る前に終わることがある
-        retireOutgoing()
-        let outcome = bringDown(child, timeout: timeout)
+    private func stop(timeout: TimeInterval) async -> StopOutcome {
+        // **退役待ちも置いていかない。** 入れ替わりの合図が来る前に終わることがある。子と並べて
+        // 止める — 順に待つと、退役の子が応えないあいだ現役の子へ頼みが届かない
+        let retiring = Task { await self.retireOutgoing() }
+        // **止めている間に、持っている子が入れ替わりうる。** 待つあいだ main actor を手放すので、
+        // 差し替えの途中に終わりが来ると同じ子を 2 つの口が止めに行く (止め方は 1 つに畳まれる)。
+        // 後から戻ったほうが、先に起こされた次の子を手放さないように、止めた相手を覚えておく
+        let leaving = child
+        stoppingChild = leaving
+        let outcome = await bringDown(leaving, timeout: timeout)
+        if child === leaving { child = nil }
+        if stoppingChild === leaving { stoppingChild = nil }
+        lastStop = outcome
+        _ = await retiring.value
+        // **誰が始めた止めでも、済むまで戻らない。** 戻った後は置いていく子が居ない、が
+        // 終えるときの約束である (#454)
+        await settle()
+        return outcome
+    }
+
+    /// 走っているものを、**待つあいだ main actor を塞いで**終わらせる。
+    ///
+    /// **プロセスが終わる直前の後始末だけが使う** (``WatchCommand/teardown(_:_:created:)``)。
+    /// 通常の終わり方 (巡回を抜けるとき・Dock やログアウトの終了) は ``end()`` を窓を開いた
+    /// まま済ませてから抜けるので、ここへは来ない。それでも置いていかないために、残って
+    /// いるものがあれば止め方は同じ手順 (``Shutdown``) で止める。検査の後始末にも使う。
+    ///
+    /// - Parameter timeout: 頼んでから強制終了へ進むまでの上限 (秒)。省けば ``stopTimeout``。
+    @discardableResult
+    func stopBlocking(timeout: TimeInterval? = nil) -> StopOutcome {
+        if isRebuilding, let build = hooks.stopRebuild() {
+            bringDownBlocking(build, timeout: stopTimeout, interrupting: true)
+        }
+        if let leaving = outgoing {
+            outgoing = nil
+            bringDownBlocking(leaving, timeout: stopTimeout)
+        }
+        let outcome = bringDownBlocking(child, timeout: timeout ?? stopTimeout)
         child = nil
         lastStop = outcome
         return outcome
@@ -549,26 +614,40 @@ final class WatchSession {
     /// 止めた」と名乗る** — 建っていない回を `output` で名乗った #1066 と同じ形で、
     /// 読み手が要るのは分岐する欄ではなく「なぜ絵が変わらないか」の本文である。
     ///
-    /// - Returns: 作り直していなければ `nil`。止めた子の結果は ``bringDown(_:)`` と同じ
+    /// - Returns: 作り直していなければ `nil`。止めた子の結果は ``bringDown(_:timeout:interrupting:)`` と同じ
     ///   分け方で、**`.notRunning` は「止めると決めたが、その瞬間に走っている `swift` が
     ///   無かった」** (作り直しは `swift` を何度か呼ぶ) — 次の 1 本は起こされない。
     @discardableResult
-    func stopRebuilding() -> StopOutcome? {
-        guard isRebuilding, stoppedReport == nil else { return nil }
+    func stopRebuilding() async -> StopOutcome? {
+        // **作り直しの中だけを止める。** 差し替えの最中 (作り直しは建ち終えている) に止めた記録を
+        // 書くと、建ち終えた回が「途中で止めた」ことになる。そこは差し替えの側が、終われと言われた
+        // ことを見て起こさずに抜ける (#2576)
+        guard isRebuilding, isBuilding, stoppedReport == nil, rebuildStop == nil else { return nil }
         let running = hooks.stopRebuild()
-        let outcome = bringDown(running, timeout: stopTimeout, interrupting: true)
-        // **終わっていない子の終了コードは読まない** (読むと例外で落ちる)。置いていった回と、
-        // 走っている子が無かった回は、止めた合図の慣習の値で書く
-        let status =
-            running.flatMap { $0.isRunning ? nil : $0.terminationStatus } ?? (128 + SIGINT)
-        let report = BuildReport.failed(
-            status: status, output: Self.stoppedRebuildNotice, stamp: lastStamp,
-            configuration: configurationName,
-            timings: .init(
-                detectMs: nil,
-                buildMs: rebuildStartedAt.map { (hooks.now() - $0) * 1000 } ?? 0,
-                relaunchMs: nil))
-        stoppedReport = finish(report)
+        // **止めている間に、作り直しが戻ってくる。** 止めた子は終了コードを持って戻るので、
+        // 記録を書き終える前に作り直しの続きが走ると、止めた記録を失敗で書き直してしまう
+        // (#1147)。待つあいだ main actor を手放すので、続きの側が ``rebuildStop`` を待てる形に
+        // しておく ([#2576](https://github.com/mokume-metal/mokume/issues/2576))
+        let stopping = Task { () -> StopOutcome in
+            let outcome = await self.bringDown(
+                running, timeout: self.stopTimeout, interrupting: true)
+            // **終わっていない子の終了コードは読まない** (読むと例外で落ちる)。置いていった回と、
+            // 走っている子が無かった回は、止めた合図の慣習の値で書く
+            let status =
+                running.flatMap { $0.isRunning ? nil : $0.terminationStatus } ?? (128 + SIGINT)
+            let report = BuildReport.failed(
+                status: status, output: Self.stoppedRebuildNotice, stamp: self.lastStamp,
+                configuration: self.configurationName,
+                timings: .init(
+                    detectMs: nil,
+                    buildMs: self.rebuildStartedAt.map { (self.hooks.now() - $0) * 1000 } ?? 0,
+                    relaunchMs: nil))
+            self.stoppedReport = self.finish(report)
+            return outcome
+        }
+        rebuildStop = stopping
+        let outcome = await stopping.value
+        rebuildStop = nil
         return outcome
     }
 
@@ -583,15 +662,47 @@ final class WatchSession {
     /// 退役待ちを止める。
     ///
     /// **何度呼んでもよい。** 入れ替わりの合図は窓ごとに来る (作品の窓とプレビューは独立に
-    /// 見ている) ので、同じ入れ替えで 2 度呼ばれる。
+    /// 見ている) ので、同じ入れ替えで 2 度呼ばれる。止めている最中に来た 2 度目は、同じ子を
+    /// 重ねて止めずに、止め終わるのを待って戻る (名乗りは最初の 1 度だけ)。
+    ///
+    /// **待つあいだ main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+    /// 合図は窓の側から main に来るので、ここで眠ると窓の描き直しがその間止まる。
     ///
     /// - Returns: 止めた結果。居なければ `nil` — **名乗るのは口の側**なので、期限に掛かった
     ///   ことを言うために返す (#732 の規律は差し替えの経路にも効く)。
     @discardableResult
-    func retireOutgoing() -> StopOutcome? {
-        guard let leaving = outgoing else { return nil }
-        outgoing = nil
-        return bringDown(leaving, timeout: stopTimeout)
+    func retireOutgoing() async -> StopOutcome? {
+        var outcome: StopOutcome?
+        if let leaving = outgoing, !isBringingDown(leaving) {
+            // **止め終えるまで ``outgoing`` を残す。** 外すと、待っている間の入力 (``send(_:)``) が
+            // まだ画面に出ている世代ではなく、次の世代へ届く
+            outcome = await bringDown(leaving, timeout: stopTimeout)
+            if outgoing === leaving { outgoing = nil }
+        }
+        // 止めている最中の他の口があれば、それが済むまで待つ (戻った後は、畳むはずの世代が居ない)
+        await settle()
+        return outcome
+    }
+
+    // MARK: - 子を止める
+
+    /// 止めている最中の子。**子ごとに 1 つの止め方に畳む。**
+    ///
+    /// 待つあいだ main actor を手放すので、同じ子を止める口が重なる — 差し替えの途中に終わりが
+    /// 来る・入れ替わりの合図が窓ごとに 2 度来る。重ねて `SIGTERM` を撃つと、後始末の最中の子が
+    /// もう 1 度後始末に入る。後から来た口は、先の止め方の結果を待つ。
+    private var shutdowns: [ObjectIdentifier: Task<StopOutcome, Never>] = [:]
+
+    /// 作り直しを止めている最中の仕事。**作り直しの続きは、これが済むまで結果を使わない。**
+    private var rebuildStop: Task<StopOutcome, Never>?
+
+    private func isBringingDown(_ process: Process) -> Bool {
+        shutdowns[ObjectIdentifier(process)] != nil
+    }
+
+    /// 止めている最中の子がすべて止まるまで待つ。
+    private func settle() async {
+        while let pending = shutdowns.values.first { _ = await pending.value }
     }
 
     /// 1 つの子を落とす。**期限を持つ。**
@@ -599,6 +710,17 @@ final class WatchSession {
     /// 呼び手が 3 つある (終わるとき・退役させるとき・作り直しを止めるとき) ので、判断は
     /// ここ 1 つに置く — 刻みの細かさも `StopOutcome` の分け方も、割れない。**期限だけは
     /// 呼び手が渡す** — 終わるときだけ、撮っていた動画を閉じ終えるまで待つ (#1219)。
+    ///
+    /// **待つのは main actor の外である** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+    /// 頼む (合図を撃つ) のはここ、main actor の上で済ませ、期限を数えて待つ仕事は切り離して走らせる —
+    /// main の上で眠ると、応えない子では最大 3.5 秒、窓の描き直しも × の問いも止まる。切り離す
+    /// 側で待つので、期限は main の込み具合に左右されない (``Hooks/rebuild`` が作り直しを
+    /// main の外で待つのと同じ分担)。
+    ///
+    /// **同じ子を止める口が重なったら、後から来た口は先の止め方に従う。** 先の期限で決着し、
+    /// 結果も先のものを受け取る — 差し替えの ``stop()`` (3 秒) の最中に ``end()`` が来ても、
+    /// 動画を閉じる分の延長は効かない。止める口が同期だった頃も、先の ``stop()`` が塞いでいる
+    /// 間に ``end()`` は呼べなかったので、順に 3 秒待ってからの終わりになり、結果は同じである。
     ///
     /// - Parameter timeout: 頼んでから、強制終了へ進むまでの上限 (秒)。``stopTimeout`` を
     ///   越える分を待つときは、越えた時点で ``willWaitForFinish`` を 1 度呼ぶ。
@@ -609,27 +731,93 @@ final class WatchSession {
     ///   配下が 1〜4.5 秒残った ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
     private func bringDown(
         _ running: Process?, timeout: TimeInterval, interrupting: Bool = false
-    ) -> StopOutcome {
+    ) async -> StopOutcome {
         guard let running, running.isRunning else { return .notRunning }
-        if interrupting { running.interrupt() } else { running.terminate() }
-        let first = min(timeout, stopTimeout)
-        if waitForExit(running, timeout: first) { return .terminated }
-        if timeout > first {
-            willWaitForFinish(timeout - first)
-            if waitForExit(running, timeout: timeout - first) { return .terminated }
+        let key = ObjectIdentifier(running)
+        if let pending = shutdowns[key] { return await pending.value }
+        // **頼むのは、ここで同期に済ませる。** 切り離す仕事が走り出すのを待つと、頼んだ後に
+        // 呼び手へ制御が戻る前に、別の口が同じ子を止めに入れる
+        let runner = ShutdownRunner(
+            Shutdown(
+                running, timeout: timeout, stopTimeout: stopTimeout, killGrace: Self.killGrace,
+                interrupting: interrupting))
+        let task = Task { () -> StopOutcome in
+            let outcome = await runner.run { remaining in
+                Task { @MainActor in self.willWaitForFinish(remaining) }
+            }
+            // **値を返す前に外す。** 待っていた口が戻ったとき、もう居ないものを待ち続けない
+            self.shutdowns[key] = nil
+            return outcome
         }
-        // **宛先を確かめてから撃つ。** 起動していない `Process` の番号は 0 で、
-        // `kill(0, …)` は**自分のプロセスグループごと**落とす。上の guard が弾いている
-        // 形だが、暗黙に頼らない
-        let pid = running.processIdentifier
-        if pid > 0, running.isRunning { kill(pid, SIGKILL) }
-        // **消えたことを確かめる。** 捕まえられない合図でも、割り込めない待ちに入って
-        // いるものは即座には消えない — 確かめずに名乗ると、置いていったものを
-        // 「止めた」と言うことになる (#732)
-        return waitForExit(running, timeout: Self.killGrace) ? .killed : .abandoned(pid: pid)
+        shutdowns[key] = task
+        return await task.value
     }
 
-    /// 終わるのを、期限まで待つ。
+    /// ``bringDown(_:timeout:interrupting:)`` の、main actor を塞ぐ版。
+    ///
+    /// **プロセスが終わる直前の後始末 (``stopBlocking(timeout:)``) だけが使う。** 手順は同じ
+    /// ``Shutdown`` で、待ち方だけが違う。
+    @discardableResult
+    private func bringDownBlocking(
+        _ running: Process?, timeout: TimeInterval, interrupting: Bool = false
+    ) -> StopOutcome {
+        guard let running, running.isRunning else { return .notRunning }
+        var shutdown = Shutdown(
+            running, timeout: timeout, stopTimeout: stopTimeout, killGrace: Self.killGrace,
+            interrupting: interrupting)
+        while true {
+            switch shutdown.poll(now: DispatchTime.now()) {
+            case .finished(let outcome): return outcome
+            case .extending(let remaining): willWaitForFinish(remaining)
+            case .waiting: break
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    /// ``Shutdown`` を、main actor の外で最後まで進める。
+    ///
+    /// **専用の待ち行列と時計の刻みで進める。** `Task.sleep` で回す形は、async の仕事を回す
+    /// 共有の枠 (協調スレッドプール) に載る — その枠が他の仕事で埋まっている間は刻みが遅れ、
+    /// 期限を越えて待つことになる。期限は子を落とすための数字なので、他の仕事の込み具合に
+    /// 左右されない足場に置く。
+    ///
+    /// **1 つの仕事だけが触る。** ``bringDown(_:timeout:interrupting:)`` が頼んだ手順を 1 度だけ
+    /// 渡し、刻みの中でだけ進める — 値は 2 つの隔離を渡るが、同時に 2 か所から触られることは無い。
+    private nonisolated final class ShutdownRunner: @unchecked Sendable {
+        private var shutdown: Shutdown
+
+        init(_ shutdown: Shutdown) { self.shutdown = shutdown }
+
+        /// - Parameter extending: 最初の期限を越えて、さらに待つと決めたときに呼ぶ (1 度だけ)。
+        ///   **待ち行列の上で呼ばれる** ので、main actor に用があれば呼ぶ側が渡す。
+        func run(extending: @escaping @Sendable (TimeInterval) -> Void) async -> StopOutcome {
+            await withCheckedContinuation { continuation in
+                let queue = DispatchQueue(label: "mokume.watch.shutdown", qos: .userInitiated)
+                let timer = DispatchSource.makeTimerSource(queue: queue)
+                // **細かく刻む。** 差し替えのときもここを通るので、粗いと保存の反映が
+                // そのぶん遅れて見える
+                timer.schedule(deadline: .now(), repeating: .milliseconds(5), leeway: .milliseconds(1))
+                timer.setEventHandler {
+                    switch self.shutdown.poll(now: DispatchTime.now()) {
+                    case .finished(let outcome):
+                        timer.cancel()
+                        continuation.resume(returning: outcome)
+                    case .extending(let remaining): extending(remaining)
+                    case .waiting: break
+                    }
+                }
+                timer.resume()
+            }
+        }
+    }
+
+    /// 子を止める手順。**待たずに進める。**
+    ///
+    /// 頼む → 期限まで待つ → (終えるときだけ) 後始末の分を延ばして待つ → 強制終了する →
+    /// 消えるのを待つ、の順で、``poll(now:)`` を呼ぶたびに 1 歩だけ進める。**待ち方 (眠るか・
+    /// 他の仕事へ手放すか) は呼ぶ側が決める** ので、同じ手順を main を塞ぐ版と塞がない版が
+    /// 分け持つ ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
     ///
     /// **期限は、眠っている間は進まない時計 (`DispatchTime`) で測る。** 壁時計 (`Date`)
     /// は機械が眠っている間も進むので、待っている最中に蓋を閉じて開けると、起きた瞬間に
@@ -643,20 +831,78 @@ final class WatchSession {
     /// 「実際にどれだけ待ったか」であって、記録に載る所要時間 (``Hooks/now``) ではない。
     /// 本番では両方とも眠りで進まない時計だが、検査が差し替えるのは後者だけである。
     ///
-    /// - Parameter timeout: 待つ上限 (秒)。
-    /// - Returns: 期限までに終わったか。
-    ///
     /// [#1940]: https://github.com/mokume-metal/mokume/issues/1940
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
-    private func waitForExit(_ child: Process, timeout: TimeInterval) -> Bool {
-        let deadline = DispatchTime.now() + timeout
-        while child.isRunning {
-            if DispatchTime.now() >= deadline { return false }
-            // **細かく刻む。** 差し替えのときもここを通るので、粗いと保存の反映が
-            // そのぶん遅れて見える
-            Thread.sleep(forTimeInterval: 0.005)
+    nonisolated struct Shutdown {
+        /// 1 歩進めた結果。
+        enum Poll: Equatable {
+            /// まだ待つ。
+            case waiting
+            /// 最初の期限を越えたので、さらにこの秒数まで待つ。**1 度だけ返す。**
+            case extending(TimeInterval)
+            /// 決着した。
+            case finished(StopOutcome)
         }
-        return true
+
+        private enum Phase {
+            /// 頼んだ。期限まで待つ。
+            case asked(until: DispatchTime)
+            /// 後始末の分を延ばして待つ (終えるときだけ)。
+            case extended(until: DispatchTime)
+            /// 強制終了した。消えるのを待つ。
+            case killed(until: DispatchTime, pid: Int32)
+        }
+
+        private let process: Process
+        private let extra: TimeInterval
+        private let killGrace: TimeInterval
+        private var phase: Phase
+
+        /// 頼む。**ここで合図を撃つ。**
+        init(
+            _ process: Process, timeout: TimeInterval, stopTimeout: TimeInterval,
+            killGrace: TimeInterval, interrupting: Bool, now: DispatchTime = .now()
+        ) {
+            if interrupting { process.interrupt() } else { process.terminate() }
+            let first = min(timeout, stopTimeout)
+            self.process = process
+            self.extra = timeout > first ? timeout - first : 0
+            self.killGrace = killGrace
+            self.phase = .asked(until: now + first)
+        }
+
+        /// 1 歩進める。**消えたことは、期限より先に見る** — 期限の瞬間に終わった子を落とさない。
+        mutating func poll(now: DispatchTime) -> Poll {
+            switch phase {
+            case .asked(let until):
+                if !process.isRunning { return .finished(.terminated) }
+                guard now >= until else { return .waiting }
+                guard extra > 0 else { return kill(now) }
+                phase = .extended(until: now + extra)
+                return .extending(extra)
+            case .extended(let until):
+                if !process.isRunning { return .finished(.terminated) }
+                guard now >= until else { return .waiting }
+                return kill(now)
+            case .killed(let until, let pid):
+                // **消えたことを確かめる。** 捕まえられない合図でも、割り込めない待ちに入って
+                // いるものは即座には消えない — 確かめずに名乗ると、置いていったものを
+                // 「止めた」と言うことになる (#732)
+                if !process.isRunning { return .finished(.killed) }
+                guard now >= until else { return .waiting }
+                return .finished(.abandoned(pid: pid))
+            }
+        }
+
+        private mutating func kill(_ now: DispatchTime) -> Poll {
+            // **宛先を確かめてから撃つ。** 起動していない `Process` の番号は 0 で、
+            // `kill(0, …)` は**自分のプロセスグループごと**落とす。呼ぶ側の guard が弾いている
+            // 形だが、暗黙に頼らない
+            let pid = process.processIdentifier
+            if pid > 0, process.isRunning { Darwin.kill(pid, SIGKILL) }
+            phase = .killed(until: now + killGrace, pid: pid)
+            return .waiting
+        }
     }
 
     private func rebuildAndReplace(stamp: String?, initial: Bool = false) async -> BuildReport {
@@ -685,6 +931,7 @@ final class WatchSession {
         let buildStarted = hooks.now()
         rebuildStartedAt = buildStarted
         let rebuilt: RunCommand.Rebuilt
+        isBuilding = true
         do throws(CommandFailure) {
             rebuilt = try await hooks.rebuild(directory)
         } catch {
@@ -696,6 +943,12 @@ final class WatchSession {
                 binPath: context.directory(under: directory), product: context.product)
         }
         let buildMs = (hooks.now() - buildStarted) * 1000
+        isBuilding = false
+
+        // **止めている最中なら、止め終えてから見る。** 止めた子は終了コードを持って戻るので、
+        // 記録を書き終える前に下を読むと、止めた記録が失敗で書き直される (#1147)。止める待ちが
+        // main actor を塞がなくなったので、続きが先に走りうる ([#2576](https://github.com/mokume-metal/mokume/issues/2576))
+        _ = await rebuildStop?.value
 
         // **途中で止めた回は、戻ってきた結果で何も決めない。** 止めた子の終了コードで
         // 失敗を書き直すと、止めた記録が「壊れていた」に化ける。子も起こさない — 止めるのは
@@ -738,13 +991,14 @@ final class WatchSession {
         //
         // **起こさなかった理由を本文の頭で名乗る** (#2521)。`launched: false` だけでは、
         // 起こせなかった回と見分けが付かない
-        guard !stopRequested else {
-            return finish(
+        func notStartedForStopping() -> BuildReport {
+            finish(
                 .notStarted(
                     reason: Self.stopRequestedNotice, buildOutput: rebuilt.output, stamp: stamp,
                     configuration: configurationName,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
+        guard !stopRequested else { return notStartedForStopping() }
 
         let relaunchStarted = hooks.now()
         // **どの世代の合図か区別できる回だけ測る。** 前の世代がまだ乗り換わらずに生きて
@@ -755,11 +1009,17 @@ final class WatchSession {
         if overlapsGenerations {
             // **止めるのは、新しい世代が画面に出てからである** (#1142)。合図が来ないまま
             // 次の保存が来た回は、ここで必ず止める — 重ねるのは 1 世代だけである
-            retireOutgoing()
+            await retireOutgoing()
+            if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
+                return early
+            }
             outgoing = child
             child = nil
         } else {
-            stop()
+            await stop()
+            if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
+                return early
+            }
         }
         // **起こせなかった理由は記録の本文の頭へ載せる** (#2521)。作り直しの出力はその後に
         // 続ける — 建っていない回 (``unbuiltNotice(_:)``) と同じ形で、読み手は頭の行で
@@ -794,6 +1054,18 @@ final class WatchSession {
             report, firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
     }
 
+    /// 前の子を止めている間に、作り直しを止める・見張りを終える頼みが来ていないかを見る。
+    ///
+    /// **止める待ちが main actor を塞がなくなったので、その間に終わりが来うる**
+    /// ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。来ていたら次の子を起こさない —
+    /// 起こしても止める者がもう居ない (#454 の孤児と同じ形)。
+    ///
+    /// - Returns: 起こさずに抜けるなら、その回の記録。続けてよければ `nil`。
+    private func interruptedWhileStopping(notStarted: () -> BuildReport) -> BuildReport? {
+        if let stoppedReport { return stoppedReport }
+        return stopRequested ? notStarted() : nil
+    }
+
     /// 次の世代が画面へ乗り換わった。**新しい絵が出るまでを記録へ足し、退役待ちを畳む。**
     ///
     /// 合図は窓ごとに来る (作品の窓とプレビューは独立に見ている) ので、同じ入れ替えで
@@ -811,7 +1083,7 @@ final class WatchSession {
     ///
     /// - Returns: 退役待ちを止めた結果。**名乗るのは口の側**である (``retireOutgoing()``)。
     @discardableResult
-    func generationPromoted() -> StopOutcome? {
+    func generationPromoted() async -> StopOutcome? {
         // **時刻は退役より先に取る。** 退役は期限つきで子の終わりを待つので、後に取ると
         // 止める待ちが絵の出た時刻に乗る
         let now = hooks.now()
@@ -821,7 +1093,7 @@ final class WatchSession {
             report.timings.firstFrameMs = (now - since) * 1000
             finish(report)
         }
-        return retireOutgoing()
+        return await retireOutgoing()
     }
 
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由。
@@ -861,6 +1133,11 @@ final class WatchSession {
         // 始めたときの名前を持ち回ると、product を改名した回に**前の名前**で
         // 「建っていない」と言うことになる (#1067)
         guard let product = rebuilt.product else {
+            // **読み直して分かった理由があれば、それを名乗る** (#2575)。道具立てが答えなかった回を
+            // 「Package.swift を見よ」と言わない
+            if let failure = rebuilt.declarationFailure {
+                return "\(failure.message)\n\n\(rebuilt.output)"
+            }
             return """
                 Cannot find anything to run: \(directory.path)
                 Check that Package.swift declares an executable in products

@@ -449,7 +449,7 @@ struct WatchCommandTests {
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
         await session.start()  // launch が nil を返すので子は居ない
 
-        #expect(session.stop() == .notRunning)
+        #expect(await session.stop() == .notRunning)
     }
 
     /// **窓から頼まれても、印は 1 つのまま。** 合図の置き場が増えると「終われと言われたか」

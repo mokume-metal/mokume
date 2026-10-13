@@ -32,6 +32,8 @@ struct WatchSessionTests {
         /// その回が探した product の名前。**土台が持つ名前とは別に置ける** — 宣言が
         /// 変わった回に、どちらの名前で名乗るかを見るため (#1067)。
         var product: String? = "sketch"
+        /// 宣言を読み直したときに道具立てが答えなかった理由 (#2575)。
+        var declarationFailure: CommandFailure?
         /// 作り直しの最中に待たせる口。**既定は何もしない。**
         ///
         /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
@@ -67,7 +69,7 @@ struct WatchSessionTests {
                     return RunCommand.Rebuilt(
                         status: self.buildStatus, output: self.buildOutput,
                         executable: self.productBuilt ? bin : nil, binPath: directory,
-                        product: self.product)
+                        product: self.product, declarationFailure: self.declarationFailure)
                 },
                 launch: { _, _, stamp, rate throws(CommandFailure) in
                     self.launches += 1
@@ -295,7 +297,7 @@ struct WatchSessionTests {
         #expect(previous.isRunning == overlapping, "窓の有無で前の版の扱いが変わっていない")
         let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
         #expect(lines.contains(WatchCommand.holdingLine) == overlapping, "\(lines)")
-        session.end()
+        await session.end()
     }
 
     /// **作り直しは通ったが、成果物に実行ビットが無い** (#2521 の反証)。作り直しは実行できる
@@ -336,6 +338,35 @@ struct WatchSessionTests {
         let unbuilt = try #require(await session.tick())
         #expect(!unbuilt.ok)
         #expect(unbuilt.output.contains("was never built"))
+    }
+
+    /// **作り直しの後に宣言を読み直して道具立てが答えなかった回を、「Package.swift を見よ」と
+    /// 言わない** (#2575)。`product == nil` が「宣言に実行ファイルが無い」と「道具立てが答えなかった」を
+    /// 混ぜていた。理由があれば記録の本文の頭にそれを名乗り、無ければ従来どおり。
+    @Test("宣言を読み直せなかった回は、Package.swift を指さず、道具立てが答えなかったと名乗る")
+    func anUnansweredDeclarationIsNotAMissingProduct() async throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        await session.start()
+
+        let failure = CommandFailure.toolchainFailed(
+            command: "swift package dump-package", status: 1)
+        recorder.productBuilt = false
+        recorder.product = nil
+        recorder.declarationFailure = failure
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+        #expect(!report.ok)
+        #expect(report.output.hasPrefix(failure.message + "\n\n"), "理由が本文の頭に無い")
+        #expect(!report.output.contains("Package.swift"))
+
+        // 裏側: 理由が無ければ (宣言に実行ファイルが無い)、いままでどおり
+        recorder.declarationFailure = nil
+        recorder.stamp = "ccc"
+        let plain = try #require(await session.tick())
+        #expect(plain.output.contains("Cannot find anything to run"))
+        #expect(plain.output.contains("Package.swift"))
     }
 
     /// **`launched: false` の口はどれも理由を名乗る** (#2521)。終われと言われた後に作り直しが
@@ -395,7 +426,7 @@ struct WatchSessionTests {
 
         // 走らせるものが無い (裏側。いままでどおり)
         let absent = directory.appendingPathComponent("absent")
-        #expect(throws: CommandFailure.noExecutable(path: absent.path)) {
+        #expect(throws: CommandFailure.executableVanished(path: absent.path)) {
             try hooks.launch(absent, directory, nil, nil)
         }
     }
@@ -697,7 +728,7 @@ struct WatchSessionTests {
 
         var waits = 0
         session.willWaitForFinish = { _ in waits += 1 }
-        #expect(session.end() == .terminated)
+        #expect(await session.end() == .terminated)
         #expect(!child.isRunning)
         // **いつもの終わり方は無言のまま。** 素直に終わる子を待つ間は名乗らない
         #expect(waits == 0)
@@ -715,11 +746,11 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(child.isRunning)
 
-        let started = ProcessInfo.processInfo.systemUptime
-        #expect(session.stop() == .killed)
+        // **戻ってきたこと自体が、期限の効いている証拠である** — 期限が無ければ戻らない。戻るまでの
+        // 秒数は見ない: 待ちは main の外で期限を測るが、戻りは main を通るので、同じ走者の他の検査が
+        // main を数秒塞いでいる間は、期限どおり落とした後でも戻りが遅れる (#2576)
+        #expect(await session.stop() == .killed)
         #expect(!child.isRunning)
-        // 数字は「戻ってきた」ことの確認でしかない — 期限が効いていなければ戻らないので
-        #expect(ProcessInfo.processInfo.systemUptime - started < 2)
     }
 
     /// **差し替えも同じ経路を通る。** 期限が無いと、終われないだけでなく**保存のたびに**
@@ -733,7 +764,7 @@ struct WatchSessionTests {
         await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.tick()
         #expect(!first.isRunning, "前の子が残っている")
@@ -749,9 +780,21 @@ struct WatchSessionTests {
     /// (``nudge(_:)``) が 1 行渡すからである — 1 行で終わる子だと、**頼まれていない子まで**
     /// 自分から終わって `.terminated` に見える。管が閉じれば `read` が偽を返して終わるので、
     /// 置き去りにされても生き続けない。
-    private func hooksClosingSlowly(ready: Ready) -> WatchSession.Hooks {
+    ///
+    /// - Parameter go: これが在るまで後始末に入らない (印は検査が置く)。**時間で終わらせない**
+    ///   — 待ちが main の外で期限を測るようになり、同じ走者の他の検査が数秒止まっている間に
+    ///   子が自分で終わると、「長く待つ間を名乗る」手前で決着してしまう (#2576)。
+    private func hooksClosingSlowly(ready: Ready, after go: URL) -> WatchSession.Hooks {
         hooks(
-            running: "trap 'sleep 0.6; exit 0' TERM; echo ready; while read line; do :; done",
+            running: "trap 'while [ ! -e \"\(go.path)\" ]; do sleep 0.02; done; sleep 0.6; exit 0' TERM; "
+                + "echo ready; while read line; do :; done",
+            ready: ready)
+    }
+
+    /// 後始末が終わらない子。**期限で落とすしかない。**
+    private func hooksNeverFinishingCleanup(ready: Ready) -> WatchSession.Hooks {
+        hooks(
+            running: "trap 'while :; do sleep 0.05; done' TERM; echo ready; while read line; do :; done",
             ready: ready)
     }
 
@@ -782,9 +825,10 @@ struct WatchSessionTests {
     @Test("見張りを終えるときは、後始末に時間のかかる子も待ってから、待っていると 1 度名乗る")
     func waitsForTheChildToFinishWhenWatchingEnds() async throws {
         let ready = Ready()
+        let go = try makeDirectory().appendingPathComponent("go")
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 30)
+            hooks: hooksClosingSlowly(ready: ready, after: go), stopTimeout: 0.2, finishTimeout: 30)
         await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
@@ -795,10 +839,12 @@ struct WatchSessionTests {
         // どちらかである (``nudge(_:)``)
         session.willWaitForFinish = {
             waits.append($0)
+            // **名乗られてから、後始末に入らせる。** 名乗りより先に子が終わる順は作れない
+            try? Data().write(to: go)
             nudge(child)
         }
 
-        #expect(session.end() == .terminated, "後始末の途中で落とした")
+        #expect(await session.end() == .terminated, "後始末の途中で落とした")
         #expect(!child.isRunning)
         #expect(waits.count == 1, "長く待つ間を名乗っていない (または 2 度以上名乗った)")
         // 名乗るのは「この先さらに待つ上限」で、全体の上限から最初の待ちを引いたもの
@@ -813,13 +859,13 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
+            hooks: hooksNeverFinishingCleanup(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
         var waits = 0
         session.willWaitForFinish = { _ in waits += 1 }
         await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.tick()
         #expect(!first.isRunning, "前の子が残っている")
@@ -917,7 +963,7 @@ struct WatchSessionTests {
         await session.start()
         ready.waitForLast()
 
-        #expect(session.stop() == .terminated)
+        #expect(await session.stop() == .terminated)
         #expect(session.departed() == nil)
     }
 
@@ -931,7 +977,7 @@ struct WatchSessionTests {
             hooks: hooks(ignoringTermination: false, ready: ready), stopTimeout: 1)
         await session.start()
         ready.waitForLast()
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.tick()
         ready.waitForLast()
@@ -947,7 +993,7 @@ struct WatchSessionTests {
     func overlappingKeepsTheOutgoingChildAlive() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -959,7 +1005,7 @@ struct WatchSessionTests {
         #expect(leaving.isRunning, "画面が入れ替わる前に止めている")
         #expect(session.child !== leaving)
 
-        session.retireOutgoing()
+        await session.retireOutgoing()
         waitUntilGone(leaving)
         #expect(!leaving.isRunning, "入れ替わりの合図で止まっていない")
         #expect(session.outgoing == nil)
@@ -971,7 +1017,7 @@ struct WatchSessionTests {
     func theOutgoingChildIsStoppedAtTheNextSwap() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -996,7 +1042,7 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; read line", ready: ready), stopTimeout: 0.5)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -1012,7 +1058,7 @@ struct WatchSessionTests {
     func inputGoesToTheGenerationOnScreen() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -1075,7 +1121,7 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; exec sleep 30", ready: ready), stopTimeout: 1)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -1124,7 +1170,7 @@ struct WatchSessionTests {
         let arriving = try #require(session.child)
         #expect(session.outgoing === leaving)
 
-        session.stop()
+        await session.stop()
         waitUntilGone(leaving)
         waitUntilGone(arriving)
         #expect(!leaving.isRunning, "控えていた子を置いていった")
@@ -1144,7 +1190,7 @@ struct WatchSessionTests {
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.overlapsGenerations = true
         await session.start()
-        session.generationPromoted()
+        await session.generationPromoted()
         return session
     }
 
@@ -1173,7 +1219,7 @@ struct WatchSessionTests {
         #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
 
         recorder.clock += 0.2
-        session.generationPromoted()
+        await session.generationPromoted()
 
         let report = try #require(session.lastReport)
         let firstFrame = try #require(report.timings.firstFrameMs, "合図が来ても足されていない")
@@ -1196,11 +1242,11 @@ struct WatchSessionTests {
         recorder.stamp = "bbb"
         await session.tick()
         recorder.clock += 0.2
-        session.generationPromoted()
+        await session.generationPromoted()
         let first = try #require(session.lastReport?.timings.firstFrameMs)
 
         recorder.clock += 0.05
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == first)
         #expect(try writtenTimings(of: session)?["firstFrameMs"] as? Double == first)
     }
@@ -1214,13 +1260,13 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         await session.start()
-        session.generationPromoted()
+        await session.generationPromoted()
 
         recorder.stamp = "bbb"
         await session.tick()
         recorder.clock += 0.2
         // 窓の無い実行に合図は来ないが、来ても測らない
-        session.generationPromoted()
+        await session.generationPromoted()
 
         let report = try #require(session.lastReport)
         #expect(report.timings.firstFrameMs == nil)
@@ -1244,7 +1290,7 @@ struct WatchSessionTests {
 
         await session.start()
         recorder.clock += 0.2
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == nil)
         #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
     }
@@ -1263,7 +1309,7 @@ struct WatchSessionTests {
         recorder.buildStatus = 1
         let failed = try #require(await session.tick())
         #expect(!failed.ok)
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == nil)
         #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
     }
@@ -1275,11 +1321,11 @@ struct WatchSessionTests {
     func aSwapBeforeThePreviousGenerationShowedIsNotMeasured() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
-        session.generationPromoted()
+        await session.generationPromoted()
         // 2 世代目を起こし、**乗り換わらないうちに** 3 世代目へ差し替える
         await session.tick()
         ready.waitForLast()
@@ -1288,7 +1334,7 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(unshown.isRunning, "前の世代が生きている形を作れていない")
 
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == nil, "どちらの世代の合図か分からないのに測った")
     }
 

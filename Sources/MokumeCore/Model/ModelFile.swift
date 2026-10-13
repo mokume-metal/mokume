@@ -81,10 +81,17 @@ nonisolated enum ModelFile {
         var derivedNormals: [Bool]
         /// 読み飛ばしたものの数。**読み飛ばしたことが分かる手段**として持つ。
         ///
-        /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) を数える。
+        /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) と、Model I/O が
+        /// 返した形のうち写せなかった要素 (位置を持たない mesh・三角形でない submesh・3 つに
+        /// 満たない余りの番号など) を数える。数える単位は形式と要素で違い、面の数ではない。
         /// **OBJ は行を丸ごと読み飛ばす** — 面の行に位置の番号が読めない角 (範囲の外・0・
         /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。行末のコメント
         /// (`#` から後) と継ぎ文字 (`\`) は角でない字で、読めない角に数えない。
+        ///
+        /// **読めない `v`・`vt`・`vn` の行は番号の枠を 1 つ使い (#2564)、詰めない。** 数えるのは
+        /// 読めない行 1 つ分で、その行を位置として指す面は行ごと読み飛ばして面の行ごとに 1 つ
+        /// 足す (読めない `v` 1 行を 2 つの面の行が指せば 3)。`vt`・`vn` を指す角は書いて
+        /// いない角と同じに読み、足さない。
         var skippedLines: Int
     }
 
@@ -114,9 +121,17 @@ nonisolated enum ModelFile {
     /// **読めない行で止まらない。** 途中に知らない行があっても、そこまでの形は
     /// 使えるほうが役に立つ (数えて知らせる)。
     static func parse(_ text: String) -> Parsed {
+        // **読めない行も番号の枠を 1 つ使う** (#2564)。OBJ の番号は行の通し番号なので、読めない
+        // 行を詰めると後ろの番号が 1 つずつずれ、面が別の頂点を指して形が黙って変わる。枠は
+        // 0 で埋めて置き、読めなかった行の番号だけを別の集合に持つ (`Optional` の配列にすると
+        // 大きな OBJ で要素が倍の幅になり、最後に外す写しも要る)。数える読み飛ばしは、読めない
+        // 行 1 つ分のままである
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
         var textures: [SIMD2<Float>] = []
+        var unreadablePositions: Set<Int> = []
+        var unreadableNormals: Set<Int> = []
+        var unreadableTextures: Set<Int> = []
         /// 面の頂点 (位置の番号・読み取り位置の番号・向きの番号)。
         var faces: [[(position: Int, texture: Int?, normal: Int?)]] = []
         var skipped = 0
@@ -124,17 +139,34 @@ nonisolated enum ModelFile {
         for line in text.lines {
             let fields = line.split(whereSeparator: \.isWhitespaceQuickly)
             guard let keyword = fields.first else { continue }
-            let values = fields.dropFirst()
+            // **向きは 3 つの数まで** (`vn i j k`)。4 つ目以降があれば欄を空にして、読めない行として
+            // 数える (#2566)。行末のコメント (`# …`) は欄に数えない。`v` の 4 つ目 (w・色) と
+            // `vt` の 3 つ目 (w) は仕様にある欄なので、それは読み捨てる
+            let values =
+                keyword == "vn" && fields.dropFirst().prefix(while: { !$0.hasPrefix("#") }).count > 3
+                ? ArraySlice<Substring>() : fields.dropFirst()
             switch keyword {
             case "v":
-                guard let point = vector(values) else { skipped += 1; continue }
-                positions.append(point)
+                let point = vector(values)
+                if point == nil {
+                    skipped += 1
+                    unreadablePositions.insert(positions.count)
+                }
+                positions.append(point ?? .zero)
             case "vn":
-                guard let point = vector(values) else { skipped += 1; continue }
-                normals.append(point)
+                let point = vector(values)
+                if point == nil {
+                    skipped += 1
+                    unreadableNormals.insert(normals.count)
+                }
+                normals.append(point ?? .zero)
             case "vt":
-                guard let point = texture(values) else { skipped += 1; continue }
-                textures.append(point)
+                let point = texture(values)
+                if point == nil {
+                    skipped += 1
+                    unreadableTextures.insert(textures.count)
+                }
+                textures.append(point ?? .zero)
             case "f":
                 // **位置の番号が読めない角が 1 つでもあれば、行ごと読み飛ばす** (#2339)。読める
                 // 角だけで面を作ると、5 角形が四角形になったことが数えられずに消える。読み
@@ -147,10 +179,19 @@ nonisolated enum ModelFile {
                 var corners: [(position: Int, texture: Int?, normal: Int?)] = []
                 for value in written {
                     guard
-                        let read = corner(
+                        var read = corner(
                             value, positions: positions.count, textures: textures.count,
-                            normals: normals.count)
+                            normals: normals.count),
+                        unreadablePositions.isEmpty || !unreadablePositions.contains(read.position)
                     else { break }
+                    // 読めない `vt`・`vn` の行を指す角は、その番号を書いていない角と同じに読む
+                    // (番号が読めない・範囲の外と同じ。#2349・#2564)
+                    if let index = read.texture, unreadableTextures.contains(index) {
+                        read.texture = nil
+                    }
+                    if let index = read.normal, unreadableNormals.contains(index) {
+                        read.normal = nil
+                    }
                     corners.append(read)
                 }
                 guard corners.count == written.count, corners.count >= 3 else {
@@ -166,6 +207,7 @@ nonisolated enum ModelFile {
             }
         }
 
+        // 面が指すのは読めた行だけ (上で確かめてある)。枠だけの 0 は指されない
         return assemble(
             positions: positions, normals: normals, textures: textures, faces: faces,
             skipped: skipped)
@@ -287,9 +329,15 @@ nonisolated enum ModelFile {
         _ field: Substring, positions: Int, textures: Int, normals: Int
     ) -> (position: Int, texture: Int?, normal: Int?)? {
         let parts = field.split(separator: "/", omittingEmptySubsequences: false)
-        guard let first = parts.first, let raw = Int(first) else { return nil }
+        // **欄は最大 3 つ** (`位置/読み取り位置/向き`)。4 つ目以降があれば読めない角で、黙って
+        // 捨てて三角形にはしない — 面の行ごと読み飛ばして数える (#2566・#2339)
+        guard parts.count <= 3, let first = parts.first, let raw = Int(first) else { return nil }
         guard let position = resolve(raw, count: positions) else { return nil }
-        // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)
+        // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)。
+        // 番号が数として読めない (`a/x/c`)・範囲の外 (`a/99/c`) も、書いていない角と同じに
+        // 読む — 面は残し、読み飛ばした行には数えない ([#2349])。`vn` も同じ
+        //
+        // [#2349]: https://github.com/mokume-metal/mokume/issues/2349
         var texture: Int?
         if parts.count >= 2, let rawTexture = Int(parts[1]) {
             texture = resolve(rawTexture, count: textures)

@@ -28,6 +28,12 @@ public final class Shader {
     var watcher: FileWatcher? { box.watcher }
     /// 診断: 差し替えの失敗を知らせた回数 (``ShaderBox/failureReports``)。
     var failureReports: Int { box.failureReports }
+    /// 診断: 裏で組みに行った回数 (``ShaderBox`` の「裏で組む」)。
+    var backgroundBuildsStarted: Int { box.backgroundBuildsStarted }
+    /// 診断: 裏で組んでいる仕事があるか。
+    var isBuildingInBackground: Bool { box.isBuildingInBackground }
+    /// 診断: 裏で組んでいる仕事が組み上がっているか (まだ差し替えていない)。
+    var backgroundBuildFinished: Bool { box.backgroundBuildFinished }
 
     /// いま渡している面。**名前ごとに口を 1 つ使う** ([#407])。
     ///
@@ -145,24 +151,48 @@ public final class Shader {
 
     // MARK: - 差し替え
 
-    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
+    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(inBackground:prepare:adopt:)``)。
+    ///
+    /// 窓の経路では裏で組み、組み上がった後のフレームの頭で差し替える (``ShaderBox`` の「裏で組む」)。
     func reload() {
-        box.reload { (body: String) throws(RenderFailure) in
-            let library = try gpu.shaders.makeShapeLibrary(
-                named: name, body: body, values: values, surfaces: surfaces)
-            // **両方が組み上がってから差し替える。** 片方だけ差し替わると、平面と
-            // 立体で違う断片が効いている状態になる
-            let flat = try pipeline.makeStates(
-                fragmentLibrary: library, label: "mokume.shader.\(name)")
-            let solid = try pipeline.makeStates(
-                fragmentLibrary: library, label: "mokume.shader.\(name).solid",
-                vertexFunctionName: ShapePipeline.solidVertexFunctionName)
-            // **入れ替えた古い状態は、投入済みのフレームが終わるまで抱える** (#1830 の 2 回目の
-            // 反証 2・``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。列が抱えるのは塗り
-            // そのもので、前のフレームが組んだ状態は誰も抱えていない
-            gpu.holdUntilSubmittedWorkFinishes(states.all + solidStates.all)
-            states = flat
-            solidStates = solid
-        }
+        box.reload(
+            inBackground: gpu.shaderRebuildsRunInBackground,
+            prepare: { (body: String) throws(RenderFailure) -> BuildJob<Rebuilt> in
+                let library = try gpu.shaders.shapeLibraryJob(
+                    named: name, body: body, values: values, surfaces: surfaces)
+                let flat = pipeline.statesJob(label: "mokume.shader.\(name)")
+                let solid = pipeline.statesJob(
+                    label: "mokume.shader.\(name).solid",
+                    vertexFunctionName: ShapePipeline.solidVertexFunctionName)
+                return BuildJob(
+                    now: { () throws(RenderFailure) in
+                        let made = try library.runNow()
+                        return Rebuilt(
+                            flat: try flat.makeNow(fragmentLibrary: made),
+                            solid: try solid.makeNow(fragmentLibrary: made))
+                    },
+                    later: { () async throws(RenderFailure) in
+                        let made = try await library.run()
+                        return Rebuilt(
+                            flat: try await flat.make(fragmentLibrary: made),
+                            solid: try await solid.make(fragmentLibrary: made))
+                    })
+            },
+            adopt: { rebuilt in
+                // **両方が組み上がってから差し替える。** 片方だけ差し替わると、平面と
+                // 立体で違う断片が効いている状態になる
+                // **入れ替えた古い状態は、投入済みのフレームが終わるまで抱える** (#1830 の 2 回目の
+                // 反証 2・``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。列が抱えるのは塗り
+                // そのもので、前のフレームが組んだ状態は誰も抱えていない
+                gpu.holdUntilSubmittedWorkFinishes(states.all + solidStates.all)
+                states = ShapePipeline.BlendStates(rebuilt.flat)
+                solidStates = ShapePipeline.BlendStates(rebuilt.solid)
+            })
+    }
+
+    /// 組み直した平面と立体の 3 本ずつ。
+    struct Rebuilt: Sendable {
+        let flat: ShapePipeline.BuiltStates
+        let solid: ShapePipeline.BuiltStates
     }
 }

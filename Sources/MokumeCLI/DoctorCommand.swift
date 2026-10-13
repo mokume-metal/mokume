@@ -63,6 +63,12 @@ enum DoctorCommand {
         /// 「could not launch swift」と言うと、入っている `swift` を疑わせる
         /// ([#2314](https://github.com/mokume-metal/mokume/issues/2314)・規律 3)。
         var toolchainUnasked: URL? = nil
+        /// 道具立てを**聞いて答えなかった**ときの理由 (1 行)。答えたか、聞かなかったなら `nil`。
+        ///
+        /// **理由を捨てない** ([#2522](https://github.com/mokume-metal/mokume/issues/2522))。
+        /// 「聞いて読めなかった」の 1 文だけでは、`swift` が `PATH` に無い回も、入れない場所で
+        /// 起こせなかった回も、0 以外で終わった回も同じ顔になる (規律 3)。
+        var toolchainUnanswered: String? = nil
     }
 
     /// 手元の状態。
@@ -279,7 +285,9 @@ enum DoctorCommand {
             machineLine(environment.machine),
             graphicsLine(environment.canDraw),
             resourcesLine(environment.resources),
-            toolchainLine(environment.toolchain, unaskedIn: environment.toolchainUnasked),
+            toolchainLine(
+                environment.toolchain, unaskedIn: environment.toolchainUnasked,
+                unanswered: environment.toolchainUnanswered),
             "Tool: \(environment.tool)",
         ]
     }
@@ -324,18 +332,26 @@ enum DoctorCommand {
     /// 「could not launch swift」と言うと、入っている `swift` を疑わせる (規律 3)。何が
     /// 使えないのかは `Place:` の行が言う。
     ///
+    /// **聞いて読めなかった回は、読めなかった理由を名乗る** (#2522)。起こせなかった理由
+    /// (`swift` が無い・場所に入れない・OS の事情) も、0 以外での終了も、空の出力も、同じ
+    /// 1 文に畳むと、入っている `swift` を疑わせたり、無い `swift` を隠したりする。
+    ///
     /// **代償: その間は、道具立てが本当に無いことも見えない** (場所を打ち間違えたうえに
     /// Command Line Tools も入っていない組では、場所を直してから初めて分かる)。断定できない
     /// ことを言い切らない向きを採った。
     ///
     /// - Parameter place: 道具立てを聞かなかったときの、見ている場所。
-    static func toolchainLine(_ toolchain: String?, unaskedIn place: URL? = nil) -> String {
+    /// - Parameter reason: 聞いて答えなかったときの理由。
+    static func toolchainLine(
+        _ toolchain: String?, unaskedIn place: URL? = nil, unanswered reason: String? = nil
+    ) -> String {
         if let toolchain { return "Toolchain: \(toolchain)" }
         if let place {
             return "Toolchain: \(unknown) — not asked, since swift cannot start in \(place.path)"
                 + " (see Place below)"
         }
-        return "Toolchain: \(unknown) — could not launch swift"
+        // 理由を持たない回 (聞いた記録が無い) も、起こせなかったとは決めつけない
+        return "Toolchain: \(unknown) — \(reason ?? "swift gave no answer")"
     }
 
     /// 共有の置き場を名乗る行。**1 行目が根と合計で、続く行が部屋の内訳。**
@@ -516,13 +532,22 @@ enum DoctorCommand {
     static func probeEnvironment(in directory: URL) -> Environment {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         let askable = GivenPath.Presence.of(directory) == .directory
+        var toolchain: String?
+        var unanswered: String?
+        if askable {
+            switch Toolchain.read(in: directory) {
+            case .version(let version): toolchain = version
+            case .unanswered(let reason): unanswered = reason
+            }
+        }
         return Environment(
             system: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
             machine: machine(),
             canDraw: RenderDevice.isAvailable,
             resources: BundledShaders.location,
-            toolchain: askable ? toolchain(in: directory) : nil,
-            toolchainUnasked: askable ? nil : directory)
+            toolchain: toolchain,
+            toolchainUnasked: askable ? nil : directory,
+            toolchainUnanswered: unanswered)
     }
 
     /// 機種の名乗り。
@@ -533,14 +558,6 @@ enum DoctorCommand {
             String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
         }
         return name.isEmpty ? unknown : name
-    }
-
-    /// 道具立ての名乗り 1 行。**起動できなければ黙って諦める** (投げない)。
-    ///
-    /// **読み方は ``Toolchain`` が持つ。** ビルドの置き場も同じ文字列を鍵の一部にするので、
-    /// ここで別に読むと片方だけが追随しなくなる。
-    static func toolchain(in directory: URL) -> String? {
-        Toolchain.describe(in: directory)
     }
 
     /// 手元の状態を読む。**何も作らない。**
