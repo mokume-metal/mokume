@@ -179,6 +179,30 @@ import MokumeDiagnostics
     /// ([#728](https://github.com/mokume-metal/mokume/issues/728))。
     let shaders: ShaderLibraries
 
+    /// 利用者の断片 (``Shader``・``EffectShader``・``Computation``) の保存を、裏で組むか ([#2365])。
+    ///
+    /// **立てるのは窓・共有面の経路だけ** (``SketchApplication`` が、時計と出口を決める同じ所で
+    /// 決める)。既定は立てない — 書き出し・検査・利用者が直に回す面は、保存の次のフレームの頭で
+    /// その場で組む ([#1830] の約束のまま)。立てると、組み上がるまでは前の断片で描き、組み上がった
+    /// 後の最初のフレームの頭で差し替える (``ShaderBox`` の「裏で組む」)。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    var rebuildsShadersInBackground = false
+
+    /// いまのフレームは、断片の組み上がりを待つか。**観測のフレームでランタイムが立てる**
+    /// ([#2365])。観測が返す絵と目録は、保存した中身で描いたものでなければならない
+    /// ([ADR-0018] 決定 3)。
+    ///
+    /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    var waitsForShaderRebuilds = false
+
+    /// 断片の持ち主が読む、いま裏で組むか。
+    var shaderRebuildsRunInBackground: Bool {
+        rebuildsShadersInBackground && !waitsForShaderRebuilds
+    }
+
     /// コマンドの置き場ひとつぶん。
     ///
     /// 置き場は巻き戻して使い回すが、**巻き戻してよいのは、そこへ積んだコマンドを
