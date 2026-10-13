@@ -92,6 +92,8 @@ final class Typeface {
     }
 
     /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、引けた面と「無かった」を返す。
+    ///
+    /// [#2562]: https://github.com/mokume-metal/mokume/issues/2562
     private static func makeFont(_ request: TypefaceRequest) -> (font: CTFont, lacksStyle: Bool) {
         let size = CGFloat(request.size)
         let base: CTFont
@@ -110,9 +112,18 @@ final class Typeface {
         // **写しが返っても、頼んだ面とは限らない。** 面が無いとき、nil を返す書体もあれば、元の
         // 面や片方の性質だけの面を返す書体もある (Kefa III の斜体は `KefaIII-Regular`、太斜体は
         // `KefaIII-Bold`)。返った面の性質で見る。引けた面 (太字だけの面など) はそのまま使う
-        guard let styled = CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits)
-        else { return (base, true) }
-        return (styled, !CTFontGetSymbolicTraits(styled).contains(traits))
+        let styled = CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits)
+        if let styled, CTFontGetSymbolicTraits(styled).contains(traits) { return (styled, false) }
+        // **太斜体で斜体が無いとき、太字まで捨てない** ([#2562])。ヒラギノ角ゴシック・游明朝体の
+        // ように太斜体で nil (や太字でない面) を返す書体でも、太字だけで頼めば太字の面が引ける
+        func isBold(_ font: CTFont) -> Bool { CTFontGetSymbolicTraits(font).contains(.traitBold) }
+        if traits == [.traitBold, .traitItalic], !(styled.map(isBold) ?? false),
+            let bold = CTFontCreateCopyWithSymbolicTraits(base, size, nil, .traitBold, .traitBold),
+            isBold(bold)
+        {
+            return (bold, true)
+        }
+        return (styled ?? base, true)
     }
 
     /// 書体の名前を、CoreText に渡す綴りへ直す。**濁点を分けた綴り (NFD) を合わせた綴り (NFC) に

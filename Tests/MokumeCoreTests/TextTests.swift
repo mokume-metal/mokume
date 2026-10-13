@@ -454,6 +454,56 @@ struct TextTests {
             "\(canvas.warnings.message(for: .missingTypefaceStyle) ?? "")")
     }
 
+    /// 斜体の面は無く太字の面は在る書体。`.boldItalic` は斜体を諦めても、太字まで捨てない (#2562)。
+    /// どちらも macOS に同梱 (ヒラギノ角ゴシック・游明朝体)。
+    @Test("斜体の面が無く太字の面がある書体は、太斜体を太字の立体で描き、斜体が無いと警告する", arguments: [
+        ("HiraginoSans-W3", "HiraginoSans-W6"),
+        ("YuMincho", "YuMin-Demibold"),
+    ])
+    func boldItalicKeepsTheBoldFaceWhenThereIsNoItalic(_ font: String, _ drawn: String) throws {
+        try #require(
+            Self.postScriptName(resolving: font) != "Helvetica", "前提: この環境に \(font) がある")
+        try #require(!Self.hasFace(font, .traitItalic), "前提: \(font) は斜体の面を持たない")
+        try #require(Self.hasFace(font, .traitBold), "前提: \(font) は太字の面を持つ")
+        let canvas = try makeCanvas()
+        canvas.textFont(font)
+        canvas.textStyle(.boldItalic)
+        let face = canvas.typeface.base
+        #expect(CTFontCopyPostScriptName(face) as String == drawn)
+        #expect(CTFontGetSymbolicTraits(face).contains(.traitBold))
+        #expect(!CTFontGetSymbolicTraits(face).contains(.traitItalic))
+        #expect(canvas.warnings.hasWarned(.missingTypefaceStyle))
+        let message = canvas.warnings.message(for: .missingTypefaceStyle) ?? ""
+        #expect(message.contains(drawn) && message.contains("bold, upright"), "\(message)")
+    }
+
+    /// どの書体でも、太字の面があれば `.boldItalic` は太字を捨てない。環境の書体の全ファミリーを
+    /// 回す (引く先は `CTFontCreateCopyWithSymbolicTraits` で独立に確かめる)。
+    @Test("太字の面がある書体は、どれも太斜体で太字を捨てない")
+    func boldItalicNeverDropsAvailableBoldAcrossFamilies() throws {
+        var families = Set<String>()
+        let collection = CTFontCollectionCreateFromAvailableFonts(nil)
+        for descriptor in CTFontCollectionCreateMatchingFontDescriptors(collection) as? [CTFontDescriptor] ?? [] {
+            let name = CTFontCopyFamilyName(CTFontCreateWithFontDescriptor(descriptor, 12, nil)) as String
+            if !name.hasPrefix(".") { families.insert(name) }
+        }
+        try #require(families.contains("Helvetica"), "前提: 書体の一覧に Helvetica がある")
+        var checked = 0
+        var dropped: [String] = []
+        for family in families.sorted() where Self.hasFace(family, .traitBold) {
+            // 面があるのは確か。名前で引き直した書体が同じ家族のものとは限らない書体 (別名) は除く
+            guard CTFontCopyFamilyName(CTFontCreateWithName(family as CFString, 12, nil)) as String == family
+            else { continue }
+            let canvas = try makeCanvas()
+            canvas.textFont(family)
+            canvas.textStyle(.boldItalic)
+            checked += 1
+            if !CTFontGetSymbolicTraits(canvas.typeface.base).contains(.traitBold) { dropped.append(family) }
+        }
+        try #require(checked > 50, "前提: 太字の面を持つ書体がこの環境に 50 以上ある (\(checked))")
+        #expect(dropped.isEmpty, "太字を捨てた: \(dropped.prefix(10))")
+    }
+
     @Test("面を持つ書体の太さと傾きは、その面で描き、警告しない", arguments: [
         ("Helvetica", TextStyle.italic, "Helvetica-Oblique"),
         ("Helvetica", TextStyle.boldItalic, "Helvetica-BoldOblique"),
