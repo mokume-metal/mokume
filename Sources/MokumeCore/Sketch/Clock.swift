@@ -53,7 +53,8 @@ enum FrameStep: Equatable {
 ///
 /// 実時間で動かすときの落とし穴を 1 つ引き受ける: **止めている間も実時間は進む。**
 /// 止めて再開したとき起点を寄せ直さないと、止めていた時間まるごとが 1 フレームの
-/// 経過時間として渡り、それを積分に使う側は 1 回で破綻する。止まり方で口が 2 つある:
+/// 経過時間として渡り、それを積分に使う側は 1 回で破綻する。止まり方で口が 2 つあり、
+/// 最初の枚も同じ扱いにする:
 ///
 /// - 外から止めて再開した (`SketchRuntime.resume()`) — ``resync()`` で起点を寄せ直し、
 ///   再開してから次のフレームまでの経過を渡す
@@ -61,6 +62,9 @@ enum FrameStep: Equatable {
 ///   ``stepOneFrameNext()`` で、次の 1 枚の経過を**目標の 1 フレームぶん**にする。寄せ直すと
 ///   頼んだ直後に描くので経過がほぼ 0 になり、`deltaTime` で動かすものが 1 枚進めても
 ///   動かない ([#1366])。フレーム番号から導く時計の 1 枚と同じ値になる
+/// - 最初の枚 — 時計を作ってから最初の枚までの間 (アプリの起動・窓・`setup()`) は描いていた
+///   時間ではない。最初の ``advance(at:)`` が起点をその枚へ寄せ、同じ印で経過を目標の
+///   1 フレームぶんにする ([#2413])
 ///
 /// **寄せ直せない止まり方もある。** ディスプレイのスリープや駆動源の停止は
 /// `pause()` を通らないので ``resync()`` が呼ばれない ([#874])。そこで経過そのものに
@@ -70,6 +74,7 @@ enum FrameStep: Equatable {
 ///
 /// [#874]: https://github.com/mokume-metal/mokume/issues/874
 /// [#1366]: https://github.com/mokume-metal/mokume/issues/1366
+/// [#2413]: https://github.com/mokume-metal/mokume/issues/2413
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 @MainActor
 final class FrameTiming {
@@ -79,7 +84,11 @@ final class FrameTiming {
     private let now: () -> Double
     /// 作者への知らせの出口。検査が文面と回数を受け取れるよう差し替えられる形にしてある。
     private let warn: (String) -> Void
-    private let started: Double
+    /// 実時間の時計の起点。**最初の枚で、その枚の時刻へ寄せ直す** ([#2413])。作ったときの
+    /// 時刻のままにすると、最初の枚の ``time`` に起動・窓・`setup()` の長さが乗る。
+    ///
+    /// [#2413]: https://github.com/mokume-metal/mokume/issues/2413
+    private var started: Double
     private var previous: Double
 
     /// これまでに進めたフレームの数。最初のフレームの最中は 1。
@@ -106,9 +115,11 @@ final class FrameTiming {
 
     /// 1 フレームぶんとして渡す経過の上限 (秒)。**実時間で動かすときだけ効く。**
     private let maximumDeltaTime: Double
-    /// 目標の 1 フレームぶんの間隔 (秒)。``stepOneFrameNext()`` が渡す経過。
+    /// 目標の 1 フレームぶんの間隔 (秒)。止めていたところから描く 1 枚 (``stepOneFrameNext()``) と
+    /// 実時間の時計の最初の枚に渡す経過。
     private let frameInterval: Double
-    /// 次の ``advance()`` の経過を ``frameInterval`` にするか。1 枚で落ちる。
+    /// 次の ``advance()`` の経過を ``frameInterval`` にするか。1 枚で落ちる。立てるのは
+    /// ``stepOneFrameNext()`` と、実時間の時計の最初の ``advance(at:)``。
     private var stepsOneFrame = false
 
     /// 時計の生の時刻に足す、原点のずれ (秒)。作者が止めた・飛んだぶんだけ動く ([#1286])。
@@ -142,8 +153,8 @@ final class FrameTiming {
 
     /// - Parameters:
     ///   - clock: 時刻の出どころ。
-    ///   - frameRate: 目標のフレームレート。**実時間で動かすときの**経過の上限と、止めていた
-    ///     ところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
+    ///   - frameRate: 目標のフレームレート。**実時間で動かすときの**経過の上限と、最初の枚・
+    ///     止めていたところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
     ///   - warn: 作者への知らせの出口。
@@ -180,6 +191,16 @@ final class FrameTiming {
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     func advance(at requestedTime: Float? = nil) {
         let now = now()
+        if frameCount == 0, clock == .wallClock {
+            // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``Sketch/time``
+            // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
+            // 作ってからここまでの間 (起動・窓・`setup()`) は、描いていた時間ではない。
+            // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い
+            //
+            // [#2413]: https://github.com/mokume-metal/mokume/issues/2413
+            started = now
+            stepsOneFrame = true
+        }
         frameCount += 1
         defer { stepsOneFrame = false }
         let raw: Double
