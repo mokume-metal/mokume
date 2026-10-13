@@ -125,7 +125,10 @@ enum WatchCommand {
         // 窓を閉じる経路を通らない (`windowShouldClose` も巡回も通らない) ので、受けないと
         // 子と区画が置き去りになる — 窓を持つ道具は `.regular` なので Dock に出ている
         // ([#826](https://github.com/mokume-metal/mokume/issues/826))
-        let delegate = ApplicationDelegate { teardown(session, viewer, created: prepared) }
+        let delegate = ApplicationDelegate(
+            stopRequested: { session.noteStopRequested() },
+            finish: { await finish(session) },
+            teardown: { teardown(session, viewer, created: prepared) })
         NSApplication.shared.delegate = delegate
 
         // **巡回に入る前に断る。** 窓が覆われてから立てるのでは遅い — App Nap は
@@ -178,7 +181,9 @@ enum WatchCommand {
         // **断りを返す。** 終わりの経路は 2 つある (巡回が抜けた / 道具立てが終わらせた)
         // が、どちらもここを通る
         allowThrottling()
-        finish(session)
+        // **待つ手続きは、窓を開いたまま済んでいる。** ここは窓を閉じる前の取りこぼしを拾うだけで、
+        // 通常は何もしない (``finishBlocking(_:)``)
+        finishBlocking(session)
         viewer?.close()
         // **置いていかない。** 区画は面の番号を置く場所で、置いた見張りが居なくなれば
         // 指す先も無い。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
@@ -236,11 +241,36 @@ enum WatchCommand {
     /// (Dock の「終了」・ログアウト・システム終了) は `windowShouldClose` を問わず、
     /// `run()` からも戻らない — 後始末はここでしか通れない。
     final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+        private let stopRequested: () -> Void
+        private let finish: () async -> Void
         private let teardown: () -> Void
 
-        init(teardown: @escaping () -> Void) {
+        /// - Parameter stopRequested: 終われと言われたことを覚えさせる。**終わる返事より先に
+        ///   呼ぶ** — 止めている間も巡回は回り続けるので、覚えさせないと新しい作り直しを始める。
+        /// - Parameter finish: 走らせていたものを止める。**待つあいだ main actor を塞がない**
+        ///   ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+        /// - Parameter teardown: 窓を閉じる・区画を片付ける。
+        init(
+            stopRequested: @escaping () -> Void, finish: @escaping () async -> Void,
+            teardown: @escaping () -> Void
+        ) {
+            self.stopRequested = stopRequested
+            self.finish = finish
             self.teardown = teardown
             super.init()
+        }
+
+        /// **子を止め終えてから終わると返す。** 同期の `applicationWillTerminate` で眠って待つと、
+        /// 撮っていた動画を閉じ終えるまで (最大 38 秒) 窓が開いたまま止まる。終わりを遅らせる
+        /// 返事 (`.terminateLater`) の間も、実行ループは回り続ける。
+        func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+            stopRequested()
+            let finish = self.finish
+            Task { @MainActor in
+                await finish()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
         }
 
         func applicationWillTerminate(_ notification: Notification) {
@@ -288,8 +318,15 @@ enum WatchCommand {
         // 出せなかった実行で重ねると、止める者の居ない子が残る (#1142)
         session.overlapsGenerations = true
         // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
-        window.onGenerationPromoted = { [weak session] in retire(after: session) }
-        preview.onGenerationPromoted = { [weak session] in retire(after: session) }
+        //
+        // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+        // 合図は窓の側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
+        window.onGenerationPromoted = { [weak session] in
+            Task { @MainActor in await retire(after: session) }
+        }
+        preview.onGenerationPromoted = { [weak session] in
+            Task { @MainActor in await retire(after: session) }
+        }
         let viewer = Viewer(window: window, preview: preview)
         // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
         // (窓の中身を繋ぐ順序と同じ理由)
@@ -352,8 +389,8 @@ enum WatchCommand {
     /// **名乗るのは口の側である** — ``WatchSession`` は判断だけを持ち、出力を持たない
     /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。新しい絵が
     /// 出るまでの記録もこの合図で足される (#930)。
-    static func retire(after session: WatchSession?) {
-        guard let outcome = session?.generationPromoted() else { return }
+    static func retire(after session: WatchSession?) async {
+        guard let outcome = await session?.generationPromoted() else { return }
         switch outcome {
         case .killed: say(killedLine)
         case .abandoned(let pid): say(abandonedLine(pid: pid))
@@ -408,7 +445,7 @@ enum WatchCommand {
         if let departure = session.departed() {
             // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
             // 合図はもう来ないので、ここで畳む (#1142)
-            retire(after: session)
+            await retire(after: session)
             let line = departedLine(departure)
             say(line)
             viewer?.preview.report(line, spinning: false)
@@ -472,6 +509,10 @@ enum WatchCommand {
                     if await step(session, viewer: viewer) { return }
                     guard !state.leaving else { return }
                     state.leaving = true
+                    // **窓を開いたまま、走らせていたものを止める。** 実行ループを抜けてから
+                    // 止めると、撮っていた動画を閉じ終えるまで (最大 38 秒) 窓が固まって見える。
+                    // 待つあいだ main actor は空く ([#2576](https://github.com/mokume-metal/mokume/issues/2576))
+                    await finish(session)
                     leave(application)
                 }
             }
@@ -512,17 +553,53 @@ enum WatchCommand {
     /// どう止まったかを名乗る — 既に死んでいた・頼んで止まった・期限で落とした の 3 つは
     /// 別の出来事である。とくに 3 つ目は子の側の事情なので、黙って終わると
     /// 「止めた」と見分けが付かない (#732)。
-    static func finish(_ session: WatchSession) {
+    ///
+    /// **待つあいだ main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+    /// 撮っていた動画を閉じ終えるまで最大 38 秒かかり、窓を閉じるのはこの後なので、塞ぐと
+    /// その間は窓が開いたまま止まって見える。**窓を閉じる前に済ませる順序は変えない** —
+    /// 呼ぶ側 (巡回を抜けるとき・道具立ての終了) が、窓を開いたままこれを待ってから窓を畳む。
+    ///
+    /// **2 度呼ばれても、止めて名乗るのは 1 度きり。** 終わりの経路は 2 つあり (巡回を抜けた・
+    /// 道具立てが終わらせた)、後から来た呼び手は、先の手続きが済むまで待って戻る。
+    static func finish(_ session: WatchSession) async {
+        switch session.finishStage {
+        case .done: return
+        case .running:
+            while session.finishStage == .running { try? await Task.sleep(for: .milliseconds(5)) }
+            return
+        case .idle: session.finishStage = .running
+        }
+        // **終わりの意味を先に立てる。** 待つあいだ巡回は回り続けるので、立てないと新しい作り直しを
+        // 始めて子を起こす (起こしても、止める者がもう居ない — #454)
+        session.noteStopRequested()
         // **作り直しを先に止める。** 見張りは作り直しを待たずに終われるので、止めないと
         // `swift build` が残って `.build` の鍵を握り、起こし直した見張りを待たせる (#1147)
-        if let line = stoppedRebuildLine(session.stopRebuilding()) { say(line) }
-        switch session.end() {
-        case .notRunning: say("Stopped watching")
-        case .terminated: say("Stopped watching (the running sketch was stopped)")
-        case .killed: say("Stopped watching (a sketch that would not stop was killed)")
+        if let line = stoppedRebuildLine(await session.stopRebuilding()) { say(line) }
+        say(stoppedWatchingLine(await session.end()))
+        session.finishStage = .done
+    }
+
+    /// ``finish(_:)`` の、main actor を塞ぐ版。**プロセスが終わる直前の後始末だけが使う。**
+    ///
+    /// 通常の終わり方は ``finish(_:)`` を窓を開いたまま済ませてから抜けるので、ここへ来るのは
+    /// 先に済んでいない場合 (検査が見張りの口だけを通した・想定外の経路) だけである。それでも
+    /// 置いていかないために、残っているものを同じ手順で止める。
+    static func finishBlocking(_ session: WatchSession) {
+        guard session.finishStage != .done else { return }
+        session.finishStage = .done
+        session.noteStopRequested()
+        say(stoppedWatchingLine(session.stopBlocking(timeout: session.finishTimeout)))
+    }
+
+    /// 終えたときの、子の止まり方の名乗り。
+    static func stoppedWatchingLine(_ outcome: WatchSession.StopOutcome) -> String {
+        switch outcome {
+        case .notRunning: "Stopped watching"
+        case .terminated: "Stopped watching (the running sketch was stopped)"
+        case .killed: "Stopped watching (a sketch that would not stop was killed)"
         // **置いていくことを言う。** 黙って終わると「止めた」と見分けが付かず、残ったものが
         // #454 の孤児として次の人に渡る
-        case .abandoned(let pid): say("Stopped watching — " + abandonedLine(pid: pid))
+        case .abandoned(let pid): "Stopped watching — " + abandonedLine(pid: pid)
         }
     }
 
