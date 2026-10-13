@@ -217,16 +217,21 @@ minutes_since() { # $1=ISO8601 (空可)
 # 前の run の ci-gate は、同じ run の pr-title が赤いので失敗で終わるが、test-release を
 # 待つ分だけ直した後の run より遅く完了し、古い赤が時刻の上では最新に見える (#2568)。run の
 # id は単調に増えるので、detailsUrl の /actions/runs/<id> を新旧の順にする。読めなければ 0
-# (StatusContext など。そのときは at だけで並ぶ)
+# (StatusContext など)。**同じ名前の check が全部 0 のときだけ at だけで並ぶ** — 0 は
+# どの run id よりも古いと読む
 #
-# **凍結された古い run の赤は、ここで入力から外す。** 赤い pr-title があり、それより新しい run
-# の pr-title が緑なら、その古い run は「タイトルを直す前の run」である。同じ run が付けた赤
-# (pr-title と、それを受けた ci-gate) は今の状態を表さない (この赤のまま #2543 は merge され、
-# 他の 7 本も queue に入った)。以降の判定は、外した後の並びだけを読む
+# **凍結された古い run の、タイトルを読む赤だけを入力から外す。** 赤い pr-title があり、それ
+# より新しい run の pr-title が **SUCCESS** なら、その古い run は「タイトルを直す前の run」
+# である。外すのは、その run の赤い pr-title と、それを受けた赤い ci-gate (**新しい run の
+# ci-gate も SUCCESS のときだけ** — 新しい側が緑でなければ、本当の詰まりを黙らせない)。
+# この赤のまま #2543 は merge され、他の 7 本も queue に入った。
+# **SKIPPED は直った証拠ではない** — pr-title は pull_request でしか走らないので、レビューの
+# 投稿などで起きた run では SKIPPED になる。タイトルは直っていないので外さない。ci-check や
+# test-release の赤は、タイトルと関わらない本物の失敗なので外さない
 normalize_checks() { # 標準入力=PR の JSON
   jq -c --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
     def red: .result as $r | (($unsettled | index($r)) == null) and (($passed | index($r)) == null);
-    def green: .result as $r | ($passed | index($r)) != null;
+    def ok: .result == "SUCCESS";
     [.statusCheckRollup[]? | {
       name: (.name // .context // ""),
       result: (.conclusion // .state // ""),
@@ -236,8 +241,12 @@ normalize_checks() { # 標準入力=PR の JSON
     }]
     | . as $all
     | [ $all[] | select(.name == "pr-title" and .run > 0 and red) | .run
-        | select(. as $r | any($all[]; .name == "pr-title" and green and .run > $r)) ] as $frozen
-    | [ $all[] | select((red and (.run as $r | $frozen | index($r)) != null) | not) ]'
+        | select(. as $r | any($all[]; .name == "pr-title" and ok and .run > $r)) ] as $frozen
+    | def newer_ok($n; $r): any($all[]; .name == $n and ok and .run > $r);
+      [ $all[] | select(
+          ((.run as $r | $frozen | index($r)) != null and red
+           and (.name == "pr-title" or (.name == "ci-gate" and newer_ok("ci-gate"; .run))))
+          | not) ]'
 }
 
 # 失敗している check の名前 (重複を畳む)

@@ -375,6 +375,57 @@ class StallWatchTest(unittest.TestCase):
         kind, action = self.classify(15, self.watch())
         self.assertEqual((kind, action), ("stale-checks", "act"))
 
+    def test_新しい_run_の_pr_title_が_SKIPPED_なら_直った証拠にしない(self):
+        """レビューの投稿で起きた run では pr-title が SKIPPED になる。タイトルは直っていない。"""
+        self.add_pr(
+            16,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("ci-gate", "FAILURE", ago(80), run=100),
+                check("pr-title", "SKIPPED", ago(60), run=200),
+                check("ci-gate", "SUCCESS", ago(60), run=200),
+            ],
+        )
+        kind, action = self.classify(16, self.watch())
+        self.assertEqual((kind, action), ("bad-title", "name"))
+
+    def test_凍結された_run_の_ci_check_の本物の失敗は外さない(self):
+        """タイトルの修正の run では ci-check が SKIPPED になる。古い run の本物の赤は残す。"""
+        self.add_pr(
+            17,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("ci-check", "FAILURE", ago(85), run=100),
+                check("ci-gate", "FAILURE", ago(80), run=100),
+                check("pr-title", "SUCCESS", ago(60), run=200),
+                check("ci-check", "SKIPPED", ago(60), run=200),
+                check("ci-gate", "SUCCESS", ago(60), run=200),
+            ],
+        )
+        kind, action = self.classify(17, self.watch())
+        self.assertEqual((kind, action), ("stale-checks", "act"))
+
+    def test_新しい_run_の_ci_gate_が_SUCCESS_でなければ_古い_ci_gate_の赤を黙らせない(self):
+        """新しい側が SUCCESS と言い切れないなら、古い赤は判定を固定しているかもしれない。
+        外すと stale-checks にも何にも当たらず、本当の詰まりが無音になる。"""
+        self.add_pr(
+            18,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("ci-gate", "FAILURE", ago(80), run=100),
+                check("pr-title", "SUCCESS", ago(60), run=200),
+                check("ci-gate", "SKIPPED", ago(55), run=200),
+            ],
+        )
+        kind, action = self.classify(18, self.watch())
+        self.assertEqual((kind, action), ("stale-checks", "act"))
+
     def test_判定は何も打たない(self):
         self.add_pr(11, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
         self.watch()
