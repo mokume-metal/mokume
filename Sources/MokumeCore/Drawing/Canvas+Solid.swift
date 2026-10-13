@@ -150,7 +150,16 @@ extension Canvas {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     func place(_ shape: SolidShape) {
-        if style.hasFill { placeMesh(.mesh(shape)) { solidMesh(for: shape) } }
+        if style.hasFill {
+            if prototypeUnitSpheres, !recordingShape,
+                case .sphere(let radius, let detail) = shape, radius > 0
+            {
+                let unit = SolidShape.sphere(radius: 1, detail: detail)
+                placeMesh(.mesh(unit), sphereRadius: radius) { solidMesh(for: unit) }
+            } else {
+                placeMesh(.mesh(shape)) { solidMesh(for: shape) }
+            }
+        }
         strokeSolidEdges(of: .mesh(shape)) { solidMesh(for: shape) }
     }
 
@@ -167,7 +176,7 @@ extension Canvas {
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
-        _ source: SolidSource, winding: () -> SolidWinding = { .outward },
+        _ source: SolidSource, sphereRadius: Float = 0, winding: () -> SolidWinding = { .outward },
         mesh build: () -> SolidMesh
     ) {
         // 区間の外では、立体の側へも移らない (``Canvas/canPlace``・#1672)
@@ -177,9 +186,10 @@ extension Canvas {
         // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
         useFillTexture()
         let textured = style.picture != nil
-        let placement = SolidInstance(
+        var placement = SolidInstance(
             matrix: transform.matrix, normalMatrix: transform.normalMatrix,
             color: style.fill)
+        placement.normal0.w = sphereRadius
 
         if recordingShape {
             // **置き場所で描いたときと同じ頂点を、先に作って焼く。** 焼いた頂点はその場で
@@ -221,7 +231,9 @@ extension Canvas {
             let key = SolidMeshRangeKey(source: source, textured: textured, whiteUV: whiteUV)
             // **読み込んだモデルは、頂点を GPU の置き場に持って使い回す** (#1749)。溜め場へ
             // 積まないので、列はその置き場の先頭から数える
-            if case .model = source,
+            let persistent: Bool
+            if case .model = source { persistent = true } else { persistent = sphereRadius > 0 }
+            if persistent,
                 let geometry = modelFill(for: key, textured: textured, mesh: build)
             {
                 openSolid = OpenSolid(
