@@ -136,9 +136,12 @@ final class WatchSession {
                         // **起こせなかった理由を捨てない** (#2521)。読み分けは `run` の口と同じ
                         // 1 つを使う — 場所が使えないのか・走らせるものが無いのか・在るのに
                         // 起こせないのか (#2314)
+                        //
+                        // **消えた、と名乗ってよいのは、渡される実行ファイルが作り直しの直後に建てた
+                        // ものだけだから** (#2522・`RunCommand.launch` の前提と同じ)
                         throw RunCommand.launchFailure(
                             of: process, error: error,
-                            executableMissing: .noExecutable(path: executable.path))
+                            executableMissing: .executableVanished(path: executable.path))
                     }
                     return process
                 },
@@ -860,6 +863,11 @@ final class WatchSession {
         // 始めたときの名前を持ち回ると、product を改名した回に**前の名前**で
         // 「建っていない」と言うことになる (#1067)
         guard let product = rebuilt.product else {
+            // **読み直して分かった理由があれば、それを名乗る** (#2575)。道具立てが答えなかった回を
+            // 「Package.swift を見よ」と言わない
+            if let failure = rebuilt.declarationFailure {
+                return "\(failure.message)\n\n\(rebuilt.output)"
+            }
             return """
                 Cannot find anything to run: \(directory.path)
                 Check that Package.swift declares an executable in products

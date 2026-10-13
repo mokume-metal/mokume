@@ -32,6 +32,8 @@ struct WatchSessionTests {
         /// その回が探した product の名前。**土台が持つ名前とは別に置ける** — 宣言が
         /// 変わった回に、どちらの名前で名乗るかを見るため (#1067)。
         var product: String? = "sketch"
+        /// 宣言を読み直したときに道具立てが答えなかった理由 (#2575)。
+        var declarationFailure: CommandFailure?
         /// 作り直しの最中に待たせる口。**既定は何もしない。**
         ///
         /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
@@ -67,7 +69,7 @@ struct WatchSessionTests {
                     return RunCommand.Rebuilt(
                         status: self.buildStatus, output: self.buildOutput,
                         executable: self.productBuilt ? bin : nil, binPath: directory,
-                        product: self.product)
+                        product: self.product, declarationFailure: self.declarationFailure)
                 },
                 launch: { _, _, stamp, rate throws(CommandFailure) in
                     self.launches += 1
@@ -338,6 +340,35 @@ struct WatchSessionTests {
         #expect(unbuilt.output.contains("was never built"))
     }
 
+    /// **作り直しの後に宣言を読み直して道具立てが答えなかった回を、「Package.swift を見よ」と
+    /// 言わない** (#2575)。`product == nil` が「宣言に実行ファイルが無い」と「道具立てが答えなかった」を
+    /// 混ぜていた。理由があれば記録の本文の頭にそれを名乗り、無ければ従来どおり。
+    @Test("宣言を読み直せなかった回は、Package.swift を指さず、道具立てが答えなかったと名乗る")
+    func anUnansweredDeclarationIsNotAMissingProduct() async throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        await session.start()
+
+        let failure = CommandFailure.toolchainFailed(
+            command: "swift package dump-package", status: 1)
+        recorder.productBuilt = false
+        recorder.product = nil
+        recorder.declarationFailure = failure
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+        #expect(!report.ok)
+        #expect(report.output.hasPrefix(failure.message + "\n\n"), "理由が本文の頭に無い")
+        #expect(!report.output.contains("Package.swift"))
+
+        // 裏側: 理由が無ければ (宣言に実行ファイルが無い)、いままでどおり
+        recorder.declarationFailure = nil
+        recorder.stamp = "ccc"
+        let plain = try #require(await session.tick())
+        #expect(plain.output.contains("Cannot find anything to run"))
+        #expect(plain.output.contains("Package.swift"))
+    }
+
     /// **`launched: false` の口はどれも理由を名乗る** (#2521)。終われと言われた後に作り直しが
     /// 通った回は、起こさないと決めたのは見張りの側で、本文にその 1 行が無いと起こせなかった回と
     /// 見分けが付かない。
@@ -395,7 +426,7 @@ struct WatchSessionTests {
 
         // 走らせるものが無い (裏側。いままでどおり)
         let absent = directory.appendingPathComponent("absent")
-        #expect(throws: CommandFailure.noExecutable(path: absent.path)) {
+        #expect(throws: CommandFailure.executableVanished(path: absent.path)) {
             try hooks.launch(absent, directory, nil, nil)
         }
     }

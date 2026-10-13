@@ -49,6 +49,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// ([#1282](https://github.com/mokume-metal/mokume/issues/1282))。
     case renderIncomplete(destination: String, status: Int32)
     case noExecutable(path: String)
+    /// 起こそうとした実行ファイルが、起こす時点で無かった。
+    ///
+    /// **``noExecutable(path:)`` と分ける。** そちらは「宣言から走らせるものを決められない」
+    /// 失敗で、案内は `Package.swift` を指す。こちらへ来る実行ファイルは宣言済みで、作り直しの
+    /// 直後に建ったことを確かめたものだから、`Package.swift` を見直しても直らない — 消したのは
+    /// 作り直しの外の誰かである。**この前提は呼び元 (`run`・`render`・`watch`) が作り直しの直後に
+    /// 渡すことで成り立つ** (``RunCommand/launch(_:in:environment:forwarding:)``) ([#2522](https://github.com/mokume-metal/mokume/issues/2522))。
+    case executableVanished(path: String)
     /// 作り直しは通ったのに、走らせるものが建っていない。
     ///
     /// **「ビルドが成功した」とは別の失敗である。** 置き場の計画が古いと道具立ては
@@ -86,6 +94,11 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 「上を読め」とは言わない: 見張りはこの文面を記録 (`BuildReport.output`) に載せ、窓口の
     /// 読み手には端末の「上」が無い。打ったものを名乗るので、打ち直せば同じ理由が読める。
     case toolchainFailed(command: String, status: Int32)
+    /// 道具立ては 0 で答えたが、答えが読める形をしていなかった。`command` は打ったもの。
+    ///
+    /// **``toolchainFailed(command:status:)`` と分ける** (終了コード 0 の「失敗」と名乗らない)。
+    /// 道具立てが出力の形を変えた日に起きる。**宣言 (`Package.swift`) の不備として名乗らない** (#2575)。
+    case declarationUnreadable(command: String)
     /// 作り直しを途中で止めると決めた後に、次の `swift` を起こそうとした。
     ///
     /// **人へ届く失敗ではない。** 止めるのは見張りが終わるときだけで、この失敗を受ける
@@ -294,6 +307,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             Cannot find anything to run: \(path)
             Check that Package.swift declares an executable in products
             """
+        case .executableVanished(let path):
+            """
+            The sketch's executable was there right after the build, but it is gone now: \(path)
+            Something removed it in between (a clean, or another build). Run it again
+            """
         case .productNotBuilt(let product, let path):
             """
             The build succeeded, but \(product) was never built: \(path)
@@ -310,6 +328,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
         case .cannotLaunch(let tool, let place, let reason):
             "Could not start \(tool) in \(place): \(reason)"
+        case .declarationUnreadable(let command):
+            """
+            The toolchain answered, but what it said could not be read: \(command)
+            A toolchain that changed its output format can do this; run that command in the sketch's directory to see what it prints
+            """
         case .toolchainFailed(let command, let status):
             """
             The toolchain did not answer (exit code \(status)): \(command)

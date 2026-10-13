@@ -69,7 +69,13 @@ nonisolated struct AppIdentity: Equatable {
     static func read(in root: URL) throws(CommandFailure) -> AppIdentity {
         let url = root.appendingPathComponent(fileName)
         guard let data = try? Data(contentsOf: url) else {
-            throw .identityMissing(path: url.path)
+            // **在るのに読めないものを「無い」と言わない** (#2575)。`try?` は権限の無いファイルも
+            // ディレクトリも無いファイルと同じ顔にする。「無い」は、名指しした場所に何も無い
+            // ときだけで、在るものは「読めない」と名乗る (読み直して決める)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw .identityMissing(path: url.path)
+            }
+            throw .identityUnreadable(path: url.path)
         }
         guard let wire = try? JSONDecoder().decode(Wire.self, from: data) else {
             throw .identityUnreadable(path: url.path)
