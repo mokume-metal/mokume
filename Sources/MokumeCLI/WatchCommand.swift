@@ -461,8 +461,7 @@ enum WatchCommand {
                 Task<Void, Never> {
                     if !state.started {
                         state.started = true
-                        let outcome = await session.start()
-                        report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
+                        report(await session.start(), on: viewer)
                         return
                     }
                     if await step(session, viewer: viewer) { return }
@@ -541,8 +540,10 @@ enum WatchCommand {
     }
 
     private static func report(
-        _ outcome: BuildReport, holdingPrevious: Bool, on viewer: Viewer?
+        _ outcome: BuildReport, holdingPrevious: Bool = false, on viewer: Viewer?
     ) {
+        // **既定は「前の版は走っていない」。** 最初の 1 回 (``WatchSession/start()``) には前の版が
+        // 居ないので、口はそこで渡さない
         for line in reportLines(outcome, holdingPrevious: holdingPrevious) { say(line) }
         // **回っている印は止める。** 作り直しは終わっているので、回り続ける印は
         // 「まだ待たされている」と読める
