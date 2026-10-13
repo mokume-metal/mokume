@@ -101,6 +101,11 @@ on:
 permissions:
   contents: read
 
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # 専用機へ積む順番を決める門番 (#2062・上の「専用機へ積む順番」)。待つ上限は
   # render-turn.sh が持つ (merge_group は前の group が終わるまで・schedule は 60 分)。

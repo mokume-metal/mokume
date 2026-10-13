@@ -36,7 +36,7 @@
     },
     "status": {
       "type": "integer",
-      "description": "The build's exit code."
+      "description": "The build's exit code. 128 plus the signal number when the build was ended by a signal, as a shell reports it."
     },
     "output": {
       "type": "string",

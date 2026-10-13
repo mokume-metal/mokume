@@ -40,6 +40,11 @@ on:
 permissions:
   contents: read
 
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
 jobs:
   drift:
     runs-on: ubuntu-latest

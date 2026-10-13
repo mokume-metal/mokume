@@ -27,6 +27,19 @@ struct RunCommandTests {
         return executable
     }
 
+    /// 合図で自分を落とすだけの実行ファイルを置く (`kill -s <NAME> $$`)。`fatalError` の代わり。
+    private func makeCrasher(signal name: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-crash-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nkill -s \(name) $$\n".write(
+            to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return executable
+    }
+
     /// 自分の番号を `pid` へ書いて 30 秒眠るだけの実行ファイルを置く。合図の検査の子。
     ///
     /// **番号を書き終えてから名乗る** (途中を読ませない)。`exec` で番号を保ったまま眠る。
@@ -573,6 +586,61 @@ struct RunCommandTests {
         }
     }
 
+    /// 自分から終わったスケッチと、合図で落ちたスケッチを、終了コードの形で取り違えない
+    /// ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。`fatalError` は SIGTRAP で、
+    /// 合図の番号は 5 — `Process.terminationStatus` だけを読むと `exit(5)` と同じ「code 5」になる。
+    /// **この 2 つは番号が同じなので、見分けられることがこの検査の中身である。**
+    @Test("合図で落ちたスケッチは、同じ番号で exit したスケッチと見分けて名乗る")
+    func aSignalledSketchIsNotAnExitWithTheSameNumber() throws {
+        let exited = try makeExecutable(exiting: Int32(SIGTRAP))
+        #expect(throws: CommandFailure.sketchExited(status: SIGTRAP)) {
+            try RunCommand.launch(exited, in: exited.deletingLastPathComponent())
+        }
+        let crashed = try makeCrasher(signal: "TRAP")
+        #expect(throws: CommandFailure.sketchSignalled(signal: SIGTRAP)) {
+            try RunCommand.launch(crashed, in: crashed.deletingLastPathComponent())
+        }
+        // 名乗りと終了コード: 合図は 128 + 番号 (シェルの `$?` と同じ)、exit は番号そのもの
+        let signalled = CommandFailure.sketchSignalled(signal: SIGTRAP)
+        #expect(signalled.exitCode == 128 + SIGTRAP)
+        #expect(signalled.message.contains("signal 5 (SIGTRAP)"))
+        #expect(!signalled.message.contains("exited with code"))
+        #expect(CommandFailure.sketchExited(status: SIGTRAP).exitCode == SIGTRAP)
+        #expect(CommandFailure.sketchExited(status: SIGTRAP).message.contains("exited with code 5"))
+        // 道具が止めた回 (`stopped`) と、スケッチが外から落とされた回は、同じ終了コードでも文面で分かれる
+        #expect(CommandFailure.stopped(signal: SIGTERM).exitCode == 143)
+        #expect(CommandFailure.sketchSignalled(signal: SIGTERM).exitCode == 143)
+        #expect(CommandFailure.sketchSignalled(signal: SIGTERM).message != CommandFailure.stopped(signal: SIGTERM).message)
+    }
+
+    /// 道具立て (`swift`) や `codesign` を起こす口の戻りも、合図で落ちた子を合図の番号のまま
+    /// 返さない — `buildFailed` と記録 (`build-status` の `status`) が、5 で終わった回と
+    /// 合図 5 で落ちた回を取り違える。
+    @Test("起こした子が合図で落ちたら、終了コードの戻りは 128 + 番号で返す")
+    func aSignalledChildComesBackAsShellStatus() throws {
+        func status(of script: String) throws -> Int32 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", script]
+            return try RunCommand.capture(process, capturing: true, errors: .discard).status
+        }
+        #expect(try status(of: "exit 5") == 5)
+        #expect(try status(of: "kill -s TRAP $$") == 128 + SIGTRAP)
+        #expect(try status(of: "kill -s KILL $$") == 128 + SIGKILL)
+        // `env` 越しの 127 の読み分けは、合図の番号 127 を拾わない (127 は合図でなく終了コード)
+        #expect(ChildEnding.exited(127).shellStatus == 127)
+    }
+
+    @Test("子の終わり方は、終了コードと合図を分けて数にする")
+    func childEndingsAreToldApart() {
+        #expect(ChildEnding.exited(3).shellStatus == 3)
+        #expect(ChildEnding.signalled(SIGTRAP).shellStatus == 133)
+        #expect(ChildEnding.exited(3).phrase == "exited with code 3")
+        #expect(ChildEnding.signalled(SIGSEGV).phrase == "ended by signal 11 (SIGSEGV)")
+        // 名前を持たない合図は、番号だけを言う
+        #expect(ChildEnding.signalled(SIGUSR1).phrase == "ended by signal \(SIGUSR1)")
+    }
+
     @Test("0 で終わったスケッチは、何も投げない")
     func cleanExitsAreQuiet() throws {
         let executable = try makeExecutable(exiting: 0)
@@ -695,7 +763,8 @@ struct RunCommandTests {
             kill(pid, SIGTERM)
         }
 
-        #expect(throws: CommandFailure.sketchExited(status: SIGTERM)) {
+        // 外から SIGTERM で落とされた子は、合図で落ちたと名乗る (道具が止めた回ではない)
+        #expect(throws: CommandFailure.sketchSignalled(signal: SIGTERM)) {
             try RunCommand.launch(executable, in: directory)
         }
         #expect(watcher.done.wait(timeout: .now() + 60) == .success, "見る糸が戻らない")
@@ -1350,7 +1419,8 @@ struct RunCommandTests {
         let child = try #require(running.stop(), "走っている子を掴んでいない")
         child.interrupt()
         #expect(outcome.done.wait(timeout: .now() + 30) == .success, "止めた子を待つ糸が戻らない")
-        #expect(outcome.status == SIGINT, "取り出した子が、止めた合図で終わっていない")
+        // 合図で落ちた子の終了コードは `128 + 番号` (シェルの `$?` と同じ・#2315)
+        #expect(outcome.status == 128 + SIGINT, "取り出した子が、止めた合図で終わっていない")
         #expect(running.stop() == nil, "終わった子を掴んだままでいる")
     }
 }

@@ -298,7 +298,11 @@ struct RenderCommandTests {
     // MARK: - 終わり方 (完了条件 6)
 
     /// 環境を書き留めてから、指定した終了コードで終わる子。
-    private func makeChild(exiting status: Int32) throws -> (executable: URL, seen: URL) {
+    ///
+    /// - Parameter signal: 渡されたら、終了コードではなくこの合図 (`TRAP` など) で自分を落とす。
+    private func makeChild(exiting status: Int32, signalled signal: String? = nil) throws
+        -> (executable: URL, seen: URL)
+    {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-render-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -307,7 +311,7 @@ struct RenderCommandTests {
         try """
             #!/bin/sh
             printf '%s' "$\(StartupReads.render.key)" > '\(seen.path)'
-            exit \(status)
+            \(signal.map { "kill -s \($0) $$" } ?? "exit \(status)")
             """.write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
@@ -331,14 +335,39 @@ struct RenderCommandTests {
         let child = try makeChild(exiting: 1)
         let request = try #require(
             RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/out.mov"))
-        #expect(throws: CommandFailure.renderIncomplete(destination: "/tmp/out.mov", status: 1)) {
+        #expect(
+            throws: CommandFailure.renderIncomplete(
+                destination: "/tmp/out.mov", ending: .exited(1))
+        ) {
             try RenderCommand.launch(
                 child.executable, in: child.executable.deletingLastPathComponent(),
                 request: request)
         }
-        let failure = CommandFailure.renderIncomplete(destination: "/tmp/out.mov", status: 1)
+        let failure = CommandFailure.renderIncomplete(destination: "/tmp/out.mov", ending: .exited(1))
         #expect(failure.exitCode != 0)
         #expect(failure.message.contains("/tmp/out.mov"))
+        #expect(failure.message.contains("it exited with code 1"))
+    }
+
+    /// **合図で落ちた子を「exited with code N」と名乗らない** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// `fatalError` の SIGTRAP は番号が 5 で、`terminationStatus` だけを読むと「code 5」になる。
+    /// 終了コードは「書けたか」を言う値なので 1 のまま (#1282)。
+    @Test("子が合図で落ちれば、合図の番号を名乗り、終了コードの形では言わない")
+    func aSignalledChildIsNamedBySignal() throws {
+        let child = try makeChild(exiting: 0, signalled: "TRAP")
+        let request = try #require(
+            RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/out.mov"))
+        let thrown = #expect(throws: CommandFailure.self) {
+            try RenderCommand.launch(
+                child.executable, in: child.executable.deletingLastPathComponent(),
+                request: request)
+        }
+        #expect(
+            thrown == .renderIncomplete(destination: "/tmp/out.mov", ending: .signalled(SIGTRAP)))
+        let failure = try #require(thrown)
+        #expect(failure.exitCode == 1)
+        #expect(failure.message.contains("signal 5 (SIGTRAP)"))
+        #expect(!failure.message.contains("exited with code"))
     }
 
     // MARK: - 途中で止める (完了条件 7)
