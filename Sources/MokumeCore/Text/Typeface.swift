@@ -141,6 +141,103 @@ final class Typeface {
         return entry
     }
 
+    /// 描いて測った墨の範囲の控え。`nil` を控えるのは、描いた結果「墨が無い」と分かった字
+    /// (空白など)。**描く道具を作れずに描けなかった字は控えず、次に引き直す** (焼き場が
+    /// `.unbakeable` を控えないのと同じ)。
+    private var drawnInks: [Unicode.Scalar: CGRect?] = [:]
+
+    /// その字形を、**道筋ではなく描いて測るか** ([#2308])。
+    ///
+    /// 焼き場は道筋を見ず、どの字形も `CTFontDrawGlyphs` で描く。道筋が描いた墨を表すのは、
+    /// 書体が字形を道筋で描くときだけである。**色やビットマップの字形を持つ書体**
+    /// (Apple Color Emoji。`traitColorGlyphs`) の字形は、道筋が無いか、あっても描く絵と別の
+    /// 仮の形 (国旗の部品 🇯 は 40 で中身の無い矩形を道筋に持ち、描く絵はその右と下へ数画素
+    /// はみ出す) なので、描いて測る。道筋を持たない字 (空白・ビットマップだけの字形) も同じ。
+    ///
+    /// 字形ごとに描いて確かめず書体の印で決めるのは、色の字形を持たない書体の字を 1 つも
+    /// 描かずに済ませるためである (描くのは色の書体の字と、道筋の無い字だけ)。字形の絵が
+    /// 色を持つか (焼き場の `hasOwnColor`) では決めない — 🇯 は塗りの色で描かれる (色を持たない)
+    /// が、描く絵は道筋と違う。
+    ///
+    /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
+    static func measuresByDrawing(_ resolved: ResolvedGlyph, path: CGPath?) -> Bool {
+        path == nil || CTFontGetSymbolicTraits(resolved.font).contains(.traitColorGlyphs)
+    }
+
+    /// 字形を**焼き場と同じ描き方** (``GlyphAtlas/render(glyph:font:width:height:penX:penY:)``)
+    /// で描いた墨の範囲を、字形の座標 (書き始めと基準線から測り、上向き) で返す。墨が無ければ
+    /// `nil` ([#2308])。
+    ///
+    /// 外接矩形 (`CTFontGetBoundingRectsForGlyphs`) は色を持つ字形では送り幅の升目そのもので、
+    /// 見える墨より左右に広い (Apple Color Emoji の 🌲 は 40 で各 3 画素)。だから描いて測る。
+    /// 書き始めは整数の升目に置くので、焼き場が焼く絵と同じ升目に乗る。字ごとに控えるので、
+    /// 描くのは字の種類ごとに 1 度だけである。
+    ///
+    /// 外接矩形の面積が無い字 (空白) は描かずに墨なし (焼き場も焼かない)。焼き場の上限の頁に
+    /// 入らない大きさの字は、描かずに外接矩形を墨とする — 墨を含む、送り幅の升目ぶん広い枠に
+    /// なる。描く道具を作れなかったときも `nil` を返すが、控えないので次に呼べば描き直す。
+    ///
+    /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
+    func drawnInk(of scalar: Unicode.Scalar, _ resolved: ResolvedGlyph) -> CGRect? {
+        if let cached = drawnInks[scalar] { return cached }
+        switch Self.draw(resolved) {
+        case .ink(let ink):
+            drawnInks[scalar] = ink
+            return ink
+        case .failed:
+            return nil
+        }
+    }
+
+    /// 描いて測った結果。描けなかったこと (`failed`) と、描いて墨が無かったこと (`ink(nil)`) を分ける。
+    private enum Drawing {
+        case ink(CGRect?)
+        case failed
+    }
+
+    private static func draw(_ resolved: ResolvedGlyph) -> Drawing {
+        var glyph = resolved.glyph
+        let bounds = CTFontGetBoundingRectsForGlyphs(resolved.font, .horizontal, &glyph, nil, 1)
+        guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
+        else { return .ink(nil) }
+        // 焼き場 (`GlyphAtlas.bake`) と同じく、外接矩形を整数へ広げて余白を足した升目に描く
+        let pad = CGFloat(GlyphAtlas.padding)
+        let leftEdge = bounds.minX.rounded(.down) - pad
+        let bottomEdge = bounds.minY.rounded(.down) - pad
+        let rightEdge = bounds.maxX.rounded(.up) + pad
+        let topEdge = bounds.maxY.rounded(.up) + pad
+        // 焼き場の上限の頁に入らない字は描いて測らない (巨大な絵を CPU に描かせない)。外接矩形は
+        // 墨を含むので、それを枠にする — 道筋を持つ字も、焼き場に入らない大きさで枠を返す
+        guard
+            GlyphAtlas.fitsFreshPage(
+                width: rightEdge - leftEdge, height: topEdge - bottomEdge,
+                side: GlyphAtlas.maximumSize),
+            let left = Int(exactly: leftEdge), let bottom = Int(exactly: bottomEdge),
+            let right = Int(exactly: rightEdge), let top = Int(exactly: topEdge)
+        else { return .ink(bounds) }
+        guard
+            let pixels = GlyphAtlas.render(
+                glyph: glyph, font: resolved.font, width: right - left, height: top - bottom,
+                penX: -left, penY: -bottom)
+        else { return .failed }
+
+        let width = right - left
+        var (minColumn, maxColumn, minRow, maxRow) = (Int.max, Int.min, Int.max, Int.min)
+        for (index, texel) in pixels.enumerated() where texel.w > 0 {
+            let (row, column) = index.quotientAndRemainder(dividingBy: width)
+            minColumn = min(minColumn, column)
+            maxColumn = max(maxColumn, column)
+            minRow = min(minRow, row)
+            maxRow = max(maxRow, row)
+        }
+        guard minColumn <= maxColumn else { return .ink(nil) }
+        // 並びの先頭は絵の上端。行 r は、字形の座標で top - r - 1 から top - r までを覆う
+        return .ink(
+            CGRect(
+                x: left + minColumn, y: top - maxRow - 1, width: maxColumn - minColumn + 1,
+                height: maxRow - minRow + 1))
+    }
+
     /// 書体の中での字形の番号。持っていなければ 0。
     private static func glyphIndex(of scalar: Unicode.Scalar, in font: CTFont) -> CGGlyph {
         var units = Array(String(scalar).utf16)

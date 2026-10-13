@@ -655,6 +655,8 @@ extension Sketch {
     /// 1 つの形として扱いたい (三角形へ畳む・穴だけ別の色にする) なら、
     /// ``textFont(_:)`` で書体を指定する — `Helvetica` などでは `A` が外周 1 つと
     /// 穴 1 つになる。
+    ///
+    /// 色で描かれる字 (絵文字) は輪郭を持たない絵なので、周を返さない (送りは進める)。
     // shot: 1 snippet=e9e2ccf8
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
@@ -694,7 +696,8 @@ extension Sketch {
     /// 枠の `x`・`y` は**いつも左上**で、``rectMode(_:)`` に依らない。返る値は**いまの座標の
     /// まま**で、変換は掛かっていない — 同じ変換の下で ``rect(_:_:_:_:)`` へ渡せば、描いた字を
     /// 囲む。``textAlign(_:_:)`` の横・縦と、行送り・改行・``textStyle(_:)`` は、描くときと
-    /// 同じに効く。空白は送りだけを進め、墨には数えない。
+    /// 同じに効く。空白は送りだけを進め、墨には数えない。色で描かれる字 (絵文字) も、
+    /// 描いた絵の墨を同じく囲む。
     ///
     /// 墨が無いときは `nil` を返す — 空の文字列・空白や改行だけの文字列・大きさ 0
     /// (``textSize(_:)``)・位置に数でない値や無限を渡したとき。
