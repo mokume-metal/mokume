@@ -34,6 +34,11 @@ on:
 permissions:
   contents: read
 
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # 検査の実体は make ci-check に集約する。CI にステップを足したくなったら
   # まず Makefile に足し、このジョブは呼ぶだけを保つ。
