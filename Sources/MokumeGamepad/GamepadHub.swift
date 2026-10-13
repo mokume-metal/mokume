@@ -79,6 +79,11 @@ final class GamepadHub {
 
     /// 繋がった。識別子を振り、handler を中継へ繋ぎ、いまの値を入れる。
     func connected(_ controller: GCController) {
+        // 読めるのは `extendedGamepad` の左スティックと釦だけ。持たない機材は席を振らない。
+        // 実機 (Xbox360 互換の USB パッド) は、挿し直した直後に別名の汎用 HID (`RETRO GAMEPAD`・
+        // `extendedGamepad` なし) を 0.2 秒だけ通知してから、本来のパッドを新しい機材として
+        // 通知する。席を振ると、持ち主のいない席が列に残る (#2295)
+        guard controller.extendedGamepad != nil else { return }
         let key = ObjectIdentifier(controller)
         // 走り出しの一覧と知らせの両方で同じ機材が来ることがある
         guard bound[key] == nil else { return }

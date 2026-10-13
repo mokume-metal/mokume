@@ -125,6 +125,27 @@ struct GamepadHubTests {
         #expect(hub.slots.known.count == 1)
     }
 
+    @Test("extendedGamepad を持たない機材は席を取らない。挿し直しの前後に汎用 HID が通知されても、一覧は増えない")
+    func machinesWithoutExtendedGamepadTakeNoSeat() throws {
+        let hub = GamepadHub(watches: false)
+        let first = GCController.withExtendedGamepad()
+        hub.connected(first)
+        let id = try #require(hub.slots.known.first)
+
+        // 実機 (Xbox360 互換) の挿し直し: 抜かれた直後に別名の汎用 HID が通知され、すぐ消え、
+        // 本来のパッドが新しい機材として届く。汎用 HID は左スティックも釦も読めない
+        hub.disconnected(first)
+        let generic = GCController.withMicroGamepad()
+        #expect(generic.extendedGamepad == nil)
+        hub.connected(generic)
+        hub.disconnected(generic)
+        let again = GCController.withExtendedGamepad()
+        hub.connected(again)
+
+        #expect(hub.slots.known == [id])
+        #expect(hub.slots.isConnected(id))
+    }
+
     @Test("閉じた入り口には、その後の値が入らない")
     func closedPadStopsReceiving() async throws {
         let hub = GamepadHub(watches: false)

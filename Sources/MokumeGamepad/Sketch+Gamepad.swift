@@ -39,6 +39,9 @@ extension Sketch {
     ///   要るなら `state == .running` で絞る
     /// - **毎フレーム呼んでよい。** 同じパッドには同じ ``Gamepad`` を返す。後から挿したパッドは、
     ///   OS が繋がったと知らせた後に呼んだときから列の後ろに並ぶ
+    /// - **左スティックと釦を読めない機材は並ばない。** GameController が拡張ゲームパッドの形
+    ///   (`extendedGamepad`) で見せる機材だけが対象で、汎用 HID として見えるものは入らない。
+    ///   パッドによっては、挿し直した直後に別名の汎用 HID を一瞬だけ通知するが、列は増えない
     /// - 1 台を識別子 (``Gamepad/id``) で選ぶなら、列から探す:
     ///   `gamepads().first { $0.id == "Xbox Wireless Controller #1" }`
     /// - **呼んだときだけ見張り始める。** `import mokume` しただけでは、GameController に触れない
