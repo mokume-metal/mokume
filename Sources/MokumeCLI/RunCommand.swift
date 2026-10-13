@@ -478,7 +478,8 @@ enum RunCommand {
         return SwiftPM.package(inDumpOf: dump)
     }
 
-    /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。
+    /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。**合図で落ちた子は、シェルの
+    /// `$?` と同じ `128 + 番号` で名乗る** (``CommandFailure/sketchSignalled(signal:)``・#2315)。
     ///
     /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:viewportOwner:)``)。
     ///   **何を載せるかは口が決める** — `run` は速さの名乗りと × の確認を、`render` は書き出しの

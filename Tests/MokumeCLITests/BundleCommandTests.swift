@@ -475,6 +475,28 @@ struct BundleCommandTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
     }
 
+    /// **合図で落ちた `codesign` を、終了コードの形で名乗らない** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// `terminationStatus` を直に読むと SIGKILL の 9 が「Signing failed (exit code 9)」になり、
+    /// `exit(9)` で終わった回と見分けがつかない。実物の `Process` の終わり方を通して読む。
+    @Test("署名の子が合図で落ちたら、128 + 番号で名乗る。通れば失敗にしない")
+    func aSignalledCodesignIsNamedByShellStatus() throws {
+        func ending(of script: String) throws -> ChildEnding {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", script]
+            try process.run()
+            process.waitUntilExit()
+            return ChildEnding(of: process)
+        }
+        #expect(BundleCommand.signingFailure(ending: try ending(of: "exit 0")) == nil)
+        #expect(
+            BundleCommand.signingFailure(ending: try ending(of: "exit 9"))
+                == .codesignFailed(status: 9))
+        #expect(
+            BundleCommand.signingFailure(ending: try ending(of: "kill -s KILL $$"))
+                == .codesignFailed(status: 128 + SIGKILL))
+    }
+
     /// 本物の Mach-O を主実行ファイルにした包みを組んで、`sign` を通す。
     private func makeSignedApplication(
         identity signature: String?, entitlements: [String: Bool],

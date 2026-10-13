@@ -267,9 +267,17 @@ enum BundleCommand {
             throw .toolchainMissing("codesign")
         }
         exited.wait()
-        guard process.terminationStatus == 0 else {
-            throw .codesignFailed(status: process.terminationStatus)
-        }
+        if let failure = signingFailure(ending: ChildEnding(of: process)) { throw failure }
+    }
+
+    /// `codesign` の終わり方から、署名の失敗を決める。**通ったなら `nil`。**
+    ///
+    /// **合図で落ちた `codesign` を終了コードの形で名乗らない** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// `terminationStatus` は合図で落ちた子に合図の番号を返すので、直に読むと SIGKILL (9) が
+    /// 「Signing failed (exit code 9)」になる。`128 + 番号` で名乗る (``ChildEnding/shellStatus``・
+    /// `RunCommand.capture` の戻りと同じ)。
+    static func signingFailure(ending: ChildEnding) -> CommandFailure? {
+        ending == .exited(0) ? nil : .codesignFailed(status: ending.shellStatus)
     }
 
     /// `codesign` に渡すもの (検査から呼べる形)。
