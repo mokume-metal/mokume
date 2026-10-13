@@ -81,10 +81,29 @@ struct RenderCommandTests {
         ])
         #expect(
             options.invocation
-                == Invocation(place: "Cast", configuration: "release", scratchPath: ".build"))
+                == Invocation(
+                    place: "Cast", configuration: "release", scratchPath: ".build",
+                    currentDirectory: Self.typedFrom))
         #expect(options.request.frameRate == 60)
         #expect(options.request.frameCount == 2880)
         #expect(options.request.destination == "/tmp/cast.mov")
+    }
+
+    /// **場所・置き場・行き先は、どれも打った場所から解く** (#2320・#2323 の判断・案 A)。
+    /// 置き場だけがスケッチの場所から解かれていたので、`plain/` で
+    /// `render ../probe --scratch-path sp --out o.mov` と打つと、書いたものは `plain/o.mov`
+    /// なのに組み立ての置き場は `probe/sp` になっていた。
+    @Test("場所・置き場・行き先は、どれも打った場所から解く")
+    func everyPathIsResolvedFromWhereItWasTyped() throws {
+        let plain = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let options = try RenderCommand.parse(
+            [
+                "../probe", "--scratch-path", "sp", "--fps", "10", "--seconds", "0.1", "--out",
+                "o.mov",
+            ], currentDirectory: plain)
+        #expect(options.invocation.directory.path == "/work/probe")
+        #expect(options.invocation.scratchDirectory?.path == "/work/plain/sp")
+        #expect(options.request.destination == "/work/plain/o.mov")
     }
 
     /// **子の作業ディレクトリはスケッチの場所である。** 相対のまま渡すと、書いたものが
@@ -137,6 +156,25 @@ struct RenderCommandTests {
         arguments: ["0", "-30", "29.97", "abc", ""])
     func aBadFrameRateIsRefused(rate: String) {
         expectUsage(["--fps", rate, "--seconds", "2", "--out", "/a.mov"], mentioning: "--fps")
+    }
+
+    /// **`.mov` の時刻は 1/90 000 秒で数える** ([#2307])。それより速いと隣の枚が同じ時刻へ
+    /// 丸まり、書く係が外れて開けない `.mov` が残っていた (`--fps 100000`)。走らせる前に、
+    /// 上限を名乗って止まる。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    @Test("--fps が .mov の刻みを越えたら、上限を名乗ってビルドの前に止まる")
+    func aFrameRateBeyondTheMovieTimescaleIsRefused() throws {
+        expectUsage(
+            ["--fps", "90001", "--seconds", "1", "--out", "/a.mov"],
+            mentioningAll: ["--fps", "90000", ": 90001"])
+        // 境目: 刻みちょうどは通る。連番は時刻を書かないので、刻みを越えても通る
+        #expect(
+            try parse(["--fps", "90000", "--seconds", "1", "--out", "/a.mov"]).request.frameRate
+                == 90_000)
+        #expect(
+            try parse(["--fps", "90001", "--seconds", "1", "--out", "/f-####.png"]).request
+                .frameRate == 90_001)
     }
 
     @Test(

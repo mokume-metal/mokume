@@ -32,12 +32,21 @@ nonisolated struct Invocation: Equatable {
     /// 共有が都合の悪い場面 (検査・隔離したい計測) では従来どおりパッケージ直下を
     /// 指せるようにしておく。
     var scratchPath: String?
+    /// 相対パスを解く基準。**走らせた場所である** — 場所も置き場も同じ基準から解く
+    /// ([#2323](https://github.com/mokume-metal/mokume/issues/2323))。検査から渡せる形にしてある。
+    var currentDirectory: URL = GivenPath.currentDirectory
 
-    /// スケッチの場所 (URL)。
-    var directory: URL {
-        URL(
-            fileURLWithPath: place ?? FileManager.default.currentDirectoryPath,
-            isDirectory: true)
+    /// スケッチの場所。**走らせた場所から解いた絶対パス**で、子の作業ディレクトリにも
+    /// このまま渡る — 相対の `URL` のまま渡すと先頭の `..` が落ちる (``GivenPath``)。
+    var directory: URL { GivenPath.resolve(place ?? ".", from: currentDirectory) }
+
+    /// 指定されたビルドの置き場。渡されなければ `nil`。
+    ///
+    /// **基準はスケッチの場所ではなく、走らせた場所である** (#2323 の判断・案 A)。スケッチの
+    /// 中で走らせれば `--scratch-path .build` はいままでどおりスケッチの下を指し、外から
+    /// 場所を渡したときだけ、打った場所の下を指す — `render --out` と同じ基準になる。
+    var scratchDirectory: URL? {
+        scratchPath.map { GivenPath.resolve($0, from: currentDirectory) }
     }
 
     /// 名乗るときの構成の名前。
@@ -99,8 +108,10 @@ nonisolated struct Invocation: Equatable {
     /// 文面が ``Command/usage(_:)`` から来る — 値としての ``Invocation`` を作り直しの糸
     /// (`Task.detached`) へ渡すのに要るのは格納された値のほうで、解く手続きではない。
     @MainActor
-    static func parse(_ arguments: [String]) throws(CommandFailure) -> Invocation {
-        try parse(arguments, adding: []).invocation
+    static func parse(
+        _ arguments: [String], from currentDirectory: URL = GivenPath.currentDirectory
+    ) throws(CommandFailure) -> Invocation {
+        try parse(arguments, adding: [], from: currentDirectory).invocation
     }
 
     /// 口が自分の選択肢を足して解く。**走らせる部分 (場所・構成・置き場) の解き方は共有する。**
@@ -110,11 +121,15 @@ nonisolated struct Invocation: Equatable {
     /// [#680] のように片方だけが選択肢を受ける状態が戻る。足した選択肢は `run` / `watch` へは
     /// 届かない — 知らない選択肢として断られる。
     ///
+    /// - Parameter currentDirectory: 相対パスを解く基準 (走らせた場所)。足した選択肢に場所を
+    ///   取るものがあれば、口は同じ基準で解く — `render` の `--out` と `--scratch-path` が
+    ///   別の基準で解かれていた ([#2320](https://github.com/mokume-metal/mokume/issues/2320))。
     /// - Returns: 走らせる部分と、足した選択肢の値 (鍵は ``Arguments/Option/key``)。
     @MainActor
-    static func parse(_ arguments: [String], adding extra: [Arguments.Option]) throws(
-        CommandFailure
-    ) -> (invocation: Invocation, values: [String: String]) {
+    static func parse(
+        _ arguments: [String], adding extra: [Arguments.Option],
+        from currentDirectory: URL = GivenPath.currentDirectory
+    ) throws(CommandFailure) -> (invocation: Invocation, values: [String: String]) {
         let parsed = try Arguments.parse(
             arguments,
             options: [
@@ -136,7 +151,7 @@ nonisolated struct Invocation: Equatable {
         }
         let invocation = Invocation(
             place: parsed.positional, configuration: configuration,
-            scratchPath: parsed.values[scratchPathFlags[0]])
+            scratchPath: parsed.values[scratchPathFlags[0]], currentDirectory: currentDirectory)
         return (invocation, parsed.values)
     }
 }

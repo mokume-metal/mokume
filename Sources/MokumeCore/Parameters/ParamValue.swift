@@ -44,6 +44,26 @@ public enum ParamValue: Equatable, Sendable {
         case .bool, .string, .color, .vector2, .vector3: false
         }
     }
+
+    /// 数の成分が、どれも有限か (NaN も無限も含まない)。数を持たない型 (真偽・文字) と整数は
+    /// 常に真。
+    ///
+    /// **値を受け取る関所が見るのは、これ 1 つである** ([ADR-0030] 決定 3)。非有限の数は
+    /// JSON に書けないので、載ったままにすると保存も応答も、他の値を含めて書けなくなる
+    /// ([#2271](https://github.com/mokume-metal/mokume/issues/2271))。型ごとの分岐を関所に
+    /// 持たせず、組と色の成分もここで数える。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    var hasOnlyFiniteNumbers: Bool {
+        switch self {
+        case .float(let number): number.isFinite
+        case .int, .bool, .string: true
+        case .color(let color):
+            color.red.isFinite && color.green.isFinite && color.blue.isFinite && color.alpha.isFinite
+        case .vector2(let vector): vector.x.isFinite && vector.y.isFinite
+        case .vector3(let vector): vector.x.isFinite && vector.y.isFinite && vector.z.isFinite
+        }
+    }
 }
 
 /// 面に出せる値。

@@ -92,6 +92,94 @@ struct DocumentLoadingTests {
         #expect(broken?.line == 2)
     }
 
+    /// 負の側は `JSONSerialization` が投げずに `-inf` として返す。壊れていた位置もくれないので、
+    /// 本体が文字から探して名乗る (#2329)。
+    @Test(
+        "Double に収まらない負の数も壊れた JSON で、その数が書かれた行と列を名乗る",
+        arguments: [
+            ("負の大きな指数", #"{"a": -1e400}"#, 1, 7, "-1e400"),
+            ("Double の最小値の少し外", #"{"a": -1.8e308}"#, 1, 7, "-1.8e308"),
+            ("大文字の E", #"{"a": -1E400}"#, 1, 7, "-1E400"),
+            ("配列の中", #"{"a": [-1e400]}"#, 1, 8, "-1e400"),
+            ("入れ子の中", #"{"o": {"a": -1e400}}"#, 1, 13, "-1e400"),
+            ("2 行目", "{\n\"a\": -1e400}", 2, 6, "-1e400"),
+            ("CRLF の行", "{\"a\": [1,\r\n-1e400]}", 2, 1, "-1e400"),
+            ("CR の行", "{\"a\": [1,\r\r -1e400]}", 3, 2, "-1e400"),
+            // 文字列の中の数の綴りと、閉じない引用符 (\") は数として読まない
+            ("文字列の中は数でない", "{\"s\": \"-1e400 \\\" -1e999\",\n\"a\":\n -1e400}", 3, 2, "-1e400"),
+            // 収まる負の数より後ろにある、収まらない数を名乗る
+            ("収まる数の後ろ", "{\"x\": -1e300, \"y\": -2,\n \"a\": -1e999}", 2, 7, "-1e999"),
+            // 列は文字で数える (``JSONFile`` の行と列の数え方)
+            ("日本語の後ろ", "{\"札幌\": -1e400}", 1, 8, "-1e400"),
+            // `JSONSerialization` は重複したキーの先の値を残し、後ろの -inf は木から落ちる
+            ("重複したキーの後ろ", "{\"a\": 1,\n\"a\": -1e400}", 2, 6, "-1e400"),
+            // 壊れた箇所が複数あれば、符号によらず文字の中で最初のものを名乗る
+            ("正の数より前", "{\"a\": -1e400,\n\"b\": 1e400}", 1, 7, "-1e400"),
+            ("負の数より前", "{\"a\": [1e400,\n-1e400]}", 1, 8, "1e400"),
+            ("配列の中で正の数より前", "[-1e400, 1e400]", 1, 2, "-1e400"),
+        ])
+    func negativeOverflowIsMalformed(
+        _ name: String, _ text: String, _ line: Int, _ column: Int, _ literal: String
+    ) throws {
+        defer { cleanUp() }
+        let path = try file("negative.json", text)
+        let broken = malformedLine { () throws(DataFailure) in _ = try Bare().loadJSONObject(path) }
+        #expect(broken?.line == line, "\(name)")
+        #expect(broken?.reason.hasSuffix("(column \(column))") == true, "\(name): \(broken?.reason ?? "")")
+        #expect(broken?.reason.contains(literal) == true, "\(name): \(broken?.reason ?? "")")
+    }
+
+    @Test("Double に収まらない数は、符号によらず同じ行と同じ形の文面を名乗る")
+    func overflowNamesSameLineEitherSign() throws {
+        defer { cleanUp() }
+        let positive = try file("positive.json", "{\n\"a\": 1e400}")
+        let negative = try file("negative.json", "{\n\"a\": -1e400}")
+        let up = malformedLine { () throws(DataFailure) in _ = try Bare().loadJSONObject(positive) }
+        let down = malformedLine { () throws(DataFailure) in _ = try Bare().loadJSONObject(negative) }
+        #expect(up?.line == 2)
+        #expect(down?.line == up?.line)
+        #expect(up?.reason == "Number 1e400 does not fit in a Double (column 6)")
+        #expect(down?.reason == "Number -1e400 does not fit in a Double (column 6)")
+    }
+
+    @Test(
+        "数の形が崩れた綴りは、大きくても収まらない数とは名乗らない",
+        arguments: ["{\"a\": 1.e400}", "{\"a\": 01e400}", "{\"a\": -e400}", "{\"a\": 1e+}"])
+    func malformedNumbersAreNotUnfit(_ text: String) throws {
+        defer { cleanUp() }
+        let path = try file("syntax.json", text)
+        let broken = malformedLine { () throws(DataFailure) in _ = try Bare().loadJSONObject(path) }
+        #expect(broken?.line == 1)
+        #expect(broken?.reason.contains("does not fit") == false, "\(broken?.reason ?? "")")
+    }
+
+    @Test("Double に収まらない負の数は、待たない版でも URL の本文でも同じ失敗で投げる")
+    func negativeOverflowSameForEveryDoor() async throws {
+        defer { cleanUp() }
+        let text = "{\"o\": {\n\"a\": [-1e400]}}"
+        let path = try file("negative.json", text)
+        let failure = #expect(throws: DataFailure.self) { try Bare().loadJSONObject(path) }
+        guard let failure, case .malformed(_, 2, let reason) = failure else {
+            Issue.record("line 2 の malformed で投げていない: \(String(describing: failure))")
+            return
+        }
+        await #expect(throws: failure) { try await Bare().requestJSONObject(path) }
+
+        // URL の本文は、名前が URL になるほかはファイルと同じ失敗
+        let url = CannedResponses.serve(text)
+        let expected = DataFailure.malformed(path: url, line: 2, reason: reason)
+        #expect(throws: expected) { try Bare().loadJSONObject(url) }
+        await #expect(throws: expected) { try await Bare().requestJSONObject(url) }
+    }
+
+    @Test("Double の最小値ちょうどは読め、Float に収まらないので getFloat は負の無限大")
+    func mostNegativeDoubleReads() throws {
+        defer { cleanUp() }
+        let object = try Bare().loadJSONObject(try file("edge.json", #"{"a": -1.7976931348623157e308}"#))
+        #expect(object.members["a"] == .number(-.greatestFiniteMagnitude))
+        #expect(object.getFloat("a") == -.infinity)
+    }
+
     @Test("真偽は数と分けて持つ。true は数として読まない")
     func booleansAreNotNumbers() throws {
         defer { cleanUp() }

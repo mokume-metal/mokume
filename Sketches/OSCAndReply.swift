@@ -21,7 +21,9 @@ import mokume
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class OSCAndReply: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "osc and reply")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "osc and reply")
+    }
 
     /// 受けるポート。送り先も同じにして、自分で送って自分で受ける。
     private static let port = 9000

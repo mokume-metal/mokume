@@ -114,14 +114,12 @@ enum RunCommand {
         let declared = try dumpPackage(in: directory)
         let product = declared?.executableProductName
 
-        // **明示されたら理由を確かめない。** 選んだのは人である
-        if let given = invocation.scratchPath {
-            let url = URL(
-                fileURLWithPath: NSString(string: given).expandingTildeInPath, isDirectory: true,
-                relativeTo: directory)
+        // **明示されたら理由を確かめない。** 選んだのは人である。解く基準は走らせた場所で、
+        // 解くのは ``Invocation`` の 1 か所 (#2323)
+        if let given = invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
-                place: .outside(url.standardizedFileURL, given: true), product: product)
+                place: .outside(given, given: true), product: product)
         }
 
         // **宣言が読めないことを、断る理由にしない。** 壊した状態から直していく途中は
@@ -505,6 +503,12 @@ enum RunCommand {
     ///   継がせると、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る
     ///   ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     ///
+    /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
+    /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
+    /// ディレクトリをスケッチに替えて起こされるので、そのまま運ぶと道具 (走らせた場所から
+    /// 解く) と子 (スケッチから解く) が別の区画を見る — 観測も入力も黙って噛み合わない
+    /// (#2323 の反証)。道具が見ている区画に子を揃える。
+    ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func childEnvironment(
         _ base: [String: String] = ProcessInfo.processInfo.environment,
@@ -512,6 +516,9 @@ enum RunCommand {
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil
     ) -> [String: String] {
         var environment = base
+        if let workDirectory = WorkDirectory.given(environment: base) {
+            environment[StartupReads.workDirectory.key] = workDirectory.path
+        }
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
         if let tool { environment[StartupReads.closeConfirmation.key] = tool }

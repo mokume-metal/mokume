@@ -12,7 +12,9 @@ import mokume
 /// 右の板だけ `in.place` (画面の中の位置) で塗ってある。**同じ形・同じ回し方で、模様の
 /// 留まり方だけが違う**ので、何が変わったのかがこの 1 枚で読める。
 final class SurfaceAndGrain: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "surface and grain")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "surface and grain")
+    }
 
     /// 木目の作り。**縞の作り方は 2 つで共有し、どの座標から作るかだけを変える。**
     private static func wood(from source: String) -> String {

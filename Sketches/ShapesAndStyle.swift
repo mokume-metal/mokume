@@ -7,7 +7,9 @@ import mokume
 ///
 /// 曲線と、頂点の並べ方 (`beginShape` に渡す種類) は `CurvesAndVertices` が持つ。
 final class ShapesAndStyle: Sketch {
-    var settings = SketchSettings(width: 960, height: 720, title: "shapes and style")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 720, title: "shapes and style")
+    }
 
     func draw() {
         background(18, 20, 26)

@@ -10,7 +10,9 @@ import mokume
 /// 描き切らせてから読んでいる。下の 4 つの四角は、白い輪の場所を `get()` で 1 画素ずつ
 /// 読んだ色 (書き換えた後の色が読める)、黄色の市松は `set()` で 1 画素ずつ書いたもの。
 final class PixelsAndPaint: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "pixels and paint")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "pixels and paint")
+    }
 
     private var ripple: Shader?
 

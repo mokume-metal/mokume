@@ -43,6 +43,79 @@ struct InvocationTests {
                     place: "/tmp/sketch", configuration: "release", scratchPath: "/store"))
     }
 
+    // ------------------------------------------------------------ 相対パスの基準 (#2323)
+
+    /// **場所は走らせた場所から 1 度だけ絶対パスへ解く。** 相対の `URL` のまま
+    /// `Process.currentDirectoryURL` へ渡すと、Foundation は先頭の `..` だけを落とす —
+    /// `../probe` は起動に失敗し、`..` は投げずに走らせた場所で子を動かす
+    /// ([#2314](https://github.com/mokume-metal/mokume/issues/2314))。子へ渡る場所は
+    /// 基準の URL を持たず、`..` を含まない形でなければならない。
+    @Test(
+        "場所は走らせた場所から絶対パスに解き、先頭の .. も落とさない",
+        arguments: [
+            ("../probe", "/work/probe"), ("..", "/work"), ("../", "/work"), ("../..", "/"),
+            ("probe", "/work/plain/probe"), ("./probe", "/work/plain/probe"),
+            ("probe/../other", "/work/plain/other"), ("/elsewhere/sketch", "/elsewhere/sketch"),
+        ])
+    func thePlaceIsResolvedFromWhereItWasTyped(place: String, expected: String) {
+        let typedFrom = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let directory = Invocation(place: place, currentDirectory: typedFrom).directory
+        #expect(directory.baseURL == nil, "相対の URL のまま: \(directory)")
+        #expect(!directory.pathComponents.contains(".."))
+        #expect(directory.path == expected)
+    }
+
+    /// 既定の基準 (このプロセスの作業ディレクトリ) でも同じ。完了条件 2 の例そのもの。
+    @Test("基準を渡さなければ、このプロセスの作業ディレクトリから解く")
+    func theDefaultBaseIsTheWorkingDirectory() throws {
+        let directory = Invocation(place: "../x").directory
+        #expect(directory.baseURL == nil)
+        #expect(!directory.pathComponents.contains(".."))
+        let parent = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            .deletingLastPathComponent()
+        #expect(
+            directory.standardizedFileURL.path
+                == parent.appendingPathComponent("x").standardizedFileURL.path)
+        // 場所を渡さなければ、走らせた場所そのもの
+        #expect(
+            Invocation().directory.standardizedFileURL.path
+                == URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .standardizedFileURL.path)
+    }
+
+    /// **置き場も場所と同じ基準で解く** (#2323 の判断・案 A)。スケッチの場所から解いていた
+    /// ので、外から場所を渡すと `--scratch-path sp` が `<スケッチ>/sp` を指し、README の
+    /// 「相対パスは実行した場所が基準」と食い違っていた。
+    @MainActor
+    @Test("置き場の相対パスは、スケッチの場所ではなく走らせた場所から解く")
+    func theScratchPathIsResolvedFromWhereItWasTyped() throws {
+        let typedFrom = URL(fileURLWithPath: "/work", isDirectory: true)
+        let invocation = try Invocation.parse(
+            ["probe", "--scratch-path", "sp"], from: typedFrom)
+        #expect(invocation.directory.path == "/work/probe")
+        #expect(invocation.scratchDirectory?.path == "/work/sp")
+        #expect(invocation.scratchDirectory?.baseURL == nil)
+        // `..` で始まっても、絶対パスでも同じ規則
+        #expect(
+            try Invocation.parse(["../probe", "--scratch-path", "../sp"], from: typedFrom)
+                .scratchDirectory?.path == "/sp")
+        #expect(
+            try Invocation.parse(["--scratch-path", "/store"], from: typedFrom)
+                .scratchDirectory?.path == "/store")
+        // 渡されなければ置き場は決めない (BuildDirectory が決める)
+        #expect(try Invocation.parse(["probe"], from: typedFrom).scratchDirectory == nil)
+    }
+
+    /// help が「`--scratch-path` で package の下に置く」と言っていた (スケッチの場所から解いて
+    /// いた頃の言い方)。基準を走らせた場所にしたので、help もそう言う (#2323 の完了条件 4)。
+    @Test("help は、相対パスが --scratch-path も含めて走らせた場所から解かれることを言う")
+    func theHelpSaysWhereRelativePathsStartFrom() throws {
+        let entry = try #require(Command.Verb.run.usageEntry)
+        let text = entry.description.replacingOccurrences(of: "\n", with: " ")
+        #expect(text.contains("Relative paths start from where you run this, --scratch-path included"))
+        #expect(!text.contains("under the package"))
+    }
+
     /// **知らない選択肢を黙って場所にしない** ([#680] が構成で踏んだ形と同じ)。
     ///
     /// [#680]: https://github.com/mokume-metal/mokume/issues/680
