@@ -112,8 +112,8 @@ struct ColorWarningTests {
 struct ColorValueWarningTests {
     @Test("素の数値の口と、色相の口は互いに黙らせない")
     func numericAndHSBCountSeparately() {
-        #expect(color(.nan, 0, 0) == .transparent)
-        #expect(color(hue: .nan, saturation: 80, brightness: 90) == .transparent)
+        #expect(color(Float.nan, 0, 0) == .transparent)
+        #expect(color(hue: Float.nan, saturation: 80, brightness: 90) == .transparent)
         #expect(ColorValues.warnings.hasWarned(.notANumber))
         #expect(ColorValues.warnings.hasWarned(.notANumberHSB))
         #expect(ColorValues.warnings.message(for: .notANumber)?.hasPrefix("color()") == true)
@@ -128,8 +128,8 @@ struct ColorValueWarningTests {
     @Test("2 色の間を取る口と、素の数値の口は互いに黙らせない")
     func lerpColorCountsSeparately() {
         let start = color(236, 238, 240)
-        #expect(lerpColor(start, color(232, 96, 72), .nan) == start)
-        #expect(color(.nan, 0, 0) == .transparent)
+        #expect(lerpColor(start, color(232, 96, 72), Float.nan) == start)
+        #expect(color(Float.nan, 0, 0) == .transparent)
         #expect(ColorValues.warnings.hasWarned(.notANumberLerpColor))
         #expect(ColorValues.warnings.hasWarned(.notANumber))
         #expect(

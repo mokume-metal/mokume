@@ -155,9 +155,9 @@ struct ColorSurfaceTests {
 
     @Test("数でない値は色を作らず、読み出しは 0 へ倒れる")
     func notANumberFallsToSafeValues() {
-        #expect(color(.nan, 0, 0) == .transparent)
-        #expect(color(.infinity, 0, 0) == .transparent)
-        #expect(color(255, 204, 0, .nan) == .transparent)
+        #expect(color(Float.nan, 0, 0) == .transparent)
+        #expect(color(Float.infinity, 0, 0) == .transparent)
+        #expect(color(255, 204, 0, Float.nan) == .transparent)
 
         let broken = LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: .nan)
         #expect(red(broken) == 0)
