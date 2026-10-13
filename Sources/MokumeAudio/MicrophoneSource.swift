@@ -221,12 +221,15 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
 
     /// 構成の変化の知らせを受け、知らせに載ったエンジンを**弱く**控えて、`queue` で `handle` へ渡す。
     ///
-    /// 比べるのは `queue` に回ってからで、それまでに先に届いた知らせの始め直しが古いエンジンを
-    /// 手放して新しいエンジンを作りうる。新しいエンジンは古いエンジンの番地 (`ObjectIdentifier`) を
-    /// 引き継ぎうるので、番地で控えると、古いエンジンの知らせで新しいエンジンを止め直す ([#2529])。
-    /// 本体の「番地で見分けない」方針 (`PendingUploads`・[#2306] の `Canvas.placementKey`) と同じ。
+    /// 比べるのは `queue` に回ってからで、それまでに別の口が古いエンジンを手放し、新しいエンジンを
+    /// 作りうる — 一覧の変化 (``devicesChanged()``) が 1 回の呼び出しで抜かれた → 挿されたと止めて
+    /// 始め直す (機材の抜き差しでは構成の変化の知らせも出る)・``stop()`` の直後の ``start()``
+    /// (外すのと競って入った知らせが後から列に乗る)・始め直しが途中で失敗してエンジンを捨てる。
+    /// 新しいエンジンは古いエンジンの番地 (`ObjectIdentifier`) を引き継ぎうるので、番地で控えると、
+    /// 古いエンジンの知らせで新しいエンジンを止め直しうる ([#2529])。本体の「番地で見分けない」
+    /// 方針 (`PendingUploads`・[#2306] の `Canvas.placementKey`) と同じ。
     ///
-    /// 知らせの中継所と名前は検査が差し替える (実機のエンジン無しで、知らせを続けて送るため)。
+    /// 知らせの中継所と名前は検査が差し替える (実機のエンジン無しで知らせを送るため)。
     ///
     /// [#2306]: https://github.com/mokume-metal/mokume/issues/2306
     /// [#2529]: https://github.com/mokume-metal/mokume/issues/2529
@@ -270,14 +273,35 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
         }
     }
 
-    /// 構成が変わってエンジンが止まった。**同じ機材がまだ在るときだけ**始め直す — 抜かれたなら、
-    /// それは一覧の変化 (``devicesChanged()``) が抜かれたと名乗る。
+    /// 構成が変わってエンジンが止まった。判定は ``restartIfCurrent(_:engine:device:isPresent:running:restart:)``。
     private func configurationChanged(_ noted: NotedObject) {
-        guard let engine, noted.refers(to: engine), let device = current,
-            CoreAudioDevices.allObjects().contains(device), lifecycle.state == .running
+        Self.restartIfCurrent(
+            noted, engine: engine, device: current,
+            isPresent: { CoreAudioDevices.allObjects().contains($0) },
+            running: lifecycle.state == .running
+        ) { device in
+            stopEngine()
+            startEngine(with: device)
+        }
+    }
+
+    /// 構成の変化の知らせで始め直すかを決め、始め直すなら `restart` を呼ぶ。**判定の正本はここ
+    /// 1 つ** で、検査もここを通す ([#2529])。
+    ///
+    /// 始め直すのは、知らせに載ったのが**今のエンジンそのもの**で、使っている機材がまだ在り、
+    /// 動いている状態のときだけ。抜かれたなら、それは一覧の変化 (``devicesChanged()``) が
+    /// 抜かれたと名乗る。古いエンジンについての知らせ (列で待つ間に別の口が作り直した) では
+    /// 始め直さない — 今のエンジンを止め直すことになる。
+    ///
+    /// [#2529]: https://github.com/mokume-metal/mokume/issues/2529
+    static func restartIfCurrent(
+        _ noted: NotedObject, engine: AnyObject?, device: AudioObjectID?,
+        isPresent: (AudioObjectID) -> Bool, running: Bool,
+        restart: (AudioObjectID) -> Void
+    ) {
+        guard let engine, noted.refers(to: engine), let device, isPresent(device), running
         else { return }
-        stopEngine()
-        startEngine(with: device)
+        restart(device)
     }
 }
 
@@ -285,6 +309,11 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
 ///
 /// 番地は、持ち主が解放されると後から作った物に使い回されうる。弱参照なら、解放された物の控えは
 /// どの物とも一致しない。控えは物を生かさない (知らせが列で待つ間、古いエンジンを手放せる)。
+///
+/// 控えるのは知らせを届けている最中 (``MicrophoneSource/observeConfigurationChanges(center:name:on:_:)``
+/// の手続きの中) で、そのあいだ知らせ自身が物を強く持っている。解放の途中の物に弱参照を作ると
+/// Objective-C の実行時が落とすが、それが起きるのは物が自分の解放の中で自分を載せた知らせを出した
+/// ときだけで、その知らせは解放の途中の物を強く持つことになり、控える前に既に壊れている。
 ///
 /// [#2529]: https://github.com/mokume-metal/mokume/issues/2529
 nonisolated final class NotedObject: @unchecked Sendable {
