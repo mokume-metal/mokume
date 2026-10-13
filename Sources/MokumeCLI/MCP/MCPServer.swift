@@ -6,8 +6,8 @@ import mokume
 
 /// エージェントの窓口。
 ///
-/// 標準入出力で行区切りの JSON-RPC をやりとりする。手続きは 3 つだけ —
-/// 繋ぎ始めの挨拶・道具立ての一覧・呼び出し。
+/// 標準入出力で行区切りの JSON-RPC をやりとりする。手続きは 4 つだけ —
+/// 繋ぎ始めの挨拶・生きているかの確かめ (`ping`)・道具立ての一覧・呼び出し。
 struct MCPServer {
     /// 名乗る版。手続きの版であって、この道具の版ではない。
     static let protocolVersion = "2024-11-05"
@@ -23,19 +23,37 @@ struct MCPServer {
         while let line = readLine() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            guard let call = JSONRPC.parse(trimmed) else {
+            switch JSONRPC.parse(trimmed) {
+            case .call(let call):
+                guard let response = respond(to: call) else { continue }
+                write(response)
+            case .refused(let reply):
                 // **1 行の壊れで繋がりを切らない。** 切ると、繋いでいる側からは
-                // 何が起きたのか分からなくなる
+                // 何が起きたのか分からなくなる。黙りもしない — 誤りを 1 行返して次の行へ
+                // 進む。黙ると、繋いでいる側は来ない答えを待ち続ける (#2317)
+                write(reply)
+            case .response:
+                // 応答には答えない。窓口は要求を出さないので、待っている応答も無い
                 continue
             }
-            guard let response = respond(to: call) else { continue }
-            write(response)
         }
     }
 
     /// 1 つの呼び出しに答える。答えを返さない通知なら `nil`。
+    ///
+    /// **通知かどうかは、手続きの名前を見る前にここで 1 度だけ決める。** 名前ごとの枝で
+    /// 決めると、枝を足すたびに判断が漏れうる — `initialize`・`tools/list`・`tools/call`
+    /// の枝が通知にも `"id": null` で答え、`tools/call` は道具まで走らせていた (#2317)。
+    /// MCP 2024-11-05 の通知 (`notifications/` の 4 つ) に、下の枝の名前のものは無い。
+    /// 名前によらず、知らない通知と同じく黙って捨てる
     func respond(to call: JSONRPC.Call) -> String? {
+        // JSON-RPC 2.0 §4.1 — 通知には、手続きの名前によらず答えない
+        guard call.expectsResponse else { return nil }
         switch call.method {
+        case "ping":
+            // 空の結果で速やかに答える (MCP 2024-11-05 の Ping・#2318)。窓口は挨拶の
+            // 前後で状態を変えないので、挨拶の前でも同じ答えになる
+            return JSONRPC.response(id: call.id, result: [:])
         case "initialize":
             return JSONRPC.response(
                 id: call.id,
@@ -53,7 +71,17 @@ struct MCPServer {
             guard let name = call.params["name"] as? String else {
                 return JSONRPC.failure(id: call.id, code: -32602, message: "name is required")
             }
-            let arguments = call.params["arguments"] as? [String: Any] ?? [:]
+            // **オブジェクトでない引数は、道具を走らせずに断る。** 黙って空に倒すと、
+            // `"arguments":"x"` が引数なしの頼みに化けて道具が走る (#2319)。省いたときと
+            // `null` は「渡していない」と読み、従来どおり空の引数で走らせる
+            let arguments: [String: Any]
+            switch call.params["arguments"] {
+            case nil, is NSNull: arguments = [:]
+            case let object as [String: Any]: arguments = object
+            default:
+                return JSONRPC.failure(
+                    id: call.id, code: -32602, message: "arguments must be an object")
+            }
             let outcome = tools.call(name, arguments: arguments)
             return JSONRPC.response(
                 id: call.id,
@@ -62,8 +90,6 @@ struct MCPServer {
                     "isError": outcome.isError,
                 ])
         default:
-            // 通知 (答えを待たないもの) には黙って従う
-            guard call.expectsResponse else { return nil }
             return JSONRPC.failure(
                 id: call.id, code: -32601, message: "no such method: \(call.method)")
         }
@@ -81,15 +107,32 @@ enum MCPCommand {
     /// **パッケージの場所は環境変数に動かされない。** `Package.swift` も `.build/` も
     /// そこにあり、動かすとビルドも面の仕様の解決も行き先を失う。
     ///
+    /// **引数は共有の解き手で解く** (``Arguments``・#680・#814)。最初の引数をそのまま
+    /// 場所にしていた頃は、`mcp --help` が `--help` という場所の窓口として標準入力を待ち、
+    /// 余る引数も黙って受けていた ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
+    ///
+    /// **在らない場所は、繋ぐ前に断る。** 繋がってから道具が「答えが無い」と言うのでは、
+    /// 原因が場所にあると気付けない。**`Package.swift` は求めない** — `claude mcp add mokume
+    /// -- mokume mcp` は打った場所で起こすので、スケッチでない場所で起こされうる。
+    ///
+    /// 断るときは投げるだけで、標準出力には何も書かない (MCP の stdio は標準出力に伝言以外を
+    /// 書くことを禁じている)。失敗は `main.swift` が標準エラーへ書く。
+    ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     static func directories(
         arguments: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment,
         currentDirectory: URL = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-    ) -> (package: URL, facets: URL) {
-        let package = arguments.first.map { URL(fileURLWithPath: $0, isDirectory: true) }
+    ) throws(CommandFailure) -> (package: URL, facets: URL) {
+        let parsed = try Arguments.parse(
+            arguments, surplus: .reject { "Only one directory: \($0)" })
+        let package = parsed.positional.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? currentDirectory
+        // 在るかの判定は 1 本を通す (`ObjCBool` の受け渡しを写さない・#988)
+        guard WorkDirectory.directoryExists(at: package) else {
+            throw .directoryNotFound(path: package.path)
+        }
         // 区画の基準を決める計算は、走らせる口と同じ 1 つを通る (#791)
         return (
             package,
@@ -98,8 +141,14 @@ enum MCPCommand {
         )
     }
 
-    static func run(_ arguments: [String]) throws(CommandFailure) {
-        let directories = directories(arguments: arguments)
+    /// - Parameter serving: 窓口を回す手続き。**検査から差し替える** — 既定は標準入力が
+    ///   閉じるまで読み続けるので、回す前に止まることを確かめる検査がここで固まらないように
+    ///   する (`WatchCommand.run(_:watching:)` と同じ作法)。
+    static func run(
+        _ arguments: [String], serving: (MCPServer) -> Void = { $0.serve() }
+    ) throws(CommandFailure) {
+        // **窓口を立てる前に解く。** 立ててからでは、誤りを言う前に標準入力を待つ
+        let directories = try directories(arguments: arguments)
         // 基準を環境変数が決めたのかどうかは、応えないときの案内が名乗る (#380)
         let given = WorkDirectory.given != nil
         let server = MCPServer(
@@ -110,6 +159,6 @@ enum MCPCommand {
             write: { line in
                 print(line)
             })
-        server.serve()
+        serving(server)
     }
 }

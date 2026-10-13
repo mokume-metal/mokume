@@ -42,8 +42,10 @@ extension Sketch {
     /// **読み込みは投げる。** 読めなかったときに別の道を選ぶ判断が要るので、黙って空へ
     /// 倒さない。見つからないときの説明には**探した場所**が載る。
     ///
-    /// - Throws: 見つからないときに ``DataFailure/notFound(path:searched:)``、UTF-8 の文字と
-    ///   して読めないときに ``DataFailure/unreadable(path:)``。
+    /// - Throws: 見つからないときに ``DataFailure/notFound(path:searched:)``、見つかったが開け
+    ///   ない (ディレクトリだった・読む権利が無い) ときに
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)、UTF-8 の文字として
+    ///   読めないときに ``DataFailure/unreadable(path:)``。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadStrings(_ path: String) throws(DataFailure) -> [String] {
         let url = try dataURL(path)
@@ -117,7 +119,11 @@ extension Sketch {
     ///
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。
     ///
-    /// - Throws: 見つからない・UTF-8 の文字として読めない・CSV として壊れているとき。
+    /// - Throws: ``DataFailure``。見つからない (``DataFailure/notFound(path:searched:)``)・
+    ///   見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る。
+    ///   ``DataFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めない
+    ///   (``DataFailure/unreadable(path:)``)・CSV として壊れている
+    ///   (``DataFailure/malformed(path:line:reason:)``) とき。
     // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadTable(_ path: String, header: Bool = false) throws(DataFailure) -> Table {
         let url = try dataURL(path)
@@ -174,8 +180,10 @@ extension Sketch {
     /// ```
     ///
     /// 見出しを持つ表なら、最初の行に見出しを書く。文字は UTF-8 (BOM なし)、行の終わりは LF。
-    /// カンマ・引用符・改行を含むセルだけを `"…"` で囲む。書いたファイルを ``loadTable(_:header:)``
-    /// で読み直すと、同じ表に戻る。
+    /// `"…"` で囲むのは、カンマ・引用符・改行を含むセル、頭が U+FEFF (BOM と同じ文字) のセル、
+    /// 1 列の表の空のセルだけ — ``loadTable(_:header:)`` はファイルの先頭の BOM と中身の無い行を
+    /// 読み飛ばすので、囲まないと最初のセルの頭の U+FEFF や、空の行が消える。書いたファイルを
+    /// ``loadTable(_:header:)`` で (見出しを持つ表なら `header: true` で) 読み直すと、同じ表に戻る。
     ///
     /// 置き場は**作業ディレクトリが基準** (``save(_:)`` と同じ)。途中のディレクトリは無ければ
     /// 作る。**書きかけを残さない** — 隣の一時ファイルへ書いてから置き換えるので、途中で
@@ -216,25 +224,29 @@ extension Sketch {
     /// **名前が `http://` か `https://` で始まれば、その URL から読む。** それ以外はファイルの
     /// 名前で、探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。
     ///
-    /// **URL を渡すと、届くまで返らない** — 届かないと分かるまで (応答が無ければ最長 60 秒)
-    /// 待つ。`setup()` の中で 1 度読むためのもので、待つ間は窓も描かれない。フレームを止めずに
+    /// **URL を渡すと、届くまで返らない** — 届き終わるか、届かないと分かるまで待つ。待つのは
+    /// **呼んでから最長 60 秒**で、少しずつ届き続けていても、60 秒で届き終わらなければ諦めて
+    /// 投げる。`setup()` の中で 1 度読むためのもので、待つ間は窓も描かれない。フレームを止めずに
     /// 読むのは ``requestJSONObject(_:)`` である。
     ///
     /// ## 読み方
     ///
     /// - 文字は UTF-8 (ファイルも URL の本文も)。先頭の BOM は読み飛ばす
     /// - **最上位はオブジェクト (`{…}`) でなければならない**
-    /// - 入れ子は、最上位の下に 512 段まで。`Double` に収まらない数 (`1e400`) は読めない
+    /// - 入れ子は、最上位の下に 512 段まで。`Double` に収まらない数 (`1e400`・`-1e400`) は、
+    ///   符号によらず読めない
     ///
     /// ## 読めないときは投げる
     ///
     /// 読めなかったときに別の道を選ぶ判断が要るので、黙って空へ倒さない。
     ///
     /// - ファイルが見つからない: ``DataFailure/notFound(path:searched:)`` (探した場所が載る)
+    /// - ファイルが見つかったが開けない (ディレクトリだった・読む権利が無い):
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)
     /// - URL から受け取れない (繋がらない・時間切れ・サーバが 2xx 以外の状態で答えた):
     ///   ``DataFailure/unreachable(url:reason:)``
     /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``
-    /// - JSON として壊れている・最上位がオブジェクトでない:
+    /// - JSON として壊れている・`Double` に収まらない数がある・最上位がオブジェクトでない:
     ///   ``DataFailure/malformed(path:line:reason:)`` (壊れていた行が載る)
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
@@ -310,7 +322,11 @@ extension Sketch {
     ///
     /// ## 読み方
     ///
-    /// - 文字は UTF-8 (ファイルも URL の本文も)。先頭の BOM は読み飛ばす
+    /// - 文字は UTF-8 (ファイルも URL の本文も)。先頭の BOM は読み飛ばす。**XML 宣言の
+    ///   `encoding` は読まない** — `<?xml version="1.0" encoding="Shift_JIS"?>` と書いてあっても、
+    ///   UTF-8 として読めた文書は UTF-8 として読む。値が名前の形 (英字で始まり、英数字と `.` `_` `-`)
+    ///   でない宣言 (`encoding=""` など) は、XML として壊れているので `malformed` で投げる
+    /// - 行の終わりは LF・CRLF・CR のどれでもよい。壊れた行は、どれで改行した文書でも同じ行を名乗る
     /// - **外の実体 (`<!ENTITY … SYSTEM …>`) は読まない。** XML の中に書かれた名前から、手元の
     ///   ファイルや外の URL を読みに行かない
     /// - 持つのは要素の名前・属性・子の要素。実体参照 (`&amp;`) は解いた値になる
@@ -318,7 +334,7 @@ extension Sketch {
     ///
     /// ## 読めないときは投げる
     ///
-    /// 投げる場合は ``loadJSONObject(_:)`` と同じ 4 つで、壊れた XML (閉じない要素・閉じる名前の
+    /// 投げる場合は ``loadJSONObject(_:)`` と同じで、壊れた XML (閉じない要素・閉じる名前の
     /// 食い違い・不正な文字・要素の無い文字・深すぎる入れ子) は ``DataFailure/malformed(path:line:reason:)``
     /// で、壊れていた行を添えて投げる。
     ///

@@ -905,6 +905,74 @@ def check_port_kinds(
     return problems
 
 
+# 型の本体の直下に置いた格納型の `settings` (`var settings = …`・`var settings: T = …`・`let`)。
+# 計算型 (`var settings: SketchSettings { … }`) は `=` を持たない
+STORED_SETTINGS = re.compile(
+    r"^\s*(?:(?:public|internal|private|fileprivate)\s+)?(?:var|let)\s+settings\s*"
+    r"(?::\s*[\w.]+\s*)?=")
+# 型の本体を開く行。**その行の最初の `{` だけ**を型の本体と数える
+TYPE_OPENING = re.compile(r"\b(?:class|struct|enum|actor|extension)\b")
+# 説明文の囲み。文脈の印 (`<!-- example: 文脈 … -->`) は囲みの外にあるので数えない
+SWIFT_FENCE = re.compile(r"```swift\n(.*?)```", re.DOTALL)
+
+
+def stored_settings(code: str) -> list[int]:
+    """型の本体の直下に置いた格納型の `settings` の行番号 (1 起点)。
+
+    計算型の本体の中の局所変数 (`var settings = SketchSettings.fullScreen(2)` に代入して返す
+    形・`SketchSettings.fullScreen` の説明文の例) は型の直下ではないので数えない。波括弧は
+    文字列の中のもの (断片の原文) も数えるが、対で閉じるので深さは戻る。
+    """
+    depth: list[bool] = []  # 開いている波括弧が型の本体か
+    found = []
+    for number, line in enumerate(code.split("\n"), 1):
+        line = re.sub(r"//.*", "", line)
+        if depth and depth[-1] and STORED_SETTINGS.match(line):
+            found.append(number)
+        opens_type = bool(TYPE_OPENING.search(line))
+        for character in line:
+            if character == "{":
+                depth.append(opens_type)
+                opens_type = False
+            elif character == "}" and depth:
+                depth.pop()
+    return found
+
+
+def check_settings_form(symbols: list[dict], sketches: pathlib.Path) -> list[str]:
+    """手本の `settings` が、雛形と同じ計算型か (#2256)。
+
+    見るのは参照スケッチ (`Sketches/`) と、公開の説明文の中の囲み (面に出る例)。
+    `SketchSettings.frameRate` の説明文は、格納型を「`draw()` の中で代入でき、読み返すと
+    代入した値が返るので、変えられたように見えてしまう」罠と名指ししている。雛形
+    (`Sketch.swift.template`) は計算型で、同じ代入は組み立てで止まる。読者は手本を写すので、
+    手本が罠の側の形を見せると、警告された形を学ぶ — 参照スケッチ 31 本と入口・説明文の例
+    1 本がそうだった。
+
+    **地の文と文脈の印は数えない。** 罠を名指す文そのものと、面に出ない文脈の印
+    (`<!-- example: 文脈 … -->`) は手本ではない。カタログの記事 (`mokume.docc/*.md`) は
+    シンボルグラフに載らないのでここでは見ない (いま格納型は 0 件)。入口と README の
+    「はじめの 1 本」は `check-entry.py` が雛形の出力と突き合わせる。
+    """
+    advice = "雛形と同じ計算型 `var settings: SketchSettings { SketchSettings(…) }` で書く"
+    problems = []
+    for path in sorted(sketches.glob("*.swift")):
+        for number in stored_settings(path.read_text(encoding="utf-8")):
+            problems.append(
+                f"参照スケッチ {path.name}:{number} が格納型の settings を持つ — {advice} (#2256)")
+    seen = set()
+    for symbol in symbols:
+        lines = (symbol.get("docComment") or {}).get("lines", [])
+        text = "\n".join(line.get("text", "") for line in lines)
+        name = f"{owner(symbol)}.{title(symbol)}" if owner(symbol) else title(symbol)
+        for block in SWIFT_FENCE.findall(text):
+            if stored_settings(block) and name not in seen:
+                seen.add(name)
+                problems.append(
+                    f"{name} の説明文の例が格納型の settings を持つ — {advice} (#2256)")
+    return problems
+
+
 def read_sketches(directory: pathlib.Path) -> str:
     return "\n".join(
         path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.swift"))
@@ -956,6 +1024,7 @@ def main() -> int:
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
         + check_sketch_coverage(symbols, read_sketches(SKETCHES))
+        + check_settings_form(symbols, SKETCHES)
         + check_port_kinds(symbols, SCENE_TEST.read_text(encoding="utf-8"))
     )
     if problems:

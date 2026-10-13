@@ -49,10 +49,45 @@ import Synchronization
 /// **プロセスで 1 つ** (``process``) が本物である。検査だけが自前の関所を土台へ渡す。そうすれば、
 /// 印を立てる検査が同じプロセスの他の検査を巻き添えにしない。
 ///
+/// ## 手放した発行口の解放を遅らせる ([#2054])
+///
+/// **土台が手放した発行口は、すぐには解放しない。** 後から ``retiredQueueLimit`` 本が手放される
+/// まで、関所が持っておく (``retire(_:)``)。
+///
+/// 発行口を解放した直後 (50〜200ms) に、同じプロセスが別の土台へ投入した仕事が、GPU の hang
+/// (`kIOGPUCommandBufferCallbackErrorHang`) か page fault で打ち切られる。土台が待ちを済ませてから
+/// 手放しても起きる。
+///
+/// 専用機で全検査を幅 1 で回した計測では、次のとおりだった。
+///
+/// - 基準: 6 回中 4 回で打ち切られた
+/// - 解放を 8 本後まで遅らせた形: 5 回中 0 回 (集合を外す形と合わせて)
+/// - キューを解放しない対照: 3 回中 0 回
+/// - 解放の前に投入の結末を待つ形・常駐の集合を外すだけの形: 消えなかった
+///
+/// **これは根を直すのではなく、引き金をずらす対処である。** 打ち切りの根は Metal の側にあって、
+/// こちらからは見えない。見えるのは「解放が引き金になる」ことだけなので、解放を後ろへずらす。
+/// 解放しない対照でも、幅 16 の `EffectArgumentTests` では 30 回中 1 回が残った。だから、別の根が
+/// あるかもしれない。
+///
+/// **遅らせ方は時間ではなく本数で決める。** 計測したのはこの形で、時間で待つ形 (解放の後に 200ms
+/// 待つ) は検査 1 回の所要を 2.8 秒から 10.6 秒に延ばしたので採らなかった (#2054)。
+///
+/// **一度も投入していない発行口は通さない。** ``RenderDevice/isAvailable`` の使い捨てや、初期化子が
+/// 途中で投げたときの発行口がそれに当たる。`isAvailable` の結果を控えても打ち切りは減らなかった
+/// (#2054 の起票時の計測)。環に通すと、本物の発行口を押し出して早く解放させる。
+///
+/// 製品の経路では、1 プロセスが作る土台は 1 つなので、持つのは高々 1 本である。土台を作っては
+/// 捨てる道具と検査でも、持つのは ``retiredQueueLimit`` 本で頭打ちになる。待ちを済ませて手放された
+/// 発行口は、常駐の集合を外した後のもの (`RenderDevice` の `deinit`) なので、前の土台の資源までは
+/// 生かさない。**待ちが期限を越えて手放されたものだけは、集合を付けたまま持つ** — 実行中のコマンドが
+/// 踏む集合は外せないからである。そのプロセスでは以後、新しい土台を作らない (上の「何をするか」)。
+///
 /// Metal 側の糸からは触らないが、``RenderDevice/isAvailable`` が隔離の外から呼ぶので、錠で
 /// 守る (``CoalescedNotices`` と同じ作法)。
 ///
 /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
+/// [#2054]: https://github.com/mokume-metal/mokume/issues/2054
 nonisolated final class CommandQueueGate: Sendable {
     /// 期限を越えた待ちの種類。GPU の待ちは 4 つで、どれも `RenderDevice` の `signalReached(_:while:)` を通る。
     enum Wait: Sendable, Equatable {
@@ -94,7 +129,13 @@ nonisolated final class CommandQueueGate: Sendable {
     private struct State {
         var closure: Closure?
         var queuesMade = 0
+        /// 手放されて、解放を待っている発行口 (古い順)
+        var retired: [any MTL4CommandQueue] = []
     }
+
+    /// 手放された発行口を、解放せずに持っておく本数。計測 (#2054) では 8 本で打ち切りが消えた。
+    /// 2 本では 30 回中 1〜2 回残った (#2007 の調査ログ 5)
+    static let retiredQueueLimit = 8
 
     private let state = Mutex(State())
 
@@ -129,6 +170,24 @@ nonisolated final class CommandQueueGate: Sendable {
 
     /// 最初に印を立てた待ち。立っていなければ `nil`。
     var closure: Closure? { state.withLock { $0.closure } }
+
+    /// 土台が手放した発行口を引き取る。**すぐには解放せず、後から ``retiredQueueLimit`` 本が手放された
+    /// ときに解放する** (#2054。上の「手放した発行口の解放を遅らせる」)。
+    ///
+    /// 渡す前に、常駐の集合を発行口から外しておくこと。付けたままだと、集合が抱える前の土台の資源まで
+    /// 生き延びる。
+    func retire(_ queue: sending any MTL4CommandQueue) {
+        // 解放は錠の外で起こす (溢れた 1 本を外へ持ち出してから捨てる)
+        let released: (any MTL4CommandQueue)? = state.withLock { state in
+            state.retired.append(queue)
+            guard state.retired.count > Self.retiredQueueLimit else { return nil }
+            return state.retired.removeFirst()
+        }
+        _ = released
+    }
+
+    /// 診断: 手放されて、解放を待っている発行口の数。
+    var retiredQueueCount: Int { state.withLock { $0.retired.count } }
 
     /// 診断: この関所を通って作った発行口の数。
     ///

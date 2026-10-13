@@ -17,7 +17,9 @@ import mokume
 /// (`requestShape`) で読んでいて、書き出しはフレームを続けて進めるだけで読み終わりを受け取る
 /// 番が回らない (`crowd-and-model` の波打つ板と同じ)。窓で走らせれば、起動して間もなく現れる。
 final class ShapesFromSVG: Sketch {
-    var settings = SketchSettings(width: 1200, height: 600, title: "shapes from svg")
+    var settings: SketchSettings {
+        SketchSettings(width: 1200, height: 600, title: "shapes from svg")
+    }
 
     /// ファイルの色のまま読んだロゴ。
     private var logo: Shape?

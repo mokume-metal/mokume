@@ -66,7 +66,11 @@ enum Command {
             case .new:
                 (
                     "new <name> [--path <directory>] [--local <library path>]",
-                    "Create a sketch package. Pass --local to point at this repository (for development)"
+                    """
+                    Create a sketch package. Pass --local to point at this repository (for development).
+                    --local goes into the new Package.swift as is, so a relative one starts from the
+                    new sketch, not from where you run this
+                    """
                 )
             case .run:
                 (
@@ -75,7 +79,8 @@ enum Command {
                     Build a sketch and run it. Defaults to the current directory.
                     -c takes debug or release (defaults to whatever the toolchain uses).
                     Build products are shared per version by default. Pass --scratch-path
-                    to keep them under the package instead (doctor reports where they are)
+                    to put them in a directory of your own instead (doctor reports where they are).
+                    Relative paths start from where you run this, --scratch-path included
                     """
                 )
             case .watch:
@@ -92,8 +97,9 @@ enum Command {
                     """
                     Build the sketch and write its motion at a fixed frame rate, with no window.
                     The time the sketch sees steps by 1/fps per frame, so the same arguments give
-                    the same motion. --out takes a .mov, or a numbered series with a run of # for
-                    the number (out/frame-####.png). Ends by itself after fps × seconds frames
+                    the same motion. --out takes a .mov, or a numbered series with a run of # in
+                    the file name for the number (out/frame-####.png). Ends by itself after
+                    fps × seconds frames
                     """
                 )
             case .mcp:
@@ -101,7 +107,10 @@ enum Command {
             case .bundle:
                 (
                     "bundle [<directory>] [--out <directory>]",
-                    "Package the sketch to run on another machine (its identity goes in \(AppIdentity.fileName))"
+                    """
+                    Package the sketch to run on another machine (its identity goes in \(AppIdentity.fileName)).
+                    Relative paths start from where you run this, --out included
+                    """
                 )
             case .doctor:
                 (

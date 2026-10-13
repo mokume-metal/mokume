@@ -11,7 +11,9 @@ import mokume
 /// **視点が回る。** 巻き方 (箱は面ごと・球は経度と緯度・円柱は側面の一周) は静止画では
 /// 読めないので、参照スケッチの側で回してある。
 final class TexturedSurfaces: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "textured surfaces")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "textured surfaces")
+    }
 
     /// 焼いた木目。**初期化で 1 度だけ作る。**
     private var grain: Image?

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// 読み手が書きかけを掴まないように書く ([ADR-0018] 決定 3)。
 ///
@@ -181,7 +182,7 @@ package enum AtomicFile {
         } catch {
             failures.warnOnce(
                 url,
-                "Could not place \(what) (\(url.path)): \(error.localizedDescription)"
+                "Could not place \(what) (\(url.path)): \(Diagnostics.reason(error))"
                     + " — further failures at the same place will not be reported")
             return false
         }

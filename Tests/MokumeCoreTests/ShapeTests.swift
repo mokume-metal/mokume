@@ -18,6 +18,11 @@ struct ShapeTests {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
+    /// スケッチを窓を出さずに回すランタイム。**GPU は条件の掛かったこの型の本体で作る** (`GPUGateTests`)。
+    private func makeRuntime(_ sketch: some Sketch) throws -> SketchRuntime {
+        try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+    }
+
     /// 4 隅を 2 枚の三角形で張った立体の面。番号で指すかを選べる。
     private func patch(_ canvas: Canvas, indexed: Bool, x: Float = 0) {
         let corners: [SIMD2<Float>] = [
@@ -1475,15 +1480,21 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
             + "not been drawn yet. There, get() returns transparent, set() and loadPixels() do "
             + "nothing, and pixels is not read again",
     .drawnOut:
-        "createShape { }: the frame was drawn out while the shape was being built (a drawing "
-            + "target placed earlier was changed when this canvas could not keep one more copy of it, "
-            + "or this canvas started a frame anew), so what was built up to then was drawn into the "
-            + "frame or dropped, and the shape is empty. Do those before or after building the shape",
+        "createShape { }: the frame was drawn out or dropped while the shape was being built (a "
+            + "drawing target placed earlier was changed when this canvas could not keep one more copy "
+            + "of it, or the main canvas began its next frame while this canvas still had a frame "
+            + "open), so what was built up to then was drawn into the frame or dropped, and the shape "
+            + "is empty. Do those before or after building the shape",
     .frameEnd:
-        "createShape { }: the frame of the canvas being built on was closed inside the shape (by "
-            + "endDraw() or at the end of draw { }), so it stays open until the shape is finished "
-            + "and closes there; until then the canvas is still drawing. Close it after building the "
-            + "shape",
+        "createShape { }: the frame of the canvas being built on was closed inside the shape by "
+            + "endDraw(), so it stays open until the shape is finished and closes there; until then "
+            + "the canvas is still drawing. Close it after building the shape",
+    .frameStart:
+        "createShape { }: a frame of the canvas being built on was started inside the shape (by "
+            + "beginDraw() or draw { }). Starting it would drop what was built, so it was not "
+            + "started: beginDraw() does nothing there, nor does an endDraw() with no frame to close, "
+            + "and draw { } runs its block as part of the shape. Start the frame before or after "
+            + "building the shape",
     .camera:
         "The camera and projection do nothing inside createShape { }. A shape cannot hold a "
             + "camera, so place it before or after building the shape",
@@ -1565,18 +1576,80 @@ enum NoiseChangeInsideShape: CaseIterable, CustomTestStringConvertible {
 
 /// 組み立ての中で、組み立てている描き場所のフレームを開いて閉じる形 ([#1855] の反証 1)。
 ///
+/// [#2201] から、フレームの外の描き場所では組み立ての中でフレームを始めない (閉包は組み立ての続きとして
+/// 走り、対の `endDraw()` も何もしない)。
+///
 /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+/// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
 enum FrameInsideShape: CaseIterable, CustomTestStringConvertible {
-    /// フレームの外の描き場所で、組み立ての中に `draw { }`
+    /// フレームの外の描き場所で、組み立ての中に `draw { }`。始めずに、閉包を組み立ての続きとして走らせる
     case drawOutsideAFrame
     /// 同じく、組み立ての中に `beginDraw()` と `endDraw()` の対 (`draw { }` と結果が揃うことの対照)
     case beginAndEndDrawOutsideAFrame
-    /// フレームの外の描き場所で、入れ子の組み立ての内側に `draw { }`。閉じるのは一番外の出口で 1 度
+    /// フレームの外の描き場所で、入れ子の組み立ての内側に `draw { }`
     case drawInsideANestedBuild
     /// フレームの中の描き場所で、組み立ての中に `draw { }`。開いたフレームの続きとして走り、閉じない
     case drawInsideAnOpenFrame
 
     var testDescription: String { "\(self)" }
+}
+
+/// 組み立ての中で、組み立てている面のフレームを始める口 ([#2201])。
+///
+/// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+enum FrameStartInsideShape: CaseIterable, CustomTestStringConvertible {
+    case beginDraw
+    /// `draw { }` の閉包の中で四角を置く (形に入ることを見る)
+    case draw
+
+    var testDescription: String { "\(self)" }
+}
+
+/// [#2201] の経路 2 をスケッチで踏む: `setup()` か `draw()` で、フレームを開いていない描き場所の
+/// 組み立ての中で、円を置いてから、その描き場所のフレームを始める (`beginDraw()` か `draw { }`)。
+/// 直す前は、フレームの頭の検めが組み立ての記録を「フレームの外で置いたもの」として捨て、
+/// `placementLeak` (mokume の不具合を名乗る注意) を言い、mokume の検査の中では止まっていた。
+///
+/// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+final class FrameStartInsideLayerBuild: Sketch {
+    var call = FrameStartInsideShape.beginDraw
+    /// `setup()` で組み立てるか (偽なら 1 枚目の `draw()`)
+    var inSetup = true
+    var layer: Canvas?
+    var shape = Shape.empty
+    var built = false
+    var drawingAfterTheBuild = true
+    init() {}
+    var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 30) }
+
+    func setup() {
+        layer = try? createGraphics(16, 16)
+        if inSetup { build() }
+    }
+
+    func draw() {
+        background(.linear(red: 0, green: 0, blue: 0))
+        if !inSetup, !built { build() }
+    }
+
+    private func build() {
+        guard let layer else { return }
+        built = true
+        shape = layer.createShape {
+            layer.noStroke()
+            layer.fill(.linear(red: 0, green: 1, blue: 0))
+            layer.circle(0, 0, 20)
+            switch call {
+            case .beginDraw: layer.beginDraw()
+            case .draw:
+                try? layer.draw {
+                    layer.fill(.linear(red: 0, green: 0, blue: 1))
+                    layer.rect(4, 4, 2, 2)
+                }
+            }
+        }
+        drawingAfterTheBuild = layer.isDrawing
+    }
 }
 
 extension ShapeTests {
@@ -1978,16 +2051,22 @@ extension ShapeTests {
     }
 
     /// 経路 3 の兄弟 ([#1855] の反証 1)。`draw { }` も閉包の終わりで `endFrame()` → `flush()` と進み、
-    /// 組み立ての中で開いた `draw { }` は組み立ての区間ごと描き切って形を空にしていた。`endDraw()` と同じく
-    /// 一番外の組み立ての出口まで閉じるのを待たせ、`beginDraw()` / `endDraw()` の対と結果を揃える。
+    /// 組み立ての中で開いた `draw { }` は組み立ての区間ごと描き切って形を空にしていた。#1855 では出口まで
+    /// 閉じるのを待たせた。
+    ///
+    /// [#2201] から、フレームの外の描き場所では**組み立ての中でフレームを始めない** — `draw { }` は閉包を
+    /// 組み立ての続きとして走らせ、`beginDraw()` と対の `endDraw()` は何もしない (`InsideShape.frameStart`)。
+    /// 始めると、それより前に組み立てたものが「フレームの外で置いたもの」として捨てられていた。描き場所は
+    /// フレームの外のままで、`draw { }` と `beginDraw()` / `endDraw()` の対で結果が揃う。
     ///
     /// 開いているフレームの中の `draw { }` は、そのフレームの続きとして走って閉じない (今までどおり)。
     ///
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     @Test(
-        "組み立ての中でフレームを開いて閉じても、閉じるのは出口で、draw { } と beginDraw()/endDraw() の対で結果が揃う",
+        "組み立ての中でフレームを開こうとしても、閉じていた描き場所は始めず、開いていたなら続きとして走る。どちらも形は中で描いたものを持つ",
         arguments: FrameInsideShape.allCases)
-    func aFrameOpenedAndClosedInsideABuildClosesAtTheExit(_ form: FrameInsideShape) throws {
+    func openingAFrameInsideABuildKeepsTheShape(_ form: FrameInsideShape) throws {
         let host = try makeCanvas(width: 16, height: 16)
         let layer = try host.createGraphics(16, 16)
         layer.beginDraw()
@@ -2020,19 +2099,24 @@ extension ShapeTests {
         } else {
             shape = build()
         }
-        #expect(drawingAfterTheBody, "組み立ての中でフレームを閉じた")
         #expect(!shape.isEmpty)
         #expect(!layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        #expect(!layer.warnings.hasWarned(.frameEndInsideShape), "閉じていないのに注意した")
         if form == .drawInsideAnOpenFrame {
+            #expect(drawingAfterTheBody, "組み立ての中でフレームを閉じた")
             #expect(layer.isDrawing, "開いていたフレームを組み立ての出口で閉じた")
             #expect(layer.framesDrawn == framesBefore)
-            #expect(!layer.warnings.hasWarned(.frameEndInsideShape), "閉じていないのに注意した")
+            #expect(!layer.warnings.hasWarned(.frameStartInsideShape), "始めていないのに注意した")
             layer.endDraw()
         } else {
-            #expect(!layer.isDrawing, "組み立ての出口の後もフレームが開いたまま")
-            #expect(layer.framesDrawn == framesBefore + 1, "閉じたフレームの数が 1 でない")
+            #expect(!drawingAfterTheBody, "組み立ての中で描き場所のフレームを始めた")
+            #expect(!layer.isDrawing, "組み立ての出口の後に描き場所のフレームが開いている")
+            #expect(layer.framesDrawn == framesBefore, "組み立ての中で始めたフレームを閉じた")
             #expect(
-                layer.warnings.message(for: .frameEndInsideShape) == insideShapeNotices[.frameEnd])
+                layer.warnings.message(for: .frameStartInsideShape) == insideShapeNotices[.frameStart])
+            #expect(
+                !layer.warnings.hasWarned(.notDrawing),
+                "始めなかった beginDraw() と対の endDraw() を、beginDraw() より前と言った")
         }
         #expect(layer.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
 
@@ -2042,6 +2126,149 @@ extension ShapeTests {
         layer.endDraw()
         #expect(layer.get(8, 8) == Self.green, "組み立てた円が形に入っていない")
         #expect(layer.get(13, 13) == Self.blue, "組み立てた四角が形に入っていない")
+    }
+
+    /// [#2201] の経路 2 (完了条件 1)。フレームを開いていない描き場所の組み立ての中で、円を置いてから
+    /// その描き場所のフレームを始める。**始めない** — 円を持つ形が返り、描き場所はフレームの外のまま。
+    /// 直す前は、フレームの頭の検めが組み立てた円を「フレームの外で置いたもの」として捨て、形が空になり、
+    /// `placementLeak` (mokume の不具合を名乗る注意) を言っていた。mokume の検査の中では `assertionFailure`
+    /// で止まる (検査の中では止まるのが既定 — `Canvas.stopsOnPlacementOutsideRegions`)。
+    ///
+    /// `setup()` の中 (本体は持ち越しの区間) と `draw()` の中 (本体のフレームの中) の両方で見る。
+    ///
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    @Test(
+        "フレームを開いていない描き場所の組み立ての中でその描き場所のフレームを始めても、始めずに形が中で描いたものを持つ",
+        arguments: [true, false], FrameStartInsideShape.allCases)
+    func startingTheFrameOfAClosedTargetInsideABuildKeepsTheShape(
+        inSetup: Bool, call: FrameStartInsideShape
+    ) throws {
+        let sketch = FrameStartInsideLayerBuild()
+        sketch.inSetup = inSetup
+        sketch.call = call
+        let runtime = try makeRuntime(sketch)
+        try runtime.advance()
+        let layer = try #require(sketch.layer, "描き場所を作れなかった")
+        #expect(sketch.built, "組み立てていない")
+        #expect(!sketch.drawingAfterTheBuild, "組み立ての出口の後に描き場所のフレームが開いている")
+        #expect(!layer.isDrawing)
+        #expect(!sketch.shape.isEmpty)
+        #expect(layer.placementsFoundOutsideRegions == 0, "組み立ての記録を置き漏れと見なした")
+        #expect(!layer.warnings.hasWarned(.placementLeak))
+        #expect(!layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        #expect(!layer.warnings.hasWarned(.frameEndInsideShape))
+        #expect(
+            layer.warnings.message(for: .frameStartInsideShape) == insideShapeNotices[.frameStart])
+
+        layer.beginDraw()
+        layer.background(Self.black)
+        layer.shape(sketch.shape, 8, 8)
+        layer.endDraw()
+        #expect(layer.get(8, 8) == Self.green, "組み立てた円が形に入っていない")
+        if call == .draw {
+            #expect(layer.get(13, 13) == Self.blue, "draw { } の中で組み立てた四角が形に入っていない")
+        }
+    }
+
+    /// [#2201] の経路 1 (完了条件 2)。直に作った面 (時刻の置き場の持ち主) が `beginDraw()` で開いた
+    /// フレームの中の組み立てで、もう一度フレームを始める。**始めない** — 開いていたフレームはそのまま
+    /// 続き、続く `endDraw()` で組み立ての前に置いた四角が描かれる。直す前は、持ち主の面では `beginDraw()`
+    /// で開いたフレームがいつも境目を越えた扱いになるので、閉じ忘れとして捨てて始め直し、形が空になって
+    /// いた。
+    ///
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    @Test(
+        "直に作った面が beginDraw() で開いたフレームの中の組み立てで、もう一度フレームを始めても、捨てずに形が中で描いたものを持つ",
+        arguments: FrameStartInsideShape.allCases)
+    func startingTheOwnersFrameAgainInsideABuildKeepsTheFrame(_ call: FrameStartInsideShape) throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        canvas.beginDraw()
+        canvas.background(Self.black)
+        canvas.noStroke()
+        canvas.fill(Self.red)
+        canvas.rect(0, 0, 4, 4)
+        let framesBefore = canvas.framesDrawn
+        let shape = canvas.createShape {
+            placeCircle(canvas)
+            switch call {
+            case .beginDraw: canvas.beginDraw()
+            case .draw:
+                try? canvas.draw {
+                    canvas.fill(Self.blue)
+                    canvas.rect(4, 4, 2, 2)
+                }
+            }
+        }
+        #expect(canvas.isDrawing, "開いていたフレームが続いていない")
+        #expect(canvas.framesDrawn == framesBefore, "開いていたフレームを捨てた")
+        #expect(!shape.isEmpty)
+        #expect(!canvas.warnings.hasWarned(.unfinishedFrameDropped))
+        #expect(!canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        #expect(
+            canvas.warnings.message(for: .frameStartInsideShape) == insideShapeNotices[.frameStart])
+        canvas.endDraw()
+        #expect(canvas.get(2, 2) == Self.red, "組み立ての前に置いた四角が、続く endDraw() で描かれていない")
+        #expect(canvas.get(6, 6) == Self.black, "組み立てた円がフレームに出た")
+
+        try canvas.draw {
+            canvas.background(Self.black)
+            canvas.shape(shape, 8, 8)
+        }
+        #expect(canvas.get(8, 8) == Self.green, "組み立てた円が形に入っていない")
+        if call == .draw {
+            #expect(canvas.get(13, 13) == Self.blue, "draw { } の中で組み立てた四角が形に入っていない")
+        }
+    }
+
+    /// [#2201] の完了条件 3。組み立ての中で `endDraw()` を待たせた後の `beginDraw()` を、持ち主の面でも
+    /// 描き場所でも同じく `frameStart` で断り、フレームは出口で 1 度だけ閉じる (#1855 の案 G のまま)。
+    /// 直す前は、描き場所では「`endDraw()` がまだ」と言って断り (`Warning.alreadyDrawing`)、持ち主の面では
+    /// 待たせたフレームを閉じ忘れとして捨てて始め直していた (形は空・出口の後もフレームが開いたまま)。
+    /// `nested` は入れ子の内側で呼ぶ。
+    ///
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    @Test(
+        "組み立ての中で endDraw() を待たせた後の beginDraw() は、持ち主の面でも描き場所でも始めず、フレームは出口で 1 度だけ閉じる",
+        arguments: [false, true], [false, true])
+    func beginningAgainAfterAnAwaitedEndInsideABuildIsRefused(onGraphics: Bool, nested: Bool) throws {
+        let host = try makeCanvas(width: 16, height: 16)
+        let target = try onGraphics ? host.createGraphics(16, 16) : host
+        target.beginDraw()
+        target.background(Self.black)
+        placeTriangle(target)
+        let framesBefore = target.framesDrawn
+        var drawingAfterTheCall = false
+        let build = {
+            target.createShape {
+                placeCircle(target)
+                target.endDraw()
+                target.beginDraw()
+                drawingAfterTheCall = target.isDrawing
+                target.fill(Self.blue)
+                target.rect(4, 4, 2, 2)
+            }
+        }
+        let shape = nested ? target.createShape { target.shape(build()) } : build()
+        #expect(drawingAfterTheCall, "待たせたフレームが組み立ての中で閉じた")
+        #expect(!target.isDrawing, "組み立ての出口の後もフレームが開いたまま")
+        #expect(target.framesDrawn == framesBefore + 1, "閉じたフレームの数が 1 でない")
+        #expect(!shape.isEmpty)
+        #expect(!target.warnings.hasWarned(.unfinishedFrameDropped), "待たせたフレームを捨てた")
+        #expect(!target.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        #expect(
+            !target.warnings.hasWarned(.alreadyDrawing),
+            "閉じるのを待たせた後の beginDraw() を「endDraw() がまだ」と言った")
+        #expect(
+            target.warnings.message(for: .frameStartInsideShape) == insideShapeNotices[.frameStart])
+        #expect(target.get(11, 11) == Self.red, "組み立ての前に置いた三角形が出ていない")
+        #expect(target.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
+
+        target.beginDraw()
+        target.background(Self.black)
+        target.shape(shape, 8, 8)
+        target.endDraw()
+        #expect(target.get(8, 8) == Self.green, "組み立てた円が形に入っていない")
+        #expect(target.get(13, 13) == Self.blue, "beginDraw() の後に組み立てた四角が形に入っていない")
     }
 
     /// 置いた描き場所の画素を組み立ての中で読むと、読み込みの描き切りが置いた側 (組み立ての途中の

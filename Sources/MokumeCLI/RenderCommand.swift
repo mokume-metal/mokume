@@ -87,12 +87,12 @@ enum RenderCommand {
     /// **枚数は丸めない。** `fps × seconds` が整数にならない組は使い方の誤りとして断る —
     /// 丸めると、頼んだ長さと書き出した長さが黙って食い違う。
     ///
-    /// - Parameter currentDirectory: `--out` の相対パスを解く基準。**打った場所である** —
-    ///   子の作業ディレクトリはスケッチの場所なので、渡す前に絶対パスにする。
+    /// - Parameter currentDirectory: 相対パスを解く基準。**打った場所である** — 子の作業
+    ///   ディレクトリはスケッチの場所なので、`--out` は渡す前に絶対パスにする。場所と
+    ///   `--scratch-path` も同じ基準で解く (#2320 — `--scratch-path` だけがスケッチの場所から
+    ///   解かれ、隣に並ぶ `--out` と基準が割れていた)。
     static func parse(
-        _ arguments: [String],
-        currentDirectory: URL = URL(
-            fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        _ arguments: [String], currentDirectory: URL = GivenPath.currentDirectory
     ) throws(CommandFailure) -> Options {
         let (invocation, values) = try Invocation.parse(
             arguments,
@@ -104,7 +104,7 @@ enum RenderCommand {
                 Arguments.Option(outFlags) {
                     "\($0) needs somewhere to write after it (a .mov, or out/frame-####.png)"
                 },
-            ])
+            ], from: currentDirectory)
 
         guard let rateText = values[frameRateFlags[0]], let secondsText = values[secondsFlags[0]],
             let out = values[outFlags[0]]
@@ -120,16 +120,30 @@ enum RenderCommand {
         }
         let frameRate = try parseFrameRate(rateText)
         let frameCount = try parseFrameCount(seconds: secondsText, frameRate: frameRate)
-        let destination = URL(
-            fileURLWithPath: NSString(string: out).expandingTildeInPath, relativeTo: currentDirectory
-        ).standardizedFileURL.path
-        guard
+        let destination = GivenPath.resolve(out, from: currentDirectory, isDirectory: false).path
+        // **形は打った綴りでも見る** (#2313)。絶対パスにすると末尾の `/` と `.`・`..` が消え、
+        // 最後の部品が変わる — `take#1/` (フォルダ) が `…/take#1` になり、`take#1` の `#` を
+        // 番号にして連番として通ってしまう。書く API は `take#1/` を断るので、道具だけが通すと
+        // 同じ綴りで判定が食い違う
+        //
+        // **`.mov` へは刻みより速く書けない** (#2307)。形が通る行き先でだけ見て、形の誤りは
+        // 下の `--out` の文面で名乗る
+        if RenderRequest.accepts(destination: out),
+            !RenderRequest.accepts(destination: out, frameRate: frameRate)
+        {
+            throw .usage(
+                "\(frameRateFlags[0]) takes at most \(RenderRequest.movieFrameRateLimit) frames per"
+                    + " second when writing a .mov (its time is counted in"
+                    + " 1/\(RenderRequest.movieFrameRateLimit) of a second, which cannot hold a"
+                    + " shorter frame, so frames would be lost): \(rateText)")
+        }
+        guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(
                 frameRate: frameRate, frameCount: frameCount, destination: destination)
         else {
             throw .usage(
                 "\(outFlags[0]) takes a movie ending in .mov, or a numbered series with a run of #"
-                    + " where the number goes (out/frame-####.png): \(out)")
+                    + " in the file name where the number goes (out/frame-####.png): \(out)")
         }
         return Options(invocation: invocation, request: request)
     }

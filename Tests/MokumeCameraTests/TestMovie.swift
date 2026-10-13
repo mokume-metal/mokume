@@ -52,6 +52,10 @@ nonisolated enum TestMovie {
                 ],
             ])
         input.expectsMediaDataInRealTime = false
+        // **刻みを書き手へ渡す** (#2307)。`CMTime` を fps の刻みで作るだけでは、トラックも容れ物も
+        // 既定の 600 で書かれ、600 を割り切らない fps (48 など) の時刻が丸まる
+        input.mediaTimeScale = fps
+        writer.movieTimeScale = fps
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [

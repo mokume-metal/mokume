@@ -64,7 +64,9 @@ import mokume
 /// `mouseMoved(deltaX:deltaY:)` と `mouseDragged(deltaX:deltaY:)` へ渡った量の和で、2 つは
 /// 一致する。針は見回している間だけ描く — 触らずに書き出した絵は変わらない。
 final class PointerAndKeys: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "pointer and keys")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "pointer and keys")
+    }
 
     /// スクロールで積み上がる大きさ。フレームを越える。
     var size: Float = 120

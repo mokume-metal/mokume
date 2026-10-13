@@ -28,9 +28,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "check-shaders.sh"
 
-# xcrun --find metal / xcrun metal -c <src> -o <out> の代役
+# xcrun metal --version / xcrun metal -c <src> -o <out> の代役
 XCRUN = """#!/bin/bash
-if [ "$1" = "--find" ]; then echo /usr/bin/true; exit 0; fi
+if [ "$2" = "--version" ]; then echo "Apple metal version 0"; exit 0; fi
 src="$3"
 if grep -q broken "$src"; then echo "error: broken" >&2; exit 1; fi
 if grep -q needs_common "$src" && ! grep -q common_defined "$src"; then
@@ -121,6 +121,23 @@ class ShadersScopeTest(unittest.TestCase):
         r = self.run_check()
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("NG: Sources/Core/New.metal", r.stderr)
+
+    def test_a_stub_without_the_component_names_how_to_install(self):
+        # Xcode 26 のスタブは在処を答えたまま、起こすとコンポーネントが無いと言って落ちうる。
+        # 断片ごとの生のエラーではなく、入れ方を 1 度だけ言って止まる
+        (self.bin / "xcrun").write_text(
+            "#!/bin/bash\n"
+            'if [ "$1" = "--find" ]; then echo /usr/bin/metal; exit 0; fi\n'
+            'echo "error: cannot execute tool \'metal\' due to missing Metal Toolchain" >&2\n'
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        self.place_drawing()
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("xcodebuild -downloadComponent MetalToolchain", r.stderr)
+        self.assertNotIn("NG:", r.stderr)
+
 
 
 if __name__ == "__main__":

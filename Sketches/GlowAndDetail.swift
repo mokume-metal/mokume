@@ -21,8 +21,10 @@ import mokume
 /// 刻まれるので、拡大の粗さは字の縁にも出る (効果より前に置くので、色ずれも字に掛かる)。
 final class GlowAndDetail: Sketch {
     // 描く細かさは半分。**出す細かさは変えない**ので、座標も窓の大きさもそのまま
-    var settings = SketchSettings(
-        width: 960, height: 540, title: "glow and detail", pixelDensity: 0.5)
+    var settings: SketchSettings {
+        SketchSettings(
+            width: 960, height: 540, title: "glow and detail", pixelDensity: 0.5)
+    }
 
     /// 輻の本数。細い線を放射状に置く。
     private let spokes = 72

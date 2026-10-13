@@ -7,6 +7,13 @@ import simd
 
 @testable import MokumeCore
 
+/// 優先の順の検査が使う色 (純色)。
+private nonisolated enum Ink {
+    static let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
+    static let green = SVGFile.Color(red: 0, green: 1, blue: 0, alpha: 1)
+    static let blue = SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1)
+}
+
 /// SVG の読み解き (``SVGFile``) と、読めないときの伝え方 ([#2019])。GPU は要らない。
 ///
 /// 期待値は書いた文字から手で導く ([ADR-0019] 決定 4)。絵が正しいかは
@@ -251,6 +258,202 @@ struct SVGFileTests {
         #expect(drawing.items[3].stroke == nil)
     }
 
+    // MARK: 優先の順 — `!important` と詳細度 ([#2348], [#2334])
+    //
+    // 順位は 属性 < 規則 (詳細度の順: `*` < 要素名 < クラス・同じなら後に書いたほう) < `style` 属性。
+    // `!important` の宣言はそれらすべてより上で、その中でも同じ順に並ぶ。期待値は CSS の順から手で導く。
+    //
+    // [#2348]: https://github.com/mokume-metal/mokume/issues/2348
+    // [#2334]: https://github.com/mokume-metal/mokume/issues/2334
+
+    /// `<style>` と 1 つの `rect` を読んで、その `rect` の塗り。
+    private func fill(sheet: String, rect attributes: String = "") throws -> SVGFile.Color? {
+        let drawing = try document(
+            "<style>\(sheet)</style>\n<rect width=\"1\" height=\"1\" \(attributes)/>")
+        #expect(drawing.items.count == 1, "\(sheet) / \(attributes)")
+        return drawing.items.first?.fill
+    }
+
+    @Test(
+        "<style> の !important は、style 属性・属性・ふつうの規則に勝つ",
+        arguments: [
+            // 要素名・クラス・* のどの規則でも、style 属性のふつうの宣言に勝つ ([#2348] の 1)
+            ("rect { fill: red !important }", #"style="fill: blue""#),
+            (".a { fill: red !important }", #"class="a" style="fill: blue""#),
+            ("* { fill: red !important }", #"style="fill: blue""#),
+            // 属性にも勝つ
+            ("rect { fill: red !important }", #"fill="blue""#),
+            // ふつうのクラスの規則にも勝つ ([#2348] の 4)
+            (".a { fill: #00ff00 } rect { fill: red !important }", #"class="a" fill="white""#),
+            // 後に書いたふつうの規則にも勝つ
+            ("rect { fill: red !important } rect { fill: blue }", ""),
+            // `!` と important の間の空白・大文字小文字・詰めた書き方・後ろの空白は同じに読む ([#2348] の 5)
+            ("rect { fill: red ! important }", #"style="fill: blue""#),
+            ("rect { fill: red !IMPORTANT }", #"style="fill: blue""#),
+            ("rect { fill: red!important }", #"style="fill: blue""#),
+            ("rect { fill: red !important ; }", #"style="fill: blue""#),
+            ("rect { fill: red !important }", #"style="fill: blue; fill: lime""#),
+        ])
+    func importantRulesBeatEverythingNormal(_ sample: (sheet: String, rect: String)) throws {
+        let painted = try fill(sheet: sample.sheet, rect: sample.rect)
+        #expect(painted == Ink.red, "\(sample.sheet) / \(sample.rect)")
+    }
+
+    @Test(
+        "style 属性の !important は <style> の !important に勝つ",
+        arguments: [
+            ("rect { fill: red !important }", #"style="fill: blue !important""#),
+            ("rect { fill: red !important }", #"style="fill: blue ! IMPORTANT""#),
+            (".a { fill: red !important }", #"class="a" style="fill: blue !important""#),
+            // 同じ宣言の並びの中でも、important が上
+            ("", #"style="fill: blue !important; fill: red""#),
+        ])
+    func importantStyleAttributeBeatsImportantRules(_ sample: (sheet: String, rect: String)) throws {
+        let painted = try fill(sheet: sample.sheet, rect: sample.rect)
+        #expect(painted == Ink.blue, "\(sample.sheet) / \(sample.rect)")
+    }
+
+    @Test(
+        "<style> の !important どうしは詳細度の順で、同じなら後に書いたほうが勝つ",
+        arguments: [
+            // クラスの規則が要素名の規則に勝つ。要素名の規則を後に書いても ([#2348] の 3)
+            (".a { fill: #00ff00 !important } rect { fill: red !important }", #"class="a""#, Ink.green),
+            ("rect { fill: red !important } .a { fill: #00ff00 !important }", #"class="a""#, Ink.green),
+            // 要素名の規則が * に勝つ。* を後に書いても
+            ("rect { fill: red !important } * { fill: blue !important }", "", Ink.red),
+            ("* { fill: blue !important } rect { fill: red !important }", "", Ink.red),
+            // クラスの規則が * に勝つ
+            (".a { fill: red !important } * { fill: blue !important }", #"class="a""#, Ink.red),
+            // 詳細度が同じなら後に書いたほう
+            ("rect { fill: blue !important } rect { fill: red !important }", "", Ink.red),
+            ("rect { fill: red !important } rect { fill: blue !important }", "", Ink.blue),
+            // 別の <style> に分けても、書いた順は文書の順
+            ("rect { fill: blue !important }</style><style>rect { fill: red !important }", "", Ink.red),
+        ])
+    func importantRulesFollowSpecificity(_ sample: (sheet: String, rect: String, expected: SVGFile.Color)) throws {
+        let painted = try fill(sheet: sample.sheet, rect: sample.rect)
+        #expect(painted == sample.expected, "\(sample.sheet) / \(sample.rect)")
+    }
+
+    @Test(
+        "important の無い宣言でも、詳細度が同じなら後に書いたほうが勝つ",
+        arguments: [
+            ("rect { fill: blue } rect { fill: red }", "", Ink.red),
+            ("rect { fill: red } rect { fill: blue }", "", Ink.blue),
+            ("* { fill: blue } * { fill: red }", "", Ink.red),
+            (".a { fill: blue } .b { fill: red }", #"class="a b""#, Ink.red),
+            (".b { fill: red } .a { fill: blue }", #"class="a b""#, Ink.blue),
+            // 別の <style> に分けても、文書の順
+            ("rect { fill: blue }</style><style>rect { fill: red }", "", Ink.red),
+            // 同じ `style` 属性の中でも
+            ("", #"style="fill: blue; fill: red""#, Ink.red),
+        ])
+    func laterWinsAtEqualSpecificity(_ sample: (sheet: String, rect: String, expected: SVGFile.Color)) throws {
+        let painted = try fill(sheet: sample.sheet, rect: sample.rect)
+        #expect(painted == sample.expected, "\(sample.sheet) / \(sample.rect)")
+    }
+
+    @Test("!important が掛かるのは、それを付けた宣言だけ")
+    func importantOnlyCoversItsOwnDeclaration() throws {
+        let drawing = try document(
+            """
+            <style>rect { fill: red !important; stroke: #0000ff; stroke-width: 3 }</style>
+            <rect width="1" height="1" style="fill: blue; stroke: #00ff00"/>
+            """)
+        #expect(drawing.items.count == 1)
+        #expect(drawing.items[0].fill == Ink.red, "important の付いた fill は style 属性に勝つ")
+        #expect(drawing.items[0].stroke == Ink.green, "important の無い stroke は style 属性に負ける")
+        #expect(drawing.items[0].strokeWidth == 3)
+        // 同じ性質を同じ規則の中で 2 度書いたときも、important が先に書いたか後に書いたかに依らず勝つ
+        #expect(try fill(sheet: "rect { fill: red !important; fill: blue }") == Ink.red)
+        #expect(try fill(sheet: "rect { fill: blue; fill: red !important }") == Ink.red)
+        // 受け継ぐ値は、子自身のどの宣言よりも弱い (important は子へ移らない)
+        let inherited = try document(
+            """
+            <style>g { fill: red !important }</style>
+            <g><rect width="1" height="1"/><rect width="1" height="1" fill="blue"/></g>
+            """)
+        #expect(inherited.items.map(\.fill) == [Ink.red, Ink.blue])
+    }
+
+    @Test(
+        "宣言の末尾の !important は値から外して持ち、綴りの揺れは同じに読む",
+        arguments: [
+            ("fill: red !important", "red", true),
+            ("fill:red!important", "red", true),
+            ("fill: red ! important", "red", true),
+            ("fill: red !IMPORTANT ", "red", true),
+            ("FILL: url(#a) red !Important", "url(#a) red", true),
+            ("fill: red", "red", false),
+            // 末尾でない `!important` は CSS の文法の外。印とは読まず、値のまま (読めない値として名乗られる)
+            ("fill: red !important blue", "red !important blue", false),
+            ("fill: red !imp", "red !imp", false),
+        ])
+    func importantMarkerIsSplitFromTheValue(_ sample: (text: String, value: String, isImportant: Bool)) {
+        let declarations = SVGFile.parseDeclarations(sample.text)
+        #expect(declarations.count == 1, "\(sample.text)")
+        #expect(declarations.first?.name == "fill", "\(sample.text)")
+        #expect(declarations.first?.value == sample.value, "\(sample.text)")
+        #expect(declarations.first?.isImportant == sample.isImportant, "\(sample.text)")
+    }
+
+    @Test("規則は、* と要素名とクラスのセレクタを分けて持ち、宣言ごとに important を持つ")
+    func styleSheetKeepsSelectorKindsAndImportance() {
+        let sheet = SVGFile.parseStyleSheet(
+            "* { fill: blue } rect { fill: red !important; stroke: #00f } .a, circle { opacity: 0.5 }")
+        #expect(sheet.unread.isEmpty, "\(sheet.unread)")
+        #expect(
+            sheet.rules.map(\.selector) == [.universal, .element("rect"), .className("a"), .element("circle")])
+        #expect(sheet.rules[0].selector.specificity < sheet.rules[1].selector.specificity)
+        #expect(sheet.rules[1].selector.specificity < sheet.rules[2].selector.specificity)
+        #expect(
+            sheet.rules[1].declarations == [
+                SVGFile.Declaration(name: "fill", value: "red", isImportant: true),
+                SVGFile.Declaration(name: "stroke", value: "#00f", isImportant: false),
+            ])
+        #expect(sheet.rules[0].selector.matches(name: "rect", classes: []))
+        #expect(!sheet.rules[1].selector.matches(name: "circle", classes: ["rect"]))
+        #expect(sheet.rules[2].selector.matches(name: "g", classes: ["a", "b"]))
+    }
+
+    @Test("!important を付けた値が読めなければ、!important を除いた値を名乗る")
+    func unreadableImportantValueIsReportedWithoutTheMarker() throws {
+        let drawing = try document(
+            "<style>rect { fill: nonsense !important }</style>\n<rect width=\"1\" height=\"1\" fill=\"#0000ff\"/>")
+        #expect(drawing.skipped.map(\.what) == ["fill \"nonsense\""])
+        #expect(drawing.items[0].fill == Ink.blue, "読めない宣言は無かったことになり、属性の青が残る")
+    }
+
+    @Test(
+        "* の規則は要素名の規則より弱く、書いた順に依らない",
+        arguments: [
+            ("rect { fill: red } * { fill: blue }", Ink.red),
+            ("* { fill: blue } rect { fill: red }", Ink.red),
+            // 別の <style> に分けても
+            ("rect { fill: red }</style><style>* { fill: blue }", Ink.red),
+            // クラスの規則は * にも要素名の規則にも勝つ
+            (".a { fill: #00ff00 } * { fill: blue }", Ink.green),
+            (".a { fill: #00ff00 } rect { fill: red } * { fill: blue }", Ink.green),
+        ])
+    func universalRuleIsWeakerThanTypeAndClassRules(_ sample: (sheet: String, expected: SVGFile.Color)) throws {
+        let painted = try fill(sheet: sample.sheet, rect: #"class="a""#)
+        #expect(painted == sample.expected, "\(sample.sheet)")
+        // クラスを持たない要素では、要素名の規則が * に勝つだけ
+        let plain = try fill(sheet: sample.sheet)
+        #expect(plain == (sample.sheet.contains("rect") ? Ink.red : Ink.blue), "\(sample.sheet)")
+    }
+
+    @Test("* の規則は属性より強く、style 属性より弱い")
+    func universalRuleSitsBetweenAttributesAndStyleAttribute() throws {
+        #expect(try fill(sheet: "* { fill: blue }", rect: #"fill="red""#) == Ink.blue)
+        #expect(try fill(sheet: "* { fill: blue }", rect: #"style="fill: red""#) == Ink.red)
+        // 同じ * の規則でも、属性の無い要素には何も足さず、ほかの性質は触らない
+        let drawing = try document(
+            "<style>* { stroke: #00ff00 }</style>\n<rect width=\"1\" height=\"1\" fill=\"red\"/>")
+        #expect(drawing.items[0].fill == Ink.red)
+        #expect(drawing.items[0].stroke == Ink.green)
+    }
+
     @Test("受け継ぎ: 色は子へ渡り、currentColor は color を引き、不透明度は掛かる")
     func inheritance() throws {
         let drawing = try document(
@@ -415,6 +618,193 @@ struct SVGFileTests {
         #expect(Canvas.svgSkippedNotice(nothing, path: "words.svg").contains("the shape is empty"))
     }
 
+    // MARK: - XML 宣言と行の終わり (#2332・#2331)
+
+    /// 行の終わりの 3 通り。どれも 1 つの行の終わり (``TextFile/lines(of:)``)。
+    private static let lineBreaks: [(name: String, text: String)] = [
+        ("LF", "\n"), ("CRLF", "\r\n"), ("CR", "\r"),
+    ]
+
+    /// 宣言だけを替える。**ASCII でない文字を属性の値とコメントと字に持たせる** (ASCII だけなら、
+    /// 宣言が何でも libxml2 は読めてしまう)。
+    private nonisolated static let declarations: [(name: String, text: String)] = [
+        ("宣言なし", ""),
+        ("Shift_JIS", #"<?xml version="1.0" encoding="Shift_JIS"?>"#),
+        ("一重引用符", "<?xml version='1.0' encoding='Shift_JIS'?>"),
+        ("ISO-8859-1", #"<?xml version="1.0" encoding="ISO-8859-1"?>"#),
+        ("UTF-16", #"<?xml version="1.0" encoding="UTF-16"?>"#),
+        ("standalone が続く", #"<?xml version="1.0" encoding="Shift_JIS" standalone="yes"?>"#),
+    ]
+
+    @Test("宣言の encoding が何でも、UTF-8 として読んだ同じ Drawing になる", arguments: declarations)
+    func declaredEncodingIsNotRead(_ name: String, _ declaration: String) throws {
+        let body = """
+            <svg xmlns="http://www.w3.org/2000/svg" data-name="値é">
+            <!-- 星 -->
+            <text x="0" y="0">星</text>
+            <rect id="é" width="4" height="4" fill="#ff0000"/>
+            </svg>
+            """
+        let expected = try SVGFile.parse(body, path: "plain.svg")
+        let drawing = try SVGFile.parse(declaration + "\n" + body, path: "declared.svg")
+        #expect(drawing.items.count == 1, "\(name)")
+        #expect(drawing.items.first?.fill == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1), "\(name)")
+        // 宣言が使う行の数だけ下がる。字 (3 行目) を捨てたと名乗る行も、その分だけ下がる
+        let used = declaration.filter { $0 == "\n" }.count + 1
+        #expect(drawing.items == expected.items, "\(name)")
+        #expect(
+            drawing.skipped == [SVGFile.Skip(what: "<text>", count: 1, line: 3 + used)], "\(name)")
+    }
+
+    @Test("値が名前の形でない宣言の SVG は、書き換えず、これまでどおり malformed で投げる", arguments: ["", "1abc", "Shift JIS"])
+    func declarationThatIsNotANameStaysMalformed(_ name: String) {
+        do {
+            _ = try SVGFile.parse(
+                "<?xml version=\"1.0\" encoding=\"\(name)\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+                path: "x.svg")
+            Issue.record("読めたことになっている: \"\(name)\"")
+        } catch {
+            guard case .malformed(_, let line, _) = error else {
+                Issue.record("malformed でない: \(error)")
+                return
+            }
+            #expect(line == 1, "\"\(name)\"")
+        }
+    }
+
+    @Test("先頭に BOM が残った SVG も、宣言の encoding を読まない (loadShape と同じ道で読む)")
+    func declaredEncodingIsNotReadAfterLeftoverBOM() throws {
+        let body = """
+            <svg xmlns="http://www.w3.org/2000/svg">
+            <!-- 星 -->
+            <text x="0" y="0">星</text>
+            <rect id="é" width="4" height="4" fill="#ff0000"/>
+            </svg>
+            """
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        let shiftJIS = #"<?xml version="1.0" encoding="Shift_JIS"?>"#
+        // `loadShape` は `TextFile.read` (BOM を 1 つ落とす) の結果を `SVGFile.parse` に渡す。
+        // BOM が 2 つのファイルでは 1 つが残り、libxml2 はそれを読み飛ばしてから宣言を読む
+        for (name, count, declaration) in [
+            ("BOM 1 つ・Shift_JIS", 1, shiftJIS), ("BOM 2 つ・Shift_JIS", 2, shiftJIS),
+            ("BOM 1 つ・宣言なし", 1, ""), ("BOM 2 つ・宣言なし", 2, ""),
+        ] {
+            var bytes = Data()
+            for _ in 0..<count { bytes.append(bom) }
+            bytes.append(Data((declaration + body).utf8))
+            let url = try written(bytes, as: "bom.svg")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let drawing = try SVGFile.parse(try TextFile.read(url, path: url.path), path: url.path)
+            #expect(drawing.items.count == 1, "\(name)")
+            #expect(drawing.skipped == [SVGFile.Skip(what: "<text>", count: 1, line: 3)], "\(name)")
+        }
+    }
+
+    /// 捨てるものの行が、改行のどれでも同じになる SVG。字 (3 行目)・グラデーションの塗り (4 行目)・
+    /// 読めない CSS の規則 (5 行目)。
+    private static let skippingLines = """
+        <svg xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="g"/></defs>
+        <text x="0" y="0">A</text>
+        <rect width="4" height="4" fill="url(#g)"/>
+        <style>g .deep { fill: red }</style>
+        </svg>
+        """
+
+    @Test("CR・CRLF で改行した壊れていない SVG も、捨てたものの行が LF と同じになる")
+    func skippedLinesDoNotDependOnTheBreak() throws {
+        let expected = try SVGFile.parse(Self.skippingLines, path: "lf.svg")
+        let lines = Dictionary(uniqueKeysWithValues: expected.skipped.map { ($0.what, $0.line) })
+        #expect(lines == ["<text>": 3, "fill=\"url(…)\"": 4, "CSS rule \"g .deep\"": 5])
+        for (kind, lineBreak) in Self.lineBreaks {
+            let drawing = try SVGFile.parse(
+                Self.skippingLines.replacingOccurrences(of: "\n", with: lineBreak), path: "\(kind).svg")
+            #expect(drawing == expected, "\(kind)")
+        }
+    }
+
+    @Test(
+        "行の終わりが LF・CRLF・CR のどれでも、壊れた SVG と根が <svg> でない XML は同じ行を名乗る",
+        arguments: [
+            ("閉じない要素", "<svg>\n<rect width=\"1\" height=\"1\">\n</svg>\n", 3),
+            ("閉じる名前の食い違い", "<svg>\n<g>\n<rect/>\n</rect>\n</svg>", 4),
+            ("定義の無い実体", "<svg>\n<g/>\n<g x=\"&nope;\"/>\n</svg>", 3),
+            ("根が svg でない", "<?xml version=\"1.0\"?>\n<html><body/></html>", 2),
+            ("根が svg でない (3 行目)", "<!-- a -->\n\n<html/>", 3),
+        ])
+    func malformedSVGNamesTheSameLineWithAnyBreak(_ name: String, _ text: String, _ line: Int) {
+        for (kind, lineBreak) in Self.lineBreaks {
+            do {
+                _ = try SVGFile.parse(text.replacingOccurrences(of: "\n", with: lineBreak), path: "x.svg")
+                Issue.record("読めたことになっている: \(name) (\(kind))")
+            } catch {
+                guard case .malformed(_, let named, _) = error else {
+                    Issue.record("malformed でない: \(error)")
+                    continue
+                }
+                #expect(named == line, "\(name) (\(kind))")
+            }
+        }
+    }
+
+    @Test("CR だけで改行した SVG を loadShape が読めないとき、壊れた行は LF の SVG と同じ")
+    func loadShapeNamesTheLineOfACarriageReturnFile() throws {
+        let url = try written(
+            Data("<svg>\r<rect width=\"1\" height=\"1\">\r</svg>\r".utf8), as: "broken-cr.svg")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            _ = try Probe().loadShape(url.path)
+            Issue.record("壊れた XML を読めたことになっている")
+        } catch {
+            guard case .malformed(_, let line, _) = error else {
+                Issue.record("malformed でない: \(error)")
+                return
+            }
+            #expect(line == 3)
+        }
+    }
+
+    @Test("属性と <style> (CDATA を含む) の値は、行の終わりによらず同じに読む")
+    func valuesDoNotDependOnTheBreak() throws {
+        let svg = """
+            <svg xmlns="http://www.w3.org/2000/svg">
+            <style><![CDATA[
+            .a { fill: red;
+            stroke: blue }
+            ]]></style>
+            <style>.b { fill: lime;
+            stroke: black }</style>
+            <rect class="a" width="4" height="4"/>
+            <rect class="b" width="4" height="4"/>
+            <rect width="4" height="4" style="fill:red;
+            stroke:blue"/>
+            <polyline points="0,0
+            5,0
+            5,5" fill="none" stroke="black"/>
+            </svg>
+            """
+        let expected = try SVGFile.parse(svg, path: "lf.svg")
+        // 規則が実際に効いている (どの書き方も、読めた値は同じ赤と青)
+        let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
+        let blue = SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1)
+        #expect(expected.items.count == 4)
+        #expect(expected.items[0].fill == red && expected.items[0].stroke == blue)
+        #expect(expected.items[1].stroke == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 1))
+        #expect(expected.items[2].fill == red && expected.items[2].stroke == blue)
+        // 改行だけで区切った点の並び (属性の値の改行は空白 1 つ。消えると点がつながる)
+        guard case .path(let subpaths) = expected.items[3].outline else {
+            Issue.record("polyline が線の集まりになっていない")
+            return
+        }
+        #expect(points(subpaths[0]) == [SIMD2(0, 0), SIMD2(5, 0), SIMD2(5, 5)])
+        #expect(expected.skipped.isEmpty, "\(expected.skipped)")
+        for (kind, lineBreak) in Self.lineBreaks {
+            let drawing = try SVGFile.parse(
+                svg.replacingOccurrences(of: "\n", with: lineBreak), path: "\(kind).svg")
+            #expect(drawing == expected, "\(kind)")
+        }
+    }
+
     // MARK: - 塗りの規則
 
     @Test("evenodd は入れ子の深さで向きをそろえ直す (同じ向きの穴が穴になる)")
@@ -529,8 +919,19 @@ struct SVGFileTests {
         }
     }
 
+    /// **投げた case を見る。** `parse` は `throws(DataFailure)` なので、型だけを見ると
+    /// どの case でも通る (#2289)。
     @Test("空の文字は malformed")
     func emptyTextThrowsMalformed() {
-        #expect(throws: DataFailure.self) { try SVGFile.parse("", path: "empty.svg") }
+        do {
+            _ = try SVGFile.parse("", path: "empty.svg")
+            Issue.record("空の文字を読めたことになっている")
+        } catch {
+            guard case .malformed(let path, _, _) = error else {
+                Issue.record("malformed でない: \(error)")
+                return
+            }
+            #expect(path == "empty.svg")
+        }
     }
 }

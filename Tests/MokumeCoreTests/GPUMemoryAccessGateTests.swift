@@ -64,13 +64,17 @@ struct GPUMemoryAccessGateTests {
         /// 自分では待たない。**呼ぶ側の経路が待っている**ことが理由に書かれている。
         case waitedElsewhere
 
-        /// 名乗りが本当かを原文から見るための語。無ければ見ない。
-        var evidence: String? {
+        /// 名乗りが本当かを原文から見るための綴り (どれか 1 つがあればよい)。空なら見ない。
+        ///
+        /// **待ちは呼び出しの形で探し、注釈と文字列を潰した原文で見る。** 語の部分一致で
+        /// 見ていた頃は、doc コメントの ``RenderDevice/settle()`` や別物の
+        /// `settlePlacersBeforeChange` で合格し、読み戻し前の待ちを全部消しても緑だった (#2294)。
+        var evidence: [String] {
             switch self {
-            case .settles: "settle"
-            case .settlesOrSkips: "settleBeforeWriting"
-            case .ring: "FrameRing"
-            case .waitedElsewhere: nil
+            case .settles: [".settle(", ".settleQuietly("]
+            case .settlesOrSkips: [".settleBeforeWriting("]
+            case .ring: ["FrameRing"]
+            case .waitedElsewhere: []
             }
         }
     }
@@ -185,10 +189,12 @@ struct GPUMemoryAccessGateTests {
                 Issue.record("\(permit.file) はもう GPU 可視メモリに触っていない。一覧から外す")
                 continue
             }
-            guard let evidence = permit.discipline.evidence else { continue }
+            let evidence = permit.discipline.evidence
+            guard !evidence.isEmpty else { continue }
+            let code = String(GPUGateScan.strippingCommentsAndStrings(Array(source)))
             #expect(
-                source.contains(evidence),
-                "\(permit.file) は \(permit.discipline) と名乗っているが、原文に \(evidence) が無い")
+                evidence.contains { code.contains($0) },
+                "\(permit.file) は \(permit.discipline) と名乗っているが、注釈の外に \(evidence) が無い")
         }
     }
 }

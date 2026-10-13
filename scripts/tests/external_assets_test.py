@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/check-external-assets.py の検査 (#483)。
 
-固定するのは 4 つで、どれが抜けても検査は「何も見ていない緑」か「直しようのない赤」に
+固定するのは 5 つで、どれが抜けても検査は「何も見ていない緑」か「直しようのない赤」に
 倒れる。
 
 - **資産だけを拾う** — 説明文 (`///`) と Markdown の本文に書かれた画像・動きの指し先。
@@ -13,6 +13,10 @@
 - **一時的な失敗を消失と数えない** (#1676) — 5xx・429・接続の失敗は 1 度だけ待って引き直し、
   それでも応えないものは「消えた」ではなく「応えない」と名乗る。撮り直しを求める赤が、
   生きている絵に向かないようにする
+- **リリースノートの絵も引く** (#2268) — 直近の版の「この版の絵」にある URL を、出所
+  (`Release <タグ> (#PR)`) つきで同じ検査に載せる。ノートを**読めなかった**ことは赤、
+  絵の無い週は緑 (どちらも本数を出す)。手元の `gh` を叩かないよう、既存の検査は
+  `--releases 0` で走らせる
 
 実行は make hooks-test (CI もこれを呼ぶ)。**引く部分はここでは動かさない** — 単体の
 検査がネットワークに依存すると、相手の不調でこちらが赤くなる。実際に引くのは
@@ -112,7 +116,7 @@ class CommandTest(unittest.TestCase):
 
     def run_script(self, *arguments):
         return subprocess.run(
-            ["python3", str(SCRIPT), "--root", str(self.root), *arguments],
+            ["python3", str(SCRIPT), "--root", str(self.root), "--releases", "0", *arguments],
             capture_output=True,
             text=True,
         )
@@ -294,11 +298,181 @@ class MainWiringTest(unittest.TestCase):
         ), mock.patch.object(
             assets, "probe_all", return_value={url: assets.Failure("HTTP 503", True)}
         ), mock.patch.object(
-            assets.sys, "argv", ["check-external-assets.py"]
+            assets.sys, "argv", ["check-external-assets.py", "--releases", "0"]
         ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
             status = assets.main()
         self.assertEqual(status, 1)
         self.assertIn(f"{url} — HTTP 503 (引き直しても応えない)", stderr.getvalue())
+
+
+NOTES = (
+    "## 修正\n\n- 直した\n\n## この版の絵\n\n"
+    "### [#2182 fix: 絵](https://github.com/example/repo/pull/2182)\n\n"
+    "![a](https://i.example.test/release-a.png)\n"
+    '<img src="https://i.example.test/release-b.png" width="240">\n'
+)
+
+
+class ReleaseReferencesTest(unittest.TestCase):
+    """リリースノートの絵を、同じ検査に出所つきで載せる (#2268)。
+
+    読む部分 (gh) と引く部分は差し替える。節の読み方そのものは release_test.py が持つ。
+    """
+
+    def test_出所はタグと_PR_の番号で名乗る(self):
+        references = assets.release_references([("v0.21.0", NOTES)])
+        self.assertEqual(
+            [(r.url, r.origin) for r in references],
+            [
+                ("https://i.example.test/release-a.png", "Release v0.21.0 (#2182)"),
+                ("https://i.example.test/release-b.png", "Release v0.21.0 (#2182)"),
+            ],
+        )
+
+    def test_絵の節が無い版は指し先を持たない(self):
+        self.assertEqual(assets.release_references([("v0.18.0", "## 修正\n\n- 直した\n")]), [])
+
+    def test_ファイルの出所は今までどおり_パスと行(self):
+        self.assertEqual(assets.Reference("https://i.example.test/a.png", "A.swift", 3).origin, "A.swift:3")
+
+    def run_main(self, *arguments, releases=None, fetch_error=None, failures=None):
+        """main を走らせる。fetch_releases と probe_all は差し替える。"""
+        fetched = []
+
+        def fetch(count, root):
+            fetched.append(count)
+            if fetch_error:
+                raise assets.ReleaseReadError(fetch_error)
+            return releases or []
+
+        probed = []
+
+        def probe_all(urls):
+            probed.extend(urls)
+            return failures or {}
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        docs = [assets.Reference("https://i.example.test/docs.png", "A.swift", 1)]
+        with mock.patch.object(assets, "collect", return_value=docs), mock.patch.object(
+            assets, "fetch_releases", fetch
+        ), mock.patch.object(assets, "probe_all", probe_all), mock.patch.object(
+            assets.sys, "argv", ["check-external-assets.py", *arguments]
+        ), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = assets.main()
+        return status, stdout.getvalue(), stderr.getvalue(), fetched, probed
+
+    def test_既定で直近の版数だけ読み_ノートの絵も引く(self):
+        status, out, _err, fetched, probed = self.run_main(releases=[("v0.21.0", NOTES)])
+        self.assertEqual(status, 0)
+        self.assertEqual(fetched, [assets.RELEASES_WATCHED])
+        self.assertEqual(
+            probed,
+            [
+                "https://i.example.test/docs.png",
+                "https://i.example.test/release-a.png",
+                "https://i.example.test/release-b.png",
+            ],
+        )
+        self.assertIn("リリースノートの絵: 直近 1 版のうち 1 版に 2 本", out)
+
+    def test_releases_0_ならノートを読まない(self):
+        status, _out, _err, fetched, probed = self.run_main("--releases", "0", releases=[("v0.21.0", NOTES)])
+        self.assertEqual(status, 0)
+        self.assertEqual(fetched, [])
+        self.assertEqual(probed, ["https://i.example.test/docs.png"])
+
+    def test_ノートに絵の無い週は緑で_0_本と名乗る(self):
+        # 描画に触れた PR の無い週は正常。ただし黙らない (読めなかった空と見分けるため)
+        status, out, _err, _fetched, probed = self.run_main(releases=[("v0.18.0", "## 修正\n\n- 直した\n")])
+        self.assertEqual(status, 0)
+        self.assertIn("リリースノートの絵: 直近 1 版のうち 0 版に 0 本", out)
+        self.assertEqual(probed, ["https://i.example.test/docs.png"])
+
+    def test_ノートを読めなければ赤で_引きに行かない(self):
+        status, _out, err, _fetched, probed = self.run_main(fetch_error="HTTP 401")
+        self.assertEqual(status, 1)
+        self.assertIn("リリースノートを読めない", err)
+        self.assertIn("HTTP 401", err)
+        self.assertEqual(probed, [])
+
+    def test_ノートの絵が切れていれば出所つきで赤(self):
+        dead = "https://i.example.test/release-b.png"
+        status, _out, err, _fetched, _probed = self.run_main(
+            releases=[("v0.21.0", NOTES)], failures={dead: assets.Failure("HTTP 404", False)}
+        )
+        self.assertEqual(status, 1)
+        self.assertIn(f"{dead} — HTTP 404", err)
+        self.assertIn("Release v0.21.0 (#2182)", err)
+        self.assertIn("gh release edit", err)
+
+    def test_説明文の絵が切れただけなら_ノートの直し方は言わない(self):
+        dead = "https://i.example.test/docs.png"
+        status, _out, err, _fetched, _probed = self.run_main(
+            releases=[("v0.21.0", NOTES)], failures={dead: assets.Failure("HTTP 404", False)}
+        )
+        self.assertEqual(status, 1)
+        self.assertIn("A.swift:1", err)
+        self.assertNotIn("gh release edit", err)
+
+    def test_説明文が_0_本なら_ノートに絵があっても赤(self):
+        # 0 本の守りは説明文の側にだけ掛ける。ノートの絵で「拾えている」ことにしない
+        stderr = io.StringIO()
+        with mock.patch.object(assets, "collect", return_value=[]), mock.patch.object(
+            assets, "fetch_releases", return_value=[("v0.21.0", NOTES)]
+        ), mock.patch.object(
+            assets.sys, "argv", ["check-external-assets.py"]
+        ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            status = assets.main()
+        self.assertEqual(status, 1)
+        self.assertIn("検査が成立していない", stderr.getvalue())
+
+
+class FetchReleasesTest(unittest.TestCase):
+    """gh を偽物にして、読めなかったことを空の一覧にしないこと。"""
+
+    def run_fetch(self, script, count=7):
+        with tempfile.TemporaryDirectory() as directory:
+            gh = Path(directory) / "gh"
+            gh.write_text("#!/bin/sh\n" + script)
+            gh.chmod(0o755)
+            with mock.patch.dict("os.environ", {"PATH": f"{directory}:/usr/bin:/bin"}):
+                return assets.fetch_releases(count, Path(directory))
+
+    def test_新しい順に_下書きを除いて返す(self):
+        releases = self.run_fetch(
+            "cat <<'JSON'\n"
+            '[{"tag_name":"v2","draft":false,"body":"b2"},'
+            '{"tag_name":"v1.5","draft":true,"body":"d"},'
+            '{"tag_name":"v1","draft":false,"body":null}]\n'
+            "JSON\n"
+        )
+        self.assertEqual(releases, [("v2", "b2"), ("v1", "")])
+
+    def test_版数は_per_page_で頼む(self):
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "args"
+            gh = Path(directory) / "gh"
+            gh.write_text(f'#!/bin/sh\necho "$@" > {record}\necho "[]"\n')
+            gh.chmod(0o755)
+            with mock.patch.dict("os.environ", {"PATH": f"{directory}:/usr/bin:/bin"}):
+                assets.fetch_releases(5, Path(directory))
+            self.assertEqual(record.read_text().strip(), "api repos/{owner}/{repo}/releases?per_page=5")
+
+    def test_gh_が失敗すれば例外(self):
+        with self.assertRaises(assets.ReleaseReadError) as raised:
+            self.run_fetch("echo 'HTTP 403: rate limit' >&2; exit 1")
+        self.assertIn("rate limit", str(raised.exception))
+
+    def test_応答が_JSON_でなければ例外(self):
+        with self.assertRaises(assets.ReleaseReadError):
+            self.run_fetch("echo 'not json'")
+
+    def test_gh_が無ければ例外(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            "os.environ", {"PATH": directory}
+        ):
+            with self.assertRaises(assets.ReleaseReadError):
+                assets.fetch_releases(7, Path(directory))
 
 
 class ReportTest(unittest.TestCase):

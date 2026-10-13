@@ -151,18 +151,32 @@ struct ObserveTests {
         #expect(Tools.timeObservationFailure(report, requested: 0.7) != nil)
     }
 
+    /// **応答の無い区画で呼ぶ。** 応答を先に置くと、送ってしまっても失敗が返るので
+    /// 「送る前に断った」と見分けられない (#2280)。断った文面と、要求が置かれていない
+    /// ことの両方で見る (`MCPServerTests.refusesSeriesThatAreNotWholeNumbers` と同じ形)。
     @Test("時刻の不正値と連写指定は要求を送る前に断る")
     func rejectsInvalidTimeArguments() throws {
-        let tools = try makeTools(report: base())
-        for raw: Any in [-1.0, Double.infinity, 1e39, "three", true, NSNull()] {
-            let (_, error) = tools.call("observe", arguments: ["time": raw])
-            #expect(error)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-observe-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let facets = Facets(directory: directory, waitLimit: 0.2)
+        let tools = Tools(facets: facets, makeID: { "fixed" })
+        let request = facets.observeFacet.appendingPathComponent("request.json")
+
+        func expectRefused(_ arguments: [String: Any], _ reason: String) {
+            let outcome = tools.call("observe", arguments: arguments)
+            #expect(outcome.isError, "\(arguments)")
+            #expect(outcome.text == reason, "\(arguments)")
+            #expect(!FileManager.default.fileExists(atPath: request.path), "\(arguments)")
         }
-        let (_, error) = tools.call("observe", arguments: ["time": 3, "count": 2])
-        #expect(error)
+
+        for raw: Any in [-1.0, Double.infinity, 1e39, "three", true, NSNull()] {
+            expectRefused(
+                ["time": raw], "time must be finite, non-negative seconds within the Float range")
+        }
+        expectRefused(["time": 3, "count": 2], "A specified time requires count=1 and every=1")
         for key in ["count", "every"] {
-            let (_, invalid) = tools.call("observe", arguments: ["time": 3, key: "one"])
-            #expect(invalid)
+            expectRefused(["time": 3, key: "one"], "A specified time requires count=1 and every=1")
         }
     }
 

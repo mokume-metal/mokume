@@ -18,7 +18,10 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
   5. 専用機のジョブは権限を広げず (`permissions` を持たず workflow 既定の `contents: read`)、
      秘密を持たない
   6. `issues: write` を持つのは GitHub ホストの後続ジョブ (`scheduled-report`) だけ
-  7. `scheduled-report` は専用機のジョブが失敗したときだけ走る
+  7. `scheduled-report` は専用機のジョブが落ちた (`failure`) か切れた (`cancelled`) ときだけ
+     走り、2 つの job の結論を起票のスクリプトへ渡す。timeout で切れた回は `cancelled` に
+     なるので、`failure` だけを見ると黙って抜ける (#2084)。`if:` は状態の関数を持つ —
+     無ければ暗黙の success() で、needs が赤の回に skipped になる
   8. 専用機のジョブはすべて門番 (`render-turn` / `scheduled-release-turn`) の後に積まれ、
      門番が赤でも走る (`!cancelled()`)。render が skipped になると必須チェックを満たして
      しまう (#2062)
@@ -194,14 +197,32 @@ class RenderWorkflowTest(unittest.TestCase):
         self.assertNotIn("self-hosted", self.jobs["scheduled-report"])
         self.assertIn("runs-on: ubuntu-latest", self.jobs["scheduled-report"])
 
-    def test_scheduled_report_は専用機のジョブが失敗したときだけ走る(self):
+    def test_scheduled_report_は専用機のジョブが落ちたか切れたときだけ走る(self):
         body = self.jobs["scheduled-report"]
         self.assertRegex(body, r"needs: \[scheduled-debug, scheduled-release\]")
         cond = condition(body)
-        self.assertIn("needs.scheduled-debug.result == 'failure'", cond)
-        self.assertIn("needs.scheduled-release.result == 'failure'", cond)
-        # 成功・skipped・cancelled のときに走らせない。`!=` 側で書くと、skipped で起票する
+        for job in SCHEDULED_RUNNER_JOBS:
+            self.assertIn(f"needs.{job}.result == 'failure'", cond, job)
+            # 30 分の timeout で切れた回は cancelled で終わる。ここを外すと、何も起票されずに
+            # 黙って抜ける (#2084 の 6 回)。人の cancel と見分けないのは ADR-0019 決定 7
+            self.assertIn(f"needs.{job}.result == 'cancelled'", cond, job)
+        # 成功・skipped のときに走らせない。`!=` 側で書くと、skipped で起票する
         self.assertNotIn("!=", cond)
+
+    def test_scheduled_report_は_needs_が赤でも走る(self):
+        # `if:` に状態の関数が無いと、GitHub は暗黙の success() を足す。needs が failure /
+        # cancelled の回にこそ走る job が skipped になり、#2084 と同じく黙って抜ける。
+        # 専用機の job の検査 (test_門番が赤でも専用機のジョブは走る) と同じく、`if:` の
+        # 先頭の項として持つことを見る
+        cond = condition(self.jobs["scheduled-report"])
+        self.assertRegex(cond, r"^(always\(\)|!cancelled\(\)) && ", cond)
+
+    def test_scheduled_report_は_job_ごとの結論を起票のスクリプトへ渡す(self):
+        # 渡さないと、切れた回の本文が「記録が無い = ビルドで落ちた」と読み違えさせる (#2211)。
+        # `if:` は `${{ }}` で包まずに書いてあるので、この綴りに当たるのは step の側だけ
+        body = self.jobs["scheduled-report"]
+        for job in SCHEDULED_RUNNER_JOBS:
+            self.assertIn(f"${{{{ needs.{job}.result }}}}", body, job)
 
     def test_専用機のジョブはすべて門番の後に積まれる(self):
         gate = {

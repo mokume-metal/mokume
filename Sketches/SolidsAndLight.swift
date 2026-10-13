@@ -14,7 +14,9 @@ import mokume
 /// 回してある — 影がどの形から落ちているか、面のどちら側が光を受けているかは、
 /// 動いて初めて読める。
 final class SolidsAndLight: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "solids and light")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "solids and light")
+    }
 
     /// 注視点。床も立体もこのまわりに固める。
     private var center: (x: Float, y: Float) { (width / 2, height / 2) }

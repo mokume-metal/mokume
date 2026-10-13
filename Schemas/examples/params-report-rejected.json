@@ -21,6 +21,11 @@
       "max": 1
     },
     {
+      "name": "gain",
+      "type": "float",
+      "value": 0.5
+    },
+    {
       "name": "shape",
       "type": "string",
       "value": "square",
@@ -38,6 +43,10 @@
     {
       "name": "shape",
       "reason": "notInChoices"
+    },
+    {
+      "name": "gain",
+      "reason": "notFinite"
     }
   ],
   "clamped": [
