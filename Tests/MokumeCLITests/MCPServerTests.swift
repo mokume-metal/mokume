@@ -198,6 +198,107 @@ struct MCPServerTests {
         #expect(answers.map(errorCode) == [nil, -32600])
     }
 
+    /// `Double` に収まらない数は、符号によらず読めない行として断る (#2476)。`JSONSerialization` は
+    /// 正の側 (`1e400`) は投げるが、負の側 (`-1e400`) は投げずに `-inf` で読むので、通すと `id` が
+    /// JSON に戻せず `lastResort` (`id` が `null`・-32603) へ落ち、引数の数は `-inf` のまま道具へ渡る。
+    /// 書く位置 (id・引数・配列の中・最上位・通知) によらず、`1e400` と同じ失敗にする。
+    nonisolated private static let unfitLines: [String] = {
+        func call(id: String = "1", arguments: String = "{}") -> String {
+            #"{"jsonrpc":"2.0","id":"# + id
+                + #","method":"tools/call","params":{"name":"observe","arguments":"# + arguments + "}}"
+        }
+        return [
+            call(id: "-1e400"), call(id: "-1.8e308"), call(id: "-1E400"),
+            call(id: "-1e+400"), call(id: "-0.5e999999999"),
+            call(arguments: #"{"scale":-1e400}"#),
+            call(arguments: #"{"events":[1,[2,{"x":-1e400}]]}"#),
+            call(arguments: #"{"events":[-1.8e308]}"#),
+            // 通知 (id が無い) でも、壊れた行として答える
+            #"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"observe","arguments":{"scale":-1e400}}}"#,
+            // 応答の形の行の中でも
+            #"{"jsonrpc":"2.0","id":-1e400,"result":{}}"#,
+            // 最上位が数だけの行も、形の誤りではなく読めない行
+            "-1e400",
+        ]
+    }()
+
+    @Test("Double に収まらない負の数が木に残る行は、道具を走らせずに -32700 で断る", arguments: unfitLines)
+    func refusesNegativeNumbersThatDoNotFit(line: String) throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [line, #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#])
+        server.serve()
+
+        // 1 行目は誤りの 1 行 (id は読めないので null)。lastResort (-32603) へは落ちない。
+        // 繋がりは切れず、次の呼び出しには答える
+        try #require(recorder.written.count == 2)
+        let refused = try decode(recorder.written[0])
+        #expect(errorCode(refused) == JSONRPC.parseError)
+        #expect(idOf(refused) == "null")
+        #expect(idOf(try decode(recorder.written[1])) == "2")
+        // 道具は走っていない。走ると観測の区画に要求が置かれる
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path))
+    }
+
+    @Test("収まらない数の断りは、正の側 (1e400) と負の側 (-1e400) で同じ失敗になる")
+    func refusesBothSignsAlike() throws {
+        // 応答の組み立ては鍵の並びを決めないので、文字ではなく読んだ中身で比べる
+        func reply(_ line: String) throws -> NSDictionary {
+            guard case .refused(let reply) = JSONRPC.parse(line) else {
+                Issue.record("断られていない: \(line)")
+                return [:]
+            }
+            return try decode(reply) as NSDictionary
+        }
+        let positive = try reply(#"{"jsonrpc":"2.0","id":1e400,"method":"tools/list"}"#)
+        let negative = try reply(#"{"jsonrpc":"2.0","id":-1e400,"method":"tools/list"}"#)
+        #expect(positive.count == 3)
+        #expect(positive == negative)
+        #expect(try reply("1e400") == reply("-1e400"))
+    }
+
+    /// **限界の明示。** 同じキーを 2 度書いた行の、後ろの値は読み手が木から落とすので、木を歩く
+    /// 検めには見えない (`1e400` を同じ位置に置くと `JSONSerialization` が行ごと投げて断られる)。
+    /// 道具へ渡るのは残った有限の値だけで、`-inf` は届かない。文字から探す読み手 (`MokumeCore` の
+    /// `JSONFile`) なら落ちた数も断れるが、`MokumeCLI` から使える口が無い (#2476)。ここは**いま
+    /// 断られない**ことを固定する — 将来塞ぐなら、この検査を断る側へ書き換える。
+    @Test(
+        "同じキーを 2 度書いて、後ろの収まらない負の数が木から落ちる行は、いまは断らず残った値で答える",
+        arguments: [
+            #"{"jsonrpc":"2.0","id":1,"id":-1e400,"method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"a":2,"a":{"x":-1e400}}}"#,
+        ])
+    func doesNotSeeNumbersDroppedFromTheTree(line: String) throws {
+        let (server, recorder) = makeServer(directory: try makeDirectory(), input: [line])
+        server.serve()
+
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(errorCode(answer) == nil)
+        #expect(idOf(answer) == "1")
+        #expect(answer["result"] != nil)
+    }
+
+    @Test("Double の最小値・最大値ちょうどの数は、これまでどおり読める")
+    func readsTheExtremesThatFit() throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [
+                #"{"jsonrpc":"2.0","id":-1.7976931348623157e308,"method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":1.7976931348623157e308,"method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"reference","arguments":{"name":"x","extra":-1.7976931348623157e308}}}"#,
+            ])
+        server.serve()
+
+        let answers = try recorder.written.map(decode)
+        try #require(answers.count == 3)
+        #expect(answers.map(errorCode) == [nil, nil, nil])
+        #expect(answers.allSatisfy { $0["result"] != nil })
+        #expect(idOf(answers[2]) == "3")
+    }
+
     @Test("id のある tools/call は、窓口越しに道具を走らせ、その id で結果を返す")
     func runsAToolForACall() throws {
         let directory = try makeDirectory()
