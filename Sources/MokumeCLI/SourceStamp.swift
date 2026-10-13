@@ -3,13 +3,18 @@
 
 import CryptoKit
 import Foundation
+import Synchronization
 
 /// 監視しているソースの世代。
 ///
 /// **中身から導く。** 時刻や連番で振ると「編集して元に戻した」ときに別の世代を
 /// 名乗ってしまい、読み手は反映されていない変更を反映済みと読む。中身から導けば、
 /// 変われば必ず変わり、変わらなければ変わらない。
-enum SourceStamp {
+///
+/// **main actor に置かない。** 世代を取る仕事は資材の中身まで読むので、大きな資材では
+/// 数百 ms かかる (512 MiB で約 263 ms)。見張りはこれを main actor の外で走らせる
+/// ([#2518](https://github.com/mokume-metal/mokume/issues/2518)・``WatchSession/Hooks/live(resolver:running:stamps:)``)。
+nonisolated enum SourceStamp {
     /// 数えるファイル。ここに無い変更は作り直しを起こさない (資材の置き場は別に数える ―
     /// ``sources(in:)``)。
     ///
@@ -110,30 +115,35 @@ enum SourceStamp {
     /// 上書きされると、属性が揃ったまま中身だけが変わる。控えが無かった頃は毎回中身を読んで
     /// いたので、「変われば必ず変わる」をそこで後退させない (版管理の道具が「読んだ直後の
     /// 書き換え」に対して取るのと同じ守り)。
-    final class Reader {
+    ///
+    /// **控えは錠の内側に置く。** 見張りは世代を main actor の外で取るので、読み手は巡回ごとに
+    /// 別のスレッドから呼ばれる (#2518)。1 回の読みは錠を握ったまま走らせ、2 つの手が控えを
+    /// 同時に触る形を型で書けなくする。見張りは世代を待っている間の巡回を弾くので重ならないが、
+    /// 読み手の正しさをそれに頼らない。
+    final class Reader: Sendable {
         /// 更新時刻からこれだけ経ってから読んだファイルだけ、控えを信じる。**最も粗い刻み
         /// (FAT の 2 秒) に合わせる。** 保存した直後の数回の巡回だけ読み直しが続く。
         static let racyWindow: TimeInterval = 2
 
         /// 控え。**いま数えているファイルの分だけを持つ** (消えたファイルの分は次の読みで落とす)。
-        private var kept: [String: Kept] = [:]
+        private let kept = Mutex<[String: Kept]>([:])
         /// 中身の要約を取る口。**検査から呼んだ回数を数えられる形にしてある。**
-        private let summarize: (URL) -> Data?
+        private let summarize: @Sendable (URL) -> Data?
 
-        private struct Kept {
+        private struct Kept: Sendable {
             let attributes: Attributes
             let digest: Data
             /// 要約を取った時刻。控えを信じてよいかを ``racyWindow`` で決める。
             let readAt: Date
         }
 
-        private struct Attributes: Equatable {
+        private struct Attributes: Equatable, Sendable {
             let size: Int
             let modified: Date
             let number: Int
         }
 
-        init(summarize: @escaping (URL) -> Data? = Reader.digest(of:)) {
+        init(summarize: @escaping @Sendable (URL) -> Data? = Reader.digest(of:)) {
             self.summarize = summarize
         }
 
@@ -142,7 +152,7 @@ enum SourceStamp {
         /// **少しずつ読む。** 丸ごと読むと、置き場の動画やモデルの大きさぶんの記憶を巡回の中で
         /// 取る。写像 (`mmap`) で読む形は採らない — 読んでいる間に別の手がファイルを切り詰めると、
         /// 道具ごと落ちる (SIGBUS)。
-        nonisolated static func digest(of file: URL) -> Data? {
+        static func digest(of file: URL) -> Data? {
             guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
             defer { try? handle.close() }
             var hasher = SHA256()
@@ -158,19 +168,21 @@ enum SourceStamp {
 
         /// いまの世代。読めるファイルが 1 つも無ければ `nil`。
         func current(for directory: URL) -> String? {
-            let files = SourceStamp.sources(in: directory)
-            guard !files.isEmpty else { return nil }
-            var hasher = SHA256()
-            var next: [String: Kept] = [:]
-            for file in files {
-                guard let digest = digest(of: file, keeping: &next) else { continue }
-                // 名前も混ぜる。中身が同じファイルの名前だけが変わった場合も別の世代になる
-                hasher.update(data: Data(file.path.utf8))
-                hasher.update(data: digest)
+            kept.withLock { kept in
+                let files = SourceStamp.sources(in: directory)
+                guard !files.isEmpty else { return nil }
+                var hasher = SHA256()
+                var next: [String: Kept] = [:]
+                for file in files {
+                    guard let digest = digest(of: file, kept: kept, keeping: &next) else { continue }
+                    // 名前も混ぜる。中身が同じファイルの名前だけが変わった場合も別の世代になる
+                    hasher.update(data: Data(file.path.utf8))
+                    hasher.update(data: digest)
+                }
+                kept = next
+                return hasher.finalize().map { String(format: "%02x", $0) }.joined().prefix(12)
+                    .description
             }
-            kept = next
-            return hasher.finalize().map { String(format: "%02x", $0) }.joined().prefix(12)
-                .description
         }
 
         /// 中身の要約。属性が控えと同じで、控えが更新時刻から十分に後に取られていれば、読まずに
@@ -178,7 +190,9 @@ enum SourceStamp {
         ///
         /// **属性は読む前に取る。** 取ってから読むまでの間に書き換わっても、控えの属性は
         /// 古いほうなので、次の読みで食い違って読み直す (取り違えは読み直しの側へ倒れる)。
-        private func digest(of file: URL, keeping next: inout [String: Kept]) -> Data? {
+        private func digest(
+            of file: URL, kept: [String: Kept], keeping next: inout [String: Kept]
+        ) -> Data? {
             let attributes = Self.attributes(of: file)
             if let attributes, let previous = kept[file.path], previous.attributes == attributes,
                 previous.readAt.timeIntervalSince(attributes.modified) >= Self.racyWindow

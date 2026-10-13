@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Synchronization
 import Testing
 import mokume
 
@@ -41,6 +42,13 @@ struct WatchOffMainTests {
             waiting = []
             for continuation in waited { continuation.resume() }
         }
+    }
+
+    /// どのスレッドからでも立てられる印。**要約は main actor の外で呼ばれうる** (#2518)。
+    nonisolated final class Flag: Sendable {
+        private let raised = Mutex(false)
+        func raise() { raised.withLock { $0 = true } }
+        var isRaised: Bool { raised.withLock { $0 } }
     }
 
     /// 起きた順に積む帳面。**検査が見るのはこの並びである。**
@@ -178,6 +186,166 @@ struct WatchOffMainTests {
         let result = try await waiting.value
         #expect(result.status == 0)
         #expect(result.output == "hi")
+    }
+
+    // MARK: - 世代を取る仕事も main を塞がない (#2518)
+
+    /// 世代を待たせた状態の見張りを組む。**最初の作り直しは済ませてある** — 巡回で見たいので。
+    @MainActor
+    private func makeStampingSession() async throws -> (
+        recorder: WatchSessionTests.Recorder, gate: Gate, session: WatchSession
+    ) {
+        let recorder = WatchSessionTests.Recorder()
+        let gate = Gate()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        await session.start()
+        recorder.whileStamping = { await gate.wait() }
+        recorder.stamp = "bbb"
+        return (recorder, gate, session)
+    }
+
+    /// **大きな資材の要約は数百 ms かかる** (512 MiB で約 263 ms)。巡回が main actor で
+    /// 待つと、そのあいだ道具の窓が止まる ([#2518](https://github.com/mokume-metal/mokume/issues/2518))。
+    @Test("巡回が世代を待っている最中も、main actor は別の仕事を進められる")
+    @MainActor
+    func theMainActorIsFreeWhileTheTickTakesTheStamp() async throws {
+        let log = Log()
+        let (recorder, gate, session) = try await makeStampingSession()
+
+        let ticking = Task { @MainActor () -> BuildReport? in
+            let report = await session.tick()
+            log.append("巡回を終える")
+            return report
+        }
+        try await waitUntil { gate.isWaiting }
+        Task { @MainActor in log.append("別の仕事が進む") }
+        try await waitUntil { log.entries.contains("別の仕事が進む") }
+        #expect(gate.isWaiting, "世代を取り終えてから走っている")
+
+        gate.open()
+        #expect(try #require(await ticking.value).ok, "世代が変わったのに作り直していない")
+        #expect(log.entries == ["別の仕事が進む", "巡回を終える"])
+        #expect(recorder.builds == 2)
+    }
+
+    @Test("最初の作り直しの前に世代を待つ間も、main actor は別の仕事を進められる")
+    @MainActor
+    func theMainActorIsFreeWhileTheStartTakesTheStamp() async throws {
+        let log = Log()
+        let recorder = WatchSessionTests.Recorder()
+        let gate = Gate()
+        recorder.whileStamping = { await gate.wait() }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+
+        let starting = Task { @MainActor () -> BuildReport in
+            let report = await session.start()
+            log.append("最初の作り直しを終える")
+            return report
+        }
+        try await waitUntil { gate.isWaiting }
+        Task { @MainActor in log.append("別の仕事が進む") }
+        try await waitUntil { log.entries.contains("別の仕事が進む") }
+        #expect(recorder.builds == 0, "世代を取り終える前に作り直している")
+
+        // **最初の世代を待つ間に来た巡回も、読みを重ねない。** 見張りの口は最初の 1 拍で
+        // 作り直しを始め、続く拍で巡回する (``WatchCommand/watch(_:viewer:)``)
+        #expect(try await returnsWithoutWaiting(log, "最中の巡回") { await session.tick() } == nil)
+        #expect(recorder.stampings == 1, "最初の世代を待つ間に、巡回が世代を取り直した")
+
+        gate.open()
+        #expect(await starting.value.ok)
+        #expect(log.entries == ["別の仕事が進む", "最中の巡回", "最初の作り直しを終える"])
+        #expect(recorder.builds == 1)
+    }
+
+    /// **巡回は 0.25 秒ごとに来る。** 大きな資材の要約はそれより長いので、印が無いと
+    /// 読み終わる前に次の読みが積み上がる。
+    @Test("世代を待っている最中に来た巡回は、世代を取り直さずに戻る")
+    @MainActor
+    func doesNotTakeASecondStampWhileOneIsPending() async throws {
+        let log = Log()
+        let (recorder, gate, session) = try await makeStampingSession()
+
+        let ticking = Task { await session.tick() }
+        try await waitUntil { gate.isWaiting }
+        #expect(try await returnsWithoutWaiting(log, "1 度目") { await session.tick() } == nil)
+        #expect(try await returnsWithoutWaiting(log, "2 度目") { await session.tick() } == nil)
+        // 最初の作り直しの 1 回と、いま待っている 1 回
+        #expect(recorder.stampings == 2, "待っている間の巡回が世代を取り直した")
+
+        gate.open()
+        #expect(try #require(await ticking.value).ok)
+        #expect(recorder.builds == 2, "1 つの変化で作り直しが重なった")
+    }
+
+    /// **合図を見るのは口の側で、待っている巡回は止められない。** 見直さないと、終われと
+    /// 言われた後で作り直しを始め、`swift build` が置き場の鍵を握ったまま残る (#834・#1147)。
+    @Test("世代を待っている間に終われと言われたら、戻っても作り直さない")
+    @MainActor
+    func aStopRequestedWhileTakingTheStampStartsNothing() async throws {
+        let (recorder, gate, session) = try await makeStampingSession()
+
+        let ticking = Task { await session.tick() }
+        try await waitUntil { gate.isWaiting }
+        #expect(await !WatchCommand.step(session, stopped: { true }), "抜けていない")
+
+        gate.open()
+        #expect(await ticking.value == nil, "終われと言われた後に作り直した")
+        #expect(recorder.builds == 1, "終われと言われた後に作り直した")
+        #expect(recorder.launches == 1, "終われと言われた後に子を起こした")
+    }
+
+    /// **本物の口が外で読むこと。** 上の検査は替え玉の `stamp` が関門で待つ形なので、
+    /// `live` の側で main actor のまま読む形に戻っても緑のままになる。ここでは本物の読み手の
+    /// 要約を塞ぎ、塞いでいる間に main actor の仕事が進むかを見る。
+    ///
+    /// **main で呼ばれたら塞がずに名乗る。** 塞ぐと検査の側から開けられず、赤くならずに
+    /// 固まる。外で呼ばれた要約は開けられるまで待つが、**待つ側が期限を持つ** (検査が開け損ねた
+    /// ときに残らないため)。期限は混んだ日の main の遅れより十分に長く取る — 期限で抜けると
+    /// 「進んだ時点で要約がもう終わっていた」と読まれ、混雑が赤に化ける (手元で 2 秒では
+    /// 他の suite と並んだ回に赤くなった)。
+    @Test("本物の世代の口は、要約を main actor の外で取る")
+    @MainActor
+    func theLiveStampSummarizesOffTheMainActor() async throws {
+        let sketch = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        try "// swift-tools-version: 6.2\n".write(
+            to: sketch.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+
+        let onMain = Flag()
+        let entered = Flag()
+        let finished = Flag()
+        let release = DispatchSemaphore(value: 0)
+        let reader = SourceStamp.Reader(summarize: { url in
+            if Thread.isMainThread {
+                onMain.raise()
+            } else {
+                entered.raise()
+                _ = release.wait(timeout: .now() + 60)
+            }
+            defer { finished.raise() }
+            return SourceStamp.Reader.digest(of: url)
+        })
+        let running = RunningBuild()
+        let hooks = WatchSession.Hooks.live(
+            resolver: .live(in: sketch, invocation: Invocation(), running: running),
+            running: running, stamps: reader)
+
+        let stamping = Task { @MainActor in await hooks.stamp(sketch) }
+        try await waitUntil { entered.isRaised || onMain.isRaised }
+        #expect(!onMain.isRaised, "要約を main actor で取っている")
+
+        let log = Log()
+        Task { @MainActor in log.append("別の仕事が進む") }
+        try await waitUntil { log.entries.contains("別の仕事が進む") }
+        #expect(
+            !finished.isRaised,
+            "要約を取り終えてから main actor の仕事が進んだ — 要約が main を塞いでいる")
+
+        release.signal()
+        #expect(await stamping.value == SourceStamp.current(for: sketch))
     }
 
     /// 待たずに戻ることを、期限つきで見る。

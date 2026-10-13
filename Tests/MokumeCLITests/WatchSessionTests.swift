@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import Synchronization
 import Testing
 import mokume
 
@@ -36,6 +37,11 @@ struct WatchSessionTests {
         /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
         /// でしか見えない (#834)。ここで待たせて、その隙に main actor の仕事を積む。
         var whileBuilding: () async -> Void = {}
+        /// 世代を取る最中に待たせる口。**既定は何もしない。** 使い方は ``whileBuilding`` と
+        /// 同じで、世代を待つ間に main actor が空くかを見る (#2518)。
+        var whileStamping: () async -> Void = {}
+        /// 世代を取った回数。**待っている間の巡回が読みを重ねないこと**を見る (#2518)。
+        var stampings = 0
         /// 作り直しを起こせなかったことにする誤り。**立っていれば、作り直しは投げる。**
         var failure: CommandFailure?
         /// 起こしたことにする子を返すか。**既定は返さない** (起こせなかった回になる)。
@@ -68,7 +74,11 @@ struct WatchSessionTests {
                     return self.launchesChild ? Process() : nil
                 },
                 now: { self.clock },
-                stamp: { _ in self.stamp })
+                stamp: { _ in
+                    self.stampings += 1
+                    await self.whileStamping()
+                    return self.stamp
+                })
         }
     }
 
@@ -1260,24 +1270,26 @@ struct SourceStampTests {
             ["Package.swift", "Sources/app/main.swift", "Sources/app/assets/v.txt",
              "Sources/app/assets/big.bin"], in: sketch)
 
-        var reads: [String] = []
+        // **読み手は main actor の外で呼ばれうる** (#2518) ので、数える先も錠で守る
+        let log = ReadLog()
         let reader = SourceStamp.Reader(summarize: { url in
-            reads.append(url.lastPathComponent)
+            log.names.withLock { $0.append(url.lastPathComponent) }
             return SourceStamp.Reader.digest(of: url)
         })
+        var reads: [String] { log.names.withLock { $0 } }
 
         let first = reader.current(for: sketch)
         #expect(
             Set(reads) == ["Package.swift", "main.swift", "v.txt", "big.bin"],
             "初回に読むべきものを読んでいない: \(reads)")
 
-        reads.removeAll()
+        log.names.withLock { $0.removeAll() }
         #expect(reader.current(for: sketch) == first)
         #expect(reads.isEmpty, "属性の変わらないファイルを読み直した: \(reads)")
 
         // 同じ大きさで書き換える。読み直すのはその 1 つだけ
         try write("two", to: "Sources/app/assets/v.txt", in: sketch)
-        reads.removeAll()
+        log.names.withLock { $0.removeAll() }
         let second = reader.current(for: sketch)
         #expect(reads == ["v.txt"], "書き換えた 1 つ以外も読み直した: \(reads)")
         #expect(second != first)
@@ -1318,6 +1330,11 @@ struct SourceStampTests {
         let second = reader.current(for: sketch)
         #expect(second != first, "属性の揃った書き換えを、控えのせいで取りこぼした")
         #expect(second == SourceStamp.current(for: sketch))
+    }
+
+    /// 要約を取った名前の帳面。
+    private nonisolated final class ReadLog: Sendable {
+        let names = Mutex<[String]>([])
     }
 
     /// 大きな資材を丸ごと記憶へ載せないために、要約は少しずつ読む。**少しずつ読んでも、

@@ -359,9 +359,19 @@ struct WatchCommandTests {
         await WatchCommand.step(session, stopped: { true })
 
         #expect(stub.builds == 1)
-        // 合図が無ければ作り直す状況であることを、同じ場面で確かめる
-        await WatchCommand.step(session, stopped: { false })
-        #expect(stub.builds == 2)
+        // **終われと言われた後の巡回も、作り直さない** (#2518)。世代を待つ間は合図を口が
+        // 見られないので、見張りの側が覚えた合図で止める
+        await session.tick()
+        #expect(stub.builds == 1, "終われと言われた後の巡回で作り直した")
+
+        // 合図が無ければ作り直す状況であることを、同じ場面 (別の見張り) で確かめる
+        let control = Stub()
+        let unstopped = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: control.hooks())
+        await unstopped.start()
+        control.stamp = "bbb"
+        await WatchCommand.step(unstopped, stopped: { false })
+        #expect(control.builds == 2)
     }
 
     /// **止めたかどうかは別の出来事。** 走らせていたものが既に死んでいた場合と、

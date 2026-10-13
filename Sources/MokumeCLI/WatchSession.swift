@@ -48,7 +48,13 @@ final class WatchSession {
         /// ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
         var now: () -> Double
         /// 監視しているソースの世代。
-        var stamp: (URL) -> String?
+        ///
+        /// **待つのは main actor の外である** (``rebuild`` と同じ)。世代は資材の中身から導くので、
+        /// 大きな資材を置いた・書き換えている間は 1 回に数百 ms かかる — main actor で取ると、
+        /// そのあいだ道具の窓が止まる ([#2518](https://github.com/mokume-metal/mokume/issues/2518))。
+        /// `@Sendable` にしない理由も ``rebuild`` と同じで、外へ出すのは ``live(resolver:running:stamps:)``
+        /// の内側だけに閉じる。
+        var stamp: (URL) async -> String?
         /// 走っている作り直しを止めると決め、いま走っている子を返す。**居なければ `nil`。**
         ///
         /// **撃つのは ``WatchSession`` である。** 期限つきで落とす判断はスケッチを止める
@@ -75,11 +81,14 @@ final class WatchSession {
         ///   丸ごと乗る ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
         /// - Parameter running: 走っている `swift` を掴む先。**導き手と同じものを渡す** —
         ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
-        static func live(resolver: BuildResolver, running: RunningBuild) -> Hooks {
-            // **世代の読み手は 1 つを持ち回る。** 属性の変わらないファイルを巡回のたびに
-            // 読み直さないための控えを持つ (資材の置き場の大きなファイル・#2312)
-            let stamps = SourceStamp.Reader()
-            return Hooks(
+        /// - Parameter stamps: 世代の読み手。**1 つを持ち回る** — 属性の変わらないファイルを
+        ///   巡回のたびに読み直さないための控えを持つ (資材の置き場の大きなファイル・#2312)。
+        ///   渡すのは検査だけである (要約を塞いで、待っている間に main が進むかを見る)。
+        static func live(
+            resolver: BuildResolver, running: RunningBuild,
+            stamps: SourceStamp.Reader = SourceStamp.Reader()
+        ) -> Hooks {
+            Hooks(
                 rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
                     // ここで待っても main actor は空く — ADR-0010 決定 4 の「明示的に分離
@@ -119,7 +128,13 @@ final class WatchSession {
                     return (try? process.run()) == nil ? nil : process
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
-                stamp: { stamps.current(for: $0) },
+                stamp: { directory in
+                    // **切り離して読む。** 読み手は錠で控えを守るので、どのスレッドから読んでも
+                    // よい。待っている間 main actor は空く (#2518)
+                    await Task.detached(priority: .userInitiated) {
+                        stamps.current(for: directory)
+                    }.value
+                },
                 stopRebuild: { running.stop() })
         }
     }
@@ -328,6 +343,13 @@ final class WatchSession {
         self.finishTimeout = finishTimeout
     }
 
+    /// 世代を待っているか。
+    ///
+    /// **世代を取る仕事が main actor を塞がなくなったので、印が要る** (#2518)。取るのに
+    /// 巡回の間隔 (0.25 秒) より長くかかると、印が無ければ次の巡回が同じ読みを重ねて起こす —
+    /// 大きな資材を書き換えている間は、読み終わる前に次の読みが積み上がる。
+    private(set) var isStamping = false
+
     /// 1 巡する。変化が無ければ何もしない。
     ///
     /// **作り直している間に来た巡回は、何もせずに戻る。** 作り直しはもう main actor を
@@ -340,19 +362,38 @@ final class WatchSession {
     /// **順番待ちは気付いた時刻に含める。** 印を見るのを「気付いた時刻」を置いた**後**に
     /// するのは、そうしないと順番待ちの時間が 3 つの数字のどこにも出ないためである —
     /// 保存から絵が変わるまでの説明が付かなくなる。
+    ///
+    /// **世代を待っている間に来た巡回も、何もせずに戻る** (#2518)。世代を取る仕事は main
+    /// actor の外で走るので、待っている間も巡回は来続ける。
+    ///
+    /// **世代を待って戻ったら、終われと言われていないかを見直す。** 合図を見るのは口の側
+    /// (``WatchCommand/step(_:viewer:stopped:)``) で、待っている間に来た合図はこの巡回を
+    /// 止められない — 見直さないと、終われと言われた後に作り直しを始める (#834 の順序)。
     @discardableResult
     func tick() async -> BuildReport? {
-        let stamp = hooks.stamp(directory)
-        guard stamp != lastStamp else { return nil }
+        guard !isStamping else { return nil }
+        let stamp = await takeStamp()
+        guard !stopRequested, stamp != lastStamp else { return nil }
         if noticedAt == nil { noticedAt = hooks.now() }
         guard !isRebuilding else { return nil }
         return await rebuildAndReplace(stamp: stamp)
     }
 
     /// 最初の 1 回。変化を待たずに作って走らせる。
+    ///
+    /// **最初の世代も main actor の外で取る** (#2518)。初回は控えが無いので、資材をすべて読む。
     @discardableResult
     func start() async -> BuildReport {
-        await rebuildAndReplace(stamp: hooks.stamp(directory), initial: true)
+        await rebuildAndReplace(stamp: await takeStamp(), initial: true)
+    }
+
+    /// 世代を取る。**取っている間は印を立てる** (``isStamping``)。
+    ///
+    /// - Returns: いまの世代。読めるファイルが 1 つも無ければ `nil`。
+    private func takeStamp() async -> String? {
+        isStamping = true
+        defer { isStamping = false }
+        return await hooks.stamp(directory)
     }
 
     /// 終われと言われたことを覚える。
