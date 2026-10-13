@@ -103,7 +103,8 @@ nonisolated enum SVGFile {
     /// - Parameter path: 失敗を名乗るための名前。
     static func parse(_ text: String, path: String) throws(DataFailure) -> Drawing {
         let reader = Reader()
-        let parser = XMLParser(data: Data(text.utf8))
+        // 渡すバイトは ``XMLFile`` と同じに整える (XML 宣言の `encoding` を読まず、行の終わりを揃える)
+        let parser = XMLParser(data: XMLFile.document(of: text))
         parser.delegate = reader
         // XML の中の名前から、手元のファイルや外の URL を読みに行かない (``XMLFile`` と同じ約束)
         parser.shouldResolveExternalEntities = false
