@@ -38,7 +38,12 @@ final class WatchSession {
         /// ([#1100](https://github.com/mokume-metal/mokume/issues/1100))。
         var rebuild: (URL) async throws(CommandFailure) -> RunCommand.Rebuilt
         /// 走らせる。世代の刻印と、速さの名乗り (一緒に出す構成の名前) を渡す。
-        var launch: (URL, URL, String?, String?) -> Process?
+        ///
+        /// **起こせなければ投げる** (``rebuild`` と同じ)。記録の形へ直すのは ``WatchSession`` の
+        /// 側である — `nil` を返す形だった頃は、`try?` が理由を捨て、記録には `launched: false`
+        /// だけが残って `output` にも端末にも理由が出なかった
+        /// ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+        var launch: (URL, URL, String?, String?) throws(CommandFailure) -> Process
         /// 時計の読み (秒)。**取るのは 2 つの読みの差だけである** — 記録に載るのは所要時間
         /// (`detect_ms` など) で、時刻そのものは書かない。
         ///
@@ -108,7 +113,7 @@ final class WatchSession {
                         }
                     }.value.get()
                 },
-                launch: { executable, directory, stamp, rate in
+                launch: { executable, directory, stamp, rate throws(CommandFailure) in
                     let process = Process()
                     process.executableURL = executable
                     process.currentDirectoryURL = directory
@@ -125,7 +130,17 @@ final class WatchSession {
                     // 窓を出せたときだけ置くので、出せなかった回の子は自分の窓を開く (#2028)
                     process.environment = RunCommand.childEnvironment(
                         stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName)
-                    return (try? process.run()) == nil ? nil : process
+                    do {
+                        try process.run()
+                    } catch {
+                        // **起こせなかった理由を捨てない** (#2521)。読み分けは `run` の口と同じ
+                        // 1 つを使う — 場所が使えないのか・走らせるものが無いのか・在るのに
+                        // 起こせないのか (#2314)
+                        throw RunCommand.launchFailure(
+                            of: process, error: error,
+                            executableMissing: .noExecutable(path: executable.path))
+                    }
+                    return process
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
                 stamp: { directory in
@@ -687,6 +702,21 @@ final class WatchSession {
         // 見張りが終わるときだけである (#1147)
         if let stoppedReport { return stoppedReport }
 
+        // **在るのに起こせない成果物を「建っていない」と言わない** (#2521)。作り直しは実行
+        // できるものだけを「建った」と返すので、実行ビットの無い成果物は下の「建っていない」へ
+        // 落ちていた。通ったのに起こせない回として名乗り、走っているものは落とさない
+        if rebuilt.status == 0, rebuilt.executable == nil, let product = rebuilt.product,
+            let reason = RunCommand.unrunnableProduct(product, in: rebuilt.binPath)
+        {
+            let failure = CommandFailure.cannotLaunch(
+                tool: product, place: directory.path, reason: reason)
+            return finish(
+                BuildReport(
+                    ok: true, status: 0, output: Self.notLaunched(failure.message, rebuilt.output),
+                    stamp: stamp, configuration: configurationName, launched: false,
+                    timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
+        }
+
         // **通ったことと、走らせるものが在ることは別である。** 置き場を他の誰かと
         // 共有していると、作り直しが「通った」のに実行ファイルが建っていないことが
         // 起きる (#1055)。そこを成功として記録すると、症状は「作り直したと出たのに
@@ -705,10 +735,14 @@ final class WatchSession {
         // **終われと言われた後は、起こさない。** ここへ来るのは作り直しを待っている間に
         // 巡回が畳まれた回で、起こしても止める者がもう居ない (#834)。作り直し自体は通って
         // いるので、記録には通ったと書いて「起こしていない」だけを名乗る
+        //
+        // **起こさなかった理由を本文の頭で名乗る** (#2521)。`launched: false` だけでは、
+        // 起こせなかった回と見分けが付かない
         guard !stopRequested else {
             return finish(
                 BuildReport(
-                    ok: true, status: 0, output: rebuilt.output, stamp: stamp,
+                    ok: true, status: 0,
+                    output: Self.notLaunched(Self.stopRequestedNotice, rebuilt.output), stamp: stamp,
                     configuration: configurationName, launched: false,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
@@ -728,7 +762,17 @@ final class WatchSession {
         } else {
             stop()
         }
-        child = hooks.launch(executable, directory, stamp, reportsRate ? configurationName : nil)
+        // **起こせなかった理由は記録の本文の頭へ載せる** (#2521)。作り直しの出力はその後に
+        // 続ける — 建っていない回 (``unbuiltNotice(_:)``) と同じ形で、読み手は頭の行で
+        // 何が起きたかを読める
+        var launchFailure: CommandFailure?
+        do throws(CommandFailure) {
+            child = try hooks.launch(
+                executable, directory, stamp, reportsRate ? configurationName : nil)
+        } catch {
+            child = nil
+            launchFailure = error
+        }
         // **書き口を塞がない形にしてから渡す。** 入力が来るのは窓が出た後なので、ここで
         // 立てておけば「読まない子へ書いて固まる」回は作れない (#1296)
         unblockWriting(to: child)
@@ -737,8 +781,10 @@ final class WatchSession {
 
         return finish(
             BuildReport(
-                ok: true, status: 0, output: rebuilt.output, stamp: stamp,
-                configuration: configurationName, launched: child != nil,
+                ok: true, status: 0,
+                output: launchFailure.map { Self.notLaunched($0.message, rebuilt.output) }
+                    ?? rebuilt.output,
+                stamp: stamp, configuration: configurationName, launched: child != nil,
                 timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)),
             firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
     }
@@ -771,6 +817,36 @@ final class WatchSession {
             finish(report)
         }
         return retireOutgoing()
+    }
+
+    /// 終われと言われた後に作り直しが通った回の、起こさなかった理由。
+    ///
+    /// **起こせなかった回と言葉を分ける** (#2521)。どちらも `ok: true, launched: false` で、
+    /// 違いは本文にしか出ない。要約 (``BuildReport/summary``) もこれで始まる本文を見て言い分ける。
+    static var stopRequestedNotice: String { BuildReport.stopRequestedNotice }
+
+    /// 起こさなかった (起こせなかった) 理由を頭に置き、作り直しの出力を後に続ける。
+    ///
+    /// **理由を先に置き、最初の空行で区切る。** 作り直しの出力は長く、末尾に置いた理由は
+    /// 読まれない。理由は空行を含まない (複数行のことはある・`placeUnusable` は 2 行) ので、
+    /// 最初の空行までが理由になる (``notLaunchedReason(of:)``・schema の `output` の説明)。
+    static func notLaunched(_ reason: String, _ buildOutput: String) -> String {
+        buildOutput.isEmpty ? reason : reason + "\n\n" + buildOutput
+    }
+
+    /// ``notLaunched(_:_:)`` で組んだ本文から、理由 (最初の空行の前) を取り出す。
+    static func notLaunchedReason(of output: String) -> String {
+        output.range(of: "\n\n").map { String(output[..<$0.lowerBound]) } ?? output
+    }
+
+    /// 前の版がまだ走っていて、画面に出ているか。**終われと言われた後は数えない。**
+    ///
+    /// 起こせなかった回に端末で「前の版のまま待つ」と名乗るかを決める (#2521)。窓のある見張り
+    /// (``overlapsGenerations``) は前の世代を退役待ちに残してから起こすので、起こせなくても
+    /// 前の版が走り続ける。窓の無い見張りは起こす前に止めるので、走っていない。在るのに
+    /// 起こせない成果物の回は、差し替えに入らないので走り続ける。
+    var keepsPreviousRunning: Bool {
+        !stopRequested && (outgoing ?? child)?.isRunning == true
     }
 
     /// 「通ったのに建っていない」ことを、記録の中で名乗る。

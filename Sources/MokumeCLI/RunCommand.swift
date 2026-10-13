@@ -382,9 +382,29 @@ enum RunCommand {
             guard let product = result.product else {
                 throw .noExecutable(path: directory.path)
             }
+            // **在るのに起こせないものを「建っていない」と言わない** (#2521)。作り直しは
+            // 実行できるものだけを「建った」と返すので、実行ビットの無い成果物もここへ来る
+            if let reason = unrunnableProduct(product, in: result.binPath) {
+                throw .cannotLaunch(tool: product, place: directory.path, reason: reason)
+            }
             throw .productNotBuilt(product: product, path: result.binPath.path)
         }
         return executable
+    }
+
+    /// 作り直しが「建った」と返さなかった product が、置き場に**在るのに起こせない**なら、その
+    /// 理由 (在処を含む 1 行)。無ければ `nil` (本当に建っていない)。
+    ///
+    /// **置き場の直下を指す名前だけを見る。** `/` や `.`・`..` を含む名前は置き場の外や置き場
+    /// そのものを指すので、そこに在るものを「起こせない成果物」とは言わない。
+    nonisolated static func unrunnableProduct(_ product: String, in bin: URL) -> String? {
+        guard !product.isEmpty, !product.contains("/"), product != ".", product != ".." else {
+            return nil
+        }
+        guard case .unrunnable(let reason) = standing(
+            of: bin.appendingPathComponent(product, isDirectory: false))
+        else { return nil }
+        return reason
     }
 
     /// 出来上がりが置かれる場所。**道具立てに聞く** — 置き場の中の構造を組み立てると、
@@ -702,7 +722,8 @@ enum RunCommand {
     /// **限界: 起こした時点と確かめた時点の間に場所が消えたり戻ったりすると、読み分けが
     /// 変わる** (確かめた時点の姿を名乗る)。
     ///
-    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。口ごとに名乗りが違う
+    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。**在るのに実行できない
+    ///   ときには使わない** — 「走らせるものが無い」と言うと、在るものを探しに行かせる (#2521)。口ごとに名乗りが違う
     ///   (道具なら ``CommandFailure/toolchainMissing(_:)``、スケッチなら
     ///   ``CommandFailure/noExecutable(path:)``)。
     nonisolated static func launchFailure(
@@ -714,10 +735,60 @@ enum RunCommand {
         guard presence == .directory else {
             return .placeUnusable(tool: tool, place: place.path, presence: presence)
         }
-        guard let executable = process.executableURL,
-            FileManager.default.isExecutableFile(atPath: executable.path)
-        else { return executableMissing }
-        return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
+        guard let executable = process.executableURL else { return executableMissing }
+        // **在るのに起こせないものを「無い」と言わない** (#2521)。`Process.run()` は実行ビットの
+        // 無いファイル・探索権の無いディレクトリの下・宛先の無い symlink のどれにも「The file
+        // doesn’t exist」(下に POSIX の誤り無し) を投げるので、誤りの文面からは原因が取れない —
+        // stat し直した事実で名乗る
+        switch standing(of: executable) {
+        case .missing: return executableMissing
+        case .unrunnable(let reason):
+            return .cannotLaunch(tool: tool, place: place.path, reason: reason)
+        case .runnable:
+            return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
+        }
+    }
+
+    /// 走らせるものの在り方。``standing(of:)`` が読む。
+    nonisolated enum Standing: Equatable {
+        /// 何も無い (`ENOENT` で、symlink でもない)。
+        case missing
+        /// 在るが、起こせない。`reason` は在処を含む 1 行。
+        case unrunnable(reason: String)
+        /// 在り、実行できる (起こせなかったのなら、理由は起こした側の誤りにある)。
+        case runnable
+    }
+
+    /// 走らせるものを stat し直して、在り方を決める
+    /// ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    ///
+    /// **「無い」と言うのは、stat が `ENOENT` を返し、symlink でもないときだけ** — 作業
+    /// ディレクトリの側の ``GivenPath/Presence/of(_:)`` と同じ読み分けである。辿り着けない
+    /// (`EACCES` など)・宛先の無い symlink・ディレクトリ・実行ビットが無い、は在るものなので、
+    /// 「無い」と言うと在るものを探しに行かせる。
+    ///
+    /// **限界: 起こした時点と確かめた時点の間に変わると、確かめた時点の姿を名乗る。**
+    nonisolated static func standing(of executable: URL) -> Standing {
+        let path = executable.path
+        var info = stat()
+        guard stat(path, &info) == 0 else {
+            let code = errno
+            guard code == ENOENT else {
+                return .unrunnable(reason: "\(path) cannot be reached (\(GivenPath.errorText(code)))")
+            }
+            var link = stat()
+            return lstat(path, &link) == 0
+                ? .unrunnable(reason: "\(path) is a symbolic link to something that is not there")
+                : .missing
+        }
+        if (info.st_mode & S_IFMT) == S_IFDIR {
+            return .unrunnable(reason: "\(path) is a directory, not a program")
+        }
+        guard access(path, X_OK) == 0 else {
+            return .unrunnable(
+                reason: "\(path) is not executable (\(GivenPath.errorText(errno)))")
+        }
+        return .runnable
     }
 
     /// 起こせなかった事情の文面 (場所でも実行ファイルの不在でもないとき)。
