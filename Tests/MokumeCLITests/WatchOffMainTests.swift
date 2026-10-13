@@ -299,14 +299,18 @@ struct WatchOffMainTests {
 
     /// **本物の口が外で読むこと。** 上の検査は替え玉の `stamp` が関門で待つ形なので、
     /// `live` の側で main actor のまま読む形に戻っても緑のままになる。ここでは本物の読み手の
-    /// 要約を塞ぎ、塞いでいる間に main actor の仕事が進むかを見る。
+    /// 要約の中から、2 つを見る:
     ///
-    /// **main で呼ばれたら塞がずに名乗る。** 塞ぐと検査の側から開けられず、赤くならずに
-    /// 固まる。外で呼ばれた要約は開けられるまで待つが、**待つ側が期限を持つ** (検査が開け損ねた
-    /// ときに残らないため)。期限は混んだ日の main の遅れより十分に長く取る — 期限で抜けると
-    /// 「進んだ時点で要約がもう終わっていた」と読まれ、混雑が赤に化ける (手元で 2 秒では
-    /// 他の suite と並んだ回に赤くなった)。
-    @Test("本物の世代の口は、要約を main actor の外で取る")
+    /// - 要約が main で呼ばれていないこと (呼ばれたら塞がずに名乗る — 塞ぐと固まる)
+    /// - 要約の最中に main が空いていること。**main へ仕事を 1 つ積み、それが走るまで要約を
+    ///   終えない** — 外で読んでいても main を塞いで待つ形 (同期で待ち合わせる形) なら、積んだ
+    ///   仕事は要約が終わるまで走れない
+    ///
+    /// **時間ではなく、積んだ仕事が走ったかで見る。** 走るまでの待ちには期限を持たせるが、
+    /// それは塞がれたまま固まらないための上限で、混んだ日に赤くならないよう十分長く取る —
+    /// main actor の検査が並ぶと、空くまで数十秒待つことがある (手元の cli の全件で 60 秒を
+    /// 越えた)。緑の実装では main が空いた時点で抜けるので、長く取っても待ちは延びない。
+    @Test("本物の世代の口は、要約を main actor の外で取り、その間 main を空ける")
     @MainActor
     func theLiveStampSummarizesOffTheMainActor() async throws {
         let sketch = try makeDirectory()
@@ -315,17 +319,15 @@ struct WatchOffMainTests {
             to: sketch.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
 
         let onMain = Flag()
-        let entered = Flag()
-        let finished = Flag()
-        let release = DispatchSemaphore(value: 0)
+        let mainRanMeanwhile = Flag()
         let reader = SourceStamp.Reader(summarize: { url in
             if Thread.isMainThread {
                 onMain.raise()
             } else {
-                entered.raise()
-                _ = release.wait(timeout: .now() + 60)
+                let ran = DispatchSemaphore(value: 0)
+                DispatchQueue.main.async { ran.signal() }
+                if ran.wait(timeout: .now() + 300) == .success { mainRanMeanwhile.raise() }
             }
-            defer { finished.raise() }
             return SourceStamp.Reader.digest(of: url)
         })
         let running = RunningBuild()
@@ -333,19 +335,12 @@ struct WatchOffMainTests {
             resolver: .live(in: sketch, invocation: Invocation(), running: running),
             running: running, stamps: reader)
 
-        let stamping = Task { @MainActor in await hooks.stamp(sketch) }
-        try await waitUntil { entered.isRaised || onMain.isRaised }
+        let stamp = await hooks.stamp(sketch)
         #expect(!onMain.isRaised, "要約を main actor で取っている")
-
-        let log = Log()
-        Task { @MainActor in log.append("別の仕事が進む") }
-        try await waitUntil { log.entries.contains("別の仕事が進む") }
         #expect(
-            !finished.isRaised,
-            "要約を取り終えてから main actor の仕事が進んだ — 要約が main を塞いでいる")
-
-        release.signal()
-        #expect(await stamping.value == SourceStamp.current(for: sketch))
+            onMain.isRaised || mainRanMeanwhile.isRaised,
+            "要約の最中に main へ積んだ仕事が走らなかった — 世代を待つ間 main が塞がっている")
+        #expect(stamp == SourceStamp.current(for: sketch))
     }
 
     /// 待たずに戻ることを、期限つきで見る。
