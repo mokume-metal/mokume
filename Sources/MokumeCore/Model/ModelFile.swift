@@ -81,7 +81,9 @@ nonisolated enum ModelFile {
         var derivedNormals: [Bool]
         /// 読み飛ばしたものの数。**読み飛ばしたことが分かる手段**として持つ。
         ///
-        /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) を数える。
+        /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) と、Model I/O が
+        /// 返した形のうち写せなかった要素 (位置を持たない mesh・三角形でない submesh・3 つに
+        /// 満たない余りの番号など) を数える。数える単位は形式と要素で違い、面の数ではない。
         /// **OBJ は行を丸ごと読み飛ばす** — 面の行に位置の番号が読めない角 (範囲の外・0・
         /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。行末のコメント
         /// (`#` から後) と継ぎ文字 (`\`) は角でない字で、読めない角に数えない。
@@ -124,7 +126,12 @@ nonisolated enum ModelFile {
         for line in text.lines {
             let fields = line.split(whereSeparator: \.isWhitespaceQuickly)
             guard let keyword = fields.first else { continue }
-            let values = fields.dropFirst()
+            // **向きは 3 つの数まで** (`vn i j k`)。4 つ目以降があれば欄を空にして、読めない行として
+            // 数える (#2566)。行末のコメント (`# …`) は欄に数えない。`v` の 4 つ目 (w・色) と
+            // `vt` の 3 つ目 (w) は仕様にある欄なので、それは読み捨てる
+            let values =
+                keyword == "vn" && fields.dropFirst().prefix(while: { !$0.hasPrefix("#") }).count > 3
+                ? ArraySlice<Substring>() : fields.dropFirst()
             switch keyword {
             case "v":
                 guard let point = vector(values) else { skipped += 1; continue }
@@ -287,7 +294,9 @@ nonisolated enum ModelFile {
         _ field: Substring, positions: Int, textures: Int, normals: Int
     ) -> (position: Int, texture: Int?, normal: Int?)? {
         let parts = field.split(separator: "/", omittingEmptySubsequences: false)
-        guard let first = parts.first, let raw = Int(first) else { return nil }
+        // **欄は最大 3 つ** (`位置/読み取り位置/向き`)。4 つ目以降があれば読めない角で、黙って
+        // 捨てて三角形にはしない — 面の行ごと読み飛ばして数える (#2566・#2339)
+        guard parts.count <= 3, let first = parts.first, let raw = Int(first) else { return nil }
         guard let position = resolve(raw, count: positions) else { return nil }
         // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)。
         // 番号が数として読めない (`a/x/c`)・範囲の外 (`a/99/c`) も、書いていない角と同じに

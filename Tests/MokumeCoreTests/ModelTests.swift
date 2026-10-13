@@ -121,6 +121,68 @@ struct ModelTests {
         #expect(parsed.skippedLines == skipped, "\(line)")
     }
 
+    /// 約束 ([#2566]): 面の角は `位置[/読み取り位置[/向き]]` の最大 3 つの欄で、**4 つ目以降の欄が
+    /// ある角は読めない角**として、面の行ごと読み飛ばして数える ([#2339])。黙って 4 つ目以降を
+    /// 捨てて三角形にすると、書き違いに気付く手段が無い。正しい書き方 4 通りは変わらない。
+    ///
+    /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
+    /// [#2339]: https://github.com/mokume-metal/mokume/issues/2339
+    @Test(
+        "面の角に 4 つ目以降の欄があれば、面の行ごと読み飛ばして数える",
+        arguments: [
+            // (面の行, 三角形の数, 読み飛ばした行の数)
+            ("f 1/1/1/1 2 3", 0, 1), ("f 1 2/1/1/1 3", 0, 1), ("f 1 2 3/1/1/1", 0, 1),
+            ("f 1/1/1/ 2 3", 0, 1), ("f 1/1/1/1/1 2 3", 0, 1), ("f 1//1/1 2 3", 0, 1),
+            ("f 1///1 2 3", 0, 1),
+            // 陰性対照: 正しい 4 通りの書き方は面になり、数えない
+            ("f 1 2 3", 1, 0), ("f 1/1 2/2 3/3", 1, 0), ("f 1//1 2//1 3//1", 1, 0),
+            ("f 1/1/1 2/2/1 3/3/1", 1, 0),
+        ])
+    func cornersWithMoreThanThreeFieldsAreSkippedWhole(line: String, triangles: Int, skipped: Int) {
+        let parsed = ModelFile.parse(
+            """
+            v 0 0 0
+            v 1 0 0
+            v 0 1 0
+            vt 0 0
+            vt 1 0
+            vt 0 1
+            vn 0 0 1
+            \(line)
+            """)
+        #expect(parsed.positions.count == triangles * 3, "\(line)")
+        #expect(parsed.skippedLines == skipped, "\(line)")
+    }
+
+    /// 約束 ([#2566]): 向き (`vn`) は 3 つの数までで、**4 つ目以降があれば読めない行**として数える
+    /// (置かない)。`v` の 4 つ目 (w・色) と `vt` の 3 つ目 (w) は OBJ の仕様にある欄なので、
+    /// 読み捨てて数えない。
+    ///
+    /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
+    @Test(
+        "vn の 4 つ目以降の欄は読めない行として数え、v・vt の仕様にある欄は数えない",
+        arguments: [
+            // (追加する行, 読み飛ばした行の数)
+            ("vn 0 0 1 1", 1), ("vn 0 0 1 abc", 1), ("vn 0 0 1 1 1", 1),
+            // 陰性対照: 仕様にある欄・書き方は変わらず、数えない
+            ("vn 0 0 1", 0), ("vn 0 0 1 # normal", 0), ("v 1 1 1 1", 0), ("v 1 1 1 0.5 0.5 0.5", 0), ("vt 0.5 0.5 0.5", 0),
+        ])
+    func normalLinesWithExtraFieldsAreSkipped(line: String, skipped: Int) {
+        let base = """
+            v 0 0 0
+            v 1 0 0
+            v 0 1 0
+            vt 0.25 0.75
+            vn 0 0 1
+            f 1/1/1 2/1/1 3/1/1
+            """
+        let plain = ModelFile.parse(base)
+        let parsed = ModelFile.parse(base + "\n" + line)
+        var expected = plain
+        expected.skippedLines += skipped
+        #expect(parsed == expected, "\(line)")
+    }
+
     /// Windows 系の道具が書き出した OBJ は改行が `\r\n` である。**割れないと、先頭の
     /// `#` で全体がコメント扱いになり、頂点 0 のモデルが落ちも警告も無しに返る** —
     /// 唯一の手がかりである `skippedLines` も 0 なので、症状は「何も出ない」だけになる。

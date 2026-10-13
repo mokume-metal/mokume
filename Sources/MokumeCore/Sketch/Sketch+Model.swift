@@ -41,7 +41,7 @@ extension Sketch {
     ///   置くと寝て見える。起こすなら `rotateX` で 4 分の 1 回す
     /// - **文字の STL で数として読めない座標は 0 として読まれる** (読み手の Model I/O がそう
     ///   読む)。OBJ のように読み飛ばして数えはしない。バイナリの STL で座標が数でない面は
-    ///   読み飛ばし、``Model/skippedLines`` に面の数として数える
+    ///   読み飛ばし、``Model/skippedLines`` に数える (面ごとに 1)
     ///
     /// 読めない STL (壊れている・途中で切れている・空のファイル・小文字の `solid` で始まらない
     /// 文字の STL) は ``ModelFailure/unreadable(path:)`` を投げる。面を 1 つも持たない STL は
