@@ -79,11 +79,12 @@ struct ModelTests {
             v 1 0 nan
             v 1 0 0
             v 0 1 0
-            f 1 2 3
+            f 1 3 4
             g grouped
             """)
-        // 数でない頂点は読まないので、面の番号もその分ずれる (3 点そろえば三角形になる)
+        // 数でない頂点は読まないが、番号の枠は使う (#2564)。面は元の番号で 3 点そろい、三角形になる
         #expect(parsed.positions.count == 3)
+        #expect(parsed.positions == [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)])
         #expect(parsed.skippedLines == 2)
     }
 
@@ -226,37 +227,50 @@ struct ModelTests {
             """
         let face = "f 1/1/1 2/1/1 3/1/1"
         let plain = ModelFile.parse(base + "\n" + face)
-        // 面の**後ろ**に置いた読めない行は、形を変えずに数えられるだけ。前に置いたときは
-        // 番号がずれる (下の `unreadableLinesShiftTheNumbersAfterThem`)
+        // 面の**後ろ**に置いた読めない行は、形を変えずに数えられるだけ。前に置いても番号の枠は
+        // 使うので、後ろの番号はずれない (下の `unreadablePositionLinesKeepTheirSlot`)
         let broken = ModelFile.parse(base + "\n" + face + "\n" + line)
         var expected = plain
         expected.skippedLines += 1
         #expect(broken == expected, "\(line.debugDescription)")
     }
 
-    /// 読めない行は番号の枠を使わない (前からの仕様・`brokenLinesDoNotStopTheRest` と同じ)。
-    /// **直す前は読めていた 16 進の行も、いまは読み飛ばすので、後ろの番号が 1 つずつずれる** —
-    /// その行を指していた面は詰めた次の頂点を指し、範囲の外に出た番号は読めない番号になる
-    /// (読めない行に枠を残すかは [#2564])。
+    /// 約束 ([#2564]): **読めない行も番号の枠を 1 つ使う。** OBJ の番号は行の通し番号なので、
+    /// 読めない `v`・`vt`・`vn` の行を詰めると、後ろの番号が 1 つずつずれ、面が別の頂点を指して
+    /// 形が黙って変わる。数えるのは読めない行 1 つ分だけで変わらない。その行を指す角は、位置なら
+    /// 面の行ごと読み飛ばして数え ([#2339])、`vt`・`vn` なら書いていない角と同じに読む ([#2349])。
     ///
     /// [#2564]: https://github.com/mokume-metal/mokume/issues/2564
-    @Test("面の前にある読めない v・vt の行は、後ろの番号を 1 つずつずらす")
-    func unreadableLinesShiftTheNumbersAfterThem() throws {
-        let positions = ModelFile.parse(
+    /// [#2339]: https://github.com/mokume-metal/mokume/issues/2339
+    /// [#2349]: https://github.com/mokume-metal/mokume/issues/2349
+    @Test(
+        "面の前にある読めない v の行も番号の枠を使い、後ろの番号をずらさない",
+        arguments: [
+            "v 0x10 0 0", "v x 0 0", "v 1 2", "v nan 0 0", "v 1 2 +inf",
+        ])
+    func unreadablePositionLinesKeepTheirSlot(line: String) {
+        let parsed = ModelFile.parse(
             """
             v 0 0 0
-            v 0x10 0 0
+            \(line)
             v 1 0 0
             v 0 1 0
+            f 1 3 4
+            f -4 -2 -1
             f 1 2 3
             f 2 3 4
             """)
-        // 2 番は (16, 0, 0) ではなく、詰めた (1, 0, 0) を指す。4 番は範囲の外なので、
-        // 角が 3 つ揃わない 2 つ目の面は行ごと数える
-        #expect(positions.positions == [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)])
-        #expect(positions.skippedLines == 2)
+        // 1・3・4 番の頂点で組まれる (詰めて 1・2・3 番が別の形になることは無い)。
+        // 負の番号も読めない行を数える (-4 = 1 番・-2 = 3 番・-1 = 4 番)
+        let triangle = [SIMD3<Float>(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)]
+        #expect(parsed.positions == triangle + triangle, "\(line.debugDescription)")
+        // 数えるのは、読めない `v` の行 1 つと、その行を指す面の行 2 つ (`f 1 2 3`・`f 2 3 4`)
+        #expect(parsed.skippedLines == 3, "\(line.debugDescription)")
+    }
 
-        let textures = ModelFile.parse(
+    @Test("面の前にある読めない vt の行も番号の枠を使い、その行を指す角は書いていない角になる")
+    func unreadableTextureLinesKeepTheirSlot() {
+        let parsed = ModelFile.parse(
             """
             v 0 0 0
             v 1 0 0
@@ -264,11 +278,40 @@ struct ModelTests {
             vt 0.1 0.1
             vt 0x1 0
             vt 0.5 0.5
+            vt 0.25
             f 1/1 2/2 3/3
+            f 1/3 2/-4 3/4
             """)
-        // 2 番の読み取り位置は詰めた (0.5, 0.5)、3 番は範囲の外なので書いていない角になる
-        #expect(textures.uvs == [SIMD2(0.1, 0.9), SIMD2(0.5, 0.5), nil])
-        #expect(textures.skippedLines == 1)
+        // 2 番は読めない行で、書いていない角と同じ。3 番は詰めずに 0.5, 0.5 を指す。
+        // 2 面目: -4 は 1 番 (読める vt の行)。`vt 0.25` (4 番) は v を 0 として読む
+        #expect(
+            parsed.uvs == [
+                SIMD2(0.1, 0.9), nil, SIMD2(0.5, 0.5),
+                SIMD2(0.5, 0.5), SIMD2(0.1, 0.9), SIMD2(0.25, 1),
+            ])
+        // 読めない行 1 つだけ。角は数えない
+        #expect(parsed.skippedLines == 1)
+    }
+
+    @Test("面の前にある読めない vn の行も番号の枠を使い、その行を指す角は書いていない角になる")
+    func unreadableNormalLinesKeepTheirSlot() {
+        let parsed = ModelFile.parse(
+            """
+            v 0 0 0
+            v 1 0 0
+            v 0 1 0
+            vn 0 1 0
+            vn 0x1 0 0
+            vn 1 0 0
+            f 1//1 2//2 3//3
+            """)
+        // 2 番は読めない行で、向きを書いていない角と同じ (形から求めて両面)。
+        // 3 番は詰めずに (1, 0, 0) を指す
+        #expect(parsed.derivedNormals == [false, true, false])
+        #expect(parsed.normals[0] == SIMD3(0, 1, 0))
+        #expect(parsed.normals[1] == SIMD3(0, 0, 1))
+        #expect(parsed.normals[2] == SIMD3(1, 0, 0))
+        #expect(parsed.skippedLines == 1)
     }
 
     @Test("10 進の綴りなら、符号・小数点だけの始まり・指数を含めて読む")

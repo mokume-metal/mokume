@@ -87,6 +87,11 @@ nonisolated enum ModelFile {
         /// **OBJ は行を丸ごと読み飛ばす** — 面の行に位置の番号が読めない角 (範囲の外・0・
         /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。行末のコメント
         /// (`#` から後) と継ぎ文字 (`\`) は角でない字で、読めない角に数えない。
+        ///
+        /// **読めない `v`・`vt`・`vn` の行は番号の枠を 1 つ使い (#2564)、詰めない。** 数えるのは
+        /// 読めない行 1 つ分で、その行を位置として指す面は行ごと読み飛ばして面の行ごとに 1 つ
+        /// 足す (読めない `v` 1 行を 2 つの面の行が指せば 3)。`vt`・`vn` を指す角は書いて
+        /// いない角と同じに読み、足さない。
         var skippedLines: Int
     }
 
@@ -116,9 +121,17 @@ nonisolated enum ModelFile {
     /// **読めない行で止まらない。** 途中に知らない行があっても、そこまでの形は
     /// 使えるほうが役に立つ (数えて知らせる)。
     static func parse(_ text: String) -> Parsed {
+        // **読めない行も番号の枠を 1 つ使う** (#2564)。OBJ の番号は行の通し番号なので、読めない
+        // 行を詰めると後ろの番号が 1 つずつずれ、面が別の頂点を指して形が黙って変わる。枠は
+        // 0 で埋めて置き、読めなかった行の番号だけを別の集合に持つ (`Optional` の配列にすると
+        // 大きな OBJ で要素が倍の幅になり、最後に外す写しも要る)。数える読み飛ばしは、読めない
+        // 行 1 つ分のままである
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
         var textures: [SIMD2<Float>] = []
+        var unreadablePositions: Set<Int> = []
+        var unreadableNormals: Set<Int> = []
+        var unreadableTextures: Set<Int> = []
         /// 面の頂点 (位置の番号・読み取り位置の番号・向きの番号)。
         var faces: [[(position: Int, texture: Int?, normal: Int?)]] = []
         var skipped = 0
@@ -134,14 +147,26 @@ nonisolated enum ModelFile {
                 ? ArraySlice<Substring>() : fields.dropFirst()
             switch keyword {
             case "v":
-                guard let point = vector(values) else { skipped += 1; continue }
-                positions.append(point)
+                let point = vector(values)
+                if point == nil {
+                    skipped += 1
+                    unreadablePositions.insert(positions.count)
+                }
+                positions.append(point ?? .zero)
             case "vn":
-                guard let point = vector(values) else { skipped += 1; continue }
-                normals.append(point)
+                let point = vector(values)
+                if point == nil {
+                    skipped += 1
+                    unreadableNormals.insert(normals.count)
+                }
+                normals.append(point ?? .zero)
             case "vt":
-                guard let point = texture(values) else { skipped += 1; continue }
-                textures.append(point)
+                let point = texture(values)
+                if point == nil {
+                    skipped += 1
+                    unreadableTextures.insert(textures.count)
+                }
+                textures.append(point ?? .zero)
             case "f":
                 // **位置の番号が読めない角が 1 つでもあれば、行ごと読み飛ばす** (#2339)。読める
                 // 角だけで面を作ると、5 角形が四角形になったことが数えられずに消える。読み
@@ -154,10 +179,19 @@ nonisolated enum ModelFile {
                 var corners: [(position: Int, texture: Int?, normal: Int?)] = []
                 for value in written {
                     guard
-                        let read = corner(
+                        var read = corner(
                             value, positions: positions.count, textures: textures.count,
-                            normals: normals.count)
+                            normals: normals.count),
+                        unreadablePositions.isEmpty || !unreadablePositions.contains(read.position)
                     else { break }
+                    // 読めない `vt`・`vn` の行を指す角は、その番号を書いていない角と同じに読む
+                    // (番号が読めない・範囲の外と同じ。#2349・#2564)
+                    if let index = read.texture, unreadableTextures.contains(index) {
+                        read.texture = nil
+                    }
+                    if let index = read.normal, unreadableNormals.contains(index) {
+                        read.normal = nil
+                    }
                     corners.append(read)
                 }
                 guard corners.count == written.count, corners.count >= 3 else {
@@ -173,6 +207,7 @@ nonisolated enum ModelFile {
             }
         }
 
+        // 面が指すのは読めた行だけ (上で確かめてある)。枠だけの 0 は指されない
         return assemble(
             positions: positions, normals: normals, textures: textures, faces: faces,
             skipped: skipped)
