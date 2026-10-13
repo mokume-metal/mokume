@@ -129,6 +129,37 @@ for index in 0..<columns {
 }
 ```
 
+**添字と `width` を混ぜる式は、誤りが `width` のほうを指します。** `i * width / count` のように
+`Int` の添字と `Float` を同じ式に書くと通りません。ところが渡す先が型を決めなくなったので、
+コンパイラは式を `Int` で解こうとして、**添字ではなく `width` を「`Int` ではない」と名指しします**。
+言われたとおりに `width` を `Int` にするのではなく、直すのは添字の側です (`Float(i)`):
+
+<!-- example: 組めない 通らないことが主題の例 (Int の添字と Float の width を混ぜると型の誤りになる) -->
+```swift
+let count = 6
+for i in 0..<count {
+    circle(i * width / count, height / 2, 10)
+    // error: cannot convert value of type 'Float' to expected argument type 'Int'
+    // (コンパイラが指すのは width。誤りの本当の場所は、Int のままの i と count)
+}
+```
+
+```swift
+let count = 6
+for i in 0..<count {
+    circle(Float(i) * width / Float(count), height / 2, 10)   // 添字を Float へ揃える
+}
+```
+
+**添字を経ずに `Float` のまま回すなら、標準の `stride` が使えます。** 変換を書かずに済みます。
+
+```swift
+let step = width / 6
+for x in stride(from: Float(0), to: width, by: step) {
+    circle(x, height / 2, 10)
+}
+```
+
 **個数・添字・細かさは `Int` のままです。** `sphere(半径, detail:)` の `detail`、画素の添字
 (``Sketch/get(_:_:)``)、乱数の種 (``Sketch/randomSeed(_:)``) のような「数え上げ」は `Int` で
 受けます。半分の個数や 1.5 番目の画素は無いからです。
