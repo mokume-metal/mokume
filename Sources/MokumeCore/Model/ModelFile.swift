@@ -72,6 +72,8 @@ nonisolated enum ModelFile {
         /// 読み飛ばしたものの数。**読み飛ばしたことが分かる手段**として持つ。
         ///
         /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) を数える。
+        /// **OBJ は行を丸ごと読み飛ばす** — 面の行に位置の番号が読めない角 (範囲の外・0・
+        /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。
         var skippedLines: Int
     }
 
@@ -123,12 +125,22 @@ nonisolated enum ModelFile {
                 guard let point = texture(values) else { skipped += 1; continue }
                 textures.append(point)
             case "f":
-                let corners = values.compactMap {
-                    corner(
-                        $0, positions: positions.count, textures: textures.count,
-                        normals: normals.count)
+                // **位置の番号が読めない角が 1 つでもあれば、行ごと読み飛ばす** (#2339)。読める
+                // 角だけで面を作ると、5 角形が四角形になったことが数えられずに消える。読み
+                // 飛ばす単位は、1 つでも数が読めない `v` の行と同じく行である
+                var corners: [(position: Int, texture: Int?, normal: Int?)] = []
+                for value in values {
+                    guard
+                        let read = corner(
+                            value, positions: positions.count, textures: textures.count,
+                            normals: normals.count)
+                    else { break }
+                    corners.append(read)
                 }
-                guard corners.count >= 3 else { skipped += 1; continue }
+                guard corners.count == values.count, corners.count >= 3 else {
+                    skipped += 1
+                    continue
+                }
                 faces.append(corners)
             case "#", "":
                 continue
