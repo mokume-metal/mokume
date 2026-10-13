@@ -15,7 +15,7 @@ import Foundation
 
 /// 解いた引数。既定は測り始める前の値と同じ (6 秒・畳まない・画面のスリープを断る)。
 struct ProbeArguments: Equatable {
-    /// 測る秒数。有限の正の数。
+    /// 測る秒数。有限の正の数。**測りは 1 秒刻みで、秒数は切り上がる** (6.5 なら 7 秒で終わる)。
     var seconds = 6.0
     /// 窓を畳むまでの秒数。畳まないときは `nil`。有限の 0 以上の数。
     var minimizeAfter: Double?
@@ -34,7 +34,7 @@ struct ProbeArguments: Equatable {
             switch argument {
             case "--seconds":
                 parsed.seconds = try number(
-                    after: argument, in: &rest, requirement: "有限の正の数") { $0 > 0 }
+                    after: argument, in: &rest, requirement: "有限の正の数 (測りは 1 秒刻みで、秒数は切り上がる)") { $0 > 0 }
             case "--minimize-after":
                 // **自分で畳む。** よそのプロセスの窓を osascript から畳むにはアクセシビリティの
                 // 許可が要り、許可の無い環境では「検査が落ちた」と「窓を畳めなかった」を
@@ -49,6 +49,13 @@ struct ProbeArguments: Equatable {
                 throw Failure(message: "知らない引数: \(argument)")
             }
         }
+        // 畳むのが測り終えた後だと、畳まないまま終わる (測りは `seconds` 秒で落ちる)
+        if let minimizeAfter = parsed.minimizeAfter, minimizeAfter >= parsed.seconds {
+            throw Failure(
+                message:
+                    "--minimize-after (\(minimizeAfter)) は --seconds (\(parsed.seconds)) より短くなければならない。"
+                    + "畳む前に測り終えてしまう")
+        }
         return parsed
     }
 
@@ -62,7 +69,7 @@ struct ProbeArguments: Equatable {
             throw Failure(message: "\(flag) には値が要る (\(requirement))")
         }
         guard let parsed = Double(value), parsed.isFinite, accepts(parsed) else {
-            throw Failure(message: "\(flag) の値は\(requirement)でなければならない: \(value)")
+            throw Failure(message: "\(flag) の値は次でなければならない — \(requirement): \(value)")
         }
         return parsed
     }

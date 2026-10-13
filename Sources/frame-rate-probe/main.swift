@@ -59,7 +59,8 @@ if let minimizeAfter {
     }
 }
 
-// 1 秒ごとに実測値を 1 行。行を集めるのは呼び出す側の仕事にする
+// 1 秒ごとに実測値を 1 行。行を集めるのは呼び出す側の仕事にする。
+// **測りは 1 秒刻みなので、`--seconds` の小数は切り上がる** (6.5 なら 7 秒で終わる)
 var elapsed = 0.0
 Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
     MainActor.assumeIsolated {

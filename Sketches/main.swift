@@ -35,15 +35,23 @@ func exitReporting(_ headline: String, _ error: any Error) -> Never {
 var arguments = Array(CommandLine.arguments.dropFirst())
 
 if arguments.first == "--render" {
+    // 解けない引数は使い方の誤りとして断る (#2490)。解き方は RenderArguments.swift
+    let options: RenderArguments
     do {
-        let directory = URL(fileURLWithPath: arguments.count > 1 ? arguments[1] : "shots")
+        options = try RenderArguments.parse(Array(arguments.dropFirst()))
+    } catch let failure as RenderArguments.Failure {
+        FileHandle.standardError.write(Data("\(failure.message)\n".utf8))
+        exit(2)
+    } catch {
+        exitReporting("参照スケッチの引数を読めませんでした。", error)
+    }
+    do {
+        let directory = URL(fileURLWithPath: options.directory)
         // 連番で出すのは**動きの証跡のため**。立体は静止画だと向きが読めないことがある。
         // 観測の経路でも動きは撮れる (#312) が、あちらは走っている窓を外から覗くので間隔が
         // 揃わない。ここは既に決定論でフレームを進めているので、同じ経路から連番を出せば
         // **撮り直しても 1 枚ずつ同じ絵になる** — 参照スケッチの証跡はこちらで採る
-        let frames = arguments.firstIndex(of: "--frames").flatMap { index in
-            arguments.count > index + 1 ? Int(arguments[index + 1]) : nil
-        }
+        let frames = options.frames
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let gpu = try RenderDevice()
         // 外と実物でやりとりするものは書き出さない (ReferenceSketch.reachesOutside)
@@ -77,7 +85,7 @@ guard let name = arguments.first, let entry = catalogue.first(where: { $0.name =
     print("参照スケッチ:")
     for entry in catalogue { print("  \(entry.name)") }
     print("\n窓を開く: swift run reference-sketches <名前>")
-    print("書き出す: swift run reference-sketches --render <置き場>")
+    print("書き出す: swift run reference-sketches --render <置き場> [--frames <枚数>]")
     exit(arguments.isEmpty ? 0 : 2)
 }
 

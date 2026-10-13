@@ -41,6 +41,13 @@ struct ProbeArgumentsTests {
             ["--minimize-after", "-1"],
             // 値を取る口の次に別の綴りが来ても、それを値として読まない
             ["--seconds", "--allow-display-sleep"],
+            // 畳む前に測り終える (畳まないまま黙って終わる)
+            ["--seconds", "3", "--minimize-after", "3"],
+            ["--seconds", "3", "--minimize-after", "5"],
+            ["--minimize-after", "3", "--seconds", "2"],
+            // --seconds が既定 (6 秒) のときも、既定と比べる
+            ["--minimize-after", "6"],
+            ["--minimize-after", "10"],
         ])
     func refusesUnusableValues(arguments: [String]) {
         let refused = failure(arguments)
@@ -81,6 +88,19 @@ struct ProbeArgumentsTests {
         let awake = try ProbeArguments.parse(["--seconds", "7", "--allow-display-sleep"])
         #expect(awake.seconds == 7)
         #expect(awake.allowsDisplaySleep)
+    }
+
+    @Test("畳むのが測り終えるより前なら通る (既定の 6 秒との比べ方も)")
+    func minimizingBeforeTheEndPasses() throws {
+        #expect(try ProbeArguments.parse(["--minimize-after", "5.9"]).minimizeAfter == 5.9)
+        #expect(try ProbeArguments.parse(["--minimize-after", "3", "--seconds", "4"]).seconds == 4)
+        #expect(try ProbeArguments.parse(["--seconds", "10", "--minimize-after", "9"]).minimizeAfter == 9)
+    }
+
+    @Test("--seconds の小数は通るが、断る理由には 1 秒刻みで切り上がることを書く")
+    func fractionalSecondsAreExplained() throws {
+        #expect(try ProbeArguments.parse(["--seconds", "6.5"]).seconds == 6.5)
+        #expect(failure(["--seconds", "0"])?.message.contains("1 秒刻み") == true)
     }
 
     @Test("境界: 0 は畳むまでの秒数としてだけ通り、小数も通る")
