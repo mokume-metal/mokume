@@ -307,6 +307,75 @@ struct ModelTests {
         #expect(!parsed.derivedNormals.contains(true))
     }
 
+    /// 約束 ([#2349]): 角の `vt` の番号が数として読めない・範囲の外なら、その角に `vt` を
+    /// 書いていないのと同じに読む。面は残り、読み飛ばした行にも数えない。比べる側 (`1//1`) は
+    /// 「書いていない」の書き方そのもの。**`vn` の側は [#2342] が直すまで比べない** — 向きを
+    /// 書かない角が (0,0,1) へ倒れるのを、この比較が不具合ごと固定してしまう。
+    ///
+    /// [#2349]: https://github.com/mokume-metal/mokume/issues/2349
+    /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
+    @Test(
+        "角の vt の番号が読めない・範囲の外なら、書いていない角と同じに読み、数えない",
+        arguments: ["1/x/1", "1/99/1", "1/0/1", "1/-9/1", "1/1.5/1"])
+    func unreadableTextureIndexReadsAsUnwritten(corner: String) {
+        func parsed(_ first: String) -> ModelFile.Parsed {
+            ModelFile.parse(
+                """
+                v 0 0 0
+                v 1 0 0
+                v 0 1 0
+                vt 0.1 0.2
+                vt 0.3 0.4
+                vt 0.5 0.6
+                vn 0 0 1
+                f \(first) 2/2/1 3/3/1
+                """)
+        }
+        let unwritten = parsed("1//1")
+        let broken = parsed(corner)
+        #expect(broken == unwritten, "\(corner)")
+        // 面は残り (3 点)、1 つ目の角だけが読み取り位置を持たない
+        #expect(broken.positions.count == 3)
+        #expect(broken.uvs[0] == nil)
+        #expect(broken.uvs[1] != nil && broken.uvs[2] != nil)
+        #expect(broken.skippedLines == 0)
+    }
+
+    /// 約束 ([#2349] 条件 2): 角の `vn` の番号が読めない・範囲の外でも同じ。**書いていない角の
+    /// 向きは形から求めて両面にする** ([#2342]) ので、読めない番号の角は (0, 0, 1) ではなく、
+    /// 書いていない角と同じ求めた向きになる。向きを書いた角 (2・3 つ目) は書いた向きのまま。
+    ///
+    /// [#2349]: https://github.com/mokume-metal/mokume/issues/2349
+    /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
+    @Test(
+        "角の vn の番号が読めない・範囲の外なら、書いていない角と同じに読み、数えない",
+        arguments: ["1/1/x", "1/1/99", "1/1/0", "1/1/-9", "1/1/1.5"])
+    func unreadableNormalIndexReadsAsUnwritten(corner: String) {
+        func parsed(_ first: String) -> ModelFile.Parsed {
+            ModelFile.parse(
+                """
+                v 0 0 0
+                v 1 0 0
+                v 0 1 0
+                vt 0.1 0.2
+                vt 0.3 0.4
+                vt 0.5 0.6
+                vn 0 1 0
+                f \(first) 2/2/1 3/3/1
+                """)
+        }
+        let unwritten = parsed("1/1")
+        let broken = parsed(corner)
+        #expect(broken == unwritten, "\(corner)")
+        // 面は残り (3 点)、1 つ目の角だけが向きを書かず、形から求めて両面にする
+        #expect(broken.positions.count == 3)
+        #expect(broken.derivedNormals == [true, false, false])
+        #expect(broken.normals[0] == SIMD3(0, 0, 1))
+        #expect(broken.normals[1] == SIMD3(0, 1, 0) && broken.normals[2] == SIMD3(0, 1, 0))
+        #expect(broken.uvs[0] != nil)
+        #expect(broken.skippedLines == 0)
+    }
+
     @Test("vt は u だけでも読め、3 つ目 (w) は無視する")
     func textureLinesToleratePartialAndExtraNumbers() throws {
         let parsed = ModelFile.parse(
