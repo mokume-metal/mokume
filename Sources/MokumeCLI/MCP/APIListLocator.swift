@@ -180,7 +180,9 @@ struct APIListLocator {
     /// 切れたか (呼んでからの総時間か、音沙汰の無い間か) は言わない — どちらが切れても
     /// 偽りにならない言い方である。
     nonisolated static func overdue(limit: TimeInterval) -> FetchFailure {
-        let seconds = limit == limit.rounded() ? "\(Int(limit))" : "\(limit)"
+        // 整数の秒は小数点なしで書く。`Int(limit)` は無限大・非数・Int に収まらない値で落ちるので、
+        // 収まる範囲の有限の値だけ変換する (今の呼び元は有限の 10 秒だが、落ちる口を残さない)
+        let seconds = limit.isFinite && abs(limit) < 1e15 && limit == limit.rounded() ? "\(Int(limit))" : "\(limit)"
         return FetchFailure("no complete answer came back within \(seconds) seconds")
     }
 

@@ -9,13 +9,19 @@ import Testing
 
 /// 検査の中で、URL の応答を差し替える (#2407)。**外のネットワークへ出ない。**
 ///
-/// `URLProtocol` として登録し、予約済みの `.test` の名前 (RFC 6761) の要求だけを横取りする。
-/// 本体は `URLSession.shared` で受け取り、共有の受け口は登録した `URLProtocol` を引くので、
-/// 本体に差し替えの口は要らない。応答は URL ごとに 1 つ置き、URL は置くたびに別の名前にする
-/// ので、並んで走る検査が互いの応答を踏まない。
+/// `URLProtocol` として登録し、**この検査が表に置いた URL だけ**を横取りする。名前は予約済みの
+/// `.example` (RFC 2606) で、置いていない URL は横取りしないので外へ問い合わせもしない。本体は
+/// `URLSession.shared` で受け取り、共有の受け口は登録した `URLProtocol` を引くので、本体に
+/// 差し替えの口は要らない。応答は URL ごとに 1 つ置き、URL は置くたびに別の名前にするので、
+/// 並んで走る検査が互いの応答を踏まない。
 ///
-/// `MokumeCoreTests` にも同じ形の `CannedResponses` があるが、検査の対象が別で共有できない
-/// ので、ここの検査が要る 3 つの応答 (すぐ返る・少しずつ返し続ける・何も返さない) だけを持つ。
+/// **`MokumeCoreTests` の `CannedResponses` と同じ形だが、共有しない。** 検査の対象が別の
+/// ターゲット (`MokumeCLITests`) で、Swift Package は検査のターゲットをまたいだ共有を持たない
+/// ので、必要な 3 つの応答 (すぐ返る・少しずつ返し続ける・何も返さない) だけの写しを置く。
+/// **登録した `URLProtocol` は、同じプロセスで走る検査全部の要求から引かれる** — 両方が
+/// 「`.test` で終わるホストは全部引き受ける」と書くと、後に登録した側が相手の URL まで引き受け
+/// (`cannotFindHost` で返し)、登録の順で相手の suite が赤くなる。そのため、名前を `.test` から
+/// 外し、`canInit` を自分が置いた URL だけに絞って、相手の URL に触れないようにしてある。
 nonisolated final class CannedHTTP: URLProtocol, @unchecked Sendable {
     enum Reply: Sendable {
         /// 状態と本文ですぐ答える。
@@ -50,7 +56,7 @@ nonisolated final class CannedHTTP: URLProtocol, @unchecked Sendable {
 
     static func serve(_ reply: Reply) -> URL {
         _ = installed
-        let url = URL(string: "https://canned-\(UUID().uuidString.lowercased()).test/asset.md")!
+        let url = URL(string: "https://canned-\(UUID().uuidString.lowercased()).example/asset.md")!
         state.withLock { $0[url.absoluteString] = Progress(reply: reply) }
         return url
     }
@@ -68,8 +74,11 @@ nonisolated final class CannedHTTP: URLProtocol, @unchecked Sendable {
     private var ticker: Timer?
     private var offset = 0
 
+    /// 自分が表に置いた URL だけ引き受ける。同じプロセスの別の `URLProtocol` (`MokumeCoreTests` の
+    /// `CannedResponses` など) の URL には触れない。
     override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.host()?.hasSuffix(".test") == true
+        guard let key = request.url?.absoluteString else { return false }
+        return state.withLock { $0[key] != nil }
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -215,6 +224,15 @@ struct APIListDownloadTests {
         #expect(String(describing: APIListLocator.failure(of: timedOut, limit: 10)) == overdue)
         let refused = URLError(.cannotConnectToHost)
         #expect((APIListLocator.failure(of: refused, limit: 10) as? URLError)?.code == .cannotConnectToHost)
+    }
+
+    @Test("有限でない・桁外れの期限でも、失敗の文面を組むところで落ちない")
+    func overdueNeverTrapsOnOddLimits() {
+        // `Int(limit)` は無限大・非数・Int に収まらない値で落ちる。期限として渡る値ではないが、落ちる口を残さない
+        #expect(String(describing: APIListLocator.overdue(limit: .infinity)) == "no complete answer came back within inf seconds")
+        #expect(String(describing: APIListLocator.overdue(limit: .nan)) == "no complete answer came back within nan seconds")
+        #expect(String(describing: APIListLocator.overdue(limit: 1e30)).hasPrefix("no complete answer came back within "))
+        #expect(String(describing: APIListLocator.overdue(limit: 0.3)) == "no complete answer came back within 0.3 seconds")
     }
 
     @Test("受け口の期限は待つ期限と同じ値で、既定では fetchLimit (10 秒) 1 か所から来る")
