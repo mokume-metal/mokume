@@ -321,6 +321,104 @@ struct RunCommandTests {
 
     // MARK: - `..` で始まる場所 (#2314)
 
+    /// **在るのに起こせないものを、どれも「無い」と言わない** (#2521 の反証)。`Process.run()` は
+    /// 実行ビットの無いファイル・探索権の無いディレクトリの下・宛先の無い symlink のどれにも
+    /// 「doesn't exist」を投げ、`fileExists` も後の 2 つで偽を返す。作業ディレクトリの側
+    /// (``GivenPath/Presence``) と同じく、stat し直して読み分ける。
+    @Test("起こせない走らせるものは、実行ビット・中身・ディレクトリ・探索権・宛先の無い symlink を読み分ける")
+    func unrunnableExecutablesAreToldApart() throws {
+        let place = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-unrunnable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)
+        let locked = place.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        defer {
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: place)
+        }
+        func reason(_ executable: URL) -> CommandFailure {
+            do {
+                try RunCommand.launch(executable, in: place)
+                return .noExecutable(path: "(起こせてしまった)")
+            } catch { return error }
+        }
+        func expect(
+            _ executable: URL, _ text: String, sourceLocation: SourceLocation = #_sourceLocation
+        ) {
+            #expect(
+                reason(executable) == .cannotLaunch(
+                    tool: executable.lastPathComponent, place: place.path, reason: text),
+                sourceLocation: sourceLocation)
+        }
+
+        // 1. 実行ビットが無い (0644)
+        let plain = place.appendingPathComponent("plain")
+        try "#!/bin/sh\nexit 0\n".write(to: plain, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: plain.path)
+        expect(plain, "\(plain.path) is not executable (Permission denied)")
+
+        // 2. 実行ビットは在るが中身が実行形式でない (ENOEXEC) — OS の事情を言う
+        let garbage = place.appendingPathComponent("garbage")
+        try Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE]).write(to: garbage)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: garbage.path)
+        expect(garbage, String(cString: strerror(ENOEXEC)))
+
+        // 3. ディレクトリ
+        let directory = place.appendingPathComponent("folder", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        expect(directory, "\(directory.path) is a directory, not a program")
+
+        // 4. 探索権の無いディレクトリの中
+        let inside = locked.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: inside, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: inside.path)
+        chmod(locked.path, 0o600)
+        expect(inside, "\(inside.path) cannot be reached (Permission denied)")
+        chmod(locked.path, 0o755)
+
+        // 5. 宛先の無い symlink
+        let dangling = place.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(
+            at: dangling, withDestinationURL: place.appendingPathComponent("nowhere"))
+        expect(dangling, "\(dangling.path) is a symbolic link to something that is not there")
+
+        // 裏側: 本当に無ければ、いままでどおり「走らせるものが無い」
+        let absent = place.appendingPathComponent("absent")
+        #expect(reason(absent) == .noExecutable(path: absent.path))
+    }
+
+    /// **作り直しは通ったが、成果物に実行ビットが無い** (#2521 の反証)。作り直しは実行できる
+    /// ものだけを「建った」と返すので、`run` はここで「建っていない (置き場を消してやり直せ)」と
+    /// 言っていた。作り直しの戻りから起こす前までを通して見る。
+    @Test("run は、在るのに実行できない成果物を建っていないと言わず、起こせないと名乗る")
+    func runCallsAnUnrunnableProductUnrunnable() throws {
+        let executable = try makeExecutable(exiting: 0)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: executable.path)
+        let bin = executable.deletingLastPathComponent()
+        let sketch = bin.appendingPathComponent("package", isDirectory: true)
+        let built = RunCommand.Rebuilt(
+            status: 0, output: "Build complete!", executable: nil, binPath: bin, product: "sketch")
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: sketch.path,
+                reason: "\(executable.path) is not executable (Permission denied)")
+        ) {
+            try RunCommand.executable(from: built, in: sketch)
+        }
+        // 裏側: 本当に無ければ、いままでどおり「建っていない」
+        try FileManager.default.removeItem(at: executable)
+        #expect(throws: CommandFailure.productNotBuilt(product: "sketch", path: bin.path)) {
+            try RunCommand.executable(from: built, in: sketch)
+        }
+        // 置き場の外を指す名前は、そこに在るものを成果物と読まない
+        let escaping = RunCommand.Rebuilt(
+            status: 0, output: "", executable: nil, binPath: bin, product: "..")
+        #expect(throws: CommandFailure.productNotBuilt(product: "..", path: bin.path)) {
+            try RunCommand.executable(from: escaping, in: sketch)
+        }
+    }
+
     /// 自分の作業ディレクトリ (シンボリックリンクを解いたもの) を `marker` へ書いて終わる子。
     private func makeWorkingDirectoryRecorder() throws -> (executable: URL, marker: URL) {
         let directory = FileManager.default.temporaryDirectory

@@ -268,6 +268,14 @@ struct WatchCommandTests {
         #expect(line.hasSuffix("作り直した"))
     }
 
+    /// **複数行は行ごとに消す** (#2521 の反証)。理由のように複数行を 1 度に書くと、先頭しか
+    /// 消さない形では 2 行目以降に速さの行の残りが重なる。
+    @Test("端末へ複数行を書くときは、行ごとに速さの行を消す")
+    func clearsEveryLineOfAMultilineText() {
+        let text = WatchCommand.line("1 行目\n2 行目", isTerminal: true)
+        #expect(text == "\r\u{1B}[2K1 行目\n\r\u{1B}[2K2 行目")
+    }
+
     /// **記録へ落とすときは飾らない。** 制御の文字がそのまま残ると読めない。
     @Test("端末でなければ、飾りを付けない")
     func doesNotDecorateARecord() {

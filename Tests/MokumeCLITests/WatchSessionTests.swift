@@ -222,12 +222,110 @@ struct WatchSessionTests {
         #expect(decoded?["launched"] as? Bool == false)
         #expect(decoded?["ok"] as? Bool == true)
 
-        // 端末にも、要約の次の行に理由が出る
-        let lines = WatchCommand.reportLines(report)
-        #expect(lines.count == 2, "\(lines)")
-        #expect(lines.first?.hasPrefix("Rebuilt, but could not start it: ") == true)
-        #expect(lines.dropFirst().first?.hasPrefix(reason) == true, "端末に理由が出ていない: \(lines)")
-        #expect(!lines.contains(WatchCommand.holdingLine), "作り直しは通っているのに、前の版のまま待つと言った")
+        // 端末には、要約の次の行に理由だけが出る — 作り直しの出力は流さない
+        let lines = WatchCommand.reportLines(
+            report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines == [report.summary, reason], "\(lines)")
+        #expect(report.summary.hasPrefix("Rebuilt, but could not start it: "))
+        // 窓の無い見張りは起こす前に止めるので、前の版は走っていない
+        #expect(!session.keepsPreviousRunning)
+    }
+
+    /// **端末には理由だけを出す** (#2521 の反証)。作り直しは通っているので、`swift build` の
+    /// 出力 (`[n/m] Compiling…`) を流しても読む人のすることは変わらない。理由が複数行でも
+    /// 最初の空行までを出す。
+    @Test("起こせなかった回の端末には、複数行の理由まで出して作り直しの出力は流さない")
+    func theTerminalShowsOnlyTheReason() async throws {
+        let recorder = Recorder()
+        recorder.buildOutput = "[1/3] Compiling app main.swift\n[3/3] Linking sketch\nBuild complete!"
+        // 2 行の理由
+        recorder.launchFailure = .placeUnusable(tool: "sketch", place: "/gone", presence: .missing)
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+
+        let report = await session.start()
+        let reason = recorder.launchFailure.message
+        #expect(reason.contains("\n"), "理由が 1 行では、複数行の区切りを確かめられない")
+        #expect(WatchSession.notLaunchedReason(of: report.output) == reason)
+        let lines = WatchCommand.reportLines(report, holdingPrevious: false)
+        #expect(lines == [report.summary, reason])
+        #expect(!lines.joined().contains("Compiling"), "作り直しの出力を端末へ流した")
+    }
+
+    /// **窓のある見張りは、起こせなかった回も前の版を走らせ続ける** (#2521 の反証)。前の世代を
+    /// 退役待ちへ残してから起こすので、端末は「前の版のまま待つ」と名乗る。窓の無い見張りは
+    /// 起こす前に止めるので名乗らない。
+    @Test(
+        "起こせなかった回は、前の版が走り続けているときだけ前の版のまま待つと名乗る",
+        arguments: [true, false])
+    func aLaunchFailureHoldsThePreviousOnlyWhenItRuns(overlapping: Bool) async throws {
+        let recorder = Recorder()
+        let previous = Process()
+        previous.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        previous.arguments = ["30"]
+        // **待つ側が期限を持つ。** 残ったら殺す
+        defer { if previous.isRunning { kill(previous.processIdentifier, SIGKILL) } }
+        var hooks = recorder.hooks()
+        var launches = 0
+        hooks.launch = { _, _, _, _ throws(CommandFailure) in
+            launches += 1
+            guard launches == 1 else { throw recorder.launchFailure }
+            do { try previous.run() } catch { throw .cannotLaunch(tool: "sleep", place: "", reason: "\(error)") }
+            return previous
+        }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 1)
+        session.overlapsGenerations = overlapping
+        #expect(await session.start().launched)
+
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+        #expect(!report.launched)
+        #expect(session.keepsPreviousRunning == overlapping)
+        #expect(previous.isRunning == overlapping, "窓の有無で前の版の扱いが変わっていない")
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines.contains(WatchCommand.holdingLine) == overlapping, "\(lines)")
+        session.end()
+    }
+
+    /// **作り直しは通ったが、成果物に実行ビットが無い** (#2521 の反証)。作り直しは実行できる
+    /// ものだけを「建った」と返すので、ここは起こす口まで届かず「建っていない」へ落ちていた。
+    /// 作り直しの戻り (``RunCommand/Rebuilt``) から記録と端末までを通して見る。
+    @Test("在るのに実行できない成果物は、建っていないではなく起こせないと名乗り、前の版を落とさない")
+    func anUnrunnableProductIsNotCalledUnbuilt() async throws {
+        let recorder = Recorder()
+        let directory = try makeDirectory()
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: recorder.hooks())
+        recorder.launchesChild = true
+        await session.start()
+
+        // Recorder は「建っていない」ときに置き場 (= directory) と product を返す
+        recorder.productBuilt = false
+        let product = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: product, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: product.path)
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+
+        let reason = CommandFailure.cannotLaunch(
+            tool: "sketch", place: directory.path,
+            reason: "\(product.path) is not executable (Permission denied)"
+        ).message
+        #expect(report.ok, "作り直しは通っている")
+        #expect(!report.launched)
+        #expect(report.output == reason + "\n\n" + recorder.buildOutput)
+        #expect(!report.output.contains("was never built"), "在るものを建っていないと言った")
+        #expect(recorder.launches == 1, "起こせないと分かっているのに差し替えに入った")
+        #expect(session.child != nil, "前の版を落とした")
+        #expect(WatchCommand.reportLines(report, holdingPrevious: false) == [report.summary, reason])
+
+        // 裏側: 本当に無ければ、いままでどおり「建っていない」
+        try FileManager.default.removeItem(at: product)
+        recorder.stamp = "ccc"
+        let unbuilt = try #require(await session.tick())
+        #expect(!unbuilt.ok)
+        #expect(unbuilt.output.contains("was never built"))
     }
 
     /// **`launched: false` の口はどれも理由を名乗る** (#2521)。終われと言われた後に作り直しが
@@ -245,7 +343,11 @@ struct WatchSessionTests {
         #expect(!report.launched)
         #expect(recorder.launches == 0)
         #expect(report.output == WatchSession.stopRequestedNotice + "\n\n" + recorder.buildOutput)
-        #expect(WatchCommand.reportLines(report).contains(report.output))
+        // **要約も本文と同じことを言う** (#2521 の反証)。「起こせなかった」と言うと本文の頭と食い違う
+        #expect(report.summary.hasPrefix("Rebuilt, not started because watching was ending: "))
+        #expect(!report.summary.contains("could not start"))
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines == [report.summary, WatchSession.stopRequestedNotice])
     }
 
     /// **本物の起こす口が、在処と原因を名乗る** (#2521)。替え玉の検査は投げる形なので、`live` の

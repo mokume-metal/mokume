@@ -642,6 +642,21 @@ final class WatchSession {
         // 見張りが終わるときだけである (#1147)
         if let stoppedReport { return stoppedReport }
 
+        // **在るのに起こせない成果物を「建っていない」と言わない** (#2521)。作り直しは実行
+        // できるものだけを「建った」と返すので、実行ビットの無い成果物は下の「建っていない」へ
+        // 落ちていた。通ったのに起こせない回として名乗り、走っているものは落とさない
+        if rebuilt.status == 0, rebuilt.executable == nil, let product = rebuilt.product,
+            let reason = RunCommand.unrunnableProduct(product, in: rebuilt.binPath)
+        {
+            let failure = CommandFailure.cannotLaunch(
+                tool: product, place: directory.path, reason: reason)
+            return finish(
+                BuildReport(
+                    ok: true, status: 0, output: Self.notLaunched(failure.message, rebuilt.output),
+                    stamp: stamp, configuration: configurationName, launched: false,
+                    timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
+        }
+
         // **通ったことと、走らせるものが在ることは別である。** 置き場を他の誰かと
         // 共有していると、作り直しが「通った」のに実行ファイルが建っていないことが
         // 起きる (#1055)。そこを成功として記録すると、症状は「作り直したと出たのに
@@ -747,15 +762,31 @@ final class WatchSession {
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由。
     ///
     /// **起こせなかった回と言葉を分ける** (#2521)。どちらも `ok: true, launched: false` で、
-    /// 違いは本文にしか出ない。
-    static let stopRequestedNotice =
-        "Not started, because watching was ending — the build itself succeeded"
+    /// 違いは本文にしか出ない。要約 (``BuildReport/summary``) もこれで始まる本文を見て言い分ける。
+    static var stopRequestedNotice: String { BuildReport.stopRequestedNotice }
 
     /// 起こさなかった (起こせなかった) 理由を頭に置き、作り直しの出力を後に続ける。
     ///
-    /// **理由を先に置く。** 作り直しの出力は長く、末尾に置いた理由は読まれない。
+    /// **理由を先に置き、最初の空行で区切る。** 作り直しの出力は長く、末尾に置いた理由は
+    /// 読まれない。理由は空行を含まない (複数行のことはある・`placeUnusable` は 2 行) ので、
+    /// 最初の空行までが理由になる (``notLaunchedReason(of:)``・schema の `output` の説明)。
     static func notLaunched(_ reason: String, _ buildOutput: String) -> String {
         buildOutput.isEmpty ? reason : reason + "\n\n" + buildOutput
+    }
+
+    /// ``notLaunched(_:_:)`` で組んだ本文から、理由 (最初の空行の前) を取り出す。
+    static func notLaunchedReason(of output: String) -> String {
+        output.range(of: "\n\n").map { String(output[..<$0.lowerBound]) } ?? output
+    }
+
+    /// 前の版がまだ走っていて、画面に出ているか。**終われと言われた後は数えない。**
+    ///
+    /// 起こせなかった回に端末で「前の版のまま待つ」と名乗るかを決める (#2521)。窓のある見張り
+    /// (``overlapsGenerations``) は前の世代を退役待ちに残してから起こすので、起こせなくても
+    /// 前の版が走り続ける。窓の無い見張りは起こす前に止めるので、走っていない。在るのに
+    /// 起こせない成果物の回は、差し替えに入らないので走り続ける。
+    var keepsPreviousRunning: Bool {
+        !stopRequested && (outgoing ?? child)?.isRunning == true
     }
 
     /// 「通ったのに建っていない」ことを、記録の中で名乗る。

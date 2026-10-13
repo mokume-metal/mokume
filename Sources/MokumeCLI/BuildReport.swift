@@ -95,14 +95,23 @@ struct BuildReport: Encodable, Equatable {
         if let stamp { parts.append("stamp=\(stamp)") }
         // **起こせなかった回を「作り直した」で終わらせない。** そこが最も分かりにくい
         // 壊れ方 (絵が止まっているのに成功と出る) だからである (#1066)
+        //
+        // **終われと言われて起こさなかった回を「起こせなかった」と言わない** (#2521)。本文の頭
+        // (``stopRequestedNotice``) と食い違うと、読む人はどちらが起きたのか分からない
         let lead =
             switch (ok, launched) {
             case (true, true): "Rebuilt: "
+            case (true, false) where output.hasPrefix(Self.stopRequestedNotice):
+                "Rebuilt, not started because watching was ending: "
             case (true, false): "Rebuilt, but could not start it: "
             case (false, _): "Build failed: "
             }
         return lead + parts.joined(separator: " ")
     }
+
+    /// 終われと言われた後に作り直しが通った回の、起こさなかった理由 (本文の頭に置く)。
+    static let stopRequestedNotice =
+        "Not started, because watching was ending — the build itself succeeded"
 
     private func round(_ value: Double) -> String {
         String(format: "%.1f", value)
