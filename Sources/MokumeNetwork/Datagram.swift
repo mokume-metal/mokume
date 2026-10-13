@@ -76,7 +76,8 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
     private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
-    private let opener: PortListener
+    /// 受け口。閉じたときの知らせに自分を渡すので、他をすべて決めた後に作る。
+    private var opener: PortListener!
     /// 送り元と、最後に読んだ時刻 (``now`` の目盛り)。
     private var ledger: SenderLedger<NWConnection>
     private var stopped = false
@@ -103,7 +104,8 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         ledger = SenderLedger(limit: Self.connectionLimit, idleAfter: idleAfter)
         opener = PortListener(
             port: port, host: host, retryAfter: retryAfter, queue: queue,
-            parameters: { .udp }, changed: changed)
+            parameters: { .udp }, changed: changed,
+            closed: { [weak self] in self?.listenerClosed() })
     }
 
     /// 開き始める。待たずに返る。
@@ -132,7 +134,24 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         }
     }
 
+    /// 待ち行列の上で手続きを走らせる。検査が ``listenerClosed()`` を、受け口を本当に
+    /// 失敗させずに呼ぶための口。
+    func onQueue<Result>(_ body: () -> Result) -> Result {
+        queue.sync(execute: body)
+    }
+
     // MARK: - 待ち行列の上
+
+    /// 受け口 (`NWListener`) が失敗して閉じた。送り元をすべて台帳から外して閉じる。
+    ///
+    /// 開き直した受け口は、送り元ごとに繋ぎを作り直す。閉じた受け口の繋ぎを台帳に残すと、
+    /// その待っていた受けが空の datagram と同じ形 (`content == nil`・`error == nil`) で
+    /// 返ったときに、届いていない空のメッセージとして渡してしまう。外した繋ぎは
+    /// ``SenderTally`` に数えない。``PortListener`` が ``queue`` の上で呼ぶ。
+    func listenerClosed() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        for connection in ledger.removeAll() { connection.cancel() }
+    }
 
     private func accept(_ connection: NWConnection) {
         guard !stopped else {
@@ -153,18 +172,69 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         receive(on: connection)
     }
 
+    /// 送り元の繋ぎから、datagram を 1 つずつ読み続ける。扱いは ``completion(content:isFinal:failed:held:)``。
     private func receive(on connection: NWConnection) {
-        connection.receiveMessage { [weak self, weak connection] content, _, _, error in
+        connection.receiveMessage { [weak self, weak connection] content, context, _, error in
             let hostTime = mach_absolute_time()
             guard let self, let connection, !stopped else { return }
-            guard let content, error == nil else {
+            let completion = Self.completion(
+                content: content, isFinal: context?.isFinal == true, failed: error != nil,
+                held: ledger.holds(connection))
+            switch completion {
+            case .ended:
                 connection.cancel()
-                return
+            case .abandoned:
+                break
+            case .datagram(let bytes):
+                ledger.heard(connection, at: now())
+                received(bytes, hostTime)
+                receive(on: connection)
+            case .last(let bytes):
+                ledger.heard(connection, at: now())
+                received(bytes, hostTime)
+                connection.cancel()
             }
-            ledger.heard(connection, at: now())
-            received([UInt8](content), hostTime)
-            receive(on: connection)
         }
+    }
+
+    /// 受けの完了 1 つの扱い。
+    enum Completion: Equatable {
+        /// datagram として渡し、受けを続ける。
+        case datagram([UInt8])
+        /// datagram として渡し、繋ぎを閉じる。
+        case last([UInt8])
+        /// 繋ぎが終わった。閉じる。
+        case ended
+        /// こちらが閉じた繋ぎの、待っていた受けの返り。何も渡さない。
+        case abandoned
+    }
+
+    /// 受けの完了が渡したもの (`content`・文脈の `isFinal`・失敗したか) と、その繋ぎをまだ台帳に
+    /// 持っているか (`held`) から、扱いを決める。
+    ///
+    /// **空の datagram (0 バイト) も 1 つの datagram として渡す。** Network.framework は空の
+    /// datagram を `content == nil`・`error == nil` で渡す。送り元の流れができて受けを待っている
+    /// ところへ届いた空には、流れの終わり (`isFinal`) も名乗り、次の受けを `ENODATA` で返して
+    /// 流れを閉じる (macOS 27.0.1 で実測。流れの最初の datagram と一緒に届いた空は、たいてい
+    /// 終わりを名乗らない)。空を終わりと読むと、空そのものを黙って捨てる (#2324)。だから終わりを
+    /// 名乗った空も渡し、**渡してからこちらで閉じる** — 閉じた流れが空を返し続ける OS でも、
+    /// 次の受けの `error` を待たずに止まる (実測は 27.0.1 だけ)。中身のある datagram は、
+    /// `isFinal` に依らず渡して続ける。
+    ///
+    /// 流れが閉じた後に届いたものは、新しい送り元として受け直す。**閉じる前にその流れへ積まれて
+    /// いたもの (空の直後 1 ミリ秒ほどの間に同じ送り元から届いたもの) は Network.framework が
+    /// 捨て、ここからは見えない** (#2324・#2363。受けを Network.framework から外さない限り
+    /// 避けられない)。
+    ///
+    /// 待っていた受けは、こちらが繋ぎを閉じたとき (黙った送り元・受け口の失敗) にも
+    /// `content == nil`・`error == nil` で返る。届いていない空を渡さないよう、台帳から外した
+    /// 繋ぎの**中身の無い**受けは何も渡さない。中身のある受けは、台帳から外した後に返っても、
+    /// 届いた datagram なので渡す。
+    static func completion(content: Data?, isFinal: Bool, failed: Bool, held: Bool) -> Completion {
+        if failed { return .ended }
+        if let content { return .datagram([UInt8](content)) }
+        guard held else { return .abandoned }
+        return isFinal ? .last([]) : .datagram([])
     }
 }
 
@@ -174,7 +244,9 @@ nonisolated struct SenderTally: Sendable, Equatable {
     var accepted = 0
     /// 黙っていたとして閉じた数。
     var closedIdle = 0
-    /// 繋ぎが失敗・取り消しで終わって外れた数 (黙りで閉じたもの・受け口ごと閉じたものは数えない)。
+    /// 繋ぎが台帳に居るまま終わって外れた数。失敗・取り消しのほか、終わりを名乗った空の
+    /// datagram を渡してこちらが閉じたもの (#2324) も数える。黙りで閉じたもの・受け口ごと
+    /// 閉じたもの・受け口が失敗して外したものは、先に台帳から外すので数えない。
     var ended = 0
 }
 
@@ -216,6 +288,11 @@ nonisolated struct SenderLedger<Sender: AnyObject> {
         tally.accepted += 1
         tally.closedIdle += idle.count
         return idle
+    }
+
+    /// 送り元を持っているか。黙りで閉じた・失敗や取り消しで外れた・受け口ごと閉じた後は偽。
+    func holds(_ sender: Sender) -> Bool {
+        entries.contains { $0.sender === sender }
     }
 
     /// 送り元から読んだ。
