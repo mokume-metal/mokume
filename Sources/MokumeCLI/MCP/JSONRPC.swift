@@ -53,9 +53,14 @@ enum JSONRPC {
     /// 断ると、応答にまで誤りを返してしまう。`method` も `result` も `error` も無い行
     /// (`{"id":3}`) は応答ではないので、形の誤りとして断る
     static func parse(_ line: String) -> Line {
+        // **`Double` に収まらない数は、符号によらず読めない行として断る** (#2476)。
+        // `JSONSerialization` は正の側 (`1e400`) は投げるが、負の側 (`-1e400`) は投げずに
+        // `-inf` で読む。通すと `id` が JSON に戻せず `lastResort` へ落ち、引数の数は `-inf` の
+        // まま道具へ渡る。読めた木を歩いて、有限でない数が 1 つでもあれば同じ失敗にする
         guard
             let object = try? JSONSerialization.jsonObject(
-                with: Data(line.utf8), options: [.fragmentsAllowed])
+                with: Data(line.utf8), options: [.fragmentsAllowed]),
+            allNumbersAreFinite(object)
         else {
             return .refused(
                 reply: failure(
@@ -82,6 +87,20 @@ enum JSONRPC {
             Call(
                 id: fields["id"], method: method,
                 params: fields["params"] as? [String: Any] ?? [:]))
+    }
+
+    /// 読んだ木の数が、残らず有限か。
+    ///
+    /// `isValidJSONObject` は使わない — 最上位が数や文字列だけの行 (断片) には偽を返すので、
+    /// `-1e400` 単独の行と配列の中の数を同じ物差しで見られない。真偽は `NSNumber` で届き
+    /// `doubleValue` が有限なので、見分けずにそのまま見てよい。
+    private static func allNumbersAreFinite(_ value: Any) -> Bool {
+        switch value {
+        case let members as [String: Any]: members.values.allSatisfy(allNumbersAreFinite)
+        case let items as [Any]: items.allSatisfy(allNumbersAreFinite)
+        case let number as NSNumber: number.doubleValue.isFinite
+        default: true
+        }
     }
 
     /// JSON-RPC の「内側で転んだ」符号。
