@@ -133,13 +133,12 @@ struct OSCPortTests {
     /// 空きポートを先に選んで手放すと、開くまでの間に別のプロセスに取られうる (#2359) ので、
     /// 受けるポートはここでしか決めない。
     private func listening(
-        told: Told, outbound: (any DatagramSending)? = nil,
-        idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        told: Told, idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
         now: (@Sendable () -> TimeInterval)? = nil
     ) async throws -> (osc: OSCPort, port: Int) {
         let aimed = AimedSender(warn: told.append)
         let osc = try loopback(
-            port: 0, told: told, outbound: outbound ?? aimed, idleAfter: idleAfter, now: now)
+            port: 0, told: told, outbound: aimed, idleAfter: idleAfter, now: now)
         let running = await until { osc.state == .running }
         guard running else {
             osc.close()
@@ -160,7 +159,7 @@ struct OSCPortTests {
 
     /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す (受け始めるのは待たない)。
     ///
-    /// 受けるポートの番号が要るなら ``listening(told:outbound:idleAfter:now:)`` を使う。
+    /// 受けるポートの番号が要るなら ``listening(told:idleAfter:now:)`` を使う。
     /// こちらは番号を決めて渡す口で、他のアプリが握っているポートを名指しする検査だけが使う。
     private func loopback(
         port: Int, told: Told, outbound: (any DatagramSending)? = nil,
