@@ -19,12 +19,23 @@ import Foundation
 ///
 /// 綴りの照合は手で書いた ASCII の照合で、照合を通った綴りだけを `Float(String)` に渡す。
 /// 表の行を毎フレーム読む作品があるので、正規表現は使わない。
+///
+/// SVG の値の数 (長さ・不透明度・`rgb()` の成分) も同じ綴りの規則で読む (#2513)。そちらは
+/// 前後の空白を落とさない `spelled(_:)` を使う。
 nonisolated enum DecimalText {
     /// 文字を数にする。10 進の綴りでなければ `nil`。
     static func float(_ text: String) -> Float? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isDecimal(trimmed.utf8) else { return nil }
-        return Float(trimmed)
+        spelled(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// 前後の空白を落とさずに、文字が丸ごと 10 進の綴りのときだけ数にする。
+    ///
+    /// 数と単位が隣り合う書式 (SVG / CSS の `10px`・`50%`) が使う。そこでは数と単位のあいだに
+    /// 空白を置けない (`"10 px"` は読めない値) ので、空白を落とすのは値の前後を知る呼ぶ側に任せる。
+    static func spelled(_ text: some StringProtocol) -> Float? {
+        let string = String(text)
+        guard isDecimal(string.utf8) else { return nil }
+        return Float(string)
     }
 
     /// 綴りが `[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?` に丸ごと合うか。
