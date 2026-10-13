@@ -167,14 +167,16 @@ struct ModelTests {
     /// 約束: 読めない行は読み飛ばして数える。**OBJ の数は 10 進の綴りだけ** — Swift の
     /// `Float(String)` は 16 進 (`0x10`) を受け、NUL の手前で読み終える (`"3\0abc"` が 3) ので、
     /// それに任せると読めない行が数として置かれ、数えられない ([#2514])。`vt` の 2 つ目 (`v`) は
-    /// 「無ければ 0」だが、書いてあって読めないものは無いのではない。
+    /// 「無ければ 0」だが、書いてあって読めないものは無いのではない。読めない欄を飛ばして
+    /// 詰めると、`vt abc 0.5` が u = 0.5 として置かれる。
     ///
     /// [#2514]: https://github.com/mokume-metal/mokume/issues/2514
     @Test(
         "v・vn・vt の数が 10 進の綴りでなければ、その行を置かずに読み飛ばして数える",
         arguments: [
             "v 0x10 0 0", "v 3\0abc 0 0", "v 1 2 3\0", "vn 0x1p0 0 0", "vt 0x1 0", "vt 0.5 0x1",
-            "vt 0.5 1\0", "v 1 2 +inf", "vt nan",
+            "vt 0.5 1\0", "vt 0x1p-1 0", "vt abc 0.5", "v 1 abc 2 3", "vn 1 0 0x0",
+            "v 1 2 +inf", "vt nan",
         ])
     func numbersAreReadAsDecimalOnly(line: String) {
         let base = """
