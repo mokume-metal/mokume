@@ -114,9 +114,12 @@ nonisolated enum ModelFile {
     /// **読めない行で止まらない。** 途中に知らない行があっても、そこまでの形は
     /// 使えるほうが役に立つ (数えて知らせる)。
     static func parse(_ text: String) -> Parsed {
-        var positions: [SIMD3<Float>] = []
-        var normals: [SIMD3<Float>] = []
-        var textures: [SIMD2<Float>] = []
+        // **読めない行も番号の枠を 1 つ使う** (#2564)。OBJ の番号は行の通し番号なので、読めない
+        // 行を詰めると後ろの番号が 1 つずつずれ、面が別の頂点を指して形が黙って変わる。枠は
+        // `nil` で置く。数える読み飛ばしは、読めない行 1 つ分のままである
+        var positions: [SIMD3<Float>?] = []
+        var normals: [SIMD3<Float>?] = []
+        var textures: [SIMD2<Float>?] = []
         /// 面の頂点 (位置の番号・読み取り位置の番号・向きの番号)。
         var faces: [[(position: Int, texture: Int?, normal: Int?)]] = []
         var skipped = 0
@@ -127,13 +130,16 @@ nonisolated enum ModelFile {
             let values = fields.dropFirst()
             switch keyword {
             case "v":
-                guard let point = vector(values) else { skipped += 1; continue }
+                let point = vector(values)
+                if point == nil { skipped += 1 }
                 positions.append(point)
             case "vn":
-                guard let point = vector(values) else { skipped += 1; continue }
+                let point = vector(values)
+                if point == nil { skipped += 1 }
                 normals.append(point)
             case "vt":
-                guard let point = texture(values) else { skipped += 1; continue }
+                let point = texture(values)
+                if point == nil { skipped += 1 }
                 textures.append(point)
             case "f":
                 // **位置の番号が読めない角が 1 つでもあれば、行ごと読み飛ばす** (#2339)。読める
@@ -147,10 +153,15 @@ nonisolated enum ModelFile {
                 var corners: [(position: Int, texture: Int?, normal: Int?)] = []
                 for value in written {
                     guard
-                        let read = corner(
+                        var read = corner(
                             value, positions: positions.count, textures: textures.count,
-                            normals: normals.count)
+                            normals: normals.count),
+                        positions[read.position] != nil
                     else { break }
+                    // 読めない `vt`・`vn` の行を指す角は、その番号を書いていない角と同じに読む
+                    // (番号が読めない・範囲の外と同じ。#2349・#2564)
+                    if let index = read.texture, textures[index] == nil { read.texture = nil }
+                    if let index = read.normal, normals[index] == nil { read.normal = nil }
                     corners.append(read)
                 }
                 guard corners.count == written.count, corners.count >= 3 else {
@@ -166,9 +177,10 @@ nonisolated enum ModelFile {
             }
         }
 
+        // 面が指すのは読めた行だけ (上で確かめてある)。印の枠は、指されないので 0 で埋める
         return assemble(
-            positions: positions, normals: normals, textures: textures, faces: faces,
-            skipped: skipped)
+            positions: positions.map { $0 ?? .zero }, normals: normals.map { $0 ?? .zero },
+            textures: textures.map { $0 ?? .zero }, faces: faces, skipped: skipped)
     }
 
     /// 読み取った並びを三角形へ畳む。
