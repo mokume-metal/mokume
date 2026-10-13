@@ -541,18 +541,25 @@ nonisolated enum SVGFile {
             }
             let x = isRoot ? 0 : length("x", reference.x) ?? 0
             let y = isRoot ? 0 : length("y", reference.y) ?? 0
+            // 根の片方だけなら、書いていない側は viewBox の縦横比から決まる (CSS Images 3 の
+            // 既定の大きさの決め方。ブラウザの <img>・resvg・librsvg の大きさ) (#2333)。
+            // 比を先に取るのは、途中の積 (書いた側 × viewBox の辺) があふれないようにするため。
+            // 導いた値が Float に収まらない (無限大・0 へ潰れる) なら導けないものとし、
+            // viewBox の大きさに倒す
+            func derived(_ written: Float, _ side: Float, _ across: Float) -> Float {
+                let value = written * (side / across)
+                return value.isFinite && value > 0 ? value : side
+            }
             let width: Float
             let height: Float
             switch (length("width", reference.x), length("height", reference.y)) {
             case (let written?, let other?):
                 (width, height) = (written, other)
             case (let written?, nil):
-                // 根の片方だけなら、書いていない側は viewBox の縦横比から決まる (CSS Images 3 の
-                // 既定の大きさの決め方。ブラウザの <img>・resvg・librsvg の大きさ) (#2333)
                 width = written
-                height = isRoot ? box.map { written * $0[3] / $0[2] } ?? 100 : reference.y
+                height = isRoot ? box.map { derived(written, $0[3], $0[2]) } ?? 100 : reference.y
             case (nil, let written?):
-                width = isRoot ? box.map { written * $0[2] / $0[3] } ?? 100 : reference.x
+                width = isRoot ? box.map { derived(written, $0[2], $0[3]) } ?? 100 : reference.x
                 height = written
             case (nil, nil):
                 (width, height) = isRoot ? (box?[2] ?? 100, box?[3] ?? 100) : (reference.x, reference.y)
