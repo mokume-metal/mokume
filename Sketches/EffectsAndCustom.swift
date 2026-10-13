@@ -18,7 +18,9 @@ import mokume
 /// 色抜きで濃淡だけになり、白い芯と黒い点は反転で入れ替わる。時計はフレーム番号から
 /// 導くので、**同じ番号のフレームは何度描いても同じ絵**になる。
 final class EffectsAndCustom: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "effects and custom")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "effects and custom")
+    }
 
     /// 1 枚ぶんの大きさ。**6 枚とも同じ描き場所から出る**ので、寸法も 1 つ。
     private static let panel = (width: 288, height: 200)

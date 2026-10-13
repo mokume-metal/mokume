@@ -49,6 +49,123 @@ struct ParameterStoreTests {
         for _ in 0...ParamStore.quietFrames { store.tick() }
     }
 
+    // MARK: - 書けないとき
+
+    /// 非有限の数を宣言として返す代役の置き場。
+    ///
+    /// **`@Param` は、値を書き換える口ではもう非有限を載せない** ([#2271](https://github.com/mokume-metal/mokume/issues/2271))
+    /// ので、符号化の守り (#2263) は書き換えからは踏めない。残る入口は生まれのときの値 (初期値・
+    /// `init` の中の代入・[#2394](https://github.com/mokume-metal/mokume/issues/2394)) で、
+    /// 関所を抜けた非有限が届いても保存が黙って止まらないことを、関所の外の口
+    /// (``DeclaredParam`` の別の実装) から見る。
+    @MainActor
+    final class Unbounded: DeclaredParam {
+        var number: Double = .nan
+
+        var declaration: ParamDeclaration {
+            ParamDeclaration(name: "radius", value: .float(number))
+        }
+
+        func write(_ incoming: ParamValue) -> ParamOutcome { .applied }
+    }
+
+    /// 符号化に失敗する値を 2 番目に持つスケッチ (拒まれた値の名前を、先頭以外でも引けること)。
+    final class Unencodable: Sketch {
+        @Param(1...8) var count: Int = 3
+        let radius = Unbounded()
+    }
+
+    /// 符号化の失敗を黙って捨てない (#2263)。
+    @Test("値を符号化できなければ、型と理由を 1 行言い、書かない")
+    func failingToEncodeSaysWhy() throws {
+        let url = try makeFile()
+        let sketch = Unencodable()
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
+        store.flushNow()
+
+        #expect(store.writeCount == 0)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        try #require(warnings.count == 1, "符号化に失敗したのに黙っていた")
+        let line = warnings[0]
+        #expect(!line.contains("\n"))
+        #expect(line.contains("EncodingError"))
+        #expect(line.contains("nan"))
+        #expect(line.contains("`radius`"), "どの値が拒まれたかを言わない: \(line)")
+        #expect(line.contains(url.path))
+    }
+
+    /// 面からの要求は当てるたびに書くので、書けない値が残ると入力ごとに同じ行が流れる。
+    @Test("書けない理由が変わらなければ、書けるまで繰り返し言わない")
+    func theSameWriteFailureIsSaidOnce() throws {
+        let url = try makeFile()
+        let sketch = Unencodable()
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
+        store.flushNow()
+        sketch.count = 5
+        store.flushNow()
+        #expect(warnings.count == 1, "同じ理由を繰り返した: \(warnings)")
+
+        // 書ければ忘れる。また書けなくなったら、また言う
+        sketch.radius.number = 10
+        store.flushNow()
+        #expect(store.writeCount == 1)
+        sketch.radius.number = .nan
+        store.flushNow()
+        #expect(warnings.count == 2)
+    }
+
+    @Test("置き場へ書けなければ、型と理由を 1 行言う")
+    func failingToWriteSaysWhy() throws {
+        let url = try makeFile()
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        }
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: Knobbed()), at: url, warn: { warnings.append($0) })
+        store.flushNow()
+
+        #expect(store.writeCount == 0)
+        let line = try #require(warnings.first, "書けなかったのに黙っていた")
+        #expect(warnings.count == 1)
+        #expect(line.contains("NSCocoaErrorDomain"), "失敗の型を名乗らない: \(line)")
+        #expect(line.contains(url.path))
+    }
+
+    @Test("保存が無ければ黙って既定値で立ち上げ、読めなければ型と理由を言う")
+    func failingToReadSaysWhyButAMissingFileIsQuiet() throws {
+        var warnings: [String] = []
+        let missing = try makeFile()
+        ParamStore(registry: ParamRegistry(of: Knobbed()), at: missing, warn: { warnings.append($0) })
+            .restore()
+        #expect(warnings.isEmpty, "初めての起動で名乗った: \(warnings)")
+
+        // 解けない中身
+        let broken = try makeFile()
+        try Data(#"{"schemaVersion": 1, "values": 3}"#.utf8).write(to: broken)
+        ParamStore(registry: ParamRegistry(of: Knobbed()), at: broken, warn: { warnings.append($0) })
+            .restore()
+        let decoding = try #require(warnings.first)
+        #expect(decoding.contains("DecodingError"), "失敗の型を名乗らない: \(decoding)")
+        #expect(decoding.contains("values"), "どこで拒まれたかを言わない: \(decoding)")
+
+        // 在るのに読めない (置き場がディレクトリ)
+        let unreadable = try makeFile()
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        ParamStore(
+            registry: ParamRegistry(of: Knobbed()), at: unreadable, warn: { warnings.append($0) }
+        ).restore()
+        #expect(warnings.count == 2, "在るのに読めない保存を黙って捨てた")
+        #expect(warnings.last?.contains("NSCocoaErrorDomain") == true)
+    }
+
     // MARK: - 往復
 
     @Test("動かした値が、次の起動で戻る")

@@ -17,7 +17,9 @@ import mokume
 /// その右は、`imageMode(.center)` で白い点を中心に置いた**左上の切り出し** (引数 9 つの
 /// `image`)、`Image.get` で絵の 1 画素を読んだ色の円、`+` で葉と茎を 1 つに畳んだ形。
 final class TypeAndImagery: Sketch {
-    var settings = SketchSettings(width: 960, height: 720, title: "type and imagery")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 720, title: "type and imagery")
+    }
 
     /// 毎フレーム組み立て直さない葉。色は形の中で決まる。
     private var leaf = Shape.empty

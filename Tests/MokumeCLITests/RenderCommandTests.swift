@@ -29,18 +29,46 @@ struct RenderCommandTests {
         _ arguments: [String], mentioning needle: String,
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
+        expectUsage(arguments, mentioningAll: [needle], sourceLocation: sourceLocation)
+    }
+
+    /// 上と同じで、文面に `needles` を**全部**含むことまで見る。
+    ///
+    /// - Parameter typedFrom: 打った場所。
+    private func expectUsage(
+        _ arguments: [String], mentioningAll needles: [String],
+        typedFrom: URL = RenderCommandTests.typedFrom,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
         do {
-            _ = try parse(arguments)
-            Issue.record("止まらなかった: \(arguments)", sourceLocation: sourceLocation)
+            _ = try RenderCommand.parse(arguments, currentDirectory: typedFrom)
+            Issue.record(
+                "止まらなかった: 打った場所 \(typedFrom.path) で \(arguments)",
+                sourceLocation: sourceLocation)
         } catch {
             guard case .usage(let text) = error else {
                 Issue.record("使い方の誤りではない: \(error)", sourceLocation: sourceLocation)
                 return
             }
-            #expect(
-                text.contains(needle), "文面に \(needle) が無い: \(text)",
-                sourceLocation: sourceLocation)
+            for needle in needles {
+                #expect(
+                    text.contains(needle), "文面に \(needle) が無い: \(text)",
+                    sourceLocation: sourceLocation)
+            }
         }
+    }
+
+    /// `--out` の形が断られたか。**文面の肝まで見る** — `--out` の名と、打った綴りと、番号の
+    /// 場所がファイル名に要ること。`--out` とだけ言われても、`take#1/` の何が悪いのかは
+    /// 分からない。
+    private func expectOutRefused(
+        _ out: String, typedFrom: URL = RenderCommandTests.typedFrom,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        expectUsage(
+            ["--fps", "10", "--seconds", "0.5", "--out", out],
+            mentioningAll: ["--out", "in the file name", ": \(out)"], typedFrom: typedFrom,
+            sourceLocation: sourceLocation)
     }
 
     // MARK: - 解ける形 (完了条件 1・2)
@@ -53,10 +81,29 @@ struct RenderCommandTests {
         ])
         #expect(
             options.invocation
-                == Invocation(place: "Cast", configuration: "release", scratchPath: ".build"))
+                == Invocation(
+                    place: "Cast", configuration: "release", scratchPath: ".build",
+                    currentDirectory: Self.typedFrom))
         #expect(options.request.frameRate == 60)
         #expect(options.request.frameCount == 2880)
         #expect(options.request.destination == "/tmp/cast.mov")
+    }
+
+    /// **場所・置き場・行き先は、どれも打った場所から解く** (#2320・#2323 の判断・案 A)。
+    /// 置き場だけがスケッチの場所から解かれていたので、`plain/` で
+    /// `render ../probe --scratch-path sp --out o.mov` と打つと、書いたものは `plain/o.mov`
+    /// なのに組み立ての置き場は `probe/sp` になっていた。
+    @Test("場所・置き場・行き先は、どれも打った場所から解く")
+    func everyPathIsResolvedFromWhereItWasTyped() throws {
+        let plain = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let options = try RenderCommand.parse(
+            [
+                "../probe", "--scratch-path", "sp", "--fps", "10", "--seconds", "0.1", "--out",
+                "o.mov",
+            ], currentDirectory: plain)
+        #expect(options.invocation.directory.path == "/work/probe")
+        #expect(options.invocation.scratchDirectory?.path == "/work/plain/sp")
+        #expect(options.request.destination == "/work/plain/o.mov")
     }
 
     /// **子の作業ディレクトリはスケッチの場所である。** 相対のまま渡すと、書いたものが
@@ -111,6 +158,25 @@ struct RenderCommandTests {
         expectUsage(["--fps", rate, "--seconds", "2", "--out", "/a.mov"], mentioning: "--fps")
     }
 
+    /// **`.mov` の時刻は 1/90 000 秒で数える** ([#2307])。それより速いと隣の枚が同じ時刻へ
+    /// 丸まり、書く係が外れて開けない `.mov` が残っていた (`--fps 100000`)。走らせる前に、
+    /// 上限を名乗って止まる。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    @Test("--fps が .mov の刻みを越えたら、上限を名乗ってビルドの前に止まる")
+    func aFrameRateBeyondTheMovieTimescaleIsRefused() throws {
+        expectUsage(
+            ["--fps", "90001", "--seconds", "1", "--out", "/a.mov"],
+            mentioningAll: ["--fps", "90000", ": 90001"])
+        // 境目: 刻みちょうどは通る。連番は時刻を書かないので、刻みを越えても通る
+        #expect(
+            try parse(["--fps", "90000", "--seconds", "1", "--out", "/a.mov"]).request.frameRate
+                == 90_000)
+        #expect(
+            try parse(["--fps", "90001", "--seconds", "1", "--out", "/f-####.png"]).request
+                .frameRate == 90_001)
+    }
+
     @Test(
         "秒数は 0 より大きい数だけを受ける",
         arguments: ["0", "-1", "abc", "2s", "inf", "nan", "0x10"])
@@ -121,13 +187,62 @@ struct RenderCommandTests {
     /// 形の規則は撮る係のもの。`.mov` か、番号の入る場所 (`#`) を持つ連番。
     @Test("行き先が動画でも連番でもなければ止まる", arguments: ["/a.png", "/a", "/a.mp4"])
     func anUnrecordableOutIsRefused(out: String) {
-        expectUsage(["--fps", "30", "--seconds", "2", "--out", out], mentioning: "--out")
+        expectOutRefused(out)
+    }
+
+    /// **打った場所の名前の `#` は番号の場所ではない** ([#2313])。`--out` は打った場所から
+    /// 絶対パスにしてから形を見るので、パス全体から `#` を探すと、`#` の無い `still.png` まで
+    /// 連番として受け、断られずに 0 で終わる。書いたものは隣の `take01/`… にできる。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test("打った場所の名前に # があっても、ファイル名に # の無い --out は止まる")
+    func aHashInWhereItWasTypedDoesNotMakeASeries() throws {
+        let typedFrom = URL(fileURLWithPath: "/tmp/take#1", isDirectory: true)
+        expectOutRefused("still.png", typedFrom: typedFrom)
+
+        // 同じ場所でも、ファイル名に `#` があれば連番として受け、置き場はそのまま
+        let series = try RenderCommand.parse(
+            ["--fps", "10", "--seconds", "0.5", "--out", "f-##.png"], currentDirectory: typedFrom)
+        #expect(series.request.destination == "/tmp/take#1/f-##.png")
+    }
+
+    /// **形は打った綴りで見る** ([#2313] の反証)。絶対パスにすると末尾の `/` と `.`・`..` が
+    /// 消え、番号の場所を探す最後の部品が打った綴りと変わる。`take#1/` (フォルダを指した
+    /// つもり) が `<打った場所>/take#1` になり、`take#1` の `#` を番号にして、拡張子の無い
+    /// `take01`・`take11`… を打った場所に並べて 0 で終わっていた。書く API の側
+    /// (`beginRecord("take#1/")`) は断るので、同じ綴りで道具とスケッチの判定が食い違っていた。
+    ///
+    /// 打った場所は `#` の無い所にする (打った場所の `#` は上の検査が見る)。
+    ///
+    /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
+    @Test(
+        "--out がフォルダを指す綴り (末尾の /・. ・..) なら、名前に # や .mov があっても止まる",
+        arguments: ["take#1/", "out-##/", "dir/", "motion.mov/", "take#1/.", "f-##.png/.."])
+    func anOutThatNamesAFolderIsRefused(out: String) {
+        expectOutRefused(out)
     }
 
     /// **`run` / `watch` の選択肢はそのまま効き、知らない選択肢は断る** (``Invocation`` と同じ規律)。
     @Test("知らない選択肢は、場所にせずに止まる")
     func anUnknownOptionIsRefused() {
         expectUsage(["--fps", "30", "--seconds", "2", "--out", "/a.mov", "-o", "x"], mentioning: "-o")
+    }
+
+    /// **構成の値も、組み立ての前に検める** ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    /// 検めずに道具立てへ渡すと、組み立てを始めてから「Package.swift に実行ファイルが無い」と
+    /// 名乗っていた。
+    @Test("構成は debug / release だけを受け、それ以外は受け付ける値を名指して止まる")
+    func anUnknownConfigurationIsRefused() throws {
+        for configuration in ["bogus", "Release", "DEBUG"] {
+            expectUsage(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"],
+                mentioningAll: ["debug", "release", ": \(configuration)"])
+        }
+        for configuration in ["debug", "release"] {
+            let options = try parse(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"])
+            #expect(options.invocation.configuration == configuration)
+        }
     }
 
     /// 解いた後にパッケージを探すので、`Package.swift` の無い場所でも使い方の誤りが先に出る。

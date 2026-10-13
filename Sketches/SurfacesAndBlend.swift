@@ -19,7 +19,9 @@ import mokume
 /// 真ん中上の小さな箱は、同じ面を断片を使わずに `texture(_:)` で貼ったもの。
 /// **名前で渡しても、貼っても、描いた面は読み込んだ絵と同じに扱える。**
 final class SurfacesAndBlend: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "surfaces and blend")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "surfaces and blend")
+    }
 
     /// 焼いた木目。**1 度だけ作る** — 板は動かないので、断片の中で作り直す理由が無い。
     private var grain: Image?

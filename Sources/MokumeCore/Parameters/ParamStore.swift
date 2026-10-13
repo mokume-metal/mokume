@@ -50,6 +50,12 @@ final class ParamStore: DeclarationWatcher {
     private var countdown: Int?
     /// 実際に書いた回数。**まとめられていることを検査から見るために持つ。**
     private(set) var writeCount = 0
+    /// 人へ 1 行伝える口。**検査から差し替える** — 失敗の文面を標準エラーから拾わずに見る。
+    private let warn: (String) -> Void
+    /// 最後に名乗った、書けなかった理由。**同じ理由は書けるまで繰り返さない** — 面からの
+    /// 要求は当てるたびに書く (``flushNow()``) ので、書けない値が残っていると入力 1 回ごとに
+    /// 同じ 1 行が流れる。
+    private var lastWriteFailure: String?
 
     /// 保存を持たせる。宣言が 1 つも無ければ持たせない (書くものが無い)。
     static func makeIfNeeded(for registry: ParamRegistry, at url: URL = WorkDirectory.savedParams)
@@ -58,9 +64,13 @@ final class ParamStore: DeclarationWatcher {
         registry.isEmpty ? nil : ParamStore(registry: registry, at: url)
     }
 
-    init(registry: ParamRegistry, at url: URL = WorkDirectory.savedParams) {
+    init(
+        registry: ParamRegistry, at url: URL = WorkDirectory.savedParams,
+        warn: @escaping (String) -> Void = Diagnostics.warn
+    ) {
         self.registry = registry
         self.url = url
+        self.warn = warn
     }
 
     // MARK: - 戻す
@@ -74,12 +84,17 @@ final class ParamStore: DeclarationWatcher {
     @discardableResult
     func restore() -> Restoration {
         defer { watchDeclarations() }
-        guard let data = try? Data(contentsOf: url) else { return Restoration() }
-        guard let saved = try? JSONDecoder().decode(Saved.self, from: data) else {
-            // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
-            // 既定値に戻る」は理由が出ないと追えない
-            Diagnostics.warn(
-                "Could not read the saved values (\(url.path)). Starting from the defaults")
+        // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
+        // 既定値に戻る」は理由が出ないと追えない。**黙るのは無いときだけ** (初めての起動)
+        let saved: Saved
+        do {
+            saved = try JSONDecoder().decode(Saved.self, from: Data(contentsOf: url))
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return Restoration()
+        } catch {
+            warn(
+                "Could not read the saved values (\(url.path)): \(Diagnostics.reason(error)). "
+                    + "Starting from the defaults")
             return Restoration()
         }
 
@@ -93,6 +108,8 @@ final class ParamStore: DeclarationWatcher {
                 result.discarded.append(.init(name: entry.name, reason: .typeMismatch))
             case .notInChoices:
                 result.discarded.append(.init(name: entry.name, reason: .notInChoices))
+            case .notFinite:
+                result.discarded.append(.init(name: entry.name, reason: .notFinite))
             case .applied:
                 break
             case .clamped(let requested, let applied):
@@ -115,7 +132,7 @@ final class ParamStore: DeclarationWatcher {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     private func announce(_ restoration: Restoration) {
         guard let notice = Self.notice(for: restoration.discarded) else { return }
-        Diagnostics.warn(notice)
+        warn(notice)
     }
 
     /// 捨てたものを人へ伝える 1 行。捨てていなければ `nil`。
@@ -124,6 +141,9 @@ final class ParamStore: DeclarationWatcher {
         let listed = discarded
             .map { "\($0.name) (\(reason(for: $0.reason)))" }
             .joined(separator: " / ")
+        // 非有限で捨てたものも宣言が変わったせい: 保存はこのライブラリが書くので有限の数しか
+        // 入っておらず、読み替えて無限になるのは、宣言の型が変わったとき (`Double` で宣言していた
+        // 値を `Float` へ変えた、など。どちらも `float` を名乗るので型の違いにならない)
         return "Threw away \(discarded.count) of the saved values: \(listed). "
             + "The declarations have changed, so these stay at their defaults"
     }
@@ -133,6 +153,7 @@ final class ParamStore: DeclarationWatcher {
         case .unknownName: "no longer declared"
         case .typeMismatch: "a different type from the declaration"
         case .notInChoices: "outside the choices that are allowed"
+        case .notFinite: "not a finite number once read as the declared type"
         }
     }
 
@@ -192,12 +213,43 @@ final class ParamStore: DeclarationWatcher {
             values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) })
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
-        guard let data = try? encoder.encode(saved) else { return }
-        guard (try? AtomicFile.write(data, to: url)) != nil else {
-            Diagnostics.warn("Could not save the values as they stand (\(url.path))")
+        // 書けなければ型と理由を名乗る (#2263)。非有限の数が 1 つ載っているだけで全部が
+        // 書けなくなるので、どの値かも言う
+        let data: Data
+        do {
+            data = try encoder.encode(saved)
+        } catch {
+            let offender = Self.offender(of: error, in: saved).map { ": `\($0)` was refused" }
+            sayWriteFailure(
+                "Could not encode the values as they stand to save them (\(url.path))"
+                    + (offender ?? "") + " — \(Diagnostics.reason(error))")
             return
         }
+        do {
+            try AtomicFile.write(data, to: url)
+        } catch {
+            sayWriteFailure(
+                "Could not save the values as they stand (\(url.path)): \(Diagnostics.reason(error))")
+            return
+        }
+        lastWriteFailure = nil
         writeCount += 1
+    }
+
+    /// 書けなかった理由を言う。**前と同じ理由なら言わない** (``lastWriteFailure``)。
+    private func sayWriteFailure(_ message: String) {
+        defer { lastWriteFailure = message }
+        guard message != lastWriteFailure else { return }
+        warn(message)
+    }
+
+    /// 符号化が拒んだ値の名前。拒まれた場所が値の並びの中でなければ `nil`。
+    private static func offender(of error: any Error, in saved: Saved) -> String? {
+        guard case EncodingError.invalidValue(_, let context) = error,
+            let index = context.codingPath.lazy.compactMap(\.intValue).first,
+            saved.values.indices.contains(index)
+        else { return nil }
+        return saved.values[index].name
     }
 }
 

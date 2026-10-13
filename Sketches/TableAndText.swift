@@ -21,7 +21,9 @@ import mokume
 ///
 /// [#1964]: https://github.com/mokume-metal/mokume/issues/1964
 final class TableAndText: Sketch {
-    var settings = SketchSettings(width: 1200, height: 560, title: "table and text")
+    var settings: SketchSettings {
+        SketchSettings(width: 1200, height: 560, title: "table and text")
+    }
 
     /// 平均の列を足した表。読めなければ `nil` のまま (説明の文だけが出る)。
     private var table: Table?

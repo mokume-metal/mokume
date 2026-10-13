@@ -5,8 +5,10 @@ import Foundation
 
 /// 標準入出力でやりとりする JSON-RPC の 1 往復。
 ///
-/// 手続きは行区切りの JSON で流れる。**読めなかった行は落とすが、繋がりは切らない** —
-/// 1 行の壊れで窓口ごと落ちると、繋いでいる側からは原因が分からない。
+/// 手続きは行区切りの JSON で流れる。**呼び出しとして読めなかった行には誤りを 1 行返し、
+/// 繋がりは切らない** — 1 行の壊れで窓口ごと落ちると、繋いでいる側からは原因が分からない。
+/// 黙って落とすのもいけない。`id` を読める行に黙ると、繋いでいる側は来ない答えを待ち
+/// 続ける (JSON-RPC 2.0 §5・#2317)。
 enum JSONRPC {
     /// 受け取った呼び出し。
     struct Call {
@@ -15,17 +17,71 @@ enum JSONRPC {
         let params: [String: Any]
 
         /// 応答を返すべき呼び出しか。返り値を待たない通知には `id` が無い。
+        ///
+        /// `"id": null` は通知ではない (`NSNull` が入る)。JSON-RPC 2.0 §4 は `id` に
+        /// Null を許しており、答えはその `null` で返る。
         var expectsResponse: Bool { id != nil }
     }
 
+    /// 1 行を読んだ結果。
+    enum Line {
+        /// 手続きの呼び出し (通知を含む)。
+        case call(Call)
+        /// 呼び出しとして読めなかった。通知かどうかによらず、この誤りの 1 行で答える。
+        case refused(reply: String)
+        /// 相手からの応答 (`method` が無く、`result` か `error` を持つ)。答えずに読み飛ばす。
+        ///
+        /// JSON-RPC 2.0 は応答に答えない。窓口は自分から要求を出さないので、届く応答は
+        /// 残らず余分なものである。誤りを返すと、相手の `id` の空間に別の答えが紛れうる
+        case response
+    }
+
+    /// JSON として読めない行の符号。
+    static let parseError = -32700
+    /// JSON だが呼び出しの形でない行の符号。
+    static let invalidRequest = -32600
+
     /// 1 行を呼び出しとして解く。
-    static func parse(_ line: String) -> Call? {
-        guard let data = line.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let method = object["method"] as? String
-        else { return nil }
-        return Call(
-            id: object["id"], method: method, params: object["params"] as? [String: Any] ?? [:])
+    ///
+    /// **呼び出しの形でない行は、通知かどうかを見ずに断る。** 通知かどうかを決める `id`
+    /// も読めているとは限らないので、JSON-RPC 2.0 §5 は誤りを返し、`id` を読めなければ
+    /// `null` にすると決めている。束 (配列) は扱わない — 名乗る版 (MCP 2024-11-05) は
+    /// 束を含まないので、中身によらず 1 行で断る。JSON としては読めるがオブジェクトで
+    /// ない行 (`5` など) も、壊れた JSON ではなく形の誤りとして断る。
+    ///
+    /// **応答の形の行は断らずに読み飛ばす** (`Line.response`)。`method` が無いことだけで
+    /// 断ると、応答にまで誤りを返してしまう。`method` も `result` も `error` も無い行
+    /// (`{"id":3}`) は応答ではないので、形の誤りとして断る
+    static func parse(_ line: String) -> Line {
+        guard
+            let object = try? JSONSerialization.jsonObject(
+                with: Data(line.utf8), options: [.fragmentsAllowed])
+        else {
+            return .refused(
+                reply: failure(
+                    id: nil, code: parseError, message: "parse error: the line is not JSON"))
+        }
+        guard let fields = object as? [String: Any] else {
+            return .refused(
+                reply: failure(
+                    id: nil, code: invalidRequest,
+                    message: "invalid request: expected one JSON object (batches are not supported)"
+                ))
+        }
+        // `method` と `result` を両方持つ行は応答ではない。呼び出しとして `method` を見る
+        if fields["method"] == nil, fields["result"] != nil || fields["error"] != nil {
+            return .response
+        }
+        guard let method = fields["method"] as? String else {
+            return .refused(
+                reply: failure(
+                    id: fields["id"], code: invalidRequest,
+                    message: "invalid request: method must be a string"))
+        }
+        return .call(
+            Call(
+                id: fields["id"], method: method,
+                params: fields["params"] as? [String: Any] ?? [:]))
     }
 
     /// JSON-RPC の「内側で転んだ」符号。

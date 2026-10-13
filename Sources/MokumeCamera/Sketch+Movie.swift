@@ -19,7 +19,7 @@ extension Sketch {
     ///
     /// ```swift
     /// final class Overlay: Sketch {
-    ///     var settings = SketchSettings(width: 1280, height: 720)
+    ///     var settings: SketchSettings { SketchSettings(width: 1280, height: 720) }
     ///     var clip: Movie?
     ///     func setup() {
     ///         clip = try? createVideo("assets/clip.mov")

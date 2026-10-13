@@ -121,8 +121,9 @@ nonisolated final class ListenerStatus: Sendable {
 /// UDP のポートで受ける出どころ。届いた datagram をその場で読み、メッセージにして列へ入れる。
 ///
 /// 読み方 (`decode`) だけを差し替える — OSC はパケットを読み、文字列は 1 datagram を 1 つの
-/// 文字列にする。読めなかった数は列に数える。ポートが使用中・拒まれた・失敗したときは
-/// ``ListenerStatus`` が状態に写し、それぞれ 1 度だけ知らせる。
+/// 文字列にする。読めなかった数は列に数える。**上限 (``Datagram/sizeLimit``) に入らない datagram は、
+/// 切れた疑いがあるので読まずに捨てて、読めなかった数に入れる。** ポートが使用中・拒まれた・
+/// 失敗したときは ``ListenerStatus`` が状態に写し、それぞれ 1 度だけ知らせる。
 nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態は ``listener`` だけで、main actor (start / stop) でだけ
     // 触る。受け口の手続きが触るのは ``status`` (錠を持つ) と列 (それ自身が錠を持つ) だけ。
@@ -172,6 +173,11 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unche
         let listener = DatagramListener(
             port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter, now: now,
             received: { [decode] bytes, hostTime in
+                // 先頭だけを読むと、黙って別の文字列や、束の頭のメッセージだけを渡すことになる
+                guard Datagram.fits(bytes.count) else {
+                    queue.discardUnreadable()
+                    return
+                }
                 let decoded = decode(bytes)
                 for message in decoded.messages { queue.send(message, hostTime: hostTime) }
                 queue.discardUnreadable(decoded.unreadable)

@@ -41,7 +41,7 @@ SwiftPM が `--xunit-output` で自分でファイルへ書く記録は、同じ
 
 終了コードは同じく常に 0 にする。判定は呼ぶ側が行を読んで決める。
 
-## 落ちた検査の文面 (`--failure-messages <記録>`・#1773)
+## 落ちた検査の文面 (`--failure-messages <記録> [<絵の artifact>]`・#1773)
 
 専用機の描画ジョブが落ちた回に、ジョブの要約 (`$GITHUB_STEP_SUMMARY`) へ書く Markdown を
 出す。専用機の記録は次のジョブが消すので、赤を読んで直す材料を run の画面に残すためで
@@ -50,6 +50,9 @@ SwiftPM が `--xunit-output` で自分でファイルへ書く記録は、同じ
 台帳 (`SceneLedgerTests`) の失敗が書き換え後の行を名乗っていれば、それを先頭に 1 つの
 塊として集める。**集めた行は案であって、台帳へ写す前に絵を目で見る** (ADR-0019 決定 3)。
 行の形は `Ledger.line` (`<名前> <sha256 の 16 進 64 桁>[ os=<版>]`) に合わせる。
+絵の置き場として案内する artifact の名前は、3 つ目の引数で渡す。既定は `render` /
+`render-pr` の `ledger-shots` で、定期の検査の起票 (`scripts/report-scheduled-render.sh`)
+は `scheduled-debug-ledger-shots` を渡す (#2084)。
 
 記録が無い・読めないときも、そう名乗る 1 行を出す。終了コードは常に 0 にする。
 """
@@ -126,8 +129,11 @@ def keep_attribute_newlines(raw):
     return re.sub(r'="([^"]*)"', escape, raw)
 
 
-def failure_messages(path):
-    """落ちた検査の名前と文面を Markdown で。台帳の書き換え後の行は先頭に集める。"""
+def failure_messages(path, shots_artifact="ledger-shots"):
+    """落ちた検査の名前と文面を Markdown で。台帳の書き換え後の行は先頭に集める。
+
+    shots_artifact は台帳の絵を上げた artifact の名前。案内の文面に入る。
+    """
     try:
         if os.path.getsize(path) == 0:
             return "記録が無い (`%s`)" % path
@@ -164,7 +170,7 @@ def failure_messages(path):
         out += [
             "#### 台帳の書き換え後の行 (案)",
             "",
-            "**写す前に絵を目で見る** (ADR-0019 決定 3)。絵は artifact の `ledger-shots` にある。",
+            "**写す前に絵を目で見る** (ADR-0019 決定 3)。絵は artifact の `%s` にある。" % shots_artifact,
             "",
             fenced("\n".join(ledger_lines)),
             "",
@@ -180,8 +186,8 @@ def main(argv):
     if len(argv) == 3 and argv[1] == "--failures":
         print(failures(argv[2]))
         return 0
-    if len(argv) == 3 and argv[1] == "--failure-messages":
-        print(failure_messages(argv[2]))
+    if len(argv) in (3, 4) and argv[1] == "--failure-messages":
+        print(failure_messages(*argv[2:]))
         return 0
     if len(argv) != 3:
         print("unreadable 0")

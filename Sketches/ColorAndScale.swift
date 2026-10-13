@@ -22,7 +22,9 @@ import mokume
 /// `lerp` で混ぜた (手本の `lerpColor` と同じ) もの。真ん中の色は上のほうが明るく、
 /// 下は灰色へ沈む。
 final class ColorAndScale: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "color and scale")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "color and scale")
+    }
 
     /// 色を掛けて置く絵。**毎フレーム透明で消す**ので、置いた先で下地が透けて見える。
     private var pad: Canvas?

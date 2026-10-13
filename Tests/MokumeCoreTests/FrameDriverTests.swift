@@ -25,11 +25,13 @@ struct FrameDriverTests {
                 stallThreshold: threshold, isAlreadyDriving: false))
     }
 
+    /// **経過は具体の秒で書く。** 閾値から作ると、閾値がどんな値でも真になる (#2286)。
+    /// 60 fps で 0.1 秒 (6 枚ぶん) 進まなければ、止まっている。
     @Test("誰も進めなくなったら、予備が引き受ける")
     func takesOverWhenNothingHasAdvanced() {
         #expect(
             FrameDriver.shouldAdvanceFromFallback(
-                now: 100 + threshold * 2, lastAdvancedAt: 100,
+                now: 100.1, lastAdvancedAt: 100,
                 stallThreshold: threshold, isAlreadyDriving: false))
     }
 
@@ -46,16 +48,28 @@ struct FrameDriverTests {
 
     /// 固定値にすると、遅いフレームレートを求めたスケッチで**1 枚ぶんの間隔が閾値を
     /// 越えて**しまい、表示のリフレッシュが生きていても予備が割り込む。
+    ///
+    /// **上側も見る。** 下側 (割り込まない) だけでは、閾値を大きな固定値にしても通り、
+    /// 画面が止まってから予備が引き受けるまで何秒も止まる退行を見逃す (#2286)。
     @Test(
         "止まったとみなす間は、目標フレームレートに追随する",
         arguments: [10, 24, 30, 60, 120])
     func stallThresholdFollowsTheTargetFrameRate(frameRate: Int) {
         let interval = 1 / Double(frameRate)
         let threshold = FrameDriver.stallThreshold(frameRate: frameRate)
-        // 1 枚ぶん遅れただけでは割り込まない
+        // 目標フレーム間隔の 4 倍
+        #expect(abs(threshold - 4 * interval) < 1e-12)
+        // 1 枚・3 枚ぶん遅れただけでは割り込まない
+        for frames in [1.0, 3.0] {
+            #expect(
+                !FrameDriver.shouldAdvanceFromFallback(
+                    now: 100 + frames * interval, lastAdvancedAt: 100,
+                    stallThreshold: threshold, isAlreadyDriving: false))
+        }
+        // 5 枚ぶん進まなければ割り込む
         #expect(
-            !FrameDriver.shouldAdvanceFromFallback(
-                now: 100 + interval, lastAdvancedAt: 100,
+            FrameDriver.shouldAdvanceFromFallback(
+                now: 100 + 5 * interval, lastAdvancedAt: 100,
                 stallThreshold: threshold, isAlreadyDriving: false))
         // 予備が回る間隔は、そのまま止まっている間のフレームレートになる
         #expect(abs(FrameDriver.fallbackInterval(frameRate: frameRate) - interval) < 1e-9)

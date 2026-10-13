@@ -54,6 +54,28 @@ struct CommandQueueGateTests {
         #expect(gate.queuesMade == 1, "使える環境かを問うだけで発行口を作った (計 \(gate.queuesMade) 本)")
     }
 
+    /// 発行口を解放した直後に、同じプロセスの別の土台へ投入した仕事が打ち切られる (#2054)。
+    /// 解放を後ろへずらすので、手放した発行口は関所が持ち、持つ本数は上限で頭打ちになる。
+    @Test("手放した土台の発行口は、後から上限の本数が手放されるまで関所が持つ")
+    func retiredQueuesOutliveTheirFoundation() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
+        let gate = CommandQueueGate()
+        let limit = CommandQueueGate.retiredQueueLimit
+        for made in 1...(limit + 2) {
+            do {
+                let gpu = try RenderDevice(device: device, slotCount: 1, queueGate: gate)
+                #expect(gate.retiredQueueCount == min(made - 1, limit), "生きている土台の発行口を数えた")
+                _ = gpu
+            }
+            // 手放した直後に解放すると、次の土台の仕事が打ち切られる
+            #expect(
+                gate.retiredQueueCount == min(made, limit),
+                "\(made) 本目の土台を手放した後に、関所が持つ発行口が \(gate.retiredQueueCount) 本")
+        }
+        #expect(gate.queuesMade == limit + 2)
+        #expect(!gate.isClosed)
+    }
+
     /// 土台を作り、答えの来ない投入を 1 本足して手放す。`deinit` が待ちを打ち切る (上の手順 1・2)。
     ///
     /// 手放すのは、この関数を抜けるときである。検査は main actor で走るので、`isolated deinit` は

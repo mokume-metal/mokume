@@ -34,13 +34,13 @@
 #
 # 分類は 5 つで、この順に出す:
 #
-#   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無く、親が open な Bug でない
+#   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無く、開いた根の子でもない
 #   stock    **B-1 の対象** — エージェントが起票したのに無印で、型が Bug / Task / Docs
 #   dropped  status: in progress なのに、open PR も手元の worktree / 枝も無く、静かで久しい。
 #            家族 (親・兄弟・子) にも同じ証拠が無い
 #   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている・
-#            家族のどれかがそうである)。または ready の候補のうち、親が open な Bug のもの
-#            (根を直す側で閉じる)
+#            家族のどれかがそうである)。または ready の候補のうち、開いた根の子 (親が open な
+#            Bug か、親が open で印の付いた Design の Bug の子。根を直す側で閉じる)
 #   decide   **人が決める行** — 無印の Design で、open な Bug の子を持つもの。子の多い順
 #
 # ## 根と判断 (#1661)
@@ -49,14 +49,23 @@
 # 同じ根のバグが 1 件ずつ直されていた (#1659)。ADR-0040 は同じ根の群を sub-issue で束ね、
 # 根を直す PR が子をまとめて閉じるとした (決定 2)。判定はその形に 2 つで合わせる:
 #
-#   親が open な Bug の子   ready に出さず busy へ回す。子を 1 件ずつ拾うと、根を直さずに
-#                           症状だけを閉じる直しが続く。根のほうが ready に出ていれば、そちらを取る
-#   Bug の子を持つ Design   根本の直し方が人の判断を待っている (決定 3 — 約束を決める・変える
-#                           ときだけ人を待つ)。人の目に入らないと、子の Bug が症状のまま直される
+#   開いた根の子            ready に出さず busy へ回す。子を 1 件ずつ拾うと、根を直さずに
+#                           症状だけを閉じる直しが続く。根のほうが ready に出ていれば、そちらを取る。
+#                           根は、親が open な Bug (子の型は問わない) か、親が open で印の付いた
+#                           Design (子が Bug のときだけ — #2228)
+#   Bug の子を持つ          根本の直し方が人の判断を待っている (決定 3 — 約束を決める・変える
+#   無印の Design           ときだけ人を待つ)。人の目に入らないと、子の Bug が症状のまま直される
 #
-# 親は GraphQL 1 回で、open な Bug と ready の候補の分だけ読む。**読めなかったら ready は
-# 従来どおり出し、decide は出さず、そう名乗る。** decide は終了コードに数えない — 打てる
-# 仕事ではなく、人が決める仕事である。
+# **Design の根で子を止めるのは、印が付いてから**である。無印のうちは decide に出て人を待ち、
+# 子の症状の直しは止めない (決定 3「Design を待つ間も、症状を塞ぐ直しは止めない」)。印が付くと
+# decide から外れて根そのものが ready に出るので、そこで子を根へ回す — 回さないと、根に束ねた
+# Bug が ready に残って症状の 1 か所だけが直される。Design の Bug でない子 (段取りの Task など) は
+# 根の症状ではないので止めない。止めると #1663・#1744 (印の付いた Design の子の Task) まで
+# ready から消える。
+#
+# 親 (番号・state・型・印) は GraphQL 1 回で、open な Bug と ready の候補の分だけ読む。
+# **読めなかったら ready は従来どおり出し、decide は出さず、そう名乗る。** decide は終了コードに
+# 数えない — 打てる仕事ではなく、人が決める仕事である。
 #
 # busy を出すのは、**ready から外れた理由を見せるため**である。ready だけ出すと「なぜ
 # この Issue が出てこないのか」が読めず、判定の誤りが黙って通る。
@@ -309,17 +318,20 @@ fi
 
 # --- 根と判断 (#1661) ---------------------------------------------------------
 
-# 番号ごとの親を 1 回で読む。「<番号> <親> <親の state> <親の型>」を 1 行 1 件で出す
-# (親の無いものは出さない。型の無い親は - にする — 空にすると欄がずれる)
+# 番号ごとの親を 1 回で読む。「<番号> <親> <親の state> <親の型> <親の印>」を 1 行 1 件で出す
+# (親の無いものは出さない。型の無い親は - にする — 空にすると欄がずれる)。親の印は
+# verify: triaged があれば triaged、無ければ - で、Design の根を見分けるのに使う (#2228)
 read_parents() { # $1=番号 (空白区切り)
   local owner=${REPO%%/*} name=${REPO#*/} q='' n
   for n in $1; do
-    q+="i$n: issue(number: $n) { parent { number state issueType { name } } } "
+    q+="i$n: issue(number: $n) { parent { number state issueType { name }"
+    q+=" labels(first: 100) { nodes { name } } } } "
   done
   gh api graphql -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } }" \
     --jq '.data.repository | to_entries[]
       | (.value.parent // empty) as $p
-      | "\(.key | ltrimstr("i")) \($p.number) \($p.state) \($p.issueType.name // "-")"'
+      | (if any($p.labels.nodes[]?; .name == "'"$TRIAGED"'") then "triaged" else "-" end) as $mark
+      | "\(.key | ltrimstr("i")) \($p.number) \($p.state) \($p.issueType.name // "-") \($mark)"'
 }
 
 # 引くのは open な Bug と ready の候補だけ。**どちらも無ければ引かない** — 平常時の呼び出しを
@@ -337,11 +349,20 @@ if [ -n "$asked" ]; then
   }
 fi
 
-# (a) 親が open な Bug なら、子は根を直す側で閉じる (ADR-0040 決定 2)。子を ready に出すと
-# 症状の 1 か所だけが直され、同じ根の兄弟が残る — #1659 が数えた「深いが狭い」直しの形である
+# (a) 根が開いていれば、子は根を直す側で閉じる (ADR-0040 決定 2)。子を ready に出すと
+# 症状の 1 か所だけが直され、同じ根の兄弟が残る — #1659 が数えた「深いが狭い」直しの形である。
+# 根は 2 つの形をとる (冒頭の「根と判断」):
+#
+#   親が open な Bug                子の型は問わない
+#   親が open で印の付いた Design   子が Bug のときだけ (#2228)。無印のうちは子を止めない —
+#                                   人の判断を待つ間も症状の直しは止めず、根本は (b) が人に見せる
+#                                   (決定 3)。Bug でない子は根の症状ではない
 while read -r n type title; do
   [ -n "$n" ] || continue
-  root=$(awk -v n="$n" '$1 == n && $3 == "OPEN" && $4 == "Bug" { print $2; exit }' <<<"$parents")
+  root=$(awk -v n="$n" -v type="$type" '
+    $1 == n && $3 == "OPEN" && ($4 == "Bug" || ($4 == "Design" && $5 == "triaged" && type == "Bug")) {
+      print $2; exit
+    }' <<<"$parents")
   if [ -n "$root" ]; then
     busy+="$n busy 根 #$root で直す ($title)"$'\n'
   else

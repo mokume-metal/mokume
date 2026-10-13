@@ -19,7 +19,9 @@ import mokume
 /// `Helvetica` にしてある (既定の書体は字を重なった部品で持つので、穴として返らない
 /// 字がある)。説明の小さな字だけは `noTextFont()` で既定の書体へ戻している。
 final class TypeAndMeasure: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "type and measure")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "type and measure")
+    }
 
     /// 枠を渡って流す文。3 つ目の枠で終わる長さにしてある。
     private let passage =

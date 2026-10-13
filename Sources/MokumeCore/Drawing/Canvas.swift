@@ -1142,10 +1142,25 @@ public final class Canvas {
     /// (``discardPending()``) で、落とした後に同じ面のまま置いた形も、置いた時点で記録し直される
     /// ([#1543])。
     ///
+    /// **鍵は描き場所の通し番号 (``placementKey``) である** ([#2306])。`ObjectIdentifier` (番地) を鍵に
+    /// すると、同じフレームで置いてから捨てた描き場所の番号が記録に残り、その番地を引き継いだ描き場所を
+    /// 置いても記録済みと見なして相手の ``placers`` に載せなかった — 描き換える前に置いた時点の絵を写させる
+    /// 相手が居ないので、先に置いた所に描き換えた後の絵が出た。番号は面ごとに 1 度きりなので引き継がれない。
+    /// 記録は番号だけを持ち、**描き場所そのものは掴まない** (``placers`` が弱く持つのと同じ理由)。
+    ///
     /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
-    private(set) var placedGraphics: Set<ObjectIdentifier> = []
+    /// [#2306]: https://github.com/mokume-metal/mokume/issues/2306
+    private(set) var placedGraphics: Set<UInt64> = []
+
+    /// この面の通し番号。**作った面ごとに 1 度きりで、捨てた面の番号を後の面が引き継がない** ([#2306])。
+    /// 置いた側の記録 (``placedGraphics``) が、置いた描き場所を見分ける鍵に使う。
+    ///
+    /// [#2306]: https://github.com/mokume-metal/mokume/issues/2306
+    let placementKey: UInt64
+    /// 次に配る通し番号 (``placementKey``)。面を作るたびに進める。
+    private static var nextPlacementKey: UInt64 = 0
 
     /// 自分を置いた面。**自分の絵が変わる前に、そちらへ置いた時点の絵を写させる**
     /// (``settlePlacersBeforeChange()``)。
@@ -1953,6 +1968,8 @@ public final class Canvas {
             throw .invalidPixelDensity(pixelDensity)
         }
         self.output = output
+        Self.nextPlacementKey &+= 1
+        placementKey = Self.nextPlacementKey
         // **近いほうへ丸め、1 画素は必ず残す。** 出す先と同じ大きさになったら段は
         // 立てない — 等倍の拡大は絵を変えないのに、置き場と 1 段ぶんの費用だけ増える
         let drawn = Self.drawnSize(of: output, at: pixelDensity)
@@ -2588,27 +2605,31 @@ public final class Canvas {
     /// ``beginDraw()`` で開いたまま閉じ忘れて境目を越えたフレームは、捨ててから始める
     /// (``beginDraw()`` の説明。描き場所の閉じ忘れは、本体のフレームの頭が先に捨てている)。
     ///
-    /// **この面の形の組み立て (``createShape(_:)``) の中で開いたフレームは、閉包の終わりでは閉じない**
-    /// ([#1855])。``endDraw()`` と同じく 1 度注意して、組み立ての出口 (入れ子なら一番外) で閉じる。閉包の
-    /// 中で組み立てたものは形に入り、フレームには描かれない。描き切れなかったときは、出口から投げずに
-    /// 理由を知らせる。
+    /// **この面の形の組み立て (``createShape(_:)``) の中では、フレームを始めない** ([#2201])。そこで
+    /// フレームを始めることになるとき (フレームの外に居る・``beginDraw()`` で開いたまま境目を越えた・
+    /// 組み立ての中で ``endDraw()`` を呼んで閉じるのを待たせた) は、1 度注意して `body` を組み立ての続きと
+    /// して走らせる。中で描いたものは形に入り、フレームは開かない。始めると、開いたままのフレームを閉じ
+    /// 忘れとして捨てるか、フレームの頭の検めがそれまでの記録を「フレームの外で置いたもの」として捨て、
+    /// 形が空になっていた。組み立ての前に開いたフレームが続いているなら、上のとおりその続きとして走る。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-    /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     public func draw(_ body: () -> Void) throws(RenderFailure) {
+        if startsFrameInsideShape {
+            warnInsideShape(.frameStart)
+            body()
+            return
+        }
         if isDrawing, !leftOpenAcrossBoundary {
             warnFrameCallInsideFrame("draw")
             body()
             return
         }
+        // ここへ来るのは組み立ての外だけで (上の守り)、閉包の中の組み立ては閉包の中で閉じる。だから閉包の
+        // 終わりで閉じるのを組み立ての出口まで待たせる場合 (#1855 の案 G) は、もう無い
         beginFrame()
         body()
-        // **自分の形の組み立ての中では、ここで閉じない** ([#1855] の案 G を閉包の終わりにも当てる)。
-        // 閉じる描き切りが組み立ての区間を空にし、形が空になっていた (`endDraw()` と同じ場所)
-        //
-        // [#1855]: https://github.com/mokume-metal/mokume/issues/1855
-        guard !recordingShape else { return awaitFrameEndInsideShape() }
         try endFrame()
     }
 
@@ -2668,6 +2689,13 @@ public final class Canvas {
     /// - ``draw(_:)`` が開いたフレームの中で呼んだ。そのフレームは ``draw(_:)`` が自分で閉じる
     /// - 描き場所で、同じ本体のフレームの中で `beginDraw()` を重ねた (補助の関数の入れ子など)
     ///
+    /// **この面の形の組み立て (``createShape(_:)``) の中では、フレームを始めない** ([#2201])。そこで
+    /// フレームを始めることになるとき (フレームの外に居る・閉じ忘れたまま境目を越えた・組み立ての中で
+    /// ``endDraw()`` を呼んで閉じるのを待たせた) は、1 度注意して何もしない。始めると、閉じ忘れたフレーム
+    /// として捨てるか、フレームの頭の検めがそれまでの記録を「フレームの外で置いたもの」として捨て、形が
+    /// 空になっていた。フレームを開くのは組み立ての前か後にする。断るのは組み立てている面自身のフレーム
+    /// だけで、別の面の組み立ての中で描き場所を開くのは今までどおりである。
+    ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
@@ -2675,7 +2703,10 @@ public final class Canvas {
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     public func beginDraw() {
+        // **組み立ての中では、組み立てている面のフレームを始めない** ([#2201])。捨てる道へ入る前に見る
+        if startsFrameInsideShape { return warnInsideShape(.frameStart) }
         // 閉じ忘れたまま境目を越えたフレームだけを捨てる。越えていない重ね呼びで捨てると、
         // 本体の面の `draw()` で `canvas.beginDraw()` を呼んだだけで、あるいは補助の関数が
         // 同じフレームで描き場所を開き直しただけで、それまでに描いたものが消える
@@ -2708,6 +2739,25 @@ public final class Canvas {
         return timebase.owner === self || opened < timebase.frame
     }
 
+    /// この面の形の組み立ての中で、いまフレームを開く口 (``beginDraw()``・``draw(_:)``) を通すと、
+    /// フレームを始めることになるか ([#2201])。立っていれば、口は始めずに断る (``InsideShape/frameStart``)。
+    ///
+    /// 始めることになるのは、フレームの外に居るとき・閉じ忘れたまま境目を越えたとき (持ち主の面では
+    /// `beginDraw()` で開いたフレームがいつもこれに当たる)・組み立ての中で閉じるのを待たせたとき
+    /// (``frameEndAwaitingShape``) である。どれもフレームの頭 (``beginFrame()``) へ入り、開いたままの
+    /// フレームを閉じ忘れとして捨てるか、頭の検めが組み立ての記録を「フレームの外で置いたもの」として
+    /// 捨てていた。組み立ての前に開いたフレームが続いているなら (``draw(_:)`` の中・同じ本体のフレームの
+    /// 中の描き場所) 立たず、口は今までどおりその続きとして扱う。
+    ///
+    /// 見るのは**この面の**組み立てだけである (``recordingShape`` は面ごと)。別の面の組み立ての中で
+    /// 描き場所を開いて閉じるのは今までどおりで、本体の頭が組み立て中の描き場所の閉じ忘れを捨てる形は
+    /// 出口の安全網に残る (``InsideShape/drawnOut``)。
+    ///
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    private var startsFrameInsideShape: Bool {
+        recordingShape && (!isDrawing || leftOpenAcrossBoundary || frameEndAwaitingShape)
+    }
+
     /// 描き場所へ描き切る。**投げない。**
     ///
     /// 毎フレーム呼ばれるので、1 段の失敗でフレームごと落とさない ([ADR-0020]
@@ -2718,17 +2768,26 @@ public final class Canvas {
     ///
     /// **この面の形の組み立て (``createShape(_:)``) の中で呼ぶと、そこでは閉じない** ([#1855])。1 度
     /// 注意して、組み立ての出口 (入れ子なら一番外) で閉じる。それまでに組み立てたものは形に入り、
-    /// フレームには描かれない。**出口までは、この面はまだ描いている扱いである** — 組み立ての残りで
-    /// ``beginDraw()`` を呼ぶと、開いたフレームが続いていると注意して何もせず、別の面へ置く
-    /// (`image(pg)` など) と、描き切る前の絵 (前のフレームまでの絵) を読む。
+    /// フレームには描かれない。**出口までは、この面はまだ描いている扱いである** — 別の面へ置く
+    /// (`image(pg)` など) と、描き切る前の絵 (前のフレームまでの絵) を読む。組み立ての残りで
+    /// ``beginDraw()`` か ``draw(_:)`` を呼んでも、持ち主の面でも描き場所でもフレームを始め直さず、注意して
+    /// 断る ([#2201])。
+    ///
+    /// 組み立ての中で閉じるフレームが無いとき (組み立ての中の ``beginDraw()`` が始めなかったとき) も、
+    /// 同じ注意で断る。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     public func endDraw() {
         guard isDrawing else {
             // 捨てたことを名乗るのは 1 度だけ。2 度目からは、`beginDraw()` を書いていない誤りである
-            guard droppedAtTheMainFrame else { return warnNotDrawing() }
+            guard droppedAtTheMainFrame else {
+                // 組み立ての中なら、対の `beginDraw()` が始めなかったフレームである (#2201)。「`beginDraw()`
+                // より前」とは言わず、始めなかった注意と同じ鍵で言う
+                return recordingShape ? warnInsideShape(.frameStart) : warnNotDrawing()
+            }
             droppedAtTheMainFrame = false
             return warnEndDrawAfterFrameDropped()
         }
@@ -2894,12 +2953,14 @@ public final class Canvas {
     /// 形の組み立ての中で閉じようとした自分のフレームを、一番外の組み立ての出口まで待たせているか
     /// ([#1855] の案 G)。
     ///
-    /// 立てるのは組み立ての中で自分のフレームを閉じる 2 口 — ``endDraw()`` と、組み立ての中で開いた
-    /// ``draw(_:)`` の閉包の終わり — だけ (``awaitFrameEndInsideShape()``)。下ろすのは一番外の出口が
+    /// 立てるのは組み立ての中で自分のフレームを閉じる ``endDraw()`` だけ (``awaitFrameEndInsideShape()``)。
+    /// ``draw(_:)`` は組み立ての中ではフレームを始めない ([#2201]) ので、閉包の終わりで閉じるフレームが
+    /// 組み立ての中に残ることは無い。下ろすのは一番外の出口が
     /// フレームを閉じるとき (``closeFrameAwaitingShape()``) と、フレームの外へ出たとき (``leaveFrame()``。
     /// 待たせている間にフレームが捨てられたら、閉じるものはもう無い)。
     ///
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     private(set) var frameEndAwaitingShape = false
 
     /// 組み立ての中で自分のフレームを閉じようとした口が、閉じずに出口まで待たせる ([#1855] の案 G)。
@@ -2915,8 +2976,7 @@ public final class Canvas {
     /// 状態を戻した後に呼ぶ** — 閉じる側 (``abandonFrame()``) が既定へ戻した値を、出口が組み立て前の
     /// 値で書き戻さない。
     ///
-    /// ``endDraw()`` を通さずに閉じる。待たせた口が `draw { }` の閉包の終わりなら、開いたのは
-    /// `draw { }` で、``endDraw()`` は「`draw { }` が閉じる」と断る。どちらの口でも、閉じるのは
+    /// ``endDraw()`` を通さずに閉じる (組み立ての中ではそこが閉じずに待たせるため)。閉じるのは
     /// ``endDraw()`` と同じく投げない (出口は投げられない) — 描き切れなければ理由を知らせ、前の絵が残る。
     ///
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
@@ -3223,7 +3283,7 @@ public final class Canvas {
         // **記録済みなら相手へは載せ直さない** (#1683 の反証 2 回目)。貼る絵の記録は置くたびに
         // 来るので、相手の `placers` を毎回探さない。こちらの記録と相手の `placers` は組で、
         // 相手が `placers` を空にするときはこちらの記録も落とす (``keepPicture(placedFrom:)``)
-        guard placedGraphics.insert(ObjectIdentifier(graphics)).inserted else { return }
+        guard placedGraphics.insert(graphics.placementKey).inserted else { return }
         graphics.note(placedBy: self)
     }
 
@@ -3280,7 +3340,7 @@ public final class Canvas {
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     private func keepPicture(placedFrom graphics: Canvas) {
-        let placed = ObjectIdentifier(graphics)
+        let placed = graphics.placementKey
         guard placedGraphics.contains(placed) else { return }
         // **相手の `placers` から外れたので、こちらの記録も落とす。** 記録が残ったままだと、
         // 次に置いたとき記録済みとして相手へ載せ直さず (``note(placing:)``)、相手が次に変わる
@@ -3324,7 +3384,7 @@ public final class Canvas {
     ///
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     func keepPictureWithoutFlushing(placedFrom graphics: Canvas) -> Bool {
-        let placed = ObjectIdentifier(graphics)
+        let placed = graphics.placementKey
         guard placedGraphics.contains(placed) else { return true }
         // **畳む雛形を組み立てている途中なら写さない。** 写すときに列を閉じるので、組み立て途中の頂点が
         // ふつうの列として閉じ、雛形から抜け落ちる
@@ -3486,7 +3546,7 @@ public final class Canvas {
     var isPlacedInAShapeInProgress: Bool {
         guard upscaleStage == nil else { return false }
         for entry in placers {
-            guard let canvas = entry.canvas, canvas.placedGraphics.contains(ObjectIdentifier(self))
+            guard let canvas = entry.canvas, canvas.placedGraphics.contains(placementKey)
             else { continue }
             if canvas.recordingShape { return true }
         }

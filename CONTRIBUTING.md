@@ -57,6 +57,8 @@ mokume-cli run
 
 渡した場所は生成される `Package.swift` の `.package(path:)` へそのまま入るので、**作られるスケッチから見た相対**で書く (絶対パスでもよい)。`--local` を付けなければ、公開済みの版を引く。
 
+道具を作ってスケッチで確かめるところまでは Command Line Tools で足りる。**`make ci-check` のうち `shaders` (`xcrun metal`) と `reference` (`xcrun docc`) の段は Xcode が要り**、`shaders` はさらに Metal Toolchain (Xcode の Settings → Components、または `xcodebuild -downloadComponent MetalToolchain`) が要る。スケッチを作る人には、どちらも要らない。
+
 ## 設計の背景
 
 - 土台となる原則: [ADR-0001 設計原則](docs/decisions/0001-founding-principles.md)

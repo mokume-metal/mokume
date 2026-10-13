@@ -16,14 +16,41 @@ import Foundation
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 nonisolated enum TextFile {
     /// ファイルを UTF-8 の文字として読む。先頭の BOM は落とす。
+    ///
+    /// **開けないことと、中身が UTF-8 でないことを分ける** (#2341)。場所が分かっても開けない
+    /// (ディレクトリだった・読む権利が無い) のは置き場か権利の問題で、
+    /// ``DataFailure/unopenable(path:location:reason:)`` で、解けた場所 (`url`) と OS の事情を
+    /// 添えて投げる。``DataFailure/unreadable(path:)`` (UTF-8 で保存し直せ) は、開けた中身を
+    /// ``text(of:path:)`` が解けなかったときだけである。
     static func read(_ url: URL, path: String) throws(DataFailure) -> String {
         let data: Data
         do {
             data = try Data(contentsOf: url)
         } catch {
-            throw .unreadable(path: path)
+            throw .unopenable(
+                path: path, location: url.standardizedFileURL.path, reason: Self.openingReason(of: error))
         }
         return try text(of: data, path: path)
+    }
+
+    /// 開けなかった事情を、人が読む短い句にする。OS が名乗った事情 (`Is a directory`・
+    /// `Permission denied`) があればそれを、無ければ失敗そのものの説明を返す。
+    ///
+    /// **OS の事情は、失敗の番号から C の文面 (`strerror_r`) で引く。** Foundation の説明は
+    /// 言語の設定に左右されうるが、道具が話す言葉は英語で、設定で切り替えない ([ADR-0038]
+    /// 決定 1・2)。`strerror` ではなく `strerror_r` なのは、待たない口が別の thread で読むため。
+    ///
+    /// [ADR-0038]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0038-language-of-the-tool.md
+    private static func openingReason(of error: any Error) -> String {
+        let failure = error as NSError
+        guard let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError,
+            underlying.domain == NSPOSIXErrorDomain
+        else { return failure.localizedDescription }
+        var text = [CChar](repeating: 0, count: 256)
+        guard strerror_r(Int32(underlying.code), &text, text.count) == 0 else {
+            return failure.localizedDescription
+        }
+        return text.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
     }
 
     /// 受け取ったバイト列を UTF-8 の文字として解く。先頭の BOM は落とす。

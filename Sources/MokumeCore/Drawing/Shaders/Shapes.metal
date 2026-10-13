@@ -196,6 +196,8 @@ struct SolidStrokePiece {
     float4 b;
     float4 c;
 };
+// `forward.w` は画面の横 1 画素 ÷ 縦 1 画素の世界での長さ (縦横比を面と違えた投影で 1 でなくなる・#2176)、
+// `down.w` はその逆数。`right.w` は端の形の番号 (`SolidStrokePlacement.capCode`)。
 struct SolidStrokePlacement {
     float4x4 matrix;
     float4 eye;
@@ -207,6 +209,7 @@ struct SolidStrokePlacement {
     float4 uv;
 };
 
+/// その位置での、画面の縦 1 画素ぶんの世界での長さ。横は `forward.w` 倍 (CPU の `StrokeCamera.worldPerPixel`)。
 float solidStrokePixel(float3 p, constant SolidStrokePlacement &s) {
     if (s.eye.w != 0) {
         float depth = max(dot(p - s.eye.xyz, s.forward.xyz), s.parameters.z);
@@ -215,16 +218,33 @@ float solidStrokePixel(float3 p, constant SolidStrokePlacement &s) {
     return s.parameters.y / s.parameters.w;
 }
 
-/// 線分 a–b を画面に写したときの垂線の、画面の横と縦の成分 (長さ 1) を `normal` に入れる。
-/// CPU の `Canvas.screenNormal` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
+/// 見ている側へ寄せる量の 1 画素ぶんの長さ。画面の横と縦の長いほうで測る (CPU の `StrokeCamera.liftPerPixel`)。
+float solidStrokeLiftPixel(float3 p, constant SolidStrokePlacement &s) {
+    float vertical = solidStrokePixel(p, s);
+    return s.forward.w > 1 ? vertical * s.forward.w : vertical;
+}
+
+/// 画面の画素で測った成分 (横, 縦) の向きを、世界の向きにする。CPU の `StrokeCamera.world(_:)` と同じ式。
+float3 solidStrokeWorld(float2 screen, constant SolidStrokePlacement &s) {
+    return (s.right.xyz * s.forward.w) * screen.x + s.down.xyz * screen.y;
+}
+
+/// 視線に直交する面の中の世界の向きを、画面の画素で測った成分 (横, 縦) にする。CPU の
+/// `StrokeCamera.onScreen(_:)` と同じ式 (割り算は逆数の掛け算で持つ)。
+float2 solidStrokeOnScreen(float3 v, constant SolidStrokePlacement &s) {
+    return float2(dot(v, s.right.xyz) * s.down.w, dot(v, s.down.xyz));
+}
+
+/// 線分 a–b を画面に写したときの垂線の、画面の画素で測った成分 (横, 縦・長さ 1) を `normal` に入れる。
+/// CPU の `StrokeCamera.screenNormal` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
 bool solidStrokeNormal(float3 a, float3 b, constant SolidStrokePlacement &s, thread float2 &normal) {
     float3 along = b - a;
     float2 raw;
     if (s.eye.w != 0) {
         float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
-        raw = float2(dot(plane, s.right.xyz), dot(plane, s.down.xyz));
+        raw = float2(dot(plane, s.right.xyz) * s.forward.w, dot(plane, s.down.xyz));
     } else {
-        raw = float2(-dot(along, s.down.xyz), dot(along, s.right.xyz));
+        raw = float2(-dot(along, s.down.xyz) * s.forward.w, dot(along, s.right.xyz));
     }
     float size = length(raw);
     if (!(dot(along, along) > 0 && size > 0 && isfinite(size))) return false;
@@ -232,12 +252,12 @@ bool solidStrokeNormal(float3 a, float3 b, constant SolidStrokePlacement &s, thr
     return true;
 }
 
-/// 線分 a–b を画面に写したときの垂線を、世界の向き (長さ 1) で `side` に入れる。CPU の
-/// `Canvas.screenAcross` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
+/// 線分 a–b を画面に写したときの垂線を、世界の向き (画面の画素で長さ 1 の向きを世界へ直したもの) で
+/// `side` に入れる。CPU の `Canvas.screenAcross` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
 bool solidStrokeAcross(float3 a, float3 b, constant SolidStrokePlacement &s, thread float3 &side) {
     float2 normal;
     if (!solidStrokeNormal(a, b, s, normal)) return false;
-    side = s.right.xyz * normal.x + s.down.xyz * normal.y;
+    side = solidStrokeWorld(normal, s);
     return true;
 }
 
@@ -251,13 +271,15 @@ bool solidStrokeToward(float3 a, float3 b, constant SolidStrokePlacement &s, thr
     return true;
 }
 
-/// 画面の軸に沿った正方形の、6 頂点の並びの隅 (0…3) の向き。
+/// 画面の軸に沿った正方形の、6 頂点の並びの隅 (0…3) の向き。画面の画素で測った正方形を世界へ直す
+/// (CPU は `StrokeCamera.screenRight` と `down` で張る)。
 float3 solidStrokeSquareCorner(uint corner, constant SolidStrokePlacement &s) {
+    float3 screenRight = s.right.xyz * s.forward.w;
     switch (corner) {
-        case 0: return -s.right.xyz - s.down.xyz;
-        case 1: return s.right.xyz - s.down.xyz;
-        case 2: return s.right.xyz + s.down.xyz;
-        default: return -s.right.xyz + s.down.xyz;
+        case 0: return -screenRight - s.down.xyz;
+        case 1: return screenRight - s.down.xyz;
+        case 2: return screenRight + s.down.xyz;
+        default: return -screenRight + s.down.xyz;
     }
 }
 
@@ -561,7 +583,7 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             uint step = uint(piece.b.y) * 2 + (corner == 0 ? 0 : corner - 1);
             float2 unit = kSolidStrokeDisc[step];
             world = corner == 0 ? placed.center
-                : placed.center + (s.right.xyz * unit.x + s.down.xyz * unit.y) * radius;
+                : placed.center + solidStrokeWorld(unit, s) * radius;
         }
     } else {
         // 網の点の半分 (#1644・#1889・#1893)。形は点の記録から決める (`solidStrokeCornerShape`)
@@ -577,7 +599,8 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             // 出っ張らせる端。CPU の `appendSolidSquare(at:awayFrom:shape:half:camera:)` と同じ 2 軸
             float3 right;
             if (solidStrokeAcross(placed.far1, center, s, right)) {
-                float3 down = s.right.xyz * -dot(right, s.down.xyz) + s.down.xyz * dot(right, s.right.xyz);
+                float2 onScreen = solidStrokeOnScreen(right, s);
+                float3 down = solidStrokeWorld(float2(-onScreen.y, onScreen.x), s);
                 switch (corner) {
                     case 0: world = center + (-right - down) * radius; break;
                     case 1: world = center + (right - down) * radius; break;
@@ -605,7 +628,7 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
                 && solidStrokeToward(ownOrigin, own, s, armOwn) && solidStrokeToward(otherOrigin, other, s, armOther);
             float2 inward = armOwn + armOther;
             if (built && !(inward.x == 0 && inward.y == 0)) {
-                float2 sideOwn = float2(dot(acrossOwn, s.right.xyz), dot(acrossOwn, s.down.xyz));
+                float2 sideOwn = solidStrokeOnScreen(acrossOwn, s);
                 // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.y`)
                 float2 outerOwn = firstHalf ? float2(-armOwn.y, armOwn.x) : float2(armOwn.y, -armOwn.x);
                 if (dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
@@ -629,15 +652,15 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
                 // 角のすぐ内側 (CPU の `joinRim` の周の最初の点)。角を片の内に入れる
                 float2 inner = normalize(inward) / 64;
                 switch (corner) {
-                    case 0: world = center + (s.right.xyz * inner.x + s.down.xyz * inner.y) * radius; break;
+                    case 0: world = center + solidStrokeWorld(inner, s) * radius; break;
                     case 1: world = center + edge; break;
-                    case 2: world = center + (s.right.xyz * cut.x + s.down.xyz * cut.y) * radius; break;
-                    default: world = center + (s.right.xyz * middle.x + s.down.xyz * middle.y) * radius; break;
+                    case 2: world = center + solidStrokeWorld(cut, s) * radius; break;
+                    default: world = center + solidStrokeWorld(middle, s) * radius; break;
                 }
             }
         }
     }
-    float lift = (s.parameters.x + 1) * solidStrokePixel(world, s);
+    float lift = (s.parameters.x + 1) * solidStrokeLiftPixel(world, s);
     if (s.eye.w != 0) {
         float3 toEye = s.eye.xyz - world;
         float distance = length(toEye);

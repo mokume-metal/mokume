@@ -522,14 +522,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         guard
             let shared = SharedFrameSurface.makeIfEnabled(
                 gpu: gpu, width: runtime.target.width, height: runtime.target.height,
-                windowScale: runtime.windowScale, at: directory, owner: owner)
+                windowScale: runtime.windowScale, at: directory, owner: owner,
+                warn: { announce($0) })
         else { return nil }
         do {
             try shared.publishManifest()
         } catch {
-            Diagnostics.warn(
+            announce(
                 "Could not place the identifiers of the surfaces frames go to: "
-                    + "\(error.localizedDescription) — opening a window and carrying on")
+                    + "\(Diagnostics.reason(error)) — opening a window and carrying on")
             return nil
         }
         return shared

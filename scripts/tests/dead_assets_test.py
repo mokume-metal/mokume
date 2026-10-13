@@ -5,7 +5,7 @@
 
 `scripts/report-dead-assets.sh` が持つのは**固定タイトルと本文**だけで、起票の手続きは
 `report-check-failure.sh` が 1 つ持つ (そちらの 6 点は `report_check_failure_test.py` が
-留める)。ここで固定するのは、この検査に固有の 5 つ:
+留める)。ここで固定するのは、この検査に固有の 6 つ:
 
   1. 固定タイトルが `fix(` で始まる — triage.sh は接頭辞から型を推定するので、ここが
      崩れると型の無い Issue になる。動いていた絵が読めなくなった事象なので Bug である
@@ -21,13 +21,20 @@
   5. 共通部品を通っている — 同名の Issue が open なら二重に立てない。ここが写しになると、
      片方だけが直ったときに黙って壊れる (ADR-0008 決定 6)
 
+6. リリースノートの絵の 404 が起票の本文まで届く (#2268) — 検査と発信を本物のまま通す dry-run。
+   実物の Release に 404 を混ぜずに、日次の publication が起票するところまでを確かめる
+
 偽 gh は PATH の先頭に置いた同型のスタブ (`ruleset_drift_test.py` と同じ形)。
 実行は make ci-check (CI もこれを呼ぶ)。
 """
 
+import http.server
+import json
 import os
+import socketserver
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -70,6 +77,7 @@ case "$1 $2" in
       *) json='{"labels":[]}' ;;
     esac ;;
   "issue edit") exit 0 ;;
+  "api repos/{owner}/{repo}/releases"*) cat "$FAKE_RELEASES"; exit 0 ;;
   *) exit 1 ;;
 esac
 if [ -n "$query" ]; then
@@ -188,6 +196,93 @@ class ReportDeadAssetsTest(unittest.TestCase):
         )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("死活検査の出力ファイルが無い", r.stderr)
+
+    def test_リリースノートの絵の_404_が起票の本文まで届く(self):
+        """#2268 の完了条件: 404 を 1 本混ぜたリリースノートで起票される。
+
+        検査 (check-external-assets.py) と発信 (report-dead-assets.sh) は本物で、差し替えるのは
+        Release を返す gh と、引かれる先 (手元の HTTP サーバ。dead.png だけ 404) だけ。
+        ワークフローと同じく検査の出力 (標準出力と標準エラー) を 1 本のログにして発信へ渡す。
+        """
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(handler):
+                handler.send_response(404 if handler.path.endswith("dead.png") else 200)
+                handler.send_header("Content-Length", "2")
+                handler.end_headers()
+                handler.wfile.write(b"ok")
+
+            def log_message(handler, *_):
+                pass
+
+        # HTTPServer は bind の後に名前を引き、CI の macOS で約 35 秒止まる (#1714)
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+
+        # 説明文の側に 1 本 (0 本だと検査が成立しない)。ノートの側は生きた 1 本と死んだ 1 本。
+        # 下書きの Release は数えない (そこにある 404 は起票に出ない)
+        work = self.dir / "work"
+        work.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=work, check=True)
+        # 使い捨てのリポジトリは手元の署名設定を継ぐ。継がせない (#344)
+        subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=work, check=True)
+        (work / "guide.md").write_text(f"![説明文の絵]({base}/ok.png)\n", encoding="utf-8")
+        subprocess.run(["git", "add", "guide.md"], cwd=work, check=True)
+        releases = self.dir / "releases.json"
+        releases.write_text(
+            json.dumps(
+                [
+                    {
+                        "tag_name": "v9.9.9",
+                        "draft": False,
+                        "body": "## 修正\n\n- 直した\n\n## この版の絵\n\n"
+                        "### [#77 fix: 絵](https://github.com/example/repo/pull/77)\n\n"
+                        f"![生きている]({base}/alive.png)\n![死んでいる]({base}/dead.png)\n",
+                    },
+                    {
+                        "tag_name": "v9.9.8",
+                        "draft": True,
+                        "body": f"## この版の絵\n\n### #1\n\n![下書き]({base}/draft-dead.png)\n",
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env.update(
+            {
+                "PATH": f"{self.bin_dir}:{env['PATH']}",
+                "FAKE_GH_LOG": str(self.log),
+                "FAKE_RELEASES": str(releases),
+                "no_proxy": "127.0.0.1",
+            }
+        )
+        check = subprocess.run(
+            ["python3", str(REPO / "scripts" / "check-external-assets.py"), "--root", str(work)],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=work,
+        )
+        self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
+        log = check.stdout + check.stderr
+        self.assertIn("直近 1 版のうち 1 版に 2 本", log)
+        self.assertIn(f"{base}/dead.png", log)
+        self.assertIn("Release v9.9.9 (#77)", log)
+        self.assertNotIn("alive.png", log.split("引けなかった指し先と出所")[-1])
+        self.assertNotIn("draft-dead.png", log)
+
+        r = self.report(assets=log)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue create", self.gh_log())
+        body = self.body.read_text()
+        self.assertIn(f"{base}/dead.png", body)
+        self.assertIn("Release v9.9.9 (#77)", body)
+        self.assertIn("gh release edit", body)
 
 
 if __name__ == "__main__":

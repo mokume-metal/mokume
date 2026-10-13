@@ -15,13 +15,134 @@ extension Sketch {
     /// **読み込みは投げる。** 読めなかったときに別の道を選ぶ判断が要るので、黙って
     /// 既定へ倒さない。見つからないときの説明には**探した場所**が載る。
     ///
-    /// > Note: この口には例の絵が付いていない。読む先のファイルが要るが、このリポジトリは
-    /// > 生成物・バイナリを持たないためである。絵を手続きで作るなら ``createImage(_:_:)``
-    /// > か ``createGraphics(_:_:)`` を見ること — そちらには絵が付いている。
-    ///
-    /// 名前は、作業ディレクトリと**実行ファイルの隣に置かれた資材の包み**から探す。
+    /// 名前は、作業ディレクトリと**実行ファイルの隣に置かれた資材の包み**から探す
+    /// (`/` で始まる名前は、その場所だけを読む)。
     /// スケッチのパッケージが資材の置き場を宣言していないと、ビルドは静かに通って
     /// 実行時に読めないだけになるので、宣言を確かめること。
+    ///
+    /// **読んだ絵は、ファイルの画素数のまま置かれる。** 下の 3 枚は、右へ行くほど赤く、
+    /// 下へ行くほど青い絵を例がその場で PNG に書き出し、読んで ``image(_:_:_:)-(Image,_,_)``
+    /// で等倍に置いたもので、変えたのは書き出す絵の縦横だけである。下の文字は、読んだ絵の
+    /// ``Image/width`` と ``Image/height``。このリポジトリは画像のファイルを持たないので、
+    /// 読む先は例が自分で作っている。絵を手続きで作るだけなら、書き出さずに
+    /// ``createImage(_:_:)`` で作れる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image? -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         // 横 120・縦 80 画素の絵を、一時ディレクトリへ PNG で書き出す
+    ///         let (w, h) = (120, 80)
+    ///         var bytes: [UInt8] = []
+    ///         for y in 0..<h {
+    ///             for x in 0..<w {
+    ///                 bytes += [UInt8(255 * x / (w - 1)), 90, UInt8(255 * y / (h - 1)), 255]
+    ///             }
+    ///         }
+    ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
+    ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
+    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///
+    ///         tile = try? loadImage(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         guard let tile else { return }
+    ///         image(tile, 40, 40)
+    ///         fill(242, 242, 242)
+    ///         textSize(24)
+    ///         text("\(tile.width) × \(tile.height)", 40, 270)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 右へ行くほど赤く、下へ行くほど青い横 120・縦 80 画素の絵が等倍で置かれ、下に 120 × 80 と出る -->
+    ///     ![右へ行くほど赤く、下へ行くほど青い横 120・縦 80 画素の絵が等倍で置かれ、下に 120 × 80 と出る](https://i.gyazo.com/6a1fc85b39b44b4d02d24a48f4fb623d.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image? -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         // 横だけ 2 倍の 240 画素にする
+    ///         let (w, h) = (240, 80)
+    ///         var bytes: [UInt8] = []
+    ///         for y in 0..<h {
+    ///             for x in 0..<w {
+    ///                 bytes += [UInt8(255 * x / (w - 1)), 90, UInt8(255 * y / (h - 1)), 255]
+    ///             }
+    ///         }
+    ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
+    ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
+    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///
+    ///         tile = try? loadImage(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         guard let tile else { return }
+    ///         image(tile, 40, 40)
+    ///         fill(242, 242, 242)
+    ///         textSize(24)
+    ///         text("\(tile.width) × \(tile.height)", 40, 270)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 横だけ 240 画素にして書き出すと、置かれた絵も高さはそのままで横幅が 2 倍になり、下に 240 × 80 と出る -->
+    ///     ![横だけ 240 画素にして書き出すと、置かれた絵も高さはそのままで横幅が 2 倍になり、下に 240 × 80 と出る](https://i.gyazo.com/6760474cf06f998d5c964f883273a83c.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image? -->
+    ///     ```swift
+    ///     import Foundation
+    ///
+    ///     func setup() {
+    ///         // 縦だけ 2 倍の 160 画素にする
+    ///         let (w, h) = (120, 160)
+    ///         var bytes: [UInt8] = []
+    ///         for y in 0..<h {
+    ///             for x in 0..<w {
+    ///                 bytes += [UInt8(255 * x / (w - 1)), 90, UInt8(255 * y / (h - 1)), 255]
+    ///             }
+    ///         }
+    ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
+    ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
+    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///
+    ///         tile = try? loadImage(path)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(23, 26, 31)
+    ///         guard let tile else { return }
+    ///         image(tile, 40, 40)
+    ///         fill(242, 242, 242)
+    ///         textSize(24)
+    ///         text("\(tile.width) × \(tile.height)", 40, 270)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 縦だけ 160 画素にして書き出すと、置かれた絵も横幅はそのままで高さが 2 倍になり、下に 120 × 160 と出る -->
+    ///     ![縦だけ 160 画素にして書き出すと、置かれた絵も横幅はそのままで高さが 2 倍になり、下に 120 × 160 と出る](https://i.gyazo.com/3b4f35e8384933aacf3a4991d3b59f0a.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// **読んだ絵の成分は、面が表せる範囲へ移る。** 数でない成分・無限の成分はそのまま残り (図形を描く
     /// 経路が面へ移すときと同じ)、有限の成分は面が表せる ±65504 で止まる。浮動小数の絵 (TIFF・
@@ -36,7 +157,9 @@ extension Sketch {
     /// ということでもある。走らせたままファイルを差し替えれば、次の読み込みからそちらが出る。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
-    // shot: 撮れない 読む先の画像ファイルが要る (このリポジトリは画像を持たず、撮る側は例の import を通さないので、例が自分で書き出して読むこともできない・#2216)
+    // shot: 1 snippet=33373ac5
+    // shot: 2 snippet=57be30b4
+    // shot: 3 snippet=78ae8dd3
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         try canvas.loadImage(path)
     }
@@ -79,8 +202,10 @@ extension Sketch {
     /// スケッチが終わった後に届いても落ちない。絵はそのまま返り、置く ``draw()`` が
     /// もう来ないだけである。
     ///
-    /// > Note: ``loadImage(_:)`` と同じ理由で、この口にも例の絵は付いていない。
-    // shot: 撮れない 読む先の画像ファイルが要り (loadImage と同じ理由)、絵が届くまでのフレームにも依る
+    /// > Note: 届いた絵の見え方は ``loadImage(_:)`` と同じなので、絵はそちらを見ること。
+    /// > 何枚目のフレームで届くかは絵の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
+    /// > ずれうるので、この口だけの絵は撮っていない。
+    // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
         try await Self.requireLoadingCanvas("requestImage(_:)").requestImage(path)
     }

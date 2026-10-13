@@ -24,9 +24,9 @@ mokume は、Processing や p5.js の書き方で絵と動きをつくる、Swif
 
 ## 必要な環境
 
-Apple Silicon の Mac、macOS 26 以降、Xcode 26 以降と [Homebrew](https://brew.sh) が必要です。
+Apple Silicon の Mac と macOS 26 以降が必要です。
 
-Xcode 26 では Metal Toolchain を別にインストールします (Xcode の Settings → Components、または `xcodebuild -downloadComponent MetalToolchain`)。入っていないと、ビルドが `unable to spawn process 'metal'` で失敗します。
+スケッチのビルドには Command Line Tools (26 以降) を使い、Xcode は要りません。Command Line Tools は [Homebrew](https://brew.sh) を入れるときに一緒に入ります。Homebrew を使わない場合は `xcode-select --install` で入れてください。
 
 ## インストール
 
@@ -123,7 +123,7 @@ mokume render --fps 60 --seconds 4 --out motion.mov
 }
 ```
 
-`Package.swift` で宣言したリソースも同梱されます。`mokume-app.json` は `mokume new` では作られません。識別子は macOS が権限の許可を覚えるときの鍵になるので、作品ごとに付けてください。
+`Package.swift` で宣言したリソースも同梱されます。`mokume-app.json` は `mokume new` では作られません。識別子は macOS が権限の許可を覚えるときの鍵になるので、作品ごとに付けてください。`name` は `.app` と隣にできる開き方の紙のファイル名にもなるので、`/` は使えません (含めると組み立ての前に止まります)。
 
 標準では ad-hoc 署名のため、受け取った人が初めて開くときは macOS にブロックされ、「システム設定」→「プライバシーとセキュリティ」の「このまま開く」から開く必要があります。その手順を書いた `<name> を開くには.txt` が `.app` の隣にできるので、一緒に渡してください。
 

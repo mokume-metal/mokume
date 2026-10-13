@@ -49,11 +49,27 @@ enum BundleCommand {
     struct Options {
         var path: String
         var out: String?
+
+        /// スケッチの場所。**走らせた場所から解いた絶対パス** (``GivenPath``) — `dump-package`
+        /// と `swift build` の作業ディレクトリへこのまま渡る (#2314)。
+        ///
+        /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
+        func directory(from base: URL = GivenPath.currentDirectory) -> URL {
+            GivenPath.resolve(path, from: base)
+        }
+
+        /// 置き場。渡されなければ `nil` (スケッチの下の ``defaultOutputDirectory``)。
+        /// **場所と同じく、走らせた場所から解いた絶対パス** (``GivenPath``)。
+        ///
+        /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
+        func outDirectory(from base: URL = GivenPath.currentDirectory) -> URL? {
+            out.map { GivenPath.resolve($0, from: base) }
+        }
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let options = try parse(arguments)
-        let directory = URL(fileURLWithPath: options.path, isDirectory: true)
+        let directory = options.directory()
         guard
             FileManager.default.fileExists(
                 atPath: directory.appendingPathComponent("Package.swift").path)
@@ -79,7 +95,7 @@ enum BundleCommand {
             configuration: configuration, place: .inPackage(.packaging), product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
         let out =
-            options.out.map { URL(fileURLWithPath: $0, isDirectory: true) }
+            options.outDirectory()
             ?? directory.appendingPathComponent(defaultOutputDirectory, isDirectory: true)
 
         let app = try assemble(
@@ -90,7 +106,7 @@ enum BundleCommand {
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
         try sign(app, as: signature, entitlements: identity.entitlements)
         let note = try writeOpeningNote(for: identity, beside: app)
-        print(report(for: app, note: note, signedAs: signature))
+        print(report(for: app, package: directory, note: note, signedAs: signature))
     }
 
     // MARK: - 引数
@@ -114,10 +130,28 @@ enum BundleCommand {
     ///
     /// **作り直しは消してから。** 前の版の資材が残ると、消したはずのものが配られる —
     /// しかも手元では動くので気付けない。
+    ///
+    /// **消してよいのは、`--out` の直下にある `<name>.app` だけである** (そこに在るものを前の版の
+    /// 自分の出力とみなす。中身が自分のものかまでは確かめない)。名前から作った場所がそこを
+    /// 外れていたら、何も消さずに投げる。名前の `/` は名乗りを読む段
+    /// (``AppIdentity/make(from:path:)``) が断るが、ここはそれに頼らない — 名乗りを通らずに
+    /// 組んだ `AppIdentity` でも `--out` の外を消さない。`..` を含む名前で `--out` の外にある
+    /// `.app` を中身ごと消していた ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
     static func assemble(
         executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL
     ) throws(CommandFailure) -> URL {
-        let app = out.appendingPathComponent("\(identity.name).app", isDirectory: true)
+        let fileName = "\(identity.name).app"
+        let app = out.appendingPathComponent(fileName, isDirectory: true)
+        // 最後の部品が名前そのもので (`a/../b` は `b.app` に畳まれるので外れる)、親が `--out`
+        guard app.lastPathComponent == fileName,
+            app.deletingLastPathComponent().standardizedFileURL.path
+                == out.standardizedFileURL.path
+        else {
+            throw .cannotCreate(
+                path: app.path,
+                reason: "It would not sit directly inside \(out.path), so nothing was removed"
+                    + " or written. The name must not contain \"/\"")
+        }
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
         let programs = contents.appendingPathComponent("MacOS", isDirectory: true)
         let resources = contents.appendingPathComponent("Resources", isDirectory: true)
@@ -282,8 +316,17 @@ enum BundleCommand {
     /// **どちらの段で署名したかを名乗る。** 名前のある署名を当てただけでは受け取った側の
     /// 往復は消えないので、名乗らないと「署名したのだから開くはず」と読まれる。
     ///
+    /// **確かめ方の行は、走らせた場所からそのまま貼って動く形にする** (#2320)。退避するのは
+    /// スケッチの `.build` (束ねるときの置き場はパッケージ直下に固定 — ``BuildDirectory/Fallback/packaging``)
+    /// なので、`.build` と書くと走らせた場所がスケッチでないときに別の場所を指す。場所は
+    /// 絶対パスで名指しし、シェルの 1 語に包む (``GivenPath/shellWord(_:)``)。
+    ///
+    /// - Parameter package: 束ねたスケッチの場所 (絶対パス)。
+    ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-    static func report(for app: URL, note: URL, signedAs signature: String?) -> String {
+    static func report(for app: URL, package: URL, note: URL, signedAs signature: String?)
+        -> String
+    {
         """
         Bundled: \(app.path)
 
@@ -296,10 +339,17 @@ enum BundleCommand {
 
         Before sending, check that nothing still resolves through the author's environment:
 
-          mv .build .build-held && open "\(app.path)" ; mv .build-held .build
+          \(checkLine(for: app, package: package))
 
         If it still draws with .build moved aside, the bundle carries all it needs.
         """
+    }
+
+    /// 確かめ方の 1 行。スケッチの `.build` を退避して `.app` を開き、戻す。
+    static func checkLine(for app: URL, package: URL) -> String {
+        let build = GivenPath.shellWord(package.appendingPathComponent(".build"))
+        let held = GivenPath.shellWord(package.appendingPathComponent(".build-held"))
+        return "mv \(build) \(held) && open \(GivenPath.shellWord(app)) ; mv \(held) \(build)"
     }
 
     /// どちらの段で署名したかを 1 行で言う。

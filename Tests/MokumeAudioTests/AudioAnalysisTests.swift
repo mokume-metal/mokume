@@ -90,13 +90,16 @@ struct AudioAnalysisTests {
         #expect(wrapped[AudioAnalysis.windowSize - 501] == 2000)
     }
 
-    @Test("同じ時刻からは、いつも同じ窓が切り出される")
-    func sameTimeSameWindow() {
-        let samples = sine(band: 3, count: 10_000)
-        for time in [0.0, 0.1, 1.0 / 60, 0.123456] {
-            #expect(
-                AudioAnalysis.window(of: samples, sampleRate: 48_000, endingAt: time)
-                    == AudioAnalysis.window(of: samples, sampleRate: 48_000, endingAt: time))
-        }
+    /// **標本の間に落ちる時刻は、その時刻までに届いた標本で切る** (切り捨て)。上の検査は
+    /// 積が整数になる時刻しか使わないので、丸めの向きはここで固める。AudioIn と SoundFile の
+    /// 検査は期待値をこの関数で作るので、向きを取り違えても両辺が揃って動き、気付けない
+    /// (#2283)。
+    @Test("標本の間に落ちる時刻は、そこまでに届いた標本で終わる")
+    func fractionalTimesEndAtTheLastArrivedSample() {
+        let samples = (1...2000).map(Float.init)
+        // 500.4 標本ぶん: 500 標本目までが届いている
+        #expect(AudioAnalysis.window(of: samples, sampleRate: 1000, endingAt: 0.5004).last == 500)
+        // 499.6 標本ぶん: 500 標本目はまだ届いていない
+        #expect(AudioAnalysis.window(of: samples, sampleRate: 1000, endingAt: 0.4996).last == 499)
     }
 }

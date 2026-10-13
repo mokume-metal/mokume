@@ -20,7 +20,9 @@ import mokume
 ///
 /// [#1286]: https://github.com/mokume-metal/mokume/issues/1286
 final class TimeAndScrub: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "time and scrub")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "time and scrub")
+    }
 
     /// 1 巡の長さ (秒)。
     static let length: Float = 12
