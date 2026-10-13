@@ -395,7 +395,7 @@ struct WatchSessionTests {
 
         // 走らせるものが無い (裏側。いままでどおり)
         let absent = directory.appendingPathComponent("absent")
-        #expect(throws: CommandFailure.noExecutable(path: absent.path)) {
+        #expect(throws: CommandFailure.executableVanished(path: absent.path)) {
             try hooks.launch(absent, directory, nil, nil)
         }
     }

@@ -285,9 +285,7 @@ enum RunCommand {
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
         // (先に消せていないので「いま建った」までは言えないが、他人の産物も居ない)
-        let product =
-            context.product
-            ?? (try? dumpPackage(in: directory, running: running))?.executableProductName
+        let product = try productAfterBuild(context: context, in: directory, running: running)
         guard let product else {
             return Rebuilt(status: result.status, output: result.output, executable: nil,
                 binPath: bin, product: nil)
@@ -295,6 +293,19 @@ enum RunCommand {
         return Rebuilt(
             status: result.status, output: result.output,
             executable: builtExecutable(named: product, in: bin), binPath: bin, product: product)
+    }
+
+    /// 作り直しの後に使う product の名前。**宣言が読めていなければ、建った後に読み直す。**
+    ///
+    /// **読めなかった理由を捨てない** (#2575)。`try?` は起こせなかった・場所が使えない失敗を
+    /// `nil` に化かし、人には「走らせるものが無い (Package.swift を見よ)」と届いた。道具立てが
+    /// 答えなかった回 (0 以外での終了) は従来どおり `nil` — 宣言が読めないまま進む形である。
+    nonisolated static func productAfterBuild(
+        context: BuildContext, in directory: URL, running: RunningBuild? = nil
+    ) throws(CommandFailure) -> String? {
+        // `??` で畳まない。右辺が投げるので、誤りの型が `any Error` へ落ちる (ADR-0010 決定 7)
+        if let known = context.product { return known }
+        return try dumpPackage(in: directory, running: running)?.executableProductName
     }
 
     /// 作り直しが先に消してよい、置き場 `bin` の直下にある自分の前の産物。
@@ -463,19 +474,73 @@ enum RunCommand {
         return built
     }
 
+    /// パッケージの宣言を読んだ結果。
+    nonisolated enum Declaration: Equatable {
+        /// 読めた。
+        case declared(SwiftPM.Package)
+        /// 道具立てが答えなかった (0 以外で終わった)。`Package.swift` を道具立てが読めなかった
+        /// 回もここへ来る — 理由は道具立てが標準エラーで名乗っている。
+        case unanswered(status: Int32)
+        /// 0 で終わったが、出力が宣言として読めなかった (道具立てが JSON の形を変えた日)。
+        case unreadable
+
+        /// 道具立てが答えなかった回の名乗り。**宣言の不備として名乗らない** (#2483)。
+        var failure: CommandFailure? {
+            guard case .unanswered(let status) = self else { return nil }
+            return .toolchainFailed(command: RunCommand.dumpCommand, status: status)
+        }
+
+        /// 読めた宣言。**読めなければ `nil`** — 見張りが宣言の壊れた状態でも続けるための形。
+        var package: SwiftPM.Package? {
+            guard case .declared(let package) = self else { return nil }
+            return package
+        }
+    }
+
+    /// 宣言を読むために `swift` へ聞くこと。答えなかったときに名乗る。
+    nonisolated static let dumpCommand = "swift package dump-package"
+
     /// パッケージの宣言を読む。**読めなければ `nil`。**
+    ///
+    /// `nil` は「宣言が読めない」として見張りを続けるための形で、`run` / `watch` / `render` は
+    /// そのまま持ち回る (壊した状態から直していく途中は、まさに見張っていてほしい)。**読めなかった
+    /// 理由が要る口は ``declaration(in:running:)`` を使う** (`bundle` — #2483)。
     ///
     /// 起こすのは重い (数百 ms) ので、同じ実行の中で 2 度要るときは呼び手が持ち回る。
     nonisolated static func dumpPackage(
         in directory: URL, running: RunningBuild? = nil
     ) throws(CommandFailure) -> SwiftPM.Package? {
+        try declaration(in: directory, running: running).package
+    }
+
+    /// パッケージの宣言を読み、**読めなかった理由を分けて返す**。
+    ///
+    /// 起こせなかった・場所が使えない・道具立てが無い回は、子を起こす口が読み分けたとおり投げる。
+    /// 道具立てが答えなかった回 (0 以外での終了) と、答えたが読めない回は、値で返す — 続けるか
+    /// 止めるかは呼び手が決める。
+    nonisolated static func declaration(
+        in directory: URL, running: RunningBuild? = nil
+    ) throws(CommandFailure) -> Declaration {
         // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
-        // nil になる (#731)
-        let dump = try swift(
+        // 読めなくなる (#731)
+        let answer = try swift(
             ["package", "dump-package"], in: directory, capturing: true, errors: .inherit,
-            running: running
-        ).output
-        return SwiftPM.package(inDumpOf: dump)
+            running: running)
+        return declaration(from: answer)
+    }
+
+    /// `dump-package` の答えを読む。**検査から偽の子の答えを渡せる形にしてある。**
+    ///
+    /// **終了コードを先に見る。** 0 以外で終わった回の出力は JSON でなく、`nil` に畳むと、
+    /// 道具立てが答えなかったことが「宣言が読めない」→「走らせるものが無い」と読み替わる
+    /// ([#2483](https://github.com/mokume-metal/mokume/issues/2483)・`binPath(from:asking:)` と
+    /// 同じ根)。
+    nonisolated static func declaration(from answer: (status: Int32, output: String))
+        -> Declaration
+    {
+        guard answer.status == 0 else { return .unanswered(status: answer.status) }
+        guard let package = SwiftPM.package(inDumpOf: answer.output) else { return .unreadable }
+        return .declared(package)
     }
 
     /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。
@@ -504,9 +569,12 @@ enum RunCommand {
             try process.run()
         } catch {
             // **起こせなかった理由を、走らせるものの不在と決めつけない** (#2314 — 道具の側と
-            // 同じ読み替え)
+            // 同じ読み替え)。ここへ来る実行ファイルは宣言済みで、作り直しの直後に建ったことを
+            // 確かめたものなので、無いなら消えたのであって、`Package.swift` の宣言のせいではない
+            // (#2522)
             throw launchFailure(
-                of: process, error: error, executableMissing: .noExecutable(path: executable.path))
+                of: process, error: error,
+                executableMissing: .executableVanished(path: executable.path))
         }
         // **番号を置いてから印を見る。** 置く前に来た合図はハンドラが子へ撃てていないので、
         // ここで拾う。逆順にすると、見た後・置く前に来た合図を誰も子へ渡さない

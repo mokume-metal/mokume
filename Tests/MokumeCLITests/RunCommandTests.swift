@@ -294,10 +294,43 @@ struct RunCommandTests {
         ) {
             try RunCommand.launch(executable, in: missing)
         }
-        // 裏側。走らせるものが無ければ、いままでどおり
+        // 裏側。走らせるものが無ければ、無いと言う — ただし `Package.swift` を指さない (#2522)。
+        // `launch` に届く実行ファイルは宣言済みで、作り直しの直後に建ったことを確かめたもの
+        // なので、無いのは消えたのであって、宣言のせいではない
         let absent = missingPlace().appendingPathComponent("sketch")
-        #expect(throws: CommandFailure.noExecutable(path: absent.path)) {
+        #expect(throws: CommandFailure.executableVanished(path: absent.path)) {
             try RunCommand.launch(absent, in: executable.deletingLastPathComponent())
+        }
+    }
+
+    /// **起こした後の案内が、宣言を見直せと言わない** (#2522 の完了条件 4)。宣言から走らせる
+    /// ものを決められない回 (`bundle` など) の `noExecutable` は、`Package.swift` を指すのが
+    /// 正しいので変わらない。
+    @Test("起こす前に消えた実行ファイルは、Package.swift ではなく消えたことを名乗る")
+    func aVanishedExecutableDoesNotPointAtPackageSwift() {
+        let gone = CommandFailure.executableVanished(path: "/bin/sketch").message
+        #expect(gone.contains("/bin/sketch"))
+        #expect(gone.contains("gone"))
+        #expect(!gone.contains("Package.swift"))
+        #expect(CommandFailure.noExecutable(path: "/sketch").message.contains("Package.swift"))
+    }
+
+    /// **stat が通ることと、入れることは別である** (#2522)。自身に x の無いディレクトリは
+    /// `Presence.of` で `.directory` と読めるのに、`chdir` が `EACCES` で子を起こせない。
+    /// 起こせなかった理由 (`Permission denied`) は、`doctor` が名乗れるよう値として運ばれる。
+    @Test("探索権の無い作業ディレクトリでは、起こせなかった理由として入れないことを名乗る")
+    func aWorkingDirectoryWithoutSearchPermissionIsNamedByItsReason() throws {
+        let executable = try makeExecutable(exiting: 0)
+        let locked = executable.deletingLastPathComponent()
+            .appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        chmod(locked.path, 0)
+        defer { chmod(locked.path, 0o755) }
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: locked.path, reason: String(cString: strerror(EACCES)))
+        ) {
+            try RunCommand.launch(executable, in: locked)
         }
     }
 
@@ -384,7 +417,7 @@ struct RunCommandTests {
 
         // 裏側: 本当に無ければ、いままでどおり「走らせるものが無い」
         let absent = place.appendingPathComponent("absent")
-        #expect(reason(absent) == .noExecutable(path: absent.path))
+        #expect(reason(absent) == .executableVanished(path: absent.path))
     }
 
     /// **作り直しは通ったが、成果物に実行ビットが無い** (#2521 の反証)。作り直しは実行できる
@@ -1133,6 +1166,60 @@ struct RunCommandTests {
         #expect(throws: CommandFailure.toolchainFailed(command: "swift build --show-bin-path", status: 0)) {
             try RunCommand.binPath(from: (0, " \n"), asking: asked)
         }
+    }
+
+    /// **宣言を読めなかった理由を、宣言の不備と取り違えない** (#2483)。`dump-package` が 0 以外で
+    /// 終わると、出力は JSON でないので `nil` に畳まれ、`bundle` はそれを「実行ファイルを宣言
+    /// していない」(`noExecutable`) と名乗っていた。0 で終わって宣言に実行ファイルが無い回との
+    /// 違いは、終了コードにしか無い。
+    @Test("宣言は、0 以外で終わった回を道具立ての失敗として、0 で読めない回を読めないものとして分ける")
+    func aDeclarationReadIsToldApartByHowTheToolchainAnswered() throws {
+        let dump = #"{"name": "probe", "products": [{"name": "probe", "type": {"executable": null}}]}"#
+        let declared = RunCommand.declaration(from: (0, dump))
+        #expect(declared.package?.executableProductName == "probe")
+        #expect(declared.failure == nil)
+
+        // 0 以外 — 出力に JSON が混じっていても読まない。理由は道具立てが標準エラーで名乗っている
+        let refused = RunCommand.declaration(from: (1, dump))
+        #expect(refused == .unanswered(status: 1))
+        #expect(refused.package == nil)
+        #expect(
+            refused.failure
+                == .toolchainFailed(command: "swift package dump-package", status: 1))
+        let message = try #require(refused.failure).message
+        #expect(!message.contains("Package.swift"), "道具立ての失敗なのに宣言を疑わせている: \(message)")
+
+        // 0 で終わったが読めない — 宣言の不備でも、道具立ての「終了コード 0」の失敗でもない
+        let unreadable = RunCommand.declaration(from: (0, "not json"))
+        #expect(unreadable == .unreadable)
+        #expect(unreadable.package == nil)
+        #expect(unreadable.failure == nil)
+
+        // 0 で終わって宣言に実行ファイルが無い — 従来どおり、読めて、product が無いだけ
+        let library = RunCommand.declaration(
+            from: (0, #"{"name": "lib", "products": [{"name": "lib", "type": {"library": ["automatic"]}}]}"#))
+        #expect(library.package != nil)
+        #expect(library.package?.executableProductName == nil)
+    }
+
+    /// **作り直しの後に宣言を読み直す口は、起こせなかった失敗を `nil` に化かさない** (#2575)。
+    /// 化かすと、人には「走らせるものが無い (Package.swift を見よ)」と届く。道具立てが
+    /// 答えなかった回 (0 以外) は従来どおり `nil` で、読めない宣言のまま進む。
+    @Test("作り直しの後の宣言の読み直しは、起こせなかった失敗を product なしに化かさない")
+    func theProductReadAfterTheBuildDoesNotSwallowAFailure() throws {
+        let missing = URL(
+            fileURLWithPath: "/nonexistent-\(UUID().uuidString)", isDirectory: true)
+        let unknown = BuildContext(configuration: nil, place: .inPackage(.unreadableManifest), product: nil)
+        #expect(
+            throws: CommandFailure.placeUnusable(
+                tool: "swift", place: missing.path, presence: .missing)
+        ) {
+            try RunCommand.productAfterBuild(context: unknown, in: missing)
+        }
+        // 名前が分かっていれば、読み直さない (起こさないので、場所が無くても投げない)
+        let known = BuildContext(
+            configuration: nil, place: .inPackage(.unreadableManifest), product: "probe")
+        #expect(try RunCommand.productAfterBuild(context: known, in: missing) == "probe")
     }
 
     /// 宣言だけを置いたディレクトリ。**中身は持たない** — 置き場を答えられれば足りる。

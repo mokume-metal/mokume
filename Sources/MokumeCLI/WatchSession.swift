@@ -138,7 +138,7 @@ final class WatchSession {
                         // 起こせないのか (#2314)
                         throw RunCommand.launchFailure(
                             of: process, error: error,
-                            executableMissing: .noExecutable(path: executable.path))
+                            executableMissing: .executableVanished(path: executable.path))
                     }
                     return process
                 },
