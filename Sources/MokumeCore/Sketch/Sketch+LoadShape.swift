@@ -209,8 +209,10 @@ extension Sketch {
     /// - 塗りと線: 色 (`#rgb` / `#rrggbb` と不透明度つきの形・`rgb()` / `rgba()`・名前の色・
     ///   `currentColor`)・`fill-opacity` / `stroke-opacity` / `opacity`・`stroke-width`・
     ///   `stroke-linecap`・`stroke-linejoin`・`fill-rule`
-    /// - 書き方: 属性・`style` 属性・`<style>` の規則 (クラス 1 つか要素名 1 つのセレクタ。
-    ///   Illustrator の書き出しの既定がこの形)
+    /// - 書き方: 属性・`style` 属性・`<style>` の規則 (`*`・要素名 1 つ・クラス 1 つのセレクタ。
+    ///   Illustrator の書き出しの既定がこの形)。優先の順は CSS のとおりで、属性 < `*` の規則 <
+    ///   要素名の規則 < クラスの規則 < `style` 属性。`!important` を付けた宣言はそれらすべてより上で、
+    ///   その中でも同じ順
     ///
     /// ## 描けないものは捨てて、知らせる
     ///
@@ -236,9 +238,11 @@ extension Sketch {
     /// - ファイルが見つからない: ``DataFailure/notFound(path:searched:)`` (探した場所が載る)
     /// - 見つかったが開けない (ディレクトリだった・読む権利が無い):
     ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)
-    /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``
+    /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``。UTF-8 として読めたファイルは、
+    ///   XML 宣言の `encoding` が何を名乗っていても UTF-8 として読む (値が名前の形のとき。
+    ///   `encoding=""` など名前の形でない宣言は `malformed`)
     /// - XML として壊れている・根が `<svg>` でない: ``DataFailure/malformed(path:line:reason:)``
-    ///   (壊れていた行が載る)
+    ///   (壊れていた行が載る。行の終わりは LF・CRLF・CR のどれでもよく、捨てたものに添える行も同じ数え方)
     ///
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。URL からは読まない。
     ///

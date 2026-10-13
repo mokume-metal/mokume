@@ -78,6 +78,109 @@ struct DoctorCommandTests {
         #expect(lines.contains("Toolchain: \(DoctorCommand.unknown)"))
     }
 
+    // MARK: - 見ている場所が無い (#2314)
+
+    /// 共有の置き場を打った人の手元へ向かせない環境 (結果を機械の状態で変えない)。
+    private static func isolated() -> [String: String] {
+        [
+            BuildDirectory.environmentKey: FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-doctor-store-\(UUID().uuidString)").path
+        ]
+    }
+
+    /// **場所が無いことを、道具立てのせいにしない** (規律 3)。道具立ては見ている場所で
+    /// `swift` を起こして読むので、場所が無いと起きない。それを「could not launch swift」と
+    /// 言うと、入っている `swift` を疑わせ、打ち間違えた場所からは遠ざける。
+    @Test("在らない場所を渡すと、場所が無いと名乗り、swift を起こせなかったとは言わない")
+    func aMissingPlaceIsNamedWithoutBlamingTheToolchain() {
+        let missing = "/nonexistent-\(UUID().uuidString)/xyz"
+        let text = DoctorCommand.text(for: [missing], workDirectory: nil, environment: Self.isolated())
+        #expect(text.contains("Place: \(missing) — nothing is there"))
+        #expect(!text.contains("could not launch swift"))
+        #expect(text.contains("Toolchain: \(DoctorCommand.unknown) — not asked"))
+    }
+
+    @Test("ファイルを渡すと、ディレクトリでないと名乗り、swift を起こせなかったとは言わない")
+    func aFileAsThePlaceIsNamed() throws {
+        let place = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: place) }
+        let file = place.appendingPathComponent("Package.swift")
+        try "".write(to: file, atomically: true, encoding: .utf8)
+        let text = DoctorCommand.text(
+            for: [file.path], workDirectory: nil, environment: Self.isolated())
+        #expect(text.contains("— not a directory"))
+        #expect(!text.contains("could not launch swift"))
+    }
+
+    /// **入れない場所を「無い」と言わない** (#2314 の反証)。`fileExists` は入れない場所も
+    /// 宛先の無い symlink も false にするので、それだけで「nothing is there」と言うと、在る
+    /// 場所を探させる。
+    @Test(
+        "入れない場所・宛先の無い symlink を渡すと、無いとは言わずに辿り着けない理由を言う",
+        arguments: ["locked", "dangling"])
+    func anUnreachablePlaceIsNamedWithItsReason(kind: String) throws {
+        let root = try Self.emptyDirectory()
+        let locked = root.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: locked.appendingPathComponent("child", isDirectory: true),
+            withIntermediateDirectories: true)
+        let dangling = root.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(
+            atPath: dangling.path, withDestinationPath: root.appendingPathComponent("nowhere").path)
+        chmod(locked.path, 0)
+        defer {
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let (place, reason) =
+            kind == "locked"
+            ? (locked.appendingPathComponent("child").path, String(cString: strerror(EACCES)))
+            : (dangling.path, "a symbolic link to something that is not there")
+
+        let text = DoctorCommand.text(for: [place], workDirectory: nil, environment: Self.isolated())
+        #expect(text.contains("Place: \(place) — cannot be reached: \(reason)"))
+        #expect(!text.contains("nothing is there"))
+        #expect(!text.contains("could not launch swift"))
+    }
+
+    /// 裏側。場所が在れば、いままでどおり道具立てを聞いて名乗る — `..` で始まる場所でも、
+    /// 走らせた場所から解いた場所で聞く (#2314 の完了条件 1)。
+    @Test("`..` で始まる場所でも、そこで道具立てを読んで名乗る")
+    func aPlaceStartingWithDotDotIsReadThere() throws {
+        let root = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let plain = root.appendingPathComponent("plain", isDirectory: true)
+        let probe = root.appendingPathComponent("probe", isDirectory: true)
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: true)
+
+        let text = DoctorCommand.text(
+            for: ["../probe"], workDirectory: nil, environment: Self.isolated(),
+            currentDirectory: plain)
+        #expect(text.contains("Place: \(probe.standardizedFileURL.path)\n"))
+        #expect(!text.contains("Toolchain: \(DoctorCommand.unknown)"))
+    }
+
+    /// 文の形 (純関数)。
+    @Test("聞かなかった道具立てと、聞いて読めなかった道具立てを言い分ける")
+    func anUnaskedToolchainIsToldApart() {
+        let place = URL(fileURLWithPath: "/nowhere", isDirectory: true)
+        #expect(
+            DoctorCommand.toolchainLine(nil, unaskedIn: place)
+                == "Toolchain: \(DoctorCommand.unknown) — not asked, since swift cannot start in"
+                + " /nowhere (see Place below)")
+        #expect(
+            DoctorCommand.toolchainLine(nil)
+                == "Toolchain: \(DoctorCommand.unknown) — could not launch swift")
+        #expect(DoctorCommand.placeLine(place, presence: .directory) == "Place: /nowhere")
+        #expect(DoctorCommand.placeLine(place, presence: .missing).contains("nothing is there"))
+        #expect(
+            DoctorCommand.placeLine(place, presence: .notDirectory).contains("not a directory"))
+        let unreachable = DoctorCommand.placeLine(
+            place, presence: .unreachable(reason: "Permission denied"))
+        #expect(unreachable == "Place: /nowhere — cannot be reached: Permission denied")
+    }
+
     /// 同梱の断片は実行時に組むので、スケッチのビルドは `metal` を起こさない。並べると
     /// 要らない Metal Toolchain を入れさせることになる
     /// ([#2351](https://github.com/mokume-metal/mokume/issues/2351))。

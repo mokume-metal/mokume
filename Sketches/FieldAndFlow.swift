@@ -20,7 +20,9 @@ import mokume
 ///
 /// 時計はフレーム番号から導くので、**同じ番号のフレームは何度描いても同じ絵**になる。
 final class FieldAndFlow: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "field and flow")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "field and flow")
+    }
 
     /// 場の細かさ。**画面の画素数より 2 桁少ない** — 場は絵の下書きであって絵ではない。
     private let columns = 96

@@ -414,6 +414,120 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
         self.assertIn("catalogue", api.read_sketches(api.SKETCHES))
 
 
+STORED_SKETCH = """\
+import mokume
+
+final class Waves: Sketch {
+    var settings = SketchSettings(width: 960, height: 540, title: "waves")
+
+    func draw() { background(0) }
+}
+"""
+
+COMPUTED_SKETCH = """\
+import mokume
+
+final class Waves: Sketch {
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "waves")
+    }
+
+    func draw() { background(0) }
+}
+"""
+
+
+class 設定の手本の形(unittest.TestCase):
+    """手本 (参照スケッチ・公開の説明文の例) の `settings` が、雛形と同じ計算型であること (#2256)。
+
+    説明文 (`SketchSettings.frameRate`) は格納型を「代入が効かないのに効いたように見える」
+    罠と名指しし、雛形も計算型なのに、参照スケッチ 31 本は格納型だった。読者は手本を
+    写すので、警告された形を学ぶ。計算型なら同じ代入は組み立てで止まる。
+    """
+
+    def sketches(self, files):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        for name, text in files.items():
+            Path(directory.name, name).write_text(text, encoding="utf-8")
+        return Path(directory.name)
+
+    def test_参照スケッチの格納型を名指す(self):
+        directory = self.sketches({"Waves.swift": STORED_SKETCH, "Calm.swift": COMPUTED_SKETCH})
+        problems = api.check_settings_form([], directory)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("Waves.swift:4", problems[0])
+        self.assertIn("var settings: SketchSettings {", problems[0])
+
+    def test_複数行の格納型も型の注釈つきも_let_も見つける(self):
+        for line in [
+            "    var settings = SketchSettings(\n        width: 960, height: 540)",
+            "    var settings: SketchSettings = SketchSettings()",
+            "    let settings = SketchSettings.fullScreen(2)",
+            "    public var settings = SketchSettings()",
+        ]:
+            with self.subTest(line=line):
+                source = f"final class A: Sketch {{\n{line}\n    func draw() {{}}\n}}\n"
+                directory = self.sketches({"A.swift": source})
+                self.assertEqual(len(api.check_settings_form([], directory)), 1)
+
+    def test_計算型の本体の中の局所変数は数えない(self):
+        # `SketchSettings.fullScreen` の説明文の例と同じ形 (返す値へ代入して変える)
+        source = """\
+final class A: Sketch {
+    var settings: SketchSettings {
+        var settings = SketchSettings.fullScreen(2)
+        settings.frameRate = 30
+        return settings
+    }
+    func draw() {
+        let settings = 3
+        print(settings)
+    }
+}
+"""
+        directory = self.sketches({"A.swift": source})
+        self.assertEqual(api.check_settings_form([], directory), [])
+
+    def test_文字列の中の波括弧で型の深さを見失わない(self):
+        # 参照スケッチは断片 (Metal) を文字列で持つ。中の `struct … {` と `}` は対で閉じる
+        source = '''\
+final class A: Sketch {
+    let fragment = """
+        struct Values { float amount; };
+        float4 paint(Fragment in) { return in.color; }
+        """
+    var settings = SketchSettings()
+}
+'''
+        directory = self.sketches({"A.swift": source})
+        self.assertEqual(len(api.check_settings_form([], directory)), 1)
+
+    def test_説明文の例の格納型を名指す(self):
+        doc = (
+            "動画を流す:\n\n```swift\nfinal class Overlay: Sketch {\n"
+            "    var settings = SketchSettings(width: 1280, height: 720)\n"
+            "    func draw() {}\n}\n```"
+        )
+        problems = api.check_settings_form([symbol("createVideo(_:)", owner="Sketch", doc=doc)], self.sketches({}))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("Sketch.createVideo(_:)", problems[0])
+
+    def test_説明文の地の文と文脈の印は数えない(self):
+        # 罠を名指す文 (`SketchSettings.frameRate`) と、面に出ない文脈の印 (`Image.swift`) は手本ではない
+        doc = (
+            "`var settings = SketchSettings(…)` と持てば代入でき、変えられたように見える。\n\n"
+            "<!-- example: 文脈 var settings = SketchSettings(width: 400, height: 300) -->\n"
+            "```swift\nimage(picture, 0, 0)\n```"
+        )
+        self.assertEqual(
+            api.check_settings_form([symbol("image(_:_:_:)", owner="Sketch", doc=doc)], self.sketches({})),
+            [])
+
+    def test_いまの参照スケッチは計算型で揃っている(self):
+        self.assertEqual(api.check_settings_form([], api.SKETCHES), [])
+
+
 class 公開の口の種類(unittest.TestCase):
     """公開の口が種類の表に載り、シーンの記述は口ごとの検査に名前があること (#1670)。
 

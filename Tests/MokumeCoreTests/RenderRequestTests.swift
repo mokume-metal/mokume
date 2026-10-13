@@ -53,6 +53,21 @@ struct RenderRequestTests {
         #expect(RenderRequest(frameRate: 1, frameCount: 1, destination: "/tmp/a.mov") != nil)
     }
 
+    /// **`.mov` の時刻は 1/90 000 秒で数える** ([#2307])。それより速い fps では隣の枚が同じ時刻に
+    /// なり、書き出せない組になる。連番は時刻を書かないので、上限は掛からない。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    @Test("刻みを越える fps の .mov では組まず、刻みちょうどと連番は組む")
+    func aMovieFasterThanItsTimescaleIsRefused() {
+        let limit = RenderRequest.movieFrameRateLimit
+        #expect(limit == 90_000)
+        #expect(RenderRequest(frameRate: limit + 1, frameCount: 10, destination: "/tmp/a.mov") == nil)
+        #expect(RenderRequest(frameRate: limit, frameCount: 10, destination: "/tmp/a.mov") != nil)
+        #expect(
+            RenderRequest(frameRate: limit + 1, frameCount: 10, destination: "/tmp/f-###.png") != nil)
+        #expect(RenderRequest(environmentValue: "\(limit + 1):10:/tmp/a.mov") == nil)
+    }
+
     @Test(
         "読めない値からは組まない",
         arguments: ["", "30", "30:120", "x:120:/tmp/a.mov", "30:y:/tmp/a.mov", "30:120:/tmp/a.png"])

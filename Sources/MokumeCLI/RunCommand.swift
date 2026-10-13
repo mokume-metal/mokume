@@ -114,14 +114,12 @@ enum RunCommand {
         let declared = try dumpPackage(in: directory)
         let product = declared?.executableProductName
 
-        // **明示されたら理由を確かめない。** 選んだのは人である
-        if let given = invocation.scratchPath {
-            let url = URL(
-                fileURLWithPath: NSString(string: given).expandingTildeInPath, isDirectory: true,
-                relativeTo: directory)
+        // **明示されたら理由を確かめない。** 選んだのは人である。解く基準は走らせた場所で、
+        // 解くのは ``Invocation`` の 1 か所 (#2323)
+        if let given = invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
-                place: .outside(url.standardizedFileURL, given: true), product: product)
+                place: .outside(given, given: true), product: product)
         }
 
         // **宣言が読めないことを、断る理由にしない。** 壊した状態から直していく途中は
@@ -338,13 +336,31 @@ enum RunCommand {
     )
         throws(CommandFailure) -> URL
     {
+        let asked = ["build", "--show-bin-path"] + context.arguments
         // **愚痴を混ぜない。** 出力はファイルパスとして解くので、警告 1 行で別の
         // 場所を指すことになる (#731)
-        let output = try swift(
-            ["build", "--show-bin-path"] + context.arguments, in: directory, capturing: true,
-            errors: .inherit, running: running
-        ).output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !output.isEmpty else { throw .noExecutable(path: directory.path) }
+        let answer = try swift(
+            asked, in: directory, capturing: true, errors: .inherit, running: running)
+        return try binPath(from: answer, asking: asked)
+    }
+
+    /// `--show-bin-path` の答えを読む。**検査から偽の子の答えを渡せる形にしてある** —
+    /// 聞く側は `/usr/bin/env swift` を書き固めている (#731)。
+    ///
+    /// **終了コードを見る。** 0 で終わって道を答えたときだけ読み、それ以外は道具立てが
+    /// 答えなかったと名乗る。空の出力だけを見て ``CommandFailure/noExecutable(path:)`` と
+    /// 読んでいた頃は、道具立てが引数を断った回を「Package.swift に実行ファイルが無い」と
+    /// 言っていた ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    ///
+    /// - Parameter arguments: 聞いたときに `swift` へ渡したもの。答えなかったときに名乗る。
+    nonisolated static func binPath(
+        from answer: (status: Int32, output: String), asking arguments: [String]
+    ) throws(CommandFailure) -> URL {
+        let output = answer.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard answer.status == 0, !output.isEmpty else {
+            throw .toolchainFailed(
+                command: (["swift"] + arguments).joined(separator: " "), status: answer.status)
+        }
         return URL(fileURLWithPath: output, isDirectory: true)
     }
 
@@ -410,7 +426,10 @@ enum RunCommand {
         do {
             try process.run()
         } catch {
-            throw .noExecutable(path: executable.path)
+            // **起こせなかった理由を、走らせるものの不在と決めつけない** (#2314 — 道具の側と
+            // 同じ読み替え)
+            throw launchFailure(
+                of: process, error: error, executableMissing: .noExecutable(path: executable.path))
         }
         // **番号を置いてから印を見る。** 置く前に来た合図はハンドラが子へ撃てていないので、
         // ここで拾う。逆順にすると、見た後・置く前に来た合図を誰も子へ渡さない
@@ -487,6 +506,12 @@ enum RunCommand {
     ///   継がせると、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る
     ///   ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     ///
+    /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
+    /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
+    /// ディレクトリをスケッチに替えて起こされるので、そのまま運ぶと道具 (走らせた場所から
+    /// 解く) と子 (スケッチから解く) が別の区画を見る — 観測も入力も黙って噛み合わない
+    /// (#2323 の反証)。道具が見ている区画に子を揃える。
+    ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func childEnvironment(
         _ base: [String: String] = ProcessInfo.processInfo.environment,
@@ -494,6 +519,9 @@ enum RunCommand {
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil
     ) -> [String: String] {
         var environment = base
+        if let workDirectory = WorkDirectory.given(environment: base) {
+            environment[StartupReads.workDirectory.key] = workDirectory.path
+        }
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
         if let tool { environment[StartupReads.closeConfirmation.key] = tool }
@@ -576,7 +604,11 @@ enum RunCommand {
                 launched = true
             }
         } catch {
-            throw .toolchainMissing(toolName(of: process))
+            // **起こせなかったことを、道具が無いことと決めつけない** (#2314)。`env` 越しなら
+            // 道具の不在は下の 127 で分かる。ここに来るのは、たいてい作業ディレクトリの問題である
+            throw launchFailure(
+                of: process, error: error,
+                executableMissing: .toolchainMissing(toolName(of: process)))
         }
         guard launched else { throw .rebuildStopped }
         defer { running?.finished() }
@@ -597,6 +629,58 @@ enum RunCommand {
             throw .toolchainMissing(toolName(of: process))
         }
         return (process.terminationStatus, output)
+    }
+
+    /// 子を起こせなかった理由を読む。**実行ファイルの不在と言うのは、それが無いときだけ** (#2314)。
+    ///
+    /// `Process.run()` の失敗は、作業ディレクトリが無いときも実行ファイルが無いときも
+    /// `NSFileNoSuchFileError` で、違うのは `NSFilePath` に名指しした場所だけである。入れない
+    /// 場所 (`chmod 000` の親の下) でも同じ「無い」になる。名指しの綴りを比べ合わせる形は
+    /// 採らない — 何が無いのかは言えても、なぜ入れないのかは載っていない。だから**失敗の後に
+    /// 場所と実行ファイルを stat し直して**決める (``GivenPath/Presence``)。`swift` は
+    /// `/usr/bin/env` 越しに起こすので env 自体は必ず在り、起動の失敗はたいてい作業ディレクトリ
+    /// の問題である — それを「swift が無い」と言うと、Xcode を入れ直す方向へ人を遠ざける
+    /// (`DoctorCommand` の規律 3 と同じ向き)。
+    ///
+    /// **限界: 起こした時点と確かめた時点の間に場所が消えたり戻ったりすると、読み分けが
+    /// 変わる** (確かめた時点の姿を名乗る)。
+    ///
+    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。口ごとに名乗りが違う
+    ///   (道具なら ``CommandFailure/toolchainMissing(_:)``、スケッチなら
+    ///   ``CommandFailure/noExecutable(path:)``)。
+    nonisolated static func launchFailure(
+        of process: Process, error: any Error, executableMissing: CommandFailure
+    ) -> CommandFailure {
+        let tool = toolName(of: process)
+        let place = process.currentDirectoryURL ?? GivenPath.currentDirectory
+        let presence = GivenPath.Presence.of(place)
+        guard presence == .directory else {
+            return .placeUnusable(tool: tool, place: place.path, presence: presence)
+        }
+        guard let executable = process.executableURL,
+            FileManager.default.isExecutableFile(atPath: executable.path)
+        else { return executableMissing }
+        return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
+    }
+
+    /// 起こせなかった事情の文面 (場所でも実行ファイルの不在でもないとき)。
+    ///
+    /// **POSIX の事情 (失敗そのものか、その下の `NSUnderlyingErrorKey`) なら、その番号から
+    /// C の文面を引く** (``GivenPath/errorText(_:)``)。Foundation の説明は言語の設定に左右
+    /// されうるが、道具が話す言葉は英語である (ADR-0038 決定 1・2)。
+    ///
+    /// **例外: POSIX の事情を持たない誤り** (下に POSIX の誤りを持たない Cocoa の誤り — たとえば
+    /// `NSFileNoSuchFileError` だけのもの) は、引ける番号が無いので `localizedDescription` に
+    /// 落とす。その文面は言語の設定で変わりうる。
+    nonisolated static func launchReason(of error: any Error) -> String {
+        let failure = error as NSError
+        let posix =
+            failure.domain == NSPOSIXErrorDomain
+            ? failure : failure.userInfo[NSUnderlyingErrorKey] as? NSError
+        guard let posix, posix.domain == NSPOSIXErrorDomain else {
+            return failure.localizedDescription
+        }
+        return GivenPath.errorText(Int32(posix.code))
     }
 
     /// 道具立てを探させる口。**`PATH` を引くのは `env` に任せる。**

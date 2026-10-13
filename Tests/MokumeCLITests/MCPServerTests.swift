@@ -36,6 +36,11 @@ struct MCPServerTests {
         return url
     }
 
+    /// 観測の区画に置かれる要求。道具が走ったかどうかは、これが在るかで分かる。
+    private func observeRequest(in directory: URL) -> URL {
+        directory.appendingPathComponent(".mokume/observe/request.json")
+    }
+
     private func decode(_ line: String) throws -> [String: Any] {
         try #require(
             try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
@@ -219,6 +224,57 @@ struct MCPServerTests {
         #expect((content.first?["text"] as? String)?.contains("error: 何か") == true)
     }
 
+    /// 黙って空の引数に倒すと、`"arguments":"x"` が引数なしの頼みに化けて道具が走る
+    /// (`observe` なら等倍で 1 枚撮る)。隣の `name is required` と同じ符号で断る (#2319)。
+    /// 空の配列 `[]` も断る — 空の連想配列を `[]` と書き出すエンコーダ (PHP の
+    /// `json_encode([])` など) では、これまで通っていた呼び出しが断られるようになる。
+    /// 変更の記録 (`changelog.d/`) がそれを名乗る。
+    @Test(
+        "tools/call の arguments がオブジェクトでなければ、道具を走らせずに -32602 で断る",
+        arguments: [#""x""#, "[1]", "[]", "5", "true"])
+    func refusesToolArgumentsThatAreNotAnObject(value: String) throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [
+                #"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"observe","arguments":"#
+                    + value + "}}"
+            ])
+        server.serve()
+
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(idOf(answer) == "12")
+        #expect(errorCode(answer) == -32602)
+        #expect(answer["result"] == nil)
+        // 道具は走っていない。走ると観測の区画に要求が置かれる
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path))
+    }
+
+    /// 上の断りの反対側。`null` は「渡していない」以上の意図を運ばないので、省略と同じに読む。
+    @Test(
+        "tools/call の arguments を省くか null にすると、従来どおり空の引数で道具を走らせる",
+        arguments: [
+            #"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"observe"}}"#,
+            #"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"observe","arguments":null}}"#,
+        ])
+    func runsAToolWithoutArguments(line: String) throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(directory: directory, input: [line])
+        server.serve()
+
+        // 誰も応えないので道具は失敗の結果を返すが、走って要求を置いている
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(idOf(answer) == "13")
+        #expect(errorCode(answer) == nil)
+        #expect(answer["result"] != nil)
+        let request = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
+                as? [String: Any])
+        // 空の引数で走った — 縮尺も時刻も枚数も置かれていない
+        #expect(request.keys.sorted() == ["id"])
+    }
 
     @Test("ping には、繋ぎ始めの挨拶より前でも空の結果で答える")
     func answersPingWithAnEmptyResult() throws {
@@ -472,6 +528,60 @@ struct MCPServerTests {
                 atPath: directory.appendingPathComponent(".mokume/observe/request.json").path))
     }
 
+    /// 数でない縮尺を黙って落とすと等倍の頼みに化け、真偽値は `NSNumber` 経由で 1 に読める。
+    /// どちらも撮る側の警告に載らない (#2319)。`-1e400` は JSON の読み手が `-inf` に読み、
+    /// 通すと区画を作った後で書けずに、置き場所のせいにした案内が返る。**引数は JSON から
+    /// 読む** — Swift の `true` は JSON の `true` と違う型で届き、`-inf` は JSON の外から
+    /// 渡しても読み手の癖を再現できない。
+    @Test(
+        "数でない・有限でない縮尺は、区画に触れずに断る",
+        arguments: [
+            #"{"scale":"0.5","time":1}"#, #"{"scale":true}"#, #"{"scale":false}"#,
+            #"{"scale":[0.5]}"#, #"{"scale":-1e400}"#,
+        ])
+    func refusesScalesThatAreNotFiniteNumbers(json: String) throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call("observe", arguments: try decode(json))
+        #expect(outcome.isError)
+        #expect(outcome.text == "scale must be a finite number")
+        // 要求を置く前に断る。区画のディレクトリも作らない
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/observe").path))
+    }
+
+    /// `null` の方針は #2393 で決める。それまでは、`as? Double` が外れて省略と同じに
+    /// なっていた従来の読み方を変えない (省略できる欄に `null` を入れる呼び手が断られないように)。
+    @Test("null の縮尺は、従来どおり省いたのと同じに読む")
+    func readsANullScaleAsOmitted() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        // 誰も応えないので上限まで待って諦めるが、要求は置かれている
+        _ = tools.call("observe", arguments: try decode(#"{"scale":null}"#))
+
+        let request = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
+                as? [String: Any])
+        #expect(request.keys.sorted() == ["id"])
+    }
+
+    @Test("範囲の外の縮尺は切らずに要求へ置き、撮る側が切ったことを名乗れるようにする")
+    func passesOutOfRangeScalesThrough() throws {
+        // 範囲 (0 を越え 1 以下) の外は、撮る側が等倍で書いて警告で名乗る (observe-request の約束)
+        for (json, expected) in [(#"{"scale":0}"#, 0.0), (#"{"scale":2}"#, 2.0), (#"{"scale":-0.5}"#, -0.5)] {
+            let directory = try makeDirectory()
+            let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+            // 誰も応えないので上限まで待って諦めるが、要求は置かれている
+            _ = tools.call("observe", arguments: try decode(json))
+
+            let request = try #require(
+                try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
+                    as? [String: Any])
+            #expect(request["scale"] as? Double == expected, "\(json)")
+        }
+    }
+
     /// このリポジトリの `Schemas/`。**検査の実行ファイルからは辿れない** (道具の実行ファイルと
     /// 深さが違う) ので、ソースの位置から引く。
     private func schemasRoot() -> URL {
@@ -585,36 +695,147 @@ struct MCPServerTests {
 
     // ---------------------------------------------------------- 基準ディレクトリ
 
+    /// **場所は在るものを渡す** — 窓口は在らない場所を断る (#2321)。区画の基準
+    /// (`elsewhere`) は在らなくてよい: スケッチが書くときに作る。
     @Test("区画は環境変数が決め、パッケージの場所は引数が決める")
-    func splitsTheFacetBaseFromThePackageDirectory() {
-        let cwd = URL(fileURLWithPath: "/cwd", isDirectory: true)
-        let sketch = "/sketch"
+    func splitsTheFacetBaseFromThePackageDirectory() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cwd = root.appendingPathComponent("cwd", isDirectory: true)
+        let sketch = root.appendingPathComponent("sketch", isDirectory: true).path
+        for place in [cwd.path, sketch] {
+            try FileManager.default.createDirectory(
+                atPath: place, withIntermediateDirectories: true)
+        }
         let elsewhere = "/elsewhere"
 
         // 区画はスケッチが書く場所。スケッチは環境変数に従うので、引数より強い
-        let both = MCPCommand.directories(
+        let both = try MCPCommand.directories(
             arguments: [sketch], environment: ["MOKUME_WORK_DIR": elsewhere],
             currentDirectory: cwd)
         #expect(both.package.path == sketch)
         #expect(both.facets.path == elsewhere)
 
         // 環境変数が無ければ、渡された場所が両方を兼ねる (いままでどおり)
-        let given = MCPCommand.directories(
+        let given = try MCPCommand.directories(
             arguments: [sketch], environment: [:], currentDirectory: cwd)
         #expect(given.package.path == sketch)
         #expect(given.facets.path == sketch)
 
         // 引数も無ければ作業ディレクトリ
-        let neither = MCPCommand.directories(
+        let neither = try MCPCommand.directories(
             arguments: [], environment: [:], currentDirectory: cwd)
         #expect(neither.package.path == cwd.path)
         #expect(neither.facets.path == cwd.path)
 
         // 環境変数はパッケージの場所を動かさない (Package.swift も .build/ もそこにある)
-        let environmentOnly = MCPCommand.directories(
+        let environmentOnly = try MCPCommand.directories(
             arguments: [], environment: ["MOKUME_WORK_DIR": elsewhere], currentDirectory: cwd)
         #expect(environmentOnly.package.path == cwd.path)
         #expect(environmentOnly.facets.path == elsewhere)
+    }
+
+    // ---------------------------------------------------------- 引数の解き方 (#2321)
+
+    /// **引数を取る口は、共有の解き手を通す** (`Arguments.parse`・#680・#814)。窓口だけが
+    /// 最初の引数をそのまま場所にしていて、`mcp --help` は `--help` という場所の窓口として
+    /// 標準入力を待っていた ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
+    /// 断る文面は `run --help` と同じ形 (`Unknown option: …` と使い方)。
+    @Test("知らない選択肢は、使い方を出して止まる", arguments: ["--help", "-h", "--version", "-c"])
+    func anUnknownOptionIsRefused(option: String) throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let thrown = #expect(throws: CommandFailure.self) {
+            try MCPCommand.directories(arguments: [option], environment: [:], currentDirectory: root)
+        }
+        guard case .usage(let text) = thrown else {
+            Issue.record("使い方の誤りとして止まっていない: \(String(describing: thrown))")
+            return
+        }
+        #expect(text.hasPrefix("Unknown option: \(option)\n"), "知らない選択肢を名指していない: \(text)")
+        #expect(text.contains("Usage: "), "使い方を出していない: \(text)")
+    }
+
+    /// 位置引数は 1 つまで。`bundle` / `run` と同じ文面で、2 つ目を名指す。
+    @Test("場所は 1 つだけ受け、2 つ目を名指して止まる")
+    func onlyOneDirectoryIsTaken() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(throws: CommandFailure.usage("Only one directory: b")) {
+            try MCPCommand.directories(
+                arguments: [root.path, "b"], environment: [:], currentDirectory: root)
+        }
+        // 1 つ目が在らなくても、余りを先に言う (本文の `mcp /nonexistent a b`)
+        #expect(throws: CommandFailure.usage("Only one directory: a")) {
+            try MCPCommand.directories(
+                arguments: ["/nonexistent-\(UUID().uuidString)", "a", "b"], environment: [:],
+                currentDirectory: root)
+        }
+    }
+
+    /// **繋ぐ前に言う。** 繋がってから `observe` などが「答えが無い」と言うのでは、原因が
+    /// 場所にあると気付けない。ファイルを指したときも、ディレクトリとしては在らない。
+    @Test("在らない場所は、その道を名乗って止まる")
+    func aMissingPlaceIsRefused() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missing = root.appendingPathComponent("nonexistent", isDirectory: true)
+        let file = root.appendingPathComponent("notes.txt")
+        try "not a directory".write(to: file, atomically: true, encoding: .utf8)
+
+        for place in [missing.path, file.path] {
+            let thrown = #expect(throws: CommandFailure.self) {
+                try MCPCommand.directories(
+                    arguments: [place], environment: [:], currentDirectory: root)
+            }
+            #expect(thrown == .directoryNotFound(path: place))
+            #expect(thrown?.message.contains(place) == true, "在らない場所の道を名乗っていない")
+        }
+        // 作業ディレクトリが消えていれば、それも同じく言う。**場所を省いた結果なので、
+        // 省けとは勧めない** (反証の指摘)
+        let gone = #expect(throws: CommandFailure.self) {
+            try MCPCommand.directories(arguments: [], environment: [:], currentDirectory: missing)
+        }
+        #expect(gone == .directoryNotFound(path: missing.path))
+        #expect(gone?.message.contains("leave it out") == false, "省いた結果に省けと勧めている")
+    }
+
+    /// **`Package.swift` は求めない。** `claude mcp add mokume -- mokume mcp` は打った場所で
+    /// 起こすので、スケッチでない場所で起こされうる (README)。求める方向へ広げると、その
+    /// 起こし方を壊す。
+    @Test("在る場所なら、Package.swift が無くても受ける")
+    func anExistingPlaceWithoutAPackageIsTaken() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("Package.swift").path))
+        let given = try MCPCommand.directories(
+            arguments: [root.path], environment: [:], currentDirectory: root)
+        #expect(given.package.path == root.path)
+        let typedHere = try MCPCommand.directories(
+            arguments: [], environment: [:], currentDirectory: root)
+        #expect(typedHere.package.path == root.path)
+    }
+
+    /// **口そのものが、窓口を回す (標準入力を読む) 前に止まる。** 回す手続きを差し替えて、
+    /// 回されたかを見る — 本物を回すと、検査が標準入力を待って固まる。
+    @Test("引数の誤りでは、口は窓口を回さずに止まる")
+    func theDoorStopsBeforeServing() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrong = [
+            ["--help"], [root.path, "b"], [root.appendingPathComponent("nonexistent").path],
+        ]
+        for arguments in wrong {
+            var served = false
+            #expect(throws: CommandFailure.self, "\(arguments) で止まらなかった") {
+                try MCPCommand.run(arguments) { _ in served = true }
+            }
+            #expect(!served, "\(arguments) で窓口を回した")
+        }
+        // 裏側: 在る場所なら回す
+        var served = false
+        try MCPCommand.run([root.path]) { _ in served = true }
+        #expect(served)
     }
 
     @Test("区画が別の場所でも、区画は区画から・仕様はパッケージの場所から読む")
@@ -787,6 +1008,29 @@ struct MCPServerTests {
         let outcome = tools.call("reference", arguments: [:])
         #expect(!outcome.isError)
         #expect(outcome.text.contains("- api"))
+    }
+
+    /// 文字列でない名前を「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として返り、
+    /// 頼み方を誤ったことに気付けない (#2319)。省いたとき一覧になるのは上の検査が見る。
+    @Test(
+        "文字列でない文書の名前は、一覧に倒さずに断る",
+        arguments: [#"{"name":5}"#, #"{"name":true}"#, #"{"name":["api"]}"#])
+    func refusesDocumentNamesThatAreNotStrings(json: String) throws {
+        let tools = makeTools(directory: try makeDirectory(), fetches: Fetches())
+        let outcome = tools.call("reference", arguments: try decode(json))
+        #expect(outcome.isError)
+        #expect(outcome.text.hasPrefix("name must be a string"))
+        #expect(!outcome.text.contains("Documents this interface serves"))
+    }
+
+    /// `null` の方針は #2393 で決める。それまでは、`as? String` が外れて省略と同じに
+    /// なっていた従来の読み方を変えない。
+    @Test("null の文書の名前は、従来どおり省いたのと同じに一覧を返す")
+    func readsANullDocumentNameAsOmitted() throws {
+        let tools = makeTools(directory: try makeDirectory(), fetches: Fetches())
+        let outcome = tools.call("reference", arguments: try decode(#"{"name":null}"#))
+        #expect(!outcome.isError)
+        #expect(outcome.text.contains("Documents this interface serves"))
     }
 
     /// **組めなかった応答を空行で返さない。**

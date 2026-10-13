@@ -142,6 +142,30 @@ struct RecordingFrameRateTests {
         }
     }
 
+    /// **作品から撮っても、刻みは 90 000 で 1 枚の長さが揃う** ([#2307] の再現と同じ形)。
+    ///
+    /// 48 fps は 90 000 を割り切る (1 枚 1875 刻み) が、600 は割り切らない。刻みを書き手へ渡して
+    /// いないと、`.mov` は 1/600 秒で書かれ、1 枚の長さが 12 と 13 の交互になった。読むのは
+    /// `AVAsset` が秒へ直した値ではなく、ファイルの箱 (`mdhd`・`stts`) である。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    @Test("48 fps で 24 枚撮ると、刻みは 90 000 で、24 枚とも 1875 刻み")
+    func fortyEightFramesASecondLastTheSameFromASketch() async throws {
+        try await withTemporaryDirectory("mokume-rate-48") { directory in
+            let path = directory.appendingPathComponent("rate.mov").path
+            try run(launchFrameRate: 48, frames: 25) { sketch in
+                if sketch.frameCount == 1 { sketch.beginRecord(path) }
+                if sketch.frameCount == 25 { sketch.endRecord() }
+            }
+
+            let movie = try #require(
+                MovieBoxes.timing(of: try Data(contentsOf: URL(fileURLWithPath: path))),
+                "mdhd・stts を読めない")
+            #expect(movie.mediaTimescale == Int(MovieFile.timescale))
+            #expect(movie.durations == Array(repeating: 1875, count: 24))
+        }
+    }
+
     /// **2 本目も、2 本目を始めたときの値ではなく起動のときの値に従う。** 1 本目を撮ってから
     /// 代入し、2 本目を撮る。
     @Test("1 本目の後に frameRate を代入しても、2 本目の最後の 1 枚は起動のときの 1 フレームぶん")

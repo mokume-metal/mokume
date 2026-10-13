@@ -27,7 +27,9 @@ import mokume
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class NetAndReply: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "net and reply")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "net and reply")
+    }
 
     /// 円の並び。左から TCP・UDP・WebSocket。
     private static let names = ["TCP 5204", "UDP 6000", "WebSocket 8025"]

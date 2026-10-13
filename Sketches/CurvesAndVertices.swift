@@ -12,7 +12,9 @@ import mokume
 /// **下の段は同じ 6 つの頂点を、並べ方だけ変えて渡す。** 点・2 つずつの線・3 つずつの
 /// 三角形・1 つ目を要にした扇 — 頂点の列は同じで、`beginShape` に渡す種類が絵を決める。
 final class CurvesAndVertices: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "curves and vertices")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "curves and vertices")
+    }
 
     /// 上の段で結ぶ点 (1 本ぶんの左端を原点とした座標)。
     private let knots: [SIMD2<Float>] = [

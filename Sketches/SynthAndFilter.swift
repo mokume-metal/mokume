@@ -17,7 +17,9 @@ import mokume
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class SynthAndFilter: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "synth and filter")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "synth and filter")
+    }
 
     /// 1 枚のパネルに描く音と色。
     private struct Panel {

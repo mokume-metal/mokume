@@ -21,8 +21,9 @@ import Foundation
 /// - `transform` (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)
 /// - 塗りと線: 色・`currentColor`・`fill-opacity` / `stroke-opacity` / `opacity`・
 ///   `stroke-width`・`stroke-linecap`・`stroke-linejoin`・`fill-rule`
-/// - 書き方: 属性・`style` 属性・`<style>` のクラス 1 つか要素名 1 つのセレクタ。優先の順は
-///   CSS のとおり (属性 < 要素名の規則 < クラスの規則 < `style` 属性)
+/// - 書き方: 属性・`style` 属性・`<style>` の `*` か要素名 1 つかクラス 1 つのセレクタ。優先の順は
+///   CSS のとおり (属性 < `*` の規則 < 要素名の規則 < クラスの規則 < `style` 属性。`!important` を
+///   付けた宣言はそれらすべてより上で、その中でも同じ順)
 ///
 /// ## 描けないものは捨てて、何を捨てたかを残す
 ///
@@ -102,7 +103,8 @@ nonisolated enum SVGFile {
     /// - Parameter path: 失敗を名乗るための名前。
     static func parse(_ text: String, path: String) throws(DataFailure) -> Drawing {
         let reader = Reader()
-        let parser = XMLParser(data: Data(text.utf8))
+        // 渡すバイトは ``XMLFile`` と同じに整える (XML 宣言の `encoding` を読まず、行の終わりを揃える)
+        let parser = XMLParser(data: XMLFile.document(of: text))
         parser.delegate = reader
         // XML の中の名前から、手元のファイルや外の URL を読みに行かない (``XMLFile`` と同じ約束)
         parser.shouldResolveExternalEntities = false
@@ -359,7 +361,12 @@ nonisolated enum SVGFile {
 
         // MARK: 描き方を決める
 
-        /// 受け継いだ描き方に、属性・CSS の規則・`style` 属性をこの順で重ねる。
+        /// 受け継いだ描き方に、属性・CSS の規則・`style` 属性の宣言を重ねる。重ね方は CSS のとおり
+        /// 1 つの比べ方 (`Rank`) で、`!important` の宣言が上、次に 属性 < 規則 < `style` 属性、規則どうしは
+        /// 詳細度 (`*` < 要素名 < クラス)、それも同じなら後に書いたほうが上。宣言を集めて順位で
+        /// 並べ、下から当てる。
+        /// ただし**下から全部を当てて上書きする**形なので、勝った宣言が `inherit`・`none`・読めない値の
+        /// ときは、下の宣言の値が残り、CSS とは違う (#2410)。
         /// **`display="none"` なら `nil`** (中身ごと描かない。書き手の意図なので数えない)。
         /// 描けない効果 (`clip-path` など) は、要素を描くと決まってから名乗れるよう返す。
         private mutating func resolve(
@@ -367,28 +374,27 @@ nonisolated enum SVGFile {
         ) -> (Context, lost: [String])? {
             var context = inherited
             var own = Own()
+            var candidates: [(rank: Rank, declaration: Declaration)] = []
+            func collect(_ declaration: Declaration, from origin: Rank.Origin, specificity: Int = 0) {
+                let rank = Rank(
+                    isImportant: declaration.isImportant, origin: origin, specificity: specificity,
+                    order: candidates.count)
+                candidates.append((rank, declaration))
+            }
             for (property, value) in attributes where SVGFile.properties.contains(property) {
-                apply(property, value, to: &context, own: &own, line: line)
+                collect(Declaration(name: property, value: value, isImportant: false), from: .attribute)
             }
             let classes = Set((attributes["class"] ?? "").split(whereSeparator: \.isWhitespace).map(String.init))
-            for rule in rules {
-                if case .element(let element) = rule.selector, element == name || element == "*" {
-                    for declaration in rule.declarations {
-                        apply(declaration.name, declaration.value, to: &context, own: &own, line: line)
-                    }
-                }
-            }
-            for rule in rules {
-                if case .className(let className) = rule.selector, classes.contains(className) {
-                    for declaration in rule.declarations {
-                        apply(declaration.name, declaration.value, to: &context, own: &own, line: line)
-                    }
+            for rule in rules where rule.selector.matches(name: name, classes: classes) {
+                for declaration in rule.declarations {
+                    collect(declaration, from: .rule, specificity: rule.selector.specificity)
                 }
             }
             if let style = attributes["style"] {
-                for declaration in SVGFile.parseDeclarations(style) {
-                    apply(declaration.name, declaration.value, to: &context, own: &own, line: line)
-                }
+                for declaration in SVGFile.parseDeclarations(style) { collect(declaration, from: .styleAttribute) }
+            }
+            for (_, declaration) in candidates.sorted(by: { $0.rank < $1.rank }) {
+                apply(declaration.name, declaration.value, to: &context, own: &own, line: line)
             }
             guard own.isDisplayed else { return nil }
             context.opacity *= own.opacity

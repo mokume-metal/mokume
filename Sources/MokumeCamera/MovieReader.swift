@@ -26,8 +26,9 @@ import MokumeCore
 /// フレームにだけ払う。
 ///
 /// 作るときのトラックの読み込みだけは、AVFoundation が非同期の口しか持たない (同期の口は
-/// Swift では非推奨) ので、別の仕事で読ませて待つ (`WebFile.fetchWaiting` と同じ形)。手元の
-/// ファイルなら 1 ms ほどで返る。
+/// Swift では非推奨) ので、別の仕事で読ませて待つ。受けるのは手元のファイルの場所だけ
+/// (`createVideo(_:)` が `assetURL(_:)` で解く) なので、待ちに期限は持たない。
+/// 手元のファイルなら 1 ms ほどで返る。
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 final class MovieReader {
