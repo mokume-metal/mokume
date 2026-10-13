@@ -164,6 +164,52 @@ struct ModelTests {
         #expect(parsed.skippedLines == 0)
     }
 
+    /// 約束: 読めない行は読み飛ばして数える。**OBJ の数は 10 進の綴りだけ** — Swift の
+    /// `Float(String)` は 16 進 (`0x10`) を受け、NUL の手前で読み終える (`"3\0abc"` が 3) ので、
+    /// それに任せると読めない行が数として置かれ、数えられない ([#2514])。`vt` の 2 つ目 (`v`) は
+    /// 「無ければ 0」だが、書いてあって読めないものは無いのではない。
+    ///
+    /// [#2514]: https://github.com/mokume-metal/mokume/issues/2514
+    @Test(
+        "v・vn・vt の数が 10 進の綴りでなければ、その行を置かずに読み飛ばして数える",
+        arguments: [
+            "v 0x10 0 0", "v 3\0abc 0 0", "v 1 2 3\0", "vn 0x1p0 0 0", "vt 0x1 0", "vt 0.5 0x1",
+            "vt 0.5 1\0", "v 1 2 +inf", "vt nan",
+        ])
+    func numbersAreReadAsDecimalOnly(line: String) {
+        let base = """
+            v 0 0 0
+            v 1 0 0
+            v 0 1 0
+            vt 0.25 0.75
+            vn 0 0 1
+            """
+        let face = "f 1/1/1 2/1/1 3/1/1"
+        let plain = ModelFile.parse(base + "\n" + face)
+        // 読めない行は前に置いても後ろに置いても、番号をずらさず数えられるだけ
+        let broken = ModelFile.parse(base + "\n" + face + "\n" + line)
+        #expect(broken == ModelFile.Parsed(
+            positions: plain.positions, normals: plain.normals, uvs: plain.uvs,
+            hasWrittenNormals: plain.hasWrittenNormals, skippedLines: 1),
+            "\(line.debugDescription)")
+    }
+
+    @Test("10 進の綴りなら、符号・小数点だけの始まり・指数を含めて読む")
+    func decimalSpellingsStillRead() throws {
+        let parsed = ModelFile.parse(
+            """
+            v 1.5 -2 3e1
+            v +1 .5 5.
+            v 0 1E-1 -0
+            vt .5
+            vt 1 -2.5e0
+            f 1/1 2/2 3/1
+            """)
+        #expect(parsed.skippedLines == 0)
+        #expect(parsed.positions == [SIMD3(1.5, -2, 30), SIMD3(1, 0.5, 5), SIMD3(0, 0.1, 0)])
+        #expect(parsed.uvs == [SIMD2(0.5, 1), SIMD2(1, 3.5), SIMD2(0.5, 1)])
+    }
+
     // MARK: - 整え方
 
     /// 面を作らずに整える。**GPU の無いところでも契約を確かめられる**ようにする —
