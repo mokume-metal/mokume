@@ -22,7 +22,9 @@ import mokume
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class SerialAndKnob: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "serial and knob")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "serial and knob")
+    }
 
     private var port: Serial?
     /// 開いたポートの識別子。開いていなければ空。
