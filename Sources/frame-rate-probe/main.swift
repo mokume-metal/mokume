@@ -33,28 +33,17 @@ final class Probe: Sketch {
     }
 }
 
-var seconds = 6.0
-var minimizeAfter: Double?
-var allowsDisplaySleep = false
-var arguments = CommandLine.arguments.dropFirst().makeIterator()
-while let argument = arguments.next() {
-    switch argument {
-    case "--seconds":
-        if let value = arguments.next(), let parsed = Double(value) { seconds = parsed }
-    case "--minimize-after":
-        // **自分で畳む。** よそのプロセスの窓を osascript から畳むにはアクセシビリティの
-        // 許可が要り、許可の無い環境では「検査が落ちた」と「窓を畳めなかった」を
-        // 区別できない (#223)
-        if let value = arguments.next(), let parsed = Double(value) { minimizeAfter = parsed }
-    case "--allow-display-sleep":
-        // **画面が消えることそのものを測るときだけ外す。** 断ったまま測ると
-        // 「スリープを作れなかったのに緑」という嘘が出る (#874)
-        allowsDisplaySleep = true
-    default:
-        FileHandle.standardError.write(Data("知らない引数: \(argument)\n".utf8))
-        exit(2)
-    }
+// 解き方は ProbeArguments.swift。解けない引数は使い方の誤りとして断る (#2490)
+let options: ProbeArguments
+do {
+    options = try ProbeArguments.parse(Array(CommandLine.arguments.dropFirst()))
+} catch let failure as ProbeArguments.Failure {
+    FileHandle.standardError.write(Data("\(failure.message)\n".utf8))
+    exit(2)
 }
+let seconds = options.seconds
+let minimizeAfter = options.minimizeAfter
+let allowsDisplaySleep = options.allowsDisplaySleep
 
 let gpu = try RenderDevice()
 let application = try SketchApplication(sketch: Probe(), gpu: gpu)
@@ -70,7 +59,8 @@ if let minimizeAfter {
     }
 }
 
-// 1 秒ごとに実測値を 1 行。行を集めるのは呼び出す側の仕事にする
+// 1 秒ごとに実測値を 1 行。行を集めるのは呼び出す側の仕事にする。
+// **測りは 1 秒刻みなので、`--seconds` の小数は切り上がる** (6.5 なら 7 秒で終わる)
 var elapsed = 0.0
 Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
     MainActor.assumeIsolated {
