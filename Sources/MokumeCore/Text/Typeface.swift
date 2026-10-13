@@ -114,14 +114,19 @@ final class Typeface {
         // `KefaIII-Bold`)。返った面の性質で見る。引けた面 (太字だけの面など) はそのまま使う
         let styled = CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits)
         if let styled, CTFontGetSymbolicTraits(styled).contains(traits) { return (styled, false) }
-        // **太斜体で斜体が無いとき、太字まで捨てない** ([#2562])。ヒラギノ角ゴシック・游明朝体の
-        // ように太斜体で nil (や太字でない面) を返す書体でも、太字だけで頼めば太字の面が引ける
-        func isBold(_ font: CTFont) -> Bool { CTFontGetSymbolicTraits(font).contains(.traitBold) }
-        if traits == [.traitBold, .traitItalic], !(styled.map(isBold) ?? false),
-            let bold = CTFontCreateCopyWithSymbolicTraits(base, size, nil, .traitBold, .traitBold),
-            isBold(bold)
-        {
-            return (bold, true)
+        // **頼んだ性質が揃わなくても、引ける性質は捨てない** ([#2562])。太斜体は「太斜体 → 太字だけ →
+        // 斜体だけ → 元の面」の順に頼み、最初に引けた面を使う。ヒラギノ角ゴシック・游明朝体のように
+        // 太斜体で nil (や太字でない面) を返す書体でも、太字だけで頼めば太字の面が引ける。**太字と
+        // 斜体の両方を持つが太斜体だけ無い書体 (Futura など) は太字を取る** — 太さは文字の読みに効き、
+        // 消えにくい強調だから。斜体だけを持つ書体 (Bodoni 72 Oldstyle など) は斜体で描く
+        if traits == [.traitBold, .traitItalic] {
+            for partial: CTFontSymbolicTraits in [.traitBold, .traitItalic] {
+                if let face = CTFontCreateCopyWithSymbolicTraits(base, size, nil, partial, partial),
+                    CTFontGetSymbolicTraits(face).contains(partial)
+                {
+                    return (face, true)
+                }
+            }
         }
         return (styled ?? base, true)
     }
