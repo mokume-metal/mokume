@@ -85,43 +85,89 @@ struct DatagramSenderTests {
 
     private let refused = NWError.posix(.ECONNREFUSED)
 
+    /// 始めていない繋ぎを作る。通信はしない。
+    private func unstartedConnection() -> NWConnection {
+        NWConnection(host: "192.168.1.20", port: 7000, using: .udp)
+    }
+
+    /// 送信の完了を、`connection` に返ったものとして読ませる。`issued` は送信を出した時刻。
+    private func complete(
+        _ sender: DatagramSender, _ error: NWError?, on connection: NWConnection?,
+        issuedAt issued: TimeInterval? = nil
+    ) {
+        sender.onQueue { sender.finished(sending: error, on: connection, issuedAt: issued) }
+    }
+
     @Test("拒否で名乗った後は、完了が誤り無しで返っても戻らない。拒否は次の送信の失敗として返る")
     func aCleanCompletionDoesNotClearARefusal() {
         let told = Told()
         let clock = ManualClock(0)
         let sender = clocked(told, clock)
-        sender.onQueue { sender.finished(sending: refused, on: nil) }
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        complete(sender, refused, on: connection)
         #expect(told.lines.count == 1)
 
-        // 送るたびに「誤り無し」と「拒否」が交互に返る。誤り無しの完了で戻すと、毎回言い直す
+        // 送るたびに「誤り無し」と「拒否」が交互に返る。誤り無しの完了で戻すと、毎回言い直す。
+        // 拒否が返るたびに繋ぎは捨てられるので、次は新しい繋ぎ
         for _ in 0..<6 {
+            let next = unstartedConnection()
+            sender.onQueue { sender.attach(next) }
             clock.advance(by: 0.1)
-            sender.onQueue { sender.finished(sending: nil, on: nil) }
+            complete(sender, nil, on: next, issuedAt: clock.provider())
             clock.advance(by: 0.1)
-            sender.onQueue { sender.finished(sending: refused, on: nil) }
+            complete(sender, refused, on: next)
         }
         #expect(told.lines.count == 1)
     }
 
-    @Test("同じ繋ぎで間を空けた 2 つ目も誤り無く終わったら戻り、次の拒否をまた名乗る")
+    @Test("同じ繋ぎで、最初の完了から間を空けて出した 2 つ目も誤り無く終わったら戻り、次の拒否をまた名乗る")
     func aConfirmedSendClearsARefusal() {
         let told = Told()
         let clock = ManualClock(0)
         let sender = clocked(told, clock)
-        sender.onQueue { sender.finished(sending: refused, on: nil) }
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        complete(sender, refused, on: connection)
 
-        sender.onQueue { sender.finished(sending: nil, on: nil) }
-        clock.advance(by: 0.4)  // まだ間が足りない
-        sender.onQueue { sender.finished(sending: nil, on: nil) }
-        sender.onQueue { sender.finished(sending: refused, on: nil) }
+        // 新しい繋ぎで最初の完了 (0 秒)。0.4 秒後に出した送信は間が足りない
+        let next = unstartedConnection()
+        sender.onQueue { sender.attach(next) }
+        complete(sender, nil, on: next, issuedAt: 0)
+        clock.advance(by: 0.4)
+        complete(sender, nil, on: next, issuedAt: 0.4)
+        clock.advance(by: 0.1)
+        complete(sender, refused, on: next)
         #expect(told.lines.count == 1)
 
-        // 拒否が返ると間の測り直し。足りたら戻る
-        sender.onQueue { sender.finished(sending: nil, on: nil) }
+        // 拒否が返ると繋ぎは捨てられ、数え直し。0.5 秒空けて出した送信が終わったら戻る
+        let third = unstartedConnection()
+        sender.onQueue { sender.attach(third) }
+        complete(sender, nil, on: third, issuedAt: clock.provider())
+        let first = clock.provider()
         clock.advance(by: 0.5)
-        sender.onQueue { sender.finished(sending: nil, on: nil) }
-        sender.onQueue { sender.finished(sending: refused, on: nil) }
+        complete(sender, nil, on: third, issuedAt: first + 0.5)
+        complete(sender, refused, on: third)
         #expect(told.lines.count == 2)
+    }
+
+    @Test("間は送信を出した時刻で測る。完了が遅れて返っただけでは満たさない")
+    func theGapIsMeasuredFromWhenTheSendWasIssued() {
+        let told = Told()
+        let clock = ManualClock(0)
+        let sender = clocked(told, clock)
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        complete(sender, refused, on: connection)
+        let next = unstartedConnection()
+        sender.onQueue { sender.attach(next) }
+
+        // 1 つ目 (0 秒に完了)。2 つ目は 0.1 秒に出したのに、待ち行列が遅れて完了が 0.6 秒に返る
+        complete(sender, nil, on: next, issuedAt: 0)
+        clock.advance(by: 0.6)
+        complete(sender, nil, on: next, issuedAt: 0.1)
+        complete(sender, refused, on: next)
+        #expect(told.lines.count == 1)  // 戻っていれば、この拒否を名乗り直して 2 になる
     }
 
     @Test("待っていた繋ぎは、拒否と違って、誤り無く終わった 1 度で戻す (間は要らない)")
@@ -135,37 +181,62 @@ struct DatagramSenderTests {
         #expect(told.lines.count == 2)
     }
 
-    @Test("自分で捨てた繋ぎの取り消しは、送れない理由として名乗らない。いまの繋ぎの取り消しは名乗る")
-    func ownCancellationIsNotAReason() {
+    @Test("待っていると名乗った後に拒否が返れば、以後は拒否として戻す (1 度の成功で言い直さない)")
+    func aRefusalAfterWaitingIsStillARefusal() {
         let told = Told()
-        let sender = clocked(told, ManualClock(0))
-        // いまの繋ぎ (まだ 1 つも開いていない) ではない繋ぎで返った取り消し
-        let dropped = NWConnection(host: "192.168.1.20", port: 7000, using: .udp)
-        sender.onQueue { sender.finished(sending: .posix(.ECANCELED), on: dropped) }
-        #expect(told.lines.isEmpty)
-
-        sender.onQueue { sender.finished(sending: .posix(.ECANCELED), on: nil) }
+        let clock = ManualClock(0)
+        let sender = clocked(told, clock)
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
         #expect(told.lines.count == 1)
-        #expect(told.lines.first?.contains("Operation canceled") == true)
+
+        complete(sender, refused, on: connection)  // 名乗り済みなので増えない。ここで拒否になる
+        let next = unstartedConnection()
+        sender.onQueue { sender.attach(next) }
+        complete(sender, nil, on: next, issuedAt: clock.provider())  // 誤り無しの 1 度では戻らない
+        complete(sender, refused, on: next)
+        #expect(told.lines.count == 1)
     }
 
-    @Test("大きすぎる datagram は大きさを名乗り、宛先を疑わず、送れた 1 度で戻る")
-    func tooLargeNamesTheSizeNotTheDestination() {
+    @Test("捨てた繋ぎに返った完了は、どんな誤りでも名乗らず、いまの繋ぎの数え方を崩さない")
+    func completionsOfADroppedConnectionAreIgnored() {
+        let told = Told()
+        let clock = ManualClock(0)
+        let sender = clocked(told, clock)
+        let dropped = unstartedConnection()
+        let current = unstartedConnection()
+        sender.onQueue { sender.attach(current) }
+
+        // 弱参照が消えた (nil) 完了も、いまの繋ぎではない
+        for error in [NWError.posix(.ECANCELED), refused, .posix(.EMSGSIZE)] {
+            complete(sender, error, on: dropped)
+            complete(sender, error, on: nil)
+        }
+        #expect(told.lines.isEmpty)
+
+        // いまの繋ぎの数え方を、捨てた繋ぎの誤りで消さない: 拒否の名乗り後、いまの繋ぎで最初の
+        // 完了 (0 秒) の後に捨てた繋ぎの拒否が返っても、0.5 秒空けた送信で戻れる
+        complete(sender, refused, on: current)
+        let fresh = unstartedConnection()
+        sender.onQueue { sender.attach(fresh) }
+        complete(sender, nil, on: fresh, issuedAt: 0)
+        complete(sender, refused, on: dropped)
+        complete(sender, nil, on: dropped, issuedAt: 5)  // 捨てた繋ぎの成功は数えない
+        clock.advance(by: 0.5)
+        complete(sender, nil, on: fresh, issuedAt: 0.5)
+        complete(sender, refused, on: fresh)
+        #expect(told.lines.count == 2)
+    }
+
+    @Test("いまの繋ぎに返った取り消しは、送れない理由として名乗る")
+    func cancellationOfTheCurrentConnectionIsNamed() {
         let told = Told()
         let sender = clocked(told, ManualClock(0))
-        sender.onQueue { sender.finished(sending: .posix(.EMSGSIZE), on: nil) }
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        complete(sender, .posix(.ECANCELED), on: connection)
         #expect(told.lines.count == 1)
-        let line = told.lines.first ?? ""
-        #expect(line.contains("Message too long"))
-        #expect(line.contains("larger than one datagram"))
-        #expect(!line.contains("listening"))
-        #expect(!line.contains("Local Network"))
-
-        // 続けて大きすぎても重ねて言わない。小さいものが送れたら戻る
-        sender.onQueue { sender.finished(sending: .posix(.EMSGSIZE), on: nil) }
-        #expect(told.lines.count == 1)
-        sender.onQueue { sender.finished(sending: nil, on: nil) }
-        sender.onQueue { sender.finished(sending: .posix(.EMSGSIZE), on: nil) }
-        #expect(told.lines.count == 2)
+        #expect(told.lines.first?.contains("Operation canceled") == true)
     }
 }

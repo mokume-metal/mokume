@@ -338,9 +338,6 @@ protocol DatagramSending: AnyObject, Sendable {
 ///   無いことがある (束ねた `.app` で、ダイアログが出ないまま塞がれたときに実測した — #1962)。
 ///   `Network is down` は Wi-Fi が落ちているときにも出るので、許可の拒否と断定はしない
 ///
-/// - **1 つの datagram が大きすぎる** (`EMSGSIZE`。`Message too long`) — 宛先の話ではなく、その
-///   メッセージの大きさの話なので、繋ぎは捨てず、宛先を疑う文面も出さない
-///
 /// ## UDP の送れた
 ///
 /// UDP の送信の完了は「手元のソケットから出た」ことしか言わない。宛先で誰も受けていない拒否は
@@ -349,13 +346,16 @@ protocol DatagramSending: AnyObject, Sendable {
 /// 「送れた」と読むと、誰にも届いていないのに送るたびに戻って、1 度だけのはずの診断が出直す
 /// (#2326)。
 ///
-/// だから**拒否で名乗った後は、同じ繋ぎで ``confirmAfter`` 秒の間を空けた 2 つ目の送信も誤り無く
-/// 終わって初めて**、送れたと読む。拒否は送信から宛先の往復の間に届くので、それより長く待った後の
-/// 送信が拒まれなければ、最初の送信は届いていた。受け手が居ないままなら、繋ぎは 2 つ目の送信の前に
+/// だから**拒否で名乗った後は、同じ繋ぎで最初に誤り無く終わった送信の完了から ``confirmAfter`` 秒以上
+/// 後に出した送信も誤り無く終わって初めて**、送れたと読む。拒否は送信から宛先の往復の間に届くので、
+/// それより長く待ってから出した送信が拒まれなければ、最初の送信は届いていた。**測るのは 2 つ目を
+/// 出した時刻で、完了が返った時刻ではない** — 待ち行列が遅れて 2 つ目が拒否の到着より前に出ていても、
+/// 完了の時刻だけを見ると間を満たしてしまう。受け手が居ないままなら、繋ぎは 2 つ目の送信の前に
 /// 拒否で捨てられるので、戻らない。
 ///
-/// **自分で捨てた繋ぎの取り消しは、送れない理由として名乗らない。** 繋ぎを捨てると、その繋ぎに
-/// 積まれていた送信の完了が `ECANCELED` で返る。
+/// **捨てた繋ぎ (いまの繋ぎでないもの) に返った完了は、いまの繋ぎの話ではないので無視する。** 繋ぎを
+/// 捨てると、その繋ぎに積まれていた送信の完了が `ECANCELED` などの誤りで返る。それを送れない理由として
+/// 名乗らず、いまの繋ぎの数え方も崩さない。
 ///
 /// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
 nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
@@ -374,9 +374,10 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     private let warn: @Sendable (String) -> Void
     private var connection: NWConnection?
     private var warned = false
-    /// いま名乗っているのが、宛先の失敗 (拒否など) か。偽なら (待っている・大きすぎる) 送れた 1 度で戻る。
+    /// いま名乗っているのが、宛先の失敗 (拒否など) か。偽なら (待っている) 送れた 1 度で戻る。名乗った
+    /// 後に宛先の失敗が返れば、理由が待ちでも真にする (次の誤り無しの完了で戻して言い直さない)。
     private var refused = false
-    /// いまの繋ぎで、最初に誤り無く終わった送信の時刻。繋ぎを捨てる・失敗が返るたびに消える。
+    /// いまの繋ぎで、最初に誤り無く終わった送信の完了の時刻。繋ぎを捨てる・失敗が返るたびに消える。
     private var unrefutedSince: TimeInterval?
 
     /// - Parameters:
@@ -397,10 +398,11 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     func send(_ bytes: [UInt8]) {
         queue.async { [self] in
             let connection = connection ?? open()
+            let issued = now()
             connection.send(
                 content: Data(bytes),
                 completion: .contentProcessed { [weak self, weak connection] error in
-                    self?.finished(sending: error, on: connection)
+                    self?.finished(sending: error, on: connection, issuedAt: issued)
                 })
         }
     }
@@ -429,8 +431,15 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
             self?.changed(to: state, on: opened)
         }
         opened.start(queue: queue)
-        connection = opened
+        attach(opened)
         return opened
+    }
+
+    /// 繋ぎをいまの繋ぎにする。検査は、始めていない繋ぎをここへ据えて、いまの繋ぎの完了と
+    /// 捨てた繋ぎの完了を作り分ける。
+    func attach(_ opened: NWConnection) {
+        connection = opened
+        unrefutedSince = nil
     }
 
     /// 繋ぎの移り変わりを読む。送れない形なら 1 度だけ知らせる。
@@ -449,37 +458,42 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
 
     /// 1 つ送り終えた。送れたら、また知らせられるように戻す。
     ///
-    /// 「送れた」が何かは、名乗った理由で違う。待っている・大きすぎるときは、誤り無く終わった 1 度で
-    /// 戻す。**宛先の失敗 (拒否など) は、完了が誤り無しで返っても戻さない** — 拒否は次の送信の
-    /// 失敗として返るので、同じ繋ぎで ``confirmAfter`` 秒の間を空けて 2 つ目が誤り無く終わって初めて
-    /// 戻す (型の説明の「UDP の送れた」)。
-    func finished(sending error: NWError?, on sent: NWConnection?) {
-        // 捨てた繋ぎの後始末で返った完了は、いまの繋ぎの話ではない
-        let current = connection === sent
+    /// 「送れた」が何かは、名乗った理由で違う。待っているときは、誤り無く終わった 1 度で戻す。
+    /// **宛先の失敗 (拒否など) は、完了が誤り無しで返っても戻さない** — 拒否は次の送信の失敗として
+    /// 返るので、同じ繋ぎで最初に誤り無く終わった完了から ``confirmAfter`` 秒以上後に出した送信も誤り
+    /// 無く終わって初めて戻す (型の説明の「UDP の送れた」)。
+    ///
+    /// - Parameter issuedAt: この送信を出した時刻。`nil` なら、いま。
+    func finished(sending error: NWError?, on sent: NWConnection?, issuedAt: TimeInterval? = nil) {
         guard let error else {
             guard warned else {
-                if current { unrefutedSince = unrefutedSince ?? now() }
+                if isCurrent(sent) { unrefutedSince = unrefutedSince ?? now() }
                 return
             }
             guard refused else {
                 warned = false
                 return
             }
-            guard current else { return }
-            let time = now()
-            let since = unrefutedSince ?? time
+            // 捨てた繋ぎの完了は、いまの繋ぎの数え方に入れない
+            guard isCurrent(sent) else { return }
+            let completed = now()
+            let since = unrefutedSince ?? completed
             unrefutedSince = since
-            if time - since >= confirmAfter { warned = false }
+            if (issuedAt ?? completed) - since >= confirmAfter { warned = false }
             return
         }
-        if !current, case .posix(.ECANCELED) = error { return }  // 自分で捨てた繋ぎの取り消し
+        // 捨てた繋ぎに積まれていた送信の完了は、どんな誤りでも、いまの繋ぎの話ではない
+        guard isCurrent(sent) else { return }
         unrefutedSince = nil
-        if case .posix(.EMSGSIZE) = error {
-            tell(error, cause: .tooLarge)  // 宛先の話ではない。繋ぎは捨てない
-            return
-        }
         if let sent { drop(sent) }
         tell(error, cause: .destination)
+    }
+
+    /// `sent` がいまの繋ぎか。**弱参照が消えた (`nil`) ものはいまの繋ぎではない** — いまの繋ぎは
+    /// こちらが持っているので消えない。
+    private func isCurrent(_ sent: NWConnection?) -> Bool {
+        guard let sent else { return false }
+        return connection === sent
     }
 
     /// 繋ぎを捨てる。次に送るときに作り直す。
@@ -497,11 +511,11 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
         case waiting
         /// 繋ぎや送信が失敗した (宛先で誰も受けていないなど)。
         case destination
-        /// 1 つの datagram が大きすぎる。
-        case tooLarge
     }
 
     private func tell(_ error: NWError, cause: Cause) {
+        // 待っていると名乗った後に宛先の失敗が返ったら、以後は拒否として戻す
+        if cause == .destination { refused = true }
         guard !warned else { return }
         warned = true
         refused = cause == .destination
@@ -514,10 +528,6 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
                     + "waiting for the connection")
         case .destination:
             warn(head + " Check that something is listening there; the next message tries again")
-        case .tooLarge:
-            warn(
-                head + " The message is larger than one datagram this system sends; the connection "
-                    + "is kept, and smaller messages still go through")
         }
     }
 
