@@ -157,7 +157,10 @@ class PlaceAndAnswerTest(unittest.TestCase):
         """固まりうる待ちには待つ側が期限を持たせる (AGENTS.md)。"""
         started = time.monotonic()
         self.assertIsNone(observe_lib.answered(self.observe, "a", 0.1))
-        self.assertLess(time.monotonic() - started, 2.0)
+        # **見たいのは上限そのもの** (期限を守って戻ること) なので、時計の上限を残す。
+        # 余裕は期限 (0.1 秒) の 50 倍に取る — CPU が混んで数秒止まっても赤にせず、期限を
+        # 無視して待ち続ける・単位を取り違えて 100 倍待つ (10 秒) 退行は捕まえる (#2396)
+        self.assertLess(time.monotonic() - started, 5.0)
 
     def test_a_wall_clock_jump_does_not_cut_the_wait_short(self):
         """**期限は、眠っている間は進まない時計で測る** (#1940)。
@@ -168,6 +171,8 @@ class PlaceAndAnswerTest(unittest.TestCase):
         """
         calls = iter(range(10**6))
         report = self.observe / "report.json"
+        # 応答は 0.05 秒後に置き、待ちの期限は 5 秒 — 100 倍の余裕があり、置くのが遅れても
+        # 期限の内側に収まる (固定の窓に頼る揺れにはならない・#2396)
         later = threading.Timer(0.05, lambda: report.write_text(json.dumps({"id": "a"})))
         later.start()
         self.addCleanup(later.join)
@@ -188,17 +193,25 @@ class RoundtripTest(unittest.TestCase):
     # 期限は応答が返らない回の上限でしかない (返れば即座に抜ける)。短くすると、CPU が
     # 混んだ回に偽スケッチの応答が遅れただけで赤になる (#1857)
     def run_roundtrip(self, rounds, deadline="5"):
-        return subprocess.run(
-            [
-                sys.executable,
-                str(SCRIPTS / "observation_roundtrip.py"),
-                str(self.root / ".mokume"),
-                str(rounds),
-                deadline,
-            ],
-            capture_output=True,
-            text=True,
-        )
+        # **待つ側も期限を持ち、越えたら殺す** (AGENTS.md「待ちを含む検査を書く」・#2396)。
+        # 数える側が待ちうるのは 回数 × 面 2 つ × 1 往復の期限 までで、それに起動の余裕を
+        # 足す。期限が無いと、数える側が固まったとき検査ごと止まり、子が残る
+        limit = rounds * 2 * float(deadline) + 30
+        try:
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "observation_roundtrip.py"),
+                    str(self.root / ".mokume"),
+                    str(rounds),
+                    deadline,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=limit,
+            )
+        except subprocess.TimeoutExpired as expired:
+            self.fail(f"数える側が {limit:g} 秒で戻らなかった (殺した)\n{expired.stdout}\n{expired.stderr}")
 
     def test_all_answered_is_green(self):
         with Sketch(self.observe, self.inbox):
@@ -245,17 +258,21 @@ class RoundtripTest(unittest.TestCase):
             with self.subTest(answer_delay=delay):
                 (observe,) = facets(self.root / f"delay-{delay}", "observe")
                 with Sketch(observe, delay=delay) as sketch:
-                    pressing, stderr = self.press_until_placed(observe, sketch, 2)
+                    pressing, elapsed, stderr = self.press_until_placed(observe, sketch, 2)
                 self.assertGreater(len(sketch.placed), 1, f"置かれた要求が {sketch.placed}\n{stderr}")
                 self.assertTrue(pressing, f"2 件目を置く前に圧をかける側が戻った\n{stderr}")
                 self.assertEqual(sketch.placed[0], "m1")
+                # **遅らせが効いていること。** 2 件目は 1 件目の応答の後にしか置かれないので、
+                # 遅らせが効いていれば 2 件目までに遅れの秒数以上かかる (下限なので揺れない)
+                self.assertGreaterEqual(elapsed, delay, "偽スケッチの応答が遅れていない")
 
     def press_until_placed(self, observe, sketch, count):
         """`pressure` を走らせ、`count` 件置かれるか、自分で戻るか、期限を越えるまで待って止める。
 
-        返すのは (止めた時点でまだ走っていたか, stderr)。**待つ側が期限を持ち、越えたら殺す**
-        (AGENTS.md「待ちを含む検査を書く」)。
+        返すのは (止めた時点でまだ走っていたか, 起動から待ち終えるまでの秒数, stderr)。
+        **待つ側が期限を持ち、越えたら殺す** (AGENTS.md「待ちを含む検査を書く」)。
         """
+        started = time.monotonic()
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -277,14 +294,53 @@ class RoundtripTest(unittest.TestCase):
             ):
                 time.sleep(0.01)
             pressing = proc.poll() is None
+            elapsed = time.monotonic() - started
         finally:
             proc.kill()
             _, stderr = proc.communicate(timeout=10)
-        return pressing, stderr
+        return pressing, elapsed, stderr
+
+    # 短い窓。圧をかける側は窓が閉じたら、いま待っている 1 往復を終えて戻る
+    SHORT_WINDOW_SECONDS = 0.3
+    # 窓で戻ることを待つ側の期限 (窓の 60 倍余り)。越えたら殺して赤にする。窓を守らない
+    # 退行 (1 往復ごとに期限を延ばす・秒を取り違えて 1000 倍の窓にする) はここで捕まる。
+    # これより細かい比例 (窓の数倍で戻る) は見ない — 混んだ機械の起動の遅れで揺れるため
+    SHORT_WINDOW_DEADLINE_SECONDS = 20
 
     def test_pressure_returns_when_its_window_closes(self):
-        """`limit` 秒で戻る口 (`measure-frame-rate.sh` が使う) は残っている。窓が 0 秒なら
-        1 件も置かずに 0 で戻る。"""
+        """`limit` 秒で戻る口 (`measure-frame-rate.sh` が使う) は、応答を受けながら置き続けても
+        窓を守り、0 で戻る (#2396 の反証)。
+
+        偽スケッチはすぐ応答するので、窓の間は識別子を変えながら置き続け、窓が閉じると戻る。
+        **置かれた数の下限は見ない** — 窓の中で何件置けるかは機械の速さで決まり、それに頼ると
+        #2396 の揺れに戻る (続けて置くことは `test_pressure_keeps_placing_requests` が見る)。
+        見るのは、期限の内に戻ること・終了コード・置いた識別子が m1 から 1 つずつ変わることである。
+        """
+        with Sketch(self.observe) as sketch:
+            try:
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPTS / "frame_rate_observe.py"),
+                        "pressure",
+                        str(self.observe),
+                        str(self.SHORT_WINDOW_SECONDS),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.SHORT_WINDOW_DEADLINE_SECONDS,
+                )
+            except subprocess.TimeoutExpired as expired:
+                self.fail(
+                    f"窓 {self.SHORT_WINDOW_SECONDS} 秒の圧が {self.SHORT_WINDOW_DEADLINE_SECONDS} 秒で"
+                    f"戻らなかった (殺した。置かれた要求 {len(sketch.placed)} 件)\n{expired.stderr}"
+                )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertGreaterEqual(len(sketch.placed), 1, proc.stderr)
+        self.assertEqual(sketch.placed, [f"m{i}" for i in range(1, len(sketch.placed) + 1)])
+
+    def test_pressure_with_a_closed_window_places_nothing(self):
+        """窓が 0 秒なら 1 件も置かずに 0 で戻る。"""
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS / "frame_rate_observe.py"), "pressure", str(self.observe), "0"],
             capture_output=True,
