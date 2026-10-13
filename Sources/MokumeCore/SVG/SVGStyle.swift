@@ -7,6 +7,10 @@ import Foundation
 //
 // どれも**読めなければ `nil` を返し、何を読めなかったかは呼ぶ側が名乗る** (``SVGFile/Drawing/skipped``)。
 // ここは文字を値にするだけで、どの要素の話かを知らない。
+//
+// 数は SVG / CSS の数の文法 — 10 進の綴りだけ — で読む。1 つの値を丸ごと数にする所は
+// `DecimalText.spelled(_:)`、数を並べた値 (`viewBox`・パス・`transform` の引数) は
+// `NumberScanner` を通す。Swift の `Float(String)` は 16 進 (`0x10`) も数にするので直に使わない (#2513)。
 
 extension SVGFile {
     // MARK: - 色
@@ -63,14 +67,15 @@ extension SVGFile {
         let name = value[..<open].trimmingCharacters(in: .whitespaces)
         guard name == "rgb" || name == "rgba" else { return nil }
         let inside = value[value.index(after: open)..<value.index(before: value.endIndex)]
-        let parts = inside.split(whereSeparator: { $0 == "," || $0 == " " || $0 == "/" || $0 == "\t" })
+        // 区切りの空白には改行も数える (`<style>` の値は改行を残して渡る) (#2513)
+        let parts = inside.split(whereSeparator: { $0 == "," || $0 == "/" || $0.isWhitespace })
         guard parts.count == 3 || parts.count == 4 else { return nil }
         func component(_ part: Substring, scale: Float) -> Float? {
             if part.hasSuffix("%") {
-                guard let percent = Float(part.dropLast()), percent.isFinite else { return nil }
+                guard let percent = DecimalText.spelled(part.dropLast()), percent.isFinite else { return nil }
                 return min(max(percent / 100, 0), 1)
             }
-            guard let number = Float(part), number.isFinite else { return nil }
+            guard let number = DecimalText.spelled(part), number.isFinite else { return nil }
             return min(max(number / scale, 0), 1)
         }
         guard let red = component(parts[0], scale: 255), let green = component(parts[1], scale: 255),
@@ -143,10 +148,12 @@ extension SVGFile {
             ("in", 96), ("%", 0),
         ]
         for unit in units where value.hasSuffix(unit.suffix) {
-            guard let number = Float(value.dropLast(unit.suffix.count)), number.isFinite else { return nil }
+            guard let number = DecimalText.spelled(value.dropLast(unit.suffix.count)), number.isFinite else {
+                return nil
+            }
             return unit.suffix == "%" ? number / 100 * reference : number * unit.scale
         }
-        guard let number = Float(value), number.isFinite else { return nil }
+        guard let number = DecimalText.spelled(value), number.isFinite else { return nil }
         return number
     }
 
@@ -214,7 +221,8 @@ extension SVGFile {
             guard let open = rest.firstIndex(of: "("), let close = rest.firstIndex(of: ")"),
                 open < close
             else { return nil }
-            let name = rest[..<open].trimmingCharacters(in: .whitespaces).lowercased()
+            // 名前と括弧のあいだの改行 (`translate&#10;(10)`) も空白として落とす (#2513)
+            let name = rest[..<open].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard let numbers = parseNumbers(String(rest[rest.index(after: open)..<close])) else {
                 return nil
             }

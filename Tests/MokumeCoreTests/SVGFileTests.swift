@@ -183,6 +183,106 @@ struct SVGFileTests {
         #expect(SVGFile.parseLength("2em", reference: 0) == nil)
     }
 
+    /// 数は SVG / CSS の数の文法 (10 進の綴り) で読む。Swift の `Float(String)` が受ける 16 進・
+    /// `nan`・`inf` は数でなく、数と単位のあいだの空白も読めない値のまま ([#2513])。
+    ///
+    /// [#2513]: https://github.com/mokume-metal/mokume/issues/2513
+    @Test("長さと色の成分は 10 進の綴りだけを数にする (#2513)")
+    func numbersAreDecimalOnly() {
+        for text in ["0x10", "0x10mm", "0x10%", "0x1p-1", "0X2px", "nan", "inf", "10 px", "1e39"] {
+            #expect(SVGFile.parseLength(text, reference: 100) == nil, "\(text)")
+        }
+        #expect(SVGFile.parseLength(" .5px\n", reference: 0) == 0.5)
+        #expect(SVGFile.parseLength("+1e1", reference: 0) == 10)
+        #expect(SVGFile.parseLength("-0.5in", reference: 0) == -48)
+        for text in ["rgb(0x10, 0, 0)", "rgb(0x10%, 0%, 0%)", "rgba(0, 0, 0, 0x1p-1)", "rgb(nan, 0, 0)"] {
+            #expect(SVGFile.parseColor(text) == nil, "\(text)")
+        }
+        #expect(SVGFile.parseColor("rgb(16, 0, 0)") == SVGFile.Color(red: 16 / 255, green: 0, blue: 0, alpha: 1))
+    }
+
+    @Test(
+        "16 進の数は、同じ口に abc を置いたときと同じく読めない値として名乗る (#2513)",
+        arguments: ["0x10", "0x1p-1", "0X2", "abc"])
+    func hexadecimalValuesAreUnreadable(_ bad: String) throws {
+        let drawing = try document(
+            """
+            <rect width="\(bad)" height="10"/>
+            <rect width="10" height="10" stroke="red" stroke-width="\(bad)"/>
+            <rect width="10" height="10" opacity="\(bad)"/>
+            <rect width="10" height="10" fill-opacity="\(bad)%"/>
+            <rect width="10" height="10" fill="rgb(\(bad), 0, 0)"/>
+            <rect width="\(bad)mm" height="10"/>
+            <rect width="10" height="10" stroke="red" stroke-opacity="\(bad)"/>
+            <rect x="\(bad)" width="10" height="10"/>
+            <rect y="\(bad)" width="10" height="10"/>
+            <circle cx="\(bad)" r="5"/>
+            <circle r="\(bad)"/>
+            <ellipse rx="\(bad)" ry="5"/>
+            <ellipse rx="5" ry="\(bad)"/>
+            <line x1="\(bad)" x2="5" stroke="red"/>
+            <line y2="\(bad)" x2="5" stroke="red"/>
+            """)
+        #expect(
+            drawing.skipped.map(\.what) == [
+                "<rect width=\"\(bad)\">", "stroke-width \"\(bad)\"", "opacity \"\(bad)\"",
+                "fill-opacity \"\(bad)%\"", "fill \"rgb(\(bad), 0, 0)\"", "<rect width=\"\(bad)mm\">",
+                "stroke-opacity \"\(bad)\"", "<rect x=\"\(bad)\">", "<rect y=\"\(bad)\">",
+                "<circle cx=\"\(bad)\">", "<circle r=\"\(bad)\">", "<ellipse rx=\"\(bad)\">",
+                "<ellipse ry=\"\(bad)\">", "<line x1=\"\(bad)\">", "<line y2=\"\(bad)\">",
+            ], "\(bad)")
+        // 寸法・位置の読めない図形は描かず、読めない宣言は捨てて既定 (線の太さ 1・不透明・黒) のまま
+        #expect(drawing.items.count == 5)
+        #expect(drawing.items.first?.strokeWidth == 1)
+        #expect(drawing.items.dropFirst().prefix(3).map(\.fill) == [.black, .black, .black])
+        #expect(drawing.items.last?.stroke == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
+    }
+
+    @Test("10 進で書いた長さ・不透明度・rgb() は変わらず読む (#2513 の陰性対照)")
+    func decimalValuesStillRead() throws {
+        let drawing = try document(
+            """
+            <rect width="10" height="10" stroke="red" stroke-width="2" opacity=".5"/>
+            <rect width="1e1" height="10" fill="rgb(16, 0, 0)" fill-opacity="50%"/>
+            """)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items.map(\.strokeWidth) == [2, 1])
+        #expect(drawing.items[0].fill == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 0.5))
+        #expect(drawing.items[1].outline == .rect(x: 0, y: 0, width: 10, height: 10))
+        #expect(drawing.items[1].fill == SVGFile.Color(red: 16 / 255, green: 0, blue: 0, alpha: 0.5))
+    }
+
+    @Test("transform の名前と括弧のあいだの改行は空白として落とす (#2513)")
+    func newlineBetweenTransformNameAndParenthesis() throws {
+        for text in ["translate\n(10)", "translate\r\n(10)", "translate \t(10)", "\ntranslate\n(10)\n"] {
+            let read = try #require(SVGFile.parseTransform(text), "\(text.debugDescription)")
+            #expect(read == .translate(10, 0), "\(text.debugDescription)")
+        }
+        // 属性に文字参照で書いた改行も、同じ変換になる
+        let drawing = try document(#"<rect width="1" height="1" transform="translate&#10;(10)"/>"#)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items.first?.transform == .translate(10, 0))
+    }
+
+    /// `rgb()` の引数の区切りの空白には改行も数える (CSS の空白)。`<style>` の値は改行を残して
+    /// 渡るので、`fill: rgb(255,` で折り返した規則が読めないと名乗られていた (#2513 の反証)。
+    @Test("rgb() の引数のあいだの改行は空白として区切る (#2513)")
+    func newlinesSeparateRgbArguments() throws {
+        let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
+        for text in ["rgb(255,\n 0, 0)", "rgb(255\r\n0\n0)", "rgba(255, 0,\n0 /\n100%)"] {
+            #expect(SVGFile.parseColor(text) == red, "\(text.debugDescription)")
+        }
+        let drawing = try document(
+            """
+            <style>.a { fill: rgb(255,
+              0, 0) }</style>
+            <rect class="a" width="1" height="1"/>
+            <rect width="1" height="1" fill="rgb(255,&#10;0,&#13;&#10;0)"/>
+            """)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items.map(\.fill) == [red, red])
+    }
+
     // MARK: - 文書
 
     @Test("基本図形と、群の変換を畳んだ置き場所を読む")

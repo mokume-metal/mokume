@@ -500,9 +500,9 @@ nonisolated enum SVGFile {
         private static func fraction(_ text: String) -> Float? {
             let value: Float?
             if text.hasSuffix("%") {
-                value = Float(text.dropLast()).map { $0 / 100 }
+                value = DecimalText.spelled(text.dropLast()).map { $0 / 100 }
             } else {
-                value = Float(text)
+                value = DecimalText.spelled(text)
             }
             guard let value, value.isFinite else { return nil }
             return min(max(value, 0), 1)
