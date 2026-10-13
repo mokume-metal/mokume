@@ -43,6 +43,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -292,6 +293,30 @@ class ExampleShotsTest(unittest.TestCase):
         self.assertEqual(
             (package / "Package.swift").read_text(encoding="utf-8").count(".executableTarget"), 1
         )
+
+    def test_生成した入口は失敗を名乗って落ち_裸のtryを持たない(self):
+        # **裸の top-level `try` は Swift ランタイムの既定処理 (trap) へ落ちる** (#2541)。
+        # 入口の失敗は何が足りないかを名乗って exit(1) で終わる (規範は Sketches/main.swift の exitReporting)
+        found = self.collect()
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        main = (package / "Sources" / "example-shots" / "main.swift").read_text(encoding="utf-8")
+        tries = 0
+        for line in main.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("//") or not re.search(r"\btry\b", stripped):
+                continue
+            tries += 1
+            # 字下げの外 (= do の外) に try が無い
+            self.assertTrue(line[:1].isspace(), f"do の外に try が残っている: {stripped}")
+        self.assertGreater(tries, 0, "try を含む行が 1 つも無い — 検査が空回りしている")
+        self.assertRegex(main, r"(?m)^do \{$")
+        self.assertRegex(main, r"(?m)^\} catch \{$")
+        # catch の中で、標準エラーへ失敗の中身を書き、exit(1) で終わる
+        handler = main[main.index("} catch {"):]
+        self.assertIn("FileHandle.standardError.write", handler)
+        self.assertIn("\\(error)", handler)
+        self.assertIn("exit(1)", handler)
 
     def test_例のimportは重ねずに生成物の先頭へ集める(self):
         """#2216。2 本の例が同じ `import` を書いても、先頭には 1 回だけ出る。"""
