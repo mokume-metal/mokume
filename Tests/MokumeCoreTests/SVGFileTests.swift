@@ -213,16 +213,29 @@ struct SVGFileTests {
             <rect width="10" height="10" fill-opacity="\(bad)%"/>
             <rect width="10" height="10" fill="rgb(\(bad), 0, 0)"/>
             <rect width="\(bad)mm" height="10"/>
+            <rect width="10" height="10" stroke="red" stroke-opacity="\(bad)"/>
+            <rect x="\(bad)" width="10" height="10"/>
+            <rect y="\(bad)" width="10" height="10"/>
+            <circle cx="\(bad)" r="5"/>
+            <circle r="\(bad)"/>
+            <ellipse rx="\(bad)" ry="5"/>
+            <ellipse rx="5" ry="\(bad)"/>
+            <line x1="\(bad)" x2="5" stroke="red"/>
+            <line y2="\(bad)" x2="5" stroke="red"/>
             """)
         #expect(
             drawing.skipped.map(\.what) == [
                 "<rect width=\"\(bad)\">", "stroke-width \"\(bad)\"", "opacity \"\(bad)\"",
                 "fill-opacity \"\(bad)%\"", "fill \"rgb(\(bad), 0, 0)\"", "<rect width=\"\(bad)mm\">",
+                "stroke-opacity \"\(bad)\"", "<rect x=\"\(bad)\">", "<rect y=\"\(bad)\">",
+                "<circle cx=\"\(bad)\">", "<circle r=\"\(bad)\">", "<ellipse rx=\"\(bad)\">",
+                "<ellipse ry=\"\(bad)\">", "<line x1=\"\(bad)\">", "<line y2=\"\(bad)\">",
             ], "\(bad)")
-        // 寸法の読めない矩形は描かず、読めない宣言は捨てて既定 (線の太さ 1・不透明・黒) のまま
-        #expect(drawing.items.count == 4)
+        // 寸法・位置の読めない図形は描かず、読めない宣言は捨てて既定 (線の太さ 1・不透明・黒) のまま
+        #expect(drawing.items.count == 5)
         #expect(drawing.items.first?.strokeWidth == 1)
-        #expect(drawing.items.dropFirst().map(\.fill) == [.black, .black, .black])
+        #expect(drawing.items.dropFirst().prefix(3).map(\.fill) == [.black, .black, .black])
+        #expect(drawing.items.last?.stroke == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
     }
 
     @Test("10 進で書いた長さ・不透明度・rgb() は変わらず読む (#2513 の陰性対照)")
@@ -249,6 +262,25 @@ struct SVGFileTests {
         let drawing = try document(#"<rect width="1" height="1" transform="translate&#10;(10)"/>"#)
         #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
         #expect(drawing.items.first?.transform == .translate(10, 0))
+    }
+
+    /// `rgb()` の引数の区切りの空白には改行も数える (CSS の空白)。`<style>` の値は改行を残して
+    /// 渡るので、`fill: rgb(255,` で折り返した規則が読めないと名乗られていた (#2513 の反証)。
+    @Test("rgb() の引数のあいだの改行は空白として区切る (#2513)")
+    func newlinesSeparateRgbArguments() throws {
+        let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
+        for text in ["rgb(255,\n 0, 0)", "rgb(255\r\n0\n0)", "rgba(255, 0,\n0 /\n100%)"] {
+            #expect(SVGFile.parseColor(text) == red, "\(text.debugDescription)")
+        }
+        let drawing = try document(
+            """
+            <style>.a { fill: rgb(255,
+              0, 0) }</style>
+            <rect class="a" width="1" height="1"/>
+            <rect width="1" height="1" fill="rgb(255,&#10;0,&#13;&#10;0)"/>
+            """)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items.map(\.fill) == [red, red])
     }
 
     // MARK: - 文書

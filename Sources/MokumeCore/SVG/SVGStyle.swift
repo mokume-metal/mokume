@@ -67,7 +67,8 @@ extension SVGFile {
         let name = value[..<open].trimmingCharacters(in: .whitespaces)
         guard name == "rgb" || name == "rgba" else { return nil }
         let inside = value[value.index(after: open)..<value.index(before: value.endIndex)]
-        let parts = inside.split(whereSeparator: { $0 == "," || $0 == " " || $0 == "/" || $0 == "\t" })
+        // 区切りの空白には改行も数える (`<style>` の値は改行を残して渡る) (#2513)
+        let parts = inside.split(whereSeparator: { $0 == "," || $0 == "/" || $0.isWhitespace })
         guard parts.count == 3 || parts.count == 4 else { return nil }
         func component(_ part: Substring, scale: Float) -> Float? {
             if part.hasSuffix("%") {
