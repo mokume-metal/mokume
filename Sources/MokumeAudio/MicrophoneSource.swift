@@ -214,11 +214,31 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
             devicesListener = listener
         }
         // 機材の形式が変わる (標本化率を変えた等) と、エンジンは止まる。同じ機材で始め直す
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil
-        ) { [weak self] note in
-            let changed = (note.object as AnyObject?).map(ObjectIdentifier.init)
-            self?.control.async { [weak self] in self?.configurationChanged(changed) }
+        configurationObserver = Self.observeConfigurationChanges(on: control) { [weak self] noted in
+            self?.configurationChanged(noted)
+        }
+    }
+
+    /// 構成の変化の知らせを受け、知らせに載ったエンジンを**弱く**控えて、`queue` で `handle` へ渡す。
+    ///
+    /// 比べるのは `queue` に回ってからで、それまでに先に届いた知らせの始め直しが古いエンジンを
+    /// 手放して新しいエンジンを作りうる。新しいエンジンは古いエンジンの番地 (`ObjectIdentifier`) を
+    /// 引き継ぎうるので、番地で控えると、古いエンジンの知らせで新しいエンジンを止め直す ([#2529])。
+    /// 本体の「番地で見分けない」方針 (`PendingUploads`・[#2306] の `Canvas.placementKey`) と同じ。
+    ///
+    /// 知らせの中継所と名前は検査が差し替える (実機のエンジン無しで、知らせを続けて送るため)。
+    ///
+    /// [#2306]: https://github.com/mokume-metal/mokume/issues/2306
+    /// [#2529]: https://github.com/mokume-metal/mokume/issues/2529
+    static func observeConfigurationChanges(
+        center: NotificationCenter = .default,
+        name: Notification.Name = .AVAudioEngineConfigurationChange,
+        on queue: DispatchQueue,
+        _ handle: @escaping @Sendable (NotedObject) -> Void
+    ) -> any NSObjectProtocol {
+        center.addObserver(forName: name, object: nil, queue: nil) { note in
+            let noted = NotedObject(note.object as AnyObject?)
+            queue.async { handle(noted) }
         }
     }
 
@@ -252,11 +272,31 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
 
     /// 構成が変わってエンジンが止まった。**同じ機材がまだ在るときだけ**始め直す — 抜かれたなら、
     /// それは一覧の変化 (``devicesChanged()``) が抜かれたと名乗る。
-    private func configurationChanged(_ changed: ObjectIdentifier?) {
-        guard let engine, changed == ObjectIdentifier(engine), let device = current,
+    private func configurationChanged(_ noted: NotedObject) {
+        guard let engine, noted.refers(to: engine), let device = current,
             CoreAudioDevices.allObjects().contains(device), lifecycle.state == .running
         else { return }
         stopEngine()
         startEngine(with: device)
+    }
+}
+
+/// 知らせに載った物の控え。**番地 (`ObjectIdentifier`) ではなく弱参照で持つ** ([#2529])。
+///
+/// 番地は、持ち主が解放されると後から作った物に使い回されうる。弱参照なら、解放された物の控えは
+/// どの物とも一致しない。控えは物を生かさない (知らせが列で待つ間、古いエンジンを手放せる)。
+///
+/// [#2529]: https://github.com/mokume-metal/mokume/issues/2529
+nonisolated final class NotedObject: @unchecked Sendable {
+    // `@unchecked Sendable`: 書くのは作るときの 1 度だけで、弱参照は糸をまたいで読んでよい
+    private weak var object: AnyObject?
+
+    init(_ object: AnyObject?) {
+        self.object = object
+    }
+
+    /// 控えた物が `candidate` そのものか。控えた物が既に解放されていれば偽。
+    func refers(to candidate: AnyObject) -> Bool {
+        object === candidate
     }
 }
