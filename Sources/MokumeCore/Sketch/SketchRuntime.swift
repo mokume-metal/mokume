@@ -16,7 +16,14 @@ import QuartzCore
 /// 進め方が変わっても描かれる中身は変わらない。だから画面を持たない実行と画面に出す
 /// 実行が、別の実装に分かれない。
 ///
+/// 例外は 1 つで、**経路** (進め方ではない) で変わる。窓・共有面の経路では、保存した利用者の断片を
+/// 裏で組み、組み上がった後のフレームから効かせる ([#2365]・[ADR-0025] 決定 1 の追補 2026-10-14)。
+/// 書き出しと、この型を直に作って回す場合は、保存の次のフレームから効く。どちらの経路でも、
+/// 叩き方 (main actor を譲るか) で届き方は変わらない。
+///
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
+/// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+/// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
 @MainActor
 public final class SketchRuntime {
     /// 走らせているスケッチ。
@@ -575,6 +582,13 @@ public final class SketchRuntime {
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
         let observation = capture == nil ? observer?.pendingRequest() : nil
+        // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
+        // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
+        // このフレームの中なので、ここで立てれば覆える
+        //
+        // [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+        canvas.gpu.waitsForShaderRebuilds = observation != nil || capture != nil
+        defer { canvas.gpu.waitsForShaderRebuilds = false }
         var requestedTime: Float?
         if let observation, observation.time != nil, let observer {
             var refusal = observation.timeWarning
