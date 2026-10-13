@@ -105,6 +105,10 @@ public final class SketchRuntime {
     enum Warning: Hashable {
         /// 走っている最中に ``SketchSettings/frameRate`` が起動のときの値から変わった。
         case frameRateChangedWhileRunning
+        /// 観測へ差し出された値が非有限の数だった (``Sketch/expose(_:_:)-(_,Double)``)。
+        /// **ランタイムで 1 度だけ** — 毎フレーム差し出す口で、名前ごとに言うと名前を動的に
+        /// 作る作品で控えが増え続ける。
+        case nonFiniteExposed
     }
 
     /// 1 度だけ言った注意の控え。**検査が読む。**
@@ -1329,9 +1333,29 @@ public final class SketchRuntime {
     /// 外から値を差し出す (``Sketch/expose(_:_:)-(_,Double)`` から呼ばれる)。
     ///
     /// 観測が有効でなければ溜めない。
+    ///
+    /// **非有限の数 (NaN・無限) は溜めずに、1 度だけ名乗る。** 応答は JSON で、非有限の数を
+    /// 符号化できない — 溜めると、その枚の応答がまるごと置けなくなる
+    /// ([#2271](https://github.com/mokume-metal/mokume/issues/2271))。差し出さなかった値は
+    /// 応答の `values` に載らない (他の値は載る)。前の枚の値は残らない — 差し出した値は
+    /// フレームの頭で消える (``beginFrame()``)。**例外は ``measure(_:_:)`` で測った名前**: 測った
+    /// 値はフレームの頭で差し戻されるので、その名前に非有限を差し出しても、載るのは測った値である。
     func expose(_ name: String, _ value: ExposedValue) {
         guard observer != nil else { return }
+        guard value.paramValue.hasOnlyFiniteNumbers else {
+            // 文面は言う回にしか組まない (毎フレーム差し出す口で、黙る回に文字列を確保しない)
+            warnings.warnOnce(.nonFiniteExposed, Self.nonFiniteExposedNotice(name, value))
+            return
+        }
         exposedValues[name] = value
+    }
+
+    /// 非有限の値を差し出されたときの 1 行。数は今は `.float` だけが持つ。
+    private static func nonFiniteExposedNotice(_ name: String, _ value: ExposedValue) -> String {
+        let shown: String
+        if case .float(let number) = value { shown = "\(number)" } else { shown = "\(value)" }
+        return "expose(): \"\(name)\" was given \(shown), which is not a finite number, "
+            + "so it is not exposed (said once)"
     }
 
     /// 処理を 1 度走らせ、かかった実時間をミリ秒で差し出す (``Sketch/measure(_:_:)`` から

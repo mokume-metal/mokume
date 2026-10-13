@@ -323,6 +323,94 @@ struct GraphicsTests {
         #expect(image[44, 12] == (0, 0, 255, 255), "置いた後に描き換えた絵が出た")
     }
 
+    // MARK: - 捨てた描き場所の番地を引き継いでも、置いた時点の絵が残る (#2306)
+
+    /// 描き場所を置く口。どれも同じ記録 (``Canvas/note(placing:)``) を通る。
+    enum PlacingRoute: CaseIterable, CustomTestStringConvertible {
+        /// `image(pg, …)` で置く
+        case image
+        /// `texture(pg)` で塗った矩形で置く
+        case texture
+
+        var testDescription: String { "\(self)" }
+    }
+
+    /// 番地の一致を待って作り直す回数の上限。手元では 1〜数回で一致する (#2306 の起票)。
+    private static let reuseAttempts = 256
+
+    /// 同じフレームで、置いた描き場所 `dying` を捨て、作り直して `ObjectIdentifier` (番地) が `dying` と
+    /// 一致した描き場所 `born` を緑で置いてから青へ描き換える。`keepDyingAlive` なら `dying` を生かした
+    /// まま、最初に作った `born` で同じことをする (番地を引き継がない対照)。
+    ///
+    /// 返すのは、出す先の絵と、番地の引き継ぎが起きたか。`dying` は左上 (0, 0)、`born` は (32, 32) に
+    /// 16 × 16 で置く。
+    private func placeAfterReusingAnAddress(
+        _ route: PlacingRoute, keepDyingAlive: Bool
+    ) throws -> (image: DisplayImage, reused: Bool) {
+        let canvas = try makeCanvas()
+        var reused = false
+        var kept: Canvas?
+        var held: [Canvas] = []
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            // 置いてから捨てる描き場所。番地だけを控え、描き場所そのものは掴まない (返った時点で解放される)
+            @MainActor func placeAndDrop() -> ObjectIdentifier? {
+                guard let dying = try? canvas.createGraphics(16, 16) else { return nil }
+                paint(dying, red)
+                canvas.image(dying, 0, 0)
+                if keepDyingAlive { kept = dying }
+                return ObjectIdentifier(dying)
+            }
+            guard let gone = placeAndDrop() else { return }
+            var candidate = try? canvas.createGraphics(16, 16)
+            while !keepDyingAlive, let made = candidate, ObjectIdentifier(made) != gone,
+                held.count < Self.reuseAttempts
+            {
+                held.append(made)
+                candidate = try? canvas.createGraphics(16, 16)
+            }
+            guard let born = candidate else { return }
+            reused = ObjectIdentifier(born) == gone
+            paint(born, green)
+            switch route {
+            case .image:
+                canvas.image(born, 32, 32)
+            case .texture:
+                canvas.texture(born)
+                canvas.rect(32, 32, 16, 16)
+            }
+            paint(born, blue)
+        }
+        withExtendedLifetime((kept, held)) {}
+        return (try pixels(of: canvas), reused)
+    }
+
+    /// 置いた側は置いた描き場所を番号で覚える。番号が `ObjectIdentifier` (番地) だった頃は、同じフレームで
+    /// 捨てた描き場所の番号が記録に残り、その番地を引き継いだ描き場所を置いても「記録済み」と見なして
+    /// 相手の `placers` に載せなかった。描き換える直前に置いた時点の絵を写させる相手がいないので、先に
+    /// 置いた所に描き換えた後の絵 (青) が出ていた ([#2306])。
+    ///
+    /// **番地の使い回しに頼る検査なので、引き継ぎが起きなかった回は赤にする** (`#require`)。起きない環境で
+    /// 何も確かめずに緑になる検査にしない。
+    ///
+    /// [#2306]: https://github.com/mokume-metal/mokume/issues/2306
+    @Test(
+        "同じフレームで捨てた描き場所の番地を引き継いだ描き場所も、置いた時点の絵で出る",
+        arguments: PlacingRoute.allCases)
+    func aTargetReusingADroppedAddressKeepsThePictureItWasPlacedWith(_ route: PlacingRoute) throws {
+        let (image, reused) = try placeAfterReusingAnAddress(route, keepDyingAlive: false)
+        try #require(
+            reused,
+            "捨てた描き場所の番地を引き継ぐ描き場所を、\(Self.reuseAttempts) 回作り直しても作れなかった (この検査は何も確かめていない)")
+        #expect(image[40, 40] == (0, 255, 0, 255), "置いた後に描き換えた絵が出た")
+        #expect(image[8, 8] == (255, 0, 0, 255), "先に置いて捨てた描き場所の絵が出ていない")
+
+        // 対照: 番地を引き継がなければ、今までも置いた時点の絵が出ていた
+        let (control, _) = try placeAfterReusingAnAddress(route, keepDyingAlive: true)
+        #expect(control[40, 40] == (0, 255, 0, 255), "対照の描き場所が置いた時点の絵で出ていない")
+    }
+
     // MARK: - 背景が独立している (完了条件 4)
 
     @Test("描き場所の背景は、画面の背景と独立に決められる")

@@ -20,7 +20,9 @@ import mokume
 /// 種を `setup()` で決めてあるので、走らせるたびに同じ粒が同じ順に出る。時計はフレーム
 /// 番号から導くので、**同じ番号のフレームは何度描いても同じ絵**になる。
 final class SparksAndForces: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "sparks and forces")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "sparks and forces")
+    }
 
     /// 同時に持てる粒の数。**寿命が尽きた粒の枠は次の粒が使う**ので、
     /// 出す速さ × 寿命がこれを超えなければ足りる

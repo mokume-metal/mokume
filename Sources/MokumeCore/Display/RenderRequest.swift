@@ -36,9 +36,14 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     package let destination: String
 
     /// 組む。**書き出せない組は作らない** — 子が受け取ってから断ると、窓を持たない子は
-    /// 何も書かずに終わることになる。行き先の規則は撮る係のもの (``FrameRecorder/accepts(_:)``)。
+    /// 何も書かずに終わることになる。行き先と fps の規則は撮る係のもの
+    /// (``FrameRecorder/accepts(_:frameRate:)``)。`.mov` へ刻みより速く書く組もここで断る ([#2307])。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
     package init?(frameRate: Int, frameCount: Int, destination: String) {
-        guard frameRate > 0, frameCount > 0, Self.accepts(destination: destination) else {
+        guard frameRate > 0, frameCount > 0,
+            Self.accepts(destination: destination, frameRate: frameRate)
+        else {
             return nil
         }
         self.frameRate = frameRate
@@ -56,6 +61,17 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
     package static func accepts(destination: String) -> Bool {
         FrameRecorder.accepts(destination)
+    }
+
+    /// `.mov` に書ける fps の上限。規則は撮る係のもの (``FrameRecorder/movieFrameRateLimit``・[#2307])。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    package static let movieFrameRateLimit = FrameRecorder.movieFrameRateLimit
+
+    /// 行き先の綴りと fps の組を、書き出せる組として受けるか。規則は撮る係のもの
+    /// (``FrameRecorder/accepts(_:frameRate:)``) で、組むときもこれで見る。
+    package static func accepts(destination: String, frameRate: Int) -> Bool {
+        FrameRecorder.accepts(destination, frameRate: frameRate)
     }
 
     /// 環境変数に載せる値。
@@ -83,8 +99,10 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
         guard let value = environment[StartupReads.render.key] else { return nil }
         guard let request = RenderRequest(environmentValue: value) else {
             Diagnostics.warn(
-                "\(StartupReads.render.key) is set but cannot be read (\(value)) — running as"
-                    + " usual, with a window. Its form is <fps>:<frames>:<where to write>")
+                "\(StartupReads.render.key) is set but cannot be read, or asks for something that "
+                    + "cannot be written (\(value)) — running as usual, with a window. Its form is "
+                    + "<fps>:<frames>:<where to write>, and a .mov takes at most \(movieFrameRateLimit) "
+                    + "frames per second")
             return nil
         }
         return request

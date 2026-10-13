@@ -199,6 +199,31 @@ struct DataLoadingTests {
         #expect(reread.rows[0].getString("name") == "Smith, J")
     }
 
+    /// 書いた文字の頭に来るセル (見出しがあれば 1 列目の見出し、無ければ 1 行目 1 列目) の
+    /// 頭の U+FEFF は、読む側が BOM として落とす (#1964 の採択)。書く側が囲んで残す (#2340)。
+    @Test(
+        "頭が U+FEFF のセルも、書いて読み直すと同じ表に戻る",
+        arguments: [
+            (false, 1, "\u{FEFF}"), (false, 1, "\u{FEFF}z"), (false, 2, "\u{FEFF}"), (false, 2, "\u{FEFF}z"),
+            (true, 1, "\u{FEFF}"), (true, 1, "\u{FEFF}z"), (true, 2, "\u{FEFF}"), (true, 2, "\u{FEFF}z"),
+            (true, 2, "\u{FEFF}date"),
+        ])
+    func leadingByteOrderMarkRoundTrips(header: Bool, width: Int, first: String) throws {
+        defer { cleanUp() }
+        let sketch = Bare()
+        let titles = header ? Array([first, "b"].prefix(width)) : nil
+        let firstRow = Array([header ? "1" : first, "2"].prefix(width))
+        let table = Table(TableFile.Parsed(titles: titles, rows: [firstRow, Array(["3", "4"].prefix(width))]))
+        let out = folder.appendingPathComponent("bom-\(header)-\(width).csv").path
+        try sketch.saveTable(table, out)
+        let reread = try sketch.loadTable(out, header: header)
+        #expect(reread == table)
+        #expect(reread.rowCount == 2)
+        // 消えたことは `==` でも分かる。残ったのが元のスカラーの並びそのものであることも見る
+        let firstCell = header ? reread.columnTitles.first : reread.rows.first?.getString(0)
+        #expect(firstCell.map { Array($0.unicodeScalars) } == Array(first.unicodeScalars))
+    }
+
     @Test("見出しの無い表に名前つきの列を足すと、見出しの行が付いて書き出される")
     func addColumnToHeaderlessTableAddsHeader() throws {
         defer { cleanUp() }

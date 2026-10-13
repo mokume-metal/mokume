@@ -113,9 +113,10 @@
             "enum": [
               "unknownName",
               "typeMismatch",
-              "notInChoices"
+              "notInChoices",
+              "notFinite"
             ],
-            "description": "unknownName = a name that was never declared (check the spelling) / typeMismatch = a type other than the declared one / notInChoices = outside the choices that are allowed."
+            "description": "unknownName = a name that was never declared (check the spelling) / typeMismatch = a type other than the declared one / notInChoices = outside the choices that are allowed / notFinite = a number that is not finite once it is the declared type: a value that overflows to infinity when read as a single-precision float, such as 1e300 written to a float that declares no range, or a component of a vec2, vec3 or colour that does not fit (JSON itself cannot carry NaN or infinity). **It is refused, not brought into range**, and the value stays as it was."
           }
         }
       }
@@ -165,9 +166,10 @@
             "enum": [
               "unknownName",
               "typeMismatch",
-              "notInChoices"
+              "notInChoices",
+              "notFinite"
             ],
-            "description": "unknownName = a name that was never declared (check the spelling) / typeMismatch = a type other than the declared one / notInChoices = outside the choices that are allowed."
+            "description": "unknownName = a name that was never declared (check the spelling) / typeMismatch = a type other than the declared one / notInChoices = outside the choices that are allowed / notFinite = a number that is not finite once it is the declared type: a value that overflows to infinity when read as a single-precision float, such as 1e300 written to a float that declares no range, or a component of a vec2, vec3 or colour that does not fit (JSON itself cannot carry NaN or infinity). **It is refused, not brought into range**, and the value stays as it was."
           }
         }
       }
