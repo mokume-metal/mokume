@@ -325,6 +325,105 @@ struct TextTests {
         #expect(canvas.textWidth("mokume") == before)
     }
 
+    // 名前の判定 (#2444)。**表は macOS に同梱の書体だけで組む。** 引いた書体は PostScript 名で
+    // 見るので、その名前を CoreText がこの環境で何に引くかを、各検査の頭で前提として確かめる
+    // (前提が崩れたら黙って飛ばさず、前提の行で赤くなる)。
+
+    /// CoreText が、この名前でこの環境から引く書体の PostScript 名。被検査の `Typeface` を通さない。
+    nonisolated private static func postScriptName(resolving name: String) -> String {
+        CTFontCopyPostScriptName(CTFontCreateWithName(name as CFString, 12, nil)) as String
+    }
+
+    /// 在る書体の、いろいろな呼び方と、CoreText がそれで引く書体。上の 4 つは直す前に断っていた
+    /// 呼び方 (日本語の名前・フルネーム)、下の 4 つは直す前から通っていた呼び方。
+    nonisolated static var namesOfPresentTypefaces: [(name: String, postScript: String)] {
+        [
+            ("ヒラギノ角ゴシック W3", "HiraginoSans-W3"),
+            ("Hiragino Sans W6", "HiraginoSans-W6"),
+            ("游明朝体", "YuMin-Medium"),
+            ("Helvetica Neue Bold", "HelveticaNeue-Bold"),
+            ("HiraginoSans-W6", "HiraginoSans-W6"),
+            ("Hiragino Sans", "HiraginoSans-W3"),
+            ("YuMincho", "YuMin-Medium"),
+            ("helvetica", "Helvetica"),
+        ]
+    }
+
+    @Test(
+        "この環境で引ける書体は、日本語の名前・フルネームでも指定でき、警告が出ない",
+        arguments: namesOfPresentTypefaces)
+    func aPresentTypefaceIsTakenByAnyOfItsNames(_ face: (name: String, postScript: String)) throws {
+        try #require(
+            Self.postScriptName(resolving: face.name) == face.postScript,
+            "前提: この環境の CoreText は \(face.name) を \(face.postScript) に引く")
+        let canvas = try makeCanvas()
+        canvas.textFont(face.name)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == face.postScript)
+        #expect(!canvas.warnings.hasWarned(.missingFont), "\(face.name) を無いと断った")
+    }
+
+    /// 無い名前。CoreText はどれも黙って `Helvetica` へ倒す — 判定はそれを見抜かなければならない。
+    /// `游明朝`・`Hiragino` は在る書体の名前の一部で、それだけでは書体を指さない。
+    @Test("無い名前は、いまどおり警告して書体を変えない", arguments: ["NoSuchFont", "游明朝", "Hiragino"])
+    func aMissingNameIsStillRefused(_ name: String) throws {
+        try #require(
+            Self.postScriptName(resolving: name) == "Helvetica",
+            "前提: この環境の CoreText は \(name) を別の書体 (Helvetica) へ倒す")
+        let canvas = try makeCanvas()
+        canvas.textFont("Courier")
+        canvas.textFont(name)
+        #expect(canvas.warnings.hasWarned(.missingFont), "\(name) を受けた")
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Courier")
+    }
+
+    /// システムの内部名 (`.` で始まる名前) は、CoreText が別の書体へ差し替えたうえで「その名前の
+    /// 書体が見つかった」と答える。名前で書体を探させる判定に回すと、別の書体で描くことになる。
+    @Test("システムの内部名は、CoreText が別の書体へ差し替えるので断る")
+    func aPrivateSystemNameIsRefused() throws {
+        let name = ".SFNS-Regular"
+        try #require(
+            Self.postScriptName(resolving: name) != name,
+            "前提: この環境の CoreText は \(name) を別の書体へ差し替える")
+        let canvas = try makeCanvas()
+        canvas.textFont(name)
+        #expect(canvas.warnings.hasWarned(.missingFont))
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Helvetica")
+    }
+
+    /// その書体が、その太さ・傾きの面を持っているか。被検査の `Typeface` を通さない。
+    nonisolated private static func hasFace(_ name: String, _ traits: CTFontSymbolicTraits) -> Bool {
+        let base = CTFontCreateWithName(name as CFString, 12, nil)
+        return CTFontCreateCopyWithSymbolicTraits(base, 12, nil, traits, traits) != nil
+    }
+
+    @Test("斜体の面を持たない書体を斜体にすると、立体のまま描き、そのことを警告する")
+    func aMissingItalicFaceIsWarned() throws {
+        try #require(!Self.hasFace("HiraginoSans-W3", .traitItalic), "前提: ヒラギノ角ゴシック W3 は斜体の面を持たない")
+        let canvas = try makeCanvas()
+        canvas.textFont("HiraginoSans-W3")
+        canvas.textStyle(.italic)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "HiraginoSans-W3")
+        #expect(canvas.warnings.hasWarned(.missingTypefaceStyle))
+        #expect(
+            canvas.warnings.message(for: .missingTypefaceStyle)?.contains("HiraginoSans-W3") == true,
+            "\(canvas.warnings.message(for: .missingTypefaceStyle) ?? "")")
+    }
+
+    @Test("面を持つ書体の太さと傾きは、その面で描き、警告しない", arguments: [
+        ("Helvetica", TextStyle.italic, "Helvetica-Oblique"),
+        ("Helvetica", TextStyle.boldItalic, "Helvetica-BoldOblique"),
+        ("HiraginoSans-W3", TextStyle.bold, "HiraginoSans-W6"),
+    ])
+    func aPresentFaceIsUsedWithoutWarning(_ name: String, _ style: TextStyle, _ face: String) throws {
+        try #require(
+            Self.postScriptName(resolving: face) == face, "前提: この環境に \(face) がある")
+        let canvas = try makeCanvas()
+        canvas.textFont(name)
+        canvas.textStyle(style)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == face)
+        #expect(!canvas.warnings.hasWarned(.missingTypefaceStyle))
+    }
+
     @Test("指定した書体が覆えない文字も描ける")
     func charactersOutsideTheFontStillDraw() throws {
         let canvas = try makeCanvas()

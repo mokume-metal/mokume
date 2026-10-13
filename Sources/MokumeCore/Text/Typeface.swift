@@ -78,15 +78,21 @@ final class Typeface {
     /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
     var placed: [Unicode.Scalar: PlacedGlyph] = [:]
 
+    /// 頼まれた太さ・傾きの面を、書体が持っていなかったか ([#2444])。持っていなければ ``base`` は
+    /// 元の面のまま (立体・細字) で、それを知らせるのは書体を作らせた側 (`Canvas`) である。
+    ///
+    /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
+    let lacksRequestedStyle: Bool
+
     init(request: TypefaceRequest) {
         self.request = request
-        self.base = Self.makeFont(request)
+        (self.base, self.lacksRequestedStyle) = Self.makeFont(request)
         self.ascent = Float(CTFontGetAscent(base))
         self.descent = Float(CTFontGetDescent(base))
     }
 
-    /// 名前と大きさと太さから書体を作る。
-    private static func makeFont(_ request: TypefaceRequest) -> CTFont {
+    /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、元の面と「無かった」を返す。
+    private static func makeFont(_ request: TypefaceRequest) -> (font: CTFont, lacksStyle: Bool) {
         let size = CGFloat(request.size)
         let base: CTFont
         if let name = request.name {
@@ -100,20 +106,45 @@ final class Typeface {
         var traits: CTFontSymbolicTraits = []
         if request.style == .bold || request.style == .boldItalic { traits.insert(.traitBold) }
         if request.style == .italic || request.style == .boldItalic { traits.insert(.traitItalic) }
-        guard !traits.isEmpty else { return base }
-        return CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits) ?? base
+        guard !traits.isEmpty else { return (base, false) }
+        guard let styled = CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits)
+        else { return (base, true) }
+        return (styled, false)
     }
 
     /// その名前の書体がこの環境にあるか。
     ///
     /// **無い名前を渡しても書体は返ってくる** — この環境は黙って別の書体へ倒すので、
     /// 返ってきた書体の名前と突き合わせないと「指定が効かなかった」ことに気付けない。
+    ///
+    /// **フルネームと各言語の名前は、CoreText に名前で探させて確かめる** ([#2444])。
+    /// `ヒラギノ角ゴシック W3`・`Helvetica Neue Bold` は、返った書体のファミリー名とも
+    /// PostScript 名とも一致しない。返った書体の地域化した名前と比べると、比べられるのは
+    /// いまの表示言語の名前 1 つだけで、表示言語によって在る名前を断ってしまう。名前を必須に
+    /// して探させれば、無い名前では何も見つからず、在る名前は表示言語に依らず見つかる。
+    ///
+    /// **`.` で始まる名前は探させない。** システムの内部名 (`.SFNS-Regular` など) は、CoreText が
+    /// 別の書体へ差し替えたうえで「見つかった」と答えるので、名前の一致だけで決める。
+    ///
+    /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
     static func exists(name: String) -> Bool {
         let font = CTFontCreateWithName(name as CFString, 12, nil)
         let family = CTFontCopyFamilyName(font) as String
         let postScript = (CTFontCopyPostScriptName(font) as String?) ?? ""
-        return family.compare(name, options: .caseInsensitive) == .orderedSame
+        if family.compare(name, options: .caseInsensitive) == .orderedSame
             || postScript.compare(name, options: .caseInsensitive) == .orderedSame
+        {
+            return true
+        }
+        guard !name.hasPrefix(".") else { return false }
+        let wanted = CTFontDescriptorCreateWithNameAndSize(name as CFString, 12)
+        let mandatory: Set<String> = [kCTFontNameAttribute as String]
+        guard
+            let found = CTFontDescriptorCreateMatchingFontDescriptor(wanted, mandatory as CFSet),
+            let foundName = CTFontDescriptorCopyAttribute(found, kCTFontNameAttribute) as? String
+        else { return false }
+        // 見つかった書体が、名前で引いた書体そのものであること
+        return foundName == postScript
     }
 
     /// 1 文字ぶんを引き当てる。字形が無ければ `nil`。

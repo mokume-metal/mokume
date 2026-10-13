@@ -275,6 +275,10 @@ extension Canvas {
 
         /// 無い書体を指定された。
         case missingFont
+        /// ``Canvas/textStyle(_:)`` の太さ・傾きの面を、書体が持っていなかった ([#2444])。
+        ///
+        /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
+        case missingTypefaceStyle
         /// ``Canvas/textSize(_:)``・``Canvas/textLeading(_:)`` に、数でない値・無限・上限
         /// (``Canvas/largestTextMeasure``) を越える値が渡された ([#1587])。
         ///
