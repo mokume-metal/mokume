@@ -72,6 +72,9 @@ nonisolated enum ModelFile {
         /// 読み飛ばしたものの数。**読み飛ばしたことが分かる手段**として持つ。
         ///
         /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) を数える。
+        /// **OBJ は行を丸ごと読み飛ばす** — 面の行に位置の番号が読めない角 (範囲の外・0・
+        /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。行末のコメント
+        /// (`#` から後) と継ぎ文字 (`\`) は角でない字で、読めない角に数えない。
         var skippedLines: Int
     }
 
@@ -123,12 +126,27 @@ nonisolated enum ModelFile {
                 guard let point = texture(values) else { skipped += 1; continue }
                 textures.append(point)
             case "f":
-                let corners = values.compactMap {
-                    corner(
-                        $0, positions: positions.count, textures: textures.count,
-                        normals: normals.count)
+                // **位置の番号が読めない角が 1 つでもあれば、行ごと読み飛ばす** (#2339)。読める
+                // 角だけで面を作ると、5 角形が四角形になったことが数えられずに消える。読み
+                // 飛ばす単位は、1 つでも数が読めない `v` の行と同じく行である
+                //
+                // **角でない字は角として読まない。** 行末のコメント (`#` から後) と継ぎ文字 (`\`) は
+                // 読めない角ではなく、並べただけの字である。読めない角と同じに数えると、
+                // `f 1 2 3 4 # quad` が丸ごと消える (`v` の行は 3 つ目までしか読まないので残る)
+                let written = Self.cornerFields(values)
+                var corners: [(position: Int, texture: Int?, normal: Int?)] = []
+                for value in written {
+                    guard
+                        let read = corner(
+                            value, positions: positions.count, textures: textures.count,
+                            normals: normals.count)
+                    else { break }
+                    corners.append(read)
                 }
-                guard corners.count >= 3 else { skipped += 1; continue }
+                guard corners.count == written.count, corners.count >= 3 else {
+                    skipped += 1
+                    continue
+                }
                 faces.append(corners)
             case "#", "":
                 continue
@@ -245,5 +263,23 @@ nonisolated enum ModelFile {
     private static func resolve(_ raw: Int, count: Int) -> Int? {
         let index = raw > 0 ? raw - 1 : count + raw
         return (0..<count).contains(index) ? index : nil
+    }
+
+    /// 面の行のうち、角として読む欄。**行末のコメントと継ぎ文字を除く** (#2339)。
+    ///
+    /// `#` を含む欄はその手前までを残して打ち切る (`4#quad` は `4`)。最後の欄が継ぎ文字 `\`
+    /// だけなら落とす — 次の行へ続ける書き方だが、続きを繋いでは読まない (直す前と同じく、
+    /// この行の角だけで面を作る)。
+    private static func cornerFields(_ values: ArraySlice<Substring>) -> [Substring] {
+        var fields: [Substring] = []
+        for value in values {
+            if let mark = value.firstIndex(of: "#") {
+                if mark > value.startIndex { fields.append(value[..<mark]) }
+                break
+            }
+            fields.append(value)
+        }
+        if fields.last == "\\" { fields.removeLast() }
+        return fields
     }
 }
