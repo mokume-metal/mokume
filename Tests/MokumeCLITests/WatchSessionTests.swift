@@ -336,9 +336,11 @@ struct WatchSessionTests {
         let recorder = Recorder()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
-        session.noteStopRequested()
+        // **作り直しの最中に言われる。** 始める前に言われた回は作り直しそのものを始めない
+        recorder.whileBuilding = { session.noteStopRequested() }
 
         let report = await session.start()
+        #expect(recorder.builds == 1)
         #expect(report.ok)
         #expect(!report.launched)
         #expect(recorder.launches == 0)
