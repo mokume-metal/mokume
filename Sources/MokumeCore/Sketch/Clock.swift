@@ -79,7 +79,11 @@ final class FrameTiming {
     private let now: () -> Double
     /// 作者への知らせの出口。検査が文面と回数を受け取れるよう差し替えられる形にしてある。
     private let warn: (String) -> Void
-    private let started: Double
+    /// 実時間の時計の起点。**最初の枚で、その枚の時刻へ寄せ直す** ([#2413])。作ったときの
+    /// 時刻のままにすると、最初の枚の ``time`` に起動・窓・`setup()` の長さが乗る。
+    ///
+    /// [#2413]: https://github.com/mokume-metal/mokume/issues/2413
+    private var started: Double
     private var previous: Double
 
     /// これまでに進めたフレームの数。最初のフレームの最中は 1。
@@ -142,8 +146,8 @@ final class FrameTiming {
 
     /// - Parameters:
     ///   - clock: 時刻の出どころ。
-    ///   - frameRate: 目標のフレームレート。**実時間で動かすときの**経過の上限と、止めていた
-    ///     ところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
+    ///   - frameRate: 目標のフレームレート。**実時間で動かすときの**経過の上限と、最初の枚・
+    ///     止めていたところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
     ///   - warn: 作者への知らせの出口。
@@ -180,6 +184,16 @@ final class FrameTiming {
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     func advance(at requestedTime: Float? = nil) {
         let now = now()
+        if frameCount == 0, clock == .wallClock {
+            // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``Sketch/time``
+            // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
+            // 作ってからここまでの間 (起動・窓・`setup()`) は、描いていた時間ではない。
+            // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い
+            //
+            // [#2413]: https://github.com/mokume-metal/mokume/issues/2413
+            started = now
+            stepsOneFrame = true
+        }
         frameCount += 1
         defer { stepsOneFrame = false }
         let raw: Double

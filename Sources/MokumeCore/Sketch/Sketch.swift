@@ -492,6 +492,10 @@ extension Sketch {
     public var frameCount: Int { Self.requireRuntime().frameCount }
     /// いまのフレームの時刻 (秒)。最初のフレームは 0。
     ///
+    /// **最初のフレームが 0 なのは時計 (``clock``) によらない。** 窓に出して動かしている間も、
+    /// アプリの起動・窓の作成・``setup()`` にかかった時間は乗らない — 数え始めるのは最初の
+    /// フレームからである。
+    ///
     /// 窓に出して動かしている間は**実際に流れた時間**で、フレームが何枚落ちても
     /// 復帰した瞬間に追いつく。**揃えたいものはここから導く** ([ADR-0025] 決定 6) —
     /// 複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
@@ -506,6 +510,10 @@ extension Sketch {
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     public var time: Float { Self.requireRuntime().time }
     /// 前のフレームからの経過 (秒)。
+    ///
+    /// **最初のフレームは、時計 (``clock``) によらず 1 フレームぶんである。** 窓に出して動かして
+    /// いる間は目標の 1 フレームぶん (``SketchSettings/frameRate`` 分の 1 秒) で、アプリの起動や
+    /// ``setup()`` にかかった時間は乗らない。
     ///
     /// **止まっていた時間まるごとは渡らない。** ディスプレイのスリープなどでフレームが
     /// 長く途切れたとき、その間の秒数がそのまま 1 枚に乗ると、これで積分している側

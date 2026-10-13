@@ -467,7 +467,7 @@ struct LoopTests {
 
     /// 実時間の時計で `setup()` から止め、`stoppedAt` 秒まで止めてから `route` で描き直しを頼む。
     ///
-    /// 起点は 0 秒で、最初の 1 枚は 0.016 秒に描く。止めている間にも 1 度進めて、描かずに
+    /// 最初の 1 枚を 0 秒に描き、そこが時刻の起点になる。止めている間にも 1 度進めて、描かずに
     /// 過ぎるフレームを挟む (窓では止めている間も駆動源が呼んでくる)。
     private func redrawAfterStop(
         _ sketch: Lines, route: RedrawRoute, stoppedAt: Double
@@ -476,9 +476,8 @@ struct LoopTests {
         sketch.onPress = { $0.redraw() }
         var now: Double = 0
         let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
-        now = 0.016
         try runtime.advance()
-        now = (0.016 + stoppedAt) / 2
+        now = stoppedAt / 2
         try runtime.advance()
         #expect(sketch.drawCalls == 1)
 
@@ -534,7 +533,6 @@ struct LoopTests {
         sketch.onPress = { $0.loop() }
         var now: Double = 0
         let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
-        now = 0.016
         try runtime.advance()
 
         now = 5
