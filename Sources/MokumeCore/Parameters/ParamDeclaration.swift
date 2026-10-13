@@ -35,6 +35,28 @@ public struct ParamRange: Equatable, Sendable {
     }
 }
 
+extension Int {
+    /// 最も近い整数。**`Int` に収まらなければ、近いほうの端へ収める。**
+    ///
+    /// `Int(_: Double)` は収まらない値で**プロセスごと落ちる**。範囲を `Double` で持つので、
+    /// 上端が `Int.max` の宣言は収めた後の値が `Int` に収まらない 2^63 になりうる
+    /// (`Double(Int.max)` は丸めで 2^63 になる)。外から来る値も窓のスライダーも同じ変換を
+    /// 通るので、変換はここ 1 か所にする ([#2478](https://github.com/mokume-metal/mokume/issues/2478))。
+    ///
+    /// NaN は受け取らない前提で、端のどちらでもなく 0 を返す (落とさないための値で、意味は無い)。
+    /// 非有限の数は ``ParamBox`` がこれより手前で拒む。
+    init(roundingAndSaturating value: Double) {
+        let rounded = value.rounded()
+        if let exact = Int(exactly: rounded) {
+            self = exact
+        } else if rounded.isNaN {
+            self = 0
+        } else {
+            self = rounded < 0 ? .min : .max
+        }
+    }
+}
+
 /// 宣言された 1 つの値の、面から見える姿。
 ///
 /// 名前・型・範囲・候補が揃っているので、読み手は値を試し打ちせずに何を書けるか
