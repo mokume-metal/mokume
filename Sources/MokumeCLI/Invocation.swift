@@ -136,10 +136,10 @@ nonisolated struct Invocation: Equatable {
                 Arguments.Option(configurationFlags) {
                     "\($0) needs a configuration after it (\(configurations.joined(separator: " / ")))"
                 },
-                Arguments.Option(scratchPathFlags) {
+                Arguments.Option(scratchPathFlags, takesPlace: true) {
                     "\($0) needs a build directory after it"
                 },
-            ] + extra,
+            ] + extra, positionalIsPlace: true,
             surplus: .reject { "Only one directory: \($0)" })
         let configuration = parsed.values[configurationFlags[0]]
         // 打たれた綴りは解いた結果に残らないので、両方を名乗る

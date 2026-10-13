@@ -195,7 +195,13 @@ enum DoctorCommand {
         let ignored = parsed.ignored
         // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)。場所は走らせた
         // 場所から絶対パスに解く (#2323)
-        let invocation = Invocation(place: parsed.positional, currentDirectory: currentDirectory)
+        //
+        // **空の場所も断らずに名乗る** ([#2485](https://github.com/mokume-metal/mokume/issues/2485))。
+        // 空は場所を名指していないので、渡された場所を診たようには言えない — 走らせた場所を診る
+        // 代わりに、そう診たと先頭で名乗る (走らせる口は同じ誤りを使い方の誤りとして断る)
+        let emptyPlace = parsed.positional?.isEmpty == true
+        let invocation = Invocation(
+            place: emptyPlace ? nil : parsed.positional, currentDirectory: currentDirectory)
         let directory = invocation.directory
         let base = invocation.facetBase(workDirectory: workDirectory)
         return report(
@@ -203,16 +209,27 @@ enum DoctorCommand {
             state: probeState(in: directory, facetBase: base, environment: environment, home: home),
             base: base,
             given: workDirectory != nil,
-            ignored: ignored)
+            ignored: ignored,
+            emptyPlaceLookedAt: emptyPlace ? directory : nil)
     }
 
     // MARK: - 文
 
     /// 3 段に並べる。**上 2 段が切り分けの本体**で、3 段目は既にある一覧をそのまま出す。
     static func report(
-        environment: Environment, state: State, base: URL, given: Bool, ignored: [String] = []
+        environment: Environment, state: State, base: URL, given: Bool, ignored: [String] = [],
+        emptyPlaceLookedAt: URL? = nil
     ) -> String {
         var lines: [String] = []
+        if let place = emptyPlaceLookedAt {
+            // 投げずに言う (上の `ignored` と同じ理由)。**どこを診たかも言う** — 渡された場所を
+            // 診たと読ませない
+            lines += [
+                "An empty directory was given, which names no place."
+                    + " This looked where you ran it instead: \(place.path)",
+                "",
+            ]
+        }
         if !ignored.isEmpty {
             // 投げずに言う。切り分けの口が使い方で止まると、いちばん要るときに読めない
             lines += ["Ignored unknown arguments: \(ignored.joined(separator: " "))", ""]
