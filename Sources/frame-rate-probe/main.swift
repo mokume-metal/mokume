@@ -45,8 +45,15 @@ let seconds = options.seconds
 let minimizeAfter = options.minimizeAfter
 let allowsDisplaySleep = options.allowsDisplaySleep
 
-let gpu = try RenderDevice()
-let application = try SketchApplication(sketch: Probe(), gpu: gpu)
+// 描画の土台と窓を作れなければ、裸の `try` で Swift ランタイムの既定処理 (trap) へ落とさず、
+// 何が足りないかを名乗って落ちる (#2541)。文面は ProbeStartup.swift
+let application: SketchApplication
+do {
+    application = try SketchApplication(sketch: Probe(), gpu: try RenderDevice())
+} catch {
+    FileHandle.standardError.write(Data(ProbeStartup.message(for: error).utf8))
+    exit(1)
+}
 application.blocksDisplaySleep = !allowsDisplaySleep
 
 if let minimizeAfter {
