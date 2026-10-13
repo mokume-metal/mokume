@@ -1611,22 +1611,39 @@ struct TextTests {
 
     // MARK: - 色を持つ字形の墨の範囲 (#2308)
     //
-    // 色を持つ字形 (絵文字) は道筋を持たず、ビットマップで描かれる。墨は**検査の側で CoreText に
-    // 同じ字形を CPU で描かせ、不透明な画素の範囲を取ったもの**とする。焼き場も字形を CPU で描いて
+    // 色を持つ字形 (絵文字) はビットマップで描かれ、道筋を持たないか、持っていても描く絵と別の
+    // 仮の形 (国旗の部品 🇯 の矩形) である。墨は**検査の側で CoreText に同じ字形を CPU で描かせ、
+    // 不透明な画素の範囲を取ったもの**とする。焼き場も字形を 1 つずつ整数の升目で CPU に描いて
     // 面へ写すだけなので、`text()` の墨は同じ升目に乗る。描き方 (8bit の sRGB) は焼き場 (16bit の
-    // 浮動小数・線形) と変えてあり、被検査の描く関数を通さない。
+    // 浮動小数・線形) と変えてあり、被検査の描く関数も字形の引き当ても通さない。
 
-    /// 色を持つ字形の墨の範囲を、書き始めと基準線から測った値 (x は右・y は上へ) で返す。
-    /// 墨が無ければ `nil`。
-    nonisolated private static func referenceInk(of scalar: Unicode.Scalar, size: CGFloat)
-        -> (left: CGFloat, right: CGFloat, top: CGFloat, bottom: CGFloat)?
+    /// 検査で使う書体。`nil` は既定の書体 (`noTextFont()`)。既定の書体の絵文字は
+    /// `.AppleColorEmojiUI` から引かれ、名前で引いた Apple Color Emoji と升目が 2 画素ずれる。
+    nonisolated private static func referenceFont(_ name: String?, size: CGFloat) -> CTFont {
+        guard let name else { return CTFontCreateUIFontForLanguage(.system, size, nil)! }
+        return CTFontCreateWithName(name as CFString, size, nil)
+    }
+
+    /// 字を 1 つ引く。書体に無ければ、CoreText に代わりの書体を選ばせる。
+    nonisolated private static func referenceGlyph(_ scalar: Unicode.Scalar, in base: CTFont)
+        -> (font: CTFont, glyph: CGGlyph)?
     {
-        let base = CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        func glyph(in font: CTFont) -> CGGlyph? {
+            var units = Array(String(scalar).utf16)
+            var glyphs = [CGGlyph](repeating: 0, count: units.count)
+            let found = CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count)
+            return found && glyphs[0] != 0 ? glyphs[0] : nil
+        }
+        if let found = glyph(in: base) { return (base, found) }
         let text = String(scalar) as CFString
         let font = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
-        var units = Array(String(scalar).utf16)
-        var glyphs = [CGGlyph](repeating: 0, count: units.count)
-        guard CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count) else { return nil }
+        return glyph(in: font).map { (font, $0) }
+    }
+
+    /// 字形 1 つを描いた墨の範囲を、書き始めと基準線から測った値 (x は右・y は上へ) で返す。
+    nonisolated private static func referenceInk(of glyph: CGGlyph, in font: CTFont, size: CGFloat)
+        -> (left: CGFloat, right: CGFloat, top: CGFloat, bottom: CGFloat)?
+    {
         // 字形が十分収まる升目に、書き始めと基準線を (margin, margin) に置いて描く
         let margin = Int(size) * 2
         let side = margin * 3
@@ -1638,8 +1655,9 @@ struct TextTests {
                     bytesPerRow: side * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
             else { return }
+            var glyph = glyph
             var position = CGPoint(x: margin, y: margin)
-            CTFontDrawGlyphs(font, &glyphs, &position, 1, context)
+            CTFontDrawGlyphs(font, &glyph, &position, 1, context)
         }
         var (left, right, top, bottom) = (Int.max, Int.min, Int.max, Int.min)
         for row in 0..<side {
@@ -1656,46 +1674,95 @@ struct TextTests {
         )
     }
 
-    /// 🔴 は墨が送り幅の升目いっぱいに載り、🌲 は升目より左右に 3 画素ずつ狭い (40 で実測)。
-    /// 🌲 があるので、外接矩形 (升目) を枠にする直し方では赤くなる。
-    @Test(
-        "色を持つ字形 1 字の墨の枠は、nil でなく、CPU で描いた墨の外接から各辺 1 画素以内",
-        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"),
-        arguments: ["\u{1F534}", "\u{1F332}"] as [Unicode.Scalar])
-    func aColoredGlyphHasBoundsAroundItsInk(_ scalar: Unicode.Scalar) throws {
-        let canvas = try makeCanvas()
-        canvas.textSize(40)
-        let ink = try #require(Self.referenceInk(of: scalar, size: 40), "前提: \(scalar) を描くと墨が出る")
-        let bounds = try #require(canvas.textBounds(String(scalar), 20, 80), "\(scalar) の枠が nil")
-        #expect(abs(CGFloat(bounds.x) - (20 + ink.left)) <= 1, "左 \(bounds.x) / 墨 \(20 + ink.left)")
-        #expect(
-            abs(CGFloat(bounds.x + bounds.width) - (20 + ink.right)) <= 1,
-            "右 \(bounds.x + bounds.width) / 墨 \(20 + ink.right)")
-        #expect(abs(CGFloat(bounds.y) - (80 - ink.top)) <= 1, "上 \(bounds.y) / 墨 \(80 - ink.top)")
-        #expect(
-            abs(CGFloat(bounds.y + bounds.height) - (80 - ink.bottom)) <= 1,
-            "下 \(bounds.y + bounds.height) / 墨 \(80 - ink.bottom)")
+    /// 1 行の文字列を `(x, baseline)` から描いた墨の外接 (左・上・右・下、面の座標)。字は
+    /// スカラ 1 つずつ、CoreText の送り幅で並べる (mokume は組版をしない)。
+    nonisolated private static func referenceExtent(
+        _ string: String, font name: String?, size: CGFloat, x: CGFloat, baseline: CGFloat
+    ) -> (left: CGFloat, top: CGFloat, right: CGFloat, bottom: CGFloat)? {
+        let base = referenceFont(name, size: size)
+        var pen = x
+        var extent: (left: CGFloat, top: CGFloat, right: CGFloat, bottom: CGFloat)?
+        for scalar in string.unicodeScalars {
+            guard let (font, glyph) = referenceGlyph(scalar, in: base) else { continue }
+            if let ink = referenceInk(of: glyph, in: font, size: size) {
+                let piece = (pen + ink.left, baseline - ink.top, pen + ink.right, baseline - ink.bottom)
+                extent = extent.map {
+                    (min($0.left, piece.0), min($0.top, piece.1), max($0.right, piece.2), max($0.bottom, piece.3))
+                } ?? piece
+            }
+            var index = glyph
+            var advance = CGSize.zero
+            CTFontGetAdvancesForGlyphs(font, .horizontal, &index, &advance, 1)
+            pen += advance.width
+        }
+        return extent
+    }
+
+    /// 墨の枠を照合する組 (文字列・書体)。
+    ///
+    /// - 🔴 は墨が送り幅の升目いっぱいに載り、🌲 は升目より左右に 3 画素ずつ狭い (40 で実測)。
+    ///   🌲 があるので、外接矩形 (升目) を枠にする直し方では赤くなる
+    /// - 🇯 🇵 (国旗 🇯🇵 の部品) は、CoreText が中身の無い仮の矩形を道筋として返すが、描かれるのは
+    ///   色の絵で、道筋より右と下へはみ出す。「道筋が無ければ描いて測る」の振り分けでは赤くなる
+    /// - `1`・`#`・U+20E3 は、Apple Color Emoji を指定すると同じく仮の道筋を持つ
+    /// - 既定の書体 (`nil`) の絵文字は `.AppleColorEmojiUI` から引かれ、升目が 2 画素ずれる
+    nonisolated static var colorGlyphCases: [(string: String, font: String?)] {
+        let singles: [String] = ["\u{1F534}", "\u{1F332}", "\u{1F1EF}", "\u{1F1F5}"]
+        return singles.flatMap { [($0, "Helvetica"), ($0, nil)] } + [
+            ("A\u{1F534}", "Helvetica"),
+            ("A \u{1F534} ", "Helvetica"),
+            ("A\u{1F534}", nil),
+            ("\u{1F1EF}\u{1F1F5}", nil),
+            ("1\u{20E3}", "Apple Color Emoji"),
+            ("#", "Apple Color Emoji"),
+        ]
     }
 
     @Test(
-        "字と色を持つ字形を混ぜた墨の枠は、色を持つ字形の墨の右端まで届く",
-        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
-    func aMixedStringBoundsReachTheColoredGlyph() throws {
+        "色の字形を持つ書体の字と道筋の無い字の墨の枠は、nil でなく、CPU で描いた墨の外接から各辺 1 画素以内",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"),
+        arguments: colorGlyphCases)
+    func theBoundsHugTheDrawnInkOfColorGlyphs(_ item: (string: String, font: String?)) throws {
+        let note = "\(item.string.debugDescription) \(item.font ?? "既定の書体")"
         let canvas = try makeCanvas()
+        if let font = item.font { canvas.textFont(font) } else { canvas.noTextFont() }
         canvas.textSize(40)
-        let ink = try #require(Self.referenceInk(of: coloredScalar, size: 40), "前提: 🔴 を描くと墨が出る")
-        let letter = try #require(canvas.textBounds("A", 20, 80))
-        let mixed = try #require(canvas.textBounds("A\(coloredScalar)", 20, 80))
-        // 🔴 は A の送り幅のぶん右から書き始める
-        let start = 20 + CGFloat(canvas.textWidth("A"))
+        let ink = try #require(
+            Self.referenceExtent(item.string, font: item.font, size: 40, x: 20, baseline: 80),
+            "前提: \(note) を描くと墨が出る")
+        let bounds = try #require(canvas.textBounds(item.string, 20, 80), "\(note): 枠が nil")
+        #expect(abs(CGFloat(bounds.x) - ink.left) <= 1, "\(note): 左 \(bounds.x) / 墨 \(ink.left)")
+        #expect(abs(CGFloat(bounds.y) - ink.top) <= 1, "\(note): 上 \(bounds.y) / 墨 \(ink.top)")
         #expect(
-            abs(CGFloat(mixed.x + mixed.width) - (start + ink.right)) <= 1,
-            "右 \(mixed.x + mixed.width) / 🔴 の墨 \(start + ink.right)")
-        #expect(mixed.x == letter.x, "左は A の墨のまま")
-        // 空白を挟んでも、空白は墨に数えない
-        let spaced = try #require(canvas.textBounds("A \(coloredScalar) ", 20, 80))
-        let spacedStart = 20 + CGFloat(canvas.textWidth("A "))
-        #expect(abs(CGFloat(spaced.x + spaced.width) - (spacedStart + ink.right)) <= 1)
+            abs(CGFloat(bounds.x + bounds.width) - ink.right) <= 1,
+            "\(note): 右 \(bounds.x + bounds.width) / 墨 \(ink.right)")
+        #expect(
+            abs(CGFloat(bounds.y + bounds.height) - ink.bottom) <= 1,
+            "\(note): 下 \(bounds.y + bounds.height) / 墨 \(ink.bottom)")
+    }
+
+    /// 国旗の部品は道筋 (仮の矩形) を持つが、描かれるのは Apple Color Emoji の絵である。輪郭は
+    /// 描く絵の形ではないので返さない。並べた字の輪郭はそのまま残る。
+    @Test(
+        "色の字形を持つ書体の字は、道筋を持っていても輪郭を返さない",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"),
+        arguments: ["\u{1F1EF}", "\u{1F1F5}"] as [Unicode.Scalar], ["Helvetica", nil] as [String?])
+    func aColorGlyphWithAPlaceholderPathHasNoOutline(_ scalar: Unicode.Scalar, _ font: String?)
+        throws
+    {
+        let (face, glyph) = try #require(
+            Self.referenceGlyph(scalar, in: Self.referenceFont(font, size: 40)))
+        try #require(
+            CTFontCreatePathForGlyph(face, glyph, nil) != nil,
+            "前提: CoreText は \(scalar) に道筋を返す")
+        try #require(
+            CTFontGetSymbolicTraits(face).contains(.traitColorGlyphs),
+            "前提: \(scalar) は色の字形を持つ書体から引かれる")
+        let canvas = try makeCanvas()
+        if let font { canvas.textFont(font) } else { canvas.noTextFont() }
+        canvas.textSize(40)
+        #expect(canvas.textOutline(String(scalar), 20, 80).isEmpty)
+        #expect(canvas.textOutline("A\(scalar)", 20, 80) == canvas.textOutline("A", 20, 80))
     }
 
     /// 焼き場の上限 (4096) に入らない大きさでは、字形を描いて測らない (巨大な絵を CPU に描かせ
