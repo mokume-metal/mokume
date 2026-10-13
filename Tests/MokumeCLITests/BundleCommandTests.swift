@@ -308,6 +308,28 @@ struct BundleCommandTests {
         #expect(note.contains("Open Anyway"))
     }
 
+    /// README は紙の名前を利用者に約束している。**名前は実関数から引く** — 検査の側に
+    /// 写しを持つと、実装と README と検査の 3 か所が別々に古くなる ([#2488])。`<name>` は
+    /// README が作品名の場所に書く綴りで、`name` に入れて求めた名前がそのまま載る。
+    ///
+    /// [#2488]: https://github.com/mokume-metal/mokume/issues/2488
+    @Test("README が書く開き方の紙の名前は、実際に作る名前と同じ")
+    func theReadmeNamesTheOpeningNoteTheWayItIsWritten() throws {
+        let readme = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // MokumeCLITests
+                .deletingLastPathComponent()  // Tests
+                .deletingLastPathComponent()  // リポジトリ直下
+                .appendingPathComponent("README.md"),
+            encoding: .utf8)
+        let placeholder = AppIdentity(
+            name: "<name>", identifier: "org.example.grain", version: "0.1.0")
+        let fileName = BundleCommand.noteFileName(for: placeholder)
+        #expect(
+            readme.contains("`\(fileName)`"),
+            "README が開き方の紙を `\(fileName)` と書いていない (実際に作る名前と食い違っている)")
+    }
+
     /// 手順を報せに書くと、読んだ送り手が伝え直すことになる。名指しなら物が動く。
     @Test("束ねた後の報せが、開き方の紙を名指しして一緒に送るよう言う")
     func theReportPointsAtTheOpeningNote() {

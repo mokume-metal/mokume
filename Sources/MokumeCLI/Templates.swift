@@ -48,11 +48,30 @@ enum Templates {
 
     /// `{{鍵}}` を置き換える。
     ///
+    /// **テンプレートを 1 回だけ走査する。** 値を 1 つずつ順に置換すると、差し込んだ値の中の
+    /// `{{鍵}}` が後から差し込む鍵に置き換えられ、結果が `Dictionary` の並びで変わる
+    /// ([#2489](https://github.com/mokume-metal/mokume/issues/2489))。差し込んだ値は打たれた
+    /// とおりに出る。
+    ///
     /// **置き換え残しは失敗にしない** — テンプレートに新しい鍵を足したときに気付ける
-    /// よう、残った鍵はそのまま出力に現れる (検査が見つける)。
+    /// よう、値の無い鍵はそのまま出力に現れる (検査が見つける)。
     static func substitute(_ text: String, _ values: [String: String]) -> String {
-        values.reduce(text) { partial, entry in
-            partial.replacingOccurrences(of: "{{\(entry.key)}}", with: entry.value)
+        var output = ""
+        var rest = text[...]
+        while let open = rest.range(of: "{{") {
+            output += rest[..<open.lowerBound]
+            let afterOpen = rest[open.upperBound...]
+            if let close = afterOpen.range(of: "}}"),
+                let value = values[String(afterOpen[..<close.lowerBound])]
+            {
+                output += value
+                rest = afterOpen[close.upperBound...]
+            } else {
+                // 鍵でない `{{`。**1 文字だけ進む** — `{{{A}}}` の 2 つ目からの `{{A}}` を見落とさない
+                output += "{"
+                rest = rest[rest.index(after: open.lowerBound)...]
+            }
         }
+        return output + rest
     }
 }

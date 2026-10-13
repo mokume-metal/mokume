@@ -34,8 +34,9 @@ struct FixedTimestepTests {
         let timing = FrameTiming(clock: .wallClock, now: { jumps.next() ?? 0 })
         timing.advance()
         timing.advance()
-        // 同じ 2 枚目でも、フレーム番号から導けば 1/60 秒。実時間なら流れたぶん
-        #expect(timing.time == 3.001)
+        // 同じ 2 枚目でも、フレーム番号から導けば 1/60 秒。実時間なら最初の枚 (3 秒) から
+        // 流れたぶん
+        #expect(timing.time == Float(0.001))
         #expect(timing.deltaTime == Float(0.001))
     }
 }

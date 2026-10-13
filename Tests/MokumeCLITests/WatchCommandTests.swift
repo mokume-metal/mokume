@@ -30,7 +30,9 @@ struct WatchCommandTests {
                         status: 0, output: "", executable: nil, binPath: directory,
                         product: "sketch")
                 },
-                launch: { _, _, _, _ in nil },
+                launch: { _, _, _, _ throws(CommandFailure) in
+                    throw .cannotLaunch(tool: "sketch", place: "/stub", reason: "the stub starts nothing")
+                },
                 now: { 0 },
                 stamp: { _ in self.stamp })
         }
@@ -266,6 +268,14 @@ struct WatchCommandTests {
         #expect(line.hasSuffix("作り直した"))
     }
 
+    /// **複数行は行ごとに消す** (#2521 の反証)。理由のように複数行を 1 度に書くと、先頭しか
+    /// 消さない形では 2 行目以降に速さの行の残りが重なる。
+    @Test("端末へ複数行を書くときは、行ごとに速さの行を消す")
+    func clearsEveryLineOfAMultilineText() {
+        let text = WatchCommand.line("1 行目\n2 行目", isTerminal: true)
+        #expect(text == "\r\u{1B}[2K1 行目\n\r\u{1B}[2K2 行目")
+    }
+
     /// **記録へ落とすときは飾らない。** 制御の文字がそのまま残ると読めない。
     @Test("端末でなければ、飾りを付けない")
     func doesNotDecorateARecord() {
@@ -359,9 +369,19 @@ struct WatchCommandTests {
         await WatchCommand.step(session, stopped: { true })
 
         #expect(stub.builds == 1)
-        // 合図が無ければ作り直す状況であることを、同じ場面で確かめる
-        await WatchCommand.step(session, stopped: { false })
-        #expect(stub.builds == 2)
+        // **終われと言われた後の巡回も、作り直さない** (#2518)。世代を待つ間は合図を口が
+        // 見られないので、見張りの側が覚えた合図で止める
+        await session.tick()
+        #expect(stub.builds == 1, "終われと言われた後の巡回で作り直した")
+
+        // 合図が無ければ作り直す状況であることを、同じ場面 (別の見張り) で確かめる
+        let control = Stub()
+        let unstopped = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: control.hooks())
+        await unstopped.start()
+        control.stamp = "bbb"
+        await WatchCommand.step(unstopped, stopped: { false })
+        #expect(control.builds == 2)
     }
 
     /// **止めたかどうかは別の出来事。** 走らせていたものが既に死んでいた場合と、

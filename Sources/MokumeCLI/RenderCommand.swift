@@ -101,7 +101,7 @@ enum RenderCommand {
                     "\($0) needs a frame rate after it (frames per second, a whole number)"
                 },
                 Arguments.Option(secondsFlags) { "\($0) needs a length after it (in seconds)" },
-                Arguments.Option(outFlags) {
+                Arguments.Option(outFlags, takesPlace: true) {
                     "\($0) needs somewhere to write after it (a .mov, or out/frame-####.png)"
                 },
             ], from: currentDirectory)

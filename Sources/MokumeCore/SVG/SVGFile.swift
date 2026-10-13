@@ -500,9 +500,9 @@ nonisolated enum SVGFile {
         private static func fraction(_ text: String) -> Float? {
             let value: Float?
             if text.hasSuffix("%") {
-                value = Float(text.dropLast()).map { $0 / 100 }
+                value = DecimalText.spelled(text.dropLast()).map { $0 / 100 }
             } else {
-                value = Float(text)
+                value = DecimalText.spelled(text)
             }
             guard let value, value.isFinite else { return nil }
             return min(max(value, 0), 1)
@@ -534,14 +534,36 @@ nonisolated enum SVGFile {
             }
             // 根の幅と高さの割合は、viewBox (無ければ 100) に対して読む。入れ子は親の座標の決まりに対して
             let reference = isRoot ? SIMD2(box?[2] ?? 100, box?[3] ?? 100) : context.viewport
-            func length(_ name: String, _ against: Float, _ fallback: Float) -> Float {
-                guard let text = attributes[name] else { return fallback }
-                return SVGFile.parseLength(text, reference: against) ?? fallback
+            // 書いていない・`auto` (SVG 2 では書いていないのと同じ)・読めない値は `nil`
+            func length(_ name: String, _ against: Float) -> Float? {
+                guard let text = attributes[name] else { return nil }
+                return SVGFile.parseLength(text, reference: against)
             }
-            let x = isRoot ? 0 : length("x", reference.x, 0)
-            let y = isRoot ? 0 : length("y", reference.y, 0)
-            let width = length("width", reference.x, isRoot ? (box?[2] ?? 100) : reference.x)
-            let height = length("height", reference.y, isRoot ? (box?[3] ?? 100) : reference.y)
+            let x = isRoot ? 0 : length("x", reference.x) ?? 0
+            let y = isRoot ? 0 : length("y", reference.y) ?? 0
+            // 根の片方だけなら、書いていない側は viewBox の縦横比から決まる (CSS Images 3 の
+            // 既定の大きさの決め方。ブラウザの <img>・resvg・librsvg の大きさ) (#2333)。
+            // 比を先に取るのは、途中の積 (書いた側 × viewBox の辺) があふれないようにするため。
+            // 導いた値が Float に収まらない (無限大・0 へ潰れる) なら導けないものとし、
+            // viewBox の大きさに倒す
+            func derived(_ written: Float, _ side: Float, _ across: Float) -> Float {
+                let value = written * (side / across)
+                return value.isFinite && value > 0 ? value : side
+            }
+            let width: Float
+            let height: Float
+            switch (length("width", reference.x), length("height", reference.y)) {
+            case (let written?, let other?):
+                (width, height) = (written, other)
+            case (let written?, nil):
+                width = written
+                height = isRoot ? box.map { derived(written, $0[3], $0[2]) } ?? 100 : reference.y
+            case (nil, let written?):
+                width = isRoot ? box.map { derived(written, $0[2], $0[3]) } ?? 100 : reference.x
+                height = written
+            case (nil, nil):
+                (width, height) = isRoot ? (box?[2] ?? 100, box?[3] ?? 100) : (reference.x, reference.y)
+            }
             guard width > 0, height > 0 else { return nil }
             var transform = Affine.translate(x, y)
             guard let box else { return (transform, SIMD2(width, height)) }

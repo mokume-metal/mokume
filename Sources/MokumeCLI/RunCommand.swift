@@ -271,10 +271,9 @@ enum RunCommand {
             bin = try self.binPath(in: directory, context: context, running: running)
         }
         if let product = context.product {
-            let executable = bin.appendingPathComponent(product, isDirectory: false)
-            try? FileManager.default.removeItem(at: executable)
-            try? FileManager.default.removeItem(
-                at: bin.appendingPathComponent("\(product).dSYM", isDirectory: true))
+            for previous in previousArtifacts(of: product, in: bin) {
+                try? FileManager.default.removeItem(at: previous)
+            }
         }
 
         // **診断は stderr にしか出ない。** 掴む形 (watch) では混ぜないと、記録に
@@ -293,11 +292,70 @@ enum RunCommand {
             return Rebuilt(status: result.status, output: result.output, executable: nil,
                 binPath: bin, product: nil)
         }
-        let executable = bin.appendingPathComponent(product, isDirectory: false)
-        let built = FileManager.default.isExecutableFile(atPath: executable.path)
         return Rebuilt(
-            status: result.status, output: result.output, executable: built ? executable : nil,
-            binPath: bin, product: product)
+            status: result.status, output: result.output,
+            executable: builtExecutable(named: product, in: bin), binPath: bin, product: product)
+    }
+
+    /// 作り直しが先に消してよい、置き場 `bin` の直下にある自分の前の産物。
+    ///
+    /// **消してよいのは `<product>` と `<product>.dSYM` だけで、どちらも置き場の直下にあるときに
+    /// 限る** (消す理由は「前の版が残ると、いま建ったかを言えない」で、置き場の外へ出る理由は
+    /// 無い)。product の名前は `Package.swift` から来るので、`..`・`.` や `/` を含む名前は
+    /// 置き場の外・置き場そのものを指し、そのまま `removeItem` に渡すと置き場の親や置き場を
+    /// 丸ごと消す ([#2502](https://github.com/mokume-metal/mokume/issues/2502)・実測した)。
+    /// 外れたものは消さずに作り直しへ進む (消せなかった回と同じ扱い)。
+    ///
+    /// `bundle` の `assemble` が「作る場所が `--out` の直下でなければ何も消さない」を名前の検めと
+    /// 独立に置くのと同じ形である (#2309・#2504)。
+    nonisolated static func previousArtifacts(of product: String, in bin: URL) -> [URL] {
+        [product, "\(product).dSYM"].compactMap { directChild($0, of: bin) }
+    }
+
+    /// 置き場 `bin` の直下にある `name` の場所。**直下でなければ `nil`。**
+    ///
+    /// **ファイルの在る・無しに左右されない、字面だけの判定にする。** `standardizedFileURL` は
+    /// 在るパスの先頭 `/private` を外し、在らないパスはそのまま返すので、`/tmp`・`/var` 配下の置き場
+    /// で、行き先の無い symlink (`bin/<product>` が dangling) を従来は消せたのに守りが空を返した。
+    /// `bin` に `name` を足した字面を `.`・`..` を畳んで部品に割り、親の部品列が `bin` の
+    /// 部品列と等しく、最後の部品が名前そのものであることを見る。`sub/../victim` は畳むと
+    /// `bin` の直下を指すが、最後の部品が名前と違うので外れる。返すのは畳まない `bin/<name>` で、
+    /// OS が解く先は `bin` の中の 1 部品になる。
+    nonisolated static func directChild(_ name: String, of bin: URL) -> URL? {
+        let home = foldedComponents(of: bin.path)
+        let target = foldedComponents(of: bin.path + "/" + name)
+        guard !name.isEmpty, !name.contains("\0"), target.last == name,
+            Array(target.dropLast()) == home
+        else { return nil }
+        return bin.appendingPathComponent(name, isDirectory: false)
+    }
+
+    /// パスを `/` で割り、`.` を落とし `..` を 1 つ戻す。
+    nonisolated private static func foldedComponents(of path: String) -> [String] {
+        var parts: [String] = []
+        for part in path.split(separator: "/", omittingEmptySubsequences: true) {
+            switch part {
+            case ".": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(String(part))
+            }
+        }
+        return parts
+    }
+
+    /// 作り直しで建った実行ファイル。**無ければ `nil`。**
+    ///
+    /// 「建った」と言うのは、置き場の直下にある**通常のファイルで実行できるもの**だけである。
+    /// `isExecutableFile` はディレクトリにも真を返すので、直下を指さない名前 (`..`・`sub/../victim`)
+    /// や、ディレクトリを指す名前を通すと、消さなくなった分だけ `bin` の親などが「建った実行
+    /// ファイル」として返る ([#2502](https://github.com/mokume-metal/mokume/issues/2502))。
+    nonisolated static func builtExecutable(named product: String, in bin: URL) -> URL? {
+        guard let url = directChild(product, of: bin) else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+            !isDirectory.boolValue, FileManager.default.isExecutableFile(atPath: url.path)
+        else { return nil }
+        return url
     }
 
     /// 作り直して、走らせるものを返す。**通らなければ投げる** (人へ見せる経路の形)。
@@ -324,9 +382,29 @@ enum RunCommand {
             guard let product = result.product else {
                 throw .noExecutable(path: directory.path)
             }
+            // **在るのに起こせないものを「建っていない」と言わない** (#2521)。作り直しは
+            // 実行できるものだけを「建った」と返すので、実行ビットの無い成果物もここへ来る
+            if let reason = unrunnableProduct(product, in: result.binPath) {
+                throw .cannotLaunch(tool: product, place: directory.path, reason: reason)
+            }
             throw .productNotBuilt(product: product, path: result.binPath.path)
         }
         return executable
+    }
+
+    /// 作り直しが「建った」と返さなかった product が、置き場に**在るのに起こせない**なら、その
+    /// 理由 (在処を含む 1 行)。無ければ `nil` (本当に建っていない)。
+    ///
+    /// **置き場の直下を指す名前だけを見る。** `/` や `.`・`..` を含む名前は置き場の外や置き場
+    /// そのものを指すので、そこに在るものを「起こせない成果物」とは言わない。
+    nonisolated static func unrunnableProduct(_ product: String, in bin: URL) -> String? {
+        guard !product.isEmpty, !product.contains("/"), product != ".", product != ".." else {
+            return nil
+        }
+        guard case .unrunnable(let reason) = standing(
+            of: bin.appendingPathComponent(product, isDirectory: false))
+        else { return nil }
+        return reason
     }
 
     /// 出来上がりが置かれる場所。**道具立てに聞く** — 置き場の中の構造を組み立てると、
@@ -378,12 +456,11 @@ enum RunCommand {
         -> URL
     {
         guard let product = context.product else { throw .noExecutable(path: directory.path) }
-        let url = try binPath(in: directory, context: context)
-            .appendingPathComponent(product, isDirectory: false)
-        guard FileManager.default.isExecutableFile(atPath: url.path) else {
-            throw .noExecutable(path: url.path)
+        let bin = try binPath(in: directory, context: context)
+        guard let built = builtExecutable(named: product, in: bin) else {
+            throw .noExecutable(path: bin.appendingPathComponent(product).path)
         }
-        return url
+        return built
     }
 
     /// パッケージの宣言を読む。**読めなければ `nil`。**
@@ -645,7 +722,8 @@ enum RunCommand {
     /// **限界: 起こした時点と確かめた時点の間に場所が消えたり戻ったりすると、読み分けが
     /// 変わる** (確かめた時点の姿を名乗る)。
     ///
-    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。口ごとに名乗りが違う
+    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。**在るのに実行できない
+    ///   ときには使わない** — 「走らせるものが無い」と言うと、在るものを探しに行かせる (#2521)。口ごとに名乗りが違う
     ///   (道具なら ``CommandFailure/toolchainMissing(_:)``、スケッチなら
     ///   ``CommandFailure/noExecutable(path:)``)。
     nonisolated static func launchFailure(
@@ -657,10 +735,60 @@ enum RunCommand {
         guard presence == .directory else {
             return .placeUnusable(tool: tool, place: place.path, presence: presence)
         }
-        guard let executable = process.executableURL,
-            FileManager.default.isExecutableFile(atPath: executable.path)
-        else { return executableMissing }
-        return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
+        guard let executable = process.executableURL else { return executableMissing }
+        // **在るのに起こせないものを「無い」と言わない** (#2521)。`Process.run()` は実行ビットの
+        // 無いファイル・探索権の無いディレクトリの下・宛先の無い symlink のどれにも「The file
+        // doesn’t exist」(下に POSIX の誤り無し) を投げるので、誤りの文面からは原因が取れない —
+        // stat し直した事実で名乗る
+        switch standing(of: executable) {
+        case .missing: return executableMissing
+        case .unrunnable(let reason):
+            return .cannotLaunch(tool: tool, place: place.path, reason: reason)
+        case .runnable:
+            return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
+        }
+    }
+
+    /// 走らせるものの在り方。``standing(of:)`` が読む。
+    nonisolated enum Standing: Equatable {
+        /// 何も無い (`ENOENT` で、symlink でもない)。
+        case missing
+        /// 在るが、起こせない。`reason` は在処を含む 1 行。
+        case unrunnable(reason: String)
+        /// 在り、実行できる (起こせなかったのなら、理由は起こした側の誤りにある)。
+        case runnable
+    }
+
+    /// 走らせるものを stat し直して、在り方を決める
+    /// ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    ///
+    /// **「無い」と言うのは、stat が `ENOENT` を返し、symlink でもないときだけ** — 作業
+    /// ディレクトリの側の ``GivenPath/Presence/of(_:)`` と同じ読み分けである。辿り着けない
+    /// (`EACCES` など)・宛先の無い symlink・ディレクトリ・実行ビットが無い、は在るものなので、
+    /// 「無い」と言うと在るものを探しに行かせる。
+    ///
+    /// **限界: 起こした時点と確かめた時点の間に変わると、確かめた時点の姿を名乗る。**
+    nonisolated static func standing(of executable: URL) -> Standing {
+        let path = executable.path
+        var info = stat()
+        guard stat(path, &info) == 0 else {
+            let code = errno
+            guard code == ENOENT else {
+                return .unrunnable(reason: "\(path) cannot be reached (\(GivenPath.errorText(code)))")
+            }
+            var link = stat()
+            return lstat(path, &link) == 0
+                ? .unrunnable(reason: "\(path) is a symbolic link to something that is not there")
+                : .missing
+        }
+        if (info.st_mode & S_IFMT) == S_IFDIR {
+            return .unrunnable(reason: "\(path) is a directory, not a program")
+        }
+        guard access(path, X_OK) == 0 else {
+            return .unrunnable(
+                reason: "\(path) is not executable (\(GivenPath.errorText(errno)))")
+        }
+        return .runnable
     }
 
     /// 起こせなかった事情の文面 (場所でも実行ファイルの不在でもないとき)。

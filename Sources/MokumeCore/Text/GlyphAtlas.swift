@@ -406,7 +406,7 @@ import simd
 
         guard let origin = reserve(width: width, height: height) else { return .full }
         guard
-            let pixels = render(
+            let pixels = Self.render(
                 glyph: glyph, font: font, width: width, height: height, penX: -left,
                 penY: -bottom)
         else { return .unbakeable }
@@ -495,7 +495,13 @@ import simd
     ///
     /// 描く道具の座標は下から上へ数えるが、**並びの先頭は絵の上端**なので、
     /// 面へはそのままの順で写る (``ImageFile/decode(at:name:)`` と同じ)。
-    private func render(
+    ///
+    /// **墨の範囲を測る側 (``Typeface/drawnInk(of:_:)``) も、この描き方を読む** ([#2308])。
+    /// 色を持つ字形 (絵文字) の墨は描いてみないと分からず、別の描き方で測ると
+    /// `text()` の墨と食い違いうる。
+    ///
+    /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
+    static func render(
         glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int
     ) -> [SIMD4<Float16>]? {
         var pixels = [SIMD4<Float16>](repeating: .zero, count: width * height)

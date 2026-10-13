@@ -628,7 +628,7 @@ public final class Canvas {
     /// 読み込んだモデルの塗りの頂点の、GPU 上の置き場 (#1749)。列も所有し、控えの追い出しと
     /// 描画の寿命を分ける (線の骨 ``solidStrokeGeometry`` と同じ作法)。
     ///
-    /// **1 つで予算の半分を超えるモデルは持たない** (``modelFill(for:isDerived:textured:mesh:)``)
+    /// **1 つで予算の半分を超えるモデルは持たない** (``modelFill(for:textured:mesh:)``)
     /// — 追い出し合って毎フレーム作り直すと、溜め場へ写すより重くなる。検査は予算を 0 に
     /// して、持たない経路 (以前の経路) を物差しにする。
     var modelFills = BoundedCache<SolidMeshRangeKey, SolidFillGeometry>(

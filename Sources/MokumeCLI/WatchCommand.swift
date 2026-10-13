@@ -414,7 +414,7 @@ enum WatchCommand {
             viewer?.preview.report(line, spinning: false)
         }
         if let outcome = await session.tick() {
-            report(outcome, on: viewer)
+            report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
             // 通るので、保存のたびにも起こりうる (#732)
             switch session.lastStop {
@@ -461,7 +461,12 @@ enum WatchCommand {
                 Task<Void, Never> {
                     if !state.started {
                         state.started = true
-                        report(await session.start(), on: viewer)
+                        let outcome = await session.start()
+                        // **終われと言われた後に戻ってきた最初の結果は名乗らない。** どう
+                        // 終えたかは抜ける側 (``finish(_:)``) が名乗る — ここでも言うと、
+                        // 始めなかった・止めた作り直しを「Build failed」と言うことになる
+                        guard !session.stopRequested else { return }
+                        report(outcome, on: viewer)
                         return
                     }
                     if await step(session, viewer: viewer) { return }
@@ -539,15 +544,42 @@ enum WatchCommand {
         }
     }
 
-    private static func report(_ outcome: BuildReport, on viewer: Viewer?) {
-        say(outcome.summary)
-        if !outcome.ok, !outcome.output.isEmpty {
-            say(outcome.output)
-            say(holdingLine)
-        }
+    private static func report(
+        _ outcome: BuildReport, holdingPrevious: Bool = false, on viewer: Viewer?
+    ) {
+        // **既定は「前の版は走っていない」。** 最初の 1 回 (``WatchSession/start()``) には前の版が
+        // 居ないので、口はそこで渡さない
+        for line in reportLines(outcome, holdingPrevious: holdingPrevious) { say(line) }
         // **回っている印は止める。** 作り直しは終わっているので、回り続ける印は
         // 「まだ待たされている」と読める
         viewer?.preview.report(notice(for: outcome), spinning: false)
+    }
+
+    /// 1 回の作り直しの結果として端末に出す行。
+    ///
+    /// **起こさなかった回も理由を出す** ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    /// 作り直しが通って子を起こせなかった回 (`ok: true, launched: false`) は、要約が
+    /// `Rebuilt, but could not start it` と言うだけで、理由は記録の本文の頭にしか無い —
+    /// 通らなかった回だけ本文を出していた頃は、端末には理由が 1 行も出なかった。
+    ///
+    /// **出すのは理由 (本文の最初の空行まで) だけである。** 作り直しは通っているので、その
+    /// 出力 (`[n/m] Compiling…` の行) を端末へ流しても読む人のすることは変わらない。全文は
+    /// 記録 (`status.json`) に在る。
+    ///
+    /// - Parameter holdingPrevious: 前の版が走り続けているか (``WatchSession/keepsPreviousRunning``)。
+    ///   起こせなかった回に、そうであるときだけ ``holdingLine`` を名乗る — 窓のある見張りは前の
+    ///   世代を残してから起こし、窓の無い見張りは起こす前に止める。
+    static func reportLines(_ outcome: BuildReport, holdingPrevious: Bool) -> [String] {
+        var lines = [outcome.summary]
+        guard !outcome.output.isEmpty else { return lines }
+        if !outcome.ok {
+            lines.append(outcome.output)
+            lines.append(holdingLine)
+        } else if !outcome.launched {
+            lines.append(WatchSession.notLaunchedReason(of: outcome.output))
+            if holdingPrevious { lines.append(holdingLine) }
+        }
+        return lines
     }
 
     /// 作り直しが通らなかったとき、走り続けているものを名乗る行。
@@ -663,7 +695,12 @@ enum WatchCommand {
     /// 規約は文章で共有し、実装はそれぞれが持つ — 出すべきかどうかは、外から使う人が
     /// 現れてから決める。**同じ扱いだった `AtomicWrite` は、道具の側に使い手が 3 人
     /// 現れた時点で畳んだ** ([#989](https://github.com/mokume-metal/mokume/issues/989))。
+    ///
+    /// **行ごとに消す** (#2521)。理由のように複数行を 1 度に書くと、先頭の行しか消さない形では
+    /// 2 行目以降に速さの行の残りが重なる。
     static func line(_ text: String, isTerminal: Bool) -> String {
-        isTerminal ? "\r\u{1B}[2K" + text : text
+        guard isTerminal else { return text }
+        return text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "\r\u{1B}[2K" + $0 }.joined(separator: "\n")
     }
 }

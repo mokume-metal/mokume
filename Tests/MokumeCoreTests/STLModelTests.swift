@@ -56,7 +56,8 @@ struct STLModelTests {
         for (index, facet) in Self.tetrahedron.prefix(3).enumerated() {
             #expect(parsed.normals[index * 3..<index * 3 + 3].allSatisfy { $0 == facet.normal })
         }
-        #expect(parsed.hasWrittenNormals)
+        // **両面の印は面ごと** (#2342): 書いた 3 面は片面、`0 0 0` の 4 面目の 3 点だけが求めた向き
+        #expect(parsed.derivedNormals == Array(repeating: false, count: 9) + [true, true, true])
         // 展開は持たない (囲みの箱の位置に倒れる)
         #expect(parsed.uvs.count == 12)
         #expect(parsed.uvs.allSatisfy { $0 == nil })
@@ -84,7 +85,7 @@ struct STLModelTests {
     func noWrittenNormalsAtAll() throws {
         let parsed = try read(Data(ModelFixture.pyramidSTLText.utf8))
         #expect(parsed.positions.count == 18)
-        #expect(parsed.hasWrittenNormals == false)
+        #expect(parsed.derivedNormals == Array(repeating: true, count: 18))
         #expect(parsed.normals.allSatisfy { abs(length($0) - 1) < 1e-5 })
     }
 
@@ -114,7 +115,7 @@ struct STLModelTests {
 
         #expect(fromSTL.positions == fromOBJ.positions)
         #expect(fromSTL.uvs == fromOBJ.uvs)
-        #expect(fromSTL.hasWrittenNormals == fromOBJ.hasWrittenNormals)
+        #expect(fromSTL.derivedNormals == fromOBJ.derivedNormals)
         #expect(fromSTL.skippedLines == fromOBJ.skippedLines)
         // 求めた向きは OBJ が Newell の方法・STL が外積で求めるので、最下位の桁だけ違いうる
         #expect(fromSTL.normals.count == fromOBJ.normals.count)
@@ -136,7 +137,7 @@ struct STLModelTests {
         #expect(stl.center == obj.center)
         #expect(stl.mesh.points.map(\.position) == obj.mesh.points.map(\.position))
         #expect(stl.mesh.points.map(\.uv) == obj.mesh.points.map(\.uv))
-        #expect(stl.hasDerivedNormals == obj.hasDerivedNormals)
+        #expect(stl.mesh.points.map(\.isDerivedNormal) == obj.mesh.points.map(\.isDerivedNormal))
         // **向きだけは違う。** STL は点を共有しないので面ごとに平ら (3 点が同じ向き) で、OBJ は
         // 点を共有する面どうしで均される
         let points = stl.mesh.points

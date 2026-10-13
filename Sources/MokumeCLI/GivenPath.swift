@@ -36,6 +36,10 @@ nonisolated enum GivenPath {
     /// 返す URL は**基準の URL を持たず、`.`・`..` を含まない** — 相対の URL を `Process` へ
     /// 渡すと先頭の `..` が落ちる (上の説明)。
     ///
+    /// **空文字列は `base` そのものに解ける** (Foundation の解き方)。場所を名指していないので、
+    /// 打たれた値としては口が断る (``Arguments/emptyPlace(_:)``・#2485) — ここは受け取った後の
+    /// 計算で、断る場所ではない。
+    ///
     /// - Parameter base: 相対パスを解く基準。既定は走らせた場所で、**検査から渡せる形にしてある。**
     static func resolve(_ given: String, from base: URL = currentDirectory, isDirectory: Bool = true)
         -> URL

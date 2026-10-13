@@ -90,8 +90,17 @@ enum SchemasLocator {
             .sorted()
     }
 
-    /// 仕様の中身。
+    /// 仕様の中身。**配っている名前 (``names(in:)``) のときだけ読む。**
+    ///
+    /// `name` を検めずに `<置き場>/<name>.schema.json` へ繋ぐと、`../` で置き場の外の
+    /// `*.schema.json` を、区切りでサブディレクトリの中を、一覧が配っていないのに読める
+    /// (#2395)。綴りを 1 つずつ弾く (`../`・区切り・絶対パス…) と取りこぼした綴りが
+    /// 口になるので、「一覧に無い名前は読まない」という約束そのもので塞ぐ — 一覧と読み口が
+    /// 同じ定義を見るので、食い違いようがない。
+    ///
+    /// 呼ぶ側 (``Tools``) は `nil` を「その名前の文書は無い」と答える。
     static func contents(of name: String, in root: URL) -> String? {
+        guard names(in: root).contains(name) else { return nil }
         let url = root.appendingPathComponent("\(name).schema.json")
         return try? String(contentsOf: url, encoding: .utf8)
     }

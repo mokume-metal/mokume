@@ -6,7 +6,7 @@
 ADR-0019 決定 7 は、専用機に届くきっかけを 3 つ (merge_group・同じリポジトリの PR・
 schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権限の 1 行が崩れると、理由ごと
 外れる** — しかも崩れても run は緑のままで、気付くのは専用機に想定外のものが届いた後になる。
-ここで固定するのは次の 10 個:
+ここで固定するのは次の 11 個:
 
   1. schedule の cron は 6 時間おきで、毎時 0 分を避けている (このリポジトリの慣習)
   2. `render` (必須) と `render-pr` は schedule では起動しない — 必須チェックの結論を
@@ -17,7 +17,8 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
      `render` を先に通す (1 本の長いジョブにしない)
   5. 専用機のジョブは権限を広げず (`permissions` を持たず workflow 既定の `contents: read`)、
      秘密を持たない
-  6. `issues: write` を持つのは GitHub ホストの後続ジョブ (`scheduled-report`) だけ
+  6. `issues: write` を持つのは GitHub ホストの後続ジョブ (`scheduled-report` と
+     `render-environment-report`) だけ
   7. `scheduled-report` は専用機のジョブが落ちた (`failure`) か切れた (`cancelled`) ときだけ
      走り、2 つの job の結論を起票のスクリプトへ渡す。timeout で切れた回は `cancelled` に
      なるので、`failure` だけを見ると黙って抜ける (#2084)。`if:` は状態の関数を持つ —
@@ -31,6 +32,10 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
      `needs` の鎖で 1 本ずつ並び、どれも `wait` の門番の後ろにいる。門番より前に積まれた
      定期の job を退かせないことを受け入れる根拠 — 先頭の render と並ぶのは定期の job 1 本
      まで — がこの形である (#2064・ADR-0019 決定 7)。3 本目を足すと、ここが赤になる
+ 11. 専用機のジョブはすべて、checkout の直後に環境の前検査 (`scripts/runner-preflight.sh`)
+     を走らせる。`render` はその理由を job の出力へ上げ、`render-environment-report` は
+     前検査で落ちた回 (理由が空でない) にだけ走って発信する (#2588)。理由を見ずに
+     `failure` だけで走らせると、PR の中身による赤まで「専用機が壊れている」と起票する
 
 PyYAML は入れていない (標準の Python だけで回す) ので、`jobs:` の直下の 2 字下げの
 キーでジョブを切り、本文を行で読む。YAML の構文そのものは actionlint が見る。
@@ -193,9 +198,34 @@ class RenderWorkflowTest(unittest.TestCase):
 
     def test_issues_write_を持つのは_GitHub_ホストの後続ジョブだけ(self):
         holders = [name for name, body in self.jobs.items() if re.search(r"issues:\s*write", body)]
-        self.assertEqual(holders, ["scheduled-report"])
-        self.assertNotIn("self-hosted", self.jobs["scheduled-report"])
-        self.assertIn("runs-on: ubuntu-latest", self.jobs["scheduled-report"])
+        self.assertEqual(sorted(holders), ["render-environment-report", "scheduled-report"])
+        for name in holders:
+            self.assertNotIn("self-hosted", self.jobs[name], name)
+            self.assertIn("runs-on: ubuntu-latest", self.jobs[name], name)
+
+    def test_専用機のジョブは_checkout_の直後に前検査を走らせる(self):
+        # make より後に置くと、壊れた環境で 14 分走ってから落ちる (#2507) のに戻る
+        for name in RUNNER_JOBS:
+            steps = re.findall(r"(?m)^      - (.+)$", self.jobs[name])
+            self.assertEqual(steps[0], "uses: actions/checkout@v7", name)
+            self.assertEqual(steps[1], "id: preflight", name)
+            self.assertRegex(
+                self.jobs[name], r"(?m)^      - id: preflight\n        run: bash scripts/runner-preflight.sh$", name
+            )
+
+    def test_render_environment_report_は前検査で落ちた回にだけ走る(self):
+        self.assertIn(
+            "preflight-reason: ${{ steps.preflight.outputs.reason }}", self.jobs["render"]
+        )
+        body = self.jobs["render-environment-report"]
+        self.assertEqual(needs(body), {"render"})
+        cond = condition(body)
+        # 状態の関数が無いと暗黙の success() で、render が赤の回にこそ skipped になる
+        self.assertIn("!cancelled() && ", cond)
+        self.assertIn("needs.render.result == 'failure'", cond)
+        # 理由を見ないと、PR の中身による赤まで専用機の故障として起票する
+        self.assertIn("needs.render.outputs.preflight-reason != ''", cond)
+        self.assertIn("scripts/report-runner-environment.sh", body)
 
     def test_scheduled_report_は専用機のジョブが落ちたか切れたときだけ走る(self):
         body = self.jobs["scheduled-report"]

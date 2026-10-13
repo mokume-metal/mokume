@@ -24,7 +24,7 @@ enum KnobBinding {
         let isInteger = current.isInteger
         return Binding(
             get: { box.declaration.value.asDouble ?? 0 },
-            set: { _ = box.write(isInteger ? .int(Int($0.rounded())) : .float($0)) })
+            set: { _ = box.write(isInteger ? .int(Int(roundingAndSaturating: $0)) : .float($0)) })
     }
 
     static func flag(_ box: any DeclaredParam) -> Binding<Bool> {

@@ -330,12 +330,32 @@ protocol DatagramSending: AnyObject, Sendable {
 /// ように戻す。知らせるのは 2 つの形である。
 ///
 /// - **繋ぎが失敗した** (`failed`。宛先で誰も受けていない `connection refused` など) — 繋ぎを捨て、
-///   次に送るときに繋ぎ直す
+///   次に送るときに繋ぎ直す。**送れたと読めるのは、繋ぎが ``confirmAfter`` 秒以上、拒まれずに
+///   送れ続けたとき**である (下の「UDP の送れた」)
 /// - **繋ぎが待っている** (`waiting`。`Network is down` など) — 繋ぎは Network.framework が自分で
 ///   待ち続けるので捨てない。待っている間は送ったものの完了が 1 度も返らず、知らせなければ**黙って
 ///   消える**。ネットワークが生きているのに待つなら、このアプリにローカルネットワークの許可が
 ///   無いことがある (束ねた `.app` で、ダイアログが出ないまま塞がれたときに実測した — #1962)。
 ///   `Network is down` は Wi-Fi が落ちているときにも出るので、許可の拒否と断定はしない
+///
+/// ## UDP の送れた
+///
+/// UDP の送信の完了は「手元のソケットから出た」ことしか言わない。宛先で誰も受けていない拒否は
+/// **次の送信**の失敗として返り、繋ぎはそのまま使える (macOS 27.0.1 で、受け手の居ないポートへ
+/// 繋ぎを捨てずに送ると、完了が成功・拒否を交互に返すのを実測した)。完了が誤り無しで返ったことを
+/// 「送れた」と読むと、誰にも届いていないのに送るたびに戻って、1 度だけのはずの診断が出直す
+/// (#2326)。
+///
+/// だから**拒否で名乗った後は、同じ繋ぎで最初に誤り無く終わった送信の完了から ``confirmAfter`` 秒以上
+/// 後に出した送信も誤り無く終わって初めて**、送れたと読む。拒否は送信から宛先の往復の間に届くので、
+/// それより長く待ってから出した送信が拒まれなければ、最初の送信は届いていた。**測るのは 2 つ目を
+/// 出した時刻で、完了が返った時刻ではない** — 待ち行列が遅れて 2 つ目が拒否の到着より前に出ていても、
+/// 完了の時刻だけを見ると間を満たしてしまう。受け手が居ないままなら、繋ぎは 2 つ目の送信の前に
+/// 拒否で捨てられるので、戻らない。
+///
+/// **捨てた繋ぎ (いまの繋ぎでないもの) に返った完了は、いまの繋ぎの話ではないので無視する。** 繋ぎを
+/// 捨てると、その繋ぎに積まれていた送信の完了が `ECANCELED` などの誤りで返る。それを送れない理由として
+/// 名乗らず、いまの繋ぎの数え方も崩さない。
 ///
 /// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
 nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
@@ -343,24 +363,46 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
 
     let host: String
     let port: Int
+    /// 拒否で名乗った後、送れたと読むまでに、同じ繋ぎで空ける間 (秒) の既定。拒否は宛先との往復の間に
+    /// 届くので、それより長ければよい。長すぎると、受け手が戻ってから次に落ちたときの名乗りが遅れる。
+    static let defaultConfirmAfter: TimeInterval = 0.5
+
+    /// 拒否で名乗った後、送れたと読むまでに、同じ繋ぎで空ける間 (秒)。
+    let confirmAfter: TimeInterval
     private let queue = DispatchQueue(label: "org.mokume.network.sender")
+    private let now: @Sendable () -> TimeInterval
     private let warn: @Sendable (String) -> Void
     private var connection: NWConnection?
     private var warned = false
+    /// いま名乗っているのが、宛先の失敗 (拒否など) か。偽なら (待っている) 送れた 1 度で戻る。名乗った
+    /// 後に宛先の失敗が返れば、理由が待ちでも真にする (次の誤り無しの完了で戻して言い直さない)。
+    private var refused = false
+    /// いまの繋ぎで、最初に誤り無く終わった送信の完了の時刻。繋ぎを捨てる・失敗が返るたびに消える。
+    private var unrefutedSince: TimeInterval?
 
-    init(host: String, port: Int, warn: @escaping @Sendable (String) -> Void) {
+    /// - Parameters:
+    ///   - confirmAfter: 拒否で名乗った後、送れたと読むまでに、同じ繋ぎで空ける間 (秒)。
+    ///   - now: その間を測る時計 (秒)。検査は手で進める時計を渡す。
+    init(
+        host: String, port: Int, confirmAfter: TimeInterval = defaultConfirmAfter,
+        now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
+        warn: @escaping @Sendable (String) -> Void
+    ) {
         self.host = host
         self.port = port
+        self.confirmAfter = confirmAfter
+        self.now = now
         self.warn = warn
     }
 
     func send(_ bytes: [UInt8]) {
         queue.async { [self] in
             let connection = connection ?? open()
+            let issued = now()
             connection.send(
                 content: Data(bytes),
                 completion: .contentProcessed { [weak self, weak connection] error in
-                    self?.finished(sending: error, on: connection)
+                    self?.finished(sending: error, on: connection, issuedAt: issued)
                 })
         }
     }
@@ -369,6 +411,7 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
         queue.sync { [self] in
             connection?.cancel()
             connection = nil
+            unrefutedSince = nil
         }
     }
 
@@ -388,8 +431,15 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
             self?.changed(to: state, on: opened)
         }
         opened.start(queue: queue)
-        connection = opened
+        attach(opened)
         return opened
+    }
+
+    /// 繋ぎをいまの繋ぎにする。検査は、始めていない繋ぎをここへ据えて、いまの繋ぎの完了と
+    /// 捨てた繋ぎの完了を作り分ける。
+    func attach(_ opened: NWConnection) {
+        connection = opened
+        unrefutedSince = nil
     }
 
     /// 繋ぎの移り変わりを読む。送れない形なら 1 度だけ知らせる。
@@ -397,41 +447,86 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
         switch state {
         case .waiting(let error):
             // 繋ぎは Network.framework が自分で待ち続ける。捨てずに、送れないことだけを言う
-            tell(error, waiting: true)
+            tell(error, cause: .waiting)
         case .failed(let error):
             if let opened { drop(opened) }
-            tell(error, waiting: false)
+            tell(error, cause: .destination)
         default:
             break
         }
     }
 
     /// 1 つ送り終えた。送れたら、また知らせられるように戻す。
-    func finished(sending error: NWError?, on sent: NWConnection?) {
+    ///
+    /// 「送れた」が何かは、名乗った理由で違う。待っているときは、誤り無く終わった 1 度で戻す。
+    /// **宛先の失敗 (拒否など) は、完了が誤り無しで返っても戻さない** — 拒否は次の送信の失敗として
+    /// 返るので、同じ繋ぎで最初に誤り無く終わった完了から ``confirmAfter`` 秒以上後に出した送信も誤り
+    /// 無く終わって初めて戻す (型の説明の「UDP の送れた」)。
+    ///
+    /// - Parameter issuedAt: この送信を出した時刻。`nil` なら、いま。
+    func finished(sending error: NWError?, on sent: NWConnection?, issuedAt: TimeInterval? = nil) {
         guard let error else {
-            warned = false
+            guard warned else {
+                if isCurrent(sent) { unrefutedSince = unrefutedSince ?? now() }
+                return
+            }
+            guard refused else {
+                warned = false
+                return
+            }
+            // 捨てた繋ぎの完了は、いまの繋ぎの数え方に入れない
+            guard isCurrent(sent) else { return }
+            let completed = now()
+            let since = unrefutedSince ?? completed
+            unrefutedSince = since
+            if (issuedAt ?? completed) - since >= confirmAfter { warned = false }
             return
         }
+        // 捨てた繋ぎに積まれていた送信の完了は、どんな誤りでも、いまの繋ぎの話ではない
+        guard isCurrent(sent) else { return }
+        unrefutedSince = nil
         if let sent { drop(sent) }
-        tell(error, waiting: false)
+        tell(error, cause: .destination)
+    }
+
+    /// `sent` がいまの繋ぎか。**弱参照が消えた (`nil`) ものはいまの繋ぎではない** — いまの繋ぎは
+    /// こちらが持っているので消えない。
+    private func isCurrent(_ sent: NWConnection?) -> Bool {
+        guard let sent else { return false }
+        return connection === sent
     }
 
     /// 繋ぎを捨てる。次に送るときに作り直す。
     private func drop(_ failed: NWConnection) {
         failed.cancel()
-        if connection === failed { connection = nil }
+        if connection === failed {
+            connection = nil
+            unrefutedSince = nil
+        }
     }
 
-    private func tell(_ error: NWError, waiting: Bool) {
+    /// 送れない理由。名乗る言葉と、戻す条件が違う。
+    private enum Cause {
+        /// 繋ぎが待っている (許可が無い・ネットワークが落ちている)。
+        case waiting
+        /// 繋ぎや送信が失敗した (宛先で誰も受けていないなど)。
+        case destination
+    }
+
+    private func tell(_ error: NWError, cause: Cause) {
+        // 待っていると名乗った後に宛先の失敗が返ったら、以後は拒否として戻す
+        if cause == .destination { refused = true }
         guard !warned else { return }
         warned = true
+        refused = cause == .destination
         let head = "Could not send to \(host):\(port) (\(Self.describe(error)))."
-        if waiting {
+        switch cause {
+        case .waiting:
             warn(
                 head + " If the network is up, this app may not be allowed to reach the local "
                     + "network: check System Settings > Privacy & Security > Local Network. It keeps "
                     + "waiting for the connection")
-        } else {
+        case .destination:
             warn(head + " Check that something is listening there; the next message tries again")
         }
     }

@@ -286,8 +286,12 @@ nonisolated enum BuildDirectory {
         if let product = package.executableProductName { names.append(product) }
         names.append(contentsOf: package.targets.map(\.name))
         var seen = Set<String>()
-        // 置き場の名前にできないものは押さえようがないので落とす
-        return names.filter { !$0.contains("/") && !$0.isEmpty && seen.insert($0).inserted }
+        // 置き場の名前にできないものは押さえようがないので落とす。**`.`・`..` も** — 押さえる記録の
+        // 置き場 `owners/<name>` が `owners` 自身か置き場の根を指し、先客と読めない記録で
+        // 共有を諦める理由が不正確になる ([#2502](https://github.com/mokume-metal/mokume/issues/2502))
+        return names.filter {
+            !$0.contains("/") && !$0.isEmpty && $0 != "." && $0 != ".." && seen.insert($0).inserted
+        }
     }
 
     /// 共有の置き場で名前を押さえる。

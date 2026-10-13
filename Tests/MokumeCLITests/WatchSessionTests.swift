@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import Synchronization
 import Testing
 import mokume
 
@@ -36,6 +37,11 @@ struct WatchSessionTests {
         /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
         /// でしか見えない (#834)。ここで待たせて、その隙に main actor の仕事を積む。
         var whileBuilding: () async -> Void = {}
+        /// 世代を取る最中に待たせる口。**既定は何もしない。** 使い方は ``whileBuilding`` と
+        /// 同じで、世代を待つ間に main actor が空くかを見る (#2518)。
+        var whileStamping: () async -> Void = {}
+        /// 世代を取った回数。**待っている間の巡回が読みを重ねないこと**を見る (#2518)。
+        var stampings = 0
         /// 作り直しを起こせなかったことにする誤り。**立っていれば、作り直しは投げる。**
         var failure: CommandFailure?
         /// 起こしたことにする子を返すか。**既定は返さない** (起こせなかった回になる)。
@@ -43,6 +49,9 @@ struct WatchSessionTests {
         /// 返すのは走らせていない `Process` である — 新しい絵が出るまでを測るのは子が居る回
         /// だけなので、居ることにだけ要る (#930)。
         var launchesChild = false
+        /// 起こせなかった回に投げる誤り。**理由が記録と端末に載るか**を見る (#2521)。
+        var launchFailure = CommandFailure.cannotLaunch(
+            tool: "sketch", place: "/stub", reason: "the stub starts nothing")
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
@@ -60,15 +69,20 @@ struct WatchSessionTests {
                         executable: self.productBuilt ? bin : nil, binPath: directory,
                         product: self.product)
                 },
-                launch: { _, _, stamp, rate in
+                launch: { _, _, stamp, rate throws(CommandFailure) in
                     self.launches += 1
                     self.stampsGivenToChildren.append(stamp)
                     self.ratesGivenToChildren.append(rate)
                     self.clock += 0.03
-                    return self.launchesChild ? Process() : nil
+                    guard self.launchesChild else { throw self.launchFailure }
+                    return Process()
                 },
                 now: { self.clock },
-                stamp: { _ in self.stamp })
+                stamp: { _ in
+                    self.stampings += 1
+                    await self.whileStamping()
+                    return self.stamp
+                })
         }
     }
 
@@ -188,11 +202,202 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
 
-        // Recorder の launch は常に nil を返す (子を作らない)
+        // Recorder の launch は既定で起こせない (理由を投げる)
         let report = await session.start()
         #expect(report.ok, "作り直し自体は通っている")
         #expect(!report.launched)
         #expect(report.summary.contains("could not start it"))
+    }
+
+    /// **起こせなかった理由を捨てない** ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    /// `launched: false` だけでは、場所が消えたのか実行できないのかを誰も読めない — 理由は
+    /// 本文の頭に置き、作り直しの出力はその後に続ける (建っていない回と同じ形)。
+    @Test("建ったのに起こせなかった回は、起こせなかった理由を記録の本文の頭に載せる")
+    func aLaunchFailureLeadsTheRecordedOutput() async throws {
+        let recorder = Recorder()
+        let directory = try makeDirectory()
+        recorder.launchFailure = .placeUnusable(
+            tool: "sketch", place: "/gone", presence: .missing)
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: recorder.hooks())
+
+        let report = await session.start()
+        let reason = recorder.launchFailure.message
+        #expect(report.output == reason + "\n\n" + recorder.buildOutput)
+
+        let data = try Data(
+            contentsOf: directory.appendingPathComponent(".mokume/build/status.json"))
+        let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(decoded?["output"] as? String == report.output, "区画の記録に理由が載っていない")
+        #expect(decoded?["launched"] as? Bool == false)
+        #expect(decoded?["ok"] as? Bool == true)
+
+        // 端末には、要約の次の行に理由だけが出る — 作り直しの出力は流さない
+        let lines = WatchCommand.reportLines(
+            report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines == [report.summary, reason], "\(lines)")
+        #expect(report.summary.hasPrefix("Rebuilt, but could not start it: "))
+        // 窓の無い見張りは起こす前に止めるので、前の版は走っていない
+        #expect(!session.keepsPreviousRunning)
+    }
+
+    /// **端末には理由だけを出す** (#2521 の反証)。作り直しは通っているので、`swift build` の
+    /// 出力 (`[n/m] Compiling…`) を流しても読む人のすることは変わらない。理由が複数行でも
+    /// 最初の空行までを出す。
+    @Test("起こせなかった回の端末には、複数行の理由まで出して作り直しの出力は流さない")
+    func theTerminalShowsOnlyTheReason() async throws {
+        let recorder = Recorder()
+        recorder.buildOutput = "[1/3] Compiling app main.swift\n[3/3] Linking sketch\nBuild complete!"
+        // 2 行の理由
+        recorder.launchFailure = .placeUnusable(tool: "sketch", place: "/gone", presence: .missing)
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+
+        let report = await session.start()
+        let reason = recorder.launchFailure.message
+        #expect(reason.contains("\n"), "理由が 1 行では、複数行の区切りを確かめられない")
+        #expect(WatchSession.notLaunchedReason(of: report.output) == reason)
+        let lines = WatchCommand.reportLines(report, holdingPrevious: false)
+        #expect(lines == [report.summary, reason])
+        #expect(!lines.joined().contains("Compiling"), "作り直しの出力を端末へ流した")
+    }
+
+    /// **窓のある見張りは、起こせなかった回も前の版を走らせ続ける** (#2521 の反証)。前の世代を
+    /// 退役待ちへ残してから起こすので、端末は「前の版のまま待つ」と名乗る。窓の無い見張りは
+    /// 起こす前に止めるので名乗らない。
+    @Test(
+        "起こせなかった回は、前の版が走り続けているときだけ前の版のまま待つと名乗る",
+        arguments: [true, false])
+    func aLaunchFailureHoldsThePreviousOnlyWhenItRuns(overlapping: Bool) async throws {
+        let recorder = Recorder()
+        let previous = Process()
+        previous.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        previous.arguments = ["30"]
+        // **待つ側が期限を持つ。** 残ったら殺す
+        defer { if previous.isRunning { kill(previous.processIdentifier, SIGKILL) } }
+        var hooks = recorder.hooks()
+        var launches = 0
+        hooks.launch = { _, _, _, _ throws(CommandFailure) in
+            launches += 1
+            guard launches == 1 else { throw recorder.launchFailure }
+            do { try previous.run() } catch { throw .cannotLaunch(tool: "sleep", place: "", reason: "\(error)") }
+            return previous
+        }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 1)
+        session.overlapsGenerations = overlapping
+        #expect(await session.start().launched)
+
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+        #expect(!report.launched)
+        #expect(session.keepsPreviousRunning == overlapping)
+        #expect(previous.isRunning == overlapping, "窓の有無で前の版の扱いが変わっていない")
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines.contains(WatchCommand.holdingLine) == overlapping, "\(lines)")
+        session.end()
+    }
+
+    /// **作り直しは通ったが、成果物に実行ビットが無い** (#2521 の反証)。作り直しは実行できる
+    /// ものだけを「建った」と返すので、ここは起こす口まで届かず「建っていない」へ落ちていた。
+    /// 作り直しの戻り (``RunCommand/Rebuilt``) から記録と端末までを通して見る。
+    @Test("在るのに実行できない成果物は、建っていないではなく起こせないと名乗り、前の版を落とさない")
+    func anUnrunnableProductIsNotCalledUnbuilt() async throws {
+        let recorder = Recorder()
+        let directory = try makeDirectory()
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: recorder.hooks())
+        recorder.launchesChild = true
+        await session.start()
+
+        // Recorder は「建っていない」ときに置き場 (= directory) と product を返す
+        recorder.productBuilt = false
+        let product = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: product, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: product.path)
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+
+        let reason = CommandFailure.cannotLaunch(
+            tool: "sketch", place: directory.path,
+            reason: "\(product.path) is not executable (Permission denied)"
+        ).message
+        #expect(report.ok, "作り直しは通っている")
+        #expect(!report.launched)
+        #expect(report.output == reason + "\n\n" + recorder.buildOutput)
+        #expect(!report.output.contains("was never built"), "在るものを建っていないと言った")
+        #expect(recorder.launches == 1, "起こせないと分かっているのに差し替えに入った")
+        #expect(session.child != nil, "前の版を落とした")
+        #expect(WatchCommand.reportLines(report, holdingPrevious: false) == [report.summary, reason])
+
+        // 裏側: 本当に無ければ、いままでどおり「建っていない」
+        try FileManager.default.removeItem(at: product)
+        recorder.stamp = "ccc"
+        let unbuilt = try #require(await session.tick())
+        #expect(!unbuilt.ok)
+        #expect(unbuilt.output.contains("was never built"))
+    }
+
+    /// **`launched: false` の口はどれも理由を名乗る** (#2521)。終われと言われた後に作り直しが
+    /// 通った回は、起こさないと決めたのは見張りの側で、本文にその 1 行が無いと起こせなかった回と
+    /// 見分けが付かない。
+    @Test("終われと言われた後で起こさなかった回は、そう名乗る")
+    func aSkippedLaunchAfterStopSaysWhy() async throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        // **作り直しの最中に言われる。** 始める前に言われた回は作り直しそのものを始めない
+        recorder.whileBuilding = { session.noteStopRequested() }
+
+        let report = await session.start()
+        #expect(recorder.builds == 1)
+        #expect(report.ok)
+        #expect(!report.launched)
+        #expect(recorder.launches == 0)
+        #expect(report.output == WatchSession.stopRequestedNotice + "\n\n" + recorder.buildOutput)
+        // **要約も本文と同じことを言う** (#2521 の反証)。「起こせなかった」と言うと本文の頭と食い違う
+        #expect(report.summary.hasPrefix("Rebuilt, not started because watching was ending: "))
+        #expect(!report.summary.contains("could not start"))
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines == [report.summary, WatchSession.stopRequestedNotice])
+    }
+
+    /// **本物の起こす口が、在処と原因を名乗る** (#2521)。替え玉の検査は投げる形なので、`live` の
+    /// 側で `try?` に戻っても緑のままになる — ここでは本物の `Process` を起こせない形で起こす。
+    @Test("本物の起こす口は、起こせなかった在処と原因を投げる")
+    func theLiveLaunchThrowsWhereAndWhy() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-unlaunchable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
+
+        // 実行ビットを外した実行ファイル。`Process.run()` は「無い」と投げるが、在る
+        let executable = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: executable.path)
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: directory.path,
+                reason: "\(executable.path) is not executable (Permission denied)")
+        ) {
+            try hooks.launch(executable, directory, nil, nil)
+        }
+
+        // 見張りの途中で消えた場所
+        let gone = directory.appendingPathComponent("gone", isDirectory: true)
+        #expect(
+            throws: CommandFailure.placeUnusable(tool: "sketch", place: gone.path, presence: .missing)
+        ) {
+            try hooks.launch(executable, gone, nil, nil)
+        }
+
+        // 走らせるものが無い (裏側。いままでどおり)
+        let absent = directory.appendingPathComponent("absent")
+        #expect(throws: CommandFailure.noExecutable(path: absent.path)) {
+            try hooks.launch(absent, directory, nil, nil)
+        }
     }
 
     @Test("最初の 1 回は、変化を待たずに作って走らせる")
@@ -459,7 +664,7 @@ struct WatchSessionTests {
                     status: 0, output: "", executable: URL(fileURLWithPath: "/bin/sh"),
                     binPath: directory, product: "sketch")
             },
-            launch: { executable, _, _, _ in
+            launch: { executable, _, _, _ throws(CommandFailure) in
                 let process = Process()
                 process.executableURL = executable
                 process.arguments = ["-c", script]
@@ -467,7 +672,11 @@ struct WatchSessionTests {
                 process.standardInput = Pipe()
                 process.standardOutput = pipe
                 process.standardError = FileHandle.nullDevice
-                guard (try? process.run()) != nil else { return nil }
+                do {
+                    try process.run()
+                } catch {
+                    throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
+                }
                 ready.pipes.append(pipe)
                 return process
             },
@@ -1260,24 +1469,26 @@ struct SourceStampTests {
             ["Package.swift", "Sources/app/main.swift", "Sources/app/assets/v.txt",
              "Sources/app/assets/big.bin"], in: sketch)
 
-        var reads: [String] = []
+        // **読み手は main actor の外で呼ばれうる** (#2518) ので、数える先も錠で守る
+        let log = ReadLog()
         let reader = SourceStamp.Reader(summarize: { url in
-            reads.append(url.lastPathComponent)
+            log.names.withLock { $0.append(url.lastPathComponent) }
             return SourceStamp.Reader.digest(of: url)
         })
+        var reads: [String] { log.names.withLock { $0 } }
 
         let first = reader.current(for: sketch)
         #expect(
             Set(reads) == ["Package.swift", "main.swift", "v.txt", "big.bin"],
             "初回に読むべきものを読んでいない: \(reads)")
 
-        reads.removeAll()
+        log.names.withLock { $0.removeAll() }
         #expect(reader.current(for: sketch) == first)
         #expect(reads.isEmpty, "属性の変わらないファイルを読み直した: \(reads)")
 
         // 同じ大きさで書き換える。読み直すのはその 1 つだけ
         try write("two", to: "Sources/app/assets/v.txt", in: sketch)
-        reads.removeAll()
+        log.names.withLock { $0.removeAll() }
         let second = reader.current(for: sketch)
         #expect(reads == ["v.txt"], "書き換えた 1 つ以外も読み直した: \(reads)")
         #expect(second != first)
@@ -1318,6 +1529,11 @@ struct SourceStampTests {
         let second = reader.current(for: sketch)
         #expect(second != first, "属性の揃った書き換えを、控えのせいで取りこぼした")
         #expect(second == SourceStamp.current(for: sketch))
+    }
+
+    /// 要約を取った名前の帳面。
+    private nonisolated final class ReadLog: Sendable {
+        let names = Mutex<[String]>([])
     }
 
     /// 大きな資材を丸ごと記憶へ載せないために、要約は少しずつ読む。**少しずつ読んでも、
@@ -1399,7 +1615,7 @@ struct FrameRateHandoffTests {
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
 
         let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
-        let child = try #require(hooks.launch(executable, directory, nil, nil))
+        let child = try hooks.launch(executable, directory, nil, nil)
         child.waitUntilExit()
         #expect(try String(contentsOf: seen, encoding: .utf8) == WatchSession.viewportOwnerName)
         #expect(WatchSession.viewportOwnerName.hasSuffix(" watch"))

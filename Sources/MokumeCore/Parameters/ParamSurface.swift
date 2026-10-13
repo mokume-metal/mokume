@@ -10,7 +10,92 @@ struct ParamRequest: ExchangeRequest {
     let values: [Entry]
 
     /// 1 件ぶん。**書く側 (道具・保存) と同じ形を読む** (``NamedParamValue``)。
-    typealias Entry = NamedParamValue
+    ///
+    /// **読めなかった 1 件は、要求を道連れにせず、読めなかったことを抱える。** 要素を
+    /// そのまま ``NamedParamValue`` で解くと、`Double` に収まらない数 (`1e400`)・知らない
+    /// `type`・型に合わない値のどれか 1 件が配列ごと・要求ごとのデコードを失敗させ、
+    /// `RequestFile.pending()` が要求を確定させて捨てる。書いた側には応答も警告も返らず、
+    /// 同じ要求の他の値も入らない ([#2496](https://github.com/mokume-metal/mokume/issues/2496))。
+    /// 入力の面の ``InputRequest/Entry`` と同じ形で、1 件ずつ緩く読み、読めなかった 1 件は
+    /// ``ParamSurface`` が理由つきで `rejected` に載せる ([ADR-0030] 決定 2)。
+    ///
+    /// 読めなかった理由は 2 つに分ける。`float`・`vec2`・`vec3`・`color` の数が `Double`
+    /// に収まらないとき (`JSONDecoder` が数を読む瞬間に断る) は ``ParamReport/Rejection/Reason/notFinite``
+    /// — 置き場が `1e300` を断るのと同じ「有限の数にならない」である。それ以外 (知らない
+    /// `type`・値が型の形でない・`int` に収まらない数・成分の数が違う) は
+    /// ``ParamReport/Rejection/Reason/typeMismatch``。
+    ///
+    /// **理由を決める順は、名前が先** である。名前が読めて宣言に無いなら、読めなかった中身が
+    /// どうであれ ``ParamReport/Rejection/Reason/unknownName`` (綴りの誤りが先に直せる)。
+    /// 宣言のある名前なら、上の理由で載せる。
+    ///
+    /// **名前が読めない 1 件は、名指しする相手が無い**ので、名前を空にして `typeMismatch` に
+    /// 載せる (宣言されていない名前としても、読めた 1 件の名前が空であっても、応答の形は同じ)。
+    ///
+    /// **要求の外枠 — 読める `id` と、配列としての `values` — が揃わないときは、これまでどおり
+    /// 要求ごと読まず、応答しない。** `id` が読めても `values` が配列でない・欠けた要求も含む。
+    /// ADR-0030 決定 2 は `id` を読めれば応答すると読めるので食い違うが、入力の面
+    /// (``InputRequest``) の据え置きと揃えて広げていない
+    /// ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    struct Entry: Decodable, Equatable {
+        let name: String
+        let reading: Reading
+
+        enum Reading: Equatable {
+            case value(ParamValue)
+            /// 名前は読めたが、中身が読めなかった。名前が宣言に無ければ `unknownName` が先。
+            case unreadable(ParamReport.Rejection.Reason)
+            /// 名前が読めなかった。名指しする相手が無いので、名前は空で `typeMismatch`。
+            case nameless
+        }
+
+        init(name: String, value: ParamValue) {
+            self.name = name
+            reading = .value(value)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case name, type
+        }
+
+        init(from decoder: any Decoder) throws {
+            // 要素がオブジェクトでない・名前が文字列でないときは、名指しできない
+            guard let container = try? decoder.container(keyedBy: CodingKeys.self),
+                let name = try? container.decode(String.self, forKey: .name)
+            else {
+                self.name = ""
+                reading = .nameless
+                return
+            }
+            self.name = name
+            do {
+                reading = .value(try NamedParamValue(from: decoder).value)
+            } catch {
+                let typeName = (try? container.decode(String.self, forKey: .type))
+                    .flatMap(ParamTypeName.init(rawValue:))
+                reading = .unreadable(Self.reason(unreadableBecauseOf: error, typeName: typeName))
+            }
+        }
+
+        /// 読めなかった理由。
+        private static func reason(unreadableBecauseOf error: any Error, typeName: ParamTypeName?)
+            -> ParamReport.Rejection.Reason
+        {
+            switch typeName {
+            case .float, .vec2, .vec3, .color:
+                // **ここで読む数が読めない理由は、桁あふれだけ** (`1e400`)。`JSONDecoder` は数を
+                // 読む瞬間に断り (文書の走査は通るので、この 1 件だけが断られる)、入れ子の読みの
+                // 中では `DecodingError` に包まれる前の内部の誤りが漏れ出る。こちらが投げる誤りは、
+                // 型の不一致・欠け・成分の数の違いのどれも `DecodingError` なので、それ以外が
+                // 出たら数の桁あふれと読む (`ParameterUnreadableEntryTests` が固定する)
+                return error is DecodingError ? .typeMismatch : .notFinite
+            case .int, .bool, .string, nil:
+                return .typeMismatch
+            }
+        }
+    }
 
     /// 当てる順に並べた書き込み。**名前順で、同じ名前は書いた順**
     /// ([ADR-0030] 決定 3)。
@@ -238,7 +323,21 @@ final class ParamSurface: DeclarationWatcher {
         var rejected: [ParamReport.Rejection] = []
         var clamped: [ParamReport.Clamp] = []
         for entry in request.valuesInApplicationOrder {
-            guard let outcome = registry.write(entry.value, to: entry.name) else {
+            // **読めなかった 1 件は、その 1 件だけ理由つきで載せ、残りは当てる** (#2496)
+            let value: ParamValue
+            switch entry.reading {
+            case .value(let read):
+                value = read
+            case .unreadable(let reason):
+                // **名前が先** — 綴りを間違えた書き手には、中身の誤りより先にそれを伝える
+                rejected.append(
+                    .init(name: entry.name, reason: registry.declares(entry.name) ? reason : .unknownName))
+                continue
+            case .nameless:
+                rejected.append(.init(name: "", reason: .typeMismatch))
+                continue
+            }
+            guard let outcome = registry.write(value, to: entry.name) else {
                 rejected.append(.init(name: entry.name, reason: .unknownName))
                 continue
             }

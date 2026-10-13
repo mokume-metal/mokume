@@ -22,6 +22,13 @@ nonisolated struct SolidMesh {
         ///
         /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
         var uv: SIMD2<Float> = .zero
+        /// 向きを**形から求めた**か。求めた向きは両面として扱う (断片が裏から見たときに
+        /// 裏返す — ``SolidVertex``)。組み込みの形は向きを持って作るので常に偽で、読み込んだ
+        /// モデルだけが角ごとに真になりうる — 向きを書いた面と書かない面が混ざったファイルが
+        /// あるので、モデル単位では決めない ([#2342])。その場で並べた頂点と同じ単位である (#290)。
+        ///
+        /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
+        var isDerivedNormal = false
     }
 
     let points: [Point]
