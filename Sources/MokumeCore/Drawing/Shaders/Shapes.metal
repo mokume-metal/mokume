@@ -154,12 +154,6 @@ vertex ShapeFragmentIn solidVertexMain(
     bool flipsNormal = (index & kSolidFlipsNormal) != 0u;
     SolidVertex vertex_in = vertices[index & ~kSolidFlipsNormal];
     SolidInstance placement = instances[instance];
-    // #1862: 0 は従来経路。正の値は単位球の半径 (normal0.xyz は従来のまま)。
-    if (placement.normal0.w > 0.0) {
-        float3 scaled = vertex_in.normal.xyz * placement.normal0.w;
-        vertex_in.position = scaled;
-        vertex_in.shapePosition = scaled;
-    }
 
     // **形自身の座標を、置き場所の変換で世界へ移す。** 何も動かさない置き場所
     // (単位行列) を通しても値は 1 ビットも変わらないので、その場で並べた頂点も

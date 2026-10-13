@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("phase", choices=["compatibility", "performance", "validation", "all"])
+parser.add_argument("phase", choices=["compatibility", "performance", "validation", "setupCost", "all"])
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 out = Path(os.environ.get("MOKUME_SPHERE_OUTPUT", "/private/tmp/mokume-sphere-1862/results")).resolve()
@@ -36,7 +36,7 @@ env["MOKUME_SPHERE_OUTPUT"] = str(out)
 env["MOKUME_GPU_SLOT_WAIT"] = "180"
 phases = ["compatibility", "performance", "validation"] if args.phase == "all" else [args.phase]
 for phase in phases:
-    selected = ("(ShaderInterfaceTests|SolidShaderTests|SolidBackFaceOrderTests|RetainedSolidStrokeTests)"
+    selected = ("(ShaderInterfaceTests|SolidShaderTests|SolidBackFaceOrderTests|RetainedSolidStrokeTests|UnitSpherePrototypeTests/isolatedRouting)"
                 if phase == "validation" else f"UnitSpherePrototypeTests/{phase}")
     command = [sys.executable, "scripts/gpu-slot.py", "--exclusive", "--", "swift", "test",
                "--skip-build", "-c", "release", "-Xswiftc", "-enable-testing", "--filter", selected,
@@ -55,7 +55,7 @@ for phase in phases:
                 child.wait()
             code = 124
     print(f"{phase}: exit {code}; {out / (phase + '.log')}", flush=True)
-    if code:
+    if code and phase != "compatibility":
         sys.exit(code)
 
     reference = env.get("MOKUME_SPHERE_REFERENCE")
@@ -65,16 +65,23 @@ for phase in phases:
             scenes = [row["scene"] for row in csv.DictReader(data)]
         for scene in scenes:
             row = {"scene": scene}
-            for suffix, format in [("rgba16f", "<H"), ("shape32", "<I")]:
-                old = (Path(reference) / f"{scene}-before.{suffix}").read_bytes()
-                new = (out / f"{scene}-after.{suffix}").read_bytes()
-                if len(old) != len(new):
-                    raise ValueError(f"{scene}: incompatible dimensions")
-                a = [v[0] for v in struct.iter_unpack(format, old)]
-                b = [v[0] for v in struct.iter_unpack(format, new)]
-                row[suffix + "_differing_components"] = sum(x != y for x, y in zip(a, b))
+            for mode in ["before", "after"]:
+                for suffix, format in [("rgba16f", "<H"), ("shape32", "<I")]:
+                    old = (Path(reference) / f"{scene}-before.{suffix}").read_bytes()
+                    new = (out / f"{scene}-{mode}.{suffix}").read_bytes()
+                    if len(old) != len(new):
+                        raise ValueError(f"{scene}: incompatible dimensions")
+                    a = [v[0] for v in struct.iter_unpack(format, old)]
+                    b = [v[0] for v in struct.iter_unpack(format, new)]
+                    row[mode + "_" + suffix + "_differing_components"] = sum(x != y for x, y in zip(a, b))
+                row[mode + "_png_equal"] = ((Path(reference) / f"{scene}-before.png").read_bytes()
+                                            == (out / f"{scene}-{mode}.png").read_bytes())
             rows.append(row)
             print("main comparison:", row, flush=True)
         (out / "main-comparison.json").write_text(json.dumps(rows, indent=2))
-        if any(row["rgba16f_differing_components"] or row["shape32_differing_components"] for row in rows):
+        if any(any(row[mode + "_rgba16f_differing_components"]
+                       or row[mode + "_shape32_differing_components"]
+                       or not row[mode + "_png_equal"] for mode in ["before", "after"]) for row in rows):
             sys.exit(2)
+    if code:
+        sys.exit(code)

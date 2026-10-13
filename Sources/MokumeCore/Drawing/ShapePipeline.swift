@@ -125,6 +125,11 @@ final class ShapePipeline {
 
     /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
     let solidStates: BlendStates
+    let unitSphereLibraryMilliseconds: Double
+    let unitSphereStatesMilliseconds: Double
+    let unitSphereStates: BlendStates
+    let unitSphereShadowState: any MTLRenderPipelineState
+    private let unitSphereLibrary: any MTLLibrary
     let solidStrokeStates: BlendStates
     let solidStrokeShadowState: any MTLRenderPipelineState
 
@@ -200,6 +205,11 @@ final class ShapePipeline {
         let library = try gpu.shaders.makeShapeLibrary(
             named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"))
         self.vertexLibrary = library
+        let unitLibraryStarted = ProcessInfo.processInfo.systemUptime
+        let unitLibrary = try gpu.shaders.makeShapeLibrary(
+            named: "UnitSphere", body: gpu.shaders.bundledShaderSource(named: "UnitSphere"))
+        self.unitSphereLibrary = unitLibrary
+        self.unitSphereLibraryMilliseconds = (ProcessInfo.processInfo.systemUptime - unitLibraryStarted) * 1000
 
         let compiler = try gpu.shaders.compiler()
         self.compiler = compiler
@@ -213,6 +223,15 @@ final class ShapePipeline {
             pixelFormat: pixelFormat, label: "mokume.solids",
             vertexFunctionName: Self.solidVertexFunctionName)
 
+        let unitStatesStarted = ProcessInfo.processInfo.systemUptime
+        self.unitSphereStates = try Self.makeBlendStates(
+            compiler: compiler, vertexLibrary: unitLibrary, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.unit-spheres",
+            vertexFunctionName: Self.unitSphereVertexFunctionName)
+        self.unitSphereShadowState = try Self.makeDepthOnlyState(
+            compiler: compiler, vertexLibrary: unitLibrary, label: "mokume.unit-sphere-shadow",
+            vertexFunctionName: Self.unitSphereVertexFunctionName)
+        self.unitSphereStatesMilliseconds = (ProcessInfo.processInfo.systemUptime - unitStatesStarted) * 1000
         self.solidStrokeStates = try Self.makeBlendStates(
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
             pixelFormat: pixelFormat, label: "mokume.solid-strokes",
@@ -271,6 +290,7 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
+    static let unitSphereVertexFunctionName = "unitSphereVertexMain"
     static let solidStrokeVertexFunctionName = "solidStrokeVertexMain"
     /// 三角形の経路の断片の名前 (下地を読む側)。
     static let flatFragmentFunctionName = "mokume_fragmentMain"
@@ -303,7 +323,9 @@ final class ShapePipeline {
         vertexFunctionName: String = ShapePipeline.flatVertexFunctionName
     ) throws(RenderFailure) -> BlendStates {
         try Self.makeBlendStates(
-            compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary,
+            compiler: compiler,
+            vertexLibrary: vertexFunctionName == Self.unitSphereVertexFunctionName ? unitSphereLibrary : vertexLibrary,
+            fragmentLibrary: fragmentLibrary,
             pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName)
     }
 

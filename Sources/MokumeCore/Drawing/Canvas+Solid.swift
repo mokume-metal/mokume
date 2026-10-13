@@ -223,6 +223,7 @@ extension Canvas {
         //
         // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
         if openSolid?.source != source || openSolid?.strokeGeometry != nil
+            || openSolid?.usesUnitSphere != (sphereRadius > 0)
             || openSolid?.isMirrored != placement.isMirrored
             || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
         {
@@ -239,7 +240,7 @@ extension Canvas {
                 openSolid = OpenSolid(
                     source: source, vertexStart: 0, vertexCount: geometry.count,
                     indexStart: nil, instanceStart: solidInstances.count,
-                    isMirrored: placement.isMirrored, fillGeometry: geometry)
+                    isMirrored: placement.isMirrored, fillGeometry: geometry, usesUnitSphere: sphereRadius > 0)
                 solidInstances.append(placement)
                 noteMeshPlacement(placement, winding: winding)
                 return
@@ -261,7 +262,7 @@ extension Canvas {
                 source: source, vertexStart: range.lowerBound, vertexCount: range.count,
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
-                instanceStart: solidInstances.count, isMirrored: placement.isMirrored)
+                instanceStart: solidInstances.count, isMirrored: placement.isMirrored, usesUnitSphere: sphereRadius > 0)
         }
 
         solidInstances.append(placement)

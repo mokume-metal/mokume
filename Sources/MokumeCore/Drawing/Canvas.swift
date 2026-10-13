@@ -481,6 +481,7 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場 (``SolidFillGeometry``)。持っていれば、
         /// 列は溜め場ではなくここから頂点を読む。閉じた列へそのまま渡し、所有させる。
         var fillGeometry: SolidFillGeometry?
+        var usesUnitSphere = false
     }
 
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
@@ -1627,6 +1628,7 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点の置き場 (``OpenSolid/fillGeometry``)。線の骨と同じく、
         /// 投入完了まで HeldFrame が列ごと保持する。
         var fillGeometry: SolidFillGeometry?
+        var usesUnitSphere = false
         /// 面を置き換える列か (``Canvas/replaceSurface(with:)``・[#1685])。
         ///
         /// 立てた列は**奥行きを比べずに書き** (``ShapePipeline/replaceDepthState``)、書く値は
@@ -4063,7 +4065,9 @@ public final class Canvas {
                 // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
                 encoder.setRenderPipelineState(
                     (batch.strokeGeometry != nil
-                        ? pipeline.solidStrokeStates : (run.paint.shader?.solidStates ?? pipeline.solidStates))
+                        ? pipeline.solidStrokeStates : (batch.usesUnitSphere
+                            ? (run.paint.shader?.unitSphereStates ?? pipeline.unitSphereStates)
+                            : (run.paint.shader?.solidStates ?? pipeline.solidStates)))
                         .drawing(batch))
                 encoder.setDepthStencilState(
                     batch.replacesSurface ? pipeline.replaceDepthState : pipeline.solidDepthState)
@@ -4921,7 +4925,8 @@ public final class Canvas {
         _ batch: Batch, from source: CasterSource, on encoder: any MTL4RenderCommandEncoder
     ) {
         encoder.setRenderPipelineState(
-            batch.strokeGeometry == nil ? pipeline.shadowState : pipeline.solidStrokeShadowState)
+            batch.strokeGeometry != nil ? pipeline.solidStrokeShadowState
+                : (batch.usesUnitSphere ? pipeline.unitSphereShadowState : pipeline.shadowState))
         // 持ち越した列は詰め直した区画の頭を、溜め場の列は溜め場の頭を渡す。引数を GPU が書く列 (粒) は、
         // そこから列の頭までを足す (``Batch/vertexBaseShift``)。その列は溜め場の頂点を添字なしで読む
         // 列に限られ (``Batch/addressesVertexHead``)、持ち越した列は詰め直すときに頭が 0 へ置き直される

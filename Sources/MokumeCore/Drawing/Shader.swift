@@ -65,6 +65,8 @@ public final class Shader {
     /// **断片は 1 つで、頂点の落とし方だけが違う。** 平面と立体で断片を別々に
     /// 組み立てると、同じ断片なのに片方だけ差し替わる状態が作れてしまう。
     private(set) var solidStates: ShapePipeline.BlendStates
+    private(set) var unitSphereStates: ShapePipeline.BlendStates
+    let unitSphereBuildMilliseconds: Double
 
     private let pipeline: ShapePipeline
     private let gpu: RenderDevice
@@ -99,6 +101,11 @@ public final class Shader {
             fragmentLibrary: library, label: "mokume.shader.\(name).solid",
             vertexFunctionName: ShapePipeline.solidVertexFunctionName)
 
+        let unitStarted = ProcessInfo.processInfo.systemUptime
+        self.unitSphereStates = try pipeline.makeStates(
+            fragmentLibrary: library, label: "mokume.shader.\(name).unit-sphere",
+            vertexFunctionName: ShapePipeline.unitSphereVertexFunctionName)
+        self.unitSphereBuildMilliseconds = (ProcessInfo.processInfo.systemUptime - unitStarted) * 1000
         box.watch { [weak self] in self?.reload() }
     }
 
@@ -160,9 +167,13 @@ public final class Shader {
             // **入れ替えた古い状態は、投入済みのフレームが終わるまで抱える** (#1830 の 2 回目の
             // 反証 2・``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。列が抱えるのは塗り
             // そのもので、前のフレームが組んだ状態は誰も抱えていない
-            gpu.holdUntilSubmittedWorkFinishes(states.all + solidStates.all)
+            let unit = try pipeline.makeStates(
+                fragmentLibrary: library, label: "mokume.shader.\(name).unit-sphere",
+                vertexFunctionName: ShapePipeline.unitSphereVertexFunctionName)
+            gpu.holdUntilSubmittedWorkFinishes(states.all + solidStates.all + unitSphereStates.all)
             states = flat
             solidStates = solid
+            unitSphereStates = unit
         }
     }
 }

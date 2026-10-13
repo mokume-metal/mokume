@@ -20,6 +20,12 @@ struct UnitSpherePrototypeTests {
         c.resetShader()
         c.background(.linear(red: 0.015, green: 0.02, blue: 0.03))
         c.noStroke()
+        if scene == "orbit" || scene == "random" {
+            c.camera(371.27, 227.13, 417.19, 320.7, 200.3, 0.19, 0.03, 1, 0.02)
+            c.perspective(1.137, 1.6, 1.3, 1900)
+        } else if scene == "ortho" { c.ortho() }
+        if scene == "add" { c.blendMode(.add) }
+        if scene == "replace" { c.blendMode(.replace) }
         c.shadows(scene == "shadow")
         c.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
         c.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.4, 0.5, -1)
@@ -36,17 +42,27 @@ struct UnitSpherePrototypeTests {
         c.fill(LinearRGBA(premultipliedRed: 0.7 * alpha, green: 0.35 * alpha, blue: 0.15 * alpha, alpha: alpha))
         if scene == "stroke" { c.stroke(.linear(red: 0.1, green: 0.65, blue: 0.8)); c.strokeWeight(0.7) }
         else { c.noStroke() }
+        let detail = Int(ProcessInfo.processInfo.environment["MOKUME_SPHERE_DETAIL"] ?? "24") ?? 24
+        let originalMode = c.prototypeUnitSpheres
+        defer { c.prototypeUnitSpheres = originalMode }
         for i in 0..<1000 {
+            if scene == "mixed" { c.prototypeUnitSpheres = originalMode && i % 2 == 0 }
             let r: Float = scene == "zero" ? 0 : (scene == "unit" ? 1 : (radii == "same" ? 4.123 : 3.013 + Float(i) * 0.00217
                 + (radii == "moving" ? Float(frame) * 0.0031 : 0)))
             c.push()
             let spacing: Float = scene == "alpha" ? 9 : 16
             c.translate(Float(i % 40) * spacing + 8.13, Float(i / 40) * spacing + 8.27, Float(i % 7) * 0.31)
-            if scene == "transform" || scene == "alpha" {
+            if ["transform", "alpha", "orbit", "ortho", "add", "replace", "mixed", "random"].contains(scene) {
                 c.rotateX(0.171); c.rotateY(0.219); c.rotateZ(0.113)
                 c.scale(i % 2 == 0 ? -1.13 : 1.13, 0.79, 1.31)
             }
-            c.sphere(r, detail: 24)
+            if scene == "random" {
+                c.rotateX(Float(i % 37) * 0.0917)
+                c.rotateY(Float(i % 29) * -0.07013)
+                c.translate(0.091, -0.173, Float(i % 13) * 4.73 - 20)
+                c.scale(0.31 + Float(i % 7) * 0.19, 0.27 + Float(i % 11) * 0.21, 0.43 + Float(i % 5) * 0.39)
+            }
+            c.sphere(r, detail: detail)
             c.pop()
         }
     }
@@ -145,6 +161,68 @@ struct UnitSpherePrototypeTests {
             #expect(different == 0)
             #expect(ad.bytes.contains { $0 != 0 })
         }
+    }
+
+
+    @Test("単位球と従来の球の列を混ぜても正しく選び、断片を再読込する")
+    func isolatedRouting() throws {
+        let gpu = try RenderDevice()
+        let c = try CanvasFixture.make(gpu: gpu, width: 80, height: 32)
+        let directory = output.appendingPathComponent("reload-source")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("paint.metal")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func write(_ color: String) throws {
+            try "float4 paint(Fragment in, Values values) { return float4(\(color), 1.0); }"
+                .write(to: url, atomically: true, encoding: .utf8)
+        }
+        try write("1.0, 0.0, 0.0")
+        let shader = try c.loadShader(url.path)
+        func draw() throws {
+            try c.draw {
+                c.background(.linear(red: 0, green: 0, blue: 0)); c.noStroke()
+                c.shader(shader)
+                for (i, useUnit) in [true, false, true, false].enumerated() {
+                    c.prototypeUnitSpheres = useUnit
+                    c.push(); c.translate(Float(i * 20 + 10), 16, 0)
+                    // 両方式の形の鍵が同じ半径1でも列の入口は分ける。
+                    c.scale(7, 7, 7); c.sphere(1, detail: 24); c.pop()
+                }
+            }
+        }
+        try draw()
+        let first = try c.target.readPixels()
+        for i in 0..<4 { #expect(c.get(i * 20 + 10, 16) == .linear(red: 1, green: 0, blue: 0)) }
+        #expect(c.drawCallsInLastFrame == 4)
+        try write("0.0, 1.0, 0.0")
+        shader.reload()
+        #expect(shader.failure == nil)
+        try draw()
+        for i in 0..<4 { #expect(c.get(i * 20 + 10, 16) == .linear(red: 0, green: 1, blue: 0)) }
+        let second = try c.target.readPixels()
+        #expect(first.components.map(\.bitPattern) != second.components.map(\.bitPattern))
+        try "this is not MSL".write(to: url, atomically: true, encoding: .utf8)
+        shader.reload()
+        #expect(shader.failure != nil)
+        try draw()
+        #expect(try c.target.readPixels().components.map(\.bitPattern) == second.components.map(\.bitPattern))
+    }
+
+    @Test("専用ライブラリとパイプラインの生成費用を記録する")
+    func setupCost() throws {
+        let gpu = try RenderDevice()
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        var report = "round,canvas_ms,unit_library_ms,unit_states_ms,shader_ms,unit_shader_states_ms\n"
+        for round in 0..<6 {
+            let start = ProcessInfo.processInfo.systemUptime
+            let c = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+            let canvasMS = (ProcessInfo.processInfo.systemUptime - start) * 1000
+            let shaderStart = ProcessInfo.processInfo.systemUptime
+            let shader = try c.makeShader("float4 paint(Fragment in, Values values) { return float4(in.shapePosition * 0.03, 1.0); }")
+            let shaderMS = (ProcessInfo.processInfo.systemUptime - shaderStart) * 1000
+            report += "\(round),\(canvasMS),\(c.pipeline.unitSphereLibraryMilliseconds),\(c.pipeline.unitSphereStatesMilliseconds),\(shaderMS),\(shader.unitSphereBuildMilliseconds)\n"
+        }
+        try report.write(to: output.appendingPathComponent("setup.csv"), atomically: true, encoding: .utf8)
     }
 
     @Test("releaseで交互に従来と試作を測る")
