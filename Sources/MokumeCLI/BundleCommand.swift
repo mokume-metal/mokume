@@ -130,10 +130,28 @@ enum BundleCommand {
     ///
     /// **作り直しは消してから。** 前の版の資材が残ると、消したはずのものが配られる —
     /// しかも手元では動くので気付けない。
+    ///
+    /// **消してよいのは、`--out` の直下にある `<name>.app` だけである** (そこに在るものを前の版の
+    /// 自分の出力とみなす。中身が自分のものかまでは確かめない)。名前から作った場所がそこを
+    /// 外れていたら、何も消さずに投げる。名前の `/` は名乗りを読む段
+    /// (``AppIdentity/make(from:path:)``) が断るが、ここはそれに頼らない — 名乗りを通らずに
+    /// 組んだ `AppIdentity` でも `--out` の外を消さない。`..` を含む名前で `--out` の外にある
+    /// `.app` を中身ごと消していた ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
     static func assemble(
         executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL
     ) throws(CommandFailure) -> URL {
-        let app = out.appendingPathComponent("\(identity.name).app", isDirectory: true)
+        let fileName = "\(identity.name).app"
+        let app = out.appendingPathComponent(fileName, isDirectory: true)
+        // 最後の部品が名前そのもので (`a/../b` は `b.app` に畳まれるので外れる)、親が `--out`
+        guard app.lastPathComponent == fileName,
+            app.deletingLastPathComponent().standardizedFileURL.path
+                == out.standardizedFileURL.path
+        else {
+            throw .cannotCreate(
+                path: app.path,
+                reason: "It would not sit directly inside \(out.path), so nothing was removed"
+                    + " or written. The name must not contain \"/\"")
+        }
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
         let programs = contents.appendingPathComponent("MacOS", isDirectory: true)
         let resources = contents.appendingPathComponent("Resources", isDirectory: true)
