@@ -130,19 +130,20 @@ jobs:
   # (ShapeTests の速さ = GPU が要る) はここでは捕まらない。手元で make test-release を打つ
   # 理由はそのぶん残る。
   #
-  # 承認・ラベルの付け外し・本文とタイトルだけの編集では走らせない (#623 / #729 / #1712)
-  # — どれも PR の木を 1 バイトも変えないので、macOS で release ビルドを回し直す理由が
-  # 無い。条件は ci-check と同じ形で、括弧を 1 段深くして pull_request の中に閉じ込める
-  # 理由と、edited を base の変更に限る理由もそちらのコメントが持つ。
+  # **merge_group でだけ走らせ、PR では走らせない** (#2589)。GitHub ホストの macOS の同時
+  # 実行枠 (Free プランで 5 本) は、PR 1 本ごとの ci-check と test-release、merge queue の
+  # group ごとの 2 本が取り合う。2026-10-13 は常に 5 本が埋まって 15〜19 本が待ち、PR の
+  # ci-check は走り出すまで約 1 時間待っていた。PR の test-release を外すと、PR が使う
+  # macOS の時間はおよそ半分になる。ci-gate の needs には残すので、merge_group では
+  # 必須のまま — main に入る木は今までどおり release で検査される (#1096 の約束)。
+  # 代償: release でだけ出る赤に気付くのが merge queue に入った後になり、弾かれると
+  # その束が組み直しになる。PR の時点で確かめたければ、手元で make test-release を打つ。
+  # PR では skipped になり、ci-gate は skipped を通す。形は scripts/tests/ci_workflow_test.py
+  # が固定する。
   #
   # 検査の実体は Makefile に集約する (このファイル冒頭の既定)。ここは呼ぶだけを保つ。
   test-release:
-    if: >-
-      github.event_name != 'pull_request_review'
-      && (github.event_name != 'pull_request'
-      || (github.event.action != 'labeled'
-      && github.event.action != 'unlabeled'
-      && (github.event.action != 'edited' || github.event.changes.base)))
+    if: github.event_name == 'merge_group'
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
