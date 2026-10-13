@@ -229,7 +229,11 @@ nonisolated enum ModelFile {
         let parts = field.split(separator: "/", omittingEmptySubsequences: false)
         guard let first = parts.first, let raw = Int(first) else { return nil }
         guard let position = resolve(raw, count: positions) else { return nil }
-        // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)
+        // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)。
+        // 番号が数として読めない (`a/x/c`)・範囲の外 (`a/99/c`) も、書いていない角と同じに
+        // 読む — 面は残し、読み飛ばした行には数えない ([#2349])。`vn` も同じ
+        //
+        // [#2349]: https://github.com/mokume-metal/mokume/issues/2349
         var texture: Int?
         if parts.count >= 2, let rawTexture = Int(parts[1]) {
             texture = resolve(rawTexture, count: textures)
