@@ -222,7 +222,7 @@ struct MCPServerTests {
         ]
     }()
 
-    @Test("Double に収まらない負の数を含む行は、道具を走らせずに -32700 で断る", arguments: unfitLines)
+    @Test("Double に収まらない負の数が木に残る行は、道具を走らせずに -32700 で断る", arguments: unfitLines)
     func refusesNegativeNumbersThatDoNotFit(line: String) throws {
         let directory = try makeDirectory()
         let (server, recorder) = makeServer(
@@ -256,6 +256,28 @@ struct MCPServerTests {
         #expect(positive.count == 3)
         #expect(positive == negative)
         #expect(try reply("1e400") == reply("-1e400"))
+    }
+
+    /// **限界の明示。** 同じキーを 2 度書いた行の、後ろの値は読み手が木から落とすので、木を歩く
+    /// 検めには見えない (`1e400` を同じ位置に置くと `JSONSerialization` が行ごと投げて断られる)。
+    /// 道具へ渡るのは残った有限の値だけで、`-inf` は届かない。文字から探す読み手 (`MokumeCore` の
+    /// `JSONFile`) なら落ちた数も断れるが、`MokumeCLI` から使える口が無い (#2476)。ここは**いま
+    /// 断られない**ことを固定する — 将来塞ぐなら、この検査を断る側へ書き換える。
+    @Test(
+        "同じキーを 2 度書いて、後ろの収まらない負の数が木から落ちる行は、いまは断らず残った値で答える",
+        arguments: [
+            #"{"jsonrpc":"2.0","id":1,"id":-1e400,"method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"a":2,"a":{"x":-1e400}}}"#,
+        ])
+    func doesNotSeeNumbersDroppedFromTheTree(line: String) throws {
+        let (server, recorder) = makeServer(directory: try makeDirectory(), input: [line])
+        server.serve()
+
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(errorCode(answer) == nil)
+        #expect(idOf(answer) == "1")
+        #expect(answer["result"] != nil)
     }
 
     @Test("Double の最小値・最大値ちょうどの数は、これまでどおり読める")

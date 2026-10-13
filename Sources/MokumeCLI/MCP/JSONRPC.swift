@@ -56,7 +56,12 @@ enum JSONRPC {
         // **`Double` に収まらない数は、符号によらず読めない行として断る** (#2476)。
         // `JSONSerialization` は正の側 (`1e400`) は投げるが、負の側 (`-1e400`) は投げずに
         // `-inf` で読む。通すと `id` が JSON に戻せず `lastResort` へ落ち、引数の数は `-inf` の
-        // まま道具へ渡る。読めた木を歩いて、有限でない数が 1 つでもあれば同じ失敗にする
+        // まま道具へ渡る。読めた木を歩いて、有限でない数が 1 つでもあれば同じ失敗にする。
+        //
+        // **見るのは木に残った数だけ。** 同じキーを 2 度書いた行の、後ろの値は木から落ちる
+        // (`{"id":1,"id":-1e400}`) ので、断れない。道具へ渡るのは残った有限の値だけで、
+        // `-inf` は届かない。落ちた数まで断るには、文字から探す読み手 (`MokumeCore` の
+        // `JSONFile`) と同じ走査が要り、`MokumeCLI` から使える口が無い
         guard
             let object = try? JSONSerialization.jsonObject(
                 with: Data(line.utf8), options: [.fragmentsAllowed]),
