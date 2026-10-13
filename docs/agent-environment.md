@@ -135,7 +135,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `gh pr merge --auto` を打たない。入れると、計測のワークフローや検証用のコミットが main へ
    入る。AGENTS.md「マージの判断基準」の「queue に入れてよい」は、この PR には当てはまらない。
 2. **起動した `render-pr` と `CI` を、作った直後と push のたびに取り消す。** hosted の `CI`
-   (macOS の `ci-check`・`test-release`) は Draft でも起動する。`Render` の `render-pr` は
+   (macOS の `ci-check`) は Draft でも起動する。`Render` の `render-pr` は
    Draft では skipped だが (render.yml の `!github.event.pull_request.draft`)、Ready の間は
    専用機に積まれ、計測が待たされる (#1922 では起動した `render-pr` を取り消した)。
    `gh run list --branch <枝>` で run を見つけ、`gh run cancel <run-id>` で取り消す。反映に
@@ -153,7 +153,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
 4. **base の切り替えは `gh api -X PATCH` で行う。** 条件式の検証では、空コミットだけの Draft
    (重要パスに触れない) を作り、main と同じ SHA の一時ブランチへ base を向け、main へ戻す。
    `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。切り替えのたびに `edited`
-   の run ができる。`changes.base` が効いて `ci-check`・`test-release` が積まれる
+   の run ができる。`changes.base` が効いて `ci-check` が積まれる
    (skipped にならない) ことを、本文だけの編集 (対照・skipped になる) と並べて読む。
    読み終えた macOS のジョブは 2 と同じく取り消す。
 
