@@ -245,6 +245,16 @@ final class WatchSession {
         didSet { hasNamedDeparture = false }
     }
 
+    /// 止めている最中の ``child``。**死んでから ``child`` を外すまでの間、``departed()`` が
+    /// 「勝手に消えた」と名乗らないための印である** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+    private var stoppingChild: Process?
+
+    /// 作り直し (`hooks.rebuild`) の中か。**止められる作り直しは、ここに居る間だけである。**
+    ///
+    /// ``isRebuilding`` は子の差し替えまで含めて立つので、差し替えの最中に作り直しを止めようと
+    /// すると、走っている作り直しが無いのに「止めた」記録が建ち終えた回に付く。
+    private var isBuilding = false
+
     /// 退役待ちの子。**画面が新しい世代へ入れ替わるまで、走らせておく。**
     ///
     /// 止めてから起こすと、新しい子が最初のフレームを焼くまで絵が途切れる (手元では
@@ -501,15 +511,20 @@ final class WatchSession {
     /// ([#1103](https://github.com/mokume-metal/mokume/issues/1103))。
     ///
     /// **道具が自分で止めた回は返らない。** 終わるときも保存による差し替えも ``stop()``
-    /// を通り、そこは必ず ``child`` を `nil` にする。だから**「子は居るのに走っていない」
-    /// だけが、誰も頼んでいない消え方**である。
+    /// を通り、そこは止め終えたら ``child`` を `nil` にする。止めている最中 (待つあいだは
+    /// 子が死んでも ``child`` が残る) は ``stoppingChild`` と止めている子の一覧で弾く。だから
+    /// **「子は居るのに走っていない」だけが、誰も頼んでいない消え方**である。
     ///
     /// **1 度きりなのは、巡回が 0.25 秒ごとに回るからである。** 消えた状態はそのまま続く
     /// ので、印を持たないと同じ 1 行を毎秒 4 回出し続ける。印は子が入れ替われば下りる。
     ///
     /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。
     func departed() -> Departure? {
-        guard let gone = child, !gone.isRunning, !hasNamedDeparture else { return nil }
+        // **道具が止めている最中の子は、消えたと名乗らない。** 止める待ちが main actor を塞がなく
+        // なったので、子が死んでから ``child`` を外すまでの間に巡回が来る (#2576)
+        guard let gone = child, !gone.isRunning, !hasNamedDeparture, gone !== stoppingChild,
+            !isBringingDown(gone)
+        else { return nil }
         hasNamedDeparture = true
         return Departure(
             status: gone.terminationStatus, wasSignalled: gone.terminationReason == .uncaughtSignal)
@@ -549,8 +564,10 @@ final class WatchSession {
         // 差し替えの途中に終わりが来ると同じ子を 2 つの口が止めに行く (止め方は 1 つに畳まれる)。
         // 後から戻ったほうが、先に起こされた次の子を手放さないように、止めた相手を覚えておく
         let leaving = child
+        stoppingChild = leaving
         let outcome = await bringDown(leaving, timeout: timeout)
         if child === leaving { child = nil }
+        if stoppingChild === leaving { stoppingChild = nil }
         lastStop = outcome
         _ = await retiring.value
         // **誰が始めた止めでも、済むまで戻らない。** 戻った後は置いていく子が居ない、が
@@ -599,7 +616,10 @@ final class WatchSession {
     ///   無かった」** (作り直しは `swift` を何度か呼ぶ) — 次の 1 本は起こされない。
     @discardableResult
     func stopRebuilding() async -> StopOutcome? {
-        guard isRebuilding, stoppedReport == nil, rebuildStop == nil else { return nil }
+        // **作り直しの中だけを止める。** 差し替えの最中 (作り直しは建ち終えている) に止めた記録を
+        // 書くと、建ち終えた回が「途中で止めた」ことになる。そこは差し替えの側が、終われと言われた
+        // ことを見て起こさずに抜ける (#2576)
+        guard isRebuilding, isBuilding, stoppedReport == nil, rebuildStop == nil else { return nil }
         let running = hooks.stopRebuild()
         // **止めている間に、作り直しが戻ってくる。** 止めた子は終了コードを持って戻るので、
         // 記録を書き終える前に作り直しの続きが走ると、止めた記録を失敗で書き直してしまう
@@ -693,6 +713,11 @@ final class WatchSession {
     /// main の上で眠ると、応えない子では最大 3.5 秒、窓の描き直しも × の問いも止まる。切り離す
     /// 側で待つので、期限は main の込み具合に左右されない (``Hooks/rebuild`` が作り直しを
     /// main の外で待つのと同じ分担)。
+    ///
+    /// **同じ子を止める口が重なったら、後から来た口は先の止め方に従う。** 先の期限で決着し、
+    /// 結果も先のものを受け取る — 差し替えの ``stop()`` (3 秒) の最中に ``end()`` が来ても、
+    /// 動画を閉じる分の延長は効かない。止める口が同期だった頃も、先の ``stop()`` が塞いでいる
+    /// 間に ``end()`` は呼べなかったので、順に 3 秒待ってからの終わりになり、結果は同じである。
     ///
     /// - Parameter timeout: 頼んでから、強制終了へ進むまでの上限 (秒)。``stopTimeout`` を
     ///   越える分を待つときは、越えた時点で ``willWaitForFinish`` を 1 度呼ぶ。
@@ -903,6 +928,7 @@ final class WatchSession {
         let buildStarted = hooks.now()
         rebuildStartedAt = buildStarted
         let rebuilt: RunCommand.Rebuilt
+        isBuilding = true
         do throws(CommandFailure) {
             rebuilt = try await hooks.rebuild(directory)
         } catch {
@@ -914,6 +940,7 @@ final class WatchSession {
                 binPath: context.directory(under: directory), product: context.product)
         }
         let buildMs = (hooks.now() - buildStarted) * 1000
+        isBuilding = false
 
         // **止めている最中なら、止め終えてから見る。** 止めた子は終了コードを持って戻るので、
         // 記録を書き終える前に下を読むと、止めた記録が失敗で書き直される (#1147)。止める待ちが

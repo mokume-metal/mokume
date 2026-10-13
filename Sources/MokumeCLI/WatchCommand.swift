@@ -126,8 +126,11 @@ enum WatchCommand {
         // 子と区画が置き去りになる — 窓を持つ道具は `.regular` なので Dock に出ている
         // ([#826](https://github.com/mokume-metal/mokume/issues/826))
         let delegate = ApplicationDelegate(
-            stopRequested: { session.noteStopRequested() },
-            finish: { await finish(session) },
+            stopRequested: {
+                requestStop()
+                session.noteStopRequested()
+            },
+            isFinished: { session.finishStage == .done },
             teardown: { teardown(session, viewer, created: prepared) })
         NSApplication.shared.delegate = delegate
 
@@ -242,36 +245,70 @@ enum WatchCommand {
     /// `run()` からも戻らない — 後始末はここでしか通れない。
     final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         private let stopRequested: () -> Void
-        private let finish: () async -> Void
+        private let isFinished: () -> Bool
         private let teardown: () -> Void
+        private let reply: (Bool) -> Void
+        /// 子を止め終えるのを見に来る Timer。**待たせているときだけ持つ。**
+        private var poll: Timer?
 
-        /// - Parameter stopRequested: 終われと言われたことを覚えさせる。**終わる返事より先に
-        ///   呼ぶ** — 止めている間も巡回は回り続けるので、覚えさせないと新しい作り直しを始める。
-        /// - Parameter finish: 走らせていたものを止める。**待つあいだ main actor を塞がない**
-        ///   ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+        /// 見に来る間隔 (秒)。
+        static let pollInterval: TimeInterval = 0.1
+
+        /// - Parameter stopRequested: 終われと言われたことを、窓の × と同じ印で伝える
+        ///   (``requestStop()`` と ``WatchSession/noteStopRequested()``)。**返事より先に呼ぶ** —
+        ///   止めている間も巡回は回り続けるので、覚えさせないと新しい作り直しを始める。
+        /// - Parameter isFinished: 走らせていたものを止め終えたか (``WatchSession/finishStage``)。
         /// - Parameter teardown: 窓を閉じる・区画を片付ける。
+        /// - Parameter reply: 終わってよいと返す。**検査が差し替える** — 実際に返すと、走者ごと終わる。
         init(
-            stopRequested: @escaping () -> Void, finish: @escaping () async -> Void,
-            teardown: @escaping () -> Void
+            stopRequested: @escaping () -> Void, isFinished: @escaping () -> Bool,
+            teardown: @escaping () -> Void,
+            reply: @escaping (Bool) -> Void = {
+                NSApplication.shared.reply(toApplicationShouldTerminate: $0)
+            }
         ) {
             self.stopRequested = stopRequested
-            self.finish = finish
+            self.isFinished = isFinished
             self.teardown = teardown
+            self.reply = reply
             super.init()
         }
 
         /// **子を止め終えてから終わると返す。** 同期の `applicationWillTerminate` で眠って待つと、
-        /// 撮っていた動画を閉じ終えるまで (最大 38 秒) 窓が開いたまま止まる。終わりを遅らせる
-        /// 返事 (`.terminateLater`) の間も、実行ループは回り続ける。
+        /// 撮っていた動画を閉じ終えるまで (最大 38 秒) 窓が開いたまま止まる
+        /// ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
+        ///
+        /// **止める仕事はここでは起こさず、窓の × と同じ道に任せる。** 印を立てれば、巡回が抜けて
+        /// (`finish` で子を止め、`leave` する) 道が既にある。**main actor の仕事 (`Task`) で待たない**
+        /// — `terminate(_:)` が main actor の仕事から呼ばれると、`await` の続きが永久に来ず終わりが
+        /// 保留されたまま固まる (実測・`SketchApplicationDelegate.shouldTerminate` と同じ作法)。
+        /// 済んだかは `.common` の Timer から見に来る。
         func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
             stopRequested()
-            let finish = self.finish
-            Task { @MainActor in
-                await finish()
-                sender.reply(toApplicationShouldTerminate: true)
+            guard !isFinished() else { return .terminateNow }
+            // **返事は 1 回だけ。** 既に待たせているなら、見に来る仕掛けがそのまま返す
+            guard poll == nil else { return .terminateLater }
+            let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.pollFinish() }
             }
+            RunLoop.main.add(timer, forMode: .common)
+            poll = timer
             return .terminateLater
         }
+
+        /// 止め終えたかを 1 回だけ見に来る。**塞がない。** 済んでいたら「終わってよい」と返す。
+        ///
+        /// 待たせていなければ何もしない。検査は run loop を回さないので、Timer に代わってここを
+        /// 直に呼ぶ。
+        func pollFinish() {
+            guard let timer = poll, isFinished() else { return }
+            timer.invalidate()
+            poll = nil
+            reply(true)
+        }
+
+        /// 待たせているか。**検査から読む。**
+        var isWaitingToTerminate: Bool { poll != nil }
 
         func applicationWillTerminate(_ notification: Notification) {
             teardown()

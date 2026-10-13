@@ -105,7 +105,7 @@ struct WatchStopOffMainTests {
     ///
     /// **同じ走者の他の検査が main を数秒塞ぐことがある** (見張りの口の検査は本物の `swift` を
     /// 起こす)。期限が短いと、検査が印を見る前に実装が子を落としてしまう。
-    private static let stopTimeout: TimeInterval = 10
+    private static let stopTimeout: TimeInterval = 30
 
     // MARK: - 差し替え
 
@@ -462,6 +462,125 @@ struct WatchStopOffMainTests {
         // 最初の期限 (0.1) を越えたら、残り (0.2) を 1 度だけ名乗る
         #expect(extensions.count == 1)
         #expect(abs((extensions.first ?? 0) - 0.2) < 0.001)
+    }
+
+    // MARK: - 止めている最中の子は、勝手に消えたと名乗らない
+
+    /// 止める待ちが main actor を塞がなくなったので、子が死んでから ``WatchSession/child`` を外すまでの
+    /// 間に巡回 (`departed()`) が来る。**道具が止めている子を、スケッチが自分で消えたと名乗らない。**
+    @Test("止めている最中の子は、死んでも勝手に消えたと名乗られない")
+    func aChildBeingStoppedIsNotNamedAsDeparted() async throws {
+        let (stubborn, _) = try makeStubborn()
+        defer { stubborn.killAll() }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: stubborn.hooks(),
+            stopTimeout: Self.stopTimeout)
+        await session.start()
+        stubborn.waitUntilReady()
+        let first = try #require(session.child)
+
+        let swapping = Task { await session.tick() }
+        try await waitUntil { stubborn.received(0) }
+
+        // 子を落とし、**止める側が結果を持ち帰る前** (main を塞いだまま) に巡回が来る形を作る
+        kill(first.processIdentifier, SIGKILL)
+        let deadline = DispatchTime.now() + 5
+        while first.isRunning, DispatchTime.now() < deadline { usleep(5000) }
+        #expect(!first.isRunning)
+        #expect(session.child === first, "止め終える前に child を外している")
+        #expect(session.departed() == nil, "道具が止めている子を、勝手に消えたと名乗った")
+
+        _ = await swapping.value
+        #expect(session.lastStop == .terminated)
+    }
+
+    // MARK: - 止められる作り直しがあるときだけ、止めた記録を書く
+
+    /// 差し替えの最中は、作り直しは建ち終えている。**止めた記録を書くと、建ち終えた回が
+    /// 「途中で止めた」ことになる。**
+    @Test("差し替えの最中に作り直しを止めようとしても、止めた記録は書かない")
+    func stoppingTheRebuildDuringASwapWritesNoStoppedRecord() async throws {
+        let (stubborn, _) = try makeStubborn()
+        defer { stubborn.killAll() }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: stubborn.hooks(),
+            stopTimeout: Self.stopTimeout, finishTimeout: Self.stopTimeout)
+        await session.start()
+        stubborn.waitUntilReady()
+        let first = try #require(session.child)
+
+        let swapping = Task { await session.tick() }
+        try await waitUntil { stubborn.received(0) }
+        // 差し替えの最中 (`swift` は走っていない) に、終わりの手続きが作り直しを止めに来る
+        #expect(await session.stopRebuilding() == nil, "走っていない作り直しを止めたと答えた")
+        #expect(session.lastReport?.output != WatchSession.stoppedRebuildNotice, "止めた記録を書いている")
+
+        session.noteStopRequested()
+        kill(first.processIdentifier, SIGKILL)
+        let report = try #require(await swapping.value)
+        // 建ち終えた回は、終わりで起こさなかった回として記録される (止めた記録ではない)
+        #expect(report.ok)
+        #expect(report.output.hasPrefix(WatchSession.stopRequestedNotice))
+        #expect(stubborn.children.count == 1)
+    }
+
+    // MARK: - 道具立ての終了 (Dock・⌘Q・ログアウト)
+
+    /// `terminate(_:)` が main actor の仕事から呼ばれると、`Task` の続きは永久に来ず、終わりが
+    /// 保留されたまま固まる (実測・`SketchApplicationDelegate.shouldTerminate` の作法)。**止める仕事は
+    /// 窓の × と同じ印で既にある道に任せ、済んだかは Timer から見に来る。**
+    @Test("終了の問いは、終われの印を立てて保留し、止め終えたら 1 度だけ返す")
+    func terminationIsDeferredUntilTheChildIsStopped() {
+        var stops = 0
+        var finished = false
+        var replies: [Bool] = []
+        let delegate = WatchCommand.ApplicationDelegate(
+            stopRequested: { stops += 1 }, isFinished: { finished }, teardown: {},
+            reply: { replies.append($0) })
+        defer { finished = true; delegate.pollFinish() }
+
+        #expect(delegate.applicationShouldTerminate(.shared) == .terminateLater)
+        #expect(stops == 1, "終われと言われたことを伝えていない")
+        #expect(delegate.isWaitingToTerminate)
+        // 2 度目の問いも保留のまま (見に来る仕掛けは 1 つ)
+        #expect(delegate.applicationShouldTerminate(.shared) == .terminateLater)
+        #expect(stops == 2)
+
+        delegate.pollFinish()
+        #expect(replies.isEmpty, "止め終える前に返している")
+
+        finished = true
+        delegate.pollFinish()
+        #expect(replies == [true])
+        #expect(!delegate.isWaitingToTerminate)
+        delegate.pollFinish()
+        #expect(replies == [true], "返事を重ねている")
+    }
+
+    @Test("止め終えているときの終了の問いは、保留せずに終わらせる")
+    func terminationIsImmediateWhenAlreadyStopped() {
+        var replies: [Bool] = []
+        let delegate = WatchCommand.ApplicationDelegate(
+            stopRequested: {}, isFinished: { true }, teardown: {}, reply: { replies.append($0) })
+        #expect(delegate.applicationShouldTerminate(.shared) == .terminateNow)
+        #expect(!delegate.isWaitingToTerminate)
+        #expect(replies.isEmpty)
+    }
+
+    /// 原文を読む (#600 と同じ形)。**終了の問いの中で `Task` を使わない** — 使うと、上の実測の
+    /// 固まりが戻る。呼んで確かめる道が無い (固まりは実機の `terminate(_:)` の呼ばれ方に依る)。
+    @Test("終了の問いの中に Task が無い")
+    func theTerminationQuestionSpawnsNoTask() throws {
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/MokumeCLI/WatchCommand.swift")
+        let text = try String(contentsOf: source, encoding: .utf8)
+        let start = try #require(text.range(of: "func applicationShouldTerminate"))
+        let rest = text[start.lowerBound...]
+        let end = try #require(rest.range(of: "func pollFinish"))
+        let body = rest[..<end.lowerBound]
+        let code = body.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+        #expect(!code.joined().contains("Task"), "終了の問いが Task を起こしている")
     }
 
     // MARK: - 助け
