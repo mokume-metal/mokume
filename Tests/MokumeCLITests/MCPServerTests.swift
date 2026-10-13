@@ -1033,6 +1033,62 @@ struct MCPServerTests {
         #expect(outcome.text.contains("Documents this interface serves"))
     }
 
+    /// 仕様の置き場の隣 (1 つ上) と、置き場の中のサブディレクトリに、`*.schema.json` を置いた
+    /// 消費側。**どれも一覧 (`SchemasLocator.names(in:)`) には載らない。**
+    private func consumerWithStrayDocuments() throws -> (tools: Tools, outside: URL) {
+        let consumer = try ConsumerFixture.make()
+        let manager = FileManager.default
+        let outside = consumer.schemas.deletingLastPathComponent()
+            .appendingPathComponent("outside.schema.json")
+        try Data("OUTSIDE-SECRET".utf8).write(to: outside)
+        let nested = consumer.schemas.appendingPathComponent("nested", isDirectory: true)
+        try manager.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data("NESTED-SECRET".utf8).write(to: nested.appendingPathComponent("inner.schema.json"))
+        let tools = Tools(
+            facets: Facets(directory: consumer.work, waitLimit: 0.2), makeID: { "fixed" })
+        return (tools, outside)
+    }
+
+    /// `name` を検めずに `<置き場>/<name>.schema.json` へ繋ぐと、`../` で置き場の外の
+    /// `*.schema.json` を読める (#2395)。**配っている一覧に無い名前は読まない** という約束を、
+    /// 綴りの検め (`../`・区切り・絶対パス…) ではなく一覧との照合で守るので、兄弟の綴りも同じ表で見る。
+    @Test(
+        "一覧に無い文書の名前は、置き場の外や中のサブディレクトリを指していても読まずに断る",
+        arguments: [
+            "../outside", "..", ".", "", "a/b", "nested/inner", "/nested/inner",
+            "../Schemas/observe-report", "observe-report/../../outside",
+            "observe-report\0",
+        ])
+    func refusesDocumentNamesNotInTheList(name: String) throws {
+        let (tools, _) = try consumerWithStrayDocuments()
+        let outcome = tools.call("reference", arguments: ["name": name])
+        #expect(outcome.isError)
+        #expect(outcome.text == "There is no document by that name: \(name)")
+        #expect(!outcome.text.contains("SECRET"))
+    }
+
+    @Test("絶対パスで置き場の外のファイルを指す名前も、読まずに断る")
+    func refusesAnAbsolutePathName() throws {
+        let (tools, outside) = try consumerWithStrayDocuments()
+        let name = String(outside.path.dropLast(".schema.json".count))
+        let outcome = tools.call("reference", arguments: ["name": name])
+        #expect(outcome.isError)
+        #expect(outcome.text == "There is no document by that name: \(name)")
+        #expect(!outcome.text.contains("SECRET"))
+    }
+
+    @Test("一覧にある名前は、置き場の外にファイルがあっても従来どおり読める")
+    func stillServesNamesInTheList() throws {
+        let (tools, _) = try consumerWithStrayDocuments()
+        let outcome = tools.call("reference", arguments: ["name": "observe-report"])
+        #expect(!outcome.isError)
+        #expect(outcome.text.contains("observe-report"))
+        // 一覧は置き場の 1 つ上のファイルを含まない
+        let catalog = tools.call("reference", arguments: [:])
+        #expect(catalog.text.contains("- observe-report"))
+        #expect(!catalog.text.contains("outside"))
+    }
+
     /// **組めなかった応答を空行で返さない。**
     ///
     /// 行区切りの JSON-RPC で空行を書くと、繋いでいる側からは「まだ応答が来ていない」
