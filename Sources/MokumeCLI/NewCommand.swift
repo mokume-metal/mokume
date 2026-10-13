@@ -67,6 +67,7 @@ enum NewCommand {
             surplus: .reject { "Only one name: \($0)" })
         guard let name = parsed.positional else { throw .nameMissing }
         guard isValid(name: name) else { throw .invalidName(name) }
+        if let reason = unusableReason(name: name) { throw .unusableName(name: name, reason: reason) }
         return Options(
             name: name, path: parsed.values["--path"] ?? ".", local: parsed.values["--local"])
     }
@@ -92,13 +93,20 @@ enum NewCommand {
                     from: "\(Templates.libraryMinimumVersion)")
                 """
             }
+        let identity = packageIdentity(local: options.local, sketch: options.root(from: base))
+        // **作るパッケージの名前と、依存の名前が同じだと組めない** — 作るディレクトリの名前が
+        // identity になるので、同じ名前で終わる場所を指すと、自分自身に依存する形になる (#2310)
+        if options.name.lowercased() == identity {
+            throw .unusableName(
+                name: options.name,
+                reason: "The package would have the same name as the one it depends on (\(identity)).")
+        }
         let values = [
             "NAME": options.name,
             "TARGET": target,
             "TYPE": type,
             "DEPENDENCY": dependency,
-            "PACKAGE": swiftStringContents(
-                packageIdentity(local: options.local, sketch: options.root(from: base))),
+            "PACKAGE": swiftStringContents(identity),
         ]
         return [
             ("Package.swift", try Templates.render("Package.swift.template", values)),
@@ -152,7 +160,7 @@ enum NewCommand {
     ///
     /// - Parameter sketch: 作られるスケッチの場所 (``Options/root(from:)``)。
     static func packageIdentity(local: String?, sketch: URL) -> String {
-        guard let local else { return "mokume" }
+        guard let local else { return libraryPackageName }
         let (base, relative) =
             local.hasPrefix("~/")
             ? (NSHomeDirectory(), String(local.dropFirst(2))) : (onDisk(sketch).path, local)
@@ -166,7 +174,7 @@ enum NewCommand {
         }
         var name = parts.last ?? ""
         if name.hasSuffix(".git") { name.removeLast(4) }
-        return name.isEmpty ? "mokume" : name.lowercased()
+        return name.isEmpty ? libraryPackageName : name.lowercased()
     }
 
     /// 場所の実体 (symlink を解いた絶対パス)。**まだ無い末尾は、在る祖先を解いた後に足す。**
@@ -205,11 +213,66 @@ enum NewCommand {
         return escaped
     }
 
+    /// 依存する mokume のパッケージの名前 (url で指すときの identity)。
+    static let libraryPackageName = "mokume"
+
+    /// ひな形 `Sketch.swift` が mokume から使う型。**作る型の名前がこれと同じだと組めない**
+    /// (`'Sketch' inherits from itself`・使いたい型を隠す)。ひな形に型の参照を足したら、ここへ
+    /// 足す (検査が突き合わせる)。
+    static let templateTypes: Set<String> = ["Sketch", "SketchSettings"]
+
+    /// 型の名前にできない綴り (`keyword 'Self' cannot be used as an identifier here`)。
+    /// `Type`・`Protocol`・`Never`・`Error`・`Main` は型の名前にできた (実測)。
+    static let keywordTypes: Set<String> = ["Self", "Any"]
+
+    /// 作るパッケージの名前 (= ターゲットの名前) にできないモジュール。**同じ名前のターゲットは
+    /// 依存の中にも在り、`multiple packages … declare targets with a conflicting name` で組めない。**
+    ///
+    /// - mokume の library product が辿るターゲット (検査が `Package.swift` の宣言から導いて
+    ///   突き合わせる)。`mokume` は ``libraryPackageName`` の綴り違い (大小) も含めて
+    ///   ``unusableReason(name:)`` が断る
+    /// - ひな形が import するモジュール (`Foundation` は `module dependency cycle`)・標準ライブラリ
+    ///   (`Swift` は `module name "Swift" is reserved for the standard library`)
+    ///
+    /// **開いた集合の全部ではない。** swift-syntax のターゲット (`SwiftSyntax` など) と、mokume が
+    /// 間接に import する SDK のモジュール (`Metal`・`Darwin` など) も同じ形で組めなくなるが
+    /// (実測)、列挙しきれない — 一覧は、ひな形と mokume の宣言から導ける範囲に限る。
+    static let unusableModules: Set<String> = [
+        "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
+        "MokumeDiagnostics", "MokumeMacros", "Foundation", "Swift",
+    ]
+
     /// 名前として使えるか。パッケージ名にもディレクトリ名にもなるので、両方で
     /// 困らない範囲に絞る。
     static func isValid(name: String) -> Bool {
         guard let first = name.first, first.isLetter else { return false }
         return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+    }
+
+    /// 名前が、組めないパッケージを作るなら、その理由 (英語の 1 文)。組めるなら `nil`。
+    ///
+    /// **文字の種類は見ない** (``isValid(name:)``)。ここは文字としては使える名前のうち、型の名前・
+    /// ターゲットの名前が mokume や Swift の名前と衝突するものを断る
+    /// ([#2310](https://github.com/mokume-metal/mokume/issues/2310))。実際に `swift build` で
+    /// 確かめた結果が土台で、`new` が `Created` と言ったものは組める、を守る。
+    ///
+    /// 依存の名前 (`--local` の末尾) との衝突は、場所を解いてからでないと分からないので
+    /// ``files(for:base:)`` が見る。
+    static func unusableReason(name: String) -> String? {
+        let type = typeName(for: name)
+        if templateTypes.contains(type) {
+            return "The sketch's class would be called \(type), the same as a type in mokume that the template builds on."
+        }
+        if keywordTypes.contains(type) {
+            return "The sketch's class would be called \(type), which Swift does not allow as a type name."
+        }
+        if name.lowercased() == libraryPackageName {
+            return "The package would have the same name as mokume, which it depends on."
+        }
+        if unusableModules.contains(name) {
+            return "\(name) is already the name of a module the sketch builds with."
+        }
+        return nil
     }
 
     /// `my-sketch` から `MySketch` を作る。型の名前は識別子でなければならない。

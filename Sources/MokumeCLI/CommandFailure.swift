@@ -14,6 +14,12 @@ nonisolated enum CommandFailure: Error, Equatable {
     case usage(String)
     case nameMissing
     case invalidName(String)
+    /// 文字は使えるが、作ったパッケージが組めなくなる名前。`reason` は組めない理由 (英語の 1 文)。
+    ///
+    /// **``invalidName(_:)`` と分ける。** あちらは文字の種類の誤りで、直し方は文字を変えること。
+    /// こちらは名前が mokume や Swift の名前と衝突していて、直し方は別の名前を選ぶこと
+    /// ([#2310](https://github.com/mokume-metal/mokume/issues/2310))。
+    case unusableName(name: String, reason: String)
     case directoryExists(path: String)
     case cannotCreate(path: String, reason: String)
     case templatesMissing
@@ -143,6 +149,12 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
             That name has characters a sketch cannot use: \(name)
             Use letters, digits, hyphens and underscores, and start with a letter
+            """
+        case .unusableName(let name, let reason):
+            """
+            That name would make a sketch that does not build: \(name)
+            \(reason)
+            Pick another name, for example my-\(name.lowercased())
             """
         case .directoryExists(let path):
             "Already there: \(path)\nPick another name, or remove that one first"
