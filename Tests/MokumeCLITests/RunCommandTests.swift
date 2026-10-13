@@ -828,8 +828,9 @@ struct RunCommandTests {
 
         func remove() { try? FileManager.default.removeItem(at: root) }
 
-        func rebuild(product: String) throws {
-            _ = try RunCommand.rebuild(
+        @discardableResult
+        func rebuild(product: String) throws -> RunCommand.Rebuilt {
+            try RunCommand.rebuild(
                 in: package, context: testContext(product: product), capturing: true, binPath: bin)
         }
     }
@@ -876,6 +877,98 @@ struct RunCommandTests {
             "前の dSYM が残った")
         for file in layout.kept {
             #expect(FileManager.default.fileExists(atPath: file.path), "別のものが消えた: \(file.path)")
+        }
+    }
+
+    /// **消さなくなった分、`..` などが「建った実行ファイル」として返ってはならない** (#2502 の反証)。
+    /// `isExecutableFile` はディレクトリにも真を返すので、`bin/..` (= `bin` の親) や
+    /// `bin/victim` (ディレクトリ) を、実在する実行ファイルとして名乗っていた。
+    @Test(
+        "product の名前が置き場の直下を指さない・ディレクトリを指すなら、建った実行ファイルとは言わない",
+        arguments: ["../victim", "..", ".", "sub/../victim", "../bin", "victim/..", "sub/..", "victim"])
+    func rebuildNeverReportsADirectoryAsBuilt(product: String) throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+
+        let rebuilt = try layout.rebuild(product: product)
+
+        #expect(rebuilt.executable == nil, "product \(product) で、建ったと言っている: \(String(describing: rebuilt.executable))")
+    }
+
+    /// 「建った」と見るのは、置き場の直下にある通常のファイルで実行できるものだけ。
+    @Test("建った実行ファイルは、直下の実行できる通常のファイルだけ")
+    func onlyARegularExecutableFileInTheBinCountsAsBuilt() throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+        let manager = FileManager.default
+        let tool = layout.bin.appendingPathComponent("Grain")
+        try "binary".write(to: tool, atomically: true, encoding: .utf8)
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        let plain = layout.bin.appendingPathComponent("Plain")
+        try "text".write(to: plain, atomically: true, encoding: .utf8)
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: plain.path)
+
+        #expect(RunCommand.builtExecutable(named: "Grain", in: layout.bin) == tool)
+        #expect(RunCommand.builtExecutable(named: "Plain", in: layout.bin) == nil, "実行できないものを建ったと言った")
+        #expect(RunCommand.builtExecutable(named: "victim", in: layout.bin) == nil, "ディレクトリを建ったと言った")
+        #expect(RunCommand.builtExecutable(named: "Absent", in: layout.bin) == nil)
+    }
+
+    /// **守りは、ファイルの在る・無しで結果を変えない** (#2502 の反証)。`standardizedFileURL` は
+    /// 在るパスの先頭 `/private` を外し、在らないパスはそのまま返すので、`/tmp`・`/var` 配下の置き場で
+    /// 行き先の無い symlink (`bin/<product>` が dangling) だけが、従来は消せたのに守りで空になった。
+    @Test("/tmp 配下でも、行き先の無い symlink は前の産物として消える")
+    func aDanglingLinkUnderTmpIsStillRemoved() throws {
+        // `/tmp` は `/private/tmp` への symlink。`temporaryDirectory` (`/var/folders/…`) も同じ形だが、
+        // 症状の出る綴りを名指しする
+        let root = URL(fileURLWithPath: "/private/tmp/mokume-dangling-\(UUID().uuidString)", isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let link = bin.appendingPathComponent("Dang")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path, withDestinationPath: "/nonexistent-\(UUID().uuidString)")
+
+        #expect(RunCommand.previousArtifacts(of: "Dang", in: bin).first?.lastPathComponent == "Dang")
+
+        let package = root.appendingPathComponent("package", isDirectory: true)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        _ = try RunCommand.rebuild(
+            in: package, context: testContext(product: "Dang"), capturing: true, binPath: bin)
+        #expect(
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil,
+            "行き先の無い symlink が残った")
+    }
+
+    /// 置き場の綴りによらない: `..` を含む・symlink を通る・在る/無い。
+    @Test("置き場が .. を含む綴り・symlink でも、直下の産物は前の産物として返る")
+    func theBinSpellingDoesNotChangeTheAnswer() throws {
+        let root = URL(fileURLWithPath: "/tmp/mokume-spell-\(UUID().uuidString)", isDirectory: true)
+        let real = root.appendingPathComponent("real", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: real.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("linked")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path, withDestinationPath: real.appendingPathComponent("bin").path)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let spellings = [
+            real.appendingPathComponent("bin"),
+            URL(fileURLWithPath: root.path + "/sub/../real/bin", isDirectory: true),
+            link,
+            URL(fileURLWithPath: root.path + "/absent/bin", isDirectory: true),  // 在らない
+            URL(fileURLWithPath: "/private" + root.path + "/real/bin", isDirectory: true),
+        ]
+        for bin in spellings {
+            let found = RunCommand.previousArtifacts(of: "Grain", in: bin)
+            #expect(found.map(\.lastPathComponent) == ["Grain", "Grain.dSYM"], "\(bin.path)")
+            #expect(RunCommand.previousArtifacts(of: "../victim", in: bin).isEmpty, "\(bin.path)")
+            // `..` 自身は返らない (`...dSYM` は直下の通常の名前なので返ってよい)
+            #expect(
+                RunCommand.previousArtifacts(of: "..", in: bin).map(\.lastPathComponent)
+                    == ["...dSYM"], "\(bin.path)")
         }
     }
 
