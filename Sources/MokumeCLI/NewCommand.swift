@@ -61,7 +61,7 @@ enum NewCommand {
         let parsed = try Arguments.parse(
             arguments,
             options: [
-                Arguments.Option(["--path"]) { "\($0) needs a directory after it" },
+                Arguments.Option(["--path"], takesPlace: true) { "\($0) needs a directory after it" },
                 Arguments.Option(["--local"]) { "\($0) needs the library's path after it" },
             ],
             surplus: .reject { "Only one name: \($0)" })

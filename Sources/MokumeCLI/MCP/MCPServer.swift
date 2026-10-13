@@ -126,7 +126,7 @@ enum MCPCommand {
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
     ) throws(CommandFailure) -> (package: URL, facets: URL) {
         let parsed = try Arguments.parse(
-            arguments, surplus: .reject { "Only one directory: \($0)" })
+            arguments, positionalIsPlace: true, surplus: .reject { "Only one directory: \($0)" })
         let package = parsed.positional.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? currentDirectory
         // 在るかの判定は 1 本を通す (`ObjCBool` の受け渡しを写さない・#988)

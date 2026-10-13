@@ -116,8 +116,11 @@ enum BundleCommand {
         let parsed = try Arguments.parse(
             arguments,
             options: [
-                Arguments.Option(["--out"]) { "\($0) needs a directory\n\n" + Command.usage() }
+                Arguments.Option(["--out"], takesPlace: true) {
+                    "\($0) needs a directory\n\n" + Command.usage()
+                }
             ],
+            positionalIsPlace: true,
             surplus: .reject { "Only one directory: \($0)" })
         return Options(
             path: parsed.positional ?? FileManager.default.currentDirectoryPath,
