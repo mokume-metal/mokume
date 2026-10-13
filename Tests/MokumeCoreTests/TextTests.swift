@@ -1608,4 +1608,117 @@ struct TextTests {
         #expect(canvas.glyphEntry(for: colored)?.isColored == true)
         #expect(canvas.glyphEntry(for: plain)?.isColored == false)
     }
+
+    // MARK: - 色を持つ字形の墨の範囲 (#2308)
+    //
+    // 色を持つ字形 (絵文字) は道筋を持たず、ビットマップで描かれる。墨は**検査の側で CoreText に
+    // 同じ字形を CPU で描かせ、不透明な画素の範囲を取ったもの**とする。焼き場も字形を CPU で描いて
+    // 面へ写すだけなので、`text()` の墨は同じ升目に乗る。描き方 (8bit の sRGB) は焼き場 (16bit の
+    // 浮動小数・線形) と変えてあり、被検査の描く関数を通さない。
+
+    /// 色を持つ字形の墨の範囲を、書き始めと基準線から測った値 (x は右・y は上へ) で返す。
+    /// 墨が無ければ `nil`。
+    nonisolated private static func referenceInk(of scalar: Unicode.Scalar, size: CGFloat)
+        -> (left: CGFloat, right: CGFloat, top: CGFloat, bottom: CGFloat)?
+    {
+        let base = CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        let text = String(scalar) as CFString
+        let font = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        var units = Array(String(scalar).utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        guard CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count) else { return nil }
+        // 字形が十分収まる升目に、書き始めと基準線を (margin, margin) に置いて描く
+        let margin = Int(size) * 2
+        let side = margin * 3
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            guard
+                let context = CGContext(
+                    data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8,
+                    bytesPerRow: side * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return }
+            var position = CGPoint(x: margin, y: margin)
+            CTFontDrawGlyphs(font, &glyphs, &position, 1, context)
+        }
+        var (left, right, top, bottom) = (Int.max, Int.min, Int.max, Int.min)
+        for row in 0..<side {
+            for column in 0..<side where pixels[(row * side + column) * 4 + 3] > 0 {
+                (left, right) = (min(left, column), max(right, column + 1))
+                (top, bottom) = (min(top, row), max(bottom, row + 1))
+            }
+        }
+        guard left <= right else { return nil }
+        // 並びの先頭は絵の上端。基準線は下から margin の行
+        return (
+            CGFloat(left - margin), CGFloat(right - margin), CGFloat(side - margin - top),
+            CGFloat(side - margin - bottom)
+        )
+    }
+
+    /// 🔴 は墨が送り幅の升目いっぱいに載り、🌲 は升目より左右に 3 画素ずつ狭い (40 で実測)。
+    /// 🌲 があるので、外接矩形 (升目) を枠にする直し方では赤くなる。
+    @Test(
+        "色を持つ字形 1 字の墨の枠は、nil でなく、CPU で描いた墨の外接から各辺 1 画素以内",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"),
+        arguments: ["\u{1F534}", "\u{1F332}"] as [Unicode.Scalar])
+    func aColoredGlyphHasBoundsAroundItsInk(_ scalar: Unicode.Scalar) throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(40)
+        let ink = try #require(Self.referenceInk(of: scalar, size: 40), "前提: \(scalar) を描くと墨が出る")
+        let bounds = try #require(canvas.textBounds(String(scalar), 20, 80), "\(scalar) の枠が nil")
+        #expect(abs(CGFloat(bounds.x) - (20 + ink.left)) <= 1, "左 \(bounds.x) / 墨 \(20 + ink.left)")
+        #expect(
+            abs(CGFloat(bounds.x + bounds.width) - (20 + ink.right)) <= 1,
+            "右 \(bounds.x + bounds.width) / 墨 \(20 + ink.right)")
+        #expect(abs(CGFloat(bounds.y) - (80 - ink.top)) <= 1, "上 \(bounds.y) / 墨 \(80 - ink.top)")
+        #expect(
+            abs(CGFloat(bounds.y + bounds.height) - (80 - ink.bottom)) <= 1,
+            "下 \(bounds.y + bounds.height) / 墨 \(80 - ink.bottom)")
+    }
+
+    @Test(
+        "字と色を持つ字形を混ぜた墨の枠は、色を持つ字形の墨の右端まで届く",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
+    func aMixedStringBoundsReachTheColoredGlyph() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(40)
+        let ink = try #require(Self.referenceInk(of: coloredScalar, size: 40), "前提: 🔴 を描くと墨が出る")
+        let letter = try #require(canvas.textBounds("A", 20, 80))
+        let mixed = try #require(canvas.textBounds("A\(coloredScalar)", 20, 80))
+        // 🔴 は A の送り幅のぶん右から書き始める
+        let start = 20 + CGFloat(canvas.textWidth("A"))
+        #expect(
+            abs(CGFloat(mixed.x + mixed.width) - (start + ink.right)) <= 1,
+            "右 \(mixed.x + mixed.width) / 🔴 の墨 \(start + ink.right)")
+        #expect(mixed.x == letter.x, "左は A の墨のまま")
+        // 空白を挟んでも、空白は墨に数えない
+        let spaced = try #require(canvas.textBounds("A \(coloredScalar) ", 20, 80))
+        let spacedStart = 20 + CGFloat(canvas.textWidth("A "))
+        #expect(abs(CGFloat(spaced.x + spaced.width) - (spacedStart + ink.right)) <= 1)
+    }
+
+    /// 焼き場の上限 (4096) に入らない大きさでは、字形を描いて測らない (巨大な絵を CPU に描かせ
+    /// ない)。枠は CoreText の外接矩形になり、道筋を持つ字と同じく枠を返す。
+    @Test(
+        "焼き場に入らない大きさの色を持つ字形は、描かずに外接矩形を枠にする",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
+    func aHugeColoredGlyphFallsBackToItsBoundingRect() throws {
+        let size: CGFloat = 6000
+        let canvas = try makeCanvas()
+        canvas.textSize(Float(size))
+        let base = CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        let text = String(coloredScalar) as CFString
+        let font = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        var units = Array(String(coloredScalar).utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        try #require(CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count))
+        let rect = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyphs, nil, 1)
+        try #require(rect.width > 4096, "前提: \(size) の 🔴 は焼き場の上限より大きい")
+        let bounds = try #require(canvas.textBounds(String(coloredScalar), 0, 0))
+        #expect(abs(CGFloat(bounds.x) - rect.minX) <= 0.5)
+        #expect(abs(CGFloat(bounds.width) - rect.width) <= 0.5)
+        #expect(abs(CGFloat(bounds.y) + rect.maxY) <= 0.5)
+        #expect(abs(CGFloat(bounds.height) - rect.height) <= 0.5)
+    }
 }

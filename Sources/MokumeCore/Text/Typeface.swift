@@ -141,6 +141,72 @@ final class Typeface {
         return entry
     }
 
+    /// 道筋を持たない字形の墨の範囲の控え。`nil` を控えるのは「墨が無い」(空白など) と分かった字。
+    private var bitmapInks: [Unicode.Scalar: CGRect?] = [:]
+
+    /// **道筋を持たない字形** (色を持つ字形・絵文字) の墨の範囲を、字形の座標 (書き始めと基準線
+    /// から測り、上向き) で返す。墨が無ければ `nil` ([#2308])。
+    ///
+    /// こうした字形はビットマップで描かれ、道筋の外接では測れない。外接矩形
+    /// (`CTFontGetBoundingRectsForGlyphs`) は送り幅の升目そのもので、見える墨より左右に広い
+    /// (Apple Color Emoji の 🌲 は 40 で各 3 画素)。だから**焼き場と同じ描き方
+    /// (``GlyphAtlas/render(glyph:font:width:height:penX:penY:)``) で描いて、不透明な画素の範囲を取る。**
+    /// 書き始めは整数の升目に置くので、焼き場が焼く絵と同じ升目に乗る。字ごとに控えるので、
+    /// 描くのは字の種類ごとに 1 度だけである。
+    ///
+    /// 外接矩形の面積が無い字 (空白) は、描かずに `nil` を返す (焼き場も焼かない)。焼き場の上限の
+    /// 頁に入らない大きさの字は、描かずに外接矩形を返す — 墨を含む、送り幅の升目ぶん広い枠になる。
+    ///
+    /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
+    func bitmapInk(of scalar: Unicode.Scalar, _ resolved: ResolvedGlyph) -> CGRect? {
+        if let cached = bitmapInks[scalar] { return cached }
+        let ink = Self.measureBitmapInk(resolved)
+        bitmapInks[scalar] = ink
+        return ink
+    }
+
+    private static func measureBitmapInk(_ resolved: ResolvedGlyph) -> CGRect? {
+        var glyph = resolved.glyph
+        let bounds = CTFontGetBoundingRectsForGlyphs(resolved.font, .horizontal, &glyph, nil, 1)
+        guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
+        else { return nil }
+        // 焼き場 (`GlyphAtlas.bake`) と同じく、外接矩形を整数へ広げて余白を足した升目に描く
+        let pad = CGFloat(GlyphAtlas.padding)
+        let leftEdge = bounds.minX.rounded(.down) - pad
+        let bottomEdge = bounds.minY.rounded(.down) - pad
+        let rightEdge = bounds.maxX.rounded(.up) + pad
+        let topEdge = bounds.maxY.rounded(.up) + pad
+        // 焼き場の上限の頁に入らない字は描いて測らない (巨大な絵を CPU に描かせない)。外接矩形は
+        // 墨を含むので、それを枠にする — 道筋を持つ字も、焼き場に入らない大きさで枠を返す
+        guard
+            GlyphAtlas.fitsFreshPage(
+                width: rightEdge - leftEdge, height: topEdge - bottomEdge,
+                side: GlyphAtlas.maximumSize),
+            let left = Int(exactly: leftEdge), let bottom = Int(exactly: bottomEdge),
+            let right = Int(exactly: rightEdge), let top = Int(exactly: topEdge)
+        else { return bounds }
+        guard
+            let pixels = GlyphAtlas.render(
+                glyph: glyph, font: resolved.font, width: right - left, height: top - bottom,
+                penX: -left, penY: -bottom)
+        else { return nil }
+
+        let width = right - left
+        var (minColumn, maxColumn, minRow, maxRow) = (Int.max, Int.min, Int.max, Int.min)
+        for (index, texel) in pixels.enumerated() where texel.w > 0 {
+            let (row, column) = index.quotientAndRemainder(dividingBy: width)
+            minColumn = min(minColumn, column)
+            maxColumn = max(maxColumn, column)
+            minRow = min(minRow, row)
+            maxRow = max(maxRow, row)
+        }
+        guard minColumn <= maxColumn else { return nil }
+        // 並びの先頭は絵の上端。行 r は、字形の座標で top - r - 1 から top - r までを覆う
+        return CGRect(
+            x: left + minColumn, y: top - maxRow - 1, width: maxColumn - minColumn + 1,
+            height: maxRow - minRow + 1)
+    }
+
     /// 書体の中での字形の番号。持っていなければ 0。
     private static func glyphIndex(of scalar: Unicode.Scalar, in font: CTFont) -> CGGlyph {
         var units = Array(String(scalar).utf16)
