@@ -571,6 +571,86 @@ struct SVGFileTests {
         #expect(isClose(auto.items[0].transform.apply(SIMD2(10, 20)), SIMD2(10, 20)))
     }
 
+    /// CSS では読めない (無効な) 宣言は捨てられ、順位の下の宣言が残る。勝った宣言が読めない値なら、読める
+    /// 下の宣言 (属性など) を採り、読めなかった宣言を名乗る。
+    @Test(
+        "CSS で書いた読めない値は、読める属性に勝たず、名乗る",
+        arguments: [
+            // (根の属性, <style> の中身, 名乗りの並び)。viewBox は 512×256 で、属性の 24 (縦横比から 24×12) が残れば右下が (24, 12)
+            (#"width="24" style="width:1em""#, "", [#"<svg width="1em">"#]),
+            (#"width="24" style="width:1rem""#, "", [#"<svg width="1rem">"#]),
+            (#"width="24" style="width:100vw""#, "", [#"<svg width="100vw">"#]),
+            (#"width="24" style="width:calc(100% - 4px)""#, "", [#"<svg width="calc(100% - 4px)">"#]),
+            (#"height="12" style="height:fit-content""#, "", [#"<svg height="fit-content">"#]),
+            // <style> の規則でも、!important でも同じ
+            (#"width="24""#, "svg { width: 1em }", [#"<svg width="1em">"#]),
+            (#"width="24""#, "svg { width: 1em !important }", [#"<svg width="1em">"#]),
+            // 読めない宣言が 2 つ重なれば、順位の高いほうから両方を名乗る
+            (#"width="24" style="width:2rem""#, "svg { width: 1em }", [#"<svg width="2rem">"#, #"<svg width="1em">"#]),
+            // 読める宣言のあいだに読めない宣言があれば、読めない宣言だけを飛ばす
+            (#"width="24" style="width:1em""#, "svg { width: 24px }", [#"<svg width="1em">"#]),
+        ])
+    func unreadableCSSSizeDoesNotBeatReadableOne(_ sample: (String, String, [String])) throws {
+        let drawing = try document(
+            "<style>\(sample.1)</style><rect width=\"1\" height=\"1\"/>",
+            root: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 256\" \(sample.0)>")
+        #expect(drawing.skipped.map(\.what) == sample.2, "\(sample.0) \(sample.1): \(drawing.skipped)")
+        let mapped = drawing.items[0].transform.apply(SIMD2(512, 256))
+        #expect(isClose(mapped, SIMD2(24, 12)), "\(sample.0) \(sample.1): \(mapped)")
+    }
+
+    @Test("CSS の読めない値だけが重なれば、全部を名乗り、書いていないのと同じ (viewBox の大きさ) に読む")
+    func onlyUnreadableSizesFallBackToTheViewBox() throws {
+        let drawing = try document(
+            #"<style>svg { width: 1em }</style><rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="abc">"#)
+        #expect(drawing.skipped.map(\.what) == [#"<svg width="1em">"#, #"<svg width="abc">"#], "\(drawing.skipped)")
+        #expect(isClose(drawing.items[0].transform.apply(SIMD2(512, 512)), SIMD2(512, 512)))
+    }
+
+    /// `initial` と `unset` は、`width` / `height` では初めの値 `auto` と同じ。読める宣言として名乗らず、
+    /// 下の属性を消して書いていないのと同じにする (CSS の `auto` と同じ)。
+    @Test("CSS の initial と unset は auto と同じ (名乗らず、属性を消す)", arguments: ["initial", "unset", " AUTO "])
+    func initialAndUnsetAreAuto(_ keyword: String) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#,
+            root:
+                #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="24" height="24" style="width:\#(keyword)">"#
+        )
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        // 幅は auto (書いていない) で、高さは 24 だけが残る: 縦横比 1:1 から幅も 24
+        #expect(isClose(drawing.items[0].transform.apply(SIMD2(512, 512)), SIMD2(24, 24)))
+    }
+
+    /// `ellipse` の `rx` / `ry` の `auto` は、`rect` と同じに名乗らず、書いていないのと同じに読む (SVG 2:
+    /// 片方が `auto` なら、もう片方を使う。両方なら 0 で描かない)。
+    @Test("ellipse の rx・ry の auto は名乗らず、片方が auto ならもう片方を使う")
+    func ellipseAutoRadius() throws {
+        let one = try document(#"<ellipse cx="10" cy="10" rx="auto" ry="5"/>"#)
+        #expect(one.skipped.isEmpty, "\(one.skipped)")
+        #expect(one.items.first?.outline == .ellipse(centerX: 10, centerY: 10, radiusX: 5, radiusY: 5))
+        let other = try document(#"<ellipse cx="10" cy="10" rx="7" ry=" Auto "/>"#)
+        #expect(other.skipped.isEmpty, "\(other.skipped)")
+        #expect(other.items.first?.outline == .ellipse(centerX: 10, centerY: 10, radiusX: 7, radiusY: 7))
+        let both = try document(#"<ellipse cx="10" cy="10" rx="auto" ry="auto"/>"#)
+        #expect(both.skipped.isEmpty, "\(both.skipped)")
+        #expect(both.items.isEmpty)
+        // 読めない値は、これまでどおり名乗って描かない
+        let bad = try document(#"<ellipse cx="10" cy="10" rx="abc" ry="5"/>"#)
+        #expect(bad.skipped.map(\.what) == [#"<ellipse rx="abc">"#], "\(bad.skipped)")
+        #expect(bad.items.isEmpty)
+    }
+
+    @Test("rect の width・height の auto は、rx と同じに名乗らず、0 として描かない。読めない値は名乗る")
+    func rectAutoSize() throws {
+        let auto = try document(#"<rect width="auto" height="10"/><rect width="10" height=" auto "/>"#)
+        #expect(auto.skipped.isEmpty, "\(auto.skipped)")
+        #expect(auto.items.isEmpty)
+        let bad = try document(#"<rect width="abc" height="10"/>"#)
+        #expect(bad.skipped.map(\.what) == [#"<rect width="abc">"#], "\(bad.skipped)")
+        #expect(bad.items.isEmpty)
+    }
+
     @Test("CSS の width は svg 以外の要素の大きさを変えない (#2557 の陰性対照)")
     func cssWidthDoesNotTouchOtherElements() throws {
         let drawing = try document(
