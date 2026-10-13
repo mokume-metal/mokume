@@ -271,10 +271,9 @@ enum RunCommand {
             bin = try self.binPath(in: directory, context: context, running: running)
         }
         if let product = context.product {
-            let executable = bin.appendingPathComponent(product, isDirectory: false)
-            try? FileManager.default.removeItem(at: executable)
-            try? FileManager.default.removeItem(
-                at: bin.appendingPathComponent("\(product).dSYM", isDirectory: true))
+            for previous in previousArtifacts(of: product, in: bin) {
+                try? FileManager.default.removeItem(at: previous)
+            }
         }
 
         // **診断は stderr にしか出ない。** 掴む形 (watch) では混ぜないと、記録に
@@ -298,6 +297,32 @@ enum RunCommand {
         return Rebuilt(
             status: result.status, output: result.output, executable: built ? executable : nil,
             binPath: bin, product: product)
+    }
+
+    /// 作り直しが先に消してよい、置き場 `bin` の直下にある自分の前の産物。
+    ///
+    /// **消してよいのは `<product>` と `<product>.dSYM` だけで、どちらも置き場の直下にあるときに
+    /// 限る** (消す理由は「前の版が残ると、いま建ったかを言えない」で、置き場の外へ出る理由は
+    /// 無い)。product の名前は `Package.swift` から来るので、`..`・`.` や `/` を含む名前は
+    /// 置き場の外・置き場そのものを指し、そのまま `removeItem` に渡すと置き場の親や置き場を
+    /// 丸ごと消す ([#2502](https://github.com/mokume-metal/mokume/issues/2502)・実測した)。
+    ///
+    /// **SwiftPM がそういう名前を断るかには頼らない。** 字面ではなく、畳んだ後の場所で見る —
+    /// 最後の部品が名前そのもので、親が置き場であること。`sub/../victim` は畳むと置き場の直下を
+    /// 指すが、最後の部品が名前と違うので外れる。外れたものは消さずに作り直しへ進む
+    /// (消せなかった回と同じ扱い)。
+    ///
+    /// `bundle` の `assemble` が「作る場所が `--out` の直下でなければ何も消さない」を名前の検めと
+    /// 独立に置くのと同じ形である (#2309・#2504)。
+    nonisolated static func previousArtifacts(of product: String, in bin: URL) -> [URL] {
+        let home = bin.standardizedFileURL.path
+        return [product, "\(product).dSYM"].compactMap { name in
+            let place = bin.appendingPathComponent(name).standardizedFileURL
+            guard place.lastPathComponent == name,
+                place.deletingLastPathComponent().path == home
+            else { return nil }
+            return place
+        }
     }
 
     /// 作り直して、走らせるものを返す。**通らなければ投げる** (人へ見せる経路の形)。

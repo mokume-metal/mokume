@@ -782,6 +782,103 @@ struct RunCommandTests {
         #expect(rebuilt.binPath.path.contains(".build"), "道具立てが答える置き場の形をしていない")
     }
 
+    // MARK: - 作り直しが先に消すもの (#2502)
+
+    /// 置き場 (`bin`) とその周りの、消えてはならないものを並べた木。
+    ///
+    /// ```
+    /// <root>/
+    ///   package/            Package.swift の無い場所 (作り直しは即座に失敗する)
+    ///   layout/
+    ///     marker.txt        bin の親にある印
+    ///     victim/keep.txt   bin の隣
+    ///     bin/
+    ///       other.txt       bin の中の別のファイル
+    ///       victim/keep.txt bin の中の別のディレクトリ (`sub/../victim` の行き先)
+    ///       sub/
+    /// ```
+    private struct Layout {
+        let root: URL
+        let package: URL
+        let bin: URL
+        /// 消えてはならない印のファイル。
+        let kept: [URL]
+
+        init() throws {
+            root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-rebuild-guard-\(UUID().uuidString)", isDirectory: true)
+            let layout = root.appendingPathComponent("layout", isDirectory: true)
+            package = root.appendingPathComponent("package", isDirectory: true)
+            bin = layout.appendingPathComponent("bin", isDirectory: true)
+            let manager = FileManager.default
+            for directory in [
+                package, bin.appendingPathComponent("victim"), bin.appendingPathComponent("sub"),
+                layout.appendingPathComponent("victim"),
+            ] {
+                try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            kept = [
+                layout.appendingPathComponent("marker.txt"),
+                layout.appendingPathComponent("victim/keep.txt"),
+                bin.appendingPathComponent("other.txt"),
+                bin.appendingPathComponent("victim/keep.txt"),
+            ]
+            for file in kept { try "keep".write(to: file, atomically: true, encoding: .utf8) }
+        }
+
+        func remove() { try? FileManager.default.removeItem(at: root) }
+
+        func rebuild(product: String) throws {
+            _ = try RunCommand.rebuild(
+                in: package, context: testContext(product: product), capturing: true, binPath: bin)
+        }
+    }
+
+    /// **作り直しが先に消すのは、置き場の直下にある自分の前の産物 (`<product>` と
+    /// `<product>.dSYM`) だけ**である。product の名前は `Package.swift` から来るが、
+    /// 名前から作った場所を検めずに渡すと、`..` を含む名前は置き場の外を指す
+    /// ([#2502](https://github.com/mokume-metal/mokume/issues/2502))。SwiftPM がそういう名前を
+    /// 断るかには頼らない。
+    @Test(
+        "product の名前が置き場の外・置き場そのものを指す形でも、置き場の外と中の別のものは消えない",
+        arguments: ["../victim", "..", ".", "sub/../victim", "../bin", "victim/..", "sub/.."])
+    func rebuildNeverRemovesOutsideItsOwnProducts(product: String) throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+
+        try layout.rebuild(product: product)
+
+        for file in layout.kept {
+            #expect(
+                FileManager.default.fileExists(atPath: file.path),
+                "product \(product) で、消えてはならないものが消えた: \(file.path)")
+        }
+        #expect(FileManager.default.fileExists(atPath: layout.bin.path), "置き場そのものが消えた")
+    }
+
+    /// 陽性側。**いつもの名前は従来どおり先に消える** — 前の版が残ると「いま建ったか」を
+    /// 言えない (`rebuild` の消す理由)。守りが広すぎて消さなくなっていないことを見る。
+    @Test("いつもの名前なら、置き場の直下の実行ファイルと dSYM は先に消える")
+    func rebuildStillRemovesItsOwnPreviousProducts() throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+        let executable = layout.bin.appendingPathComponent("Grain")
+        let symbols = layout.bin.appendingPathComponent("Grain.dSYM/Contents", isDirectory: true)
+        try "old".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: symbols, withIntermediateDirectories: true)
+
+        try layout.rebuild(product: "Grain")
+
+        #expect(!FileManager.default.fileExists(atPath: executable.path), "前の実行ファイルが残った")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: layout.bin.appendingPathComponent("Grain.dSYM").path),
+            "前の dSYM が残った")
+        for file in layout.kept {
+            #expect(FileManager.default.fileExists(atPath: file.path), "別のものが消えた: \(file.path)")
+        }
+    }
+
     // MARK: - 置き場の答えの読み方 (#2316)
 
     /// **終了コードを見る。** 空の出力だけを見ていた頃は、道具立てが断った回
