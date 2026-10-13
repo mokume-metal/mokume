@@ -267,10 +267,8 @@ enum BundleCommand {
             throw .toolchainMissing("codesign")
         }
         exited.wait()
-        // **合図で落ちた `codesign` も `128 + 番号` で名乗る** (#2315)
-        let ending = ChildEnding(of: process)
-        guard ending == .exited(0) else {
-            throw .codesignFailed(status: ending.shellStatus)
+        guard process.terminationStatus == 0 else {
+            throw .codesignFailed(status: process.terminationStatus)
         }
     }
 
