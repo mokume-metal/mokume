@@ -355,7 +355,13 @@ jobs:
         run: bash scripts/runner-preflight.sh
       # 検査の端末出力は行を落とす (#1056) ので正本は xunit の記録だが、落ちた理由を読む
       # 手がかりとして起票の本文へ末尾を載せるため、test-log へ写しを残す
-      - run: |
+      #
+      # **shell: bash を外さない** (#2609)。shell を書かない run: は `bash -e {0}` で走り
+      # pipefail が無いので、パイプの結論は最後の tee の 0 になる。make が落ちても step が
+      # 緑になり、scheduled-report が skipped で赤が誰にも届かなかった (10 回のうち 2 回)。
+      # shell: bash を書くと `bash --noprofile --norc -eo pipefail {0}` で走る
+      - shell: bash
+        run: |
           mkdir -p .build
           make test-release-scheduled CI= 2>&1 | tee .build/test-log.txt
       - name: 落ちた検査の文面を要約へ書く
