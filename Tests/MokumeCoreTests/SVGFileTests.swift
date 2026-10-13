@@ -337,6 +337,108 @@ struct SVGFileTests {
         #expect(isClose(stretched.items[0].transform.apply(SIMD2(100, 100)), SIMD2(200, 100)))
     }
 
+    /// 根の `<svg>` に幅か高さの片方と `viewBox` だけを書くと、書いていない側は `viewBox` の
+    /// 縦横比から決まる (CSS Images 3 の既定の大きさの決め方。ブラウザの `<img>`・resvg・librsvg
+    /// の大きさ) ([#2333])。
+    ///
+    /// [#2333]: https://github.com/mokume-metal/mokume/issues/2333
+    @Test(
+        "根の幅か高さの片方だけなら、もう片方は viewBox の縦横比から決まる (#2333)",
+        arguments: [
+            // (根の属性, viewBox の右下の角, 写った先)
+            (#"width="50" viewBox="0 0 10 20""#, SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"height="50" viewBox="0 0 20 10""#, SIMD2(20, 10), SIMD2(100, 50)),
+            (#"width="50" viewBox="0 0 10 20" preserveAspectRatio="none""#, SIMD2(10, 20), SIMD2(50, 100)),
+            (#"height="50" viewBox="0 0 20 10" preserveAspectRatio="xMidYMid slice""#, SIMD2(20, 10), SIMD2(100, 50)),
+            // 書いた側を割合で書いても、割合を読んだ後の大きさから導く。根の割合を viewBox に
+            // 対して読むのは mokume の決まりで、ブラウザで開いたときの大きさと同じとは限らない
+            (#"width="500%" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+            // SVG 2 の auto と読めない値は、書いていないのと同じ
+            (#"width="50" height="auto" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+            (#"width="auto" height="100" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+            (#"width="50" height="abc" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+        ])
+    func oneRootSideFollowsTheViewBoxAspect(_ sample: (String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(.zero), .zero), "\(sample.0): \(transform.apply(.zero))")
+        #expect(isClose(transform.apply(sample.1), sample.2), "\(sample.0): \(transform.apply(sample.1))")
+    }
+
+    @Test("viewBox の原点が 0 でない根でも、片方だけなら縦横比から導き、viewBox の左上が原点へ写る (#2333)")
+    func oneRootSideWithAnOffsetViewBox() throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="50" viewBox="10 10 10 20">"#)
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(SIMD2(10, 10)), .zero), "\(transform.apply(SIMD2(10, 10)))")
+        #expect(isClose(transform.apply(SIMD2(20, 30)), SIMD2(50, 100)), "\(transform.apply(SIMD2(20, 30)))")
+    }
+
+    /// 入れ子の `<svg>` の書いていない側は、根と違って親の座標の決まりの 100% (SVG 2 の `auto`)
+    /// のままで、縦横比からは導かない。
+    @Test("入れ子の <svg> に片方だけ書けば、もう片方は親の 100% のまま (#2333)")
+    func nestedSvgWithOneSideKeepsTheParentSize() throws {
+        let drawing = try document(
+            #"<svg width="20" viewBox="0 0 10 20"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        let transform = drawing.items[0].transform
+        // 20×100 の枠に meet で 2 倍、縦の余り 100 − 40 の半分だけ下へ寄せる
+        // (縦横比から導くと 20×40 の枠になり、ずれは出ない)
+        #expect(isClose(transform.apply(.zero), SIMD2(0, 30)), "\(transform.apply(.zero))")
+        #expect(isClose(transform.apply(SIMD2(10, 20)), SIMD2(20, 70)), "\(transform.apply(SIMD2(10, 20)))")
+    }
+
+    /// 導いた側が `Float` に収まらない (無限大・0 へ潰れる) ときは、導けないものとして直す前と
+    /// 同じ `viewBox` の大きさに倒す。途中の積があふれても答えが収まるなら、その答えを使う。
+    @Test(
+        "根の片方から導いた大きさが Float に収まらなければ、viewBox の大きさに倒す (#2333)",
+        arguments: [
+            // (根の属性, viewBox の右下の角, 写った先)
+            // 導くと高さ 1e39 (無限大)。viewBox の高さ 10 に倒し、縦は等倍・横は余りの半分だけ寄る
+            (#"width="1e38" viewBox="0 0 1 10""#, SIMD2<Float>(1, 10), SIMD2<Float>(5e37, 10)),
+            // 縦横比そのものが 1e40 (無限大)。viewBox の高さに倒し、縦は等倍・横は余りの半分 50 だけ寄る
+            (#"width="100" viewBox="0 0 1e-20 1e20""#, SIMD2(1e-20, 1e20), SIMD2(50, 1e20)),
+            // 縦横比が 1e-60 (0 へ潰れる)。viewBox の高さ 1e-30 に倒し、縦は等倍
+            (#"width="100" viewBox="0 0 1e30 1e-30""#, SIMD2(1e30, 1e-30), SIMD2(100, 1e-30)),
+            // 書いた幅 × viewBox の高さは 1e40 であふれるが、答えの 1e30 は収まる
+            (#"width="1e30" viewBox="0 0 1e10 1e10""#, SIMD2(1e10, 1e10), SIMD2(1e30, 1e30)),
+        ])
+    func derivedRootSideThatDoesNotFitFallsBack(_ sample: (String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        let item = try #require(drawing.items.first, "\(sample.0): 描かれなかった")
+        let transform = item.transform
+        let coefficients = [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f]
+        let isFinite = coefficients.allSatisfy { $0.isFinite }
+        #expect(isFinite, "\(sample.0): \(transform)")
+        let mapped = transform.apply(sample.1)
+        // 桁が大きく離れるので、相対の誤差で比べる
+        let matches = (0..<2).allSatisfy { abs(mapped[$0] - sample.2[$0]) <= 1e-3 * max(1, abs(sample.2[$0])) }
+        #expect(matches, "\(sample.0): \(mapped)")
+    }
+
+    @Test(
+        "根に幅と高さの両方か、どちらも書かなければ、写し方は変わらない (#2333 の陰性対照)",
+        arguments: [
+            // 両方を書けば、その枠へ写す
+            (#"width="50" height="100" viewBox="0 0 10 20""#, SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // 両方を書いて縦横比が違えば、縦横比を保って中央へ (片方から導かない)
+            (#"width="50" height="50" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(37.5, 50)),
+            // どちらも書かなければ等倍
+            (#"viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(10, 20)),
+            (#"width="auto" height="auto" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(10, 20)),
+            // viewBox が無ければ導けない。書いていない側は 100 で、変換は掛からない
+            (#"width="50""#, SIMD2(10, 20), SIMD2(10, 20)),
+        ])
+    func rootWithBothOrNeitherSideIsUnchanged(_ sample: (String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(sample.1), sample.2), "\(sample.0): \(transform.apply(sample.1))")
+    }
+
     @Test("書き方の優先は 属性 < 要素名の規則 < クラスの規則 < style 属性")
     func cascadeOrder() throws {
         let drawing = try document(
