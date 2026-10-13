@@ -33,6 +33,10 @@ public struct Model: Equatable, Sendable {
     public var isEmpty: Bool { mesh.points.isEmpty }
     /// 読み飛ばしたものの数。OBJ では読み飛ばした行 (材質の指定など、いま読まないもの)、
     /// STL では読み飛ばした面 (座標が数でない面) を数える。
+    ///
+    /// OBJ は**行を丸ごと**読み飛ばす。面の行に位置の番号が読めない角 (範囲の外・0・数でない)
+    /// が 1 つでもあれば、残りの角で面を作らず、その行を 1 つ数える。行末のコメント (`#` から
+    /// 後) と継ぎ文字 (`\`) は角でない字なので、読めない角とは数えない。
     public let skippedLines: Int
     /// 囲みの箱の大きさ。整えたあとの値。
     public let size: SIMD3<Float>
