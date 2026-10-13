@@ -454,45 +454,32 @@ struct TextTests {
             "\(canvas.warnings.message(for: .missingTypefaceStyle) ?? "")")
     }
 
-    /// 斜体の面は無く太字の面は在る書体。`.boldItalic` は斜体を諦めても、太字まで捨てない (#2562)。
-    /// どちらも macOS に同梱 (ヒラギノ角ゴシック・游明朝体)。
-    @Test("斜体の面が無く太字の面がある書体は、太斜体を太字の立体で描き、斜体が無いと警告する", arguments: [
-        ("HiraginoSans-W3", "HiraginoSans-W6"),
-        ("YuMincho", "YuMin-Demibold"),
-    ])
-    func boldItalicKeepsTheBoldFaceWhenThereIsNoItalic(_ font: String, _ drawn: String) throws {
-        try #require(
-            Self.postScriptName(resolving: font) != "Helvetica", "前提: この環境に \(font) がある")
-        try #require(!Self.hasFace(font, .traitItalic), "前提: \(font) は斜体の面を持たない")
-        try #require(Self.hasFace(font, .traitBold), "前提: \(font) は太字の面を持つ")
-        let canvas = try makeCanvas()
-        canvas.textFont(font)
-        canvas.textStyle(.boldItalic)
-        let face = canvas.typeface.base
-        #expect(CTFontCopyPostScriptName(face) as String == drawn)
-        #expect(CTFontGetSymbolicTraits(face).contains(.traitBold))
-        #expect(!CTFontGetSymbolicTraits(face).contains(.traitItalic))
-        #expect(canvas.warnings.hasWarned(.missingTypefaceStyle))
-        let message = canvas.warnings.message(for: .missingTypefaceStyle) ?? ""
-        #expect(message.contains(drawn) && message.contains("bold, upright"), "\(message)")
+    /// 太斜体の面を持たない書体の警告は、描いた面の性質を名乗る (#2562)。**書体は名指しせず、この環境から
+    /// 拾う** (面の構成は macOS の版・資産で機械ごとに違う)。拾えない構成は、その検査が何も走らない。
+    /// 期待の面は CoreText への独立な問い合わせで決める (``FamilySurvey``)。
+    ///
+    /// 太字だけが引ける家族 (斜体は無い: ヒラギノ角ゴシックなど) は太字の立体、太字も斜体もあるが太斜体だけ
+    /// 無い家族 (Futura など) も太字の立体、斜体だけが引ける家族 (Bodoni 72 Oldstyle など) は斜体。
+    nonisolated static var partialBoldItalicFamilies: [(font: String, traits: String)] {
+        let kinds: [(String, (Bool, Bool, Bool) -> Bool)] = [
+            ("bold, upright", { full, bold, italic in !full && bold && !italic }),
+            ("bold, upright", { full, bold, italic in !full && bold && italic }),
+            ("regular weight, italic", { full, bold, italic in !full && !bold && italic }),
+        ]
+        return kinds.flatMap { kind in
+            FamilySurvey.examples(where: kind.1).map { ($0, kind.0) }
+        }
     }
 
-    /// 太字の面だけが無い書体は、太斜体を斜体で描き、警告が「斜体、太字でない」と名乗る (#2562)。
-    /// 太字も斜体もあるが太斜体だけ無い書体 (Futura) は、太字の立体で描く。
-    @Test("太斜体が引けない書体の警告は、描いた面の性質を名乗る", arguments: [
-        ("Bodoni 72 Oldstyle", "BodoniSvtyTwoOSITCTT-BookIt", "regular weight, italic"),
-        ("Futura", "Futura-Bold", "bold, upright"),
-    ])
-    func theWarningNamesThePartialFaceDrawn(_ font: String, _ drawn: String, _ traits: String) throws {
-        try #require(Self.postScriptName(resolving: drawn) == drawn, "前提: この環境に \(drawn) がある")
-        try #require(
-            !Self.hasFace(font, [.traitBold, .traitItalic]), "前提: \(font) は太斜体を持たない")
+    @Test("太斜体の面が無い書体は、引ける面で描き、警告が描いた面の性質を名乗る", arguments: partialBoldItalicFamilies)
+    func theWarningNamesThePartialFaceDrawn(_ font: String, _ traits: String) throws {
+        let expected = try #require(FamilySurvey.expectedBoldItalic(of: font))
         let canvas = try makeCanvas()
         canvas.textFont(font)
         canvas.textStyle(.boldItalic)
-        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == drawn)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == expected.postScript)
         let message = canvas.warnings.message(for: .missingTypefaceStyle) ?? ""
-        #expect(message.contains("\"\(drawn)\" (\(traits))"), "\(message)")
+        #expect(message.contains("\"\(expected.postScript)\" (\(traits))"), "\(message)")
     }
 
     @Test("面を持つ書体の太さと傾きは、その面で描き、警告しない", arguments: [

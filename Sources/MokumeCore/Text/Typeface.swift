@@ -92,8 +92,6 @@ final class Typeface {
     }
 
     /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、引けた面と「無かった」を返す。
-    ///
-    /// [#2562]: https://github.com/mokume-metal/mokume/issues/2562
     private static func makeFont(_ request: TypefaceRequest) -> (font: CTFont, lacksStyle: Bool) {
         let size = CGFloat(request.size)
         let base: CTFont
@@ -109,21 +107,34 @@ final class Typeface {
         if request.style == .bold || request.style == .boldItalic { traits.insert(.traitBold) }
         if request.style == .italic || request.style == .boldItalic { traits.insert(.traitItalic) }
         guard !traits.isEmpty else { return (base, false) }
-        // **写しが返っても、頼んだ面とは限らない。** 面が無いとき、nil を返す書体もあれば、元の
-        // 面や片方の性質だけの面を返す書体もある (Kefa III の斜体は `KefaIII-Regular`、太斜体は
-        // `KefaIII-Bold`)。返った面の性質で見る。引けた面 (太字だけの面など) はそのまま使う
-        let styled = CTFontCreateCopyWithSymbolicTraits(base, size, nil, traits, traits)
+        return styledFace(of: base, traits: traits) {
+            CTFontCreateCopyWithSymbolicTraits(base, size, nil, $0, $0)
+        }
+    }
+
+    /// 頼んだ太さ・傾きの面を選ぶ。`copy` は、その性質の面を頼んだときの CoreText の答え。
+    /// 面が無ければ、引けた面と「無かった」を返す。**面の引き方を CoreText から切り離してある** —
+    /// 順序を、どの機械でも同じ答えを返す合成の材料で検査できる。
+    ///
+    /// **写しが返っても、頼んだ面とは限らない。** 面が無いとき、nil を返す書体もあれば、元の
+    /// 面や片方の性質だけの面を返す書体もある (Kefa III の斜体は `KefaIII-Regular`、太斜体は
+    /// `KefaIII-Bold`)。返った面の性質で見る。引けた面 (太字だけの面など) はそのまま使う。
+    ///
+    /// **頼んだ性質が揃わなくても、引ける性質は捨てない** ([#2562])。太斜体は「太斜体 → 太字だけ →
+    /// 斜体だけ → 元の面」の順に頼み、最初に引けた面を使う。ヒラギノ角ゴシック・游明朝体のように
+    /// 太斜体で nil (や太字でない面) を返す書体でも、太字だけで頼めば太字の面が引ける。**太字と
+    /// 斜体の両方を持つが太斜体だけ無い書体は太字を取る** — 太さは文字の読みに効き、消えにくい
+    /// 強調だから。斜体だけを持つ書体は斜体で描く。
+    ///
+    /// [#2562]: https://github.com/mokume-metal/mokume/issues/2562
+    static func styledFace(
+        of base: CTFont, traits: CTFontSymbolicTraits, copy: (CTFontSymbolicTraits) -> CTFont?
+    ) -> (font: CTFont, lacksStyle: Bool) {
+        let styled = copy(traits)
         if let styled, CTFontGetSymbolicTraits(styled).contains(traits) { return (styled, false) }
-        // **頼んだ性質が揃わなくても、引ける性質は捨てない** ([#2562])。太斜体は「太斜体 → 太字だけ →
-        // 斜体だけ → 元の面」の順に頼み、最初に引けた面を使う。ヒラギノ角ゴシック・游明朝体のように
-        // 太斜体で nil (や太字でない面) を返す書体でも、太字だけで頼めば太字の面が引ける。**太字と
-        // 斜体の両方を持つが太斜体だけ無い書体 (Futura など) は太字を取る** — 太さは文字の読みに効き、
-        // 消えにくい強調だから。斜体だけを持つ書体 (Bodoni 72 Oldstyle など) は斜体で描く
         if traits == [.traitBold, .traitItalic] {
             for partial: CTFontSymbolicTraits in [.traitBold, .traitItalic] {
-                if let face = CTFontCreateCopyWithSymbolicTraits(base, size, nil, partial, partial),
-                    CTFontGetSymbolicTraits(face).contains(partial)
-                {
+                if let face = copy(partial), CTFontGetSymbolicTraits(face).contains(partial) {
                     return (face, true)
                 }
             }
