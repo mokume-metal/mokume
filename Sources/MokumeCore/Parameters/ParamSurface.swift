@@ -25,11 +25,18 @@ struct ParamRequest: ExchangeRequest {
     /// `type`・値が型の形でない・`int` に収まらない数・成分の数が違う) は
     /// ``ParamReport/Rejection/Reason/typeMismatch``。
     ///
+    /// **理由を決める順は、名前が先** である。名前が読めて宣言に無いなら、読めなかった中身が
+    /// どうであれ ``ParamReport/Rejection/Reason/unknownName`` (綴りの誤りが先に直せる)。
+    /// 宣言のある名前なら、上の理由で載せる。
+    ///
     /// **名前が読めない 1 件は、名指しする相手が無い**ので、名前を空にして `typeMismatch` に
     /// 載せる (宣言されていない名前としても、読めた 1 件の名前が空であっても、応答の形は同じ)。
     ///
-    /// 要求の外枠 (`id`・配列としての `values`) が読めないときは、これまでどおり要求ごと読まない
-    /// (応答が echo する `id` が無い)。
+    /// **要求の外枠 — 読める `id` と、配列としての `values` — が揃わないときは、これまでどおり
+    /// 要求ごと読まず、応答しない。** `id` が読めても `values` が配列でない・欠けた要求も含む。
+    /// ADR-0030 決定 2 は `id` を読めれば応答すると読めるので食い違うが、入力の面
+    /// (``InputRequest``) の据え置きと揃えて広げていない
+    /// ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     struct Entry: Decodable, Equatable {
@@ -38,7 +45,10 @@ struct ParamRequest: ExchangeRequest {
 
         enum Reading: Equatable {
             case value(ParamValue)
+            /// 名前は読めたが、中身が読めなかった。名前が宣言に無ければ `unknownName` が先。
             case unreadable(ParamReport.Rejection.Reason)
+            /// 名前が読めなかった。名指しする相手が無いので、名前は空で `typeMismatch`。
+            case nameless
         }
 
         init(name: String, value: ParamValue) {
@@ -56,7 +66,7 @@ struct ParamRequest: ExchangeRequest {
                 let name = try? container.decode(String.self, forKey: .name)
             else {
                 self.name = ""
-                reading = .unreadable(.typeMismatch)
+                reading = .nameless
                 return
             }
             self.name = name
@@ -319,7 +329,12 @@ final class ParamSurface: DeclarationWatcher {
             case .value(let read):
                 value = read
             case .unreadable(let reason):
-                rejected.append(.init(name: entry.name, reason: reason))
+                // **名前が先** — 綴りを間違えた書き手には、中身の誤りより先にそれを伝える
+                rejected.append(
+                    .init(name: entry.name, reason: registry.declares(entry.name) ? reason : .unknownName))
+                continue
+            case .nameless:
+                rejected.append(.init(name: "", reason: .typeMismatch))
                 continue
             }
             guard let outcome = registry.write(value, to: entry.name) else {

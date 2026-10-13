@@ -167,21 +167,62 @@ struct ParameterUnreadableEntryTests {
         #expect(report.clamped.isEmpty)
     }
 
-    // MARK: - 識別子が読めない要求 (完了条件 4)
+    // MARK: - 名前が先 (反証 5)
 
-    @Test("識別子が読めない要求は、これまでどおり応答せず捨てる", arguments: [
+    /// 綴りを間違えた書き手には、中身の誤りより先に名前の誤りを伝える。
+    @Test("宣言に無い名前は、中身が読めなくても unknownName が先になる", arguments: [
+        #"{"name":"nonexistent","type":"float","value":1e400}"#,
+        #"{"name":"nonexistent","type":"hologram","value":1}"#,
+        #"{"name":"nonexistent","type":"int","value":3.5}"#,
+        #"{"name":"nonexistent","type":"vec2","value":[1,2,3]}"#,
+        #"{"name":"nonexistent"}"#,
+    ])
+    func anUnknownNameComesFirst(entry: String) throws {
+        let (sketch, surface, facet) = try pairSurface()
+
+        let report = try answer(
+            #"{"id":"u1","values":[\#(entry),{"name":"count","type":"int","value":8}]}"#,
+            from: surface, in: facet)
+
+        #expect(report.rejected == [.init(name: "nonexistent", reason: .unknownName)])
+        #expect(sketch.count == 8)
+    }
+
+    @Test("宣言のある名前は、中身が読めないときの理由のまま")
+    func aDeclaredNameKeepsTheReadingReason() throws {
+        let (_, surface, facet) = try pairSurface()
+
+        let report = try answer(
+            #"{"id":"d1","values":[{"name":"gain","type":"float","value":1e400},{"name":"count","type":"hologram","value":1}]}"#,
+            from: surface, in: facet)
+
+        #expect(
+            report.rejected == [
+                .init(name: "count", reason: .typeMismatch), .init(name: "gain", reason: .notFinite),
+            ])
+    }
+
+    // MARK: - 外枠が読めない要求 (完了条件 4・反証 7)
+
+    /// **外枠は据え置き。** `id` が読めても `values` が配列でない・欠けた要求は応答しない
+    /// ([#2550](https://github.com/mokume-metal/mokume/issues/2550) が ADR-0030 決定 2 との
+    /// 食い違いを持つ)。この検査は、決まるまで今の形を固定する。
+    @Test("外枠が読めない要求は、これまでどおり応答せず捨てる", arguments: [
+        #"{"id":"x","values":5}"#,
+        #"{"id":"x"}"#,
+        #"{"id":"x","values":null}"#,
         #"{"values":[{"name":"count","type":"int","value":8}]}"#,
         #"{"id":5,"values":[{"name":"count","type":"int","value":8}]}"#,
         #"{"id":"x","values":[{"name":"count","type":"int","value":8}"#,
         #"not json"#,
     ])
-    func aRequestWithoutAReadableIDIsDropped(request: String) throws {
+    func aRequestWithAnUnreadableFrameIsDropped(request: String) throws {
         let (sketch, surface, facet) = try pairSurface()
         let before = try Data(contentsOf: facet.appendingPathComponent("report.json"))
 
         try place(request, in: facet)
 
-        #expect(surface.drain() == nil, "echo する相手が無いので、応答しない")
+        #expect(surface.drain() == nil, "外枠が読めない (echo する id か、書く values が無い) ので、応答しない")
         #expect(sketch.count == 3)
         #expect(try Data(contentsOf: facet.appendingPathComponent("report.json")) == before)
     }
