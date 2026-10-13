@@ -46,6 +46,11 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
 jobs:
   publish:
     # 組み立てに swift build が要る (ADR-0009 の土台)。deploy まで 1 ジョブで通すのは、
