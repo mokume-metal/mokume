@@ -19,7 +19,7 @@ import MokumeDiagnostics
 ///     func setup() { server = try? createTCPServer(5204) }
 ///     func draw() {
 ///         for line in server?.messages ?? [] {
-///             size = Float(line) ?? size   // 0.3 のような数だけを読む
+///             size = Float(line) ?? size   // Float として読めた行だけを使う ("nan"・"inf" も数として読む)
 ///         }
 ///         circle(width / 2, height / 2, size * height)
 ///     }
