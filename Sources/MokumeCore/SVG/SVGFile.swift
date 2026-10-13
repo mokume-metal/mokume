@@ -534,14 +534,29 @@ nonisolated enum SVGFile {
             }
             // 根の幅と高さの割合は、viewBox (無ければ 100) に対して読む。入れ子は親の座標の決まりに対して
             let reference = isRoot ? SIMD2(box?[2] ?? 100, box?[3] ?? 100) : context.viewport
-            func length(_ name: String, _ against: Float, _ fallback: Float) -> Float {
-                guard let text = attributes[name] else { return fallback }
-                return SVGFile.parseLength(text, reference: against) ?? fallback
+            // 書いていない・`auto` (SVG 2 では書いていないのと同じ)・読めない値は `nil`
+            func length(_ name: String, _ against: Float) -> Float? {
+                guard let text = attributes[name] else { return nil }
+                return SVGFile.parseLength(text, reference: against)
             }
-            let x = isRoot ? 0 : length("x", reference.x, 0)
-            let y = isRoot ? 0 : length("y", reference.y, 0)
-            let width = length("width", reference.x, isRoot ? (box?[2] ?? 100) : reference.x)
-            let height = length("height", reference.y, isRoot ? (box?[3] ?? 100) : reference.y)
+            let x = isRoot ? 0 : length("x", reference.x) ?? 0
+            let y = isRoot ? 0 : length("y", reference.y) ?? 0
+            let width: Float
+            let height: Float
+            switch (length("width", reference.x), length("height", reference.y)) {
+            case (let written?, let other?):
+                (width, height) = (written, other)
+            case (let written?, nil):
+                // 根の片方だけなら、書いていない側は viewBox の縦横比から決まる (CSS Images 3 の
+                // 既定の大きさの決め方。ブラウザの <img>・resvg・librsvg の大きさ) (#2333)
+                width = written
+                height = isRoot ? box.map { written * $0[3] / $0[2] } ?? 100 : reference.y
+            case (nil, let written?):
+                width = isRoot ? box.map { written * $0[2] / $0[3] } ?? 100 : reference.x
+                height = written
+            case (nil, nil):
+                (width, height) = isRoot ? (box?[2] ?? 100, box?[3] ?? 100) : (reference.x, reference.y)
+            }
             guard width > 0, height > 0 else { return nil }
             var transform = Affine.translate(x, y)
             guard let box else { return (transform, SIMD2(width, height)) }
