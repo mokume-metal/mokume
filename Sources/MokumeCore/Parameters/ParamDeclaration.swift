@@ -13,15 +13,31 @@ public struct ParamRange: Equatable, Sendable {
     public let lowerBound: Double
     /// 上端。
     public let upperBound: Double
+    /// 整数で書かれた範囲の、整数のままの端。**整数の値はこちらで収める。**
+    ///
+    /// `Double` の端は 2^53 を超える整数を正確に持てない (`Double(Int.max)` は 2^63 に丸まる)。
+    /// 整数の値を `Double` へ移して収め直すと、宣言した端の外の値が範囲の中として通り、
+    /// 範囲の中の値が丸められる ([#2478](https://github.com/mokume-metal/mokume/issues/2478))。
+    /// 整数の宣言は端も整数のまま持ち、整数の値は `Int` のまま収める。`Double` で書かれた
+    /// 範囲 (`nil`) は従来どおり `Double` で収める。
+    let integerBounds: ClosedRange<Int>?
 
     public init(_ range: ClosedRange<Double>) {
         lowerBound = range.lowerBound
         upperBound = range.upperBound
+        integerBounds = nil
     }
 
     public init(_ range: ClosedRange<Int>) {
         lowerBound = Double(range.lowerBound)
         upperBound = Double(range.upperBound)
+        integerBounds = range
+    }
+
+    /// 端は `Double` の値で比べる。**整数で書いたか実数で書いたかでは区別しない**
+    /// (`ParamRange(0...10)` と、応答から読み直した同じ端の範囲は等しい)。
+    public static func == (lhs: ParamRange, rhs: ParamRange) -> Bool {
+        lhs.lowerBound == rhs.lowerBound && lhs.upperBound == rhs.upperBound
     }
 
     /// 範囲へ収めた値を返す。
@@ -33,18 +49,27 @@ public struct ParamRange: Equatable, Sendable {
     func clamped(_ component: Float) -> Float {
         Float(clamped(Double(component)))
     }
+
+    /// 整数の値を、この範囲へ収める。**整数で書かれた範囲は `Int` のまま収める**ので、
+    /// 2^53 を超える整数も丸めず、宣言した端そのものを書けば収めたことにならない。
+    func clamped(_ value: Int) -> Int {
+        guard let integerBounds else {
+            return Int(roundingAndSaturating: clamped(Double(value)))
+        }
+        return min(max(value, integerBounds.lowerBound), integerBounds.upperBound)
+    }
 }
 
 extension Int {
     /// 最も近い整数。**`Int` に収まらなければ、近いほうの端へ収める。**
     ///
-    /// `Int(_: Double)` は収まらない値で**プロセスごと落ちる**。範囲を `Double` で持つので、
-    /// 上端が `Int.max` の宣言は収めた後の値が `Int` に収まらない 2^63 になりうる
-    /// (`Double(Int.max)` は丸めで 2^63 になる)。外から来る値も窓のスライダーも同じ変換を
-    /// 通るので、変換はここ 1 か所にする ([#2478](https://github.com/mokume-metal/mokume/issues/2478))。
+    /// `Int(_: Double)` は収まらない値で**プロセスごと落ちる**。窓のスライダーが返す実数
+    /// (範囲の右端は `Double(Int.max)` = 2^63) を整数へ戻す所は、この変換を通す
+    /// ([#2478](https://github.com/mokume-metal/mokume/issues/2478))。
     ///
-    /// NaN は受け取らない前提で、端のどちらでもなく 0 を返す (落とさないための値で、意味は無い)。
-    /// 非有限の数は ``ParamBox`` がこれより手前で拒む。
+    /// NaN は 0 を返す (落とさないための値で、意味は無い)。**この手前で NaN は拒まれない**
+    /// — 整数の値は `hasOnlyFiniteNumbers` が常に有限と読むので、窓の整数のつまみが NaN を
+    /// 出せば 0 になる。窓のスライダーは有限の値しか出さないので、実際には通らない。
     init(roundingAndSaturating value: Double) {
         let rounded = value.rounded()
         if let exact = Int(exactly: rounded) {

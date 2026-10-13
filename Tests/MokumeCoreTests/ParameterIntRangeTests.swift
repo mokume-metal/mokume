@@ -15,14 +15,28 @@ import Testing
 /// `Int` へ戻す変換が**プロセスごと落ちていた**。非有限の数 (``ParameterNonFiniteTests``) と
 /// 違い、値はどれも有限で、根は「収めた後の `Int` への戻し方」である。
 ///
-/// 2^53 を超える整数が `Double` を通って丸まるのは今までどおり (直す対象ではない)。ここが
-/// 固定するのは、落ちないことと、端の値が端として入ることだけである。
+/// **根は、整数を `Double` へ移して収めていたこと。** 端が 2^53 を超えると `Double` の端が丸まり、
+/// 宣言した端の外の値が範囲の中として通り (`0...(Int.max - 1)` へ `Int.max`)、範囲の中の値が
+/// 丸められる (`0...Int.max` へ 2^53 + 1)。整数の宣言は端を `Int` のまま持ち、整数の値は
+/// `Int` のまま収める。ここが固定するのは、落ちないことと、宣言した端そのものが範囲の中として
+/// 通り、端の外は端へ収まって応答に載ることである。
 @Suite("範囲つきの整数は Int の端でも落ちない")
 @MainActor
 struct ParameterIntRangeTests {
     final class Wide: Sketch {
         @Param(0...Int.max) var upper: Int = 1
         @Param(Int.min...0) var lower: Int = -1
+    }
+
+    final class WideBoth: Sketch {
+        @Param(Int.min...Int.max) var both: Int = 0
+    }
+
+    /// 端が 2^53 を超え、`Double` では宣言した端を持てない範囲。
+    final class Huge: Sketch {
+        @Param(0...(1 << 62 + 1)) var big: Int = 1
+        @Param(0...(Int.max - 1)) var nearMax: Int = 1
+        @Param((Int.min + 1)...0) var nearMin: Int = -1
     }
 
     final class Narrow: Sketch {
@@ -68,8 +82,8 @@ struct ParameterIntRangeTests {
         #expect(report.clamped.isEmpty, "範囲の中の値なので、収めたことにはならない")
     }
 
-    @Test("Double では 2^63 に丸まる Int.max - 1 も、落ちずに端として入る")
-    func justBelowTheUpperEndDoesNotCrash() throws {
+    @Test("Double では 2^63 に丸まる Int.max - 1 は、丸めず書いた値のまま入る")
+    func justBelowTheUpperEndIsKeptAsWritten() throws {
         let facet = try makeDirectory()
         let sketch = Wide()
         let surface = ParamSurface(directory: facet, sketch: sketch)
@@ -79,10 +93,27 @@ struct ParameterIntRangeTests {
             #"{"id":"i2","values":[{"name":"upper","type":"int","value":9223372036854775806}]}"#,
             from: surface, in: facet)
 
-        #expect(sketch.upper == Int.max)
+        #expect(sketch.upper == Int.max - 1)
         #expect(report.rejected.isEmpty)
-        // 丸まって別の整数になったので、書いた値と入った値が違うことは応答に載る
-        #expect(report.clamped.count == 1)
+        #expect(report.clamped.isEmpty, "範囲の中の値なので、別の値にも収めたことにもならない")
+    }
+
+    @Test("2^53 を超える整数が、範囲の中で丸まらない", arguments: [
+        "9007199254740993", "9007199254740995", "4611686018427387905", "-9007199254740993",
+    ])
+    func largeIntegersAreNotRounded(written: String) throws {
+        let facet = try makeDirectory()
+        let sketch = WideBoth()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+
+        let report = try answer(
+            #"{"id":"l1","values":[{"name":"both","type":"int","value":\#(written)}]}"#,
+            from: surface, in: facet)
+
+        #expect(sketch.both == Int(written))
+        #expect(report.rejected.isEmpty)
+        #expect(report.clamped.isEmpty)
     }
 
     @Test("下端が Int.min の範囲へ Int.min を書いても落ちない")
@@ -116,6 +147,73 @@ struct ParameterIntRangeTests {
         #expect(sketch.lower == -5)
     }
 
+    // MARK: - 端が 2^53 を超える範囲 (宣言した端と、その外)
+
+    @Test("宣言した端そのものは範囲の中として入り、収めたことにならない", arguments: [
+        ("big", "4611686018427387905", 4_611_686_018_427_387_905),
+        ("nearMax", "9223372036854775806", Int.max - 1),
+        ("nearMin", "-9223372036854775807", Int.min + 1),
+    ])
+    func theDeclaredEndIsInsideTheRange(name: String, written: String, expected: Int) throws {
+        let facet = try makeDirectory()
+        let sketch = Huge()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+
+        let report = try answer(
+            #"{"id":"e1","values":[{"name":"\#(name)","type":"int","value":\#(written)}]}"#,
+            from: surface, in: facet)
+
+        #expect(try knob(sketch, name).declaration.value == .int(expected))
+        #expect(report.rejected.isEmpty)
+        #expect(report.clamped.isEmpty, "宣言した端なので、収めたことにならない")
+    }
+
+    @Test("宣言した端の外は、端へ収まって応答に載る", arguments: [
+        ("big", "9223372036854775807", 4_611_686_018_427_387_905),
+        ("nearMax", "9223372036854775807", Int.max - 1),
+        ("nearMin", "-9223372036854775808", Int.min + 1),
+    ])
+    func outsideTheDeclaredEndIsClamped(name: String, written: String, expected: Int) throws {
+        let facet = try makeDirectory()
+        let sketch = Huge()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+
+        let report = try answer(
+            #"{"id":"e2","values":[{"name":"\#(name)","type":"int","value":\#(written)}]}"#,
+            from: surface, in: facet)
+
+        #expect(try knob(sketch, name).declaration.value == .int(expected))
+        #expect(report.rejected.isEmpty)
+        #expect(
+            report.clamped == [.init(name: name, requested: .int(Int(written)!), value: .int(expected))])
+    }
+
+    // MARK: - 応答の端 (完了条件の外・#2478 の反証 5)
+
+    /// 整数の宣言の端を `Double` で出すと `Int.max` は 2^63 になり、読み手が端を `int` の値として
+    /// 書き戻すと `Int` に収まらない数になる。端も整数のまま出す。
+    @Test("応答の min と max は整数のまま出て、そのまま int の値として書き戻せる")
+    func theRangeEndsAreWrittenAsIntegers() throws {
+        let facet = try makeDirectory()
+        let sketch = Wide()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+
+        let reply = try String(contentsOf: facet.appendingPathComponent("report.json"), encoding: .utf8)
+        #expect(reply.contains("9223372036854775807"), "上端が 2^63 に丸まって出ている: \(reply)")
+        #expect(reply.contains("-9223372036854775808"))
+
+        // 読んだ端をそのまま書き戻す
+        let report = try answer(
+            #"{"id":"back","values":[{"name":"upper","type":"int","value":9223372036854775807},{"name":"lower","type":"int","value":-9223372036854775808}]}"#,
+            from: surface, in: facet)
+        #expect(report.rejected.isEmpty)
+        #expect(sketch.upper == Int.max)
+        #expect(sketch.lower == Int.min)
+    }
+
     // MARK: - 窓から (完了条件 3)
 
     @Test("窓の段付きスライダーを右端 (2^63) へ寄せても落ちず、Int.max になる")
@@ -126,6 +224,16 @@ struct ParameterIntRangeTests {
         KnobBinding.number(box, box.declaration.value).wrappedValue = 9_223_372_036_854_775_808.0
 
         #expect(sketch.upper == Int.max)
+    }
+
+    @Test("上端が Int.max - 1 の範囲では、スライダーを右端 (2^63) へ寄せても上端に収まる")
+    func theSliderIsClampedToTheDeclaredEnd() throws {
+        let sketch = Huge()
+        let box = try knob(sketch, "nearMax")
+
+        KnobBinding.number(box, box.declaration.value).wrappedValue = 9_223_372_036_854_775_808.0
+
+        #expect(sketch.nearMax == Int.max - 1)
     }
 
     @Test("窓のスライダーを左端 (-2^63) へ寄せても落ちず、Int.min になる")

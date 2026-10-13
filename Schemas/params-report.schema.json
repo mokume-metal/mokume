@@ -82,7 +82,7 @@
           },
           "max": {
             "type": "number",
-            "description": "The upper end of the range it can move in."
+            "description": "The upper end of the range it can move in. For an int declaration the ends are written as integers, so Int.max reads back exactly and can be written back as an int value."
           },
           "choices": {
             "type": "array",

@@ -180,8 +180,8 @@ extension ParamBox: DeclaredParam {
         case .float(let number):
             settled = .float(range.clamped(number))
         case .int(let number):
-            // 収めた後の `Double` は上端が `Int.max` だと 2^63 で、素の `Int(_:)` は落ちる (#2478)
-            settled = .int(Int(roundingAndSaturating: range.clamped(Double(number))))
+            // 整数は `Int` のまま収める (`Double` を通すと 2^53 を超える整数が丸まる・#2478)
+            settled = .int(range.clamped(number))
         case .vector2(let vector):
             settled = .vector2(SIMD2(range.clamped(vector.x), range.clamped(vector.y)))
         case .vector3(let vector):
