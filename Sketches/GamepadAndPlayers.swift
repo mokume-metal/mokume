@@ -17,7 +17,9 @@ import mokume
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class GamepadAndPlayers: Sketch {
-    var settings = SketchSettings(width: 1200, height: 600, title: "gamepad and players")
+    var settings: SketchSettings {
+        SketchSettings(width: 1200, height: 600, title: "gamepad and players")
+    }
 
     /// 記録した入力の長さ (フレーム)。最後まで行けば最初に戻る。
     private static let length = 240
