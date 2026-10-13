@@ -289,6 +289,42 @@ struct SketchRuntimeTests {
         #expect(abs(sketch.seen[1].delta - 0.02) < 1e-5)
     }
 
+    /// **いまの振る舞いを固定するだけ** (直さない)。最初の枚の起点は描き始め (`advance`) なので、
+    /// 最初のフレームの中で使った時間 — 最初の `draw()` の重い準備、`setup()` で置いて最初の
+    /// フレームへ持ち越した図形・画素を組む時間 — は、ほかのフレームと同じく 2 枚目の経過に乗る
+    /// (上限まで)。[#2413](https://github.com/mokume-metal/mokume/issues/2413) が寄せたのは
+    /// `setup()` の中で済む計算までである。
+    @Test("実時間の時計で、最初の draw() にかかった時間は 2 枚目の time と deltaTime に乗る (deltaTime は上限まで)")
+    func firstDrawTimeLandsOnTheSecondFrame() throws {
+        /// 最初の `draw()` で時計を 0.5 秒進め (重い準備の代わり)、描いた枚の時刻と経過を控える。
+        final class HeavyFirstDraw: Sketch {
+            var settings = SketchSettings(width: 8, height: 8, frameRate: 60)
+            var onFirstDraw: () -> Void = {}
+            var seen: [(time: Float, delta: Float)] = []
+            init() {}
+            func draw() {
+                seen.append((time, deltaTime))
+                if frameCount == 1 { onFirstDraw() }
+                background(.linear(red: 0, green: 0, blue: 0))
+            }
+        }
+
+        let clock = FrameTimingTests.ManualClock(100)
+        let sketch = HeavyFirstDraw()
+        sketch.onFirstDraw = { clock.now += 0.5 }
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: clock.provider)
+        try runtime.advance()
+        try runtime.advance()
+
+        try #require(sketch.seen.count == 2)
+        #expect(sketch.seen[0].time == 0)
+        #expect(sketch.seen[0].delta == Float(1.0 / 60))
+        // 2 枚目の時刻は最初の draw() の 0.5 秒ごと進み、経過は上限 (60 fps で 1/6 秒) で頭打ち
+        #expect(abs(sketch.seen[1].time - 0.5) < 1e-5)
+        #expect(sketch.seen[1].delta == Float(FrameTiming.maximumDeltaTime(frameRate: 60)))
+    }
+
     @Test("止めて再開したとき、再開後の最初の経過は 1 フレームぶんに収まる")
     func resumeResyncsTheClock() throws {
         /// 経過時間を記録するだけのスケッチ。

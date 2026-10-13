@@ -516,8 +516,11 @@ struct LoopTests {
 
     @Test(
         "描き直しの 1 枚の刻みは設定のフレームレートから取り、止めていた時間が 1 フレームより短くても上限より長くても変わらない",
-        arguments: [24, 120], [0.02, 3.0])
+        arguments: [24, 120], [0.004, 3.0])
     func redrawStepFollowsTheTargetFrameRate(frameRate: Int, stoppedAt: Double) throws {
+        // 最初の 1 枚が 0 秒なので、止めていた長さは `stoppedAt` そのもの。0.004 秒はどちらの
+        // フレームレートでも 1 フレーム (120 fps で 0.0083 秒) より短く、3 秒はどちらの上限
+        // (24 fps で 0.42 秒) より長い
         let sketch = Lines()
         sketch.settings.frameRate = frameRate
         try redrawAfterStop(sketch, route: .fromCallback, stoppedAt: stoppedAt)
