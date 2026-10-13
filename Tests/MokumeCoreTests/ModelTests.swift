@@ -101,6 +101,12 @@ struct ModelTests {
             ("f 1 2 -9 3 4", 0, 1), ("f /1 1 2 3", 0, 1), ("f 1 2 99", 0, 1),
             // 陰性対照: 読める角だけの面は面になり、数えない
             ("f 1 2 3 4", 2, 0), ("f -4 -3 -2 -1", 2, 0),
+            // 角でない字 — 行末のコメント (`#` から後) と継ぎ文字 (`\`) — は角として読まない。
+            // 読めない角ではないので、面は残り数えない (直す前と同じ結果)
+            ("f 1 2 3 4 # quad", 2, 0), ("f 1 2 3 # x", 1, 0), ("f 1 2 3 4#quad", 2, 0),
+            ("f 1 2 3 4 \\", 2, 0),
+            // コメントの手前に読めない角があれば、やはり行ごと数える
+            ("f 1 2 x 3 4 # quad", 0, 1), ("f 1 2 # 3 4", 0, 1),
         ])
     func facesWithAnUnreadableCornerAreSkippedWhole(line: String, triangles: Int, skipped: Int) {
         let parsed = ModelFile.parse(
