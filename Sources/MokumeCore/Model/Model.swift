@@ -51,8 +51,6 @@ public struct Model: Equatable, Sendable {
     /// 点を溶接する表と向き付きの辺の表を作るので (100 万三角形で 300 万要素ずつ)、半透明で
     /// 置かないモデルにまで払わせない。控えは参照なので、値を写した `Model` どうしで共有する。
     let windingCache = WindingCache()
-    /// 面の向きを**形から求めた**か。求めた向きは両面として扱う。
-    let hasDerivedNormals: Bool
     /// 同じモデルを続けて置いたときにまとめるための番号。**プロセスの中で読み込みごとに違う**
     /// (``nextIdentity()``)。
     let identity: Int
@@ -64,12 +62,11 @@ public struct Model: Equatable, Sendable {
     /// **番号は受け取らない** — 作るたびに ``nextIdentity()`` から取る。外から番号を渡せると、
     /// 「別々に読んだモデルは違う番号を持つ」を呼ぶ側が守る約束になってしまう (#1846)。
     private init(
-        name: String, mesh: SolidMesh, hasDerivedNormals: Bool, skippedLines: Int,
-        size: SIMD3<Float>, center: SIMD3<Float>
+        name: String, mesh: SolidMesh, skippedLines: Int, size: SIMD3<Float>,
+        center: SIMD3<Float>
     ) {
         self.name = name
         self.mesh = mesh
-        self.hasDerivedNormals = hasDerivedNormals
         self.skippedLines = skippedLines
         self.size = size
         self.center = center
@@ -186,7 +183,10 @@ extension Model {
                 uv: parsed.uvs[index]
                     ?? SIMD2(
                         extent.x > 0 ? (source.x - uvLowest.x) / extent.x : 0,
-                        extent.y > 0 ? (-source.y - uvLowest.y) / extent.y : 0))
+                        extent.y > 0 ? (-source.y - uvLowest.y) / extent.y : 0),
+                // 両面として扱うかも角ごと (#2342)。モデル単位の 1 つの印にすると、混ざった
+                // モデルの求めた面が片面になる
+                isDerivedNormal: parsed.derivedNormals[index])
         }
 
         // **縦を裏返した形は、巻き方を戻す。** 縦だけの裏返しは鏡映なので、3 点の並びから
@@ -203,8 +203,7 @@ extension Model {
             }
         }
         return Model(
-            name: name, mesh: SolidMesh(points: points),
-            hasDerivedNormals: !parsed.hasWrittenNormals, skippedLines: parsed.skippedLines,
+            name: name, mesh: SolidMesh(points: points), skippedLines: parsed.skippedLines,
             size: size, center: center)
     }
 }

@@ -44,7 +44,7 @@ nonisolated enum ModelFile {
 
     /// 面を 1 つも持たない読み取り結果。
     static let empty = Parsed(
-        positions: [], normals: [], uvs: [], hasWrittenNormals: false, skippedLines: 0)
+        positions: [], normals: [], uvs: [], derivedNormals: [], skippedLines: 0)
 
     /// 読み取った中身。正規化する前の形。
     struct Parsed: Sendable, Equatable {
@@ -63,12 +63,21 @@ nonisolated enum ModelFile {
         /// (``Model``) だが、こちらは**整えの対象ではない** — 読み取り位置は形の座標では
         /// なく絵を読む位置なので、`normalize` の有無で値が変わってはならない。
         var uvs: [SIMD2<Float>?]
-        /// 面の向きが**ファイルに書かれていた**か。
+        /// 頂点ごとに、面の向きを**形から求めた**か (ファイルに書かれていなかったか)。
+        /// ``positions`` と同じ数だけ並ぶ。
         ///
         /// 書かれていなければ形から求める。求めた向きは**両面**として扱う —
         /// 巻き方が逆なモデルが真っ黒になるのを避けるためで、その場で並べた頂点と
         /// 同じ規則である (#290)。
-        var hasWrittenNormals: Bool
+        ///
+        /// **モデル単位ではなく角ごとに持つ** ([#2342])。向きを書いた面と書かない面が
+        /// 混ざったファイル (OBJ の `vn` のある面と無い面・STL の `facet normal 0 0 0` の面と
+        /// 書いた面) があり、1 つの印に畳むと、書かない面の向きを求めない (OBJ) か、求めた
+        /// 面が両面にならない (STL)。OBJ の 1 つの面の中で `vn` のある角と無い角が混ざって
+        /// いても、角ごとに決める (その場で並べた頂点と同じ)。
+        ///
+        /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
+        var derivedNormals: [Bool]
         /// 読み飛ばしたものの数。**読み飛ばしたことが分かる手段**として持つ。
         ///
         /// OBJ では読み飛ばした行、STL では読み飛ばした面 (座標が数でない面) を数える。
@@ -148,12 +157,15 @@ nonisolated enum ModelFile {
         positions: [SIMD3<Float>], normals: [SIMD3<Float>], textures: [SIMD2<Float>],
         faces: [[(position: Int, texture: Int?, normal: Int?)]], skipped: Int
     ) -> Parsed {
-        let hasWrittenNormals = !normals.isEmpty && faces.contains { $0.contains { $0.normal != nil } }
-
-        // 向きが書かれていなければ、**面の向きを頂点ごとに足し込んでから正規化する**。
+        // 向きが書かれていない角があれば、**面の向きを頂点ごとに足し込んでから正規化する**。
         // 3 つずつ独立に処理すると、帯状・扇状に並べた形の後ろの頂点が既定値のまま残る
+        //
+        // **書かれていない角が 1 つでもあれば求める** (#2342)。ファイルに 1 つでも `vn` が
+        // あると求めなかった頃は、`vn` の無い面が既定の (0, 0, 1) へ倒れていた。足し込むのは
+        // すべての面で、向きを書いた面も形としては点の周りの面である。どの面も書いていない
+        // ファイルは、いままでと 1 ビットも違わない
         var derived = [SIMD3<Float>](repeating: .zero, count: positions.count)
-        if !hasWrittenNormals {
+        if faces.contains(where: { $0.contains { $0.normal == nil } }) {
             for face in faces {
                 let corners = face.map { positions[$0.position] }
                 let facing = newell(corners)
@@ -164,25 +176,30 @@ nonisolated enum ModelFile {
         var placedPositions: [SIMD3<Float>] = []
         var placedNormals: [SIMD3<Float>] = []
         var placedUVs: [SIMD2<Float>?] = []
+        var placedDerived: [Bool] = []
         for face in faces {
             // 多角形は扇状に割る。凹んだ面は正しく割れないが、OBJ の面はふつう凸である
             for index in 1..<(face.count - 1) {
                 for corner in [face[0], face[index], face[index + 1]] {
                     placedPositions.append(positions[corner.position])
                     placedUVs.append(corner.texture.map { textures[$0] })
-                    if let written = corner.normal, written < normals.count {
+                    // 番号は ``corner(_:positions:textures:normals:)`` が範囲を確かめてある。
+                    // 範囲の外の番号は「書いていない」として届く
+                    if let written = corner.normal {
                         placedNormals.append(normals[written])
+                        placedDerived.append(false)
                     } else {
                         let sum = derived[corner.position]
                         placedNormals.append(
                             length_squared(sum) > 0 ? normalize(sum) : SIMD3(0, 0, 1))
+                        placedDerived.append(true)
                     }
                 }
             }
         }
         return Parsed(
             positions: placedPositions, normals: placedNormals, uvs: placedUVs,
-            hasWrittenNormals: hasWrittenNormals, skippedLines: skipped)
+            derivedNormals: placedDerived, skippedLines: skipped)
     }
 
     /// 面の向きを、周の形から求める (Newell の方法)。

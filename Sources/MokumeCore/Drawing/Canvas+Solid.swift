@@ -167,8 +167,8 @@ extension Canvas {
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
-        _ source: SolidSource, isDerived: Bool = false,
-        winding: () -> SolidWinding = { .outward }, mesh build: () -> SolidMesh
+        _ source: SolidSource, winding: () -> SolidWinding = { .outward },
+        mesh build: () -> SolidMesh
     ) {
         // 区間の外では、立体の側へも移らない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -188,7 +188,7 @@ extension Canvas {
             var vertices: [SolidVertex] = []
             vertices.reserveCapacity(points.count)
             for point in points {
-                vertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
+                vertices.append(meshVertex(point, textured: textured))
             }
             // 記録した形 1 つが部品 1 つ (``SolidPart``)。置いたときのスタイルを部品へ残す —
             // 保持した形を置くときは、記録したときのスタイルで裏 → 表に描くかが決まる。記録した
@@ -218,13 +218,11 @@ extension Canvas {
         {
             // 列は分けても、描く順序と頂点の所有は別である。同じ入力なら既に積んだ範囲を指す。
             closeBatch()
-            let key = SolidMeshRangeKey(
-                source: source, isDerived: isDerived, textured: textured, whiteUV: whiteUV)
+            let key = SolidMeshRangeKey(source: source, textured: textured, whiteUV: whiteUV)
             // **読み込んだモデルは、頂点を GPU の置き場に持って使い回す** (#1749)。溜め場へ
             // 積まないので、列はその置き場の先頭から数える
             if case .model = source,
-                let geometry = modelFill(
-                    for: key, isDerived: isDerived, textured: textured, mesh: build)
+                let geometry = modelFill(for: key, textured: textured, mesh: build)
             {
                 openSolid = OpenSolid(
                     source: source, vertexStart: 0, vertexCount: geometry.count,
@@ -242,7 +240,7 @@ extension Canvas {
                 let start = solidVertices.count
                 solidVertices.reserveCapacity(start + mesh.points.count)
                 for point in mesh.points {
-                    solidVertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
+                    solidVertices.append(meshVertex(point, textured: textured))
                 }
                 range = start..<solidVertices.count
                 solidMeshRanges[key] = range
@@ -279,8 +277,7 @@ extension Canvas {
     /// 予算の半分を超えるとき (追い出し合って毎フレーム作り直すのを避ける) と、置き場を
     /// 確保できないとき (描けなくするより溜め場で描く)。
     private func modelFill(
-        for key: SolidMeshRangeKey, isDerived: Bool, textured: Bool,
-        mesh build: () -> SolidMesh
+        for key: SolidMeshRangeKey, textured: Bool, mesh build: () -> SolidMesh
     ) -> SolidFillGeometry? {
         if let cached = modelFills[key] { return cached }
         let points = build().points
@@ -290,7 +287,7 @@ extension Canvas {
         var vertices: [SolidVertex] = []
         vertices.reserveCapacity(points.count)
         for point in points {
-            vertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
+            vertices.append(meshVertex(point, textured: textured))
         }
         guard let made = try? SolidFillGeometry(vertices: vertices, gpu: gpu) else { return nil }
         modelFills.insert(made, for: key)
@@ -300,12 +297,11 @@ extension Canvas {
     /// 組み込みの形・読み込んだモデルの 1 点を頂点にする。
     ///
     /// **形自身の座標のまま、白で作る。** 変換と塗りは置き場所が持つ (記録の間は、置き場所
-    /// ごと焼く — ``placeMesh(_:isDerived:mesh:)``)。
-    private func meshVertex(
-        _ point: SolidMesh.Point, isDerived: Bool, textured: Bool
-    ) -> SolidVertex {
+    /// ごと焼く — ``placeMesh(_:winding:mesh:)``)。**向きを形から求めたかは点が持つ**
+    /// (``SolidMesh/Point/isDerivedNormal``) — 読み込んだモデルは角ごとに違いうる (#2342)。
+    private func meshVertex(_ point: SolidMesh.Point, textured: Bool) -> SolidVertex {
         SolidVertex(
-            position: point.position, normal: point.normal, isDerived: isDerived,
+            position: point.position, normal: point.normal, isDerived: point.isDerivedNormal,
             // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
             // 貼る口が無かった頃と 1 ビットも変わらない**
             uv: textured ? point.uv : whiteUV,

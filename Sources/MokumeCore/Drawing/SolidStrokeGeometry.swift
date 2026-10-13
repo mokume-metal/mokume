@@ -174,10 +174,10 @@ struct SolidStrokePlacement {
 }
 
 extension Canvas {
-    /// 頂点の並びだけを共有する鍵。色と変換は置き場所が持つ。
+    /// 頂点の並びだけを共有する鍵。色と変換は置き場所が持つ。**向きを形から求めたかは鍵に
+    /// 入れない** — 点が持ち (``SolidMesh/Point/isDerivedNormal``)、出どころから決まる (#2342)。
     struct SolidMeshRangeKey: Hashable {
         var source: SolidSource
-        var isDerived: Bool
         var textured: Bool
         var whiteUV: SIMD2<Float>
     }
