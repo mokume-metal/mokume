@@ -238,24 +238,6 @@ nonisolated enum ModelFile {
         return SIMD2(u, 1 - v)
     }
 
-    /// 面の行のうち、角として読む欄。**行末のコメントと継ぎ文字を除く** (#2339)。
-    ///
-    /// `#` を含む欄はその手前までを残して打ち切る (`4#quad` は `4`)。最後の欄が継ぎ文字 `\`
-    /// だけなら落とす — 次の行へ続ける書き方だが、続きを繋いでは読まない (直す前と同じく、
-    /// この行の角だけで面を作る)。
-    private static func cornerFields(_ values: ArraySlice<Substring>) -> [Substring] {
-        var fields: [Substring] = []
-        for value in values {
-            if let mark = value.firstIndex(of: "#") {
-                if mark > value.startIndex { fields.append(value[..<mark]) }
-                break
-            }
-            fields.append(value)
-        }
-        if fields.last == "\\" { fields.removeLast() }
-        return fields
-    }
-
     /// 面の 1 つの角 (`位置/読み取り位置/向き`) を読む。
     ///
     /// 番号は 1 から数える。**負の番号は末尾からの数え方**なので、そのまま足す。
@@ -281,5 +263,23 @@ nonisolated enum ModelFile {
     private static func resolve(_ raw: Int, count: Int) -> Int? {
         let index = raw > 0 ? raw - 1 : count + raw
         return (0..<count).contains(index) ? index : nil
+    }
+
+    /// 面の行のうち、角として読む欄。**行末のコメントと継ぎ文字を除く** (#2339)。
+    ///
+    /// `#` を含む欄はその手前までを残して打ち切る (`4#quad` は `4`)。最後の欄が継ぎ文字 `\`
+    /// だけなら落とす — 次の行へ続ける書き方だが、続きを繋いでは読まない (直す前と同じく、
+    /// この行の角だけで面を作る)。
+    private static func cornerFields(_ values: ArraySlice<Substring>) -> [Substring] {
+        var fields: [Substring] = []
+        for value in values {
+            if let mark = value.firstIndex(of: "#") {
+                if mark > value.startIndex { fields.append(value[..<mark]) }
+                break
+            }
+            fields.append(value)
+        }
+        if fields.last == "\\" { fields.removeLast() }
+        return fields
     }
 }
