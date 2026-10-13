@@ -40,8 +40,8 @@ struct BuildReportTests {
     @Test("鍵の並びが、辞書順で決まる")
     func theKeyOrderIsDecided() throws {
         let text = try encoded(
-            BuildReport(
-                ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug", launched: true,
+            BuildReport.launched(
+                output: "出力", stamp: "abc123", configuration: "debug",
                 timings: BuildReport.Timings(detectMs: 12, buildMs: 34, relaunchMs: 56)))
         let top = text.split(separator: "\n").compactMap { line -> String? in
             // 入れ子 (timings の中) は字下げが深いので、上の階だけを見る
@@ -57,8 +57,8 @@ struct BuildReportTests {
     @Test("載る鍵が、手書きの encode と同じ")
     func theKeysAreUnchanged() throws {
         let text = try encoded(
-            BuildReport(
-                ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug", launched: true,
+            BuildReport.launched(
+                output: "出力", stamp: "abc123", configuration: "debug",
                 timings: BuildReport.Timings(detectMs: 12, buildMs: 34, relaunchMs: 56, firstFrameMs: 78)))
         let object = try #require(
             try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
@@ -82,8 +82,8 @@ struct BuildReportTests {
     @Test("面の版が、組む側の手を借りずに載る")
     func theSchemaVersionRidesAlong() throws {
         let text = try encoded(
-            BuildReport(
-                ok: true, status: 0, output: "", stamp: nil, configuration: "debug", launched: true,
+            BuildReport.launched(
+                output: "", stamp: nil, configuration: "debug",
                 timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil)))
         #expect(text.contains("\"schemaVersion\" : 1"))
     }
@@ -93,8 +93,8 @@ struct BuildReportTests {
     @Test("省いた欄は、null ではなく現れない")
     func absentFieldsStayAbsent() throws {
         let text = try encoded(
-            BuildReport(
-                ok: false, status: 1, output: "だめ", stamp: nil, configuration: "release", launched: true,
+            BuildReport.failed(
+                status: 1, output: "だめ", stamp: nil, configuration: "release",
                 timings: BuildReport.Timings(detectMs: nil, buildMs: 2, relaunchMs: nil)))
         #expect(!text.contains("stamp"))
         #expect(!text.contains("detectMs"))
@@ -108,10 +108,66 @@ struct BuildReportTests {
     @Test("出力の中の道は、そのままの形で載る")
     func pathsAreNotEscaped() throws {
         let text = try encoded(
-            BuildReport(
-                ok: false, status: 1, output: "/tmp/sketch/Sources/main.swift:3: error",
-                stamp: nil, configuration: "debug", launched: true,
+            BuildReport.failed(
+                status: 1, output: "/tmp/sketch/Sources/main.swift:3: error",
+                stamp: nil, configuration: "debug",
                 timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil)))
         #expect(text.contains("/tmp/sketch/Sources/main.swift:3: error"))
+    }
+
+    // MARK: - 起こせなかった回は理由を持つ (#2574)
+
+    private let timings = BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil)
+
+    /// **理由の無い `ok: true, launched: false` は作れない。** 約束を型が守らせなければ、読み手が
+    /// 理由の無い記録に出会う形が残る。空・空白だけ・空行だけの理由は、理由が無いと名乗る文に倒す。
+    @Test("理由を渡さない起こせなかった回は、理由が無いと名乗る文を持つ")
+    func aReportThatWasNotStartedAlwaysHasAReason() {
+        for empty in ["", "   ", "\n\n", " \n \n"] {
+            let report = BuildReport.notStarted(
+                reason: empty, buildOutput: "Build complete!", stamp: nil,
+                configuration: "debug", timings: timings)
+            #expect(report.ok)
+            #expect(!report.launched)
+            #expect(report.notStartedReason == BuildReport.unknownReason)
+            #expect(report.output.hasPrefix(BuildReport.unknownReason + "\n\n"))
+        }
+    }
+
+    /// 理由は空行を含められない (最初の空行までが理由と読まれる)。行を詰め、頭は空でない。
+    @Test("複数行の理由は空行を詰めて持ち、本文の頭と欄が同じになる")
+    func aMultiLineReasonKeepsNoBlankLine() throws {
+        let report = BuildReport.notStarted(
+            reason: "\nfirst\n\n  second  \n", buildOutput: "out", stamp: nil,
+            configuration: "debug", timings: timings)
+        let reason = try #require(report.notStartedReason)
+        #expect(reason == "first\nsecond")
+        #expect(report.output == reason + "\n\nout")
+        #expect(report.notStartedHead == "first")
+    }
+
+    /// 起こせた回・通らなかった回は理由を持たない (欄が載らない)。
+    @Test("起こせた回と通らなかった回は、理由を持たない")
+    func otherReportsCarryNoReason() throws {
+        let launched = BuildReport.launched(
+            output: "", stamp: nil, configuration: "debug", timings: timings)
+        let failed = BuildReport.failed(
+            status: 1, output: "x", stamp: nil, configuration: "debug", timings: timings)
+        #expect(launched.notStartedReason == nil && launched.notStartedHead == nil)
+        #expect(failed.notStartedReason == nil && failed.notStartedHead == nil)
+        #expect(!(try encoded(launched)).contains("notStartedReason"))
+        #expect(!(try encoded(failed)).contains("notStartedReason"))
+    }
+
+    @Test("起こせなかった回の記録は、理由の欄を持って書かれる")
+    func theReasonIsWrittenToTheRecord() throws {
+        let report = BuildReport.notStarted(
+            reason: "Could not start hello", buildOutput: "out", stamp: nil,
+            configuration: "debug", timings: timings)
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(try encoded(report).utf8)) as? [String: Any])
+        #expect(object["notStartedReason"] as? String == "Could not start hello")
+        #expect(object["launched"] as? Bool == false)
+        #expect(object["ok"] as? Bool == true)
     }
 }

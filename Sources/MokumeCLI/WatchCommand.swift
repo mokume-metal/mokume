@@ -575,8 +575,8 @@ enum WatchCommand {
         if !outcome.ok {
             lines.append(outcome.output)
             lines.append(holdingLine)
-        } else if !outcome.launched {
-            lines.append(WatchSession.notLaunchedReason(of: outcome.output))
+        } else if let reason = outcome.notStartedReason {
+            lines.append(reason)
             if holdingPrevious { lines.append(holdingLine) }
         }
         return lines

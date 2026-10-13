@@ -167,9 +167,23 @@ enum DoctorCommand {
         /// 差し替えたスケッチが立ち上がったか。**記録に無ければ (この欄を持たない古い書き手)
         /// `nil`** — 作り直せたことだけで読む。
         var launched: Bool?
-        /// 作り直しは通ったのに起こさなかった回の、理由の頭 1 行 (``BuildReport/notStartedHead``)。
-        /// 起こさなかった回以外は `nil`。
+        /// 作り直しは通ったのに起こさなかった回の、理由の頭 1 行 (記録の `notStartedReason` の頭)。
+        /// **記録が理由を持たなければ `nil`** — 起こさなかった回でも、この欄ができる前の古い記録は
+        /// 理由を本文の頭に置いていないので、本文の最初の行を理由と読むと誤った断定になる。
         var notStarted: String?
+        /// 作り直しの失敗ではないのに `ok: false` で書かれた記録か (見張りを終えたときの最後の記録)。
+        var interruption: BuildReport.Interruption?
+
+        init(
+            ok: Bool?, at: Date, launched: Bool? = nil, notStarted: String? = nil,
+            interruption: BuildReport.Interruption? = nil
+        ) {
+            self.ok = ok
+            self.at = at
+            self.launched = launched
+            self.notStarted = notStarted
+            self.interruption = interruption
+        }
     }
 
     static func run(_ arguments: [String]) {
@@ -451,14 +465,26 @@ enum DoctorCommand {
         // **通ったが起こせなかった回を「succeeded」と言わない** (#2574)。切り分けの口が
         // 成功と言うと、止まっている絵の原因から人を遠ざける
         if last.ok == true, last.launched == false {
-            let head = last.notStarted ?? ""
+            // **理由を持たない古い記録は、理由を名乗らない** (断定しない)。本文の最初の行は
+            // 作り直しの出力かもしれない
+            guard let head = last.notStarted else {
+                return "Last build: built at \(at), but not started — this record has no reason "
+                    + "(an older tool wrote it); the build output is in \(BuildReport.statusRelativePath)"
+            }
             // **終われと言われて起こさなかった回は、その文をそのまま言う** (#2521)
             if head.hasPrefix(BuildReport.stopRequestedNotice) {
                 return "Last build: built at \(at); \(head)"
             }
-            return head.isEmpty
-                ? "Last build: built at \(at), but not started"
-                : "Last build: built at \(at), but not started: \(head)"
+            return "Last build: built at \(at), but not started: \(head)"
+        }
+        // **作り直しの失敗ではない記録を「failed」と言わない。** 見張りを終えたときの最後の記録は
+        // `ok: false` だが、本文の頭が失敗ではないと名乗っている (#1147)
+        switch last.interruption {
+        case .rebuildStopped?:
+            return "Last build: stopped partway at \(at) because watching ended (not a build failure)"
+        case .beforeFirstBuild?:
+            return "Last build: none ran — watching ended at \(at), before the first build (not a build failure)"
+        case nil: break
         }
         return switch last.ok {
         case true: "Last build: succeeded at \(at)"
@@ -648,10 +674,9 @@ enum DoctorCommand {
         let launched = object?["launched"] as? Bool
         return LastBuild(
             ok: ok, at: at, launched: launched,
-            notStarted: ok.flatMap {
-                BuildReport.notStartedHead(
-                    ok: $0, launched: launched, output: object?["output"] as? String ?? "")
-            })
+            notStarted: (object?["notStartedReason"] as? String).flatMap(BuildReport.firstLine),
+            interruption: ok == false
+                ? BuildReport.Interruption.of(output: object?["output"] as? String ?? "") : nil)
     }
 
     private static func exists(_ url: URL) -> Bool {

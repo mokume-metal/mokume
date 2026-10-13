@@ -254,40 +254,63 @@ struct WatchCommandTests {
     /// 「保存した → 絵が止まっている → 何も出ない」になる。
     @Test("起こせなかった回は、重ねる行に起こせなかったことと理由の頭 1 行を出す")
     func namesTheReasonWhenTheBuildPassedButNothingStarted() throws {
-        let reason = "Cannot start sketch: permission denied: /stub/.build/debug/sketch"
         let line = try #require(
             WatchCommand.notice(
-                for: report(
-                    ok: true, launched: false,
-                    output: WatchSession.notLaunched(reason + "\nsecond line", "[1/2] Compiling…"))))
-        #expect(line == "Rebuilt, but could not start it: " + reason)
+                for: notStarted(reason: "Cannot start sketch: permission denied\nsecond line")))
+        #expect(line == "Rebuilt, but could not start it: Cannot start sketch: permission denied")
         // 起こせた回は畳む (従来どおり)
         #expect(WatchCommand.notice(for: report(ok: true, launched: true)) == nil)
     }
 
-    /// 型は理由の無い `launched: false` も作れる。**それでも、起こせなかったことは名乗る。**
-    @Test("理由の無い起こせなかった回も、起こせなかったことだけは出す")
-    func namesTheFailureEvenWithoutAReason() throws {
-        let line = try #require(WatchCommand.notice(for: report(ok: true, launched: false)))
-        #expect(line == "Rebuilt, but could not start it")
+    /// **「could not start」を重ねず、長くても要点 (末尾の原因) が切れない。** 印は 1 行の小さな字で、
+    /// 折り返しも省略もしないので、窓幅で切れると肝心の `(Permission denied)` が落ちる。実際の
+    /// `cannotLaunch` の文面 (スキーマの代表例) で見る。
+    @Test("実際の起こせなかった理由は、前置きを重ねず、短くしても原因が残る")
+    func aRealReasonIsNotRepeatedAndKeepsItsCause() throws {
+        let reason = try Self.exampleReason()
+        let line = try #require(WatchCommand.notice(for: notStarted(reason: reason)))
+        #expect(line.lowercased().components(separatedBy: "could not start").count == 2, "言葉が重なっている: \(line)")
+        #expect(line.hasPrefix("Rebuilt, but could not start hello"))
+        #expect(line.count <= BuildReport.noticeLimit)
+        #expect(line.hasSuffix("(Permission denied)"), "原因が切れている: \(line)")
+    }
+
+    /// スキーマの代表例に載っている、実際の理由。
+    private static func exampleReason() throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Schemas/examples/build-status-not-launched.json")
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        return try #require(object["notStartedReason"] as? String)
+    }
+
+    /// 理由を渡さなくても、型が理由を持たせる。**理由なしの記録は作れない。**
+    @Test("理由を渡さなかった起こせなかった回も、理由つきで出る")
+    func aReportWithoutAReasonCannotBeBuilt() throws {
+        let line = try #require(WatchCommand.notice(for: notStarted(reason: "")))
+        #expect(line.hasSuffix("no reason was given"))
     }
 
     /// 終われと言われて起こさなかった回を「起こせなかった」と言わない (#2521 の規律)。
     @Test("終われと言われて起こさなかった回は、起こせなかったと言わない")
     func doesNotCallAnEndingWatchAFailureToStart() throws {
-        let output = WatchSession.notLaunched(
-            WatchSession.stopRequestedNotice, "[1/1] Compiling…")
-        let line = try #require(
-            WatchCommand.notice(for: report(ok: true, launched: false, output: output)))
+        let line = try #require(WatchCommand.notice(for: notStarted(reason: WatchSession.stopRequestedNotice)))
         #expect(line == WatchSession.stopRequestedNotice)
         #expect(!line.contains("could not"))
     }
 
-    private func report(ok: Bool, launched: Bool? = nil, output: String = "") -> BuildReport {
-        BuildReport(
-            ok: ok, status: ok ? 0 : 1, output: output, stamp: nil, configuration: "debug",
-            launched: launched ?? ok,
+    private func notStarted(reason: String) -> BuildReport {
+        .notStarted(
+            reason: reason, buildOutput: "[1/2] Compiling…", stamp: nil, configuration: "debug",
             timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+    }
+
+    private func report(ok: Bool, launched: Bool = true) -> BuildReport {
+        let timings = BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil)
+        return ok
+            ? .launched(output: "", stamp: nil, configuration: "debug", timings: timings)
+            : .failed(status: 1, output: "", stamp: nil, configuration: "debug", timings: timings)
     }
 
     // MARK: - 書くとき
