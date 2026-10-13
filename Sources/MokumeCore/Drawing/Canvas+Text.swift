@@ -14,11 +14,11 @@ extension Canvas {
     /// 気付けないので、無い名前は警告して指定を変えない。
     public func textFont(_ name: String) {
         let name = Typeface.canonicalName(name)
-        guard Typeface.exists(name: name) else {
+        guard let resolved = Typeface.resolvedName(of: name) else {
             warnMissingFontOnce(name)
             return
         }
-        style.fontName = name
+        style.fontName = resolved
     }
 
     /// 既定の書体へ戻す。

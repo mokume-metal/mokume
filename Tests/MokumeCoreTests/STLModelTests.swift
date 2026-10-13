@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import ModelIO
 import Testing
 import simd
 
@@ -240,6 +241,107 @@ struct STLModelTests {
         }
         #expect(parsed.positions == expected)
         #expect(parsed.skippedLines == 0)
+    }
+
+    // MARK: - 写せなかった要素を数える (#2566)
+
+    /// 頂点 4 つ (原点・x・y・xy) を持つ mesh を作る。`attribute` は頂点の属性の名前で、位置を持たない
+    /// mesh は `MDLVertexAttributeNormal` などにする。submesh は (番号の並び, 形) で渡す。
+    ///
+    /// Model I/O が STL から返す mesh は三角形だけで番号も 3 の倍数なので、**そうでない形は
+    /// 実ファイルからは作れない** — 返り値の契約を守らない相手にも数える約束を、直接組んで見る。
+    private func mesh(
+        attribute: String = MDLVertexAttributePosition,
+        submeshes: [(indices: [UInt32], geometry: MDLGeometryType)]
+    ) -> MDLMesh {
+        let allocator = MDLMeshBufferDataAllocator()
+        let floats: [Float] = [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]
+        let vertices = allocator.newBuffer(
+            with: floats.withUnsafeBufferPointer { Data(buffer: $0) }, type: .vertex)
+        let descriptor = MDLVertexDescriptor()
+        descriptor.attributes[0] = MDLVertexAttribute(
+            name: attribute, format: .float3, offset: 0, bufferIndex: 0)
+        descriptor.layouts[0] = MDLVertexBufferLayout(stride: 12)
+        let built = submeshes.map { submesh in
+            MDLSubmesh(
+                indexBuffer: allocator.newBuffer(
+                    with: submesh.indices.withUnsafeBufferPointer { Data(buffer: $0) },
+                    type: .index),
+                indexCount: submesh.indices.count, indexType: .uInt32,
+                geometryType: submesh.geometry, material: nil)
+        }
+        return MDLMesh(
+            vertexBuffer: vertices, vertexCount: 4, descriptor: descriptor, submeshes: built)
+    }
+
+    /// 数え方の検体 1 つ。
+    nonisolated struct LeftoverCase: CustomTestStringConvertible, Sendable {
+        var name: String
+        /// 頂点が位置を持つか。持たない mesh は、位置でない属性だけを名乗る
+        var hasPositions = true
+        var submeshes: [Submesh]
+        var triangles: Int
+        var skipped: Int
+        var testDescription: String { name }
+
+        struct Submesh: Sendable {
+            var indices: [UInt32]
+            var triangles = true
+        }
+
+        nonisolated static let all: [LeftoverCase] = [
+            .init(name: "余りの番号 1 つ", submeshes: [.init(indices: [0, 1, 2, 3])], triangles: 1, skipped: 1),
+            .init(
+                name: "余りの番号 2 つ", submeshes: [.init(indices: [0, 1, 2, 3, 1])], triangles: 1,
+                skipped: 1),
+            .init(
+                name: "三角形でない submesh",
+                submeshes: [.init(indices: [0, 1, 2, 3], triangles: false)], triangles: 0, skipped: 1),
+            .init(
+                name: "三角形 + 線の submesh",
+                submeshes: [.init(indices: [0, 1, 2]), .init(indices: [0, 1], triangles: false)],
+                triangles: 1, skipped: 1),
+            .init(
+                name: "余りのある submesh が 2 つ",
+                submeshes: [.init(indices: [0, 1, 2, 3]), .init(indices: [1, 2, 3, 0])],
+                triangles: 2, skipped: 2),
+            .init(name: "submesh を持たない mesh", submeshes: [], triangles: 0, skipped: 1),
+            .init(
+                name: "位置を持たない mesh", hasPositions: false,
+                submeshes: [.init(indices: [0, 1, 2])], triangles: 0, skipped: 1),
+            // 陰性対照: 3 つで割り切れる三角形は変わらず、数えない
+            .init(name: "三角形 1 枚", submeshes: [.init(indices: [0, 1, 2])], triangles: 1, skipped: 0),
+            .init(
+                name: "三角形 2 枚", submeshes: [.init(indices: [0, 1, 2, 1, 3, 2])], triangles: 2,
+                skipped: 0),
+            .init(name: "番号が空の submesh", submeshes: [.init(indices: [])], triangles: 0, skipped: 0),
+        ]
+    }
+
+    /// 約束: Model I/O の mesh のうち**面にならなかった要素は、黙って捨てず `skippedLines` に数える**。
+    /// 位置を持たない mesh と三角形でない submesh は 1 つずつ、3 つに満たない余りの番号は submesh ごとに
+    /// 1 つ。正しい三角形は変わらず、数えない。
+    @Test(
+        "写せなかった mesh・submesh・余りの番号は、読み飛ばしたものとして数える",
+        arguments: LeftoverCase.all)
+    func unplacedMeshElementsAreCounted(_ example: LeftoverCase) {
+        let built = mesh(
+            attribute: example.hasPositions ? MDLVertexAttributePosition : MDLVertexAttributeNormal,
+            submeshes: example.submeshes.map {
+                (indices: $0.indices, geometry: $0.triangles ? .triangles : .lines)
+            })
+        let parsed = ModelFile.triangles(of: [built])
+        #expect(parsed.positions.count == example.triangles * 3, "\(example.name)")
+        #expect(parsed.skippedLines == example.skipped, "\(example.name)")
+    }
+
+    @Test("mesh でない物は、読み飛ばしたものとして数え、mesh は変わらず読む")
+    func nonMeshObjectsAreCounted() {
+        let built = mesh(submeshes: [(indices: [0, 1, 2], geometry: .triangles)])
+        let parsed = ModelFile.triangles(of: [MDLObject(), built, MDLObject()])
+        #expect(parsed.positions.count == 3)
+        #expect(parsed.skippedLines == 2)
+        #expect(ModelFile.triangles(of: [built]).skippedLines == 0)
     }
 
     // MARK: - 読める形式と説明

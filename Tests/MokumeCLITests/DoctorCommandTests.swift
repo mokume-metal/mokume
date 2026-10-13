@@ -161,6 +161,78 @@ struct DoctorCommandTests {
         #expect(!text.contains("Toolchain: \(DoctorCommand.unknown)"))
     }
 
+    // MARK: - 道具立てを聞いて答えなかった理由 (#2522)
+
+    /// **入れない場所を「swift を起こせなかった」の 1 文に畳まない。** stat に要るのは親の探索権
+    /// だけなので、自身に x の無いディレクトリ (`chmod 000`) は `.directory` と読め、`swift` を
+    /// 聞きに行って起こせずに投げる — その理由を `try?` が捨てて、唯一の既定文になっていた。
+    @Test("入れない場所 (chmod 000) を渡すと、道具立ての行が入れないことを名乗る")
+    func aPlaceWithoutSearchPermissionIsNamedOnTheToolchainLine() throws {
+        let root = try Self.emptyDirectory()
+        let locked = root.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        chmod(locked.path, 0)
+        defer {
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let text = DoctorCommand.text(
+            for: [locked.path], workDirectory: nil, environment: Self.isolated())
+        #expect(
+            text.contains(
+                "Toolchain: \(DoctorCommand.unknown) — swift could not start in \(locked.path): "
+                    + String(cString: strerror(EACCES))))
+        #expect(!text.contains("could not launch swift"))
+    }
+
+    /// 聞く口を差し替えて、答えなかった理由ごとの名乗りを固める。**127 は `PATH` を差し替えずに
+    /// 通す** — 起こす側は `/usr/bin/env swift` を書き固めている。
+    @Test("道具立てが答えなかった理由は、無い・起こせない・0 以外・空で別々に名乗る")
+    func eachReasonTheToolchainDidNotAnswerIsNamedApart() {
+        let place = URL(fileURLWithPath: "/sketch", isDirectory: true)
+        func line(_ ask: @escaping (URL) throws(CommandFailure) -> (status: Int32, output: String))
+            -> String
+        {
+            switch Toolchain.read(in: place, asking: ask) {
+            case .version(let version): DoctorCommand.toolchainLine(version)
+            case .unanswered(let reason): DoctorCommand.toolchainLine(nil, unanswered: reason)
+            }
+        }
+        let unknown = DoctorCommand.unknown
+
+        // `env` が 127 で終わった (`swift` が `PATH` に無い) — 無いと言う
+        #expect(
+            line { _ throws(CommandFailure) in throw .toolchainMissing("swift") }
+                == "Toolchain: \(unknown) — swift was not found on the PATH — install the Xcode "
+                + "command line tools")
+        // 入れない・OS の事情で起こせない — 無いとは言わず、その理由を言う
+        #expect(
+            line { _ throws(CommandFailure) in
+                throw .cannotLaunch(tool: "swift", place: "/sketch", reason: "Bad CPU type in executable")
+            } == "Toolchain: \(unknown) — swift could not start in /sketch: Bad CPU type in executable")
+        // 起きて 0 以外で終わった・何も言わなかった
+        #expect(
+            line { _ throws(CommandFailure) in (status: 69, output: "") }
+                == "Toolchain: \(unknown) — swift --version exited with code 69")
+        #expect(
+            line { _ throws(CommandFailure) in (status: 0, output: "\n") }
+                == "Toolchain: \(unknown) — swift --version printed nothing")
+        // 答えたなら名乗りそのもの
+        #expect(
+            line { _ throws(CommandFailure) in (status: 0, output: "Apple Swift version 6.3.3\nTarget: x\n") }
+                == "Toolchain: Apple Swift version 6.3.3")
+    }
+
+    /// **置き場の鍵は、読めない回にいままでどおり共有しない側へ倒れる** (#2522 の完了条件 5)。
+    /// 理由を返す形にしても、`describe` の見え方は変えない。
+    @Test("置き場の鍵が読む describe は、答えなかった回に nil のまま")
+    func describeStaysNilWhenTheToolchainDoesNotAnswer() {
+        let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)", isDirectory: true)
+        #expect(Toolchain.describe(in: missing) == nil)
+        #expect(BuildDirectory.toolchainSegment(from: Toolchain.describe(in: missing)) == nil)
+    }
+
     /// 文の形 (純関数)。
     @Test("聞かなかった道具立てと、聞いて読めなかった道具立てを言い分ける")
     func anUnaskedToolchainIsToldApart() {
@@ -169,9 +241,13 @@ struct DoctorCommandTests {
             DoctorCommand.toolchainLine(nil, unaskedIn: place)
                 == "Toolchain: \(DoctorCommand.unknown) — not asked, since swift cannot start in"
                 + " /nowhere (see Place below)")
+        // 聞いて読めなかった回は、理由を名乗る。理由を持たない回も「起こせなかった」とは決めつけない
+        #expect(
+            DoctorCommand.toolchainLine(nil, unanswered: "swift --version printed nothing")
+                == "Toolchain: \(DoctorCommand.unknown) — swift --version printed nothing")
         #expect(
             DoctorCommand.toolchainLine(nil)
-                == "Toolchain: \(DoctorCommand.unknown) — could not launch swift")
+                == "Toolchain: \(DoctorCommand.unknown) — swift gave no answer")
         #expect(DoctorCommand.placeLine(place, presence: .directory) == "Place: /nowhere")
         #expect(DoctorCommand.placeLine(place, presence: .missing).contains("nothing is there"))
         #expect(

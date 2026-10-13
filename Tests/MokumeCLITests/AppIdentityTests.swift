@@ -43,6 +43,28 @@ struct AppIdentityTests {
         #expect(CommandFailure.identityMissing(path: path).message.contains(AppIdentity.example))
     }
 
+    /// **在るのに読めないファイルを「無い」と言わない** (#2575)。`try?` は権限の無いファイルも
+    /// ディレクトリも、無いファイルと同じ顔にする — 「There is none」と言うと、在るものを
+    /// 書きに行かせて、上書きを促すことになる。
+    @Test("在るのに読めない名乗りは、無いとは言わず読めないと言う", arguments: ["locked", "directory"])
+    func anIdentityThatIsThereButCannotBeReadIsNotMissing(kind: String) throws {
+        let root = try makeSketch(identity: nil)
+        let url = root.appendingPathComponent(AppIdentity.fileName)
+        if kind == "locked" {
+            try AppIdentity.example.write(to: url, atomically: true, encoding: .utf8)
+            chmod(url.path, 0)
+        } else {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        defer {
+            chmod(url.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+        #expect(throws: CommandFailure.identityUnreadable(path: url.path)) {
+            try AppIdentity.read(in: root)
+        }
+    }
+
     @Test("形が壊れていれば、その旨を言う")
     func anUnreadableIdentityStops() throws {
         let root = try makeSketch(identity: "{ これは JSON ではない")

@@ -420,7 +420,7 @@ struct WatchOffMainTests {
         try await waitUntil { gate.isWaiting }
 
         // 替え玉の作り直しは子を起こさないので、止める相手は居ない
-        #expect(session.stopRebuilding() == .notRunning)
+        #expect(await session.stopRebuilding() == .notRunning)
         let stopped = try #require(session.lastReport, "止めた記録が残っていない")
         #expect(!stopped.ok)
         #expect(!stopped.launched)
@@ -428,7 +428,7 @@ struct WatchOffMainTests {
         #expect(
             try writtenOutput(of: session) == WatchSession.stoppedRebuildNotice,
             "区画に止めた記録が書かれていない")
-        #expect(session.stopRebuilding() == nil, "同じ作り直しを 2 度止めた")
+        #expect(await session.stopRebuilding() == nil, "同じ作り直しを 2 度止めた")
 
         gate.open()
         #expect(await building.value == stopped, "止めた記録が、戻ってきた結果で書き直された")
@@ -441,12 +441,12 @@ struct WatchOffMainTests {
 
     @Test("作り直していなければ、止めても何も書かない")
     @MainActor
-    func stoppingWithoutARebuildWritesNothing() throws {
+    func stoppingWithoutARebuildWritesNothing() async throws {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: WatchSessionTests.Recorder().hooks())
 
-        #expect(session.stopRebuilding() == nil, "作り直していないのに止めたと答えた")
+        #expect(await session.stopRebuilding() == nil, "作り直していないのに止めたと答えた")
         #expect(session.lastReport == nil)
         #expect(try writtenOutput(of: session) == nil, "作り直していないのに記録を書いた")
     }
@@ -482,7 +482,7 @@ struct WatchOffMainTests {
         let building = Task { await session.start() }
         try await waitUntil { gate.isWaiting }
 
-        #expect(session.stopRebuilding() == .terminated, "SIGINT で頼んでいない")
+        #expect(await session.stopRebuilding() == .terminated, "SIGINT で頼んでいない")
         #expect(!build.isRunning)
 
         gate.open()
@@ -519,7 +519,7 @@ struct WatchOffMainTests {
         let building = Task { await session.start() }
         try await waitUntil { gate.isWaiting }
 
-        #expect(session.stopRebuilding() == .terminated)
+        #expect(await session.stopRebuilding() == .terminated)
         #expect(session.lastReport?.status == 128 + SIGINT, "合図で落ちた作り直しの数が生の番号のまま")
 
         gate.open()
@@ -534,7 +534,7 @@ struct WatchOffMainTests {
         let building = Task { await session.start() }
         try await waitUntil { gate.isWaiting }
 
-        WatchCommand.finish(session)
+        await WatchCommand.finish(session)
         #expect(
             session.lastReport?.output == WatchSession.stoppedRebuildNotice,
             "終えるときに作り直しを止めていない")

@@ -55,7 +55,7 @@ import MokumeDiagnostics
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 @MainActor
 public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
-    private let gpu: RenderDevice
+    let gpu: RenderDevice
     private let runtime: SketchRuntime
     private let presenter: FramePresenter
     private let title: String
@@ -338,6 +338,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let clock: Clock = render.map { .frameIndex(frameRate: $0.frameRate) } ?? .wallClock
         self.clock = clock
         self.outlet = render.map(ScreenOutlet.render) ?? .pendingWindow
+        // **利用者の断片の保存を裏で組むのも、窓・共有面の経路だけ** ([#2365])。書き出しは保存の
+        // 次のフレームの頭で組み、同じ引数から同じ絵が出る。窓の経路はもともと実時間の時計で、
+        // 保存のたびに窓が止まるほうが害が大きい ([ADR-0025] 追補 2026-10-14)
+        //
+        // [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+        // [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+        gpu.rebuildsShadersInBackground = render == nil
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
             displays: displays)

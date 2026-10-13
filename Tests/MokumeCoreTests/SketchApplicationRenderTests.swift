@@ -402,6 +402,8 @@ struct SketchApplicationRenderTests {
         let application = try SketchApplication(sketch: Sweep(), gpu: RenderDevice())
         defer { application.willTerminate() }
         #expect(application.clock == .wallClock)
+        // 窓の経路は、利用者の断片の保存を裏で組む (#2365)
+        #expect(application.gpu.rebuildsShadersInBackground)
         #expect(application.activationPolicy == .regular)
         #expect(application.endsAfterLastWindowClosed)
     }
@@ -413,6 +415,8 @@ struct SketchApplicationRenderTests {
         let ending = Ending()
         let application = try makeApplication(Sweep(), request, ending)
         #expect(application.clock == .frameIndex(frameRate: 24))
+        // 書き出しは、保存の次のフレームの頭でその場で組む (#2365)
+        #expect(!application.gpu.rebuildsShadersInBackground)
         // 1 枚も描かずに畳む — 揃っていないので 0 以外になる (プロセスは終わらない)
         application.willTerminate()
         #expect(ending.exitStatus == 1)

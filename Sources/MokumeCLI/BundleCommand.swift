@@ -84,7 +84,13 @@ enum BundleCommand {
 
         // **宣言は 1 度だけ読む。** 走らせるものを決めるのにも、下限の版と資材の包みを
         // 知るのにも要る — 別々に引くと `dump-package` を 2 回起こすことになる
-        let declared = try RunCommand.dumpPackage(in: directory)
+        //
+        // **道具立てが答えなかった回を、宣言の不備と名乗らない** (#2483)。`dump-package` が 0 以外で
+        // 終わると宣言は読めないが、それは `Package.swift` が実行ファイルを宣言していないことでは
+        // ない。壊れた宣言そのものを道具立てが読めなかった回も、理由は標準エラーにある
+        let reading = try RunCommand.declaration(in: directory)
+        if let failure = reading.failure { throw failure }
+        let declared = reading.package
         guard let product = declared?.executableProductName else {
             throw .noExecutable(path: directory.path)
         }
@@ -243,9 +249,20 @@ enum BundleCommand {
     /// 強化されたランタイムの下では、カメラやマイクは entitlement が無いと許可を求める
     /// ところまで行けずに拒否される。名前を持たない署名はランタイムを当てないので、文言が
     /// あれば許可を求められる。
+    ///
+    /// **`codesign` は `swift` と同じ口 (``RunCommand/capture(_:capturing:errors:running:)``) で
+    /// 起こす** ([#2483](https://github.com/mokume-metal/mokume/issues/2483)・
+    /// [#2575](https://github.com/mokume-metal/mokume/issues/2575))。`env` 越しなので、`codesign` が
+    /// 無い回は 127 で終わる — 自前で起こして終了コードだけを読むと、それを「署名に失敗した
+    /// (127)」と名乗り、起こせなかった理由は `catch` で捨てて一律「codesign が無い」と名乗って
+    /// いた。道具が無いこと・起こせなかった理由・署名の失敗を、それぞれの名で名乗る。出力は
+    /// 端末へ流す (失敗の本文は `codesign` が標準エラーで名乗る)。
+    ///
+    /// - Parameter environment: `codesign` へ渡す環境。**検査から `PATH` を差し替えられる形にしてある。**
     static func sign(
         _ app: URL, as identity: String?, entitlements: [String: Bool] = [:],
-        scratch: URL = FileManager.default.temporaryDirectory
+        scratch: URL = FileManager.default.temporaryDirectory,
+        environment: [String: String]? = nil
     ) throws(CommandFailure) {
         var file: URL?
         if identity != nil, !entitlements.isEmpty {
@@ -257,27 +274,13 @@ enum BundleCommand {
         }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.executableURL = RunCommand.envURL
         process.arguments = signArguments(for: app, as: identity, entitlements: file)
-        // **待つ間に実行ループを回さない** (``ExitWait``・#1937)
-        let exited = ExitWait(for: process)
-        do {
-            try process.run()
-        } catch {
-            throw .toolchainMissing("codesign")
+        process.environment = environment
+        let result = try RunCommand.capture(process, capturing: false, errors: .inherit)
+        guard result.status == 0 else {
+            throw .codesignFailed(status: result.status)
         }
-        exited.wait()
-        if let failure = signingFailure(ending: ChildEnding(of: process)) { throw failure }
-    }
-
-    /// `codesign` の終わり方から、署名の失敗を決める。**通ったなら `nil`。**
-    ///
-    /// **合図で落ちた `codesign` を終了コードの形で名乗らない** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
-    /// `terminationStatus` は合図で落ちた子に合図の番号を返すので、直に読むと SIGKILL (9) が
-    /// 「Signing failed (exit code 9)」になる。`128 + 番号` で名乗る (``ChildEnding/shellStatus``・
-    /// `RunCommand.capture` の戻りと同じ)。
-    static func signingFailure(ending: ChildEnding) -> CommandFailure? {
-        ending == .exited(0) ? nil : .codesignFailed(status: ending.shellStatus)
     }
 
     /// `codesign` に渡すもの (検査から呼べる形)。

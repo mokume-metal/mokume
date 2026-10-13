@@ -134,12 +134,14 @@ final class Typeface {
     /// PostScript 名とも一致しない。返った書体の地域化した名前と比べると、比べられるのは
     /// いまの表示言語の名前 1 つだけで、表示言語によって在る名前を断ってしまう。名前を必須に
     /// して探させれば、無い名前では何も見つからず、CoreText の名前の索引に載った名前は表示言語に
-    /// 依らず見つかる。索引に載らない名前 (後から入れた書体の表示名など) は、どの経路でも引けない。
+    /// 依らず見つかる。**索引に載らない名前** (後から入れた書体の表示名など) は、ここでは引けない —
+    /// ``resolvedName(of:)`` が各言語の名前の表 (``TypefaceNameIndex``) で引き直す ([#2563])。
     ///
     /// **`.` で始まる名前は探させない。** システムの内部名 (`.SFNS-Regular` など) は、CoreText が
     /// 別の書体へ差し替えたうえで「見つかった」と答えるので、名前の一致だけで決める。
     ///
     /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
+    /// [#2563]: https://github.com/mokume-metal/mokume/issues/2563
     static func exists(name: String) -> Bool {
         let font = CTFontCreateWithName(name as CFString, 12, nil)
         let family = CTFontCopyFamilyName(font) as String
@@ -158,6 +160,26 @@ final class Typeface {
         else { return false }
         // 見つかった書体が、名前で引いた書体そのものであること
         return foundName == postScript
+    }
+
+    /// 名前を、``CTFontCreateWithName`` が同じ書体へ引ける綴りに解く。この環境に無い名前は `nil`。
+    ///
+    /// CoreText の名前の索引が引ける名前 (``exists(name:)``) は、そのまま返す。**索引に載らない名前**
+    /// (日本語表示の `ヒラギノ角ゴ 簡体中文 W3`・`黒体-簡 ミディアム`、後から入れた書体の表示名など) は、
+    /// 書体メニューに出る各言語の名前の表 (``TypefaceNameIndex``) で面を探し、その PostScript 名を
+    /// 返す ([#2563])。表は初回に 1 度だけ作る。名前が複数の面に当たるときは、表が CoreText の選ぶ
+    /// 面に揃える。表が返した名前も CoreText で同じ面に引き直せることを確かめ、引けなければ断る。
+    ///
+    /// **`.` で始まる名前は表でも引かない** (``exists(name:)`` と同じく、内部名は別の書体へ差し替わる)。
+    ///
+    /// [#2563]: https://github.com/mokume-metal/mokume/issues/2563
+    static func resolvedName(of name: String) -> String? {
+        if exists(name: name) { return name }
+        guard !name.hasPrefix("."),
+            let postScript = TypefaceNameIndex.system.postScriptName(for: name),
+            exists(name: postScript)
+        else { return nil }
+        return postScript
     }
 
     /// 1 文字ぶんを引き当てる。字形が無ければ `nil`。
