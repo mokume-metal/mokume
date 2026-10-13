@@ -126,18 +126,18 @@ nonisolated enum ModelFile {
         for line in text.lines {
             let fields = line.split(whereSeparator: \.isWhitespaceQuickly)
             guard let keyword = fields.first else { continue }
-            let values = fields.dropFirst()
+            // **向きは 3 つの数まで** (`vn i j k`)。4 つ目以降があれば欄を空にして、読めない行として
+            // 数える (#2566)。行末のコメント (`# …`) は欄に数えない。`v` の 4 つ目 (w・色) と
+            // `vt` の 3 つ目 (w) は仕様にある欄なので、それは読み捨てる
+            let values =
+                keyword == "vn" && fields.dropFirst().prefix(while: { !$0.hasPrefix("#") }).count > 3
+                ? ArraySlice<Substring>() : fields.dropFirst()
             switch keyword {
             case "v":
                 guard let point = vector(values) else { skipped += 1; continue }
                 positions.append(point)
             case "vn":
-                // **向きは 3 つの数まで** (`vn i j k`)。4 つ目以降があれば読めない行 (#2566)。
-                // `v` の 4 つ目 (w・色) と `vt` の 3 つ目 (w) は仕様にある欄なので、それは読み捨てる
-                guard values.count <= 3, let point = vector(values) else {
-                    skipped += 1
-                    continue
-                }
+                guard let point = vector(values) else { skipped += 1; continue }
                 normals.append(point)
             case "vt":
                 guard let point = texture(values) else { skipped += 1; continue }
@@ -298,7 +298,11 @@ nonisolated enum ModelFile {
         // 捨てて三角形にはしない — 面の行ごと読み飛ばして数える (#2566・#2339)
         guard parts.count <= 3, let first = parts.first, let raw = Int(first) else { return nil }
         guard let position = resolve(raw, count: positions) else { return nil }
-        // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)
+        // **`a//c` は真ん中が空**という書き方 (読み取り位置を持たない角)。
+        // 番号が数として読めない (`a/x/c`)・範囲の外 (`a/99/c`) も、書いていない角と同じに
+        // 読む — 面は残し、読み飛ばした行には数えない ([#2349])。`vn` も同じ
+        //
+        // [#2349]: https://github.com/mokume-metal/mokume/issues/2349
         var texture: Int?
         if parts.count >= 2, let rawTexture = Int(parts[1]) {
             texture = resolve(rawTexture, count: textures)
