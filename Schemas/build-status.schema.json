@@ -28,7 +28,7 @@
     },
     "output": {
       "type": "string",
-      "description": "The build's output. What went wrong goes here. Warnings can appear even on success."
+      "description": "The build's output. What went wrong goes here. When the build succeeded but the sketch was not started (launched is false), the reason it was not started comes first, followed by the build's output after a blank line. Warnings can appear even on success."
     },
     "stamp": {
       "type": "string",

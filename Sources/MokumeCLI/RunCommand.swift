@@ -645,7 +645,8 @@ enum RunCommand {
     /// **限界: 起こした時点と確かめた時点の間に場所が消えたり戻ったりすると、読み分けが
     /// 変わる** (確かめた時点の姿を名乗る)。
     ///
-    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。口ごとに名乗りが違う
+    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。**在るのに実行できない
+    ///   ときには使わない** — 「走らせるものが無い」と言うと、在るものを探しに行かせる (#2521)。口ごとに名乗りが違う
     ///   (道具なら ``CommandFailure/toolchainMissing(_:)``、スケッチなら
     ///   ``CommandFailure/noExecutable(path:)``)。
     nonisolated static func launchFailure(
@@ -658,8 +659,16 @@ enum RunCommand {
             return .placeUnusable(tool: tool, place: place.path, presence: presence)
         }
         guard let executable = process.executableURL,
-            FileManager.default.isExecutableFile(atPath: executable.path)
+            FileManager.default.fileExists(atPath: executable.path)
         else { return executableMissing }
+        // **在るのに実行できないファイルを「無い」と言わない** (#2521)。`Process.run()` は
+        // 実行ビットの無いファイルにも「The file doesn’t exist」(下に POSIX の誤り無し) を
+        // 投げるので、誤りの文面からは原因が取れない — stat し直した事実で名乗る
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            return .cannotLaunch(
+                tool: tool, place: place.path,
+                reason: "\(executable.path) is not executable (\(GivenPath.errorText(EACCES)))")
+        }
         return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
     }
 

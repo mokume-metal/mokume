@@ -301,6 +301,24 @@ struct RunCommandTests {
         }
     }
 
+    /// **在るのに実行できないスケッチを「走らせるものが無い」と言わない** ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    /// `Process.run()` は実行ビットの無いファイルにも「無い」と投げるので、誤りの文面に頼ると
+    /// 「Package.swift の products を見よ」と、在るものを探しに行かせる。
+    @Test("実行ビットの無いスケッチは、走らせるものが無いではなく実行できないと名乗る")
+    func aSketchWithoutTheExecuteBitSaysSo() throws {
+        let executable = try makeExecutable(exiting: 0)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: executable.path)
+        let place = executable.deletingLastPathComponent()
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: place.path,
+                reason: "\(executable.path) is not executable (Permission denied)")
+        ) {
+            try RunCommand.launch(executable, in: place)
+        }
+    }
+
     // MARK: - `..` で始まる場所 (#2314)
 
     /// 自分の作業ディレクトリ (シンボリックリンクを解いたもの) を `marker` へ書いて終わる子。
@@ -367,9 +385,7 @@ struct RunCommandTests {
         let invocation = Invocation(place: "..", currentDirectory: typedFrom)
         let hooks = WatchSession.Hooks.live(in: invocation.directory, invocation: invocation)
 
-        let process = try #require(
-            hooks.launch(recorder.executable, invocation.directory, nil, nil),
-            "見張りがスケッチを起こせなかった")
+        let process = try hooks.launch(recorder.executable, invocation.directory, nil, nil)
         // **待つ側が期限を持つ。** 越えたら子を殺して赤にする
         defer { if process.isRunning { process.terminate() } }
         let ran = try #require(Self.waitForText(in: recorder.marker), "期限までに書かれなかった")

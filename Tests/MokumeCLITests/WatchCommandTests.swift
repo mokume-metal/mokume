@@ -30,7 +30,9 @@ struct WatchCommandTests {
                         status: 0, output: "", executable: nil, binPath: directory,
                         product: "sketch")
                 },
-                launch: { _, _, _, _ in nil },
+                launch: { _, _, _, _ throws(CommandFailure) in
+                    throw .cannotLaunch(tool: "sketch", place: "/stub", reason: "the stub starts nothing")
+                },
                 now: { 0 },
                 stamp: { _ in self.stamp })
         }

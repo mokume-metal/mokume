@@ -38,7 +38,12 @@ final class WatchSession {
         /// ([#1100](https://github.com/mokume-metal/mokume/issues/1100))。
         var rebuild: (URL) async throws(CommandFailure) -> RunCommand.Rebuilt
         /// 走らせる。世代の刻印と、速さの名乗り (一緒に出す構成の名前) を渡す。
-        var launch: (URL, URL, String?, String?) -> Process?
+        ///
+        /// **起こせなければ投げる** (``rebuild`` と同じ)。記録の形へ直すのは ``WatchSession`` の
+        /// 側である — `nil` を返す形だった頃は、`try?` が理由を捨て、記録には `launched: false`
+        /// だけが残って `output` にも端末にも理由が出なかった
+        /// ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+        var launch: (URL, URL, String?, String?) throws(CommandFailure) -> Process
         /// 時計の読み (秒)。**取るのは 2 つの読みの差だけである** — 記録に載るのは所要時間
         /// (`detect_ms` など) で、時刻そのものは書かない。
         ///
@@ -99,7 +104,7 @@ final class WatchSession {
                         }
                     }.value.get()
                 },
-                launch: { executable, directory, stamp, rate in
+                launch: { executable, directory, stamp, rate throws(CommandFailure) in
                     let process = Process()
                     process.executableURL = executable
                     process.currentDirectoryURL = directory
@@ -116,7 +121,17 @@ final class WatchSession {
                     // 窓を出せたときだけ置くので、出せなかった回の子は自分の窓を開く (#2028)
                     process.environment = RunCommand.childEnvironment(
                         stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName)
-                    return (try? process.run()) == nil ? nil : process
+                    do {
+                        try process.run()
+                    } catch {
+                        // **起こせなかった理由を捨てない** (#2521)。読み分けは `run` の口と同じ
+                        // 1 つを使う — 場所が使えないのか・走らせるものが無いのか・在るのに
+                        // 起こせないのか (#2314)
+                        throw RunCommand.launchFailure(
+                            of: process, error: error,
+                            executableMissing: .noExecutable(path: executable.path))
+                    }
+                    return process
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
                 stamp: { stamps.current(for: $0) },
@@ -645,10 +660,14 @@ final class WatchSession {
         // **終われと言われた後は、起こさない。** ここへ来るのは作り直しを待っている間に
         // 巡回が畳まれた回で、起こしても止める者がもう居ない (#834)。作り直し自体は通って
         // いるので、記録には通ったと書いて「起こしていない」だけを名乗る
+        //
+        // **起こさなかった理由を本文の頭で名乗る** (#2521)。`launched: false` だけでは、
+        // 起こせなかった回と見分けが付かない
         guard !stopRequested else {
             return finish(
                 BuildReport(
-                    ok: true, status: 0, output: rebuilt.output, stamp: stamp,
+                    ok: true, status: 0,
+                    output: Self.notLaunched(Self.stopRequestedNotice, rebuilt.output), stamp: stamp,
                     configuration: configurationName, launched: false,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
@@ -668,7 +687,17 @@ final class WatchSession {
         } else {
             stop()
         }
-        child = hooks.launch(executable, directory, stamp, reportsRate ? configurationName : nil)
+        // **起こせなかった理由は記録の本文の頭へ載せる** (#2521)。作り直しの出力はその後に
+        // 続ける — 建っていない回 (``unbuiltNotice(_:)``) と同じ形で、読み手は頭の行で
+        // 何が起きたかを読める
+        var launchFailure: CommandFailure?
+        do throws(CommandFailure) {
+            child = try hooks.launch(
+                executable, directory, stamp, reportsRate ? configurationName : nil)
+        } catch {
+            child = nil
+            launchFailure = error
+        }
         // **書き口を塞がない形にしてから渡す。** 入力が来るのは窓が出た後なので、ここで
         // 立てておけば「読まない子へ書いて固まる」回は作れない (#1296)
         unblockWriting(to: child)
@@ -677,8 +706,10 @@ final class WatchSession {
 
         return finish(
             BuildReport(
-                ok: true, status: 0, output: rebuilt.output, stamp: stamp,
-                configuration: configurationName, launched: child != nil,
+                ok: true, status: 0,
+                output: launchFailure.map { Self.notLaunched($0.message, rebuilt.output) }
+                    ?? rebuilt.output,
+                stamp: stamp, configuration: configurationName, launched: child != nil,
                 timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)),
             firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
     }
@@ -711,6 +742,20 @@ final class WatchSession {
             finish(report)
         }
         return retireOutgoing()
+    }
+
+    /// 終われと言われた後に作り直しが通った回の、起こさなかった理由。
+    ///
+    /// **起こせなかった回と言葉を分ける** (#2521)。どちらも `ok: true, launched: false` で、
+    /// 違いは本文にしか出ない。
+    static let stopRequestedNotice =
+        "Not started, because watching was ending — the build itself succeeded"
+
+    /// 起こさなかった (起こせなかった) 理由を頭に置き、作り直しの出力を後に続ける。
+    ///
+    /// **理由を先に置く。** 作り直しの出力は長く、末尾に置いた理由は読まれない。
+    static func notLaunched(_ reason: String, _ buildOutput: String) -> String {
+        buildOutput.isEmpty ? reason : reason + "\n\n" + buildOutput
     }
 
     /// 「通ったのに建っていない」ことを、記録の中で名乗る。

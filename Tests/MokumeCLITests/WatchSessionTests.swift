@@ -43,6 +43,9 @@ struct WatchSessionTests {
         /// 返すのは走らせていない `Process` である — 新しい絵が出るまでを測るのは子が居る回
         /// だけなので、居ることにだけ要る (#930)。
         var launchesChild = false
+        /// 起こせなかった回に投げる誤り。**理由が記録と端末に載るか**を見る (#2521)。
+        var launchFailure = CommandFailure.cannotLaunch(
+            tool: "sketch", place: "/stub", reason: "the stub starts nothing")
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
@@ -60,12 +63,13 @@ struct WatchSessionTests {
                         executable: self.productBuilt ? bin : nil, binPath: directory,
                         product: self.product)
                 },
-                launch: { _, _, stamp, rate in
+                launch: { _, _, stamp, rate throws(CommandFailure) in
                     self.launches += 1
                     self.stampsGivenToChildren.append(stamp)
                     self.ratesGivenToChildren.append(rate)
                     self.clock += 0.03
-                    return self.launchesChild ? Process() : nil
+                    guard self.launchesChild else { throw self.launchFailure }
+                    return Process()
                 },
                 now: { self.clock },
                 stamp: { _ in self.stamp })
@@ -188,11 +192,98 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
 
-        // Recorder の launch は常に nil を返す (子を作らない)
+        // Recorder の launch は既定で起こせない (理由を投げる)
         let report = await session.start()
         #expect(report.ok, "作り直し自体は通っている")
         #expect(!report.launched)
         #expect(report.summary.contains("could not start it"))
+    }
+
+    /// **起こせなかった理由を捨てない** ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    /// `launched: false` だけでは、場所が消えたのか実行できないのかを誰も読めない — 理由は
+    /// 本文の頭に置き、作り直しの出力はその後に続ける (建っていない回と同じ形)。
+    @Test("建ったのに起こせなかった回は、起こせなかった理由を記録の本文の頭に載せる")
+    func aLaunchFailureLeadsTheRecordedOutput() async throws {
+        let recorder = Recorder()
+        let directory = try makeDirectory()
+        recorder.launchFailure = .placeUnusable(
+            tool: "sketch", place: "/gone", presence: .missing)
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: recorder.hooks())
+
+        let report = await session.start()
+        let reason = recorder.launchFailure.message
+        #expect(report.output == reason + "\n\n" + recorder.buildOutput)
+
+        let data = try Data(
+            contentsOf: directory.appendingPathComponent(".mokume/build/status.json"))
+        let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(decoded?["output"] as? String == report.output, "区画の記録に理由が載っていない")
+        #expect(decoded?["launched"] as? Bool == false)
+        #expect(decoded?["ok"] as? Bool == true)
+
+        // 端末にも、要約の次の行に理由が出る
+        let lines = WatchCommand.reportLines(report)
+        #expect(lines.count == 2, "\(lines)")
+        #expect(lines.first?.hasPrefix("Rebuilt, but could not start it: ") == true)
+        #expect(lines.dropFirst().first?.hasPrefix(reason) == true, "端末に理由が出ていない: \(lines)")
+        #expect(!lines.contains(WatchCommand.holdingLine), "作り直しは通っているのに、前の版のまま待つと言った")
+    }
+
+    /// **`launched: false` の口はどれも理由を名乗る** (#2521)。終われと言われた後に作り直しが
+    /// 通った回は、起こさないと決めたのは見張りの側で、本文にその 1 行が無いと起こせなかった回と
+    /// 見分けが付かない。
+    @Test("終われと言われた後で起こさなかった回は、そう名乗る")
+    func aSkippedLaunchAfterStopSaysWhy() async throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        session.noteStopRequested()
+
+        let report = await session.start()
+        #expect(report.ok)
+        #expect(!report.launched)
+        #expect(recorder.launches == 0)
+        #expect(report.output == WatchSession.stopRequestedNotice + "\n\n" + recorder.buildOutput)
+        #expect(WatchCommand.reportLines(report).contains(report.output))
+    }
+
+    /// **本物の起こす口が、在処と原因を名乗る** (#2521)。替え玉の検査は投げる形なので、`live` の
+    /// 側で `try?` に戻っても緑のままになる — ここでは本物の `Process` を起こせない形で起こす。
+    @Test("本物の起こす口は、起こせなかった在処と原因を投げる")
+    func theLiveLaunchThrowsWhereAndWhy() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-unlaunchable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
+
+        // 実行ビットを外した実行ファイル。`Process.run()` は「無い」と投げるが、在る
+        let executable = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: executable.path)
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: directory.path,
+                reason: "\(executable.path) is not executable (Permission denied)")
+        ) {
+            try hooks.launch(executable, directory, nil, nil)
+        }
+
+        // 見張りの途中で消えた場所
+        let gone = directory.appendingPathComponent("gone", isDirectory: true)
+        #expect(
+            throws: CommandFailure.placeUnusable(tool: "sketch", place: gone.path, presence: .missing)
+        ) {
+            try hooks.launch(executable, gone, nil, nil)
+        }
+
+        // 走らせるものが無い (裏側。いままでどおり)
+        let absent = directory.appendingPathComponent("absent")
+        #expect(throws: CommandFailure.noExecutable(path: absent.path)) {
+            try hooks.launch(absent, directory, nil, nil)
+        }
     }
 
     @Test("最初の 1 回は、変化を待たずに作って走らせる")
@@ -459,7 +550,7 @@ struct WatchSessionTests {
                     status: 0, output: "", executable: URL(fileURLWithPath: "/bin/sh"),
                     binPath: directory, product: "sketch")
             },
-            launch: { executable, _, _, _ in
+            launch: { executable, _, _, _ throws(CommandFailure) in
                 let process = Process()
                 process.executableURL = executable
                 process.arguments = ["-c", script]
@@ -467,7 +558,11 @@ struct WatchSessionTests {
                 process.standardInput = Pipe()
                 process.standardOutput = pipe
                 process.standardError = FileHandle.nullDevice
-                guard (try? process.run()) != nil else { return nil }
+                do {
+                    try process.run()
+                } catch {
+                    throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
+                }
                 ready.pipes.append(pipe)
                 return process
             },
@@ -1399,7 +1494,7 @@ struct FrameRateHandoffTests {
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
 
         let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
-        let child = try #require(hooks.launch(executable, directory, nil, nil))
+        let child = try hooks.launch(executable, directory, nil, nil)
         child.waitUntilExit()
         #expect(try String(contentsOf: seen, encoding: .utf8) == WatchSession.viewportOwnerName)
         #expect(WatchSession.viewportOwnerName.hasSuffix(" watch"))

@@ -540,14 +540,26 @@ enum WatchCommand {
     }
 
     private static func report(_ outcome: BuildReport, on viewer: Viewer?) {
-        say(outcome.summary)
-        if !outcome.ok, !outcome.output.isEmpty {
-            say(outcome.output)
-            say(holdingLine)
-        }
+        for line in reportLines(outcome) { say(line) }
         // **回っている印は止める。** 作り直しは終わっているので、回り続ける印は
         // 「まだ待たされている」と読める
         viewer?.preview.report(notice(for: outcome), spinning: false)
+    }
+
+    /// 1 回の作り直しの結果として端末に出す行。
+    ///
+    /// **起こさなかった回も本文を出す** ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    /// 作り直しが通って子を起こせなかった回 (`ok: true, launched: false`) は、要約が
+    /// `Rebuilt, but could not start it` と言うだけで、理由は記録の本文の頭にしか無い —
+    /// 通らなかった回だけ本文を出していた頃は、端末には理由が 1 行も出なかった。
+    static func reportLines(_ outcome: BuildReport) -> [String] {
+        var lines = [outcome.summary]
+        guard !outcome.ok || !outcome.launched, !outcome.output.isEmpty else { return lines }
+        lines.append(outcome.output)
+        // **走り続けているものを名乗るのは、作り直しが通らなかった回だけである。** 起こせ
+        // なかった回は差し替えに入った後なので、前の版が走り続けているとは限らない
+        if !outcome.ok { lines.append(holdingLine) }
+        return lines
     }
 
     /// 作り直しが通らなかったとき、走り続けているものを名乗る行。
