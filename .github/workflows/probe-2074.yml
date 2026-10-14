@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て (#2074 の完了条件 2・4)。main には入れない。
+# 本体の検査の最初の GPU の待ちで、プロセスの関所に印を立て (MOKUME_PROBE_TRIP_GATE=1)、
+# 定期と同じ make test-release-scheduled を 3 回回す。各回が要約の行を出して 30 分の内側で
+# 終わるか、記録 (XML・test-log) が残るかを見る。後段で、起票の本文を gh の偽物で作って要約に出す
+# (Issue は立てない)。
+name: Probe 2074
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [".github/workflows/probe-2074.yml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  probe:
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 100
+    concurrency:
+      group: render-scheduled-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/runner-preflight.sh
+      - name: 1 回目
+        timeout-minutes: 30
+        env:
+          MOKUME_PROBE_TRIP_GATE: "1"
+        run: |
+          mkdir -p .build/probe-1
+          start=$SECONDS
+          set +e
+          make test-release-scheduled CI= 2>&1 | tee .build/probe-1/test-log.txt
+          status=$?
+          set -e
+          echo "make=$status seconds=$((SECONDS - start))" | tee .build/probe-1/result.txt
+          cp .build/test-results-release-swift-testing.xml .build/probe-1/ 2>/dev/null || echo "XML なし" | tee -a .build/probe-1/result.txt
+          grep -E 'Test run with [0-9]+ tests' .build/probe-1/test-log.txt | tee -a .build/probe-1/result.txt || echo "要約の行なし" | tee -a .build/probe-1/result.txt
+      - name: 2 回目
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        env:
+          MOKUME_PROBE_TRIP_GATE: "1"
+        run: |
+          mkdir -p .build/probe-2
+          start=$SECONDS
+          set +e
+          make test-release-scheduled CI= 2>&1 | tee .build/probe-2/test-log.txt
+          status=$?
+          set -e
+          echo "make=$status seconds=$((SECONDS - start))" | tee .build/probe-2/result.txt
+          cp .build/test-results-release-swift-testing.xml .build/probe-2/ 2>/dev/null || echo "XML なし" | tee -a .build/probe-2/result.txt
+          grep -E 'Test run with [0-9]+ tests' .build/probe-2/test-log.txt | tee -a .build/probe-2/result.txt || echo "要約の行なし" | tee -a .build/probe-2/result.txt
+      - name: 3 回目 (定期と同じ形・make の赤で step を落とす)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        env:
+          MOKUME_PROBE_TRIP_GATE: "1"
+        run: |
+          mkdir -p .build/probe-3 .build/probe-3-record
+          make test-release-scheduled CI= 2>&1 | tee .build/test-log.txt
+      - name: 3 回目の記録を集める
+        if: ${{ always() }}
+        run: |
+          cp .build/test-log.txt .build/probe-3/ 2>/dev/null || true
+          cp .build/test-results-release-swift-testing.xml .build/probe-3/ 2>/dev/null || true
+          for n in 1 2 3; do
+            echo "## $n 回目" >> "$GITHUB_STEP_SUMMARY"
+            cat .build/probe-$n/result.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            grep -E 'Test run with [0-9]+ tests' .build/probe-$n/test-log.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "要約の行なし" >> "$GITHUB_STEP_SUMMARY"
+            echo "test-log の行数: $(wc -l < .build/probe-$n/test-log.txt 2>/dev/null || echo 0)" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: probe-2074-record
+          path: |
+            .build/probe-1
+            .build/probe-2
+            .build/probe-3
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
+      # 定期と同じ名前でも上げる (後段の起票の本文が読む)
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduled-release-record
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 7
+
+  report-dry:
+    needs: probe
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: scheduled-release-record
+          path: record/release
+      - name: 起票の本文を偽 gh で作る (Issue は立てない)
+        env:
+          RELEASE_RESULT: ${{ needs.probe.result }}
+        run: |
+          mkdir -p fakebin
+          cat > fakebin/gh <<'GH'
+          #!/bin/sh
+          echo "fake gh: $*" >&2
+          case "$1 $2" in
+            "issue list") echo "" ; exit 0 ;;
+            "issue create")
+              prev=
+              for a in "$@"; do
+                [ "$prev" = "--body-file" ] && cp "$a" body.md
+                prev=$a
+              done
+              echo "https://github.com/mokume-metal/mokume/issues/0"; exit 0 ;;
+            *) exit 0 ;;
+          esac
+          GH
+          chmod +x fakebin/gh
+          export PATH="$PWD/fakebin:$PATH"
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          release_xml=$(find_one record/release test-results-release-swift-testing.xml)
+          release_log=$(find_one record/release test-log.txt)
+          set +e
+          bash scripts/report-scheduled-render.sh \
+            success record/debug/none.xml record/debug/none.txt \
+            "$RELEASE_RESULT" "${release_xml:-record/release/none.xml}" "${release_log:-record/release/none.txt}"
+          echo "report の終了コード: $?"
+          set -e
+          { echo "## 起票される本文 (release の結論: $RELEASE_RESULT)"; echo; head -c 60000 body.md 2>/dev/null || echo "(本文なし)"; } >> "$GITHUB_STEP_SUMMARY"

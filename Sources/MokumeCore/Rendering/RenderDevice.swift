@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
 import MokumeDiagnostics
 
@@ -992,7 +993,10 @@ import MokumeDiagnostics
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     private func signalReached(_ value: UInt64, while wait: CommandQueueGate.Wait) -> Bool {
         let milliseconds = UInt64((signalWaitLimit / .milliseconds(1)).rounded(.up))
-        guard !completion.wait(untilSignaledValue: value, timeoutMS: milliseconds) else { return true }
+        // 使い捨て (#2074 の条件 2): プロセスの関所への最初の待ちを、期限切れとして扱う
+        let probeTrip = ProcessInfo.processInfo.environment["MOKUME_PROBE_TRIP_GATE"] == "1"
+            && queueGate === CommandQueueGate.process && !queueGate.isClosed
+        guard probeTrip || !completion.wait(untilSignaledValue: value, timeoutMS: milliseconds) else { return true }
         if queueGate.close(after: wait, limit: signalWaitLimit), unansweredSubmissionsForTesting == 0 {
             Diagnostics.warn(Self.closingNotice(after: wait, limit: signalWaitLimit))
         }
