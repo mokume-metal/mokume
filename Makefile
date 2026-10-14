@@ -68,7 +68,8 @@ CI_CHECK_SKIP ?=
 #   - hooks-test は macOS に残る。検査のファイルの 6 割がスクリプトを /bin/bash で起こし、その 3.2 と
 #     BSD の道具での動き — 手元とエージェントのフックが走る環境 — を保証している (#702)。
 #     ubuntu へ出す段のうちシェルで書いたもの (adrs・file-modes など) の 3.2 での動きも、
-#     macOS に残る hooks-test の各段の検査 (adrs_test など) が持つ
+#     macOS に残る hooks-test の各段の検査 (adrs_test など) が持つ。ubuntu の段が起こす
+#     scripts/*.sh のどれにもその検査があることは ci_workflow_test.py が見る
 #   - drawing-evidence は CI ではどちらでも理由を述べて 0 で抜ける (上の並びの注釈)。ubuntu に置く
 CI_STATIC_STEPS := schemas tool-language isolated-deinit entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
 CI_CHECK_HOST ?=

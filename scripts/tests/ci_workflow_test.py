@@ -27,9 +27,11 @@ release_workflow_test.py)。ここで固定するのは次の 2 つ:
   6. 段を走らせるジョブは `make ci-check` を呼ぶだけで (段の並びを ci.yml に持たない)、
      `CI_CHECK_HOST` の綴りを誤ると全段や 0 段に落ちずに make が止まる
 
-あわせて ci-static の足回りを固定する:
+あわせて ci-static の足回りを 2 つ固定する:
 
   7. 道具は照合値の無いものを 1 つも入れない (ToolPinsTest の冒頭)
+  8. ubuntu へ出したシェルの段のスクリプトには、macOS の hooks-test に `/bin/bash` で起こす
+     検査がある (StaticShellStepsTest の冒頭)
 
 段の集合は Makefile を正本にして、**ci-check のレシピをそのまま走らせて**読む。レシピは
 `bash scripts/ci-check.sh <段…>` なので、PATH の先に置いた代役の `bash` が受け取った引数を
@@ -281,6 +283,39 @@ class ToolPinsTest(unittest.TestCase):
         self.assertIn("--no-build-isolation", second)
         for line in self.installs:
             self.assertIn("--require-hashes", line)
+
+
+@unittest.skipUnless(MAKE, "make が PATH に無い")
+class StaticShellStepsTest(unittest.TestCase):
+    """ubuntu へ出したシェルの段は、macOS の hooks-test が `/bin/bash` で起こす (#2612・#702)。
+
+    CI ではこれらの段が ubuntu の bash 5 と GNU の道具で走る。手元とエージェントが走らせる
+    `/bin/bash` (3.2) と BSD の道具での動きは、macOS に残る hooks-test の検査だけが持つ。
+    段のレシピが起こす `scripts/*.sh` ごとに、そのスクリプトを名指しし `/bin/bash` を起こす
+    検査が scripts/tests に在ることを見る (Makefile の CI_STATIC_STEPS の注釈の約束)。
+    """
+
+    def test_ubuntu_のシェルの段には_bin_bash_の検査がある(self):
+        static = planned_steps("ubuntu", "")
+        env = {k: v for k, v in os.environ.items() if k not in INHERITED}
+        tests = {
+            p.name: p.read_text(encoding="utf-8")
+            for p in (REPO / "scripts" / "tests").glob("*_test.py")
+        }
+        scripts = set()
+        for step in static:
+            recipe = subprocess.run(
+                [MAKE, "--no-print-directory", "-n", step],
+                cwd=REPO, env=env, capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(recipe.returncode, 0, recipe.stderr)
+            scripts |= set(re.findall(r"scripts/([\w.-]+\.sh)\b", recipe.stdout))
+        self.assertTrue(scripts, "ubuntu の段にシェルのスクリプトが 1 つも無い (読み方が壊れている)")
+        uncovered = sorted(
+            s for s in scripts
+            if not any(s in text and '"/bin/bash"' in text for text in tests.values())
+        )
+        self.assertEqual(uncovered, [], "ubuntu へ出したのに /bin/bash で起こす検査の無いスクリプト")
 
 
 if __name__ == "__main__":
