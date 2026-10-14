@@ -675,7 +675,8 @@ struct SVGFileTests {
         let drawing = try document(
             #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
-        // 描かないのは変えない
+        // 描かないのは変えない。名乗りは「負の値を捨てた」ではなく「この値で根を描かない」の意味で、
+        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2410 に置いてある
         #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
     }
 

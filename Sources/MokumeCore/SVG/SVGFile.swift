@@ -597,6 +597,8 @@ nonisolated enum SVGFile {
             }
             // 順位の高い宣言から見て、**読めた宣言 (`auto` を含む) で止める**。読めない宣言は CSS では無効で
             // 捨てられ、下の宣言が残るので、名乗って次へ進む。全部が読めなければ書いていないのと同じ
+            // **負の値は別**: CSS では無効な宣言だが、ここでは読めた値として採り (描かない結果は変えていない)、
+            // 名乗りは「捨てた」ではなく「この値で根を描かない」の意味。CSS との仕様差は #2410 に置いてある
             func size(_ key: String, _ against: Float) -> Float? {
                 for text in (sizes[key] ?? []).reversed() {
                     switch written(
