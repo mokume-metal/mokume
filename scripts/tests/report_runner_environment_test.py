@@ -10,9 +10,9 @@
   1. 固定タイトルが `fix(` で始まる — triage.sh は接頭辞から型を推定する
   2. 開いた同じ Issue が無ければ起票し、本文に前検査の理由が載る
   3. 開いた同じ Issue があれば起票しない — 壊れている間、merge_group ごとに立てない
-  4. 本文が、PR の赤ではないこと・直した後の 1 手 (`gh workflow run stall-watch.yml`)・
-     「解消したら閉じる」を言う。stall-watch.yml が workflow_dispatch を持つことも見る
-     (持たなければ案内の 1 手が打てない)
+  4. 本文が、PR の赤ではないこと・直した後の 1 手 (弾かれた PR の予約を手で掛け直す)・
+     「解消したら閉じる」を言う。当番 (stall-watch) を走らせれば掛け直されるとは言わない —
+     当番は名乗るだけで掛け直さない (#2614)
   5. 理由が空なら使い方の誤りで止まる — 空の理由で起票しない
 
 偽 gh は PATH の先頭に置いた同型のスタブ (`scheduled_report_test.py` と同じ形)。
@@ -28,7 +28,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "report-runner-environment.sh"
-STALL_WATCH = REPO / ".github" / "workflows" / "stall-watch.yml"
 
 TITLE = "fix(render): 専用機の環境が壊れていて、merge queue の render が前検査で落ちている"
 REASON = "console: 表の GUI セッションが so で、job のユーザー (runner) ではない / screens: job のユーザーから見える画面が 0 枚"
@@ -130,10 +129,11 @@ class ReportRunnerEnvironmentTest(unittest.TestCase):
         self.run_script(REASON)
         body = self.body.read_text(encoding="utf-8")
         self.assertIn("PR の中身による赤ではない", body)
-        self.assertIn("gh workflow run stall-watch.yml", body)
+        self.assertIn("gh pr merge <番号> --auto --squash", body)
+        self.assertIn("bash scripts/stall-watch.sh", body)
         self.assertIn("解消したらこの Issue を閉じる", body)
-        # 案内の 1 手が打てること: stall-watch.yml は workflow_dispatch を持つ
-        self.assertRegex(STALL_WATCH.read_text(encoding="utf-8"), r"(?m)^  workflow_dispatch:")
+        # 当番を走らせても予約は戻らない (#2614)。そう読める案内を残さない
+        self.assertNotIn("gh workflow run stall-watch.yml", body)
 
     def test_理由が空なら起票しない(self):
         r = self.run_script("")

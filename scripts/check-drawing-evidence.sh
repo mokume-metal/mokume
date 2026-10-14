@@ -221,10 +221,16 @@ if [ -n "$pr" ]; then args=("$pr" "${args[@]}"); fi
 # **番号を名指しされたときは差を当てない。** 手元の木がその PR の木とは限らない — CI の
 # ジョブは既定ブランチを checkout して PR_NUMBER を渡すので、API が落ちたときに差を当てると
 # 「描画に触れない」と答えてしまう。読めなかったとだけ言って放棄する
-if ! pr_json=$(gh pr view "${args[@]}" 2>/dev/null); then
-  if [ -n "$pr" ]; then give_up "PR #$pr を読めなかった"; fi
+#
+# **読めなかった理由 (gh の stderr) は捨てずに添える** (#2614)。放棄して 0 で抜ける振る舞いは同じ
+pr_err=$(mktemp)
+if ! pr_json=$(gh pr view "${args[@]}" 2>"$pr_err"); then
+  why=$(tr '\n' ' ' <"$pr_err" | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/ $//')
+  rm -f "$pr_err"
+  if [ -n "$pr" ]; then give_up "PR #$pr を読めなかった (${why:-gh は理由を出さなかった})"; fi
   preview_without_pr
 fi
+rm -f "$pr_err"
 
 if jq -e --arg l "$ESCAPE_LABEL" '.labels[]? | select(.name == $l)' >/dev/null <<<"$pr_json"; then
   say "$ESCAPE_LABEL による例外 PR (絵は変わらないという申告)"
