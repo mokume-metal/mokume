@@ -27,6 +27,10 @@ release_workflow_test.py)。ここで固定するのは次の 2 つ:
   6. 段を走らせるジョブは `make ci-check` を呼ぶだけで (段の並びを ci.yml に持たない)、
      `CI_CHECK_HOST` の綴りを誤ると全段や 0 段に落ちずに make が止まる
 
+あわせて ci-static の足回りを固定する:
+
+  7. 道具は照合値の無いものを 1 つも入れない (ToolPinsTest の冒頭)
+
 段の集合は Makefile を正本にして、**ci-check のレシピをそのまま走らせて**読む。レシピは
 `bash scripts/ci-check.sh <段…>` なので、PATH の先に置いた代役の `bash` が受け取った引数を
 書き出して抜ける (駆動役も段も走らない)。各ジョブの `CI_CHECK_HOST` と `CI_CHECK_SKIP` は
@@ -217,6 +221,66 @@ class StepPartitionTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CI_CHECK_HOST", result.stderr)
         self.assertNotIn("scripts/ci-check.sh", result.stdout)
+
+
+def requirements(path: Path) -> tuple[list[str], dict[str, list[str]]]:
+    """requirements の (指定の行, 名前==版 → 照合値の並び)。継続行 (`\\`) は 1 つに畳む。"""
+    text = re.sub(r"\\\n", " ", path.read_text(encoding="utf-8"))
+    options, pins = [], {}
+    for line in text.splitlines():
+        line = line.split(" #", 1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("--"):
+            options.append(" ".join(line.split()))
+            continue
+        name = line.split()[0]
+        pins[name] = re.findall(r"--hash=sha256:([0-9a-f]{64})", line)
+    return options, pins
+
+
+class ToolPinsTest(unittest.TestCase):
+    """ci-static は照合値の無いものを 1 つも入れない (#2612)。
+
+    `--require-hashes` は build 依存に効かない。sdist を組むと、組む道具 (build-system の
+    requires) が版も照合値も無しに隔離環境へ入る。だからホイールだけを許し (`--only-binary
+    :all:`)、合うホイールの無い reuse だけを例外にして、組む道具は照合値つきで先に入れて
+    `--no-build-isolation` で使わせる。
+    """
+
+    TOOLS = REPO / "scripts" / "ci-tools.txt"
+    BUILD = REPO / "scripts" / "ci-tools-build.txt"
+
+    @classmethod
+    def setUpClass(cls):
+        _, jobs = workflow.split(CI.read_text(encoding="utf-8"))
+        cls.installs = re.findall(r"(?m)^\s+(\S*pip\"? install .+)$", jobs["ci-static"])
+
+    def test_全部の版に照合値がある(self):
+        for path in (self.TOOLS, self.BUILD):
+            options, pins = requirements(path)
+            with self.subTest(file=path.name):
+                self.assertTrue(pins)
+                for name, hashes in pins.items():
+                    self.assertRegex(name, r"^[A-Za-z0-9._-]+==\S+$", "版を == で固定する")
+                    self.assertTrue(hashes, f"{name} に照合値が無い")
+                self.assertIn("--require-hashes", options)
+                self.assertIn("--only-binary :all:", options)
+
+    def test_sdist_から組むのは_reuse_だけ(self):
+        tools, _ = requirements(self.TOOLS)
+        self.assertEqual([o for o in tools if o.startswith("--no-binary")], ["--no-binary reuse"])
+        build, _ = requirements(self.BUILD)
+        self.assertEqual([o for o in build if o.startswith("--no-binary")], [])
+
+    def test_ci_static_は組む道具を先に入れ_隔離せずに組む(self):
+        self.assertEqual(len(self.installs), 2, self.installs)
+        first, second = self.installs
+        self.assertIn("-r scripts/ci-tools-build.txt", first)
+        self.assertIn("-r scripts/ci-tools.txt", second)
+        self.assertIn("--no-build-isolation", second)
+        for line in self.installs:
+            self.assertIn("--require-hashes", line)
 
 
 if __name__ == "__main__":

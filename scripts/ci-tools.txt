@@ -1,21 +1,39 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# CI の ubuntu のジョブ (.github/workflows/ci.yml の ci-static) が入れる道具の、版と照合値 (#2612)。
-# ci-static は `pip install --require-hashes -r scripts/ci-tools.txt` で入れるので、ここに無い
-# 版・照合の合わない配布物は入らない。手元の道具は make setup が案内する (版はここに縛らない)。
+# reuse・chardet・check-jsonschema の版と照合値の正本 (#2612)。
+#
+#   CI    ubuntu のジョブ (.github/workflows/ci.yml の ci-static) がここから入れる
+#   手元  make setup (scripts/ci_tools.py) が同じ版を読んで、入っている版と突き合わせる
 #
 # 直接に要るのは 3 つで、残りはそれらの依存:
 #   reuse             reuse-lint・reuse-encoding-check
 #   chardet           reuse の encoding 判定モジュール (#48。Makefile の REUSE_ENCODING_MODULE)
 #   check-jsonschema  schemas
 #
-# 組み直し方 (ci-static の runs-on の python3 と同じ版・同じ機械の種類に向けて解く。
-# 公開から 7 日経っていない版は取らない — dependabot の cooldown と同じ構え):
+# **照合値の無いものは 1 つも入らない。** 下の 3 行がそれを持つ (pip は requirements の中の
+# この指定を読む):
+#   --require-hashes      全部の配布物を照合値で縛る
+#   --only-binary :all:   ホイールだけを入れる。sdist を組む経路は、組む道具 (build 依存) が照合値の
+#                         外から入るので塞ぐ — --require-hashes は build 依存に効かない
+#   --no-binary reuse     例外は reuse 1 つ。PyPI の reuse のホイールは cp310・manylinux_2_41 だけで
+#                         ubuntu-24.04 (python 3.12・glibc 2.39) に合わない。sdist を組む道具
+#                         (poetry-core) は scripts/ci-tools-build.txt から照合値つきで先に入れ、
+#                         ci.yml は --no-build-isolation でそれを使わせる
+# この形は scripts/tests/ci_workflow_test.py が見る。
+#
+# **上げるのは手で** (dependabot には載せない)。手元と CI は同じこのファイルを読むので、上げれば
+# 両方が同時に動く。上げ方 — 版を書き換えて、ci-static の runs-on の python3 と同じ版・同じ機械の
+# 種類に向けて解き直す (公開から 7 日経っていない版は取らない。dependabot の cooldown と同じ構え):
 #   printf 'reuse==6.2.0\nchardet==7.6.0\ncheck-jsonschema==0.38.2\n' |
 #     uv pip compile - --generate-hashes --no-header --no-annotate \
-#       --python-version 3.12 --python-platform x86_64-unknown-linux-gnu \
-#       --exclude-newer <7 日前の日付>
+#       --python-version 3.12 --python-platform x86_64-manylinux_2_39 \
+#       --only-binary :all: --no-binary reuse --exclude-newer <7 日前の日付>
+# その出力を下の 3 行の後ろに置く。reuse の build-system が変わったら ci-tools-build.txt も直す。
+# 手元は make setup が版つきの入れ方を示す。
+--require-hashes
+--only-binary :all:
+--no-binary reuse
 attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309 \
     --hash=sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32
