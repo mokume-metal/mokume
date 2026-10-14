@@ -407,15 +407,14 @@ nonisolated extension ModelFile {
     ) -> Parsed? {
         let prepared = readerHead(of: head)
         guard rest == nil || prepared != head else { return askModelIO(url) }
-        // **まず元のファイルを読ませ、写しは、それで決められないときだけ作る** (写しは、ファイルの全部を
-        // 書き直す — 104 MB で 2.9 秒が 4.2 秒になり、ディスクも二重に要る)。読み手が文字を読み直した
-        // ものは、**枚数が必ず ⌊(大きさ − 84) ÷ 50⌋ になる** (面の数が 2^24 以上と宣言された形は、大きさが
-        // 838,860,884 バイトに満たなければ、ある分だけを返す)。書かれた面の数がそれと違えば、枚数が合った
-        // ことは、読み直しでなく文字として読めた証になる。同じ数なら読み直しと見分けられないので、写しで読む
-        if rest != nil, size < 84 + 50 * (1 << 24), facets != (size - 84) / 50,
-            let original = askModelIO(url), agrees(original, facets: facets)
-        {
-            return original
+        // **書かれた面の数が ⌊(大きさ − 84) ÷ 50⌋ と違えば、写しを作らず、元のファイルを読ませる** (写しは、
+        // ファイルの全部を書き直す — 大きい文字で読む所要が 1 割〜5 割増え、ディスクも二重に要る)。読み手が
+        // 文字を読み直したものは、**枚数が必ずその数になる** (面の数が 2^24 以上と宣言された形は、大きさが
+        // 838,860,884 バイトに満たなければ、ある分だけを返す)。だから、書かれた面の数と違う数が返れば読み直し
+        // (または読めなかった) で、合う数が返れば文字として読めた証になる。照合は呼ぶ側が行う。
+        // 数が同じなら読み直しと見分けられないので、写しで読む
+        if rest != nil, size < 84 + 50 * (1 << 24), facets != (size - 84) / 50 {
+            return askModelIO(url)
         }
         let directory = scratch.appendingPathComponent(
             "mokume-stl-\(UUID().uuidString)", isDirectory: true)
