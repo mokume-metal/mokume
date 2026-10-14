@@ -47,9 +47,13 @@ extension Sketch {
     /// - Note: 視点と同じく**フレームを越えない**。`setup()` や止まっている間の入力の
     ///   コールバックで呼ぶと、警告して無視される (道具の状態も進めない)。
     public func orbitControl(
-        _ sensitivityX: Float = 1, _ sensitivityY: Float = 1, _ sensitivityZ: Float = 1
+        _ sensitivityX: some ScalarConvertible = 1, _ sensitivityY: some ScalarConvertible = 1,
+        _ sensitivityZ: some ScalarConvertible = 1
     ) {
         guard let runtime = runningSketch else { return }
+        let (sensitivityX, sensitivityY, sensitivityZ) = (
+            sensitivityX.asFloat, sensitivityY.asFloat, sensitivityZ.asFloat
+        )
         // **道具の状態を進める前に断る** (#1670)。視点を書くのはシーンの記述で、フレームの
         // 外 (`setup()`・止まっている間のコールバック) では下の `camera` が断る。そこまで
         // 進めてから断ると、注意は出ても道具の状態 (慣性・引きずった量を食った印) だけが

@@ -155,9 +155,9 @@ struct BrightnessTests {
     func brokenExposureIsIgnored() throws {
         let canvas = try makeCanvas()
         canvas.exposure(2)
-        canvas.exposure(.nan)
+        canvas.exposure(Float.nan)
         canvas.exposure(-1)
-        canvas.exposure(.infinity)
+        canvas.exposure(Float.infinity)
         #expect(canvas.target.brightness.exposure == 2)
     }
 
