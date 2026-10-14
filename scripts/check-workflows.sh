@@ -22,30 +22,48 @@ cd "$(git rev-parse --show-toplevel)"
 
 # 更新は dependabot ではなく手動。lint の指摘が増減してある日突然 CI が赤くなるのを避ける。
 #
-# actionlint は shellcheck があると run: の中身も検証するが、GitHub の macOS ランナーには
-# shellcheck が入っていない (ci-check は ADR-0009 により macos-26 で走る)。「あれば使う」
-# にすると CI とローカルで検証範囲が変わり、CI が黙って緩くなるため**両方**をピンして落とす。
+# actionlint は shellcheck があると run: の中身も検証するが、GitHub のランナーに入っている
+# shellcheck の有無と版はイメージ次第である (macOS には無く、ubuntu には別の版がある。この段は
+# CI では ubuntu の ci-static で走る・#2612)。「あれば使う」にすると CI とローカルで検証範囲が
+# 変わり、CI が黙って緩くなるため**両方**をピンして落とす。
 #
-# 上げるときは SHA256 も一緒に差し替えること:
+# 上げるときは、下の pick_assets の照合値も機械の種類ごとに一緒に差し替えること:
 #   curl -fsSL https://github.com/rhysd/actionlint/releases/download/v<ver>/actionlint_<ver>_checksums.txt
 #   curl -fsSL <shellcheck tarball url> | shasum -a 256
 ACTIONLINT_VERSION="1.7.12"
-ACTIONLINT_SHA256="aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f"
 SHELLCHECK_VERSION="0.11.0"
-SHELLCHECK_SHA256="339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f"
 
 # .build/ は .gitignore 済み。check-no-binaries.sh は git ls-files を見るので、
 # ここに実行ファイルが増えても検査には掛からない
 TOOLS_DIR=".build/tools"
 
-# mokume は macOS / Apple Silicon 専用 (ADR-0009) なので、落とす配布物も 1 種類でよい。
+# 落とす配布物と照合値を、走っている機械の種類で選ぶ。種類は 2 つだけ: 手元の macOS /
+# Apple Silicon (ADR-0009) と、CI でこの段を走らせる ubuntu の x86_64 (ci.yml の ci-static・#2612)。
 # 想定外の環境では黙って別物を落とさず、手で入れる道を示して止まる
-require_darwin_arm64() {
-  if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
-    echo "このスクリプトは macOS / Apple Silicon 専用 (uname: $(uname -s) $(uname -m))" >&2
-    echo "他の環境では actionlint ${ACTIONLINT_VERSION} と shellcheck ${SHELLCHECK_VERSION} を手で入れて PATH に通す" >&2
-    exit 1
-  fi
+ACTIONLINT_ASSET=""
+ACTIONLINT_SHA256=""
+SHELLCHECK_ASSET=""
+SHELLCHECK_SHA256=""
+pick_assets() {
+  case "$(uname -s)/$(uname -m)" in
+    Darwin/arm64)
+      ACTIONLINT_ASSET="actionlint_${ACTIONLINT_VERSION}_darwin_arm64.tar.gz"
+      ACTIONLINT_SHA256="aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f"
+      SHELLCHECK_ASSET="shellcheck-v${SHELLCHECK_VERSION}.darwin.aarch64.tar.gz"
+      SHELLCHECK_SHA256="339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f"
+      ;;
+    Linux/x86_64)
+      ACTIONLINT_ASSET="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+      ACTIONLINT_SHA256="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+      SHELLCHECK_ASSET="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+      SHELLCHECK_SHA256="b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6"
+      ;;
+    *)
+      echo "このスクリプトが道具を落とせるのは macOS / Apple Silicon と Linux / x86_64 だけ (uname: $(uname -s) $(uname -m))" >&2
+      echo "他の環境では actionlint ${ACTIONLINT_VERSION} と shellcheck ${SHELLCHECK_VERSION} を手で入れて PATH に通す" >&2
+      exit 1
+      ;;
+  esac
 }
 
 # fetch_tool <url> <期待する sha256> <tarball 内のパス> <strip-components> <置き場>
@@ -90,9 +108,9 @@ resolve_shellcheck() {
     return
   fi
   if [ ! -x "$pinned" ]; then
-    require_darwin_arm64
+    pick_assets
     fetch_tool \
-      "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.darwin.aarch64.tar.gz" \
+      "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_ASSET}" \
       "$SHELLCHECK_SHA256" \
       "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" 1 \
       "$pinned"
@@ -109,9 +127,9 @@ resolve_actionlint() {
     return
   fi
   if [ ! -x "$pinned" ]; then
-    require_darwin_arm64
+    pick_assets
     fetch_tool \
-      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_darwin_arm64.tar.gz" \
+      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${ACTIONLINT_ASSET}" \
       "$ACTIONLINT_SHA256" \
       "actionlint" 0 \
       "$pinned"

@@ -162,5 +162,56 @@ class FetchToolTest(unittest.TestCase):
         self.assertEqual(result.stdout, "sourced\n")
 
 
+class PickAssetsTest(unittest.TestCase):
+    """落とす配布物を機械の種類で選ぶ (#2612)。
+
+    CI ではこの段を ubuntu (x86_64) の ci-static が走らせ、手元は macOS / Apple Silicon で
+    走る。取り違えると、照合値の合わない配布物か、走らない種類の実行ファイルを落とす。
+    `uname` は PATH の先に置いた代役が名乗る。
+    """
+
+    def pick(self, system: str, machine: str) -> subprocess.CompletedProcess:
+        bin_dir = Path(tempfile.mkdtemp(prefix="pick-assets-"))
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(bin_dir)])
+        stub = bin_dir / "uname"
+        stub.write_text(
+            f'#!/bin/sh\ncase "$1" in -s) echo {system} ;; -m) echo {machine} ;; esac\n'
+        )
+        stub.chmod(0o755)
+        command = (
+            f'PATH="{bin_dir}:$PATH"; source "{SCRIPT}"; pick_assets; '
+            'printf "%s\\n" "$ACTIONLINT_ASSET" "$ACTIONLINT_SHA256" "$SHELLCHECK_ASSET" "$SHELLCHECK_SHA256"'
+        )
+        return subprocess.run(
+            ["/bin/bash", "-c", command], cwd=REPO, capture_output=True, text=True, timeout=60,
+        )
+
+    def test_ubuntu_の_x86_64_では_linux_の配布物を選ぶ(self):
+        result = self.pick("Linux", "x86_64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        actionlint, actionlint_sha, shellcheck, shellcheck_sha = result.stdout.split()
+        self.assertRegex(actionlint, r"^actionlint_[0-9.]+_linux_amd64\.tar\.gz$")
+        self.assertRegex(shellcheck, r"^shellcheck-v[0-9.]+\.linux\.x86_64\.tar\.gz$")
+        self.assertRegex(actionlint_sha, r"^[0-9a-f]{64}$")
+        self.assertRegex(shellcheck_sha, r"^[0-9a-f]{64}$")
+
+    def test_手元の_Apple_Silicon_では_darwin_の配布物を選ぶ(self):
+        result = self.pick("Darwin", "arm64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        actionlint, actionlint_sha, shellcheck, shellcheck_sha = result.stdout.split()
+        self.assertRegex(actionlint, r"^actionlint_[0-9.]+_darwin_arm64\.tar\.gz$")
+        self.assertRegex(shellcheck, r"^shellcheck-v[0-9.]+\.darwin\.aarch64\.tar\.gz$")
+        # 種類ごとに照合値が違う (片方の値の写し忘れを拾う)
+        linux = self.pick("Linux", "x86_64").stdout.split()
+        self.assertNotEqual(actionlint_sha, linux[1])
+        self.assertNotEqual(shellcheck_sha, linux[3])
+
+    def test_想定外の機械では落とさずに止まる(self):
+        result = self.pick("Linux", "aarch64")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("手で入れて PATH に通す", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+
 if __name__ == "__main__":
     unittest.main()
