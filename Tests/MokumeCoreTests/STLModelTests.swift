@@ -246,7 +246,8 @@ struct STLModelTests {
         let parsed = try read(Data(Self.smallASCII(trailing: trailing).utf8))
         #expect(parsed.positions == Self.smallFacet.corners)
         #expect(parsed.normals == Array(repeating: Self.smallFacet.normal, count: 3))
-        #expect(parsed.hasWrittenNormals)
+        // 向きは書かれたもの (求めた向きではない) — 両面の印は面ごと (#2342)
+        #expect(parsed.derivedNormals == [false, false, false])
         #expect(parsed.skippedLines == 0)
         #expect(parsed == (try read(Data(Self.smallASCII(trailing: 40).utf8))))
     }
