@@ -6,7 +6,7 @@
 ADR-0019 決定 7 は、専用機に届くきっかけを 3 つ (merge_group・同じリポジトリの PR・
 schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権限の 1 行が崩れると、理由ごと
 外れる** — しかも崩れても run は緑のままで、気付くのは専用機に想定外のものが届いた後になる。
-ここで固定するのは次の 11 個:
+ここで固定するのは次の 12 個:
 
   1. schedule の cron は 6 時間おきで、毎時 0 分を避けている (このリポジトリの慣習)
   2. `render` (必須) と `render-pr` は schedule では起動しない — 必須チェックの結論を
@@ -36,6 +36,9 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
      を走らせる。`render` はその理由を job の出力へ上げ、`render-environment-report` は
      前検査で落ちた回 (理由が空でない) にだけ走って発信する (#2588)。理由を見ずに
      `failure` だけで走らせると、PR の中身による赤まで「専用機が壊れている」と起票する
+ 12. 外のパッケージ mokume-syphon の検査 (`scripts/syphon-check-pr.sh`) は `render-pr` にだけ
+     あり、`continue-on-error` で merge を止めない (#1973)。必須の `render` や定期のジョブに
+     入ると、外のリポジトリの赤が本体の merge や起票を動かす
 
 PyYAML は入れていない (標準の Python だけで回す) ので、`jobs:` の直下の 2 字下げの
 キーでジョブを切り、本文を行で読む。YAML の構文そのものは actionlint が見る。
@@ -212,6 +215,14 @@ class RenderWorkflowTest(unittest.TestCase):
             self.assertRegex(
                 self.jobs[name], r"(?m)^      - id: preflight\n        run: bash scripts/runner-preflight.sh$", name
             )
+
+    def test_mokume_syphon_の検査は_render_pr_にだけあり_merge_を止めない(self):
+        holders = [name for name, body in self.jobs.items() if "syphon-check" in body]
+        self.assertEqual(holders, ["render-pr"])
+        self.assertRegex(
+            self.jobs["render-pr"],
+            r"(?m)^        continue-on-error: true\n        run: bash scripts/syphon-check-pr.sh$",
+        )
 
     def test_render_environment_report_は前検査で落ちた回にだけ走る(self):
         self.assertIn(

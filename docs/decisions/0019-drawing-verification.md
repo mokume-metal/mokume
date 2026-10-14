@@ -235,6 +235,25 @@ SPDX-License-Identifier: MIT
 
 門番は `actions: read` だけを持ち、GitHub ホストで走る。**専用機のジョブは権限も秘密も持たないまま**で、上の前提は動かない。門番が赤でも専用機のジョブは走らせる。`render` が skipped になると、skipped は必須チェックを満たしてしまうので、順番が乱れるほうを軽く取る。門番で待っている間に run を cancel すると `render` は cancelled で終わり、必須を満たさない (skipped にはならない・[#2063](https://github.com/mokume-metal/mokume/issues/2063) の実測)。
 
+#### 追補 (2026-10-14) — 外のリポジトリから専用機に届くのは、render-pr が組む mokume-syphon の main だけ
+
+**塞ぐ実害**: [mokume-syphon#26](https://github.com/mokume-metal/mokume-syphon/issues/26) では、本体の振る舞いの変化 (出口へ渡す絵が 1 フレーム遅れた) で mokume-syphon の GPU の検査が 4 件落ちた。気付いたのは mokume-syphon の追随の PR で、本体は壊した版をもう出していた。mokume-syphon の GPU の検査は GitHub ホストでは Suite ごと飛ぶので、専用機の外では誰も見ない。
+
+**決定** ([#1971](https://github.com/mokume-metal/mokume/issues/1971)・[#1973](https://github.com/mokume-metal/mokume/issues/1973)): `render-pr` の最後の段 (`scripts/syphon-check-pr.sh`) が、mokume-syphon の `main` を clone し、依存の mokume を PR の木へ差し替えて組み、GPU の検査まで走らせる。警告だけで merge は止めない (`continue-on-error`)。**mokume-syphon には runner を登録しない。**
+
+届く範囲を延ばしてよい理由は、B (同じリポジトリの PR) の水準を外れないことである。
+
+- mokume-syphon の `main` も PR 必須・bypass なしの ruleset で守られ、書ける人は本体と同じである (2026-10-14 の実測で collaborator は admin 1 人)。「専用機に届くコードは write 権限を持つ人のもの」が保たれる
+- 専用機のジョブは token も秘密も持たないままである。clone は公開リポジトリを匿名で引き、Syphon.xcframework は mokume-syphon の Release の資産 (同じ org の成果物) を引く
+- 走るのは `render-pr` の中だけで、`render` (A) と定期の検査 (D) には入れない。必須の所要を延ばさず、外のリポジトリの赤が merge や起票を動かさないためである (`scripts/tests/render_workflow_test.py` が形を固定する)
+- 届く範囲は `render.yml` 1 枚で言えるまま残る。外の clone 元は `scripts/syphon-check.sh` の既定の 1 つだけである
+
+**却下した案**:
+- (a) org 単位の runner に直して、mokume-syphon の PR も専用機で受ける — 別のリポジトリのジョブは門番 (`render-turn.sh`) に見えず、必須の `render` が待たされる
+- (b) 同じ機械に 2 つ目の runner を立てる — 1 台に 1 ジョブずつの前提が崩れ、描画の検査と GPU を取り合う
+
+**代償**: mokume-syphon の PR 自身 (Dependabot の pin の張り替えを含む) は、PR の時点では GPU の検査を受けない。(a) へ移るのは、その穴のために壊れた版が出たときである。
+
 **動かさないもの**: 決定 1 (新しい絵の正しさは人間と AI の目が判定する) と、PR に証跡を要求すること。機械が描けるようになっても、新しい絵の判定は移らない。決定 4・5 (仕様から導く自己判定テスト・観測値を一次証拠にする作法) もそのままである。専用機が変えるのは、決定 3 の台帳を含む描画の検査が**どこで走るか**だけである。
 
 実装は [#878](https://github.com/mokume-metal/mokume/issues/878) (専用機の描画ジョブ) と [#879](https://github.com/mokume-metal/mokume/issues/879) (手元の実行を運ぶ機構を消す) が持ち、定期の検査 (D) は [#1983](https://github.com/mokume-metal/mokume/issues/1983) が持ち、#180 はその親として残す。
