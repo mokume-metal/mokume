@@ -184,6 +184,100 @@ struct ModelTests {
         #expect(parsed == expected, "\(line)")
     }
 
+    /// 約束 ([#2624]): **`#` から後は、欄の途中でもコメント**で、面の角 (`cornerFields`・#2339) に
+    /// 限らず `v`・`vt`・`vn` の欄も、行の先頭の語も同じに読む。欄に貼り付いたコメント
+    /// (`v 1 2 3#c`) が読めない行になると、有効な行を指す面が行ごと読み飛ばされ、空白で区切った
+    /// コメント (`v 1 2 3 # c`) との差が利用者に見えない。右の「コメントを落とした行」と
+    /// **まったく同じ結果** (頂点・向き・読み取り位置・数える読み飛ばし) になることで確かめる。
+    ///
+    /// [#2624]: https://github.com/mokume-metal/mokume/issues/2624
+    @Test(
+        "v の行の # 以降はコメントで、欄に貼り付いていても落としてから欄を読む",
+        arguments: [
+            // (コメントの付いた行, コメントを落とした行)
+            ("v 1 0 0#c", "v 1 0 0"), ("v 1 0 0#", "v 1 0 0"), ("v 1 0 0 # c", "v 1 0 0"),
+            ("v 1 0 0#c 9 9", "v 1 0 0"), ("v 1 0 0 1#c", "v 1 0 0 1"), ("v 1 0 0\t#c", "v 1 0 0"),
+            // コメントの手前に欄が足りなければ、読めない行 (コメントの中の数は欄に数えない)
+            ("v 1 0#c 0", "v 1 0"), ("v 1#0 0 0", "v 1"), ("v 1 0 # 0", "v 1 0"), ("v #c 1 0 0", "v"),
+            ("v#c 1 0 0", "v"), ("v 1 0 0#c\\", "v 1 0 0"),
+            // 陰性対照: コメントの無い行は変わらない
+            ("v 1 0 0", "v 1 0 0"), ("v 1 0", "v 1 0"),
+        ])
+    func commentsEndVertexLines(line: String, clean: String) {
+        func parsed(_ vertex: String) -> ModelFile.Parsed {
+            ModelFile.parse("v 0 0 0\n\(vertex)\nv 0 1 0\nf 1 2 3")
+        }
+        #expect(parsed(line) == parsed(clean), "\(line)")
+    }
+
+    @Test(
+        "vt の行の # 以降はコメントで、欄に貼り付いていても落としてから欄を読む",
+        arguments: [
+            ("vt 0.5 0.5#c", "vt 0.5 0.5"), ("vt 0.5 0.5 # c", "vt 0.5 0.5"),
+            ("vt 0.5 0.5 0.5#c", "vt 0.5 0.5 0.5"),
+            // `u` だけの行は読める (v は 0)。コメントを欄に数えて読めない行にしない
+            ("vt 0.5#c", "vt 0.5"), ("vt 0.5 # c", "vt 0.5"), ("vt 0.5#0.5 0.5", "vt 0.5"),
+            ("vt 0.5 0.5#c 0.5", "vt 0.5 0.5"),
+            // u が無ければ読めない行
+            ("vt #c", "vt"), ("vt#c 0.5 0.5", "vt"), ("vt #c 0.5", "vt"),
+            ("vt 0.5 0.5", "vt 0.5 0.5"),
+        ])
+    func commentsEndTextureLines(line: String, clean: String) {
+        func parsed(_ texture: String) -> ModelFile.Parsed {
+            ModelFile.parse("v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0.25 0.75\n\(texture)\nf 1/2 2/2 3/2")
+        }
+        #expect(parsed(line) == parsed(clean), "\(line)")
+    }
+
+    @Test(
+        "vn の行の # 以降はコメントで、欄に貼り付いていても落としてから欄を読む",
+        arguments: [
+            ("vn 0 1 0#x", "vn 0 1 0"), ("vn 0 1 0#", "vn 0 1 0"), ("vn 0 1 0 #x", "vn 0 1 0"),
+            ("vn 0 1 0#x 9 9", "vn 0 1 0"), ("vn 0 1 0\t#x", "vn 0 1 0"),
+            // 欄が 4 つ以上あれば読めない行 (#2566)。コメントの中の欄は数えない
+            ("vn 0 1 0 1#x", "vn 0 1 0 1"), ("vn 0 1 0#x 1", "vn 0 1 0"),
+            // コメントの手前に欄が足りなければ読めない行
+            ("vn 0 1#x 0", "vn 0 1"), ("vn 0 1 # 0", "vn 0 1"), ("vn#x 0 1 0", "vn"),
+            ("vn 0 1 0", "vn 0 1 0"),
+        ])
+    func commentsEndNormalLines(line: String, clean: String) {
+        func parsed(_ normal: String) -> ModelFile.Parsed {
+            ModelFile.parse("v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\n\(normal)\nf 1//2 2//2 3//2")
+        }
+        #expect(parsed(line) == parsed(clean), "\(line)")
+    }
+
+    /// 約束 ([#2624]): 行の先頭の語に `#` が貼り付いた行 (`#Blender`) は、空白で区切ったコメント
+    /// (`# Blender`) と同じコメントの行で、読み飛ばして数えない。
+    ///
+    /// [#2624]: https://github.com/mokume-metal/mokume/issues/2624
+    @Test(
+        "行の先頭に貼り付いた # もコメントで、読み飛ばして数えない",
+        arguments: ["#Blender", "#", "# Blender", "  #Blender v 1 2 3", "#v 9 9 9"])
+    func commentLinesAreNotSkippedLines(line: String) {
+        let base = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3"
+        #expect(ModelFile.parse("\(line)\n\(base)") == ModelFile.parse(base), "\(line)")
+        #expect(ModelFile.parse("\(line)\n\(base)").skippedLines == 0, "\(line)")
+    }
+
+    /// Issue の例: 欄に貼り付いたコメントのある `v` を指す面が、行ごと読み飛ばされない。
+    @Test("コメントが貼り付いた v・vt・vn の行を指す面は、読み飛ばされず三角形になる")
+    func facesPointingAtCommentedLinesSurvive() {
+        let parsed = ModelFile.parse(
+            """
+            v 0 0 0
+            v 1 0 0#c
+            v 0 1 0
+            vt 0.25 0.75#c
+            vn 0 0 1#c
+            f 1/1/1 2/1/1 3/1/1
+            """)
+        #expect(parsed.positions == [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)])
+        #expect(parsed.uvs == Array(repeating: SIMD2<Float>(0.25, 0.25), count: 3))
+        #expect(parsed.normals == Array(repeating: SIMD3<Float>(0, 0, 1), count: 3))
+        #expect(parsed.skippedLines == 0)
+    }
+
     /// Windows 系の道具が書き出した OBJ は改行が `\r\n` である。**割れないと、先頭の
     /// `#` で全体がコメント扱いになり、頂点 0 のモデルが落ちも警告も無しに返る** —
     /// 唯一の手がかりである `skippedLines` も 0 なので、症状は「何も出ない」だけになる。

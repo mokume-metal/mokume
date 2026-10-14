@@ -85,8 +85,9 @@ nonisolated enum ModelFile {
         /// 返した形のうち写せなかった要素 (位置を持たない mesh・三角形でない submesh・3 つに
         /// 満たない余りの番号など) を数える。数える単位は形式と要素で違い、面の数ではない。
         /// **OBJ は行を丸ごと読み飛ばす** — 面の行に位置の番号が読めない角 (範囲の外・0・
-        /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。行末のコメント
-        /// (`#` から後) と継ぎ文字 (`\`) は角でない字で、読めない角に数えない。
+        /// 数でない) が 1 つでもあれば、残りの角で面を作らず、その行を数える。`#` から後は
+        /// 欄の途中でもコメント (`v 1 2 3#c` は `v 1 2 3`・#2624) で、継ぎ文字 (`\`) とともに角でない字
+        /// なので、読めない角にも読めない欄にも数えない。
         ///
         /// **読めない `v`・`vt`・`vn` の行は番号の枠を 1 つ使い (#2564)、詰めない。** 数えるのは
         /// 読めない行 1 つ分で、その行を位置として指す面は行ごと読み飛ばして面の行ごとに 1 つ
@@ -137,14 +138,22 @@ nonisolated enum ModelFile {
         var skipped = 0
 
         for line in text.lines {
-            let fields = line.split(whereSeparator: \.isWhitespaceQuickly)
-            guard let keyword = fields.first else { continue }
+            var fields = line.split(whereSeparator: \.isWhitespaceQuickly)
+            guard !fields.isEmpty else { continue }
+            // **`#` から後は、欄の途中でもコメント** (#2624)。`v 1 2 3#c`・`vt 0.5#c`・`#Blender` の
+            // ように語に貼り付いていても、空白で区切ったコメント (`v 1 2 3 # c`) と同じに落とす。
+            // `#` の無い行 (大きな OBJ のほとんど) は、行の字を 1 度なぞるだけで割った欄をそのまま使う
+            if line.utf8.contains(Self.hash) {
+                fields = Self.uncommented(fields)
+                // 語が 1 つも残らなければコメントだけの行で、読み飛ばして数える行ではない
+                if fields.isEmpty { continue }
+            }
+            let keyword = fields[0]
             // **向きは 3 つの数まで** (`vn i j k`)。4 つ目以降があれば欄を空にして、読めない行として
-            // 数える (#2566)。行末のコメント (`# …`) は欄に数えない。`v` の 4 つ目 (w・色) と
-            // `vt` の 3 つ目 (w) は仕様にある欄なので、それは読み捨てる
+            // 数える (#2566)。コメント (`# …`) は上で落としてあり、欄に数えない。`v` の 4 つ目
+            // (w・色) と `vt` の 3 つ目 (w) は仕様にある欄なので、それは読み捨てる
             let values =
-                keyword == "vn" && fields.dropFirst().prefix(while: { !$0.hasPrefix("#") }).count > 3
-                ? ArraySlice<Substring>() : fields.dropFirst()
+                keyword == "vn" && fields.count > 4 ? ArraySlice<Substring>() : fields.dropFirst()
             switch keyword {
             case "v":
                 let point = vector(values)
@@ -172,9 +181,9 @@ nonisolated enum ModelFile {
                 // 角だけで面を作ると、5 角形が四角形になったことが数えられずに消える。読み
                 // 飛ばす単位は、1 つでも数が読めない `v` の行と同じく行である
                 //
-                // **角でない字は角として読まない。** 行末のコメント (`#` から後) と継ぎ文字 (`\`) は
-                // 読めない角ではなく、並べただけの字である。読めない角と同じに数えると、
-                // `f 1 2 3 4 # quad` が丸ごと消える (`v` の行は 3 つ目までしか読まないので残る)
+                // **角でない字は角として読まない。** 行末のコメント (`#` から後。上で落としてある)
+                // と継ぎ文字 (`\`) は読めない角ではなく、並べただけの字である。読めない角と同じに
+                // 数えると、`f 1 2 3 4 # quad` が丸ごと消える
                 let written = Self.cornerFields(values)
                 var corners: [(position: Int, texture: Int?, normal: Int?)] = []
                 for value in written {
@@ -199,8 +208,6 @@ nonisolated enum ModelFile {
                     continue
                 }
                 faces.append(corners)
-            case "#", "":
-                continue
             default:
                 // 材質・物体の区切り・なめらかさの指定などは読まない
                 skipped += 1
@@ -355,20 +362,35 @@ nonisolated enum ModelFile {
         return (0..<count).contains(index) ? index : nil
     }
 
-    /// 面の行のうち、角として読む欄。**行末のコメントと継ぎ文字を除く** (#2339)。
+    /// `#` (コメントの始まり) の UTF-8。
+    private static let hash: UInt8 = 0x23
+
+    /// 行を割った語のうち、**コメントの手前までを返す** (#2624)。
     ///
-    /// `#` を含む欄はその手前までを残して打ち切る (`4#quad` は `4`)。最後の欄が継ぎ文字 `\`
+    /// `#` を含む語はその手前までを残して打ち切り (`3#c` は `3`・`#c` は空で残さない)、後ろの
+    /// 語は捨てる。`#` は語の途中でもコメントの始まりで、行の先頭の語も同じ (`#Blender` は
+    /// 何も残らず、`v#c` は `v`)。`#` を含む行にだけ通す。`#` は ASCII なので UTF-8 の 1 バイトで
+    /// 探す (`Character` で探すと、直後の結合文字と 1 字に束ねられて見逃す)。
+    private static func uncommented(_ fields: [Substring]) -> [Substring] {
+        var kept: [Substring] = []
+        kept.reserveCapacity(fields.count)
+        for field in fields {
+            if let mark = field.utf8.firstIndex(of: hash) {
+                if mark > field.startIndex { kept.append(field[..<mark]) }
+                break
+            }
+            kept.append(field)
+        }
+        return kept
+    }
+
+    /// 面の行のうち、角として読む欄。**行末の継ぎ文字を除く** (#2339)。
+    ///
+    /// コメント (`#` から後) は行の頭で落としてある (``uncommented(_:)``)。最後の欄が継ぎ文字 `\`
     /// だけなら落とす — 次の行へ続ける書き方だが、続きを繋いでは読まない (直す前と同じく、
     /// この行の角だけで面を作る)。
     private static func cornerFields(_ values: ArraySlice<Substring>) -> [Substring] {
-        var fields: [Substring] = []
-        for value in values {
-            if let mark = value.firstIndex(of: "#") {
-                if mark > value.startIndex { fields.append(value[..<mark]) }
-                break
-            }
-            fields.append(value)
-        }
+        var fields = Array(values)
         if fields.last == "\\" { fields.removeLast() }
         return fields
     }
