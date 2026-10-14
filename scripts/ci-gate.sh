@@ -5,7 +5,9 @@
 # ci.yml の必須チェック ci-gate の判定。呼ぶのは ci.yml の ci-gate だけである。
 #
 #   RESULTS=<toJSON(needs)> EVENT_NAME=<github.event_name> HEAD_SHA=<PR の head の SHA> \
-#     GITHUB_REPOSITORY=<owner/repo> GH_TOKEN=<token> bash scripts/ci-gate.sh
+#     GITHUB_REPOSITORY=<owner/repo> GITHUB_RUN_ID=<この run> GH_TOKEN=<token> bash scripts/ci-gate.sh
+#
+# GITHUB_REPOSITORY と GITHUB_RUN_ID は Actions が渡す (ci.yml には書かない)。
 #
 # ## needs の failure と cancelled は赤、skipped は通す
 #
@@ -19,12 +21,27 @@
 # 途中でも、赤でも、必須が満たされていた。ci-gate を skipped にしても穴は塞がらない
 # (skipped の必須チェックは通過と扱われる)。
 #
-# そこで skipped の検査ごとに、同じ head SHA の check run から skipped を除いて最新のもの
-# (id が最大 = 作成順で最新) を読み、completed かつ success のときだけ通す。走っている途中・
-# 赤・見つからない・API の失敗は、理由を出して赤にする (閉じる側に倒す)。
+# そこで skipped の検査ごとに、同じ head SHA の check run から skipped とこの run 自身のものを
+# 除いて最新のもの (id が最大 = 作成順で最新) を読み、completed かつ success のときだけ通す。
+# 走っている途中・赤・見つからない・API の失敗 (間を空けて 3 回試した後) は、理由を出して赤に
+# する (閉じる側に倒す)。EVENT_NAME が無い・知らない event も赤にする — 開く側に倒れると、
+# 渡し忘れひとつで素通しに戻る。
 #
-# **待たない。** 走っている途中の検査の run は、その検査が終わってから自分の ci-gate を作り、
-# そちらが最新になってこの赤を上書きする。代償は、その間 ci-gate の赤が見えること。
+# **この run 自身の check run は除く。** skipped になる job は ci-gate より数秒遅れて作られる
+# ことがあり (#2690 の反証で実測)、作られた瞬間の状態が completed でなければ「走っている途中」の
+# 最新に見える。後から ci-gate を作る run は無いので、その赤が最新のまま固まる。
+#
+# **待たない。** 走っている途中の検査の run は、その検査が終わってから自分の ci-gate を作り
+# (needs が終わった時点で作られる。#2690 の反証で実測)、そちらが最新になってこの赤を上書きする。
+#
+# 代償:
+#   - その間、ci-gate の赤が見える。上書きされた後も並んで残る
+#   - 同じ head SHA の check run は PR を区別しない。同じブランチから出た別の PR (閉じて作り
+#     直したものを含む) の検査の結論を読みうる
+#
+# 塞いでいない兄弟: base の変更・reopen では、その run の ci-gate が検査の終わるまで作られず、
+# 前の run の緑の ci-gate が最新のまま必須を満たす。ci-gate がここで判定する前の穴で、別に扱う
+# (#2692)。
 #
 # 読む名前は needs から取り、コードの検査の名前の写しを持たない。check_name で引くので、
 # ci-check・ci-static という job 名をほかのワークフローに置かない
@@ -33,6 +50,7 @@
 set -euo pipefail
 
 : "${RESULTS:?toJSON(needs) を渡す}"
+: "${EVENT_NAME:?github.event_name を渡す}"
 
 echo "$RESULTS"
 # パイプにしない (#2609)。pipefail の下では、grep -q が一致して先に抜けたときに
@@ -42,28 +60,47 @@ if grep -Eq '"result": *"(failure|cancelled)"' <<<"$RESULTS"; then
   exit 1
 fi
 
-[ "${EVENT_NAME:-}" = pull_request ] || exit 0
+case "$EVENT_NAME" in
+  merge_group) exit 0 ;;
+  pull_request) ;;
+  *) echo "知らない event: $EVENT_NAME (ci.yml の on: と合わせる)" >&2; exit 1 ;;
+esac
 
 skipped=$(jq -r 'to_entries[] | select(.value.result == "skipped") | .key' <<<"$RESULTS")
 [ -n "$skipped" ] || exit 0
 
 : "${HEAD_SHA:?PR の head の SHA を渡す}"
 : "${GITHUB_REPOSITORY:?owner/repo を渡す}"
+: "${GITHUB_RUN_ID:?この run の id を渡す}"
+RETRY_WAIT=${RETRY_WAIT:-10}
 
 errfile=$(mktemp)
 trap 'rm -f "$errfile"' EXIT
 
+# 1 行 = "<id> <status> <conclusion> <url>"。gh が落ちたら間を空けて 3 回まで試す
+read_runs() { # $1=名前
+  local attempt
+  for attempt in 1 2 3; do
+    if gh api --paginate \
+      "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=$1&filter=all&per_page=100" \
+      --jq '.check_runs[] | select(.app.slug == "github-actions" and .conclusion != "skipped")
+            | select(.details_url | contains("/actions/runs/'"$GITHUB_RUN_ID"'/") | not)
+            | "\(.id) \(.status) \(.conclusion // "-") \(.html_url)"' 2>"$errfile" </dev/null; then
+      return 0
+    fi
+    [ "$attempt" -eq 3 ] || sleep "$RETRY_WAIT"
+  done
+  return 1
+}
+
 failed=0
 while read -r name; do
-  # 1 行 = "<id> <status> <conclusion> <url>"。ページごとに出るので、並べ直してから最大の id を取る
-  if ! rows=$(gh api --paginate \
-    "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=$name&filter=all&per_page=100" \
-    --jq '.check_runs[] | select(.app.slug == "github-actions" and .conclusion != "skipped")
-          | "\(.id) \(.status) \(.conclusion // "-") \(.html_url)"' 2>"$errfile"); then
-    echo "$name: 同じ SHA の check run を読めなかった: $(tr '\n' ' ' <"$errfile")" >&2
+  if ! rows=$(read_runs "$name"); then
+    echo "$name: 同じ SHA の check run を読めなかった (3 回): $(tr '\n' ' ' <"$errfile")" >&2
     failed=1
     continue
   fi
+  # ページごとに出るので、id の数の順に並べ直してから最大を取る
   latest=$(sort -n <<<"$rows" | tail -n 1)
   if [ -z "$latest" ]; then
     echo "$name: この run では skipped で、同じ SHA に走った $name が無い" >&2

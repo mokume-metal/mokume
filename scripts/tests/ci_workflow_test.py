@@ -175,18 +175,28 @@ class CiWorkflowTest(unittest.TestCase):
         self.assertRegex(
             gate, r"(?m)^          HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\s*$"
         )
+        self.assertRegex(gate, r"(?m)^          EVENT_NAME: \$\{\{ github\.event_name \}\}\s*$")
+        self.assertRegex(gate, r"(?m)^          GH_TOKEN: \$\{\{ github\.token \}\}\s*$")
         self.assertRegex(gate, r"(?m)^      checks: read\b")
         self.assertRegex(gate, r"(?m)^          sparse-checkout: scripts/ci-gate\.sh\s*$")
 
     def test_段を走らせる_job_の名前はほかのワークフローに無い(self):
-        # ci-gate.sh は check_name で同じ SHA の check run を引く。同じ名前の job がほかに
-        # あると、別のワークフローの結論を読んでしまう
+        # ci-gate.sh は needs のキーを check run の名前として、check_name で同じ SHA を引く。
+        # job に name: があると名前がキーとずれ、同じ名前の job がほかにあると別のワークフローの
+        # 結論を読んでしまう
+        names = workflow.needs(self.jobs["ci-gate"])
+        for name in names:
+            with self.subTest(job=name):
+                self.assertNotRegex(self.jobs[name], r"(?m)^    name:")
         for path in sorted(CI.parent.glob("*.yml")):
             if path == CI:
                 continue
             _, jobs = workflow.split(path.read_text(encoding="utf-8"))
             with self.subTest(workflow=path.name):
-                self.assertEqual(set(jobs) & workflow.needs(self.jobs["ci-gate"]), set())
+                self.assertEqual(set(jobs) & names, set())
+                for body in jobs.values():
+                    m = re.search(r"(?m)^    name: *['\"]?([^'\"\n]+?)['\"]?\s*$", body)
+                    self.assertNotIn(m.group(1) if m else None, names)
 
     def test_ci_static_は_ubuntu_で_make_ci_check_を呼ぶだけ(self):
         body = self.jobs["ci-static"]
@@ -260,11 +270,19 @@ for a in "$@"; do
 done
 case "$url" in
   */check-runs\\?*)
-    [ -z "${CHECKRUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout" >&2; exit 1; }
+    # 先頭の CHECKRUNS_FAIL 回だけ落ちる
+    n=$(cat "$RUNS_DIR/fails" 2>/dev/null || echo 0)
+    if [ "$n" -lt "${CHECKRUNS_FAIL:-0}" ]; then
+      echo $((n + 1)) > "$RUNS_DIR/fails"
+      echo "gh: HTTP 504: Gateway Timeout" >&2; exit 1
+    fi
     name=${url#*check_name=}; name=${name%%&*}
     f="$RUNS_DIR/$name.json"
     [ -f "$f" ] || f="$RUNS_DIR/none.json"
-    jq -r "$filter" < "$f"; exit 0 ;;
+    # --paginate はページごとに --jq を当てて連結する。2 ページ目があればそれも出す
+    jq -r "$filter" < "$f"
+    [ ! -f "$RUNS_DIR/$name.2.json" ] || jq -r "$filter" < "$RUNS_DIR/$name.2.json"
+    exit 0 ;;
 esac
 echo "代役が知らない呼び出し: $*" >&2
 exit 2
@@ -274,13 +292,20 @@ SHA = "0123abcd"
 RESULTS_EDITED = {"ci-check": {"result": "skipped"}, "ci-static": {"result": "skipped"}}
 
 
-def check_run(id_: int, status: str, conclusion, app: str = "github-actions") -> dict:
+RUN_ID = "555"
+
+
+def check_run(
+    id_: int, status: str, conclusion, app: str = "github-actions", run: str = "1"
+) -> dict:
+    url = f"https://github.com/o/r/actions/runs/{run}/job/{id_}"
     return {
         "id": id_,
         "status": status,
         "conclusion": conclusion,
         "app": {"slug": app},
-        "html_url": f"https://github.com/o/r/actions/runs/1/job/{id_}",
+        "details_url": url,
+        "html_url": url,
     }
 
 
@@ -294,8 +319,10 @@ def needs_json(results: dict) -> str:
 class CiGateScriptTest(unittest.TestCase):
     """scripts/ci-gate.sh の判定 (#2690)。"""
 
-    def run_gate(self, runs: dict, *, event="pull_request", results=None, env_extra=None):
-        """runs = {名前: [check run …]}。(returncode, stdout+stderr, gh の呼び出し) を返す。"""
+    def run_gate(
+        self, runs: dict, *, event="pull_request", results=None, env_extra=None, page2=None
+    ):
+        """runs = {名前: [check run …]}・page2 = 2 ページ目。(returncode, 出力, gh の呼び出し) を返す。"""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             gh = tmp / "bin" / "gh"
@@ -309,6 +336,10 @@ class CiGateScriptTest(unittest.TestCase):
                 (runs_dir / f"{name}.json").write_text(
                     json.dumps({"total_count": len(items), "check_runs": items})
                 )
+            for name, items in (page2 or {}).items():
+                (runs_dir / f"{name}.2.json").write_text(
+                    json.dumps({"total_count": len(items), "check_runs": items})
+                )
             calls = tmp / "calls"
             calls.write_text("")
             env = {
@@ -317,10 +348,13 @@ class CiGateScriptTest(unittest.TestCase):
                 "EVENT_NAME": event,
                 "HEAD_SHA": SHA,
                 "GITHUB_REPOSITORY": "o/r",
+                "GITHUB_RUN_ID": RUN_ID,
+                "RETRY_WAIT": "0",
                 "GH_CALLS": str(calls),
                 "RUNS_DIR": str(runs_dir),
                 **(env_extra or {}),
             }
+            env = {k: v for k, v in env.items() if v is not None}
             proc = subprocess.run(
                 ["/bin/bash", str(GATE)], env=env, capture_output=True, text=True, timeout=30
             )
@@ -337,6 +371,8 @@ class CiGateScriptTest(unittest.TestCase):
         self.assertEqual(len(calls), 2, calls)
         for call in calls:
             self.assertIn(f"repos/o/r/commits/{SHA}/check-runs?check_name=", call)
+            # latest は completed_at の最新だけを返し、走っている途中も古い success も見えない
+            self.assertIn("filter=all", call)
 
     def test_走っている途中なら赤(self):
         # 変更前の素通しでは、opened の run の ci-check が走っている間に緑が付いた (#2577)
@@ -370,6 +406,32 @@ class CiGateScriptTest(unittest.TestCase):
         code, out, _ = self.run_gate(runs)
         self.assertEqual(code, 0, out)
 
+    def test_この_run_自身の_check_run_は読まない(self):
+        # skipped の job は ci-gate より遅れて作られ、作られた瞬間は completed でないことがある。
+        # それを最新と読むと、後から ci-gate を作る run が無いまま赤が固まる (#2690 の反証)
+        runs = self.both([
+            check_run(100, "completed", "success"),
+            check_run(300, "queued", None, run=RUN_ID),
+        ])
+        code, out, _ = self.run_gate(runs)
+        self.assertEqual(code, 0, out)
+
+    def test_id_は数の大きさで比べる(self):
+        runs = self.both([
+            check_run(100, "completed", "success"),
+            check_run(99, "completed", "failure"),
+        ])
+        code, out, _ = self.run_gate(runs)
+        self.assertEqual(code, 0, out)
+
+    def test_ページをまたいで最新を取る(self):
+        code, out, _ = self.run_gate(
+            self.both([check_run(100, "completed", "success")]),
+            page2={"ci-check": [check_run(200, "in_progress", None)]},
+        )
+        self.assertEqual(code, 1, out)
+        self.assertIn("走っている途中", out)
+
     def test_最新は作成順_id_で決める(self):
         # 返る並びは id の順とは限らない。古い赤の後に打ち直した緑があれば通し、逆なら赤
         runs = self.both([
@@ -391,12 +453,30 @@ class CiGateScriptTest(unittest.TestCase):
         code, out, _ = self.run_gate(runs)
         self.assertEqual(code, 1, out)
 
-    def test_API_が失敗したら理由を出して赤(self):
-        code, out, _ = self.run_gate(
-            self.both([check_run(100, "completed", "success")]), env_extra={"CHECKRUNS_FAIL": "1"}
+    def test_API_が失敗し続けたら理由を出して赤(self):
+        code, out, calls = self.run_gate(
+            self.both([check_run(100, "completed", "success")]), env_extra={"CHECKRUNS_FAIL": "99"}
         )
         self.assertEqual(code, 1, out)
         self.assertIn("Gateway Timeout", out)
+        self.assertEqual(len(calls), 6, calls)  # 2 つの名前を 3 回ずつ
+
+    def test_API_の一時的な失敗は試し直す(self):
+        # 検査が緑で終わった後の本文の編集で 1 回落ちただけの赤は、後から上書きする run が無い
+        code, out, _ = self.run_gate(
+            self.both([check_run(100, "completed", "success")]), env_extra={"CHECKRUNS_FAIL": "2"}
+        )
+        self.assertEqual(code, 0, out)
+
+    def test_event_が無いか知らなければ赤(self):
+        # 開く側に倒れると、ci.yml の渡し忘れひとつで素通しに戻る
+        for event in (None, "push"):
+            with self.subTest(event=event):
+                code, out, calls = self.run_gate(
+                    self.both([check_run(100, "completed", "success")]), env_extra={"EVENT_NAME": event}
+                )
+                self.assertEqual(code, 1, out)
+                self.assertEqual(calls, [])
 
     def test_検査が走った_run_では_API_を呼ばない(self):
         for results, want in (
