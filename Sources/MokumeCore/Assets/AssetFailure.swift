@@ -24,3 +24,5 @@ extension AssetFailure: CustomStringConvertible {
         }
     }
 }
+
+// probe #2668: 使い捨て。merge しない
