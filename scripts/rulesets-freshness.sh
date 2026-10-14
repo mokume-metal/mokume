@@ -62,13 +62,18 @@ RULESET_TREE_FRESHNESS=unknown
 # **この関数は赤にしない。** 定義を編集している最中の作業ブランチでは「手元だけが違う」
 # のが正常な状態で、そこで止めると邪魔になる (#311 の打ち手案)。名乗るだけに留める。
 report_tree_freshness() {
-  local main_list="" main_names=" " differing="" name sha local_sha last f
+  local main_list="" main_names=" " differing="" name sha local_sha last f err why
 
   RULESET_TREE_FRESHNESS=unknown
 
+  # 引けなかった理由 (gh の stderr) は捨てずに名乗りへ添える (#2614)
+  err=$(mktemp)
   if ! main_list=$(gh api "repos/$REPO/contents/$DEFS?ref=main" \
-      --jq '.[] | select(.type == "file") | "\(.name)\t\(.sha)"' 2>/dev/null); then
-    echo "注意: main の定義を引けず、手元のツリーが正典と同じかは確かめていない" >&2
+      --jq '.[] | select(.type == "file") | "\(.name)\t\(.sha)"' 2>"$err"); then
+    why=$(tr '\n' ' ' <"$err" | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/ $//')
+    rm -f "$err"
+    echo "注意: main の定義を引けず、手元のツリーが正典と同じかは確かめていない" \
+      "(${why:-gh は理由を出さなかった})" >&2
     return 0
   fi
 
@@ -87,17 +92,20 @@ report_tree_freshness() {
   done
 
   if [ -z "$differing" ]; then
+    rm -f "$err"
     RULESET_TREE_FRESHNESS=same
     return 0
   fi
 
   last=$(gh api "repos/$REPO/commits?path=$DEFS&sha=main&per_page=1" \
-      --jq '.[0].sha // empty' 2>/dev/null) || last=""
+      --jq '.[0].sha // empty' 2>"$err") || last=""
+  why=$(tr '\n' ' ' <"$err" | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/ $//')
+  rm -f "$err"
 
   {
     if [ -z "$last" ]; then
       echo "注意: 手元の定義は main と違うが、どちら向きの違いかは判定していない" \
-        "(main の履歴を引けなかった)"
+        "(main の履歴を引けなかった: ${why:-gh は理由を出さなかった})"
     elif git merge-base --is-ancestor "$last" HEAD 2>/dev/null; then
       RULESET_TREE_FRESHNESS=editing
       echo "注意: 手元の定義は main にまだ入っていない (定義を編集中とみられる)。"
