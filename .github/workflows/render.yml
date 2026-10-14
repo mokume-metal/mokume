@@ -297,6 +297,9 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: bash scripts/syphon-check-pr.sh
+        # 一時: 段そのものを確かめる (#1973)。merge 前に外す
+        env:
+          SYPHON_CHECK_FORCE: "1"
 
   scheduled-debug:
     needs: render-turn
