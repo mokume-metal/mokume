@@ -313,6 +313,11 @@ nonisolated extension ModelFile {
     /// バイナリとして読み直したでたらめな面、少ないのは頂点の足りない面が次の面の頂点を食った形である。
     /// 読み手は、正しい STL では退化した面 (3 点が同じ・一直線)・数でない座標の面・複数の `solid` も
     /// 1 面ずつ返す (測った)。
+    ///
+    /// ``Parsed/skippedLines`` は、数でない座標の面のほかに、写せなかった要素も数える ([#2566])。実ファイルの
+    /// STL ではそれは起きず (Model I/O が契約を破ったときの防御)、ここで足すのは読み飛ばした面だけである。
+    ///
+    /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
     private static func agrees(_ parsed: Parsed, facets: Int) -> Bool {
         parsed.positions.count / 3 + parsed.skippedLines == facets
     }
