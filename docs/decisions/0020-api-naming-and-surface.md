@@ -244,7 +244,7 @@ struct Player: SketchPart {
 
 **代償:**
 
-- リファレンスの頁の置き場が変わる。例と絵の網羅の検査 (`extension Sketch` を数える) を、移した先に合わせる
+- リファレンスの頁の置き場が変わる (`…/sketch/…` が `…/sketchpart/…` になる)。例と絵の網羅の検査と公開 API の検査は、`extension Sketch` だけを数えていたので、`SketchPart` も上の層として数えるようにした ([#2616](https://github.com/mokume-metal/mokume/issues/2616))
 - 名乗り忘れると「`fill` が見つからない」になるので、入門の文書で 1 語を教える
 
 **退けた案:**
