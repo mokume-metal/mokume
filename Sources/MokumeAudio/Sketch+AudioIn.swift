@@ -7,7 +7,7 @@ import MokumeCore
 // 音の入力。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0042] 決定 1)。`plugins` には何も書かない —
-// 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -63,7 +63,7 @@ extension Sketch {
     /// 固定の時計で書き出すと、何度書き出しても同じフレームが同じ値を受け取る
     /// ([ADR-0028] 決定 7)。マイクを使うスケッチを、機材の無い場所で確かめるときにも使う。
     ///
-    /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。読み込みは作るときに 1 度だけで、
+    /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。読み込みは作るときに 1 度だけで、
     /// 全体を標本列として持つ。
     ///
     /// - Parameter file: 音声ファイルの名前。macOS が読める形式 (WAV・AIFF・CAF・MP3・

@@ -98,6 +98,23 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("決定 1", problems[0])
 
+    def test_SketchPart_に置いた語彙も上の層として転送を見る(self):
+        """語彙の経路の頭は SketchPart になる (#2616)。上の層として数えないと検査が空振りする。"""
+        symbols = [
+            symbol("tint(_:)", owner="SketchPart"),
+            symbol("tint(color:)", owner="Canvas"),
+        ]
+        problems = api.check_forwarding(symbols, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("決定 1", problems[0])
+
+    def test_SketchPart_と下の層に同じ説明文があると見つける(self):
+        symbols = [
+            symbol("fill(_:)", owner="SketchPart", doc="塗りの色。"),
+            symbol("fill(_:)", owner="Canvas", doc="塗りの色。"),
+        ]
+        self.assertEqual(len(api.check_doc_canon(symbols)), 1)
+
     def test_同じ名前と同じラベルなら通す(self):
         symbols = [symbol("tint(_:)", owner="Sketch"), symbol("tint(_:)", owner="Canvas")]
         self.assertEqual(api.check_forwarding(symbols, set()), [])
@@ -405,6 +422,12 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
         self.assertEqual(len(api.check_sketch_coverage(symbols, "", {})), 1)
         self.assertEqual(api.check_sketch_coverage(symbols, "fill(0.5)", {}), [])
 
+    def test_SketchPart_の語彙も参照スケッチからの呼び出しを見る(self):
+        """語彙は SketchPart に置いてある (#2616)。数えないと見る範囲が黙って空になる。"""
+        symbols = [symbol("ellipse(_:_:_:_:)", owner="SketchPart")]
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "", {})), 1)
+        self.assertEqual(api.check_sketch_coverage(symbols, "ellipse(1, 2, 3, 4)", {}), [])
+
     def test_Sketch以外の型のメンバは見ない(self):
         symbols = [symbol("encodeForDisplay()", owner="RenderTarget")]
         self.assertEqual(api.check_sketch_coverage(symbols, "", {}), [])
@@ -548,6 +571,21 @@ class 公開の口の種類(unittest.TestCase):
         problems = api.check_port_kinds(symbols, 'Mouth("clip", .clip) { $0.clip(0, 0, 8, 8) }', kinds)
         self.assertEqual(len(problems), 1)
         self.assertIn("effects", problems[0])
+        self.assertIn(api.SCENE_TEST.name, problems[0])
+
+    def test_SketchPart_の口も種類の表に載っているかを見る(self):
+        """語彙は SketchPart に置いてある (#2616)。表に無い口を名乗れないと、書き落としが黙る。"""
+        problems = api.check_port_kinds([symbol("blur(_:)", owner="SketchPart")], "", {})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("blur", problems[0])
+
+    def test_SketchPart_にしか無いシーンの記述も検査に名前を求める(self):
+        """下の層に同名が無いと、数は上の層から取る。上の層を数えないと KeyError で落ちていた。"""
+        symbols = [symbol("lights()", owner="SketchPart")]
+        problems = api.check_port_kinds(symbols, "", {"lights": api.SCENE})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("lights", problems[0])
+        # 「公開の口が無い」ではなく「シーンの記述の検査に名前が無い」で名乗る
         self.assertIn(api.SCENE_TEST.name, problems[0])
 
     def test_シーンの記述でない口は検査に名前を求めない(self):

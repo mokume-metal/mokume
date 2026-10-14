@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // モデル。
-extension Sketch {
+extension SketchPart {
     /// 外で作ったモデルを読む。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var head: Model? -->
@@ -185,7 +185,7 @@ extension Sketch {
     /// 解釈を別の仕事として回すので、大きなモデルを読んでもフレームが詰まらない。
     ///
     /// **`setup()` の中で `Task` を起こし、そこから呼ぶ。** 呼び方と届く前の扱いは
-    /// ``requestImage(_:)`` と同じで、届くまでの ``draw()`` はモデルが無いまま呼ばれ、
+    /// ``requestImage(_:)`` と同じで、届くまでの ``Sketch/draw()`` はモデルが無いまま呼ばれ、
     /// 置くのは `draw()` の中である。
     ///
     /// <!-- example: 文脈 var head: Model? -->

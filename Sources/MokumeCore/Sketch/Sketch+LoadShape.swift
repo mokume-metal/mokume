@@ -6,7 +6,7 @@
 // 読み解きは ``SVGFile``、形にするのは面 (``Canvas``) の記録で、どちらも公開しない。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
     /// SVG のファイルを読み、保持した形 (``Shape``) にする。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var logo: Shape? -->
@@ -251,7 +251,7 @@ extension Sketch {
     ///
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。URL からは読まない。
     ///
-    /// **形を記録する面が要るので、`setup()` か ``draw()`` の中で呼ぶ。** 同じ名前を読み直すと、
+    /// **形を記録する面が要るので、`setup()` か ``Sketch/draw()`` の中で呼ぶ。** 同じ名前を読み直すと、
     /// ファイルをもう一度読む。毎フレーム呼ばず、`setup()` で読んで持ち回る。
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
@@ -284,7 +284,7 @@ extension Sketch {
     /// ``loadShape(_:)`` と同じ。
     ///
     /// 呼び方と届く前の扱いは ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、
-    /// そこから呼ぶ。** 届くまでの ``draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
+    /// そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
     ///
     /// > Note: 届いた形の見え方は ``loadShape(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは SVG の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに

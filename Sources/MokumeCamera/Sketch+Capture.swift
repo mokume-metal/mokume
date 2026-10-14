@@ -6,7 +6,7 @@ import MokumeCore
 // カメラ。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0042] 決定 1)。`plugins` には何も書かない —
-// 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -39,7 +39,7 @@ extension Sketch {
     ///   - width: 受け取る絵の幅 (画素)。
     ///   - height: 受け取る絵の高さ (画素)。
     ///   - device: 使うカメラ (``captureDevices()`` から選ぶ)。省けば既定の 1 台。
-    /// - Throws: 大きさが絵として置けないとき (``createImage(_:_:)`` と同じ)。
+    /// - Throws: 大きさが絵として置けないとき (``SketchPart/createImage(_:_:)`` と同じ)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     public func createCapture(

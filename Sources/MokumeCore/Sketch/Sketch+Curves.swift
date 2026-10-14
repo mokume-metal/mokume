@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、曲線の制御点。
-extension Sketch {
+extension SketchPart {
     /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     ///
     /// **2 つの制御点は通らない** — 曲線を引っぱる位置である。下の例では灰色の丸が

@@ -244,7 +244,7 @@ struct Player: SketchPart {
 
 **代償:**
 
-- リファレンスの頁の置き場が変わる。例と絵の網羅の検査 (`extension Sketch` を数える) を、移した先に合わせる
+- リファレンスの頁の置き場が変わる (`…/sketch/…` が `…/sketchpart/…` になる)。例と絵の網羅の検査と公開 API の検査は、`extension Sketch` だけを数えていたので、`SketchPart` も上の層として数えるようにした ([#2616](https://github.com/mokume-metal/mokume/issues/2616))
 - 名乗り忘れると「`fill` が見つからない」になるので、入門の文書で 1 語を教える
 
 **退けた案:**
@@ -252,7 +252,9 @@ struct Player: SketchPart {
 - **`keyboard` / `mouse` だけをグローバルにする。** `fill()` との不一致が残る
 - **語彙をすべてグローバルにも置く** (p5.js のグローバルモード)。`width`・`key`・`line`・`text`・`image` などが、利用者のモジュール全体の名前空間に入る
 
-**当初の置き場**は、純粋な計算をグローバル関数に、状態を持つ語彙を `Sketch` のメソッドにする 2 区分だった (上の小見出し)。2026-10-14 時点で `SketchPart` はまだ無い ([ADR-0045](0045-game-direction.md) 決定 13 の段 1)。
+**`Sketch` に残すもの:** 要件と既定の実装 (`setup`・`draw`・`settings`・`plugins`・入力の呼び出し)・`main()`・`params` (そのスケッチの `@Param` を読むので、部品に置くと意味が変わる)。音・カメラ・通信のターゲットの口 (`create*`・`loadSound` ほか) も、いまは `Sketch` に残す。資源の持ち主をスケッチの class そのもの (`owner: self`) で持っているためで、部品から呼ぶ作例が来たら、走っているスケッチを持ち主として渡す形に直して移す。
+
+**当初の置き場**は、純粋な計算をグローバル関数に、状態を持つ語彙を `Sketch` のメソッドにする 2 区分だった (上の小見出し)。`SketchPart` は [#2616](https://github.com/mokume-metal/mokume/issues/2616) で入った。
 
 ## 影響
 

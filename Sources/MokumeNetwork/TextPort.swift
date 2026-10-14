@@ -118,7 +118,7 @@ public class TextPort: Inlet {
 
     /// 止める。ポートを閉じ、以後 ``messages`` は空のままで、送っても何も出ない。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``Sketch/detach(_:)-(Inlet)`` と同じ)。
+    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     public func stop() {
         owner?.detach(self)
     }

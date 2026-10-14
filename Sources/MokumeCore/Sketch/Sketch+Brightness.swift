@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 明るさを画面へ写す。
-extension Sketch {
+extension SketchPart {
     /// 画面全体の明るさの倍率。既定は `1`。
     ///
     /// **画面の性質なので、材質や光と違ってフレームを越える** — 一度書けば書き換える

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、行列と、積んで戻す操作。
-extension Sketch {
+extension SketchPart {
     /// 与えた変換を、いまの変換の後に重ねる。
     ///
     /// 渡す ``Transform`` は ``Transform/identity`` から積み上げて作る。積む順も向きも

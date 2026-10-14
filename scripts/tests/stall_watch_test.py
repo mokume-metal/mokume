@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは八つ。
+固定したいのは十一。
 
 1. **pr-title へ rerun を打たない。** pull_request の rerun は元のイベントを再生するので、
    古いタイトルで判定され、その失敗が最新の結果になって**打つ前より悪くなる** (#699)。
@@ -12,7 +12,7 @@
    古い失敗 check が判定を固定したまま (#259 / #513) 誰も直さなくなる
 3. **凍結されたペイロードの可変欄を読むジョブが、除外リストに載っている。** いまは
    pr-title 1 本だが、同じ形のジョブが増えたときに人が気付く経路が無い (#801 と同じ形)
-4. **BLOCKED で予約が外れた PR は、重要パスに触れていても掛け直す。** 承認のゲートは
+4. **BLOCKED で予約が外れた PR は、重要パスに触れていても名乗る。** 承認のゲートは
    ADR-0044 で外れた (#2108) ので、承認待ちと読んで黙ると予約が外れたまま誰も直さない
 5. **判定は何も打たない。** 手元で様子を見るために打っただけで auto-merge が掛かると、
    判定と対処を分けた意味が消える
@@ -23,6 +23,16 @@
 8. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
    走らないと、描画に触れない PR も含めて queue 全体が止まる。1 台なので、他の run を
    走らせている間の queued は正常な順番待ちで、名乗ると毎回の注意になる (#642)
+9. **予約が外れた PR があっても、当番は予約を掛けない** (#2614)。当番の GITHUB_TOKEN では
+   掛けられず (`enablePullRequestAutoMerge` が FORBIDDEN)、掛け直しは一度も成功しないまま、
+   毎回 stall-act を exit 1 にして他の赤を埋もれさせていた。**代わりに、外れた出来事
+   (queue から弾かれた・人の操作でなく外された) から猶予を超えたら赤で人に返す。**
+   一度も予約を掛けていない PR と、人が外した予約は「外れた」と名乗らない
+10. **gh が失敗した理由 (stderr) を捨てない** (#2614)。捨てると、失敗が何十回続いても
+   理由がどこにも残らない。rerun の拒否のうち、打つ対象がその回に居ないだけのもの (同じ
+   run が走り直している・古い attempt のジョブ) は赤にしない
+11. **当番の job が持つ書き込み権限と、スクリプトが打つ書き込みが対応している** (#2614)。
+   偽 gh は権限を見ないので、権限の外の操作を打ち続けても単体の検査は緑のままだった
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -61,17 +71,32 @@ emit() { # $1=JSON ファイル
 
 if [ "$1 $2" = "pr list" ]; then emit "$PR_DIR/list.json"; exit 0; fi
 
-if [ "$1 $2" = "pr view" ]; then emit "$PR_DIR/$3.json"; exit 0; fi
+if [ "$1 $2" = "pr view" ]; then
+  [ -z "${VIEW_FAILS:-}" ] || { echo "gh: HTTP 502: Bad Gateway (pr view)" >&2; exit 1; }
+  emit "$PR_DIR/$3.json"; exit 0
+fi
 
 if [ "$1 $2" = "pr merge" ]; then
   [ -z "${MERGE_FAILS:-}" ] || { echo "gh: cannot enable auto-merge" >&2; exit 1; }
   exit 0
 fi
 
-if [ "$1 $2" = "run rerun" ]; then exit 0; fi
-
 if [ "$1 $2" = "api graphql" ]; then
+  num=""
+  prev=""
+  for a in "$@"; do
+    case "$prev $a" in "-F number="*) num=${a#number=} ;; esac
+    prev=$a
+  done
   case "$*" in
+    # 予約と queue の出来事 (#2614)。既定は出来事なし
+    *timelineItems*)
+      [ -z "${TIMELINE_FAILS:-}" ] || { echo "gh: HTTP 502: Bad Gateway (timeline)" >&2; exit 1; }
+      f="$PR_DIR/$num.timeline.json"
+      [ -f "$f" ] || f="$PR_DIR/timeline.none.json"
+      emit "$f"; exit 0 ;;
+    *isInMergeQueue*)
+      [ -z "${QUEUE_FAILS:-}" ] || { echo "gh: HTTP 502: Bad Gateway (isInMergeQueue)" >&2; exit 1; } ;;
     # 順番の判定が読む merge queue の並び (#1266)。既定は空
     *"mergeQueue{"*) printf '%s\\n' ${QUEUED_PRS:-}; exit 0 ;;
   esac
@@ -97,7 +122,14 @@ case "$url" in
     f="$PR_DIR/render-jobs.$id.json"
     [ -f "$f" ] || { echo '{"jobs":[]}' > "$PR_DIR/render-jobs.none.json"; f="$PR_DIR/render-jobs.none.json"; }
     emit "$f"; exit 0 ;;
+  # ジョブの rerun (POST)。本物の gh api は失敗の文面を「gh: <message> (HTTP <code>)」で出す
+  */actions/jobs/*/rerun)
+    [ -z "${RERUN_FAILS:-}" ] || { echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1; }
+    [ -z "${RERUN_RUNNING:-}" ] || { echo "gh: The workflow run containing this job is already running (HTTP 403)" >&2; exit 1; }
+    [ -z "${RERUN_OLD_ATTEMPT:-}" ] || { echo "gh: Only jobs from the current attempt can be re-run (HTTP 403)" >&2; exit 1; }
+    exit 0 ;;
   */check-runs)
+    [ -z "${CHECKRUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout (check-runs)" >&2; exit 1; }
     sha=${url%/check-runs}; sha=${sha##*/}
     emit "$PR_DIR/${sha#sha-}.checkruns.json"; exit 0 ;;
   */files)
@@ -115,6 +147,20 @@ def ago(minutes):
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
+
+
+def removed(reason, minutes):
+    """queue から外れた出来事 (#2614)。reason は GitHub の値 (failed_checks・manual・merged など)。"""
+    return {"__typename": "RemovedFromMergeQueueEvent", "createdAt": ago(minutes), "reason": reason}
+
+
+def disabled(code, minutes):
+    """auto-merge が外された出来事 (#2614)。人が外すと reasonCode は manually_disabled になる。"""
+    return {"__typename": "AutoMergeDisabledEvent", "createdAt": ago(minutes), "reasonCode": code}
+
+
+def enabled(minutes):
+    return {"__typename": "AutoMergeEnabledEvent", "createdAt": ago(minutes)}
 
 
 def check(name, result, at=None, run=None):
@@ -142,6 +188,7 @@ class StallWatchTest(unittest.TestCase):
         # **run が無いときも応答は返す** (空の並び)。本物の gh もそう返すので、判定側の
         # `// ""` と length を素通りさせない
         self.write_runs("none")
+        self.write_timeline("none", [])
         self.calls = root / "gh-calls.txt"
         self.calls.write_text("", encoding="utf-8")
         self.bin_dir = bin_dir
@@ -149,6 +196,13 @@ class StallWatchTest(unittest.TestCase):
 
     def write(self, name, payload):
         (self.pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+
+    def write_timeline(self, key, events):
+        """PR の予約と queue の出来事を、GraphQL の応答の形で置く (古い順)。"""
+        self.write(
+            f"{key}.timeline.json",
+            {"data": {"repository": {"pullRequest": {"timelineItems": {"nodes": list(events)}}}}},
+        )
 
     def write_runs(self, status, *created, job_status=None, gate="completed"):
         """render.yml の run のうち、status のものを created の時刻で並べる。
@@ -184,6 +238,7 @@ class StallWatchTest(unittest.TestCase):
         checks=(),
         updated=None,
         files=(),
+        events=None,
     ):
         listing = []
         path = self.pr_dir / "list.json"
@@ -204,6 +259,8 @@ class StallWatchTest(unittest.TestCase):
             },
         )
         self.write(f"{number}.files.json", [{"filename": f} for f in files])
+        if events is not None:
+            self.write_timeline(number, events)
 
     def env(self, **extra):
         env = dict(os.environ)
@@ -258,12 +315,79 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch()
         self.assertEqual(proc.stdout.strip(), "", proc.stdout)
 
-    def test_auto_merge_が外れた_PR_は打つに分類される(self):
-        self.add_pr(2, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
+    def test_auto_merge_が外れた_PR_は名乗るに分類される(self):
+        """当番は掛け直さず、人に返す (#2614)。"""
+        self.add_pr(
+            2,
+            auto=False,
+            state="CLEAN",
+            checks=[check("ci-gate", "SUCCESS")],
+            events=[enabled(90), removed("failed_checks", 10)],
+        )
         kind, action = self.classify(2, self.watch())
-        self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
+        self.assertEqual((kind, action), ("auto-merge-dropped", "name"))
 
-    def test_重要パスに触れる_PR_も予約が外れていれば掛け直す(self):
+    def test_一度も予約を掛けていない_PR_は外れたと名乗らない(self):
+        """後からコミットを足す PR は予約を掛けずに置く (AGENTS.md)。外れた出来事が無いものを
+        外れたと名乗ると、置いてあるだけの PR が猶予の後に当番を赤くする (#2614)。"""
+        self.add_pr(30, auto=False, state="BLOCKED", checks=[check("ci-gate", "SUCCESS")], events=[])
+        proc = self.watch(STALL_MINUTES=1)
+        self.assertEqual(self.classify(30, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_人が外した予約は外れたと名乗らない(self):
+        """人が外した (disable-auto・queue から手で出した) のは意図で、当番が返す先も人である。"""
+        for number, events in (
+            (31, [enabled(120), disabled("manually_disabled", 100)]),
+            (32, [enabled(120), removed("manual", 100)]),
+        ):
+            self.add_pr(number, auto=False, state="BLOCKED", checks=[check("ci-gate", "SUCCESS")], events=events)
+        proc = self.watch(STALL_MINUTES=1)
+        self.assertEqual(self.classify(31, proc), (None, None), proc.stdout)
+        self.assertEqual(self.classify(32, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_人の操作でなく外された予約は名乗る(self):
+        """reasonCode が manually_disabled 以外 (知らない値も含む) は外れたと読む。"""
+        self.add_pr(33, auto=False, state="BLOCKED", events=[enabled(120), disabled("unknown_reason", 20)])
+        self.assertEqual(self.classify(33, self.watch()), ("auto-merge-dropped", "name"))
+
+    def test_外れた後に予約を掛け直した出来事が新しければ名乗らない(self):
+        """見るのは最新の出来事だけ。弾かれた後に掛け直され、queue に入る前の隙間は外れていない。"""
+        self.add_pr(34, auto=False, state="BLOCKED", events=[removed("failed_checks", 60), enabled(1)])
+        self.assertEqual(self.classify(34, self.watch()), (None, None))
+
+    def test_弾かれてから猶予を超えたら赤くする(self):
+        """#961 の約束: 機械が打てないものは、猶予を過ぎたら赤で人に返す。経過は弾かれた時刻から測る。"""
+        self.add_pr(35, auto=False, state="BLOCKED", events=[enabled(200), removed("checks_timed_out", 120)])
+        proc = self.watch(STALL_MINUTES=60)
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith("35 "))
+        self.assertEqual(line[1:3], ["auto-merge-dropped", "name"], proc.stdout)
+        self.assertGreaterEqual(int(line[3]), 119, proc.stdout)
+        self.assertIn("checks_timed_out", line[4], proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def test_予約の出来事を読めなければ読めなかったと名乗る(self):
+        self.add_pr(36, auto=False, state="BLOCKED", events=[removed("failed_checks", 120)])
+        proc = self.watch(TIMELINE_FAILS=1)
+        self.assertEqual(self.classify(36, proc), ("unreadable", "name"), proc.stdout)
+        self.assertIn("HTTP 502: Bad Gateway (timeline)", proc.stderr)
+
+    def test_queue_に居るかを読めなければ読めなかったと名乗る(self):
+        """読めずに空が返ったとき、居ないと読んで外れた・古い check に落とさない (#1303)。"""
+        self.add_pr(37, auto=False, state="BLOCKED", events=[removed("failed_checks", 120)])
+        self.add_pr(
+            38,
+            auto=False,
+            state="BLOCKED",
+            checks=[check("ci-gate", "FAILURE", ago(90)), check("ci-gate", "SUCCESS", ago(10))],
+        )
+        proc = self.watch(QUEUE_FAILS=1)
+        self.assertEqual(self.classify(37, proc), ("unreadable", "name"), proc.stdout)
+        self.assertEqual(self.classify(38, proc), ("unreadable", "name"), proc.stdout)
+        self.assertIn("HTTP 502: Bad Gateway (isInMergeQueue)", proc.stderr)
+
+    def test_重要パスに触れる_PR_も予約が外れていれば名乗る(self):
         """承認のゲートは ADR-0044 で外れた (#2108)。以前は awaiting-approval として
         黙っていた形で、黙ると予約が外れたまま誰も掛け直さない。"""
         self.add_pr(
@@ -272,9 +396,10 @@ class StallWatchTest(unittest.TestCase):
             state="BLOCKED",
             checks=[check("ci-gate", "SUCCESS")],
             files=[".github/workflows/ci.yml"],
+            events=[removed("failed_checks", 10)],
         )
         kind, action = self.classify(3, self.watch())
-        self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
+        self.assertEqual((kind, action), ("auto-merge-dropped", "name"))
 
     def test_queue_に居る_PR_は黙る(self):
         self.add_pr(5, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
@@ -427,11 +552,11 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual((kind, action), ("stale-checks", "act"))
 
     def test_判定は何も打たない(self):
-        self.add_pr(11, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
+        self.add_pr(11, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 10)])
         self.watch()
         log = self.gh_log()
         self.assertNotIn("pr merge", log)
-        self.assertNotIn("run rerun", log)
+        self.assertNotIn("/rerun", log)
 
     def test_猶予の中の名乗りでは_0_で終える(self):
         self.add_pr(12, auto=True, state="UNKNOWN", checks=[], updated=ago(5))
@@ -507,12 +632,22 @@ class StallWatchTest(unittest.TestCase):
         proc = self.act(["- runner-offline name 30 専用機の runner が render を拾っていない"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("pr merge", self.gh_log())
-        self.assertNotIn("run rerun", self.gh_log())
+        self.assertNotIn("/rerun", self.gh_log())
 
-    def test_打つ行だけでは赤くしない(self):
-        self.add_pr(14, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
-        proc = self.watch(STALL_MINUTES=1)
+    def test_猶予の内の外れは赤くしない(self):
+        """弾かれた直後は、人が読んで掛け直すまでの時間である (#642)。"""
+        self.add_pr(14, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 5)])
+        proc = self.watch(STALL_MINUTES=60)
+        self.assertEqual(self.classify(14, proc), ("auto-merge-dropped", "name"), proc.stdout)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_読めなかった理由を捨てない(self):
+        """unreadable と名乗るだけで理由を捨てると、何が読めなかったのか誰にも分からない (#2614)。"""
+        self.add_pr(15, auto=False, state="CLEAN")
+        proc = self.watch(RUNS_FAIL=1, VIEW_FAILS=1)
+        self.assertEqual(self.classify(15, proc), ("unreadable", "name"), proc.stdout)
+        self.assertIn("gh: 502", proc.stderr)
+        self.assertIn("HTTP 502: Bad Gateway (pr view)", proc.stderr)
 
     # --- 対処 ---------------------------------------------------------------
 
@@ -530,8 +665,8 @@ class StallWatchTest(unittest.TestCase):
         proc = self.act(["20 stale-checks act 5 古い失敗 check"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
-        self.assertNotIn("--job 111", log, "pr-title へ rerun を打っている")
-        self.assertIn("--job 222", log, "同じ run の他の失敗ジョブへ打っていない")
+        self.assertNotIn("jobs/111/rerun", log, "pr-title へ rerun を打っている")
+        self.assertIn("jobs/222/rerun", log, "同じ run の他の失敗ジョブへ打っていない")
 
     def test_cancel_された_render_pr_を巻き添えで_rerun_しない(self):
         """ジョブ単位の rerun は門番 (render-turn) を通らず、専用機へ直に積む (#2062)。"""
@@ -548,24 +683,69 @@ class StallWatchTest(unittest.TestCase):
         proc = self.act(["25 stale-checks act 5 古い失敗 check"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
-        self.assertNotIn("--job 333", log, "render-pr へ rerun を打っている")
-        self.assertIn("--job 222", log)
+        self.assertNotIn("jobs/333/rerun", log, "render-pr へ rerun を打っている")
+        self.assertIn("jobs/222/rerun", log)
 
     def test_名乗る行には何も打たない(self):
         proc = self.act(["21 conflict name 90 main と衝突している"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
         self.assertNotIn("pr merge", log)
-        self.assertNotIn("run rerun", log)
+        self.assertNotIn("/rerun", log)
 
-    def test_auto_merge_を掛け直す(self):
-        proc = self.act(["22 auto-merge-dropped act 0 外れている"])
+    def test_予約が外れた_PR_があっても当番は掛けず_対処は赤くならない(self):
+        """判定の出力をそのまま対処へ渡す (stall-watch.yml と同じ流れ)。
+
+        当番の GITHUB_TOKEN では予約を掛けられない (MERGE_FAILS が本物の FORBIDDEN に
+        当たる・#2614)。以前は毎回「掛け直せなかった」で exit 1 になり、他の赤を埋もれさせた。
+        赤で人に返すのは判定の終了コード (猶予) の役目で、対処は名乗りの行に何も打たない。"""
+        self.add_pr(22, auto=False, state="BLOCKED", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 5)])
+        watched = self.watch(STALL_MINUTES=60)
+        self.assertEqual(watched.returncode, 0, watched.stdout + watched.stderr)
+        self.assertEqual(self.classify(22, watched), ("auto-merge-dropped", "name"), watched.stdout)
+        proc = self.act(watched.stdout.splitlines(), MERGE_FAILS="1")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("pr merge 22", self.gh_log())
+        self.assertNotIn("pr merge", self.gh_log())
 
-    def test_掛け直しに失敗したら_1_で終える(self):
-        proc = self.act(["23 auto-merge-dropped act 0 外れている"], MERGE_FAILS="1")
-        self.assertEqual(proc.returncode, 1)
+    def test_rerun_に失敗したら理由を添えて_1_で終える(self):
+        self.add_pr(23)
+        self.write("23.checkruns.json", {"check_runs": [{"name": "ci-check", "conclusion": "failure", "id": 222}]})
+        proc = self.act(["23 stale-checks act 5 古い失敗 check"], RERUN_FAILS="1")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(
+            proc.stderr, r"#23: ci-check を rerun できなかった: gh: Resource not accessible by integration \(HTTP 403\)"
+        )
+
+    def test_同じ_run_が走り直している間の_rerun_の拒否は赤にしない(self):
+        """同じ run の別の失敗ジョブを先に打つと run が走り出し、残りは 403 で拒まれる (#2614 の
+        反証)。2026-09-30 の #1883 では 1 回の当番で、ci-gate を打った直後の review-gate と
+        drawing-evidence が 9 本「rerun できなかった」になった (理由は捨てられていて残っていないが、同じ形を
+        再現するとこの文面になる)。次の回に回せば済む。"""
+        self.add_pr(27)
+        self.write("27.checkruns.json", {"check_runs": [{"name": "review-gate", "conclusion": "failure", "id": 444}]})
+        proc = self.act(["27 stale-checks act 5 古い失敗 check"], RERUN_RUNNING="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("#27: review-gate は同じ run が走り直している", proc.stdout)
+
+    def test_古い_attempt_のジョブの_rerun_の拒否は赤にしない(self):
+        """commit の check run の一覧には走り直す前の attempt のジョブも残る。それは打ち直せず、
+        新しい attempt の側が同じ一覧に居る。毎回の赤にしない。"""
+        self.add_pr(28)
+        self.write("28.checkruns.json", {"check_runs": [{"name": "ci-gate", "conclusion": "failure", "id": 555}]})
+        proc = self.act(["28 stale-checks act 5 古い失敗 check"], RERUN_OLD_ATTEMPT="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("#28: ci-gate は古い attempt のジョブ", proc.stdout)
+
+    def test_check_run_を読めなかったら理由を添えて_1_で終える(self):
+        self.add_pr(24)
+        proc = self.act(["24 stale-checks act 5 古い失敗 check"], CHECKRUNS_FAIL="1")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stderr, r"#24: check run の一覧を読めなかった.*HTTP 504: Gateway Timeout")
+
+    def test_head_を読めなかったら理由を添えて_1_で終える(self):
+        proc = self.act(["26 stale-checks act 5 古い失敗 check"], VIEW_FAILS="1")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stderr, r"#26: head の commit を読めなかった.*HTTP 502: Bad Gateway \(pr view\)")
 
     def test_入力ファイルが無ければ_66_で終える(self):
         proc = subprocess.run(
@@ -658,6 +838,88 @@ class RerunExclusionTest(unittest.TestCase):
         self.assertIn(self.squash("新しいコミットを push して run を作り直す"), header)
         self.assertIn(self.squash("rerun でも消えない"), header)
         self.assertNotIn(self.squash("直せば edited で新しい run が走る"), header)
+
+
+STALL_WORKFLOW = REPO / ".github" / "workflows" / "stall-watch.yml"
+
+# gh の書き込みの操作と、それに要る GITHUB_TOKEN の書き込み権限。**gh pr merge (auto-merge の
+# 予約) には contents: write も要る** — pull-requests: write だけでは
+# enablePullRequestAutoMerge が FORBIDDEN になることを実物で確かめた (#2614 の probe、
+# run 38541307087)。知らない書き込みは検査を赤にするので、増やすときはここへ足す
+WRITE_OPS = (
+    (re.compile(r"^pr merge\b"), {"contents", "pull-requests"}),
+    (re.compile(r"^pr (comment|edit|close|reopen|ready|review|create)\b"), {"pull-requests"}),
+    (re.compile(r"^issue (comment|edit|close|reopen|create)\b"), {"issues"}),
+    (re.compile(r"^run (rerun|cancel)\b"), {"actions"}),
+    (re.compile(r"^workflow run\b"), {"actions"}),
+    (re.compile(r'^api "?repos/[^ "]*/actions/[^ "]*"? .*-X (POST|PUT|PATCH|DELETE)\b'), {"actions"}),
+)
+
+# 実行される gh (コマンドの位置にあるもの)。説明の文字列の中の「gh pr merge …」は拾わない
+GH_COMMAND = re.compile(r"(?:^|[;&|({]|\$\(|\bif\s+!?|\bthen|\belse|\bdo)\s*gh\s+(.*)$")
+
+
+class StallWorkflowPermissionTest(unittest.TestCase):
+    """当番の job が持つ書き込み権限と、当番のスクリプトが打つ書き込みの対応 (#2614)。
+
+    掛け直しは権限の外の操作で、直近 98 回の当番で一度も成功しなかった (失敗は 80 回)。
+    偽 gh の pr merge は常に成功するので、単体の検査はそれを見ていなかった。ここで固定するのは 2 つ:
+
+      1. スクリプトが打つ書き込みに要る権限を、job が持っている (持たない書き込みを打たない)
+      2. job が持つ書き込み権限は、どれかの書き込みが使っている (使わない権限を持たない)
+
+    全 workflow への一般化はこの PR の外 (render_workflow_test.py は render.yml の分を持つ)。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        text = STALL_WORKFLOW.read_text(encoding="utf-8")
+        job = text.split("\n  watch:\n", 1)[1]
+        block = job.split("\n    permissions:\n", 1)[1].split("\n    steps:\n", 1)[0]
+        cls.granted = {}
+        for line in block.splitlines():
+            m = re.match(r"^      ([a-z-]+):\s*(read|write)\b", line)
+            if m:
+                cls.granted[m.group(1)] = m.group(2)
+        cls.writes = {k for k, v in cls.granted.items() if v == "write"}
+        cls.scripts = sorted(set(re.findall(r"bash (scripts/[\w-]+\.sh)", job)))
+
+    def ops(self):
+        """(スクリプト, 行, 要る権限 or None) の並び。None は知らない書き込み。"""
+        found = []
+        for rel in self.scripts:
+            for line in (REPO / rel).read_text(encoding="utf-8").splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
+                if re.search(r"\bmutation\b", line):
+                    found.append((rel, line.strip(), None))
+                    continue
+                m = GH_COMMAND.search(line)
+                if not m:
+                    continue
+                cmd = re.sub(r"--repo \S+ ", "", m.group(1))
+                need = next((n for pat, n in WRITE_OPS if pat.search(cmd)), set())
+                if not need and re.search(r"-X (POST|PUT|PATCH|DELETE)\b", cmd):
+                    need = None
+                if need is None or need:
+                    found.append((rel, line.strip(), need))
+        return found
+
+    def test_当番が走らせるスクリプトを読めている(self):
+        self.assertEqual(self.scripts, ["scripts/stall-act.sh", "scripts/stall-watch.sh"])
+        # 走査が空振りしていないこと: rerun の書き込みを拾えている
+        self.assertTrue(any(n == {"actions"} for _, _, n in self.ops()), self.ops())
+
+    def test_打つ書き込みに要る権限を_job_が持つ(self):
+        for rel, line, need in self.ops():
+            self.assertIsNotNone(need, f"{rel}: 対応を知らない書き込み (WRITE_OPS へ足す): {line}")
+            self.assertLessEqual(
+                need, self.writes, f"{rel}: 権限の外の書き込みを打つ (要る {sorted(need)}・持つ {sorted(self.writes)}): {line}"
+            )
+
+    def test_使わない書き込みの権限を持たない(self):
+        used = set().union(*(n for _, _, n in self.ops() if n))
+        self.assertLessEqual(self.writes, used, f"使わない書き込みの権限を持つ: {sorted(self.writes - used)}")
 
 
 if __name__ == "__main__":

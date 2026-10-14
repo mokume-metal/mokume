@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 資材の名前から、在るファイルを探せなかったこと。``Sketch/assetURL(_:)`` が投げる。
+/// 資材の名前から、在るファイルを探せなかったこと。``SketchPart/assetURL(_:)`` が投げる。
 public enum AssetFailure: Error, Equatable, Sendable {
     /// その名前の資材が見つからない。`searched` は探した場所を、探した順に並べたもの。
     case notFound(path: String, searched: [String])

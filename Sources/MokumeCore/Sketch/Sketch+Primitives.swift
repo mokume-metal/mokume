@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、基本図形。
-extension Sketch {
+extension SketchPart {
     /// 矩形を塗る。
     ///
     /// 4 つの数の読み方は ``rectMode(_:)`` が決める。既定は**左上の角と、幅と高さ**。

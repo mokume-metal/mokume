@@ -6,12 +6,12 @@ import MokumeDiagnostics
 // 走っているスケッチへ差込口を足す・外す。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     /// 入り口を、走っているスケッチへ足す。
     ///
     /// **呼べば使える機能を作るための口である** ([ADR-0042] 決定 2)。カメラのような機能は、
-    /// 利用者に ``plugins`` へ書かせず、作る口の中でこれを呼ぶ。外のパッケージも同じ形を
+    /// 利用者に ``Sketch/plugins`` へ書かせず、作る口の中でこれを呼ぶ。外のパッケージも同じ形を
     /// 作れる — 呼べば入る手軽さは、組み込みだけのものではない。
     ///
     /// ```swift
@@ -36,7 +36,7 @@ extension Sketch {
     /// - 同じものを 2 度足しても 1 つのまま (開き直さない)
     /// - ``Inlet/supply()`` の中から頼んだときは、その巡回が終わってから開いて足す
     ///   (戻り値は `true`。開けなければ診断に出る)
-    /// - ``plugins`` で宣言したものと同じ並びに入る。閉じるのは ``detach(_:)-(Inlet)`` か、
+    /// - ``Sketch/plugins`` で宣言したものと同じ並びに入る。閉じるのは ``detach(_:)-(Inlet)`` か、
     ///   スケッチの終わり
     ///
     /// 下の例は、呼ばれた回数を数える入り口を 3 つ足し、数を棒の長さにしている。上の 2 つは

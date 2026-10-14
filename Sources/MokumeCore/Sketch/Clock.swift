@@ -45,7 +45,7 @@ enum FrameStep: Equatable {
         }
     }
 
-    /// 利用者に見せる単精度の秒 (``Sketch/deltaTime``)。
+    /// 利用者に見せる単精度の秒 (``SketchPart/deltaTime``)。
     var deltaTime: Float { Float(seconds) }
 }
 
@@ -78,7 +78,7 @@ enum FrameStep: Equatable {
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 @MainActor
 final class FrameTiming {
-    /// 時刻の出どころ。``Sketch/clock`` が読む。
+    /// 時刻の出どころ。``SketchPart/clock`` が読む。
     let clock: Clock
     /// 実時間の出どころ。検査が時間を操れるよう差し替えられる形にしてある。
     private let now: () -> Double
@@ -192,7 +192,7 @@ final class FrameTiming {
     func advance(at requestedTime: Float? = nil) {
         let now = now()
         if frameCount == 0, clock == .wallClock {
-            // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``Sketch/time``
+            // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``SketchPart/time``
             // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
             // 作ってからここまでの間 (起動・窓・`setup()`) は、描いていた時間ではない。
             // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い

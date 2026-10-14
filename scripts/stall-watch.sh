@@ -35,7 +35,8 @@
 #      原因: merge queue の合流後の木で必須チェック (ci-gate か、専用機の render) が落ちて
 #      弾かれ、auto-merge も一緒に外れた (eject の副作用)
 #      対処: 弾いた merge_group の run を読む。一過性か main 側で直ったなら予約を掛け直す
-#      (当番は auto-merge-dropped として掛け直す)。PR 側で直すものなら直して push する
+#      (当番は auto-merge-dropped と名乗り、猶予を超えたら赤くするだけで、掛け直すのは
+#      人 — #2614)。PR 側で直すものなら直して push する
 #   6. pr-title が落ちた
 #      原因: タイトルが Conventional Commits ではない (design は Issue Type であって型ではない)
 #      対処: タイトルを直し、**新しいコミットを push して run を作り直す** (空コミットでよい)。
@@ -108,9 +109,27 @@
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
-#   auto-merge-dropped   act    2・5    予約を掛け直すだけ。ゲートは飛び越えない
+#   auto-merge-dropped   name   2・5    予約の掛け直しは人手。当番の権限では掛けられない
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
+#
+# **auto-merge-dropped は打たずに名乗り、猶予を超えたら赤で人に返す** (#2614)。以前は act
+# で、stall-act.sh が gh pr merge --auto --squash を打っていたが一度も成功しなかった — 当番の
+# GITHUB_TOKEN (contents: read) では enablePullRequestAutoMerge が FORBIDDEN になる。掛けるには
+# リポジトリへの書き込みを当番に渡すことになり、それは人の判断なので、掛けずに人へ返す。
+#
+# **「外れた」は PR の状態ではなく timeline の出来事で読む。** 予約が無いという状態は、外れた
+# PR と、一度も掛けていない PR (後からコミットを足す PR は掛けずに置く・AGENTS.md「マージの
+# 判断基準」) の両方を指す。状態で読むと、掛けずに置いた PR に猶予の後で赤を返してしまう
+# (#642)。予約と queue の出来事のうち**最新のもの**が次のどちらかのときだけ外れたと読み、
+# その時刻から経過を測る:
+#
+# - queue から外れた (RemovedFromMergeQueueEvent) で、理由が merged でも manual でもない
+#   (実測で見た値は failed_checks・checks_timed_out・merge_conflict)
+# - auto-merge が外された (AutoMergeDisabledEvent) で、reasonCode が manually_disabled でない
+#
+# 人が外したもの (manual・manually_disabled) は意図なので外れたと読まない — 足すコミットの
+# 前に --disable-auto で外すのは決まりどおりの操作である。出来事を読めなければ unreadable。
 #
 # **unreadable は表の行を持たない。** PR そのものか専用機の render の run が読めなかった回で、
 # 詰まりの種類を言っていない — 黙って通す (quiet) と、読めていないことが誰にも見えない
@@ -137,7 +156,8 @@
 # ときだけ 1 で終える。** それ以下は出力するだけで 0。
 #
 # 経過は「その状態を作った出来事の時刻」から測る — 失敗 check があればその completedAt、
-# check が 1 本も無い conflict では PR の updatedAt。**状態をどこにも記録しない**ので、
+# check が 1 本も無い conflict では PR の updatedAt、auto-merge-dropped では外れた出来事の
+# createdAt。**状態をどこにも記録しない**ので、
 # 当番が落ちていても復帰すればそのまま正しく測れる。
 #
 # **猶予の値は、走る間隔に合わせて動かさない** (#1197)。cron は 15 分ごとに頼んでいるが、
@@ -170,6 +190,9 @@
 #   <番号> <分類> <act|name|quiet> <経過分> <説明>
 #
 # 終了コード: 0 = 詰まりなし / 閾値内、1 = 閾値を超えた名乗りがある。
+#
+# **読めなかったときの gh の stderr は捨てずに stderr へ流す** (#2614)。標準出力は機械が
+# 読む契約なので混ぜないが、unreadable と名乗った理由はジョブのログに残す。
 #
 # 呼び出しは .github/workflows/stall-watch.yml、検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail
@@ -296,7 +319,29 @@ in_merge_queue() { # $1=PR 番号
   gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$1" \
     -f query='query($owner:String!,$name:String!,$number:Int!){
       repository(owner:$owner,name:$name){pullRequest(number:$number){isInMergeQueue}}}' \
-    --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || echo ""
+    --jq '.data.repository.pullRequest.isInMergeQueue' || echo ""
+}
+
+# 予約が外れた出来事 (#2614)。予約と queue の出来事のうち最新のものが、人の操作でない外れ方
+# なら「<時刻> <理由>」を 1 行出す。何も出さなければ外れていない (一度も掛けていない・人が
+# 外した・掛け直した)。読めなければ非 0。読み方の理由は冒頭の分類の表の下
+dropped_event() { # $1=PR 番号
+  # shellcheck disable=SC2016
+  gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$1" \
+    -f query='query($owner:String!,$name:String!,$number:Int!){
+      repository(owner:$owner,name:$name){pullRequest(number:$number){
+        timelineItems(last:1,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT,
+                                        AUTO_MERGE_ENABLED_EVENT,AUTO_MERGE_DISABLED_EVENT]){
+          nodes{__typename
+            ... on RemovedFromMergeQueueEvent{createdAt reason}
+            ... on AutoMergeDisabledEvent{createdAt reasonCode}}}}}}' \
+    --jq '.data.repository.pullRequest.timelineItems.nodes[-1] // empty
+      | select((.__typename == "RemovedFromMergeQueueEvent"
+                and ((.reason // "") | ascii_downcase) != "merged"
+                and ((.reason // "") | ascii_downcase) != "manual")
+            or (.__typename == "AutoMergeDisabledEvent"
+                and ((.reasonCode // "") | ascii_downcase) != "manually_disabled"))
+      | "\(.createdAt) \(.reason // .reasonCode // "-")"'
 }
 
 say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
@@ -309,14 +354,14 @@ runner_jobs() {
   local st ids="" got id
   for st in queued in_progress; do
     got=$(gh api "repos/$REPO/actions/workflows/render.yml/runs?status=$st&per_page=100" \
-      --jq '.workflow_runs[].id' 2>/dev/null) || return 1
+      --jq '.workflow_runs[].id') || return 1
     ids+="$got"$'\n'
   done
   for id in $(printf '%s' "$ids" | sort -u); do
     gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
       --jq '.jobs[] | select((.labels // []) | index("mokume-render"))
         | select(.status == "queued" or .status == "in_progress")
-        | "\(.status) \(.created_at)"' 2>/dev/null || return 1
+        | "\(.status) \(.created_at)"' || return 1
   done
 }
 
@@ -353,8 +398,7 @@ numbers=$(gh pr list --repo "$REPO" --state open --limit 100 \
 
 for n in $numbers; do
   json=$(gh pr view "$n" --repo "$REPO" \
-    --json isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,updatedAt \
-    2>/dev/null) || {
+    --json isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,updatedAt) || {
     say_line "$n" unreadable name 0 "PR を読めなかった (判定していない)"
     continue
   }
@@ -390,10 +434,18 @@ for n in $numbers; do
   # 予約が queue へ移ると autoMergeRequest は null になる。**外れたのではない** (#628)
   if [ "$auto" != true ]; then
     queued=$(in_merge_queue "$n")
-    if [ "$queued" = true ]; then
-      say_line "$n" in-queue quiet 0 "queue が進めている (何も打たない)"
-      continue
-    fi
+    case "$queued" in
+      true)
+        say_line "$n" in-queue quiet 0 "queue が進めている (何も打たない)"
+        continue
+        ;;
+      false) ;;
+      # 読めなかった (空) を「居ない」と読むと、外れた・古い check へ落ちて打ちうる (#1303)
+      *)
+        say_line "$n" unreadable name 0 "queue に居るかを読めなかった (判定していない)"
+        continue
+        ;;
+    esac
   fi
 
   stale=$(stale_names <<<"$checks")
@@ -403,9 +455,19 @@ for n in $numbers; do
     continue
   fi
 
-  # BLOCKED でも承認待ちとは読まない。承認のゲートは ADR-0044 で外れた (#2108)
+  # BLOCKED でも承認待ちとは読まない。承認のゲートは ADR-0044 で外れた (#2108)。
+  # 外れたかは状態ではなく出来事で読み、外れた時刻から猶予を測る。理由は冒頭の分類の表の下 (#2614)
   if [ "$auto" != true ]; then
-    say_line "$n" auto-merge-dropped act 0 "auto-merge が外れている — 予約を掛け直す"
+    event=$(dropped_event "$n") || {
+      say_line "$n" unreadable name 0 "予約と queue の出来事を読めなかった (判定していない)"
+      continue
+    }
+    # 外れた出来事が無い: 一度も掛けていない・人が外した。名乗らない
+    [ -n "$event" ] || continue
+    mins=$(minutes_since "${event%% *}")
+    say_line "$n" auto-merge-dropped name "$mins" \
+      "auto-merge が外れている (${event#* }) — 弾いた run を読み、gh pr merge $n --auto --squash で掛け直す (当番は掛けない・#2614)"
+    [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
     continue
   fi
 done

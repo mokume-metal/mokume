@@ -4,7 +4,7 @@
 import Foundation
 
 /// XML の要素 1 つ (`<star x="120" y="80"/>`)。ファイルか URL から読んで根の要素を作り
-/// (``Sketch/loadXML(_:)``)、子の要素を名前で取り出し、属性を読む。
+/// (``SketchPart/loadXML(_:)``)、子の要素を名前で取り出し、属性を読む。
 ///
 /// <!-- example: 文脈 var sky: XML? -->
 /// ```swift

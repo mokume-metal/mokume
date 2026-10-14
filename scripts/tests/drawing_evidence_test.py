@@ -458,6 +458,8 @@ class DrawingEvidenceTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertIn("判定しない", r.stdout)
                 self.assertIn("PR #101 を読めなかった", r.stdout)
+                # 読めなかった理由 (gh の stderr) を捨てない (#2614)
+                self.assertIn("no pull requests found", r.stdout)
                 self.assertNotIn("描画に触れ", r.stdout)
 
     # --- 呼び方 -----------------------------------------------------------

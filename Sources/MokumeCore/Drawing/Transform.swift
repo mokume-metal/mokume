@@ -16,7 +16,7 @@ import simd
 ///
 /// **組み立ての起点は ``identity`` である。** 行列を返す口は無く、`var` で受けた
 /// `identity` に `translate` や `rotate` を積んでいく。組み上がった値は
-/// ``Sketch/applyMatrix(_:)`` へ渡せる。
+/// ``SketchPart/applyMatrix(_:)`` へ渡せる。
 ///
 /// ```swift
 /// var step = Transform.identity

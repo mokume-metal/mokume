@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 影。
-extension Sketch {
+extension SketchPart {
     /// 影を落とすかどうか。既定は落とさない。
     ///
     /// 落とすのは**置いてあるうちの最初の向きを持つ光** (``directionalLight(_:_:_:_:)``)
@@ -26,8 +26,8 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// **影が減らすのは直接の光だけ**である。影の中でも、``ambientLight(_:)-fvb5`` の光・
-    /// ``surroundings(_:)`` の光・``emissive(_:)-uyuh`` の自発光は残り、``ambient(_:)-9anin`` は
+    /// **影が減らすのは直接の光だけ**である。影の中でも、``ambientLight(_:)-(LinearRGBA)`` の光・
+    /// ``surroundings(_:)`` の光・``emissive(_:)-(LinearRGBA)`` の自発光は残り、``ambient(_:)-(LinearRGBA)`` は
     /// 影の内外を問わず効く。
     ///
     /// **影は描き切るときに焼く。そのフレームでそこまでに置いた立体を、そのときに置かれて

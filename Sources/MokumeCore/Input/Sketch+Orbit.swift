@@ -4,7 +4,7 @@
 import simd
 
 // 引きずって回し、スクロールで寄る。
-extension Sketch {
+extension SketchPart {
 
     /// 引きずって回し、スクロールで寄れるようにする。
     ///
@@ -40,7 +40,7 @@ extension Sketch {
     ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
     ///
     /// - Important: **``Sketch/mouseDragged(deltaX:deltaY:)`` の中から呼ばない。** ここが
-    ///   食うのは ``Sketch/dragX`` — フレームの合計 — なので、1 フレームに移動が複数件
+    ///   食うのは ``SketchPart/dragX`` — フレームの合計 — なので、1 フレームに移動が複数件
     ///   届くと同じ量を何度も食うことになる (2 度目からは食わない作りにしてあるが、
     ///   そのぶん残りの呼び出しでは何も起きない)。`draw()` の中で 1 回呼ぶ形にする。
     ///
@@ -99,7 +99,8 @@ extension Sketch {
             }
             return runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         }
-        set {
+        // 部品 (struct) から書いても、書く先は走っているスケッチで、部品の値は変わらない
+        nonmutating set {
             guard let runtime = runningSketch else { return }
             var orbit = newValue
             orbit.clampToLimits()

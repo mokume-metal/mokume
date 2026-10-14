@@ -7,7 +7,7 @@ import MokumeDiagnostics
 
 /// 利用者が書いた計算。
 ///
-/// 使い方は ``Sketch/makeComputation(_:name:values:)`` にある。
+/// 使い方は ``SketchPart/makeComputation(_:name:values:)`` にある。
 // `Canvas` と同じ隔離で使う型なので隔離を明示する。**理由は `RenderDevice` の冒頭が
 // 持つ** (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
 @MainActor public final class Computation {

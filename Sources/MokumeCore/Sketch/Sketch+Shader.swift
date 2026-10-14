@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 利用者が書く塗り。
-extension Sketch {
+extension SketchPart {
     /// 断片を読み込む。
     ///
     /// <!-- example: 文脈 var waves: Shader! -->

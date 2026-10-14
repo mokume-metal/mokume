@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 効果。
-extension Sketch {
+extension SketchPart {
     /// このフレームの絵にかける効果を決める。
     ///
     /// 下は、描き終えた絵に、ぼかし → にじみ → 周辺減光の順で掛けたもの。にじむのは明るい

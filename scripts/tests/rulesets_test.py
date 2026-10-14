@@ -62,6 +62,7 @@ endpoint = next((a for a in args if a.startswith("repos/")), "")
 if "/contents/" in endpoint:
     defs = os.environ.get("FAKE_MAIN_DEFS_DIR")
     if not defs:
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
         sys.exit(1)
     for f in sorted(pathlib.Path(defs).glob("*.json")):
         blob = f.read_bytes()
@@ -73,6 +74,7 @@ if "/contents/" in endpoint:
 if "/commits?" in endpoint:
     sha = os.environ.get("FAKE_MAIN_RULESET_COMMIT")
     if not sha:
+        print("gh: Server Error (HTTP 502)", file=sys.stderr)
         sys.exit(1)
     print(sha)
     sys.exit(0)
@@ -622,6 +624,8 @@ class FreshnessTest(TreeFixture):
         code, out = self.check(FAKE_MAIN_DEFS_DIR=None)
         self.assertEqual(code, 0, out)
         self.assertIn("確かめていない", out)
+        # 引けなかった理由 (gh の stderr) を捨てない (#2614)
+        self.assertIn("Not Found (HTTP 404)", out)
 
     def test_向きが分からなければ古いとは言わない(self):
         # 中身は違うと分かっても、どちら向きかを判定する材料が無いときに断定しない
@@ -630,6 +634,7 @@ class FreshnessTest(TreeFixture):
         code, out = self.check(FAKE_MAIN_RULESET_COMMIT=None)
         self.assertEqual(code, 0, out)
         self.assertIn("判定していない", out)
+        self.assertIn("Server Error (HTTP 502)", out)
         self.assertNotIn("手元のツリーは古い", out)
 
 

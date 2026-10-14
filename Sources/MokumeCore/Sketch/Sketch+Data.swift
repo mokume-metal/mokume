@@ -13,7 +13,7 @@ import Foundation
 // ファイルだけを読む — URL から読む作例がまだ無い (#2070)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     // MARK: - 文字列
 
@@ -69,7 +69,7 @@ extension Sketch {
     /// ```
     ///
     /// 読み方と失敗は ``loadStrings(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
-    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``draw()`` は
+    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 文字列が無いまま呼ばれる。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestStrings(_ path: String) async throws(DataFailure) -> [String] {
@@ -285,7 +285,7 @@ extension Sketch {
     /// 灰色で、届かないときは画面の隅に理由 (``DataFailure`` の 1 文) を出す。
     ///
     /// 読み方と失敗は ``loadJSONObject(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
-    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``draw()`` は
+    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 値が無いまま呼ばれる。
     // shot: 撮れない 読んだ値を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestJSONObject(_ path: String) async throws(DataFailure) -> JSONObject {

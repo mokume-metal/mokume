@@ -7,7 +7,7 @@ import MokumeDiagnostics
 // TCP・UDP・WebSocket。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0041] の地図の「連携の口 (標準)」)。`plugins` には何も
-// 書かない — 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 書かない — 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // 名前 ([ADR-0020] 決定 1。2026-10-09 の段): 公開の型は方式を名乗る (`TCPServer`・
 // `WebSocketServer`・`UDPPort`)。TCP には Processing の `Server` (`write`・`clientCount`) という

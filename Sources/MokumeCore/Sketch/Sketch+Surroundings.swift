@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 周囲。
-extension Sketch {
+extension SketchPart {
     /// 立体を取り巻く周囲を置く。**金属や艶のある面は、これが無いと絵にならない。**
     ///
     /// 周囲は上・地平・下の 3 色の帯で、資材は要らない。置くと 2 つのことが起きる:

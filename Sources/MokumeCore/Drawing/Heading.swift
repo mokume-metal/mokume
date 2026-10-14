@@ -5,7 +5,7 @@ import simd
 
 /// 粒がどちらへ飛ぶか。
 ///
-/// 使い方は ``Sketch/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
+/// 使い方は ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
 ///
 /// **飛ぶ向きだけを決める。** どこから出るかは ``Emitter`` が決めるので、向きを差し替えても
 /// 出る場所は変わらない (``Emitter`` と対になる)。速さも別で、`emit` の `speed` の幅から引く —

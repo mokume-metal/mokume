@@ -7,7 +7,7 @@ import MokumeDiagnostics
 
 /// 利用者が書いた効果。
 ///
-/// 使い方は ``Sketch/loadEffect(_:values:)`` にある。**平面・立体の塗りと同じ規約**で
+/// 使い方は ``SketchPart/loadEffect(_:values:)`` にある。**平面・立体の塗りと同じ規約**で
 /// 書ける — 前置きは自動で足され、書くのは `float4 effect(Pixel in, Values values)`
 /// 1 本だけである。
 public final class EffectShader {

@@ -7,7 +7,7 @@ import MokumeCore
 // 動画ファイル。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0042] 決定 1)。`plugins` には何も書かない —
-// 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -39,7 +39,7 @@ extension Sketch {
     /// - 絵の大きさは動画の大きさ。色は動画が名乗る色空間から作業空間へ移してある ([ADR-0011])
     /// - 音は鳴らさない。回転の印 (縦に撮った動画の向き) は当てず、記録された向きのまま映す
     ///
-    /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。開くときに最初のコマまで読んで
+    /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。開くときに最初のコマまで読んで
     /// 確かめる。`setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
     /// - Parameter file: 動画ファイルの名前。macOS が再生できる形式 (QuickTime の `.mov`・
