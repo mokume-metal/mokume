@@ -651,6 +651,59 @@ struct SVGFileTests {
         #expect(bad.items.isEmpty)
     }
 
+    /// 根の `width` / `height` が負なら、描かない (SVG の約束) のは今までどおりだが、読めない値と同じに
+    /// 名乗る ([#2625])。`0` は約束どおりの「描かない」で、名乗らない。
+    ///
+    /// [#2625]: https://github.com/mokume-metal/mokume/issues/2625
+    @Test(
+        "根の width・height が負なら、描かないまま skipped に載る (#2625)",
+        arguments: [
+            // (根の属性, 載るはずの名乗り)
+            (#"width="-5" height="10" viewBox="0 0 10 10""#, [#"<svg width="-5">"#]),
+            (#"width="10" height="-5" viewBox="0 0 10 10""#, [#"<svg height="-5">"#]),
+            // 片方だけ負で、もう片方は書いていない
+            (#"width="-5" viewBox="0 0 10 10""#, [#"<svg width="-5">"#]),
+            // 単位つき・小数・空白つき (空白は落とした文字で名乗る)
+            (#"width="-0.5in" height="10" viewBox="0 0 10 10""#, [#"<svg width="-0.5in">"#]),
+            (#"width=" -5 " height="10""#, [#"<svg width="-5">"#]),
+            // 両方が負なら、両方を名乗る
+            (#"width="-5" height="-6""#, [#"<svg width="-5">"#, #"<svg height="-6">"#]),
+            // CSS で書いても同じ (CSS が勝つので、読める属性の下で名乗りも出る)
+            (#"width="10" height="10" style="width:-5px""#, [#"<svg width="-5px">"#]),
+        ])
+    func negativeRootSizeIsNamed(_ sample: (String, [String])) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        // 描かないのは変えない。名乗りは「負の値を捨てた」ではなく「この値で根を描かない」の意味で、
+        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2410 に置いてある
+        #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "根の width・height が 0 なら、描かず、名乗らない。正の値は描く (#2625 の陰性対照)",
+        arguments: [
+            (#"width="0" height="10" viewBox="0 0 10 10""#, false),
+            (#"width="10" height="0" viewBox="0 0 10 10""#, false),
+            (#"width="-0" height="10" viewBox="0 0 10 10""#, false),
+            (#"width="5" height="10" viewBox="0 0 10 10""#, true),
+        ])
+    func zeroRootSizeIsNotNamed(_ sample: (String, Bool)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.isEmpty == !sample.1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test("入れ子の svg の width・height が負でも、同じに名乗り、その中は描かない。外は描く (#2625)")
+    func negativeNestedSvgSizeIsNamed() throws {
+        let drawing = try document(
+            #"<svg width="-5" height="10"><rect width="1" height="1"/></svg><rect width="2" height="2"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(drawing.skipped.map(\.what) == [#"<svg width="-5">"#], "\(drawing.skipped)")
+        #expect(drawing.items.map(\.outline) == [.rect(x: 0, y: 0, width: 2, height: 2)])
+    }
+
     @Test("CSS の width は svg 以外の要素の大きさを変えない (#2557 の陰性対照)")
     func cssWidthDoesNotTouchOtherElements() throws {
         let drawing = try document(

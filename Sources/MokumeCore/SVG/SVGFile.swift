@@ -549,8 +549,13 @@ nonisolated enum SVGFile {
 
         /// 長さの値 1 つを読む。**長さを読む口はみなここを通る** — 書いていないことと `auto` (許される口の
         /// み) は名乗らず、ほかの読めない値は `<要素 名前="値">` の形で名乗る (#2556)。
+        ///
+        /// `namesNegative` を立てた口 (根と入れ子の `svg` の `width` / `height`) は、負の値も同じ形で名乗る
+        /// (#2625。負は SVG では誤りで、0 と違って「描かない」という約束が無い)。**値はそのまま返す** —
+        /// 描かないかどうかは呼び側が決める。
         private mutating func written(
-            _ text: String?, element: String, key: String, reference: Float, allowsAuto: Bool, line: Int
+            _ text: String?, element: String, key: String, reference: Float, allowsAuto: Bool,
+            namesNegative: Bool = false, line: Int
         ) -> Written {
             guard let text else { return .absent }
             if allowsAuto,
@@ -562,10 +567,12 @@ nonisolated enum SVGFile {
                 tally.note("<\(element) \(key)=\"\(text)\">", line: line)
                 return .unreadable
             }
+            if namesNegative, value < 0 { tally.note("<\(element) \(key)=\"\(text)\">", line: line) }
             return .value(value)
         }
 
-        /// `svg` が作る座標の決まり。幅か高さが 0 以下なら描かない (SVG の約束) ので `nil`。
+        /// `svg` が作る座標の決まり。幅か高さが 0 以下なら描かない (SVG の約束) ので `nil`。0 は約束どおりなので
+        /// 名乗らず、負の値は書き手の誤りなので名乗る (#2625)。
         /// `sizes` は属性と CSS の `width` / `height` の宣言の文字を、順位の低いほうから並べたもの (`resolve` が返す)。
         private mutating func viewport(
             of attributes: [String: String], sizes: [String: [String]], in context: Context, isRoot: Bool,
@@ -590,9 +597,14 @@ nonisolated enum SVGFile {
             }
             // 順位の高い宣言から見て、**読めた宣言 (`auto` を含む) で止める**。読めない宣言は CSS では無効で
             // 捨てられ、下の宣言が残るので、名乗って次へ進む。全部が読めなければ書いていないのと同じ
+            // **負の値は別**: CSS では無効な宣言だが、ここでは読めた値として採り (描かない結果は変えていない)、
+            // 名乗りは「捨てた」ではなく「この値で根を描かない」の意味。CSS との仕様差は #2410 に置いてある
             func size(_ key: String, _ against: Float) -> Float? {
                 for text in (sizes[key] ?? []).reversed() {
-                    switch written(text, element: "svg", key: key, reference: against, allowsAuto: true, line: line) {
+                    switch written(
+                        text, element: "svg", key: key, reference: against, allowsAuto: true, namesNegative: true,
+                        line: line)
+                    {
                     case .value(let length): return length
                     case .automatic: return nil
                     case .absent, .unreadable: continue
