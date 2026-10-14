@@ -65,7 +65,7 @@ base="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main"
 
 `python3 scripts/check-external-assets.py` が緑になれば解消 (リリースノートを読むので `gh` の認証が要る)。説明文の指し先が 1 本も拾えない状態は赤なので、**説明文の参照を消して緑にすることはできない**。
 
-**解消したらこの Issue を閉じる。** open な間は重複起票を抑えるので、残したままにすると次に指し先が切れたときに起票されない。
+**解消したらこの Issue を閉じる。** open な間は、次に切れた指し先は新しく立たずにこの Issue へ追記される (#2658)。閉じ忘れると、別の事象が前の事象の続きに見える。
 BODY
 } > "$body"
 

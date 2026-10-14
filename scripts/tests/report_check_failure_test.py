@@ -12,8 +12,10 @@
 
   1. 落ちたら Issue が立ち、本文に呼び手の文と検査の出力の両方が載る
      (run のログを開かないと何が起きたか分からない起票は、無いのとあまり変わらない)
-  2. 同じ Issue が open なら二重に立てない — 日次で回るので、放置された赤が毎日 1 本
-     ずつ Issue を産まない
+  2. 同じ Issue が open なら二重に立てず、その Issue へ追記する — 日次で回るので、放置
+     された赤が毎日 1 本ずつ Issue を産まない。一方で**黙りもしない** (#2658。着手中の
+     Issue が open の間、専用機の定期の赤 2 回が run のログにしか残らなかった)。追記にも
+     呼び手の文・出力・run の URL が載り、追記が落ちたら非 0 で返る
   3. 重複判定はタイトルの完全一致で行う — GitHub の検索は語で当たるため、似たタイトルの
      別 Issue を「既にある」と誤認すると**本物の赤が一度も起票されない**
   4. 起票と同時に verify: triaged が付く — 付かないと AGENTS.md の着手ゲートに引っかかって
@@ -55,6 +57,7 @@ LOG = "NG: 例の検査が落ちた\n  詳しい理由\n"
 #   gh issue list  … --jq  → FAKE_ISSUE_LIST に jq を当てる
 #   gh issue create …      → 本文を FAKE_BODY_OUT へ写し、URL を返す
 #   gh issue view  … --jq  → ラベル無し / 型無しの Issue を演じる
+#   gh issue comment …     → 本文を FAKE_BODY_OUT へ写して成功する (FAKE_COMMENT_FAIL で落ちる)
 #   gh issue edit  …       → 記録だけして成功する
 FAKE_GH = """#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
@@ -79,6 +82,14 @@ case "$1 $2" in
       *issueType*) json='{"issueType":null}' ;;
       *) json='{"labels":[]}' ;;
     esac ;;
+  "issue comment")
+    [ -n "${FAKE_COMMENT_FAIL:-}" ] && exit 1
+    prev=
+    for a in "$@"; do
+      [ "$prev" = "--body-file" ] && cp "$a" "$FAKE_BODY_OUT"
+      prev=$a
+    done
+    exit 0 ;;
   "issue edit") exit 0 ;;
   *) exit 1 ;;
 esac
@@ -171,11 +182,31 @@ class ReportCheckFailureTest(unittest.TestCase):
         self.report()
         self.assertIn(SOURCE, self.body.read_text())
 
-    def test_同じ_Issue_が_open_なら二重に立てない(self):
-        r = self.report(issue_list=f'[{{"number":42,"title":"{TITLE}"}}]')
+    def test_同じ_Issue_が_open_なら二重に立てずに追記する(self):
+        r = self.report(
+            issue_list=f'[{{"number":42,"title":"{TITLE}"}}]',
+            env_extra={"GITHUB_RUN_ID": "1234", "GITHUB_SERVER_URL": "https://github.com"},
+        )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("issue create", self.gh_log())
+        self.assertIn("issue comment 42", self.gh_log())
         self.assertIn("#42", r.stdout)
+        # 後から出た赤は前の赤と別物でありうるので、追記も中身を省かない
+        body = self.body.read_text()
+        self.assertIn("## 解消の判定", body)
+        self.assertIn("NG: 例の検査が落ちた", body)
+        self.assertIn("https://github.com/mokume-metal/mokume/actions/runs/1234", body)
+        self.assertIn(SOURCE, body)
+        # 追記は起票ではないので、起票の印の文面を名乗らない
+        self.assertNotIn("自動で付く", body)
+
+    def test_追記に失敗したら黙らずに落ちる(self):
+        r = self.report(
+            issue_list=f'[{{"number":42,"title":"{TITLE}"}}]',
+            env_extra={"FAKE_COMMENT_FAIL": "1"},
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("issue create", self.gh_log())
 
     def test_似たタイトルの別_Issue_は重複とみなさない(self):
         # 検索は語で当たるので、こういうものが返ってくる。完全一致で絞れていないと

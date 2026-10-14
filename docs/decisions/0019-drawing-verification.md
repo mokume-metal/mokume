@@ -179,12 +179,25 @@ SPDX-License-Identifier: MIT
 
 **起票の本文は、job ごとの結論を名乗る** (`scripts/report-scheduled-render.sh`)。記録が無い理由の候補が、落ちた回 (ビルドかジョブの開始で落ちたか、検査のプロセスが記録を残さずに消えた) と切れた回 (走っている途中か、始まる前に止められた) で違うためである。本文は test-log の有無など、材料から分かることだけを名乗り、原因を 1 つに決めつけない。定期の job が cancelled で終わる経路は 3 つある。job の timeout、人の cancel、run をまたぐ重なりである。重なりは、前の回の job が concurrency の group に残っている間に次の回の job が来ると、待っていた job を GitHub が置き換えて cancel する形で起きる (下の「定期の検査 (D) は退かせない」の、run をまたいで重なる場合)。`queue-sweep` は定期の検査を退かせない。
 
-**代償**: release が慢性的に timeout する間は、固定タイトルの Issue が開いたままになり、その間に起きた別の赤 (検査が落ちた回) は重複抑止で起票されず、`scheduled-report` の run のログに残るだけになる。開いている Issue の本文は、立てた回の job ごとの結論を名乗るので、timeout だけで立った Issue かどうかは読めば分かる。この状態が解けるのは、release の所要を [#1983](https://github.com/mokume-metal/mokume/issues/1983) / [#2074](https://github.com/mokume-metal/mokume/issues/2074) が直した後である。
+**代償**: release が慢性的に timeout する間は、固定タイトルの Issue が開いたままになり、その間に起きた別の赤 (検査が落ちた回) は重複抑止で起票されず、`scheduled-report` の run のログに残るだけになる。開いている Issue の本文は、立てた回の job ごとの結論を名乗るので、timeout だけで立った Issue かどうかは読めば分かる。この状態が解けるのは、release の所要を [#1983](https://github.com/mokume-metal/mokume/issues/1983) / [#2074](https://github.com/mokume-metal/mokume/issues/2074) が直した後である。**この代償は、下の改訂 (2026-10-14) で、開いた Issue への追記に置き換えた。**
 
 退けた案:
 
 - **timeout だけを起票し、ほかの cancel と見分ける** — 起票の job が job の annotation (`exceeded the maximum execution time`) を読むには `checks: read` が要り、`issues: write` だけだった権限が広がる。見分けて救える実害も無い (上の 14 回の cancelled 7 回は、どれも timeout だった)。timeout でない cancel の起票が実害になったときに改めて決める
 - **cancelled は起票せず、起票しないことをここに書く** — 上の「赤を誰が読むか」で却下した形 (赤は Actions に出るだけ) に戻る。切れた job は落ちた job より見えにくいので、却下した案よりさらに見えない
+
+#### 改訂 (2026-10-14) — 固定タイトルの Issue が開いていれば、黙らずにそこへ追記する
+
+**上の改訂 (2026-10-10) の代償は、release の timeout が直るまでの一時的なものとしていた。** 実際には、timeout ではない理由でも同じ形になった。#2251 (定期の赤の自動起票・着手中) が開いている間、専用機の定期の赤 2 回 (10-12) が重複抑止で起票されず、`scheduled-report` の run のログに 1 行残るだけだった ([#2658](https://github.com/mokume-metal/mokume/issues/2658))。着手中の Issue は、直す PR が merge されるまで開いている。その間に起きた別の赤 (release でだけ出る赤を含む) は、上の「赤を誰が読むか」で却下した形 (赤は Actions に出るだけ) に戻っていた。
+
+**`scripts/report-check-failure.sh` は、同じタイトルの Issue が開いていれば、二重には立てず、その Issue へコメントで追記する。** 追記には新規起票と同じ本文 (job ごとの結論・落ちた検査・run の URL) を載せる。後から出た赤は前の赤と別物でありうるからである。追記に失敗したら、起票のジョブは赤になる。共通部品の変更なので、定期の検査以外の呼び手 (ルールセットのドリフト・外に置いた証跡の死活・専用機の前検査) にも効く。
+
+**代償**: 赤が続く間、定期の回ごとに 1 コメント増える (専用機の定期は最大 1 日 4 回)。
+
+退けた案:
+
+- **開いている Issue を閉じて済ませる** — いまの 1 件は解けるが、次に着手中の Issue が開いたままになれば同じ形が再び起きる
+- **専用機の定期の検査だけ追記する** — 他の呼び手も同じ重複抑止を通り、同じ形で黙る。呼び手ごとに選ばせる口を足すほどの違いが無い
 
 #### 専用機へ積む順番は、GitHub ホストの門番が決める ([#2062](https://github.com/mokume-metal/mokume/issues/2062))
 
