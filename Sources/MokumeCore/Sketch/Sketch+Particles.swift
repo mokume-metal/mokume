@@ -390,7 +390,7 @@ extension Sketch {
     public func emit(
         _ particles: Particles, from source: Emitter,
         toward heading: Heading = .plane(0...(2 * Float.pi)),
-        rate: Float,
+        rate: some ScalarConvertible,
         speed: ClosedRange<Float> = 20...60,
         life: ClosedRange<Float> = 1...2,
         size: ClosedRange<Float> = 2...6,
@@ -398,7 +398,7 @@ extension Sketch {
     ) {
         let runtime = Self.requireRuntime()
         canvas.emit(
-            particles, from: source, toward: heading, rate: rate, speed: speed, life: life,
+            particles, from: source, toward: heading, rate: rate.asFloat, speed: speed, life: life,
             size: size, color: color, using: &runtime.randomness)
     }
 

@@ -99,7 +99,6 @@ extension Sketch {
     // shot: 2 snippet=64e28a7d
     // shot: 3 snippet=47e0d876
     public func exposure(_ multiplier: some ScalarConvertible) {
-        let multiplier = multiplier.asFloat
         canvas.exposure(multiplier)
     }
 
