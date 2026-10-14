@@ -285,7 +285,7 @@ extension SketchPart {
     // shot: 6 snippet=6500dbc8
     // shot: 7 snippet=02f0807a
     // shot: 8 snippet=1eefdc11
-    public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
+    public func beginShape(_ kind: VertexKind = .polygon) { Self.liveCanvas()?.beginShape(kind) }
 
     /// 頂点を 1 つ置く。
     ///
@@ -341,6 +341,7 @@ extension SketchPart {
     // shot: 1 snippet=c25c6dcf
     // shot: 2 snippet=be9944e2
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.vertex(x, y)
     }
@@ -419,6 +420,7 @@ extension SketchPart {
     // shot: 1 snippet=b771c802
     // shot: 2 snippet=06bac7b6
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.vertex(x, y, z)
     }
@@ -498,6 +500,7 @@ extension SketchPart {
     /// ```
     // shot: 1 snippet=9de5f5b4
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
         canvas.vertex(x, y, u, v)
     }
@@ -567,6 +570,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=fa95d28d
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
         canvas.vertex(x, y, z, u, v)
     }
@@ -657,6 +661,7 @@ extension SketchPart {
     // shot: 1 snippet=dce63edf
     // shot: 2 snippet=1de4b1da
     public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.normal(x, y, z)
     }
@@ -699,7 +704,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=aefc2c81
-    public func beginContour() { canvas.beginContour() }
+    public func beginContour() { Self.liveCanvas()?.beginContour() }
 
     /// 穴を並べ終える。
     ///
@@ -738,7 +743,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=eac40026
-    public func endContour() { canvas.endContour() }
+    public func endContour() { Self.liveCanvas()?.endContour() }
 
     /// 並べ終えて描く。
     ///
@@ -798,7 +803,7 @@ extension SketchPart {
     /// 境目を越えた形は、そこで捨てられている。形は同じ ``Sketch/draw()`` の中で開いて閉じる。
     // shot: 1 snippet=ba1ee5bb
     // shot: 2 snippet=35422e2c
-    public func endShape(_ end: ShapeEnd = .open) { canvas.endShape(end) }
+    public func endShape(_ end: ShapeEnd = .open) { Self.liveCanvas()?.endShape(end) }
 
     /// 置いた頂点を 1 つ、番号で選ぶ。
     ///
@@ -882,5 +887,5 @@ extension SketchPart {
     ///   予測できない**
     // shot: 1 snippet=e91a5672
     // shot: 2 snippet=06887da2
-    public func index(_ number: Int) { canvas.index(number) }
+    public func index(_ number: Int) { Self.liveCanvas()?.index(number) }
 }

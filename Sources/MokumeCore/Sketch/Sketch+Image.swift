@@ -161,7 +161,7 @@ extension SketchPart {
     // shot: 2 snippet=57be30b4
     // shot: 3 snippet=78ae8dd3
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
-        try canvas.loadImage(path)
+        try Self.requireCanvas().loadImage(path)
     }
 
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**
@@ -249,7 +249,7 @@ extension SketchPart {
     ///   ``ImageFailure/unplaceable(width:height:)``。1 を割る指定を 1×1 へ丸めない。
     // shot: 1 snippet=f455cc89
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
-        try canvas.createImage(width, height)
+        try Self.requireCanvas().createImage(width, height)
     }
 
     /// 絵を等倍で置く。
@@ -290,6 +290,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=484b5a23
     public func image(_ image: Image, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(image, x, y)
     }
@@ -328,6 +329,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=6c035e1b
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(image, a, b, c, d)
     }
@@ -376,6 +378,7 @@ extension SketchPart {
         _ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
@@ -519,7 +522,7 @@ extension SketchPart {
     // shot: 2 snippet=1c6055c2
     // shot: 3 snippet=bbc7b35e
     // shot: 4 snippet=04e1e495
-    public func imageMode(_ mode: ShapeMode) { canvas.imageMode(mode) }
+    public func imageMode(_ mode: ShapeMode) { Self.liveCanvas()?.imageMode(mode) }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
     ///
@@ -589,7 +592,7 @@ extension SketchPart {
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=25c42a96
     // shot: 2 snippet=4775cb21
-    public func tint(_ color: LinearRGBA) { canvas.tint(color) }
+    public func tint(_ color: LinearRGBA) { Self.liveCanvas()?.tint(color) }
 
     /// 色掛けをやめる。
     ///
@@ -628,5 +631,5 @@ extension SketchPart {
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=82db2864
-    public func noTint() { canvas.noTint() }
+    public func noTint() { Self.liveCanvas()?.noTint() }
 }

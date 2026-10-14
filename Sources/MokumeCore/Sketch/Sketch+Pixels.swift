@@ -156,7 +156,9 @@ extension SketchPart {
     // shot: 1 snippet=0617ccbc
     // shot: 2 snippet=ab94a2c3
     // shot: 3 snippet=f1c90989
-    public var pixels: Pixels { canvas.pixels }
+    public var pixels: Pixels {
+        Self.liveCanvas(.read(returning: "a 0×0 window of pixels"))?.pixels ?? .unavailable
+    }
 
     /// 溜めている図形を描き切り、画素を読める状態にする。
     ///
@@ -232,7 +234,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=1276c674
     // shot: 2 snippet=2bff752d
-    public func loadPixels() { canvas.loadPixels() }
+    public func loadPixels() { Self.liveCanvas()?.loadPixels() }
 
     /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。
     ///
@@ -265,7 +267,9 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=6fc06851
-    public func get(_ x: Int, _ y: Int) -> LinearRGBA { canvas.get(x, y) }
+    public func get(_ x: Int, _ y: Int) -> LinearRGBA {
+        Self.liveCanvas(.read(returning: ".transparent"))?.get(x, y) ?? .transparent
+    }
 
     /// 1 画素の色を書き換える。範囲の外は何もしない。
     ///
@@ -295,5 +299,5 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=e62332bb
-    public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { canvas.set(x, y, color) }
+    public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { Self.liveCanvas()?.set(x, y, color) }
 }

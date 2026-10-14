@@ -91,7 +91,7 @@ extension SketchPart {
     @discardableResult
     public func attach(_ inlet: any Inlet) -> Bool {
         guard let runtime = runningSketch else {
-            Diagnostics.warn(OutsideCall.attach.notice)
+            OutsideRun.log.warn(.attach)
             return false
         }
         return runtime.attach(inlet)
@@ -140,7 +140,7 @@ extension SketchPart {
     @discardableResult
     public func attach(_ outlet: any Outlet) -> Bool {
         guard let runtime = runningSketch else {
-            Diagnostics.warn(OutsideCall.attach.notice)
+            OutsideRun.log.warn(.attach)
             return false
         }
         return runtime.attach(outlet)
@@ -192,7 +192,7 @@ extension SketchPart {
     // shot: 1 snippet=4e5e0378
     public func detach(_ inlet: any Inlet) {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.detach.notice)
+            return OutsideRun.log.warn(.detach)
         }
         runtime.detach(inlet)
     }
@@ -239,7 +239,7 @@ extension SketchPart {
     // shot: 1 snippet=751061ce
     public func detach(_ outlet: any Outlet) {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.detach.notice)
+            return OutsideRun.log.warn(.detach)
         }
         runtime.detach(outlet)
     }

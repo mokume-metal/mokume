@@ -114,7 +114,7 @@ extension SketchPart {
     // shot: 2 snippet=61f798db
     public func noLoop() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.noLoop.notice)
+            return OutsideRun.log.warn(.noLoop)
         }
         runtime.noLoop()
     }
@@ -137,7 +137,7 @@ extension SketchPart {
     // shot: 撮れない 止めた後に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、setup() / draw() で呼んでも同じ呼び出しの noLoop() を打ち消すだけで絵に違いが出ない)
     public func loop() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.loop.notice)
+            return OutsideRun.log.warn(.loop)
         }
         runtime.loop()
     }
@@ -171,7 +171,7 @@ extension SketchPart {
     // shot: 撮れない 止めている間に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、回っている間と draw() の中では何もせず、setup() で止めた後に呼んでも必ず描かれる 1 枚目に畳まれる)
     public func redraw() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.redraw.notice)
+            return OutsideRun.log.warn(.redraw)
         }
         runtime.redraw()
     }

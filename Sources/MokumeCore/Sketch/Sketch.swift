@@ -465,20 +465,27 @@ enum LaunchingSketch {
 
 extension SketchPart {
     /// いま描いている面。
-    public var canvas: Canvas { Self.requireRuntime().canvas }
+    ///
+    /// **走っている実行の外 (初期化子の中・後片付けの後・`Task` の中) で取ると止まる。** 返せる
+    /// 面が無いためで、資源を作る口 (``createGraphics(_:_:)`` など) と同じ扱いである。描く・読む
+    /// ときは語彙 (``circle(_:_:_:)``・``width`` など) を通せば、外からでも落ちない。
+    public var canvas: Canvas { Self.requireCanvas() }
 
     /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
-    public var width: Float { canvas.width }
+    ///
+    /// 走る前 (部品の `init()` の中など) に読むと 0 を返し、1 度だけ警告する。面の大きさで
+    /// 決まる値は ``Sketch/setup()`` の中で決める。
+    public var width: Float { Self.liveCanvas(.read(returning: "0"))?.width ?? 0 }
     /// 出す高さ (画素)。**細かさを変えても動かない。**
-    public var height: Float { canvas.height }
+    public var height: Float { Self.liveCanvas(.read(returning: "0"))?.height ?? 0 }
 
     /// 実際に刻んでいる幅 (画素)。細かさが 1 なら ``width`` と同じ。
     ///
     /// ``pixels`` の索引はこちらの数である。断片 (塗りと効果) が受け取る位置と大きさは
     /// こちらではなく、座標と同じ出す画素 (``width``) で届く。
-    public var pixelWidth: Int { canvas.pixelWidth }
+    public var pixelWidth: Int { Self.liveCanvas(.read(returning: "0"))?.pixelWidth ?? 0 }
     /// 実際に刻んでいる高さ (画素)。
-    public var pixelHeight: Int { canvas.pixelHeight }
+    public var pixelHeight: Int { Self.liveCanvas(.read(returning: "0"))?.pixelHeight ?? 0 }
 
     /// いまの絵が、前のフレームの結果に依っているか。
     ///
@@ -490,10 +497,10 @@ extension SketchPart {
     /// 選び、かつ実際に拡大が立っているときだけである。
     ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-    public var usesFrameHistory: Bool { canvas.usesFrameHistory }
+    public var usesFrameHistory: Bool { Self.liveCanvas(.read(returning: "false"))?.usesFrameHistory ?? false }
 
     /// これまでに描いたフレームの数。最初の ``Sketch/draw()`` の最中は 1。
-    public var frameCount: Int { Self.requireRuntime().frameCount }
+    public var frameCount: Int { Self.liveRuntime(.read(returning: "0"))?.frameCount ?? 0 }
     /// いまのフレームの時刻 (秒)。最初のフレームは 0。
     ///
     /// **最初のフレームが 0 なのは時計 (``clock``) によらない。** 窓に出して動かしている間も、
@@ -513,7 +520,7 @@ extension SketchPart {
     /// ```
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    public var time: Float { Self.requireRuntime().time }
+    public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
     /// 前のフレームからの経過 (秒)。
     ///
     /// **最初のフレームは、時計 (``clock``) によらず 1 フレームぶんである。** 窓に出して動かして
@@ -539,7 +546,7 @@ extension SketchPart {
     /// **足し込んだ合計は ``time`` と一致しない。** 揃えたいものをこれで作らない
     /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
     /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
-    public var deltaTime: Float { Self.requireRuntime().deltaTime }
+    public var deltaTime: Float { Self.liveRuntime(.read(returning: "0"))?.deltaTime ?? 0 }
     /// ``time`` がどこから来ているか。
     ///
     /// 窓に出して動かしている間は ``Clock/wallClock`` (実際に流れた時間) で、書き出し
@@ -557,20 +564,51 @@ extension SketchPart {
     /// ```
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    public var clock: Clock { Self.requireRuntime().clock }
+    public var clock: Clock { Self.liveRuntime(.read(returning: ".wallClock"))?.clock ?? .wallClock }
 
     // 描画 API が Sketch+*.swift に分かれているので private にはできない。
     // 公開もしない — 利用者が触る面ではない。
+
+    /// 走っている実行。**外から呼ばれたら、口の名前ごとに 1 度だけ警告して `nil` を返す。**
+    ///
+    /// [ADR-0020] 決定 5 のとおり、走っていない時点 (初期化子の中・後片付けの後・そこで起こした
+    /// `Task` の中) から呼ばれた語彙はプロセスを落とさない。描く・状態を書く口 (`use` が
+    /// ``OutsideRun/Use/act``) は何もせず、読み取りの口は呼ぶ側が安全な既定 (0・空) を返す。
+    /// 以前はここが `fatalError` で、`struct Player: SketchPart` の `init()` で `width` を
+    /// 読むだけで窓が開かずに落ちた ([#2265])。
+    ///
+    /// - Parameters:
+    ///   - use: 外から呼ばれたとき、どう倒すか。警告の文面を選ぶ。
+    ///   - call: 警告に載せる口の名前。呼ぶ側の `#function` が入る。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
     @MainActor
-    static func requireRuntime() -> SketchRuntime {
+    static func liveRuntime(_ use: OutsideRun.Use = .act, _ call: String = #function) -> SketchRuntime? {
         guard let runtime = runningSketch else {
-            // 走っていないときに描く手立ては無い。返せる値も無いので、ここで止める。
-            // 典型は init やプロパティの初期化子から呼んだ場合。
-            fatalError(
-                "The drawing API only works while the sketch is running. "
-                    + "Call it from setup() or draw(), not from init or a property initialiser.")
+            OutsideRun.log.warn(call, use)
+            return nil
         }
         return runtime
+    }
+
+    /// 走っている実行の面。外から呼ばれたときの扱いは ``liveRuntime(_:_:)`` と同じ。
+    @MainActor
+    static func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
+        liveRuntime(use, call)?.canvas
+    }
+
+    /// 資源を作る口 (``createGraphics(_:_:)`` など) と ``canvas`` が使う面。**外から呼ばれたら止める。**
+    ///
+    /// 返す値そのもの — 面・画像・形・領域 — を走っている面からしか作れず、既定へ倒せない
+    /// ためである。待つ読み込みの口 (``requireLoadingCanvas(_:)``) と同じく資源の生成の扱いで、
+    /// [#2265] の完了条件 5 がこの範囲を変えないと決めている。止める文面は呼ばれた口を名乗る。
+    ///
+    /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
+    @MainActor
+    static func requireCanvas(_ call: String = #function) -> Canvas {
+        guard let runtime = runningSketch else { fatalError(OutsideRun.stopNotice(call)) }
+        return runtime.canvas
     }
 
     /// 待つ読み込みの口が使う面。**走っていなくても、走っている実行の中で起こされた
@@ -584,7 +622,8 @@ extension SketchPart {
     static func requireLoadingCanvas(_ call: String) -> Canvas {
         guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
             // 走っている実行から起こされていない (init・プロパティの初期化子・
-            // Task.detached)。どの面へ読み込むかが決まらないので、描く口と同じく止める
+            // Task.detached)。どの面へ読み込むかが決まらず、返す資源を作れないので止める
+            // (資源を作る口と同じ。描く口は止めずに警告する — ``liveRuntime(_:_:)``)
             fatalError(
                 "\(call) only works for a sketch that is running. Call it from setup() or "
                     + "draw(), or from a Task started there — not from init, a property "

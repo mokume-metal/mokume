@@ -84,6 +84,7 @@ extension SketchPart {
     // shot: 2 snippet=0dab2481
     // shot: 3 snippet=58a41dae
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.translate(x, y)
     }
@@ -169,6 +170,7 @@ extension SketchPart {
     // shot: 2 snippet=00e07a33
     // shot: 3 snippet=8ea7daa7
     public func rotate(_ radians: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let radians = radians.asFloat
         canvas.rotate(radians)
     }
@@ -255,6 +257,7 @@ extension SketchPart {
     // shot: 2 snippet=2941aa4a
     // shot: 3 snippet=5ae25e26
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.scale(x, y)
     }
@@ -292,6 +295,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=ceef2b2d
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.translate(x, y, z)
     }
@@ -328,6 +332,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=54abaf07
     public func rotateX(_ radians: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let radians = radians.asFloat
         canvas.rotateX(radians)
     }
@@ -364,6 +369,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=d031c80c
     public func rotateY(_ radians: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let radians = radians.asFloat
         canvas.rotateY(radians)
     }
@@ -398,6 +404,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=7f65053a
     public func rotateZ(_ radians: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let radians = radians.asFloat
         canvas.rotateZ(radians)
     }
@@ -444,6 +451,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=e3260042
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.scale(x, y, z)
     }
@@ -504,6 +512,7 @@ extension SketchPart {
     // shot: 1 snippet=ecea4b47
     // shot: 2 snippet=1e816167
     public func shearX(_ radians: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let radians = radians.asFloat
         canvas.shearX(radians)
     }
@@ -563,6 +572,7 @@ extension SketchPart {
     // shot: 1 snippet=e8584e7d
     // shot: 2 snippet=305667e2
     public func shearY(_ radians: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let radians = radians.asFloat
         canvas.shearY(radians)
     }

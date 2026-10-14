@@ -70,7 +70,7 @@ extension SketchPart {
     /// 確かめた ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。戻すための道具は
     /// 要らない。
     public func requestPointerLock() {
-        runningSketch?.pointerLockRequested = true
+        Self.liveRuntime()?.pointerLockRequested = true
     }
 
     /// 捕まえたカーソルを放し、``requestPointerLock()`` の要求を取り下げる。
@@ -79,6 +79,6 @@ extension SketchPart {
     /// 捕まえていないときに呼んでも、要求を取り下げるだけである。窓の無い実行と、走っていない
     /// ときは何もしない。
     public func exitPointerLock() {
-        runningSketch?.pointerLockRequested = false
+        Self.liveRuntime()?.pointerLockRequested = false
     }
 }

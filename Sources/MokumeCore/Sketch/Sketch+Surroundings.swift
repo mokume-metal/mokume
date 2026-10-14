@@ -56,6 +56,7 @@ extension SketchPart {
     /// - Note: 周囲は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=f1ee1778
     public func surroundings(_ surroundings: Surroundings) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.surroundings(surroundings)
     }
 
@@ -100,6 +101,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=0713ef18
     public func background(_ surroundings: Surroundings) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.background(surroundings)
     }
 }

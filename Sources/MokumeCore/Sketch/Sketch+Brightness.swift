@@ -99,6 +99,7 @@ extension SketchPart {
     // shot: 2 snippet=64e28a7d
     // shot: 3 snippet=47e0d876
     public func exposure(_ multiplier: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.exposure(multiplier)
     }
 
@@ -170,5 +171,5 @@ extension SketchPart {
     /// - Note: ``exposure(_:)`` と同じく**画面の性質**で、フレームを越える。
     // shot: 1 snippet=26a7b873
     // shot: 2 snippet=f52b49c4
-    public func toneMapping(_ mode: ToneMapping) { canvas.toneMapping(mode) }
+    public func toneMapping(_ mode: ToneMapping) { Self.liveCanvas()?.toneMapping(mode) }
 }

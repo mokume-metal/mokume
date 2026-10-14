@@ -77,7 +77,7 @@ extension SketchPart {
     // shot: 撮れない 時刻の進み方を変える口で、1 枚の絵では違いが出ない
     public func pauseTime() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.pauseTime.notice)
+            return OutsideRun.log.warn(.pauseTime)
         }
         runtime.pauseTime()
     }
@@ -96,7 +96,7 @@ extension SketchPart {
     // shot: 撮れない 時刻の進み方を変える口で、1 枚の絵では違いが出ない
     public func playTime() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.playTime.notice)
+            return OutsideRun.log.warn(.playTime)
         }
         runtime.playTime()
     }
@@ -126,7 +126,7 @@ extension SketchPart {
     // shot: 撮れない 時刻の進み方を変える口で、1 枚の絵では違いが出ない
     public func jumpTime(_ seconds: Float) {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.jumpTime.notice)
+            return OutsideRun.log.warn(.jumpTime)
         }
         runtime.jumpTime(seconds)
     }

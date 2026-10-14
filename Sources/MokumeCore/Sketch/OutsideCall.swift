@@ -14,7 +14,11 @@
 /// (`init` から・終わった後) とも見分けられないので、**どちらでも事実である
 /// 「どこからなら受け付けるか」**を言う。
 ///
+/// **言うのは口ごとに 1 度だけで、観測の応答にも載る** (``OutsideRun``)。描く口・読み取りを外から
+/// 呼んだときと同じ事情なので、同じ控えで数える ([#2265])。
+///
 /// [#1322]: https://github.com/mokume-metal/mokume/issues/1322
+/// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
 enum OutsideCall: CaseIterable {
     case noLoop
     case loop
