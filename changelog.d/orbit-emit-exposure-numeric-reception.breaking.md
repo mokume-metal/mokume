@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 mokume-metal
 SPDX-License-Identifier: MIT
 -->
 
-**`orbitControl` の感度・`emit` の `rate`・`Canvas.exposure` が、`Int` や `Double` の変数をそのまま受けるようになりました** ([#2524](https://github.com/mokume-metal/mokume/issues/2524))。これまでは `Float` しか受けず、`orbitControl(Float(k), Float(k), Float(k))` や `emit(dust, from: e, rate: Float(n))` のように書き直す必要がありました。いまは `fill` などの描く口と同じく、`Float`・`Double`・`Int` のどれで持っていてもそのまま渡せます。`Sketch.exposure` と `Canvas.exposure` の受け方も揃いました。数でない値・無限・負を断って注意する約束 (`exposure` の露出を変えない・`emit` の粒を出さない) と、既定値、返り値は変わりません。
+**`orbitControl` の感度・`emit` の `rate`・`Canvas.exposure` が、`Int` や `Double` の変数をそのまま受けるようになりました** ([#2524](https://github.com/mokume-metal/mokume/issues/2524))。これまでは `Float` しか受けず、`orbitControl(Float(k), Float(k), Float(k))` や `emit(dust, from: e, rate: Float(n))` のように書き直す必要がありました。いまは `fill` などの描く口と同じく、`Float`・`Double`・`Int` のどれで持っていてもそのまま渡せます。`Sketch.exposure` は以前から総称だったので、`Canvas.exposure` だけが変わり、`Sketch.exposure` と同じ受け方になりました。数でない値・無限・負を断って注意する約束 (`exposure` は露出を変えず、`emit` は粒を出さない) は、これまでどおり `exposure` と `emit` だけのものです。`orbitControl` の感度は受け口で検めず、そのまま回す計算へ渡るので、感度の扱いは変わりません。どの口も既定値と返り値は変わりません。
 
 ```swift
 let k = 2.0                        // Double
@@ -22,12 +22,12 @@ canvas.exposure(.nan)           // 通りません
 canvas.exposure(Float.nan)      // こう書きます
 ```
 
-**2. 整数だけで書いた割り算は、整数のまま計算されます。** こちらは**コンパイルが通ってしまう**ので、値や絵が黙って変わります。
+**2. 整数だけで書いた割り算は、整数のまま計算されます。** こちらは**コンパイルが通ってしまう**ので、値や絵が黙って変わります。 変わるのは `orbitControl`・`emit` の `rate`・`Canvas.exposure` の 3 つの口です (`Sketch.exposure` は以前から総称で、`exposure(1 / 2)` は元から 0 でした)。
 
 ```swift
 orbitControl(1 / 2)             // 感度 0 になり、回らなくなります (これまでは 0.5)
 emit(dust, from: .point(x, y), rate: 1 / 2)   // 0 個になります (これまでは毎秒 0.5 個)
-exposure(1 / 2)                 // 露出 0 になり、絵が真っ黒になります (これまでは 0.5)
+canvas.exposure(1 / 2)          // 露出 0 になり、絵が真っ黒になります (これまでは 0.5)
 orbitControl(1 / 2.0)           // 0.5 が渡ります
 ```
 
