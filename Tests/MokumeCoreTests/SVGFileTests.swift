@@ -935,7 +935,7 @@ struct SVGFileTests {
             // 親が visible なら描き、hidden なら受け継いで隠れたまま (読めない値は hidden に変えず、visible にも戻さない)
             (#"<g visibility="visible"><rect width="10" height="10" visibility="abc"/></g>"#, [#"visibility "abc""#], 1),
             (#"<g visibility="hidden"><rect width="10" height="10" visibility="abc"/></g>"#, [#"visibility "abc""#], 0),
-            // 祖先の読めない値も、子が描かれるときに受け継ぎの値として 1 度だけ名乗る (g は描かないので 1 つ)
+            // 祖先の読めない値は、祖先の resolve で名乗られる (中身が空でも載る。祖先 1 つで 1 件)。子は受け継ぐだけで名乗らない
             (#"<g visibility="abc"><rect width="10" height="10"/><rect width="10" height="10"/></g>"#, [#"visibility "abc""#], 2),
         ])
     func unreadableVisibilityIsNamedAndInherited(_ sample: (String, [String], Int)) throws {
