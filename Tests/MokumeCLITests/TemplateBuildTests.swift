@@ -12,6 +12,20 @@ import Testing
 /// **形を見るだけでは足りない。** ひな形の Swift が壊れていても、鍵の差し込みや
 /// ファイルの並びを見る検査は緑のまま通る — 壊れたひな形が配られるのはそこである。
 /// 実際に組み上げるので時間がかかるが、ここを省くと「作った人だけが気付く」形になる。
+///
+/// ## 何を分け持ち、何を分け持たないか (#2613)
+///
+/// **スケッチは 3 本とも、検査ごとに別の名前でまっさらから作る。** 入力の条件
+/// (資材の有無・名乗りの有無) が検査ごとに違い、それぞれが保証そのものだからである —
+/// 資材を置いた後の雛形を使い回すと「生成したまま組める」が確かめられなくなる。
+///
+/// 分け持つのは、**debug の 2 本の組み上げの置き場** (``SharedDebugScratch``) だけである。
+/// 置き場の大半は mokume 本体と依存の産物で、どのスケッチでも中身が同じ (`BuildDirectory`
+/// の冒頭に実測)。だから 2 本目は自分のターゲットだけを組めば済む。
+///
+/// **束ねる 1 本は分け持たない。** 置き場を選ぶのは `BundleCommand.run` で、束ねるときは
+/// 必ずパッケージ直下の `.build` に release で組む (`BuildDirectory.Fallback.packaging`)。
+/// 外から置き場を渡す口を作ると、検査が実際の束ねの経路から外れる。
 @Suite("ひな形から作ったものが組み上がる")
 struct TemplateBuildTests {
     /// このリポジトリの場所。作ったスケッチはここをパスで指す (まだ版が出ていない
@@ -23,63 +37,59 @@ struct TemplateBuildTests {
             .deletingLastPathComponent()  // リポジトリ直下
     }
 
+    /// `mokume new` と同じファイルを書き、スケッチの場所を返す。
+    static func generate(_ name: String, in workspace: URL) throws -> URL {
+        let options = NewCommand.Options(name: name, path: workspace.path, local: repository.path)
+        let root = workspace.appendingPathComponent(name, isDirectory: true)
+        for (path, contents) in try NewCommand.files(for: options) {
+            try write(contents, to: root.appendingPathComponent(path))
+        }
+        return root
+    }
+
+    /// 書く。**置き場が無ければ作る** — 資材を置く検査が、雛形が置き場を作ることに
+    /// 寄りかからないように (それを見るのは「そのまま組み上がる」の役目である)。
+    static func write(_ contents: String, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+    }
+
     @Test("作ったスケッチが、そのまま組み上がる")
     func theGeneratedSketchBuilds() throws {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-template-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: workspace) }
+        let root = try Self.generate("try-sketch", in: SharedDebugScratch.sketches)
+        defer { try? FileManager.default.removeItem(at: root) }
 
-        let options = NewCommand.Options(
-            name: "try-sketch", path: workspace.path, local: Self.repository.path)
-        let root = workspace.appendingPathComponent("try-sketch", isDirectory: true)
-        for (path, contents) in try NewCommand.files(for: options) {
-            let url = root.appendingPathComponent(path)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
-
-        let built = try BuildProcess.build(in: root)
+        let built = try BuildProcess.build(in: root, scratchPath: SharedDebugScratch.place)
         #expect(built.killed == false, "組み上げが終わらないまま期限に達した")
         #expect(built.status == 0, "ひな形から作ったものが組み上がらない:\n\(built.output)")
     }
 
     @Test("置いた資材が、絵を探す場所へ運ばれる")
     func assetsLandWhereImagesAreLookedFor() throws {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-assets-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: workspace) }
-
-        let options = NewCommand.Options(
-            name: "asset-sketch", path: workspace.path, local: Self.repository.path)
-        let root = workspace.appendingPathComponent("asset-sketch", isDirectory: true)
-        for (path, contents) in try NewCommand.files(for: options) {
-            let url = root.appendingPathComponent(path)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
+        let root = try Self.generate("asset-sketch", in: SharedDebugScratch.sketches)
+        defer { try? FileManager.default.removeItem(at: root) }
 
         // 作った直後のスケッチへ、資材を 1 つ置く
-        let asset = root.appendingPathComponent(
-            "Sources/asset-sketch/assets/grain.txt")
-        try "木目".write(to: asset, atomically: true, encoding: .utf8)
+        try Self.write(
+            "木目", to: root.appendingPathComponent("Sources/asset-sketch/assets/grain.txt"))
 
         // 宣言があるので、走らせる前の検査は通る
         #expect(throws: Never.self) { try ResourceDeclaration.check(in: root) }
 
-        let built = try BuildProcess.build(in: root)
+        let scratch = SharedDebugScratch.place
+        let built = try BuildProcess.build(in: root, scratchPath: scratch)
         #expect(built.killed == false, "組み上げが終わらないまま期限に達した")
         #expect(built.status == 0, "資材を置いたスケッチが組み上がらない:\n\(built.output)")
 
         // 実行ファイルの隣を起点に、絵を探す並びの中に運ばれた資材が入っている。
         // **ここが繋がっていないと、宣言は書かれているのに実行時に読めない**
-        // **置き場はパッケージ直下に固定する。** ここは素の `swift build` で建てた
-        // ものを見るので、道具が選ぶ置き場 (版ごとの共有) とは別の場所である
+        // **置き場は組んだときと同じものを渡す** (分け持った置き場)。隣には先に組んだ
+        // 別のスケッチの包みも並ぶが、そちらに `grain.txt` は無いので、見つかるのは
+        // このスケッチの包みから運ばれた場合だけである
         let executable = try RunCommand.executablePath(
-            in: root, context: testContext(product: "asset-sketch"))
+            in: root,
+            context: testContext(product: "asset-sketch", place: .outside(scratch, given: true)))
         let neighbourhood = executable.deletingLastPathComponent()
         let searched = ImageFile.candidates(
             for: "assets/grain.txt", workingDirectory: root.path,
@@ -110,19 +120,9 @@ struct TemplateBuildTests {
             .appendingPathComponent("mokume-bundled-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workspace) }
-
-        let options = NewCommand.Options(
-            name: "packed-sketch", path: workspace.path, local: Self.repository.path)
-        let root = workspace.appendingPathComponent("packed-sketch", isDirectory: true)
-        for (path, contents) in try NewCommand.files(for: options) {
-            let url = root.appendingPathComponent(path)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
-        try "木目".write(
-            to: root.appendingPathComponent("Sources/packed-sketch/assets/mark.txt"),
-            atomically: true, encoding: .utf8)
+        let root = try Self.generate("packed-sketch", in: workspace)
+        try Self.write(
+            "木目", to: root.appendingPathComponent("Sources/packed-sketch/assets/mark.txt"))
         // 許可の文言を書いた名乗り。文言が実際の束ねを通って包みへ入るところまで見る
         try """
         {
@@ -248,16 +248,52 @@ nonisolated enum BuildProcess {
     }
 
     /// `swift build` を、期限つきで。
-    static func build(in directory: URL) throws -> (status: Int32, output: String, killed: Bool) {
+    ///
+    /// - Parameter scratchPath: 組み上げの置き場。`nil` ならパッケージ直下の `.build`。
+    static func build(in directory: URL, scratchPath: URL? = nil) throws -> (
+        status: Int32, output: String, killed: Bool
+    ) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["swift", "build"]
+        process.arguments =
+            ["swift", "build"] + (scratchPath.map { ["--scratch-path", $0.path] } ?? [])
         process.currentDirectoryURL = directory
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
         return try run(process, reading: pipe)
     }
+}
+
+/// ひな形の debug の 2 本が分け持つ、組み上げの置き場 (#2613)。
+///
+/// **検査のプロセスに 1 つ作り、プロセスが終わるときに丸ごと消す。** 置き場の中身は
+/// mokume 本体と依存の産物で、どのスケッチでも同じなので、2 本目は自分のターゲットだけを
+/// 組めば済む (手元の実測で、2 本目の `swift build` が 13 秒 → 4 秒)。スケッチは検査ごとに
+/// 別の名前でまっさらから作るので、入力の条件は混ざらない。前の実行の置き場は使わない —
+/// 毎回まっさらから始まり、どちらが先に走っても成り立つ。
+///
+/// **2 本のスケッチは同じ親 (``sketches``) の下に並べる。** 親が違うと、置き場を分け持って
+/// いても 2 本目で mokume 本体が組み直され、8 秒ほどかかる (手元と専用機の実測。道具立ての
+/// 側の理由までは追っていない)。
+///
+/// **同じ置き場へ 2 本が同時に組むことは無い** — 検査は main actor の上で同期に組むので
+/// 1 本ずつ進む。仮に重なっても SwiftPM が置き場に錠を掛けて待たせる。
+nonisolated enum SharedDebugScratch {
+    /// 根。置き場とスケッチの親をこの下に並べる。初めて引いたときに場所を決め、プロセスの
+    /// 終わりに消すよう頼む。
+    static let root: URL = {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-template-build-\(UUID().uuidString)", isDirectory: true)
+        atexit { try? FileManager.default.removeItem(at: SharedDebugScratch.root) }
+        return root
+    }()
+
+    /// 組み上げの置き場 (`--scratch-path`)。
+    static var place: URL { root.appendingPathComponent("build", isDirectory: true) }
+
+    /// スケッチを作る親。スケッチそのものは、作った検査の終わりに消す。
+    static var sketches: URL { root.appendingPathComponent("sketches", isDirectory: true) }
 }
 
 /// 止め木そのものの検査。
