@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
 name: PR gate
 
 # PR の作法の検査 (タイトル・マージ判定・描画の絵) を、コードの検査 (ci.yml の ci-gate) と
