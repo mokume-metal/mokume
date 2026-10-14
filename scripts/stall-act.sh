@@ -39,7 +39,23 @@
 # rerun してしまう。pull_request の rerun は元のイベントを再生するので、**古いタイトルで
 # 判定され、その失敗が最新の結果になって打つ前より悪くなる** (#699)。
 #
-# だから**失敗ジョブを 1 つずつ `gh run rerun --job` で打ち、下の除外リストを飛ばす**。
+# だから**失敗ジョブを 1 つずつジョブの rerun の API で打ち、下の除外リストを飛ばす**。
+# `gh run rerun --job` を使わないのは、拒まれたときに API の文面を捨てて
+# 「job N cannot be rerun」としか言わないためである (#2614)。`gh api` は文面を
+# 「gh: <message> (HTTP 403)」で返すので、下の 2 つを読み分けられる。
+#
+# ## 拒まれても赤にしない 2 つ (#2614)
+#
+# 次の 2 つは打つ側の失敗ではなく、打つ対象がその回に居ないだけなので、名乗って 0 のまま進む
+# (queue-sweep.sh が cancel の 409 を読み分けるのと同じ形)。文面は 2026-10-14 に実物で取った:
+#
+# - `The workflow run containing this job is already running` — 同じ run の別のジョブを
+#   先に打つと run が走り出し、残りは拒まれる。走り終われば次の回に打てる
+# - `Only jobs from the current attempt can be re-run` — commit の check run の一覧には、
+#   走り直す前の attempt のジョブも残る。それは打ち直せず、新しい attempt のジョブが同じ
+#   一覧に居る
+#
+# それ以外の拒否 (権限など) は理由を添えて 1 で終える。
 #
 # ## 除外の基準は名前ではなく「何を読むジョブか」
 #
@@ -122,12 +138,20 @@ rerun_stale_jobs() { # $1=PR 番号
       say "#$n: $name は rerun しない (凍結されたペイロードを読む #699 か、門番の後ろに居る #2062)"
       continue
     fi
-    if gh run rerun --repo "$REPO" --job "$id" >/dev/null 2>"$errfile"; then
+    if gh api "repos/$REPO/actions/jobs/$id/rerun" -X POST --silent 2>"$errfile"; then
       say "#$n: $name を rerun した"
       acted=1
     else
-      say "#$n: $name を rerun できなかった: $(reason)" >&2
-      failed=1
+      case "$(reason)" in
+        *"is already running"*)
+          say "#$n: $name は同じ run が走り直している — 次の回に回す" ;;
+        *"Only jobs from the current attempt"*)
+          say "#$n: $name は古い attempt のジョブで打ち直せない — 新しい attempt の側を見る" ;;
+        *)
+          say "#$n: $name を rerun できなかった: $(reason)" >&2
+          failed=1
+          ;;
+      esac
     fi
   done <<<"$runs"
   [ "$acted" -eq 1 ] || say "#$n: 打てる失敗ジョブが無かった"

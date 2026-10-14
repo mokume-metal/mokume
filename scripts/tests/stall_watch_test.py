@@ -29,7 +29,8 @@
    (queue から弾かれた・人の操作でなく外された) から猶予を超えたら赤で人に返す。**
    一度も予約を掛けていない PR と、人が外した予約は「外れた」と名乗らない
 10. **gh が失敗した理由 (stderr) を捨てない** (#2614)。捨てると、失敗が何十回続いても
-   理由がどこにも残らない
+   理由がどこにも残らない。rerun の拒否のうち、打つ対象がその回に居ないだけのもの (同じ
+   run が走り直している・古い attempt のジョブ) は赤にしない
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -78,11 +79,6 @@ if [ "$1 $2" = "pr merge" ]; then
   exit 0
 fi
 
-if [ "$1 $2" = "run rerun" ]; then
-  [ -z "${RERUN_FAILS:-}" ] || { echo "gh: HTTP 403: Resource not accessible by integration" >&2; exit 1; }
-  exit 0
-fi
-
 if [ "$1 $2" = "api graphql" ]; then
   num=""
   prev=""
@@ -124,6 +120,12 @@ case "$url" in
     f="$PR_DIR/render-jobs.$id.json"
     [ -f "$f" ] || { echo '{"jobs":[]}' > "$PR_DIR/render-jobs.none.json"; f="$PR_DIR/render-jobs.none.json"; }
     emit "$f"; exit 0 ;;
+  # ジョブの rerun (POST)。本物の gh api は失敗の文面を「gh: <message> (HTTP <code>)」で出す
+  */actions/jobs/*/rerun)
+    [ -z "${RERUN_FAILS:-}" ] || { echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1; }
+    [ -z "${RERUN_RUNNING:-}" ] || { echo "gh: The workflow run containing this job is already running (HTTP 403)" >&2; exit 1; }
+    [ -z "${RERUN_OLD_ATTEMPT:-}" ] || { echo "gh: Only jobs from the current attempt can be re-run (HTTP 403)" >&2; exit 1; }
+    exit 0 ;;
   */check-runs)
     [ -z "${CHECKRUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout (check-runs)" >&2; exit 1; }
     sha=${url%/check-runs}; sha=${sha##*/}
@@ -552,7 +554,7 @@ class StallWatchTest(unittest.TestCase):
         self.watch()
         log = self.gh_log()
         self.assertNotIn("pr merge", log)
-        self.assertNotIn("run rerun", log)
+        self.assertNotIn("/rerun", log)
 
     def test_猶予の中の名乗りでは_0_で終える(self):
         self.add_pr(12, auto=True, state="UNKNOWN", checks=[], updated=ago(5))
@@ -628,7 +630,7 @@ class StallWatchTest(unittest.TestCase):
         proc = self.act(["- runner-offline name 30 専用機の runner が render を拾っていない"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("pr merge", self.gh_log())
-        self.assertNotIn("run rerun", self.gh_log())
+        self.assertNotIn("/rerun", self.gh_log())
 
     def test_猶予の内の外れは赤くしない(self):
         """弾かれた直後は、人が読んで掛け直すまでの時間である (#642)。"""
@@ -661,8 +663,8 @@ class StallWatchTest(unittest.TestCase):
         proc = self.act(["20 stale-checks act 5 古い失敗 check"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
-        self.assertNotIn("--job 111", log, "pr-title へ rerun を打っている")
-        self.assertIn("--job 222", log, "同じ run の他の失敗ジョブへ打っていない")
+        self.assertNotIn("jobs/111/rerun", log, "pr-title へ rerun を打っている")
+        self.assertIn("jobs/222/rerun", log, "同じ run の他の失敗ジョブへ打っていない")
 
     def test_cancel_された_render_pr_を巻き添えで_rerun_しない(self):
         """ジョブ単位の rerun は門番 (render-turn) を通らず、専用機へ直に積む (#2062)。"""
@@ -679,15 +681,15 @@ class StallWatchTest(unittest.TestCase):
         proc = self.act(["25 stale-checks act 5 古い失敗 check"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
-        self.assertNotIn("--job 333", log, "render-pr へ rerun を打っている")
-        self.assertIn("--job 222", log)
+        self.assertNotIn("jobs/333/rerun", log, "render-pr へ rerun を打っている")
+        self.assertIn("jobs/222/rerun", log)
 
     def test_名乗る行には何も打たない(self):
         proc = self.act(["21 conflict name 90 main と衝突している"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
         self.assertNotIn("pr merge", log)
-        self.assertNotIn("run rerun", log)
+        self.assertNotIn("/rerun", log)
 
     def test_予約が外れた_PR_があっても当番は掛けず_対処は赤くならない(self):
         """判定の出力をそのまま対処へ渡す (stall-watch.yml と同じ流れ)。
@@ -709,8 +711,28 @@ class StallWatchTest(unittest.TestCase):
         proc = self.act(["23 stale-checks act 5 古い失敗 check"], RERUN_FAILS="1")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertRegex(
-            proc.stderr, r"#23: ci-check を rerun できなかった.*HTTP 403: Resource not accessible by integration"
+            proc.stderr, r"#23: ci-check を rerun できなかった: gh: Resource not accessible by integration \(HTTP 403\)"
         )
+
+    def test_同じ_run_が走り直している間の_rerun_の拒否は赤にしない(self):
+        """同じ run の別の失敗ジョブを先に打つと run が走り出し、残りは 403 で拒まれる (#2614 の
+        反証)。2026-09-30 の #1883 では 1 回の当番で、ci-gate を打った直後の review-gate と
+        drawing-evidence が 9 本「rerun できなかった」になった (理由は捨てられていて残っていないが、同じ形を
+        再現するとこの文面になる)。次の回に回せば済む。"""
+        self.add_pr(27)
+        self.write("27.checkruns.json", {"check_runs": [{"name": "review-gate", "conclusion": "failure", "id": 444}]})
+        proc = self.act(["27 stale-checks act 5 古い失敗 check"], RERUN_RUNNING="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("#27: review-gate は同じ run が走り直している", proc.stdout)
+
+    def test_古い_attempt_のジョブの_rerun_の拒否は赤にしない(self):
+        """commit の check run の一覧には走り直す前の attempt のジョブも残る。それは打ち直せず、
+        新しい attempt の側が同じ一覧に居る。毎回の赤にしない。"""
+        self.add_pr(28)
+        self.write("28.checkruns.json", {"check_runs": [{"name": "ci-gate", "conclusion": "failure", "id": 555}]})
+        proc = self.act(["28 stale-checks act 5 古い失敗 check"], RERUN_OLD_ATTEMPT="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("#28: ci-gate は古い attempt のジョブ", proc.stdout)
 
     def test_check_run_を読めなかったら理由を添えて_1_で終える(self):
         self.add_pr(24)
