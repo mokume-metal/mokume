@@ -95,7 +95,7 @@ bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 1. コメント欄へ貼って URL を得る
 2. **その URL を含むコメントを投稿する** (`scripts/comment.sh`) — ここで公開される
 3. 同じ URL を PR 本文へ書く (`gh pr create --body-file` / `gh pr edit --body-file`。発言ではないのでラッパーは通さない)
-4. **`gh pr edit` で書いたなら、赤い `drawing-evidence` の run を打ち直す** (`gh run rerun <run-id> --failed`。run が終わってから)。本文の編集は新しい run を起こして判定を付け直すが、PR 作成時の run の赤い `ci-gate` は残って必須チェックを赤のままにする (`.github/workflows/ci.yml` の `ci-gate` の上のコメント)
+4. `gh pr edit` で書けば、本文の編集が `pr-gate` の新しい run を起こし、`drawing-evidence` を付け直す (打ち直しは要らない — `.github/workflows/pr-gate.yml` の冒頭)
 
 ### 参照の面には使わない
 
