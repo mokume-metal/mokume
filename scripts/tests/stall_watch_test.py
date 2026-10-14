@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは十。
+固定したいのは十一。
 
 1. **pr-title へ rerun を打たない。** pull_request の rerun は元のイベントを再生するので、
    古いタイトルで判定され、その失敗が最新の結果になって**打つ前より悪くなる** (#699)。
@@ -31,6 +31,8 @@
 10. **gh が失敗した理由 (stderr) を捨てない** (#2614)。捨てると、失敗が何十回続いても
    理由がどこにも残らない。rerun の拒否のうち、打つ対象がその回に居ないだけのもの (同じ
    run が走り直している・古い attempt のジョブ) は赤にしない
+11. **当番の job が持つ書き込み権限と、スクリプトが打つ書き込みが対応している** (#2614)。
+   偽 gh は権限を見ないので、権限の外の操作を打ち続けても単体の検査は緑のままだった
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -836,6 +838,88 @@ class RerunExclusionTest(unittest.TestCase):
         self.assertIn(self.squash("新しいコミットを push して run を作り直す"), header)
         self.assertIn(self.squash("rerun でも消えない"), header)
         self.assertNotIn(self.squash("直せば edited で新しい run が走る"), header)
+
+
+STALL_WORKFLOW = REPO / ".github" / "workflows" / "stall-watch.yml"
+
+# gh の書き込みの操作と、それに要る GITHUB_TOKEN の書き込み権限。**gh pr merge (auto-merge の
+# 予約) には contents: write も要る** — pull-requests: write だけでは
+# enablePullRequestAutoMerge が FORBIDDEN になることを実物で確かめた (#2614 の probe、
+# run 38541307087)。知らない書き込みは検査を赤にするので、増やすときはここへ足す
+WRITE_OPS = (
+    (re.compile(r"^pr merge\b"), {"contents", "pull-requests"}),
+    (re.compile(r"^pr (comment|edit|close|reopen|ready|review|create)\b"), {"pull-requests"}),
+    (re.compile(r"^issue (comment|edit|close|reopen|create)\b"), {"issues"}),
+    (re.compile(r"^run (rerun|cancel)\b"), {"actions"}),
+    (re.compile(r"^workflow run\b"), {"actions"}),
+    (re.compile(r'^api "?repos/[^ "]*/actions/[^ "]*"? .*-X (POST|PUT|PATCH|DELETE)\b'), {"actions"}),
+)
+
+# 実行される gh (コマンドの位置にあるもの)。説明の文字列の中の「gh pr merge …」は拾わない
+GH_COMMAND = re.compile(r"(?:^|[;&|({]|\$\(|\bif\s+!?|\bthen|\belse|\bdo)\s*gh\s+(.*)$")
+
+
+class StallWorkflowPermissionTest(unittest.TestCase):
+    """当番の job が持つ書き込み権限と、当番のスクリプトが打つ書き込みの対応 (#2614)。
+
+    掛け直しは権限の外の操作で、直近 98 回の当番で一度も成功しなかった (失敗は 80 回)。
+    偽 gh の pr merge は常に成功するので、単体の検査はそれを見ていなかった。ここで固定するのは 2 つ:
+
+      1. スクリプトが打つ書き込みに要る権限を、job が持っている (持たない書き込みを打たない)
+      2. job が持つ書き込み権限は、どれかの書き込みが使っている (使わない権限を持たない)
+
+    全 workflow への一般化はこの PR の外 (render_workflow_test.py は render.yml の分を持つ)。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        text = STALL_WORKFLOW.read_text(encoding="utf-8")
+        job = text.split("\n  watch:\n", 1)[1]
+        block = job.split("\n    permissions:\n", 1)[1].split("\n    steps:\n", 1)[0]
+        cls.granted = {}
+        for line in block.splitlines():
+            m = re.match(r"^      ([a-z-]+):\s*(read|write)\b", line)
+            if m:
+                cls.granted[m.group(1)] = m.group(2)
+        cls.writes = {k for k, v in cls.granted.items() if v == "write"}
+        cls.scripts = sorted(set(re.findall(r"bash (scripts/[\w-]+\.sh)", job)))
+
+    def ops(self):
+        """(スクリプト, 行, 要る権限 or None) の並び。None は知らない書き込み。"""
+        found = []
+        for rel in self.scripts:
+            for line in (REPO / rel).read_text(encoding="utf-8").splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
+                if re.search(r"\bmutation\b", line):
+                    found.append((rel, line.strip(), None))
+                    continue
+                m = GH_COMMAND.search(line)
+                if not m:
+                    continue
+                cmd = re.sub(r"--repo \S+ ", "", m.group(1))
+                need = next((n for pat, n in WRITE_OPS if pat.search(cmd)), set())
+                if not need and re.search(r"-X (POST|PUT|PATCH|DELETE)\b", cmd):
+                    need = None
+                if need is None or need:
+                    found.append((rel, line.strip(), need))
+        return found
+
+    def test_当番が走らせるスクリプトを読めている(self):
+        self.assertEqual(self.scripts, ["scripts/stall-act.sh", "scripts/stall-watch.sh"])
+        # 走査が空振りしていないこと: rerun の書き込みを拾えている
+        self.assertTrue(any(n == {"actions"} for _, _, n in self.ops()), self.ops())
+
+    def test_打つ書き込みに要る権限を_job_が持つ(self):
+        for rel, line, need in self.ops():
+            self.assertIsNotNone(need, f"{rel}: 対応を知らない書き込み (WRITE_OPS へ足す): {line}")
+            self.assertLessEqual(
+                need, self.writes, f"{rel}: 権限の外の書き込みを打つ (要る {sorted(need)}・持つ {sorted(self.writes)}): {line}"
+            )
+
+    def test_使わない書き込みの権限を持たない(self):
+        used = set().union(*(n for _, _, n in self.ops() if n))
+        self.assertLessEqual(self.writes, used, f"使わない書き込みの権限を持つ: {sorted(self.writes - used)}")
 
 
 if __name__ == "__main__":
