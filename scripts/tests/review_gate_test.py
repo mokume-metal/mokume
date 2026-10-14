@@ -235,7 +235,7 @@ class ReviewGateTest(unittest.TestCase):
 
     def run_gate(self, pr, issue=None, all_files=None, record_calls=None,
                  issues=None, issue_fail=None, agents=None, compare_fail=None,
-                 run_id=None):
+                 run_id=None, job=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
@@ -249,6 +249,7 @@ class ReviewGateTest(unittest.TestCase):
         `compare_fail` を渡すと compare API がその文言を名乗って失敗する。
 
         `run_id` は Actions の中で立つ GITHUB_RUN_ID (#2134)。渡さなければ環境から外す。
+        `job` は GITHUB_JOB (#2668。pr-gate の中では差し戻しの末尾が替わる)。同じく渡さなければ外す。
         """
         contents = Path(self.tmp.name) / "contents"
         contents.mkdir(exist_ok=True)
@@ -279,6 +280,9 @@ class ReviewGateTest(unittest.TestCase):
         env.pop("GITHUB_RUN_ID", None)
         if run_id is not None:
             env["GITHUB_RUN_ID"] = run_id
+        env.pop("GITHUB_JOB", None)
+        if job is not None:
+            env["GITHUB_JOB"] = job
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
         )
@@ -626,6 +630,37 @@ class ReviewGateTest(unittest.TestCase):
         self.assertNotIn("stall-watch", err)
         # 単位の無い言い方 (旧: Actions の re-run か空 push) に戻っていない
         self.assertNotIn(self.squash("Actions の re-run か空 push"), self.squash(err))
+
+    # --- pr-gate の中の差し戻しの文面 (#2668) ---------------------------------
+    #
+    # pr-gate は直せば新しい run で付け直され、その結論が同じコミットの最新になる。ci.yml の
+    # 文面 (この run を打ち直す) をそのまま出すと、消したい赤 (CI の run) と違う run を指す。
+    # 重なっている間 (#2669 まで) は CI の ci-gate の赤の消し方を添える
+
+    def test_pr_gate_の中では打ち直しは要らないと言い_CI_の赤の消し方を添える(self):
+        for name, err in self.blocked_messages(run_id="424242", job="pr-gate").items():
+            with self.subTest(name):
+                self.assertSays(err, "pr-gate は直せば付け直されます (打ち直しは要りません)")
+                self.assertSays(err, "作法の検査が ci.yml の ci-gate からも外れるまで (#2669)")
+                self.assertIn("gh run rerun <CI の run-id> --failed", err)
+                # この run (pr-gate) の id で打ち直しを案内しない
+                self.assertNotIn("424242", err)
+                self.assertSays(err, "新しいコミットを push して run を作り直してください")
+
+    def test_ci_yml_の中では従来の文面のまま(self):
+        for name, err in self.blocked_messages(run_id="424242", job="review-gate").items():
+            with self.subTest(name):
+                self.assertIn("gh run rerun 424242 --failed", err)
+                self.assertNotIn("pr-gate", err)
+
+    def test_pr_gate_の中の_verify_の差し戻しは_CI_の_run_も打ち直すと添える(self):
+        proc = self.run_gate(pr_json(), issue_json("status: in progress"), run_id="424242", job="pr-gate")
+        self.assert_blocked(proc, "verify: ラベルが無い")
+        # Issue 側のラベルは run を起こさないので、この run (pr-gate) の打ち直しが正しい手
+        self.assertIn("gh run rerun 424242 --failed", proc.stderr)
+        self.assertSays(proc.stderr, "CI の赤い run も同じく失敗したジョブを打ち直す")
+        plain = self.run_gate(pr_json(), issue_json("status: in progress"), run_id="424242")
+        self.assertNotIn("CI の赤い run も", plain.stderr)
 
     # --- 差し戻しの文面は ADR を開かなくても行動できる (#2139) -------------------
     #

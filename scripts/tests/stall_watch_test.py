@@ -551,6 +551,79 @@ class StallWatchTest(unittest.TestCase):
         kind, action = self.classify(18, self.watch())
         self.assertEqual((kind, action), ("stale-checks", "act"))
 
+    # --- pr-gate は同じ SHA の最新の run の結論が判定 (#2668) ------------------
+    #
+    # pr-gate は API を読むだけの数十秒のジョブで、直すと新しい run が付け直す。concurrency は
+    # 走っている古い run を cancel する。古い赤・cancelled と新しい緑を stale-checks の組にすると、
+    # 当番が head SHA の失敗ジョブを打ち直し、凍結された run の ci-gate まで「最新の赤」にしうる
+
+    def test_古い_pr_gate_の赤と新しい緑を_stale_checks_の組にしない(self):
+        self.add_pr(
+            40,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-gate", "FAILURE", ago(90), run=100),
+                check("pr-gate", "SUCCESS", ago(60), run=200),
+                check("ci-gate", "SUCCESS", ago(50), run=150),
+            ],
+        )
+        kind, _ = self.classify(40, self.watch())
+        self.assertNotEqual(kind, "stale-checks")
+
+    def test_concurrency_が止めた_pr_gate_を_stale_checks_の組にしない(self):
+        self.add_pr(
+            41,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-gate", "CANCELLED", ago(90), run=100),
+                check("pr-gate", "SUCCESS", ago(60), run=200),
+                check("ci-gate", "SUCCESS", ago(50), run=150),
+            ],
+        )
+        kind, _ = self.classify(41, self.watch())
+        self.assertNotEqual(kind, "stale-checks")
+
+    def test_古い_pr_gate_を外しても_ほかの古い赤は_stale_checks_に残る(self):
+        self.add_pr(
+            42,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-gate", "FAILURE", ago(90), run=100),
+                check("pr-gate", "SUCCESS", ago(60), run=300),
+                check("ci-gate", "FAILURE", ago(5), run=100),
+                check("ci-gate", "SUCCESS", ago(50), run=300),
+            ],
+        )
+        proc = self.watch()
+        self.assertEqual(self.classify(42, proc), ("stale-checks", "act"))
+        line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("42 "))
+        self.assertIn("(ci-gate)", line)
+        self.assertNotIn("pr-gate", line)
+
+    def test_最新の_pr_gate_の赤は隠さない(self):
+        """外すのは古い run の pr-gate だけ。最新の赤は本物の差し戻しで、古い緑で覆わない。
+
+        最新の赤が残っていれば、失敗の時刻 (行の分) はその赤の時刻になる。古い緑を残す
+        読み違いでは、ci-gate の古い赤の時刻 (90 分前) に戻る。"""
+        self.add_pr(
+            43,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-gate", "SUCCESS", ago(120), run=100),
+                check("pr-gate", "FAILURE", ago(2), run=400),
+                check("ci-gate", "FAILURE", ago(90), run=100),
+                check("ci-gate", "SUCCESS", ago(50), run=300),
+            ],
+        )
+        proc = self.watch()
+        self.assertEqual(self.classify(43, proc), ("stale-checks", "act"))
+        line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("43 "))
+        self.assertLess(int(line.split()[3]), 10, line)
+
     def test_判定は何も打たない(self):
         self.add_pr(11, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 10)])
         self.watch()
@@ -684,6 +757,27 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
         self.assertNotIn("jobs/333/rerun", log, "render-pr へ rerun を打っている")
+        self.assertIn("jobs/222/rerun", log)
+
+    def test_pr_gate_の古い失敗や_cancel_に_rerun_を打たない(self):
+        """pr-gate は最新の run の結論が判定で、直せば新しい run が付け直す (#2668)。古い run を
+        打ち直すと、同じ concurrency の group で走っている新しい run を cancel しうる。"""
+        self.add_pr(26)
+        self.write(
+            "26.checkruns.json",
+            {
+                "check_runs": [
+                    {"name": "pr-gate", "conclusion": "failure", "id": 444},
+                    {"name": "pr-gate", "conclusion": "cancelled", "id": 555},
+                    {"name": "ci-check", "conclusion": "failure", "id": 222},
+                ]
+            },
+        )
+        proc = self.act(["26 stale-checks act 5 古い失敗 check"])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        log = self.gh_log()
+        self.assertNotIn("jobs/444/rerun", log, "古い pr-gate へ rerun を打っている")
+        self.assertNotIn("jobs/555/rerun", log, "cancel された pr-gate へ rerun を打っている")
         self.assertIn("jobs/222/rerun", log)
 
     def test_名乗る行には何も打たない(self):

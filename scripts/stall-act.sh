@@ -78,6 +78,12 @@
 # もの・#2064、stall-watch の読み分け 9 で人が退かせたもの) が、
 # 別の check の stale-checks の巻き添えで戻ってくるのも、これで止まる。
 #
+# **3 つ目の基準は「最新の run の結論が判定になるジョブか」** (#2668)。pr-gate
+# (.github/workflows/pr-gate.yml) は直すと新しい run が付け直し、concurrency が走っている古い
+# run を cancel する。head SHA に残る古い赤・cancelled は直す前の名残で、打ち直しても得るものが
+# 無い。打てば同じ group で走っている新しい run を cancel しうる。stall-watch.sh の
+# normalize_checks も古い pr-gate を stale-checks に数えない。
+#
 # 検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail
 
@@ -88,7 +94,7 @@ set -euo pipefail
 REPO="$(this_repo)"
 
 # rerun を打ってはならないジョブ。**readonly にしない** — 検査が差し替えて回すため
-RERUN_EXCLUDED=${RERUN_EXCLUDED:-"pr-title render-pr"}
+RERUN_EXCLUDED=${RERUN_EXCLUDED:-"pr-title render-pr pr-gate"}
 
 LOG="${1:?stall-watch.sh の出力ファイルが必要}"
 [ -f "$LOG" ] || {
@@ -136,7 +142,7 @@ rerun_stale_jobs() { # $1=PR 番号
   while read -r name id; do
     [ -n "${id:-}" ] || continue
     if excluded "$name"; then
-      say "#$n: $name は rerun しない (凍結されたペイロードを読む #699 か、門番の後ろに居る #2062)"
+      say "#$n: $name は rerun しない (凍結されたペイロードを読む #699・門番の後ろに居る #2062・最新の run が判定 #2668 のどれか)"
       continue
     fi
     if gh api "repos/$REPO/actions/jobs/$id/rerun" -X POST --silent 2>"$errfile"; then
