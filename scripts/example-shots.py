@@ -604,10 +604,11 @@ MEMBER_FILES = "Sources/MokumeCore/Sketch/Sketch+*.swift"
 # 許容一覧。1 行 1 口 (`ファイル: 口`)。# で始まる行と空行は読まない
 GAPS_FILE = "scripts/example-shots-gaps.txt"
 
-# `extension Sketch` の頭。`public extension Sketch` なら中の口は既定で公開になる
+# `extension Sketch` / `extension SketchPart` の頭。`public extension …` なら中の口は既定で
+# 公開になる。語彙は Sketch が継ぐ SketchPart に置いてある (ADR-0020 決定 7・#2616)
 EXTENSION = re.compile(
     r"^\s*(?P<mods>(?:(?:public|open|package|internal|private|fileprivate|@\w+(?:\([^)]*\))?)\s+)*)"
-    r"extension\s+Sketch\b"
+    r"extension\s+(?:Sketch|SketchPart)\b"
 )
 # 口の頭。属性・修飾語・種類。`private(set)` のような括弧つきの修飾も 1 語として読む
 MEMBER = re.compile(

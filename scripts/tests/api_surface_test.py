@@ -98,6 +98,23 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("決定 1", problems[0])
 
+    def test_SketchPart_に置いた語彙も上の層として転送を見る(self):
+        """語彙の経路の頭は SketchPart になる (#2616)。上の層として数えないと検査が空振りする。"""
+        symbols = [
+            symbol("tint(_:)", owner="SketchPart"),
+            symbol("tint(color:)", owner="Canvas"),
+        ]
+        problems = api.check_forwarding(symbols, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("決定 1", problems[0])
+
+    def test_SketchPart_と下の層に同じ説明文があると見つける(self):
+        symbols = [
+            symbol("fill(_:)", owner="SketchPart", doc="塗りの色。"),
+            symbol("fill(_:)", owner="Canvas", doc="塗りの色。"),
+        ]
+        self.assertEqual(len(api.check_doc_canon(symbols)), 1)
+
     def test_同じ名前と同じラベルなら通す(self):
         symbols = [symbol("tint(_:)", owner="Sketch"), symbol("tint(_:)", owner="Canvas")]
         self.assertEqual(api.check_forwarding(symbols, set()), [])
