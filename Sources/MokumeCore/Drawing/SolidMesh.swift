@@ -135,8 +135,15 @@ nonisolated enum SolidMeshBuilder {
         //
         // 貼る絵は**6 面それぞれに 1 枚**が収まる。周は 4 隅とも「上・下・下・上」の順で
         // 渡されるので、絵の四隅をこの順に当てれば、どの面も同じ向きで立つ
+        //
+        // 面の向きは軸に沿うので、`cross` を成分の絶対値の最大で割って **±1 ちょうど**にする。
+        // `normalize` は寸法によって長さが 1 から 1 ulp ずれ、単位の箱を置き場所で広げる経路
+        // (``SolidShape/unitScaling``・#2386) と光や `shapeNormal` が食い違う。割る値が 0 か有限で
+        // ない (潰れた箱・溢れる積) ときは、これまでどおり `normalize` に任せる
         func face(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ d: SIMD3<Float>) {
-            let normal = normalize(cross(c - a, b - a))
+            let facing = cross(c - a, b - a)
+            let largest = abs(facing).max()
+            let normal = largest > 0 && largest.isFinite ? facing / largest : normalize(facing)
             let corners: [(SIMD3<Float>, SIMD2<Float>)] = [
                 (a, SIMD2(0, 0)), (b, SIMD2(0, 1)), (c, SIMD2(1, 1)), (d, SIMD2(1, 0)),
             ]
