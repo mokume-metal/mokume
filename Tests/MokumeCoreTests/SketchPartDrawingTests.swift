@@ -25,6 +25,7 @@ struct SketchPartDrawingTests {
             circle(x, y, 20)
             fill(240, 120, 60)
             rect(x - 4, y + 14, 8, 6)
+            text("HP", x - 20, y + 4)
         }
     }
 
@@ -49,6 +50,7 @@ struct SketchPartDrawingTests {
             circle(24, 16, 20)
             fill(240, 120, 60)
             rect(24 - 4, 16 + 14, 8, 6)
+            text("HP", 24 - 20, 16 + 4)
         }
     }
 

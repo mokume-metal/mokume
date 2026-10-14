@@ -408,9 +408,9 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/loadImage(_:)``
 - ``SketchPart/requestImage(_:)``
 - ``SketchPart/createImage(_:_:)``
-- ``SketchPart/image(_:_:_:)-(Image,_,_)``
-- ``SketchPart/image(_:_:_:_:_:)-(Image,_,_,_,_)``
-- ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-(Image,_,_,_,_,_,_,_,_)``
+- ``SketchPart/image(_:_:_:)-23fpf``
+- ``SketchPart/image(_:_:_:_:_:)-4ch39``
+- ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-6fe4h``
 - ``SketchPart/texture(_:)-c9g``
 - ``SketchPart/noTexture()``
 - ``Image``
@@ -517,9 +517,9 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 別の描き場所に描く
 
 - ``SketchPart/createGraphics(_:_:)``
-- ``SketchPart/image(_:_:_:)-(Canvas,_,_)``
-- ``SketchPart/image(_:_:_:_:_:)-(Canvas,_,_,_,_)``
-- ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-(Canvas,_,_,_,_,_,_,_,_)``
+- ``SketchPart/image(_:_:_:)-7psdx``
+- ``SketchPart/image(_:_:_:_:_:)-666br``
+- ``SketchPart/image(_:_:_:_:_:_:_:_:_:)-3q9cm``
 - ``SketchPart/texture(_:)-6aozc``
 - ``Canvas``
 
@@ -728,7 +728,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 ### 観測へ差し出す
 
-- ``SketchPart/expose(_:_:)-(_,Float)``
+- ``SketchPart/expose(_:_:)-42vn6``
 - ``SketchPart/measure(_:_:)``
 
 ### 数を渡す
