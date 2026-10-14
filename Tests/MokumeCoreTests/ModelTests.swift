@@ -202,6 +202,9 @@ struct ModelTests {
             ("v#c 1 0 0", "v"), ("v 1 0 0#c\\", "v 1 0 0"),
             // 陰性対照: コメントの無い行は変わらない
             ("v 1 0 0", "v 1 0 0"), ("v 1 0", "v 1 0"),
+            // `#` の直後に結合文字が付いても、`#` はコメントの始まり (`Character` では束ねられて
+            // 見逃す。UTF-8 の 1 バイトで探す理由)
+            ("v 1 0 0#\u{301}c", "v 1 0 0"),
         ])
     func commentsEndVertexLines(line: String, clean: String) {
         func parsed(_ vertex: String) -> ModelFile.Parsed {
@@ -221,6 +224,8 @@ struct ModelTests {
             // u が無ければ読めない行
             ("vt #c", "vt"), ("vt#c 0.5 0.5", "vt"), ("vt #c 0.5", "vt"),
             ("vt 0.5 0.5", "vt 0.5 0.5"),
+            // `#` の直後に結合文字が付いても、`#` はコメントの始まり
+            ("vt 0.5 0.5#\u{301}c", "vt 0.5 0.5"),
         ])
     func commentsEndTextureLines(line: String, clean: String) {
         func parsed(_ texture: String) -> ModelFile.Parsed {
@@ -239,6 +244,8 @@ struct ModelTests {
             // コメントの手前に欄が足りなければ読めない行
             ("vn 0 1#x 0", "vn 0 1"), ("vn 0 1 # 0", "vn 0 1"), ("vn#x 0 1 0", "vn"),
             ("vn 0 1 0", "vn 0 1 0"),
+            // `#` の直後に結合文字が付いても、`#` はコメントの始まり
+            ("vn 0 1 0#\u{301}x", "vn 0 1 0"),
         ])
     func commentsEndNormalLines(line: String, clean: String) {
         func parsed(_ normal: String) -> ModelFile.Parsed {
