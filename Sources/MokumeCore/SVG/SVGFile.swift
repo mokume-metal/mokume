@@ -491,7 +491,12 @@ nonisolated enum SVGFile {
                 }
                 context.color = color
             case "visibility":
-                context.isVisible = lowered == "visible"
+                // `collapse` は SVG では `hidden` と同じ。読めない値は無かったものとして、受け継いだ値のまま (#2626)
+                switch lowered {
+                case "visible": context.isVisible = true
+                case "hidden", "collapse": context.isVisible = false
+                default: tally.note("\(property) \"\(trimmed)\"", line: line)
+                }
             case "display":
                 own.isDisplayed = lowered != "none"
             case "width", "height":

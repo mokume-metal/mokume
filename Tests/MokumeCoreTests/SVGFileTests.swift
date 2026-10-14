@@ -917,6 +917,55 @@ struct SVGFileTests {
         #expect(drawing.items.map(\.outline) == [.rect(x: 0, y: 0, width: 2, height: 2)])
     }
 
+    /// `visibility` の読めない値 (`abc`・空) は、`hidden` と同じに隠さず、無かったものとして親の値を受け継いで
+    /// 描き、`fill-rule "abc"` などと同じ形で名乗る ([#2626])。
+    ///
+    /// [#2626]: https://github.com/mokume-metal/mokume/issues/2626
+    @Test(
+        "visibility の読めない値は隠さず、親の値を受け継いで描き、skipped に載る (#2626)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 描かれる矩形の数)
+            (#"<rect width="10" height="10" visibility="abc"/>"#, [#"visibility "abc""#], 1),
+            (#"<rect width="10" height="10" visibility=""/>"#, [#"visibility """#], 1),
+            // 空白つきは落とした文字で名乗る
+            (#"<rect width="10" height="10" visibility=" abc "/>"#, [#"visibility "abc""#], 1),
+            // CSS の宣言 (style 属性・<style>) でも同じ
+            (#"<rect width="10" height="10" style="visibility:abc"/>"#, [#"visibility "abc""#], 1),
+            (#"<style>rect { visibility: abc }</style><rect width="10" height="10"/>"#, [#"visibility "abc""#], 1),
+            // 親が visible なら描き、hidden なら受け継いで隠れたまま (読めない値は hidden に変えず、visible にも戻さない)
+            (#"<g visibility="visible"><rect width="10" height="10" visibility="abc"/></g>"#, [#"visibility "abc""#], 1),
+            (#"<g visibility="hidden"><rect width="10" height="10" visibility="abc"/></g>"#, [#"visibility "abc""#], 0),
+            // 祖先の読めない値も、子が描かれるときに受け継ぎの値として 1 度だけ名乗る (g は描かないので 1 つ)
+            (#"<g visibility="abc"><rect width="10" height="10"/><rect width="10" height="10"/></g>"#, [#"visibility "abc""#], 2),
+        ])
+    func unreadableVisibilityIsNamedAndInherited(_ sample: (String, [String], Int)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "visibility の visible・hidden・collapse は今までどおりで、名乗らない (#2626 の陰性対照)",
+        arguments: [
+            (#"<rect width="10" height="10" visibility="visible"/>"#, 1),
+            (#"<rect width="10" height="10" visibility=" VISIBLE "/>"#, 1),
+            (#"<rect width="10" height="10" visibility="hidden"/>"#, 0),
+            (#"<rect width="10" height="10" visibility="collapse"/>"#, 0),
+            (#"<rect width="10" height="10" style="visibility:hidden"/>"#, 0),
+            (#"<rect width="10" height="10" style="visibility:collapse"/>"#, 0),
+            (#"<style>rect { visibility: hidden }</style><rect width="10" height="10"/>"#, 0),
+            // inherit は親の値のまま (hidden の親なら隠れる)
+            (#"<g visibility="hidden"><rect width="10" height="10" visibility="inherit"/></g>"#, 0),
+            (#"<rect width="10" height="10" visibility="inherit"/>"#, 1),
+            // 親が hidden でも、子が visible なら描く
+            (#"<g visibility="hidden"><rect width="10" height="10" visibility="visible"/></g>"#, 1),
+        ])
+    func readableVisibilityIsUnchanged(_ sample: (String, Int)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.1, "\(sample.0): \(drawing.items)")
+    }
+
     @Test("角丸の矩形は線の集まりに、片方だけ書いた半径はもう片方にも使う")
     func roundedRectangles() throws {
         let drawing = try document("<rect x=\"0\" y=\"0\" width=\"20\" height=\"10\" rx=\"8\"/>")
