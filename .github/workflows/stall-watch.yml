@@ -51,7 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
-      pull-requests: write # auto-merge の掛け直し
+      # PR を読むだけ。auto-merge の掛け直しはやめた — 掛けるには contents: write が要り、
+      # 当番に書き込みを渡すかは人の判断なので名乗るだけにした (#2614・scripts/stall-act.sh 冒頭)
+      pull-requests: read
       actions: write # 判定を固定している古い失敗ジョブの rerun
     steps:
       - uses: actions/checkout@v7

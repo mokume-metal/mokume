@@ -13,7 +13,7 @@
 # セッションが替わって (#2507)、merge queue の render が 14 回続けて落ちたが、どれも
 # PR の赤に見えて、原因が分かったのは翌朝だった。壊れている間は queue に入った PR が
 # 1 本ずつ弾かれ、直った後も誰かが予約を掛け直すまで止まる (当番の stall-watch は
-# schedule が間引かれて数時間に 1 回しか走らない・#1197)。
+# 外れた予約を名乗るだけで掛け直さない・#2614)。
 #
 # 対象は merge_group の render だけ。定期の run (schedule) で前検査が落ちたときは、
 # scheduled-debug が赤になり、既存の scheduled-report が「専用機の定期の検査が落ちている」で
@@ -53,10 +53,11 @@ merge queue の必須チェック `render` が、専用機の前検査 (`scripts
    - `console` — 専用機の表の GUI セッションが runner のユーザーではない。専用機の前で runner のユーザーへ切り替える (#2507)
    - `screens` — runner から画面が見えない。表のセッション・ディスプレイの接続と電源を見る
    - `metal` — Metal のデバイスが取れない。専用機を再起動する
-2. 直ったら、弾かれた PR の予約を掛け直す (当番を今すぐ走らせる):
+2. 直ったら、弾かれた PR の予約を手で掛け直す。当番 (stall-watch) は予約が外れた PR を `auto-merge-dropped` と名乗るだけで、掛け直さない (#2614)。名乗られた PR のうち、わざと外したものでないものに打つ:
 
    ```
-   gh workflow run stall-watch.yml
+   bash scripts/stall-watch.sh
+   gh pr merge <番号> --auto --squash
    ```
 
 ## 解消の判定

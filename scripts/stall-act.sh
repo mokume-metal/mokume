@@ -11,16 +11,26 @@
 # ために判定を打っただけで auto-merge が掛かってしまうのを防ぐため。打つのはここだけで、
 # 呼ぶのは .github/workflows/stall-watch.yml である。
 #
-# ## 打つのは 2 つの分類だけ
+# ## 打つのは 1 つの分類だけ
 #
-#   auto-merge-dropped   gh pr merge --auto --squash を掛け直す
 #   stale-checks         判定を固定している古い失敗ジョブを rerun する
 #
 # 名乗る (name) と黙る (quiet) の行には何もしない。**入力の 3 列目がその別**なので、
 # ここで分類名を数え直さない — 判定は 1 箇所に保つ (ADR-0001 原則 9)。
 #
-# **auto-merge の掛け直しはゲートを飛び越えない。** --auto は予約にすぎず、必須
-# チェックはそのまま効く (承認のゲートは ADR-0044 で外れた・#2108)。
+# ## auto-merge は掛け直さない (#2614)
+#
+# 以前は auto-merge-dropped にも gh pr merge --auto --squash を打っていたが、**一度も
+# 成功しなかった** (2026-10-13 に数えた直近 60 回で 0 回)。当番の GITHUB_TOKEN
+# (contents: read) では enablePullRequestAutoMerge が `Resource not accessible by
+# integration` (FORBIDDEN) で拒まれ、contents: write を足すと通る (probe の run
+# 38541307087)。リポジトリへの書き込みを当番に渡すかは人の判断なので、権限は広げずに
+# 掛け直しを消し、stall-watch.sh が名乗るだけにした。掛け直すのは人である。
+#
+# ## gh の失敗の理由を捨てない (#2614)
+#
+# 失敗の行には gh の stderr を 1 行に畳んで添える。以前は 2>/dev/null で捨てていたので、
+# 上の掛け直しが 60 回続けて落ちても理由がどこにも残らなかった。
 #
 # ## rerun は run 単位で打ってはいけない
 #
@@ -71,26 +81,29 @@ LOG="${1:?stall-watch.sh の出力ファイルが必要}"
 
 failed=0
 
+# gh の stderr の受け皿。標準出力を値として受ける呼び出しでも理由を拾えるように、
+# ファイルへ逃がしてから読む
+errfile=$(mktemp)
+trap 'rm -f "$errfile"' EXIT
+
 say() { printf '%s\n' "$*"; }
+
+# 直前の gh の stderr を 1 行に畳む。空なら空と言う (黙ると「理由なし」と読めない)
+reason() {
+  local text
+  text=$(tr '\n' ' ' <"$errfile" | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ $//')
+  printf '%s' "${text:-gh は理由を出さなかった}"
+}
 
 excluded() { # $1=ジョブ名
   case " $RERUN_EXCLUDED " in *" $1 "*) return 0 ;; esac
   return 1
 }
 
-rearm_auto_merge() { # $1=PR 番号
-  if gh pr merge "$1" --repo "$REPO" --auto --squash >/dev/null 2>&1; then
-    say "#$1: auto-merge を掛け直した"
-  else
-    say "#$1: auto-merge を掛け直せなかった" >&2
-    failed=1
-  fi
-}
-
 rerun_stale_jobs() { # $1=PR 番号
   local n=$1 sha runs name id acted=0
-  sha=$(gh pr view "$n" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null) || {
-    say "#$n: head の commit を読めなかった" >&2
+  sha=$(gh pr view "$n" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>"$errfile") || {
+    say "#$n: head の commit を読めなかった: $(reason)" >&2
     failed=1
     return 0
   }
@@ -98,8 +111,8 @@ rerun_stale_jobs() { # $1=PR 番号
   runs=$(gh api "repos/$REPO/commits/$sha/check-runs" --paginate \
     --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "cancelled"
                                  or .conclusion == "timed_out" or .conclusion == "startup_failure")
-          | "\(.name) \(.id)"' 2>/dev/null) || {
-    say "#$n: check run の一覧を読めなかった" >&2
+          | "\(.name) \(.id)"' 2>"$errfile") || {
+    say "#$n: check run の一覧を読めなかった: $(reason)" >&2
     failed=1
     return 0
   }
@@ -109,11 +122,11 @@ rerun_stale_jobs() { # $1=PR 番号
       say "#$n: $name は rerun しない (凍結されたペイロードを読む #699 か、門番の後ろに居る #2062)"
       continue
     fi
-    if gh run rerun --repo "$REPO" --job "$id" >/dev/null 2>&1; then
+    if gh run rerun --repo "$REPO" --job "$id" >/dev/null 2>"$errfile"; then
       say "#$n: $name を rerun した"
       acted=1
     else
-      say "#$n: $name を rerun できなかった" >&2
+      say "#$n: $name を rerun できなかった: $(reason)" >&2
       failed=1
     fi
   done <<<"$runs"
@@ -124,7 +137,6 @@ while read -r number kind action _rest; do
   [ -n "${number:-}" ] || continue
   [ "${action:-}" = act ] || continue
   case "$kind" in
-    auto-merge-dropped) rearm_auto_merge "$number" ;;
     stale-checks) rerun_stale_jobs "$number" ;;
     *) say "打ち方を知らない分類: $kind (#$number)" >&2; failed=1 ;;
   esac

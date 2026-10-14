@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは八つ。
+固定したいのは十。
 
 1. **pr-title へ rerun を打たない。** pull_request の rerun は元のイベントを再生するので、
    古いタイトルで判定され、その失敗が最新の結果になって**打つ前より悪くなる** (#699)。
@@ -12,7 +12,7 @@
    古い失敗 check が判定を固定したまま (#259 / #513) 誰も直さなくなる
 3. **凍結されたペイロードの可変欄を読むジョブが、除外リストに載っている。** いまは
    pr-title 1 本だが、同じ形のジョブが増えたときに人が気付く経路が無い (#801 と同じ形)
-4. **BLOCKED で予約が外れた PR は、重要パスに触れていても掛け直す。** 承認のゲートは
+4. **BLOCKED で予約が外れた PR は、重要パスに触れていても名乗る。** 承認のゲートは
    ADR-0044 で外れた (#2108) ので、承認待ちと読んで黙ると予約が外れたまま誰も直さない
 5. **判定は何も打たない。** 手元で様子を見るために打っただけで auto-merge が掛かると、
    判定と対処を分けた意味が消える
@@ -23,6 +23,11 @@
 8. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
    走らないと、描画に触れない PR も含めて queue 全体が止まる。1 台なので、他の run を
    走らせている間の queued は正常な順番待ちで、名乗ると毎回の注意になる (#642)
+9. **予約が外れた PR があっても、当番は予約を掛けず、赤くもならない** (#2614)。当番の
+   GITHUB_TOKEN では掛けられず (`enablePullRequestAutoMerge` が FORBIDDEN)、掛け直しは
+   一度も成功しないまま、毎回 stall-act を exit 1 にして他の赤を埋もれさせていた
+10. **gh が失敗した理由 (stderr) を捨てない** (#2614)。捨てると、失敗が何十回続いても
+   理由がどこにも残らない
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -61,14 +66,20 @@ emit() { # $1=JSON ファイル
 
 if [ "$1 $2" = "pr list" ]; then emit "$PR_DIR/list.json"; exit 0; fi
 
-if [ "$1 $2" = "pr view" ]; then emit "$PR_DIR/$3.json"; exit 0; fi
+if [ "$1 $2" = "pr view" ]; then
+  [ -z "${VIEW_FAILS:-}" ] || { echo "gh: HTTP 502: Bad Gateway (pr view)" >&2; exit 1; }
+  emit "$PR_DIR/$3.json"; exit 0
+fi
 
 if [ "$1 $2" = "pr merge" ]; then
   [ -z "${MERGE_FAILS:-}" ] || { echo "gh: cannot enable auto-merge" >&2; exit 1; }
   exit 0
 fi
 
-if [ "$1 $2" = "run rerun" ]; then exit 0; fi
+if [ "$1 $2" = "run rerun" ]; then
+  [ -z "${RERUN_FAILS:-}" ] || { echo "gh: HTTP 403: Resource not accessible by integration" >&2; exit 1; }
+  exit 0
+fi
 
 if [ "$1 $2" = "api graphql" ]; then
   case "$*" in
@@ -98,6 +109,7 @@ case "$url" in
     [ -f "$f" ] || { echo '{"jobs":[]}' > "$PR_DIR/render-jobs.none.json"; f="$PR_DIR/render-jobs.none.json"; }
     emit "$f"; exit 0 ;;
   */check-runs)
+    [ -z "${CHECKRUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout (check-runs)" >&2; exit 1; }
     sha=${url%/check-runs}; sha=${sha##*/}
     emit "$PR_DIR/${sha#sha-}.checkruns.json"; exit 0 ;;
   */files)
@@ -258,12 +270,13 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch()
         self.assertEqual(proc.stdout.strip(), "", proc.stdout)
 
-    def test_auto_merge_が外れた_PR_は打つに分類される(self):
+    def test_auto_merge_が外れた_PR_は名乗るに分類される(self):
+        """当番は掛け直さず、人に返す (#2614)。"""
         self.add_pr(2, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
         kind, action = self.classify(2, self.watch())
-        self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
+        self.assertEqual((kind, action), ("auto-merge-dropped", "name"))
 
-    def test_重要パスに触れる_PR_も予約が外れていれば掛け直す(self):
+    def test_重要パスに触れる_PR_も予約が外れていれば名乗る(self):
         """承認のゲートは ADR-0044 で外れた (#2108)。以前は awaiting-approval として
         黙っていた形で、黙ると予約が外れたまま誰も掛け直さない。"""
         self.add_pr(
@@ -274,7 +287,7 @@ class StallWatchTest(unittest.TestCase):
             files=[".github/workflows/ci.yml"],
         )
         kind, action = self.classify(3, self.watch())
-        self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
+        self.assertEqual((kind, action), ("auto-merge-dropped", "name"))
 
     def test_queue_に居る_PR_は黙る(self):
         self.add_pr(5, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
@@ -509,10 +522,21 @@ class StallWatchTest(unittest.TestCase):
         self.assertNotIn("pr merge", self.gh_log())
         self.assertNotIn("run rerun", self.gh_log())
 
-    def test_打つ行だけでは赤くしない(self):
+    def test_予約が外れた名乗りだけでは赤くしない(self):
+        """「外れた」と「わざと掛けていない」(後からコミットを足す PR・AGENTS.md) は PR の
+        状態から分けられず、外れた時刻も測れない。猶予で赤へ上げると、掛けずに置いた PR が
+        あるだけで毎回赤くなる (#642)。"""
         self.add_pr(14, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
         proc = self.watch(STALL_MINUTES=1)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_読めなかった理由を捨てない(self):
+        """unreadable と名乗るだけで理由を捨てると、何が読めなかったのか誰にも分からない (#2614)。"""
+        self.add_pr(15, auto=False, state="CLEAN")
+        proc = self.watch(RUNS_FAIL=1, VIEW_FAILS=1)
+        self.assertEqual(self.classify(15, proc), ("unreadable", "name"), proc.stdout)
+        self.assertIn("gh: 502", proc.stderr)
+        self.assertIn("HTTP 502: Bad Gateway (pr view)", proc.stderr)
 
     # --- 対処 ---------------------------------------------------------------
 
@@ -558,14 +582,38 @@ class StallWatchTest(unittest.TestCase):
         self.assertNotIn("pr merge", log)
         self.assertNotIn("run rerun", log)
 
-    def test_auto_merge_を掛け直す(self):
-        proc = self.act(["22 auto-merge-dropped act 0 外れている"])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("pr merge 22", self.gh_log())
+    def test_予約が外れた_PR_があっても当番は掛けず_赤くならない(self):
+        """判定の出力をそのまま対処へ渡す (stall-watch.yml と同じ流れ)。
 
-    def test_掛け直しに失敗したら_1_で終える(self):
-        proc = self.act(["23 auto-merge-dropped act 0 外れている"], MERGE_FAILS="1")
-        self.assertEqual(proc.returncode, 1)
+        当番の GITHUB_TOKEN では予約を掛けられない (MERGE_FAILS が本物の FORBIDDEN に
+        当たる・#2614)。以前は毎回「掛け直せなかった」で exit 1 になり、他の赤を埋もれさせた。"""
+        self.add_pr(22, auto=False, state="BLOCKED", checks=[check("ci-gate", "SUCCESS")])
+        watched = self.watch(STALL_MINUTES=1)
+        self.assertEqual(watched.returncode, 0, watched.stdout + watched.stderr)
+        self.assertEqual(self.classify(22, watched), ("auto-merge-dropped", "name"), watched.stdout)
+        proc = self.act(watched.stdout.splitlines(), MERGE_FAILS="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("pr merge", self.gh_log())
+
+    def test_rerun_に失敗したら理由を添えて_1_で終える(self):
+        self.add_pr(23)
+        self.write("23.checkruns.json", {"check_runs": [{"name": "ci-check", "conclusion": "failure", "id": 222}]})
+        proc = self.act(["23 stale-checks act 5 古い失敗 check"], RERUN_FAILS="1")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(
+            proc.stderr, r"#23: ci-check を rerun できなかった.*HTTP 403: Resource not accessible by integration"
+        )
+
+    def test_check_run_を読めなかったら理由を添えて_1_で終える(self):
+        self.add_pr(24)
+        proc = self.act(["24 stale-checks act 5 古い失敗 check"], CHECKRUNS_FAIL="1")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stderr, r"#24: check run の一覧を読めなかった.*HTTP 504: Gateway Timeout")
+
+    def test_head_を読めなかったら理由を添えて_1_で終える(self):
+        proc = self.act(["26 stale-checks act 5 古い失敗 check"], VIEW_FAILS="1")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stderr, r"#26: head の commit を読めなかった.*HTTP 502: Bad Gateway \(pr view\)")
 
     def test_入力ファイルが無ければ_66_で終える(self):
         proc = subprocess.run(

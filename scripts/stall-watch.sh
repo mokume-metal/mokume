@@ -35,7 +35,8 @@
 #      原因: merge queue の合流後の木で必須チェック (ci-gate か、専用機の render) が落ちて
 #      弾かれ、auto-merge も一緒に外れた (eject の副作用)
 #      対処: 弾いた merge_group の run を読む。一過性か main 側で直ったなら予約を掛け直す
-#      (当番は auto-merge-dropped として掛け直す)。PR 側で直すものなら直して push する
+#      (当番は auto-merge-dropped と名乗るだけで、掛け直すのは人 — #2614)。PR 側で直す
+#      ものなら直して push する
 #   6. pr-title が落ちた
 #      原因: タイトルが Conventional Commits ではない (design は Issue Type であって型ではない)
 #      対処: タイトルを直し、**新しいコミットを push して run を作り直す** (空コミットでよい)。
@@ -108,9 +109,20 @@
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
-#   auto-merge-dropped   act    2・5    予約を掛け直すだけ。ゲートは飛び越えない
+#   auto-merge-dropped   name   2・5    予約の掛け直しは人手。当番の権限では掛けられない
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
+#
+# **auto-merge-dropped は名乗るが、赤へは上げない** (#2614)。以前は act で、stall-act.sh が
+# gh pr merge --auto --squash を打っていたが一度も成功しなかった — 当番の GITHUB_TOKEN
+# (contents: read) では enablePullRequestAutoMerge が FORBIDDEN になる。掛けるには
+# リポジトリへの書き込みを当番に渡すことになり、それは人の判断なので、名乗って人に返す。
+# 猶予で赤へ上げない (unreadable と同じく overdue に数えない) のは 2 つの理由による:
+#
+# - 「外れた」と「わざと掛けていない」が PR の状態から分けられない。後からコミットを足す
+#   PR は掛けずに置く決まりで (AGENTS.md「マージの判断基準」)、それを赤に数えると、掛けずに
+#   置いた PR があるだけで走るたびに赤くなる (#642)
+# - 外れた時刻を測る出来事が状態に無い。経過の欄は 0 になる
 #
 # **unreadable は表の行を持たない。** PR そのものか専用機の render の run が読めなかった回で、
 # 詰まりの種類を言っていない — 黙って通す (quiet) と、読めていないことが誰にも見えない
@@ -170,6 +182,9 @@
 #   <番号> <分類> <act|name|quiet> <経過分> <説明>
 #
 # 終了コード: 0 = 詰まりなし / 閾値内、1 = 閾値を超えた名乗りがある。
+#
+# **読めなかったときの gh の stderr は捨てずに stderr へ流す** (#2614)。標準出力は機械が
+# 読む契約なので混ぜないが、unreadable と名乗った理由はジョブのログに残す。
 #
 # 呼び出しは .github/workflows/stall-watch.yml、検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail
@@ -296,7 +311,7 @@ in_merge_queue() { # $1=PR 番号
   gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$1" \
     -f query='query($owner:String!,$name:String!,$number:Int!){
       repository(owner:$owner,name:$name){pullRequest(number:$number){isInMergeQueue}}}' \
-    --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || echo ""
+    --jq '.data.repository.pullRequest.isInMergeQueue' || echo ""
 }
 
 say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
@@ -309,14 +324,14 @@ runner_jobs() {
   local st ids="" got id
   for st in queued in_progress; do
     got=$(gh api "repos/$REPO/actions/workflows/render.yml/runs?status=$st&per_page=100" \
-      --jq '.workflow_runs[].id' 2>/dev/null) || return 1
+      --jq '.workflow_runs[].id') || return 1
     ids+="$got"$'\n'
   done
   for id in $(printf '%s' "$ids" | sort -u); do
     gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
       --jq '.jobs[] | select((.labels // []) | index("mokume-render"))
         | select(.status == "queued" or .status == "in_progress")
-        | "\(.status) \(.created_at)"' 2>/dev/null || return 1
+        | "\(.status) \(.created_at)"' || return 1
   done
 }
 
@@ -353,8 +368,7 @@ numbers=$(gh pr list --repo "$REPO" --state open --limit 100 \
 
 for n in $numbers; do
   json=$(gh pr view "$n" --repo "$REPO" \
-    --json isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,updatedAt \
-    2>/dev/null) || {
+    --json isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,updatedAt) || {
     say_line "$n" unreadable name 0 "PR を読めなかった (判定していない)"
     continue
   }
@@ -403,9 +417,11 @@ for n in $numbers; do
     continue
   fi
 
-  # BLOCKED でも承認待ちとは読まない。承認のゲートは ADR-0044 で外れた (#2108)
+  # BLOCKED でも承認待ちとは読まない。承認のゲートは ADR-0044 で外れた (#2108)。
+  # 名乗るが overdue には数えない。理由は冒頭の分類の表の下 (#2614)
   if [ "$auto" != true ]; then
-    say_line "$n" auto-merge-dropped act 0 "auto-merge が外れている — 予約を掛け直す"
+    say_line "$n" auto-merge-dropped name 0 \
+      "auto-merge が外れている — わざと外したのでなければ gh pr merge $n --auto --squash で掛け直す (当番は掛けない・#2614)"
     continue
   fi
 done
