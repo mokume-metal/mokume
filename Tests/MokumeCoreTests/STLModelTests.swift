@@ -90,12 +90,12 @@ struct STLModelTests {
     /// `facet` の行も `outer loop` も無い、`vertex` ×3 + `endfacet` だけの面を `count` 面並べ、末尾の空白で `size` バイトに
     /// そろえた文字 (1 行目は 84 バイト目が LF)。**大きさを (大きさ − 84) % 50 が 48・49 になるよう選ぶ**と、読み手が
     /// 文字をバイナリとして読み直した枚数が面の数と一致する。
-    static func facetsWithoutNormals(_ count: Int, size: Int) -> Data {
-        var text = firstLine("solid ") + "\n"
+    static func facetsWithoutNormals(_ count: Int, size: Int, nulAtByte83: Bool = false) -> Data {
+        var text = firstLine("solid ") + (nulAtByte83 ? "\u{0}\n" : "\n")
         text += String(repeating: "vertex 1 2 3\nvertex 1 2 3\nvertex 1 2 3\nendfacet\n", count: count)
         let pad = size - text.utf8.count
         precondition(pad >= 0, "大きさが足りない")
-        return data(text + String(repeating: " ", count: pad), byte83: 0x0A)
+        return data(text + String(repeating: " ", count: pad), byte83: nulAtByte83 ? 0x00 : 0x0A)
     }
 
     /// 84 バイト目 (添字 83) が `byte` であることを確かめて、`text` を返す。そろっていない検体は
@@ -704,6 +704,9 @@ struct STLModelTests {
         case nulAtByte83UpperCaseFacet
         /// 同じく、字下げが 300 バイトで読み手が読めない
         case nulAtByte83WideIndent
+        /// 84 バイト目が NUL で、**面の数が読み直しの枚数と同じ** (面が 1 つ・140 バイト)。写しの頭の NUL を空白に
+        /// しないと、読み手が読み直した 1 枚が面の数と一致して、でたらめな形が採られる
+        case nulAtByte83OneFacetSameCount
 
         var testDescription: String { rawValue }
 
@@ -835,6 +838,8 @@ struct STLModelTests {
                 let text = STLModelTests.asciiSTL(firstLine: STLModelTests.firstLine("solid ") + "\u{0}")
                     .replacingOccurrences(of: "facet normal", with: "FACET NORMAL")
                 return STLModelTests.data(text, byte83: 0x00)
+            case .nulAtByte83OneFacetSameCount:
+                return STLModelTests.facetsWithoutNormals(1, size: 140, nulAtByte83: true)
             case .nulAtByte83WideIndent:
                 let wide = String(repeating: " ", count: 300)
                 let text = STLModelTests.asciiSTL(firstLine: STLModelTests.firstLine("solid ") + "\u{0}")
