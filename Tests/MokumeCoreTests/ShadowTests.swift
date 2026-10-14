@@ -1176,10 +1176,11 @@ struct ShadowTests {
             canvas.lights()
             canvas.shadows(true)
             canvas.noStroke()
-            // 落とさない立体を先に置いて、半透明の箱の列を溜め場の先頭から離す
+            // 落とさない立体を先に置いて、半透明の箱の列を溜め場の先頭から離す。箱どうしは単位の箱の
+            // 頂点を共有する (#2386) ので、先に置くのは箱ではない形にする
             canvas.castShadow(false)
             canvas.fill(.linear(red: 0.4, green: 0.4, blue: 0.4))
-            canvas.box(4)
+            canvas.cone(4, 4)
             canvas.castShadow(true)
             canvas.fill(255, 255, 255, 128)
             canvas.translate(32, 32, 0)

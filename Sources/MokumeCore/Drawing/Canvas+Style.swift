@@ -371,7 +371,7 @@ extension Canvas {
                 isMirrored: open.isMirrored,
                 solidSource: open.source,
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
-                fillGeometry: open.fillGeometry, usesUnitSphere: open.usesUnitSphere))
+                fillGeometry: open.fillGeometry, usesUnitShape: open.usesUnitShape))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
         warnIfMaterialCannotShow()
     }

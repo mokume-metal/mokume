@@ -137,11 +137,13 @@ struct SolidStrokePlacement {
     var forward: SIMD4<Float>
     var parameters: SIMD4<Float>  // 太さ、2*tan(fov/2) または世界での幅、near、高さ
     var color: SIMD4<Float>
-    var uv: SIMD4<Float>  // xy: 白い区画、z: 球の骨を元の半径へ戻す倍率、w: 被覆 (#1637)
+    var uv: SIMD4<Float>  // xy: 白い区画、z: 使わない (0)、w: 被覆 (#1637)
+    // xyz: 単位の形の骨を元の寸法へ戻す軸ごとの倍率 (#1606・#2386)。寸法ごとの骨は 1。w は使わない (0)
+    var shapeScale: SIMD4<Float>
 
     init(
         matrix: simd_float4x4, camera: Camera, width: Float, height: Float, weight: Float, cap: StrokeCap,
-        color: LinearRGBA, uv: SIMD2<Float>, geometryScale: Float, coverage: Float = 1
+        color: LinearRGBA, uv: SIMD2<Float>, geometryScale: SIMD3<Float>, coverage: Float = 1
     ) {
         self.matrix = matrix
         let pixelAspect = camera.pixelAspect(width: width, height: height)
@@ -157,7 +159,8 @@ struct SolidStrokePlacement {
             parameters = SIMD4(weight, abs(bottom - top), 0, height)
         }
         self.color = SIMD4(color.red, color.green, color.blue, color.alpha)
-        self.uv = SIMD4(uv.x, uv.y, geometryScale, coverage)
+        self.uv = SIMD4(uv.x, uv.y, 0, coverage)
+        shapeScale = SIMD4(geometryScale, 0)
         // 端の形は画面の横の w (向きには使わない成分) に載せる (``capCode(_:)``)
         right.w = Self.capCode(cap)
     }
@@ -215,7 +218,7 @@ extension Canvas {
     /// [#2011]: https://github.com/mokume-metal/mokume/issues/2011
     func gpuStrokeGeometry(
         of source: SolidSource, weight: Float, cap: StrokeCap, mesh: () -> SolidMesh
-    ) -> (SolidStrokeGeometry, Float)? {
+    ) -> (SolidStrokeGeometry, SIMD3<Float>)? {
         guard let (geometry, geometryScale) = sharedGPUStrokeGeometry(of: source, mesh: mesh) else {
             return nil
         }
@@ -228,24 +231,22 @@ extension Canvas {
         return (geometry, geometryScale)
     }
 
-    /// 組み込みの形の稜線を GPU で広げる骨と、骨を元の寸法へ戻す倍率。骨は太さによらず、形ごとに
-    /// 1 つを控えて共有する。**作れなければ `nil`** (開いた端の形・溶接の計算範囲の端にある球・
-    /// 置き場を確保できないとき)。
+    /// 組み込みの形の稜線を GPU で広げる骨と、骨を元の寸法へ戻す軸ごとの倍率。骨は太さによらず、形ごとに
+    /// 1 つを控えて共有する。稜線を単位の形から広げてよい形 (``unitEdgeScaling(of:)``) は、寸法によらず
+    /// 単位の形の骨を 1 つ共有する。**作れなければ `nil`** (開いた端の形・置き場を確保できないとき)。
     private func sharedGPUStrokeGeometry(
         of source: SolidSource, mesh: () -> SolidMesh
-    ) -> (SolidStrokeGeometry, Float)? {
+    ) -> (SolidStrokeGeometry, SIMD3<Float>)? {
         let key: SolidSource
-        let geometryScale: Float
-        if case .mesh(.sphere(let radius, let detail)) = source {
-            let tolerance = radius * SolidEdges.weldScale
-            guard tolerance >= Float.leastNormalMagnitude,
-                tolerance <= sqrt(Float.greatestFiniteMagnitude) / 4
-            else { return nil }
-            key = .mesh(.sphere(radius: 1, detail: detail))
-            geometryScale = radius
+        let geometryScale: SIMD3<Float>
+        if let (unit, scale) = unitEdgeScaling(of: source) {
+            key = .mesh(unit)
+            geometryScale = scale
         } else {
+            // 範囲の外の球は、これまでどおり骨を作らない (CPU の帯へ戻る)
+            if case .mesh(.sphere) = source { return nil }
             key = source
-            geometryScale = 1
+            geometryScale = SIMD3(repeating: 1)
         }
         if let cached = solidStrokeGeometry[key] { return (cached, geometryScale) }
         do {
@@ -271,7 +272,7 @@ extension Canvas {
     /// 保持した形なら記録したもの)。
     func openGPUStroke(
         of source: SolidSource, geometry: SolidStrokeGeometry, matrix: simd_float4x4,
-        weight: Float, cap: StrokeCap, color: LinearRGBA, uv: SIMD2<Float>, geometryScale: Float
+        weight: Float, cap: StrokeCap, color: LinearRGBA, uv: SIMD2<Float>, geometryScale: SIMD3<Float>
     ) {
         beginSolids()
         closeBatch()

@@ -148,21 +148,21 @@ extension Canvas {
     /// 線は塗りに重ねて引く。`noFill()` なら線だけになる — 塗りと線は互いに独立した
     /// スタイルで、平面の図形と同じく次元によって作用が変わらない ([ADR-0020] 決定 3)。
     ///
-    /// **正の半径の球の塗りは、単位球の頂点 1 組を共有する** ([#1862])。半径は置き場所が持ち
-    /// (``SolidInstance/normal0`` の `w`)、頂点関数が向き × 半径で位置を作る。半径の違う球を
-    /// 幾つ置いても形を組まず、1 列で描く。絵と、利用者の断片が読む `shapePosition` は、半径ごとに
-    /// 頂点を組む経路と 1 ビットも違わない (`UnitSphereTests`)。線・保持する形の記録・半径 0 の
-    /// 球は、半径ごとの形のまま置く — 線は半径込みの稜線を引き、記録は置き場所を頂点へ焼く。
+    /// **正の寸法の球・箱・平面・円柱の塗りは、単位の形の頂点 1 組を共有する** ([#1862]・[#2386])。
+    /// 軸ごとの寸法は置き場所が持ち (``SolidInstance/normal0``〜`normal2` の `w`)、頂点関数が
+    /// 単位の形の位置 × 寸法で位置を作る。寸法の違う形を幾つ置いても形を組まず、1 列で描く。絵と、
+    /// 利用者の断片が読む `shapePosition`・`shapeNormal` は、寸法ごとに頂点を組む経路と 1 ビットも
+    /// 違わない (`UnitShapeTests`)。どの形が乗るかは ``SolidShape/unitScaling`` が決める。保持する
+    /// 形の記録は寸法ごとの形のまま置く — 記録は置き場所を頂点へ焼く。線は稜線を単位の形から
+    /// 広げる (``solidEdges(of:mesh:)``)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
+    /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
     func place(_ shape: SolidShape) {
         if style.hasFill {
-            if sharesUnitSpheres, !recordingShape, case .sphere(let radius, let detail) = shape,
-                radius > 0
-            {
-                let unit = SolidShape.sphere(radius: 1, detail: detail)
-                placeMesh(.mesh(unit), sphereRadius: radius) { solidMesh(for: unit) }
+            if sharesUnitShapes, !recordingShape, let (unit, scale) = shape.unitScaling {
+                placeMesh(.mesh(unit), unitScale: scale) { solidMesh(for: unit) }
             } else {
                 placeMesh(.mesh(shape)) { solidMesh(for: shape) }
             }
@@ -181,13 +181,13 @@ extension Canvas {
     /// 捨てるのは**形の中での**畳みだけである — 組み上げた形を ``shape(_:at:)`` で何か所に
     /// 置いても、頂点 1 組と置き場所の並びで描くことは変わらない。
     ///
-    /// `sphereRadius` が正なら、`source` は単位球で、置き場所がその半径で広げて描く
-    /// (``place(_:)``)。単位球の列は、頂点の溜め場も共有の区間も半径ごとの球と同じものを使う —
+    /// `unitScale` があれば、`source` は単位の形で、置き場所がその軸ごとの倍率で広げて描く
+    /// (``place(_:)``)。単位の形の列は、頂点の溜め場も共有の区間も寸法ごとの形と同じものを使う —
     /// 裏 → 表のまとめ描き (#1947) が溜め場の頂点を読むためである。
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
-        _ source: SolidSource, sphereRadius: Float = 0,
+        _ source: SolidSource, unitScale: SIMD3<Float>? = nil,
         winding: () -> SolidWinding = { .outward },
         mesh build: () -> SolidMesh
     ) {
@@ -201,8 +201,12 @@ extension Canvas {
         var placement = SolidInstance(
             matrix: transform.matrix, normalMatrix: transform.normalMatrix,
             color: style.fill)
-        let usesUnitSphere = sphereRadius > 0
-        if usesUnitSphere { placement.normal0.w = sphereRadius }
+        let usesUnitShape = unitScale != nil
+        if let unitScale {
+            placement.normal0.w = unitScale.x
+            placement.normal1.w = unitScale.y
+            placement.normal2.w = unitScale.z
+        }
 
         if recordingShape {
             // **置き場所で描いたときと同じ頂点を、先に作って焼く。** 焼いた頂点はその場で
@@ -238,7 +242,7 @@ extension Canvas {
         //
         // 単位球の列と半径ごとの形の列も分ける (頂点関数が違う)
         if openSolid?.source != source || openSolid?.strokeGeometry != nil
-            || openSolid?.usesUnitSphere != usesUnitSphere
+            || openSolid?.usesUnitShape != usesUnitShape
             || openSolid?.isMirrored != placement.isMirrored
             || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
         {
@@ -276,7 +280,7 @@ extension Canvas {
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
                 instanceStart: solidInstances.count, isMirrored: placement.isMirrored,
-                usesUnitSphere: usesUnitSphere)
+                usesUnitShape: usesUnitShape)
         }
 
         solidInstances.append(placement)
@@ -844,33 +848,35 @@ extension Canvas {
 
     /// 稜線を使い回す。**線を引いた形にだけ作る。**
     ///
-    /// 球は半径だけでは稜線のつながりが変わらないので、半径1の形で控える (#1606)。
-    /// 使うときに点を伸ばし、利用者へ渡す形自身の座標も元の半径のまま保つ。
-    /// 溶接の許容差が下限に張り付く寸法と、近傍の距離の二乗が溢れうる寸法は除く。
-    /// 非一様に伸ばす形も面の向きの判定が変わりうるので、寸法ごとに取り出す。
+    /// 球は半径だけでは稜線のつながりが変わらないので、半径1の形で控える (#1606)。箱・平面・円柱も、
+    /// 溶接される点の組が寸法で変わらない範囲では単位の形で控える (#2386)。どちらも
+    /// ``SolidShape/unitEdgeScaling`` が決める。使うときに点を軸ごとに伸ばし、利用者へ渡す形自身の
+    /// 座標も元の寸法のまま保つ。範囲の外 (溶接の許容差が下限に張り付く・近傍の距離の二乗が溢れうる・
+    /// 最も短い軸が許容差を割るほど細い寸法) と、ほかの形は寸法ごとに取り出す。
     func solidEdges(of source: SolidSource, mesh build: () -> SolidMesh) -> SolidEdges {
-        if case .mesh(.sphere(let radius, let detail)) = source {
-            let tolerance = radius * SolidEdges.weldScale
-            // 溶接が探す隣の升目までの差は各軸2倍未満。距離の二乗にも余裕を持たせる。
-            if tolerance >= Float.leastNormalMagnitude,
-                tolerance <= sqrt(Float.greatestFiniteMagnitude) / 4
-            {
-                let unit = SolidShape.sphere(radius: 1, detail: detail)
-                let key = SolidSource.mesh(unit)
-                let net: SolidEdges
-                if let cached = solidEdges[key] {
-                    net = cached
-                } else {
-                    net = SolidEdges(unit.make())
-                    solidEdges.insert(net, for: key)
-                }
-                return net.scaled(by: radius)
+        if let (unit, scale) = unitEdgeScaling(of: source) {
+            let key = SolidSource.mesh(unit)
+            let net: SolidEdges
+            if let cached = solidEdges[key] {
+                net = cached
+            } else {
+                net = SolidEdges(unit.make())
+                solidEdges.insert(net, for: key)
             }
+            return net.scaled(by: scale)
         }
         if let cached = solidEdges[source] { return cached }
         let net = SolidEdges(build())
         solidEdges.insert(net, for: source)
         return net
+    }
+
+    /// 稜線を単位の形から広げてよい出どころなら、その単位の形と軸ごとの倍率。球は #1606 から
+    /// 常に共有する。箱・平面・円柱は ``sharesUnitShapes`` が立つときだけ (検査が寸法ごとの経路と比べる口)。
+    func unitEdgeScaling(of source: SolidSource) -> (unit: SolidShape, scale: SIMD3<Float>)? {
+        guard case .mesh(let shape) = source, let scaling = shape.unitEdgeScaling else { return nil }
+        if case .sphere = shape { return scaling }
+        return sharesUnitShapes ? scaling : nil
     }
 
     /// 線分 1 本を帯にする。

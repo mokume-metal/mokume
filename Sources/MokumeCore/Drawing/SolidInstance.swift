@@ -11,7 +11,7 @@ import simd
 ///
 /// 並びは `Drawing/Shaders/Shapes.metal` の同名の構造体と一致していなければならない
 /// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
-/// `UnitSphere.metal` はその写しを持つ (`UnitSphereTests` が一字一句同じかを見る)。
+/// `UnitShape.metal` はその写しを持つ (`UnitShapeTests` が一字一句同じかを見る)。
 struct SolidInstance {
     /// 形自身の座標を世界の座標へ移す行列。
     var matrix: simd_float4x4
@@ -20,15 +20,17 @@ struct SolidInstance {
     /// **位置と同じ行列では移せない。** 軸ごとに違う倍率を掛けると、向きは逆向きに
     /// 効くためである (``Transform/normalMatrix``)。
     ///
-    /// `w` は**単位球の列でだけ球の半径**を持ち、ほかは 0 である。単位球の頂点関数
-    /// (`UnitSphere.metal` の `unitSphereVertexMain`) が向き × この値で位置を作る ([#1862])。
-    /// ほかの頂点関数は `w` を読まない。
+    /// `w` は ``normal1``・``normal2`` の `w` と合わせて、**単位の形の列でだけ軸ごとの寸法**
+    /// (x・y・z) を持ち、ほかは 0 である。単位の形の頂点関数 (`UnitShape.metal` の
+    /// `unitShapeVertexMain`) が単位の形の位置 × この 3 つで位置を作る ([#1862]・[#2386]・
+    /// ``SolidShape/unitScaling``)。ほかの頂点関数は `w` を読まない。
     ///
     /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
+    /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
     var normal0: SIMD4<Float>
-    /// 面の向きを移す行列の 2 列目。
+    /// 面の向きを移す行列の 2 列目。`w` は単位の形の列でだけ y の寸法 (``normal0`` を参照)。
     var normal1: SIMD4<Float>
-    /// 面の向きを移す行列の 3 列目。
+    /// 面の向きを移す行列の 3 列目。`w` は単位の形の列でだけ z の寸法 (``normal0`` を参照)。
     var normal2: SIMD4<Float>
     /// この置き場所の塗り。**頂点の色に掛かる。**
     ///

@@ -74,7 +74,7 @@ let package = Package(
                 .copy("Drawing/Shaders/Effects/Builtin.metal"),
                 .copy("Drawing/Shaders/Kinds.metal"),
                 .copy("Drawing/Shaders/Shapes.metal"),
-                .copy("Drawing/Shaders/UnitSphere.metal"),
+                .copy("Drawing/Shaders/UnitShape.metal"),
             ],
             swiftSettings: .mokume),
         // 層: コア依存 — 描画コアの上に載り、外とやりとりする領域 (ADR-0042 決定 3)。

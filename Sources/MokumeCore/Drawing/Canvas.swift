@@ -481,9 +481,9 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場 (``SolidFillGeometry``)。持っていれば、
         /// 列は溜め場ではなくここから頂点を読む。閉じた列へそのまま渡し、所有させる。
         var fillGeometry: SolidFillGeometry?
-        /// 単位球の頂点を、置き場所の半径 (``SolidInstance/normal0`` の `w`) で広げて描く列か
-        /// (``Batch/usesUnitSphere``)。
-        var usesUnitSphere = false
+        /// 単位の形の頂点を、置き場所の軸ごとの寸法 (``SolidInstance/normal0``〜`normal2` の `w`) で
+        /// 広げて描く列か (``Batch/usesUnitShape``)。
+        var usesUnitShape = false
     }
 
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
@@ -598,14 +598,17 @@ public final class Canvas {
     /// 球の形を、同じ細かさの単位球から位置だけ作った回数 (作ってから通算・#1751)。
     /// **三角関数を引き直さずに済んだ回数**で、`solidMeshesBuilt` との差が引き直した回数になる。
     var spheresFromUnit = 0
-    /// 正の半径の球の塗りを、単位球の頂点 1 組と置き場所ごとの半径で描くか ([#1862])。
+    /// 正の寸法の球・箱・平面・円柱の塗りを、単位の形の頂点 1 組と置き場所ごとの寸法で描くか
+    /// ([#1862]・[#2386])。箱・平面・円柱の稜線と線の骨も、単位の形のものを広げて使う (球の稜線と
+    /// 線の骨は #1606 から、これによらず共有する)。
     ///
-    /// **常に立てておく。** 下ろすと半径ごとに頂点を組む従来の経路を通る — 2 つの経路の絵と
-    /// 利用者の断片が読む座標が 1 ビットも違わないことを、検査 (`UnitSphereTests`) と計測が
-    /// 同じビルドの中で比べるための口で、公開しない。
+    /// **常に立てておく。** 下ろすと寸法ごとに頂点・稜線・骨を組む従来の経路を通る — 2 つの経路の
+    /// 絵と利用者の断片が読む座標・向きが 1 ビットも違わないことを、検査 (`UnitShapeTests`) と
+    /// 計測が同じビルドの中で比べるための口で、公開しない。
     ///
     /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
-    var sharesUnitSpheres = true
+    /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
+    var sharesUnitShapes = true
     /// 立体の形の控えと稜線の控えに、**それぞれ**置いておく重さの合計 (見積もりのバイト数)。
     /// 超えたら古い順に 1 件ずつ捨てる。
     ///
@@ -629,8 +632,9 @@ public final class Canvas {
     /// 二度と当たらない。件数で切ると、それが大きなモデル 64 個分まで予算の外に残る
     /// ので、量で切る。上限を超える長さの連番に線を引いて回すと、毎回溶接し直す。
     ///
-    /// 球は通常の半径なら、半径1の稜線を共有する (#1606)。他の形と溶接の計算範囲の
-    /// 端にある球は寸法も鍵に持ち、予算に収まらなければ古いものから作り直す。
+    /// 球は通常の半径なら、半径1の稜線を共有する (#1606)。箱・平面・円柱も、溶接される点の組が
+    /// 寸法で変わらない範囲では単位の形の稜線を共有する (#2386・``SolidShape/unitEdgeScaling``)。
+    /// 他の形と範囲の外の寸法は寸法も鍵に持ち、予算に収まらなければ古いものから作り直す。
     var solidEdges = BoundedCache<SolidSource, SolidEdges>(
         budget: Canvas.solidCacheBudget, weight: Canvas.solidEdgesWeight)
     /// 同じ稜線の GPU 上の骨。列も所有し、控えの追い出しと描画の寿命を分ける。
@@ -1635,12 +1639,13 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点の置き場 (``OpenSolid/fillGeometry``)。線の骨と同じく、
         /// 投入完了まで HeldFrame が列ごと保持する。
         var fillGeometry: SolidFillGeometry?
-        /// 単位球の頂点を、置き場所ごとの半径で広げて描く列か ([#1862])。立っていれば、塗りと
-        /// 影の焼き付けを単位球の頂点関数 (``ShapePipeline/unitSphereStates``・
-        /// ``ShapePipeline/unitSphereShadowState``) で描く。
+        /// 単位の形の頂点を、置き場所ごとの軸の寸法で広げて描く列か ([#1862]・[#2386])。立っていれば、
+        /// 塗りと影の焼き付けを単位の形の頂点関数 (``ShapePipeline/unitShapeStates``・
+        /// ``ShapePipeline/unitShapeShadowState``) で描く。
         ///
         /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
-        var usesUnitSphere = false
+        /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
+        var usesUnitShape = false
         /// 面を置き換える列か (``Canvas/replaceSurface(with:)``・[#1685])。
         ///
         /// 立てた列は**奥行きを比べずに書き** (``ShapePipeline/replaceDepthState``)、書く値は
@@ -4078,8 +4083,8 @@ public final class Canvas {
                 encoder.setRenderPipelineState(
                     (batch.strokeGeometry != nil
                         ? pipeline.solidStrokeStates
-                        : batch.usesUnitSphere
-                            ? (run.paint.shader?.unitSphereStates ?? pipeline.unitSphereStates)
+                        : batch.usesUnitShape
+                            ? (run.paint.shader?.unitShapeStates ?? pipeline.unitShapeStates)
                             : (run.paint.shader?.solidStates ?? pipeline.solidStates))
                         .drawing(batch))
                 encoder.setDepthStencilState(
@@ -4940,7 +4945,7 @@ public final class Canvas {
         encoder.setRenderPipelineState(
             batch.strokeGeometry != nil
                 ? pipeline.solidStrokeShadowState
-                : batch.usesUnitSphere ? pipeline.unitSphereShadowState : pipeline.shadowState)
+                : batch.usesUnitShape ? pipeline.unitShapeShadowState : pipeline.shadowState)
         // 持ち越した列は詰め直した区画の頭を、溜め場の列は溜め場の頭を渡す。引数を GPU が書く列 (粒) は、
         // そこから列の頭までを足す (``Batch/vertexBaseShift``)。その列は溜め場の頂点を添字なしで読む
         // 列に限られ (``Batch/addressesVertexHead``)、持ち越した列は詰め直すときに頭が 0 へ置き直される
