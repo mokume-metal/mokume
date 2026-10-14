@@ -259,8 +259,8 @@ struct SolidTests {
             }
         }
 
-        // 箱と球で 2 つと、球の向きを借りる単位球が 1 つ (#1751)。フレーム数によらない
-        #expect(canvas.solidMeshesBuilt == 3)
+        // 箱と、球が共有する単位球の 2 つ (#1862)。フレーム数によらない
+        #expect(canvas.solidMeshesBuilt == 2)
     }
 
     @Test(
@@ -268,6 +268,9 @@ struct SolidTests {
         arguments: [3, 7, 24, 128])
     func spheresFromTheUnitMatchTheBuilder(detail: Int) throws {
         let canvas = try makeCanvas()
+        // 半径ごとに組む経路を見る。塗りは単位球を共有する (#1862) が、線・保持する形の記録・
+        // 半径 0 の球はこの経路で組む
+        canvas.sharesUnitSpheres = false
         // 0 は向きの負の成分から -0 が出る。極小・非整数・大きい値で丸めの違いを探す
         let radii: [Float] = [0, 1e-30, 0.3, 6, 10.125, 1234.5678, 3e30]
         var mismatches: [String] = []
@@ -360,10 +363,10 @@ struct SolidTests {
         #expect(
             edgeBytes <= Canvas.solidCacheBudget,
             "残っている輪環だけで稜線の控えが \(edgeBytes) バイトあり、予算 \(Canvas.solidCacheBudget) を超えている")
-        // 7 種 × 40 通りの大きさを組み立てた (当たらないので毎回作る)。球は向きを借りる
-        // 単位球を 1 度だけ足す (#1751)
-        #expect(canvas.solidMeshesBuilt == 7 * 40 + 1)
-        #expect(canvas.spheresFromUnit == 40)
+        // 球以外の 6 種 × 40 通りの大きさを組み立てた (当たらないので毎回作る)。球の塗りは
+        // 単位球を 1 度だけ組んで共有し (#1862)、半径ごとの球は組まない
+        #expect(canvas.solidMeshesBuilt == 6 * 40 + 1)
+        #expect(canvas.spheresFromUnit == 0)
     }
 
     @Test("既定の細かさの形なら、64 種並べても控えに収まり、2 フレーム目から組み立て直さない")
