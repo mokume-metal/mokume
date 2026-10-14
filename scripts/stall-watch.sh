@@ -25,8 +25,9 @@
 #      対処: gh pr merge <番号> --auto --squash を打ち直す
 #   3. 全 check が緑なのに進まない
 #      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)。作法の検査が
-#      ci-gate を離れた (#2669) 後に残るのは、同じコミットに ci.yml の run が複数立つ場面
-#      (reopen・base の変更・閉じて作り直した PR・本文の編集の run) のコードの検査の赤である
+#      ci-gate を離れた (#2669) 後に残るのは、同じコミットに段を走らせる ci.yml の run が複数
+#      立つ場面 (reopen・base の変更・閉じて作り直した PR) のコードの検査の赤である。本文の
+#      編集の run の緑 (段が skipped) は直った証拠に数えない — 10 行目
 #      対処: gh run rerun <run-id> --failed — **ただし render-pr・pr-gate には打たない**
 #      (#2062・#2668。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
 #      打たなくても merge は止まらない。pr-gate は最新の run の結論が判定で、古い赤・cancelled は
@@ -77,6 +78,20 @@
 #      busy で、後ろの render や render-pr は走っている。runner が online なのに専用機の
 #      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 8 と名乗る)、
 #      job そのものが詰まっている — 先頭の PR を queue から出し入れして job を作り直す
+#  10. 最新の ci-gate が、段を走らせていない run (本文・タイトルの編集の run) の緑で、
+#      コードの検査 (ci-check・ci-static) の赤がその下に残っている
+#      原因: その run の ci-gate は needs が skipped なので緑になる。直った証拠ではない
+#      (#2669 の反証 4)。必須の判定は最新の ci-gate を読むので、赤いまま queue に入りうる
+#      対処: コードを直して push する。**打ち直さない** — 本当に赤い検査を当番のたびに macOS
+#      で回し直すだけになる
+#  11. (移行期) 最新の ci-gate が、作法のジョブを含む古い ci.yml の run の赤で、最新の
+#      pr-gate は緑
+#      原因: #2669 より前の ci.yml の run の ci-gate は作法のジョブを待っていた。作法をラベル
+#      だけで直すと、ci.yml はラベルでは起きないので新しい ci-gate が付かない (#2669 の反証 2)。
+#      その run は打ち直さない (古いイベントを再生し、needs の赤で ci-gate も赤く返す・#699)
+#      対処: 本文を編集する (edited の run が新しい ci-gate を付ける) か、新しいコミットを push
+#      する。**作法のジョブ (LEGACY_JOBS) を含む run を head に持つ open な PR が無くなったら、
+#      この行と legacy の判定ごと消してよい**
 #
 # 読むときの注意:
 #
@@ -107,6 +122,8 @@
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
+#   masked-red           name   10      コードの直しは人手。打ち直しても同じ赤を返す
+#   legacy-gate          name   11      本文の編集か push は人手。古い run は打ち直さない
 #   auto-merge-dropped   name   2・5    予約の掛け直しは人手。当番の権限では掛けられない
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
@@ -208,6 +225,11 @@ STALL_MINUTES=${STALL_MINUTES:-60}
 # リポジトリを見る行」
 RUNNER_STALL_MINUTES=${RUNNER_STALL_MINUTES:-15}
 
+# 作法のジョブの名前。#2669 より前の ci.yml の run はこれらを含み、その ci-gate はそれらを
+# 待っていた。この名前の check を含む run を「古い run」と読む (冒頭の表の 11 行目)。
+# scripts/stall-act.sh の LEGACY_JOBS と同じに保つ (検査が見る)
+readonly LEGACY_JOBS='["pr-title","review-gate","drawing-evidence"]'
+
 # 「まだ答えが出ていない」と読む check の結果。ここに無いものは失敗として扱う
 # (FAILURE / ERROR / CANCELLED / TIMED_OUT / ACTION_REQUIRED / STARTUP_FAILURE)
 readonly UNSETTLED='["PENDING","EXPECTED","QUEUED","IN_PROGRESS",""]'
@@ -250,8 +272,14 @@ minutes_since() { # $1=ISO8601 (空可)
 # である。残すと新しい緑と組になって stale-checks に読まれ、当番が head SHA の失敗ジョブを
 # 打ち直す (凍結された run の ci-gate まで打ち直して「最新の赤」を作りうる)。新旧は上と同じく
 # run の id で決める。最新が赤なら、その赤はそのまま残る
+#
+# 各 check に 2 つの印を付ける (#2669 の反証 1・4):
+#
+# - legacy: 作法のジョブ (LEGACY_JOBS) を含む古い ci.yml の run の check。打ち直しの対象にしない
+# - hollow: 段を走らせていない run の ci-gate の緑。同じ run の ci-check・ci-static が在って、
+#   どれも SKIPPED のもの (本文・タイトルの編集の run)。直った証拠に数えない
 normalize_checks() { # 標準入力=PR の JSON
-  jq -c '
+  jq -c --argjson legacy_jobs "$LEGACY_JOBS" '
     [.statusCheckRollup[]? | {
       name: (.name // .context // ""),
       result: (.conclusion // .state // ""),
@@ -261,6 +289,16 @@ normalize_checks() { # 標準入力=PR の JSON
       job: ((.detailsUrl // .targetUrl // "")
             | (capture("/job/(?<id>[0-9]+)") | .id | tonumber) // 0)
     }]
+    | . as $all
+    | ([ $all[] | select(.run > 0 and (.name as $n | $legacy_jobs | index($n)) != null) | .run ]
+       | unique) as $legacy
+    | [ $all[] | . as $c | . + {
+        legacy: (.run > 0 and ((.run as $r | $legacy | index($r)) != null)),
+        hollow: (.name == "ci-gate" and .result == "SUCCESS" and .run > 0
+                 and ([ $all[] | select(.run == $c.run and (.name == "ci-check" or .name == "ci-static"))
+                        | .result ] as $steps
+                      | ($steps | length) > 0 and all($steps[]; . == "SKIPPED")))
+      } ]
     | ([ .[] | select(.name == "pr-gate") ] | sort_by([.run, .at]) | last) as $gate
     | [ .[] | select(.name != "pr-gate" or . == $gate) ]'
 }
@@ -296,10 +334,14 @@ newest_failure_at() { # 標準入力=均した checks
      | sort | last // ""'
 }
 
-# 「同じ名前で、新しい方は緑・古い方が赤」— 判定を固定している古い失敗 check (#259 / #513)
+# 「同じ名前で、新しい方は緑・古い方が赤」— 判定を固定している古い失敗 check (#259 / #513)。
+# **打ち直してはならない古い run (legacy) と、直った証拠にならない緑 (SKIPPED・hollow) は数えない**
+# (#2669 の反証 1・4)。SKIPPED の ci-check を「新しい緑」と読むと、本当に赤いコードの検査を当番の
+# たびに打ち直す
 stale_names() { # 標準入力=均した checks
   jq -r --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
-    [ group_by(.name)[]
+    [ .[] | select((.legacy or .hollow or .result == "SKIPPED") | not) ]
+    | [ group_by(.name)[]
       | . as $group
       | ($group | sort_by([.run, .at]) | last) as $latest
       | select(($passed | index($latest.result)) != null)
@@ -308,6 +350,27 @@ stale_names() { # 標準入力=均した checks
                           | select(($passed | index($c.result)) == null)] | length > 0)
       | $latest.name ]
     | unique | join(" ")'
+}
+
+# 最新の ci-gate が判定を表していない形 (冒頭の表の 10・11 行目)。masked / legacy / 空を出す。
+#
+# - masked: 最新の ci-gate が hollow (段を走らせていない run の緑) で、ci-check・ci-static の
+#   最新の結論 (SKIPPED を除く) のどれかが赤い
+# - legacy: 最新の ci-gate が古い run の赤で、その下のコードの検査は赤くなく (作法の赤)、最新の
+#   pr-gate が SUCCESS。コードの赤なら本文の編集を勧めない — hollow の緑で覆ってしまう
+gate_state() { # 標準入力=均した checks
+  jq -r --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
+    def red: .result as $r | (($unsettled | index($r)) == null) and (($passed | index($r)) == null);
+    def latest($n): [ .[] | select(.name == $n) ] | sort_by([.run, .at]) | last;
+    def latest_ran($n): [ .[] | select(.name == $n and .result != "SKIPPED") ] | sort_by([.run, .at]) | last;
+    latest("ci-gate") as $g
+    | latest("pr-gate") as $p
+    | ([ latest_ran("ci-check"), latest_ran("ci-static") ] | map(select(. != null)) | any(red)) as $code_red
+    | if $g == null then ""
+      elif $g.hollow and $code_red then "masked"
+      elif $g.legacy and ($g | red) and ($code_red | not) and $p != null and $p.result == "SUCCESS"
+        then "legacy"
+      else "" end'
 }
 
 # queue に居るか。**gh pr view には無い欄**なので GraphQL で引く (#628)。
@@ -452,6 +515,24 @@ for n in $numbers; do
         ;;
     esac
   fi
+
+  # 最新の ci-gate が判定を表していない形。打ち直さずに人へ返す (冒頭の表の 10・11 行目)
+  case "$(gate_state <<<"$checks")" in
+    masked)
+      mins=$(minutes_since "${failed_at:-$updated}")
+      say_line "$n" masked-red name "$mins" \
+        "コードの検査が赤いのに、最新の ci-gate は段を走らせていない run の緑 — コードを直して push する (打ち直さない)"
+      [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
+      continue
+      ;;
+    legacy)
+      mins=$(minutes_since "${failed_at:-$updated}")
+      say_line "$n" legacy-gate name "$mins" \
+        "最新の ci-gate が作法のジョブを含む古い ci.yml の run の赤 — 本文を編集する (edited の run が新しい ci-gate を付ける) か、新しいコミットを push する"
+      [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
+      continue
+      ;;
+  esac
 
   stale=$(stale_names <<<"$checks")
   if [ -n "$stale" ]; then
