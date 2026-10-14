@@ -622,7 +622,8 @@ extension SketchPart {
     static func requireLoadingCanvas(_ call: String) -> Canvas {
         guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
             // 走っている実行から起こされていない (init・プロパティの初期化子・
-            // Task.detached)。どの面へ読み込むかが決まらないので、描く口と同じく止める
+            // Task.detached)。どの面へ読み込むかが決まらず、返す資源を作れないので止める
+            // (資源を作る口と同じ。描く口は止めずに警告する — ``liveRuntime(_:_:)``)
             fatalError(
                 "\(call) only works for a sketch that is running. Call it from setup() or "
                     + "draw(), or from a Task started there — not from init, a property "

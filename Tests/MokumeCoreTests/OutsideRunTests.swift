@@ -48,11 +48,11 @@ struct OutsideRunTests {
             #expect(second.x == 0)
             // 2 つ作っても、width と height の 1 行ずつで止まる
             #expect(log.messages.count == 2)
-            let message = log.message(for: "width")
+            let message = log.messageForRead(of: "width")
             #expect(message?.hasPrefix("width is only known inside setup()") == true)
             #expect(message?.contains("0 was returned instead") == true)
             #expect(message?.contains("Make anything that depends on it inside setup()") == true)
-            #expect(log.message(for: "height") != nil)
+            #expect(log.messageForRead(of: "height") != nil)
         }
     }
 
@@ -73,7 +73,7 @@ struct OutsideRunTests {
             #expect(part.screenX(3, 4) == 0)
             #expect(part.pixelWidth == 0)
             #expect(part.usesFrameHistory == false)
-            #expect(log.message(for: "clock")?.contains(".wallClock was returned instead") == true)
+            #expect(log.messageForRead(of: "clock")?.contains(".wallClock was returned instead") == true)
         }
     }
 
@@ -105,15 +105,57 @@ struct OutsideRunTests {
             }.value
         }
         #expect(log.message(for: "circle(_:_:_:)") != nil)
-        #expect(log.message(for: "width") != nil)
+        #expect(log.messageForRead(of: "width") != nil)
     }
 
-    @Test("控えを差していない検査の警告は、差した控えへ混ざらない")
-    func aBoundLogOnlySeesItsOwnCalls() {
+    /// `orbit` は読みと書きが同じ名前 (`#function` が `"orbit"`) を持つ。名前だけを鍵にすると、
+    /// 先に踏んだ側がもう一方を永久に黙らせ、残る文面も違う種類のものになる。
+    @Test("同じ名前の口でも、読んだときと書いたときは別に 1 度ずつ言う")
+    func readingAndWritingTheSameNameWarnSeparately() {
         let log = OutsideRun()
-        _ = Painter().frameCount  // 差す前 — プロセスの控えへ行く
         OutsideRun.$current.withValue(log) {
-            #expect(log.messages.isEmpty)
+            let part = Painter()
+            _ = part.orbit
+            part.orbit = Orbit(center: .zero, distance: 100)
+            #expect(log.messageForRead(of: "orbit")?.contains("was returned instead") == true)
+            #expect(log.message(for: "orbit")?.contains("so it did nothing") == true)
+        }
+    }
+
+    /// 毎回載せると、`init` で 1 度踏んだ古い警告が、後の無関係な観測の失敗の理由に混ざり続ける。
+    @Test("観測の応答へは、言った後の最初の 1 回だけ渡す")
+    func handsEachWarningToTheObservationOnce() {
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            Painter().circle(0, 0, 10)
+            #expect(log.takeUnreported().count == 1)
+            #expect(log.takeUnreported().isEmpty)
+            _ = Painter().width
+            #expect(log.takeUnreported().map { $0.hasPrefix("width") } == [true])
+        }
+    }
+
+    /// 進行・時刻・書き出し・繋ぎの口 (``OutsideCall``) も同じ事情なので、同じ控えで 1 度だけ言う。
+    /// 以前は呼ぶたびに標準エラーへ書き、観測の応答には載らなかった。
+    @Test("呼び出しの外から頼んだ noLoop も、1 度だけ言って観測へ渡す")
+    func outsideCallsShareTheLog() {
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            Painter().noLoop()
+            Painter().noLoop()
+            #expect(log.messages == [OutsideCall.noLoop.notice])
+        }
+    }
+
+    @Test("走る前に画素を読むと、落ちずに大きさ 0 の窓が返る")
+    func pixelsBeforeTheRunAreAnEmptyWindow() {
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            let pixels = Painter().pixels
+            #expect(pixels.width == 0)
+            #expect(pixels.height == 0)
+            #expect(Painter().get(0, 0) == .transparent)
+            #expect(log.messageForRead(of: "pixels") != nil)
         }
     }
 }

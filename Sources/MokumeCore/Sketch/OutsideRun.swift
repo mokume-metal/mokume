@@ -10,12 +10,18 @@
 /// プロセスごと落ちていた。ADR-0020 決定 5 は、描く口は「警告して安全な既定へ倒す」、読み取りは
 /// 「決して落ちない」と決めている。ここはその警告の側を持つ。
 ///
-/// **口の名前を鍵に 1 度だけ言う。** 名前は呼ぶ側の `#function` で、重ね定義 (`fill(_:)` の
-/// 各形) は 1 つの口として数える。毎フレーム呼ばれる口でも 1 行で済み、控えは口の種類の数で
-/// 止まる。
+/// **口の名前と扱い (読んだ・呼んだ) の組を鍵に 1 度だけ言う。** 名前は呼ぶ側の `#function` で、
+/// 引数の数が同じ重ね定義 (`fill(_:)` の灰色と色) は 1 つに、数が違う形 (`fill(_:)` と
+/// `fill(_:_:_:)`) は別に数える。扱いも鍵に入れるのは、`orbit` のように読みと書きが同じ名前を
+/// 持つ口で、先に踏んだ側がもう一方を永久に黙らせないためである。毎フレーム呼ばれる口でも 1 行で
+/// 済み、控えは口の種類の数で止まる。
 ///
-/// **控えは観測の応答にも載る** (``SketchRuntime`` の観測の目録)。標準エラーの 1 行は MCP から
-/// 読めず、部品が (0, −30) に居続ける理由を AI が観測で辿れなくなるためである。
+/// **言った警告は、次の観測の応答にも 1 度だけ載る** (``takeUnreported()``)。標準エラーの 1 行は
+/// MCP から読めず、部品が (0, −30) に居続ける理由を AI が観測で辿れなくなるためである。毎回載せると、
+/// `init` で 1 度踏んだ古い警告が、無関係な観測の失敗の理由 (時刻を指定した観測は `warnings` を
+/// そのまま理由にする) に混ざり続ける。
+///
+/// 呼び出しの外から頼まれた進行・時刻・書き出し・繋ぎの口 (``OutsideCall``) も、同じ控えで言う。
 ///
 /// **「走っていない」とは言わない** (``OutsideCall`` と同じく [#1322])。`draw()` が回っている
 /// 最中に `Task` から呼んでもここへ来るので、どちらでも事実である「どこからなら受け付けるか」を
@@ -45,19 +51,49 @@ final class OutsideRun {
     /// いま言う先の控え。
     static var log: OutsideRun { current ?? shared }
 
-    private var said = WarningLog<String>()
+    /// 鍵。口の名前と、読んだか呼んだか。
+    private struct Key: Hashable {
+        let call: String
+        let reading: Bool
+    }
+
+    private var said = WarningLog<Key>()
     /// 言った順。観測の応答はこの順で載せる (対応表の順は定まらない)。
     private(set) var messages: [String] = []
+    /// ``messages`` のうち、観測の応答に載せ終えた数。
+    private var reported = 0
 
     /// その口について、まだ言っていなければ 1 度だけ言う。
     func warn(_ call: String, _ use: Use) {
-        guard !said.hasWarned(call) else { return }
-        said.warnOnce(call, Self.notice(call, use))
-        if let text = said.message(for: call) { messages.append(text) }
+        if case .read = use {
+            say(Key(call: call, reading: true), Self.notice(call, use))
+        } else {
+            say(Key(call: call, reading: false), Self.notice(call, use))
+        }
     }
 
-    /// その口について言った文面。まだ言っていなければ `nil`。**検査が読む。**
-    func message(for call: String) -> String? { said.message(for: call) }
+    /// 文面を呼ぶ側が持つ口 (``OutsideCall``) を、1 度だけ言う。
+    func warn(_ call: OutsideCall) {
+        say(Key(call: "\(call)", reading: false), call.notice)
+    }
+
+    private func say(_ key: Key, _ text: @autoclosure () -> String) {
+        guard !said.hasWarned(key) else { return }
+        said.warnOnce(key, text())
+        if let said = said.message(for: key) { messages.append(said) }
+    }
+
+    /// まだ観測の応答に載せていない警告を、言った順に返して、載せたことにする。
+    func takeUnreported() -> [String] {
+        defer { reported = messages.count }
+        return Array(messages[reported...])
+    }
+
+    /// 呼んだ口について言った文面。まだ言っていなければ `nil`。**検査が読む。**
+    func message(for call: String) -> String? { said.message(for: Key(call: call, reading: false)) }
+
+    /// 読んだ口について言った文面。まだ言っていなければ `nil`。**検査が読む。**
+    func messageForRead(of call: String) -> String? { said.message(for: Key(call: call, reading: true)) }
 
     /// 言う中身。**2 通りを完全な文として持つ** (ADR-0038 決定 3)。差し込むのは口の名前と
     /// 返した値だけで、どちらも語順に関わらない識別子である。

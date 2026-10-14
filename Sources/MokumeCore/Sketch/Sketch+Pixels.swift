@@ -156,7 +156,9 @@ extension SketchPart {
     // shot: 1 snippet=0617ccbc
     // shot: 2 snippet=ab94a2c3
     // shot: 3 snippet=f1c90989
-    public var pixels: Pixels { Self.requireCanvas().pixels }
+    public var pixels: Pixels {
+        Self.liveCanvas(.read(returning: "a 0×0 window of pixels"))?.pixels ?? .unavailable
+    }
 
     /// 溜めている図形を描き切り、画素を読める状態にする。
     ///
