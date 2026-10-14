@@ -129,17 +129,18 @@ nonisolated enum Triangulation {
     /// 三角形化そのものを穴に対応させるのではなく、橋を架けて 1 周にしてから同じ道具へ
     /// 通す。道具が 1 つで済み、穴が「一部の経路でだけ効く」状態を作らない。
     ///
-    /// 橋は、穴のいちばん右の点から外周の点へ架ける。架ける先には、近い点のうち
-    /// **架けた線がどの辺にも遮られない点**を選ぶ — 跨ぐと、畳んだ周が自己交差して
-    /// 三角形化が途中で止まる。辺の端点が橋の途中に載る (別の穴の角を串刺しにする)・橋と
-    /// 同じ直線に重なる辺も遮る ([#2508])。見る辺は 3 つある:
+    /// 橋は、穴のいちばん右の点 (畳んだ周の点と重なる点があれば、そこ) から外周の点へ架ける。
+    /// 架ける先には、近い点のうち **架けた線がどの辺にも遮られない点**を選ぶ — 跨ぐと、
+    /// 畳んだ周が自己交差して三角形化が途中で止まる。辺の端点が橋の途中に載る (別の穴の角を
+    /// 串刺しにする) 辺も遮る ([#2508])。見る辺は 3 つある:
     ///
     /// - **外周の辺** (先に畳んだ穴の辺も、畳んだ時点で外周に入っている)
     /// - **いま畳んでいる穴自身の辺** — 穴の右端から外周の近い点が左にあると、橋が穴の
     ///   中を通り抜ける ([#1530])
     /// - **まだ畳んでいない穴の辺** — 右の穴から架けた橋が、左の穴を横切りうる
     ///
-    /// 橋の端点に接する辺は、橋と同じ直線に重ならない限り遮らない。
+    /// 橋の端点に接する辺は遮らない。橋が 1 本の辺に丸ごと収まる (辺に沿って、その端点か
+    /// 触れた点へ架ける) のも、幅のない連結なので遮らない。
     ///
     /// 受け渡すのは**点そのものではなく番号**である。畳んだ周から元の頂点を引ける
     /// ようにするためで、立体の頂点が持つ色や面の向きは点の座標には載っていない。
@@ -167,19 +168,25 @@ nonisolated enum Triangulation {
                 (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
             }
 
+        // 畳んだ周の点の位置。穴の点が重なるかを引く
+        var placed = Set(outer.map { points[$0] })
         for (order, hole) in ordered.enumerated() {
-            guard let entryIndex = rightmostIndex(hole, points) else { continue }
-            let entry = points[hole[entryIndex]]
             // この穴と、まだ畳んでいない穴。先に畳んだ穴は `ring` に入っている
             let unmerged = ordered[order...]
-            guard
-                let bridgeIndex = bridgeTarget(
-                    ring: ring, holes: unmerged, points: points, from: entry,
+            let holeTurn = signedArea(hole.map { points[$0] })
+            var connection: (entry: Int, target: Int)?
+            for entryIndex in entryOrder(of: hole, touching: placed, points: points) {
+                if let target = bridgeTarget(
+                    ring: ring, holes: unmerged, points: points, from: points[hole[entryIndex]],
                     leaving: neighbors(of: entryIndex, in: hole, points: points),
-                    holeTurn: signedArea(hole.map { points[$0] }), slack: slack)
-            else {
-                continue  // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
+                    holeTurn: holeTurn, slack: slack)
+                {
+                    connection = (entryIndex, target)
+                    break
+                }
             }
+            // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
+            guard let (entryIndex, bridgeIndex) = connection else { continue }
             // 外周を橋の点で開き、穴を 1 周ぶん通してから戻る
             var merged = Array(ring[0...bridgeIndex])
             for step in 0...hole.count {
@@ -188,8 +195,29 @@ nonisolated enum Triangulation {
             merged.append(ring[bridgeIndex])
             merged.append(contentsOf: ring[(bridgeIndex + 1)...])
             ring = merged
+            for index in hole { placed.insert(points[index]) }
         }
         return ring
+    }
+
+    /// 穴の点を、橋の入口として試す順に並べる。
+    ///
+    /// 1. **畳んだ周の点と重なる点** (別の穴や外周に頂点で触れる点)。そこへは長さ 0 の橋で
+    ///    つなぐのが、触れた点で周を正しく対にする ([#1886])。いちばん右の点から触れた点へ
+    ///    穴自身の辺に沿って架けると、触れた点が周に 2 度現れて互いの角が重なりうる
+    /// 2. **いちばん右の点**。ふつうの穴はここから架ける
+    ///
+    /// 前の点で架けられなかったときだけ、後ろの点を試す。
+    ///
+    /// [#1886]: https://github.com/mokume-metal/mokume/issues/1886
+    private static func entryOrder(
+        of hole: [Int], touching placed: Set<SIMD2<Float>>, points: [SIMD2<Float>]
+    ) -> [Int] {
+        guard let rightmost = rightmostIndex(hole, points) else { return [] }
+        let touching = hole.indices
+            .filter { placed.contains(points[hole[$0]]) }
+            .sorted { points[hole[$0]].x > points[hole[$1]].x }
+        return touching.contains(rightmost) ? touching : touching + [rightmost]
     }
 
     // MARK: - 部品
@@ -390,16 +418,19 @@ nonisolated enum Triangulation {
     /// 架けた線が、外周 (先に畳んだ穴を含む) か穴のどれかの辺に**遮られる**か。
     ///
     /// 橋と辺は、橋の両端でだけ触れてよい。橋の途中で触れるものは、**跨ぐ辺だけでなく、
-    /// 辺の端点が橋の途中に載るもの・橋と同じ直線に重なるものも**遮る ([#2508])。
-    /// 穴を縦や横に揃えて並べると、別の穴の辺が橋と同じ直線に載る。端点が橋に載る辺を
-    /// 跨ぎに数えないと、橋は穴の角を串刺しにして架かり、畳んだ周が自分の上に折り返して
-    /// 耳切りが三角形を取りこぼす。
+    /// 辺の端点が橋の途中に載るものも**遮る ([#2508])。穴を縦や横に揃えて並べると、別の穴の
+    /// 辺が橋と同じ直線に載る。端点が橋に載る辺を跨ぎに数えないと、橋は穴の角を串刺しにして
+    /// 架かり、畳んだ周が自分の上に折り返して耳切りが三角形を取りこぼす。
     ///
-    /// 橋の両端と同じ位置にある点は、辺の端点でも橋の途中とは数えない。端点を共有する辺
-    /// (穴自身の 2 辺・橋を架ける先の前後の辺) は、橋と同じ直線に重ならない限り遮らない。
-    /// 位置で比べるのは、最後の点が最初の点と重なる周 (曲線で閉じる字の o) や、畳んだ周の
-    /// 継ぎ目で、同じ位置の点が幾つも現れるためである。
+    /// 遮らないのは、橋が 1 本の辺に丸ごと収まる場合である。辺に沿って、その端点や触れた点へ
+    /// 架けるのは、穴が触れた点で周を正しく連結する幅のない橋で、これまでも正しく塗れていた
+    /// ([#1886])。収まらずに途中まで重なる辺は、端点が橋の途中に載るので遮られる。
     ///
+    /// 橋の両端と同じ位置にある点は、辺の端点でも橋の途中とは数えない。位置で比べるのは、
+    /// 最後の点が最初の点と重なる周 (曲線で閉じる字の o) や、畳んだ周の継ぎ目で、同じ位置の
+    /// 点が幾つも現れるためである。
+    ///
+    /// [#1886]: https://github.com/mokume-metal/mokume/issues/1886
     /// [#2508]: https://github.com/mokume-metal/mokume/issues/2508
     private static func obstructed(
         ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from: SIMD2<Float>,
@@ -439,10 +470,9 @@ nonisolated enum Triangulation {
         }
         switch (sideA == 0, sideB == 0) {
         case (true, true):
-            // 同じ直線: 橋と辺が長さを持って重なるか (端で触れるだけなら重ならない)
-            let first = dot(a - from, span)
-            let second = dot(b - from, span)
-            return min(max(first, second), length) > max(min(first, second), 0)
+            // 同じ直線: 辺の端点が橋の途中に載るなら遮る。橋が辺に丸ごと収まる (辺に沿って
+            // 端点か触れる点へ架ける) なら、幅のない連結なので遮らない
+            return within(a) || within(b)
         case (true, false):
             return within(a)
         case (false, true):

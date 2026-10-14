@@ -237,6 +237,11 @@ struct AlignedHolesTests {
     func areaMatchesOuterMinusHoles(_ scene: Scene) {
         let result = run(scene)
         #expect(abs(result.area - scene.expectedArea) < 0.5)
+        // 本番の道 (交わりの組み直し → 穴の畳み込み → 耳切り) でも、面積が合い、標本点が
+        // ちょうど 1 枚に覆われる
+        let painted = TouchingHoleScene(index: 0, outer: scene.outer, holes: scene.holes).measure()
+        #expect(painted.areaError < 0.5)
+        #expect(painted.mismatches == 0)
     }
 
     @Test("穴が揃って並んでも、三角形の数が V + 2H − 2 になる", arguments: separate + lattice)
@@ -244,5 +249,82 @@ struct AlignedHolesTests {
         let result = run(scene)
         #expect(result.ring.count == result.vertexCount + 2 * result.holeCount)
         #expect(result.triangles.count == result.vertexCount + 2 * result.holeCount - 2)
+    }
+
+    // MARK: - 穴が別の穴に触れる形 (#2508 の退行)
+
+    /// 外周 200×200 の中の、穴が触れ合う形。穴は外周と逆回り。
+    nonisolated struct Touch: CustomTestStringConvertible, Sendable {
+        var name: String
+        var holes: [[SIMD2<Float>]]
+        var testDescription: String { name }
+
+        var scene: TouchingHoleScene {
+            TouchingHoleScene(
+                index: 0, outer: [SIMD2(0, 0), SIMD2(200, 0), SIMD2(200, 200), SIMD2(0, 200)],
+                holes: holes)
+        }
+    }
+
+    /// 橋を辺の端点や触れた点で止める判定を厳しくした直しが、それまで正しく塗れていた形を
+    /// 壊したときの形。
+    nonisolated static let touches: [Touch] = [
+        Touch(
+            name: "頂点が別の穴の辺の途中に載る (T 字)",
+            holes: [
+                [SIMD2(140, 30), SIMD2(110, 50), SIMD2(150, 50)],
+                [SIMD2(180, 60), SIMD2(170, 50), SIMD2(170, 30), SIMD2(140, 60)],
+            ]),
+        Touch(
+            name: "別の 2 つの穴が頂点で触れ、右端の点から触れた点へ穴自身の辺に沿う",
+            holes: [
+                [SIMD2(110, 90), SIMD2(130, 80), SIMD2(110, 100)],
+                [SIMD2(160, 40), SIMD2(150, 40), SIMD2(140, 50)],
+                [SIMD2(140, 50), SIMD2(170, 70), SIMD2(160, 70)],
+            ]),
+        Touch(
+            name: "入口から別の穴の辺に沿って触れた点へ架ける",
+            holes: [
+                [SIMD2(50, 50), SIMD2(50, 60), SIMD2(40, 70)],
+                [SIMD2(50, 90), SIMD2(20, 110), SIMD2(30, 130)],
+                [SIMD2(40, 70), SIMD2(60, 60), SIMD2(70, 50), SIMD2(60, 70)],
+            ]),
+        Touch(
+            name: "縦に並ぶ穴の 1 つが別の穴に頂点で触れる",
+            holes: [
+                [SIMD2(100, 30), SIMD2(100, 40), SIMD2(110, 40), SIMD2(110, 30)],
+                [SIMD2(110, 40), SIMD2(100, 40), SIMD2(105, 50)],
+                [SIMD2(100, 80), SIMD2(100, 90), SIMD2(110, 90), SIMD2(110, 80)],
+                [SIMD2(100, 130), SIMD2(100, 140), SIMD2(110, 140), SIMD2(110, 130)],
+            ]),
+    ]
+
+    @Test("穴が別の穴に触れても、塗りが欠けず重ならない", arguments: touches)
+    func touchingHolesArePaintedOnce(_ touch: Touch) {
+        let painted = touch.scene.measure()
+        #expect(painted.areaError < 0.5)
+        #expect(painted.mismatches == 0)
+    }
+
+    /// 頂点どうしが重なる触れ方だけの 400 場面 (固定の種・外周 200×200 の中に 2〜10 個の 3〜5 角形)。
+    /// **誤る場面が 0** であること。直す前は 9 場面が誤っていた。
+    @Test("頂点で触れ合う穴の 400 場面が、どれも面積どおりに塗れて重ならない")
+    func vertexTouchingScenesArePaintedOnce() {
+        let wrong = TouchingHoleScenes.make(.vertexToVertex, count: 400)
+            .filter { $0.isPaintedWrong }.map(\.index)
+        #expect(wrong == [])
+    }
+
+    /// 頂点が別の穴の辺の途中に載る (T 字) 触れ方も含む 400 場面。誤るのは、**直す前から誤っていた
+    /// 1 場面** (78) だけであること。直す前は 8 場面 (7・54・78・226・229・290・316・343) が誤り、
+    /// 直した後に新しく誤る場面は無い。
+    ///
+    /// 78 は、頂点が別の穴の辺の途中に載る 2 つの穴に、もう 1 つ離れた穴が加わると、畳んだ周が
+    /// 辺の上の点で耳を塞がれ、耳切りが途中で止まる (別の問題)。直ったら `[]` に書き直す。
+    @Test("T 字に触れる穴を含む 400 場面で、誤るのは直す前から誤っていた場面だけ")
+    func tJunctionScenesDoNotRegress() {
+        let wrong = TouchingHoleScenes.make(.includingTJunctions, count: 400)
+            .filter { $0.isPaintedWrong }.map(\.index)
+        #expect(wrong == [78])
     }
 }
