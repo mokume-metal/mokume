@@ -25,9 +25,10 @@
 #      対処: gh pr merge <番号> --auto --squash を打ち直す
 #   3. 全 check が緑なのに進まない
 #      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)
-#      対処: gh run rerun <run-id> --failed — **ただし pr-title と render-pr には打たない**
-#      (#699・#2062。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
-#      打たなくても merge は止まらない)
+#      対処: gh run rerun <run-id> --failed — **ただし pr-title・render-pr・pr-gate には打たない**
+#      (#699・#2062・#2668。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
+#      打たなくても merge は止まらない。pr-gate は最新の run の結論が判定で、古い赤・cancelled は
+#      この表の判定に数えない — normalize_checks)
 #   4. autoMerge: false + CLEAN + 全 check 緑 で isInMergeQueue: true
 #      原因: 止まっていない — 予約が queue へ移ると autoMergeRequest は null になる (#628)
 #      対処: 何も打たない
@@ -251,6 +252,13 @@ minutes_since() { # $1=ISO8601 (空可)
 # **SKIPPED は直った証拠ではない** — pr-title は pull_request でしか走らないので、レビューの
 # 投稿などで起きた run では SKIPPED になる。タイトルは直っていないので外さない。ci-check などの
 # 赤は、タイトルと関わらない本物の失敗なので外さない
+#
+# **pr-gate は最新の 1 本だけを残す** (#2668)。pr-gate (.github/workflows/pr-gate.yml) は API を
+# 読むだけの数十秒のジョブで、直すと新しい run が付け直し、concurrency は走っている古い run を
+# cancel する。判定になるのは同じ SHA の最新の run の結論で、古い赤・cancelled は直す前の名残
+# である。残すと新しい緑と組になって stale-checks に読まれ、当番が head SHA の失敗ジョブを
+# 打ち直す (凍結された run の ci-gate まで打ち直して「最新の赤」を作りうる)。新旧は上と同じく
+# run の id で決める。最新が赤なら、その赤はそのまま残る
 normalize_checks() { # 標準入力=PR の JSON
   jq -c --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
     def red: .result as $r | (($unsettled | index($r)) == null) and (($passed | index($r)) == null);
@@ -269,7 +277,9 @@ normalize_checks() { # 標準入力=PR の JSON
       [ $all[] | select(
           ((.run as $r | $frozen | index($r)) != null and red
            and (.name == "pr-title" or (.name == "ci-gate" and newer_ok("ci-gate"; .run))))
-          | not) ]'
+          | not) ]
+    | ([ .[] | select(.name == "pr-gate") ] | sort_by([.run, .at]) | last) as $gate
+    | [ .[] | select(.name != "pr-gate" or . == $gate) ]'
 }
 
 # 失敗している check の名前 (重複を畳む)
