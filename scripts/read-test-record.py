@@ -55,6 +55,14 @@ SwiftPM が `--xunit-output` で自分でファイルへ書く記録は、同じ
 は `scheduled-debug-ledger-shots` を渡す (#2084)。
 
 記録が無い・読めないときも、そう名乗る 1 行を出す。終了コードは常に 0 にする。
+
+**GPU の待ちが期限を越えた回は、「環境で成り立たなかった」と先に名乗る** (#2662)。期限を
+越えるとプロセスの関所 (`CommandQueueGate.process`) が閉じ、以後の GPU の検査はすべて
+`gpuNotResponding` で落ちる。2026-10-13 09:20Z の専用機の定期の release では 2,108 件が
+そうなり、先頭 80 件 (`MAX_MESSAGES`) が関所の巻き込みで埋まって、引き金の期限切れも release
+固有の赤も載らなかった。関所の文面 (`GATE_CLOSED`) を持つ失敗は件数と 1 例に畳み、それ以外
+(引き金と、本物の赤) を先に並べる。この回の GPU の検査は赤も緑も読めないので、次の周期まで
+保証が欠けていることを言う。
 """
 
 import os
@@ -66,6 +74,11 @@ LEDGER_CLASSNAME = "MokumeCoreTests.SceneLedgerTests"
 LEDGER_LINE = re.compile(r"^\s+(\S+ [0-9a-f]{64}(?: os=\d+)?)\s*$")
 # 要約は 1 step あたり 1 MiB まで。台帳が全行動いた回 (約 70 件) でも収まる数で切る
 MAX_MESSAGES = 80
+# 関所が閉じた後の失敗の文面の頭 (RenderFailure.notResponding)。英語の文面を写しているので、
+# 本物と合っていることは scripts/tests/test_vanished_test.py が Sources から確かめる
+GATE_CLOSED = "A wait for the GPU went past its limit earlier in this process"
+# 最初の期限切れの要約 (CommandQueueGate.Closure.summary)。文面の括弧の中にある
+GATE_FIRST = re.compile(r"\((the first was [^)]*)\)")
 
 
 def verdict(cases, classname):
@@ -165,7 +178,26 @@ def failure_messages(path, shots_artifact="ledger-shots"):
             if m:
                 ledger_lines.append(m.group(1))
 
+    gate = [f for f in found if GATE_CLOSED in f[2]]
+    rest = [f for f in found if GATE_CLOSED not in f[2]]
+
     out = ["### 落ちた検査 (%d 件)" % len(found), ""]
+    if gate:
+        first = GATE_FIRST.search(gate[0][2])
+        out += [
+            "**環境で成り立たなかった回である。** 落ちた %d 件のうち %d 件は、先に GPU の待ちが期限を"
+            "越えてプロセスの関所が閉じた後の `gpuNotResponding` で、その後の GPU の検査は走っていない。"
+            "**この回の GPU の検査は赤も緑も読めず、次の周期まで、この木の保証は欠けている。**"
+            % (len(found), len(gate)),
+            "",
+        ]
+        if first:
+            out += ["最初の期限切れ: %s。" % first.group(1), ""]
+        out += [
+            "関所の分を除いた %d 件 (引き金になった期限切れと、それ以外の赤) を先に並べ、関所の分は 1 例だけ載せる。"
+            % len(rest),
+            "",
+        ]
     if ledger_lines:
         out += [
             "#### 台帳の書き換え後の行 (案)",
@@ -175,10 +207,17 @@ def failure_messages(path, shots_artifact="ledger-shots"):
             fenced("\n".join(ledger_lines)),
             "",
         ]
-    for classname, name, text in found[:MAX_MESSAGES]:
+    for classname, name, text in rest[:MAX_MESSAGES]:
         out += ["#### `%s` / `%s`" % (classname, name), "", fenced(text), ""]
-    if len(found) > MAX_MESSAGES:
-        out.append("ほか %d 件は artifact の記録を読む" % (len(found) - MAX_MESSAGES))
+    if len(rest) > MAX_MESSAGES:
+        out += ["ほか %d 件は artifact の記録を読む" % (len(rest) - MAX_MESSAGES), ""]
+    if gate:
+        classname, name, text = gate[0]
+        out += [
+            "#### 関所が閉じた後の失敗 (%d 件のうち 1 例): `%s` / `%s`" % (len(gate), classname, name),
+            "",
+            fenced(text),
+        ]
     return "\n".join(out).rstrip()
 
 
