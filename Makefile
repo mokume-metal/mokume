@@ -40,9 +40,9 @@ check: setup
 # ci-check が走らせる段の並び。
 #
 # **この並びは「CI と同一」から 1 つだけ意図的にずれている。** drawing-evidence は CI では
-# 必ず no-op になる — ci-check のジョブへ GH_TOKEN を持ち込まない設計 (.github/workflows/ci.yml
-# の drawing-evidence ジョブの冒頭) のため理由を述べて 0 で抜け、本物の判定は同じファイルの
-# 独立したジョブ (drawing-evidence) が持つ。ここに置いてあるのは手元のためである
+# 必ず no-op になる — 段を走らせるジョブ (ci-check・ci-static) へ GH_TOKEN を持ち込まない設計
+# (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため理由を述べて 0 で抜け、本物の
+# 判定は同じファイルの独立したジョブ (drawing-evidence) が持つ。ここに置いてあるのは手元のためである
 #
 # **描画の検査は、ここでは GPU のある機械でだけ実際に走る。** merge の判定としては、
 # 専用機の描画ジョブ (.github/workflows/render.yml の render) が merge queue の合流後の木で
@@ -53,6 +53,27 @@ check: setup
 # 変わらない。build を外しても examples / params / api / reference は prerequisite の build を
 # 自分で走らせるので、合流後の木での検査は残る
 CI_CHECK_SKIP ?=
+
+# **CI は並びを 2 つのジョブに分けて走らせる** (#2612)。木だけを読む段 (CI_STATIC_STEPS) は
+# ubuntu の ci-static が、残り — ビルドの成果物か macOS が要る段 — は macOS の ci-check が持つ
+# (.github/workflows/ci.yml)。安い赤を、macOS の枠の待ちと build・test の後ではなく数分で返すため。
+#
+# **入口は ci-check の 1 つのまま** (ADR-0001 原則 8)。CI のジョブは CI_CHECK_HOST に ubuntu か
+# macos を渡して make ci-check を呼び、並びはそのジョブの段だけに絞られる。既定は空で、手元の
+# make ci-check は今までどおり全段を走らせる。並びから選ぶだけなので、並びの順と CI_CHECK_SKIP は
+# どちらのジョブにも効く。2 つを合わせると全段にちょうど一致する (抜けも二重も無い) ことは
+# scripts/tests/ci_workflow_test.py が PR と merge_group の両方で見る。
+#
+# ubuntu へ出してよいのは、要る OS・ビルドの成果物・GitHub の文脈のどれにも縛られない段だけ:
+#   - build・test と、組み上げを要する examples・shaders・params・api・reference は macOS に残る
+#     (ADR-0009。merge_group で合流後の木に当てるのもここ — ci.yml の ci-check のコメント)
+#   - hooks-test は macOS に残る。検査のファイルの 6 割がスクリプトを /bin/bash で起こし、その 3.2 と
+#     BSD の道具での動き — 手元とエージェントのフックが走る環境 — を保証している (#702)。
+#     ubuntu へ出す段のうちシェルで書いたもの (adrs・file-modes など) の 3.2 での動きも、
+#     macOS に残る hooks-test の各段の検査 (adrs_test など) が持つ
+#   - drawing-evidence は CI ではどちらでも理由を述べて 0 で抜ける (上の並びの注釈)。ubuntu に置く
+CI_STATIC_STEPS := schemas tool-language isolated-deinit entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
+CI_CHECK_HOST ?=
 
 # **手元で回す段は、触ったものから選ぶ。** AGENTS.md「コミット・PR の規約」の「触った範囲の段」は
 # ここを指す (#2133)。段の名前からは「触ったもの → 回す段」が引けず、取り違えた PR が queue で
@@ -77,7 +98,17 @@ CI_CHECK_SKIP ?=
 #      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤
 #      (他のセッションの GPU 負荷など) が約 70 本並ぶ中に本物が 1 本混ざることがあり、
 #      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした
-CI_CHECK_STEPS := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
+CI_CHECK_ALL := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
+ifeq ($(CI_CHECK_HOST),)
+CI_CHECK_STEPS := $(CI_CHECK_ALL)
+else ifeq ($(CI_CHECK_HOST),ubuntu)
+CI_CHECK_STEPS := $(filter $(CI_STATIC_STEPS),$(CI_CHECK_ALL))
+else ifeq ($(CI_CHECK_HOST),macos)
+CI_CHECK_STEPS := $(filter-out $(CI_STATIC_STEPS),$(CI_CHECK_ALL))
+else
+# 綴りを誤ったまま全段や 0 段へ落ちると、そのジョブの段が黙って抜ける
+$(error CI_CHECK_HOST は ubuntu か macos (空なら全段): '$(CI_CHECK_HOST)')
+endif
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、

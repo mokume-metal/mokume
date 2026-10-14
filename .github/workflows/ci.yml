@@ -44,7 +44,13 @@ jobs:
   # 検査の実体は make ci-check に集約する。CI にステップを足したくなったら
   # まず Makefile に足し、このジョブは呼ぶだけを保つ。
   #
-  # macOS ランナーで走らせる。ci-check に swift build / swift test が入り、
+  # **段は 2 つのジョブで分け持つ** (#2612)。どちらも make ci-check を呼び、CI_CHECK_HOST で
+  # 自分の段を選ぶ — このジョブ (macos) は macOS かビルドの成果物が要る段を、下の ci-static
+  # (ubuntu) は木だけを読む段を走らせる。どの段がどちらに居るか (と、その理由) の正本は Makefile の
+  # CI_STATIC_STEPS で、2 つを合わせると手元の make ci-check の全段にちょうど一致することは
+  # scripts/tests/ci_workflow_test.py が見る。
+  #
+  # macOS ランナーで走らせる。このジョブの段に swift build / swift test が入り、
   # ADR-0009 が macOS 26 / Metal 4 を前提に置いているため Linux ではビルドできない
   # (このリポジトリは public なので Actions の従量課金はかからない)。
   #
@@ -76,7 +82,7 @@ jobs:
   # build / test / gpu-ran を、GPU 付きで走らせる (上位互換)。ここでも走らせると、週に約 145 本の
   # merge_group で約 9.7 分ずつ・約 23 時間のホストの macOS 時間が二重になり、ホストの macOS の
   # 同時実行枠 (5 本) を通して PR のランナー待ちに効いていた。下限の担保は PR の ci-check が
-  # 担う (pull_request では CI_CHECK_SKIP が空で、26 段すべてを macOS 26 で走らせる)。失うのは
+  # 担う (pull_request では CI_CHECK_SKIP が空で、build と test を macOS 26 で走らせる)。失うのは
   # 「main と合流させた木を macOS 26 で走らせる」部分だけで、合流して初めて壊れ、しかも 26 で
   # だけ出る赤は狭い。その赤は、版を出す前の release.yml の release-check (合流後の main を
   # macOS 26 で release に組む) が拾い、版を止める (#2662。merge の前には止まらない)。
@@ -101,15 +107,53 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
-      # chardet も入れる: reuse の encoding 判定モジュールを固定するため (#48)。
-      # 既定では環境にあるものが選ばれ、ローカルと CI で判定が食い違う
-      - name: Install tools
-        run: |
-          pipx install reuse && pipx inject reuse chardet
-          pipx install check-jsonschema
       - run: make ci-check
         env:
+          CI_CHECK_HOST: macos
           CI_CHECK_SKIP: ${{ github.event_name == 'merge_group' && 'build test' || '' }}
+
+  # 木だけを読む段 (#2612)。SPDX の宣言漏れやリンク切れのような安い赤を、macOS の枠の待ちと
+  # build・test の後ではなく、数分で返す。どの段をここへ出したかと理由は Makefile の
+  # CI_STATIC_STEPS。保証の範囲は変えない — 同じ段を、同じ木で、先に走らせる。
+  #
+  # **起動の条件は ci-check と同じにする。** 片方だけが走る event があると、その event では
+  # 段が抜ける (scripts/tests/ci_workflow_test.py が 2 つの if: の一致を見る)。merge_group でも
+  # 走らせる — adrs の番号の重複のように、合流後の木で初めて赤になる段がここにも居る。
+  #
+  # **runs-on は ubuntu-24.04 に固定する。** ubuntu-latest は GitHub が切り替えるもので、
+  # 切り替わると python3 や ruby (github-yaml-lint) の版が黙って動く (macos-26 を固定したのと
+  # 同じ理由・#1985)。上げるときは scripts/ci-tools.txt を同じ python で組み直す。ADR-0009 の
+  # 下限とは関係しない — 下限で走らせる唯一のホストは、上の ci-check と release.yml の
+  # release-check のままである (ここの段は OS の版に依らない)。
+  #
+  # **GH_TOKEN を持ち込まない。** ci-check と同じく PR の中の任意のコード (Makefile・検査) を
+  # 走らせるので、drawing-evidence の段は認証が無いと名乗って 0 で抜ける (本物の判定は下の
+  # drawing-evidence のジョブ)。
+  #
+  # 道具は版と照合値で固定する。reuse (と encoding 判定の chardet・#48)・check-jsonschema は
+  # scripts/ci-tools.txt を --require-hashes で入れる。actionlint と shellcheck は
+  # scripts/check-workflows.sh が版と照合値を持って自分で落とす。venv の bin を丸ごと PATH に
+  # 足すと python3 まで差し替わるので、使う 2 つだけを置き場に繋ぐ
+  ci-static:
+    if: >-
+      github.event_name != 'pull_request_review'
+      && (github.event_name != 'pull_request'
+      || (github.event.action != 'labeled'
+      && github.event.action != 'unlabeled'
+      && (github.event.action != 'edited' || github.event.changes.base)))
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ci-tools"
+          "$RUNNER_TEMP/ci-tools/bin/pip" install --quiet --require-hashes -r scripts/ci-tools.txt
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -s "$RUNNER_TEMP/ci-tools/bin/reuse" "$RUNNER_TEMP/ci-tools/bin/check-jsonschema" "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: make ci-check
+        env:
+          CI_CHECK_HOST: ubuntu
 
   # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
   # merge_group にはタイトルが無いためスキップし、ci-gate 側は skipped を許容する。
@@ -246,7 +290,7 @@ jobs:
   # (scripts/check-drawing-evidence.sh)。
   ci-gate:
     if: always()
-    needs: [ci-check, pr-title, review-gate, drawing-evidence]
+    needs: [ci-check, ci-static, pr-title, review-gate, drawing-evidence]
     runs-on: ubuntu-latest
     steps:
       - name: All required jobs green
