@@ -192,6 +192,44 @@ struct ContourFillTests {
         #expect(result.spilled == 0)
     }
 
+    /// 穴を縦に揃えて並べると、橋の線が別の穴の縦の辺と同じ直線に載り、三角形を取りこぼして
+    /// 穴の外まで塗りが欠けた ([#2508])。三角形の取りこぼしは `AlignedHolesTests` が CPU だけで
+    /// 数えるので、ここは画素に出ることを 3 場面で 1 回ずつ確かめる (GPU の描画を増やさない)。
+    ///
+    /// [#2508]: https://github.com/mokume-metal/mokume/issues/2508
+    @Test("穴を縦に揃えて並べても、穴だけが抜ける (#2508)", arguments: AlignedScene.all)
+    func holesInAColumnAreAllPunched(_ scene: AlignedScene) throws {
+        // 穴は外周と逆回り
+        let holes = scene.origins.map { origin in
+            [
+                origin, origin + SIMD2(0, 10), origin + SIMD2(10, 10), origin + SIMD2(10, 0),
+            ]
+        }
+        let result = try tally([square] + holes)
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+        // 穴ごとに 100 画素が抜ける
+        #expect(result.painted == 140 * 140 - 100 * holes.count)
+    }
+
+    /// 穴は一辺 10 で、26 おきに並べる (外周 10〜150 の中に 5 つ入る)。
+    nonisolated struct AlignedScene: CustomTestStringConvertible, Sendable {
+        var name: String
+        var origins: [SIMD2<Float>]
+        var testDescription: String { name }
+
+        static let all: [AlignedScene] = [
+            AlignedScene(
+                name: "縦 1 列 5 個", origins: (0..<5).map { SIMD2(75, 20 + Float($0) * 26) }),
+            AlignedScene(
+                name: "5×5 の格子",
+                origins: (0..<25).map { SIMD2(20 + Float($0 % 5) * 26, 20 + Float($0 / 5) * 26) }),
+            AlignedScene(
+                name: "1 つおきに 3 ずらした縦の列",
+                origins: (0..<5).map { SIMD2(75 + ($0 % 2 == 1 ? 3 : 0), 20 + Float($0) * 26) }),
+        ]
+    }
+
     @Test("createShape で記録して置いた形も抜く")
     func aRecordedShapeIsPunched() throws {
         let result = try tally([square, hexagon]) { canvas, rings in
