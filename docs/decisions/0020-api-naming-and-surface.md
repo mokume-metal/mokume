@@ -55,6 +55,44 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 下の層が上の層の転送先である場合に限り、同じ名前・同じ引数ラベルを許す — 転送の対称性を検査で確かめられる形を保つためで、**下の層の新規 API は Guidelines に完全準拠**とする。
 
+#### 改訂 (2026-10-14) — 手本は出発点。関数の層は手本の名前、値型と型のメンバーは Swift の慣行
+
+**手本は出発点であり、分かりにくい部分はより適切な形に改めてよい。** そのうえで、名前は次の規則で決める。
+
+1. **関数の層 (トップレベルの語彙) は、手本の名前を既定にする。** 学生も AI も手本の名前で書き、手本の名前で探す。写せることと探せることの価値が大きい
+2. **次の場合に限って改める。**
+   - (a) 同じ名前で意味や値の体系が違ってしまう (同名異義。写すと黙ってずれる)
+   - (b) 手本自体が分かりにくい・誤解を招く (`keyPressed()` の連射、11 個の位置引数など)
+   - (c) Swift で書けない
+3. **値型と mokume の型のメンバーは、Swift の慣行に従う。** ラベルを付け、略さず、新しい値を返すものは過去分詞にする。手本での名前は説明文で名乗る。`circle()` と `Circle`、`dist()` と `a.distance(to:)` は、規則 1 と 3 の使い分けである
+4. **型の名前は、手本に近い普通の英単語にする。** Foundation と衝突する名前は取らない (`Timer` など。スケッチはほぼ全部 `import Foundation` するので、曖昧さのエラーが全員に出る)。SwiftUI と衝突する名前は取ってよい (`Circle`・`Font`。既存の `Image`・`Shape` と同じ扱い。衝突するのは埋め込むファイルだけで、`mokume.Circle` と書けば解ける)
+5. 手本の名前から mokume の口は、どれも手本からの索引 ([#2437](https://github.com/mokume-metal/mokume/issues/2437)) で引ける
+
+**手本に無い値型の名前**は、対応する描画関数の名前を大文字で始めたものにする (`circle()` → `Circle`・`rect()` → `Rect`・`box()` → `Box`)。`Rect` は略語だが、グラフィックスで定着した語 (`CGRect`) で、`rect()` と対になるので採る。ベクトルは `Vector2` / `Vector3` (Processing の `PVector` と p5 の `p5.Vector` に共通する語に次元を名乗らせる)、時間の値は `Stopwatch` と `Countdown` にする。値型の形 (ラベル・見た目・判定) は [ADR-0045](0045-game-direction.md) 決定 5〜8 が持つ。
+
+**値の体系が手本どうしで割れているか、分かりにくいときも、規則 2 で改めてよい。** 例として、刻みの時間 `deltaTime` は秒の `Float` にする。ゲームの手本 (Unity・Godot・LÖVE・raylib) が秒で、mokume の時間もすべて秒だからである。p5.js (ミリ秒) との違いは説明文で名乗る ([#1572](https://github.com/mokume-metal/mokume/issues/1572))。
+
+当てはめた例 (2026-10-14):
+
+| 口 | 決定 | 規則 |
+| --- | --- | --- |
+| `PI`・`TWO_PI`・`shuffle(配列)`・`dist`・`sq`・`makeShader` | 手本の名前のまま | 1 |
+| `Image` の大きさを変えて新しい値を返す口 | `resized(width:height:)`。Processing の `resize` は自分を変えるので、同じ名前だと同名異義になる | 2a・3 |
+| 書体の型 | `Font` | 4 |
+| `textOutline` | 改名しない。p5.js の `textToContours` は等間隔の点、mokume は折れ目の点を返す | 2a |
+| `spotLight` の `angle:` | ラベルを残す | 2b |
+| 押下の語 | `isKeyDown` を `keyboard.isPressed` へ移す ([ADR-0034](0034-input-surface-units.md) 決定 7) | 2a・2b |
+
+**代償:** Swift の命名に慣れた人には、`TWO_PI` (大文字) や、新しい配列を返す `shuffle` が慣行から外れて見える。外れるのは関数の層だけで、理由はこの段にある。
+
+**退けた案:**
+
+- **関数の層も Swift の慣行に寄せる** (`tau`・`shuffled`)。手本の綴りで書く学生と AI が赤に当たり、索引を引かないと書けなくなる
+- **Siv3D を名前の手本にする。** 借りるのは「値が振る舞いを持つ」という考え方だけにする。手本 (Processing / p5.js) と名前の体系が違い、2 つの手本の名前が混ざる
+- **当初の決定のまま、手本があれば名前と引数の順序を字義どおり採る。** 手本の分かりにくい部分 (連射する `keyPressed()`・`rectMode` で意味が変わる座標) まで新しい語彙へ持ち込む
+
+**当初の決定**は「手本があれば名前と引数の順序をそのまま採る」で、例外を置いていなかった。ゲームも書ける方向 ([ADR-0045](0045-game-direction.md)) で手本に無い値型を多く足すことになり、手本の分かりにくい部分を引き継ぐかを問われた。メンテナの方針は「Processing の微妙な部分を引き継ぐ必要はない」である ([#2580](https://github.com/mokume-metal/mokume/issues/2580))。手本の名前で探せることの価値は動いていないので、規則 1 で既定に残した。
+
 #### 手本に倣う射程は、名前と引数の順序まで
 
 **手本に倣うのは名前と引数の順序までで、同じ引数から同じ画素が出ることは約束しない。** 手本を引く意味は綴りが広く使われているかを見ることで (上の段)、手本の版にも追随しない (影響節の最後の行)。決定論のはしご ([ADR-0025](0025-determinism-levels.md) 決定 1) も水準 3「同じ機械の画素」で止まっていて、外の実装と画素が揃う段は無い。
@@ -164,6 +202,52 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 - `constrain` の上下が逆なら、入れ替えて締める (`map` が逆向きの範囲を受けるのと揃う)
 - 異常な入力の警告は、口を連想値に持たせて口ごとに数える (`NumberValues.Warning.notANumber`)。綴りを並べる形にすると、先に鳴った口が残りを永久に黙らせうる
 - 色の補間はここに入れない。作業空間で混ぜる規範 ([ADR-0011](0011-color-model.md)) が先に効く、色の面の話である
+
+#### 改訂 (2026-10-14) — 状態を読み書きする語彙は、`SketchPart` を名乗った自作の型の中でも使える
+
+**語彙の置き場を 3 つに分ける。**
+
+| 区分 | 例 | 使える場所 |
+| --- | --- | --- |
+| 純粋な計算 | `color`・`map`・`lerp`・`radians` | どこでも (グローバル関数のまま。上の小見出し) |
+| 状態を読み書きする語彙 | `fill`・`circle`・`mouseX`・`width`・`keyboard`・`random` | `Sketch` と、`SketchPart` を名乗った型の中 |
+| 値のメソッド | `draw()`・`intersects`・`isHovered` | どこでも |
+
+```swift
+struct Player: SketchPart {
+    var x: Float = 240
+    mutating func update() { if keyboard.isPressed(.arrowLeft) { x -= 4 } }
+    func display() { fill(255); circle(x, 200, 20) }
+}
+```
+
+- 実装は、`Sketch` の語彙を「`Sketch` と部品の両方が持つプロトコル」の extension へ移す。語彙はもともと、走っているスケッチを見て動く (`Sketch.requireRuntime()`)。`protocol Sketch: SketchPart` になる
+- 走っていないとき (プロパティの初期化子・`init`) に呼ばれた語彙は、決定 5 のとおり落とさず、1 度だけ警告して安全な既定へ倒す ([#2265](https://github.com/mokume-metal/mokume/issues/2265))。`struct Player: SketchPart { init() { … width / 2 … } }` を `Sketch` のプロパティで作ると、ここを踏む
+
+**理由:** Processing では、タブに書いたクラスがスケッチの内側のクラスになり、`fill()` や `keyPressed` をそのまま使える。p5.js のグローバルモードでは、すべてがグローバルである。どちらから来た人も「自分のクラスの中で `fill()` が書ける」と期待する。いまの mokume では状態を持つ語彙が `Sketch` のメソッドなので、自作の型の中から呼べず、作例は `sketch` を渡して `sketch.ambientLight(…)` と書いている。
+
+**名前は `SketchPart`** (「スケッチの部品」)。主な利用者である学生が意味を推測できることを、いちばん重く見た。リファレンスでの `Sketch: SketchPart` の読み味がやや妙なのは、学生が書く場所ではないので受け入れる。
+
+| 退けた名前 | 理由 |
+| --- | --- |
+| `Sketchable` | -able は Swift では受け身 (`Equatable`・`Sendable`) で、「描かれうるもの」と誤読しうる。「付けたのに描かれない」「`draw()` が要るのか」と誤解を招く |
+| `Sketching` | Swift の慣行 (`ProgressReporting` の型) にはいちばん忠実だが、初学者には意味が取りにくい |
+| `InSketch` | 前置詞で始まるプロトコル名は Swift では珍しい |
+| `SketchElement`・`SketchObject` | 前者は同じ意味でより長く HTML を連想させる。後者はクラスを連想させるが struct にも付ける |
+| `Drawable`・`Drawing` | Metal の drawable は描き先の面を指す。`Drawing` は名詞では「絵」で、ディレクトリ名とも重なる |
+| `SketchComponent`・`Entity`・`GameObject` | ECS とゲームエンジンでは、実体に付けるデータを指す。RealityKit の `Entity` / `Component` とも重なる |
+
+**代償:**
+
+- リファレンスの頁の置き場が変わる。例と絵の網羅の検査 (`extension Sketch` を数える) を、移した先に合わせる
+- 名乗り忘れると「`fill` が見つからない」になるので、入門の文書で 1 語を教える
+
+**退けた案:**
+
+- **`keyboard` / `mouse` だけをグローバルにする。** `fill()` との不一致が残る
+- **語彙をすべてグローバルにも置く** (p5.js のグローバルモード)。`width`・`key`・`line`・`text`・`image` などが、利用者のモジュール全体の名前空間に入る
+
+**当初の置き場**は、純粋な計算をグローバル関数に、状態を持つ語彙を `Sketch` のメソッドにする 2 区分だった (上の小見出し)。2026-10-14 時点で `SketchPart` はまだ無い ([ADR-0045](0045-game-direction.md) 決定 13 の段 1)。
 
 ## 影響
 
