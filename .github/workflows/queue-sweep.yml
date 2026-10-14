@@ -9,7 +9,7 @@ name: Queue sweep
 # ADR-0019 決定 7)
 #
 # merge queue はグループを作り直したり PR を外したりしても、古いグループの run を
-# cancel しない。捨てられた run は macOS の枠 (ci.yml の ci-check と test-release) を
+# cancel しない。捨てられた run は macOS の枠 (ci.yml の ci-check) を
 # 使い続け、今のグループの検証を待たせる。2026-09-15 には 1 日に 2 回起き、どちらも
 # merge が 30〜50 分止まった。
 #
@@ -25,8 +25,8 @@ name: Queue sweep
 #   するには PR 番号が要るが、式言語には split も正規表現も無く head_ref から抜き出せない。
 #   キーをグループ共通にすると、並行して検証中の他のグループ (main-protection.json の max_entries_to_build) まで
 #   cancel してしまう
-# - **ci.yml には相乗りさせない。** pull_request の dequeued を足すと ci-check /
-#   test-release まで起動し、すべてのジョブの条件に手を入れることになる
+# - **ci.yml には相乗りさせない。** pull_request の dequeued を足すと ci-check まで
+#   起動し、すべてのジョブの条件に手を入れることになる
 #
 # **必須チェックには入れない。** 掃除が落ちても、今のグループの検証の可否は変わらない。
 #

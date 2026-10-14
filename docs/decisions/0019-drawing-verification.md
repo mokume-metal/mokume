@@ -199,6 +199,24 @@ SPDX-License-Identifier: MIT
 - **開いている Issue を閉じて済ませる** — いまの 1 件は解けるが、次に着手中の Issue が開いたままになれば同じ形が再び起きる
 - **専用機の定期の検査だけ追記する** — 他の呼び手も同じ重複抑止を通り、同じ形で黙る。呼び手ごとに選ばせる口を足すほどの違いが無い
 
+#### 改訂 (2026-10-14) — release の赤は merge の前ではなく、版を出す前と定期で止める
+
+**当初は、ホストの release の検査 (`make test-release`・GPU なし・下限 OS の `macos-26`) を merge queue の必須にしていた** (`ci.yml` の `test-release`・`ci-gate` の `needs`)。GPU を要する release は上の定期 (D) が見て、GPU を要さない release は merge の前に止める分担だった。この検査は group ごとに約 12 分のホストの macOS を使い、queue の律速の 63% を占めていた ([#2610](https://github.com/mokume-metal/mokume/issues/2610) の判断 2)。
+
+**ホストの release の検査は `release.yml` の `release-check` に移し、版にする SHA そのものを検査して、緑のときだけタグを打つ** ([#2662](https://github.com/mokume-metal/mokume/issues/2662))。出すものが無い日も走るので、ホストの日次の検査を兼ねる。落ちた・切れた回は、`release-check-report` が `scripts/report-check-failure.sh` で起票する (開いていれば追記する)。権限の分け方は上の D と同じで、検査を走らせるジョブは `issues: write` を持たない。GPU を要する release は、これまでどおり専用機の定期 (`scheduled-release`) が見て、版の関門にはしない。GPU の停止という環境の故障で版が止まり、6 時間おきの SHA も版の SHA と一致しないためである。
+
+あわせて、**GPU の待ちが期限を越えた回は、報告が「環境で成り立たなかった」と先に名乗る** (`scripts/read-test-record.py --failure-messages`)。期限を越えるとプロセスの関所が閉じ、以後の GPU の検査はすべて `gpuNotResponding` で落ちる。2026-10-13 09:20Z の定期の release では 2,108 件がそうなり、要約の先頭 80 件が巻き込みで埋まって、引き金の期限切れも release 固有の赤も載らなかった。関所の分は件数と 1 例に畳み、本物の赤を先に並べ、その周期の保証が欠けていることを言う。
+
+**代償**: release でだけ出る赤は main に入りうる。気付くのは、次の日次の `release-check` (版を出す時) か、専用機の 6 時間おきの定期である。日次の 1 回には前の版からの PR が並ぶので、原因の PR を絞る手間が増える。赤の間は版が出ない (`release:now` の出し直しも関門を通る)。版が出るのは約 15 分遅れる。ホストの macOS の消費は 1 日に約 15 分増え、merge_group ごとの約 12 分が減る。
+
+退けた案 (2026-10-14 にメンテナが比べた):
+
+- **merge queue の必須に残す** — main にも版にも赤が入らないが、queue の律速が残る。いまの形でも GPU を要する release は merge の前に走っておらず、[#1086](https://github.com/mokume-metal/mokume/issues/1086) はこの経路で入った
+- **release に効かない変更の group だけ飛ばす** — 2026-09-30 以降の main の 251 コミットのうち、Sources・Tests・Makefile 等に触れるのは 183 で、飛ばせるのは約 27% だけだった。分け方を誤ると穴になる
+- **release のビルドを速くする** ([#2596](https://github.com/mokume-metal/mokume/issues/2596)) — 効果は実測まで分からず、キャッシュの誤りは偽の緑になる
+- **専用機の merge queue の検査で release も走らせる** — GPU の分も含めて merge の前に止まるが、1 台の専用機の所要が group ごとに約 8 分延びる。下限 OS の分は別に要る
+- **`ci.yml` の `test-release` に日次の schedule を足す** (当初の #2662) — 日次の検査の後から版を出すまでに merge された分が、下限 OS の release を通らないまま版に入る
+
 #### 専用機へ積む順番は、GitHub ホストの門番が決める ([#2062](https://github.com/mokume-metal/mokume/issues/2062))
 
 **専用機の runner は、queued の job を先着順に拾わない。** 2026-10-04 の実測では、queue の先頭の `render` が待つ間に、専用機は後から積まれた job を 6 本 (`render-pr` 4・後ろの group の `render` 2) と 7 本 (`render-pr` 2・後ろの group の `render` 5) 拾った。先頭の `render` は一度も拾われないまま queue の期限 (60 分) を越えて弾かれ、後ろの group がまとめて組み直しになった ([#2038](https://github.com/mokume-metal/mokume/issues/2038)・[#2040](https://github.com/mokume-metal/mokume/issues/2040))。

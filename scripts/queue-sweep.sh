@@ -9,7 +9,8 @@
 #
 # merge queue はグループを作り直したり PR を外したりしても、**古いグループの
 # merge_group run を cancel しない**。捨てられた run は macOS の枠を使い続け
-# (1 回の検証で ci-check と test-release の 2 本)、今のグループの検証を待たせる。
+# (1 回の検証で ci-check。2026-10 に release.yml へ移すまでは test-release も)、今のグループの
+# 検証を待たせる。
 # 2026-09-15 には 1 日に 2 回起き、どちらも merge が 30〜50 分止まった (#1265)。
 #
 # ## 捨てられたかどうかは ref で分かる

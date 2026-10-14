@@ -45,7 +45,8 @@
 # 検査スクリプトに起票を足すと、手元で打っただけで Issue が立つ。
 #
 # 呼び手は scripts/report-ruleset-drift.sh / scripts/report-dead-assets.sh /
-# scripts/report-scheduled-render.sh / scripts/report-runner-environment.sh、
+# scripts/report-scheduled-render.sh / scripts/report-runner-environment.sh /
+# scripts/report-release-check.sh、
 # 検査は scripts/tests/report_check_failure_test.py。
 set -euo pipefail
 
