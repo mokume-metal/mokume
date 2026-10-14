@@ -38,6 +38,16 @@ release_workflow_test.py)。ここで固定するのは次の 2 つ:
 書き出して抜ける (駆動役も段も走らない)。各ジョブの `CI_CHECK_HOST` と `CI_CHECK_SKIP` は
 ci.yml から読む。並びの写しをここに持たない。
 
+**作法の検査は ci.yml に居ない (#2611・#2669)。** タイトル・マージ判定・絵は pr-gate.yml の
+必須チェック pr-gate が持つ。ここで固定するのは次の 3 つ:
+
+  9. ci.yml は作法のためのイベント (labeled・unlabeled・pull_request_review) で起きない。
+     edited は base の変更のためだけに居る
+  10. 段を走らせる 2 つのジョブは、本文・タイトルだけの edited で走らず、base を変えた edited と
+      opened / synchronize / reopened・merge_group で走る (`if:` を評価して見る)
+  11. ci-gate はコードの検査だけを待ち、ペイロードの可変な欄 (title / body / labels) を読む
+      ジョブが ci.yml に無い — 戻すと、直す前の run の赤い ci-gate が同じコミットに残る (#2134)
+
 ワークフローの読み手 (split / needs / condition) は render_workflow_test.py のものを使う
 (写しを持たない)。実行は make hooks-test (CI もこれを呼ぶ)。
 """
@@ -117,6 +127,29 @@ def skip_of(body: str, event: str) -> str:
     return q.group(1) if event == "merge_group" else ""
 
 
+def evaluate(cond: str, event: str, action=None, base=None) -> bool:
+    """`if:` の式を、event・action・changes.base を与えて評価する。
+
+    読めるのは ci.yml が使う形 (`github.event_name`・`github.event.action`・
+    `github.event.changes.base` の比較と `||`・`&&`・`!`) だけで、知らない語があれば止まる。
+    Actions の式で null と文字列の `!=` は真になる (Python の None != '...' と同じ)。
+    """
+    names = {
+        "github.event_name": repr(event),
+        "github.event.action": repr(action),
+        "github.event.changes.base": repr(base),
+    }
+    expr = cond
+    for name, value in names.items():
+        expr = expr.replace(name, value)
+    expr = expr.replace("||", " or ").replace("&&", " and ")
+    expr = re.sub(r"!(?!=)", " not ", expr)
+    leftover = re.sub(r"'[^']*'|\b(or|and|not|None)\b|[(){}:,!=\s]", "", expr)
+    if leftover:
+        raise AssertionError(f"if: の式に読めない語がある: {leftover!r} ({cond})")
+    return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 — 上で語を絞った
+
+
 class CiWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -156,6 +189,55 @@ class CiWorkflowTest(unittest.TestCase):
 
     def test_ci_gate_は段を走らせる_2_つのジョブを待つ(self):
         self.assertTrue({"ci-check", "ci-static"} <= workflow.needs(self.jobs["ci-gate"]))
+
+    # --- 作法の検査は ci.yml に居ない (#2669) ---------------------------------
+
+    def test_作法のためのイベントでは起きない(self):
+        top, _ = workflow.split(CI.read_text(encoding="utf-8"))
+        triggers = set(re.findall(r"^  ([a-z_]+):", top["on"], re.M))
+        self.assertEqual(triggers, {"pull_request", "merge_group"})
+        types = re.search(r"(?m)^    types: \[(.*)\]\s*$", top["on"]).group(1)
+        self.assertEqual(
+            {s.strip() for s in types.split(",")}, {"opened", "synchronize", "reopened", "edited"}
+        )
+
+    def test_段を走らせるジョブは作法だけの_edited_で走らず_base_の変更で走る(self):
+        cond = workflow.condition(self.jobs["ci-check"])
+        runs = {
+            "opened": evaluate(cond, "pull_request", "opened"),
+            "synchronize": evaluate(cond, "pull_request", "synchronize"),
+            "reopened": evaluate(cond, "pull_request", "reopened"),
+            "edited (base)": evaluate(cond, "pull_request", "edited", {"ref": {"from": "main"}}),
+            "merge_group": evaluate(cond, "merge_group"),
+        }
+        self.assertEqual([k for k, v in runs.items() if not v], [], "走るべき起動で走らない")
+        self.assertFalse(evaluate(cond, "pull_request", "edited"), "本文・タイトルの編集で走る")
+
+    def test_ci_gate_はコードの検査だけを待つ(self):
+        self.assertEqual(workflow.needs(self.jobs["ci-gate"]), {"ci-check", "ci-static"})
+        for gone in ("pr-title", "review-gate", "drawing-evidence"):
+            self.assertNotIn(gone, self.jobs)
+
+    def test_ペイロードの可変な欄を読むジョブが無い(self):
+        text = CI.read_text(encoding="utf-8")
+        body = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+        for field in ("title", "body", "labels"):
+            self.assertNotIn(f"github.event.pull_request.{field}", body, field)
+
+
+class EvaluateTest(unittest.TestCase):
+    """式の読み手そのものの検査 — 壊れた読み手は、上の検査を黙って緑にする。"""
+
+    def test_比較と論理を読む(self):
+        cond = "github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base"
+        self.assertTrue(evaluate(cond, "merge_group"))
+        self.assertFalse(evaluate(cond, "pull_request", "edited"))
+        self.assertTrue(evaluate(cond, "pull_request", "edited", {"ref": {}}))
+        self.assertFalse(evaluate("!(github.event_name == 'merge_group')", "merge_group"))
+
+    def test_知らない語で止まる(self):
+        with self.assertRaises(AssertionError):
+            evaluate("github.event.pull_request.draft", "pull_request")
 
 
 @unittest.skipUnless(MAKE, "make が PATH に無い")

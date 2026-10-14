@@ -18,10 +18,9 @@ pr-gate は PR の作法 (タイトル・マージ判定・描画の絵) を、�
   5. 権限は読むだけ (contents / issues / pull-requests の read)。秘密を持たない
   6. ペイロードの可変な欄 (title / body / labels) を読まない — rerun が古い値を再生しない (#699)
   7. 3 つの判定はどの起動でも走り、前が赤でも後ろが走る。continue-on-error で赤を化かさない
-  8. タイトルの照合は API で読んだタイトルに当たり、Conventional Commits の type だけを通す
-  9. 重なっている間 (#2669 まで)、ci.yml の pr-title と照合の正規表現が字句で一致し、失敗の
-     文面が ci.yml の側に残る赤の消し方を添える — 割れると、同じタイトルに 2 つの必須が別の
-     答えを返し、片方の直し方しか案内されない
+  8. タイトルの照合は API で読んだタイトルに当たり、Conventional Commits の type だけを通す。
+     落ちたときの文面は、直せば付け直されると言い、新しいコミット (空コミット) を案内しない —
+     作法の検査が ci.yml の ci-gate から外れた (#2669) ので、古い赤を外す手は要らない
 
 PR と queue で実際に結論が返ることは、使い捨ての Draft PR で確かめる (#2668 の PR 本文)。
 ワークフローの読み手 (split / condition) は render_workflow_test.py のものを使う (写しを持たない)。
@@ -42,7 +41,6 @@ import render_workflow_test as workflow
 REPO = Path(__file__).resolve().parents[2]
 GATE = REPO / ".github" / "workflows" / "pr-gate.yml"
 RULESET = REPO / ".github" / "rulesets" / "main-protection.json"
-CI = REPO / ".github" / "workflows" / "ci.yml"
 
 CHECKS = ("pr-title (Conventional Commits)", "review-gate", "drawing-evidence")
 
@@ -107,7 +105,7 @@ class PrGateWorkflowTest(unittest.TestCase):
         required = next(r for r in rules if r["type"] == "required_status_checks")
         contexts = {c["context"] for c in required["parameters"]["required_status_checks"]}
         self.assertIn("pr-gate", contexts)
-        # 段 (i)・(ii) では ci-gate を残す (#2611 の条件 3)。外すのは段 iv (#2669)
+        # ci-gate はコードの検査の必須として残る (#2669 で外したのは作法の検査だけ)
         self.assertIn("ci-gate", contexts)
 
     def test_判定は既定ブランチの版で走らせる(self):
@@ -198,38 +196,13 @@ class TitleCheckTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn("Conventional Commits ではない", r.stderr)
 
-
-def title_pattern(script):
-    """`grep -qE '<正規表現>'` の正規表現。"""
-    m = re.search(r"grep -qE '([^']+)'", script)
-    if not m:
-        raise ValueError("タイトルの照合が見つからない")
-    return m.group(1)
-
-
-class OverlapWithCiTest(unittest.TestCase):
-    """ci.yml の pr-title と重なっている間 (#2669 まで) の検査。
-
-    **#2669 で ci.yml の pr-title が消えたら、このクラスごと外す。** 消えた後に残すと、
-    無い相手との一致を見に行って赤になる (それで外し忘れに気付ける)。
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        _, gate = workflow.split(GATE.read_text(encoding="utf-8"))
-        _, ci = workflow.split(CI.read_text(encoding="utf-8"))
-        cls.gate_title = run_block(step_named(gate["pr-gate"], CHECKS[0]))
-        cls.ci_title = ci["pr-title"]
-
-    def test_タイトルの照合は_ci_yml_の_pr_title_と字句で一致する(self):
-        self.assertEqual(title_pattern(self.gate_title), title_pattern(self.ci_title))
-
-    def test_失敗の文面は_ci_yml_の側に残る赤の消し方を添える(self):
+    def test_落ちた文面は付け直されると言い_新しいコミットを案内しない(self):
+        r, _ = self.check("Initial commit")
+        self.assertEqual(r.returncode, 1, r.stdout)
         squash = lambda t: re.sub(r"\s+", "", t)  # noqa: E731
-        text = squash(self.gate_title)
-        self.assertIn(squash("打ち直しは要らない"), text)
-        self.assertIn(squash("作法の検査が ci.yml の ci-gate からも外れるまで (#2669)"), text)
-        self.assertIn(squash("新しいコミットを push して run を作り直す"), text)
+        self.assertIn(squash("pr-gate はその run で付け直される (打ち直しも新しいコミットも要らない)"), squash(r.stderr))
+        for gone in ("空コミット", "ci-gate", "新しいコミットを push"):
+            self.assertNotIn(gone, r.stderr, gone)
 
 
 class StepsReaderTest(unittest.TestCase):

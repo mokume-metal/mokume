@@ -95,9 +95,13 @@ Bug を閉じる PR については、[ADR-0040](0040-bugs-as-broken-promises.md
 
 **捨てたもの**: 判定を変える PR が、その変更をその PR 自身で試せること。判定の変更は merge の後の PR から効く。
 
-**脱出口**: ゲートが壊れていて、それを直す PR も同じゲートで赤になるときは、その PR の中で `ci.yml` の該当ジョブから `ref` の行を外す。外した行は後続の PR で戻す。
+**脱出口**: ゲートが壊れていて、それを直す PR も同じゲートで赤になるときは、その PR の中で `.github/workflows/pr-gate.yml` の `pr-gate` ジョブの checkout から `ref` の行を外す。外した行は後続の PR で戻す。
 
 **→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) で承認が無くなり、この脱出口は人を一度通さなくなった (同 ADR の影響)。**
+
+#### 改訂 (2026-10-14) — 決定 2 の判定を走らせる置き場を `pr-gate.yml` へ移す
+
+当初 (2026-10-03 の改訂) は、`review-gate` と `drawing-evidence` を `.github/workflows/ci.yml` の別々のジョブとして走らせ、コードの検査と同じ必須チェック `ci-gate` がそれらを待っていた。脱出口も `ci.yml` の該当ジョブの `ref` の行だった。[#2611](https://github.com/mokume-metal/mokume/issues/2611) で PR の作法の検査をコードの検査と別の必須チェックに分け、[#2669](https://github.com/mokume-metal/mokume/issues/2669) で `ci.yml` から外した。いまは `.github/workflows/pr-gate.yml` の `pr-gate` ジョブの step として走る。分けた理由は、作法を直して新しい run が緑になっても、直す前の run の赤い `ci-gate` が同じコミットに残り、必須チェックを赤のままにしたことである ([#2134](https://github.com/mokume-metal/mokume/issues/2134))。既定ブランチの版を checkout して判定する形と、脱出口の形 (checkout の `ref` の行を外す) は変わらない。
 
 ### 3. 1 PR の粒度を「1 つの説明で筋が通る範囲」とする
 
