@@ -59,7 +59,7 @@ SPDX-License-Identifier: MIT
 理由は、決まった 2 つの道 ([ADR-0045](0045-game-direction.md)) が main actor の外で値を使うことにある。
 
 1. **外部サービスの結果を `ExternalQueue` で送る** (ADR-0045 決定 12)。どのスレッドからでも送れる約束なので、通信の完了ハンドラの中で `Vector2(x, y)` を作る。main actor の型だとコンパイルエラーになる
-2. **リプレイの記録** (ADR-0045 決定 10)。出来事に `Codable` を求める。main actor の型の `Codable` は隔離された適合になり、main の外では使えない
+2. **リプレイの記録** (ADR-0045 決定 10)。記録できるのは `Codable` な値である ([ADR-0028](0028-external-inputs.md) 決定 6 の改訂)。main actor の型の `Codable` は隔離された適合になり、main の外では使えない
 
 足した後で外すと、適合と初期化子の形が変わって作り直しになるので、足す前に決めた。
 

@@ -71,7 +71,7 @@ func mouseWheel() { size += scrollY * 4 }   // 1 フレームに 3 件届けば 
 
 ### 1. キーは自前の型で指す。綴りは手本のまま、値の体系だけ正直にする
 
-`Key` を面に出し、`Sketch/keyCode` と `isKeyDown(_:)` の両方をこの型で揃える。
+`Key` を面に出し、`Sketch/keyCode` と `isKeyDown(_:)` の両方をこの型で揃える。`isKeyDown(_:)` は、決定 7 で `keyboard.isPressed(_:)` へ移す。
 
 ```swift
 if keyCode == .space { ... }
@@ -206,7 +206,7 @@ if startButton.justPressed { startGame() }   // 左の釦がこのフレーム�
 
 - **入力の種類ごと (`keyboard`・`mouse`・パッド) に問い合わせる。** トップレベルの `justPressed(.left)` を重ねて定義すると、`.left` がマウスの釦に解決される (矢印キーは `.arrowLeft`)。矢印キーのつもりでも黙ってマウスとして動くので、入力の種類で分け、取り違えをコンパイルの時点で起こす。`keyboard` / `mouse` は `SketchPart` を名乗った型の中でも読める ([ADR-0020](0020-api-naming-and-surface.md) 決定 7)
 - **`isKeyDown(_:)` は `keyboard.isPressed(_:)` へ移す** (0.x の破壊的変更)。`isMousePressed` も、マウスの語を入れるときに `mouse.` へ移し、正本を 2 つにしない
-- 3 つの語の判定は、フレームごとの入力の状態から決める。外から注入した入力でも、記録を流し直すリプレイでも、同じ結果になる
+- 3 つの語の判定は、フレームごとの入力の状態から決める。外から注入した入力でも、記録を流し直すリプレイでも、同じ結果になる。ただしゲームパッドは、いまは入り口 (`Inlet.supply()`) を通ってこの入力の状態を通らないので、パッドに語を足すときに同じ経路へ揃える
 
 **挙動:**
 
@@ -228,6 +228,7 @@ if startButton.justPressed { startGame() }   // 左の釦がこのフレーム�
 
 ## 影響
 
+- **決定 7 で、破壊的変更がさらに 3 つ出る。** `isKeyDown(_:)` と `isMousePressed` は `keyboard.` / `mouse.` へ移り、`keyPressed()` はキーリピートで連射しなくなる。どれも 0.x なので minor で出る
 - **破壊的変更が 1 つ出る。** `isKeyDown(_ code: Int)` は落ちる。0.x では形が動くことを織り込んでいるので minor で出る (AGENTS.md「版の出方」)
 - **`keyCode` は `Key?` になる。** 何も押されていないときに返す値が要るが、`Key(rawValue: 0)` は A のキーであって「無い」ではない — 外から送る `code` の 0 を埋めない理由 ([#322](https://github.com/mokume-metal/mokume/issues/322)) と、向きが揃っている
 - **押しても離しても入れ替わる。** `keyReleased()` の中から「どのキーが離されたか」を知る口が他に無いので、`keyUp` でも更新する (p5 の `keyCode` と同じ挙動)

@@ -41,7 +41,7 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 ### 1. 名前は、手本があればそれに従い、無ければ Swift の慣行に従う (2026-09-03 改訂)
 
-- **手本がある**とは、Processing または p5.js のリファレンスに**同名または同義の API が存在する**ことをいう。その場合は**名前と引数の順序**をそのまま採る
+- **手本がある**とは、Processing または p5.js のリファレンスに**同名または同義の API が存在する**ことをいう。その場合は**名前と引数の順序**をそのまま採る (2026-10-14 の改訂で、手本は出発点になった。いまの規則は下の「手本は出発点」の段の 1〜5)
 - 手本が無いものは Swift API Design Guidelines に従う
 - **この規則が効くのは利用者が最初に触る層だけ**。下の層は常に Swift の慣行を正とする
 
@@ -64,31 +64,36 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
    - (a) 同じ名前で意味や値の体系が違ってしまう (同名異義。写すと黙ってずれる)
    - (b) 手本自体が分かりにくい・誤解を招く (`keyPressed()` の連射、11 個の位置引数など)
    - (c) Swift で書けない
-3. **値型と mokume の型のメンバーは、Swift の慣行に従う。** ラベルを付け、略さず、新しい値を返すものは過去分詞にする。手本での名前は説明文で名乗る。`circle()` と `Circle`、`dist()` と `a.distance(to:)` は、規則 1 と 3 の使い分けである
+3. **値型と mokume の型のメンバーは、Swift の慣行に従う。** ラベルを付け、略さず、新しい値を返すものは過去分詞にする。手本での名前は説明文で名乗る。`circle()` と `Circle`、`dist()` と `a.distance(to:)` は、規則 1 と 3 の使い分けである。**手本に同じ型があるもののメンバー** (`TCPServer` の `write`・`Image` の大きさを変える口) は規則 1 で手本の名前を既定にし、規則 2 に当たるときに規則 3 の形へ改める (下の当てはめの `resized`)
 4. **型の名前は、手本に近い普通の英単語にする。** Foundation と衝突する名前は取らない (`Timer` など。スケッチはほぼ全部 `import Foundation` するので、曖昧さのエラーが全員に出る)。SwiftUI と衝突する名前は取ってよい (`Circle`・`Font`。既存の `Image`・`Shape` と同じ扱い。衝突するのは埋め込むファイルだけで、`mokume.Circle` と書けば解ける)
 5. 手本の名前から mokume の口は、どれも手本からの索引 ([#2437](https://github.com/mokume-metal/mokume/issues/2437)) で引ける
 
 **手本に無い値型の名前**は、対応する描画関数の名前を大文字で始めたものにする (`circle()` → `Circle`・`rect()` → `Rect`・`box()` → `Box`)。`Rect` は略語だが、グラフィックスで定着した語 (`CGRect`) で、`rect()` と対になるので採る。ベクトルは `Vector2` / `Vector3` (Processing の `PVector` と p5 の `p5.Vector` に共通する語に次元を名乗らせる)、時間の値は `Stopwatch` と `Countdown` にする。値型の形 (ラベル・見た目・判定) は [ADR-0045](0045-game-direction.md) 決定 5〜8 が持つ。
 
-**値の体系が手本どうしで割れているか、分かりにくいときも、規則 2 で改めてよい。** 例として、刻みの時間 `deltaTime` は秒の `Float` にする。ゲームの手本 (Unity・Godot・LÖVE・raylib) が秒で、mokume の時間もすべて秒だからである。p5.js (ミリ秒) との違いは説明文で名乗る ([#1572](https://github.com/mokume-metal/mokume/issues/1572))。
+**値の体系の選び方は、上の「手本が割れているとき」の段に従う。** ゲームの語彙では、ゲームの手本も物差しに入る。例として、刻みの時間 `deltaTime` は秒の `Float` にする ([#1572](https://github.com/mokume-metal/mokume/issues/1572))。
+
+- 秒で渡すのは Unity (`Time.deltaTime`)・Godot (`delta`)・LÖVE (`dt`)・raylib (`GetFrameTime()`)・Bevy で、ミリ秒は p5.js と Phaser くらいである。Processing には `deltaTime` が無い。mokume の時間 (`time`・`Countdown`) もすべて秒である
+- **代償:** p5.js から写した `x += 0.2 * deltaTime` は型では止まらず、1000 倍遅くなってほとんど動かない。誤りは吹き飛ぶ側ではなく止まって見える側に出るので、目で気付ける。説明文の冒頭と手本からの索引で直し方を示す
+- **退けた案:** `deltaTime.seconds` で読む値型 (2026-10-04 に一度選んだ。いちばん書かれる `x += speed * deltaTime` が全員ぶん長くなる)・名前を変える (手本の名前で探しても見つからない)・ミリ秒にする (既存の利用者がコンパイルの通ったまま 1000 倍ずれる)
 
 当てはめた例 (2026-10-14):
 
 | 口 | 決定 | 規則 |
 | --- | --- | --- |
-| `PI`・`TWO_PI`・`shuffle(配列)`・`dist`・`sq`・`makeShader` | 手本の名前のまま | 1 |
+| `PI`・`TWO_PI`・`shuffle(配列)`・`dist`・`sq` | 手本の名前のまま | 1 |
+| `makeShader` | 手本の名前 `createShader` に改める (`createGraphics` などとも揃う) | 1 |
 | `Image` の大きさを変えて新しい値を返す口 | `resized(width:height:)`。Processing の `resize` は自分を変えるので、同じ名前だと同名異義になる | 2a・3 |
 | 書体の型 | `Font` | 4 |
 | `textOutline` | 改名しない。p5.js の `textToContours` は等間隔の点、mokume は折れ目の点を返す | 2a |
 | `spotLight` の `angle:` | ラベルを残す | 2b |
-| 押下の語 | `isKeyDown` を `keyboard.isPressed` へ移す ([ADR-0034](0034-input-surface-units.md) 決定 7) | 2a・2b |
+| `isKeyDown`・`isMousePressed` | 手本の `keyIsDown`・`mouseIsPressed` へ改名せず、押下の 3 語 (`keyboard.isPressed` ほか) へ移す ([ADR-0034](0034-input-surface-units.md) 決定 7) | ADR-0034 決定 7 |
 
 **代償:** Swift の命名に慣れた人には、`TWO_PI` (大文字) や、新しい配列を返す `shuffle` が慣行から外れて見える。外れるのは関数の層だけで、理由はこの段にある。
 
 **退けた案:**
 
 - **関数の層も Swift の慣行に寄せる** (`tau`・`shuffled`)。手本の綴りで書く学生と AI が赤に当たり、索引を引かないと書けなくなる
-- **Siv3D を名前の手本にする。** 借りるのは「値が振る舞いを持つ」という考え方だけにする。手本 (Processing / p5.js) と名前の体系が違い、2 つの手本の名前が混ざる
+- **Siv3D を名前の手本にする。** 借りるのは「値が振る舞いを持つ」という考え方だけにする ([#2580](https://github.com/mokume-metal/mokume/issues/2580) の論点 2)。学生と AI が写して探すのは Processing / p5.js の名前である (規則 1 の理由)
 - **当初の決定のまま、手本があれば名前と引数の順序を字義どおり採る。** 手本の分かりにくい部分 (連射する `keyPressed()`・`rectMode` で意味が変わる座標) まで新しい語彙へ持ち込む
 
 **当初の決定**は「手本があれば名前と引数の順序をそのまま採る」で、例外を置いていなかった。ゲームも書ける方向 ([ADR-0045](0045-game-direction.md)) で手本に無い値型を多く足すことになり、手本の分かりにくい部分を引き継ぐかを問われた。メンテナの方針は「Processing の微妙な部分を引き継ぐ必要はない」である ([#2580](https://github.com/mokume-metal/mokume/issues/2580))。手本の名前で探せることの価値は動いていないので、規則 1 で既定に残した。
