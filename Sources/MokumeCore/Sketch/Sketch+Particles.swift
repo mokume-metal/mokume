@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 粒。
-extension Sketch {
+extension SketchPart {
     /// 粒を用意する。**同時に持てる数をここで決める。**
     ///
     /// <!-- example: 文脈 var dust: Particles! -->

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 保持した形。
-extension Sketch {
+extension SketchPart {
     /// 形を組み立てて保持する。**毎フレーム組み立て直さずに済む。**
     ///
     /// 組み立てるのは `setup()` で 1 度だけ。`draw()` では、保持した形を ``shape(_:_:_:)`` で

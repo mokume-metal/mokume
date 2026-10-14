@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // モデル。
-extension Sketch {
+extension SketchPart {
     /// 外で作ったモデルを読む。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var head: Model? -->

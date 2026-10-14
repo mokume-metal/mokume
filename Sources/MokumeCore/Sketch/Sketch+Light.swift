@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 光。
-extension Sketch {
+extension SketchPart {
     /// 全体を底上げする光を置く。向きを持たないので、どの面も同じだけ明るくなる。
     ///
     /// **色そのものが明るさの倍率**である。`1.0` は「その光を正面から受けた白い面が

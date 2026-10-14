@@ -6,7 +6,7 @@ import MokumeDiagnostics
 // 進行を止める・戻す・1 枚だけ描き直す。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     /// 以後 ``draw()`` を呼ばない。
     ///

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 影。
-extension Sketch {
+extension SketchPart {
     /// 影を落とすかどうか。既定は落とさない。
     ///
     /// 落とすのは**置いてあるうちの最初の向きを持つ光** (``directionalLight(_:_:_:_:)``)

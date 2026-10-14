@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-extension Sketch {
+extension SketchPart {
     /// 全体を底上げする光を、素の数値で置く。**目盛りは 0–255** ([ADR-0033] 決定 1)。
     ///
     /// 0…1 で書く (1 を超える明るさも書ける) のは ``LinearRGBA`` を受ける同じ名前の口

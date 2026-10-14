@@ -6,7 +6,7 @@
 // 読み解きは ``SVGFile``、形にするのは面 (``Canvas``) の記録で、どちらも公開しない。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
     /// SVG のファイルを読み、保持した形 (``Shape``) にする。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var logo: Shape? -->

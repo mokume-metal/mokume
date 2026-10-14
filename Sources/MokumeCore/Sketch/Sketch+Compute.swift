@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 描く前の計算。
-extension Sketch {
+extension SketchPart {
     /// 数の並びを用意する。**CPU と GPU で同じものを見る。**
     ///
     /// 下は、長さ (`count`) を 4・8・16 と動かした並びを作り、`setup()` で CPU から明るさの段を

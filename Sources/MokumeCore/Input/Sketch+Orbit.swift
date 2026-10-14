@@ -4,7 +4,7 @@
 import simd
 
 // 引きずって回し、スクロールで寄る。
-extension Sketch {
+extension SketchPart {
 
     /// 引きずって回し、スクロールで寄れるようにする。
     ///
@@ -99,7 +99,8 @@ extension Sketch {
             }
             return runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         }
-        set {
+        // 部品 (struct) から書いても、書く先は走っているスケッチで、部品の値は変わらない
+        nonmutating set {
             guard let runtime = runningSketch else { return }
             var orbit = newValue
             orbit.clampToLimits()

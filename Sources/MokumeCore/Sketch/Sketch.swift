@@ -17,7 +17,7 @@
 /// しているので、スケッチもそこに乗る ([ADR-0010] 決定 1)。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
-public protocol Sketch: AnyObject {
+public protocol Sketch: AnyObject, SketchPart {
     /// 引数なしで作れること。
     init()
 
@@ -459,7 +459,7 @@ enum LaunchingSketch {
     @TaskLocal static var canvas: Canvas?
 }
 
-extension Sketch {
+extension SketchPart {
     /// いま描いている面。
     public var canvas: Canvas { Self.requireRuntime().canvas }
 

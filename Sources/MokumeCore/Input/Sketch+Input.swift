@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-extension Sketch {
+extension SketchPart {
     /// いまの位置 (横)。
     ///
     /// **単位は描く解像度の画素で、窓の大きさによらない。** 窓を大きくしても縮めても、

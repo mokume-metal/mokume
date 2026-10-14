@@ -150,7 +150,7 @@ extension NSScreen {
     }
 }
 
-extension Sketch {
+extension SketchPart {
     /// いま繋がっているディスプレイ。番号 (``Display/number``) の順に並ぶ。
     ///
     /// ```swift

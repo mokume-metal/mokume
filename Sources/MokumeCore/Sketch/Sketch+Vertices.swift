@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、頂点を並べて作る形。
-extension Sketch {
+extension SketchPart {
     /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
     ///
     /// **同じ点の並びが、読み方 (``VertexKind``) で別の絵になる。** 下の 7 枚はどれも

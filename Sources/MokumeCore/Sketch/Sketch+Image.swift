@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 画像。
-extension Sketch {
+extension SketchPart {
     /// 絵を読む。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var grain: Image? -->

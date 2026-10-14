@@ -13,7 +13,7 @@ import Foundation
 // ファイルだけを読む — URL から読む作例がまだ無い (#2070)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     // MARK: - 文字列
 

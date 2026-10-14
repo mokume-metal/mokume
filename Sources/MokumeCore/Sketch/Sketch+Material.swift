@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 表面の質感。
-extension Sketch {
+extension SketchPart {
     /// 艶の鋭さ。**0 なら艶を出さない** (既定)。
     ///
     /// 数が大きいほど艶は小さく鋭くなり、小さいほど広くぼやける — 粗い表面ほど

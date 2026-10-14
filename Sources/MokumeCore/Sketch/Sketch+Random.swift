@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 乱数と揺らぎ。
-extension Sketch {
+extension SketchPart {
     /// 0 以上 1 未満の値。**呼ぶたびに列が進む。**
     ///
     /// **種を決めなくても、走らせるたびに同じ列が出る。** 時刻から種を作らないため

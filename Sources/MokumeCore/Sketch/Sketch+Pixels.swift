@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 画素。
-extension Sketch {
+extension SketchPart {
     /// 描いた結果を画素として読み書きする面。
     ///
     /// 下の例は、同じ橙色の円を 2 つ描いたあと、**左半分の画素だけ**を読んで、成分を

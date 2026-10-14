@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-extension Sketch {
+extension SketchPart {
     /// カーソルを捕まえる。捕まえている間はカーソルが隠れてその場に留まり、**手を動かした量
     /// だけが届き続ける** — 画面の端で止まらない。
     ///

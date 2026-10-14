@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 立体。
-extension Sketch {
+extension SketchPart {
     /// 立方体を置く。
     ///
     /// 中心は原点で、大きさは画素で数える。**何も指定しなければ画素の大きさで

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、座標の変換。
-extension Sketch {
+extension SketchPart {
     /// 原点をずらす。
     ///
     /// **図形の座標は変えない。** ずらすのは原点のほうで、同じ `square(0, 0, 80)` が

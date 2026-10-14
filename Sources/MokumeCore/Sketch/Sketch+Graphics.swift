@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 描き場所と、貼る絵。
-extension Sketch {
+extension SketchPart {
     /// 画面とは別の描き場所を作る。**焼いた絵を置いたり、重ねたり、積み上げたりできる。**
     ///
     /// <!-- example: 文脈 var trail: Canvas! -->
