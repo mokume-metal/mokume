@@ -450,6 +450,88 @@ struct STLModelTests {
         #expect(Self.scan(none, chunk: chunk) == ModelFile.FacetScan(facets: 1, isWellFormed: false))
     }
 
+    /// **字下げが持ち越す長さ (256 バイト) を超えても、行頭かどうかが区切りで変わらない。** 行頭でない
+    /// 語の前に長い空白が続いても行頭と見ず、行頭の語の前に長い字下げがあっても行頭と見る。
+    @Test("長い字下げをまたぐ語の数は、読む区切りの幅 1〜500 によらず同じ")
+    func facetScanWithLongIndentDoesNotDependOnTheChunk() {
+        let blanks = String(repeating: " ", count: 300)
+        var text = ModelFixture.asciiSTL(Self.tetrahedron)
+        // 行頭でない語 (前に長い空白があっても数えない)
+        text = text.replacingOccurrences(of: "endsolid", with: "x" + blanks + "vertex 1 1 1 endfacet\nendsolid")
+        // 行頭の語 (前に長い字下げがあっても数える)
+        text = text.replacingOccurrences(of: "      vertex 0.0 0.0 0.0", with: blanks + "vertex 0.0 0.0 0.0")
+        let expected = ModelFile.FacetScan(facets: 4, isWellFormed: true)
+        #expect(Self.scan(text, chunk: 1 << 20) == expected)
+        for chunk in 1...500 {
+            #expect(Self.scan(text, chunk: chunk) == expected, "chunk = \(chunk)")
+        }
+    }
+
+    /// 同じ約束を、空白・改行・語・字をでたらめに並べた文字で確かめる (種を固定した疑似乱数)。
+    @Test("でたらめに並べた文字でも、語の数は読む区切りの幅によらず同じ")
+    func facetScanFuzzDoesNotDependOnTheChunk() {
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+        func next(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((state >> 33) % UInt64(bound))
+        }
+        let pieces = ["vertex", "endfacet", "endfacets", "x", " ", "\t", "\u{0B}", "\u{0C}", "\n", "\r", "\n"]
+        for round in 0..<60 {
+            var text = "solid t\n"
+            for _ in 0..<(20 + next(60)) {
+                // 空白の並びを、持ち越す長さの前後 (0〜20・250〜270・300 前後) から選ぶ
+                let blanks = [0, 3, 20, 250, 255, 256, 257, 270, 300][next(9)]
+                text += String(repeating: " ", count: blanks) + pieces[next(pieces.count)]
+                text += next(3) == 0 ? "" : pieces[next(pieces.count)]
+            }
+            let whole = Self.scan(text, chunk: 1 << 20)
+            for chunk in [1, 2, 7, 64, 128, 255, 256, 257, 300, 500] {
+                #expect(Self.scan(text, chunk: chunk) == whole, "round \(round) chunk \(chunk)")
+            }
+        }
+    }
+
+    /// **面の無い文字の判定は、ファイルを全体で載せず断片ごとに見る**が、結果は全体を見るときと同じ。
+    @Test("面の無い文字の判定は、読む断片によらず、行を LF・CR で割って決める")
+    func emptyTextScanMatchesTheWholeFileReading() throws {
+        func reference(_ text: String) -> Bool {
+            let bytes = Array(text.utf8)
+            guard bytes.starts(with: "solid".utf8) else { return false }
+            let lines = bytes.split(whereSeparator: { $0 == 0x0A || $0 == 0x0D }).dropFirst()
+            let blanks: Set<UInt8> = [0x20, 0x09, 0x0B, 0x0C]
+            let trimmed = lines.map { line in
+                Array(line.drop(while: { blanks.contains($0) }).reversed().drop(while: { blanks.contains($0) }).reversed())
+            }.filter { !$0.isEmpty }
+            return trimmed.count == 1 && trimmed[0].starts(with: "endsolid".utf8)
+        }
+        var state: UInt64 = 0x1234_5678_9ABC_DEF1
+        func next(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((state >> 33) % UInt64(bound))
+        }
+        let pieces = ["endsolid", "endsolid t", "end", "solid", "x", " ", "\t", "\u{0B}", "\u{0C}", "\n", "\r", "\r\n", "\n"]
+        var emptyCount = 0
+        for _ in 0..<400 {
+            var text = ["solid t", "solid", "  solid", "solid\u{0C}t"][next(4)]
+            for _ in 0..<next(8) { text += pieces[next(pieces.count)] }
+            if next(2) == 0 { text += "\nendsolid t" + String(repeating: pieces[next(pieces.count)], count: next(3)) }
+            let expected = reference(text)
+            emptyCount += expected ? 1 : 0
+            let data = Data(text.utf8)
+            #expect(ModelFile.isEmptySTL(data) == expected, "\(text.debugDescription)")
+            // 頭の 128 バイトの外へ続く形も (長い名前を足して、続きを断片ごとに読ませる)
+            let padded = "solid " + String(repeating: "n", count: 200 + next(50)) + String(text.dropFirst(5))
+            try withWritten(Data(padded.utf8), as: "empty.stl") { path in
+                let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+                defer { try? handle.close() }
+                let head = try handle.read(upToCount: 128) ?? Data()
+                #expect(ModelFile.isEmptyText(head: head, rest: handle) == reference(padded), "\(padded.debugDescription)")
+            }
+        }
+        // 検体が偏っていない (空と読めるものも、そうでないものも十分に含む)
+        #expect(emptyCount > 20 && emptyCount < 380)
+    }
+
     /// 文字の STL を書き出し、頭の 128 バイトと続きに分けて走査する。
     static func scan(_ text: String, chunk: Int) -> ModelFile.FacetScan? {
         let directory = FileManager.default.temporaryDirectory
@@ -553,6 +635,13 @@ struct STLModelTests {
         case indentedOnce
         /// `solid` の後に改行だけが続く。面も `endsolid` も無く、84 バイト目が改行 (#2391)
         case solidWithoutFacets
+        /// **UTF-16 の文字の STL** (PowerShell 5 のリダイレクト・メモ帳の「Unicode」保存)。ASCII の字の上位
+        /// バイトが 0 なので 84 バイト目 (添字 83) も 0 になり、バイナリと取り違えると、読み手が読み直して
+        /// 12 面・座標 1e-39 級のでたらめな形を返す (726 バイトの 4 面)。UTF-16 は読まない
+        case utf16LittleEndianWithBOM
+        case utf16LittleEndianWithoutBOM
+        case utf16BigEndianWithBOM
+        case utf16BigEndianWithoutBOM
 
         var testDescription: String { rawValue }
 
@@ -661,6 +750,14 @@ struct STLModelTests {
                     byte83: 0x20)
             case .solidWithoutFacets:
                 return STLModelTests.data("solid" + String(repeating: "\n", count: 200), byte83: 0x0A)
+            case .utf16LittleEndianWithBOM:
+                return Data([0xFF, 0xFE]) + whole.data(using: .utf16LittleEndian)!
+            case .utf16LittleEndianWithoutBOM:
+                return whole.data(using: .utf16LittleEndian)!
+            case .utf16BigEndianWithBOM:
+                return Data([0xFE, 0xFF]) + whole.data(using: .utf16BigEndian)!
+            case .utf16BigEndianWithoutBOM:
+                return whole.data(using: .utf16BigEndian)!
             }
         }
     }
@@ -866,6 +963,10 @@ struct STLModelTests {
         case binaryWithoutFaces
         case binaryWithSolidHeader
         case binary
+        /// UTF-16 の文字の STL は、添字 83 が 0 でもバイナリではない (どちらでもない)
+        case utf16LittleEndian
+        case utf16LittleEndianWithBOM
+        case utf16BigEndian
 
         var testDescription: String { rawValue }
 
@@ -895,6 +996,13 @@ struct STLModelTests {
             case .binaryWithSolidHeader:
                 return ModelFixture.binarySTL(STLModelTests.tetrahedron, header: "solid exported")
             case .binary: return ModelFixture.binarySTL(STLModelTests.tetrahedron)
+            case .utf16LittleEndian:
+                return ModelFixture.asciiSTL(STLModelTests.tetrahedron).data(using: .utf16LittleEndian)!
+            case .utf16LittleEndianWithBOM:
+                return Data([0xFF, 0xFE])
+                    + ModelFixture.asciiSTL(STLModelTests.tetrahedron).data(using: .utf16LittleEndian)!
+            case .utf16BigEndian:
+                return ModelFixture.asciiSTL(STLModelTests.tetrahedron).data(using: .utf16BigEndian)!
             }
         }
 
@@ -905,7 +1013,7 @@ struct STLModelTests {
                 return .text
             case .binaryWithoutFaces, .binaryWithSolidHeader, .binary: return .binary
             case .empty, .indentedKeyword, .upperCaseKeyword, .notSTL, .shortBinary, .escapeInNotSTL,
-                .declaresTwoToThe24Faces:
+                .declaresTwoToThe24Faces, .utf16LittleEndian, .utf16LittleEndianWithBOM, .utf16BigEndian:
                 return .unrecognized
             }
         }
@@ -916,6 +1024,31 @@ struct STLModelTests {
         arguments: LayoutSample.allCases)
     func layoutFollowsTheFirst84Bytes(_ sample: LayoutSample) {
         #expect(ModelFile.stlLayout(of: sample.contents) == sample.expected)
+    }
+
+    /// **面の数が 2^24 以上でも、大きさが 84 + 50 × 面の数と等しいバイナリは完全な大きいバイナリ**として
+    /// 読む (800 MB 以上。実際に作ると重いので、頭と大きさだけを渡して見分けを見る)。大きさが合わない
+    /// (切れた) ものは、これまでどおり読めない側のまま。
+    @Test("面の数が 2^24 以上で、大きさが 84 + 50 × 面の数と等しいバイナリは、バイナリと見分ける")
+    func completeLargeBinaryIsBinary() {
+        func header(_ name: String, faces: UInt32) -> Data {
+            var data = ModelFixture.binarySTL([], header: name)
+            data.replaceSubrange(80..<84, with: withUnsafeBytes(of: faces.littleEndian) { Array($0) })
+            return data
+        }
+        for faces: UInt32 in [1 << 24, 1 << 24 + 12345, 238_609_294] {
+            let whole = 84 + 50 * Int(faces)
+            for name in ["mokume test", "solid exported"] {
+                #expect(ModelFile.stlLayout(of: header(name, faces: faces), size: whole) == .binary)
+            }
+            // 1 バイト欠けた・余った (切れた・余りのあるバイナリ) は、バイナリとは言わない
+            #expect(ModelFile.stlLayout(of: header("mokume test", faces: faces), size: whole - 1) == .unrecognized)
+            #expect(ModelFile.stlLayout(of: header("mokume test", faces: faces), size: whole + 1) == .unrecognized)
+            // 見出しが `solid` なら、大きさが合わなければ文字として扱う (面を書いていなければ読めない)
+            #expect(ModelFile.stlLayout(of: header("solid exported", faces: faces), size: whole - 1) == .text)
+        }
+        // 大きさを渡さなければ、これまでの判定 (面の数の最上位のバイトが 0 でなければバイナリでない)
+        #expect(ModelFile.stlLayout(of: header("mokume test", faces: 1 << 24)) == .unrecognized)
     }
 
     // MARK: - Model I/O の判定 (説明が頼る事実)
