@@ -9,8 +9,9 @@ pr-gate は PR の作法 (タイトル・マージ判定・描画の絵) を、�
 
   1. 起動は pull_request (ready_for_review を含む)・pull_request_review・merge_group だけ。
      pull_request_target / workflow_dispatch / push を持たない
-  2. pr-gate は merge_group と Draft でだけ skipped になる — merge_group で報告が無いと queue が
-     期限まで待ち、PR のほかの出来事で skipped になると判定せずに必須を満たす
+  2. pr-gate は merge_group でだけ skipped になる — merge_group で報告が無いと queue が期限まで
+     待ち、PR の出来事 (Draft を含む) で skipped になると判定せずに必須を満たす。Draft を
+     skipped にすると、ready の直後の数秒に判定していない skipped が最新として残る
   3. pr-gate は必須チェックに載っている (main-protection.json)
   4. 判定のスクリプトは既定ブランチの版で走らせる — PR の木 (head / merge ref / base) を
      checkout すると、同じ PR の中で自分を裁く検査を書き換えて通れる (#2001)
@@ -94,11 +95,8 @@ class PrGateWorkflowTest(unittest.TestCase):
             {"opened", "edited", "synchronize", "reopened", "labeled", "unlabeled", "ready_for_review"},
         )
 
-    def test_merge_group_と_Draft_でだけ_skipped_になる(self):
-        self.assertEqual(
-            workflow.condition(self.gate),
-            "github.event_name != 'merge_group' && !github.event.pull_request.draft",
-        )
+    def test_merge_group_でだけ_skipped_になる(self):
+        self.assertEqual(workflow.condition(self.gate), "github.event_name != 'merge_group'")
 
     def test_必須チェックに載っている(self):
         rules = json.loads(RULESET.read_text(encoding="utf-8"))["rules"]

@@ -19,7 +19,8 @@ name: PR gate
 
 on:
   pull_request:
-    # ready_for_review: Draft の間は skipped にし (下の if)、ready にした時点で判定する
+    # ready_for_review: merge できるようになる時点で判定し直す。Draft の間に Issue 側のラベル
+    # (verify:) が変わっても PR の run は起きないので、ready の時点の状態で付け直す
     types: [opened, edited, synchronize, reopened, labeled, unlabeled, ready_for_review]
   # 変更要求の投稿・却下で review-gate を付け直す
   pull_request_review:
@@ -50,11 +51,13 @@ defaults:
 jobs:
   # 必須チェックの context はこのジョブの名前 (main-protection.json)。改名するときは同時に直す。
   #
-  # **merge_group と Draft では skipped にする。** Draft は merge できず、ready にすると
-  # ready_for_review で判定が走る。Draft で作って整えてから ready にすれば赤が出ない
-  # (#2611 のコメント。10/6〜10/13 の赤い ci-gate の 85% が作法の検査だった)。綴りは
-  # render.yml の render-turn と同じ。merge_group では pull_request が無く、
-  # github.event_name != 'merge_group' が偽になって短絡する。
+  # **skipped にするのは merge_group だけで、Draft でも判定する。** Draft を skipped にすると
+  # 赤は出なくなるが、ready にした直後の数秒 (ready_for_review の run の check が付くまで。
+  # #2668 の probe で ready から 5 秒)、判定していない skipped が同じ SHA の最新として残る。
+  # skipped は必須を満たすので、作法の検査が ci-gate から外れた後 (#2669) は
+  # `gh pr ready` の直後の `gh pr merge --auto` が、一度も判定されていない PR を queue へ入れうる。
+  # Draft の赤は merge を止めず、stall-watch も Draft を見ない。直せば新しい run の結論が
+  # 最新になる (#2668 の probe)。
   #
   # **3 つの判定は 1 つのジョブの step に並べ、どの起動でも 3 つとも走らせる。** check が 1 つ
   # なので、レビューの run が review-gate だけを見て緑を返すと、赤いタイトルを隠す。後ろの
@@ -79,7 +82,7 @@ jobs:
   # rerun が古いイベントを再生しても古い値で判定しない (#699)。stall-act.sh の rerun の除外
   # (RERUN_EXCLUDED) に載せなくてよい。固定は scripts/tests/pr_gate_workflow_test.py
   pr-gate:
-    if: github.event_name != 'merge_group' && !github.event.pull_request.draft
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
