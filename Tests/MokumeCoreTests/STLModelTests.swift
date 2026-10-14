@@ -310,6 +310,35 @@ struct STLModelTests {
         }
     }
 
+    /// **写しは、書かれた面の数が ⌊(大きさ − 84) ÷ 50⌋ (読み手が文字を読み直したときの枚数) と同じときだけ
+    /// 作る。** 違えば元のファイルを読ませるので、ファイルの全部を書き直さない。置き場の更新日時を古い日に
+    /// 固定し、写しの置き場 (子の作成と削除) に触れたかを見る。
+    @Test("84 バイト目が制御文字の文字の STL は、面の数が読み直しの枚数と違えば写しを作らず、同じなら作る")
+    func aCopyIsMadeOnlyWhenTheCountsCannotTellAReadingApart() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let longAgo = Date(timeIntervalSince1970: 1_000_000_000)
+        func touched(_ contents: Data) throws -> Bool {
+            try FileManager.default.setAttributes([.modificationDate: longAgo], ofItemAtPath: scratch.path)
+            _ = try withWritten(contents, as: "tap.stl") { path in
+                try? ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+            }
+            let date = try FileManager.default.attributesOfItem(atPath: scratch.path)[.modificationDate] as? Date
+            return date != longAgo
+        }
+
+        // 面が 4 つで、枚数 ⌊(大きさ − 84) ÷ 50⌋ とは違う (84 バイト目が改行)
+        let long = Self.data(Self.asciiSTL(firstLine: Self.firstLine("solid ")), byte83: 0x0A)
+        #expect((long.count - 84) / 50 != 4)
+        #expect(try touched(long) == false)
+        // 面が 1 つで、大きさから出る枚数も 1 (`facet` の行が無い 162 バイト。読み直されると 1 枚が返る)
+        let same = Broken.noFacetLineAtByte83.contents
+        #expect((same.count - 84) / 50 == 1 && same[83] < 0x10)
+        #expect(try touched(same) == true)
+    }
+
     @Test("Model I/O に渡す頭は、84 バイト目 (添字 83) が制御文字なら 1 行目の終わりに空白を足して空白にする")
     func theHeadHandedToTheReaderHasACharacterAtByte83() {
         func head(_ text: String) -> Data { Data(text.utf8.prefix(128)) }
