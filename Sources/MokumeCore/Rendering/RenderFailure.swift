@@ -147,7 +147,7 @@ public enum RenderFailure: Error, Equatable, Sendable {
     ///
     /// **組み立てで断り、別の画面へは倒さない** ([ADR-0020] 決定 5 の 2 行目)。展示でプロジェクタへ
     /// 出すつもりの作品が、黙って手元の画面を全画面で塞ぐことになるからである。繋がっていなければ
-    /// 窓で開く、としたい作品は ``Sketch/displays`` を読んで自分で選ぶ
+    /// 窓で開く、としたい作品は ``SketchPart/displays`` を読んで自分で選ぶ
     /// (``SketchSettings/fullScreen(_:)`` の例)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

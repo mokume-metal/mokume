@@ -7,7 +7,7 @@ import MokumeDiagnostics
 
 /// 利用者が書いた塗り。
 ///
-/// 使い方は ``Sketch/loadShader(_:values:surfaces:)`` にある。
+/// 使い方は ``SketchPart/loadShader(_:values:surfaces:)`` にある。
 public final class Shader {
     /// 断片・値・保存の拾い直しを持つ骨。**3 者で 1 つ** (``ShaderBox``)。
     private let box: ShaderBox

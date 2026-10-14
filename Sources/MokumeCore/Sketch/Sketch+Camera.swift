@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 視点と投影。
-extension Sketch {
+extension SketchPart {
     /// 視点を既定へ戻す。投影はそのまま残す。
     ///
     /// 既定は**面がちょうど収まる位置から、面を正面に見る**視点である。だから何も

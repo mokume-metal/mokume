@@ -3,7 +3,7 @@
 
 import AppKit
 
-/// 繋がっているディスプレイ 1 枚。``Sketch/displays`` が番号順に並べ、
+/// 繋がっているディスプレイ 1 枚。``SketchPart/displays`` が番号順に並べ、
 /// ``SketchSettings/fullScreen(_:)`` が番号で選ぶ。
 ///
 /// ## 番号の振り方
@@ -109,7 +109,7 @@ extension Display {
     ///
     /// **見つからなければ型のついたエラーで断り、別の画面へは倒さない** ([ADR-0020] 決定 5 の
     /// 2 行目 — 起動の組み立てで呼ばれる)。展示でプロジェクタへ出すつもりの作品が、黙って手元の
-    /// 画面を全画面で塞ぐことになるからである。窓で開くほうへ倒したい作品は、``Sketch/displays``
+    /// 画面を全画面で塞ぐことになるからである。窓で開くほうへ倒したい作品は、``SketchPart/displays``
     /// を読んで自分で選ぶ。
     ///
     /// - 1 を割る番号は ``RenderFailure/invalidDisplay(_:)`` (頼み方の誤り)
@@ -150,7 +150,7 @@ extension NSScreen {
     }
 }
 
-extension Sketch {
+extension SketchPart {
     /// いま繋がっているディスプレイ。番号 (``Display/number``) の順に並ぶ。
     ///
     /// ```swift

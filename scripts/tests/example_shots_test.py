@@ -1282,6 +1282,15 @@ class MemberCoverageTest(MemberTestCase):
         self.write(source)
         self.assertEqual([m.title for m in self.members()], ["mine()", "after()"])
 
+    def test_SketchPart_の_extension_も拾う(self):
+        """語彙は Sketch が継ぐ SketchPart に置いてある (#2616)。拾えないと口が 0 本に数えられる。"""
+        self.write("extension SketchPart {\n    public func shown() {}\n}\n")
+        self.assertEqual([m.key for m in self.members()], ["shown()"])
+
+    def test_名前が_Sketch_で始まる別の型は拾わない(self):
+        self.write("extension SketchSettings {\n    public func notMine() {}\n}\n")
+        self.assertEqual(self.members(), [])
+
     def test_extension_の波括弧が次の行にあっても拾う(self):
         self.write("extension Sketch\n{\n    public func shown() {}\n}\n")
         self.assertEqual([m.key for m in self.members()], ["shown()"])

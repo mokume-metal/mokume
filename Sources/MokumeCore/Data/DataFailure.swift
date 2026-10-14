@@ -3,7 +3,7 @@
 
 /// 文字列・表・JSON・XML・SVG を読む・書くときに起こりうる失敗。
 ///
-/// SVG (``Sketch/loadShape(_:)``) は XML の文字なので同じ型で運ぶ。XML として壊れているときと、
+/// SVG (``SketchPart/loadShape(_:)``) は XML の文字なので同じ型で運ぶ。XML として壊れているときと、
 /// 根が `<svg>` でないときが ``malformed(path:line:reason:)`` になる。
 ///
 /// 起こりうる失敗が列挙できるので typed throws で運ぶ ([ADR-0010] 決定 7)。
@@ -35,7 +35,7 @@ public enum DataFailure: Error, Equatable, Sendable {
     /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の文字の
     /// 符号化とは関係が無いので、直すのは `location` にあるものの置き場か権利である。
     ///
-    /// 相対の名前は複数の場所を探して解く (``Sketch/assetURL(_:)``) ので、渡した名前 (`path`)
+    /// 相対の名前は複数の場所を探して解く (``SketchPart/assetURL(_:)``) ので、渡した名前 (`path`)
     /// だけでは、どこにあるものを直せばよいかが分からない。説明には解けた場所が載る。
     case unopenable(path: String, location: String, reason: String)
     /// 中身 (開けたファイル・URL から受け取った本文) を、UTF-8 の文字として読めない。

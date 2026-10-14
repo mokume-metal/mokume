@@ -7,7 +7,7 @@ import MokumeDiagnostics
 // OSC。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0041] の地図の「連携の口 (標準)」)。`plugins` には何も
-// 書かない — 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 書かない — 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // 名前は Issue の作例の綴りに合わせた。手本 (Processing / p5.js) の本体に OSC は無いので、
 // Swift の慣行に従う ([ADR-0020] 決定 1)。`create…` は手本の作る口 (`createCapture`) と揃える。

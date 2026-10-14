@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 保持した形。
-extension Sketch {
+extension SketchPart {
     /// 形を組み立てて保持する。**毎フレーム組み立て直さずに済む。**
     ///
     /// 組み立てるのは `setup()` で 1 度だけ。`draw()` では、保持した形を ``shape(_:_:_:)`` で
@@ -120,7 +120,7 @@ extension Sketch {
     /// 列で引き、抜けた後の列は最初に書く直前の状態から続く。** 種を書く前に中で ``random()`` を引いた
     /// 分と、種を書かずに引いた分は、外で引いたのと同じく 1 本の列を進める。描き場所 (``createGraphics(_:_:)``) の
     /// `createShape { }` でも、``Canvas`` を直に作った面 (``Canvas/init(target:gpu:)``) とそこから作った
-    /// 描き場所の `createShape { }` でも、`setup()` と ``draw()`` のどちらで組み立てても同じである。
+    /// 描き場所の `createShape { }` でも、`setup()` と ``Sketch/draw()`` のどちらで組み立てても同じである。
     /// スケッチの口で書いた揺らぎの種と細かさも、どの面で組み立てても同じく戻る。
     ///
     /// ```swift

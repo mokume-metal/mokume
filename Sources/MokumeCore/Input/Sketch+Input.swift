@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-extension Sketch {
+extension SketchPart {
     /// いまの位置 (横)。
     ///
     /// **単位は描く解像度の画素で、窓の大きさによらない。** 窓を大きくしても縮めても、
@@ -29,7 +29,7 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// **押しても離しても入れ替わる。** ``mouseReleased()`` の中から「どの釦が離されたか」
+    /// **押しても離しても入れ替わる。** ``Sketch/mouseReleased()`` の中から「どの釦が離されたか」
     /// を知る口はここしかない (``keyCode`` と同じ)。押していない間も最後に離した釦を指した
     /// ままなので、いま押されているかは ``isMousePressed`` で見る。
     ///

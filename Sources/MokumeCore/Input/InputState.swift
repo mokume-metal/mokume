@@ -188,7 +188,7 @@ public final class InputState {
     /// ([#805](https://github.com/mokume-metal/mokume/issues/805))。
     ///
     /// 判定は「制御文字でも私用領域でもないスカラを 1 つ以上含むこと」。打鍵の合図と、
-    /// ``characters`` (``Sketch/key``) の更新が同じここを見る — 割れていた頃は、矢印を
+    /// ``characters`` (``SketchPart/key``) の更新が同じここを見る — 割れていた頃は、矢印を
     /// 押すと `key` が見えない文字になっていた。
     static func producesText(_ characters: String) -> Bool {
         characters.unicodeScalars.contains { scalar in

@@ -119,7 +119,7 @@ struct EmissionCadence {
 
 /// たくさんの粒。
 ///
-/// 使い方は ``Sketch/makeParticles(count:)`` にある。
+/// 使い方は ``SketchPart/makeParticles(count:)`` にある。
 ///
 /// ## 置き場はすべて数の並び
 ///

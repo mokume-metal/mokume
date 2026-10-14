@@ -161,7 +161,7 @@ extension Canvas {
     /// 始まる ([#1449])。直す前は環の最初でだけ置いていたので、切れた後の並びは手前の点から
     /// 刻みの 1 つ目へ直に繋がっていた ([#1537])。環の最後の点が始点と同じ位置なら置き
     /// 直さない — 始点を `vertex` で明示した書き方が、同じ点を 2 度持たない。規則の正本は
-    /// ``Sketch/curveVertex(_:_:)`` の説明。
+    /// ``SketchPart/curveVertex(_:_:)`` の説明。
     ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     /// [#1537]: https://github.com/mokume-metal/mokume/issues/1537

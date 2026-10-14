@@ -3,8 +3,8 @@
 
 import Foundation
 
-/// 行と列に並んだ値。CSV を読んで作り (``Sketch/loadTable(_:header:)``)、CSV へ書き出す
-/// (``Sketch/saveTable(_:_:)``)。
+/// 行と列に並んだ値。CSV を読んで作り (``SketchPart/loadTable(_:header:)``)、CSV へ書き出す
+/// (``SketchPart/saveTable(_:_:)``)。
 ///
 /// <!-- example: 文脈 var table: Table? -->
 /// ```swift

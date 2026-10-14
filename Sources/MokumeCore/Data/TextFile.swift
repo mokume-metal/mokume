@@ -3,11 +3,11 @@
 
 import Foundation
 
-/// 文字のファイルを読み書きする。文字列の行 (``Sketch/loadStrings(_:)``)・表
-/// (``Sketch/loadTable(_:header:)``)・JSON (``Sketch/loadJSONObject(_:)``)・XML
-/// (``Sketch/loadXML(_:)``) が共有する。
+/// 文字のファイルを読み書きする。文字列の行 (``SketchPart/loadStrings(_:)``)・表
+/// (``SketchPart/loadTable(_:header:)``)・JSON (``SketchPart/loadJSONObject(_:)``)・XML
+/// (``SketchPart/loadXML(_:)``) が共有する。
 ///
-/// **探すのは呼ぶ側** (``Sketch/assetURL(_:)``)。ここが受け取るのは場所が分かったファイルで、
+/// **探すのは呼ぶ側** (``SketchPart/assetURL(_:)``)。ここが受け取るのは場所が分かったファイルで、
 /// 名前 (`path`) は失敗を名乗るためだけに持ち回る。
 ///
 /// 隔離の外で走れる形にしてあるのは、待たない読み込みが読む仕事を別の仕事として回すため

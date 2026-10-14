@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 文字。
-extension Sketch {
+extension SketchPart {
     /// 文字列を描く。
     ///
     /// `y` が何を指すかは ``textAlign(_:_:)`` が決める。既定は**基準線** — 字が乗る線で、

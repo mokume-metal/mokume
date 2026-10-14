@@ -38,7 +38,7 @@
 ## 公開メンバが例か宣言を持つか (#2116)
 
 **囲みがあるなら正しいか、だけでは足りない。囲みの無い口を名指しして赤にする。** 見るのは
-`Sources/MokumeCore/Sketch/Sketch+*.swift` の `extension Sketch` に書かれた公開メンバで、
+`Sources/MokumeCore/Sketch/Sketch+*.swift` の `extension Sketch` / `extension SketchPart` に書かれた公開メンバで、
 数える単位は **overload ごと = 参照の面の 1 ページ**。各メンバは次のどれかを持つ。
 
 | 持つもの | 書き方 |
@@ -109,7 +109,7 @@
 ## 公開メンバの拾い方
 
 **ソースの字面で拾う。** 公開の判定はシンボルグラフが正確だが (`api-surface.py`)、組み
-上げを要する。この段は組まずに走るので (GPU も鍵も ffmpeg も要らない)、`extension Sketch`
+上げを要する。この段は組まずに走るので (GPU も鍵も ffmpeg も要らない)、`extension Sketch` / `extension SketchPart`
 の本体の直下にある `public` の `func` / `var` / `subscript` / `init` を字面で読む
 (`public extension Sketch` の中は、`private` などと書かれていなければ公開)。説明文の上下
 の読み方は `slash_doc` と揃える — 宣言の直前の属性 (`@…`) を跨ぎ、その上の `//` の塊を
@@ -604,10 +604,11 @@ MEMBER_FILES = "Sources/MokumeCore/Sketch/Sketch+*.swift"
 # 許容一覧。1 行 1 口 (`ファイル: 口`)。# で始まる行と空行は読まない
 GAPS_FILE = "scripts/example-shots-gaps.txt"
 
-# `extension Sketch` の頭。`public extension Sketch` なら中の口は既定で公開になる
+# `extension Sketch` / `extension SketchPart` の頭。`public extension …` なら中の口は既定で
+# 公開になる。語彙は Sketch が継ぐ SketchPart に置いてある (ADR-0020 決定 7・#2616)
 EXTENSION = re.compile(
     r"^\s*(?P<mods>(?:(?:public|open|package|internal|private|fileprivate|@\w+(?:\([^)]*\))?)\s+)*)"
-    r"extension\s+Sketch\b"
+    r"extension\s+(?:Sketch|SketchPart)\b"
 )
 # 口の頭。属性・修飾語・種類。`private(set)` のような括弧つきの修飾も 1 語として読む
 MEMBER = re.compile(
@@ -757,7 +758,7 @@ def doc_and_statements(lines: list[str], line: int) -> tuple[bool, int, list[Sta
 
 
 def members_in(root: pathlib.Path, path: pathlib.Path) -> list[Member]:
-    """`path` (根からの相対) の `extension Sketch` の本体の直下にある公開メンバ。
+    """`path` (根からの相対) の `extension Sketch` / `extension SketchPart` の本体の直下にある公開メンバ。
 
     波括弧の深さで「本体の直下」を決める (コメントと文字列の中の括弧は数えない)。
     """
@@ -894,7 +895,7 @@ def resolve_reference(member: Member, target: str, members: list[Member]) -> str
     """
     candidates = [other for other in members if other is not member and target in (other.title, other.key)]
     if not candidates:
-        return f"参照先 {target} が無い (`extension Sketch` の公開メンバに無い綴り)"
+        return f"参照先 {target} が無い (`extension Sketch` / `extension SketchPart` の公開メンバに無い綴り)"
     if len(candidates) > 1:
         listed = " / ".join(other.key for other in candidates)
         return f"参照先 {target} が複数ある (型まで添えて指す): {listed}"

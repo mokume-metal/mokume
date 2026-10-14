@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-extension Sketch {
+extension SketchPart {
     /// 下地を、素の数値で塗る。**目盛りは 0–255** ([ADR-0033] 決定 1)。
     ///
     /// 3 つなら赤・緑・青、4 つ目は不透明度。

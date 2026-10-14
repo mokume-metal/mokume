@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、塗り・線・重ね方の設定。
-extension Sketch {
+extension SketchPart {
     /// 面全体を塗り直す。切り抜き (``clip(_:_:_:_:)``) の中で呼べば、その中だけを塗り直す。
     ///
     /// @Row {

@@ -30,17 +30,17 @@ public nonisolated enum HorizontalTextAlign: Sendable, CaseIterable {
 
 /// 文字列を、指定した位置の上下どこに合わせるか。
 public nonisolated enum VerticalTextAlign: Sendable, CaseIterable {
-    /// 指定した位置が、字の囲みの上端 — 基準線から ``Sketch/textAscent()`` だけ上 — になる。
+    /// 指定した位置が、字の囲みの上端 — 基準線から ``SketchPart/textAscent()`` だけ上 — になる。
     ///
-    /// 書体によっては、アクセントの付いた字がこの上端より上へ出る (``Sketch/textAscent()``)。
+    /// 書体によっては、アクセントの付いた字がこの上端より上へ出る (``SketchPart/textAscent()``)。
     case top
     /// 指定した位置が、文字の高さの中央になる。
     case center
     /// 指定した位置が**基準線** — 字が乗る線になる。既定。
     case baseline
-    /// 指定した位置が、字の囲みの下端 — 基準線から ``Sketch/textDescent()`` だけ下 — になる。
+    /// 指定した位置が、字の囲みの下端 — 基準線から ``SketchPart/textDescent()`` だけ下 — になる。
     ///
-    /// 字の下に付く記号は、この下端より下へ出ることがある (``Sketch/textDescent()``)。
+    /// 字の下に付く記号は、この下端より下へ出ることがある (``SketchPart/textDescent()``)。
     case bottom
 }
 
@@ -100,7 +100,7 @@ public nonisolated struct TextContour: Equatable, Sendable {
     /// 内側 (穴) か。`o` の中が該当する。
     ///
     /// 穴として返るかは**書体による** — 既定の書体の `A` は重なった外周として返り、
-    /// 三角はこれの立った周にならない (``Sketch/textOutline(_:_:_:)``)。
+    /// 三角はこれの立った周にならない (``SketchPart/textOutline(_:_:_:)``)。
     public let isHole: Bool
 
     public init(points: [SIMD2<Float>], isHole: Bool) {
@@ -109,7 +109,7 @@ public nonisolated struct TextContour: Equatable, Sendable {
     }
 }
 
-/// 文字列の墨が載る範囲 (``Sketch/textBounds(_:_:_:)``)。
+/// 文字列の墨が載る範囲 (``SketchPart/textBounds(_:_:_:)``)。
 ///
 /// **送り幅ではなく墨を囲む。** 字の左右に書体が付けている余白は入らない。
 public nonisolated struct TextBounds: Equatable, Sendable {

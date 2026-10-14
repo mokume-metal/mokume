@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-extension Sketch {
+extension SketchPart {
     /// カーソルを捕まえる。捕まえている間はカーソルが隠れてその場に留まり、**手を動かした量
     /// だけが届き続ける** — 画面の端で止まらない。
     ///
@@ -21,8 +21,8 @@ extension Sketch {
     ///
     /// - ``mouseX`` / ``mouseY`` / ``pmouseX`` / ``pmouseY`` は捕まえた時点の位置のまま動かない。
     ///   押下と解放もその位置を名乗る
-    /// - 動いた量は、押していなければ ``mouseMoved(deltaX:deltaY:)`` が、押していれば
-    ///   ``mouseDragged(deltaX:deltaY:)`` が 1 件ずつ受け取る。フレームの合計は ``movedX`` /
+    /// - 動いた量は、押していなければ ``Sketch/mouseMoved(deltaX:deltaY:)`` が、押していれば
+    ///   ``Sketch/mouseDragged(deltaX:deltaY:)`` が 1 件ずつ受け取る。フレームの合計は ``movedX`` /
     ///   ``movedY`` (押している間のぶんは ``dragX`` / ``dragY`` も) で読む
     /// - 量の単位は捕まえていないときと同じ描く解像度の画素で、縦軸は下向きである
     ///
@@ -32,7 +32,7 @@ extension Sketch {
     /// (または起動してから) その面を 1 度押したとき**に捕まる。押していないのに捕まえると、
     /// 見ていない間にカーソルが消える。`mouseClicked()` の中で呼べばその 1 回の押しで捕まり、
     /// `setup()` や `draw()` から呼んでおけば次に面を押したときに捕まる。つまみ
-    /// (``params``) を押しても捕まえない。
+    /// (``Sketch/params``) を押しても捕まえない。
     ///
     /// ## 外れるのは 4 つ
     ///
