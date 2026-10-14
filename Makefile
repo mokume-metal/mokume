@@ -20,6 +20,9 @@ export REUSE_ENCODING_MODULE := chardet
 
 # python3 は 3.10 以上 (#2030)。scripts/ が match 文や評価時の `X | None` を使うので、
 # macOS 同梱の 3.9 (xcode-select で入るもの) では changelog-lint・hooks-test・agents-md-size が落ちる
+#
+# reuse・chardet・check-jsonschema は CI と同じ版を求める (#2612)。版の正本は scripts/ci-tools.txt で、
+# 突き合わせと版つきの入れ方の案内は scripts/ci_tools.py が持つ (ここに版を写さない)
 setup: ## 開発ツールを確認する
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: brew install python (3.10 以上)"; exit 1; }
 	@python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || { \
@@ -27,12 +30,7 @@ setup: ## 開発ツールを確認する
 	@for cmd in gh jq openssl; do \
 		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd が見つからない: brew install $$cmd"; exit 1; }; \
 	done
-	@command -v reuse >/dev/null 2>&1 || { echo "reuse が見つからない: pipx install reuse && pipx inject reuse chardet"; exit 1; }
-	@reuse --version >/dev/null 2>&1 || { \
-		echo "reuse が $(REUSE_ENCODING_MODULE) を使えない (#48 の回避に必要):"; \
-		echo "  pipx install reuse && pipx inject reuse chardet"; \
-		echo "Homebrew 版には chardet が同梱されていないため入れ直しが要る"; exit 1; }
-	@command -v check-jsonschema >/dev/null 2>&1 || { echo "check-jsonschema が見つからない: pipx install check-jsonschema"; exit 1; }
+	@python3 scripts/ci_tools.py check
 	@echo "ok: 必要なツールは揃っている"
 
 check: setup
