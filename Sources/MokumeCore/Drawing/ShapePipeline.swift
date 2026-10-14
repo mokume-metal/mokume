@@ -133,13 +133,15 @@ final class ShapePipeline {
 
     /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
     let solidStates: BlendStates
-    /// 正の半径の球の塗りを、単位球の頂点と置き場所の半径で描くパイプライン ([#1862])。
-    /// 頂点関数だけが別のライブラリ (`UnitSphere.metal`) にあり、断片は ``solidStates`` と同じ。
+    /// 正の寸法の球・箱・平面・円柱の塗りを、単位の形の頂点と置き場所の軸ごとの寸法で描く
+    /// パイプライン ([#1862]・[#2386])。頂点関数だけが別のライブラリ (`UnitShape.metal`) にあり、
+    /// 断片は ``solidStates`` と同じ。
     ///
     /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
-    let unitSphereStates: BlendStates
-    /// 単位球の列を影へ焼くパイプライン (``shadowState`` の単位球の版)。
-    let unitSphereShadowState: any MTLRenderPipelineState
+    /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
+    let unitShapeStates: BlendStates
+    /// 単位の形の列を影へ焼くパイプライン (``shadowState`` の単位の形の版)。
+    let unitShapeShadowState: any MTLRenderPipelineState
     let solidStrokeStates: BlendStates
     let solidStrokeShadowState: any MTLRenderPipelineState
 
@@ -207,9 +209,9 @@ final class ShapePipeline {
     let argumentTable: any MTL4ArgumentTable
 
     private let vertexLibrary: any MTLLibrary
-    /// 単位球の頂点関数だけを持つライブラリ。**Shapes とは別に組む** — 同じライブラリへ足すと、
-    /// 既存の頂点関数の組み上がり方が変わりうる (`UnitSphere.metal` の冒頭)。
-    private let unitSphereLibrary: any MTLLibrary
+    /// 単位の形の頂点関数だけを持つライブラリ。**Shapes とは別に組む** — 同じライブラリへ足すと、
+    /// 既存の頂点関数の組み上がり方が変わりうる (`UnitShape.metal` の冒頭)。
+    private let unitShapeLibrary: any MTLLibrary
     private let compiler: any MTL4Compiler
     private let pixelFormat: MTLPixelFormat
 
@@ -218,9 +220,9 @@ final class ShapePipeline {
         let library = try gpu.shaders.makeShapeLibrary(
             named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"))
         self.vertexLibrary = library
-        let unitSphereLibrary = try gpu.shaders.makeShapeLibrary(
-            named: "UnitSphere", body: gpu.shaders.bundledShaderSource(named: "UnitSphere"))
-        self.unitSphereLibrary = unitSphereLibrary
+        let unitShapeLibrary = try gpu.shaders.makeShapeLibrary(
+            named: "UnitShape", body: gpu.shaders.bundledShaderSource(named: "UnitShape"))
+        self.unitShapeLibrary = unitShapeLibrary
 
         let compiler = try gpu.shaders.compiler()
         self.compiler = compiler
@@ -233,13 +235,13 @@ final class ShapePipeline {
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
             pixelFormat: pixelFormat, label: "mokume.solids",
             vertexFunctionName: Self.solidVertexFunctionName)
-        self.unitSphereStates = try Self.makeBlendStates(
-            compiler: compiler, vertexLibrary: unitSphereLibrary, fragmentLibrary: library,
-            pixelFormat: pixelFormat, label: "mokume.unit-spheres",
-            vertexFunctionName: Self.unitSphereVertexFunctionName)
-        self.unitSphereShadowState = try Self.makeDepthOnlyState(
-            compiler: compiler, vertexLibrary: unitSphereLibrary, label: "mokume.unit-sphere-shadow",
-            vertexFunctionName: Self.unitSphereVertexFunctionName)
+        self.unitShapeStates = try Self.makeBlendStates(
+            compiler: compiler, vertexLibrary: unitShapeLibrary, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.unit-shapes",
+            vertexFunctionName: Self.unitShapeVertexFunctionName)
+        self.unitShapeShadowState = try Self.makeDepthOnlyState(
+            compiler: compiler, vertexLibrary: unitShapeLibrary, label: "mokume.unit-shape-shadow",
+            vertexFunctionName: Self.unitShapeVertexFunctionName)
 
         self.solidStrokeStates = try Self.makeBlendStates(
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
@@ -299,8 +301,8 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
-    /// 単位球の塗りの頂点を落とす関数の名前 (`UnitSphere.metal`)。
-    static let unitSphereVertexFunctionName = "unitSphereVertexMain"
+    /// 単位の形の塗りの頂点を落とす関数の名前 (`UnitShape.metal`)。
+    static let unitShapeVertexFunctionName = "unitShapeVertexMain"
     static let solidStrokeVertexFunctionName = "solidStrokeVertexMain"
     /// 三角形の経路の断片の名前 (下地を読む側)。
     static let flatFragmentFunctionName = "mokume_fragmentMain"
@@ -351,9 +353,9 @@ final class ShapePipeline {
                 pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName))
     }
 
-    /// 頂点関数を持つライブラリ。単位球の頂点関数だけが別のライブラリにある。
+    /// 頂点関数を持つライブラリ。単位の形の頂点関数だけが別のライブラリにある。
     private func vertexLibrary(for vertexFunctionName: String) -> any MTLLibrary {
-        vertexFunctionName == Self.unitSphereVertexFunctionName ? unitSphereLibrary : vertexLibrary
+        vertexFunctionName == Self.unitShapeVertexFunctionName ? unitShapeLibrary : vertexLibrary
     }
 
     /// 同じ絵を描く 3 本を組む (``BlendStates``)。

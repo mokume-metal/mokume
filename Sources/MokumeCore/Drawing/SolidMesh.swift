@@ -88,6 +88,85 @@ nonisolated enum SolidShape: Hashable {
         }
     }
 
+    /// 単位の形と、それを置き場所で広げる軸ごとの倍率 ([#1862]・[#2386])。**単位の形の点 × 倍率が、
+    /// この形を組んだ点と 1 ビットも違わない形だけが持つ。** 単位の形に乗る形はここで決まる。
+    ///
+    /// - 球: 位置は `向き × 半径` で、単位球の位置は向きそのもの
+    /// - 箱・平面: 角は `±寸法 / 2` で、単位の形の `±0.5` × 寸法と同じ値 (0.5 倍は厳密)。箱の向きは
+    ///   2 辺の積から ±1 の軸に揃える (``SolidMeshBuilder/box(width:height:depth:)``) ので、積が 0 に
+    ///   潰れるか溢れる寸法は持たない
+    /// - 円柱: 位置は `(cos, 0, sin) × 半径 + (0, ±高さ / 2, 0)` で、単位の形 × `(半径, 高さ, 半径)` と同じ値
+    ///
+    /// どれも向きと貼る絵の座標は寸法に依らない。持たない形 (円錐・楕円体は向きが寸法の比で変わる・
+    /// 輪環は比で形が変わる・寸法に 0 を含む形) は、寸法ごとに組む。
+    ///
+    /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
+    /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
+    var unitScaling: (unit: SolidShape, scale: SIMD3<Float>)? {
+        switch self {
+        case .sphere(let radius, let detail) where radius > 0:
+            return (.sphere(radius: 1, detail: detail), SIMD3(repeating: radius))
+        case .box(let width, let height, let depth) where width > 0 && height > 0 && depth > 0:
+            // 面の向きの元になる積 (向かい合う角の差 = 半分の 2 倍どうし)。組み立てと同じ式で求める
+            let half = SIMD3(width, height, depth) / 2
+            let edge = half + half
+            let areas = SIMD3(edge.y * edge.z, edge.z * edge.x, edge.x * edge.y)
+            guard areas.min() > 0, areas.max().isFinite else { return nil }
+            return (.box(width: 1, height: 1, depth: 1), SIMD3(width, height, depth))
+        case .plane(let width, let height) where width > 0 && height > 0:
+            return (.plane(width: 1, height: 1), SIMD3(width, height, 1))
+        case .cylinder(let radius, let height, let detail) where radius > 0 && height > 0:
+            return (.cylinder(radius: 1, height: 1, detail: detail), SIMD3(radius, height, radius))
+        default:
+            return nil
+        }
+    }
+
+    /// ``unitScaling`` のうち、稜線 (``SolidEdges``) も単位の形の稜線を倍率で広げて作れる組。
+    ///
+    /// 稜線は点を許容差で溶接して取り出す (`Welder`)。**単位の形と広げた形で、溶接される点の組が
+    /// 同じときに限る** — そのとき点の番号も辺も同じになり、点は単位の形の点 × 倍率と 1 ビットも違わない。
+    /// 球は一様に広げるので、許容差も同じだけ伸びる (#1606。許容差が数の範囲にあることだけを見る)。
+    /// 軸ごとに広げる形は、許容差が最も長い軸で決まるので、**最も短い軸が許容差を割るほど細い形**では
+    /// 別だった点が溶け合う。広げた後に別の点どうしが最も近づく間隔が、許容差の 2 倍を超えるときだけ
+    /// 持つ。同じ平面かの判定は、箱の面・円柱の側面と蓋のどれも軸に沿った拡大で
+    /// 厳密に同じ平面のままなので、寸法に依らない。
+    var unitEdgeScaling: (unit: SolidShape, scale: SIMD3<Float>)? {
+        guard let (unit, scale) = unitScaling else { return nil }
+        // 広げた形の溶接の許容差。`Welder` と同じく、点の座標の絶対値の最大の 10 万分の 1
+        let extent: Float
+        // 広げた後に、別の点どうしが最も近づく間隔
+        let shortest: Float
+        switch unit {
+        case .sphere:
+            let tolerance = scale.x * SolidEdges.weldScale
+            // 溶接が探す隣の升目までの差は各軸 2 倍未満。距離の二乗にも余裕を持たせる
+            guard tolerance >= Float.leastNormalMagnitude,
+                tolerance <= sqrt(Float.greatestFiniteMagnitude) / 4
+            else { return nil }
+            return (unit, scale)
+        case .box:
+            // 角どうしは、どれかの軸で単位の形の 1 (広げて その軸の寸法) 離れている
+            extent = (scale / 2).max()
+            shortest = scale.min()
+        case .plane:
+            // 縁の 4 点。厚みの軸 (z) は点を分けない
+            extent = max(scale.x, scale.y) / 2
+            shortest = min(scale.x, scale.y)
+        case .cylinder(_, _, let detail):
+            extent = max(scale.x, scale.y / 2)
+            // 上下の蓋どうしは高さ、同じ蓋の上では隣り合う周の点 (と中心から周まで) の間隔
+            shortest = min(scale.y, scale.x * min(1, 2 * sin(.pi / Float(detail))))
+        default:
+            return nil
+        }
+        let tolerance = max(extent * SolidEdges.weldScale, .leastNormalMagnitude)
+        guard tolerance <= sqrt(Float.greatestFiniteMagnitude) / 4, shortest > 2 * tolerance else {
+            return nil
+        }
+        return (unit, scale)
+    }
+
     /// この形を組み立てる。
     func make() -> SolidMesh {
         switch self {
@@ -135,8 +214,15 @@ nonisolated enum SolidMeshBuilder {
         //
         // 貼る絵は**6 面それぞれに 1 枚**が収まる。周は 4 隅とも「上・下・下・上」の順で
         // 渡されるので、絵の四隅をこの順に当てれば、どの面も同じ向きで立つ
+        //
+        // 面の向きは軸に沿うので、`cross` を成分の絶対値の最大で割って **±1 ちょうど**にする。
+        // `normalize` は寸法によって長さが 1 から 1 ulp ずれ、単位の箱を置き場所で広げる経路
+        // (``SolidShape/unitScaling``・#2386) と光や `shapeNormal` が食い違う。割る値が 0 か有限で
+        // ない (潰れた箱・溢れる積) ときは、これまでどおり `normalize` に任せる
         func face(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ d: SIMD3<Float>) {
-            let normal = normalize(cross(c - a, b - a))
+            let facing = cross(c - a, b - a)
+            let largest = abs(facing).max()
+            let normal = largest > 0 && largest.isFinite ? facing / largest : normalize(facing)
             let corners: [(SIMD3<Float>, SIMD2<Float>)] = [
                 (a, SIMD2(0, 0)), (b, SIMD2(0, 1)), (c, SIMD2(1, 1)), (d, SIMD2(1, 0)),
             ]
@@ -419,8 +505,9 @@ nonisolated struct SolidEdges {
     /// 溶接の許容差は形の大きさの10万分の1。球の共有が安全な寸法の判定にも使う。
     static let weldScale: Float = 1e-5
 
-    /// つながりを保ったまま一様に伸ばす。共有する控えの点は書き換えない。
-    func scaled(by scale: Float) -> SolidEdges {
+    /// つながりを保ったまま、軸ごとの倍率で伸ばす (``SolidShape/unitEdgeScaling``)。共有する控えの
+    /// 点は書き換えない。
+    func scaled(by scale: SIMD3<Float>) -> SolidEdges {
         var result = self
         result.points = points.map { $0 * scale }
         return result

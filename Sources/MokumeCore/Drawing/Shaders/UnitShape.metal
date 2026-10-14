@@ -1,25 +1,27 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 //
-// 正の半径の球の塗りを、単位球の頂点 1 組と置き場所ごとの半径で描く頂点関数 ([#1862])。
-// 共通部分 (Common.metal) が前に付いた状態で組み立てられる。
+// 正の寸法の球・箱・平面・円柱の塗りを、単位の形の頂点 1 組と置き場所ごとの軸の寸法で描く頂点関数
+// ([#1862]・[#2386])。共通部分 (Common.metal) が前に付いた状態で組み立てられる。
 //
 // **Shapes.metal とは別のライブラリにする。** 同じライブラリへ関数を足すと、既存の
-// `solidVertexMain` の組み上がり方が変わりうる。半径ごとに頂点を組む従来の経路と、画素と
-// 利用者の断片が読む `shapePosition` が 1 ビットも違わないことが、この経路を採る条件である。
+// `solidVertexMain` の組み上がり方が変わりうる。寸法ごとに頂点を組む従来の経路と、画素と
+// 利用者の断片が読む `shapePosition`・`shapeNormal` が 1 ビットも違わないことが、この経路を採る
+// 条件である。
 //
-// **world と投影の積和の順を明示する。** 通常の行列積に半径の掛け算を足すだけでは、
+// **world と投影の積和の順を明示する。** 通常の行列積に寸法の掛け算を足すだけでは、
 // コンパイラが積和のまとめ方を変え、重なる半透明・鏡映・斜めの視点で `shapePosition` と
 // 画素がずれた (#1862 の第 1・第 2 試作)。下の順は実測で従来経路と一致した順で、コンパイラが
-// 保証するものではない。**一致は `UnitSphereTests` が同じビルドの 2 経路を比べて見張る** —
+// 保証するものではない。**一致は `UnitShapeTests` が同じビルドの 2 経路を比べて見張る** —
 // 専用機を含む検査を回す機械ごとに確かめられ、ずれたら誤差を許さずに赤くなる。
 //
 // [#1862]: https://github.com/mokume-metal/mokume/issues/1862
+// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
 
 // MARK: - Shapes.metal の写し (ここから)
 //
 // 入力の型は Shapes.metal と一字一句同じに保つ。空行で区切った塊ごとに、Shapes.metal に
-// そのまま含まれることを `UnitSphereTests` が確かめる。直すときは Shapes.metal と同時に直す。
+// そのまま含まれることを `UnitShapeTests` が確かめる。直すときは Shapes.metal と同時に直す。
 
 struct FlatFrame {
     float4x4 projection;
@@ -68,13 +70,14 @@ constant uint kSolidFlipsNormal = 0x80000000u;
 
 // MARK: - Shapes.metal の写し (ここまで)
 
-/// 単位球の頂点を、置き場所の半径 (`normal0.w`) で広げてから落とす。
+/// 単位の形の頂点を、置き場所の軸ごとの寸法 (`normal0.w`・`normal1.w`・`normal2.w`) で広げてから落とす。
 ///
-/// 単位球の頂点は向きと位置が同じ値なので、**向き × 半径**が半径 r の球の位置になる。CPU が
-/// 半径ごとに組む球 (`Canvas.solidMesh(for:)`) と同じ 1 回の掛け算で、利用者の断片へ渡す
-/// `shapePosition` もこの値にする。ほかは `solidVertexMain` (Shapes.metal) と同じで、影の
+/// **単位の形の位置 × 寸法**が、寸法ごとに組んだ形の位置と 1 ビットも違わない (Swift 側の
+/// `SolidShape.unitScaling`)。球は単位球の位置が向きそのものなので、向き × 半径になる — CPU が
+/// 半径ごとに組む球と同じ 1 回の掛け算である。利用者の断片へ渡す `shapePosition` もこの値にする。
+/// 向きは寸法に依らないので広げない。ほかは `solidVertexMain` (Shapes.metal) と同じで、影の
 /// 焼き付けもこの関数で行う。
-vertex ShapeFragmentIn unitSphereVertexMain(
+vertex ShapeFragmentIn unitShapeVertexMain(
     uint index [[vertex_id]],
     uint instance [[instance_id]],
     constant SolidVertex *vertices [[buffer(0)]],
@@ -85,7 +88,8 @@ vertex ShapeFragmentIn unitSphereVertexMain(
     bool flipsNormal = (index & kSolidFlipsNormal) != 0u;
     SolidVertex vertex_in = vertices[index & ~kSolidFlipsNormal];
     SolidInstance placement = instances[instance];
-    float3 scaled = vertex_in.normal.xyz * placement.normal0.w;
+    float3 scaled = vertex_in.position
+        * float3(placement.normal0.w, placement.normal1.w, placement.normal2.w);
     vertex_in.position = scaled;
     vertex_in.shapePosition = scaled;
 
@@ -102,7 +106,7 @@ vertex ShapeFragmentIn unitSphereVertexMain(
     out.position = fma(frame.projection[3], world.w,
         fma(frame.projection[2], world.z,
             fma(frame.projection[1], world.y, frame.projection[0] * world.x)));
-    // 輪郭の寄せ (ADR-0039 決定 2)。単位球の塗りに輪郭の頂点は無いが、`solidVertexMain` と
+    // 輪郭の寄せ (ADR-0039 決定 2)。単位の形の塗りに輪郭の頂点は無いが、`solidVertexMain` と
     // 同じ式を保つ
     bool isStroke = vertex_in.stroke > 0.0;
     out.position.xy += (isStroke ? 1.0 : 0.0) * frame.strokeShift.xy * out.position.w;
@@ -112,7 +116,7 @@ vertex ShapeFragmentIn unitSphereVertexMain(
     out.normal = normalMatrix * vertex_in.normal.xyz;
     out.normal = flipsNormal ? -out.normal : out.normal;
     out.isDerivedNormal = vertex_in.normal.w;
-    // 利用者の断片へは、移す前の値 (半径 r の球の座標) を渡す (#367)
+    // 利用者の断片へは、移す前の値 (寸法ごとに組んだ形の座標) を渡す (#367)
     out.shapePosition = vertex_in.shapePosition;
     out.shapeNormal = flipsNormal ? -vertex_in.shapeNormal : vertex_in.shapeNormal;
     out.coverage = isStroke ? vertex_in.stroke : 1.0;

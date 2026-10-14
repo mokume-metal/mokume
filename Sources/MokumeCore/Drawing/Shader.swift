@@ -71,9 +71,10 @@ public final class Shader {
     /// **断片は 1 つで、頂点の落とし方だけが違う。** 平面と立体で断片を別々に
     /// 組み立てると、同じ断片なのに片方だけ差し替わる状態が作れてしまう。
     private(set) var solidStates: ShapePipeline.BlendStates
-    /// 正の半径の球を塗るときのパイプライン (``ShapePipeline/unitSphereStates`` の、この断片の版)。
+    /// 正の寸法の球・箱・平面・円柱を塗るときのパイプライン (``ShapePipeline/unitShapeStates`` の、
+    /// この断片の版)。
     /// 断片は ``solidStates`` と同じで、3 組は**揃って**差し替わる (``reload()``)。
-    private(set) var unitSphereStates: ShapePipeline.BlendStates
+    private(set) var unitShapeStates: ShapePipeline.BlendStates
 
     private let pipeline: ShapePipeline
     private let gpu: RenderDevice
@@ -107,9 +108,9 @@ public final class Shader {
         self.solidStates = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name).solid",
             vertexFunctionName: ShapePipeline.solidVertexFunctionName)
-        self.unitSphereStates = try pipeline.makeStates(
-            fragmentLibrary: library, label: "mokume.shader.\(name).unit-sphere",
-            vertexFunctionName: ShapePipeline.unitSphereVertexFunctionName)
+        self.unitShapeStates = try pipeline.makeStates(
+            fragmentLibrary: library, label: "mokume.shader.\(name).unit-shape",
+            vertexFunctionName: ShapePipeline.unitShapeVertexFunctionName)
 
         box.watch { [weak self] in self?.reload() }
     }
@@ -170,43 +171,43 @@ public final class Shader {
                 let solid = pipeline.statesJob(
                     label: "mokume.shader.\(name).solid",
                     vertexFunctionName: ShapePipeline.solidVertexFunctionName)
-                let unitSphere = pipeline.statesJob(
-                    label: "mokume.shader.\(name).unit-sphere",
-                    vertexFunctionName: ShapePipeline.unitSphereVertexFunctionName)
+                let unitShape = pipeline.statesJob(
+                    label: "mokume.shader.\(name).unit-shape",
+                    vertexFunctionName: ShapePipeline.unitShapeVertexFunctionName)
                 return BuildJob(
                     now: { () throws(RenderFailure) in
                         let made = try library.runNow()
                         return Rebuilt(
                             flat: try flat.makeNow(fragmentLibrary: made),
                             solid: try solid.makeNow(fragmentLibrary: made),
-                            unitSphere: try unitSphere.makeNow(fragmentLibrary: made))
+                            unitShape: try unitShape.makeNow(fragmentLibrary: made))
                     },
                     later: { () async throws(RenderFailure) in
                         let made = try await library.run()
                         return Rebuilt(
                             flat: try await flat.make(fragmentLibrary: made),
                             solid: try await solid.make(fragmentLibrary: made),
-                            unitSphere: try await unitSphere.make(fragmentLibrary: made))
+                            unitShape: try await unitShape.make(fragmentLibrary: made))
                     })
             },
             adopt: { rebuilt in
                 // **全部が組み上がってから差し替える。** 1 組だけ差し替わると、平面と
-                // 立体 (と単位球) で違う断片が効いている状態になる
+                // 立体 (と単位の形) で違う断片が効いている状態になる
                 // **入れ替えた古い状態は、投入済みのフレームが終わるまで抱える** (#1830 の 2 回目の
                 // 反証 2・``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。列が抱えるのは塗り
                 // そのもので、前のフレームが組んだ状態は誰も抱えていない
                 gpu.holdUntilSubmittedWorkFinishes(
-                    states.all + solidStates.all + unitSphereStates.all)
+                    states.all + solidStates.all + unitShapeStates.all)
                 states = ShapePipeline.BlendStates(rebuilt.flat)
                 solidStates = ShapePipeline.BlendStates(rebuilt.solid)
-                unitSphereStates = ShapePipeline.BlendStates(rebuilt.unitSphere)
+                unitShapeStates = ShapePipeline.BlendStates(rebuilt.unitShape)
             })
     }
 
-    /// 組み直した平面・立体・単位球の 3 本ずつ。
+    /// 組み直した平面・立体・単位の形の 3 本ずつ。
     struct Rebuilt: Sendable {
         let flat: ShapePipeline.BuiltStates
         let solid: ShapePipeline.BuiltStates
-        let unitSphere: ShapePipeline.BuiltStates
+        let unitShape: ShapePipeline.BuiltStates
     }
 }

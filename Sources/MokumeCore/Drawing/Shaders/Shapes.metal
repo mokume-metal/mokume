@@ -207,6 +207,8 @@ struct SolidStrokePlacement {
     float4 parameters;
     float4 color;
     float4 uv;
+    /// xyz: 単位の形の骨を元の寸法へ戻す軸ごとの倍率 (Swift 側の `SolidStrokePlacement` を参照)
+    float4 shapeScale;
 };
 
 /// その位置での、画面の縦 1 画素ぶんの世界での長さ。横は `forward.w` 倍 (CPU の `StrokeCamera.worldPerPixel`)。
@@ -312,7 +314,7 @@ constant float2 kSolidStrokeDisc[17] = {
 
 /// 骨の点の位置 (形自身の座標) を、置いた後の世界の座標へ移す。
 float3 solidStrokePlaced(float3 shape, constant SolidStrokePlacement &s) {
-    return (s.matrix * float4(shape * s.uv.z, 1)).xyz;
+    return (s.matrix * float4(shape * s.shapeScale.xyz, 1)).xyz;
 }
 
 /// 頂点関数が向きを控える腕の数。辺が 4 本の格子の点と、画面で重なる 2 点 (辺 3 本 + 3 本) まで
@@ -557,8 +559,8 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     constant float4 *words = (constant float4 *)pieces;
     const uint corners[6] = {0, 1, 2, 0, 2, 3};
     uint corner = corners[index % 6];
-    float3 shapeA = piece.a.xyz * s.uv.z;
-    float3 shapeB = piece.b.xyz * s.uv.z;
+    float3 shapeA = piece.a.xyz * s.shapeScale.xyz;
+    float3 shapeB = piece.b.xyz * s.shapeScale.xyz;
     float3 a = (s.matrix * float4(shapeA, 1)).xyz;
     float3 world = a;
     float3 shape = shapeA;

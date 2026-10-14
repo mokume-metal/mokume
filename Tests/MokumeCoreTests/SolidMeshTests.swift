@@ -84,6 +84,24 @@ struct SolidMeshTests {
         #expect(positions.map(\.z).min() == -2)
     }
 
+    /// 向きを `normalize` で求めると、寸法によって長さが 1 から 1 ulp ずれた (`box(50, 80, 20)` の
+    /// 手前の面は 0.99999994)。単位の箱を置き場所で広げる経路 (#2386) と 1 ビットも違わないよう、
+    /// 向きは寸法に依らない ±1 の軸にする。
+    @Test(
+        "箱の面の向きは、寸法によらず ±1 ちょうどの軸になる",
+        arguments: [
+            SIMD3<Float>(50, 80, 20), SIMD3(200, 10, 3), SIMD3(1, 1, 1), SIMD3(0.013, 917.3, 4.21),
+            SIMD3(1e-20, 3e-19, 7), SIMD3(3e18, 2e18, 1e18),
+        ])
+    func boxNormalsAreExactAxes(_ size: SIMD3<Float>) {
+        let mesh = SolidShape.box(width: size.x, height: size.y, depth: size.z).make()
+        for point in mesh.points {
+            let magnitudes = abs(point.normal)
+            #expect(magnitudes.max() == 1, "\(size): 向き \(point.normal) が軸の ±1 ではない")
+            #expect(magnitudes.sum() == 1, "\(size): 向き \(point.normal) が 1 つの軸だけを向いていない")
+        }
+    }
+
     @Test("平らな面は 2 枚の三角形で、画面の側を向く")
     func planeFacesTheViewer() {
         let mesh = SolidShape.plane(width: 8, height: 6).make()
