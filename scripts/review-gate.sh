@@ -79,7 +79,18 @@ fail() { # $1=理由 $2=次にすること (省略可)
 # 差し戻しの文言が同じ末尾を持つので、ここ 1 箇所に置く。呼び出し側と違い heredoc を引用
 # しない — run の id を埋めるため。bash 3.2 の $( … ) の件 (下) は、この関数が $( … ) の
 # 外にあるので当たらない
+#
+# **pr-gate (.github/workflows/pr-gate.yml) の中で走るときは文面を替える** (#2668)。pr-gate は
+# 直すと新しい run で付け直され、その結論が同じコミットの最新になるので、打ち直しは要らない。
+# この run の id で打ち直しを案内すると、消したい赤 (ci.yml の run) と違う run を指す。作法の
+# 検査が ci.yml の ci-gate からも外れるまで (#2669) は、そちらの赤の消し方を添える
+in_pr_gate() { [ "${GITHUB_JOB:-}" = pr-gate ]; }
+
 rerun_note() {
+  if in_pr_gate; then
+    pr_gate_rerun_note
+    return
+  fi
   cat <<EOF
 **直しただけ (本文の編集・ラベルの付与・変更要求の解除) では、必須チェックは緑になりません。**
 新しい run が走ってこのゲートは付け直されますが、赤い run の ci-gate は残って必須チェックを
@@ -91,6 +102,26 @@ rerun_note() {
 このゲートは実行のたびに本文・ラベル・レビューを読み直すので、打ち直せば通ります。同じ
 リポジトリの PR は、打たなくても stall-watch の当番がいずれ打ち直します (数時間おき・Draft を
 除く)。fork の PR は当番の対象外なので、メンテナが打ちます。pr-title も赤い run は、打ち直すと
+元のタイトルを再生して同じ赤を返します (#699) — タイトルを直したうえで、新しいコミットを
+push して run を作り直してください。
+EOF
+}
+
+# pr-gate の中の末尾。scripts/check-drawing-evidence.sh の pr_gate_rerun_note と同じ中身を保つ
+# (#2669 で ci-gate 側の段落ごと畳む)
+pr_gate_rerun_note() {
+  cat <<'EOF'
+**pr-gate は直せば付け直されます (打ち直しは要りません)。** 本文の編集・ラベルの付与・変更要求の
+解除で新しい run が走り、その run の pr-gate が同じコミットの最新の結論になります。
+
+ただし作法の検査が ci.yml の ci-gate からも外れるまで (#2669) は、同じ判定をした CI の run の
+ci-gate が赤のまま残り、必須チェックを赤のままにします (古い赤が新しい緑を固定する場合も
+あります — #259)。そのときは CI の赤い run を、終わってから打ち直してください:
+
+  gh run rerun <CI の run-id> --failed
+
+同じリポジトリの PR は、打たなくても stall-watch の当番がいずれ打ち直します (数時間おき・Draft を
+除く)。fork の PR は当番の対象外なので、メンテナが打ちます。CI の pr-title も赤い run は、打ち直すと
 元のタイトルを再生して同じ赤を返します (#699) — タイトルを直したうえで、新しいコミットを
 push して run を作り直してください。
 EOF
@@ -275,8 +306,12 @@ for n in $issues; do
   if grep -q '^verify: ' <<<"$ilabels"; then
     echo "review-gate: #$n はトリアージ済み"
   else
+    # pr-gate の中では、この run (pr-gate) の打ち直しは API から読み直すので通る。重なっている
+    # 間 (#2669 まで) は CI の run の赤も残るので、そちらも添える (rerun_note の上の注記)
+    also_ci=""
+    ! in_pr_gate || also_ci="作法の検査が ci.yml の ci-gate からも外れるまで (#2669) は、CI の赤い run も同じく失敗したジョブを打ち直す。"
     fail "対象 Issue #$n に verify: ラベルが無い (完了条件が未確定のまま実装に入っている)" \
-         "Issue 本文に完了条件を固める (調べて本文に書くところまではしてよい)。**verify: triaged を付けてよいのは完了条件を知る起票者だけ**で、エージェントは自分で起票し条件を書いた Issue に限る (AGENTS.md「進め方」2)。他の人が起票した Issue なら自分では付けず、本文に固めたことを Issue にコメントして、付与を起票者 (メンテナ) に頼む。付いたら、赤い run の失敗ジョブを打ち直す (gh run rerun ${GITHUB_RUN_ID:-<run-id>} --failed。空 push でもよい)。Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない。Actions の画面の「Re-run all jobs」は成功済みの pr-title まで元のタイトルで走らせ直す (#699) ので、失敗したジョブだけを打つ"
+         "Issue 本文に完了条件を固める (調べて本文に書くところまではしてよい)。**verify: triaged を付けてよいのは完了条件を知る起票者だけ**で、エージェントは自分で起票し条件を書いた Issue に限る (AGENTS.md「進め方」2)。他の人が起票した Issue なら自分では付けず、本文に固めたことを Issue にコメントして、付与を起票者 (メンテナ) に頼む。付いたら、赤い run の失敗ジョブを打ち直す (gh run rerun ${GITHUB_RUN_ID:-<run-id>} --failed。空 push でもよい)。${also_ci}Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない。Actions の画面の「Re-run all jobs」は成功済みの pr-title まで元のタイトルで走らせ直す (#699) ので、失敗したジョブだけを打つ"
   fi
 done
 

@@ -85,6 +85,8 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.env.pop("PR_NUMBER", None)
         # 差し戻しの文面へ埋まるので、CI の中で回しても結果が変わらないよう外す (#2134)
         self.env.pop("GITHUB_RUN_ID", None)
+        # pr-gate の中では打ち直しの段落が替わる (#2668)。渡すとき以外は外す
+        self.env.pop("GITHUB_JOB", None)
 
     def run_script(self, *, body="", labels=(), files=DRAWING_FILES, args=("101",),
                    all_files=None, cwd=None, **env):
@@ -198,6 +200,26 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.assertIn("gh run rerun <run-id> --failed", self.rejection())
         # run_script は env を残すので、id を入れるのは後にする
         self.assertIn("gh run rerun 424242 --failed", self.rejection(GITHUB_RUN_ID="424242"))
+
+    # --- pr-gate の中の差し戻しの文面 (#2668) ---------------------------------
+    #
+    # pr-gate は直せば新しい run で付け直され、その結論が同じコミットの最新になる。この run の
+    # id で打ち直しを案内すると、消したい赤 (CI の run) と違う run を指す
+
+    def test_pr_gate_の中では打ち直しは要らないと言い_CI_の赤の消し方を添える(self):
+        err = self.rejection(GITHUB_RUN_ID="424242", GITHUB_JOB="pr-gate")
+        self.assertSays(err, "pr-gate は直せば付け直されます (打ち直しは要りません)")
+        self.assertSays(err, "作法の検査が ci.yml の ci-gate からも外れるまで (#2669)")
+        self.assertIn("gh run rerun <CI の run-id> --failed", err)
+        self.assertNotIn("424242", err)
+        # 絵とラベルの案内は同じに出す
+        self.assertIn("gh pr create --label no-visual-change", err)
+        self.assertSays(err, "新しいコミットを push して run を作り直してください")
+
+    def test_ci_yml_の中では従来の文面のまま(self):
+        err = self.rejection(GITHUB_RUN_ID="424242", GITHUB_JOB="drawing-evidence")
+        self.assertIn("gh run rerun 424242 --failed", err)
+        self.assertNotIn("pr-gate", err)
 
     def test_差し戻しはADRを開かなくても行動でき番号は任意の参照に留める(self):
         """差し戻しを読んだエージェントが番号を辿ると、1 回で 1〜2 万字の文書を読みに行く (#2139)。

@@ -290,6 +290,30 @@ gh は PR を作ってからラベルを付けるので、まれに作成の run
 
   gh pr edit <番号> --add-label $ESCAPE_LABEL   # または画面から
 
+EOF
+# pr-gate (.github/workflows/pr-gate.yml) の中では打ち直しの段落を替える (#2668)。pr-gate は
+# 直せば新しい run で付け直され、その結論が同じコミットの最新になる。この run の id で打ち直しを
+# 案内すると、消したい赤 (ci.yml の run) と違う run を指す。中身は scripts/review-gate.sh の
+# pr_gate_rerun_note と同じに保つ (#2669 で ci-gate 側の段落ごと畳む)
+if [ "${GITHUB_JOB:-}" = pr-gate ]; then
+  cat >&2 <<'EOF'
+**打ち直し**: pr-gate は直せば付け直されます (打ち直しは要りません)。絵を貼る・ラベルを付けると
+新しい run が走り、その run の pr-gate が同じコミットの最新の結論になります。
+
+ただし作法の検査が ci.yml の ci-gate からも外れるまで (#2669) は、同じ判定をした CI の run の
+ci-gate が赤のまま残り、必須チェックを赤のままにします (古い赤が新しい緑を固定する場合も
+あります — #259)。そのときは CI の赤い run を、終わってから打ち直してください:
+
+  gh run rerun <CI の run-id> --failed
+
+同じリポジトリの PR は、打たなくても stall-watch の当番がいずれ打ち直します (数時間おき・Draft を
+除く)。fork の PR は当番の対象外なので、メンテナが打ちます。CI の pr-title も赤い run は、打ち直すと
+元のタイトルを再生して同じ赤を返します (#699) — タイトルを直したうえで、新しいコミットを
+push して run を作り直してください。
+EOF
+  exit 1
+fi
+cat >&2 <<EOF
 **打ち直し**: 本文の編集やラベルの付け外しでも新しい run が走って判定は付け直されますが、
 赤くなった run の ci-gate (必須チェック) は残って、必須チェックを赤のままにします (古い赤が
 新しい緑を固定する場合もあります — #259)。作成時の run の drawing-evidence は、そのとき API 上に
