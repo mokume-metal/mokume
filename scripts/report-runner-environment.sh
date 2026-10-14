@@ -53,7 +53,7 @@ merge queue の必須チェック `render` が、専用機の前検査 (`scripts
    - `console` — 専用機の表の GUI セッションが runner のユーザーではない。専用機の前で runner のユーザーへ切り替える (#2507)
    - `screens` — runner から画面が見えない。表のセッション・ディスプレイの接続と電源を見る
    - `metal` — Metal のデバイスが取れない。専用機を再起動する
-2. 直ったら、弾かれた PR の予約を手で掛け直す。当番 (stall-watch) は予約が外れた PR を `auto-merge-dropped` と名乗るだけで、掛け直さない (#2614)。名乗られた PR のうち、わざと外したものでないものに打つ:
+2. 直ったら、弾かれた PR の予約を手で掛け直す。当番 (stall-watch) は queue から弾かれた PR を `auto-merge-dropped` と名乗るだけで、掛け直さない (#2614)。名乗られた PR に打つ:
 
    ```
    bash scripts/stall-watch.sh

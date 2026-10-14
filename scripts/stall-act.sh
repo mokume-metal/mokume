@@ -25,7 +25,8 @@
 # (contents: read) では enablePullRequestAutoMerge が `Resource not accessible by
 # integration` (FORBIDDEN) で拒まれ、contents: write を足すと通る (probe の run
 # 38541307087)。リポジトリへの書き込みを当番に渡すかは人の判断なので、権限は広げずに
-# 掛け直しを消し、stall-watch.sh が名乗るだけにした。掛け直すのは人である。
+# 掛け直しを消した。stall-watch.sh が名乗り、外れてから猶予を超えたら赤で人に返す。
+# 掛け直すのは人である。
 #
 # ## gh の失敗の理由を捨てない (#2614)
 #
