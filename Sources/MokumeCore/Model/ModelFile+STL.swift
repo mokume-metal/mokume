@@ -483,8 +483,15 @@ nonisolated extension ModelFile {
         var scan = EmptySolidScan()
         func feed(_ data: Data) -> Bool {
             data.withUnsafeBytes { bytes in
-                for byte in bytes {
-                    if !scan.accept(byte) { return false }
+                var index = 0
+                while index < bytes.count {
+                    // 次の改行まで何も決まらない間 (1 行目・開きの 8 バイトを過ぎた行の続き) は、まとめて飛ばす
+                    if scan.skipsToNewline {
+                        while index < bytes.count, bytes[index] != 0x0A, bytes[index] != 0x0D { index += 1 }
+                        if index == bytes.count { break }
+                    }
+                    if !scan.accept(bytes[index]) { return false }
+                    index += 1
                 }
                 return true
             }
@@ -534,6 +541,9 @@ nonisolated extension ModelFile {
             if lines == 1, opening.count < 8 { opening.append(byte) }
             return true
         }
+
+        /// 次の改行まで、何を読んでも結果が変わらないか。
+        var skipsToNewline: Bool { !firstLineEnded || (lineHasContent && opening.count == 8) }
 
         var isEmpty: Bool { lines == 1 && opening == Array("endsolid".utf8) }
     }
