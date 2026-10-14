@@ -45,7 +45,7 @@ nonisolated enum JSONValue: Equatable, Sendable {
 /// 閉じない括弧・不正な文字・空の文字・深すぎる入れ子・`Double` に収まらない数は
 /// ``DataFailure/malformed(path:line:reason:)`` で、**壊れていた箇所の行**を添えて投げる。
 /// 壊れた箇所が複数あれば、文字の中で最初のものを名乗る。最上位がオブジェクトでない文字を
-/// ``Sketch/loadJSONObject(_:)`` で読んだときも同じ case で、最上位の値が始まる行を添える。
+/// ``SketchPart/loadJSONObject(_:)`` で読んだときも同じ case で、最上位の値が始まる行を添える。
 ///
 /// 隔離の外で走れる形にしてあるのは、待たない読み込みが読み解きを別の仕事として回すため
 /// ([ADR-0010] 決定 6)。

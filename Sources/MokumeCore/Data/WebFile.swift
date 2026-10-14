@@ -3,8 +3,8 @@
 
 import Foundation
 
-/// URL の向こうの本文を受け取る。JSON (``Sketch/loadJSONObject(_:)``) と XML
-/// (``Sketch/loadXML(_:)``) が、名前が `http://` か `https://` で始まるときに使う。
+/// URL の向こうの本文を受け取る。JSON (``SketchPart/loadJSONObject(_:)``) と XML
+/// (``SketchPart/loadXML(_:)``) が、名前が `http://` か `https://` で始まるときに使う。
 ///
 /// **受け取るのは `URLSession.shared` で、差し替えの口を持たない。** 検査は検査の側で
 /// `URLProtocol` を登録し、予約済みの名前 (`.test`) だけを横取りして応答を返す。本体に
@@ -38,7 +38,7 @@ nonisolated enum WebFile {
     /// 期限は受け口の側の音沙汰の無い間 (`URLRequest.timeoutInterval` = `limit`) だけで、呼んでからの
     /// 総時間は数えない — 待つ間も窓を塞がないので、同期版 (``fetchWaiting(_:path:limit:)``) の
     /// ような上限は要らない。切れたときは同期版と同じ失敗 (``overdue(path:limit:)``) で投げる。
-    /// 待たない読み込みの失敗は同期版と同じ、という約束 (``Sketch/requestJSONObject(_:)``) のため
+    /// 待たない読み込みの失敗は同期版と同じ、という約束 (``SketchPart/requestJSONObject(_:)``) のため
     /// である (#2264)。
     ///
     /// - Parameter limit: 受け口の期限。製品の経路では ``waitLimit`` のまま (`URLRequest` の既定と
@@ -59,7 +59,7 @@ nonisolated enum WebFile {
     /// 同期の受け取り (``fetchWaiting(_:path:limit:)``) が待つ上限。**呼んでから返るまでの
     /// 総時間で数える** (#2264)。
     ///
-    /// ``Sketch/loadJSONObject(_:)`` の説明が名乗る「最長 60 秒」はこの値で、変えるなら説明も
+    /// ``SketchPart/loadJSONObject(_:)`` の説明が名乗る「最長 60 秒」はこの値で、変えるなら説明も
     /// 同じく直す。`URLRequest.timeoutInterval` だけでは上限にならない — あれは音沙汰の無い間の
     /// 期限で、データが届くたびに数え直すので、少しずつ返し続けるサーバには切れない。
     ///
@@ -68,7 +68,7 @@ nonisolated enum WebFile {
 
     /// 本文を受け取る。**受け取り終わるか、届かないと分かるか、`limit` が過ぎるまで返らない。**
     ///
-    /// 同期の読み込み (``Sketch/loadJSONObject(_:)``) のための道。受け取りは共有の受け口の側の
+    /// 同期の読み込み (``SketchPart/loadJSONObject(_:)``) のための道。受け取りは共有の受け口の側の
     /// 仕事で返ってくるので、呼んだ側 (main actor) を塞いで待っても詰まらない。
     ///
     /// 呼んでから `limit` までに受け取り終わらなければ、受け取りを取り消して

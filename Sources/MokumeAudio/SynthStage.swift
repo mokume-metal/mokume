@@ -14,7 +14,7 @@ import MokumeDiagnostics
 ///
 /// ## 実際に鳴らす・鳴らさない
 ///
-/// 開くときに ``Sketch/clock`` を読み、``SoundFile`` と同じ区別をする。
+/// 開くときに ``SketchPart/clock`` を読み、``SoundFile`` と同じ区別をする。
 ///
 /// - **実時間** (窓に出しながら動かす) では、ラックを音の流れ (``RackPlayer``) へ入れて実際に鳴らす。
 ///   標本は音の側のスレッドが作る

@@ -48,12 +48,12 @@ public protocol Sketch: AnyObject, SketchPart {
 
     /// 押された瞬間に呼ばれる。
     ///
-    /// **1 フレームに押して離しても、両方とも呼ばれる。** 状態 (``isMousePressed``) を
+    /// **1 フレームに押して離しても、両方とも呼ばれる。** 状態 (``SketchPart/isMousePressed``) を
     /// 毎フレーム読む形では、押下と解放が同じフレームに収まると押されたことがどこにも
     /// 残らない — 外から送る経路では 1 回の要求がまとめて 1 フレームへ入るので、
     /// これは構造的に起きる ([#723])。
     ///
-    /// 読める値 (``mouseX`` / ``mouseY`` / ``isMousePressed`` / ``mouseButton``) は、
+    /// 読める値 (``SketchPart/mouseX`` / ``SketchPart/mouseY`` / ``SketchPart/isMousePressed`` / ``SketchPart/mouseButton``) は、
     /// **その出来事を当てた直後の姿**である。`draw()` の直前に、届いた順で呼ばれる。
     ///
     /// **押下と解放の対は保証されない。** 溜める上限を越えたぶんは古いほうから捨てられる
@@ -87,7 +87,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 動いた量**を受け取る。
     ///
     /// カーソルを捕まえて見回す一人称のスケッチは、ここで向きを回す
-    /// (``requestPointerLock()``):
+    /// (``SketchPart/requestPointerLock()``):
     ///
     /// ```swift
     /// var yaw: Float = 0
@@ -99,13 +99,13 @@ public protocol Sketch: AnyObject, SketchPart {
     /// }
     /// ```
     ///
-    /// 捕まえている間は位置が動かないので、``mouseX`` の差では動きが読めない — 量はここで
+    /// 捕まえている間は位置が動かないので、``SketchPart/mouseX`` の差では動きが読めない — 量はここで
     /// 受け取る。捕まえていないときは、当てる前の位置との差が渡る。単位はどちらも描く解像度の
     /// 画素で、縦軸は下向きである。
     ///
     /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれる。ここと
-    /// ``mouseDragged(deltaX:deltaY:)`` に渡った量を足すと、フレーム合計 (``movedX``) と一致
-    /// する。**``movedX`` をここで読まない** — フレームの頭から足し込む合計なので、ここから
+    /// ``mouseDragged(deltaX:deltaY:)`` に渡った量を足すと、フレーム合計 (``SketchPart/movedX``) と一致
+    /// する。**``SketchPart/movedX`` をここで読まない** — フレームの頭から足し込む合計なので、ここから
     /// 読むと部分累計を何度も足し込む形になる ([ADR-0034] 決定 5)。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
@@ -122,10 +122,10 @@ public protocol Sketch: AnyObject, SketchPart {
     /// ```
     ///
     /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれ、渡る量はそれぞれの 1 件ぶんに
-    /// なる。**3 つ足せばフレーム合計 (``dragX``) と一致する** — 面から読む量とここへ
+    /// なる。**3 つ足せばフレーム合計 (``SketchPart/dragX``) と一致する** — 面から読む量とここへ
     /// 渡る量は、用途が違うだけで食い違わない ([ADR-0034] 決定 5)。
     ///
-    /// ただし ``orbitControl(_:_:_:)`` は `draw()` の中で 1 回呼ぶ形のままにする。
+    /// ただし ``SketchPart/orbitControl(_:_:_:)`` は `draw()` の中で 1 回呼ぶ形のままにする。
     /// あちらが食うのはフレーム合計なので、ここから呼ぶと**同じフレームの量を何度も
     /// 食う**ことになり、回りすぎる。
     ///
@@ -142,7 +142,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// }
     /// ```
     ///
-    /// **``scrollY`` をここで読んではいけない。** あちらはフレームの頭から足し込む
+    /// **``SketchPart/scrollY`` をここで読んではいけない。** あちらはフレームの頭から足し込む
     /// 合計なので、1 フレームに 3 件届くと `a` + `(a+b)` + `(a+b+c)` を足し込む形に
     /// なる。欲しいのは `a+b+c` である ([ADR-0034] 決定 5)。
     ///
@@ -173,26 +173,26 @@ public protocol Sketch: AnyObject, SketchPart {
     /// }
     /// ```
     ///
-    /// ``isKeyDown(_:)`` では見分けられない。ここが呼ばれた時点で、そのキーは既に押されて
+    /// ``SketchPart/isKeyDown(_:)`` では見分けられない。ここが呼ばれた時点で、そのキーは既に押されて
     /// いる集合に入っており、**最初の 1 回でも `true` を返す**。
     ///
-    /// この書き方は `draw()` を見ないので、``noLoop()`` で止めている間も同じように効く
+    /// この書き方は `draw()` を見ないので、``SketchPart/noLoop()`` で止めている間も同じように効く
     /// (止まっている間もコールバックは呼ばれる)。
     ///
-    /// どのキーが動いたかは ``keyCode`` から読む。文字を打つ用途には ``keyTyped()`` と
-    /// ``key`` を使う。
+    /// どのキーが動いたかは ``SketchPart/keyCode`` から読む。文字を打つ用途には ``keyTyped()`` と
+    /// ``SketchPart/key`` を使う。
     func keyPressed()
 
     /// キーが離された瞬間に呼ばれる。
     ///
-    /// 離されたキーも ``keyCode`` が指す — **最後に動いたキー**なので、押した側と同じ
+    /// 離されたキーも ``SketchPart/keyCode`` が指す — **最後に動いたキー**なので、押した側と同じ
     /// 口から読める。
     func keyReleased()
 
     /// **文字を生むキー**が押されたとき、``keyPressed()`` の直後に続けて呼ばれる。
     ///
     /// 矢印・ファンクションキー・Escape・Delete・Tab では呼ばれない (手本と同じ)。
-    /// 打たれた文字は ``key`` から読む。
+    /// 打たれた文字は ``SketchPart/key`` から読む。
     func keyTyped()
 }
 
@@ -221,10 +221,10 @@ public struct SketchSettings: Equatable, Sendable {
     public var height: Int
     /// 1 秒あたりのフレーム数の目標。**1 以上。** 0 以下は起動の組み立てで
     /// ``RenderFailure/invalidFrameRate(_:)`` として断り、1 fps へ丸めない。止めたいなら
-    /// ``Sketch/noLoop()`` を呼ぶ。
+    /// ``SketchPart/noLoop()`` を呼ぶ。
     ///
-    /// **起動のときに読む。** 走っている最中に代入しても、画面の刻みも ``Sketch/time`` /
-    /// ``Sketch/deltaTime`` も変わらない。`var settings = SketchSettings(…)` と持てば
+    /// **起動のときに読む。** 走っている最中に代入しても、画面の刻みも ``SketchPart/time`` /
+    /// ``SketchPart/deltaTime`` も変わらない。`var settings = SketchSettings(…)` と持てば
     /// `setup()` や `draw()` の中で代入でき、読み返しても代入した値が返るので、変えられたように
     /// 見えてしまう。**そのため、起動のときと違う値になったら、1 度だけ警告を標準エラーへ
     /// 出す** (同じ走りの中では繰り返さない・[#1323](https://github.com/mokume-metal/mokume/issues/1323))。
@@ -251,7 +251,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// 描いた塗りは、面積に比例した濃さで出る (`shader()` や `texture()` を付けた長い形は、置く位置に
     /// よって 1 割ほど揺れる。扇形 (一周でない `arc`) は付けるかによらず約束の外で、`triangle`・`quad`・
     /// `beginShape` は描く画素の格子で丸まる)。
-    /// 効果の半径 (``Effect/blur(radius:)`` など)・切り抜きの矩形 (``Sketch/clip(_:_:_:_:)``)・
+    /// 効果の半径 (``Effect/blur(radius:)`` など)・切り抜きの矩形 (``SketchPart/clip(_:_:_:_:)``)・
     /// 断片 (塗りと効果) が受け取る位置と大きさも同じく出す細かさの画素で、細かさによらない。
     /// 違うのは描く画素 1 つより細かい所 (拡大のぼけと、描く画素の格子への丸め) だけである。
     ///
@@ -267,7 +267,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// ``Upscale/temporal`` は前のフレームの結果を積み上げて埋めるので、**フレーム N
     /// の絵はそこへ至る経路に依る** — 単独で描いた N と、0 から進めて得た N が
     /// 一致しない。同じ絵が出ることを前提にした仕組み (画像の比較・単一フレームだけを
-    /// 描く経路) は、``Sketch/usesFrameHistory`` を読んでそれを知る必要がある。
+    /// 描く経路) は、``SketchPart/usesFrameHistory`` を読んでそれを知る必要がある。
     /// [ADR-0015] 決定 2 の言う代償がこれである。
     ///
     /// ## いまは動きの情報を持たない
@@ -298,7 +298,7 @@ public struct SketchSettings: Equatable, Sendable {
     ///
     /// 決めるのは窓の大きさだけで、描く画素の数は ``width`` と ``height`` のまま変わらない。
     /// 窓が絵より大きければ拡大して、小さければ縮めて出す。開いた後に窓を手で広げても同じで
-    /// ある。書き出す絵 (``Sketch/save(_:)``・録画) にも効かない。
+    /// ある。書き出す絵 (``SketchPart/save(_:)``・録画) にも効かない。
     ///
     /// ## 指定を変えたら、覚えた大きさより指定を取る
     ///
@@ -353,8 +353,8 @@ public struct SketchSettings: Equatable, Sendable {
     ///
     /// 全画面のときは ``width`` / ``height`` / ``windowScale`` を読まず、そのディスプレイで全画面に
     /// したときの画素 (``Display/width`` × ``Display/height``) で描く。描いた 1 画素が画面の 1 画素に
-    /// 載るので、Retina の画面では点の 2 倍になる。スケッチの中の ``Sketch/width`` /
-    /// ``Sketch/height`` はその大きさを返す。描く側のフレームはこれまでと同じで、変わるのは大きさ
+    /// 載るので、Retina の画面では点の 2 倍になる。スケッチの中の ``SketchPart/width`` /
+    /// ``SketchPart/height`` はその大きさを返す。描く側のフレームはこれまでと同じで、変わるのは大きさ
     /// だけである。
     ///
     /// 画素が多くて重ければ、描く細かさ (``pixelDensity``) を下げて拡大させる。他の設定は
@@ -374,7 +374,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// **起動の組み立てで断り、別の画面へは出さない** — 番号が 1 を割れば
     /// ``RenderFailure/invalidDisplay(_:)``、繋がっていなければ
     /// ``RenderFailure/displayNotConnected(_:connected:)`` (いま繋がっている一覧を添える)。
-    /// 繋がっていなければ窓で開く、とするなら ``Sketch/displays`` を読んで選ぶ。手元では窓で書き、
+    /// 繋がっていなければ窓で開く、とするなら ``SketchPart/displays`` を読んで選ぶ。手元では窓で書き、
     /// 会場でプロジェクタを繋いだら全画面になる:
     ///
     /// ```swift
@@ -429,7 +429,7 @@ public struct SketchSettings: Equatable, Sendable {
 ///
 /// [ADR-0010] 決定 2 のとおり、**隠された裏口ではなく明示的に main actor 隔離された
 /// グローバル**として置く。隔離されている以上、可変であることは問題にならない。
-/// 直接呼べる描画関数 (``Sketch/circle(_:_:_:)`` など) はここを見る。
+/// 直接呼べる描画関数 (``SketchPart/circle(_:_:_:)`` など) はここを見る。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 @MainActor
@@ -438,8 +438,8 @@ var runningSketch: SketchRuntime?
 /// 走っているランタイムの面を、その中で起こされた `Task` へ持ち越すもの。
 ///
 /// ``runningSketch`` は `setup()` / `draw()` が返った時点で外れる。そこで起こした
-/// `Task` の中身が走るのはその後なので、中から ``Sketch/canvas`` を取ると何も差さって
-/// いない。待つ読み込みの口 (``Sketch/requestImage(_:)``・``Sketch/requestModel(_:normalize:)``)
+/// `Task` の中身が走るのはその後なので、中から ``SketchPart/canvas`` を取ると何も差さって
+/// いない。待つ読み込みの口 (``SketchPart/requestImage(_:)``・``SketchPart/requestModel(_:normalize:)``)
 /// は `async` で `Task` からしか呼べないので、**呼べる場所が 1 つも無かった**
 /// ([#1367](https://github.com/mokume-metal/mokume/issues/1367))。`Task { … }` は起こした
 /// 文脈のタスクローカル値を受け継ぐので、ここに束ねた面はそのまま中へ届く
@@ -488,13 +488,13 @@ extension SketchPart {
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
     public var usesFrameHistory: Bool { canvas.usesFrameHistory }
 
-    /// これまでに描いたフレームの数。最初の ``draw()`` の最中は 1。
+    /// これまでに描いたフレームの数。最初の ``Sketch/draw()`` の最中は 1。
     public var frameCount: Int { Self.requireRuntime().frameCount }
     /// いまのフレームの時刻 (秒)。最初のフレームは 0。
     ///
     /// **最初のフレームが 0 なのは時計 (``clock``) によらない。** 窓に出して動かしている間も、
-    /// アプリの起動・窓の作成・``setup()`` の中で済む計算にかかった時間は乗らない — 数え始める
-    /// のは最初のフレームからである。ただし ``setup()`` で ``jumpTime(_:)`` した最初のフレームは
+    /// アプリの起動・窓の作成・``Sketch/setup()`` の中で済む計算にかかった時間は乗らない — 数え始める
+    /// のは最初のフレームからである。ただし ``Sketch/setup()`` で ``jumpTime(_:)`` した最初のフレームは
     /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。
     ///
     /// 窓に出して動かしている間は**実際に流れた時間**で、フレームが何枚落ちても
@@ -514,11 +514,11 @@ extension SketchPart {
     ///
     /// **最初のフレームは、時計 (``clock``) によらず 1 フレームぶんである。** 窓に出して動かして
     /// いる間は目標の 1 フレームぶん (``SketchSettings/frameRate`` 分の 1 秒) で、アプリの起動や
-    /// ``setup()`` の中で済む計算にかかった時間は乗らない。ただし ``setup()`` で ``pauseTime()`` /
+    /// ``Sketch/setup()`` の中で済む計算にかかった時間は乗らない。ただし ``Sketch/setup()`` で ``pauseTime()`` /
     /// ``jumpTime(_:)`` した最初のフレームと、時刻を指定した観測が撮る最初のフレームは 0 である。
     ///
-    /// **最初のフレームの中で使った時間は、2 枚目に乗る** (上限まで)。``setup()`` で置いた図形・
-    /// 画素・背景は最初のフレームへ持ち越されてその中で組まれ、最初の ``draw()`` の重い準備も
+    /// **最初のフレームの中で使った時間は、2 枚目に乗る** (上限まで)。``Sketch/setup()`` で置いた図形・
+    /// 画素・背景は最初のフレームへ持ち越されてその中で組まれ、最初の ``Sketch/draw()`` の重い準備も
     /// その中で走るので、ほかのフレームと同じく次の枚の経過になる。
     ///
     /// **止まっていた時間まるごとは渡らない。** ディスプレイのスリープなどでフレームが

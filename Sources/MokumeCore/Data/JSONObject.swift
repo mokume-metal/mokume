@@ -4,7 +4,7 @@
 import Foundation
 
 /// JSON のオブジェクト (`{ "キー": 値, … }`)。ファイルか URL から読んで作り
-/// (``Sketch/loadJSONObject(_:)``)、キーで値を取り出す。
+/// (``SketchPart/loadJSONObject(_:)``)、キーで値を取り出す。
 ///
 /// <!-- example: 文脈 var temp: Float? -->
 /// ```swift
