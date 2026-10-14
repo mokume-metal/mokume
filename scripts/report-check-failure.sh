@@ -36,13 +36,16 @@
 # その間の赤は run のログにしか残らない — #1295 と同じ形である。実際に #2251 (着手中) が
 # open の間、専用機の定期の赤 2 回が誰にも届かなかった。追記には新規起票と同じ本文 (呼び手の
 # 文・出力の抜粋・run の URL) を載せる。後から出た赤は前の赤と別物でありうるので、中身を
-# 省かない。代償は、赤が続く間、回ごとに 1 コメント増えることである。追記に失敗したら黙らず
+# 省かない。代償は、赤が続く間、回ごとに 1 コメント増えることである (merge_group で走る
+# 前検査の起票は、queue の group ごとに 1 コメント)。閉じる人は、追記された分も同じ直しで
+# 解けたかを確かめる (呼び手の本文がそう言う)。追記に失敗したら黙らず
 # 非 0 で返す (set -e)。
 #
 # **検査と発信を分けているのは、起票を CI に限るため** (report-ruleset-drift.sh と同じ)。
 # 検査スクリプトに起票を足すと、手元で打っただけで Issue が立つ。
 #
-# 呼び手は scripts/report-ruleset-drift.sh / scripts/report-dead-assets.sh、
+# 呼び手は scripts/report-ruleset-drift.sh / scripts/report-dead-assets.sh /
+# scripts/report-scheduled-render.sh / scripts/report-runner-environment.sh、
 # 検査は scripts/tests/report_check_failure_test.py。
 set -euo pipefail
 

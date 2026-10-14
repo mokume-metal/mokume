@@ -163,6 +163,8 @@ class ReportDeadAssetsTest(unittest.TestCase):
         body = self.body.read_text()
         self.assertIn("解消したらこの Issue を閉じる", body)
         self.assertIn("この Issue へ追記される", body)
+        # 追記された別の赤を、前の赤の直しと一緒に黙って閉じない (#2658 の反証)
+        self.assertIn("追記された分も同じ直しで解けたか", body)
 
     def test_本文に引けなかった指し先と出所が載る(self):
         self.report()

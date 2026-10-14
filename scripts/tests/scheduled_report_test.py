@@ -309,6 +309,8 @@ class ReportScheduledRenderTest(unittest.TestCase):
         body = self.body.read_text()
         self.assertIn("解消したらこの Issue を閉じる", body)
         self.assertIn("この Issue へ追記される", body)
+        # 追記された別の赤を、前の赤の直しと一緒に黙って閉じない (#2658 の反証)
+        self.assertIn("追記された分も同じ直しで解けたか", body)
 
     def test_同じ_Issue_が_open_なら二重に立てずに追記する(self):
         r = self.report(issue_list=f'[{{"number":42,"title":"{TITLE}"}}]')
