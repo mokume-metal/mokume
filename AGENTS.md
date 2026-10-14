@@ -99,7 +99,7 @@ AI エージェントは、このリポジトリへの発言 (コメント・`gh
 | 待ちを含む検査を書く | 待つ側が期限を持ち、越えたら殺す。`.timeLimit` は使わない (main actor 上で検査全体の秒数を縛る) |
 | queue から弾かれた | 落ちた `render` の run を読む (`render-pr` は早期の情報で必須ではない)。専用機は画面とキーボードで操作する |
 | 止まって見える | `bash scripts/stall-watch.sh` (冒頭に症状と対処)。対象から外すなら Draft に |
-| 版の出方 | 日に 1 度自動で出る。出し直しだけ `release:now` (`scripts/release.py` 冒頭) |
+| 版の出方 | 日に 1 度自動で出る。下限 OS の release の検査が赤なら出ない (`release.yml`)。出し直しだけ `release:now` (`scripts/release.py` 冒頭) |
 | ブランチ保護の正本 | `.github/rulesets/*.json` を PR で変え、適用 (`scripts/apply-rulesets.sh --apply`) はメンテナが merge 後に行う。必須チェックを消すときだけ適用が先 |
 | sub-issue の使い方 | `scripts/sub-issue.sh <親番号> <タイトル>`。階層は 3 段までで、独立した Issue を無理にツリーにしない。open の子を残す親は not planned で閉じる |
 | 手元機が落ちた・画面が固まった | GPU の検査の起動元を `scripts/gpu-slot.py` 冒頭「起動元の記録」で引く |

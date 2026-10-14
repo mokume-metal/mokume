@@ -214,8 +214,8 @@ minutes_since() { # $1=ISO8601 (空可)
 # 欄の名前が違うので、ここで 1 つの形にしておく。
 #
 # **run は「どちらが新しいか」の基準である。** at (完了時刻) では測れない — タイトルを直す
-# 前の run の ci-gate は、同じ run の pr-title が赤いので失敗で終わるが、test-release を
-# 待つ分だけ直した後の run より遅く完了し、古い赤が時刻の上では最新に見える (#2568)。run の
+# 前の run の ci-gate は、同じ run の pr-title が赤いので失敗で終わるが、当時の test-release (いまは
+# release.yml) を待つ分だけ直した後の run より遅く完了し、古い赤が時刻の上では最新に見える (#2568)。run の
 # id は単調に増えるので、detailsUrl の /actions/runs/<id> を新旧の順にする。読めなければ 0
 # (StatusContext など)。**同じ名前の check が全部 0 のときだけ at だけで並ぶ** — 0 は
 # どの run id よりも古いと読む
@@ -226,8 +226,8 @@ minutes_since() { # $1=ISO8601 (空可)
 # ci-gate も SUCCESS のときだけ** — 新しい側が緑でなければ、本当の詰まりを黙らせない)。
 # この赤のまま #2543 は merge され、他の 7 本も queue に入った。
 # **SKIPPED は直った証拠ではない** — pr-title は pull_request でしか走らないので、レビューの
-# 投稿などで起きた run では SKIPPED になる。タイトルは直っていないので外さない。ci-check や
-# test-release の赤は、タイトルと関わらない本物の失敗なので外さない
+# 投稿などで起きた run では SKIPPED になる。タイトルは直っていないので外さない。ci-check などの
+# 赤は、タイトルと関わらない本物の失敗なので外さない
 normalize_checks() { # 標準入力=PR の JSON
   jq -c --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
     def red: .result as $r | (($unsettled | index($r)) == null) and (($passed | index($r)) == null);

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""`.github/workflows/ci.yml` の test-release の起動の形の検査 (#2589)。
+"""`.github/workflows/ci.yml` の必須の集約の形の検査 (#2589・#2662)。
 
-test-release は PR では走らせず、merge queue (merge_group) でだけ走らせる。GitHub ホストの
-macOS の枠 (同時 5 本) を PR の ci-check に空けるためである。ここで固定するのは次の 2 つ:
+release の検査 (`make test-release`) は ci.yml に置かない。merge queue の必須だった頃は
+group ごとに約 12 分のホストの macOS を使い、queue の律速の 63% を占めた。いまは版を出す
+前の `release.yml` の `release-check` が、版にする SHA そのものを検査する (形の固定は
+release_workflow_test.py)。ここで固定するのは次の 2 つ:
 
-  1. test-release は merge_group でだけ走る — PR に戻すと macOS の枠の待ちが戻る
-     (2026-10-13 は PR の ci-check が走り出すまで約 1 時間)
-  2. test-release は ci-gate の needs に残る — 外すと merge_group でも必須でなくなり、
-     #1086 の「誰も見ていない release の赤」に戻る。ci-gate は skipped を通すので、PR では
-     止まらない (failure と cancelled だけを赤にする)
+  1. ci.yml に test-release が戻っていない — 戻すと、PR か merge_group で macOS の枠を
+     また取り合う (2026-10-13 は PR の ci-check が走り出すまで約 1 時間待った)
+  2. ci-gate は skipped を通す — 赤にするのは failure と cancelled だけで、PR では走らない
+     ジョブ (merge_group だけの段・PR だけの段) が skipped で現れても止まらない
 
 ワークフローの読み手 (split / needs / condition) は render_workflow_test.py のものを使う
 (写しを持たない)。実行は make hooks-test (CI もこれを呼ぶ)。
@@ -30,12 +31,15 @@ class CiWorkflowTest(unittest.TestCase):
     def setUpClass(cls):
         _, cls.jobs = workflow.split(CI.read_text(encoding="utf-8"))
 
-    def test_test_release_は_merge_group_でだけ走る(self):
-        self.assertEqual(workflow.condition(self.jobs["test-release"]), "github.event_name == 'merge_group'")
+    def test_test_release_は_ci_yml_に無い(self):
+        self.assertNotIn("test-release", self.jobs)
+        self.assertNotIn("test-release", workflow.needs(self.jobs["ci-gate"]))
+        for name, body in self.jobs.items():
+            with self.subTest(job=name):
+                self.assertNotIn("make test-release", body)
 
-    def test_test_release_は_ci_gate_の_needs_に残り_skipped_は通る(self):
+    def test_ci_gate_は_skipped_を通す(self):
         gate = self.jobs["ci-gate"]
-        self.assertIn("test-release", workflow.needs(gate))
         # skipped を赤にすると、PR の ci-gate が毎回落ちる
         self.assertIn("(failure|cancelled)", gate)
         self.assertNotIn("skipped", gate.split("run: |", 1)[1])

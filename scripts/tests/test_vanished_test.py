@@ -25,6 +25,7 @@
 """
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -146,6 +147,13 @@ class ReadFailuresTest(unittest.TestCase):
 
 
 DIGEST = "ab" * 32
+# 関所が閉じた後の文面 (RenderFailure.notResponding の本物の形・#2074 の実測から)
+GATE_CLOSED_MESSAGE = (
+    "A wait for the GPU went past its limit earlier in this process, so no new drawing foundation"
+    " is set up in it (the first was while waiting for the GPU to finish, past 5.0 seconds, at"
+    " 2026-10-14T15:42:56+0900). That can be one frame drawing too much or a GPU that stopped"
+    " answering, and the two look the same from here."
+)
 
 
 def _failed(classname, name, message):
@@ -228,6 +236,74 @@ class ReadFailureMessagesTest(unittest.TestCase):
         self.assertIn("落ちた検査 (81 件)", out)
         self.assertEqual(out.count("色が違う"), 80)
         self.assertIn("ほか 1 件", out)
+
+    def test_folds_the_gate_closed_failures_and_names_the_environment(self):
+        """GPU の待ちが期限を越えた回は、関所の巻き込みを畳み、本物の赤を先に載せる (#2662)。
+
+        2026-10-13 09:20Z の専用機の release は 2,108 件が関所で落ち、先頭 80 件が巻き込みで
+        埋まって、引き金も release 固有の赤も載らなかった。
+        """
+        gate = _failed(
+            "MokumeNetworkTests.OSCSketchTests", "stopEndsDelivery()",
+            "Caught error: " + GATE_CLOSED_MESSAGE + " (error)",
+        )
+        trigger = _failed(
+            "MokumeCoreTests.RecordMovieTests", "records()",
+            "Caught error: Waited 5 seconds for the GPU and it never finished. (error)",
+        )
+        out = self.read(_record(*[gate] * 100, trigger, FAILED_CASE))
+        self.assertIn("落ちた検査 (102 件)", out)
+        self.assertIn("環境で成り立たなかった回", out)
+        self.assertIn("102 件のうち 100 件", out)
+        self.assertIn("次に走らせ直すまで", out)
+        self.assertIn("最初の期限切れ: the first was while waiting for the GPU to finish", out)
+        # 本物の赤 (引き金と、それ以外) は 80 件の枠に押し出されない
+        self.assertIn("records()", out)
+        self.assertIn("色が違う", out)
+        self.assertLess(out.index("色が違う"), out.index("関所が閉じた後の失敗"))
+        # 関所の分は 1 例に畳む
+        self.assertEqual(out.count("stopEndsDelivery()"), 1)
+        self.assertNotIn("ほか", out)
+
+    def test_does_not_name_the_environment_without_the_gate(self):
+        out = self.read(_record(FAILED_CASE))
+        self.assertNotIn("環境で成り立たなかった", out)
+        self.assertNotIn("関所", out)
+
+    def test_does_not_sweep_the_suites_that_check_the_gate_wording(self):
+        """関所の文面を検査する Suite の赤は本物の赤で、環境の停止と名乗らない (#2665 の反証 1)。"""
+        own = _failed(
+            "MokumeCoreTests.CommandQueueGateWordingTests", "theRefusalNamesTheFirstWait()",
+            "Expectation failed: headline.contains(...) " + GATE_CLOSED_MESSAGE,
+        )
+        out = self.read(_record(own))
+        self.assertNotIn("環境で成り立たなかった", out)
+        self.assertIn("theRefusalNamesTheFirstWait()", out)
+
+    def test_the_wording_suites_are_all_listed(self):
+        """Tests/ で関所の文面を扱う Suite が、畳まない一覧に揃っている。"""
+        reader = READER.read_text(encoding="utf-8")
+        found = set()
+        for path in (REPO / "Tests").rglob("*.swift"):
+            text = path.read_text(encoding="utf-8")
+            if "notResponding" not in text and "went past its limit" not in text:
+                continue
+            for name in re.findall(r"(?m)^(?:@MainActor\s+)?(?:final\s+)?(?:struct|class)\s+(\w+)", text):
+                found.add("%s.%s" % (path.parent.name, name))
+        self.assertTrue(found)
+        for suite in sorted(found):
+            with self.subTest(suite=suite):
+                self.assertIn('"%s"' % suite, reader)
+
+    def test_the_gate_marker_matches_the_real_message(self):
+        """畳む目印は Swift の文面の写しなので、本物から外れたら黙って畳まなくなる。"""
+        swift = (REPO / "Sources" / "MokumeCore" / "Rendering" / "RenderFailure.swift").read_text(encoding="utf-8")
+        reader = READER.read_text(encoding="utf-8")
+        marker = 'GATE_CLOSED = "A wait for the GPU went past its limit earlier in this process"'
+        self.assertIn(marker, reader)
+        self.assertIn("A wait for the GPU went past its limit earlier in this process", swift)
+        self.assertIn("(the first was ", GATE_CLOSED_MESSAGE)
+        self.assertIn("first = closure.map { \" (\\($0.summary))\" }", swift)
 
     def test_names_green_missing_and_unreadable(self):
         # 無い記録を先に見る (read は同じ置き場へ書くので、後に回すと前の記録が残る)
