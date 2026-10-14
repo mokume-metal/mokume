@@ -1969,7 +1969,7 @@ struct CanvasTests {
             "placementsFoundOutsideRegions": count,
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
-            "sweepPolicy": testing,
+            "sweepPolicy": testing, "sharesUnitSpheres": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
             "failEffectPassForTesting": testing, "failImageInputForTesting": testing,

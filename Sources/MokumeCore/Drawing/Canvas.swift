@@ -481,6 +481,9 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場 (``SolidFillGeometry``)。持っていれば、
         /// 列は溜め場ではなくここから頂点を読む。閉じた列へそのまま渡し、所有させる。
         var fillGeometry: SolidFillGeometry?
+        /// 単位球の頂点を、置き場所の半径 (``SolidInstance/normal0`` の `w`) で広げて描く列か
+        /// (``Batch/usesUnitSphere``)。
+        var usesUnitSphere = false
     }
 
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
@@ -595,6 +598,14 @@ public final class Canvas {
     /// 球の形を、同じ細かさの単位球から位置だけ作った回数 (作ってから通算・#1751)。
     /// **三角関数を引き直さずに済んだ回数**で、`solidMeshesBuilt` との差が引き直した回数になる。
     var spheresFromUnit = 0
+    /// 正の半径の球の塗りを、単位球の頂点 1 組と置き場所ごとの半径で描くか ([#1862])。
+    ///
+    /// **常に立てておく。** 下ろすと半径ごとに頂点を組む従来の経路を通る — 2 つの経路の絵と
+    /// 利用者の断片が読む座標が 1 ビットも違わないことを、検査 (`UnitSphereTests`) と計測が
+    /// 同じビルドの中で比べるための口で、公開しない。
+    ///
+    /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
+    var sharesUnitSpheres = true
     /// 立体の形の控えと稜線の控えに、**それぞれ**置いておく重さの合計 (見積もりのバイト数)。
     /// 超えたら古い順に 1 件ずつ捨てる。
     ///
@@ -1624,6 +1635,12 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点の置き場 (``OpenSolid/fillGeometry``)。線の骨と同じく、
         /// 投入完了まで HeldFrame が列ごと保持する。
         var fillGeometry: SolidFillGeometry?
+        /// 単位球の頂点を、置き場所ごとの半径で広げて描く列か ([#1862])。立っていれば、塗りと
+        /// 影の焼き付けを単位球の頂点関数 (``ShapePipeline/unitSphereStates``・
+        /// ``ShapePipeline/unitSphereShadowState``) で描く。
+        ///
+        /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
+        var usesUnitSphere = false
         /// 面を置き換える列か (``Canvas/replaceSurface(with:)``・[#1685])。
         ///
         /// 立てた列は**奥行きを比べずに書き** (``ShapePipeline/replaceDepthState``)、書く値は
@@ -4060,7 +4077,10 @@ public final class Canvas {
                 // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
                 encoder.setRenderPipelineState(
                     (batch.strokeGeometry != nil
-                        ? pipeline.solidStrokeStates : (run.paint.shader?.solidStates ?? pipeline.solidStates))
+                        ? pipeline.solidStrokeStates
+                        : batch.usesUnitSphere
+                            ? (run.paint.shader?.unitSphereStates ?? pipeline.unitSphereStates)
+                            : (run.paint.shader?.solidStates ?? pipeline.solidStates))
                         .drawing(batch))
                 encoder.setDepthStencilState(
                     batch.replacesSurface ? pipeline.replaceDepthState : pipeline.solidDepthState)
@@ -4918,7 +4938,9 @@ public final class Canvas {
         _ batch: Batch, from source: CasterSource, on encoder: any MTL4RenderCommandEncoder
     ) {
         encoder.setRenderPipelineState(
-            batch.strokeGeometry == nil ? pipeline.shadowState : pipeline.solidStrokeShadowState)
+            batch.strokeGeometry != nil
+                ? pipeline.solidStrokeShadowState
+                : batch.usesUnitSphere ? pipeline.unitSphereShadowState : pipeline.shadowState)
         // 持ち越した列は詰め直した区画の頭を、溜め場の列は溜め場の頭を渡す。引数を GPU が書く列 (粒) は、
         // そこから列の頭までを足す (``Batch/vertexBaseShift``)。その列は溜め場の頂点を添字なしで読む
         // 列に限られ (``Batch/addressesVertexHead``)、持ち越した列は詰め直すときに頭が 0 へ置き直される

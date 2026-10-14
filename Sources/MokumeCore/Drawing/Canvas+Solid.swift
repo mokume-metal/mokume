@@ -148,9 +148,25 @@ extension Canvas {
     /// 線は塗りに重ねて引く。`noFill()` なら線だけになる — 塗りと線は互いに独立した
     /// スタイルで、平面の図形と同じく次元によって作用が変わらない ([ADR-0020] 決定 3)。
     ///
+    /// **正の半径の球の塗りは、単位球の頂点 1 組を共有する** ([#1862])。半径は置き場所が持ち
+    /// (``SolidInstance/normal0`` の `w`)、頂点関数が向き × 半径で位置を作る。半径の違う球を
+    /// 幾つ置いても形を組まず、1 列で描く。絵と、利用者の断片が読む `shapePosition` は、半径ごとに
+    /// 頂点を組む経路と 1 ビットも違わない (`UnitSphereTests`)。線・保持する形の記録・半径 0 の
+    /// 球は、半径ごとの形のまま置く — 線は半径込みの稜線を引き、記録は置き場所を頂点へ焼く。
+    ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
     func place(_ shape: SolidShape) {
-        if style.hasFill { placeMesh(.mesh(shape)) { solidMesh(for: shape) } }
+        if style.hasFill {
+            if sharesUnitSpheres, !recordingShape, case .sphere(let radius, let detail) = shape,
+                radius > 0
+            {
+                let unit = SolidShape.sphere(radius: 1, detail: detail)
+                placeMesh(.mesh(unit), sphereRadius: radius) { solidMesh(for: unit) }
+            } else {
+                placeMesh(.mesh(shape)) { solidMesh(for: shape) }
+            }
+        }
         strokeSolidEdges(of: .mesh(shape)) { solidMesh(for: shape) }
     }
 
@@ -165,9 +181,14 @@ extension Canvas {
     /// 捨てるのは**形の中での**畳みだけである — 組み上げた形を ``shape(_:at:)`` で何か所に
     /// 置いても、頂点 1 組と置き場所の並びで描くことは変わらない。
     ///
+    /// `sphereRadius` が正なら、`source` は単位球で、置き場所がその半径で広げて描く
+    /// (``place(_:)``)。単位球の列は、頂点の溜め場も共有の区間も半径ごとの球と同じものを使う —
+    /// 裏 → 表のまとめ描き (#1947) が溜め場の頂点を読むためである。
+    ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
-        _ source: SolidSource, winding: () -> SolidWinding = { .outward },
+        _ source: SolidSource, sphereRadius: Float = 0,
+        winding: () -> SolidWinding = { .outward },
         mesh build: () -> SolidMesh
     ) {
         // 区間の外では、立体の側へも移らない (``Canvas/canPlace``・#1672)
@@ -177,9 +198,11 @@ extension Canvas {
         // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
         useFillTexture()
         let textured = style.picture != nil
-        let placement = SolidInstance(
+        var placement = SolidInstance(
             matrix: transform.matrix, normalMatrix: transform.normalMatrix,
             color: style.fill)
+        let usesUnitSphere = sphereRadius > 0
+        if usesUnitSphere { placement.normal0.w = sphereRadius }
 
         if recordingShape {
             // **置き場所で描いたときと同じ頂点を、先に作って焼く。** 焼いた頂点はその場で
@@ -212,7 +235,10 @@ extension Canvas {
         // 置き場所だけが続く間は、いままでどおり 1 列にまとまる
         //
         // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+        //
+        // 単位球の列と半径ごとの形の列も分ける (頂点関数が違う)
         if openSolid?.source != source || openSolid?.strokeGeometry != nil
+            || openSolid?.usesUnitSphere != usesUnitSphere
             || openSolid?.isMirrored != placement.isMirrored
             || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
         {
@@ -249,7 +275,8 @@ extension Canvas {
                 source: source, vertexStart: range.lowerBound, vertexCount: range.count,
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
-                instanceStart: solidInstances.count, isMirrored: placement.isMirrored)
+                instanceStart: solidInstances.count, isMirrored: placement.isMirrored,
+                usesUnitSphere: usesUnitSphere)
         }
 
         solidInstances.append(placement)
