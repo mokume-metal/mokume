@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27)
+採用 (2026-08-27) / 改訂あり (本文の「改訂 (日付)」見出し)
 
 ## 文脈
 
@@ -46,6 +46,16 @@ SPDX-License-Identifier: MIT
 ### 1. OS フロアは macOS 26 (Tahoe)・Apple Silicon 専用
 
 `Package.swift` の `platforms` は macOS 26 を最小とする。Intel Mac は対象にしない。
+
+#### 改訂 (2026-10-14) — iOS / iPadOS 26 (A14 / M1 以降) を加える
+
+**OS フロアに iOS / iPadOS 26 を加える。** 対象の端末は A14 / M1 以降で、Metal 4 の要件に当たる (iPhone 12 以降・iPad Air (2020) 以降など)。[ADR-0001](0001-founding-principles.md) 原則 5 が対象を Apple Silicon の macOS / iOS / iPadOS に広げたためである ([ADR-0045](0045-game-direction.md) 決定 11)。
+
+- **一本化は保つ。** どの OS でも最新世代 (26) だけを最小とし、`#available` による世代分岐を持たない
+- **互換ビルドの CI は持たない** (決定 4)。iOS のビルドも単一の Xcode で回す
+- `platforms` に iOS を書き足すのは、iOS 向けの実装を入れるとき (ADR-0045 決定 13 の段 3) である。2026-10-14 時点の `Package.swift` は macOS 26 だけを宣言している
+
+**退けた案: iPad の Swift Playgrounds を対象にする。** Playgrounds の Swift の版を下限にし、その版でビルドする CI を持つことになる。決定 4 の反転にあたる。
 
 ### 2. GPU API は Metal 4 世代のみ
 

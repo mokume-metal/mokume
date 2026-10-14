@@ -71,7 +71,7 @@ func mouseWheel() { size += scrollY * 4 }   // 1 フレームに 3 件届けば 
 
 ### 1. キーは自前の型で指す。綴りは手本のまま、値の体系だけ正直にする
 
-`Key` を面に出し、`Sketch/keyCode` と `isKeyDown(_:)` の両方をこの型で揃える。
+`Key` を面に出し、`Sketch/keyCode` と `isKeyDown(_:)` の両方をこの型で揃える。`isKeyDown(_:)` は、決定 7 で `keyboard.isPressed(_:)` へ移す。
 
 ```swift
 if keyCode == .space { ... }
@@ -185,8 +185,50 @@ func mouseReleased() {
 
 **p5.js 2.x の「真偽値の組」は採らない。** あれは「いまどの釦が押されているか」という状態で、Processing と p5.js 1.x が答える「どの釦か」とは問いが違う。手本の版に追随しないのは ADR-0020 影響節の最後の行と同じ理由である。
 
+### 7. 押下の状態は 3 つの語で、入力の種類ごとに問う (2026-10-14 追補)
+
+**3 つの語を、キーボード・マウス・ゲームパッド・図形で共通にする** ([ADR-0045](0045-game-direction.md))。
+
+| 語 | 意味 |
+| --- | --- |
+| `isPressed` | 押している間 |
+| `justPressed` | このフレームで押された |
+| `justReleased` | このフレームで離された |
+
+```swift
+if keyboard.isPressed(.arrowLeft) { x -= 4 }
+if keyboard.justPressed(.space) { jump() }
+if mouse.justPressed(.left) { shoot() }
+if startButton.justPressed { startGame() }   // 左の釦がこのフレームで、この図形の中で押された
+```
+
+"just" は Godot・Bevy・Phaser が同じ意味で使う語である。
+
+- **入力の種類ごと (`keyboard`・`mouse`・パッド) に問い合わせる。** トップレベルの `justPressed(.left)` を重ねて定義すると、`.left` がマウスの釦に解決される (矢印キーは `.arrowLeft`)。矢印キーのつもりでも黙ってマウスとして動くので、入力の種類で分け、取り違えをコンパイルの時点で起こす。`keyboard` / `mouse` は `SketchPart` を名乗った型の中でも読める ([ADR-0020](0020-api-naming-and-surface.md) 決定 7)
+- **`isKeyDown(_:)` は `keyboard.isPressed(_:)` へ移す** (0.x の破壊的変更)。`isMousePressed` も、マウスの語を入れるときに `mouse.` へ移し、正本を 2 つにしない
+- 3 つの語の判定は、フレームごとの入力の状態から決める。外から注入した入力でも、記録を流し直すリプレイでも、同じ結果になる。ただしゲームパッドは、いまは入り口 (`Inlet.supply()`) を通ってこの入力の状態を通らないので、パッドに語を足すときに同じ経路へ揃える
+
+**挙動:**
+
+1. **`keyPressed()` は、物理的に押した 1 回だけ呼ぶ。** キーリピートは文字入力用の `keyTyped()` にだけ流す (破壊的変更。Processing の連射は、手本が誤解を招く部分として引き継がない — ADR-0020 決定 1 の規則 2b)
+2. **1 フレームの中で押して離した場合**は、`justPressed` と `justReleased` を両方 true、`isPressed` を false にする。速い連打を落とさない
+3. **窓が key でなくなったら、押しているものを全部離した扱いにする** (次のフレームで `justReleased`)。⌘Tab で押しっぱなしが残るのを塞ぐ。マウスの押下は、そのために釦ごとの集合で持つ (左を押したまま右を離しても、左は押したままである)
+4. **修飾キー** `.shift`・`.control`・`.option`・`.command` を `Key` に足す。`flagsChanged` は押下の状態だけを変え、`keyPressed()`・`key`・`keyCode` には触れない (⌘Tab で Command の `keyPressed()` が呼ばれたり、大文字を打った後に `keyCode` が `.shift` のまま残ったりしないため)。`.shift` は左右どちらの Shift でも true になる
+5. **`pauseTime()` の間もフレームは回るので、入力の瞬間も届く。** 止めている間に離したキーは、止めている間の次のフレームで `justReleased` になる
+6. **タッチ** (iOS / iPadOS): 1 本目の指をマウスとして扱い (p5.js と同じ)、`touches` で全部の指の一覧を読める。図形の `isPressed` / `justPressed` は、どのポインタ (どの指) でも中にあれば押された扱いにする。macOS ではポインタが 1 つなので、マウスの語と一致する
+
+**代償:** 押した瞬間を表す `keyPressed()` (手本の名前) と、押している間を表す `keyboard.isPressed` が並ぶ。同じ "pressed" が、コールバックでは瞬間、問い合わせでは間を指す。コールバックの名前は手本のまま残し (ADR-0020 決定 1 の規則 1)、問い合わせの側で `is` / `just` を付けて意味を名乗らせる。
+
+**退けた案:**
+
+- **`down` (押した瞬間) / `held` (押している間) / `up` (離した瞬間)。** 既存の `isKeyDown(_:)` が「押している間」を意味していて、`down` を「押した瞬間」に使うと逆の意味になる
+- **トップレベルの `justPressed(_:)` に、キーと釦の両方を重ねて受ける。** 上の取り違えが黙って通る
+
+2026-10-14 時点で、3 つの語・修飾キー・フォーカスを失ったときの解放・タッチはどれもまだ無い (ADR-0045 決定 13 の段 1・3)。ゲームパッドの `justPressed` / `justReleased` は、パッドの受け口が入った後に足す。
+
 ## 影響
 
+- **決定 7 で、破壊的変更がさらに 3 つ出る。** `isKeyDown(_:)` と `isMousePressed` は `keyboard.` / `mouse.` へ移り、`keyPressed()` はキーリピートで連射しなくなる。どれも 0.x なので minor で出る
 - **破壊的変更が 1 つ出る。** `isKeyDown(_ code: Int)` は落ちる。0.x では形が動くことを織り込んでいるので minor で出る (AGENTS.md「版の出方」)
 - **`keyCode` は `Key?` になる。** 何も押されていないときに返す値が要るが、`Key(rawValue: 0)` は A のキーであって「無い」ではない — 外から送る `code` の 0 を埋めない理由 ([#322](https://github.com/mokume-metal/mokume/issues/322)) と、向きが揃っている
 - **押しても離しても入れ替わる。** `keyReleased()` の中から「どのキーが離されたか」を知る口が他に無いので、`keyUp` でも更新する (p5 の `keyCode` と同じ挙動)
