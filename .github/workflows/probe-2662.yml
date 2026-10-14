@@ -1,0 +1,133 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て (#2662)。main には入れない。release.yml の関門の形 (needs の暗黙の success()・
+# 起票のジョブの if・検査した SHA の受け渡し) を、赤の回と緑の回で確かめる。
+# make test-release の代わりに false / true を走らせ、タグも Release も作らない。
+# 起票は gh の偽物で本文を作って要約へ出すだけ (Issue は立てない)。
+name: Probe 2662
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [".github/workflows/probe-2662.yml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check-red:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: |
+          mkdir -p .build
+          { echo "make test-release の代わり (赤)"; false; } 2>&1 | tee .build/test-log.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-check-record-red
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 3
+
+  report-red:
+    needs: check-red
+    if: >-
+      always()
+      && (needs.check-red.result == 'failure' || needs.check-red.result == 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: release-check-record-red
+          path: record
+      - name: 起票の本文を偽 gh で作る (Issue は立てない)
+        env:
+          RESULT: ${{ needs.check-red.result }}
+        run: |
+          mkdir -p fakebin
+          cat > fakebin/gh <<'GH'
+          #!/bin/sh
+          echo "fake gh: $*" >&2
+          case "$1 $2" in
+            "issue list") echo "" ; exit 0 ;;
+            "issue create")
+              prev=
+              for a in "$@"; do
+                [ "$prev" = "--body-file" ] && cp "$a" body.md
+                prev=$a
+              done
+              echo "https://github.com/mokume-metal/mokume/issues/0"; exit 0 ;;
+            *) exit 0 ;;
+          esac
+          GH
+          chmod +x fakebin/gh
+          export PATH="$PWD/fakebin:$PATH"
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          xml=$(find_one record test-results-release-swift-testing.xml)
+          log=$(find_one record test-log.txt)
+          bash scripts/report-release-check.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}"
+          { echo "## 起票される本文 (結論: $RESULT)"; echo; cat body.md; } >> "$GITHUB_STEP_SUMMARY"
+
+  release-red:
+    needs: check-red
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "赤の回に版の job が走った — 関門が効いていない" >&2
+          exit 1
+
+  check-green:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: |
+          mkdir -p .build
+          { echo "make test-release の代わり (緑)"; true; } 2>&1 | tee .build/test-log.txt
+
+  report-green:
+    needs: check-green
+    if: >-
+      always()
+      && (needs.check-green.result == 'failure' || needs.check-green.result == 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "緑の回に起票の job が走った" >&2
+          exit 1
+
+  release-green:
+    needs: check-green
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: タグを打つ (打たずに表示だけ)
+        env:
+          CHECKED_SHA: ${{ needs.check-green.outputs.sha }}
+        run: |
+          head=$(git rev-parse HEAD)
+          if [ -z "$CHECKED_SHA" ] || [ "$head" != "$CHECKED_SHA" ]; then
+            echo "検査した SHA ($CHECKED_SHA) と版にする SHA ($head) が違う — 版を打たない" >&2
+            exit 1
+          fi
+          echo "打つはずのタグの SHA: $CHECKED_SHA (検査した SHA と一致)" | tee -a "$GITHUB_STEP_SUMMARY"
