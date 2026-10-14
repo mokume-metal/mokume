@@ -61,8 +61,9 @@ SwiftPM が `--xunit-output` で自分でファイルへ書く記録は、同じ
 `gpuNotResponding` で落ちる。2026-10-13 09:20Z の専用機の定期の release では 2,108 件が
 そうなり、先頭 80 件 (`MAX_MESSAGES`) が関所の巻き込みで埋まって、引き金の期限切れも release
 固有の赤も載らなかった。関所の文面 (`GATE_CLOSED`) を持つ失敗は件数と 1 例に畳み、それ以外
-(引き金と、本物の赤) を先に並べる。この回の GPU の検査は赤も緑も読めないので、次の周期まで
-保証が欠けていることを言う。
+(引き金と、本物の赤) を先に並べる。この回の GPU の検査は赤も緑も読めないので、走らせ直すまで
+保証が欠けていることを言う。関所の文面そのものを検査する Suite (`GATE_TEXT_SUITES`) の赤は
+畳まない。
 """
 
 import os
@@ -79,6 +80,16 @@ MAX_MESSAGES = 80
 GATE_CLOSED = "A wait for the GPU went past its limit earlier in this process"
 # 最初の期限切れの要約 (CommandQueueGate.Closure.summary)。文面の括弧の中にある
 GATE_FIRST = re.compile(r"\((the first was [^)]*)\)")
+# 関所の文面そのものを検査する Suite。落ちると文面を失敗の文に載せるが、関所が閉じた巻き込み
+# ではなく本物の赤なので畳まない (畳むと「環境で成り立たなかった」と誤って名乗る)。Tests/ で
+# 関所の文面を扱う Suite がここに揃っていることは test_vanished_test.py が確かめる
+GATE_TEXT_SUITES = frozenset(
+    {
+        "MokumeCoreTests.CommandQueueGateTests",
+        "MokumeCoreTests.CommandQueueGateWordingTests",
+        "MokumeCoreTests.StartupFailureTests",
+    }
+)
 
 
 def verdict(cases, classname):
@@ -178,16 +189,20 @@ def failure_messages(path, shots_artifact="ledger-shots"):
             if m:
                 ledger_lines.append(m.group(1))
 
-    gate = [f for f in found if GATE_CLOSED in f[2]]
-    rest = [f for f in found if GATE_CLOSED not in f[2]]
+    def swept(f):
+        return GATE_CLOSED in f[2] and f[0] not in GATE_TEXT_SUITES
+
+    gate = [f for f in found if swept(f)]
+    rest = [f for f in found if not swept(f)]
 
     out = ["### 落ちた検査 (%d 件)" % len(found), ""]
     if gate:
         first = GATE_FIRST.search(gate[0][2])
         out += [
             "**環境で成り立たなかった回である。** 落ちた %d 件のうち %d 件は、先に GPU の待ちが期限を"
-            "越えてプロセスの関所が閉じた後の `gpuNotResponding` で、その後の GPU の検査は走っていない。"
-            "**この回の GPU の検査は赤も緑も読めず、次の周期まで、この木の保証は欠けている。**"
+            "越えてプロセスの関所が閉じた後の `gpuNotResponding` で、その後の GPU の検査は描かずに"
+            "断られている。**この回の GPU の検査は赤も緑も読めず、この木の保証は、次に走らせ直すまで"
+            "(定期なら次の周期、merge queue なら組み直し) 欠けている。**"
             % (len(found), len(gate)),
             "",
         ]

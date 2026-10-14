@@ -8,7 +8,8 @@ release でだけ出る赤は merge の前には止めない (merge queue から
 
   1. release は release-check を needs に持ち、自分の `if:` を持たない — needs の暗黙の
      success() で、release-check が赤・切れた・走らなかった回には版を出さない。release に
-     `always()` などを書くと、赤のまま版が出る
+     `always()` などを書くと、赤のまま版が出る。release-check に `continue-on-error` を足しても
+     同じ (赤が success に化ける)
   2. release-check は macos-26 (ADR-0009 の下限) で `make test-release` を走らせ、
      出すものが無い日も走る (版の判定より前に置く) — ホストの日次の検査を兼ねる。
      起動の可否 (release:now の PR だけ) は release-check の `if:` が持つ
@@ -47,6 +48,10 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.needs(check), set())
         # 版の判定 (release.py) より前に置く — 出すものが無い日も走る
         self.assertNotIn("release.py", check)
+
+    def test_release_check_の赤を緑に化かさない(self):
+        # continue-on-error があると、検査が赤でも release-check が success になり、版が出る
+        self.assertNotIn("continue-on-error", self.jobs["release-check"])
 
     def test_release_check_は_release_now_の_PR_のときだけ_PR_の契機で走る(self):
         cond = workflow.condition(self.jobs["release-check"])

@@ -157,7 +157,7 @@ SPDX-License-Identifier: MIT
 
 #### 定期の検査 (D) の範囲・頻度・歯止め (2026-10-03・[#1983](https://github.com/mokume-metal/mokume/issues/1983))
 
-**塞ぐ実害**: [#1086](https://github.com/mokume-metal/mokume/issues/1086) は GPU を要する release の検査 (`ShapeTests` の速さ) の赤が、誰にも見られないまま 9 日間 main に残った。`ci.yml` の `test-release` は GitHub ホストで走るので GPU の Suite を飛ばし、見ているのは手元で `make test-release` を打つ人だけである。[#1736](https://github.com/mokume-metal/mokume/issues/1736) も、最適化を掛けたときだけ GPU の絵が変わる同じ類の赤で、性能の計測のついでにたまたま見つかった。
+**塞ぐ実害**: [#1086](https://github.com/mokume-metal/mokume/issues/1086) は GPU を要する release の検査 (`ShapeTests` の速さ) の赤が、誰にも見られないまま 9 日間 main に残った。`ci.yml` の `test-release` (当時。2026-10-14 の改訂で `release.yml` の `release-check` へ移した) は GitHub ホストで走るので GPU の Suite を飛ばし、見ているのは手元で `make test-release` を打つ人だけである。[#1736](https://github.com/mokume-metal/mokume/issues/1736) も、最適化を掛けたときだけ GPU の絵が変わる同じ類の赤で、性能の計測のついでにたまたま見つかった。
 
 **走らせるもの** (専用機は専用なので、夜間に限る理由が無い。広く、頻繁に使う):
 
@@ -207,7 +207,7 @@ SPDX-License-Identifier: MIT
 
 あわせて、**GPU の待ちが期限を越えた回は、報告が「環境で成り立たなかった」と先に名乗る** (`scripts/read-test-record.py --failure-messages`)。期限を越えるとプロセスの関所が閉じ、以後の GPU の検査はすべて `gpuNotResponding` で落ちる。2026-10-13 09:20Z の定期の release では 2,108 件がそうなり、要約の先頭 80 件が巻き込みで埋まって、引き金の期限切れも release 固有の赤も載らなかった。関所の分は件数と 1 例に畳み、本物の赤を先に並べ、その周期の保証が欠けていることを言う。
 
-**代償**: release でだけ出る赤は main に入りうる。気付くのは、次の日次の `release-check` (版を出す時) か、専用機の 6 時間おきの定期である。日次の 1 回には前の版からの PR が並ぶので、原因の PR を絞る手間が増える。赤の間は版が出ない (`release:now` の出し直しも関門を通る)。版が出るのは約 15 分遅れる。ホストの macOS の消費は 1 日に約 15 分増え、merge_group ごとの約 12 分が減る。
+**代償**: release でだけ出る赤は main に入りうる。気付くのは、次の日次の `release-check` (版を出す時) か、専用機の 6 時間おきの定期である。日次の 1 回には前の版からの PR が並ぶので、原因の PR を絞る手間が増える。赤の間は版が出ない (`release:now` の出し直しも関門を通る)。版が出ないと、メンテナが新しい絵を見るリリースノートの「この版の絵」(ADR-0036) も止まる (絵は次の版にまとめて載るので、欠けずに遅れる)。merge queue の中で、合流後の木の検査のターゲットを下限 OS で組むものも無くなる (`ci-check` は merge_group で build と test を外している)。下限 OS でだけ合流後に壊れる形は、日次の `release-check` で気付く。版が出るのは約 15 分遅れる。ホストの macOS の消費は 1 日に約 15 分増え、merge_group ごとの約 12 分が減る。
 
 退けた案 (2026-10-14 にメンテナが比べた):
 

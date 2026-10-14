@@ -78,7 +78,8 @@ jobs:
   # 同時実行枠 (5 本) を通して PR のランナー待ちに効いていた。下限の担保は PR の ci-check が
   # 担う (pull_request では CI_CHECK_SKIP が空で、26 段すべてを macOS 26 で走らせる)。失うのは
   # 「main と合流させた木を macOS 26 で走らせる」部分だけで、合流して初めて壊れ、しかも 26 で
-  # だけ出る赤は狭い。
+  # だけ出る赤は狭い。その赤は、版を出す前の release.yml の release-check (合流後の main を
+  # macOS 26 で release に組む) が拾い、版を止める (#2662。merge の前には止まらない)。
   #
   # **examples / params / api / reference は合流後の木でも残す。** build を prerequisite に持つ
   # ので、build の段が無ければ最初の段が swift build を自分で走らせる (約 1.5 分。2 段目以降は

@@ -25,6 +25,7 @@
 """
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -254,7 +255,7 @@ class ReadFailureMessagesTest(unittest.TestCase):
         self.assertIn("落ちた検査 (102 件)", out)
         self.assertIn("環境で成り立たなかった回", out)
         self.assertIn("102 件のうち 100 件", out)
-        self.assertIn("次の周期まで", out)
+        self.assertIn("次に走らせ直すまで", out)
         self.assertIn("最初の期限切れ: the first was while waiting for the GPU to finish", out)
         # 本物の赤 (引き金と、それ以外) は 80 件の枠に押し出されない
         self.assertIn("records()", out)
@@ -268,6 +269,31 @@ class ReadFailureMessagesTest(unittest.TestCase):
         out = self.read(_record(FAILED_CASE))
         self.assertNotIn("環境で成り立たなかった", out)
         self.assertNotIn("関所", out)
+
+    def test_does_not_sweep_the_suites_that_check_the_gate_wording(self):
+        """関所の文面を検査する Suite の赤は本物の赤で、環境の停止と名乗らない (#2665 の反証 1)。"""
+        own = _failed(
+            "MokumeCoreTests.CommandQueueGateWordingTests", "theRefusalNamesTheFirstWait()",
+            "Expectation failed: headline.contains(...) " + GATE_CLOSED_MESSAGE,
+        )
+        out = self.read(_record(own))
+        self.assertNotIn("環境で成り立たなかった", out)
+        self.assertIn("theRefusalNamesTheFirstWait()", out)
+
+    def test_the_wording_suites_are_all_listed(self):
+        """Tests/ で関所の文面を扱う Suite が、畳まない一覧に揃っている。"""
+        reader = READER.read_text(encoding="utf-8")
+        found = set()
+        for path in (REPO / "Tests").rglob("*.swift"):
+            text = path.read_text(encoding="utf-8")
+            if "notResponding" not in text and "went past its limit" not in text:
+                continue
+            for name in re.findall(r"(?m)^(?:@MainActor\s+)?(?:final\s+)?(?:struct|class)\s+(\w+)", text):
+                found.add("%s.%s" % (path.parent.name, name))
+        self.assertTrue(found)
+        for suite in sorted(found):
+            with self.subTest(suite=suite):
+                self.assertIn('"%s"' % suite, reader)
 
     def test_the_gate_marker_matches_the_real_message(self):
         """畳む目印は Swift の文面の写しなので、本物から外れたら黙って畳まなくなる。"""
