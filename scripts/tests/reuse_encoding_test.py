@@ -13,15 +13,19 @@
 防ぐ自己検査があるが、shell の heredoc に埋まっていたあいだ、その自己検査が効くかを
 見るものは無かった。
 
-ここで固定するのは 2 つ:
+ここで固定するのは 3 つ:
 
 1. 雛形が 2048 バイト境界で 2 通り以上、文字を割っていること
 2. **詰め物を ASCII にすると自己検査が落ちること** (自己検査が効いていることの検査)
+3. **`check-reuse-encoding.sh` 本体が `/bin/bash` で動くこと** (#2612)。この段は CI では ubuntu の
+   ci-static で走るので、手元とエージェントの `/bin/bash` (3.2) と BSD の道具で動くことは、
+   macOS に残るここが持つ (#702)。reuse は代役で、判定の結論と名乗りの分かれ方だけを見る
 
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -30,6 +34,19 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "reuse_encoding_fixtures.py"
+CHECK = REPO / "scripts" / "check-reuse-encoding.sh"
+
+# reuse の代役。--version と lint の結論を環境変数で選び、--debug の lint では判定モジュールを名乗る
+FAKE_REUSE = """#!/bin/sh
+case " $* " in
+  *" --version "*) exit "${FAKE_REUSE_VERSION_RC:-0}" ;;
+  *" --debug "*) echo "DEBUG: using encoding module 'charset_normalizer'"; exit 1 ;;
+  *" lint "*)
+    echo "fake lint output"
+    exit "${FAKE_REUSE_LINT_RC:-0}" ;;
+esac
+exit 2
+"""
 
 
 def _load(name: str, path: Path):
@@ -91,6 +108,60 @@ class FixturesTest(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("文字を割っていない", proc.stderr)
+
+
+
+class CheckScriptTest(unittest.TestCase):
+    """`check-reuse-encoding.sh` を `/bin/bash` で起こす (#2612)。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # PATH は代役と python3 と OS の道具だけにする (本物の reuse を拾わない)
+        self.tools = Path(self.tmp.name) / "tools"
+        self.tools.mkdir()
+        (self.tools / "python3").symlink_to(sys.executable)
+        self.stubs = Path(self.tmp.name) / "stubs"
+        self.stubs.mkdir()
+
+    def put_reuse(self):
+        reuse = self.stubs / "reuse"
+        reuse.write_text(FAKE_REUSE)
+        reuse.chmod(0o755)
+
+    def run_check(self, **env):
+        return subprocess.run(
+            ["/bin/bash", str(CHECK)],
+            env={**os.environ, "PATH": f"{self.stubs}:{self.tools}:/usr/bin:/bin", **env},
+            cwd=REPO, capture_output=True, text=True, timeout=60,
+        )
+
+    def test_読めていれば緑(self):
+        self.put_reuse()
+        r = self.run_check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ok: 2048 バイト境界", r.stdout)
+
+    def test_読み落とせば赤で原因の判定モジュールを名乗る(self):
+        self.put_reuse()
+        r = self.run_check(FAKE_REUSE_LINT_RC="1")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("#48 の再発", r.stderr)
+        self.assertIn("charset_normalizer", r.stderr)
+        self.assertIn("fake lint output", r.stderr)
+        self.assertIn("make setup", r.stderr)
+
+    def test_reuse_が起動しなければ赤で入れ直しを案内する(self):
+        self.put_reuse()
+        r = self.run_check(FAKE_REUSE_VERSION_RC="1")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("reuse が起動できない", r.stderr)
+        self.assertIn("make setup", r.stderr)
+
+    def test_reuse_が無ければ赤(self):
+        r = self.run_check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("reuse が見つからない", r.stderr)
 
 
 if __name__ == "__main__":
