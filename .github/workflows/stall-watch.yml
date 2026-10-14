@@ -1,86 +1,76 @@
 name: Stall watch
 
-# 止まった PR を見つけて、scripts/stall-watch.sh 冒頭の読み分け表が定める対処を
-# 打つ (#961)。
-#
-# 表は PR が止まるたびに 1 行ずつ増えてきたが、読むのは人間とエージェントの目だけで、
-# 気付く経路が「誰かがたまたま見る」しか無かった (#840 は 2 時間 47 分・#690 は 45 分
-# 止まった)。
-#
-# **契機が schedule なのは、詰まりが「何も起きないこと」だからである。** pull_request や
-# merge_group を契機に走る既存の検査 (ci.yml の review-gate / drawing-evidence・
-# render.yml) は PR に出来事が起きたときしか動かないので、この事象は原理的に
-# 捕まえられない。時計を持つ機構が要る。
-#
-# ロジックを YAML に埋めないのは単体テストで固定できないため (#66 / triage.sh と同じ
-# 理由)。判定は scripts/stall-watch.sh、対処は scripts/stall-act.sh、検査は
-# scripts/tests/stall_watch_test.py。
-#
-# **判定と対処をスクリプトごと分けてある。** 手元で様子を見るために判定を打っただけで
-# auto-merge が掛かってしまうのを防ぐためで、report-ruleset-drift.sh を
-# check-rulesets.sh から分けたのと同じ理由である。
-#
-# **対処は判定の終了コードに関わらず打つ。** ruleset-drift.yml が発信を
-# `if: steps.check.outputs.status != '0'` で絞っているのとはここが違う — 終了コードが
-# 表すのは「人手が要る名乗りが猶予を超えたか」であって、機械が打てる行があるかでは
-# ないからである。打つ行があるかは stall-act.sh が出力を読んで決める。
-#
-# **起票はしない。** publication.yml と同じ形で、赤くするところまでに留める
-# (ADR-0008 決定 5 の段 1)。赤を見落とす事象が実際に起きたら、そのとき
-# ruleset-drift.yml と同じ形で起票を足す。
+# PROBE for #2614 — 使い捨て。merge しない。
+# stall-watch.yml と同じ権限の job から、使い捨ての probe の PR (head が
+# probe/2614-rearm のもの) にだけ auto-merge の掛け直しを打ち、stderr を出す。
+# 比較のため contents: write を足した job も並べる。
 
 on:
-  schedule:
-    # 15 分ごとに頼む。毎時 0 分はランナーが混むので外す (ruleset-drift.yml と同じ理由)。
-    # **この間隔は保証されない。** schedule はベストエフォートで間引かれ、実測は導入から
-    # 1 日 6〜8 回 (2〜5 時間おき) だった (#1197)。頼む間隔を広げても間引きは直らないので
-    # 据え置く
-    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
 defaults:
   run:
     shell: bash
 
 jobs:
-  watch:
+  current-permissions:
     runs-on: ubuntu-latest
     permissions:
-      contents: read # checkout
-      pull-requests: write # auto-merge の掛け直し
-      actions: write # 判定を固定している古い失敗ジョブの rerun
+      contents: read
+      pull-requests: write
+      actions: write
     steps:
-      - uses: actions/checkout@v7
-
-      - name: 止まった PR を判定する
-        id: watch
+      - name: probe
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          # **標準出力は機械が読む契約なので、stderr を混ぜない** (ruleset-drift.yml が
-          # 2>&1 | tee を使っているのは、あちらの出力が人向けのログだからである)
           set +e
-          bash scripts/stall-watch.sh > stall.log
-          status=$?
-          set -e
-          cat stall.log
-          echo "status=$status" >> "$GITHUB_OUTPUT"
+          pr=$(gh pr list --repo "$REPO" --head probe/2614-rearm --state open --json number --jq '.[0].number')
+          [ -n "$pr" ] || { echo "probe の PR が無い"; exit 1; }
+          gh --version
+          gh pr view "$pr" --repo "$REPO" --json number,headRefName,isDraft,mergeStateStatus,mergeable,autoMergeRequest
+          echo "--- gh pr merge --auto --squash"
+          gh pr merge "$pr" --repo "$REPO" --auto --squash
+          echo "rc=$?"
+          echo "--- 同じ呼び出しを GH_DEBUG=api で (呼ぶ mutation を見る)"
+          GH_DEBUG=api gh pr merge "$pr" --repo "$REPO" --auto --squash 2>&1 | grep -viE 'authorization|^< (x-|set-cookie|strict|vary|access-control|content-security|referrer|server|date|etag|github-authentication)' | grep -E '^\* Request to|mutation|"errors"|"message"|"type"|^< HTTP|rc=|merge' | head -40
+          echo "--- graphql enablePullRequestAutoMerge を直に"
+          id=$(gh pr view "$pr" --repo "$REPO" --json id --jq .id)
+          gh api graphql -f query='mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id}){pullRequest{autoMergeRequest{enabledAt}}}}' -f id="$id"
+          echo "rc=$?"
+          gh pr view "$pr" --repo "$REPO" --json autoMergeRequest
+          gh pr merge "$pr" --repo "$REPO" --disable-auto
+          echo "disable rc=$?"
+          exit 0
 
-      - name: 表が定める対処を打つ
+  with-contents-write:
+    needs: current-permissions
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: probe
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/stall-act.sh stall.log
-
-      - name: 名乗りの結果
-        env:
-          STATUS: ${{ steps.watch.outputs.status }}
+          REPO: ${{ github.repository }}
         run: |
-          if [ "$STATUS" != "0" ]; then
-            echo "人手が要る詰まりが猶予を超えて続いている (分類と対処は上のログ)" >&2
-            exit 1
-          fi
-          echo "ok: 人手が要る詰まりは無い (機械が打てる分は打ってある)"
+          set +e
+          pr=$(gh pr list --repo "$REPO" --head probe/2614-rearm --state open --json number --jq '.[0].number')
+          [ -n "$pr" ] || { echo "probe の PR が無い"; exit 1; }
+          gh pr view "$pr" --repo "$REPO" --json number,mergeStateStatus,autoMergeRequest
+          echo "--- gh pr merge --auto --squash (contents: write)"
+          gh pr merge "$pr" --repo "$REPO" --auto --squash
+          echo "rc=$?"
+          gh pr view "$pr" --repo "$REPO" --json autoMergeRequest
+          echo "--- 外す"
+          gh pr merge "$pr" --repo "$REPO" --disable-auto
+          echo "disable rc=$?"
+          gh pr view "$pr" --repo "$REPO" --json autoMergeRequest
+          exit 0
