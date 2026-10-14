@@ -15,6 +15,14 @@
 #
 #   stale-checks         判定を固定している古い失敗ジョブを rerun する
 #
+# **打ち直すのはコードの検査の古い赤である。** 作法の検査 (タイトル・マージ判定・絵) の赤は
+# 打ち直す対象ではなくなった — pr-gate (.github/workflows/pr-gate.yml) は直せば新しい run が
+# 付け直し、ci.yml の ci-gate はもう作法を待たない (#2669)。かつて打ち直しの大半はこの作法の
+# 赤だった (#1160・#2134)。残るのは、同じコミットに ci.yml の run が複数立つ場面 (reopen・
+# base の変更・閉じて作り直した PR・本文の編集の run) で、古い run の ci-check・ci-gate の赤が
+# 新しい緑と並ぶときである。必須の判定がどちらを読むかは決まっていない (#2577) ので、打ち直しを
+# 残す。
+#
 # 名乗る (name) と黙る (quiet) の行には何もしない。**入力の 3 列目がその別**なので、
 # ここで分類名を数え直さない — 判定は 1 箇所に保つ (ADR-0001 原則 9)。
 #
@@ -33,17 +41,24 @@
 # 失敗の行には gh の stderr を 1 行に畳んで添える。以前は 2>/dev/null で捨てていたので、
 # 上の掛け直しが 60 回続けて落ちても理由がどこにも残らなかった。
 #
-# ## rerun は run 単位で打ってはいけない
+# ## rerun はジョブ単位で打つ
 #
-# `gh run rerun <run-id> --failed` は**その run の失敗ジョブを全部**打ち直す。
-# pr-title は ci.yml の同じ run の中に居るので、run 単位で打つと巻き添えで pr-title まで
-# rerun してしまう。pull_request の rerun は元のイベントを再生するので、**古いタイトルで
-# 判定され、その失敗が最新の結果になって打つ前より悪くなる** (#699)。
+# `gh run rerun <run-id> --failed` は**その run の失敗ジョブを全部**打ち直す。render.yml の
+# run では、打ってはならない render-pr (下の除外の基準) まで巻き添えにする。
 #
 # だから**失敗ジョブを 1 つずつジョブの rerun の API で打ち、下の除外リストを飛ばす**。
 # `gh run rerun --job` を使わないのは、拒まれたときに API の文面を捨てて
 # 「job N cannot be rerun」としか言わないためである (#2614)。`gh api` は文面を
 # 「gh: <message> (HTTP 403)」で返すので、下の 2 つを読み分けられる。
+#
+# ## 集約のジョブは最後に打つ (#1883)
+#
+# ジョブの rerun の API は、**打ったジョブと、それを needs で待つジョブ**を走らせ直す。ci-gate を
+# 先に打つと、ci-gate だけが前の結論 (落ちた ci-check) を読んで同じ赤を返し、その run が走って
+# いる間は ci-check の打ち直しが拒まれる。check run の並びが同じなら、次の回も同じ順で同じことが
+# 起きる (2026-09-30 の #1883 では、上流の review-gate がそうして打ち直されなかった)。だから
+# RERUN_LAST の名前は最後に回す。上流を打てば集約も一緒に走り直すので、そのときの集約の
+# 打ち直しは「走り直している」で拒まれ、名乗って進む (下)。
 #
 # ## 拒まれても赤にしない 2 つ (#2614)
 #
@@ -51,7 +66,8 @@
 # (queue-sweep.sh が cancel の 409 を読み分けるのと同じ形)。文面は 2026-10-14 に実物で取った:
 #
 # - `The workflow run containing this job is already running` — 同じ run の別のジョブを
-#   先に打つと run が走り出し、残りは拒まれる。走り終われば次の回に打てる
+#   先に打つと run が走り出し、残りは拒まれる。後続のジョブなら一緒に走り直している。
+#   そうでなければ、走り終わった後の次の回に打てる
 # - `Only jobs from the current attempt can be re-run` — commit の check run の一覧には、
 #   走り直す前の attempt のジョブも残る。それは打ち直せず、新しい attempt のジョブが同じ
 #   一覧に居る
@@ -62,13 +78,12 @@
 #
 # 除外が要るのは「**凍結されたイベントペイロードの可変な欄** (title / body / labels) を
 # 読むジョブ」である。番号や sha は run の中で変わらないので、それだけを受け取る
-# ジョブ (review-gate / drawing-evidence) は rerun して安全である —
-# 本文は GH_TOKEN で都度取り直すからである。
+# ジョブは rerun して安全である — 本文やタイトルは GH_TOKEN で都度取り直すからである。
 #
-# いま当てはまるのは pr-title 1 本だけだが、**同じ形のジョブが増えたらここへ足さないと
-# 同じ壊れ方をする**。人手の対応にしないため、scripts/tests/stall_watch_test.py が
-# ci.yml を読んで「可変欄を env へ流しているジョブが、このリストに載っているか」を見る
-# (#801 と同じ形)。
+# いま当てはまるジョブは無い (当てはまっていた ci.yml の pr-title は #2669 で消えた。pr-gate は
+# タイトルも API から読む)。**同じ形のジョブが増えたらここへ足さないと同じ壊れ方をする**。
+# 人手の対応にしないため、scripts/tests/stall_watch_test.py が PR の head に check を付ける
+# ワークフローを読んで「可変欄を読むジョブが、このリストに載っているか」を見る (#801 と同じ形)。
 #
 # **もう 1 つの基準は「門番の後ろに居るジョブか」** (#2062)。render.yml の render-pr は、
 # GitHub ホストの門番 (render-turn) を通ってから専用機に積まれる。ジョブ単位の rerun は
@@ -94,7 +109,10 @@ set -euo pipefail
 REPO="$(this_repo)"
 
 # rerun を打ってはならないジョブ。**readonly にしない** — 検査が差し替えて回すため
-RERUN_EXCLUDED=${RERUN_EXCLUDED:-"pr-title render-pr pr-gate"}
+RERUN_EXCLUDED=${RERUN_EXCLUDED:-"render-pr pr-gate"}
+
+# 最後に打つジョブ (needs で他を待つ集約)。理由は冒頭の「集約のジョブは最後に打つ」
+RERUN_LAST=${RERUN_LAST:-"ci-gate"}
 
 LOG="${1:?stall-watch.sh の出力ファイルが必要}"
 [ -f "$LOG" ] || {
@@ -123,8 +141,37 @@ excluded() { # $1=ジョブ名
   return 1
 }
 
+last() { # $1=ジョブ名
+  case " $RERUN_LAST " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# 1 つのジョブを打つ。打てたら 0、打たなかった・拒まれたら 1 (failed は自分で立てる)
+rerun_job() { # $1=PR 番号 $2=ジョブ名 $3=ジョブの id
+  local n=$1 name=$2 id=$3
+  if excluded "$name"; then
+    say "#$n: $name は rerun しない (凍結されたペイロードを読む #699・門番の後ろに居る #2062・最新の run が判定 #2668 のどれか)"
+    return 1
+  fi
+  if gh api "repos/$REPO/actions/jobs/$id/rerun" -X POST --silent 2>"$errfile"; then
+    say "#$n: $name を rerun した"
+    return 0
+  fi
+  case "$(reason)" in
+    *"is already running"*)
+      say "#$n: $name は同じ run が走り直している (後続なら一緒に走り直す) — 残れば次の回に回す" ;;
+    *"Only jobs from the current attempt"*)
+      say "#$n: $name は古い attempt のジョブで打ち直せない — 新しい attempt の側を見る" ;;
+    *)
+      say "#$n: $name を rerun できなかった: $(reason)" >&2
+      failed=1
+      ;;
+  esac
+  return 1
+}
+
 rerun_stale_jobs() { # $1=PR 番号
-  local n=$1 sha runs name id acted=0
+  local n=$1 sha runs name id pass acted=0
   sha=$(gh pr view "$n" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>"$errfile") || {
     say "#$n: head の commit を読めなかった: $(reason)" >&2
     failed=1
@@ -139,28 +186,14 @@ rerun_stale_jobs() { # $1=PR 番号
     failed=1
     return 0
   }
-  while read -r name id; do
-    [ -n "${id:-}" ] || continue
-    if excluded "$name"; then
-      say "#$n: $name は rerun しない (凍結されたペイロードを読む #699・門番の後ろに居る #2062・最新の run が判定 #2668 のどれか)"
-      continue
-    fi
-    if gh api "repos/$REPO/actions/jobs/$id/rerun" -X POST --silent 2>"$errfile"; then
-      say "#$n: $name を rerun した"
-      acted=1
-    else
-      case "$(reason)" in
-        *"is already running"*)
-          say "#$n: $name は同じ run が走り直している — 次の回に回す" ;;
-        *"Only jobs from the current attempt"*)
-          say "#$n: $name は古い attempt のジョブで打ち直せない — 新しい attempt の側を見る" ;;
-        *)
-          say "#$n: $name を rerun できなかった: $(reason)" >&2
-          failed=1
-          ;;
-      esac
-    fi
-  done <<<"$runs"
+  # 集約 (RERUN_LAST) を後ろへ回す 2 周。理由は冒頭の「集約のジョブは最後に打つ」
+  for pass in first last; do
+    while read -r name id; do
+      [ -n "${id:-}" ] || continue
+      if last "$name"; then [ "$pass" = last ] || continue; else [ "$pass" = first ] || continue; fi
+      if rerun_job "$n" "$name" "$id"; then acted=1; fi
+    done <<<"$runs"
+  done
   [ "$acted" -eq 1 ] || say "#$n: 打てる失敗ジョブが無かった"
 }
 

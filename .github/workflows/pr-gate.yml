@@ -11,13 +11,13 @@ name: PR gate
 # 直した後の run より遅く終わりやすい。pr-gate は API を読むだけの数十秒のジョブで、直す前の
 # run は下の concurrency が止めるので、直した後の run の結論が最新として残る。
 #
-# **段階的に切り替える** (#2611 の条件 3)。この段 (i)・(ii) では ci.yml の作法の 3 ジョブと
-# ci-gate を残し、判定は両方で重なる。メンテナが pr-gate を必須に適用し (iii)、それを確かめて
-# から ci-gate から作法を外す (iv・#2669)。必須の判定に空白を作らないため。
+# **段階的に切り替えた** (#2611 の条件 3)。pr-gate を足して ci-gate と重ねた (#2668) → メンテナが
+# pr-gate を必須に適用した → ci.yml の ci-gate から作法の検査を外した (#2669)。必須の判定に空白を
+# 作らないため。
 #
 # **別のワークフローに置くのは、起動のきっかけを分けるため。** 作法の検査には labeled /
-# edited / pull_request_review が要るが、コードの検査には要らない。段 iv で ci.yml からそれらの
-# 起動を外せる (#2611 の条件 2)。
+# edited / pull_request_review が要るが、コードの検査には要らない。ci.yml はそれらで起きない
+# (#2611 の条件 2)。
 
 on:
   pull_request:
@@ -81,8 +81,9 @@ jobs:
   # ci.yml の現行と同じ境界である。
   #
   # **ペイロードの可変な欄 (title / body / labels) を読まない。** 3 つとも API から読み直すので、
-  # rerun が古いイベントを再生しても古い値で判定しない (#699)。stall-act.sh の rerun の除外
-  # (RERUN_EXCLUDED) に載せなくてよい。固定は scripts/tests/pr_gate_workflow_test.py
+  # rerun が古いイベントを再生しても古い値で判定しない (#699)。タイトルの照合の正規表現は
+  # ここが唯一の置き場である (ci.yml の pr-title は #2669 で消えた)。固定は
+  # scripts/tests/pr_gate_workflow_test.py
   pr-gate:
     if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
@@ -97,7 +98,8 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
-      # **タイトルは API から読む** — ペイロードの title は rerun で古いタイトルを再生する (#699)
+      # **タイトルは API から読む** — ペイロードの title は rerun で古いタイトルを再生する (#699)。
+      # step の名前は scripts/stall-watch.sh の bad-title が読む (TITLE_STEP)。改名するときは同時に直す
       - name: pr-title (Conventional Commits)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -110,9 +112,7 @@ jobs:
             echo "PR タイトルが Conventional Commits ではない: $title" >&2
             echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2
             echo 'design は Issue Type であって type ではない。' >&2
-            echo 'タイトルを直すと新しい run が走り、pr-gate はその run で付け直される (打ち直しは要らない)。' >&2
-            # 重なっている間だけの案内。ci.yml の pr-title が消える #2669 で外す
-            echo '作法の検査が ci.yml の ci-gate からも外れるまで (#2669) は、CI の run の赤い pr-title と、それを受けた赤い ci-gate が残って必須チェックを赤のままにする。CI の pr-title は rerun しても古いタイトルを再生して同じ赤を返す (#699) ので、タイトルを直したうえで、新しいコミットを push して run を作り直す (空コミットでよい)。' >&2
+            echo 'タイトルを直すと新しい run が走り、pr-gate はその run で付け直される (打ち直しも新しいコミットも要らない)。' >&2
             exit 1
           fi
 
