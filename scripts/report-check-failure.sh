@@ -21,20 +21,31 @@
 # になり、run の赤にすら現れない — #1295 が踏んだ形そのままである:
 #
 #   完全一致の絞り     … 似た題の Issue を「既にある」と誤認し、本物の赤が一度も起票されない
-#   verify: triaged    … 着手ゲートで誰も触れず、しかも重複抑止で翌日以降の起票まで止まる (#205)
+#   verify: triaged    … 着手ゲートで誰も触れず、翌日以降の赤は追記として積もるだけになる (#205)
 #   200 行の切り詰め   … 長い出力で gh issue create ごと落ち、報告そのものが失われる
 #                        (assets の出力は指し先 178 本ぶん出る)
 #
 # **自動では閉じない。** 緑に戻ったことは「直った」を意味しない — 指し先を消しても緑になる
 # (0 件だけは赤)。どの手で直したのかは緑からは読めず、そこを残すのが起票の値である。
 # 「緑に戻ったのに Issue が open のまま残った」実害はまだ 1 度も出ていないので、閉じる機構は
-# 足さない (ADR-0008 決定 3・5)。残る危うさは「open なままだと重複抑止が次の事象を黙らせる」
-# 1 点なので、**呼び手の本文に「直ったら閉じる」を書かせる** — 動く人が読む場所に置く。
+# 足さない (ADR-0008 決定 3・5)。呼び手の本文には「直ったら閉じる」を書かせる — 動く人が
+# 読む場所に置く。
+#
+# **open な Issue があれば、二重には立てず、その Issue へコメントで追記する** (#2658)。
+# 以前は何も書かずに exit 0 で終わっていた。閉じ忘れや着手中の Issue が open のまま残ると、
+# その間の赤は run のログにしか残らない — #1295 と同じ形である。実際に #2251 (着手中) が
+# open の間、専用機の定期の赤 2 回が誰にも届かなかった。追記には新規起票と同じ本文 (呼び手の
+# 文・出力の抜粋・run の URL) を載せる。後から出た赤は前の赤と別物でありうるので、中身を
+# 省かない。代償は、赤が続く間、回ごとに 1 コメント増えることである (merge_group で走る
+# 前検査の起票は、queue の group ごとに 1 コメント)。閉じる人は、追記された分も同じ直しで
+# 解けたかを確かめる (呼び手の本文がそう言う)。追記に失敗したら黙らず
+# 非 0 で返す (set -e)。
 #
 # **検査と発信を分けているのは、起票を CI に限るため** (report-ruleset-drift.sh と同じ)。
 # 検査スクリプトに起票を足すと、手元で打っただけで Issue が立つ。
 #
-# 呼び手は scripts/report-ruleset-drift.sh / scripts/report-dead-assets.sh、
+# 呼び手は scripts/report-ruleset-drift.sh / scripts/report-dead-assets.sh /
+# scripts/report-scheduled-render.sh / scripts/report-runner-environment.sh、
 # 検査は scripts/tests/report_check_failure_test.py。
 set -euo pipefail
 
@@ -98,11 +109,6 @@ existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" 
   --json number,title \
   --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty")
 
-if [ -n "$existing" ]; then
-  echo "report: 既に open な #$existing がある — 重複起票しない (出力は run のログに残る)"
-  exit 0
-fi
-
 run_url=""
 if [ -n "${GITHUB_RUN_ID:-}" ]; then
   run_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/actions/runs/$GITHUB_RUN_ID"
@@ -127,9 +133,20 @@ trap 'rm -f "$tmp"' EXIT
   if [ -n "$run_url" ]; then
     printf '\n検出した run: %s\n' "$run_url"
   fi
-  printf '\n<sub>🤖 この Issue は %s。完了条件が本文で確定しているため `%s` も自動で付く (#205)</sub>\n' \
-    "$SOURCE" "$VERIFY_LABEL"
+  if [ -n "$existing" ]; then
+    printf '\n<sub>🤖 出所: %s。同じ題の Issue が open なので、新しく立てずにここへ追記した (#2658)</sub>\n' \
+      "$SOURCE"
+  else
+    printf '\n<sub>🤖 この Issue は %s。完了条件が本文で確定しているため `%s` も自動で付く (#205)</sub>\n' \
+      "$SOURCE" "$VERIFY_LABEL"
+  fi
 } > "$tmp"
+
+if [ -n "$existing" ]; then
+  gh issue comment "$existing" -R "$REPO" --body-file "$tmp" >/dev/null
+  echo "report: 既に open な #$existing がある — 二重には立てず、追記した"
+  exit 0
+fi
 
 url=$(gh issue create -R "$REPO" --title "$TITLE" --body-file "$tmp" --label "$VERIFY_LABEL")
 echo "report: 起票した $url"

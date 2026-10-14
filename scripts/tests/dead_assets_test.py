@@ -14,11 +14,11 @@
      している (ADR-0002 決定 1)。対処法だけ書いて判定基準の無い起票は、要件を満たさない
      まま印だけ付けることになる
   3. 本文に「解消したら閉じる」が載る — この機構は**自動では閉じない** (緑は「直った」を
-     意味しない。指し先を消しても緑になりうる)。代わりに、open な間は重複起票を抑えることを
-     動く人が読む場所へ書く。ここが落ちると、閉じ忘れが次の事象を黙らせる (#1295 の完了条件 3)
+     意味しない。指し先を消しても緑になりうる)。代わりに、open な間は追記に回ることを
+     動く人が読む場所へ書く。ここが落ちると、閉じ忘れた Issue に別の事象が続きとして積もる (#1295 の完了条件 3)
   4. 引けなかった指し先が本文に載る — 出所 (ファイルと行) を含む死活の出力がそのまま
      撮り直しの作業指示になる
-  5. 共通部品を通っている — 同名の Issue が open なら二重に立てない。ここが写しになると、
+  5. 共通部品を通っている — 同名の Issue が open なら二重に立てず追記する (#2658)。ここが写しになると、
      片方だけが直ったときに黙って壊れる (ADR-0008 決定 6)
 
 6. リリースノートの絵の 404 が起票の本文まで届く (#2268) — 検査と発信を本物のまま通す dry-run。
@@ -76,6 +76,13 @@ case "$1 $2" in
       *issueType*) json='{"issueType":null}' ;;
       *) json='{"labels":[]}' ;;
     esac ;;
+  "issue comment")
+    prev=
+    for a in "$@"; do
+      [ "$prev" = "--body-file" ] && cp "$a" "$FAKE_BODY_OUT"
+      prev=$a
+    done
+    exit 0 ;;
   "issue edit") exit 0 ;;
   "api repos/{owner}/{repo}/releases"*) cat "$FAKE_RELEASES"; exit 0 ;;
   *) exit 1 ;;
@@ -150,12 +157,14 @@ class ReportDeadAssetsTest(unittest.TestCase):
         self.assertIn("check-external-assets.py", body)
 
     def test_本文が解消したら閉じることを言う(self):
-        # 自動では閉じないので、閉じるのは人である。open な間は重複起票を抑えることを
+        # 自動では閉じないので、閉じるのは人である。open な間は追記に回ることを
         # 本文が言わないと、閉じ忘れが次の事象を黙らせる
         self.report()
         body = self.body.read_text()
         self.assertIn("解消したらこの Issue を閉じる", body)
-        self.assertIn("重複起票を抑える", body)
+        self.assertIn("この Issue へ追記される", body)
+        # 追記された別の赤を、前の赤の直しと一緒に黙って閉じない (#2658 の反証)
+        self.assertIn("追記された分も同じ直しで解けたか", body)
 
     def test_本文に引けなかった指し先と出所が載る(self):
         self.report()
@@ -177,10 +186,11 @@ class ReportDeadAssetsTest(unittest.TestCase):
         self.report()
         self.assertIn("全滅しているホストがあるなら撮り直さない", self.body.read_text())
 
-    def test_同じ_Issue_が_open_なら二重に立てない(self):
+    def test_同じ_Issue_が_open_なら二重に立てずに追記する(self):
         r = self.report(issue_list=f'[{{"number":42,"title":"{TITLE}"}}]')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("issue create", self.gh_log())
+        self.assertIn("issue comment 42", self.gh_log())
         self.assertIn("#42", r.stdout)
 
     def test_死活検査の出力ファイルが無ければ落ちる(self):

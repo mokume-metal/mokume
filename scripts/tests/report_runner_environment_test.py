@@ -56,6 +56,13 @@ case "$1 $2" in
       *issueType*) json='{"issueType":null}' ;;
       *) json='{"labels":[]}' ;;
     esac ;;
+  "issue comment")
+    prev=
+    for a in "$@"; do
+      [ "$prev" = "--body-file" ] && cp "$a" "$FAKE_BODY_OUT"
+      prev=$a
+    done
+    exit 0 ;;
   "issue edit") exit 0 ;;
   *) exit 1 ;;
 esac
@@ -112,10 +119,11 @@ class ReportRunnerEnvironmentTest(unittest.TestCase):
         self.assertIn(f"--title {TITLE}", self.created()[0])
         self.assertIn(REASON, self.body.read_text(encoding="utf-8"))
 
-    def test_開いた同じ_Issue_があれば起票しない(self):
+    def test_開いた同じ_Issue_があれば起票せず追記する(self):
         r = self.run_script(REASON, issue_list=json.dumps([{"number": 7, "title": TITLE}]))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.created(), [])
+        self.assertIn("issue comment 7", self.log.read_text())
         self.assertIn("#7", r.stdout)
 
     def test_本文は_PR_の赤でないことと直した後の_1_手と閉じることを言う(self):
