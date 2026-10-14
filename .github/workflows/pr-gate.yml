@@ -1,0 +1,126 @@
+name: PR gate
+
+# PR の作法の検査 (タイトル・マージ判定・描画の絵) を、コードの検査 (ci.yml の ci-gate) と
+# 別の必須チェック pr-gate にまとめる (#2611・#2668)。
+#
+# **分ける理由は、古い赤が必須チェックに残ること** (#259・#2134・#2577)。作法の検査が ci-gate の
+# needs に居ると、本文やラベルを直して新しい run が緑になっても、直す前の run の赤い ci-gate が
+# 同じ SHA に残る。直す前の run の ci-gate は macOS の ci-check (約 14 分) を待って終わるので、
+# 直した後の run より遅く終わりやすい。pr-gate は API を読むだけの数十秒のジョブで、直す前の
+# run は下の concurrency が止めるので、直した後の run の結論が最新として残る。
+#
+# **段階的に切り替える** (#2611 の条件 3)。この段 (i)・(ii) では ci.yml の作法の 3 ジョブと
+# ci-gate を残し、判定は両方で重なる。メンテナが pr-gate を必須に適用し (iii)、それを確かめて
+# から ci-gate から作法を外す (iv・#2669)。必須の判定に空白を作らないため。
+#
+# **別のワークフローに置くのは、起動のきっかけを分けるため。** 作法の検査には labeled /
+# edited / pull_request_review が要るが、コードの検査には要らない。段 iv で ci.yml からそれらの
+# 起動を外せる (#2611 の条件 2)。
+
+on:
+  pull_request:
+    # ready_for_review: Draft の間は skipped にし (下の if)、ready にした時点で判定する
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled, ready_for_review]
+  # 変更要求の投稿・却下で review-gate を付け直す
+  pull_request_review:
+    types: [submitted, dismissed]
+  # **merge_group でも結論を返す。** 必須チェックは PR と merge queue で共通なので、ここで何も
+  # 報告しないと queue が期限 (main-protection.json の check_response_timeout_minutes) まで待って
+  # 弾く。merge_group には PR の文脈 (本文・ラベル) が無いので、ジョブは skipped で返す —
+  # skipped は必須を満たす。判定は PR の側で済んでいる
+  merge_group:
+
+permissions:
+  contents: read
+
+# PR ごとに、走っている・待っている古い run を止める。止めた run の pr-gate は cancelled で
+# 終わり、後から走る run の結論が同じ SHA の最新になる。**完了した赤は消さない** — それを
+# 上書きするのは、直した後の新しい run の結論である (#2611 の条件 1)。github.ref は
+# pull_request と pull_request_review では refs/pull/<N>/merge、merge_group では group ごとに
+# 別の ref (render.yml の render-pr と同じキー)
+concurrency:
+  group: pr-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # 必須チェックの context はこのジョブの名前 (main-protection.json)。改名するときは同時に直す。
+  #
+  # **merge_group と Draft では skipped にする。** Draft は merge できず、ready にすると
+  # ready_for_review で判定が走る。Draft で作って整えてから ready にすれば赤が出ない
+  # (#2611 のコメント。10/6〜10/13 の赤い ci-gate の 85% が作法の検査だった)。綴りは
+  # render.yml の render-turn と同じ。merge_group では pull_request が無く、
+  # github.event_name != 'merge_group' が偽になって短絡する。
+  #
+  # **3 つの判定は 1 つのジョブの step に並べ、どの起動でも 3 つとも走らせる。** check が 1 つ
+  # なので、レビューの run が review-gate だけを見て緑を返すと、赤いタイトルを隠す。後ろの
+  # 2 つは前の step が赤でも走る (!cancelled())。continue-on-error は使わない — 赤が success に
+  # 化ける。
+  #
+  # **判定は既定ブランチ (main) の版のスクリプトで走らせる** (#2001・ADR-0031 決定 2)。PR の版
+  # で走らせると、同じ PR の中で自分を裁く検査を書き換えて通れてしまう。スクリプトは PR の
+  # 中身 (タイトル・本文・ファイル一覧・ラベル・レビュー・Issue) をすべて API から読むので、
+  # PR の木は要らない。ref を PR の base にしないのは、base は PR の側が選べるからである。
+  # 判定を変える PR の効き目は merge の後の PR から始まる。ゲートが壊れていて、それを直す PR
+  # も同じゲートで赤になるときの脱出口は、その PR の中で checkout の ref の行を外すこと
+  # (外した行は後続の PR で戻す)。
+  #
+  # **pull_request_target は使わない。** base の workflow で走るので PR が workflow を書き換えて
+  # 自分を通す道は塞がるが、(1) この workflow が main に入るまで一度も走らず、足す PR で確かめ
+  # られない (2) 既定で書き込みの token を持つ起動で、誤って PR の木を checkout すると秘密と
+  # 書き込み権限の下で PR のコードを走らせる。workflow の書き換えは PR の diff に現れ、
+  # ci.yml の現行と同じ境界である。
+  #
+  # **ペイロードの可変な欄 (title / body / labels) を読まない。** 3 つとも API から読み直すので、
+  # rerun が古いイベントを再生しても古い値で判定しない (#699)。stall-act.sh の rerun の除外
+  # (RERUN_EXCLUDED) に載せなくてよい。固定は scripts/tests/pr_gate_workflow_test.py
+  pr-gate:
+    if: github.event_name != 'merge_group' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # 既定ブランチの scripts を checkout する
+      issues: read # review-gate が閉じる Issue の型とラベルを読む
+      pull-requests: read # タイトル・本文・ファイル・ラベル・レビューを読む
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
+      # **タイトルは API から読む** — ペイロードの title は rerun で古いタイトルを再生する (#699)
+      - name: pr-title (Conventional Commits)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
+          if grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([^)]+\))?!?: .+' <<<"$title"; then
+            echo "ok: $title"
+          else
+            echo "PR タイトルが Conventional Commits ではない: $title" >&2
+            echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2
+            echo 'design は Issue Type であって type ではない。' >&2
+            echo 'タイトルを直すと新しい run が走り、pr-gate はその run で付け直される。' >&2
+            exit 1
+          fi
+
+      # ADR-0002 / ADR-0031 のマージ判定 (実体は scripts/review-gate.sh)
+      - name: review-gate
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash scripts/review-gate.sh "$PR_NUMBER"
+
+      # 描画に触れる PR に絵が載っていること (#306。実体は scripts/check-drawing-evidence.sh)
+      - name: drawing-evidence
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash scripts/check-drawing-evidence.sh

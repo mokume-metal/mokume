@@ -47,6 +47,9 @@
             "context": "ci-gate"
           },
           {
+            "context": "pr-gate"
+          },
+          {
             "context": "render"
           }
         ],
