@@ -20,6 +20,8 @@ struct APIListLocator {
     /// 並んでいるときに取り違える。綴りの正典は [DependencyVersion]。
     static let identity = DependencyVersion.identity
     /// 取ってくるのを諦めるまで。窓口は同期で答えるので、上限が無いと応答ごと固まる。
+    /// **呼んでから返るまでの総時間**の上限で、少しずつ返し続ける応答でも越えたら取り消す
+    /// (``download(_:limit:)``・#2407)。
     nonisolated static let fetchLimit: TimeInterval = 10
 
     /// 作業ディレクトリ (`Facets` と同じ基準)。
@@ -129,18 +131,30 @@ struct APIListLocator {
     ///
     /// **状態を見る。** 見ないと、資産の無い版で返る 404 の本文をそのまま一覧として
     /// 取り置いてしまう。
-    nonisolated static func download(_ url: URL) throws -> Data {
+    ///
+    /// **期限は呼んでから返るまでの総時間で数える** (#2407)。窓口は同期で答えるので、取ってくる
+    /// 間は MCP の応答ごと固まる。`URLRequest.timeoutInterval` は音沙汰の無い間の期限で、データが
+    /// 届くたびに数え直すので、少しずつ返し続ける応答には切れない。だから待つ側も `limit` で
+    /// 諦め、取り消して失敗を投げる。要求の期限も同じ値にする — 何も返さない応答でどちらが先に
+    /// 切れても、同じ失敗 (``failure(of:limit:)``) になる。
+    ///
+    /// - Parameter limit: 取ってくるのを諦めるまで。製品の経路では ``fetchLimit`` のまま。
+    ///   **検査だけが縮める** — 期限を越える応答を作る検査が、毎回 10 秒待たずに済むように。
+    nonisolated static func download(_ url: URL, limit: TimeInterval = fetchLimit) throws -> Data {
+        // 受け取りの仕事と待つ側の間で結果を渡す箱。**書くのは受け取りの仕事が 1 度だけで、
+        // 読むのは合図を待った後だけ** — 合図が前後を決めるので、錠は要らない。期限で諦めた
+        // ときは読まない (取り消した受け取りも後から書くが、もう誰も見ない)
         final class Box: @unchecked Sendable {
             var outcome: Result<Data, Error> = .failure(FetchFailure("no response came back"))
         }
         var request = URLRequest(url: url)
-        request.timeoutInterval = fetchLimit
+        request.timeoutInterval = limit
         let box = Box()
         let semaphore = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
             if let error {
-                box.outcome = .failure(error)
+                box.outcome = .failure(failure(of: error, limit: limit))
                 return
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -149,10 +163,37 @@ struct APIListLocator {
                 return
             }
             box.outcome = .success(data ?? Data())
-        }.resume()
-        // 上限は要求に載せてある。待ち自体には上限を置かない (二重に持つと食い違う)
-        semaphore.wait()
+        }
+        let deadline = DispatchTime.now() + limit
+        task.resume()
+        guard semaphore.wait(timeout: deadline) == .success else {
+            task.cancel()
+            throw overdue(limit: limit)
+        }
         return try box.outcome.get()
+    }
+
+    /// 期限 `limit` の間に答えが完結しなかったときの失敗。
+    ///
+    /// 待つ側が期限で諦めたときと、受け口の時計が切れたとき (``failure(of:limit:)``) の両方が
+    /// これを投げる。文面は「`limit` の間に答えが完結しなかった」とだけ名乗り、どちらの時計が
+    /// 切れたか (呼んでからの総時間か、音沙汰の無い間か) は言わない — どちらが切れても
+    /// 偽りにならない言い方である。
+    nonisolated static func overdue(limit: TimeInterval) -> FetchFailure {
+        // 整数の秒は小数点なしで書く。`Int(limit)` は無限大・非数・Int に収まらない値で落ちるので、
+        // 収まる範囲の有限の値だけ変換する (今の呼び元は有限の 10 秒だが、落ちる口を残さない)
+        let seconds = limit.isFinite && abs(limit) < 1e15 && limit == limit.rounded() ? "\(Int(limit))" : "\(limit)"
+        return FetchFailure("no complete answer came back within \(seconds) seconds")
+    }
+
+    /// 受け口が投げた誤りを、失敗にする。**受け口の時間切れ (`URLError.timedOut`) は
+    /// ``overdue(limit:)`` に畳む。** 他の誤りは、受け口が名乗った事情をそのまま渡す。
+    ///
+    /// 受け口の時計 (`URLRequest.timeoutInterval`、音沙汰の無い間) は `limit` に揃えてある。
+    /// 切れたのなら、呼んでから `limit` 以上経って、答えはまだ完結していない。
+    nonisolated static func failure(of error: any Error, limit: TimeInterval) -> any Error {
+        guard (error as? URLError)?.code == .timedOut else { return error }
+        return overdue(limit: limit)
     }
 
     nonisolated struct FetchFailure: Error, CustomStringConvertible {

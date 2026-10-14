@@ -135,7 +135,8 @@ struct STLModelTests {
         for (index, facet) in Self.tetrahedron.prefix(3).enumerated() {
             #expect(parsed.normals[index * 3..<index * 3 + 3].allSatisfy { $0 == facet.normal })
         }
-        #expect(parsed.hasWrittenNormals)
+        // **両面の印は面ごと** (#2342): 書いた 3 面は片面、`0 0 0` の 4 面目の 3 点だけが求めた向き
+        #expect(parsed.derivedNormals == Array(repeating: false, count: 9) + [true, true, true])
         // 展開は持たない (囲みの箱の位置に倒れる)
         #expect(parsed.uvs.count == 12)
         #expect(parsed.uvs.allSatisfy { $0 == nil })
@@ -163,7 +164,7 @@ struct STLModelTests {
     func noWrittenNormalsAtAll() throws {
         let parsed = try read(Data(ModelFixture.pyramidSTLText.utf8))
         #expect(parsed.positions.count == 18)
-        #expect(parsed.hasWrittenNormals == false)
+        #expect(parsed.derivedNormals == Array(repeating: true, count: 18))
         #expect(parsed.normals.allSatisfy { abs(length($0) - 1) < 1e-5 })
     }
 
@@ -193,7 +194,7 @@ struct STLModelTests {
 
         #expect(fromSTL.positions == fromOBJ.positions)
         #expect(fromSTL.uvs == fromOBJ.uvs)
-        #expect(fromSTL.hasWrittenNormals == fromOBJ.hasWrittenNormals)
+        #expect(fromSTL.derivedNormals == fromOBJ.derivedNormals)
         #expect(fromSTL.skippedLines == fromOBJ.skippedLines)
         // 求めた向きは OBJ が Newell の方法・STL が外積で求めるので、最下位の桁だけ違いうる
         #expect(fromSTL.normals.count == fromOBJ.normals.count)
@@ -215,7 +216,7 @@ struct STLModelTests {
         #expect(stl.center == obj.center)
         #expect(stl.mesh.points.map(\.position) == obj.mesh.points.map(\.position))
         #expect(stl.mesh.points.map(\.uv) == obj.mesh.points.map(\.uv))
-        #expect(stl.hasDerivedNormals == obj.hasDerivedNormals)
+        #expect(stl.mesh.points.map(\.isDerivedNormal) == obj.mesh.points.map(\.isDerivedNormal))
         // **向きだけは違う。** STL は点を共有しないので面ごとに平ら (3 点が同じ向き) で、OBJ は
         // 点を共有する面どうしで均される
         let points = stl.mesh.points
@@ -698,6 +699,107 @@ struct STLModelTests {
         }
         #expect(parsed.positions == expected)
         #expect(parsed.skippedLines == 0)
+    }
+
+    // MARK: - 写せなかった要素を数える (#2566)
+
+    /// 頂点 4 つ (原点・x・y・xy) を持つ mesh を作る。`attribute` は頂点の属性の名前で、位置を持たない
+    /// mesh は `MDLVertexAttributeNormal` などにする。submesh は (番号の並び, 形) で渡す。
+    ///
+    /// Model I/O が STL から返す mesh は三角形だけで番号も 3 の倍数なので、**そうでない形は
+    /// 実ファイルからは作れない** — 返り値の契約を守らない相手にも数える約束を、直接組んで見る。
+    private func mesh(
+        attribute: String = MDLVertexAttributePosition,
+        submeshes: [(indices: [UInt32], geometry: MDLGeometryType)]
+    ) -> MDLMesh {
+        let allocator = MDLMeshBufferDataAllocator()
+        let floats: [Float] = [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]
+        let vertices = allocator.newBuffer(
+            with: floats.withUnsafeBufferPointer { Data(buffer: $0) }, type: .vertex)
+        let descriptor = MDLVertexDescriptor()
+        descriptor.attributes[0] = MDLVertexAttribute(
+            name: attribute, format: .float3, offset: 0, bufferIndex: 0)
+        descriptor.layouts[0] = MDLVertexBufferLayout(stride: 12)
+        let built = submeshes.map { submesh in
+            MDLSubmesh(
+                indexBuffer: allocator.newBuffer(
+                    with: submesh.indices.withUnsafeBufferPointer { Data(buffer: $0) },
+                    type: .index),
+                indexCount: submesh.indices.count, indexType: .uInt32,
+                geometryType: submesh.geometry, material: nil)
+        }
+        return MDLMesh(
+            vertexBuffer: vertices, vertexCount: 4, descriptor: descriptor, submeshes: built)
+    }
+
+    /// 数え方の検体 1 つ。
+    nonisolated struct LeftoverCase: CustomTestStringConvertible, Sendable {
+        var name: String
+        /// 頂点が位置を持つか。持たない mesh は、位置でない属性だけを名乗る
+        var hasPositions = true
+        var submeshes: [Submesh]
+        var triangles: Int
+        var skipped: Int
+        var testDescription: String { name }
+
+        struct Submesh: Sendable {
+            var indices: [UInt32]
+            var triangles = true
+        }
+
+        nonisolated static let all: [LeftoverCase] = [
+            .init(name: "余りの番号 1 つ", submeshes: [.init(indices: [0, 1, 2, 3])], triangles: 1, skipped: 1),
+            .init(
+                name: "余りの番号 2 つ", submeshes: [.init(indices: [0, 1, 2, 3, 1])], triangles: 1,
+                skipped: 1),
+            .init(
+                name: "三角形でない submesh",
+                submeshes: [.init(indices: [0, 1, 2, 3], triangles: false)], triangles: 0, skipped: 1),
+            .init(
+                name: "三角形 + 線の submesh",
+                submeshes: [.init(indices: [0, 1, 2]), .init(indices: [0, 1], triangles: false)],
+                triangles: 1, skipped: 1),
+            .init(
+                name: "余りのある submesh が 2 つ",
+                submeshes: [.init(indices: [0, 1, 2, 3]), .init(indices: [1, 2, 3, 0])],
+                triangles: 2, skipped: 2),
+            .init(name: "submesh を持たない mesh", submeshes: [], triangles: 0, skipped: 1),
+            .init(
+                name: "位置を持たない mesh", hasPositions: false,
+                submeshes: [.init(indices: [0, 1, 2])], triangles: 0, skipped: 1),
+            // 陰性対照: 3 つで割り切れる三角形は変わらず、数えない
+            .init(name: "三角形 1 枚", submeshes: [.init(indices: [0, 1, 2])], triangles: 1, skipped: 0),
+            .init(
+                name: "三角形 2 枚", submeshes: [.init(indices: [0, 1, 2, 1, 3, 2])], triangles: 2,
+                skipped: 0),
+            .init(name: "番号が空の submesh", submeshes: [.init(indices: [])], triangles: 0, skipped: 0),
+        ]
+    }
+
+    /// 約束: Model I/O の mesh のうち**面にならなかった要素は、黙って捨てず `skippedLines` に数える**。
+    /// 位置を持たない mesh と三角形でない submesh は 1 つずつ、3 つに満たない余りの番号は submesh ごとに
+    /// 1 つ。正しい三角形は変わらず、数えない。
+    @Test(
+        "写せなかった mesh・submesh・余りの番号は、読み飛ばしたものとして数える",
+        arguments: LeftoverCase.all)
+    func unplacedMeshElementsAreCounted(_ example: LeftoverCase) {
+        let built = mesh(
+            attribute: example.hasPositions ? MDLVertexAttributePosition : MDLVertexAttributeNormal,
+            submeshes: example.submeshes.map {
+                (indices: $0.indices, geometry: $0.triangles ? .triangles : .lines)
+            })
+        let parsed = ModelFile.triangles(of: [built])
+        #expect(parsed.positions.count == example.triangles * 3, "\(example.name)")
+        #expect(parsed.skippedLines == example.skipped, "\(example.name)")
+    }
+
+    @Test("mesh でない物は、読み飛ばしたものとして数え、mesh は変わらず読む")
+    func nonMeshObjectsAreCounted() {
+        let built = mesh(submeshes: [(indices: [0, 1, 2], geometry: .triangles)])
+        let parsed = ModelFile.triangles(of: [MDLObject(), built, MDLObject()])
+        #expect(parsed.positions.count == 3)
+        #expect(parsed.skippedLines == 2)
+        #expect(ModelFile.triangles(of: [built]).skippedLines == 0)
     }
 
     // MARK: - 読める形式と説明

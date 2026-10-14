@@ -69,7 +69,13 @@ nonisolated struct AppIdentity: Equatable {
     static func read(in root: URL) throws(CommandFailure) -> AppIdentity {
         let url = root.appendingPathComponent(fileName)
         guard let data = try? Data(contentsOf: url) else {
-            throw .identityMissing(path: url.path)
+            // **在るのに読めないものを「無い」と言わない** (#2575)。`try?` は権限の無いファイルも
+            // ディレクトリも無いファイルと同じ顔にする。「無い」は、名指しした場所に何も無い
+            // ときだけで、在るものは「読めない」と名乗る (読み直して決める)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw .identityMissing(path: url.path)
+            }
+            throw .identityUnreadable(path: url.path)
         }
         guard let wire = try? JSONDecoder().decode(Wire.self, from: data) else {
             throw .identityUnreadable(path: url.path)
@@ -94,6 +100,17 @@ nonisolated struct AppIdentity: Equatable {
             if identifier == nil { missing.append("identifier") }
             if version == nil { missing.append("version") }
             throw .identityIncomplete(path: path, missing: missing)
+        }
+        // **名前はファイル名にもなる** (`<name>.app` と開き方の紙)。`/` は場所を動かすので、
+        // 組み立ての前に断る (#2309・メンテナの決定 = 案 B)。`Info.plist` と紙の本文では表示名
+        // として正しいが、そこだけ通す形は採らなかった
+        //
+        // **文字 (書記素) ではなく Unicode scalar で見る。** ファイルシステムは `/` の 1 バイトで
+        // 区切るが、`Character` で比べると `/` の直後の結合文字 (`a/\u{301}b`) や直前の
+        // Prepend 文字と 1 つの文字にまとまって見落とし、組み立ての後で `assemble` の守りに
+        // 落ちる。ファイル名に置けないもう 1 つ (NUL) も同じ段で断る (反証の指摘)
+        guard !name.unicodeScalars.contains(where: { $0 == "/" || $0 == "\0" }) else {
+            throw .identityNameUnusable(path: path, name: name)
         }
         return AppIdentity(
             name: name, identifier: identifier, version: version,

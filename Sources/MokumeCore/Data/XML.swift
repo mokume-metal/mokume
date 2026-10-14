@@ -73,10 +73,13 @@ public struct XML: Equatable, Sendable {
     /// circle(star.getFloat("x"), star.getFloat("y"), star.getFloat("size"))
     /// ```
     ///
-    /// 前後の空白は落とす。
+    /// 数とするのは **10 進の綴りだけ** (`"120"`・`"-2.5"`・`".5"`・`"1e3"`) で、前後の空白は
+    /// 改行 (`&#10;` で書いたもの) も含めて落とす。`Float` に収まらない数 (`"1e39"`) は無限大
+    /// になる。
     ///
     /// **数にならないときは NaN を返し、初回だけ理由を知らせる** — 属性が無い・値が数でない
-    /// 文字のどちらでも (要素の名前と属性の名前の組ごとに 1 度)。読み取りは落ちない
+    /// 文字のどちらでも (要素の名前と属性の名前の組ごとに 1 度)。`"nan"`・`"NaN"`・`"inf"`・
+    /// `"Infinity"`・16 進 (`"0x10"`) も、数でない文字である。読み取りは落ちない
     /// ([ADR-0020] 決定 5)。NaN の大きさの円は描かれないので、欠けた星は抜けとして見える。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -88,7 +91,7 @@ public struct XML: Equatable, Sendable {
                     + DocumentValues.listing("Its attributes are", element.attributes.keys))
             return .nan
         }
-        if let number = Float(text.trimmingCharacters(in: .whitespaces)) { return number }
+        if let number = DecimalText.float(text) { return number }
         DocumentValues.warnOnce(
             .attributeNotANumber(element: element.name, name: name),
             "getFloat(\"\(name)\"): <\(element.name)> has \(name)=\"\(text)\", which is not a number. "

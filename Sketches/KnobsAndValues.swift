@@ -78,7 +78,9 @@ import mokume
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 final class KnobsAndValues: Sketch {
-    var settings = SketchSettings(width: 1280, height: 1000, title: "knobs and values")
+    var settings: SketchSettings {
+        SketchSettings(width: 1280, height: 1000, title: "knobs and values")
+    }
 
     /// 並びを置く幅。右の残り (420) は宣言の一覧に使う。**窓は広げない** — 14 インチの
     /// 画面 (既定 1512×982 pt) につまみの面と並べて収まる大きさに留める。

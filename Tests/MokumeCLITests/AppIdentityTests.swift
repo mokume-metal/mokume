@@ -43,6 +43,28 @@ struct AppIdentityTests {
         #expect(CommandFailure.identityMissing(path: path).message.contains(AppIdentity.example))
     }
 
+    /// **在るのに読めないファイルを「無い」と言わない** (#2575)。`try?` は権限の無いファイルも
+    /// ディレクトリも、無いファイルと同じ顔にする — 「There is none」と言うと、在るものを
+    /// 書きに行かせて、上書きを促すことになる。
+    @Test("在るのに読めない名乗りは、無いとは言わず読めないと言う", arguments: ["locked", "directory"])
+    func anIdentityThatIsThereButCannotBeReadIsNotMissing(kind: String) throws {
+        let root = try makeSketch(identity: nil)
+        let url = root.appendingPathComponent(AppIdentity.fileName)
+        if kind == "locked" {
+            try AppIdentity.example.write(to: url, atomically: true, encoding: .utf8)
+            chmod(url.path, 0)
+        } else {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        defer {
+            chmod(url.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+        #expect(throws: CommandFailure.identityUnreadable(path: url.path)) {
+            try AppIdentity.read(in: root)
+        }
+    }
+
     @Test("形が壊れていれば、その旨を言う")
     func anUnreadableIdentityStops() throws {
         let root = try makeSketch(identity: "{ これは JSON ではない")
@@ -70,6 +92,48 @@ struct AppIdentityTests {
     func theMissingKeysAreNamed() {
         let failure = CommandFailure.identityIncomplete(path: "/demo", missing: ["identifier"])
         #expect(failure.message.contains("identifier"))
+    }
+
+    // MARK: - 名前はファイル名にもなる (#2309)
+
+    /// **`name` は表示名であり、包みのファイル名 (`bundle/<name>.app`) と開き方の紙の名前にも
+    /// なる。** `/` があると `--out` の下に余計なディレクトリを作って途中で止まり、`..` と組むと
+    /// `--out` の外の `.app` を消していた ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    /// 組み立ての前 (名乗りを読む段) に、使えないものを名指して断る (メンテナの決定: 案 B)。
+    ///
+    /// **`/` が前後の文字と 1 つの書記素にまとまっても見落とさない** (反証の指摘)。ファイル
+    /// システムは `/` の 1 バイトで区切るので、結合文字 (U+0301) が後ろに付いた `/` や、
+    /// Prepend 文字 (U+0600) が前に付いた `/` も区切りになる。ファイル名に置けないもう 1 つの
+    /// NUL も同じ段で断る — 通すと、組み立ての後で `assemble` の守りに落ちる。
+    @Test(
+        "name に / (と NUL) があれば、使えないものを名指して止まる",
+        arguments: [
+            "AC/DC", "../victim", "/", "Bund/", "a/../b", "a/\u{301}b", "../\u{301}victim",
+            "\u{600}/x", "x\u{0}y",
+        ])
+    func aNameWithASlashIsRefused(name: String) {
+        let path = "/demo/mokume-app.json"
+        let thrown = #expect(throws: CommandFailure.self) {
+            try AppIdentity.make(
+                from: AppIdentity.Wire(
+                    name: name, identifier: "org.example.bund", version: "0.1.0"),
+                path: path)
+        }
+        #expect(thrown == .identityNameUnusable(path: path, name: name))
+        let message = thrown?.message ?? ""
+        #expect(message.contains("\"/\""), "使えないもの (/) を名指していない: \(message)")
+        #expect(message.contains(name), "渡された名前を名乗っていない: \(message)")
+        #expect(message.contains(path), "名乗りの場所を名乗っていない: \(message)")
+    }
+
+    /// 裏側。**`/` の無い名前は、空白・日本語・点だけでも通る** — `..` は `/` と組まなければ
+    /// 場所を動かさない (`...app` という名前になるだけ)。
+    @Test("/ の無い名前は、いままでどおり通る", arguments: ["Bund", "My Sketch", "木目", "..", "."])
+    func aNameWithoutASlashPasses(name: String) throws {
+        let identity = try AppIdentity.make(
+            from: AppIdentity.Wire(name: name, identifier: "org.example.bund", version: "0.1.0"),
+            path: "/demo/mokume-app.json")
+        #expect(identity.name == name)
     }
 
     @Test("名乗りが、包みが読む一覧になる")

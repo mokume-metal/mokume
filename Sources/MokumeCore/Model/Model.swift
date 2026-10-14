@@ -32,7 +32,32 @@ public struct Model: Equatable, Sendable {
     /// 面が 1 つも無いか。**読めたが見えない**状態がこれにあたる。
     public var isEmpty: Bool { mesh.points.isEmpty }
     /// 読み飛ばしたものの数。OBJ では読み飛ばした行 (材質の指定など、いま読まないもの)、
-    /// STL では読み飛ばした面 (座標が数でない面) を数える。
+    /// STL では読み飛ばした面 (座標が数でない面) と写せなかった要素 (下) を数える。数える
+    /// 単位は形式と要素で違い、面の数とは限らない。
+    ///
+    /// OBJ の面の**角は `位置[/読み取り位置[/向き]]` の 3 つの欄まで**で、4 つ目以降の欄がある角も
+    /// 読めない角として同じに数える。向き (`vn`) の行も 3 つの数までで、4 つ目以降があれば
+    /// 読めない行として数える (`v` の 4 つ目と `vt` の 3 つ目は仕様にある欄なので読み捨てる)。
+    ///
+    /// STL は、座標が数でない面のほか、Model I/O が返した形のうち面にならなかった要素 (位置を
+    /// 持たない mesh・submesh を持たない mesh・三角形でない submesh を 1 つずつ、3 つに満たない
+    /// 余りの番号を submesh ごとに 1 つ) も数える。後者は実ファイルの STL では起きず、
+    /// Model I/O が契約を破ったときの防御である。
+    ///
+    /// OBJ は**行を丸ごと**読み飛ばす。面の行に位置の番号が読めない角 (範囲の外・0・数でない)
+    /// が 1 つでもあれば、残りの角で面を作らず、その行を 1 つ数える。行末のコメント (`#` から
+    /// 後) と継ぎ文字 (`\`) は角でない字なので、読めない角とは数えない。
+    ///
+    /// **面の角の `vt`・`vn` の番号が読めない・範囲の外なら、その角にその番号を書いていない
+    /// のと同じに読み、数えない** (面は読み飛ばさない)。
+    ///
+    /// **読めない `v`・`vt`・`vn` の行も番号の枠を 1 つ使う。** OBJ の番号は行の通し番号なので、
+    /// 読めない行を詰めると後ろの番号がずれて面が別の頂点を指す。**数え方は 2 段になる** —
+    /// 読めない行そのものを 1 つ数え、その行を**位置として**指す面は (読めない角を含むので)
+    /// 行ごと読み飛ばして面の行ごとに 1 つ足す。読めない `v` が 1 行あれば、`skippedLines` は
+    /// 1 に、その行を指す面の行の数を足したものになる (`v` が読めない 1 行を 2 つの面の行が
+    /// 指すなら 3)。`vt`・`vn` の読めない行を指す角は、その角に書いていないのと同じに読み、
+    /// 面は描いて足さない。
     public let skippedLines: Int
     /// 囲みの箱の大きさ。整えたあとの値。
     public let size: SIMD3<Float>
@@ -51,8 +76,6 @@ public struct Model: Equatable, Sendable {
     /// 点を溶接する表と向き付きの辺の表を作るので (100 万三角形で 300 万要素ずつ)、半透明で
     /// 置かないモデルにまで払わせない。控えは参照なので、値を写した `Model` どうしで共有する。
     let windingCache = WindingCache()
-    /// 面の向きを**形から求めた**か。求めた向きは両面として扱う。
-    let hasDerivedNormals: Bool
     /// 同じモデルを続けて置いたときにまとめるための番号。**プロセスの中で読み込みごとに違う**
     /// (``nextIdentity()``)。
     let identity: Int
@@ -64,12 +87,11 @@ public struct Model: Equatable, Sendable {
     /// **番号は受け取らない** — 作るたびに ``nextIdentity()`` から取る。外から番号を渡せると、
     /// 「別々に読んだモデルは違う番号を持つ」を呼ぶ側が守る約束になってしまう (#1846)。
     private init(
-        name: String, mesh: SolidMesh, hasDerivedNormals: Bool, skippedLines: Int,
-        size: SIMD3<Float>, center: SIMD3<Float>
+        name: String, mesh: SolidMesh, skippedLines: Int, size: SIMD3<Float>,
+        center: SIMD3<Float>
     ) {
         self.name = name
         self.mesh = mesh
-        self.hasDerivedNormals = hasDerivedNormals
         self.skippedLines = skippedLines
         self.size = size
         self.center = center
@@ -186,7 +208,10 @@ extension Model {
                 uv: parsed.uvs[index]
                     ?? SIMD2(
                         extent.x > 0 ? (source.x - uvLowest.x) / extent.x : 0,
-                        extent.y > 0 ? (-source.y - uvLowest.y) / extent.y : 0))
+                        extent.y > 0 ? (-source.y - uvLowest.y) / extent.y : 0),
+                // 両面として扱うかも角ごと (#2342)。モデル単位の 1 つの印にすると、混ざった
+                // モデルの求めた面が片面になる
+                isDerivedNormal: parsed.derivedNormals[index])
         }
 
         // **縦を裏返した形は、巻き方を戻す。** 縦だけの裏返しは鏡映なので、3 点の並びから
@@ -203,8 +228,7 @@ extension Model {
             }
         }
         return Model(
-            name: name, mesh: SolidMesh(points: points),
-            hasDerivedNormals: !parsed.hasWrittenNormals, skippedLines: parsed.skippedLines,
+            name: name, mesh: SolidMesh(points: points), skippedLines: parsed.skippedLines,
             size: size, center: center)
     }
 }

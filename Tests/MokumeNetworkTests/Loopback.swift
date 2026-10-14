@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Darwin
 import Foundation
 import Network
 import Synchronization
@@ -70,6 +71,51 @@ func clients(_ server: TextPort, reach count: Int) async -> Bool {
         server.supply()
         return server.connected == count
     }
+}
+
+/// 127.0.0.1 のポートへ、素の BSD socket から datagram を送る相手 (他のアプリの代わり)。
+///
+/// **1 つの socket から送るので、受け口からは 1 つの送り元に見える。** 間を空けずに続けて送れば、
+/// 後ろの datagram は受け口の同じ繋ぎに積まれている。送る上限 (`SO_SNDBUF`) を広げてあり、
+/// macOS の既定 (`net.inet.udp.maxdgram` の 9216 バイト) を超える datagram も送れる —
+/// ``DatagramSender`` は超えると `Message too long` で送れない。
+nonisolated final class RawDatagramSocket: Sendable {
+    private let descriptor: Int32
+
+    init() throws {
+        let descriptor = socket(AF_INET, SOCK_DGRAM, 0)
+        guard descriptor >= 0 else { throw PortHolder.Failure(call: "socket", code: errno) }
+        var size: Int32 = 1 << 20
+        guard
+            setsockopt(
+                descriptor, SOL_SOCKET, SO_SNDBUF, &size, socklen_t(MemoryLayout<Int32>.size)) == 0
+        else {
+            let code = errno
+            close(descriptor)
+            throw PortHolder.Failure(call: "setsockopt", code: code)
+        }
+        self.descriptor = descriptor
+    }
+
+    /// 1 つの datagram として送る。送れたバイト数を返す (送れなければ -1)。
+    func send(_ bytes: [UInt8], to port: Int) -> Int {
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(UInt16(port).bigEndian)
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        return bytes.withUnsafeBytes { buffer in
+            withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    sendto(
+                        descriptor, buffer.baseAddress, bytes.count, 0, $0,
+                        socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+        }
+    }
+
+    func release() { close(descriptor) }
 }
 
 /// 127.0.0.1 のポートへ TCP で繋ぐ相手 (`nc` の代わり)。届いたバイト列を溜める。
@@ -178,8 +224,9 @@ nonisolated final class WebSocketClient: @unchecked Sendable {
                 ended.withLock { $0 = true }
                 return
             }
-            if metadata.opcode == .text, let content {
-                texts.withLock { $0.append(String(decoding: content, as: UTF8.self)) }
+            // 空の 1 通は content が nil で届く。落とさずに空の文字列として積む
+            if metadata.opcode == .text {
+                texts.withLock { $0.append(String(decoding: content ?? Data(), as: UTF8.self)) }
             }
             receive()
         }

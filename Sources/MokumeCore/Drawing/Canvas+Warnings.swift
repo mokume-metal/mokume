@@ -275,6 +275,10 @@ extension Canvas {
 
         /// 無い書体を指定された。
         case missingFont
+        /// ``Canvas/textStyle(_:)`` の太さ・傾きの面を、書体が持っていなかった ([#2444])。
+        ///
+        /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
+        case missingTypefaceStyle
         /// ``Canvas/textSize(_:)``・``Canvas/textLeading(_:)`` に、数でない値・無限・上限
         /// (``Canvas/largestTextMeasure``) を越える値が渡された ([#1587])。
         ///
@@ -311,18 +315,24 @@ extension Canvas {
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case pixelsInsideShape
         /// 形の組み立ての途中で溜め場が描き切られるか捨てられ、記録したものを失って空の形を返した
-        /// ([#1588])。来るのは、写しを持てなかった置いた描き場所の描き換えと、組み立ての中で組み立てて
-        /// いる面のフレームを始めること ([#1855] の後に残った経路)。種類と文面は ``InsideShape`` が持つ。
+        /// ([#1588])。来るのは、写しを持てなかった置いた描き場所の描き換えと、組み立て中の描き場所が
+        /// 開いたままのフレームを本体の次のフレームの頭が捨てること ([#1855]・[#2201] の後に残った経路)。
+        /// 種類と文面は ``InsideShape`` が持つ。
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+        /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
         case shapeDrawnOutWhileBuilding
-        /// 組み立ての中で、組み立てている面のフレームを閉じようとした (`endDraw()` か、組み立ての中で
-        /// 開いた `draw { }` の終わり・[#1855])。フレームは閉じずに一番外の組み立ての出口まで待たせる。
-        /// 種類と文面は ``InsideShape`` が持つ。
+        /// 組み立ての中で、組み立ての前に開いた自分のフレームを `endDraw()` で閉じようとした ([#1855])。
+        /// フレームは閉じずに一番外の組み立ての出口まで待たせる。種類と文面は ``InsideShape`` が持つ。
         ///
         /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
         case frameEndInsideShape
+        /// 組み立ての中で、組み立てている面のフレームを始めようとした (`beginDraw()`・`draw { }`・
+        /// [#2201])。フレームは始めない。種類と文面は ``InsideShape`` が持つ。
+        ///
+        /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+        case frameStartInsideShape
         /// 形の組み立ての中で、形に焼き付かない設定を書いた ([#1529])。種類ごとに鍵を分ける
         /// (``OutsideFrame`` と同じく、光の注意が視点の注意を黙らせない)。種類と文面は
         /// ``InsideShape`` が持つ。

@@ -8,6 +8,7 @@
 // slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが
 // 拾われないよう、宣言との間は必ず 1 行空ける。
 
+import CoreText
 import simd
 
 extension Canvas {
@@ -32,6 +33,19 @@ extension Canvas {
         if let found = typefaces[request] { return found }
         let face = Typeface(request: request)
         typefaces.insert(face, for: request)
+        // 面が無ければ引けた面で描く。黙ると、効かない指定を効いたように見せる (#2444)
+        if face.lacksRequestedStyle {
+            // どの面で描くかを添える。太斜体で斜体だけが無いなら「太字の立体」と読める (#2562)
+            let traits = CTFontGetSymbolicTraits(face.base)
+            let drawn =
+                "\(traits.contains(.traitBold) ? "bold" : "regular weight"), "
+                + (traits.contains(.traitItalic) ? "italic" : "upright")
+            warnOnce(
+                .missingTypefaceStyle,
+                "textStyle(): the typeface family \"\(CTFontCopyFamilyName(face.base) as String)\" "
+                    + "has no \(request.style) face in this environment, so "
+                    + "\"\(CTFontCopyPostScriptName(face.base) as String)\" (\(drawn)) is used")
+        }
         return face
     }
 

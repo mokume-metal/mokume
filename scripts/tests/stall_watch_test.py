@@ -117,8 +117,12 @@ def ago(minutes):
     )
 
 
-def check(name, result, at=None):
-    return {"name": name, "conclusion": result, "completedAt": at or ago(30)}
+def check(name, result, at=None, run=None):
+    """run を渡すと detailsUrl に Actions の run id を載せる (新旧の基準・#2568)。"""
+    item = {"name": name, "conclusion": result, "completedAt": at or ago(30)}
+    if run is not None:
+        item["detailsUrl"] = f"https://github.com/o/r/actions/runs/{run}/job/1"
+    return item
 
 
 class StallWatchTest(unittest.TestCase):
@@ -309,6 +313,118 @@ class StallWatchTest(unittest.TestCase):
         )
         kind, action = self.classify(10, self.watch())
         self.assertEqual((kind, action), ("bad-title", "name"))
+
+    def test_タイトルを直した後の_PR_は_古い_run_の赤を名乗らない(self):
+        """#2568。直す前の run (id 小) の ci-gate は、直した後の run (id 大) より**遅く**完了して
+        時刻の上では最新に見える。新旧は完了時刻でなく run の id で決める。"""
+        self.add_pr(
+            12,
+            auto=False,
+            state="CLEAN",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("pr-title", "SUCCESS", ago(60), run=200),
+                check("ci-gate", "SUCCESS", ago(60), run=200),
+                check("ci-gate", "FAILURE", ago(5), run=100),
+            ],
+        )
+        kind, action = self.classify(12, self.watch(IN_QUEUE="true"))
+        self.assertEqual((kind, action), ("in-queue", "quiet"))
+
+    def test_新しい_run_の_pr_title_が赤ければ名乗る(self):
+        self.add_pr(
+            13,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "SUCCESS", ago(90), run=100),
+                check("pr-title", "FAILURE", ago(60), run=200),
+                check("ci-gate", "FAILURE", ago(5), run=200),
+            ],
+        )
+        kind, action = self.classify(13, self.watch())
+        self.assertEqual((kind, action), ("bad-title", "name"))
+
+    def test_古い_run_を外しても_別の失敗_check_は残る(self):
+        self.add_pr(
+            14,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("ci-gate", "FAILURE", ago(5), run=100),
+                check("pr-title", "SUCCESS", ago(60), run=200),
+                check("review-gate", "FAILURE", ago(50), run=200),
+                check("review-gate", "SUCCESS", ago(10), run=300),
+            ],
+        )
+        kind, action = self.classify(14, self.watch())
+        self.assertEqual((kind, action), ("stale-checks", "act"))
+
+    def test_古い失敗_check_の判定も_完了時刻でなく_run_の_id_順で読む(self):
+        """#2568。古い run (id 小) の赤が遅く完了しても、新しい run (id 大) の緑が最新である。"""
+        self.add_pr(
+            15,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("test-release", "SUCCESS", ago(60), run=200),
+                check("test-release", "FAILURE", ago(5), run=100),
+            ],
+        )
+        kind, action = self.classify(15, self.watch())
+        self.assertEqual((kind, action), ("stale-checks", "act"))
+
+    def test_新しい_run_の_pr_title_が_SKIPPED_なら_直った証拠にしない(self):
+        """レビューの投稿で起きた run では pr-title が SKIPPED になる。タイトルは直っていない。"""
+        self.add_pr(
+            16,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("ci-gate", "FAILURE", ago(80), run=100),
+                check("pr-title", "SKIPPED", ago(60), run=200),
+                check("ci-gate", "SUCCESS", ago(60), run=200),
+            ],
+        )
+        kind, action = self.classify(16, self.watch())
+        self.assertEqual((kind, action), ("bad-title", "name"))
+
+    def test_凍結された_run_の_ci_check_の本物の失敗は外さない(self):
+        """タイトルの修正の run では ci-check が SKIPPED になる。古い run の本物の赤は残す。"""
+        self.add_pr(
+            17,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("ci-check", "FAILURE", ago(85), run=100),
+                check("ci-gate", "FAILURE", ago(80), run=100),
+                check("pr-title", "SUCCESS", ago(60), run=200),
+                check("ci-check", "SKIPPED", ago(60), run=200),
+                check("ci-gate", "SUCCESS", ago(60), run=200),
+            ],
+        )
+        kind, action = self.classify(17, self.watch())
+        self.assertEqual((kind, action), ("stale-checks", "act"))
+
+    def test_新しい_run_の_ci_gate_が_SUCCESS_でなければ_古い_ci_gate_の赤を黙らせない(self):
+        """新しい側が SUCCESS と言い切れないなら、古い赤は判定を固定しているかもしれない。
+        外すと stale-checks にも何にも当たらず、本当の詰まりが無音になる。"""
+        self.add_pr(
+            18,
+            auto=True,
+            state="BLOCKED",
+            checks=[
+                check("pr-title", "FAILURE", ago(90), run=100),
+                check("ci-gate", "FAILURE", ago(80), run=100),
+                check("pr-title", "SUCCESS", ago(60), run=200),
+                check("ci-gate", "SKIPPED", ago(55), run=200),
+            ],
+        )
+        kind, action = self.classify(18, self.watch())
+        self.assertEqual((kind, action), ("stale-checks", "act"))
 
     def test_判定は何も打たない(self):
         self.add_pr(11, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])

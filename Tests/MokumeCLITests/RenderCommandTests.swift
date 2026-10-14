@@ -81,10 +81,29 @@ struct RenderCommandTests {
         ])
         #expect(
             options.invocation
-                == Invocation(place: "Cast", configuration: "release", scratchPath: ".build"))
+                == Invocation(
+                    place: "Cast", configuration: "release", scratchPath: ".build",
+                    currentDirectory: Self.typedFrom))
         #expect(options.request.frameRate == 60)
         #expect(options.request.frameCount == 2880)
         #expect(options.request.destination == "/tmp/cast.mov")
+    }
+
+    /// **場所・置き場・行き先は、どれも打った場所から解く** (#2320・#2323 の判断・案 A)。
+    /// 置き場だけがスケッチの場所から解かれていたので、`plain/` で
+    /// `render ../probe --scratch-path sp --out o.mov` と打つと、書いたものは `plain/o.mov`
+    /// なのに組み立ての置き場は `probe/sp` になっていた。
+    @Test("場所・置き場・行き先は、どれも打った場所から解く")
+    func everyPathIsResolvedFromWhereItWasTyped() throws {
+        let plain = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let options = try RenderCommand.parse(
+            [
+                "../probe", "--scratch-path", "sp", "--fps", "10", "--seconds", "0.1", "--out",
+                "o.mov",
+            ], currentDirectory: plain)
+        #expect(options.invocation.directory.path == "/work/probe")
+        #expect(options.invocation.scratchDirectory?.path == "/work/plain/sp")
+        #expect(options.request.destination == "/work/plain/o.mov")
     }
 
     /// **子の作業ディレクトリはスケッチの場所である。** 相対のまま渡すと、書いたものが
@@ -139,6 +158,25 @@ struct RenderCommandTests {
         expectUsage(["--fps", rate, "--seconds", "2", "--out", "/a.mov"], mentioning: "--fps")
     }
 
+    /// **`.mov` の時刻は 1/90 000 秒で数える** ([#2307])。それより速いと隣の枚が同じ時刻へ
+    /// 丸まり、書く係が外れて開けない `.mov` が残っていた (`--fps 100000`)。走らせる前に、
+    /// 上限を名乗って止まる。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    @Test("--fps が .mov の刻みを越えたら、上限を名乗ってビルドの前に止まる")
+    func aFrameRateBeyondTheMovieTimescaleIsRefused() throws {
+        expectUsage(
+            ["--fps", "90001", "--seconds", "1", "--out", "/a.mov"],
+            mentioningAll: ["--fps", "90000", ": 90001"])
+        // 境目: 刻みちょうどは通る。連番は時刻を書かないので、刻みを越えても通る
+        #expect(
+            try parse(["--fps", "90000", "--seconds", "1", "--out", "/a.mov"]).request.frameRate
+                == 90_000)
+        #expect(
+            try parse(["--fps", "90001", "--seconds", "1", "--out", "/f-####.png"]).request
+                .frameRate == 90_001)
+    }
+
     @Test(
         "秒数は 0 より大きい数だけを受ける",
         arguments: ["0", "-1", "abc", "2s", "inf", "nan", "0x10"])
@@ -188,6 +226,23 @@ struct RenderCommandTests {
     @Test("知らない選択肢は、場所にせずに止まる")
     func anUnknownOptionIsRefused() {
         expectUsage(["--fps", "30", "--seconds", "2", "--out", "/a.mov", "-o", "x"], mentioning: "-o")
+    }
+
+    /// **構成の値も、組み立ての前に検める** ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    /// 検めずに道具立てへ渡すと、組み立てを始めてから「Package.swift に実行ファイルが無い」と
+    /// 名乗っていた。
+    @Test("構成は debug / release だけを受け、それ以外は受け付ける値を名指して止まる")
+    func anUnknownConfigurationIsRefused() throws {
+        for configuration in ["bogus", "Release", "DEBUG"] {
+            expectUsage(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"],
+                mentioningAll: ["debug", "release", ": \(configuration)"])
+        }
+        for configuration in ["debug", "release"] {
+            let options = try parse(
+                ["-c", configuration, "--fps", "10", "--seconds", "0.1", "--out", "/c.mov"])
+            #expect(options.invocation.configuration == configuration)
+        }
     }
 
     /// 解いた後にパッケージを探すので、`Package.swift` の無い場所でも使い方の誤りが先に出る。
@@ -243,7 +298,11 @@ struct RenderCommandTests {
     // MARK: - 終わり方 (完了条件 6)
 
     /// 環境を書き留めてから、指定した終了コードで終わる子。
-    private func makeChild(exiting status: Int32) throws -> (executable: URL, seen: URL) {
+    ///
+    /// - Parameter signal: 渡されたら、終了コードではなくこの合図 (`TRAP` など) で自分を落とす。
+    private func makeChild(exiting status: Int32, signalled signal: String? = nil) throws
+        -> (executable: URL, seen: URL)
+    {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-render-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -252,7 +311,7 @@ struct RenderCommandTests {
         try """
             #!/bin/sh
             printf '%s' "$\(StartupReads.render.key)" > '\(seen.path)'
-            exit \(status)
+            \(signal.map { "kill -s \($0) $$" } ?? "exit \(status)")
             """.write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
@@ -276,14 +335,39 @@ struct RenderCommandTests {
         let child = try makeChild(exiting: 1)
         let request = try #require(
             RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/out.mov"))
-        #expect(throws: CommandFailure.renderIncomplete(destination: "/tmp/out.mov", status: 1)) {
+        #expect(
+            throws: CommandFailure.renderIncomplete(
+                destination: "/tmp/out.mov", ending: .exited(1))
+        ) {
             try RenderCommand.launch(
                 child.executable, in: child.executable.deletingLastPathComponent(),
                 request: request)
         }
-        let failure = CommandFailure.renderIncomplete(destination: "/tmp/out.mov", status: 1)
+        let failure = CommandFailure.renderIncomplete(destination: "/tmp/out.mov", ending: .exited(1))
         #expect(failure.exitCode != 0)
         #expect(failure.message.contains("/tmp/out.mov"))
+        #expect(failure.message.contains("it exited with code 1"))
+    }
+
+    /// **合図で落ちた子を「exited with code N」と名乗らない** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// `fatalError` の SIGTRAP は番号が 5 で、`terminationStatus` だけを読むと「code 5」になる。
+    /// 終了コードは「書けたか」を言う値なので 1 のまま (#1282)。
+    @Test("子が合図で落ちれば、合図の番号を名乗り、終了コードの形では言わない")
+    func aSignalledChildIsNamedBySignal() throws {
+        let child = try makeChild(exiting: 0, signalled: "TRAP")
+        let request = try #require(
+            RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/out.mov"))
+        let thrown = #expect(throws: CommandFailure.self) {
+            try RenderCommand.launch(
+                child.executable, in: child.executable.deletingLastPathComponent(),
+                request: request)
+        }
+        #expect(
+            thrown == .renderIncomplete(destination: "/tmp/out.mov", ending: .signalled(SIGTRAP)))
+        let failure = try #require(thrown)
+        #expect(failure.exitCode == 1)
+        #expect(failure.message.contains("signal 5 (SIGTRAP)"))
+        #expect(!failure.message.contains("exited with code"))
     }
 
     // MARK: - 途中で止める (完了条件 7)

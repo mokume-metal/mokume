@@ -13,8 +13,11 @@ extension Canvas {
     ///   焼き付く先が無い — 塗り直しは面全体を描き直すことで、画素はまだ描いていない形を読めない
     /// - 描き切りそのものは断れない口がある。揺らぎの設定の書き換えと置いた描き場所の描き換えは、
     ///   置いた時点のものを列が持ち歩くので描き切らず、組み立ての中で自分のフレームを閉じること
-    ///   (`endDraw()`・`draw { }` の終わり) は出口まで待たせる ([#1855]・``frameEnd``)。それでも描き切るか
-    ///   捨てる道が残り、そこは出口が見て、空の形を返す (``drawnOut``)
+    ///   (`endDraw()`) は出口まで待たせる ([#1855]・``frameEnd``)。それでも描き切るか捨てる道が残り、
+    ///   そこは出口が見て、空の形を返す (``drawnOut``)
+    /// - 組み立ての中で自分のフレームを始めること (`beginDraw()`・`draw { }`) は、呼ばれた時点で断る
+    ///   ([#2201]・``frameStart``)。始めると、閉じ忘れたフレームとして、またはフレームの外で置いたものと
+    ///   して、組み立てた分が捨てられていた
     /// - 形に焼き付かない設定 (シーンの記述と、露出・明るさの丸め方) も、呼ばれた時点で断る
     ///   ([#1529] の案 A)。フレームの中で組み立てても `setup()` で組み立てても同じ扱いで、守りは
     ///   ``Canvas/admits(_:)`` の 1 つである
@@ -25,6 +28,7 @@ extension Canvas {
     /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
     /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+    /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     enum InsideShape: CaseIterable {
         /// 塗り直した。塗り 1 色の背景と周囲の背景の 2 系統が鍵を共有する。
         case background
@@ -33,28 +37,56 @@ extension Canvas {
         /// 記録の途中で溜め場が描き切られるか捨てられ、記録したものを失った。**出口の安全網**が言う。
         ///
         /// [#1855] で、揺らぎの設定の書き換え (列ごとに写す)・置いた描き場所の描き換え (組み立ての
-        /// 入口より前の列だけを写しへ差し替える)・組み立ての中で自分のフレームを閉じること (`endDraw()` と
-        /// `draw { }` の終わり。出口まで待たせる・``frameEnd``) は来なくなった。残る経路は 2 つ:
+        /// 入口より前の列だけを写しへ差し替える)・組み立ての中で自分のフレームを閉じること (`endDraw()`。
+        /// 出口まで待たせる・``frameEnd``) は来なくなった。[#2201] で、組み立ての中で自分のフレームを始める
+        /// こと (`beginDraw()`・`draw { }`。断る・``frameStart``) も来なくなった。残る経路は 2 つ:
         ///
         /// - 同じフレームで置いた描き場所の描き換えのうち、置いた側がもう 1 枚の写しを持てなかったもの
         ///   (写しの上限 ``Canvas/placedPictureCopyLimit`` に達したか、写しを用意できなかった)。置いた時点の
         ///   絵を守るほうを取って描き切るので、それまでに組み立てたぶんはフレームに描かれる
-        /// - 組み立ての中で、組み立てている面のフレームを始めること (#2201)。開いたままのフレームを閉じ忘れ
-        ///   として捨てる (持ち主の面の `beginDraw()` / `draw { }`・本体の頭が描き場所の閉じ忘れを捨てる) か、
-        ///   フレームの外で始めた組み立ての中でフレームを開くと、頭の検めがそれまでの記録を置き漏れとして
-        ///   捨てる。どちらも組み立てたぶんは描かれずに消える。記録が無ければ捨てるものも無く、形は空に
-        ///   ならない (閉じ忘れを捨てる道は、記録が無くても捨てた回数が進むので空になる)
+        /// - 描き場所の組み立ての中で、本体の次のフレームが始まること。本体のフレームの始まりが、組み立て
+        ///   中の描き場所の開いたままのフレームを閉じ忘れとして捨てる (#1834) ので、組み立てたぶんは描かれず
+        ///   に消える。組み立てているのは描き場所で、フレームを始めるのは本体である — 本体が「どこかの描き
+        ///   場所が組み立て中か」を見て断るのは守りを別の面へ広げることになるので、#2201 では安全網に残した。
+        ///   **スケッチからも届く**: `Sketch.canvas` は公開で、スケッチは本体の `canvas.beginDraw()` /
+        ///   `canvas.draw { }` を呼べる (例: `setup()` で `canvas.beginDraw(); layer.beginDraw()` の後、
+        ///   `layer.createShape { layer.circle(0, 0, 20); canvas.beginDraw() }` は空の形を返す)。`Canvas` を
+        ///   直に作って回す使い方 (``Canvas/init(target:gpu:)``) でも届く。扱いは [#2509] で決める
         ///
         /// どちらも描き切り (捨てる) そのものは断れない (#1684)。
+        ///
+        /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+        /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
         case drawnOut
-        /// 組み立ての中で、組み立てている面のフレームを閉じようとした ([#1855] の案 G)。描き場所の
-        /// `endDraw()` と、組み立ての中で開いた `draw { }` の終わりの 2 つが鍵を共有する。**フレームは
-        /// その時点では閉じず、一番外の組み立ての出口で閉じる** (``Canvas/createShape(_:)``)。閉じると
-        /// 組み立てた区間ごと描き切られ、形が空になっていた。出口までは、その面はまだ描いている扱いである
-        /// (`beginDraw()` は注意して何もせず、別の面へ置くと前の絵を読む)。
+        /// 組み立ての中で、組み立ての前に開いた自分のフレームを `endDraw()` で閉じようとした ([#1855] の
+        /// 案 G)。**フレームはその時点では閉じず、一番外の組み立ての出口で閉じる** (``Canvas/createShape(_:)``)。
+        /// 閉じると組み立てた区間ごと描き切られ、形が空になっていた。出口までは、その面はまだ描いている扱い
+        /// である — 別の面へ置くと前の絵を読む。組み立ての残りで `beginDraw()` か `draw { }` を呼ぶと、持ち主
+        /// の面でも描き場所でも、フレームを始め直さずに ``frameStart`` で断る ([#2201])。
+        ///
+        /// 組み立ての中の `draw { }` は、組み立ての前に開いたフレームの中なら続きとして走って閉じず、そう
+        /// でなければフレームを始めずに断る (``frameStart``) ので、閉包の終わりがここへ来ることは無い。
         ///
         /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
+        /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
         case frameEnd
+        /// 組み立ての中で、組み立てている面のフレームを始めようとした ([#2201])。`beginDraw()` と
+        /// `draw { }` の 2 つが鍵を共有する。**フレームは始めない** — `beginDraw()` は何もせず、`draw { }` は
+        /// 閉包をいまの続き (組み立ての中) として走らせる。組み立ての中の `endDraw()` も、閉じるフレームが
+        /// 無ければ同じ鍵で断る (始めなかった `beginDraw()` と対で呼ばれる)。
+        ///
+        /// 断るのは、その呼び出しがフレームを始めることになるときである: フレームの外に居る・閉じ忘れたまま
+        /// 境目を越えた (持ち主の面では `beginDraw()` で開いたフレームがいつもこれに当たる)・組み立ての中で
+        /// 閉じるのを待たせた (``frameEnd``)。始めると、開いたままのフレームを閉じ忘れとして捨てるか、
+        /// フレームの頭の検めがそれまでの記録を「フレームの外で置いたもの」として捨て、形が空になっていた。
+        /// 組み立ての前に開いたフレームがそのまま続くとき (``Canvas/draw(_:)`` の中・同じ本体のフレームの
+        /// 中の描き場所) は、今までどおり開いたフレームの続きとして扱う。
+        ///
+        /// 断るのは**組み立てている面自身**のフレームだけで、別の面の組み立ての中で描き場所を開いて閉じる
+        /// のは今までどおりである (``recordingShape`` は面ごと)。
+        ///
+        /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+        case frameStart
         /// 視点・投影を書いた。
         case camera
         /// 切り抜きを書いた。切り抜きは描画先の座標で効くので、形と一緒に持ち運べない。
@@ -92,7 +124,7 @@ extension Canvas {
             case .material: .material
             case .particles: .particles
             case .compute: .compute
-            case .background, .pixels, .drawnOut, .frameEnd, .brightness: nil
+            case .background, .pixels, .drawnOut, .frameEnd, .frameStart, .brightness: nil
             }
         }
 
@@ -103,6 +135,7 @@ extension Canvas {
             case .pixels: .pixelsInsideShape
             case .drawnOut: .shapeDrawnOutWhileBuilding
             case .frameEnd: .frameEndInsideShape
+            case .frameStart: .frameStartInsideShape
             case .camera: .cameraInsideShape
             case .clip: .clipInsideShape
             case .effects: .effectsInsideShape
@@ -127,16 +160,21 @@ extension Canvas {
                     + "there has not been drawn yet. There, get() returns transparent, set() and "
                     + "loadPixels() do nothing, and pixels is not read again"
             case .drawnOut:
-                "createShape { }: the frame was drawn out while the shape was being built (a "
-                    + "drawing target placed earlier was changed when this canvas could not keep one "
-                    + "more copy of it, or this canvas started a frame anew), so what was built up to "
-                    + "then was drawn into the frame or dropped, and the shape is empty. Do those "
-                    + "before or after building the shape"
+                "createShape { }: the frame was drawn out or dropped while the shape was being built "
+                    + "(a drawing target placed earlier was changed when this canvas could not keep "
+                    + "one more copy of it, or the main canvas began its next frame while this canvas "
+                    + "still had a frame open), so what was built up to then was drawn into the frame "
+                    + "or dropped, and the shape is empty. Do those before or after building the shape"
             case .frameEnd:
                 "createShape { }: the frame of the canvas being built on was closed inside the shape "
-                    + "(by endDraw() or at the end of draw { }), so it stays open until the shape is "
-                    + "finished and closes there; until then the canvas is still drawing. Close it "
-                    + "after building the shape"
+                    + "by endDraw(), so it stays open until the shape is finished and closes there; "
+                    + "until then the canvas is still drawing. Close it after building the shape"
+            case .frameStart:
+                "createShape { }: a frame of the canvas being built on was started inside the shape "
+                    + "(by beginDraw() or draw { }). Starting it would drop what was built, so it was "
+                    + "not started: beginDraw() does nothing there, nor does an endDraw() with no frame "
+                    + "to close, and draw { } runs its block as part of the shape. Start the frame "
+                    + "before or after building the shape"
             case .camera:
                 "The camera and projection do nothing inside createShape { }. A shape cannot hold "
                     + "a camera, so place it before or after building the shape"

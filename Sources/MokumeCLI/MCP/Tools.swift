@@ -61,7 +61,7 @@ struct Tools {
             case .observe:
                 "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew. With time, redraw exactly one frame at those seconds (deltaTime=0). This changes the shown picture and retains draw side effects; it is not a rewind. noLoop stays stopped. External pause and recording refuse it."
             case .buildStatus:
-                "Return the result of the most recent build (whether it passed, the exit code, the output, a breakdown of how long it took, and the source stamp). Read this when you want to know why the drawing did not change."
+                "Return the result of the most recent build (whether it passed, whether the sketch was started, the exit code, the output, a breakdown of how long it took, and the source stamp). A build that passed but did not start the sketch (ok true, launched false) leaves the drawing frozen; notStartedReason says why. Read this when you want to know why the drawing did not change."
             case .input:
                 "Send input events to the running sketch. Coordinates are in the canvas coordinate system. The types are mouseDown / mouseUp / mouseMoved / mouseMovedBy / scrolled / keyDown / keyUp. The three positional types need x and y; the two key types need code (the macOS virtual key code: 49 = Space, 0 = A, 126 = up arrow). An event missing one is counted in ignored and the rest still go through. mouseMovedBy moves by dx and dy (canvas pixels, down is positive) without changing mouseX / mouseY, as a sketch that holds the pointer (requestPointerLock()) receives it; it reaches mouseMoved(deltaX:deltaY:), or mouseDragged(deltaX:deltaY:) while a button is held. button / dx / dy / characters / isRepeat can be left out. button is the macOS button number (0 = left, the primary one, and the default; 1 = right; 2 = center), which is not the browser order, where 1 is the middle button and 2 the secondary one."
             case .reference:
@@ -157,7 +157,23 @@ struct Tools {
     private func observe(_ arguments: [String: Any]) -> (String, Bool) {
         let id = makeID()
         var request: [String: Any] = ["id": id]
-        if let scale = arguments["scale"] as? Double { request["scale"] = scale }
+        // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
+        // 真偽値は `NSNumber` 経由で 1 に読めてしまうので、型で見分ける (`time` と揃える・#2319)。
+        // 有限でない数も断る — 通すと区画を作った後で書けずに、置き場所のせいにした案内が
+        // 返る。窓口の入口 (`JSONRPC.parse`) が、木に残った `-1e400` (`-inf` と読まれる) を行ごと
+        // 断るので、ここへは通常来ない。**多層防御として残す** — 入口が見るのは読んだ木で、
+        // 同じキーを 2 度書いた行の後ろの値のように木から落ちた数は見ないが、落ちた数は
+        // ここへも届かない。`Tools` を直に呼ぶ口 (検査・将来の呼び元) のためにも判定は持つ。
+        // 範囲では切らない — 範囲の外は撮る側が
+        // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は従来どおり省略と同じに
+        // 読む (方針は #2393 で決める)
+        if let raw = arguments["scale"], !(raw is NSNull) {
+            guard let scale = raw as? NSNumber, CFGetTypeID(scale) != CFBooleanGetTypeID(),
+                scale.doubleValue.isFinite else {
+                return ("scale must be a finite number", true)
+            }
+            request["scale"] = scale.doubleValue
+        }
         var requestedTime: Double?
         if let raw = arguments["time"] {
             guard let value = raw as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
@@ -388,6 +404,12 @@ struct Tools {
 
     private func reference(_ arguments: [String: Any]) -> (String, Bool) {
         let name = arguments["name"] as? String
+        // **文字列でない名前は断る。** 「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として
+        // 返り、頼み方を誤ったことに気付けない (#2319)。`null` は従来どおり省略と同じに読む
+        // (方針は #2393 で決める)
+        if let raw = arguments["name"], !(raw is NSNull), name == nil {
+            return ("name must be a string (a document's name). Omit it to get the list.", true)
+        }
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
         if name == Self.apiDocument { return apiReference() }
         if name == Self.startupDocument { return (startupReference(), false) }

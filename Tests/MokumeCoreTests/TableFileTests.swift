@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Testing
 
 @testable import MokumeCore
@@ -122,6 +123,43 @@ struct TableFileTests {
         let text = TableFile.format(titles: ["n", "q", "l", "p", "s"], rows: rows)
         #expect(text == "n,q,l,p,s\n\"Smith, J\",\"say \"\"hi\"\"\",\"a\nb\",plain, spaced \n")
         #expect(try parse(text, header: true) == TableFile.Parsed(titles: ["n", "q", "l", "p", "s"], rows: rows))
+    }
+
+    /// 読む側は文字の先頭の U+FEFF を BOM として落とす (``TextFile/text(of:path:)``)。囲めば
+    /// 書いた文字の頭は `"` になり、囲みの中の U+FEFF は値として残る (#2340)。
+    @Test("頭が U+FEFF のセルは囲んで書く。途中に U+FEFF があるだけのセルは囲まない")
+    func formatQuotesLeadingByteOrderMark() throws {
+        let rows = [["\u{FEFF}z", "a\u{FEFF}b"], ["\u{FEFF}", "x"]]
+        let text = TableFile.format(titles: nil, rows: rows)
+        #expect(text == "\"\u{FEFF}z\",a\u{FEFF}b\n\"\u{FEFF}\",x\n")
+        #expect(try parse(text).rows == rows)
+        // 1 列の表の、U+FEFF だけのセルも囲む (空のセルと同じく、囲まないと行が消えうる)
+        #expect(TableFile.format(titles: ["\u{FEFF}"], rows: [["1"]]) == "\"\u{FEFF}\"\n1\n")
+    }
+
+    /// 書いて読み直すと戻ることを、例ではなく小さな字母の総当たりで見る (#2340)。読み直しは
+    /// ファイルと同じく ``TextFile/text(of:path:)`` を通すので、読む側が落とすもの (文字の先頭の
+    /// BOM・中身の無い行) を書く側が取りこぼせば、ここで出る。
+    @Test("セル 2 つの表は、どの値の組でも、書いて読み直すと同じ表に戻る")
+    func everySmallTableRoundTrips() throws {
+        let letters = ["a", " ", ",", "\"", "\n", "\r", "\u{FEFF}"]
+        let cells = [""] + letters + letters.flatMap { first in letters.map { first + $0 } }
+        var broken: [String] = []
+        for header in [false, true] {
+            for first in cells {
+                for second in cells {
+                    // 1 列 2 行と 2 列 1 行。見出しを持つ表は、最初の行が見出しになる
+                    for lines in [[[first], [second]], [[first, second]]] {
+                        let table = TableFile.Parsed(
+                            titles: header ? lines[0] : nil, rows: Array(lines.dropFirst(header ? 1 : 0)))
+                        let written = TableFile.format(titles: table.titles, rows: table.rows)
+                        let reread = try parse(TextFile.text(of: Data(written.utf8), path: "t.csv"), header: header)
+                        if reread != table { broken.append("\(table) → \(reread)") }
+                    }
+                }
+            }
+        }
+        #expect(broken.isEmpty, "\(broken.count) 通りが戻らない: \(broken.prefix(3))")
     }
 
     @Test("1 列の表の空のセルは \"\" と書き、読み直しても行が消えない")

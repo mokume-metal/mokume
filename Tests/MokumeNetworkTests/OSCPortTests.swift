@@ -9,13 +9,6 @@ import Testing
 @testable import MokumeCore
 @testable import MokumeNetwork
 
-/// 空いている UDP のポートを 1 つ選ぶ。127.0.0.1 で番号 0 を開いて OS が選んだ番号を読み、閉じる。
-nonisolated func freeUDPPort() throws -> Int {
-    let holder = try PortHolder(port: 0)
-    defer { holder.release() }
-    return holder.port
-}
-
 /// 127.0.0.1 のポートを握る。他のアプリがそのポートを使っている状態を作る。
 ///
 /// 既定は UDP のソケット。`stream` なら TCP のソケットで握り、待ち受けまで始める
@@ -74,6 +67,26 @@ nonisolated final class Told: Sendable {
     func count(containing text: String) -> Int { lines.filter { $0.contains(text) }.count }
 }
 
+/// 受けるポートを OS が選ぶ入り口 (番号 0) の送り先。受け始めて番号が分かってから、そこへ向ける。
+///
+/// **空きポートの番号を先に選んで手放し、あとから開く形にしない。** 手放してから開くまでの間に
+/// 別のプロセス (並行する他のセッションの検査など) がその番号を取ると、使用中として断られて
+/// 落ちる (#2359)。番号は 0 を頼んで、開いた後に読む。
+nonisolated final class AimedSender: DatagramSending {
+    private let target = Mutex<DatagramSender?>(nil)
+    private let warn: @Sendable (String) -> Void
+
+    init(warn: @escaping @Sendable (String) -> Void) { self.warn = warn }
+
+    /// 127.0.0.1 の `port` へ向ける。
+    func aim(at port: Int) {
+        target.withLock { $0 = DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
+    }
+
+    func send(_ bytes: [UInt8]) { target.withLock { $0?.send(bytes) } }
+    func stop() { target.withLock { $0?.stop() } }
+}
+
 /// 検査から動かせる時計 (秒)。受け口が送り元の黙りを測る時計の代わりに渡す。
 /// どのスレッドから読まれてもよい (受け口は自分の待ち行列の上で読む)。
 nonisolated final class ManualClock: Sendable {
@@ -114,7 +127,40 @@ struct OSCPortTests {
         return received
     }
 
-    /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す。
+    /// 127.0.0.1 で、OS が選んだポート (0 を頼む) で受け、送り先も同じポートにした入り口。開いて、
+    /// 受け始めてから、実際に開いたポートと一緒に返す。
+    ///
+    /// 空きポートを先に選んで手放すと、開くまでの間に別のプロセスに取られうる (#2359) ので、
+    /// 受けるポートはここでしか決めない。
+    private func listening(
+        told: Told, idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        now: (@Sendable () -> TimeInterval)? = nil
+    ) async throws -> (osc: OSCPort, port: Int) {
+        let aimed = AimedSender(warn: told.append)
+        let osc = try loopback(
+            port: 0, told: told, outbound: aimed, idleAfter: idleAfter, now: now)
+        let running = await until { osc.state == .running }
+        guard running else {
+            osc.close()
+            throw ListeningFailure(state: osc.state)
+        }
+        guard let port = (osc.source as? NetworkOSCSource)?.boundPort else {
+            osc.close()
+            throw ListeningFailure(state: osc.state)
+        }
+        aimed.aim(at: port)
+        return (osc, port)
+    }
+
+    /// 受け始められなかった。`state` はそのときの状態。
+    private struct ListeningFailure: Error {
+        let state: SourceState
+    }
+
+    /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す (受け始めるのは待たない)。
+    ///
+    /// 受けるポートの番号が要るなら ``listening(told:idleAfter:now:)`` を使う。
+    /// こちらは番号を決めて渡す口で、他のアプリが握っているポートを名指しする検査だけが使う。
     private func loopback(
         port: Int, told: Told, outbound: (any DatagramSending)? = nil,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
@@ -170,17 +216,15 @@ struct OSCPortTests {
     @Test("自分で送ったメッセージを、自分のポートで受ける")
     func sendsToItselfAndReceives() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let osc = try loopback(port: port, told: told)
+        let osc = try await listening(told: told).osc
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
 
         osc.send("/size", Float(0.25))
         osc.send("/hit", 1)
         let received = await collect(osc, count: 2)
         #expect(received == [OSCMessage("/size", Float(0.25)), OSCMessage("/hit", 1)])
         #expect(osc.lastArrival != nil)
-        #expect(osc.report == SourceReport(name: "osc :\(port)", state: .running, lastArrival: osc.lastArrival))
+        #expect(osc.report == SourceReport(name: "osc :0", state: .running, lastArrival: osc.lastArrival))
         #expect(told.lines.isEmpty)
 
         osc.close()
@@ -191,10 +235,8 @@ struct OSCPortTests {
     @Test("同じメッセージの列は、ポートで受けても注入しても同じ結果になる")
     func injectedMessagesGiveTheSameOutcome() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let live = try loopback(port: port, told: told)
+        let live = try await listening(told: told).osc
         defer { live.close() }
-        #expect(await until { live.state == .running })
         for message in Self.script {
             live.send(message)
         }
@@ -239,10 +281,8 @@ struct OSCPortTests {
     @Test("読めない部分を含むパケットは、そこから後ろを捨てて数える。前と次のパケットは届く")
     func unreadablePacketIsCutOffAndCounted() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let osc = try loopback(port: port, told: told)
+        let (osc, port) = try await listening(told: told)
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
 
         let before = OSCMessage("/before", 1)
         let after = OSCMessage("/after", 2)
@@ -260,18 +300,67 @@ struct OSCPortTests {
         #expect(osc.input.unreadable == 1)
     }
 
+    @Test("9216 バイト以上のパケットは丸ごと捨てて数え、束の頭のメッセージだけを渡すことはしない")
+    func oversizedPacketIsDiscardedWhole() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 12000 バイトの blob を 1 つ持つメッセージ (datagram は 12012 バイト)
+        let blob = try Wire.encoded(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
+        #expect(blob.count == 12012)
+        // 頭に小さなメッセージを置いた束。先頭 9216 バイトに切れたものを読むと、頭だけが読める
+        let bundle = Wire.bundle([try Wire.encoded(OSCMessage("/head", 1)), blob])
+        let next = OSCMessage("/next", 3)
+        for packet in [blob, bundle, try Wire.encoded(next)] {
+            #expect(peer.send(packet, to: port) == packet.count)
+        }
+        let received = await collect(osc, count: 1)
+        #expect(received == [next])
+        #expect(osc.input.unreadable == 2)
+        #expect(told.lines.isEmpty)
+    }
+
+    @Test("空の datagram は、Network.framework が送り元の流れの終わりと名乗っても読めないものとして数え、後から届いたメッセージも受ける")
+    func emptyDatagramIsCountedAndLaterMessagesArrive() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let source = try #require(osc.source as? NetworkOSCSource)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 送り元の流れができて受けを待っているところへ空を送る。この形の空の datagram を、
+        // Network.framework は毎回、流れの終わり (`isFinal`) と名乗って渡す (macOS 27.0.1 で実測)
+        let message = OSCMessage("/m", arguments: [])
+        let packet = try Wire.encoded(message)
+        #expect(peer.send(packet, to: port) == packet.count)
+        var received = await collect(osc, count: 1)
+        #expect(peer.send([], to: port) == 0)
+        #expect(await until { osc.input.unreadable == 1 })
+
+        // 終わりを名乗った空を数えたら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
+        #expect(await until { source.tally.ended >= 1 })
+        for _ in 0..<5 {
+            #expect(peer.send(packet, to: port) == packet.count)
+        }
+        received += await collect(osc, count: 5)
+        #expect(received == Array(repeating: message, count: 6))
+        #expect(osc.input.unreadable == 1)
+    }
+
     @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
     func manySendersAreAllHeardThenSwept() async throws {
         let told = Told()
-        let port = try freeUDPPort()
         // 黙りは手で進める時計で測る。本物の時計だと、受け入れが遅い機械 (負荷のある CI) では
         // 70 本を受け入れる途中で最初の送り元が `idleAfter` 秒黙ったことになって閉じられ、
         // 数が受け入れの速さで揺れる (#2225)
         let clock = ManualClock(0)
         let idleAfter: TimeInterval = 1
-        let osc = try loopback(port: port, told: told, idleAfter: idleAfter, now: clock.provider)
+        let (osc, port) = try await listening(told: told, idleAfter: idleAfter, now: clock.provider)
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
         let source = try #require(osc.source as? NetworkOSCSource)
 
         // 送り手ごとに別のポートから送る (使い捨てのソケットで送るスクリプトと同じ形)。
@@ -305,17 +394,20 @@ struct OSCPortTests {
         late.send(try Wire.encoded(OSCMessage("/late", 1)))
         #expect(await collect(osc, count: 1) == [OSCMessage("/late", 1)])
         #expect(source.connectionCount == 1)
+
+        // 黙りで閉じた送り元の待っていた受けは、空の datagram と同じ形 (content も error も nil) で
+        // 返る。届いていない空を読めない数に足さない (#2324 の直しの反対側。実測で 70 個湧いた)
+        let phantom = await until(1) { osc.input.unreadable > 0 }
+        #expect(!phantom)
     }
 
     @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")
     func idleSendersAreSweptOnTheDefaultClock() async throws {
         let told = Told()
-        let port = try freeUDPPort()
         // 時計は差し替えない (本番と同じ既定の時計)。前の検査は手で進める時計で回すので、既定の
         // 時計が黙りを測れなくなる退行 (止まった時計への差し替えなど) はここでしか捕まらない
-        let osc = try loopback(port: port, told: told, idleAfter: 0.05)
+        let (osc, port) = try await listening(told: told, idleAfter: 0.05)
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
         let source = try #require(osc.source as? NetworkOSCSource)
 
         // 目安の数だけの送り元から送り、全部を読ませる
@@ -420,5 +512,73 @@ struct OSCPortTests {
         osc.send("/late", 1)
         #expect(recording.sent.count == 1)
         #expect(told.count(containing: "is stopped") == 1)
+    }
+
+    @Test("符号化して 9216 バイト以上になるメッセージは送り手に渡さず、大きさと上限を 1 度だけ知らせる")
+    func oversizedSendIsRefusedOnce() throws {
+        let told = Told()
+        // 送り手に渡らなければ、「受け手が居ない」見当で名乗る経路にも、繋ぎを捨てる経路にも入らない
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 9000, name: "osc :9000", source: RecordedSource<OSCMessage>(batches: []),
+            outbound: recording, owner: nil, warn: told.append)
+        let large = OSCMessage("/big", arguments: [.blob([UInt8](repeating: 7, count: 12000))])
+        osc.send(large)
+        osc.send(large)
+        #expect(recording.sent.map(\.count) == [])
+        #expect(told.lines.count == 1)
+        let line = told.lines.first ?? ""
+        #expect(line.contains("/big"))
+        #expect(line.contains("\(try Wire.encoded(large).count) bytes"))
+        #expect(line.contains("9212 bytes at most"))
+        #expect(!line.contains("listening"))
+
+        // ちょうど 9216 バイトも送らず、OSC のパケットの最大 (4 バイトの倍数で 9212 バイト) は送る。
+        // 宛名が違うので、9216 バイトの /b は改めて知らせる
+        let header = try Wire.encoded(OSCMessage("/b", arguments: [.blob([])])).count
+        osc.send(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 9216 - header))]))
+        osc.send(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 9212 - header))]))
+        #expect(recording.sent.map(\.count) == [9212])
+        #expect(told.lines.count == 2)
+        #expect(told.lines.last?.contains("/b was not sent because it is 9216 bytes") == true)
+    }
+
+    @Test("大きすぎる送りは宛名ごとに 1 度だけ知らせ、上限以内を送れたら、また知らせる")
+    func oversizedSendIsToldPerAddressAndAgainAfterASuccessfulSend() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 9000, name: "osc :9000", source: RecordedSource<OSCMessage>(batches: []),
+            outbound: recording, owner: nil, warn: told.append)
+        let blob = OSCValue.blob([UInt8](repeating: 7, count: 12000))
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        #expect(told.count(containing: "9212 bytes at most") == 1)
+        osc.send(OSCMessage("/b", arguments: [blob]))
+        #expect(told.count(containing: "9212 bytes at most") == 2)
+        #expect(told.count(containing: "/b was not sent") == 1)
+
+        osc.send("/ok", 1)
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        osc.send(OSCMessage("/a", arguments: [blob]))
+        #expect(told.count(containing: "9212 bytes at most") == 3)
+        #expect(told.count(containing: "/a was not sent") == 2)
+        #expect(recording.sent.count == 1)
+    }
+
+    @Test("本物の宛先でも、上限に入らないメッセージは送らず、続けて送ったメッセージは届く")
+    func oversizedSendLeavesTheDestinationReachable() async throws {
+        let told = Told()
+        let osc = try await listening(told: told).osc
+        defer { osc.close() }
+
+        osc.send(OSCMessage("/big", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
+        osc.send("/after", 1)
+        let received = await collect(osc, count: 1)
+        #expect(received == [OSCMessage("/after", 1)])
+        #expect(osc.input.unreadable == 0)
+        #expect(told.lines.count == 1)
+        #expect(told.count(containing: "9212 bytes at most") == 1)
+        #expect(told.count(containing: "listening") == 0)
     }
 }

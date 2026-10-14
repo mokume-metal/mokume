@@ -54,8 +54,15 @@ name: Render
 #
 # **定期の検査 (scheduled-*) は、専用機のジョブと起票のジョブで権限を分ける** (#1983)。
 #   - scheduled-debug / scheduled-release — 専用機。contents: read・秘密なしのまま
-#   - scheduled-report — GitHub ホスト。**issues: write を持つのはここだけ**で、専用機の
-#     ジョブの結論と記録の artifact を読むだけ (ruleset-drift.yml と同じ形)
+#   - scheduled-report — GitHub ホスト。**issues: write を持つのは、これと
+#     render-environment-report (下) の 2 つだけ**で、専用機のジョブの結論と記録の artifact を
+#     読むだけ (ruleset-drift.yml と同じ形)
+#
+# **merge queue の render が前検査で落ちたら、render-environment-report が発信する** (#2588)。
+# 専用機の環境が壊れていると (#2507)、render は PR の赤と見分けの付かない形で落ち続け、
+# 誰にも届かない。前検査 (scripts/runner-preflight.sh) の理由を render の job の出力で受け、
+# GitHub ホストから起票する。専用機のジョブは引き続き権限も秘密も持たない。定期の run の
+# 前検査の赤は scheduled-report が起票するので、ここは merge_group だけを見る
 # 範囲は debug の build・test・gpu-ran (台帳を含む) と、台帳を外した release
 # (Makefile の test-release-scheduled)。release で台帳を外す理由は #1736。
 # **1 本の長いジョブにしない。** release は debug の終了後に門番を通して queue へ入れ
@@ -93,6 +100,11 @@ on:
 
 permissions:
   contents: read
+
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
 
 jobs:
   # 専用機へ積む順番を決める門番 (#2062・上の「専用機へ積む順番」)。待つ上限は
@@ -132,8 +144,16 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'merge_group' }}
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
+    # 前検査で落ちたときの理由。render-environment-report が読む (#2588)
+    outputs:
+      preflight-reason: ${{ steps.preflight.outputs.reason }}
     steps:
       - uses: actions/checkout@v7
+      # 検査を走らせられる環境かを先に数秒で見る (#2588)。表の GUI セッションが替わると
+      # runner から画面が 0 枚に見え、make は 14 分走ってから窓の検査で落ちる (#2507)。
+      # 落ちたら理由を job の出力へ上げ、render-environment-report が発信する
+      - id: preflight
+        run: bash scripts/runner-preflight.sh
       # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査・examples など) は
       # GitHub ホストの ci-check が同じ木で走らせている。ただし merge_group のホストの
       # ci-check は build と test を外している (ci.yml の ci-check のコメント・#1985) —
@@ -171,6 +191,23 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
+  # merge queue の render が前検査で落ちたことを発信する (#2588・冒頭の説明)。前検査を
+  # 通って検査で落ちた回は reason が空なので走らない — それは PR の赤である
+  render-environment-report:
+    needs: render
+    if: ${{ !cancelled() && needs.render.result == 'failure' && needs.render.outputs.preflight-reason != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+      issues: write # 専用機の環境の故障の起票 (#2588)
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ needs.render.outputs.preflight-reason }}
+        run: bash scripts/report-runner-environment.sh "$REASON"
+
   render-pr:
     needs: render-turn
     # 門番が見送ったときだけ外す。門番が赤なら走らせる (go が空になる)
@@ -193,6 +230,9 @@ jobs:
           # pull_request の木は合流 ref (refs/pull/N/merge) で、HEAD^1 が base・HEAD が head
           # (この PR を足した後の木)。例の絵の前後の比較が HEAD^1 を取り出すのに要る
           fetch-depth: 2
+      # 検査を走らせられる環境かを先に見る (#2588。render と同じ)
+      - id: preflight
+        run: bash scripts/runner-preflight.sh
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
         env:
           MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
@@ -254,6 +294,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+      # 検査を走らせられる環境かを先に見る (#2588。render と同じ)
+      - id: preflight
+        run: bash scripts/runner-preflight.sh
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
         env:
           MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
@@ -312,6 +355,9 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+      # 検査を走らせられる環境かを先に見る (#2588。render と同じ)
+      - id: preflight
+        run: bash scripts/runner-preflight.sh
       # 検査の端末出力は行を落とす (#1056) ので正本は xunit の記録だが、落ちた理由を読む
       # 手がかりとして起票の本文へ末尾を載せるため、test-log へ写しを残す
       - run: |

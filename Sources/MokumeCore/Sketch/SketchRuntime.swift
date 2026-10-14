@@ -16,7 +16,14 @@ import QuartzCore
 /// 進め方が変わっても描かれる中身は変わらない。だから画面を持たない実行と画面に出す
 /// 実行が、別の実装に分かれない。
 ///
+/// 例外は 1 つで、**経路** (進め方ではない) で変わる。窓・共有面の経路では、保存した利用者の断片を
+/// 裏で組み、組み上がった後のフレームから効かせる ([#2365]・[ADR-0025] 決定 1 の追補 2026-10-14)。
+/// 書き出しと、この型を直に作って回す場合は、保存の次のフレームから効く。どちらの経路でも、
+/// 叩き方 (main actor を譲るか) で届き方は変わらない。
+///
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
+/// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+/// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
 @MainActor
 public final class SketchRuntime {
     /// 走らせているスケッチ。
@@ -105,6 +112,10 @@ public final class SketchRuntime {
     enum Warning: Hashable {
         /// 走っている最中に ``SketchSettings/frameRate`` が起動のときの値から変わった。
         case frameRateChangedWhileRunning
+        /// 観測へ差し出された値が非有限の数だった (``Sketch/expose(_:_:)-(_,Double)``)。
+        /// **ランタイムで 1 度だけ** — 毎フレーム差し出す口で、名前ごとに言うと名前を動的に
+        /// 作る作品で控えが増え続ける。
+        case nonFiniteExposed
     }
 
     /// 1 度だけ言った注意の控え。**検査が読む。**
@@ -571,6 +582,13 @@ public final class SketchRuntime {
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
         let observation = capture == nil ? observer?.pendingRequest() : nil
+        // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
+        // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
+        // このフレームの中なので、ここで立てれば覆える
+        //
+        // [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+        canvas.gpu.waitsForShaderRebuilds = observation != nil || capture != nil
+        defer { canvas.gpu.waitsForShaderRebuilds = false }
         var requestedTime: Float?
         if let observation, observation.time != nil, let observer {
             var refusal = observation.timeWarning
@@ -1329,9 +1347,29 @@ public final class SketchRuntime {
     /// 外から値を差し出す (``Sketch/expose(_:_:)-(_,Double)`` から呼ばれる)。
     ///
     /// 観測が有効でなければ溜めない。
+    ///
+    /// **非有限の数 (NaN・無限) は溜めずに、1 度だけ名乗る。** 応答は JSON で、非有限の数を
+    /// 符号化できない — 溜めると、その枚の応答がまるごと置けなくなる
+    /// ([#2271](https://github.com/mokume-metal/mokume/issues/2271))。差し出さなかった値は
+    /// 応答の `values` に載らない (他の値は載る)。前の枚の値は残らない — 差し出した値は
+    /// フレームの頭で消える (``beginFrame()``)。**例外は ``measure(_:_:)`` で測った名前**: 測った
+    /// 値はフレームの頭で差し戻されるので、その名前に非有限を差し出しても、載るのは測った値である。
     func expose(_ name: String, _ value: ExposedValue) {
         guard observer != nil else { return }
+        guard value.paramValue.hasOnlyFiniteNumbers else {
+            // 文面は言う回にしか組まない (毎フレーム差し出す口で、黙る回に文字列を確保しない)
+            warnings.warnOnce(.nonFiniteExposed, Self.nonFiniteExposedNotice(name, value))
+            return
+        }
         exposedValues[name] = value
+    }
+
+    /// 非有限の値を差し出されたときの 1 行。数は今は `.float` だけが持つ。
+    private static func nonFiniteExposedNotice(_ name: String, _ value: ExposedValue) -> String {
+        let shown: String
+        if case .float(let number) = value { shown = "\(number)" } else { shown = "\(value)" }
+        return "expose(): \"\(name)\" was given \(shown), which is not a finite number, "
+            + "so it is not exposed (said once)"
     }
 
     /// 処理を 1 度走らせ、かかった実時間をミリ秒で差し出す (``Sketch/measure(_:_:)`` から

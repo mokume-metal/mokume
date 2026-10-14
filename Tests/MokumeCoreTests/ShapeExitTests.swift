@@ -135,6 +135,7 @@ enum ShapeExit {
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進める",
+            "placementKey": "\(construction)。置いた側の記録が置いた描き場所を見分ける通し番号 (#2306)",
             "vertexStorage": resource, "flatInstanceStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,
             "solidIndexStorage": resource, "solidInstanceStorage": resource,

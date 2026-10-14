@@ -78,7 +78,9 @@ public struct Table: Equatable, Sendable {
 
     /// セルに数を書く。`row` は 0 から数えた行の番号、`column` は列の名前。
     ///
-    /// 数は文字にして持つ (`12.5` は `"12.5"`)。
+    /// 数は文字にして持つ (`12.5` は `"12.5"`)。NaN と無限は `"nan"`・`"inf"`・`"-inf"` と
+    /// 書かれ、10 進の綴りでないので、``TableRow/getFloat(_:)-(String)`` で読み直すと数でない
+    /// 文字として NaN になる (知らせが出る)。
     ///
     /// **無い列・表の外の行には書かず、初回だけ理由を知らせる。** 描く口と同じく投げない
     /// ([ADR-0020] 決定 5)。列を足すのは ``addColumn(_:)`` である。
@@ -160,7 +162,7 @@ public struct TableRow: Sendable {
         cell(TableValues.column(numbered: column, width: cells.count, call: "getString")) ?? ""
     }
 
-    /// 列の名前で、セルを数として読む。前後の空白は落とす。
+    /// 列の名前で、セルを数として読む。
     ///
     /// <!-- example: 文脈 var row: TableRow! -->
     /// ```swift
@@ -168,8 +170,12 @@ public struct TableRow: Sendable {
     /// circle(width / 2, height / 2, mean * 4)
     /// ```
     ///
+    /// 数とするのは **10 進の綴りだけ** (`"12.5"`・`"-2"`・`"+5"`・`".5"`・`"1e3"`) で、前後の
+    /// 空白は改行も含めて落とす (`"3\n"` は 3)。`Float` に収まらない数 (`"1e39"`) は無限大になる。
+    ///
     /// **数にならないときは NaN を返し、初回だけ理由を知らせる** — セルが空・数でない文字
-    /// (`"N/A"` など)・無い列のどれでも。読み取りは落ちない ([ADR-0020] 決定 5)。NaN は
+    /// (`"N/A"` など)・無い列のどれでも。`"nan"`・`"NaN"`・`"inf"`・`"Infinity"`・16 進 (`"0x10"`)
+    /// も、数でない文字である。読み取りは落ちない ([ADR-0020] 決定 5)。NaN は
     /// Processing の `getFloat` が欠けた値に返すものと同じで、0 のように黙って別の値に
     /// 化けない。幅や高さが NaN の矩形は描かれないので、欠けた日は縦棒の抜けとして見える。
     ///
@@ -181,7 +187,7 @@ public struct TableRow: Sendable {
 
     /// 列の番号 (0 から) で、セルを数として読む。見出しの無い表はこちらで読む。
     ///
-    /// 数にならないときの扱いは ``getFloat(_:)-(String)`` と同じ。
+    /// 数とする綴りと、数にならないときの扱いは ``getFloat(_:)-(String)`` と同じ。
     public func getFloat(_ column: Int) -> Float {
         let index = TableValues.column(numbered: column, width: cells.count, call: "getFloat")
         return number(index, named: "\(column)")
@@ -194,8 +200,7 @@ public struct TableRow: Sendable {
 
     private func number(_ column: Int?, named name: String) -> Float {
         guard let text = cell(column) else { return .nan }
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        if let value = Float(trimmed) { return value }
+        if let value = DecimalText.float(text) { return value }
         TableValues.warnOnce(
             .notANumber(column: name),
             "getFloat(): row \(index), column \(name) holds \"\(text)\", which is not a number. "

@@ -99,20 +99,19 @@ extension Canvas {
         shapeRecordingRunStart = savedRecordingRunStart
         restore(savedStacks)
         closeBatch()
-        // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`・`draw { }` の終わり) を、一番外の
-        // 出口で閉じる** (#1855 の案 G)。
+        // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`) を、一番外の出口で閉じる**
+        // (#1855 の案 G)。
         // `defer` は後に書いたものから走るので、閉じるのは下の状態の戻しの後 — 閉じる側が既定へ
         // 戻した値を、出口が組み立て前の値で書き戻さない。早い抜け方 (下の安全網) でも閉じる
         defer { if !savedRecording { closeFrameAwaitingShape() } }
         // 状態を戻すのは、記録したぶんを溜め場から抜いた後 (下の「抜いてから状態を戻す」)
         defer { savedManner.restore(on: self) }
         // **出口の安全網** ([#1588])。記録の途中で溜め場を捨てると、上で控えた区間は溜め場の外を
-        // 指す。塗り直しと画素の口は記録の中で断り、揺らぎの書き換え・置いた描き場所の描き換え・
-        // 自分のフレームの終わり (`endDraw()`・`draw { }` の終わり) は描き切らない (#1855)。それでも
-        // 描き切るか捨てる道が残る — 置いた側がもう 1 枚の写しを持てない (上限・失敗) ときの描き換えと、
-        // 組み立ての中で自分のフレームを始めること (持ち主の面の `beginDraw()` / `draw { }` が閉じ忘れた
-        // フレームを捨てる・本体の頭が描き場所の閉じ忘れを捨てる・フレームの外の組み立ての中でフレームを
-        // 開くと頭の検めがそれまでの記録を置き漏れとして捨てる・#2201)。
+        // 指す。塗り直しと画素の口と自分のフレームを始めること (`beginDraw()`・`draw { }`・#2201) は記録の
+        // 中で断り、揺らぎの書き換え・置いた描き場所の描き換え・自分のフレームの終わり (`endDraw()`) は
+        // 描き切らない (#1855)。それでも描き切るか捨てる道が残る — 置いた側がもう 1 枚の写しを持てない
+        // (上限・失敗) ときの描き換えと、組み立て中の描き場所の開いたままのフレームを本体の次のフレームの
+        // 頭が閉じ忘れとして捨てること (#1834。組み立てているのは描き場所で、始めるのは本体)。
         // 捨てる前に記録したものはもう描かれて (捨てる道なら消えて) いて取り戻せないので、捨てた後に
         // 記録した残りも溜め場から抜き、空の形を返す。見分けは長さではなく捨てた回数で行う
         // (``pendingDiscards``)
@@ -205,9 +204,9 @@ extension Canvas {
     /// 戻さない** (``Style/keepingFrameFields(of:)``)。組み立ての中では断るので普段は変わらないが、
     /// 組み立ての途中でフレームが閉じると、閉じる側が既定へ戻した値を、出口が閉じたフレームの値で
     /// 書き戻していた。フレームの頭はこの 3 つを戻さないので、次のフレームへ持ち越された (#1671 が
-    /// 塞いだのと同じ破れ方・#1684 の反証)。組み立ての中の自分の `endDraw()` と `draw { }` の終わりは、
-    /// 今は出口でこの戻しの後に閉じる (#1855) が、途中で閉じる道は残る — 本体の頭が描き場所の閉じ
-    /// 忘れたフレームを捨てる・持ち主の面がフレームを開き直す (#2201)。
+    /// 塞いだのと同じ破れ方・#1684 の反証)。組み立ての中の自分の `endDraw()` は、今は出口でこの戻しの
+    /// 後に閉じ (#1855)、自分のフレームを始め直すことは断る (#2201) が、途中で閉じる道は 1 つ残る —
+    /// 本体の頭が、組み立て中の描き場所の閉じ忘れたフレームを捨てる。
     ///
     /// **`Canvas` の外にある状態は、ここではなく ``ShapeAssemblyListener`` が受ける** (乱数の種・
     /// [#1936])。
@@ -277,6 +276,22 @@ extension Canvas {
     /// 置き場所に変換を掛けるだけで、頂点は触らない。三角形で組み立てた平面の区間だけは
     /// 置き場所ごとに頂点を展開する (その区間には置き場所の仕組みが無い)。どれも、同じ
     /// 置き場所を 1 つずつ書いたときと同じ絵になる。
+    ///
+    /// **区間が 2 つ以上で、立体以外 (平面・距離関数) の区間を含む形は、置き場所を外に回す**
+    /// ([#2305] の決定 B・``layersByPlacement(_:)``)。置き場所ごとに区間を一巡して積むので、重なる
+    /// 置き場所の前後は 1 つずつ置いたときと同じ「置き場所の順」になる。区間を外に回していた頃は、
+    /// 前の置き場所の後の区間が、後の置き場所の前の区間の上に出ていた。**代償は描く回数で**、平面と
+    /// 距離関数は列の種類が違い、区間が替わるたびに列が閉じるので、置き場所ごとに区間の数だけ描く
+    /// (1 つずつ置いたときと同じ回数)。区間が 1 つの形と立体だけの形は区間を外に回したままで、描く
+    /// 回数は区間ごとに 1 回である。立体だけの形は、不透明で奥行きの違う所は奥行きで前後が決まるが、
+    /// 半透明の所と同じ奥行きの所では区間の順に重なり、1 つずつ置いた絵と違いうる (#2495・決定 B の外)。
+    ///
+    /// 立体の混ざった形を置き場所を外に回して置くと、立体の区間も置き場所ごとに
+    /// ``openRetainedSolid(_:of:mirrored:external:)`` を通る — 頂点と添字を置き場所の数だけ溜め場へ写し、
+    /// 部品と線の走査も置き場所ごとに走り、半透明の部品は 1 列に置き場所 1 つになる (1 つずつ置いたとき
+    /// と同じ費用)。
+    ///
+    /// [#2305]: https://github.com/mokume-metal/mokume/issues/2305
     private func place(_ shape: Shape, at placements: [Placement]) {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)。置き場所の検めより先に断る
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -306,20 +321,53 @@ extension Canvas {
             translucent = true
             break
         }
-        replaying(shape.runs) { run in
-            switch run.source {
-            case .flat:
-                // 差し替える輪郭は区間で決まる。置き場所ごとに求め直さない
-                let carved =
-                    translucent
-                    ? shape.carvedStrokes(within: run.start..<(run.start + run.count)) : []
-                for placement in usable { place(run, of: shape, at: placement, carved: carved) }
-            case .solid:
-                placeSolid(run, of: shape, at: usable)
-            case .form:
-                for placement in usable { placeForms(run, of: shape, at: placement) }
+        let runs = shape.runs
+        // 差し替える輪郭は区間で決まる。置き場所ごとに (置き場所を外に回すときも) 求め直さない
+        var carvedByRun: [[StrokeRange]] = []
+        if translucent {
+            carvedByRun.reserveCapacity(runs.count)
+            for run in runs {
+                carvedByRun.append(
+                    run.source == .flat
+                        ? shape.carvedStrokes(within: run.start..<(run.start + run.count)) : [])
             }
         }
+        // 置き場所を外に回すなら、区間の並びを置き場所の数だけ繰り返して 1 度に通す — 区間の設定の
+        // 出入り (``replaying(_:_:)``) は並び全体で 1 度のままにする。`turn` が何巡目のどの区間かを持つ
+        let byPlacement = usable.count > 1 && Self.layersByPlacement(runs)
+        var turn = 0
+        replaying(repeatElement(runs, count: byPlacement ? usable.count : 1).joined()) { run in
+            let index = turn % runs.count
+            let round = turn / runs.count
+            turn += 1
+            let targets = byPlacement ? usable[round...round] : usable[...]
+            switch run.source {
+            case .flat:
+                let carved = translucent ? carvedByRun[index] : []
+                for placement in targets { place(run, of: shape, at: placement, carved: carved) }
+            case .solid:
+                placeSolid(run, of: shape, at: targets)
+            case .form:
+                for placement in targets { placeForms(run, of: shape, at: placement) }
+            }
+        }
+    }
+
+    /// まとめて置くとき、置き場所を外に回す (置き場所ごとに区間を一巡して積む) 形か ([#2305])。
+    /// **区間が 2 つ以上で、立体以外 (平面・距離関数) の区間を含む形**である。
+    ///
+    /// 平面と距離関数の区間は奥行きを持たず、積んだ順に重なる。区間を外に回すと、重なる置き場所の
+    /// 前後が置き場所の順ではなく区間の順になり、1 つずつ置いた絵と変わる。立体だけの形は、区間ごとに
+    /// 置き場所の並び全体を 1 度で積む (描く回数は区間ごとに 1 回のまま・#2305 の決定 B)。不透明で奥行きの
+    /// 違う所は奥行きで前後が決まり同じ絵になるが、立体の奥行きは半透明でも書き込まれ、同じ奥行きでは
+    /// 後勝ちなので、半透明の所と同じ奥行きの所では区間の順に重なる (#2495)。区間が 1 つの形は、順の
+    /// 入れ替わる相手が無い。
+    ///
+    /// [#2305]: https://github.com/mokume-metal/mokume/issues/2305
+    private static func layersByPlacement(_ runs: [Shape.Run]) -> Bool {
+        guard runs.count > 1 else { return false }
+        for run in runs where run.source != .solid { return true }
+        return false
     }
 
     /// 記録した区間の設定へ移って `place` で頂点を積み、置く側の設定へ戻す。
@@ -649,7 +697,7 @@ extension Canvas {
     ///
     /// 位置と一緒に**面の向きも移す** — 移さないと、回して置いた形だけ光が付いて
     /// 回らない。位置と違って向きには軸ごとの倍率が逆に効くので、専用の行列を使う。
-    private func placeSolid(_ run: Shape.Run, of shape: Shape, at placements: [Placement]) {
+    private func placeSolid(_ run: Shape.Run, of shape: Shape, at placements: ArraySlice<Placement>) {
         // 閉包を標準ライブラリの高階関数へ渡さずにループで組む。main actor の文脈の閉包は
         // 要素ごとに隔離の実行時検査を払う (#1779)
         var instances: [SolidInstance] = []
@@ -676,7 +724,7 @@ extension Canvas {
     ///
     /// **組み立ての中で置き直すときは、置き場所ごとに頂点へ焼く** ([#1297])。記録は置き場所を
     /// 持ち歩かないので、置き場所を並べたままだと、中で書いた変換が外側の記録から落ちる
-    /// (組み込みの形の ``placeMesh(_:isDerived:mesh:)`` と同じ理由)。
+    /// (組み込みの形の ``placeMesh(_:winding:mesh:)`` と同じ理由)。
     ///
     /// **立体の線を持つ区間も、置き場所ごとに頂点へ焼く** ([#1547])。線の帯は視点に
     /// 合わせて組むので、置き場所の行列を掛けただけでは向き・幅・目の側への寄せが記録した

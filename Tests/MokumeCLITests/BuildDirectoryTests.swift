@@ -118,6 +118,22 @@ struct BuildDirectoryTests {
         #expect(names == ["hello"], "product 名と target 名が同じなら 1 つに畳む")
     }
 
+    /// **置き場の名前にできないものは押さえない。** `.`・`..` は押さえる記録の置き場 `owners/<name>` が
+    /// `owners` 自身か置き場の根を指す ([#2502](https://github.com/mokume-metal/mokume/issues/2502))。
+    @Test("押さえる名前から、置き場の名前にできない綴り (/ を含む・空・.・..) は落とす")
+    func contestedNamesDropSpellingsThatCannotBeNames() throws {
+        let package = try #require(
+            SwiftPM.package(
+                inDumpOf: """
+                    {"name":"x",
+                     "products":[{"name":"..","type":{"executable":null}}],
+                     "targets":[{"name":"."},{"name":"a/b"},{"name":""},{"name":"ok"},{"name":"..."}],
+                     "platforms":[],
+                     "dependencies":[]}
+                    """))
+        #expect(BuildDirectory.contestedNames(of: package) == ["ok", "..."])
+    }
+
     @Test("誰も使っていない名前は取れる")
     func afreeNameIsClaimed() throws {
         let store = try Self.directory()
@@ -429,20 +445,40 @@ struct BuildPlacementTests {
     }
 
     /// **明示されたら理由を確かめない。** 既定を変えたので、戻す口が要る。
-    @Test("置き場を明示すれば、そこを使う")
+    ///
+    /// **相対パスは走らせた場所から解く** (#2323 の判断・案 A)。スケッチの外 (`work/`) で
+    /// `run probe --scratch-path sp` と打てば置き場は `work/sp` — 隣に並ぶ `render --out` と
+    /// 同じ基準である。スケッチの中で打てば、いままでどおりスケッチの下になる。
+    @Test("置き場を明示すれば、走らせた場所から解いてそこを使う")
     func anExplicitScratchPathWins() throws {
         let store = try BuildDirectoryTests.directory()
         let sketch = try Self.sketch(pinning: "0.7.1")
-        let context = try RunCommand.context(
+        let work = try BuildDirectoryTests.directory()
+        let environment = [BuildDirectory.environmentKey: store.path]
+
+        // スケッチの外で、場所を渡して打った
+        let outside = try RunCommand.context(
             in: sketch,
-            invocation: Invocation(place: sketch.path, scratchPath: ".build"),
-            environment: [BuildDirectory.environmentKey: store.path])
+            invocation: Invocation(place: sketch.path, scratchPath: "sp", currentDirectory: work),
+            environment: environment)
+        guard case .outside(let url, given: true) = outside.place else {
+            Issue.record("明示した置き場を使っていない: \(outside.place)")
+            return
+        }
+        #expect(url.path == work.appendingPathComponent("sp").standardizedFileURL.path)
+        #expect(outside.place.arguments == ["--scratch-path", url.path])
+        // 明示した人へ理由を説かない
+        #expect(outside.place.notice == nil)
+
+        // スケッチの中で打てば、スケッチの下 (従来の `--scratch-path .build`)
+        let inside = try RunCommand.context(
+            in: sketch,
+            invocation: Invocation(scratchPath: ".build", currentDirectory: sketch),
+            environment: environment)
         #expect(
-            context.place == .outside(
+            inside.place == .outside(
                 sketch.appendingPathComponent(".build", isDirectory: true).standardizedFileURL,
                 given: true))
-        // 明示した人へ理由を説かない
-        #expect(context.place.notice == nil)
     }
 
     // MARK: - 作り直しの結果の読み方

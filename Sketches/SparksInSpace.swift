@@ -31,7 +31,9 @@ import mokume
 /// 種を `setup()` で決めてあり、時計はフレーム番号から導くので、**同じ番号のフレームは
 /// 何度描いても同じ絵**になる。
 final class SparksInSpace: Sketch {
-    var settings = SketchSettings(width: 960, height: 540, title: "sparks in space")
+    var settings: SketchSettings {
+        SketchSettings(width: 960, height: 540, title: "sparks in space")
+    }
 
     /// 同時に持てる粒の数。3 つの噴き口の `rate × 寿命` の和より多く取る。
     private let capacity = 16_000

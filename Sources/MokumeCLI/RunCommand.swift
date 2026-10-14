@@ -114,14 +114,12 @@ enum RunCommand {
         let declared = try dumpPackage(in: directory)
         let product = declared?.executableProductName
 
-        // **明示されたら理由を確かめない。** 選んだのは人である
-        if let given = invocation.scratchPath {
-            let url = URL(
-                fileURLWithPath: NSString(string: given).expandingTildeInPath, isDirectory: true,
-                relativeTo: directory)
+        // **明示されたら理由を確かめない。** 選んだのは人である。解く基準は走らせた場所で、
+        // 解くのは ``Invocation`` の 1 か所 (#2323)
+        if let given = invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
-                place: .outside(url.standardizedFileURL, given: true), product: product)
+                place: .outside(given, given: true), product: product)
         }
 
         // **宣言が読めないことを、断る理由にしない。** 壊した状態から直していく途中は
@@ -223,6 +221,13 @@ enum RunCommand {
         /// 名乗ると、`Package.swift` で product を改名した回に**前の名前**を出すことに
         /// なる ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
         let product: String?
+        /// 宣言を読み直したときに、道具立てが答えなかった・答えが読めなかった理由。**それ以外は `nil`。**
+        ///
+        /// **`product == nil` が 3 つを混ぜていた** (#2575): 宣言に実行ファイルが無い・宣言が読めない・
+        /// 道具立てが答えなかった。人へ見せる口は、この理由があればそれを名乗り、「Package.swift を
+        /// 見よ」とは言わない。持ち回った `nil` (見張りを続けるための値) とは別に、**この回に読み直して
+        /// 分かったことだけ**を持つ。
+        var declarationFailure: CommandFailure? = nil
     }
 
     /// 作り直して、走らせるものの場所を返す。
@@ -273,10 +278,9 @@ enum RunCommand {
             bin = try self.binPath(in: directory, context: context, running: running)
         }
         if let product = context.product {
-            let executable = bin.appendingPathComponent(product, isDirectory: false)
-            try? FileManager.default.removeItem(at: executable)
-            try? FileManager.default.removeItem(
-                at: bin.appendingPathComponent("\(product).dSYM", isDirectory: true))
+            for previous in previousArtifacts(of: product, in: bin) {
+                try? FileManager.default.removeItem(at: previous)
+            }
         }
 
         // **診断は stderr にしか出ない。** 掴む形 (watch) では混ぜないと、記録に
@@ -288,18 +292,97 @@ enum RunCommand {
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
         // (先に消せていないので「いま建った」までは言えないが、他人の産物も居ない)
-        let product =
-            context.product
-            ?? (try? dumpPackage(in: directory, running: running))?.executableProductName
+        let (product, declarationFailure) = try productAfterBuild(
+            context: context, in: directory, running: running)
         guard let product else {
             return Rebuilt(status: result.status, output: result.output, executable: nil,
-                binPath: bin, product: nil)
+                binPath: bin, product: nil, declarationFailure: declarationFailure)
         }
-        let executable = bin.appendingPathComponent(product, isDirectory: false)
-        let built = FileManager.default.isExecutableFile(atPath: executable.path)
         return Rebuilt(
-            status: result.status, output: result.output, executable: built ? executable : nil,
-            binPath: bin, product: product)
+            status: result.status, output: result.output,
+            executable: builtExecutable(named: product, in: bin), binPath: bin, product: product)
+    }
+
+    /// 作り直しの後に使う product の名前。**宣言が読めていなければ、建った後に読み直す。**
+    ///
+    /// **読めなかった理由を捨てない** (#2575)。`try?` は起こせなかった・場所が使えない失敗を
+    /// `nil` に化かし、人には「走らせるものが無い (Package.swift を見よ)」と届いた。道具立てが
+    /// 答えなかった回・答えが読めなかった回は、名前を `nil` のまま、**その理由を返す** — 宣言が
+    /// 読めないまま進む形は変えず (作り直しは通っている)、人へ見せる口が「Package.swift を見よ」と
+    /// 言う代わりに理由を名乗れるようにする。
+    ///
+    /// - Parameter declaring: 宣言を読む口。**検査から偽の答えを渡せる形にしてある。**
+    nonisolated static func productAfterBuild(
+        context: BuildContext, in directory: URL, running: RunningBuild? = nil,
+        declaring: (URL, RunningBuild?) throws(CommandFailure) -> Declaration = {
+            directory, running throws(CommandFailure) in
+            try declaration(in: directory, running: running)
+        }
+    ) throws(CommandFailure) -> (product: String?, failure: CommandFailure?) {
+        if let known = context.product { return (known, nil) }
+        let read = try declaring(directory, running)
+        return (read.package?.executableProductName, read.failure)
+    }
+
+    /// 作り直しが先に消してよい、置き場 `bin` の直下にある自分の前の産物。
+    ///
+    /// **消してよいのは `<product>` と `<product>.dSYM` だけで、どちらも置き場の直下にあるときに
+    /// 限る** (消す理由は「前の版が残ると、いま建ったかを言えない」で、置き場の外へ出る理由は
+    /// 無い)。product の名前は `Package.swift` から来るので、`..`・`.` や `/` を含む名前は
+    /// 置き場の外・置き場そのものを指し、そのまま `removeItem` に渡すと置き場の親や置き場を
+    /// 丸ごと消す ([#2502](https://github.com/mokume-metal/mokume/issues/2502)・実測した)。
+    /// 外れたものは消さずに作り直しへ進む (消せなかった回と同じ扱い)。
+    ///
+    /// `bundle` の `assemble` が「作る場所が `--out` の直下でなければ何も消さない」を名前の検めと
+    /// 独立に置くのと同じ形である (#2309・#2504)。
+    nonisolated static func previousArtifacts(of product: String, in bin: URL) -> [URL] {
+        [product, "\(product).dSYM"].compactMap { directChild($0, of: bin) }
+    }
+
+    /// 置き場 `bin` の直下にある `name` の場所。**直下でなければ `nil`。**
+    ///
+    /// **ファイルの在る・無しに左右されない、字面だけの判定にする。** `standardizedFileURL` は
+    /// 在るパスの先頭 `/private` を外し、在らないパスはそのまま返すので、`/tmp`・`/var` 配下の置き場
+    /// で、行き先の無い symlink (`bin/<product>` が dangling) を従来は消せたのに守りが空を返した。
+    /// `bin` に `name` を足した字面を `.`・`..` を畳んで部品に割り、親の部品列が `bin` の
+    /// 部品列と等しく、最後の部品が名前そのものであることを見る。`sub/../victim` は畳むと
+    /// `bin` の直下を指すが、最後の部品が名前と違うので外れる。返すのは畳まない `bin/<name>` で、
+    /// OS が解く先は `bin` の中の 1 部品になる。
+    nonisolated static func directChild(_ name: String, of bin: URL) -> URL? {
+        let home = foldedComponents(of: bin.path)
+        let target = foldedComponents(of: bin.path + "/" + name)
+        guard !name.isEmpty, !name.contains("\0"), target.last == name,
+            Array(target.dropLast()) == home
+        else { return nil }
+        return bin.appendingPathComponent(name, isDirectory: false)
+    }
+
+    /// パスを `/` で割り、`.` を落とし `..` を 1 つ戻す。
+    nonisolated private static func foldedComponents(of path: String) -> [String] {
+        var parts: [String] = []
+        for part in path.split(separator: "/", omittingEmptySubsequences: true) {
+            switch part {
+            case ".": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(String(part))
+            }
+        }
+        return parts
+    }
+
+    /// 作り直しで建った実行ファイル。**無ければ `nil`。**
+    ///
+    /// 「建った」と言うのは、置き場の直下にある**通常のファイルで実行できるもの**だけである。
+    /// `isExecutableFile` はディレクトリにも真を返すので、直下を指さない名前 (`..`・`sub/../victim`)
+    /// や、ディレクトリを指す名前を通すと、消さなくなった分だけ `bin` の親などが「建った実行
+    /// ファイル」として返る ([#2502](https://github.com/mokume-metal/mokume/issues/2502))。
+    nonisolated static func builtExecutable(named product: String, in bin: URL) -> URL? {
+        guard let url = directChild(product, of: bin) else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+            !isDirectory.boolValue, FileManager.default.isExecutableFile(atPath: url.path)
+        else { return nil }
+        return url
     }
 
     /// 作り直して、走らせるものを返す。**通らなければ投げる** (人へ見せる経路の形)。
@@ -324,11 +407,34 @@ enum RunCommand {
             // 名前が分からないままだったのなら、宣言が読めていない — 走らせるものを
             // 決められないという、別の失敗である
             guard let product = result.product else {
+                // 読み直して分かった理由があれば、それを名乗る (#2575)。無ければ、宣言に実行
+                // ファイルが無い
+                if let failure = result.declarationFailure { throw failure }
                 throw .noExecutable(path: directory.path)
+            }
+            // **在るのに起こせないものを「建っていない」と言わない** (#2521)。作り直しは
+            // 実行できるものだけを「建った」と返すので、実行ビットの無い成果物もここへ来る
+            if let reason = unrunnableProduct(product, in: result.binPath) {
+                throw .cannotLaunch(tool: product, place: directory.path, reason: reason)
             }
             throw .productNotBuilt(product: product, path: result.binPath.path)
         }
         return executable
+    }
+
+    /// 作り直しが「建った」と返さなかった product が、置き場に**在るのに起こせない**なら、その
+    /// 理由 (在処を含む 1 行)。無ければ `nil` (本当に建っていない)。
+    ///
+    /// **置き場の直下を指す名前だけを見る。** `/` や `.`・`..` を含む名前は置き場の外や置き場
+    /// そのものを指すので、そこに在るものを「起こせない成果物」とは言わない。
+    nonisolated static func unrunnableProduct(_ product: String, in bin: URL) -> String? {
+        guard !product.isEmpty, !product.contains("/"), product != ".", product != ".." else {
+            return nil
+        }
+        guard case .unrunnable(let reason) = standing(
+            of: bin.appendingPathComponent(product, isDirectory: false))
+        else { return nil }
+        return reason
     }
 
     /// 出来上がりが置かれる場所。**道具立てに聞く** — 置き場の中の構造を組み立てると、
@@ -338,13 +444,31 @@ enum RunCommand {
     )
         throws(CommandFailure) -> URL
     {
+        let asked = ["build", "--show-bin-path"] + context.arguments
         // **愚痴を混ぜない。** 出力はファイルパスとして解くので、警告 1 行で別の
         // 場所を指すことになる (#731)
-        let output = try swift(
-            ["build", "--show-bin-path"] + context.arguments, in: directory, capturing: true,
-            errors: .inherit, running: running
-        ).output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !output.isEmpty else { throw .noExecutable(path: directory.path) }
+        let answer = try swift(
+            asked, in: directory, capturing: true, errors: .inherit, running: running)
+        return try binPath(from: answer, asking: asked)
+    }
+
+    /// `--show-bin-path` の答えを読む。**検査から偽の子の答えを渡せる形にしてある** —
+    /// 聞く側は `/usr/bin/env swift` を書き固めている (#731)。
+    ///
+    /// **終了コードを見る。** 0 で終わって道を答えたときだけ読み、それ以外は道具立てが
+    /// 答えなかったと名乗る。空の出力だけを見て ``CommandFailure/noExecutable(path:)`` と
+    /// 読んでいた頃は、道具立てが引数を断った回を「Package.swift に実行ファイルが無い」と
+    /// 言っていた ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    ///
+    /// - Parameter arguments: 聞いたときに `swift` へ渡したもの。答えなかったときに名乗る。
+    nonisolated static func binPath(
+        from answer: (status: Int32, output: String), asking arguments: [String]
+    ) throws(CommandFailure) -> URL {
+        let output = answer.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard answer.status == 0, !output.isEmpty else {
+            throw .toolchainFailed(
+                command: (["swift"] + arguments).joined(separator: " "), status: answer.status)
+        }
         return URL(fileURLWithPath: output, isDirectory: true)
     }
 
@@ -362,30 +486,95 @@ enum RunCommand {
         -> URL
     {
         guard let product = context.product else { throw .noExecutable(path: directory.path) }
-        let url = try binPath(in: directory, context: context)
-            .appendingPathComponent(product, isDirectory: false)
-        guard FileManager.default.isExecutableFile(atPath: url.path) else {
-            throw .noExecutable(path: url.path)
+        let bin = try binPath(in: directory, context: context)
+        guard let built = builtExecutable(named: product, in: bin) else {
+            throw .noExecutable(path: bin.appendingPathComponent(product).path)
         }
-        return url
+        return built
     }
 
+    /// パッケージの宣言を読んだ結果。
+    nonisolated enum Declaration: Equatable {
+        /// 読めた。
+        case declared(SwiftPM.Package)
+        /// 道具立てが答えなかった (0 以外で終わった)。`Package.swift` を道具立てが読めなかった
+        /// 回もここへ来る — 理由は道具立てが標準エラーで名乗っている。
+        case unanswered(status: Int32)
+        /// 0 で終わったが、出力が宣言として読めなかった (道具立てが JSON の形を変えた日)。
+        case unreadable
+
+        /// 読めなかった回の名乗り。**宣言の不備として名乗らない** (#2483)。読めたなら `nil`。
+        var failure: CommandFailure? {
+            switch self {
+            case .declared: nil
+            case .unanswered(let status):
+                .toolchainFailed(command: RunCommand.dumpCommand, status: status)
+            case .unreadable: .declarationUnreadable(command: RunCommand.dumpCommand)
+            }
+        }
+
+        /// 読めた宣言。**読めなければ `nil`** — 見張りが宣言の壊れた状態でも続けるための形。
+        var package: SwiftPM.Package? {
+            guard case .declared(let package) = self else { return nil }
+            return package
+        }
+    }
+
+    /// 宣言を読むために `swift` へ聞くこと。答えなかったときに名乗る。
+    nonisolated static let dumpCommand = "swift package dump-package"
+
     /// パッケージの宣言を読む。**読めなければ `nil`。**
+    ///
+    /// `nil` は「宣言が読めない」として見張りを続けるための形で、`run` / `watch` / `render` は
+    /// そのまま持ち回る (壊した状態から直していく途中は、まさに見張っていてほしい)。**読めなかった
+    /// 理由が要る口は ``declaration(in:running:)`` を使う** (`bundle` — #2483)。
     ///
     /// 起こすのは重い (数百 ms) ので、同じ実行の中で 2 度要るときは呼び手が持ち回る。
     nonisolated static func dumpPackage(
         in directory: URL, running: RunningBuild? = nil
     ) throws(CommandFailure) -> SwiftPM.Package? {
-        // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
-        // nil になる (#731)
-        let dump = try swift(
-            ["package", "dump-package"], in: directory, capturing: true, errors: .inherit,
-            running: running
-        ).output
-        return SwiftPM.package(inDumpOf: dump)
+        try declaration(in: directory, running: running).package
     }
 
-    /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。
+    /// パッケージの宣言を読み、**読めなかった理由を分けて返す**。
+    ///
+    /// 起こせなかった・場所が使えない・道具立てが無い回は、子を起こす口が読み分けたとおり投げる。
+    /// 道具立てが答えなかった回 (0 以外での終了) と、答えたが読めない回は、値で返す — 続けるか
+    /// 止めるかは呼び手が決める。
+    nonisolated static func declaration(
+        in directory: URL, running: RunningBuild? = nil
+    ) throws(CommandFailure) -> Declaration {
+        // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
+        // 読めなくなる (#731)
+        let answer = try swift(
+            ["package", "dump-package"], in: directory, capturing: true, errors: .inherit,
+            running: running)
+        return declaration(from: answer)
+    }
+
+    /// `dump-package` の答えを読む。**検査から偽の子の答えを渡せる形にしてある。**
+    ///
+    /// **終了コードを先に見る。** 0 以外で終わった回の出力は JSON でなく、`nil` に畳むと、
+    /// 道具立てが答えなかったことが「宣言が読めない」→「走らせるものが無い」と読み替わる
+    /// ([#2483](https://github.com/mokume-metal/mokume/issues/2483)・`binPath(from:asking:)` と
+    /// 同じ根)。
+    nonisolated static func declaration(from answer: (status: Int32, output: String))
+        -> Declaration
+    {
+        guard answer.status == 0 else { return .unanswered(status: answer.status) }
+        guard let package = SwiftPM.package(inDumpOf: answer.output) else { return .unreadable }
+        return .declared(package)
+    }
+
+    /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。**合図で落ちた子は、シェルの
+    /// `$?` と同じ `128 + 番号` で名乗る** (``CommandFailure/sketchSignalled(signal:)``・#2315)。
+    ///
+    /// **前提: 渡す実行ファイルは、呼び元が作り直して建ったことを確かめたものだけである**
+    /// (`run`・`render` は ``buildAndResolve(in:context:)``、`watch` は ``rebuild(in:context:capturing:running:binPath:)``
+    /// の直後)。だから起こす時点で無ければ、宣言のせいではなく消えたのであり、
+    /// ``CommandFailure/executableVanished(path:)`` が「build の直後には在った」と名乗る
+    /// ([#2522](https://github.com/mokume-metal/mokume/issues/2522))。**作り直しを通らない呼び元を足す
+    /// ときは、この名乗りが成り立つかを確かめる** — 成り立たなければ呼び元が名乗りを選べる形にする。
     ///
     /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:viewportOwner:)``)。
     ///   **何を載せるかは口が決める** — `run` は速さの名乗りと × の確認を、`render` は書き出しの
@@ -410,7 +599,14 @@ enum RunCommand {
         do {
             try process.run()
         } catch {
-            throw .noExecutable(path: executable.path)
+            // **起こせなかった理由を、走らせるものの不在と決めつけない** (#2314 — 道具の側と
+            // 同じ読み替え)。ここへ来る実行ファイルは宣言済みで、作り直しの直後に建ったことを
+            // 確かめたものなので、無いなら消えたのであって、`Package.swift` の宣言のせいではない
+            // (#2522)。**この前提は今の呼び元 (`run`・`render`・`watch`) のもの** — 作り直しを通らない
+            // 呼び元が増えたら、ここと ``CommandFailure/executableVanished(path:)`` の文面を見直す
+            throw launchFailure(
+                of: process, error: error,
+                executableMissing: .executableVanished(path: executable.path))
         }
         // **番号を置いてから印を見る。** 置く前に来た合図はハンドラが子へ撃てていないので、
         // ここで拾う。逆順にすると、見た後・置く前に来た合図を誰も子へ渡さない
@@ -422,8 +618,12 @@ enum RunCommand {
         // 済ませて 0 で終わることも、済ませずに 15 で落ちることもある (#1219)。後者を
         // `sketchExited` で名乗ると「スケッチ自身の出力を読め」になる
         if runStopSignal != 0 { throw .stopped(signal: runStopSignal) }
-        if process.terminationStatus != 0 {
-            throw .sketchExited(status: process.terminationStatus)
+        switch ChildEnding(of: process) {
+        case .exited(0): return
+        case .exited(let status): throw .sketchExited(status: status)
+        // **合図の番号を終了コードとして名乗らない** (#2315)。`terminationStatus` は合図で落ちた子に
+        // 合図の番号を返すので、`fatalError` の SIGTRAP が「code 5」になり、`exit(5)` と見分けがつかない
+        case .signalled(let signal): throw .sketchSignalled(signal: signal)
         }
     }
 
@@ -487,6 +687,12 @@ enum RunCommand {
     ///   継がせると、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る
     ///   ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     ///
+    /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
+    /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
+    /// ディレクトリをスケッチに替えて起こされるので、そのまま運ぶと道具 (走らせた場所から
+    /// 解く) と子 (スケッチから解く) が別の区画を見る — 観測も入力も黙って噛み合わない
+    /// (#2323 の反証)。道具が見ている区画に子を揃える。
+    ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func childEnvironment(
         _ base: [String: String] = ProcessInfo.processInfo.environment,
@@ -494,6 +700,9 @@ enum RunCommand {
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil
     ) -> [String: String] {
         var environment = base
+        if let workDirectory = WorkDirectory.given(environment: base) {
+            environment[StartupReads.workDirectory.key] = workDirectory.path
+        }
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
         if let tool { environment[StartupReads.closeConfirmation.key] = tool }
@@ -576,7 +785,11 @@ enum RunCommand {
                 launched = true
             }
         } catch {
-            throw .toolchainMissing(toolName(of: process))
+            // **起こせなかったことを、道具が無いことと決めつけない** (#2314)。`env` 越しなら
+            // 道具の不在は下の 127 で分かる。ここに来るのは、たいてい作業ディレクトリの問題である
+            throw launchFailure(
+                of: process, error: error,
+                executableMissing: .toolchainMissing(toolName(of: process)))
         }
         guard launched else { throw .rebuildStopped }
         defer { running?.finished() }
@@ -593,10 +806,116 @@ enum RunCommand {
         // 見逃すと空の出力が「宣言が読めない」「走らせるものが無い」と読まれ、原因が
         // 道具立てなのに Package.swift を疑わせる
         // ([#1157](https://github.com/mokume-metal/mokume/issues/1157))
-        if process.executableURL == envURL, process.terminationStatus == commandNotFound {
+        let ending = ChildEnding(of: process)
+        if process.executableURL == envURL, ending == .exited(commandNotFound) {
             throw .toolchainMissing(toolName(of: process))
         }
-        return (process.terminationStatus, output)
+        // **合図で落ちた子は `128 + 番号` で返す** (#2315)。呼び手は終了コードとして名乗り・記録する
+        // (`buildFailed`・`build-status` の `status`)。合図の番号のままだと、5 で終わった回と区別がつかない
+        return (ending.shellStatus, output)
+    }
+
+    /// 子を起こせなかった理由を読む。**実行ファイルの不在と言うのは、それが無いときだけ** (#2314)。
+    ///
+    /// `Process.run()` の失敗は、作業ディレクトリが無いときも実行ファイルが無いときも
+    /// `NSFileNoSuchFileError` で、違うのは `NSFilePath` に名指しした場所だけである。入れない
+    /// 場所 (`chmod 000` の親の下) でも同じ「無い」になる。名指しの綴りを比べ合わせる形は
+    /// 採らない — 何が無いのかは言えても、なぜ入れないのかは載っていない。だから**失敗の後に
+    /// 場所と実行ファイルを stat し直して**決める (``GivenPath/Presence``)。`swift` は
+    /// `/usr/bin/env` 越しに起こすので env 自体は必ず在り、起動の失敗はたいてい作業ディレクトリ
+    /// の問題である — それを「swift が無い」と言うと、Xcode を入れ直す方向へ人を遠ざける
+    /// (`DoctorCommand` の規律 3 と同じ向き)。
+    ///
+    /// **限界: 起こした時点と確かめた時点の間に場所が消えたり戻ったりすると、読み分けが
+    /// 変わる** (確かめた時点の姿を名乗る)。
+    ///
+    /// - Parameter executableMissing: 実行ファイルが無かったときの失敗。**在るのに実行できない
+    ///   ときには使わない** — 「走らせるものが無い」と言うと、在るものを探しに行かせる (#2521)。口ごとに名乗りが違う
+    ///   (道具なら ``CommandFailure/toolchainMissing(_:)``、スケッチなら
+    ///   ``CommandFailure/noExecutable(path:)``)。
+    nonisolated static func launchFailure(
+        of process: Process, error: any Error, executableMissing: CommandFailure
+    ) -> CommandFailure {
+        let tool = toolName(of: process)
+        let place = process.currentDirectoryURL ?? GivenPath.currentDirectory
+        let presence = GivenPath.Presence.of(place)
+        guard presence == .directory else {
+            return .placeUnusable(tool: tool, place: place.path, presence: presence)
+        }
+        guard let executable = process.executableURL else { return executableMissing }
+        // **在るのに起こせないものを「無い」と言わない** (#2521)。`Process.run()` は実行ビットの
+        // 無いファイル・探索権の無いディレクトリの下・宛先の無い symlink のどれにも「The file
+        // doesn’t exist」(下に POSIX の誤り無し) を投げるので、誤りの文面からは原因が取れない —
+        // stat し直した事実で名乗る
+        switch standing(of: executable) {
+        case .missing: return executableMissing
+        case .unrunnable(let reason):
+            return .cannotLaunch(tool: tool, place: place.path, reason: reason)
+        case .runnable:
+            return .cannotLaunch(tool: tool, place: place.path, reason: launchReason(of: error))
+        }
+    }
+
+    /// 走らせるものの在り方。``standing(of:)`` が読む。
+    nonisolated enum Standing: Equatable {
+        /// 何も無い (`ENOENT` で、symlink でもない)。
+        case missing
+        /// 在るが、起こせない。`reason` は在処を含む 1 行。
+        case unrunnable(reason: String)
+        /// 在り、実行できる (起こせなかったのなら、理由は起こした側の誤りにある)。
+        case runnable
+    }
+
+    /// 走らせるものを stat し直して、在り方を決める
+    /// ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    ///
+    /// **「無い」と言うのは、stat が `ENOENT` を返し、symlink でもないときだけ** — 作業
+    /// ディレクトリの側の ``GivenPath/Presence/of(_:)`` と同じ読み分けである。辿り着けない
+    /// (`EACCES` など)・宛先の無い symlink・ディレクトリ・実行ビットが無い、は在るものなので、
+    /// 「無い」と言うと在るものを探しに行かせる。
+    ///
+    /// **限界: 起こした時点と確かめた時点の間に変わると、確かめた時点の姿を名乗る。**
+    nonisolated static func standing(of executable: URL) -> Standing {
+        let path = executable.path
+        var info = stat()
+        guard stat(path, &info) == 0 else {
+            let code = errno
+            guard code == ENOENT else {
+                return .unrunnable(reason: "\(path) cannot be reached (\(GivenPath.errorText(code)))")
+            }
+            var link = stat()
+            return lstat(path, &link) == 0
+                ? .unrunnable(reason: "\(path) is a symbolic link to something that is not there")
+                : .missing
+        }
+        if (info.st_mode & S_IFMT) == S_IFDIR {
+            return .unrunnable(reason: "\(path) is a directory, not a program")
+        }
+        guard access(path, X_OK) == 0 else {
+            return .unrunnable(
+                reason: "\(path) is not executable (\(GivenPath.errorText(errno)))")
+        }
+        return .runnable
+    }
+
+    /// 起こせなかった事情の文面 (場所でも実行ファイルの不在でもないとき)。
+    ///
+    /// **POSIX の事情 (失敗そのものか、その下の `NSUnderlyingErrorKey`) なら、その番号から
+    /// C の文面を引く** (``GivenPath/errorText(_:)``)。Foundation の説明は言語の設定に左右
+    /// されうるが、道具が話す言葉は英語である (ADR-0038 決定 1・2)。
+    ///
+    /// **例外: POSIX の事情を持たない誤り** (下に POSIX の誤りを持たない Cocoa の誤り — たとえば
+    /// `NSFileNoSuchFileError` だけのもの) は、引ける番号が無いので `localizedDescription` に
+    /// 落とす。その文面は言語の設定で変わりうる。
+    nonisolated static func launchReason(of error: any Error) -> String {
+        let failure = error as NSError
+        let posix =
+            failure.domain == NSPOSIXErrorDomain
+            ? failure : failure.userInfo[NSUnderlyingErrorKey] as? NSError
+        guard let posix, posix.domain == NSPOSIXErrorDomain else {
+            return failure.localizedDescription
+        }
+        return GivenPath.errorText(Int32(posix.code))
     }
 
     /// 道具立てを探させる口。**`PATH` を引くのは `env` に任せる。**

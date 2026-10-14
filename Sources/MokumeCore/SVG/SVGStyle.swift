@@ -7,6 +7,10 @@ import Foundation
 //
 // どれも**読めなければ `nil` を返し、何を読めなかったかは呼ぶ側が名乗る** (``SVGFile/Drawing/skipped``)。
 // ここは文字を値にするだけで、どの要素の話かを知らない。
+//
+// 数は SVG / CSS の数の文法 — 10 進の綴りだけ — で読む。1 つの値を丸ごと数にする所は
+// `DecimalText.spelled(_:)`、数を並べた値 (`viewBox`・パス・`transform` の引数) は
+// `NumberScanner` を通す。Swift の `Float(String)` は 16 進 (`0x10`) も数にするので直に使わない (#2513)。
 
 extension SVGFile {
     // MARK: - 色
@@ -63,14 +67,15 @@ extension SVGFile {
         let name = value[..<open].trimmingCharacters(in: .whitespaces)
         guard name == "rgb" || name == "rgba" else { return nil }
         let inside = value[value.index(after: open)..<value.index(before: value.endIndex)]
-        let parts = inside.split(whereSeparator: { $0 == "," || $0 == " " || $0 == "/" || $0 == "\t" })
+        // 区切りの空白には改行も数える (`<style>` の値は改行を残して渡る) (#2513)
+        let parts = inside.split(whereSeparator: { $0 == "," || $0 == "/" || $0.isWhitespace })
         guard parts.count == 3 || parts.count == 4 else { return nil }
         func component(_ part: Substring, scale: Float) -> Float? {
             if part.hasSuffix("%") {
-                guard let percent = Float(part.dropLast()), percent.isFinite else { return nil }
+                guard let percent = DecimalText.spelled(part.dropLast()), percent.isFinite else { return nil }
                 return min(max(percent / 100, 0), 1)
             }
-            guard let number = Float(part), number.isFinite else { return nil }
+            guard let number = DecimalText.spelled(part), number.isFinite else { return nil }
             return min(max(number / scale, 0), 1)
         }
         guard let red = component(parts[0], scale: 255), let green = component(parts[1], scale: 255),
@@ -143,10 +148,12 @@ extension SVGFile {
             ("in", 96), ("%", 0),
         ]
         for unit in units where value.hasSuffix(unit.suffix) {
-            guard let number = Float(value.dropLast(unit.suffix.count)), number.isFinite else { return nil }
+            guard let number = DecimalText.spelled(value.dropLast(unit.suffix.count)), number.isFinite else {
+                return nil
+            }
             return unit.suffix == "%" ? number / 100 * reference : number * unit.scale
         }
-        guard let number = Float(value), number.isFinite else { return nil }
+        guard let number = DecimalText.spelled(value), number.isFinite else { return nil }
         return number
     }
 
@@ -214,7 +221,8 @@ extension SVGFile {
             guard let open = rest.firstIndex(of: "("), let close = rest.firstIndex(of: ")"),
                 open < close
             else { return nil }
-            let name = rest[..<open].trimmingCharacters(in: .whitespaces).lowercased()
+            // 名前と括弧のあいだの改行 (`translate&#10;(10)`) も空白として落とす (#2513)
+            let name = rest[..<open].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard let numbers = parseNumbers(String(rest[rest.index(after: open)..<close])) else {
                 return nil
             }
@@ -249,24 +257,75 @@ extension SVGFile {
 
     // MARK: - CSS
 
-    /// `<style>` に書いた規則 1 つ。読むのは**クラス 1 つか要素名 1 つ**のセレクタだけ
+    /// 宣言 1 つ (`fill: red !important`)。
+    nonisolated struct Declaration: Sendable, Equatable {
+        var name: String
+        var value: String
+        /// `!important` が付いていたか。値からは外してある。
+        var isImportant: Bool
+    }
+
+    /// `<style>` に書いた規則 1 つ。読むのは**クラス 1 つか要素名 1 つか `*`** のセレクタだけ
     /// (Illustrator の書き出しの既定は `.cls-1 { fill: #e94e1b; }` の形)。
     nonisolated struct StyleRule: Sendable, Equatable {
-        enum Selector: Sendable, Equatable {
-            /// 要素の名前 (`rect`)。`*` はすべての要素。
+        nonisolated enum Selector: Sendable, Equatable {
+            /// すべての要素 (`*`)。
+            case universal
+            /// 要素の名前 (`rect`)。
             case element(String)
             /// クラス (`.cls-1`)。
             case className(String)
+
+            /// 詳細度。CSS の (クラス, 要素名) の数を 10 と 1 の位に置いたもの。読むセレクタは
+            /// 1 つの部品だけなので桁はあふれない。`*` は数えない。
+            var specificity: Int {
+                switch self {
+                case .universal: 0
+                case .element: 1
+                case .className: 10
+                }
+            }
+
+            /// 名前とクラスを持つ要素に当たるか。
+            func matches(name: String, classes: Set<String>) -> Bool {
+                switch self {
+                case .universal: true
+                case .element(let element): element == name
+                case .className(let className): classes.contains(className)
+                }
+            }
         }
 
         var selector: Selector
         /// 宣言を書いた順に。
-        var declarations: [(name: String, value: String)]
+        var declarations: [Declaration]
+    }
 
-        static func == (left: StyleRule, right: StyleRule) -> Bool {
-            left.selector == right.selector
-                && left.declarations.map(\.name) == right.declarations.map(\.name)
-                && left.declarations.map(\.value) == right.declarations.map(\.value)
+    /// 同じ性質に宣言が重なったときの勝ち負け。**CSS Cascade の比べ方 1 つ**で、大きいほうが勝つ。
+    /// 比べるのは順に、`!important` か・出どころ・詳細度・書いた順 (後ろが上)。
+    ///
+    /// 出どころの並びは 属性 < 規則 < `style` 属性で、`!important` の宣言どうしでも変わらない
+    /// (属性には `!important` を書けない。`<style>` の `!important` は `style` 属性の `!important` に負ける)。
+    nonisolated struct Rank: Sendable, Comparable {
+        nonisolated enum Origin: Int, Sendable {
+            /// 表現属性 (`fill="red"`)。
+            case attribute
+            /// `<style>` の規則。
+            case rule
+            /// `style` 属性。
+            case styleAttribute
+        }
+
+        var isImportant: Bool
+        var origin: Origin
+        /// 規則の詳細度 (`StyleRule.Selector.specificity`)。規則でなければ 0。
+        var specificity: Int
+        /// 宣言を集めた順。
+        var order: Int
+
+        static func < (left: Rank, right: Rank) -> Bool {
+            (left.isImportant ? 1 : 0, left.origin.rawValue, left.specificity, left.order)
+                < (right.isImportant ? 1 : 0, right.origin.rawValue, right.specificity, right.order)
         }
     }
 
@@ -319,28 +378,35 @@ extension SVGFile {
         return (rules, unread)
     }
 
-    /// `name: value; …` を宣言の並びにする。`!important` は落とす (優先の順は書いた場所で決める)。
-    nonisolated static func parseDeclarations(_ text: String) -> [(name: String, value: String)] {
-        var declarations: [(name: String, value: String)] = []
+    /// `name: value; …` を宣言の並びにする。値の末尾の `!important` (`!` と `important` の間の空白と
+    /// 大文字小文字は問わない) は、値から外して `isImportant` に持たせる。どちらが勝つかは書いた
+    /// 場所ではなく、重ねる側の順位 (`Rank`) が決める。
+    nonisolated static func parseDeclarations(_ text: String) -> [Declaration] {
+        var declarations: [Declaration] = []
         for part in withoutComments(text).split(separator: ";") {
             guard let colon = part.firstIndex(of: ":") else { continue }
             let name = part[..<colon].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             var value = part[part.index(after: colon)...].trimmingCharacters(in: .whitespacesAndNewlines)
-            if let important = value.range(of: "!important", options: .caseInsensitive) {
-                value = value[..<important.lowerBound].trimmingCharacters(in: .whitespaces)
+            var isImportant = false
+            if let mark = value.lastIndex(of: "!"),
+                value[value.index(after: mark)...].trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() == "important"
+            {
+                isImportant = true
+                value = value[..<mark].trimmingCharacters(in: .whitespacesAndNewlines)
             }
             guard !name.isEmpty else { continue }
-            declarations.append((name, value))
+            declarations.append(Declaration(name: name, value: value, isImportant: isImportant))
         }
         return declarations
     }
 
-    /// クラス 1 つか要素名 1 つのセレクタ。それ以外は `nil`。
+    /// クラス 1 つか要素名 1 つか `*` のセレクタ。それ以外は `nil`。
     nonisolated private static func simpleSelector(_ text: String) -> StyleRule.Selector? {
         func isNameCharacter(_ character: Character) -> Bool {
             character.isLetter || character.isNumber || character == "-" || character == "_"
         }
-        if text == "*" { return .element("*") }
+        if text == "*" { return .universal }
         if text.hasPrefix(".") {
             let name = text.dropFirst()
             guard !name.isEmpty, name.allSatisfy(isNameCharacter) else { return nil }

@@ -10,13 +10,13 @@ import Testing
 struct NewCommandTests {
     @Test("名前と場所を読む")
     func readsTheNameAndWhereToPutIt() throws {
-        #expect(try NewCommand.parse(["sketch"]) == .init(name: "sketch"))
+        #expect(try NewCommand.parse(["my-sketch"]) == .init(name: "my-sketch"))
         #expect(
-            try NewCommand.parse(["sketch", "--path", "/tmp"])
-                == .init(name: "sketch", path: "/tmp"))
+            try NewCommand.parse(["my-sketch", "--path", "/tmp"])
+                == .init(name: "my-sketch", path: "/tmp"))
         #expect(
-            try NewCommand.parse(["sketch", "--local", "../mokume"])
-                == .init(name: "sketch", path: ".", local: "../mokume"))
+            try NewCommand.parse(["my-sketch", "--local", "../mokume"])
+                == .init(name: "my-sketch", path: ".", local: "../mokume"))
     }
 
     @Test("名前が無ければ、何をすればよいか言って止まる")
@@ -46,9 +46,195 @@ struct NewCommandTests {
     func namesAPathDependencyByItsDirectory() {
         // リポジトリの名前ではなくパスの末尾が identity になる。作業用の複製を
         // 指したときに食い違うので、パスから導く
-        #expect(NewCommand.packageIdentity(local: nil) == "mokume")
-        #expect(NewCommand.packageIdentity(local: "/a/b/mokume") == "mokume")
-        #expect(NewCommand.packageIdentity(local: "/a/b/work-copy") == "work-copy")
+        let sketch = URL(fileURLWithPath: "/w/plain/foo", isDirectory: true)
+        #expect(NewCommand.packageIdentity(local: nil, sketch: sketch) == "mokume")
+        #expect(NewCommand.packageIdentity(local: "/a/b/mokume", sketch: sketch) == "mokume")
+        #expect(NewCommand.packageIdentity(local: "/a/b/work-copy", sketch: sketch) == "work-copy")
+    }
+
+    /// **`.package(path:)` と同じ場所を、同じ基準で指す** (#2322)。`--local` は
+    /// `.package(path:)` へそのまま入り SwiftPM が**作られるスケッチの場所から**解くのに、
+    /// 名前だけを走らせた場所から解いていた。末尾が `..`・`.` だと 2 つが別の場所を指し、
+    /// `swift package resolve` が `unknown package` で止まる。
+    @Test(
+        "パスで指した依存の名前は、作られるスケッチの場所から解く",
+        arguments: [
+            // (走らせた場所, --path, --local, identity)
+            ("/w/Mokume", ".", "..", "mokume"),  // チェックアウトの中で `new foo --local ..`
+            ("/w/Mokume", "sub", "../..", "mokume"),  // --path と組む
+            ("/w/plain", ".", ".", "foo"),  // スケッチ自身 (末尾が `.`)
+            ("/w/plain", ".", "../../lib/Mokume-Copy", "mokume-copy"),
+            ("/w/plain", "/elsewhere", "../mokume", "mokume"),  // 絶対の --path
+            ("/w/plain", ".", "/a/b/work-copy", "work-copy"),  // 絶対の --local
+        ])
+    func namesAPathDependencyFromTheSketch(
+        typedFrom: String, path: String, local: String, identity: String
+    ) throws {
+        let options = NewCommand.Options(name: "foo", path: path, local: local)
+        let base = URL(fileURLWithPath: typedFrom, isDirectory: true)
+        let sketch = options.root(from: base)
+        #expect(NewCommand.packageIdentity(local: local, sketch: sketch) == identity)
+        // 自分自身を指す行 (末尾が `.`) は、自分に依存するパッケージになり組めないので断る (#2310)
+        guard identity != options.name else {
+            #expect(throws: CommandFailure.self) { try NewCommand.files(for: options, base: base) }
+            return
+        }
+        // 作られる Package.swift でも、`.package(path:)` と名前が揃っている
+        let manifest = try #require(
+            try NewCommand.files(for: options, base: base).first { $0.0 == "Package.swift" }?.1)
+        #expect(manifest.contains(".package(path: \"\(local)\")"))
+        #expect(manifest.contains("package: \"\(identity)\""))
+    }
+
+    /// **SwiftPM はパッケージの場所を実体 (symlink を解いた作業ディレクトリ) で持ち、
+    /// `.package(path:)` をそこから解く** (#2323 の反証)。字面のまま `..` を畳むと、
+    /// symlink を通って作ったスケッチでは別のディレクトリの名前になる —
+    /// `work/link -> ../real/lib` で `new foo --path link --local ..` と打つと、字面では
+    /// `link`、SwiftPM は `lib` を要る。
+    @Test("symlink を通って作るスケッチでも、依存の名前は実体の場所から解く")
+    func namesAPathDependencyFromWhereTheSketchReallyIs() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-new-link-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appendingPathComponent("real/lib", isDirectory: true)
+        let work = root.appendingPathComponent("work", isDirectory: true)
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: work.appendingPathComponent("link").path, withDestinationPath: "../real/lib")
+
+        let options = NewCommand.Options(name: "foo", path: "link", local: "..")
+        let sketch = options.root(from: work)
+        #expect(NewCommand.packageIdentity(local: "..", sketch: sketch) == "lib")
+        // 在る場所が symlink を含まなければ、いままでどおり字面と同じ
+        #expect(
+            NewCommand.packageIdentity(
+                local: "..", sketch: real.appendingPathComponent("foo", isDirectory: true))
+                == "lib")
+    }
+
+    /// SwiftPM はパスから名前を導くとき、末尾の `.git` を落とす (#2323 の反証)。
+    @Test("依存の場所の末尾が .git なら、名前から落とす")
+    func dropsTheGitSuffixFromThePackageName() throws {
+        let sketch = URL(fileURLWithPath: "/w/plain/foo", isDirectory: true)
+        #expect(NewCommand.packageIdentity(local: "../Mok.git", sketch: sketch) == "mok")
+        #expect(NewCommand.packageIdentity(local: "/a/b/mokume.git", sketch: sketch) == "mokume")
+        // `.git` で終わらなければ触らない
+        #expect(NewCommand.packageIdentity(local: "../mokume.github", sketch: sketch) == "mokume.github")
+        let manifest = try #require(
+            try NewCommand.files(
+                for: .init(name: "foo", local: "../Mok.git"),
+                base: URL(fileURLWithPath: "/w/plain", isDirectory: true)
+            ).first { $0.0 == "Package.swift" }?.1)
+        #expect(manifest.contains(#".package(path: "../Mok.git")"#))
+        #expect(manifest.contains(#"package: "mok""#))
+    }
+
+    /// SwiftPM は `~/` で始まる path の依存だけを home から解く。名前も同じ規則で解く。
+    @Test("~/ で始まる依存の名前は、home から解く")
+    func namesAHomeRelativeDependencyFromHome() {
+        let sketch = URL(fileURLWithPath: "/w/plain/foo", isDirectory: true)
+        #expect(NewCommand.packageIdentity(local: "~/src/Mokume", sketch: sketch) == "mokume")
+        // 末尾が `.` だと、どこから解いたかで名前が変わる (スケッチからなら `~`)
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        #expect(
+            NewCommand.packageIdentity(local: "~/.", sketch: sketch)
+                == home.standardizedFileURL.lastPathComponent.lowercased())
+    }
+
+    /// **場所を Swift の文字列として逃がす** (#2322)。`"` を含む場所を生のまま貼ると
+    /// `Package.swift` が読めず、`Created` と言って壊れたものを残していた。逃がすのは
+    /// `--local` から来る 2 つの差し込み口 (`DEPENDENCY`・`PACKAGE`) — 名前は
+    /// ``NewCommand/isValid(name:)`` が `"` を通さない。
+    @Test("場所に \" や \\ があっても、Package.swift の文字列は閉じたまま")
+    func aLocalWithQuotesStaysInsideTheString() throws {
+        let local = #"/tmp/q"dir\x/we"ird"#
+        let manifest = try #require(
+            try NewCommand.files(for: .init(name: "quoted", local: local))
+                .first { $0.0 == "Package.swift" }?.1)
+        #expect(manifest.contains(#".package(path: "/tmp/q\"dir\\x/we\"ird")"#))
+        #expect(manifest.contains(#"package: "we\"ird""#))
+        #expect(!manifest.contains(local), "場所が逃がされずに貼られている")
+    }
+
+    /// 上の逃がし方で作った `Package.swift` を、SwiftPM 自身に読ませる (完了条件 3 の
+    /// `swift package dump-package` が通ること)。依存の中身は読まないので、指す先は空でよい。
+    @Test("場所に \" や \\ があっても、作った Package.swift を SwiftPM が読める")
+    func aLocalWithQuotesMakesAReadableManifest() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-new-quoted-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let options = NewCommand.Options(
+            name: "quoted", path: workspace.path,
+            local: workspace.appendingPathComponent(#"q"dir\x"#).path)
+        let root = options.root()
+        for (path, contents) in try NewCommand.files(for: options) {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let declared = try RunCommand.dumpPackage(in: root)
+        #expect(declared?.executableProductName == "quoted", "SwiftPM が Package.swift を読めない")
+    }
+
+    /// 基準が口ごとに違うのは `--local` だけなので、help がそれを言う (#2323 の完了条件 4)。
+    @Test("help は、相対の --local が作られるスケッチから解かれることを言う")
+    func theHelpSaysWhereLocalStartsFrom() throws {
+        let entry = try #require(Command.Verb.new.usageEntry)
+        let text = entry.description.replacingOccurrences(of: "\n", with: " ")
+        #expect(text.contains("a relative one starts from the new sketch"))
+    }
+
+    // MARK: - 作った後の案内 (#2320)
+
+    /// 案内に出る `cd` の行を、走らせた場所で `/bin/sh` に打たせ、入った先を返す。
+    private func pasteCD(from guidance: String, at typedFrom: URL) throws -> String {
+        let line = try #require(
+            guidance.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { $0.hasPrefix("cd ") })
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "\(line) && pwd"]
+        process.currentDirectoryURL = typedFrom
+        let result = try RunCommand.capture(process, capturing: true, errors: .inherit)
+        #expect(result.status == 0, "案内の cd が通らない: \(line)")
+        return result.output.trimmingCharacters(in: .newlines)
+    }
+
+    /// **案内は、走らせた場所からそのまま貼って動く。** `--path` を無視して `cd <名前>` と
+    /// 言っていたので、`--path` を付けると走らせた場所からは入れず、空白を含む場所なら
+    /// 引用も要った。
+    @Test(
+        "作った後の案内は、走らせた場所からそのまま貼れば作った場所へ入る",
+        arguments: [".", "dir with space", "it's here", #"a"b\c $HOME"#])
+    func theGuidanceCanBePastedWhereItWasTyped(path: String) throws {
+        let typedFrom = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-new-guide-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: typedFrom) }
+        let root = NewCommand.Options(name: "hint", path: path).root(from: typedFrom)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let guidance = NewCommand.guidance(for: root)
+        #expect(guidance.contains("Created \(root.path)"))
+        // 場所は引用され、--path を含む
+        #expect(guidance.contains("  cd \(GivenPath.shellWord(root))\n"))
+        #expect(try pasteCD(from: guidance, at: typedFrom) == root.path)
+    }
+
+    /// 文面の固定。`--path` と空白を含む場所で、引用した絶対パスを名指しする。
+    @Test("作った後の案内は、作った場所を引用した絶対パスで名指しする")
+    func theGuidanceNamesTheQuotedPlace() {
+        let root = NewCommand.Options(name: "hint", path: "dir with space")
+            .root(from: URL(fileURLWithPath: "/work", isDirectory: true))
+        #expect(
+            NewCommand.guidance(for: root) == """
+                Created /work/dir with space/hint
+
+                  cd '/work/dir with space/hint'
+                  \(Command.name) run
+                """)
     }
 
     @Test("作られるのは 7 つ — 定義・スケッチ・無視の指定・資材の置き場・案内 2 枚・窓口の登録")

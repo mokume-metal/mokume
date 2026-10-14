@@ -70,14 +70,25 @@ public final class EffectShader {
         box.assign(name, value)
     }
 
-    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
+    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(inBackground:prepare:adopt:)``)。
+    ///
+    /// 窓の経路では裏で組む (``Shader/reload()`` と同じ)。
     func reload() {
-        box.reload { (body: String) throws(RenderFailure) in
-            let library = try gpu.shaders.makeEffectLibrary(named: name, body: body, values: values)
-            let rebuilt = try pipeline.makeState(library: library, label: "mokume.effect.\(name)")
-            // 入れ替えた古い状態は、投入済みのフレームが終わるまで抱える (``Shader/reload()`` と同じ)
-            gpu.holdUntilSubmittedWorkFinishes([state])
-            state = rebuilt
-        }
+        box.reload(
+            inBackground: gpu.shaderRebuildsRunInBackground,
+            prepare: { (body: String) throws(RenderFailure) -> BuildJob<any MTLRenderPipelineState> in
+                let library = try gpu.shaders.effectLibraryJob(named: name, body: body, values: values)
+                let state = pipeline.stateJob(label: "mokume.effect.\(name)")
+                return BuildJob(
+                    now: { () throws(RenderFailure) in try state.makeNow(library: library.runNow()) },
+                    later: { () async throws(RenderFailure) in
+                        try await state.make(library: library.run())
+                    })
+            },
+            adopt: { rebuilt in
+                // 入れ替えた古い状態は、投入済みのフレームが終わるまで抱える (``Shader/reload()`` と同じ)
+                gpu.holdUntilSubmittedWorkFinishes([state])
+                state = rebuilt
+            })
     }
 }

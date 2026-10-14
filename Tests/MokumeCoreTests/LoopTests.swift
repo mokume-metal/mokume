@@ -467,7 +467,7 @@ struct LoopTests {
 
     /// 実時間の時計で `setup()` から止め、`stoppedAt` 秒まで止めてから `route` で描き直しを頼む。
     ///
-    /// 起点は 0 秒で、最初の 1 枚は 0.016 秒に描く。止めている間にも 1 度進めて、描かずに
+    /// 最初の 1 枚を 0 秒に描き、そこが時刻の起点になる。止めている間にも 1 度進めて、描かずに
     /// 過ぎるフレームを挟む (窓では止めている間も駆動源が呼んでくる)。
     private func redrawAfterStop(
         _ sketch: Lines, route: RedrawRoute, stoppedAt: Double
@@ -476,9 +476,8 @@ struct LoopTests {
         sketch.onPress = { $0.redraw() }
         var now: Double = 0
         let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
-        now = 0.016
         try runtime.advance()
-        now = (0.016 + stoppedAt) / 2
+        now = stoppedAt / 2
         try runtime.advance()
         #expect(sketch.drawCalls == 1)
 
@@ -517,8 +516,11 @@ struct LoopTests {
 
     @Test(
         "描き直しの 1 枚の刻みは設定のフレームレートから取り、止めていた時間が 1 フレームより短くても上限より長くても変わらない",
-        arguments: [24, 120], [0.02, 3.0])
+        arguments: [24, 120], [0.004, 3.0])
     func redrawStepFollowsTheTargetFrameRate(frameRate: Int, stoppedAt: Double) throws {
+        // 最初の 1 枚が 0 秒なので、止めていた長さは `stoppedAt` そのもの。0.004 秒はどちらの
+        // フレームレートでも 1 フレーム (120 fps で 0.0083 秒) より短く、3 秒はどちらの上限
+        // (24 fps で 0.42 秒) より長い
         let sketch = Lines()
         sketch.settings.frameRate = frameRate
         try redrawAfterStop(sketch, route: .fromCallback, stoppedAt: stoppedAt)
@@ -534,7 +536,6 @@ struct LoopTests {
         sketch.onPress = { $0.loop() }
         var now: Double = 0
         let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
-        now = 0.016
         try runtime.advance()
 
         now = 5

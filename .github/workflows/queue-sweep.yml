@@ -23,7 +23,7 @@ name: Queue sweep
 #   塞ぎたい停止より遅い
 # - **native の concurrency では書けない。** 同じ PR の旧グループと新グループを同じキーに
 #   するには PR 番号が要るが、式言語には split も正規表現も無く head_ref から抜き出せない。
-#   キーをグループ共通にすると、並行して検証中の他のグループ (max_entries_to_build: 5) まで
+#   キーをグループ共通にすると、並行して検証中の他のグループ (main-protection.json の max_entries_to_build) まで
 #   cancel してしまう
 # - **ci.yml には相乗りさせない。** pull_request の dequeued を足すと ci-check /
 #   test-release まで起動し、すべてのジョブの条件に手を入れることになる
@@ -60,6 +60,11 @@ on:
 
 permissions:
   contents: read
+
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
 
 jobs:
   sweep:

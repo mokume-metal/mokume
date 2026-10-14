@@ -29,9 +29,15 @@ enum Arguments {
         /// 値が欠けていたときの言い方。**打たれた綴り**を受け取る — `-c` と
         /// `--configuration` のどちらで打たれたかは、直す人にとって同じではない。
         let missingValue: (String) -> String
+        /// 値が場所か。**場所なら、空の値を断る** (``emptyPlace(_:)``)。
+        let takesPlace: Bool
 
-        init(_ flags: [String], missingValue: @escaping (String) -> String) {
+        init(
+            _ flags: [String], takesPlace: Bool = false,
+            missingValue: @escaping (String) -> String
+        ) {
             self.flags = flags
+            self.takesPlace = takesPlace
             self.missingValue = missingValue
         }
 
@@ -51,8 +57,9 @@ enum Arguments {
 
     /// 解いた結果。
     ///
-    /// **位置引数は 1 つまで**である。4 つの口はどれも 1 つしか取らないので、それ以上を
-    /// 受ける形は書かない (ADR-0001 原則 4 — 実際に踏まれてから足す)。
+    /// **位置引数は 1 つまで**である。ここを通る口 (窓口 `mcp` も含む・#2321) はどれも
+    /// 1 つしか取らないので、それ以上を受ける形は書かない (ADR-0001 原則 4 — 実際に
+    /// 踏まれてから足す)。
     struct Parsed: Equatable {
         /// 位置引数 (場所・名前)。
         var positional: String?
@@ -62,9 +69,30 @@ enum Arguments {
         var ignored: [String] = []
     }
 
+    /// 空の場所を断る言い方。`flag` は選択肢の綴り (位置引数なら `nil`)。
+    ///
+    /// **空は場所を名指していない。** `URL(fileURLWithPath: "")` は走らせた場所に解けるので、
+    /// 通すと `run "$DIR"` で `DIR` が空だった回が、黙って走らせた場所を使う
+    /// ([#2485](https://github.com/mokume-metal/mokume/issues/2485))。打った値を別のものとして
+    /// 読まない規律 (#680) を、場所を取る口すべてに 1 か所で効かせる。
+    static func emptyPlace(_ flag: String?) -> CommandFailure {
+        guard let flag else {
+            return .usage(
+                "The directory is empty, which names no place. Pass a directory, or leave it out"
+                    + " to use where you ran this (is a variable you passed unset?)")
+        }
+        return .usage(
+            "\(flag) is empty, which names no place. Pass a path after it"
+                + " (is a variable you passed unset?)")
+    }
+
     /// 解く。
+    ///
+    /// - Parameter positionalIsPlace: 位置引数が場所か。**場所なら、空を断る**
+    ///   (``emptyPlace(_:)``)。名前を取る口 (`new`) は名前の規則で断るので立てない。
     static func parse(
-        _ arguments: [String], options: [Option] = [], surplus: Surplus
+        _ arguments: [String], options: [Option] = [], positionalIsPlace: Bool = false,
+        surplus: Surplus
     ) throws(CommandFailure) -> Parsed {
         var parsed = Parsed()
         var index = 0
@@ -73,6 +101,7 @@ enum Arguments {
             if let option = options.first(where: { $0.flags.contains(argument) }) {
                 index += 1
                 guard index < arguments.count else { throw .usage(option.missingValue(argument)) }
+                if option.takesPlace, arguments[index].isEmpty { throw emptyPlace(argument) }
                 parsed.values[option.key] = arguments[index]
             } else if argument.hasPrefix("-") {
                 // **知らない選択肢を黙って位置引数にしない。** `-c` が場所として解釈された
@@ -82,6 +111,7 @@ enum Arguments {
                 case .ignore: parsed.ignored.append(argument)
                 }
             } else if parsed.positional == nil {
+                if positionalIsPlace, argument.isEmpty { throw emptyPlace(nil) }
                 parsed.positional = argument
             } else {
                 switch surplus {

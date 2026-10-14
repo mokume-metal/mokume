@@ -130,6 +130,8 @@ final class FrameRecorder: Outlet {
         case alreadyRecording
         /// 番号の入る場所が無い名前で撮り始めようとした。
         case patternWithoutNumber
+        /// `.mov` に書ける速さ (``FrameRecorder/movieFrameRateLimit``) を越える fps で撮り始めようとした。
+        case movieFrameRateTooHigh
         /// 撮っていないのに止めようとした。
         case notRecording
         /// 出口へ届かなかったフレームがあった。
@@ -246,14 +248,29 @@ final class FrameRecorder: Outlet {
     /// ``FrameSequence``)。どちらでもない名前は断る — 番号の入る場所が無い連番を受けて
     /// しまうと全部が同じ名前になり、最後の 1 枚しか残らない。
     ///
+    /// **`.mov` は、fps が ``movieFrameRateLimit`` を越えるときも断る** ([#2307])。1 フレームぶんを
+    /// 刻みで書き表せず、撮れているつもりで枚が消える (フレーム番号の時計) か最後の 1 枚の長さが
+    /// 崩れる形は、番号の入る場所が無い連番と同じである。
+    ///
     /// - Parameter frame: 頼まれたフレームの番号。**録りの 1 枚目はこの番号の絵になる**
     ///   (``recordingFrom``)。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
     func beginRecord(_ pattern: String, at frame: Int) {
         guard !isRecording else {
             warnOnce(.alreadyRecording, "beginRecord(): already recording. Carrying on with the current one")
             return
         }
         if Self.isMovie(pattern) {
+            guard Self.accepts(pattern, frameRate: frameRate) else {
+                warnOnce(
+                    .movieFrameRateTooHigh,
+                    "beginRecord(\"\(pattern)\"): recording at \(frameRate) frames per second, but a .mov "
+                        + "counts time in 1/\(Self.movieFrameRateLimit) of a second, which cannot hold "
+                        + "a frame that short (frames would be lost). A .mov takes at most "
+                        + "\(Self.movieFrameRateLimit) frames per second. Not starting")
+                return
+            }
             movie = MovieWriter(path: pattern, frameRate: frameRate, from: frame)
             recordingFrom = frame
             forgetWarnings()
@@ -285,6 +302,22 @@ final class FrameRecorder: Outlet {
     /// 広げた日に道具だけが古い規則で断る。
     nonisolated static func accepts(_ pattern: String) -> Bool {
         isMovie(pattern) || FrameSequence(pattern: pattern) != nil
+    }
+
+    /// `.mov` に書ける fps の上限。**時刻の刻み (``MovieFile/timescale``) そのものである** ([#2307])。
+    ///
+    /// 動画の時刻は 1/刻み 秒で数える。刻みより速いと 1 フレームぶん (1/fps 秒) が 1 刻みより短くなり、
+    /// 書き表せない。フレーム番号の時計では隣のフレームが同じ時刻へ丸まって枚が消えるか、書く係が
+    /// 外れて開けない `.mov` が残る。実時間の時計でも、最後の 1 枚の長さ (1/fps 秒) が丸まって崩れる。
+    /// だから時計によらず断る。連番は時刻を書かないので、この上限は掛からない。
+    ///
+    /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
+    nonisolated static let movieFrameRateLimit = Int(MovieFile.timescale)
+
+    /// 行き先の綴りと fps の組を受けるか。**``accepts(_:)`` に、`.mov` の速さの上限
+    /// (``movieFrameRateLimit``) を足したもの**で、規則は ``beginRecord(_:at:)`` と同じ 1 つ。
+    nonisolated static func accepts(_ pattern: String, frameRate: Int) -> Bool {
+        accepts(pattern) && (!isMovie(pattern) || frameRate <= movieFrameRateLimit)
     }
 
     /// 静止画・連番の書き損じを持ち越さずに、仕切り直す。**``SketchRuntime`` が、この係を

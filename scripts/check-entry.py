@@ -11,7 +11,11 @@
    HTML に書いたリンクは誰も検査していなかった
 2. **入口と README で同じことが二重に書かれ、片方だけが古くなる。** 入口の本文の正本は
    `Documentation/site/index.html` だが、入れ方の 1 行だけは README と重なる。重なった
-   1 行が唯一の漏れ口なので、そこだけを機械で突き合わせる (ADR-0001 原則 9)
+   1 行が唯一の漏れ口なので、そこだけを機械で突き合わせる (ADR-0001 原則 9)。
+   **「はじめの 1 本」の例も写しである** — 入口と README は `mokume new` の出力を写して
+   見せるので、雛形 (`Sketch.swift.template`) を埋めた出力と突き合わせる。入口は #555 で
+   置いたときから雛形と違う形 (格納型の `settings`・`import Foundation` なし) を見せていた
+   ([#2256](https://github.com/mokume-metal/mokume/issues/2256))
 
 ## 責務の線
 
@@ -58,6 +62,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import pathlib
 import re
 import sys
@@ -98,6 +103,53 @@ EXTERNAL_STYLE = re.compile(
 # HTML では直後に閉じ札が続き、Markdown ではインラインコードの縁が続くので、
 # 空白だけを区切りにすると両者で違う文字列が取れて必ず食い違う
 BREW_LINE = re.compile(r"brew install [^\s<`]+")
+# `mokume new` の雛形。入口と README の「はじめの 1 本」は、これを下の名前で埋めた出力を写す
+TEMPLATE = pathlib.Path("Sources/MokumeCLI/Templates/Sketch.swift.template")
+# 入口と README が例に使う名前。`mokume new my-sketch` は `MySketch` という型を作る
+# (README の「`Sources/my-sketch/MySketch.swift` を編集します」)
+SKETCH_NAME = "my-sketch"
+SKETCH_TYPE = "MySketch"
+# 入口の例 (`<pre><code>`) と README の例 (```swift)。**`@main` を持つ塊だけを数える** —
+# どちらにも他の塊 (打つコマンド・入れ方) が並ぶ
+HTML_CODE = re.compile(r"<pre><code>(.*?)</code></pre>", re.DOTALL)
+MARKDOWN_SWIFT = re.compile(r"```swift\n(.*?)```", re.DOTALL)
+
+
+def sketch_from(template: pathlib.Path) -> str:
+    """雛形を、入口と README が使う名前で埋めた出力。"""
+    text = template.read_text(encoding="utf-8")
+    return text.replace("{{NAME}}", SKETCH_NAME).replace("{{TYPE}}", SKETCH_TYPE)
+
+
+def example_problems(where: str, blocks: list[str], expected: str) -> list[str]:
+    """「はじめの 1 本」の例が、雛形の出力と同じかを見る (#2256)。
+
+    **写しなので、雛形が変われば追随しない。** 入口は #555 で置いたときから、雛形
+    (#215 から計算型の `settings`) と違う形 (格納型・`import Foundation` なし) を
+    「できるのは」として見せていた。読者は入口を写すので、警告された形を学ぶ。
+    """
+    examples = [block for block in blocks if "@main" in block]
+    if not examples:
+        # 0 件を緑にしない。書式が変わって拾えなくなった状態は、例が消えた状態と同じに見える
+        return [f"{where}に「はじめの 1 本」の例 (`@main` を持つ塊) が見つからない"]
+    problems = []
+    for example in examples:
+        shown = example.strip("\n").splitlines()
+        wanted = expected.strip("\n").splitlines()
+        if shown == wanted:
+            continue
+        # 最初に食い違う行を名指す。全文を並べると、どこを直すかが埋もれる
+        for index in range(max(len(shown), len(wanted))):
+            left = shown[index] if index < len(shown) else "(無い)"
+            right = wanted[index] if index < len(wanted) else "(無い)"
+            if left != right:
+                break
+        problems.append(
+            f"{where}の「はじめの 1 本」の例が、雛形を {SKETCH_NAME} で埋めた出力 "
+            f"(`mokume new {SKETCH_NAME}` が作るもの) と違う — {index + 1} 行目が "
+            f"「{left.strip()}」で、雛形は「{right.strip()}」"
+        )
+    return problems
 
 def brew_line(text: str) -> str | None:
     """入れ方の 1 行。**最初の 1 本だけを見る** — README は他の入れ方も持つが、
@@ -106,7 +158,10 @@ def brew_line(text: str) -> str | None:
     return match.group(0) if match else None
 
 
-def check(source: Source, readme: pathlib.Path, catalog: pathlib.Path) -> list[str]:
+def check(
+    source: Source, readme: pathlib.Path, catalog: pathlib.Path,
+    template: pathlib.Path | None = None,
+) -> list[str]:
     problems: list[str] = []
     # 面が名乗る名前。**導出は site_source の 1 本**で、check-published-reference.py と
     # 同じものを読む (#568)
@@ -153,6 +208,21 @@ def check(source: Source, readme: pathlib.Path, catalog: pathlib.Path) -> list[s
         problems.append(f"README が無い ({readme})")
 
     problems.extend(readme_face_problems(readme, surface))
+
+    if template is not None:
+        if not template.is_file():
+            problems.append(f"雛形が無い ({template})")
+        else:
+            expected = sketch_from(template)
+            problems.extend(
+                example_problems(
+                    "入口", [html.unescape(block) for block in HTML_CODE.findall(page)],
+                    expected))
+            if readme.is_file():
+                problems.extend(
+                    example_problems(
+                        "README", MARKDOWN_SWIFT.findall(readme.read_text(encoding="utf-8")),
+                        expected))
     return problems
 
 
@@ -194,10 +264,17 @@ def main() -> int:
         default=pathlib.Path("Documentation/mokume.docc"),
         help="面が名乗る名前を導くカタログ (既定: Documentation/mokume.docc)",
     )
+    parser.add_argument(
+        "--template",
+        type=pathlib.Path,
+        default=TEMPLATE,
+        help=f"「はじめの 1 本」の例と突き合わせる雛形 (既定: {TEMPLATE})",
+    )
     arguments = parser.parse_args()
 
     try:
-        problems = check(Source(arguments.target), arguments.readme, arguments.catalog)
+        problems = check(
+            Source(arguments.target), arguments.readme, arguments.catalog, arguments.template)
     except Unreachable as unreachable:
         # **「出ていない」ではなく「読めなかった」。** 混ぜると直す先を間違える
         # (置き忘れを直すのか、配信を直すのか)。向きは site_source の冒頭が持つ
@@ -210,7 +287,9 @@ def main() -> int:
             print(f"  {problem}", file=sys.stderr)
         return 1
 
-    print("ok: 入口は面へ繋がっていて、入れ方の 1 行が README と一致している")
+    print(
+        "ok: 入口は面へ繋がっていて、入れ方の 1 行が README と一致し、"
+        "はじめの 1 本が雛形の出力と一致している")
     return 0
 
 

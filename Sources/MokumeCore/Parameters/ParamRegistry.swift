@@ -3,8 +3,8 @@
 
 /// 書き込みをどう扱ったか。
 ///
-/// **黙って何もしない道を作らない。** 知らない名前・型の違い・候補の外は、どれも
-/// 「効かない」と同じ見え方になるので、理由を面へ返せる形で持つ
+/// **黙って何もしない道を作らない。** 知らない名前・型の違い・候補の外・非有限の数は、
+/// どれも「効かない」と同じ見え方になるので、理由を面へ返せる形で持つ
 /// ([ADR-0030] 決定 3)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
@@ -18,6 +18,10 @@ enum ParamOutcome: Equatable {
     case typeMismatch
     /// 許した候補の外。
     case notInChoices
+    /// 有限の数でない (NaN・無限)。宣言の型へ読み替えると `Float` に収まらず無限になる数も
+    /// 含む (`1e300` を `Float` の値へ)。**置かずに、前の値を保つ** ([ADR-0030] 決定 3)。
+    /// 有限の端へ収めない — `clamped` は「宣言した範囲へ収めた」という意味のまま保つ。
+    case notFinite
 }
 
 /// 宣言された値の索引。
@@ -47,6 +51,11 @@ struct ParamRegistry {
     /// 「重複が 2 個ある」と読める
     /// ([#994](https://github.com/mokume-metal/mokume/issues/994) の 13)。
     var knobs: [any DeclaredParam] { boxes.map(\.box) }
+
+    /// その名前の宣言があるか。
+    func declares(_ name: String) -> Bool {
+        boxes.contains { $0.name == name }
+    }
 
     /// 名前を指して書き換える。
     func write(_ value: ParamValue, to name: String) -> ParamOutcome? {

@@ -64,8 +64,12 @@ nonisolated enum TableFile {
 
     /// 表を CSV の文字にする。行の終わりは LF で、最後の行も改行で終える。
     ///
-    /// カンマ・引用符・改行を含むセルだけを引用符で囲む。**1 列の行の空のセルも囲む** —
-    /// 囲まないと中身の無い行になり、読み直したときに読み飛ばされて行が消える。
+    /// カンマ・引用符・改行を含むセルと、頭が U+FEFF のセルだけを引用符で囲む (``quoted(_:)``)。
+    /// **1 列の行の空のセルも囲む** — 囲まないと中身の無い行になり、読み直したときに読み飛ばされて
+    /// 行が消える。
+    ///
+    /// 書いた文字を ``TextFile`` で読み直して ``parse(_:header:path:)`` に掛けると、同じ見出しと
+    /// セルに戻る。
     static func format(titles: [String]?, rows: [[String]]) -> String {
         var text = ""
         func append(_ cells: [String]) {
@@ -81,10 +85,16 @@ nonisolated enum TableFile {
     }
 
     /// 囲みが要るセルだけを引用符で囲む。中の `"` は `""` にする。
+    ///
+    /// **頭が U+FEFF のセルも囲む。** 読む側は文字の先頭の U+FEFF を BOM として落とす
+    /// (``TextFile/text(of:path:)``) ので、書いた文字の頭に来るセル (1 列目の見出しか、1 行目の
+    /// 1 列目) の U+FEFF が消え、U+FEFF だけのセルなら 1 列の表の行ごと消える。囲めば文字の頭は
+    /// `"` になり、囲みの中の U+FEFF は値として残る。どの位置のセルでも囲んで読み直せば同じ値に
+    /// 戻るので、頭に来るかどうかは見ない。
     private static func quoted(_ cell: String) -> String {
-        let needsQuotes = cell.unicodeScalars.contains {
-            $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r"
-        }
+        let needsQuotes =
+            cell.unicodeScalars.first == "\u{FEFF}"
+            || cell.unicodeScalars.contains { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }
         guard needsQuotes else { return cell }
         var escaped = String.UnicodeScalarView()
         for scalar in cell.unicodeScalars {

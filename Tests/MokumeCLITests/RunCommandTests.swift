@@ -27,6 +27,19 @@ struct RunCommandTests {
         return executable
     }
 
+    /// 合図で自分を落とすだけの実行ファイルを置く (`kill -s <NAME> $$`)。`fatalError` の代わり。
+    private func makeCrasher(signal name: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-crash-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nkill -s \(name) $$\n".write(
+            to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return executable
+    }
+
     /// 自分の番号を `pid` へ書いて 30 秒眠るだけの実行ファイルを置く。合図の検査の子。
     ///
     /// **番号を書き終えてから名乗る** (途中を読ませない)。`exec` で番号を保ったまま眠る。
@@ -136,12 +149,496 @@ struct RunCommandTests {
         #expect(result.status == 127)
     }
 
+    // MARK: - 起こせなかった理由 (#2314)
+
+    private func missingPlace() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-no-such-place-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// **起こせなかったことを、道具が無いことと決めつけない。** `Process.run()` は作業
+    /// ディレクトリが無いときも、実行ファイルが無いときと同じ失敗で投げる。`swift` は
+    /// `/usr/bin/env` 越しに起こすので env 自体は在り、どれも道具の不在と読むと
+    /// 「Xcode を入れ直せ」と人を遠ざける (`doctor` の規律 3)。
+    @Test("作業ディレクトリが無くて swift を起こせなければ、道具が無いとは言わない")
+    func aMissingPlaceIsNotAMissingTool() {
+        let missing = missingPlace()
+        let expected = CommandFailure.placeUnusable(
+            tool: "swift", place: missing.path, presence: .missing)
+        #expect(throws: expected) {
+            try RunCommand.swift(["--version"], in: missing, capturing: true, errors: .discard)
+        }
+        #expect(expected.message.contains("\(missing.path): no such directory"))
+        #expect(!expected.message.contains("Install the Xcode"), "道具の入れ直しへ案内している")
+        #expect(expected.message.contains("Check the place you gave"))
+    }
+
+    @Test("作業ディレクトリがファイルなら、ディレクトリでないと言う")
+    func aFileAsThePlaceIsNamed() throws {
+        let executable = try makeExecutable(exiting: 0)
+        #expect(
+            throws: CommandFailure.placeUnusable(
+                tool: "swift", place: executable.path, presence: .notDirectory)
+        ) {
+            try RunCommand.swift(["--version"], in: executable, capturing: true, errors: .discard)
+        }
+    }
+
+    /// **入れない場所を「無い」と言わない** (#2314 の反証)。`Process.run()` は、`chmod 000` の
+    /// 親の下を作業ディレクトリにしても `NSFileNoSuchFileError` で投げる (実測)。在る場所を
+    /// 「no such directory」と言うと、在る場所を探させる。
+    @Test("入れない場所で swift を起こせなければ、無いとは言わずに入れない理由を言う")
+    func anUnreachablePlaceIsNotCalledMissing() throws {
+        let locked = try makeLockedParent()
+        defer { unlock(locked) }
+        let place = locked.appendingPathComponent("child", isDirectory: true)
+        let reason = String(cString: strerror(EACCES))
+        let expected = CommandFailure.placeUnusable(
+            tool: "swift", place: place.path, presence: .unreachable(reason: reason))
+        #expect(throws: expected) {
+            try RunCommand.swift(["--version"], in: place, capturing: true, errors: .discard)
+        }
+        #expect(!expected.message.contains("no such directory"))
+        #expect(expected.message.contains(reason))
+    }
+
+    /// **場所に関わらない理由で、場所を疑わせない** (#2314 の反証)。場所はディレクトリで
+    /// 実行ファイルも在るのに起こせなかった回 (ここでは中身が実行形式でない `ENOEXEC`) は、
+    /// 「渡した場所を確かめよ」と言わない。
+    @Test("場所でも実行ファイルの不在でもない理由なら、OS の事情を言い、場所を確かめよとは言わない")
+    func aNonPlaceReasonDoesNotBlameThePlace() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-noexec-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let garbage = directory.appendingPathComponent("sketch")
+        try Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE]).write(to: garbage)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: garbage.path)
+
+        let expected = CommandFailure.cannotLaunch(
+            tool: "sketch", place: directory.path, reason: String(cString: strerror(ENOEXEC)))
+        #expect(throws: expected) {
+            try RunCommand.launch(garbage, in: directory)
+        }
+        #expect(!expected.message.contains("Check the place you gave"), "場所を疑わせている")
+        #expect(!expected.message.contains("no such directory"))
+    }
+
+    // MARK: - 場所の在り方 (#2314 の反証)
+
+    /// 検索の権利を外した親 (`chmod 000`) を作る。**戻すのは呼び手** (`unlock`)。
+    private func makeLockedParent() throws -> URL {
+        let locked = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-locked-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: locked.appendingPathComponent("child", isDirectory: true),
+            withIntermediateDirectories: true)
+        chmod(locked.path, 0)
+        return locked
+    }
+
+    private func unlock(_ locked: URL) {
+        chmod(locked.path, 0o755)
+        try? FileManager.default.removeItem(at: locked)
+    }
+
+    /// **「無い」は `ENOENT` のときだけ。** 入れない・symlink が巡る・symlink の宛先が無い、は
+    /// 理由を言う。`.directory` になるのは ``WorkDirectory/directoryExists(at:)`` が `true` を
+    /// 返すときだけ (同じ判定であること)。
+    @Test("場所の在り方は、無い・ディレクトリでない・辿り着けないを分け、ディレクトリの判定は WorkDirectory と同じ")
+    func presenceTellsMissingFromUnreachable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-presence-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("file")
+        try "".write(to: file, atomically: true, encoding: .utf8)
+        let dangling = root.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(
+            atPath: dangling.path, withDestinationPath: root.appendingPathComponent("nowhere").path)
+        let loopA = root.appendingPathComponent("loop-a")
+        let loopB = root.appendingPathComponent("loop-b")
+        try FileManager.default.createSymbolicLink(atPath: loopA.path, withDestinationPath: loopB.path)
+        try FileManager.default.createSymbolicLink(atPath: loopB.path, withDestinationPath: loopA.path)
+        let linkToDirectory = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(atPath: linkToDirectory.path, withDestinationPath: root.path)
+        let locked = try makeLockedParent()
+        defer { unlock(locked) }
+        let behindLock = locked.appendingPathComponent("child", isDirectory: true)
+
+        let cases: [(URL, GivenPath.Presence)] = [
+            (root, .directory),
+            (linkToDirectory, .directory),
+            (file, .notDirectory),
+            (root.appendingPathComponent("nope"), .missing),
+            (behindLock, .unreachable(reason: String(cString: strerror(EACCES)))),
+            (loopA, .unreachable(reason: String(cString: strerror(ELOOP)))),
+            (dangling, .unreachable(reason: "a symbolic link to something that is not there")),
+        ]
+        for (place, expected) in cases {
+            let presence = GivenPath.Presence.of(place)
+            #expect(presence == expected, "\(place.lastPathComponent)")
+            #expect(
+                (presence == .directory) == WorkDirectory.directoryExists(at: place),
+                "WorkDirectory と判定が割れた: \(place.lastPathComponent)")
+        }
+    }
+
+    /// 裏側。実行ファイルが本当に無ければ、いままでどおり道具が無いと言う。
+    @Test("実行ファイルそのものが無ければ、いままでどおり道具が無いと言う")
+    func aMissingExecutableIsStillAMissingTool() {
+        let process = Process()
+        process.executableURL = missingPlace().appendingPathComponent("mokume-tool")
+        #expect(throws: CommandFailure.toolchainMissing("mokume-tool")) {
+            try RunCommand.capture(process, capturing: true, errors: .discard)
+        }
+    }
+
+    /// スケッチを起こす口 (`launch`) も同じ読み替えをしていた — 起こせなければどれも
+    /// 「走らせるものが無い (Package.swift の products を見よ)」だった。
+    @Test("スケッチを在らない場所で起こせなければ、走らせるものが無いとは言わない")
+    func aSketchInAMissingPlaceIsNotAMissingExecutable() throws {
+        let executable = try makeExecutable(exiting: 0)
+        let missing = missingPlace()
+        #expect(
+            throws: CommandFailure.placeUnusable(
+                tool: "sketch", place: missing.path, presence: .missing)
+        ) {
+            try RunCommand.launch(executable, in: missing)
+        }
+        // 裏側。走らせるものが無ければ、無いと言う — ただし `Package.swift` を指さない (#2522)。
+        // `launch` に届く実行ファイルは宣言済みで、作り直しの直後に建ったことを確かめたもの
+        // なので、無いのは消えたのであって、宣言のせいではない
+        let absent = missingPlace().appendingPathComponent("sketch")
+        #expect(throws: CommandFailure.executableVanished(path: absent.path)) {
+            try RunCommand.launch(absent, in: executable.deletingLastPathComponent())
+        }
+    }
+
+    /// **起こした後の案内が、宣言を見直せと言わない** (#2522 の完了条件 4)。宣言から走らせる
+    /// ものを決められない回 (`bundle` など) の `noExecutable` は、`Package.swift` を指すのが
+    /// 正しいので変わらない。
+    @Test("起こす前に消えた実行ファイルは、Package.swift ではなく消えたことを名乗る")
+    func aVanishedExecutableDoesNotPointAtPackageSwift() {
+        let gone = CommandFailure.executableVanished(path: "/bin/sketch").message
+        #expect(gone.contains("/bin/sketch"))
+        #expect(gone.contains("gone"))
+        #expect(!gone.contains("Package.swift"))
+        #expect(CommandFailure.noExecutable(path: "/sketch").message.contains("Package.swift"))
+    }
+
+    /// **stat が通ることと、入れることは別である** (#2522)。自身に x の無いディレクトリは
+    /// `Presence.of` で `.directory` と読めるのに、`chdir` が `EACCES` で子を起こせない。
+    /// 起こせなかった理由 (`Permission denied`) は、`doctor` が名乗れるよう値として運ばれる。
+    @Test("探索権の無い作業ディレクトリでは、起こせなかった理由として入れないことを名乗る")
+    func aWorkingDirectoryWithoutSearchPermissionIsNamedByItsReason() throws {
+        let executable = try makeExecutable(exiting: 0)
+        let locked = executable.deletingLastPathComponent()
+            .appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        chmod(locked.path, 0)
+        defer { chmod(locked.path, 0o755) }
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: locked.path, reason: String(cString: strerror(EACCES)))
+        ) {
+            try RunCommand.launch(executable, in: locked)
+        }
+    }
+
+    /// **在るのに実行できないスケッチを「走らせるものが無い」と言わない** ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    /// `Process.run()` は実行ビットの無いファイルにも「無い」と投げるので、誤りの文面に頼ると
+    /// 「Package.swift の products を見よ」と、在るものを探しに行かせる。
+    @Test("実行ビットの無いスケッチは、走らせるものが無いではなく実行できないと名乗る")
+    func aSketchWithoutTheExecuteBitSaysSo() throws {
+        let executable = try makeExecutable(exiting: 0)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: executable.path)
+        let place = executable.deletingLastPathComponent()
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: place.path,
+                reason: "\(executable.path) is not executable (Permission denied)")
+        ) {
+            try RunCommand.launch(executable, in: place)
+        }
+    }
+
+    // MARK: - `..` で始まる場所 (#2314)
+
+    /// **在るのに起こせないものを、どれも「無い」と言わない** (#2521 の反証)。`Process.run()` は
+    /// 実行ビットの無いファイル・探索権の無いディレクトリの下・宛先の無い symlink のどれにも
+    /// 「doesn't exist」を投げ、`fileExists` も後の 2 つで偽を返す。作業ディレクトリの側
+    /// (``GivenPath/Presence``) と同じく、stat し直して読み分ける。
+    @Test("起こせない走らせるものは、実行ビット・中身・ディレクトリ・探索権・宛先の無い symlink を読み分ける")
+    func unrunnableExecutablesAreToldApart() throws {
+        let place = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-unrunnable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)
+        let locked = place.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        defer {
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: place)
+        }
+        func reason(_ executable: URL) -> CommandFailure {
+            do {
+                try RunCommand.launch(executable, in: place)
+                return .noExecutable(path: "(起こせてしまった)")
+            } catch { return error }
+        }
+        func expect(
+            _ executable: URL, _ text: String, sourceLocation: SourceLocation = #_sourceLocation
+        ) {
+            #expect(
+                reason(executable) == .cannotLaunch(
+                    tool: executable.lastPathComponent, place: place.path, reason: text),
+                sourceLocation: sourceLocation)
+        }
+
+        // 1. 実行ビットが無い (0644)
+        let plain = place.appendingPathComponent("plain")
+        try "#!/bin/sh\nexit 0\n".write(to: plain, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: plain.path)
+        expect(plain, "\(plain.path) is not executable (Permission denied)")
+
+        // 2. 実行ビットは在るが中身が実行形式でない (ENOEXEC) — OS の事情を言う
+        let garbage = place.appendingPathComponent("garbage")
+        try Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE]).write(to: garbage)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: garbage.path)
+        expect(garbage, String(cString: strerror(ENOEXEC)))
+
+        // 3. ディレクトリ
+        let directory = place.appendingPathComponent("folder", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        expect(directory, "\(directory.path) is a directory, not a program")
+
+        // 4. 探索権の無いディレクトリの中
+        let inside = locked.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: inside, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: inside.path)
+        chmod(locked.path, 0o600)
+        expect(inside, "\(inside.path) cannot be reached (Permission denied)")
+        chmod(locked.path, 0o755)
+
+        // 5. 宛先の無い symlink
+        let dangling = place.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(
+            at: dangling, withDestinationURL: place.appendingPathComponent("nowhere"))
+        expect(dangling, "\(dangling.path) is a symbolic link to something that is not there")
+
+        // 裏側: 本当に無ければ、いままでどおり「走らせるものが無い」
+        let absent = place.appendingPathComponent("absent")
+        #expect(reason(absent) == .executableVanished(path: absent.path))
+    }
+
+    /// **作り直しは通ったが、成果物に実行ビットが無い** (#2521 の反証)。作り直しは実行できる
+    /// ものだけを「建った」と返すので、`run` はここで「建っていない (置き場を消してやり直せ)」と
+    /// 言っていた。作り直しの戻りから起こす前までを通して見る。
+    @Test("run は、在るのに実行できない成果物を建っていないと言わず、起こせないと名乗る")
+    func runCallsAnUnrunnableProductUnrunnable() throws {
+        let executable = try makeExecutable(exiting: 0)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: executable.path)
+        let bin = executable.deletingLastPathComponent()
+        let sketch = bin.appendingPathComponent("package", isDirectory: true)
+        let built = RunCommand.Rebuilt(
+            status: 0, output: "Build complete!", executable: nil, binPath: bin, product: "sketch")
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: sketch.path,
+                reason: "\(executable.path) is not executable (Permission denied)")
+        ) {
+            try RunCommand.executable(from: built, in: sketch)
+        }
+        // 裏側: 本当に無ければ、いままでどおり「建っていない」
+        try FileManager.default.removeItem(at: executable)
+        #expect(throws: CommandFailure.productNotBuilt(product: "sketch", path: bin.path)) {
+            try RunCommand.executable(from: built, in: sketch)
+        }
+        // 置き場の外を指す名前は、そこに在るものを成果物と読まない
+        let escaping = RunCommand.Rebuilt(
+            status: 0, output: "", executable: nil, binPath: bin, product: "..")
+        #expect(throws: CommandFailure.productNotBuilt(product: "..", path: bin.path)) {
+            try RunCommand.executable(from: escaping, in: sketch)
+        }
+    }
+
+    /// 自分の作業ディレクトリ (シンボリックリンクを解いたもの) を `marker` へ書いて終わる子。
+    private func makeWorkingDirectoryRecorder() throws -> (executable: URL, marker: URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-pwd-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let marker = directory.appendingPathComponent("pwd")
+        let executable = directory.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            /bin/pwd -P > '\(marker.path).tmp' && mv '\(marker.path).tmp' '\(marker.path)'
+            """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return (executable, marker)
+    }
+
+    /// シンボリックリンクを解いた絶対パス (`/var` → `/private/var`)。`/bin/pwd -P` と比べる。
+    private static func realPath(_ url: URL) -> String {
+        guard let resolved = realpath(url.path, nil) else { return url.path }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// `走らせた場所/a/b` から打った、という形の置き場を作る。
+    private func makeTypedFrom() throws -> (root: URL, typedFrom: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-dotdot-\(UUID().uuidString)", isDirectory: true)
+        let typedFrom = root.appendingPathComponent("a/b", isDirectory: true)
+        try FileManager.default.createDirectory(at: typedFrom, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("a/c", isDirectory: true),
+            withIntermediateDirectories: true)
+        return (root, typedFrom)
+    }
+
+    /// **子は、渡した場所で動く。** 相対の `URL` のまま `Process.currentDirectoryURL` へ
+    /// 渡すと、Foundation は先頭の `..` だけを落とす — `..`・`../..` は投げずに走らせた
+    /// 場所で子を動かし、`../c` は `<走らせた場所>/c` を名指しして起動に失敗していた。
+    @Test(
+        "`..` で始まる場所を渡しても、スケッチは意図した場所で動く",
+        arguments: [("..", "a"), ("../..", ""), ("../c", "a/c")])
+    func aPlaceStartingWithDotDotRunsTheSketchThere(place: String, expected: String) throws {
+        let (root, typedFrom) = try makeTypedFrom()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = try makeWorkingDirectoryRecorder()
+        let invocation = Invocation(place: place, currentDirectory: typedFrom)
+
+        try RunCommand.launch(recorder.executable, in: invocation.directory)
+
+        let ran = try String(contentsOf: recorder.marker, encoding: .utf8)
+            .trimmingCharacters(in: .newlines)
+        #expect(ran == Self.realPath(root.appendingPathComponent(expected, isDirectory: true)))
+    }
+
+    /// 見張りがスケッチを起こす口 (`WatchSession.Hooks.live`) も、同じ場所で起こす。
+    @MainActor
+    @Test("`..` で始まる場所を見張りに渡しても、スケッチは意図した場所で動く")
+    func aPlaceStartingWithDotDotRunsTheWatchedSketchThere() throws {
+        let (root, typedFrom) = try makeTypedFrom()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = try makeWorkingDirectoryRecorder()
+        let invocation = Invocation(place: "..", currentDirectory: typedFrom)
+        let hooks = WatchSession.Hooks.live(in: invocation.directory, invocation: invocation)
+
+        let process = try hooks.launch(recorder.executable, invocation.directory, nil, nil)
+        // **待つ側が期限を持つ。** 越えたら子を殺して赤にする
+        defer { if process.isRunning { process.terminate() } }
+        let ran = try #require(Self.waitForText(in: recorder.marker), "期限までに書かれなかった")
+        #expect(ran == Self.realPath(root.appendingPathComponent("a", isDirectory: true)))
+    }
+
+    /// 書かれた中身を読む。**期限までに書かれなければ `nil`** (期限は安全網・#564)。
+    private nonisolated static func waitForText(in marker: URL) -> String? {
+        let deadline = DispatchTime.now() + 30
+        while DispatchTime.now() < deadline {
+            if let text = try? String(contentsOf: marker, encoding: .utf8) {
+                return text.trimmingCharacters(in: .newlines)
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        return nil
+    }
+
+    /// `swift` を起こす口 (`RunCommand.swift`) も、同じ場所で起こす。`dump-package` が
+    /// 読んだ宣言で、どのパッケージの中で動いたかが分かる。
+    @Test("`..` で始まる場所を渡しても、swift は意図したパッケージの中で動く")
+    func aPlaceStartingWithDotDotRunsSwiftThere() throws {
+        let (root, typedFrom) = try makeTypedFrom()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let package = root.appendingPathComponent("a/c", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: package.appendingPathComponent("Sources/probe", isDirectory: true),
+            withIntermediateDirectories: true)
+        try """
+            // swift-tools-version: 6.2
+            import PackageDescription
+            let package = Package(
+                name: "probe",
+                products: [.executable(name: "probe", targets: ["probe"])],
+                targets: [.executableTarget(name: "probe")]
+            )
+            """.write(
+            to: package.appendingPathComponent("Package.swift"), atomically: true,
+            encoding: .utf8)
+        try "".write(
+            to: package.appendingPathComponent("Sources/probe/main.swift"), atomically: true,
+            encoding: .utf8)
+
+        let invocation = Invocation(place: "../c", currentDirectory: typedFrom)
+        let declared = try RunCommand.dumpPackage(in: invocation.directory)
+        #expect(declared?.executableProductName == "probe")
+    }
+
     @Test("0 以外で終わったスケッチは、終了コードを載せて投げる")
     func nonZeroExitsAreThrown() throws {
         let executable = try makeExecutable(exiting: 3)
         #expect(throws: CommandFailure.sketchExited(status: 3)) {
             try RunCommand.launch(executable, in: executable.deletingLastPathComponent())
         }
+    }
+
+    /// 自分から終わったスケッチと、合図で落ちたスケッチを、終了コードの形で取り違えない
+    /// ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。`fatalError` は SIGTRAP で、
+    /// 合図の番号は 5 — `Process.terminationStatus` だけを読むと `exit(5)` と同じ「code 5」になる。
+    /// **この 2 つは番号が同じなので、見分けられることがこの検査の中身である。**
+    @Test("合図で落ちたスケッチは、同じ番号で exit したスケッチと見分けて名乗る")
+    func aSignalledSketchIsNotAnExitWithTheSameNumber() throws {
+        let exited = try makeExecutable(exiting: Int32(SIGTRAP))
+        #expect(throws: CommandFailure.sketchExited(status: SIGTRAP)) {
+            try RunCommand.launch(exited, in: exited.deletingLastPathComponent())
+        }
+        let crashed = try makeCrasher(signal: "TRAP")
+        #expect(throws: CommandFailure.sketchSignalled(signal: SIGTRAP)) {
+            try RunCommand.launch(crashed, in: crashed.deletingLastPathComponent())
+        }
+        // 名乗りと終了コード: 合図は 128 + 番号 (シェルの `$?` と同じ)、exit は番号そのもの
+        let signalled = CommandFailure.sketchSignalled(signal: SIGTRAP)
+        #expect(signalled.exitCode == 128 + SIGTRAP)
+        #expect(signalled.message.contains("signal 5 (SIGTRAP)"))
+        #expect(!signalled.message.contains("exited with code"))
+        #expect(CommandFailure.sketchExited(status: SIGTRAP).exitCode == SIGTRAP)
+        #expect(CommandFailure.sketchExited(status: SIGTRAP).message.contains("exited with code 5"))
+        // 道具が止めた回 (`stopped`) と、スケッチが外から落とされた回は、同じ終了コードでも文面で分かれる
+        #expect(CommandFailure.stopped(signal: SIGTERM).exitCode == 143)
+        #expect(CommandFailure.sketchSignalled(signal: SIGTERM).exitCode == 143)
+        #expect(CommandFailure.sketchSignalled(signal: SIGTERM).message != CommandFailure.stopped(signal: SIGTERM).message)
+    }
+
+    /// 道具立て (`swift`) や `codesign` を起こす口の戻りも、合図で落ちた子を合図の番号のまま
+    /// 返さない — `buildFailed` と記録 (`build-status` の `status`) が、5 で終わった回と
+    /// 合図 5 で落ちた回を取り違える。
+    @Test("起こした子が合図で落ちたら、終了コードの戻りは 128 + 番号で返す")
+    func aSignalledChildComesBackAsShellStatus() throws {
+        func status(of script: String) throws -> Int32 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", script]
+            return try RunCommand.capture(process, capturing: true, errors: .discard).status
+        }
+        #expect(try status(of: "exit 5") == 5)
+        #expect(try status(of: "kill -s TRAP $$") == 128 + SIGTRAP)
+        #expect(try status(of: "kill -s KILL $$") == 128 + SIGKILL)
+        // `env` 越しの 127 の読み分けは、合図の番号 127 を拾わない (127 は合図でなく終了コード)
+        #expect(ChildEnding.exited(127).shellStatus == 127)
+    }
+
+    @Test("子の終わり方は、終了コードと合図を分けて数にする")
+    func childEndingsAreToldApart() {
+        #expect(ChildEnding.exited(3).shellStatus == 3)
+        #expect(ChildEnding.signalled(SIGTRAP).shellStatus == 133)
+        #expect(ChildEnding.exited(3).phrase == "exited with code 3")
+        #expect(ChildEnding.signalled(SIGSEGV).phrase == "ended by signal 11 (SIGSEGV)")
+        // 名前を持たない合図は、番号だけを言う
+        #expect(ChildEnding.signalled(SIGUSR1).phrase == "ended by signal \(SIGUSR1)")
     }
 
     @Test("0 で終わったスケッチは、何も投げない")
@@ -266,7 +763,8 @@ struct RunCommandTests {
             kill(pid, SIGTERM)
         }
 
-        #expect(throws: CommandFailure.sketchExited(status: SIGTERM)) {
+        // 外から SIGTERM で落とされた子は、合図で落ちたと名乗る (道具が止めた回ではない)
+        #expect(throws: CommandFailure.sketchSignalled(signal: SIGTERM)) {
             try RunCommand.launch(executable, in: directory)
         }
         #expect(watcher.done.wait(timeout: .now() + 60) == .success, "見る糸が戻らない")
@@ -415,6 +913,45 @@ struct RunCommandTests {
         #expect(carried[StartupReads.closeConfirmation.key] == "mokume run")
     }
 
+    /// **区画の基準は、道具と子で同じ場所を指す** (#2323 の反証)。`MOKUME_WORK_DIR` が相対
+    /// パスだと、道具は自分の作業ディレクトリ (走らせた場所) から解き、子は作業ディレクトリを
+    /// スケッチに替えて起こされるので環境の相対値をスケッチから解く — `MOKUME_WORK_DIR=wd
+    /// mokume watch ../probe` で、道具は `<走らせた場所>/wd` を、子は `<probe>/wd` を見て、
+    /// 観測も入力も黙って噛み合わなくなる。子へは道具が解いた絶対パスを渡す。
+    @Test("相対の MOKUME_WORK_DIR は、道具が解いた絶対パスで子へ渡る")
+    func aRelativeWorkDirectoryReachesTheChildResolved() throws {
+        let key = StartupReads.workDirectory.key
+        let toolSide = try #require(WorkDirectory.given(environment: [key: "wd"]))
+
+        let environment = RunCommand.childEnvironment([key: "wd"])
+        #expect(environment[key] == toolSide.path)
+        #expect(environment[key]?.hasPrefix("/") == true, "相対のまま子へ渡している")
+        // 与えられていなければ、置かない (子は自分の既定に任せる)
+        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(RunCommand.childEnvironment([key: ""])[key] == "", "空は与えられていない扱いのまま運ぶ")
+
+        // 子を、道具とは別の作業ディレクトリ (スケッチ) で起こし、受け取った値を
+        // その場所から解く — 子が見る区画の基準である
+        let sketch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-workdir-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sketch) }
+        let marker = sketch.appendingPathComponent("given")
+        let child = sketch.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            printf '%s' "$\(key)" > '\(marker.path)'
+            """.write(to: child, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: child.path)
+
+        try RunCommand.launch(child, in: sketch, environment: environment)
+
+        let received = try String(contentsOf: marker, encoding: .utf8)
+        let childSide = URL(fileURLWithPath: received, isDirectory: true, relativeTo: sketch)
+            .standardizedFileURL
+        #expect(childSide.path == toolSide.standardizedFileURL.path, "子が別の区画を見る")
+    }
+
     // MARK: - 出来上がりの置き場 (#1067)
 
     /// **置き場を聞くのに `swift` を 1 本起こす。** 見張りは宣言が変わるまでそれを持ち回る
@@ -459,6 +996,349 @@ struct RunCommandTests {
             "聞いた先が別のパッケージの下になっている")
         #expect(rebuilt.binPath.lastPathComponent != "given-bin")
         #expect(rebuilt.binPath.path.contains(".build"), "道具立てが答える置き場の形をしていない")
+    }
+
+    // MARK: - 作り直しが先に消すもの (#2502)
+
+    /// 置き場 (`bin`) とその周りの、消えてはならないものを並べた木。
+    ///
+    /// ```
+    /// <root>/
+    ///   package/            Package.swift の無い場所 (作り直しは即座に失敗する)
+    ///   layout/
+    ///     marker.txt        bin の親にある印
+    ///     victim/keep.txt   bin の隣
+    ///     bin/
+    ///       other.txt       bin の中の別のファイル
+    ///       victim/keep.txt bin の中の別のディレクトリ (`sub/../victim` の行き先)
+    ///       sub/
+    /// ```
+    private struct Layout {
+        let root: URL
+        let package: URL
+        let bin: URL
+        /// 消えてはならない印のファイル。
+        let kept: [URL]
+
+        init() throws {
+            root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-rebuild-guard-\(UUID().uuidString)", isDirectory: true)
+            let layout = root.appendingPathComponent("layout", isDirectory: true)
+            package = root.appendingPathComponent("package", isDirectory: true)
+            bin = layout.appendingPathComponent("bin", isDirectory: true)
+            let manager = FileManager.default
+            for directory in [
+                package, bin.appendingPathComponent("victim"), bin.appendingPathComponent("sub"),
+                layout.appendingPathComponent("victim"),
+            ] {
+                try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            kept = [
+                layout.appendingPathComponent("marker.txt"),
+                layout.appendingPathComponent("victim/keep.txt"),
+                bin.appendingPathComponent("other.txt"),
+                bin.appendingPathComponent("victim/keep.txt"),
+            ]
+            for file in kept { try "keep".write(to: file, atomically: true, encoding: .utf8) }
+        }
+
+        func remove() { try? FileManager.default.removeItem(at: root) }
+
+        @discardableResult
+        func rebuild(product: String) throws -> RunCommand.Rebuilt {
+            try RunCommand.rebuild(
+                in: package, context: testContext(product: product), capturing: true, binPath: bin)
+        }
+    }
+
+    /// **作り直しが先に消すのは、置き場の直下にある自分の前の産物 (`<product>` と
+    /// `<product>.dSYM`) だけ**である。product の名前は `Package.swift` から来るが、
+    /// 名前から作った場所を検めずに渡すと、`..` を含む名前は置き場の外を指す
+    /// ([#2502](https://github.com/mokume-metal/mokume/issues/2502))。SwiftPM がそういう名前を
+    /// 断るかには頼らない。
+    @Test(
+        "product の名前が置き場の外・置き場そのものを指す形でも、置き場の外と中の別のものは消えない",
+        arguments: ["../victim", "..", ".", "sub/../victim", "../bin", "victim/..", "sub/.."])
+    func rebuildNeverRemovesOutsideItsOwnProducts(product: String) throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+
+        try layout.rebuild(product: product)
+
+        for file in layout.kept {
+            #expect(
+                FileManager.default.fileExists(atPath: file.path),
+                "product \(product) で、消えてはならないものが消えた: \(file.path)")
+        }
+        #expect(FileManager.default.fileExists(atPath: layout.bin.path), "置き場そのものが消えた")
+    }
+
+    /// 陽性側。**いつもの名前は従来どおり先に消える** — 前の版が残ると「いま建ったか」を
+    /// 言えない (`rebuild` の消す理由)。守りが広すぎて消さなくなっていないことを見る。
+    @Test("いつもの名前なら、置き場の直下の実行ファイルと dSYM は先に消える")
+    func rebuildStillRemovesItsOwnPreviousProducts() throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+        let executable = layout.bin.appendingPathComponent("Grain")
+        let symbols = layout.bin.appendingPathComponent("Grain.dSYM/Contents", isDirectory: true)
+        try "old".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: symbols, withIntermediateDirectories: true)
+
+        try layout.rebuild(product: "Grain")
+
+        #expect(!FileManager.default.fileExists(atPath: executable.path), "前の実行ファイルが残った")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: layout.bin.appendingPathComponent("Grain.dSYM").path),
+            "前の dSYM が残った")
+        for file in layout.kept {
+            #expect(FileManager.default.fileExists(atPath: file.path), "別のものが消えた: \(file.path)")
+        }
+    }
+
+    /// **消さなくなった分、`..` などが「建った実行ファイル」として返ってはならない** (#2502 の反証)。
+    /// `isExecutableFile` はディレクトリにも真を返すので、`bin/..` (= `bin` の親) や
+    /// `bin/victim` (ディレクトリ) を、実在する実行ファイルとして名乗っていた。
+    @Test(
+        "product の名前が置き場の直下を指さない・ディレクトリを指すなら、建った実行ファイルとは言わない",
+        arguments: ["../victim", "..", ".", "sub/../victim", "../bin", "victim/..", "sub/..", "victim"])
+    func rebuildNeverReportsADirectoryAsBuilt(product: String) throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+
+        let rebuilt = try layout.rebuild(product: product)
+
+        #expect(rebuilt.executable == nil, "product \(product) で、建ったと言っている: \(String(describing: rebuilt.executable))")
+    }
+
+    /// 「建った」と見るのは、置き場の直下にある通常のファイルで実行できるものだけ。
+    @Test("建った実行ファイルは、直下の実行できる通常のファイルだけ")
+    func onlyARegularExecutableFileInTheBinCountsAsBuilt() throws {
+        let layout = try Layout()
+        defer { layout.remove() }
+        let manager = FileManager.default
+        let tool = layout.bin.appendingPathComponent("Grain")
+        try "binary".write(to: tool, atomically: true, encoding: .utf8)
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        let plain = layout.bin.appendingPathComponent("Plain")
+        try "text".write(to: plain, atomically: true, encoding: .utf8)
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: plain.path)
+
+        #expect(RunCommand.builtExecutable(named: "Grain", in: layout.bin) == tool)
+        #expect(RunCommand.builtExecutable(named: "Plain", in: layout.bin) == nil, "実行できないものを建ったと言った")
+        #expect(RunCommand.builtExecutable(named: "victim", in: layout.bin) == nil, "ディレクトリを建ったと言った")
+        #expect(RunCommand.builtExecutable(named: "Absent", in: layout.bin) == nil)
+    }
+
+    /// **守りは、ファイルの在る・無しで結果を変えない** (#2502 の反証)。`standardizedFileURL` は
+    /// 在るパスの先頭 `/private` を外し、在らないパスはそのまま返すので、`/tmp`・`/var` 配下の置き場で
+    /// 行き先の無い symlink (`bin/<product>` が dangling) だけが、従来は消せたのに守りで空になった。
+    @Test("/tmp 配下でも、行き先の無い symlink は前の産物として消える")
+    func aDanglingLinkUnderTmpIsStillRemoved() throws {
+        // `/tmp` は `/private/tmp` への symlink。`temporaryDirectory` (`/var/folders/…`) も同じ形だが、
+        // 症状の出る綴りを名指しする
+        let root = URL(fileURLWithPath: "/private/tmp/mokume-dangling-\(UUID().uuidString)", isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let link = bin.appendingPathComponent("Dang")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path, withDestinationPath: "/nonexistent-\(UUID().uuidString)")
+
+        #expect(RunCommand.previousArtifacts(of: "Dang", in: bin).first?.lastPathComponent == "Dang")
+
+        let package = root.appendingPathComponent("package", isDirectory: true)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        _ = try RunCommand.rebuild(
+            in: package, context: testContext(product: "Dang"), capturing: true, binPath: bin)
+        #expect(
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil,
+            "行き先の無い symlink が残った")
+    }
+
+    /// 置き場の綴りによらない: `..` を含む・symlink を通る・在る/無い。
+    @Test("置き場が .. を含む綴り・symlink でも、直下の産物は前の産物として返る")
+    func theBinSpellingDoesNotChangeTheAnswer() throws {
+        let root = URL(fileURLWithPath: "/tmp/mokume-spell-\(UUID().uuidString)", isDirectory: true)
+        let real = root.appendingPathComponent("real", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: real.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("linked")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path, withDestinationPath: real.appendingPathComponent("bin").path)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let spellings = [
+            real.appendingPathComponent("bin"),
+            URL(fileURLWithPath: root.path + "/sub/../real/bin", isDirectory: true),
+            link,
+            URL(fileURLWithPath: root.path + "/absent/bin", isDirectory: true),  // 在らない
+            URL(fileURLWithPath: "/private" + root.path + "/real/bin", isDirectory: true),
+        ]
+        for bin in spellings {
+            let found = RunCommand.previousArtifacts(of: "Grain", in: bin)
+            #expect(found.map(\.lastPathComponent) == ["Grain", "Grain.dSYM"], "\(bin.path)")
+            #expect(RunCommand.previousArtifacts(of: "../victim", in: bin).isEmpty, "\(bin.path)")
+            // `..` 自身は返らない (`...dSYM` は直下の通常の名前なので返ってよい)
+            #expect(
+                RunCommand.previousArtifacts(of: "..", in: bin).map(\.lastPathComponent)
+                    == ["...dSYM"], "\(bin.path)")
+        }
+    }
+
+    // MARK: - 置き場の答えの読み方 (#2316)
+
+    /// **終了コードを見る。** 空の出力だけを見ていた頃は、道具立てが断った回
+    /// (`--show-bin-path -c Release` が usage を出して非 0 で終わる) を「Package.swift に
+    /// 実行ファイルが無い」と名乗っていた ([#2316](https://github.com/mokume-metal/mokume/issues/2316))。
+    /// 原因が道具立てなのに宣言を疑わせる形は、`env` の 127 で塞いだ #1157 と同類である。
+    ///
+    /// **答えは偽の子から取る。** `binPath(in:context:)` は `/usr/bin/env swift` を書き固めて
+    /// いるので、管の配線を持つ `capture` に任意の子を渡し、その答えを同じ読み手に通す (#731)。
+    @Test("置き場を聞かれた道具立てが 0 以外で終わったら、宣言ではなく道具立ての失敗として名乗る")
+    func aRefusedBinPathIsTheToolchainsFailure() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "echo 'error: usage' >&2; exit 64"]
+        let answer = try RunCommand.capture(process, capturing: true, errors: .discard)
+        let asked = ["build", "--show-bin-path", "-c", "Release"]
+
+        let thrown = #expect(throws: CommandFailure.self) {
+            try RunCommand.binPath(from: answer, asking: asked)
+        }
+        #expect(
+            thrown == .toolchainFailed(command: "swift build --show-bin-path -c Release", status: 64))
+        let message = try #require(thrown).message
+        #expect(!message.contains("Package.swift"), "道具立ての失敗なのに宣言を疑わせている: \(message)")
+        #expect(message.contains("swift build --show-bin-path -c Release"), "何を打ったかを名乗っていない")
+        #expect(message.contains("64"), "終了コードを名乗っていない")
+        // **見張りはこの文面を記録に載せ、窓口の読み手には端末の「上」が無い** (反証の指摘)。
+        // 理由が流れた先と、それをもう一度読む手を言う
+        #expect(!message.contains("above"), "記録の読み手に無い「上」を指している: \(message)")
+        #expect(message.contains("standard error"), "理由の行き先を名乗っていない: \(message)")
+    }
+
+    /// 読み方の境目。**0 以外なら、道が印字されていても読まない** — 終了コードを見ずに
+    /// 出力の有無だけで決めると、途中まで書いて断った回の道を採る。0 でも空なら答えていない。
+    @Test("置き場は 0 で終わって道を答えたときだけ読み、それ以外は道具立ての失敗にする")
+    func onlyAnAnsweredBinPathIsRead() throws {
+        let asked = ["build", "--show-bin-path"]
+        #expect(
+            try RunCommand.binPath(
+                from: (0, "/sketch/.build/arm64-apple-macosx/debug\n"), asking: asked)
+                == URL(fileURLWithPath: "/sketch/.build/arm64-apple-macosx/debug", isDirectory: true))
+        #expect(throws: CommandFailure.toolchainFailed(command: "swift build --show-bin-path", status: 1)) {
+            try RunCommand.binPath(from: (1, "/sketch/.build/debug\n"), asking: asked)
+        }
+        #expect(throws: CommandFailure.toolchainFailed(command: "swift build --show-bin-path", status: 0)) {
+            try RunCommand.binPath(from: (0, " \n"), asking: asked)
+        }
+    }
+
+    /// **宣言を読めなかった理由を、宣言の不備と取り違えない** (#2483)。`dump-package` が 0 以外で
+    /// 終わると、出力は JSON でないので `nil` に畳まれ、`bundle` はそれを「実行ファイルを宣言
+    /// していない」(`noExecutable`) と名乗っていた。0 で終わって宣言に実行ファイルが無い回との
+    /// 違いは、終了コードにしか無い。
+    @Test("宣言は、0 以外で終わった回を道具立ての失敗として、0 で読めない回を読めないものとして分ける")
+    func aDeclarationReadIsToldApartByHowTheToolchainAnswered() throws {
+        let dump = #"{"name": "probe", "products": [{"name": "probe", "type": {"executable": null}}]}"#
+        let declared = RunCommand.declaration(from: (0, dump))
+        #expect(declared.package?.executableProductName == "probe")
+        #expect(declared.failure == nil)
+
+        // 0 以外 — 出力に JSON が混じっていても読まない。理由は道具立てが標準エラーで名乗っている
+        let refused = RunCommand.declaration(from: (1, dump))
+        #expect(refused == .unanswered(status: 1))
+        #expect(refused.package == nil)
+        #expect(
+            refused.failure
+                == .toolchainFailed(command: "swift package dump-package", status: 1))
+        let message = try #require(refused.failure).message
+        #expect(!message.contains("Package.swift"), "道具立ての失敗なのに宣言を疑わせている: \(message)")
+
+        // 0 で終わったが読めない — 宣言の不備でも、道具立ての「終了コード 0」の失敗でもない
+        let unreadable = RunCommand.declaration(from: (0, "not json"))
+        #expect(unreadable == .unreadable)
+        #expect(unreadable.package == nil)
+        #expect(
+            unreadable.failure == .declarationUnreadable(command: "swift package dump-package"))
+        #expect(!(try #require(unreadable.failure)).message.contains("Package.swift"))
+
+        // 0 で終わって宣言に実行ファイルが無い — 従来どおり、読めて、product が無いだけ
+        let library = RunCommand.declaration(
+            from: (0, #"{"name": "lib", "products": [{"name": "lib", "type": {"library": ["automatic"]}}]}"#))
+        #expect(library.package != nil)
+        #expect(library.package?.executableProductName == nil)
+    }
+
+    /// **作り直しの後に宣言を読み直す口は、起こせなかった失敗を `nil` に化かさない** (#2575)。
+    /// 化かすと、人には「走らせるものが無い (Package.swift を見よ)」と届く。道具立てが
+    /// 答えなかった回 (0 以外) は従来どおり `nil` で、読めない宣言のまま進む。
+    @Test("作り直しの後の宣言の読み直しは、起こせなかった失敗を product なしに化かさない")
+    func theProductReadAfterTheBuildDoesNotSwallowAFailure() throws {
+        let missing = URL(
+            fileURLWithPath: "/nonexistent-\(UUID().uuidString)", isDirectory: true)
+        let unknown = BuildContext(configuration: nil, place: .inPackage(.unreadableManifest), product: nil)
+        #expect(
+            throws: CommandFailure.placeUnusable(
+                tool: "swift", place: missing.path, presence: .missing)
+        ) {
+            try RunCommand.productAfterBuild(context: unknown, in: missing)
+        }
+        // 名前が分かっていれば、読み直さない (起こさないので、場所が無くても投げない)
+        let known = BuildContext(
+            configuration: nil, place: .inPackage(.unreadableManifest), product: "probe")
+        let kept = try RunCommand.productAfterBuild(context: known, in: missing)
+        #expect(kept.product == "probe")
+        #expect(kept.failure == nil)
+    }
+
+    /// **`product == nil` が 3 つを混ぜない** (#2575)。宣言に実行ファイルが無い・道具立てが答えなかった・
+    /// 答えが読めなかったは、人へ見せるときの名乗りが違う。作り直しの戻りは、読み直して分かった
+    /// 理由を運び、`run` / `render` の `executable(from:)` がそれを投げる (「Package.swift を見よ」と
+    /// 言わない)。見張りの側の名乗りは `WatchSessionTests.anUnansweredDeclarationIsNotAMissingProduct`。
+    @Test("作り直しの後に宣言を読めなかった回は、読めなかった理由を運び、実行ファイルが無いとは言わない")
+    func aDeclarationUnreadAfterTheBuildKeepsItsReason() throws {
+        let place = URL(fileURLWithPath: "/sketch", isDirectory: true)
+        let unknown = BuildContext(
+            configuration: nil, place: .inPackage(.unreadableManifest), product: nil)
+        func read(_ answer: RunCommand.Declaration) throws -> (product: String?, failure: CommandFailure?) {
+            try RunCommand.productAfterBuild(
+                context: unknown, in: place,
+                declaring: { _, _ throws(CommandFailure) in answer })
+        }
+
+        let refused = try read(.unanswered(status: 1))
+        #expect(refused.product == nil)
+        #expect(refused.failure == .toolchainFailed(command: "swift package dump-package", status: 1))
+        let garbled = try read(.unreadable)
+        #expect(garbled.product == nil)
+        #expect(garbled.failure == .declarationUnreadable(command: "swift package dump-package"))
+        // 宣言に実行ファイルが無い (読めている) — 理由は無い。`noExecutable` に届く
+        let library = try #require(
+            SwiftPM.package(
+                inDumpOf: #"{"name": "lib", "products": [{"name": "lib", "type": {"library": ["automatic"]}}]}"#))
+        let declared = try read(.declared(library))
+        #expect(declared.product == nil)
+        #expect(declared.failure == nil)
+
+        // 人へ見せる口: 理由があればそれを投げ、無ければ従来の `noExecutable`
+        func rebuilt(_ failure: CommandFailure?) -> RunCommand.Rebuilt {
+            RunCommand.Rebuilt(
+                status: 0, output: "", executable: nil, binPath: place, product: nil,
+                declarationFailure: failure)
+        }
+        #expect(throws: try #require(refused.failure)) {
+            try RunCommand.executable(from: rebuilt(refused.failure), in: place)
+        }
+        #expect(throws: try #require(garbled.failure)) {
+            try RunCommand.executable(from: rebuilt(garbled.failure), in: place)
+        }
+        #expect(throws: CommandFailure.noExecutable(path: place.path)) {
+            try RunCommand.executable(from: rebuilt(nil), in: place)
+        }
     }
 
     /// 宣言だけを置いたディレクトリ。**中身は持たない** — 置き場を答えられれば足りる。
@@ -539,7 +1419,8 @@ struct RunCommandTests {
         let child = try #require(running.stop(), "走っている子を掴んでいない")
         child.interrupt()
         #expect(outcome.done.wait(timeout: .now() + 30) == .success, "止めた子を待つ糸が戻らない")
-        #expect(outcome.status == SIGINT, "取り出した子が、止めた合図で終わっていない")
+        // 合図で落ちた子の終了コードは `128 + 番号` (シェルの `$?` と同じ・#2315)
+        #expect(outcome.status == 128 + SIGINT, "取り出した子が、止めた合図で終わっていない")
         #expect(running.stop() == nil, "終わった子を掴んだままでいる")
     }
 }

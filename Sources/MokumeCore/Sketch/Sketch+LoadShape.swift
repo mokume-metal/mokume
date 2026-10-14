@@ -34,7 +34,11 @@ extension Sketch {
     ///
     /// - **位置**: ``shape(_:_:_:)`` に渡した位置が、SVG の原点 (`viewBox` の左上) になる
     /// - **大きさ**: SVG の 1 単位 (`px`) が 1 画素。`width` / `height` と `viewBox` が
-    ///   書いてあれば、その大きさへ写した形になる。変えるには ``scale(_:_:)`` か
+    ///   書いてあれば、その大きさへ写した形になる (根の `width` / `height` は属性でも CSS の
+    ///   `style` 属性・`<style>` でも書け、重なれば CSS が勝つ。`auto` は書いていないのと同じで、
+    ///   読めない値は書いていないものとして読み、捨てたものとして知らせる)。片方だけなら、もう片方は `viewBox` の
+    ///   縦横比から決まる (片方を長さで書いた SVG は、ブラウザで開いたときと同じ大きさになる。
+    ///   根の割合 `50%` は `viewBox` の大きさに対して読む)。変えるには ``scale(_:_:)`` か
     ///   ``Placement/scale``。**拡大しても滑らかに出る** — 矩形・円・楕円は距離関数で描き、
     ///   曲線は 20 倍に拡大しても折れ目が見えない細かさで刻む
     /// - **色**: SVG に書いた塗りと線の色が形に焼き付く (``createShape(_:)`` と同じ)。
@@ -209,8 +213,10 @@ extension Sketch {
     /// - 塗りと線: 色 (`#rgb` / `#rrggbb` と不透明度つきの形・`rgb()` / `rgba()`・名前の色・
     ///   `currentColor`)・`fill-opacity` / `stroke-opacity` / `opacity`・`stroke-width`・
     ///   `stroke-linecap`・`stroke-linejoin`・`fill-rule`
-    /// - 書き方: 属性・`style` 属性・`<style>` の規則 (クラス 1 つか要素名 1 つのセレクタ。
-    ///   Illustrator の書き出しの既定がこの形)
+    /// - 書き方: 属性・`style` 属性・`<style>` の規則 (`*`・要素名 1 つ・クラス 1 つのセレクタ。
+    ///   Illustrator の書き出しの既定がこの形)。優先の順は CSS のとおりで、属性 < `*` の規則 <
+    ///   要素名の規則 < クラスの規則 < `style` 属性。`!important` を付けた宣言はそれらすべてより上で、
+    ///   その中でも同じ順
     ///
     /// ## 描けないものは捨てて、知らせる
     ///
@@ -236,9 +242,11 @@ extension Sketch {
     /// - ファイルが見つからない: ``DataFailure/notFound(path:searched:)`` (探した場所が載る)
     /// - 見つかったが開けない (ディレクトリだった・読む権利が無い):
     ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)
-    /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``
+    /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``。UTF-8 として読めたファイルは、
+    ///   XML 宣言の `encoding` が何を名乗っていても UTF-8 として読む (値が名前の形のとき。
+    ///   `encoding=""` など名前の形でない宣言は `malformed`)
     /// - XML として壊れている・根が `<svg>` でない: ``DataFailure/malformed(path:line:reason:)``
-    ///   (壊れていた行が載る)
+    ///   (壊れていた行が載る。行の終わりは LF・CRLF・CR のどれでもよく、捨てたものに添える行も同じ数え方)
     ///
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。URL からは読まない。
     ///

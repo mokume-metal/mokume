@@ -42,9 +42,9 @@ struct NumberSurfaceTests {
     @Test("ラジアンを度に直すと、手本と同じ値になる")
     func radiansBecomeDegrees() {
         #expect(degrees(0) == 0)
-        #expect(isNear(degrees(.pi / 2), 90))
-        #expect(isNear(degrees(.pi), 180))
-        #expect(isNear(degrees(-.pi), -180))
+        #expect(isNear(degrees(Float.pi / 2), 90))
+        #expect(isNear(degrees(Float.pi), 180))
+        #expect(isNear(degrees(-Float.pi), -180))
     }
 
     @Test("直して戻すと元の値に返る")
@@ -202,14 +202,14 @@ struct NumberSurfaceTests {
 
     @Test("数でない値・無限が混じっても、数でない値は返らない")
     func nonFiniteInputsNeverEscape() {
-        #expect(map(.nan, 0, 1, 100, 200) == 100)
-        #expect(map(0.5, .nan, 1, 100, 200) == 100)
+        #expect(map(Float.nan, 0, 1, 100, 200) == 100)
+        #expect(map(0.5, Float.nan, 1, 100, 200) == 100)
         // 上端が無限なら幅も無限。下端が無限だと割り算が NaN になる — 両側を見る
-        #expect(map(0.5, 0, .infinity, 100, 200) == 100)
-        #expect(map(0.5, -.infinity, 1, 100, 200) == 100)
-        #expect(map(0.5, 0, 1, 100, .nan) == 100)
+        #expect(map(0.5, 0, Float.infinity, 100, 200) == 100)
+        #expect(map(0.5, -Float.infinity, 1, 100, 200) == 100)
+        #expect(map(0.5, 0, 1, 100, Float.nan) == 100)
         // 下端そのものが数でないときは 0 へ倒す — 返す先が無いため
-        #expect(map(0.5, 0, 1, .nan, 200) == 0)
+        #expect(map(0.5, 0, 1, Float.nan, 200) == 0)
     }
 
     // MARK: - 間を取る
@@ -284,7 +284,7 @@ struct NumberSurfaceTests {
     @Test("端の差が溢れても、真ん中は 0")
     func anOverflowingSpanHasItsMiddleAtZero() {
         #expect(lerp(-3e38, 3e38, 0.5) == 0)
-        #expect(lerp(-.greatestFiniteMagnitude, .greatestFiniteMagnitude, 0.5) == 0)
+        #expect(lerp(-Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude, 0.5) == 0)
     }
 
     /// ここから 2 つは、いまの式 (`start + (stop - start) * amount`) が満たしていて、端を
@@ -329,11 +329,11 @@ struct NumberSurfaceTests {
 
     @Test("間を取る口へ数でない値・無限が混じっても、数でない値は返らない")
     func nonFiniteInterpolationInputsNeverEscape() {
-        #expect(lerp(.nan, 10, 0.5) == 0)  // 始まりが数でないので返す先が無い — 0 へ倒す
-        #expect(lerp(3, .nan, 0.5) == 3)
-        #expect(lerp(3, 10, .nan) == 3)
-        #expect(lerp(3, .infinity, 0.5) == 3)
-        #expect(lerp(3, 10, .infinity) == 3)
+        #expect(lerp(Float.nan, 10, 0.5) == 0)  // 始まりが数でないので返す先が無い — 0 へ倒す
+        #expect(lerp(3, Float.nan, 0.5) == 3)
+        #expect(lerp(3, 10, Float.nan) == 3)
+        #expect(lerp(3, Float.infinity, 0.5) == 3)
+        #expect(lerp(3, 10, Float.infinity) == 3)
     }
 
     // MARK: - 締める
@@ -363,13 +363,13 @@ struct NumberSurfaceTests {
 
     @Test("締める口へ数でない値・無限が混じっても、数でない値は返らない")
     func nonFiniteConstraintInputsNeverEscape() {
-        #expect(constrain(.nan, 0, 10) == 0)
-        #expect(constrain(5, .nan, 10) == 10)  // 有限なほうの端へ倒す
-        #expect(constrain(5, 0, .nan) == 0)
-        #expect(constrain(5, 0, .infinity) == 0)
-        #expect(constrain(5, .nan, .nan) == 0)  // 返す先が無い
+        #expect(constrain(Float.nan, 0, 10) == 0)
+        #expect(constrain(5, Float.nan, 10) == 10)  // 有限なほうの端へ倒す
+        #expect(constrain(5, 0, Float.nan) == 0)
+        #expect(constrain(5, 0, Float.infinity) == 0)
+        #expect(constrain(5, Float.nan, Float.nan) == 0)  // 返す先が無い
         // 上下が逆でも、倒す先は下端のまま
-        #expect(constrain(.nan, 10, 0) == 0)
+        #expect(constrain(Float.nan, 10, 0) == 0)
     }
 
     // MARK: - 窓を 0…1 へ写す
@@ -404,11 +404,11 @@ struct NumberSurfaceTests {
         // 手本は ±∞ / NaN を返す。map が写した先の下端を返すのと揃える
         #expect(norm(5, 3, 3) == 0)
         #expect(norm(3, 3, 3) == 0)
-        #expect(norm(.nan, 0, 80) == 0)
-        #expect(norm(20, .nan, 80) == 0)
-        #expect(norm(20, 0, .infinity) == 0)
-        #expect(norm(20, -.infinity, 80) == 0)
-        #expect(norm(.infinity, 0, 80) == 0)
+        #expect(norm(Float.nan, 0, 80) == 0)
+        #expect(norm(20, Float.nan, 80) == 0)
+        #expect(norm(20, 0, Float.infinity) == 0)
+        #expect(norm(20, -Float.infinity, 80) == 0)
+        #expect(norm(Float.infinity, 0, 80) == 0)
     }
 
     // MARK: - 窓・締め・曲線を 1 本で
@@ -452,13 +452,13 @@ struct NumberSurfaceTests {
 
     @Test("数でない値・無限が混じったら 0 を返す")
     func smoothstepFallsToZero() {
-        #expect(smoothstep(0, 1, .nan) == 0)
-        #expect(smoothstep(.nan, 1, 0.5) == 0)
-        #expect(smoothstep(0, .nan, 0.5) == 0)
+        #expect(smoothstep(0, 1, Float.nan) == 0)
+        #expect(smoothstep(Float.nan, 1, 0.5) == 0)
+        #expect(smoothstep(0, Float.nan, 0.5) == 0)
         // 無限も数でない値と同じ扱い — 締めれば 1 になるはずの値でも 0 へ倒す
-        #expect(smoothstep(0, 1, .infinity) == 0)
-        #expect(smoothstep(0, .infinity, 0.5) == 0)
-        #expect(smoothstep(-.infinity, 1, 0.5) == 0)
+        #expect(smoothstep(0, 1, Float.infinity) == 0)
+        #expect(smoothstep(0, Float.infinity, 0.5) == 0)
+        #expect(smoothstep(-Float.infinity, 1, 0.5) == 0)
     }
 
     /// 窓の幅 (`edge1 - edge0`) が `Float` で溢れると、そのまま割れば窓の中の値が 0 に潰れ、
@@ -503,9 +503,9 @@ struct NumberValueWarningTests {
     @Test("幅が 0 の注意と、数でない値の注意は互いに黙らせない")
     func theTwoReasonsCountSeparately() {
         #expect(map(5, 3, 3, 100, 200) == 100)
-        #expect(map(.nan, 0, 1, 100, 200) == 100)
+        #expect(map(Float.nan, 0, 1, 100, 200) == 100)
         #expect(norm(5, 3, 3) == 0)
-        #expect(norm(.nan, 0, 1) == 0)
+        #expect(norm(Float.nan, 0, 1) == 0)
         for entry: NumberValues.Warning.Entry in [.map, .norm] {
             #expect(NumberValues.warnings.hasWarned(.emptyRange(entry)), "\(entry)")
             #expect(NumberValues.warnings.hasWarned(.notANumber(entry)), "\(entry)")
@@ -538,11 +538,11 @@ struct NumberValueWarningTests {
     /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
     @Test("数でない値の注意は、口ごとに数えられる")
     func eachEntryCountsItsOwnNonFiniteWarning() {
-        #expect(map(.nan, 0, 1, 100, 200) == 100)
-        #expect(lerp(3, 10, .nan) == 3)
-        #expect(constrain(.nan, 0, 10) == 0)
-        #expect(norm(20, 0, .infinity) == 0)
-        #expect(smoothstep(0, 1, .nan) == 0)
+        #expect(map(Float.nan, 0, 1, 100, 200) == 100)
+        #expect(lerp(3, 10, Float.nan) == 3)
+        #expect(constrain(Float.nan, 0, 10) == 0)
+        #expect(norm(20, 0, Float.infinity) == 0)
+        #expect(smoothstep(0, 1, Float.nan) == 0)
         // 文面も口ごとに違う — 鍵を共有していれば、どれかが他の口の名前で鳴る
         let entries: [(entry: NumberValues.Warning.Entry, name: String)] = [
             (.map, "map()"), (.lerp, "lerp()"), (.constrain, "constrain()"),

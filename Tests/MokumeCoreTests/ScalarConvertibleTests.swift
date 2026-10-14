@@ -28,6 +28,21 @@ struct ScalarConvertibleTests {
         #expect(identity.apply(x: 640 * 2 / 3, y: 0).x == 426)
     }
 
+    /// **トップレベルの色と数の口も同じ受け方をする** ([#2255])。`Float` 固定だった頃は、引数の型
+    /// から逆算して `1 / 2` を `Float` の 0.5 にしていた。総称の受け口では `Int` の 0 になる
+    /// (ADR-0035 決定 6-b)。
+    ///
+    /// [#2255]: https://github.com/mokume-metal/mokume/issues/2255
+    @Test("トップレベルの数の口でも、整数リテラルだけの割り算は整数除算になる")
+    func integerLiteralsDivideAsIntegersAtTheTopLevel() {
+        let half: Float = lerp(0, 10, 1 / 2)
+        #expect(half == 0)
+        let fraction: Float = lerp(0, 10, 1 / 2.0)
+        #expect(fraction == 5)
+        let gray: LinearRGBA = color(255 / 2)
+        #expect(gray == color(Float(127)))
+    }
+
     /// 片方に小数点を付ければ、面の案内どおり小数のまま渡る。
     @Test("片方を小数で書けば、小数のまま渡る")
     func oneFloatingLiteralKeepsThePrecision() {
@@ -55,5 +70,60 @@ struct ScalarConvertibleTests {
         #expect(identity.apply(x: asFloat, y: 0).x == 3.5)
         #expect(identity.apply(x: asDouble, y: 0).x == 3.5)
         #expect(identity.apply(x: asInt, y: 0).x == 3)
+    }
+
+    /// **トップレベルの色と数の口も、変数をそのまま受ける** ([#2255])。Sketch の口と同じく
+    /// `Float`・`Double`・`Int` のどれで持っていても通り、`Float` で渡したときと同じ値を返す
+    /// (返り値は `Float` のまま — ADR-0035 決定 3)。
+    ///
+    /// 式は 1 つずつ型を書いた `let` に受けてから比べる。総称の口を `#expect` の中で
+    /// 連ねると、型検査が重くなる。
+    ///
+    /// [#2255]: https://github.com/mokume-metal/mokume/issues/2255
+    @Test("トップレベルの色と数の口も、Float・Double・Int の変数をそのまま受ける")
+    func topLevelColourAndNumberPortsTakeEveryStoredWidth() {
+        let i: Int = 3
+        let d: Double = 0.5
+        let f: Float = 3
+
+        // 数の口。`Float` で渡したときと同じ値であることと、その値そのものを見る
+        let mapped: Float = map(i, 0, 10, 0, 1)
+        #expect(mapped == 0.3)
+        #expect(mapped == map(f, Float(0), Float(10), Float(0), Float(1)))
+        let mixed: Float = lerp(0, i, d)
+        #expect(mixed == 1.5)
+        let held: Float = constrain(i, 0, 2)
+        #expect(held == 2)
+        let ratio: Float = norm(i, 0, 10)
+        #expect(ratio == 0.3)
+        let eased: Float = smoothstep(0, 10, i)
+        let t: Float = 0.3
+        #expect(eased == t * t * (3 - 2 * t))
+        #expect(eased == smoothstep(Float(0), Float(10), f))
+        let turned: Float = radians(i)
+        #expect(turned == f * Float.pi / 180)
+        let read: Float = degrees(d)
+        #expect(read == Float(0.5) * 180 / Float.pi)
+
+        // 色の口。値そのものは、別の口 (4 つの数の口・成分を読む口・間を取る計算) と突き合わせる
+        let red: LinearRGBA = color(i, 0, 0)
+        #expect(red == color(f, Float(0), Float(0)))
+        #expect(abs(MokumeCore.red(red) - 3) < 1e-3)
+        let veil: LinearRGBA = color(i, d)
+        #expect(veil == color(f, f, f, Float(0.5)))
+        let gray: LinearRGBA = color(i)
+        #expect(gray == color(f, f, f))
+        let tinted: LinearRGBA = color(hue: i, saturation: 80, brightness: 90)
+        #expect(tinted == color(hue: f, saturation: Float(80), brightness: Float(90)))
+        #expect(abs(hue(tinted) - 3) < 1e-2)
+        let a: LinearRGBA = color(255, 170, 60)
+        let b: LinearRGBA = color(40, 50, 120)
+        let blended: LinearRGBA = lerpColor(a, b, d)
+        let halfway = LinearRGBA(
+            premultipliedRed: interpolate(a.red, b.red, 0.5),
+            green: interpolate(a.green, b.green, 0.5),
+            blue: interpolate(a.blue, b.blue, 0.5),
+            alpha: interpolate(a.alpha, b.alpha, 0.5))
+        #expect(blended == halfway)
     }
 }

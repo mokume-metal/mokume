@@ -1050,28 +1050,36 @@ MAIN = """\
 import Foundation
 import mokume
 
-let directory = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "shots")
-try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-let gpu = try RenderDevice()
+// **裸の `try` に任せない** (#2541)。top-level の throw は Swift ランタイムの既定処理へ落ち、
+// `Fatal error: Error raised at top level: …` と内部の姿をそのまま出して trap する。道具の入口は
+// 失敗したら何が足りないかを名乗って `exit(1)` で落ちる (規範は Sketches/main.swift の `exitReporting`)
+do {
+    let directory = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "shots")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let gpu = try RenderDevice()
 
-for entry in catalogue {
-    let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu)
-    guard entry.frames > 0 else {
-        // **最初のフレームを撮る。** 秒で待つと待つ間に進む枚数が実行ごとに変わり、
-        // 撮り直すたびに別の絵になる
-        try runtime.advance()
-        let url = directory.appendingPathComponent("\\(entry.name).png")
-        try runtime.target.writePNG(to: url)
-        print("\\(entry.name) → \\(url.lastPathComponent)")
-        continue
+    for entry in catalogue {
+        let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu)
+        guard entry.frames > 0 else {
+            // **最初のフレームを撮る。** 秒で待つと待つ間に進む枚数が実行ごとに変わり、
+            // 撮り直すたびに別の絵になる
+            try runtime.advance()
+            let url = directory.appendingPathComponent("\\(entry.name).png")
+            try runtime.target.writePNG(to: url)
+            print("\\(entry.name) → \\(url.lastPathComponent)")
+            continue
+        }
+        let folder = directory.appendingPathComponent(entry.name)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for index in 0..<entry.frames {
+            try runtime.advance()
+            try runtime.target.writePNG(to: folder.appendingPathComponent(String(format: "f.%04d.png", index)))
+        }
+        print("\\(entry.name) → \\(folder.lastPathComponent) (\\(entry.frames) 枚)")
     }
-    let folder = directory.appendingPathComponent(entry.name)
-    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    for index in 0..<entry.frames {
-        try runtime.advance()
-        try runtime.target.writePNG(to: folder.appendingPathComponent(String(format: "f.%04d.png", index)))
-    }
-    print("\\(entry.name) → \\(folder.lastPathComponent) (\\(entry.frames) 枚)")
+} catch {
+    FileHandle.standardError.write(Data("例の絵を撮れませんでした。\\n\\(error)\\n".utf8))
+    exit(1)
 }
 """
 

@@ -580,7 +580,12 @@ struct FirstObservedFrameTests {
         init() {}
         private(set) var times: [Float] = []
         private(set) var deltas: [Float] = []
+        /// `setup()` で飛ぶ先の秒。最初の枚の時刻を面の既定値 (0) と違えるのに使う。
+        var jumpsInSetup: Float?
         var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func setup() {
+            if let jumpsInSetup { jumpTime(jumpsInSetup) }
+        }
         func draw() {
             background(.display(red: 0, green: 0, blue: 0))
             times.append(canvas.time)
@@ -625,23 +630,20 @@ struct FirstObservedFrameTests {
     func handsTheSurfaceThisFramesClock() throws {
         let facet = try makeFacet()
         let sketch = SurfaceClock()
-        // 実時間の時計を差し、進めた先を検査から決める。フレーム番号から導く時計だと
-        // 最初の 1 枚がちょうど面の既定値と重なり、落ちていても気付けない
-        nonisolated(unsafe) var clockReading = 0.0
+        // 最初の 1 枚は時計によらず時刻 0・経過 1 フレームぶんで、面の既定値 (0・60 分の 1 秒) と
+        // 重なり、落ちていても気付けない (#2413)。`setup()` で飛んで、時刻も経過も既定値と違える
+        // (飛んだ枚は経過 0)
+        sketch.jumpsInSetup = 0.1
         let runtime = try SketchRuntime(
-            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: { clockReading },
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: { 0 },
             observer: FrameObserver(directory: facet))
         runtime.pause()
 
-        // 経過の上限 (目標フレーム間隔の 10 倍・#874) に当たらない値を選ぶ。ここで
-        // 見たいのは「面へ渡る時刻がこのフレームの値か」で、上限の振る舞いは
-        // FrameTimingTests が別に固定している
-        clockReading = 0.1
         try request(id: "a1", in: facet)
         try runtime.advance()
 
         #expect(sketch.times == [0.1])
-        #expect(sketch.deltas == [0.1])
+        #expect(sketch.deltas == [0])
     }
 
     @Test("入り口が、この 1 枚にも値を供給する")

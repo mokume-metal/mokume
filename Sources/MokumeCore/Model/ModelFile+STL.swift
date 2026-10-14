@@ -102,12 +102,21 @@ nonisolated extension ModelFile {
     /// STL を読む。
     ///
     /// **面の向き**: 書かれた向き (有限で長さが 0 でない) はそのまま使う — OBJ の `vn` と同じ扱い
-    /// (``Parsed/hasWrittenNormals``)。`0 0 0` の面は巻き方から求め、OBJ で向きを求めた形と同じく
-    /// 両面として扱う。**点を共有しないので、どちらも面ごとに平らに光る** — OBJ で向きを書かない
-    /// 形は、点を共有する面どうしで向きが均される。
+    /// (``Parsed/derivedNormals``)。`0 0 0` の面は巻き方から求め、OBJ で向きを求めた形と同じく
+    /// 両面として扱う。**どちらにするかは面ごとに決める** — 向きを書いた面と `0 0 0` の面が
+    /// 混ざったファイルでも、`0 0 0` の面だけが両面になり、書いた面は片面のまま ([#2342])。
+    /// **点を共有しないので、どちらも面ごとに平らに光る** — OBJ で向きを書かない形は、点を
+    /// 共有する面どうしで向きが均される。
     ///
-    /// **座標が数でない面は読み飛ばし、面の数として数える** (``Parsed/skippedLines``)。残すと
-    /// 囲みの箱も整え方も壊れる。
+    /// [#2342]: https://github.com/mokume-metal/mokume/issues/2342
+    ///
+    /// **座標が数でない面は読み飛ばし、数える** (``Parsed/skippedLines``)。残すと囲みの箱も
+    /// 整え方も壊れる。Model I/O が返した形のうち**写せなかった要素**も同じに数える (位置を
+    /// 持たない mesh・submesh を持たない mesh・三角形でない submesh・mesh でない物・型の
+    /// 合わない submesh を 1 つずつ、3 つに満たない余りの番号を submesh ごとに 1 つ)。これは
+    /// 実ファイルの STL では起きず、Model I/O が契約を破ったときの防御である ([#2566])。
+    ///
+    /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
     ///
     /// **面の無い STL は投げずに空を返す。** 「読めなかった」と「読めたが面が無い」は別である
     /// (``ModelFailure``)。Model I/O はこれを読めないとして断るか、バイナリとして読み直して
@@ -320,9 +329,9 @@ nonisolated extension ModelFile {
         let asset = MDLAsset(
             url: url, vertexDescriptor: nil, bufferAllocator: nil, preserveTopology: false,
             error: &error)
-        let meshes = asset.childObjects(of: MDLMesh.self).compactMap { $0 as? MDLMesh }
-        guard error == nil, !meshes.isEmpty else { return nil }
-        return triangles(of: meshes)
+        let objects = asset.childObjects(of: MDLMesh.self)
+        guard error == nil, objects.contains(where: { $0 is MDLMesh }) else { return nil }
+        return triangles(of: objects)
     }
 
     /// 文字の STL を Model I/O に読ませる。**読み手が、面を読めなかった文字をバイナリとして読み直す余地
@@ -421,21 +430,40 @@ nonisolated extension ModelFile {
     }
 
     /// Model I/O の形から、三角形の並びを写す。
-    private static func triangles(of meshes: [MDLMesh]) -> Parsed {
+    ///
+    /// **写せなかった要素は、黙って捨てず `skipped` に数える** ([#2566]): mesh でない物・位置を
+    /// 持たない mesh・submesh を持たない mesh・型の合わない submesh・三角形でない submesh を
+    /// 1 つずつ、3 つに満たない余りの番号を submesh ごとに 1 つ。数える単位は面ではなく、
+    /// 写せなかった要素である。
+    ///
+    /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
+    static func triangles(of objects: [MDLObject]) -> Parsed {
+        let meshes = objects.compactMap { $0 as? MDLMesh }
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
-        var hasWrittenNormals = false
-        var skipped = 0
+        var derivedNormals: [Bool] = []
+        var skipped = objects.count - meshes.count
 
         for mesh in meshes {
             guard
                 let placed = mesh.vertexAttributeData(
                     forAttributeNamed: MDLVertexAttributePosition, as: .float3)
-            else { continue }
+            else {
+                skipped += 1
+                continue
+            }
             let facing = mesh.vertexAttributeData(
                 forAttributeNamed: MDLVertexAttributeNormal, as: .float3)
-            let submeshes = (mesh.submeshes as? [MDLSubmesh]) ?? []
-            for submesh in submeshes where submesh.geometryType == .triangles {
+            let written = mesh.submeshes ?? []
+            let submeshes = written.compactMap { $0 as? MDLSubmesh }
+            skipped += written.count - submeshes.count
+            // 位置はあっても submesh が 1 つも無ければ、写すものが無い
+            if written.count == 0 { skipped += 1 }
+            for submesh in submeshes {
+                guard submesh.geometryType == .triangles else {
+                    skipped += 1
+                    continue
+                }
                 // **番号の置き場も、その写しも、読み終わるまで手放さない。** 型を変えた番号の
                 // 置き場は新しく作られ、写し (`map`) はそれを持ち続けない — 一時の値のまま
                 // 写すと、指した先がすぐに消えて番号がでたらめになる
@@ -445,7 +473,8 @@ nonisolated extension ModelFile {
                     let indices = UnsafeBufferPointer(
                         start: map.bytes.assumingMemoryBound(to: UInt32.self),
                         count: submesh.indexCount)
-                    // 3 つに満たない余りは面にならない
+                    // 3 つに満たない余りは面にならない。捨てるが、数える
+                    if indices.count % 3 != 0 { skipped += 1 }
                     for start in stride(from: 0, to: indices.count - 2, by: 3) {
                         let corners = (0..<3).map { Int(indices[start + $0]) }
                         guard corners.allSatisfy({ $0 < mesh.vertexCount }) else {
@@ -464,9 +493,10 @@ nonisolated extension ModelFile {
                             let written = facing.map { vector($0, at: corner) }
                             if let written, isFinite(written), length_squared(written) > 0 {
                                 normals.append(written)
-                                hasWrittenNormals = true
+                                derivedNormals.append(false)
                             } else {
                                 normals.append(derived)
+                                derivedNormals.append(true)
                             }
                         }
                     }
@@ -476,7 +506,7 @@ nonisolated extension ModelFile {
         return Parsed(
             positions: positions, normals: normals,
             uvs: [SIMD2<Float>?](repeating: nil, count: positions.count),
-            hasWrittenNormals: hasWrittenNormals, skippedLines: skipped)
+            derivedNormals: derivedNormals, skippedLines: skipped)
     }
 
     /// 頂点の属性を 1 つ読む。
