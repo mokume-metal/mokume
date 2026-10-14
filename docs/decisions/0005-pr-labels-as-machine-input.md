@@ -19,7 +19,7 @@ SPDX-License-Identifier: MIT
 
 | PR の属性 | 既にある正典 | 強制する機構 |
 | --- | --- | --- |
-| 何の仕事か (型) | PR タイトルの Conventional Commits | `.github/workflows/ci.yml` の `pr-title` ジョブ |
+| 何の仕事か (型) | PR タイトルの Conventional Commits | `.github/workflows/ci.yml` の `pr-title` ジョブ (いまは `.github/workflows/pr-gate.yml` の `pr-gate`・決定 5 の改訂) |
 | 対象の Issue | 本文の `Closes #N` | `scripts/review-gate.sh` |
 | 完了条件の性質 | 対象 Issue の `verify: *` ラベル | `scripts/review-gate.sh` |
 | 重要パスに触れるか | `.github/rulesets/main-protection.json` の `required_reviewers` (team `maintainers` へ要求も飛ぶ) | GitHub native (Review required) |
@@ -79,7 +79,11 @@ PR ラベルの唯一の役目は、**機構への入力**である。新しい 
 | size ラベル (XS/S/M/L) | 変更行数は PR 一覧にも diff にも常に出ている情報の写し |
 | リリースノート生成用の分類ラベル (Release Drafter 等) | このリポジトリの変更履歴は `changelog.d/` の断片が正典 (PR ではなくファイルが単位)。ラベルを情報源にすると正典が 2 つになる |
 | `status: *` を PR にも共用する | 進行状態は Draft・Review・merge queue が native に持つ |
-| PR の型ラベル (`type: *` の PR 版) | PR タイトルが squash 後のコミットメッセージそのもので、`pr-title` ジョブが形式を強制している |
+| PR の型ラベル (`type: *` の PR 版) | PR タイトルが squash 後のコミットメッセージそのもので、`pr-gate` のタイトルの検査が形式を強制している |
+
+#### 改訂 (2026-10-14) — 型を強制する機構の置き場を `pr-gate.yml` へ移す
+
+当初は `.github/workflows/ci.yml` の `pr-title` ジョブが PR タイトルの形式を強制していた。[#2669](https://github.com/mokume-metal/mokume/issues/2669) で PR の作法の検査が `.github/workflows/pr-gate.yml` の必須チェック `pr-gate` へ移り、タイトルの検査はその step になった ([#2611](https://github.com/mokume-metal/mokume/issues/2611))。タイトルが型の正典で、それを機械が強制するので型ラベルは要らない、という理由は変わらない。
 
 ## 影響
 

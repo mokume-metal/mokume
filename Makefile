@@ -39,8 +39,9 @@ check: setup
 #
 # **この並びは「CI と同一」から 1 つだけ意図的にずれている。** drawing-evidence は CI では
 # 必ず no-op になる — 段を走らせるジョブ (ci-check・ci-static) へ GH_TOKEN を持ち込まない設計
-# (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため理由を述べて 0 で抜け、本物の
-# 判定は同じファイルの独立したジョブ (drawing-evidence) が持つ。ここに置いてあるのは手元のためである
+# (.github/workflows/ci.yml の ci-static の冒頭) のため理由を述べて 0 で抜け、本物の判定は
+# .github/workflows/pr-gate.yml の pr-gate (drawing-evidence の step) が持つ。ここに置いてあるのは
+# 手元のためである
 #
 # **描画の検査は、ここでは GPU のある機械でだけ実際に走る。** merge の判定としては、
 # 専用機の描画ジョブ (.github/workflows/render.yml の render) が merge queue の合流後の木で
