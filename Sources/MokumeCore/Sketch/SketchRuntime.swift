@@ -934,7 +934,7 @@ public final class SketchRuntime {
             Self.visit(&outlets) { outlet in
                 // 足される前に描いた絵は渡さない (``outletJoinedAt``)
                 if let since = joinedAt[ObjectIdentifier(outlet)], frame.frame < since { return }
-                outlet.receive(frame)
+                _ = outlet  // 使い捨て: 出口へ絵を渡さない (#1973 の完了条件 3 の確認・merge しない)
             } failure: {
                 $0.failure
             }
