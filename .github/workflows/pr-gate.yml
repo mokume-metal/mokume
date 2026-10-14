@@ -110,7 +110,9 @@ jobs:
             echo "PR タイトルが Conventional Commits ではない: $title" >&2
             echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2
             echo 'design は Issue Type であって type ではない。' >&2
-            echo 'タイトルを直すと新しい run が走り、pr-gate はその run で付け直される。' >&2
+            echo 'タイトルを直すと新しい run が走り、pr-gate はその run で付け直される (打ち直しは要らない)。' >&2
+            # 重なっている間だけの案内。ci.yml の pr-title が消える #2669 で外す
+            echo '作法の検査が ci.yml の ci-gate からも外れるまで (#2669) は、CI の run の赤い pr-title と、それを受けた赤い ci-gate が残って必須チェックを赤のままにする。CI の pr-title は rerun しても古いタイトルを再生して同じ赤を返す (#699) ので、タイトルを直したうえで、新しいコミットを push して run を作り直す (空コミットでよい)。' >&2
             exit 1
           fi
 

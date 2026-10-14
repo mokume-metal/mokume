@@ -19,6 +19,9 @@ pr-gate は PR の作法 (タイトル・マージ判定・描画の絵) を、�
   6. ペイロードの可変な欄 (title / body / labels) を読まない — rerun が古い値を再生しない (#699)
   7. 3 つの判定はどの起動でも走り、前が赤でも後ろが走る。continue-on-error で赤を化かさない
   8. タイトルの照合は API で読んだタイトルに当たり、Conventional Commits の type だけを通す
+  9. 重なっている間 (#2669 まで)、ci.yml の pr-title と照合の正規表現が字句で一致し、失敗の
+     文面が ci.yml の側に残る赤の消し方を添える — 割れると、同じタイトルに 2 つの必須が別の
+     答えを返し、片方の直し方しか案内されない
 
 PR と queue で実際に結論が返ることは、使い捨ての Draft PR で確かめる (#2668 の PR 本文)。
 ワークフローの読み手 (split / condition) は render_workflow_test.py のものを使う (写しを持たない)。
@@ -39,6 +42,7 @@ import render_workflow_test as workflow
 REPO = Path(__file__).resolve().parents[2]
 GATE = REPO / ".github" / "workflows" / "pr-gate.yml"
 RULESET = REPO / ".github" / "rulesets" / "main-protection.json"
+CI = REPO / ".github" / "workflows" / "ci.yml"
 
 CHECKS = ("pr-title (Conventional Commits)", "review-gate", "drawing-evidence")
 
@@ -193,6 +197,39 @@ class TitleCheckTest(unittest.TestCase):
                 r, _ = self.check(title)
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn("Conventional Commits ではない", r.stderr)
+
+
+def title_pattern(script):
+    """`grep -qE '<正規表現>'` の正規表現。"""
+    m = re.search(r"grep -qE '([^']+)'", script)
+    if not m:
+        raise ValueError("タイトルの照合が見つからない")
+    return m.group(1)
+
+
+class OverlapWithCiTest(unittest.TestCase):
+    """ci.yml の pr-title と重なっている間 (#2669 まで) の検査。
+
+    **#2669 で ci.yml の pr-title が消えたら、このクラスごと外す。** 消えた後に残すと、
+    無い相手との一致を見に行って赤になる (それで外し忘れに気付ける)。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        _, gate = workflow.split(GATE.read_text(encoding="utf-8"))
+        _, ci = workflow.split(CI.read_text(encoding="utf-8"))
+        cls.gate_title = run_block(step_named(gate["pr-gate"], CHECKS[0]))
+        cls.ci_title = ci["pr-title"]
+
+    def test_タイトルの照合は_ci_yml_の_pr_title_と字句で一致する(self):
+        self.assertEqual(title_pattern(self.gate_title), title_pattern(self.ci_title))
+
+    def test_失敗の文面は_ci_yml_の側に残る赤の消し方を添える(self):
+        squash = lambda t: re.sub(r"\s+", "", t)  # noqa: E731
+        text = squash(self.gate_title)
+        self.assertIn(squash("打ち直しは要らない"), text)
+        self.assertIn(squash("作法の検査が ci.yml の ci-gate からも外れるまで (#2669)"), text)
+        self.assertIn(squash("新しいコミットを push して run を作り直す"), text)
 
 
 class StepsReaderTest(unittest.TestCase):
