@@ -129,16 +129,18 @@ nonisolated enum Triangulation {
     /// 三角形化そのものを穴に対応させるのではなく、橋を架けて 1 周にしてから同じ道具へ
     /// 通す。道具が 1 つで済み、穴が「一部の経路でだけ効く」状態を作らない。
     ///
-    /// 橋は、穴のいちばん右の点から外周の点へ架ける。架ける先には、近い点のうち
-    /// **架けた線がどの辺も跨がない点**を選ぶ — 跨ぐと、畳んだ周が自己交差して
-    /// 三角形化が途中で止まる。見る辺は 3 つある:
+    /// 橋は、穴のいちばん右の点 (畳んだ周の点と重なる点があれば、そこ) から外周の点へ架ける。
+    /// 架ける先には、近い点のうち **架けた線がどの辺にも遮られない点**を選ぶ — 跨ぐと、
+    /// 畳んだ周が自己交差して三角形化が途中で止まる。辺の端点が橋の途中に載る (別の穴の角を
+    /// 串刺しにする) 辺も遮る ([#2508])。見る辺は 3 つある:
     ///
     /// - **外周の辺** (先に畳んだ穴の辺も、畳んだ時点で外周に入っている)
     /// - **いま畳んでいる穴自身の辺** — 穴の右端から外周の近い点が左にあると、橋が穴の
     ///   中を通り抜ける ([#1530])
     /// - **まだ畳んでいない穴の辺** — 右の穴から架けた橋が、左の穴を横切りうる
     ///
-    /// 橋の端点に接する辺は、跨いだことにしない。
+    /// 橋の端点に接する辺は遮らない。橋が 1 本の辺に丸ごと収まる (辺に沿って、その端点か
+    /// 触れた点へ架ける) のも、幅のない連結なので遮らない。
     ///
     /// 受け渡すのは**点そのものではなく番号**である。畳んだ周から元の頂点を引ける
     /// ようにするためで、立体の頂点が持つ色や面の向きは点の座標には載っていない。
@@ -149,6 +151,7 @@ nonisolated enum Triangulation {
     ///   - points: 番号で引ける点の位置。
     ///
     /// [#1530]: https://github.com/mokume-metal/mokume/issues/1530
+    /// [#2508]: https://github.com/mokume-metal/mokume/issues/2508
     ///
     /// `slack` は、橋の線のすぐそばにある点を「橋に載る」と数える許容 (距離)。**既定の 0 から
     /// 変えるのは、交わった周を組み直した周だけである** (``triangulate(_:comparisons:slack:)``
@@ -165,19 +168,25 @@ nonisolated enum Triangulation {
                 (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
             }
 
+        // 畳んだ周の点の位置。穴の点が重なるかを引く
+        var placed = Set(outer.map { points[$0] })
         for (order, hole) in ordered.enumerated() {
-            guard let entryIndex = rightmostIndex(hole, points) else { continue }
-            let entry = points[hole[entryIndex]]
             // この穴と、まだ畳んでいない穴。先に畳んだ穴は `ring` に入っている
             let unmerged = ordered[order...]
-            guard
-                let bridgeIndex = bridgeTarget(
-                    ring: ring, holes: unmerged, points: points, from: entry,
+            let holeTurn = signedArea(hole.map { points[$0] })
+            var connection: (entry: Int, target: Int)?
+            for entryIndex in entryOrder(of: hole, touching: placed, points: points) {
+                if let target = bridgeTarget(
+                    ring: ring, holes: unmerged, points: points, from: points[hole[entryIndex]],
                     leaving: neighbors(of: entryIndex, in: hole, points: points),
-                    holeTurn: signedArea(hole.map { points[$0] }), slack: slack)
-            else {
-                continue  // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
+                    holeTurn: holeTurn, slack: slack)
+                {
+                    connection = (entryIndex, target)
+                    break
+                }
             }
+            // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
+            guard let (entryIndex, bridgeIndex) = connection else { continue }
             // 外周を橋の点で開き、穴を 1 周ぶん通してから戻る
             var merged = Array(ring[0...bridgeIndex])
             for step in 0...hole.count {
@@ -186,8 +195,29 @@ nonisolated enum Triangulation {
             merged.append(ring[bridgeIndex])
             merged.append(contentsOf: ring[(bridgeIndex + 1)...])
             ring = merged
+            for index in hole { placed.insert(points[index]) }
         }
         return ring
+    }
+
+    /// 穴の点を、橋の入口として試す順に並べる。
+    ///
+    /// 1. **畳んだ周の点と重なる点** (別の穴や外周に頂点で触れる点)。そこへは長さ 0 の橋で
+    ///    つなぐのが、触れた点で周を正しく対にする ([#1886])。いちばん右の点から触れた点へ
+    ///    穴自身の辺に沿って架けると、触れた点が周に 2 度現れて互いの角が重なりうる
+    /// 2. **いちばん右の点**。ふつうの穴はここから架ける
+    ///
+    /// 前の点で架けられなかったときだけ、後ろの点を試す。
+    ///
+    /// [#1886]: https://github.com/mokume-metal/mokume/issues/1886
+    private static func entryOrder(
+        of hole: [Int], touching placed: Set<SIMD2<Float>>, points: [SIMD2<Float>]
+    ) -> [Int] {
+        guard let rightmost = rightmostIndex(hole, points) else { return [] }
+        let touching = hole.indices
+            .filter { placed.contains(points[hole[$0]]) }
+            .sorted { points[hole[$0]].x > points[hole[$1]].x }
+        return touching.contains(rightmost) ? touching : touching + [rightmost]
     }
 
     // MARK: - 部品
@@ -246,9 +276,10 @@ nonisolated enum Triangulation {
 
     /// 橋を架ける先を、外周の点から選ぶ。
     ///
-    /// 跨ぐ辺を見るほかに、**橋の両端で、橋が塗る側を通るか**を角の向きで確かめる
-    /// ([#1538])。どちらも、点が辺や別の点にちょうど重なる形でだけ効く — 跨ぐかの判定は
-    /// 端が辺に載る組を跨いだと数えないので、そこでは向きでしか見分けられない。
+    /// 辺に遮られないかを見るほかに、**橋の両端で、橋が塗る側を通るか**を角の向きで確かめる
+    /// ([#1538])。どちらも、点が辺や別の点にちょうど重なる形でだけ効く — 辺の判定は
+    /// 橋の両端に触れる辺を遮りと数えないので、両端ではどちらの側へ向かうかを向きでしか
+    /// 見分けられない。
     ///
     /// - **外周の側:** 橋は、架ける先の角の内側から入る。先に畳んだ穴の入口と橋の点は、
     ///   畳んだ周に 2 度ずつ現れる。角の外側を向く写しで周を開くと、畳んだ周が自分と重なり、
@@ -277,9 +308,8 @@ nonisolated enum Triangulation {
                 arrivesInside(
                     ring: ring, at: index, turn: turn, points: points, from: entry, leaving: leaving),
                 !entersHole(toward: delta, at: entry, leaving: leaving, turn: holeTurn),
-                !crossesAnyEdge(
-                    ring: ring, points: points, from: entry, to: candidate, skipping: index),
-                !crossesAnyHole(holes, points: points, from: entry, to: candidate),
+                !obstructed(
+                    ring: ring, holes: holes, points: points, from: entry, to: candidate),
                 slack == 0
                     || !passesNearAPoint(
                         ring: ring, holes: holes, points: points, from: entry, to: candidate,
@@ -385,47 +415,75 @@ nonisolated enum Triangulation {
         return false
     }
 
-    /// 架けた線が、外周 (先に畳んだ穴を含む) のどれかの辺を跨ぐか。
-    private static func crossesAnyEdge(
-        ring: [Int], points: [SIMD2<Float>], from: SIMD2<Float>, to: SIMD2<Float>,
-        skipping target: Int
-    ) -> Bool {
-        for index in ring.indices {
-            let next = (index + 1) % ring.count
-            // 橋の端点を共有する辺は、跨いだことにしない
-            if index == target || next == target { continue }
-            if segmentsIntersect(from, to, points[ring[index]], points[ring[next]]) { return true }
-        }
-        return false
-    }
-
-    /// 架けた線が、穴のどれかの辺を跨ぐか。
+    /// 架けた線が、外周 (先に畳んだ穴を含む) か穴のどれかの辺に**遮られる**か。
     ///
-    /// 外すのは、**入口の点と同じ位置に端を持つ辺**である。穴自身の 2 辺がこれに当たる。
-    /// 番号ではなく位置で比べるのは、最後の点が最初の点と重なる穴 (曲線で閉じる字の o) で、
-    /// 同じ位置のもう 1 つの点に接する辺まで外すためである。
-    private static func crossesAnyHole(
-        _ holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from: SIMD2<Float>, to: SIMD2<Float>
+    /// 橋と辺は、橋の両端でだけ触れてよい。橋の途中で触れるものは、**跨ぐ辺だけでなく、
+    /// 辺の端点が橋の途中に載るものも**遮る ([#2508])。穴を縦や横に揃えて並べると、別の穴の
+    /// 辺が橋と同じ直線に載る。端点が橋に載る辺を跨ぎに数えないと、橋は穴の角を串刺しにして
+    /// 架かり、畳んだ周が自分の上に折り返して耳切りが三角形を取りこぼす。
+    ///
+    /// 遮らないのは、橋が 1 本の辺に丸ごと収まる場合である。辺に沿って、その端点や触れた点へ
+    /// 架けるのは、穴が触れた点で周を正しく連結する幅のない橋で、これまでも正しく塗れていた
+    /// ([#1886])。収まらずに途中まで重なる辺は、端点が橋の途中に載るので遮られる。
+    ///
+    /// 橋の両端と同じ位置にある点は、辺の端点でも橋の途中とは数えない。位置で比べるのは、
+    /// 最後の点が最初の点と重なる周 (曲線で閉じる字の o) や、畳んだ周の継ぎ目で、同じ位置の
+    /// 点が幾つも現れるためである。
+    ///
+    /// [#1886]: https://github.com/mokume-metal/mokume/issues/1886
+    /// [#2508]: https://github.com/mokume-metal/mokume/issues/2508
+    private static func obstructed(
+        ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from: SIMD2<Float>,
+        to: SIMD2<Float>
     ) -> Bool {
+        let span = to - from
+        let length = dot(span, span)
+        // 長さ 0 の橋 (穴の入口が外周の点に重なる) は、何にも触れない
+        guard length > 0 else { return false }
+        func blocks(_ first: Int, _ second: Int) -> Bool {
+            bridgeIsBlocked(
+                by: points[first], points[second], from: from, to: to, span: span, length: length)
+        }
+        for index in ring.indices where blocks(ring[index], ring[(index + 1) % ring.count]) {
+            return true
+        }
         for hole in holes {
-            for index in hole.indices {
-                let a = points[hole[index]]
-                let b = points[hole[(index + 1) % hole.count]]
-                if a == from || b == from { continue }
-                if segmentsIntersect(from, to, a, b) { return true }
+            for index in hole.indices where blocks(hole[index], hole[(index + 1) % hole.count]) {
+                return true
             }
         }
         return false
     }
 
-    private static func segmentsIntersect(
-        _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>, _ p4: SIMD2<Float>
+    /// 辺 `a`–`b` が、橋 (`from` から `to` への線分・`span` は `to - from`) を遮るか。
+    /// 外積と内積が 0 かの比べは、許容を持たない。
+    private static func bridgeIsBlocked(
+        by a: SIMD2<Float>, _ b: SIMD2<Float>, from: SIMD2<Float>, to: SIMD2<Float>,
+        span: SIMD2<Float>, length: Float
     ) -> Bool {
-        let d1 = cross(p2 - p1, p3 - p1)
-        let d2 = cross(p2 - p1, p4 - p1)
-        let d3 = cross(p4 - p3, p1 - p3)
-        let d4 = cross(p4 - p3, p2 - p3)
-        return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0))
+        let sideA = cross(span, a - from)
+        let sideB = cross(span, b - from)
+        // 橋の線の上の点が、橋の両端を除いた途中にあるか
+        func within(_ point: SIMD2<Float>) -> Bool {
+            let along = dot(point - from, span)
+            return along > 0 && along < length
+        }
+        switch (sideA == 0, sideB == 0) {
+        case (true, true):
+            // 同じ直線: 辺の端点が橋の途中に載るなら遮る。橋が辺に丸ごと収まる (辺に沿って
+            // 端点か触れる点へ架ける) なら、幅のない連結なので遮らない
+            return within(a) || within(b)
+        case (true, false):
+            return within(a)
+        case (false, true):
+            return within(b)
+        case (false, false):
+            guard (sideA > 0) != (sideB > 0) else { return false }
+            // 辺の線が橋の両端を隔てるか。端点が辺の上に載る (T 字に触れる) のは跨ぎではない
+            let sideFrom = cross(b - a, from - a)
+            let sideTo = cross(b - a, to - a)
+            return sideFrom != 0 && sideTo != 0 && (sideFrom > 0) != (sideTo > 0)
+        }
     }
 }
 
