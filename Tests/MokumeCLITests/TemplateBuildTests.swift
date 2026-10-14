@@ -15,7 +15,7 @@ import Testing
 ///
 /// ## 何を分け持ち、何を分け持たないか (#2613)
 ///
-/// **スケッチは 3 本とも、検査ごとに使い捨ての場所へまっさらから作る。** 入力の条件
+/// **スケッチは 3 本とも、検査ごとに別の名前でまっさらから作る。** 入力の条件
 /// (資材の有無・名乗りの有無) が検査ごとに違い、それぞれが保証そのものだからである —
 /// 資材を置いた後の雛形を使い回すと「生成したまま組める」が確かめられなくなる。
 ///
@@ -35,14 +35,6 @@ struct TemplateBuildTests {
             .deletingLastPathComponent()  // MokumeCLITests
             .deletingLastPathComponent()  // Tests
             .deletingLastPathComponent()  // リポジトリ直下
-    }
-
-    /// 使い捨ての場所。**検査ごとに作り、検査の終わりに呼ぶ側が消す。**
-    static func makeWorkspace(_ label: String) throws -> URL {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-\(label)-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        return workspace
     }
 
     /// `mokume new` と同じファイルを書き、スケッチの場所を返す。
@@ -65,9 +57,8 @@ struct TemplateBuildTests {
 
     @Test("作ったスケッチが、そのまま組み上がる")
     func theGeneratedSketchBuilds() throws {
-        let workspace = try Self.makeWorkspace("template")
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let root = try Self.generate("try-sketch", in: workspace)
+        let root = try Self.generate("try-sketch", in: SharedDebugScratch.sketches)
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let built = try BuildProcess.build(in: root, scratchPath: SharedDebugScratch.place)
         #expect(built.killed == false, "組み上げが終わらないまま期限に達した")
@@ -76,9 +67,8 @@ struct TemplateBuildTests {
 
     @Test("置いた資材が、絵を探す場所へ運ばれる")
     func assetsLandWhereImagesAreLookedFor() throws {
-        let workspace = try Self.makeWorkspace("assets")
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let root = try Self.generate("asset-sketch", in: workspace)
+        let root = try Self.generate("asset-sketch", in: SharedDebugScratch.sketches)
+        defer { try? FileManager.default.removeItem(at: root) }
 
         // 作った直後のスケッチへ、資材を 1 つ置く
         try Self.write(
@@ -126,7 +116,9 @@ struct TemplateBuildTests {
     /// を塞ぐので、上限が鳴ってもプロセスは終わらない) ので、失うものは無い (#564)。
     @Test("束ねた包みの中でも、資材が絵を探す場所にある")
     func assetsLandInsideTheBundledApplication() throws {
-        let workspace = try Self.makeWorkspace("bundled")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-bundled-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workspace) }
         let root = try Self.generate("packed-sketch", in: workspace)
         try Self.write(
@@ -275,22 +267,33 @@ nonisolated enum BuildProcess {
 
 /// ひな形の debug の 2 本が分け持つ、組み上げの置き場 (#2613)。
 ///
-/// **検査のプロセスに 1 つ作り、プロセスが終わるときに消す。** 置き場の中身は mokume 本体と
-/// 依存の産物で、どのスケッチでも同じなので、2 本目は自分のターゲットだけを組めば済む
-/// (手元の実測で、2 本目の `swift build` が 13 秒 → 4 秒)。パッケージは検査ごとに別なので、
-/// 入力の条件は混ざらない。前の実行の置き場は使わない — 毎回まっさらから始まり、どちらが
-/// 先に走っても成り立つ。
+/// **検査のプロセスに 1 つ作り、プロセスが終わるときに丸ごと消す。** 置き場の中身は
+/// mokume 本体と依存の産物で、どのスケッチでも同じなので、2 本目は自分のターゲットだけを
+/// 組めば済む (手元の実測で、2 本目の `swift build` が 13 秒 → 4 秒)。スケッチは検査ごとに
+/// 別の名前でまっさらから作るので、入力の条件は混ざらない。前の実行の置き場は使わない —
+/// 毎回まっさらから始まり、どちらが先に走っても成り立つ。
+///
+/// **2 本のスケッチは同じ親 (``sketches``) の下に並べる。** 親が違うと、置き場を分け持って
+/// いても 2 本目で mokume 本体が組み直され、8 秒ほどかかる (手元と専用機の実測。道具立ての
+/// 側の理由までは追っていない)。
 ///
 /// **同じ置き場へ 2 本が同時に組むことは無い** — 検査は main actor の上で同期に組むので
 /// 1 本ずつ進む。仮に重なっても SwiftPM が置き場に錠を掛けて待たせる。
 nonisolated enum SharedDebugScratch {
-    /// 置き場。初めて引いたときに場所を決め、プロセスの終わりに消すよう頼む。
-    static let place: URL = {
-        let place = FileManager.default.temporaryDirectory
+    /// 根。置き場とスケッチの親をこの下に並べる。初めて引いたときに場所を決め、プロセスの
+    /// 終わりに消すよう頼む。
+    static let root: URL = {
+        let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-template-build-\(UUID().uuidString)", isDirectory: true)
-        atexit { try? FileManager.default.removeItem(at: SharedDebugScratch.place) }
-        return place
+        atexit { try? FileManager.default.removeItem(at: SharedDebugScratch.root) }
+        return root
     }()
+
+    /// 組み上げの置き場 (`--scratch-path`)。
+    static var place: URL { root.appendingPathComponent("build", isDirectory: true) }
+
+    /// スケッチを作る親。スケッチそのものは、作った検査の終わりに消す。
+    static var sketches: URL { root.appendingPathComponent("sketches", isDirectory: true) }
 }
 
 /// 止め木そのものの検査。
