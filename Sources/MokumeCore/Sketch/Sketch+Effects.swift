@@ -201,7 +201,7 @@ extension SketchPart {
     // shot: 4 snippet=d6f7db6c
     // shot: 5 snippet=4e94538e
     // shot: 6 snippet=d2be289c
-    public func effects(_ effects: [Effect]) { canvas.effects(effects) }
+    public func effects(_ effects: [Effect]) { Self.liveCanvas()?.effects(effects) }
 
     /// 文字列から効果を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
@@ -331,7 +331,7 @@ extension SketchPart {
     public func makeEffect(
         _ body: String, name: String = "effect", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try canvas.makeEffect(body, name: name, values: values)
+        try Self.requireCanvas().makeEffect(body, name: name, values: values)
     }
 
     /// ファイルから効果を読み込む。
@@ -346,6 +346,6 @@ extension SketchPart {
     public func loadEffect(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try canvas.loadEffect(path, values: values)
+        try Self.requireCanvas().loadEffect(path, values: values)
     }
 }

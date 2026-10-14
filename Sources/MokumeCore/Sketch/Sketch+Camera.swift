@@ -49,7 +49,7 @@ extension SketchPart {
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
     ///   ときに書いた視点はどのフレームにも属さないので、警告して無視される。
     // shot: 1 snippet=f5f742f6
-    public func camera() { canvas.camera() }
+    public func camera() { Self.liveCanvas()?.camera() }
 
     /// 見る位置・見ている先・上方向を決める。
     ///
@@ -113,6 +113,7 @@ extension SketchPart {
         _ centerX: some ScalarConvertible, _ centerY: some ScalarConvertible, _ centerZ: some ScalarConvertible,
         _ upX: some ScalarConvertible, _ upY: some ScalarConvertible, _ upZ: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) = (eyeX.asFloat, eyeY.asFloat, eyeZ.asFloat, centerX.asFloat, centerY.asFloat, centerZ.asFloat, upX.asFloat, upY.asFloat, upZ.asFloat)
         canvas.camera(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)
     }
@@ -157,7 +158,10 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=4861898c
-    public var currentCamera: Camera { canvas.currentCamera }
+    public var currentCamera: Camera {
+        Self.liveCanvas(.read(returning: "the camera that fits a 1×1 surface"))?.currentCamera
+            ?? Camera.fitting(width: 1, height: 1)
+    }
 
     /// 作っておいた視点を当てる。
     ///
@@ -206,7 +210,7 @@ extension SketchPart {
     /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
     ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=1911c7b0
-    public func setCamera(_ camera: Camera) { canvas.setCamera(camera) }
+    public func setCamera(_ camera: Camera) { Self.liveCanvas()?.setCamera(camera) }
 
     /// 透視投影を既定へ戻す。
     ///
@@ -244,7 +248,7 @@ extension SketchPart {
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=2f8f127f
-    public func perspective() { canvas.perspective() }
+    public func perspective() { Self.liveCanvas()?.perspective() }
 
     /// 遠くのものほど小さく写す。
     ///
@@ -322,6 +326,7 @@ extension SketchPart {
     // shot: 1 snippet=9980d6cc
     // shot: 2 snippet=3ae634c3
     public func perspective(_ fieldOfView: some ScalarConvertible, _ aspect: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (fieldOfView, aspect, near, far) = (fieldOfView.asFloat, aspect.asFloat, near.asFloat, far.asFloat)
         canvas.perspective(fieldOfView, aspect, near, far)
     }
@@ -364,7 +369,7 @@ extension SketchPart {
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=3a4c652b
-    public func ortho() { canvas.ortho() }
+    public func ortho() { Self.liveCanvas()?.ortho() }
 
     /// 距離によらず同じ大きさで写す。
     ///
@@ -430,6 +435,7 @@ extension SketchPart {
     public func ortho(
         _ left: some ScalarConvertible, _ right: some ScalarConvertible, _ bottom: some ScalarConvertible, _ top: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (left, right, bottom, top, near, far) = (left.asFloat, right.asFloat, bottom.asFloat, top.asFloat, near.asFloat, far.asFloat)
         canvas.ortho(left, right, bottom, top, near, far)
     }

@@ -225,7 +225,7 @@ extension SketchPart {
     /// 1 つずつ描く作りではないので、「保持にしたのに速くならない」が起きない。
     // shot: 1 snippet=2caf9b37
     // shot: 2 snippet=77b00113
-    public func createShape(_ body: () -> Void) -> Shape { canvas.createShape(body) }
+    public func createShape(_ body: () -> Void) -> Shape { Self.requireCanvas().createShape(body) }
 
     /// 保持した形を、**置き場所ぶんだけまとめて置く**。
     ///
@@ -327,6 +327,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=276142f3
     public func shape(_ shape: Shape, at placements: [Placement]) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.shape(shape, at: placements)
     }
 
@@ -383,6 +384,7 @@ extension SketchPart {
     /// 置き直すので、置く数だけ描く回数が増える。
     // shot: 1 snippet=73a8868f
     public func shape(_ shape: Shape, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.shape(shape, x, y)
     }

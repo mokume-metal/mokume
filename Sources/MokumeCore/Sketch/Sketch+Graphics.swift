@@ -107,7 +107,7 @@ extension SketchPart {
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     // shot: 1 snippet=952dfdc7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
-        try canvas.createGraphics(width, height)
+        try Self.requireCanvas().createGraphics(width, height)
     }
 
     /// 描き場所を等倍で置く。
@@ -152,6 +152,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=b01c8b0c
     public func image(_ graphics: Canvas, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(graphics, x, y)
     }
@@ -190,6 +191,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=eca56bd9
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(graphics, a, b, c, d)
     }
@@ -234,6 +236,7 @@ extension SketchPart {
         _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(graphics, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
@@ -373,7 +376,7 @@ extension SketchPart {
     // shot: 1 snippet=c9428b67
     // shot: 2 snippet=f943b654
     // shot: 3 snippet=beee00de
-    public func texture(_ image: Image) { canvas.texture(image) }
+    public func texture(_ image: Image) { Self.liveCanvas()?.texture(image) }
 
     /// これから置く塗りに描き場所を貼る。
     ///
@@ -464,7 +467,7 @@ extension SketchPart {
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=ce04dd39
     // shot: 2 snippet=5d6b5918
-    public func texture(_ graphics: Canvas) { canvas.texture(graphics) }
+    public func texture(_ graphics: Canvas) { Self.liveCanvas()?.texture(graphics) }
 
     /// 絵を貼るのをやめる。
     ///
@@ -549,5 +552,5 @@ extension SketchPart {
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=5281a349
     // shot: 2 snippet=346300b3
-    public func noTexture() { canvas.noTexture() }
+    public func noTexture() { Self.liveCanvas()?.noTexture() }
 }

@@ -50,7 +50,8 @@ extension SketchPart {
         _ sensitivityX: some ScalarConvertible = 1, _ sensitivityY: some ScalarConvertible = 1,
         _ sensitivityZ: some ScalarConvertible = 1
     ) {
-        guard let runtime = runningSketch else { return }
+        guard let runtime = Self.liveRuntime() else { return }
+        let canvas = runtime.canvas
         let (sensitivityX, sensitivityY, sensitivityZ) = (
             sensitivityX.asFloat, sensitivityY.asFloat, sensitivityZ.asFloat
         )
@@ -90,18 +91,18 @@ extension SketchPart {
     /// ```
     ///
     /// 書いた値は限界へ収められる (仰角は真上・真下を越えず、距離は上下限の中へ入る)。
-    /// **走っていなければ読んでも空が返り、書いても何も起きない** — 入力を読むのと同じで、
-    /// 状態の読み書きでスケッチを止めない。
+    /// **走っていなければ読んでも空が返り、書いても何も起きない** (口の名前ごとに 1 度だけ警告する)。
+    /// 状態の読み書きでスケッチを止めない (ADR-0020 決定 5)。
     public var orbit: Orbit {
         get {
-            guard let runtime = runningSketch else {
+            guard let runtime = Self.liveRuntime(.read(returning: "an orbit at the origin with no distance")) else {
                 return Orbit(center: .zero, distance: 0)
             }
             return runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         }
         // 部品 (struct) から書いても、書く先は走っているスケッチで、部品の値は変わらない
         nonmutating set {
-            guard let runtime = runningSketch else { return }
+            guard let runtime = Self.liveRuntime() else { return }
             var orbit = newValue
             orbit.clampToLimits()
             runtime.orbit = orbit

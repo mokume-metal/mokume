@@ -65,7 +65,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=9c067b7f
     // shot: 2 snippet=ad0cc1bf
-    public func applyMatrix(_ matrix: Transform) { canvas.applyMatrix(matrix) }
+    public func applyMatrix(_ matrix: Transform) { Self.liveCanvas()?.applyMatrix(matrix) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
@@ -97,7 +97,7 @@ extension SketchPart {
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=a95c28ee
-    public func resetMatrix() { canvas.resetMatrix() }
+    public func resetMatrix() { Self.liveCanvas()?.resetMatrix() }
 
     /// いまの変換を積んでおく。
     ///
@@ -158,7 +158,7 @@ extension SketchPart {
     /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻るので、戻し忘れても次のフレームへは残らない。
     // shot: 1 snippet=ec08da66
     // shot: 2 snippet=f32daf1c
-    public func pushMatrix() { canvas.pushMatrix() }
+    public func pushMatrix() { Self.liveCanvas()?.pushMatrix() }
 
     /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
     ///
@@ -189,7 +189,7 @@ extension SketchPart {
     ///
     /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻る。
     // shot: 1 snippet=2d914404
-    public func popMatrix() { canvas.popMatrix() }
+    public func popMatrix() { Self.liveCanvas()?.popMatrix() }
 
     /// 変換とスタイルの**両方**を積んでおく。
     ///
@@ -225,7 +225,7 @@ extension SketchPart {
     ///
     /// - Note: 積んだ**変換**はフレームを越えない — フレームの頭で空に戻る。
     // shot: 1 snippet=2665a2c3
-    public func push() { canvas.push() }
+    public func push() { Self.liveCanvas()?.push() }
 
     /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
     ///
@@ -262,5 +262,5 @@ extension SketchPart {
     ///
     /// - Note: 積んだ**変換**はフレームを越えない — フレームの頭で空に戻る。
     // shot: 1 snippet=45e99a0e
-    public func pop() { canvas.pop() }
+    public func pop() { Self.liveCanvas()?.pop() }
 }

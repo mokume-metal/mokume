@@ -121,7 +121,7 @@ extension SketchPart {
     // shot: 1 snippet=ed20505f
     // shot: 2 snippet=ee77bf99
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
-        try canvas.makeParticles(count: count)
+        try Self.requireCanvas().makeParticles(count: count)
     }
 
     /// 粒を出す。
@@ -396,8 +396,8 @@ extension SketchPart {
         size: ClosedRange<Float> = 2...6,
         color: LinearRGBA? = nil
     ) {
-        let runtime = Self.requireRuntime()
-        canvas.emit(
+        guard let runtime = Self.liveRuntime() else { return }
+        runtime.canvas.emit(
             particles, from: source, toward: heading, rate: rate.asFloat, speed: speed, life: life,
             size: size, color: color, using: &runtime.randomness)
     }
@@ -512,6 +512,7 @@ extension SketchPart {
     // shot: 1 snippet=4426839e
     // shot: 2 snippet=878e959d
     public func force(_ particles: Particles, _ forces: Force...) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.force(particles, forces)
     }
 
@@ -676,5 +677,5 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=07f084f9
     // shot: 2 snippet=468ad272
-    public func particles(_ particles: Particles) { canvas.particles(particles) }
+    public func particles(_ particles: Particles) { Self.liveCanvas()?.particles(particles) }
 }

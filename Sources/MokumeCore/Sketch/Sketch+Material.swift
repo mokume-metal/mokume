@@ -51,6 +51,7 @@ extension SketchPart {
     ///   (書いてあれば警告が出る)。
     // shot: 1 snippet=d8f1f5d4
     public func shininess(_ amount: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.shininess(amount)
     }
@@ -96,6 +97,7 @@ extension SketchPart {
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=06e03582
     public func metalness(_ amount: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.metalness(amount)
     }
@@ -148,7 +150,7 @@ extension SketchPart {
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=49cec9a2
-    public func ambient(_ color: LinearRGBA) { canvas.ambient(color) }
+    public func ambient(_ color: LinearRGBA) { Self.liveCanvas()?.ambient(color) }
 
     /// 自ら出す光。光が当たっていない側にも同じだけ出る。
     ///
@@ -192,5 +194,5 @@ extension SketchPart {
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=dec7f776
-    public func emissive(_ color: LinearRGBA) { canvas.emissive(color) }
+    public func emissive(_ color: LinearRGBA) { Self.liveCanvas()?.emissive(color) }
 }

@@ -262,7 +262,7 @@ extension SketchPart {
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         let url = try dataURL(path)
         let drawing = try SVGFile.parse(try TextFile.read(url, path: path), path: path)
-        return canvas.shape(of: drawing, readFrom: path)
+        return Self.requireCanvas().shape(of: drawing, readFrom: path)
     }
 
     /// SVG のファイルを読み、保持した形にする。**読んでいる間、他の仕事を止めない。**

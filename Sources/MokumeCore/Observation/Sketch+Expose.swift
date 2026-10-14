@@ -37,28 +37,28 @@ extension SketchPart {
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public func expose(_ name: String, _ value: Double) {
-        runningSketch?.expose(name, .float(value))
+        Self.liveRuntime()?.expose(name, .float(value))
     }
 
     /// いまの値を観測へ差し出す。数でない値 (NaN・無限) は差し出されない
     /// (``expose(_:_:)-(_,Double)``)。
     public func expose(_ name: String, _ value: Float) {
-        runningSketch?.expose(name, .float(Double(value)))
+        Self.liveRuntime()?.expose(name, .float(Double(value)))
     }
 
     /// いまの値を観測へ差し出す。
     public func expose(_ name: String, _ value: Int) {
-        runningSketch?.expose(name, .int(value))
+        Self.liveRuntime()?.expose(name, .int(value))
     }
 
     /// いまの値を観測へ差し出す。
     public func expose(_ name: String, _ value: String) {
-        runningSketch?.expose(name, .string(value))
+        Self.liveRuntime()?.expose(name, .string(value))
     }
 
     /// いまの値を観測へ差し出す。
     public func expose(_ name: String, _ value: Bool) {
-        runningSketch?.expose(name, .bool(value))
+        Self.liveRuntime()?.expose(name, .bool(value))
     }
 
     /// 処理を 1 度走らせ、かかった実時間 (ミリ秒) を観測へ差し出す。
@@ -97,7 +97,7 @@ extension SketchPart {
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     public func measure<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
-        guard let runtime = runningSketch else { return try body() }
+        guard let runtime = Self.liveRuntime() else { return try body() }
         return try runtime.measure(name, body)
     }
 }

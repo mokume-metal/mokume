@@ -67,7 +67,7 @@ extension SketchPart {
     ///   1 個へ丸めない) に ``RenderFailure``。
     // shot: 1 snippet=fc61cf1e
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
-        try canvas.makeNumbers(count: count)
+        try Self.requireCanvas().makeNumbers(count: count)
     }
 
     /// 文字列から計算を作る。保存の拾い直しは効かない (在処が無いため)。
@@ -211,7 +211,7 @@ extension SketchPart {
     public func makeComputation(
         _ body: String, name: String = "computation", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try canvas.makeComputation(body, name: name, values: values)
+        try Self.requireCanvas().makeComputation(body, name: name, values: values)
     }
 
     /// ファイルから計算を読み込む。**入口の関数の名前はファイル名**になる。
@@ -226,7 +226,7 @@ extension SketchPart {
     public func loadComputation(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try canvas.loadComputation(path, values: values)
+        try Self.requireCanvas().loadComputation(path, values: values)
     }
 
     /// 描く前に計算させる (1 次元)。
@@ -439,6 +439,7 @@ extension SketchPart {
         _ computation: Computation, over count: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.compute(computation, over: count, reads: reads, writes: writes)
     }
 
@@ -598,7 +599,7 @@ extension SketchPart {
     // shot: 1 snippet=d9bf43e4
     // shot: 2 snippet=0bc34129
     // shot: 3 snippet=5ec9d11e
-    public func numbers(_ numbers: Numbers) { canvas.numbers(numbers) }
+    public func numbers(_ numbers: Numbers) { Self.liveCanvas()?.numbers(numbers) }
 
     /// 並びを読まない状態へ戻す。
     ///
@@ -689,7 +690,7 @@ extension SketchPart {
     /// - Note: 並びは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=b40dc8fc
     // shot: 2 snippet=b4da70c9
-    public func resetNumbers() { canvas.resetNumbers() }
+    public func resetNumbers() { Self.liveCanvas()?.resetNumbers() }
 
     /// 描く前に計算させる (2 次元)。
     ///
@@ -763,6 +764,7 @@ extension SketchPart {
         _ computation: Computation, over width: Int, by height: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.compute(computation, over: width, by: height, reads: reads, writes: writes)
     }
 
@@ -886,5 +888,5 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=d7424f97
     // shot: 2 snippet=9dfc4082
-    public func read(_ numbers: Numbers) -> [Float] { canvas.read(numbers) }
+    public func read(_ numbers: Numbers) -> [Float] { Self.liveCanvas(.read(returning: "[]"))?.read(numbers) ?? [] }
 }
