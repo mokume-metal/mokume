@@ -1527,7 +1527,10 @@ public final class SketchRuntime {
                 frame: timing.frameCount,
                 time: Double(timing.time),
                 size: ObservationReport.Size(width: target.width, height: target.height),
-                warnings: warnings,
+                // 走っている実行の外から呼ばれた語彙 (#2265) も、どの道で終わっても毎回載せる。
+                // 標準エラーの 1 行は MCP から読めず、`init` で読んだ `width` が 0 だった
+                // ことを観測で辿れなくなる。控えは口の種類の数で止まる
+                warnings: warnings + OutsideRun.log.messages,
                 stats: last?.stats,
                 load: RuntimeLoad.sample(tempo: tempo, now: now()),
                 values: exposedValues.isEmpty ? nil : exposedValues,
