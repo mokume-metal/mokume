@@ -52,6 +52,9 @@ set -uo pipefail
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 REPO="$(this_repo)"
+# 「bot の手か」の判定と、その前提の宣言 (#2660 — 二重着手の跡見が使う)
+# shellcheck source=scripts/bot-hand.sh
+. "$(dirname "${BASH_SOURCE[0]}")/bot-hand.sh"
 
 # 投稿済み判定の目印。個人環境の同種フック (plan-record: <id>) と混ざらないよう
 # 接頭辞を分ける — 両方が動いていても互いの記録を「投稿済み」と誤読しない
@@ -442,26 +445,35 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
 # 件数を超えたもの) を REST で全件ページ送りに引き、手元で目印つきに絞る。窓に収まっていれば
 # 呼び出しも取得量も今と同じで、溢れたものごとに ⌈コメント数 / 100⌉ 回の REST が加わる。
 # 引き直しに失敗したら窓の分だけで判定する (従来どおり)。
+#
+# **bot の手のコメントは、目印を含んでいてもプランと読まない** (前提と判定は
+# scripts/bot-hand.sh)。bot の追記は検査の出力の抜粋を載せるので、この検査自身の目印の
+# 綴り (<!-- mokume-plan-record: … -->) が混じりうる。
 
 readonly MARKS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      comments(last: 100) { totalCount nodes { body url } }
+      comments(last: 100) { totalCount nodes { body url author { __typename } } }
       timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 50) {
         nodes { ... on CrossReferencedEvent { source {
-          ... on Issue { number state comments(last: 50) { totalCount nodes { body url } } }
-          ... on PullRequest { number state comments(last: 50) { totalCount nodes { body url } } }
+          ... on Issue { number state
+            comments(last: 50) { totalCount nodes { body url author { __typename } } } }
+          ... on PullRequest { number state
+            comments(last: 50) { totalCount nodes { body url author { __typename } } } }
         } } }
       }
     }
   }
 }'
 
+# 目印つきで、bot の手でないコメント。GraphQL の nodes にも REST のコメントにも効く
+MARKED_JQ="$BOT_HAND_JQ"' def marked: select(.body | contains("'"$MARKER: "'")) | select(bot_hand | not);'
+
 # Issue / PR のコメントを全件引き、目印つきのものだけを 1 行 1 件の {url, body} で出す (#2660)。
 # PR の会話のコメントも issues/<番号>/comments で引ける
 marked_comments() { # $1=Issue / PR の番号
   gh api --paginate "repos/$REPO/issues/$1/comments?per_page=100" \
-    --jq ".[] | select(.body | contains(\"$MARKER: \")) | {url: .html_url, body} | tojson" 2>/dev/null
+    --jq "$MARKED_JQ"' .[] | marked | {url: .html_url, body} | tojson' 2>/dev/null
 }
 
 concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → 跡を 1 行 1 件で stdout へ
@@ -476,8 +488,8 @@ concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → �
   overflowed=$(printf '%s' "$json" | jq -r '
     .data.repository.issue.comments | (.totalCount // 0) > (.nodes | length)' 2>/dev/null)
   if [ "$overflowed" != true ] || ! mine=$(marked_comments "$number"); then
-    mine=$(printf '%s' "$json" | jq -c --arg m "$MARKER: " '
-      .data.repository.issue.comments.nodes[]? | select(.body | contains($m)) | {url, body}' \
+    mine=$(printf '%s' "$json" | jq -c "$MARKED_JQ"'
+      .data.repository.issue.comments.nodes[]? | marked | {url, body}' \
       2>/dev/null) || return 0
   fi
 
@@ -499,11 +511,11 @@ concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → �
   esac
 
   # open な参照元に載った、目印つきのコメント (1 行 1 件の JSON)
-  plans=$(printf '%s' "$json" | jq -c --arg m "$MARKER: " --argjson n "$number" '
+  plans=$(printf '%s' "$json" | jq -c --argjson n "$number" "$MARKED_JQ"'
     .data.repository.issue.timelineItems.nodes[]?.source?
     | select(type == "object" and .state == "OPEN" and .number != $n)
     | .number as $source
-    | .comments.nodes[]? | select(.body | contains($m))
+    | .comments.nodes[]? | marked
     | {source: $source, url, body}' 2>/dev/null) || return 0
 
   # 窓から押し出しのあった参照元は、全件から拾い直したもので置き換える (#2660)

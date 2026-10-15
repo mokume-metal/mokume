@@ -92,11 +92,13 @@
 #
 # ### bot の追記は数えない (#2660)
 #
-# 逆向きは成り立たない — 新しいからといって生きているとは限らない。定期の検査・前検査の赤は、
-# 同じ題の Issue が open なら `github-actions` がそこへコメントで追記する (#2658)。追記は
-# updatedAt を動かすので、止まった着手印でも追記から 120 分は「まだ動いている」に見え、前検査が
+# 逆向きは成り立たない — 新しいからといって生きているとは限らない。Issue の活動には bot の手が
+# 混じる (前提の宣言と「bot の手か」の判定は scripts/bot-hand.sh)。bot の追記は updatedAt を
+# 動かすので、止まった着手印でも追記から 120 分は「まだ動いている」に見え、前検査が
 # merge_group ごとに追記すると queue が回る間ずっと隠れる。
 #
+# 項目の種類は限らない — 窓の timeline はどの種類にも作者 / actor を引かせ (bot-hand.sh の
+# 断片)、Bot のものを全部 bot の手として扱う。
 # だから updatedAt が新しいだけの着手印 (PR も手元の worktree / 枝も無い) は、**窓の中
 # (DROPPED_MINUTES 分) の timeline を引いて、人の手があるかを見る**。窓の中に bot の手が
 # **少なくとも 1 つあり**、それ以外が無いときだけ静かとみなして家族の判定へ回す — 新しさを
@@ -157,6 +159,9 @@ set -euo pipefail
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+# 「bot の手か」の判定と、その前提の宣言 (#2660)
+# shellcheck source=scripts/bot-hand.sh
+. "$(dirname "${BASH_SOURCE[0]}")/bot-hand.sh"
 
 REPO="$(this_repo)"
 
@@ -281,20 +286,21 @@ done < <(jq -c '.[]' <<<"$issues_json")
 
 # 窓の中に人の手があるかを 1 回で読む。「<番号> human|quiet」を 1 行 1 件で出す。
 #
-# quiet は「窓の中が Bot のコメントと参照だけで、少なくとも 1 つある」ときに限る。作者の
-# 分からない項目 (退会した人・actor を引かない種類の出来事)・本文の編集・窓に収まらない項目・
+# quiet は「窓の中が bot の手 (scripts/bot-hand.sh) だけで、少なくとも 1 つある」ときに限る。
+# 作者の分からない項目 (退会した人・断片の並びに無い種類)・本文の編集・窓に収まらない項目・
 # 空の窓は human に倒す (冒頭の「bot の追記は数えない」— bot と分かるものだけを除く)
 read_hands() { # $1=番号 (空白区切り)
   local owner=${REPO%%/*} name=${REPO#*/} q='' n
   for n in $1; do
     q+="i$n: issue(number: $n) { lastEditedAt timelineItems(since: \"$QUIET_BEFORE\", last: 100) {"
-    q+=" filteredCount nodes { __typename ... on IssueComment { author { __typename } }"
-    q+=" ... on CrossReferencedEvent { actor { __typename } } } } } "
+    q+=" filteredCount nodes { __typename ...hand } } } "
   done
-  gh api graphql -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } }" \
-    --jq '.data.repository | to_entries[]
+  gh api graphql \
+    -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } } $BOT_HAND_TIMELINE_FRAGMENT" \
+    --jq "$BOT_HAND_JQ"'
+      .data.repository | to_entries[]
       | .value.timelineItems as $t
-      | (any($t.nodes[]?; ((.author // .actor // {}).__typename) != "Bot")
+      | (any($t.nodes[]?; bot_hand | not)
          or ($t.nodes | length) == 0
          or ($t.filteredCount // 0) > ($t.nodes | length)
          or (.value.lastEditedAt // "") > "'"$QUIET_BEFORE"'") as $hand

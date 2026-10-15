@@ -98,9 +98,14 @@ if [ "$1" = "api" ]; then
         [ -z "${FAIL_HANDS:-}" ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
         since=$(printf '%s' "$*" | sed -n 's/.*timelineItems(since: "\\([^"]*\\)".*/\\1/p')
         asked=$(printf '%s' "$*" | grep -o 'i[0-9]*: issue' | sed 's/: issue//' | jq -R . | jq -sc .)
-        jq --arg s "$since" --argjson asked "$asked" '
+        # 手 (author / actor) は、問い合わせがその種類に断片で求めたときだけ返す — 本物も
+        # 求めない欄は返さない。いつも返すと、断片から種類が落ちても検査は緑のままになる
+        handed=$(printf '%s' "$*" | grep -oE 'on [A-Za-z]+ [{] (actor|author)' |
+          awk '{ print $2 }' | jq -R . | jq -sc .)
+        jq --arg s "$since" --argjson asked "$asked" --argjson handed "$handed" '
           .data.repository |= with_entries(select(.key as $k | $asked | index($k))
-            | .value.timelineItems |= ((.nodes |= map(select(.createdAt >= $s)))
+            | .value.timelineItems |= ((.nodes |= map(select(.createdAt >= $s)
+                | if (.__typename as $t | $handed | index($t)) then . else del(.author, .actor) end))
               | .filteredCount = (.hidden // 0) + (.nodes | length) | del(.hidden)))' \\
           "$FIX/hands.json" > "$FIX/hands-asked.json"
         emit "$FIX/hands-asked.json"; exit 0
@@ -411,6 +416,32 @@ class ReadyQueueTest(unittest.TestCase):
                 seen = self.lines_by_number(done.stdout)
                 self.assertEqual(seen[60][0], "busy", f"{name}を数えていない")
                 self.assertIn("まだ動いている", seen[60][1])
+
+    def test_bot_hand_of_any_kind_does_not_keep_busy(self):
+        """bot がコメント以外の書き方 (ラベル付け・再オープンなど) をしても bot の手と読む。
+
+        「bot の手か」は scripts/bot-hand.sh の 1 か所で決め、項目の種類を限らない (#2660 の反証 3)
+        """
+        for kind in ("LabeledEvent", "ReopenedEvent", "RenamedTitleEvent", "AssignedEvent"):
+            with self.subTest(kind):
+                done, _ = self.run_queue(
+                    [issue(62, labels=["status: in progress"], updated=ago(30))],
+                    hands={
+                        62: {
+                            "nodes": [
+                                {
+                                    "__typename": kind,
+                                    "createdAt": ago(30),
+                                    "actor": {"__typename": "Bot", "login": "github-actions"},
+                                },
+                                bot_comment(30),
+                            ]
+                        }
+                    },
+                )
+                self.assertEqual(
+                    self.lines_by_number(done.stdout)[62][0], "dropped", f"bot の {kind} を人の手と読んでいる"
+                )
 
     def test_bot_reference_alone_does_not_keep_busy(self):
         done, _ = self.run_queue(

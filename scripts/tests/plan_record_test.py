@@ -1485,7 +1485,11 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
     @staticmethod
     def rest_pages(comments, per_page=100):
         """REST の --paginate が出すページの並び (配列を続けた JSON)。url は html_url の名で返る"""
-        rows = [{"body": c["body"], "html_url": c["url"]} for c in comments]
+        rows = [
+            {"body": c["body"], "html_url": c["url"]}
+            | ({"user": {"login": "github-actions[bot]", "type": "Bot"}} if c.get("bot") else {})
+            for c in comments
+        ]
         return "".join(
             json.dumps(rows[i : i + per_page]) for i in range(0, len(rows), per_page)
         )
@@ -1509,6 +1513,59 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         )
         self.assertIn("issues/123/comments", rest_log.read_text(encoding="utf-8"))
         self.assertIn("着手を止めません", result.stderr)
+
+    def test_capture_does_not_read_a_bot_comment_as_a_plan(self):
+        """bot の追記に目印の綴りが混じっても、プランと読まない (#2660 の反証 3)。
+
+        bot の追記は検査の出力の抜粋を載せるので、この検査自身の目印が混じりうる。
+        「bot の手か」は scripts/bot-hand.sh の 1 か所が答え、GraphQL (author.__typename) でも
+        REST (user.type) でも同じ定義が効く。
+        """
+        excerpt = (
+            "## 検査の出力\n\n```text\n"
+            "AssertionError: <!-- mokume-plan-record: someone-else-1700000000 -->\n```\n"
+        )
+        in_window = {
+            "body": excerpt,
+            "url": "https://example.invalid/bot/window",
+            "author": {"__typename": "Bot"},
+        }
+        with self.subTest("窓 (GraphQL)"):
+            result = self.capture(
+                "計画。\n",
+                FAKE_GH_ISSUE="123",
+                FAKE_GH_GRAPHQL=issue_state(comments=[in_window], total=1),
+            )
+            self.assertNotIn("二重着手", result.stderr)
+        with self.subTest("全件 (REST)"):
+            bots = [self.bot_comment(i) for i in range(120)]
+            pushed = {"body": excerpt, "url": "https://example.invalid/bot/rest", "bot": True}
+            result = self.capture(
+                "計画。\n",
+                FAKE_GH_ISSUE="123",
+                FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=121),
+                FAKE_GH_REST_COMMENTS_123=self.rest_pages([pushed] + bots),
+            )
+            self.assertNotIn("二重着手", result.stderr)
+        with self.subTest("人のプランは数える"):
+            result = self.capture(
+                "計画。\n",
+                FAKE_GH_ISSUE="123",
+                FAKE_GH_GRAPHQL=issue_state(
+                    comments=[
+                        in_window,
+                        dict(
+                            plan_comment(self.OTHER, "https://example.invalid/c/1"),
+                            author={"__typename": "User"},
+                        ),
+                    ],
+                    total=2,
+                ),
+            )
+            self.assertIn(
+                "#123 に別のセッションのプランが 1 件載っている (https://example.invalid/c/1)",
+                result.stderr,
+            )
 
     def test_capture_does_not_point_at_its_own_plan_pushed_out(self):
         """全件から拾い直しても、自分のセッションのプランは数えない。"""
