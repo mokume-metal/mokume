@@ -20,16 +20,20 @@
 # 付け直し、ci.yml の ci-gate はもう作法を待たない (#2669)。かつて打ち直しの大半はこの作法の
 # 赤だった (#1160・#2134)。残るのは、同じコミットに段を走らせる ci.yml の run が複数立つ場面
 # (reopen・base の変更・閉じて作り直した PR) で、古い run の ci-check・ci-gate の赤が新しい緑と
-# 並ぶときである。必須の判定がどちらを読むかは観測からの推定で、確定していない (scripts/ci-gate.sh
-# の冒頭・#2577) ので、打ち直しを残す。
+# 並ぶときである。必須の判定は作成順で最新の check suite の結論を読む (規則と観測は
+# scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」・#2577)。この組の赤は古い suite に
+# 載っているので、**規則の下では必須を塞がず、打ち直しは要らない**。外すのは当番の振る舞いの
+# 変更なので記述の直しに混ぜず、別に扱う。それまでは残す — 打ち直しは冪等で、塞いでいない赤を
+# 消すだけである。新旧は run の id の順で読み、suite の作成順と同じに並ぶ (同じ冒頭)。
 # 本文の編集の run の緑 (段が skipped) は直った証拠ではないので、stall-watch.sh はそれを組に
 # 数えない (masked-red と名乗る・#2669 の反証 4)。
 #
 # 本文の編集の run の ci-gate は、同じ SHA のコードの検査の最新を読んで結論を返す (#2690)。
 # 検査の赤を読んだ後や待ちの期限 (scripts/ci-gate.sh の WAIT_LIMIT) を越えた後に、検査を打ち
-# 直して緑にしても、その赤は必須を塞ぎ続ける (読み方は scripts/ci-gate.sh の冒頭)。
-# stall-watch.sh は、同じ SHA の検査の最新がどちらも success になったその赤も stale-checks で
-# 回す (#2717)。打てば同じ SHA を読み直して緑を返す。検査の最新が赤なら回さない (同じ赤を返す)。
+# 直して緑にしても、その赤は必須を塞ぎ続ける (その赤が新しい suite に載る。規則は
+# scripts/ci-gate.sh の冒頭)。stall-watch.sh は、同じ SHA の検査の最新がどちらも success になった
+# その赤も stale-checks で回す (#2717)。打てば同じ SHA を読み直して緑を返す。検査の最新が赤なら
+# 回さない (同じ赤を返す)。
 #
 # ## 作法のジョブを含む古い ci.yml の run は丸ごと打たない (#2669 の移行)
 #
@@ -111,10 +115,14 @@
 # 別の check の stale-checks の巻き添えで戻ってくるのも、これで止まる。
 #
 # **3 つ目の基準は「最新の run の結論が判定になるジョブか」** (#2668)。pr-gate
-# (.github/workflows/pr-gate.yml) は直すと新しい run が付け直し、concurrency が走っている古い
-# run を cancel する。head SHA に残る古い赤・cancelled は直す前の名残で、打ち直しても得るものが
-# 無い。打てば同じ group で走っている新しい run を cancel しうる。stall-watch.sh の
-# normalize_checks も古い pr-gate を stale-checks に数えない。
+# (.github/workflows/pr-gate.yml) は直すと新しい run が付け直し、必須は作成順で最新の run の結論を
+# 読む (規則は scripts/ci-gate.sh の冒頭)。head SHA に残る古い赤・cancelled は必須が読まない名残で、
+# 打ち直しても得るものが無い (pr-gate は concurrency を持たないので、打っても他の run は止まらない・
+# #2716)。
+# stall-watch.sh の normalize_checks も古い pr-gate を stale-checks に数えない。必須が読む最新の
+# suite の pr-gate が cancelled で BLOCKED のままの形 (#2716) は、stall-watch.sh が stale-gate と
+# 名乗って打ち直す run の番号を出し、**打つのは人である** (分類は name なのでここへは来ない)。
+# 当番に打たせるかは、この除外を変える判断になる
 #
 # 検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail

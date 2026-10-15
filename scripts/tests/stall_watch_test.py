@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは十四。
+固定したいのは十五。
 
 1. **集約のジョブ (ci-gate) は上流より後に打つ** (#1883)。先に打つと ci-gate だけが前の結論を
    読んで同じ赤を返し、その run が走っている間は上流の打ち直しが拒まれる。除外したジョブ
@@ -40,10 +40,16 @@
    直されて新しい ci-gate が付かない PR は legacy-gate と名乗って人へ返す (#2669 の反証 1・2)
 13. **段を走らせていない run (本文の編集) の緑の ci-gate は、直った証拠に数えない。** 数えると
    本当に赤いコードの検査を当番のたびに打ち直す。打たずに masked-red と名乗る (#2669 の反証 4)
-14. **段を走らせていない run の赤い ci-gate は、同じ SHA の検査の最新がどちらも緑なら打つ** (#2717)。
+14. **必須が揃っているのに、必須が読む最新の check suite の pr-gate が cancelled で BLOCKED の PR を、
+   猶予の後に名乗る** (#2716)。#2712 は必須が揃った後も queue に入らず、どの分類にも当たらなかった。
+   打ち直す run の番号を出し、当番は打たない。新旧は suite の id で読み、cancelled が古い suite の
+   ほう (#2710)・最新の suite の赤 (PR を読んだ結論)・必須が揃っていない BLOCKED (待ち・赤・欠け) は
+   名乗らない。古い suite の結論は問わず、stale-checks と同じ PR でも名乗る (#2716 の反証 1・2・6)
+15. **段を走らせていない run の赤い ci-gate は、同じ SHA の検査の最新がどちらも緑なら打つ** (#2717)。
    検査を打ち直して緑にしても、run の id の大きいその赤が必須を塞ぎ続ける。検査の最新が赤・
    走っている途中・片方が無いなら打たない (読み直しても緑にならない)。検査の最新は ci-gate.sh と
-   同じ check run の id で読み、作法のジョブを含む古い run の赤は legacy-gate に残す (#2717 の反証)
+   同じく作成順で最新の run (suite) の、その中の最後の attempt で読み、作法のジョブを含む古い
+   run の赤は legacy-gate に残す (#2717 の反証・#2716 で ci-gate.sh を suite の順に揃えた)
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -121,6 +127,13 @@ fi
 url=${2:-}
 
 case "$url" in
+  # PR gate の run の一覧 (stale-gate が check suite の作成順を読む・#2716)。既定は空の並び
+  */actions/workflows/pr-gate.yml/runs\\?*)
+    [ -z "${GATERUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout (pr-gate runs)" >&2; exit 1; }
+    sha=${url#*head_sha=}; sha=${sha%%&*}
+    f="$PR_DIR/${sha#sha-}.gateruns.json"
+    [ -f "$f" ] || f="$PR_DIR/render-runs.none.json"
+    emit "$f"; exit 0 ;;
   # 専用機の render の run (#1774)。status の値ごとに応答を分ける。既定は空の並び
   */actions/workflows/render.yml/runs\\?*)
     [ -z "${RUNS_FAIL:-}" ] || { echo "gh: 502" >&2; exit 1; }
@@ -146,9 +159,10 @@ case "$url" in
   */actions/jobs/*)
     [ -z "${JOB_FAILS:-}" ] || { echo "gh: HTTP 502: Bad Gateway (job)" >&2; exit 1; }
     emit "$PR_DIR/job.${url##*/}.json"; exit 0 ;;
-  */check-runs)
+  # stall-watch の stale-gate は check_name と filter を問い合わせの文字列で渡す (#2716)
+  */check-runs|*/check-runs\\?*)
     [ -z "${CHECKRUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout (check-runs)" >&2; exit 1; }
-    sha=${url%/check-runs}; sha=${sha##*/}
+    sha=${url%%\\?*}; sha=${sha%/check-runs}; sha=${sha##*/}
     emit "$PR_DIR/${sha#sha-}.checkruns.json"; exit 0 ;;
   */files)
     n=${url%/files}; n=${n##*/}
@@ -685,6 +699,208 @@ class StallWatchTest(unittest.TestCase):
         line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("43 "))
         self.assertLess(int(line.split()[3]), 10, line)
 
+    # --- 必須が読む最新の suite の pr-gate が cancelled で BLOCKED のまま (#2716) ---
+    #
+    # 必須は作成順で最新の check suite の pr-gate を読む (scripts/ci-gate.sh 冒頭・#2577)。#2712 は
+    # 作成と同時のラベルで 2 本の run が立ち、新しい suite (105017324579・run 38752624025) が
+    # cancelled、古い suite (105017320903・run 38752622858) が success で残った。必須が揃った後も
+    # BLOCKED のまま queue に入らず、cancelled の run の打ち直しで CLEAN になった。#2710 は
+    # cancelled が古い suite のほうで、止まらずに merge された
+
+    def stale_gate_pr(self, number, *, suites=None, rollup=None, ci="SUCCESS", ci_at=20,
+                      render="SKIPPED", state="BLOCKED"):
+        """suites は (suite の id, run の id, run の status か conclusion[, ジョブがあるか]) の並び。
+
+        既定は #2712 の形。rollup を渡さなければ、ジョブのある run を rollup の pr-gate に載せる。
+        ジョブの無い run (待ちを置き換えられた cancelled) は check run を作らないので rollup に出ない。"""
+        if suites is None:
+            suites = [(105017320903, 38752622858, "success"), (105017324579, 38752624025, "cancelled")]
+        suites = [tuple(x) + (True,) * (4 - len(x)) for x in suites]
+        if rollup is None:
+            rollup = [
+                check("pr-gate", result.upper(), ago(40), run=run, job=number * 10 + i)
+                for i, (_, run, result, jobs) in enumerate(suites) if jobs
+            ]
+        checks = list(rollup) + [check("ci-gate", ci, ago(ci_at), run=38752623159, job=number * 10 + 7)]
+        if render is not None:
+            checks.append(check("render", render, ago(39), run=38752623160, job=number * 10 + 8))
+        self.add_pr(number, auto=True, state=state, checks=checks)
+        runs = []
+        for suite, run, result, _ in suites:
+            item = {"id": run, "check_suite_id": suite, "event": "pull_request"}
+            if result in ("queued", "in_progress"):
+                item.update(status=result, conclusion=None)
+            else:
+                item.update(status="completed", conclusion=result)
+            runs.append(item)
+        self.write(f"{number}.gateruns.json", {"total_count": len(runs), "workflow_runs": runs})
+
+    def stale_gate_line(self, number, proc):
+        return next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith(f"{number} "))
+
+    def test_必須が読む最新の_suite_の_pr_gate_が_cancelled_で_BLOCKED_のまま猶予を超えたら名乗る(self):
+        """名乗りの行に最新の suite の run の番号を出し、猶予を超えたので 1 で終える。"""
+        self.stale_gate_pr(60)
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        line = self.stale_gate_line(60, proc)
+        self.assertEqual(line[1:3], ["stale-gate", "name"], proc.stdout)
+        self.assertIn(int(line[3]), (19, 20), proc.stdout)
+        self.assertIn("gh run rerun 38752624025", line[4], proc.stdout)
+        self.assertNotIn("38752622858", line[4], "緑の run を打ち直しに挙げている")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn(f"actions/workflows/pr-gate.yml/runs?head_sha=sha-60", self.gh_log())
+        self.assertIn("--paginate", self.gh_log(), "run の一覧を 1 ページしか読んでいない (#2716 の反証 5)")
+
+        # 当番は打たない (古い pr-gate を当番に打たせない決まり・#2668)
+        self.calls.write_text("", encoding="utf-8")
+        acted = self.act(proc.stdout.splitlines())
+        self.assertEqual(acted.returncode, 0, acted.stdout + acted.stderr)
+        self.assertNotIn("rerun", self.gh_log())
+
+    def test_新旧は_run_の_id_ではなく_check_suite_の_id_で読む(self):
+        """run の id が小さくても suite が新しければ、必須はそちらを読む。逆も同じ。"""
+        self.stale_gate_pr(61, suites=[(900, 500, "success"), (901, 400, "cancelled")])
+        self.stale_gate_pr(62, suites=[(901, 500, "success"), (900, 600, "cancelled")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.stale_gate_line(61, proc)[1], "stale-gate", proc.stdout)
+        self.assertIn("gh run rerun 400", self.stale_gate_line(61, proc)[4], proc.stdout)
+        self.assertEqual(self.classify(62, proc), (None, None), proc.stdout)
+
+    def test_cancelled_が古い_suite_のほうなら_BLOCKED_でも名乗らない(self):
+        """#2710 の形。必須を塞いでいないので、BLOCKED の理由は別にある。打ち直しを勧めない。"""
+        self.stale_gate_pr(63, suites=[(104990765053, 38743419706, "cancelled"),
+                                       (104990774366, 38743423023, "success")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(63, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_打ち直して最新の_suite_が緑になれば名乗らない(self):
+        """打ち直した run は同じ run (同じ suite) のまま、一覧は最後の attempt の結論を返す。rollup に
+        前の attempt の cancelled が残って見えても、run の一覧の側で読む。"""
+        self.stale_gate_pr(
+            64,
+            suites=[(105017320903, 38752622858, "success"), (105017324579, 38752624025, "success")],
+            rollup=[check("pr-gate", "CANCELLED", ago(40), run=38752624025, job=641),
+                    check("pr-gate", "SUCCESS", ago(39), run=38752622858, job=642)],
+        )
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(64, proc), (None, None), proc.stdout)
+
+    def test_必須が揃ってから猶予の内なら_cancelled_の_pr_gate_が残っても黙る(self):
+        self.stale_gate_pr(65, ci_at=5)
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(65, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_必須が揃っていなければ_cancelled_の_pr_gate_が残っても_stale_gate_と名乗らない(self):
+        """BLOCKED が正しく待っている形。pr-gate を打ち直しても進まない。"""
+        self.stale_gate_pr(66, ci="FAILURE")  # 必須の赤
+        self.stale_gate_pr(67, ci="IN_PROGRESS")  # 必須の待ち
+        self.stale_gate_pr(68, render=None)  # 必須がまだ付いていない
+        # 最新の suite の pr-gate が赤 (PR を読んだ結論。打ち直しても同じ赤・#2716 の反証 1)。rollup
+        # には古い suite の cancelled が見えるので、suite の側で読んで外す
+        self.stale_gate_pr(69, suites=[(900, 800, "cancelled"), (901, 900, "failure")])
+        # 最新の suite の pr-gate が待っている (打ち直すと待っている run を cancel する)。時刻は猶予の
+        # 外に置き、猶予ではなく待ちの判定で黙ることを見る。rollup の側にも待ちが見える
+        self.stale_gate_pr(70, suites=[(900, 800, "success"), (901, 900, "cancelled"),
+                                       (902, 1000, "queued")])
+        # rollup には待ちが見えず (読んだ瞬間の食い違い)、suite の側で待っている
+        self.stale_gate_pr(71, suites=[(900, 800, "success"), (901, 900, "in_progress")],
+                           rollup=[check("pr-gate", "CANCELLED", ago(40), run=700, job=711),
+                                   check("pr-gate", "SUCCESS", ago(39), run=800, job=712)])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        for number in range(66, 72):
+            self.assertNotEqual(self.classify(number, proc)[0], "stale-gate", f"#{number}: {proc.stdout}")
+
+    def test_最新の_suite_の正当な赤は_古い_suite_が緑でも_stale_gate_と名乗らない(self):
+        """#2716 の反証 1 の探査の形。絵・Issue の紐づけの赤は人が直すもので、打ち直しを勧めない。"""
+        self.stale_gate_pr(77, suites=[(900, 800, "success"), (901, 900, "failure")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertNotIn("stale-gate", proc.stdout)
+        self.assertNotIn("gh run rerun", proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_最新の_suite_が_cancelled_なら古い_suite_の結論によらず名乗る(self):
+        """#2716 の反証 2。打ち切られた run は何も判定していない。古い suite が赤でも、cancelled
+        だけでも、打ち直せば今の PR を読んで結論を返す。"""
+        self.stale_gate_pr(78, suites=[(900, 800, "failure"), (901, 900, "cancelled")])
+        self.stale_gate_pr(79, suites=[(900, 900, "cancelled")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertIn("gh run rerun 900", self.stale_gate_line(78, proc)[4], proc.stdout)
+        self.assertEqual(self.stale_gate_line(78, proc)[1], "stale-gate", proc.stdout)
+        self.assertEqual(self.stale_gate_line(79, proc)[1], "stale-gate", proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def test_古い失敗_check_を打つ_PR_でも_cancelled_の_pr_gate_を名乗る(self):
+        """#2716 の反証 6。stale-checks に当たって先へ進まなくても、stale-gate の行も出す。"""
+        self.stale_gate_pr(
+            80,
+            rollup=[
+                check("pr-gate", "SUCCESS", ago(40), run=38752622858, job=801),
+                check("pr-gate", "CANCELLED", ago(40), run=38752624025, job=802),
+                check("ci-check", "FAILURE", ago(90), run=100, job=803),
+                check("ci-check", "SUCCESS", ago(30), run=300, job=804),
+            ],
+        )
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        kinds = [l.split()[1] for l in proc.stdout.splitlines() if l.startswith("80 ")]
+        self.assertEqual(kinds, ["stale-checks", "stale-gate"], proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def test_最新の_suite_が緑の_BLOCKED_は名乗らない(self):
+        self.stale_gate_pr(72, suites=[(900, 800, "success")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(72, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_最新の_suite_がジョブの無い_cancelled_でも名乗る(self):
+        """#2716 の 2 回目の反証 1・2。待ちを置き換えられた run はジョブを作らず、rollup にも
+        check-runs にも出ない。run の一覧で suite の順を読む。#2730 (a0ad3c6) の実物の id。"""
+        early = [(105060542702, 38767870619, "success"),
+                 (105060661486, 38767911727, "cancelled", False),
+                 (105060676655, 38767916918, "cancelled", False),
+                 (105060749327, 38767942922, "cancelled", False)]
+        self.stale_gate_pr(81, suites=early)
+        # 実物ではこの後に success の run (suite 105060841346) が立って塞がなかった
+        self.stale_gate_pr(82, suites=early + [(105060841346, 38767975569, "success")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        line = self.stale_gate_line(81, proc)
+        self.assertEqual(line[1], "stale-gate", proc.stdout)
+        self.assertIn("gh run rerun 38767942922", line[4], proc.stdout)
+        self.assertEqual(self.classify(82, proc), (None, None), proc.stdout)
+
+    def test_最新の_suite_にジョブが無ければ古い_suite_の_cancelled_を打ち直しに挙げない(self):
+        """#2716 の 2 回目の反証 4。check run を持つ suite だけで「最新」を選ぶと、古い suite の
+        ジョブを持った cancelled を返してしまう。"""
+        self.stale_gate_pr(83, suites=[(900, 800, "cancelled"), (901, 850, "cancelled", False)])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        line = self.stale_gate_line(83, proc)
+        self.assertIn("gh run rerun 850", line[4], proc.stdout)
+        self.assertNotIn("gh run rerun 800", line[4], proc.stdout)
+
+    def test_rollup_に待っている_pr_gate_が見えれば_suite_を読まず名乗らない(self):
+        self.stale_gate_pr(76, suites=[(900, 800, "success"), (901, 900, "cancelled"), (902, 1000, "queued")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(76, proc), (None, None), proc.stdout)
+        self.assertNotIn("pr-gate.yml/runs", self.gh_log(), "走っている pr-gate のある PR で API を引いている")
+
+    def test_必須の定義を読めなければ読めなかったと名乗る(self):
+        """黙ると「止まっていない」に倒れる (#1303)。"""
+        self.stale_gate_pr(73)
+        empty = self.pr_dir / "ruleset.empty.json"
+        empty.write_text(json.dumps({"rules": [{"type": "required_status_checks",
+                                                "parameters": {"required_status_checks": []}}]}),
+                         encoding="utf-8")
+        for ruleset in (self.pr_dir / "missing.json", empty):
+            proc = self.watch(QUEUE_ENTRY_MINUTES=15, RULESET=ruleset)
+            self.assertEqual(self.classify(73, proc), ("unreadable", "name"), proc.stdout)
+
+    def test_pr_gate_の_run_の一覧を読めなければ読めなかったと名乗る(self):
+        self.stale_gate_pr(74)
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15, GATERUNS_FAIL=1)
+        self.assertEqual(self.classify(74, proc), ("unreadable", "name"), proc.stdout)
+        self.assertIn("Gateway Timeout", proc.stderr, "読めなかった理由を捨てている")
+
     # --- 作法のジョブを含む古い ci.yml の run (#2669 の移行) ------------------
     #
     # #2669 より前の ci.yml の run は、作法のジョブ (pr-title・review-gate・drawing-evidence) を
@@ -863,21 +1079,37 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch()
         self.assertNotEqual(self.classify(60, proc), ("stale-checks", "act"), proc.stdout)
 
-    def test_本文の編集の_run_の赤い_ci_gate_は_古い_run_を後から打ち直した赤を最新と読む(self):
-        """#2717 の反証 2。ci-gate.sh は同じ SHA の検査を check run の id の最大で読む。R1 の検査を
-        後から打ち直して赤なら、run の id が大きい R3 の緑より新しい。打っても同じ赤を返す。"""
-        self.add_pr(61, auto=True, state="BLOCKED", checks=[
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査の最新を_ci_gate_sh_と同じ_suite_の順で読む(self):
+        """#2717 の反証 2 (読み方を ci-gate.sh と揃える)。ci-gate.sh は作成順で最新の suite の、その中の
+        最後の attempt を読む (#2716)。R1 の検査を後から打ち直した赤 (job の id は最大) は古い suite に
+        載るので読まない — 読むのは R3 の緑で、打ち直せば緑を返す。同じ run の中では後の attempt を読み、
+        R3 の打ち直しが赤なら打たない。"""
+        older_rerun_red = [
             check("ci-check", "FAILURE", ago(10), run=100, job=900),
             check("ci-static", "SUCCESS", ago(100), run=100, job=101),
-            check("ci-check", "SUCCESS", ago(40), run=300, job=301),
-            check("ci-static", "SUCCESS", ago(40), run=300, job=302),
-            check("ci-gate", "SUCCESS", ago(39), run=300, job=303),
+        ]
+        edited = [
             check("ci-check", "SKIPPED", ago(5), run=400, job=401),
             check("ci-static", "SKIPPED", ago(5), run=400, job=402),
             check("ci-gate", "FAILURE", ago(5), run=400, job=403),
-        ])
+        ]
+        self.add_pr(61, auto=True, state="BLOCKED", checks=older_rerun_red + [
+            check("ci-check", "SUCCESS", ago(40), run=300, job=301),
+            check("ci-static", "SUCCESS", ago(40), run=300, job=302),
+            check("ci-gate", "SUCCESS", ago(39), run=300, job=303),
+        ] + edited)
+        # R3 の ci-check を打ち直して赤 (同じ run・後の attempt)。ci-gate.sh はその赤を読む
+        self.add_pr(63, auto=True, state="BLOCKED", checks=older_rerun_red + [
+            check("ci-check", "SUCCESS", ago(40), run=300, job=301),
+            check("ci-check", "FAILURE", ago(8), run=300, job=950),
+            check("ci-static", "SUCCESS", ago(40), run=300, job=302),
+            check("ci-gate", "SUCCESS", ago(39), run=300, job=303),
+        ] + edited)
         proc = self.watch()
-        self.assertNotIn("本文の編集の run の ci-gate", proc.stdout)
+        line61 = [l for l in proc.stdout.splitlines() if l.startswith("61 ")]
+        self.assertTrue(any("本文の編集の run の ci-gate" in l for l in line61), proc.stdout)
+        line63 = [l for l in proc.stdout.splitlines() if l.startswith("63 ")]
+        self.assertFalse(any("本文の編集の run の ci-gate" in l for l in line63), proc.stdout)
 
     def test_作法のジョブを含む古い本文の編集の_run_の赤い_ci_gate_は_legacy_gate_と名乗る(self):
         """#2717 の反証 1。stall-act はその run を丸ごと飛ばすので、打つ分類にすると何も打たれず黙る。"""
@@ -1260,6 +1492,53 @@ class RerunExclusionTest(unittest.TestCase):
         self.assertEqual(found.group(1), TITLE_STEP)
         gate = (WORKFLOWS / "pr-gate.yml").read_text(encoding="utf-8")
         self.assertRegex(gate, rf"(?m)^      - name: {re.escape(found.group(1))}$")
+
+
+class RequiredRuleTest(unittest.TestCase):
+    """必須の判定がどの check run を読むかの規則は、scripts/ci-gate.sh の冒頭 1 か所に書く (#2577)。
+
+    規則は観測からの推定で、ci.yml・stall-act.sh・stall-watch.sh・pr-gate.yml がそれぞれ別の言い方で
+    写していた頃は、観測と食い違う言い方 (「run ごとの最新がどれも赤くない」「決まっていない」) が
+    残った。写しを持たずに置き場を指すこと、置き場の見出しが在ることを固定する。
+    """
+
+    GATE = REPO / "scripts" / "ci-gate.sh"
+    POINTER = "ci-gate.sh 冒頭の「必須の判定が読む check run」"
+    READERS = (
+        WORKFLOWS / "ci.yml", WORKFLOWS / "pr-gate.yml", ACT, WATCH,
+        # 差し戻しの文面の前提も同じ規則に乗る (#2716 の反証 3)
+        REPO / "scripts" / "review-gate.sh", REPO / "scripts" / "check-drawing-evidence.sh",
+    )
+    STALE = (
+        "run ごとの最新", "run (check suite) ごとの最新", "どれも赤くない", "決まっていない (#2577)",
+        # #2712 で成り立たなかった前提 (#2716 の反証 3)
+        "同じコミットの最新", "concurrency が止める", "ラベルの run で付け直されます",
+        # pr-gate が concurrency を持っていた頃の前提 (#2716 の 2 回目の反証 1)
+        "3 つ以上重な", "cancel-in-progress: false では", "group の待ちを置き換えて",
+    )
+
+    @staticmethod
+    def prose(path):
+        """コメントの行頭の # と空白を外して 1 続きにする (折り返しで言い回しが割れても読めるように)。"""
+        lines = [re.sub(r"^\s*#\s?", "", line) for line in path.read_text(encoding="utf-8").splitlines()]
+        return re.sub(r"\s+", "", "".join(lines))
+
+    def test_規則の置き場は_ci_gate_sh_の冒頭に在る(self):
+        text = self.GATE.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^# ## 必須の判定が読む check run \(#2577\)$")
+        header = self.prose(self.GATE)
+        self.assertIn(re.sub(r"\s+", "", "作成順で最新の check suite (run) に載った"), header)
+        self.assertIn("未確認(#2692)", header)
+
+    def test_ほかは置き場を指し_食い違う言い方を残さない(self):
+        pointer = re.sub(r"\s+", "", self.POINTER)
+        for path in self.READERS:
+            text = self.prose(path)
+            self.assertIn(pointer, text, f"{path.name} が規則の置き場を指していない")
+        for path in (self.GATE, *self.READERS):
+            text = self.prose(path)
+            for phrase in self.STALE:
+                self.assertNotIn(re.sub(r"\s+", "", phrase), text, f"{path.name} に「{phrase}」が残っている")
 
 
 if __name__ == "__main__":

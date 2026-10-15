@@ -126,8 +126,9 @@ class DrawingEvidenceTest(unittest.TestCase):
 
     # --- 差し戻しの文面が約束してよいこと (#2134・#2669) ---------------------
     #
-    # この検査は pr-gate の中で走る。絵を貼る・ラベルを付けると pr-gate の新しい run が走り、
-    # その結論が同じコミットの最新になる (#2668 の probe)。かつて ci.yml の ci-gate の needs に
+    # この検査は pr-gate の中で走る。絵を貼る・ラベルを付けると pr-gate の新しい run が作られ、
+    # 必須は作成順で最新の run の結論を読む (scripts/ci-gate.sh 冒頭の規則・#2577・#2716)。
+    # かつて ci.yml の ci-gate の needs に
     # 居た頃は、後付けのラベルで ci-gate が赤のまま止まり (2026-09-23 に描画 PR 13 本のうち 3 本)、
     # 文面は打ち直しまで案内していた。作法の検査が ci-gate を離れた (#2669) ので、文面は次を
     # 守る — 作成と同時に付ける形を先に案内する (ただし保証とは言わない)・直せば付け直されると
@@ -157,7 +158,8 @@ class DrawingEvidenceTest(unittest.TestCase):
     def test_差し戻しは直せば付け直されると言い_打ち直しを案内しない(self):
         err = self.rejection()
         self.assertSays(err, "直せば付け直されます (打ち直しは要りません)")
-        self.assertSays(err, "pr-gate の新しい run が走り、その結論が同じコミットの最新になります")
+        self.assertSays(err, "pr-gate の新しい run が作られ、必須はその (作成順で最新の) run の結論を読みます")
+        self.assertNotIn(self.squash("同じコミットの最新"), self.squash(err))
         for gone in ("gh run rerun", "ci-gate", "新しいコミット", "空コミット", "stall-watch"):
             self.assertNotIn(gone, err, gone)
 
@@ -165,7 +167,7 @@ class DrawingEvidenceTest(unittest.TestCase):
         """gh は PR を作ってからラベルを付ける。作成の run が先に API を読めば赤くなる。"""
         err = self.rejection()
         self.assertSays(err, "通常は最初の run から通る")
-        self.assertSays(err, "まれに作成の run が先にラベルを読んで赤くなりますが、ラベルの run で付け直されます")
+        self.assertSays(err, "まれに作成の run がラベルの付く前を読んで赤くなりますが、必須は後から作られるラベルの run の結論を読みます")
         # 赤くなる理由は本文ではなく、API 上のラベル (と絵) の有無である
         self.assertNotIn(self.squash("ラベルが付く前の本文"), self.squash(err))
 

@@ -8,8 +8,8 @@ name: PR gate
 # **分ける理由は、古い赤が必須チェックに残ること** (#259・#2134・#2577)。作法の検査が ci-gate の
 # needs に居ると、本文やラベルを直して新しい run が緑になっても、直す前の run の赤い ci-gate が
 # 同じ SHA に残る。直す前の run の ci-gate は macOS の ci-check (約 14 分) を待って終わるので、
-# 直した後の run より遅く終わりやすい。pr-gate は API を読むだけの数十秒のジョブで、直す前の
-# run は下の concurrency が止めるので、直した後の run の結論が最新として残る。
+# 直した後の run より遅く終わりやすい。pr-gate は API を読むだけの数十秒のジョブで、直した後の
+# 出来事の run は作成順で新しい suite に載るので、必須はその結論を読む (下の permissions の後の注釈)。
 #
 # **段階的に切り替えた** (#2611 の条件 3)。pr-gate を足して ci-gate と重ねた (#2668) → メンテナが
 # pr-gate を必須に適用した → ci.yml の ci-gate から作法の検査を外した (#2669)。必須の判定に空白を
@@ -36,15 +36,28 @@ on:
 permissions:
   contents: read
 
-# PR ごとに、走っている・待っている古い run を止める。止めた run の pr-gate は cancelled で
-# 終わる。必須が同じ SHA のどの check run を読むかは scripts/ci-gate.sh の冒頭 (#2577) が
-# 正本である。**完了した赤は消さない** — それを上書きするのは、直した後の新しい run の
-# 結論である (#2611 の条件 1)。github.ref は
-# pull_request と pull_request_review では refs/pull/<N>/merge、merge_group では group ごとに
-# 別の ref (render.yml の render-pr と同じキー)
-concurrency:
-  group: pr-gate-${{ github.ref }}
-  cancel-in-progress: true
+# **concurrency を持たない** (#2716)。出来事ごとの run はどれも止めずに最後まで走る。
+#
+# 必須が読むのは、作成順で最新の check suite (run) の pr-gate である (規則は scripts/ci-gate.sh
+# 冒頭の「必須の判定が読む check run」・#2577)。結論が付く順 (完了順) は問わないので、古い run の
+# 結論が後から付いても、新しい run の結論は覆らない。どの run も走った時点で PR を API で読むので、
+# 最新の suite の run は自分の出来事以降の状態 (ラベル・タイトル・本文の直し) で判定する。ci.yml も
+# concurrency を持たずに同じ規則で動いている。
+#
+# group を持つと、効果は打ち切りだけになる。打ち切られた run が最新の suite なら、必須はその
+# cancelled を読む (待ちと読む向きは未確認・#2692):
+#
+# - cancel-in-progress: true (以前): 走っている run を後から group に入った run が止める。**group に
+#   入る順は作成順と逆になりうる** — #2712 では作成と同時のラベルで同じ秒に 2 本の run が立ち、
+#   新しい run が先に group に入って、後から入った古い run に cancel された。必須は新しい suite の
+#   cancelled を読み、必須が揃っても BLOCKED のまま queue に入らなかった
+# - cancel-in-progress: false: 待っている 1 本を、次に来た run が置き換える (GitHub の文書の既定の
+#   動き)。置き換えられた run はジョブを 1 本も作らずに cancelled で終わり、suite に pr-gate の
+#   check run が残らない (#2730 の a0ad3c6 の run 38767942922 ほか)。PR gate の run は 1 秒以内に
+#   5〜6 本立つことがある
+# - queue: max (待ちを並べる): 固定している actionlint が受けない (rhysd/actionlint#657)
+#
+# 手で cancel した run が最新の suite に残る形は、scripts/stall-watch.sh が stale-gate と名乗る。
 
 # run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
 defaults:
