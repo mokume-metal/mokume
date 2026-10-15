@@ -620,8 +620,11 @@ extension SketchPart {
         return runtime.canvas
     }
 
-    /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、その口の型の
-    /// `notRunning(call:)` を投げる。**
+    /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、口ごとに 1 度だけ
+    /// 警告して、その口の型の `notRunning(call:)` を投げる。**
+    ///
+    /// 警告は ``OutsideRun`` の控えへ言い、観測の応答にも載る。投げるだけだと、`try?` で受けた側
+    /// (部品の `init()` の `sprite = try? loadImage(…)`) には値が黙って `nil` になる以外に何も残らない。
     ///
     /// 返す値そのもの — 面・画像・形・領域 — を走っている面からしか作れず、既定へ倒せない。
     /// 以前はここが `fatalError` で、投げる口なのに `try?` でも受けられずにプロセスごと落ちた
@@ -637,7 +640,11 @@ extension SketchPart {
     static func resourceCanvas<Failure: NotRunningFailure>(
         _ failure: Failure.Type, _ call: String = #function
     ) throws(Failure) -> Canvas {
-        guard let runtime = runningSketch else { throw Failure.notRunning(call: call) }
+        guard let runtime = runningSketch else {
+            // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
+            OutsideRun.log.warn(call, .thrown)
+            throw Failure.notRunning(call: call)
+        }
         return runtime.canvas
     }
 
@@ -649,7 +656,7 @@ extension SketchPart {
     ///
     /// 走っている実行から起こされていない所 (`init`・後片付けの後・`Task.detached`) では、
     /// どの面へ読み込むかが決まらず、返す資源を作れない。そこでは ``resourceCanvas(_:_:)`` と
-    /// 同じく `notRunning(call:)` を投げる。
+    /// 同じく、口ごとに 1 度だけ警告して `notRunning(call:)` を投げる。
     ///
     /// - Parameters:
     ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
@@ -660,6 +667,7 @@ extension SketchPart {
         _ failure: Failure.Type, _ call: String = #function
     ) throws(Failure) -> Canvas {
         guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
+            OutsideRun.log.warn(call, .thrown)
             throw Failure.notRunning(call: call)
         }
         return canvas

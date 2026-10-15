@@ -40,6 +40,13 @@ final class OutsideRun {
         /// 値を作って返す口のうち、投げない口 (``SketchPart/createShape(_:)``)。代わりに `value`
         /// (人が読む綴り: `an empty shape` など) を返した。
         case make(returning: String)
+        /// 資源を作る口 (``SketchPart/loadImage(_:)`` など)。`notRunning(call:)` を投げた。
+        ///
+        /// 投げるだけでは、`try?` で受けた側に何も残らない (値が黙って `nil` になる)。投げる前に
+        /// ここで 1 度言い、観測の応答にも載せる ([#2683] の反証 3)。
+        ///
+        /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
+        case thrown
     }
 
     /// 検査が自分の控えを差す口。差していなければ ``shared``。
@@ -114,6 +121,11 @@ final class OutsideRun {
             "\(call) only works inside setup(), draw() or an input callback. It was called "
                 + "outside them — from an initialiser, after the sketch ended, or from a Task — so "
                 + "\(value) was returned instead. Call it from setup()"
+        case .thrown:
+            // 投げた文面の 2 文 (起きたこと・次にすること) の間に、投げたことを言う独立の 1 文を挟む。
+            // 標準エラーへは 1 行しか流せないので、改行は畳む
+            notRunningNotice(call).replacingOccurrences(
+                of: "\n", with: " It threw an error instead of returning anything. ")
         }
     }
 

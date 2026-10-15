@@ -114,6 +114,34 @@ struct ResourceOutsideRunTests {
 
         let shape = await Task.detached { await Self.requestShapeFailure(svg) }.value
         #expect(shape == .notRunning(call: "requestShape(_:)"))
+
+        // `Task.detached` には検査の控え (タスクローカル値) も届かないので、プロセスの控えへ言う
+        for call in ["requestImage(_:)", "requestModel(_:normalize:)", "requestShape(_:)"] {
+            #expect(
+                OutsideRun.shared.message(for: call)?.contains("It threw an error") == true,
+                "\(call) が投げる前に言っていない")
+        }
+    }
+
+    /// 投げるだけでは、`try?` で受けた側に何も残らない — 値が黙って `nil` になり、標準エラーにも
+    /// 観測の `warnings` にも出ない。`createShape` は警告するので、それとも食い違う。
+    @Test("投げる前に口ごとに 1 度だけ警告し、観測の応答にも載る (try? で受けても残る)")
+    func throwingLeavesAWarningOnce() {
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            let game = Game()
+            _ = Game()
+            #expect(game.ship.sprite == nil)
+            // 2 つ作っても 1 行
+            #expect(log.messages.count == 1)
+            let message = log.message(for: "loadImage(_:)")
+            #expect(message?.hasPrefix("loadImage(_:) only works inside setup()") == true)
+            #expect(message?.contains("It threw an error instead of returning anything.") == true)
+            #expect(message?.hasSuffix("Call it from setup()") == true)
+            // 標準エラーへは 1 行しか流せない
+            #expect(message?.contains("\n") == false)
+            #expect(log.takeUnreported() == message.map { [$0] })
+        }
     }
 
     // 待つ読み込みを呼んで、投げた失敗を返す。投げなければ `nil`。`Task.detached` の中身から呼ぶ
