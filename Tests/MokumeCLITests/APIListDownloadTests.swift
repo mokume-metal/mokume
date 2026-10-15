@@ -39,6 +39,8 @@ nonisolated final class CannedHTTP: URLProtocol, @unchecked Sendable {
         var reply: Reply?
         /// 刻んで返した本文のバイト数。
         var delivered = 0
+        /// 刻んだ 1 バイトずつを返した時刻。
+        var arrivals: [ContinuousClock.Instant] = []
         /// 検査が打ち切ったか (``cut(_:)``)。
         var cut = false
         /// 受け口がこの応答を止めたか。受け取りを取り消したときも、返し終えたときも止める。
@@ -68,6 +70,9 @@ nonisolated final class CannedHTTP: URLProtocol, @unchecked Sendable {
     }
 
     static func delivered(_ url: URL) -> Int { state.withLock { $0[url.absoluteString]?.delivered ?? 0 } }
+    static func arrivals(_ url: URL) -> [ContinuousClock.Instant] {
+        state.withLock { $0[url.absoluteString]?.arrivals ?? [] }
+    }
     static func stopped(_ url: URL) -> Bool { state.withLock { $0[url.absoluteString]?.stopped ?? false } }
     static func timeout(of url: URL) -> TimeInterval? { state.withLock { $0[url.absoluteString]?.timeout } }
 
@@ -105,7 +110,11 @@ nonisolated final class CannedHTTP: URLProtocol, @unchecked Sendable {
                 }
                 this.client?.urlProtocol(this, didLoad: Data(body.dropFirst(this.offset).prefix(1)))
                 this.offset += 1
-                Self.state.withLock { $0[key]?.delivered += 1 }
+                let now = ContinuousClock.now
+                Self.state.withLock {
+                    $0[key]?.delivered += 1
+                    $0[key]?.arrivals.append(now)
+                }
                 return true
             }
         case .silent:
@@ -160,10 +169,11 @@ struct APIListDownloadTests {
     /// `.timeLimit` は使わない (main actor の上で検査全体の秒数を縛るため)。
     private func downloadOffMain(
         _ url: URL, limit: TimeInterval? = nil
-    ) -> (outcome: Result<Data, Error>, took: Duration)? {
+    ) -> (outcome: Result<Data, Error>, called: ContinuousClock.Instant, took: Duration)? {
         // 受け取りの糸が書き、合図を待った後にだけ読む (打ち切ったときは読まない)
         nonisolated final class Box: @unchecked Sendable {
             var outcome: Result<Data, Error>?
+            var called = ContinuousClock.now
             var took = Duration.zero
         }
         let box = Box()
@@ -171,6 +181,7 @@ struct APIListDownloadTests {
         DispatchQueue.global().async {
             let clock = ContinuousClock()
             let start = clock.now
+            box.called = start
             box.outcome = Result {
                 if let limit { try APIListLocator.download(url, limit: limit) } else { try APIListLocator.download(url) }
             }
@@ -183,7 +194,7 @@ struct APIListDownloadTests {
             _ = returned.wait(timeout: .now() + patience)
             return nil
         }
-        return box.outcome.map { ($0, box.took) }
+        return box.outcome.map { ($0, box.called, box.took) }
     }
 
     private func described(_ outcome: Result<Data, Error>) -> String? {
@@ -192,17 +203,27 @@ struct APIListDownloadTests {
 
     @Test("少しずつ返し続ける応答でも、呼んでからの総時間が期限を越えたら取り消して、秒数を名乗る失敗を投げる")
     func tricklePastLimitFails() throws {
-        // 20 ミリ秒ごとに 1 バイト。音沙汰の無い間は期限に届かないので、受け口の時間切れでは切れない
-        let url = CannedHTTP.serve(.trickle(body: Data(repeating: 0x20, count: 100_000), every: .milliseconds(20)))
-        let returned = try #require(
-            downloadOffMain(url, limit: 0.3), "期限で返らず、検査の側の期限で打ち切った")
-        #expect(described(returned.outcome) == "no complete answer came back within 0.3 seconds")
-        #expect(returned.took >= .milliseconds(300))
-        #expect(CannedHTTP.delivered(url) >= 2, "期限までの間に、本文は届き続けていた")
-        // 諦めた受け取りは取り消すので、受け口が応答を止める。止めるのは受け口の糸で少し遅れる
-        let until = ContinuousClock.now + .seconds(2)
-        while !CannedHTTP.stopped(url), ContinuousClock.now < until { Thread.sleep(forTimeInterval: 0.01) }
-        #expect(CannedHTTP.stopped(url), "期限を越えた受け取りを取り消していない")
+        // 20 ミリ秒ごとに 1 バイト。音沙汰の無い間は期限に届かないので、受け口の時間切れでは切れない。
+        // **ただしそれは、呼んでから返るまで、期限以上の空白が 1 度も無かった回に限る** — 並列の
+        // 負荷の下では、届き始めるまでに期限が過ぎる回がある (#2689)。その回は受け口の時間切れでも
+        // 同じ文面で返り、総時間で切る実装かを見分けられないので、新しい応答でやり直す
+        let limit: TimeInterval = 0.3
+        for _ in 1...5 {
+            let url = CannedHTTP.serve(.trickle(body: Data(repeating: 0x20, count: 100_000), every: .milliseconds(20)))
+            let returned = try #require(
+                downloadOffMain(url, limit: limit), "期限で返らず、検査の側の期限で打ち切った")
+            let marks = [returned.called] + CannedHTTP.arrivals(url) + [returned.called + returned.took]
+            let longestSilence = zip(marks, marks.dropFirst()).map { $1 - $0 }.max() ?? .zero
+            guard longestSilence < .seconds(limit) else { continue }
+            #expect(described(returned.outcome) == "no complete answer came back within 0.3 seconds")
+            #expect(returned.took >= .seconds(limit))
+            // 諦めた受け取りは取り消すので、受け口が応答を止める。止めるのは受け口の糸で少し遅れる
+            let until = ContinuousClock.now + .seconds(2)
+            while !CannedHTTP.stopped(url), ContinuousClock.now < until { Thread.sleep(forTimeInterval: 0.01) }
+            #expect(CannedHTTP.stopped(url), "期限を越えた受け取りを取り消していない")
+            return
+        }
+        try Test.cancel("5 回とも、期限 0.3 秒以上の空白を挟まずに本文を返し続けられなかった (前提の不成立)")
     }
 
     @Test("何も返さない応答も、期限で返って同じ失敗を投げる")
@@ -238,10 +259,11 @@ struct APIListDownloadTests {
     @Test("受け口の期限は待つ期限と同じ値で、既定では fetchLimit (10 秒) 1 か所から来る")
     func theTwoLimitsAreOneValue() throws {
         #expect(APIListLocator.fetchLimit == 10)
-        // 縮めた期限は、要求の期限にもそのまま載る
+        // 縮めた期限は、要求の期限にもそのまま載る。すぐ返るので待たないが、期限の内に受け口へ
+        // 要求が届かないと見られないので、負荷の下でも収まる長さにしておく (#2689)
         let shrunk = CannedHTTP.serve(.answer(status: 200, body: Data("x".utf8)))
-        _ = try #require(downloadOffMain(shrunk, limit: 2))
-        #expect(CannedHTTP.timeout(of: shrunk) == 2)
+        _ = try #require(downloadOffMain(shrunk, limit: 5))
+        #expect(CannedHTTP.timeout(of: shrunk) == 5)
         // 既定は fetchLimit。待たずに済むよう、すぐ返る応答で見る
         let standard = CannedHTTP.serve(.answer(status: 200, body: Data("x".utf8)))
         _ = try #require(downloadOffMain(standard))
