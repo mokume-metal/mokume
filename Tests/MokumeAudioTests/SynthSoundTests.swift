@@ -379,21 +379,54 @@ struct SynthSoundTests {
         #expect(firstStage?.rack.rendered == before)
     }
 
+    /// 番地の引き継ぎを待って、閉じずに捨てるスケッチを組み直す回数の上限。手元では 2 回目で引き継ぐ
+    /// (#2711)。
+    private static let reuseRounds = 40
+
+    /// 閉じずに捨てたスケッチのステージが生きている間に、その番地を別のスケッチが引き継ぐと、ステージを
+    /// 番地だけで探す形では前の回のラックを引き継ぐ。照らし合わせる持ち主 (``SynthStage`` の `owner`) が
+    /// それを止める。
+    ///
+    /// **捨てたスケッチのステージは、検査が掴んで生かしておく。** ステージはスケッチの音が強く持つだけ
+    /// なので、掴まなければスケッチと一緒に解放され、番地を引き継いでも探す先に何も残っていない —
+    /// 持ち主の照らし合わせを消しても緑のままになる (#2711 の反証で見つけた)。
+    ///
+    /// **番地の使い回しに頼る検査なので、引き継ぎが起きなかった回は赤にする** (`#require`)。起きない環境で
+    /// 何も確かめずに緑にしない。待つ番地は 1 つに絞らず、捨てたスケッチの番地の**どれか**を引き継げば
+    /// よい ([#2711] の `GraphicsTests` と同じ形)。
+    ///
+    /// [#2711]: https://github.com/mokume-metal/mokume/issues/2711
     @Test("閉じずに捨てられたスケッチの番地を、別のスケッチが引き継いでも、前のステージは持ち越さない")
     func reusedAddressDoesNotInheritTheStage() throws {
-        // 同じ参照スケッチを、閉じずに何度も組む (台帳の検査がしている形)。手放された番地は
-        // 次のスケッチに使い回されやすく、ステージを番地だけで探すと前の回のラックを引き継ぐ
-        for round in 0..<40 {
+        // 同じ参照スケッチを、閉じずに何度も組む (台帳の検査がしている形)
+        var dropped: Set<ObjectIdentifier> = []
+        var stages: [SynthStage] = []
+        var reused = false
+        for round in 0..<Self.reuseRounds {
             var startedAt = -1
+            var inherited = false
             _ = try run(
                 frames: 3,
                 setup: { sketch in
+                    let address = ObjectIdentifier(sketch)
+                    reused = dropped.contains(address)
+                    dropped.insert(address)
                     let stage = SynthStage.stage(for: sketch)
+                    inherited = stages.contains { $0 === stage }
+                    stages.append(stage)
                     startedAt = stage.rack.rendered
                     SinOsc(stage: stage).play(440, 0.5)
                 })
+            #expect(!inherited, "round \(round): 前のスケッチのステージを引き継いだ")
             #expect(startedAt == 0, "round \(round)")
+            if reused { break }
         }
+        try #require(
+            reused,
+            "閉じずに捨てたスケッチの番地を引き継ぐスケッチを、\(Self.reuseRounds) 回組み直しても作れなかった (この検査は何も確かめていない)"
+        )
+        // 掴んでいたステージは、引き継ぎが起きた時点で生きていて閉じていない (探す先が残っていた)
+        #expect(stages.dropLast().allSatisfy { !$0.isClosed })
     }
 
     @Test("手放した音は、ラックの節として鳴り続ける")
