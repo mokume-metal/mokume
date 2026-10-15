@@ -248,6 +248,9 @@ extension SketchPart {
     ///   `encoding=""` など名前の形でない宣言は `malformed`)
     /// - XML として壊れている・根が `<svg>` でない: ``DataFailure/malformed(path:line:reason:)``
     ///   (壊れていた行が載る。行の終わりは LF・CRLF・CR のどれでもよく、捨てたものに添える行も同じ数え方)
+    /// - スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼んだ:
+    ///   ``DataFailure/notRunning(call:)``。ファイルを読んでから形を記録する面を取るので、読めない
+    ///   ファイルなら上のどれかが先に投げられる
     ///
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。URL からは読まない。
     ///
@@ -262,7 +265,7 @@ extension SketchPart {
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         let url = try dataURL(path)
         let drawing = try SVGFile.parse(try TextFile.read(url, path: path), path: path)
-        return Self.requireCanvas().shape(of: drawing, readFrom: path)
+        return try Self.resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
     }
 
     /// SVG のファイルを読み、保持した形にする。**読んでいる間、他の仕事を止めない。**
@@ -290,10 +293,12 @@ extension SketchPart {
     /// > 何枚目のフレームで届くかは SVG の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
     ///
-    /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。
+    /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。ただし走っていないときは、ファイルを
+    ///   読む前に投げる。走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`)
+    ///   で呼ぶと ``DataFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
-        let surface = Self.requireLoadingCanvas("requestShape(_:)")
+        let surface = try Self.loadingCanvas(DataFailure.self)
         let url = try dataURL(path)
         let drawing = try await Self.readAway { () throws(DataFailure) in
             try SVGFile.parse(try TextFile.read(url, path: path), path: path)

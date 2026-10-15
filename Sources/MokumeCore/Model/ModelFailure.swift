@@ -21,6 +21,11 @@ public enum ModelFailure: Error, Equatable, Sendable {
     case unreadable(path: String)
     /// 対応していない形式。説明に、読める形式の一覧が載る。
     case unsupported(path: String, extensionName: String)
+    /// スケッチが走っていない所 (初期化子の中・後片付けの後・走っている実行から起こしていない
+    /// `Task` の中) で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// (`"loadModel(_:normalize:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    case notRunning(call: String)
 }
 
 extension ModelFailure: CustomStringConvertible {
@@ -57,6 +62,8 @@ extension ModelFailure: CustomStringConvertible {
                 The format of "\(path)" (.\(extensionName)) is not supported. \
                 Readable formats: \(readable)
                 """
+        case .notRunning(let call):
+            return OutsideRun.notRunningNotice(call)
         }
     }
 }

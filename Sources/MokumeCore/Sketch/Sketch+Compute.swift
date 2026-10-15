@@ -65,9 +65,11 @@ extension SketchPart {
     ///
     /// - Throws: 領域を取れないときと、`count` が 1 を割るとき (``RenderFailure/invalidCount(_:)``。
     ///   1 個へ丸めない) に ``RenderFailure``。
+    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=fc61cf1e
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
-        try Self.requireCanvas().makeNumbers(count: count)
+        try Self.resourceCanvas(RenderFailure.self).makeNumbers(count: count)
     }
 
     /// 文字列から計算を作る。保存の拾い直しは効かない (在処が無いため)。
@@ -206,12 +208,14 @@ extension SketchPart {
     /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。
     ///
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
+    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=d76ea602
     // shot: 2 snippet=e8f5dab5
     public func makeComputation(
         _ body: String, name: String = "computation", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try Self.requireCanvas().makeComputation(body, name: name, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).makeComputation(body, name: name, values: values)
     }
 
     /// ファイルから計算を読み込む。**入口の関数の名前はファイル名**になる。
@@ -222,11 +226,13 @@ extension SketchPart {
     /// こと (``makeComputation(_:name:values:)`` の「保存したら差し替わる」) である。
     ///
     /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeComputation(_:name:values:)
     public func loadComputation(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try Self.requireCanvas().loadComputation(path, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).loadComputation(path, values: values)
     }
 
     /// 描く前に計算させる (1 次元)。

@@ -11,6 +11,11 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     case tooManyValues(path: String, count: Int, capacity: Int)
     /// 渡す面が口の数に収まらない。枚数と上限を添える。
     case tooManySurfaces(path: String, count: Int, capacity: Int)
+    /// スケッチが走っていない所 (初期化子の中・後片付けの後・走っている実行から起こしていない
+    /// `Task` の中) で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// (`"makeShader(_:name:values:surfaces:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    case notRunning(call: String)
 }
 
 extension ShaderFailure: CustomStringConvertible {
@@ -47,6 +52,8 @@ extension ShaderFailure: CustomStringConvertible {
                 fragment. Pass fewer, or combine several pictures into one (bake them side by \
                 side, and pick one by where you read)
                 """
+        case .notRunning(let call):
+            return OutsideRun.notRunningNotice(call)
         }
     }
 }

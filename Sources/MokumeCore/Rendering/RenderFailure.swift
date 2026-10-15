@@ -7,8 +7,8 @@
 ///
 /// **大半は「環境かリソースが足りない」形だが、それに限らない。** 頼んだ値が通らないもの
 /// (``invalidSize(width:height:)`` / ``invalidPixelDensity(_:)`` / ``invalidFrameRate(_:)`` /
-/// ``invalidWindowScale(_:)`` / ``invalidDisplay(_:)`` / ``invalidCount(_:)``) と、呼ぶ順序が誤っているもの
-/// (``commandsAlreadyOpen``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
+/// ``invalidWindowScale(_:)`` / ``invalidDisplay(_:)`` / ``invalidCount(_:)``) と、呼ぶ順序や場所が誤っているもの
+/// (``commandsAlreadyOpen`` / ``notRunning(call:)``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
 /// 起きたことで、運び方を分けても受け取る場所が増えるだけだからである ([#792])。
 ///
 /// **区別を持つのは ``description`` のほうである。** 資源が足りないなら「走ったままの
@@ -178,6 +178,12 @@ public enum RenderFailure: Error, Equatable, Sendable {
 
     /// テクスチャの読み取り方を作れない。
     case samplerUnavailable
+
+    /// スケッチが走っていない所 (初期化子の中・後片付けの後・走っている実行から起こしていない
+    /// `Task` の中) で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// (`"createGraphics(_:_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    case notRunning(call: String)
 }
 
 extension RenderFailure: CustomStringConvertible {
@@ -351,6 +357,8 @@ extension RenderFailure: CustomStringConvertible {
             Cannot create a way to read from a texture.
             \(Self.exhaustedAdvice)
             """
+        case .notRunning(let call):
+            OutsideRun.notRunningNotice(call)
         }
     }
 

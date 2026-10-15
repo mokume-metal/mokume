@@ -47,6 +47,11 @@ public enum DataFailure: Error, Equatable, Sendable {
     /// URL から本文を受け取れなかった。`reason` は受け取れなかった事情 (繋がらない・
     /// 時間切れ・サーバが 2xx 以外の状態で答えた、など)。
     case unreachable(url: String, reason: String)
+    /// スケッチが走っていない所 (初期化子の中・後片付けの後・走っている実行から起こしていない
+    /// `Task` の中) で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// (`"loadShape(_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    case notRunning(call: String)
 }
 
 extension DataFailure: CustomStringConvertible {
@@ -66,6 +71,8 @@ extension DataFailure: CustomStringConvertible {
             "Cannot write \"\(path)\": \(reason)"
         case .unreachable(let url, let reason):
             "Cannot read \"\(url)\": \(reason)"
+        case .notRunning(let call):
+            OutsideRun.notRunningNotice(call)
         }
     }
 }

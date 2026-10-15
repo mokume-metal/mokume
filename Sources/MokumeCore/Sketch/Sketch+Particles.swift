@@ -118,10 +118,12 @@ extension SketchPart {
     ///
     /// - Throws: 置き場を取れないときと、`count` が 1 を割るとき
     ///   (``RenderFailure/invalidCount(_:)``) に ``RenderFailure``。
+    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=ed20505f
     // shot: 2 snippet=ee77bf99
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
-        try Self.requireCanvas().makeParticles(count: count)
+        try Self.resourceCanvas(RenderFailure.self).makeParticles(count: count)
     }
 
     /// 粒を出す。

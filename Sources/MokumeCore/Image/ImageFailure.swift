@@ -20,6 +20,11 @@ public enum ImageFailure: Error, Equatable, Sendable {
     /// 直す) で、分けても選び分ける先が無い (``RenderFailure/invalidSize(width:height:)`` と
     /// 同じ理由・[#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     case unplaceable(width: Int, height: Int)
+    /// スケッチが走っていない所 (初期化子の中・後片付けの後・走っている実行から起こしていない
+    /// `Task` の中) で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// (`"loadImage(_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    case notRunning(call: String)
 }
 
 extension ImageFailure: CustomStringConvertible {
@@ -46,6 +51,8 @@ extension ImageFailure: CustomStringConvertible {
                 A side has to be at least 1 and at most \(RenderDevice.maxTextureSide) pixels — \
                 check that it is within that
                 """
+        case .notRunning(let call):
+            return OutsideRun.notRunningNotice(call)
         }
     }
 }

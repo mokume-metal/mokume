@@ -37,6 +37,9 @@ final class OutsideRun {
         case act
         /// 読み取りの口。代わりに `value` (人が読む綴り: `0`・`.wallClock` など) を返した。
         case read(returning: String)
+        /// 値を作って返す口のうち、投げない口 (``SketchPart/createShape(_:)``)。代わりに `value`
+        /// (人が読む綴り: `an empty shape` など) を返した。
+        case make(returning: String)
     }
 
     /// 検査が自分の控えを差す口。差していなければ ``shared``。
@@ -107,15 +110,41 @@ final class OutsideRun {
             "\(call) is only known inside setup(), draw() or an input callback. It was read "
                 + "outside them — from an initialiser, after the sketch ended, or from a Task — so "
                 + "\(value) was returned instead. Make anything that depends on it inside setup()"
+        case .make(let value):
+            "\(call) only works inside setup(), draw() or an input callback. It was called "
+                + "outside them — from an initialiser, after the sketch ended, or from a Task — so "
+                + "\(value) was returned instead. Call it from setup()"
         }
     }
 
-    /// 資源を作る口を外から呼んだときに止める文面。返す値そのものを面からしか作れないので、
-    /// 既定へ倒せない (#2265 の完了条件 5)。
-    static func stopNotice(_ call: String) -> String {
-        "\(call) only works inside setup(), draw() or an input callback, because what it returns "
-            + "is made on the running sketch's surface. It was called outside them — from an "
-            + "initialiser, a property initialiser, after the sketch ended, or from a Task — "
-            + "where there is no surface. Call it from setup()"
+    /// 待つ読み込みの口の名前。走っている実行の中で起こした `Task` からも呼べる (``LaunchingSketch``)
+    /// ので、``notRunningNotice(_:)`` が呼べる場所をそう言い分ける。名前は口の `#function` である。
+    nonisolated static let waitingLoads: Set<String> = [
+        "requestImage(_:)", "requestModel(_:normalize:)", "requestShape(_:)",
+    ]
+
+    /// 資源を作る口を外から呼んだときの文面 (``RenderFailure/notRunning(call:)`` など 5 つの型の
+    /// `notRunning` と、止める ``SketchPart/canvas``)。返す値そのものを面からしか作れないので、既定へ
+    /// 倒せない ([#2683])。
+    ///
+    /// **2 通りを完全な文として持つ** (ADR-0038 決定 3)。待つ読み込みの口 (``waitingLoads``) だけが、
+    /// 走っている実行の中で起こした `Task` から呼べる。同期の口をそこから呼ぶと投げるので、同じ文面で
+    /// 「`Task` から呼べる」と言うと、呼んだ場所そのものを勧めることになる。
+    ///
+    /// 1 行目が起きたこと、2 行目が次にすることで、走っている最中の警告の 1 行 (``RenderFailure``
+    /// の `headline`) は 1 行目になる。
+    ///
+    /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
+    nonisolated static func notRunningNotice(_ call: String) -> String {
+        if waitingLoads.contains(call) {
+            "\(call) only works inside setup(), draw() or an input callback, or in a Task started "
+                + "there, because it needs the running sketch's surface. It was called from somewhere "
+                + "else — an initialiser, after the sketch ended, or Task.detached — where there is "
+                + "no surface.\nCall it from a Task started in setup()"
+        } else {
+            "\(call) only works inside setup(), draw() or an input callback, because it needs the "
+                + "running sketch's surface. It was called outside them — from an initialiser, after "
+                + "the sketch ended, or from a Task — where there is no surface.\nCall it from setup()"
+        }
     }
 }

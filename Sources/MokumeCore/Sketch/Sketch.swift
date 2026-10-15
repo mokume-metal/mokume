@@ -456,7 +456,7 @@ var runningSketch: SketchRuntime?
 /// 文脈のタスクローカル値を受け継ぐので、ここに束ねた面はそのまま中へ届く
 /// (`Task.detached` は受け継がない)。
 ///
-/// **読むのは待つ読み込みの口だけ** (``Sketch/requireLoadingCanvas(_:)``)。描く口は
+/// **読むのは待つ読み込みの口だけ** (``Sketch/loadingCanvas(_:_:)``)。描く口は
 /// ``runningSketch`` だけを見続ける — `Task` から描けると、描く順が `Task` に番が回る時機で
 /// 決まり、描画順を main actor の上で直列に確定させている性質 ([ADR-0010] の影響欄) が崩れる。
 /// 待つ読み込みの口は絵を描かず、値を作って返すだけなので、この性質に触れない。
@@ -474,8 +474,10 @@ extension SketchPart {
     /// いま描いている面。
     ///
     /// **走っている実行の外 (初期化子の中・後片付けの後・`Task` の中) で取ると止まる。** 返せる
-    /// 面が無いためで、資源を作る口 (``createGraphics(_:_:)`` など) と同じ扱いである。描く・読む
-    /// ときは語彙 (``circle(_:_:_:)``・``width`` など) を通せば、外からでも落ちない。
+    /// 面が無く、プロパティなので投げることもできないためである。資源を作る口
+    /// (``createGraphics(_:_:)`` など) は同じ場所から呼んでも止まらず、型のついたエラー
+    /// (``RenderFailure/notRunning(call:)`` など) を投げる。描く・読むときは語彙
+    /// (``circle(_:_:_:)``・``width`` など) を通せば、外からでも落ちない。
     public var canvas: Canvas { Self.requireCanvas() }
 
     /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
@@ -605,16 +607,37 @@ extension SketchPart {
         liveRuntime(use, call)?.canvas
     }
 
-    /// 資源を作る口 (``createGraphics(_:_:)`` など) と ``canvas`` が使う面。**外から呼ばれたら止める。**
+    /// ``canvas`` が使う面。**外から呼ばれたら止める。**
     ///
-    /// 返す値そのもの — 面・画像・形・領域 — を走っている面からしか作れず、既定へ倒せない
-    /// ためである。待つ読み込みの口 (``requireLoadingCanvas(_:)``) と同じく資源の生成の扱いで、
-    /// [#2265] の完了条件 5 がこの範囲を変えないと決めている。止める文面は呼ばれた口を名乗る。
+    /// 返す値そのものが面で既定へ倒せず、プロパティなので投げることもできないためである。
+    /// 資源を作る口はここを通らず、投げる (``resourceCanvas(_:_:)``・[#2683])。新しい語彙が
+    /// ``canvas`` を素で使うと、外から呼ばれたときにここで止まる (#2684)。
     ///
-    /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
+    /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
     @MainActor
     static func requireCanvas(_ call: String = #function) -> Canvas {
-        guard let runtime = runningSketch else { fatalError(OutsideRun.stopNotice(call)) }
+        guard let runtime = runningSketch else { fatalError(OutsideRun.notRunningNotice(call)) }
+        return runtime.canvas
+    }
+
+    /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、その口の型の
+    /// `notRunning(call:)` を投げる。**
+    ///
+    /// 返す値そのもの — 面・画像・形・領域 — を走っている面からしか作れず、既定へ倒せない。
+    /// 以前はここが `fatalError` で、投げる口なのに `try?` でも受けられずにプロセスごと落ちた
+    /// ([#2683])。資源の生成は型のついたエラーを投げる ([ADR-0020] 決定 5)。
+    ///
+    /// - Parameters:
+    ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
+    ///   - call: エラーに載せる口の名前。呼ぶ側の `#function` が入る。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
+    @MainActor
+    static func resourceCanvas<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, _ call: String = #function
+    ) throws(Failure) -> Canvas {
+        guard let runtime = runningSketch else { throw Failure.notRunning(call: call) }
         return runtime.canvas
     }
 
@@ -622,20 +645,37 @@ extension SketchPart {
     /// `Task` からなら、その実行の面を返す** (``LaunchingSketch``)。
     ///
     /// 先に見るのは ``runningSketch`` で、これまで動いていた経路は何も変わらない。
-    /// 持ち越した面へ倒れるのは、これまで止まっていた経路だけである。
+    /// 持ち越した面へ倒れるのは、``runningSketch`` が外れた後の `Task` だけである。
     ///
-    /// - Parameter call: 止めるときの文面に載せる、呼ばれた口の名前。
+    /// 走っている実行から起こされていない所 (`init`・後片付けの後・`Task.detached`) では、
+    /// どの面へ読み込むかが決まらず、返す資源を作れない。そこでは ``resourceCanvas(_:_:)`` と
+    /// 同じく `notRunning(call:)` を投げる。
+    ///
+    /// - Parameters:
+    ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
+    ///   - call: エラーに載せる口の名前。呼ぶ側の `#function` が入り、
+    ///     ``OutsideRun/waitingLoads`` のどれかである。
     @MainActor
-    static func requireLoadingCanvas(_ call: String) -> Canvas {
+    static func loadingCanvas<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, _ call: String = #function
+    ) throws(Failure) -> Canvas {
         guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
-            // 走っている実行から起こされていない (init・プロパティの初期化子・
-            // Task.detached)。どの面へ読み込むかが決まらず、返す資源を作れないので止める
-            // (資源を作る口と同じ。描く口は止めずに警告する — ``liveRuntime(_:_:)``)
-            fatalError(
-                "\(call) only works for a sketch that is running. Call it from setup() or "
-                    + "draw(), or from a Task started there — not from init, a property "
-                    + "initialiser or Task.detached.")
+            throw Failure.notRunning(call: call)
         }
         return canvas
     }
 }
+
+/// 資源を作る口が投げる失敗の型。走っていないときの場合 (`notRunning(call:)`) を持つ。
+///
+/// ``SketchPart/resourceCanvas(_:_:)`` が、呼んだ口の `throws` の型のまま投げるための束ね。
+/// 各型の場合そのものがこの要件を満たす。公開しない — 利用者が名乗る型ではない。
+protocol NotRunningFailure: Error {
+    static func notRunning(call: String) -> Self
+}
+
+extension RenderFailure: NotRunningFailure {}
+extension ImageFailure: NotRunningFailure {}
+extension ShaderFailure: NotRunningFailure {}
+extension ModelFailure: NotRunningFailure {}
+extension DataFailure: NotRunningFailure {}
