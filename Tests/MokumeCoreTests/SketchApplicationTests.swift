@@ -189,6 +189,17 @@ struct SketchApplicationTests {
             ["mouseDown", "mouseUp"].first { line.contains("\"\($0)\"") }
         }
         #expect(kinds == ["mouseDown", "mouseUp", "mouseDown", "mouseUp"])
+
+        // 退いた後に本物の解放が来ないまま押し直したら (窓の外で離した、など)、次の解放は流す
+        lines.removeAll()
+        surface.mouseDown(with: try mouse(.leftMouseDown))
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        surface.mouseDown(with: try mouse(.leftMouseDown))
+        surface.mouseUp(with: try mouse(.leftMouseUp))
+        let again = lines.compactMap { line in
+            ["mouseDown", "mouseUp"].first { line.contains("\"\($0)\"") }
+        }
+        #expect(again == ["mouseDown", "mouseUp", "mouseDown", "mouseUp"])
     }
 
     /// **AppKit は ⌘ を伴う keyUp を窓へ配らない** (#2435)。アプリへ送った 1 件が、面の
