@@ -866,7 +866,8 @@ struct SVGFileTests {
             ("fill: red !imp", "red !imp", false),
         ])
     func importantMarkerIsSplitFromTheValue(_ sample: (text: String, value: String, isImportant: Bool)) {
-        let declarations = SVGFile.parseDeclarations(sample.text)
+        let (declarations, unreadable) = SVGFile.parseDeclarations(sample.text)
+        #expect(unreadable.isEmpty, "\(sample.text): \(unreadable)")
         #expect(declarations.count == 1, "\(sample.text)")
         #expect(declarations.first?.name == "fill", "\(sample.text)")
         #expect(declarations.first?.value == sample.value, "\(sample.text)")
@@ -1143,26 +1144,79 @@ struct SVGFileTests {
         #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
     }
 
-    /// `url(#a) abc` の代わりの色が読めなければ、参照の名乗り (`fill="url(…)"`) とは別に、読めない値として名乗る。
-    /// 塗りは今までどおり (代わりの色が無いのと同じに塗らない)。
+    /// `url(#a) abc` の代わりの色が読めなければ、CSS では宣言ごと無効になる。参照としても読まず、読めない値として
+    /// 名乗るだけで、下の順位の宣言・受け継いだ値が残る (他の読めない値と同じ)。
     @Test(
-        "塗りの参照の代わりの色が読めなければ、skipped に載る。参照の名乗りは今までどおり (#2649)",
+        "塗りの参照の代わりの色が読めなければ、宣言ごと読めない値として名乗り、下の宣言・受け継いだ値が残る (#2649)",
         arguments: [
             // (SVG の本体, 載るはずの名乗り, 塗りの色)
-            (#"<rect width="10" height="10" fill="url(#a) abc"/>"#, [#"fill "url(#a) abc""#, #"fill="url(…)""#], nil),
-            (#"<rect width="10" height="10" fill="url(#a)abc"/>"#, [#"fill "url(#a)abc""#, #"fill="url(…)""#], nil),
-            (#"<rect width="10" height="10" fill="url(#a) inherit"/>"#, [#"fill "url(#a) inherit""#, #"fill="url(…)""#], nil),
-            (#"<rect width="10" height="10" fill="url(#a) url(#b)"/>"#, [#"fill "url(#a) url(#b)""#, #"fill="url(…)""#], nil),
+            // 書いていないときの塗りは黒 (受け継ぐ初めの値)
+            (#"<rect width="10" height="10" fill="url(#a) abc"/>"#, [#"fill "url(#a) abc""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a)abc"/>"#, [#"fill "url(#a)abc""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a) inherit"/>"#, [#"fill "url(#a) inherit""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a) url(#b)"/>"#, [#"fill "url(#a) url(#b)""#], SVGFile.Color.black),
+            // 線は引かれないまま (初めの値の none)
+            (#"<rect width="10" height="10" stroke="url(#a) abc"/>"#, [#"stroke "url(#a) abc""#], SVGFile.Color.black),
+            // 下の順位の宣言を消さない (属性 < <style> の規則 < style 属性)
             (
-                #"<rect width="10" height="10" stroke="url(#a) abc"/>"#,
-                [#"stroke "url(#a) abc""#, #"stroke="url(…)""#], SVGFile.Color.black
+                #"<rect width="10" height="10" fill="red" style="fill: url(#a) abc"/>"#,
+                [#"fill "url(#a) abc""#], Ink.red
             ),
-            (#"<rect width="10" height="10" style="fill: url(#a) abc"/>"#, [#"fill "url(#a) abc""#, #"fill="url(…)""#], nil),
+            (
+                ##"<style>rect { fill: url(#a) abc }</style><rect width="10" height="10" fill="#0000ff"/>"##,
+                [#"fill "url(#a) abc""#], Ink.blue
+            ),
+            // 受け継いだ値も消さない
+            (#"<g fill="red"><rect width="10" height="10" fill="url(#a) abc"/></g>"#, [#"fill "url(#a) abc""#], Ink.red),
         ] as [(String, [String], SVGFile.Color?)])
     func unreadablePaintFallbackIsNamed(_ sample: (String, [String], SVGFile.Color?)) throws {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
         #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
+        #expect(drawing.items.first?.stroke == nil, "\(sample.0): \(drawing.items)")
+    }
+
+    /// `style` 属性と `<style>` の、宣言の形をしていない部分 (`:` が無い・名前が空) は CSS では捨てられる。
+    /// 黙って落とさず、`CSS declaration "fill red"` の形で名乗る。下の宣言は残る。
+    @Test(
+        "宣言の形をしていない CSS の部分は、skipped に載り、下の宣言を消さない (#2649)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 塗りの色)
+            (##"<rect width="10" height="10" fill="#0000ff" style="fill red"/>"##, [#"CSS declaration "fill red""#], Ink.blue),
+            (##"<rect width="10" height="10" fill="#0000ff" style=": red"/>"##, [#"CSS declaration ": red""#], Ink.blue),
+            // 同じ style 属性の読める宣言は効く
+            (##"<rect width="10" height="10" style="fill red; fill: #00ff00"/>"##, [#"CSS declaration "fill red""#], Ink.green),
+            (
+                ##"<style>rect { fill red }</style><rect width="10" height="10" fill="#0000ff"/>"##,
+                [#"CSS declaration "fill red""#], Ink.blue
+            ),
+            (
+                #"<style>rect { fill: red; stroke }</style><rect width="10" height="10"/>"#,
+                [#"CSS declaration "stroke""#], Ink.red
+            ),
+            // 読めない規則の中身は、規則ごと名乗るので別に名乗らない
+            (#"<style>g .deep { fill red }</style><rect width="10" height="10"/>"#, [#"CSS rule "g .deep""#], SVGFile.Color.black),
+        ])
+    func malformedDeclarationIsNamed(_ sample: (String, [String], SVGFile.Color)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "空の宣言 (;; と末尾の ;) と空の style は、名乗らない (#2649 の陰性対照)",
+        arguments: [
+            #"<rect width="10" height="10" style="fill: red;"/>"#,
+            #"<rect width="10" height="10" style=" ; fill: red ;; "/>"#,
+            #"<rect width="10" height="10" fill="red" style=""/>"#,
+            #"<rect width="10" height="10" fill="red" style="/* 註 */"/>"#,
+            #"<style>rect { fill: red; }</style><rect width="10" height="10"/>"#,
+            #"<style>rect { ; fill: red ;; }</style><rect width="10" height="10"/>"#,
+        ])
+    func emptyDeclarationsAreNotNamed(_ sample: String) throws {
+        let drawing = try document(sample)
+        #expect(drawing.skipped.isEmpty, "\(sample): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == Ink.red, "\(sample): \(drawing.items)")
     }
 
     @Test(

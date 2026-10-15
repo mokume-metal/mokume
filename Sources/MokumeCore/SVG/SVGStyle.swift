@@ -108,10 +108,9 @@ extension SVGFile {
         /// 親の値を受け継ぐ (`inherit`)。
         case inherit
         /// グラデーションやパターン (`url(#…)`) を指している。**描けないので名乗る。** 後ろに
-        /// 書いた代わりの色 (`url(#a) red`) があれば、その色で塗る。書いていなければ `.none`。
-        /// **代わりの色が読めなければ `nil`** (`url(#a) abc`) で、呼ぶ側が名乗る (#2649)
-        case reference(fallback: Paint?)
-        /// 読めない。
+        /// 書いた代わりの色 (`url(#a) red`) があれば、その色で塗る
+        case reference(fallback: Paint)
+        /// 読めない。代わりの色が読めない参照 (`url(#a) abc`) も、CSS では宣言ごと無効なのでここ (#2649)
         case unreadable
     }
 
@@ -126,11 +125,11 @@ extension SVGFile {
         if value.lowercased().hasPrefix("url(") {
             guard let close = value.firstIndex(of: ")") else { return .unreadable }
             let rest = value[value.index(after: close)...].trimmingCharacters(in: .whitespaces)
-            if rest.isEmpty { return .reference(fallback: Paint.none) }
+            if rest.isEmpty { return .reference(fallback: .none) }
             switch parsePaint(rest) {
             case .paint(let fallback): return .reference(fallback: fallback)
-            // `inherit`・もう 1 つの参照・読めない値は、代わりの色として読めない
-            default: return .reference(fallback: nil)
+            // `inherit`・もう 1 つの参照・読めない値は代わりの色にならず、値ごと読めない (#2649)
+            case .inherit, .reference, .unreadable: return .unreadable
             }
         }
         guard let color = parseColor(value) else { return .unreadable }
@@ -350,10 +349,14 @@ extension SVGFile {
     }
 
     /// CSS の文字を規則へ分ける。読めない規則 (複合のセレクタ・`@media` など) は描かない
-    /// ものとして、その書き出しを返す。
-    nonisolated static func parseStyleSheet(_ text: String) -> (rules: [StyleRule], unread: [String]) {
+    /// ものとして、その書き出しを返す。読めた規則の中の宣言の形をしていない部分は `unreadDeclarations` に
+    /// 返す (読めない規則の中身は、規則ごと名乗るので返さない) (#2649)。
+    nonisolated static func parseStyleSheet(_ text: String) -> (
+        rules: [StyleRule], unread: [String], unreadDeclarations: [String]
+    ) {
         var rules: [StyleRule] = []
         var unread: [String] = []
+        var unreadDeclarations: [String] = []
         let source = withoutComments(text)
         var cursor = source.startIndex
         while cursor < source.endIndex {
@@ -385,26 +388,40 @@ extension SVGFile {
                 continue
             }
             let body = source[source.index(after: open)..<close]
-            let declarations = parseDeclarations(String(body))
+            let parsed = parseDeclarations(String(body))
+            var readsAny = false
             for part in prelude.split(separator: ",") {
                 let selector = part.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let read = simpleSelector(selector) {
-                    rules.append(StyleRule(selector: read, declarations: declarations))
+                    rules.append(StyleRule(selector: read, declarations: parsed.declarations))
+                    readsAny = true
                 } else if !selector.isEmpty {
                     unread.append(selector)
                 }
             }
+            if readsAny { unreadDeclarations += parsed.unreadable }
         }
-        return (rules, unread)
+        return (rules, unread, unreadDeclarations)
     }
 
     /// `name: value; …` を宣言の並びにする。値の末尾の `!important` (`!` と `important` の間の空白と
     /// 大文字小文字は問わない) は、値から外して `isImportant` に持たせる。どちらが勝つかは書いた
     /// 場所ではなく、重ねる側の順位 (`Rank`) が決める。
-    nonisolated static func parseDeclarations(_ text: String) -> [Declaration] {
+    ///
+    /// **宣言の形をしていない部分 (`:` が無い `fill red`・名前が空の `: red`) は `unreadable` に、落とした文字で
+    /// 返す** — 呼ぶ側が名乗る (#2649)。空の部分 (`fill: red;;` の間・末尾の `;` の後ろ) は CSS の文法どおりで、返さない。
+    nonisolated static func parseDeclarations(_ text: String) -> (declarations: [Declaration], unreadable: [String]) {
         var declarations: [Declaration] = []
+        var unreadable: [String] = []
         for part in withoutComments(text).split(separator: ";") {
-            guard let colon = part.firstIndex(of: ":") else { continue }
+            let written = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !written.isEmpty else { continue }
+            guard let colon = part.firstIndex(of: ":"),
+                !part[..<colon].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                unreadable.append(written)
+                continue
+            }
             let name = part[..<colon].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             var value = part[part.index(after: colon)...].trimmingCharacters(in: .whitespacesAndNewlines)
             var isImportant = false
@@ -415,10 +432,9 @@ extension SVGFile {
                 isImportant = true
                 value = value[..<mark].trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            guard !name.isEmpty else { continue }
             declarations.append(Declaration(name: name, value: value, isImportant: isImportant))
         }
-        return declarations
+        return (declarations, unreadable)
     }
 
     /// クラス 1 つか要素名 1 つか `*` のセレクタ。それ以外は `nil`。

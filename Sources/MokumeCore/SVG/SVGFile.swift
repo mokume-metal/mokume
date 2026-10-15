@@ -285,6 +285,7 @@ nonisolated enum SVGFile {
             let sheet = SVGFile.parseStyleSheet(text)
             rules += sheet.rules
             for selector in sheet.unread { tally.note("CSS rule \"\(selector)\"", line: line) }
+            for written in sheet.unreadDeclarations { tally.note("CSS declaration \"\(written)\"", line: line) }
         }
 
         mutating func visit(_ event: Event) {
@@ -398,7 +399,9 @@ nonisolated enum SVGFile {
                 }
             }
             if let style = attributes["style"] {
-                for declaration in SVGFile.parseDeclarations(style) { collect(declaration, from: .styleAttribute) }
+                let parsed = SVGFile.parseDeclarations(style)
+                for declaration in parsed.declarations { collect(declaration, from: .styleAttribute) }
+                for written in parsed.unreadable { tally.note("CSS declaration \"\(written)\"", line: line) }
             }
             for (_, declaration) in candidates.sorted(by: { $0.rank < $1.rank }) {
                 apply(declaration.name, declaration.value, to: &context, own: &own, line: line)
@@ -435,10 +438,9 @@ nonisolated enum SVGFile {
                 case .paint(let read): paint = read
                 case .inherit: return
                 case .reference(let fallback):
-                    // 代わりの色が読めなければ名乗り、塗らない (参照は描いた要素ごとに別に名乗る) (#2649)
-                    if fallback == nil { tally.note("\(property) \"\(trimmed)\"", line: line) }
-                    paint = fallback ?? .none
+                    paint = fallback
                     isReference = true
+                // 代わりの色が読めない参照 (`url(#a) abc`) もここで、下の宣言・受け継いだ値が残る (#2649)
                 case .unreadable:
                     return tally.note("\(property) \"\(trimmed)\"", line: line)
                 }
