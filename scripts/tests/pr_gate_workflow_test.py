@@ -142,13 +142,14 @@ class PrGateWorkflowTest(unittest.TestCase):
         self.assertIn("bash scripts/review-gate.sh", step_named(self.gate, "review-gate"))
         self.assertIn("bash scripts/check-drawing-evidence.sh", step_named(self.gate, "drawing-evidence"))
 
-    def test_run_は_PR_ごとに_1_本ずつ走らせ_走っている_run_を止めない(self):
-        """必須は作成順で最新の suite を読む (scripts/ci-gate.sh 冒頭の規則・#2577)。走っている run を
-        止めると、group に入る順と作成順が逆のとき、新しい suite が cancelled で残って必須を塞ぐ
-        (#2712・#2716)。queue: max は固定している actionlint が受けない。"""
-        self.assertIn("group: pr-gate-${{ github.ref }}", self.top["concurrency"])
-        self.assertRegex(self.top["concurrency"], r"(?m)^  cancel-in-progress: false\s*$")
-        self.assertNotRegex(self.top["concurrency"], r"(?m)^  queue:")
+    def test_concurrency_を持たず_どの_run_も打ち切らない(self):
+        """必須は作成順で最新の suite を読み、完了順は問わない (scripts/ci-gate.sh 冒頭の規則・#2577)。
+        group の効果は打ち切りだけで、打ち切られた run が最新の suite なら必須を塞ぐ。走っている run の
+        打ち切り (#2712) も、待ちの置き換え (ジョブの無い cancelled・#2716 の 2 回目の反証) も起こさない。
+        ワークフロー単位にも、ジョブ単位にも置かない。"""
+        self.assertNotIn("concurrency", self.top)
+        for name, body in self.jobs.items():
+            self.assertNotRegex(body, r"(?m)^    concurrency:", name)
 
 
 class TitleCheckTest(unittest.TestCase):

@@ -59,7 +59,7 @@
 # 作成順は check suite の id の順で読む。どの観測でも作成時刻と食い違わず、Actions の run の id も
 # 同じ順に並んでいた (#2696・#2703・#2707・#2710・#2712 の CI と PR gate の run)。**concurrency の
 # group に入る順とは違いうる** — #2712 では新しい run が先に group に入り、後から入った古い run に
-# cancel された (pr-gate はその後、走っている run を止めなくした・#2716)。
+# cancel された (pr-gate はその後 concurrency を外した・#2716)。
 #
 # この規則で説明できる観測 (run と suite の id は #2577 の本文):
 #

@@ -122,6 +122,13 @@ fi
 url=${2:-}
 
 case "$url" in
+  # PR gate の run の一覧 (stale-gate が check suite の作成順を読む・#2716)。既定は空の並び
+  */actions/workflows/pr-gate.yml/runs\\?*)
+    [ -z "${GATERUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout (pr-gate runs)" >&2; exit 1; }
+    sha=${url#*head_sha=}; sha=${sha%%&*}
+    f="$PR_DIR/${sha#sha-}.gateruns.json"
+    [ -f "$f" ] || f="$PR_DIR/render-runs.none.json"
+    emit "$f"; exit 0 ;;
   # 専用機の render の run (#1774)。status の値ごとに応答を分ける。既定は空の並び
   */actions/workflows/render.yml/runs\\?*)
     [ -z "${RUNS_FAIL:-}" ] || { echo "gh: 502" >&2; exit 1; }
@@ -697,31 +704,31 @@ class StallWatchTest(unittest.TestCase):
 
     def stale_gate_pr(self, number, *, suites=None, rollup=None, ci="SUCCESS", ci_at=20,
                       render="SKIPPED", state="BLOCKED"):
-        """suites は (suite の id, run の id, check run の status か conclusion) の並び。
+        """suites は (suite の id, run の id, run の status か conclusion[, ジョブがあるか]) の並び。
 
-        既定は #2712 の形。rollup を渡さなければ、suites の各 run を rollup の pr-gate に載せる。"""
+        既定は #2712 の形。rollup を渡さなければ、ジョブのある run を rollup の pr-gate に載せる。
+        ジョブの無い run (待ちを置き換えられた cancelled) は check run を作らないので rollup に出ない。"""
         if suites is None:
             suites = [(105017320903, 38752622858, "success"), (105017324579, 38752624025, "cancelled")]
+        suites = [tuple(x) + (True,) * (4 - len(x)) for x in suites]
         if rollup is None:
             rollup = [
                 check("pr-gate", result.upper(), ago(40), run=run, job=number * 10 + i)
-                for i, (_, run, result) in enumerate(suites)
+                for i, (_, run, result, jobs) in enumerate(suites) if jobs
             ]
         checks = list(rollup) + [check("ci-gate", ci, ago(ci_at), run=38752623159, job=number * 10 + 7)]
         if render is not None:
             checks.append(check("render", render, ago(39), run=38752623160, job=number * 10 + 8))
         self.add_pr(number, auto=True, state=state, checks=checks)
         runs = []
-        for suite, run, result in suites:
-            item = {"name": "pr-gate", "check_suite": {"id": suite}, "id": run + 1}
+        for suite, run, result, _ in suites:
+            item = {"id": run, "check_suite_id": suite, "event": "pull_request"}
             if result in ("queued", "in_progress"):
                 item.update(status=result, conclusion=None)
             else:
                 item.update(status="completed", conclusion=result)
-            if run:
-                item["details_url"] = f"https://github.com/o/r/actions/runs/{run}/job/{run + 1}"
             runs.append(item)
-        self.write(f"{number}.checkruns.json", {"total_count": len(runs), "check_runs": runs})
+        self.write(f"{number}.gateruns.json", {"total_count": len(runs), "workflow_runs": runs})
 
     def stale_gate_line(self, number, proc):
         return next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith(f"{number} "))
@@ -736,7 +743,8 @@ class StallWatchTest(unittest.TestCase):
         self.assertIn("gh run rerun 38752624025", line[4], proc.stdout)
         self.assertNotIn("38752622858", line[4], "緑の run を打ち直しに挙げている")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertIn("filter=latest", self.gh_log())
+        self.assertIn(f"actions/workflows/pr-gate.yml/runs?head_sha=sha-60", self.gh_log())
+        self.assertIn("--paginate", self.gh_log(), "run の一覧を 1 ページしか読んでいない (#2716 の反証 5)")
 
         # 当番は打たない (古い pr-gate を当番に打たせない決まり・#2668)
         self.calls.write_text("", encoding="utf-8")
@@ -762,8 +770,8 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_打ち直して最新の_suite_が緑になれば名乗らない(self):
-        """filter=latest は suite ごとの最新を返す。打ち直した run は同じ suite に載る。rollup に
-        前の attempt の cancelled が残って見えても、suite の側で読む。"""
+        """打ち直した run は同じ run (同じ suite) のまま、一覧は最後の attempt の結論を返す。rollup に
+        前の attempt の cancelled が残って見えても、run の一覧の側で読む。"""
         self.stale_gate_pr(
             64,
             suites=[(105017320903, 38752622858, "success"), (105017324579, 38752624025, "success")],
@@ -834,18 +842,42 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(kinds, ["stale-checks", "stale-gate"], proc.stdout)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
 
-    def test_cancelled_の_pr_gate_が無い_BLOCKED_は_suite_を読まず名乗らない(self):
+    def test_最新の_suite_が緑の_BLOCKED_は名乗らない(self):
         self.stale_gate_pr(72, suites=[(900, 800, "success")])
         proc = self.watch(QUEUE_ENTRY_MINUTES=15)
         self.assertEqual(self.classify(72, proc), (None, None), proc.stdout)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertNotIn("check-runs", self.gh_log(), "当たりえない PR で API を引いている")
+
+    def test_最新の_suite_がジョブの無い_cancelled_でも名乗る(self):
+        """#2716 の 2 回目の反証 1・2。待ちを置き換えられた run はジョブを作らず、rollup にも
+        check-runs にも出ない。run の一覧で suite の順を読む。#2730 (a0ad3c6) の実物の id。"""
+        early = [(105060542702, 38767870619, "success"),
+                 (105060661486, 38767911727, "cancelled", False),
+                 (105060676655, 38767916918, "cancelled", False),
+                 (105060749327, 38767942922, "cancelled", False)]
+        self.stale_gate_pr(81, suites=early)
+        # 実物ではこの後に success の run (suite 105060841346) が立って塞がなかった
+        self.stale_gate_pr(82, suites=early + [(105060841346, 38767975569, "success")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        line = self.stale_gate_line(81, proc)
+        self.assertEqual(line[1], "stale-gate", proc.stdout)
+        self.assertIn("gh run rerun 38767942922", line[4], proc.stdout)
+        self.assertEqual(self.classify(82, proc), (None, None), proc.stdout)
+
+    def test_最新の_suite_にジョブが無ければ古い_suite_の_cancelled_を打ち直しに挙げない(self):
+        """#2716 の 2 回目の反証 4。check run を持つ suite だけで「最新」を選ぶと、古い suite の
+        ジョブを持った cancelled を返してしまう。"""
+        self.stale_gate_pr(83, suites=[(900, 800, "cancelled"), (901, 850, "cancelled", False)])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        line = self.stale_gate_line(83, proc)
+        self.assertIn("gh run rerun 850", line[4], proc.stdout)
+        self.assertNotIn("gh run rerun 800", line[4], proc.stdout)
 
     def test_rollup_に待っている_pr_gate_が見えれば_suite_を読まず名乗らない(self):
         self.stale_gate_pr(76, suites=[(900, 800, "success"), (901, 900, "cancelled"), (902, 1000, "queued")])
         proc = self.watch(QUEUE_ENTRY_MINUTES=15)
         self.assertEqual(self.classify(76, proc), (None, None), proc.stdout)
-        self.assertNotIn("check-runs", self.gh_log(), "走っている pr-gate のある PR で API を引いている")
+        self.assertNotIn("pr-gate.yml/runs", self.gh_log(), "走っている pr-gate のある PR で API を引いている")
 
     def test_必須の定義を読めなければ読めなかったと名乗る(self):
         """黙ると「止まっていない」に倒れる (#1303)。"""
@@ -858,15 +890,11 @@ class StallWatchTest(unittest.TestCase):
             proc = self.watch(QUEUE_ENTRY_MINUTES=15, RULESET=ruleset)
             self.assertEqual(self.classify(73, proc), ("unreadable", "name"), proc.stdout)
 
-    def test_suite_か_run_の番号を読めなければ読めなかったと名乗る(self):
+    def test_pr_gate_の_run_の一覧を読めなければ読めなかったと名乗る(self):
         self.stale_gate_pr(74)
-        proc = self.watch(QUEUE_ENTRY_MINUTES=15, CHECKRUNS_FAIL=1)
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15, GATERUNS_FAIL=1)
         self.assertEqual(self.classify(74, proc), ("unreadable", "name"), proc.stdout)
         self.assertIn("Gateway Timeout", proc.stderr, "読めなかった理由を捨てている")
-
-        self.stale_gate_pr(75, suites=[(900, 800, "success"), (901, 0, "cancelled")])
-        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
-        self.assertEqual(self.classify(75, proc), ("unreadable", "name"), proc.stdout)
 
     # --- 作法のジョブを含む古い ci.yml の run (#2669 の移行) ------------------
     #
@@ -1365,6 +1393,8 @@ class RequiredRuleTest(unittest.TestCase):
         "run ごとの最新", "run (check suite) ごとの最新", "どれも赤くない", "決まっていない (#2577)",
         # #2712 で成り立たなかった前提 (#2716 の反証 3)
         "同じコミットの最新", "concurrency が止める", "ラベルの run で付け直されます",
+        # pr-gate が concurrency を持っていた頃の前提 (#2716 の 2 回目の反証 1)
+        "3 つ以上重な", "cancel-in-progress: false では", "group の待ちを置き換えて",
     )
 
     @staticmethod

@@ -108,17 +108,18 @@
 #      対処: gh pr merge <番号> --disable-auto の後に gh pr merge <番号> --auto --squash で
 #      掛け直す (#2691 はこれで直後に queue へ入った)。当番は掛けない (2・5 と同じ・#2614)
 #  13. autoMerge: true + BLOCKED で、pr-gate 以外の必須は揃っている (最新が緑か skipped) のに、
-#      作成順で最新の check suite の pr-gate が cancelled (結論の無い打ち切り)
-#      原因: 同じ PR の出来事が重なり、pr-gate の concurrency が run を打ち切った。必須は最新の
-#      suite の pr-gate を読む (規則は scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」・
-#      #2577)。打ち切られたのが古い suite なら止まらない (#2710・#2707・#2703 は merge された) が、
-#      新しい suite なら必須が揃った後も BLOCKED のまま queue に入らない (#2712・#2716)。#2716 で
-#      pr-gate は走っている run を止めなくなり、作成と同時のラベルの 2 本では起きない。残るのは
-#      出来事が 3 つ以上重なって待ちが置き換えられたときである。最新の suite の赤は打ち切りでは
-#      なく PR を読んだ結論なので、ここには当てない (打ち直しても同じ赤を返す)
+#      作成順で最新の check suite の pr-gate の run が cancelled (結論の無い打ち切り)
+#      原因: run が打ち切られた。必須は最新の suite の pr-gate を読む (規則は scripts/ci-gate.sh
+#      冒頭の「必須の判定が読む check run」・#2577)。打ち切られたのが古い suite なら止まらない
+#      (#2710・#2707・#2703 は merge された) が、新しい suite なら必須が揃った後も BLOCKED のまま
+#      queue に入らない (#2712・#2716)。かつては pr-gate の concurrency が打ち切っていた (走っている
+#      run の打ち切り・待ちの置き換え)。#2716 で concurrency を外したので、残るのは手で cancel した
+#      ときである。待ちを置き換えられた run はジョブを作らないので、suite の順は run の一覧で読む。
+#      最新の suite の赤は打ち切りではなく PR を読んだ結論なので、ここには当てない
 #      対処: 名乗りの行に出る gh run rerun <run-id> で cancelled の run を打ち直す (#2712 は打ち直しの
-#      14 秒後に CLEAN になった)。**当番は打たない** — 古い pr-gate を当番に打たせない決まり
-#      (#2668・stall-act.sh の除外) を変えるのは人の判断である
+#      14 秒後に CLEAN になった)。ジョブの無い run で打ち直せなければ、本文を編集して新しい run を
+#      作る。**当番は打たない** — 古い pr-gate を当番に打たせない決まり (#2668・stall-act.sh の
+#      除外) を変えるのは人の判断である
 #
 # 読むときの注意:
 #
@@ -430,10 +431,14 @@ required_contexts() {
 
 # stale-gate (冒頭の表の 13 行目・#2716) に当たりうる PR か。当たりうれば yes を出す。
 # **ここは statusCheckRollup だけで絞る** — rollup には check suite の id が無いので、どの suite が
-# 新しいかは stale_gate_run が API で読む。API を引くのは、ここを通った PR だけである。
+# 新しいかは stale_gate_run が run の一覧で読む。API を引くのは、ここを通った PR だけである。
 #
 # - pr-gate 以外の必須: その名前の最新 (run の id の順) が SUCCESS・NEUTRAL・SKIPPED
-# - pr-gate: 待っている run が無く、cancelled の run が残っている
+# - pr-gate: 待っている run が無い
+#
+# **rollup の CANCELLED では絞らない** (#2716 の 2 回目の反証 1・2)。待ちを置き換えられた run は
+# ジョブを 1 本も作らずに cancelled で終わり、rollup にも check-runs にも出ない。予約付きの BLOCKED で
+# 必須が揃っている PR はそもそも少ないので、ここを通った PR は run の一覧を引く
 stale_gate_candidate() { # $1=必須の context の並び (JSON) / 標準入力=PR の JSON
   flatten_checks | jq -r --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" \
     --argjson required "$1" '
@@ -441,7 +446,7 @@ stale_gate_candidate() { # $1=必須の context の並び (JSON) / 標準入力=
     def waiting: .result as $r | ($unsettled | index($r)) != null;
     . as $all
     | [ $all[] | select(.name == "pr-gate") ] as $gates
-    | select((any($gates[]; waiting) | not) and any($gates[]; .result == "CANCELLED"))
+    | select(any($gates[]; waiting) | not)
     | select(all($required[] | select(. != "pr-gate");
                  . as $n | ([ $all[] | select(.name == $n) ] | sort_by([.run, .at]) | last) as $l
                  | $l != null and ($l | ok)))
@@ -449,28 +454,35 @@ stale_gate_candidate() { # $1=必須の context の並び (JSON) / 標準入力=
 }
 
 # 必須が読む pr-gate (作成順で最新の check suite に載ったもの。規則は scripts/ci-gate.sh 冒頭の
-# 「必須の判定が読む check run」) が cancelled の形 (#2716)。当たれば最新の suite の run の id を
-# 出す (読めなければ 0)。当たらなければ空。API を読めなければ非 0。
+# 「必須の判定が読む check run」) の run が cancelled の形 (#2716)。当たれば最新の suite の run の
+# id を出す。当たらなければ空。API を読めなければ非 0。
 #
-# - **suite の作成順で読む。** cancelled が古い suite のほう (#2710・#2707・#2703) は必須を塞がない
-#   ので、BLOCKED の別の理由と重なったときに打ち直しを勧めてしまう。順は check suite の id で読む
+# - **suite の作成順を、PR gate の run の一覧 (actions/runs の check_suite_id) で読む。** check-runs
+#   では読まない — 待ちを置き換えられた run はジョブを作らず、suite に pr-gate の check run が残らない
+#   (#2730 の a0ad3c6 の run 38767942922 ほか・#2716 の 2 回目の反証 1)。check run を持つ suite だけで
+#   「最新」を選ぶと、ジョブの無い最新の suite を見落とし、古い suite の cancelled を打ち直しに挙げる
+#   (同 反証 4)。ジョブの無い cancelled が最新の suite のとき、必須がそれを cancelled と読むか待ちと
+#   読むかは未確認 (#2692)。どちらでも打ち直せば最新の suite に結論が付くので、名乗る
+# - cancelled が古い suite のほう (#2710・#2707・#2703) は必須を塞がないので名乗らない。BLOCKED の
+#   別の理由と重なったときに打ち直しを勧めてしまう
 # - **当てるのは cancelled (結論の無い打ち切り) だけである** (#2716 の反証 1)。最新の suite の赤は
 #   その run が PR を読んで出した結論 (タイトル・Issue の紐づけ・絵) で、打ち直しても同じ赤を返す。
 #   直すのは人で、タイトルなら bad-title が名乗る
 # - **古い suite の結論は問わない** (#2716 の反証 2)。打ち切られた run は何も判定していないので、
 #   古い suite が赤でも、打ち直せば今の PR を読んで結論を返す
-# - filter=latest は suite ごとの最新の check run を返す。打ち直した run は同じ suite に載るので、
-#   打ち直しが終われば当たらなくなる
-stale_gate_run() { # $1=head の SHA
-  # shellcheck disable=SC2016
-  gh api "repos/$REPO/commits/$1/check-runs?check_name=pr-gate&filter=latest&per_page=100" --jq '
-    [ .check_runs[]? | {
-        suite: (.check_suite.id // 0),
-        result: (if .status == "completed" then (.conclusion // "") else "waiting" end),
-        run: ((.details_url // "") | (capture("/actions/runs/(?<id>[0-9]+)") | .id | tonumber) // 0)
-      } ]
-    | (sort_by(.suite) | last) as $top
-    | if $top != null and $top.result == "cancelled" then $top.run else empty end'
+# - 打ち直した run は同じ run (同じ suite) のまま、一覧は最後の attempt の結論を返すので、打ち直しが
+#   終われば当たらなくなる。--paginate はページごとに --jq を当てるので、最大はここで取る
+stale_gate_run() { # $1=head の SHA (完全な 40 桁。短い SHA では一覧が空になる)
+  local rows newest id status conclusion
+  rows=$(gh api "repos/$REPO/actions/workflows/pr-gate.yml/runs?head_sha=$1&per_page=100" --paginate \
+    --jq '.workflow_runs[] | "\(.check_suite_id // 0) \(.id) \(.status) \(.conclusion // "-")"') || return 1
+  newest=$(sort -n -k1,1 <<<"$rows" | tail -n 1)
+  [ -n "$newest" ] || return 0
+  read -r _ id status conclusion <<<"$newest"
+  if [ "$status" = completed ] && [ "$conclusion" = cancelled ]; then
+    echo "$id"
+  fi
+  return 0
 }
 
 # 「同じ名前で、新しい方は緑・古い方が赤」— 判定を固定している古い失敗 check (#259 / #513)。
@@ -579,17 +591,14 @@ name_stale_gate() { # $1=番号 $2=PR の JSON $3=均した checks
   [ "$mins" -ge "$QUEUE_ENTRY_MINUTES" ] || return 1
   sha=$(jq -r '.headRefOid // ""' <<<"$json")
   if [ -z "$sha" ] || ! gate_run=$(stale_gate_run "$sha"); then
-    say_line "$n" unreadable name 0 "pr-gate の check suite を読めなかった (判定していない)"
+    say_line "$n" unreadable name 0 "PR gate の run の一覧を読めなかった (判定していない)"
     return 1
   fi
-  # 最新の suite の pr-gate が cancelled でない (緑・赤・待ち): この形ではない
+  # 最新の suite の run が cancelled でない (緑・赤・待ち): この形ではない
   [ -n "$gate_run" ] || return 1
-  if [ "$gate_run" = 0 ]; then
-    say_line "$n" unreadable name 0 "最新の suite の pr-gate の run の番号を読めなかった (判定していない)"
-    return 1
-  fi
+  # ジョブの無い run の打ち直しは確かめていないので、効かないときの手を添える
   say_line "$n" stale-gate name "$mins" \
-    "必須は揃っているのに、必須が読む最新の suite の pr-gate が cancelled で BLOCKED のまま — gh run rerun $gate_run で打ち直す (当番は打たない・#2716)"
+    "必須は揃っているのに、必須が読む最新の suite の pr-gate の run が cancelled で BLOCKED のまま — gh run rerun $gate_run で打ち直す (打ち直せなければ本文を編集して新しい run を作る。当番は打たない・#2716)"
 }
 
 # --- 走査 -------------------------------------------------------------------

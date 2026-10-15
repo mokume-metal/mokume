@@ -262,10 +262,10 @@ fi
 # 差し戻しの文面。この検査は pr-gate (.github/workflows/pr-gate.yml) の中で走る。絵を貼る
 # (本文の編集)・ラベルを付けると pr-gate の新しい run が作られ、必須は作成順で最新の run (check
 # suite) の結論を読む (規則は scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」・#2577)。直した
-# 後の run はその出来事の後に PR を読むので、打ち直しは要らない (#2668 の probe)。例外は、その run が
-# 走る前に cancelled で終わったとき (出来事が 3 つ以上重なり、待ちが置き換えられた) で、stall-watch が
-# stale-gate と名乗り、打ち直す run を出す (#2716)。打ち切られた run は文面を出さないので、
-# 差し戻しの文面には書かない。
+# 後の run はその出来事の後に PR を読むので、打ち直しは要らない (#2668 の probe)。pr-gate は
+# concurrency を持たないので run は打ち切られない (#2716)。例外は手で cancel した run が最新の suite に
+# 残ったときで、stall-watch が stale-gate と名乗り、打ち直す run を出す。打ち切られた run は文面を
+# 出さないので、差し戻しの文面には書かない。
 #
 # かつて (#2134〜#2669) は ci.yml の ci-gate の needs に居て、後付けのラベルや貼った絵では赤かった
 # run の ci-gate が同じコミットに残り、必須チェックを赤のままにした (#259)。文面は打ち直しまで
