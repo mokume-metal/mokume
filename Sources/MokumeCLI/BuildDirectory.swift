@@ -23,7 +23,8 @@ import mokume
 /// 無いが、親はスケッチを置いたフォルダの数だけあり、鍵に入れると親ごとに初回の 17 秒と
 /// 約 400MB を払う。往復の 6〜9 秒は初回よりも安い。`--build-system native` を渡せば
 /// 起きないが、道具立てが廃止を予告している口なので頼らない
-/// ([#2687](https://github.com/mokume-metal/mokume/issues/2687))。
+/// ([#2687](https://github.com/mokume-metal/mokume/issues/2687)。上流へは
+/// [swiftlang/swift-package-manager#10681](https://github.com/swiftlang/swift-package-manager/issues/10681) で報告した)。
 ///
 /// **部分だけ共有する口は無い。** `--cache-path` を別に与えても置き場は 393MB のまま
 /// (キャッシュ側が持つのは圧縮された種で、置き場は展開後の写しを別に持つ)。内容で
