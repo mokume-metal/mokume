@@ -435,6 +435,73 @@ class StallWatchTest(unittest.TestCase):
         kind, action = self.classify(5, self.watch(IN_QUEUE="true"))
         self.assertEqual((kind, action), ("in-queue", "quiet"))
 
+    def test_予約が掛かり揃っても_queue_に入らないまま猶予を超えたら名乗る(self):
+        """#2691 の形 (#2693)。予約が効いていれば揃ってから数秒で queue に入る。経過は check の
+        最新の完了時刻から測り、どの分類にも当たらず黙って抜けていた。"""
+        self.add_pr(
+            40,
+            auto=True,
+            state="CLEAN",
+            checks=[check("pr-gate", "SUCCESS", ago(40)), check("ci-gate", "SUCCESS", ago(27))],
+        )
+        # 必須でない check の赤 (render-pr) で UNSTABLE でも、予約は同じく queue へ動くはず
+        self.add_pr(
+            41,
+            auto=True,
+            state="UNSTABLE",
+            checks=[check("ci-gate", "SUCCESS", ago(30)), check("render-pr", "FAILURE", ago(20))],
+        )
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith("40 "))
+        self.assertEqual(line[1:3], ["queue-not-entered", "name"], proc.stdout)
+        self.assertIn(int(line[3]), (26, 27), proc.stdout)
+        self.assertIn("gh pr merge 40 --disable-auto", line[4], proc.stdout)
+        self.assertIn("gh pr merge 40 --auto --squash", line[4], proc.stdout)
+        self.assertEqual(self.classify(41, proc), ("queue-not-entered", "name"), proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def test_揃った後に掛けた予約は_掛けてから猶予の内なら黙る(self):
+        """経過は check の最新と予約を掛けた時刻の遅い方から測る。揃ってから 2 時間後に掛けた
+        予約の、queue へ動く前の隙間を名乗らない。BEHIND も必須は揃っている形として見る。"""
+        self.add_pr(46, auto=True, state="CLEAN", checks=[check("ci-gate", "SUCCESS", ago(120))])
+        self.add_pr(47, auto=True, state="BEHIND", checks=[check("ci-gate", "SUCCESS", ago(120))])
+        for number, at in ((46, ago(1)), (47, ago(20))):
+            path = self.pr_dir / f"{number}.json"
+            pr = json.loads(path.read_text(encoding="utf-8"))
+            pr["autoMergeRequest"] = {"enabledAt": at}
+            path.write_text(json.dumps(pr), encoding="utf-8")
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(46, proc), (None, None), proc.stdout)
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith("47 "))
+        self.assertEqual(line[1:3], ["queue-not-entered", "name"], proc.stdout)
+        self.assertIn(int(line[3]), (19, 20), proc.stdout)
+
+    def test_揃ってから猶予の内は_queue_に入っていなくても黙る(self):
+        """予約が queue へ動くまでの隙間は正常。出すと毎回の注意になる (#642)。"""
+        self.add_pr(42, auto=True, state="CLEAN", checks=[check("ci-gate", "SUCCESS", ago(5))])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(42, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_必須が揃っていなければ_queue_に入らなくても名乗らない(self):
+        """BLOCKED (必須の待ち・赤) は予約が待っているだけで、queue に入らないのが正しい。"""
+        self.add_pr(43, auto=True, state="BLOCKED", checks=[check("ci-gate", "SUCCESS", ago(120))])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(43, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_予約が掛かり揃って_queue_に居るなら黙る(self):
+        self.add_pr(44, auto=True, state="CLEAN", checks=[check("ci-gate", "SUCCESS", ago(120))])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15, IN_QUEUE="true")
+        self.assertEqual(self.classify(44, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_予約が掛かり揃った_PR_の_queue_を読めなければ読めなかったと名乗る(self):
+        """読めずに空が返ったとき、居ないとも居るとも読まない (#1303)。"""
+        self.add_pr(45, auto=True, state="CLEAN", checks=[check("ci-gate", "SUCCESS", ago(120))])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15, QUEUE_FAILS=1)
+        self.assertEqual(self.classify(45, proc), ("unreadable", "name"), proc.stdout)
+
     def test_衝突して_check_が_1_本も付かない_PR_を名乗る(self):
         self.add_pr(6, auto=True, state="UNKNOWN", checks=[])
         kind, action = self.classify(6, self.watch())
