@@ -719,8 +719,8 @@ struct SharedFrameStageTests {
     // MARK: - 打ち切られた差し出し (#2735)
 
     /// **差し出しの投入を GPU が打ち切ったら、枚数が進むのを待たずに同じ枚を出し直す。** 台は投入の
-    /// 直後に「出した」と記すので、記しを戻さないと、書き手が止まっている間 (`noLoop()`・一時停止)
-    /// 窓は打ち切られる前の絵のままになる
+    /// 直後に「出した」と記すので、記しを戻さないと、書き手が書くのをやめたとき (子の終了・異常終了・
+    /// 詰まり) 窓は打ち切られる前の絵のままになる
     /// ([#2735](https://github.com/mokume-metal/mokume/issues/2735))。
     ///
     /// 打ち切りは GPU を止めずに作る (`dropsNextSubmissionForTesting` は結末の記録だけを打ち切りに
@@ -739,7 +739,7 @@ struct SharedFrameStageTests {
             stage.displayLinkFired()
             try #require(stage.presentations == 1, "最初の 1 枚を差し出していない (これでは何も測れない)")
 
-            // 書き手が 1 枚進めて止まる。その 1 枚の差し出しが打ち切られる
+            // 書き手が 1 枚進めて書くのをやめる。その 1 枚の差し出しが打ち切られる
             try draw(surface, frame: 2, gpu: gpu)
             if dropped { gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim }
             stage.displayLinkFired()
