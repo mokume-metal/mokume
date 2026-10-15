@@ -591,7 +591,9 @@ import MokumeDiagnostics
     ///   面の中身は仕上がっていないので、この面へ書く新しい投入が積まれるまで、何も積まずに同じ理由で
     ///   投げる。この面へ書かない投入 (読み戻し・出力段・別の面への描画・計算) だけが打ち切られていた
     ///   なら、その回だけ投げ、次の読みは面を読み直す。CPU が書いた画素の書き戻しが打ち切られていた
-    ///   ら、書いた画素は失わず、次にこの面へ描くときに書き戻し直す
+    ///   とき、**打ち切りの後にこの面へ描いていなければ**、書いた画素は失わず、次にこの面へ描くときに
+    ///   書き戻し直す。**描いていれば、`set()` などで書いた画素は失われうる** — 書き戻しは写しの全面を
+    ///   戻すので、書き戻し直すと後から描いた絵を巻き戻すため ([#2199])
     ///
     /// 毎フレーム読む口 (`pixels`・`loadPixels()`・`get`) は投げない ([ADR-0020] 決定 5)。打ち切りは
     /// 最初の 1 回だけ警告で名乗る。
@@ -600,6 +602,7 @@ import MokumeDiagnostics
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     public func readPixels() throws(RenderFailure) -> PixelBuffer {
         try refuseHeldDrop()
         // 出す先なら、止まっている間に変わった描く先を広げ直してから読む ([#1882])

@@ -4853,7 +4853,7 @@ public final class Canvas {
         // 焼き付けを積んだ後で投げたフレームの指紋を覚えると、次のフレームが焼けていない
         // 面を読む ([#1183])。投入されなかった焼き付けは面を書き換えていないので、前の
         // 指紋のまま使い回して正しい。**投入した後で GPU が打ち切った焼き付けは、結末が届いた後の
-        // 最初の描き切りの頭で指紋ごと忘れる** (`forgetShadowBake()`・[#2199])
+        // 最初の描き切りの頭で指紋ごと忘れる** (`shadowBakeDropped(_:)`・[#2199])
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
