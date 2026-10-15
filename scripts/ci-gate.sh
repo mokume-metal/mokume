@@ -20,9 +20,9 @@
 # 走っている途中でも必須が満たされていた。ci-gate を skipped にしても穴は塞がらない (skipped の
 # 必須チェックは通過と扱われる)。
 #
-# 必須の判定は、**run (check suite) ごとの最新の ci-gate がどれも赤くない**ことを求める。まだ
-# ci-gate を作っていない run は数えない (#2690 の実測・#2696)。そのため、走っている途中に赤を
-# 返すと、後から検査の run の緑の ci-gate が作られても、打ち直されるまで PR を塞ぐ。**だから
+# 必須の判定は、作成順で最新の check suite に載った ci-gate を読む (下の「必須の判定が読む check
+# run」)。本文の編集の run は検査の run より後に作られるので、走っている途中に赤を返すと、後から
+# 検査の run (古い suite) の緑の ci-gate が付いても、打ち直されるまで PR を塞ぐ (#2696)。**だから
 # 待つ。** 待っている間、この ci-gate は in_progress で、必須は満たされない。
 #
 # skipped の検査ごとに、同じ head SHA の check run から skipped とこの run 自身のものを除いて
@@ -43,8 +43,36 @@
 #     直したものを含む) の検査の結論を読みうる
 #
 # 塞いでいない兄弟: base の変更・reopen では、その run の ci-gate が検査の終わるまで作られず、
-# 前の run の緑の ci-gate だけで必須が満たされる。ci-gate がここで判定する前の穴で、別に扱う
-# (#2692)。
+# その間は前の run の緑の ci-gate だけで必須が満たされうる (未確認 (#2692)。下の規則の「最新の
+# suite に名前がまだ無いとき」)。ci-gate がここで判定する前の穴で、別に扱う。
+#
+# ## 必須の判定が読む check run (#2577)
+#
+# **必須チェックの規則の置き場はここ 1 か所である** (ci.yml・stall-act.sh・stall-watch.sh・
+# pr-gate.yml はここを指す)。観測からの推定で、GitHub の文書では確かめていない:
+#
+# > 必須の判定は、**ワークフローごとに、作成順で最新の check suite (run) に載った、その名前の
+# > check run** を読む。古い suite の赤・cancelled は読まない。同じ run の打ち直しは同じ suite に
+# > 載るので、打ち直した結論がその suite の結論になる。
+#
+# 作成順は check suite の id の順で読む。どの観測でも作成時刻と食い違わず、Actions の run の id も
+# 同じ順に並んでいた (#2696・#2703・#2707・#2710・#2712 の CI と PR gate の run)。**concurrency の
+# group に入る順とは違いうる** — #2712 では新しい run が先に group に入り、後から入った古い run に
+# cancel された。
+#
+# この規則で説明できる観測 (run と suite の id は #2577 の本文):
+#
+#   #2543          古い suite の赤い pr-title・ci-gate を残したまま merge された
+#   #2688          新しい suite の緑の ci-gate が、走っている古い suite を待たずに必須を満たした
+#   #2696          新しい suite (本文の編集の run) の赤い ci-gate が、古い suite の緑で上書きされず
+#                  11 時間 BLOCKED。打ち直して CLEAN
+#   #2712          作成と同時のラベルで同じ秒に立った pr-gate のうち、新しい suite のほうが cancelled
+#                  で BLOCKED。打ち直して CLEAN (#2716)
+#   #2710 ほか     cancelled の pr-gate が古い suite のほうで、止まらずに merge された (#2707・#2703 も)
+#
+# **未確認 (#2692)**: 最新の suite にその名前がまだ無いとき、前の suite の結論で必須が満たされるか。
+# #279 (API で上書きした check run が最初の suite に居続けた回) は「待ち」と記録しているが、ci-gate で
+# 測った記録は無い。
 #
 # 読む名前は needs から取り、コードの検査の名前の写しを持たない。check_name で引くので、
 # ci-check・ci-static という job 名をほかのワークフローに置かない
