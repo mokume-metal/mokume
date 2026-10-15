@@ -247,6 +247,18 @@ struct ResourceOutsideRunTests {
         #expect(RenderFailure.notRunning(call: call).headline.hasPrefix("makeSomething(_:) only works"))
     }
 
+    /// `canvas` は読むプロパティなので、資源の口の文面 (「作って返す」「setup() から呼ぶ」) を言わない。
+    /// 止めるので、落ちずに済む語彙へ案内する。止める文面はプロセスを落とすので、ここでは文面だけを見る。
+    @Test("canvas の止める文面は、読んだプロパティとして名乗り、落ちない語彙へ案内する")
+    func theCanvasStopNoticeFitsAProperty() {
+        let text = OutsideRun.canvasStopNotice
+        #expect(text.hasPrefix("canvas can only be read inside setup(), draw() or an input callback."))
+        #expect(!text.contains("makes what it returns"))
+        #expect(text != OutsideRun.notRunningNotice("canvas"))
+        #expect(!text.lowercased().contains("not running"))
+        #expect(text.contains("circle()"))
+    }
+
     /// 待つ読み込みの名前は、文面の言い分けに使う一覧と口の `#function` が一致していないと、
     /// 同期の口の文面に落ちる。一覧の名前で投げた失敗が、待つ読み込みの文面を出すことを見る。
     @Test("待つ読み込みの一覧は 3 口で、どれも Task から呼べると名乗る")

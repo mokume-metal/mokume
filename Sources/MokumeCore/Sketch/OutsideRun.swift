@@ -135,8 +135,20 @@ final class OutsideRun {
         "requestImage(_:)", "requestModel(_:normalize:)", "requestShape(_:)",
     ]
 
-    /// 資源を作る口を外から呼んだときの文面 (``RenderFailure/notRunning(call:)`` など 5 つの型の
-    /// `notRunning` と、止める ``SketchPart/canvas``)。返す値そのものを面からしか作れないので、既定へ
+    /// 外から読まれた ``SketchPart/canvas`` が止めるときの文面。
+    ///
+    /// **資源の口の文面 (``notRunningNotice(_:)``) を使わない** (#2683 の反証 B5)。`canvas` は読む
+    /// プロパティで、何かを作って返す口ではない。代わりに返せる値も投げる道も無いので止まる、と言い、
+    /// 外からでも落ちない語彙へ案内する。「走っていない」とは言わない (#1322)。
+    nonisolated static let canvasStopNotice =
+        "canvas can only be read inside setup(), draw() or an input callback. It was read outside "
+        + "them — from an initialiser, after the sketch ended, or from a Task — where the sketch's "
+        + "surface cannot be reached, and there is no other value to give back, so the sketch "
+        + "stopped. Read it inside setup() or draw(), or use the drawing functions such as circle() "
+        + "and the values such as width, which do not stop outside them"
+
+    /// 資源を作る口を外から呼んだときの文面 (``RenderFailure/notRunning(call:)`` など 6 つの型の
+    /// `notRunning` と、その前に 1 度言う警告)。返す値そのものを面からしか作れないので、既定へ
     /// 倒せない ([#2683])。
     ///
     /// **2 通りを完全な文として持つ** (ADR-0038 決定 3)。待つ読み込みの口 (``waitingLoads``) だけが、

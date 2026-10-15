@@ -478,7 +478,13 @@ extension SketchPart {
     /// (``createGraphics(_:_:)`` など) は同じ場所から呼んでも止まらず、型のついたエラー
     /// (``RenderFailure/notRunning(call:)`` など) を投げる。描く・読むときは語彙
     /// (``circle(_:_:_:)``・``width`` など) を通せば、外からでも落ちない。
-    public var canvas: Canvas { Self.requireCanvas() }
+    public var canvas: Canvas {
+        // **止める口はここ 1 つだけに置く** (#2683 の反証 B3)。止める取り方を別の口にしておくと、
+        // 新しい資源の口がそれを呼べてしまい、投げるべき所でまた落ちる。資源の口は
+        // ``resourceCanvas(_:_:)`` / ``loadingCanvas(_:_:)`` を通って投げる
+        guard let runtime = runningSketch else { fatalError(OutsideRun.canvasStopNotice) }
+        return runtime.canvas
+    }
 
     /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
     ///
@@ -605,19 +611,6 @@ extension SketchPart {
     @MainActor
     static func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
         liveRuntime(use, call)?.canvas
-    }
-
-    /// ``canvas`` が使う面。**外から呼ばれたら止める。**
-    ///
-    /// 返す値そのものが面で既定へ倒せず、プロパティなので投げることもできないためである。
-    /// 資源を作る口はここを通らず、投げる (``resourceCanvas(_:_:)``・[#2683])。新しい語彙が
-    /// ``canvas`` を素で使うと、外から呼ばれたときにここで止まる (#2684)。
-    ///
-    /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
-    @MainActor
-    static func requireCanvas(_ call: String = #function) -> Canvas {
-        guard let runtime = runningSketch else { fatalError(OutsideRun.notRunningNotice(call)) }
-        return runtime.canvas
     }
 
     /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、口ごとに 1 度だけ
