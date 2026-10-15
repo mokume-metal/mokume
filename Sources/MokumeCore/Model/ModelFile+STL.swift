@@ -96,6 +96,8 @@ import simd
 ///     ([#2645])。頂点の行と 2 つ目より後ろの面の行には触れない。最初の面の行に `normal` が無い文字は、書き直さない。
 ///     どちらにも当たらない文字 (面と面の間・`endsolid` の前後にだけ空白の行がある文字も) は、これまでどおりの経路で
 ///     写しを作らない。この写しを書けなければ、上と同じに元のファイルを読ませて照らす
+///   - 上の写し (添字 83・128 バイト未満) を作るときも、最初の面の行に `normal` があれば、同じ書き直しにする — 1 行目に
+///     空白を足すだけでは、`facet normal` の綴りが添字 128 から先へずれうる ([#2645])
 /// - **バイナリ**は 128 バイト以上を Model I/O に読ませる。128 バイトに満たないものは、Model I/O が必ず
 ///   断る (面を持てない) ので渡さず、84 バイトの面の無いものだけ空、ほかは読めないとして返す
 ///
@@ -309,8 +311,9 @@ nonisolated extension ModelFile {
         /// 読み手が、文字の面を探しに行けるか — 先頭から ``facetNormalLimit`` バイトまでに `facet normal` (間の空白は
         /// 1 つ) の綴りが始まる。名前の中の綴りでもよい。
         var readerFindsFacets = false
-        /// 最初の面の行 (`facet` の語で始まる行) が `facet` <空白> `normal` と続くとき、`normal` の語の直後の位置
-        /// (ファイルの先頭からのバイト数)。最初の面の行に `normal` が無ければ `nil`。
+        /// 最初の面の行 (`facet` の語で始まる行) が `facet` <空白> `normal` と続くとき、`normal` の 6 字の直後の位置
+        /// (ファイルの先頭からのバイト数)。後ろの字は問わない (`normalx` でも、読み手は綴りで探しに行く)。最初の面の行に
+        /// `normal` が無ければ `nil`。面の行は、面の外にある `facet` の語で始まる行に限る
         var firstFacetNormalEnd: Int?
         /// 面の中 (`facet` から `endfacet` まで・`outer` から `endloop` まで) に、空白・タブ・VT・FF・CR だけでできた行
         /// (1 バイト以上) がある。CRLF の空行もこれに当たる。面と面の間や `endsolid` の前後の空白の行は数えない
@@ -349,7 +352,8 @@ nonisolated extension ModelFile {
     /// **読み手は、`outer` の行から `endloop` の行までの空でない行をすべて頂点として読む** (語が何でも、0 として)。
     /// そこで `vertex`・`endloop` 以外の空白だけでない行があれば、組み立てが崩れているとする (`endloop` の無い面も
     /// ここに入る)。`facet` の行と `outer` の行の間・`endloop` の行と `endfacet` の行の間の、`outer`・`endfacet` 以外の
-    /// 空白だけでない行も、読み手が断るので同じにする ([#2645])。
+    /// 空白だけでない行も、読み手が断るので同じにする ([#2645])。面として見るのは `facet` の行の後ろだけで、面の外の
+    /// 行は (`outer` で始まっても) 読み手どおり読み飛ばす。
     ///
     /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
     static func scanFacets(head: Data, rest: FileHandle?, chunk: Int = 1 << 20) -> FacetScan? {
@@ -478,8 +482,9 @@ nonisolated extension ModelFile {
                 guard !ModelFile.isBlankOrCR(byte) else { return }
                 phase = byte == Self.normalWord[0] ? .normal(1) : .skip
             case .normal(let matched):
-                if matched == Self.normalWord.count {
-                    if ModelFile.isBlankOrCR(byte) { normalEnd = at }
+                // 読み手は `facet normal` の綴りだけを見るので、`normal` の後ろの字は問わない (`normalx` でもよい)
+                if byte == Self.normalWord[matched], matched + 1 == Self.normalWord.count {
+                    normalEnd = at + 1
                     phase = .skip
                 } else {
                     phase = byte == Self.normalWord[matched] ? .normal(matched + 1) : .skip
@@ -497,8 +502,6 @@ nonisolated extension ModelFile {
 
         /// 行を 1 つ読み終えた。`end` は行の終わり (LF か、ファイルの終わり) の位置。
         private mutating func endLine(at end: Int) {
-            // 最初の面の行の `normal` が行の終わりで終わった
-            if case .normal(let matched) = phase, matched == Self.normalWord.count { normalEnd = end }
             defer {
                 phase = .indent
                 lineHasBytes = false
@@ -543,10 +546,8 @@ nonisolated extension ModelFile {
                     sawFacetLine = true
                     text.firstFacetNormalEnd = normalEnd
                 }
-            } else if starts(with: Self.outerWord) {
-                // `facet` の行の無い面 (読み手は読み飛ばす)。中の行は同じに見る
-                inLoop = true
             }
+            // 面の外の行 (`outer` で始まる行も) は、読み手どおり読み飛ばす
         }
 
         /// 読み終えた。最後の行が LF で終わらなければ、ここで閉じる。
@@ -621,23 +622,17 @@ nonisolated extension ModelFile {
     /// に満たないものは断られたのと同じに `nil` を、それ以上のものは元のファイルを読ませる。
     ///
     /// **読み手が面を探しに行けない・面の中に空白だけの行がある文字** (``TextScan/needsRewrite``) は、上のどれでも
-    /// なく、書き直した写し (``writeRewritten(from:head:rest:to:)``) を読ませる。写しを書けなければ、上と同じに
+    /// なく、書き直した写し (``writeRewritten(from:head:rest:to:)``) を読ませる。**上の写しを作るときも、最初の面の
+    /// 行に `facet normal` の綴りがあれば同じ書き直しにする** — 1 行目に空白を足すと、`facet normal` の綴りが
+    /// 添字 128 から先へずれて、読み手が面を探しに行けなくなりうる ([#2645])。写しを書けなければ、上と同じに
     /// 元のファイルを読ませる (読み手が断るか、返った枚数が面の数と合わずに読めないとして返る)。
+    ///
+    /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
     private static func askModelIO(
         text url: URL, head: Data, rest: FileHandle?, scratch: URL, scan: TextScan, size: Int
     ) -> Reading? {
-        if scan.needsRewrite, let normalEnd = scan.firstFacetNormalEnd {
-            do {
-                return try readThroughCopy(in: scratch) { output in
-                    try writeRewritten(from: normalEnd, head: head, rest: rest, to: output)
-                }
-            } catch {
-                return rest == nil ? nil : reading(url)
-            }
-        }
         let facets = scan.shape.facets
         let prepared = readerHead(of: head)
-        guard rest == nil || prepared != head else { return reading(url) }
         // **書かれた面の数が、読み直しの枚数 ⌊(大きさ − 84) ÷ 50⌋ とも ⌊(大きさ − 82) ÷ 50⌋ とも違えば、写しを
         // 作らず、元のファイルを読ませる** (写しは、ファイルの全部を書き直す — ディスクも二重に要る)。
         // 読み手が文字を読み直すと、**揃った面 (50 バイト) の数を返し、最後の 48 バイトで終わる面も 1 面と
@@ -645,11 +640,16 @@ nonisolated extension ModelFile {
         // 838,860,884 バイトに満たなければ、ある分だけを返す)。だから、書かれた面の数と違う数が返れば
         // 読み直し (または読めなかった) で、合う数が返れば文字として読めた証になる。照合は呼ぶ側が行う。
         // 数が同じなら読み直しと見分けられないので、写しで読む
-        if rest != nil, size < 84 + 50 * (1 << 24), facets != (size - 84) / 50, facets != (size - 82) / 50 {
-            return reading(url)
-        }
+        let countsTellAReadingApart =
+            size < 84 + 50 * (1 << 24) && facets != (size - 84) / 50 && facets != (size - 82) / 50
+        let readsTheOriginal =
+            !scan.needsRewrite && rest != nil && (prepared == head || countsTellAReadingApart)
+        guard !readsTheOriginal else { return reading(url) }
         do {
             return try readThroughCopy(in: scratch) { output in
+                if let normalEnd = scan.firstFacetNormalEnd {
+                    return try writeRewritten(from: normalEnd, head: head, rest: rest, to: output)
+                }
                 var written = prepared.count
                 try output.write(contentsOf: prepared)
                 if let rest {

@@ -487,6 +487,49 @@ struct STLModelTests {
         #expect(parsed == (try read(Data(ModelFixture.asciiSTL(Self.tetrahedron).utf8))))
     }
 
+    /// 最初の面の行が `facet normalx` のように `normal` の後ろに字が続いても、読み手は `facet normal` の綴りで面を
+    /// 探しに行き、読む。名前が長くても同じに読めるよう、書き直すかも綴りで決める (#2645 の 2 回目の反証 4)。
+    @Test("最初の面の行の normal の後ろに字が続き、名前が長い文字の STL も読める (#2645)", arguments: ["t", String(repeating: "x", count: 130)])
+    func aFirstFacetLineWithAWordAfterNormalIsRead(name: String) throws {
+        var text = ModelFixture.asciiSTL(Self.tetrahedron, name: name)
+        text.replaceSubrange(try #require(text.range(of: "facet normal ")), with: "facet normalx ")
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed.positions == Self.tetrahedron.flatMap(\.corners))
+    }
+
+    /// **面の外の行は、`outer` で始まっても読み手は読み飛ばす。** 面と面の間の `outer loop`・`endsolid` の後ろの
+    /// 説明の行・`solid` の行の直後の説明の行があっても、書かれた面のとおりに読める (#2645 の 2 回目の反証 1)。
+    @Test("面の外に outer で始まる行がある文字の STL も、書かれた面のとおりに読める (#2645)")
+    func outerLinesOutsideFacetsAreSkipped() throws {
+        let body = Self.body(Self.tetrahedron)
+        let samples = [
+            "solid t\n    outer loop\n" + body,
+            "solid t\n" + body.replacingOccurrences(of: "  endfacet\n", with: "  endfacet\n    outer loop\n"),
+            "solid t\n" + body.replacingOccurrences(of: "endsolid", with: "    outer loop\nendsolid"),
+            "solid t\n" + body + "outer surface exported by X\nunits mm\n",
+            "solid t\nouter shell of part\n" + body,
+        ]
+        for text in samples {
+            let parsed = try? read(Data(text.utf8))
+            #expect(parsed?.positions == Self.tetrahedron.flatMap(\.corners), "\(text.prefix(40).debugDescription)")
+        }
+    }
+
+    /// 1 面の文字で、84 バイト目が改行・面の数が読み直しの枚数と同じなので写しを作る形。1 行目に空白を足すだけの写し
+    /// (``ModelFile/readerHead(of:)``) では、`facet normal` の綴りが添字 65 から 142 へずれ、読み手が面を探しに行け
+    /// なくなる。写しでも綴りを手前に置く (#2645 の 2 回目の反証 2)。
+    @Test("写しを作る 1 面の文字の STL で、1 行目に空白を足すと facet normal が遠くなる形も読める (#2645)",
+        arguments: [String(repeating: " ", count: 57), String(repeating: "\n", count: 57)])
+    func aCopyKeepsFacetNormalWithinReach(_ before: String) throws {
+        let text = "solid t\n" + before
+            + "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid\n"
+        let data = Data(text.utf8)
+        #expect(data.count == 160 && data[83] == 0x0A && Self.facetNormal(in: text) == 65)
+        #expect(ModelFile.readerHead(of: data.prefix(128)).count == 128 + 77)
+        let parsed = try read(data)
+        #expect(parsed.positions == Self.smallFacet.corners)
+    }
+
     /// 84 バイト目が NUL で (名前に NUL)、最初の面の字下げが 300 バイトの文字。#2347 では読み手が読めない形として
     /// 読めないとしていたが、写しで最初の面の行を手前へ寄せれば読める。
     @Test("84 バイト目が NUL で、最初の面の字下げが 300 バイトの文字の STL も読める (#2645)")
@@ -719,6 +762,8 @@ struct STLModelTests {
             ("solid t\n" + blanks + tabbed, false, 8 + 300 + 2 + 13, false),
             // 名前に `facet normal` があれば、面の区切りがタブでも探しに行ける
             ("solid facet normal\n" + body.replacingOccurrences(of: "facet normal", with: "facet\tnormal"), true, 19 + 2 + 12, false),
+            // `normal` の後ろに字が続いても、`normal` の直後の位置を持つ
+            ("solid t\n" + blanks + body.replacingOccurrences(of: "facet normal ", with: "facet normalx "), false, 8 + 300 + 2 + 12, false),
         ]
         for (number, sample) in samples.enumerated() {
             for chunk in [1, 2, 3, 7, 64, 127, 128, 129, 255, 256, 257, 300, 400, 1 << 20] {
