@@ -1950,6 +1950,7 @@ struct CanvasTests {
             "shadowBakedSince": "影の面が拠る焼き付けの投入の範囲の始まり。焼いた投入が打ち切られたら指紋を忘れるために、shadowMapHolds と同じく越える (#2199)",
             "shadowBakedThrough": "shadowBakedSince と同じ範囲の終わり (#2199)",
             "upscaledBy": "最後に拡大を積んだ投入の番号。打ち切られたら targetChangedSinceUpscale を立て直すために越える (#2199)",
+            "carriedBy": "効果を通す前の絵を控えへ写した最後の投入の番号。打ち切られたら carriesPictureBeforeEffects を下ろすために越える (#2199)",
             "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
             "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,

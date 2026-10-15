@@ -387,6 +387,128 @@ struct DroppedWorkRedeliveryTests {
         #expect(target.surfaceClearsRepeated == (kind == "打ち切り" ? 1 : 0), "塗り直した回数が違う")
     }
 
+    // MARK: - 3 回目の反証 (C)
+
+    /// 大きな入力は、復号した後の編集だけを届けることがある。復号を届けた投入が打ち切られたのに、
+    /// 後の編集だけの届けを「全体を届けた最後の投入」と覚えると、復号は次に書くまで面に届かない (C1)。
+    @Test("大きな入力の復号を届けた投入が打ち切られると、後に編集だけを届けていても復号から届け直す。無ければ届け直さない",
+        arguments: [true, false])
+    func aDroppedDecodeIsSentAgainAfterAnEditOnlyUpload(dropped: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let side = 1024
+        let image = try canvas.createImage(side, side)
+        image.write(DisplayImage(width: side, height: side, bytes: Array(repeating: 127, count: side * side * 4)))
+        try canvas.draw {
+            canvas.image(image, 0, 0, 16, 16)
+            if dropped { gpu.dropsNextSubmissionForTesting = Self.victim }
+        }
+        #expect(image.displayInput != nil, "大きな入力の経路を通っていない — 前提が崩れている")
+
+        // 編集だけを届ける。結末が届く前に照会されないよう、照会を止めて描く
+        gpu.holdRevocations()
+        image.set(0, 0, Self.red)
+        try canvas.draw { canvas.image(image, 0, 0, 16, 16) }
+        gpu.releaseRevocations()
+        #expect(!image.needsUpload, "編集を届けていない — 前提が崩れている")
+
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        #expect(image.needsUpload == dropped, "届け直す旗の立ち方が違う")
+        #expect(image.inputNeedsDecode == dropped, "復号から届け直していない")
+    }
+
+    /// 効果を通す前の絵を控えへ写した投入が打ち切られると、控えは古い (初めてなら未定義)。印が立った
+    /// ままだと、次のフレームの最初の描き切りがそれを描く先へ戻す (C2)。
+    @Test("効果を通す前の絵を控えへ写した投入が打ち切られると、控えを戻す印を下ろす。無ければ下ろさない",
+        arguments: [true, false])
+    func aDroppedCarryIsNotRestored(dropped: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(Self.blue)
+            canvas.effects([.vignette(amount: 0.6)])
+            if dropped { gpu.dropsNextSubmissionForTesting = Self.victim }
+        }
+        #expect(canvas.carriesPictureBeforeEffects, "控えへ写していない — 前提が崩れている")
+
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        #expect(canvas.carriesPictureBeforeEffects == !dropped, "控えを戻す印の扱いが違う")
+    }
+
+    /// 届けるものが無い描き切りでも、登録簿から届け終えた持ち主を降ろす (C6)。逃げ道で直接書いた
+    /// 持ち主は、空でない届けが来るまで載ったままだった。
+    @Test("届けるものが無い描き切りでも、直接書いて届け終えた持ち主を登録簿から降ろす")
+    func finishedOwnersLeaveTheRegistryOnAnEmptyFlush() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let numbers = try canvas.makeNumbers(count: 64)
+        numbers.dirtyRangeLimit = 0
+        numbers.set(1, at: 3)
+        #expect(numbers.directUploads == 1, "直接書いていない — 前提が崩れている")
+        #expect(numbers.isQueuedForUpload)
+        try canvas.draw {}
+        #expect(!numbers.isQueuedForUpload, "届け終えた持ち主が登録簿に残っている")
+    }
+
+    /// 完了の知らせは、結末を記してから積む (C8)。知らせの照会だけで、描き切りを挟まずに取り消しが
+    /// 届く。頭で照会しない口 (止まっている間の追い付き・出す先を読む口) は、これに頼る。
+    @Test("描き切りを挟まなくても、完了の知らせが打ち切られた投入の記帳を取り消す")
+    func theCompletionNoticeRevokesWithoutAnotherFlush() async throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        try writeBlue(canvas, dropped: true)
+        awaitOutcomes(gpu)
+        // 知らせは main actor で走る。譲りながら、期限つきで待つ
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !canvas.output.hasPendingPixelWrites, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(canvas.output.hasPendingPixelWrites, "知らせが取り消していない")
+    }
+
+    /// 作った面の塗りが打ち切られた後、塗られていない面を映した写しへ CPU が書いていたら、塗り直さない
+    /// (C9)。塗り直しても、書き戻しが写しの全面 (塗られていない中身 + 書いた画素) で上書きする。
+    @Test("作った面の塗りが打ち切られても、写しへ書いた画素が戻っていなければ塗り直さない。書いていなければ塗り直す",
+        arguments: [true, false])
+    func aDroppedClearIsNotRepeatedUnderPendingPixelWrites(written: Bool) throws {
+        let gpu = try RenderDevice()
+        gpu.dropsNextSubmissionForTesting = Self.victim
+        let target = try RenderTarget(gpu: gpu, width: 8, height: 8)
+        gpu.holdRevocations()
+        var window = target.pixels
+        if written { window[1, 1] = Self.red }
+        gpu.releaseRevocations()
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        #expect(target.surfaceClearsRepeated == (written ? 0 : 1), "塗り直した回数が違う")
+        if !written {
+            #expect(target.pixelMirror?.syncedThrough == 0, "塗り直した後も写しを映したままにしている")
+        }
+    }
+
+    /// 粒を進めた投入が打ち切られると、GPU の寿命は減っていない。CPU の累計を戻さないと、生きている粒の
+    /// 上書きを注意しなくなる (C3)。
+    @Test("粒を進めた投入が打ち切られると、寿命の累計からその回の量を戻す。無ければ戻さない",
+        arguments: [true, false])
+    func aDroppedParticleAdvanceIsTakenBackFromTheLifeTotal(dropped: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let particles = try canvas.makeParticles(count: 16)
+        let before = particles.consumed
+        try canvas.draw {
+            canvas.particles(particles)
+            if dropped { gpu.dropsNextSubmissionForTesting = Self.victim }
+        }
+        let advanced = particles.consumed
+        #expect(advanced > before, "粒を進めていない — 前提が崩れている")
+
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        #expect(particles.consumed == (dropped ? before : advanced), "累計: \(particles.consumed)")
+    }
+
     // MARK: - 照会の止め (#2199 の反証 7)
 
     /// 描き切りは頭で照会してから描く先を変えるかを数え、終わるまで照会を止める。入れ子の描き切りの頭が

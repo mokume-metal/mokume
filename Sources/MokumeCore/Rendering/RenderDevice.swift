@@ -461,6 +461,26 @@ import MokumeDiagnostics
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
             @Sendable [commandFaults, completionNotices, weak self] (feedback: any MTL4CommitFeedback) in
+            // **結末を記してから知らせを積む** (#2199)。知らせは main actor で記帳の取り消しを照会する
+            // (`releaseOnNotice`) ので、先に積むと、記す前に走って結末を「まだ」と読み、取り消しが次の照会
+            // まで遅れる。頭で照会しない口 (止まっている間の追い付き・出す先を読む口) は、知らせの照会に頼る。
+            //
+            // 検査が知らせを落としたことにした投入は、記録へ何も書かない
+            if !losesOutcomeForTesting {
+                if let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting {
+                    if commandFaults.note(reason, droppedAt: submission, wrote: wrote),
+                        droppedForTesting == nil
+                    {
+                        Diagnostics.warn(
+                            "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
+                                + " — this notice will not be repeated")
+                    }
+                } else {
+                    // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
+                    // 待ちの期限切れを打ち切りのせいにしない (#1343)
+                    commandFaults.noteFinished(submission)
+                }
+            }
             // **抱えている資源を手放す契機は、完了そのものが持つ。** 実測では、成功した
             // 投入でもハンドラは毎回呼ばれる (50 回の投入に対し 50 回)
             if completionNotices.arrive(submission) {
@@ -471,21 +491,6 @@ import MokumeDiagnostics
                     self?.releaseOnNotice(upTo: newest)
                 }
             }
-            // 検査が知らせを落としたことにした投入は、記録へ何も書かない
-            guard !losesOutcomeForTesting else { return }
-            guard let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting
-            else {
-                // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
-                // 待ちの期限切れを打ち切りのせいにしない (#1343)
-                commandFaults.noteFinished(submission)
-                return
-            }
-            guard commandFaults.note(reason, droppedAt: submission, wrote: wrote),
-                droppedForTesting == nil
-            else { return }
-            Diagnostics.warn(
-                "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
-                    + " — this notice will not be repeated")
         }
         return options
     }
@@ -1182,14 +1187,14 @@ import MokumeDiagnostics
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     func noteUploaded(_ uploaded: EncodedUploads, by submission: UInt64) {
-        guard !uploaded.isEmpty else { return }
+        // **届けたものが無くても刈る。** 逃げ道で直接書いた持ち主や手放された持ち主は、ここで降ろす
+        defer { pendingUploads.dropFinishedOwners() }
         for item in uploaded {
             // 逃げ道で直接書いた分は投入に載っていないので、結末を待たせない
             let delivered = item.owner.markUploaded(
                 through: item.generation, by: item.direct ? nil : submission)
             if delivered { awaitSettlement(of: submission, by: item.owner) }
         }
-        pendingUploads.dropFinishedOwners()
     }
 
     /// 描き切りの間、照会を止める ([#2199])。描き切りは頭で照会してから、描く先を変えるかを数える。

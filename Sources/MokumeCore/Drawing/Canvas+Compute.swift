@@ -354,7 +354,7 @@ extension Canvas {
         // いるので、残すと 2 度走る (#1183)
         pendingComputations.removeAll(keepingCapacity: true)
         // 流した計算に粒の進めがあれば、寿命を減らした量として数える (#1710)
-        commitParticleAdvances()
+        commitParticleAdvances(by: assembled.submission)
     }
 
     /// 溜めた計算が書く並びに、書いた投入の番号を覚えさせる ([#2199])。**溜めた計算を積んだ投入の後で、

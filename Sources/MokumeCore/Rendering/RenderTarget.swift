@@ -751,15 +751,22 @@ extension RenderTarget: SettlementObserver {
     /// - **読み戻し**: 写しの「映した」を下ろす。写しは打ち切られた読み戻しの前の中身 (初めてなら 0) の
     ///   ままなので、次の読みが面から映し直す。書き込み待ちが立っていれば CPU の側が最新なので触らない。
     ///   投げる読む口の判定 (``judgeDroppedWork()``) と同じ扱いである
-    /// - **作ったときの塗り**: 後にこの面へ書く投入が無ければ、透明な黒で塗り直す (``clearAgain()``)。
-    ///   あれば、描いた分を塗り潰さないよう取り戻さない
+    /// - **作ったときの塗り**: 後にこの面へ書く投入も、CPU が写しへ書いたまま戻していない画素も無ければ、
+    ///   透明な黒で塗り直す (``clearAgain()``)。どちらかがあれば取り戻さない — 描いた分を塗り潰さない。
+    ///   写しへ書いた画素は塗られていない面を映した写しの上に載っていて、書き戻しは写しの全面を戻すので、
+    ///   塗り直しても書き戻しが未定義の中身で上書きする (書き戻しを立て直さないのと同じ向き・#2199 の
+    ///   反証 C9)
     func submissionSettled(_ submission: UInt64, dropped: Bool) {
         guard dropped else { return }
         rewritePixels(droppedAt: submission)
         if let pixelMirror, !pixelMirror.hasPendingWrites, pixelMirror.syncedThrough == submission {
             pixelMirror.syncedThrough = 0
         }
-        if submission == clearSubmission, lastWriteSubmission == submission { clearAgain() }
+        if submission == clearSubmission, lastWriteSubmission == submission,
+            pixelMirror?.hasPendingWrites != true
+        {
+            clearAgain()
+        }
     }
 
     /// 作ったときの塗りが打ち切られた面を、透明な黒で塗り直す ([#2199])。**待たない。** 塗れなければ
@@ -785,6 +792,8 @@ extension RenderTarget: SettlementObserver {
                 return gpu.commit(commands, writing: [self])
             }
             clearSubmission = submission
+            // 写しは塗られていない面を映しているかもしれないので、次の読みに映し直させる
+            pixelMirror?.syncedThrough = 0
             gpu.awaitSettlement(of: submission, by: self)
             surfaceClearsRepeated += 1
         } catch {

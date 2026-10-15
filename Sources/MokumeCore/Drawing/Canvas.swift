@@ -836,7 +836,7 @@ public final class Canvas {
     /// このフレームで頼んだ粒の進めのうち、まだ投入していないものと、その回の寿命を減らす量
     /// ([#1710])。
     ///
-    /// **計算を投入したときに粒へ足し (``commitParticleAdvances()``)、投入せずにフレームを捨てた
+    /// **計算を投入したときに粒へ足し (``commitParticleAdvances(by:)``)、投入せずにフレームを捨てた
     /// ら落とす。** 粒の上書きの注意は寿命を減らした量の累計で測る (``Particles/consumed``) ので、
     /// 走らなかった進めを数えると、累計が GPU の寿命の先へ行く。溜めた計算
     /// (``pendingComputations``) と同じ所で投入し、同じ所で落とす。粒は弱く持つ。
@@ -855,6 +855,11 @@ public final class Canvas {
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     var carriesPictureBeforeEffects = false
+    /// 効果を通す前の絵を控えへ写した最後の投入の番号 ([#2199])。打ち切られたら
+    /// ``carriesPictureBeforeEffects`` を下ろす (``carryDropped(_:)``)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    var carriedBy: UInt64 = 0
     /// 描く先が、最後に拡大した後に変わったか ([#1882])。**細かさを下げた面の出す先は、描く先を
     /// 拡大の段が広げて書いた絵**で、拡大が積まれるのはフレームの終わりの描き切りだけである。
     /// 途中の描き切り (フレームの中でも、止まっている間でも) はその後に描く先だけを変えるので、立って
@@ -3926,7 +3931,7 @@ public final class Canvas {
                 uploaded: uploaded, carried: carried, upscaled: upscaled)
         }
         // 頼んだ計算はこの投入で流れた。粒の進めを、寿命を減らした量として数える (#1710)
-        commitParticleAdvances()
+        commitParticleAdvances(by: assembled.submission)
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
         // まま書いてよい」ことになる (#754)
@@ -3980,7 +3985,13 @@ public final class Canvas {
         // フレームの最初の描き切りで、描く先は効果を通す前の絵に戻ったか塗り直された。
         // このコマンドが効果を通していれば、描く先はまた効果を通した絵になっている
         if startsFrame { carriesPictureBeforeEffects = false }
-        if assembled.carried { carriesPictureBeforeEffects = true }
+        if assembled.carried {
+            carriesPictureBeforeEffects = true
+            // 控えへ写した投入が打ち切られたら、控えは古い (初めてなら未定義) ので、印を下ろして戻させない
+            // (``carryDropped(_:)``・#2199)
+            carriedBy = assembled.submission
+            gpu.awaitSettlement(of: assembled.submission, by: self)
+        }
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。
@@ -5209,5 +5220,18 @@ extension Canvas: SettlementObserver {
         guard dropped else { return }
         shadowBakeDropped(submission)
         upscaleDropped(submission)
+        carryDropped(submission)
+    }
+
+    /// 効果を通す前の絵を控えへ写した投入 `submission` が打ち切られた。**それが最後に写した投入で、まだ
+    /// 控えを戻す印が立っていれば、印を下ろす** ([#2199])。控えは写されておらず古い (初めてなら未定義)
+    /// ので、戻すと次のフレームの入りがその絵になり、背景を塗らないスケッチでは以後ずっと持ち越す。
+    /// 下ろせば、次のフレームは描く先 (効果を通した絵か、打ち切られた回の前の絵) の上に描く —
+    /// 打ち切られた回の絵と同じく、そのフレームの欠けは取り戻さない。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func carryDropped(_ submission: UInt64) {
+        guard submission == carriedBy, carriesPictureBeforeEffects else { return }
+        carriesPictureBeforeEffects = false
     }
 }
