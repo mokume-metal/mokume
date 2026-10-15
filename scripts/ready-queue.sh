@@ -288,7 +288,13 @@ done < <(jq -c '.[]' <<<"$issues_json")
 #
 # quiet は「窓の中が bot の手 (scripts/bot-hand.sh) だけで、少なくとも 1 つある」ときに限る。
 # 作者の分からない項目 (退会した人・断片の並びに無い種類)・本文の編集・窓に収まらない項目・
-# 空の窓は human に倒す (冒頭の「bot の追記は数えない」— bot と分かるものだけを除く)
+# 空の窓は human に倒す (冒頭の「bot の追記は数えない」— bot と分かるものだけを除く)。
+#
+# 「窓に収まらない」は filteredCount と引けた件数で見る。**filteredCount は since を反映した
+# 窓の中の件数で、totalCount は反映しない** — 2026-10-16 に #2251 で確かめた (since なし:
+# total 29・filtered 29。since つき last: 100: total 29・filtered 5・引けた 5。since つき
+# last: 2: total 29・filtered 5・引けた 2)。totalCount で比べると、窓より前に履歴のある
+# Issue はほぼ常に human に倒れて黙って効かなくなる
 read_hands() { # $1=番号 (空白区切り)
   local owner=${REPO%%/*} name=${REPO#*/} q='' n
   for n in $1; do

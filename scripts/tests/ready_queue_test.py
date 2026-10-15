@@ -92,7 +92,8 @@ if [ "$1" = "api" ]; then
     # merge queue の並び (#1266)。既定は空
     graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; }
       # 窓の中の人の手 (#2660)。本物と同じく since より前の項目を落とし (filteredCount は
-      # 落とした後の件数 + 窓に収まらなかった hidden)、問い合わせた番号の分だけを返す。
+      # 落とした後の件数 + 窓に収まらなかった hidden。本物も since を反映する — 実物で確かめた
+      # 値は ready-queue.sh の read_hands の頭)、問い合わせた番号の分だけを返す。
       # FAIL_HANDS で読み取りを失敗させる
       if [[ "$*" == *"timelineItems(since:"* ]]; then
         [ -z "${FAIL_HANDS:-}" ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
