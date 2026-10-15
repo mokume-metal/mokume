@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは十三。
+固定したいのは十四。
 
 1. **集約のジョブ (ci-gate) は上流より後に打つ** (#1883)。先に打つと ci-gate だけが前の結論を
    読んで同じ赤を返し、その run が走っている間は上流の打ち直しが拒まれる。除外したジョブ
@@ -40,6 +40,9 @@
    直されて新しい ci-gate が付かない PR は legacy-gate と名乗って人へ返す (#2669 の反証 1・2)
 13. **段を走らせていない run (本文の編集) の緑の ci-gate は、直った証拠に数えない。** 数えると
    本当に赤いコードの検査を当番のたびに打ち直す。打たずに masked-red と名乗る (#2669 の反証 4)
+14. **段を走らせていない run の赤い ci-gate は、同じ SHA の検査の最新がどちらも緑なら打つ** (#2717)。
+   検査を打ち直して緑にしても、run の id の大きいその赤が必須を塞ぎ続ける。検査の最新が赤・
+   走っている途中・片方が無いなら打たない (読み直しても緑にならない)
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -807,6 +810,77 @@ class StallWatchTest(unittest.TestCase):
             ],
         )
         self.assertEqual(self.classify(55, self.watch()), ("stale-checks", "act"))
+
+    def red_edited_run(self, run, at=60):
+        """本文の編集の run。段を走らせる 2 つが skipped で、ci-gate は同じ SHA の検査を読んで赤 (#2690)。"""
+        return [
+            check("ci-check", "SKIPPED", ago(at), run=run),
+            check("ci-static", "SKIPPED", ago(at), run=run),
+            check("ci-gate", "FAILURE", ago(at), run=run),
+        ]
+
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査を打ち直して緑になったら打つ(self):
+        """#2717。R1 の ci-check が赤で終わり、検査の途中に立った本文の編集の run (R2) の ci-gate が
+        それを読んで赤で終わった。R1 を打ち直して緑にしても、id の大きい R2 の赤が最新に残って
+        必須を塞ぐ。打ち直せば同じ SHA を読み直して緑になる。待ちの期限 (WAIT_LIMIT) を越えた赤も、
+        後で検査が緑になれば同じ形になる。"""
+        self.add_pr(56, auto=True, state="BLOCKED", checks=[
+            check("ci-check", "SUCCESS", ago(10), run=100),
+            check("ci-static", "SUCCESS", ago(100), run=100),
+            check("ci-gate", "SUCCESS", ago(9), run=100),
+        ] + self.red_edited_run(200))
+        proc = self.watch()
+        self.assertEqual(self.classify(56, proc), ("stale-checks", "act"), proc.stdout)
+        self.assertIn("本文の編集の run の ci-gate", proc.stdout)
+
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査の最新が赤なら打たない(self):
+        # 打ち直しても同じ赤を返すだけで、本当に赤いコードの検査を当番のたびに読み直す
+        self.add_pr(57, auto=True, state="BLOCKED", checks=[
+            check("ci-check", "FAILURE", ago(70), run=100),
+            check("ci-static", "SUCCESS", ago(100), run=100),
+            check("ci-gate", "FAILURE", ago(69), run=100),
+        ] + self.red_edited_run(200))
+        proc = self.watch()
+        self.assertNotEqual(self.classify(57, proc), ("stale-checks", "act"), proc.stdout)
+
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査が走っている間は打たない(self):
+        # 打ち直しが終わる前に打つと、ci-gate は待ちに入って runner を占めるだけになる。次の回に回す
+        self.add_pr(58, auto=True, state="BLOCKED", checks=[
+            check("ci-check", None, ago(5), run=100),
+            check("ci-static", "SUCCESS", ago(100), run=100),
+            check("ci-gate", None, ago(5), run=100),
+        ] + self.red_edited_run(200))
+        proc = self.watch()
+        self.assertNotEqual(self.classify(58, proc), ("stale-checks", "act"), proc.stdout)
+
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査の片方が同じ_SHA_に無ければ打たない(self):
+        # ci-gate は skipped の検査ごとに同じ SHA の最新を読む。片方が無ければ打ち直しても赤い
+        self.add_pr(60, auto=True, state="BLOCKED", checks=[
+            check("ci-check", "SUCCESS", ago(10), run=100),
+            check("ci-gate", "SUCCESS", ago(9), run=100),
+        ] + self.red_edited_run(200))
+        proc = self.watch()
+        self.assertNotEqual(self.classify(60, proc), ("stale-checks", "act"), proc.stdout)
+
+    def test_本文の編集の_run_の赤い_ci_gate_を打ち直す(self):
+        """#2717 の対処。R1 の打ち直す前の attempt の赤は API が拒む (古い attempt) ので、R2 の
+        ci-gate に届くことを見る。"""
+        self.add_pr(59)
+        url = "https://github.com/o/r/actions/runs/{}/job/{}"
+        self.write(
+            "59.checkruns.json",
+            {
+                "check_runs": [
+                    {"name": "ci-check", "conclusion": "success", "id": 103, "details_url": url.format(100, 103)},
+                    {"name": "ci-gate", "conclusion": "success", "id": 104, "details_url": url.format(100, 104)},
+                    {"name": "ci-check", "conclusion": "skipped", "id": 201, "details_url": url.format(200, 201)},
+                    {"name": "ci-gate", "conclusion": "failure", "id": 202, "details_url": url.format(200, 202)},
+                ]
+            },
+        )
+        proc = self.act(["59 stale-checks act 5 本文の編集の run の ci-gate"])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("jobs/202/rerun", self.gh_log(), "本文の編集の run の赤い ci-gate へ打っていない")
 
     def test_判定は何も打たない(self):
         self.add_pr(11, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 10)])
