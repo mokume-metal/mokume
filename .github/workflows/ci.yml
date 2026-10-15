@@ -57,7 +57,8 @@ jobs:
   # pull_request で合流 ref (refs/pull/N/merge) を取る。base の変更のときにだけ
   # github.event.changes.base が載る (あれば object で真、無ければ null で偽)。GitHub は
   # イベントの種類で base の変更だけを選べないので、本文の編集では軽い run が立ち、この
-  # ジョブは skipped になる。
+  # ジョブは skipped になる。その run の ci-gate は、同じ SHA のこのジョブが終わるのを待って
+  # 結論を返す (#2690)。
   #
   # **runs-on は macos-26 に固定する** (#1985)。macos-latest は GitHub が次の世代へ切り替える
   # もので、切り替わった時点で下限 (ADR-0009 の macOS 26) の build/test が誰にも気付かれず
@@ -150,22 +151,29 @@ jobs:
   # 直して新しい run が緑になっても、直す前の run の赤い ci-gate が同じコミットに残り、必須
   # チェックを赤のままにした (#259・#2134)。打ち直しと「空コミットを push」の案内が要った。
   #
-  # 本文・タイトルの編集の run では、段を走らせる 2 つが skipped になり、ci-gate は緑で終わる
-  # (skipped を通す)。同じコミットの古い run のコードの赤は、それで直ったことにはならない —
-  # 合流後の木は merge queue が検査し直す。
+  # **本文・タイトルの編集の run では、同じ head SHA のコードの検査が終わるのを待ち、その結論を
+  # 返す** (#2690)。その run では段を走らせる 2 つが skipped になる。素通しで緑にすると、同じ SHA の
+  # 別の run で検査が走っている途中・赤でも必須が満たされていた。走っている途中に赤を返すと、
+  # 後から緑が来ても打ち直すまで PR を塞ぐ (run ごとの最新の ci-gate がどれも赤くないことが必須)。
+  # 判定と理由・代償は scripts/ci-gate.sh の冒頭。timeout-minutes は、スクリプトの待ちの期限
+  # (WAIT_LIMIT の既定 90 分) の外側に置く。
   ci-gate:
     if: always()
     needs: [ci-check, ci-static]
     runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: read # scripts/ci-gate.sh を checkout する
+      checks: read # 同じ head SHA のコードの検査の check run を読む (#2690)
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci-gate.sh
+          sparse-checkout-cone-mode: false
       - name: All required jobs green
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          echo "$RESULTS"
-          # パイプにしない (#2609)。pipefail の下では、grep -q が一致して先に抜けたときに
-          # 書き終えていない printf が SIGPIPE で落ち、if が偽 (= 落ちていない) と読む
-          if grep -Eq '"result": *"(failure|cancelled)"' <<<"$RESULTS"; then
-            echo "必須ジョブが落ちている" >&2
-            exit 1
-          fi
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci-gate.sh

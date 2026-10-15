@@ -10,8 +10,12 @@ release_workflow_test.py)。ここで固定するのは次の 2 つ:
 
   1. ci.yml に test-release が戻っていない — 戻すと、PR か merge_group で macOS の枠を
      また取り合う (2026-10-13 は PR の ci-check が走り出すまで約 1 時間待った)
-  2. ci-gate は skipped を通す — 赤にするのは failure と cancelled だけで、PR では走らない
-     ジョブ (merge_group だけの段・PR だけの段) が skipped で現れても止まらない
+  2. ci-gate (scripts/ci-gate.sh) は needs の failure と cancelled を赤にし、skipped を素通しに
+     しない — PR の run で skipped の検査は、同じ head SHA の skipped を除いた最新の check run が
+     success のときだけ通す (#2690)。走っている途中・赤・見つからない・API の失敗は赤で、
+     merge_group と、検査が走った run では API を呼ばない。gh は PATH の先の代役で、--jq を
+     実際に当てる (絞り込みの誤りを素通りさせない)。check_name で引く前提として、ci-check・
+     ci-static という job 名はほかのワークフローに無い
 
 **段の振り分け (#2612)。** CI は `make ci-check` の段を、macOS の ci-check と ubuntu の ci-static に
 分けて走らせる (どちらも `make ci-check` を呼び、`CI_CHECK_HOST` で自分の段を選ぶ)。手元の
@@ -52,6 +56,7 @@ ci.yml から読む。並びの写しをここに持たない。
 (写しを持たない)。実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import json
 import os
 import re
 import shutil
@@ -162,11 +167,43 @@ class CiWorkflowTest(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertNotIn("make test-release", body)
 
-    def test_ci_gate_は_skipped_を通す(self):
+    def test_ci_gate_は判定を_ci_gate_sh_に任せ_check_run_を読める(self):
         gate = self.jobs["ci-gate"]
-        # skipped を赤にすると、PR の ci-gate が毎回落ちる
-        self.assertIn("(failure|cancelled)", gate)
-        self.assertNotIn("skipped", gate.split("run: |", 1)[1])
+        self.assertRegex(gate, r"(?m)^        run: bash scripts/ci-gate\.sh\s*$")
+        self.assertRegex(gate, r"(?m)^          RESULTS: \$\{\{ toJSON\(needs\) \}\}\s*$")
+        # 同じ SHA を引くのは PR の head。合流 ref の SHA (github.sha) には check run が付かない
+        self.assertRegex(
+            gate, r"(?m)^          HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\s*$"
+        )
+        self.assertRegex(gate, r"(?m)^          EVENT_NAME: \$\{\{ github\.event_name \}\}\s*$")
+        self.assertRegex(gate, r"(?m)^          GH_TOKEN: \$\{\{ github\.token \}\}\s*$")
+        self.assertRegex(gate, r"(?m)^      checks: read\b")
+        self.assertRegex(gate, r"(?m)^          sparse-checkout: scripts/ci-gate\.sh\s*$")
+
+    def test_ci_gate_の_timeout_は待ちの期限の外側にある(self):
+        # 内側だと、期限の赤 (理由つき) より先に job が切られ、理由の無い cancelled になる
+        gate = self.jobs["ci-gate"]
+        minutes = int(re.search(r"(?m)^    timeout-minutes: (\d+)\s*$", gate).group(1))
+        limit = int(re.search(r"(?m)^WAIT_LIMIT=\$\{WAIT_LIMIT:-(\d+)\}$", GATE.read_text()).group(1))
+        self.assertGreater(minutes * 60, limit + 5 * 60)
+
+    def test_段を走らせる_job_の名前はほかのワークフローに無い(self):
+        # ci-gate.sh は needs のキーを check run の名前として、check_name で同じ SHA を引く。
+        # job に name: があると名前がキーとずれ、同じ名前の job がほかにあると別のワークフローの
+        # 結論を読んでしまう
+        names = workflow.needs(self.jobs["ci-gate"])
+        for name in names:
+            with self.subTest(job=name):
+                self.assertNotRegex(self.jobs[name], r"(?m)^    name:")
+        for path in sorted(CI.parent.glob("*.yml")):
+            if path == CI:
+                continue
+            _, jobs = workflow.split(path.read_text(encoding="utf-8"))
+            with self.subTest(workflow=path.name):
+                self.assertEqual(set(jobs) & names, set())
+                for body in jobs.values():
+                    m = re.search(r"(?m)^    name: *['\"]?([^'\"\n]+?)['\"]?\s*$", body)
+                    self.assertNotIn(m.group(1) if m else None, names)
 
     def test_ci_static_は_ubuntu_で_make_ci_check_を呼ぶだけ(self):
         body = self.jobs["ci-static"]
@@ -223,6 +260,289 @@ class CiWorkflowTest(unittest.TestCase):
         body = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
         for field in ("title", "body", "labels"):
             self.assertNotIn(f"github.event.pull_request.{field}", body, field)
+
+
+GATE = REPO / "scripts" / "ci-gate.sh"
+
+# gh の代役。呼ばれた引数を $GH_CALLS に書き、check-runs は check_name ごとの JSON に --jq を当てる
+FAKE_GH = """#!/bin/bash
+printf '%s\\n' "$*" >> "$GH_CALLS"
+filter=""
+prev=""
+url=""
+for a in "$@"; do
+  if [ "$prev" = "--jq" ]; then filter=$a; fi
+  case "$a" in repos/*) url=$a ;; esac
+  prev=$a
+done
+case "$url" in
+  */check-runs\\?*)
+    # 先頭の CHECKRUNS_FAIL 回だけ落ちる
+    n=$(cat "$RUNS_DIR/fails" 2>/dev/null || echo 0)
+    if [ "$n" -lt "${CHECKRUNS_FAIL:-0}" ]; then
+      echo $((n + 1)) > "$RUNS_DIR/fails"
+      echo "gh: HTTP 504: Gateway Timeout" >&2; exit 1
+    fi
+    name=${url#*check_name=}; name=${name%%&*}
+    # 名前ごとの回数。<名前>.after.json があれば、AFTER 回目 (既定 2) からはそちらを返す
+    k=$(( $(cat "$RUNS_DIR/$name.count" 2>/dev/null || echo 0) + 1 ))
+    echo "$k" > "$RUNS_DIR/$name.count"
+    f="$RUNS_DIR/$name.json"
+    if [ -f "$RUNS_DIR/$name.after.json" ] && [ "$k" -ge "${AFTER:-2}" ]; then
+      f="$RUNS_DIR/$name.after.json"
+    fi
+    [ -f "$f" ] || f="$RUNS_DIR/none.json"
+    # --paginate はページごとに --jq を当てて連結する。2 ページ目があればそれも出す
+    jq -r "$filter" < "$f"
+    [ ! -f "$RUNS_DIR/$name.2.json" ] || jq -r "$filter" < "$RUNS_DIR/$name.2.json"
+    exit 0 ;;
+esac
+echo "代役が知らない呼び出し: $*" >&2
+exit 2
+"""
+
+SHA = "0123abcd"
+RESULTS_EDITED = {"ci-check": {"result": "skipped"}, "ci-static": {"result": "skipped"}}
+
+
+RUN_ID = "555"
+
+
+def check_run(
+    id_: int, status: str, conclusion, app: str = "github-actions", run: str = "1"
+) -> dict:
+    url = f"https://github.com/o/r/actions/runs/{run}/job/{id_}"
+    return {
+        "id": id_,
+        "status": status,
+        "conclusion": conclusion,
+        "app": {"slug": app},
+        "details_url": url,
+        "html_url": url,
+    }
+
+
+def needs_json(results: dict) -> str:
+    """toJSON(needs) の形。Actions は 2 空白で字下げし、`"result": "..."` と書く。"""
+    return json.dumps(
+        {k: {"result": v["result"], "outputs": {}} for k, v in results.items()}, indent=2
+    )
+
+
+class CiGateScriptTest(unittest.TestCase):
+    """scripts/ci-gate.sh の判定 (#2690)。"""
+
+    def run_gate(
+        self, runs: dict, *, event="pull_request", results=None, env_extra=None, page2=None,
+        after=None,
+    ):
+        """runs = {名前: [check run …]}・page2 = 2 ページ目・after = 読み直したときの応答。
+
+        (returncode, 出力, gh の呼び出し) を返す。既定の WAIT_LIMIT は 0 (1 度だけ読む)。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            gh = tmp / "bin" / "gh"
+            gh.parent.mkdir()
+            gh.write_text(FAKE_GH)
+            gh.chmod(0o755)
+            runs_dir = tmp / "runs"
+            runs_dir.mkdir()
+            (runs_dir / "none.json").write_text(json.dumps({"total_count": 0, "check_runs": []}))
+            for name, items in runs.items():
+                (runs_dir / f"{name}.json").write_text(
+                    json.dumps({"total_count": len(items), "check_runs": items})
+                )
+            for name, items in (after or {}).items():
+                (runs_dir / f"{name}.after.json").write_text(
+                    json.dumps({"total_count": len(items), "check_runs": items})
+                )
+            for name, items in (page2 or {}).items():
+                (runs_dir / f"{name}.2.json").write_text(
+                    json.dumps({"total_count": len(items), "check_runs": items})
+                )
+            calls = tmp / "calls"
+            calls.write_text("")
+            env = {
+                "PATH": f"{gh.parent}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RESULTS": needs_json(results if results is not None else RESULTS_EDITED),
+                "EVENT_NAME": event,
+                "HEAD_SHA": SHA,
+                "GITHUB_REPOSITORY": "o/r",
+                "GITHUB_RUN_ID": RUN_ID,
+                "POLL_WAIT": "0",
+                "WAIT_LIMIT": "0",
+                "GH_CALLS": str(calls),
+                "RUNS_DIR": str(runs_dir),
+                **(env_extra or {}),
+            }
+            env = {k: v for k, v in env.items() if v is not None}
+            proc = subprocess.run(
+                ["/bin/bash", str(GATE)], env=env, capture_output=True, text=True, timeout=30
+            )
+            # --jq の式は複数行なので、呼び出しの頭 (api …) の行だけを数える
+            heads = [ln for ln in calls.read_text().splitlines() if ln.startswith("api ")]
+            return proc.returncode, proc.stdout + proc.stderr, heads
+
+    def both(self, items):
+        return {"ci-check": items, "ci-static": [check_run(900, "completed", "success")]}
+
+    def test_同じ_SHA_の最新が_success_なら通す(self):
+        code, out, calls = self.run_gate(self.both([check_run(100, "completed", "success")]))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(calls), 2, calls)
+        for call in calls:
+            self.assertIn(f"repos/o/r/commits/{SHA}/check-runs?check_name=", call)
+            # latest は completed_at の最新だけを返し、走っている途中も古い success も見えない
+            self.assertIn("filter=all", call)
+
+    def test_走っている途中なら終わるのを待って結論を返す(self):
+        # 変更前の素通しでは、opened の run の ci-check が走っている間に緑が付いた (#2577)。
+        # 途中で赤を返すと、後から緑が来ても打ち直すまで PR を塞ぐ (#2690 の実測)
+        for final, want in (("success", 0), ("failure", 1)):
+            with self.subTest(final=final):
+                code, out, calls = self.run_gate(
+                    self.both([check_run(100, "in_progress", None)]),
+                    after={"ci-check": [check_run(100, "completed", final)]},
+                    env_extra={"WAIT_LIMIT": "30", "AFTER": "3"},
+                )
+                self.assertEqual(code, want, out)
+                self.assertIn("待つ", out)
+                self.assertGreaterEqual(len(calls), 4, calls)  # ci-check を 3 回・ci-static を 1 回
+
+    def test_期限まで終わらなければ赤(self):
+        code, out, calls = self.run_gate(
+            self.both([check_run(100, "in_progress", None)]), env_extra={"WAIT_LIMIT": "1"}
+        )
+        self.assertEqual(code, 1, out)
+        self.assertIn("待っても結論が出ない", out)
+        self.assertIn("走っている途中", out)
+        self.assertGreater(len(calls), 3, calls)  # 期限までは読み直している
+
+    def test_まだ見つからなければ現れるまで待つ(self):
+        # 本文の編集が、検査の run の job が作られるより先に届いた場合
+        code, out, _ = self.run_gate(
+            {"ci-static": [check_run(900, "completed", "success")]},
+            after={"ci-check": [check_run(100, "completed", "success")]},
+            env_extra={"WAIT_LIMIT": "30"},
+        )
+        self.assertEqual(code, 0, out)
+
+    def test_最新が赤なら赤(self):
+        for conclusion in ("failure", "cancelled", "timed_out"):
+            with self.subTest(conclusion=conclusion):
+                code, out, _ = self.run_gate(self.both([check_run(100, "completed", conclusion)]))
+                self.assertEqual(code, 1, out)
+                self.assertIn(conclusion, out)
+
+    def test_skipped_しか無ければ赤(self):
+        # この run 自身の skipped の check run は数えない
+        code, out, _ = self.run_gate(self.both([check_run(300, "completed", "skipped")]))
+        self.assertEqual(code, 1, out)
+        self.assertIn("走った ci-check が無い", out)
+
+    def test_同じ名前の_check_run_が無ければ赤(self):
+        code, out, _ = self.run_gate({"ci-static": [check_run(900, "completed", "success")]})
+        self.assertEqual(code, 1, out)
+        self.assertIn("走った ci-check が無い", out)
+
+    def test_新しい_skipped_の下の_success_を読む(self):
+        runs = self.both([
+            check_run(100, "completed", "success"),
+            check_run(300, "completed", "skipped"),
+        ])
+        code, out, _ = self.run_gate(runs)
+        self.assertEqual(code, 0, out)
+
+    def test_この_run_自身の_check_run_は読まない(self):
+        # skipped の job は ci-gate より遅れて作られ、作られた瞬間は completed でないことがある。
+        # それを最新と読むと、後から ci-gate を作る run が無いまま赤が固まる (#2690 の反証)
+        runs = self.both([
+            check_run(100, "completed", "success"),
+            check_run(300, "queued", None, run=RUN_ID),
+        ])
+        code, out, _ = self.run_gate(runs)
+        self.assertEqual(code, 0, out)
+
+    def test_id_は数の大きさで比べる(self):
+        runs = self.both([
+            check_run(100, "completed", "success"),
+            check_run(99, "completed", "failure"),
+        ])
+        code, out, _ = self.run_gate(runs)
+        self.assertEqual(code, 0, out)
+
+    def test_ページをまたいで最新を取る(self):
+        code, out, _ = self.run_gate(
+            self.both([check_run(100, "completed", "success")]),
+            page2={"ci-check": [check_run(200, "in_progress", None)]},
+        )
+        self.assertEqual(code, 1, out)
+        self.assertIn("走っている途中", out)
+
+    def test_最新は作成順_id_で決める(self):
+        # 返る並びは id の順とは限らない。古い赤の後に打ち直した緑があれば通し、逆なら赤
+        runs = self.both([
+            check_run(200, "completed", "success"),
+            check_run(100, "completed", "failure"),
+        ])
+        self.assertEqual(self.run_gate(runs)[0], 0)
+        runs = self.both([
+            check_run(100, "completed", "success"),
+            check_run(200, "completed", "failure"),
+        ])
+        self.assertEqual(self.run_gate(runs)[0], 1)
+
+    def test_ほかの_app_の_check_run_は読まない(self):
+        runs = self.both([
+            check_run(100, "completed", "failure"),
+            check_run(200, "completed", "success", app="someone-else"),
+        ])
+        code, out, _ = self.run_gate(runs)
+        self.assertEqual(code, 1, out)
+
+    def test_API_が失敗し続けたら理由を出して赤(self):
+        code, out, calls = self.run_gate(
+            self.both([check_run(100, "completed", "success")]),
+            env_extra={"CHECKRUNS_FAIL": "9999", "WAIT_LIMIT": "1"},
+        )
+        self.assertEqual(code, 1, out)
+        self.assertIn("Gateway Timeout", out)
+        self.assertGreater(len(calls), 2, calls)  # 期限までは試し直している
+
+    def test_API_の一時的な失敗は試し直す(self):
+        # 赤を返すと、打ち直すまで PR を塞ぐ
+        code, out, _ = self.run_gate(
+            self.both([check_run(100, "completed", "success")]),
+            env_extra={"CHECKRUNS_FAIL": "2", "WAIT_LIMIT": "30"},
+        )
+        self.assertEqual(code, 0, out)
+
+    def test_event_が無いか知らなければ赤(self):
+        # 開く側に倒れると、ci.yml の渡し忘れひとつで素通しに戻る
+        for event in (None, "push"):
+            with self.subTest(event=event):
+                code, out, calls = self.run_gate(
+                    self.both([check_run(100, "completed", "success")]), env_extra={"EVENT_NAME": event}
+                )
+                self.assertEqual(code, 1, out)
+                self.assertEqual(calls, [])
+
+    def test_検査が走った_run_では_API_を呼ばない(self):
+        for results, want in (
+            ({"ci-check": {"result": "success"}, "ci-static": {"result": "success"}}, 0),
+            ({"ci-check": {"result": "failure"}, "ci-static": {"result": "success"}}, 1),
+            ({"ci-check": {"result": "cancelled"}, "ci-static": {"result": "skipped"}}, 1),
+        ):
+            with self.subTest(results=results):
+                code, out, calls = self.run_gate({}, results=results)
+                self.assertEqual(code, want, out)
+                self.assertEqual(calls, [])
+
+    def test_merge_group_では_API_を呼ばない(self):
+        code, out, calls = self.run_gate({}, event="merge_group")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls, [])
 
 
 class EvaluateTest(unittest.TestCase):
