@@ -92,6 +92,12 @@
 #      対処: 本文を編集する (edited の run が新しい ci-gate を付ける) か、新しいコミットを push
 #      する。**作法のジョブ (LEGACY_JOBS) を含む run を head に持つ open な PR が無くなったら、
 #      この行と legacy の判定ごと消してよい**
+#  12. autoMerge: true + CLEAN (か UNSTABLE) で isInMergeQueue: false のまま、揃ってから猶予を超えた
+#      原因: 予約は掛かっていて必須も揃っているのに、予約が queue へ動かない (#2693)。予約が
+#      効いていれば揃ってから数秒で入る。#2691 は揃ってから 27 分入らなかった。起きる条件は
+#      #2693 で調べている (作成と同時のラベルで cancelled の pr-gate が残る形が疑わしい)
+#      対処: gh pr merge <番号> --disable-auto の後に gh pr merge <番号> --auto --squash で
+#      掛け直す (#2691 はこれで直後に queue へ入った)。当番は掛けない (2・5 と同じ・#2614)
 #
 # 読むときの注意:
 #
@@ -115,7 +121,7 @@
 # ために打っただけで auto-merge が掛かってしまうのを防ぐため。こちらは読み取りしか
 # しないので、いつ打っても安全である。
 #
-# ## 分類 (表の 9 行に対応する)
+# ## 分類 (表の行に対応する)
 #
 #   分類                 別     表の行  なぜその別か
 #   bad-title            name   6       タイトルの修正は人手。打ち直しでは直らない
@@ -125,6 +131,7 @@
 #   masked-red           name   10      コードの直しは人手。打ち直しても同じ赤を返す
 #   legacy-gate          name   11      本文の編集か push は人手。古い run は打ち直さない
 #   auto-merge-dropped   name   2・5    予約の掛け直しは人手。当番の権限では掛けられない
+#   queue-not-entered    name   12      同上。掛かっている予約を外して掛け直す
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
 #
@@ -172,7 +179,7 @@
 #
 # 経過は「その状態を作った出来事の時刻」から測る — 失敗 check があればその completedAt、
 # check が 1 本も無い conflict では PR の updatedAt、auto-merge-dropped では外れた出来事の
-# createdAt。**状態をどこにも記録しない**ので、
+# createdAt、queue-not-entered では check のうち最新の完了時刻 (必須が揃った時刻の近似)。**状態をどこにも記録しない**ので、
 # 当番が落ちていても復帰すればそのまま正しく測れる。
 #
 # **猶予の値は、走る間隔に合わせて動かさない** (#1197)。cron は 15 分ごとに頼んでいるが、
@@ -200,6 +207,14 @@
 #   内の queued は正常な順番待ちなので、出すと毎回の注意になる (#642)
 # - run の一覧を読めなかったら unreadable を名乗る。黙ると「止まっていない」に倒れる (#1303)
 #
+# ## 予約が queue へ動かない行 (queue-not-entered・#2693)
+#
+# 予約が効いていれば、必須が揃ってから数秒で queue に入る。なので猶予 (既定 15 分) は PR の
+# 猶予より短く、runner-offline と同じく**猶予を超えたときにしか行を出さず、出したら必ず 1 で
+# 終える** — 揃った直後の隙間は正常で、出すと毎回の注意になる (#642)。UNSTABLE (必須でない
+# check の赤・render-pr など) も必須は揃っているので含める。queue に居るかの GraphQL は、
+# この形に当たった PR だけで引く
+#
 # ## 出力
 #
 #   <番号> <分類> <act|name|quiet> <経過分> <説明>
@@ -224,6 +239,10 @@ STALL_MINUTES=${STALL_MINUTES:-60}
 # 専用機の runner が render を拾わないまま過ぎてよい時間。理由は冒頭の「PR ではなく
 # リポジトリを見る行」
 RUNNER_STALL_MINUTES=${RUNNER_STALL_MINUTES:-15}
+
+# 予約が掛かり必須が揃ってから、queue に入らないまま過ぎてよい時間。理由は冒頭の「予約が
+# queue へ動かない行」
+QUEUE_ENTRY_MINUTES=${QUEUE_ENTRY_MINUTES:-15}
 
 # 作法のジョブの名前。#2669 より前の ci.yml の run はこれらを含み、その ci-gate はそれらを
 # 待っていた。この名前の check を含む run を「古い run」と読む (冒頭の表の 11 行目)。
@@ -332,6 +351,11 @@ newest_failure_at() { # 標準入力=均した checks
           | select(($passed | index($c.result)) == null)
           | $c.at]
      | sort | last // ""'
+}
+
+# check のうち、いちばん新しい時刻 (揃った時刻の近似。queue-not-entered が経過を測る)
+newest_check_at() { # 標準入力=均した checks
+  jq -r '[.[].at | select(. != "")] | sort | last // ""'
 }
 
 # 「同じ名前で、新しい方は緑・古い方が赤」— 判定を固定している古い失敗 check (#259 / #513)。
@@ -555,6 +579,21 @@ for n in $numbers; do
       "auto-merge が外れている (${event#* }) — 弾いた run を読み、gh pr merge $n --auto --squash で掛け直す (当番は掛けない・#2614)"
     [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
     continue
+  fi
+
+  # 予約が掛かり必須も揃っているのに queue へ動かない (冒頭の表の 12 行目・#2693)
+  if [ "$state" = CLEAN ] || [ "$state" = UNSTABLE ]; then
+    mins=$(minutes_since "$(newest_check_at <<<"$checks")")
+    [ "$mins" -ge "$QUEUE_ENTRY_MINUTES" ] || continue
+    case "$(in_merge_queue "$n")" in
+      true) ;;
+      false)
+        say_line "$n" queue-not-entered name "$mins" \
+          "予約が掛かり必須も揃っているのに queue に入らない — gh pr merge $n --disable-auto の後に gh pr merge $n --auto --squash で掛け直す (当番は掛けない・#2693)"
+        overdue=1
+        ;;
+      *) say_line "$n" unreadable name 0 "queue に居るかを読めなかった (判定していない)" ;;
+    esac
   fi
 done
 
