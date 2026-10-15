@@ -40,6 +40,9 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
      あり、`continue-on-error` で merge を止めない (#1973)。必須の `render` や定期のジョブに
      入ると、外のリポジトリの赤が本体の merge や起票を動かす
 
+5・6 は権限の置き場の方針で、ジョブが打つ書き込みと権限の対応 (要る権限を持つか・使わない
+権限を持たないか) は workflow_permissions_test.py が全 workflow ぶんを見る (#2675)。
+
 PyYAML は入れていない (標準の Python だけで回す) ので、`jobs:` の直下の 2 字下げの
 キーでジョブを切り、本文を行で読む。YAML の構文そのものは actionlint が見る。
 実行は make hooks-test (CI もこれを呼ぶ)。
