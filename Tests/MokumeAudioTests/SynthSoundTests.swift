@@ -379,54 +379,48 @@ struct SynthSoundTests {
         #expect(firstStage?.rack.rendered == before)
     }
 
-    /// 番地の引き継ぎを待って、閉じずに捨てるスケッチを組み直す回数の上限。手元では 2 回目で引き継ぐ
-    /// (#2711)。
-    private static let reuseRounds = 40
-
     /// 閉じずに捨てたスケッチのステージが生きている間に、その番地を別のスケッチが引き継ぐと、ステージを
     /// 番地だけで探す形では前の回のラックを引き継ぐ。照らし合わせる持ち主 (``SynthStage`` の `owner`) が
     /// それを止める。
     ///
-    /// **捨てたスケッチのステージは、検査が掴んで生かしておく。** ステージはスケッチの音が強く持つだけ
-    /// なので、掴まなければスケッチと一緒に解放され、番地を引き継いでも探す先に何も残っていない —
-    /// 持ち主の照らし合わせを消しても緑のままになる (#2711 の反証で見つけた)。
+    /// **番地の引き継ぎは待たずに、検査が作る** ([#2711])。引き継ぎは割り当て器しだいで、専用機では
+    /// 40 回組み直しても起きない回があった。前の回のステージを、次のスケッチの番地の鍵の下へ置き直して
+    /// (``SynthStage/stages``)、引き継いだときと同じ状態にしてから次のスケッチのステージを求める。
     ///
-    /// **番地の使い回しに頼る検査なので、引き継ぎが起きなかった回は赤にする** (`#require`)。起きない環境で
-    /// 何も確かめずに緑にしない。待つ番地は 1 つに絞らず、捨てたスケッチの番地の**どれか**を引き継げば
-    /// よい ([#2711] の `GraphicsTests` と同じ形)。
+    /// **前の回のステージは、検査が掴んで生かしておく。** ステージはスケッチの音が強く持つだけなので、
+    /// 掴まなければスケッチと一緒に解放され、探す先に何も残らない — 持ち主の照らし合わせを消しても緑の
+    /// ままになる (#2711 の反証で見つけた)。
     ///
     /// [#2711]: https://github.com/mokume-metal/mokume/issues/2711
     @Test("閉じずに捨てられたスケッチの番地を、別のスケッチが引き継いでも、前のステージは持ち越さない")
     func reusedAddressDoesNotInheritTheStage() throws {
-        // 同じ参照スケッチを、閉じずに何度も組む (台帳の検査がしている形)
-        var dropped: Set<ObjectIdentifier> = []
-        var stages: [SynthStage] = []
-        var reused = false
-        for round in 0..<Self.reuseRounds {
-            var startedAt = -1
-            var inherited = false
-            _ = try run(
-                frames: 3,
-                setup: { sketch in
-                    let address = ObjectIdentifier(sketch)
-                    reused = dropped.contains(address)
-                    dropped.insert(address)
-                    let stage = SynthStage.stage(for: sketch)
-                    inherited = stages.contains { $0 === stage }
-                    stages.append(stage)
-                    startedAt = stage.rack.rendered
-                    SinOsc(stage: stage).play(440, 0.5)
-                })
-            #expect(!inherited, "round \(round): 前のスケッチのステージを引き継いだ")
-            #expect(startedAt == 0, "round \(round)")
-            if reused { break }
-        }
-        try #require(
-            reused,
-            "閉じずに捨てたスケッチの番地を引き継ぐスケッチを、\(Self.reuseRounds) 回組み直しても作れなかった (この検査は何も確かめていない)"
-        )
-        // 掴んでいたステージは、引き継ぎが起きた時点で生きていて閉じていない (探す先が残っていた)
-        #expect(stages.dropLast().allSatisfy { !$0.isClosed })
+        // 前の回: 閉じずに捨てる (台帳の検査がしている形)。ステージだけを掴む
+        var dropped: SynthStage?
+        _ = try run(
+            frames: 3,
+            setup: { sketch in
+                let stage = SynthStage.stage(for: sketch)
+                dropped = stage
+                SinOsc(stage: stage).play(440, 0.5)
+            })
+        let previous = try #require(dropped)
+        try #require(!previous.isClosed, "前の回のステージが閉じている (探す先として残っていない)")
+        try #require(previous.rack.rendered > 0, "前の回のラックが進んでいない (持ち越しを見分けられない)")
+
+        // 次の回: 前の回のステージを、このスケッチの番地の鍵の下へ置いてから求める
+        var inherited = false
+        var startedAt = -1
+        _ = try run(
+            frames: 3,
+            setup: { sketch in
+                SynthStage.stages[ObjectIdentifier(sketch)] = SynthStage.Weak(stage: previous)
+                let stage = SynthStage.stage(for: sketch)
+                inherited = stage === previous
+                startedAt = stage.rack.rendered
+                SinOsc(stage: stage).play(440, 0.5)
+            })
+        #expect(!inherited, "前のスケッチのステージを引き継いだ")
+        #expect(startedAt == 0)
     }
 
     @Test("手放した音は、ラックの節として鳴り続ける")
