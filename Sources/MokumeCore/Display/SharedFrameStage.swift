@@ -161,7 +161,22 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 確定させずに次の機会へ回る (``WatchedFile``)。
     private let manifest: WatchedFile<SharedFrameSurface.Manifest>
     /// 最後に画面へ出した枚数。**同じ絵を二度出さない**ための目印。
+    ///
+    /// **差し出しを投入した直後に記し、結末は後で見る** ([#2735])。投入を GPU が打ち切ったら、
+    /// 結末が届いた後のリフレッシュで記しを戻し (``submissionSettled(_:dropped:)``)、同じ枚を
+    /// 出し直す。戻さないと、書き手が止まっている間 (`noLoop()`・一時停止) は枚数が進まず、窓は
+    /// 打ち切られる前の絵のままになる。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     private var lastFrame = 0
+    /// ``lastFrame`` を記した差し出しの投入の番号。**この番号の打ち切りだけが記しを戻す** —
+    /// 後の差し出しが記し直していれば、前の差し出しの打ち切りは見送る。
+    private var lastFrameSubmission: UInt64 = 0
+    /// 差し出した回数 (作ってから通算)。**検査から読む** — 打ち切られた 1 枚を出し直したか、
+    /// 打ち切りの無い経路で差し出しを増やしていないか ([#2735]) は、外からはこの数でしか見えない。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    private(set) var presentations = 0
     /// 最後に面から読んだ枚数。**出せた枚数とは別に持つ** — 差し出しに失敗した回でも
     /// 数字は届いているので、`lastFrame` に相乗りさせると失敗した回だけ数字が古くなる。
     private var lastSeenFrame = 0
@@ -306,6 +321,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     // MARK: - 駆動
 
     func displayLinkFired() {
+        // **結末の届いた差し出しを、出すかを決める前に照らす** ([#2735])。打ち切られていれば
+        // ``submissionSettled(_:dropped:)`` が記しを戻し、このリフレッシュが同じ枚を出し直す。
+        // 道具のプロセスには描き切り (`Canvas.flush`) が無いので、照会を完了の知らせだけに任せると
+        // 出し直しが知らせの走る時刻に縛られる。待たずに問い、置き場は持ち回る (#2199)
+        //
+        // [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+        gpu.revokeDroppedDeliveries()
         onTick?()
         reloadSourceIfChanged()
         promoteIfReady()
@@ -322,7 +344,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         do {
             // **出せた枚数だけを覚える。** 面を取れずに見送ったときに覚えると、次の
             // リフレッシュで「同じ枚数だから出さない」と判断して 1 枚落とす
-            if try presenter.present(frame, to: layer) { lastFrame = newest.frame }
+            if try presenter.present(frame, to: layer) {
+                lastFrame = newest.frame
+                presentations += 1
+                // **記した直後に結末を預ける** (#2199 の作法)。打ち切られたら記しを戻す
+                lastFrameSubmission = presenter.lastSubmission
+                gpu.awaitSettlement(of: lastFrameSubmission, by: self)
+            }
             noteRecovery()
         } catch {
             noteFailure(error)
@@ -500,5 +528,24 @@ extension SharedFrameStage {
     /// 閉じられる経路 (問いを繋がずに出した窓の ×) を、費用だけ払い続ける形にしない (#826)。
     fileprivate func willClose() {
         screenLink.invalidate()
+    }
+}
+
+// MARK: - 打ち切られた差し出し
+
+extension SharedFrameStage: SettlementObserver {
+    /// 差し出しの投入の結末が届いた ([#2735])。
+    ///
+    /// **打ち切られた投入が、いま記している最後の差し出しなら記しを戻す。** 次のリフレッシュが
+    /// 普段の経路で同じ枚を出し直す — 書き手が止まっていても、枚数が進むのを待たない。後の差し出しが
+    /// 記し直していれば、前の打ち切りは見送る (後の絵が既に出ている)。打ち切りの無い結末では何もしない。
+    ///
+    /// 世代を乗り換えた後に前の世代の差し出しの結末が届いても、戻すのは記しだけで、出るのはいまの
+    /// 世代の最新の枚である。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        guard dropped, submission == lastFrameSubmission else { return }
+        lastFrame = 0
     }
 }

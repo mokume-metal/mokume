@@ -1466,12 +1466,18 @@ extension RenderDevice {
     /// **待たなくても番号は進める。** 進めないと、この経路で使った置き場だけが
     /// 「いつ終わったか分からない」まま環へ戻り、次の巻き戻しが実行中のコマンドを
     /// 踏む ([#222](https://github.com/mokume-metal/mokume/issues/222))。
-    func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) {
+    ///
+    /// - Returns: 振った番号。差し出した側が結末を待つのに使う ([#2735])。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @discardableResult
+    func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) -> UInt64 {
         // **投入の並びは ``commit(_:retaining:writing:)`` が持つ。** かつてはここにも同じ 5 行が
         // 書かれていた — 並びに 1 段足して片方だけ直すと、そのコマンドが抱えられないまま
         // GPU の実行中に消える。負荷のかかったときだけ出る形である (#222 が踏んだ)
-        commit(commands)
+        let submission = commit(commands)
         queue.signalDrawable(drawable)
+        return submission
     }
 }
 
