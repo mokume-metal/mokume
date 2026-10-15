@@ -435,7 +435,9 @@ nonisolated enum SVGFile {
                 case .paint(let read): paint = read
                 case .inherit: return
                 case .reference(let fallback):
-                    paint = fallback
+                    // 代わりの色が読めなければ名乗り、塗らない (参照は描いた要素ごとに別に名乗る) (#2649)
+                    if fallback == nil { tally.note("\(property) \"\(trimmed)\"", line: line) }
+                    paint = fallback ?? .none
                     isReference = true
                 case .unreadable:
                     return tally.note("\(property) \"\(trimmed)\"", line: line)
@@ -482,8 +484,12 @@ nonisolated enum SVGFile {
                 default: tally.note("\(property) \"\(trimmed)\"", line: line)
                 }
             case "stroke-dasharray":
-                let lengths = SVGFile.parseNumbers(lowered.replacingOccurrences(of: "px", with: "")) ?? [1]
-                context.isDashed = lowered != "none" && lengths.contains { $0 != 0 }
+                // 読めない値と負の値を含む値は、破線ありへ倒さず無かったものとして名乗る (#2649)。
+                // 全部 0 なら破線にならない (SVG の約束)
+                guard let lengths = SVGFile.parseDashArray(trimmed, reference: context.diagonal) else {
+                    return tally.note("\(property) \"\(trimmed)\"", line: line)
+                }
+                context.isDashed = lengths.contains { $0 > 0 }
             case "color":
                 guard lowered != "currentcolor" else { return }
                 guard let color = SVGFile.parseColor(trimmed) else {
@@ -593,6 +599,16 @@ nonisolated enum SVGFile {
                     tally.note("viewBox \"\(text)\"", line: line)
                 }
             }
+            // 読めない値は、書いていないもの (`xMidYMid meet`) として写し、名乗る (#2649)
+            var aspect = AspectRatio.standard
+            if let text = attributes["preserveAspectRatio"] {
+                if let read = SVGFile.parseAspectRatio(text) {
+                    aspect = read
+                } else {
+                    tally.note(
+                        "preserveAspectRatio \"\(text.trimmingCharacters(in: .whitespacesAndNewlines))\"", line: line)
+                }
+            }
             // 根の幅と高さの割合は、viewBox (無ければ 100) に対して読む。入れ子は親の座標の決まりに対して
             let reference = isRoot ? SIMD2(box?[2] ?? 100, box?[3] ?? 100) : context.viewport
             // `x` / `y` は `auto` を取らないので、`auto` も読めない値として名乗る
@@ -649,8 +665,7 @@ nonisolated enum SVGFile {
             guard let box else { return (transform, SIMD2(width, height)) }
             transform =
                 transform
-                * SVGFile.viewBoxTransform(
-                    box, width: width, height: height, aspect: attributes["preserveAspectRatio"])
+                * SVGFile.viewBoxTransform(box, width: width, height: height, aspect: aspect)
             return (transform, SIMD2(box[2], box[3]))
         }
 
@@ -788,16 +803,59 @@ nonisolated enum SVGFile {
 
     // MARK: - 座標の決まり
 
+    /// `preserveAspectRatio` の読み。
+    struct AspectRatio: Sendable {
+        /// 寄せる向き 1 つ (`xMin`・`xMid`・`xMax` など)。
+        enum Edge: Sendable, Equatable {
+            case min, mid, max
+        }
+
+        /// 縦横の倍率をそろえるときの寄せ方。`nil` は `none` (縦横を別々に伸ばして枠いっぱいに写す)。
+        var align: (x: Edge, y: Edge)?
+        /// 枠を覆う側の倍率にそろえるか (`slice`)。`meet` (枠に収まる側) なら偽。
+        var slices: Bool
+
+        /// 書いていないときの値 (`xMidYMid meet`)。
+        static let standard = AspectRatio(align: (.mid, .mid), slices: false)
+    }
+
+    /// `preserveAspectRatio` の値を読む。文法は `[defer] <align> [meet | slice]` で、`<align>` は `none` か
+    /// `x{Min,Mid,Max}Y{Min,Mid,Max}`。大文字と小文字は区別しない。**読めなければ `nil`** (未知の語・余分な語・
+    /// `defer` だけ・空) — 呼ぶ側が名乗り、書いていないものとして読む (#2649)。
+    static func parseAspectRatio(_ text: String) -> AspectRatio? {
+        var words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.first == "defer" { words.removeFirst() }
+        guard let first = words.first, words.count <= 2 else { return nil }
+        let slices: Bool
+        switch words.dropFirst().first {
+        case nil, "meet": slices = false
+        case "slice": slices = true
+        default: return nil
+        }
+        if first == "none" { return AspectRatio(align: nil, slices: slices) }
+        func edge(_ word: Substring) -> AspectRatio.Edge? {
+            switch word {
+            case "min": .min
+            case "mid": .mid
+            case "max": .max
+            default: nil
+            }
+        }
+        // `xMidYMax` は 8 文字で、`x` + 3 文字 + `y` + 3 文字
+        guard first.count == 8, first.hasPrefix("x"), first.dropFirst(4).hasPrefix("y"),
+            let x = edge(first.dropFirst().prefix(3)), let y = edge(first.dropFirst(5))
+        else { return nil }
+        return AspectRatio(align: (x, y), slices: slices)
+    }
+
     /// `viewBox` を、幅と高さの枠へ写す変換。`preserveAspectRatio` (既定は `xMidYMid meet`) に従う。
     static func viewBoxTransform(
-        _ box: [Float], width: Float, height: Float, aspect: String?
+        _ box: [Float], width: Float, height: Float, aspect: AspectRatio
     ) -> Affine {
         var scaleX = width / box[2]
         var scaleY = height / box[3]
-        let words = (aspect ?? "").lowercased().split(whereSeparator: \.isWhitespace).filter { $0 != "defer" }
-        let align = words.first.map(String.init) ?? "xmidymid"
-        if align != "none" {
-            let uniform = words.dropFirst().first == "slice" ? max(scaleX, scaleY) : min(scaleX, scaleY)
+        if aspect.align != nil {
+            let uniform = aspect.slices ? max(scaleX, scaleY) : min(scaleX, scaleY)
             scaleX = uniform
             scaleY = uniform
         }
@@ -805,10 +863,15 @@ nonisolated enum SVGFile {
         var offsetY = -box[1] * scaleY
         let spareX = width - box[2] * scaleX
         let spareY = height - box[3] * scaleY
-        if align.hasPrefix("xmid") { offsetX += spareX / 2 }
-        if align.hasPrefix("xmax") { offsetX += spareX }
-        if align.hasSuffix("ymid") { offsetY += spareY / 2 }
-        if align.hasSuffix("ymax") { offsetY += spareY }
+        func shift(_ edge: AspectRatio.Edge?, _ spare: Float) -> Float {
+            switch edge {
+            case .mid: spare / 2
+            case .max: spare
+            case .min, nil: 0
+            }
+        }
+        offsetX += shift(aspect.align?.x, spareX)
+        offsetY += shift(aspect.align?.y, spareY)
         return Affine(a: scaleX, b: 0, c: 0, d: scaleY, e: offsetX, f: offsetY)
     }
 

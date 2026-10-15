@@ -108,8 +108,9 @@ extension SVGFile {
         /// 親の値を受け継ぐ (`inherit`)。
         case inherit
         /// グラデーションやパターン (`url(#…)`) を指している。**描けないので名乗る。** 後ろに
-        /// 書いた代わりの色 (`url(#a) red`) があれば、その色で塗る
-        case reference(fallback: Paint)
+        /// 書いた代わりの色 (`url(#a) red`) があれば、その色で塗る。書いていなければ `.none`。
+        /// **代わりの色が読めなければ `nil`** (`url(#a) abc`) で、呼ぶ側が名乗る (#2649)
+        case reference(fallback: Paint?)
         /// 読めない。
         case unreadable
     }
@@ -125,10 +126,11 @@ extension SVGFile {
         if value.lowercased().hasPrefix("url(") {
             guard let close = value.firstIndex(of: ")") else { return .unreadable }
             let rest = value[value.index(after: close)...].trimmingCharacters(in: .whitespaces)
-            if rest.isEmpty { return .reference(fallback: .none) }
+            if rest.isEmpty { return .reference(fallback: Paint.none) }
             switch parsePaint(rest) {
             case .paint(let fallback): return .reference(fallback: fallback)
-            default: return .reference(fallback: .none)
+            // `inherit`・もう 1 つの参照・読めない値は、代わりの色として読めない
+            default: return .reference(fallback: nil)
             }
         }
         guard let color = parseColor(value) else { return .unreadable }
@@ -155,6 +157,24 @@ extension SVGFile {
         }
         guard let number = DecimalText.spelled(value), number.isFinite else { return nil }
         return number
+    }
+
+    /// `stroke-dasharray` の値を読む。`none` は空の並び、ほかは 0 以上の長さ (``parseLength(_:reference:)`` が
+    /// 読む単位と `%`) をカンマか空白で区切った並び。**読めない長さ・負の長さ・空の区切り (`5,,3`) を含めば `nil`**
+    /// — SVG では宣言ごと無効で、呼ぶ側が名乗って無かったものとする (#2649)。
+    nonisolated static func parseDashArray(_ text: String, reference: Float) -> [Float]? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.lowercased() == "none" { return [] }
+        var lengths: [Float] = []
+        for part in value.split(separator: ",", omittingEmptySubsequences: false) {
+            let words = part.split(whereSeparator: \.isWhitespace)
+            guard !words.isEmpty else { return nil }
+            for word in words {
+                guard let length = parseLength(String(word), reference: reference), length >= 0 else { return nil }
+                lengths.append(length)
+            }
+        }
+        return lengths
     }
 
     // MARK: - 変換
