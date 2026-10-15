@@ -426,33 +426,65 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
 #
 # GraphQL 1 回で N のコメントと参照元のコメントをまとめて引く (候補 1 件につき 1 回なので、
 # 呼び出しの回数は #642 のときと変わらない)。
+#
+# ### 窓から押し出されたプランも見る (#2660)
+#
+# 1 回目の問い合わせは N を新しい順に 100 件、参照元を 50 件までしか引かない。定期の検査・
+# 前検査の赤は同じ題の open な Issue へ `github-actions` が追記する (#2658) ので、追記が積もると
+# 着手時のプランが窓の外へ押し出され、別のセッションのプランを黙って見逃す。
+#
+# 「目印つきのコメントだけを引く」は採れない。GraphQL の comments が取る引数は
+# `orderBy,after,before,first,last` だけで、本文でも作者でも絞れない。検索は目印を含む
+# **Issue** を返すがコメントは返さないので、自分のセッションの目印を除いて数え、URL を名乗る
+# には足りない。
+#
+# そこで窓を広げずに、**窓に収まらなかったと分かった Issue / PR だけ** (`totalCount` が引けた
+# 件数を超えたもの) を REST で全件ページ送りに引き、手元で目印つきに絞る。窓に収まっていれば
+# 呼び出しも取得量も今と同じで、溢れたものごとに ⌈コメント数 / 100⌉ 回の REST が加わる。
+# 引き直しに失敗したら窓の分だけで判定する (従来どおり)。
 
 readonly MARKS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      comments(last: 100) { nodes { body url } }
+      comments(last: 100) { totalCount nodes { body url } }
       timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 50) {
         nodes { ... on CrossReferencedEvent { source {
-          ... on Issue { number state comments(last: 50) { nodes { body url } } }
-          ... on PullRequest { number state comments(last: 50) { nodes { body url } } }
+          ... on Issue { number state comments(last: 50) { totalCount nodes { body url } } }
+          ... on PullRequest { number state comments(last: 50) { totalCount nodes { body url } } }
         } } }
       }
     }
   }
 }'
 
+# Issue / PR のコメントを全件引き、目印つきのものだけを 1 行 1 件の {url, body} で出す (#2660)。
+# PR の会話のコメントも issues/<番号>/comments で引ける
+marked_comments() { # $1=Issue / PR の番号
+  gh api --paginate "repos/$REPO/issues/$1/comments?per_page=100" \
+    --jq ".[] | select(.body | contains(\"$MARKER: \")) | {url: .html_url, body} | tojson" 2>/dev/null
+}
+
 concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → 跡を 1 行 1 件で stdout へ
-  local number="$1" prefix="$2" json others count url plans plan source seen=''
+  local number="$1" prefix="$2" json mine overflowed others count url plans plan source seen=''
+  local more
 
   json=$(gh api graphql -f query="$MARKS_QUERY" -f owner="${REPO%%/*}" -f name="${REPO#*/}" \
     -F number="$number" 2>/dev/null) || return 0
   [ -n "$json" ] || return 0
 
-  # N 自身に載ったプラン。自分のセッションが載せたものは除く — 同じセッションで 2 度
+  # N 自身に載った目印つきのコメント。窓から押し出しがあれば全件から拾い直す (#2660)
+  overflowed=$(printf '%s' "$json" | jq -r '
+    .data.repository.issue.comments | (.totalCount // 0) > (.nodes | length)' 2>/dev/null)
+  if [ "$overflowed" != true ] || ! mine=$(marked_comments "$number"); then
+    mine=$(printf '%s' "$json" | jq -c --arg m "$MARKER: " '
+      .data.repository.issue.comments.nodes[]? | select(.body | contains($m)) | {url, body}' \
+      2>/dev/null) || return 0
+  fi
+
+  # 自分のセッションが載せたものは除く — 同じセッションで 2 度
   # プランを取ったときに自分を指して「二重着手かもしれない」と言わないため
-  others=$(printf '%s' "$json" | jq -r --arg m "$MARKER: " --arg p "$prefix-" '
-    [ .data.repository.issue.comments.nodes[]? | select(.body | contains($m))
-      | select(.body | contains($m + $p) | not) ]
+  others=$(printf '%s\n' "$mine" | jq -rs --arg m "$MARKER: " --arg p "$prefix-" '
+    [ .[] | select(.body | contains($m + $p) | not) ]
     | "\(length)\t\(.[0].url // "")"' 2>/dev/null) || return 0
 
   count=${others%%	*}
@@ -466,13 +498,29 @@ concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → �
       ;;
   esac
 
-  # open な参照元に載った、別のセッションのプラン (1 行 1 件の JSON)
-  plans=$(printf '%s' "$json" | jq -c --arg m "$MARKER: " --arg p "$prefix-" --argjson n "$number" '
+  # open な参照元に載った、目印つきのコメント (1 行 1 件の JSON)
+  plans=$(printf '%s' "$json" | jq -c --arg m "$MARKER: " --argjson n "$number" '
     .data.repository.issue.timelineItems.nodes[]?.source?
     | select(type == "object" and .state == "OPEN" and .number != $n)
     | .number as $source
-    | .comments.nodes[]? | select(.body | contains($m)) | select(.body | contains($m + $p) | not)
+    | .comments.nodes[]? | select(.body | contains($m))
     | {source: $source, url, body}' 2>/dev/null) || return 0
+
+  # 窓から押し出しのあった参照元は、全件から拾い直したもので置き換える (#2660)
+  for source in $(printf '%s' "$json" | jq -r --argjson n "$number" '
+    [ .data.repository.issue.timelineItems.nodes[]?.source?
+      | select(type == "object" and .state == "OPEN" and .number != $n)
+      | select((.comments.totalCount // 0) > (.comments.nodes | length)) | .number ]
+    | unique[]' 2>/dev/null); do
+    more=$(marked_comments "$source") || continue
+    plans=$(printf '%s\n' "$plans" | jq -c --argjson s "$source" 'select(.source != $s)')
+    [ -z "$more" ] ||
+      plans=$(printf '%s\n%s\n' "$plans" "$(printf '%s\n' "$more" | jq -c --argjson s "$source" '{source: $s} + .')")
+  done
+
+  # 別のセッションのプランだけを残す (自分のを除く理由は N と同じ)
+  plans=$(printf '%s\n' "$plans" | jq -c --arg m "$MARKER: " --arg p "$prefix-" '
+    select(.body | contains($m + $p) | not)' 2>/dev/null) || return 0
 
   while IFS= read -r plan; do
     [ -n "$plan" ] || continue

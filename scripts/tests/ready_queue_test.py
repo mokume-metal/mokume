@@ -35,10 +35,16 @@
 10. **ready と stock の説明は Issue Type を `[Bug]` の形で先頭に置く** (#2136)。Type は題から
    読めず、Bug は反証の節を要るので、着手の前に目に入る必要がある (#1998)。Type の無い
    Issue は `[-]`。**番号・分類の位置は動かさない** — 既存の読み手は先頭の 2 語を読む
+11. **bot の追記だけでは「まだ動いている」にならない** (#2660)。updatedAt だけが新しい着手印と
+   open な家族は、窓の中の timeline に人の手があるかを読む。Bot のコメントと参照だけなら静か。
+   人の手・作者の分からない項目・本文の編集・窓に収まらない項目は動いているとみなす。読むのは
+   そういう着手印 / 家族があるときだけで、読めなければ従来どおり updatedAt で測ってそう名乗る
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む。親の印 (labels) は本物と同じく問い合わせが欄を求めたときだけ
-返すので、問い合わせから欄が落ちれば Design の根の検査が赤くなる (#2228)。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
+返すので、問い合わせから欄が落ちれば Design の根の検査が赤くなる (#2228)。人の手の問い合わせ
+(#2660) には、本物と同じく問い合わせの `since:` より前の項目を落とし、問い合わせた番号の分だけを
+返す — 窓の境目を渡し損ねれば検査が赤くなる。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
 落ちる (1 は呼び出しログと終了コードの両方で見る)。
 
 実行は make ci-check (CI もこれを呼ぶ)。
@@ -49,7 +55,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -85,6 +91,20 @@ if [ "$1" = "api" ]; then
   case "$2" in
     # merge queue の並び (#1266)。既定は空
     graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; }
+      # 窓の中の人の手 (#2660)。本物と同じく since より前の項目を落とし (filteredCount は
+      # 落とした後の件数 + 窓に収まらなかった hidden)、問い合わせた番号の分だけを返す。
+      # FAIL_HANDS で読み取りを失敗させる
+      if [[ "$*" == *"timelineItems(since:"* ]]; then
+        [ -z "${FAIL_HANDS:-}" ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
+        since=$(printf '%s' "$*" | sed -n 's/.*timelineItems(since: "\\([^"]*\\)".*/\\1/p')
+        asked=$(printf '%s' "$*" | grep -o 'i[0-9]*: issue' | sed 's/: issue//' | jq -R . | jq -sc .)
+        jq --arg s "$since" --argjson asked "$asked" '
+          .data.repository |= with_entries(select(.key as $k | $asked | index($k))
+            | .value.timelineItems |= ((.nodes |= map(select(.createdAt >= $s)))
+              | .filteredCount = (.hidden // 0) + (.nodes | length) | del(.hidden)))' \\
+          "$FIX/hands.json" > "$FIX/hands-asked.json"
+        emit "$FIX/hands-asked.json"; exit 0
+      fi
       # open な Bug と ready の候補の親 (#1661)。家族の問い合わせとは issueType の綴りで
       # 見分ける (家族のほうは型を読まない)。FAIL_PARENTS で読み取りを失敗させる
       if [[ "$*" == *"issueType"* ]]; then
@@ -189,8 +209,51 @@ def parents_response(parents):
     return {"data": {"repository": {f"i{n}": {"parent": p} for n, p in parents.items()}}}
 
 
+def ago(minutes):
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def bot_comment(minutes_ago):
+    """`github-actions` の追記 (#2658)。GraphQL の timelineItems の IssueComment と同じ形"""
+    return {
+        "__typename": "IssueComment",
+        "createdAt": ago(minutes_ago),
+        "author": {"__typename": "Bot", "login": "github-actions"},
+    }
+
+
+def human_comment(minutes_ago):
+    return {
+        "__typename": "IssueComment",
+        "createdAt": ago(minutes_ago),
+        "author": {"__typename": "User", "login": "someone"},
+    }
+
+
+def hands_response(hands):
+    """{番号: {"nodes": [...], "edited": 時刻か None, "hidden": 窓に収まらなかった件数}} から応答を組む。
+
+    nodes は窓の外も含めて渡す (落とすのは偽 gh が問い合わせの since で行う)
+    """
+    return {
+        "data": {
+            "repository": {
+                f"i{n}": {
+                    "lastEditedAt": h.get("edited"),
+                    "timelineItems": {"nodes": list(h.get("nodes", [])), "hidden": h.get("hidden", 0)},
+                }
+                for n, h in hands.items()
+            }
+        }
+    }
+
+
 class ReadyQueueTest(unittest.TestCase):
-    def run_queue(self, issues, prs=(), worktrees="", families=None, parents=None, **extra_env):
+    def run_queue(
+        self, issues, prs=(), worktrees="", families=None, parents=None, hands=None, **extra_env
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             fix = tmp / "fixtures"
@@ -204,6 +267,9 @@ class ReadyQueueTest(unittest.TestCase):
                 )
             (fix / "parents.json").write_text(
                 json.dumps(parents_response(parents or {})), encoding="utf-8"
+            )
+            (fix / "hands.json").write_text(
+                json.dumps(hands_response(hands or {})), encoding="utf-8"
             )
 
             bindir = tmp / "bin"
@@ -297,11 +363,148 @@ class ReadyQueueTest(unittest.TestCase):
             [
                 issue(50, labels=["status: in progress"], updated=fresh),
                 issue(51, labels=["status: in progress"]),  # LONG_AGO
-            ]
+            ],
+            hands={50: {"nodes": [human_comment(0)]}},  # 着手したセッションのプラン
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[50][0], "busy", "着手した直後の Issue を落ちたと呼んでいる")
+        self.assertNotIn("読めなかった", seen[50][1])
         self.assertEqual(seen[51][0], "dropped")
+
+    # 11. bot の追記だけでは「まだ動いている」にならない (#2660)
+    def test_bot_comment_alone_does_not_keep_busy(self):
+        # 完了条件 1 の例: 最後の人の活動が 3 時間前で、30 分前に github-actions の追記がある
+        done, log = self.run_queue(
+            [issue(2251, labels=["status: in progress"], updated=ago(30))],
+            hands={2251: {"nodes": [human_comment(180), bot_comment(30)]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[2251][0], "dropped", f"bot の追記で生きていると読んでいる:\n{done.stdout}")
+        self.assertIn("timelineItems(since:", log)
+
+    def test_human_hand_in_window_keeps_busy(self):
+        cases = {
+            "人のコメント": {"nodes": [bot_comment(50), human_comment(40), bot_comment(30)]},
+            # 着手印を付けた・題を直した等。actor を引かない種類は人の手に倒す
+            "作者の分からない出来事": {
+                "nodes": [{"__typename": "LabeledEvent", "createdAt": ago(40)}, bot_comment(30)]
+            },
+            "退会した人のコメント": {
+                "nodes": [
+                    {"__typename": "IssueComment", "createdAt": ago(40), "author": None},
+                    bot_comment(30),
+                ]
+            },
+            "本文の編集": {"nodes": [bot_comment(30)], "edited": ago(40)},
+            "窓に収まらない項目": {"nodes": [bot_comment(30)], "hidden": 1},
+        }
+        for name, hand in cases.items():
+            with self.subTest(name):
+                done, _ = self.run_queue(
+                    [issue(60, labels=["status: in progress"], updated=ago(30))],
+                    hands={60: hand},
+                )
+                seen = self.lines_by_number(done.stdout)
+                self.assertEqual(seen[60][0], "busy", f"{name}を数えていない")
+                self.assertIn("まだ動いている", seen[60][1])
+
+    def test_bot_reference_alone_does_not_keep_busy(self):
+        done, _ = self.run_queue(
+            [issue(61, labels=["status: in progress"], updated=ago(30))],
+            hands={
+                61: {
+                    "nodes": [
+                        {
+                            "__typename": "CrossReferencedEvent",
+                            "createdAt": ago(30),
+                            "actor": {"__typename": "Bot", "login": "github-actions"},
+                        }
+                    ],
+                    "edited": ago(600),  # 窓の外の編集は数えない
+                }
+            },
+        )
+        self.assertEqual(self.lines_by_number(done.stdout)[61][0], "dropped")
+
+    def test_family_bot_comment_does_not_keep_busy(self):
+        done, log = self.run_queue(
+            [issue(1352, labels=["status: in progress"])],
+            families={
+                1352: {
+                    "parent": member(1350),
+                    "siblings": [member(1357, updated=ago(30)), member(1358, updated=ago(20))],
+                }
+            },
+            hands={
+                1357: {"nodes": [bot_comment(30)]},
+                1358: {"nodes": [human_comment(20)]},
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1352][0], "busy")
+        self.assertIn("家族 #1358 がまだ動いている", seen[1352][1])
+
+        done, _ = self.run_queue(
+            [issue(1352, labels=["status: in progress"])],
+            families={1352: {"parent": member(1350), "siblings": [member(1357, updated=ago(30))]}},
+            hands={1357: {"nodes": [bot_comment(30)]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1352][0], "dropped", "家族の bot の追記で生きていると読んでいる")
+
+    def test_hands_are_read_only_where_recency_is_the_only_evidence(self):
+        # 新しい着手印も、新しい open な家族も無ければ読まない
+        done, log = self.run_queue(
+            [
+                issue(1, labels=["verify: triaged"], updated=ago(5)),  # 着手印が無い
+                issue(2, labels=["status: in progress"], updated=ago(5)),  # PR がある
+                issue(3, labels=["status: in progress"]),  # 古い
+            ],
+            prs=[closing_pr(90, closes=[2])],
+            families={3: {"parent": member(1350, updated=ago(5)), "siblings": [
+                member(1354, "CLOSED", ago(5)),  # 閉じた家族は「閉じたばかり」のまま
+            ]}},
+            hands={1350: {"nodes": [human_comment(5)]}},
+        )
+        self.assertEqual(self.lines_by_number(done.stdout)[3][0], "busy")
+        asked = [line for line in log.splitlines() if "timelineItems(since:" in line]
+        self.assertEqual(len(asked), 1, f"人の手を読む回数が違う:\n{log}")
+        self.assertIn("i1350: issue", asked[0])
+        for n in (1, 2, 3, 1354):
+            self.assertNotIn(f"i{n}: issue(number: {n}) {{ lastEditedAt", asked[0])
+
+        done, log = self.run_queue([issue(4, labels=["status: in progress"])])
+        self.assertNotIn("timelineItems(since:", log, "新しい着手印が無いのに読んでいる")
+
+    def test_hands_already_read_are_not_read_again(self):
+        # 自分の手を読んだ番号が家族にも居るとき、家族の回で読み直さない
+        done, log = self.run_queue(
+            [
+                issue(10, labels=["status: in progress"], updated=ago(30)),
+                issue(11, labels=["status: in progress"], updated=ago(30)),
+            ],
+            families={
+                10: {"parent": member(1), "siblings": [member(11, updated=ago(30))]},
+                11: {"parent": member(1), "siblings": [member(10, updated=ago(30))]},
+            },
+            hands={10: {"nodes": [bot_comment(30)]}, 11: {"nodes": [bot_comment(30)]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual((seen[10][0], seen[11][0]), ("dropped", "dropped"))
+        asked = [line for line in log.splitlines() if "timelineItems(since:" in line]
+        self.assertEqual(len(asked), 1, f"同じ番号を読み直している:\n{log}")
+
+    def test_unreadable_hands_fall_back_to_updated_at_and_say_so(self):
+        done, _ = self.run_queue(
+            [issue(2251, labels=["status: in progress"], updated=ago(30))],
+            hands={2251: {"nodes": [bot_comment(30)]}},
+            FAIL_HANDS="1",
+        )
+        self.assertNotEqual(done.returncode, 2, "人の手が読めないだけで一覧の失敗と名乗っている")
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[2251][0], "busy", "読めなかったのに従来の判定より悪くしている")
+        self.assertIn("作者を読めなかった", seen[2251][1])
+        self.assertIn("読めなかった", done.stderr)
 
     # 3c. 別リポジトリを閉じる PR は紐づけに数えない
     def test_other_repo_claim_is_ignored(self):

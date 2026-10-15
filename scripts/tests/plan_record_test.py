@@ -55,8 +55,21 @@ query=.
 prev=
 for arg in "$@"; do
   [ "$prev" = "-q" ] && query=$arg
+  [ "$prev" = "--jq" ] && query=$arg
   prev=$arg
 done
+# 窓から押し出しのあった Issue / PR のコメントの全件 (#2660)。REST の --paginate は
+# ページごとの配列を続けて出し、--jq をページごとに掛ける — 本物と同じく扱う。
+# FAKE_GH_REST_COMMENTS_<番号> にページの並び (配列を続けた JSON) を置く。無ければ
+# 引けなかったことにする。呼ばれた URL は FAKE_GH_REST_LOG へ残す
+if [ "$kind" = api ] && [ "${2:-}" = --paginate ]; then
+  [ -z "${FAKE_GH_REST_LOG:-}" ] || printf '%s\\n' "$3" >> "$FAKE_GH_REST_LOG"
+  number=$(printf '%s' "$3" | sed -n 's#.*/issues/\\([0-9]*\\)/comments.*#\\1#p')
+  eval "pages=\\${FAKE_GH_REST_COMMENTS_$number:-}"
+  [ -n "$pages" ] || exit 1
+  printf '%s' "$pages" | jq -r "$query"
+  exit 0
+fi
 # 二重着手の跡見 (#642・#1216) は GraphQL 1 回で、対象 Issue とその参照元のコメントを
 # JSON のまま引く。呼び手が jq を掛けるので絞り込まない。番号ごとに応答を変えられるよう、
 # FAKE_GH_GRAPHQL_<番号> があればそちらを、無ければ FAKE_GH_GRAPHQL を返す (どちらも無ければ
@@ -118,15 +131,28 @@ def plan_comment(rid, url, body="計画。"):
     return {"body": f"<!-- mokume-plan-record: {rid} -->\n{body}", "url": url}
 
 
-def issue_state(in_progress=False, plans=(), sources=()):
+def issue_state(in_progress=False, plans=(), sources=(), comments=None, total=None):
     """跡見 (#642・#1216) が引く GraphQL の応答を組む。
 
     plans は対象 Issue に載ったプランの (記録 ID, URL) の並び。sources は対象を参照して
-    いる Issue / PR の (番号, state, [plan_comment(...)]) の並び。
+    いる Issue / PR の (番号, state, [plan_comment(...)]) の並びで、4 つ目に全件数
+    (totalCount) を置ける。
+
+    comments を渡すと plans の代わりにそれを窓のコメントとし、total はその全件数
+    (totalCount — 窓から押し出しがあれば窓の件数より大きい。#2660)。省くと欄ごと返さない
+    (既存の検査の応答はこの形)。
 
     in_progress は「ラベルが在っても名乗らない」ことを見るために残してある
     (跡見はラベルを読まない — 付け主を判定できないため)。
     """
+
+    def connection(nodes, total):
+        out = {"nodes": list(nodes)}
+        if total is not None:
+            out["totalCount"] = total
+        return out
+
+    window = comments if comments is not None else [plan_comment(rid, url) for rid, url in plans]
     return json.dumps(
         {
             "data": {
@@ -135,19 +161,19 @@ def issue_state(in_progress=False, plans=(), sources=()):
                         "labels": {"nodes": [{"name": "status: in progress"}]}
                         if in_progress
                         else {"nodes": []},
-                        "comments": {
-                            "nodes": [plan_comment(rid, url) for rid, url in plans]
-                        },
+                        "comments": connection(window, total),
                         "timelineItems": {
                             "nodes": [
                                 {
                                     "source": {
                                         "number": number,
                                         "state": state,
-                                        "comments": {"nodes": list(comments)},
+                                        "comments": connection(
+                                            source_comments, rest[0] if rest else None
+                                        ),
                                     }
                                 }
-                                for number, state, comments in sources
+                                for number, state, source_comments, *rest in sources
                             ]
                         },
                     }
@@ -1447,6 +1473,99 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
             ),
         )
         self.assertNotIn("二重着手", result.stderr)
+
+    # --- 窓から押し出されたプラン (#2660) ----------------------------------------
+    # 定期の検査・前検査の赤は、同じ題の open な Issue へ github-actions が追記する (#2658)。
+    # 追記が積もると、着手時のプランが comments(last: N) の窓の外へ押し出される。
+
+    @staticmethod
+    def bot_comment(i):
+        return {"body": f"定期の検査が赤い ({i} 回目)", "url": f"https://example.invalid/bot/{i}"}
+
+    @staticmethod
+    def rest_pages(comments, per_page=100):
+        """REST の --paginate が出すページの並び (配列を続けた JSON)。url は html_url の名で返る"""
+        rows = [{"body": c["body"], "html_url": c["url"]} for c in comments]
+        return "".join(
+            json.dumps(rows[i : i + per_page]) for i in range(0, len(rows), per_page)
+        )
+
+    def test_capture_finds_a_plan_pushed_out_by_bot_comments(self):
+        """完了条件 2 の例: プランの後に bot の追記が 120 件あっても、別のセッションのプランを名乗る。"""
+        plan = plan_comment(self.OTHER, "https://example.invalid/c/plan")
+        bots = [self.bot_comment(i) for i in range(120)]
+        rest_log = Path(self.workdir.name) / "rest-calls"
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            # GraphQL の窓 (last: 100) は bot の追記だけで埋まり、プランは外にある
+            FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=121),
+            FAKE_GH_REST_COMMENTS_123=self.rest_pages([plan] + bots),
+            FAKE_GH_REST_LOG=str(rest_log),
+        )
+        self.assertIn(
+            "#123 に別のセッションのプランが 1 件載っている (https://example.invalid/c/plan)",
+            result.stderr,
+        )
+        self.assertIn("issues/123/comments", rest_log.read_text(encoding="utf-8"))
+        self.assertIn("着手を止めません", result.stderr)
+
+    def test_capture_does_not_point_at_its_own_plan_pushed_out(self):
+        """全件から拾い直しても、自分のセッションのプランは数えない。"""
+        own = plan_comment("abcd1234-1700000000", "https://example.invalid/c/own")
+        bots = [self.bot_comment(i) for i in range(120)]
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=121),
+            FAKE_GH_REST_COMMENTS_123=self.rest_pages([own] + bots),
+        )
+        self.assertNotIn("二重着手", result.stderr)
+
+    def test_capture_finds_a_source_plan_pushed_out_by_bot_comments(self):
+        """参照元の窓 (last: 50) から押し出されたプランも、まとめ先を名乗っていれば名乗る。"""
+        plan = plan_comment(
+            self.OTHER, "https://example.invalid/c/912", "# #912 (+ #1082): 線の載り方\n\n### #1082\n"
+        )
+        bots = [self.bot_comment(i) for i in range(60)]
+        result = self.capture(
+            self.BUNDLE,
+            FAKE_GH_ISSUE="1",
+            FAKE_GH_GRAPHQL_913=issue_state(),
+            FAKE_GH_GRAPHQL_1082=issue_state(sources=[(912, "OPEN", bots[-50:], 61)]),
+            FAKE_GH_REST_COMMENTS_912=self.rest_pages([plan] + bots),
+        )
+        self.assertIn(
+            "#1082 を名乗る別のセッションのプランが #912 に載っている "
+            "(https://example.invalid/c/912)",
+            result.stderr,
+        )
+
+    def test_capture_does_not_page_when_the_window_holds_everything(self):
+        """窓に収まっていれば REST を打たない (呼び出しも取得量も #642 のときと同じ)。"""
+        rest_log = Path(self.workdir.name) / "rest-calls"
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_GRAPHQL=issue_state(
+                comments=[plan_comment(self.OTHER, "https://example.invalid/c/1")], total=1
+            ),
+            FAKE_GH_REST_LOG=str(rest_log),
+        )
+        self.assertIn("別のセッションのプランが 1 件載っている", result.stderr)
+        self.assertFalse(rest_log.exists(), "窓に収まっているのに全件を引いている")
+
+    def test_capture_falls_back_to_the_window_when_paging_fails(self):
+        """全件を引けなければ、窓の分だけで判定する (従来どおり。黙って何も見なくはならない)。"""
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            # 窓にもプランが 1 件ある。REST の応答は置かない = 引けない
+            FAKE_GH_GRAPHQL=issue_state(
+                comments=[plan_comment(self.OTHER, "https://example.invalid/c/1")], total=150
+            ),
+        )
+        self.assertIn("別のセッションのプランが 1 件載っている", result.stderr)
 
     def test_capture_records_the_target_it_pointed_at(self):
         """指示した先が記録に残ること。ここが空だと guard は引き直しだけに頼る。"""
