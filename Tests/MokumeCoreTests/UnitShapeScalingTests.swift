@@ -60,11 +60,15 @@ struct UnitShapeScalingTests {
             let built = shape.make().points
             let units = unit.make().points
             try #require(built.count == units.count, "\(shape): 点の数が違う")
+            // 条件は 1 つずつ Bool に受けてから束ねる。`||` で 1 つの式に連ねると型検査に
+            // 2 秒強かかる (#2596)
             let differing = zip(built, units).filter { built, unit in
-                Self.bits(built.position) != Self.bits(unit.position * scale)
-                    || Self.bits(built.normal) != Self.bits(unit.normal)
-                    || built.uv.x.bitPattern != unit.uv.x.bitPattern || built.uv.y.bitPattern != unit.uv.y.bitPattern
-                    || built.isDerivedNormal != unit.isDerivedNormal
+                let position: Bool = Self.bits(built.position) != Self.bits(unit.position * scale)
+                let normal: Bool = Self.bits(built.normal) != Self.bits(unit.normal)
+                let uv: Bool = built.uv.x.bitPattern != unit.uv.x.bitPattern
+                    || built.uv.y.bitPattern != unit.uv.y.bitPattern
+                let derived: Bool = built.isDerivedNormal != unit.isDerivedNormal
+                return position || normal || uv || derived
             }.count
             #expect(differing == 0, "\(shape): \(differing) 点が違う")
         }
