@@ -174,10 +174,13 @@ extension SketchPart {
     /// - Note: 読めても面が 1 つも無いことがある (``Model/isEmpty``)。そのときは
     ///   投げずに、置いたときに警告する — 「読めなかった」と「読めたが見えない」は
     ///   別の話なので、区別できるようにしてある。
+    /// - Throws: 見つからないとき・読めないとき・対応していない形式のときに ``ModelFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=422c10b2
     // shot: 2 snippet=c25f28d8
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
-        try Self.requireCanvas().loadModel(path, normalize: normalize)
+        try Self.resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
     }
 
     /// 外で作ったモデルを読む。**読んでいる間、他の仕事を止めない。**
@@ -203,11 +206,15 @@ extension SketchPart {
     ///
     /// > Note: 届いたモデルの整え方と見え方は ``loadModel(_:normalize:)`` と同じなので、絵は
     /// > そちらを見ること。届くフレームは実行ごとに違うので、この口だけの絵は撮っていない。
+    ///
+    /// - Throws: ``loadModel(_:normalize:)`` と同じ (``ModelFailure``)。
+    ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
+    ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 loadModel(_:normalize:)
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model
     {
-        try await Self.requireLoadingCanvas("requestModel(_:normalize:)")
+        try await Self.loadingCanvas(ModelFailure.self)
             .requestModel(path, normalize: normalize)
     }
 

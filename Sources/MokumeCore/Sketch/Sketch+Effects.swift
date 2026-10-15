@@ -325,13 +325,15 @@ extension SketchPart {
     /// 使うときは ``Effect/custom(_:)`` として並びへ入れる。
     ///
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=51305187
     // shot: 2 snippet=6a15d68d
     // shot: 3 snippet=e53a59b0
     public func makeEffect(
         _ body: String, name: String = "effect", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try Self.requireCanvas().makeEffect(body, name: name, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).makeEffect(body, name: name, values: values)
     }
 
     /// ファイルから効果を読み込む。
@@ -342,10 +344,12 @@ extension SketchPart {
     /// 書き方は文字列から作る ``makeEffect(_:name:values:)`` と同じで、例と絵はそちらにある。
     ///
     /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeEffect(_:name:values:)
     public func loadEffect(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try Self.requireCanvas().loadEffect(path, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).loadEffect(path, values: values)
     }
 }
