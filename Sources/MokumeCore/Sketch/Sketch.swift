@@ -677,8 +677,9 @@ extension SketchPart {
 /// 資源を作る口が投げる失敗の型。走っていないときの場合 (`notRunning(call:)`) を持つ。
 ///
 /// ``SketchPart/resourceCanvas(_:_:)`` が、呼んだ口の `throws` の型のまま投げるための束ね。
-/// 各型の場合そのものがこの要件を満たす。公開しない — 利用者が名乗る型ではない。
-protocol NotRunningFailure: Error {
+/// 各型の場合そのものがこの要件を満たす。公開しない — 利用者が名乗る型ではない。外のモジュール
+/// (MokumeCamera の `MovieFailure`) も満たせるよう、パッケージの中にだけ見せる。
+package protocol NotRunningFailure: Error {
     static func notRunning(call: String) -> Self
 }
 
@@ -687,3 +688,27 @@ extension ImageFailure: NotRunningFailure {}
 extension ShaderFailure: NotRunningFailure {}
 extension ModelFailure: NotRunningFailure {}
 extension DataFailure: NotRunningFailure {}
+
+// 外のモジュールの資源の口 (MokumeCamera の `createCapture`・`createVideo`) が使う入口。
+//
+// **呼んだ口の名前を外の口のものにする** (#2683 の反証 2)。公開の ``SketchPart/createImage(_:_:)``
+// を素で呼ぶと、`notRunning(call:)` にも警告にも `"createImage(_:_:)"` が入り、利用者が呼んだ口を
+// 名乗らない。
+extension SketchPart {
+    /// 面を取れる所から呼ばれたかを確かめる。取れなければ、`call` の名前で 1 度だけ警告して
+    /// `notRunning(call:)` を投げる (``resourceCanvas(_:_:)`` と同じ)。
+    ///
+    /// ファイルを開くなど、絵を作る前に重い仕事をする口が、その前に呼ぶ。
+    package func requireSurface<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, calledAs call: String
+    ) throws(Failure) {
+        _ = try Self.resourceCanvas(failure, call)
+    }
+
+    /// ``createImage(_:_:)`` と同じ絵を作る。面を取れないときは `call` の名前で投げる。
+    package func createImage(
+        _ width: Int, _ height: Int, calledAs call: String
+    ) throws(ImageFailure) -> Image {
+        try Self.resourceCanvas(ImageFailure.self, call).createImage(width, height)
+    }
+}
