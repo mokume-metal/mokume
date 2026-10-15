@@ -43,7 +43,8 @@
 14. **必須が揃っているのに、必須が読む最新の check suite の pr-gate が cancelled で BLOCKED の PR を、
    猶予の後に名乗る** (#2716)。#2712 は必須が揃った後も queue に入らず、どの分類にも当たらなかった。
    打ち直す run の番号を出し、当番は打たない。新旧は suite の id で読み、cancelled が古い suite の
-   ほう (#2710) と、必須が揃っていない BLOCKED (待ち・赤・欠け) は名乗らない
+   ほう (#2710)・最新の suite の赤 (PR を読んだ結論)・必須が揃っていない BLOCKED (待ち・赤・欠け) は
+   名乗らない。古い suite の結論は問わず、stale-checks と同じ PR でも名乗る (#2716 の反証 1・2・6)
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -783,8 +784,9 @@ class StallWatchTest(unittest.TestCase):
         self.stale_gate_pr(66, ci="FAILURE")  # 必須の赤
         self.stale_gate_pr(67, ci="IN_PROGRESS")  # 必須の待ち
         self.stale_gate_pr(68, render=None)  # 必須がまだ付いていない
-        # 古い suite に緑の pr-gate が無い (cancelled だけ)
-        self.stale_gate_pr(69, suites=[(900, 900, "cancelled")])
+        # 最新の suite の pr-gate が赤 (PR を読んだ結論。打ち直しても同じ赤・#2716 の反証 1)。rollup
+        # には古い suite の cancelled が見えるので、suite の側で読んで外す
+        self.stale_gate_pr(69, suites=[(900, 800, "cancelled"), (901, 900, "failure")])
         # 最新の suite の pr-gate が待っている (打ち直すと待っている run を cancel する)。時刻は猶予の
         # 外に置き、猶予ではなく待ちの判定で黙ることを見る。rollup の側にも待ちが見える
         self.stale_gate_pr(70, suites=[(900, 800, "success"), (901, 900, "cancelled"),
@@ -796,6 +798,41 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch(QUEUE_ENTRY_MINUTES=15)
         for number in range(66, 72):
             self.assertNotEqual(self.classify(number, proc)[0], "stale-gate", f"#{number}: {proc.stdout}")
+
+    def test_最新の_suite_の正当な赤は_古い_suite_が緑でも_stale_gate_と名乗らない(self):
+        """#2716 の反証 1 の探査の形。絵・Issue の紐づけの赤は人が直すもので、打ち直しを勧めない。"""
+        self.stale_gate_pr(77, suites=[(900, 800, "success"), (901, 900, "failure")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertNotIn("stale-gate", proc.stdout)
+        self.assertNotIn("gh run rerun", proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_最新の_suite_が_cancelled_なら古い_suite_の結論によらず名乗る(self):
+        """#2716 の反証 2。打ち切られた run は何も判定していない。古い suite が赤でも、cancelled
+        だけでも、打ち直せば今の PR を読んで結論を返す。"""
+        self.stale_gate_pr(78, suites=[(900, 800, "failure"), (901, 900, "cancelled")])
+        self.stale_gate_pr(79, suites=[(900, 900, "cancelled")])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertIn("gh run rerun 900", self.stale_gate_line(78, proc)[4], proc.stdout)
+        self.assertEqual(self.stale_gate_line(78, proc)[1], "stale-gate", proc.stdout)
+        self.assertEqual(self.stale_gate_line(79, proc)[1], "stale-gate", proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def test_古い失敗_check_を打つ_PR_でも_cancelled_の_pr_gate_を名乗る(self):
+        """#2716 の反証 6。stale-checks に当たって先へ進まなくても、stale-gate の行も出す。"""
+        self.stale_gate_pr(
+            80,
+            rollup=[
+                check("pr-gate", "SUCCESS", ago(40), run=38752622858, job=801),
+                check("pr-gate", "CANCELLED", ago(40), run=38752624025, job=802),
+                check("ci-check", "FAILURE", ago(90), run=100, job=803),
+                check("ci-check", "SUCCESS", ago(30), run=300, job=804),
+            ],
+        )
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        kinds = [l.split()[1] for l in proc.stdout.splitlines() if l.startswith("80 ")]
+        self.assertEqual(kinds, ["stale-checks", "stale-gate"], proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
 
     def test_cancelled_の_pr_gate_が無い_BLOCKED_は_suite_を読まず名乗らない(self):
         self.stale_gate_pr(72, suites=[(900, 800, "success")])
@@ -1319,8 +1356,16 @@ class RequiredRuleTest(unittest.TestCase):
 
     GATE = REPO / "scripts" / "ci-gate.sh"
     POINTER = "ci-gate.sh 冒頭の「必須の判定が読む check run」"
-    READERS = (WORKFLOWS / "ci.yml", WORKFLOWS / "pr-gate.yml", ACT, WATCH)
-    STALE = ("run ごとの最新", "run (check suite) ごとの最新", "どれも赤くない", "決まっていない (#2577)")
+    READERS = (
+        WORKFLOWS / "ci.yml", WORKFLOWS / "pr-gate.yml", ACT, WATCH,
+        # 差し戻しの文面の前提も同じ規則に乗る (#2716 の反証 3)
+        REPO / "scripts" / "review-gate.sh", REPO / "scripts" / "check-drawing-evidence.sh",
+    )
+    STALE = (
+        "run ごとの最新", "run (check suite) ごとの最新", "どれも赤くない", "決まっていない (#2577)",
+        # #2712 で成り立たなかった前提 (#2716 の反証 3)
+        "同じコミットの最新", "concurrency が止める", "ラベルの run で付け直されます",
+    )
 
     @staticmethod
     def prose(path):

@@ -142,9 +142,13 @@ class PrGateWorkflowTest(unittest.TestCase):
         self.assertIn("bash scripts/review-gate.sh", step_named(self.gate, "review-gate"))
         self.assertIn("bash scripts/check-drawing-evidence.sh", step_named(self.gate, "drawing-evidence"))
 
-    def test_古い_run_を止める(self):
+    def test_run_は_PR_ごとに_1_本ずつ走らせ_走っている_run_を止めない(self):
+        """必須は作成順で最新の suite を読む (scripts/ci-gate.sh 冒頭の規則・#2577)。走っている run を
+        止めると、group に入る順と作成順が逆のとき、新しい suite が cancelled で残って必須を塞ぐ
+        (#2712・#2716)。queue: max は固定している actionlint が受けない。"""
         self.assertIn("group: pr-gate-${{ github.ref }}", self.top["concurrency"])
-        self.assertRegex(self.top["concurrency"], r"(?m)^  cancel-in-progress: true\s*$")
+        self.assertRegex(self.top["concurrency"], r"(?m)^  cancel-in-progress: false\s*$")
+        self.assertNotRegex(self.top["concurrency"], r"(?m)^  queue:")
 
 
 class TitleCheckTest(unittest.TestCase):

@@ -544,6 +544,25 @@ class CiGateScriptTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(calls, [])
 
+    def test_最新は作成順で最新の_check_suite_で選ぶ(self):
+        """必須は作成順で最新の suite を読む (ci-gate.sh 冒頭の規則・#2577)。古い suite の検査を
+        打ち直すと check run の id は最大になるが、読むのは新しい suite の結論 (#2716 の反証 4)。"""
+        def in_suite(suite, *args, **kwargs):
+            item = check_run(*args, **kwargs)
+            item["check_suite"] = {"id": suite}
+            return item
+
+        # 古い suite (10) の打ち直しの赤 (id 500) より、新しい suite (20) の緑 (id 300) を読む
+        runs = self.both([in_suite(10, 500, "completed", "failure"), in_suite(20, 300, "completed", "success")])
+        self.assertEqual(self.run_gate(runs)[0], 0)
+        # 逆も同じ。古い suite の打ち直しの緑で、新しい suite の赤を覆わない
+        runs = self.both([in_suite(10, 500, "completed", "success"), in_suite(20, 300, "completed", "failure")])
+        self.assertEqual(self.run_gate(runs)[0], 1)
+        # 同じ suite の中では、打ち直し (後の attempt・id が大きい) の結論を読む
+        runs = self.both([in_suite(20, 300, "completed", "failure"), in_suite(20, 400, "completed", "success"),
+                          in_suite(10, 500, "completed", "failure")])
+        self.assertEqual(self.run_gate(runs)[0], 0)
+
 
 class EvaluateTest(unittest.TestCase):
     """式の読み手そのものの検査 — 壊れた読み手は、上の検査を黙って緑にする。"""

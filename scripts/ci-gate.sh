@@ -26,7 +26,8 @@
 # 待つ。** 待っている間、この ci-gate は in_progress で、必須は満たされない。
 #
 # skipped の検査ごとに、同じ head SHA の check run から skipped とこの run 自身のものを除いて
-# 最新のもの (id が最大 = 作成順で最新) を読み、completed になるまで POLL_WAIT 秒おきに読み直す。
+# 最新のもの (作成順で最新の check suite の、その中で id が最大のもの。下の latest_run) を読み、
+# completed になるまで POLL_WAIT 秒おきに読み直す。
 # 結論が success なら通し、ほかの結論は赤。WAIT_LIMIT 秒を越えても終わらない・見つからない・
 # API が読めないままなら、最後の理由を出して赤にする (閉じる側に倒す)。期限は ci.yml の
 # timeout-minutes より内側に置く。EVENT_NAME が無い・知らない event も赤にする — 開く側に
@@ -58,7 +59,7 @@
 # 作成順は check suite の id の順で読む。どの観測でも作成時刻と食い違わず、Actions の run の id も
 # 同じ順に並んでいた (#2696・#2703・#2707・#2710・#2712 の CI と PR gate の run)。**concurrency の
 # group に入る順とは違いうる** — #2712 では新しい run が先に group に入り、後から入った古い run に
-# cancel された。
+# cancel された (pr-gate はその後、走っている run を止めなくした・#2716)。
 #
 # この規則で説明できる観測 (run と suite の id は #2577 の本文):
 #
@@ -110,16 +111,23 @@ errfile=$(mktemp)
 trap 'rm -f "$errfile"' EXIT
 
 # 同じ SHA の、skipped とこの run 自身を除いた最新の 1 行 ("<id> <status> <conclusion> <url>")。
-# 無ければ空。gh が落ちたら 1 を返す
+# 無ければ空。gh が落ちたら 1 を返す。
+#
+# **最新は、冒頭の規則と同じく作成順で最新の check suite で選び、その中で check run の id の
+# 最大を取る** (#2716 の反証 4)。suite をまたいで id の最大を取ると、古い suite の検査を打ち直した
+# とき (stall-act の stale-checks が打つ組) その id が最大になり、必須が読まない古い suite の結論を
+# 返す。打ち直しは同じ suite に載るので、suite の中では id の最大が最後の attempt である。suite の
+# id が読めない check run は 0 (どの suite よりも古い) と読む
 latest_run() { # $1=名前
   local rows
   rows=$(gh api --paginate \
     "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=$1&filter=all&per_page=100" \
     --jq '.check_runs[] | select(.app.slug == "github-actions" and .conclusion != "skipped")
           | select(.details_url | contains("/actions/runs/'"$GITHUB_RUN_ID"'/") | not)
-          | "\(.id) \(.status) \(.conclusion // "-") \(.html_url)"' 2>"$errfile" </dev/null) || return 1
-  # ページごとに出るので、id の数の順に並べ直してから最大を取る
-  sort -n <<<"$rows" | tail -n 1
+          | "\(.check_suite.id // 0) \(.id) \(.status) \(.conclusion // "-") \(.html_url)"' \
+    2>"$errfile" </dev/null) || return 1
+  # ページごとに出るので、suite と id の数の順に並べ直してから最大を取り、suite の欄を外す
+  sort -n -k1,1 -k2,2 <<<"$rows" | tail -n 1 | cut -d' ' -f2-
 }
 
 failed=0

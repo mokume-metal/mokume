@@ -114,13 +114,13 @@
 # 別の check の stale-checks の巻き添えで戻ってくるのも、これで止まる。
 #
 # **3 つ目の基準は「最新の run の結論が判定になるジョブか」** (#2668)。pr-gate
-# (.github/workflows/pr-gate.yml) は直すと新しい run が付け直し、concurrency が走っている古い
-# run を cancel する。head SHA に残る古い赤・cancelled は直す前の名残で、打ち直しても得るものが
-# 無い。打てば同じ group で走っている新しい run を cancel しうる。stall-watch.sh の
-# normalize_checks も古い pr-gate を stale-checks に数えない。必須が揃った後も cancelled の
-# pr-gate が残って BLOCKED のままの形 (#2716) は、stall-watch.sh が stale-gate と名乗って打ち直す
-# run の番号を出し、**打つのは人である** (分類は name なのでここへは来ない)。当番に打たせるかは、
-# この除外を変える判断になる
+# (.github/workflows/pr-gate.yml) は直すと新しい run が付け直し、必須は作成順で最新の run の結論を
+# 読む (規則は scripts/ci-gate.sh の冒頭)。head SHA に残る古い赤・cancelled は必須が読まない名残で、
+# 打ち直しても得るものが無い。打てば同じ concurrency の group の待ちを置き換えて cancel しうる。
+# stall-watch.sh の normalize_checks も古い pr-gate を stale-checks に数えない。必須が読む最新の
+# suite の pr-gate が cancelled で BLOCKED のままの形 (#2716) は、stall-watch.sh が stale-gate と
+# 名乗って打ち直す run の番号を出し、**打つのは人である** (分類は name なのでここへは来ない)。
+# 当番に打たせるかは、この除外を変える判断になる
 #
 # 検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail

@@ -8,8 +8,8 @@ name: PR gate
 # **分ける理由は、古い赤が必須チェックに残ること** (#259・#2134・#2577)。作法の検査が ci-gate の
 # needs に居ると、本文やラベルを直して新しい run が緑になっても、直す前の run の赤い ci-gate が
 # 同じ SHA に残る。直す前の run の ci-gate は macOS の ci-check (約 14 分) を待って終わるので、
-# 直した後の run より遅く終わりやすい。pr-gate は API を読むだけの数十秒のジョブで、直す前の
-# run は下の concurrency が止めるので、直した後の run の結論が最新として残る。
+# 直した後の run より遅く終わりやすい。pr-gate は API を読むだけの数十秒のジョブで、直した後の
+# 出来事の run は作成順で新しい suite に載るので、必須はその結論を読む (下の concurrency の注釈)。
 #
 # **段階的に切り替えた** (#2611 の条件 3)。pr-gate を足して ci-gate と重ねた (#2668) → メンテナが
 # pr-gate を必須に適用した → ci.yml の ci-gate から作法の検査を外した (#2669)。必須の判定に空白を
@@ -36,23 +36,29 @@ on:
 permissions:
   contents: read
 
-# PR ごとに、走っている・待っている run を、後から group に入った run が止める。止めた run の
-# pr-gate は cancelled で終わる。**完了した赤は消さない** — それを上書きするのは、直した後の新しい
-# run の結論である (#2611 の条件 1)。
+# PR ごとに run を 1 本ずつ走らせ、**走っている run は止めない** (#2716)。
 #
 # 必須が読むのは、作成順で最新の check suite (run) の pr-gate である (規則は scripts/ci-gate.sh
-# 冒頭の「必須の判定が読む check run」・#2577)。直した後の出来事の run は後から作られるので、その
-# 結論が読まれる。**ただし同じ秒に立った run では、group に入る順と作成順が逆になりうる** —
-# #2712 では作成と同時のラベルで 2 本の run が立ち、新しい run が先に group に入って、後から入った
-# 古い run に cancel された。必須は新しい suite の cancelled を読み、BLOCKED のまま queue に入ら
-# なかった (#2716)。cancel しない置き方 (queue: max・concurrency を外す) では、その run がラベルの
-# 付く前の状態を読んで赤で残りうるので採っていない (#2716 の PR)。起きたら scripts/stall-watch.sh が
-# stale-gate と名乗り、打ち直す run を出す。github.ref は
-# pull_request と pull_request_review では refs/pull/<N>/merge、merge_group では group ごとに
-# 別の ref (render.yml の render-pr と同じキー)
+# 冒頭の「必須の判定が読む check run」・#2577)。結論が付く順 (完了順) は問わないので、古い run の
+# 結論が後から付いても、新しい run の結論は覆らない。新しい run は自分の出来事の後に PR を API で
+# 読むので、ラベル・タイトル・本文の直しはその結論に入る。
+#
+# 以前は cancel-in-progress: true で、走っている run を後から group に入った run が止めていた。
+# **group に入る順は作成順と逆になりうる** — #2712 では作成と同時のラベルで同じ秒に 2 本の run が
+# 立ち、新しい run が先に group に入って、後から入った古い run に cancel された。必須は新しい
+# suite の cancelled を読み、必須が揃っても BLOCKED のまま queue に入らなかった。
+#
+# cancel-in-progress: false では、group は走る 1 本と待つ 1 本を持つ。作成と同時のラベルの 2 本
+# (opened・labeled) では打ち切りが起きない。**3 本目が来ると待っている 1 本が置き換えられて
+# cancelled になる** (GitHub の文書の既定の動き)。置き換えられたのが新しい suite の run なら同じく
+# 塞ぐので、scripts/stall-watch.sh が stale-gate と名乗り、打ち直す run を出す。queue: max (待ちを
+# 並べる) は、固定している actionlint が受けないので使わない (rhysd/actionlint#657)。
+#
+# github.ref は pull_request と pull_request_review では refs/pull/<N>/merge、merge_group では
+# group ごとに別の ref (render.yml の render-pr と同じキー)
 concurrency:
   group: pr-gate-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 # run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
 defaults:

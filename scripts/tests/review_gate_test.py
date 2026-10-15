@@ -530,7 +530,8 @@ class ReviewGateTest(unittest.TestCase):
     # --- 差し戻しの文面が約束してよいこと (#2134・#2669) -----------------------
     #
     # このゲートは pr-gate の中で走る。本文の編集・ラベルの付け外し・変更要求の解除で pr-gate の
-    # 新しい run が走り、その結論が同じコミットの最新になる (#2668 の probe)。かつて ci.yml の
+    # 新しい run が作られ、必須は作成順で最新の run の結論を読む (scripts/ci-gate.sh 冒頭の規則・
+    # #2577)。「その結論が同じコミットの最新になる」は #2712 で成り立たなかった (#2716)。かつて ci.yml の
     # ci-gate の needs に居た頃は、直しても赤かった run の ci-gate が残り、文面は打ち直しまで
     # 案内していた。作法の検査が ci-gate を離れた (#2669) ので、共通の末尾 (after_fix_note) を
     # 持つ 4 つの差し戻しは、直せば付け直されると言い、打ち直しや新しいコミットを案内しない。
@@ -563,7 +564,8 @@ class ReviewGateTest(unittest.TestCase):
         for name, err in self.blocked_messages().items():
             with self.subTest(name):
                 self.assertSays(err, "直せば付け直されます (打ち直しは要りません)")
-                self.assertSays(err, "pr-gate の新しい run が走り、その結論が同じコミットの最新になります")
+                self.assertSays(err, "pr-gate の新しい run が作られ、必須はその (作成順で最新の) run の結論を読みます")
+                self.assertNotIn(self.squash("同じコミットの最新"), self.squash(err))
                 for gone in ("gh run rerun", "ci-gate", "新しいコミット", "空コミット", "stall-watch"):
                     self.assertNotIn(gone, err, gone)
 
@@ -575,7 +577,7 @@ class ReviewGateTest(unittest.TestCase):
         err = self.blocked_messages()["no-issue の不在"]
         self.assertIn("gh pr create --label no-issue", err)
         self.assertSays(err, "通常は最初の run から通ります")
-        self.assertSays(err, "まれに作成の run が先にラベルを読んで赤くなりますが、ラベルの run で付け直されます")
+        self.assertSays(err, "まれに作成の run がラベルの付く前を読んで赤くなりますが、必須は後から作られるラベルの run の結論を読みます")
         self.assertSays(err, "あとから付けても付け直されます")
         # 後付けの案内は、作成と同時の案内より後に出る
         self.assertLess(err.find("gh pr create --label no-issue"), err.find("あとから付けても"))
@@ -585,7 +587,7 @@ class ReviewGateTest(unittest.TestCase):
     def test_the_changes_requested_message_says_a_dismissal_starts_a_run_but_needs_a_rerun(self):
         err = self.blocked_messages()["変更要求"]
         self.assertSays(err, "変更要求を解いてもらう")
-        self.assertSays(err, "変更要求の解除で pr-gate の新しい run が走り")
+        self.assertSays(err, "変更要求の解除で pr-gate の新しい run が作られ")
         self.assertNotIn("打ち直しが要ります", err)
 
     def test_the_missing_verify_label_message_names_the_rerun_of_this_run(self):
