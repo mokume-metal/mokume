@@ -49,13 +49,17 @@ struct FormInstance {
     static let fillsFlag: UInt32 = 1
     /// 輪郭を持つ。
     static let strokesFlag: UInt32 = 2
-    /// 描く画素で 1 画素より細い塗りを含みうる。**列だけが持つ旗で、置き場所には入れない**
-    /// (``mayHaveThinFill(unitsPerDrawnPixel:)``)。
+    /// 描く画素で 1 画素より細い塗りか、1 画素より細い (潰れた) 輪郭の帯の穴を含みうる。
+    /// **列だけが持つ旗で、置き場所には入れない** (``mayHaveThinFill(unitsPerDrawnPixel:)``・
+    /// ``mayHaveThinHole(unitsPerDrawnPixel:)``)。
     ///
     /// 塗り・輪郭の旗と違って、変わっても列を切らない。含む図形が 1 つでもある列は、
-    /// 断片の枝を残した組で描く ([#1477])。
+    /// 断片の枝を残した組で描く ([#1477])。名前は細い塗りの旗として入ったときのままで、
+    /// 帯の細い穴の枝 ([#2186]) も同じ旗に乗る — 枝は図形ごとの判定でさらに分かれるので、
+    /// 片方しか含まない列も絵は変わらない。
     ///
     /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
     static let thinFillsFlag: UInt32 = 4
 
     /// 判定を保守側へ倒す幅 (相対)。
@@ -84,17 +88,63 @@ struct FormInstance {
         guard meta.w & Self.fillsFlag != 0,
             meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue
         else { return false }
+        return isThin(half: SIMD2(size.x, size.y), unitsPerDrawnPixel: unitsPerDrawnPixel)
+    }
+
+    /// 半幅 `half` (形自身の座標) の向きのどちらかが、描く画素で 1 画素より細いか。断片の境目
+    /// (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つ`) を、``thinFillSlack`` だけ「細い」側へ広げて解く。
+    private func isThin(half: SIMD2<Float>, unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
         // 断片が読む行ノルム (描く画素 1 つが形自身の座標でいくらか) は、逆行列の行に
         // 描く画素の大きさを掛けたものの長さ。逆行列は余因子 / 行列式なので、両辺に
         // 行列式の 2 乗を掛けて、割り算と平方根を使わずに 2 乗どうしで比べる
         let determinant = linear.x * linear.w - linear.y * linear.z
         let rowX = SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel
         let rowY = SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel
-        let span = 2 * SIMD2(size.x, size.y) * (1 + 2.0 / 256)
+        let span = 2 * half * (1 + 2.0 / 256)
         let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
         let squared = determinant * determinant
         return span.x * span.x * squared < simd_length_squared(rowX) * reach
             || span.y * span.y * squared < simd_length_squared(rowY) * reach
+    }
+
+    /// この形の輪郭の帯の穴 (内縁の内) が、**描く画素で 1 画素より細いか潰れている**ことがありうるか
+    /// ([#2186])。
+    ///
+    /// 断片の `rect` と楕円の輪郭の、帯の穴を両縁を見る積で数える枝 (`Shapes.metal` の
+    /// `mokume_thinHole`) を残した組で描くかを決める。``mayHaveThinFill(unitsPerDrawnPixel:)`` と
+    /// 同じく**迷ったら「含む」と答える** — 立て損なうと、潰れた穴を縁 1 本で数えて帯が欠ける。
+    /// 穴の大きさは断片と同じ式で出す (`rect` は半幅 − 太さの半分、楕円は ``ellipseHole(radii:halfWeight:)``)。
+    /// 潰れた穴 (どちらかの向きが 0 以下) は、描く画素によらず「含む」。
+    ///
+    /// 扇 (`arc`) と線・点、輪郭の無い形は枝を持たないので、常に「含まない」。
+    ///
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    func mayHaveThinHole(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        guard meta.w & Self.strokesFlag != 0,
+            meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue
+        else { return false }
+        let half = SIMD2(size.x, size.y)
+        let hole = meta.x == Kind.ellipse.rawValue
+            ? Self.ellipseHole(radii: half, halfWeight: size.z) : half - size.z
+        guard hole.x > 0, hole.y > 0 else { return true }
+        return isThin(half: hole, unitsPerDrawnPixel: unitsPerDrawnPixel)
+    }
+
+    /// 楕円の輪郭の帯の穴の、短い向きの半幅と長い向きの端までの長さ (`radii` と同じ並び)。
+    /// 断片の `mokume_ellipseHole` (`Shapes.metal`) と同じ式で、理由もそちらにある。
+    static func ellipseHole(radii: SIMD2<Float>, halfWeight: Float) -> SIMD2<Float> {
+        let shortRadius = min(radii.x, radii.y)
+        let longRadius = max(radii.x, radii.y)
+        let shortHole = shortRadius - halfWeight
+        let longHole: Float
+        if halfWeight * longRadius <= shortRadius * shortRadius {
+            longHole = longRadius - halfWeight
+        } else {
+            let ratio = halfWeight / max(shortRadius, 1e-30)
+            longHole = (max(longRadius * longRadius - shortRadius * shortRadius, 0)).squareRoot()
+                * (max(1 - ratio * ratio, 0)).squareRoot()
+        }
+        return radii.x <= radii.y ? SIMD2(shortHole, longHole) : SIMD2(longHole, shortHole)
     }
 
     /// 置き場所を 1 つ組む。**色は「持つか」を旗で渡し、`Optional` にしない。**

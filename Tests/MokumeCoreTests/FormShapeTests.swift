@@ -2080,4 +2080,50 @@ struct FormShapeTests {
         #expect(!form(2, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 2")
         #expect(form(1.9, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 1.9")
     }
+
+    /// **輪郭の帯の細い穴の判定は、穴の大きさを描く画素で測り、潰れた穴は必ず「含む」と答える**
+    /// ([#2186])。
+    ///
+    /// 「含む」と答えた図形の列だけが、断片に帯の穴を両縁で数える枝を残した組で描かれる
+    /// (`kFormHasThinFill`)。穴は `rect` が半幅 − 太さの半分、楕円が `ellipseHole` で、断片と同じ式。
+    /// 潰れた穴を「含まない」と答えると、帯が欠けた絵に戻る。
+    ///
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    @Test("輪郭の帯の細い穴の判定は、穴を描く画素で測り、潰れた穴は含む側に答える")
+    func thinHoleJudgementLeansToIncluding() {
+        func form(
+            _ width: Float, _ height: Float, weight: Float, kind: FormInstance.Kind = .rect,
+            linear: SIMD4<Float> = SIMD4(1, 0, 0, 1), strokes: Bool = true
+        ) -> FormInstance {
+            FormInstance(
+                kind: kind, linear: linear, offset: SIMD2(10, 10),
+                half: SIMD2(width / 2, height / 2), arc: kind == .arc ? SIMD2(0, 1) : .zero,
+                halfWeight: weight / 2, fill: SIMD4(1, 1, 1, 1), stroke: SIMD4(1, 1, 1, 1),
+                fills: true, strokes: strokes, cap: .round, join: .miter)
+        }
+        let one = SIMD2<Float>(1, 1)
+        // rect: 穴は半幅 − 太さの半分。潰れた穴・1 画素より細い穴は含む
+        #expect(form(0.6, 20, weight: 1).mayHaveThinHole(unitsPerDrawnPixel: one), "潰れた穴 (rect 0.6・太さ 1)")
+        #expect(form(1.5, 20, weight: 2).mayHaveThinHole(unitsPerDrawnPixel: one), "潰れた穴 (rect 1.5・太さ 2)")
+        #expect(form(2.4, 20, weight: 2).mayHaveThinHole(unitsPerDrawnPixel: one), "幅 0.4 の穴")
+        #expect(!form(3, 20, weight: 2).mayHaveThinHole(unitsPerDrawnPixel: one), "幅 1 の穴")
+        #expect(!form(40, 30, weight: 2).mayHaveThinHole(unitsPerDrawnPixel: one), "普通の rect")
+        // 楕円: 太さの半分が短半径以上なら穴は無い。細長い楕円の細い穴も含む
+        #expect(
+            form(100, 6, weight: 20, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one),
+            "潰れた穴 (ellipse 100×6・太さ 20)")
+        #expect(
+            form(40, 2.4, weight: 2, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one),
+            "幅 0.4 の穴 (ellipse 40×2.4・太さ 2)")
+        #expect(form(1.9, 1.9, weight: 1, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 1.9 の円")
+        #expect(!form(2, 2, weight: 1, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 2 の円")
+        #expect(!form(700, 700, weight: 7, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 700 の円")
+        // 扇・輪郭の無い形は枝を持たないので含まない
+        #expect(!form(0.6, 20, weight: 1, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "扇")
+        #expect(!form(0.6, 20, weight: 1, strokes: false).mayHaveThinHole(unitsPerDrawnPixel: one), "輪郭の無い形")
+        // 拡大の下では画面の大きさで答える: scale(0.25) の穴の幅 3 は画面で 0.75
+        let quarter = SIMD4<Float>(0.25, 0, 0, 0.25)
+        #expect(form(5, 40, weight: 2, linear: quarter).mayHaveThinHole(unitsPerDrawnPixel: one), "scale(0.25) の穴 3")
+        #expect(!form(10, 40, weight: 2, linear: quarter).mayHaveThinHole(unitsPerDrawnPixel: one), "scale(0.25) の穴 8")
+    }
 }

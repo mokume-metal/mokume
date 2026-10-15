@@ -684,11 +684,12 @@ extension Canvas {
             let moved = form.placed(by: matrix, tint: placement.fill)
             // 潰れた変換で置いた形は面積を持たない (直に描いたときと同じく何も出ない)
             guard moved.isPlaceable else { continue }
-            // 細い塗りは**置いた後の変換で**判定する — 記録したときの大きさが同じでも、
-            // 縮めて置けば細くなる
+            // 細い塗り (と輪郭の帯の細い穴・#2186) は**置いた後の変換で**判定する — 記録した
+            // ときの大きさが同じでも、縮めて置けば細くなる
             beginForm(
                 flags: moved.meta.w,
-                thinFill: moved.mayHaveThinFill(unitsPerDrawnPixel: unitsPerDrawnPixel))
+                thinFill: moved.mayHaveThinFill(unitsPerDrawnPixel: unitsPerDrawnPixel)
+                    || moved.mayHaveThinHole(unitsPerDrawnPixel: unitsPerDrawnPixel))
             formInstances.append(moved)
         }
     }

@@ -498,6 +498,324 @@ struct PixelGridTests {
             total / Double(counted) < 0.001, "\(mode): 継ぎ目で下地が漏れる: 平均 \(total / Double(counted))")
     }
 
+    // MARK: - 1 画素より細い塗りと、潰れた帯の穴 (#2186)
+
+    /// 細い塗りや潰れた帯の穴を持つ `rect` と楕円。和集合を**真の幾何**で数えるための形。
+    ///
+    /// 和集合を描いた絵 (塗りだけ・輪郭だけを細かい面に描いたもの) から取らないのは、輪郭だけの
+    /// 絵そのものが同じ口で欠けるからである — 欠けた帯は和集合から外れ、漏れが数えられない。
+    nonisolated struct SeamShape: CustomTestStringConvertible, Sendable {
+        let name: String
+        let isEllipse: Bool
+        /// rect は半幅・半高、楕円は 2 つの半径 (形自身の座標)
+        let half: SIMD2<Double>
+        let weight: Float
+        var testDescription: String { "\(name)・太さ \(weight)" }
+
+        @MainActor func draw(on canvas: Canvas) {
+            let size = SIMD2<Float>(Float(half.x * 2), Float(half.y * 2))
+            if isEllipse {
+                canvas.ellipse(0, 0, size.x, size.y)
+            } else {
+                canvas.rect(-size.x / 2, -size.y / 2, size.x, size.y)
+            }
+        }
+
+        func inFill(_ p: SIMD2<Double>) -> Bool {
+            if isEllipse {
+                let q = p / half
+                return simd_dot(q, q) <= 1
+            }
+            return abs(p.x) <= half.x && abs(p.y) <= half.y
+        }
+
+        /// 帯 (外縁の内で内縁の外) に入るか。`q` は輪郭の位置 (画面で半画素寄せた所) での座標。
+        /// 角は `miter` (既定)。
+        func inBand(_ q: SIMD2<Double>) -> Bool {
+            let halfWeight = Double(weight) / 2
+            if isEllipse { return abs(PixelGridTests.ellipseDistance(q, half)) <= halfWeight }
+            guard abs(q.x) <= half.x + halfWeight, abs(q.y) <= half.y + halfWeight else { return false }
+            let hole = half - halfWeight
+            return hole.x <= 0 || hole.y <= 0 || abs(q.x) >= hole.x || abs(q.y) >= hole.y
+        }
+    }
+
+    /// 点から楕円の縁までの符号つきの距離 (内で負)。**真の距離**を二分法で解く
+    /// (D. Eberly, "Distance from a Point to an Ellipse")。距離関数の経路の楕円は近似の距離場
+    /// (`mokume_ellipseField`) なので、それと独立に和集合を決めるために使う。
+    nonisolated static func ellipseDistance(_ point: SIMD2<Double>, _ radii: SIMD2<Double>) -> Double {
+        // 長いほうを x に揃え、第 1 象限へ折る
+        var p = SIMD2(abs(point.x), abs(point.y))
+        var r = radii
+        if r.x < r.y {
+            p = SIMD2(p.y, p.x)
+            r = SIMD2(r.y, r.x)
+        }
+        let inside = (p.x / r.x) * (p.x / r.x) + (p.y / r.y) * (p.y / r.y) <= 1
+        let distance: Double
+        if p.y > 0 && p.x > 0 {
+            let z = p / r
+            let ratio = (r.x / r.y) * (r.x / r.y)
+            let n0 = ratio * z.x
+            var low = z.y - 1
+            var high = inside ? 0 : sqrt(n0 * n0 + z.y * z.y) - 1
+            var s = 0.0
+            for _ in 0..<80 {
+                s = (low + high) / 2
+                let g = (n0 / (s + ratio)) * (n0 / (s + ratio)) + (z.y / (s + 1)) * (z.y / (s + 1)) - 1
+                if g > 0 { low = s } else { high = s }
+            }
+            let nearest = SIMD2(ratio * p.x / (s + ratio), p.y / (s + 1))
+            distance = simd_length(nearest - p)
+        } else if p.y > 0 {
+            // 短い軸の上。いちばん近いのは短い軸の端
+            distance = abs(p.y - r.y)
+        } else if r.x * p.x < r.x * r.x - r.y * r.y {
+            // 長い軸の上で、縮閉線の尖りより中心の側。いちばん近いのは軸の外の点
+            let x0 = r.x * p.x / (r.x * r.x - r.y * r.y)
+            distance = simd_length(SIMD2(r.x * x0 - p.x, r.y * sqrt(max(0, 1 - x0 * x0))))
+        } else {
+            distance = abs(p.x - r.x)
+        }
+        return inside ? -distance : distance
+    }
+
+    /// #2186 の本文の 4 通りの置き方 (48×48 の面の中心からのずれと回転)。
+    private static let seamPlacements: [SIMD3<Float>] = [
+        SIMD3(0.15, 0.11, 0), SIMD3(0.3, -0.38, 0.35), SIMD3(-0.29, 0.44, 1.1), SIMD3(0.52, 0.27, 2.3),
+    ]
+
+    /// 塗り ∪ 帯に丸ごと入る画素の漏れ (最悪・平均・数えた画素)。
+    ///
+    /// 画素は四角を 1/8 画素だけ広げた所を 9x9 の標本で見て、全部が塗りか帯に入っているかで
+    /// 決める (細い形は帯の幅も 1〜2 画素なので、5x5 の標本では隙間を取り逃す)。漏れの読み方は
+    /// `fillAndStrokeLeaveNoSeam` と同じで、画素の値が「塗りだけ・重なり・帯だけ」の 3 色の範囲から
+    /// 地の側へはみ出した分を、範囲の端から地までの距離で割ったもの。
+    private func seamLeaks(
+        _ shape: SeamShape, _ mode: BlendMode, fills: Bool, canvasSize: Int, center: SIMD2<Float>
+    ) throws -> (worst: Double, total: Double, counted: Int, where: String) {
+        let (groundValue, inkValue) = seamPalette(mode)
+        let ground = LinearRGBA.linear(red: groundValue, green: groundValue, blue: groundValue)
+        let ink = LinearRGBA.linear(red: inkValue, green: inkValue, blue: inkValue)
+        let whole: [Float] = try {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 48, height: 48)
+            try canvas.draw {
+                canvas.background(ground)
+                canvas.blendMode(mode)
+                canvas.strokeWeight(16)
+                canvas.fill(ink)
+                canvas.noStroke()
+                canvas.rect(8, 8, 32, 32)
+                canvas.noFill()
+                canvas.stroke(ink)
+                canvas.rect(8, 8, 32, 32)
+            }
+            let pixels = try canvas.target.readPixels()
+            return [pixels[24, 24].red, pixels[12, 24].red, pixels[4, 24].red]
+        }()
+        // 塗りを持たない形は帯だけの色だけで読む
+        let range = fills ? whole : [whole[2]]
+        let (low, high) = (Double(range.min() ?? 0), Double(range.max() ?? 0))
+        let groundLevel = Double(groundValue)
+        #expect(groundLevel < low || groundLevel > high, "\(mode): 地が 3 色の範囲の中にある (\(whole))")
+        func leak(_ value: Double) -> Double {
+            groundLevel < low
+                ? max(0, low - value) / (low - groundLevel)
+                : max(0, value - high) / (groundLevel - high)
+        }
+        var worst = 0.0
+        var worstAt = ""
+        var total = 0.0
+        var counted = 0
+        let halfWeight = Double(shape.weight) / 2
+        for placement in Self.seamPlacements {
+            let origin = SIMD2<Double>(Double(center.x + placement.x), Double(center.y + placement.y))
+            let angle = Double(placement.z)
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: canvasSize, height: canvasSize)
+            try canvas.draw {
+                canvas.background(ground)
+                canvas.blendMode(mode)
+                canvas.fill(ink)
+                canvas.stroke(ink)
+                if !fills { canvas.noFill() }
+                canvas.strokeWeight(shape.weight)
+                canvas.translate(Float(origin.x), Float(origin.y))
+                canvas.rotate(Float(angle))
+                shape.draw(on: canvas)
+            }
+            let pixels = try canvas.target.readPixels()
+            // 画面 → 形自身の座標 (回転の逆)。帯は画面で半画素寄る (ADR-0039 決定 2)
+            let (c, s) = (cos(angle), sin(angle))
+            func local(_ point: SIMD2<Double>) -> SIMD2<Double> {
+                let d = point - origin
+                return SIMD2(c * d.x + s * d.y, -s * d.x + c * d.y)
+            }
+            let shift = local(origin + 0.5)
+            func covered(_ point: SIMD2<Double>) -> Bool {
+                let p = local(point)
+                return (fills && shape.inFill(p)) || shape.inBand(p - shift)
+            }
+            let reach = max(shape.half.x, shape.half.y) + halfWeight + 2
+            let lowest = max(0, Int(min(origin.x, origin.y) - reach))
+            let highest = min(canvasSize, Int(max(origin.x, origin.y) + reach) + 1)
+            for y in lowest..<highest {
+                for x in lowest..<highest {
+                    var inside = true
+                    for j in 0..<9 where inside {
+                        for k in 0..<9 {
+                            let point = SIMD2(
+                                Double(x) - 0.125 + Double(k) * 1.25 / 8, Double(y) - 0.125 + Double(j) * 1.25 / 8)
+                            if !covered(point) { inside = false; break }
+                        }
+                    }
+                    guard inside else { continue }
+                    let leaked = leak(Double(pixels.components[(y * canvasSize + x) * 4]))
+                    if leaked > worst {
+                        worst = leaked
+                        worstAt = "(\(x), \(y)) を \(placement) で"
+                    }
+                    total += leaked
+                    counted += 1
+                }
+            }
+        }
+        return (worst, total, counted, worstAt)
+    }
+
+    /// 1 画素より細い塗りに輪郭を付けた形 (#2186 の完了条件 1)。
+    nonisolated static let thinFillShapes: [SeamShape] = [
+        SeamShape(name: "rect(-0.3, -10, 0.6, 20)", isEllipse: false, half: SIMD2(0.3, 10), weight: 1),
+        SeamShape(name: "ellipse(0, 0, 0.7, 20)", isEllipse: true, half: SIMD2(0.35, 10), weight: 1),
+    ]
+
+    /// 1 画素より細い塗りと輪郭を両方持つ形も、継ぎ目で下地を漏らさない ([#2186])。
+    ///
+    /// 細い塗り (`isThinFill`) は両縁を見る積で数えるが、帯の内縁は縁 1 本の距離場のままだった。
+    /// 太さが塗りの幅を越えると帯の穴は潰れて「どこにも無い」はずなのに、`rect` は負の半幅が
+    /// 縁の渡し (1 画素) の内に残って内縁の被覆が 0 にならず、楕円は近似の距離場が長軸の近くで
+    /// 先端までの距離を返して内縁が画素を丸ごと覆い、帯が欠けた。直す前は `.blend` の
+    /// `ellipse(0, 0, 0.7, 20)` で太さ 1・2 とも最悪 31.7% (本文の測り方)。上限は
+    /// `fillAndStrokeLeaveNoSeam` と同じ。
+    ///
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    @Test(
+        "1 画素より細い塗りと輪郭が接する所で、下地が漏れない",
+        arguments: [
+            BlendMode.blend, .add, .subtract, .lightest, .darkest,
+            .difference, .exclusion, .multiply, .screen,
+        ],
+        [Float(1), 2])
+    func thinFillAndStrokeLeaveNoSeam(_ mode: BlendMode, _ weight: Float) throws {
+        for base in Self.thinFillShapes {
+            let shape = SeamShape(name: base.name, isEllipse: base.isEllipse, half: base.half, weight: weight)
+            let measured = try seamLeaks(shape, mode, fills: true, canvasSize: 48, center: SIMD2(24, 24))
+            #expect(measured.counted > 0, "\(mode)・\(shape): 丸ごと覆われる画素が無い")
+            #expect(
+                measured.worst < (weight < 1.5 ? 0.08 : 0.01),
+                "\(mode)・\(shape): 継ぎ目で下地が漏れる: 最悪 \(measured.worst) \(measured.where)")
+            #expect(
+                measured.total / Double(max(measured.counted, 1)) < 0.001,
+                "\(mode)・\(shape): 継ぎ目で下地が漏れる: 平均 \(measured.total / Double(max(measured.counted, 1)))")
+        }
+    }
+
+    /// 帯の穴が潰れる・1 画素より細い形 (#2186 の完了条件 2)。面の大きさと中心も持つ。
+    nonisolated static let collapsedHoleShapes: [(shape: SeamShape, canvasSize: Int)] = [
+        (SeamShape(name: "rect(-0.3, -10, 0.6, 20)", isEllipse: false, half: SIMD2(0.3, 10), weight: 1), 48),
+        (SeamShape(name: "rect(-0.3, -10, 0.6, 20)", isEllipse: false, half: SIMD2(0.3, 10), weight: 2), 48),
+        (SeamShape(name: "ellipse(0, 0, 0.7, 20)", isEllipse: true, half: SIMD2(0.35, 10), weight: 1), 48),
+        (SeamShape(name: "ellipse(0, 0, 0.7, 20)", isEllipse: true, half: SIMD2(0.35, 10), weight: 2), 48),
+        (SeamShape(name: "rect(-0.75, -10, 1.5, 20)", isEllipse: false, half: SIMD2(0.75, 10), weight: 2), 48),
+        // #1562 の形
+        (SeamShape(name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: 20), 160),
+    ]
+
+    /// 太さが形より太く帯の穴が潰れた形も、輪郭だけで帯を欠かさない ([#2186])。
+    ///
+    /// 輪郭の帯は「外縁の内で内縁の外」で、線幅が形より太いと内縁はどこにも無い (被覆 0)。
+    /// 内縁を縁 1 本の距離場で数えると、穴が潰れたことを見られない — `rect(-0.3, -10, 0.6, 20)`・
+    /// 太さ 1 は内縁の半幅が −0.2 で帯の中心の画素に被覆が残り、楕円は近似の距離場が長軸の上で
+    /// 先端までの距離を返すので、内縁が長軸の近くを丸ごと覆って帯が抜けた。輪郭だけの帯は
+    /// 混ぜ方によらず同じ被覆で混ぜるので、`.blend` で数える。
+    ///
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    @Test(
+        "太さが形より太く帯の穴が潰れても、輪郭だけの帯は欠けない",
+        arguments: PixelGridTests.collapsedHoleShapes.indices)
+    func collapsedHoleLeavesNoGapInTheBand(_ index: Int) throws {
+        let (shape, size) = Self.collapsedHoleShapes[index]
+        let center = SIMD2<Float>(Float(size) / 2, Float(size) / 2)
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: size, center: center)
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(
+            measured.worst < (shape.weight < 1.5 ? 0.08 : 0.01),
+            "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.total / Double(max(measured.counted, 1)) < 0.001,
+            "\(shape): 帯が欠ける: 平均 \(measured.total / Double(max(measured.counted, 1)))")
+    }
+
+    /// 帯の穴が潰れてはいないが 1 画素より細い、細長い楕円。
+    nonisolated static let thinHoleShapes: [SeamShape] = [
+        SeamShape(name: "ellipse(0, 0, 40, 2.4)", isEllipse: true, half: SIMD2(20, 1.2), weight: 2),
+        SeamShape(name: "ellipse(0, 0, 60, 1.6)", isEllipse: true, half: SIMD2(30, 0.8), weight: 1.2),
+    ]
+
+    /// 帯の穴が 1 画素より細い細長い楕円も、輪郭だけの帯を欠かさない ([#2186])。
+    ///
+    /// 縁 1 本の距離場は細い穴の向こう側の縁を見られない。細長い楕円では、近似の距離場
+    /// (`mokume_ellipseField`) が長軸の上で先端までの距離を返すので、穴が実際の端 (長軸の上で縁
+    /// から太さの半分だけ離れる所) を越えて先端の近くまで伸び、帯が丸ごと抜けていた。細い穴は
+    /// 長軸に沿った穴の半幅で数える (`mokume_thinEllipseHoleCoverage`)。
+    ///
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    @Test(
+        "帯の穴が 1 画素より細い細長い楕円も、輪郭だけの帯は欠けない",
+        arguments: PixelGridTests.thinHoleShapes)
+    func thinHoleLeavesNoGapInTheBand(_ shape: SeamShape) throws {
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: 64, center: SIMD2(32, 32))
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        // 上限は太さによらず最悪 8%・平均 0.5% に取る。細い穴も細い塗りと同じ箱フィルタで、
+        // 画素の中のいちばん広い所の半幅を長さに掛けるので、尖った穴の端の画素では穴を多めに
+        // 数える (直した後の実測で最悪 3.6%・6.6%、平均 0.05%・0.33%。どれも穴の端の画素)。
+        // 標本 (9x9) が見落とすほど細い穴の端は、丸ごと覆われる画素に数えられる。直す前は
+        // 長軸の近くで帯が丸ごと抜けた (最悪 100%)
+        #expect(measured.worst < 0.08, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.total / Double(max(measured.counted, 1)) < 0.005,
+            "\(shape): 帯が欠ける: 平均 \(measured.total / Double(max(measured.counted, 1)))")
+    }
+
+    /// 帯の穴が 1 画素より細い `rect` の輪郭は、帯の面積ぶんの光を出す ([#2186])。
+    ///
+    /// 細い穴が画素の中に収まると、縁 1 本の距離場は穴を `0.5 + 穴の半幅` と数え、実際の穴
+    /// (穴の幅) より大きく引く。帯に丸ごと入る画素は欠けないので漏れとしては数えられず、光の
+    /// 総量で見る。軸に沿った `rect` は縁の被覆が箱フィルタと一致するので、総量は帯の面積に
+    /// 角の画素ぶんの差だけで一致する。穴 (幅 0.4) の中心を画素の中心に置く — 縁 1 本では
+    /// 1 行あたり 0.3、38 行で 11 ほど足りなくなる。
+    ///
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    @Test("帯の穴が 1 画素より細い rect の輪郭は、帯の面積ぶんの光を出す")
+    func thinHoleRectKeepsItsLight() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 48, height: 64)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(2)
+            // 帯の中心は (11, 24.2) から画面で半画素寄って (11.5, 24.7)。穴は x = 11.3〜11.7
+            canvas.rect(9.8, 4.2, 2.4, 40)
+        }
+        let pixels = try canvas.target.readPixels()
+        var light = 0.0
+        for index in stride(from: 0, to: pixels.components.count, by: 4) {
+            light += Double(pixels.components[index])
+        }
+        // 外縁 4.4 × 42 から、穴 0.4 × 38 を引いた面積
+        let area = 4.4 * 42 - 0.4 * 38
+        #expect(abs(light - area) < 1, "帯の光が \(light) (帯の面積 \(area))")
+    }
+
     @Test("塗りを足しても、輪郭で塗り切られる画素は輪郭の色のまま")
     func fillNeverCoversTheStroke() throws {
         // 形の経路は塗りと輪郭を 1 つの断片で重ねる。輪郭の位置の出し方や重ね方を
