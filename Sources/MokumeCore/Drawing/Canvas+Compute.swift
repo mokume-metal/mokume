@@ -331,6 +331,9 @@ extension Canvas {
     /// 呼んでよいのは、値の区画と控えの置き場のいまのスロットを読む投入が終わっているときだけ
     /// (読み戻しなら全完了を待った後・面をまたぐ順なら環を進めた後)。
     private func submitPendingComputationsAndUploads() throws(RenderFailure) {
+        // **打ち切られた投入の控えを、積む前に立て直す** (#2199)。面をまたぐ早い投入
+        // (`submitPendingComputations()`) も通るので、他の面の計算が届いていない入力を読んで流れない
+        gpu.revokeDroppedDeliveries()
         let assembled = try gpu.withCommands {
             commands throws(RenderFailure) -> (uploaded: EncodedUploads, submission: UInt64) in
             // **控えが先、計算が後。** 計算は書いた値を読む

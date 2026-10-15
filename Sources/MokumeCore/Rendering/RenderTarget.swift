@@ -412,14 +412,21 @@ import MokumeDiagnostics
     ///
     /// 立て直さないのは、書き戻した番号がもう `submission` でない (書き戻し直した・捨てた) とき、書き込み
     /// 待ちが既に立っている (CPU の側が最新) とき、写しを読み戻しで上書きした後 (書いた画素は写しにも
-    /// 残っていない) である。
+    /// 残っていない) とき、**打ち切りの後でこの面へ書く投入があったとき** (``lastWriteSubmission`` が
+    /// `submission` より進んだ) である。
+    ///
+    /// 最後の条件を置くのは、**書き戻しが写しの全面を面へ戻す**からである。打ち切りの後にこの面へ描いた
+    /// 分 (結末が届くまでの数フレーム) があれば、書き戻し直しはそれを打ち切る前の絵へ巻き戻す — 背景を
+    /// 塗らずに重ねるスケッチではその数フレームの線が消え、効果を通した面では効果を通す前の絵の控えまで
+    /// 古い絵に置き換わる (#2199 の反証 1)。立て直さなければ失うのは書いた画素だけなので、そちらに倒す。
+    /// 書いた画素は、打ち切られた回の描いた絵と同じく取り戻さない側に入る。
     ///
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     @discardableResult
     func rewritePixels(droppedAt submission: UInt64) -> Bool {
         guard let pixelMirror, pixelMirror.writtenBackBy == submission,
-            pixelMirror.holdsWrittenBackPixels
+            pixelMirror.holdsWrittenBackPixels, lastWriteSubmission == submission
         else { return false }
         pixelMirror.hasPendingWrites = true
         return true

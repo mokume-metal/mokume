@@ -243,6 +243,32 @@ struct DroppedWorkRedeliveryTests {
         expectRevoked(gpu, dropped: dropped)
     }
 
+    /// **打ち切りの後にこの面へ書いた投入があれば、書き戻しを立て直さない** (#2199 の反証 1)。書き戻しは
+    /// 写しの全面を戻すので、立て直すと後から描いた絵を打ち切る前の絵へ巻き戻す。
+    ///
+    /// 描き切りは頭で取り消すので、「結末が届く前にこの面へ書いた」を描き切りでは決定的に作れない。
+    /// この面へ書く投入を (中身の無いパスで) 直に積んでから、描き切りの頭と同じ照会を呼ぶ。
+    @Test("書き戻しが打ち切られた後にこの面へ書く投入があれば、書き込み待ちを立て直さない (後の絵を巻き戻さない)",
+        arguments: [true, false])
+    func aWriteBackIsNotRebuiltOverLaterWrites(writtenAfter: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        try writeBlue(canvas, dropped: true)
+        awaitOutcomes(gpu)
+        if writtenAfter {
+            let pass = canvas.output.makeRenderPass(clearColor: nil)
+            try gpu.withCommands { commands throws(RenderFailure) in
+                guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+                    throw .encoderUnavailable
+                }
+                encoder.endEncoding()
+                gpu.commit(commands, writing: [canvas.output])
+            }
+        }
+        gpu.revokeDroppedDeliveries()
+        #expect(canvas.output.hasPendingPixelWrites == !writtenAfter, "書き込み待ちの立て直し方が違う")
+    }
+
     /// 投げる読む口の立て直し (#1932) と土台の取り消しは、同じ 1 つの関数を通る。先に読む口が立て直し
     /// ても、後の描き切りの取り消しがもう 1 度立て直さない。
     @Test("投げる読む口が先に立て直した書き戻しを、描き切りの取り消しが二重に書き戻さない")
