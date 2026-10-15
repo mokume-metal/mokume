@@ -71,6 +71,21 @@ final class SketchSurface: NSView {
     /// 退く・閉じる知らせを受けている窓。外すときに名指しする。
     fileprivate weak var observedWindow: NSWindow?
 
+    /// この面が合流点へ押下として流し、まだ解放を流していないキーと釦。
+    ///
+    /// **窓が前から退いたら、ここに残っているものへ解放を流す** (``releaseHeld()``)。退いている
+    /// 間に離したキーは窓へ届かないので、流さないと押されたまま残る
+    /// ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。持つのは面が流した分だけで、
+    /// 外から注入した押下は離さない — 人が触っていないものを、窓の都合で動かさない。
+    fileprivate var heldKeys: Set<Key> = []
+    fileprivate var heldButtons: Set<MouseButton> = []
+    /// 退いたときに離した扱いにした釦。**その後に届く本物の解放は流さない** — 押した窓は
+    /// 解放も受け取るので、流すと `mouseReleased()` が 2 度呼ばれる。押し直せば外す。
+    fileprivate var releasedOnLeave: Set<MouseButton> = []
+
+    /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。窓に載っている間だけ持つ。
+    fileprivate var keyUpMonitor: Any?
+
     init(frame: NSRect, device: any MTLDevice, input: InputState, canvasSize: (Int, Int)) {
         self.device = device
         self.input = input
@@ -82,6 +97,16 @@ final class SketchSurface: NSView {
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationWillTerminate(_:)),
             name: NSApplication.willTerminateNotification, object: nil)
+        // **アプリが退いたときも離す。** 窓が key のまま他のアプリへ移ることがある (窓の
+        // 知らせだけでは取りこぼす)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidResignActive(_:)),
+            name: NSApplication.didResignActiveNotification, object: nil)
+        // **メニューを開いている間も離す。** AppKit は自前の追跡ループへ入り、その間に離した
+        // キーはメニューが取る。窓は key のままでフレームは回り続けるので、押されたまま走る
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(menuDidBeginTracking(_:)),
+            name: NSMenu.didBeginTrackingNotification, object: nil)
     }
 
     @available(*, unavailable)
@@ -240,6 +265,8 @@ extension SketchSurface {
     }
 
     private func noteRelease(_ event: NSEvent) {
+        // 退いたときに離した扱いにした釦の、本物の解放は流さない (``releasedOnLeave``)
+        if releasedOnLeave.remove(Self.button(of: event)) != nil { return }
         guard let point = pressPoint(of: event) else { return }
         deliver(.mouseUp(x: point.x, y: point.y, button: Self.button(of: event)))
     }
@@ -248,9 +275,7 @@ extension SketchSurface {
     /// 直さず、最後に名乗った位置をそのまま使う。`mouseX` は捕まえている間動かない約束である。
     private func pressPoint(of event: NSEvent) -> (x: Float, y: Float)? {
         if pointerLock.isLocked { return lastPoint }
-        guard let point = canvasLocation(of: event) else { return nil }
-        lastPoint = point
-        return point
+        return canvasLocation(of: event)
     }
 
     /// 押しが面そのものに当たったか (重ねた面の上ではないか)。
@@ -274,7 +299,6 @@ extension SketchSurface {
             let motion = Self.motion(
                 isLocked: pointerLock.isLocked, location: canvasLocation(of: event), delta: delta)
         else { return }
-        if case .mouseMoved(let x, let y) = motion { lastPoint = (x, y) }
         deliver(motion)
     }
 
@@ -305,8 +329,46 @@ extension SketchSurface {
     /// 拾った 1 件の行き先。**ここ 1 つを通す** — 種別ごとに書くと、足した種別だけが
     /// 運ばれない形になる。
     func deliver(_ event: InputEvent) {
+        note(event)
         input.enqueue(event)
         relay?(event.wireLine)
+    }
+
+    /// 流した出来事から、面が覚えておくものを控える — 名乗った位置 (``lastPoint``) と、
+    /// 押したまま残っているキーと釦 (``heldKeys``)。**流す口 1 つで控える**ので、拾い方の違う
+    /// 経路 (押下・移動・退いたときの解放) で控え忘れない。
+    private func note(_ event: InputEvent) {
+        switch event {
+        case .keyDown(let code, _, _): heldKeys.insert(code)
+        case .keyUp(let code): heldKeys.remove(code)
+        case .mouseDown(let x, let y, let button):
+            lastPoint = (x, y)
+            heldButtons.insert(button)
+            releasedOnLeave.remove(button)
+        case .mouseUp(let x, let y, let button):
+            lastPoint = (x, y)
+            heldButtons.remove(button)
+        case .mouseMoved(let x, let y): lastPoint = (x, y)
+        case .mouseMovedBy, .scrolled: break
+        }
+    }
+
+    /// 押したまま残っているキーと釦に、解放を流す。**キーと釦がこの面へ届かなくなるときに呼ぶ** —
+    /// 窓が退く・アプリが退く・同じ窓の中で第一応答者が移る・メニューを開く。
+    ///
+    /// 解放は普通の出来事として合流点へ入るので、`keyReleased()` / `mouseReleased()` も呼ばれ、
+    /// 次のフレームで `keyboard.justReleased` が立つ (ADR-0034 決定 7 の挙動 3)。並びは番号順に
+    /// 揃え、同じ押し方からは同じ並びが出るようにする。
+    func releaseHeld() {
+        for code in heldKeys.sorted(by: { $0.rawValue < $1.rawValue }) {
+            deliver(.keyUp(code: code))
+        }
+        // 釦が残っているなら、押下を流したときに位置を控えてある (``note(_:)``)
+        guard let point = lastPoint else { return }
+        for button in heldButtons.sorted(by: { $0.rawValue < $1.rawValue }) {
+            deliver(.mouseUp(x: point.x, y: point.y, button: button))
+            releasedOnLeave.insert(button)
+        }
     }
 
     // MARK: スクロール
@@ -332,6 +394,64 @@ extension SketchSurface {
 
     override func keyUp(with event: NSEvent) {
         deliver(.keyUp(code: Key(rawValue: Int(event.keyCode))))
+    }
+
+    /// 修飾キー (Shift・Control・Option・Command) の押下と解放。**AppKit は `keyDown` ではなく
+    /// ここへ配る** — 受けていなかった頃は、窓で Shift を押しても押されていない扱いだった
+    /// ([#2435](https://github.com/mokume-metal/mokume/issues/2435))。
+    ///
+    /// 合流点へは普通の `keyDown` / `keyUp` として流す。外から `code` 56 を送ったものと同じ形
+    /// になるので、2 つの経路が同じ答えを返す。修飾キーが呼び出しを生まないのは合流点の
+    /// 規則である (`Key.isModifier`)。
+    override func flagsChanged(with event: NSEvent) {
+        if let modifier = Self.modifierEvent(
+            keyCode: Int(event.keyCode), flags: event.modifierFlags.rawValue)
+        {
+            deliver(modifier)
+        }
+        super.flagsChanged(with: event)
+    }
+
+    /// 修飾キーの番号と、左右を分けた修飾のビット (`NX_DEVICE*KEYMASK`)。
+    ///
+    /// **左右を分けたビットで決める。** `modifierFlags.shift` は左右をまとめた旗なので、両方の
+    /// Shift を押してから片方を離すと、立ったままの旗から「押した」と読み違える。
+    private static let modifierMasks: [Int: UInt] = [
+        56: 0x02, 60: 0x04,  // Shift (左・右)
+        59: 0x01, 62: 0x2000,  // Control
+        58: 0x20, 61: 0x40,  // Option
+        55: 0x08, 54: 0x10,  // Command
+    ]
+
+    /// 修飾キーの変化 1 件を、合流点へ流す出来事にする。修飾キーでなければ `nil` (Caps Lock・fn)。
+    ///
+    /// - Parameters:
+    ///   - keyCode: 変わったキーの番号 (`NSEvent.keyCode`)。
+    ///   - flags: 変わった後の修飾の旗 (`NSEvent.modifierFlags.rawValue`)。
+    static func modifierEvent(keyCode: Int, flags: UInt) -> InputEvent? {
+        guard let mask = modifierMasks[keyCode] else { return nil }
+        let code = Key(rawValue: keyCode)
+        return flags & mask != 0
+            ? .keyDown(code: code, characters: "", isRepeat: false) : .keyUp(code: code)
+    }
+
+    /// ⌘ を押している間の keyUp を拾う監視を作る。
+    ///
+    /// **AppKit は ⌘ を伴う keyUp を窓へ配らない** (`NSApplication.sendEvent(_:)` が落とす)。
+    /// 受けないと、⌘S のように組んだ S が押されたまま残る
+    /// ([#2435](https://github.com/mokume-metal/mokume/issues/2435))。そこで配られる前に拾って
+    /// 面へ流し、出来事は消費する — 配られる版の AppKit でも、2 度は流れない。
+    ///
+    /// 拾うのは、この面が載る窓宛てで、面が第一応答者のときだけである (キーが本来ここへ
+    /// 届く場合に揃える)。
+    private func commandKeyUpMonitor(for window: NSWindow) -> Any? {
+        NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self, weak window] event in
+            guard let self, let window, event.window === window,
+                window.firstResponder === self, event.modifierFlags.contains(.command)
+            else { return event }
+            self.keyUp(with: event)
+            return nil
+        }
     }
 }
 
@@ -375,9 +495,14 @@ extension SketchSurface {
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowWillClose(_:)),
             name: NSWindow.willCloseNotification, object: window)
+        keyUpMonitor = commandKeyUpMonitor(for: window)
     }
 
     private func stopObservingWindow() {
+        if let monitor = keyUpMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyUpMonitor = nil
+        }
         guard let observed = observedWindow else { return }
         NotificationCenter.default.removeObserver(
             self, name: NSWindow.didResignKeyNotification, object: observed)
@@ -387,8 +512,29 @@ extension SketchSurface {
     }
 
     /// 窓が退いた (⌘Tab・他の窓)。**利用者が外したものとして放す** — 押すまで掛け直さない。
+    ///
+    /// **押しているキーと釦も離す** (``releaseHeld()``)。
     @objc private func windowDidResignKey(_ notification: Notification) {
         pointerLock.releaseByUser()
+        releaseHeld()
+    }
+
+    /// アプリが退いた。窓が key のまま他のアプリへ移る経路でも、押しているものを離す。
+    @objc fileprivate func applicationDidResignActive(_ notification: Notification) {
+        releaseHeld()
+    }
+
+    /// メニューを開いた。追跡の間に離したキーは、面へ届かない。
+    @objc fileprivate func menuDidBeginTracking(_ notification: Notification) {
+        releaseHeld()
+    }
+
+    /// 同じ窓の中で、キーの行き先がこの面から移る (重ねたつまみが応答者を取る、など)。窓は
+    /// key のままなので、退く知らせは来ない。
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { releaseHeld() }
+        return resigned
     }
 
     /// 窓が閉じる。

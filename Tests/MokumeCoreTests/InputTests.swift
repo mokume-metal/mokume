@@ -336,15 +336,15 @@ struct InputCallbackTests {
         #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyReleased])
     }
 
-    /// **押しっぱなしは連射する** — Processing と同じで、p5.js とは違う (p5.js は押したままの
-    /// キーでは呼び直さない)。
-    @Test("押しっぱなしのキーは、届いたぶんだけ配られる")
-    func repeatsWhileHeld() {
+    /// **押しっぱなしでは押下を配り直さない** — p5.js と同じで、Processing の連射は引き継がない
+    /// ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。リピートは打鍵にだけ届く。
+    @Test("押しっぱなしのキーは、押下を 1 回だけ配り、打鍵は届いたぶんだけ配る")
+    func repeatsReachOnlyTyping() {
         let events: [InputEvent] = [
             .keyDown(code: .a, characters: "a", isRepeat: false),
             .keyDown(code: .a, characters: "a", isRepeat: true),
         ]
-        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyPressed, .keyTyped])
+        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyTyped])
     }
 
     /// **「`characters` が空でない」では判定できない。** AppKit は矢印に私用領域

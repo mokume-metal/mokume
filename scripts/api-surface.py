@@ -728,7 +728,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "isMousePressed": READING,
     "key": READING,
     "keyCode": READING,
-    "isKeyDown": READING,
+    "keyboard": READING,
     "get": READING,
     "loadPixels": READING,
     "pixels": (READING, "画素の窓を返す。窓からの書き込みは set と同じく #1603 の R3 が扱う"),

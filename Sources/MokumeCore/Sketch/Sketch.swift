@@ -74,11 +74,18 @@ public protocol Sketch: AnyObject, SketchPart {
     func mousePressed()
 
     /// 離された瞬間に呼ばれる。読める値の約束は ``mousePressed()`` と同じ。
+    ///
+    /// **窓が前から退いたとき (⌘Tab・ほかの窓を触る・メニューを開く) も、押していた釦の数だけ
+    /// 呼ばれ、``mouseClicked()`` が続く。** 退いている間に離した釦は窓へ届かないので、離した扱い
+    /// にしないと押されたまま残る ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。
+    /// 離していないのに呼ばれる・クリックになるのが代償である。戻ってから本物の解放が届いても、
+    /// 2 度は呼ばれない。
     func mouseReleased()
 
     /// 押して離されたときに、``mouseReleased()`` の**直後に続けて**呼ばれる。
     ///
-    /// 押下を伴わない解放 (窓の外で押して中で離した、など) では呼ばれない。
+    /// 押下を伴わない解放 (窓の外で押して中で離した、など) では呼ばれない。押していた釦を窓が
+    /// 退いて離した扱いにしたときは呼ばれる (``mouseReleased()``)。
     /// 時刻を見ないので、外から送った出来事でも窓での実操作と同じように起きる。
     func mouseClicked()
 
@@ -154,34 +161,26 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 確かめている限り気付けない。
     func mouseWheel(deltaX: Float, deltaY: Float)
 
-    /// キーが押された瞬間に呼ばれる。
+    /// キーが押された瞬間に呼ばれる。**押した 1 回だけで、押しっぱなしでは呼び直さない。**
     ///
-    /// **押しっぱなしでは連射される** — OS のキーリピートが届くたびに、また呼ばれる。
-    /// これは Processing と同じで、**p5.js とは違う** (p5.js は押したままのキーでは
-    /// 呼び直さない)。
-    ///
-    /// **1 回だけ効かせたいなら、押したままかを ``keyReleased()`` と対にして自分で持つ。**
-    ///
+    /// <!-- example: 文脈 var showsGrid = false -->
     /// ```swift
-    /// var showsGrid = false
-    /// var spaceHeld = false
-    ///
     /// func keyPressed() {
-    ///     guard keyCode == .space, !spaceHeld else { return }
-    ///     spaceHeld = true
-    ///     showsGrid.toggle()  // 押しっぱなしでも、押すたびに 1 回だけ切り替わる
-    /// }
-    ///
-    /// func keyReleased() {
-    ///     if keyCode == .space { spaceHeld = false }
+    ///     if keyCode == .space { showsGrid.toggle() }  // 押したままでも 1 回だけ切り替わる
     /// }
     /// ```
     ///
-    /// ``SketchPart/isKeyDown(_:)`` では見分けられない。ここが呼ばれた時点で、そのキーは既に押されて
-    /// いる集合に入っており、**最初の 1 回でも `true` を返す**。
+    /// OS のキーリピートは、文字を打つ ``keyTyped()`` にだけ届く。**Processing は連射するが、
+    /// 引き継がない** — 「1 回だけ切り替える」に、押したままかの印を作者が持つ必要があった
+    /// ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。p5.js と同じ振る舞いである。
+    /// 押している間ずっと効かせたいもの (矢印で動かす、など) は、`draw()` で
+    /// ``SketchPart/keyboard`` の `isPressed(_:)` を読む。
     ///
-    /// この書き方は `draw()` を見ないので、``SketchPart/noLoop()`` で止めている間も同じように効く
-    /// (止まっている間もコールバックは呼ばれる)。
+    /// 呼ばれるのは押されていないキーが押されたとき (と、押されているはずのキーにリピートでない
+    /// 押下が届いたとき。解放を取りこぼした印として、押し直しに数える) で、**修飾キー (Shift・Control・Option・
+    /// Command) では呼ばれない**。修飾キーは `keyboard.isPressed(.shift)` で問う。
+    ///
+    /// ``SketchPart/noLoop()`` で止めている間も呼ばれる (止まっている間もコールバックは呼ばれる)。
     ///
     /// どのキーが動いたかは ``SketchPart/keyCode`` から読む。文字を打つ用途には ``keyTyped()`` と
     /// ``SketchPart/key`` を使う。
@@ -191,9 +190,17 @@ public protocol Sketch: AnyObject, SketchPart {
     ///
     /// 離されたキーも ``SketchPart/keyCode`` が指す — **最後に動いたキー**なので、押した側と同じ
     /// 口から読める。
+    ///
+    /// **窓が前から退いたとき (⌘Tab・ほかの窓を触る・メニューを開く) も、押していたキーの数だけ
+    /// 呼ばれる。**
+    /// 退いている間に離したキーは窓へ届かないので、離した扱いにしないと押されたまま残る
+    /// ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。離していないのに呼ばれるのが
+    /// 代償である。呼ばれるのは押されているキーが離されたときだけなので、戻ってから本物の解放が
+    /// 届いても 2 度は呼ばれない。修飾キーでは呼ばれない。
     func keyReleased()
 
-    /// **文字を生むキー**が押されたとき、``keyPressed()`` の直後に続けて呼ばれる。
+    /// **文字を生むキー**が押されたときに呼ばれる。押した瞬間は ``keyPressed()`` の直後に続き、
+    /// 押しっぱなしではキーリピートが届くたびに、これだけがまた呼ばれる。
     ///
     /// 矢印・ファンクションキー・Escape・Delete・Tab では呼ばれない (手本と同じ)。
     /// 打たれた文字は ``SketchPart/key`` から読む。
