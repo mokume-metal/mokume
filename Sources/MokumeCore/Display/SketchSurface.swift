@@ -79,6 +79,9 @@ final class SketchSurface: NSView {
     /// 外から注入した押下は離さない — 人が触っていないものを、窓の都合で動かさない。
     fileprivate var heldKeys: Set<Key> = []
     fileprivate var heldButtons: Set<MouseButton> = []
+    /// 退いたときに離した扱いにした釦。**その後に届く本物の解放は流さない** — 押した窓は
+    /// 解放も受け取るので、流すと `mouseReleased()` が 2 度呼ばれる。押し直せば外す。
+    fileprivate var releasedOnLeave: Set<MouseButton> = []
 
     /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。窓に載っている間だけ持つ。
     fileprivate var keyUpMonitor: Any?
@@ -99,6 +102,11 @@ final class SketchSurface: NSView {
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationDidResignActive(_:)),
             name: NSApplication.didResignActiveNotification, object: nil)
+        // **メニューを開いている間も離す。** AppKit は自前の追跡ループへ入り、その間に離した
+        // キーはメニューが取る。窓は key のままでフレームは回り続けるので、押されたまま走る
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(menuDidBeginTracking(_:)),
+            name: NSMenu.didBeginTrackingNotification, object: nil)
     }
 
     @available(*, unavailable)
@@ -257,6 +265,8 @@ extension SketchSurface {
     }
 
     private func noteRelease(_ event: NSEvent) {
+        // 退いたときに離した扱いにした釦の、本物の解放は流さない (``releasedOnLeave``)
+        if releasedOnLeave.remove(Self.button(of: event)) != nil { return }
         guard let point = pressPoint(of: event) else { return }
         deliver(.mouseUp(x: point.x, y: point.y, button: Self.button(of: event)))
     }
@@ -334,6 +344,7 @@ extension SketchSurface {
         case .mouseDown(let x, let y, let button):
             lastPoint = (x, y)
             heldButtons.insert(button)
+            releasedOnLeave.remove(button)
         case .mouseUp(let x, let y, let button):
             lastPoint = (x, y)
             heldButtons.remove(button)
@@ -342,7 +353,8 @@ extension SketchSurface {
         }
     }
 
-    /// 押したまま残っているキーと釦に、解放を流す。**窓が前から退いたときに呼ぶ。**
+    /// 押したまま残っているキーと釦に、解放を流す。**キーと釦がこの面へ届かなくなるときに呼ぶ** —
+    /// 窓が退く・アプリが退く・同じ窓の中で第一応答者が移る・メニューを開く。
     ///
     /// 解放は普通の出来事として合流点へ入るので、`keyReleased()` / `mouseReleased()` も呼ばれ、
     /// 次のフレームで `keyboard.justReleased` が立つ (ADR-0034 決定 7 の挙動 3)。並びは番号順に
@@ -355,6 +367,7 @@ extension SketchSurface {
         guard let point = lastPoint else { return }
         for button in heldButtons.sorted(by: { $0.rawValue < $1.rawValue }) {
             deliver(.mouseUp(x: point.x, y: point.y, button: button))
+            releasedOnLeave.insert(button)
         }
     }
 
@@ -509,6 +522,19 @@ extension SketchSurface {
     /// アプリが退いた。窓が key のまま他のアプリへ移る経路でも、押しているものを離す。
     @objc fileprivate func applicationDidResignActive(_ notification: Notification) {
         releaseHeld()
+    }
+
+    /// メニューを開いた。追跡の間に離したキーは、面へ届かない。
+    @objc fileprivate func menuDidBeginTracking(_ notification: Notification) {
+        releaseHeld()
+    }
+
+    /// 同じ窓の中で、キーの行き先がこの面から移る (重ねたつまみが応答者を取る、など)。窓は
+    /// key のままなので、退く知らせは来ない。
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { releaseHeld() }
+        return resigned
     }
 
     /// 窓が閉じる。

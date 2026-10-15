@@ -18,7 +18,10 @@ extension SketchPart {
     public var pmouseX: Float { Self.input.previousX }
     /// 前のフレームでの位置 (縦)。
     public var pmouseY: Float { Self.input.previousY }
-    /// 押されているか。
+    /// どれかの釦が押されているか。
+    ///
+    /// **釦ごとに数える** — 左を押したまま右を押して離しても、`true` のまま。窓が前から退くと、
+    /// 押していた釦は離された扱いになる (``Sketch/mouseReleased()``)。
     public var isMousePressed: Bool { Self.input.isMouseDown }
     /// 最後に押されたか離された釦。まだ何も押していなければ `nil`。
     ///
@@ -120,8 +123,8 @@ extension SketchPart {
     ///   `isPressed` は `false` になる
     /// - **止めている間 (``noLoop()``) に押した・離した分は、次に描くフレームで `true` になる。**
     ///   ``pauseTime()`` の間はフレームが回るので、そのまま次のフレームで読める
-    /// - **窓が前から退くと (⌘Tab・ほかの窓を触る)、押していたキーと釦はすべて離された扱いに
-    ///   なる。** 次のフレームで `justReleased` が `true` になり、``Sketch/keyReleased()`` も
+    /// - **窓が前から退くと (⌘Tab・ほかの窓を触る・メニューを開く)、押していたキーと釦はすべて
+    ///   離された扱いになる。** 次のフレームで `justReleased` が `true` になり、``Sketch/keyReleased()`` も
     ///   呼ばれる。離していないのに離した扱いになるのが代償で、戻ってきたときに押し続けて
     ///   いれば、キーリピートが届いたところで押下として入り直す。退いている間に離したキーが
     ///   押されたまま残り、物が走り続けるのを避けるためである

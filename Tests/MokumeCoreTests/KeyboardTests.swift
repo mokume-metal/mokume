@@ -169,6 +169,19 @@ struct KeyboardTests {
         #expect(Keyboard(state: state).justPressed(.space))
     }
 
+    /// 押されているはずのキーにリピートでない押下が届くのは、解放を取りこぼした印である。
+    /// 新しい押下に数えないと、次に本当に押したときに `keyPressed()` も `justPressed` も起きない。
+    @Test("押されているキーにリピートでない押下が届くと、新しい押下に数える")
+    func aFreshPressOnAHeldKeyCountsAgain() {
+        let state = InputState()
+        frame(state, [Self.spaceDown])
+        var calls: [InputCallback] = []
+        state.enqueue(Self.spaceDown)
+        state.beginFrame { calls.append($0) }
+        #expect(calls == [.keyPressed, .keyTyped])
+        #expect(Keyboard(state: state).justPressed(.space))
+    }
+
     // MARK: - マウスの釦
 
     @Test("左を押したまま右を押して離しても、左は押されたまま")
@@ -291,5 +304,20 @@ struct SurfaceHeldInputTests {
         NotificationCenter.default.post(
             name: NSApplication.didResignActiveNotification, object: NSApplication.shared)
         #expect(lines.isEmpty)
+    }
+
+    /// メニューの追跡の間に離したキーは面へ届かず、窓は key のままフレームが回る。
+    @Test(
+        "メニューを開くと、面が流した押下に解放を流す",
+        .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
+    func releasesWhenAMenuBeginsTracking() throws {
+        let (surface, _) = try makeSurface()
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+        surface.deliver(.keyDown(code: .arrowLeft, characters: "\u{F702}", isRepeat: false))
+        lines.removeAll()
+
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: NSMenu())
+        #expect(lines == [InputEvent.keyUp(code: .arrowLeft).wireLine])
     }
 }

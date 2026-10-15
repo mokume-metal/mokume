@@ -137,6 +137,60 @@ struct SketchApplicationTests {
             ])
     }
 
+    /// **同じ窓の中で第一応答者が面から移っても離す** (#2443 の兄弟)。窓は key のままなので、
+    /// 退く知らせは来ず、押していたキーの解放は移った先へ配られる。
+    @Test("第一応答者が面から移ると、押していたキーの解放が流れる")
+    func losingFirstResponderReleasesHeldKeys() throws {
+        let application = try makeApplication(Blank())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        window.sendEvent(
+            try #require(KeyEventFixture.keyDown(in: window, characters: "a", keyCode: 0)))
+        #expect(window.makeFirstResponder(nil))
+        #expect(lines.last == InputEvent.keyUp(code: .a).wireLine)
+        window.makeFirstResponder(surface)
+    }
+
+    /// 退いて離した扱いにした釦の、本物の解放は流さない。押した窓は解放も受け取るので、
+    /// 流すと `mouseReleased()` が 2 度呼ばれる (#2443 の反証の指摘 4)。
+    @Test("退いて離した扱いにした釦の、本物の解放は流さない")
+    func doesNotReleaseAButtonTwice() throws {
+        let application = try makeApplication(Blank())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        let center = NSPoint(x: surface.bounds.midX, y: surface.bounds.midY)
+        func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+            try #require(
+                NSEvent.mouseEvent(
+                    with: type, location: surface.convert(center, to: nil), modifierFlags: [],
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                    clickCount: 1, pressure: 1))
+        }
+        surface.mouseDown(with: try mouse(.leftMouseDown))
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        surface.mouseUp(with: try mouse(.leftMouseUp))
+        // 押し直した後の解放は流す
+        surface.mouseDown(with: try mouse(.leftMouseDown))
+        surface.mouseUp(with: try mouse(.leftMouseUp))
+
+        let kinds = lines.compactMap { line in
+            ["mouseDown", "mouseUp"].first { line.contains("\"\($0)\"") }
+        }
+        #expect(kinds == ["mouseDown", "mouseUp", "mouseDown", "mouseUp"])
+    }
+
     /// **AppKit は ⌘ を伴う keyUp を窓へ配らない** (#2435)。アプリへ送った 1 件が、面の
     /// 監視を通って解放として流れることを見る。窓へ直に送る (`window.sendEvent`) と、落とす
     /// 区間 (`NSApplication.sendEvent(_:)`) を飛ばしてしまう。

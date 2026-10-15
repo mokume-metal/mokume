@@ -188,16 +188,16 @@ public final class InputState {
             // **位置を持たない移動も、同じ分け方で配る** (#1144)。差を作らずに量そのものを
             // 渡す — 位置は動かないので、当てる前との差は常に 0 になる
             dispatchMotion(deltaX: dx, deltaY: dy, before: before, to: dispatch)
-        case .keyDown(let code, let characters, _):
+        case .keyDown(let code, let characters, let isRepeat):
             // **修飾キーは押下の状態だけを変える** (``Key/isModifier``)
             guard !code.isModifier else { return }
-            // **押されていないキーが押されたときだけ呼ぶ。** 押しっぱなしのキーリピートは
-            // 打鍵 (`keyTyped()`) にだけ流す — 連射していた頃は、「1 回だけ切り替える」に
-            // 押したままかの印を作者が持つ必要があった
-            // ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。`isRepeat` ではなく
-            // 集合の出入りで決めるので、窓が退いて離した扱いにした後で戻ってきたリピートは、
-            // 押下として入り直す
-            if !before.keyWasPressed { dispatch(.keyPressed) }
+            // **押されていないキーが押されたとき、またはリピートでない押下が届いたときに呼ぶ**
+            // (``isFreshPress(wasPressed:isRepeat:)``)。押しっぱなしのキーリピートは打鍵
+            // (`keyTyped()`) にだけ流す — 連射していた頃は、「1 回だけ切り替える」に押したままかの
+            // 印を作者が持つ必要があった ([#2400](https://github.com/mokume-metal/mokume/issues/2400))
+            if Self.isFreshPress(wasPressed: before.keyWasPressed, isRepeat: isRepeat) {
+                dispatch(.keyPressed)
+            }
             // **文字を生むキーだけが打鍵になる。** 矢印やファンクションキーでは呼ばない
             if Self.producesText(characters) { dispatch(.keyTyped) }
         case .keyUp(let code):
@@ -249,6 +249,19 @@ public final class InputState {
         }
     }
 
+    /// 押下 1 件が、新しく押したことになるか。**押されていなかったキーか、リピートでない押下。**
+    ///
+    /// 押されていなかったキーなら、リピートでも新しい押下として入る — 窓が退いて離した扱いに
+    /// した後で、押し続けていたキーのリピートが戻ってきた形である。
+    ///
+    /// 押されているはずのキーにリピートでない押下が届いたら、**解放を取りこぼした印**として
+    /// 新しい押下に数える。集合に古い押下が残ったままだと、次に本当に押したときに
+    /// `keyPressed()` も `justPressed` も起きず、押下が 1 回無視される (窓が key のまま解放だけが
+    /// 届かない経路は、すべては塞げない)。
+    static func isFreshPress(wasPressed: Bool, isRepeat: Bool) -> Bool {
+        !wasPressed || !isRepeat
+    }
+
     private func apply(_ event: InputEvent) {
         switch event {
         case .mouseDown(let x, let y, let button):
@@ -272,8 +285,11 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             scrollX += dx
             scrollY += dy
-        case .keyDown(let code, let characters, _):
-            if pressedKeys.insert(code).inserted { justPressedKeys.insert(code) }
+        case .keyDown(let code, let characters, let isRepeat):
+            let wasPressed = !pressedKeys.insert(code).inserted
+            if Self.isFreshPress(wasPressed: wasPressed, isRepeat: isRepeat) {
+                justPressedKeys.insert(code)
+            }
             // **修飾キーは `keyCode` も `key` も動かさない。** 大文字を打った後に `keyCode` が
             // `.shift` のまま残らないようにする (#2435)
             guard !code.isModifier else { return }
