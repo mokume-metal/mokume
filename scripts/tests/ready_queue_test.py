@@ -443,6 +443,23 @@ class ReadyQueueTest(unittest.TestCase):
                     self.lines_by_number(done.stdout)[62][0], "dropped", f"bot の {kind} を人の手と読んでいる"
                 )
 
+    def test_other_bots_keep_busy(self):
+        """GitHub App 経由で投稿するエージェントも Bot 型。除くのは追記の書き手だけ (#2660)。
+
+        型で除くと、そのエージェントの作業中の着手印を静かと読んで dropped に出す
+        """
+        agent = {
+            "__typename": "IssueComment",
+            "createdAt": ago(20),
+            "author": {"__typename": "Bot", "login": "some-agent"},
+        }
+        done, _ = self.run_queue(
+            [issue(63, labels=["status: in progress"], updated=ago(20))],
+            hands={63: {"nodes": [bot_comment(30), agent]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[63][0], "busy", "追記の書き手でない Bot の手を除いている")
+
     def test_bot_reference_alone_does_not_keep_busy(self):
         done, _ = self.run_queue(
             [issue(61, labels=["status: in progress"], updated=ago(30))],

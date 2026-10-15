@@ -453,13 +453,13 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
 readonly MARKS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      comments(last: 100) { totalCount nodes { body url author { __typename } } }
+      comments(last: 100) { totalCount nodes { body url author { __typename login } } }
       timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 50) {
         nodes { ... on CrossReferencedEvent { source {
           ... on Issue { number state
-            comments(last: 50) { totalCount nodes { body url author { __typename } } } }
+            comments(last: 50) { totalCount nodes { body url author { __typename login } } } }
           ... on PullRequest { number state
-            comments(last: 50) { totalCount nodes { body url author { __typename } } } }
+            comments(last: 50) { totalCount nodes { body url author { __typename login } } } }
         } } }
       }
     }

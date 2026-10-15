@@ -953,12 +953,31 @@ class DestinationNoticeTest(unittest.TestCase):
                 self.bot(1),
             ],
         )
-        self.assertIn("maintainer", proc.stderr)
-        self.assertIn("12 分前", proc.stderr)
-        self.assertIn("## 判断を差し替えた", proc.stderr)
-        self.assertNotIn("定期の検査が赤い", proc.stderr, "bot の追記を最新コメントとして名乗っている")
-        self.assertIn("その後に bot の追記 2 件", proc.stderr)
+        self.assertIn(
+            "最新コメント: maintainer・12 分前・「## 判断を差し替えた", proc.stderr,
+            "bot の追記を最新コメントとして名乗っている",
+        )
+        self.assertIn("その後に bot の追記 2 件・最新「## 定期の検査が赤い」", proc.stderr)
         self.assertIn("comment", log.read_text(encoding="utf-8"))
+
+    def test_bot_note_carries_the_reason_of_a_reopen(self):
+        """parent-guard も github.token で reopen の理由を書く。件数だけでは理由が消える。"""
+        reason = self.comment(
+            2, login="github-actions", body="## 子が open のまま閉じられたので開き直した", kind="Bot"
+        )
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[self.comment(30), reason]
+        )
+        self.assertIn("最新「## 子が open のまま閉じられたので開き直した」", proc.stderr)
+
+    def test_other_bots_are_not_mistaken_for_the_appender(self):
+        """GitHub App 経由で投稿するエージェントも Bot 型。除くのは追記の書き手だけ (#2660)。"""
+        agent = self.comment(4, login="some-agent", body="## エージェントの判断", kind="Bot")
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[self.comment(30), agent, self.bot(1)]
+        )
+        self.assertIn("最新コメント: some-agent・4 分前・「## エージェントの判断」", proc.stderr)
+        self.assertIn("その後に bot の追記 1 件", proc.stderr)
 
     def test_no_bot_note_when_the_human_comment_is_last(self):
         proc, _ = self.run_comment(
@@ -971,8 +990,11 @@ class DestinationNoticeTest(unittest.TestCase):
         proc, _ = self.run_comment(
             "issue", "42", "--body", "x", comments=[self.bot(30), self.bot(3)]
         )
-        self.assertIn("人のコメントは新しい順の 2 件に無い", proc.stderr)
-        self.assertNotIn("定期の検査が赤い", proc.stderr)
+        self.assertIn(
+            "人のコメントは新しい順の 2 件に無い (bot の追記だけ・最新「## 定期の検査が赤い」)",
+            proc.stderr,
+        )
+        self.assertNotIn("最新コメント:", proc.stderr)
         self.assertNotIn("コメントはまだ無い", proc.stderr)
 
     def test_comment_by_a_deleted_user_counts_as_human(self):

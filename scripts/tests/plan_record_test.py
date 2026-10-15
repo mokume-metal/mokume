@@ -1528,7 +1528,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         in_window = {
             "body": excerpt,
             "url": "https://example.invalid/bot/window",
-            "author": {"__typename": "Bot"},
+            "author": {"__typename": "Bot", "login": "github-actions"},
         }
         with self.subTest("窓 (GraphQL)"):
             result = self.capture(

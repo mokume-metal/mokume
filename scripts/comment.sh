@@ -152,8 +152,9 @@ fi
 # gh が使えない / 認証が無いときは黙って続行する — 署名という本務を、付加的な表示の
 # 失敗で落とさない。追認フラグ (--force) は持たない (止めないので要らない)。
 
-# 宛先を 1 行の TSV (state / 経過秒 / 投稿者 / 見出しの冒頭 / 後ろの bot の追記の数 /
-# 窓の件数) へ畳む。
+# 宛先を 1 行 (state / 後ろの bot の追記の数 / 窓の件数 / 経過秒 / 投稿者 / 見出しの冒頭 /
+# bot の追記の最新の見出し) へ畳む。区切りは US (\x1f) — タブは IFS の空白なので、空の欄が
+# 続くと 1 つに畳まれて欄がずれる。
 # **相対時刻も切り詰めも jq 側で行う** — date の GNU / BSD 差 (scripts/stall-watch.sh の
 # epoch_of が抱えている問題) を持ち込まず、bash 3.2 の ${v:0:n} がロケール次第で
 # マルチバイトを割るのも避けられる。
@@ -163,24 +164,27 @@ fi
 # **名乗るのは人の最新のコメントである** (#2660)。Issue の活動には bot の手が混じる (前提と
 # 判定は scripts/bot-hand.sh)。末尾のコメントを名乗ると、#1327 が塞いだ「読んだ後に人が判断を
 # 差し替えた」が、その後に github-actions が追記しただけで見えなくなる。後ろに bot の追記が
-# あれば、その件数も添える。作者の分からないコメント (退会した人) は人の側に数える。
-# 窓は新しい順に 100 件で、その中に人のコメントが無ければそう名乗る
+# あれば、その件数と最新の見出しも添える — 書き手は定期の赤の追記だけでなく、reopen の理由を
+# 書く scripts/parent-guard.sh もあり、件数だけでは理由が消える。作者の分からないコメント
+# (退会した人) は人の側に数える。窓は新しい順に 100 件で、その中に人のコメントが無ければ
+# そう名乗る
 readonly LATEST_COMMENT_JQ="$BOT_HAND_JQ"'
+  def heading: ([.body | split("\n")[]
+                 | select(test("\\S")) | select(test("^\\s*<!--") | not)][0] // "")
+    | if length > 48 then .[0:48] + "…" else . end;
   .data.repository.issueOrPullRequest as $t
   | ($t.comments.nodes // []) as $c
   | ([$c | to_entries[] | select(.value | bot_hand | not)] | last) as $e
   | ($e.value // null) as $last
+  | ($c[(if $e then $e.key + 1 else 0 end):] | last) as $bot
   | [ $t.state,
       (($c | length) - (if $e then $e.key + 1 else 0 end) | tostring),
       ($c | length | tostring),
       (if $last then ((now - ($last.createdAt | fromdateiso8601)) | floor | tostring) else "" end),
       (if $last then ($last.author.login // "ghost") else "" end),
-      (if $last
-       then ([$last.body | split("\n")[]
-              | select(test("\\S")) | select(test("^\\s*<!--") | not)][0] // "") as $h
-            | (if ($h | length) > 48 then ($h[0:48] + "…") else $h end)
-       else "" end)
-    ] | @tsv'
+      (if $last then ($last | heading) else "" end),
+      (if $bot then ($bot | heading) else "" end)
+    ] | map(gsub("[\u001f\n]"; " ")) | join("\u001f")'
 
 # 宛先の state と、新しい順に 100 件のコメント (作者の型つき)。Issue でも PR でも同じ形で引く
 readonly LATEST_COMMENT_QUERY='query($owner: String!, $name: String!, $number: Int!) {
@@ -201,13 +205,12 @@ relative_age() { # $1=経過秒 → 「12 分前」
 }
 
 announce_destination() { # $1=issue|pr $2=番号
-  local line state age login head bots window mark latest
+  local line state age login head bothead bots window mark latest
   line=$(gh api graphql -f query="$LATEST_COMMENT_QUERY" -f owner="${REPO%%/*}" \
     -f name="${REPO#*/}" -F number="$2" --jq "$LATEST_COMMENT_JQ" 2>/dev/null) ||
     return 0
   [ -n "$line" ] || return 0
-  # 空になりうる欄は後ろに置く — タブは IFS の空白なので、続いたタブは 1 つに畳まれて欄がずれる
-  IFS=$'\t' read -r state bots window age login head <<< "$line" || return 0
+  IFS=$'\x1f' read -r state bots window age login head bothead <<< "$line" || return 0
 
   # OPEN 以外は state そのものを添える (closed / merged。条件は「閉じていることも名乗る」)
   mark=''
@@ -221,10 +224,10 @@ announce_destination() { # $1=issue|pr $2=番号
     # 人の最新のコメントの後ろに積もった bot の追記 (#2660)。名乗らないと、その後の動きが
     # 無いように読める
     if [ "${bots:-0}" -gt 0 ] 2>/dev/null; then
-      latest="${latest} (その後に bot の追記 ${bots} 件)"
+      latest="${latest} (その後に bot の追記 ${bots} 件・最新「${bothead}」)"
     fi
   elif [ "${window:-0}" -gt 0 ] 2>/dev/null; then
-    latest="人のコメントは新しい順の ${window} 件に無い (bot の追記だけ)"
+    latest="人のコメントは新しい順の ${window} 件に無い (bot の追記だけ・最新「${bothead}」)"
   else
     latest='コメントはまだ無い'
   fi
