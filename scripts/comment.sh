@@ -43,6 +43,9 @@ set -euo pipefail
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 REPO="$(this_repo)"
+# 「bot の手か」の判定と、その前提の宣言 (#2660 — 宛先の近況が使う)
+# shellcheck source=scripts/bot-hand.sh
+. "$(dirname "${BASH_SOURCE[0]}")/bot-hand.sh"
 
 # 署名の検知キー。リンク先や絵文字が変わっても効き続けるよう、固定の語で見る。
 # scripts/agent-comment-guard.sh と .github の検査もこの文字列を共有する
@@ -149,24 +152,45 @@ fi
 # gh が使えない / 認証が無いときは黙って続行する — 署名という本務を、付加的な表示の
 # 失敗で落とさない。追認フラグ (--force) は持たない (止めないので要らない)。
 
-# 宛先を 1 行の TSV (state / 経過秒 / 投稿者 / 見出しの冒頭) へ畳む。
+# 宛先を 1 行の TSV (state / 経過秒 / 投稿者 / 見出しの冒頭 / 後ろの bot の追記の数 /
+# 窓の件数) へ畳む。
 # **相対時刻も切り詰めも jq 側で行う** — date の GNU / BSD 差 (scripts/stall-watch.sh の
 # epoch_of が抱えている問題) を持ち込まず、bash 3.2 の ${v:0:n} がロケール次第で
 # マルチバイトを割るのも避けられる。
 # 行頭の HTML コメントを飛ばすのは、この経路自身が付けるマーカー行
 # (plan-record の <!-- mokume-plan-record: … -->) を見出しと取り違えないため
-readonly LATEST_COMMENT_JQ='
-  .comments as $c
-  | ($c[-1] // null) as $last
-  | [ .state,
+#
+# **名乗るのは人の最新のコメントである** (#2660)。Issue の活動には bot の手が混じる (前提と
+# 判定は scripts/bot-hand.sh)。末尾のコメントを名乗ると、#1327 が塞いだ「読んだ後に人が判断を
+# 差し替えた」が、その後に github-actions が追記しただけで見えなくなる。後ろに bot の追記が
+# あれば、その件数も添える。作者の分からないコメント (退会した人) は人の側に数える。
+# 窓は新しい順に 100 件で、その中に人のコメントが無ければそう名乗る
+readonly LATEST_COMMENT_JQ="$BOT_HAND_JQ"'
+  .data.repository.issueOrPullRequest as $t
+  | ($t.comments.nodes // []) as $c
+  | ([$c | to_entries[] | select(.value | bot_hand | not)] | last) as $e
+  | ($e.value // null) as $last
+  | [ $t.state,
+      (($c | length) - (if $e then $e.key + 1 else 0 end) | tostring),
+      ($c | length | tostring),
       (if $last then ((now - ($last.createdAt | fromdateiso8601)) | floor | tostring) else "" end),
-      (if $last then ($last.author.login // "") else "" end),
+      (if $last then ($last.author.login // "ghost") else "" end),
       (if $last
        then ([$last.body | split("\n")[]
               | select(test("\\S")) | select(test("^\\s*<!--") | not)][0] // "") as $h
             | (if ($h | length) > 48 then ($h[0:48] + "…") else $h end)
        else "" end)
     ] | @tsv'
+
+# 宛先の state と、新しい順に 100 件のコメント (作者の型つき)。Issue でも PR でも同じ形で引く
+readonly LATEST_COMMENT_QUERY='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issueOrPullRequest(number: $number) {
+      ... on Issue { state comments(last: 100) { nodes { createdAt body author { __typename login } } } }
+      ... on PullRequest { state comments(last: 100) { nodes { createdAt body author { __typename login } } } }
+    }
+  }
+}'
 
 relative_age() { # $1=経過秒 → 「12 分前」
   if [ "$1" -lt 60 ]; then printf 'たった今'
@@ -177,11 +201,13 @@ relative_age() { # $1=経過秒 → 「12 分前」
 }
 
 announce_destination() { # $1=issue|pr $2=番号
-  local line state age login head mark latest
-  line=$(gh "$1" view "$2" -R "$REPO" --json state,comments --jq "$LATEST_COMMENT_JQ" 2>/dev/null) ||
+  local line state age login head bots window mark latest
+  line=$(gh api graphql -f query="$LATEST_COMMENT_QUERY" -f owner="${REPO%%/*}" \
+    -f name="${REPO#*/}" -F number="$2" --jq "$LATEST_COMMENT_JQ" 2>/dev/null) ||
     return 0
   [ -n "$line" ] || return 0
-  IFS=$'\t' read -r state age login head <<< "$line" || return 0
+  # 空になりうる欄は後ろに置く — タブは IFS の空白なので、続いたタブは 1 つに畳まれて欄がずれる
+  IFS=$'\t' read -r state bots window age login head <<< "$line" || return 0
 
   # OPEN 以外は state そのものを添える (closed / merged。条件は「閉じていることも名乗る」)
   mark=''
@@ -192,6 +218,13 @@ announce_destination() { # $1=issue|pr $2=番号
     # ${} で括る — 変数名の直後が多バイト文字だと、ロケール次第で bash が
     # それを名前の一部として読んでしまう (login・ → 「login\xe3 は未定義」で落ちる)
     latest="最新コメント: ${login}・$(relative_age "$age")・「${head}」"
+    # 人の最新のコメントの後ろに積もった bot の追記 (#2660)。名乗らないと、その後の動きが
+    # 無いように読める
+    if [ "${bots:-0}" -gt 0 ] 2>/dev/null; then
+      latest="${latest} (その後に bot の追記 ${bots} 件)"
+    fi
+  elif [ "${window:-0}" -gt 0 ] 2>/dev/null; then
+    latest="人のコメントは新しい順の ${window} 件に無い (bot の追記だけ)"
   else
     latest='コメントはまだ無い'
   fi
