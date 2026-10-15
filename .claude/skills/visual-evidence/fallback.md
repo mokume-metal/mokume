@@ -88,7 +88,7 @@ bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 上げた欄と投稿先は別でよい。添付はスレッドに縛られないので、PR のコメント欄で上げたものを Issue へ投稿しても
 公開される。
 
-**PR 本文へ載せたいときも、先にコメントで投稿する。** `gh pr edit --body` で本文に書いても、本文の編集は
+**PR 本文へ載せたいときも、先にコメントで投稿する。** 本文に書いても (`scripts/edit-body.sh` でも、その中身の `gh pr edit` でも)、本文の編集は
 新しい投稿に数えられず 404 のままである ([#1306](https://github.com/mokume-metal/mokume/issues/1306))。
 `drawing-evidence` が読むのは PR 本文なので、描画 PR ではこの順を守る:
 

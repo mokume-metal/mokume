@@ -293,6 +293,9 @@ class ReportDeadAssetsTest(unittest.TestCase):
         self.assertIn(f"{base}/dead.png", body)
         self.assertIn("Release v9.9.9 (#77)", body)
         self.assertIn("gh release edit", body)
+        # PR 本文はラッパーで直させる。素の gh pr edit --body* はフックが差し戻す (#2615)
+        self.assertIn("scripts/edit-body.sh pr", body)
+        self.assertNotIn("gh pr edit", body)
 
 
 if __name__ == "__main__":

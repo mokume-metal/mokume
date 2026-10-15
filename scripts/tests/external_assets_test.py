@@ -404,6 +404,9 @@ class ReleaseReferencesTest(unittest.TestCase):
         self.assertIn(f"{dead} — HTTP 404", err)
         self.assertIn("Release v0.21.0 (#2182)", err)
         self.assertIn("gh release edit", err)
+        # PR 本文はラッパーで直させる。素の gh pr edit --body* はフックが差し戻す (#2615)
+        self.assertIn("scripts/edit-body.sh pr", err)
+        self.assertNotIn("gh pr edit", err)
 
     def test_説明文の絵が切れただけなら_ノートの直し方は言わない(self):
         dead = "https://i.example.test/docs.png"
