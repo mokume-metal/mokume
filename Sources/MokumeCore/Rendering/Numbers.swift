@@ -152,6 +152,15 @@ import MokumeDiagnostics
     /// 残す。検査が差し替える。
     var dirtyRangeLimit = 256
 
+    /// 投入に載せて届けた区間のうち、結末がまだ届いていないもの ([#2199])。投入ごとに
+    /// ``inFlightRanges`` の `start` から `count` 本。**置き場は持ち回る** — 毎フレーム届ける並びで確保しない。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private var inFlight: [(submission: UInt64, start: Int, count: Int)] = []
+    private var inFlightRanges: [Range<Int>] = []
+    /// 計算がこの並びへ書いた最後の投入の番号 ([#2199])。打ち切りの後に書いていれば届け直さない。
+    private var lastGPUWrite: UInt64 = 0
+
     /// 書き込みの世代。書くたびに進む。
     private(set) var writeGeneration: UInt64 = 0
 
@@ -193,7 +202,7 @@ import MokumeDiagnostics
         gpu.pendingUploads.enqueue(self)
         // 細切れすぎる書き込みだけは、ここで待って届ける。待てなければ控えに残す (#934)
         if dirty.count > dirtyRangeLimit, let uploaded = uploadDirectly() {
-            markUploaded(through: uploaded)
+            markUploaded(through: uploaded, by: nil)
         }
     }
 
@@ -381,28 +390,47 @@ extension Numbers: PendingUpload {
     }
 
     @discardableResult
-    func markUploaded(through generation: UInt64) -> (@MainActor () -> Void)? {
-        guard generation == writeGeneration, !dirty.isEmpty else { return nil }
-        let delivered = dirty
+    func markUploaded(through generation: UInt64, by submission: UInt64?) -> Bool {
+        guard generation == writeGeneration, !dirty.isEmpty else { return false }
+        if let submission {
+            // 運んだ区間を、結末が届くまで覚える。置き場は持ち回る (毎フレーム確保しない)
+            inFlight.append((submission, inFlightRanges.count, dirty.count))
+            inFlightRanges.append(contentsOf: dirty)
+        }
         dirty.removeAll(keepingCapacity: true)
-        return { [weak self] in self?.uploadAgainAfterDrop(delivered) }
+        return submission != nil
     }
 
-    /// 届けた投入を GPU が打ち切った。**その投入が運んだ区間だけ**を、汚れ区間へ戻す ([#2199])。
+    /// 投入 `submission` の中で、計算がこの並びへ書いた ([#2199])。計算を積んだ投入の後で呼ぶ。
     ///
-    /// 区間の外は GPU の計算が書き換えているかもしれないので、届け直さない (``shadow`` の約束)。
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteWrittenByGPU(in submission: UInt64) {
+        lastGPUWrite = max(lastGPUWrite, submission)
+    }
+
+    /// 届けた投入の結末が届いた。**打ち切られていたら、その投入が運んだ区間だけ**を汚れ区間へ戻す
+    /// ([#2199])。区間の外は GPU の計算が書き換えているかもしれないので、届け直さない (``shadow`` の約束)。
     /// 影はその区間の値を持ったままである — 打ち切りの後で同じ番地を書いていれば、影は新しい値で、
     /// 区間は既に汚れている (畳まれて 1 つになる)。
     ///
-    /// **打ち切りの後・ここより前に計算がその区間へ書いた値は、届け直しが潰す。** その区間を読む計算
-    /// なら、届いていない入力を読んでおり中身はどちらにしても失われている。**区間を読まずに書くだけの
-    /// 計算の結果も潰す** — 届け直しは CPU が最後に書いた値へ戻す (#2199 の反証 2)。どちらも、結末が
-    /// 届くまでの数フレームに流れた計算に限られる。
+    /// **打ち切りの後に、この並びへ GPU が書く投入 (計算) があれば届け直さない。** 届け直しは CPU が最後に
+    /// 書いた値へ戻すので、その計算が書いた結果を潰す — 粒なら、打ち切りの後に進めた粒が生まれた位置へ
+    /// 跳ね戻る (#2199 の反証 2・4)。そのときは届けた区間を取り戻さない側に置く。区間を読む計算は届いて
+    /// いない入力を読んでおり、その結果も含めて打ち切られた回の計算と同じく失われる。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    private func uploadAgainAfterDrop(_ delivered: [Range<Int>]) {
-        for range in delivered { markDirty(range) }
-        writeGeneration &+= 1
-        gpu.pendingUploads.enqueue(self)
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        guard let index = inFlight.firstIndex(where: { $0.submission == submission }) else { return }
+        let record = inFlight[index]
+        let ranges = record.start..<(record.start + record.count)
+        if dropped, lastGPUWrite <= submission {
+            for range in inFlightRanges[ranges] { markDirty(range) }
+            writeGeneration &+= 1
+            gpu.pendingUploads.enqueue(self)
+        }
+        // 運んだ区間を手放し、後ろの記録の位置を詰める
+        inFlightRanges.removeSubrange(ranges)
+        inFlight.remove(at: index)
+        for later in index..<inFlight.count { inFlight[later].start -= record.count }
     }
 }

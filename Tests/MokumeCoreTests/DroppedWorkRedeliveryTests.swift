@@ -139,6 +139,63 @@ struct DroppedWorkRedeliveryTests {
         expectRevoked(gpu, dropped: dropped)
     }
 
+    static let stamp = """
+        kernel void stamp(device float *out [[buffer(0)]],
+                          constant Values &values [[buffer(MOKUME_VALUES)]],
+                          uint id [[thread_position_in_grid]])
+        {
+            out[id] = values.amount;
+        }
+        """
+
+    /// **打ち切りの後に計算がその並びへ書いていれば、届け直さない** (#2199 の反証 4)。届け直しは CPU が
+    /// 最後に書いた値へ戻すので、計算が進めた中身 (粒なら進めた位置) を潰す。
+    ///
+    /// 描き切りは頭で照会するので、「結末が届く前に計算が書いた」を描き切りでは決定的に作れない。照会を
+    /// 止めて (`holdRevocations()`) 計算を流してから、止めを戻して照会する。
+    @Test("数の並びを届けた投入が打ち切られても、その後に計算がその並びへ書いていれば届け直さない",
+        arguments: [true, false])
+    func aNumberRangeWrittenByALaterComputationIsNotSentAgain(computedAfter: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let numbers = try canvas.makeNumbers(count: 64)
+        let stamp = try canvas.makeComputation(Self.stamp, name: "stamp", values: ["amount": 7])
+        for index in 10..<20 { numbers.set(Float(index), at: index) }
+        try canvas.draw { gpu.dropsNextSubmissionForTesting = Self.victim }
+
+        gpu.holdRevocations()
+        if computedAfter {
+            try canvas.draw { canvas.compute(stamp, over: 64, writes: [numbers]) }
+        } else {
+            try canvas.draw {}
+        }
+        gpu.releaseRevocations()
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        let range = 10 * MemoryLayout<Float>.stride
+        #expect(numbers.pendingUploadByteCount == (computedAfter ? 0 : range), "控え: \(numbers.pendingUploadByteCount)")
+        if computedAfter { #expect(canvas.read(numbers)[15] == 7, "計算の結果を潰した") }
+    }
+
+    /// **結末を失っただけの投入では取り消さない** (#2199 の反証 5)。知らせが失われただけで仕事は走って
+    /// いたかもしれず、取り消すと正しく届いた中身を CPU の値で潰す。
+    @Test("結末の知らせを失った投入は、届け直しの対象にせず、預けも残さない")
+    func aLostOutcomeIsNotRevoked() throws {
+        let gpu = try RenderDevice()
+        gpu.outcomeWaitLimit = .milliseconds(100)
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let numbers = try canvas.makeNumbers(count: 64)
+        for index in 10..<20 { numbers.set(Float(index), at: index) }
+        try canvas.draw { gpu.losesNextOutcomeForTesting = true }
+
+        // 投げる読む口と同じ待ちで、失われた結末を打ち切りとして記させる
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        #expect(numbers.pendingUploadByteCount == 0, "結末を失った投入の区間を届け直した")
+        #expect(gpu.droppedDeliveriesRevoked == 0)
+        #expect(gpu.pendingRevocationCount == 0, "結末を失った投入の預けが残っている")
+    }
+
     // MARK: - 影 (完了条件 3)
 
     /// 床と球の影の場面を組む (描き切らない)。`offset` で球をずらす。
@@ -285,6 +342,67 @@ struct DroppedWorkRedeliveryTests {
         #expect(canvas.output.pixelWriteBacksEncoded - writeBacks == 1, "書き戻した回数が 1 でない")
         let read = try canvas.output.readPixels()
         #expect(read[4, 4].blue == 1 && read[4, 4].red == 0, "書いた画素が失われた: \(read[4, 4])")
+    }
+
+    // MARK: - 読み戻しの「映した」(#2199 の反証 1)
+
+    /// 投げない口 (`pixels`) が積んだ読み戻しが打ち切られると、写しは古いのに「映した」の印が付いた
+    /// ままだった。止まっている間ずっと古い写しを返し、`set()` の書き戻しは古い写しの全面で面を壊す。
+    @Test("投げない口の読み戻しが打ち切られると、次の読みが映し直す。無ければ映し直さない",
+        arguments: [true, false])
+    func aDroppedReadbackOfANonThrowingReadIsReadAgain(dropped: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        try canvas.draw { canvas.background(Self.blue) }
+        if dropped { gpu.dropsNextSubmissionForTesting = Self.victim }
+        _ = canvas.output.pixels
+
+        awaitOutcomes(gpu)
+        let readbacks = canvas.output.pixelReadbacksEncoded
+        let read = canvas.output.pixels[4, 4]
+        #expect(canvas.output.pixelReadbacksEncoded - readbacks == (dropped ? 1 : 0), "映し直した回数が違う")
+        #expect(read.blue == 1 && read.red == 0)
+    }
+
+    // MARK: - 作ったときの塗り (#2199 の反証 2)
+
+    @Test("面を作るときの塗りが打ち切られると、後に書く投入が無ければ塗り直す。書いていれば塗らない。無ければ塗らない",
+        arguments: ["打ち切り", "打ち切りの後に書く", "打ち切りなし"])
+    func aDroppedClearOfANewSurfaceIsRepeated(kind: String) throws {
+        let gpu = try RenderDevice()
+        if kind != "打ち切りなし" { gpu.dropsNextSubmissionForTesting = Self.victim }
+        let target = try RenderTarget(gpu: gpu, width: 8, height: 8)
+        if kind == "打ち切りの後に書く" {
+            let pass = target.makeRenderPass(clearColor: Self.red)
+            try gpu.withCommands { commands throws(RenderFailure) in
+                guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+                    throw .encoderUnavailable
+                }
+                encoder.endEncoding()
+                gpu.commit(commands, writing: [target])
+            }
+        }
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        #expect(target.surfaceClearsRepeated == (kind == "打ち切り" ? 1 : 0), "塗り直した回数が違う")
+    }
+
+    // MARK: - 照会の止め (#2199 の反証 7)
+
+    /// 描き切りは頭で照会してから描く先を変えるかを数え、終わるまで照会を止める。入れ子の描き切りの頭が
+    /// 照会すると、数えた後で書き込み待ちが立つ。
+    @Test("照会を止めている間は取り消さず、止めを戻した後の照会で取り消す")
+    func revocationsWaitWhileHeld() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        try writeBlue(canvas, dropped: true)
+        awaitOutcomes(gpu)
+        gpu.holdRevocations()
+        gpu.revokeDroppedDeliveries()
+        #expect(!canvas.output.hasPendingPixelWrites, "止めている間に取り消した")
+        gpu.releaseRevocations()
+        gpu.revokeDroppedDeliveries()
+        #expect(canvas.output.hasPendingPixelWrites, "止めを戻した後も取り消していない")
     }
 
     // MARK: - 拡大 (完了条件 5)

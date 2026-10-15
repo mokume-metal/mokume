@@ -189,6 +189,9 @@ import MokumeDiagnostics
     /// (塗る口は面の持ち主を知らないので、打ち切りの記録に面が添えられない)。
     private var clearSubmission: UInt64 = 0
 
+    /// 診断: 作ったときの塗りが打ち切られて、塗り直した回数 (#2199)。
+    private(set) var surfaceClearsRepeated = 0
+
     /// 出力段を通った道を通った回数。
     ///
     /// **置き場を作った回数とは別に要る。** 置き場は 1 枚を使い回すので、作った回数は
@@ -227,6 +230,8 @@ import MokumeDiagnostics
         let depthTexture = try gpu.makeTexture(descriptor: depth)
         depthTexture.label = "mokume.target.depth"
         self.depthTexture = depthTexture
+        // 塗りが打ち切られたら、後に書く投入が無ければ塗り直す (``submissionSettled(_:dropped:)``・#2199)
+        gpu.awaitSettlement(of: clearSubmission, by: self)
     }
 
     /// **色と奥行きの面を常駐から退かせる** ([#795])。
@@ -292,6 +297,8 @@ import MokumeDiagnostics
     ///
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private func mirrorForReading() throws(RenderFailure) -> PixelMirror {
+        // 打ち切られた読み戻しの「映した」を、映し直すかを見る前に下ろす (#2199)
+        gpu.revokeDroppedDeliveries()
         let mirror = try mirrorHolding()
         if mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount {
             return mirror
@@ -334,12 +341,18 @@ import MokumeDiagnostics
     /// **結末を見ずに記録する** — 呼ぶ 2 か所 (``mirrorForReading()`` と、描き切りの末尾に読み戻しを
     /// 積む `Canvas` の描き切り) は投入した直後で、結末はまだ届いていない。その投入が打ち切られて
     /// いたら、投げる読む口の判定 (``judgeDroppedWork()``) が範囲の中に見つけて投げ、
-    /// 印を下ろす ([#1932])。投げない口 (`pixels`) は印のまま読む ([ADR-0020] 決定 5)。
+    /// 印を下ろす ([#1932])。投げない口 (`pixels`・`get`・`loadPixels()`) は投げないが
+    /// ([ADR-0020] 決定 5)、**結末が届いた後で土台が同じく印を下ろす** ([#2199])。読み戻しは面を書かない
+    /// ので、面の中身は無事で、次の読みが映し直せば取り戻せる。結末が届くまでの読みは古い写しを返す。
     ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     func markPixelsMirrored(through submission: UInt64) {
-        pixelMirror?.syncedThrough = submission
+        guard let pixelMirror else { return }
+        pixelMirror.syncedThrough = submission
+        // 打ち切られていたら、投げない口でも「映した」を下ろす (``submissionSettled(_:dropped:)``・#2199)
+        gpu.awaitSettlement(of: submission, by: self)
     }
 
     /// CPU が写しへ書いたものをテクスチャへ戻す blit を積む。**書いていなければ何も積まない。**
@@ -399,7 +412,7 @@ import MokumeDiagnostics
         guard let pixelMirror else { return }
         pixelMirror.hasPendingWrites = false
         pixelMirror.writtenBackBy = submission
-        gpu.revokeIfDropped(submission) { [weak self] in self?.rewritePixels(droppedAt: submission) }
+        gpu.awaitSettlement(of: submission, by: self)
     }
 
     /// 書いた画素を書き戻した投入 `submission` が打ち切られた。**写しが書いた画素の唯一の写しなら、
@@ -722,4 +735,58 @@ import MokumeDiagnostics
     ///
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
     isolated deinit { gpu.retire(storage) }
+}
+
+// MARK: - 打ち切られた投入の結末 (#2199)
+
+extension RenderTarget: SettlementObserver {
+    /// この面の記帳を進めた投入の結末が届いた ([#2199])。打ち切られていたら、まだその投入の記帳が
+    /// 生きているものだけを取り消す。
+    ///
+    /// - **書き戻し**: 書き込み待ちを立て直す (``rewritePixels(droppedAt:)``。後にこの面へ書く投入が
+    ///   あれば立て直さない)
+    /// - **読み戻し**: 写しの「映した」を下ろす。写しは打ち切られた読み戻しの前の中身 (初めてなら 0) の
+    ///   ままなので、次の読みが面から映し直す。書き込み待ちが立っていれば CPU の側が最新なので触らない。
+    ///   投げる読む口の判定 (``judgeDroppedWork()``) と同じ扱いである
+    /// - **作ったときの塗り**: 後にこの面へ書く投入が無ければ、透明な黒で塗り直す (``clearAgain()``)。
+    ///   あれば、描いた分を塗り潰さないよう取り戻さない
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        guard dropped else { return }
+        rewritePixels(droppedAt: submission)
+        if let pixelMirror, !pixelMirror.hasPendingWrites, pixelMirror.syncedThrough == submission {
+            pixelMirror.syncedThrough = 0
+        }
+        if submission == clearSubmission, lastWriteSubmission == submission { clearAgain() }
+    }
+
+    /// 作ったときの塗りが打ち切られた面を、透明な黒で塗り直す ([#2199])。**待たない。** 塗れなければ
+    /// 1 行名乗って諦める (面の中身は未定義のまま — 塗り直す前と同じ)。
+    ///
+    /// 置いた側には写させない — 塗り直すのは、まだ何も書かれていない面だけで、置いた側が読んだはずの
+    /// 中身 (透明な黒) に揃える書き込みだからである。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private func clearAgain() {
+        let pass = MTL4RenderPassDescriptor()
+        let attachment = pass.colorAttachments[0]!
+        attachment.texture = texture
+        attachment.loadAction = .clear
+        attachment.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        attachment.storeAction = .store
+        do {
+            let submission = try gpu.withCommands { commands throws(RenderFailure) in
+                guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+                    throw .encoderUnavailable
+                }
+                encoder.endEncoding()
+                return gpu.commit(commands, writing: [self])
+            }
+            clearSubmission = submission
+            gpu.awaitSettlement(of: submission, by: self)
+            surfaceClearsRepeated += 1
+        } catch {
+            Diagnostics.warn(
+                "Could not clear a surface again after the GPU dropped its first clear: \(error.headline)")
+        }
+    }
 }

@@ -45,7 +45,7 @@ import Metal
 /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
 /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
 /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-@MainActor protocol PendingUpload: AnyObject {
+@MainActor protocol PendingUpload: SettlementObserver {
     /// 登録簿に載っているか。**同じ持ち主を 2 度載せないための印**で、登録簿だけが書く。
     ///
     /// `ObjectIdentifier` で見分けないのは、死んだ持ち主の番号が新しい持ち主に使い回され
@@ -68,12 +68,13 @@ import Metal
     /// 世代 `generation` までの書き込みが GPU 側へ届いた。**それより後に書かれていれば
     /// 控えを残す** (次の描き切りがもう一度届ける)。
     ///
-    /// - Returns: 下ろした控えを立て直す手立て。届けた投入を GPU が打ち切っていたら、結末が届いた
-    ///   後で土台が走らせる ([#2199])。何も下ろさなかったら `nil`。手立ては自分を弱く持つ。
+    /// - Parameter submission: 届けた投入の番号。逃げ道で直接書いた分は `nil` (投入に載っていない)。
+    /// - Returns: 投入に載せて届けた控えを下ろしたか。真なら、土台がその投入の結末を待たせ、打ち切られて
+    ///   いたら ``SettlementObserver/submissionSettled(_:dropped:)`` で控えを立て直させる ([#2199])。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     @discardableResult
-    func markUploaded(through generation: UInt64) -> (@MainActor () -> Void)?
+    func markUploaded(through generation: UInt64, by submission: UInt64?) -> Bool
 }
 
 /// 届けていない書き込みを持つものの登録簿。``RenderDevice`` が 1 つ持つ。
@@ -111,24 +112,9 @@ import Metal
         }
     }
 
-    /// 届けたものを知らせ、**もう届けるものが無い持ち主を登録簿から降ろす。**
-    ///
-    /// - Returns: 投入に載せて届けた分の、下ろした控えを立て直す手立て。逃げ道で直接書いた分
-    ///   (`direct`) は投入によらず届いているので返さない ([#2199])。
-    ///
-    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    func markUploaded(_ uploaded: EncodedUploads) -> [@MainActor () -> Void] {
-        var revocations: [@MainActor () -> Void] = []
-        for item in uploaded {
-            let revoke = item.owner.markUploaded(through: item.generation)
-            if !item.direct, let revoke { revocations.append(revoke) }
-        }
-        prune()
-        return revocations
-    }
-
-    /// もう届けるものが無い持ち主を登録簿から降ろす。
-    private func prune() {
+    /// **もう届けるものが無い持ち主を登録簿から降ろす。** 届けた後で
+    /// (``RenderDevice/noteUploaded(_:by:)``) 呼ぶ。
+    func dropFinishedOwners() {
         entries.removeAll { entry in
             guard let owner = entry.owner else { return true }
             guard owner.pendingUploadByteCount == 0 else { return false }

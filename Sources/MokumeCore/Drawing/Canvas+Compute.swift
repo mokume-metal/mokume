@@ -348,12 +348,26 @@ extension Canvas {
         frameRing.noteSubmission()
         // この投入が打ち切られたら、運んだ控えを立て直す (#2199)
         gpu.noteUploaded(assembled.uploaded, by: assembled.submission)
+        noteComputationWrites(by: assembled.submission)
         // **流したものは溜め場から降ろす** — 降ろさないとフレーム末尾の描き切りが同じ計算を
         // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
         // いるので、残すと 2 度走る (#1183)
         pendingComputations.removeAll(keepingCapacity: true)
         // 流した計算に粒の進めがあれば、寿命を減らした量として数える (#1710)
         commitParticleAdvances()
+    }
+
+    /// 溜めた計算が書く並びに、書いた投入の番号を覚えさせる ([#2199])。**溜めた計算を積んだ投入の後で、
+    /// 溜め場を空にする前に呼ぶ。** 打ち切られた投入の控えを届け直すとき、その後で計算が書いた並びは
+    /// 届け直さない (``Numbers/submissionSettled(_:dropped:)``)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteComputationWrites(by submission: UInt64) {
+        for dispatch in pendingComputations {
+            for numbers in dispatch.buffers.suffix(dispatch.writeCount) {
+                numbers.noteWrittenByGPU(in: submission)
+            }
+        }
     }
 
     // MARK: - 面をまたいで、頼んだ順に効かせる

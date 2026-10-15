@@ -872,6 +872,10 @@ public final class Canvas {
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     var targetChangedSinceUpscale = false
+    /// 最後に拡大を積んだ投入の番号。その結末が打ち切りなら印を立て直す (``noteUpscaled(by:)``・[#2199])。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    var upscaledBy: UInt64 = 0
     /// 置く口の追い付き (``catchUpOutputForPlacing(by:)``) を、この面が次に描き切るまで見送るか ([#2042])。
     ///
     /// **追い付けなかったら立てる** (拡大が投げた・置く側自身の写しを取れなかった)。立てないと、断片の
@@ -3686,8 +3690,13 @@ public final class Canvas {
         // 「まだ」に戻すので、この描き切りが普段の経路でやり直す。書き込み待ちの立て直しは、すぐ下で
         // 描く先を変えるかの数えに入る
         //
+        // **照会はここで済ませ、描き切りが終わるまで止める。** 下で置いた側に写させる入れ子の描き切りが
+        // 頭で照会すると、この描き切りが数えた後で書き込み待ちが立ち、数えと食い違う
+        //
         // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
         gpu.revokeDroppedDeliveries()
+        gpu.holdRevocations()
+        defer { gpu.releaseRevocations() }
         // **自分の絵が変わる直前がここ。** 自分を溜めている面にいまの絵を写させると、
         // その面には「置いた時点の絵」が残る (#1656)。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
@@ -3941,7 +3950,7 @@ public final class Canvas {
         if applyingEffects {
             targetChangedSinceUpscale = !assembled.upscaled
             placingCatchUpDeferred = false
-            if assembled.upscaled { revokeUpscaleIfDropped(assembled.submission) }
+            if assembled.upscaled, upscaleStage != nil { noteUpscaled(by: assembled.submission) }
         } else if upscaleStage != nil, changesTarget || assembled.wroteBack {
             targetChangedSinceUpscale = true
             placingCatchUpDeferred = false
@@ -3956,16 +3965,18 @@ public final class Canvas {
             shadowMapHolds = shadow.holds.map {
                 (chain: $0, matrix: shadow.matrix, detail: shadow.map.detail)
             }
-            // **焼いた投入が打ち切られたら、焼いた面は書かれていない** ([#2199])。指紋も持ち越した
-            // 列の並びも忘れ、次の焼き付けを全部から焼かせる。使い回した投入は面を書かないので預けない
+            // **焼いた投入が打ち切られたら、焼いた面は書かれていない** ([#2199])。面がどの投入に拠るかを
+            // 覚えて結末を待つ。使い回した投入は面を書かないので預けない
             //
             // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
             if shadow.solidUploads != nil {
-                gpu.revokeIfDropped(assembled.submission) { [weak self] in
-                    self?.forgetShadowBake()
-                }
+                if !shadow.added { shadowBakedSince = assembled.submission }
+                shadowBakedThrough = assembled.submission
+                gpu.awaitSettlement(of: assembled.submission, by: self)
             }
         }
+        // 計算が書いた並びに、書いた投入を覚えさせる (打ち切りの後に書いた並びは届け直さない・#2199)
+        noteComputationWrites(by: assembled.submission)
         // フレームの最初の描き切りで、描く先は効果を通す前の絵に戻ったか塗り直された。
         // このコマンドが効果を通していれば、描く先はまた効果を通した絵になっている
         if startsFrame { carriesPictureBeforeEffects = false }
@@ -4851,7 +4862,7 @@ public final class Canvas {
         if let key, key == lastShadowBakeKey, let shadowMap, shadowMap.detail == detail {
             shadowBakesReused += 1
             return BakedShadow(
-                map: shadowMap, matrix: matrix, key: key, holds: holds, solidUploads: nil)
+                map: shadowMap, matrix: matrix, key: key, holds: holds, solidUploads: nil, added: false)
         }
         // **面が持ち越した列をちょうど焼いてあれば、この回の列だけを足して焼く** ([#1656])。前の
         // 区切りで焼いた面は、そのときの列 (いま持ち越している列の全部) を、同じ行列と細かさで
@@ -4940,7 +4951,8 @@ public final class Canvas {
         encoder.endEncoding()
         shadowBakesEncoded += 1
         if adding { shadowBakesAdded += 1 }
-        return BakedShadow(map: map, matrix: matrix, key: key, holds: holds, solidUploads: solid)
+        return BakedShadow(
+            map: map, matrix: matrix, key: key, holds: holds, solidUploads: solid, added: adding)
     }
 
     /// 落とす列 1 つが読む置き場。溜め場の列は溜め場を写した置き場を、途中の描き切りから持ち越した
@@ -5016,6 +5028,10 @@ public final class Canvas {
         let holds: UInt64?
         /// 焼くために写した立体の置き場。**使い回したフレームでは `nil`** (写していない)。
         let solidUploads: SolidUploads?
+        /// 面を消さずに、この回の列だけを足して焼いたか ([#1656])。足した面は、前に焼いた投入の上に載る。
+        ///
+        /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        let added: Bool
     }
 
     /// 焼き付けの入力の指紋。**焼く側が読むものを全部**入れる — 光の行列・細かさ・
@@ -5117,14 +5133,25 @@ public final class Canvas {
     /// 誰にも書き換えられないので、影を切って戻したフレームも同じ指紋ならそのまま読める。
     private var lastShadowBakeKey: UInt64?
 
-    /// 焼いた面が何を持つかの記帳 (``lastShadowBakeKey``・``shadowMapHolds``) を忘れる。焼いた投入を
-    /// GPU が打ち切ったとき、結末が届いた後で土台が呼ぶ ([#2199])。次の焼き付けは使い回さず、足さず、
-    /// 全部から焼く。
+    /// 影の面がいま拠っている焼き付けの投入の範囲 ([#2199])。全部から焼いた投入 (`since`) から、その上に
+    /// 足して焼いた最後の投入 (`through`) まで。0 は焼いていない。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    private func forgetShadowBake() {
+    private var shadowBakedSince: UInt64 = 0
+    private var shadowBakedThrough: UInt64 = 0
+
+    /// 焼いた投入 `submission` が打ち切られた。**影の面がまだその投入に拠っていれば** (後で全部から焼き
+    /// 直していなければ)、面が何を持つかの記帳 (``lastShadowBakeKey``・``shadowMapHolds``) を忘れる
+    /// ([#2199])。次の焼き付けは使い回さず、足さず、全部から焼く。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func shadowBakeDropped(_ submission: UInt64) {
+        guard shadowBakedSince > 0, shadowBakedSince <= submission, submission <= shadowBakedThrough
+        else { return }
         lastShadowBakeKey = nil
         shadowMapHolds = nil
+        shadowBakedSince = 0
+        shadowBakedThrough = 0
     }
 
     /// 焼き上がりを待つ仕掛けを積む。**焼いた面を画面のパスが読む前に置く。**
@@ -5170,4 +5197,17 @@ public final class Canvas {
         return texture
     }
 
+}
+
+// MARK: - 打ち切られた投入の結末 (#2199)
+
+extension Canvas: SettlementObserver {
+    /// 影を焼いた投入か、拡大を積んだ投入の結末が届いた。打ち切られていれば、それぞれの記帳を取り消す
+    /// (``shadowBakeDropped(_:)``・``upscaleDropped(_:)``)。正常に終わったなら何もしない — 覚えた番号は
+    /// 後の投入が上書きする。
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        guard dropped else { return }
+        shadowBakeDropped(submission)
+        upscaleDropped(submission)
+    }
 }

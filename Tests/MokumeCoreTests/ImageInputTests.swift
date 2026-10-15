@@ -190,7 +190,7 @@ import Testing
         #expect(actual[0] == .zero && actual[1] == SIMD4(repeating: 1))
         let generation = image.uploadGeneration
         image.write(picture())
-        image.markUploaded(through: generation)
+        image.markUploaded(through: generation, by: nil)
         #expect(image.needsUpload && image.inputNeedsDecode)
     }
 

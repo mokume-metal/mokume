@@ -61,6 +61,10 @@ import simd
     /// 画素を書き換えた世代。**送った後に書き換えられていたら、旗を下ろさない。**
     private var writeGeneration: UInt64 = 0
     var isQueuedForUpload = false
+    /// 全体を届けた最後の投入の番号。結末が届くか、直接書いたら 0 ([#2199])。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private var deliveredBy: UInt64 = 0
     /// 逃げ道で直接送った回数。**検査が読む。**
     private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
@@ -293,21 +297,28 @@ extension Image: PendingUpload {
     }
 
     @discardableResult
-    func markUploaded(through generation: UInt64) -> (@MainActor () -> Void)? {
-        guard generation == writeGeneration else { return nil }
+    func markUploaded(through generation: UInt64, by submission: UInt64?) -> Bool {
+        guard generation == writeGeneration else { return false }
         needsUpload = false
         inputNeedsDecode = false
-        return { [weak self] in self?.uploadAgainAfterDrop() }
+        // 全体を届けるので、届けた最後の投入だけを覚えれば足りる。直接書いた分は届いている
+        deliveredBy = submission ?? 0
+        return submission != nil
     }
 
-    /// 届けた投入を GPU が打ち切った。**画像の全体を、次の描き切りでもう一度届ける** ([#2199])。
+    /// 届けた投入の結末が届いた。**打ち切られていて、それが全体を届けた最後の投入なら、画像の全体を
+    /// 次の描き切りでもう一度届ける** ([#2199])。
     ///
-    /// 控え (CPU の画素か、大きな入力とその後の編集) は届けた後も全体を持っているので、全体を
-    /// 送り直せば面が揃う。大きな入力は復号からやり直す — 打ち切られた投入の復号も面に書かれて
-    /// いない。打ち切りの後に書き換えていれば、既に送る旗が立っているので、送るのは 1 回である。
+    /// 控え (CPU の画素か、大きな入力とその後の編集) は届けた後も全体を持っているので、全体を送り直せば
+    /// 面が揃う。大きな入力は復号からやり直す — 打ち切られた投入の復号も面に書かれていない。後の投入が
+    /// 全体を届け直していれば (``deliveredBy`` が進んでいれば) 何もしない。打ち切りの後に書き換えていれば、
+    /// 既に送る旗が立っているので、送るのは 1 回である。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    private func uploadAgainAfterDrop() {
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        guard submission == deliveredBy else { return }
+        deliveredBy = 0
+        guard dropped else { return }
         if displayInput != nil { inputNeedsDecode = true }
         needsUpload = true
         requestUpload()
