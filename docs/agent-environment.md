@@ -172,3 +172,5 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    枝が残る。枝は `git push origin --delete <枝>` で消す。一時ブランチ
    (`tmp/base-switch-<N>`) も同じである。消えたことは `git ls-remote --heads origin <枝>` が
    空なことで確かめる。
+
+<!-- #2693 の再現の使い捨て (a・merge しない) -->
