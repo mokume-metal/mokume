@@ -241,10 +241,16 @@ struct InputCallbackTests {
                 return (deltaX, deltaY)
             }
 
-        #expect(delivered.map(\.0).reduce(0, +) == sent.map(\.0).reduce(0, +))
-        #expect(delivered.map(\.1).reduce(0, +) == sent.map(\.1).reduce(0, +))
+        // 和は型を明示して取り出す。#expect の中で `reduce(0, +)` を比べると型検査に 2 秒強
+        // かかる (#2596)
+        let deliveredX: Float = delivered.map(\.0).reduce(0, +)
+        let deliveredY: Float = delivered.map(\.1).reduce(0, +)
+        let sentX: Float = sent.map(\.0).reduce(0, +)
+        let sentY: Float = sent.map(\.1).reduce(0, +)
+        #expect(deliveredX == sentX)
+        #expect(deliveredY == sentY)
         // 部分累計を配っていれば 3a + 2b + c = 3*1 + 2*3 + 5 = 14 になる
-        #expect(delivered.map(\.0).reduce(0, +) == 9)
+        #expect(deliveredX == 9)
     }
 
     /// 引きずりも同じ規則で、**1 件ぶんを足し合わせるとフレーム合計 (``InputState/dragX``)
