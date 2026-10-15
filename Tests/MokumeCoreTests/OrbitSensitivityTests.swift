@@ -302,4 +302,22 @@ struct OrbitSensitivityTests {
         let later = try #require(sketch.seen)
         #expect(later.yaw == released.yaw, "慣性を上げた瞬間に、水平角が \(released.yaw) から \(later.yaw) へ回った")
     }
+
+    /// 感度の注意と溢れの注意は別の事情。1 軸の感度が使えなくても、別の有限の軸で
+    /// 溢れたことを黙らない。
+    @Test("別の軸の感度が使えなくても、有限の感度で溢れた軸は知らせる")
+    func overflowIsToldBesideAnUnusableSensitivity() throws {
+        let sketch = Turning()
+        let runtime = try makeRuntime(sketch)
+        try feed(runtime, [.mouseDown(x: 10, y: 14, button: .left), .mouseMoved(x: 40, y: 24)])
+        let before = try #require(sketch.seen)
+
+        sketch.sensitivity = SIMD3(1e37, 1, .nan)
+        try feed(runtime, [.mouseMoved(x: 80, y: 34)])
+        let after = try #require(sketch.seen)
+
+        #expect(after.yaw == before.yaw)
+        #expect(hasWarned(runtime, .badOrbitSensitivity))
+        #expect(hasWarned(runtime, .orbitStepHeld), "溢れた横の軸を知らせなかった")
+    }
 }

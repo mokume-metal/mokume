@@ -262,11 +262,19 @@ struct OrbitControlTests {
             ("distance = .nan", { $0.distance = .nan }, { $0.distance == $0.minimumDistance }),
             ("minimumDistance = .nan", { $0.minimumDistance = .nan }, { $0.minimumDistance == 1 }),
             ("inertia = .nan", { $0.inertia = .nan }, { $0.inertia == 0 }),
+            // 見ている先は、道具の始まりと同じ面の中央へ倒す
+            ("center = (.nan, 0, 0)", { $0.center = SIMD3(.nan, 0, 0) }, { $0.center == SIMD3(32, 24, 0) }),
+            (
+                "Orbit.fitting(width: .nan, height: 48)", { $0 = Orbit.fitting(width: Float.nan, height: 48) },
+                { $0.center == SIMD3(32, 24, 0) }
+            ),
         ]
         for (name, write, fellBack) in cases {
             let (orbit, canvas) = try written(write)
             #expect(fellBack(orbit), "\(name) の後が \(orbit)")
             #expect(canvas.warnings.message(for: .badOrbit)?.hasPrefix("orbit:") == true, "\(name) で注意が出ない")
+            // 倒した先は視点として成り立つ (呼んでもいない camera() の文面で断られない)
+            #expect(!canvas.warnings.hasWarned(.badCamera), "\(name) で視点が成り立たなかった")
         }
     }
 

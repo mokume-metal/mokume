@@ -254,7 +254,7 @@ struct OrbitTests {
         #expect(before.yaw != 0 && before.pitch != 0)
         let held = orbit.advance(
             dragX: 40, dragY: 10, scroll: 0, isDragging: true, sensitivity: SIMD3(1e37, 1, 1))
-        #expect(held)
+        #expect(held == Orbit.HeldAxes(turn: true))
         #expect(orbit.yaw == before.yaw)
         #expect(orbit.yawSpeed == 0)
         // 溢れていない縦はいつもどおり進む
@@ -268,7 +268,7 @@ struct OrbitTests {
         let before = orbit
         let held = orbit.advance(
             dragX: amount, dragY: 0, scroll: 0, isDragging: true, sensitivity: SIMD3(1, 1, 1))
-        #expect(held)
+        #expect(held == Orbit.HeldAxes(turn: true))
         #expect(orbit.yaw == before.yaw)
         #expect(orbit.yawSpeed.isFinite && orbit.pitchSpeed.isFinite)
     }
@@ -279,7 +279,7 @@ struct OrbitTests {
         let before = orbit.distance
         let held = orbit.advance(
             dragX: 0, dragY: 0, scroll: 2, isDragging: false, sensitivity: SIMD3(1, 1, sensitivity))
-        #expect(held)
+        #expect(held == Orbit.HeldAxes(zoom: true))
         #expect(orbit.distance == before)
     }
 
@@ -290,7 +290,7 @@ struct OrbitTests {
         // 指数 100 は Float の exp で無限になる
         let held = orbit.advance(
             dragX: 0, dragY: 0, scroll: -200, isDragging: false, sensitivity: SIMD3(1, 1, 10))
-        #expect(!held)
+        #expect(!held.any)
         #expect(orbit.distance == orbit.maximumDistance)
 
         var written = fitting()
@@ -305,7 +305,7 @@ struct OrbitTests {
         var orbit = Orbit(center: .zero, distance: 100)
         let held = orbit.advance(
             dragX: 0, dragY: 0, scroll: -200, isDragging: false, sensitivity: SIMD3(1, 1, 10))
-        #expect(held)
+        #expect(held == Orbit.HeldAxes(zoom: true))
         #expect(orbit.distance == 100)
     }
 
@@ -341,5 +341,50 @@ struct OrbitTests {
         #expect(orbit.inertia == 0)
         #expect(orbit.distance == 1)
         #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
+    }
+
+    /// 見ている先も「状態は常に有限」に入る。外れていると、毎フレーム見る位置が数でない
+    /// 値になり、呼んでもいない `camera()` の文面で断られていた。
+    @Test("見ている先が数でない・無限なら、渡した先へ倒し、既定へ倒したと分かる")
+    func brokenCenterFallsBack() {
+        var orbit = fitting()
+        orbit.center = SIMD3(.nan, 0, 0)
+        let fellBack = orbit.clampToLimits(fallbackCenter: SIMD3(1, 2, 3))
+        #expect(fellBack)
+        #expect(orbit.center == SIMD3(1, 2, 3))
+        #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
+    }
+
+    @Test("面の大きさが数でない・無限の fitting も、収めれば視点として成り立つ")
+    func fittingWithBrokenSizeFallsBack() {
+        var orbit = Orbit.fitting(width: Float.nan, height: Float.infinity)
+        let fellBack = orbit.clampToLimits(fallbackCenter: SIMD3(32, 24, 0))
+        #expect(fellBack)
+        #expect(orbit.center == SIMD3(32, 24, 0))
+        #expect(orbit.distance.isFinite)
+        #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
+    }
+
+    /// 無限の限界は使える値で、逆さに書いた限界と同じく入れ替えの規則で読む。
+    /// 既定へ倒すのは数でない限界だけ。
+    @Test("無限の限界は入れ替えの規則で読み、既定へ倒さない")
+    func infiniteLimitsKeepTheSwapRule() {
+        var farOnly = fitting()
+        farOnly.minimumDistance = .infinity
+        farOnly.maximumDistance = 500
+        farOnly.distance = 100
+        let farFellBack = farOnly.clampToLimits()
+        #expect(!farFellBack)
+        #expect(farOnly.minimumDistance == .infinity)
+        // 「500 より遠く」
+        #expect(farOnly.distance == 500)
+
+        var nearOnly = fitting()
+        nearOnly.maximumDistance = -.infinity
+        nearOnly.distance = 1e9
+        let nearFellBack = nearOnly.clampToLimits()
+        #expect(!nearFellBack)
+        #expect(nearOnly.maximumDistance == -.infinity)
+        #expect(nearOnly.distance == nearOnly.minimumDistance)
     }
 }

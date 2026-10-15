@@ -110,28 +110,29 @@ public struct Orbit: Equatable, Sendable {
     ///
     /// ## 状態は常に有限に保つ
     ///
-    /// 角・距離・速さに数でない値・無限が入ると、``clampToLimits()`` が角を 0、距離を
+    /// 角・距離・速さに数でない値・無限が入ると、``clampToLimits(fallbackCenter:)`` が角を 0、距離を
     /// 下限へ倒すしかなく、慣性があれば離したあとも毎フレーム倒し続ける ([#2643])。
     /// だから**進めた先が有限にならない軸は、その軸だけ進めない** — 感度が数でない・無限、
     /// 有限の感度と引きずった量の積が溢れる、外から届いた量が無限、のどれでも同じ扱いになる。
     /// 進めなかった軸の速さは捨てる。寄りは指数が有限なら掛けてから限界へ収める (溢れて
     /// 無限になった距離は上限へ。引いたつもりで最も寄った位置へ飛ばない)。
     ///
-    /// - Returns: 進めた先が有限にならず、進めなかった軸があったか。知らせるのは呼ぶ側
-    ///   (``SketchPart/orbitControl(_:_:_:)``) で、ここは面を持たない。
+    /// - Returns: 進めた先が有限にならず、進めなかった軸。知らせるのは呼ぶ側
+    ///   (``SketchPart/orbitControl(_:_:_:)``) で、ここは面を持たない。**軸ごとに返す** —
+    ///   呼ぶ側は、感度が使えなかった軸と、有限の感度で溢れた軸を分けて知らせる。
     ///
     /// [#2643]: https://github.com/mokume-metal/mokume/issues/2643
     @discardableResult
     mutating func advance(
         dragX: Float, dragY: Float, scroll: Float, isDragging: Bool,
         sensitivity: SIMD3<Float>
-    ) -> Bool {
-        var held = false
+    ) -> HeldAxes {
+        var held = HeldAxes()
         if isDragging {
             let turn = -dragX * sensitivity.x * Self.radiansPerPixel
             let tilt = dragY * sensitivity.y * Self.radiansPerPixel
-            if !Self.step(&yaw, speed: &yawSpeed, by: turn) { held = true }
-            if !Self.step(&pitch, speed: &pitchSpeed, by: tilt) { held = true }
+            held.turn = !Self.step(&yaw, speed: &yawSpeed, by: turn)
+            held.tilt = !Self.step(&pitch, speed: &pitchSpeed, by: tilt)
         } else if inertia > 0 {
             // 速さは有限に保ってあるので、溢れるのは角が極端に大きいときだけ
             Self.step(&yaw, speed: &yawSpeed, by: yawSpeed)
@@ -151,10 +152,22 @@ public struct Orbit: Equatable, Sendable {
             let next = exponent.isFinite ? distance * exp(exponent) : .nan
             // 収めた先が有限なら進める。溢れた +∞ は上限へ、0 へ潰れたら下限へ収まる
             let clamped = next.isNaN ? next : min(max(next, lower), upper)
-            if clamped.isFinite { distance = clamped } else { held = true }
+            if clamped.isFinite { distance = clamped } else { held.zoom = true }
         }
         clampToLimits()
         return held
+    }
+
+    /// ``advance(dragX:dragY:scroll:isDragging:sensitivity:)`` が進めなかった軸。
+    struct HeldAxes: Equatable {
+        /// 横 (水平角)。
+        var turn = false
+        /// 縦 (仰角)。
+        var tilt = false
+        /// 寄り (距離)。
+        var zoom = false
+        /// どれかを進めなかったか。
+        var any: Bool { turn || tilt || zoom }
     }
 
     /// 角を 1 段進め、続く速さをその量にする。進めた先が有限にならないなら角を動かさず、
@@ -171,7 +184,10 @@ public struct Orbit: Equatable, Sendable {
         return true
     }
 
-    /// 寄れる限界と引ける限界 (逆さに書かれていても小さいほうが下)。
+    /// 寄れる限界と引ける限界 (逆さに書かれていても小さいほうが下)。**無限の限界も
+    /// この規則で読む** — `minimumDistance = .infinity; maximumDistance = 500` は
+    /// 「500 より遠く」。使えないのは数でない値だけで、それは ``clampToLimits(fallbackCenter:)``
+    /// が既定へ倒す。
     private var distanceLimits: (lower: Float, upper: Float) {
         (min(minimumDistance, maximumDistance), max(minimumDistance, maximumDistance))
     }
@@ -180,15 +196,22 @@ public struct Orbit: Equatable, Sendable {
     /// 置かれうるので、進めるときにも当てるときにも同じ規則を通す。
     ///
     /// 限界の外は収める。**収めようのない値** (数でない値・無限の角・限界の無い側の無限)
-    /// は既定へ倒す: 角は 0、距離は下限、寄れる限界は 1、引ける限界は無し (無限)、
-    /// 慣性は 0 (``init(center:distance:yaw:pitch:inertia:minimumDistance:maximumDistance:)``
+    /// は既定へ倒す: 見ている先は `fallbackCenter`、角は 0、距離は下限 (下限も無限なら上限、
+    /// 両方とも無限なら 1)、数でない限界は寄れる側 1・引ける側は無し (無限)、慣性は 0
+    /// (``init(center:distance:yaw:pitch:inertia:minimumDistance:maximumDistance:)``
     /// の既定)。速さの数でない値・無限も捨てる — 残すと慣性のあるかぎり毎フレーム角を
     /// 倒し続ける ([#2643])。
     ///
+    /// - Parameter fallbackCenter: 見ている先が数でない・無限のときに置く先。書く口は面の
+    ///   中央 (``fitting(width:height:)`` の見ている先) を渡す。
     /// - Returns: 既定へ倒した値があったか。書く口 (``SketchPart/orbit``) が警告する。
     @discardableResult
-    mutating func clampToLimits() -> Bool {
+    mutating func clampToLimits(fallbackCenter: SIMD3<Float> = .zero) -> Bool {
         var fellBack = false
+        if !(center.x.isFinite && center.y.isFinite && center.z.isFinite) {
+            center = fallbackCenter
+            fellBack = true
+        }
         if !pitch.isFinite {
             pitch = 0
             fellBack = true
@@ -201,11 +224,11 @@ public struct Orbit: Equatable, Sendable {
             inertia = 0
             fellBack = true
         }
-        if !minimumDistance.isFinite {
+        if minimumDistance.isNaN {
             minimumDistance = 1
             fellBack = true
         }
-        if maximumDistance.isNaN || maximumDistance == -.infinity {
+        if maximumDistance.isNaN {
             maximumDistance = .infinity
             fellBack = true
         }
@@ -217,7 +240,7 @@ public struct Orbit: Equatable, Sendable {
         if clamped.isFinite {
             distance = clamped
         } else {
-            distance = lower
+            distance = lower.isFinite ? lower : upper.isFinite ? upper : 1
             fellBack = true
         }
         return fellBack

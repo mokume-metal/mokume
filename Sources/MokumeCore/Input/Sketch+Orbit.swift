@@ -83,8 +83,12 @@ extension SketchPart {
             let held = orbit.advance(
                 dragX: input.dragX, dragY: input.dragY, scroll: input.scrollY,
                 isDragging: input.isMouseDown, sensitivity: sensitivity)
-            // 感度が有限なのに進めなかった — 積が溢れた・届いた量が数でない・無限
-            if held, sensible {
+            // 感度が有限なのに進めなかった軸 — 積が溢れた・届いた量が数でない・無限。
+            // 別の軸の感度が使えなくても、こちらは別に知らせる
+            let overflowed =
+                (held.turn && sensitivity.x.isFinite) || (held.tilt && sensitivity.y.isFinite)
+                || (held.zoom && sensitivity.z.isFinite)
+            if overflowed {
                 canvas.warnOnce(
                     .orbitStepHeld,
                     "orbitControl(): a turn or zoom came out as not a number or infinite (too large a sensitivity or movement), so that axis was left as it was for the frame")
@@ -110,8 +114,8 @@ extension SketchPart {
     /// ```
     ///
     /// 書いた値は限界へ収められる (仰角は真上・真下を越えず、距離は上下限の中へ入る)。
-    /// 収めようのない値 (数でない値・無限の角など) は既定へ倒し、初回だけ警告する
-    /// (``Orbit`` の各値の既定。角は 0、距離は寄れる限界)。
+    /// 収めようのない値 (数でない値・無限の角や見ている先など) は既定へ倒し、初回だけ
+    /// 警告する (見ている先は面の中央、角は 0、距離は寄れる限界)。
     /// **走っていなければ読んでも空が返り、書いても何も起きない** (口の名前ごとに 1 度だけ警告する)。
     /// 状態の読み書きでスケッチを止めない (ADR-0020 決定 5)。
     public var orbit: Orbit {
@@ -125,10 +129,12 @@ extension SketchPart {
         nonmutating set {
             guard let runtime = Self.liveRuntime() else { return }
             var orbit = newValue
-            if orbit.clampToLimits() {
+            // 見ている先の既定は、道具の始まりと同じ面の中央
+            let start = Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
+            if orbit.clampToLimits(fallbackCenter: start.center) {
                 runtime.canvas.warnOnce(
                     .badOrbit,
-                    "orbit: got a value that is not a number, or an infinite one with no limit to stop at, so it fell back to its default (angle 0, the nearest distance, minimum distance 1, no maximum distance, no inertia)")
+                    "orbit: got a value that is not a number, or an infinite one with no limit to stop at, so it fell back to its default (the middle of the canvas, angle 0, the nearest distance, minimum distance 1, no maximum distance, no inertia)")
             }
             runtime.orbit = orbit
         }
