@@ -37,8 +37,9 @@ permissions:
   contents: read
 
 # PR ごとに、走っている・待っている古い run を止める。止めた run の pr-gate は cancelled で
-# 終わり、後から走る run の結論が同じ SHA の最新になる。**完了した赤は消さない** — それを
-# 上書きするのは、直した後の新しい run の結論である (#2611 の条件 1)。github.ref は
+# 終わる。必須が同じ SHA のどの check run を読むかは scripts/ci-gate.sh の冒頭 (#2577) が
+# 正本である。**完了した赤は消さない** — それを上書きするのは、直した後の新しい run の
+# 結論である (#2611 の条件 1)。github.ref は
 # pull_request と pull_request_review では refs/pull/<N>/merge、merge_group では group ごとに
 # 別の ref (render.yml の render-pr と同じキー)
 concurrency:
