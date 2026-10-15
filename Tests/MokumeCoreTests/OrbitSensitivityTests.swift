@@ -155,6 +155,16 @@ struct OrbitSensitivityTests {
             }
         }
 
+        /// `Float` へ写した後で使えない軸 (横・縦・寄り)。
+        var unusableAxes: (x: Bool, y: Bool, z: Bool) {
+            let s: SIMD3<Float> =
+                switch self {
+                case .float(let s): s
+                case .double(let s): SIMD3(Float(s.x), Float(s.y), Float(s.z))
+                }
+            return (!s.x.isFinite, !s.y.isFinite, !s.z.isFinite)
+        }
+
         static let all: [Unusable] = [
             .float(SIMD3(.nan, 1, 1)), .float(SIMD3(1, .infinity, 1)), .float(SIMD3(1, 1, -.infinity)),
             .double(SIMD3(.nan, 1, 1)), .double(SIMD3(1, .infinity, 1)),
@@ -175,45 +185,64 @@ struct OrbitSensitivityTests {
         .mouseMoved(x: 50, y: 34), .scrolled(dx: 0, dy: 2),
     ]
 
-    @Test("感度が数でない・無限なら、引きずっても寄せても視点が進まず、注意が出る", arguments: Unusable.all)
-    func unusableSensitivityLeavesTheView(_ unusable: Unusable) throws {
+    private func hasWarned(_ runtime: SketchRuntime, _ warning: Canvas.Warning) -> Bool {
+        runtime.canvas.warnings.hasWarned(warning)
+    }
+
+    /// 使えない感度は**その軸だけ**効かせない。他の軸は、感度 1 のまま続けたときと同じに進む。
+    @Test("感度が数でない・無限なら、その軸だけ効かず、他の軸は進み、注意が出る", arguments: Unusable.all)
+    func unusableSensitivityHoldsOnlyItsAxis(_ unusable: Unusable) throws {
+        let plainSketch = Turning()
+        try feed(try makeRuntime(plainSketch), turnAndZoom + moreTurnAndZoom)
+        let plain = try #require(plainSketch.seen)
+
         let sketch = Turning()
         let runtime = try makeRuntime(sketch)
         try feed(runtime, turnAndZoom)
         let before = try #require(sketch.seen)
         // 動かしてあることを先に確かめる。動いていなければ、下の比較は何も見ていない
         try #require(before.yaw != 0 && before.pitch != 0)
-        try #require(!runtime.canvas.warnings.hasWarned(.badOrbitSensitivity), "受け取れる感度で注意が出た")
+        try #require(plain.yaw != before.yaw && plain.pitch != before.pitch && plain.distance != before.distance)
+        try #require(!hasWarned(runtime, .badOrbitSensitivity), "受け取れる感度で注意が出た")
 
         unusable.apply(to: sketch)
         try feed(runtime, moreTurnAndZoom)
         let after = try #require(sketch.seen)
+        let held = unusable.unusableAxes
 
-        #expect(after == before, "進まないはずの視点が \(before) から \(after) へ動いた")
+        #expect(after.yaw == (held.x ? before.yaw : plain.yaw), "水平角が \(before.yaw) から \(after.yaw)")
+        #expect(after.pitch == (held.y ? before.pitch : plain.pitch), "仰角が \(before.pitch) から \(after.pitch)")
         #expect(
-            runtime.canvas.warnings.message(for: .badOrbitSensitivity)?.hasPrefix("orbitControl()") == true)
+            after.distance == (held.z ? before.distance : plain.distance),
+            "距離が \(before.distance) から \(after.distance)")
+        #expect(after.yawSpeed.isFinite && after.pitchSpeed.isFinite)
+        #expect(runtime.canvas.warnings.message(for: .badOrbitSensitivity)?.hasPrefix("orbitControl()") == true)
+        // 感度の注意で足りる。溢れの注意を重ねない
+        #expect(!hasWarned(runtime, .orbitStepHeld))
     }
 
-    /// 進めなかった呼び出しは引きずった量を食わない — 同じフレームで受け取れる感度で
-    /// 呼び直せば、そちらが食う。
-    @Test("感度が受け取れない呼び出しは、引きずった量を食わない")
-    func unusableCallLeavesTheDragForTheNext() throws {
-        let plain = try orbit(
-            sensitivity: SIMD3(1, 1, 1),
-            after: [.mouseDown(x: 10, y: 24, button: .left), .mouseMoved(x: 40, y: 24)])
-        try #require(plain.yaw != 0)
-
+    /// 有限の感度でも、引きずった量との積が溢れれば角が 0 へ倒れていた。
+    @Test("有限の感度でも積が溢れた軸は進まず、角を 0 へ倒さず、注意が出る")
+    func overflowingTurnHoldsTheAxis() throws {
         let sketch = Turning()
-        sketch.sensitivity = SIMD3(.nan, 1, 1)
-        sketch.thenPlain = true
-        try feed(
-            try makeRuntime(sketch),
-            [.mouseDown(x: 10, y: 24, button: .left), .mouseMoved(x: 40, y: 24)])
-        let retried = try #require(sketch.seen)
-        #expect(retried == plain, "呼び直しで \(retried)、1 度だけ呼んで \(plain)")
+        let runtime = try makeRuntime(sketch)
+        try feed(runtime, [.mouseDown(x: 10, y: 14, button: .left), .mouseMoved(x: 40, y: 24)])
+        let before = try #require(sketch.seen)
+        try #require(before.yaw != 0)
+
+        // 1e37 × 40 画素は Float で溢れる
+        sketch.sensitivity = SIMD3(1e37, 1, 1)
+        try feed(runtime, [.mouseMoved(x: 80, y: 24)])
+        let after = try #require(sketch.seen)
+
+        #expect(after.yaw == before.yaw, "水平角が \(before.yaw) から \(after.yaw)")
+        #expect(after.yawSpeed == 0)
+        #expect(runtime.canvas.warnings.message(for: .orbitStepHeld)?.hasPrefix("orbitControl()") == true)
+        #expect(!hasWarned(runtime, .badOrbitSensitivity))
     }
 
-    /// 慣性があると、非有限の速さが残れば離したあとも毎フレーム角を 0 へ戻す。
+    /// 引きずり中に感度が使えなくなっても、非有限の速さが残って、離したあと毎フレーム
+    /// 角を 0 へ戻すことはない。進めなかったフレームの速さは捨てる (止めてから離したのと同じ)。
     @Test("慣性があっても、感度が受け取れない間に非有限の速さが残らない")
     func unusableSensitivityLeavesNoUnusableSpeed() throws {
         let sketch = Turning()
@@ -221,7 +250,7 @@ struct OrbitSensitivityTests {
         let runtime = try makeRuntime(sketch)
         try feed(runtime, [.mouseDown(x: 10, y: 14, button: .left), .mouseMoved(x: 40, y: 24)])
         let turned = try #require(sketch.seen)
-        try #require(turned.yaw != 0 && turned.inertia == 0.9)
+        try #require(turned.yaw != 0 && turned.pitch != 0 && turned.inertia == 0.9)
 
         sketch.sensitivity = SIMD3(.nan, .nan, 1)
         try feed(runtime, [.mouseMoved(x: 60, y: 34)])
@@ -229,10 +258,48 @@ struct OrbitSensitivityTests {
         try feed(
             runtime,
             [.mouseUp(x: 60, y: 34, button: .left), .mouseMoved(x: 61, y: 34), .mouseMoved(x: 62, y: 34)])
-        let drifted = try #require(sketch.seen)
+        let released = try #require(sketch.seen)
 
-        #expect(drifted.yawSpeed.isFinite && drifted.pitchSpeed.isFinite, "速さが \(drifted.yawSpeed), \(drifted.pitchSpeed)")
-        // 離したあとは、引きずっていた向きへ流れ続ける (0 へ戻されない)
-        #expect(drifted.yaw.isFinite && abs(drifted.yaw) > abs(turned.yaw), "水平角が \(turned.yaw) から \(drifted.yaw)")
+        #expect(released.yawSpeed.isFinite && released.pitchSpeed.isFinite)
+        #expect(released.yaw == turned.yaw, "水平角が \(turned.yaw) から \(released.yaw)")
+        #expect(released.pitch == turned.pitch, "仰角が \(turned.pitch) から \(released.pitch)")
+    }
+
+    /// 離したあとの流れは感度を使わないので、感度が使えなくても止めない。
+    @Test("感度が受け取れなくても、離したあとの慣性の流れは止まらない")
+    func unusableSensitivityKeepsTheCoast() throws {
+        let sketch = Turning()
+        sketch.inertia = 0.9
+        let runtime = try makeRuntime(sketch)
+        try feed(
+            runtime,
+            [.mouseDown(x: 10, y: 24, button: .left), .mouseMoved(x: 40, y: 24), .mouseUp(x: 40, y: 24, button: .left)])
+        let released = try #require(sketch.seen)
+        try #require(released.yawSpeed != 0)
+
+        sketch.sensitivity = SIMD3(.nan, .nan, .nan)
+        try feed(runtime, [.mouseMoved(x: 41, y: 24), .mouseMoved(x: 42, y: 24)])
+        let coasted = try #require(sketch.seen)
+        #expect(abs(coasted.yaw) > abs(released.yaw), "水平角が \(released.yaw) から \(coasted.yaw)")
+    }
+
+    /// 慣性 0 なら速さを毎フレーム捨てる。感度が使えないフレームでも捨てないと、あとで
+    /// 慣性を上げた瞬間に、取っておいた速さで勝手に回り出す。
+    @Test("感度が受け取れないフレームでも、慣性 0 なら速さを捨てる")
+    func unusableSensitivityStillDropsTheSpeedWithoutInertia() throws {
+        let sketch = Turning()
+        let runtime = try makeRuntime(sketch)
+        try feed(runtime, [.mouseDown(x: 10, y: 24, button: .left), .mouseMoved(x: 40, y: 24)])
+        try #require(try #require(sketch.seen).yawSpeed != 0)
+
+        sketch.sensitivity = SIMD3(.nan, .nan, .nan)
+        try feed(runtime, [.mouseUp(x: 40, y: 24, button: .left)])
+        let released = try #require(sketch.seen)
+
+        sketch.sensitivity = SIMD3(1, 1, 1)
+        sketch.inertia = 0.9
+        try feed(runtime, [.mouseMoved(x: 41, y: 24)])
+        let later = try #require(sketch.seen)
+        #expect(later.yaw == released.yaw, "慣性を上げた瞬間に、水平角が \(released.yaw) から \(later.yaw) へ回った")
     }
 }

@@ -213,21 +213,133 @@ struct OrbitTests {
         var orbit = fitting()
         orbit.pitch = 10
         orbit.distance = 1e9
-        orbit.clampToLimits()
+        // 収めただけで、既定へ倒してはいない (書く口が警告しない)
+        let fellBack = orbit.clampToLimits()
+        #expect(!fellBack)
         #expect(orbit.pitch == Orbit.pitchLimit)
         #expect(orbit.distance == orbit.maximumDistance)
     }
 
-    @Test("壊れた値を書いても、視点として成り立つ")
+    /// 倒れ方は既定のまま、**倒したことを返す** — 書く口 (`orbit`) が警告する (#2643)。
+    @Test("壊れた値を書いても、視点として成り立ち、既定へ倒したと分かる")
     func brokenValuesFallBackToSomethingUsable() {
         var orbit = fitting()
         orbit.pitch = .nan
         orbit.yaw = .infinity
         orbit.distance = .nan
-        orbit.clampToLimits()
+        let fellBack = orbit.clampToLimits()
+        #expect(fellBack)
         #expect(orbit.pitch == 0)
         #expect(orbit.yaw == 0)
         #expect(orbit.distance == orbit.minimumDistance)
+        #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
+    }
+
+    // MARK: - 状態は常に有限 (#2643)
+
+    /// 角・距離・速さに数でない値・無限が入ると、限界へ収める段が角を 0、距離を下限へ
+    /// 倒すしかない。だから進めた先が有限にならない軸は、その軸だけ進めない。
+
+    /// 回して、角が 0 でない状態を作る (0 へ倒れても「動かなかった」と見分けが付くように)。
+    private func turned() -> Orbit {
+        var orbit = fitting()
+        drag(&orbit, x: 20, y: 10)
+        return orbit
+    }
+
+    @Test("有限の感度でも積が溢れた軸だけ進めず、角を 0 へ倒さず、その軸の速さを捨てる")
+    func overflowingTurnHoldsOnlyThatAxis() {
+        var orbit = turned()
+        let before = orbit
+        #expect(before.yaw != 0 && before.pitch != 0)
+        let held = orbit.advance(
+            dragX: 40, dragY: 10, scroll: 0, isDragging: true, sensitivity: SIMD3(1e37, 1, 1))
+        #expect(held)
+        #expect(orbit.yaw == before.yaw)
+        #expect(orbit.yawSpeed == 0)
+        // 溢れていない縦はいつもどおり進む
+        #expect(abs(orbit.pitch - (before.pitch + 10 * Orbit.radiansPerPixel)) < 1e-6)
+        #expect(orbit.pitchSpeed != 0)
+    }
+
+    @Test("届いた引きずりの量が数でない・無限でも、その軸は進まない", arguments: [Float.nan, .infinity, -.infinity])
+    func unusableDragHoldsTheAxis(_ amount: Float) {
+        var orbit = turned()
+        let before = orbit
+        let held = orbit.advance(
+            dragX: amount, dragY: 0, scroll: 0, isDragging: true, sensitivity: SIMD3(1, 1, 1))
+        #expect(held)
+        #expect(orbit.yaw == before.yaw)
+        #expect(orbit.yawSpeed.isFinite && orbit.pitchSpeed.isFinite)
+    }
+
+    @Test("寄りの感度が数でない・無限なら、距離は動かない", arguments: [Float.nan, .infinity, -.infinity])
+    func unusableZoomSensitivityHoldsTheDistance(_ sensitivity: Float) {
+        var orbit = fitting()
+        let before = orbit.distance
+        let held = orbit.advance(
+            dragX: 0, dragY: 0, scroll: 2, isDragging: false, sensitivity: SIMD3(1, 1, sensitivity))
+        #expect(held)
+        #expect(orbit.distance == before)
+    }
+
+    /// 引いたつもりが、最も寄った位置へ飛んでいた。
+    @Test("溢れて無限になった距離は、下限ではなく上限へ収める")
+    func overflowingZoomOutStopsAtTheFarLimit() {
+        var orbit = fitting()
+        // 指数 100 は Float の exp で無限になる
+        let held = orbit.advance(
+            dragX: 0, dragY: 0, scroll: -200, isDragging: false, sensitivity: SIMD3(1, 1, 10))
+        #expect(!held)
+        #expect(orbit.distance == orbit.maximumDistance)
+
+        var written = fitting()
+        written.distance = .infinity
+        let fellBack = written.clampToLimits()
+        #expect(!fellBack)
+        #expect(written.distance == written.maximumDistance)
+    }
+
+    @Test("引ける限界が無いときに溢れた寄りは、進めない")
+    func overflowingZoomWithoutAFarLimitHolds() {
+        var orbit = Orbit(center: .zero, distance: 100)
+        let held = orbit.advance(
+            dragX: 0, dragY: 0, scroll: -200, isDragging: false, sensitivity: SIMD3(1, 1, 10))
+        #expect(held)
+        #expect(orbit.distance == 100)
+    }
+
+    @Test("どこから入っても、非有限の速さは捨てられ、慣性で角が 0 へ戻されない")
+    func unusableSpeedIsDropped() {
+        var clamped = turned()
+        clamped.yawSpeed = .nan
+        clamped.pitchSpeed = .infinity
+        clamped.clampToLimits()
+        #expect(clamped.yawSpeed == 0 && clamped.pitchSpeed == 0)
+
+        var coasting = turned()
+        let before = coasting
+        coasting.inertia = 0.9
+        coasting.yawSpeed = .nan
+        coasting.pitchSpeed = -.infinity
+        drag(&coasting, isDragging: false)
+        #expect(coasting.yaw == before.yaw && coasting.pitch == before.pitch)
+        #expect(coasting.yawSpeed == 0 && coasting.pitchSpeed == 0)
+    }
+
+    @Test("限界や慣性に数でない値を書いても、距離に数でない値が入らない")
+    func brokenLimitsFallBackToDefaults() {
+        var orbit = fitting()
+        orbit.minimumDistance = .nan
+        orbit.maximumDistance = .nan
+        orbit.inertia = .nan
+        orbit.distance = .nan
+        let fellBack = orbit.clampToLimits()
+        #expect(fellBack)
+        #expect(orbit.minimumDistance == 1)
+        #expect(orbit.maximumDistance == .infinity)
+        #expect(orbit.inertia == 0)
+        #expect(orbit.distance == 1)
         #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
     }
 }
