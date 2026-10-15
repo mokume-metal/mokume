@@ -13,34 +13,37 @@
 #
 # PR では走らない段 (merge_group だけの段など) が skipped で現れても止まらない。
 #
-# ## PR の run で skipped の検査は、同じ head SHA の最新の結論を読む (#2690)
+# ## PR の run で skipped の検査は、同じ head SHA の検査が終わるのを待って、その結論を返す (#2690)
 #
 # 本文・タイトルだけの edited の run では、ci-check・ci-static が skipped になる (ci.yml の
-# ci-check の if:)。そのまま通すと緑の ci-gate が付く。必須の判定は同じ名前の check のうち
-# 作成順で最新のものを読む (#2577 の実測) ので、同じ SHA の別の run でコードの検査が走っている
-# 途中でも、赤でも、必須が満たされていた。ci-gate を skipped にしても穴は塞がらない
-# (skipped の必須チェックは通過と扱われる)。
+# ci-check の if:)。そのまま通すと緑の ci-gate が付き、同じ SHA の別の run でコードの検査が
+# 走っている途中でも必須が満たされていた。ci-gate を skipped にしても穴は塞がらない (skipped の
+# 必須チェックは通過と扱われる)。
 #
-# そこで skipped の検査ごとに、同じ head SHA の check run から skipped とこの run 自身のものを
-# 除いて最新のもの (id が最大 = 作成順で最新) を読み、completed かつ success のときだけ通す。
-# 走っている途中・赤・見つからない・API の失敗 (間を空けて 3 回試した後) は、理由を出して赤に
-# する (閉じる側に倒す)。EVENT_NAME が無い・知らない event も赤にする — 開く側に倒れると、
-# 渡し忘れひとつで素通しに戻る。
+# 必須の判定は、**run (check suite) ごとの最新の ci-gate がどれも赤くない**ことを求める。まだ
+# ci-gate を作っていない run は数えない (#2690 の実測・#2696)。そのため、走っている途中に赤を
+# 返すと、後から検査の run の緑の ci-gate が作られても、打ち直されるまで PR を塞ぐ。**だから
+# 待つ。** 待っている間、この ci-gate は in_progress で、必須は満たされない。
+#
+# skipped の検査ごとに、同じ head SHA の check run から skipped とこの run 自身のものを除いて
+# 最新のもの (id が最大 = 作成順で最新) を読み、completed になるまで POLL_WAIT 秒おきに読み直す。
+# 結論が success なら通し、ほかの結論は赤。WAIT_LIMIT 秒を越えても終わらない・見つからない・
+# API が読めないままなら、最後の理由を出して赤にする (閉じる側に倒す)。期限は ci.yml の
+# timeout-minutes より内側に置く。EVENT_NAME が無い・知らない event も赤にする — 開く側に
+# 倒れると、渡し忘れひとつで素通しに戻る。
 #
 # **この run 自身の check run は除く。** skipped になる job は ci-gate より数秒遅れて作られる
-# ことがあり (#2690 の反証で実測)、作られた瞬間の状態が completed でなければ「走っている途中」の
-# 最新に見える。後から ci-gate を作る run は無いので、その赤が最新のまま固まる。
-#
-# **待たない。** 走っている途中の検査の run は、その検査が終わってから自分の ci-gate を作り
-# (needs が終わった時点で作られる。#2690 の反証で実測)、そちらが最新になってこの赤を上書きする。
+# ことがあり (#2690 の反証で実測)、作られた瞬間の状態が completed でなければ、自分自身の終わりを
+# 待つことになる。
 #
 # 代償:
-#   - その間、ci-gate の赤が見える。上書きされた後も並んで残る
+#   - 本文を編集するたびに、ubuntu の runner を最長で検査の所要時間ぶん (macOS の空き待ちを
+#     含む) 占める。期限を越えた赤は、打ち直すまで PR を塞ぐ
 #   - 同じ head SHA の check run は PR を区別しない。同じブランチから出た別の PR (閉じて作り
 #     直したものを含む) の検査の結論を読みうる
 #
 # 塞いでいない兄弟: base の変更・reopen では、その run の ci-gate が検査の終わるまで作られず、
-# 前の run の緑の ci-gate が最新のまま必須を満たす。ci-gate がここで判定する前の穴で、別に扱う
+# 前の run の緑の ci-gate だけで必須が満たされる。ci-gate がここで判定する前の穴で、別に扱う
 # (#2692)。
 #
 # 読む名前は needs から取り、コードの検査の名前の写しを持たない。check_name で引くので、
@@ -72,47 +75,49 @@ skipped=$(jq -r 'to_entries[] | select(.value.result == "skipped") | .key' <<<"$
 : "${HEAD_SHA:?PR の head の SHA を渡す}"
 : "${GITHUB_REPOSITORY:?owner/repo を渡す}"
 : "${GITHUB_RUN_ID:?この run の id を渡す}"
-RETRY_WAIT=${RETRY_WAIT:-10}
+POLL_WAIT=${POLL_WAIT:-30}
+WAIT_LIMIT=${WAIT_LIMIT:-5400}
 
 errfile=$(mktemp)
 trap 'rm -f "$errfile"' EXIT
 
-# 1 行 = "<id> <status> <conclusion> <url>"。gh が落ちたら間を空けて 3 回まで試す
-read_runs() { # $1=名前
-  local attempt
-  for attempt in 1 2 3; do
-    if gh api --paginate \
-      "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=$1&filter=all&per_page=100" \
-      --jq '.check_runs[] | select(.app.slug == "github-actions" and .conclusion != "skipped")
-            | select(.details_url | contains("/actions/runs/'"$GITHUB_RUN_ID"'/") | not)
-            | "\(.id) \(.status) \(.conclusion // "-") \(.html_url)"' 2>"$errfile" </dev/null; then
-      return 0
-    fi
-    [ "$attempt" -eq 3 ] || sleep "$RETRY_WAIT"
-  done
-  return 1
+# 同じ SHA の、skipped とこの run 自身を除いた最新の 1 行 ("<id> <status> <conclusion> <url>")。
+# 無ければ空。gh が落ちたら 1 を返す
+latest_run() { # $1=名前
+  local rows
+  rows=$(gh api --paginate \
+    "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=$1&filter=all&per_page=100" \
+    --jq '.check_runs[] | select(.app.slug == "github-actions" and .conclusion != "skipped")
+          | select(.details_url | contains("/actions/runs/'"$GITHUB_RUN_ID"'/") | not)
+          | "\(.id) \(.status) \(.conclusion // "-") \(.html_url)"' 2>"$errfile" </dev/null) || return 1
+  # ページごとに出るので、id の数の順に並べ直してから最大を取る
+  sort -n <<<"$rows" | tail -n 1
 }
 
 failed=0
+end=$((SECONDS + WAIT_LIMIT))
 while read -r name; do
-  if ! rows=$(read_runs "$name"); then
-    echo "$name: 同じ SHA の check run を読めなかった (3 回): $(tr '\n' ' ' <"$errfile")" >&2
-    failed=1
-    continue
-  fi
-  # ページごとに出るので、id の数の順に並べ直してから最大を取る
-  latest=$(sort -n <<<"$rows" | tail -n 1)
-  if [ -z "$latest" ]; then
-    echo "$name: この run では skipped で、同じ SHA に走った $name が無い" >&2
-    failed=1
-    continue
-  fi
-  read -r _id status conclusion url <<<"$latest"
-  if [ "$status" != completed ]; then
-    echo "$name: この run では skipped で、同じ SHA の $name が走っている途中 ($url)。" \
-      "その run の ci-gate が終わったときに付け直す" >&2
-    failed=1
-  elif [ "$conclusion" != success ]; then
+  while :; do
+    if ! latest=$(latest_run "$name"); then
+      reason="同じ SHA の check run を読めなかった: $(tr '\n' ' ' <"$errfile")"
+    elif [ -z "$latest" ]; then
+      reason="同じ SHA に走った $name が無い"
+    else
+      read -r _id status conclusion url <<<"$latest"
+      if [ "$status" = completed ]; then
+        break
+      fi
+      reason="同じ SHA の $name が走っている途中 ($url)"
+    fi
+    if [ "$SECONDS" -ge "$end" ]; then
+      echo "$name: この run では skipped で、${WAIT_LIMIT} 秒待っても結論が出ない — $reason" >&2
+      failed=1
+      continue 2
+    fi
+    echo "$name: 待つ — $reason"
+    sleep "$POLL_WAIT"
+  done
+  if [ "$conclusion" != success ]; then
     echo "$name: この run では skipped で、同じ SHA の最新の $name が $conclusion ($url)" >&2
     failed=1
   else

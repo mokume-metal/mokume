@@ -180,6 +180,13 @@ class CiWorkflowTest(unittest.TestCase):
         self.assertRegex(gate, r"(?m)^      checks: read\b")
         self.assertRegex(gate, r"(?m)^          sparse-checkout: scripts/ci-gate\.sh\s*$")
 
+    def test_ci_gate_の_timeout_は待ちの期限の外側にある(self):
+        # 内側だと、期限の赤 (理由つき) より先に job が切られ、理由の無い cancelled になる
+        gate = self.jobs["ci-gate"]
+        minutes = int(re.search(r"(?m)^    timeout-minutes: (\d+)\s*$", gate).group(1))
+        limit = int(re.search(r"(?m)^WAIT_LIMIT=\$\{WAIT_LIMIT:-(\d+)\}$", GATE.read_text()).group(1))
+        self.assertGreater(minutes * 60, limit + 5 * 60)
+
     def test_段を走らせる_job_の名前はほかのワークフローに無い(self):
         # ci-gate.sh は needs のキーを check run の名前として、check_name で同じ SHA を引く。
         # job に name: があると名前がキーとずれ、同じ名前の job がほかにあると別のワークフローの
@@ -277,7 +284,13 @@ case "$url" in
       echo "gh: HTTP 504: Gateway Timeout" >&2; exit 1
     fi
     name=${url#*check_name=}; name=${name%%&*}
+    # 名前ごとの回数。<名前>.after.json があれば、AFTER 回目 (既定 2) からはそちらを返す
+    k=$(( $(cat "$RUNS_DIR/$name.count" 2>/dev/null || echo 0) + 1 ))
+    echo "$k" > "$RUNS_DIR/$name.count"
     f="$RUNS_DIR/$name.json"
+    if [ -f "$RUNS_DIR/$name.after.json" ] && [ "$k" -ge "${AFTER:-2}" ]; then
+      f="$RUNS_DIR/$name.after.json"
+    fi
     [ -f "$f" ] || f="$RUNS_DIR/none.json"
     # --paginate はページごとに --jq を当てて連結する。2 ページ目があればそれも出す
     jq -r "$filter" < "$f"
@@ -320,9 +333,13 @@ class CiGateScriptTest(unittest.TestCase):
     """scripts/ci-gate.sh の判定 (#2690)。"""
 
     def run_gate(
-        self, runs: dict, *, event="pull_request", results=None, env_extra=None, page2=None
+        self, runs: dict, *, event="pull_request", results=None, env_extra=None, page2=None,
+        after=None,
     ):
-        """runs = {名前: [check run …]}・page2 = 2 ページ目。(returncode, 出力, gh の呼び出し) を返す。"""
+        """runs = {名前: [check run …]}・page2 = 2 ページ目・after = 読み直したときの応答。
+
+        (returncode, 出力, gh の呼び出し) を返す。既定の WAIT_LIMIT は 0 (1 度だけ読む)。
+        """
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             gh = tmp / "bin" / "gh"
@@ -334,6 +351,10 @@ class CiGateScriptTest(unittest.TestCase):
             (runs_dir / "none.json").write_text(json.dumps({"total_count": 0, "check_runs": []}))
             for name, items in runs.items():
                 (runs_dir / f"{name}.json").write_text(
+                    json.dumps({"total_count": len(items), "check_runs": items})
+                )
+            for name, items in (after or {}).items():
+                (runs_dir / f"{name}.after.json").write_text(
                     json.dumps({"total_count": len(items), "check_runs": items})
                 )
             for name, items in (page2 or {}).items():
@@ -349,7 +370,8 @@ class CiGateScriptTest(unittest.TestCase):
                 "HEAD_SHA": SHA,
                 "GITHUB_REPOSITORY": "o/r",
                 "GITHUB_RUN_ID": RUN_ID,
-                "RETRY_WAIT": "0",
+                "POLL_WAIT": "0",
+                "WAIT_LIMIT": "0",
                 "GH_CALLS": str(calls),
                 "RUNS_DIR": str(runs_dir),
                 **(env_extra or {}),
@@ -374,11 +396,37 @@ class CiGateScriptTest(unittest.TestCase):
             # latest は completed_at の最新だけを返し、走っている途中も古い success も見えない
             self.assertIn("filter=all", call)
 
-    def test_走っている途中なら赤(self):
-        # 変更前の素通しでは、opened の run の ci-check が走っている間に緑が付いた (#2577)
-        code, out, _ = self.run_gate(self.both([check_run(100, "in_progress", None)]))
+    def test_走っている途中なら終わるのを待って結論を返す(self):
+        # 変更前の素通しでは、opened の run の ci-check が走っている間に緑が付いた (#2577)。
+        # 途中で赤を返すと、後から緑が来ても打ち直すまで PR を塞ぐ (#2690 の実測)
+        for final, want in (("success", 0), ("failure", 1)):
+            with self.subTest(final=final):
+                code, out, calls = self.run_gate(
+                    self.both([check_run(100, "in_progress", None)]),
+                    after={"ci-check": [check_run(100, "completed", final)]},
+                    env_extra={"WAIT_LIMIT": "30", "AFTER": "3"},
+                )
+                self.assertEqual(code, want, out)
+                self.assertIn("待つ", out)
+                self.assertGreaterEqual(len(calls), 4, calls)  # ci-check を 3 回・ci-static を 1 回
+
+    def test_期限まで終わらなければ赤(self):
+        code, out, calls = self.run_gate(
+            self.both([check_run(100, "in_progress", None)]), env_extra={"WAIT_LIMIT": "1"}
+        )
         self.assertEqual(code, 1, out)
+        self.assertIn("待っても結論が出ない", out)
         self.assertIn("走っている途中", out)
+        self.assertGreater(len(calls), 3, calls)  # 期限までは読み直している
+
+    def test_まだ見つからなければ現れるまで待つ(self):
+        # 本文の編集が、検査の run の job が作られるより先に届いた場合
+        code, out, _ = self.run_gate(
+            {"ci-static": [check_run(900, "completed", "success")]},
+            after={"ci-check": [check_run(100, "completed", "success")]},
+            env_extra={"WAIT_LIMIT": "30"},
+        )
+        self.assertEqual(code, 0, out)
 
     def test_最新が赤なら赤(self):
         for conclusion in ("failure", "cancelled", "timed_out"):
@@ -455,16 +503,18 @@ class CiGateScriptTest(unittest.TestCase):
 
     def test_API_が失敗し続けたら理由を出して赤(self):
         code, out, calls = self.run_gate(
-            self.both([check_run(100, "completed", "success")]), env_extra={"CHECKRUNS_FAIL": "99"}
+            self.both([check_run(100, "completed", "success")]),
+            env_extra={"CHECKRUNS_FAIL": "9999", "WAIT_LIMIT": "1"},
         )
         self.assertEqual(code, 1, out)
         self.assertIn("Gateway Timeout", out)
-        self.assertEqual(len(calls), 6, calls)  # 2 つの名前を 3 回ずつ
+        self.assertGreater(len(calls), 2, calls)  # 期限までは試し直している
 
     def test_API_の一時的な失敗は試し直す(self):
-        # 検査が緑で終わった後の本文の編集で 1 回落ちただけの赤は、後から上書きする run が無い
+        # 赤を返すと、打ち直すまで PR を塞ぐ
         code, out, _ = self.run_gate(
-            self.both([check_run(100, "completed", "success")]), env_extra={"CHECKRUNS_FAIL": "2"}
+            self.both([check_run(100, "completed", "success")]),
+            env_extra={"CHECKRUNS_FAIL": "2", "WAIT_LIMIT": "30"},
         )
         self.assertEqual(code, 0, out)
 
