@@ -325,7 +325,7 @@ extension SketchPart {
     /// 使うときは ``Effect/custom(_:)`` として並びへ入れる。
     ///
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=51305187
     // shot: 2 snippet=6a15d68d
@@ -344,7 +344,7 @@ extension SketchPart {
     /// 書き方は文字列から作る ``makeEffect(_:name:values:)`` と同じで、例と絵はそちらにある。
     ///
     /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeEffect(_:name:values:)
     public func loadEffect(

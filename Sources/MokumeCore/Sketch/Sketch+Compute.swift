@@ -65,7 +65,7 @@ extension SketchPart {
     ///
     /// - Throws: 領域を取れないときと、`count` が 1 を割るとき (``RenderFailure/invalidCount(_:)``。
     ///   1 個へ丸めない) に ``RenderFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=fc61cf1e
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
@@ -208,7 +208,7 @@ extension SketchPart {
     /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。
     ///
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=d76ea602
     // shot: 2 snippet=e8f5dab5
@@ -226,7 +226,7 @@ extension SketchPart {
     /// こと (``makeComputation(_:name:values:)`` の「保存したら差し替わる」) である。
     ///
     /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeComputation(_:name:values:)
     public func loadComputation(

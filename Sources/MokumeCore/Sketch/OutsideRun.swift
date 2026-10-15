@@ -134,17 +134,25 @@ final class OutsideRun {
     /// 1 行目が起きたこと、2 行目が次にすることで、走っている最中の警告の 1 行 (``RenderFailure``
     /// の `headline`) は 1 行目になる。
     ///
+    /// **「走っていない」「面が無い」とは言わない** (上の冒頭と同じく [#1322])。`draw()` が回っている
+    /// 最中に、そこで起こした `Task` から同期の口を呼んでもここへ来る。そのとき面はあるが、そこからは
+    /// 取れない。どちらでも事実である「どこからなら面を取れるか」を言う。場合の名前 (`notRunning`) は
+    /// #2683 の完了条件が決めたもので、この言い方とずれる。
+    ///
+    /// [#1322]: https://github.com/mokume-metal/mokume/issues/1322
     /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
     nonisolated static func notRunningNotice(_ call: String) -> String {
         if waitingLoads.contains(call) {
             "\(call) only works inside setup(), draw() or an input callback, or in a Task started "
-                + "there, because it needs the running sketch's surface. It was called from somewhere "
-                + "else — an initialiser, after the sketch ended, or Task.detached — where there is "
-                + "no surface.\nCall it from a Task started in setup()"
+                + "there, because it makes what it returns on the sketch's surface, which can only be "
+                + "reached from those places. It was called from somewhere else — an initialiser, "
+                + "after the sketch ended, or Task.detached — so the surface could not be reached."
+                + "\nCall it from a Task started in setup()"
         } else {
-            "\(call) only works inside setup(), draw() or an input callback, because it needs the "
-                + "running sketch's surface. It was called outside them — from an initialiser, after "
-                + "the sketch ended, or from a Task — where there is no surface.\nCall it from setup()"
+            "\(call) only works inside setup(), draw() or an input callback, because it makes what "
+                + "it returns on the sketch's surface, which can only be reached there. It was called "
+                + "outside them — from an initialiser, after the sketch ended, or from a Task — so the "
+                + "surface could not be reached.\nCall it from setup()"
         }
     }
 }

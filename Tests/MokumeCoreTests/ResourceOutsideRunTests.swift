@@ -199,6 +199,14 @@ struct ResourceOutsideRunTests {
         #expect(waiting.hasPrefix("requestImage(_:) only works inside setup(), draw() or an input callback, or in a Task started there"))
         #expect(waiting.contains("Task.detached"))
 
+        // **「走っていない」「面が無い」とは言わない** (#1322)。`draw()` が回っている最中に、そこで
+        // 起こした `Task` から同期の口を呼んでもこの文面になり、そのとき面はある
+        for text in [synchronous, waiting] {
+            #expect(!text.contains("no surface"), "面が無いと言い切っている: \(text)")
+            #expect(!text.lowercased().contains("not running"), "走っていないと言い切っている: \(text)")
+            #expect(text.contains("could not be reached"))
+        }
+
         // 5 つの型が同じ文面を出す (どの口から来たかで変わるのは名前だけ)
         let call = "makeSomething(_:)"
         let expected = OutsideRun.notRunningNotice(call)

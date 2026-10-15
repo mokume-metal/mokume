@@ -157,7 +157,7 @@ extension SketchPart {
     /// ということでもある。走らせたままファイルを差し替えれば、次の読み込みからそちらが出る。
     ///
     /// - Throws: 見つからないとき・画像として読めないとき・GPU 側へ置けないときに ``ImageFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
@@ -255,7 +255,7 @@ extension SketchPart {
     ///
     /// - Throws: 幅・高さのどちらかが 1 を割るか面の上限を越えるときに
     ///   ``ImageFailure/unplaceable(width:height:)``。1 を割る指定を 1×1 へ丸めない。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=f455cc89
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {

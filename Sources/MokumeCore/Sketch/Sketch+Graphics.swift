@@ -100,7 +100,7 @@ extension SketchPart {
     /// - Throws: 描き場所を確保できないときと、幅・高さのどちらかが 1 を割るとき
     ///   (``RenderFailure/invalidSize(width:height:)``。1×1 へ丸めない) に ``RenderFailure``。
     ///   **組み立てのときに投げる** ([ADR-0020] 決定 5) ので、`setup()` で作って持ち回る。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

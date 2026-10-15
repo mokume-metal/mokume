@@ -47,10 +47,15 @@ public enum DataFailure: Error, Equatable, Sendable {
     /// URL から本文を受け取れなかった。`reason` は受け取れなかった事情 (繋がらない・
     /// 時間切れ・サーバが 2xx 以外の状態で答えた、など)。
     case unreachable(url: String, reason: String)
-    /// スケッチが走っていない所 (初期化子の中・後片付けの後・走っている実行から起こしていない
-    /// `Task` の中) で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
     /// (`"loadShape(_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    ///
+    /// 面を取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで起こした
+    /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
+    /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした `Task` から
+    /// 同期の口を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)
+    /// と同じ事情)。
     case notRunning(call: String)
 }
 

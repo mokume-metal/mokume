@@ -248,7 +248,7 @@ extension SketchPart {
     ///   `encoding=""` など名前の形でない宣言は `malformed`)
     /// - XML として壊れている・根が `<svg>` でない: ``DataFailure/malformed(path:line:reason:)``
     ///   (壊れていた行が載る。行の終わりは LF・CRLF・CR のどれでもよく、捨てたものに添える行も同じ数え方)
-    /// - スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼んだ:
+    /// - `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼んだ:
     ///   ``DataFailure/notRunning(call:)``。ファイルを読んでから形を記録する面を取るので、読めない
     ///   ファイルなら上のどれかが先に投げられる
     ///

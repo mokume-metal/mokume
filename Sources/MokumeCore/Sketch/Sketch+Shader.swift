@@ -91,7 +91,7 @@ extension SketchPart {
     /// 組み上がってはじめて差し替わるので、片方だけ古い断片が効くことはない。
     ///
     /// - Throws: 見つからないとき・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeShader(_:name:values:surfaces:)
     public func loadShader(
@@ -299,7 +299,7 @@ extension SketchPart {
     /// }
     ///
     /// - Throws: 組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
-    ///   スケッチが走っていない所 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=7a78b249
     // shot: 2 snippet=3bf5c822
