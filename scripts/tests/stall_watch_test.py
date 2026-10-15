@@ -459,6 +459,22 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(self.classify(41, proc), ("queue-not-entered", "name"), proc.stdout)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
 
+    def test_揃った後に掛けた予約は_掛けてから猶予の内なら黙る(self):
+        """経過は check の最新と予約を掛けた時刻の遅い方から測る。揃ってから 2 時間後に掛けた
+        予約の、queue へ動く前の隙間を名乗らない。BEHIND も必須は揃っている形として見る。"""
+        self.add_pr(46, auto=True, state="CLEAN", checks=[check("ci-gate", "SUCCESS", ago(120))])
+        self.add_pr(47, auto=True, state="BEHIND", checks=[check("ci-gate", "SUCCESS", ago(120))])
+        for number, at in ((46, ago(1)), (47, ago(20))):
+            path = self.pr_dir / f"{number}.json"
+            pr = json.loads(path.read_text(encoding="utf-8"))
+            pr["autoMergeRequest"] = {"enabledAt": at}
+            path.write_text(json.dumps(pr), encoding="utf-8")
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(46, proc), (None, None), proc.stdout)
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith("47 "))
+        self.assertEqual(line[1:3], ["queue-not-entered", "name"], proc.stdout)
+        self.assertIn(int(line[3]), (19, 20), proc.stdout)
+
     def test_揃ってから猶予の内は_queue_に入っていなくても黙る(self):
         """予約が queue へ動くまでの隙間は正常。出すと毎回の注意になる (#642)。"""
         self.add_pr(42, auto=True, state="CLEAN", checks=[check("ci-gate", "SUCCESS", ago(5))])

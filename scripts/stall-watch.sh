@@ -92,7 +92,7 @@
 #      対処: 本文を編集する (edited の run が新しい ci-gate を付ける) か、新しいコミットを push
 #      する。**作法のジョブ (LEGACY_JOBS) を含む run を head に持つ open な PR が無くなったら、
 #      この行と legacy の判定ごと消してよい**
-#  12. autoMerge: true + CLEAN (か UNSTABLE) で isInMergeQueue: false のまま、揃ってから猶予を超えた
+#  12. autoMerge: true + CLEAN (か UNSTABLE・BEHIND) で isInMergeQueue: false のまま、揃ってから猶予を超えた
 #      原因: 予約は掛かっていて必須も揃っているのに、予約が queue へ動かない (#2693)。予約が
 #      効いていれば揃ってから数秒で入る。#2691 は揃ってから 27 分入らなかった。起きる条件は
 #      #2693 で調べている (作成と同時のラベルで cancelled の pr-gate が残る形が疑わしい)
@@ -175,11 +175,13 @@
 #
 # 名乗る行は人が動くまで消えないので、毎回赤くすると走るたびに通知が飛び、「毎回出る
 # 注意は意味を失う」(#642) を踏む。**閾値 (既定 60 分) を超えて続いているものがある
-# ときだけ 1 で終える。** それ以下は出力するだけで 0。
+# ときだけ 1 で終える。** それ以下は出力するだけで 0。例外は runner-offline と
+# queue-not-entered で、猶予を短くする代わりに猶予の内は行を出さない (下のそれぞれの節)。
 #
 # 経過は「その状態を作った出来事の時刻」から測る — 失敗 check があればその completedAt、
 # check が 1 本も無い conflict では PR の updatedAt、auto-merge-dropped では外れた出来事の
-# createdAt、queue-not-entered では check のうち最新の完了時刻 (必須が揃った時刻の近似)。**状態をどこにも記録しない**ので、
+# createdAt、queue-not-entered では check のうち最新の時刻と予約を掛けた時刻の遅い方
+# (必須が揃い、予約も掛かった時刻の近似)。**状態をどこにも記録しない**ので、
 # 当番が落ちていても復帰すればそのまま正しく測れる。
 #
 # **猶予の値は、走る間隔に合わせて動かさない** (#1197)。cron は 15 分ごとに頼んでいるが、
@@ -212,8 +214,14 @@
 # 予約が効いていれば、必須が揃ってから数秒で queue に入る。なので猶予 (既定 15 分) は PR の
 # 猶予より短く、runner-offline と同じく**猶予を超えたときにしか行を出さず、出したら必ず 1 で
 # 終える** — 揃った直後の隙間は正常で、出すと毎回の注意になる (#642)。UNSTABLE (必須でない
-# check の赤・render-pr など) も必須は揃っているので含める。queue に居るかの GraphQL は、
-# この形に当たった PR だけで引く
+# check の赤・render-pr など) と BEHIND (保護は最新の main を求めず、queue が合流後の木で
+# 測り直す) も必須は揃っているので含める。queue に居るかの GraphQL は、この形に当たった
+# PR だけで引く。
+#
+# 経過は check の最新の時刻と予約を掛けた時刻 (enabledAt) の遅い方から測る。揃ってから
+# 何時間も後に予約を掛けた PR を、掛けた直後の隙間で名乗らないため。check の時刻には
+# 必須でない check や本文の編集の run も入るので、起点は遅い側に寄る — 誤って赤くするより、
+# 名乗りが遅れるほうに倒している
 #
 # ## 出力
 #
@@ -582,8 +590,10 @@ for n in $numbers; do
   fi
 
   # 予約が掛かり必須も揃っているのに queue へ動かない (冒頭の表の 12 行目・#2693)
-  if [ "$state" = CLEAN ] || [ "$state" = UNSTABLE ]; then
-    mins=$(minutes_since "$(newest_check_at <<<"$checks")")
+  if [ "$state" = CLEAN ] || [ "$state" = UNSTABLE ] || [ "$state" = BEHIND ]; then
+    since=$(printf '%s\n%s\n' "$(newest_check_at <<<"$checks")" \
+      "$(jq -r '.autoMergeRequest.enabledAt // ""' <<<"$json")" | sort | tail -n 1)
+    mins=$(minutes_since "$since")
     [ "$mins" -ge "$QUEUE_ENTRY_MINUTES" ] || continue
     case "$(in_merge_queue "$n")" in
       true) ;;
