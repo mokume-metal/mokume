@@ -301,6 +301,19 @@ echo "代役が知らない呼び出し: $*" >&2
 exit 2
 """
 
+# 時計の代役 (#2713)。sleep は眠らずに $FAKE_CLOCK を引数の秒だけ進めて $SLEEPS に書き、
+# date +%s はその時計を返す。時計が進むのは sleep だけなので、期限までの読み直しの回数は
+# 負荷にも秒の境目にも依らない。本物の時計 (bash の SECONDS) で測ると、秒の境目の直前に
+# 起きた回は WAIT_LIMIT=1 の期限が実時間で 0 秒近くで切れ、1 度しか読まない
+FAKE_SLEEP = """#!/bin/bash
+printf '%s\\n' "$1" >> "$SLEEPS"
+echo $(( $(cat "$FAKE_CLOCK") + $1 )) > "$FAKE_CLOCK"
+"""
+FAKE_DATE = """#!/bin/bash
+[ "$*" = "+%s" ] || { echo "代役が知らない呼び出し: date $*" >&2; exit 2; }
+cat "$FAKE_CLOCK"
+"""
+
 SHA = "0123abcd"
 RESULTS_EDITED = {"ci-check": {"result": "skipped"}, "ci-static": {"result": "skipped"}}
 
@@ -339,13 +352,20 @@ class CiGateScriptTest(unittest.TestCase):
         """runs = {名前: [check run …]}・page2 = 2 ページ目・after = 読み直したときの応答。
 
         (returncode, 出力, gh の呼び出し) を返す。既定の WAIT_LIMIT は 0 (1 度だけ読む)。
+        時計は代役で、進むのは sleep だけ (POLL_WAIT=0 の既定では進まない)。眠った秒の並びは
+        self.sleeps に残す。
         """
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             gh = tmp / "bin" / "gh"
             gh.parent.mkdir()
-            gh.write_text(FAKE_GH)
-            gh.chmod(0o755)
+            for name, text in (("gh", FAKE_GH), ("sleep", FAKE_SLEEP), ("date", FAKE_DATE)):
+                (gh.parent / name).write_text(text)
+                (gh.parent / name).chmod(0o755)
+            clock = tmp / "clock"
+            clock.write_text("1700000000\n")
+            sleeps = tmp / "sleeps"
+            sleeps.write_text("")
             runs_dir = tmp / "runs"
             runs_dir.mkdir()
             (runs_dir / "none.json").write_text(json.dumps({"total_count": 0, "check_runs": []}))
@@ -374,6 +394,8 @@ class CiGateScriptTest(unittest.TestCase):
                 "WAIT_LIMIT": "0",
                 "GH_CALLS": str(calls),
                 "RUNS_DIR": str(runs_dir),
+                "FAKE_CLOCK": str(clock),
+                "SLEEPS": str(sleeps),
                 **(env_extra or {}),
             }
             env = {k: v for k, v in env.items() if v is not None}
@@ -382,6 +404,7 @@ class CiGateScriptTest(unittest.TestCase):
             )
             # --jq の式は複数行なので、呼び出しの頭 (api …) の行だけを数える
             heads = [ln for ln in calls.read_text().splitlines() if ln.startswith("api ")]
+            self.sleeps = [int(s) for s in sleeps.read_text().split()]
             return proc.returncode, proc.stdout + proc.stderr, heads
 
     def both(self, items):
@@ -410,14 +433,22 @@ class CiGateScriptTest(unittest.TestCase):
                 self.assertIn("待つ", out)
                 self.assertGreaterEqual(len(calls), 4, calls)  # ci-check を 3 回・ci-static を 1 回
 
+    # 期限の 2 検査は、本番の既定 (POLL_WAIT=30・WAIT_LIMIT=5400) を片方ずつ渡さずに走らせる。
+    # 両方を既定にすると 181 回読み直し、代役の起動だけで秒単位かかる。どちらも ci-check を
+    # 0, 1, 2, 3 回眠った時点の 4 回読み、期限に達した 4 回目で赤にする。期限を過ぎた
+    # ci-static は 1 度だけ読む
+
     def test_期限まで終わらなければ赤(self):
         code, out, calls = self.run_gate(
-            self.both([check_run(100, "in_progress", None)]), env_extra={"WAIT_LIMIT": "1"}
+            self.both([check_run(100, "in_progress", None)]),
+            env_extra={"POLL_WAIT": None, "WAIT_LIMIT": "90"},
         )
         self.assertEqual(code, 1, out)
-        self.assertIn("待っても結論が出ない", out)
+        self.assertIn("90 秒待っても結論が出ない", out)
         self.assertIn("走っている途中", out)
-        self.assertGreater(len(calls), 3, calls)  # 期限までは読み直している
+        # 期限までは既定の 30 秒おきに読み直し、期限で止まる
+        self.assertEqual(self.sleeps, [30, 30, 30])
+        self.assertEqual(len(calls), 4 + 1, calls)
 
     def test_まだ見つからなければ現れるまで待つ(self):
         # 本文の編集が、検査の run の job が作られるより先に届いた場合
@@ -504,11 +535,14 @@ class CiGateScriptTest(unittest.TestCase):
     def test_API_が失敗し続けたら理由を出して赤(self):
         code, out, calls = self.run_gate(
             self.both([check_run(100, "completed", "success")]),
-            env_extra={"CHECKRUNS_FAIL": "9999", "WAIT_LIMIT": "1"},
+            env_extra={"CHECKRUNS_FAIL": "9999", "POLL_WAIT": "1800", "WAIT_LIMIT": None},
         )
         self.assertEqual(code, 1, out)
+        self.assertIn("5400 秒待っても結論が出ない", out)
         self.assertIn("Gateway Timeout", out)
-        self.assertGreater(len(calls), 2, calls)  # 期限までは試し直している
+        # 既定の 5400 秒の期限までは試し直し、期限で止まる
+        self.assertEqual(self.sleeps, [1800, 1800, 1800])
+        self.assertEqual(len(calls), 4 + 1, calls)
 
     def test_API_の一時的な失敗は試し直す(self):
         # 赤を返すと、打ち直すまで PR を塞ぐ

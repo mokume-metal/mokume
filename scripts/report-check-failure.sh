@@ -143,6 +143,10 @@ trap 'rm -f "$tmp"' EXIT
   fi
 } > "$tmp"
 
+# 追記は **bot の手**として Issue の活動に混じる (CI の github.token で書くので作者は Bot)。
+# 活動を読む道具 (ready-queue・plan-record・comment.sh) はそれを人の活動に数えない —
+# 前提と判定は scripts/bot-hand.sh に 1 度だけ置いてある。ここで書き方を変えるとき
+# (ラベル付け・再オープンなど) も、作者が Bot である限り読み手の側は変えなくてよい
 if [ -n "$existing" ]; then
   gh issue comment "$existing" -R "$REPO" --body-file "$tmp" >/dev/null
   echo "report: 既に open な #$existing がある — 二重には立てず、追記した"

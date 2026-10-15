@@ -866,7 +866,8 @@ struct SVGFileTests {
             ("fill: red !imp", "red !imp", false),
         ])
     func importantMarkerIsSplitFromTheValue(_ sample: (text: String, value: String, isImportant: Bool)) {
-        let declarations = SVGFile.parseDeclarations(sample.text)
+        let (declarations, unreadable) = SVGFile.parseDeclarations(sample.text)
+        #expect(unreadable.isEmpty, "\(sample.text): \(unreadable)")
         #expect(declarations.count == 1, "\(sample.text)")
         #expect(declarations.first?.name == "fill", "\(sample.text)")
         #expect(declarations.first?.value == sample.value, "\(sample.text)")
@@ -1017,6 +1018,220 @@ struct SVGFileTests {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
         #expect(drawing.items.count == sample.1, "\(sample.0): \(drawing.items)")
+    }
+
+    // MARK: 読めない値を一方へ倒さない ([#2649])
+    //
+    // [#2649]: https://github.com/mokume-metal/mokume/issues/2649
+
+    /// `viewBox="0 0 10 10"` を 100×50 の根へ写した変換で、viewBox の左上と右下が写る先。
+    private func aspectCorners(_ aspect: String?) throws -> (drawing: SVGFile.Drawing, corners: [SIMD2<Float>]) {
+        let written = aspect.map { #" preserveAspectRatio="\#($0)""# } ?? ""
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="100" height="50"\#(written)>"#)
+        let transform = try #require(drawing.items.first, "\(aspect ?? "なし"): 描かれなかった").transform
+        return (drawing, [transform.apply(.zero), transform.apply(SIMD2(10, 10))])
+    }
+
+    /// `preserveAspectRatio` の読めない値は、SVG では書いていないのと同じ (`xMidYMid meet`) に読まれる。
+    /// 左上寄せ (xMinYMin) に倒さず、`visibility "abc"` などと同じ形で名乗る。
+    @Test(
+        "preserveAspectRatio の読めない値は、書いていないときと同じ中央寄せで写し、skipped に載る (#2649)",
+        arguments: [
+            // (書いた値, 載るはずの名乗り)
+            ("foo", #"preserveAspectRatio "foo""#),
+            (" foo ", #"preserveAspectRatio "foo""#),
+            ("xMidYMid foo", #"preserveAspectRatio "xMidYMid foo""#),
+            ("xMidYMid meet slice", #"preserveAspectRatio "xMidYMid meet slice""#),
+            ("xMidYMin2", #"preserveAspectRatio "xMidYMin2""#),
+            ("defer", #"preserveAspectRatio "defer""#),
+            ("", #"preserveAspectRatio """#),
+        ])
+    func unreadableAspectRatioIsNamedAndCentred(_ sample: (String, String)) throws {
+        let (drawing, corners) = try aspectCorners(sample.0)
+        let (_, expected) = try aspectCorners(nil)
+        // 書いていなければ 5 倍で写し、横の余り 50 の半分だけ右へ寄せる
+        #expect(expected == [SIMD2(25, 0), SIMD2(75, 50)])
+        #expect(corners == expected, "\(sample.0): \(corners)")
+        #expect(drawing.skipped.map(\.what) == [sample.1], "\(sample.0): \(drawing.skipped)")
+    }
+
+    @Test(
+        "preserveAspectRatio の読める値は今までどおりで、名乗らない (#2649 の陰性対照)",
+        arguments: [
+            // (書いた値, viewBox の左上と右下が写る先)
+            ("none", [SIMD2<Float>(0, 0), SIMD2<Float>(100, 50)]),
+            ("none slice", [SIMD2(0, 0), SIMD2(100, 50)]),
+            ("xMidYMid", [SIMD2(25, 0), SIMD2(75, 50)]),
+            ("xMinYMin slice", [SIMD2(0, 0), SIMD2(100, 100)]),
+            ("xMidYMid slice", [SIMD2(0, -25), SIMD2(100, 75)]),
+            ("xMaxYMax", [SIMD2(50, 0), SIMD2(100, 50)]),
+            ("XMINYMID meet", [SIMD2(0, 0), SIMD2(50, 50)]),
+            ("defer xMaxYMin meet", [SIMD2(50, 0), SIMD2(100, 50)]),
+        ])
+    func readableAspectRatioIsUnchanged(_ sample: (String, [SIMD2<Float>])) throws {
+        let (drawing, corners) = try aspectCorners(sample.0)
+        #expect(corners == sample.1, "\(sample.0): \(corners)")
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+    }
+
+    @Test("入れ子の svg の preserveAspectRatio の読めない値も、中央寄せで写して名乗る (#2649)")
+    func unreadableNestedAspectRatioIsNamed() throws {
+        let drawing = try document(
+            #"<svg viewBox="0 0 10 10" width="100" height="50" preserveAspectRatio="foo"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">"#)
+        #expect(drawing.items[0].transform.apply(.zero) == SIMD2(25, 0))
+        #expect(drawing.skipped.map(\.what) == [#"preserveAspectRatio "foo""#], "\(drawing.skipped)")
+    }
+
+    /// `stroke-dasharray` の読めない値と負の値は SVG では宣言ごと無効で、破線にならない。「破線あり」に倒して
+    /// 「破線を捨てた」と名乗らず、無かったものとして受け継いだ値のまま、値が読めなかったと名乗る。
+    @Test(
+        "stroke-dasharray の読めない値・負の値は、破線ありに倒さず skipped に載り、下の none を消さない (#2649)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り)
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="abc"/>"#, [#"stroke-dasharray "abc""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="-1 2"/>"#, [#"stroke-dasharray "-1 2""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5em"/>"#, [#"stroke-dasharray "5em""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5,,3"/>"#, [#"stroke-dasharray "5,,3""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray=""/>"#, [#"stroke-dasharray """#]),
+            // 線を引かなくても、読めない値は名乗る (visibility などと同じ)
+            (#"<rect width="10" height="10" stroke-dasharray="abc"/>"#, [#"stroke-dasharray "abc""#]),
+            // 下の順位の有効な none は、読めない宣言に消されない
+            (
+                #"<rect width="10" height="10" stroke="black" stroke-dasharray="none" style="stroke-dasharray:abc"/>"#,
+                [#"stroke-dasharray "abc""#]
+            ),
+            (
+                #"<style>rect { stroke-dasharray: abc }</style><rect width="10" height="10" stroke="black" stroke-dasharray="none"/>"#,
+                [#"stroke-dasharray "abc""#]
+            ),
+            // 親の破線は受け継ぐ (読めない値は破線を消しもしない)。読めた破線は今までどおり「捨てた」と名乗る
+            (
+                #"<g stroke-dasharray="5 3"><rect width="10" height="10" stroke="black" stroke-dasharray="abc"/></g>"#,
+                [#"stroke-dasharray "abc""#, "stroke-dasharray"]
+            ),
+        ])
+    func unreadableDashArrayIsNamedAndIgnored(_ sample: (String, [String])) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "stroke-dasharray の読める値は今までどおりで、0 の並びは破線にしない (#2649 の陰性対照)",
+        arguments: [
+            // (SVG の本体, 破線を捨てたと名乗るか)
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5 3"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5,3"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray=" 5 , 3 "/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5pt 3%"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="none"/>"#, false),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray=" NONE "/>"#, false),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="0pt"/>"#, false),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="0, 0px"/>"#, false),
+            // 線を引かなければ、読めた破線も名乗らない
+            (#"<rect width="10" height="10" stroke-dasharray="5 3"/>"#, false),
+            // 上の順位の有効な値が勝つ
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="none" style="stroke-dasharray:5 3"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5 3" style="stroke-dasharray:none"/>"#, false),
+            (#"<g stroke-dasharray="none"><rect width="10" height="10" stroke="black" stroke-dasharray="inherit"/></g>"#, false),
+        ])
+    func readableDashArrayIsUnchanged(_ sample: (String, Bool)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == (sample.1 ? ["stroke-dasharray"] : []), "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    /// `url(#a) abc` の代わりの色が読めなければ、CSS では宣言ごと無効になる。参照としても読まず、読めない値として
+    /// 名乗るだけで、下の順位の宣言・受け継いだ値が残る (他の読めない値と同じ)。
+    @Test(
+        "塗りの参照の代わりの色が読めなければ、宣言ごと読めない値として名乗り、下の宣言・受け継いだ値が残る (#2649)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 塗りの色)
+            // 書いていないときの塗りは黒 (受け継ぐ初めの値)
+            (#"<rect width="10" height="10" fill="url(#a) abc"/>"#, [#"fill "url(#a) abc""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a)abc"/>"#, [#"fill "url(#a)abc""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a) inherit"/>"#, [#"fill "url(#a) inherit""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a) url(#b)"/>"#, [#"fill "url(#a) url(#b)""#], SVGFile.Color.black),
+            // 線は引かれないまま (初めの値の none)
+            (#"<rect width="10" height="10" stroke="url(#a) abc"/>"#, [#"stroke "url(#a) abc""#], SVGFile.Color.black),
+            // 下の順位の宣言を消さない (属性 < <style> の規則 < style 属性)
+            (
+                #"<rect width="10" height="10" fill="red" style="fill: url(#a) abc"/>"#,
+                [#"fill "url(#a) abc""#], Ink.red
+            ),
+            (
+                ##"<style>rect { fill: url(#a) abc }</style><rect width="10" height="10" fill="#0000ff"/>"##,
+                [#"fill "url(#a) abc""#], Ink.blue
+            ),
+            // 受け継いだ値も消さない
+            (#"<g fill="red"><rect width="10" height="10" fill="url(#a) abc"/></g>"#, [#"fill "url(#a) abc""#], Ink.red),
+        ] as [(String, [String], SVGFile.Color?)])
+    func unreadablePaintFallbackIsNamed(_ sample: (String, [String], SVGFile.Color?)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
+        #expect(drawing.items.first?.stroke == nil, "\(sample.0): \(drawing.items)")
+    }
+
+    /// `style` 属性と `<style>` の、宣言の形をしていない部分 (`:` が無い・名前が空) は CSS では捨てられる。
+    /// 黙って落とさず、`CSS declaration "fill red"` の形で名乗る。下の宣言は残る。
+    @Test(
+        "宣言の形をしていない CSS の部分は、skipped に載り、下の宣言を消さない (#2649)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 塗りの色)
+            (##"<rect width="10" height="10" fill="#0000ff" style="fill red"/>"##, [#"CSS declaration "fill red""#], Ink.blue),
+            (##"<rect width="10" height="10" fill="#0000ff" style=": red"/>"##, [#"CSS declaration ": red""#], Ink.blue),
+            // 同じ style 属性の読める宣言は効く
+            (##"<rect width="10" height="10" style="fill red; fill: #00ff00"/>"##, [#"CSS declaration "fill red""#], Ink.green),
+            (
+                ##"<style>rect { fill red }</style><rect width="10" height="10" fill="#0000ff"/>"##,
+                [#"CSS declaration "fill red""#], Ink.blue
+            ),
+            (
+                #"<style>rect { fill: red; stroke }</style><rect width="10" height="10"/>"#,
+                [#"CSS declaration "stroke""#], Ink.red
+            ),
+            // 読めない規則の中身は、規則ごと名乗るので別に名乗らない
+            (#"<style>g .deep { fill red }</style><rect width="10" height="10"/>"#, [#"CSS rule "g .deep""#], SVGFile.Color.black),
+        ])
+    func malformedDeclarationIsNamed(_ sample: (String, [String], SVGFile.Color)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "空の宣言 (;; と末尾の ;) と空の style は、名乗らない (#2649 の陰性対照)",
+        arguments: [
+            #"<rect width="10" height="10" style="fill: red;"/>"#,
+            #"<rect width="10" height="10" style=" ; fill: red ;; "/>"#,
+            #"<rect width="10" height="10" fill="red" style=""/>"#,
+            #"<rect width="10" height="10" fill="red" style="/* 註 */"/>"#,
+            #"<style>rect { fill: red; }</style><rect width="10" height="10"/>"#,
+            #"<style>rect { ; fill: red ;; }</style><rect width="10" height="10"/>"#,
+        ])
+    func emptyDeclarationsAreNotNamed(_ sample: String) throws {
+        let drawing = try document(sample)
+        #expect(drawing.skipped.isEmpty, "\(sample): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == Ink.red, "\(sample): \(drawing.items)")
+    }
+
+    @Test(
+        "塗りの参照の読める代わりの色は今までどおりで、参照だけを名乗る (#2649 の陰性対照)",
+        arguments: [
+            (#"<rect width="10" height="10" fill="url(#a) red"/>"#, Ink.red),
+            (#"<rect width="10" height="10" fill="url(#a)  #0000ff "/>"#, Ink.blue),
+            (#"<rect width="10" height="10" fill="url(#a)"/>"#, nil),
+            (#"<rect width="10" height="10" fill="url(#a) none"/>"#, nil),
+            (##"<rect width="10" height="10" color="#00ff00" fill="url(#a) currentColor"/>"##, Ink.green),
+        ] as [(String, SVGFile.Color?)])
+    func readablePaintFallbackIsUnchanged(_ sample: (String, SVGFile.Color?)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == [#"fill="url(…)""#], "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == sample.1, "\(sample.0): \(drawing.items)")
     }
 
     @Test("角丸の矩形は線の集まりに、片方だけ書いた半径はもう片方にも使う")

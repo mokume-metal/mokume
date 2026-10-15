@@ -23,7 +23,13 @@
 # 必須の判定は、作成順で最新の check suite に載った ci-gate を読む (下の「必須の判定が読む check
 # run」)。本文の編集の run は検査の run より後に作られるので、走っている途中に赤を返すと、後から
 # 検査の run (古い suite) の緑の ci-gate が付いても、打ち直されるまで PR を塞ぐ (#2696)。**だから
-# 待つ。** 待っている間、この ci-gate は in_progress で、必須は満たされない。
+# 待つ。** 待っている間、この ci-gate は in_progress で、必須は満たされない。待った末の赤 (検査の
+# 赤・期限切れ・見つからない・読めない) も、後で検査が打ち直されて緑になれば残った赤になる。
+# **当番 (stall-watch.sh の reread) が、同じ SHA の ci-check・ci-static の最新がどちらも success に
+# なったところでこの ci-gate を打ち直す** (#2717)。打ち直された ci-gate は同じ SHA を読み直して緑を
+# 返す。検査の最新が赤のままなら打ち直さない。
+#
+# ## 待ち方
 #
 # skipped の検査ごとに、同じ head SHA の check run から skipped とこの run 自身のものを除いて
 # 最新のもの (作成順で最新の check suite の、その中で id が最大のもの。下の latest_run) を読み、
@@ -39,7 +45,7 @@
 #
 # 代償:
 #   - 本文を編集するたびに、ubuntu の runner を最長で検査の所要時間ぶん (macOS の空き待ちを
-#     含む) 占める。期限を越えた赤は、打ち直すまで PR を塞ぐ
+#     含む) 占める。期限を越えた赤は、当番が打ち直すまで (当番の間隔ぶん) PR を塞ぐ
 #   - 同じ head SHA の check run は PR を区別しない。同じブランチから出た別の PR (閉じて作り
 #     直したものを含む) の検査の結論を読みうる
 #
@@ -67,6 +73,8 @@
 #   #2688          新しい suite の緑の ci-gate が、走っている古い suite を待たずに必須を満たした
 #   #2696          新しい suite (本文の編集の run) の赤い ci-gate が、古い suite の緑で上書きされず
 #                  11 時間 BLOCKED。打ち直して CLEAN
+#   #2717          古い suite の検査を打ち直して緑にしても、その suite の ci-gate が走り直すだけで、
+#                  新しい suite (本文の編集の run) の赤い ci-gate は残った
 #   #2712          作成と同時のラベルで同じ秒に立った pr-gate のうち、新しい suite のほうが cancelled
 #                  で BLOCKED。打ち直して CLEAN (#2716)
 #   #2710 ほか     cancelled の pr-gate が古い suite のほうで、止まらずに merge された (#2707・#2703 も)
@@ -130,8 +138,13 @@ latest_run() { # $1=名前
   sort -n -k1,1 -k2,2 <<<"$rows" | tail -n 1 | cut -d' ' -f2-
 }
 
+# 期限の時計。SECONDS と同じ壁時計の整数秒で、検査が date の代役を置いて差し込む (#2713)。
+# 時計が進むのを sleep の代役だけにすると、期限までの読み直しの回数が負荷にも秒の境目にも
+# 依らず決まる
+now() { date +%s; }
+
 failed=0
-end=$((SECONDS + WAIT_LIMIT))
+end=$(($(now) + WAIT_LIMIT))
 while read -r name; do
   while :; do
     if ! latest=$(latest_run "$name"); then
@@ -145,7 +158,7 @@ while read -r name; do
       fi
       reason="同じ SHA の $name が走っている途中 ($url)"
     fi
-    if [ "$SECONDS" -ge "$end" ]; then
+    if [ "$(now)" -ge "$end" ]; then
       echo "$name: この run では skipped で、${WAIT_LIMIT} 秒待っても結論が出ない — $reason" >&2
       failed=1
       continue 2
