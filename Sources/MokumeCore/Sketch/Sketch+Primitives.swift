@@ -88,7 +88,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 濃い灰色の下地の中央に、直径 160 の橙色の円 | symmetric=xy -->
-    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/96181bf509092609adb70e0a39c9fe35.png)
+    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/317de77f2b2ae9704cd049ad1ffccbae.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -109,7 +109,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に重なる、直径 240・160・80 の 3 つの円 | symmetric=xy -->
-    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/179362f2c7ba97955a550ebdf9a38ba1.png)
+    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/062fc2de26cf77114506f26ffdd72667.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -135,7 +135,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 画面の中央に、横に長い橙色の楕円 | symmetric=xy -->
-    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/ae195aa51d3fa91ee52980143a4d5f17.png)
+    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/796275b020867edd4ddd47574cb8873f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -154,7 +154,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に、横長と縦長の楕円が十字に重なる | symmetric=xy -->
-    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/22de3a16c890eca31fd83cad374ecb51.png)
+    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/b1b1cff37c194754aaf33a08442b2fd2.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -484,7 +484,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: (200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円 | symmetric=xy -->
-    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/081c472956dcaac395ba5c36ea71014b.png)
+    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/c708f09f06b46a68c73a9b7d738674c0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -502,7 +502,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円 -->
-    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/6de8f23b4bfb1c069f267af4ea1a5a19.png)
+    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/326e3fc677ed66bfcc721fef30c9227c.png)
     ///     <!-- /shot -->
     ///   }
     /// }

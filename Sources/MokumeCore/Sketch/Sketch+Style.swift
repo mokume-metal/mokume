@@ -33,7 +33,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている | symmetric=xy -->
-    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/30cab01270e473c802ae7fd35b300899.png)
+    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/5fcd864ce485b6cc8d4c49c8b4481e65.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -156,7 +156,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 水色に塗られた円を、太い橙色の輪郭が囲んでいる | symmetric=xy -->
-    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/7525fbdb545e5afc07a044a0689a263d.png)
+    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/a16f01b7cab1deac298a2002945488bc.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -248,7 +248,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円 | symmetric=y -->
-    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/a2cc975f1de172ef03648d3b0b3182b3.png)
+    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/33eeaba03d211b96e5ba885377208023.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -275,7 +275,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円 | symmetric=y -->
-    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/515eb90948becaf5a1f6c967ad31e22e.png)
+    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/5909889759476cfcaa30f35dae77a821.png)
     ///     <!-- /shot -->
     ///   }
     /// }
