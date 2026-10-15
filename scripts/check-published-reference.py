@@ -67,19 +67,43 @@ from site_source import (  # noqa: E402
 MIDDLE_TARGET = re.compile(
     r"""(?:url=|href=["'])\.?/?([A-Za-z0-9_.-]+)/""", re.IGNORECASE)
 
-# Topics に並べた記号 (``Foo``)。入れ子は `Foo/Bar` の形で書けるので `/` を、口 1 本は
-# `Foo/bar(_:_:)` の形になるので括弧・コロン・同名を分ける `-<印>` も拾う。
-# **狭いと黙って見なくなる** — 並べたのに拾えなかった記号は期待から落ち、出ていなくても
-# 誰も言わない (索引が型の粒度だった頃はこの形が現れなかった・#582)
-CURATED_SYMBOL = re.compile(r"^\s*-\s*``([A-Za-z_][A-Za-z0-9_/(:)-]*)``\s*$", re.MULTILINE)
+# Topics に並べた行 (`- ` の後に二重バッククォートの記号が 1 つだけの行)。
+# **中身の形を問わずにまず全部拾う** — 形で絞って拾うと、知らない形の行は期待から黙って落ち、出ていなくても誰も言わない
+# (索引が型の粒度だった頃は口 1 本の形が現れなかった・#582。引数の型で区別した形も
+# 同じ落ち方をしていた・#2672)。拾った行は下の 2 つの形に読み分け、どちらでもない行は名乗る
+CURATED_ROW = re.compile(r"^\s*-\s*``([^`\n]+)``\s*$", re.MULTILINE)
 
-def expectations(catalog: pathlib.Path) -> tuple[str, list[str], list[str]]:
-    """(モジュール名, 入口に並べた記号, 記事のファイル名) を面の入口から導く。"""
+# 経路そのものの形。入れ子は `Foo/Bar` の形で書けるので `/` を、口 1 本は `Foo/bar(_:_:)`
+# の形になるので括弧・コロン・同名を分けるハッシュの印 (`-9jeha`) も含む。経路は小文字に
+# 畳めば公開の索引の経路と一致する
+PATH_SYMBOL = re.compile(r"[A-Za-z_][A-Za-z0-9_/(:)-]*")
+
+# 引数の型で区別した形 (`Foo/fill(_:_:)-(LinearRGBA,_)`)。公開の経路はこの形ではなく
+# ハッシュの形 (`fill(_:_:)-108zr`) で出るので、経路と文字列では突き合わせられない。
+# **基底 (`Foo/fill(_:_:)`) まで畳んで、その下に同名を分けた頁が居るかを見る** (#2672)
+TYPED_SYMBOL = re.compile(r"([A-Za-z_][A-Za-z0-9_/(:)]*\))-\(.*\)")
+
+
+def typed_base(symbol: str) -> str | None:
+    """引数の型で区別した形なら基底を、そうでなければ None を返す。"""
+    if match := TYPED_SYMBOL.fullmatch(symbol):
+        return match.group(1)
+    return None
+
+
+def expectations(catalog: pathlib.Path) -> tuple[str, list[str], list[str], list[str]]:
+    """(モジュール名, 入口に並べた記号, 読めない行, 記事のファイル名) を面の入口から導く。"""
     landing, module = landing_of(catalog)
     text = landing.read_text(encoding="utf-8")
-    symbols = CURATED_SYMBOL.findall(text)
+    symbols: list[str] = []
+    unreadable: list[str] = []
+    for row in CURATED_ROW.findall(text):
+        if typed_base(row) is not None or PATH_SYMBOL.fullmatch(row):
+            symbols.append(row)
+        else:
+            unreadable.append(row)
     articles = [p.stem for p in sorted(catalog.glob("*.md")) if p != landing]
-    return module, symbols, articles
+    return module, symbols, unreadable, articles
 
 
 def paths_in_index(index: dict) -> set[str]:
@@ -98,12 +122,21 @@ def paths_in_index(index: dict) -> set[str]:
 
 
 def check(source: Source, catalog: pathlib.Path) -> list[str]:
-    module, symbols, articles = expectations(catalog)
+    module, symbols, unreadable, articles = expectations(catalog)
+
+    # **読めない行は黙って落とさず名乗る** (#2672)。落とした行は期待から消え、その頁が
+    # 出ていなくても誰も言わない — 赤にして、読み口を広げるか行の書き方を変えるかを迫る
+    unread = [
+        f"入口の ``{row}`` は読めない形の行 — 出ているかを見ていない "
+        "(経路の形か、引数の型で区別した形 `-(…)` で書く。別の形が要るなら "
+        "scripts/check-published-reference.py の読み口を広げる)"
+        for row in unreadable
+    ]
 
     # **記号が 0 件なら通してはいけない。** 入口の書式が変わって拾えなくなった状態が
     # 「全部出ている」と同じ緑で表れるのを防ぐ (check-docs-links.py と同じ守り)
     if not symbols:
-        return [f"面の入口 ({catalog}) から記号を 1 つも読み取れない — 検査が成立していない"]
+        return [f"面の入口 ({catalog}) から記号を 1 つも読み取れない — 検査が成立していない"] + unread
 
     metadata = source.read_json("metadata.json")
     if metadata is None:
@@ -117,7 +150,7 @@ def check(source: Source, catalog: pathlib.Path) -> list[str]:
         return [f"{source.target} に索引 (index/index.json) が無い"]
     published = paths_in_index(index)
 
-    problems: list[str] = []
+    problems: list[str] = list(unread)
 
     root = f"/documentation/{module.lower()}"
     if root not in published:
@@ -165,6 +198,15 @@ def check(source: Source, catalog: pathlib.Path) -> list[str]:
             )
 
     for symbol in symbols:
+        if (base := typed_base(symbol)) is not None:
+            # 型の形は、同じ基底の下に同名を分けた頁 (`<基底>-<印>`) が居れば出ているとする。
+            # 型までは索引に無いので、**どの重なりの頁か**までは見ない (#2672)
+            stem = f"{root}/{base.lower()}-"
+            if not any(path.startswith(stem) for path in published):
+                problems.append(
+                    f"入口に並べた ``{symbol}`` のページ ({stem} で始まる経路) が出ていない"
+                )
+            continue
         path = f"{root}/{symbol.lower()}"
         if path not in published:
             problems.append(f"入口に並べた ``{symbol}`` のページ ({path}) が出ていない")
@@ -189,7 +231,17 @@ def check(source: Source, catalog: pathlib.Path) -> list[str]:
         if path.startswith(prefix) and "/" not in path[len(prefix):]
     }
     curated = {symbol.lower() for symbol in symbols if "/" not in symbol}
-    forgotten = sorted(tops - curated)
+    # 型の形で並べた最上位は経路の文字列と一致しないので、同じ基底で突き合わせる (#2672)
+    curated_bases = {
+        f"{base.lower()}-"
+        for symbol in symbols
+        if "/" not in symbol and (base := typed_base(symbol)) is not None
+    }
+    forgotten = sorted(
+        top
+        for top in tops - curated
+        if not any(top.startswith(base) for base in curated_bases)
+    )
     if forgotten:
         problems.append(
             "面に出ているのに入口に並んでいない最上位: "

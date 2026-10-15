@@ -199,6 +199,56 @@ class PublishedReferenceTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("``Foo/draw(_:_:)``", result.stderr)
 
+    def add_rows(self, *rows):
+        """入口の目次の末尾に行を足す。足した行だけが、既定の形との違いになる。"""
+        landing = self.catalog / "Mod.md"
+        text = landing.read_text(encoding="utf-8")
+        landing.write_text(text + "".join(f"- ``{row}``\n" for row in rows), encoding="utf-8")
+
+    DEFAULT_PATHS = [
+        "/documentation/mod",
+        "/documentation/mod/foo",
+        "/documentation/mod/bar",
+        "/documentation/mod/foo/draw(_:_:)",
+        "/documentation/mod/foo/fill(_:)-1a2b3",
+        "/documentation/mokume/guide",
+    ]
+
+    def test_引数の型で区別した行は同じ基底の頁が出ていれば通る(self):
+        # 目次は型の形 (`-(LinearRGBA,_)`)、公開の経路はハッシュの形 (`-9z8y7`) で書かれる。
+        # **拾えないと黙って期待から落ちる** (#2672) — 数が増えることまで見る
+        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)")
+        self.build_output(paths=self.DEFAULT_PATHS + ["/documentation/mod/foo/fill(_:_:)-9z8y7"])
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("入口に並べた記号: 5", result.stdout)
+
+    def test_引数の型で区別した行は同じ基底の頁が出ていなければ赤い(self):
+        # 基底の違う `fill(_:)-1a2b3` は居る。名前の頭が同じだけの頁で通さない
+        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("``Foo/fill(_:_:)-(LinearRGBA,_)``", result.stderr)
+        self.assertIn("/documentation/mod/foo/fill(_:_:)-", result.stderr)
+
+    def test_最上位の引数の型で区別した行は並べ漏れに数えない(self):
+        # 逆向き (#515) も同じ基底で突き合わせる。経路の文字列のまま比べると、
+        # 並べてある頁を「入口に並んでいない」と取り違える
+        self.add_rows("area(_:)-(Double)")
+        self.build_output(paths=self.DEFAULT_PATHS + ["/documentation/mod/area(_:)-5k3j2"])
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("並べ漏れ 0", result.stdout)
+
+    def test_拾えない形の行は黙らずに名乗る(self):
+        # 返り値の型で区別した形 (`->Bool`) はいまの読み口が知らない。知らない形を
+        # 期待から黙って落とすと、出ていなくても誰も言わない (#2672)
+        self.add_rows("Foo/draw(_:_:)->Bool")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("``Foo/draw(_:_:)->Bool``", result.stderr)
+        self.assertIn("読めない", result.stderr)
+
     def test_入口に並べた記号が出ていなければ赤い(self):
         self.build_output(
             paths=["/documentation/mod", "/documentation/mod/foo", "/documentation/mokume/guide"]
