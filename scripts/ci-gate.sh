@@ -94,8 +94,13 @@ latest_run() { # $1=名前
   sort -n <<<"$rows" | tail -n 1
 }
 
+# 期限の時計。SECONDS と同じ壁時計の整数秒で、検査が date の代役を置いて差し込む (#2713)。
+# 時計が進むのを sleep の代役だけにすると、期限までの読み直しの回数が負荷にも秒の境目にも
+# 依らず決まる
+now() { date +%s; }
+
 failed=0
-end=$((SECONDS + WAIT_LIMIT))
+end=$(($(now) + WAIT_LIMIT))
 while read -r name; do
   while :; do
     if ! latest=$(latest_run "$name"); then
@@ -109,7 +114,7 @@ while read -r name; do
       fi
       reason="同じ SHA の $name が走っている途中 ($url)"
     fi
-    if [ "$SECONDS" -ge "$end" ]; then
+    if [ "$(now)" -ge "$end" ]; then
       echo "$name: この run では skipped で、${WAIT_LIMIT} 秒待っても結論が出ない — $reason" >&2
       failed=1
       continue 2
