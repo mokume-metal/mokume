@@ -33,9 +33,15 @@ final class SynthStage: Inlet {
     /// で、ここではない。スケッチが終わっても閉じられなかったとき (検査が閉じずに捨てるとき) に、
     /// 手放された後の同じ番地の別のスケッチが、前のステージを引き継がないようにするため、
     /// 持ち主も照らし合わせる。
-    private static var stages: [ObjectIdentifier: Weak] = [:]
+    ///
+    /// **`private` にしないのは検査のため** ([#2711])。番地の引き継ぎは割り当て器しだいで、待っても
+    /// 起きない機械がある。検査は、別のスケッチのステージを同じ鍵の下へ置いて、引き継いだ状態を
+    /// 直接作る。ここを書き換えてよいのはこの型と検査だけである。
+    ///
+    /// [#2711]: https://github.com/mokume-metal/mokume/issues/2711
+    static var stages: [ObjectIdentifier: Weak] = [:]
 
-    private struct Weak {
+    struct Weak {
         weak var stage: SynthStage?
     }
 

@@ -335,43 +335,77 @@ struct GraphicsTests {
         var testDescription: String { "\(self)" }
     }
 
-    /// 番地の一致を待って作り直す回数の上限。手元では 1〜数回で一致する (#2306 の起票)。
+    /// 番地の引き継ぎを待って作り直す回数の上限。手元では 1〜3 回目で引き継ぐ (#2711 の計測)。
     private static let reuseAttempts = 256
 
-    /// 同じフレームで、置いた描き場所 `dying` を捨て、作り直して `ObjectIdentifier` (番地) が `dying` と
-    /// 一致した描き場所 `born` を緑で置いてから青へ描き換える。`keepDyingAlive` なら `dying` を生かした
-    /// まま、最初に作った `born` で同じことをする (番地を引き継がない対照)。
+    /// 置いた側が描き場所を見分ける通し番号 (``Canvas/placementKey``) は面ごとに 1 度きりで、捨てた
+    /// 描き場所の後に作った描き場所にも配り直されない (#2306)。**割り当て器の番地に依らずに見る。**
     ///
-    /// 返すのは、出す先の絵と、番地の引き継ぎが起きたか。`dying` は左上 (0, 0)、`born` は (32, 32) に
-    /// 16 × 16 で置く。
+    /// これだけでは足りない: 記録の鍵を `ObjectIdentifier` へ戻しても番号はそのまま配られるので、
+    /// この検査は緑のままである。番号が記録の鍵に使われていることは、番地を引き継いだ描き場所を
+    /// 実際に置く ``aTargetReusingADroppedAddressKeepsThePictureItWasPlacedWith(_:)`` が見る。
+    @Test("描き場所の通し番号は、捨てた描き場所の後に作った描き場所にも配り直されない")
+    func placementKeysAreNeverHandedOutAgain() throws {
+        let canvas = try makeCanvas()
+        var keys = [canvas.placementKey]
+        // どれも掴まずに捨てる (次の周回に入った時点で解放される)
+        for _ in 0..<8 {
+            keys.append(try canvas.createGraphics(16, 16).placementKey)
+        }
+        #expect(Set(keys).count == keys.count, "番号が配り直された: \(keys)")
+        #expect(keys == keys.sorted(), "番号が作った順に増えていない: \(keys)")
+    }
+
+    /// 同じフレームで、描き場所を作っては赤で置いて捨てることを繰り返し、捨てた描き場所の
+    /// `ObjectIdentifier` (番地) の**どれか**を引き継いだ描き場所 `born` が出たら、それを緑で置いてから
+    /// 青へ描き換える。`keepDroppedAlive` なら、置いた描き場所を生かしたまま、次に作った描き場所を
+    /// `born` にして同じことをする (番地を引き継がない対照)。
+    ///
+    /// **待つ番地を 1 つに絞らず、作った描き場所を掴み続けない** ([#2711])。以前は捨てた 1 つの番地
+    /// だけを待ちながら候補を掴み続け、release の定期の検査で 8 回中 2 回、引き継ぎが起きないまま上限に
+    /// 着いた。手元で確かめたのは次のところまでである:
+    ///
+    /// - `Canvas` の割り当ては 4096 バイトで、捨てた描き場所は返った時点で解放されている
+    /// - 別のスレッドが同じ大きさ (4080 バイト) の `malloc` / `free` を回し続けると、以前の作り方は
+    ///   100 回中 55 回上限に着き、この作り方は 100 回とも 1〜3 回目で引き継ぐ
+    ///
+    /// `Canvas` は main actor の上でしか作れないので、この同期の繰り返しに割り込めるのは `Canvas` 以外の
+    /// 同じ大きさの割り当てだけである。定期の検査で何がそうしたのかは確かめていない (赤の回は `route` の
+    /// 2 例が揃って落ちたので、実行ごとに効く何かがあると読める)。
+    ///
+    /// 作った描き場所をどれも置いてから捨てれば、番地を取られても次に捨てた番地がまた空く。
+    ///
+    /// 返すのは、出す先の絵と、番地の引き継ぎが起きたか。捨てる描き場所は左上 (0, 0)、`born` は
+    /// (32, 32) に 16 × 16 で置く。
+    ///
+    /// [#2711]: https://github.com/mokume-metal/mokume/issues/2711
     private func placeAfterReusingAnAddress(
-        _ route: PlacingRoute, keepDyingAlive: Bool
+        _ route: PlacingRoute, keepDroppedAlive: Bool
     ) throws -> (image: DisplayImage, reused: Bool) {
         let canvas = try makeCanvas()
         var reused = false
-        var kept: Canvas?
-        var held: [Canvas] = []
+        var kept: [Canvas] = []
         try canvas.draw {
             canvas.background(black)
             canvas.noStroke()
-            // 置いてから捨てる描き場所。番地だけを控え、描き場所そのものは掴まない (返った時点で解放される)
-            @MainActor func placeAndDrop() -> ObjectIdentifier? {
-                guard let dying = try? canvas.createGraphics(16, 16) else { return nil }
-                paint(dying, red)
-                canvas.image(dying, 0, 0)
-                if keepDyingAlive { kept = dying }
-                return ObjectIdentifier(dying)
+            // 置いてから捨てた描き場所の番地。描き場所そのものは掴まない (次の周回に入った時点で解放される)
+            var dropped: Set<ObjectIdentifier> = []
+            var born: Canvas?
+            while born == nil, dropped.count < Self.reuseAttempts {
+                guard let made = try? canvas.createGraphics(16, 16) else { return }
+                let isBorn =
+                    keepDroppedAlive ? !dropped.isEmpty : dropped.contains(ObjectIdentifier(made))
+                if isBorn {
+                    born = made
+                } else {
+                    paint(made, red)
+                    canvas.image(made, 0, 0)
+                    dropped.insert(ObjectIdentifier(made))
+                    if keepDroppedAlive { kept.append(made) }
+                }
             }
-            guard let gone = placeAndDrop() else { return }
-            var candidate = try? canvas.createGraphics(16, 16)
-            while !keepDyingAlive, let made = candidate, ObjectIdentifier(made) != gone,
-                held.count < Self.reuseAttempts
-            {
-                held.append(made)
-                candidate = try? canvas.createGraphics(16, 16)
-            }
-            guard let born = candidate else { return }
-            reused = ObjectIdentifier(born) == gone
+            guard let born else { return }
+            reused = dropped.contains(ObjectIdentifier(born))
             paint(born, green)
             switch route {
             case .image:
@@ -382,7 +416,7 @@ struct GraphicsTests {
             }
             paint(born, blue)
         }
-        withExtendedLifetime((kept, held)) {}
+        withExtendedLifetime(kept) {}
         return (try pixels(of: canvas), reused)
     }
 
@@ -399,15 +433,15 @@ struct GraphicsTests {
         "同じフレームで捨てた描き場所の番地を引き継いだ描き場所も、置いた時点の絵で出る",
         arguments: PlacingRoute.allCases)
     func aTargetReusingADroppedAddressKeepsThePictureItWasPlacedWith(_ route: PlacingRoute) throws {
-        let (image, reused) = try placeAfterReusingAnAddress(route, keepDyingAlive: false)
+        let (image, reused) = try placeAfterReusingAnAddress(route, keepDroppedAlive: false)
         try #require(
             reused,
-            "捨てた描き場所の番地を引き継ぐ描き場所を、\(Self.reuseAttempts) 回作り直しても作れなかった (この検査は何も確かめていない)")
+            "捨てた描き場所の番地を引き継ぐ描き場所を、\(Self.reuseAttempts) 回作っては捨てても作れなかった (この検査は何も確かめていない)")
         #expect(image[40, 40] == (0, 255, 0, 255), "置いた後に描き換えた絵が出た")
         #expect(image[8, 8] == (255, 0, 0, 255), "先に置いて捨てた描き場所の絵が出ていない")
 
         // 対照: 番地を引き継がなければ、今までも置いた時点の絵が出ていた
-        let (control, _) = try placeAfterReusingAnAddress(route, keepDyingAlive: true)
+        let (control, _) = try placeAfterReusingAnAddress(route, keepDroppedAlive: true)
         #expect(control[40, 40] == (0, 255, 0, 255), "対照の描き場所が置いた時点の絵で出ていない")
     }
 
