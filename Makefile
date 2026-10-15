@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -392,6 +392,14 @@ test-release: ## release でテストを回す (性能の計測用。ci-check �
 test-release-scheduled: ## 定期の release の検査 (台帳を外す。専用機の schedule が走らせる)
 	$(MAKE) test-release TEST_RELEASE_ARGS='--skip MokumeCoreTests.SceneLedgerTests'
 	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE) GPU_RAN_SUITE=MokumeCoreTests.ShapeTests
+
+# 外のパッケージ mokume-syphon の main を、この木に向けて組み、GPU の検査まで走らせる (#1973)。
+# 本体の変更が mokume-syphon の振る舞いを壊したかは、API の一覧の差分には出ない
+# (mokume-metal/mokume-syphon#26)。**ci-check には入れない** — 外のリポジトリの検査が
+# 不安定でも本体の PR を止めないため。CI では render.yml の render-pr が、PR の木と base の木を
+# 比べる口 (scripts/syphon-check-pr.sh) から呼ぶ。終了コードの読み方は scripts/syphon-check.sh
+syphon-check: ## mokume-syphon の main をこの木に向けて組み、検査する (ci-check の外)
+	bash scripts/syphon-check.sh . .build/syphon-check/local
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは

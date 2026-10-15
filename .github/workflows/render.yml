@@ -17,6 +17,9 @@ name: Render
 #     merge_group の queue を通ったものと同じ。入力を差し込む経路が無い (#1983)。
 #     workflow_dispatch は足さない — 書き込み権限を持つ人が任意のブランチで起こせるので、
 #     B に近い別の理由が要る
+# **専用機に届く外のリポジトリのコードは、render-pr が clone する mokume-syphon の main
+# だけである** (#1973・ADR-0019 決定 7 の追補 (2026-10-14))。mokume-syphon に runner は
+# 登録しない — 別のリポジトリのジョブは下の門番に見えず、1 台に 1 ジョブずつの前提が崩れる (#1971)
 # fork の PR は各ジョブの if で弾く。fork の PR はこのファイル自体を書き換えられるので、
 # if だけでは止まらない。止めるのはリポジトリの設定 (外部の人の PR のワークフローは
 # 毎回承認を要する・approval_policy: all_external_contributors) である。
@@ -42,7 +45,7 @@ name: Render
 # artifact は runner が持つ runtime の token で上げるので、contents: read のままで足りる。
 # 保持は 14 日 — 赤を直すまでの材料で、恒久の証跡は PR に載せる絵が持つ。
 # render と render-pr の step の並びは同じに保つ。違うのはジョブの if と concurrency と、
-# render-pr だけが持つ最後の 1 step (例の絵の前後の比較・#1986) である。
+# render-pr だけが持つ最後の 2 step (例の絵の前後の比較・#1986 と、mokume-syphon の検査・#1973) である。
 #
 # **例の絵の前後の比較は render-pr だけが持つ** (#1986)。指紋 (// shot: N snippet=…) の材料は
 # 例のコードと撮影設定だけで実装は入らないので、実装だけが変わって絵が古くなっても
@@ -282,6 +285,18 @@ jobs:
             exit 0
           fi
           python3 scripts/example-shots.py --drift HEAD^1
+      # 本体の PR が外のパッケージ mokume-syphon を壊したかを知らせる (#1973)。mokume-syphon の
+      # main をこの木に向けて組み、GPU の検査まで走らせる。落ちたときだけ base の木 (HEAD^1) でも
+      # 走らせ、「この PR が壊した」と「前から壊れている」を分ける。**警告だけで、merge は止めない**
+      # (continue-on-error・render-pr は必須でもない)。ライブラリ (Sources/・Package.swift) に
+      # 触れない PR では走らない。判断は scripts/syphon-check-pr.sh が持つ
+      #
+      # **手前の検査が赤でも走らせる (`!cancelled()`)。** 本体の検査の赤と mokume-syphon の赤は
+      # 別の問いで、片方で止めると、もう片方を知るのに専用機の 1 周を余計に回す
+      - name: mokume-syphon をこの木で組んで検査する (警告のみ)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash scripts/syphon-check-pr.sh
 
   scheduled-debug:
     needs: render-turn
