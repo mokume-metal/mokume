@@ -1,0 +1,41 @@
+name: measure-2596
+# 使い捨て (#2596)。release-check と同じ macos-26・make test-release を、テストの WMO の有無で比べる
+on:
+  pull_request:
+    types: [opened]
+    paths: [.github/workflows/measure-2596.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        without_wmo: ["0", "1"]
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          MOKUME_TESTS_WITHOUT_WMO: ${{ matrix.without_wmo }}
+        run: |
+          mkdir -p .build
+          sysctl -n hw.ncpu machdep.cpu.brand_string
+          swift --version
+          start=$SECONDS
+          make test-release 2>&1 | tee .build/test-log.txt
+          echo "make test-release: $((SECONDS - start)) 秒"
+      - if: always()
+        run: grep -E "\] Compiling Mokume(Diagnostics|Core|CoreTests|CLITests) |Build complete|Test run with" .build/test-log.txt | head -40 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: record-${{ matrix.without_wmo }}
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+          include-hidden-files: true
+          retention-days: 7
