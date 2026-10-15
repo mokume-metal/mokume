@@ -444,10 +444,16 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
 # **Issue** を返すがコメントは返さないので、自分のセッションの目印を除いて数え、URL を名乗る
 # には足りない。
 #
-# そこで窓を広げずに、**窓に収まらなかったと分かった Issue / PR だけ** (`totalCount` が引けた
-# 件数を超えたもの) を REST で全件ページ送りに引き、手元で目印つきに絞る。窓に収まっていれば
-# 呼び出しも取得量も今と同じで、溢れたものごとに ⌈コメント数 / 100⌉ 回の REST が加わる。
-# 引き直しに失敗したら窓の分だけで判定する (従来どおり)。
+# そこで窓を広げずに、**窓の意味を「新しい順に人の手 100 件 (参照元は 50 件)」に揃える**。
+# 窓に収まらなかったと分かった Issue / PR (`totalCount` が引けた件数を超えたもの) で、窓の中の
+# 人の手が足りないときだけ、scripts/bot-hand.sh の recent_comments で人の手が足りるまでページを
+# 新しい順に遡る。全履歴は数えない — 溢れる前と同じく、終わった過去のセッションのプランまで
+# 「別のセッションのプラン」に入れない (#642 の向き)。添える URL は範囲の中の最新のプラン。
+# 窓に収まっていれば呼び出しも取得量も今と同じ。
+#
+# **遡るのには上限がある** (ページ数と秒数 — recent_comments の頭)。capture のフックは 20 秒で
+# 殺されるので、capture は跡見の全体に BOT_HAND_DEADLINE を置く。打ち切ったら集まった範囲で
+# 判定し、そう名乗る。最初のページも読めなければ窓の分だけで判定する (従来どおり)。
 #
 # **bot の手のコメントは、目印を含んでいてもプランと読まない** (前提と判定は
 # scripts/bot-hand.sh)。bot の追記は検査の出力の抜粋を載せるので、この検査自身の目印の
@@ -469,35 +475,45 @@ readonly MARKS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
   }
 }'
 
-# 目印つきで、bot の手でないコメント。GraphQL の nodes にも REST のコメントにも効く
+# 目印つきで、bot の手でないコメント
 MARKED_JQ="$BOT_HAND_JQ"' def marked: select(.body | contains("'"$MARKER: "'")) | select(bot_hand | not);'
 
-# Issue / PR のコメントを全件引き、目印つきのものだけを 1 行 1 件の {url, body} で出す (#2660)。
-# PR の会話のコメントも issues/<番号>/comments で引ける
-marked_comments() { # $1=Issue / PR の番号
-  gh api --paginate "repos/$REPO/issues/$1/comments?per_page=100" \
-    --jq "$MARKED_JQ"' .[] | marked | {url: .html_url, body} | tojson' 2>/dev/null
+# 窓 (コメントの connection) から、範囲の目印つきのコメントを新しい順に 1 行 1 件の {url, body}
+# で出す。窓から押し出しがあり、窓の中の人の手が $3 件に満たなければ、人の手が $3 件
+# 集まるまで遡る (#2660)。遡り切れなかったら stderr で名乗る
+marked_in_range() { # $1=番号 $2=窓 (connection の JSON) $3=人の手の件数
+  local number=$1 window=$2 need=$3 short lines
+  short=$(printf '%s' "$window" | jq -r --argjson need "$need" "$BOT_HAND_JQ"'
+    (.totalCount // 0) > (.nodes | length)
+    and ([.nodes[] | select(bot_hand | not)] | length) < $need' 2>/dev/null)
+  if [ "$short" = true ] && lines=$(recent_comments "$REPO" "$number" "$need" 100); then
+    if [ "$(printf '%s\n' "$lines" | tail -n 1 | jq -r '.end // ""')" = capped ]; then
+      printf '跡見: #%s のコメントは上限まで遡って打ち切った — 新しい側の範囲だけで跡を見た\n' \
+        "$number" >&2
+    fi
+    printf '%s\n' "$lines" | jq -sc --argjson need "$need" "$MARKED_JQ"'
+      [.[] | select(has("body") and (.bot | not))][:$need][] | marked | {url, body}' 2>/dev/null
+    return
+  fi
+  # 窓に収まっている (またはそれ以上引けない) — 窓の全体が範囲
+  printf '%s' "$window" | jq -c "$MARKED_JQ"' .nodes | reverse[] | marked | {url, body}' 2>/dev/null
 }
 
 concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → 跡を 1 行 1 件で stdout へ
-  local number="$1" prefix="$2" json mine overflowed others count url plans plan source seen=''
-  local more
+  local number="$1" prefix="$2" json mine others count url plans plan source seen='' window
 
   json=$(gh api graphql -f query="$MARKS_QUERY" -f owner="${REPO%%/*}" -f name="${REPO#*/}" \
     -F number="$number" 2>/dev/null) || return 0
   [ -n "$json" ] || return 0
 
-  # N 自身に載った目印つきのコメント。窓から押し出しがあれば全件から拾い直す (#2660)
-  overflowed=$(printf '%s' "$json" | jq -r '
-    .data.repository.issue.comments | (.totalCount // 0) > (.nodes | length)' 2>/dev/null)
-  if [ "$overflowed" != true ] || ! mine=$(marked_comments "$number"); then
-    mine=$(printf '%s' "$json" | jq -c "$MARKED_JQ"'
-      .data.repository.issue.comments.nodes[]? | marked | {url, body}' \
-      2>/dev/null) || return 0
-  fi
+  # N 自身に載った目印つきのコメント (新しい順)。範囲は新しい順に人の手 100 件 (#2660)
+  window=$(printf '%s' "$json" | jq -c '.data.repository.issue.comments // {nodes: []}' 2>/dev/null) ||
+    return 0
+  mine=$(marked_in_range "$number" "$window" 100) || return 0
 
   # 自分のセッションが載せたものは除く — 同じセッションで 2 度
-  # プランを取ったときに自分を指して「二重着手かもしれない」と言わないため
+  # プランを取ったときに自分を指して「二重着手かもしれない」と言わないため。
+  # mine は新しい順なので、添える URL (先頭) は最新のプラン (#2660)
   others=$(printf '%s\n' "$mine" | jq -rs --arg m "$MARKER: " --arg p "$prefix-" '
     [ .[] | select(.body | contains($m + $p) | not) ]
     | "\(length)\t\(.[0].url // "")"' 2>/dev/null) || return 0
@@ -513,25 +529,20 @@ concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → �
       ;;
   esac
 
-  # open な参照元に載った、目印つきのコメント (1 行 1 件の JSON)
-  plans=$(printf '%s' "$json" | jq -c --argjson n "$number" "$MARKED_JQ"'
-    .data.repository.issue.timelineItems.nodes[]?.source?
-    | select(type == "object" and .state == "OPEN" and .number != $n)
-    | .number as $source
-    | .comments.nodes[]? | marked
-    | {source: $source, url, body}' 2>/dev/null) || return 0
-
-  # 窓から押し出しのあった参照元は、全件から拾い直したもので置き換える (#2660)
-  for source in $(printf '%s' "$json" | jq -r --argjson n "$number" '
+  # open な参照元に載った、目印つきのコメント (1 行 1 件の JSON)。範囲は参照元ごとに、
+  # 新しい順に人の手 50 件 (#2660)
+  plans=''
+  while IFS= read -r source; do
+    [ -n "$source" ] || continue
+    window=$(printf '%s' "$json" | jq -c --argjson s "$source" '
+      [.data.repository.issue.timelineItems.nodes[]?.source? | select(type == "object")
+       | select(.number == $s)][0].comments // {nodes: []}' 2>/dev/null) || continue
+    plans+=$(marked_in_range "$source" "$window" 50 | jq -c --argjson s "$source" '{source: $s} + .')
+    plans+=$'\n'
+  done < <(printf '%s' "$json" | jq -r --argjson n "$number" '
     [ .data.repository.issue.timelineItems.nodes[]?.source?
-      | select(type == "object" and .state == "OPEN" and .number != $n)
-      | select((.comments.totalCount // 0) > (.comments.nodes | length)) | .number ]
-    | unique[]' 2>/dev/null); do
-    more=$(marked_comments "$source") || continue
-    plans=$(printf '%s\n' "$plans" | jq -c --argjson s "$source" 'select(.source != $s)')
-    [ -z "$more" ] ||
-      plans=$(printf '%s\n%s\n' "$plans" "$(printf '%s\n' "$more" | jq -c --argjson s "$source" '{source: $s} + .')")
-  done
+      | select(type == "object" and .state == "OPEN" and .number != $n) | .number ]
+    | unique[]' 2>/dev/null)
 
   # 別のセッションのプランだけを残す (自分のを除く理由は N と同じ)
   plans=$(printf '%s\n' "$plans" | jq -c --arg m "$MARKER: " --arg p "$prefix-" '
@@ -1078,6 +1089,9 @@ capture() {
   # **候補が複数なら Issue の候補を全部見る** (#1216) — 1 つのプランが複数の Issue を
   # まとめるとき、重なるのはたいてい 2 件目以降のまとめ先である
   marks=''
+  # 跡見がページを遡る上限 (#2660)。このフックは 20 秒で殺される (.claude/settings.json) ので、
+  # 起動から 14 秒を過ぎたら次のページを引かない — 残りで投稿の指示を出す
+  BOT_HAND_DEADLINE=${BOT_HAND_DEADLINE:-14}
   while IFS= read -r candidate; do
     case "$candidate" in
       'issue '*)

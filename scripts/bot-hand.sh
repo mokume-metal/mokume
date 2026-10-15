@@ -92,3 +92,94 @@ for _bot_hand_type in $BOT_HAND_ACTOR_TYPES; do
 done
 BOT_HAND_TIMELINE_FRAGMENT+=' }'
 unset _bot_hand_type _bot_hand_writer _bot_hand_writers
+
+# --- 人の手を新しい順に集める (#2660) ------------------------------------------
+#
+# bot の追記が積もると、コメントの窓 (`comments(last: N)`) は bot の手で埋まり、人の手が
+# 窓の外へ押し出される。窓を広げるのではなく、**人の手が要るだけ集まるまでページを新しい順に
+# 遡る**。ほとんどの宛先は最初の 1 ページで足りる。
+#
+# **遡るのには上限がある** — ページ数 (BOT_HAND_MAX_PAGES・既定 5) と秒数
+# (BOT_HAND_MAX_SECONDS・既定 8)。呼ぶ側がフックの中なら、フックの上限 (capture は 20 秒) より
+# 先に打ち切る必要がある。BOT_HAND_DEADLINE (シェルの $SECONDS の値) を置くと、それより後には
+# 次のページを引かない — 1 回のフックで何度も呼ぶ側が、呼び出しをまたいだ上限に使う。
+# 打ち切ったら末尾でそう名乗り、呼ぶ側は集まった範囲で判定して名乗る。
+#
+# 出力は 1 行 1 件の JSON:
+#
+#   先頭  {"state": <state>, "total": <コメントの全件数>}
+#   続き  コメントを新しい順に 1 件ずつ。bot の手かを "bot" に添える
+#   末尾  {"end": "enough" | "complete" | "capped", "pages": <引いたページ数>}
+#         enough は人の手が要るだけ集まった、complete は最古まで遡った、capped は上限で
+#         打ち切った (途中のページを読めなかったときも capped)
+#
+# 最初のページを読めなければ 1 を返す (呼ぶ側は従来の判定へ戻る)。
+BOT_HAND_COMMENTS_QUERY='query($owner: String!, $name: String!, $number: Int!, $size: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    issueOrPullRequest(number: $number) {
+      ... on Issue { state comments(last: $size, before: $cursor) {
+        totalCount pageInfo { hasPreviousPage startCursor }
+        nodes { createdAt body url author { __typename login } } } }
+      ... on PullRequest { state comments(last: $size, before: $cursor) {
+        totalCount pageInfo { hasPreviousPage startCursor }
+        nodes { createdAt body url author { __typename login } } } }
+    }
+  }
+}'
+
+# 1 ページを行に畳む。最終行は {humans, prev, cursor} (呼び手が次を決めるのに使う)
+BOT_HAND_PAGE_JQ="$BOT_HAND_JQ"'
+  .data.repository.issueOrPullRequest as $t
+  | ($t.comments // {}) as $c
+  | (if $first then {state: $t.state, total: ($c.totalCount // 0)} else empty end),
+    (($c.nodes // []) | reverse[] | . + {bot: bot_hand}),
+    {humans: ([($c.nodes // [])[] | select(bot_hand | not)] | length),
+     prev: ($c.pageInfo.hasPreviousPage // false), cursor: ($c.pageInfo.startCursor // "")}'
+
+_bot_hand_page() { # $1=owner/repo $2=番号 $3=1 ページの件数 $4=カーソル (空なら最新のページ)
+  if [ -n "$4" ]; then
+    gh api graphql -f query="$BOT_HAND_COMMENTS_QUERY" -f owner="${1%%/*}" -f name="${1#*/}" \
+      -F number="$2" -F size="$3" -f cursor="$4" 2>/dev/null
+  else
+    gh api graphql -f query="$BOT_HAND_COMMENTS_QUERY" -f owner="${1%%/*}" -f name="${1#*/}" \
+      -F number="$2" -F size="$3" 2>/dev/null
+  fi
+}
+
+recent_comments() { # $1=owner/repo $2=番号 $3=集める人の手の件数 $4=1 ページの件数 (既定 100)
+  local repo=$1 number=$2 need=$3 size=${4:-100} cursor='' pages=0 humans=0 first json out meta
+  local deadline=$((SECONDS + ${BOT_HAND_MAX_SECONDS:-8})) max_pages=${BOT_HAND_MAX_PAGES:-5}
+  if [ -n "${BOT_HAND_DEADLINE:-}" ] && [ "$BOT_HAND_DEADLINE" -lt "$deadline" ]; then
+    deadline=$BOT_HAND_DEADLINE
+  fi
+  while :; do
+    # 最初のページは必ず引く (従来の窓と同じ)。2 ページ目からが上限の対象
+    if [ "$pages" -gt 0 ] && { [ "$pages" -ge "$max_pages" ] || [ "$SECONDS" -ge "$deadline" ]; }; then
+      printf '{"end":"capped","pages":%d}\n' "$pages"
+      return 0
+    fi
+    first=false
+    [ "$pages" -gt 0 ] || first=true
+    # 条件の中で引く — 呼ぶ側が set -e でも、読めなかったことで呼ぶ側ごと落とさない
+    if ! json=$(_bot_hand_page "$repo" "$number" "$size" "$cursor") ||
+      ! out=$(printf '%s' "$json" | jq -c --argjson first "$first" "$BOT_HAND_PAGE_JQ" 2>/dev/null); then
+      [ "$pages" -gt 0 ] || return 1
+      printf '{"end":"capped","pages":%d}\n' "$pages"
+      return 0
+    fi
+    pages=$((pages + 1))
+    printf '%s\n' "$out" | sed '$d'
+    meta=$(printf '%s\n' "$out" | tail -n 1 | jq -r '"\(.humans) \(.prev) \(.cursor)"')
+    humans=$((humans + ${meta%% *}))
+    meta=${meta#* }
+    if [ "$humans" -ge "$need" ]; then
+      printf '{"end":"enough","pages":%d}\n' "$pages"
+      return 0
+    fi
+    if [ "${meta%% *}" != true ]; then
+      printf '{"end":"complete","pages":%d}\n' "$pages"
+      return 0
+    fi
+    cursor=${meta#* }
+  done
+}
