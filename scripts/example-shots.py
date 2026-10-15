@@ -38,8 +38,12 @@
 ## 公開メンバが例か宣言を持つか (#2116)
 
 **囲みがあるなら正しいか、だけでは足りない。囲みの無い口を名指しして赤にする。** 見るのは
-`Sources/MokumeCore/Sketch/Sketch+*.swift` の `extension Sketch` / `extension SketchPart` に書かれた公開メンバで、
-数える単位は **overload ごと = 参照の面の 1 ページ**。各メンバは次のどれかを持つ。
+`Sources/MokumeCore/Sketch/Sketch+*.swift` の `extension Sketch` / `extension SketchPart` に書かれた公開メンバと、
+`Sources/MokumeCore/Geometry/*.swift` の値型 (`Vector2`・`Circle`・`Rect`) の `struct` / `extension` の
+本体に書かれた公開メンバで (#2600)、数える単位は **overload ごと = 参照の面の 1 ページ**。
+値型の口は型の名前を前に付けて数える (`Circle.draw()`) — 型をまたいで同じ名前の口
+(`draw()`・`intersects(_:)`) があるので、付けないと許容一覧の綴りと参照の行き先が型を
+取り違える。各メンバは次のどれかを持つ。
 
 | 持つもの | 書き方 |
 | --- | --- |
@@ -601,15 +605,25 @@ def collect(root: pathlib.Path) -> list[Shot]:
 
 # 見る範囲。**#526 の 8 束が見た範囲と同じ** (冒頭の「公開メンバの拾い方」)
 MEMBER_FILES = "Sources/MokumeCore/Sketch/Sketch+*.swift"
+# 値型の口 (#2600)。型の本体と extension の両方を見て、口に型の名前を前置する
+VALUE_FILES = "Sources/MokumeCore/Geometry/*.swift"
 # 許容一覧。1 行 1 口 (`ファイル: 口`)。# で始まる行と空行は読まない
 GAPS_FILE = "scripts/example-shots-gaps.txt"
 
 # `extension Sketch` / `extension SketchPart` の頭。`public extension …` なら中の口は既定で
 # 公開になる。語彙は Sketch が継ぐ SketchPart に置いてある (ADR-0020 決定 7・#2616)
 EXTENSION = re.compile(
-    r"^\s*(?P<mods>(?:(?:public|open|package|internal|private|fileprivate|@\w+(?:\([^)]*\))?)\s+)*)"
-    r"extension\s+(?:Sketch|SketchPart)\b"
+    r"^\s*(?P<mods>(?:(?:public|open|package|internal|private|fileprivate|nonisolated|@\w+(?:\([^)]*\))?)\s+)*)"
+    r"(?P<kind>extension)\s+(?P<owner>Sketch|SketchPart)\b"
 )
+# 値型の本体か extension の頭 (#2600)。**本体 (`struct`) は `public` でも中の口を公開にしない** —
+# Swift の規則どおり、口ごとの `public` だけを見る (`public extension` だけが既定を変える)
+VALUE_HEAD = re.compile(
+    r"^\s*(?P<mods>(?:(?:public|open|package|internal|private|fileprivate|nonisolated|@\w+(?:\([^)]*\))?)\s+)*)"
+    r"(?P<kind>extension|struct)\s+(?P<owner>[A-Z]\w*)\b"
+)
+# 演算子の名前。演算子の引数名 (`lhs`) はラベルではないので、口の綴りでは `_` と読む
+OPERATOR = re.compile(r"^[^A-Za-z_]")
 # 口の頭。属性・修飾語・種類。`private(set)` のような括弧つきの修飾も 1 語として読む
 MEMBER = re.compile(
     r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*"
@@ -726,7 +740,7 @@ def parse_declaration(lines: list[str], line: int, kind: str) -> tuple[str, tupl
         if not parameter.strip():
             continue
         names, _, annotation = parameter.partition(":")
-        labels.append((names.split() or ["_"])[0])
+        labels.append("_" if OPERATOR.match(base) else (names.split() or ["_"])[0])
         types.append(" ".join(split_top_level(annotation, "=")[0].split()))
     return f"{base}({''.join(f'{label}:' for label in labels)})", tuple(types)
 
@@ -757,8 +771,11 @@ def doc_and_statements(lines: list[str], line: int) -> tuple[bool, int, list[Sta
     return bool(doc), sum(1 for text in doc if OPEN.match(text)), statements
 
 
-def members_in(root: pathlib.Path, path: pathlib.Path) -> list[Member]:
-    """`path` (根からの相対) の `extension Sketch` / `extension SketchPart` の本体の直下にある公開メンバ。
+def members_in(
+    root: pathlib.Path, path: pathlib.Path, head: re.Pattern[str] = EXTENSION, owned: bool = False
+) -> list[Member]:
+    """`path` (根からの相対) の、`head` が読む頭 (既定は `extension Sketch` / `extension SketchPart`)
+    の本体の直下にある公開メンバ。`owned` なら口に型の名前を前置する (`Circle.draw()`)。
 
     波括弧の深さで「本体の直下」を決める (コメントと文字列の中の括弧は数えない)。
     """
@@ -768,13 +785,17 @@ def members_in(root: pathlib.Path, path: pathlib.Path) -> list[Member]:
     body: int | None = None  # 本体の深さ
     waiting = False  # `extension Sketch` の `{` が次の行以降にある
     public_extension = False
+    owner = ""
     for number, line in enumerate(lines):
         code = code_of(line)
         if body is None:
-            head = EXTENSION.match(code)
-            if head or waiting:
-                if head:
-                    public_extension = bool(re.search(r"\b(public|open)\b", head["mods"]))
+            opened = head.match(code)
+            if opened or waiting:
+                if opened:
+                    public_extension = opened["kind"] == "extension" and bool(
+                        re.search(r"\b(public|open)\b", opened["mods"])
+                    )
+                    owner = f"{opened['owner']}." if owned else ""
                 if "{" in code:
                     body, waiting = depth + 1, False
                 else:
@@ -789,7 +810,7 @@ def members_in(root: pathlib.Path, path: pathlib.Path) -> list[Member]:
                     raise SystemExit(f"{path}:{number + 1} の公開メンバの宣言が読めない: {line.strip()}")
                 has_doc, shots, statements = doc_and_statements(lines, number)
                 title, types = declared
-                members.append(Member(path, number, title, types, shots, has_doc, statements))
+                members.append(Member(path, number, owner + title, types, shots, has_doc, statements))
         depth += code.count("{") - code.count("}")
         if body is not None and depth < body:
             body = None
@@ -800,6 +821,8 @@ def collect_members(root: pathlib.Path) -> list[Member]:
     members: list[Member] = []
     for path in sorted(root.glob(MEMBER_FILES)):
         members += members_in(root, path.relative_to(root))
+    for path in sorted(root.glob(VALUE_FILES)):
+        members += members_in(root, path.relative_to(root), VALUE_HEAD, owned=True)
     return members
 
 
@@ -895,7 +918,7 @@ def resolve_reference(member: Member, target: str, members: list[Member]) -> str
     """
     candidates = [other for other in members if other is not member and target in (other.title, other.key)]
     if not candidates:
-        return f"参照先 {target} が無い (`extension Sketch` / `extension SketchPart` の公開メンバに無い綴り)"
+        return f"参照先 {target} が無い (拾った公開メンバに無い綴り。値型の口は `Circle.draw()` と型の名前から書く)"
     if len(candidates) > 1:
         listed = " / ".join(other.key for other in candidates)
         return f"参照先 {target} が複数ある (型まで添えて指す): {listed}"

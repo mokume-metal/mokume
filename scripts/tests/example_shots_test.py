@@ -1615,6 +1615,99 @@ class DeferredMemberTest(MemberTestCase):
         self.assertIn("許容一覧から消す", problems[0])
 
 
+VALUE_DIRECTORY = "Sources/MokumeCore/Geometry"
+
+
+class ValueMemberTest(MemberTestCase):
+    """値型の口 (#2600) — `struct` の本体と extension を見て、型の名前を前置して数える。"""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / VALUE_DIRECTORY).mkdir(parents=True)
+
+    def write_value(self, source, name="Ball.swift"):
+        (self.root / VALUE_DIRECTORY / name).write_text(source, encoding="utf-8")
+
+    def value_keys(self):
+        return [m.key for m in self.members() if VALUE_DIRECTORY in str(m.path)]
+
+    def test_本体と_extension_の公開の口を型の名前つきで拾う(self):
+        self.write_value(
+            "public nonisolated struct Ball: Sendable {\n"
+            + pictured("draw", parameters="")
+            + "    public var radius: Float\n"
+            + "    var hidden: Float\n"
+            + "    private func secret() {}\n"
+            + "}\n\n"
+            + "nonisolated extension Ball {\n"
+            + "    public func moved(by offset: Float) -> Ball { self }\n"
+            + "    func internalOnly() {}\n"
+            + "}\n"
+        )
+        self.assertEqual(
+            self.value_keys(), ["Ball.draw()", "Ball.radius", "Ball.moved(by:) (Float)"]
+        )
+
+    def test_型の本体は_public_でも中の口を公開にしない(self):
+        """Swift の規則どおり。`public extension` と違い、`public struct` は既定を変えない。"""
+        self.write_value("public struct Ball {\n    func roll() {}\n}\n")
+        self.assertEqual(self.value_keys(), [])
+
+    def test_演算子の引数名はラベルとして読まない(self):
+        self.write_value(
+            "extension Ball {\n"
+            "    public static func + (lhs: Ball, rhs: Ball) -> Ball { lhs }\n"
+            "    public static prefix func - (ball: Ball) -> Ball { ball }\n"
+            "}\n"
+        )
+        self.assertEqual(self.value_keys(), ["Ball.+(_:_:) (Ball, Ball)", "Ball.-(_:) (Ball)"])
+
+    def test_値型の口も例か宣言が無ければ名指しして赤い(self):
+        self.write(swift(pictured("circle")))
+        self.write_value("public struct Ball {\n    /// 転がす。\n    public func roll() {}\n}\n")
+        problems = self.judge()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{VALUE_DIRECTORY}/Ball.swift:3", problems[0])
+        self.assertIn("Ball.roll()", problems[0])
+
+    def test_参照は型の名前つきの綴りで同じ名前の別の型の口と取り違えない(self):
+        self.write(swift(pictured("circle")))
+        self.write_value("public struct Ball {\n" + pictured("draw", parameters="") + "}\n")
+        self.write_value("public struct Box {\n" + pictured("draw", parameters="") + "}\n", "Box.swift")
+        self.write_value(
+            "extension Ball {\n"
+            "    /// 描く (別名)。\n"
+            "    // shot: 参照 Ball.draw()\n"
+            "    public func show() {}\n"
+            "}\n",
+            "Ball+Show.swift",
+        )
+        self.assertEqual(self.judge(), [])
+        self.assertIn("参照 1", self.output)
+
+    def test_型の名前の無い参照は行き先が無いと言う(self):
+        self.write(swift(pictured("circle")))
+        self.write_value(
+            "public struct Ball {\n"
+            + pictured("draw", parameters="")
+            + "    /// 描く (別名)。\n"
+            + "    // shot: 参照 draw()\n"
+            + "    public func show() {}\n"
+            + "}\n"
+        )
+        problems = self.judge()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("参照先 draw() が無い", problems[0])
+
+    def test_実物のソースから値型の口が拾える(self):
+        keys = {(m.path.name, m.key) for m in shots.collect_members(REPO)}
+        self.assertIn(("Circle.swift", "Circle.intersects(_:) (Rect)"), keys)
+        self.assertIn(("Rect.swift", "Rect.intersects(_:) (Circle)"), keys)
+        self.assertIn(("Rect.swift", "Rect.draw()"), keys)
+        self.assertIn(("Vector2.swift", "Vector2.+(_:_:) (Vector2, Vector2)"), keys)
+        self.assertIn(("Vector2.swift", "Vector2.init(_:_:) (some ScalarConvertible, some ScalarConvertible)"), keys)
+
+
 class MemberEntryTest(unittest.TestCase):
     """入口 — 赤なら書き方を添えて落ちる。実物の許容一覧は緑のまま通る。"""
 
