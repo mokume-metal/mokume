@@ -17,6 +17,8 @@ release でだけ出る赤は merge の前には止めない (merge queue から
   4. `issues: write` を持つのは起票のジョブ (release-check-report) だけで、release-check が
      落ちた (`failure`) か切れた (`cancelled`) ときだけ走る。`if:` は状態の関数を持つ —
      無ければ暗黙の success() で、赤の回に skipped になる
+  5. release-check はテストのターゲットを WMO せずに組む (`MOKUME_TESTS_WITHOUT_WMO`・#2596。
+     理由は Package.swift の mokumeTests)
 
 ワークフローの読み手は render_workflow_test.py のものを使う。実行は make hooks-test。
 """
@@ -48,6 +50,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(workflow.needs(check), set())
         # 版の判定 (release.py) より前に置く — 出すものが無い日も走る
         self.assertNotIn("release.py", check)
+
+    def test_release_check_はテストを_WMO_せずに組む(self):
+        # 外すと MokumeCoreTests の WMO が逐次に走り、ビルドが倍近く延びる (#2596)
+        self.assertRegex(
+            self.jobs["release-check"], r'(?m)^\s+MOKUME_TESTS_WITHOUT_WMO: "1"\s*$')
 
     def test_release_check_の赤を緑に化かさない(self):
         # continue-on-error があると、検査が赤でも release-check が success になり、版が出る

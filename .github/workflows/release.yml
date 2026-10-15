@@ -92,7 +92,10 @@ jobs:
       - id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       # 端末出力を test-log に残す (起票の本文が末尾を載せる)。pipefail が make の赤を通す (#2609)
-      - run: |
+      # テストのターゲットだけ WMO を外して組む (#2596。理由と代償は Package.swift の mokumeTests)
+      - env:
+          MOKUME_TESTS_WITHOUT_WMO: "1"
+        run: |
           mkdir -p .build
           make test-release 2>&1 | tee .build/test-log.txt
       - uses: actions/upload-artifact@v7

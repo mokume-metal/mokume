@@ -115,22 +115,22 @@ let package = Package(
         .testTarget(
             name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches"],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
-            exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
-        .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
+            exclude: ["scene-ledger.txt"], swiftSettings: .mokumeTests),
+        .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokumeTests),
         // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせると窓を開くので、
         // 解き方だけを ProbeArguments.swift に出して、ここから呼ぶ
         .testTarget(
             name: "FrameRateProbeTests", dependencies: ["frame-rate-probe"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeCameraTests", dependencies: ["mokume", "MokumeCamera"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeAudioTests", dependencies: ["mokume", "MokumeAudio"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeNetworkTests", dependencies: ["mokume", "MokumeNetwork"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
 
     ]
 )
@@ -150,4 +150,25 @@ extension [SwiftSetting] {
     /// スケッチのための既定隔離は載せない — macro の展開はコンパイラの中で走り、
     /// main actor は存在しない。
     static var tool: [SwiftSetting] { [.swiftLanguageMode(.v6)] }
+
+    /// テストターゲットの言語設定。
+    ///
+    /// `MOKUME_TESTS_WITHOUT_WMO=1` のときだけ、release でもテストを whole-module 最適化
+    /// (WMO) せずにファイルごとに組む (#2596)。WMO は型検査と SIL 最適化を 1 本の
+    /// フロントエンドで逐次に走らせるので、テストが増えるほど線形より速く伸び、コア数も
+    /// 使えない (`MokumeCoreTests` が release のビルドの 8 割を占めた)。立てるのは
+    /// release.yml の release-check だけである。
+    ///
+    /// - **`-O` は保つ。** `-Onone` にすると、テストの側で `assert` の残り方を見る
+    ///   `isDebugBuild` が真になり、release でだけ走る検査が黙って飛ぶ
+    /// - テストだけに掛ける。本体のモジュールは利用者が組むのと同じ WMO のまま検査する
+    /// - **既定にはしない。** swiftbuild (Swift 6.4 の既定のビルド系) は release を WMO と
+    ///   決め打ちして出力を計画するので、この旗で `-primary.d` が無いと言って落ちる。
+    ///   CI の既定が swiftbuild に変わったら、release-check が落ちるので、そのとき外す
+    static var mokumeTests: [SwiftSetting] {
+        guard Context.environment["MOKUME_TESTS_WITHOUT_WMO"] == "1" else { return mokume }
+        return mokume + [
+            .unsafeFlags(["-no-whole-module-optimization"], .when(configuration: .release))
+        ]
+    }
 }
