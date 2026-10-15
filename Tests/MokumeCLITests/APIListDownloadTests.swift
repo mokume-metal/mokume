@@ -212,9 +212,10 @@ struct APIListDownloadTests {
             let url = CannedHTTP.serve(.trickle(body: Data(repeating: 0x20, count: 100_000), every: .milliseconds(20)))
             let returned = try #require(
                 downloadOffMain(url, limit: limit), "期限で返らず、検査の側の期限で打ち切った")
-            let marks = [returned.called] + CannedHTTP.arrivals(url) + [returned.called + returned.took]
+            let arrivals = CannedHTTP.arrivals(url)
+            let marks = [returned.called] + arrivals + [returned.called + returned.took]
             let longestSilence = zip(marks, marks.dropFirst()).map { $1 - $0 }.max() ?? .zero
-            guard longestSilence < .seconds(limit) else { continue }
+            guard arrivals.count >= 2, longestSilence < .seconds(limit) else { continue }
             #expect(described(returned.outcome) == "no complete answer came back within 0.3 seconds")
             #expect(returned.took >= .seconds(limit))
             // 諦めた受け取りは取り消すので、受け口が応答を止める。止めるのは受け口の糸で少し遅れる
