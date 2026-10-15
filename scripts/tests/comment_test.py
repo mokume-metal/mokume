@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: MIT
 """scripts/comment.sh と scripts/agent-comment-guard.sh の検査 (#18)。
 
-守りたいのは 3 つ:
+守りたいのは 4 つ:
   1. 素の gh でコメントしようとしたら差し戻される (付け忘れの経路を塞ぐ)
   2. ラッパー経由なら、どの AI が書いたかの署名が自動で付く
   3. 投稿の直前に、宛先の近況が 1 行で名乗られる (#1327)
+  4. 素の gh で既存の本文を書き換えようとしたら、scripts/edit-body.sh へ差し戻される
+     (#2615。ラッパーそのものの検査は edit_body_test.py)
 
 gh は PATH のスタブに差し替えるので、ネットワークも認証も要らない。
 **ラッパーを起動する検査はすべてスタブを噛ませる** — 3 が宛先を読みに行くので、
@@ -26,6 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 COMMENT = REPO / "scripts" / "comment.sh"
+EDIT_BODY = REPO / "scripts" / "edit-body.sh"
 GUARD = REPO / "scripts" / "agent-comment-guard.sh"
 
 # エージェント検出に関わる環境変数。テストの中では毎回まっさらにしてから
@@ -64,8 +67,10 @@ AGENT_ENV = [
 #
 # 行の意味: (グループ, サブコマンド): (gh が与える本文系フラグ, 扱い, 代表コマンド, 理由)
 #
-# **境界は「スレッドへの発言か」の 1 本。** Issue / PR の本文・マージコミットの本文は
-# 発言ではないので素通しする (署名の作法はスレッドに並ぶコメントを対象にしている)。
+# **発言の境界は「スレッドへの発言か」の 1 本。** Issue / PR の本文・マージコミットの本文は
+# 発言ではないので署名の対象にしない (署名の作法はスレッドに並ぶコメントを対象にしている)。
+# ただし既存の本文の書き換え (edit) は、読んだ後の改訂を黙って消すので scripts/edit-body.sh
+# へ回す (#2615。扱いは "deny-body")。
 BODY_BEARING_SURFACES = {
     ("issue", "comment"): (
         {"--body", "--body-file"},
@@ -93,9 +98,9 @@ BODY_BEARING_SURFACES = {
     ),
     ("issue", "edit"): (
         {"--body", "--body-file"},
-        "pass",
+        "deny-body",
         "gh issue edit 42 --body-file body.md",
-        "既存本文の書き換え。新しい発言は増えない",
+        "既存本文の書き換え。発言ではないが、読んだ後の改訂を黙って消す (#2615)",
     ),
     ("issue", "view"): (
         {"--comments"},
@@ -135,9 +140,9 @@ BODY_BEARING_SURFACES = {
     ),
     ("pr", "edit"): (
         {"--body", "--body-file"},
-        "pass",
+        "deny-body",
         'gh pr edit 42 --body "本文"',
-        "既存本文の書き換え",
+        "既存本文の書き換え (#2615)",
     ),
     ("pr", "merge"): (
         {"--body", "--body-file"},
@@ -269,12 +274,12 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
-    def assert_denied(self, command, cwd=None, **env):
+    def assert_denied(self, command, cwd=None, wrapper="scripts/comment.sh", **env):
         out = self.run_guard(command, cwd=cwd, **env)
         self.assertTrue(out, f"差し戻されるはずが素通しした: {command}")
         decision = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(decision["permissionDecision"], "deny")
-        self.assertIn("scripts/comment.sh", decision["permissionDecisionReason"])
+        self.assertIn(wrapper, decision["permissionDecisionReason"])
         return decision["permissionDecisionReason"]
 
     def assert_passed(self, command, cwd=None, **env):
@@ -692,6 +697,8 @@ class GuardTest(unittest.TestCase):
             with self.subTest(surface=" ".join(("gh", *surface)), why=why):
                 if expect == "deny":
                     self.assert_denied(command)
+                elif expect == "deny-body":
+                    self.assert_denied(command, wrapper="scripts/edit-body.sh")
                 else:
                     self.assert_passed(command)
 
@@ -702,6 +709,55 @@ class GuardTest(unittest.TestCase):
         本文を伴わなければ発言が無い (--approve だけのレビューと同じ扱い)。
         """
         self.assert_passed("gh pr review 42 --comment")
+
+    # --- 本文の書き換え (#2615) ------------------------------------------
+    #
+    # #2610 では、別のエージェントが本文を改訂した 21 秒後に、古い写しを土台にした
+    # gh issue edit --body-file がその改訂を消した。素の本文の書き換えはラッパーへ回す
+
+    def assert_edit_denied(self, command, **kwargs):
+        reason = self.assert_denied(command, wrapper="scripts/edit-body.sh", **kwargs)
+        self.assertIn("--fetch", reason, "土台の取り方が案内されていない")
+        self.assertNotIn("scripts/comment.sh", reason, "本文の書き換えをコメントと案内している")
+        return reason
+
+    def test_body_edit_is_sent_to_the_wrapper(self):
+        """本文のオプションは 4 つの綴りすべてで、issue と pr の両方で止める。"""
+        for group in ("issue", "pr"):
+            for option in ("--body-file body.md", "-F body.md", '--body "本文"', "-b 本文",
+                           "--body=本文", "--body-file=body.md"):
+                with self.subTest(group=group, option=option):
+                    self.assert_edit_denied(f"gh {group} edit 42 {option}")
+
+    def test_body_edit_with_other_changes_is_still_sent_to_the_wrapper(self):
+        self.assert_edit_denied('gh issue edit 42 --title "題" --add-label bug --body-file body.md')
+        self.assert_edit_denied("gh -R mokume-metal/mokume issue edit 42 --body-file body.md")
+
+    def test_edit_without_body_passes(self):
+        """完了条件 3: タイトル・ラベル・担当などだけの edit は対象にしない。"""
+        self.assert_passed('gh issue edit 42 --title "新しい題"')
+        self.assert_passed('gh issue edit 42 --add-label "status: in progress"')
+        self.assert_passed('gh issue edit 42 --remove-label "status: in progress" --add-assignee @me')
+        self.assert_passed("gh issue edit 42 --type Bug")
+        self.assert_passed("gh pr edit 42 --add-label no-visual-change --base main")
+
+    def test_body_edit_keeps_the_exceptions(self):
+        """他リポ宛て・--help・ラッパー経由・地の文での言及は素通しのまま。"""
+        self.assert_passed("gh issue edit 5 -R shinyaoguri/claude-plugins --body-file body.md")
+        self.assert_passed("gh issue edit --help")
+        self.assert_passed("bash scripts/edit-body.sh issue 42 --fetch /tmp/42.md")
+        self.assert_passed("bash scripts/edit-body.sh issue 42 --body-file /tmp/42.md")
+        self.assert_passed("echo 'gh issue edit 42 --body-file は使わない'")
+        self.assert_passed('gh issue create --title "題" --body-file body.md')
+
+    def test_prefixed_body_edit_is_denied(self):
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_edit_denied(f"{gh} issue edit 42 --body-file body.md")
+
+    def test_comment_and_body_edit_together_name_both_wrappers(self):
+        reason = self.assert_denied("gh issue comment 1 -b x && gh issue edit 1 --body-file body.md")
+        self.assertIn("scripts/edit-body.sh", reason)
 
 
 class SignatureTest(unittest.TestCase):
@@ -802,6 +858,8 @@ class DocumentationTest(unittest.TestCase):
         # ラッパーを改名したらここで気付く (ドキュメントが古いパスを指し続けない)
         self.assertIn("scripts/comment.sh", self.agents_md)
         self.assertTrue(COMMENT.exists())
+        self.assertIn("scripts/edit-body.sh", self.agents_md)
+        self.assertTrue(EDIT_BODY.exists())
 
     def test_agents_md_does_not_restate_the_signature(self):
         # 署名の文字列を文書側にも書くと、変えたときに片方が古くなる。

@@ -94,8 +94,8 @@ bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 
 1. コメント欄へ貼って URL を得る
 2. **その URL を含むコメントを投稿する** (`scripts/comment.sh`) — ここで公開される
-3. 同じ URL を PR 本文へ書く (`gh pr create --body-file` / `gh pr edit --body-file`。発言ではないのでラッパーは通さない)
-4. `gh pr edit` で書けば、本文の編集が `pr-gate` の新しい run を起こし、`drawing-evidence` を付け直す (打ち直しは要らない — `.github/workflows/pr-gate.yml` の冒頭)
+3. 同じ URL を PR 本文へ書く (`gh pr create --body-file`。既存の本文を直すなら `scripts/edit-body.sh pr <番号>` の `--fetch` → `--body-file`。発言ではないので署名は付かない)
+4. 本文を書き換えれば (ラッパーの中身も `gh pr edit`)、本文の編集が `pr-gate` の新しい run を起こし、`drawing-evidence` を付け直す (打ち直しは要らない — `.github/workflows/pr-gate.yml` の冒頭)
 
 ### 参照の面には使わない
 
