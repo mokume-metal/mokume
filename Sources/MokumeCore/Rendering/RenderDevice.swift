@@ -461,6 +461,26 @@ import MokumeDiagnostics
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
             @Sendable [commandFaults, completionNotices, weak self] (feedback: any MTL4CommitFeedback) in
+            // **結末を記してから知らせを積む** (#2199)。知らせは main actor で記帳の取り消しを照会する
+            // (`releaseOnNotice`) ので、先に積むと、記す前に走って結末を「まだ」と読み、取り消しが次の照会
+            // まで遅れる。頭で照会しない口 (止まっている間の追い付き・出す先を読む口) は、知らせの照会に頼る。
+            //
+            // 検査が知らせを落としたことにした投入は、記録へ何も書かない
+            if !losesOutcomeForTesting {
+                if let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting {
+                    if commandFaults.note(reason, droppedAt: submission, wrote: wrote),
+                        droppedForTesting == nil
+                    {
+                        Diagnostics.warn(
+                            "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
+                                + " — this notice will not be repeated")
+                    }
+                } else {
+                    // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
+                    // 待ちの期限切れを打ち切りのせいにしない (#1343)
+                    commandFaults.noteFinished(submission)
+                }
+            }
             // **抱えている資源を手放す契機は、完了そのものが持つ。** 実測では、成功した
             // 投入でもハンドラは毎回呼ばれる (50 回の投入に対し 50 回)
             if completionNotices.arrive(submission) {
@@ -471,21 +491,6 @@ import MokumeDiagnostics
                     self?.releaseOnNotice(upTo: newest)
                 }
             }
-            // 検査が知らせを落としたことにした投入は、記録へ何も書かない
-            guard !losesOutcomeForTesting else { return }
-            guard let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting
-            else {
-                // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
-                // 待ちの期限切れを打ち切りのせいにしない (#1343)
-                commandFaults.noteFinished(submission)
-                return
-            }
-            guard commandFaults.note(reason, droppedAt: submission, wrote: wrote),
-                droppedForTesting == nil
-            else { return }
-            Diagnostics.warn(
-                "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
-                    + " — this notice will not be repeated")
         }
         return options
     }
@@ -511,6 +516,8 @@ import MokumeDiagnostics
     private func releaseOnNotice(upTo submission: UInt64) {
         noticeRuns += 1
         releaseFinished(upTo: submission)
+        // 結末の届いた取り消しを刈る。打ち切られていたら、止まっている間でも印だけは先に戻す (#2199)
+        revokeDroppedDeliveries()
     }
 
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
@@ -1128,6 +1135,117 @@ import MokumeDiagnostics
         }
     }
 
+    // MARK: - 打ち切られた投入が届けたはずの中身を取り戻す (#2199)
+
+    /// 結末を待っている投入と、その結末を知らせる持ち主 (弱く持つ)。
+    struct PendingSettlement {
+        let submission: UInt64
+        weak var observer: (any SettlementObserver)?
+    }
+
+    /// 投入の後で記帳を進め、その投入の結末を待っている持ち主。**番号の順とは限らない。**
+    ///
+    /// **結末が届けば外す** (``revokeDroppedDeliveries()``)。正常な経路では、結末が届くたびに刈られて
+    /// 伸びない。**置き場は持ち回る** — 毎フレーム預けて外すので、容量を捨てない ([ADR-0023] 決定 5 の
+    /// 「毎フレーム走る経路は資源を増やさない」と同じ線で、CPU の確保も増やさない)。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    private var settlements: [PendingSettlement] = []
+    /// ``revokeDroppedDeliveries()`` が持ち回る置き場。照会の答えと、結末の届いた持ち主。
+    private var settlementOutcomes: [Bool?] = []
+    private var settledObservers: [(submission: UInt64, observer: (any SettlementObserver)?, dropped: Bool)] = []
+    /// 持ち主へ結末を知らせている最中か。知らせの中から照会し直しても、置き場を二重に使わない。
+    private var isSettling = false
+
+    /// 照会を止めている深さ。**描き切りの間は照会しない** (``holdRevocations()``)。
+    private var revocationHolds = 0
+
+    /// 診断: 打ち切られたと確かめられた投入を、持ち主へ知らせた数 (作ってから通算)。
+    private(set) var droppedDeliveriesRevoked = 0
+
+    /// 診断: 結末を待っている預けの数。**正常な経路では、結末が届くたびに刈られる。**
+    var pendingRevocationCount: Int { settlements.count }
+
+    /// 番号 `submission` の投入の結末を、届いた後で `observer` へ知らせる ([#2199])。
+    /// **投入の後で記帳した直後に呼ぶ** — 記帳を進めた持ち主が、打ち切られたら何を戻すかを知っている。
+    ///
+    /// 知らせるのは、結末が届いた後の最初の ``revokeDroppedDeliveries()`` である。同じ持ち主が同じ投入を
+    /// 続けて預けたら 1 つにまとめる (影と拡大を 1 本の描き切りに載せる面)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func awaitSettlement(of submission: UInt64, by observer: any SettlementObserver) {
+        if let last = settlements.last, last.submission == submission, last.observer === observer {
+            return
+        }
+        settlements.append(PendingSettlement(submission: submission, observer: observer))
+    }
+
+    /// 番号 `submission` の投入が届けた控えを下ろし ([#1183] の作法で投入の後に)、投入に載せて届けた
+    /// 持ち主には結末を待たせる ([#2199])。控えを届けた投入の後で呼ぶ口はここ 1 つにする (描き切りと、
+    /// 計算と控えの早い投入)。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteUploaded(_ uploaded: EncodedUploads, by submission: UInt64) {
+        // **届けたものが無くても刈る。** 逃げ道で直接書いた持ち主や手放された持ち主は、ここで降ろす
+        defer { pendingUploads.dropFinishedOwners() }
+        for item in uploaded {
+            // 逃げ道で直接書いた分は投入に載っていないので、結末を待たせない
+            let delivered = item.owner.markUploaded(
+                through: item.generation, by: item.direct ? nil : submission)
+            if delivered { awaitSettlement(of: submission, by: item.owner) }
+        }
+    }
+
+    /// 描き切りの間、照会を止める ([#2199])。描き切りは頭で照会してから、描く先を変えるかを数える。
+    /// その後で入れ子の描き切り (置いた側に写させる) の頭が照会すると、数えた後で書き込み待ちが立ち、
+    /// 数えと食い違う。**止めた深さは ``releaseRevocations()`` で戻す。**
+    func holdRevocations() { revocationHolds += 1 }
+
+    /// ``holdRevocations()`` を 1 段戻す。
+    func releaseRevocations() { revocationHolds -= 1 }
+
+    /// 届いている結末を**待たずに**照らし、結末の届いた投入を持ち主へ知らせる ([#2199])。打ち切られたと
+    /// 確かめられた投入なら、持ち主が記帳を取り消す。
+    ///
+    /// **描き切りの頭で呼ぶ** (`Canvas.flush`・計算と控えの早い投入・写しを読む口)。取り消すのは印だけで
+    /// (届けていない控えを立て直す・焼いた指紋を忘れる・書き込み待ちを立て直す・拡大の後に変わった印を
+    /// 立てる・写しの「映した」を下ろす)、届け直すのはその後の普段の経路である。作った面の塗りだけは、
+    /// 持ち主がその場で塗り直す。完了の知らせ (``releaseOnNotice(upTo:)``) でも呼び、正常に終わった投入の
+    /// 分を刈る。
+    ///
+    /// 結末がまだ届いていない投入は残し、次に呼ばれたときに問い直す。だから打ち切りから結末が届く
+    /// までのフレームは、古い中身のまま描く (案 A' の代償)。描き切りの間 (``holdRevocations()``) と、
+    /// コマンドを組み立てている最中は照会しない。
+    ///
+    /// **打ち切りの無い経路では確保しない。** 置き場は持ち回り、預けは値として並べる。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func revokeDroppedDeliveries() {
+        guard !settlements.isEmpty, revocationHolds == 0, !isSettling, slotOfOpenCommands.isEmpty
+        else { return }
+        isSettling = true
+        defer { isSettling = false }
+        commandFaults.outcomes(of: settlements.lazy.map(\.submission), into: &settlementOutcomes)
+        // **知らせる前に預け先を片付ける。** 持ち主が知らせの中で預け直しても、ここは触らない
+        var kept = 0
+        for index in settlements.indices {
+            if let dropped = settlementOutcomes[index] {
+                let settled = settlements[index]
+                settledObservers.append((settled.submission, settled.observer, dropped))
+            } else {
+                settlements[kept] = settlements[index]
+                kept += 1
+            }
+        }
+        settlements.removeSubrange(kept...)
+        for settled in settledObservers {
+            if settled.dropped { droppedDeliveriesRevoked += 1 }
+            settled.observer?.submissionSettled(settled.submission, dropped: settled.dropped)
+        }
+        settledObservers.removeAll(keepingCapacity: true)
+    }
+
     /// 番号が `floor` より大きく `last` 以下の投入のうち、GPU が打ち切ったもの (番号の昇順)。
     /// **その範囲の結末が届くまで待つ** ([#1932])。
     ///
@@ -1355,4 +1473,18 @@ extension RenderDevice {
         commit(commands)
         queue.signalDrawable(drawable)
     }
+}
+
+/// 投入の後で記帳を進め、その投入の結末を待つ持ち主 ([#2199])。
+///
+/// 記帳 (届けた・焼いた・書き戻した・拡大した・映した・塗った) は結末を見ずに進むので、投入を GPU が
+/// 打ち切ると、届いていない中身を届いたものとして使い続ける。持ち主は記帳した投入の番号を覚えて
+/// ``RenderDevice/awaitSettlement(of:by:)`` で預け、結末が届いたらここで受ける。
+///
+/// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+@MainActor protocol SettlementObserver: AnyObject {
+    /// 番号 `submission` の投入の結末が届いた。`dropped` なら打ち切られたと確かめられたので、その投入で
+    /// 進めた記帳を取り消す。**まだその番号の記帳が生きているかは持ち主が見る** — 後の投入が同じ記帳を
+    /// 進め直していれば、取り消さない。`dropped` が偽でも呼ぶので、番号ごとに覚えた分はここで手放す。
+    func submissionSettled(_ submission: UInt64, dropped: Bool)
 }

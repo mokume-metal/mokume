@@ -235,9 +235,16 @@ extension Canvas {
     /// 所で呼ぶ** — 描き切りと、溜めた計算を描き切りより先に流す口 (読み戻し・面をまたぐ順)。
     ///
     /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
-    func commitParticleAdvances() {
+    ///
+    /// 投入 `submission` の結末を粒に待たせる。打ち切られたら、粒はその回の量を累計から戻す
+    /// (``Particles/submissionSettled(_:dropped:)``・[#2199])。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func commitParticleAdvances(by submission: UInt64) {
         for (particles, amount) in particleAdvancesThisFrame {
-            particles.value?.noteSubmittedAdvance(amount)
+            guard let particles = particles.value else { continue }
+            particles.noteSubmittedAdvance(amount, by: submission)
+            gpu.awaitSettlement(of: submission, by: particles)
         }
         particleAdvancesThisFrame.removeAll(keepingCapacity: true)
     }
