@@ -104,6 +104,10 @@ final class SharedFrameSurface {
         static let frameRate = "mokume.frameRate"
         /// 直近のフレーム時間の平均 (ミリ秒)。**測れていなければ載らない。**
         static let frameTimeMs = "mokume.frameTimeMs"
+        /// 1 フレームの予算を越えたフレームの数 (#2601)。
+        static let overBudgetFrames = "mokume.overBudgetFrames"
+        /// いちばん重かったフレームの番号。**まだ測っていなければ載らない。**
+        static let heaviestFrame = "mokume.heaviestFrame"
     }
 
     /// スケッチがカーソルを捕まえるよう頼んでいるかを載せる属性の名前 (1 で頼んでいる)
@@ -492,6 +496,10 @@ final class SharedFrameSurface {
         IOSurfaceSetValue(surface, TempoAttribute.time as CFString, NSNumber(value: numbers.time))
         set(numbers.frameRate, as: TempoAttribute.frameRate, on: surface)
         set(numbers.frameTimeMs, as: TempoAttribute.frameTimeMs, on: surface)
+        IOSurfaceSetValue(
+            surface, TempoAttribute.overBudgetFrames as CFString,
+            NSNumber(value: numbers.overBudgetFrames))
+        set(numbers.heaviestFrame.map(Double.init), as: TempoAttribute.heaviestFrame, on: surface)
     }
 
     /// 捕まえの要求を面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、
@@ -588,7 +596,9 @@ final class SharedFrameSurface {
         return FrameNumbers(
             frameCount: count, time: time,
             frameRate: number(TempoAttribute.frameRate, on: surface)?.doubleValue,
-            frameTimeMs: number(TempoAttribute.frameTimeMs, on: surface)?.doubleValue)
+            frameTimeMs: number(TempoAttribute.frameTimeMs, on: surface)?.doubleValue,
+            overBudgetFrames: number(TempoAttribute.overBudgetFrames, on: surface)?.intValue ?? 0,
+            heaviestFrame: number(TempoAttribute.heaviestFrame, on: surface)?.intValue)
     }
 
     private static func number(_ name: String, on surface: IOSurfaceRef) -> NSNumber? {

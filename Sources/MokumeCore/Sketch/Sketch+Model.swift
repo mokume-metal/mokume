@@ -177,7 +177,8 @@ extension SketchPart {
     // shot: 1 snippet=422c10b2
     // shot: 2 snippet=c25f28d8
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
-        try Self.requireCanvas().loadModel(path, normalize: normalize)
+        Self.noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
+        return try Self.requireCanvas().loadModel(path, normalize: normalize)
     }
 
     /// 外で作ったモデルを読む。**読んでいる間、他の仕事を止めない。**

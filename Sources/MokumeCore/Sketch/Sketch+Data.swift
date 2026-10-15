@@ -48,6 +48,7 @@ extension SketchPart {
     ///   読めないときに ``DataFailure/unreadable(path:)``。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadStrings(_ path: String) throws(DataFailure) -> [String] {
+        Self.noticeBlockingLoad("loadStrings(_:)", instead: "requestStrings(_:)")
         let url = try dataURL(path)
         return TextFile.lines(of: try TextFile.read(url, path: path))
     }
@@ -126,6 +127,7 @@ extension SketchPart {
     ///   (``DataFailure/malformed(path:line:reason:)``) とき。
     // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadTable(_ path: String, header: Bool = false) throws(DataFailure) -> Table {
+        Self.noticeBlockingLoad("loadTable(_:header:)", instead: "requestTable(_:header:)")
         let url = try dataURL(path)
         return Table(try TableFile.parse(try TextFile.read(url, path: path), header: header, path: path))
     }
@@ -252,7 +254,8 @@ extension SketchPart {
     /// - Throws: 上のどれか (``DataFailure``)。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadJSONObject(_ path: String) throws(DataFailure) -> JSONObject {
-        JSONObject(try JSONFile.parseObject(try readText(path), path: path))
+        Self.noticeBlockingLoad("loadJSONObject(_:)", instead: "requestJSONObject(_:)")
+        return JSONObject(try JSONFile.parseObject(try readText(path), path: path))
     }
 
     /// JSON のファイルか URL を読み、オブジェクトにする。**読んでいる間、他の仕事を止めない。**
@@ -341,7 +344,8 @@ extension SketchPart {
     /// - Throws: ``DataFailure``。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadXML(_ path: String) throws(DataFailure) -> XML {
-        XML(try XMLFile.parse(try readText(path), path: path))
+        Self.noticeBlockingLoad("loadXML(_:)", instead: "requestXML(_:)")
+        return XML(try XMLFile.parse(try readText(path), path: path))
     }
 
     /// XML のファイルか URL を読み、根の要素にする。**読んでいる間、他の仕事を止めない。**

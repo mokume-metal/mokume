@@ -260,6 +260,7 @@ extension SketchPart {
     // shot: 3 snippet=b33c97d0
     // shot: 4 snippet=8ae46fb2
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
+        Self.noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
         let url = try dataURL(path)
         let drawing = try SVGFile.parse(try TextFile.read(url, path: path), path: path)
         return Self.requireCanvas().shape(of: drawing, readFrom: path)
