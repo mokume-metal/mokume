@@ -2125,5 +2125,21 @@ struct FormShapeTests {
         let quarter = SIMD4<Float>(0.25, 0, 0, 0.25)
         #expect(form(5, 40, weight: 2, linear: quarter).mayHaveThinHole(unitsPerDrawnPixel: one), "scale(0.25) の穴 3")
         #expect(!form(10, 40, weight: 2, linear: quarter).mayHaveThinHole(unitsPerDrawnPixel: one), "scale(0.25) の穴 8")
+        // 列の旗を決める口 (mayHaveThinPart) は、塗りの判定と穴の判定の論理和と同じ答えを返す
+        for kind in [FormInstance.Kind.rect, .ellipse, .arc] {
+            for (width, height, weight) in [
+                (Float(0.6), Float(20), Float(1)), (1.5, 20, 2), (2.4, 20, 2), (3, 20, 2), (40, 30, 2), (1.9, 1.9, 1),
+                (100, 6, 20), (0.5, 0.5, 0.2),
+            ] {
+                for linear: SIMD4<Float> in [SIMD4(1, 0, 0, 1), quarter, SIMD4(Float(cos(0.5)), Float(sin(0.5)), Float(-sin(0.5)), Float(cos(0.5)))] {
+                    let shape = form(width, height, weight: weight, kind: kind, linear: linear)
+                    #expect(
+                        shape.mayHaveThinPart(unitsPerDrawnPixel: one)
+                            == (shape.mayHaveThinFill(unitsPerDrawnPixel: one)
+                                || shape.mayHaveThinHole(unitsPerDrawnPixel: one)),
+                        "\(kind) \(width)×\(height)・太さ \(weight)")
+                }
+            }
+        }
     }
 }

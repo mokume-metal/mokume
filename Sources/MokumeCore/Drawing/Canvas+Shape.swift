@@ -688,8 +688,7 @@ extension Canvas {
             // ときの大きさが同じでも、縮めて置けば細くなる
             beginForm(
                 flags: moved.meta.w,
-                thinFill: moved.mayHaveThinFill(unitsPerDrawnPixel: unitsPerDrawnPixel)
-                    || moved.mayHaveThinHole(unitsPerDrawnPixel: unitsPerDrawnPixel))
+                thinFill: moved.mayHaveThinPart(unitsPerDrawnPixel: unitsPerDrawnPixel))
             formInstances.append(moved)
         }
     }

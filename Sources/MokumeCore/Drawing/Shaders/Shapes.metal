@@ -845,7 +845,16 @@ static inline bool mokume_canShiftRing(
 /// それより太い穴は縁 1 本の式のまま (絵は 1 ビットも変わらない)。判定はインスタンスごとの量
 /// なので、頂点関数が 1 度だけ出して断片へ渡す (`FormFragmentIn.thinHole`)。
 ///
+/// **楕円の近似の距離場の外れそのものは直していない。** 太さの半分が長軸の端の曲率半径
+/// (`短半径² / 長半径`) を越えると、長軸の上で先端までの距離を返す近似は、穴が 1 画素以上ある
+/// 楕円でも内縁を実際の穴の端より先まで伸ばす。ここで直るのは穴が潰れているか 1 画素より細い
+/// ときだけで、境目の手前と先で絵が跳ぶ (`noFill()` の `ellipse(0, 0, 100, 6)` は太さ 5.0 で
+/// 長軸に沿って帯が丸ごと抜け、5.02 で抜けない)。距離場の側は [#2742] で直す。扇の帯の穴も
+/// 縁 1 本のままである ([#2747])。
+///
 /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+/// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+/// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
 static inline bool mokume_thinHole(float2 hole, float2 unitsPerPixel) {
     return any(2.0 * hole * (1.0 + 2.0 * kFormSnap) < unitsPerPixel);
 }
@@ -1411,7 +1420,8 @@ static inline FormPaint mokume_formPaint(
             outer = mokume_grown(ring, halfWeight);
             // 帯の穴が潰れている・1 画素より細いときは、両縁を見る積で数える (`mokume_thinHole`・
             // `mokume_thinEllipseHoleCoverage`・[#2186](https://github.com/mokume-metal/mokume/issues/2186))。
-            // 太さの半分が短半径以上なら穴は無い
+            // 太さの半分が短半径以上なら穴は無い。穴が 1 画素以上ある細長い楕円の内縁の外れは
+            // 距離場の近似の側にあり、ここでは直らない ([#2742](https://github.com/mokume-metal/mokume/issues/2742))
             if (kFormHasThinFill && in.thinHole != 0) {
                 float2 hole = mokume_ellipseHole(form.size.xy, halfWeight);
                 isThinHole = true;

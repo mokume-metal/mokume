@@ -587,8 +587,10 @@ struct PixelGridTests {
 
     /// 塗り ∪ 帯に丸ごと入る画素の漏れ (最悪・平均・数えた画素)。
     ///
-    /// 画素は四角を 1/8 画素だけ広げた所を 9x9 の標本で見て、全部が塗りか帯に入っているかで
-    /// 決める (細い形は帯の幅も 1〜2 画素なので、5x5 の標本では隙間を取り逃す)。漏れの読み方は
+    /// 画素は四角を 1/8 画素だけ広げた所を 9x9 の標本と、4 辺を 201 点ずつ見て、全部が塗りか帯に
+    /// 入っているかで決める (細い形は帯の幅も 1〜2 画素なので、5x5 の標本では隙間を取り逃す。
+    /// 9x9 だけでも、尖った細い穴の端が標本の間をすり抜け、穴の掛かる画素を丸ごと覆われると
+    /// 数えた)。漏れの読み方は
     /// `fillAndStrokeLeaveNoSeam` と同じで、画素の値が「塗りだけ・重なり・帯だけ」の 3 色の範囲から
     /// 地の側へはみ出した分を、範囲の端から地までの距離で割ったもの。
     private func seamLeaks(
@@ -666,6 +668,24 @@ struct PixelGridTests {
                             let point = SIMD2(
                                 Double(x) - 0.125 + Double(k) * 1.25 / 8, Double(y) - 0.125 + Double(j) * 1.25 / 8)
                             if !covered(point) { inside = false; break }
+                        }
+                    }
+                    // 9x9 の標本の間をすり抜ける細い穴の端を、4 辺を 201 点ずつ見て拾う。帯が
+                    // 画素ごと確かに覆う (楕円の帯の中心からの真の距離が太さの半分 − 0.9 以内。
+                    // 1/8 画素広げた画素は中心から 0.9 画素の内に収まる) なら見なくてよい
+                    if inside, !(shape.isEllipse
+                        && abs(Self.ellipseDistance(local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift, shape.half))
+                            <= halfWeight - 0.9)
+                    {
+                        edges: for t in 0...200 {
+                            let u = -0.125 + Double(t) * 1.25 / 200
+                            for point in [
+                                SIMD2(Double(x) + u, Double(y) - 0.125), SIMD2(Double(x) + u, Double(y) + 1.125),
+                                SIMD2(Double(x) - 0.125, Double(y) + u), SIMD2(Double(x) + 1.125, Double(y) + u),
+                            ] where !covered(point) {
+                                inside = false
+                                break edges
+                            }
                         }
                     }
                     guard inside else { continue }
@@ -775,14 +795,12 @@ struct PixelGridTests {
     func thinHoleLeavesNoGapInTheBand(_ shape: SeamShape) throws {
         let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: 64, center: SIMD2(32, 32))
         #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
-        // 上限は太さによらず最悪 8%・平均 0.5% に取る。細い穴も細い塗りと同じ箱フィルタで、
-        // 画素の中のいちばん広い所の半幅を長さに掛けるので、尖った穴の端の画素では穴を多めに
-        // 数える (直した後の実測で最悪 3.6%・6.6%、平均 0.05%・0.33%。どれも穴の端の画素)。
-        // 標本 (9x9) が見落とすほど細い穴の端は、丸ごと覆われる画素に数えられる。直す前は
-        // 長軸の近くで帯が丸ごと抜けた (最悪 100%)
-        #expect(measured.worst < 0.08, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        // 上限は太さによらず最悪 1%・平均 0.1% (継ぎ目の検査の太さ 2 以上と同じ)。直す前は
+        // 長軸の近くで帯が丸ごと抜けた (最悪 100%)。かつて 9x9 の標本だけで丸ごと覆われる画素を
+        // 決めていた頃は、尖った穴の端の画素を数えて 3.6%・6.6% が残って見えた
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
         #expect(
-            measured.total / Double(max(measured.counted, 1)) < 0.005,
+            measured.total / Double(max(measured.counted, 1)) < 0.001,
             "\(shape): 帯が欠ける: 平均 \(measured.total / Double(max(measured.counted, 1)))")
     }
 

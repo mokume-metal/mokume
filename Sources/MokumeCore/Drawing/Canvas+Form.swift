@@ -158,8 +158,7 @@ extension Canvas {
         // 細い塗りと、輪郭の帯の細い穴 (#2186) は同じ旗に乗る (``FormInstance/thinFillsFlag``)
         beginForm(
             flags: instance.meta.w,
-            thinFill: instance.mayHaveThinFill(unitsPerDrawnPixel: unitsPerDrawnPixel)
-                || instance.mayHaveThinHole(unitsPerDrawnPixel: unitsPerDrawnPixel))
+            thinFill: instance.mayHaveThinPart(unitsPerDrawnPixel: unitsPerDrawnPixel))
         formInstances.append(instance)
     }
 

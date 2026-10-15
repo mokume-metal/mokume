@@ -130,6 +130,38 @@ struct FormInstance {
         return isThin(half: hole, unitsPerDrawnPixel: unitsPerDrawnPixel)
     }
 
+    /// 列の旗 (``thinFillsFlag``) を立てるか: 塗りが細い (``mayHaveThinFill(unitsPerDrawnPixel:)``) か、
+    /// 輪郭の帯の穴が細い・潰れている (``mayHaveThinHole(unitsPerDrawnPixel:)``) ことがありうるか。
+    ///
+    /// **2 つの判定を 1 度の行列式と行ノルムで解く。** 答えは 2 つの論理和と同じ。図形を置くたびに
+    /// 走る費用は、release で判定だけが図形 1 つあたり 5.8 ns から 13.4 ns、寸法違いの円 20 万個を
+    /// 置く本体が 1 つあたり 51.7 ns から 56.8 ns になった (帯の穴の判定を足す前と比べて・#2186)。
+    /// 2 つを順に呼んでも同じ速さだったが、置く口を 1 つにするためにまとめてある。
+    func mayHaveThinPart(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue else { return false }
+        let fills = meta.w & Self.fillsFlag != 0
+        let strokes = meta.w & Self.strokesFlag != 0
+        let half = SIMD2(size.x, size.y)
+        var hole = SIMD2<Float>(1, 1)
+        if strokes {
+            hole = meta.x == Kind.ellipse.rawValue
+                ? Self.ellipseHole(radii: half, halfWeight: size.z) : half - size.z
+            // 潰れた穴は描く画素によらず細い
+            if hole.x <= 0 || hole.y <= 0 { return true }
+        }
+        guard fills || strokes else { return false }
+        let determinant = linear.x * linear.w - linear.y * linear.z
+        let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
+        let rowY = simd_length_squared(SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel)
+        let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
+        let squared = determinant * determinant
+        func thin(_ half: SIMD2<Float>) -> Bool {
+            let span = 2 * half * (1 + 2.0 / 256)
+            return span.x * span.x * squared < rowX * reach || span.y * span.y * squared < rowY * reach
+        }
+        return (fills && thin(half)) || (strokes && thin(hole))
+    }
+
     /// 楕円の輪郭の帯の穴の、短い向きの半幅と長い向きの端までの長さ (`radii` と同じ並び)。
     /// 断片の `mokume_ellipseHole` (`Shapes.metal`) と同じ式で、理由もそちらにある。
     static func ellipseHole(radii: SIMD2<Float>, halfWeight: Float) -> SIMD2<Float> {
