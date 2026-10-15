@@ -187,20 +187,40 @@ FAILING_GH = """#!/bin/bash
 exit 1
 """
 
-# view には固定の JSON を**実物の jq**で評価させ、comment は引数と本文を記録する。
+# 宛先の近況 (api graphql — #2660 から。以前は view) には固定の JSON を**実物の jq**で評価させ、
+# comment は引数と本文を記録する。
 # --jq の式はラッパーが書いたものがそのまま渡るので、式自体がここで検査される
 # (スタブが答えを作ると、式が壊れても緑のままになってしまう)
+#
+# 宛先の近況は scripts/bot-hand.sh の recent_comments が、新しい順にページで遡って引く
+# (#2660)。固定の JSON ({state, comments: [古い順]}) から、本物と同じく last: size・
+# before: cursor の 1 ページを組んで返す (カーソルは添字の文字列)。引いたページは PAGE_LOG へ
 RESPONDING_GH = """#!/bin/bash
-if [ "$2" = view ]; then
-  expr=""
-  while [ $# -gt 0 ]; do
-    if [ "$1" = --jq ]; then expr="$2"; shift 2; else shift; fi
+if [ "$1" = api ]; then
+  size= cursor=
+  for arg in "$@"; do
+    case "$arg" in
+      size=*) size=${arg#size=} ;;
+      cursor=*) cursor=${arg#cursor=} ;;
+    esac
   done
-  exec jq -r "$expr" "$FIXTURE"
+  [ -z "${PAGE_LOG:-}" ] || echo "${cursor:-last}" >> "$PAGE_LOG"
+  exec jq -c --argjson size "$size" --arg cursor "$cursor" '
+    .state as $state | (.comments | length) as $n
+    | (if $cursor == "" then $n else ($cursor | tonumber) end) as $end
+    | ([$end - $size, 0] | max) as $start
+    | {data: {repository: {issueOrPullRequest: {state: $state, comments: {
+        totalCount: $n, pageInfo: {hasPreviousPage: ($start > 0), startCursor: ($start | tostring)},
+        nodes: .comments[$start:$end]}}}}}' "$FIXTURE"
 fi
 printf '%s\\n' "$@" > "$LOG"
 cat "${!#}" >> "$LOG"
 """
+
+
+def destination_json(state="OPEN", comments=()):
+    """宛先の state と全コメント (古い順)。ページは偽 gh が組む (RESPONDING_GH)。"""
+    return json.dumps({"state": state, "comments": list(comments)})
 
 
 def stub_gh(testcase, script=FAILING_GH):
@@ -888,7 +908,7 @@ class GhInvocationTest(unittest.TestCase):
             d = Path(d)
             log = d / "argv.txt"
             fixture = d / "view.json"
-            fixture.write_text('{"state":"OPEN","comments":[]}', encoding="utf-8")
+            fixture.write_text(destination_json(), encoding="utf-8")
             stub = d / "gh"
             stub.write_text(RESPONDING_GH, encoding="utf-8")
             stub.chmod(0o755)
@@ -925,21 +945,26 @@ class DestinationNoticeTest(unittest.TestCase):
     それも名乗ること・**止めないこと**・gh が使えないときに黙って続行することである。
     """
 
-    def comment(self, minutes_ago, login="octocat", body="## 判断を差し替えた"):
+    def comment(self, minutes_ago, login="octocat", body="## 判断を差し替えた", kind="User"):
         at = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
         return {
             "createdAt": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "author": {"login": login},
+            "author": {"__typename": kind, "login": login},
             "body": body,
         }
 
-    def run_comment(self, *args, state="OPEN", comments=None, gh=RESPONDING_GH):
+    def bot(self, minutes_ago):
+        """github-actions の追記 (#2658)。GraphQL は Bot の login を [bot] なしで返す"""
+        return self.comment(
+            minutes_ago, login="github-actions", body="## 定期の検査が赤い", kind="Bot"
+        )
+
+    def run_comment(self, *args, state="OPEN", comments=None, gh=RESPONDING_GH, **env):
         directory = stub_gh(self, gh)
         fixture = directory / "view.json"
-        fixture.write_text(
-            json.dumps({"state": state, "comments": comments or []}), encoding="utf-8"
-        )
+        fixture.write_text(destination_json(state, comments or []), encoding="utf-8")
         log = directory / "argv.txt"
+        self.page_log = directory / "pages.txt"
         proc = subprocess.run(
             ["/bin/bash", str(COMMENT), *args],
             capture_output=True,
@@ -949,11 +974,16 @@ class DestinationNoticeTest(unittest.TestCase):
                 CLAUDECODE="1",
                 FIXTURE=str(fixture),
                 LOG=str(log),
+                PAGE_LOG=str(self.page_log),
                 GITHUB_REPOSITORY="mokume-metal/mokume",
+                **env,
             ),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc, log
+
+    def pages_called(self):
+        return self.page_log.read_text(encoding="utf-8").splitlines() if self.page_log.exists() else []
 
     def test_latest_comment_is_announced_and_posting_continues(self):
         """投稿者・相対時刻・見出しの冒頭が出て、投稿はそのまま走る (条件 1・3)。"""
@@ -974,6 +1004,101 @@ class DestinationNoticeTest(unittest.TestCase):
         self.assertNotIn("当初の判断", proc.stderr, "最新ではなく古いコメントを名乗っている")
         # 止めない — gh comment まで到達している
         self.assertIn("comment", log.read_text(encoding="utf-8"))
+
+    def test_bot_comments_do_not_bury_the_latest_human_comment(self):
+        """#2660: 人が判断を差し替えた後に bot が追記しても、人の最新のコメントを名乗る。
+
+        末尾のコメントを名乗ると、#1327 が塞いだ「読んだ後に判断が差し替わった」が、
+        github-actions の追記 1 件で見えなくなる。後ろの追記は件数で添える。
+        """
+        proc, log = self.run_comment(
+            "issue",
+            "42",
+            "--body",
+            "x",
+            comments=[
+                self.comment(100, body="## 当初の判断"),
+                self.comment(12, login="maintainer", body="## 判断を差し替えた — 原因は相対パス"),
+                self.bot(5),
+                self.bot(1),
+            ],
+        )
+        self.assertIn(
+            "最新コメント: maintainer・12 分前・「## 判断を差し替えた", proc.stderr,
+            "bot の追記を最新コメントとして名乗っている",
+        )
+        self.assertIn("その後に bot の追記 2 件・最新「## 定期の検査が赤い」", proc.stderr)
+        self.assertIn("comment", log.read_text(encoding="utf-8"))
+
+    def test_bot_note_carries_the_reason_of_a_reopen(self):
+        """parent-guard も github.token で reopen の理由を書く。件数だけでは理由が消える。"""
+        reason = self.comment(
+            2, login="github-actions", body="## 子が open のまま閉じられたので開き直した", kind="Bot"
+        )
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[self.comment(30), reason]
+        )
+        self.assertIn("最新「## 子が open のまま閉じられたので開き直した」", proc.stderr)
+
+    def test_other_bots_are_not_mistaken_for_the_appender(self):
+        """GitHub App 経由で投稿するエージェントも Bot 型。除くのは追記の書き手だけ (#2660)。"""
+        agent = self.comment(4, login="some-agent", body="## エージェントの判断", kind="Bot")
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[self.comment(30), agent, self.bot(1)]
+        )
+        self.assertIn("最新コメント: some-agent・4 分前・「## エージェントの判断」", proc.stderr)
+        self.assertIn("その後に bot の追記 1 件", proc.stderr)
+
+    def test_no_bot_note_when_the_human_comment_is_last(self):
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[self.bot(30), self.comment(3)]
+        )
+        self.assertIn("3 分前", proc.stderr)
+        self.assertNotIn("bot の追記", proc.stderr)
+
+    def test_only_bot_comments_in_the_window_say_so(self):
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[self.bot(30), self.bot(3)]
+        )
+        self.assertIn("人のコメントは無い (bot の追記 2 件・最新「## 定期の検査が赤い」)", proc.stderr)
+        self.assertNotIn("最新コメント:", proc.stderr)
+        self.assertNotIn("コメントはまだ無い", proc.stderr)
+
+    def test_human_comment_pushed_out_of_the_window_is_still_named(self):
+        """#2660: bot の追記で窓 (100 件) が溢れても、人の最新のコメントまで遡って名乗る。
+
+        窓の中だけを見ると「人のコメントは無い」になり、#1327 の約束 (直前の人の判断を
+        名乗る) が再び破れる
+        """
+        comments = [
+            self.comment(300, login="maintainer", body="## 判断を差し替えた"),
+            *[self.bot(299 - i) for i in range(130)],
+        ]
+        proc, _ = self.run_comment("issue", "42", "--body", "x", comments=comments)
+        self.assertIn(
+            "最新コメント: maintainer・5 時間前・「## 判断を差し替えた」 (その後に bot の追記 130 件",
+            proc.stderr,
+        )
+        self.assertEqual(len(self.pages_called()), 2, "人の手が見つかるまで遡っていない")
+
+    def test_paging_stops_at_the_limit_and_says_so(self):
+        """遡るのには上限がある (plan-record と同じ部品)。打ち切ったらそう名乗る。"""
+        comments = [self.comment(300), *[self.bot(299 - i) for i in range(250)]]
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=comments, BOT_HAND_MAX_PAGES="2"
+        )
+        self.assertIn("人のコメントは新しい順の 200 件に無い (上限で遡りを打ち切った", proc.stderr)
+        self.assertEqual(len(self.pages_called()), 2)
+
+    def test_comment_by_a_deleted_user_counts_as_human(self):
+        """作者の分からないコメントは bot の手と言わない (scripts/bot-hand.sh の向き)。"""
+        deleted = self.comment(8, body="## 退会した人の判断")
+        deleted["author"] = None
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[deleted, self.bot(2)]
+        )
+        self.assertIn("ghost・8 分前・「## 退会した人の判断」", proc.stderr)
+        self.assertIn("その後に bot の追記 1 件", proc.stderr)
 
     def test_closed_destination_says_so(self):
         """条件 2。#1291 は投稿の 5 分後に closed になった。"""
