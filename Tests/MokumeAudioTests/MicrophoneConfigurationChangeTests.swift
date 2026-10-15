@@ -111,6 +111,10 @@ struct MicrophoneConfigurationChangeTests {
         }
         Self.post(about(holder), to: center, name: name)
         queue.resume()
+        // **2 度流す** (#2711 の反証)。`first` が列の上から送った知らせは、受けた糸が列の末尾へ積むので、
+        // 1 度目の `sync` の後ろに並ぶ。1 度目が返った時点で `first` は終わっていて知らせは積まれている
+        // ので、2 度目でそれも処理し終える。1 度だけだと、`first` の知らせを処理する前に判定を読む
+        queue.sync {}
         queue.sync {}
         return holder
     }
