@@ -421,7 +421,12 @@ nonisolated enum SVGFile {
             }
             // 名乗るものは、要素を描くと決まるまで溜める
             var unreadable: [String] = []
-            for (property, value) in attributes
+            // 属性の書いた順は分からない (`XMLParser` が辞書で渡す) ので、決まった順で集める — 辞書の巡る順は
+            // プロセスごとに変わる。順が効くのは短縮形の `marker` と個別の `marker-*` の重なりだけで、短縮形を先に
+            // 置いて個別の性質を勝たせる (CSS で短縮形を先に書いたのと同じ)。ほかは名前の順
+            func place(_ property: String) -> (Int, String) { (property == "marker" ? 0 : 1, property) }
+            let written = attributes.sorted { place($0.key) < place($1.key) }
+            for (property, value) in written
             where SVGFile.properties.contains(property) || (name == "svg" && SVGFile.sizeProperties.contains(property))
             {
                 collect(Declaration(name: property, value: value, isImportant: false), from: .attribute)

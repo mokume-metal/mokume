@@ -676,7 +676,7 @@ struct SVGFileTests {
             #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
         // 描かないのは変えない。名乗りは「負の値を捨てた」ではなく「この値で根を描かない」の意味で、
-        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2410 に置いてある
+        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2648 に置いてある
         #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
     }
 
@@ -1343,7 +1343,7 @@ struct SVGFileTests {
     }
 
     @Test(
-        "勝った宣言が効果を持てば、下の none に負けず今までどおり 1 度名乗る (#2410 の 2 の陰性対照)",
+        "勝った宣言が効果を持てば、下の none に負けず名乗る。宣言が重なっても数えるのは要素ごとに 1 度 (#2410 の 2 の陰性対照)",
         arguments: [
             (#"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: url(#d)"/>"#, "clip-path"),
             (#"<rect width="1" height="1" clip-path="none" style="clip-path: url(#d)"/>"#, "clip-path"),
@@ -1351,11 +1351,28 @@ struct SVGFileTests {
             (#"<rect width="1" height="1" mix-blend-mode="normal" style="mix-blend-mode: screen"/>"#, "mix-blend-mode"),
             // 短縮形の marker の後に 1 つだけ打ち消しても、残りの 2 つが効く
             (#"<path d="M0 0 L1 1" stroke="black" marker="url(#m)" style="marker-start: none"/>"#, "marker"),
+            // 矢じりの 3 つの性質のどれが効いても、1 つの要素で数えるのは 1 度
+            (#"<path d="M0 0 L1 1" stroke="black" marker-start="url(#m)" marker-end="url(#m)"/>"#, "marker"),
         ])
     func winningEffectIsStillNamed(_ sample: (String, String)) throws {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.map(\.what) == [sample.1], "\(sample.0): \(drawing.skipped)")
         #expect(drawing.skipped.first?.count == 1, "\(sample.0): \(drawing.skipped)")
+    }
+
+    /// 属性は辞書で届き、巡る順は辞書ごとに変わる。短縮形の `marker` と個別の `marker-*` を属性に両方書いたとき、
+    /// どちらが勝つかがその順に依らないこと (個別の性質が勝つ) を、同じ文字を何度も読んで見る。
+    @Test(
+        "属性に短縮形の marker と個別の marker-* を両方書けば個別の性質が勝ち、何度読んでも同じ (#2410)",
+        arguments: [
+            (#"<path d="M0 0 L1 1" stroke="black" marker="none" marker-start="url(#m)"/>"#, ["marker"]),
+            (#"<path d="M0 0 L1 1" stroke="black" marker-end="none" marker="url(#m)" marker-start="none" marker-mid="none"/>"#, []),
+        ])
+    func markerAttributesResolveTheSameEveryTime(_ sample: (String, [String])) throws {
+        for _ in 0..<64 {
+            let drawing = try document(sample.0)
+            #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        }
     }
 
     @Test(
@@ -1374,6 +1391,11 @@ struct SVGFileTests {
             (#"<rect width="1" height="1" style="marker: bogus"/>"#, [#"marker "bogus""#]),
             (#"<rect width="1" height="1" marker-start="url(#m) url(#n)"/>"#, [#"marker-start "url(#m) url(#n)""#]),
             (#"<rect width="1" height="1" mix-blend-mode="bogus"/>"#, [#"mix-blend-mode "bogus""#]),
+            (#"<rect width="1" height="1" mask="bogus"/>"#, [#"mask "bogus""#]),
+            (#"<rect width="1" height="1" mask="url(#a) url(#b)"/>"#, [#"mask "url(#a) url(#b)""#]),
+            (#"<rect width="1" height="1" mask="url(#m),"/>"#, [#"mask "url(#m),""#]),
+            (#"<rect width="1" height="1" mask=""/>"#, [#"mask """#]),
+            (#"<rect width="1" height="1" mask="url(#m)" style="mask: blur(1px)"/>"#, [#"mask "blur(1px)""#, "mask"]),
             // mix-blend-mode に none の語は無い
             (#"<rect width="1" height="1" mix-blend-mode="none"/>"#, [#"mix-blend-mode "none""#]),
             // 下の none (normal) を消さない
@@ -1401,7 +1423,10 @@ struct SVGFileTests {
             (#"filter="drop-shadow(1px 1px 2px black) url(#f)""#, "filter"),
             (#"filter="blur(2px)grayscale(1)""#, "filter"),
             (#"mask="url(#m)""#, "mask"),
-            (#"mask="luminance""#, "mask"),
+            (#"mask="url(#m) luminance""#, "mask"),
+            (#"mask="linear-gradient(black, transparent)""#, "mask"),
+            (#"mask="url(#m) center / contain no-repeat""#, "mask"),
+            (#"mask="none, url(#m) 10px 50%""#, "mask"),
             (#"marker="url(#m)""#, "marker"),
             (#"marker-end="url(#m)""#, "marker"),
             (#"mix-blend-mode="multiply""#, "mix-blend-mode"),
@@ -1412,6 +1437,22 @@ struct SVGFileTests {
         let body = #"<rect width="1" height="1" \#(sample.0)/>"#
         let drawing = try document(body)
         #expect(drawing.skipped.map(\.what) == [sample.1], "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+    }
+
+    /// `mask` の短縮形で、どの層の画像も `none` (書いていない) なら切り抜かない (CSS Masking)。語だけの値を
+    /// 「マスクを捨てた」と名乗らず、下の宣言も打ち消す。
+    @Test(
+        "mask の層に画像が無ければ効果なしで名乗らず、下の mask を打ち消す (#2410)",
+        arguments: [
+            #"<rect width="1" height="1" mask="luminance"/>"#,
+            #"<rect width="1" height="1" mask="alpha center / contain no-repeat"/>"#,
+            #"<rect width="1" height="1" mask="none, luminance"/>"#,
+            #"<rect width="1" height="1" mask="url(#m)" style="mask: luminance"/>"#,
+        ])
+    func maskWithoutImageHasNoEffect(_ body: String) throws {
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
         #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
     }
 
@@ -1429,6 +1470,7 @@ struct SVGFileTests {
             (#"<rect width="10" height="10" display="block block"/>"#, [#"display "block block""#], 1),
             (#"<rect width="10" height="10" display="list-item flex"/>"#, [#"display "list-item flex""#], 1),
             (#"<rect width="10" height="10" display="flex grid"/>"#, [#"display "flex grid""#], 1),
+            (#"<rect width="10" height="10" display="list-item math"/>"#, [#"display "list-item math""#], 1),
             // none に決まった要素は、その要素の読めない値 (宣言の形でない部分・描けない効果の読めない値も) を名乗らない
             (#"<rect width="10" height="10" display="none" fill="abc"/>"#, [], 0),
             (#"<rect width="10" height="10" display="none" visibility="abc"/>"#, [], 0),
@@ -1447,7 +1489,7 @@ struct SVGFileTests {
         arguments: [
             "block", "inline", "contents", "block flow", "inline flow-root", "flow-root inline", "list-item",
             "list-item block flow", "inline list-item", "flow list-item", "inline-block", "table-cell", "ruby-text-container",
-            "initial", "unset", "revert", "revert-layer", " Inline ", "BLOCK  FLOW",
+            "initial", "unset", "revert", "revert-layer", " Inline ", "BLOCK  FLOW", "math", "block math", "inline math",
         ])
     func readableDisplayCancelsNone(_ value: String) throws {
         let body = #"<rect width="10" height="10" display="none" style="display: \#(value)"/>"#

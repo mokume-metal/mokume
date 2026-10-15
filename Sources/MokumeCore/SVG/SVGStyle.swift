@@ -139,7 +139,8 @@ extension SVGFile {
     // MARK: - display と描けない効果
 
     /// `display` の値を読み、描くか (`none` だけが偽) を返す。読むのは CSS Display 3 の値 — 1 語の値と、
-    /// `<display-outside> || <display-inside>` と `list-item` の 2 語・3 語の組 — と、全体キーワード (`initial`・
+    /// `<display-outside> || <display-inside>` と `list-item` の 2 語・3 語の組 — と、MathML Core の `math`
+    /// (`block math`・`inline math` も)、全体キーワード (`initial`・
     /// `unset`・`revert`・`revert-layer`。どれも描く)。大文字と小文字は区別しない。**読めなければ `nil`**
     /// (`abc`・空・接頭辞つきの `-webkit-box`) — 呼ぶ側が名乗り、無かったものとする (#2650)。
     /// mokume が使うのは描くかどうかだけで、語ごとの意味は持たない。
@@ -162,15 +163,17 @@ extension SVGFile {
         return true
     }
 
-    /// `display` の 1 語の値 (CSS Display 3)。
+    /// `display` の 1 語の値 (CSS Display 3 と MathML Core の `math`)。
     nonisolated private static let displayKeywords: Set<String> = [
         "block", "inline", "run-in", "flow", "flow-root", "table", "flex", "grid", "ruby", "list-item", "contents",
         "inline-block", "inline-table", "inline-flex", "inline-grid", "table-row-group", "table-header-group",
         "table-footer-group", "table-row", "table-cell", "table-column-group", "table-column", "table-caption",
-        "ruby-base", "ruby-text", "ruby-base-container", "ruby-text-container",
+        "ruby-base", "ruby-text", "ruby-base-container", "ruby-text-container", "math",
     ]
     nonisolated private static let displayOutside: Set<String> = ["block", "inline", "run-in"]
-    nonisolated private static let displayInside: Set<String> = ["flow", "flow-root", "table", "flex", "grid", "ruby"]
+    nonisolated private static let displayInside: Set<String> = [
+        "flow", "flow-root", "table", "flex", "grid", "ruby", "math",
+    ]
     /// `inherit` を除く CSS の全体キーワード。
     nonisolated private static let cssWideKeywords: Set<String> = ["initial", "unset", "revert", "revert-layer"]
 
@@ -183,7 +186,9 @@ extension SVGFile {
     /// - `filter`: `url(…)` とフィルタ関数 (`blur()`・`drop-shadow()` など) の並び
     /// - `marker*`: `url(…)`
     /// - `mix-blend-mode`: CSS Compositing の語
-    /// - `mask`: 短縮形で語だけの値も多いので、`none` 以外はみな効果を持つと読む
+    /// - `mask`: 短縮形の層 (`,` で区切る) の並び。層は画像 (`url(…)`・グラデーションなどの画像の関数・`none`)
+    ///   を 1 つまでと、位置・大きさ・繰り返し・箱・合成・`alpha` / `luminance` の語と長さ。**どの層の画像も `none`
+    ///   (書いていない) なら切り抜かないので効果なし** (`mask: luminance`)
     ///
     /// 関数の引数は確かめない。
     nonisolated static func parseEffect(_ property: String, _ text: String) -> Bool? {
@@ -193,8 +198,8 @@ extension SVGFile {
             return blendModes.contains(value) ? true : nil
         }
         if value == "none" { return false }
-        if property == "mask" { return true }
         guard let parts = cssComponents(value), !parts.isEmpty else { return nil }
+        if property == "mask" { return maskHasImage(parts) }
         let functions = parts.map(functionName)
         switch property {
         case "clip-path":
@@ -209,6 +214,42 @@ extension SVGFile {
             return parts.count == 1 && functions[0] == "url" ? true : nil
         }
     }
+
+    /// `mask` の短縮形の部品から、画像を持つ層があるかを読む。読めない部品・2 つ目の画像・空の層があれば `nil`。
+    nonisolated private static func maskHasImage(_ parts: [Substring]) -> Bool? {
+        var hasImage = false
+        for layer in parts.split(separator: ",", omittingEmptySubsequences: false) {
+            guard !layer.isEmpty else { return nil }
+            var images = 0
+            for part in layer {
+                if part == "none" || functionName(part).map(maskImages.contains) == true {
+                    images += 1
+                    if part != "none" { hasImage = true }
+                } else if functionName(part) != nil {
+                    return nil
+                } else if !(part == "/" || maskKeywords.contains(String(part))
+                    || parseLength(String(part), reference: 1) != nil)
+                {
+                    return nil
+                }
+            }
+            guard images <= 1 else { return nil }
+        }
+        return hasImage
+    }
+
+    /// `mask` の層の画像になる関数 (`url()` と CSS Images の画像の関数)。
+    nonisolated private static let maskImages: Set<String> = [
+        "url", "linear-gradient", "radial-gradient", "conic-gradient", "repeating-linear-gradient",
+        "repeating-radial-gradient", "repeating-conic-gradient", "image", "image-set", "cross-fade", "element",
+        "paint",
+    ]
+    /// `mask` の層に書ける語 (位置・大きさ・繰り返し・箱・合成・モード)。
+    nonisolated private static let maskKeywords: Set<String> = geometryBoxes.union([
+        "left", "right", "top", "bottom", "center", "auto", "cover", "contain", "repeat", "repeat-x", "repeat-y",
+        "no-repeat", "space", "round", "no-clip", "add", "subtract", "intersect", "exclude", "alpha", "luminance",
+        "match-source",
+    ])
 
     nonisolated private static let basicShapes: Set<String> = [
         "inset", "circle", "ellipse", "polygon", "path", "rect", "xywh", "shape",
@@ -227,7 +268,7 @@ extension SVGFile {
     ]
 
     /// 値を、括弧の外の空白と、括弧を閉じた所で部品に分ける (`url(#a) fill-box` も `blur(2px)grayscale(1)` も
-    /// 2 つ)。括弧が釣り合わなければ `nil`。
+    /// 2 つ)。括弧の外の `,` と `/` は、それだけで 1 つの部品にする。括弧が釣り合わなければ `nil`。
     nonisolated private static func cssComponents(_ text: String) -> [Substring]? {
         var parts: [Substring] = []
         var depth = 0
@@ -235,9 +276,10 @@ extension SVGFile {
         var index = text.startIndex
         while index < text.endIndex {
             let character = text[index]
-            if depth == 0, character.isWhitespace {
+            if depth == 0, character.isWhitespace || character == "," || character == "/" {
                 if let from = start { parts.append(text[from..<index]) }
                 start = nil
+                if !character.isWhitespace { parts.append(text[index...index]) }
             } else {
                 if start == nil { start = index }
                 if character == "(" { depth += 1 }
