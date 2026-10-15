@@ -20,13 +20,18 @@ import simd
 ///   揃った面を読む
 /// - **数として読めない座標は、文字の STL では黙って 0 になる** (`nan`・`a` など)。バイナリの
 ///   NaN・無限はそのまま返る
-/// - **文字の STL は、1 行目の後ろの行頭の最初の `facet` が添字 127 までに始まらないと、面を 1 つも読めない**
-///   ([#2645])。名前が 121 文字以上 (字下げ 2 の `facet` が添字 130)・最初の面の字下げが長い・前に空白の行や空行を
-///   挟んだ、のどれでも同じで、下の「バイナリの道」へ落ちる。境目は行の長さではない — 2 つ目の `solid` の名前・
-///   `vertex` の行の字下げや行末の空白が長くても読み、座標は 40 桁でも 1200 桁でも切らずに読む
-/// - **`outer loop` と `endloop` の間の、空白・タブ・VT・CR だけの行を、頂点 (0, 0, 0) として読む** ([#2645])。
-///   CRLF の空行は CR だけの行なので当たる。頂点を 3 つずつ区切り直した枚数を返し、`facet normal` や `endloop` の
-///   直後のそういう行では断る。本当に空の行 (LF だけ) は、どこにあっても読み飛ばす
+/// - **文字の STL は、`facet normal` (間の空白 1 つ) の綴りが添字 127 までに始まらないと、面を 1 つも読めない**
+///   ([#2645])。綴りの位置だけを見て、名前の中の綴りでもよい。名前が 121 文字以上 (字下げ 2 の `facet normal` が
+///   添字 130)・最初の面の字下げが長い・前に空白の行や空行を挟んだ・面の行の区切りがタブや空白 2 つ、のどれでも
+///   下の「バイナリの道」へ落ちる。探しに行けた後は、区切りがタブや空白 2 つの面の行も読む。境目は行の長さでは
+///   ない — 2 つ目の `solid` の名前・`vertex` の行の字下げや行末の空白が長くても読み、座標は 40 桁でも 1200 桁でも
+///   切らずに読む
+/// - **行は LF だけで割り、`outer` の行から `endloop` の行までの空でない行を、語によらず頂点として読む** ([#2645])。
+///   `vertex` で始まらない行 (`foo`・`# comment`・大文字の `VERTEX`・NUL や NBSP だけの行・空白・タブ・VT・FF・CR
+///   だけの行) は頂点 (0, 0, 0) になる。CRLF の空行は CR だけの行なので当たる。2 つの `vertex` の行を CR 1 つで繋ぐと
+///   1 つの頂点になる。頂点を 3 つずつ区切り直した枚数と、余りの番号を返す。`facet normal` と `outer` の間・`endloop`
+///   と `endfacet` の間の、空白だけの行も含む空でない行では断り、`outer` の無い面も断る。`endloop` の無い面は
+///   `endfacet` を頂点として読む。本当に空の行 (LF だけ) と、面と面の間・`endsolid` の前後の行は読み飛ばす
 ///
 /// ## Model I/O の境目は、公開の説明と食い違う
 ///
@@ -71,11 +76,13 @@ import simd
 ///   約 210 万以上の宣言は 100 MB 超で、切れたバイナリと区別できる)。**頭に制御文字 (FF・VT・DEL・ESC など) が
 ///   あるかは見ない** — 名前に制御文字があっても文字は文字で、バイナリに回すと読み手の判定に直に渡る。
 ///   面の数が 2^24 以上と宣言して大きさが合わないバイナリ (切れた大きいバイナリ) は壊れているとして読めない
-/// - **文字の STL** は、行の先頭の `vertex` と `endfacet` を順に数える (``scanFacets(head:rest:chunk:)``)。
+/// - **文字の STL** は、行を LF だけで割り (読み手と同じ)、行の先頭の `vertex` と `endfacet` を順に数える
+///   (``scanFacets(head:rest:chunk:)``)。
 ///   - 面が 0 → 渡さず、面の無い STL (``isEmptySTL(_:)``) なら空、そうでなければ読めないとして返す
-///   - どの面も頂点がちょうど 3 つでない → 渡さず、読めないとして返す
-///   - それ以外 → Model I/O に読ませ、**返った三角形の数が面の数と等しいときだけ採る**。0 枚・多い・少ないは
-///     読めないとして返す。読ませるとき、添字 83 が制御文字なら、**1 行目 (名前の行・読まれない) に空白を足して
+///   - どの面も頂点がちょうど 3 つでない・面の中に読み手が頂点と読む行や断る行がある (`vertex` でない行・
+///     `outer loop` や `endloop` の無い面。空白だけの行は除く) → 渡さず、読めないとして返す ([#2645])
+///   - それ以外 → Model I/O に読ませ、**返った三角形の数が面の数と等しく、写せなかった要素 (3 つに満たない余りの
+///     番号など) が無いときだけ採る**。0 枚・多い・少ない・余りは読めないとして返す。読ませるとき、添字 83 が制御文字なら、**1 行目 (名前の行・読まれない) に空白を足して
 ///     添字 83 を空白にした一時の写し**を渡す (``readerHead(of:)``)。添字 83 が 0x10 以上なら読み直しは面の数が
 ///     上限を超えて断られるので、**読み直されて数が偶然合う**ことが無くなる。128 バイトに満たなければ、
 ///     末尾を空白で 128 バイトまで埋めた写しにする。読み手は変えない — 自前で読むと、数でない座標が 0 に
@@ -83,16 +90,18 @@ import simd
 ///     読み直しの枚数 (⌊(大きさ − 84) ÷ 50⌋ か ⌊(大きさ − 82) ÷ 50⌋。読み手は最後の 48 バイトで終わる面も 1 面と
 ///     数える) のどちらかと同じときと、128 バイトに満たないときだけ作る** — どちらとも違うときは元のファイル
 ///     を読ませ、返った枚数を面の数と照らす (ファイルの全部を書き直さずに済む)
-///   - **行頭の最初の `facet` が添字 128 から先にあるか、空白・CR だけの行がある**なら (``TextScan/needsRewrite``)、
-///     上の写しに替えて、**1 行目を `solid` と空白 (添字 83 が空白) にし、最初の `facet` より前と空白・CR だけの行を
-///     落とした写し**を渡す ([#2645])。頂点と面の行には触れない。どちらにも当たらない文字は、これまでどおりの経路で
-///     写しを作らない。この写しを書けなければ読めないとする (元のファイルは、読み手が断るか読み直す)
+///   - **`facet normal` の綴りが添字 128 から先にしか無いか、面の中に空白・CR だけの行がある**なら
+///     (``TextScan/needsRewrite``)、上の写しに替えて、**1 行目を `solid` と空白 (添字 83 が空白) にし、最初の面の
+///     行の `normal` までを `facet normal` に替え (それより前を落とし)、空白・CR だけの行を落とした写し**を渡す
+///     ([#2645])。頂点の行と 2 つ目より後ろの面の行には触れない。最初の面の行に `normal` が無い文字は、書き直さない。
+///     どちらにも当たらない文字 (面と面の間・`endsolid` の前後にだけ空白の行がある文字も) は、これまでどおりの経路で
+///     写しを作らない。この写しを書けなければ、上と同じに元のファイルを読ませて照らす
 /// - **バイナリ**は 128 バイト以上を Model I/O に読ませる。128 バイトに満たないものは、Model I/O が必ず
 ///   断る (面を持てない) ので渡さず、84 バイトの面の無いものだけ空、ほかは読めないとして返す
 ///
 /// 上の境目 (128 バイトと 128〜132 バイトの癖・面の数の上限・文字をバイナリとして読むこと・読み直しの
-/// 形・読めない文字を面の無い形で返すこと・VT と FF を空白として読むこと・最初の `facet` の位置の上限・
-/// 空白だけの行を頂点として読むこと) は読み手の挙動で、
+/// 形・読めない文字を面の無い形で返すこと・VT と FF を空白として読むこと・`facet normal` の綴りの位置の上限・
+/// 面の中の空でない行を頂点として読むこと・行を LF だけで割ること) は読み手の挙動で、
 /// `STLModelTests` が固定している。読み手が変わったら、そこが赤くなって、この節の直し時を知らせる。
 ///
 /// **残る境目**: 面の数を宣言して途中で切れたバイナリは、128 バイトで結果が変わる ([#2493])。文字の STL
@@ -108,16 +117,17 @@ import simd
 /// - 頂点の無い面だけの STL は、空ではなく読めない。頂点の無い面と正しい面が混ざったものは、正しい 1 面を
 ///   返さずに読めない
 /// - 改行が CR だけの STL・改行の無い STL は、128 バイト以上でも空ではなく読めない
-/// - 頂点が 3 つでない面を含む文字の STL は、壊れた形ではなく読めない
+/// - 頂点が 3 つでない面を含む文字の STL は、壊れた形ではなく読めない。2 つの `vertex` の行を CR 1 つで繋いだ
+///   文字の STL は、1 面欠けた形ではなく読めない (#2645)
 /// - 面の数が 2^24 以上と宣言して、大きさが 84 + 50 × 面の数と合わないバイナリ (切れた大きいバイナリ) は、
 ///   読めない (これまで読み手は、揃った分を読んでいた)。大きさが合う完全な大きいバイナリは読める。
 ///   見出しが `solid` で始まり、面の数が約 210 万 (0x202020) 以上と宣言した切れたバイナリは、文字として扱われて
 ///   読めない。見出しが UTF-16 風 (先頭の 12 バイトが ASCII と 0 の交互) で、大きさが合わない切れたバイナリも読めない
 /// - UTF-16 の文字の STL (BOM あり・なし) は、でたらめな形ではなく読めない
 /// - 逆に、読めるようになったもの: 128 バイトに満たない文字の STL (#2335)・名前に FF・VT・NUL・DEL・ESC を
-///   含む文字の STL (#2494)・名前に UTF-8 でない字を含む面の無い solid (空になる)・行頭の最初の `facet` が添字 128
-///   から先にある文字の STL (名前が 121 文字以上・最初の面の字下げが長いなど)・面の中に空白・CR だけの行 (CRLF の
-///   空行など) がある文字の STL (#2645)
+///   含む文字の STL (#2494)・名前に UTF-8 でない字を含む面の無い solid (空になる)・`facet normal` の綴りが添字 128
+///   から先にしか無い文字の STL (名前が 121 文字以上・最初の面の字下げが長い・面の行の区切りがタブや空白 2 つなど)・
+///   面の中に空白・CR だけの行 (CRLF の空行など) がある文字の STL (#2645)
 ///
 /// [#1966]: https://github.com/mokume-metal/mokume/issues/1966
 /// [#2335]: https://github.com/mokume-metal/mokume/issues/2335
@@ -201,18 +211,18 @@ nonisolated extension ModelFile {
                 }
                 return empty
             }
-            // 面の組み立てが崩れている (頂点が 3 つでない面がある) 文字は、読み手が後ろの面の頂点を
-            // 食ってでたらめな形を返しうるので、渡さない
+            // 面の組み立てが崩れている (頂点が 3 つでない面・面の中に読み手が頂点と読む行がある) 文字は、
+            // 読み手が後ろの面の頂点を食ってでたらめな形を返しうるので、渡さない
             guard scan.isWellFormed else { throw .unreadable(path: path) }
-            let parsed = askModelIO(
+            let read = askModelIO(
                 text: url, head: head, rest: isSmall ? nil : handle, scratch: scratch,
                 scan: text, size: size)
             // **返ってきた三角形を、文字に書かれた面の数と照らす。** 読み手は、読めない文字 (CR だけの
             // 改行など) を面の無い形で返す。数が合わなければ読めなかったのと同じである
-            guard let parsed, agrees(parsed, facets: scan.facets) else {
+            guard let read, agrees(read, facets: scan.facets) else {
                 throw .unreadable(path: path)
             }
-            return parsed
+            return read.parsed
         }
     }
 
@@ -285,7 +295,8 @@ nonisolated extension ModelFile {
     struct FacetScan: Equatable {
         /// 面の数 (行の先頭の `endfacet` の数)。
         var facets = 0
-        /// どの面も、行の先頭の `vertex` をちょうど 3 つ持ち、最後の `endfacet` の後ろに余りが無い。
+        /// どの面も、行の先頭の `vertex` をちょうど 3 つ持ち、最後の `endfacet` の後ろに余りが無く、面の中に読み手が
+        /// 読み違える行 (``scanText(head:rest:chunk:)``) が無い。
         var isWellFormed = true
     }
 
@@ -295,104 +306,74 @@ nonisolated extension ModelFile {
     struct TextScan: Equatable {
         /// 面の数と組み立て。
         var shape = FacetScan()
-        /// 行の先頭の、最初の `facet` の語の位置 (ファイルの先頭からのバイト数)。無ければ `nil`。
-        var firstFacet: Int?
-        /// 空白・タブ・VT・FF・CR だけでできた行 (1 バイト以上で、LF で終わる) がある。CRLF の空行もこれに当たる。
-        var hasBlankLine = false
+        /// 読み手が、文字の面を探しに行けるか — 先頭から ``facetNormalLimit`` バイトまでに `facet normal` (間の空白は
+        /// 1 つ) の綴りが始まる。名前の中の綴りでもよい。
+        var readerFindsFacets = false
+        /// 最初の面の行 (`facet` の語で始まる行) が `facet` <空白> `normal` と続くとき、`normal` の語の直後の位置
+        /// (ファイルの先頭からのバイト数)。最初の面の行に `normal` が無ければ `nil`。
+        var firstFacetNormalEnd: Int?
+        /// 面の中 (`facet` から `endfacet` まで・`outer` から `endloop` まで) に、空白・タブ・VT・FF・CR だけでできた行
+        /// (1 バイト以上) がある。CRLF の空行もこれに当たる。面と面の間や `endsolid` の前後の空白の行は数えない
+        /// (読み手は正しく読む)。
+        var hasBlankLineInFacet = false
 
-        /// 読み手に、名前の行と空白だけの行を落とした写しを渡すか (``ModelFile/rewrittenHead``)。
+        /// 読み手に、書き直した写し (``ModelFile/writeRewritten(from:head:rest:to:)``) を渡すか。
         ///
-        /// 最初の `facet` が添字 ``firstFacetLimit`` 以降にあるか、空白だけの行があれば渡す。`facet` が 1 つも無い
-        /// 文字は渡さない — 読み手はどう渡しても面を読めない。
+        /// 読み手が面を探しに行けないか、面の中に空白だけの行があれば渡す。最初の面の行に `normal` が無い文字は渡さない
+        /// — 書き直しても読み手は面を読めず、読めないとして返る。
         var needsRewrite: Bool {
-            guard let firstFacet else { return false }
-            return firstFacet >= ModelFile.firstFacetLimit || hasBlankLine
+            firstFacetNormalEnd != nil && (!readerFindsFacets || hasBlankLineInFacet)
         }
     }
 
-    /// 読み手が文字の STL の面を読める、行の先頭の最初の `facet` の位置の上限 (この添字から先では読めない)。
+    /// 読み手が文字の面を探しに行ける、`facet normal` の綴りの始まりの上限 (この添字から先では探しに行かない)。
     ///
-    /// 最初の `facet` が添字 127 までに始まれば読み、128 から先では面を 1 つも読めずに、バイナリとして読み直して
-    /// 断るかでたらめな面を返す (macOS 27 で測った)。1 行目の長さでも字下げでも、前に挟んだ空白の行や空行でも同じ
-    /// で、2 つ目の `solid` の行や `vertex` の行の長さには境目が無い ([#2645])。
+    /// 綴りが添字 127 までに始まれば読み、128 から先では面を 1 つも読めずに、バイナリとして読み直して断るかでたらめな
+    /// 面を返す (macOS 27 で測った)。見るのは綴りの位置だけで、行の先頭か・名前の中かは問わない。区切りがタブや 2 つの
+    /// 空白の `facet normal` は数えず、最初の面の区切りがそうなら、2 つ目より後ろの面の綴りの位置で決まる。2 つ目の
+    /// `solid` の行や `vertex` の行の長さには境目が無い ([#2645])。
     ///
     /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
-    static let firstFacetLimit = 128
+    static let facetNormalLimit = 128
+
+    private static let facetNormalSpelling = Array("facet normal".utf8)
 
     /// 文字の STL の面を数える。`head` は頭で、続きは `rest` から `chunk` バイトずつ読む (`nil`
     /// なら頭がファイルの全部)。読めなければ `nil`。
     ///
-    /// **行の先頭 (字下げは空白・タブ・VT・FF) の `vertex` と `endfacet` だけを数え、後ろが空白・改行・
-    /// 終端の語に限る。** 読み手が面として読むのは、そう書かれた面だけである (`endloop` と並べても、
-    /// 面を 1 行に詰めても、CR だけの改行でも読めない — 測った)。名前の中の語や `endfacets` は数えず、
-    /// 数は「読み手が読みうる面の数」になる。区切りをまたぐ語と行頭の判定のために、手前の末尾
-    /// ``lookBehind`` バイトを持ち越し、語の後ろの 1 バイトが次の区切りにあるものは次の窓で数える。
+    /// **行は LF だけで割り** (読み手と同じ。CR は行の頭や語の後ろの空白として扱う)、**行の先頭 (字下げは空白・タブ・
+    /// VT・FF・CR) の `vertex` と `endfacet` だけを数え、後ろが空白・改行・終端の語に限る。** 読み手が面として読むのは、
+    /// そう書かれた面だけである (`endloop` と並べても、面を 1 行に詰めても、CR だけの改行でも読めない — 測った)。
+    /// 名前の中の語や `endfacets` は数えず、数は「読み手が読みうる面の数」になる。
+    ///
+    /// **読み手は、`outer` の行から `endloop` の行までの空でない行をすべて頂点として読む** (語が何でも、0 として)。
+    /// そこで `vertex`・`endloop` 以外の空白だけでない行があれば、組み立てが崩れているとする (`endloop` の無い面も
+    /// ここに入る)。`facet` の行と `outer` の行の間・`endloop` の行と `endfacet` の行の間の、`outer`・`endfacet` 以外の
+    /// 空白だけでない行も、読み手が断るので同じにする ([#2645])。
+    ///
+    /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
     static func scanFacets(head: Data, rest: FileHandle?, chunk: Int = 1 << 20) -> FacetScan? {
         scanText(head: head, rest: rest, chunk: chunk)?.shape
     }
 
-    /// ``scanFacets(head:rest:chunk:)`` と同じに通読し、行の先頭の最初の `facet` の位置と、空白だけの行が
-    /// あるかも見る (``TextScan``)。どちらも、読む区切りの幅によらない。
+    /// ``scanFacets(head:rest:chunk:)`` と同じに通読し、読み手が面を探しに行けるか・最初の面の行の `normal` の位置・
+    /// 面の中の空白だけの行も見る (``TextScan``)。どれも、読む区切りの幅によらない。
     static func scanText(head: Data, rest: FileHandle?, chunk: Int = 1 << 20) -> TextScan? {
-        var text = TextScan()
-        var vertices = 0
-        var window = head
-        var carried = 0
-        // 窓の先頭が、ファイルの先頭から何バイト目か
-        var windowStart = 0
-        // 窓の手前 (持ち越した部分より前) で、最後の空白でない字が改行か (ファイルの先頭も行頭)。
-        // 字下げが持ち越す長さより長くても、行頭かどうかが区切りで変わらないようにする
-        var lineStartBefore = true
-        // 窓の手前が、LF の後ろに空白・CR だけが続いた所か (ファイルの先頭は `solid` の行なので、当たらない)
-        var blankLineBefore = false
-        func nextChunk() throws -> Data? {
-            guard let rest else { return nil }
-            // **読むたびに自動解放の置き場を空ける。** 空けないと、読んだ断片が外側の置き場が空くまで
-            // 消えず、ファイル全体が常駐する (74 MB の STL で 86 MB・測った)
-            let data = try autoreleasepool { try rest.read(upToCount: chunk) }
-            return (data?.isEmpty ?? true) ? nil : data
-        }
+        var reader = LineReader()
+        reader.feed(head)
         do {
-            var upcoming = try nextChunk()
-            while true {
-                let isLast = upcoming == nil
-                tally(
-                    window, after: carried, isLast: isLast, lineStartBefore: lineStartBefore,
-                    into: &text.shape, vertices: &vertices)
-                if text.firstFacet == nil,
-                    let at = firstFacet(in: window, after: carried, isLast: isLast, lineStartBefore: lineStartBefore)
-                {
-                    text.firstFacet = windowStart + at
-                }
-                if !text.hasBlankLine {
-                    text.hasBlankLine = hasBlankLine(in: window, from: carried, blankLineBefore: blankLineBefore)
-                }
-                guard let more = upcoming else { break }
-                let carry = Data(window.suffix(lookBehind))
-                lineStartBefore = isLineStart(
-                    before: window.count - carry.count, in: window, outer: lineStartBefore)
-                blankLineBefore = isInBlankLine(
-                    before: window.count - carry.count, in: window, outer: blankLineBefore)
-                windowStart += window.count - carry.count
-                window = carry + more
-                carried = carry.count
-                upcoming = try nextChunk()
+            while let rest {
+                // **読むたびに自動解放の置き場を空ける。** 空けないと、読んだ断片が外側の置き場が空くまで
+                // 消えず、ファイル全体が常駐する (74 MB の STL で 86 MB・測った)
+                let data = try autoreleasepool { try rest.read(upToCount: chunk) }
+                guard let data, !data.isEmpty else { break }
+                reader.feed(data)
             }
         } catch {
             return nil
         }
-        // 最後の `endfacet` の後ろに頂点が余っている面は、書き終えていない
-        if vertices != 0 { text.shape.isWellFormed = false }
-        return text
+        return reader.finish()
     }
-
-    /// 区切りをまたいで持ち越す長さ (バイト)。字下げがこれより長くても、持ち越した部分の手前の答え
-    /// (``isLineStart(before:in:outer:)``) を引き継ぐので、行頭の判定は区切りで変わらない。
-    private static let lookBehind = 256
-
-    private static let vertexWord = Array("vertex".utf8)
-    private static let endfacetWord = Array("endfacet".utf8)
-    private static let facetWord = Array("facet".utf8)
 
     /// 字下げに使う空白 (空白・タブ・VT・FF)。読み手は VT・FF も空白として読む。
     private static func isBlank(_ byte: UInt8) -> Bool {
@@ -404,122 +385,183 @@ nonisolated extension ModelFile {
         isBlank(byte) || byte == 0x0D
     }
 
-    /// `window` に現れる行頭の `vertex` と `endfacet` を、現れる順に `scan` へ数える。**語の後ろの
-    /// 1 バイトを見て決める**ので、`carried` バイトより手前で決まった語 (前の窓で数えた) は飛ばし、後ろの
-    /// 1 バイトがまだ読めていない語 (窓の終わりで終わる語。`isLast` でなければ) は次の窓へ回す。
+    /// 文字の STL を、断片ごとに LF で割った行として読む (``scanText(head:rest:chunk:)``)。
     ///
-    /// `lineStartBefore` は、窓の手前が行頭か (窓の頭まで空白が続くとき、その手前で決める)。
-    private static func tally(
-        _ window: Data, after carried: Int, isLast: Bool, lineStartBefore: Bool,
-        into scan: inout FacetScan, vertices: inout Int
-    ) {
-        var events: [(at: Int, isEnd: Bool)] = []
-        window.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-            for (word, isEnd) in [(vertexWord, false), (endfacetWord, true)] {
-                forEachLineStart(
-                    word, in: bytes, after: carried, isLast: isLast, lineStartBefore: lineStartBefore
-                ) { start in
-                    events.append((start, isEnd))
-                    return true
+    /// 行ごとに見るのは、字下げの後ろの先頭 ``wordLength`` バイト (語と、その後ろの 1 バイト) だけで、残りは次の LF まで
+    /// 読み飛ばす。最初の面の行だけは、`facet` の後ろの `normal` の語まで見る。断片の区切りは状態として持ち越すので、
+    /// 結果は区切りの幅によらない。
+    private struct LineReader {
+        private enum Phase {
+            /// 行の頭の空白を読み飛ばしている
+            case indent
+            /// 字下げの後ろの語を集めている
+            case word
+            /// 最初の面の行で、`facet` の後ろの空白を読み飛ばしている
+            case gapBeforeNormal
+            /// 最初の面の行で、`normal` の綴りと突き合わせている (何字目まで合ったか)
+            case normal(Int)
+            /// 次の LF まで読み飛ばす
+            case skip
+        }
+
+        /// 語と、その後ろの 1 バイトが入る長さ (いちばん長い語は `endfacet` の 8 字)
+        private static let wordLength = 9
+        private static let normalWord = Array("normal".utf8)
+        private static let vertexWord = Array("vertex".utf8)
+        private static let endfacetWord = Array("endfacet".utf8)
+        private static let endloopWord = Array("endloop".utf8)
+        private static let outerWord = Array("outer".utf8)
+        private static let facetWord = Array("facet".utf8)
+
+        private var text = TextScan()
+        private var vertices = 0
+        private var inFacet = false
+        private var inLoop = false
+        private var sawFacetLine = false
+        /// 読んだバイト数 (いま見ている字の位置)
+        private var position = 0
+        /// 先頭の、`facet normal` の綴りを探すぶん
+        private var prefix: [UInt8] = []
+
+        private var phase = Phase.indent
+        private var lineHasBytes = false
+        private var word: [UInt8] = []
+        /// この行が最初の面の行になりうる (面の外で、まだ面の行を見ていない) とき、`normal` の直後の位置
+        private var normalEnd: Int?
+
+        mutating func feed(_ data: Data) {
+            let wanted = ModelFile.facetNormalLimit - 1 + ModelFile.facetNormalSpelling.count
+            if prefix.count < wanted { prefix += data.prefix(wanted - prefix.count) }
+            data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+                guard let base = bytes.baseAddress else { return }
+                var index = 0
+                while index < bytes.count {
+                    if case .skip = phase {
+                        // 次の LF まで、まとめて飛ばす
+                        guard let hit = memchr(base + index, 0x0A, bytes.count - index) else {
+                            index = bytes.count
+                            break
+                        }
+                        index = base.distance(to: UnsafeRawPointer(hit))
+                    }
+                    let byte = bytes[index]
+                    let at = position + index
+                    index += 1
+                    if byte == 0x0A {
+                        endLine(at: at)
+                        continue
+                    }
+                    lineHasBytes = true
+                    accept(byte, at: at)
                 }
             }
+            position += data.count
         }
-        events.sort { $0.at < $1.at }
-        for event in events {
-            if event.isEnd {
-                if vertices != 3 { scan.isWellFormed = false }
-                scan.facets += 1
+
+        /// 行の中の、LF でない 1 バイトを見る。
+        private mutating func accept(_ byte: UInt8, at: Int) {
+            switch phase {
+            case .indent:
+                guard !ModelFile.isBlankOrCR(byte) else { return }
+                phase = .word
+                word.append(byte)
+            case .word:
+                word.append(byte)
+                if word.count == 6, !inFacet, !inLoop, !sawFacetLine, word.starts(with: Self.facetWord),
+                    ModelFile.isBlankOrCR(byte)
+                {
+                    phase = .gapBeforeNormal
+                } else if word.count == Self.wordLength {
+                    phase = .skip
+                }
+            case .gapBeforeNormal:
+                guard !ModelFile.isBlankOrCR(byte) else { return }
+                phase = byte == Self.normalWord[0] ? .normal(1) : .skip
+            case .normal(let matched):
+                if matched == Self.normalWord.count {
+                    if ModelFile.isBlankOrCR(byte) { normalEnd = at }
+                    phase = .skip
+                } else {
+                    phase = byte == Self.normalWord[matched] ? .normal(matched + 1) : .skip
+                }
+            case .skip:
+                break
+            }
+        }
+
+        /// 行の頭の語が `spelled` か (後ろが空白・CR か、行の終わり)。
+        private func starts(with spelled: [UInt8]) -> Bool {
+            guard word.starts(with: spelled) else { return false }
+            return word.count == spelled.count || ModelFile.isBlankOrCR(word[spelled.count])
+        }
+
+        /// 行を 1 つ読み終えた。`end` は行の終わり (LF か、ファイルの終わり) の位置。
+        private mutating func endLine(at end: Int) {
+            // 最初の面の行の `normal` が行の終わりで終わった
+            if case .normal(let matched) = phase, matched == Self.normalWord.count { normalEnd = end }
+            defer {
+                phase = .indent
+                lineHasBytes = false
+                word.removeAll(keepingCapacity: true)
+                normalEnd = nil
+            }
+            guard lineHasBytes else { return }  // 空の行
+            guard !word.isEmpty else {
+                // 空白だけの行。読み手は面の中のそれを頂点として読む (`facet normal`・`endloop` の直後なら断る)
+                if inFacet || inLoop { text.hasBlankLineInFacet = true }
+                return
+            }
+            let isVertex = starts(with: Self.vertexWord)
+            let isEndfacet = starts(with: Self.endfacetWord)
+            // 数え方はこれまでどおり、どこにあっても数える
+            if isVertex { vertices += 1 }
+            if isEndfacet {
+                if vertices != 3 { text.shape.isWellFormed = false }
+                text.shape.facets += 1
                 vertices = 0
-            } else {
-                vertices += 1
+            }
+            if inLoop {
+                if starts(with: Self.endloopWord) {
+                    inLoop = false
+                } else if !isVertex {
+                    // 読み手が頂点 (0, 0, 0) として読む行。`endloop` の無い面の `endfacet` もここ
+                    text.shape.isWellFormed = false
+                    if isEndfacet { (inLoop, inFacet) = (false, false) }
+                }
+            } else if inFacet {
+                if starts(with: Self.outerWord) {
+                    inLoop = true
+                } else if isEndfacet {
+                    inFacet = false
+                } else {
+                    // `outer` の無い面・`endloop` と `endfacet` の間の行は、読み手が断る
+                    text.shape.isWellFormed = false
+                }
+            } else if starts(with: Self.facetWord) {
+                inFacet = true
+                if !sawFacetLine {
+                    sawFacetLine = true
+                    text.firstFacetNormalEnd = normalEnd
+                }
+            } else if starts(with: Self.outerWord) {
+                // `facet` の行の無い面 (読み手は読み飛ばす)。中の行は同じに見る
+                inLoop = true
             }
         }
-    }
 
-    /// `bytes` に現れる行頭の `word` (後ろが空白・改行・終端) の位置を、現れる順に `body` へ渡す。`body` が
-    /// `false` を返せば止める。窓の扱い (`carried`・`isLast`・`lineStartBefore`) は ``tally(_:after:isLast:lineStartBefore:into:vertices:)``
-    /// と同じ。
-    private static func forEachLineStart(
-        _ word: [UInt8], in bytes: UnsafeRawBufferPointer, after carried: Int, isLast: Bool,
-        lineStartBefore: Bool, _ body: (Int) -> Bool
-    ) {
-        guard let base = bytes.baseAddress else { return }
-        var offset = 0
-        while offset < bytes.count,
-            let hit = memmem(base + offset, bytes.count - offset, word, word.count)
-        {
-            let start = base.distance(to: UnsafeRawPointer(hit))
-            offset = start + word.count
-            guard offset >= carried else { continue }
-            if offset == bytes.count {
-                if !isLast { continue }
-            } else {
-                let after = bytes[offset]
-                guard isBlank(after) || after == 0x0A || after == 0x0D else { continue }
-            }
-            var before = start - 1
-            while before >= 0, isBlank(bytes[before]) { before -= 1 }
-            // 窓の頭まで空白なら、窓の手前で決める
-            if before < 0 ? lineStartBefore : (bytes[before] == 0x0A || bytes[before] == 0x0D) {
-                guard body(start) else { return }
-            }
-        }
-    }
-
-    /// `window` に現れる行頭の最初の `facet` の、窓の中の位置。窓の扱いは ``tally(_:after:isLast:lineStartBefore:into:vertices:)``
-    /// と同じで、前の窓で決まった語は数えない。
-    private static func firstFacet(
-        in window: Data, after carried: Int, isLast: Bool, lineStartBefore: Bool
-    ) -> Int? {
-        var found: Int?
-        window.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-            forEachLineStart(
-                facetWord, in: bytes, after: carried, isLast: isLast, lineStartBefore: lineStartBefore
-            ) { start in
-                found = start
-                return false
-            }
-        }
-        return found
-    }
-
-    /// `window` の `start` から先に、空白だけの行 (空白・CR だけが 1 バイト以上続いて LF で終わり、その前が LF)
-    /// を終える LF があるか。窓の頭まで空白・CR が続けば、窓の手前の答え (`blankLineBefore`) で決める。
-    /// `start` より手前の LF は、前の窓で見ている。
-    private static func hasBlankLine(in window: Data, from start: Int, blankLineBefore: Bool) -> Bool {
-        window.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-            guard let base = bytes.baseAddress else { return false }
-            var offset = start
-            while offset < bytes.count, let hit = memchr(base + offset, 0x0A, bytes.count - offset) {
-                let end = base.distance(to: UnsafeRawPointer(hit))
-                offset = end + 1
-                var before = end - 1
-                while before >= 0, isBlankOrCR(bytes[before]) { before -= 1 }
-                // 手前に空白も CR も無い行 (空の行・中身のある行) は当たらない
-                guard before < end - 1 else { continue }
-                if before < 0 ? blankLineBefore : bytes[before] == 0x0A { return true }
-            }
-            return false
-        }
-    }
-
-    /// `window` の `offset` より手前で、最後の空白でない字が改行か。`offset` までが全部空白なら、窓の手前の
-    /// 答え (`outer`) を引き継ぐ。
-    private static func isLineStart(before offset: Int, in window: Data, outer: Bool) -> Bool {
-        window.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-            var index = offset - 1
-            while index >= 0, isBlank(bytes[index]) { index -= 1 }
-            return index < 0 ? outer : (bytes[index] == 0x0A || bytes[index] == 0x0D)
-        }
-    }
-
-    /// `window` の `offset` より手前で、最後の空白・CR でない字が LF か (その行がここまで空白・CR だけか)。
-    /// `offset` までが全部空白・CR なら、窓の手前の答え (`outer`) を引き継ぐ。
-    private static func isInBlankLine(before offset: Int, in window: Data, outer: Bool) -> Bool {
-        window.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-            var index = offset - 1
-            while index >= 0, isBlankOrCR(bytes[index]) { index -= 1 }
-            return index < 0 ? outer : bytes[index] == 0x0A
+        /// 読み終えた。最後の行が LF で終わらなければ、ここで閉じる。
+        mutating func finish() -> TextScan {
+            if lineHasBytes { endLine(at: position) }
+            // 最後の `endfacet` の後ろに頂点が余っている面は、書き終えていない
+            if vertices != 0 { text.shape.isWellFormed = false }
+            text.readerFindsFacets =
+                prefix.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
+                    guard let base = bytes.baseAddress,
+                        let hit = memmem(base, bytes.count, ModelFile.facetNormalSpelling, ModelFile.facetNormalSpelling.count)
+                    else { return false }
+                    return base.distance(to: UnsafeRawPointer(hit)) < ModelFile.facetNormalLimit
+                }
+            return text
         }
     }
 
@@ -530,13 +572,19 @@ nonisolated extension ModelFile {
     /// 読み手は、正しい STL では退化した面 (3 点が同じ・一直線)・数でない座標の面・複数の `solid` も
     /// 1 面ずつ返す (測った)。
     ///
-    /// ``Parsed/skippedLines`` は、数でない座標の面のほかに、写せなかった要素も数える ([#2566])。実ファイルの
-    /// STL ではそれは起きず (Model I/O が契約を破ったときの防御)、ここで足すのは読み飛ばした面だけである。
+    /// ``Parsed/skippedLines`` は、数でない座標の面のほかに、写せなかった要素も数える ([#2566])。足してよいのは
+    /// 読み飛ばした面 (数でない座標) だけで、**写せなかった要素 (`defects`) が 1 つでもあれば一致としない** — 読み手が
+    /// 頂点を 3 つずつ区切れなかった余りの番号もここに入り、それを面と数えると、1 面欠けた形が数の上で合ってしまう
+    /// ([#2645])。
     ///
     /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
-    private static func agrees(_ parsed: Parsed, facets: Int) -> Bool {
-        parsed.positions.count / 3 + parsed.skippedLines == facets
+    /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
+    static func agrees(_ reading: Reading, facets: Int) -> Bool {
+        reading.defects == 0 && reading.parsed.positions.count / 3 + reading.parsed.skippedLines == facets
     }
+
+    /// Model I/O が読んだ形と、そのうち写せなかった要素の数 (数でない座標の面を除く。``triangles(of:)``)。
+    typealias Reading = (parsed: Parsed, defects: Int)
 
     /// 面が無い STL なら空、そうでなければ読めないとして返す。
     private static func emptyOrUnreadable(_ data: Data, path: String) throws(ModelFailure) -> Parsed {
@@ -546,13 +594,18 @@ nonisolated extension ModelFile {
 
     /// Model I/O にファイルを読ませる。断られたら `nil`。
     private static func askModelIO(_ url: URL) -> Parsed? {
+        reading(url)?.parsed
+    }
+
+    /// Model I/O にファイルを読ませ、写せなかった要素の数も返す。断られたら `nil`。
+    private static func reading(_ url: URL) -> Reading? {
         var error: NSError?
         let asset = MDLAsset(
             url: url, vertexDescriptor: nil, bufferAllocator: nil, preserveTopology: false,
             error: &error)
         let objects = asset.childObjects(of: MDLMesh.self)
         guard error == nil, objects.contains(where: { $0 is MDLMesh }) else { return nil }
-        return triangles(of: objects)
+        return trianglesCounting(of: objects)
     }
 
     /// 文字の STL を Model I/O に読ませる。**読み手が、面を読めなかった文字をバイナリとして読み直す余地
@@ -567,20 +620,24 @@ nonisolated extension ModelFile {
     /// 写しは一時の置き場に書き、**読み終えたら、読めても断られても消す。** 写しを書けなければ、128 バイト
     /// に満たないものは断られたのと同じに `nil` を、それ以上のものは元のファイルを読ませる。
     ///
-    /// **最初の `facet` が遠い・空白だけの行がある文字** (``TextScan/needsRewrite``) は、上のどれでもなく、
-    /// 名前の行と空白だけの行を落とした写し (``writeRewritten(from:head:rest:to:)``) を読ませる。写しを書け
-    /// なければ `nil` (元のファイルは、読み手が断るか、文字をバイナリとして読み直した形を返しうる)。
+    /// **読み手が面を探しに行けない・面の中に空白だけの行がある文字** (``TextScan/needsRewrite``) は、上のどれでも
+    /// なく、書き直した写し (``writeRewritten(from:head:rest:to:)``) を読ませる。写しを書けなければ、上と同じに
+    /// 元のファイルを読ませる (読み手が断るか、返った枚数が面の数と合わずに読めないとして返る)。
     private static func askModelIO(
         text url: URL, head: Data, rest: FileHandle?, scratch: URL, scan: TextScan, size: Int
-    ) -> Parsed? {
-        if scan.needsRewrite, let start = scan.firstFacet {
-            return try? readThroughCopy(in: scratch) { output in
-                try writeRewritten(from: start, head: head, rest: rest, to: output)
+    ) -> Reading? {
+        if scan.needsRewrite, let normalEnd = scan.firstFacetNormalEnd {
+            do {
+                return try readThroughCopy(in: scratch) { output in
+                    try writeRewritten(from: normalEnd, head: head, rest: rest, to: output)
+                }
+            } catch {
+                return rest == nil ? nil : reading(url)
             }
         }
         let facets = scan.shape.facets
         let prepared = readerHead(of: head)
-        guard rest == nil || prepared != head else { return askModelIO(url) }
+        guard rest == nil || prepared != head else { return reading(url) }
         // **書かれた面の数が、読み直しの枚数 ⌊(大きさ − 84) ÷ 50⌋ とも ⌊(大きさ − 82) ÷ 50⌋ とも違えば、写しを
         // 作らず、元のファイルを読ませる** (写しは、ファイルの全部を書き直す — ディスクも二重に要る)。
         // 読み手が文字を読み直すと、**揃った面 (50 バイト) の数を返し、最後の 48 バイトで終わる面も 1 面と
@@ -589,7 +646,7 @@ nonisolated extension ModelFile {
         // 読み直し (または読めなかった) で、合う数が返れば文字として読めた証になる。照合は呼ぶ側が行う。
         // 数が同じなら読み直しと見分けられないので、写しで読む
         if rest != nil, size < 84 + 50 * (1 << 24), facets != (size - 84) / 50, facets != (size - 82) / 50 {
-            return askModelIO(url)
+            return reading(url)
         }
         do {
             return try readThroughCopy(in: scratch) { output in
@@ -607,7 +664,7 @@ nonisolated extension ModelFile {
                 return written
             }
         } catch {
-            return rest == nil ? nil : askModelIO(url)
+            return rest == nil ? nil : reading(url)
         }
     }
 
@@ -615,7 +672,7 @@ nonisolated extension ModelFile {
     /// 末尾を空白で 128 バイトまで埋める。**写しは、読めても断られても消す。** 写しを書けなければ投げる。
     private static func readThroughCopy(
         in scratch: URL, fill: (FileHandle) throws -> Int
-    ) throws -> Parsed? {
+    ) throws -> Reading? {
         let directory = scratch.appendingPathComponent(
             "mokume-stl-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -633,24 +690,25 @@ nonisolated extension ModelFile {
                 try output.write(contentsOf: padding)
             }
         }
-        return askModelIO(copy)
+        return reading(copy)
     }
 
-    /// 読み手に渡す、名前の行と空白だけの行を落とした写しの 1 行目。`solid` の後ろを空白で埋め、84 バイト目
-    /// (添字 83) を空白にする — 読み手が面を読めなくても、読み直しは面の数が上限を超えて断られる
-    /// (``readerHead(of:)`` と同じ理由)。最初の `facet` は添字 85 に来る。
-    static let rewrittenHead = Data(("solid" + String(repeating: " ", count: 79) + "\n").utf8)
+    /// 読み手に渡す、書き直した写しの頭。1 行目は `solid` の後ろを空白で埋めて 84 バイト目 (添字 83) を空白にする —
+    /// 読み手が面を読めなくても、読み直しは面の数が上限を超えて断られる (``readerHead(of:)`` と同じ理由)。2 行目は
+    /// 最初の面の行の頭で、区切りを空白 1 つにした `facet normal` が添字 85 から始まる (``facetNormalLimit``)。
+    static let rewrittenHead = Data(("solid" + String(repeating: " ", count: 79) + "\nfacet normal").utf8)
 
     /// 文字の STL の、読み手が読めるように書き直した写しを `output` へ書き、書いたバイト数を返す ([#2645])。
     ///
-    /// - 1 行目を ``rewrittenHead`` に替え、行の先頭の最初の `facet` (ファイルの先頭から `start` バイト目) より
-    ///   前を落とす。読み手は、最初の `facet` が添字 128 以降にあると面を読めない (``firstFacetLimit``)。名前は
-    ///   読まれず、最初の `facet` より前の行は面にならない
+    /// - 最初の面の行の `normal` の語の直後 (ファイルの先頭から `start` バイト目) より前を、``rewrittenHead``
+    ///   (`solid` の行と `facet normal`) に替える。読み手は、`facet normal` の綴りが添字 128 から先にしか無いと面を
+    ///   読めない (``facetNormalLimit``)。名前は読まれず、最初の面の行より前の行は面にならない。最初の面の行の
+    ///   `facet` と `normal` の間の空白・タブは、空白 1 つになる
     /// - 空白・タブ・VT・FF・CR だけの行を、行ごと (LF も) 落とす (``BlankLineFilter``)。読み手は、`outer loop` と
     ///   `endloop` の間のそういう行を頂点 (0, 0, 0) として読み、`facet normal` や `endloop` の直後なら断る。
     ///   本当に空の行 (LF だけ) はどこでも読み飛ばすので残す
     ///
-    /// 頂点・面の行には触れない。
+    /// 頂点の行と、2 つ目より後ろの面の行には触れない (読み手は、区切りがタブや 2 つの空白の面の行も読む)。
     ///
     /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
     private static func writeRewritten(
@@ -883,6 +941,12 @@ nonisolated extension ModelFile {
     ///
     /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
     static func triangles(of objects: [MDLObject]) -> Parsed {
+        trianglesCounting(of: objects).parsed
+    }
+
+    /// ``triangles(of:)`` と同じに写し、写せなかった要素のうち、数でない座標の面を除いた数 (`defects`) も返す。
+    static func trianglesCounting(of objects: [MDLObject]) -> Reading {
+        var nonFinite = 0
         let meshes = objects.compactMap { $0 as? MDLMesh }
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
@@ -929,6 +993,7 @@ nonisolated extension ModelFile {
                         let points = corners.map { vector(placed, at: $0) }
                         guard points.allSatisfy(isFinite) else {
                             skipped += 1
+                            nonFinite += 1
                             continue
                         }
                         let wound = cross(points[1] - points[0], points[2] - points[0])
@@ -948,10 +1013,11 @@ nonisolated extension ModelFile {
                 }
             }
         }
-        return Parsed(
+        let parsed = Parsed(
             positions: positions, normals: normals,
             uvs: [SIMD2<Float>?](repeating: nil, count: positions.count),
             derivedNormals: derivedNormals, skippedLines: skipped)
+        return (parsed, skipped - nonFinite)
     }
 
     /// 頂点の属性を 1 つ読む。
