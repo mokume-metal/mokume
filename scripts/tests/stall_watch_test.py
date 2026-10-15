@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは十三。
+固定したいのは十四。
 
 1. **集約のジョブ (ci-gate) は上流より後に打つ** (#1883)。先に打つと ci-gate だけが前の結論を
    読んで同じ赤を返し、その run が走っている間は上流の打ち直しが拒まれる。除外したジョブ
@@ -40,6 +40,9 @@
    直されて新しい ci-gate が付かない PR は legacy-gate と名乗って人へ返す (#2669 の反証 1・2)
 13. **段を走らせていない run (本文の編集) の緑の ci-gate は、直った証拠に数えない。** 数えると
    本当に赤いコードの検査を当番のたびに打ち直す。打たずに masked-red と名乗る (#2669 の反証 4)
+14. **必須が揃っているのに cancelled の pr-gate が残って BLOCKED の PR を、猶予の後に名乗る** (#2716)。
+   #2712 は必須が揃った後も queue に入らず、どの分類にも当たらなかった。打ち直す run の番号を
+   出し、当番は打たない。必須が揃っていない BLOCKED (待ち・赤・欠け) は名乗らない
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -680,6 +683,94 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(self.classify(43, proc), ("stale-checks", "act"))
         line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("43 "))
         self.assertLess(int(line.split()[3]), 10, line)
+
+    # --- 必須が揃っても cancelled の pr-gate で BLOCKED のまま (#2716) -----------
+    #
+    # #2712 の形。ラベル付きで作った PR で opened と labeled の pr-gate が同じ秒に立ち、id の
+    # 大きい run (38752624025) が cancelled、小さい run (38752622858) が success で残った。必須が
+    # 揃った後も BLOCKED のまま queue に入らず、cancelled の run の打ち直しで CLEAN になった
+
+    def stale_gate_pr(self, number, *, cancelled=38752624025, passed=38752622858, ci="SUCCESS",
+                      ci_at=20, render="SKIPPED", gates=None, state="BLOCKED"):
+        checks = gates if gates is not None else [
+            check("pr-gate", "CANCELLED", ago(40), run=cancelled, job=number * 10 + 1),
+            check("pr-gate", "SUCCESS", ago(39), run=passed, job=number * 10 + 2),
+        ]
+        checks = list(checks) + [check("ci-gate", ci, ago(ci_at), run=passed + 5, job=number * 10 + 3)]
+        if render is not None:
+            checks.append(check("render", render, ago(39), run=passed + 7, job=number * 10 + 4))
+        self.add_pr(number, auto=True, state=state, checks=checks)
+
+    def test_必須が揃っても_cancelled_の_pr_gate_で_BLOCKED_のまま猶予を超えたら名乗る(self):
+        """名乗りの行に打ち直す run の番号を出し、猶予を超えたので 1 で終える。cancelled が
+        run の id の上で新しくても (#2712)、古くても (#2710 の並び) 名乗る。"""
+        self.stale_gate_pr(60)
+        self.stale_gate_pr(61, cancelled=500, passed=600)
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith("60 "))
+        self.assertEqual(line[1:3], ["stale-gate", "name"], proc.stdout)
+        self.assertIn(int(line[3]), (19, 20), proc.stdout)
+        self.assertIn("gh run rerun 38752624025", line[4], proc.stdout)
+        self.assertNotIn("38752622858", line[4], "緑の run を打ち直しに挙げている")
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if l.startswith("61 "))
+        self.assertEqual(line[1:3], ["stale-gate", "name"], proc.stdout)
+        self.assertIn("gh run rerun 500", line[4], proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+        # 当番は打たない (古い pr-gate を当番に打たせない決まり・#2668)
+        self.calls.write_text("", encoding="utf-8")
+        acted = self.act(proc.stdout.splitlines())
+        self.assertEqual(acted.returncode, 0, acted.stdout + acted.stderr)
+        self.assertNotIn("rerun", self.gh_log())
+
+    def test_必須が揃ってから猶予の内なら_cancelled_の_pr_gate_が残っても黙る(self):
+        self.stale_gate_pr(62, ci_at=5)
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(62, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_必須が揃っていなければ_cancelled_の_pr_gate_が残っても_stale_gate_と名乗らない(self):
+        """BLOCKED が正しく待っている形。pr-gate を打ち直しても進まない。"""
+        self.stale_gate_pr(63, ci="FAILURE")  # 必須の赤
+        self.stale_gate_pr(64, ci="IN_PROGRESS")  # 必須の待ち
+        self.stale_gate_pr(65, render=None)  # 必須がまだ付いていない
+        # 緑の pr-gate が無い (cancelled だけ)
+        self.stale_gate_pr(66, gates=[check("pr-gate", "CANCELLED", ago(40), run=900, job=661)])
+        # pr-gate が待っている (打ち直すと待っている run を cancel する)。時刻は猶予の外に置き、
+        # 猶予ではなく待ちの判定で黙ることを見る
+        self.stale_gate_pr(67, gates=[
+            check("pr-gate", "CANCELLED", ago(40), run=900, job=671),
+            check("pr-gate", "SUCCESS", ago(39), run=800, job=672),
+            check("pr-gate", "QUEUED", ago(30), run=1000, job=673),
+        ])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        for number in range(63, 68):
+            self.assertNotEqual(self.classify(number, proc)[0], "stale-gate", f"#{number}: {proc.stdout}")
+
+    def test_cancelled_の_pr_gate_が無い_BLOCKED_は_stale_gate_と名乗らない(self):
+        self.stale_gate_pr(68, gates=[check("pr-gate", "SUCCESS", ago(39), run=800, job=681)])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(68, proc), (None, None), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_必須の定義を読めなければ読めなかったと名乗る(self):
+        """黙ると「止まっていない」に倒れる (#1303)。"""
+        self.stale_gate_pr(69)
+        empty = self.pr_dir / "ruleset.empty.json"
+        empty.write_text(json.dumps({"rules": [{"type": "required_status_checks",
+                                                "parameters": {"required_status_checks": []}}]}),
+                         encoding="utf-8")
+        for ruleset in (self.pr_dir / "missing.json", empty):
+            proc = self.watch(QUEUE_ENTRY_MINUTES=15, RULESET=ruleset)
+            self.assertEqual(self.classify(69, proc), ("unreadable", "name"), proc.stdout)
+
+    def test_残っている_pr_gate_の_run_の番号を読めなければ読めなかったと名乗る(self):
+        self.stale_gate_pr(70, gates=[
+            {"name": "pr-gate", "conclusion": "CANCELLED", "completedAt": ago(40)},
+            check("pr-gate", "SUCCESS", ago(39), run=800, job=702),
+        ])
+        proc = self.watch(QUEUE_ENTRY_MINUTES=15)
+        self.assertEqual(self.classify(70, proc), ("unreadable", "name"), proc.stdout)
 
     # --- 作法のジョブを含む古い ci.yml の run (#2669 の移行) ------------------
     #

@@ -34,7 +34,8 @@
 #      対処: gh run rerun <run-id> --failed — **ただし render-pr・pr-gate には打たない**
 #      (#2062・#2668。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
 #      打たなくても merge は止まらない。pr-gate は最新の run の結論が判定で、古い赤・cancelled は
-#      この表の判定に数えない — normalize_checks)
+#      この表の判定に数えない — normalize_checks。ただし必須が揃っても BLOCKED のまま残る
+#      cancelled は 13 行目)
 #   4. autoMerge: false + CLEAN + 全 check 緑 で isInMergeQueue: true
 #      原因: 止まっていない — 予約が queue へ移ると autoMergeRequest は null になる (#628)
 #      対処: 何も打たない
@@ -104,6 +105,15 @@
 #      #2693 で調べている (作成と同時のラベルで cancelled の pr-gate が残る形が疑わしい)
 #      対処: gh pr merge <番号> --disable-auto の後に gh pr merge <番号> --auto --squash で
 #      掛け直す (#2691 はこれで直後に queue へ入った)。当番は掛けない (2・5 と同じ・#2614)
+#  13. autoMerge: true + BLOCKED で、必須は揃っている (最新が緑か skipped) のに、同じ SHA に
+#      cancelled か赤の pr-gate の run が残っている
+#      原因: 作成と同時のラベルで opened と labeled の run が同じ秒に立ち、concurrency が片方を
+#      cancel する (#2682 の反証 2)。たいていは止まらない (#2710・#2707・#2703 は merge された) が、
+#      #2712 は必須が揃った後も statusCheckRollup が FAILURE・BLOCKED のまま queue に入らなかった
+#      (#2716)。どちらの run の結論を必須が読むかは確かめられていない (#2577)
+#      対処: 名乗りの行に出る gh run rerun <run-id> で cancelled の run を打ち直す (#2712 は打ち直しの
+#      14 秒後に CLEAN になった)。**当番は打たない** — 古い pr-gate を当番に打たせない決まり
+#      (#2668・stall-act.sh の除外) を変えるのは人の判断である
 #
 # 読むときの注意:
 #
@@ -138,6 +148,7 @@
 #   legacy-gate          name   11      本文の編集か push は人手。古い run は打ち直さない
 #   auto-merge-dropped   name   2・5    予約の掛け直しは人手。当番の権限では掛けられない
 #   queue-not-entered    name   12      同上。掛かっている予約を外して掛け直す
+#   stale-gate           name   13      古い pr-gate の打ち直しは人手。当番には打たせていない (#2668)
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
 #
@@ -182,11 +193,11 @@
 # 名乗る行は人が動くまで消えないので、毎回赤くすると走るたびに通知が飛び、「毎回出る
 # 注意は意味を失う」(#642) を踏む。**閾値 (既定 60 分) を超えて続いているものがある
 # ときだけ 1 で終える。** それ以下は出力するだけで 0。例外は runner-offline と
-# queue-not-entered で、猶予を短くする代わりに猶予の内は行を出さない (下のそれぞれの節)。
+# queue-not-entered・stale-gate で、猶予を短くする代わりに猶予の内は行を出さない (下のそれぞれの節)。
 #
 # 経過は「その状態を作った出来事の時刻」から測る — 失敗 check があればその completedAt、
 # check が 1 本も無い conflict では PR の updatedAt、auto-merge-dropped では外れた出来事の
-# createdAt、queue-not-entered では check のうち最新の時刻と予約を掛けた時刻の遅い方
+# createdAt、queue-not-entered と stale-gate では check のうち最新の時刻と予約を掛けた時刻の遅い方
 # (必須が揃い、予約も掛かった時刻の近似)。**状態をどこにも記録しない**ので、
 # 当番が落ちていても復帰すればそのまま正しく測れる。
 #
@@ -229,6 +240,11 @@
 # 必須でない check や本文の編集の run も入るので、起点は遅い側に寄る — 誤って赤くするより、
 # 名乗りが遅れるほうに倒している
 #
+# BLOCKED のうち、必須は揃っているのに cancelled か赤の pr-gate が残る形 (stale-gate・#2716) も
+# 同じ猶予と出し方にする。必須かどうかは .github/rulesets/main-protection.json (正本) から読み、
+# 待っている必須・赤い必須・まだ付いていない必須があれば名乗らない — それは予約が正しく待って
+# いる形で、pr-gate を打ち直しても進まない
+#
 # ## 出力
 #
 #   <番号> <分類> <act|name|quiet> <経過分> <説明>
@@ -257,6 +273,10 @@ RUNNER_STALL_MINUTES=${RUNNER_STALL_MINUTES:-15}
 # 予約が掛かり必須が揃ってから、queue に入らないまま過ぎてよい時間。理由は冒頭の「予約が
 # queue へ動かない行」
 QUEUE_ENTRY_MINUTES=${QUEUE_ENTRY_MINUTES:-15}
+
+# 必須チェックの正本 (stale-gate が必須の context を読む)。**readonly にしない** — 検査が
+# 読めない形を差し替えて回すため
+RULESET=${RULESET:-"$(dirname "${BASH_SOURCE[0]}")/../.github/rulesets/main-protection.json"}
 
 # 作法のジョブの名前。#2669 より前の ci.yml の run はこれらを含み、その ci-gate はそれらを
 # 待っていた。この名前の check を含む run を「古い run」と読む (冒頭の表の 11 行目)。
@@ -306,13 +326,21 @@ minutes_since() { # $1=ISO8601 (空可)
 # 打ち直す (凍結された run の ci-gate まで打ち直して「最新の赤」を作りうる)。新旧は上と同じく
 # run の id で決める。最新が赤なら、その赤はそのまま残る
 #
+# **ただし cancelled の pr-gate が必須を塞ぐことがある** (#2716)。同じ秒に立った 2 本の run では、
+# concurrency の group に入った順と run の id の順が逆になりうる — #2712 では id の大きい run が
+# cancelled で、小さい run が success だった。そのまま必須が揃っても BLOCKED で queue に入らず、
+# cancelled の run の打ち直しで CLEAN になった。この形は打ち直さずに stale-gate と名乗る (表の 13 行目)
+#
 # 各 check に 2 つの印を付ける (#2669 の反証 1・4):
 #
 # - legacy: 作法のジョブ (LEGACY_JOBS) を含む古い ci.yml の run の check。打ち直しの対象にしない
 # - hollow: 段を走らせていない run の ci-gate の緑。同じ run の ci-check・ci-static が在って、
 #   どれも SKIPPED のもの (本文・タイトルの編集の run)。直った証拠に数えない
-normalize_checks() { # 標準入力=PR の JSON
-  jq -c --argjson legacy_jobs "$LEGACY_JOBS" '
+#
+# **古い pr-gate を落とす前の並びは flatten_checks が出す。** stale-gate (表の 13 行目・#2716) は、
+# 落とした側に残る cancelled を読む
+flatten_checks() { # 標準入力=PR の JSON
+  jq -c '
     [.statusCheckRollup[]? | {
       name: (.name // .context // ""),
       result: (.conclusion // .state // ""),
@@ -321,8 +349,12 @@ normalize_checks() { # 標準入力=PR の JSON
             | (capture("/actions/runs/(?<id>[0-9]+)") | .id | tonumber) // 0),
       job: ((.detailsUrl // .targetUrl // "")
             | (capture("/job/(?<id>[0-9]+)") | .id | tonumber) // 0)
-    }]
-    | . as $all
+    }]'
+}
+
+normalize_checks() { # 標準入力=PR の JSON
+  flatten_checks | jq -c --argjson legacy_jobs "$LEGACY_JOBS" '
+    . as $all
     | ([ $all[] | select(.run > 0 and (.name as $n | $legacy_jobs | index($n)) != null) | .run ]
        | unique) as $legacy
     | [ $all[] | . as $c | . + {
@@ -370,6 +402,47 @@ newest_failure_at() { # 標準入力=均した checks
 # check のうち、いちばん新しい時刻 (揃った時刻の近似。queue-not-entered が経過を測る)
 newest_check_at() { # 標準入力=均した checks
   jq -r '[.[].at | select(. != "")] | sort | last // ""'
+}
+
+# 必須が揃い、予約も掛かった時刻の近似。check の最新と予約を掛けた時刻の遅い方 (冒頭の
+# 「予約が queue へ動かない行」)。queue-not-entered と stale-gate が経過を測る
+ready_since() { # $1=均した checks $2=PR の JSON
+  printf '%s\n%s\n' "$(newest_check_at <<<"$1")" \
+    "$(jq -r '.autoMergeRequest.enabledAt // ""' <<<"$2")" | sort | tail -n 1
+}
+
+# 必須チェックの context の並び (JSON)。**写しを持たず、ブランチ保護の正本から読む**
+# (AGENTS.md「ブランチ保護の正本」)。実設定との食い違いは check-rulesets.sh が見る。
+# 読めないか 1 つも無ければ非 0
+required_contexts() {
+  jq -ce '[.rules[]? | select(.type == "required_status_checks")
+           | .parameters.required_status_checks[]?.context]
+          | select(length > 0)' "$RULESET"
+}
+
+# 必須が揃っているのに、cancelled か赤の pr-gate が同じ SHA に残る形 (冒頭の表の 13 行目・#2716)。
+# 当たれば、その pr-gate の run の id を空白区切りで出す (読めない id は 0)。当たらなければ空。
+#
+# - pr-gate: 緑の run が 1 本以上あり、待っている run は無く、cancelled か赤の run が残っている。
+#   **run の id の新旧では絞らない** — #2712 では塞いだ cancelled のほうが id が大きく、
+#   normalize_checks の「最新」は cancelled に倒れる
+# - pr-gate 以外の必須: その名前の最新 (run の id の順) が SUCCESS・NEUTRAL・SKIPPED
+#
+# 待っている pr-gate が無いことは、打ち直しが走っている run を cancel しないことも意味する
+# (打ち直した run も同じ concurrency の group に入る)
+stale_gate_runs() { # $1=必須の context の並び (JSON) / 標準入力=PR の JSON
+  flatten_checks | jq -r --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" \
+    --argjson required "$1" '
+    def ok: .result as $r | ($passed | index($r)) != null;
+    def waiting: .result as $r | ($unsettled | index($r)) != null;
+    . as $all
+    | [ $all[] | select(.name == "pr-gate") ] as $gates
+    | if ($gates | length) == 0 or any($gates[]; waiting) or (any($gates[]; ok) | not) then empty
+      elif (all($required[] | select(. != "pr-gate");
+                . as $n | ([ $all[] | select(.name == $n) ] | sort_by([.run, .at]) | last) as $l
+                | $l != null and ($l | ok)) | not) then empty
+      else [ $gates[] | select((ok or waiting) | not) | .run ] | unique | map(tostring) | join(" ")
+      end'
 }
 
 # 「同じ名前で、新しい方は緑・古い方が赤」— 判定を固定している古い失敗 check (#259 / #513)。
@@ -595,11 +668,35 @@ for n in $numbers; do
     continue
   fi
 
+  # 予約が掛かり必須も揃っているのに、cancelled か赤の pr-gate が残って BLOCKED のまま
+  # (冒頭の表の 13 行目・#2716)。猶予の扱いは queue-not-entered と同じ
+  if [ "$state" = BLOCKED ]; then
+    if [ -z "${required:-}" ] && ! required=$(required_contexts); then
+      say_line "$n" unreadable name 0 "必須チェックの定義 ($RULESET) を読めなかった (判定していない)"
+      continue
+    fi
+    gate_runs=$(stale_gate_runs "$required" <<<"$json")
+    [ -n "$gate_runs" ] || continue
+    mins=$(minutes_since "$(ready_since "$checks" "$json")")
+    [ "$mins" -ge "$QUEUE_ENTRY_MINUTES" ] || continue
+    rerun=""
+    for id in $gate_runs; do
+      [ "$id" != 0 ] || continue
+      rerun+="${rerun:+・}gh run rerun $id"
+    done
+    if [ -z "$rerun" ]; then
+      say_line "$n" unreadable name 0 "残っている pr-gate の run の番号を読めなかった (判定していない)"
+      continue
+    fi
+    say_line "$n" stale-gate name "$mins" \
+      "必須は揃っているのに、同じ SHA に残る pr-gate の cancelled か赤で BLOCKED のまま — $rerun で打ち直す (当番は打たない・#2716)"
+    overdue=1
+    continue
+  fi
+
   # 予約が掛かり必須も揃っているのに queue へ動かない (冒頭の表の 12 行目・#2693)
   if [ "$state" = CLEAN ] || [ "$state" = UNSTABLE ] || [ "$state" = BEHIND ]; then
-    since=$(printf '%s\n%s\n' "$(newest_check_at <<<"$checks")" \
-      "$(jq -r '.autoMergeRequest.enabledAt // ""' <<<"$json")" | sort | tail -n 1)
-    mins=$(minutes_since "$since")
+    mins=$(minutes_since "$(ready_since "$checks" "$json")")
     [ "$mins" -ge "$QUEUE_ENTRY_MINUTES" ] || continue
     case "$(in_merge_queue "$n")" in
       true) ;;

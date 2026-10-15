@@ -113,7 +113,10 @@
 # (.github/workflows/pr-gate.yml) は直すと新しい run が付け直し、concurrency が走っている古い
 # run を cancel する。head SHA に残る古い赤・cancelled は直す前の名残で、打ち直しても得るものが
 # 無い。打てば同じ group で走っている新しい run を cancel しうる。stall-watch.sh の
-# normalize_checks も古い pr-gate を stale-checks に数えない。
+# normalize_checks も古い pr-gate を stale-checks に数えない。必須が揃った後も cancelled の
+# pr-gate が残って BLOCKED のままの形 (#2716) は、stall-watch.sh が stale-gate と名乗って打ち直す
+# run の番号を出し、**打つのは人である** (分類は name なのでここへは来ない)。当番に打たせるかは、
+# この除外を変える判断になる
 #
 # 検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail
