@@ -321,6 +321,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/imageMode(_:)``
 - ``ShapeMode``
 
+### 図形を値で持ち歩いて当てる
+
+- ``Rect``
+- ``Circle``
+- ``Vector2``
+
 ### 自分で形を組む
 
 - ``SketchPart/beginShape(_:)``
