@@ -145,6 +145,13 @@ extension Canvas {
         ///
         /// [#1495]: https://github.com/mokume-metal/mokume/issues/1495
         case badCamera
+        /// ``SketchPart/orbitControl(_:_:_:)`` の感度に、数でない値・無限の値が渡され、
+        /// その呼び出しでは視点を進めなかった ([#2643])。
+        ///
+        /// **``badCamera`` とは鍵を分ける。** あちらは視点を当てず、こちらは今の視点のまま当てる。
+        ///
+        /// [#2643]: https://github.com/mokume-metal/mokume/issues/2643
+        case badOrbitSensitivity
         /// 受け取れない切り抜きが渡された。
         case badClip
         /// ``strokeWeight(_:)`` に負の値・数でない値・無限が渡され、0 に丸めた ([#1698])。

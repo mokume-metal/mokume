@@ -32,6 +32,9 @@ extension SketchPart {
     ///   - sensitivityY: 縦に引きずったときの効き。
     ///   - sensitivityZ: スクロールの効き。
     ///
+    ///   どれかが数でない値・無限なら、警告してその呼び出しでは視点を進めない
+    ///   (今の視点のまま当てる)。
+    ///
     /// - Note: 変えるのは**視点だけ**で、投影 (``perspective()`` / ``ortho()``) は
     ///   書き換えない。細かく決めたいときは ``orbit`` を直接書く。
     ///   慣性は既定で入っていない (``Orbit/inertia``)。
@@ -62,14 +65,25 @@ extension SketchPart {
         guard canvas.admits(.camera) else { return }
         var orbit = runtime.orbit ?? Orbit.fitting(width: canvas.width, height: canvas.height)
 
+        // 感度が数でない・無限なら、**この呼び出しでは進めず、今の視点のまま当てる**
+        // (#2643・ADR-0020 決定 5)。掛けた量が角・距離・速さへ入ると、限界へ収める段が
+        // 角を 0、距離を下限へ黙って倒し、慣性があれば離したあとも毎フレーム倒し続ける。
+        // 引きずった量も食わない — 同じフレームで有限の感度で呼び直せば、そちらが食う。
+        // 検めるのは `Float` へ写した後で、`Double` の大きすぎる値が無限になる場合も拾う
+        let sensitivity = SIMD3(sensitivityX, sensitivityY, sensitivityZ)
+        let sensible = sensitivity.x.isFinite && sensitivity.y.isFinite && sensitivity.z.isFinite
+        if !sensible {
+            canvas.warnOnce(
+                .badOrbitSensitivity,
+                "orbitControl(): got a sensitivity that is not a number, or an infinite one, so the view was left as it was")
+        }
         // 同じフレームで 2 度呼ばれても、引きずった量を 2 度食わない
-        if runtime.orbitAdvancedAt != runtime.frameCount {
+        if sensible, runtime.orbitAdvancedAt != runtime.frameCount {
             runtime.orbitAdvancedAt = runtime.frameCount
             let input = runtime.input
             orbit.advance(
                 dragX: input.dragX, dragY: input.dragY, scroll: input.scrollY,
-                isDragging: input.isMouseDown,
-                sensitivity: SIMD3(sensitivityX, sensitivityY, sensitivityZ))
+                isDragging: input.isMouseDown, sensitivity: sensitivity)
         } else {
             orbit.clampToLimits()
         }
