@@ -42,7 +42,8 @@
    本当に赤いコードの検査を当番のたびに打ち直す。打たずに masked-red と名乗る (#2669 の反証 4)
 14. **段を走らせていない run の赤い ci-gate は、同じ SHA の検査の最新がどちらも緑なら打つ** (#2717)。
    検査を打ち直して緑にしても、run の id の大きいその赤が必須を塞ぎ続ける。検査の最新が赤・
-   走っている途中・片方が無いなら打たない (読み直しても緑にならない)
+   走っている途中・片方が無いなら打たない (読み直しても緑にならない)。検査の最新は ci-gate.sh と
+   同じ check run の id で読み、作法のジョブを含む古い run の赤は legacy-gate に残す (#2717 の反証)
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -861,6 +862,34 @@ class StallWatchTest(unittest.TestCase):
         ] + self.red_edited_run(200))
         proc = self.watch()
         self.assertNotEqual(self.classify(60, proc), ("stale-checks", "act"), proc.stdout)
+
+    def test_本文の編集の_run_の赤い_ci_gate_は_古い_run_を後から打ち直した赤を最新と読む(self):
+        """#2717 の反証 2。ci-gate.sh は同じ SHA の検査を check run の id の最大で読む。R1 の検査を
+        後から打ち直して赤なら、run の id が大きい R3 の緑より新しい。打っても同じ赤を返す。"""
+        self.add_pr(61, auto=True, state="BLOCKED", checks=[
+            check("ci-check", "FAILURE", ago(10), run=100, job=900),
+            check("ci-static", "SUCCESS", ago(100), run=100, job=101),
+            check("ci-check", "SUCCESS", ago(40), run=300, job=301),
+            check("ci-static", "SUCCESS", ago(40), run=300, job=302),
+            check("ci-gate", "SUCCESS", ago(39), run=300, job=303),
+            check("ci-check", "SKIPPED", ago(5), run=400, job=401),
+            check("ci-static", "SKIPPED", ago(5), run=400, job=402),
+            check("ci-gate", "FAILURE", ago(5), run=400, job=403),
+        ])
+        proc = self.watch()
+        self.assertNotIn("本文の編集の run の ci-gate", proc.stdout)
+
+    def test_作法のジョブを含む古い本文の編集の_run_の赤い_ci_gate_は_legacy_gate_と名乗る(self):
+        """#2717 の反証 1。stall-act はその run を丸ごと飛ばすので、打つ分類にすると何も打たれず黙る。"""
+        self.add_pr(62, auto=True, state="BLOCKED", checks=[
+            check("ci-check", "SUCCESS", ago(90), run=100),
+            check("ci-static", "SUCCESS", ago(90), run=100),
+            check("ci-gate", "SUCCESS", ago(89), run=100),
+            check("pr-title", "FAILURE", ago(80), run=200),
+            check("pr-gate", "SUCCESS", ago(10), run=300),
+        ] + self.red_edited_run(200, at=80))
+        proc = self.watch()
+        self.assertEqual(self.classify(62, proc), ("legacy-gate", "name"), proc.stdout)
 
     def test_本文の編集の_run_の赤い_ci_gate_を打ち直す(self):
         """#2717 の対処。R1 の打ち直す前の attempt の赤は API が拒む (古い attempt) ので、R2 の

@@ -403,18 +403,24 @@ stale_names() { # 標準入力=均した checks
 # - reread: 最新の ci-gate が skips の赤で、ci-check・ci-static の最新の結論 (SKIPPED を除く) が
 #   どちらも在って SUCCESS (#2717)。その ci-gate は、読んだ後で検査が打ち直されて緑になったか、
 #   待ちの期限を越えた。理由を問わず、打ち直せば同じ SHA を読み直して緑を返す。検査の最新が
-#   赤・走っている途中なら出さない (同じ赤を返すだけ・待ちで runner を占めるだけ)
+#   赤・走っている途中なら出さない (同じ赤を返すだけ・待ちで runner を占めるだけ)。
+#   **検査の「最新」は ci-gate.sh と同じく check run の id (= job の id) の最大で読む** —
+#   run の id で読むと、古い run の検査を後から打ち直した赤を見落とし、打ち直しても同じ赤を
+#   返す ci-gate を当番のたびに打つ (#2717 の反証 2)。作法のジョブを含む古い run (legacy) の
+#   赤は打たない — stall-act はその run を丸ごと飛ばすので、legacy-gate と名乗らせる (反証 1)
 gate_state() { # 標準入力=均した checks
   jq -r --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
     def red: .result as $r | (($unsettled | index($r)) == null) and (($passed | index($r)) == null);
     def latest($n): [ .[] | select(.name == $n) ] | sort_by([.run, .at]) | last;
     def latest_ran($n): [ .[] | select(.name == $n and .result != "SKIPPED") ] | sort_by([.run, .at]) | last;
+    def latest_read($n): [ .[] | select(.name == $n and .result != "SKIPPED") ] | sort_by([.job, .run, .at]) | last;
     latest("ci-gate") as $g
     | latest("pr-gate") as $p
-    | ([ latest_ran("ci-check"), latest_ran("ci-static") ] | map(select(. != null))) as $code
-    | ($code | any(red)) as $code_red
+    | ([ latest_ran("ci-check"), latest_ran("ci-static") ] | map(select(. != null)) | any(red)) as $code_red
+    | ([ latest_read("ci-check"), latest_read("ci-static") ] | map(select(. != null))) as $read
     | if $g == null then ""
-      elif $g.skips and ($g | red) and ($code | length) == 2 and all($code[]; .result == "SUCCESS")
+      elif $g.skips and ($g.legacy | not) and ($g | red)
+           and ($read | length) == 2 and all($read[]; .result == "SUCCESS")
         then "reread"
       elif $g.hollow and $code_red then "masked"
       elif $g.legacy and ($g | red) and ($code_red | not) and $p != null and $p.result == "SUCCESS"
