@@ -113,6 +113,53 @@ struct SketchApplicationTests {
             ])
     }
 
+    /// **窓が key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
+    /// 離したキーは窓へ届かないので、流さないと押されたまま残る。
+    @Test("窓が退く知らせで、押していたキーの解放が流れる")
+    func resigningKeyReleasesHeldKeys() throws {
+        let application = try makeApplication(Blank())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        window.sendEvent(
+            try #require(KeyEventFixture.keyDown(in: window, characters: "\u{F703}", keyCode: 124)))
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        #expect(
+            lines == [
+                InputEvent.keyDown(code: .arrowRight, characters: "\u{F703}", isRepeat: false)
+                    .wireLine,
+                InputEvent.keyUp(code: .arrowRight).wireLine,
+            ])
+    }
+
+    /// **AppKit は ⌘ を伴う keyUp を窓へ配らない** (#2435)。アプリへ送った 1 件が、面の
+    /// 監視を通って解放として流れることを見る。窓へ直に送る (`window.sendEvent`) と、落とす
+    /// 区間 (`NSApplication.sendEvent(_:)`) を飛ばしてしまう。
+    @Test("⌘ を押したままの keyUp も、面へ届く")
+    func commandKeyUpReachesTheSurface() throws {
+        let application = try makeApplication(Blank())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        let keyUp = try #require(
+            NSEvent.keyEvent(
+                with: .keyUp, location: .zero, modifierFlags: .command, timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: "s",
+                charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1))
+        NSApplication.shared.sendEvent(keyUp)
+        #expect(lines == [InputEvent.keyUp(code: .s).wireLine])
+    }
+
     // MARK: - 最後の窓が閉じたときに終わるか (#1102)
 
     /// 区画を 1 つ作って渡す。後片付けまで面倒を見る。

@@ -701,7 +701,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/movedY``
 - ``SketchPart/requestPointerLock()``
 - ``SketchPart/exitPointerLock()``
-- ``SketchPart/isKeyDown(_:)``
+- ``SketchPart/keyboard``
+- ``Keyboard``
 - ``SketchPart/key``
 - ``SketchPart/keyCode``
 - ``Key``

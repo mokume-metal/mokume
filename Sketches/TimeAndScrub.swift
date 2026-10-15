@@ -34,8 +34,6 @@ final class TimeAndScrub: Sketch {
     /// 時刻を止めているか。**止めた・再開したを自分で覚える** — 時刻の口は頼むだけで、
     /// いまの状態を読む口は無い。
     var paused = false
-    /// space を押したままか (`keyPressed()` は押しっぱなしで連射される)。
-    var spaceHeld = false
 
     /// 1 巡の中の位置 (0 ..< ``length``)。負の秒へ飛んでも巡る。
     var cycle: Float {
@@ -45,8 +43,8 @@ final class TimeAndScrub: Sketch {
 
     func keyPressed() {
         switch keyCode {
-        case .space where !spaceHeld:
-            spaceHeld = true
+        case .space:
+            // 押した 1 回だけ呼ばれるので、押したままでも切り替わり続けない
             paused.toggle()
             if paused { pauseTime() } else { playTime() }
         case .arrowLeft: jumpTime(time - 0.25)
@@ -57,10 +55,6 @@ final class TimeAndScrub: Sketch {
         case .digit4: jumpTime(Self.acts[3])
         default: break
         }
-    }
-
-    func keyReleased() {
-        if keyCode == .space { spaceHeld = false }
     }
 
     /// 下の帯の上で押した・引きずった横位置を、1 巡の中の秒に写す。

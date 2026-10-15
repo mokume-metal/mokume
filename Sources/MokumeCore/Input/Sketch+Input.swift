@@ -98,8 +98,47 @@ extension SketchPart {
     public var movedX: Float { Self.input.movedX }
     /// このフレームに動いた量 (縦)。**縦軸は下向き**で、手前へ引くと正になる。
     public var movedY: Float { Self.input.movedY }
-    /// そのキーが押されているか。
-    public func isKeyDown(_ key: Key) -> Bool { Self.input.pressedKeys.contains(key) }
+    /// キーボードへの問い合わせ。押している間・押した瞬間・離した瞬間を、キーごとに問う。
+    ///
+    /// <!-- example: 文脈 var x: Float = 0 -->
+    /// <!-- example: 文脈 var jumps = 0 -->
+    /// ```swift
+    /// if keyboard.isPressed(.arrowLeft) { x -= 4 }   // 押している間
+    /// if keyboard.justPressed(.space) { jumps += 1 } // 押したフレームだけ
+    /// ```
+    ///
+    /// | 語 | 意味 |
+    /// | --- | --- |
+    /// | ``Keyboard/isPressed(_:)`` | 押している間 |
+    /// | ``Keyboard/justPressed(_:)`` | このフレームで押された |
+    /// | ``Keyboard/justReleased(_:)`` | このフレームで離された |
+    ///
+    /// **判定はフレームごとの入力の状態から決まる。** 窓で触っても、外から送っても
+    /// (`mokume input`・MCP の `input`)、同じ出来事の並びは同じ答えになる。
+    ///
+    /// - **1 フレームの中で押して離すと**、`justPressed` と `justReleased` が両方 `true` で、
+    ///   `isPressed` は `false` になる
+    /// - **止めている間 (``noLoop()``) に押した・離した分は、次に描くフレームで `true` になる。**
+    ///   ``pauseTime()`` の間はフレームが回るので、そのまま次のフレームで読める
+    /// - **窓が前から退くと (⌘Tab・ほかの窓を触る)、押していたキーと釦はすべて離された扱いに
+    ///   なる。** 次のフレームで `justReleased` が `true` になり、``Sketch/keyReleased()`` も
+    ///   呼ばれる。離していないのに離した扱いになるのが代償で、戻ってきたときに押し続けて
+    ///   いれば、キーリピートが届いたところで押下として入り直す。退いている間に離したキーが
+    ///   押されたまま残り、物が走り続けるのを避けるためである
+    ///   ([#2443](https://github.com/mokume-metal/mokume/issues/2443))
+    /// - **修飾キー** (``Key/shift``・``Key/control``・``Key/option``・``Key/command``) も
+    ///   問える。左右どちらでも `true` になる
+    ///
+    /// **手本の `keyIsDown(code)` は `keyboard.isPressed(_:)` と書く。** 問い合わせを入力の種類
+    /// ごとに分けるのは、トップレベルの `justPressed(.left)` だと `.left` がマウスの釦に
+    /// 解決され、矢印キー (``Key/arrowLeft``) のつもりでも黙ってマウスとして動くためである
+    /// ([ADR-0034] 決定 7)。
+    ///
+    /// **コールバックの `keyPressed()` と、問い合わせの `isPressed` は意味が違う。** 前者は押した
+    /// 瞬間に 1 回、後者は押している間ずっとである。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    public var keyboard: Keyboard { Keyboard(state: Self.input) }
     /// 最後に入力された文字。
     ///
     /// **文字を生むキーでだけ変わる。** 矢印・ファンクションキー・Escape・Delete では

@@ -719,6 +719,9 @@ public final class SketchRuntime {
         try canvas.draw {
             withActiveRuntime {
                 if !deliveredInput { input.beginFrame { deliver($0) } }
+                // **押した・離した (`keyboard.justPressed`) は、描いたフレームの終わりで消す。**
+                // 止めている間に配った分は、ここを通るまで残る (`InputState.endFrame()`)
+                defer { input.endFrame() }
                 supplyFromInlets()
                 sketch.draw()
             }
