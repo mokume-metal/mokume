@@ -397,6 +397,10 @@ class ReadyQueueTest(unittest.TestCase):
             },
             "本文の編集": {"nodes": [bot_comment(30)], "edited": ago(40)},
             "窓に収まらない項目": {"nodes": [bot_comment(30)], "hidden": 1},
+            # timeline に出ない動き (既存のコメントの編集・子の close による親の更新など) が
+            # updatedAt を動かしたとき。新しさを bot の手だと説明できないので静かとは言えない
+            "空の窓": {"nodes": []},
+            "窓の外の人のコメントだけ": {"nodes": [human_comment(300)]},
         }
         for name, hand in cases.items():
             with self.subTest(name):
@@ -451,6 +455,16 @@ class ReadyQueueTest(unittest.TestCase):
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[1352][0], "dropped", "家族の bot の追記で生きていると読んでいる")
+
+        # 家族の窓が空なら、新しさを bot の手と説明できないので動いている側
+        done, _ = self.run_queue(
+            [issue(1352, labels=["status: in progress"])],
+            families={1352: {"parent": member(1350), "siblings": [member(1357, updated=ago(30))]}},
+            hands={1357: {"nodes": []}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1352][0], "busy", "空の窓の家族を静かと読んでいる")
+        self.assertIn("家族 #1357 がまだ動いている", seen[1352][1])
 
     def test_hands_are_read_only_where_recency_is_the_only_evidence(self):
         # 新しい着手印も、新しい open な家族も無ければ読まない

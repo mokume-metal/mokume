@@ -98,10 +98,13 @@
 # merge_group ごとに追記すると queue が回る間ずっと隠れる。
 #
 # だから updatedAt が新しいだけの着手印 (PR も手元の worktree / 枝も無い) は、**窓の中
-# (DROPPED_MINUTES 分) の timeline を引いて、人の手があるかを見る**。作者 / actor が Bot の
-# コメントと参照だけなら静かとみなして家族の判定へ回す。それ以外 (人の手・作者の分からない
-# 項目・本文の編集・窓に 100 件を超えて見えない項目) は今までどおり動いているとみなす —
-# **bot と分かるものだけを除く**。家族の open な者も同じ式で測る。閉じた家族は「閉じたばかり」
+# (DROPPED_MINUTES 分) の timeline を引いて、人の手があるかを見る**。窓の中に bot の手が
+# **少なくとも 1 つあり**、それ以外が無いときだけ静かとみなして家族の判定へ回す — 新しさを
+# 説明しているのが bot の手だと分かるときに限る。それ以外 (人の手・作者の分からない項目・
+# 本文の編集・窓に 100 件を超えて見えない項目・**窓が空**) は今までどおり動いているとみなす —
+# **bot と分かるものだけを除く**。窓が空でも新しいのは、timeline に出ない動き (既存のコメントの
+# 編集・子の close による親の更新など) が updatedAt を動かしたときで、それが人の手でないとは
+# 言えない。家族の open な者も同じ式で測る。閉じた家族は「閉じたばかり」
 # のまま (bot が追記するのは open な Issue だけ — scripts/report-check-failure.sh)。
 #
 # 問い合わせは、そういう着手印があるときに 1 回、家族にそういう者があるときにもう 1 回で、
@@ -278,9 +281,9 @@ done < <(jq -c '.[]' <<<"$issues_json")
 
 # 窓の中に人の手があるかを 1 回で読む。「<番号> human|quiet」を 1 行 1 件で出す。
 #
-# quiet は「窓の中が Bot のコメントと参照だけ」のときに限る。作者の分からない項目
-# (退会した人・actor を引かない種類の出来事)・本文の編集・窓に収まらない項目は human に倒す
-# (冒頭の「bot の追記は数えない」— bot と分かるものだけを除く)
+# quiet は「窓の中が Bot のコメントと参照だけで、少なくとも 1 つある」ときに限る。作者の
+# 分からない項目 (退会した人・actor を引かない種類の出来事)・本文の編集・窓に収まらない項目・
+# 空の窓は human に倒す (冒頭の「bot の追記は数えない」— bot と分かるものだけを除く)
 read_hands() { # $1=番号 (空白区切り)
   local owner=${REPO%%/*} name=${REPO#*/} q='' n
   for n in $1; do
@@ -292,6 +295,7 @@ read_hands() { # $1=番号 (空白区切り)
     --jq '.data.repository | to_entries[]
       | .value.timelineItems as $t
       | (any($t.nodes[]?; ((.author // .actor // {}).__typename) != "Bot")
+         or ($t.nodes | length) == 0
          or ($t.filteredCount // 0) > ($t.nodes | length)
          or (.value.lastEditedAt // "") > "'"$QUIET_BEFORE"'") as $hand
       | "\(.key | ltrimstr("i")) \(if $hand then "human" else "quiet" end)"'
