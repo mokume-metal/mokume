@@ -191,6 +191,7 @@ enum ShapeExit {
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "placedPictureCopyLimitReached": count, "shadowBakesAdded": count,
             "shadowMapHolds": count, "shadowRebakeBarriersEncoded": count,
+            "shadowBakedSince": flush, "shadowBakedThrough": flush, "upscaledBy": flush,
             "shadowsEverEnabled": "影を 1 度でも有効にした面の印。面と同じだけ生き、組み立ての中の shadows() は断られるので立たない",
             "shaders": "この面が作った断片 (弱く持つ)。観測へ失敗を載せる",
             "effectShaders": "この面が作った効果 (弱く持つ)。観測へ失敗を載せる",
