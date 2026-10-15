@@ -325,6 +325,47 @@ struct SharedFrameSurfaceTests {
         }
     }
 
+    /// **焼きを GPU が打ち切ったら、その面を名乗らない** ([#2735])。合図は打ち切りでも進むので、
+    /// 待てただけで名乗ると、読み手は `slotCount` 枚前の絵か書いていない面を最新として掴む。名乗らな
+    /// ければ読み手は前に名乗った面を出し続け、次の書き込みが同じ面を焼き直して名乗る。
+    ///
+    /// 打ち切りは GPU を止めずに作る (`dropsNextSubmissionForTesting` は結末の記録だけを打ち切りに
+    /// する)。打ち切りの無い側では、今までどおり書いた 1 枚を名乗る。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @Test("焼きを GPU が打ち切ったら、その面は名乗らず、次の書き込みが同じ面を焼き直して名乗る。無ければ名乗る",
+        arguments: [true, false])
+    func aDroppedBurnIsNotNamed(dropped: Bool) throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 1))
+            try shared.publishPending()
+            let first = try #require(SharedFrameSurface.newest(among: shared.ids))
+
+            // 次の投入は 2 枚目の焼き (控えは名乗り済みなので、書き込みの頭は何も投入しない)
+            if dropped { gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim }
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 2))
+            let burnt = try #require(shared.pendingID)
+            try shared.publishPending()
+            let named = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(
+                named.frame == (dropped ? 1 : 2) && named.id == (dropped ? first.id : burnt),
+                "名乗った面が違う (枚数 \(named.frame)・面 \(named.id)・1 枚目 \(first.id)・焼いた面 \(burnt))")
+
+            // 次の書き込み。打ち切られていれば同じ面を焼き直して名乗る
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 3))
+            #expect((shared.pendingID == burnt) == dropped, "焼き直す面が違う")
+            try shared.publishPending()
+            let next = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(next.frame == (dropped ? 2 : 3))
+            try gpu.settle()
+        }
+    }
+
     /// **公開を 1 枚遅らせても、読み手が掴んだ面の猶予を縮めない** (#748 の完了条件 3)。
     ///
     /// 読み手 (`SharedFrameStage`) は掴んだ面を GPU の完了を待たずに差し出すので、掴んだ

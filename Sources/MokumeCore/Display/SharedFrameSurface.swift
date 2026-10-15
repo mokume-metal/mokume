@@ -432,7 +432,8 @@ final class SharedFrameSurface {
     ///
     /// 焼く投入は待たない。いま焼いた絵が名乗るのは次の書き込みのときである ([#748])。
     /// 走っているスケッチは止めている間も毎リフレッシュここを通るので、控えた 1 枚は
-    /// 次のリフレッシュで必ず出る。
+    /// 次のリフレッシュで必ず出る (焼きを GPU が打ち切ったときは、次の書き込みが焼き直して出す・
+    /// ``publishPending()``)。
     ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
     /// - Parameters:
@@ -458,10 +459,25 @@ final class SharedFrameSurface {
     /// 待つのは 1 本だけで、1 枚遅らせているぶん普通は何もせずに返る。
     ///
     /// **待てなければ名乗らない。** 控えは先に手放すので、次の書き込みは同じ面を焼き直す。
+    ///
+    /// **焼きを GPU が打ち切っていても名乗らない** ([#2735])。合図は打ち切りでも進むので、待てた
+    /// だけでは面の中身は揃っていない — 名乗ると、読み手は `slotCount` 枚前の絵か書いていない面を
+    /// 「最新の絵」として掴み、書き手がその後で書くのをやめれば (終了・異常終了・詰まり) 窓はそのまま
+    /// 残る。読み手は前に名乗った面を出し続け、次の書き込みが同じ面を焼き直して名乗る。
+    ///
+    /// **結末は届くのを待ってから確かめる** (投げる読む口と同じ ``RenderDevice/droppedWork(after:through:)``)。
+    /// #2199 の待たない照会 (``RenderDevice/revokeDroppedDeliveries()``) では、名乗る時点で結末がまだ
+    /// 届いていなければ打ち切った面を名乗ってしまう。名乗りは取り消せない (読み手は別のプロセスで、
+    /// 既に掴んで差し出しているかもしれない) ので、名乗る前に確かめる。公開は 1 枚遅らせてあるので、
+    /// 普通は結末も届いていて待たずに返る。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     func publishPending() throws(RenderFailure) {
         guard let written = pending else { return }
         pending = nil
         try gpu.waitForSubmission(written.submission)
+        guard gpu.droppedWork(after: written.submission - 1, through: written.submission).isEmpty
+        else { return }
         let slot = slots[written.slot]
         frameNumber += 1
         // **速さを枚数より先に載せる。** 読み手は枚数がいちばん大きい面を選ぶので、枚数を
