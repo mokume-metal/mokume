@@ -40,6 +40,7 @@ CLI_USAGE = {
     "apply-rulesets.sh": ["--no-such-flag"],
     "sub-issue.sh": ["1", "題", "--no-such-flag"],
     "comment.sh": ["no-such-kind"],
+    "edit-body.sh": ["no-such-kind"],
     "plan-record.sh": ["no-such-mode"],
     "report-check-failure.sh": ["--no-such-flag"],
     "test-vanished.sh": ["not-a-code", "record.xml", "log.txt", "stamp"],

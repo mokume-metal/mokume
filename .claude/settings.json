@@ -38,7 +38,7 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/agent-comment-guard.sh\"",
             "timeout": 10,
-            "statusMessage": "コメントの投稿経路を確認中"
+            "statusMessage": "コメント・本文の書き込み経路を確認中"
           },
           {
             "type": "command",

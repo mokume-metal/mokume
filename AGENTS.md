@@ -62,7 +62,7 @@ PR 本文が揃い `ci-gate`・`pr-gate` が green なら、指示を待たず `
 
 置き場は、PR ができるまでは Issue、できてからは PR。ただし完了条件が動く話と完了報告 (条件と PR の対応表を 1 通) は Issue、恒久的な決定は ADR。Issue に「実装 PR は #N」とは書かない (GitHub が相互リンクを描く)。
 
-AI エージェントは、このリポジトリへの発言 (コメント・`gh pr review` の本文・close / reopen の発言) を `bash scripts/comment.sh {issue|pr} <番号> --body-file <ファイル>` で投稿し、署名をラッパーに付けさせる。close / reopen は発言を投稿してから、状態だけを発言なしで変える。他のリポジトリへは素の `gh` で書く。
+AI エージェントは、このリポジトリへの発言 (コメント・`gh pr review` の本文・close / reopen の発言) を `bash scripts/comment.sh {issue|pr} <番号> --body-file <ファイル>` で投稿し、署名をラッパーに付けさせる。close / reopen は発言を投稿してから、状態だけを発言なしで変える。本文の書き換えは `bash scripts/edit-body.sh {issue|pr} <番号>` の `--fetch <ファイル>` で取得して直し、`--body-file` で書き込む。他のリポジトリへは素の `gh` で書く。
 
 ## コミット・PR の規約
 
