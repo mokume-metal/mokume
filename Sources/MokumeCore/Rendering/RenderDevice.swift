@@ -511,6 +511,8 @@ import MokumeDiagnostics
     private func releaseOnNotice(upTo submission: UInt64) {
         noticeRuns += 1
         releaseFinished(upTo: submission)
+        // 結末の届いた取り消しを刈る。打ち切られていたら、止まっている間でも印だけは先に戻す (#2199)
+        revokeDroppedDeliveries()
     }
 
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
@@ -1126,6 +1128,73 @@ import MokumeDiagnostics
         } catch {
             Diagnostics.warn("\(note): \(error.headline)")
         }
+    }
+
+    // MARK: - 打ち切られた投入が届けたはずの中身を取り戻す (#2199)
+
+    /// 投入の後で進めた記帳のうち、その投入が打ち切られたら取り消すもの。番号と取り消す手立て。
+    ///
+    /// **結末が届けば外す** (``revokeDroppedDeliveries()``)。正常に終わった投入の分は捨て、打ち切られた
+    /// 投入の分は走らせてから捨てる。手立ては持ち主を弱く持つ。
+    private var revocations: [(submission: UInt64, revoke: @MainActor () -> Void)] = []
+
+    /// 診断: 打ち切られた投入の記帳を取り消した数 (作ってから通算)。
+    private(set) var droppedDeliveriesRevoked = 0
+
+    /// 診断: 結末を待っている取り消しの数。**正常な経路では、結末が届くたびに 0 へ戻る。**
+    var pendingRevocationCount: Int { revocations.count }
+
+    /// 番号 `submission` の投入が打ち切られていたら、`revoke` で記帳を取り消す ([#2199])。
+    /// **投入の後で記帳した直後に呼ぶ** — 記帳を進めた口が、何を戻せば届け直せるかを知っている。
+    ///
+    /// 走らせるのは、結末が届いた後の最初の ``revokeDroppedDeliveries()`` である。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func revokeIfDropped(_ submission: UInt64, _ revoke: @escaping @MainActor () -> Void) {
+        revocations.append((submission, revoke))
+    }
+
+    /// 番号 `submission` の投入が届けた控えを下ろし ([#1183] の作法で投入の後に)、その投入が打ち切られて
+    /// いたら控えを立て直すよう預ける ([#2199])。控えを届けた投入の後で呼ぶ口はここ 1 つにする
+    /// (描き切りと、計算と控えの早い投入)。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteUploaded(_ uploaded: EncodedUploads, by submission: UInt64) {
+        let revocations = pendingUploads.markUploaded(uploaded)
+        guard !revocations.isEmpty else { return }
+        revokeIfDropped(submission) {
+            for revoke in revocations { revoke() }
+        }
+    }
+
+    /// 届いている結末を**待たずに**照らし、打ち切られた投入の記帳を取り消す ([#2199])。
+    ///
+    /// **描き切りの頭で呼ぶ** (`Canvas.flush` と、計算と控えの早い投入)。取り消すのは印だけで (届けて
+    /// いない控えを立て直す・焼いた指紋を忘れる・書き込み待ちを立て直す・拡大の後に変わった印を立てる)、
+    /// 届け直すのはその描き切りが普段の経路でする。完了の知らせ (``releaseOnNotice(upTo:)``) でも呼び、
+    /// 正常に終わった投入の分を刈る。
+    ///
+    /// 結末がまだ届いていない投入は残し、次に呼ばれたときに問い直す。だから打ち切りから結末が届く
+    /// までのフレームは、古い中身のまま描く (案 A' の代償)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func revokeDroppedDeliveries() {
+        guard !revocations.isEmpty else { return }
+        let outcomes = commandFaults.outcomes(of: revocations.map(\.submission))
+        var dropped: [@MainActor () -> Void] = []
+        var waiting: [(submission: UInt64, revoke: @MainActor () -> Void)] = []
+        for (entry, outcome) in zip(revocations, outcomes) {
+            switch outcome {
+            case nil: waiting.append(entry)
+            case true?: dropped.append(entry.revoke)
+            case false?: break
+            }
+        }
+        // **走らせる前に預け先を片付ける。** 手立てが登録簿を引いても、預け先は触らない
+        revocations = waiting
+        for revoke in dropped { revoke() }
+        droppedDeliveriesRevoked += dropped.count
     }
 
     /// 番号が `floor` より大きく `last` 以下の投入のうち、GPU が打ち切ったもの (番号の昇順)。

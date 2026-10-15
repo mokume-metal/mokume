@@ -292,9 +292,24 @@ extension Image: PendingUpload {
         return writeGeneration
     }
 
-    func markUploaded(through generation: UInt64) {
-        guard generation == writeGeneration else { return }
+    @discardableResult
+    func markUploaded(through generation: UInt64) -> (@MainActor () -> Void)? {
+        guard generation == writeGeneration else { return nil }
         needsUpload = false
         inputNeedsDecode = false
+        return { [weak self] in self?.uploadAgainAfterDrop() }
+    }
+
+    /// 届けた投入を GPU が打ち切った。**画像の全体を、次の描き切りでもう一度届ける** ([#2199])。
+    ///
+    /// 控え (CPU の画素か、大きな入力とその後の編集) は届けた後も全体を持っているので、全体を
+    /// 送り直せば面が揃う。大きな入力は復号からやり直す — 打ち切られた投入の復号も面に書かれて
+    /// いない。打ち切りの後に書き換えていれば、既に送る旗が立っているので、送るのは 1 回である。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private func uploadAgainAfterDrop() {
+        if displayInput != nil { inputNeedsDecode = true }
+        needsUpload = true
+        requestUpload()
     }
 }

@@ -380,8 +380,27 @@ extension Numbers: PendingUpload {
         return writeGeneration
     }
 
-    func markUploaded(through generation: UInt64) {
-        guard generation == writeGeneration else { return }
+    @discardableResult
+    func markUploaded(through generation: UInt64) -> (@MainActor () -> Void)? {
+        guard generation == writeGeneration, !dirty.isEmpty else { return nil }
+        let delivered = dirty
         dirty.removeAll(keepingCapacity: true)
+        return { [weak self] in self?.uploadAgainAfterDrop(delivered) }
+    }
+
+    /// 届けた投入を GPU が打ち切った。**その投入が運んだ区間だけ**を、汚れ区間へ戻す ([#2199])。
+    ///
+    /// 区間の外は GPU の計算が書き換えているかもしれないので、届け直さない (``shadow`` の約束)。
+    /// 影はその区間の値を持ったままである — 打ち切りの後で同じ番地を書いていれば、影は新しい値で、
+    /// 区間は既に汚れている (畳まれて 1 つになる)。
+    ///
+    /// **打ち切りの後・ここより前に計算がその区間へ書いた値は、届け直しが潰す。** その計算は届いて
+    /// いない入力を読んでおり、中身はどちらにしても失われている (打ち切られた回の計算は取り戻さない)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private func uploadAgainAfterDrop(_ delivered: [Range<Int>]) {
+        for range in delivered { markDirty(range) }
+        writeGeneration &+= 1
+        gpu.pendingUploads.enqueue(self)
     }
 }

@@ -30,8 +30,24 @@ import Synchronization
 /// 届けた側は、条件の錠を握ったまま状態を書いて起こすので、確かめてから眠るまでの間に届いた
 /// 結末を取りこぼさない。
 ///
+/// ## 打ち切りの後に取り戻すもの・取り戻さないもの ([#2199])
+///
+/// 投入の後に「届いた・焼けた・書き戻した・拡大した」と記す記帳は、結末を見ずに進む。打ち切られた
+/// 投入の分は、**結末が届いた後の最初の描き切りの頭で取り消し**、その描き切り (拡大は出す先を読む口の
+/// 追い付き) が普段の経路で届け直す (``RenderDevice/revokeDroppedDeliveries()``)。待たずに問うので
+/// (``outcomes(of:)``)、結末が届くまでのフレームは古い中身のまま描く。
+///
+/// - **取り戻す** (CPU の側か入力の指紋に正本がある): 画像と数の並びへの書き込み (数の並びは、打ち
+///   切られた投入が運んだ汚れ区間だけ)・影の焼き付けの指紋 (足すだけの焼き付けの判定も)・CPU が書いた
+///   画素の書き戻し・細かさを下げた面の拡大の追い付き
+/// - **取り戻さない** (正本が GPU にしか無い・その回の仕事そのもの): 打ち切られた回に描いた絵・流した
+///   計算・粒の進め・持ち越した奥行き・効果を通す前の絵の控え・「映した」印。数の並びの届け直しは、
+///   打ち切りの後・取り消す前に計算がその区間へ書いた値を潰す (その計算は届いていない入力を読んでおり、
+///   中身はどちらにしても失われている)
+///
 /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
 /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+/// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 nonisolated final class CommandFaultLog: Sendable {
     /// 打ち切られた投入 1 つ。
@@ -139,6 +155,18 @@ nonisolated final class CommandFaultLog: Sendable {
             if let forgotten, forgotten.submission > floor { found.append(forgotten) }
             return found.sorted { $0.submission < $1.submission }
         }
+
+        /// 番号 `submission` の結末。届いていなければ `nil`、打ち切られていれば `true`。
+        ///
+        /// **忘れた打ち切りに掛かりうる番号は、打ち切りとして答える** (``drops(after:through:)``
+        /// と同じ倒し方)。忘れた分の番号は最も新しい 1 つしか残していないので、それより前の番号は
+        /// 打ち切られたかを確かめられない。
+        func outcome(of submission: UInt64) -> Bool? {
+            guard submission <= arrivedThrough || arrivedAhead.contains(submission) else { return nil }
+            if drops.contains(where: { $0.submission == submission }) { return true }
+            if let forgotten, submission <= forgotten.submission { return true }
+            return false
+        }
     }
 
     private let state = Mutex(State())
@@ -217,6 +245,18 @@ nonisolated final class CommandFaultLog: Sendable {
                 until: Date(timeIntervalSinceNow: Double(seconds) + Double(attoseconds) * 1e-18))
         }
         return (state.withLock { $0.drops(after: floor, through: last) }, waited, lost)
+    }
+
+    /// 番号ごとの結末を、**待たずに**答える ([#2199])。届いていない番号は `nil`、打ち切られた番号は
+    /// `true`、正常に終わった番号は `false`。並びは `submissions` と揃う。
+    ///
+    /// 打ち切られた投入が届けたはずの中身を取り戻す口 (``RenderDevice/revokeDroppedDeliveries()``) が、
+    /// 描き切りの頭で 1 度呼ぶ。待たないので、結末がまだ届いていない投入はその回には取り戻さない
+    /// (次の回に問い直す)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func outcomes(of submissions: [UInt64]) -> [Bool?] {
+        state.withLock { state in submissions.map { state.outcome(of: $0) } }
     }
 
     /// 結末を 1 つ書き、待っている側を起こす。**条件の錠を握ったまま書く** — 待つ側は同じ錠を

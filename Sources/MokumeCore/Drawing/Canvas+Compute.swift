@@ -302,6 +302,8 @@ extension Canvas {
     ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     private func runPendingComputations() {
+        // **打ち切られた投入の控えを、流すものがあるかを見る前に立て直す** (#2199)。読む前に届け直す
+        gpu.revokeDroppedDeliveries()
         guard !pendingComputations.isEmpty || !gpu.pendingUploads.isEmpty else { return }
         // **値の区画と控えの置き場へ書く前に待つ。** ここは描き切りを通らないので、フレームの
         // 環を進める `frameRing.advance()` の待ちが効かない — 直前のフレームの投入が、
@@ -329,19 +331,20 @@ extension Canvas {
     /// 呼んでよいのは、値の区画と控えの置き場のいまのスロットを読む投入が終わっているときだけ
     /// (読み戻しなら全完了を待った後・面をまたぐ順なら環を進めた後)。
     private func submitPendingComputationsAndUploads() throws(RenderFailure) {
-        let uploaded = try gpu.withCommands {
-            commands throws(RenderFailure) -> EncodedUploads in
+        let assembled = try gpu.withCommands {
+            commands throws(RenderFailure) -> (uploaded: EncodedUploads, submission: UInt64) in
             // **控えが先、計算が後。** 計算は書いた値を読む
             let uploaded = try encodeUploads(into: commands)
             try encodeComputations(into: commands)
-            gpu.commit(commands, retaining: imageInputPass.map { [$0] } ?? [])
-            return uploaded
+            let submission = gpu.commit(commands, retaining: imageInputPass.map { [$0] } ?? [])
+            return (uploaded, submission)
         }
         // **いまのスロットを読む投入として記録する。** 描き切りと同じ置き場へ書いたので、
         // 記録しないと、下の待ちが期限切れになったときにそのスロットが「読み終わった」
         // ことになってしまう (#754)
         frameRing.noteSubmission()
-        gpu.pendingUploads.markUploaded(uploaded)
+        // この投入が打ち切られたら、運んだ控えを立て直す (#2199)
+        gpu.noteUploaded(assembled.uploaded, by: assembled.submission)
         // **流したものは溜め場から降ろす** — 降ろさないとフレーム末尾の描き切りが同じ計算を
         // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
         // いるので、残すと 2 度走る (#1183)

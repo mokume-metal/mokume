@@ -177,6 +177,19 @@ extension Canvas {
         if assembled.wroteBack { target.markPixelsWrittenBack(by: assembled.submission) }
         targetChangedSinceUpscale = false
         placingCatchUpDeferred = false
+        revokeUpscaleIfDropped(assembled.submission)
+    }
+
+    /// 拡大を積んだ投入 `submission` が打ち切られたら、**拡大の後に描く先が変わった印を立て直す**
+    /// ([#2199])。拡大を積んで印を下ろした直後に呼ぶ (フレームの終わりの描き切りと ``catchUpOutput()``)。
+    ///
+    /// 打ち切られた拡大は出す先を書いていないので、出す先は前の絵のままである。印が下りたままだと、
+    /// 止まっている間 (描く先が変わらない間) は出す先を読む口が追い付き直さない。立て直せば、次の
+    /// フレームの終わりの拡大か、出す先を読む口の追い付きが広げ直す。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func revokeUpscaleIfDropped(_ submission: UInt64) {
+        gpu.revokeIfDropped(submission) { [weak self] in self?.targetChangedSinceUpscale = true }
     }
 
     /// 置く口が追い付かせる要があるか ([#2042])。拡大の段があり、描き切らせて描く先が出す先より

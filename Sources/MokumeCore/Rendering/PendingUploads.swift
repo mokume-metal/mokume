@@ -25,14 +25,25 @@ import Metal
 /// - ``stageUpload(into:of:at:on:)`` は控えを写してコピーを積み、**写した世代**を返す。
 ///   届いたことにするのは投入の後 (``markUploaded(through:)``) で、積んだ後で組み立てが
 ///   投げても書き込みは失われない ([#1183] の作法)
+/// - **届けた投入を GPU が打ち切っても、書き込みは失われない** ([#2199])。届いたことにするのは結末を
+///   見る前なので、``markUploaded(through:)`` は下ろした控えを立て直す手立てを返し、土台がその投入の
+///   番号と一緒に預かる (``RenderDevice/noteUploaded(_:by:)``)。**打ち切りの結末が届いた後の最初の
+///   描き切り**が、頭で控えを立て直して届け直す (``RenderDevice/revokeDroppedDeliveries()``)。画像は全体を、
+///   数の並びは**打ち切られた投入が運んだ区間だけ**を届け直す。結末が届くまでのフレームは、届いていない
+///   面のまま描く
+/// - 打ち切られた回に描いた絵・流した計算・粒の進めは取り戻さない (``CommandFaultLog`` の「打ち切りの
+///   後に取り戻すもの・取り戻さないもの」)。数の並びの届け直しは、打ち切りの後に計算がその区間へ書いた
+///   値を潰す — その計算は届いていない入力を読んでいたので、中身はどちらにしても失われている
 /// - ``uploadDirectly()`` は控えに載せられないとき (大きすぎる) の逃げ道で、待ってから
-///   直接書く。**待てなければ書かず `nil`** — 控えは残る ([#934])
+///   直接書く。**待てなければ書かず `nil`** — 控えは残る ([#934])。投入に載らないので、打ち切りの
+///   取り消しには預けない
 ///
 /// [#727]: https://github.com/mokume-metal/mokume/issues/727
 /// [#749]: https://github.com/mokume-metal/mokume/issues/749
 /// [#934]: https://github.com/mokume-metal/mokume/issues/934
 /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
 /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
+/// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
 @MainActor protocol PendingUpload: AnyObject {
     /// 登録簿に載っているか。**同じ持ち主を 2 度載せないための印**で、登録簿だけが書く。
     ///
@@ -55,7 +66,13 @@ import Metal
 
     /// 世代 `generation` までの書き込みが GPU 側へ届いた。**それより後に書かれていれば
     /// 控えを残す** (次の描き切りがもう一度届ける)。
-    func markUploaded(through generation: UInt64)
+    ///
+    /// - Returns: 下ろした控えを立て直す手立て。届けた投入を GPU が打ち切っていたら、結末が届いた
+    ///   後で土台が走らせる ([#2199])。何も下ろさなかったら `nil`。手立ては自分を弱く持つ。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    @discardableResult
+    func markUploaded(through generation: UInt64) -> (@MainActor () -> Void)?
 }
 
 /// 届けていない書き込みを持つものの登録簿。``RenderDevice`` が 1 つ持つ。
@@ -94,8 +111,23 @@ import Metal
     }
 
     /// 届けたものを知らせ、**もう届けるものが無い持ち主を登録簿から降ろす。**
-    func markUploaded(_ uploaded: [(owner: any PendingUpload, generation: UInt64)]) {
-        for item in uploaded { item.owner.markUploaded(through: item.generation) }
+    ///
+    /// - Returns: 投入に載せて届けた分の、下ろした控えを立て直す手立て。逃げ道で直接書いた分
+    ///   (`direct`) は投入によらず届いているので返さない ([#2199])。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func markUploaded(_ uploaded: EncodedUploads) -> [@MainActor () -> Void] {
+        var revocations: [@MainActor () -> Void] = []
+        for item in uploaded {
+            let revoke = item.owner.markUploaded(through: item.generation)
+            if !item.direct, let revoke { revocations.append(revoke) }
+        }
+        prune()
+        return revocations
+    }
+
+    /// もう届けるものが無い持ち主を登録簿から降ろす。
+    private func prune() {
         entries.removeAll { entry in
             guard let owner = entry.owner else { return true }
             guard owner.pendingUploadByteCount == 0 else { return false }

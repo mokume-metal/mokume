@@ -3681,6 +3681,13 @@ public final class Canvas {
     func flush(applyingEffects: Bool = true, mirroringPixels: Bool = false)
         throws(RenderFailure)
     {
+        // **GPU が打ち切った投入の記帳を、何かを数える前に取り消す** ([#2199])。結末が届いていれば、
+        // 届けていない画像・数の並び・焼けていない影・戻っていない画素・拡大の後に変わった描く先を
+        // 「まだ」に戻すので、この描き切りが普段の経路でやり直す。書き込み待ちの立て直しは、すぐ下で
+        // 描く先を変えるかの数えに入る
+        //
+        // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+        gpu.revokeDroppedDeliveries()
         // **自分の絵が変わる直前がここ。** 自分を溜めている面にいまの絵を写させると、
         // その面には「置いた時点の絵」が残る (#1656)。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
@@ -3934,11 +3941,12 @@ public final class Canvas {
         if applyingEffects {
             targetChangedSinceUpscale = !assembled.upscaled
             placingCatchUpDeferred = false
+            if assembled.upscaled { revokeUpscaleIfDropped(assembled.submission) }
         } else if upscaleStage != nil, changesTarget || assembled.wroteBack {
             targetChangedSinceUpscale = true
             placingCatchUpDeferred = false
         }
-        gpu.pendingUploads.markUploaded(assembled.uploaded)
+        gpu.noteUploaded(assembled.uploaded, by: assembled.submission)
         // 「映した」は結末を見ずに付ける。この投入が打ち切られていたら、投げる読む口が範囲の中に
         // 見つけて投げ、印を下ろす (`RenderTarget.markPixelsMirrored(through:)`・#1932)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
@@ -3947,6 +3955,15 @@ public final class Canvas {
             lastShadowBakeKey = shadow.key
             shadowMapHolds = shadow.holds.map {
                 (chain: $0, matrix: shadow.matrix, detail: shadow.map.detail)
+            }
+            // **焼いた投入が打ち切られたら、焼いた面は書かれていない** ([#2199])。指紋も持ち越した
+            // 列の並びも忘れ、次の焼き付けを全部から焼かせる。使い回した投入は面を書かないので預けない
+            //
+            // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+            if shadow.solidUploads != nil {
+                gpu.revokeIfDropped(assembled.submission) { [weak self] in
+                    self?.forgetShadowBake()
+                }
             }
         }
         // フレームの最初の描き切りで、描く先は効果を通す前の絵に戻ったか塗り直された。
@@ -4824,9 +4841,11 @@ public final class Canvas {
         // である。指紋は焼く直前に取り、**覚えるのは描き切りが投入した後** (`flush`) —
         // 焼き付けを積んだ後で投げたフレームの指紋を覚えると、次のフレームが焼けていない
         // 面を読む ([#1183])。投入されなかった焼き付けは面を書き換えていないので、前の
-        // 指紋のまま使い回して正しい
+        // 指紋のまま使い回して正しい。**投入した後で GPU が打ち切った焼き付けは、結末が届いた後の
+        // 最初の描き切りの頭で指紋ごと忘れる** (`forgetShadowBake()`・[#2199])
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+        // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
         let detail = shadowDetailValue
         let (key, holds) = shadowBakeKey(matrix: matrix, detail: detail, casting: casting)
         if let key, key == lastShadowBakeKey, let shadowMap, shadowMap.detail == detail {
@@ -5097,6 +5116,16 @@ public final class Canvas {
     /// 前のフレームで焼いた入力の指紋。焼かなかったフレームでは触らない — 焼いた面は
     /// 誰にも書き換えられないので、影を切って戻したフレームも同じ指紋ならそのまま読める。
     private var lastShadowBakeKey: UInt64?
+
+    /// 焼いた面が何を持つかの記帳 (``lastShadowBakeKey``・``shadowMapHolds``) を忘れる。焼いた投入を
+    /// GPU が打ち切ったとき、結末が届いた後で土台が呼ぶ ([#2199])。次の焼き付けは使い回さず、足さず、
+    /// 全部から焼く。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private func forgetShadowBake() {
+        lastShadowBakeKey = nil
+        shadowMapHolds = nil
+    }
 
     /// 焼き上がりを待つ仕掛けを積む。**焼いた面を画面のパスが読む前に置く。**
     ///

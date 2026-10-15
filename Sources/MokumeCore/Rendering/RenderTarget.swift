@@ -389,11 +389,40 @@ import MokumeDiagnostics
     /// いたら、書いた画素は面へ届いていない。投げる読む口の判定がそれを見つけたとき、写しをまだ
     /// 読み戻しで上書きしていなければ、書き込み待ちを立て直す (``judgeDroppedWork()``・[#1932])。
     ///
+    /// **その投入が打ち切られたら、結末が届いた後で土台が同じ立て直しをする** (``rewritePixels(droppedAt:)``・
+    /// [#2199])。投げる読む口を呼ばない経路 (窓・`save()`・録り) でも、書いた画素を次の描き切りが戻す。
+    /// 呼び手 (描き切り・追い付き・出力段の書き戻し) はすべてここを通るので、預けるのもここ 1 か所である。
+    ///
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     func markPixelsWrittenBack(by submission: UInt64) {
         guard let pixelMirror else { return }
         pixelMirror.hasPendingWrites = false
         pixelMirror.writtenBackBy = submission
+        gpu.revokeIfDropped(submission) { [weak self] in self?.rewritePixels(droppedAt: submission) }
+    }
+
+    /// 書いた画素を書き戻した投入 `submission` が打ち切られた。**写しが書いた画素の唯一の写しなら、
+    /// 書き込み待ちを立て直す** — 次にこの面へ触る投入が書き戻し直す。立て直したら `true`。
+    ///
+    /// **打ち切りから立て直す口はここ 1 つにする** ([#2199])。投げる読む口の判定 (``judgeDroppedWork()``・
+    /// [#1932]) と、結末が届いた後の土台の取り消し (``RenderDevice/revokeDroppedDeliveries()``) の両方が
+    /// 呼ぶ。先に立て直した側の後では、書き込み待ちが立っている (か、書き戻し直して番号が進んでいる)
+    /// ので、もう片方は何もしない — 2 度書き戻さない。
+    ///
+    /// 立て直さないのは、書き戻した番号がもう `submission` でない (書き戻し直した・捨てた) とき、書き込み
+    /// 待ちが既に立っている (CPU の側が最新) とき、写しを読み戻しで上書きした後 (書いた画素は写しにも
+    /// 残っていない) である。
+    ///
+    /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    @discardableResult
+    func rewritePixels(droppedAt submission: UInt64) -> Bool {
+        guard let pixelMirror, pixelMirror.writtenBackBy == submission,
+            pixelMirror.holdsWrittenBackPixels
+        else { return false }
+        pixelMirror.hasPendingWrites = true
+        return true
     }
 
     /// CPU が写しへ書いたまま戻していないものを、**戻さずに捨てる** ([#1678])。書いていなければ
@@ -627,13 +656,10 @@ import MokumeDiagnostics
             heldDrop = (wrote.reason, lastWriteSubmission)
         }
         if let pixelMirror, !pixelMirror.hasPendingWrites {
-            if pixelMirror.holdsWrittenBackPixels,
-                drops.contains(where: { $0.submission == pixelMirror.writtenBackBy })
-            {
-                pixelMirror.hasPendingWrites = true
-            } else {
-                pixelMirror.syncedThrough = 0
-            }
+            let writeBack = pixelMirror.writtenBackBy
+            let rewrote =
+                drops.contains { $0.submission == writeBack } && rewritePixels(droppedAt: writeBack)
+            if !rewrote { pixelMirror.syncedThrough = 0 }
         }
         throw .workDropped(reason: first.reason)
     }
