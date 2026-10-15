@@ -17,6 +17,12 @@ release でだけ出る赤は merge の前には止めない (merge queue から
   4. `issues: write` を持つのは起票のジョブ (release-check-report) だけで、release-check が
      落ちた (`failure`) か切れた (`cancelled`) ときだけ走る。`if:` は状態の関数を持つ —
      無ければ暗黙の success() で、赤の回に skipped になる
+  5. 版を出す run は release ジョブの concurrency で 1 本ずつ並ぶ (#2666)。日次と release:now が
+     重なっても、待った側が先の版のタグを見てから版を決める (checkout と next-version が
+     同じジョブの中にある)。走っている版を止めない (`cancel-in-progress: false`)。
+     **ワークフロー単位にも release-check にも掛けない** — 保留は group に 1 本で新しい保留が
+     古い保留を cancel するので、全 PR の closed で起きる run が待っている release:now を
+     cancel する。共有の group に入るのは release-check が緑の run だけ (それ以外は run ごと)
 
 ワークフローの読み手は render_workflow_test.py のものを使う。実行は make hooks-test。
 """
@@ -34,7 +40,7 @@ RELEASE = REPO / ".github" / "workflows" / "release.yml"
 class ReleaseWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        _, cls.jobs = workflow.split(RELEASE.read_text(encoding="utf-8"))
+        cls.top, cls.jobs = workflow.split(RELEASE.read_text(encoding="utf-8"))
 
     def test_release_は_release_check_の緑を待ち_自分の_if_を持たない(self):
         release = self.jobs["release"]
@@ -78,6 +84,31 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("needs.release-check.result == 'failure'", cond)
         self.assertIn("needs.release-check.result == 'cancelled'", cond)
         self.assertIn("scripts/report-release-check.sh", report)
+
+
+    def test_版を出すジョブだけが_concurrency_で並び_走っている版を止めない(self):
+        release = self.jobs["release"]
+        self.assertRegex(release, r"(?m)^    concurrency:\s*$")
+        self.assertRegex(release, r"(?m)^      cancel-in-progress: false\s*$")
+        # 版を決めるのも、タグを取ってくる checkout も、並んだ後 (同じジョブの中) にある
+        self.assertIn("python3 scripts/release.py next-version", release)
+        self.assertIn("fetch-depth: 0", release)
+
+    def test_共有の_group_に入るのは_release_check_が緑の_run_だけ(self):
+        # 緑でない run (全 PR の closed で起きる run を含む) が共有の group に入ると、待っている
+        # release:now の保留を置き換えて cancel する。skipped のジョブが group に入るかに頼らない
+        m = re.search(r"(?m)^      group:\s*(.+?)\s*$", self.jobs["release"])
+        self.assertIsNotNone(m)
+        self.assertEqual(
+            m.group(1),
+            "${{ needs.release-check.result == 'success' && 'release-tag'"
+            " || format('release-tag-unused-{0}', github.run_id) }}",
+        )
+
+    def test_ワークフロー単位にも_release_check_にも_concurrency_を掛けない(self):
+        self.assertNotIn("concurrency", self.top)
+        holders = {name for name, body in self.jobs.items() if re.search(r"(?m)^    concurrency:", body)}
+        self.assertEqual(holders, {"release"})
 
 
 if __name__ == "__main__":

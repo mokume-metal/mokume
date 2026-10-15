@@ -140,9 +140,29 @@ jobs:
           log=$(find_one record test-log.txt)
           bash scripts/report-release-check.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}"
 
+  # **版を出す run を 1 本ずつ並べる** (#2666)。日次と release:now の run が重なると、どちらも
+  # 同じ版を決め、後から push した側が既にあるタグで赤くなる。release-check (約 15 分) が
+  # 前にあるので、重なる窓は広い。待った側はこのジョブの checkout で先の版のタグを見てから
+  # 版を決める — 新しい木なら次の版を出し、古い木なら断片が増えていないので見送る。
+  #
+  # **掛けるのはこのジョブだけで、ワークフローにも release-check にも掛けない。** group に
+  # 置ける保留は 1 本で、新しい保留が古い保留を cancel する (queue: single)。この workflow は
+  # 全 PR の closed で起きるので、ワークフロー単位にすると、普通の PR の merge が待っている
+  # release:now の run を cancel する。
+  #
+  # **共有の group に入るのは release-check が緑の run だけ**にする。skipped のジョブが group に
+  # 入るかは公式に書かれていないので、それに頼らず、緑でない run は run ごとの group へ逃がす
+  # (式は needs を引けるので、needs が済んでから評価される)。
+  #
+  # 代償: 版を出す run が 3 本重なると、2 本目の保留は 3 本目に置き換えられて cancel (灰色) に
+  # なる。3 本目が古い木なら、2 本目の中身は次の版を待つ。queue: max (保留を並べる) は固定して
+  # いる actionlint が知らない (rhysd/actionlint#657)。形は scripts/tests/release_workflow_test.py
   release:
     needs: release-check
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ needs.release-check.result == 'success' && 'release-tag' || format('release-tag-unused-{0}', github.run_id) }}
+      cancel-in-progress: false
     permissions:
       contents: write # タグを push し、Release を作る
       pull-requests: read # 「この版の絵」に描画の PR の本文とラベルを読む (#2109)
