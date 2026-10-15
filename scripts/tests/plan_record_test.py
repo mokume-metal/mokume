@@ -75,6 +75,9 @@ fi
 # FAKE_GH_GRAPHQL_<番号> があればそちらを、無ければ FAKE_GH_GRAPHQL を返す (どちらも無ければ
 # 引けなかったことにする)
 if [ "$kind" = api ] && [ "${2:-}" = graphql ]; then
+  # 跡見の途中でフックが timeout に殺されたことを演じる (#2660)。プロセスグループごと殺すので、
+  # 呼ぶ側は新しいセッションでフックを起こすこと
+  [ -z "${FAKE_GH_GRAPHQL_KILL:-}" ] || kill -KILL 0
   number=
   for arg in "$@"; do
     case "$arg" in number=*) number=${arg#number=} ;; esac
@@ -1594,6 +1597,33 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
                 "#123 に別のセッションのプランが 1 件載っている (https://example.invalid/c/1)",
                 result.stderr,
             )
+
+    def test_capture_keeps_its_targets_when_killed_while_looking_for_marks(self):
+        """跡見の途中で timeout に殺されても、指示した先は .meta に残る (#2660)。
+
+        跡見はページを遡ることがあり、フックの中で最も遅い区間になりうる。先に書いて
+        おかないと、guard が引き直す解決 (PR) だけになり、Issue への投稿を見落とす (#631)
+        """
+        payload = {
+            "tool_name": "ExitPlanMode",
+            "cwd": str(self.repo),
+            "session_id": "abcd1234-ef56-7890",
+            "tool_input": {"plan": "計画。\n" + RECHECK},
+        }
+        done = subprocess.run(
+            ["/bin/bash", str(SCRIPT), "capture"],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            cwd=str(self.repo),
+            env=self.env(FAKE_GH_ISSUE="123", FAKE_GH_GRAPHQL_KILL="1"),
+            timeout=30,
+            start_new_session=True,  # 偽 gh がグループごと殺す — 検査の走らせ手を巻き込まない
+        )
+        self.assertLess(done.returncode, 0, "跡見の途中で殺されていない")
+        metas = self.metas()
+        self.assertEqual(len(metas), 1)
+        self.assertIn("target=issue 123", metas[0].read_text(encoding="utf-8"))
 
     def test_capture_does_not_point_at_its_own_plan_pushed_out(self):
         """全件から拾い直しても、自分のセッションのプランは数えない。"""

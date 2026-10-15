@@ -1066,6 +1066,13 @@ capture() {
   target=$(printf '%s' "$targets" | sed -n '1p')
   count=$(printf '%s' "$targets" | grep -c . || true)
 
+  # 指示した先を書き戻す。guard は解決を引き直すが、規約どおりに進めると解決は
+  # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
+  # 確定していないときは候補を全部残す (#646)。
+  # **跡見 (concurrent_marks) より前に書く** (#2660)。跡見はページを遡ることがあり、この
+  # フックの中で最も遅い区間になりうる — そこで timeout に殺されても、指示した先は残る
+  write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
+
   # 他のセッションが同じ Issue に既に着手していないかを見る (#642)。着手直後は PR が
   # まだ無いので投稿先は Issue になり、二重着手が問題になるのもその時点である。
   # **候補が複数なら Issue の候補を全部見る** (#1216) — 1 つのプランが複数の Issue を
@@ -1082,11 +1089,6 @@ capture() {
   done <<< "$targets"
   marks=${marks%
 }
-
-  # 指示した先を書き戻す。guard は解決を引き直すが、規約どおりに進めると解決は
-  # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
-  # 確定していないときは候補を全部残す (#646)
-  write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
 
   if [ -n "$EXPLICIT_AGENT" ] && posted_anywhere "$id" "$targets"; then
     rm -f "$file" "$dir/$id.meta"
