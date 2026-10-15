@@ -89,6 +89,12 @@ case "$*" in
   # PR には無い) は、両方が同じものを返す偽 gh では表現できない。
   # ${VAR-...} はコロン無し — 空文字を渡せば「そちらには無い」を明示できる
   *comments*)
+    # FAKE_GH_COMMENTS_JSON は view --json comments の応答の JSON。こちらは -q の式を
+    # 実物の jq で掛ける (式が作者を見るときの検査用 — #2660)
+    if [ -n "${FAKE_GH_COMMENTS_JSON:-}" ]; then
+      printf '%s' "$FAKE_GH_COMMENTS_JSON" | jq -r "$query"
+      exit 0
+    fi
     case "$kind" in
       pr)    printf '%s\\n' "${FAKE_GH_PR_COMMENTS-${FAKE_GH_COMMENTS:-}}" ;;
       issue) printf '%s\\n' "${FAKE_GH_ISSUE_COMMENTS-${FAKE_GH_COMMENTS:-}}" ;;
@@ -938,6 +944,28 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertEqual(len(self.records()), 1)
+
+    def test_guard_is_not_fooled_by_a_bot_comment_quoting_the_record_id(self):
+        """bot の追記の抜粋に記録 ID が混じっても、投稿済みと読まない (#2660)。
+
+        読めば記録を消し、プランは投稿されないまま催促も止まる。人の投稿は従来どおり数える
+        (gh の view は作者の型を返さないので、login だけで照らす — scripts/bot-hand.sh)
+        """
+        self.capture("計画。\n", FAKE_GH_PR="42")
+        marker = f"<!-- mokume-plan-record: {self.record_id()} -->"
+        bot = {"author": {"login": "github-actions"}, "body": f"```\nAssertionError: {marker}\n```"}
+        result = self.guard(
+            FAKE_GH_PR="42", FAKE_GH_COMMENTS_JSON=json.dumps({"comments": [bot]})
+        )
+        self.assertEqual(result.returncode, 2, "bot の抜粋で投稿済みと読んでいる")
+        self.assertEqual(len(self.records()), 1)
+
+        human = {"author": {"login": "someone"}, "body": marker + "\n計画。"}
+        result = self.guard(
+            FAKE_GH_PR="42", FAKE_GH_COMMENTS_JSON=json.dumps({"comments": [bot, human]})
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), [])
 
     def test_guard_clears_a_record_posted_to_a_merged_pull_request(self):
         self.capture("計画。\n", FAKE_GH_PR_JSON=MERGED_PR)

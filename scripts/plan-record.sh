@@ -357,7 +357,10 @@ posted() { # $1=種別 $2=番号 $3=記録 ID — GitHub 側にこの記録が�
   local bodies
   # 受けてから読む (#1900)。pipefail の下で gh を grep -q に流すと、目印が前の方のコメントに
   # あるとき grep が先に抜け、gh が SIGPIPE で止まって「未投稿」と返っていた
-  bodies=$(gh "$kind" view "$number" -R "$REPO" --json comments -q '.comments[].body' 2>/dev/null) || return 1
+  # **bot の手のコメントは読まない** (#2660 — 前提と判定は scripts/bot-hand.sh)。bot の追記は
+  # 検査の出力の抜粋を載せるので、記録 ID の綴りが混じると「投稿済み」と読んで記録を消す
+  bodies=$(gh "$kind" view "$number" -R "$REPO" --json comments \
+    -q "$BOT_HAND_JQ"' .comments[] | select(bot_hand | not) | .body' 2>/dev/null) || return 1
   grep -qF "$MARKER: $id" <<<"$bodies"
 }
 
