@@ -241,6 +241,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/deltaTime``
 - ``SketchPart/clock``
 - ``Clock``
+- ``Countdown``
 - ``SketchPart/usesFrameHistory``
 - ``Upscale``
 

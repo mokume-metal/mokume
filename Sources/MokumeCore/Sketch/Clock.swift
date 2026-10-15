@@ -168,6 +168,14 @@ final class FrameTiming {
     private(set) var timeline: Double = 0
     /// 前のフレームからの経過 (秒)。``step`` の単精度の写しで、利用者に見せる値。
     var deltaTime: Float { step.deltaTime }
+    /// これまでの枚の経過 (``step``) を足し込んだもの (秒)。``Countdown`` が減る元 ([#2602])。
+    ///
+    /// 経過が 0 の枚 (``pauseTime()`` の間・``jumpTime(_:)`` の枚・時刻を指定した観測の枚) では増えず、
+    /// 枚が来ない間 (`noLoop()`・外からの停止) も増えない。倍精度で足すので、1/60 を足し続けた丸めは
+    /// 単精度の秒 (``Countdown`` が比べる単位) に届かない。
+    ///
+    /// [#2602]: https://github.com/mokume-metal/mokume/issues/2602
+    private(set) var elapsed: Double = 0
 
     /// 1 フレームぶんとして渡す経過の上限 (秒)。**実時間で動かすときだけ効く。**
     private let maximumDeltaTime: Double
@@ -303,6 +311,8 @@ final class FrameTiming {
             time = requestedTime
             step = .seconds(0)
         }
+        // **見せる経過そのものを足す** — 止めた枚・飛んだ枚・観測の枚は 0 で、積み上げは動かない
+        elapsed += step.seconds
     }
 
     /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、

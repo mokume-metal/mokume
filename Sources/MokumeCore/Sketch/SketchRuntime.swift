@@ -350,6 +350,8 @@ public final class SketchRuntime {
     public var deltaTime: Float { timing.deltaTime }
     /// 時刻の出どころ。意味の説明は ``SketchPart/clock`` が正本。
     var clock: Clock { timing.clock }
+    /// 描いたフレームの経過を足し込んだもの (秒・``Countdown`` が読む)。
+    var elapsed: Double { timing.elapsed }
 
     /// 画面へ出しながら回しているか。**外の時間で動くもの (音の再生) は、これが真なら実際に鳴らす。**
     ///
