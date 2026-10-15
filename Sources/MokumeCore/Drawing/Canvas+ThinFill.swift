@@ -391,7 +391,7 @@ extension Canvas {
         /// `∫₀^s √(1 − (v / half)²) dv`
         private func unitArea(_ s: Float) -> Float {
             let r = min(max(s / half, -1), 1)
-            return half / 2 * (r * max(0, 1 - r * r).squareRoot() + asin(r))
+            return half / 2 * (r * max(0, 1 - r * r).squareRoot() + RuntimeMath.asin(r))
         }
 
         /// 列の位置を一様に動かしてならした、**列ごとの「列の中でいちばん太い弦 × 列と形が重なる
@@ -414,7 +414,7 @@ extension Canvas {
             // v f(v) の原始関数: −peak (x² / 3) (1 − v² / x²)^(3/2)
             func moment(_ v: Float) -> Float {
                 let r = v / x
-                return -peak * x * x / 3 * pow(max(0, 1 - r * r), 1.5)
+                return -peak * x * x / 3 * RuntimeMath.pow(max(0, 1 - r * r), 1.5)
             }
             let side = integral(0, knee) + x * integral(knee, x) - (moment(x) - moment(knee))
             return middle + 2 * side

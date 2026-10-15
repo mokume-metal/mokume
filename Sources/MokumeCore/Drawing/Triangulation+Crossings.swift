@@ -814,7 +814,7 @@ nonisolated extension Triangulation {
             var angle = [Float](repeating: 0, count: halves)
             for half in 0..<halves {
                 let vector = direction(half)
-                angle[half] = atan2(vector.y, vector.x)
+                angle[half] = RuntimeMath.atan2(vector.y, vector.x)
             }
             var slot = [Int](repeating: 0, count: halves)
             for node in leaving.keys {
@@ -1059,7 +1059,7 @@ nonisolated extension Triangulation {
                     where candidate == start || !used[candidate] {
                         let out = nodes[kept[candidate].to] - here
                         // `out` から `back` へ反時計回りに測った角 = `back` から `out` へ時計回りの角
-                        var angle = atan2(Triangulation.cross(out, back), dot(out, back))
+                        var angle = RuntimeMath.atan2(Triangulation.cross(out, back), dot(out, back))
                         if angle <= 0 { angle += 2 * .pi }
                         if best.map({ angle < $0.angle }) ?? true { best = (candidate, angle) }
                     }

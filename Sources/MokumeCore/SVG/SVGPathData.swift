@@ -260,8 +260,8 @@ extension SVGFile {
         var ry = Double(abs(radiusY))
         guard rx > 0, ry > 0, rx.isFinite, ry.isFinite else { return [.line(end)] }
         let phi = Double(rotation) * .pi / 180
-        let cosPhi = cos(phi)
-        let sinPhi = sin(phi)
+        let cosPhi = RuntimeMath.cos(phi)
+        let sinPhi = RuntimeMath.sin(phi)
         let x0 = Double(start.x), y0 = Double(start.y)
         let x1 = Double(end.x), y1 = Double(end.y)
         let dx = (x0 - x1) / 2
@@ -284,14 +284,14 @@ extension SVGFile {
 
         let ux = (px - cxPrime) / rx, uy = (py - cyPrime) / ry
         let vx = (-px - cxPrime) / rx, vy = (-py - cyPrime) / ry
-        let startAngle = atan2(uy, ux)
-        var sweepAngle = atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+        let startAngle = RuntimeMath.atan2(uy, ux)
+        var sweepAngle = RuntimeMath.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
         if !sweep && sweepAngle > 0 { sweepAngle -= 2 * .pi }
         if sweep && sweepAngle < 0 { sweepAngle += 2 * .pi }
 
         let pieces = max(1, Int((abs(sweepAngle) / (.pi / 2)).rounded(.up)))
         let step = sweepAngle / Double(pieces)
-        let handle = 4.0 / 3.0 * tan(step / 4)
+        let handle = 4.0 / 3.0 * RuntimeMath.tan(step / 4)
         func place(_ x: Double, _ y: Double) -> SIMD2<Float> {
             SIMD2(
                 Float(cx + rx * cosPhi * x - ry * sinPhi * y),
@@ -302,9 +302,9 @@ extension SVGFile {
         for index in 0..<pieces {
             let a1 = startAngle + Double(index) * step
             let a2 = a1 + step
-            let first = place(cos(a1) - handle * sin(a1), sin(a1) + handle * cos(a1))
-            let second = place(cos(a2) + handle * sin(a2), sin(a2) - handle * cos(a2))
-            let target = index == pieces - 1 ? end : place(cos(a2), sin(a2))
+            let first = place(RuntimeMath.cos(a1) - handle * RuntimeMath.sin(a1), RuntimeMath.sin(a1) + handle * RuntimeMath.cos(a1))
+            let second = place(RuntimeMath.cos(a2) + handle * RuntimeMath.sin(a2), RuntimeMath.sin(a2) - handle * RuntimeMath.cos(a2))
+            let target = index == pieces - 1 ? end : place(RuntimeMath.cos(a2), RuntimeMath.sin(a2))
             segments.append(.cubic(first, second, target))
         }
         return segments

@@ -367,8 +367,8 @@ extension SVGFile {
         /// 度で渡す回転。
         static func rotate(degrees: Float) -> Affine {
             let radians = Double(degrees) * .pi / 180
-            let cosine = Float(cos(radians))
-            let sine = Float(sin(radians))
+            let cosine = Float(RuntimeMath.cos(radians))
+            let sine = Float(RuntimeMath.sin(radians))
             return Affine(a: cosine, b: sine, c: -sine, d: cosine, e: 0, f: 0)
         }
 
@@ -433,10 +433,10 @@ extension SVGFile {
                     * .translate(-numbers[1], -numbers[2])
             case ("skewx", 1):
                 step = Affine(
-                    a: 1, b: 0, c: Float(tan(Double(numbers[0]) * .pi / 180)), d: 1, e: 0, f: 0)
+                    a: 1, b: 0, c: Float(RuntimeMath.tan(Double(numbers[0]) * .pi / 180)), d: 1, e: 0, f: 0)
             case ("skewy", 1):
                 step = Affine(
-                    a: 1, b: Float(tan(Double(numbers[0]) * .pi / 180)), c: 0, d: 1, e: 0, f: 0)
+                    a: 1, b: Float(RuntimeMath.tan(Double(numbers[0]) * .pi / 180)), c: 0, d: 1, e: 0, f: 0)
             default:
                 return nil
             }

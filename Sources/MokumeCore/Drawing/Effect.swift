@@ -146,7 +146,7 @@ public enum Effect {
     /// [#1545]: https://github.com/mokume-metal/mokume/issues/1545
     static func bloomFloor(drawnPerOutput scale: Float) -> Int {
         // 細かさ 1 では log2(4) = 2 ちょうどで、これまでの下限と変わらない
-        max(0, Int(log2(4 * scale).rounded()))
+        max(0, Int(RuntimeMath.log2(4 * scale).rounded()))
     }
 
     static func reductionLevel(for radius: Float) -> Int {

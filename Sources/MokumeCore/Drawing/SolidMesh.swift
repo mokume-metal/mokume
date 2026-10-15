@@ -156,7 +156,7 @@ nonisolated enum SolidShape: Hashable {
         case .cylinder(_, _, let detail):
             extent = max(scale.x, scale.y / 2)
             // 上下の蓋どうしは高さ、同じ蓋の上では隣り合う周の点 (と中心から周まで) の間隔
-            shortest = min(scale.y, scale.x * min(1, 2 * sin(.pi / Float(detail))))
+            shortest = min(scale.y, scale.x * min(1, 2 * RuntimeMath.sin(.pi / Float(detail))))
         default:
             return nil
         }
@@ -269,9 +269,9 @@ nonisolated enum SolidMeshBuilder {
             let phi = Float(ring) / Float(rings) * .pi
             let theta = Float(step) / Float(around) * 2 * .pi
             let normal = SIMD3<Float>(
-                sin(phi) * cos(theta),
-                cos(phi),
-                sin(phi) * sin(theta))
+                RuntimeMath.sin(phi) * RuntimeMath.cos(theta),
+                RuntimeMath.cos(phi),
+                RuntimeMath.sin(phi) * RuntimeMath.sin(theta))
             // 貼る絵は経度と緯度に巻く。`ring` が 0 のところは +y (縦軸が下向きなので
             // 下の極) なので、絵の上端 (v = 0) が上の極に来るよう裏返す。**継ぎ目は
             // 番号から作るので、一周の最後は 0 ではなく 1 で閉じる**
@@ -327,9 +327,9 @@ nonisolated enum SolidMeshBuilder {
             let theta = Float(step) / Float(around) * 2 * .pi
             // 球の上の向き。**球と同じ字面で作る** — 位置と向きだけが分かれる
             let direction = SIMD3<Float>(
-                sin(phi) * cos(theta),
-                cos(phi),
-                sin(phi) * sin(theta))
+                RuntimeMath.sin(phi) * RuntimeMath.cos(theta),
+                RuntimeMath.cos(phi),
+                RuntimeMath.sin(phi) * RuntimeMath.sin(theta))
             let gradient = SIMD3<Double>(direction) * cofactor
             // **2 つ以上の半径が 0 だと余因子まで 0 になる** (`ellipsoid(0, 0, 40)`)。
             // そのときは向きへ倒す — 潰れた形に法線は定まらないが、数でない値は出さない
@@ -366,8 +366,8 @@ nonisolated enum SolidMeshBuilder {
         for step in 0..<detail {
             let t0 = Float(step) / Float(detail) * 2 * .pi
             let t1 = Float(step + 1) / Float(detail) * 2 * .pi
-            let n0 = SIMD3<Float>(cos(t0), 0, sin(t0))
-            let n1 = SIMD3<Float>(cos(t1), 0, sin(t1))
+            let n0 = SIMD3<Float>(RuntimeMath.cos(t0), 0, RuntimeMath.sin(t0))
+            let n1 = SIMD3<Float>(RuntimeMath.cos(t1), 0, RuntimeMath.sin(t1))
             let a = n0 * radius + SIMD3(0, -half, 0)
             let b = n0 * radius + SIMD3(0, half, 0)
             let c = n1 * radius + SIMD3(0, half, 0)
@@ -404,8 +404,8 @@ nonisolated enum SolidMeshBuilder {
         for step in 0..<detail {
             let t0 = Float(step) / Float(detail) * 2 * .pi
             let t1 = Float(step + 1) / Float(detail) * 2 * .pi
-            let r0 = SIMD3<Float>(cos(t0), 0, sin(t0))
-            let r1 = SIMD3<Float>(cos(t1), 0, sin(t1))
+            let r0 = SIMD3<Float>(RuntimeMath.cos(t0), 0, RuntimeMath.sin(t0))
+            let r1 = SIMD3<Float>(RuntimeMath.cos(t1), 0, RuntimeMath.sin(t1))
             let a = r0 * radius + SIMD3(0, half, 0)
             let b = r1 * radius + SIMD3(0, half, 0)
             // 斜面の向きは、その三角形そのものから求める (巻き方と同じ順で読む)
@@ -430,8 +430,8 @@ nonisolated enum SolidMeshBuilder {
         func point(ring: Int, tube: Int) -> SolidMesh.Point {
             let u = Float(ring) / Float(detail) * 2 * .pi
             let v = Float(tube) / Float(detail) * 2 * .pi
-            let ringDirection = SIMD3<Float>(cos(u), sin(u), 0)
-            let normal = ringDirection * cos(v) + SIMD3<Float>(0, 0, sin(v))
+            let ringDirection = SIMD3<Float>(RuntimeMath.cos(u), RuntimeMath.sin(u), 0)
+            let normal = ringDirection * RuntimeMath.cos(v) + SIMD3<Float>(0, 0, RuntimeMath.sin(v))
             let position = ringDirection * ringRadius + normal * tubeRadius
             // 貼る絵は 2 つの一周に巻く (横が輪の一周・縦が管の一周)。球と同じく
             // 番号から作るので、どちらの継ぎ目も 1 で閉じる
@@ -463,7 +463,7 @@ nonisolated enum SolidMeshBuilder {
         firstAngle: Float, secondAngle: Float
     ) -> [SolidMesh.Point] {
         func rim(_ angle: Float) -> SIMD2<Float> {
-            SIMD2(0.5 + 0.5 * cos(angle), 0.5 + 0.5 * sin(angle))
+            SIMD2(0.5 + 0.5 * RuntimeMath.cos(angle), 0.5 + 0.5 * RuntimeMath.sin(angle))
         }
         return [
             SolidMesh.Point(position: center, normal: normal, uv: SIMD2(0.5, 0.5)),
@@ -537,7 +537,7 @@ nonisolated struct SolidEdges {
             }
         }
 
-        let threshold = sin(Self.coplanarAngle)
+        let threshold = RuntimeMath.sin(Self.coplanarAngle)
         edges = order.compactMap { key in
             let normals = owners[key]!
             // 2 枚で挟まれ、同じ平面に載っているときだけ線にしない。3 枚以上が

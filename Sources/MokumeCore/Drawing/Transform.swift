@@ -124,12 +124,12 @@ public struct Transform: Equatable, Sendable {
 
     /// 斜めに歪める (横方向) を後から重ねる。
     public mutating func shearX(by radians: Float) {
-        matrix = matrix * Self.shearing(x: tan(radians), y: 0)
+        matrix = matrix * Self.shearing(x: RuntimeMath.tan(radians), y: 0)
     }
 
     /// 斜めに歪める (縦方向) を後から重ねる。
     public mutating func shearY(by radians: Float) {
-        matrix = matrix * Self.shearing(x: 0, y: tan(radians))
+        matrix = matrix * Self.shearing(x: 0, y: RuntimeMath.tan(radians))
     }
 
     /// 与えた変換を後から重ねる。
@@ -191,8 +191,8 @@ public struct Transform: Equatable, Sendable {
     }
 
     static func rotationZ(_ radians: Float) -> simd_float4x4 {
-        let c = cos(radians)
-        let s = sin(radians)
+        let c = RuntimeMath.cos(radians)
+        let s = RuntimeMath.sin(radians)
         return simd_float4x4(
             SIMD4<Float>(c, s, 0, 0),
             SIMD4<Float>(-s, c, 0, 0),
@@ -201,8 +201,8 @@ public struct Transform: Equatable, Sendable {
     }
 
     static func rotationX(_ radians: Float) -> simd_float4x4 {
-        let c = cos(radians)
-        let s = sin(radians)
+        let c = RuntimeMath.cos(radians)
+        let s = RuntimeMath.sin(radians)
         return simd_float4x4(
             SIMD4<Float>(1, 0, 0, 0),
             SIMD4<Float>(0, c, s, 0),
@@ -211,8 +211,8 @@ public struct Transform: Equatable, Sendable {
     }
 
     static func rotationY(_ radians: Float) -> simd_float4x4 {
-        let c = cos(radians)
-        let s = sin(radians)
+        let c = RuntimeMath.cos(radians)
+        let s = RuntimeMath.sin(radians)
         return simd_float4x4(
             SIMD4<Float>(c, 0, -s, 0),
             SIMD4<Float>(0, 1, 0, 0),
