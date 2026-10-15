@@ -68,8 +68,15 @@ class PublishedReferenceTest(unittest.TestCase):
         self.out = self.root / "out"
         self.build_output()
 
-    def build_output(self, paths=None, title="Mod", bundle="mokume", html=True, middle="mod/"):
-        """出来上がった面の最小の形。壊すときは引数で 1 か所だけ動かす。"""
+    def build_output(
+        self, paths=None, title="Mod", bundle="mokume", html=True, middle="mod/", titles=None
+    ):
+        """出来上がった面の最小の形。壊すときは引数で 1 か所だけ動かす。
+
+        `titles` は経路から索引の題への対応。本物の索引は各ノードに題 (`func fill(LinearRGBA,
+        some ScalarConvertible)`) を持ち、引数の型で区別した行はそれと突き合わせる (#2672)。
+        """
+        titles = titles or {}
         if paths is None:
             paths = [
                 "/documentation/mod",
@@ -88,7 +95,10 @@ class PublishedReferenceTest(unittest.TestCase):
             json.dumps(
                 {
                     "interfaceLanguages": {
-                        "swift": [{"path": p, "children": []} for p in paths]
+                        "swift": [
+                            {"path": p, "children": [], **({"title": titles[p]} if p in titles else {})}
+                            for p in paths
+                        ]
                     }
                 }
             ),
@@ -198,6 +208,136 @@ class PublishedReferenceTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("``Foo/draw(_:_:)``", result.stderr)
+
+    def add_rows(self, *rows):
+        """入口の目次の末尾に行を足す。足した行だけが、既定の形との違いになる。"""
+        landing = self.catalog / "Mod.md"
+        text = landing.read_text(encoding="utf-8")
+        landing.write_text(text + "".join(f"- ``{row}``\n" for row in rows), encoding="utf-8")
+
+    DEFAULT_PATHS = [
+        "/documentation/mod",
+        "/documentation/mod/foo",
+        "/documentation/mod/bar",
+        "/documentation/mod/foo/draw(_:_:)",
+        "/documentation/mod/foo/fill(_:)-1a2b3",
+        "/documentation/mokume/guide",
+    ]
+
+    # `fill(_:_:)` の 2 本の重なり。公開の面と同じく、経路はハッシュの形、題に引数の型が載る
+    FILL_OVERLOADS = {
+        "/documentation/mod/foo/fill(_:_:)-9z8y7": "func fill(LinearRGBA, some ScalarConvertible)",
+        "/documentation/mod/foo/fill(_:_:)-4k5m6": "func fill(some ScalarConvertible, some ScalarConvertible)",
+    }
+
+    def test_引数の型で区別した行は型の合う重なりが出ていれば通る(self):
+        # 目次は型の形 (`-(LinearRGBA,_)`)、公開の経路はハッシュの形 (`-9z8y7`) で書かれる。
+        # **拾えないと黙って期待から落ちる** (#2672) — 数が増えることまで見る
+        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)", "Foo/fill(_:_:)-(ScalarConvertible,_)")
+        self.build_output(
+            paths=self.DEFAULT_PATHS + list(self.FILL_OVERLOADS), titles=self.FILL_OVERLOADS
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("入口に並べた記号: 6", result.stdout)
+
+    def test_引数の型で区別した行は同じ基底の頁が出ていなければ赤い(self):
+        # 基底の違う `fill(_:)-1a2b3` は居る。名前の頭が同じだけの頁で通さない
+        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("``Foo/fill(_:_:)-(LinearRGBA,_)``", result.stderr)
+        self.assertIn("/documentation/mod/foo/fill(_:_:)", result.stderr)
+
+    def test_重なりの片方が消えれば型の合う行が赤い(self):
+        # 基底の下に頁が 1 つでも居れば通す判定だと、残ったもう片方の重なりで緑になる
+        survivor = "/documentation/mod/foo/fill(_:_:)-4k5m6"
+        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)", "Foo/fill(_:_:)-(ScalarConvertible,_)")
+        self.build_output(paths=self.DEFAULT_PATHS + [survivor], titles=self.FILL_OVERLOADS)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("``Foo/fill(_:_:)-(LinearRGBA,_)``", result.stderr)
+        self.assertNotIn("``Foo/fill(_:_:)-(ScalarConvertible,_)``", result.stderr)
+
+    def test_型の形の行が重なりを_1_つに決めなければ赤い(self):
+        # `_` は何にでも当たる。2 本に当たる行は、どちらの頁を並べたのかを決めていない
+        self.add_rows("Foo/fill(_:_:)-(_,_)")
+        self.build_output(
+            paths=self.DEFAULT_PATHS + list(self.FILL_OVERLOADS), titles=self.FILL_OVERLOADS
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("``Foo/fill(_:_:)-(_,_)``", result.stderr)
+        self.assertIn("2 本", result.stderr)
+
+    def test_題の綴りの差は畳んで突き合わせる(self):
+        # 題は引数の名前 (`with:`)・総称の節 (`<T>`)・`some` / `any`・投げる節や返り値を持つ。
+        # 目次の型の形はどれも書かないので、畳まないと出ている頁を「出ていない」と言う
+        page = "/documentation/mod/foo/tint(with:_:)-8p7q6"
+        other = "/documentation/mod/foo/tint(with:_:)-2r3s4"
+        self.add_rows("Foo/tint(with:_:)-(LinearRGBA,Numeric)")
+        self.build_output(
+            paths=self.DEFAULT_PATHS + [page, other],
+            titles={
+                page: "func tint<T>(with: LinearRGBA, any Numeric) throws(RenderFailure) -> T",
+                other: "func tint(with: Float, any Numeric) -> (Int) -> Void",
+            },
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_題を読めない重なりしか無ければ名乗る(self):
+        # 索引の題が無いと、どの重なりかを引けない。「出ていない」と混ぜずに理由を言う
+        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)")
+        self.build_output(paths=self.DEFAULT_PATHS + list(self.FILL_OVERLOADS))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("題から引数の並びを読めない", result.stderr)
+
+    AREA_OVERLOADS = {
+        "/documentation/mod/area(_:)-5k3j2": "func area(Double) -> Double",
+        "/documentation/mod/area(_:)-7h6g5": "func area(Float) -> Float",
+    }
+
+    def test_最上位の引数の型で区別した行は並べ漏れに数えない(self):
+        # 逆向き (#515) も、型の形の行が引いた頁で突き合わせる。経路の文字列のまま
+        # 比べると、並べてある頁を「入口に並んでいない」と取り違える
+        self.add_rows("area(_:)-(Double)", "area(_:)-(Float)")
+        self.build_output(
+            paths=self.DEFAULT_PATHS + list(self.AREA_OVERLOADS), titles=self.AREA_OVERLOADS
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("並べ漏れ 0", result.stdout)
+
+    def test_最上位の型の形の行は同じ基底の別の重なりを並べたことにしない(self):
+        # 基底の前方一致で突き合わせると、1 行で同じ基底の重なりが全部「並べてある」になる
+        self.add_rows("area(_:)-(Double)")
+        self.build_output(
+            paths=self.DEFAULT_PATHS + list(self.AREA_OVERLOADS), titles=self.AREA_OVERLOADS
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("入口に並んでいない最上位: area(_:)-7h6g5", result.stderr)
+
+    def test_拾えない形の行は黙らずに名乗る(self):
+        # 返り値の型で区別した形 (`->Bool`) はいまの読み口が知らない。知らない形を
+        # 期待から黙って落とすと、出ていなくても誰も言わない (#2672)
+        self.add_rows("Foo/draw(_:_:)->Bool")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("``Foo/draw(_:_:)->Bool``", result.stderr)
+        self.assertIn("読めない", result.stderr)
+
+    def test_読めない行は面が組み上がっていなくても一緒に名乗る(self):
+        # 早い段で止まる赤 (metadata.json が無い) に読めない行が隠れると、直した後の
+        # 2 回目で初めて出てくる。1 回の実行で全部名乗る
+        self.add_rows("Foo/draw(_:_:)->Bool")
+        (self.out / "metadata.json").unlink()
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("metadata.json", result.stderr)
+        self.assertIn("``Foo/draw(_:_:)->Bool``", result.stderr)
 
     def test_入口に並べた記号が出ていなければ赤い(self):
         self.build_output(
