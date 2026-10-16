@@ -874,7 +874,9 @@ struct FrameSyncTests {
 
         #expect(!bench.gpu.isIdle, "書き込みから返った時点で GPU が終わっている — 面へ焼く道が待っている")
         #expect(bench.gpu.blockingWaits == drains, "面へ焼く道が投入済みの全完了を待っている")
-        #expect(shared.frameNumber == frame - 1, "1 枚遅れで名乗っていない")
+        // **いま焼いた絵は名乗らない** (待たないので)。名乗りは焼きの結末を見てからなので、結末が
+        // 合図より遅れて届く間は、もう 1 枚遅れうる (#2735)
+        #expect(shared.frameNumber <= frame - 1, "いま焼いた絵まで名乗っている — 焼きを待っている")
 
         // **見終えたら GPU を空にして出る** (#1063。上の出口の検査と同じ理由)
         try bench.gpu.settle()
