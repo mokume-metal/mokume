@@ -234,6 +234,8 @@ final class SharedFrameSurface {
         let submission: UInt64
         let numbers: FrameNumbers
         let pointerLock: Bool
+        /// 焼いた書き込みの通し番号 (``writes``)。名乗るときの枚数になる。
+        let number: Int
     }
 
     /// 焼いたがまだ名乗っていない面。焼いた順。**次の書き込みの先頭で公開する** ([#748])。
@@ -262,8 +264,18 @@ final class SharedFrameSurface {
     private var heldCursor = 0
     /// 読み手が掴んでいるかもしれない面に当たって、焼きを見送った回数 (作ってから通算)。**検査から読む。**
     private(set) var burnsDeferred = 0
-    /// これまでに名乗った枚数。**1 から数える** — 0 は「まだ 1 枚も書いていない」を
-    /// 表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている 1 枚は数えない。**
+    /// 書き込みの通し番号。**1 から数える。** 焼いた面が名乗る枚数はこれで決まる。
+    private var writes = 0
+    /// 最後に名乗った面の枚数 (その面を焼いた書き込みの通し番号)。**1 から数える** — 0 は「まだ
+    /// 1 枚も書いていない」を表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている面は
+    /// 数えない。**
+    ///
+    /// **名乗った回数ではない** ([#2735])。打ち切られた・結末を失った焼きは名乗らず、読み手の掴んで
+    /// いる面に当たった書き込みは焼かないので、その書き込みの番号は飛ぶ。名乗った回数で数えると、
+    /// 面の絵と枚数がずれる (後の書き込みの絵が前の書き込みの枚数を名乗る)。読み手は枚数の大小と
+    /// 変わったかだけを見るので、飛んでも噛み合う。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     private(set) var frameNumber = 0
 
     /// 窓を持つ道具に起こされ、区画もあるときだけ作る。**綴りは ``StartupReads`` が正典** (#380)。
@@ -490,6 +502,7 @@ final class SharedFrameSurface {
         pointerLock: Bool = false
     ) throws(RenderFailure) {
         try publishPending()
+        writes += 1
         // 読み手が掴んでいるかもしれない面を記す: いまの最新と、直前 2 回の書き込みのときの最新
         heldSlots[heldCursor] = newestSlot
         heldCursor = (heldCursor + 1) % heldSlots.count
@@ -503,7 +516,9 @@ final class SharedFrameSurface {
         }
         let submission = try presenter.draw(source, into: slots[index].texture)
         pending.append(
-            Burn(slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock))
+            Burn(
+                slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
+                number: writes))
         nextSlot = (index + 1) % slots.count
     }
 
@@ -548,7 +563,7 @@ final class SharedFrameSurface {
     /// 焼いた面を名乗らせる。
     private func name(_ burn: Burn) {
         let slot = slots[burn.slot]
-        frameNumber += 1
+        frameNumber = burn.number
         newestSlot = burn.slot
         // **速さを枚数より先に載せる。** 読み手は枚数がいちばん大きい面を選ぶので、枚数を
         // 最後にすれば、選ばれた面の速さは必ずその枚数のときのものになる。属性を 1 つずつ

@@ -374,13 +374,14 @@ struct SharedFrameSurfaceTests {
                 "名乗った面が違う (枚数 \(named.frame)・面 \(named.id)・1 枚目 \(first.id)・焼いた面 \(burnt))")
             #expect(shared.pendingID == nil, "打ち切られた面を控えに残している")
 
-            // 次の書き込み。打ち切られていても、次に焼いた面が続きの枚数で名乗る
+            // 次の書き込み。打ち切られていても、次に焼いた面が名乗る
             try shared.write(source, using: presenter, numbers: Self.numbers(frame: 3))
             let following = try #require(shared.pendingID)
             Self.awaitOutcomes(gpu)
             try shared.publishPending()
             let next = try #require(SharedFrameSurface.newest(among: shared.ids))
-            #expect(next.frame == (dropped ? 2 : 3) && next.id == following)
+            // 枚数は書き込みの通し番号なので、名乗らなかった 2 枚目のぶん飛ぶ
+            #expect(next.frame == 3 && next.id == following)
             try gpu.settle()
         }
     }
@@ -437,7 +438,7 @@ struct SharedFrameSurfaceTests {
 
             try shared.write(source, using: presenter, numbers: Self.numbers(frame: 4))
             let named = try #require(SharedFrameSurface.newest(among: shared.ids))
-            #expect(named.id == following && named.frame == 2, "結末を失った面を名乗ったか、後の面を名乗っていない")
+            #expect(named.id == following && named.frame == 3, "結末を失った面を名乗ったか、後の面を名乗っていない")
             #expect(gpu.outcomeWaits == waits)
             try gpu.settle()
         }
