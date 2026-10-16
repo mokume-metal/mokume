@@ -516,6 +516,178 @@ struct TextTests {
         #expect(!canvas.warnings.hasWarned(.missingTypefaceStyle))
     }
 
+    // 代わりの書体から引いた字の面 (#2561)。指定した書体が覆えない字は CoreText が別の書体から
+    // 引き、その面が頼んだ太さ・傾きを持つとは限らない (欧文の斜体に混ぜた日本語は立ったまま)。
+    // 描く絵は変えずに、そのことを 1 度知らせる。**代わりの書体は CoreText への独立な問い合わせで
+    // 確かめ、前提の行で赤くする** (この環境にヒラギノ角ゴシックがあること)。
+
+    /// CoreText が、その書体のその性質の面に無い字を、どの書体から引くか。被検査の `Typeface` を通さない。
+    nonisolated private static func fallbackPostScriptName(
+        of string: String, in name: String, _ traits: CTFontSymbolicTraits
+    ) -> String {
+        let plain = CTFontCreateWithName(name as CFString, 32, nil)
+        let base =
+            traits.isEmpty ? plain : CTFontCreateCopyWithSymbolicTraits(plain, 32, nil, traits, traits) ?? plain
+        let text = string as CFString
+        let fallback = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        return CTFontCopyPostScriptName(fallback) as String
+    }
+
+    /// 欧文の斜体に混ぜた「あ」が、ヒラギノ角ゴシックの立体から引かれること。
+    private static func requireHiraginoFallback() throws {
+        try #require(
+            fallbackPostScriptName(of: "あ", in: "Helvetica", .traitItalic) == "HiraginoSans-W3",
+            "前提: この環境の CoreText は、Helvetica の斜体に無い「あ」を HiraginoSans-W3 から引く")
+    }
+
+    @Test("欧文の斜体に混ぜた日本語は、代わりの書体の立体で描き、そのことを 1 度だけ警告する")
+    func aFallbackWithoutTheStyleIsWarnedOnce() throws {
+        try Self.requireHiraginoFallback()
+        let canvas = try makeCanvas()
+        canvas.textStyle(.italic)
+        try canvas.draw {
+            canvas.text("aあ", 20, 50)
+            canvas.text("aあ", 20, 80)
+        }
+        #expect(canvas.warnings.hasWarned(.missingFallbackTypefaceStyle))
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"あ\""), "\(message)")
+        #expect(message.contains("\"Helvetica\""), "\(message)")
+        #expect(message.contains("\"HiraginoSans-W3\" (regular weight, upright)"), "\(message)")
+        #expect(message.contains("italic"), "\(message)")
+        // 次のフレームで別の字が代わりの書体へ落ちても、2 度目は言わない (最初の文面のまま)
+        try canvas.draw { canvas.text("もくめ", 20, 50) }
+        #expect(canvas.warnings.message(for: .missingFallbackTypefaceStyle) == message)
+        // 欧文の書体の斜体は面を持つので、指定した書体の面の警告は出ない
+        #expect(!canvas.warnings.hasWarned(.missingTypefaceStyle))
+    }
+
+    @Test("警告しても、代わりの書体から引いた字の絵は変わらない (傾けて描かない)")
+    func aFallbackWithoutTheStyleDrawsTheSameUprightFace() throws {
+        try Self.requireHiraginoFallback()
+        func drawn(_ style: TextStyle) throws -> [UInt8] {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textStyle(style)
+                canvas.text("あ", 30, 60)
+            }
+            return try pixels(of: canvas).bytes
+        }
+        #expect(try drawn(.italic) == drawn(.normal), "斜体の「あ」が、立体の「あ」と違う絵になった")
+    }
+
+    @Test("太斜体に混ぜた日本語は、代わりの書体の太字の立体で描き、警告がそう名乗る")
+    func aFallbackWithOnlyTheBoldFaceNamesIt() throws {
+        let fallback = Self.fallbackPostScriptName(of: "あ", in: "Helvetica", [.traitBold, .traitItalic])
+        try #require(
+            fallback == "HiraginoSans-W6",
+            "前提: この環境の CoreText は、Helvetica の太斜体に無い「あ」を HiraginoSans-W6 から引く")
+        let canvas = try makeCanvas()
+        canvas.textStyle(.boldItalic)
+        _ = canvas.textWidth("あ")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"HiraginoSans-W6\" (bold, upright)"), "\(message)")
+    }
+
+    @Test("指定した書体の面の警告と、代わりの書体の面の警告は、どちらが先でも互いを黙らせない")
+    func theTwoStyleWarningsAreIndependent() throws {
+        try Self.requireHiraginoFallback()
+        try #require(
+            Self.postScriptName(resolving: "HiraginoSans-W3") == "HiraginoSans-W3",
+            "前提: この環境に HiraginoSans-W3 がある")
+        try #require(
+            !Self.hasFace("HiraginoSans-W3", .traitItalic), "前提: ヒラギノ角ゴシックは斜体の面を持たない")
+        // 文面で見分ける — 鍵を共有すると、後の側の鍵にも先の側の文面が入っている
+        func styleMessage(_ canvas: Canvas) -> String {
+            canvas.warnings.message(for: .missingTypefaceStyle) ?? ""
+        }
+        func fallbackMessage(_ canvas: Canvas) -> String {
+            canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        }
+
+        // 代わりの書体の警告が先
+        let fallbackFirst = try makeCanvas()
+        fallbackFirst.textStyle(.italic)
+        _ = fallbackFirst.textWidth("あ")
+        #expect(fallbackMessage(fallbackFirst).contains("\"あ\""), "\(fallbackMessage(fallbackFirst))")
+        #expect(!fallbackFirst.warnings.hasWarned(.missingTypefaceStyle))
+        fallbackFirst.textFont("HiraginoSans-W3")
+        _ = fallbackFirst.textWidth("あ")
+        #expect(
+            styleMessage(fallbackFirst).contains("has no italic face"),
+            "代わりの書体の警告が、指定した書体の警告を黙らせた: \(styleMessage(fallbackFirst))")
+
+        // 指定した書体の警告が先
+        let styleFirst = try makeCanvas()
+        styleFirst.textFont("HiraginoSans-W3")
+        styleFirst.textStyle(.italic)
+        _ = styleFirst.textWidth("あ")
+        #expect(styleMessage(styleFirst).contains("has no italic face"), "\(styleMessage(styleFirst))")
+        #expect(
+            !styleFirst.warnings.hasWarned(.missingFallbackTypefaceStyle),
+            "ヒラギノ角ゴシックが覆う字を、代わりの書体から引いたと数えた")
+        styleFirst.textFont(fontName)
+        _ = styleFirst.textWidth("あ")
+        #expect(
+            fallbackMessage(styleFirst).contains("\"あ\""),
+            "指定した書体の警告が、代わりの書体の警告を黙らせた: \(fallbackMessage(styleFirst))")
+    }
+
+    /// 代わりの書体から引いても警告しない組。代わりの書体が頼んだ面を持つ (太字のあ)・何も頼んでいない
+    /// (標準のあ)・色の字形を持つ書体 (Apple Color Emoji。太さ・傾きの面を持たない。太字と斜体の 2 つ)。
+    nonisolated static var fallbacksWithoutWarning: [(style: TextStyle, string: String)] {
+        [(.bold, "あ"), (.normal, "あ"), (.bold, "😀"), (.italic, "😀")]
+    }
+
+    @Test(
+        "代わりの書体が頼んだ面を持つとき・何も頼んでいないとき・絵文字は警告しない",
+        arguments: fallbacksWithoutWarning)
+    func aFallbackWithTheStyleOrColourGlyphsIsNotWarned(_ item: (style: TextStyle, string: String)) throws {
+        let traits: CTFontSymbolicTraits =
+            switch item.style {
+            case .normal: []
+            case .bold: .traitBold
+            case .italic: .traitItalic
+            case .boldItalic: [.traitBold, .traitItalic]
+            }
+        let fallback = Self.fallbackPostScriptName(of: item.string, in: fontName, traits)
+        try #require(
+            !fallback.hasPrefix("Helvetica"), "前提: Helvetica は「\(item.string)」を持たず、代わりの書体から引く")
+        let canvas = try makeCanvas()
+        canvas.textStyle(item.style)
+        try canvas.draw { canvas.text(item.string, 20, 60) }
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle)
+        #expect(message == nil, "\(item.style) の「\(item.string)」(\(fallback)) で鳴った: \(message ?? "")")
+    }
+
+    /// 代わりの書体から字を引く口。どれも同じ `Typeface.glyph(for:)` を通る。
+    nonisolated static var glyphReadingEntries: [String] { ["text", "textWidth", "textBounds", "textOutline"] }
+
+    @Test("どの口から先に引いても、代わりの書体の面の警告は 1 度出る", arguments: glyphReadingEntries)
+    func theFallbackWarningComesFromEveryEntry(_ entry: String) throws {
+        try Self.requireHiraginoFallback()
+        let canvas = try makeCanvas()
+        canvas.textStyle(.italic)
+        func read(_ entry: String) throws {
+            switch entry {
+            case "text": try canvas.draw { canvas.text("aあ", 20, 50) }
+            case "textWidth": _ = canvas.textWidth("aあ")
+            case "textBounds": _ = canvas.textBounds("aあ", 20, 50)
+            case "textOutline": _ = canvas.textOutline("aあ", 20, 50)
+            default: Issue.record("知らない口 \(entry)")
+            }
+        }
+        try read(entry)
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(
+            message.contains("\"HiraginoSans-W3\" (regular weight, upright)"), "\(entry) から引いて鳴らない: \(message)")
+        // 残りの口から引いても、言い直さない
+        for other in Self.glyphReadingEntries where other != entry { try read(other) }
+        #expect(canvas.warnings.message(for: .missingFallbackTypefaceStyle) == message)
+    }
+
     @Test("指定した書体が覆えない文字も描ける")
     func charactersOutsideTheFontStillDraw() throws {
         let canvas = try makeCanvas()

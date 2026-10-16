@@ -31,22 +31,48 @@ extension Canvas {
         let request = TypefaceRequest(
             name: style.fontName, size: style.textSize, style: style.textStyle)
         if let found = typefaces[request] { return found }
-        let face = Typeface(request: request)
+        // 代わりの書体から引いた字の面も同じく知らせる (#2561)。書体は面の控えに入るので、面を
+        // 強く掴むと巡って離れない
+        let face = Typeface(request: request) { [weak self] face, scalar, fallback in
+            self?.warnFallbackLackingStyleOnce(face, scalar, fallback)
+        }
         typefaces.insert(face, for: request)
         // 面が無ければ引けた面で描く。黙ると、効かない指定を効いたように見せる (#2444)
         if face.lacksRequestedStyle {
             // どの面で描くかを添える。太斜体で斜体だけが無いなら「太字の立体」と読める (#2562)
-            let traits = CTFontGetSymbolicTraits(face.base)
-            let drawn =
-                "\(traits.contains(.traitBold) ? "bold" : "regular weight"), "
-                + (traits.contains(.traitItalic) ? "italic" : "upright")
             warnOnce(
                 .missingTypefaceStyle,
                 "textStyle(): the typeface family \"\(CTFontCopyFamilyName(face.base) as String)\" "
                     + "has no \(request.style) face in this environment, so "
-                    + "\"\(CTFontCopyPostScriptName(face.base) as String)\" (\(drawn)) is used")
+                    + "\"\(CTFontCopyPostScriptName(face.base) as String)\" (\(Self.faceTraits(of: face.base))) "
+                    + "is used")
         }
         return face
+    }
+
+    /// 書体の面の太さと傾きを、警告の文面の言い方 (`bold, upright` など) で言う。
+    private static func faceTraits(of font: CTFont) -> String {
+        let traits = CTFontGetSymbolicTraits(font)
+        return "\(traits.contains(.traitBold) ? "bold" : "regular weight"), "
+            + (traits.contains(.traitItalic) ? "italic" : "upright")
+    }
+
+    /// 指定した書体が覆えず別の書体から引いた字が、頼んだ太さ・傾きの面で描けないことを、初回だけ
+    /// 知らせる ([#2561])。**字・字を引いた書体・描いた面を名乗る** — 指定した書体の面は揃っているので、
+    /// どの字がどこから来たかを言わないと、効かない理由に辿り着けない。絵は変えない (傾けて合成しない)。
+    ///
+    /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
+    private func warnFallbackLackingStyleOnce(
+        _ face: Typeface, _ scalar: Unicode.Scalar, _ fallback: CTFont
+    ) {
+        warnOnce(
+            .missingFallbackTypefaceStyle,
+            "textStyle(): \"\(Character(scalar))\" is not in the typeface family "
+                + "\"\(CTFontCopyFamilyName(face.base) as String)\", so it is drawn from "
+                + "\"\(CTFontCopyPostScriptName(fallback) as String)\" (\(Self.faceTraits(of: fallback))) "
+                + "without the .\(face.request.style) style. This is said once for all the characters "
+                + "taken from other typefaces; to change how they look, draw them with textFont() set "
+                + "to a typeface that has them")
     }
 
     /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる — 上限の面なら、同じ

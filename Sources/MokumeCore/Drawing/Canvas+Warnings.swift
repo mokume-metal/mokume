@@ -293,6 +293,16 @@ extension Canvas {
         ///
         /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
         case missingTypefaceStyle
+        /// 指定した書体が覆えず別の書体から引いた字の面が、``Canvas/textStyle(_:)`` の太さ・傾きを
+        /// 持っていなかった ([#2561])。色の字形を持つ書体 (絵文字) の字は数えない
+        /// (``Typeface/lacksStyle(fallback:requested:)``)。
+        ///
+        /// **``missingTypefaceStyle`` と鍵を分ける。** 共有すると、指定した書体の面の知らせと
+        /// 代わりの書体の面の知らせのうち、先に言った側がもう片方を黙らせる — どちらも
+        /// 「効かない指定を効いたように見せる」ことを防ぐ知らせで、片方で他方は分からない。
+        ///
+        /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
+        case missingFallbackTypefaceStyle
         /// ``Canvas/textSize(_:)``・``Canvas/textLeading(_:)`` に、数でない値・無限・上限
         /// (``Canvas/largestTextMeasure``) を越える値が渡された ([#1587])。
         ///
