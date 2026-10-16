@@ -15,9 +15,10 @@ import simd
 /// - 文字の STL もバイナリの STL も読む。面ごとに 3 点を持ち、**点を共有しない**
 /// - 面の向き (`facet normal`) は書かれた値のまま返す。`0 0 0` も 0 のまま
 /// - 縦軸の約束は持たない (`upAxis` は常に y)。3D プリンタ向けの STL は z を上に書くことが多い
-/// - 改行が CRLF でも読む。途中で切れたバイナリは、揃っている面だけを読む。文字の STL は、
-///   面の途中で切れていれば断り、面の境 (`endfacet` の後) で切れていれば `endsolid` が無くても
-///   揃った面を読む
+/// - 改行が CRLF でも読む。途中で切れたバイナリは、揃っている面だけを、宣言した面の数まで読む
+///   (向きと 3 点の 48 バイトがあれば 1 面と数え、後ろの属性の 2 バイトは問わない。最初の面だけは、下の
+///   128〜132 バイトの癖で 49 バイトから)。文字の STL は、面の途中で切れていれば断り、面の境 (`endfacet` の後) で
+///   切れていれば `endsolid` が無くても揃った面を読む
 /// - **数として読めない座標は、文字の STL では黙って 0 になる** (`nan`・`a` など)。バイナリの
 ///   NaN・無限はそのまま返る
 /// - **文字の STL は、`facet normal` (間の空白 1 つ) の綴りが添字 127 までに始まらないと、面を 1 つも読めない**
@@ -78,7 +79,7 @@ import simd
 ///   面の数が 2^24 以上と宣言して大きさが合わないバイナリ (切れた大きいバイナリ) は壊れているとして読めない
 /// - **文字の STL** は、行を LF だけで割り (読み手と同じ)、行の先頭の `vertex` と `endfacet` を順に数える
 ///   (``scanFacets(head:rest:chunk:)``)。
-///   - 面が 0 → 渡さず、面の無い STL (``isEmptySTL(_:)``) なら空、そうでなければ読めないとして返す
+///   - 面が 0 → 渡さず、面の無い STL (``isEmptyText(head:rest:)``) なら空、そうでなければ読めないとして返す
 ///   - どの面も頂点がちょうど 3 つでない・面の中に読み手が頂点と読む行や断る行がある (`vertex` でない行・
 ///     `outer loop` や `endloop` の無い面。空白だけの行は除く) → 渡さず、読めないとして返す ([#2645])
 ///   - それ以外 → Model I/O に読ませ、**返った三角形の数が面の数と等しく、写せなかった要素 (3 つに満たない余りの
@@ -98,17 +99,19 @@ import simd
 ///     写しを作らない。この写しを書けなければ、上と同じに元のファイルを読ませて照らす
 ///   - 上の写し (添字 83・128 バイト未満) を作るときも、最初の面の行に `normal` があれば、同じ書き直しにする — 1 行目に
 ///     空白を足すだけでは、`facet normal` の綴りが添字 128 から先へずれうる ([#2645])
-/// - **バイナリ**は 128 バイト以上を Model I/O に読ませる。128 バイトに満たないものは、Model I/O が必ず
-///   断る (面を持てない) ので渡さず、84 バイトの面の無いものだけ空、ほかは読めないとして返す
+/// - **バイナリ**は、**途中で切れていても大きさによらず、揃った面だけを読む** ([#2493])。大きさから揃ったと
+///   読める面の数 (``completeBinaryFaces(head:size:)``。宣言した面の数と、頭の後ろに揃った面の数の小さいほう) が
+///   0 なら、Model I/O に渡さず空にする — 面の数が 0 で後ろに余りがあるものも、最初の面の途中で切れたものも、
+///   84 バイトから同じに空になる。128 バイトに満たないもの (Model I/O が必ず断る) と、128〜132 バイト (Model I/O が
+///   面の無い形を返す) もここに入る。1 以上なら Model I/O に読ませる
 ///
-/// 上の境目 (128 バイトと 128〜132 バイトの癖・面の数の上限・文字をバイナリとして読むこと・読み直しの
-/// 形・読めない文字を面の無い形で返すこと・VT と FF を空白として読むこと・`facet normal` の綴りの位置の上限・
-/// 面の中の空でない行を頂点として読むこと・行を LF だけで割ること) は読み手の挙動で、
-/// `STLModelTests` が固定している。読み手が変わったら、そこが赤くなって、この節の直し時を知らせる。
+/// 上の境目 (128 バイトと 128〜132 バイトの癖・面の数の上限・途中で切れたバイナリの揃った面の数え方・文字を
+/// バイナリとして読むこと・読み直しの形・読めない文字を面の無い形で返すこと・VT と FF を空白として読むこと・
+/// `facet normal` の綴りの位置の上限・面の中の空でない行を頂点として読むこと・行を LF だけで割ること) は読み手の
+/// 挙動で、`STLModelTests` が固定している。読み手が変わったら、そこが赤くなって、この節の直し時を知らせる。
 ///
-/// **残る境目**: 面の数を宣言して途中で切れたバイナリは、128 バイトで結果が変わる ([#2493])。文字の STL
-/// では、座標が足りない `vertex` の行や数でない座標を、読み手が 0 として読む (上の読み手の癖)。頂点の数
-/// と面の数の確かめでは見えない。
+/// **残る境目**: 文字の STL では、座標が足りない `vertex` の行や数でない座標を、読み手が 0 として読む (上の
+/// 読み手の癖)。頂点の数と面の数の確かめでは見えない。
 ///
 /// ## 挙動が変わるもの (これまで読めた・空になったものが、読めないとして返る)
 ///
@@ -129,7 +132,8 @@ import simd
 /// - 逆に、読めるようになったもの: 128 バイトに満たない文字の STL (#2335)・名前に FF・VT・NUL・DEL・ESC を
 ///   含む文字の STL (#2494)・名前に UTF-8 でない字を含む面の無い solid (空になる)・`facet normal` の綴りが添字 128
 ///   から先にしか無い文字の STL (名前が 121 文字以上・最初の面の字下げが長い・面の行の区切りがタブや空白 2 つなど)・
-///   面の中に空白・CR だけの行 (CRLF の空行など) がある文字の STL (#2645)
+///   面の中に空白・CR だけの行 (CRLF の空行など) がある文字の STL (#2645)。揃った面の無い 84〜127 バイトのバイナリ
+///   (最初の面の途中で切れたもの・面の数が 0 で後ろに余りのあるもの) は、読めないではなく空になる (#2493)
 ///
 /// [#1966]: https://github.com/mokume-metal/mokume/issues/1966
 /// [#2335]: https://github.com/mokume-metal/mokume/issues/2335
@@ -160,8 +164,12 @@ nonisolated extension ModelFile {
     ///
     /// **面の無い STL は投げずに空を返す。** 「読めなかった」と「読めたが面が無い」は別である
     /// (``ModelFailure``)。Model I/O はこれを読めないとして断るか、バイナリとして読み直して
-    /// でたらめな面を返すので、文字は書かれた面が無いと分かったとき、小さいバイナリは大きさで、
-    /// Model I/O へ渡さずに決める (``isEmptySTL(_:)``)。
+    /// でたらめな面を返すので、文字は書かれた面が無いと分かったとき (``isEmptyText(head:rest:)``)、
+    /// バイナリは大きさから揃った面が無いと分かったとき (``completeBinaryFaces(head:size:)``) に、
+    /// Model I/O へ渡さずに決める。**途中で切れたバイナリは、揃った面だけを読む** — 揃った面が無ければ
+    /// 投げずに空にする ([#2493])。
+    ///
+    /// [#2493]: https://github.com/mokume-metal/mokume/issues/2493
     ///
     /// **文字の STL は、Model I/O が返した三角形を、書かれた面の数と照らして採る。** 読めない文字
     /// を面の無い形で返されても、空とは取り違えない (読めないとして返す)。
@@ -196,8 +204,10 @@ nonisolated extension ModelFile {
             }
             throw .unreadable(path: path)
         case .binary:
-            // 128 バイトに満たないバイナリは、読み手が必ず断る (面を持てない) ので渡さない
-            guard !isSmall else { return try emptyOrUnreadable(head, path: path) }
+            // **揃った面が無ければ、読み手に渡さず空にする** (#2493)。途中で切れていても、面の数が 0 で後ろに
+            // 余りがあっても、大きさによらない。128 バイトに満たないもの (読み手が必ず断る) と、128〜132 バイト
+            // (読み手が面の無い形を返す) もここに入る
+            guard completeBinaryFaces(head: head, size: size) > 0 else { return empty }
             guard let parsed = askModelIO(url) else { throw .unreadable(path: path) }
             return parsed
         case .text:
@@ -230,6 +240,29 @@ nonisolated extension ModelFile {
 
     /// Model I/O が断らない STL の最小の大きさ (バイト)。**これに満たない STL は中身を見ずに断る。**
     static let smallestSTLModelIOReads = 128
+
+    /// 読み手がバイナリの最初の面を読む、ファイルの最小の大きさ (バイト)。84 バイトの頭と、最初の面の 49 バイト。
+    /// 128〜132 バイトのバイナリを、読み手は面の無い形で返す。
+    static let smallestBinaryWithAFace = 133
+
+    /// バイナリの STL の頭 (84 バイト以上) が宣言する面の数 (添字 80〜83 の、リトルエンディアンの 4 バイト)。
+    static func declaredBinaryFaces(in head: Data) -> Int {
+        (0..<4).reduce(0) { $0 | Int(head[head.startIndex + 80 + $1]) << (8 * $1) }
+    }
+
+    /// バイナリの STL の、**大きさから揃ったと読める面の数** ([#2493])。宣言した面の数と、84 バイトの頭の後ろに
+    /// 揃った面の数の小さいほうで、**読み手 (Model I/O) がバイナリとして読んで返す枚数と同じ**になる。`head` は
+    /// 頭 (84 バイト以上)、`size` はファイルの大きさ。
+    ///
+    /// 揃ったと読むのは、向きと 3 点の 48 バイトがある面 (後ろの属性の 2 バイトは問わない)。ただし最初の面だけは
+    /// 49 バイト (ファイルが ``smallestBinaryWithAFace`` バイト) から — 読み手は 128〜132 バイトのバイナリを面の無い
+    /// 形で返し、128 バイトに満たなければ断る (macOS 27 で測った。`STLModelTests.modelIOReadsTheCompleteBinaryFaces`)。
+    ///
+    /// [#2493]: https://github.com/mokume-metal/mokume/issues/2493
+    static func completeBinaryFaces(head: Data, size: Int) -> Int {
+        guard size >= smallestBinaryWithAFace else { return 0 }
+        return min(declaredBinaryFaces(in: head), (size - 84 + 2) / 50)
+    }
 
     /// 頭から見分けた、STL の形。
     enum STLLayout: Sendable, Equatable {
@@ -264,9 +297,8 @@ nonisolated extension ModelFile {
     /// 見出しが `solid` の切れたバイナリは、添字 80〜82 に 0x20 未満を持つので、これまでどおりバイナリである。
     static func stlLayout(of head: Data, size: Int? = nil) -> STLLayout {
         let base = head.startIndex
-        if head.count >= 84, let size {
-            let faces = (0..<4).reduce(0) { $0 | Int(head[base + 80 + $1]) << (8 * $1) }
-            if size == 84 + 50 * faces { return .binary }
+        if head.count >= 84, let size, size == 84 + 50 * declaredBinaryFaces(in: head) {
+            return .binary
         }
         if isUTF16(head) { return .unrecognized }
         let isSolid = head.starts(with: "solid".utf8)
@@ -587,12 +619,6 @@ nonisolated extension ModelFile {
     /// Model I/O が読んだ形と、そのうち写せなかった要素の数 (数でない座標の面を除く。``triangles(of:)``)。
     typealias Reading = (parsed: Parsed, defects: Int)
 
-    /// 面が無い STL なら空、そうでなければ読めないとして返す。
-    private static func emptyOrUnreadable(_ data: Data, path: String) throws(ModelFailure) -> Parsed {
-        guard isEmptySTL(data) else { throw .unreadable(path: path) }
-        return empty
-    }
-
     /// Model I/O にファイルを読ませる。断られたら `nil`。
     private static func askModelIO(_ url: URL) -> Parsed? {
         reading(url)?.parsed
@@ -808,17 +834,6 @@ nonisolated extension ModelFile {
             bytes[83] = 0x20
         }
         return Data(bytes)
-    }
-
-    /// 面を 1 つも持たない、形の整った STL か。
-    ///
-    /// バイナリは 80 バイトの見出しと面の数 (0) だけの 84 バイト。文字は ``isEmptyText(head:rest:)``。
-    /// **0 バイトは含めない** — どちらの形にもなっておらず、書き出しに失敗したファイルであることが多い。
-    static func isEmptySTL(_ data: Data) -> Bool {
-        if data.count == 84, data[data.startIndex + 80..<data.endIndex].allSatisfy({ $0 == 0 }) {
-            return true
-        }
-        return isEmptyText(head: data, rest: nil)
     }
 
     /// 面を 1 つも持たない、形の整った文字の STL か。`head` は頭で、続きは `rest` から 1 MiB ずつ読む

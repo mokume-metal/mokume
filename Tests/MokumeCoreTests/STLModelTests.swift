@@ -848,6 +848,41 @@ struct STLModelTests {
         }
     }
 
+    /// **バイナリと見分けた途中で切れた STL は、大きさによらず揃った面だけを読み、揃った面が無ければ空**
+    /// ([#2493](https://github.com/mokume-metal/mokume/issues/2493))。4 面を宣言した 284 バイトを、先頭から `cut.0`
+    /// バイトで切る。これまでは 84〜127 バイトが読めないとして投げ、128〜132 バイトは空、133 バイトから揃った面を
+    /// 読んでいた — 同じ切れ方への答えが、中身ではなく大きさで決まっていた。揃ったと読む境目は読み手と同じ
+    /// (``ModelFile/completeBinaryFaces(head:size:)``。2 つ目からの面は 48 バイトで揃う)。
+    @Test(
+        "途中で切れたバイナリの STL は、大きさによらず揃った面だけを読み、揃った面が無ければ空になる (#2493)",
+        arguments: ["mokume test", "solid exported"],
+        [(84, 0), (100, 0), (127, 0), (128, 0), (132, 0), (133, 1), (134, 1), (182, 2), (183, 2), (232, 3), (233, 3),
+         (282, 4), (283, 4)])
+    func cutBinaryReadsTheCompleteFacesAtAnySize(header: String, cut: (Int, Int)) throws {
+        let (size, faces) = cut
+        let whole = ModelFixture.binarySTL(Self.tetrahedron, header: header)
+        #expect(whole.count == 284)
+        let parsed = try read(Data(whole.prefix(size)))
+        if faces == 0 {
+            #expect(parsed == ModelFile.empty)
+        } else {
+            #expect(parsed.positions == Self.tetrahedron.prefix(faces).flatMap(\.corners))
+        }
+    }
+
+    /// **面の数を 0 と宣言したバイナリは、84 バイトの後ろに余りがあっても空**
+    /// ([#2493](https://github.com/mokume-metal/mokume/issues/2493))。余りは 8 面ぶんの面の並び。これまでは 85〜127
+    /// バイトが読めないとして投げ、84 バイトと 128 バイト以上は空だった。
+    @Test(
+        "面の数を 0 と宣言し、後ろに余りのあるバイナリの STL は、大きさによらず空になる (#2493)",
+        arguments: [84, 85, 127, 128, 133, 308])
+    func binaryDeclaringNoFacesIsEmptyAtAnySize(size: Int) throws {
+        var data = ModelFixture.binarySTL(Self.tetrahedron + Self.tetrahedron)
+        data.replaceSubrange(80..<84, with: [0, 0, 0, 0])
+        #expect(ModelFile.stlLayout(of: data.prefix(128), size: size) == .binary)
+        #expect(try read(Data(data.prefix(size))) == ModelFile.empty)
+    }
+
     /// 1 行目が 83 文字 (84 バイト目が改行) の面の無い solid。Model I/O は面を見つけられず、80〜83
     /// バイト目を面の数とするバイナリとして読み直し、でたらめな面を返す (#2391)。**名前に `facet` を
     /// 含んでも同じ** — 面の有無を `facet` の語の有無で代用すると、ここを取りこぼす。
@@ -985,7 +1020,7 @@ struct STLModelTests {
             let expected = reference(text)
             emptyCount += expected ? 1 : 0
             let data = Data(text.utf8)
-            #expect(ModelFile.isEmptySTL(data) == expected, "\(text.debugDescription)")
+            #expect(ModelFile.isEmptyText(head: data, rest: nil) == expected, "\(text.debugDescription)")
             // 頭の 128 バイトの外へ続く形も (長い名前を足して、続きを断片ごとに読ませる)
             let padded = "solid " + String(repeating: "n", count: 200 + next(50)) + String(text.dropFirst(5))
             try withWritten(Data(padded.utf8), as: "empty.stl") { path in
@@ -1642,7 +1677,7 @@ struct STLModelTests {
 
     // MARK: - Model I/O の判定 (説明が頼る事実)
 
-    // **次の 9 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
+    // **次の 10 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
     // 検査は、この挙動を前提に境目を決めている。Model I/O が変わったら、ここが赤くなって、説明と
     // `loadSTL` の見分け方の直し時を知らせる (`asciiNonNumbersBecomeZero` と同じ役)。
 
@@ -1777,5 +1812,33 @@ struct STLModelTests {
         #expect(try readByModelIO(declaring(238_609_294))?.triangles == 3)
         #expect(try readByModelIO(declaring(238_609_295)) == nil)
         #expect(try readByModelIO(declaring(1 << 28)) == nil)
+    }
+
+    /// 読み手は、途中で切れたバイナリを 128 バイトに満たなければ断り、128〜132 バイトは面の無い形で返し、133
+    /// バイトからは向きと 3 点の 48 バイトがある面 (後ろの属性の 2 バイトは問わない) を、宣言した面の数まで返す。
+    /// 最初の面だけ 49 バイトから数えるのは 128〜132 バイトの癖による。``ModelFile/completeBinaryFaces(head:size:)``
+    /// はこれと同じ数を返す ([#2493](https://github.com/mokume-metal/mokume/issues/2493))。
+    @Test("Model I/O は途中で切れたバイナリの、向きと 3 点が揃った面を宣言の数まで読む — 最初の面だけ 133 バイトから")
+    func modelIOReadsTheCompleteBinaryFaces() throws {
+        for header in ["mokume test", "solid exported"] {
+            let whole = ModelFixture.binarySTL(Self.tetrahedron, header: header)
+            for size in 84...whole.count {
+                let cut = Data(whole.prefix(size))
+                let counted = ModelFile.completeBinaryFaces(head: cut.prefix(128), size: size)
+                if size < ModelFile.smallestSTLModelIOReads {
+                    #expect(try readByModelIO(cut) == nil, "\(header) \(size)")
+                    #expect(counted == 0, "\(header) \(size)")
+                } else {
+                    #expect(try readByModelIO(cut)?.triangles == counted, "\(header) \(size)")
+                }
+            }
+        }
+        // 宣言が揃った面より少なければ宣言の数まで、0 なら余りがあっても面の無い形
+        for declared: UInt8 in [0, 2] {
+            var data = ModelFixture.binarySTL(Self.tetrahedron)
+            data.replaceSubrange(80..<84, with: [declared, 0, 0, 0])
+            #expect(try readByModelIO(data)?.triangles == Int(declared))
+            #expect(ModelFile.completeBinaryFaces(head: data.prefix(128), size: data.count) == Int(declared))
+        }
     }
 }
