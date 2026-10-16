@@ -156,12 +156,16 @@ extension SketchPart {
     /// 毎回新しいということは、**読んだ絵を塗り替えても次の読み込みには影響しない**
     /// ということでもある。走らせたままファイルを差し替えれば、次の読み込みからそちらが出る。
     ///
+    /// - Throws: 見つからないとき・画像として読めないとき・GPU 側へ置けないときに ``ImageFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     // shot: 1 snippet=33373ac5
     // shot: 2 snippet=57be30b4
     // shot: 3 snippet=78ae8dd3
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
-        try Self.requireCanvas().loadImage(path)
+        try Self.resourceCanvas(ImageFailure.self).loadImage(path)
     }
 
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**
@@ -192,12 +196,12 @@ extension SketchPart {
     /// フレームとフレームの間で、届いた次のフレームから置かれる。
     ///
     /// **置くのは ``Sketch/draw()`` の中で、`Task` の中ではない。** `Task` の中から描く口
-    /// (``image(_:_:_:)-(Image,_,_)`` や ``width``) を呼ぶと、走っていないとして止まる。`Task` がするのは、
-    /// 届いたものを持っておくところまでである。
+    /// (``image(_:_:_:)-(Image,_,_)`` や ``width``) を呼んでも、そこからは面を取れないので描かれず、
+    /// 0 が返る (口ごとに 1 度だけ警告する)。`Task` がするのは、届いたものを持っておくところまでである。
     ///
     /// 起こすのは ``Sketch/draw()`` や入力のコールバックの中でもよい。そこで起こした `Task` も
-    /// 呼べる。呼べないのは、走っている実行から起こされていない所 — `init`・プロパティの
-    /// 初期化子・`Task.detached` — で、そこから呼ぶと止まる。
+    /// 呼べる。呼べないのは、走っている実行から起こされていない所 — `init`・後片付けの後・
+    /// `Task.detached` — で、そこから呼ぶと ``ImageFailure/notRunning(call:)`` を投げる。
     ///
     /// スケッチが終わった後に届いても落ちない。絵はそのまま返り、置く ``Sketch/draw()`` が
     /// もう来ないだけである。
@@ -205,9 +209,13 @@ extension SketchPart {
     /// > Note: 届いた絵の見え方は ``loadImage(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは絵の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
+    ///
+    /// - Throws: ``loadImage(_:)`` と同じ (``ImageFailure``)。
+    ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
-        try await Self.requireLoadingCanvas("requestImage(_:)").requestImage(path)
+        try await Self.loadingCanvas(ImageFailure.self).requestImage(path)
     }
 
     /// 空の絵を作る。中身は透明。
@@ -247,9 +255,11 @@ extension SketchPart {
     ///
     /// - Throws: 幅・高さのどちらかが 1 を割るか面の上限を越えるときに
     ///   ``ImageFailure/unplaceable(width:height:)``。1 を割る指定を 1×1 へ丸めない。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=f455cc89
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
-        try Self.requireCanvas().createImage(width, height)
+        try Self.resourceCanvas(ImageFailure.self).createImage(width, height)
     }
 
     /// 絵を等倍で置く。
