@@ -130,11 +130,11 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 走らせているのは 2 つ:
 
 - **debug**: `make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=` (台帳を含む。`render` と同じ)
-- **release**: `make test-release-scheduled` — release の検査から台帳 (`SceneLedgerTests`) だけを外したもの。release で台帳が合うべきかは #1736 が決める途中で、素で走らせると決着するまで毎回赤になるため外してある (代償: 台帳にだけ出る release の差は、この検査では見えない)
+- **release**: `make test-release-scheduled` — release の検査の全部 (台帳を含む。release でも debug と同じ台帳に合う — #1736)
 
 BODY
   job_section "debug" "$DEBUG_RESULT" "$DEBUG_RECORD" "$DEBUG_LOG" "$DEBUG_SHOTS"
-  # release は台帳を外していて (Makefile の test-release-scheduled)、絵を上げない
+  # release は絵を上げない。台帳の行が動けば、記録の失敗の文面に指紋が出る
   job_section "release" "$RELEASE_RESULT" "$RELEASE_RECORD" "$RELEASE_LOG" ""
   cat <<'BODY'
 ## 対処

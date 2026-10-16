@@ -300,9 +300,9 @@ class ReportScheduledRenderTest(unittest.TestCase):
         self.assertIn('make ci-check CI_CHECK_STEPS="build test gpu-ran"', body)
         self.assertNotIn("--skip", body)
 
-    def test_台帳を外している理由を言う(self):
+    def test_release_も台帳を含むと言う(self):
         self.report()
-        self.assertIn("#1736", self.body.read_text())
+        self.assertIn("台帳を含む", self.body.read_text())
 
     def test_本文が解消したら閉じることを言う(self):
         self.report()

@@ -337,9 +337,9 @@ test:
 # scripts/read-test-record.py が持つ (端末の出力は行を落とすので読まない・#1056)。
 # 検査は scripts/tests/gpu_ran_test.py
 #
-# **代表の Suite は GPU_RAN_SUITE で差し替えられる** (#1983)。台帳を外した定期の release
-# (下の test-release-scheduled) では SceneLedgerTests が記録に無いので、同じく Suite 全体が
-# GPU の有無で飛ぶ ShapeTests を代表にする。既定は台帳のまま
+# **代表の Suite は GPU_RAN_SUITE で差し替えられる** (#1983)。台帳を外した記録を読むときは、
+# 同じく Suite 全体が GPU の有無で飛ぶ ShapeTests を代表にする。既定は台帳のまま。定期の
+# release も台帳ごと走らせるようになったので (#1736)、いまは既定で読む
 GPU_RAN_SUITE ?= MokumeCoreTests.SceneLedgerTests
 
 gpu-ran:
@@ -367,7 +367,7 @@ gpu-ran:
 # 見ながら打つ器なので、同じものが 2 つ要らない
 #
 # **TEST_RELEASE_ARGS は swift test へそのまま渡す追加の引数** (既定は空)。素で打ったときの
-# 動作は変えない。定期の検査 (下の test-release-scheduled) が範囲を絞る口として使う (#1983)
+# 動作は変えない。範囲を絞る口で、手元で台帳だけを回すときなどに使う
 TEST_RELEASE_ARGS ?=
 
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
@@ -383,15 +383,13 @@ test-release: ## release でテストを回す (性能の計測用。ci-check �
 # 範囲の正本はここ 1 箇所**で、workflow (.github/workflows/render.yml)・起票の本文
 # (scripts/report-scheduled-render.sh)・手元の再現がみなこの的を指す。
 #
-# release の台帳 (SceneLedgerTests) だけを外す。release で台帳が合うべきかは #1736 が決める
-# 途中で、素で走らせると決着するまで毎回赤になる。#1736 が決着したら、ここの --skip を外して
-# 戻す。代償: 台帳にだけ出る release の差は、定期の検査では見えない。
+# release も台帳 (SceneLedgerTests) ごと走らせる。release でも debug と同じ台帳に合う
+# (ADR-0025 決定 7・#1736)。#1736 が決着するまでは台帳だけを外していた。
 #
-# 「GPU が見えないので全部飛ばした」まま緑になるのは gpu-ran が止める。代表は ShapeTests —
-# Suite 全体が GPU の有無で飛び、#1086 の速さの検査 (release でしか走らない) を含む
-test-release-scheduled: ## 定期の release の検査 (台帳を外す。専用機の schedule が走らせる)
-	$(MAKE) test-release TEST_RELEASE_ARGS='--skip MokumeCoreTests.SceneLedgerTests'
-	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE) GPU_RAN_SUITE=MokumeCoreTests.ShapeTests
+# 「GPU が見えないので全部飛ばした」まま緑になるのは gpu-ran が止める。代表は debug と同じ台帳
+test-release-scheduled: ## 定期の release の検査 (専用機の schedule が走らせる)
+	$(MAKE) test-release
+	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE)
 
 # 外のパッケージ mokume-syphon の main を、この木に向けて組み、GPU の検査まで走らせる (#1973)。
 # 本体の変更が mokume-syphon の振る舞いを壊したかは、API の一覧の差分には出ない
