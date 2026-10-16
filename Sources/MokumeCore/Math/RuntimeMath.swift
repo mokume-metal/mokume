@@ -5,7 +5,9 @@ import Foundation
 
 /// 最適化の有無で値が変わらない、超越関数の呼び口。
 ///
-/// **本体の中では `sin` / `pow` などを直に呼ばず、ここを通す** ([#1736])。最適化 (`-O`) は
+/// **本体 (このパッケージのモジュール) では `sin` / `pow` などを直に呼ばず、ここを通す** ([#1736])。
+/// 音の側 (`MokumeAudio`) も通す — 合成と解析の値は `sound.level` などを経て絵に出る。
+/// そのため `package` にしてある (作者には見せない)。最適化 (`-O`) は
 /// 超越関数の呼び出しを 2 通りに書き換え、どちらも値を 1 ULP 動かしうる:
 ///
 /// - **同じ角度の sin と cos の対を、1 回の `__sincosf_stret` に畳む。** 畳んだ側は、
@@ -26,28 +28,30 @@ import Foundation
 /// 自分のモジュールの宣言が優先されるが、`@testable import MokumeCore` した検査からは
 /// 内部の宣言も見え、Foundation の同名の関数と曖昧になる (型の推論がそこで落ちる)。
 ///
-/// 効くのはこのモジュールの中だけである。作者のスケッチに書いた `sin` などは作者の
+/// 効くのはこのパッケージの中だけである。作者のスケッチに書いた `sin` などは作者の
 /// コンパイラ設定で組まれ、ここを通らない。
 ///
 /// [#1736]: https://github.com/mokume-metal/mokume/issues/1736
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-nonisolated enum RuntimeMath {
-    @inline(never) static func sin(_ x: Float) -> Float { Foundation.sin(x) }
-    @inline(never) static func sin(_ x: Double) -> Double { Foundation.sin(x) }
-    @inline(never) static func cos(_ x: Float) -> Float { Foundation.cos(x) }
-    @inline(never) static func cos(_ x: Double) -> Double { Foundation.cos(x) }
-    @inline(never) static func tan(_ x: Float) -> Float { Foundation.tan(x) }
-    @inline(never) static func tan(_ x: Double) -> Double { Foundation.tan(x) }
-    @inline(never) static func asin(_ x: Float) -> Float { Foundation.asin(x) }
-    @inline(never) static func asin(_ x: Double) -> Double { Foundation.asin(x) }
-    @inline(never) static func acos(_ x: Float) -> Float { Foundation.acos(x) }
-    @inline(never) static func acos(_ x: Double) -> Double { Foundation.acos(x) }
-    @inline(never) static func atan2(_ y: Float, _ x: Float) -> Float { Foundation.atan2(y, x) }
-    @inline(never) static func atan2(_ y: Double, _ x: Double) -> Double { Foundation.atan2(y, x) }
-    @inline(never) static func pow(_ x: Float, _ y: Float) -> Float { Foundation.pow(x, y) }
-    @inline(never) static func pow(_ x: Double, _ y: Double) -> Double { Foundation.pow(x, y) }
-    @inline(never) static func exp(_ x: Float) -> Float { Foundation.exp(x) }
-    @inline(never) static func exp(_ x: Double) -> Double { Foundation.exp(x) }
-    @inline(never) static func log2(_ x: Float) -> Float { Foundation.log2(x) }
-    @inline(never) static func log2(_ x: Double) -> Double { Foundation.log2(x) }
+package nonisolated enum RuntimeMath {
+    @inline(never) package static func sin(_ x: Float) -> Float { Foundation.sin(x) }
+    @inline(never) package static func sin(_ x: Double) -> Double { Foundation.sin(x) }
+    @inline(never) package static func cos(_ x: Float) -> Float { Foundation.cos(x) }
+    @inline(never) package static func cos(_ x: Double) -> Double { Foundation.cos(x) }
+    @inline(never) package static func tan(_ x: Float) -> Float { Foundation.tan(x) }
+    @inline(never) package static func tan(_ x: Double) -> Double { Foundation.tan(x) }
+    @inline(never) package static func asin(_ x: Float) -> Float { Foundation.asin(x) }
+    @inline(never) package static func asin(_ x: Double) -> Double { Foundation.asin(x) }
+    @inline(never) package static func acos(_ x: Float) -> Float { Foundation.acos(x) }
+    @inline(never) package static func acos(_ x: Double) -> Double { Foundation.acos(x) }
+    @inline(never) package static func atan2(_ y: Float, _ x: Float) -> Float { Foundation.atan2(y, x) }
+    @inline(never) package static func atan2(_ y: Double, _ x: Double) -> Double { Foundation.atan2(y, x) }
+    @inline(never) package static func pow(_ x: Float, _ y: Float) -> Float { Foundation.pow(x, y) }
+    @inline(never) package static func pow(_ x: Double, _ y: Double) -> Double { Foundation.pow(x, y) }
+    @inline(never) package static func exp(_ x: Float) -> Float { Foundation.exp(x) }
+    @inline(never) package static func exp(_ x: Double) -> Double { Foundation.exp(x) }
+    @inline(never) package static func log2(_ x: Float) -> Float { Foundation.log2(x) }
+    @inline(never) package static func log2(_ x: Double) -> Double { Foundation.log2(x) }
+    @inline(never) package static func log10(_ x: Float) -> Float { Foundation.log10(x) }
+    @inline(never) package static func log10(_ x: Double) -> Double { Foundation.log10(x) }
 }
