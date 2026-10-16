@@ -107,7 +107,7 @@ import simd
     /// 同じ直線に載る 2 本の辺が集まる点を持つか。傾きの差は稜線の「同じ平面」と同じ許容差で見る
     /// (``SolidEdges/coplanarAngle``)。
     private static func hasStraightPair(_ net: SolidStrokeNet) -> Bool {
-        let threshold = Float(sin(SolidEdges.coplanarAngle))
+        let threshold = Float(RuntimeMath.sin(SolidEdges.coplanarAngle))
         for index in net.points.indices {
             let neighbors = net.neighbors(of: index)
             for (offset, first) in neighbors.enumerated() {
@@ -153,7 +153,7 @@ struct SolidStrokePlacement {
         switch camera.projection {
         case .perspective(let fov, _, let near, _):
             eye = SIMD4(camera.eye, 1)
-            parameters = SIMD4(weight, 2 * tan(fov / 2), near, height)
+            parameters = SIMD4(weight, 2 * RuntimeMath.tan(fov / 2), near, height)
         case .orthographic(_, _, let bottom, let top, _, _):
             eye = SIMD4(camera.eye, 0)
             parameters = SIMD4(weight, abs(bottom - top), 0, height)

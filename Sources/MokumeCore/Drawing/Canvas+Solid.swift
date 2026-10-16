@@ -1009,7 +1009,7 @@ extension Canvas {
         (0...segments).map { step in
             guard step > 0 else { return SIMD2(1, 0) }
             let angle = 2 * Float.pi * Float(step) / Float(segments)
-            return SIMD2(cos(angle), sin(angle))
+            return SIMD2(RuntimeMath.cos(angle), RuntimeMath.sin(angle))
         }
     }
 
@@ -1223,7 +1223,7 @@ struct StrokeCamera {
         switch camera.projection {
         case let .perspective(fieldOfView, _, near, _):
             isPerspective = true
-            scale = 2 * tan(fieldOfView / 2)
+            scale = 2 * RuntimeMath.tan(fieldOfView / 2)
             self.near = near
         case let .orthographic(_, _, bottom, top, _, _):
             isPerspective = false

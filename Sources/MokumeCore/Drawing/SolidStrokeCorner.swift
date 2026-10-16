@@ -164,7 +164,7 @@ extension Canvas {
         // ように、3D では逆の側へ傾いた腕も、潰れた辺に沿って見れば画面で同じ向きになる
         guard scale > 0, scale.isFinite else { return false }
         let volume = abs(dot(cross(first, along), second))
-        return volume <= Float(sin(SolidEdges.coplanarAngle)) * scale
+        return volume <= Float(RuntimeMath.sin(SolidEdges.coplanarAngle)) * scale
     }
 }
 

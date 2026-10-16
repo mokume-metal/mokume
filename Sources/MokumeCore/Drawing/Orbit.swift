@@ -87,7 +87,7 @@ public struct Orbit: Equatable, Sendable {
     public var eye: SIMD3<Float> {
         // 縦軸は下向きなので、見下ろす (正の仰角) と見る位置は -y へ上がる
         let offset = SIMD3<Float>(
-            sin(yaw) * cos(pitch), -sin(pitch), cos(yaw) * cos(pitch))
+            RuntimeMath.sin(yaw) * RuntimeMath.cos(pitch), -RuntimeMath.sin(pitch), RuntimeMath.cos(yaw) * RuntimeMath.cos(pitch))
         return center + offset * distance
     }
 
@@ -149,7 +149,7 @@ public struct Orbit: Equatable, Sendable {
         if scroll != 0 {
             let exponent = -scroll * sensitivity.z * Self.zoomPerScroll
             let (lower, upper) = distanceLimits
-            let next = exponent.isFinite ? distance * exp(exponent) : .nan
+            let next = exponent.isFinite ? distance * RuntimeMath.exp(exponent) : .nan
             // 収めた先が有限なら進める。溢れた +∞ は上限へ、0 へ潰れたら下限へ収まる
             let clamped = next.isNaN ? next : min(max(next, lower), upper)
             if clamped.isFinite { distance = clamped } else { held.zoom = true }

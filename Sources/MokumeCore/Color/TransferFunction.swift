@@ -27,7 +27,7 @@ enum TransferFunction {
         if linear <= linearThreshold {
             return linearSlope * linear
         }
-        return scale * pow(linear, 1 / exponent) - offset
+        return scale * RuntimeMath.pow(linear, 1 / exponent) - offset
     }
 
     /// ディスプレイのエンコード → 線形 (入口の境界)。
@@ -43,6 +43,6 @@ enum TransferFunction {
         if encoded <= linearSlope * linearThreshold {
             return encoded / linearSlope
         }
-        return min(pow((encoded + offset) / scale, exponent), .greatestFiniteMagnitude)
+        return min(RuntimeMath.pow((encoded + offset) / scale, exponent), .greatestFiniteMagnitude)
     }
 }

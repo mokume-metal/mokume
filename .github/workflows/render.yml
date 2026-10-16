@@ -66,8 +66,8 @@ name: Render
 # 誰にも届かない。前検査 (scripts/runner-preflight.sh) の理由を render の job の出力で受け、
 # GitHub ホストから起票する。専用機のジョブは引き続き権限も秘密も持たない。定期の run の
 # 前検査の赤は scheduled-report が起票するので、ここは merge_group だけを見る
-# 範囲は debug の build・test・gpu-ran (台帳を含む) と、台帳を外した release
-# (Makefile の test-release-scheduled)。release で台帳を外す理由は #1736。
+# 範囲は debug の build・test・gpu-ran と、release の test・gpu-ran (Makefile の
+# test-release-scheduled)。どちらも台帳を含む (#1736)。
 # **1 本の長いジョブにしない。** release は debug の終了後に門番を通して queue へ入れ
 # (needs)、その間に待っている render を先に通す。各 30 分。初回の run で所要と render の
 # 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。

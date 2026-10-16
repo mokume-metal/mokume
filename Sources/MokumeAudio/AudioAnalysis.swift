@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Accelerate
+import MokumeCore
 
 /// 1 つの窓を解析した値。``AudioIn`` がフレームごとに 1 つ持つ。
 nonisolated struct AudioLevels: Equatable, Sendable {
@@ -103,7 +104,7 @@ nonisolated enum AudioAnalysis {
     /// 振幅を dBFS にする。
     static func decibels(_ amplitude: Float) -> Float {
         guard amplitude > 0 else { return floorDecibels }
-        return max(20 * log10(amplitude), floorDecibels)
+        return max(20 * RuntimeMath.log10(amplitude), floorDecibels)
     }
 
     /// dBFS を 0〜1 へ写す。``quietDecibels`` が 0、0 dBFS が 1 で、外は丸める。

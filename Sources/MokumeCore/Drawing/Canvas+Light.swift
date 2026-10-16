@@ -54,7 +54,7 @@ extension Canvas {
                 kind: .spot, color: color,
                 position: transform.apply(x: x, y: y, z: z),
                 direction: transformedDirection(directionX, directionY, directionZ),
-                coneCosine: cos(used)),
+                coneCosine: RuntimeMath.cos(used)),
             color: color, entry: .spotLight)
     }
 
