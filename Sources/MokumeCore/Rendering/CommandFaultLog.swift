@@ -197,6 +197,21 @@ nonisolated final class CommandFaultLog: Sendable {
             if let forgotten, forgotten.submission == submission { return !forgotten.lost }
             return false
         }
+
+        /// 番号 `submission` の投入が、絵を届けられなかったか。届いていなければ `nil`。
+        ///
+        /// **確かめられないものは届けられなかった側へ倒す** (``outcome(of:)`` とは逆の倒し方・[#2735])。
+        /// 結末を失った番号 (``Drop/lost``) と、忘れた打ち切りに掛かりうる番号 (忘れた分のうち最も
+        /// 新しいもの以前で、覚えている打ち切りに無いもの) である。答えを使うのは同じ絵を出し直す・
+        /// 焼いた面を名乗らない口で、倒し違えても絵を 1 回余計に出すか 1 枚見送るだけで済む。
+        ///
+        /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+        func undelivered(_ submission: UInt64) -> Bool? {
+            guard submission <= arrivedThrough || arrivedAhead.contains(submission) else { return nil }
+            if drops.contains(where: { $0.submission == submission }) { return true }
+            if let forgotten, forgotten.submission >= submission { return true }
+            return false
+        }
     }
 
     private let state = Mutex(State())
@@ -293,6 +308,14 @@ nonisolated final class CommandFaultLog: Sendable {
         state.withLock { state in
             for submission in submissions { answers.append(state.outcome(of: submission)) }
         }
+    }
+
+    /// 番号 `submission` の投入が絵を届けられなかったかを、**待たずに**答える ([#2735])。届いていなければ
+    /// `nil`、打ち切られた・結末を失った・忘れた打ち切りに掛かりうるなら `true` (``State/undelivered(_:)``)。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    func undelivered(_ submission: UInt64) -> Bool? {
+        state.withLock { $0.undelivered(submission) }
     }
 
     /// 結末を 1 つ書き、待っている側を起こす。**条件の錠を握ったまま書く** — 待つ側は同じ錠を

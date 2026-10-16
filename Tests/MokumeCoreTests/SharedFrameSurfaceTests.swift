@@ -175,6 +175,17 @@ struct SharedFrameSurfaceTests {
             frameCount: frame, time: Double(frame) / 60, frameRate: rate, frameTimeMs: frameTimeMs)
     }
 
+    /// 積んである投入の結末がすべて届くまで待つ。
+    ///
+    /// **名乗りは焼きの結末を見てから** ([#2735])。結末は合図より遅れて届くので、待たずに続けて書くと、
+    /// 名乗りが 1 回遅れたり、届かないまま次の書き込みが来た面を見送ったりする。本番の書き込みは
+    /// リフレッシュごとなので結末は届いている。ここの検査は運び方と中身を見るので、その間合いを作る。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    static func awaitOutcomes(_ gpu: RenderDevice) {
+        _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+    }
+
     /// 与えた色で埋めた絵を、面へ 1 枚差し出す。
     ///
     /// **控えも名乗らせてから返す。** 公開は 1 枚遅れる (#748) ので、書いただけでは最後の
@@ -192,8 +203,10 @@ struct SharedFrameSurfaceTests {
             gpu: gpu, width: size.width, height: size.height, at: directory)
         try shared.publishManifest()
         for frame in 1..<(times + 1) {
+            Self.awaitOutcomes(gpu)
             try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
         }
+        Self.awaitOutcomes(gpu)
         try shared.publishPending()
         return shared
     }
@@ -312,16 +325,152 @@ struct SharedFrameSurfaceTests {
             #expect(SharedFrameSurface.newest(among: shared.ids) == nil, "書いたその場で名乗っている")
 
             for written in 2...(SharedFrameSurface.slotCount + 2) {
+                Self.awaitOutcomes(gpu)
                 try shared.write(source, using: presenter, numbers: Self.numbers(frame: written))
                 let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
                 #expect(newest.frame == written - 1)
             }
             // 控えを名乗らせれば、最後に書いた 1 枚が出る
+            Self.awaitOutcomes(gpu)
             try shared.publishPending()
             let last = try #require(SharedFrameSurface.newest(among: shared.ids))
             #expect(last.frame == SharedFrameSurface.slotCount + 2)
             #expect(shared.pendingID == nil)
             try gpu.settle()
+        }
+    }
+
+    /// **焼きを GPU が打ち切ったら、その面を名乗らない** ([#2735])。合図は打ち切りでも進むので、
+    /// 待てただけで名乗ると、読み手は前に焼いた絵か書いていない面を最新として掴む。名乗らなければ
+    /// 読み手は前に名乗った面を出し続け、次に焼いた面が名乗る。
+    ///
+    /// 打ち切りは GPU を止めずに作る (`dropsNextSubmissionForTesting` は結末の記録だけを打ち切りに
+    /// する)。打ち切りの無い側では、今までどおり書いた 1 枚を名乗る。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @Test("焼きを GPU が打ち切ったら、その面は名乗らず、次に焼いた面が名乗る。無ければ名乗る",
+        arguments: [true, false])
+    func aDroppedBurnIsNotNamed(dropped: Bool) throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 1))
+            Self.awaitOutcomes(gpu)
+            try shared.publishPending()
+            let first = try #require(SharedFrameSurface.newest(among: shared.ids))
+
+            // 次の投入は 2 枚目の焼き (控えは名乗り済みなので、書き込みの頭は何も投入しない)
+            if dropped { gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim }
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 2))
+            let burnt = try #require(shared.pendingID)
+            Self.awaitOutcomes(gpu)
+            try shared.publishPending()
+            let named = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(
+                named.frame == (dropped ? 1 : 2) && named.id == (dropped ? first.id : burnt),
+                "名乗った面が違う (枚数 \(named.frame)・面 \(named.id)・1 枚目 \(first.id)・焼いた面 \(burnt))")
+            #expect(shared.pendingID == nil, "打ち切られた面を控えに残している")
+
+            // 次の書き込み。打ち切られていても、次に焼いた面が名乗る
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 3))
+            let following = try #require(shared.pendingID)
+            Self.awaitOutcomes(gpu)
+            try shared.publishPending()
+            let next = try #require(SharedFrameSurface.newest(among: shared.ids))
+            // 枚数は書き込みの通し番号なので、名乗らなかった 2 枚目のぶん飛ぶ
+            #expect(next.frame == 3 && next.id == following)
+            try gpu.settle()
+        }
+    }
+
+    /// **名乗るときに結末の届くのを待たない** ([#2735] の反証)。毎フレーム main actor で通る口なので、
+    /// 結末がまだ届いていない焼きは名乗りを次の書き込みまで遅らせ、次の書き込みでも届いていなければ
+    /// 見送る。結末を失った焼き (届かないまま) は名乗らない。
+    ///
+    /// 届かない結末は `losesNextOutcomeForTesting` で作る (GPU の仕事は普通に走り、結末の記録だけが
+    /// 欠ける)。待てば ``RenderDevice/outcomeWaitLimit`` まで眠り、待ちを数える (`outcomeWaits`) ので、
+    /// 待たなかったことは時間と数の両方で見る。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @Test("結末の届いていない焼きは、待たずに名乗りを遅らせ、届かないまま次の書き込みが来たら名乗らない")
+    func anUnsettledBurnIsDeferredWithoutWaiting() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            gpu.outcomeWaitLimit = .seconds(2)
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 1))
+            Self.awaitOutcomes(gpu)
+
+            // 2 枚目の焼きの結末は届かない。1 枚目はこの書き込みの頭で名乗る
+            gpu.losesNextOutcomeForTesting = true
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 2))
+            let unsettled = try #require(shared.pendingID)
+            let first = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(first.frame == 1)
+            try gpu.settle()
+
+            let waits = gpu.outcomeWaits
+            let started = ContinuousClock.now
+            try shared.publishPending()
+            let took = ContinuousClock.now - started
+            #expect(gpu.outcomeWaits == waits, "名乗る口が結末の届くのを待った")
+            #expect(took < .milliseconds(500), "名乗る口が \(took) 止まった")
+            #expect(
+                SharedFrameSurface.newest(among: shared.ids)?.id == first.id,
+                "結末の届いていない面を名乗った")
+            #expect(shared.pendingID == unsettled, "結末の届いていない面の名乗りを遅らせていない")
+
+            // 次の書き込み。届かないままなので、後に焼いた面を残して見送る
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 3))
+            let following = try #require(shared.pendingID)
+            #expect(following != unsettled && following != first.id, "読み手の掴む面か、控えの面へ焼いた")
+            // 3 枚目の結末だけが届くのを待つ (2 枚目の結末を失ったものと記さない)
+            let last = gpu.submissionCount
+            let deadline = ContinuousClock.now + .seconds(2)
+            while gpu.undelivered(last) == nil, ContinuousClock.now < deadline {}
+            try #require(gpu.undelivered(last) == false, "3 枚目の結末が届かない (これでは何も測れない)")
+
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 4))
+            let named = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(named.id == following && named.frame == 3, "結末を失った面を名乗ったか、後の面を名乗っていない")
+            #expect(gpu.outcomeWaits == waits)
+            try gpu.settle()
+        }
+    }
+
+    /// **名乗れない焼きが続いても、読み手が最新として掴んでいる面へは焼かない** ([#2735])。名乗りを
+    /// 遅らせる・見送ると最新の面が進まないので、焼く面を書き込みごとに回すだけでは、回りが最新の面に
+    /// 追い付く。読み手はその面を GPU の完了を待たずに差し出すので、焼けば途中の絵を読ませる。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @Test("名乗れない焼きが続いても、読み手が最新として掴んでいる面へは焼かない")
+    func burnsNeverLandOnTheNamedSurfaceWhileNamingStalls() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 1))
+            Self.awaitOutcomes(gpu)
+
+            // 以後の焼きは、どれも結末が届かない (名乗れない)
+            for frame in 2...(SharedFrameSurface.slotCount + 2) {
+                gpu.losesNextOutcomeForTesting = true
+                try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
+                try gpu.settle()
+                let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
+                #expect(newest.frame == 1, "\(frame) 回目: 結末の届かない面を名乗った")
+                #expect(shared.pendingID != newest.id, "\(frame) 回目: 最新として名乗っている面へ焼いた")
+            }
+            #expect(shared.burnsDeferred > 0, "焼く面の回りが最新の面に届いていない — この検査は何も見ていない")
+            gpu.losesNextOutcomeForTesting = false
         }
     }
 
@@ -344,6 +493,7 @@ struct SharedFrameSurfaceTests {
             for frame in 1...(SharedFrameSurface.slotCount * 3) {
                 // 読み手は書き込みの合間に掴む
                 grabbed.append(SharedFrameSurface.newest(among: shared.ids)?.id)
+                Self.awaitOutcomes(gpu)
                 try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
                 let burning = try #require(shared.pendingID, "書いたのに控えが無い")
                 // **いま焼いている面は、公開済みの最新面ではない**
@@ -375,6 +525,7 @@ struct SharedFrameSurfaceTests {
                 numbers: FrameNumbers(
                     frameCount: 7, time: 0.25, frameRate: 59.5, frameTimeMs: 16.8,
                     overBudgetFrames: 2, heaviestFrame: 5))
+            Self.awaitOutcomes(gpu)
             try shared.publishPending()
 
             let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
@@ -402,6 +553,7 @@ struct SharedFrameSurfaceTests {
             try shared.write(
                 source, using: presenter,
                 numbers: Self.numbers(frame: 1, rate: nil, frameTimeMs: nil))
+            Self.awaitOutcomes(gpu)
             try shared.publishPending()
 
             let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
@@ -428,16 +580,20 @@ struct SharedFrameSurfaceTests {
             let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
             // 面を 1 周させてから、同じ面へ「測れていない」を書く
             for frame in 1...SharedFrameSurface.slotCount {
+                Self.awaitOutcomes(gpu)
                 try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
             }
+            Self.awaitOutcomes(gpu)
             try shared.publishPending()
             let reused = shared.ids[0]
             #expect(try #require(SharedFrameSurface.numbers(of: reused)).frameRate != nil)
 
+            Self.awaitOutcomes(gpu)
             try shared.write(
                 source, using: presenter,
                 numbers: Self.numbers(
                     frame: SharedFrameSurface.slotCount + 1, rate: nil, frameTimeMs: nil))
+            Self.awaitOutcomes(gpu)
             try shared.publishPending()
             let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
             #expect(newest.id == reused, "面が 1 周していない — この検査が何も見ていない")

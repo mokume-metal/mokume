@@ -1246,6 +1246,19 @@ import MokumeDiagnostics
         settledObservers.removeAll(keepingCapacity: true)
     }
 
+    /// 番号 `submission` の投入が絵を届けられなかったかを、**待たずに**答える ([#2735])。結末がまだ届いて
+    /// いなければ `nil`、打ち切られた・結末を失ったなら `true`。
+    ///
+    /// 絵を渡す口 (道具の窓の出し直し・共有の面の名乗り) が使う。``droppedWork(after:through:)`` と違って
+    /// 眠らないので、毎フレーム main actor で呼べる。**確かめられないものは届けられなかった側へ倒す** —
+    /// ``revokeDroppedDeliveries()`` の照会 (正常の側へ倒す) とは逆で、倒し違えても絵を 1 回余計に出すか、
+    /// 1 枚名乗りを見送るだけで済む (``CommandFaultLog/undelivered(_:)``)。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    func undelivered(_ submission: UInt64) -> Bool? {
+        commandFaults.undelivered(submission)
+    }
+
     /// 番号が `floor` より大きく `last` 以下の投入のうち、GPU が打ち切ったもの (番号の昇順)。
     /// **その範囲の結末が届くまで待つ** ([#1932])。
     ///
@@ -1466,12 +1479,18 @@ extension RenderDevice {
     /// **待たなくても番号は進める。** 進めないと、この経路で使った置き場だけが
     /// 「いつ終わったか分からない」まま環へ戻り、次の巻き戻しが実行中のコマンドを
     /// 踏む ([#222](https://github.com/mokume-metal/mokume/issues/222))。
-    func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) {
+    ///
+    /// - Returns: 振った番号。差し出した側が結末を待つのに使う ([#2735])。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @discardableResult
+    func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) -> UInt64 {
         // **投入の並びは ``commit(_:retaining:writing:)`` が持つ。** かつてはここにも同じ 5 行が
         // 書かれていた — 並びに 1 段足して片方だけ直すと、そのコマンドが抱えられないまま
         // GPU の実行中に消える。負荷のかかったときだけ出る形である (#222 が踏んだ)
-        commit(commands)
+        let submission = commit(commands)
         queue.signalDrawable(drawable)
+        return submission
     }
 }
 
