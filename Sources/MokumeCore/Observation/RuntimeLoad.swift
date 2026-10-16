@@ -24,6 +24,25 @@ public struct RuntimeLoad: Encodable, Equatable, Sendable {
     public let frameRate: Double?
     /// 直近のフレーム時間。まだ測れていなければ `nil`。
     public let frameTimeMs: FrameTime?
+
+    /// いちばん重かったフレーム。
+    public struct HeaviestFrame: Encodable, Equatable, Sendable {
+        /// フレームの番号 (``SketchPart/frameCount`` と同じ数え方)。
+        public let frame: Int
+        /// そのフレームの仕事にかかった長さ (ミリ秒)。
+        public let ms: Double
+    }
+
+    /// 起動してから、1 フレームの予算 (1 / ``SketchSettings/frameRate`` 秒) を越えたフレームの数。
+    ///
+    /// **フレームの時計 (``SketchSettings/ClockMode/frames``) では、越えたフレームがそのまま処理落ち
+    /// になる。** 測るのはフレームの仕事 (時刻を進めてから組み終えるまで) の長さで、`setup()` と
+    /// 画面の更新を待つ間は含まない ([#2601](https://github.com/mokume-metal/mokume/issues/2601))。
+    public let overBudgetFrames: Int
+    /// 起動してから、仕事がいちばん長かったフレーム。まだ 1 枚も測っていなければ `nil`。
+    /// フレームの時計なら、その番号の時刻 ((番号 − 1) / fps 秒) を指定した観測で同じフレームを
+    /// 描き直し、重さの元を探せる。
+    public let heaviestFrame: HeaviestFrame?
     /// プロセスが使っている物理メモリ (MB)。採れなければ `nil`。
     public let memoryMB: Double?
     /// 熱の状態。
@@ -36,11 +55,13 @@ public struct RuntimeLoad: Encodable, Equatable, Sendable {
     /// どちらも syscall を要するので要求されたときにしか採らない。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    static func sample(tempo: FrameTempo, now: Double) -> RuntimeLoad {
+    static func sample(tempo: FrameTempo, budget: FrameBudget, now: Double) -> RuntimeLoad {
         let frameTime = tempo.frameTimeMs(now: now)
         return RuntimeLoad(
             frameRate: tempo.frameRate(now: now),
             frameTimeMs: frameTime.map { FrameTime(mean: $0.mean, max: $0.max) },
+            overBudgetFrames: budget.overBudgetFrames,
+            heaviestFrame: budget.heaviest.map { HeaviestFrame(frame: $0.frame, ms: $0.seconds * 1000) },
             memoryMB: physicalFootprintMB(),
             thermalState: thermalStateName(ProcessInfo.processInfo.thermalState))
     }

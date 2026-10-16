@@ -165,7 +165,8 @@ extension SketchPart {
     // shot: 2 snippet=57be30b4
     // shot: 3 snippet=78ae8dd3
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
-        try Self.resourceCanvas(ImageFailure.self).loadImage(path)
+        Self.noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
+        return try Self.resourceCanvas(ImageFailure.self).loadImage(path)
     }
 
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**

@@ -267,7 +267,9 @@ struct ObservationProtocolTests {
             warnings: [],
             stats: FrameStats.summarize(
                 DisplayImage(width: 2, height: 2, bytes: [UInt8](repeating: 0, count: 16))),
-            load: RuntimeLoad.sample(tempo: Self.tempo(recording: [0, 0.016, 0.033]), now: 0.033),
+            load: RuntimeLoad.sample(
+                tempo: Self.tempo(recording: [0, 0.016, 0.033]), budget: FrameBudget(frameRate: 60),
+                now: 0.033),
             values: ["angle": .float(1.0)],
             inputs: [
                 SourceReport(

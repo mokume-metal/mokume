@@ -101,8 +101,8 @@ struct Tools {
                                 """
                                 Take a shot every N frames (\(ObservationRequest.minimumEvery)…\(ObservationRequest.maximumEvery)). \
                                 Omit to take every frame. Counted in frames rather than seconds, \
-                                and the sketch being observed runs on the wall clock, so the shots \
-                                are not evenly spaced in time — lay the series out by each entry's \
+                                and the sketch being observed runs on the wall clock unless it chose \
+                                `clock: .frames`, so the shots are not evenly spaced in time — lay the series out by each entry's \
                                 `time` in the reply's catalogue, rather than assuming an even gap. \
                                 For motion with evenly spaced times, write it with `mokume render` \
                                 instead (a fixed frame rate, every frame written).

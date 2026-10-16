@@ -243,6 +243,66 @@ public struct SketchSettings: Equatable, Sendable {
     /// 手本 (Processing / p5) の `frameRate(n)` は走っている最中に呼べるが、ここには
     /// 走っている最中に速さを変える口が無い。
     public var frameRate: Int
+    /// 窓で走らせるときの時計。既定は ``ClockMode/wallClock`` (実際に流れた時間)。
+    ///
+    /// ``ClockMode/frames`` にすると、窓の中でも ``Sketch/draw()`` 1 回がちょうど
+    /// ``frameRate`` 分の 1 秒になる。書き出し (`mokume render`) と同じ時計で、``SketchPart/time`` は
+    /// `(frameCount − 1) / frameRate`、``SketchPart/deltaTime`` は常に 1 / ``frameRate`` である。
+    /// 同じ入力をフレームの番号つきで流せば、同じ状態に進む — ゲームの書き方 (Pico-8・GameMaker・
+    /// Processing の `x += 2`) である。
+    ///
+    /// <!-- example: 文脈 var ball = Circle(x: 240, y: 60, radius: 8); var vy: Float = 0 -->
+    /// ```swift
+    /// var settings: SketchSettings { SketchSettings(width: 480, height: 270, clock: .frames) }
+    ///
+    /// func draw() {
+    ///     // フレームと押下の判定の単位が同じなので、2 回発火も取りこぼしも無い
+    ///     if keyboard.justPressed(.space) { vy = -8 }
+    ///     vy += 0.4                        // deltaTime を掛けなくてよい
+    ///     ball.move(by: Vector2(0, vy))
+    ///     background(20)
+    ///     ball.draw()
+    /// }
+    /// ```
+    ///
+    /// ## 重いフレームでは、絵を抜かずに遅くなる (処理落ち)
+    ///
+    /// 1 フレームに 30 ms かかっても、``SketchPart/time`` は 1/60 秒しか進まない。実時間の時計なら
+    /// 30 ms 進み、`deltaTime` も約 0.03 になる。処理落ちが起きたことは、観測の重さ
+    /// (1/fps を越えたフレームの数と、いちばん重かったフレームの番号) と、窓の数字の欄に出る。
+    ///
+    /// - **処理落ちの間、実時間で進むものとずれる。** 音 (``SketchPart/clock`` が実時間でなくても、窓では
+    ///   実際に鳴らす)・カメラ・外から届く値は実時間で進み、絵だけが遅れる
+    /// - **実時間が正であるべきゲーム** (音楽に合わせるリズムゲームなど) は、既定の
+    ///   ``ClockMode/wallClock`` のまま、``SketchPart/time`` と ``SketchPart/deltaTime`` で書く
+    /// - 重さの元になりやすい `draw()` の中の同期の読み込み (`loadImage` など) は、1 度だけ警告する。
+    ///   `setup()` で読むか、`request…` の口を使う
+    ///
+    /// ## 止める口の意味は、時計によらない
+    ///
+    /// | 口 | `draw()` | `frameCount` | `time` | `deltaTime` | 入力 |
+    /// | --- | --- | --- | --- | --- | --- |
+    /// | 何もしない | 毎フレーム | +1 | 進む | 1/fps | 届く |
+    /// | ``SketchPart/pauseTime()`` の間 | 呼ばれる | +1 | 止まる | 0 | 届く |
+    /// | ``SketchPart/jumpTime(_:)`` の枚 | 呼ばれる | +1 | 指定の秒へ跳ぶ | 0 | 届く |
+    /// | 時刻を指定した観測の 1 枚 | 呼ばれる | +1 | その枚だけ指定の秒 | 0 | 届く |
+    /// | ``SketchPart/noLoop()`` の間 | 呼ばれない | 止まる | 止まる | — | コールバックは呼ばれる |
+    /// | ``SketchPart/redraw()`` | 1 回 | +1 | 1/fps 進む | 1/fps | 届く |
+    /// | 外からの停止 (`watch`・MCP) | 呼ばれない | 止まる | 止まる | 再開した枚は 1/fps | 溜まる |
+    ///
+    /// ゲームの一時停止は「自分の印 + ``SketchPart/pauseTime()``」で書く。足して進めるもの
+    /// (`ball.move(by:)`) は自分の印で止め、``SketchPart/time`` から作る動きは `pauseTime()` で止まる。
+    /// 描画は続くので、止めた画面に「PAUSED」を出せる。画面ごと凍らせてよいなら
+    /// ``SketchPart/noLoop()`` / ``SketchPart/loop()`` を使う。
+    ///
+    /// ## 窓の外では読まない
+    ///
+    /// 書き出し (`mokume render`) は、この設定によらず書き出しの刻みのフレームの時計で回る。窓を
+    /// 開かずに `SketchRuntime` を直に回すときも、既定でフレームの時計である。走っている時計は
+    /// ``SketchPart/clock`` で読める (この設定が ``ClockMode/frames`` の窓では
+    /// ``Clock/frameIndex(frameRate:)``)。**起動のときに読む。** 走っている最中に代入しても時計は
+    /// 変わらない。
+    public var clock: ClockMode
     /// 窓の題名。
     public var title: String
 
@@ -336,11 +396,13 @@ public struct SketchSettings: Equatable, Sendable {
 
     public init(
         width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume",
-        pixelDensity: Float = 1, upscale: Upscale = .spatial, windowScale: Float = 0.5
+        pixelDensity: Float = 1, upscale: Upscale = .spatial, windowScale: Float = 0.5,
+        clock: ClockMode = .wallClock
     ) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
+        self.clock = clock
         self.title = title
         self.pixelDensity = pixelDensity
         self.upscale = upscale
@@ -523,10 +585,14 @@ extension SketchPart {
     /// のは最初のフレームからである。ただし ``Sketch/setup()`` で ``jumpTime(_:)`` した最初のフレームは
     /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。
     ///
-    /// 窓に出して動かしている間は**実際に流れた時間**で、フレームが何枚落ちても
+    /// 窓に出して動かしている間は、既定で**実際に流れた時間**で、フレームが何枚落ちても
     /// 復帰した瞬間に追いつく。**揃えたいものはここから導く** ([ADR-0025] 決定 6) —
-    /// 複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
+    /// 実時間の時計で複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
     /// 状態ではない。
+    ///
+    /// 窓でもフレームの時計を選べる (``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``)。
+    /// そのときと書き出し (`mokume render`) では `(frameCount − 1) / fps` で、重いフレームでも 1 枚に
+    /// 1/fps 秒しか進まない (処理落ち)。
     ///
     /// 作品の側から止める・飛ぶこともできる (``pauseTime()`` / ``jumpTime(_:)``)。
     ///
@@ -538,14 +604,19 @@ extension SketchPart {
     public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
     /// 前のフレームからの経過 (秒)。
     ///
+    /// **フレームの時計** (書き出しと、``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``
+    /// にした窓) では、**常にちょうど 1 / fps 秒**である。重いフレームの後でも変わらない。
+    ///
+    /// 以下は、窓の既定の**実時間の時計** (``Clock/wallClock``) の話である。
+    ///
     /// **最初のフレームは、時計 (``clock``) によらず 1 フレームぶんである。** 窓に出して動かして
     /// いる間は目標の 1 フレームぶん (``SketchSettings/frameRate`` 分の 1 秒) で、アプリの起動や
     /// ``Sketch/setup()`` の中で済む計算にかかった時間は乗らない。ただし ``Sketch/setup()`` で ``pauseTime()`` /
     /// ``jumpTime(_:)`` した最初のフレームと、時刻を指定した観測が撮る最初のフレームは 0 である。
     ///
-    /// **最初のフレームの中で使った時間は、2 枚目に乗る** (上限まで)。``Sketch/setup()`` で置いた図形・
-    /// 画素・背景は最初のフレームへ持ち越されてその中で組まれ、最初の ``Sketch/draw()`` の重い準備も
-    /// その中で走るので、ほかのフレームと同じく次の枚の経過になる。
+    /// **最初のフレームの中で使った時間は、2 枚目に乗る** (上限まで・実時間の時計)。``Sketch/setup()`` で
+    /// 置いた図形・画素・背景は最初のフレームへ持ち越されてその中で組まれ、最初の ``Sketch/draw()`` の
+    /// 重い準備もその中で走るので、ほかのフレームと同じく次の枚の経過になる。
     ///
     /// **止まっていた時間まるごとは渡らない。** ディスプレイのスリープなどでフレームが
     /// 長く途切れたとき、その間の秒数がそのまま 1 枚に乗ると、これで積分している側
@@ -557,24 +628,30 @@ extension SketchPart {
     /// 「描き直しの 1 枚の時刻」)。
     ///
     /// **作者が時刻を止めている間と、飛んだ枚は 0 である** (``pauseTime()`` / ``jumpTime(_:)``)。
+    /// どちらの時計でも同じである。
     ///
-    /// **足し込んだ合計は ``time`` と一致しない。** 揃えたいものをこれで作らない
-    /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
-    /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
+    /// ## 足し込んだ状態が揃うかは、時計で決まる
+    ///
+    /// - **フレームの時計では揃う。** 刻みが毎回ちょうど 1 / fps なので、同じ入力をフレームの番号
+    ///   つきで流せば、足し込んだ状態 (位置・速さ・残り時間) は何度走らせても同じになる
+    /// - **実時間の時計では揃わない。** 刻み方が実行ごとに違い、同じ合計時間でも刻み方が違えば
+    ///   結果が変わる。フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない — 揃えたい
+    ///   ものは ``time`` から導く ([ADR-0025] 決定 6)
     public var deltaTime: Float { Self.liveRuntime(.read(returning: "0"))?.deltaTime ?? 0 }
     /// ``time`` がどこから来ているか。
     ///
-    /// 窓に出して動かしている間は ``Clock/wallClock`` (実際に流れた時間) で、書き出し
+    /// 窓に出して動かしている間は、既定で ``Clock/wallClock`` (実際に流れた時間) で、書き出し
     /// (`mokume render`) と、窓を開かずに回す検査では ``Clock/frameIndex(frameRate:)``
-    /// (フレームの数え方) である。
+    /// (フレームの数え方) である。窓でも ``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``
+    /// にすれば、宣言の fps の ``Clock/frameIndex(frameRate:)`` になる。
     ///
     /// **外の時間で動くものを作る側が読む** — たとえば音声ファイルの再生 (`loadSound(_:)`)
-    /// は、実時間なら実際に鳴らし、フレームの数え方なら鳴らさずに再生位置をフレームの数から
-    /// 決める。書き出すたびに同じ絵になるのは後者である ([ADR-0025] の水準 2)。
+    /// は、書き出しでは鳴らさずに再生位置をフレームの数から決める。書き出すたびに同じ絵に
+    /// なるのはこのためである ([ADR-0025] の水準 2)。窓では、フレームの時計でも実際に鳴らす。
     ///
     /// ```swift
     /// background(0)
-    /// // 窓で見ている間だけ時刻を出し、書き出す絵には入れない
+    /// // 実時間で動いている間だけ時刻を出し、書き出す絵には入れない
     /// if clock == .wallClock { text("\(time)", 20, 40) }
     /// ```
     ///
