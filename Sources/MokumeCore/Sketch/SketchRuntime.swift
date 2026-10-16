@@ -121,6 +121,10 @@ public final class SketchRuntime {
     /// 1 度だけ言った注意の控え。**検査が読む。**
     private(set) var warnings = WarningLog<Warning>()
 
+    /// `draw()` の中の同期の読み込みを、口ごとに 1 度だけ知らせる控え (#2601)。読み込みの口が
+    /// ``SketchPart/noticeBlockingLoad(_:instead:)`` から言う。
+    let blockingLoads = BlockingLoads()
+
     /// 走っている最中の ``SketchSettings/frameRate`` への代入を、1 度だけ警告して断る
     /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
     ///
@@ -318,6 +322,13 @@ public final class SketchRuntime {
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     private var tempo = FrameTempo()
+    /// 1 フレームの予算を越えたフレームの控え ([#2601])。速さと同じく、窓に出る数字も観測の重さも
+    /// ここから採る。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    private var budget: FrameBudget
+    /// いま描いているフレームの仕事を始めた時刻 (``budget`` が測る長さの起点)。`setup()` の後に置く。
+    private var frameWorkBegan: Double?
 
     /// 窓に出す数字。**観測の応答が返すものと同じ集計器から採る** (ADR-0030 決定 7)。
     var frameNumbers: FrameNumbers {
@@ -326,7 +337,9 @@ public final class SketchRuntime {
             frameCount: timing.frameCount,
             time: Double(timing.time),
             frameRate: tempo.frameRate(now: moment),
-            frameTimeMs: tempo.frameTimeMs(now: moment)?.mean)
+            frameTimeMs: tempo.frameTimeMs(now: moment)?.mean,
+            overBudgetFrames: budget.overBudgetFrames,
+            heaviestFrame: budget.heaviest?.frame)
     }
 
     /// これまでに描いたフレームの数。
@@ -337,6 +350,16 @@ public final class SketchRuntime {
     public var deltaTime: Float { timing.deltaTime }
     /// 時刻の出どころ。意味の説明は ``SketchPart/clock`` が正本。
     var clock: Clock { timing.clock }
+
+    /// 画面へ出しながら回しているか。**外の時間で動くもの (音の再生) は、これが真なら実際に鳴らす。**
+    ///
+    /// 窓・共有面の経路 (`SketchApplication`) が組み立てで頼めば、時計によらず真 — 作品がフレームの
+    /// 時計を選んでいても鳴らす ([#2601])。時計だけを見て決めると、フレームの時計を選んだ窓が無音に
+    /// なる。頼まなければ時計から決まり、実時間の時計なら真、フレームの時計なら偽 (書き出しと、窓を
+    /// 持たずに直に回す実行) である。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    let isOnScreen: Bool
 
     /// スケッチとその舞台を組み立てる。
     ///
@@ -355,20 +378,31 @@ public final class SketchRuntime {
 
     /// 実時間の出どころを差し替えられる入口 (検査用)。
     ///
-    /// - Parameter displays: ディスプレイの一覧の出どころ (``stage(for:displays:)``)。既定は
-    ///   いま繋がっているもの。**検査と、窓を開く側 (`SketchApplication`) から渡す。**
+    /// - Parameters:
+    ///   - displays: ディスプレイの一覧の出どころ (``stage(for:displays:)``)。既定は
+    ///     いま繋がっているもの。**検査と、窓を開く側 (`SketchApplication`) から渡す。**
+    ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**窓・共有面の経路だけが立てる。**
+    ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
+    ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
+    ///
+    /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
     init(
         sketch: any Sketch,
         gpu: RenderDevice,
         clock: Clock?,
         now: @escaping () -> Double,
-        displays: () -> [Display] = { Display.connected }
+        displays: () -> [Display] = { Display.connected },
+        onScreen: Bool = false
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         try Self.checkWindowScale(settings.windowScale)
         let stage = try Self.stage(for: settings, displays: displays)
-        let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
+        let clock =
+            clock
+            ?? (onScreen
+                ? Clock.launching(settings.clock, frameRate: settings.frameRate)
+                : .frameIndex(frameRate: settings.frameRate))
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
         self.windowScale = settings.windowScale
@@ -379,6 +413,8 @@ public final class SketchRuntime {
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
+        self.isOnScreen = onScreen || clock == .wallClock
+        self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
@@ -420,6 +456,8 @@ public final class SketchRuntime {
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
+        self.isOnScreen = clock == .wallClock
+        self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
         self.observer = observer
         self.inbox = inbox
@@ -681,6 +719,11 @@ public final class SketchRuntime {
         // 次のフレームの CPU と重ねるためなので、次が来ないなら遅らせる意味が無い (#1300)。
         // ここでの `redrawRequested` は上で落としてあるので、残る理由は作者の `noLoop()` である
         if !isLooping { settleWithoutAnotherFrame() }
+        // **組み終えたところで測る。** 観測に応える仕事 (絵を書き出す) は作品の重さではない
+        if let began = frameWorkBegan {
+            budget.record(frame: timing.frameCount, seconds: now() - began)
+            frameWorkBegan = nil
+        }
         serveObservationIfRequested(request: observation, drawFailure: drawFailure, appliedTime: requestedTime)
         if let drawFailure { throw drawFailure }
     }
@@ -700,6 +743,8 @@ public final class SketchRuntime {
     ///   引きずった量・スクロール) が描くフレームから消える。
     private func drawSketchFrame(deliveredInput: Bool = false, at requestedTime: Float? = nil) throws(RenderFailure) {
         start()
+        // **測るのは `setup()` の後から** — `setup()` は描いていた時間ではない (``FrameBudget``)
+        frameWorkBegan = now()
         timing.advance(at: requestedTime)
         // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
         defer { drawnThrough = timing.frameCount }
@@ -723,6 +768,10 @@ public final class SketchRuntime {
                 // 止めている間に配った分は、ここを通るまで残る (`InputState.endFrame()`)
                 defer { input.endFrame() }
                 supplyFromInlets()
+                // **`draw()` の間だけ立てる。** 同期の読み込みを知らせるのはここだけで、`setup()` と
+                // 入力のコールバック (上の配り) では言わない (``BlockingLoads``)
+                blockingLoads.isDrawing = true
+                defer { blockingLoads.isDrawing = false }
                 sketch.draw()
             }
         }
@@ -1535,7 +1584,7 @@ public final class SketchRuntime {
                 // 0 だったことを観測で辿れなくなる。最後に足すので、失敗の理由より前には来ない
                 warnings: warnings + OutsideRun.log.takeUnreported(),
                 stats: last?.stats,
-                load: RuntimeLoad.sample(tempo: tempo, now: now()),
+                load: RuntimeLoad.sample(tempo: tempo, budget: budget, now: now()),
                 values: exposedValues.isEmpty ? nil : exposedValues,
                 inputs: inputReports,
                 stamp: SourceStamp.current,

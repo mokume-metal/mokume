@@ -223,9 +223,25 @@ extension SketchPart {
     ///
     /// ``Shape/group(_:)`` と `+` は形を**1 本の頂点の並びへ畳む**。子の一覧を持って
     /// 1 つずつ描く作りではないので、「保持にしたのに速くならない」が起きない。
+    ///
+    /// ## 面を取れない所で呼ぶと空の形になる
+    ///
+    /// 形を記録する面が要るので、`setup()` か ``Sketch/draw()`` の中で呼ぶ。その外
+    /// (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、落ちずに空の形 (``Shape/empty``) を返し、
+    /// 1 度だけ警告する。中身は呼ばれ、中の語彙も何もせずに警告する
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     // shot: 1 snippet=2caf9b37
     // shot: 2 snippet=77b00113
-    public func createShape(_ body: () -> Void) -> Shape { Self.requireCanvas().createShape(body) }
+    public func createShape(_ body: () -> Void) -> Shape {
+        // 走っていなければ、形を記録する面が無い。投げない口なので止めずに空の形を返し、1 度だけ
+        // 警告する (#2683・#2265 の決定)。中身は呼ぶ — 中の語彙も同じ控えへ言い、何を呼んでいたかが
+        // 警告に残る
+        guard let canvas = Self.liveCanvas(.make(returning: "an empty shape")) else {
+            body()
+            return .empty
+        }
+        return canvas.createShape(body)
+    }
 
     /// 保持した形を、**置き場所ぶんだけまとめて置く**。
     ///

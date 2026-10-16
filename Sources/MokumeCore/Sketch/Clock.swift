@@ -19,6 +19,62 @@ public enum Clock: Equatable, Sendable {
     case frameIndex(frameRate: Int)
 }
 
+extension SketchSettings {
+    /// 窓で走らせるときの時計の選び方 (``SketchSettings/clock``)。
+    ///
+    /// 走っている時計そのもの (``Clock``) とは別の型にしてある。選ぶ側は刻みを書かずに
+    /// ``frames`` と書き、刻みは ``SketchSettings/frameRate`` から採る — 刻みを 2 か所に書くと、
+    /// 食い違ったときにどちらを取るかの答えが要る。
+    public nonisolated enum ClockMode: Sendable, Hashable, Codable {
+        /// 実際に流れた時間で進む (既定)。重いフレームでは時刻を進めて絵だけ抜く。
+        case wallClock
+        /// フレームの数で進む。``Sketch/draw()`` 1 回がちょうど 1 / ``SketchSettings/frameRate`` 秒で、
+        /// 重いフレームでは絵を抜かずに遅くなる。走っている間の ``SketchPart/clock`` は
+        /// ``Clock/frameIndex(frameRate:)`` になる。
+        case frames
+    }
+}
+
+extension Clock {
+    /// 窓・共有面の経路の時計を、作品の設定から決める。``SketchSettings/ClockMode/frames`` なら宣言の
+    /// 刻みのフレーム番号、既定は実時間である。
+    ///
+    /// 書き出しの頼みがあるときはここを通らず、頼みの刻みのフレーム番号になる (`SketchApplication`) —
+    /// `--fps` が作品の宣言と違っても、撮る係の刻み (`SketchRuntime.launchFrameRate`) と最後の 1 枚まで
+    /// 揃う。
+    ///
+    /// - Parameters:
+    ///   - mode: 作品が選んだ時計 (``SketchSettings/clock``)。
+    ///   - frameRate: 作品の宣言の刻み (``SketchSettings/frameRate``)。
+    static func launching(_ mode: SketchSettings.ClockMode, frameRate: Int) -> Clock {
+        switch mode {
+        case .wallClock: return .wallClock
+        case .frames: return .frameIndex(frameRate: frameRate)
+        }
+    }
+
+    /// 音 (音声ファイルの再生・合成音) をフレームの数で進めるなら、その刻み。実際に鳴らすなら `nil`。
+    ///
+    /// **鳴らさずに数で進めるのは、フレームの時計で、かつ画面へ出していないときだけ** — 書き出しと、
+    /// 窓を持たずに直に回す実行である。フレームの時計を選んだ窓 (``SketchSettings/ClockMode/frames``)
+    /// は鳴らす。時計だけで決めると、その窓が無音になる ([#2601])。代償として、処理落ちの間は音が
+    /// 実時間で進み、絵とずれる。
+    ///
+    /// - Parameter onScreen: 画面へ出しながら回しているか (`SketchRuntime.isOnScreen`)。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    package func soundFrameRate(onScreen: Bool) -> Int? {
+        guard case .frameIndex(let frameRate) = self, !onScreen else { return nil }
+        return frameRate
+    }
+}
+
+extension SketchPart {
+    /// 画面へ出しながら回しているか (`SketchRuntime.isOnScreen`)。音の口が鳴らすかを決めるのに読む
+    /// (``Clock/soundFrameRate(onScreen:)``)。走っていなければ `false`。
+    package var isOnScreen: Bool { runningSketch?.isOnScreen ?? false }
+}
+
 /// 1 フレームの長さ。
 ///
 /// **フレーム番号から導く時計では、秒ではなく「fps 分の 1 秒」のまま持つ** ([#1640])。

@@ -65,6 +65,7 @@ struct StartupFailureTests {
         ("pipelineUnavailable", .pipelineUnavailable(reason: "入口が見つからない")),
         ("argumentTableUnavailable", .argumentTableUnavailable(reason: "テーブルを作れない")),
         ("samplerUnavailable", .samplerUnavailable),
+        ("notRunning", .notRunning(call: "createGraphics(_:_:)")),
     ]
 
     /// リポジトリ直下。原文を読む検査が使う。

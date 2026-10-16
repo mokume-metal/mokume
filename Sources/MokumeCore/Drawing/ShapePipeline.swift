@@ -161,20 +161,23 @@ final class ShapePipeline {
     /// で特化できる ([#771])。鍵は旗 (``FormInstance/fillsFlag`` | `strokesFlag`) —
     /// 塗りも輪郭も無い図形は置かれないので 0 は使わない。
     ///
-    /// **1 画素より細い塗りを含むかでも分かれる** (``FormInstance/thinFillsFlag``・[#1477])。
-    /// 塗りを持つ組 (旗 1 と 3) にだけ、細い塗りの枝を残した組 (旗 5 と 7) がある。
+    /// **1 画素より細い塗り・輪郭の帯の細い穴を含むかでも分かれる** (``FormInstance/thinFillsFlag``・
+    /// [#1477]・[#2186])。3 つの組 (旗 1・2・3) のそれぞれに、細い枝を残した組 (旗 5・6・7) がある。
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
     /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
     private let formStatesByFlags: [UInt32: BlendStates]
 
-    /// 組むパイプラインの旗の組。細い塗りの旗は塗りを持つ組にしか立たない
-    /// (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` が塗りの無い形に「含まない」と答える)。
+    /// 組むパイプラインの旗の組。細い枝の旗は、塗りだけの組には細い塗りで、輪郭だけの組には
+    /// 帯の細い穴で立つ (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` は塗りの無い形に、
+    /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)`` は輪郭の無い形に「含まない」と答える)。
     static let formFlagCombinations: [UInt32] = [
         FormInstance.fillsFlag, FormInstance.strokesFlag,
         FormInstance.fillsFlag | FormInstance.strokesFlag,
         FormInstance.fillsFlag | FormInstance.thinFillsFlag,
+        FormInstance.strokesFlag | FormInstance.thinFillsFlag,
         FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.thinFillsFlag,
     ]
 
@@ -253,8 +256,8 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
-        // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、塗りを持つ組に
-        // 1 画素より細い塗りの枝を残したもの (5・7)
+        // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、それぞれに
+        // 1 画素より細い塗り・帯の細い穴の枝を残したもの (5・6・7)
         var formStates: [UInt32: BlendStates] = [:]
         for flags in Self.formFlagCombinations {
             formStates[flags] = try Self.makeBlendStates(

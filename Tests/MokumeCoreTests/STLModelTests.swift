@@ -403,6 +403,429 @@ struct STLModelTests {
         #expect(try leftBehind().isEmpty)
     }
 
+    // MARK: - 読み手の行の読み方 (#2645)
+
+    /// ``tetrahedron`` などの面を書いた文字の、`solid` の行の後ろ (面の行から `endsolid` の行まで)。
+    static func body(_ facets: [ModelFixture.Facet]) -> String {
+        String(ModelFixture.asciiSTL(facets).drop(while: { $0 != "\n" }).dropFirst())
+    }
+
+    /// 読み手 (Model I/O) が文字の面を探しに行けない書き方 — `facet normal` (間の空白 1 つ) の綴りが添字 128 から
+    /// 先にしか無い (``modelIOFindsFacetsOnlyByAFacetNormalBefore128()``)。
+    enum FarFacet: String, CaseIterable, CustomTestStringConvertible {
+        /// 名前が 121 文字 (`facet` の字下げ 2 を足して、最初の `facet normal` が添字 130)
+        case name121
+        /// 名前が 200 文字
+        case name200
+        /// 同じく、改行が CRLF
+        case name200CRLF
+        /// 名前が 1000 文字 (読む断片より長い行)
+        case name1000
+        /// 最初の面の字下げが 120 (名前は短い)
+        case indent120
+        /// 名前の後ろに空行を 130 行。84 バイト目が改行なので、読み手はバイナリとして読み直す
+        case blankLinesBefore
+        /// 名前の後ろに空白 60 個の行を 2 行
+        case spaceLinesBefore
+        /// 面の行の `facet` と `normal` の間がタブ (名前は短い)
+        case tabSeparated
+        /// 面の行の `facet` と `normal` の間が空白 2 つ
+        case twoSpaces
+        /// 最初の面の行だけ空白 2 つで、2 つ目の面の `facet normal` が添字 128 から先 (4 面のとき)
+        case firstTwoSpacesFarSecond
+
+        var testDescription: String { rawValue }
+
+        func text(_ facets: [ModelFixture.Facet]) -> String {
+            let body = STLModelTests.body(facets)
+            func named(_ length: Int) -> String { ModelFixture.asciiSTL(facets, name: String(repeating: "n", count: length)) }
+            switch self {
+            case .name121: return named(121)
+            case .name200: return named(200)
+            case .name200CRLF: return named(200).replacingOccurrences(of: "\n", with: "\r\n")
+            case .name1000: return named(1000)
+            case .indent120: return "solid t\n" + String(repeating: " ", count: 118) + body
+            case .blankLinesBefore: return "solid t\n" + String(repeating: "\n", count: 130) + body
+            case .spaceLinesBefore:
+                let line = String(repeating: " ", count: 60) + "\n"
+                return "solid t\n" + line + line + body
+            case .tabSeparated: return "solid t\n" + body.replacingOccurrences(of: "facet normal", with: "facet\tnormal")
+            case .twoSpaces: return "solid t\n" + body.replacingOccurrences(of: "facet normal", with: "facet  normal")
+            case .firstTwoSpacesFarSecond:
+                let first = body.range(of: "facet normal")!
+                return "solid " + String(repeating: "n", count: 40) + "\n" + body.replacingCharacters(in: first, with: "facet  normal")
+            }
+        }
+    }
+
+    /// 文字の中の、`facet normal` の綴りの最初の位置。
+    static func facetNormal(in text: String) -> Int? {
+        guard let range = text.range(of: "facet normal") else { return nil }
+        return text.utf8.distance(from: text.startIndex, to: range.lowerBound)
+    }
+
+    @Test("読み手が面を探しに行けない (facet normal の綴りが添字 128 から先にしか無い) 文字の STL も、書かれた面のとおりに読める (#2645)",
+        arguments: FarFacet.allCases, [1, 4])
+    func aFarFirstFacetIsRead(_ far: FarFacet, facets count: Int) throws {
+        let facets = count == 1 ? [Self.smallFacet] : Self.tetrahedron
+        let text = far.text(facets)
+        #expect((Self.facetNormal(in: text) ?? .max) >= 128)
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed.positions == facets.flatMap(\.corners))
+        #expect(parsed.skippedLines == 0)
+        // 書いた向きは書いたまま (写しで面の行の数を書き換えていない)
+        #expect(parsed == (try read(Data(ModelFixture.asciiSTL(facets).utf8))))
+    }
+
+    /// 名前に `facet normal` を含むと、面の行の区切りがタブで名前が長くても、読み手は読む。写しで名前を落とすと
+    /// 読めなくなる (#2645 の反証 2)。読み手が読めるものは写さない。
+    @Test("名前に facet normal を含み、面の区切りがタブで名前の長い文字の STL は、これまでどおり読める (#2645)")
+    func aNameWithFacetNormalKeepsTabSeparatedFacetsReadable() throws {
+        let text = "solid facet normal " + String(repeating: "x", count: 120) + "\n"
+            + Self.body(Self.tetrahedron).replacingOccurrences(of: "facet normal", with: "facet\tnormal")
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed == (try read(Data(ModelFixture.asciiSTL(Self.tetrahedron).utf8))))
+    }
+
+    /// 最初の面の行が `facet normalx` のように `normal` の後ろに字が続いても、読み手は `facet normal` の綴りで面を
+    /// 探しに行き、読む。名前が長くても同じに読めるよう、書き直すかも綴りで決める (#2645 の 2 回目の反証 4)。
+    @Test("最初の面の行の normal の後ろに字が続き、名前が長い文字の STL も読める (#2645)", arguments: ["t", String(repeating: "x", count: 130)])
+    func aFirstFacetLineWithAWordAfterNormalIsRead(name: String) throws {
+        var text = ModelFixture.asciiSTL(Self.tetrahedron, name: name)
+        text.replaceSubrange(try #require(text.range(of: "facet normal ")), with: "facet normalx ")
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed.positions == Self.tetrahedron.flatMap(\.corners))
+    }
+
+    /// **面の外の行は、`outer` で始まっても読み手は読み飛ばす。** 面と面の間の `outer loop`・`endsolid` の後ろの
+    /// 説明の行・`solid` の行の直後の説明の行があっても、書かれた面のとおりに読める (#2645 の 2 回目の反証 1)。
+    @Test("面の外に outer で始まる行がある文字の STL も、書かれた面のとおりに読める (#2645)")
+    func outerLinesOutsideFacetsAreSkipped() throws {
+        let body = Self.body(Self.tetrahedron)
+        let samples = [
+            "solid t\n    outer loop\n" + body,
+            "solid t\n" + body.replacingOccurrences(of: "  endfacet\n", with: "  endfacet\n    outer loop\n"),
+            "solid t\n" + body.replacingOccurrences(of: "endsolid", with: "    outer loop\nendsolid"),
+            "solid t\n" + body + "outer surface exported by X\nunits mm\n",
+            "solid t\nouter shell of part\n" + body,
+        ]
+        for text in samples {
+            let parsed = try? read(Data(text.utf8))
+            #expect(parsed?.positions == Self.tetrahedron.flatMap(\.corners), "\(text.prefix(40).debugDescription)")
+        }
+    }
+
+    /// 1 面の文字で、84 バイト目が改行・面の数が読み直しの枚数と同じなので写しを作る形。1 行目に空白を足すだけの写し
+    /// (``ModelFile/readerHead(of:)``) では、`facet normal` の綴りが添字 65 から 142 へずれ、読み手が面を探しに行け
+    /// なくなる。写しでも綴りを手前に置く (#2645 の 2 回目の反証 2)。
+    @Test("写しを作る 1 面の文字の STL で、1 行目に空白を足すと facet normal が遠くなる形も読める (#2645)",
+        arguments: [String(repeating: " ", count: 57), String(repeating: "\n", count: 57)])
+    func aCopyKeepsFacetNormalWithinReach(_ before: String) throws {
+        let text = "solid t\n" + before
+            + "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid\n"
+        let data = Data(text.utf8)
+        #expect(data.count == 160 && data[83] == 0x0A && Self.facetNormal(in: text) == 65)
+        #expect(ModelFile.readerHead(of: data.prefix(128)).count == 128 + 77)
+        let parsed = try read(data)
+        #expect(parsed.positions == Self.smallFacet.corners)
+    }
+
+    /// 84 バイト目が NUL で (名前に NUL)、最初の面の字下げが 300 バイトの文字。#2347 では読み手が読めない形として
+    /// 読めないとしていたが、写しで最初の面の行を手前へ寄せれば読める。
+    @Test("84 バイト目が NUL で、最初の面の字下げが 300 バイトの文字の STL も読める (#2645)")
+    func nulAtByte83WithAWideIndentIsRead() throws {
+        let wide = String(repeating: " ", count: 300)
+        let text = Self.asciiSTL(firstLine: Self.firstLine("solid ") + "\u{0}")
+            .replacingOccurrences(of: "  facet", with: wide + "facet")
+        let parsed = try read(Self.data(text, byte83: 0x00))
+        #expect(parsed.positions == Self.tetrahedron.prefix(3).flatMap(\.corners))
+    }
+
+    /// 頂点の行の間に空行のある、CRLF の文字の STL。CRLF の空行は CR だけの行で、読み手は `outer loop` と
+    /// `endloop` の間のそれを頂点 (0, 0, 0) として読む (``modelIOReadsBlankLinesInALoopAsVertices()``)。
+    @Test("改行が CRLF で、頂点の行の間に空行がある 5 面の文字の STL は、5 面として読める (#2645)")
+    func crlfBlankLinesBetweenVerticesAreRead() throws {
+        let facets = Self.tetrahedron + [Self.smallFacet]
+        let text = ModelFixture.asciiSTL(facets).replacingOccurrences(of: "\n", with: "\r\n")
+            .replacingOccurrences(of: "\r\n      vertex", with: "\r\n\r\n      vertex")
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed.positions == facets.flatMap(\.corners))
+        #expect(parsed == (try read(Data(ModelFixture.asciiSTL(facets).utf8))))
+    }
+
+    /// 空白だけの行は、CRLF の空行に限らない (LF の空白・タブ・VT・FF だけの行)。1 行だけでも、読み手は頂点を 1 つ
+    /// 足して 3 つに満たない余りの番号を返すので、読めないとしていた。`facet normal` の直後・`endloop` の直後の
+    /// 空白だけの行は、読み手が断っていた。
+    @Test("面の中に空白だけの行が 1 つある文字の STL も、書かれた面のとおりに読める (#2645)",
+        arguments: ["\r\n", "   \n", "\t\n", "\u{0B}\n", "\u{0C}\n", " \r\n"], [false, true])
+    func aBlankLineInAFacetDoesNotBecomeAVertex(_ blank: String, crlf: Bool) throws {
+        let facets = [Self.smallFacet, Self.tetrahedron[0]]
+        let text = ModelFixture.asciiSTL(facets)
+        for after in ["      vertex 0.0 0.0 0.0\n", "  facet normal 0.0 0.0 1.0\n", "    endloop\n"] {
+            var inserted = text
+            let first = try #require(inserted.range(of: after))
+            inserted.insert(contentsOf: blank, at: first.upperBound)
+            if crlf { inserted = inserted.replacingOccurrences(of: "\n", with: "\r\n").replacingOccurrences(of: "\r\r\n", with: "\r\n") }
+            let parsed = try read(Data(inserted.utf8))
+            #expect(parsed.positions == facets.flatMap(\.corners), "after \(after.debugDescription)")
+        }
+    }
+
+    /// **読み手は、`outer` の行から `endloop` の行までの空でない行を、語が何でも頂点 (0, 0, 0) として読む**
+    /// (``modelIOReadsEveryLineInALoopAsAVertex()``)。そういう行は壊れたものとして、読み手に渡さず断る。`facet` の
+    /// 行と `outer` の行の間・`endloop` の行と `endfacet` の行の間の行、`outer` や `endloop` の無い面も同じ
+    /// (#2645 の反証 4)。
+    @Test("面の中に頂点でない行がある文字の STL は、読めないとして投げる (#2645)",
+        arguments: [
+            "foo\n", "# comment\n", "VERTEX 9 9 9\n", "\u{0}\n", "\u{1A}\n", "\u{00A0}\n", "normal 1 2 3\n",
+            "vertex1 2 3\n", "end loop\n", "endloopx\n", "endsolid t\n",
+        ])
+    func aLineInAFacetThatIsNotAVertexIsUnreadable(_ junk: String) throws {
+        let facets = [Self.smallFacet, Self.tetrahedron[0]]
+        let text = ModelFixture.asciiSTL(facets)
+        for after in ["      vertex 1.0 0.0 0.0\n", "  facet normal 0.0 0.0 1.0\n", "    endloop\n"] {
+            var inserted = text
+            let first = try #require(inserted.range(of: after))
+            inserted.insert(contentsOf: junk, at: first.upperBound)
+            try withWritten(Data(inserted.utf8), as: "junk.stl") { path in
+                #expect(throws: ModelFailure.unreadable(path: path), "after \(after.debugDescription)") {
+                    try ModelFile.load(path)
+                }
+            }
+        }
+    }
+
+    @Test("outer loop や endloop の無い面・頂点でない行と空白だけの行を同じ面に持つ長い名前の文字の STL は、読めないとして投げる (#2645)")
+    func facetsTheReaderMisreadsAreUnreadable() throws {
+        let body = Self.body(Self.tetrahedron)
+        var samples = [
+            // `outer loop` が無い (読み手は断る)・`endloop` が無い (読み手は `endfacet` を頂点として読む)
+            "solid t\n" + body.replacingOccurrences(of: "    outer loop\n", with: ""),
+            "solid t\n" + body.replacingOccurrences(of: "    endloop\n", with: ""),
+            // 頂点でない行と CRLF の空行が同じ面にあり、名前が長い
+            ("solid " + String(repeating: "x", count: 130) + "\n" + body)
+                .replacingOccurrences(of: "\n", with: "\r\n")
+                .replacingOccurrences(of: "      vertex 0.0 0.0 0.0\r\n", with: "      vertex 0.0 0.0 0.0\r\n      foo\r\n\r\n"),
+        ]
+        // 頂点でない行が 1 つと、CR で繋いだ 2 つの `vertex` の行が 1 つ。読み手の頂点の数は書かれた数と同じになり、
+        // 1 つ目の面に (0, 0, 0) を持つ違う形が数の上で合う (反証 4 の `junk_crjoin_longname.stl`・`junk_plus_crjoin.stl`)
+        for name in ["t", String(repeating: "x", count: 130)] {
+            var text = ModelFixture.asciiSTL(Self.tetrahedron + [Self.smallFacet], name: name)
+            text.insert(contentsOf: "      foo\n", at: try #require(text.range(of: "      vertex 0.0 1.0 0.0\n")).lowerBound)
+            text.replaceSubrange(
+                try #require(text.range(of: "1.0 0.0 0.0\n      vertex", options: .backwards)), with: "1.0 0.0 0.0\r      vertex")
+            samples.append(text)
+        }
+        for text in samples {
+            try withWritten(Data(text.utf8), as: "misread.stl") { path in
+                #expect(throws: ModelFailure.unreadable(path: path)) { try ModelFile.load(path) }
+            }
+        }
+    }
+
+    /// **行は LF だけで割る** (読み手と同じ)。2 つの `vertex` の行を CR 1 つで繋ぐと、読み手はそれを 1 つの頂点として
+    /// 読み、頂点を 3 つずつ区切り直して 1 面欠けた形と余りの番号を返す。CR を行の区切りとして数えると、数え上げも
+    /// 照合も合ってしまう (#2645 の反証 5)。
+    @Test("2 つの vertex の行を CR 1 つで繋いだ文字の STL は、1 面欠けた形ではなく読めないとして投げる (#2645)",
+        arguments: [false, true])
+    func verticesJoinedByACarriageReturnAreUnreadable(longName: Bool) throws {
+        let facets = Self.tetrahedron + [Self.smallFacet]
+        var text = ModelFixture.asciiSTL(facets, name: longName ? String(repeating: "n", count: 200) : "test")
+        let joint = try #require(text.range(of: "1.0 0.0 0.0\n      vertex", options: .backwards))
+        text.replaceSubrange(joint, with: "1.0 0.0 0.0\r      vertex")
+        try withWritten(Data(text.utf8), as: "crjoin.stl") { path in
+            #expect(throws: ModelFailure.unreadable(path: path)) { try ModelFile.load(path) }
+        }
+        // 数え上げは、繋がった行を 1 つの頂点と数える
+        #expect(Self.scan(text, chunk: 7) == ModelFile.FacetScan(facets: 5, isWellFormed: false))
+    }
+
+    /// **照合で足してよいのは、数でない座標で読み飛ばした面だけ。** 読み手が頂点を 3 つずつ区切れなかった余りの番号
+    /// (``ModelFile/trianglesCounting(of:)`` の `defects`) を面と数えると、1 面欠けた形が数の上で合う (#2645 の反証 5)。
+    @Test("返った三角形の照合は、写せなかった要素が 1 つでもあれば一致としない")
+    func agreementNeedsNoDefects() {
+        func parsed(triangles: Int, skipped: Int) -> ModelFile.Parsed {
+            let count = triangles * 3
+            return ModelFile.Parsed(
+                positions: Array(repeating: .zero, count: count), normals: Array(repeating: .zero, count: count),
+                uvs: Array(repeating: nil, count: count), derivedNormals: Array(repeating: true, count: count),
+                skippedLines: skipped)
+        }
+        // 4 枚 + 余り 1 は 5 面と合わない
+        #expect(!ModelFile.agrees((parsed(triangles: 4, skipped: 1), defects: 1), facets: 5))
+        // 4 枚 + 数でない座標の面 1 は 5 面と合う
+        #expect(ModelFile.agrees((parsed(triangles: 4, skipped: 1), defects: 0), facets: 5))
+        #expect(ModelFile.agrees((parsed(triangles: 5, skipped: 0), defects: 0), facets: 5))
+    }
+
+    /// **写しは、読み手が面を探しに行けないか、面の中に空白だけの行があるときだけ作る。** いま読めるものは写さない
+    /// (``aCopyIsMadeOnlyWhenTheCountsCannotTellAReadingApart()`` と同じ測り方)。面と面の間・`endsolid` の前後の空白の
+    /// 行は、読み手が正しく読むので写さない (#2645 の反証 3)。写しは残らない。
+    @Test("読み手が面を探しに行けない・面の中に空白だけの行がある文字だけ写しを作り、写しは残らない (#2645)")
+    func aCopyIsMadeOnlyForAFarFacetOrABlankLineInAFacet() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let longAgo = Date(timeIntervalSince1970: 1_000_000_000)
+        func touched(_ text: String) throws -> Bool {
+            try FileManager.default.setAttributes([.modificationDate: longAgo], ofItemAtPath: scratch.path)
+            _ = try withWritten(Data(text.utf8), as: "tap.stl") { path in
+                let parsed = try ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+                #expect(parsed.positions == Self.smallFacet.corners)
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
+            let date = try FileManager.default.attributesOfItem(atPath: scratch.path)[.modificationDate] as? Date
+            return date != longAgo
+        }
+        let facet = [Self.smallFacet]
+        // 名前 200 文字の 1 面は写す。100 文字なら `facet normal` は添字 109 で、写さない
+        #expect(try touched(ModelFixture.asciiSTL(facet, name: String(repeating: "n", count: 200))) == true)
+        #expect(try touched(ModelFixture.asciiSTL(facet, name: String(repeating: "n", count: 100))) == false)
+        // 区切りがタブの面の行は写す。名前に `facet normal` があれば、名前が長くても写さない
+        let tab = Self.body(facet).replacingOccurrences(of: "facet normal", with: "facet\tnormal")
+        #expect(try touched("solid t\n" + tab) == true)
+        #expect(try touched("solid facet normal " + String(repeating: "n", count: 200) + "\n" + tab) == false)
+        // 面の中の CRLF の空行は写す。CRLF だけ・LF の空行 (本当に空の行) だけ・面の外の空白の行だけなら写さない
+        let crlf = ModelFixture.asciiSTL(facet).replacingOccurrences(of: "\n", with: "\r\n")
+        #expect(try touched(crlf.replacingOccurrences(of: "\r\n      vertex", with: "\r\n\r\n      vertex")) == true)
+        #expect(try touched(crlf) == false)
+        #expect(try touched(ModelFixture.asciiSTL(facet).replacingOccurrences(of: "\n      vertex", with: "\n\n      vertex")) == false)
+        #expect(try touched(crlf.replacingOccurrences(of: "endsolid", with: "  \r\n\r\nendsolid") + "  \r\n") == false)
+    }
+
+    /// 写しを書けない置き場でも、写しの要らない文字は読める。面と面の間・`endsolid` の前後に空白の行がある文字は、
+    /// 読み手がそのまま読む (#2645 の反証 3)。写しの要る文字は、これまでどおり元のファイルを読ませて照らす。
+    @Test("写しを書けない置き場でも、面の外にだけ空白の行がある文字の STL は読める (#2645)")
+    func blankLinesOutsideFacetsNeedNoScratch() throws {
+        let scratch = URL(fileURLWithPath: "/dev/null/mokume-no-scratch")
+        let facets = Array(Self.tetrahedron.prefix(2))
+        let crlf = ModelFixture.asciiSTL(facets).replacingOccurrences(of: "\n", with: "\r\n")
+        let outside = crlf.replacingOccurrences(of: "  endfacet\r\n", with: "  endfacet\r\n  \r\n")
+            .replacingOccurrences(of: "endsolid", with: "\r\nendsolid") + "\t\r\n"
+        try withWritten(Data(outside.utf8), as: "outside.stl") { path in
+            let parsed = try ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+            #expect(parsed.positions == facets.flatMap(\.corners))
+        }
+        // 写しが要るのに書けなければ、元のファイルを読み手に渡し、数が合わずに読めないとして投げる
+        let inside = crlf.replacingOccurrences(of: "\r\n      vertex", with: "\r\n\r\n      vertex")
+        try withWritten(Data(inside.utf8), as: "inside.stl") { path in
+            #expect(throws: ModelFailure.unreadable(path: path)) {
+                try ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+            }
+        }
+    }
+
+    @Test("座標を 40 桁で書いた 141 バイトの vertex の行も、切られずに読める (#2645)")
+    func longCoordinatesAreReadWhole() throws {
+        // 1e-39 の 40 桁目に 1 を置き、e39 で 1 に戻す。切って読むと 0 か 1e-39 級になる
+        let one = "0." + String(repeating: "0", count: 38) + "1e39"
+        let line = "vertex \(one) \(one) \(one)"
+        #expect(line.utf8.count == 141)
+        let text = "solid t\nfacet normal 0 0 1\nouter loop\n\(line)\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid t\n"
+        let parsed = try read(Data(text.utf8))
+        #expect(parsed.positions == [SIMD3(1, 1, 1), SIMD3(1, 0, 0), SIMD3(0, 1, 0)])
+    }
+
+    /// 文字の STL を書き出し、頭の 128 バイトと続きに分けて通読する (``scan(_:chunk:)`` の ``ModelFile/TextScan`` 版)。
+    static func textScan(_ text: String, chunk: Int) -> ModelFile.TextScan? {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-stl-scan-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("scan.stl")
+        guard (try? Data(text.utf8).write(to: url)) != nil,
+            let handle = try? FileHandle(forReadingFrom: url)
+        else { return nil }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 128)) ?? Data()
+        return ModelFile.scanText(head: head, rest: head.count < 128 ? nil : handle, chunk: chunk)
+    }
+
+    @Test("読み手が面を探しに行けるか・最初の面の行の normal の位置・面の中の空白だけの行は、長い行が断片をまたいでも読む区切りの幅によらず同じ")
+    func textScanDoesNotDependOnTheChunk() throws {
+        let body = Self.body(Self.tetrahedron)
+        let blanks = String(repeating: " ", count: 300)
+        let tabbed = "  facet\t normal" + body.dropFirst("  facet normal".count)
+        let samples: [(text: String, finds: Bool, normalEnd: Int, blankInFacet: Bool)] = [
+            // 長い字下げの後ろの面の行。名前の中・行頭でない `facet` は面の行ではない
+            ("solid facet x facet\n" + "x facet\n" + blanks + body, false, 28 + 300 + 2 + 12, false),
+            // 面の前の長い空白だけの行 (CRLF) は、面の中ではない
+            ("solid t\r\n" + blanks + "\r\n" + body, false, 9 + 302 + 2 + 12, false),
+            // 面の中のタブと VT だけの行
+            ("solid t\n" + body.replacingOccurrences(of: "    endloop", with: "\t\u{0B}\n    endloop"), true, 8 + 2 + 12, true),
+            // 空白の後ろに字がある行・本当に空の行・最後の LF の無い空白は、空白だけの行ではない
+            ("solid t\n" + blanks + "x\n\n" + body + blanks, false, 8 + 302 + 1 + 2 + 12, false),
+            // 面と面の間・`endsolid` の前の空白だけの行は、面の中ではない
+            ("solid t\n" + body.replacingOccurrences(of: "  endfacet\n", with: "  endfacet\n \r\n"), true, 8 + 2 + 12, false),
+            // 最初の面の行の区切りがタブと空白で、遠い
+            ("solid t\n" + blanks + tabbed, false, 8 + 300 + 2 + 13, false),
+            // 名前に `facet normal` があれば、面の区切りがタブでも探しに行ける
+            ("solid facet normal\n" + body.replacingOccurrences(of: "facet normal", with: "facet\tnormal"), true, 19 + 2 + 12, false),
+            // `normal` の後ろに字が続いても、`normal` の直後の位置を持つ
+            ("solid t\n" + blanks + body.replacingOccurrences(of: "facet normal ", with: "facet normalx "), false, 8 + 300 + 2 + 12, false),
+        ]
+        for (number, sample) in samples.enumerated() {
+            for chunk in [1, 2, 3, 7, 64, 127, 128, 129, 255, 256, 257, 300, 400, 1 << 20] {
+                let scan = try #require(Self.textScan(sample.text, chunk: chunk))
+                #expect(scan.readerFindsFacets == sample.finds, "sample \(number) chunk \(chunk)")
+                #expect(scan.firstFacetNormalEnd == sample.normalEnd, "sample \(number) chunk \(chunk)")
+                #expect(scan.hasBlankLineInFacet == sample.blankInFacet, "sample \(number) chunk \(chunk)")
+                #expect(scan.shape == ModelFile.FacetScan(facets: 4, isWellFormed: true), "sample \(number) chunk \(chunk)")
+            }
+        }
+    }
+
+    /// 同じ約束を、面の行・空白・CR・LF・語をでたらめに並べた文字で確かめる (種を固定した疑似乱数)。
+    @Test("でたらめに並べた文字でも、通読の結果は読む区切りの幅によらず同じ")
+    func textScanFuzzDoesNotDependOnTheChunk() throws {
+        var state: UInt64 = 0x2645_2645_9E37_79B9
+        func next(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((state >> 33) % UInt64(bound))
+        }
+        let pieces = [
+            "facet normal 1 2 3", "facet\tnormal", "facet  normal", "outer loop", "vertex 1 2 3", "endloop", "endfacet",
+            "x", " ", "\t", "\u{0B}", "\r", "\n", "\r\n", "\n", "\n",
+        ]
+        var seen = (finds: 0, normal: 0, blank: 0, wellFormed: 0)
+        for round in 0..<120 {
+            var text = "solid t\n"
+            for _ in 0..<(10 + next(40)) {
+                let blanks = [0, 0, 1, 20, 130, 300][next(6)]
+                text += String(repeating: " ", count: blanks) + pieces[next(pieces.count)]
+            }
+            let whole = try #require(Self.textScan(text, chunk: 1 << 20))
+            seen.finds += whole.readerFindsFacets ? 1 : 0
+            seen.normal += whole.firstFacetNormalEnd != nil ? 1 : 0
+            seen.blank += whole.hasBlankLineInFacet ? 1 : 0
+            seen.wellFormed += whole.shape.isWellFormed ? 1 : 0
+            for chunk in [1, 2, 7, 64, 128, 255, 256, 257, 300, 500] {
+                #expect(Self.textScan(text, chunk: chunk) == whole, "round \(round) chunk \(chunk)")
+            }
+        }
+        // 検体が偏っていない (どの答えも、真と偽の両方が出る)
+        for count in [seen.finds, seen.normal, seen.blank, seen.wellFormed] {
+            #expect(count > 3 && count < 117, "\(seen)")
+        }
+    }
+
+    @Test("写しで落とすのは空白・CR だけの行で、空の行と中身のある行は断片をまたいでもそのまま残す")
+    func blankLineFilterDropsOnlyBlankLines() {
+        let text = "facet x\n  \r\n\n\t\u{0B}\u{0C}\n  vertex 1\r\n" + String(repeating: " ", count: 300) + "\n end\n  "
+        let expected = "facet x\n\n  vertex 1\r\n end\n  "
+        for chunk in [1, 2, 3, 5, 64, 1 << 20] {
+            var filter = ModelFile.BlankLineFilter()
+            var kept = Data()
+            let bytes = Data(text.utf8)
+            for start in stride(from: 0, to: bytes.count, by: chunk) {
+                kept += filter.feed(bytes.subdata(in: start..<min(start + chunk, bytes.count)))
+            }
+            kept += filter.finish()
+            #expect(String(decoding: kept, as: UTF8.self) == expected, "chunk = \(chunk)")
+        }
+    }
+
     // MARK: - 読めたが面が無い
 
     @Test("面を 1 つも持たない STL は、投げずに空として読める")
@@ -702,8 +1125,6 @@ struct STLModelTests {
         /// 添字 80〜82 が印字できる字で、`solid` で始まり、大きさが合わない — バイナリではなく文字として扱い、
         /// 返った枚数を面の数と照らす。これまでは直にバイナリとして読み手に渡り、でたらめな形が返った
         case nulAtByte83UpperCaseFacet
-        /// 同じく、字下げが 300 バイトで読み手が読めない
-        case nulAtByte83WideIndent
         /// 84 バイト目が NUL で、**面の数が読み直しの枚数と同じ** (面が 1 つ・140 バイト)。写しの頭の NUL を空白に
         /// しないと、読み手が読み直した 1 枚が面の数と一致して、でたらめな形が採られる
         case nulAtByte83OneFacetSameCount
@@ -840,11 +1261,6 @@ struct STLModelTests {
                 return STLModelTests.data(text, byte83: 0x00)
             case .nulAtByte83OneFacetSameCount:
                 return STLModelTests.facetsWithoutNormals(1, size: 140, nulAtByte83: true)
-            case .nulAtByte83WideIndent:
-                let wide = String(repeating: " ", count: 300)
-                let text = STLModelTests.asciiSTL(firstLine: STLModelTests.firstLine("solid ") + "\u{0}")
-                    .replacingOccurrences(of: "  facet", with: wide + "facet")
-                return STLModelTests.data(text, byte83: 0x00)
             }
         }
     }
@@ -1226,7 +1642,7 @@ struct STLModelTests {
 
     // MARK: - Model I/O の判定 (説明が頼る事実)
 
-    // **次の 6 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
+    // **次の 9 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
     // 検査は、この挙動を前提に境目を決めている。Model I/O が変わったら、ここが赤くなって、説明と
     // `loadSTL` の見分け方の直し時を知らせる (`asciiNonNumbersBecomeZero` と同じ役)。
 
@@ -1288,6 +1704,66 @@ struct STLModelTests {
         // 面の途中で切れた文字は、読み直されずに断られる
         let cutInFacet = Self.firstLine("solid ") + "\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\n"
         #expect(try readByModelIO(Self.data(cutInFacet + String(repeating: " ", count: 100), byte83: 0x0A)) == nil)
+    }
+
+    /// `facet normal` (間の空白 1 つ) の綴りが添字 127 までに始まれば読み、128 から先にしか無ければ面を読めない (84
+    /// バイト目が空白なので、バイナリとしての読み直しも断られる)。押し出すのが名前でも字下げでも同じで、綴りは名前の
+    /// 中にあってもよく、区切りがタブや空白 2 つの面の行は数えない ([#2645](https://github.com/mokume-metal/mokume/issues/2645))。
+    @Test("Model I/O は、facet normal の綴りが添字 128 から先にしか無い文字の面を読めない")
+    func modelIOFindsFacetsOnlyByAFacetNormalBefore128() throws {
+        let body = Self.body(Self.tetrahedron)
+        // 名前で押し出す (字下げ 2 の `facet normal` が添字 127・128)
+        #expect(try readByModelIO(Data(ModelFixture.asciiSTL(Self.tetrahedron, name: String(repeating: "n", count: 118)).utf8))?.triangles == 4)
+        #expect(try readByModelIO(Data(ModelFixture.asciiSTL(Self.tetrahedron, name: String(repeating: "n", count: 119)).utf8)) == nil)
+        // 字下げで押し出す
+        #expect(try readByModelIO(Data(("solid t\n" + String(repeating: " ", count: 117) + body).utf8))?.triangles == 4)
+        #expect(try readByModelIO(Data(("solid t\n" + String(repeating: " ", count: 118) + body).utf8)) == nil)
+        #expect(ModelFile.facetNormalLimit == 128)
+        // 区切りがタブ・空白 2 つの面の行だけなら、名前が短くても読めない。名前に綴りがあれば読む
+        let tab = body.replacingOccurrences(of: "facet normal", with: "facet\tnormal")
+        #expect(try readByModelIO(Data(("solid t\n" + tab).utf8)) == nil)
+        #expect(try readByModelIO(Data(("solid t\n" + body.replacingOccurrences(of: "facet normal", with: "facet  normal")).utf8)) == nil)
+        #expect(try readByModelIO(Data(("solid facet normal " + String(repeating: "x", count: 120) + "\n" + tab).utf8))?.triangles == 4)
+        // 2 つ目の `solid` の名前や、`vertex` の字下げが長くても読む
+        let second = String(repeating: "n", count: 200)
+        let twoSolids = ModelFixture.asciiSTL(Array(Self.tetrahedron.prefix(2))) + ModelFixture.asciiSTL(Array(Self.tetrahedron.suffix(2)), name: second)
+        #expect(try readByModelIO(Data(twoSolids.utf8))?.triangles == 4)
+        let wideVertex = ModelFixture.asciiSTL(Self.tetrahedron).replacingOccurrences(of: "      vertex", with: String(repeating: " ", count: 200) + "vertex")
+        #expect(try readByModelIO(Data(wideVertex.utf8))?.triangles == 4)
+    }
+
+    /// `outer loop` と `endloop` の間の、空白だけでない行も語によらず頂点として読む。2 つの `vertex` の行を CR 1 つで
+    /// 繋ぐと 1 つの頂点として読む — 行は LF だけで割る ([#2645](https://github.com/mokume-metal/mokume/issues/2645))。
+    @Test("Model I/O は、面の中の空でない行を語によらず頂点として読み、行を LF だけで割る")
+    func modelIOReadsEveryLineInALoopAsAVertex() throws {
+        let facets = Self.tetrahedron + [Self.smallFacet]
+        let lf = ModelFixture.asciiSTL(facets)
+        // 5 面 × 頂点 3 + 頂点でない行 15 = 30 点 → 10 枚
+        for junk in ["# c", "foo", "VERTEX 9 9 9", "normal 1 2 3"] {
+            let text = lf.replacingOccurrences(of: "\n      vertex", with: "\n" + junk + "\n      vertex")
+            #expect(try readByModelIO(Data(text.utf8))?.triangles == 10, "\(junk)")
+        }
+        // CR で繋いだ 2 行は 1 つの頂点 → 14 点 → 4 枚と余り
+        var joined = lf
+        joined.replaceSubrange(joined.range(of: "1.0 0.0 0.0\n      vertex", options: .backwards)!, with: "1.0 0.0 0.0\r      vertex")
+        #expect(try readByModelIO(Data(joined.utf8))?.triangles == 4)
+    }
+
+    /// `outer loop` と `endloop` の間の空白だけの行 (CRLF の空行・空白・タブだけの行) を頂点として読み、頂点を 3 つ
+    /// ずつ区切り直した枚数を返す。本当に空の行は読み飛ばす ([#2645](https://github.com/mokume-metal/mokume/issues/2645))。
+    @Test("Model I/O は、面の中の空白だけの行を頂点として読み、空の行は読み飛ばす")
+    func modelIOReadsBlankLinesInALoopAsVertices() throws {
+        let facets = Self.tetrahedron + [Self.smallFacet]
+        let crlf = ModelFixture.asciiSTL(facets).replacingOccurrences(of: "\n", with: "\r\n")
+        // 5 面 × 頂点 3 + 空行 15 = 30 点 → 10 枚
+        let blankCRLF = crlf.replacingOccurrences(of: "\r\n      vertex", with: "\r\n\r\n      vertex")
+        #expect(try readByModelIO(Data(blankCRLF.utf8))?.triangles == 10)
+        let lf = ModelFixture.asciiSTL(facets)
+        let spaces = lf.replacingOccurrences(of: "\n      vertex", with: "\n   \n      vertex")
+        #expect(try readByModelIO(Data(spaces.utf8))?.triangles == 10)
+        // 空の行は読み飛ばす
+        let empty = lf.replacingOccurrences(of: "\n      vertex", with: "\n\n      vertex")
+        #expect(try readByModelIO(Data(empty.utf8))?.triangles == 5)
     }
 
     @Test("Model I/O はバイナリの面の数が 238,609,294 までなら、揃っている分を読み、超えると断る")

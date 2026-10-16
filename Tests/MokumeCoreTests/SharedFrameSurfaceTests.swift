@@ -522,7 +522,8 @@ struct SharedFrameSurfaceTests {
             try shared.write(
                 source, using: presenter,
                 numbers: FrameNumbers(
-                    frameCount: 7, time: 0.25, frameRate: 59.5, frameTimeMs: 16.8))
+                    frameCount: 7, time: 0.25, frameRate: 59.5, frameTimeMs: 16.8,
+                    overBudgetFrames: 2, heaviestFrame: 5))
             Self.awaitOutcomes(gpu)
             try shared.publishPending()
 
@@ -532,6 +533,9 @@ struct SharedFrameSurfaceTests {
             #expect(read.time == 0.25)
             #expect(read.frameRate == 59.5)
             #expect(read.frameTimeMs == 16.8)
+            // 予算を越えた数といちばん重いフレームも、同じ面で運ばれる (#2601)
+            #expect(read.overBudgetFrames == 2)
+            #expect(read.heaviestFrame == 5)
         }
     }
 
@@ -557,6 +561,7 @@ struct SharedFrameSurfaceTests {
             #expect(read.frameCount == 1)
             #expect(read.frameRate == nil)
             #expect(read.frameTimeMs == nil)
+            #expect(read.heaviestFrame == nil)
             let surface = try #require(IOSurfaceLookup(newest.id))
             let key = SharedFrameSurface.TempoAttribute.frameRate as CFString
             #expect(IOSurfaceCopyValue(surface, key) == nil, "0 ではなく鍵ごと無いこと")

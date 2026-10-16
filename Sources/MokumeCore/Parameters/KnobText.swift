@@ -24,17 +24,24 @@ enum KnobText {
     ///
     /// **数字そのものが届いていないこともある。** 走っているのが別のプロセスのときは、
     /// まだ 1 枚も来ていない・もう来なくなった、が起きる (``RemoteTempo``)。そのときは
-    /// 枚数と時刻まで欠測なので、**4 つとも同じ綴りで出す** — 進んでいない相手の枚数を
+    /// 枚数と時刻まで欠測なので、**どれも同じ綴りで出す** — 進んでいない相手の枚数を
     /// 0 と書けば、「1 枚目を描いたところ」と区別が付かなくなる。
+    ///
+    /// **予算を越えた数 (`slow`) と、いちばん重かったフレームの番号 (`worst`) も並べる**
+    /// ([#2601](https://github.com/mokume-metal/mokume/issues/2601))。フレームの時計では越えたフレームが
+    /// そのまま処理落ちになるので、平均の速さに埋もれさせない。越えた数は数え上げなので常に測れて
+    /// おり、番号は 1 枚も測っていなければ欠測である。
     static func numbers(_ numbers: FrameNumbers?) -> [(label: String, value: String)] {
         guard let numbers else {
-            return ["fps", "ms", "frame", "t"].map { (label: $0, value: notMeasured) }
+            return ["fps", "ms", "frame", "t", "slow", "worst"].map { (label: $0, value: notMeasured) }
         }
         return [
             ("fps", measurement(numbers.frameRate)),
             ("ms", measurement(numbers.frameTimeMs)),
             ("frame", String(numbers.frameCount)),
             ("t", measurement(numbers.time, fractionDigits: 2)),
+            ("slow", String(numbers.overBudgetFrames)),
+            ("worst", numbers.heaviestFrame.map { "#\($0)" } ?? notMeasured),
         ]
     }
 

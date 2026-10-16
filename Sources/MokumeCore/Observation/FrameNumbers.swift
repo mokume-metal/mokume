@@ -25,4 +25,8 @@ struct FrameNumbers: Equatable {
     let frameRate: Double?
     /// 直近のフレーム時間の平均 (ミリ秒)。**測れていなければ `nil`。**
     let frameTimeMs: Double?
+    /// 1 フレームの予算 (1 / fps 秒) を越えたフレームの数 (``FrameBudget``)。数え上げなので常に測れている。
+    var overBudgetFrames = 0
+    /// いちばん重かったフレームの番号。**まだ 1 枚も測っていなければ `nil`。**
+    var heaviestFrame: Int?
 }

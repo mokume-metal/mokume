@@ -138,7 +138,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
-    /// 時刻の出どころ。**起動の瞬間に決まる** — 書き出すならフレーム番号、でなければ実時間。
+    /// 時刻の出どころ。**起動の瞬間に決まる** — 書き出すならその刻みのフレーム番号、でなければ
+    /// 作品が選んだ時計 (既定は実時間・``Clock/launching(_:frameRate:)``)。
     /// 検査が読む。
     let clock: Clock
 
@@ -291,6 +292,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 面を取れずに見送ったフレームの数。
     public var missedFrames: Int { presenter.missedFrames }
 
+    /// 画面へ出しながら回す扱いか (`SketchRuntime.isOnScreen`)。**検査が読む。**
+    var isOnScreen: Bool { runtime.isOnScreen }
+
     /// 窓がいま画面に出ているか。
     public var isWindowOnScreen: Bool { window?.isVisible ?? false }
 
@@ -305,8 +309,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// スケッチを画面に出す用意をする。
     ///
-    /// 時刻の出どころは**実時間**にする — 画面に出しながら動かす経路なので、
-    /// 実際に流れた時間で動くのが正しい。
+    /// 時刻の出どころは**既定で実時間**にする — 画面に出しながら動かす経路なので、
+    /// 実際に流れた時間で動くのが正しい。作品が ``SketchSettings/clock`` で
+    /// ``SketchSettings/ClockMode/frames`` を選んでいれば、宣言の刻みのフレーム番号にする。
     ///
     /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、窓を
     /// 開かずに決めた枚数を書き出す。その経路の時刻はフレーム番号から導く。
@@ -334,9 +339,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         self.gpu = gpu
         self.title = sketch.settings.title
         // **刻みは頼みから採る。** 撮る係の刻みも時計から決まる (`SketchRuntime.launchFrameRate`)
-        // ので、`--fps` が作品の宣言と違っても最後の 1 枚まで揃う
-        let clock: Clock = render.map { .frameIndex(frameRate: $0.frameRate) } ?? .wallClock
-        self.clock = clock
+        // ので、`--fps` が作品の宣言と違っても最後の 1 枚まで揃う。頼みが無ければ、ランタイムが
+        // 組み立てで読んだ作品の時計 (`SketchSettings.clock`) で、既定は実時間 (#2601)。**ここで
+        // 設定を読み直さない** — 計算型の設定は読むたびに別の値を返しうる (#1642)
+        let clock: Clock? = render.map { .frameIndex(frameRate: $0.frameRate) }
         self.outlet = render.map(ScreenOutlet.render) ?? .pendingWindow
         // **利用者の断片の保存を裏で組むのも、窓・共有面の経路だけ** ([#2365])。書き出しは保存の
         // 次のフレームの頭で組み、同じ引数から同じ絵が出る。窓の経路はもともと実時間の時計で、
@@ -347,7 +353,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         gpu.rebuildsShadersInBackground = render == nil
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
-            displays: displays)
+            displays: displays, onScreen: render == nil)
+        self.clock = runtime.clock
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)

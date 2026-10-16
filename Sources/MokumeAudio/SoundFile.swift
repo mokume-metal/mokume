@@ -241,13 +241,12 @@ public final class SoundFile: Inlet {
         frame = Self.frameIndex(of: owner)
         if let injectedFlow {
             speak(through: injectedFlow)
+        } else if let frameRate = owner.clock.soundFrameRate(onScreen: owner.isOnScreen) {
+            // 書き出しの経路。鳴らさずに、フレームの数から位置を決める
+            pace = .frames(perSecond: max(1, frameRate), origin: frame)
         } else {
-            switch owner.clock {
-            case .frameIndex(let frameRate):
-                pace = .frames(perSecond: max(1, frameRate), origin: frame)
-            case .wallClock:
-                speak(through: .speakers)
-            }
+            // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
+            speak(through: .speakers)
         }
         // 鳴らさないと決まったなら、器は要らない (鳴らすなら player が持っている)
         buffer = nil

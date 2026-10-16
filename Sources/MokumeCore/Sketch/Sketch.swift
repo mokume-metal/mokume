@@ -243,6 +243,66 @@ public struct SketchSettings: Equatable, Sendable {
     /// 手本 (Processing / p5) の `frameRate(n)` は走っている最中に呼べるが、ここには
     /// 走っている最中に速さを変える口が無い。
     public var frameRate: Int
+    /// 窓で走らせるときの時計。既定は ``ClockMode/wallClock`` (実際に流れた時間)。
+    ///
+    /// ``ClockMode/frames`` にすると、窓の中でも ``Sketch/draw()`` 1 回がちょうど
+    /// ``frameRate`` 分の 1 秒になる。書き出し (`mokume render`) と同じ時計で、``SketchPart/time`` は
+    /// `(frameCount − 1) / frameRate`、``SketchPart/deltaTime`` は常に 1 / ``frameRate`` である。
+    /// 同じ入力をフレームの番号つきで流せば、同じ状態に進む — ゲームの書き方 (Pico-8・GameMaker・
+    /// Processing の `x += 2`) である。
+    ///
+    /// <!-- example: 文脈 var ball = Circle(x: 240, y: 60, radius: 8); var vy: Float = 0 -->
+    /// ```swift
+    /// var settings: SketchSettings { SketchSettings(width: 480, height: 270, clock: .frames) }
+    ///
+    /// func draw() {
+    ///     // フレームと押下の判定の単位が同じなので、2 回発火も取りこぼしも無い
+    ///     if keyboard.justPressed(.space) { vy = -8 }
+    ///     vy += 0.4                        // deltaTime を掛けなくてよい
+    ///     ball.move(by: Vector2(0, vy))
+    ///     background(20)
+    ///     ball.draw()
+    /// }
+    /// ```
+    ///
+    /// ## 重いフレームでは、絵を抜かずに遅くなる (処理落ち)
+    ///
+    /// 1 フレームに 30 ms かかっても、``SketchPart/time`` は 1/60 秒しか進まない。実時間の時計なら
+    /// 30 ms 進み、`deltaTime` も約 0.03 になる。処理落ちが起きたことは、観測の重さ
+    /// (1/fps を越えたフレームの数と、いちばん重かったフレームの番号) と、窓の数字の欄に出る。
+    ///
+    /// - **処理落ちの間、実時間で進むものとずれる。** 音 (``SketchPart/clock`` が実時間でなくても、窓では
+    ///   実際に鳴らす)・カメラ・外から届く値は実時間で進み、絵だけが遅れる
+    /// - **実時間が正であるべきゲーム** (音楽に合わせるリズムゲームなど) は、既定の
+    ///   ``ClockMode/wallClock`` のまま、``SketchPart/time`` と ``SketchPart/deltaTime`` で書く
+    /// - 重さの元になりやすい `draw()` の中の同期の読み込み (`loadImage` など) は、1 度だけ警告する。
+    ///   `setup()` で読むか、`request…` の口を使う
+    ///
+    /// ## 止める口の意味は、時計によらない
+    ///
+    /// | 口 | `draw()` | `frameCount` | `time` | `deltaTime` | 入力 |
+    /// | --- | --- | --- | --- | --- | --- |
+    /// | 何もしない | 毎フレーム | +1 | 進む | 1/fps | 届く |
+    /// | ``SketchPart/pauseTime()`` の間 | 呼ばれる | +1 | 止まる | 0 | 届く |
+    /// | ``SketchPart/jumpTime(_:)`` の枚 | 呼ばれる | +1 | 指定の秒へ跳ぶ | 0 | 届く |
+    /// | 時刻を指定した観測の 1 枚 | 呼ばれる | +1 | その枚だけ指定の秒 | 0 | 届く |
+    /// | ``SketchPart/noLoop()`` の間 | 呼ばれない | 止まる | 止まる | — | コールバックは呼ばれる |
+    /// | ``SketchPart/redraw()`` | 1 回 | +1 | 1/fps 進む | 1/fps | 届く |
+    /// | 外からの停止 (`watch`・MCP) | 呼ばれない | 止まる | 止まる | 再開した枚は 1/fps | 溜まる |
+    ///
+    /// ゲームの一時停止は「自分の印 + ``SketchPart/pauseTime()``」で書く。足して進めるもの
+    /// (`ball.move(by:)`) は自分の印で止め、``SketchPart/time`` から作る動きは `pauseTime()` で止まる。
+    /// 描画は続くので、止めた画面に「PAUSED」を出せる。画面ごと凍らせてよいなら
+    /// ``SketchPart/noLoop()`` / ``SketchPart/loop()`` を使う。
+    ///
+    /// ## 窓の外では読まない
+    ///
+    /// 書き出し (`mokume render`) は、この設定によらず書き出しの刻みのフレームの時計で回る。窓を
+    /// 開かずに `SketchRuntime` を直に回すときも、既定でフレームの時計である。走っている時計は
+    /// ``SketchPart/clock`` で読める (この設定が ``ClockMode/frames`` の窓では
+    /// ``Clock/frameIndex(frameRate:)``)。**起動のときに読む。** 走っている最中に代入しても時計は
+    /// 変わらない。
+    public var clock: ClockMode
     /// 窓の題名。
     public var title: String
 
@@ -336,11 +396,13 @@ public struct SketchSettings: Equatable, Sendable {
 
     public init(
         width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume",
-        pixelDensity: Float = 1, upscale: Upscale = .spatial, windowScale: Float = 0.5
+        pixelDensity: Float = 1, upscale: Upscale = .spatial, windowScale: Float = 0.5,
+        clock: ClockMode = .wallClock
     ) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
+        self.clock = clock
         self.title = title
         self.pixelDensity = pixelDensity
         self.upscale = upscale
@@ -456,7 +518,7 @@ var runningSketch: SketchRuntime?
 /// 文脈のタスクローカル値を受け継ぐので、ここに束ねた面はそのまま中へ届く
 /// (`Task.detached` は受け継がない)。
 ///
-/// **読むのは待つ読み込みの口だけ** (``Sketch/requireLoadingCanvas(_:)``)。描く口は
+/// **読むのは待つ読み込みの口だけ** (``Sketch/loadingCanvas(_:_:)``)。描く口は
 /// ``runningSketch`` だけを見続ける — `Task` から描けると、描く順が `Task` に番が回る時機で
 /// 決まり、描画順を main actor の上で直列に確定させている性質 ([ADR-0010] の影響欄) が崩れる。
 /// 待つ読み込みの口は絵を描かず、値を作って返すだけなので、この性質に触れない。
@@ -474,9 +536,17 @@ extension SketchPart {
     /// いま描いている面。
     ///
     /// **走っている実行の外 (初期化子の中・後片付けの後・`Task` の中) で取ると止まる。** 返せる
-    /// 面が無いためで、資源を作る口 (``createGraphics(_:_:)`` など) と同じ扱いである。描く・読む
-    /// ときは語彙 (``circle(_:_:_:)``・``width`` など) を通せば、外からでも落ちない。
-    public var canvas: Canvas { Self.requireCanvas() }
+    /// 面が無く、プロパティなので投げることもできないためである。資源を作る口
+    /// (``createGraphics(_:_:)`` など) は同じ場所から呼んでも止まらず、型のついたエラー
+    /// (``RenderFailure/notRunning(call:)`` など) を投げる。描く・読むときは語彙
+    /// (``circle(_:_:_:)``・``width`` など) を通せば、外からでも落ちない。
+    public var canvas: Canvas {
+        // **止める口はここ 1 つだけに置く** (#2683 の反証 B3)。止める取り方を別の口にしておくと、
+        // 新しい資源の口がそれを呼べてしまい、投げるべき所でまた落ちる。資源の口は
+        // ``resourceCanvas(_:_:)`` / ``loadingCanvas(_:_:)`` を通って投げる
+        guard let runtime = runningSketch else { fatalError(OutsideRun.canvasStopNotice) }
+        return runtime.canvas
+    }
 
     /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
     ///
@@ -515,10 +585,14 @@ extension SketchPart {
     /// のは最初のフレームからである。ただし ``Sketch/setup()`` で ``jumpTime(_:)`` した最初のフレームは
     /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。
     ///
-    /// 窓に出して動かしている間は**実際に流れた時間**で、フレームが何枚落ちても
+    /// 窓に出して動かしている間は、既定で**実際に流れた時間**で、フレームが何枚落ちても
     /// 復帰した瞬間に追いつく。**揃えたいものはここから導く** ([ADR-0025] 決定 6) —
-    /// 複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
+    /// 実時間の時計で複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
     /// 状態ではない。
+    ///
+    /// 窓でもフレームの時計を選べる (``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``)。
+    /// そのときと書き出し (`mokume render`) では `(frameCount − 1) / fps` で、重いフレームでも 1 枚に
+    /// 1/fps 秒しか進まない (処理落ち)。
     ///
     /// 作品の側から止める・飛ぶこともできる (``pauseTime()`` / ``jumpTime(_:)``)。
     ///
@@ -530,14 +604,19 @@ extension SketchPart {
     public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
     /// 前のフレームからの経過 (秒)。
     ///
+    /// **フレームの時計** (書き出しと、``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``
+    /// にした窓) では、**常にちょうど 1 / fps 秒**である。重いフレームの後でも変わらない。
+    ///
+    /// 以下は、窓の既定の**実時間の時計** (``Clock/wallClock``) の話である。
+    ///
     /// **最初のフレームは、時計 (``clock``) によらず 1 フレームぶんである。** 窓に出して動かして
     /// いる間は目標の 1 フレームぶん (``SketchSettings/frameRate`` 分の 1 秒) で、アプリの起動や
     /// ``Sketch/setup()`` の中で済む計算にかかった時間は乗らない。ただし ``Sketch/setup()`` で ``pauseTime()`` /
     /// ``jumpTime(_:)`` した最初のフレームと、時刻を指定した観測が撮る最初のフレームは 0 である。
     ///
-    /// **最初のフレームの中で使った時間は、2 枚目に乗る** (上限まで)。``Sketch/setup()`` で置いた図形・
-    /// 画素・背景は最初のフレームへ持ち越されてその中で組まれ、最初の ``Sketch/draw()`` の重い準備も
-    /// その中で走るので、ほかのフレームと同じく次の枚の経過になる。
+    /// **最初のフレームの中で使った時間は、2 枚目に乗る** (上限まで・実時間の時計)。``Sketch/setup()`` で
+    /// 置いた図形・画素・背景は最初のフレームへ持ち越されてその中で組まれ、最初の ``Sketch/draw()`` の
+    /// 重い準備もその中で走るので、ほかのフレームと同じく次の枚の経過になる。
     ///
     /// **止まっていた時間まるごとは渡らない。** ディスプレイのスリープなどでフレームが
     /// 長く途切れたとき、その間の秒数がそのまま 1 枚に乗ると、これで積分している側
@@ -549,24 +628,30 @@ extension SketchPart {
     /// 「描き直しの 1 枚の時刻」)。
     ///
     /// **作者が時刻を止めている間と、飛んだ枚は 0 である** (``pauseTime()`` / ``jumpTime(_:)``)。
+    /// どちらの時計でも同じである。
     ///
-    /// **足し込んだ合計は ``time`` と一致しない。** 揃えたいものをこれで作らない
-    /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
-    /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
+    /// ## 足し込んだ状態が揃うかは、時計で決まる
+    ///
+    /// - **フレームの時計では揃う。** 刻みが毎回ちょうど 1 / fps なので、同じ入力をフレームの番号
+    ///   つきで流せば、足し込んだ状態 (位置・速さ・残り時間) は何度走らせても同じになる
+    /// - **実時間の時計では揃わない。** 刻み方が実行ごとに違い、同じ合計時間でも刻み方が違えば
+    ///   結果が変わる。フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない — 揃えたい
+    ///   ものは ``time`` から導く ([ADR-0025] 決定 6)
     public var deltaTime: Float { Self.liveRuntime(.read(returning: "0"))?.deltaTime ?? 0 }
     /// ``time`` がどこから来ているか。
     ///
-    /// 窓に出して動かしている間は ``Clock/wallClock`` (実際に流れた時間) で、書き出し
+    /// 窓に出して動かしている間は、既定で ``Clock/wallClock`` (実際に流れた時間) で、書き出し
     /// (`mokume render`) と、窓を開かずに回す検査では ``Clock/frameIndex(frameRate:)``
-    /// (フレームの数え方) である。
+    /// (フレームの数え方) である。窓でも ``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``
+    /// にすれば、宣言の fps の ``Clock/frameIndex(frameRate:)`` になる。
     ///
     /// **外の時間で動くものを作る側が読む** — たとえば音声ファイルの再生 (`loadSound(_:)`)
-    /// は、実時間なら実際に鳴らし、フレームの数え方なら鳴らさずに再生位置をフレームの数から
-    /// 決める。書き出すたびに同じ絵になるのは後者である ([ADR-0025] の水準 2)。
+    /// は、書き出しでは鳴らさずに再生位置をフレームの数から決める。書き出すたびに同じ絵に
+    /// なるのはこのためである ([ADR-0025] の水準 2)。窓では、フレームの時計でも実際に鳴らす。
     ///
     /// ```swift
     /// background(0)
-    /// // 窓で見ている間だけ時刻を出し、書き出す絵には入れない
+    /// // 実時間で動いている間だけ時刻を出し、書き出す絵には入れない
     /// if clock == .wallClock { text("\(time)", 20, 40) }
     /// ```
     ///
@@ -605,16 +690,31 @@ extension SketchPart {
         liveRuntime(use, call)?.canvas
     }
 
-    /// 資源を作る口 (``createGraphics(_:_:)`` など) と ``canvas`` が使う面。**外から呼ばれたら止める。**
+    /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、口ごとに 1 度だけ
+    /// 警告して、その口の型の `notRunning(call:)` を投げる。**
     ///
-    /// 返す値そのもの — 面・画像・形・領域 — を走っている面からしか作れず、既定へ倒せない
-    /// ためである。待つ読み込みの口 (``requireLoadingCanvas(_:)``) と同じく資源の生成の扱いで、
-    /// [#2265] の完了条件 5 がこの範囲を変えないと決めている。止める文面は呼ばれた口を名乗る。
+    /// 警告は ``OutsideRun`` の控えへ言い、観測の応答にも載る。投げるだけだと、`try?` で受けた側
+    /// (部品の `init()` の `sprite = try? loadImage(…)`) には値が黙って `nil` になる以外に何も残らない。
     ///
-    /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
+    /// 返す値そのもの — 面・画像・形・領域 — を走っている面からしか作れず、既定へ倒せない。
+    /// 以前はここが `fatalError` で、投げる口なのに `try?` でも受けられずにプロセスごと落ちた
+    /// ([#2683])。資源の生成は型のついたエラーを投げる ([ADR-0020] 決定 5)。
+    ///
+    /// - Parameters:
+    ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
+    ///   - call: エラーに載せる口の名前。呼ぶ側の `#function` が入る。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
     @MainActor
-    static func requireCanvas(_ call: String = #function) -> Canvas {
-        guard let runtime = runningSketch else { fatalError(OutsideRun.stopNotice(call)) }
+    static func resourceCanvas<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, _ call: String = #function
+    ) throws(Failure) -> Canvas {
+        guard let runtime = runningSketch else {
+            // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
+            OutsideRun.log.warn(call, .thrown)
+            throw Failure.notRunning(call: call)
+        }
         return runtime.canvas
     }
 
@@ -622,20 +722,63 @@ extension SketchPart {
     /// `Task` からなら、その実行の面を返す** (``LaunchingSketch``)。
     ///
     /// 先に見るのは ``runningSketch`` で、これまで動いていた経路は何も変わらない。
-    /// 持ち越した面へ倒れるのは、これまで止まっていた経路だけである。
+    /// 持ち越した面へ倒れるのは、``runningSketch`` が外れた後の `Task` だけである。
     ///
-    /// - Parameter call: 止めるときの文面に載せる、呼ばれた口の名前。
+    /// 走っている実行から起こされていない所 (`init`・後片付けの後・`Task.detached`) では、
+    /// どの面へ読み込むかが決まらず、返す資源を作れない。そこでは ``resourceCanvas(_:_:)`` と
+    /// 同じく、口ごとに 1 度だけ警告して `notRunning(call:)` を投げる。
+    ///
+    /// - Parameters:
+    ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
+    ///   - call: エラーに載せる口の名前。呼ぶ側の `#function` が入り、
+    ///     ``OutsideRun/waitingLoads`` のどれかである。
     @MainActor
-    static func requireLoadingCanvas(_ call: String) -> Canvas {
+    static func loadingCanvas<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, _ call: String = #function
+    ) throws(Failure) -> Canvas {
         guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
-            // 走っている実行から起こされていない (init・プロパティの初期化子・
-            // Task.detached)。どの面へ読み込むかが決まらず、返す資源を作れないので止める
-            // (資源を作る口と同じ。描く口は止めずに警告する — ``liveRuntime(_:_:)``)
-            fatalError(
-                "\(call) only works for a sketch that is running. Call it from setup() or "
-                    + "draw(), or from a Task started there — not from init, a property "
-                    + "initialiser or Task.detached.")
+            OutsideRun.log.warn(call, .thrown)
+            throw Failure.notRunning(call: call)
         }
         return canvas
+    }
+}
+
+/// 資源を作る口が投げる失敗の型。走っていないときの場合 (`notRunning(call:)`) を持つ。
+///
+/// ``SketchPart/resourceCanvas(_:_:)`` が、呼んだ口の `throws` の型のまま投げるための束ね。
+/// 各型の場合そのものがこの要件を満たす。公開しない — 利用者が名乗る型ではない。外のモジュール
+/// (MokumeCamera の `MovieFailure`) も満たせるよう、パッケージの中にだけ見せる。
+package protocol NotRunningFailure: Error {
+    static func notRunning(call: String) -> Self
+}
+
+extension RenderFailure: NotRunningFailure {}
+extension ImageFailure: NotRunningFailure {}
+extension ShaderFailure: NotRunningFailure {}
+extension ModelFailure: NotRunningFailure {}
+extension DataFailure: NotRunningFailure {}
+
+// 外のモジュールの資源の口 (MokumeCamera の `createCapture`・`createVideo`) が使う入口。
+//
+// **呼んだ口の名前を外の口のものにする** (#2683 の反証 2)。公開の ``SketchPart/createImage(_:_:)``
+// を素で呼ぶと、`notRunning(call:)` にも警告にも `"createImage(_:_:)"` が入り、利用者が呼んだ口を
+// 名乗らない。
+extension SketchPart {
+    /// 面を取れる所から呼ばれたかを確かめる。取れなければ、`call` の名前で 1 度だけ警告して
+    /// `notRunning(call:)` を投げる (``resourceCanvas(_:_:)`` と同じ)。
+    ///
+    /// ファイルを開くなど、絵を作る前に重い仕事をする口が、その前に呼ぶ。
+    package func requireSurface<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, calledAs call: String
+    ) throws(Failure) {
+        _ = try Self.resourceCanvas(failure, call)
+    }
+
+    /// ``createImage(_:_:)`` と同じ絵を作る。面を取れないときは `call` の名前で投げる。
+    package func createImage(
+        _ width: Int, _ height: Int, calledAs call: String
+    ) throws(ImageFailure) -> Image {
+        try Self.resourceCanvas(ImageFailure.self, call).createImage(width, height)
     }
 }

@@ -49,7 +49,9 @@ extension Sketch {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func loadSound(_ file: String) throws(AudioFailure) -> SoundFile {
-        try loadSound(file, flow: nil)
+        // 待たずに読む口は無いので、`setup()` だけを案内する (#2601)
+        Self.noticeBlockingLoad("loadSound(_:)", instead: nil)
+        return try loadSound(file, flow: nil)
     }
 
     /// 鳴らす流れを差し替えられる入口 (検査用)。`flow` を渡すと、時計によらずその流れで鳴らす。
