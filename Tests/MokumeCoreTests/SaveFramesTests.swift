@@ -1088,6 +1088,52 @@ struct SaveFramesTests {
         }
     }
 
+    // MARK: - GPU が打ち切ったフレーム (#2743)
+
+    /// `RenderDevice.dropsNextSubmissionForTesting` に渡す理由 (#1812 の run で実際に届いたもの)。
+    static let victim =
+        "Discarded (victim of GPU error/recovery) (00000005:kIOGPUCommandBufferCallbackErrorInnocentVictim)"
+
+    /// フレーム `frame` で塗る明るさ (表示の値)。**8 bit で割り切れる値にしてある** — 書いた PNG の
+    /// 画素 1 つで、どのフレームの絵かを言える。
+    static func level(atFrame frame: Int) -> Float { min(Float(frame) * 0.2, 1) }
+
+    /// **打ち切りは GPU を止めずに作る** (`DroppedWorkReadersTests` と同じ)。投入は GPU で普通に
+    /// 走り、結末だけが「打ち切り」として遅れて届く。だから打ち切ったフレームの絵そのものは無事で、
+    /// 見るのは書き出しがその枚を書かないかである。
+    ///
+    /// 変更前は、3 枚目の投入が打ち切られても、合図だけを待って 3 枚目を `f-0002.png` に書いた
+    /// (本物の打ち切りなら、置き場に残った前の絵が書かれる)。
+    @Test("連番の途中のフレームの投入が打ち切られたら、その枚を書かず、止め際に落ちた数として名乗る")
+    func aDroppedFrameIsNotWrittenIntoASequence() throws {
+        try withTemporaryDirectory("mokume-record-dropped-submission") { directory in
+            let pattern = directory.appendingPathComponent("f-####.png").path
+            let runtime = try makeRuntime { sketch in
+                // 3 枚目の描き切りの投入を打ち切ったことにする
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                let level = Self.level(atFrame: sketch.frameCount)
+                sketch.background(.display(red: level, green: level, blue: level))
+                if sketch.frameCount == 1 { sketch.beginRecord(pattern) }
+                if sketch.frameCount == 6 { sketch.endRecord() }
+            }
+            for _ in 0..<6 { try runtime.advance() }
+
+            let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+            #expect(names == ["f-0000.png", "f-0001.png", "f-0002.png", "f-0003.png"], "\(names)")
+            // 名前は録りの中の通し番号で、打ち切った 3 枚目は穴にならずに詰まる
+            let levels = try names.map { try readBack(directory.appendingPathComponent($0))[0, 0].red }
+            let expected = [1, 2, 4, 5].map { UInt8((Self.level(atFrame: $0) * 255).rounded()) }
+            #expect(
+                levels.count == expected.count
+                    && zip(levels, expected).allSatisfy { abs(Int($0) - Int($1)) <= 1 },
+                "書いた絵のフレームが違う: \(levels) (期待 \(expected))")
+            let said = try #require(
+                runtime.recorderWarnings?.message(for: .droppedFrames), "打ち切ったフレームを名乗っていない")
+            #expect(said.contains("wrote 4 frames. 1 did not reach it"), "\(said)")
+            runtime.closePlugins()
+        }
+    }
+
     // MARK: - 転んだとき
 
     @Test("書き損じが続くと、その差込口が外れる")
