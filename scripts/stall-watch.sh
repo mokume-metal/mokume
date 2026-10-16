@@ -26,13 +26,9 @@
 #   3. 全 check が緑なのに進まない
 #      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)。作法の検査が
 #      ci-gate を離れた (#2669) 後に残るのは、同じコミットに段を走らせる ci.yml の run が複数
-#      立つ場面 (reopen・base の変更・閉じて作り直した PR) のコードの検査の赤である。本文の
-#      編集の run の緑 (段が skipped) は直った証拠に数えない — 10 行目。
-#      もう 1 つは**本文の編集の run の赤い ci-gate** (#2717)。その ci-gate は同じ SHA の検査の
-#      最新を読んで結論を返す (#2690) ので、検査の赤を読んだ後や待ちの期限を越えた後に、検査を
-#      打ち直して緑にしても赤のまま残る。run の id が大きく最新の赤に見えるが、同じ SHA の
-#      ci-check・ci-static の最新がどちらも success なら、ここで打つ (読み直して緑を返す)。
-#      検査の最新が赤・走っている途中なら打たない (gate_state の reread)
+#      立つ場面 (reopen・閉じて作り直した PR) のコードの検査の赤である。base の変更と本文の編集
+#      では ci.yml の run が立たない (#2718)。#2718 より前の本文の編集の run の緑 (段が skipped)
+#      は直った証拠に数えない — 10 行目
 #      対処: gh run rerun <run-id> --failed — **ただし render-pr・pr-gate には打たない**
 #      (#2062・#2668。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
 #      打たなくても merge は止まらない。pr-gate は最新の run の結論が判定で、古い赤・cancelled は
@@ -99,9 +95,9 @@
 #      原因: #2669 より前の ci.yml の run の ci-gate は作法のジョブを待っていた。作法をラベル
 #      だけで直すと、ci.yml はラベルでは起きないので新しい ci-gate が付かない (#2669 の反証 2)。
 #      その run は打ち直さない (古いイベントを再生し、needs の赤で ci-gate も赤く返す・#699)
-#      対処: 本文を編集する (edited の run が新しい ci-gate を付ける) か、新しいコミットを push
-#      する。**作法のジョブ (LEGACY_JOBS) を含む run を head に持つ open な PR が無くなったら、
-#      この行と legacy の判定ごと消してよい**
+#      対処: 新しいコミットを push する。本文の編集では新しい ci-gate が付かない — ci.yml は
+#      edited で起きない (#2718)。**作法のジョブ (LEGACY_JOBS) を含む run を head に持つ open な
+#      PR が無くなったら、この行と legacy の判定ごと消してよい**
 #  12. autoMerge: true + CLEAN (か UNSTABLE・BEHIND) で isInMergeQueue: false のまま、揃ってから猶予を超えた
 #      原因: 予約は掛かっていて必須も揃っているのに、予約が queue へ動かない (#2693)。予約が
 #      効いていれば揃ってから数秒で入る。#2691 は揃ってから 27 分入らなかった。起きる条件は
@@ -153,7 +149,7 @@
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check と、読み直せば緑になる ci-gate を打ち直す。冪等
 #   masked-red           name   10      コードの直しは人手。打ち直しても同じ赤を返す
-#   legacy-gate          name   11      本文の編集か push は人手。古い run は打ち直さない
+#   legacy-gate          name   11      push は人手。古い run は打ち直さない
 #   auto-merge-dropped   name   2・5    予約の掛け直しは人手。当番の権限では掛けられない
 #   queue-not-entered    name   12      同上。掛かっている予約を外して掛け直す
 #   stale-gate           name   13      古い pr-gate の打ち直しは人手。当番には打たせていない (#2668)
@@ -346,7 +342,8 @@ minutes_since() { # $1=ISO8601 (空可)
 #
 # - legacy: 作法のジョブ (LEGACY_JOBS) を含む古い ci.yml の run の check。打ち直しの対象にしない
 # - skips: 段を走らせていない run の ci-gate。同じ run の ci-check・ci-static が在って、どれも
-#   SKIPPED のもの (本文・タイトルの編集の run)。その結論は同じ SHA の検査を読んだもの (#2690)
+#   SKIPPED のもの (本文・タイトルの編集の run。#2718 からは立たない)。その結論は同じ SHA の検査を
+#   読んだもの (#2690)
 # - hollow: skips のうち緑。直った証拠に数えない
 #
 # **古い pr-gate を落とす前の並びは flatten_checks が出す。** stale-gate (表の 13 行目・#2716) の
@@ -507,37 +504,25 @@ stale_names() { # 標準入力=均した checks
     | unique | join(" ")'
 }
 
-# 最新の ci-gate が判定を表していない形 (冒頭の表の 3・10・11 行目)。masked / legacy / reread / 空を出す。
+# 最新の ci-gate が判定を表していない形 (冒頭の表の 10・11 行目)。masked / legacy / 空を出す。
 #
 # - masked: 最新の ci-gate が hollow (段を走らせていない run の緑) で、ci-check・ci-static の
 #   最新の結論 (SKIPPED を除く) のどれかが赤い
 # - legacy: 最新の ci-gate が古い run の赤で、その下のコードの検査は赤くなく (作法の赤)、最新の
-#   pr-gate が SUCCESS。コードの赤なら本文の編集を勧めない — hollow の緑で覆ってしまう
-# - reread: 最新の ci-gate が skips の赤で、ci-check・ci-static の最新の結論 (SKIPPED を除く) が
-#   どちらも在って SUCCESS (#2717)。その ci-gate は、読んだ後で検査が打ち直されて緑になったか、
-#   待ちの期限を越えた。理由を問わず、打ち直せば同じ SHA を読み直して緑を返す。検査の最新が
-#   赤・走っている途中なら出さない (同じ赤を返すだけ・待ちで runner を占めるだけ)。
-#   **検査の「最新」は ci-gate.sh の latest_run と同じものを読む** (#2717 の反証 2) — 作成順で
-#   最新の run (suite) の、その中の最後の attempt (job の id の最大)。run の id は suite の作成順と
-#   同じに並ぶ (規則と観測は scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」)。ci-gate.sh と
-#   食い違うと、打ち直しても同じ赤を返す ci-gate を当番のたびに打つか、緑を返す ci-gate を打たずに
-#   黙る。#2716 で ci-gate.sh を suite をまたぐ check run の id の最大から suite の順に揃えたので、
-#   古い run の検査を後から打ち直した赤は、もう読まない。作法のジョブを含む古い run (legacy) の
-#   赤は打たない — stall-act はその run を丸ごと飛ばすので、legacy-gate と名乗らせる (反証 1)
+#   pr-gate が SUCCESS。コードの赤なら名乗らない — 直すのはコードの側である
+#
+# かつてはここで、段を走らせていない run の赤い ci-gate を、同じ SHA の検査の最新がどちらも
+# success なら打ち直させていた (reread・#2717)。本文の編集で ci.yml の run が立たなくなったので
+# (#2718)、その赤も生まれない
 gate_state() { # 標準入力=均した checks
   jq -r --argjson unsettled "$UNSETTLED" --argjson passed "$PASSED" '
     def red: .result as $r | (($unsettled | index($r)) == null) and (($passed | index($r)) == null);
     def latest($n): [ .[] | select(.name == $n) ] | sort_by([.run, .at]) | last;
     def latest_ran($n): [ .[] | select(.name == $n and .result != "SKIPPED") ] | sort_by([.run, .at]) | last;
-    def latest_read($n): [ .[] | select(.name == $n and .result != "SKIPPED") ] | sort_by([.run, .job, .at]) | last;
     latest("ci-gate") as $g
     | latest("pr-gate") as $p
     | ([ latest_ran("ci-check"), latest_ran("ci-static") ] | map(select(. != null)) | any(red)) as $code_red
-    | ([ latest_read("ci-check"), latest_read("ci-static") ] | map(select(. != null))) as $read
     | if $g == null then ""
-      elif $g.skips and ($g.legacy | not) and ($g | red)
-           and ($read | length) == 2 and all($read[]; .result == "SUCCESS")
-        then "reread"
       elif $g.hollow and $code_red then "masked"
       elif $g.legacy and ($g | red) and ($code_red | not) and $p != null and $p.result == "SUCCESS"
         then "legacy"
@@ -713,11 +698,6 @@ for n in $numbers; do
 
   # 最新の ci-gate が判定を表していない形。打ち直さずに人へ返す (冒頭の表の 10・11 行目)
   case "$(gate_state <<<"$checks")" in
-    reread)
-      say_line "$n" stale-checks act "$(minutes_since "${failed_at:-$updated}")" \
-        "本文の編集の run の ci-gate が赤のまま、同じ SHA の検査の最新は success — 打ち直せば読み直す (#2717)"
-      continue
-      ;;
     masked)
       mins=$(minutes_since "${failed_at:-$updated}")
       say_line "$n" masked-red name "$mins" \
@@ -728,7 +708,7 @@ for n in $numbers; do
     legacy)
       mins=$(minutes_since "${failed_at:-$updated}")
       say_line "$n" legacy-gate name "$mins" \
-        "最新の ci-gate が作法のジョブを含む古い ci.yml の run の赤 — 本文を編集する (edited の run が新しい ci-gate を付ける) か、新しいコミットを push する"
+        "最新の ci-gate が作法のジョブを含む古い ci.yml の run の赤 — 新しいコミットを push する (本文の編集では ci.yml が起きない・#2718)"
       [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
       continue
       ;;

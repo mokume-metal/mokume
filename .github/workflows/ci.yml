@@ -17,9 +17,19 @@ run-name: "${{ github.event_name == 'merge_group' && format('merge queue: {0}', 
 
 on:
   # **作法の検査 (タイトル・マージ判定・絵) のためのイベントでは起こさない** (#2611・#2669)。
-  # それらは pr-gate.yml が持つ。edited は base の変更のためだけに居る (下の ci-check の if:)
+  # それらは pr-gate.yml が持つ。
+  #
+  # **edited (本文・タイトル・base の編集) でも起こさない** (#2718)。base の変更のためだけに居た
+  # (#1712) が、GitHub はイベントの種類で base の変更だけを選べず、本文の編集のたびに段を走らせない
+  # run が立った。その run の ci-gate は同じ SHA の検査の終わりを待って ubuntu の runner を占め
+  # (編集のたびに 1 本ずつ重なる)、待った末の赤は検査を打ち直しても必須を塞いだ (#2717・#2727)。
+  # 代償: base を付け替えた PR を、PR の時点で下限 OS (macOS 26) で検査し直さない。前の base で
+  # 走った run の ci-gate が必須を満たし続ける。合流後の木は merge_group の render と ci-check の
+  # examples 等が、下限 OS の release は release.yml の release-check が版の前に見る (main が進む
+  # たびに既に起きている欠け・#1985 と同じ形)。新しい base で PR の時点の検査が要るなら、
+  # コミットを push して synchronize の run を立てる (scripts/ci-gate.sh 冒頭の「代償」)
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
   merge_group:
   # **main への push では走らせない** (#1713)。main へ入る経路は merge queue だけで
   # (main-protection.json の merge_queue 規則・bypass なし)、queue は合流後の木を必須の
@@ -52,13 +62,9 @@ jobs:
   # ADR-0009 が macOS 26 / Metal 4 を前提に置いているため Linux ではビルドできない
   # (このリポジトリは public なので Actions の従量課金はかからない)。
   #
-  # **edited では base の変更でだけ走らせる** (#1712)。edited は本文・タイトルの編集でも
-  # 発火するが、検査する木は変わらない。base の変更は合流先を変える — checkout は
-  # pull_request で合流 ref (refs/pull/N/merge) を取る。base の変更のときにだけ
-  # github.event.changes.base が載る (あれば object で真、無ければ null で偽)。GitHub は
-  # イベントの種類で base の変更だけを選べないので、本文の編集では軽い run が立ち、この
-  # ジョブは skipped になる。その run の ci-gate は、同じ SHA のこのジョブが終わるのを待って
-  # 結論を返す (#2690)。
+  # **if: を持たず、どの起動でも走らせる** (#2718)。pull_request の run で skipped になると
+  # ci-gate が赤にする (scripts/ci-gate.sh の冒頭・#2690)。かつては edited の run で、base の変更の
+  # ときにだけ走らせる if: を持っていた (#1712)。
   #
   # **runs-on は macos-26 に固定する** (#1985)。macos-latest は GitHub が次の世代へ切り替える
   # もので、切り替わった時点で下限 (ADR-0009 の macOS 26) の build/test が誰にも気付かれず
@@ -84,10 +90,6 @@ jobs:
   # 並べると merge_group では null と文字列を突き合わせ、可否が式言語の型強制の解釈に乗る
   # (外れたときの姿は「merge queue で ci-check が黙って走らない」)。
   ci-check:
-    if: >-
-      github.event_name != 'pull_request'
-      || github.event.action != 'edited'
-      || github.event.changes.base
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -100,8 +102,8 @@ jobs:
   # build・test の後ではなく、数分で返す。どの段をここへ出したかと理由は Makefile の
   # CI_STATIC_STEPS。保証の範囲は変えない — 同じ段を、同じ木で、先に走らせる。
   #
-  # **起動の条件は ci-check と同じにする。** 片方だけが走る event があると、その event では
-  # 段が抜ける (scripts/tests/ci_workflow_test.py が 2 つの if: の一致を見る)。merge_group でも
+  # **ci-check と同じく if: を持たない。** 片方だけが走る event があると、その event では段が抜ける
+  # (scripts/tests/ci_workflow_test.py が 2 つとも if: を持たないことを見る)。merge_group でも
   # 走らせる — adrs の番号の重複のように、合流後の木で初めて赤になる段がここにも居る。
   #
   # **runs-on は ubuntu-24.04 に固定する。** ubuntu-latest は GitHub が切り替えるもので、
@@ -123,10 +125,6 @@ jobs:
   # scripts/check-workflows.sh が版と照合値を持って自分で落とす。venv の bin を丸ごと PATH に
   # 足すと python3 まで差し替わるので、使う 2 つだけを置き場に繋ぐ
   ci-static:
-    if: >-
-      github.event_name != 'pull_request'
-      || github.event.action != 'edited'
-      || github.event.changes.base
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -151,20 +149,14 @@ jobs:
   # 直して新しい run が緑になっても、直す前の run の赤い ci-gate が同じコミットに残り、必須
   # チェックを赤のままにした (#259・#2134)。打ち直しと「空コミットを push」の案内が要った。
   #
-  # **本文・タイトルの編集の run では、同じ head SHA のコードの検査が終わるのを待ち、その結論を
-  # 返す** (#2690)。その run では段を走らせる 2 つが skipped になる。素通しで緑にすると、同じ SHA の
-  # 別の run で検査が走っている途中・赤でも必須が満たされていた。走っている途中に赤を返すと、
-  # 後から緑が来ても打ち直すまで PR を塞ぐ (必須は作成順で最新の check suite の ci-gate を読む —
-  # 規則は scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」)。判定と理由・代償も同じ冒頭。
-  # timeout-minutes は、スクリプトの待ちの期限 (WAIT_LIMIT の既定 90 分) の外側に置く。
+  # **needs の結論だけで判定し、API を読まない** (#2718)。pull_request の run で段を走らせる 2 つが
+  # skipped なら赤にする (#2690 の穴)。本文の編集の run で同じ head SHA の検査の終わりを待つ形
+  # (#2690) は、edited で起こさなくなったので外した。必須は作成順で最新の check suite の ci-gate を
+  # 読む (規則は scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」)。判定と理由・代償も同じ冒頭。
   ci-gate:
     if: always()
     needs: [ci-check, ci-static]
     runs-on: ubuntu-latest
-    timeout-minutes: 100
-    permissions:
-      contents: read # scripts/ci-gate.sh を checkout する
-      checks: read # 同じ head SHA のコードの検査の check run を読む (#2690)
     steps:
       - uses: actions/checkout@v7
         with:
@@ -174,6 +166,4 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci-gate.sh

@@ -28,13 +28,6 @@
 # 本文の編集の run の緑 (段が skipped) は直った証拠ではないので、stall-watch.sh はそれを組に
 # 数えない (masked-red と名乗る・#2669 の反証 4)。
 #
-# 本文の編集の run の ci-gate は、同じ SHA のコードの検査の最新を読んで結論を返す (#2690)。
-# 検査の赤を読んだ後や待ちの期限 (scripts/ci-gate.sh の WAIT_LIMIT) を越えた後に、検査を打ち
-# 直して緑にしても、その赤は必須を塞ぎ続ける (その赤が新しい suite に載る。規則は
-# scripts/ci-gate.sh の冒頭)。stall-watch.sh は、同じ SHA の検査の最新がどちらも success になった
-# その赤も stale-checks で回す (#2717)。打てば同じ SHA を読み直して緑を返す。検査の最新が赤なら
-# 回さない (同じ赤を返す)。
-#
 # ## 作法のジョブを含む古い ci.yml の run は丸ごと打たない (#2669 の移行)
 #
 # #2669 より前の ci.yml の run は作法のジョブ (LEGACY_JOBS) を含み、その ci-gate はそれらを
