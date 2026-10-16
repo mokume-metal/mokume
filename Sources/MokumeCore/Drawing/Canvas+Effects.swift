@@ -137,6 +137,9 @@ extension Canvas {
         }
     }
 
+    /// 使い捨ての計測 (#1744 の G2) のスイッチ。検査だけが立てる。
+    static var perfSkipsEffectCarry = false
+
     func encodeEffects(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
         // **半径は出す画素で書かれている** ([#1545])。段は描く細かさの絵の上で回るので、
         // 展開する前に描く画素へ換算する (縮め幅もこの半径で決まる)
@@ -150,7 +153,9 @@ extension Canvas {
         // 数えてよい)。控えへの写しは段ではないので枠を取らない
         try pipeline.reservePasses(stagePassesUsed + passes.count + upscalePassCount)
         let carry = try pipeline.carry()
-        try encodeCarry(into: carry, in: commands)
+        // **使い捨ての計測 (#1744 の G2・PR は閉じる) のスイッチ。** 控えへの写しだけを飛ばし、
+        // 写しとその前後の待ちの費用を直に測る (絵は正しくない)
+        if !Self.perfSkipsEffectCarry { try encodeCarry(into: carry, in: commands) }
 
         /// いまの絵。**最初は控え** — 入りの絵を描く先から読まないので、最後の段は
         /// 読んでいる面へ書くことにならない。

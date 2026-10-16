@@ -117,6 +117,11 @@ enum PerfScene {
         }
     }
 
+    /// 2 枚の読み出しの、成分の差の絶対値の最大。
+    static func largestDifference(_ a: PixelBuffer, _ b: PixelBuffer) -> Float {
+        zip(a.components, b.components).reduce(0) { max($0, abs(Float($1.0) - Float($1.1))) }
+    }
+
     /// 2 枚の読み出しの、ビットで違う成分の数。
     static func differingComponents(_ a: PixelBuffer, _ b: PixelBuffer) -> Int {
         zip(a.components, b.components).reduce(0) { $0 + ($1.0.bitPattern == $1.1.bitPattern ? 0 : 1) }
@@ -157,6 +162,25 @@ enum ProcessUsage {
         let wakeups = Double(after.interruptWakeups - before.interruptWakeups)
         let cpu = Double(after.cpuNanoseconds - before.cpuNanoseconds) / 1e6
         return (wakeups / seconds, cpu / seconds)
+    }
+}
+
+/// display link が回るよう、プロセスを WindowServer に繋いで小さな窓を前に出す。**窓の無い検査の
+/// プロセスでは、`NSScreen.displayLink` のコールバックが 1 度も来ない** (2026-10-16 の 1 回目の run で
+/// 0 回だった)。
+@MainActor
+enum OnScreenProbe {
+    static func window(on screen: NSScreen) -> NSWindow {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        app.finishLaunching()
+        let frame = NSRect(x: screen.frame.minX + 40, y: screen.frame.minY + 40, width: 320, height: 200)
+        let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "perf-g2"
+        window.orderFrontRegardless()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
+        return window
     }
 }
 
@@ -307,6 +331,9 @@ struct PerfReviewG2Frame {
         let clock = ContinuousClock()
         var cpu: [Double] = []
         for _ in 0..<ticks {
+            // 窓の経路と同じく、リフレッシュの間に run loop を回す。回さないと GPU の結末が届かず、
+            // 焼いた面が名乗られない (#2735 の publishPending は結末が届くまで名乗りを遅らせる)
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 1.0 / 60))
             let before = gpu.submissionCount
             let start = clock.now
             try runtime.advance()
@@ -592,6 +619,12 @@ struct PerfReviewG2Frame {
         let b = try run(effects: [.invert()], clears: true)
         let c = try run(effects: [.invert()], clears: false)
         let d = try run(effects: [.invert(), .invert()], clears: true)
+        // 控えへの写しだけを飛ばした b (使い捨てのスイッチ。絵は正しくない)。b との差が写しと、その
+        // 前後の待ちの費用を直に表す
+        Canvas.perfSkipsEffectCarry = true
+        let e = try run(effects: [.invert()], clears: true)
+        Canvas.perfSkipsEffectCarry = false
+        Perf.series(2388, scene, "e invert・塗る・控えへの写しを飛ばす", e.samples, "ms")
         Perf.series(2388, scene, "a 効果なし", a.samples, "ms")
         Perf.series(2388, scene, "b invert・塗る", b.samples, "ms")
         Perf.series(2388, scene, "c invert・塗らない", c.samples, "ms")
@@ -604,6 +637,7 @@ struct PerfReviewG2Frame {
         Perf.line(2388, scene, "戻しの写し 1 回 ≈ c−b", m(c.samples) - m(b.samples), "ms")
         Perf.line(2388, scene, "段 1 つ ≈ d−b", m(d.samples) - m(b.samples), "ms")
         Perf.line(2388, scene, "控えへの写し 1 回 ≈ (b−a)−(d−b)", (m(b.samples) - m(a.samples)) - (m(d.samples) - m(b.samples)), "ms")
+        Perf.line(2388, scene, "控えへの写し 1 回 (直に) = b−e", m(b.samples) - m(e.samples), "ms")
     }
 
     // MARK: #2371 組み込みの効果の uber shader・融合・ぼかしの重み
@@ -705,6 +739,8 @@ struct PerfReviewG2Frame {
         Perf.line(2371, "4K", "成分の総数", Double(builtinBlur.pixels.components.count), "個")
         Perf.line(2371, "4K", "invert 組み込みと特化のビット違いの成分", Double(PerfScene.differingComponents(builtinInvert.pixels, customInvert.pixels)), "個")
         Perf.line(2371, "4K", "4 段と融合のビット違いの成分", Double(PerfScene.differingComponents(builtinChain.pixels, fusedChain.pixels)), "個")
+        Perf.line(2371, "4K", "4 段と融合の成分の差の最大", Double(PerfScene.largestDifference(builtinChain.pixels, fusedChain.pixels)), "値")
+        Perf.line(2371, "4K", "blur 組み込みと定数の重みの成分の差の最大", Double(PerfScene.largestDifference(builtinBlur.pixels, tableBlur.pixels)), "値")
     }
 
     // MARK: #2374 createGraphics
@@ -945,6 +981,8 @@ struct PerfReviewG2FrameWithoutGPU {
             Perf.line(2368, "画面なし", "display link の比較を飛ばした", 0, "-")
             return
         }
+        let window = OnScreenProbe.window(on: screen)
+        defer { window.close() }
         Perf.line(2368, "画面", "maximumFramesPerSecond", Double(screen.maximumFramesPerSecond), "Hz")
         func bareLink(_ probe: LinkProbe, rate: Float?) -> CADisplayLink {
             let link = screen.displayLink(target: probe, selector: #selector(LinkProbe.step(_:)))
@@ -1013,6 +1051,8 @@ struct PerfReviewG2FrameWithoutGPU {
             Perf.line(2390, "画面なし", "飛ばした", 0, "-")
             return
         }
+        let window = OnScreenProbe.window(on: screen)
+        defer { window.close() }
         let probe = LinkProbe()
         let link = screen.displayLink(target: probe, selector: #selector(LinkProbe.step(_:)))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)

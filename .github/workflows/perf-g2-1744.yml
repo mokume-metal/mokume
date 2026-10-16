@@ -17,6 +17,7 @@ on:
     paths:
       - .github/workflows/perf-g2-1744.yml
       - Tests/MokumeCoreTests/PerfReviewG2Tests.swift
+      - Sources/MokumeCore/Drawing/Canvas+Effects.swift
 
 permissions:
   contents: read
@@ -66,21 +67,15 @@ jobs:
           unset MTL_DEBUG_LAYER MTL_DEBUG_LAYER_WARNING_MODE
           out=.build/perf-g2
           : > "$out/perf.tsv"
+          # 2 回目 (2026-10-16): 1 回目で計測の作りが崩れていた 5 本だけを測り直す (窓が無く display
+          # link が回らなかった 2 本・結末が届く前に書き続けた共有面・写しを直に測る #2388・差の最大を
+          # 足した #2371)。ほかの 9 本は 1 回目の run (38884752748) の数字を使う
           for t in \
             PerfReviewG2FrameWithoutGPU/frameTimeJitter \
-            PerfReviewG2FrameWithoutGPU/blurWeightsDoNotDependOnRadius \
             PerfReviewG2FrameWithoutGPU/fallbackTimerWakeups \
-            PerfReviewG2Frame/idlePresentPerRefresh \
             PerfReviewG2Frame/idleSharedSurfacePerRefresh \
-            PerfReviewG2Frame/sharedSurfaceAttributeCosts \
-            PerfReviewG2Frame/layeredFrameSlotWaits \
-            PerfReviewG2Frame/effectsAndCustomShape \
-            PerfReviewG2Frame/layeredSketchByClock \
             PerfReviewG2Frame/effectCarryCopies \
-            PerfReviewG2Frame/builtinVersusSpecialized \
-            PerfReviewG2Frame/createGraphicsBreakdown \
-            PerfReviewG2Frame/readEveryFrame \
-            PerfReviewG2Frame/growthStall
+            PerfReviewG2Frame/builtinVersusSpecialized
           do
             name=${t##*/}
             echo "::group::$t"
