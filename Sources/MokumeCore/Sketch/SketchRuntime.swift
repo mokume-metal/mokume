@@ -363,6 +363,16 @@ public final class SketchRuntime {
     /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
     let isOnScreen: Bool
 
+    /// 画面へ出しながら回しているか。**外の時間で動くもの (音の再生) は、これが真なら実際に鳴らす。**
+    ///
+    /// 窓・共有面の経路 (`SketchApplication`) が組み立てで頼めば、時計によらず真 — 作品がフレームの
+    /// 時計を選んでいても鳴らす ([#2601])。時計だけを見て決めると、フレームの時計を選んだ窓が無音に
+    /// なる。頼まなければ時計から決まり、実時間の時計なら真、フレームの時計なら偽 (書き出しと、窓を
+    /// 持たずに直に回す実行) である。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    let isOnScreen: Bool
+
     /// スケッチとその舞台を組み立てる。
     ///
     /// - Parameters:

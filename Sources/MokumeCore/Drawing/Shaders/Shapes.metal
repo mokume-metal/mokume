@@ -726,20 +726,25 @@ struct FormInstance {
 constant bool kFormHasFill [[function_constant(0)]];
 constant bool kFormHasStroke [[function_constant(1)]];
 
-/// この列が、描く画素で 1 画素より細い塗りを含みうるか。**列ごとに決まる** ([#1477])。
+/// この列が、描く画素で 1 画素より細い塗りか、1 画素より細い (潰れた) 輪郭の帯の穴を含みうるか。
+/// **列ごとに決まる** ([#1477]・[#2186])。
 ///
-/// 1 画素より細い塗りの枝 (`mokume_formPaint` の `rect` と楕円の塗り) も、上の 2 つと同じ
-/// 理由で特化して外す。枝は細い塗りに 1 度も入らない絵でも費用になり、面を覆う矩形 200 枚
-/// (塗りだけ・1920×1080) で GPU 時間が 28% 増えていた。境目の比べ方を軽くしても消えず、
-/// 原稿から外すと戻った。
+/// 1 画素より細い塗りの枝 (`mokume_formPaint` の `rect` と楕円の塗り) と、帯の細い穴の枝
+/// (`mokume_thinHole`) も、上の 2 つと同じ理由で特化して外す。枝は細い塗りに 1 度も入らない
+/// 絵でも費用になり、面を覆う矩形 200 枚 (塗りだけ・1920×1080) で GPU 時間が 28% 増えていた。
+/// 境目の比べ方を軽くしても消えず、原稿から外すと戻った。帯の細い穴の枝も、入るかは図形ごとの
+/// 判定 (`FormFragmentIn.thinHole`) で決まるのに、**枝が原稿に在るだけで** 直径 700 の円 200 個
+/// (塗り + 輪郭・太さ 7) の GPU 時間が 1 割増えた (#2186)。旗の名前は細い塗りの旗として入った
+/// ときのままである (CPU 側の `FormInstance.thinFillsFlag`)。
 ///
 /// 決めるのは CPU で、置いた時点の変換と大きさから保守側に倒して判定する
-/// (`FormInstance.mayHaveThinFill`)。立っていても、細くない形は枝の中の判定で今までどおりの
-/// 式を通るので、絵は変わらない。**立てるべき列で立て損なうと、細い塗りが縁 1 本の式に
-/// 戻って絵が変わる** — だから判定は迷ったら「含む」側にする。列は旗で切らない
+/// (`FormInstance.mayHaveThinFill`・`mayHaveThinHole`)。立っていても、細くない形は枝の中の判定で
+/// 今までどおりの式を通るので、絵は変わらない。**立てるべき列で立て損なうと、細い塗りや帯の細い
+/// 穴が縁 1 本の式に戻って絵が変わる** — だから判定は迷ったら「含む」側にする。列は旗で切らない
 /// (細い塗りと太い塗りが混ざった列は、含む側の組で描く)。
 ///
 /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+/// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
 constant bool kFormHasThinFill [[function_constant(2)]];
 
 /// 縁を滑らかにする余白 (描く画素)。被覆が 0 になるのは縁から 0.5 画素なので、微分の
@@ -764,6 +769,9 @@ struct FormFragmentIn {
     /// 1: 距離場そのものの勾配でずらす (`mokume_shiftedBySlope`)・2: 円なので法線でずらす
     /// (`mokume_shifted`)
     uint ringFromFill [[flat]];
+    /// 輪郭の帯の穴が、描く画素で 1 画素より細いか潰れているか (`mokume_thinHole`)。`rect` と楕円の
+    /// インスタンスごとに決まる。0: 縁 1 本の距離場で数える・1: 両縁を見る積で数える
+    uint thinHole [[flat]];
     uint instance [[flat]];
 };
 
@@ -820,6 +828,61 @@ static inline bool mokume_canShiftRing(
     return innerRadius > 0.0
         && shiftLength * (shiftLength / smallest + rotation)
             <= 2.0 * kFormShiftTolerance * innerRadius;
+}
+
+/// 輪郭の帯の穴 (内縁の内) が、描く画素で 1 画素より細いか潰れているか ([#2186])。
+/// `hole` は穴の半幅・半径 (形自身の座標。潰れていれば 0 以下)。
+///
+/// **縁 1 本の距離場は、穴の向こう側の縁を見られない。** 帯の被覆は「外縁の被覆 − 内縁の被覆」
+/// なので、内縁の被覆が実際の穴より大きく出ると、そのぶん帯が欠けて下地が透ける。線幅が形より
+/// 太いと穴は「どこにも無い」はずだが、`rect` は負の半幅が縁の渡し (1 画素) の内に残って内縁の
+/// 被覆が 0 にならず (`rect(-0.3, -10, 0.6, 20)`・太さ 1 で帯の中心の画素に 0.15 が残った)、
+/// 楕円は近似の距離場 (`mokume_ellipseField`) が長軸の上で先端までの距離を返すので、内縁が
+/// 長軸の近くの画素を丸ごと覆った (`ellipse(0, 0, 0.7, 20)`・太さ 2 で帯が丸ごと抜けた)。
+/// 1 画素より細い穴も、縁 1 本では穴の面積より大きく数える (塗りの #1477・線の #1451 と同じ)。
+///
+/// そこで、そうした穴は両縁を見る積で数える。境目は細い塗り・細い線と同じ 256/258 画素で、
+/// それより太い穴は縁 1 本の式のまま (絵は 1 ビットも変わらない)。判定はインスタンスごとの量
+/// なので、頂点関数が 1 度だけ出して断片へ渡す (`FormFragmentIn.thinHole`)。
+///
+/// **楕円の近似の距離場の外れそのものは直していない。** 太さの半分が長軸の端の曲率半径
+/// (`短半径² / 長半径`) を越えると、長軸の上で先端までの距離を返す近似は、穴が 1 画素以上ある
+/// 楕円でも内縁を実際の穴の端より先まで伸ばす。ここで直るのは穴が潰れているか 1 画素より細い
+/// ときだけで、境目の手前と先で絵が跳ぶ (`noFill()` の `ellipse(0, 0, 100, 6)` は太さ 5.0 で
+/// 長軸に沿って帯が丸ごと抜け、5.02 で抜けない)。距離場の側は [#2742] で直す。扇の帯の穴も
+/// 縁 1 本のままである ([#2747])。
+///
+/// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+/// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+/// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+static inline bool mokume_thinHole(float2 hole, float2 unitsPerPixel) {
+    return any(2.0 * hole * (1.0 + 2.0 * kFormSnap) < unitsPerPixel);
+}
+
+/// 楕円の輪郭の帯の穴 (縁から太さの半分より内の所) の、短い向きの半幅と長い向きの端までの長さ
+/// (形自身の座標・`radii` と同じ並び)。短い向きが 0 以下なら穴は無い ([#2186])。
+///
+/// - 短い向きは `短半径 − 太さの半分` で厳密 (短い軸の上の点から縁へのいちばん近い点は短い軸の
+///   端)。楕円に内接するいちばん大きい円の半径は短半径なので、太さの半分がそれ以上なら穴は無い
+/// - 長い向きの端は、太さの半分が長い軸の端の曲率半径 `短半径² / 長半径` までなら
+///   `長半径 − 太さの半分`。越えると内縁は長い軸の端に届かない — 長い軸の上の点 x から縁までの
+///   距離は `短半径 · √(1 − x² / (長半径² − 短半径²))` なので、それが太さの半分になる x で切れる。
+///   2 つは曲率半径の所で連続につながる
+///
+/// 穴の形そのものは楕円ではない (内縁は楕円の平行曲線で、太いと端が尖る)。細い穴の被覆は
+/// 半径だけでなく形に沿って数える (`mokume_thinEllipseHoleCoverage`)。
+///
+/// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+static inline float2 mokume_ellipseHole(float2 radii, float halfWeight) {
+    float shortRadius = min(radii.x, radii.y);
+    float longRadius = max(radii.x, radii.y);
+    float shortHole = shortRadius - halfWeight;
+    float ratio = halfWeight / max(shortRadius, 1e-30);
+    float longHole = halfWeight * longRadius <= shortRadius * shortRadius
+        ? longRadius - halfWeight
+        : sqrt(max(longRadius * longRadius - shortRadius * shortRadius, 0.0))
+            * sqrt(max(1.0 - ratio * ratio, 0.0));
+    return radii.x <= radii.y ? float2(shortHole, longHole) : float2(longHole, shortHole);
 }
 
 vertex FormFragmentIn formVertexMain(
@@ -892,6 +955,15 @@ vertex FormFragmentIn formVertexMain(
         (form.meta.x == kFormEllipse
             && mokume_canShiftRing(form.size.xy, halfWeight, out.strokeShift, drawnRows))
         ? (form.size.x == form.size.y ? 2u : 1u) : 0u;
+    // 輪郭の帯の穴が 1 画素より細いか潰れているか。これもインスタンスごとの量なので頂点で 1 度だけ
+    // 出す — 断片で出すと、楕円の穴の半径 (平方根 2 つ) を画素ごとに解き、面を覆う円で GPU 時間が
+    // 2 割増えた (#2186)。断片の `unitsPerPixel` と同じ式で描く画素の大きさを出す
+    float2 drawnUnits = float2(length(drawnRows.xy), length(drawnRows.zw));
+    float2 hole = form.meta.x == kFormEllipse
+        ? mokume_ellipseHole(form.size.xy, halfWeight) : form.size.xy - halfWeight;
+    out.thinHole =
+        ((form.meta.x == kFormRect || form.meta.x == kFormEllipse) && mokume_thinHole(hole, drawnUnits))
+        ? 1u : 0u;
     out.instance = instance;
     return out;
 }
@@ -996,6 +1068,40 @@ static inline float mokume_thinEllipseCoverage(float2 p, float2 radii, float2 un
     float halfWidth = r.x * sqrt(max(1.0 - t * t, 0.0));
     return mokume_spanCoverage(at.x / u.x, halfWidth / u.x)
         * mokume_spanCoverage(at.y / u.y, r.y / u.y);
+}
+
+/// 1 画素より細い楕円の輪郭の帯の穴の被覆 ([#2186])。`p`・`radii` は形自身の座標
+/// (`p` は輪郭の位置での座標)、`hole` は `mokume_ellipseHole` の返り値。
+///
+/// 1 画素より細い楕円の塗り (`mokume_thinEllipseCoverage`) と同じ箱フィルタで、短い向きと
+/// 長い向きの重なりの長さを掛け合わせる。長い向きは穴の端 (`hole`) までの帯、短い向きの半幅は
+/// **画素の中で中心にいちばん近い長い軸の上の点 x での穴の半幅** `D(x) − 太さの半分` を取る。
+/// `D(x)` は長い軸の上の点から縁までの真の距離で、縮閉線の尖りの内 (`x · 長半径 < 長半径² −
+/// 短半径²`) では `短半径 · √(1 − x² / (長半径² − 短半径²))`、外では先端までの `長半径 − x` である。
+///
+/// 穴を楕円とみなすと、太い輪郭で尖った穴の端の近くを太く数えすぎる (`ellipse(0, 0, 40, 2.4)`・
+/// 太さ 2 で、帯に丸ごと入る画素に 16% の欠けが残った。CPU の写し)。円は長い軸の上の点の
+/// 距離が `半径 − x` になり、穴は外接する四角で数える (細い塗りの円と同じ数え方)。
+///
+/// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+static inline float mokume_thinEllipseHoleCoverage(
+    float2 p, float2 radii, float halfWeight, float2 hole, float2 unitsPerPixel)
+{
+    // 短い向きを x に揃える
+    bool shortIsX = radii.x <= radii.y;
+    float2 at = shortIsX ? p : p.yx;
+    float2 r = shortIsX ? radii : radii.yx;
+    float2 h = shortIsX ? hole : hole.yx;
+    float2 u = shortIsX ? unitsPerPixel : unitsPerPixel.yx;
+    float nearest = abs(clamp(0.0, at.y - 0.5 * u.y, at.y + 0.5 * u.y));
+    // 縮閉線の尖りの位置 (長半径² − 短半径²) / 長半径。円では 0 で、先端までの距離を取る
+    float spread = r.y * r.y - r.x * r.x;
+    float depth = nearest * r.y < spread
+        ? r.x * sqrt(max(1.0 - nearest * nearest / max(spread, 1e-30), 0.0))
+        : r.y - nearest;
+    float halfWidth = max(depth - halfWeight, 0.0);
+    return mokume_spanCoverage(at.x / u.x, halfWidth / u.x)
+        * mokume_spanCoverage(at.y / u.y, max(h.y, 0.0) / u.y);
 }
 
 /// `a` と `b` の共通部分 (どちらの外側にも出ない形) の距離場。
@@ -1210,6 +1316,9 @@ static inline FormPaint mokume_formPaint(
     // 画面で 1 画素より細い塗りも同じ (`rect` の塗りの説明)
     bool isThinFill = false;
     float thinFillCoverage = 0.0;
+    // 輪郭の帯の穴 (内縁の内) が画面で 1 画素より細いか潰れているときも同じ (`mokume_thinHole`)
+    bool isThinHole = false;
+    float thinHoleCoverage = 0.0;
     if (kind == kFormRect) {
         float2 extent = form.size.xy;
         if (kFormHasFill) {
@@ -1258,9 +1367,20 @@ static inline FormPaint mokume_formPaint(
                     outer = mokume_intersect(outer, mokume_field(chamfer, gradient));
                 }
             }
-            // 線幅が形より太いと半幅が負になり、内縁は「どこにも無い」(被覆 0) になる —
-            // 帯が重なって全部塗られる、三角形のときと同じ絵
-            inner = mokume_boxField(q, extent - halfWeight);
+            // 内縁 (帯の穴) は、形を太さの半分だけ縮めた箱。線幅が形より太いと半幅が負になり、
+            // 内縁は「どこにも無い」(被覆 0) になる — 帯が重なって全部塗られる、三角形のときと
+            // 同じ絵。**穴が描く画素で 1 画素より細いか潰れているときは、両縁を見る積で数える**
+            // (頂点関数が決める `thinHole`・`mokume_thinHole` の説明・
+            // [#2186](https://github.com/mokume-metal/mokume/issues/2186))
+            float2 hole = extent - halfWeight;
+            if (kFormHasThinFill && in.thinHole != 0) {
+                isThinHole = true;
+                thinHoleCoverage =
+                    mokume_spanCoverage(q.x / unitsPerPixel.x, max(hole.x, 0.0) / unitsPerPixel.x)
+                    * mokume_spanCoverage(q.y / unitsPerPixel.y, max(hole.y, 0.0) / unitsPerPixel.y);
+            } else {
+                inner = mokume_boxField(q, hole);
+            }
         }
     } else if (kind == kFormEllipse) {
         // 塗りと輪郭は評価する位置が違う。**両方を持つ列では、輪郭の側を塗りの距離場から 1 次の
@@ -1298,7 +1418,19 @@ static inline FormPaint mokume_formPaint(
                 ring = mokume_ellipseField(q, form.size.xy);
             }
             outer = mokume_grown(ring, halfWeight);
-            inner = mokume_grown(ring, -halfWeight);
+            // 帯の穴が潰れている・1 画素より細いときは、両縁を見る積で数える (`mokume_thinHole`・
+            // `mokume_thinEllipseHoleCoverage`・[#2186](https://github.com/mokume-metal/mokume/issues/2186))。
+            // 太さの半分が短半径以上なら穴は無い。穴が 1 画素以上ある細長い楕円の内縁の外れは
+            // 距離場の近似の側にあり、ここでは直らない ([#2742](https://github.com/mokume-metal/mokume/issues/2742))
+            if (kFormHasThinFill && in.thinHole != 0) {
+                float2 hole = mokume_ellipseHole(form.size.xy, halfWeight);
+                isThinHole = true;
+                thinHoleCoverage = all(hole > 0.0)
+                    ? mokume_thinEllipseHoleCoverage(q, form.size.xy, halfWeight, hole, unitsPerPixel)
+                    : 0.0;
+            } else {
+                inner = mokume_grown(ring, -halfWeight);
+            }
         }
     } else if (kind == kFormArc) {
         // 扇形は 1 次の近似でずらせない (`mokume_shifted` の説明)。塗りと輪郭で式を別々に解く
@@ -1369,7 +1501,7 @@ static inline FormPaint mokume_formPaint(
     }
     if (kFormHasStroke) {
         float outerCoverage = mokume_formCoverage(outer, in.inverseRows);
-        float innerCoverage = mokume_formCoverage(inner, in.inverseRows);
+        float innerCoverage = isThinHole ? thinHoleCoverage : mokume_formCoverage(inner, in.inverseRows);
         // **帯の被覆は、外縁の被覆 − 内縁の被覆。** 縁は画素の幅では平行とみなせるので、
         // 帯 = (外縁の内) − (内縁の内) で、画素の中の面積も引き算になる。2 つを掛け合わせる
         // 式 (外縁の内 × 内縁の外) は 2 つが画素の中で無関係に散らばっているとみなすので、
@@ -1379,7 +1511,8 @@ static inline FormPaint mokume_formPaint(
         // 1 画素以上の帯では、内縁が画素に掛かるときは外縁が画素を覆い切っている (外縁の
         // 被覆がちょうど 1) ので、差と積は 1 ビットも違わない — 遊び (1/256) を込めて、画面の
         // 太さ 256/258 ≈ 0.9923 画素以上で成り立つ。線は内縁を持たない (被覆 0) ので外縁の
-        // 被覆がそのまま残り、1 画素より細い線と点だけが別に数えた値を使う
+        // 被覆がそのまま残り、1 画素より細い線と点だけが別に数えた値を使う。内縁の被覆は、
+        // 帯の穴が 1 画素より細いか潰れていれば両縁を見る積で数えた値を使う (`mokume_thinHole`)
         paint.strokeCoverage =
             isThinLine ? thinLineCoverage : max(0.0, outerCoverage - innerCoverage);
         if (kFormHasFill && kind != kFormLine) {
@@ -1395,7 +1528,13 @@ static inline FormPaint mokume_formPaint(
             // 重なり `o`・帯だけ `s − o`・どちらでもない所の 4 つの面積に分け、それぞれを
             // 混ぜた色を面積で足す — 塗りと輪郭を両方持つ形の 1 画素の約束である
             // ([#1867](https://github.com/mokume-metal/mokume/issues/1867) 決定 1・ADR-0039
-            // 決定 5)。塗りだけ・輪郭だけの列は旗が外すので、絵は 1 ビットも変わらない
+            // 決定 5)。塗りだけ・輪郭だけの列は旗が外すので、絵は 1 ビットも変わらない。
+            //
+            // 1 画素より細い塗り (両縁を見る積で、半平面ではない) でも、この見積もりのままで
+            // 塗り ∪ 帯に丸ごと入る画素は漏れない。細い塗りに輪郭を付けた形の継ぎ目の漏れは、
+            // 帯の穴を縁 1 本で数えていた内縁の口 (`mokume_thinHole`) が全部で、それを直した後に
+            // 残る漏れは 0 だった (CPU の写しで、幅 0.2〜0.9 の `rect` と楕円・太さ 0.5〜3 を
+            // 置き方 30 通りずつ・#2186)
             paint.overlap = max(
                 0.0,
                 min(paint.fillCoverage, outerCoverage) - min(paint.fillCoverage, innerCoverage));
