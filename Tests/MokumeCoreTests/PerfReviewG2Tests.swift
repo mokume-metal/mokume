@@ -1045,8 +1045,18 @@ struct PerfReviewG2FrameWithoutGPU {
     ///
     /// **いまの実装の `now()` はコールバックより後** (`pollStopSignal`・`updatePresence`・観測の処理の後、
     /// `drawSketchFrame` の頭) なので、実際の揺れはここで測るコールバックの時点より大きいか等しい。
-    @Test("#2390 コールバックの時刻と表示予定の時刻の deltaTime の揺れ", arguments: [false, true])
-    func frameTimeJitter(loaded: Bool) {
+    enum MainLoad: String, CaseIterable {
+        /// 負荷なし
+        case none
+        /// 5 ms ごとに 0〜3 ms 塞ぐ (イベント・SwiftUI・タイマーの代わり)
+        case light
+        /// 軽い負荷に加え、500 ms ごとに 30 ms 塞ぐ (刻みを飛ばす重いフレームの代わり)
+        case heavy
+    }
+
+    @Test("#2390 コールバックの時刻と表示予定の時刻の deltaTime の揺れ", arguments: MainLoad.allCases)
+    func frameTimeJitter(load mainLoad: MainLoad) {
+        let loaded = mainLoad != .none
         guard let screen = NSScreen.main else {
             Perf.line(2390, "画面なし", "飛ばした", 0, "-")
             return
@@ -1071,12 +1081,22 @@ struct PerfReviewG2FrameWithoutGPU {
             RunLoop.main.add(made, forMode: .common)
             load = made
         }
+        var spike: Timer?
+        if mainLoad == .heavy {
+            let made = Timer(timeInterval: 0.5, repeats: true) { _ in
+                let until = CACurrentMediaTime() + 0.030
+                while CACurrentMediaTime() < until {}
+            }
+            RunLoop.main.add(made, forMode: .common)
+            spike = made
+        }
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 4))
         link.invalidate()
         load?.invalidate()
+        spike?.invalidate()
 
         let ticks = Array(probe.ticks.dropFirst(10))
-        let scene = loaded ? "main に 0〜3 ms の負荷" : "負荷なし"
+        let scene = ["none": "負荷なし", "light": "main に 0〜3 ms の負荷", "heavy": "0〜3 ms + 500 ms ごとに 30 ms"][mainLoad.rawValue]!
         guard ticks.count > 30 else {
             Perf.line(2390, scene, "コールバックが来なかった (窓の無いプロセスで回らない?)", Double(ticks.count), "回")
             return
