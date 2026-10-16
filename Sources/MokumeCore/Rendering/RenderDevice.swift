@@ -1246,6 +1246,19 @@ import MokumeDiagnostics
         settledObservers.removeAll(keepingCapacity: true)
     }
 
+    /// 番号 `submission` の投入が絵を届けられなかったかを、**待たずに**答える ([#2735])。結末がまだ届いて
+    /// いなければ `nil`、打ち切られた・結末を失ったなら `true`。
+    ///
+    /// 絵を渡す口 (道具の窓の出し直し・共有の面の名乗り) が使う。``droppedWork(after:through:)`` と違って
+    /// 眠らないので、毎フレーム main actor で呼べる。**確かめられないものは届けられなかった側へ倒す** —
+    /// ``revokeDroppedDeliveries()`` の照会 (正常の側へ倒す) とは逆で、倒し違えても絵を 1 回余計に出すか、
+    /// 1 枚名乗りを見送るだけで済む (``CommandFaultLog/undelivered(_:)``)。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    func undelivered(_ submission: UInt64) -> Bool? {
+        commandFaults.undelivered(submission)
+    }
+
     /// 番号が `floor` より大きく `last` 以下の投入のうち、GPU が打ち切ったもの (番号の昇順)。
     /// **その範囲の結末が届くまで待つ** ([#1932])。
     ///

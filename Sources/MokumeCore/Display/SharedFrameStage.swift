@@ -541,12 +541,18 @@ extension SharedFrameStage: SettlementObserver {
     /// 普段の経路で同じ枚を出し直す — 書き手が書くのをやめていても、枚数が進むのを待たない。後の差し出しが
     /// 記し直していれば、前の打ち切りは見送る (後の絵が既に出ている)。打ち切りの無い結末では何もしない。
     ///
+    /// **結末を失った差し出しも出し直す** (``RenderDevice/undelivered(_:)``)。`dropped` は記帳を取り消す
+    /// 口のための答えで、正しく済んだ中身を潰さないよう、確かめられないものを正常の側へ倒している
+    /// (#2199)。台は同じ絵をもう一度出すだけなので、倒し違えても差し出しが 1 回増えるだけで済む。
+    ///
     /// 世代を乗り換えた後に前の世代の差し出しの結末が届いても、戻すのは記しだけで、出るのはいまの
     /// 世代の最新の枚である。
     ///
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     func submissionSettled(_ submission: UInt64, dropped: Bool) {
-        guard dropped, submission == lastFrameSubmission else { return }
+        guard submission == lastFrameSubmission,
+            dropped || gpu.undelivered(submission) == true
+        else { return }
         lastFrame = 0
     }
 }

@@ -798,6 +798,39 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **結末を失った差し出しも出し直す** ([#2735] の反証)。記帳を取り消す口は、確かめられない結末を
+    /// 正常の側へ倒す (#2199) が、台は同じ絵をもう一度出すだけなので、届けられなかった側へ倒す。
+    ///
+    /// 失った結末は `losesNextOutcomeForTesting` で作り、投げる読む口と同じ待ち (`droppedWork`) が
+    /// 期限で「結末を失った」と記してから照らす。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @Test("差し出しの投入の結末を失ったら、結末の後のリフレッシュで同じ枚を出し直す")
+    func aHandOverWhoseOutcomeWasLostIsPresentedAgain() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            gpu.outcomeWaitLimit = .milliseconds(200)
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("lost"))
+            stage.open()
+            defer { stage.close() }
+            stage.displayLinkFired()
+
+            try draw(surface, frame: 2, gpu: gpu)
+            gpu.losesNextOutcomeForTesting = true
+            stage.displayLinkFired()
+            try #require(stage.presentations == 2, "2 枚目を差し出していない (これでは何も測れない)")
+
+            // 期限まで待って、届かなかった結末を「失った」と記す
+            try gpu.settle()
+            awaitOutcomes(gpu)
+            stage.displayLinkFired()
+            #expect(stage.presentations == 3, "結末を失った差し出しを出し直していない (通算 \(stage.presentations))")
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(stage.presentations == 3, "出し直した後も差し出し続けた (通算 \(stage.presentations))")
+        }
+    }
+
     /// 積んである投入の結末がすべて届くまで待つ (`DroppedWorkRedeliveryTests` と同じ)。
     private func awaitOutcomes(_ gpu: RenderDevice) {
         _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
@@ -836,6 +869,8 @@ struct SharedFrameStageTests {
         try shared.write(
             source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame),
             pointerLock: pointerLock)
+        // 名乗りは焼きの結末を見てからなので、結末が届くのを待ってから名乗らせる (#2735)
+        awaitOutcomes(gpu)
         try shared.publishPending()
     }
 }
