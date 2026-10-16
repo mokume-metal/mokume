@@ -305,7 +305,7 @@ mokume にはすでに 2 つの時計がある。
 | `.wallClock` | 窓の既定 | 実時間で進む。重いフレームでは時刻を進めて絵だけ抜く。`deltaTime` は毎回ばらつく |
 | `.frameIndex(frameRate:)` | 書き出し (`render`)・ヘッドレス実行の既定 | `draw()` 1 回がちょうど 1/fps 秒。同じ入力なら同じ絵 |
 
-**窓でもフレームの時計を選べる設定を足す** (名前は仮に `SketchSettings(clock: .frames)`)。
+**窓でもフレームの時計を選べる設定を足す** (`SketchSettings(clock: .frames)`。#2601 で入った)。
 
 ```swift
 var settings: SketchSettings { SketchSettings(width: 480, height: 270, clock: .frames) }
@@ -499,5 +499,5 @@ MyGame/
 - **0.x の破壊的変更がいくつか出る。** `isKeyDown` は `keyboard.isPressed` へ移り、`keyPressed()` はキーリピートで連射しなくなる ([ADR-0034](0034-input-surface-units.md) 決定 7)。公開面の SIMD は `Vector2` / `Vector3` へ移る (決定 8)。語彙の置き場が `SketchPart` へ移り、リファレンスの頁の置き場が変わる ([ADR-0020](0020-api-naming-and-surface.md) 決定 7)
 - **書き方が 2 つ並ぶことを、教える順で支える。** 関数で描く → 値で判定する → 物体ごとに見た目を持たせる (決定 6)。入門の文書の組み直しは段 1 の作例と一緒に行う
 - **本 ADR は検査・hook・ラベル・ワークフローを 1 つも足さない。** 段ごとの完了条件は、既存の検査 (golden の台帳・`make api`・注入の検査) の範囲を広げて確かめる
-- **未実装のものが多い。** 本 ADR は方向と口の形を決めたもので、採用は実装の完了を意味しない。`clock: .frames`・`SketchPart`・値型・リプレイ・`SketchView`・iOS・`MokumeGame` はどれもまだ無い。実装の順と進み具合は #2580 の段が持つ
+- **未実装のものが多い。** 本 ADR は方向と口の形を決めたもので、採用は実装の完了を意味しない。`SketchPart`・値型・リプレイ・`SketchView`・iOS・`MokumeGame` はどれもまだ無い (`clock: .frames` は #2601 で入った)。実装の順と進み具合は #2580 の段が持つ
 - 想定する利用者を Mac で開発できる学生に置いたので、Mac を持たない人に遊んでもらう道 (Web・Android) は持たない。この弱さは決定 3 の負ける軸に残す
