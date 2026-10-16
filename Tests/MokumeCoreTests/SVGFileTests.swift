@@ -676,7 +676,7 @@ struct SVGFileTests {
             #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
         // 描かないのは変えない。名乗りは「負の値を捨てた」ではなく「この値で根を描かない」の意味で、
-        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2410 に置いてある
+        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2648 に置いてある
         #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
     }
 
@@ -1232,6 +1232,273 @@ struct SVGFileTests {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.map(\.what) == [#"fill="url(…)""#], "\(sample.0): \(drawing.skipped)")
         #expect(drawing.items.first?.fill == sample.1, "\(sample.0): \(drawing.items)")
+    }
+
+    // MARK: 勝った宣言だけが効く ([#2410]・[#2650])
+    //
+    // 同じ性質に宣言が重なったら、読める宣言のうち順位が最も高い 1 つだけが効き、負けた宣言の値は残らない
+    // (CSS Cascade)。勝った宣言が `inherit` なら親の値、`none` なら効果なし、読めない値なら無かったことになる。
+    // 期待値は CSS の規則から手で導く。
+    //
+    // [#2410]: https://github.com/mokume-metal/mokume/issues/2410
+    // [#2650]: https://github.com/mokume-metal/mokume/issues/2650
+
+    @Test(
+        "勝った宣言が inherit なら、負けた宣言の値を残さず親の値になる。出どころに依らない (#2410)",
+        arguments: [
+            // (SVG の本体, 塗り, 線)。親は青、子の負けた宣言は赤
+            // 1a: style 属性の inherit が属性に勝つ
+            (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: inherit"/></g>"#, Ink.blue, nil),
+            // 1b: <style> の !important の inherit が style 属性に勝つ
+            (
+                #"<style>rect { fill: inherit !important }</style><g fill="blue"><rect width="1" height="1" style="fill: red"/></g>"#,
+                Ink.blue, nil
+            ),
+            // 1c: <style> の inherit が属性に勝つ
+            (#"<style>rect { fill: inherit }</style><g fill="blue"><rect width="1" height="1" fill="red"/></g>"#, Ink.blue, nil),
+            // 属性の inherit (負けた宣言が無い) は今までどおり
+            (#"<g fill="blue"><rect width="1" height="1" fill="inherit"/></g>"#, Ink.blue, nil),
+            // 1d: 線も同じ
+            (
+                #"<g stroke="blue"><rect width="1" height="1" fill="none" stroke="red" style="stroke: inherit"/></g>"#,
+                nil, Ink.blue
+            ),
+            // 1e: color 自身の currentColor は inherit と同じ
+            (
+                #"<g color="blue"><rect width="1" height="1" fill="currentColor" color="red" style="color: currentColor"/></g>"#,
+                Ink.blue, nil
+            ),
+            // 陰性対照: 勝った宣言が読める値なら、その値 (親の値を取らない)
+            (#"<g fill="blue"><rect width="1" height="1" fill="inherit" style="fill: red"/></g>"#, Ink.red, nil),
+        ] as [(String, SVGFile.Color?, SVGFile.Color?)])
+    func winningInheritTakesTheParentValue(_ sample: (String, SVGFile.Color?, SVGFile.Color?)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+        #expect(drawing.items.first?.fill == sample.1, "\(sample.0): \(drawing.items)")
+        #expect(drawing.items.first?.stroke == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "受け継がない display・opacity も、勝った inherit は親の値を取る (#2410 の 1f・1g)",
+        arguments: [
+            // (SVG の本体, 描く矩形の数, 塗りの不透明度)
+            // 1f: 親は表示されているので描く
+            (#"<g><rect width="1" height="1" display="none" style="display: inherit"/></g>"#, 1, 1),
+            (#"<style>rect { display: inherit }</style><g><rect width="1" height="1" display="none"/></g>"#, 1, 1),
+            // 1g: 親自身の opacity 0.5 を受け、群の 0.5 と掛かる
+            (#"<g opacity="0.5"><rect width="1" height="1" opacity="0.2" style="opacity: inherit"/></g>"#, 1, 0.25),
+            // 根の要素の inherit は初めの値 (1)
+            (#"<rect width="1" height="1" opacity="0.2" style="opacity: inherit"/>"#, 1, 1),
+            // 陰性対照: 勝った宣言が読める値なら、その値
+            (#"<g opacity="0.5"><rect width="1" height="1" opacity="inherit" style="opacity: 0.2"/></g>"#, 1, 0.1),
+            (#"<g><rect width="1" height="1" display="inherit" style="display: none"/></g>"#, 0, 0),
+        ] as [(String, Int, Float)])
+    func winningInheritOfUninheritedProperties(_ sample: (String, Int, Float)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.1, "\(sample.0): \(drawing.items)")
+        if let alpha = drawing.items.first?.fill?.alpha {
+            #expect(abs(alpha - sample.2) < 1e-6, "\(sample.0): \(alpha)")
+        }
+    }
+
+    @Test(
+        "描けない効果の inherit は、親が効果を持つときだけ名乗る (#2410)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗りと数)。親の効果は親の分として 1 度名乗られる
+            (#"<g clip-path="url(#c)"><rect width="1" height="1" style="clip-path: inherit"/></g>"#, ["clip-path": 2]),
+            (#"<g><rect width="1" height="1" clip-path="url(#c)" style="clip-path: inherit"/></g>"#, [:]),
+            (#"<g filter="url(#f)"><rect width="1" height="1" filter="inherit"/></g>"#, ["filter": 2]),
+            (#"<g mix-blend-mode="multiply"><rect width="1" height="1" style="mix-blend-mode: inherit"/></g>"#, ["mix-blend-mode": 2]),
+            (#"<g marker-end="url(#m)"><path d="M0 0 L1 1" stroke="black" style="marker: inherit"/></g>"#, ["marker": 2]),
+            // 陰性対照: 書かなければ受け継がない
+            (#"<g clip-path="url(#c)"><rect width="1" height="1"/></g>"#, ["clip-path": 1]),
+        ] as [(String, [String: Int])])
+    func inheritedEffectFollowsTheParent(_ sample: (String, [String: Int])) throws {
+        let drawing = try document(sample.0)
+        let counts = Dictionary(uniqueKeysWithValues: drawing.skipped.map { ($0.what, $0.count) })
+        #expect(counts == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "勝った宣言が none・normal なら、下の宣言の効果を打ち消し、何も名乗らない (#2410 の 2)",
+        arguments: [
+            // 2a〜2c
+            #"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: none"/>"#,
+            #"<rect width="1" height="1" filter="url(#f)" style="filter: none"/>"#,
+            #"<rect width="1" height="1" mix-blend-mode="multiply" style="mix-blend-mode: normal"/>"#,
+            #"<rect width="1" height="1" mask="url(#m)" style="mask: none"/>"#,
+            #"<style>rect { clip-path: url(#c) }</style><rect width="1" height="1" style="clip-path: NONE"/>"#,
+            #"<rect width="1" height="1" style="clip-path: url(#c); clip-path: none"/>"#,
+            // 短縮形の marker は、3 つの性質をまとめて打ち消す
+            #"<path d="M0 0 L1 1" stroke="black" marker-start="url(#m)" style="marker: none"/>"#,
+            #"<path d="M0 0 L1 1" stroke="black" marker="url(#m)" style="marker-start: none; marker-mid: none; marker-end: none"/>"#,
+        ])
+    func winningNoneCancelsTheEffect(_ body: String) throws {
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+    }
+
+    @Test(
+        "勝った宣言が効果を持てば、下の none に負けず名乗る。宣言が重なっても数えるのは要素ごとに 1 度 (#2410 の 2 の陰性対照)",
+        arguments: [
+            (#"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: url(#d)"/>"#, "clip-path"),
+            (#"<rect width="1" height="1" clip-path="none" style="clip-path: url(#d)"/>"#, "clip-path"),
+            (#"<style>rect { clip-path: url(#c) !important }</style><rect width="1" height="1" style="clip-path: none"/>"#, "clip-path"),
+            (#"<rect width="1" height="1" mix-blend-mode="normal" style="mix-blend-mode: screen"/>"#, "mix-blend-mode"),
+            // 短縮形の marker の後に 1 つだけ打ち消しても、残りの 2 つが効く
+            (#"<path d="M0 0 L1 1" stroke="black" marker="url(#m)" style="marker-start: none"/>"#, "marker"),
+            // 矢じりの 3 つの性質のどれが効いても、1 つの要素で数えるのは 1 度
+            (#"<path d="M0 0 L1 1" stroke="black" marker-start="url(#m)" marker-end="url(#m)"/>"#, "marker"),
+        ])
+    func winningEffectIsStillNamed(_ sample: (String, String)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == [sample.1], "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.skipped.first?.count == 1, "\(sample.0): \(drawing.skipped)")
+    }
+
+    /// 属性は辞書で届き、巡る順は辞書ごとに変わる。短縮形の `marker` と個別の `marker-*` を属性に両方書いたとき、
+    /// どちらが勝つかがその順に依らないこと (個別の性質が勝つ) を、同じ文字を何度も読んで見る。
+    @Test(
+        "属性に短縮形の marker と個別の marker-* を両方書けば個別の性質が勝ち、何度読んでも同じ (#2410)",
+        arguments: [
+            (#"<path d="M0 0 L1 1" stroke="black" marker="none" marker-start="url(#m)"/>"#, ["marker"]),
+            (#"<path d="M0 0 L1 1" stroke="black" marker-end="none" marker="url(#m)" marker-start="none" marker-mid="none"/>"#, []),
+        ])
+    func markerAttributesResolveTheSameEveryTime(_ sample: (String, [String])) throws {
+        for _ in 0..<64 {
+            let drawing = try document(sample.0)
+            #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        }
+    }
+
+    @Test(
+        "描けない効果の読めない値は、効果ありへ倒さず値の形で名乗り、下の宣言が残る (#2410 の 3d)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り)
+            (#"<rect width="1" height="1" style="clip-path: bogus"/>"#, [#"clip-path "bogus""#]),
+            (#"<rect width="1" height="1" clip-path="none" style="clip-path: bogus"/>"#, [#"clip-path "bogus""#]),
+            (#"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: bogus"/>"#, [#"clip-path "bogus""#, "clip-path"]),
+            (#"<rect width="1" height="1" clip-path="url(#c) fill-box"/>"#, [#"clip-path "url(#c) fill-box""#]),
+            (#"<rect width="1" height="1" clip-path="circle(50%"/>"#, [#"clip-path "circle(50%""#]),
+            (#"<rect width="1" height="1" clip-path="circle(1px) ellipse(1px)"/>"#, [#"clip-path "circle(1px) ellipse(1px)""#]),
+            (#"<rect width="1" height="1" clip-path="initial"/>"#, [#"clip-path "initial""#]),
+            (#"<rect width="1" height="1" style="filter: bogus"/>"#, [#"filter "bogus""#]),
+            (#"<rect width="1" height="1" filter="blur(2px) bogus"/>"#, [#"filter "blur(2px) bogus""#]),
+            (#"<rect width="1" height="1" style="marker: bogus"/>"#, [#"marker "bogus""#]),
+            (#"<rect width="1" height="1" marker-start="url(#m) url(#n)"/>"#, [#"marker-start "url(#m) url(#n)""#]),
+            (#"<rect width="1" height="1" mix-blend-mode="bogus"/>"#, [#"mix-blend-mode "bogus""#]),
+            (#"<rect width="1" height="1" mask="bogus"/>"#, [#"mask "bogus""#]),
+            (#"<rect width="1" height="1" mask="url(#a) url(#b)"/>"#, [#"mask "url(#a) url(#b)""#]),
+            (#"<rect width="1" height="1" mask="url(#m),"/>"#, [#"mask "url(#m),""#]),
+            (#"<rect width="1" height="1" mask=""/>"#, [#"mask """#]),
+            (#"<rect width="1" height="1" mask="url(#m)" style="mask: blur(1px)"/>"#, [#"mask "blur(1px)""#, "mask"]),
+            // mix-blend-mode に none の語は無い
+            (#"<rect width="1" height="1" mix-blend-mode="none"/>"#, [#"mix-blend-mode "none""#]),
+            // 下の none (normal) を消さない
+            (#"<rect width="1" height="1" mix-blend-mode="normal" style="mix-blend-mode: bogus"/>"#, [#"mix-blend-mode "bogus""#]),
+            (#"<style>rect { filter: bogus }</style><rect width="1" height="1" filter="none"/>"#, [#"filter "bogus""#]),
+        ])
+    func unreadableEffectIsNamedAndIgnored(_ sample: (String, [String])) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "描けない効果の読める値は今までどおり、効果の名前で 1 度名乗る (#2410 の 3d の陰性対照)",
+        arguments: [
+            (#"clip-path="url(#c)""#, "clip-path"),
+            (#"clip-path=" URL(#c) ""#, "clip-path"),
+            (#"clip-path="circle(50%)""#, "clip-path"),
+            (#"clip-path="inset(1px round 2px)""#, "clip-path"),
+            (#"clip-path="fill-box""#, "clip-path"),
+            (#"clip-path="circle(50%) view-box""#, "clip-path"),
+            (#"clip-path="stroke-box polygon(0 0, 1px 0, 1px 1px)""#, "clip-path"),
+            (#"filter="url(#f)""#, "filter"),
+            (#"filter="blur(2px)""#, "filter"),
+            (#"filter="drop-shadow(1px 1px 2px black) url(#f)""#, "filter"),
+            (#"filter="blur(2px)grayscale(1)""#, "filter"),
+            (#"mask="url(#m)""#, "mask"),
+            (#"mask="url(#m) luminance""#, "mask"),
+            (#"mask="linear-gradient(black, transparent)""#, "mask"),
+            (#"mask="url(#m) center / contain no-repeat""#, "mask"),
+            (#"mask="none, url(#m) 10px 50%""#, "mask"),
+            (#"marker="url(#m)""#, "marker"),
+            (#"marker-end="url(#m)""#, "marker"),
+            (#"mix-blend-mode="multiply""#, "mix-blend-mode"),
+            (#"style="mix-blend-mode: SCREEN ""#, "mix-blend-mode"),
+            (#"mix-blend-mode="plus-lighter""#, "mix-blend-mode"),
+        ])
+    func readableEffectIsNamed(_ sample: (String, String)) throws {
+        let body = #"<rect width="1" height="1" \#(sample.0)/>"#
+        let drawing = try document(body)
+        #expect(drawing.skipped.map(\.what) == [sample.1], "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+    }
+
+    /// `mask` の短縮形で、どの層の画像も `none` (書いていない) なら切り抜かない (CSS Masking)。語だけの値を
+    /// 「マスクを捨てた」と名乗らず、下の宣言も打ち消す。
+    @Test(
+        "mask の層に画像が無ければ効果なしで名乗らず、下の mask を打ち消す (#2410)",
+        arguments: [
+            #"<rect width="1" height="1" mask="luminance"/>"#,
+            #"<rect width="1" height="1" mask="alpha center / contain no-repeat"/>"#,
+            #"<rect width="1" height="1" mask="none, luminance"/>"#,
+            #"<rect width="1" height="1" mask="url(#m)" style="mask: luminance"/>"#,
+        ])
+    func maskWithoutImageHasNoEffect(_ body: String) throws {
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+    }
+
+    @Test(
+        "display の読めない値は、下の none を消さず無かったものとして名乗る。none に決まった要素は名乗らない (#2650)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 描く矩形の数)
+            (#"<rect width="10" height="10" display="none" style="display:abc"/>"#, [], 0),
+            (#"<style>rect{display:abc}</style><rect width="10" height="10" display="none"/>"#, [], 0),
+            (#"<rect width="10" height="10" display="abc"/>"#, [#"display "abc""#], 1),
+            (#"<rect width="10" height="10" display=" abc "/>"#, [#"display "abc""#], 1),
+            (#"<rect width="10" height="10" display=""/>"#, [#"display """#], 1),
+            (#"<rect width="10" height="10" display="-webkit-box"/>"#, [#"display "-webkit-box""#], 1),
+            (#"<rect width="10" height="10" display="block inline"/>"#, [#"display "block inline""#], 1),
+            (#"<rect width="10" height="10" display="block block"/>"#, [#"display "block block""#], 1),
+            (#"<rect width="10" height="10" display="list-item flex"/>"#, [#"display "list-item flex""#], 1),
+            (#"<rect width="10" height="10" display="flex grid"/>"#, [#"display "flex grid""#], 1),
+            (#"<rect width="10" height="10" display="list-item math"/>"#, [#"display "list-item math""#], 1),
+            // none に決まった要素は、その要素の読めない値 (宣言の形でない部分・描けない効果の読めない値も) を名乗らない
+            (#"<rect width="10" height="10" display="none" fill="abc"/>"#, [], 0),
+            (#"<rect width="10" height="10" display="none" visibility="abc"/>"#, [], 0),
+            (#"<rect width="10" height="10" display="none" style="fill red; clip-path: bogus"/>"#, [], 0),
+            // none でない要素の名乗りは今までどおり
+            (#"<rect width="10" height="10" display="block" fill="abc"/>"#, [#"fill "abc""#], 1),
+        ] as [(String, [String], Int)])
+    func unreadableDisplayIsNamedAndIgnored(_ sample: (String, [String], Int)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "display の読める値は、下の none を打ち消して描き、名乗らない (#2650 の陰性対照)",
+        arguments: [
+            "block", "inline", "contents", "block flow", "inline flow-root", "flow-root inline", "list-item",
+            "list-item block flow", "inline list-item", "flow list-item", "inline-block", "table-cell", "ruby-text-container",
+            "initial", "unset", "revert", "revert-layer", " Inline ", "BLOCK  FLOW", "math", "block math", "inline math",
+        ])
+    func readableDisplayCancelsNone(_ value: String) throws {
+        let body = #"<rect width="10" height="10" display="none" style="display: \#(value)"/>"#
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+        // 上に none が勝てば描かない
+        let hidden = try document(#"<rect width="10" height="10" display="\#(value)" style="display: none"/>"#)
+        #expect(hidden.items.isEmpty, "\(value): \(hidden.items)")
     }
 
     @Test("角丸の矩形は線の集まりに、片方だけ書いた半径はもう片方にも使う")

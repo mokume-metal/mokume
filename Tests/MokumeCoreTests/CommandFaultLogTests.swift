@@ -156,7 +156,8 @@ struct CommandFaultLogTests {
         let limit = Duration.milliseconds(50)
         let answer = log.drops(after: 0, through: 3, waitingUpTo: limit)
         #expect(answer.drops == [
-            CommandFaultLog.Drop(submission: 2, reason: CommandFaultLog.lostReason(after: limit))
+            CommandFaultLog.Drop(
+                submission: 2, reason: CommandFaultLog.lostReason(after: limit), lost: true)
         ])
         #expect(answer.waited && answer.lost)
         // 届かなかったのは GPU の打ち切りと分かったものではないので、土台の記録には数えない
@@ -182,8 +183,22 @@ struct CommandFaultLogTests {
         let answer = log.drops(after: 0, through: last + 1, waitingUpTo: .zero)
         #expect(!answer.waited, "欠けた 2 番で止まったまま")
         #expect(answer.drops == [
-            CommandFaultLog.Drop(submission: 2, reason: CommandFaultLog.skippedReason)
+            CommandFaultLog.Drop(submission: 2, reason: CommandFaultLog.skippedReason, lost: true)
         ])
+    }
+
+    /// 記帳を取り消す口 (#2199) が問う結末は、打ち切られたと**確かめられた**ものだけを打ち切りと
+    /// 答える。結末を失った投入は、仕事が走っていたかもしれないので、取り消すと正しく済んだ中身を潰す。
+    @Test("待たずに問う結末は、届いていなければ nil、確かめられた打ち切りだけ true、結末を失った投入は false")
+    func outcomesForRevocationAnswerOnlyConfirmedDrops() {
+        let log = CommandFaultLog()
+        log.noteFinished(1)
+        _ = log.note(Self.pageFault, droppedAt: 3)
+        _ = log.drops(after: 0, through: 3, waitingUpTo: .milliseconds(10))  // 2 は失われる
+        log.noteFinished(4)
+        var answers: [Bool?] = []
+        log.outcomes(of: [1, 2, 3, 4, 5], into: &answers)
+        #expect(answers == [false, false, true, false, nil])
     }
 
     @Test("揃っていれば待たずに答え、範囲の外の打ち切りは答えに入らない")
