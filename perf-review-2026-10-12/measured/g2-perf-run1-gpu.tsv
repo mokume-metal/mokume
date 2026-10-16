@@ -1,0 +1,445 @@
+PERF	2365	Shapes 温	ShapePipeline.init.median	2.0648	ms
+PERF	2365	Shapes 温	ShapePipeline.init.p90	2.1781	ms
+PERF	2365	Shapes 温	ShapePipeline.init.min	2.0342	ms
+PERF	2365	Shapes 温	ShapePipeline.init.n	15.0000	回
+PERF	2365	Shapes 温	librariesBuilt 増分 (18 回の init)	18.0000	回
+PERF	2365	Shapes 冷 (comment)	makeShapeLibrary.median	231.4071	ms
+PERF	2365	Shapes 冷 (comment)	makeShapeLibrary.p90	260.0651	ms
+PERF	2365	Shapes 冷 (comment)	makeShapeLibrary.min	223.9832	ms
+PERF	2365	Shapes 冷 (comment)	makeShapeLibrary.n	5.0000	回
+PERF	2365	Shapes 冷 (comment)	26 本のパイプライン.median	1.9272	ms
+PERF	2365	Shapes 冷 (comment)	26 本のパイプライン.p90	2.2375	ms
+PERF	2365	Shapes 冷 (comment)	26 本のパイプライン.min	1.7433	ms
+PERF	2365	Shapes 冷 (comment)	26 本のパイプライン.n	5.0000	回
+PERF	2365	Shapes 冷の 2 度目 (comment)	makeShapeLibrary.median	0.5090	ms
+PERF	2365	Shapes 冷の 2 度目 (comment)	makeShapeLibrary.p90	0.5331	ms
+PERF	2365	Shapes 冷の 2 度目 (comment)	makeShapeLibrary.min	0.4706	ms
+PERF	2365	Shapes 冷の 2 度目 (comment)	makeShapeLibrary.n	5.0000	回
+PERF	2365	Shapes 冷の 2 度目 (comment)	26 本のパイプライン.median	1.3810	ms
+PERF	2365	Shapes 冷の 2 度目 (comment)	26 本のパイプライン.p90	1.5242	ms
+PERF	2365	Shapes 冷の 2 度目 (comment)	26 本のパイプライン.min	1.3169	ms
+PERF	2365	Shapes 冷の 2 度目 (comment)	26 本のパイプライン.n	5.0000	回
+PERF	2365	Shapes 冷 (valuesField)	makeShapeLibrary.median	222.1558	ms
+PERF	2365	Shapes 冷 (valuesField)	makeShapeLibrary.p90	225.6022	ms
+PERF	2365	Shapes 冷 (valuesField)	makeShapeLibrary.min	221.2983	ms
+PERF	2365	Shapes 冷 (valuesField)	makeShapeLibrary.n	5.0000	回
+PERF	2365	Shapes 冷 (valuesField)	26 本のパイプライン.median	104.2906	ms
+PERF	2365	Shapes 冷 (valuesField)	26 本のパイプライン.p90	120.0461	ms
+PERF	2365	Shapes 冷 (valuesField)	26 本のパイプライン.min	103.3616	ms
+PERF	2365	Shapes 冷 (valuesField)	26 本のパイプライン.n	5.0000	回
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	makeShapeLibrary.median	0.4792	ms
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	makeShapeLibrary.p90	0.5597	ms
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	makeShapeLibrary.min	0.4499	ms
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	makeShapeLibrary.n	5.0000	回
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	26 本のパイプライン.median	1.3116	ms
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	26 本のパイプライン.p90	1.3910	ms
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	26 本のパイプライン.min	1.2557	ms
+PERF	2365	Shapes 冷の 2 度目 (valuesField)	26 本のパイプライン.n	5.0000	回
+PERF	2365	保存 1 回 冷 (断片の定数を変える)	Shader.reload.median	185.8000	ms
+PERF	2365	保存 1 回 冷 (断片の定数を変える)	Shader.reload.p90	190.3171	ms
+PERF	2365	保存 1 回 冷 (断片の定数を変える)	Shader.reload.min	179.1089	ms
+PERF	2365	保存 1 回 冷 (断片の定数を変える)	Shader.reload.n	8.0000	回
+PERF	2365	保存 1 回 温 (交互に 2 つ)	Shader.reload.median	0.7018	ms
+PERF	2365	保存 1 回 温 (交互に 2 つ)	Shader.reload.p90	0.8652	ms
+PERF	2365	保存 1 回 温 (交互に 2 つ)	Shader.reload.min	0.6371	ms
+PERF	2365	保存 1 回 温 (交互に 2 つ)	Shader.reload.n	20.0000	回
+PERF	2365	効果の初回 温 1080p	1 枚目 (組み立て込み).median	1.8570	ms
+PERF	2365	効果の初回 温 1080p	1 枚目 (組み立て込み).p90	2.0947	ms
+PERF	2365	効果の初回 温 1080p	1 枚目 (組み立て込み).min	1.4605	ms
+PERF	2365	効果の初回 温 1080p	1 枚目 (組み立て込み).n	12.0000	回
+PERF	2365	効果の初回 温 1080p	2 枚目.median	0.5129	ms
+PERF	2365	効果の初回 温 1080p	2 枚目.p90	0.9373	ms
+PERF	2365	効果の初回 温 1080p	2 枚目.min	0.4654	ms
+PERF	2365	効果の初回 温 1080p	2 枚目.n	12.0000	回
+PERF	2365	効果の初回 冷	makeEffectLibrary(Builtin).median	107.3685	ms
+PERF	2365	効果の初回 冷	makeEffectLibrary(Builtin).p90	109.8100	ms
+PERF	2365	効果の初回 冷	makeEffectLibrary(Builtin).min	107.1026	ms
+PERF	2365	効果の初回 冷	makeEffectLibrary(Builtin).n	5.0000	回
+PERF	2365	効果の初回 冷	パイプライン 1 本.median	49.2550	ms
+PERF	2365	効果の初回 冷	パイプライン 1 本.p90	50.5259	ms
+PERF	2365	効果の初回 冷	パイプライン 1 本.min	47.7815	ms
+PERF	2365	効果の初回 冷	パイプライン 1 本.n	5.0000	回
+PERF	2365	起動 温	RenderDevice+Canvas+FramePresenter.median	4.4438	ms
+PERF	2365	起動 温	RenderDevice+Canvas+FramePresenter.p90	5.2115	ms
+PERF	2365	起動 温	RenderDevice+Canvas+FramePresenter.min	3.1792	ms
+PERF	2365	起動 温	RenderDevice+Canvas+FramePresenter.n	10.0000	回
+PERF	2367	noLoop 中	advance の投入 / リフレッシュ	0.0000	本
+PERF	2367	noLoop 中	差し出しの投入 / リフレッシュ	1.0000	本
+PERF	2367	noLoop 中	advance だけ (GPU が空くまで).median	0.0005	ms
+PERF	2367	noLoop 中	advance だけ (GPU が空くまで).p90	0.0007	ms
+PERF	2367	noLoop 中	advance だけ (GPU が空くまで).min	0.0005	ms
+PERF	2367	noLoop 中	advance だけ (GPU が空くまで).n	30.0000	回
+PERF	2367	noLoop 中	advance + 差し出し 2560×1600 (GPU が空くまで).median	0.2606	ms
+PERF	2367	noLoop 中	advance + 差し出し 2560×1600 (GPU が空くまで).p90	0.4104	ms
+PERF	2367	noLoop 中	advance + 差し出し 2560×1600 (GPU が空くまで).min	0.2042	ms
+PERF	2367	noLoop 中	advance + 差し出し 2560×1600 (GPU が空くまで).n	30.0000	回
+PERF	2367	pause 中	advance の投入 / リフレッシュ	0.0000	本
+PERF	2367	pause 中	差し出しの投入 / リフレッシュ	1.0000	本
+PERF	2367	pause 中	advance だけ (GPU が空くまで).median	0.0002	ms
+PERF	2367	pause 中	advance だけ (GPU が空くまで).p90	0.0002	ms
+PERF	2367	pause 中	advance だけ (GPU が空くまで).min	0.0002	ms
+PERF	2367	pause 中	advance だけ (GPU が空くまで).n	30.0000	回
+PERF	2367	pause 中	advance + 差し出し 2560×1600 (GPU が空くまで).median	0.2132	ms
+PERF	2367	pause 中	advance + 差し出し 2560×1600 (GPU が空くまで).p90	0.2528	ms
+PERF	2367	pause 中	advance + 差し出し 2560×1600 (GPU が空くまで).min	0.1919	ms
+PERF	2367	pause 中	advance + 差し出し 2560×1600 (GPU が空くまで).n	30.0000	回
+PERF	2367	共有面 noLoop 中	投入 / リフレッシュ (作る側)	1.0000	本
+PERF	2367	共有面 noLoop 中	受け手が差し出す回 / リフレッシュ	0.9917	回
+PERF	2367	共有面 noLoop 中	作る側の 1 リフレッシュ (CPU).median	0.3065	ms
+PERF	2367	共有面 noLoop 中	作る側の 1 リフレッシュ (CPU).p90	0.4088	ms
+PERF	2367	共有面 noLoop 中	作る側の 1 リフレッシュ (CPU).min	0.1587	ms
+PERF	2367	共有面 noLoop 中	作る側の 1 リフレッシュ (CPU).n	120.0000	回
+PERF	2368	受け手 毎リフレッシュ	newest(among: 4 枚).median	0.8349	µs/回
+PERF	2368	受け手 毎リフレッシュ	newest(among: 4 枚).p90	0.8657	µs/回
+PERF	2368	受け手 毎リフレッシュ	newest(among: 4 枚).min	0.7807	µs/回
+PERF	2368	受け手 毎リフレッシュ	newest(among: 4 枚).n	15.0000	回
+PERF	2368	受け手 参照を持ったまま	CopyValue × 4.median	0.4669	µs/回
+PERF	2368	受け手 参照を持ったまま	CopyValue × 4.p90	0.4894	µs/回
+PERF	2368	受け手 参照を持ったまま	CopyValue × 4.min	0.4577	µs/回
+PERF	2368	受け手 参照を持ったまま	CopyValue × 4.n	15.0000	回
+PERF	2368	受け手 新しい枚ごと	pointerLockRequested + numbers.median	0.7521	µs/回
+PERF	2368	受け手 新しい枚ごと	pointerLockRequested + numbers.p90	0.7735	µs/回
+PERF	2368	受け手 新しい枚ごと	pointerLockRequested + numbers.min	0.7143	µs/回
+PERF	2368	受け手 新しい枚ごと	pointerLockRequested + numbers.n	15.0000	回
+PERF	2368	作る側 1 枚ごと	SetValue/RemoveValue × 6.median	10.4008	µs/回
+PERF	2368	作る側 1 枚ごと	SetValue/RemoveValue × 6.p90	10.5980	µs/回
+PERF	2368	作る側 1 枚ごと	SetValue/RemoveValue × 6.min	10.2510	µs/回
+PERF	2368	作る側 1 枚ごと	SetValue/RemoveValue × 6.n	15.0000	回
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	投入 / フレーム	2.0000	本
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	slotWaits / フレーム	1.8750	回
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	平均フレーム時間 (完了まで)	0.5531	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	フレームの CPU 時間.median	0.4897	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	フレームの CPU 時間.p90	0.8211	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	フレームの CPU 時間.min	0.0306	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	投入 / フレーム	3.0000	本
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	slotWaits / フレーム	2.8500	回
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	平均フレーム時間 (完了まで)	0.7396	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	フレームの CPU 時間.median	0.6878	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	フレームの CPU 時間.p90	0.8565	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	フレームの CPU 時間.min	0.0580	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	投入 / フレーム	5.0000	本
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	slotWaits / フレーム	4.6750	回
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	平均フレーム時間 (完了まで)	1.3922	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	フレームの CPU 時間.median	1.3460	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	フレームの CPU 時間.p90	1.5296	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	フレームの CPU 時間.min	1.0946	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	投入 / フレーム	7.0000	本
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	slotWaits / フレーム	6.7000	回
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	平均フレーム時間 (完了まで)	2.0354	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	フレームの CPU 時間.median	2.0181	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	フレームの CPU 時間.p90	2.2059	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	フレームの CPU 時間.min	1.5245	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	投入 / フレーム	2.0000	本
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	slotWaits / フレーム	1.9250	回
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	平均フレーム時間 (完了まで)	0.1708	ms
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	フレームの CPU 時間.median	0.1504	ms
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	フレームの CPU 時間.p90	0.1804	ms
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	フレームの CPU 時間.min	0.0334	ms
+PERF	2387	釣り合い 層 0 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	投入 / フレーム	3.0000	本
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	slotWaits / フレーム	1.2750	回
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	平均フレーム時間 (完了まで)	0.3915	ms
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	フレームの CPU 時間.median	0.4080	ms
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	フレームの CPU 時間.p90	0.5366	ms
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	フレームの CPU 時間.min	0.2220	ms
+PERF	2387	釣り合い 層 1 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	投入 / フレーム	5.0000	本
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	slotWaits / フレーム	0.8000	回
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	平均フレーム時間 (完了まで)	0.7774	ms
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	フレームの CPU 時間.median	0.7025	ms
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	フレームの CPU 時間.p90	1.0159	ms
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	フレームの CPU 時間.min	0.5899	ms
+PERF	2387	釣り合い 層 3 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	投入 / フレーム	7.0000	本
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	slotWaits / フレーム	1.0000	回
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	平均フレーム時間 (完了まで)	1.2297	ms
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	フレームの CPU 時間.median	1.1432	ms
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	フレームの CPU 時間.p90	1.4374	ms
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	フレームの CPU 時間.min	1.0491	ms
+PERF	2387	釣り合い 層 5 枚 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	投入 / フレーム	2.0000	本
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	slotWaits / フレーム	1.7500	回
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	平均フレーム時間 (完了まで)	0.4262	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	フレームの CPU 時間.median	0.3755	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	フレームの CPU 時間.p90	0.5643	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	フレームの CPU 時間.min	0.0210	ms
+PERF	2387	GPU 律速 層 0 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	投入 / フレーム	3.0000	本
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	slotWaits / フレーム	2.8000	回
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	平均フレーム時間 (完了まで)	0.7534	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	フレームの CPU 時間.median	0.6811	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	フレームの CPU 時間.p90	1.0302	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	フレームの CPU 時間.min	0.0442	ms
+PERF	2387	GPU 律速 層 1 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	投入 / フレーム	5.0000	本
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	slotWaits / フレーム	4.6750	回
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	平均フレーム時間 (完了まで)	1.3926	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	フレームの CPU 時間.median	1.3382	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	フレームの CPU 時間.p90	1.5429	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	フレームの CPU 時間.min	0.1539	ms
+PERF	2387	GPU 律速 層 3 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	投入 / フレーム	7.0000	本
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	slotWaits / フレーム	6.6500	回
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	平均フレーム時間 (完了まで)	2.0354	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	フレームの CPU 時間.median	1.9885	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	フレームの CPU 時間.p90	2.1600	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	フレームの CPU 時間.min	0.2900	ms
+PERF	2387	GPU 律速 層 5 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	投入 / フレーム	2.0000	本
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	slotWaits / フレーム	1.7750	回
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	平均フレーム時間 (完了まで)	0.1682	ms
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	フレームの CPU 時間.median	0.1421	ms
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	フレームの CPU 時間.p90	0.2283	ms
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	フレームの CPU 時間.min	0.0192	ms
+PERF	2387	釣り合い 層 0 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	投入 / フレーム	3.0000	本
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	slotWaits / フレーム	0.5000	回
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	平均フレーム時間 (完了まで)	0.2804	ms
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	フレームの CPU 時間.median	0.2409	ms
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	フレームの CPU 時間.p90	0.3745	ms
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	フレームの CPU 時間.min	0.2189	ms
+PERF	2387	釣り合い 層 1 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	投入 / フレーム	5.0000	本
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	slotWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	平均フレーム時間 (完了まで)	0.6540	ms
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	フレームの CPU 時間.median	0.6366	ms
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	フレームの CPU 時間.p90	0.7075	ms
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	フレームの CPU 時間.min	0.5647	ms
+PERF	2387	釣り合い 層 3 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	投入 / フレーム	7.0000	本
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	slotWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	ringWaits / フレーム	0.0000	回
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	平均フレーム時間 (完了まで)	1.0022	ms
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	フレームの CPU 時間.median	0.9656	ms
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	フレームの CPU 時間.p90	1.1010	ms
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	フレームの CPU 時間.min	0.9021	ms
+PERF	2387	釣り合い 層 5 枚 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	EffectsAndCustom 型 置き場 3 本	投入 / フレーム	13.0000	本
+PERF	2387	EffectsAndCustom 型 置き場 3 本	slotWaits / フレーム	10.2250	回
+PERF	2387	EffectsAndCustom 型 置き場 3 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	EffectsAndCustom 型 置き場 3 本	写しの上限に達した回 / フレーム	1.0000	回
+PERF	2387	EffectsAndCustom 型 置き場 3 本	フレームの CPU 時間.median	1.2680	ms
+PERF	2387	EffectsAndCustom 型 置き場 3 本	フレームの CPU 時間.p90	1.6733	ms
+PERF	2387	EffectsAndCustom 型 置き場 3 本	フレームの CPU 時間.min	1.0033	ms
+PERF	2387	EffectsAndCustom 型 置き場 3 本	フレームの CPU 時間.n	40.0000	回
+PERF	2387	EffectsAndCustom 型 置き場 8 本	投入 / フレーム	13.0000	本
+PERF	2387	EffectsAndCustom 型 置き場 8 本	slotWaits / フレーム	10.1250	回
+PERF	2387	EffectsAndCustom 型 置き場 8 本	blockingWaits / フレーム	0.0250	回
+PERF	2387	EffectsAndCustom 型 置き場 8 本	写しの上限に達した回 / フレーム	1.0000	回
+PERF	2387	EffectsAndCustom 型 置き場 8 本	フレームの CPU 時間.median	1.1847	ms
+PERF	2387	EffectsAndCustom 型 置き場 8 本	フレームの CPU 時間.p90	1.5670	ms
+PERF	2387	EffectsAndCustom 型 置き場 8 本	フレームの CPU 時間.min	0.8670	ms
+PERF	2387	EffectsAndCustom 型 置き場 8 本	フレームの CPU 時間.n	40.0000	回
+PERF	2388	1920×1080	a 効果なし.median	0.1851	ms
+PERF	2388	1920×1080	a 効果なし.p90	0.2102	ms
+PERF	2388	1920×1080	a 効果なし.min	0.1652	ms
+PERF	2388	1920×1080	a 効果なし.n	20.0000	回
+PERF	2388	1920×1080	b invert・塗る.median	0.2417	ms
+PERF	2388	1920×1080	b invert・塗る.p90	0.2619	ms
+PERF	2388	1920×1080	b invert・塗る.min	0.2110	ms
+PERF	2388	1920×1080	b invert・塗る.n	20.0000	回
+PERF	2388	1920×1080	c invert・塗らない.median	0.3094	ms
+PERF	2388	1920×1080	c invert・塗らない.p90	0.4640	ms
+PERF	2388	1920×1080	c invert・塗らない.min	0.2827	ms
+PERF	2388	1920×1080	c invert・塗らない.n	20.0000	回
+PERF	2388	1920×1080	d invert×2・塗る.median	0.2787	ms
+PERF	2388	1920×1080	d invert×2・塗る.p90	0.3924	ms
+PERF	2388	1920×1080	d invert×2・塗る.min	0.2532	ms
+PERF	2388	1920×1080	d invert×2・塗る.n	20.0000	回
+PERF	2388	1920×1080	b 写し / フレーム	1.0000	回
+PERF	2388	1920×1080	b 戻し / フレーム	0.0000	回
+PERF	2388	1920×1080	c 写し / フレーム	1.0000	回
+PERF	2388	1920×1080	c 戻し / フレーム	1.0000	回
+PERF	2388	1920×1080	戻しの写し 1 回 ≈ c−b	0.0677	ms
+PERF	2388	1920×1080	段 1 つ ≈ d−b	0.0369	ms
+PERF	2388	1920×1080	控えへの写し 1 回 ≈ (b−a)−(d−b)	0.0197	ms
+PERF	2388	3840×2160	a 効果なし.median	0.2642	ms
+PERF	2388	3840×2160	a 効果なし.p90	0.3917	ms
+PERF	2388	3840×2160	a 効果なし.min	0.2322	ms
+PERF	2388	3840×2160	a 効果なし.n	20.0000	回
+PERF	2388	3840×2160	b invert・塗る.median	0.3963	ms
+PERF	2388	3840×2160	b invert・塗る.p90	0.5338	ms
+PERF	2388	3840×2160	b invert・塗る.min	0.3829	ms
+PERF	2388	3840×2160	b invert・塗る.n	20.0000	回
+PERF	2388	3840×2160	c invert・塗らない.median	0.4777	ms
+PERF	2388	3840×2160	c invert・塗らない.p90	0.5723	ms
+PERF	2388	3840×2160	c invert・塗らない.min	0.4464	ms
+PERF	2388	3840×2160	c invert・塗らない.n	20.0000	回
+PERF	2388	3840×2160	d invert×2・塗る.median	0.5004	ms
+PERF	2388	3840×2160	d invert×2・塗る.p90	0.6258	ms
+PERF	2388	3840×2160	d invert×2・塗る.min	0.4794	ms
+PERF	2388	3840×2160	d invert×2・塗る.n	20.0000	回
+PERF	2388	3840×2160	b 写し / フレーム	1.0000	回
+PERF	2388	3840×2160	b 戻し / フレーム	0.0000	回
+PERF	2388	3840×2160	c 写し / フレーム	1.0000	回
+PERF	2388	3840×2160	c 戻し / フレーム	1.0000	回
+PERF	2388	3840×2160	戻しの写し 1 回 ≈ c−b	0.0813	ms
+PERF	2388	3840×2160	段 1 つ ≈ d−b	0.1040	ms
+PERF	2388	3840×2160	控えへの写し 1 回 ≈ (b−a)−(d−b)	0.0281	ms
+PERF	2371	4K	効果なし.median	0.3155	ms
+PERF	2371	4K	効果なし.p90	0.4176	ms
+PERF	2371	4K	効果なし.min	0.2839	ms
+PERF	2371	4K	効果なし.n	20.0000	回
+PERF	2371	4K	組み込み invert.median	0.4655	ms
+PERF	2371	4K	組み込み invert.p90	0.5033	ms
+PERF	2371	4K	組み込み invert.min	0.4226	ms
+PERF	2371	4K	組み込み invert.n	20.0000	回
+PERF	2371	4K	特化 invert (利用者の効果).median	0.4305	ms
+PERF	2371	4K	特化 invert (利用者の効果).p90	0.4692	ms
+PERF	2371	4K	特化 invert (利用者の効果).min	0.3955	ms
+PERF	2371	4K	特化 invert (利用者の効果).n	20.0000	回
+PERF	2371	4K	組み込み 4 段 (invert/monochrome/vignette/adjust).median	0.7829	ms
+PERF	2371	4K	組み込み 4 段 (invert/monochrome/vignette/adjust).p90	0.8393	ms
+PERF	2371	4K	組み込み 4 段 (invert/monochrome/vignette/adjust).min	0.6800	ms
+PERF	2371	4K	組み込み 4 段 (invert/monochrome/vignette/adjust).n	20.0000	回
+PERF	2371	4K	融合 1 段 (同じ式).median	0.4620	ms
+PERF	2371	4K	融合 1 段 (同じ式).p90	0.6272	ms
+PERF	2371	4K	融合 1 段 (同じ式).min	0.4179	ms
+PERF	2371	4K	融合 1 段 (同じ式).n	20.0000	回
+PERF	2371	4K	組み込み blur r=4 (2 段・毎画素 exp).median	1.3025	ms
+PERF	2371	4K	組み込み blur r=4 (2 段・毎画素 exp).p90	1.6301	ms
+PERF	2371	4K	組み込み blur r=4 (2 段・毎画素 exp).min	1.1848	ms
+PERF	2371	4K	組み込み blur r=4 (2 段・毎画素 exp).n	20.0000	回
+PERF	2371	4K	定数の重みの blur r=4 (2 段).median	1.3681	ms
+PERF	2371	4K	定数の重みの blur r=4 (2 段).p90	1.6865	ms
+PERF	2371	4K	定数の重みの blur r=4 (2 段).min	1.2217	ms
+PERF	2371	4K	定数の重みの blur r=4 (2 段).n	20.0000	回
+PERF	2371	4K	blur 組み込みと定数の重みのビット違いの成分	66.0000	個
+PERF	2371	4K	成分の総数	33177600.0000	個
+PERF	2371	4K	invert 組み込みと特化のビット違いの成分	0.0000	個
+PERF	2371	4K	4 段と融合のビット違いの成分	23542296.0000	個
+PERF	2374	256×256 空いている GPU	createGraphics.median	2.6055	ms
+PERF	2374	256×256 空いている GPU	createGraphics.p90	4.2337	ms
+PERF	2374	256×256 空いている GPU	createGraphics.min	2.2048	ms
+PERF	2374	256×256 空いている GPU	createGraphics.n	15.0000	回
+PERF	2374	256×256 空いている GPU	blockingWaits / 回	1.0000	回
+PERF	2374	256×256 空いている GPU	RenderTarget.init.median	0.0766	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init.p90	0.2273	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init.min	0.0445	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init.n	15.0000	回
+PERF	2374	256×256 空いている GPU	RenderTarget.init + fill(.transparent).median	0.2560	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init + fill(.transparent).p90	0.5417	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init + fill(.transparent).min	0.2313	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init + fill(.transparent).n	15.0000	回
+PERF	2374	256×256 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).median	1.9313	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).p90	2.0888	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).min	1.8588	ms
+PERF	2374	256×256 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).n	15.0000	回
+PERF	2374	256×256 空いている GPU	うち ShapePipeline.init.median	1.7716	ms
+PERF	2374	256×256 空いている GPU	うち ShapePipeline.init.p90	1.9473	ms
+PERF	2374	256×256 空いている GPU	うち ShapePipeline.init.min	1.6977	ms
+PERF	2374	256×256 空いている GPU	うち ShapePipeline.init.n	15.0000	回
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	createGraphics.median	3.6252	ms
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	createGraphics.p90	3.8871	ms
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	createGraphics.min	3.3096	ms
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	createGraphics.n	15.0000	回
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).median	1.8635	ms
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).p90	2.1508	ms
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).min	1.7833	ms
+PERF	2374	256×256 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).n	15.0000	回
+PERF	2374	1920×1080 空いている GPU	createGraphics.median	2.9510	ms
+PERF	2374	1920×1080 空いている GPU	createGraphics.p90	3.5229	ms
+PERF	2374	1920×1080 空いている GPU	createGraphics.min	2.7463	ms
+PERF	2374	1920×1080 空いている GPU	createGraphics.n	15.0000	回
+PERF	2374	1920×1080 空いている GPU	blockingWaits / 回	1.0000	回
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init.median	0.4846	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init.p90	0.5216	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init.min	0.4479	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init.n	15.0000	回
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + fill(.transparent).median	0.7520	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + fill(.transparent).p90	1.2639	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + fill(.transparent).min	0.6803	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + fill(.transparent).n	15.0000	回
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).median	2.6266	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).p90	2.9299	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).min	2.4012	ms
+PERF	2374	1920×1080 空いている GPU	RenderTarget.init + Canvas.init (塗りなし).n	15.0000	回
+PERF	2374	1920×1080 空いている GPU	うち ShapePipeline.init.median	1.7489	ms
+PERF	2374	1920×1080 空いている GPU	うち ShapePipeline.init.p90	1.9534	ms
+PERF	2374	1920×1080 空いている GPU	うち ShapePipeline.init.min	1.7148	ms
+PERF	2374	1920×1080 空いている GPU	うち ShapePipeline.init.n	15.0000	回
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	createGraphics.median	4.1395	ms
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	createGraphics.p90	5.0341	ms
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	createGraphics.min	3.5385	ms
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	createGraphics.n	15.0000	回
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).median	2.4306	ms
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).p90	2.5434	ms
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).min	2.2968	ms
+PERF	2374	1920×1080 走っている GPU (幕 48 枚 1080p)	RenderTarget + Canvas (塗りなし).n	15.0000	回
+PERF	2373	1080p 幕 32 枚 read=none	平均フレーム時間 (完了まで)	0.9753	ms
+PERF	2373	1080p 幕 32 枚 read=none	フレームの CPU 時間.median	0.8683	ms
+PERF	2373	1080p 幕 32 枚 read=none	フレームの CPU 時間.p90	1.0520	ms
+PERF	2373	1080p 幕 32 枚 read=none	フレームの CPU 時間.min	0.7053	ms
+PERF	2373	1080p 幕 32 枚 read=none	フレームの CPU 時間.n	30.0000	回
+PERF	2373	1080p 幕 32 枚 read=none	blockingWaits / フレーム	0.0333	回
+PERF	2373	1080p 幕 32 枚 read=none	settleCalls / フレーム	0.0333	回
+PERF	2373	1080p 幕 32 枚 read=none	投入 / フレーム	1.0000	本
+PERF	2373	1080p 幕 32 枚 read=everyFrame	平均フレーム時間 (完了まで)	1.3834	ms
+PERF	2373	1080p 幕 32 枚 read=everyFrame	フレームの CPU 時間.median	1.2909	ms
+PERF	2373	1080p 幕 32 枚 read=everyFrame	フレームの CPU 時間.p90	1.5792	ms
+PERF	2373	1080p 幕 32 枚 read=everyFrame	フレームの CPU 時間.min	1.1652	ms
+PERF	2373	1080p 幕 32 枚 read=everyFrame	フレームの CPU 時間.n	30.0000	回
+PERF	2373	1080p 幕 32 枚 read=everyFrame	read の所要.median	1.2643	ms
+PERF	2373	1080p 幕 32 枚 read=everyFrame	read の所要.p90	1.5481	ms
+PERF	2373	1080p 幕 32 枚 read=everyFrame	read の所要.min	1.1410	ms
+PERF	2373	1080p 幕 32 枚 read=everyFrame	read の所要.n	30.0000	回
+PERF	2373	1080p 幕 32 枚 read=everyFrame	blockingWaits / フレーム	2.0333	回
+PERF	2373	1080p 幕 32 枚 read=everyFrame	settleCalls / フレーム	3.0333	回
+PERF	2373	1080p 幕 32 枚 read=everyFrame	投入 / フレーム	2.0000	本
+PERF	2373	1080p 幕 32 枚 read=settledFirst	平均フレーム時間 (完了まで)	1.3864	ms
+PERF	2373	1080p 幕 32 枚 read=settledFirst	フレームの CPU 時間.median	1.2566	ms
+PERF	2373	1080p 幕 32 枚 read=settledFirst	フレームの CPU 時間.p90	1.6405	ms
+PERF	2373	1080p 幕 32 枚 read=settledFirst	フレームの CPU 時間.min	1.1377	ms
+PERF	2373	1080p 幕 32 枚 read=settledFirst	フレームの CPU 時間.n	30.0000	回
+PERF	2373	1080p 幕 32 枚 read=settledFirst	read の所要.median	0.2210	ms
+PERF	2373	1080p 幕 32 枚 read=settledFirst	read の所要.p90	0.6435	ms
+PERF	2373	1080p 幕 32 枚 read=settledFirst	read の所要.min	0.1596	ms
+PERF	2373	1080p 幕 32 枚 read=settledFirst	read の所要.n	30.0000	回
+PERF	2373	1080p 幕 32 枚 read=settledFirst	blockingWaits / フレーム	2.0333	回
+PERF	2373	1080p 幕 32 枚 read=settledFirst	settleCalls / フレーム	4.0333	回
+PERF	2373	1080p 幕 32 枚 read=settledFirst	投入 / フレーム	2.0000	本
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びるフレームの draw.median	3.1896	ms
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びるフレームの draw.p90	3.3257	ms
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びるフレームの draw.min	3.0595	ms
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びるフレームの draw.n	18.0000	回
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びないフレームの draw.median	0.9076	ms
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びないフレームの draw.p90	1.1750	ms
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びないフレームの draw.min	0.0384	ms
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びないフレームの draw.n	90.0000	回
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びるフレームの blockingWaits 平均	1.0000	回
+PERF	1791	1080p 幕 40 枚 + 小さな矩形 倍々	伸びるフレームの settleCalls 平均	1.0000	回

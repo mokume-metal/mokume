@@ -1,0 +1,42 @@
+PERF	2371	CPU の Float	重みの最大の相対差 (半径 0.0002〜131072)	0.0000	比
+PERF	2368	何も無し	起床 / 秒 (プロセス)	0.0000	回
+PERF	2368	何も無し	CPU / 秒 (プロセス)	0.0142	ms
+PERF	2368	タイマーだけ tolerance=0.0	起床 / 秒 (プロセス)	60.0000	回
+PERF	2368	タイマーだけ tolerance=0.0	CPU / 秒 (プロセス)	1.6080	ms
+PERF	2368	タイマーだけ tolerance=0.0	発火 / 秒	60.0000	回
+PERF	2368	タイマーだけ tolerance=0.008333333333333333	起床 / 秒 (プロセス)	60.0000	回
+PERF	2368	タイマーだけ tolerance=0.008333333333333333	CPU / 秒 (プロセス)	4.0698	ms
+PERF	2368	タイマーだけ tolerance=0.008333333333333333	発火 / 秒	60.0000	回
+PERF	2368	画面	maximumFramesPerSecond	120.0000	Hz
+PERF	2368	素の display link 60	起床 / 秒 (プロセス)	60.3333	回
+PERF	2368	素の display link 60	CPU / 秒 (プロセス)	7.8462	ms
+PERF	2368	素の display link 60	発火 / 秒	60.0000	回
+PERF	2368	ScreenDisplayLink(60) = link + 予備 (いま)	起床 / 秒 (プロセス)	120.0000	回
+PERF	2368	ScreenDisplayLink(60) = link + 予備 (いま)	CPU / 秒 (プロセス)	8.0552	ms
+PERF	2368	ScreenDisplayLink(60) = link + 予備 (いま)	発火 / 秒	60.0000	回
+PERF	2368	link 60 + 予備 tolerance 半分	起床 / 秒 (プロセス)	120.0000	回
+PERF	2368	link 60 + 予備 tolerance 半分	CPU / 秒 (プロセス)	10.8571	ms
+PERF	2368	link 60 + 予備 tolerance 半分	発火 / 秒	60.0000	回
+PERF	2368	link 60 + 張り直す見張り (閾値 4 枚)	起床 / 秒 (プロセス)	60.3333	回
+PERF	2368	link 60 + 張り直す見張り (閾値 4 枚)	CPU / 秒 (プロセス)	7.4278	ms
+PERF	2368	link 60 + 張り直す見張り (閾値 4 枚)	発火 / 秒	0.0000	回
+PERF	2368	道具の link 速さ=据えない	起床 / 秒 (プロセス)	120.3333	回
+PERF	2368	道具の link 速さ=据えない	CPU / 秒 (プロセス)	14.5948	ms
+PERF	2368	道具の link 速さ=据えない	発火 / 秒	120.0000	回
+PERF	2368	道具の link 速さ=60.0	起床 / 秒 (プロセス)	60.3333	回
+PERF	2368	道具の link 速さ=60.0	CPU / 秒 (プロセス)	7.1927	ms
+PERF	2368	道具の link 速さ=60.0	発火 / 秒	60.3333	回
+PERF	2390	負荷なし	コールバックの時点の間隔 標準偏差	0.0809	ms
+PERF	2390	負荷なし	targetTimestamp の間隔 標準偏差	0.0021	ms
+PERF	2390	負荷なし	コールバックの時点の間隔 最大の外れ	0.3703	ms
+PERF	2390	負荷なし	targetTimestamp が 1.5 枚以上飛んだ回	0.0000	回
+PERF	2390	負荷なし	コールバック - timestamp の遅れ 中央値	0.1754	ms
+PERF	2390	負荷なし	deltaTime 標準偏差 いま (コールバックの時点)	0.0809	ms
+PERF	2390	負荷なし	deltaTime 標準偏差 案 B (targetTimestamp)	0.0021	ms
+PERF	2390	main に 0〜3 ms の負荷	コールバックの時点の間隔 標準偏差	2.3607	ms
+PERF	2390	main に 0〜3 ms の負荷	targetTimestamp の間隔 標準偏差	0.0022	ms
+PERF	2390	main に 0〜3 ms の負荷	コールバックの時点の間隔 最大の外れ	6.8539	ms
+PERF	2390	main に 0〜3 ms の負荷	targetTimestamp が 1.5 枚以上飛んだ回	0.0000	回
+PERF	2390	main に 0〜3 ms の負荷	コールバック - timestamp の遅れ 中央値	0.1828	ms
+PERF	2390	main に 0〜3 ms の負荷	deltaTime 標準偏差 いま (コールバックの時点)	2.3607	ms
+PERF	2390	main に 0〜3 ms の負荷	deltaTime 標準偏差 案 B (targetTimestamp)	0.0022	ms
