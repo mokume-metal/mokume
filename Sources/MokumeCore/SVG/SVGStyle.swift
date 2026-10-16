@@ -136,6 +136,177 @@ extension SVGFile {
         return .paint(.color(color))
     }
 
+    // MARK: - display と描けない効果
+
+    /// `display` の値を読み、描くか (`none` だけが偽) を返す。読むのは CSS Display 3 の値 — 1 語の値と、
+    /// `<display-outside> || <display-inside>` と `list-item` の 2 語・3 語の組 — と、MathML Core の `math`
+    /// (`block math`・`inline math` も)、全体キーワード (`initial`・
+    /// `unset`・`revert`・`revert-layer`。どれも描く)。大文字と小文字は区別しない。**読めなければ `nil`**
+    /// (`abc`・空・接頭辞つきの `-webkit-box`) — 呼ぶ側が名乗り、無かったものとする (#2650)。
+    /// mokume が使うのは描くかどうかだけで、語ごとの意味は持たない。
+    nonisolated static func parseDisplay(_ text: String) -> Bool? {
+        let words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let first = words.first else { return nil }
+        if words.count == 1 {
+            if first == "none" { return false }
+            return displayKeywords.contains(first) || cssWideKeywords.contains(first) ? true : nil
+        }
+        // 組は語ごとに 1 度まで。`list-item` の中は `flow` か `flow-root` だけ。`list-item` が無ければ外と中の 2 語
+        guard words.count <= 3, Set(words).count == words.count else { return nil }
+        let outside = words.filter(displayOutside.contains)
+        let inside = words.filter(displayInside.contains)
+        let listItem = words.contains("list-item")
+        guard outside.count <= 1, inside.count <= 1,
+            outside.count + inside.count + (listItem ? 1 : 0) == words.count
+        else { return nil }
+        if listItem { return inside.allSatisfy { $0 == "flow" || $0 == "flow-root" } ? true : nil }
+        return true
+    }
+
+    /// `display` の 1 語の値 (CSS Display 3 と MathML Core の `math`)。
+    nonisolated private static let displayKeywords: Set<String> = [
+        "block", "inline", "run-in", "flow", "flow-root", "table", "flex", "grid", "ruby", "list-item", "contents",
+        "inline-block", "inline-table", "inline-flex", "inline-grid", "table-row-group", "table-header-group",
+        "table-footer-group", "table-row", "table-cell", "table-column-group", "table-column", "table-caption",
+        "ruby-base", "ruby-text", "ruby-base-container", "ruby-text-container", "math",
+    ]
+    nonisolated private static let displayOutside: Set<String> = ["block", "inline", "run-in"]
+    nonisolated private static let displayInside: Set<String> = [
+        "flow", "flow-root", "table", "flex", "grid", "ruby", "math",
+    ]
+    /// `inherit` を除く CSS の全体キーワード。
+    nonisolated private static let cssWideKeywords: Set<String> = ["initial", "unset", "revert", "revert-layer"]
+
+    /// 描けない効果の性質 (`clip-path`・`mask`・`filter`・`marker` / `marker-start` / `marker-mid` / `marker-end`・
+    /// `mix-blend-mode`) の値を読み、効果を持つか (`none`、`mix-blend-mode` は `normal` なら偽) を返す。**読めなければ
+    /// `nil`** — 呼ぶ側が名乗り、無かったものとする (#2410)。大文字と小文字は区別しない。読む文法は:
+    ///
+    /// - `clip-path`: `url(…)`、または基本図形の関数 (`inset()`・`circle()` など) と箱の語 (`fill-box` など) の
+    ///   どちらか、または 1 つずつ
+    /// - `filter`: `url(…)` とフィルタ関数 (`blur()`・`drop-shadow()` など) の並び
+    /// - `marker*`: `url(…)`
+    /// - `mix-blend-mode`: CSS Compositing の語
+    /// - `mask`: 短縮形の層 (`,` で区切る) の並び。層は画像 (`url(…)`・グラデーションなどの画像の関数・`none`)
+    ///   を 1 つまでと、位置・大きさ・繰り返し・箱・合成・`alpha` / `luminance` の語と長さ。**どの層の画像も `none`
+    ///   (書いていない) なら切り抜かないので効果なし** (`mask: luminance`)
+    ///
+    /// 関数の引数は確かめない。
+    nonisolated static func parseEffect(_ property: String, _ text: String) -> Bool? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if property == "mix-blend-mode" {
+            if value == "normal" { return false }
+            return blendModes.contains(value) ? true : nil
+        }
+        if value == "none" { return false }
+        guard let parts = cssComponents(value), !parts.isEmpty else { return nil }
+        if property == "mask" { return maskHasImage(parts) }
+        let functions = parts.map(functionName)
+        switch property {
+        case "clip-path":
+            if parts.count == 1, functions[0] == "url" { return true }
+            guard parts.count <= 2 else { return nil }
+            let shapes = functions.compactMap { $0 }.filter(basicShapes.contains)
+            let boxes = zip(parts, functions).filter { $1 == nil && geometryBoxes.contains(String($0)) }
+            return shapes.count <= 1 && boxes.count <= 1 && shapes.count + boxes.count == parts.count ? true : nil
+        case "filter":
+            return functions.allSatisfy { $0 == "url" || $0.map(filterFunctions.contains) == true } ? true : nil
+        default:  // marker・marker-start・marker-mid・marker-end
+            return parts.count == 1 && functions[0] == "url" ? true : nil
+        }
+    }
+
+    /// `mask` の短縮形の部品から、画像を持つ層があるかを読む。読めない部品・2 つ目の画像・空の層があれば `nil`。
+    nonisolated private static func maskHasImage(_ parts: [Substring]) -> Bool? {
+        var hasImage = false
+        for layer in parts.split(separator: ",", omittingEmptySubsequences: false) {
+            guard !layer.isEmpty else { return nil }
+            var images = 0
+            for part in layer {
+                if part == "none" || functionName(part).map(maskImages.contains) == true {
+                    images += 1
+                    if part != "none" { hasImage = true }
+                } else if functionName(part) != nil {
+                    return nil
+                } else if !(part == "/" || maskKeywords.contains(String(part))
+                    || parseLength(String(part), reference: 1) != nil)
+                {
+                    return nil
+                }
+            }
+            guard images <= 1 else { return nil }
+        }
+        return hasImage
+    }
+
+    /// `mask` の層の画像になる関数 (`url()` と CSS Images の画像の関数)。
+    nonisolated private static let maskImages: Set<String> = [
+        "url", "linear-gradient", "radial-gradient", "conic-gradient", "repeating-linear-gradient",
+        "repeating-radial-gradient", "repeating-conic-gradient", "image", "image-set", "cross-fade", "element",
+        "paint",
+    ]
+    /// `mask` の層に書ける語 (位置・大きさ・繰り返し・箱・合成・モード)。
+    nonisolated private static let maskKeywords: Set<String> = geometryBoxes.union([
+        "left", "right", "top", "bottom", "center", "auto", "cover", "contain", "repeat", "repeat-x", "repeat-y",
+        "no-repeat", "space", "round", "no-clip", "add", "subtract", "intersect", "exclude", "alpha", "luminance",
+        "match-source",
+    ])
+
+    nonisolated private static let basicShapes: Set<String> = [
+        "inset", "circle", "ellipse", "polygon", "path", "rect", "xywh", "shape",
+    ]
+    nonisolated private static let geometryBoxes: Set<String> = [
+        "fill-box", "stroke-box", "view-box", "margin-box", "border-box", "padding-box", "content-box",
+    ]
+    nonisolated private static let filterFunctions: Set<String> = [
+        "blur", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate", "invert", "opacity", "saturate",
+        "sepia",
+    ]
+    nonisolated private static let blendModes: Set<String> = [
+        "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light",
+        "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity", "plus-darker",
+        "plus-lighter",
+    ]
+
+    /// 値を、括弧の外の空白と、括弧を閉じた所で部品に分ける (`url(#a) fill-box` も `blur(2px)grayscale(1)` も
+    /// 2 つ)。括弧の外の `,` と `/` は、それだけで 1 つの部品にする。括弧が釣り合わなければ `nil`。
+    nonisolated private static func cssComponents(_ text: String) -> [Substring]? {
+        var parts: [Substring] = []
+        var depth = 0
+        var start: String.Index?
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if depth == 0, character.isWhitespace || character == "," || character == "/" {
+                if let from = start { parts.append(text[from..<index]) }
+                start = nil
+                if !character.isWhitespace { parts.append(text[index...index]) }
+            } else {
+                if start == nil { start = index }
+                if character == "(" { depth += 1 }
+                if character == ")" {
+                    depth -= 1
+                    guard depth >= 0 else { return nil }
+                    if depth == 0, let from = start {
+                        parts.append(text[from...index])
+                        start = nil
+                    }
+                }
+            }
+            index = text.index(after: index)
+        }
+        guard depth == 0 else { return nil }
+        if let from = start { parts.append(text[from...]) }
+        return parts
+    }
+
+    /// 部品が関数 (`name(…)`) なら、その名前。
+    nonisolated private static func functionName(_ part: Substring) -> String? {
+        guard part.hasSuffix(")"), let open = part.firstIndex(of: "(") else { return nil }
+        let name = part[..<open]
+        guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0 == "-" }) else { return nil }
+        return String(name)
+    }
+
     // MARK: - 長さ
 
     /// 長さを読む。単位は `px` (と単位なし)・`pt`・`pc`・`mm`・`cm`・`in` と、`%`

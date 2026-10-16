@@ -836,7 +836,7 @@ public final class Canvas {
     /// このフレームで頼んだ粒の進めのうち、まだ投入していないものと、その回の寿命を減らす量
     /// ([#1710])。
     ///
-    /// **計算を投入したときに粒へ足し (``commitParticleAdvances()``)、投入せずにフレームを捨てた
+    /// **計算を投入したときに粒へ足し (``commitParticleAdvances(by:)``)、投入せずにフレームを捨てた
     /// ら落とす。** 粒の上書きの注意は寿命を減らした量の累計で測る (``Particles/consumed``) ので、
     /// 走らなかった進めを数えると、累計が GPU の寿命の先へ行く。溜めた計算
     /// (``pendingComputations``) と同じ所で投入し、同じ所で落とす。粒は弱く持つ。
@@ -855,6 +855,11 @@ public final class Canvas {
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     var carriesPictureBeforeEffects = false
+    /// 効果を通す前の絵を控えへ写した最後の投入の番号 ([#2199])。打ち切られたら
+    /// ``carriesPictureBeforeEffects`` を下ろす (``carryDropped(_:)``)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    var carriedBy: UInt64 = 0
     /// 描く先が、最後に拡大した後に変わったか ([#1882])。**細かさを下げた面の出す先は、描く先を
     /// 拡大の段が広げて書いた絵**で、拡大が積まれるのはフレームの終わりの描き切りだけである。
     /// 途中の描き切り (フレームの中でも、止まっている間でも) はその後に描く先だけを変えるので、立って
@@ -872,6 +877,10 @@ public final class Canvas {
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     var targetChangedSinceUpscale = false
+    /// 最後に拡大を積んだ投入の番号。その結末が打ち切りなら印を立て直す (``noteUpscaled(by:)``・[#2199])。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    var upscaledBy: UInt64 = 0
     /// 置く口の追い付き (``catchUpOutputForPlacing(by:)``) を、この面が次に描き切るまで見送るか ([#2042])。
     ///
     /// **追い付けなかったら立てる** (拡大が投げた・置く側自身の写しを取れなかった)。立てないと、断片の
@@ -3681,6 +3690,18 @@ public final class Canvas {
     func flush(applyingEffects: Bool = true, mirroringPixels: Bool = false)
         throws(RenderFailure)
     {
+        // **GPU が打ち切った投入の記帳を、何かを数える前に取り消す** ([#2199])。結末が届いていれば、
+        // 届けていない画像・数の並び・焼けていない影・戻っていない画素・拡大の後に変わった描く先を
+        // 「まだ」に戻すので、この描き切りが普段の経路でやり直す。書き込み待ちの立て直しは、すぐ下で
+        // 描く先を変えるかの数えに入る
+        //
+        // **照会はここで済ませ、描き切りが終わるまで止める。** 下で置いた側に写させる入れ子の描き切りが
+        // 頭で照会すると、この描き切りが数えた後で書き込み待ちが立ち、数えと食い違う
+        //
+        // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+        gpu.revokeDroppedDeliveries()
+        gpu.holdRevocations()
+        defer { gpu.releaseRevocations() }
         // **自分の絵が変わる直前がここ。** 自分を溜めている面にいまの絵を写させると、
         // その面には「置いた時点の絵」が残る (#1656)。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
@@ -3910,7 +3931,7 @@ public final class Canvas {
                 uploaded: uploaded, carried: carried, upscaled: upscaled)
         }
         // 頼んだ計算はこの投入で流れた。粒の進めを、寿命を減らした量として数える (#1710)
-        commitParticleAdvances()
+        commitParticleAdvances(by: assembled.submission)
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
         // まま書いてよい」ことになる (#754)
@@ -3934,11 +3955,12 @@ public final class Canvas {
         if applyingEffects {
             targetChangedSinceUpscale = !assembled.upscaled
             placingCatchUpDeferred = false
+            if assembled.upscaled, upscaleStage != nil { noteUpscaled(by: assembled.submission) }
         } else if upscaleStage != nil, changesTarget || assembled.wroteBack {
             targetChangedSinceUpscale = true
             placingCatchUpDeferred = false
         }
-        gpu.pendingUploads.markUploaded(assembled.uploaded)
+        gpu.noteUploaded(assembled.uploaded, by: assembled.submission)
         // 「映した」は結末を見ずに付ける。この投入が打ち切られていたら、投げる読む口が範囲の中に
         // 見つけて投げ、印を下ろす (`RenderTarget.markPixelsMirrored(through:)`・#1932)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
@@ -3948,11 +3970,28 @@ public final class Canvas {
             shadowMapHolds = shadow.holds.map {
                 (chain: $0, matrix: shadow.matrix, detail: shadow.map.detail)
             }
+            // **焼いた投入が打ち切られたら、焼いた面は書かれていない** ([#2199])。面がどの投入に拠るかを
+            // 覚えて結末を待つ。使い回した投入は面を書かないので預けない
+            //
+            // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+            if shadow.solidUploads != nil {
+                if !shadow.added { shadowBakedSince = assembled.submission }
+                shadowBakedThrough = assembled.submission
+                gpu.awaitSettlement(of: assembled.submission, by: self)
+            }
         }
+        // 計算が書いた並びに、書いた投入を覚えさせる (打ち切りの後に書いた並びは届け直さない・#2199)
+        noteComputationWrites(by: assembled.submission)
         // フレームの最初の描き切りで、描く先は効果を通す前の絵に戻ったか塗り直された。
         // このコマンドが効果を通していれば、描く先はまた効果を通した絵になっている
         if startsFrame { carriesPictureBeforeEffects = false }
-        if assembled.carried { carriesPictureBeforeEffects = true }
+        if assembled.carried {
+            carriesPictureBeforeEffects = true
+            // 控えへ写した投入が打ち切られたら、控えは古い (初めてなら未定義) ので、印を下ろして戻させない
+            // (``carryDropped(_:)``・#2199)
+            carriedBy = assembled.submission
+            gpu.awaitSettlement(of: assembled.submission, by: self)
+        }
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。
@@ -4824,15 +4863,17 @@ public final class Canvas {
         // である。指紋は焼く直前に取り、**覚えるのは描き切りが投入した後** (`flush`) —
         // 焼き付けを積んだ後で投げたフレームの指紋を覚えると、次のフレームが焼けていない
         // 面を読む ([#1183])。投入されなかった焼き付けは面を書き換えていないので、前の
-        // 指紋のまま使い回して正しい
+        // 指紋のまま使い回して正しい。**投入した後で GPU が打ち切った焼き付けは、結末が届いた後の
+        // 最初の描き切りの頭で指紋ごと忘れる** (`shadowBakeDropped(_:)`・[#2199])
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+        // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
         let detail = shadowDetailValue
         let (key, holds) = shadowBakeKey(matrix: matrix, detail: detail, casting: casting)
         if let key, key == lastShadowBakeKey, let shadowMap, shadowMap.detail == detail {
             shadowBakesReused += 1
             return BakedShadow(
-                map: shadowMap, matrix: matrix, key: key, holds: holds, solidUploads: nil)
+                map: shadowMap, matrix: matrix, key: key, holds: holds, solidUploads: nil, added: false)
         }
         // **面が持ち越した列をちょうど焼いてあれば、この回の列だけを足して焼く** ([#1656])。前の
         // 区切りで焼いた面は、そのときの列 (いま持ち越している列の全部) を、同じ行列と細かさで
@@ -4921,7 +4962,8 @@ public final class Canvas {
         encoder.endEncoding()
         shadowBakesEncoded += 1
         if adding { shadowBakesAdded += 1 }
-        return BakedShadow(map: map, matrix: matrix, key: key, holds: holds, solidUploads: solid)
+        return BakedShadow(
+            map: map, matrix: matrix, key: key, holds: holds, solidUploads: solid, added: adding)
     }
 
     /// 落とす列 1 つが読む置き場。溜め場の列は溜め場を写した置き場を、途中の描き切りから持ち越した
@@ -4997,6 +5039,10 @@ public final class Canvas {
         let holds: UInt64?
         /// 焼くために写した立体の置き場。**使い回したフレームでは `nil`** (写していない)。
         let solidUploads: SolidUploads?
+        /// 面を消さずに、この回の列だけを足して焼いたか ([#1656])。足した面は、前に焼いた投入の上に載る。
+        ///
+        /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        let added: Bool
     }
 
     /// 焼き付けの入力の指紋。**焼く側が読むものを全部**入れる — 光の行列・細かさ・
@@ -5098,6 +5144,27 @@ public final class Canvas {
     /// 誰にも書き換えられないので、影を切って戻したフレームも同じ指紋ならそのまま読める。
     private var lastShadowBakeKey: UInt64?
 
+    /// 影の面がいま拠っている焼き付けの投入の範囲 ([#2199])。全部から焼いた投入 (`since`) から、その上に
+    /// 足して焼いた最後の投入 (`through`) まで。0 は焼いていない。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private var shadowBakedSince: UInt64 = 0
+    private var shadowBakedThrough: UInt64 = 0
+
+    /// 焼いた投入 `submission` が打ち切られた。**影の面がまだその投入に拠っていれば** (後で全部から焼き
+    /// 直していなければ)、面が何を持つかの記帳 (``lastShadowBakeKey``・``shadowMapHolds``) を忘れる
+    /// ([#2199])。次の焼き付けは使い回さず、足さず、全部から焼く。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func shadowBakeDropped(_ submission: UInt64) {
+        guard shadowBakedSince > 0, shadowBakedSince <= submission, submission <= shadowBakedThrough
+        else { return }
+        lastShadowBakeKey = nil
+        shadowMapHolds = nil
+        shadowBakedSince = 0
+        shadowBakedThrough = 0
+    }
+
     /// 焼き上がりを待つ仕掛けを積む。**焼いた面を画面のパスが読む前に置く。**
     ///
     /// この世代のコマンド構造は encoder をまたぐ依存を自動では張らないので、同じ
@@ -5141,4 +5208,30 @@ public final class Canvas {
         return texture
     }
 
+}
+
+// MARK: - 打ち切られた投入の結末 (#2199)
+
+extension Canvas: SettlementObserver {
+    /// 影を焼いた投入か、拡大を積んだ投入の結末が届いた。打ち切られていれば、それぞれの記帳を取り消す
+    /// (``shadowBakeDropped(_:)``・``upscaleDropped(_:)``)。正常に終わったなら何もしない — 覚えた番号は
+    /// 後の投入が上書きする。
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        guard dropped else { return }
+        shadowBakeDropped(submission)
+        upscaleDropped(submission)
+        carryDropped(submission)
+    }
+
+    /// 効果を通す前の絵を控えへ写した投入 `submission` が打ち切られた。**それが最後に写した投入で、まだ
+    /// 控えを戻す印が立っていれば、印を下ろす** ([#2199])。控えは写されておらず古い (初めてなら未定義)
+    /// ので、戻すと次のフレームの入りがその絵になり、背景を塗らないスケッチでは以後ずっと持ち越す。
+    /// 下ろせば、次のフレームは描く先 (効果を通した絵か、打ち切られた回の前の絵) の上に描く —
+    /// 打ち切られた回の絵と同じく、そのフレームの欠けは取り戻さない。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func carryDropped(_ submission: UInt64) {
+        guard submission == carriedBy, carriesPictureBeforeEffects else { return }
+        carriesPictureBeforeEffects = false
+    }
 }

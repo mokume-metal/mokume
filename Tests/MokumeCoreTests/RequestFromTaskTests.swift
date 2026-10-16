@@ -48,6 +48,11 @@ struct RequestFromTaskTests {
         var detachedWhenCalled: [Bool] = []
         /// 絵を持たないまま描いたフレームの数。
         var framesWithoutPicture = 0
+        /// `Task` の中で、待つ読み込みの前に同期の資源の口 (`createImage`) も呼ぶか (#2683)。
+        var alsoMakesImage = false
+        /// そのとき同期の口が返した絵と、投げた失敗。
+        var madeImage: Image?
+        var madeImageFailure: ImageFailure?
 
         init() {}
 
@@ -67,6 +72,7 @@ struct RequestFromTaskTests {
 
         private func startLoading() {
             loading = Task {
+                if alsoMakesImage { makeImageInTask() }
                 if let imagePath {
                     detachedWhenCalled.append(runningSketch == nil)
                     picture = try? await requestImage(imagePath)
@@ -75,6 +81,15 @@ struct RequestFromTaskTests {
                     detachedWhenCalled.append(runningSketch == nil)
                     arrivedModel = try? await requestModel(modelPath)
                 }
+            }
+        }
+
+        /// 同期の資源の口を、起こした `Task` の中から呼ぶ。待つ読み込みと違い、持ち越した面を読まない。
+        private func makeImageInTask() {
+            do {
+                madeImage = try createImage(2, 1)
+            } catch {
+                madeImageFailure = error
             }
         }
     }
@@ -161,6 +176,30 @@ struct RequestFromTaskTests {
         #expect(sketch.detachedWhenCalled == [true])
         let picture = try #require(sketch.picture)
         #expect(isClose(picture.get(0, 0), 1, 0, 0), "左の画素: \(picture.get(0, 0))")
+    }
+
+    /// **同期の資源の口は、走っている実行の中で起こした `Task` から呼んでも面を取れない** (#2683)。
+    /// 持ち越した面 (``LaunchingSketch``) を読むのは待つ読み込みだけで、同じ `Task` の中でも割れる。
+    /// `draw()` が回っている最中でもそうなので、文面は「走っていない」と言わない (#1322)。
+    @Test(
+        "setup() / draw() で起こした Task から、同期の createImage は notRunning を投げ、待つ読み込みは読める",
+        arguments: [false, true])
+    func synchronousResourcesFromARunningTaskThrow(startsInDraw: Bool) async throws {
+        let url = try writePicture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sketch = Requesting()
+        sketch.imagePath = url.path
+        sketch.alsoMakesImage = true
+        sketch.startsInDraw = startsInDraw
+        let runtime = try makeRuntime(sketch)
+        try runtime.advance()
+
+        await sketch.loading?.value
+        #expect(sketch.madeImage == nil, "同期の口が Task の中で面を取れている")
+        #expect(sketch.madeImageFailure == .notRunning(call: "createImage(_:_:)"))
+        #expect(sketch.picture != nil, "同じ Task の中の待つ読み込みが読めていない")
+        // 実行は畳まれていない — 走っている最中でもこの場合になる
+        try runtime.advance()
     }
 
     /// **終わった後に届いても落ちない。** 持ち越すのは面だけで、実行そのものは `Task` に

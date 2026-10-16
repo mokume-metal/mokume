@@ -61,6 +61,11 @@ import simd
     /// 画素を書き換えた世代。**送った後に書き換えられていたら、旗を下ろさない。**
     private var writeGeneration: UInt64 = 0
     var isQueuedForUpload = false
+    /// 全体を届けた (CPU の画素の全体か、大きな入力の復号) 最後の投入の番号。結末が正常に届くか、
+    /// 直接書いたら 0 ([#2199])。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private var wholeDeliveredBy: UInt64 = 0
     /// 逃げ道で直接送った回数。**検査が読む。**
     private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
@@ -292,9 +297,40 @@ extension Image: PendingUpload {
         return writeGeneration
     }
 
-    func markUploaded(through generation: UInt64) {
-        guard generation == writeGeneration else { return }
+    @discardableResult
+    func markUploaded(through generation: UInt64, by submission: UInt64?) -> Bool {
+        guard generation == writeGeneration else { return false }
+        // **全体を届けたかを、下ろす前に見る。** CPU の画素は毎回全体を、大きな入力は復号するときだけ
+        // 全体を届ける。復号した後の編集だけの届けは、編集の画素しか書かない (`ImageInputPass`)
+        let whole = displayInput == nil || inputNeedsDecode
         needsUpload = false
         inputNeedsDecode = false
+        // 直接書いた分は届いている (全体を書く)
+        if whole || submission == nil { wholeDeliveredBy = submission ?? 0 }
+        return submission != nil
+    }
+
+    /// 届けた投入の結末が届いた。打ち切られていたら、その投入が書くはずだった分を次の描き切りでもう
+    /// 一度届ける ([#2199])。
+    ///
+    /// - **全体を届けた最後の投入** (``wholeDeliveredBy``) なら、全体を届け直す。大きな入力は復号から
+    ///   やり直す — 打ち切られた投入の復号も面に書かれていない
+    /// - それより後の、**編集だけを届けた投入**なら、編集を届け直す (編集は次に書き込むまで控えに残る)
+    /// - それより前の投入なら何もしない — 後の投入が全体を書いた
+    ///
+    /// 控え (CPU の画素か、大きな入力とその後の編集) は届けた後も持っているので、届け直せば面が揃う。
+    /// 打ち切りの後に書き換えていれば、既に送る旗が立っているので、送るのは 1 回である。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        if submission == wholeDeliveredBy {
+            wholeDeliveredBy = 0
+            guard dropped else { return }
+            if displayInput != nil { inputNeedsDecode = true }
+        } else {
+            guard dropped, submission > wholeDeliveredBy else { return }
+        }
+        needsUpload = true
+        requestUpload()
     }
 }

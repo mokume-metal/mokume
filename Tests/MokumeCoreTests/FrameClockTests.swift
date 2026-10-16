@@ -417,4 +417,31 @@ struct SketchFrameClockTests {
             noisy.blockingLoads.message(for: "loadImage(_:)")
                 == BlockingLoads.notice("loadImage(_:)", instead: "requestImage(_:)"))
     }
+
+    /// **1 回の呼び出しで言うのは 1 行だけ** — `draw()` の中は走っているので、走っていない口の警告
+    /// (`OutsideRun`・#2683) は出ず、同期の読み込みの警告だけが出る。外 (`init` など) から呼ぶと、
+    /// 走っていない口の警告だけが出て、同期の読み込みの警告は出ない。
+    @Test("draw() の中では同期の読み込みの警告だけ、外では走っていない口の警告だけが 1 行出る")
+    func eachCallSaysOneLine() throws {
+        let url = try writePicture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let inDraw = Probe()
+        inDraw.onDraw = { _ = try? $0.loadImage(url.path) }
+        let runtime = try SketchRuntime(sketch: inDraw, gpu: RenderDevice())
+
+        let insideLog = OutsideRun()
+        try OutsideRun.$current.withValue(insideLog) {
+            for _ in 0..<3 { try runtime.advance() }
+        }
+        #expect(insideLog.messages.isEmpty, "draw() の中で走っていない口の警告が出た")
+        #expect(runtime.blockingLoads.message(for: "loadImage(_:)") != nil)
+
+        // 外から呼ぶ (走っていない)。同期の読み込みの控えには何も増えない
+        let outsideLog = OutsideRun()
+        OutsideRun.$current.withValue(outsideLog) {
+            for _ in 0..<3 { _ = try? inDraw.loadModel(url.path) }
+        }
+        #expect(outsideLog.messages.count == 1, "外の 3 回で \(outsideLog.messages.count) 行")
+        #expect(runtime.blockingLoads.message(for: "loadModel(_:normalize:)") == nil)
+    }
 }

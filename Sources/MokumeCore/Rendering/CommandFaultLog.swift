@@ -30,8 +30,44 @@ import Synchronization
 /// 届けた側は、条件の錠を握ったまま状態を書いて起こすので、確かめてから眠るまでの間に届いた
 /// 結末を取りこぼさない。
 ///
+/// ## 打ち切りの後に取り戻すもの・取り戻さないもの ([#2199])
+///
+/// 投入の後に「届いた・焼けた・書き戻した・拡大した」と記す記帳は、結末を見ずに進む。打ち切られた
+/// 投入の分は、**結末が届いた後の最初の描き切りの頭で取り消し**、その描き切り (拡大は出す先を読む口の
+/// 追い付き) が普段の経路で届け直す (``RenderDevice/revokeDroppedDeliveries()``)。待たずに問うので
+/// (``outcomes(of:into:)``)、結末が届くまでのフレームは古い中身のまま描く。
+///
+/// - **取り戻す** (CPU の側か入力の指紋に正本がある):
+///   - 画像への書き込み (全体を届けた投入が打ち切られたら全体を、大きな入力は復号から。編集だけを
+///     届けた投入なら編集を届け直す)
+///   - 数の並びへの書き込み (打ち切られた投入が運んだ汚れ区間だけ。**打ち切りの後に計算がその並びへ
+///     書いていれば届け直さない** — CPU の値へ戻すと計算の結果を潰す)
+///   - 影の焼き付けの指紋 (足すだけの焼き付けの判定も)
+///   - CPU が書いた画素の書き戻し (**打ち切りの後にその面へ書く投入が無かったときだけ**。あれば写しの
+///     全面で巻き戻すので立て直さず、`set()` で書いた画素は失われうる)
+///   - 写しの「映した」印 (読み戻しは面を書かないので、印を下ろせば次の読みが映し直す)
+///   - 作ったときの面の塗り (**後にその面へ書く投入も、写しへ書いたまま戻していない画素も無かった
+///     ときだけ**、透明な黒で塗り直す)
+///   - 効果を通す前の絵の控えを戻す印 (控えへ写した投入が打ち切られたら下ろし、古い控えを戻さない)
+///   - 粒の寿命を減らした量の累計 (打ち切られた進めの分を戻す)
+///   - 細かさを下げた面の拡大の追い付き
+/// - **取り戻さない** (正本が GPU にしか無い・その回の仕事そのもの・後の仕事が上に載った・1 フレーム
+///   限り):
+///   - 打ち切られた回に描いた絵・流した計算・粒の進め・持ち越した奥行き・効果を通す前の絵の控えの中身
+///   - 上の「だけ」に当たらない書き戻し・塗り・数の並び
+///   - 時間方向の拡大の控え (`StageImage`) の最初の塗り。拡大は毎フレーム前の控えと重み付きで混ぜて
+///     書き直すので、塗りが無くても数フレームで薄れる
+///   - 置いた時点の絵の写し (`keepPicture(placedFrom:)`)。写しはそのフレームの列だけが読み、境目で
+///     手放すので、欠けるのはそのフレームの絵だけである
+///
+/// **取り消すのは、打ち切られたと確かめられた投入の記帳だけである** (``outcomes(of:into:)``)。結末が
+/// 届かなかった投入 (知らせが失われただけで、仕事は走っているかもしれない) と、上限を越えて忘れた
+/// 打ち切りに掛かりうる投入は取り消さない — 取り消すと、正しく済んだ中身を CPU の古い値で潰しうる。
+/// 投げる読む口がこれらを打ち切りとして投げる倒し方 (#1932) は変えない。
+///
 /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
 /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
+/// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 nonisolated final class CommandFaultLog: Sendable {
     /// 打ち切られた投入 1 つ。
@@ -45,6 +81,13 @@ nonisolated final class CommandFaultLog: Sendable {
         ///
         /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
         var wrote: [ObjectIdentifier] = []
+        /// 結末が届かず、打ち切りとして記しただけか (``lostReason(after:)``・``skippedReason``)。
+        ///
+        /// 投げる読む口は打ち切りと同じに扱う (#1932)。届け直す口は扱わない — 知らせが失われただけで、
+        /// 仕事は走っているかもしれないので、記帳を取り消すと正しく済んだ中身を潰しうる ([#2199])。
+        ///
+        /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+        var lost = false
     }
 
     /// 番号ごとの打ち切りを覚えておく上限。
@@ -113,7 +156,7 @@ nonisolated final class CommandFaultLog: Sendable {
             var submission = arrivedThrough + 1
             while submission <= last {
                 if arrivedAhead.remove(submission) == nil {
-                    remember(Drop(submission: submission, reason: reason))
+                    remember(Drop(submission: submission, reason: reason, lost: true))
                 }
                 submission += 1
             }
@@ -138,6 +181,21 @@ nonisolated final class CommandFaultLog: Sendable {
             var found = drops.filter { $0.submission > floor && $0.submission <= last }
             if let forgotten, forgotten.submission > floor { found.append(forgotten) }
             return found.sorted { $0.submission < $1.submission }
+        }
+
+        /// 番号 `submission` の結末。届いていなければ `nil`、**打ち切られたと確かめられれば** `true`。
+        ///
+        /// **確かめられないものは `false` に倒す** (``drops(after:through:)`` とは逆の倒し方・[#2199])。
+        /// 結末が届かず打ち切りとして記しただけの番号 (``Drop/lost``) と、上限を越えて忘れた打ち切りに
+        /// 掛かりうる番号 (忘れた分は最も新しい 1 つしか残していない) である。答えを使うのは記帳の
+        /// 取り消しで、取り消しは正しく済んだ中身を潰しうるので、確かめられた打ち切りにだけ効かせる。
+        ///
+        /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+        func outcome(of submission: UInt64) -> Bool? {
+            guard submission <= arrivedThrough || arrivedAhead.contains(submission) else { return nil }
+            if let drop = drops.first(where: { $0.submission == submission }) { return !drop.lost }
+            if let forgotten, forgotten.submission == submission { return !forgotten.lost }
+            return false
         }
     }
 
@@ -217,6 +275,24 @@ nonisolated final class CommandFaultLog: Sendable {
                 until: Date(timeIntervalSinceNow: Double(seconds) + Double(attoseconds) * 1e-18))
         }
         return (state.withLock { $0.drops(after: floor, through: last) }, waited, lost)
+    }
+
+    /// 番号ごとの結末を、**待たずに** `answers` へ書く ([#2199])。届いていない番号は `nil`、打ち切られた
+    /// と確かめられた番号は `true`、それ以外 (正常に終わった・結末を失った・忘れた打ち切りに掛かりうる)
+    /// は `false`。並びは `submissions` と揃う。
+    ///
+    /// 打ち切られた投入が届けたはずの中身を取り戻す口 (``RenderDevice/revokeDroppedDeliveries()``) が、
+    /// 描き切りの頭で 1 度呼ぶ。待たないので、結末がまだ届いていない投入はその回には取り戻さない
+    /// (次の回に問い直す)。**答えの置き場は呼び手が持ち回る** — 毎フレーム呼ぶ口で確保しない。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func outcomes<Submissions: Sequence<UInt64>>(
+        of submissions: Submissions, into answers: inout [Bool?]
+    ) {
+        answers.removeAll(keepingCapacity: true)
+        state.withLock { state in
+            for submission in submissions { answers.append(state.outcome(of: submission)) }
+        }
     }
 
     /// 結末を 1 つ書き、待っている側を起こす。**条件の錠を握ったまま書く** — 待つ側は同じ錠を

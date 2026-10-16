@@ -247,9 +247,41 @@ nonisolated enum SVGFile {
         var transform = Affine.identity
         /// 割合 (`%`) の基準になる大きさ (いちばん近い `svg` の `viewBox`)。
         var viewport = SIMD2<Float>(100, 100)
+        /// この要素自身の受け継がない描き方。子へは受け継がず、子の `inherit` だけが親の値として取る。
+        var own = Own()
 
         /// 割合で書いた半径などの基準 (対角線の長さを √2 で割ったもの)。
         var diagonal: Float { ((viewport.x * viewport.x + viewport.y * viewport.y) / 2).squareRoot() }
+    }
+
+    /// 受け継がない描き方。要素ごとに初めの値から始まり、勝った宣言が `inherit` のときだけ親の値を取る (CSS のとおり)。
+    private struct Own {
+        /// 要素自身の `opacity` (祖先の分は掛けていない)。
+        var opacity: Float = 1
+        var isDisplayed = true
+        /// 描けない効果 (`clip-path` など) を持つ性質の名前。`marker` は `marker-start` / `marker-mid` /
+        /// `marker-end` に分けて持つ。
+        var effects: Set<String> = []
+
+        /// 描けないので名乗るもの。決まった順 (`clip-path`・`mask`・`filter`・`marker`・`mix-blend-mode`)。
+        var lost: [String] {
+            var names = ["clip-path", "mask", "filter"].filter(effects.contains)
+            if !effects.isDisjoint(with: SVGFile.markerLonghands) { names.append("marker") }
+            if effects.contains("mix-blend-mode") { names.append("mix-blend-mode") }
+            return names
+        }
+
+        /// 受け継がない性質 1 つを親の値にする。受け継ぐ性質 (`fill` など) では何もしない — 受け継いだ値が
+        /// そのまま親の値である。
+        mutating func inherit(_ property: String, from parent: Own) {
+            switch property {
+            case "opacity": opacity = parent.opacity
+            case "display": isDisplayed = parent.isDisplayed
+            case _ where SVGFile.effectProperties.contains(property):
+                if parent.effects.contains(property) { effects.insert(property) }
+            default: break
+            }
+        }
     }
 
     /// 開いている要素 1 つ。
@@ -366,11 +398,13 @@ nonisolated enum SVGFile {
 
         /// 受け継いだ描き方に、属性・CSS の規則・`style` 属性の宣言を重ねる。重ね方は CSS のとおり
         /// 1 つの比べ方 (`Rank`) で、`!important` の宣言が上、次に 属性 < 規則 < `style` 属性、規則どうしは
-        /// 詳細度 (`*` < 要素名 < クラス)、それも同じなら後に書いたほうが上。宣言を集めて順位で
-        /// 並べ、下から当てる。
-        /// ただし**下から全部を当てて上書きする**形なので、勝った宣言が `inherit`・`none`・読めない値の
-        /// ときは、下の宣言の値が残り、CSS とは違う (#2410)。
-        /// **`display="none"` なら `nil`** (中身ごと描かない。書き手の意図なので数えない)。
+        /// 詳細度 (`*` < 要素名 < クラス)、それも同じなら後に書いたほうが上。
+        /// **性質ごとに、読める宣言のうち順位が最も高い 1 つだけを当てる** (勝った宣言だけが効き、負けた
+        /// 宣言の値は残らない)。読めない値の宣言は名乗って無かったことにする (下の宣言が残る)。勝った宣言が
+        /// `none` なら効果は無く、`inherit` なら親の値になる (受け継がない `opacity`・`display`・描けない
+        /// 効果も、親の値を取る)。`marker` は `marker-start` / `marker-mid` / `marker-end` の短縮形として重ねる。
+        /// **`display` が `none` に決まれば `nil`** (中身ごと描かない。書き手の意図なので、この要素の読めない
+        /// 値も名乗らない)。
         /// 描けない効果 (`clip-path` など) は、要素を描くと決まってから名乗れるよう返す。
         /// **`svg` の `width` / `height` は、属性と CSS (`<style>`・`style` 属性) の宣言を同じ順位で重ねて**、
         /// 順位の低いほうから並べた文字を `sizes` に返す (SVG 2 では CSS の性質でもあるので、CSS で書いた
@@ -378,8 +412,6 @@ nonisolated enum SVGFile {
         private mutating func resolve(
             _ inherited: Context, attributes: [String: String], name: String, line: Int
         ) -> (Context, lost: [String], sizes: [String: [String]])? {
-            var context = inherited
-            var own = Own()
             var candidates: [(rank: Rank, declaration: Declaration)] = []
             func collect(_ declaration: Declaration, from origin: Rank.Origin, specificity: Int = 0) {
                 let rank = Rank(
@@ -387,7 +419,14 @@ nonisolated enum SVGFile {
                     order: candidates.count)
                 candidates.append((rank, declaration))
             }
-            for (property, value) in attributes
+            // 名乗るものは、要素を描くと決まるまで溜める
+            var unreadable: [String] = []
+            // 属性の書いた順は分からない (`XMLParser` が辞書で渡す) ので、決まった順で集める — 辞書の巡る順は
+            // プロセスごとに変わる。順が効くのは短縮形の `marker` と個別の `marker-*` の重なりだけで、短縮形を先に
+            // 置いて個別の性質を勝たせる (CSS で短縮形を先に書いたのと同じ)。ほかは名前の順
+            func place(_ property: String) -> (Int, String) { (property == "marker" ? 0 : 1, property) }
+            let written = attributes.sorted { place($0.key) < place($1.key) }
+            for (property, value) in written
             where SVGFile.properties.contains(property) || (name == "svg" && SVGFile.sizeProperties.contains(property))
             {
                 collect(Declaration(name: property, value: value, isImportant: false), from: .attribute)
@@ -401,122 +440,153 @@ nonisolated enum SVGFile {
             if let style = attributes["style"] {
                 let parsed = SVGFile.parseDeclarations(style)
                 for declaration in parsed.declarations { collect(declaration, from: .styleAttribute) }
-                for written in parsed.unreadable { tally.note("CSS declaration \"\(written)\"", line: line) }
+                unreadable += parsed.unreadable.map { "CSS declaration \"\($0)\"" }
             }
+
+            // 順位の低いほうから見て、性質ごとに読めた宣言で上書きしていく。最後に残るのが勝った宣言
+            var winners: [String: Reading] = [:]
+            var sizes: [String: [String]] = [:]
             for (_, declaration) in candidates.sorted(by: { $0.rank < $1.rank }) {
-                apply(declaration.name, declaration.value, to: &context, own: &own, line: line)
+                let property = declaration.name
+                let value = declaration.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if SVGFile.sizeProperties.contains(property) {
+                    if value.lowercased() != "inherit" { sizes[property, default: []].append(value) }
+                    continue
+                }
+                guard SVGFile.properties.contains(property) else { continue }
+                let reading = read(property, value, in: inherited)
+                if case .unreadable = reading {
+                    unreadable.append("\(property) \"\(value)\"")
+                    continue
+                }
+                for longhand in property == "marker" ? SVGFile.markerLonghands : [property] {
+                    winners[longhand] = reading
+                }
+            }
+
+            var context = inherited
+            var own = Own()
+            for (property, reading) in winners {
+                switch reading {
+                case .inherit: own.inherit(property, from: inherited.own)
+                case .set(let assign): assign(&context, &own)
+                case .effect(let present): if present { own.effects.insert(property) }
+                case .unreadable: break
+                }
             }
             guard own.isDisplayed else { return nil }
+            for what in unreadable { tally.note(what, line: line) }
             context.opacity *= own.opacity
-            return (context, own.lost, own.sizes)
+            context.own = own
+            return (context, own.lost, sizes)
         }
 
-        /// 受け継がない描き方。要素ごとに初めの値から始まる。
-        private struct Own {
-            var opacity: Float = 1
-            var isDisplayed = true
-            /// 描けないので名乗るもの (`clip-path` など)。
-            var lost: [String] = []
-            /// `width` / `height` の宣言の文字を、順位の低いほうから。読むのは `svg` だけ。
-            var sizes: [String: [String]] = [:]
+        /// 宣言 1 つの値の読み。**読むだけで、名乗りも当てもしない** (どの宣言が勝つかは `resolve` が決める)。
+        private enum Reading {
+            /// 親の値を取る (`inherit`。`color` では `currentColor` も)。
+            case inherit
+            /// 読めない値。CSS で読めない宣言が無かったことになるのと同じく、下の宣言・受け継いだ値が残る。
+            case unreadable
+            /// 描き方を書き換える。
+            case set((inout Context, inout Own) -> Void)
+            /// 描けない効果 (`clip-path` など) を持つか。`none` (`mix-blend-mode` は `normal`) なら持たない。
+            case effect(Bool)
         }
 
-        /// 描き方を 1 つ書き換える。読めない値は、受け継いだ値のまま名乗る (CSS で読めない
-        /// 宣言が無かったことになるのと同じ)。
-        private mutating func apply(
-            _ property: String, _ value: String, to context: inout Context, own: inout Own, line: Int
-        ) {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            let lowered = trimmed.lowercased()
-            guard lowered != "inherit" else { return }
+        /// 宣言 1 つの値を読む。`value` は前後の空白を落としたもの。大文字と小文字は区別しない。
+        private func read(_ property: String, _ value: String, in inherited: Context) -> Reading {
+            let lowered = value.lowercased()
+            guard lowered != "inherit" else { return .inherit }
             switch property {
             case "fill", "stroke":
                 let isFill = property == "fill"
                 let paint: Paint
                 var isReference = false
-                switch SVGFile.parsePaint(trimmed) {
+                switch SVGFile.parsePaint(value) {
                 case .paint(let read): paint = read
-                case .inherit: return
+                case .inherit: return .inherit
                 case .reference(let fallback):
                     paint = fallback
                     isReference = true
                 // 代わりの色が読めない参照 (`url(#a) abc`) もここで、下の宣言・受け継いだ値が残る (#2649)
-                case .unreadable:
-                    return tally.note("\(property) \"\(trimmed)\"", line: line)
+                case .unreadable: return .unreadable
                 }
-                if isFill {
-                    context.fill = paint
-                    context.fillIsReference = isReference
-                } else {
-                    context.stroke = paint
-                    context.strokeIsReference = isReference
+                return .set { context, _ in
+                    if isFill {
+                        context.fill = paint
+                        context.fillIsReference = isReference
+                    } else {
+                        context.stroke = paint
+                        context.strokeIsReference = isReference
+                    }
                 }
             case "fill-opacity", "stroke-opacity", "opacity":
-                guard let amount = Self.fraction(trimmed) else {
-                    return tally.note("\(property) \"\(trimmed)\"", line: line)
-                }
+                guard let amount = Self.fraction(value) else { return .unreadable }
                 switch property {
-                case "fill-opacity": context.fillOpacity = amount
-                case "stroke-opacity": context.strokeOpacity = amount
-                default: own.opacity = amount
+                case "fill-opacity": return .set { context, _ in context.fillOpacity = amount }
+                case "stroke-opacity": return .set { context, _ in context.strokeOpacity = amount }
+                default: return .set { _, own in own.opacity = amount }
                 }
             case "fill-rule":
                 switch lowered {
-                case "nonzero": context.fillRule = .nonzero
-                case "evenodd": context.fillRule = .evenOdd
-                default: tally.note("\(property) \"\(trimmed)\"", line: line)
+                case "nonzero": return .set { context, _ in context.fillRule = .nonzero }
+                case "evenodd": return .set { context, _ in context.fillRule = .evenOdd }
+                default: return .unreadable
                 }
             case "stroke-width":
-                guard let width = SVGFile.parseLength(trimmed, reference: context.diagonal), width >= 0 else {
-                    return tally.note("\(property) \"\(trimmed)\"", line: line)
+                guard let width = SVGFile.parseLength(value, reference: inherited.diagonal), width >= 0 else {
+                    return .unreadable
                 }
-                context.strokeWidth = width
+                return .set { context, _ in context.strokeWidth = width }
             case "stroke-linecap":
+                let cap: StrokeCap
                 switch lowered {
-                case "butt": context.cap = .square
-                case "round": context.cap = .round
-                case "square": context.cap = .project
-                default: tally.note("\(property) \"\(trimmed)\"", line: line)
+                case "butt": cap = .square
+                case "round": cap = .round
+                case "square": cap = .project
+                default: return .unreadable
                 }
+                return .set { context, _ in context.cap = cap }
             case "stroke-linejoin":
+                let join: StrokeJoin
                 switch lowered {
-                case "miter", "miter-clip", "arcs": context.join = .miter
-                case "round": context.join = .round
-                case "bevel": context.join = .bevel
-                default: tally.note("\(property) \"\(trimmed)\"", line: line)
+                case "miter", "miter-clip", "arcs": join = .miter
+                case "round": join = .round
+                case "bevel": join = .bevel
+                default: return .unreadable
                 }
+                return .set { context, _ in context.join = join }
             case "stroke-dasharray":
                 // 読めない値と負の値を含む値は、破線ありへ倒さず無かったものとして名乗る (#2649)。
                 // 全部 0 なら破線にならない (SVG の約束)
-                guard let lengths = SVGFile.parseDashArray(trimmed, reference: context.diagonal) else {
-                    return tally.note("\(property) \"\(trimmed)\"", line: line)
+                guard let lengths = SVGFile.parseDashArray(value, reference: inherited.diagonal) else {
+                    return .unreadable
                 }
-                context.isDashed = lengths.contains { $0 > 0 }
+                let isDashed = lengths.contains { $0 > 0 }
+                return .set { context, _ in context.isDashed = isDashed }
             case "color":
-                guard lowered != "currentcolor" else { return }
-                guard let color = SVGFile.parseColor(trimmed) else {
-                    return tally.note("\(property) \"\(trimmed)\"", line: line)
-                }
-                context.color = color
+                // `color` 自身の `currentColor` は `inherit` と同じ (CSS Color)
+                guard lowered != "currentcolor" else { return .inherit }
+                guard let color = SVGFile.parseColor(value) else { return .unreadable }
+                return .set { context, _ in context.color = color }
             case "visibility":
                 // `collapse` は SVG では `hidden` と同じ。読めない値は無かったものとして、受け継いだ値のまま (#2626)
                 switch lowered {
-                case "visible": context.isVisible = true
-                case "hidden", "collapse": context.isVisible = false
-                default: tally.note("\(property) \"\(trimmed)\"", line: line)
+                case "visible": return .set { context, _ in context.isVisible = true }
+                case "hidden", "collapse": return .set { context, _ in context.isVisible = false }
+                default: return .unreadable
                 }
             case "display":
-                own.isDisplayed = lowered != "none"
-            case "width", "height":
-                own.sizes[property, default: []].append(trimmed)
-            case "clip-path", "mask", "filter":
-                if lowered != "none" { own.lost.append(property) }
-            case "marker", "marker-start", "marker-mid", "marker-end":
-                if lowered != "none" { own.lost.append("marker") }
-            case "mix-blend-mode":
-                if lowered != "normal" { own.lost.append(property) }
+                // `none` だけが描かない。CSS Display の値の外は無かったものとして、下の宣言のまま (#2650)
+                guard let isDisplayed = SVGFile.parseDisplay(value) else { return .unreadable }
+                return .set { _, own in own.isDisplayed = isDisplayed }
+            case _ where SVGFile.effectProperties.contains(property) || property == "marker":
+                // 文法の外の値を「効果あり」へ倒さず、無かったものとして名乗る (#2410)
+                guard let present = SVGFile.parseEffect(property, value) else { return .unreadable }
+                return .effect(present)
             default:
-                break
+                // 読む性質 (`properties`) の外は `resolve` が弾くので、ここへは来ない
+                return .set { _, _ in }
             }
         }
 
@@ -621,7 +691,7 @@ nonisolated enum SVGFile {
             // 順位の高い宣言から見て、**読めた宣言 (`auto` を含む) で止める**。読めない宣言は CSS では無効で
             // 捨てられ、下の宣言が残るので、名乗って次へ進む。全部が読めなければ書いていないのと同じ
             // **負の値は別**: CSS では無効な宣言だが、ここでは読めた値として採り (描かない結果は変えていない)、
-            // 名乗りは「捨てた」ではなく「この値で根を描かない」の意味。CSS との仕様差は #2410 に置いてある
+            // 名乗りは「捨てた」ではなく「この値で根を描かない」の意味。CSS との仕様差は #2648 に置いてある
             func size(_ key: String, _ against: Float) -> Float? {
                 for text in (sizes[key] ?? []).reversed() {
                     switch written(
@@ -802,6 +872,14 @@ nonisolated enum SVGFile {
 
     /// `svg` だけが、属性にも CSS にも書ける大きさの名前 (SVG 2 では CSS の性質でもある)。
     private static let sizeProperties: Set<String> = ["width", "height"]
+
+    /// 短縮形の `marker` が決める 3 つの性質。
+    private static let markerLonghands = ["marker-start", "marker-mid", "marker-end"]
+
+    /// 描けない効果の性質 (受け継がない)。短縮形の `marker` は含めず、3 つに分けて持つ。
+    private static let effectProperties: Set<String> = [
+        "clip-path", "mask", "filter", "marker-start", "marker-mid", "marker-end", "mix-blend-mode",
+    ]
 
     // MARK: - 座標の決まり
 
