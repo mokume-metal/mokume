@@ -1,0 +1,115 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: perf-g2-1744
+
+# **使い捨ての計測 (#1744 の G2)。マージしない。** 2026-10-12 の性能レビューの G2 (同期・表示・効果)
+# を、専用機 (mokume-render) の release で測る。手元の GPU では回さない (#1999・#2052)。SSH では
+# 専用機に入れない (#1767) ので、同一リポジトリの PR の経路 (ADR-0019 決定 7 段階 B) を使う。
+#
+# - 専用機に積む前に、GitHub ホストの門番で merge queue の render が終わるのを待つ (#2303 の決定:
+#   計測 job の頭で render-turn.sh wait を通す)
+# - **テストは 1 本ずつ別のプロセスで走らせる** (Swift Testing は既定で並列で、getrusage が混ざる)
+# - Metal の検証レイヤは切る (性能を測るため。Makefile の METAL_VALIDATION と同じく CI では切れる)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - .github/workflows/perf-g2-1744.yml
+      - Tests/MokumeCoreTests/PerfReviewG2Tests.swift
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-g2-1744-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  turn:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/render-turn.sh wait
+
+  measure:
+    needs: turn
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - id: preflight
+        run: bash scripts/runner-preflight.sh
+      - name: 機械の記録
+        run: |
+          mkdir -p .build/perf-g2
+          {
+            sysctl -n machdep.cpu.brand_string
+            sysctl hw.model hw.ncpu hw.perflevel0.logicalcpu hw.perflevel1.logicalcpu hw.memsize
+            sw_vers
+            swift --version 2>&1
+            git rev-parse HEAD
+            system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'Resolution|Refresh|UI Looks like' || true
+          } | sed "s|$HOME|~|g" | tee .build/perf-g2/machine.txt
+      - name: release でビルド
+        run: swift build -c release -Xswiftc -enable-testing --build-tests
+      - name: 計測 (1 本ずつ)
+        run: |
+          set -o pipefail
+          unset MTL_DEBUG_LAYER MTL_DEBUG_LAYER_WARNING_MODE
+          out=.build/perf-g2
+          : > "$out/perf.tsv"
+          for t in \
+            PerfReviewG2FrameWithoutGPU/frameTimeJitter \
+            PerfReviewG2FrameWithoutGPU/blurWeightsDoNotDependOnRadius \
+            PerfReviewG2FrameWithoutGPU/fallbackTimerWakeups \
+            PerfReviewG2Frame/idlePresentPerRefresh \
+            PerfReviewG2Frame/idleSharedSurfacePerRefresh \
+            PerfReviewG2Frame/sharedSurfaceAttributeCosts \
+            PerfReviewG2Frame/layeredFrameSlotWaits \
+            PerfReviewG2Frame/effectsAndCustomShape \
+            PerfReviewG2Frame/layeredSketchByClock \
+            PerfReviewG2Frame/effectCarryCopies \
+            PerfReviewG2Frame/builtinVersusSpecialized \
+            PerfReviewG2Frame/createGraphicsBreakdown \
+            PerfReviewG2Frame/readEveryFrame \
+            PerfReviewG2Frame/growthStall
+          do
+            name=${t##*/}
+            echo "::group::$t"
+            { echo "# $t"; uptime; pmset -g therm 2>&1; } | tee -a "$out/load.txt"
+            swift test -c release -Xswiftc -enable-testing --skip-build --filter "$t" 2>&1 \
+              | sed "s|$HOME|~|g" > "$out/$name.log" || echo "FAILED $t" | tee -a "$out/failed.txt"
+            grep '^PERF' "$out/$name.log" | tee -a "$out/perf.tsv" || true
+            grep -E '✘|failed|Fatal' "$out/$name.log" | head -20 || true
+            echo "::endgroup::"
+          done
+      - name: 結果を要約へ書く
+        if: always()
+        run: |
+          {
+            echo '### machine'
+            echo '```'
+            cat .build/perf-g2/machine.txt 2>/dev/null
+            echo '```'
+            echo '### failed'
+            echo '```'
+            cat .build/perf-g2/failed.txt 2>/dev/null || echo none
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perf-g2
+          path: .build/perf-g2/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
