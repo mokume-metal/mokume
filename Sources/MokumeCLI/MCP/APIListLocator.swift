@@ -46,6 +46,19 @@ struct APIListLocator {
     /// 得られなかったとき。**次の一手を持つ** — 窓口の失敗は、そこで手が止まらない形にする。
     struct Missing: Error {
         let advice: String
+        /// 得られなかった理由の種類。**答えに添える手を分けるために持つ** — 版が引けないのは
+        /// 窓口がスケッチでない場所で立ったせいでもありうるが、取りに行けない・読めないのは
+        /// 場所のせいではない (#2487)。
+        var cause: Cause
+
+        enum Cause: Equatable {
+            /// 依存の版が引けない (`Package.resolved` に pin が無い)
+            case versionUnknown
+            /// 資産を取ってこられなかった
+            case fetchFailed
+            /// 取ってきたものが読めなかった
+            case unreadable
+        }
     }
 
     /// 取り置きの区画。`.mokume/` は ADR-0018 決定 2 の共通の屋根で、ひな形の `.gitignore` が
@@ -72,7 +85,8 @@ struct APIListLocator {
                         Cannot tell which version is depended on: `Package.resolved` has no pin
                         for `\(Self.identity)` (this happens when you point at mokume by path
                         while developing it).
-                        """, cache: cache))
+                        """, cache: cache),
+                cause: .versionUnknown)
         }
 
         let remote = Self.assetURL(version: version)
@@ -86,11 +100,13 @@ struct APIListLocator {
                         Could not fetch the asset for this version (\(remote)): \(error)
                         Besides having no network, this also happens when **that version has no
                         such asset attached** (the list started shipping after v0.1.0).
-                        """, cache: cache))
+                        """, cache: cache),
+                cause: .fetchFailed)
         }
         guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
             throw Missing(
-                advice: advice(reason: "what came back could not be read (\(remote))", cache: cache))
+                advice: advice(reason: "what came back could not be read (\(remote))", cache: cache),
+                cause: .unreadable)
         }
         // 取り置けなくても、いま得たものは返す。**答えを返すほうが先** (ADR-0018 決定 3)
         try? AtomicFile.write(data, to: cache)
