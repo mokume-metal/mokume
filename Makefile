@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -72,7 +72,7 @@ CI_CHECK_SKIP ?=
 #     macOS に残る hooks-test の各段の検査 (adrs_test など) が持つ。ubuntu の段が起こす
 #     scripts/*.sh のどれにもその検査があることは ci_workflow_test.py が見る
 #   - drawing-evidence は CI ではどちらでも理由を述べて 0 で抜ける (上の並びの注釈)。ubuntu に置く
-CI_STATIC_STEPS := schemas tool-language isolated-deinit entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
+CI_STATIC_STEPS := schemas tool-language isolated-deinit runtime-math entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
 CI_CHECK_HOST ?=
 
 # **手元で回す段は、触ったものから選ぶ。** AGENTS.md「コミット・PR の規約」の「触った範囲の段」は
@@ -98,7 +98,7 @@ CI_CHECK_HOST ?=
 #      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤
 #      (他のセッションの GPU 負荷など) が約 70 本並ぶ中に本物が 1 本混ざることがあり、
 #      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした
-CI_CHECK_ALL := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
+CI_CHECK_ALL := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit runtime-math reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
 ifeq ($(CI_CHECK_HOST),)
 CI_CHECK_STEPS := $(CI_CHECK_ALL)
 else ifeq ($(CI_CHECK_HOST),ubuntu)
@@ -472,6 +472,16 @@ tool-language: ## Sources/ の Swift でコメントの外に日本語を置い�
 # 組み上げは要らない — 字句だけを読む (tool-language と同じ形)
 isolated-deinit: ## Sources/ の isolated deinit が隔離を明示した型の中にあるかを検査する
 	python3 scripts/check-isolated-deinit.py
+
+# 本体の超越関数を `RuntimeMath` を通さずに直に呼んでいないかを見る (#2751)。最適化 (`-O`) が
+# 同じ角度の `sin` / `cos` の対を畳み、定数を渡した呼び出しを組むときに計算して、release でだけ
+# 値が 1 ULP 動き、絵が数画素ずれた (#1736・ADR-0025 決定 7)。規律が `RuntimeMath.swift` の冒頭と
+# ADR の散文にしか無く、debug の検査は緑のまま、release の台帳は専用機の定期でしか回らない。
+#
+# **段 1 を採っている** (ADR-0008 決定 5) — 木の字句だけを読む、isolated-deinit と同じ形。
+# 対象は Sources/MokumeCore と Sources/MokumeAudio で、組み上げは要らない
+runtime-math: ## 本体の超越関数が RuntimeMath を通さずに直に呼ばれていないかを検査する
+	python3 scripts/check-runtime-math.py
 
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m)) \
