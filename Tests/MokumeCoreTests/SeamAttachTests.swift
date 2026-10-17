@@ -206,10 +206,13 @@ struct SeamAttachTests {
             },
             declared: [DeclaredOutlet(outlet: early)])
         for _ in 0..<5 { try runtime.advance() }
-        // 宣言したほうは 1 から受け取っている — 控えはフレーム 3 の時点で在った
-        #expect(early.frames == [1, 2, 3, 4])
-        #expect(late.frames == [3, 4])
+        // **閉じてから比べる** (#2743)。配るのは絵を組んだ投入の結末を確かめてからで、配る時点で
+        // 結末が届いていない絵はもう 1 フレーム持ち越されるので、途中で数えると揺れる。閉じるときに
+        // 残りを配り終える。足したフレームより前の絵を受け取らないことは、閉じた後でも見える
         runtime.closePlugins()
+        // 宣言したほうは 1 から受け取っている — 控えはフレーム 3 の時点で在った
+        #expect(early.frames == [1, 2, 3, 4, 5])
+        #expect(late.frames == [3, 4, 5])
     }
 }
 
