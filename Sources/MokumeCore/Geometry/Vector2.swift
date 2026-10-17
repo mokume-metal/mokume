@@ -35,6 +35,8 @@
 /// | `v.sub(w)` | `v -= w` / `v - w` |
 /// | `v.mult(n)` / `v.div(n)` | `v *= n` / `v / n` |
 /// | `v.mag()` | ``length`` |
+/// | `v.normalize()` | ``normalized()`` |
+/// | `v.limit(max)` | ``limited(to:)`` |
 ///
 /// **隔離の外に置く** ([ADR-0010] 決定 1 の改訂)。通信の完了ハンドラのような main actor の
 /// 外からも作れ、比べ、符号化できる。符号化の形は `{"x": …, "y": …}` である。
@@ -421,5 +423,89 @@ nonisolated extension Vector2 {
     // shot: 参照 Vector2./(_:_:)
     public static func /= (lhs: inout Vector2, rhs: some ScalarConvertible) {
         lhs.simd /= rhs.asFloat
+    }
+}
+
+// MARK: - 向きと上限
+
+nonisolated extension Vector2 {
+    /// 向きを保ったまま、長さを 1 にした値。Processing の `normalize()` に当たる。
+    ///
+    /// 位置の差から「向かう向き」だけを取り出し、好きな大きさを掛けて歩幅にする。
+    /// 元の値は変わらない (新しい値を返す。Processing の `normalize()` は自分を書き換える)。
+    ///
+    /// **長さが 0 の値は、変えずに返す** (`Vector2(0, 0).normalized()` は `Vector2(0, 0)`)。
+    /// 向きが無いので 0 で割らず、数でない値を絵に流さない。成分が小さすぎて ``length`` が 0 に
+    /// なる値も同じ。Processing の `normalize()` も、長さ 0 では変えない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     let center = Vector2(110, 220)
+    ///     let target = Vector2(330, 90)
+    ///     let heading = (target - center).normalized()
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(3)
+    ///     line(center.x, center.y, center.x + heading.x * 100, center.y + heading.y * 100)
+    ///     noStroke()
+    ///     fill(89, 191, 242)
+    ///     circle(target.x, target.y, 30)
+    ///     circle(center.x, center.y, 20)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左下の小さな円から右上の水色の円へ向かう、長さ 100 の橙色の線。線は右上の円まで届かない -->
+    ///     ![左下の小さな円から右上の水色の円へ向かう、長さ 100 の橙色の線。線は右上の円まで届かない](https://i.gyazo.com/2d89ba039e95fc1fc72781ecc6da8387.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=d4ed6bb5
+    public func normalized() -> Vector2 {
+        let magnitude = length
+        guard magnitude > 0 else { return self }
+        return Vector2(simd / magnitude)
+    }
+
+    /// 長さが `maximum` を越えないように縮めた値。Processing の `limit()` に当たる。
+    ///
+    /// 向きは保つ。長さが `maximum` 以下の値は変えずに返し、越えるときだけ長さを `maximum` にする。
+    /// 加速を重ねた速さに上限を掛けるのに使う。元の値は変わらない (新しい値を返す)。
+    ///
+    /// **`maximum` が 0 以下なら `Vector2(0, 0)` を返す** (数でない値も同じ)。速さの上限として
+    /// 負の数に意味は無いので、向きを反転させず止める。**Processing の `limit()` とはここが違う** —
+    /// あちらは上限が負だと向きが反転する (`(6, 8)` に `limit(-5)` で `(-3, -4)`)。mokume では
+    /// `Vector2(6, 8).limited(to: -5)` は `Vector2(0, 0)` になる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     let target = Vector2(340, 80)
+    ///     var position = Vector2(50, 240)
+    ///     var velocity = Vector2(0, 0)
+    ///     fill(242, 115, 64)
+    ///     for _ in 0..<20 {
+    ///         velocity = (velocity + (target - position).normalized() * 2).limited(to: 12)
+    ///         position += velocity
+    ///         circle(position.x, position.y, 8)
+    ///     }
+    ///     fill(89, 191, 242)
+    ///     circle(target.x, target.y, 24)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左下から右上の水色の円へ向かって、はじめは詰まり、やがて等しい間隔で並ぶ橙色の点の列 -->
+    ///     ![左下から右上の水色の円へ向かって、はじめは詰まり、やがて等しい間隔で並ぶ橙色の点の列](https://i.gyazo.com/411de8eef950b9b7b6151a38feb76395.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=91efd0d7
+    public func limited(to maximum: some ScalarConvertible) -> Vector2 {
+        let limit = maximum.asFloat
+        guard limit > 0 else { return Vector2(0, 0) }
+        let magnitude = length
+        guard magnitude > limit else { return self }
+        return Vector2(simd * limit / magnitude)
     }
 }
