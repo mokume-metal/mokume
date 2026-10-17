@@ -1060,8 +1060,10 @@ struct SaveFramesTests {
             for _ in 0..<10 { try runtime.advance() }
             runtime.closePlugins()
 
-            // 付けっぱなしにすると、ここが 10 になる
-            #expect(runtime.target.encodePassCount == 1)
+            // 付けっぱなしにすると、ここが 10 になる。**2 までは許す** (#2743) — 1 枚目を組んだ投入の
+            // 結末が次のフレームで配る時点で届いていなければ、配るのを持ち越すので、撮る係は 1 枚目が
+            // 書けるまで並びに残り、2 枚目も組む (1 枚目が打ち切られていたら、その絵で書くため)
+            #expect(runtime.target.encodePassCount <= 2)
             #expect(FileManager.default.fileExists(atPath: url.path))
         }
     }
@@ -1085,6 +1087,137 @@ struct SaveFramesTests {
             #expect(runtime.target.encodePassCount == 1)
             #expect(runtime.target.encodedStorage?.readCount == 1)
             #expect(try Data(contentsOf: first) == (try Data(contentsOf: second)))
+        }
+    }
+
+    // MARK: - GPU が打ち切ったフレーム (#2743)
+
+    /// `RenderDevice.dropsNextSubmissionForTesting` に渡す理由 (#1812 の run で実際に届いたもの)。
+    static let victim =
+        "Discarded (victim of GPU error/recovery) (00000005:kIOGPUCommandBufferCallbackErrorInnocentVictim)"
+
+    /// フレーム `frame` で塗る明るさ (表示の値)。**8 bit で割り切れる値にしてある** — 書いた PNG の
+    /// 画素 1 つで、どのフレームの絵かを言える。
+    static func level(atFrame frame: Int) -> Float { min(Float(frame) * 0.2, 1) }
+
+    /// **打ち切りは GPU を止めずに作る** (`DroppedWorkReadersTests` と同じ)。投入は GPU で普通に
+    /// 走り、結末だけが「打ち切り」として遅れて届く。だから打ち切ったフレームの絵そのものは無事で、
+    /// 見るのは書き出しがその枚を書かないかである。
+    ///
+    /// 変更前は、3 枚目の投入が打ち切られても、合図だけを待って 3 枚目を `f-0002.png` に書いた
+    /// (本物の打ち切りなら、置き場に残った前の絵が書かれる)。
+    @Test("連番の途中のフレームの投入が打ち切られたら、その枚を書かず、止め際に落ちた数として名乗る")
+    func aDroppedFrameIsNotWrittenIntoASequence() throws {
+        try withTemporaryDirectory("mokume-record-dropped-submission") { directory in
+            let pattern = directory.appendingPathComponent("f-####.png").path
+            let runtime = try makeRuntime { sketch in
+                // 3 枚目の描き切りの投入を打ち切ったことにする
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                let level = Self.level(atFrame: sketch.frameCount)
+                sketch.background(.display(red: level, green: level, blue: level))
+                if sketch.frameCount == 1 { sketch.beginRecord(pattern) }
+                if sketch.frameCount == 6 { sketch.endRecord() }
+            }
+            for _ in 0..<6 { try runtime.advance() }
+
+            let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+            #expect(names == ["f-0000.png", "f-0001.png", "f-0002.png", "f-0003.png"], "\(names)")
+            // 名前は録りの中の通し番号で、打ち切った 3 枚目は穴にならずに詰まる
+            let levels = try names.map { try readBack(directory.appendingPathComponent($0))[0, 0].red }
+            let expected = [1, 2, 4, 5].map { UInt8((Self.level(atFrame: $0) * 255).rounded()) }
+            #expect(
+                levels.count == expected.count
+                    && zip(levels, expected).allSatisfy { abs(Int($0) - Int($1)) <= 1 },
+                "書いた絵のフレームが違う: \(levels) (期待 \(expected))")
+            let said = try #require(
+                runtime.recorderWarnings?.message(for: .droppedFrames), "打ち切ったフレームを名乗っていない")
+            #expect(said.contains("wrote 4 frames. 1 did not reach it"), "\(said)")
+            // ランタイムが、配らなかったことを 1 度だけ理由つきで言う
+            let dropped = try #require(
+                runtime.warnings.message(for: .droppedOutletFrame), "配らなかったことを言っていない")
+            #expect(dropped.contains("frame 3") && dropped.contains(Self.victim), "\(dropped)")
+            runtime.closePlugins()
+        }
+    }
+
+    /// **打ち切られたフレームの次のフレームが面へ何も書かなければ、その絵も欠けている** (#2743 の
+    /// 反証 3)。打ち切られた投入は面を書かないので、何も書かない次のフレームの絵は打ち切りの前の
+    /// 絵のままである。範囲に打ち切りが入らなくても、面へ新しく書くまでは落とす (投げる読む口の
+    /// 持ち越し `heldDrop` と同じ規則)。
+    @Test("打ち切られたフレームの次が面へ何も書かなければ、その枚も書かず、面へ書いたら戻る")
+    func aFrameThatWritesNothingAfterADropIsNotWritten() throws {
+        try withTemporaryDirectory("mokume-record-dropped-then-idle") { directory in
+            let pattern = directory.appendingPathComponent("f-####.png").path
+            let runtime = try makeRuntime { sketch in
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                // 4 枚目は面へ何も書かない
+                if sketch.frameCount != 4 {
+                    let level = Self.level(atFrame: sketch.frameCount)
+                    sketch.background(.display(red: level, green: level, blue: level))
+                }
+                if sketch.frameCount == 1 { sketch.beginRecord(pattern) }
+                if sketch.frameCount == 6 { sketch.endRecord() }
+            }
+            for _ in 0..<6 { try runtime.advance() }
+
+            let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+            #expect(names == ["f-0000.png", "f-0001.png", "f-0002.png"], "\(names)")
+            let levels = try names.map { try readBack(directory.appendingPathComponent($0))[0, 0].red }
+            let expected = [1, 2, 5].map { UInt8((Self.level(atFrame: $0) * 255).rounded()) }
+            #expect(
+                levels.count == expected.count
+                    && zip(levels, expected).allSatisfy { abs(Int($0) - Int($1)) <= 1 },
+                "書いた絵のフレームが違う: \(levels) (期待 \(expected))")
+            let said = try #require(runtime.recorderWarnings?.message(for: .droppedFrames))
+            #expect(said.contains("wrote 3 frames. 2 did not reach it"), "\(said)")
+            runtime.closePlugins()
+        }
+    }
+
+    /// `save()` を頼んだフレームの投入が打ち切られたら、**次に配れたフレームの絵で書く** (#2743)。
+    /// 描画が転んだフレームと同じ持ち越しで、ランタイムの警告がそう言う。
+    @Test("save() を頼んだフレームの投入が打ち切られたら、次のフレームの絵で書き、1 度だけ言う")
+    func aSaveInADroppedFrameWritesTheNextFrame() throws {
+        try withTemporaryDirectory("mokume-save-dropped-submission") { directory in
+            let url = directory.appendingPathComponent("shot.png")
+            let runtime = try makeRuntime { sketch in
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                let level = Self.level(atFrame: sketch.frameCount)
+                sketch.background(.display(red: level, green: level, blue: level))
+                if sketch.frameCount == 3 { sketch.save(url.path) }
+            }
+            for _ in 0..<5 { try runtime.advance() }
+            runtime.closePlugins()
+
+            let written = try readBack(url)[0, 0].red
+            let fourth = UInt8((Self.level(atFrame: 4) * 255).rounded())
+            #expect(abs(Int(written) - Int(fourth)) <= 1, "4 枚目の絵で書いていない: \(written) (期待 \(fourth))")
+            let said = try #require(runtime.warnings.message(for: .droppedOutletFrame))
+            #expect(said.contains("save()"), "save() がどうなるかを言っていない: \(said)")
+        }
+    }
+
+    /// 動画の途中のフレームの投入が打ち切られたら、その枚は入らず、止め際に落ちた数として名乗る
+    /// (#2743)。ほかの枚の時刻はずれない (落ちた枚の分だけ、前の枚が長く映る — `RecordedSpan`)。
+    @Test("動画の途中のフレームの投入が打ち切られたら、その枚を入れず、落ちた数として名乗る")
+    func aDroppedFrameIsLeftOutOfAMovie() throws {
+        try withTemporaryDirectory("mokume-movie-dropped-submission") { directory in
+            let path = directory.appendingPathComponent("motion.mov").path
+            let runtime = try makeRuntime { sketch in
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                let level = Self.level(atFrame: sketch.frameCount)
+                sketch.background(.display(red: level, green: level, blue: level))
+                if sketch.frameCount == 1 { sketch.beginRecord(path) }
+                if sketch.frameCount == 6 { sketch.endRecord() }
+            }
+            for _ in 0..<6 { try runtime.advance() }
+
+            let said = try #require(
+                runtime.recorderWarnings?.message(for: .droppedFrames), "打ち切ったフレームを名乗っていない")
+            #expect(said.contains("wrote 4 frames. 1 did not reach it"), "\(said)")
+            #expect(runtime.warnings.hasWarned(.droppedOutletFrame))
+            runtime.closePlugins()
+            #expect(FileManager.default.fileExists(atPath: path))
         }
     }
 

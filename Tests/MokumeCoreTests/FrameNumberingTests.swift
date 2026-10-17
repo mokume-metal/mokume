@@ -162,7 +162,12 @@ struct FrameNumberingTests {
         let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
         outlet.runtime = runtime
 
-        for _ in 0..<3 { try runtime.advance() }
+        for _ in 0..<3 {
+            try runtime.advance()
+            // **配りがちょうど 1 枚遅れになる間合いを作る** (#2743)。結末が配る時点で届いていない絵は
+            // もう 1 フレーム持ち越されるので、届くのを待ってから進める (`PluginSeamTests.advanceAndSettle`)
+            SharedFrameSurfaceTests.awaitOutcomes(runtime.target.gpu)
+        }
         // 閉じるときに、まだ配っていない最後の 1 枚が届く
         runtime.closePlugins()
 

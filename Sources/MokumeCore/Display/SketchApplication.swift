@@ -778,8 +778,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 書き出しを締めくくる。**書き出す経路でなければ何もしない。**
     ///
     /// 揃わなかったら理由を名乗り、0 以外で終わる — 道具 (`mokume render`) は終了コードで
-    /// 「書けたか」を読む。揃ったとは、決めた枚数を全部描き、撮る係が 1 度も書き損じなかった
-    /// ことである。書き損じの中身は撮る係が既に名乗っているので、ここでは繰り返さない。
+    /// 「書けたか」を読む。揃ったとは、決めた枚数を全部描き、**GPU がどの枚の仕事も打ち切らず**、
+    /// 撮る係が 1 度も書き損じなかったことである。書き損じの中身は撮る係が既に名乗っているので、
+    /// ここでは繰り返さない。
+    ///
+    /// **GPU が打ち切った枚は、描けなかった枚と同じく穴に数える** ([#2743])。打ち切った枚は出口へ
+    /// 配らないので書き出しに入らない (`SketchRuntime` の `outletFramesDropped`)。1 枚だけ描いて書き出す
+    /// 入口 (`renderFrame(to:)`) が打ち切りで投げるのとも揃う。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
     private func concludeRender() {
         guard case .render(let request) = outlet else { return }
         var complete = true
@@ -794,6 +801,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             Diagnostics.warn(
                 "\(request.destination) is missing \(framesFailedToDraw) of \(request.frameCount)"
                     + " frames (they could not be drawn)")
+        }
+        if runtime.outletFramesDropped > 0 {
+            complete = false
+            Diagnostics.warn(
+                "\(request.destination) is missing \(runtime.outletFramesDropped) of \(request.frameCount)"
+                    + " frames (the GPU dropped the work behind them)")
         }
         if runtime.recordingFailed {
             complete = false

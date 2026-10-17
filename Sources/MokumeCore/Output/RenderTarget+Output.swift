@@ -17,7 +17,7 @@ extension RenderTarget {
     /// **頼まれるまで 1 パスも積まない。** 出口が 1 つも無いスケッチは、この経路の
     /// 存在を一切払わない。
     ///
-    /// 返るのは**使い回している 1 枚**なので、次に取り出すと中身が書き換わる
+    /// 返るのは**使い回している 1〜2 枚のどれか**なので、後で取り出すと中身が書き換わる
     /// ([ADR-0023] 決定 5)。持ち帰って後で読む用途には ``EncodedImage/read()`` で
     /// 値にしてから渡す。
     ///
@@ -26,15 +26,21 @@ extension RenderTarget {
     /// 直前の ``SketchRuntime``。かつてはここで投入済みの全部を待っており、出口が 1 本
     /// でも刺さっていると毎フレーム CPU が GPU に追いついてしまっていた。
     ///
+    /// - Parameter busy: 上書きしてはいけない置き場 — 出口へ配るのを持ち越した、前のフレームの
+    ///   絵 ([#2743])。それが 1 枚目なら 2 枚目 (``spareEncodedStorage``) へ組み、2 枚目が
+    ///   まだ無ければ 1 度だけ作る。`nil` なら 1 枚目へ組む。
+    ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
-    func encodeToImage() throws(RenderFailure) -> EncodedImage {
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    func encodeToImage(avoiding busy: EncodedImage? = nil) throws(RenderFailure) -> EncodedImage {
         try encode { () throws(RenderFailure) in
             encodePassCount += 1
-            if let encodedStorage { return encodedStorage }
+            if let encodedStorage, encodedStorage !== busy { return encodedStorage }
+            if encodedStorage != nil, let spareEncodedStorage { return spareEncodedStorage }
             let image = try EncodedImage(gpu: gpu, width: width, height: height)
-            encodedStorage = image
+            if encodedStorage == nil { encodedStorage = image } else { spareEncodedStorage = image }
             encodedImagesMade += 1
             return image
         }
@@ -50,13 +56,17 @@ extension RenderTarget {
     /// ``RenderFailure/workDropped(reason:)`` を投げる。出口へ渡す ``encodeToImage()`` そのものは
     /// 投げない (毎フレーム走る口なので・[ADR-0020] 決定 5)。
     ///
-    /// - Parameter scale: 縮小率 (``EncodedImage/read(scaledBy:)`` と同じ。1 = 実寸)。
+    /// - Parameters:
+    ///   - scale: 縮小率 (``EncodedImage/read(scaledBy:)`` と同じ。1 = 実寸)。
+    ///   - busy: 上書きしてはいけない置き場 (``encodeToImage(avoiding:)`` と同じ)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
-    func encodeToImageAndRead(scaledBy scale: Double = 1) throws(RenderFailure) -> DisplayImage {
+    func encodeToImageAndRead(
+        scaledBy scale: Double = 1, avoiding busy: EncodedImage? = nil
+    ) throws(RenderFailure) -> DisplayImage {
         try refuseHeldDrop()
-        let image = try encodeToImage()
+        let image = try encodeToImage(avoiding: busy)
         // 出力段は最後に積んだ 1 本なので、名指しで待てば範囲の投入はすべて終わっている (#927)
         try gpu.waitForSubmission(image.pendingSubmission)
         try judgeDroppedWork()
@@ -195,8 +205,8 @@ extension RenderTarget {
     /// 費用の大半だった。出るバイト列は CPU の変換と全入力で同じである ([#1762] で揃えた。
     /// 検査は CPU の変換を独立した参照として残して突き合わせる)。
     ///
-    /// **置き場は出口へ渡す絵とは別の 1 枚である。** 出口へ渡す絵は次のフレームの頭まで
-    /// 控えられている (#927) ので、合間にここを呼んでも控えの中身を書き換えない。こちらの
+    /// **置き場は出口へ渡す絵とは別の 1 枚である。** 出口へ渡す絵は 1〜2 フレーム控えられている
+    /// (#927・結末が未着なら持ち越す #2743) ので、合間にここを呼んでも控えの中身を書き換えない。こちらの
     /// 1 枚も頼まれて初めて作り、以後は使い回す ([ADR-0023] 決定 5)。
     ///
     /// **待てなければ投げる。** 待ち口は全画素を読み戻していたときと同じ `RenderDevice.settle()`
