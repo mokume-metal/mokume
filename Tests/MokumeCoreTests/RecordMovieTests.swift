@@ -763,7 +763,9 @@ struct RecordMovieTests {
         var fromTheRoad: [DisplayImage] = []
         for _ in 0..<frames {
             try runtime.advance()
-            fromTheRoad.append(try runtime.target.encodeToImage().read())
+            // **配るのを持ち越した前のフレームの置き場へは組まない** (#2743)。置き場を選ばずに組むと、
+            // 撮っている動画へ前のフレームとして渡る絵が、いまの絵に書き換わる
+            fromTheRoad.append(try runtime.encodePictureForReading().read())
         }
         try runtime.advance()
         runtime.closePlugins()

@@ -1060,8 +1060,10 @@ struct SaveFramesTests {
             for _ in 0..<10 { try runtime.advance() }
             runtime.closePlugins()
 
-            // 付けっぱなしにすると、ここが 10 になる
-            #expect(runtime.target.encodePassCount == 1)
+            // 付けっぱなしにすると、ここが 10 になる。**2 までは許す** (#2743) — 1 枚目を組んだ投入の
+            // 結末が次のフレームで配る時点で届いていなければ、配るのを持ち越すので、撮る係は 1 枚目が
+            // 書けるまで並びに残り、2 枚目も組む (1 枚目が打ち切られていたら、その絵で書くため)
+            #expect(runtime.target.encodePassCount <= 2)
             #expect(FileManager.default.fileExists(atPath: url.path))
         }
     }
@@ -1130,7 +1132,58 @@ struct SaveFramesTests {
             let said = try #require(
                 runtime.recorderWarnings?.message(for: .droppedFrames), "打ち切ったフレームを名乗っていない")
             #expect(said.contains("wrote 4 frames. 1 did not reach it"), "\(said)")
+            // ランタイムが、配らなかったことを 1 度だけ理由つきで言う
+            let dropped = try #require(
+                runtime.warnings.message(for: .droppedOutletFrame), "配らなかったことを言っていない")
+            #expect(dropped.contains("frame 3") && dropped.contains(Self.victim), "\(dropped)")
             runtime.closePlugins()
+        }
+    }
+
+    /// `save()` を頼んだフレームの投入が打ち切られたら、**次に配れたフレームの絵で書く** (#2743)。
+    /// 描画が転んだフレームと同じ持ち越しで、ランタイムの警告がそう言う。
+    @Test("save() を頼んだフレームの投入が打ち切られたら、次のフレームの絵で書き、1 度だけ言う")
+    func aSaveInADroppedFrameWritesTheNextFrame() throws {
+        try withTemporaryDirectory("mokume-save-dropped-submission") { directory in
+            let url = directory.appendingPathComponent("shot.png")
+            let runtime = try makeRuntime { sketch in
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                let level = Self.level(atFrame: sketch.frameCount)
+                sketch.background(.display(red: level, green: level, blue: level))
+                if sketch.frameCount == 3 { sketch.save(url.path) }
+            }
+            for _ in 0..<5 { try runtime.advance() }
+            runtime.closePlugins()
+
+            let written = try readBack(url)[0, 0].red
+            let fourth = UInt8((Self.level(atFrame: 4) * 255).rounded())
+            #expect(abs(Int(written) - Int(fourth)) <= 1, "4 枚目の絵で書いていない: \(written) (期待 \(fourth))")
+            let said = try #require(runtime.warnings.message(for: .droppedOutletFrame))
+            #expect(said.contains("save()"), "save() がどうなるかを言っていない: \(said)")
+        }
+    }
+
+    /// 動画の途中のフレームの投入が打ち切られたら、その枚は入らず、止め際に落ちた数として名乗る
+    /// (#2743)。ほかの枚の時刻はずれない (落ちた枚の分だけ、前の枚が長く映る — `RecordedSpan`)。
+    @Test("動画の途中のフレームの投入が打ち切られたら、その枚を入れず、落ちた数として名乗る")
+    func aDroppedFrameIsLeftOutOfAMovie() throws {
+        try withTemporaryDirectory("mokume-movie-dropped-submission") { directory in
+            let path = directory.appendingPathComponent("motion.mov").path
+            let runtime = try makeRuntime { sketch in
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                let level = Self.level(atFrame: sketch.frameCount)
+                sketch.background(.display(red: level, green: level, blue: level))
+                if sketch.frameCount == 1 { sketch.beginRecord(path) }
+                if sketch.frameCount == 6 { sketch.endRecord() }
+            }
+            for _ in 0..<6 { try runtime.advance() }
+
+            let said = try #require(
+                runtime.recorderWarnings?.message(for: .droppedFrames), "打ち切ったフレームを名乗っていない")
+            #expect(said.contains("wrote 4 frames. 1 did not reach it"), "\(said)")
+            #expect(runtime.warnings.hasWarned(.droppedOutletFrame))
+            runtime.closePlugins()
+            #expect(FileManager.default.fileExists(atPath: path))
         }
     }
 

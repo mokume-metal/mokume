@@ -216,6 +216,12 @@ nonisolated final class CommandFaultLog: Sendable {
 
     private let state = Mutex(State())
 
+    /// 検査が遅らせた結末 (`RenderDevice.holdsNextOutcomeForTesting`・[#2743])。正常に終わった投入の
+    /// 番号を、記録へ書かずに置く。製品の経路では常に空。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    private let heldForTesting = Mutex<[UInt64]>([])
+
     /// 結末の到着を待つ側を眠らせ、起こす。**状態はここに置かない** (上の `state` が守る)。
     private let arrival = NSCondition()
 
@@ -246,6 +252,23 @@ nonisolated final class CommandFaultLog: Sendable {
             state.remember(Drop(submission: submission, reason: reason, wrote: wrote))
             return Self.count(reason, into: &state)
         }
+    }
+
+    /// 番号 `submission` の投入が正常に終わったことを、**記さずに抱える** (検査の差し込み・[#2743])。
+    /// ``releaseHeldForTesting()`` が記す。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    func holdForTesting(_ submission: UInt64) {
+        heldForTesting.withLock { $0.append(submission) }
+    }
+
+    /// 抱えた結末を、正常に終わったものとして記す (``holdForTesting(_:)``)。
+    func releaseHeldForTesting() {
+        let held = heldForTesting.withLock { held in
+            defer { held.removeAll() }
+            return held
+        }
+        for submission in held { noteFinished(submission) }
     }
 
     /// 番号 `submission` の投入が正常に終わったことを記す。``unresolved`` を消す。
@@ -307,6 +330,21 @@ nonisolated final class CommandFaultLog: Sendable {
         answers.removeAll(keepingCapacity: true)
         state.withLock { state in
             for submission in submissions { answers.append(state.outcome(of: submission)) }
+        }
+    }
+
+    /// 番号が `floor` より大きく `last` 以下の投入のうち打ち切られたもの (番号の昇順) を、**待たずに**
+    /// 答える ([#2743])。範囲の結末がまだ全部届いていなければ `nil`。
+    ///
+    /// 答えは ``drops(after:through:waitingUpTo:)`` が届いた後に返すものと同じである (届かなかった結末・
+    /// 忘れた打ち切りに掛かりうる番号を、打ち切りの側に倒す)。出口へ絵を配る口が、毎フレーム main
+    /// actor で眠らずに問うために使う — 届いていなければ、配るのを次のフレームへ持ち越す。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    func settledDrops(after floor: UInt64, through last: UInt64) -> [Drop]? {
+        state.withLock { state in
+            guard state.arrivedThrough >= last else { return nil }
+            return state.drops(after: floor, through: last)
         }
     }
 

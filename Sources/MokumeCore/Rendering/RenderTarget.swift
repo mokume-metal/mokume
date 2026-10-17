@@ -130,6 +130,16 @@ import MokumeDiagnostics
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     var encodedStorage: EncodedImage?
+    /// 出力段を通した絵の 2 枚目の置き場 ([#2743])。**出口へ配るのを持ち越したフレームの絵を
+    /// 上書きしないために、初めて持ち越したときに 1 度だけ作り、以後は使い回す。**
+    ///
+    /// 出口へ配るのは、その絵を組んだ投入の結末 (GPU が打ち切ったか) を確かめてからである
+    /// (`SketchRuntime` の `settleOldestOutletFrame(waiting:)`)。結末が配る時点で届いていなければ
+    /// 配るのを次のフレームへ持ち越すので、その間のフレームはこちらへ組む
+    /// (``encodeToImage(avoiding:)``)。持ち越さないスケッチ (間合いを取って回る窓) は作らない。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    var spareEncodedStorage: EncodedImage?
     /// 同期で読む ``encodeForDisplay(scale:)`` が出力段を通した絵の置き場 ([#1752])。
     ///
     /// **出口へ渡す ``encodedStorage`` とは別に持つ。** あちらは次のフレームの頭まで出口へ
@@ -151,7 +161,7 @@ import MokumeDiagnostics
     var lastEncodeSubmission: UInt64 = 0
 
     /// 出力段を通した絵の置き場を作った回数。**作り直していないこと**を
-    /// 検査から数えるための目印。
+    /// 検査から数えるための目印。高々 2 (``encodedStorage`` と ``spareEncodedStorage``)。
     var encodedImagesMade = 0
 
     /// 投げる読む口 (``readPixels()``・``encodeForDisplay(scale:)`` と、それを通る口) が、GPU の

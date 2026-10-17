@@ -358,6 +358,22 @@ import MokumeDiagnostics
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     var losesNextOutcomeForTesting = false
 
+    /// 検査から「次の投入の結末の知らせが遅れて届く」を作る差し込み。製品の経路では常に `false`。
+    ///
+    /// 次の ``commit(_:retaining:writing:)`` が取って下ろす。その投入が正常に終わったとき、結末を記録へ
+    /// 書かずに抱え、``releaseHeldOutcomesForTesting()`` で書く ([#2743])。結末は完了の合図より遅れて
+    /// 届くので、出口へ配る口は、配る時点で届いていない絵を持ち越す。その持ち越しを、間合いに頼らずに
+    /// 起こすための穴である (``losesNextOutcomeForTesting`` は届かないままなので、待つ側しか見えない)。
+    /// 打ち切られた投入は抱えない。公開はしない。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    var holdsNextOutcomeForTesting = false
+
+    /// ``holdsNextOutcomeForTesting`` で抱えた結末を、いま記録へ書く。検査からだけ呼ぶ。
+    func releaseHeldOutcomesForTesting() {
+        commandFaults.releaseHeldForTesting()
+    }
+
     /// 投げる読む口が、範囲の結末が届くのを待つ上限 (``droppedWork(after:through:)``)。
     ///
     /// 製品の経路では ``waitLimitSeconds`` のまま。**検査だけが縮める** — 届かない結末を作る検査
@@ -451,12 +467,14 @@ import MokumeDiagnostics
     ///     (``dropsNextSubmissionForTesting``)。製品の経路では常に `nil`。
     ///   - losesOutcomeForTesting: 検査がこの投入の結末を届かないことにしたか
     ///     (``losesNextOutcomeForTesting``)。製品の経路では常に `false`。
+    ///   - holdsOutcomeForTesting: 検査がこの投入の結末を遅らせたか (``holdsNextOutcomeForTesting``)。
+    ///     製品の経路では常に `false`。
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private func makeCommitOptions(
         finishing submission: UInt64, wrote: [ObjectIdentifier], droppedForTesting: String?,
-        losesOutcomeForTesting: Bool
+        losesOutcomeForTesting: Bool, holdsOutcomeForTesting: Bool
     ) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
@@ -465,8 +483,11 @@ import MokumeDiagnostics
             // (`releaseOnNotice`) ので、先に積むと、記す前に走って結末を「まだ」と読み、取り消しが次の照会
             // まで遅れる。頭で照会しない口 (止まっている間の追い付き・出す先を読む口) は、知らせの照会に頼る。
             //
-            // 検査が知らせを落としたことにした投入は、記録へ何も書かない
-            if !losesOutcomeForTesting {
+            // 検査が知らせを落としたことにした投入は、記録へ何も書かない。遅らせた投入は、正常に
+            // 終わっていれば記録へ書かずに抱える (検査が後で書く)
+            if holdsOutcomeForTesting, feedback.error == nil, droppedForTesting == nil {
+                commandFaults.holdForTesting(submission)
+            } else if !losesOutcomeForTesting {
                 if let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting {
                     if commandFaults.note(reason, droppedAt: submission, wrote: wrote),
                         droppedForTesting == nil
@@ -1259,6 +1280,18 @@ import MokumeDiagnostics
         commandFaults.undelivered(submission)
     }
 
+    /// ``droppedWork(after:through:)`` の**待たない**形 ([#2743])。範囲の結末がまだ全部届いていなければ
+    /// `nil` を返し、眠らない。答えの倒し方は ``CommandFaultLog/settledDrops(after:through:)``。
+    ///
+    /// 出口へ絵を配る口 (`SketchRuntime`) が使う。配る時点で結末が届いていなければ、配るのを次の
+    /// フレームへ持ち越す — 毎フレームの経路で待ちを増やさないためである (ADR-0023 決定 5 と同じ線)。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    func settledDrops(after floor: UInt64, through last: UInt64) -> [CommandFaultLog.Drop]? {
+        guard last > floor else { return [] }
+        return commandFaults.settledDrops(after: floor, through: last)
+    }
+
     /// 番号が `floor` より大きく `last` 以下の投入のうち、GPU が打ち切ったもの (番号の昇順)。
     /// **その範囲の結末が届くまで待つ** ([#1932])。
     ///
@@ -1418,13 +1451,16 @@ import MokumeDiagnostics
         dropsNextSubmissionForTesting = nil
         let losesOutcomeForTesting = losesNextOutcomeForTesting
         losesNextOutcomeForTesting = false
+        let holdsOutcomeForTesting = holdsNextOutcomeForTesting
+        holdsNextOutcomeForTesting = false
         // **結末を受け取るお願いを添える。** 添えなければ Metal は打ち切りを捨てるので、
         // 描き上げられなかった仕事も「終わった」としか見えない (#1065)
         queue.commit(
             [commands],
             options: makeCommitOptions(
                 finishing: submission, wrote: surfaces.map(ObjectIdentifier.init),
-                droppedForTesting: droppedForTesting, losesOutcomeForTesting: losesOutcomeForTesting))
+                droppedForTesting: droppedForTesting, losesOutcomeForTesting: losesOutcomeForTesting,
+                holdsOutcomeForTesting: holdsOutcomeForTesting))
         recordSubmission(submission, of: commands)
         for surface in surfaces { surface.noteWritten(by: submission) }
         // **投入した本体も、終わるまで抱える。** 記録の実体は置き場 (allocator) にあるが、

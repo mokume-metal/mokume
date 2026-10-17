@@ -167,6 +167,17 @@ struct PluginSeamTests {
         return try SketchRuntime(sketch: SeamSketch(), gpu: try RenderDevice())
     }
 
+    /// 1 フレーム進め、積んだ投入の結末が届くまで待つ。**配りがちょうど 1 枚遅れになる間合いを作る**
+    /// ([#2743])。出口へ配るのは絵を組んだ投入の結末を確かめてからで、間を空けずに回すと、配る時点で
+    /// 結末がまだ届いていない絵はもう 1 フレーム持ち越される。ここの検査が見るのは並びと配り方で、
+    /// 持ち越すかどうかではない (持ち越しは `DroppedOutletFrameTests` が見る)。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    private func advanceAndSettle(_ runtime: SketchRuntime) throws {
+        try runtime.advance()
+        SharedFrameSurfaceTests.awaitOutcomes(runtime.target.gpu)
+    }
+
     // MARK: - 並びと束
 
     @Test("1 つの束が、出口と入り口の両方へ入れる")
@@ -175,7 +186,7 @@ struct PluginSeamTests {
         let inlet = CountingInlet()
         let runtime = try makeRuntime([BothPlugin(outlet: outlet, inlet: inlet)])
 
-        try runtime.advance()
+        try advanceAndSettle(runtime)
         try runtime.advance()
 
         #expect(outlet.opened == 1)
@@ -196,7 +207,7 @@ struct PluginSeamTests {
         ])
 
         // 配りは 1 枚遅れるので、1 枚届かせるには 2 フレーム要る (#927)
-        try runtime.advance()
+        try advanceAndSettle(runtime)
         try runtime.advance()
 
         #expect(first.received.count == 1)
@@ -214,7 +225,7 @@ struct PluginSeamTests {
         ])
 
         // 配りは 1 枚遅れる (#927)
-        try runtime.advance()
+        try advanceAndSettle(runtime)
         try runtime.advance()
 
         #expect(log.names == ["a", "b", "c"])
@@ -261,9 +272,9 @@ struct PluginSeamTests {
         let runtime = try makeRuntime([OutletOnlyPlugin(outlet: outlet)])
 
         // 配りは 1 枚遅れる (#927)。毎フレーム同じ絵なので、比べる相手は変わらない
+        try advanceAndSettle(runtime)
         try runtime.advance()
-        try runtime.advance()
-        let fromRoad = try runtime.target.encodeToImage().read()[0, 0]
+        let fromRoad = try runtime.encodePictureForReading().read()[0, 0]
 
         #expect(outlet.received.count == 1)
         #expect(outlet.received[0].first == fromRoad)
@@ -278,8 +289,10 @@ struct PluginSeamTests {
 
         for _ in 0..<8 { try runtime.advance() }
 
-        // 置き場を作り直していない = フレームごとに確保していない (ADR-0023 決定 5)
-        #expect(runtime.target.encodedImagesMade == 1)
+        #expect(runtime.target.encodePassCount == 8)
+        // 置き場を作り直していない = フレームごとに確保していない (ADR-0023 決定 5)。2 枚目は、配るのを
+        // 持ち越したときに 1 度だけ作る (#2743)。間を空けずに回すと持ち越しうるので、2 までは許す
+        #expect(runtime.target.encodedImagesMade <= 2)
     }
 
     @Test("出口が 1 つも無ければ、道を 1 回も通らない")
@@ -303,7 +316,7 @@ struct PluginSeamTests {
         ])
 
         // 配りは 1 枚遅れる (#927)
-        try runtime.advance()
+        try advanceAndSettle(runtime)
         try runtime.advance()
 
         #expect(healthy.received.count == 1)
@@ -398,7 +411,7 @@ struct PluginSeamTests {
             OutletOnlyPlugin(outlet: healthy),
         ])
 
-        for _ in 0..<8 { try runtime.advance() }
+        for _ in 0..<8 { try advanceAndSettle(runtime) }
 
         // 2 枚受け取ったあと limit 回転んで外れる。**外れたら呼ばれなくなる**ので、
         // 呼ばれた回数がそこで止まる (受け取れた枚数だけを見ると、外さない実装でも
