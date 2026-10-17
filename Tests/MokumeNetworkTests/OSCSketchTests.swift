@@ -63,6 +63,47 @@ struct OSCSketchTests {
         #expect(second.frames == first.frames)
     }
 
+    /// **走っている所で呼べば、投げる 4 口は渡したポートで作ったものを足して返す** ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。
+    /// 走らせない検査は投げることしか見られないので、成功する側をここで見る (端の 65535 も)。足されたことは、
+    /// 終わり (`closePlugins()`) に閉じられて `stopped` になることで見る — 足されていなければ誰も閉じない。
+    /// ポートは実際に開く (すべての口で受ける) が、何も送らず、すぐ閉じる。
+    @Test("setup() で呼んだ投げる 4 口は、渡したポートで作ったものを走っているスケッチへ足して返す (#2740)")
+    func throwingMakersSucceedWhileRunning() throws {
+        var tcp: TCPServer?
+        var socket: WebSocketServer?
+        var udp: UDPPort?
+        var osc: OSCPort?
+        var failures: [String] = []
+        let log = OutsideRun()
+        try OutsideRun.$current.withValue(log) {
+            OSCSketch.onSetup = { sketch in
+                do {
+                    tcp = try sketch.createTCPServer(65535)
+                    socket = try sketch.createWebSocketServer(65534)
+                    udp = try sketch.createUDP(listen: 65533, send: ("127.0.0.1", 1))
+                    osc = try sketch.createOSC(listen: 65532, send: ("127.0.0.1", 1))
+                } catch {
+                    failures.append("\(error)")
+                }
+            }
+            OSCSketch.onDraw = { _ in }
+            defer { OSCSketch.onSetup = { _ in } }
+            let runtime = try SketchRuntime(sketch: OSCSketch(), gpu: try RenderDevice())
+            try runtime.advance()
+            #expect(failures.isEmpty, "\(failures)")
+            #expect(tcp?.port == 65535)
+            #expect(socket?.port == 65534)
+            #expect(udp?.port == 65533)
+            #expect(osc?.port == 65532)
+            #expect(log.messages.isEmpty, "走っている所では何も言わない: \(log.messages)")
+            runtime.closePlugins()
+        }
+        #expect(tcp?.state == .stopped)
+        #expect(socket?.state == .stopped)
+        #expect(udp?.state == .stopped)
+        #expect(osc?.state == .stopped)
+    }
+
     @Test("stop() の後は何も届かず、状態は stopped を名乗る")
     func stopEndsDelivery() throws {
         let batches = [[OSCMessage("/tick", 1)]]

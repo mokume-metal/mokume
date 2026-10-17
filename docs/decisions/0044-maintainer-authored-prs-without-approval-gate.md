@@ -87,7 +87,7 @@ ADR-0003 決定 6 自身が書いているとおり、この分離は暗号的�
 ## 影響
 
 - **柵の変更も、他の PR と同じく必須チェックだけで merge される。** 守りは文書の規約と着手前のプラン、後からの振り返りだけになる。フックの効かない環境 (Codex など) でも同じである
-- **`review-gate` を既定ブランチの版で走らせる仕組みの脱出口 ([ADR-0031](0031-triage-as-the-single-gate.md) 決定 2 の 2026-10-03 改訂) が、前提を失う。** PR が `pr-gate.yml` の `ref` の行を外せば、自分の版の判定で通せる。突くには `pr-gate.yml` を意図して書き換える必要があり、それは PR の diff と着手前のプランに現れるので、代償として受け入れる
+- **`review-gate` を既定ブランチの版で走らせる仕組みの脱出口 ([ADR-0031](0031-triage-as-the-single-gate.md) 決定 2 の 2026-10-03 改訂) が、前提を失う。** PR が `pr-gate.yml` の checkout の `with:` と `ref` の行を外し、それを固定する `scripts/tests/pr_gate_workflow_test.py` の `test_判定は既定ブランチの版で走らせる` の `ref` の固定も同じ PR で外せば、自分の版の判定で通せる (外すものは ADR-0031 決定 2 の脱出口)。突くには `pr-gate.yml` と検査の両方を意図して書き換える必要があり、それは PR の diff と着手前のプランに現れるので、代償として受け入れる
 - **dependabot の PR も、他の PR と同じく必須チェックだけで入る。** [ADR-0005](0005-pr-labels-as-machine-input.md) 決定 4 が根拠にしていた「`.github/workflows/` を触るので毎回承認が入る」は成り立たなくなる
 - **ルールセットの適用・解除は、エージェントにもできる操作として認める。** 実態は ADR-0003 の頃から同じで、文書が実態に揃う。適用は引き続き定義ファイルの PR から行う ([ADR-0006](0006-github-settings-as-code.md))
 - auto mode の分類器は、メンテナのユーザー設定が「ゲートが green なら merge まで」を明示的に許しているので、承認なしの auto-merge で止まらない
@@ -95,3 +95,7 @@ ADR-0003 決定 6 自身が書いているとおり、この分離は暗号的�
 #### 改訂 (2026-10-14) — 影響の脱出口の置き場を `pr-gate.yml` へ移す
 
 当初は、判定のジョブが `.github/workflows/ci.yml` に居たので、上の脱出口は `ci.yml` の `ref` の行だった。[#2669](https://github.com/mokume-metal/mokume/issues/2669) で判定は `.github/workflows/pr-gate.yml` の `pr-gate` ジョブへ移った ([ADR-0031](0031-triage-as-the-single-gate.md) 決定 2 の 2026-10-14 の改訂)。突く道と、それが PR の diff と着手前のプランに現れるという代償は変わらない。
+
+#### 改訂 (2026-10-17) — 影響の脱出口に、検査の固定も外す必要があることを足す
+
+当初は、突く道を「`pr-gate.yml` の `ref` の行を外す」とだけ書いていた。実際にはその行を `scripts/tests/pr_gate_workflow_test.py` の `test_判定は既定ブランチの版で走らせる` が固定していて、`ref` の行だけを外した PR は必須の `ci-gate` で赤になる。`ref` だけを外すと空になる checkout の `with:` も `actionlint` が赤にする ([#2724](https://github.com/mokume-metal/mokume/issues/2724)・[ADR-0031](0031-triage-as-the-single-gate.md) 決定 2 の 2026-10-17 の改訂)。突くために書き換えるものが `pr-gate.yml` の 2 行と検査の固定に増えるだけで、どれも PR の diff に現れるので、代償の評価は変わらない。

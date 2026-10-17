@@ -32,11 +32,12 @@ struct ParamRequest: ExchangeRequest {
     /// **名前が読めない 1 件は、名指しする相手が無い**ので、名前を空にして `typeMismatch` に
     /// 載せる (宣言されていない名前としても、読めた 1 件の名前が空であっても、応答の形は同じ)。
     ///
-    /// **要求の外枠 — 読める `id` と、配列としての `values` — が揃わないときは、これまでどおり
-    /// 要求ごと読まず、応答しない。** `id` が読めても `values` が配列でない・欠けた要求も含む。
-    /// ADR-0030 決定 2 は `id` を読めれば応答すると読めるので食い違うが、入力の面
-    /// (``InputRequest``) の据え置きと揃えて広げていない
-    /// ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
+    /// **要求の外枠が読めないときも、`id` を読めれば応える** ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
+    /// `values` が配列でない・欠けた・`null` の要求は、名前の読めない 1 件だけを持つ要求として当てる
+    /// (``ParamSurface`` が `rejected` に名前を空にして `typeMismatch` で載せる)。名指しする相手が
+    /// 無いのは名前の読めない 1 件と同じで、応答の形も理由の列挙も変えずに「届いたが読めなかった」が
+    /// 伝わる ([ADR-0030] 決定 2・3)。`id` が読めない要求 (欠け・文字列でない・JSON でない) は、
+    /// echo する相手が無いので応えない (``RequestFile``)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     struct Entry: Decodable, Equatable {
@@ -54,6 +55,14 @@ struct ParamRequest: ExchangeRequest {
         init(name: String, value: ParamValue) {
             self.name = name
             reading = .value(value)
+        }
+
+        /// 名前の読めない 1 件。外枠が読めない要求は、これだけを持つ要求として当てる (#2550)。
+        static var nameless: Entry { Entry(name: "", reading: .nameless) }
+
+        private init(name: String, reading: Reading) {
+            self.name = name
+            self.reading = reading
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -290,10 +299,17 @@ final class ParamSurface: DeclarationWatcher {
     @discardableResult
     func drain() -> ParamReport? {
         takeDeclarationChange()
-        if let request = requests.pending() {
+        if let pending = requests.pending() {
             // 応えようとしたことは、応答を書けたかどうかによらず記録する (観測と同じ)
-            defer { requests.markHandled(request.id) }
-            return apply(request)
+            defer { requests.markHandled(pending.id) }
+            switch pending {
+            case .request(let request):
+                return apply(request)
+            case .unreadable(let id, _):
+                // **外枠が読めない要求にも応える** (#2550)。名前の読めない 1 件だけを持つ要求として
+                // 当てるので、`rejected` に名前の無い `typeMismatch` が 1 件載り、値は何も変わらない
+                return apply(ParamRequest(id: id, values: [.nameless]))
+            }
         }
         guard valuesChanged else { return nil }
         return publish()

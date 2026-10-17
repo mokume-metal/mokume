@@ -202,27 +202,71 @@ struct ParameterUnreadableEntryTests {
             ])
     }
 
-    // MARK: - 外枠が読めない要求 (完了条件 4・反証 7)
+    // MARK: - 外枠が読めない要求 (#2550)
 
-    /// **外枠は据え置き。** `id` が読めても `values` が配列でない・欠けた要求は応答しない
-    /// ([#2550](https://github.com/mokume-metal/mokume/issues/2550) が ADR-0030 決定 2 との
-    /// 食い違いを持つ)。この検査は、決まるまで今の形を固定する。
-    @Test("外枠が読めない要求は、これまでどおり応答せず捨てる", arguments: [
+    /// **外枠が読めなくても、`id` を読めれば応える** ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
+    /// `values` が配列でない・欠けた・`null` の要求は、名前の読めない 1 件だけを持つ要求として当たる:
+    /// `rejected` に名前の無い `typeMismatch` が 1 件載り、値は何も変わらない ([ADR-0030] 決定 2・3)。
+    /// 応えないと、書き手には「届いたが読めなかった」と「走っていない」の見分けが付かない。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    @Test("外枠が読めない要求にも、id を echo し、名前の無い typeMismatch を 1 件載せて応える", arguments: [
         #"{"id":"x","values":5}"#,
         #"{"id":"x"}"#,
         #"{"id":"x","values":null}"#,
+        #"{"id":"x","values":{"name":"count","type":"int","value":8}}"#,
+    ])
+    func aRequestWithAnUnreadableFrameIsAnswered(request: String) throws {
+        let (sketch, surface, facet) = try pairSurface()
+
+        let report = try answer(request, from: surface, in: facet)
+
+        #expect(report.id == "x")
+        #expect(report.rejected == [.init(name: "", reason: .typeMismatch)])
+        #expect(report.clamped.isEmpty)
+        #expect(sketch.count == 3)
+        #expect(sketch.gain == 0.5)
+        // 書いた応答も同じ id を echo する (読み手が完了を知る印)
+        #expect(try jsonObject(at: facet.appendingPathComponent("report.json"))["id"] as? String == "x")
+        // 応えた要求は、置き直しても二度は当てない
+        try place(request, in: facet)
+        #expect(surface.drain() == nil)
+    }
+
+    /// **読めなかった要求も応えた記録になる** — 直して同じ `id` で置き直しても処理し直さない (限界)。
+    /// `id` を使い回さない約束 (`params-request.schema.json` の `id`) の内側で、直した要求は新しい
+    /// `id` で置く。
+    @Test("読めなかった要求を直して同じ id で置き直しても当てず、新しい id なら当てる")
+    func aFixedRequestNeedsANewID() throws {
+        let (sketch, surface, facet) = try pairSurface()
+        _ = try answer(#"{"id":"x","values":5}"#, from: surface, in: facet)
+
+        try place(#"{"id":"x","values":[{"name":"count","type":"int","value":8}]}"#, in: facet)
+        #expect(surface.drain() == nil)
+        #expect(sketch.count == 3)
+
+        let report = try answer(
+            #"{"id":"x2","values":[{"name":"count","type":"int","value":8}]}"#, from: surface, in: facet)
+        #expect(report.id == "x2")
+        #expect(report.rejected.isEmpty)
+        #expect(sketch.count == 8)
+    }
+
+    /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
+    /// JSON・JSON でない)。確定させて捨て、応答は書き換わらない。
+    @Test("id が読めない要求は、これまでどおり応答せず捨てる", arguments: [
         #"{"values":[{"name":"count","type":"int","value":8}]}"#,
         #"{"id":5,"values":[{"name":"count","type":"int","value":8}]}"#,
         #"{"id":"x","values":[{"name":"count","type":"int","value":8}"#,
         #"not json"#,
     ])
-    func aRequestWithAnUnreadableFrameIsDropped(request: String) throws {
+    func aRequestWithAnUnreadableIDIsDropped(request: String) throws {
         let (sketch, surface, facet) = try pairSurface()
         let before = try Data(contentsOf: facet.appendingPathComponent("report.json"))
 
         try place(request, in: facet)
 
-        #expect(surface.drain() == nil, "外枠が読めない (echo する id か、書く values が無い) ので、応答しない")
+        #expect(surface.drain() == nil, "echo する id が無いので、応答しない")
         #expect(sketch.count == 3)
         #expect(try Data(contentsOf: facet.appendingPathComponent("report.json")) == before)
     }

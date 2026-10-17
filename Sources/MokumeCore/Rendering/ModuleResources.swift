@@ -28,7 +28,7 @@ nonisolated enum ModuleResources {
     /// 在処を確かめるときに読む断片 (名前と拡張子)。
     ///
     /// **描く経路が必ず読むものを選ぶ。** 前置きは無条件なので (`ShaderLibraries` の
-    /// `preludedShaderSource(named:)`)、これが読めなければどの断片も組み立てられない。
+    /// `prelude(named:)`)、これが読めなければどの断片も組み立てられない。
     /// 包みが在ることではなく、**読めること**を確かめるために要る。
     static let probe = (name: "Kinds", ext: "metal")
 

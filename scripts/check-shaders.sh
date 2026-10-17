@@ -19,6 +19,13 @@
 # ここも同じ順で組み立てる — **1 本ずつ分けて確かめると、実行時に通る組み合わせを
 # 落とすか、逆に実行時に落ちる組み合わせを通してしまう。**
 #
+# **区切りの頭で名乗るのも同じにする** (#2457)。実行時の ShaderSource.assemble は、区切り
+# (値の宣言・前置きの各ファイル・断片) ごとに `#line 1 "<名前>"` を差し、区切りの後に改行を
+# 1 つ足す。ここも区切りごとに差す (part)。差さないと、同梱した断片の誤りが、つないだ一時の
+# ファイルの行 (`Shapes.metal:1050`) で出る。名前は実行時の `mokume/<名前>.metal` ではなく、
+# **木の中のパス** (`Sources/MokumeCore/Drawing/Shaders/Shapes.metal:12`) にする — ここで読むのは
+# 本体を直す人で、開くのはそのファイルである。
+#
 # どの前置きを付けるかは置き場で決まる。
 #
 #   Shaders/               図形を塗る断片   値の宣言 + Kinds.metal + Common.metal
@@ -102,8 +109,27 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # 値の宣言。実行時は利用者が渡した値から組み立てるので、ここでは何も渡さないときの形
-# (ShaderSource.declaration の分岐と同じ) を置く
+# (ShaderSource.declaration の分岐と同じ) を置く。名乗りは実行時と同じ `mokume/Values`
 printf 'struct Values {\n    float4 mokume_unused;\n};\n' > "$work/values.metal"
+
+# 区切り 1 つ: `#line 1 "<名前>"`・中身・改行 (ShaderSource.assemble と同じ形)。名前の `\` と
+# `"` は逃がす (木の中のパスに改行や制御文字は無い)
+part() {
+  local name="${1//\\/\\\\}"
+  name="${name//\"/\\\"}"
+  printf '#line 1 "%s"\n' "$name"
+  cat "$2"
+  printf '\n'
+}
+
+# 前置きつきの断片を組み立てる: 値の宣言 → Kinds.metal → 前置き → 断片
+assemble() {
+  local prelude="$1" shader="$2"
+  part mokume/Values "$work/values.metal"
+  if [ -n "$kinds" ]; then part "$kinds" "$kinds"; fi
+  part "$prelude" "$prelude"
+  part "$shader" "$shader"
+}
 
 failed=0
 for shader in "${shaders[@]}"; do
@@ -111,16 +137,17 @@ for shader in "${shaders[@]}"; do
   case "$shader" in "$common" | "$compute" | "$effect" | "$kinds") continue ;; esac
   source="$work/$(basename "$shader")"
   if [ -n "$effect_dir" ] && [ "$(dirname "$shader")" = "$effect_dir" ]; then
-    cat "$work/values.metal" ${kinds:+"$kinds"} "$effect" "$shader" > "$source"
+    assemble "$effect" "$shader" > "$source"
     label="$shader (効果の前置きつき)"
   elif [ -n "$compute_dir" ] && [ "$(dirname "$shader")" = "$compute_dir" ]; then
-    cat "$work/values.metal" ${kinds:+"$kinds"} "$compute" "$shader" > "$source"
+    assemble "$compute" "$shader" > "$source"
     label="$shader (計算の前置きつき)"
   elif [ -n "$common_dir" ] && [ "$(dirname "$shader")" = "$common_dir" ]; then
-    cat "$work/values.metal" ${kinds:+"$kinds"} "$common" "$shader" > "$source"
+    assemble "$common" "$shader" > "$source"
     label="$shader (共通部分つき)"
   else
-    cp "$shader" "$source"
+    # 単体で組む断片も、木の中のパスで名乗る (一時のファイルの名前で出さない)
+    part "$shader" "$shader" > "$source"
     label="$shader"
   fi
   if xcrun metal -c "$source" -o "$source.air" 2>"$work/err"; then

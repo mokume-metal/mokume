@@ -621,7 +621,7 @@ public final class SketchRuntime {
         // 駆動源の側で止めないのは、3 本のどれを止め忘れても同じ穴になるためである
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
-        let observation = capture == nil ? observer?.pendingRequest() : nil
+        let observation = capture == nil ? takeObservationRequest() : nil
         // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
         // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
         // このフレームの中なので、ここで立てれば覆える
@@ -1573,24 +1573,49 @@ public final class SketchRuntime {
         id: String, through observer: FrameObserver,
         frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String], appliedTime: Float? = nil
     ) {
-        let last = complete ? frames.last : nil
         observer.finish(
-            ObservationReport(
-                id: id,
-                image: last?.image,
-                frame: timing.frameCount,
-                time: Double(timing.time),
-                size: ObservationReport.Size(width: target.width, height: target.height),
-                // 走っている実行の外から呼ばれた語彙 (#2265) の警告も、言った後の最初の応答に
-                // 1 度だけ載せる。標準エラーの 1 行は MCP から読めず、`init` で読んだ `width` が
-                // 0 だったことを観測で辿れなくなる。最後に足すので、失敗の理由より前には来ない
-                warnings: warnings + OutsideRun.log.takeUnreported(),
-                stats: last?.stats,
-                load: RuntimeLoad.sample(tempo: tempo, budget: budget, now: now()),
-                values: exposedValues.isEmpty ? nil : exposedValues,
-                inputs: inputReports,
-                stamp: SourceStamp.current,
-                frames: frames, appliedTime: complete ? appliedTime.map(Double.init) : nil))
+            report(id: id, frames: frames, complete: complete, warnings: warnings, appliedTime: appliedTime))
+    }
+
+    /// 観測の要求を拾う。**`id` だけ読めた要求は、撮らずにここで応えて `nil` を返す** (#2550)。
+    /// 時刻の指定を断るのと同じく、前回の成果物を消し、理由を載せた目録を書く
+    /// (``FrameObserver/refuse(id:reason:report:)``)。
+    private func takeObservationRequest() -> ObservationRequest? {
+        guard let observer, let pending = observer.pendingRequest() else { return nil }
+        switch pending {
+        case .request(let request):
+            return request
+        case .unreadable(let id, let reason):
+            observer.refuse(id: id, reason: reason) { id, warnings in
+                report(id: id, frames: [], complete: false, warnings: warnings)
+            }
+            return nil
+        }
+    }
+
+    /// 目録を組む。``finish(id:through:frames:complete:warnings:appliedTime:)`` と、読めない要求への
+    /// 応え (``takeObservationRequest()``) が同じ中身を書く。
+    private func report(
+        id: String, frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String],
+        appliedTime: Float? = nil
+    ) -> ObservationReport {
+        let last = complete ? frames.last : nil
+        return ObservationReport(
+            id: id,
+            image: last?.image,
+            frame: timing.frameCount,
+            time: Double(timing.time),
+            size: ObservationReport.Size(width: target.width, height: target.height),
+            // 走っている実行の外から呼ばれた語彙 (#2265) の警告も、言った後の最初の応答に
+            // 1 度だけ載せる。標準エラーの 1 行は MCP から読めず、`init` で読んだ `width` が
+            // 0 だったことを観測で辿れなくなる。最後に足すので、失敗の理由より前には来ない
+            warnings: warnings + OutsideRun.log.takeUnreported(),
+            stats: last?.stats,
+            load: RuntimeLoad.sample(tempo: tempo, budget: budget, now: now()),
+            values: exposedValues.isEmpty ? nil : exposedValues,
+            inputs: inputReports,
+            stamp: SourceStamp.current,
+            frames: frames, appliedTime: complete ? appliedTime.map(Double.init) : nil)
     }
 
     /// 名乗りを持つ入り口の状態 (``Inlet/report``)。1 つも無ければ `nil` で、応答から鍵ごと落ちる。

@@ -244,3 +244,38 @@ extension SketchPart {
         runtime.detach(outlet)
     }
 }
+
+// 外のモジュールの作る口 (MokumeAudio・MokumeNetwork の `loadSound`・`createTCPServer` など) が使う入口 ([#2740])。
+//
+// **呼んだ口の名前で言う。** 公開の ``SketchPart/attach(_:)-(Inlet)`` を素で呼ぶと、足せない所での警告が
+// 利用者の呼んでいない `attach()` を名乗り、投げる口も黙って生きていないものを返す。
+//
+// [#2740]: https://github.com/mokume-metal/mokume/issues/2740
+extension SketchPart {
+    /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げる作る口)。足せなければ、`call` の名前で
+    /// 1 度だけ警告して `notRunning(call:)` を投げる (文面は ``OutsideRun/notAttachedNotice(_:)``)。
+    ///
+    /// ファイルを読む・ポートを開く前に呼ぶ。足すのはその後の ``attach(_:)-(Inlet)`` で、同じ所から続けて呼ぶので
+    /// 足せる。#2683 の ``requireSurface(_:calledAs:)`` と同じ形で、理由が面でないことだけが違う。
+    package func requireAttachable<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, calledAs call: String
+    ) throws(Failure) {
+        guard runningSketch != nil else {
+            // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
+            OutsideRun.log.warn(call, .thrownUnattached)
+            throw Failure.notRunning(call: call)
+        }
+    }
+
+    /// 入り口を、走っている実行へ足す (投げない作る口)。足せない所から呼ばれたら、`attach()` ではなく `call` の
+    /// 名前で 1 度だけ警告し、`false` を返す。`value` は、代わりに返したものの人が読む綴り
+    /// (`a sound that is never heard` など)。
+    @discardableResult
+    package func attach(_ inlet: any Inlet, calledAs call: String, returning value: String) -> Bool {
+        guard let runtime = runningSketch else {
+            OutsideRun.log.warn(call, .make(returning: value))
+            return false
+        }
+        return runtime.attach(inlet)
+    }
+}
