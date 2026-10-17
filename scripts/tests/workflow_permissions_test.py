@@ -5,8 +5,8 @@
 
 #2614 では stall-watch.yml の当番が `contents: read` のまま `gh pr merge --auto` を打ち、
 60 回に 60 回とも拒まれた。偽 gh は権限を見ないので、スクリプトの検査は緑のままだった。
-権限の外の書き込みは **run を赤くせずに黙って失敗する** ことがある (stall-act は失敗を
-名乗るだけで、当番の run は他の対処を続ける) ので、ここで全 workflow の対応を固定する:
+権限の外の書き込みは **run を赤くせずに黙って失敗する** ことがある (当時の当番の対処は失敗を
+名乗るだけで、run は他の対処を続けた) ので、ここで全 workflow の対応を固定する:
 
   1. ジョブが打つ書き込みに要る権限を、ジョブが持っている
   2. ジョブが持つ書き込み権限は、どれかの書き込みが使っている (使わない権限を持たない)
@@ -322,7 +322,6 @@ class WorkflowPermissionTest(unittest.TestCase):
     def test_走査が空振りしていない(self):
         # 推移の呼び出し・ヒアドキュメントの外の gh・run: の 1 行・git push・uses: を、それぞれ拾えている
         expect = {
-            "stall-watch.yml:watch": ("scripts/stall-act.sh", {"actions"}),
             "queue-sweep.yml:sweep": ("scripts/queue-sweep.sh", {"actions"}),
             "close-cleanup.yml:drop-in-progress": ("run:", {"issues"}),
             "release.yml:release": ("run:", {"contents"}),

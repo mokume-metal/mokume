@@ -1,53 +1,43 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
+"""scripts/stall-watch.sh と、それを回す当番 (.github/workflows/stall-watch.yml) の検査 (#961)。
 
-固定したいのは十五。
+固定したいのは十二。
 
-1. **集約のジョブ (ci-gate) は上流より後に打つ** (#1883)。先に打つと ci-gate だけが前の結論を
-   読んで同じ赤を返し、その run が走っている間は上流の打ち直しが拒まれる。除外したジョブ
-   (render-pr・pr-gate) には打たない
-2. **同じ run の他の失敗ジョブには打つ。** 除外を守るために全部を飛ばしてしまうと、
-   古い失敗 check が判定を固定したまま (#259 / #513) 誰も直さなくなる
-3. **凍結されたペイロードの可変欄を読むジョブが、除外リストに載っている。** いまは
-   1 本も無い (ci.yml の pr-title は #2669 で消えた) が、同じ形のジョブが増えたときに人が
-   気付く経路が無い (#801 と同じ形)。タイトルの赤は pr-gate のタイトルの step で読む
-4. **BLOCKED で予約が外れた PR は、重要パスに触れていても名乗る。** 承認のゲートは
+1. **BLOCKED で予約が外れた PR は、重要パスに触れていても名乗る。** 承認のゲートは
    ADR-0044 で外れた (#2108) ので、承認待ちと読んで黙ると予約が外れたまま誰も直さない
-5. **判定は何も打たない。** 手元で様子を見るために打っただけで auto-merge が掛かると、
-   判定と対処を分けた意味が消える
-6. **Draft と fork からの PR は見ない。** 作業中の PR を Draft にしておくのが opt-out で、
+2. **判定も当番も何も打たない** (#2734)。判定は手元で様子を見るために打っても何も起きない。
+   当番の job は書き込みを 1 つも打たず、書き込み権限も持たない — 打つ分類 (act) はもう無い
+3. **Draft と fork からの PR は見ない。** 作業中の PR を Draft にしておくのが opt-out で、
    fork の PR に予約を掛けるかは引き取るメンテナが決める (#1361)
-7. **猶予の中の名乗りでは赤くしない。** 走るたびに通知が飛ぶと「毎回出る注意は意味を
+4. **猶予の中の名乗りでは赤くしない。** 走るたびに通知が飛ぶと「毎回出る注意は意味を
    失う」(#642) を踏む
-8. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
+5. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
    走らないと、描画に触れない PR も含めて queue 全体が止まる。1 台なので、他の run を
    走らせている間の queued は正常な順番待ちで、名乗ると毎回の注意になる (#642)
-9. **予約が外れた PR があっても、当番は予約を掛けない** (#2614)。当番の GITHUB_TOKEN では
-   掛けられず (`enablePullRequestAutoMerge` が FORBIDDEN)、掛け直しは一度も成功しないまま、
-   毎回 stall-act を exit 1 にして他の赤を埋もれさせていた。**代わりに、外れた出来事
-   (queue から弾かれた・人の操作でなく外された) から猶予を超えたら赤で人に返す。**
-   一度も予約を掛けていない PR と、人が外した予約は「外れた」と名乗らない
-10. **gh が失敗した理由 (stderr) を捨てない** (#2614)。捨てると、失敗が何十回続いても
-   理由がどこにも残らない。rerun の拒否のうち、打つ対象がその回に居ないだけのもの (同じ
-   run が走り直している・古い attempt のジョブ) は赤にしない
-11. **当番の job が持つ書き込み権限と、スクリプトが打つ書き込みが対応している** (#2614)。
-   偽 gh は権限を見ないので、権限の外の操作を打ち続けても単体の検査は緑のままだった。
-   全 workflow の分と合わせて workflow_permissions_test.py が見る (#2675)
-12. **作法のジョブを含む古い ci.yml の run (#2669 の前) は丸ごと打たない。** 打つと古いイベントを
-   再生し (#699)、その run の ci-gate は needs の赤で赤く走り直して最新になる。ラベルだけで
-   直されて新しい ci-gate が付かない PR は legacy-gate と名乗って人へ返す (#2669 の反証 1・2)
-13. **段を走らせていない run (本文の編集) の緑の ci-gate は、直った証拠に数えない。** 数えると
-   本当に赤いコードの検査を当番のたびに打ち直す。打たずに masked-red と名乗る (#2669 の反証 4)
-14. **必須が揃っているのに、必須が読む最新の check suite の pr-gate が cancelled で BLOCKED の PR を、
+6. **予約が外れた PR があっても、当番は予約を掛けない** (#2614)。当番の GITHUB_TOKEN では
+   掛けられず (`enablePullRequestAutoMerge` が FORBIDDEN)、掛け直しは一度も成功しなかった。
+   **代わりに、外れた出来事 (queue から弾かれた・人の操作でなく外された) から猶予を超えたら
+   赤で人に返す。** 一度も予約を掛けていない PR と、人が外した予約は「外れた」と名乗らない
+7. **gh が失敗した理由 (stderr) を捨てない** (#2614)。捨てると、失敗が何十回続いても
+   理由がどこにも残らない
+8. **作法のジョブを含む古い ci.yml の run (#2669 の前) の赤を、古い失敗 check の組にしない。**
+   ラベルだけで直されて新しい ci-gate が付かない PR は legacy-gate と名乗って人へ返す
+   (#2669 の反証 1・2)
+9. **段を走らせていない run (本文の編集) の緑の ci-gate は、直った証拠に数えない。** 数えると
+   本当に赤いコードの検査を古い赤と読み違える。masked-red と名乗る (#2669 の反証 4)
+10. **必須が揃っているのに、必須が読む最新の check suite の pr-gate が cancelled で BLOCKED の PR を、
    猶予の後に名乗る** (#2716)。#2712 は必須が揃った後も queue に入らず、どの分類にも当たらなかった。
    打ち直す run の番号を出し、当番は打たない。新旧は suite の id で読み、cancelled が古い suite の
    ほう (#2710)・最新の suite の赤 (PR を読んだ結論)・必須が揃っていない BLOCKED (待ち・赤・欠け) は
    名乗らない。古い suite の結論は問わず、stale-checks と同じ PR でも名乗る (#2716 の反証 1・2・6)
-15. **段を走らせていない run の赤い ci-gate を打ち直しに挙げない** (#2718)。本文の編集で ci.yml の
+11. **段を走らせていない run の赤い ci-gate を打ち直しに挙げない** (#2718)。本文の編集で ci.yml の
    run が立たなくなったので、その赤 (#2717) を読み直させる判定は外した。作法のジョブを含む古い
    run の赤は legacy-gate に残し、対処は push だけを言う (本文の編集では新しい ci-gate が付かない)
+12. **古い失敗 check と同じ名前の新しい緑の組は、名乗るだけで打ち直さない** (#2734)。必須は作成順で
+   最新の check suite を読むので、古い suite の赤は必須を塞がない。止まって見えるなら理由は別にあり、
+   人が見る。ほかの名乗りと同じく、猶予を超えたら赤で人に返す
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -65,10 +55,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 WATCH = REPO / "scripts" / "stall-watch.sh"
-ACT = REPO / "scripts" / "stall-act.sh"
 WORKFLOWS = REPO / ".github" / "workflows"
-# PR の head に check を付けるワークフロー。stall-act はその head の失敗ジョブを打つ
-PR_WORKFLOWS = ("ci.yml", "pr-gate.yml", "render.yml")
 
 # --jq の値を取り出して本物の jq を当てる。応答は $PR_DIR の中の JSON から読む
 FAKE_GH = """#!/bin/bash
@@ -91,11 +78,6 @@ if [ "$1 $2" = "pr list" ]; then emit "$PR_DIR/list.json"; exit 0; fi
 if [ "$1 $2" = "pr view" ]; then
   [ -z "${VIEW_FAILS:-}" ] || { echo "gh: HTTP 502: Bad Gateway (pr view)" >&2; exit 1; }
   emit "$PR_DIR/$3.json"; exit 0
-fi
-
-if [ "$1 $2" = "pr merge" ]; then
-  [ -z "${MERGE_FAILS:-}" ] || { echo "gh: cannot enable auto-merge" >&2; exit 1; }
-  exit 0
 fi
 
 if [ "$1 $2" = "api graphql" ]; then
@@ -146,25 +128,12 @@ case "$url" in
     f="$PR_DIR/render-jobs.$id.json"
     [ -f "$f" ] || { echo '{"jobs":[]}' > "$PR_DIR/render-jobs.none.json"; f="$PR_DIR/render-jobs.none.json"; }
     emit "$f"; exit 0 ;;
-  # ジョブの rerun (POST)。本物の gh api は失敗の文面を「gh: <message> (HTTP <code>)」で出す
-  */actions/jobs/*/rerun)
-    [ -z "${RERUN_FAILS:-}" ] || { echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1; }
-    [ -z "${RERUN_RUNNING:-}" ] || { echo "gh: The workflow run containing this job is already running (HTTP 403)" >&2; exit 1; }
-    [ -z "${RERUN_OLD_ATTEMPT:-}" ] || { echo "gh: Only jobs from the current attempt can be re-run (HTTP 403)" >&2; exit 1; }
-    exit 0 ;;
   # ジョブの中身 (step の結論)。bad-title が赤い pr-gate のタイトルの step を読む (#2669)。
-  # 既定は空 (step が見つからない)
+  # 既定は空 (step が見つからない)。打ち直し (.../rerun) は判定も当番も打たないので受けない
+  */actions/jobs/*/rerun) ;;
   */actions/jobs/*)
     [ -z "${JOB_FAILS:-}" ] || { echo "gh: HTTP 502: Bad Gateway (job)" >&2; exit 1; }
     emit "$PR_DIR/job.${url##*/}.json"; exit 0 ;;
-  # stall-watch の stale-gate は check_name と filter を問い合わせの文字列で渡す (#2716)
-  */check-runs|*/check-runs\\?*)
-    [ -z "${CHECKRUNS_FAIL:-}" ] || { echo "gh: HTTP 504: Gateway Timeout (check-runs)" >&2; exit 1; }
-    sha=${url%%\\?*}; sha=${sha%/check-runs}; sha=${sha##*/}
-    emit "$PR_DIR/${sha#sha-}.checkruns.json"; exit 0 ;;
-  */files)
-    n=${url%/files}; n=${n##*/}
-    emit "$PR_DIR/$n.files.json"; exit 0 ;;
 esac
 
 echo "偽 gh が知らない呼び出し: $*" >&2
@@ -326,16 +295,6 @@ class StallWatchTest(unittest.TestCase):
             env=self.env(**extra),
         )
         return proc
-
-    def act(self, lines, **extra):
-        log = Path(self.tmp.name) / "stall.log"
-        log.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-        return subprocess.run(
-            ["/bin/bash", str(ACT), str(log)],
-            capture_output=True,
-            text=True,
-            env=self.env(**extra),
-        )
 
     def gh_log(self):
         return self.calls.read_text(encoding="utf-8")
@@ -523,7 +482,9 @@ class StallWatchTest(unittest.TestCase):
         kind, action = self.classify(6, self.watch())
         self.assertEqual((kind, action), ("conflict", "name"))
 
-    def test_古い失敗_check_が残る_PR_は打つに分類される(self):
+    def test_古い失敗_check_が残る_PR_は名乗るに分類され_当番は打たない(self):
+        """#2734。必須は作成順で最新の suite を読むので、古い suite の赤は必須を塞がない。打ち直さずに
+        名乗り、止まっている理由は人が見る。"""
         self.add_pr(
             9,
             auto=True,
@@ -533,13 +494,34 @@ class StallWatchTest(unittest.TestCase):
                 check("ci-gate", "SUCCESS", ago(10)),
             ],
         )
-        kind, action = self.classify(9, self.watch())
-        self.assertEqual((kind, action), ("stale-checks", "act"))
+        proc = self.watch()
+        self.assertEqual(self.classify(9, proc), ("stale-checks", "name"), proc.stdout)
+        line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("9 "))
+        self.assertIn("当番は打ち直さない", line)
+        self.assertNotIn("/rerun", self.gh_log())
+
+    def test_古い失敗_check_の名乗りも猶予を超えたら_1_で終える(self):
+        """ほかの名乗りと同じく、経過は失敗 check の時刻から測る (騒がしさの上限・#642)。"""
+        for failed, want in ((90, 1), (30, 0)):
+            with self.subTest(failed=failed):
+                self.setUp()
+                self.add_pr(
+                    16,
+                    auto=True,
+                    state="BLOCKED",
+                    checks=[
+                        check("ci-check", "FAILURE", ago(failed), run=100),
+                        check("ci-check", "SUCCESS", ago(10), run=200),
+                    ],
+                )
+                proc = self.watch(STALL_MINUTES=60)
+                self.assertEqual(self.classify(16, proc), ("stale-checks", "name"), proc.stdout)
+                self.assertEqual(proc.returncode, want, proc.stdout + proc.stderr)
 
     # --- タイトルの赤は pr-gate のタイトルの step で読む (#2669) ---------------
 
     def test_最新の_pr_gate_のタイトルの_step_が落ちた_PR_は名乗るに分類される(self):
-        # **stale-checks より先に判定されること。** 後ろだと打ち直すだけで名乗らない
+        # **stale-checks より先に判定されること。** 後ろだと古い赤の組と名乗るだけで、直すべきタイトルを言わない
         self.add_pr(
             10,
             auto=True,
@@ -622,7 +604,7 @@ class StallWatchTest(unittest.TestCase):
             ],
         )
         kind, action = self.classify(15, self.watch())
-        self.assertEqual((kind, action), ("stale-checks", "act"))
+        self.assertEqual((kind, action), ("stale-checks", "name"))
 
     # --- pr-gate は同じ SHA の最新の run の結論が判定 (#2668) ------------------
     #
@@ -671,7 +653,7 @@ class StallWatchTest(unittest.TestCase):
             ],
         )
         proc = self.watch()
-        self.assertEqual(self.classify(42, proc), ("stale-checks", "act"))
+        self.assertEqual(self.classify(42, proc), ("stale-checks", "name"))
         line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("42 "))
         self.assertIn("(ci-gate)", line)
         self.assertNotIn("pr-gate", line)
@@ -693,7 +675,7 @@ class StallWatchTest(unittest.TestCase):
             ],
         )
         proc = self.watch()
-        self.assertEqual(self.classify(43, proc), ("stale-checks", "act"))
+        self.assertEqual(self.classify(43, proc), ("stale-checks", "name"))
         line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("43 "))
         self.assertLess(int(line.split()[3]), 10, line)
 
@@ -748,12 +730,8 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn(f"actions/workflows/pr-gate.yml/runs?head_sha=sha-60", self.gh_log())
         self.assertIn("--paginate", self.gh_log(), "run の一覧を 1 ページしか読んでいない (#2716 の反証 5)")
-
-        # 当番は打たない (古い pr-gate を当番に打たせない決まり・#2668)
-        self.calls.write_text("", encoding="utf-8")
-        acted = self.act(proc.stdout.splitlines())
-        self.assertEqual(acted.returncode, 0, acted.stdout + acted.stderr)
-        self.assertNotIn("rerun", self.gh_log())
+        # 当番は打たない (当番は何も打ち直さない・#2668・#2734)
+        self.assertNotIn("/rerun", self.gh_log())
 
     def test_新旧は_run_の_id_ではなく_check_suite_の_id_で読む(self):
         """run の id が小さくても suite が新しければ、必須はそちらを読む。逆も同じ。"""
@@ -829,7 +807,7 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(self.stale_gate_line(79, proc)[1], "stale-gate", proc.stdout)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
 
-    def test_古い失敗_check_を打つ_PR_でも_cancelled_の_pr_gate_を名乗る(self):
+    def test_古い失敗_check_を名乗る_PR_でも_cancelled_の_pr_gate_を名乗る(self):
         """#2716 の反証 6。stale-checks に当たって先へ進まなくても、stale-gate の行も出す。"""
         self.stale_gate_pr(
             80,
@@ -903,7 +881,7 @@ class StallWatchTest(unittest.TestCase):
     #
     # #2669 より前の ci.yml の run は、作法のジョブ (pr-title・review-gate・drawing-evidence) を
     # 含み、その ci-gate はそれらを待っていた。打ち直すと古いイベントを再生し (#699)、needs の赤で
-    # ci-gate も赤く走り直して最新になる。古い run は丸ごと打ち直しの対象から外し、人へ返す
+    # ci-gate も赤く走り直して最新になる。古い run は丸ごと古い失敗 check の組から外し、人へ返す
 
     def legacy_run(self, run, *, title="SUCCESS", review="SUCCESS", code="SUCCESS", gate="FAILURE", at=90):
         return [
@@ -1011,9 +989,9 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch()
         self.assertEqual(self.classify(54, proc), ("masked-red", "name"), proc.stdout)
 
-    def test_段を走らせた新しい_run_の緑は直った証拠として打つ(self):
+    def test_段を走らせた新しい_run_の緑は直った証拠として古い赤の組に数える(self):
         # reopen の run は段を走らせる (base の変更では ci.yml の run が立たない・#2718)。古いコードの
-        # 赤は打ち直しの対象のまま
+        # 赤は古い失敗 check の組として名乗る
         self.add_pr(
             55,
             auto=True,
@@ -1027,7 +1005,7 @@ class StallWatchTest(unittest.TestCase):
                 check("ci-gate", "SUCCESS", ago(29), run=200),
             ],
         )
-        self.assertEqual(self.classify(55, self.watch()), ("stale-checks", "act"))
+        self.assertEqual(self.classify(55, self.watch()), ("stale-checks", "name"))
 
     def red_edited_run(self, run, at=60):
         """本文の編集の run。段を走らせる 2 つが skipped で、ci-gate は同じ SHA の検査を読んで赤 (#2690)。"""
@@ -1140,12 +1118,6 @@ class StallWatchTest(unittest.TestCase):
         self.assertIsNotNone(line, proc.stdout)
         self.assertEqual(line[1:3], ["unreadable", "name"], proc.stdout)
 
-    def test_runner_の行には何も打たない(self):
-        proc = self.act(["- runner-offline name 30 専用機の runner が render を拾っていない"])
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertNotIn("pr merge", self.gh_log())
-        self.assertNotIn("/rerun", self.gh_log())
-
     def test_猶予の内の外れは赤くしない(self):
         """弾かれた直後は、人が読んで掛け直すまでの時間である (#642)。"""
         self.add_pr(14, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 5)])
@@ -1161,226 +1133,38 @@ class StallWatchTest(unittest.TestCase):
         self.assertIn("gh: 502", proc.stderr)
         self.assertIn("HTTP 502: Bad Gateway (pr view)", proc.stderr)
 
-    # --- 対処 ---------------------------------------------------------------
 
-    def test_集約の_ci_gate_は上流より後に打つ(self):
-        """#1883。先に ci-gate を打つと、ci-gate だけが前の結論を読んで同じ赤を返し、その run が
-        走っている間は上流 (ci-check) の打ち直しが拒まれる。check run の並びが同じなら毎回そうなる。"""
-        self.add_pr(20)
-        self.write(
-            "20.checkruns.json",
-            {
-                "check_runs": [
-                    {"name": "ci-gate", "conclusion": "failure", "id": 111},
-                    {"name": "ci-check", "conclusion": "failure", "id": 222},
-                ]
-            },
-        )
-        proc = self.act(["20 stale-checks act 5 古い失敗 check"])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        log = self.gh_log()
-        self.assertIn("jobs/222/rerun", log, "上流の失敗ジョブへ打っていない")
-        self.assertIn("jobs/111/rerun", log, "集約だけが落ちた回に打てない")
-        self.assertLess(log.index("jobs/222/rerun"), log.index("jobs/111/rerun"), "ci-gate を上流より先に打っている")
+class DutyTest(unittest.TestCase):
+    """当番 (.github/workflows/stall-watch.yml) は名乗るだけで、何も打たない (#2734)。
 
-    def test_作法のジョブを含む古い_run_は丸ごと打たない(self):
-        """#2669 より前の ci.yml の run の pr-title を打つと古いタイトルを再生し (#699)、その run の
-        ci-gate を打つと needs の赤で赤く返して最新になる。除外の名前では ci-gate を外せないので、
-        run の単位で外す。"""
-        self.add_pr(29)
-        url = "https://github.com/o/r/actions/runs/{}/job/{}"
-        self.write(
-            "29.checkruns.json",
-            {
-                "check_runs": [
-                    {"name": "pr-title", "conclusion": "failure", "id": 111, "details_url": url.format(100, 111)},
-                    {"name": "review-gate", "conclusion": "success", "id": 113, "details_url": url.format(100, 113)},
-                    {"name": "ci-gate", "conclusion": "failure", "id": 112, "details_url": url.format(100, 112)},
-                    {"name": "ci-check", "conclusion": "failure", "id": 301, "details_url": url.format(300, 301)},
-                    {"name": "ci-gate", "conclusion": "failure", "id": 302, "details_url": url.format(300, 302)},
-                ]
-            },
-        )
-        proc = self.act(["29 stale-checks act 5 古い失敗 check"])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        log = self.gh_log()
-        self.assertNotIn("jobs/111/rerun", log, "古い run の pr-title を打っている")
-        self.assertNotIn("jobs/112/rerun", log, "古い run の ci-gate を打っている")
-        self.assertIn("jobs/301/rerun", log, "新しい run の失敗ジョブへ打っていない")
-        self.assertIn("#29: ci-gate は作法のジョブを含む古い ci.yml の run", proc.stdout)
-
-    def test_cancel_された_render_pr_を巻き添えで_rerun_しない(self):
-        """ジョブ単位の rerun は門番 (render-turn) を通らず、専用機へ直に積む (#2062)。"""
-        self.add_pr(25)
-        self.write(
-            "25.checkruns.json",
-            {
-                "check_runs": [
-                    {"name": "render-pr", "conclusion": "cancelled", "id": 333},
-                    {"name": "ci-check", "conclusion": "failure", "id": 222},
-                ]
-            },
-        )
-        proc = self.act(["25 stale-checks act 5 古い失敗 check"])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        log = self.gh_log()
-        self.assertNotIn("jobs/333/rerun", log, "render-pr へ rerun を打っている")
-        self.assertIn("jobs/222/rerun", log)
-
-    def test_pr_gate_の古い失敗や_cancel_に_rerun_を打たない(self):
-        """pr-gate は最新の run の結論が判定で、直せば新しい run が付け直す (#2668)。古い run を
-        打ち直すと、同じ concurrency の group で走っている新しい run を cancel しうる。"""
-        self.add_pr(26)
-        self.write(
-            "26.checkruns.json",
-            {
-                "check_runs": [
-                    {"name": "pr-gate", "conclusion": "failure", "id": 444},
-                    {"name": "pr-gate", "conclusion": "cancelled", "id": 555},
-                    {"name": "ci-check", "conclusion": "failure", "id": 222},
-                ]
-            },
-        )
-        proc = self.act(["26 stale-checks act 5 古い失敗 check"])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        log = self.gh_log()
-        self.assertNotIn("jobs/444/rerun", log, "古い pr-gate へ rerun を打っている")
-        self.assertNotIn("jobs/555/rerun", log, "cancel された pr-gate へ rerun を打っている")
-        self.assertIn("jobs/222/rerun", log)
-
-    def test_名乗る行には何も打たない(self):
-        proc = self.act(["21 conflict name 90 main と衝突している"])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        log = self.gh_log()
-        self.assertNotIn("pr merge", log)
-        self.assertNotIn("/rerun", log)
-
-    def test_予約が外れた_PR_があっても当番は掛けず_対処は赤くならない(self):
-        """判定の出力をそのまま対処へ渡す (stall-watch.yml と同じ流れ)。
-
-        当番の GITHUB_TOKEN では予約を掛けられない (MERGE_FAILS が本物の FORBIDDEN に
-        当たる・#2614)。以前は毎回「掛け直せなかった」で exit 1 になり、他の赤を埋もれさせた。
-        赤で人に返すのは判定の終了コード (猶予) の役目で、対処は名乗りの行に何も打たない。"""
-        self.add_pr(22, auto=False, state="BLOCKED", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 5)])
-        watched = self.watch(STALL_MINUTES=60)
-        self.assertEqual(watched.returncode, 0, watched.stdout + watched.stderr)
-        self.assertEqual(self.classify(22, watched), ("auto-merge-dropped", "name"), watched.stdout)
-        proc = self.act(watched.stdout.splitlines(), MERGE_FAILS="1")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertNotIn("pr merge", self.gh_log())
-
-    def test_rerun_に失敗したら理由を添えて_1_で終える(self):
-        self.add_pr(23)
-        self.write("23.checkruns.json", {"check_runs": [{"name": "ci-check", "conclusion": "failure", "id": 222}]})
-        proc = self.act(["23 stale-checks act 5 古い失敗 check"], RERUN_FAILS="1")
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertRegex(
-            proc.stderr, r"#23: ci-check を rerun できなかった: gh: Resource not accessible by integration \(HTTP 403\)"
-        )
-
-    def test_同じ_run_が走り直している間の_rerun_の拒否は赤にしない(self):
-        """同じ run の別の失敗ジョブを先に打つと run が走り出し、残りは 403 で拒まれる (#2614 の
-        反証)。2026-09-30 の #1883 では 1 回の当番で、ci-gate を打った直後の review-gate と
-        drawing-evidence が 9 本「rerun できなかった」になった (理由は捨てられていて残っていないが、同じ形を
-        再現するとこの文面になる)。次の回に回せば済む。"""
-        self.add_pr(27)
-        self.write("27.checkruns.json", {"check_runs": [{"name": "review-gate", "conclusion": "failure", "id": 444}]})
-        proc = self.act(["27 stale-checks act 5 古い失敗 check"], RERUN_RUNNING="1")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("#27: review-gate は同じ run が走り直している", proc.stdout)
-
-    def test_古い_attempt_のジョブの_rerun_の拒否は赤にしない(self):
-        """commit の check run の一覧には走り直す前の attempt のジョブも残る。それは打ち直せず、
-        新しい attempt の側が同じ一覧に居る。毎回の赤にしない。"""
-        self.add_pr(28)
-        self.write("28.checkruns.json", {"check_runs": [{"name": "ci-gate", "conclusion": "failure", "id": 555}]})
-        proc = self.act(["28 stale-checks act 5 古い失敗 check"], RERUN_OLD_ATTEMPT="1")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("#28: ci-gate は古い attempt のジョブ", proc.stdout)
-
-    def test_check_run_を読めなかったら理由を添えて_1_で終える(self):
-        self.add_pr(24)
-        proc = self.act(["24 stale-checks act 5 古い失敗 check"], CHECKRUNS_FAIL="1")
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertRegex(proc.stderr, r"#24: check run の一覧を読めなかった.*HTTP 504: Gateway Timeout")
-
-    def test_head_を読めなかったら理由を添えて_1_で終える(self):
-        proc = self.act(["26 stale-checks act 5 古い失敗 check"], VIEW_FAILS="1")
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertRegex(proc.stderr, r"#26: head の commit を読めなかった.*HTTP 502: Bad Gateway \(pr view\)")
-
-    def test_入力ファイルが無ければ_66_で終える(self):
-        proc = subprocess.run(
-            ["/bin/bash", str(ACT), str(Path(self.tmp.name) / "無い.log")],
-            capture_output=True,
-            text=True,
-            env=self.env(),
-        )
-        self.assertEqual(proc.returncode, 66)
-
-
-class RerunExclusionTest(unittest.TestCase):
-    """凍結ペイロードの可変欄を読むジョブが、除外リストに載っているか (#801 と同じ形)。
-
-    pull_request の rerun は元のイベントを再生するので、title / body / labels を
-    ペイロードから受け取るジョブは古い値で判定される。番号や sha は run の中で
-    変わらないので、それだけを受け取るジョブは rerun して安全である。いまは 1 本も
-    無い (ci.yml の pr-title は #2669 で消え、pr-gate はタイトルも API から読む)。
+    打つ分類は stale-checks (古い失敗ジョブの rerun) だけが残っていたが、必須は作成順で最新の
+    check suite を読むので (scripts/ci-gate.sh 冒頭の規則・#2577)、古い suite の赤は必須を塞がず、
+    打ち直しは macOS の枠を使うだけだった。打つ側 (stall-act.sh) と、そのための actions: write を
+    外した。打つ別 (act) を戻すと、ここが赤になる。
     """
 
-    MUTABLE = ("title", "body", "labels")
+    def test_判定は名乗るか黙るかだけを出す(self):
+        text = WATCH.read_text(encoding="utf-8")
+        kinds = re.findall(r'\bsay_line\s+\S+\s+\S+\s+(\S+)', text)
+        self.assertGreater(len(kinds), 5, "say_line の呼び出しを読めていない")
+        self.assertEqual(set(kinds) - {"name", "quiet"}, set(), kinds)
 
-    def excluded_jobs(self):
-        text = ACT.read_text(encoding="utf-8")
-        found = re.search(r'RERUN_EXCLUDED=\$\{RERUN_EXCLUDED:-"([^"]*)"\}', text)
-        self.assertIsNotNone(found, "stall-act.sh の除外リストを読めない")
-        return set(found.group(1).split())
+    def test_当番の_job_は書き込みを打たず_書き込み権限も持たない(self):
+        import workflow_permissions_test as permissions
 
-    def jobs_reading_mutable_payload(self, text):
-        """ワークフローの本文を走査し、可変欄を式に含むジョブの名前を返す (コメントは読まない)。"""
-        jobs = set()
-        current = None
-        in_jobs = False
-        for line in text.splitlines():
-            if line.lstrip().startswith("#"):
-                continue
-            if re.match(r"^jobs:\s*$", line):
-                in_jobs = True
-                continue
-            if in_jobs and re.match(r"^\S", line):
-                in_jobs = False
-            if not in_jobs:
-                continue
-            named = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
-            if named:
-                current = named.group(1)
-                continue
-            if current and any(
-                f"github.event.pull_request.{field}" in line for field in self.MUTABLE
-            ):
-                jobs.add(current)
-        return jobs
+        jobs = {job.label: job for job in permissions.load_jobs()}
+        watch = jobs["stall-watch.yml:watch"]
+        self.assertEqual(watch.ops, [], "当番の job が書き込みを打つ")
+        self.assertEqual(watch.write_scopes, set(), "当番の job が書き込み権限を持つ")
 
-    def test_可変欄を読むジョブが除外リストに載っている(self):
-        reading = set()
-        for name in PR_WORKFLOWS:
-            reading |= self.jobs_reading_mutable_payload((WORKFLOWS / name).read_text(encoding="utf-8"))
-        missing = reading - self.excluded_jobs()
-        self.assertEqual(
-            missing,
-            set(),
-            f"凍結されたペイロードを読むのに rerun の除外に載っていない: {sorted(missing)}"
-            " — stall-act.sh の RERUN_EXCLUDED へ足す (#699)",
-        )
 
-    def test_走査は可変欄を読むジョブを拾う(self):
-        # 読み手が壊れると、上の検査は黙って緑になる
-        text = (
-            "on: pull_request\njobs:\n  a:\n    steps:\n      - env:\n"
-            "          TITLE: ${{ github.event.pull_request.title }}\n"
-            "  b:\n    # github.event.pull_request.body はコメント\n    steps: []\n"
-        )
-        self.assertEqual(self.jobs_reading_mutable_payload(text), {"a"})
+class WatchTableTest(unittest.TestCase):
+    """読み分け表と、判定が読む名前の写しの検査。
+
+    かつてはここで、凍結されたペイロードの可変欄を読むジョブが stall-act.sh の rerun の除外に
+    載っているかを見ていた (#801 と同じ形)。当番が何も打ち直さなくなったので (#2734)、その除外
+    ごと外した。
+    """
 
     # --- タイトルの赤の直し方 (#2669) -----------------------------------------
     #
@@ -1398,13 +1182,10 @@ class RerunExclusionTest(unittest.TestCase):
         self.assertNotIn(self.squash("新しいコミットを push して run を作り直す"), header)
         self.assertNotIn("空コミット", header)
 
-    def test_古い_run_の作法のジョブの名前は判定と対処で同じ(self):
+    def test_古い_run_の作法のジョブの名前は_ci_yml_に居ない(self):
         watch = re.search(r"^readonly LEGACY_JOBS='(\[[^']*\])'$", WATCH.read_text(encoding="utf-8"), re.M)
-        act = re.search(r'^readonly LEGACY_JOBS="([^"]*)"$', ACT.read_text(encoding="utf-8"), re.M)
         self.assertIsNotNone(watch, "stall-watch.sh の LEGACY_JOBS を読めない")
-        self.assertIsNotNone(act, "stall-act.sh の LEGACY_JOBS を読めない")
-        self.assertEqual(json.loads(watch.group(1)), act.group(1).split())
-        self.assertEqual(set(act.group(1).split()), {"pr-title", "review-gate", "drawing-evidence"})
+        self.assertEqual(json.loads(watch.group(1)), ["pr-title", "review-gate", "drawing-evidence"])
 
     def test_bad_title_が読む_step_は_pr_gate_yml_に在る(self):
         found = re.search(r"^readonly TITLE_STEP='([^']+)'$", WATCH.read_text(encoding="utf-8"), re.M)
@@ -1425,7 +1206,7 @@ class RequiredRuleTest(unittest.TestCase):
     GATE = REPO / "scripts" / "ci-gate.sh"
     POINTER = "ci-gate.sh 冒頭の「必須の判定が読む check run」"
     READERS = (
-        WORKFLOWS / "ci.yml", WORKFLOWS / "pr-gate.yml", ACT, WATCH,
+        WORKFLOWS / "ci.yml", WORKFLOWS / "pr-gate.yml", WATCH,
         # 差し戻しの文面の前提も同じ規則に乗る (#2716 の反証 3)
         REPO / "scripts" / "review-gate.sh", REPO / "scripts" / "check-drawing-evidence.sh",
     )

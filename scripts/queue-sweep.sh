@@ -60,7 +60,7 @@
 # 分岐を持つとそこだけ検査の外に出る。
 #
 # render-pr は必須ではないので、cancel しても merge の可否は変わらない。cancel された
-# render-pr は scripts/stall-act.sh も走らせ直さない (RERUN_EXCLUDED)。定期の検査
+# render-pr は当番 (scripts/stall-watch.sh) も走らせ直さない (当番は何も打たない・#2734)。定期の検査
 # (scheduled-*) は退かせない — 1 つの run の中では needs の鎖で 1 本ずつしか積まれず、
 # 先頭の render と並ぶのは 1 本までである。受け入れた理由は ADR-0019 決定 7。
 #
