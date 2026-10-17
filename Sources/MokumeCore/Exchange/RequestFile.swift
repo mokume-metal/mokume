@@ -16,8 +16,12 @@ nonisolated protocol ExchangeRequest: Decodable {
 /// (つまみの `values` が配列でない・入力の `events` が欠けた・観測の `scale` が文字列)、`id` を
 /// 読めれば echo する相手がいる。応えないと、書き手には「届いたが読めなかった」と「走っていない」の
 /// 見分けが付かない ([ADR-0018] 決定 3「失敗しても必ず応答する」・[ADR-0030] 決定 2)。応え方
-/// (どの語彙で理由を載せるか) は区画ごとに違うので、ここは理由を添えて渡すだけにする。列挙に
-/// してあるので、区画を足しても読めない要求の扱いを書き落とせない。
+/// (どの語彙で理由を載せるか) は区画ごとに違うので、ここは理由を添えて渡すだけにする。
+///
+/// **解けた要求を取り出す口は、`switch` の他に置かない。** 列挙を `switch` で分けさせれば、区画を
+/// 足しても `.unreadable` の扱いをコンパイラが書かせる。`Request?` を返す便宜の取り出しを置くと、
+/// `nil` の側で黙って捨てられる。捨てると ``RequestFile/markHandled(_:)`` も呼ばれず、拾った要求を
+/// 毎フレーム読み直したまま応答がいつまでも書かれない — 前の「確定させて捨てる」より害が重い。
 ///
 /// [#2550]: https://github.com/mokume-metal/mokume/issues/2550
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
@@ -35,12 +39,6 @@ nonisolated enum PendingRequest<Request: ExchangeRequest> {
         case .request(let request): request.id
         case .unreadable(let id, _): id
         }
-    }
-
-    /// 解けた要求。解けなかったなら `nil`。
-    var request: Request? {
-        if case .request(let request) = self { return request }
-        return nil
     }
 }
 

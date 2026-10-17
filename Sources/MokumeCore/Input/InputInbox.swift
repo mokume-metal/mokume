@@ -87,9 +87,15 @@ final class InputInbox {
         guard let pending = requests.pending() else { return nil }
         // 応えようとしたことは、応答を書けたかどうかによらず記録する (観測と同じ)
         defer { requests.markHandled(pending.id) }
-        // **`events` が読めない要求にも応える** (#2550)。解けなかった 1 件だけを持つ要求として
-        // 流すので、`accepted == 0`・`ignored == 1` が返り、何も流れ込まない
-        let request = pending.request ?? InputRequest(id: pending.id, events: [.unreadable])
+        let request: InputRequest
+        switch pending {
+        case .request(let read):
+            request = read
+        case .unreadable(let id, _):
+            // **`events` が読めない要求にも応える** (#2550)。解けなかった 1 件だけを持つ要求として
+            // 流すので、`accepted == 0`・`ignored == 1` が返り、何も流れ込まない
+            request = InputRequest(id: id, events: [.unreadable])
+        }
         var accepted = 0
         var ignored = 0
         for entry in request.events {

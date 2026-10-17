@@ -21,6 +21,13 @@ struct ObservationProtocolTests {
         try AtomicFile.write(Data(request.utf8), to: facet.appendingPathComponent("request.json"))
     }
 
+    /// 解けた要求。解けなかった・無いなら `nil`。**検査だけが使う** — 本体の区画は `switch` で
+    /// 分け、`.unreadable` を書き落とせないようにしている (`PendingRequest`)。
+    private static func request(_ pending: PendingRequest<ObservationRequest>?) -> ObservationRequest? {
+        if case .request(let request) = pending { return request }
+        return nil
+    }
+
     private func report(id: String, image: String?, warnings: [String] = []) -> ObservationReport {
         ObservationReport(
             id: id,
@@ -61,7 +68,7 @@ struct ObservationProtocolTests {
 
         let first = observer.pendingRequest()
         #expect(first?.id == "a1")
-        #expect(first?.request?.scale == 1)
+        #expect(Self.request(first)?.scale == 1)
 
         observer.finish(report(id: "a1", image: "frame-000.png"))
 
@@ -75,7 +82,7 @@ struct ObservationProtocolTests {
         try write(request: #"{"id":"a2","scale":0.5}"#, to: facet)
         let second = observer.pendingRequest()
         #expect(second?.id == "a2")
-        #expect(second?.request?.scale == 0.5)
+        #expect(Self.request(second)?.scale == 0.5)
     }
 
     @Test("知らない鍵は無視する")
@@ -332,7 +339,7 @@ struct ObservationProtocolTests {
 
         let pending = try #require(observer.pendingRequest(), "要求が黙って捨てられた")
         #expect(pending.id == "x1")
-        #expect(pending.request == nil, "解けないのに、撮る要求として渡した")
+        #expect(Self.request(pending) == nil, "解けないのに、撮る要求として渡した")
         guard case .unreadable(let id, let reason) = pending else { return }
         if let key { #expect(reason.contains(key), "\(reason)") }
         observer.refuse(id: id, reason: reason) { id, warnings in
