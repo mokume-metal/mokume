@@ -59,6 +59,9 @@ import simd
 ///   `endfacet` が行の先頭にある面しか読まない。字下げは空白・タブ・VT・FF を読み飛ばす
 /// - 頂点が足りない面や多い面があると、隣の面の頂点を食って、形が壊れる。足りない数と多い数が打ち消し
 ///   合う並びでも、面の数は合う
+/// - **バイナリでも、見出しが `solid` で始まり `facet normal` の綴り (上の添字 127 まで) を含むと、文字として読み、
+///   面の無い形を返す** ([#2746])。大きさが 84 + 50 × 面の数と合う完全なバイナリでも、途中で切れたものでも同じ。
+///   `solid` だけ・`facet normal` だけの見出しなら、バイナリとして読む
 ///
 /// ## mokume が見分けて扱う範囲
 ///
@@ -103,12 +106,17 @@ import simd
 ///   読める面の数 (``completeBinaryFaces(head:size:)``。宣言した面の数と、頭の後ろに揃った面の数の小さいほう) が
 ///   0 なら、Model I/O に渡さず空にする — 面の数が 0 で後ろに余りがあるものも、最初の面の途中で切れたものも、
 ///   84 バイトから同じに空になる。128 バイトに満たないもの (Model I/O が必ず断る) と、128〜132 バイト (Model I/O が
-///   面の無い形を返す) もここに入る。1 以上なら Model I/O に読ませる
+///   面の無い形を返す) もここに入る。1 以上なら Model I/O に読ませ、**返った三角形の数 (数でない座標で読み飛ばした
+///   面も含む) が、揃ったと読める面の数と等しいときだけ採る** ([#2746])。合わず、見出しが `solid` で始まるときだけ、
+///   **見出しの 80 バイトを 0 にした写し**を読ませて照らし直す (``writeBlankHeader(head:rest:to:)``。面の数と面には
+///   触れない)。それでも合わない・写しを書けなければ、読めないとして返す — 面の無い形を空としては採らない。
+///   普通のバイナリ (見出しが `solid` で始まらない・`facet normal` を含まない) は 1 回目で合うので、写しを作らない
 ///
 /// 上の境目 (128 バイトと 128〜132 バイトの癖・面の数の上限・途中で切れたバイナリの揃った面の数え方・文字を
 /// バイナリとして読むこと・読み直しの形・読めない文字を面の無い形で返すこと・VT と FF を空白として読むこと・
-/// `facet normal` の綴りの位置の上限・面の中の空でない行を頂点として読むこと・行を LF だけで割ること) は読み手の
-/// 挙動で、`STLModelTests` が固定している。読み手が変わったら、そこが赤くなって、この節の直し時を知らせる。
+/// `facet normal` の綴りの位置の上限・面の中の空でない行を頂点として読むこと・行を LF だけで割ること・`solid` …
+/// `facet normal` の見出しのバイナリを文字として読むこと) は読み手の挙動で、`STLModelTests` が固定している。読み手が
+/// 変わったら、そこが赤くなって、この節の直し時を知らせる。
 ///
 /// **残る境目**: 文字の STL では、座標が足りない `vertex` の行や数でない座標を、読み手が 0 として読む (上の
 /// 読み手の癖)。頂点の数と面の数の確かめでは見えない。
@@ -133,7 +141,8 @@ import simd
 ///   含む文字の STL (#2494)・名前に UTF-8 でない字を含む面の無い solid (空になる)・`facet normal` の綴りが添字 128
 ///   から先にしか無い文字の STL (名前が 121 文字以上・最初の面の字下げが長い・面の行の区切りがタブや空白 2 つなど)・
 ///   面の中に空白・CR だけの行 (CRLF の空行など) がある文字の STL (#2645)。揃った面の無い 84〜127 バイトのバイナリ
-///   (最初の面の途中で切れたもの・面の数が 0 で後ろに余りのあるもの) は、読めないではなく空になる (#2493)
+///   (最初の面の途中で切れたもの・面の数が 0 で後ろに余りのあるもの) は、読めないではなく空になる (#2493)。
+///   見出しが `solid` で始まり `facet normal` を含むバイナリは、面の無い形ではなく書かれた面を読む (#2746)
 ///
 /// [#1966]: https://github.com/mokume-metal/mokume/issues/1966
 /// [#2335]: https://github.com/mokume-metal/mokume/issues/2335
@@ -142,6 +151,7 @@ import simd
 /// [#2391]: https://github.com/mokume-metal/mokume/issues/2391
 /// [#2493]: https://github.com/mokume-metal/mokume/issues/2493
 /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
+/// [#2746]: https://github.com/mokume-metal/mokume/issues/2746
 nonisolated extension ModelFile {
     /// STL を読む。
     ///
@@ -172,7 +182,11 @@ nonisolated extension ModelFile {
     /// [#2493]: https://github.com/mokume-metal/mokume/issues/2493
     ///
     /// **文字の STL は、Model I/O が返した三角形を、書かれた面の数と照らして採る。** 読めない文字
-    /// を面の無い形で返されても、空とは取り違えない (読めないとして返す)。
+    /// を面の無い形で返されても、空とは取り違えない (読めないとして返す)。**バイナリも、大きさから揃ったと
+    /// 読める面の数と照らす** — 見出しが `solid` で始まり `facet normal` を含むバイナリを、読み手は文字として読んで
+    /// 面の無い形を返すので、見出しを 0 にした写しで読み直す ([#2746])。
+    ///
+    /// [#2746]: https://github.com/mokume-metal/mokume/issues/2746
     ///
     /// - Parameter scratch: Model I/O に読ませる写しを置く場所。呼ぶ側が差し替えるのは検査だけ。
     static func loadSTL(
@@ -207,9 +221,18 @@ nonisolated extension ModelFile {
             // **揃った面が無ければ、読み手に渡さず空にする** (#2493)。途中で切れていても、面の数が 0 で後ろに
             // 余りがあっても、大きさによらない。128 バイトに満たないもの (読み手が必ず断る) と、128〜132 バイト
             // (読み手が面の無い形を返す) もここに入る
-            guard completeBinaryFaces(head: head, size: size) > 0 else { return empty }
-            guard let parsed = askModelIO(url) else { throw .unreadable(path: path) }
-            return parsed
+            let faces = completeBinaryFaces(head: head, size: size)
+            guard faces > 0 else { return empty }
+            // **返った面の数を、揃ったと読める面の数と照らす** (#2746)。読み手は、`solid` で始まり `facet normal` を
+            // 含む見出しのバイナリを文字として読み、面の無い形を返す。合わず、見出しが `solid` で始まるときだけ、見出しを
+            // 0 にした写しで読み直す — 普通のバイナリは 1 回目で合うので、写しを作らない
+            if let read = reading(url), agrees(read, facets: faces) { return read.parsed }
+            guard head.starts(with: "solid".utf8),
+                let read = try? readThroughCopy(
+                    in: scratch, fill: { try writeBlankHeader(head: head, rest: handle, to: $0) }),
+                agrees(read, facets: faces)
+            else { throw .unreadable(path: path) }
+            return read.parsed
         case .text:
             guard let text = scanText(head: head, rest: isSmall ? nil : handle) else {
                 throw .unreadable(path: path)
@@ -598,10 +621,12 @@ nonisolated extension ModelFile {
         }
     }
 
-    /// 読み手が文字の STL から返した三角形の数が、書かれた面の数と一致するか。
+    /// 読み手が返した三角形の数が、書かれた面の数と一致するか。文字の STL は書かれた面の数と、バイナリは大きさから
+    /// 揃ったと読める面の数 (``completeBinaryFaces(head:size:)``) と照らす ([#2746])。
     ///
-    /// **一致しなければ読めないとする。** 0 枚は「読めなかった」(CR だけの改行など)、多いのは文字を
-    /// バイナリとして読み直したでたらめな面、少ないのは頂点の足りない面が次の面の頂点を食った形である。
+    /// **一致しなければ読めないとする。** 0 枚は「読めなかった」(CR だけの改行など。バイナリでは、`solid` で始まり
+    /// `facet normal` を含む見出しを文字の頭と読んだとき)、多いのは文字をバイナリとして読み直したでたらめな面、
+    /// 少ないのは頂点の足りない面が次の面の頂点を食った形である。
     /// 読み手は、正しい STL では退化した面 (3 点が同じ・一直線)・数でない座標の面・複数の `solid` も
     /// 1 面ずつ返す (測った)。
     ///
@@ -612,17 +637,13 @@ nonisolated extension ModelFile {
     ///
     /// [#2566]: https://github.com/mokume-metal/mokume/issues/2566
     /// [#2645]: https://github.com/mokume-metal/mokume/issues/2645
+    /// [#2746]: https://github.com/mokume-metal/mokume/issues/2746
     static func agrees(_ reading: Reading, facets: Int) -> Bool {
         reading.defects == 0 && reading.parsed.positions.count / 3 + reading.parsed.skippedLines == facets
     }
 
     /// Model I/O が読んだ形と、そのうち写せなかった要素の数 (数でない座標の面を除く。``triangles(of:)``)。
     typealias Reading = (parsed: Parsed, defects: Int)
-
-    /// Model I/O にファイルを読ませる。断られたら `nil`。
-    private static func askModelIO(_ url: URL) -> Parsed? {
-        reading(url)?.parsed
-    }
 
     /// Model I/O にファイルを読ませ、写せなかった要素の数も返す。断られたら `nil`。
     private static func reading(_ url: URL) -> Reading? {
@@ -676,22 +697,38 @@ nonisolated extension ModelFile {
                 if let normalEnd = scan.firstFacetNormalEnd {
                     return try writeRewritten(from: normalEnd, head: head, rest: rest, to: output)
                 }
-                var written = prepared.count
                 try output.write(contentsOf: prepared)
-                if let rest {
-                    try rest.seek(toOffset: UInt64(head.count))
-                    while true {
-                        let data = try autoreleasepool { try rest.read(upToCount: 1 << 20) }
-                        guard let data, !data.isEmpty else { break }
-                        try autoreleasepool { try output.write(contentsOf: data) }
-                        written += data.count
-                    }
-                }
-                return written
+                guard let rest else { return prepared.count }
+                return try prepared.count + copyRest(of: rest, from: head.count, to: output)
             }
         } catch {
             return rest == nil ? nil : reading(url)
         }
+    }
+
+    /// `rest` の `offset` バイト目から終わりまでを `output` へ写し、写したバイト数を返す。1 MiB ずつ読み、
+    /// 読むたびに自動解放の置き場を空ける (ファイル全体を常駐させない)。
+    private static func copyRest(of rest: FileHandle, from offset: Int, to output: FileHandle) throws -> Int {
+        try rest.seek(toOffset: UInt64(offset))
+        var written = 0
+        while true {
+            let data = try autoreleasepool { try rest.read(upToCount: 1 << 20) }
+            guard let data, !data.isEmpty else { break }
+            try autoreleasepool { try output.write(contentsOf: data) }
+            written += data.count
+        }
+        return written
+    }
+
+    /// バイナリの STL の、見出しの 80 バイトを 0 にした写しを `output` へ書き、書いたバイト数を返す ([#2746])。
+    /// 面の数と面には触れない。読み手は、`solid` で始まり `facet normal` を含む見出しを文字の頭と読んで、面の無い形を
+    /// 返す (``loadSTL(_:path:scratch:)``)。見出しは読まれないので、0 にしても形は変わらない。
+    ///
+    /// [#2746]: https://github.com/mokume-metal/mokume/issues/2746
+    private static func writeBlankHeader(head: Data, rest: FileHandle, to output: FileHandle) throws -> Int {
+        let blanked = Data(count: 80) + head.dropFirst(80)
+        try output.write(contentsOf: blanked)
+        return try blanked.count + copyRest(of: rest, from: head.count, to: output)
     }
 
     /// 一時の置き場に写しを書き (`fill` が書いたバイト数を返す)、Model I/O に読ませる。128 バイトに満たなければ、

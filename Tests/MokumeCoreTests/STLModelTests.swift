@@ -883,6 +883,75 @@ struct STLModelTests {
         #expect(try read(Data(data.prefix(size))) == ModelFile.empty)
     }
 
+    /// 見出しが `solid` で始まり、先頭 128 バイトに `facet normal` を含む 5 面のバイナリ (334 バイト)。読み手は文字として
+    /// 読み、面の無い形を返す ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
+    static let facetNormalHeaderFacets = tetrahedron + [smallFacet]
+    static let facetNormalHeader = ModelFixture.binarySTL(
+        facetNormalHeaderFacets, header: "solid part facet normal 0 0 1 outer loop")
+
+    /// **見出しが `solid` で始まり `facet normal` を含むバイナリも、書かれた面のとおりに読む** ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
+    /// 読み手が返した面の数を、大きさから揃ったと読める面の数と照らし、合わなければ見出しを 0 にした写しで読み直す。
+    /// 途中で切れたものも、揃った面だけを読む (#2493 と両方が入った木で、どちらの約束も守る)。
+    @Test(
+        "見出しが solid で始まり facet normal を含むバイナリの STL も、空の形ではなく書かれた面のとおりに読む (#2746)",
+        arguments: [(334, 5), (333, 5), (332, 5), (283, 4), (233, 3), (183, 2), (182, 2), (133, 1), (132, 0)])
+    func aBinaryWithAFacetNormalHeaderIsRead(_ cut: (Int, Int)) throws {
+        let (size, faces) = cut
+        let whole = Self.facetNormalHeader
+        #expect(whole.count == 334)
+        #expect(ModelFile.stlLayout(of: whole.prefix(128), size: size) == .binary)
+        let parsed = try read(Data(whole.prefix(size)))
+        if faces == 0 {
+            #expect(parsed == ModelFile.empty)
+        } else {
+            #expect(parsed.positions == Self.facetNormalHeaderFacets.prefix(faces).flatMap(\.corners))
+        }
+    }
+
+    /// **写しは、読み手が返した面の数が合わず、見出しが `solid` で始まるときだけ作る** ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
+    /// 普通のバイナリ (見出しが `solid` で始まらない・`facet normal` を含まない) は、元のファイルをそのまま読ませる。
+    /// 置き場の更新日時を古い日に固定し、写しの置き場 (子の作成と削除) に触れたかを見る。
+    @Test("普通のバイナリの STL は写しを作らずに読み、見出しが solid … facet normal のものだけ写しを作って残さない (#2746)")
+    func aCopyIsMadeOnlyForABinaryTheReaderTakesForText() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let longAgo = Date(timeIntervalSince1970: 1_000_000_000)
+        let facets = Self.facetNormalHeaderFacets
+        func touched(header: String) throws -> Bool {
+            try FileManager.default.setAttributes([.modificationDate: longAgo], ofItemAtPath: scratch.path)
+            _ = try withWritten(ModelFixture.binarySTL(facets, header: header), as: "tap.stl") { path in
+                let parsed = try ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+                #expect(parsed.positions == facets.flatMap(\.corners), "\(header)")
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
+            let date = try FileManager.default.attributesOfItem(atPath: scratch.path)[.modificationDate] as? Date
+            return date != longAgo
+        }
+        #expect(try touched(header: "mokume test") == false)
+        #expect(try touched(header: "solid part1") == false)
+        #expect(try touched(header: "part facet normal 0 0 1 outer loop") == false)
+        #expect(try touched(header: "solid part facet normal 0 0 1 outer loop") == true)
+    }
+
+    /// 写しを書けない置き場では、読み手が文字として読んだ面の無い形を採らず、読めないとして投げる (空の形を返さない)。
+    /// 普通のバイナリは写しが要らないので、同じ置き場でも読める ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
+    @Test("写しを書けない置き場では、見出しが solid … facet normal のバイナリの STL は空ではなく読めないとして投げる (#2746)")
+    func aFacetNormalHeaderWithoutScratchIsUnreadable() throws {
+        let scratch = URL(fileURLWithPath: "/dev/null/mokume-no-scratch")
+        _ = try withWritten(Self.facetNormalHeader, as: "header.stl") { path in
+            #expect(throws: ModelFailure.unreadable(path: path)) {
+                try ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+            }
+        }
+        let plain = ModelFixture.binarySTL(Self.facetNormalHeaderFacets, header: "solid part1")
+        try withWritten(plain, as: "plain.stl") { path in
+            let parsed = try ModelFile.loadSTL(URL(fileURLWithPath: path), path: path, scratch: scratch)
+            #expect(parsed.positions == Self.facetNormalHeaderFacets.flatMap(\.corners))
+        }
+    }
+
     /// 1 行目が 83 文字 (84 バイト目が改行) の面の無い solid。Model I/O は面を見つけられず、80〜83
     /// バイト目を面の数とするバイナリとして読み直し、でたらめな面を返す (#2391)。**名前に `facet` を
     /// 含んでも同じ** — 面の有無を `facet` の語の有無で代用すると、ここを取りこぼす。
@@ -1677,7 +1746,7 @@ struct STLModelTests {
 
     // MARK: - Model I/O の判定 (説明が頼る事実)
 
-    // **次の 10 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
+    // **次の 11 本は、読み手の Model I/O の挙動を固定する。** 説明 (`loadSTL`・`loadModel`) とここまでの
     // 検査は、この挙動を前提に境目を決めている。Model I/O が変わったら、ここが赤くなって、説明と
     // `loadSTL` の見分け方の直し時を知らせる (`asciiNonNumbersBecomeZero` と同じ役)。
 
@@ -1840,5 +1909,21 @@ struct STLModelTests {
             #expect(try readByModelIO(data)?.triangles == Int(declared))
             #expect(ModelFile.completeBinaryFaces(head: data.prefix(128), size: data.count) == Int(declared))
         }
+    }
+
+    /// 見出しが `solid` で始まり `facet normal` を含むバイナリを、読み手は文字として読み、面の無い形を返す (切ったものも)。
+    /// `solid` だけ・`facet normal` だけの見出しなら、バイナリとして読む。見出しを 0 にすれば読む
+    /// ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
+    @Test("Model I/O は、見出しが solid で始まり facet normal を含むバイナリを文字として読み、面の無い形を返す")
+    func modelIOReadsASolidFacetNormalHeaderAsText() throws {
+        let tricky = Self.facetNormalHeader
+        #expect(try readByModelIO(tricky)?.triangles == 0)
+        #expect(try readByModelIO(Data(tricky.prefix(233)))?.triangles == 0)
+        let facets = Self.facetNormalHeaderFacets
+        #expect(try readByModelIO(ModelFixture.binarySTL(facets, header: "solid part1"))?.triangles == 5)
+        #expect(try readByModelIO(ModelFixture.binarySTL(facets, header: "part facet normal 0 0 1 outer loop"))?.triangles == 5)
+        var blanked = tricky
+        blanked.replaceSubrange(0..<80, with: Data(count: 80))
+        #expect(try readByModelIO(blanked)?.triangles == 5)
     }
 }
