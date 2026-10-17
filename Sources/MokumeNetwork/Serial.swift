@@ -94,7 +94,7 @@ public final class Serial: Inlet {
     /// 止める。ポートを閉じ、以後 ``lines`` は空のまま。閉じたポートは、他のアプリ (Arduino IDE の
     /// 書き込みなど) が開けるようになる。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``Sketch/detach(_:)-(Inlet)`` と同じ)。
+    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     public func stop() {
         owner?.detach(self)
     }
