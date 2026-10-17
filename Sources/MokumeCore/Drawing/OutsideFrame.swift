@@ -13,7 +13,15 @@ extension Canvas {
     /// **鍵は種類ごとに分けたままにしてある** — 光の注意が視点の注意を黙らせないことを
     /// `WarnOnceTests` が契約として見ている。ここが畳むのは文面だけである。
     ///
+    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 11 種) の文は、断った場面を名乗らない** —
+    /// 「フレームの外で」とだけ言う ([#2723])。断るのは `setup()` の中だけではなく、止まっている間の
+    /// コールバック・`Task.detached` の中・走る前・直に使う面の `draw { }` の外でも同じ文が出る。
+    /// かつては「`setup()` の間に書いた」と決め打ちしていて、止めた後のコールバックで書いた人に
+    /// 直す場所を取り違えさせた。場面ごとに文を変えないのは、鍵が種類ごとで、最初に断った場面の
+    /// 文しか出ないからである。
+    ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
+    /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
     enum OutsideFrame: CaseIterable {
         case camera
         case transform
@@ -72,37 +80,39 @@ extension Canvas {
             switch self {
             case .camera:
                 "The camera and projection are placed again every frame, so call this from "
-                    + "draw(). The camera placed during setup belongs to no frame, and was ignored"
+                    + "draw(). This camera was placed outside a frame, so it belongs to no frame, "
+                    + "and was ignored"
             case .transform:
-                "Transforms are written again every frame, so call this from draw(). The "
-                    + "transform written during setup belongs to no frame, and was ignored"
+                "Transforms are written again every frame, so call this from draw(). This "
+                    + "transform was written outside a frame, so it belongs to no frame, and was ignored"
             case .style:
-                "Pushing and popping style only works inside a frame. The style pushed during "
-                    + "setup belongs to no frame, and was ignored"
+                "Pushing and popping style only works inside a frame. This style was pushed outside "
+                    + "a frame, so it belongs to no frame, and was ignored"
             case .clip:
-                "The clip is written again every frame, so call this from draw(). The clip "
-                    + "written during setup belongs to no frame, and was ignored"
+                "The clip is written again every frame, so call this from draw(). This clip was "
+                    + "written outside a frame, so it belongs to no frame, and was ignored"
             case .effects:
-                "Effects are written again every frame, so call this from draw(). The effects "
-                    + "written during setup belong to no frame, and were ignored"
+                "Effects are written again every frame, so call this from draw(). These effects "
+                    + "were written outside a frame, so they belong to no frame, and were ignored"
             case .light:
-                "Lights are placed again every frame, so call this from draw(). The light "
-                    + "placed during setup belongs to no frame, and was ignored"
+                "Lights are placed again every frame, so call this from draw(). This light was "
+                    + "placed outside a frame, so it belongs to no frame, and was ignored"
             case .surroundings:
-                "The surroundings are placed again every frame, so call this from draw(). The "
-                    + "surroundings placed during setup belong to no frame, and were ignored"
+                "The surroundings are placed again every frame, so call this from draw(). These "
+                    + "surroundings were placed outside a frame, so they belong to no frame, and were "
+                    + "ignored"
             case .shadow:
-                "Shadows are written again every frame, so call this from draw(). The shadow "
-                    + "written during setup belongs to no frame, and was ignored"
+                "Shadows are written again every frame, so call this from draw(). This shadow was "
+                    + "written outside a frame, so it belongs to no frame, and was ignored"
             case .material:
-                "Materials are written again every frame, so call this from draw(). The "
-                    + "material written during setup belongs to no frame, and was ignored"
+                "Materials are written again every frame, so call this from draw(). This material "
+                    + "was written outside a frame, so it belongs to no frame, and was ignored"
             case .particles:
-                "Particles are handled where you draw, in draw(). The particles emitted during "
-                    + "setup belong to no frame, and were ignored"
+                "Particles are handled where you draw, in draw(). These particles were emitted "
+                    + "outside a frame, so they belong to no frame, and were ignored"
             case .compute:
-                "Compute is a preamble to drawing, so ask for it from draw(). The compute asked "
-                    + "for during setup belongs to no frame, and was ignored"
+                "Compute is a preamble to drawing, so ask for it from draw(). This compute was "
+                    + "asked for outside a frame, so it belongs to no frame, and was ignored"
             case .placing:
                 "Shapes, images and backgrounds are placed in setup(), draw() or an input "
                     + "callback, or between beginDraw() and endDraw() on a drawing target. This was "

@@ -12,46 +12,50 @@ import Testing
 /// 畳んだとき「頼んだ」が「頼んた」になり ([#947]・語幹だけを差し替えて音便を落とした)、
 /// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。切り抜きの
 /// 1 文 ([#1505]) と効果の 1 文 ([#1605]) は後から足した。置くことと画素を書くことの 2 文
-/// ([#1672]) はシーンの記述ではなく、置ける場面を名乗る。
+/// ([#1672]) はシーンの記述ではなく、置ける場面を名乗る。シーンの記述の 11 文は、断った場面を
+/// 名乗らずに「フレームの外で」と言う形へ直した ([#2723])。前は「setup の間に」と決め打ちしていた。
 ///
 /// [#947]: https://github.com/mokume-metal/mokume/issues/947
 /// [#1505]: https://github.com/mokume-metal/mokume/issues/1505
 /// [#1605]: https://github.com/mokume-metal/mokume/issues/1605
 /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+/// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
 private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
         "The camera and projection are placed again every frame, so call this from "
-            + "draw(). The camera placed during setup belongs to no frame, and was ignored",
+            + "draw(). This camera was placed outside a frame, so it belongs to no frame, "
+            + "and was ignored",
     .transform:
-        "Transforms are written again every frame, so call this from draw(). The "
-            + "transform written during setup belongs to no frame, and was ignored",
+        "Transforms are written again every frame, so call this from draw(). This "
+            + "transform was written outside a frame, so it belongs to no frame, and was ignored",
     .style:
-        "Pushing and popping style only works inside a frame. The style pushed during "
-            + "setup belongs to no frame, and was ignored",
+        "Pushing and popping style only works inside a frame. This style was pushed outside "
+            + "a frame, so it belongs to no frame, and was ignored",
     .clip:
-        "The clip is written again every frame, so call this from draw(). The clip "
-            + "written during setup belongs to no frame, and was ignored",
+        "The clip is written again every frame, so call this from draw(). This clip was "
+            + "written outside a frame, so it belongs to no frame, and was ignored",
     .effects:
-        "Effects are written again every frame, so call this from draw(). The effects "
-            + "written during setup belong to no frame, and were ignored",
+        "Effects are written again every frame, so call this from draw(). These effects "
+            + "were written outside a frame, so they belong to no frame, and were ignored",
     .light:
-        "Lights are placed again every frame, so call this from draw(). The light "
-            + "placed during setup belongs to no frame, and was ignored",
+        "Lights are placed again every frame, so call this from draw(). This light was "
+            + "placed outside a frame, so it belongs to no frame, and was ignored",
     .surroundings:
-        "The surroundings are placed again every frame, so call this from draw(). The "
-            + "surroundings placed during setup belong to no frame, and were ignored",
+        "The surroundings are placed again every frame, so call this from draw(). These "
+            + "surroundings were placed outside a frame, so they belong to no frame, and were "
+            + "ignored",
     .shadow:
-        "Shadows are written again every frame, so call this from draw(). The shadow "
-            + "written during setup belongs to no frame, and was ignored",
+        "Shadows are written again every frame, so call this from draw(). This shadow was "
+            + "written outside a frame, so it belongs to no frame, and was ignored",
     .material:
-        "Materials are written again every frame, so call this from draw(). The "
-            + "material written during setup belongs to no frame, and was ignored",
+        "Materials are written again every frame, so call this from draw(). This material "
+            + "was written outside a frame, so it belongs to no frame, and was ignored",
     .particles:
-        "Particles are handled where you draw, in draw(). The particles emitted during "
-            + "setup belong to no frame, and were ignored",
+        "Particles are handled where you draw, in draw(). These particles were emitted "
+            + "outside a frame, so they belong to no frame, and were ignored",
     .compute:
-        "Compute is a preamble to drawing, so ask for it from draw(). The compute asked "
-            + "for during setup belongs to no frame, and was ignored",
+        "Compute is a preamble to drawing, so ask for it from draw(). This compute was "
+            + "asked for outside a frame, so it belongs to no frame, and was ignored",
     .placing:
         "Shapes, images and backgrounds are placed in setup(), draw() or an input "
             + "callback, or between beginDraw() and endDraw() on a drawing target. This was "
