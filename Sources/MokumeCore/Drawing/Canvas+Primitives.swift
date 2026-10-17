@@ -14,15 +14,52 @@ extension Canvas {
     /// 矩形。座標の読み方は ``rectMode(_:)`` が決める。
     public func rect(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        placeRect(a, b, c, d, cornerRadius: 0)
+    }
+
+    /// 4 つの角を同じ半径で丸めた矩形。座標の読み方は ``rectMode(_:)`` が決める。
+    public func rect(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ r: some ScalarConvertible
+    ) {
+        let (a, b, c, d, r) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, r.asFloat)
+        // 負の半径・数でない値は 0 にして (角を丸めない)、1 度知らせる (ADR-0020 決定 5・#2757)。
+        // `>=` は NaN も弾く。**+∞ は弾かない** — 「できるだけ丸く」と読めて、`placeRect` が
+        // 短い辺の半分へ締める (`1e9` と同じ扱い)
+        guard r >= 0 else {
+            warnRounded(
+                .badCornerRadius, "rect", "the corner radius", takes: "0 or more",
+                passed: r, used: 0)
+            return placeRect(a, b, c, d, cornerRadius: 0)
+        }
+        placeRect(a, b, c, d, cornerRadius: r)
+    }
+
+    /// 矩形を置く。4 引数と 5 引数の口がここへ集まる。
+    ///
+    /// `cornerRadius` は検め済み (0 以上・数でないものは無い) で、**ここで短い辺の半分に
+    /// 締める** (Processing 4 の `PGraphics.rect` の `maxRounding` と同じ)。0 のときは角を丸めない
+    /// 矩形の経路をそのまま通るので、4 引数の絵は変わらない (#2757)。
+    private func placeRect(_ a: Float, _ b: Float, _ c: Float, _ d: Float, cornerRadius: Float) {
         let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
         guard box.width > 0, box.height > 0 else { return }
         let w = box.width
         let h = box.height
+        let radius = min(cornerRadius, w / 2, h / 2)
         // 距離関数で描ける間は頂点を組み立てない (`Canvas+Form.swift`)
         if formAllowed(fills: true) {
             return appendForm(
                 .rect, center: SIMD2(box.x + w / 2, box.y + h / 2), half: SIMD2(w / 2, h / 2),
-                fills: true)
+                fills: true, cornerRadius: radius)
+        }
+        // 角を丸めた矩形は、貼る絵 (`texture()`) か利用者の断片 (`shader()`) が効いている間だけ
+        // ここへ来る。距離関数の経路に入れないので、角を円弧の刻みで繋いだ周で描く。畳まない
+        if radius > 0 {
+            let segments = Self.segmentCount(
+                forRadius: radius, scale: Self.splitScale(of: transform.matrix))
+            return draw(
+                Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
+                    .moved(by: SIMD2(box.x, box.y)))
         }
         // 周は**形自身の座標**で作り、左上の角を置き場所として渡す。畳まないときは
         // 角を足し戻すだけなので、絵は 1 ビットも変わらない (足す順が入れ替わるだけ)
@@ -39,6 +76,41 @@ extension Canvas {
                 namedFill: Outline.NamedFill(
                     isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
         }
+    }
+
+    /// 角を半径 `radius` の円弧で丸めた矩形の周 (形自身の座標・左上が原点)。
+    ///
+    /// `radius` は幅・高さの半分以下で、0 より大きい。**4 つの角を、`segments` を一周の分割数として
+    /// 刻む** (円と同じ数え方・``segmentCount(forRadius:scale:)``)。弧は辺に接して繋がるので
+    /// 折れ目は無く、点はどれも刻みとして円板で繋ぐ (`curveSteps`)。半径が辺の半分ちょうどで
+    /// 重なる点は 1 つに畳む (長さ 0 の辺を作らない)。
+    static func roundedRectOutline(
+        width w: Float, height h: Float, radius r: Float, segments: Int
+    ) -> Outline {
+        // 辺に接する点は、三角関数の丸めを通さず座標そのものを置く
+        let corners: [(center: SIMD2<Float>, start: Float)] = [
+            (SIMD2(w - r, r), -.pi / 2), (SIMD2(w - r, h - r), 0),
+            (SIMD2(r, h - r), .pi / 2), (SIMD2(r, r), .pi),
+        ]
+        let ends: [(SIMD2<Float>, SIMD2<Float>)] = [
+            (SIMD2(w - r, 0), SIMD2(w, r)), (SIMD2(w, h - r), SIMD2(w - r, h)),
+            (SIMD2(r, h), SIMD2(0, h - r)), (SIMD2(0, r), SIMD2(r, 0)),
+        ]
+        var points: [SIMD2<Float>] = []
+        for (index, corner) in corners.enumerated() {
+            var arc = arcOffsets(
+                radiusX: r, radiusY: r, from: corner.start, sweep: .pi / 2, fullTurn: segments)
+            for offset in arc.indices { arc[offset] += corner.center }
+            arc[0] = ends[index].0
+            arc[arc.count - 1] = ends[index].1
+            for point in arc where point != points.last { points.append(point) }
+        }
+        if points.count > 1, points.last == points.first { points.removeLast() }
+        return Outline(
+            points: points, isClosed: true, fanCenter: SIMD2(w / 2, h / 2),
+            curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true,
+            namedFill: Outline.NamedFill(
+                isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
     }
 
     /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。

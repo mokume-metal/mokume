@@ -701,7 +701,8 @@ struct FormInstance {
     float4 linear;
     /// xy: 平行移動 (形の中心)。zw: 扇形の開始角と掃引
     float4 offset;
-    /// xy: 半幅・半高 (楕円は半径。線は半分の長さと 0)。z: 線幅の半分 (輪郭が無ければ 0)
+    /// xy: 半幅・半高 (楕円は半径。線は半分の長さと 0)。z: 線幅の半分 (輪郭が無ければ 0)。
+    /// w: 矩形の角の半径 (半幅・半高の小さいほう以下。丸めない矩形と矩形以外は 0・#2757)
     float4 size;
     /// 塗り (乗算済み線形)。塗りが無ければ 0
     float4 fill;
@@ -1123,6 +1124,23 @@ static inline FormField mokume_boxField(float2 p, float2 extent) {
     return mokume_field(max(q.x, q.y), gradient);
 }
 
+/// 原点を中心とする、角を半径 `radius` で丸めた箱の距離場 ([#2757])。
+///
+/// **角丸の箱は、半幅を `radius` だけ縮めた箱を `radius` だけ膨らませた形** なので、縮めた箱の
+/// 距離場から `radius` を引くだけで出る。外では角の円弧の中心 (縮めた箱の角) へ向かう向き、
+/// 内では近い辺の向きの勾配が、そのまま真の距離場の勾配になる。`radius` は半幅・半高の小さい
+/// ほう以下 (CPU が締める) で、縮めた箱の半幅が負にならない。
+///
+/// **`radius` が 0 のときは `mokume_boxField` と同じ値を返す** (0 を引くだけ)。角を丸めない
+/// 矩形の絵は変わらない。
+///
+/// [#2757]: https://github.com/mokume-metal/mokume/issues/2757
+static inline FormField mokume_roundedBoxField(float2 p, float2 extent, float radius) {
+    FormField field = mokume_boxField(p, extent - radius);
+    field.distance -= radius;
+    return field;
+}
+
 /// 原点を中心とする楕円の距離場 (近似)。**円なら厳密**に `|p| − r` になる。
 ///
 /// 楕円の厳密な距離は反復が要る。縁の近くで 1 次の精度があれば被覆率には足りる
@@ -1321,8 +1339,10 @@ static inline FormPaint mokume_formPaint(
     float thinHoleCoverage = 0.0;
     if (kind == kFormRect) {
         float2 extent = form.size.xy;
+        // 角の半径 (#2757)。0 なら従来の箱と同じ式を通る
+        float cornerRadius = form.size.w;
         if (kFormHasFill) {
-            fill = mokume_boxField(p, extent);
+            fill = mokume_roundedBoxField(p, extent, cornerRadius);
             if (kFormHasThinFill
                 && any(2.0 * extent * (1.0 + 2.0 * kFormSnap) < unitsPerPixel)) {
                 // **画面で 1 画素より細い塗りは、両縁を見る 1 次元の被覆の積で数える**
@@ -1352,9 +1372,12 @@ static inline FormPaint mokume_formPaint(
             }
         }
         if (kFormHasStroke) {
-            // 角の形は外縁だけが持つ。内縁は帯が重なって必ず直角 (三角形のときと同じ)
-            if (form.meta.z == kFormJoinRound) {
-                outer = mokume_grown(mokume_boxField(q, extent), halfWeight);
+            // 角の形は外縁だけが持つ。内縁は帯が重なって必ず直角 (三角形のときと同じ)。
+            // **角を丸めた矩形の周には折れ目が無い** (弧は辺に接して繋がる) ので、折れ目の形は
+            // 読まない — 外縁は丸めた周を太さの半分だけ広げた、半径が `r + 太さの半分` の弧になる
+            // (#2757)
+            if (form.meta.z == kFormJoinRound || cornerRadius > 0.0) {
+                outer = mokume_grown(mokume_roundedBoxField(q, extent, cornerRadius), halfWeight);
             } else {
                 outer = mokume_boxField(q, extent + halfWeight);
                 if (form.meta.z == kFormJoinBevel) {
@@ -1379,7 +1402,9 @@ static inline FormPaint mokume_formPaint(
                     mokume_spanCoverage(q.x / unitsPerPixel.x, max(hole.x, 0.0) / unitsPerPixel.x)
                     * mokume_spanCoverage(q.y / unitsPerPixel.y, max(hole.y, 0.0) / unitsPerPixel.y);
             } else {
-                inner = mokume_boxField(q, hole);
+                // 内縁は、丸めた周を太さの半分だけ縮めた形。角の半径は `r − 太さの半分` で、
+                // 太さの半分が半径以上なら直角になる (`max` が 0 に締める)。半径 0 は従来の箱
+                inner = mokume_roundedBoxField(q, hole, max(cornerRadius - halfWeight, 0.0));
             }
         }
     } else if (kind == kFormEllipse) {
