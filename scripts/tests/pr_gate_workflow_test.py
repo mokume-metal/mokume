@@ -14,7 +14,8 @@ pr-gate は PR の作法 (タイトル・マージ判定・描画の絵) を、�
      skipped にすると、ready の直後の数秒に判定していない skipped が最新として残る
   3. pr-gate は必須チェックに載っている (main-protection.json)
   4. 判定のスクリプトは既定ブランチの版で走らせる — PR の木 (head / merge ref / base) を
-     checkout すると、同じ PR の中で自分を裁く検査を書き換えて通れる (#2001)
+     checkout すると、同じ PR の中で自分を裁く検査を書き換えて通れる (#2001)。ADR-0031 決定 2 の
+     脱出口を使う PR は、この固定も同じ PR で外す (その検査の docstring・#2724)
   5. 権限は読むだけ (contents / issues / pull-requests の read)。秘密を持たない
   6. ペイロードの可変な欄 (title / body / labels) を読まない — rerun が古い値を再生しない (#699)
   7. 3 つの判定はどの起動でも走り、前が赤でも後ろが走る。continue-on-error で赤を化かさない
@@ -109,9 +110,21 @@ class PrGateWorkflowTest(unittest.TestCase):
         self.assertIn("ci-gate", contexts)
 
     def test_判定は既定ブランチの版で走らせる(self):
+        """ADR-0031 決定 2 の脱出口を使う PR では、この ref の固定も同じ PR で外し、後続の PR で戻す。
+
+        脱出口は、判定が壊れていて、それを直す PR も同じ判定で赤になるときに、pr-gate.yml の checkout の
+        with: と ref の 2 行を外して PR の版の判定で走らせる形である。2 行だけを外すとここが赤になり、
+        必須の ci-gate (make hooks-test) で止まる (#2724)。外すのは下の ref の assertIn (案内の文ごと)
+        だけで、checkout が先頭にあること・PR の木を指す式が無いことの固定は残す。後続の PR で、
+        pr-gate.yml の 2 行とこの assertIn を両方戻す。
+        """
         checkouts = [s for s in steps(self.gate) if s.startswith("uses: actions/checkout@")]
         self.assertEqual(len(checkouts), 1)
-        self.assertIn("ref: ${{ github.event.repository.default_branch }}", checkouts[0])
+        self.assertIn(
+            "ref: ${{ github.event.repository.default_branch }}", checkouts[0],
+            "脱出口 (ADR-0031 決定 2) で pr-gate.yml の with: と ref の行を外す PR なら、"
+            "この assertIn も同じ PR で外し、後続の PR で両方戻す",
+        )
         self.assertEqual(steps(self.gate)[0], checkouts[0], "checkout より前に何かを走らせている")
         for bad in ("pull_request.head", "pull_request.base", "github.sha", "github.head_ref", "github.ref }}"):
             self.assertNotIn(bad, self.gate, bad)
