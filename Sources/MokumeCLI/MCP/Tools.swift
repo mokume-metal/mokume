@@ -341,13 +341,55 @@ struct Tools {
     private func buildStatus() -> (String, Bool) {
         guard let status = facets.read(facets.buildStatus) else {
             return (
-                """
-                No build has been recorded yet. Either `\(Command.name) watch` is not running,
-                or it has not built anything so far.
-                """, true
+                withOutsideSketchNote(
+                    """
+                    No build has been recorded yet. Either `\(Command.name) watch` is not running,
+                    or it has not built anything so far.
+                    """), true
             )
         }
         return (pretty(status), false)
+    }
+
+    // MARK: - スケッチでない場所で立った窓口 (#2487)
+
+    /// 窓口がスケッチの場所で立っていないことの名乗り。``outsideSketchMove(package:)`` と組む。
+    static let outsideSketchHeading = "This interface was not started in a sketch's directory"
+
+    /// 窓口がスケッチの場所で立っていないときに、答えへ添える一手。スケッチの場所なら `nil`。
+    ///
+    /// **窓口は `Package.swift` の無い場所でも立つ** — `claude mcp add mokume -- mokume mcp` は
+    /// 打った場所で起こすので、`MCPCommand.directories` は在る場所なら受ける (#2321 の決定)。
+    /// そこでは区画の基準もその場所になり、別の場所で走るスケッチとは噛み合わない。応えない・
+    /// 作り直しの記録が無い・版が引けない、という答えはどれも事実だが、原因がここにあると
+    /// 言わなければ、読み手は走っている `watch` を探しに行くなど直らない道へ進む
+    /// ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
+    ///
+    /// **断らずに添える** (#2487 の案 B)。組み上げた実行ファイルをこの場所から起こすと、
+    /// スケッチの区画もここに置かれ (区画の既定はプロセスの作業ディレクトリ)、窓口は正しく
+    /// 繋がる。だから「スケッチの場所でない」は候補の 1 つとして言い、区画は今どおり作る。
+    ///
+    /// スケッチかどうかは `Package.swift` の有無で見る (`run`・`watch` が場所を受けるときと同じ)。
+    /// 文の正典はここ 1 つで、応えないとき (``Facets/notRunning(_:existed:packageDirectory:)``)・
+    /// 作り直しの記録が無いとき・公開 API の一覧の版が引けないときの答えが使う。
+    static func outsideSketchMove(package: URL) -> String? {
+        guard
+            !FileManager.default.fileExists(
+                atPath: package.appendingPathComponent("Package.swift").path)
+        else { return nil }
+        return """
+            There is no Package.swift in \(package.path).
+            If the sketch is in another directory, start this interface there instead:
+
+                \(Command.name) mcp <sketch directory>
+            """
+    }
+
+    /// 答えに、スケッチの場所で立っていないことと一手を段落で添える。スケッチの場所なら
+    /// そのまま返す。
+    func withOutsideSketchNote(_ text: String) -> String {
+        guard let move = Self.outsideSketchMove(package: packageDirectory) else { return text }
+        return "\(text)\n\n\(Self.outsideSketchHeading). \(move)"
     }
 
     private func sendInput(_ arguments: [String: Any]) -> (String, Bool) {
@@ -450,7 +492,9 @@ struct Tools {
             let found = try apiList.read()
             return ("Source: \(found.source.text)\n\n\(found.text)", false)
         } catch let missing as APIListLocator.Missing {
-            return (missing.advice, true)
+            // スケッチでない場所には `Package.resolved` も無い。版が引けない理由をそこに
+            // 結びつけないと、「パスで指しているとき」という理由だけが読まれる (#2487)
+            return (withOutsideSketchNote(missing.advice), true)
         } catch {
             return ("Could not read the public API list: \(error)", true)
         }

@@ -518,6 +518,137 @@ struct MCPServerTests {
         #expect(!outcome.text.contains(".mokume/observe"))
     }
 
+    // MARK: - スケッチでない場所で立てた窓口 (#2487)
+
+    /// 窓口を立てる場所。`sketch` なら中身の無い `Package.swift` を置く。
+    private func makePlace(sketch: Bool) throws -> URL {
+        let place = try makeDirectory()
+        if sketch {
+            try "// 中身の無い宣言\n".write(
+                to: place.appendingPathComponent("Package.swift"), atomically: true,
+                encoding: .utf8)
+        }
+        return place
+    }
+
+    /// 区画へ往復する道具 (`roundTrip` を通る口のすべて) を、誰も走っていない場所で呼ぶ。
+    private func callUnanswered(_ tool: String, in place: URL, facetExisted: Bool) throws
+        -> (text: String, isError: Bool)
+    {
+        let entry = tool == "observe" ? StartupReads.observe : StartupReads.input
+        if facetExisted {
+            try FileManager.default.createDirectory(
+                at: WorkDirectory.facet(entry.key, under: place), withIntermediateDirectories: true)
+        }
+        let tools = Tools(
+            facets: Facets(directory: place, waitLimit: 0.2), packageDirectory: place,
+            makeID: { "fixed" })
+        let arguments: [String: Any] =
+            tool == "observe" ? [:] : ["events": [["type": "keyDown", "code": 0]]]
+        return tools.call(tool, arguments: arguments)
+    }
+
+    /// **スケッチでない場所で立てた窓口は、応えないときにそのことと起こし直す手を言う**
+    /// ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。`claude mcp add mokume -- mokume mcp`
+    /// は打った場所で起こすので、`Package.swift` の無い場所でも立つ (#2321 の決定で受ける)。
+    /// そこでは区画の基準もその場所になり、別の場所で走るスケッチとは噛み合わない — それなのに
+    /// 応えないときの答えは 3 つの可能性だけを並べ、「場所を渡せ」と言わなかった。
+    ///
+    /// 区画は今どおり作る (案 B)。組み上げた実行ファイルをこの場所から起こした使い方は正しく
+    /// 繋がるので、断らずに 4 つ目の可能性として足す。作った回の名乗りと従来の 3 つも残る。
+    @Test(
+        "スケッチでない場所で立てた窓口は、応えないとき Package.swift が無いことと mcp <sketch directory> の手を答える",
+        arguments: ["observe", "input"], [false, true])
+    func tellsWhenStartedOutsideASketch(tool: String, facetExisted: Bool) throws {
+        let place = try makePlace(sketch: false)
+        defer { try? FileManager.default.removeItem(at: place) }
+        let outcome = try callUnanswered(tool, in: place, facetExisted: facetExisted)
+
+        #expect(outcome.isError)
+        // 場所のパスを名指して、そこに Package.swift が無いと言う
+        #expect(
+            outcome.text.contains("There is no Package.swift in \(place.path)"),
+            "場所に Package.swift が無いことを言っていない: \(outcome.text)")
+        // 起こし直す手
+        #expect(
+            outcome.text.contains("\(Command.name) mcp <sketch directory>"),
+            "起こし直す手を言っていない: \(outcome.text)")
+        #expect(outcome.text.contains("four possibilities"))
+        // 従来の 3 つも残る
+        #expect(
+            outcome.text.contains(
+                facetExisted ? "1. Nothing is running yet" : "1. The sketch launched without"))
+        #expect(outcome.text.contains("2. The interface and the sketch disagree on the facet base"))
+        #expect(outcome.text.contains("3. The mokume the sketch depends on"))
+        // 区画を作った回は、作ったことを名乗る (当初の完了条件 2 の「作ったことを名乗る」)
+        #expect(outcome.text.contains("this call created it") == !facetExisted)
+    }
+
+    /// 裏側。**スケッチの場所で立てた窓口の案内は変わらない** — 従来どおりの 3 つで、場所の手を
+    /// 足さない。足すのは `Package.swift` が無いと分かったときだけである。
+    @Test(
+        "スケッチの場所で立てた窓口の案内は、従来どおりの 3 つで、場所の手を足さない",
+        arguments: ["observe", "input"], [false, true])
+    func keepsTheThreePossibilitiesInASketch(tool: String, facetExisted: Bool) throws {
+        let place = try makePlace(sketch: true)
+        defer { try? FileManager.default.removeItem(at: place) }
+        let outcome = try callUnanswered(tool, in: place, facetExisted: facetExisted)
+
+        #expect(outcome.isError)
+        #expect(outcome.text.contains("three possibilities"))
+        #expect(!outcome.text.contains("Package.swift"), "スケッチの場所で場所の手を足した: \(outcome.text)")
+        #expect(!outcome.text.contains("mcp <sketch directory>"))
+        #expect(!outcome.text.contains("4. "))
+    }
+
+    /// 兄弟 — **直近の作り直しの記録が無いときも、同じ手を添える。** スケッチでない場所で立てた
+    /// 窓口は、別の場所で `watch` が作り直していても記録を読めない (区画の基準がその場所に
+    /// なる)。「watch が走っていない」とだけ言うと、走っている `watch` を探しに行かせる。
+    @Test("スケッチでない場所で立てた窓口は、作り直しの記録が無いときも、起こし直す手を添える")
+    func buildStatusTellsWhenStartedOutsideASketch() throws {
+        for sketch in [false, true] {
+            let place = try makePlace(sketch: sketch)
+            defer { try? FileManager.default.removeItem(at: place) }
+            let tools = Tools(
+                facets: Facets(directory: place, waitLimit: 0.2), packageDirectory: place,
+                makeID: { "fixed" })
+            let outcome = tools.call("build_status", arguments: [:])
+
+            #expect(outcome.isError)
+            #expect(outcome.text.contains("watch"))
+            #expect(
+                outcome.text.contains("There is no Package.swift in \(place.path)") == !sketch,
+                "sketch=\(sketch): \(outcome.text)")
+            #expect(
+                outcome.text.contains("\(Command.name) mcp <sketch directory>") == !sketch,
+                "sketch=\(sketch): \(outcome.text)")
+        }
+    }
+
+    /// 兄弟 — **公開 API の一覧の版が引けないときも、同じ手を添える。** スケッチでない場所には
+    /// `Package.resolved` も無いので版は引けないが、その理由を「パスで mokume を指しているとき」
+    /// とだけ言うと、原因を取り違えさせる。取りに行く前に断る形なので、ネットワークは使わない。
+    @Test("スケッチでない場所で立てた窓口は、公開 API の一覧の版が引けないときも、起こし直す手を添える")
+    func apiReferenceTellsWhenStartedOutsideASketch() throws {
+        for sketch in [false, true] {
+            let place = try makePlace(sketch: sketch)
+            defer { try? FileManager.default.removeItem(at: place) }
+            let tools = Tools(
+                facets: Facets(directory: place, waitLimit: 0.2), packageDirectory: place,
+                makeID: { "fixed" })
+            let outcome = tools.call("reference", arguments: ["name": Tools.apiDocument])
+
+            #expect(outcome.isError)
+            #expect(outcome.text.contains("Cannot tell which version is depended on"))
+            #expect(
+                outcome.text.contains("There is no Package.swift in \(place.path)") == !sketch,
+                "sketch=\(sketch): \(outcome.text)")
+            #expect(
+                outcome.text.contains("\(Command.name) mcp <sketch directory>") == !sketch,
+                "sketch=\(sketch): \(outcome.text)")
+        }
+    }
+
     @Test("直近の作り直しの結果を、そのまま返す")
     func readsTheBuildStatus() throws {
         let directory = try makeDirectory()

@@ -146,6 +146,11 @@ struct Facets {
     ///
     /// 文面は読む時点ごとに書き足さず、**起動の瞬間に決まるものの一覧を名指す**。一覧
     /// (``StartupReads``) に増えたものは `reference` の `startup` に自動で並ぶ。
+    ///
+    /// **窓口がスケッチでない場所 (`Package.swift` の無い `packageDirectory`) で立っていれば、
+    /// 4 つ目の可能性として名乗り、起こし直す手を言う** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
+    /// 区画の基準もその場所になるので、別の場所で走るスケッチとは噛み合わない。断らずに候補の
+    /// 1 つとして並べる理由は ``Tools/outsideSketchMove(package:)`` が持つ。
     func notRunning(
         _ entry: StartupReads.Entry, existed: Bool, packageDirectory: URL? = nil
     ) -> String {
@@ -155,12 +160,21 @@ struct Facets {
         {
             return lacksFacet(entry)
         }
+        let outsideSketch = packageDirectory.flatMap { Tools.outsideSketchMove(package: $0) }
+        let count = outsideSketch == nil ? "three" : "four"
+        // 4 つ目は 1〜3 と同じ形 (見出しの下を 3 字下げる) で並べる。複数行の文字列へ
+        // 差し込んだ値は字下げされないので、ここで下げておく
+        let fourth = outsideSketch.map { move in
+            let body = move.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { $0.isEmpty ? "" : "   \($0)" }.joined(separator: "\n")
+            return "\n\n4. \(Tools.outsideSketchHeading)\n\(body)"
+        } ?? ""
         let path = facet(entry).path
         let opening = existed
             ? """
             The running sketch did not answer. \(entry.name) (\(path)) was already there
             before the request was placed, so this is not about the order facets are created in.
-            There are three possibilities, and each takes a different move.
+            There are \(count) possibilities, and each takes a different move.
 
             1. Nothing is running yet, or it has stopped answering
                Start `\(Command.name) watch` in the sketch's directory, then call again.
@@ -168,7 +182,7 @@ struct Facets {
             : """
             The running sketch did not answer. \(entry.name) (\(path)) was not there when
             the request was placed, so this call created it.
-            There are three possibilities, and each takes a different move.
+            There are \(count) possibilities, and each takes a different move.
 
             1. The sketch launched without \(entry.name)
                \(entry.note).
@@ -194,7 +208,7 @@ struct Facets {
                be missing one. **Restarting will not fix that one either.** Which facets the
                pinned version lacks is named by
 
-                   \(Command.name) doctor <sketch directory>
+                   \(Command.name) doctor <sketch directory>\(fourth)
 
             What gets decided at launch is listed in `reference`, under `\(Tools.startupDocument)`.
             """
