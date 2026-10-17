@@ -306,6 +306,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 2D の図形
 
 - ``SketchPart/rect(_:_:_:_:)``
+- ``SketchPart/rect(_:_:_:_:_:)``
 - ``SketchPart/square(_:_:_:)``
 - ``SketchPart/circle(_:_:_:)``
 - ``SketchPart/ellipse(_:_:_:_:)``

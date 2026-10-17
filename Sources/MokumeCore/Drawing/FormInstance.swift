@@ -23,7 +23,11 @@ struct FormInstance {
     var linear: SIMD4<Float>
     /// xy: 平行移動 (形の中心)。zw: 扇形の開始角と掃引 (それ以外は 0)。
     var offset: SIMD4<Float>
-    /// xy: 半幅・半高 (楕円は半径。線は半分の長さと 0)。z: 線幅の半分 (輪郭が無ければ 0)。w: 0。
+    /// xy: 半幅・半高 (楕円は半径。線は半分の長さと 0)。z: 線幅の半分 (輪郭が無ければ 0)。
+    /// w: 矩形の角の半径 (形自身の座標・半幅と半高の小さいほう以下。角を丸めない矩形と、
+    /// 矩形以外は 0・[#2757])。
+    ///
+    /// [#2757]: https://github.com/mokume-metal/mokume/issues/2757
     var size: SIMD4<Float>
     /// 塗り (乗算済み線形)。塗りが無ければ 0。
     var fill: SIMD4<Float>
@@ -192,13 +196,13 @@ struct FormInstance {
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
     init(
         kind: Kind, linear: SIMD4<Float>, offset: SIMD2<Float>, half: SIMD2<Float>,
-        arc: SIMD2<Float> = .zero, halfWeight: Float,
+        arc: SIMD2<Float> = .zero, halfWeight: Float, cornerRadius: Float = 0,
         fill: SIMD4<Float>, stroke: SIMD4<Float>, fills: Bool, strokes: Bool,
         cap: StrokeCap, join: StrokeJoin
     ) {
         self.linear = linear
         self.offset = SIMD4(offset.x, offset.y, arc.x, arc.y)
-        self.size = SIMD4(half.x, half.y, strokes ? halfWeight : 0, 0)
+        self.size = SIMD4(half.x, half.y, strokes ? halfWeight : 0, cornerRadius)
         self.fill = fills ? fill : .zero
         self.stroke = strokes ? stroke : .zero
         self.meta = SIMD4(
