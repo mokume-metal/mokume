@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// 合成の音の値の種類。主スレッドから音の側へ渡す値は、どれもこの名前を付けて渡す。
 nonisolated enum SynthParam: UInt8, Sendable {
@@ -127,7 +128,7 @@ nonisolated final class SourceNode: RackNode {
         self.kind = kind
         // 種は節の番号から決める。同じ順に作れば同じ音になる
         noise = NoiseKernel(seed: UInt64(id) &* 0x1_0000_0001 &+ 0x6D6F_6B75_6D65)
-        smoothing = Float(1 - exp(-1 / (0.005 * sampleRate)))
+        smoothing = Float(1 - RuntimeMath.exp(-1 / (0.005 * sampleRate)))
         super.init(id: id, sampleRate: sampleRate, meter: meter)
     }
 
@@ -220,8 +221,8 @@ nonisolated final class SourceNode: RackNode {
             if panningNow != panApplied {
                 // 等しい大きさで混ざる定位。-1 で左だけ、0 で左右とも 1/√2、1 で右だけ
                 let angle = Double((panningNow + 1) * 0.25) * Double.pi
-                leftGain = Float(cos(angle))
-                rightGain = Float(sin(angle))
+                leftGain = Float(RuntimeMath.cos(angle))
+                rightGain = Float(RuntimeMath.sin(angle))
                 panApplied = panningNow
             }
             let value = source[index]

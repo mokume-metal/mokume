@@ -70,10 +70,10 @@ struct HueSaturationBrightnessTests {
     @Test("数でない色相で落ちない")
     func notANumberDoesNotTrap() {
         // 区画の添字は Int(hue / 60) で取るので、弾かないと変換で trap する
-        #expect(color(hue: .nan, saturation: 80, brightness: 90) == .transparent)
-        #expect(color(hue: .infinity, saturation: 80, brightness: 90) == .transparent)
-        #expect(color(hue: 200, saturation: .nan, brightness: 90) == .transparent)
-        #expect(color(hue: 200, saturation: 80, brightness: .infinity) == .transparent)
+        #expect(color(hue: Float.nan, saturation: 80, brightness: 90) == .transparent)
+        #expect(color(hue: Float.infinity, saturation: 80, brightness: 90) == .transparent)
+        #expect(color(hue: 200, saturation: Float.nan, brightness: 90) == .transparent)
+        #expect(color(hue: 200, saturation: 80, brightness: Float.infinity) == .transparent)
     }
 
     @Test("灰色の色相は 0")

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 乱数と揺らぎ。
-extension Sketch {
+extension SketchPart {
     /// 0 以上 1 未満の値。**呼ぶたびに列が進む。**
     ///
     /// **種を決めなくても、走らせるたびに同じ列が出る。** 時刻から種を作らないため
@@ -43,7 +43,7 @@ extension Sketch {
     ///
     /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
     // shot: 1 snippet=48c34437
-    public func random() -> Float { Self.requireRuntime().randomness.unitValue() }
+    public func random() -> Float { Self.liveRuntime(.read(returning: "0"))?.randomness.unitValue() ?? 0 }
 
     /// 0 以上 `high` 未満の値。`high` が負なら `high` 以上 0 未満。
     ///
@@ -98,7 +98,7 @@ extension Sketch {
     // shot: 2 snippet=59f8262e
     public func random(_ high: some ScalarConvertible) -> Float {
         let high = high.asFloat
-        return Self.requireRuntime().randomness.value(from: 0, to: high)
+        return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: 0, to: high) ?? 0
     }
 
     /// `low` 以上 `high` 未満の値。**順序が逆でも受け取る。**
@@ -135,7 +135,7 @@ extension Sketch {
     // shot: 1 snippet=ceae014f
     public func random(_ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
         let (low, high) = (low.asFloat, high.asFloat)
-        return Self.requireRuntime().randomness.value(from: low, to: high)
+        return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: low, to: high) ?? 0
     }
 
     /// 乱数の種。同じ種を置いてから同じ順に呼べば、いつでも同じ列が出る。
@@ -166,14 +166,14 @@ extension Sketch {
     ///   }
     /// }
     ///
-    /// **列は ``draw()`` を越えて進み続ける。** フレームの頭で戻したいなら、
+    /// **列は ``Sketch/draw()`` を越えて進み続ける。** フレームの頭で戻したいなら、
     /// そのフレームの頭でこれを呼ぶ。
     ///
     /// **形の組み立て (``createShape(_:)``) の中で書いた種は、抜けると外へ残らない。** 中で書くと、
     /// そこから抜けるまでは中で決めた列で引き、抜けた後の列は**最初に書く直前**の状態から続く。
     /// 種を書く前に中で引いた分と、種を書かずに引いた分は、外で引いたのと同じく列を進める。
     // shot: 1 snippet=c29016d0
-    public func randomSeed(_ seed: Int) { Self.requireRuntime().writeSeed(seed) }
+    public func randomSeed(_ seed: Int) { Self.liveRuntime()?.writeSeed(seed) }
 
     /// その座標の揺らぎ (0…1)。**近い座標には近い値**が返る、なめらかな乱れ。
     ///
@@ -241,7 +241,7 @@ extension Sketch {
     // shot: 2 snippet=e807b119
     public func noise(_ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return canvas.noise(x, y, z)
+        return Self.liveCanvas(.read(returning: "0"))?.noise(x, y, z) ?? 0
     }
 
     /// 揺らぎの種。**断片にも同じ種が届く**ので、配線しなくてよい。
@@ -287,7 +287,7 @@ extension Sketch {
     ///
     /// - Note: 揺らぎの種は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=3bc41d48
-    public func noiseSeed(_ seed: Int) { canvas.noiseSeed(seed) }
+    public func noiseSeed(_ seed: Int) { Self.liveCanvas()?.noiseSeed(seed) }
 
     /// 揺らぎの細かさ — 重ねる枚数 `lod` と、1 枚ごとの弱まり `falloff`。
     ///
@@ -364,6 +364,7 @@ extension Sketch {
     // shot: 1 snippet=feae6dd5
     // shot: 2 snippet=52f4861b
     public func noiseDetail(_ lod: Int, _ falloff: some ScalarConvertible = 0.5) {
+        guard let canvas = Self.liveCanvas() else { return }
         let falloff = falloff.asFloat
         canvas.noiseDetail(lod, falloff)
     }

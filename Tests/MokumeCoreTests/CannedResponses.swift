@@ -34,6 +34,8 @@ nonisolated final class CannedResponses: URLProtocol, @unchecked Sendable {
     private struct Progress {
         /// 刻んで返す応答 (``Reply/trickle(body:every:)``) が、これまでに返した本文のバイト数。
         var delivered = 0
+        /// 刻んだ 1 バイトずつを返した時刻。
+        var arrivals: [ContinuousClock.Instant] = []
         /// 検査が打ち切ったか (``cut(_:)``)。
         var cut = false
         /// 受け口がこの応答を止めたか (``stopLoading()``)。受け取りを取り消したときも、
@@ -73,6 +75,11 @@ nonisolated final class CannedResponses: URLProtocol, @unchecked Sendable {
         progress.withLock { $0[url]?.delivered ?? 0 }
     }
 
+    /// 刻んで返す応答が、1 バイトずつを返した時刻。
+    static func arrivals(_ url: String) -> [ContinuousClock.Instant] {
+        progress.withLock { $0[url]?.arrivals ?? [] }
+    }
+
     /// 受け口がその URL の応答を止めたか。止めるのは受け口の側の糸で、取り消しから少し遅れる。
     static func stopped(_ url: String) -> Bool {
         progress.withLock { $0[url]?.stopped ?? false }
@@ -110,7 +117,11 @@ nonisolated final class CannedResponses: URLProtocol, @unchecked Sendable {
                 }
                 this.client?.urlProtocol(this, didLoad: Data(body.dropFirst(this.offset).prefix(1)))
                 this.offset += 1
-                Self.progress.withLock { $0[url.absoluteString, default: Progress()].delivered += 1 }
+                let now = ContinuousClock.now
+                Self.progress.withLock {
+                    $0[url.absoluteString, default: Progress()].delivered += 1
+                    $0[url.absoluteString, default: Progress()].arrivals.append(now)
+                }
                 return true
             }
         case .silent:

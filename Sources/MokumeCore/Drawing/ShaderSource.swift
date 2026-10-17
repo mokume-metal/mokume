@@ -14,7 +14,8 @@ import Foundation
 /// ## 並び
 ///
 /// 値の宣言 → 面の宣言 → 共通部分 → 断片。共通部分が値と面の型を使い、断片が共通部分の
-/// 型を使うので、この順序でしか組み立てられない。
+/// 型を使うので、この順序でしか組み立てられない。区切りはそれぞれ頭で名前を名乗る
+/// (``assemble(prelude:values:surfaces:body:)``)。
 enum ShaderSource {
     /// 断片をファイルから読む。**塗り・効果・計算で 1 つ** ([#895])。
     ///
@@ -100,12 +101,74 @@ enum ShaderSource {
             """
     }
 
+    /// 原稿の 1 区切りと、その名前。組み立てた原稿の中で、区切りの頭の `#line` がこの名前と
+    /// 1 行目を名乗る (``assemble(prelude:values:surfaces:body:)``)。
+    struct Part: Equatable, Sendable {
+        /// 組み立ての誤りが、区切りの中の行に添えて名乗る名前。
+        var name: String
+        var text: String
+    }
+
+    /// 本文が名乗る名前。ファイルから読んだ断片はファイル名 (`waves.metal`)、文字列から作った
+    /// 断片は `name:` の名前。
+    static func bodyName(_ name: String, url: URL?) -> String {
+        url?.lastPathComponent ?? name
+    }
+
     /// 原稿を組み立てる。
+    ///
+    /// ## 区切りごとに名乗る ([#2457])
+    ///
+    /// **区切り (値の宣言・面の宣言・前置きの各ファイル・本文) の頭に `#line 1 "<名前>"` を差す。**
+    /// Metal の組み立ての誤りは、区切りの中で数え直した行と、その区切りの名前で出る — 本文の
+    /// 誤りは `shader:2:12` (`name:` の名前か、ファイル名) の形で、書いた断片の行を指す。
+    /// 差さなければ、前置きを足した原文の行 (`program_source:1053:12`) になり、書いた断片の
+    /// どこにも無い行を指す。失敗の説明が言う「上の理由が指す所を、あなたが書いた断片の中で
+    /// 直せ」が成り立たない。
+    ///
+    /// **前置きにも名乗りを差す。** 本文の名乗りだけだと、前置きの中の誤り (本体の不具合や、
+    /// 前置きの定義を断片が定義し直したときの「前の定義」の知らせ) まで、前置きの頭から数えた
+    /// 行で出る。前置きの名前は本体の名前 (`mokume/Common.metal`・`mokume/Values`) で、利用者の
+    /// 名前を名乗らない。
+    ///
+    /// [#2457]: https://github.com/mokume-metal/mokume/issues/2457
     static func assemble(
-        common: String, values: [String: ShaderValue],
-        surfaces: [String: ShaderSurface] = [:], body: String
+        prelude: [Part], values: [String: ShaderValue],
+        surfaces: [String: ShaderSurface] = [:], body: Part
     ) -> String {
-        declaration(of: values) + declaration(of: surfaces) + common + "\n" + body + "\n"
+        var parts = [Part(name: "mokume/Values", text: declaration(of: values))]
+        // 面が無ければ、名乗りごと 1 バイトも出さない (面の宣言の約束・#407)
+        let surfaceDeclaration = declaration(of: surfaces)
+        if !surfaceDeclaration.isEmpty {
+            parts.append(Part(name: "mokume/Surfaces", text: surfaceDeclaration))
+        }
+        parts += prelude
+        parts.append(body)
+        return parts.map { lineDirective(naming: $0.name) + $0.text + "\n" }.joined()
+    }
+
+    /// 次の行を、その名前の 1 行目として名乗る行。
+    ///
+    /// **名前は C の文字列なので、壊さない形に直す。** `name:` は利用者が何でも書ける。
+    ///
+    /// - `"` と `\` は逃がす。逃がさないと名前の途中で文字列が閉じ、原稿ごと組めなくなる
+    /// - 改行と制御文字 (NUL を含む) は空白にする。改行は名乗りの行を割り、NUL は原稿をそこで
+    ///   切る (Metal へ渡す C の文字列が NUL で終わる)
+    /// - `?` は `\?` と書く。`??!`・`??/` などの三文字表記として読み替えられないように
+    static func lineDirective(naming name: String) -> String {
+        var escaped = ""
+        for character in name {
+            switch character {
+            case "\\": escaped += "\\\\"
+            case "\"": escaped += "\\\""
+            case "?": escaped += "\\?"
+            case _ where character.isNewline
+                || character.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }):
+                escaped += " "
+            default: escaped.append(character)
+            }
+        }
+        return "#line 1 \"\(escaped)\"\n"
     }
 }
 

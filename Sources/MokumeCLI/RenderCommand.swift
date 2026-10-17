@@ -70,8 +70,16 @@ enum RenderCommand {
                 executable, in: directory,
                 environment: RunCommand.childEnvironment(rendering: request))
         } catch {
-            guard case .sketchExited(let status) = error else { throw error }
-            throw .renderIncomplete(destination: request.destination, status: status)
+            // **合図で落ちた回も揃わなかった回である** (#2315)。名乗るのは終わり方そのもの
+            switch error {
+            case .sketchExited(let status):
+                throw .renderIncomplete(destination: request.destination, ending: .exited(status))
+            case .sketchSignalled(let signal):
+                throw .renderIncomplete(
+                    destination: request.destination, ending: .signalled(signal))
+            default:
+                throw error
+            }
         }
     }
 
@@ -101,7 +109,7 @@ enum RenderCommand {
                     "\($0) needs a frame rate after it (frames per second, a whole number)"
                 },
                 Arguments.Option(secondsFlags) { "\($0) needs a length after it (in seconds)" },
-                Arguments.Option(outFlags) {
+                Arguments.Option(outFlags, takesPlace: true) {
                     "\($0) needs somewhere to write after it (a .mov, or out/frame-####.png)"
                 },
             ], from: currentDirectory)

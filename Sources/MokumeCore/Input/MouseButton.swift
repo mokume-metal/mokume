@@ -3,7 +3,7 @@
 
 /// マウスの釦。
 ///
-/// 意味の説明は ``Sketch/mouseButton`` が正本で、ここは値の定義である ([ADR-0020] 決定 4)。
+/// 意味の説明は ``SketchPart/mouseButton`` が正本で、ここは値の定義である ([ADR-0020] 決定 4)。
 ///
 /// 番号は macOS の `NSEvent.buttonNumber` で、0 が左 (主)・1 が右 (副)・2 が中である。
 /// **ブラウザの `MouseEvent.button` (1 が中・2 が副) とは 1 と 2 の並びが逆**なので、

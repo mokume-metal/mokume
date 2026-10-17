@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 文字。
-extension Sketch {
+extension SketchPart {
     /// 文字列を描く。
     ///
     /// `y` が何を指すかは ``textAlign(_:_:)`` が決める。既定は**基準線** — 字が乗る線で、
@@ -49,12 +49,22 @@ extension Sketch {
     ///
     /// **塗りの色で描く**ので、``noFill()`` の状態では何も出ない。
     ///
+    /// **字は Unicode のスカラ 1 つずつ引き当てて並べ、組版はしない。** 合字にしたり、
+    /// 複数のスカラを 1 つの字へまとめたりはしないので、**複数のスカラでできた絵文字は
+    /// 1 字にならず、部品ごとに描かれる**。肌色の修飾子を付けた `👍🏽` (親指と肌色の四角が
+    /// 別々に出る)・国旗の `🇯🇵` (地域指示記号 2 つ)・ZWJ で繋いだ `👨‍👩‍👧` (3 人が別々に出る)・
+    /// 異体字セレクタを付けた `❤️`・囲みを付けた `1️⃣` は、その指定が読まれず、基の字と部品が
+    /// 別々に引き当てられる。幅も部品の幅の和になる (``textWidth(_:)``)。部分の幅を足すと
+    /// 全体の幅と一致する、という約束と引き換えの選び方である。
+    /// 1 字で出したい絵文字は、1 つのスカラで書ける形 (`👍`) を使う。
+    ///
     /// **大きく出す字は ``textSize(_:)`` で大きくする。** 字はその大きさで画素に焼いてから
     /// 置くので、``scale(_:_:)`` で伸ばすと焼いた画素が引き伸ばされ、縁がぼける
     /// (``textSize(_:)``)。
     // shot: 1 snippet=0c8959e5
     // shot: 2 snippet=3044f8bc
     public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.text(string, x, y)
     }
@@ -126,6 +136,7 @@ extension Sketch {
     // shot: 1 snippet=a8143a74
     // shot: 2 snippet=02dd14ba
     public func textSize(_ size: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let size = size.asFloat
         canvas.textSize(size)
     }
@@ -153,14 +164,21 @@ extension Sketch {
     ///
     /// **この環境に無い名前は効かない。** 名前が違っても別の書体で描かれてしまうと
     /// 気付けないので、無い名前は警告を出して書体を変えない。``noTextFont()`` で
-    /// 既定へ戻る。
+    /// 既定へ戻る。名前は、CoreText が名前として引けるもの — PostScript 名 (`HiraginoSans-W3`)・
+    /// ファミリー名・フルネーム (`Hiragino Sans W3`)・書体が持つ各言語の名前
+    /// (`ヒラギノ角ゴシック W3`) — で渡す。書体メニューや Font Book に出る名前は、CoreText の名前の
+    /// 索引に載らないもの (日本語表示の `ヒラギノ角ゴ 簡体中文 W3`・後から入れた書体の表示名など) も
+    /// 引ける。この環境の書体の表示言語の名前と、書体が持つ全言語の名前から、初めて必要になった
+    /// ときに 1 度だけ表を作って引く。名前が複数の面に当たるとき (ファミリー名など) は、CoreText が
+    /// 選ぶ 1 面で描く。表は最初に必要になったときの書体から作るので、その後に入れた書体の、索引に
+    /// 載らない名前は、起動し直すまで引けない。
     ///
     /// 指定した書体が覆えない文字 (欧文の書体に日本語を渡した場合など) は、
     /// この環境が持つ別の書体から引いて描く。
     ///
     /// - Note: 書体は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=38a1d815
-    public func textFont(_ name: String) { canvas.textFont(name) }
+    public func textFont(_ name: String) { Self.liveCanvas()?.textFont(name) }
 
     /// 書体の指定をやめ、この環境の既定の書体へ戻す。
     ///
@@ -190,7 +208,7 @@ extension Sketch {
     ///
     /// - Note: 書体は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=92702e23
-    public func noTextFont() { canvas.noTextFont() }
+    public func noTextFont() { Self.liveCanvas()?.noTextFont() }
 
     /// これから描く文字の太さと傾き。既定はそのまま。
     ///
@@ -228,9 +246,21 @@ extension Sketch {
     ///   }
     /// }
     ///
+    /// 書体がその太さ・傾きの面を持たなければ (ヒラギノ角ゴシックの斜体など)、引けた面 (元の面か、
+    /// 太字だけの面など) で描き、警告を 1 度出す。`.boldItalic` で太斜体の面が無い書体は、
+    /// 太字の面・斜体の面の順に、引ける面で描く — 引ける性質を捨てない。**太字も斜体も持つのに
+    /// 太斜体だけ無い書体 (Futura など) は、斜体を捨てて太字の立体で描く。**
+    ///
+    /// 書体が覆えず別の書体から引く字 (欧文の書体に渡した日本語・絵文字) は、引いた書体が持つ面で
+    /// 描く — 欧文の斜体に混ぜた日本語は立ったままになる (傾けて合成はしない)。その面が頼んだ太さ・
+    /// 傾きを持たなければ、上とは別に警告を 1 度出し、字・引いた書体・描いた面を名乗る。色の字形を
+    /// 持つ書体 (Apple Color Emoji) から引いた字は太さ・傾きの面を持ちようがないので警告しない。
+    /// ❤ (U+2764) のように単色の書体から引く字は警告する。見えない字 (異体字セレクタ・和文の空白) と、
+    /// どの書体も持たない字の代わりに描く豆腐も警告しない。
+    ///
     /// - Note: 字の太さと傾きは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=dad4af7f
-    public func textStyle(_ style: TextStyle) { canvas.textStyle(style) }
+    public func textStyle(_ style: TextStyle) { Self.liveCanvas()?.textStyle(style) }
 
     /// 文字列を、指定した位置のどちら側へ置くか。既定は**左から右へ・基準線**。
     ///
@@ -303,6 +333,7 @@ extension Sketch {
     public func textAlign(
         _ horizontal: HorizontalTextAlign, _ vertical: VerticalTextAlign = .baseline
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.textAlign(horizontal, vertical)
     }
 
@@ -352,15 +383,20 @@ extension Sketch {
     // shot: 1 snippet=c1e64917
     // shot: 2 snippet=26cf4f8a
     public func textLeading(_ leading: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let leading = leading.asFloat
         canvas.textLeading(leading)
     }
 
     /// 文字列を描いたときの幅 (画素)。
     ///
-    /// **1 文字ずつの送り幅の合計**なので、部分に切って足すと全体と一致する。
+    /// **Unicode のスカラ 1 つずつの送り幅の合計**なので、部分に切って足すと全体と一致する。
     /// 末尾の空白も幅に数える。改行を含む文字列では、いちばん長い行の幅を返す。
     /// 大きさ 0 (``textSize(_:)``) では 0 を返す。
+    ///
+    /// **組版をしない**ので、複数のスカラでできた字 (肌色の修飾子を付けた `👍🏽`・国旗の
+    /// `🇯🇵`・ZWJ で繋いだ絵文字) は 1 字の幅にならず、部品の幅の和になる。`textWidth("👍🏽")` は
+    /// `textWidth("👍") + textWidth("🏽")` と等しい (描かれ方は ``text(_:_:_:)``)。
     ///
     /// 送り幅は字の左右に書体が付けた余白を含む。墨の載る範囲は ``textBounds(_:_:_:)`` が返す。
     ///
@@ -385,7 +421,7 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=ebe1b460
-    public func textWidth(_ string: String) -> Float { canvas.textWidth(string) }
+    public func textWidth(_ string: String) -> Float { Self.liveCanvas(.read(returning: "0"))?.textWidth(string) ?? 0 }
 
     /// 基準線から上へ伸びる高さ (画素)。
     ///
@@ -421,7 +457,7 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=f70f460d
-    public func textAscent() -> Float { canvas.textAscent() }
+    public func textAscent() -> Float { Self.liveCanvas(.read(returning: "0"))?.textAscent() ?? 0 }
 
     /// 基準線から下へ伸びる深さ (画素)。
     ///
@@ -457,7 +493,7 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=cce8b3db
-    public func textDescent() -> Float { canvas.textDescent() }
+    public func textDescent() -> Float { Self.liveCanvas(.read(returning: "0"))?.textDescent() ?? 0 }
 
     /// 矩形の中へ文字列を流し込む。
     ///
@@ -536,6 +572,8 @@ extension Sketch {
         -> TextFlow
     {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        // 外から呼ばれたら何も置かない。置けなかった文字は全部が残りになる
+        guard let canvas = Self.liveCanvas() else { return TextFlow(lineCount: 0, height: 0, remainder: string) }
         return canvas.text(string, a, b, c, d)
     }
 
@@ -596,7 +634,7 @@ extension Sketch {
     /// - Note: 折り返し方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=9d76cf16
     // shot: 2 snippet=36f2b043
-    public func textWrap(_ mode: TextWrap) { canvas.textWrap(mode) }
+    public func textWrap(_ mode: TextWrap) { Self.liveCanvas()?.textWrap(mode) }
 
     /// 文字列の輪郭を取り出す。
     ///
@@ -642,10 +680,12 @@ extension Sketch {
     /// 1 つの形として扱いたい (三角形へ畳む・穴だけ別の色にする) なら、
     /// ``textFont(_:)`` で書体を指定する — `Helvetica` などでは `A` が外周 1 つと
     /// 穴 1 つになる。
+    ///
+    /// 色で描かれる字 (絵文字) は輪郭を持たない絵なので、周を返さない (送りは進める)。
     // shot: 1 snippet=e9e2ccf8
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
-        return canvas.textOutline(string, x, y)
+        return Self.liveCanvas(.read(returning: "[]"))?.textOutline(string, x, y) ?? []
     }
 
     /// 文字列を描いたときに、墨が載る範囲を返す。
@@ -681,13 +721,14 @@ extension Sketch {
     /// 枠の `x`・`y` は**いつも左上**で、``rectMode(_:)`` に依らない。返る値は**いまの座標の
     /// まま**で、変換は掛かっていない — 同じ変換の下で ``rect(_:_:_:_:)`` へ渡せば、描いた字を
     /// 囲む。``textAlign(_:_:)`` の横・縦と、行送り・改行・``textStyle(_:)`` は、描くときと
-    /// 同じに効く。空白は送りだけを進め、墨には数えない。
+    /// 同じに効く。空白は送りだけを進め、墨には数えない。色で描かれる字 (絵文字) も、
+    /// 描いた絵の墨を同じく囲む。
     ///
     /// 墨が無いときは `nil` を返す — 空の文字列・空白や改行だけの文字列・大きさ 0
     /// (``textSize(_:)``)・位置に数でない値や無限を渡したとき。
     // shot: 1 snippet=f7ecb144
     public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
         let (x, y) = (x.asFloat, y.asFloat)
-        return canvas.textBounds(string, x, y)
+        return Self.liveCanvas(.read(returning: "nil"))?.textBounds(string, x, y)
     }
 }

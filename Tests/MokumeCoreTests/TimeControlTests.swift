@@ -75,7 +75,8 @@ struct TimeControlTests {
             clock += 0.5
             timing.advance()
         }
-        #expect(timing.time == 1.5)
+        // 起点は最初の枚 (100.5 秒)
+        #expect(timing.time == 1)
 
         timing.jumpTime(10)
         clock += 0.5
@@ -93,6 +94,7 @@ struct TimeControlTests {
     func theWallClockResumesWhereItPaused() {
         var clock = 0.0
         let timing = FrameTiming(clock: .wallClock, now: { clock })
+        timing.advance()
         clock = 2
         timing.advance()
         timing.pauseTime()
@@ -308,7 +310,7 @@ struct TimeControlTests {
                 now += 0.125
                 timing.advance()
             }
-            timing.pauseTime()  // 0.25 秒で止まる
+            timing.pauseTime()  // 起点は最初の枚なので、0.125 秒で止まる
             for _ in 0..<2 {
                 now += 0.125
                 timing.advance()
@@ -326,7 +328,7 @@ struct TimeControlTests {
         }
         let resumeObserved = resumed(observing: true)
         #expect(resumeObserved.map(\.0) == resumed(observing: false).map(\.0))
-        #expect(resumeObserved.map(\.0) == [0.375, 0.5])
+        #expect(resumeObserved.map(\.0) == [0.25, 0.375])
         #expect(resumeObserved.map(\.1) == [0.125, 0.125])
     }
 

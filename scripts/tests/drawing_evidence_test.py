@@ -83,8 +83,9 @@ class DrawingEvidenceTest(unittest.TestCase):
         )
         self.env.pop("GITHUB_REPOSITORY", None)
         self.env.pop("PR_NUMBER", None)
-        # 差し戻しの文面へ埋まるので、CI の中で回しても結果が変わらないよう外す (#2134)
+        # 差し戻しの文面が Actions の変数で変わらないことを見るので、渡すとき以外は外す
         self.env.pop("GITHUB_RUN_ID", None)
+        self.env.pop("GITHUB_JOB", None)
 
     def run_script(self, *, body="", labels=(), files=DRAWING_FILES, args=("101",),
                    all_files=None, cwd=None, **env):
@@ -123,15 +124,15 @@ class DrawingEvidenceTest(unittest.TestCase):
         r = self.run_script(body="詳細は https://github.com/mokume-metal/mokume/issues/306 を参照")
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
 
-    # --- 差し戻しの文面が約束してよいこと (#2134) -------------------------
+    # --- 差し戻しの文面が約束してよいこと (#2134・#2669) ---------------------
     #
-    # 本文の編集やラベルの付け外しで新しい run は走る。しかし赤かった run の ci-gate は
-    # 同じコミットに残って必須チェックを赤のままにする (古い赤が新しい緑を固定する場合もある —
-    # #259)。かつての文面は「CI は自動で再評価します」と約束し、後付けのラベルで ci-gate が
-    # 赤のまま止まった (2026-09-23 に描画 PR 13 本のうち 3 本)。文面は次を守る — 作成と同時に
-    # 付ける形を先に案内する (ただし保証とは言わない)・赤い ci-gate が残ることと打ち直しを
-    # 案内する (絵を貼る経路も含む)・自動で直ると約束しない・当番は fork の PR を打たない・
-    # pr-title の赤は打ち直しでは消えない
+    # この検査は pr-gate の中で走る。絵を貼る・ラベルを付けると pr-gate の新しい run が作られ、
+    # 必須は作成順で最新の run の結論を読む (scripts/ci-gate.sh 冒頭の規則・#2577・#2716)。
+    # かつて ci.yml の ci-gate の needs に
+    # 居た頃は、後付けのラベルで ci-gate が赤のまま止まり (2026-09-23 に描画 PR 13 本のうち 3 本)、
+    # 文面は打ち直しまで案内していた。作法の検査が ci-gate を離れた (#2669) ので、文面は次を
+    # 守る — 作成と同時に付ける形を先に案内する (ただし保証とは言わない)・直せば付け直されると
+    # 言う・打ち直し (gh run rerun) や新しいコミットを案内しない・Actions の変数で文面を変えない
 
     def rejection(self, **env):
         r = self.run_script(body="## 目的\n\nCloses #1\n\n## 確認方法\n\nmake ci-check", **env)
@@ -154,50 +155,31 @@ class DrawingEvidenceTest(unittest.TestCase):
         self.assertNotEqual(edit, -1, "作ってしまった PR への付け方を案内していない:\n" + err)
         self.assertLess(create, edit, "後付けの形が、作成と同時の形より先に出ている")
 
-    def test_差し戻しは後付けで赤の_ci_gate_が残ることと打ち直しを案内する(self):
+    def test_差し戻しは直せば付け直されると言い_打ち直しを案内しない(self):
         err = self.rejection()
-        self.assertIn("ci-gate", err, "必須チェックが赤で残りうることを言っていない:\n" + err)
-        self.assertRegex(err, r"gh run rerun \S+ --failed", "打ち直しの手を案内していない:\n" + err)
-
-    def test_差し戻しは自動で再評価すると約束しない(self):
-        err = self.rejection()
-        self.assertNotRegex(self.squash(err), r"自動(で|的に)?再(評価|実行)", "約束が戻っている:\n" + err)
-        # 新しい run が走ることまでは言えるが、それが必須チェックを緑にするとは言わない。
-        # 機構は 1 つに断定せず、赤が残ること (と、古い赤が固定する場合もあること) を言う
-        self.assertSays(err, "新しい run が走って")
-        self.assertSays(err, "必須チェックを赤のままにします")
-        self.assertSays(err, "古い赤が新しい緑を固定する場合もあります")
+        self.assertSays(err, "直せば付け直されます (打ち直しは要りません)")
+        self.assertSays(err, "pr-gate の新しい run が作られ、必須はその (作成順で最新の) run の結論を読みます")
+        self.assertNotIn(self.squash("同じコミットの最新"), self.squash(err))
+        for gone in ("gh run rerun", "ci-gate", "新しいコミット", "空コミット", "stall-watch"):
+            self.assertNotIn(gone, err, gone)
 
     def test_差し戻しは作成と同時のラベルを保証と言わない(self):
         """gh は PR を作ってからラベルを付ける。作成の run が先に API を読めば赤くなる。"""
         err = self.rejection()
         self.assertSays(err, "通常は最初の run から通る")
-        self.assertSays(err, "まれに作成の run が先にラベルを読んで赤くなります")
+        self.assertSays(err, "まれに作成の run がラベルの付く前を読んで赤くなりますが、必須は後から作られるラベルの run の結論を読みます")
         # 赤くなる理由は本文ではなく、API 上のラベル (と絵) の有無である
         self.assertNotIn(self.squash("ラベルが付く前の本文"), self.squash(err))
-        self.assertSays(err, "API 上に絵もラベルも無ければ赤くなり")
 
-    def test_差し戻しは絵を貼った後にも打ち直しが要ると言う(self):
+    def test_差し戻しは絵を貼ると付け直されると言う(self):
         """絵を貼る経路は構造的に PR 作成後の本文の編集で、ラベルの話では済まない。"""
         err = self.rejection()
-        self.assertSays(err, "貼ったあと (本文を編集したあと) も、赤い run があれば")
-        self.assertSays(err, "絵を貼った・ラベルを付けたあと")
+        self.assertSays(err, "貼る (本文を編集する) と、下のとおり付け直されます")
 
-    def test_差し戻しは当番がforkのPRを打たないと言う(self):
-        err = self.rejection()
-        self.assertSays(err, "同じリポジトリの PR は、打たなくても stall-watch の当番がいずれ打ち直します")
-        self.assertSays(err, "fork の PR は当番の対象外なので、メンテナが打ちます")
-
-    def test_差し戻しはpr_titleの赤を打ち直さず新しいコミットを案内する(self):
-        err = self.rejection()
-        self.assertSays(err, "pr-title も赤い run は、打ち直すと元のタイトルを再生して同じ赤を返します")
-        self.assertSays(err, "新しいコミットを push して run を作り直してください")
-
-    def test_差し戻しの打ち直しはCIの中ではそのrunのidで示す(self):
-        # 手元で打ったときは、実在しない id を出さず穴埋めの印で示す
-        self.assertIn("gh run rerun <run-id> --failed", self.rejection())
-        # run_script は env を残すので、id を入れるのは後にする
-        self.assertIn("gh run rerun 424242 --failed", self.rejection(GITHUB_RUN_ID="424242"))
+    def test_差し戻しの文面は_Actions_の変数で変わらない(self):
+        # かつては GITHUB_JOB で ci.yml と pr-gate の文面を打ち分け、GITHUB_RUN_ID を埋めた
+        plain = self.rejection()
+        self.assertEqual(self.rejection(GITHUB_RUN_ID="424242", GITHUB_JOB="pr-gate"), plain)
 
     def test_差し戻しはADRを開かなくても行動でき番号は任意の参照に留める(self):
         """差し戻しを読んだエージェントが番号を辿ると、1 回で 1〜2 万字の文書を読みに行く (#2139)。
@@ -294,8 +276,8 @@ class DrawingEvidenceTest(unittest.TestCase):
     # --- PR がまだ無いブランチ (#2153) ------------------------------------
     #
     # 以前は判定ごと放棄していたので、描画に触れていると知るのが PR を作った後になり、
-    # no-visual-change を「作成と同時に」付ける規約を守る手段が無かった (後付けすると作成時の
-    # run の ci-gate が赤で残る — #2134)。いまは origin/main との差を描画のパスに当て、作る前に
+    # no-visual-change を「作成と同時に」付ける規約を守る手段が無かった (当時は後付けすると作成時の
+    # run の ci-gate が赤で残った — #2134)。いまは origin/main との差を描画のパスに当て、作る前に
     # 案内する。**どれも 0 で抜ける** — PR の無い作業途中を赤にしない
 
     @staticmethod
@@ -436,6 +418,8 @@ class DrawingEvidenceTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertIn("判定しない", r.stdout)
                 self.assertIn("PR #101 を読めなかった", r.stdout)
+                # 読めなかった理由 (gh の stderr) を捨てない (#2614)
+                self.assertIn("no pull requests found", r.stdout)
                 self.assertNotIn("描画に触れ", r.stdout)
 
     # --- 呼び方 -----------------------------------------------------------

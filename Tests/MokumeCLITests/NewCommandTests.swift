@@ -10,13 +10,13 @@ import Testing
 struct NewCommandTests {
     @Test("名前と場所を読む")
     func readsTheNameAndWhereToPutIt() throws {
-        #expect(try NewCommand.parse(["sketch"]) == .init(name: "sketch"))
+        #expect(try NewCommand.parse(["my-sketch"]) == .init(name: "my-sketch"))
         #expect(
-            try NewCommand.parse(["sketch", "--path", "/tmp"])
-                == .init(name: "sketch", path: "/tmp"))
+            try NewCommand.parse(["my-sketch", "--path", "/tmp"])
+                == .init(name: "my-sketch", path: "/tmp"))
         #expect(
-            try NewCommand.parse(["sketch", "--local", "../mokume"])
-                == .init(name: "sketch", path: ".", local: "../mokume"))
+            try NewCommand.parse(["my-sketch", "--local", "../mokume"])
+                == .init(name: "my-sketch", path: ".", local: "../mokume"))
     }
 
     @Test("名前が無ければ、何をすればよいか言って止まる")
@@ -74,6 +74,11 @@ struct NewCommandTests {
         let base = URL(fileURLWithPath: typedFrom, isDirectory: true)
         let sketch = options.root(from: base)
         #expect(NewCommand.packageIdentity(local: local, sketch: sketch) == identity)
+        // 自分自身を指す行 (末尾が `.`) は、自分に依存するパッケージになり組めないので断る (#2310)
+        guard identity != options.name else {
+            #expect(throws: CommandFailure.self) { try NewCommand.files(for: options, base: base) }
+            return
+        }
         // 作られる Package.swift でも、`.package(path:)` と名前が揃っている
         let manifest = try #require(
             try NewCommand.files(for: options, base: base).first { $0.0 == "Package.swift" }?.1)

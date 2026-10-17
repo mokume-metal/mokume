@@ -5,7 +5,7 @@ import simd
 
 /// 描いた絵にかける効果。
 ///
-/// 使い方は ``Sketch/effects(_:)`` にある。
+/// 使い方は ``SketchPart/effects(_:)`` にある。
 ///
 /// ## 数の意味は名前が決める
 ///
@@ -146,7 +146,7 @@ public enum Effect {
     /// [#1545]: https://github.com/mokume-metal/mokume/issues/1545
     static func bloomFloor(drawnPerOutput scale: Float) -> Int {
         // 細かさ 1 では log2(4) = 2 ちょうどで、これまでの下限と変わらない
-        max(0, Int(log2(4 * scale).rounded()))
+        max(0, Int(RuntimeMath.log2(4 * scale).rounded()))
     }
 
     static func reductionLevel(for radius: Float) -> Int {

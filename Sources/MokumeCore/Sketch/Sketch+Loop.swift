@@ -6,9 +6,9 @@ import MokumeDiagnostics
 // 進行を止める・戻す・1 枚だけ描き直す。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
-    /// 以後 ``draw()`` を呼ばない。
+    /// 以後 ``Sketch/draw()`` を呼ばない。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -35,9 +35,9 @@ extension Sketch {
     ///   }
     /// }
     ///
-    /// **`setup()` で呼んでも、``draw()`` は 1 度だけ呼ばれる。** 何も描かないまま
-    /// 止まると絵が出ないためで、手本と同じ振る舞いである。``draw()`` の中で呼べば、
-    /// そのフレームを描き切ってから止まる。下は 30 枚目の ``draw()`` の中で呼んだもの。
+    /// **`setup()` で呼んでも、``Sketch/draw()`` は 1 度だけ呼ばれる。** 何も描かないまま
+    /// 止まると絵が出ないためで、手本と同じ振る舞いである。``Sketch/draw()`` の中で呼べば、
+    /// そのフレームを描き切ってから止まる。下は 30 枚目の ``Sketch/draw()`` の中で呼んだもの。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -69,7 +69,7 @@ extension Sketch {
     ///
     /// ## 止まっていても入力は届く
     ///
-    /// ``mousePressed()`` などのコールバックは呼ばれ続ける。止めたスケッチを動かし直す
+    /// ``Sketch/mousePressed()`` などのコールバックは呼ばれ続ける。止めたスケッチを動かし直す
     /// ``loop()`` / ``redraw()`` は、そこから呼ぶ。
     ///
     /// ```swift
@@ -81,21 +81,21 @@ extension Sketch {
     /// ただし止まっている間のコールバックは**フレームの外**で呼ばれる。そこで置いた図形は
     /// 次に描くフレームまで出ず、**変換も切り抜きも無い状態で置かれる** — そこで書いた
     /// ``translate(_:_:)`` などの変換や ``clip(_:_:_:_:)`` は警告して無視され、前の
-    /// ``draw()`` が最後に残した変換 (戻し
+    /// ``Sketch/draw()`` が最後に残した変換 (戻し
     /// 忘れた ``push()`` の後の分も) と切り抜きも効かない。``screenX(_:_:)`` などで読む
-    /// 座標も同じである。置いた立体は**光も周囲も無い状態で置かれ**、前の ``draw()`` の光は
-    /// 当たらない (塗りの色のまま出る)。塗りや線の色は前の ``draw()`` のものが残る。描くのは
-    /// ``draw()`` に任せる。
+    /// 座標も同じである。置いた立体は**光も周囲も無い状態で置かれ**、前の ``Sketch/draw()`` の光は
+    /// 当たらない (塗りの色のまま出る)。塗りや線の色は前の ``Sketch/draw()`` のものが残る。描くのは
+    /// ``Sketch/draw()`` に任せる。
     ///
     /// 置いたものが次に描くフレームへ持ち越されるのは、止まっている間のコールバックと
-    /// ``setup()`` が**持ち越しを約束する区間**だからである。``redraw()`` を呼ばずに置き続けると、
+    /// ``Sketch/setup()`` が**持ち越しを約束する区間**だからである。``redraw()`` を呼ばずに置き続けると、
     /// 置いたものは上限なく溜まり続ける。コールバックの中で起こした `Task` の続きは区間の外で、
     /// そこで置いた図形・絵・背景と書いた画素は、警告して置かない。
     ///
     /// ## 呼べる場所
     ///
-    /// **進行の 3 つの口 (これと ``loop()`` / ``redraw()``) が効くのは、``setup()``・
-    /// ``draw()``・入力のコールバックの中から呼んだときだけである。** それ以外の場所から
+    /// **進行の 3 つの口 (これと ``loop()`` / ``redraw()``) が効くのは、``Sketch/setup()``・
+    /// ``Sketch/draw()``・入力のコールバックの中から呼んだときだけである。** それ以外の場所から
     /// 呼ぶと何もせず、そのことを標準エラーで知らせる。
     ///
     /// **そこで起こした `Task` の中も、外に数える。** `Task` の中身が走るのは起こした
@@ -114,7 +114,7 @@ extension Sketch {
     // shot: 2 snippet=61f798db
     public func noLoop() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.noLoop.notice)
+            return OutsideRun.log.warn(.noLoop)
         }
         runtime.noLoop()
     }
@@ -132,25 +132,25 @@ extension Sketch {
     /// その 1 枚の値は ``redraw()`` で描き直した 1 枚と同じになる (``redraw()`` の
     /// 「描き直しの 1 枚の時刻」)。2 枚目からは、ふだんどおり前のフレームからの経過である。
     ///
-    /// **効くのは ``setup()``・``draw()``・入力のコールバックの中から呼んだときだけ**で、
+    /// **効くのは ``Sketch/setup()``・``Sketch/draw()``・入力のコールバックの中から呼んだときだけ**で、
     /// そこで起こした `Task` から呼んでも回り出さない (``noLoop()`` の「呼べる場所」)。
     // shot: 撮れない 止めた後に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、setup() / draw() で呼んでも同じ呼び出しの noLoop() を打ち消すだけで絵に違いが出ない)
     public func loop() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.loop.notice)
+            return OutsideRun.log.warn(.loop)
         }
         runtime.loop()
     }
 
-    /// ``noLoop()`` で止めている間に、``draw()`` を 1 度だけ呼ぶよう頼む。
+    /// ``noLoop()`` で止めている間に、``Sketch/draw()`` を 1 度だけ呼ぶよう頼む。
     ///
     /// 描かれるのは次のフレームで、何度呼んでも 1 度である。コールバックから呼んだ
     /// ときは、そのコールバックと同じフレームで描かれる。
     ///
-    /// **回っている間と、``draw()`` の中では何もしない** — どちらも、頼まなくても
+    /// **回っている間と、``Sketch/draw()`` の中では何もしない** — どちらも、頼まなくても
     /// 描かれている (または描いている最中の) フレームだからである。
     ///
-    /// **効くのは ``setup()``・``draw()``・入力のコールバックの中から呼んだときだけ**で、
+    /// **効くのは ``Sketch/setup()``・``Sketch/draw()``・入力のコールバックの中から呼んだときだけ**で、
     /// そこで起こした `Task` から呼んでも描き直さない (``noLoop()`` の「呼べる場所」)。
     ///
     /// ## 描き直しの 1 枚の時刻
@@ -171,7 +171,7 @@ extension Sketch {
     // shot: 撮れない 止めている間に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、回っている間と draw() の中では何もせず、setup() で止めた後に呼んでも必ず描かれる 1 枚目に畳まれる)
     public func redraw() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.redraw.notice)
+            return OutsideRun.log.warn(.redraw)
         }
         runtime.redraw()
     }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、塗り・線・重ね方の設定。
-extension Sketch {
+extension SketchPart {
     /// 面全体を塗り直す。切り抜き (``clip(_:_:_:_:)``) の中で呼べば、その中だけを塗り直す。
     ///
     /// @Row {
@@ -33,7 +33,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている | symmetric=xy -->
-    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/30cab01270e473c802ae7fd35b300899.png)
+    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/5fcd864ce485b6cc8d4c49c8b4481e65.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -55,7 +55,7 @@ extension Sketch {
     /// 初回だけ理由を知らせる。
     // shot: 1 snippet=45bd9950
     // shot: 2 snippet=f68cd749
-    public func background(_ color: LinearRGBA) { canvas.background(color) }
+    public func background(_ color: LinearRGBA) { Self.liveCanvas()?.background(color) }
 
     /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -117,7 +117,7 @@ extension Sketch {
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=a705bbfd
     // shot: 2 snippet=bedf025c
-    public func fill(_ color: LinearRGBA) { canvas.fill(color) }
+    public func fill(_ color: LinearRGBA) { Self.liveCanvas()?.fill(color) }
 
     /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     ///
@@ -156,7 +156,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 水色に塗られた円を、太い橙色の輪郭が囲んでいる | symmetric=xy -->
-    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/7525fbdb545e5afc07a044a0689a263d.png)
+    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/a16f01b7cab1deac298a2002945488bc.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -172,7 +172,7 @@ extension Sketch {
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=4c4fa3bb
     // shot: 2 snippet=fbfeb1bb
-    public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
+    public func stroke(_ color: LinearRGBA) { Self.liveCanvas()?.stroke(color) }
 
     /// これから引く線の太さ (画素)。
     ///
@@ -225,6 +225,7 @@ extension Sketch {
     // shot: 1 snippet=1f8ee8eb
     // shot: 2 snippet=edd890f7
     public func strokeWeight(_ weight: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let weight = weight.asFloat
         canvas.strokeWeight(weight)
     }
@@ -247,14 +248,14 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円 | symmetric=y -->
-    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/a2cc975f1de172ef03648d3b0b3182b3.png)
+    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/33eeaba03d211b96e5ba885377208023.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=8bdd372c
-    public func noFill() { canvas.noFill() }
+    public func noFill() { Self.liveCanvas()?.noFill() }
 
     /// 線を引かない。図形の輪郭も出なくなる。
     ///
@@ -274,14 +275,14 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円 | symmetric=y -->
-    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/515eb90948becaf5a1f6c967ad31e22e.png)
+    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/5909889759476cfcaa30f35dae77a821.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=ddde199c
-    public func noStroke() { canvas.noStroke() }
+    public func noStroke() { Self.liveCanvas()?.noStroke() }
 
     /// 線の端の形。既定は丸。
     ///
@@ -362,7 +363,7 @@ extension Sketch {
     // shot: 1 snippet=a8be414a
     // shot: 2 snippet=1620a3e0
     // shot: 3 snippet=ee04ab7c
-    public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
+    public func strokeCap(_ cap: StrokeCap) { Self.liveCanvas()?.strokeCap(cap) }
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
     ///
@@ -541,6 +542,7 @@ extension Sketch {
     // shot: 4 snippet=b84ca0ec
     // shot: 5 snippet=bd0ccc48
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.clip(a, b, c, d)
     }
@@ -577,7 +579,7 @@ extension Sketch {
     /// - Note: 切り抜きは**フレームを越えない**ので、フレームの外 (初期化のときなど) には
     ///   外す切り抜きが無い。そこで呼ぶと、``clip(_:_:_:_:)`` と同じく警告して無視される。
     // shot: 1 snippet=ac662413
-    public func noClip() { canvas.noClip() }
+    public func noClip() { Self.liveCanvas()?.noClip() }
 
     /// 描くものを、下にある絵とどう混ぜるか。既定は上に重ねる。
     ///
@@ -716,7 +718,7 @@ extension Sketch {
     // shot: 3 snippet=0f727a4c
     // shot: 4 snippet=b5a144fd
     // shot: 5 snippet=43e3e4b7
-    public func blendMode(_ mode: BlendMode) { canvas.blendMode(mode) }
+    public func blendMode(_ mode: BlendMode) { Self.liveCanvas()?.blendMode(mode) }
 
     /// 線の折れ目の形。既定は尖らせる形。
     ///
@@ -818,7 +820,7 @@ extension Sketch {
     // shot: 1 snippet=dc0e1fbc
     // shot: 2 snippet=449f0a0c
     // shot: 3 snippet=6ea17290
-    public func strokeJoin(_ join: StrokeJoin) { canvas.strokeJoin(join) }
+    public func strokeJoin(_ join: StrokeJoin) { Self.liveCanvas()?.strokeJoin(join) }
 
     /// いまのスタイルを積んでおく。積むのは次の設定である。
     ///
@@ -867,7 +869,7 @@ extension Sketch {
     ///   捨てられるので、`pushStyle()` と `popStyle()` は同じフレームの中で釣り合わせる。
     ///   降ろし忘れても次のフレームへは積み上がらない。
     // shot: 1 snippet=793f4c1c
-    public func pushStyle() { canvas.pushStyle() }
+    public func pushStyle() { Self.liveCanvas()?.pushStyle() }
 
     /// 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
     ///
@@ -925,5 +927,5 @@ extension Sketch {
     /// }
     // shot: 1 snippet=e3863d1c
     // shot: 2 snippet=967253ab
-    public func popStyle() { canvas.popStyle() }
+    public func popStyle() { Self.liveCanvas()?.popStyle() }
 }

@@ -35,20 +35,25 @@ final class EffectsAndCustom: Sketch {
 
         // **書くのは `effect` 1 本だけ。** 前置きは自動で足され、`mokume_at` で
         // 入りの絵のほかの場所を読める。組み込みの効果も同じ規約で書いてある
-        mosaic = try? makeEffect(
-            """
-            float4 effect(Pixel in, Values values) {
-                // 升の大きさを 0…1 の位置へ直す。升の真ん中の色を読む
-                float2 cell = values.cell / in.size;
-                float2 centre = (floor(in.place / cell) + 0.5) * cell;
-                float4 tint = mokume_at(in, centre);
-                // 升の縁を少し落とす。**色を読む位置が升ごとに 1 つ**なのが、縁で分かる
-                float2 inside = fract(in.place / cell);
-                float seam = step(0.1, inside.x) * step(0.1, inside.y);
-                return float4(tint.rgb * mix(0.55, 1.0, seam), tint.a);
-            }
-            """,
-            name: "mosaic", values: ["cell": 12])
+        do {
+            mosaic = try makeEffect(
+                """
+                float4 effect(Pixel in, Values values) {
+                    // 升の大きさを 0…1 の位置へ直す。升の真ん中の色を読む
+                    float2 cell = values.cell / in.size;
+                    float2 centre = (floor(in.place / cell) + 0.5) * cell;
+                    float4 tint = mokume_at(in, centre);
+                    // 升の縁を少し落とす。**色を読む位置が升ごとに 1 つ**なのが、縁で分かる
+                    float2 inside = fract(in.place / cell);
+                    float seam = step(0.1, inside.x) * step(0.1, inside.y);
+                    return float4(tint.rgb * mix(0.55, 1.0, seam), tint.a);
+                }
+                """,
+                name: "mosaic", values: ["cell": 12])
+        } catch {
+            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+            print(error)
+        }
     }
 
     /// 6 枚に掛ける並び。**並びは値**なので、組み込みも自作も同じ形で書ける。

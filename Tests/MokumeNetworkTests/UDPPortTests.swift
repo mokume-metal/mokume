@@ -69,6 +69,90 @@ struct UDPPortTests {
         #expect(udp.input.unreadable == 1)
     }
 
+    @Test("空の datagram は、Network.framework が送り元の流れの終わりと名乗っても空の文字列として届き、後から届いたものも受ける")
+    func emptyDatagramIsAnEmptyString() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let source = try #require(udp.source as? DatagramSource<String>)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 送り元の流れができて受けを待っているところへ空を送る。この形の空の datagram を、
+        // Network.framework は毎回、流れの終わり (`isFinal`) と名乗って渡す (macOS 27.0.1 で実測)
+        #expect(peer.send(Array("a".utf8), to: port) == 1)
+        var received = await collect(udp, count: 1)
+        #expect(peer.send([], to: port) == 0)
+        received += await collect(udp, count: 1)
+        #expect(received == ["a", ""])
+
+        // 終わりを名乗った空を渡したら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
+        #expect(await until { source.tally.ended >= 1 })
+        for text in ["b", "c"] {
+            #expect(peer.send(Array(text.utf8), to: port) == 1)
+        }
+        received += await collect(udp, count: 2)
+        #expect(received == ["a", "", "b", "c"])
+        #expect(udp.input.unreadable == 0)
+        #expect(told.lines.isEmpty)
+    }
+
+    @Test("受けの完了の扱い: 中身は台帳に依らず渡し、中身の無いものは台帳に居る繋ぎでだけ空として渡し、終わりを名乗れば閉じる")
+    func completionIsHandledByContentFinalityAndLedger() {
+        typealias Listener = DatagramListener
+        // 中身のある datagram: isFinal に依らず渡して続ける。台帳から外した後に返っても、
+        // 届いた datagram なので渡す
+        #expect(Listener.completion(content: Data([7]), isFinal: false, failed: false, held: true) == .datagram([7]))
+        #expect(Listener.completion(content: Data([7]), isFinal: true, failed: false, held: true) == .datagram([7]))
+        #expect(Listener.completion(content: Data([7]), isFinal: false, failed: false, held: false) == .datagram([7]))
+        // 空の datagram: 終わりを名乗らなければ続け、名乗れば渡してから閉じる
+        // (閉じた流れが空を返し続けても、次の受けの error を待たずに止まる)
+        #expect(Listener.completion(content: nil, isFinal: false, failed: false, held: true) == .datagram([]))
+        #expect(Listener.completion(content: nil, isFinal: true, failed: false, held: true) == .last([]))
+        // こちらが閉じた繋ぎ (台帳に居ない) の中身の無い受けは、届いていないので渡さない
+        #expect(Listener.completion(content: nil, isFinal: true, failed: false, held: false) == .abandoned)
+        #expect(Listener.completion(content: nil, isFinal: false, failed: false, held: false) == .abandoned)
+        // 失敗は終わり
+        #expect(Listener.completion(content: nil, isFinal: false, failed: true, held: true) == .ended)
+        #expect(Listener.completion(content: Data([7]), isFinal: false, failed: true, held: true) == .ended)
+    }
+
+    @Test("受け口が失敗して閉じたら、送り元を台帳から外して閉じ、待っていた受けを空のメッセージにしない")
+    func closedListenerDropsItsSenders() async throws {
+        let received = Mutex<[String]>([])
+        let bound = Mutex<Int?>(nil)
+        let listener = DatagramListener(
+            port: 0, host: "127.0.0.1", retryAfter: 0.05,
+            received: { bytes, _ in received.withLock { $0.append(String(decoding: bytes, as: UTF8.self)) } },
+            changed: { event in
+                if case .ready(let port) = event { bound.withLock { $0 = port } }
+            })
+        listener.start()
+        defer { listener.stop() }
+        #expect(await until { bound.withLock { $0 } != nil })
+        let port = try #require(bound.withLock { $0 })
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        #expect(peer.send(Array("a".utf8), to: port) == 1)
+        #expect(await until { received.withLock { $0 } == ["a"] })
+        #expect(listener.connectionCount == 1)
+
+        // 受け口が失敗して閉じたときに PortListener が呼ぶ手続きを、受け口を本当に失敗させずに呼ぶ。
+        // 閉じた繋ぎの待っていた受けは、空の datagram と同じ形で返る
+        listener.onQueue { listener.listenerClosed() }
+        #expect(listener.connectionCount == 0)
+        // 閉じた流れが片付くのを待ってから送る。直後に送ると、b は閉じた繋ぎの待っていた受けで
+        // 届くことも、閉じかけの流れに入って届かないこともある (実測)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(peer.send(Array("b".utf8), to: port) == 1)
+        #expect(await until { received.withLock { $0.count } >= 2 })
+        #expect(received.withLock { $0 } == ["a", "b"])
+        // 外した繋ぎは閉じたので、b は新しい送り元として受け直している。外した数は ended に入れない
+        #expect(listener.tally.accepted == 2)
+        #expect(listener.tally.ended == 0)
+    }
+
     @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
     func oversizedDatagramIsDiscardedAndCounted() async throws {
         let told = Told()
@@ -135,6 +219,30 @@ struct UDPPortTests {
         sender.send("hit")
         sender.send("size 0.5")
         #expect(await collect(receiver, count: 2) == ["hit", "size 0.5"])
+        #expect(told.lines.isEmpty)
+    }
+
+    @Test("空の文字列の send は 0 バイトの datagram になり、mokume の受け口に空の文字列として届く")
+    func emptySendArrivesAsAnEmptyString() async throws {
+        let told = Told()
+        let (receiver, port) = try await listening(told: told)
+        defer { receiver.close() }
+        let source = try #require(receiver.source as? DatagramSource<String>)
+        let sender = UDPPort(
+            port: 1, name: "udp :1", source: RecordedSource<String>(batches: []),
+            outbound: DatagramSender(host: "127.0.0.1", port: port, warn: told.append),
+            owner: nil, warn: told.append)
+        defer { sender.close() }
+
+        // 流れができてから空を送る (受け口の流れが終わりを名乗る形)
+        sender.send("x")
+        var received = await collect(receiver, count: 1)
+        sender.send("")
+        received += await collect(receiver, count: 1)
+        #expect(await until { source.tally.ended >= 1 })
+        sender.send("y")
+        received += await collect(receiver, count: 1)
+        #expect(received == ["x", "", "y"])
         #expect(told.lines.isEmpty)
     }
 
@@ -324,9 +432,14 @@ struct UDPPortTests {
         #expect(
             NetworkFailure.invalidPort(0).description
                 == "The port 0 is not usable. Pass a number from 1 to 65535 (9000, for example)")
-        // 両端は通る (走っていないスケッチなので、ポートは開かない)
-        let edge = try sketch.createUDP(listen: 65535, send: ("127.0.0.1", 1))
-        #expect(edge.port == 65535)
-        #expect(edge.state == .unavailable)
+        // 両端は値の検めを通る。走っていないスケッチなので、その後ポートを開く前に断る (#2740)
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: NetworkFailure.notRunning(call: "createUDP(listen:send:)")) {
+                try sketch.createUDP(listen: 65535, send: ("127.0.0.1", 1))
+            }
+            #expect(throws: NetworkFailure.notRunning(call: "createUDP(listen:send:)")) {
+                try sketch.createUDP(listen: 1, send: ("127.0.0.1", 65535))
+            }
+        }
     }
 }

@@ -114,6 +114,40 @@ struct SynthSoundTests {
         return AudioAnalysis.analyze(node.meter.latest(AudioAnalysis.windowSize))
     }
 
+    // MARK: - 走っている実行の外から作る (#2740)
+
+    /// **音の流れを先に足してあれば、外 (`draw()` で起こした `Task` など) から作った合成音も、その流れに入って
+    /// 解析され、警告は出ない** ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。ステージは
+    /// スケッチごとに 1 つで、既にあれば走っているかを見ずに返す。外で作ると鳴らない音を返すのは、流れをまだ
+    /// 足していないときだけである (`AudioOutsideRunTests`)。フレームとフレームの間は走っている実行の外にあたる。
+    @Test("setup() で合成音を作って流れを足した後なら、外から作った合成音もその流れで解析され、警告は出ない (#2740)")
+    func aSoundMadeOutsideJoinsAnExistingStage() throws {
+        let log = OutsideRun()
+        try OutsideRun.$current.withValue(log) {
+            var sketch: SynthSketch?
+            var late: SinOsc?
+            var heard: [Float] = []
+            let runtime = try run(
+                frames: 8,
+                setup: { made in
+                    sketch = made
+                    _ = made.createSinOsc()
+                },
+                draw: { _ in if let late { heard.append(late.level) } },
+                between: { frame in
+                    guard frame == 1, let sketch else { return }
+                    #expect(runningSketch == nil, "フレームの間は走っている実行の外")
+                    let osc = sketch.createSinOsc()
+                    osc.play(1000, 0.4)
+                    late = osc
+                })
+            runtime.closePlugins()
+            #expect(log.message(for: "createSinOsc()") == nil)
+            #expect(heard.count == 7)
+            #expect(heard.last ?? 0 > 0, "外で作った音が、先に足した流れで解析されていない")
+        }
+    }
+
     // MARK: - 書き出し (固定の時計) の窓
 
     @Test("固定の時計で回すと、鳴らし始めてからの標本で終わる窓が解析され、帯域は周波数のところにある")
@@ -379,21 +413,48 @@ struct SynthSoundTests {
         #expect(firstStage?.rack.rendered == before)
     }
 
+    /// 閉じずに捨てたスケッチのステージが生きている間に、その番地を別のスケッチが引き継ぐと、ステージを
+    /// 番地だけで探す形では前の回のラックを引き継ぐ。照らし合わせる持ち主 (``SynthStage`` の `owner`) が
+    /// それを止める。
+    ///
+    /// **番地の引き継ぎは待たずに、検査が作る** ([#2711])。引き継ぎは割り当て器しだいで、専用機では
+    /// 40 回組み直しても起きない回があった。前の回のステージを、次のスケッチの番地の鍵の下へ置き直して
+    /// (``SynthStage/stages``)、引き継いだときと同じ状態にしてから次のスケッチのステージを求める。
+    ///
+    /// **前の回のステージは、検査が掴んで生かしておく。** ステージはスケッチの音が強く持つだけなので、
+    /// 掴まなければスケッチと一緒に解放され、探す先に何も残らない — 持ち主の照らし合わせを消しても緑の
+    /// ままになる (#2711 の反証で見つけた)。
+    ///
+    /// [#2711]: https://github.com/mokume-metal/mokume/issues/2711
     @Test("閉じずに捨てられたスケッチの番地を、別のスケッチが引き継いでも、前のステージは持ち越さない")
     func reusedAddressDoesNotInheritTheStage() throws {
-        // 同じ参照スケッチを、閉じずに何度も組む (台帳の検査がしている形)。手放された番地は
-        // 次のスケッチに使い回されやすく、ステージを番地だけで探すと前の回のラックを引き継ぐ
-        for round in 0..<40 {
-            var startedAt = -1
-            _ = try run(
-                frames: 3,
-                setup: { sketch in
-                    let stage = SynthStage.stage(for: sketch)
-                    startedAt = stage.rack.rendered
-                    SinOsc(stage: stage).play(440, 0.5)
-                })
-            #expect(startedAt == 0, "round \(round)")
-        }
+        // 前の回: 閉じずに捨てる (台帳の検査がしている形)。ステージだけを掴む
+        var dropped: SynthStage?
+        _ = try run(
+            frames: 3,
+            setup: { sketch in
+                let stage = SynthStage.stage(for: sketch)
+                dropped = stage
+                SinOsc(stage: stage).play(440, 0.5)
+            })
+        let previous = try #require(dropped)
+        try #require(!previous.isClosed, "前の回のステージが閉じている (探す先として残っていない)")
+        try #require(previous.rack.rendered > 0, "前の回のラックが進んでいない (持ち越しを見分けられない)")
+
+        // 次の回: 前の回のステージを、このスケッチの番地の鍵の下へ置いてから求める
+        var inherited = false
+        var startedAt = -1
+        _ = try run(
+            frames: 3,
+            setup: { sketch in
+                SynthStage.stages[ObjectIdentifier(sketch)] = SynthStage.Weak(stage: previous)
+                let stage = SynthStage.stage(for: sketch)
+                inherited = stage === previous
+                startedAt = stage.rack.rendered
+                SinOsc(stage: stage).play(440, 0.5)
+            })
+        #expect(!inherited, "前のスケッチのステージを引き継いだ")
+        #expect(startedAt == 0)
     }
 
     @Test("手放した音は、ラックの節として鳴り続ける")

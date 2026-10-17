@@ -144,21 +144,18 @@ enum ColorValues {
 /// let veil = color(35, 75, 95, 128)
 /// ```
 ///
-/// 描く口へそのまま数値を渡す形 (``Sketch/fill(_:_:_:_:)``) と同じ目盛りなので、
+/// 描く口へそのまま数値を渡す形 (``SketchPart/fill(_:_:_:_:)``) と同じ目盛りなので、
 /// 色を変数に持ちたいときだけこちらを使う。
 ///
 /// **不透明度は 0–255 に締める。色の成分は締めない。** `color(255, 204, 0, 400)` は
 /// 不透明度 255 と同じ色になり、`color(510, 0, 0)` の赤は 510 のまま残る
 /// ([ADR-0033] 決定 3 の改訂・決定 6)。
 ///
-/// - Note: 引数は `Float` なので、`Int` の変数はそのまま渡せない (`color(Float(i), 0, 0)`)。
-///   `Int` と `Float` の口を並べると、リテラルの書き方で目盛りが変わる罠が入るため
-///   ([ADR-0033] 決定 1)。
-///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public func color(
-    _ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255
+    _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
 ) -> LinearRGBA {
+    let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
     guard let made = DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha)
     else {
         ColorValues.warnOnce(
@@ -177,8 +174,9 @@ public func color(
 /// ```
 ///
 /// **不透明度は 0–255 に締める。灰色の値は締めない** (``color(_:_:_:_:)`` と同じ)。
-public func color(_ gray: Float, _ alpha: Float = 255) -> LinearRGBA {
-    color(gray, gray, gray, alpha)
+public func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) -> LinearRGBA {
+    let gray = gray.asFloat
+    return color(gray, gray, gray, alpha.asFloat)
 }
 
 /// 16 進の綴りから色を作る。
@@ -233,16 +231,19 @@ public func color(hex: Int) -> LinearRGBA {
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func lerpColor(_ start: LinearRGBA, _ stop: LinearRGBA, _ amount: Float) -> LinearRGBA {
+public func lerpColor(
+    _ start: LinearRGBA, _ stop: LinearRGBA, _ amount: some ScalarConvertible
+) -> LinearRGBA {
+    let given = amount.asFloat
     // 締める前に弾く — Swift の `max` は第 1 引数の NaN をそのまま返すので、締めても NaN は残る
-    guard amount.isFinite else {
+    guard given.isFinite else {
         ColorValues.warnOnce(
             .notANumberLerpColor,
             "lerpColor(): got an amount that is not a number, or an infinite one, so the start color was returned"
         )
         return start
     }
-    let amount = min(max(amount, 0), 1)
+    let amount = min(max(given, 0), 1)
     // 乗算済みの 4 成分を、そのまま成分ごとに混ぜる。割り戻しも掛け直しもしない
     // ([ADR-0011] 決定 4) — `init(straightRed:…)` を通すと、もう 1 度掛けてしまう
     return LinearRGBA(

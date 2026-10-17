@@ -51,12 +51,12 @@ import MokumeDiagnostics
 ///
 /// 窓に出して動かしている間は実際に鳴らし、解析の位置は実際に鳴った標本の数から読む。書き出し
 /// (`mokume render`) と、窓を開かずに回す検査 (時刻がフレームの数え方から決まるとき —
-/// ``Sketch/clock``) では**鳴らさず**、位置を「鳴らし始めてから進んだフレームの数 × 標本化率
+/// ``SketchPart/clock``) では**鳴らさず**、位置を「鳴らし始めてから進んだフレームの数 × 標本化率
 /// ÷ fps」で決める。どちらも同じ位置から同じ窓を切り出すので、書き出した絵は実時間で鳴らした
 /// ときと同じ時刻の音で動き、何度書き出しても同じになる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)。
 ///
-/// 位置を進めるのは音の時計で、``Sketch/time`` ではない。``Sketch/pauseTime()`` と
-/// ``Sketch/jumpTime(_:)`` は音を止めない・飛ばさない。
+/// 位置を進めるのは音の時計で、``SketchPart/time`` ではない。``SketchPart/pauseTime()`` と
+/// ``SketchPart/jumpTime(_:)`` は音を止めない・飛ばさない。
 ///
 /// 出力の機材が開けないときは、鳴らさずに実時間で位置を進め、そのことを 1 度だけ知らせる。
 /// 出力の機材が替わって音が止まったときは、止まった位置から鳴らし直す。
@@ -88,7 +88,7 @@ public final class SoundFile: Inlet {
     /// 最後に見たフレームが、時計の上で何フレーム目に並ぶか (最初のフレームが 0)。操作はこの
     /// フレームの時刻に効く。
     ///
-    /// ``Sketch/frameCount`` から 1 を引いたもので、`setup()` の間 (``Sketch/frameCount`` が 0) も
+    /// ``SketchPart/frameCount`` から 1 を引いたもので、`setup()` の間 (``SketchPart/frameCount`` が 0) も
     /// 0 にする。フレームの数え方の時計では、最初のフレームと `setup()` はどちらも 0 秒にいる。
     private var frame = 0
     /// 最後のフレームで読んだ、区切りの中で鳴った標本の数。
@@ -241,13 +241,12 @@ public final class SoundFile: Inlet {
         frame = Self.frameIndex(of: owner)
         if let injectedFlow {
             speak(through: injectedFlow)
+        } else if let frameRate = owner.clock.soundFrameRate(onScreen: owner.isOnScreen) {
+            // 書き出しの経路。鳴らさずに、フレームの数から位置を決める
+            pace = .frames(perSecond: max(1, frameRate), origin: frame)
         } else {
-            switch owner.clock {
-            case .frameIndex(let frameRate):
-                pace = .frames(perSecond: max(1, frameRate), origin: frame)
-            case .wallClock:
-                speak(through: .speakers)
-            }
+            // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
+            speak(through: .speakers)
         }
         // 鳴らさないと決まったなら、器は要らない (鳴らすなら player が持っている)
         buffer = nil

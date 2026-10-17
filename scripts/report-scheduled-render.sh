@@ -130,11 +130,11 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 走らせているのは 2 つ:
 
 - **debug**: `make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=` (台帳を含む。`render` と同じ)
-- **release**: `make test-release-scheduled` — release の検査から台帳 (`SceneLedgerTests`) だけを外したもの。release で台帳が合うべきかは #1736 が決める途中で、素で走らせると決着するまで毎回赤になるため外してある (代償: 台帳にだけ出る release の差は、この検査では見えない)
+- **release**: `make test-release-scheduled` — release の検査の全部 (台帳を含む。release でも debug と同じ台帳に合う — #1736)
 
 BODY
   job_section "debug" "$DEBUG_RESULT" "$DEBUG_RECORD" "$DEBUG_LOG" "$DEBUG_SHOTS"
-  # release は台帳を外していて (Makefile の test-release-scheduled)、絵を上げない
+  # release は絵を上げない。台帳の行が動けば、記録の失敗の文面に指紋が出る
   job_section "release" "$RELEASE_RESULT" "$RELEASE_RECORD" "$RELEASE_LOG" ""
   cat <<'BODY'
 ## 対処
@@ -149,7 +149,7 @@ BODY
 
 手元で上の 2 つが緑になり、**次の定期の run (6 時間以内) も緑になれば解消**。定期の run は `workflow_dispatch` を持たない (ADR-0019 決定 7) ので、手で起こさず次の回を待つ。
 
-**解消したらこの Issue を閉じる。** open な間は重複起票を抑えるので、残したままにすると次の赤が起票されない。
+**解消したらこの Issue を閉じる。** open な間は、次の赤は新しく立たずにこの Issue へ追記される (#2658)。閉じ忘れると、別の事象が前の事象の続きに見える。**閉じる前に、追記された分も同じ直しで解けたかを確かめる** — 別の原因なら、閉じる前に別の Issue へ起こす。
 BODY
 } > "$body"
 

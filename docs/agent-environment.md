@@ -72,9 +72,9 @@ ON にするなら、次の赤と状態は**コードを直して push しても
 
 | 赤・状態 | 直す先 |
 | --- | --- |
-| `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2)。直したあと、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (新しい run は判定を付け直すだけで、赤い run の `ci-gate` は残る — `ci.yml` の `ci-gate` の上のコメント) |
-| `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を、PR の作成と同時に付ける。載せた (付けた) あと、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (同上) |
-| `pr-title` | タイトルを直し、新しいコミットを push して run を作り直す。rerun しない (元のタイトルを読んで同じ赤を返す — `stall-watch.sh` の読み分け表の 6) |
+| `pr-gate` の `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2)。直せば新しい run で付け直される (打ち直しは要らない) |
+| `pr-gate` の `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を付ける (作成と同時なら赤が出ない)。載せれば (付ければ) 付け直される |
+| `pr-gate` の `pr-title` | タイトルを直す。`pr-gate` はタイトルを API から読むので、直せば付け直される (新しいコミットは要らない) |
 | `render-pr` が見送られた・cancel された | 必須ではないので直すものは無い。rerun しない — 門番を通らずに専用機へ積まれ、merge queue の `render` と取り合う (#2062)。要るなら queue が空いてから push し直す |
 | `render` の台帳の不一致 | 2 回描いても一致しないなら決定論が壊れている。台帳を書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
 | `BEHIND` | 何もしない。"Update branch" を押すと auto-merge だけが外れる |
@@ -135,7 +135,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `gh pr merge --auto` を打たない。入れると、計測のワークフローや検証用のコミットが main へ
    入る。AGENTS.md「マージの判断基準」の「queue に入れてよい」は、この PR には当てはまらない。
 2. **起動した `render-pr` と `CI` を、作った直後と push のたびに取り消す。** hosted の `CI`
-   (macOS の `ci-check`・`test-release`) は Draft でも起動する。`Render` の `render-pr` は
+   (macOS の `ci-check`) は Draft でも起動する。`Render` の `render-pr` は
    Draft では skipped だが (render.yml の `!github.event.pull_request.draft`)、Ready の間は
    専用機に積まれ、計測が待たされる (#1922 では起動した `render-pr` を取り消した)。
    `gh run list --branch <枝>` で run を見つけ、`gh run cancel <run-id>` で取り消す。反映に
@@ -152,16 +152,18 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `gh run download <run-id> -n <artifact 名>` で取る。
 4. **base の切り替えは `gh api -X PATCH` で行う。** 条件式の検証では、空コミットだけの Draft
    (重要パスに触れない) を作り、main と同じ SHA の一時ブランチへ base を向け、main へ戻す。
-   `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。切り替えのたびに `edited`
-   の run ができる。`changes.base` が効いて `ci-check`・`test-release` が積まれる
-   (skipped にならない) ことを、本文だけの編集 (対照・skipped になる) と並べて読む。
-   読み終えた macOS のジョブは 2 と同じく取り消す。
+   `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。base の切り替えも本文・
+   タイトルの編集も `edited` の出来事で、起きるのは `edited` を持つワークフロー (`PR gate`) だけ
+   である。`CI` は `edited` で起きない (#2718) ので、切り替えや編集の前後で
+   `gh run list --branch <枝> --workflow CI` の本数が変わらないことを読む。`edited` で起きた
+   run のジョブは `gh run view` で読む。
 
    ```bash
    SHA=$(git rev-parse origin/main)
    git push origin "${SHA}:refs/heads/tmp/base-switch-<N>" # zsh では波括弧が要る ($SHA:refs の :r が修飾子になる)
    gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=tmp/base-switch-<N>
    gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=main
+   gh run list --branch <枝> --workflow CI --json databaseId,event,createdAt --jq '.[] | [.databaseId, .event, .createdAt] | @tsv'
    gh run view <run-id> --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'
    ```
 

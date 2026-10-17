@@ -325,6 +325,442 @@ struct TextTests {
         #expect(canvas.textWidth("mokume") == before)
     }
 
+    // 名前の判定 (#2444)。**表は macOS に同梱の書体だけで組む。** 引いた書体は PostScript 名で
+    // 見るので、その名前を CoreText がこの環境で何に引くかを、各検査の頭で前提として確かめる
+    // (前提が崩れたら黙って飛ばさず、前提の行で赤くなる)。
+
+    /// CoreText が、この名前でこの環境から引く書体の PostScript 名。被検査の `Typeface` を通さない。
+    nonisolated private static func postScriptName(resolving name: String) -> String {
+        CTFontCopyPostScriptName(CTFontCreateWithName(name as CFString, 12, nil)) as String
+    }
+
+    /// 在る書体の、いろいろな呼び方と、CoreText がそれで引く書体。上の 4 つは直す前に断っていた
+    /// 呼び方 (日本語の名前・フルネーム)、下の 4 つは直す前から通っていた呼び方。
+    nonisolated static var namesOfPresentTypefaces: [(name: String, postScript: String)] {
+        [
+            ("ヒラギノ角ゴシック W3", "HiraginoSans-W3"),
+            ("Hiragino Sans W6", "HiraginoSans-W6"),
+            ("游明朝体", "YuMin-Medium"),
+            ("Helvetica Neue Bold", "HelveticaNeue-Bold"),
+            ("HiraginoSans-W6", "HiraginoSans-W6"),
+            ("Hiragino Sans", "HiraginoSans-W3"),
+            ("YuMincho", "YuMin-Medium"),
+            ("helvetica", "Helvetica"),
+        ]
+    }
+
+    @Test(
+        "この環境で引ける書体は、日本語の名前・フルネームでも指定でき、警告が出ない",
+        arguments: namesOfPresentTypefaces)
+    func aPresentTypefaceIsTakenByAnyOfItsNames(_ face: (name: String, postScript: String)) throws {
+        try #require(
+            Self.postScriptName(resolving: face.name) == face.postScript,
+            "前提: この環境の CoreText は \(face.name) を \(face.postScript) に引く")
+        let canvas = try makeCanvas()
+        canvas.textFont(face.name)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == face.postScript)
+        #expect(!canvas.warnings.hasWarned(.missingFont), "\(face.name) を無いと断った")
+    }
+
+    /// 濁点を分けて綴った名前 (NFD。ファイル名やコピーした文字列で起きる) を、CoreText は
+    /// 引けない。合わせた綴り (NFC) に直してから引く。
+    @Test("濁点を分けて綴った名前でも、合わせた綴りと同じ書体を引く", arguments: [
+        "ヒラギノ角ゴシック W3".precomposedStringWithCanonicalMapping,
+        "ヒラギノ角ゴシック W3".decomposedStringWithCanonicalMapping,
+    ])
+    func aDecomposedNameIsTakenLikeItsComposedSpelling(_ name: String) throws {
+        let composed = name.precomposedStringWithCanonicalMapping
+        try #require(
+            Self.postScriptName(resolving: composed) == "HiraginoSans-W3",
+            "前提: この環境の CoreText は合わせた綴りを HiraginoSans-W3 に引く")
+        let canvas = try makeCanvas()
+        canvas.textFont(name)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "HiraginoSans-W3")
+        #expect(!canvas.warnings.hasWarned(.missingFont), "\(name.unicodeScalars.count) スカラの綴りを断った")
+    }
+
+    /// 無い名前。CoreText はどれも黙って `Helvetica` へ倒す — 判定はそれを見抜かなければならない。
+    /// `游明朝`・`Hiragino` は在る書体の名前の一部で、それだけでは書体を指さない。
+    @Test("無い名前は、いまどおり警告して書体を変えない", arguments: ["NoSuchFont", "游明朝", "Hiragino"])
+    func aMissingNameIsStillRefused(_ name: String) throws {
+        try #require(
+            Self.postScriptName(resolving: name) == "Helvetica",
+            "前提: この環境の CoreText は \(name) を別の書体 (Helvetica) へ倒す")
+        let canvas = try makeCanvas()
+        canvas.textFont("Courier")
+        canvas.textFont(name)
+        #expect(canvas.warnings.hasWarned(.missingFont), "\(name) を受けた")
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Courier")
+    }
+
+    /// システムの内部名 (`.` で始まる名前) は、CoreText が別の書体へ差し替えたうえで「その名前の
+    /// 書体が見つかった」と答える。名前で書体を探させる判定に回すと、別の書体で描くことになる。
+    @Test("システムの内部名は、CoreText が別の書体へ差し替えるので断る")
+    func aPrivateSystemNameIsRefused() throws {
+        let name = ".SFNS-Regular"
+        try #require(
+            Self.postScriptName(resolving: name) != name,
+            "前提: この環境の CoreText は \(name) を別の書体へ差し替える")
+        let canvas = try makeCanvas()
+        canvas.textFont(name)
+        #expect(canvas.warnings.hasWarned(.missingFont))
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Helvetica")
+    }
+
+    /// CoreText の名前の索引に載らない名前 (書体の `name` 表にある別の言語の名前) も、`textFont` は
+    /// 面に解く (#2563)。macOS 同梱の Verdana の太字が持つスペイン語の名前で、前提は頭で確かめる。
+    /// 表示言語に依る例 (`ヒラギノ角ゴ 簡体中文 W3`) は、英語表示の機械で赤くなるので使わない。
+    @Test("索引に載らない各言語の名前でも、書体を指定でき、警告が出ない")
+    func aNameMissingFromTheIndexIsTakenByTextFont() throws {
+        let name = "Verdana Negrita"
+        try #require(
+            Self.postScriptName(resolving: name) != "Verdana-Bold",
+            "前提: この環境の CoreText の索引は \(name) を Verdana-Bold に引かない")
+        try #require(
+            Self.postScriptName(resolving: "Verdana-Bold") == "Verdana-Bold", "前提: この環境に Verdana-Bold がある")
+        let canvas = try makeCanvas()
+        canvas.textFont("Courier")
+        canvas.textFont(name)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Verdana-Bold")
+        #expect(!canvas.warnings.hasWarned(.missingFont), "\(name) を無いと断った")
+    }
+
+    /// その書体が、その太さ・傾きの面を持っているか。被検査の `Typeface` を通さない。
+    ///
+    /// **写しが返っても、面があるとは限らない。** `CTFontCreateCopyWithSymbolicTraits` は、
+    /// 頼んだ面が無いとき nil を返すこともあれば、元の面や片方の性質だけの面を返すこともある
+    /// (Kefa III の斜体は `KefaIII-Regular`、太斜体は `KefaIII-Bold`)。返った面の性質で見る。
+    nonisolated private static func hasFace(_ name: String, _ traits: CTFontSymbolicTraits) -> Bool {
+        let base = CTFontCreateWithName(name as CFString, 12, nil)
+        guard let styled = CTFontCreateCopyWithSymbolicTraits(base, 12, nil, traits, traits) else {
+            return false
+        }
+        return CTFontGetSymbolicTraits(styled).contains(traits)
+    }
+
+    /// 面を持たない組。上は写しが nil で返る書体、下 3 つは写しが面を持たないまま返る書体
+    /// (元の面か、片方の性質だけの面)。どれも macOS に同梱 (`/System/Library/Fonts/Supplemental`)。
+    nonisolated static var missingFaces: [(font: String, style: TextStyle, drawn: String)] {
+        [
+            ("HiraginoSans-W3", .italic, "HiraginoSans-W3"),
+            ("Kefa III", .italic, "KefaIII-Regular"),
+            ("Kefa III", .boldItalic, "KefaIII-Bold"),
+            ("Noto Sans Syriac", .italic, "NotoSansSyriac-Regular"),
+        ]
+    }
+
+    @Test("太さ・傾きの面を持たない書体は、引けた面で描き、そのことを警告する", arguments: missingFaces)
+    func aMissingFaceIsWarned(_ item: (font: String, style: TextStyle, drawn: String)) throws {
+        let traits: CTFontSymbolicTraits =
+            switch item.style {
+            case .normal: []
+            case .bold: .traitBold
+            case .italic: .traitItalic
+            case .boldItalic: [.traitBold, .traitItalic]
+            }
+        try #require(
+            Self.postScriptName(resolving: item.font) != "Helvetica",
+            "前提: この環境に \(item.font) がある")
+        try #require(!Self.hasFace(item.font, traits), "前提: \(item.font) は \(item.style) の面を持たない")
+        let canvas = try makeCanvas()
+        canvas.textFont(item.font)
+        canvas.textStyle(item.style)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == item.drawn)
+        #expect(canvas.warnings.hasWarned(.missingTypefaceStyle), "\(item.font) \(item.style) で鳴らない")
+        #expect(
+            canvas.warnings.message(for: .missingTypefaceStyle)?.contains(item.drawn) == true,
+            "\(canvas.warnings.message(for: .missingTypefaceStyle) ?? "")")
+    }
+
+    /// 太斜体の面を持たない書体の警告は、描いた面の性質を名乗る (#2562)。**書体は名指しせず、この環境から
+    /// 拾う** (面の構成は macOS の版・資産で機械ごとに違う)。拾えない構成は、その検査が何も走らない。
+    /// 期待の面は CoreText への独立な問い合わせで決める (``FamilySurvey``)。
+    ///
+    /// 太字だけが引ける家族 (斜体は無い: ヒラギノ角ゴシックなど) は太字の立体、太字も斜体もあるが太斜体だけ
+    /// 無い家族 (Futura など) も太字の立体、斜体だけが引ける家族 (Bodoni 72 Oldstyle など) は斜体。
+    nonisolated static var partialBoldItalicFamilies: [(font: String, traits: String)] {
+        let kinds: [(String, (Bool, Bool, Bool) -> Bool)] = [
+            ("bold, upright", { full, bold, italic in !full && bold && !italic }),
+            ("bold, upright", { full, bold, italic in !full && bold && italic }),
+            ("regular weight, italic", { full, bold, italic in !full && !bold && italic }),
+        ]
+        return kinds.flatMap { kind in
+            FamilySurvey.examples(where: kind.1).map { ($0, kind.0) }
+        }
+    }
+
+    @Test("太斜体の面が無い書体は、引ける面で描き、警告が描いた面の性質を名乗る", arguments: partialBoldItalicFamilies)
+    func theWarningNamesThePartialFaceDrawn(_ font: String, _ traits: String) throws {
+        let expected = try #require(FamilySurvey.expectedBoldItalic(of: font))
+        let canvas = try makeCanvas()
+        canvas.textFont(font)
+        canvas.textStyle(.boldItalic)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == expected.postScript)
+        let message = canvas.warnings.message(for: .missingTypefaceStyle) ?? ""
+        #expect(message.contains("\"\(expected.postScript)\" (\(traits))"), "\(message)")
+    }
+
+    @Test("面を持つ書体の太さと傾きは、その面で描き、警告しない", arguments: [
+        ("Helvetica", TextStyle.italic, "Helvetica-Oblique"),
+        ("Helvetica", TextStyle.boldItalic, "Helvetica-BoldOblique"),
+        ("HiraginoSans-W3", TextStyle.bold, "HiraginoSans-W6"),
+        ("Kefa III", TextStyle.bold, "KefaIII-Bold"),
+    ])
+    func aPresentFaceIsUsedWithoutWarning(_ name: String, _ style: TextStyle, _ face: String) throws {
+        try #require(
+            Self.postScriptName(resolving: face) == face, "前提: この環境に \(face) がある")
+        let canvas = try makeCanvas()
+        canvas.textFont(name)
+        canvas.textStyle(style)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == face)
+        #expect(!canvas.warnings.hasWarned(.missingTypefaceStyle))
+    }
+
+    // 代わりの書体から引いた字の面 (#2561)。指定した書体が覆えない字は CoreText が別の書体から
+    // 引き、その面が頼んだ太さ・傾きを持つとは限らない (欧文の斜体に混ぜた日本語は立ったまま)。
+    // 描く絵は変えずに、そのことを 1 度知らせる。**代わりの書体は CoreText への独立な問い合わせで
+    // 確かめ、前提の行で赤くする** (この環境にヒラギノ角ゴシックがあること)。
+
+    /// CoreText が、その書体のその性質の面に無い字を、どの書体から引くか。被検査の `Typeface` を通さない。
+    nonisolated private static func fallbackPostScriptName(
+        of string: String, in name: String, _ traits: CTFontSymbolicTraits
+    ) -> String {
+        let plain = CTFontCreateWithName(name as CFString, 32, nil)
+        let base =
+            traits.isEmpty ? plain : CTFontCreateCopyWithSymbolicTraits(plain, 32, nil, traits, traits) ?? plain
+        let text = string as CFString
+        let fallback = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        return CTFontCopyPostScriptName(fallback) as String
+    }
+
+    /// 欧文の斜体に混ぜた「あ」が、ヒラギノ角ゴシックの立体から引かれること。
+    private static func requireHiraginoFallback() throws {
+        try #require(
+            fallbackPostScriptName(of: "あ", in: "Helvetica", .traitItalic) == "HiraginoSans-W3",
+            "前提: この環境の CoreText は、Helvetica の斜体に無い「あ」を HiraginoSans-W3 から引く")
+    }
+
+    @Test("欧文の斜体に混ぜた日本語は、代わりの書体の立体で描き、そのことを 1 度だけ警告する")
+    func aFallbackWithoutTheStyleIsWarnedOnce() throws {
+        try Self.requireHiraginoFallback()
+        let canvas = try makeCanvas()
+        canvas.textStyle(.italic)
+        try canvas.draw {
+            canvas.text("aあ", 20, 50)
+            canvas.text("aあ", 20, 80)
+        }
+        #expect(canvas.warnings.hasWarned(.missingFallbackTypefaceStyle))
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        // 字はコードポイントを添えて、持たなかったのは頼んだ面 (家族ではない) と言う
+        #expect(message.contains("\"あ\" (U+3042)"), "\(message)")
+        #expect(message.contains("\"Helvetica-Oblique\", the face drawn for .italic"), "\(message)")
+        #expect(message.contains("\"HiraginoSans-W3\" (regular weight, upright)"), "\(message)")
+        #expect(!message.contains("family"), "\(message)")
+        // 次のフレームで別の字が代わりの書体へ落ちても、2 度目は言わない (最初の文面のまま)
+        try canvas.draw { canvas.text("もくめ", 20, 50) }
+        #expect(canvas.warnings.message(for: .missingFallbackTypefaceStyle) == message)
+        // 欧文の書体の斜体は面を持つので、指定した書体の面の警告は出ない
+        #expect(!canvas.warnings.hasWarned(.missingTypefaceStyle))
+    }
+
+    /// 墨を持たない字 (異体字セレクタ U+FE0E・私用領域 U+E000 の豆腐) が先に代わりの書体へ落ちても、
+    /// 1 度きりの知らせを使い切らない。後の和文が知らされる。
+    @Test("墨を持たない字が先にあっても、後の和文の面の警告が出る", arguments: ["\u{FE0E}", "\u{E000}"])
+    func anInklessCharacterDoesNotUseUpTheWarning(_ lead: String) throws {
+        try Self.requireHiraginoFallback()
+        let canvas = try makeCanvas()
+        canvas.textStyle(.italic)
+        try canvas.draw { canvas.text("a\(lead) もくめ", 20, 50) }
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"も\" (U+3082)"), "\(message)")
+    }
+
+    /// 既定の書体では、面も代わりの書体も `.` で始まる内部名を持つ。`textFont()` が断る名前なので、
+    /// 文面は名乗らず「system typeface」と言う。
+    @Test("既定の書体の警告は、textFont() に渡せない内部名を名乗らない")
+    func theSystemTypefaceIsNotNamedByItsInternalName() throws {
+        let system = try #require(CTFontCreateUIFontForLanguage(.system, 32, nil))
+        let italic = try #require(
+            CTFontCreateCopyWithSymbolicTraits(system, 32, nil, .traitItalic, .traitItalic))
+        let fallback = CTFontCreateForString(italic, "も" as CFString, CFRangeMake(0, 1))
+        try #require(
+            (CTFontCopyPostScriptName(fallback) as String).hasPrefix("."),
+            "前提: 既定の書体の斜体に無い「も」を、内部名の書体から引く")
+        let canvas = try makeCanvas()
+        canvas.noTextFont()
+        canvas.textStyle(.italic)
+        _ = canvas.textWidth("もくめ")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("the system typeface's face for .italic"), "\(message)")
+        #expect(message.contains("from a system typeface (regular weight, upright)"), "\(message)")
+        #expect(message.contains("\"も\" (U+3082)"), "\(message)")
+        #expect(!message.contains("\"."), "内部名を名乗った: \(message)")
+    }
+
+    /// 判定は書体の印で、絵文字かどうかではない。❤ (U+2764) は単色の Zapf Dingbats から引かれ、
+    /// 太字の面を持たないので知らせる (後ろの U+FE0F は色の書体から引く印で、知らせない)。
+    @Test("単色の書体から引く ❤ は、太字の面を持たないことを警告する")
+    func aMonochromeHeartIsWarned() throws {
+        let fallback = Self.fallbackPostScriptName(of: "\u{2764}", in: fontName, .traitBold)
+        try #require(
+            fallback == "ZapfDingbatsITC", "前提: Helvetica の太字に無い ❤ を ZapfDingbatsITC から引く")
+        let canvas = try makeCanvas()
+        canvas.textStyle(.bold)
+        _ = canvas.textWidth("\u{2764}\u{FE0F}")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"\u{2764}\" (U+2764)"), "\(message)")
+        #expect(message.contains("\"ZapfDingbatsITC\" (regular weight, upright)"), "\(message)")
+    }
+
+    /// 字を持たないのは頼んだ面で、家族の別の面が持つ字もある (Euphemia UCAS の斜体に無く、立体にある
+    /// U+1400)。文面は面を名乗り、家族に無いとは言わない。
+    @Test("家族の別の面が持つ字でも、文面は頼んだ面に無いと言う")
+    func theWarningNamesTheFaceNotTheFamily() throws {
+        let italic = try #require(
+            CTFontCreateCopyWithSymbolicTraits(
+                CTFontCreateWithName("EuphemiaUCAS" as CFString, 32, nil), 32, nil, .traitItalic,
+                .traitItalic))
+        try #require(
+            CTFontCopyPostScriptName(italic) as String == "EuphemiaUCAS-Italic",
+            "前提: Euphemia UCAS の斜体がある")
+        try #require(
+            Self.fallbackPostScriptName(of: "\u{1400}", in: "EuphemiaUCAS", .traitItalic) == "EuphemiaUCAS",
+            "前提: 斜体に無い U+1400 を、同じ家族の立体から引く")
+        let canvas = try makeCanvas()
+        canvas.textFont("EuphemiaUCAS")
+        canvas.textStyle(.italic)
+        _ = canvas.textWidth("\u{1400}")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"EuphemiaUCAS-Italic\", the face drawn for .italic, has no"), "\(message)")
+        #expect(message.contains("drawn from \"EuphemiaUCAS\" (regular weight, upright)"), "\(message)")
+    }
+
+    @Test("警告しても、代わりの書体から引いた字の絵は変わらない (傾けて描かない)")
+    func aFallbackWithoutTheStyleDrawsTheSameUprightFace() throws {
+        try Self.requireHiraginoFallback()
+        func drawn(_ style: TextStyle) throws -> [UInt8] {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textStyle(style)
+                canvas.text("あ", 30, 60)
+            }
+            return try pixels(of: canvas).bytes
+        }
+        #expect(try drawn(.italic) == drawn(.normal), "斜体の「あ」が、立体の「あ」と違う絵になった")
+    }
+
+    @Test("太斜体に混ぜた日本語は、代わりの書体の太字の立体で描き、警告がそう名乗る")
+    func aFallbackWithOnlyTheBoldFaceNamesIt() throws {
+        let fallback = Self.fallbackPostScriptName(of: "あ", in: "Helvetica", [.traitBold, .traitItalic])
+        try #require(
+            fallback == "HiraginoSans-W6",
+            "前提: この環境の CoreText は、Helvetica の太斜体に無い「あ」を HiraginoSans-W6 から引く")
+        let canvas = try makeCanvas()
+        canvas.textStyle(.boldItalic)
+        _ = canvas.textWidth("あ")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"HiraginoSans-W6\" (bold, upright)"), "\(message)")
+    }
+
+    @Test("指定した書体の面の警告と、代わりの書体の面の警告は、どちらが先でも互いを黙らせない")
+    func theTwoStyleWarningsAreIndependent() throws {
+        try Self.requireHiraginoFallback()
+        try #require(
+            Self.postScriptName(resolving: "HiraginoSans-W3") == "HiraginoSans-W3",
+            "前提: この環境に HiraginoSans-W3 がある")
+        try #require(
+            !Self.hasFace("HiraginoSans-W3", .traitItalic), "前提: ヒラギノ角ゴシックは斜体の面を持たない")
+        // 文面で見分ける — 鍵を共有すると、後の側の鍵にも先の側の文面が入っている
+        func styleMessage(_ canvas: Canvas) -> String {
+            canvas.warnings.message(for: .missingTypefaceStyle) ?? ""
+        }
+        func fallbackMessage(_ canvas: Canvas) -> String {
+            canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        }
+
+        // 代わりの書体の警告が先
+        let fallbackFirst = try makeCanvas()
+        fallbackFirst.textStyle(.italic)
+        _ = fallbackFirst.textWidth("あ")
+        #expect(fallbackMessage(fallbackFirst).contains("\"あ\""), "\(fallbackMessage(fallbackFirst))")
+        #expect(!fallbackFirst.warnings.hasWarned(.missingTypefaceStyle))
+        fallbackFirst.textFont("HiraginoSans-W3")
+        _ = fallbackFirst.textWidth("あ")
+        #expect(
+            styleMessage(fallbackFirst).contains("has no italic face"),
+            "代わりの書体の警告が、指定した書体の警告を黙らせた: \(styleMessage(fallbackFirst))")
+
+        // 指定した書体の警告が先
+        let styleFirst = try makeCanvas()
+        styleFirst.textFont("HiraginoSans-W3")
+        styleFirst.textStyle(.italic)
+        _ = styleFirst.textWidth("あ")
+        #expect(styleMessage(styleFirst).contains("has no italic face"), "\(styleMessage(styleFirst))")
+        #expect(
+            !styleFirst.warnings.hasWarned(.missingFallbackTypefaceStyle),
+            "ヒラギノ角ゴシックが覆う字を、代わりの書体から引いたと数えた")
+        styleFirst.textFont(fontName)
+        _ = styleFirst.textWidth("あ")
+        #expect(
+            fallbackMessage(styleFirst).contains("\"あ\""),
+            "指定した書体の警告が、代わりの書体の警告を黙らせた: \(fallbackMessage(styleFirst))")
+    }
+
+    /// 代わりの書体から引いても警告しない組。代わりの書体が頼んだ面を持つ (太字のあ)・何も頼んでいない
+    /// (標準のあ)・色の字形を持つ書体 (Apple Color Emoji。太さ・傾きの面を持たない。太字と斜体の 2 つ)。
+    nonisolated static var fallbacksWithoutWarning: [(style: TextStyle, string: String)] {
+        [(.bold, "あ"), (.normal, "あ"), (.bold, "😀"), (.italic, "😀")]
+    }
+
+    @Test(
+        "代わりの書体が頼んだ面を持つとき・何も頼んでいないとき・絵文字は警告しない",
+        arguments: fallbacksWithoutWarning)
+    func aFallbackWithTheStyleOrColourGlyphsIsNotWarned(_ item: (style: TextStyle, string: String)) throws {
+        let traits: CTFontSymbolicTraits =
+            switch item.style {
+            case .normal: []
+            case .bold: .traitBold
+            case .italic: .traitItalic
+            case .boldItalic: [.traitBold, .traitItalic]
+            }
+        let fallback = Self.fallbackPostScriptName(of: item.string, in: fontName, traits)
+        try #require(
+            !fallback.hasPrefix("Helvetica"), "前提: Helvetica は「\(item.string)」を持たず、代わりの書体から引く")
+        let canvas = try makeCanvas()
+        canvas.textStyle(item.style)
+        try canvas.draw { canvas.text(item.string, 20, 60) }
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle)
+        #expect(message == nil, "\(item.style) の「\(item.string)」(\(fallback)) で鳴った: \(message ?? "")")
+    }
+
+    /// 代わりの書体から字を引く口。どれも同じ `Typeface.glyph(for:)` を通る。
+    nonisolated static var glyphReadingEntries: [String] { ["text", "textWidth", "textBounds", "textOutline"] }
+
+    @Test("どの口から先に引いても、代わりの書体の面の警告は 1 度出る", arguments: glyphReadingEntries)
+    func theFallbackWarningComesFromEveryEntry(_ entry: String) throws {
+        try Self.requireHiraginoFallback()
+        let canvas = try makeCanvas()
+        canvas.textStyle(.italic)
+        func read(_ entry: String) throws {
+            switch entry {
+            case "text": try canvas.draw { canvas.text("aあ", 20, 50) }
+            case "textWidth": _ = canvas.textWidth("aあ")
+            case "textBounds": _ = canvas.textBounds("aあ", 20, 50)
+            case "textOutline": _ = canvas.textOutline("aあ", 20, 50)
+            default: Issue.record("知らない口 \(entry)")
+            }
+        }
+        try read(entry)
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(
+            message.contains("\"HiraginoSans-W3\" (regular weight, upright)"), "\(entry) から引いて鳴らない: \(message)")
+        // 残りの口から引いても、言い直さない
+        for other in Self.glyphReadingEntries where other != entry { try read(other) }
+        #expect(canvas.warnings.message(for: .missingFallbackTypefaceStyle) == message)
+    }
+
     @Test("指定した書体が覆えない文字も描ける")
     func charactersOutsideTheFontStillDraw() throws {
         let canvas = try makeCanvas()
@@ -1607,5 +2043,185 @@ struct TextTests {
         let plain = try #require(face.glyph(for: "A"))
         #expect(canvas.glyphEntry(for: colored)?.isColored == true)
         #expect(canvas.glyphEntry(for: plain)?.isColored == false)
+    }
+
+    // MARK: - 色を持つ字形の墨の範囲 (#2308)
+    //
+    // 色を持つ字形 (絵文字) はビットマップで描かれ、道筋を持たないか、持っていても描く絵と別の
+    // 仮の形 (国旗の部品 🇯 の矩形) である。墨は**検査の側で CoreText に同じ字形を CPU で描かせ、
+    // 不透明な画素の範囲を取ったもの**とする。焼き場も字形を 1 つずつ整数の升目で CPU に描いて
+    // 面へ写すだけなので、`text()` の墨は同じ升目に乗る。描き方 (8bit の sRGB) は焼き場 (16bit の
+    // 浮動小数・線形) と変えてあり、被検査の描く関数も字形の引き当ても通さない。
+
+    /// 検査で使う書体。`nil` は既定の書体 (`noTextFont()`)。既定の書体の絵文字は
+    /// `.AppleColorEmojiUI` から引かれ、名前で引いた Apple Color Emoji と升目が 2 画素ずれる。
+    nonisolated private static func referenceFont(_ name: String?, size: CGFloat) -> CTFont {
+        guard let name else { return CTFontCreateUIFontForLanguage(.system, size, nil)! }
+        return CTFontCreateWithName(name as CFString, size, nil)
+    }
+
+    /// 字を 1 つ引く。書体に無ければ、CoreText に代わりの書体を選ばせる。
+    nonisolated private static func referenceGlyph(_ scalar: Unicode.Scalar, in base: CTFont)
+        -> (font: CTFont, glyph: CGGlyph)?
+    {
+        func glyph(in font: CTFont) -> CGGlyph? {
+            var units = Array(String(scalar).utf16)
+            var glyphs = [CGGlyph](repeating: 0, count: units.count)
+            let found = CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count)
+            return found && glyphs[0] != 0 ? glyphs[0] : nil
+        }
+        if let found = glyph(in: base) { return (base, found) }
+        let text = String(scalar) as CFString
+        let font = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        return glyph(in: font).map { (font, $0) }
+    }
+
+    /// 字形 1 つを描いた墨の範囲を、書き始めと基準線から測った値 (x は右・y は上へ) で返す。
+    nonisolated private static func referenceInk(of glyph: CGGlyph, in font: CTFont, size: CGFloat)
+        -> (left: CGFloat, right: CGFloat, top: CGFloat, bottom: CGFloat)?
+    {
+        // 字形が十分収まる升目に、書き始めと基準線を (margin, margin) に置いて描く
+        let margin = Int(size) * 2
+        let side = margin * 3
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            guard
+                let context = CGContext(
+                    data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8,
+                    bytesPerRow: side * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return }
+            var glyph = glyph
+            var position = CGPoint(x: margin, y: margin)
+            CTFontDrawGlyphs(font, &glyph, &position, 1, context)
+        }
+        var (left, right, top, bottom) = (Int.max, Int.min, Int.max, Int.min)
+        for row in 0..<side {
+            for column in 0..<side where pixels[(row * side + column) * 4 + 3] > 0 {
+                (left, right) = (min(left, column), max(right, column + 1))
+                (top, bottom) = (min(top, row), max(bottom, row + 1))
+            }
+        }
+        guard left <= right else { return nil }
+        // 並びの先頭は絵の上端。基準線は下から margin の行
+        return (
+            CGFloat(left - margin), CGFloat(right - margin), CGFloat(side - margin - top),
+            CGFloat(side - margin - bottom)
+        )
+    }
+
+    /// 1 行の文字列を `(x, baseline)` から描いた墨の外接 (左・上・右・下、面の座標)。字は
+    /// スカラ 1 つずつ、CoreText の送り幅で並べる (mokume は組版をしない)。
+    nonisolated private static func referenceExtent(
+        _ string: String, font name: String?, size: CGFloat, x: CGFloat, baseline: CGFloat
+    ) -> (left: CGFloat, top: CGFloat, right: CGFloat, bottom: CGFloat)? {
+        let base = referenceFont(name, size: size)
+        var pen = x
+        var extent: (left: CGFloat, top: CGFloat, right: CGFloat, bottom: CGFloat)?
+        for scalar in string.unicodeScalars {
+            guard let (font, glyph) = referenceGlyph(scalar, in: base) else { continue }
+            if let ink = referenceInk(of: glyph, in: font, size: size) {
+                let piece = (pen + ink.left, baseline - ink.top, pen + ink.right, baseline - ink.bottom)
+                extent = extent.map {
+                    (min($0.left, piece.0), min($0.top, piece.1), max($0.right, piece.2), max($0.bottom, piece.3))
+                } ?? piece
+            }
+            var index = glyph
+            var advance = CGSize.zero
+            CTFontGetAdvancesForGlyphs(font, .horizontal, &index, &advance, 1)
+            pen += advance.width
+        }
+        return extent
+    }
+
+    /// 墨の枠を照合する組 (文字列・書体)。
+    ///
+    /// - 🔴 は墨が送り幅の升目いっぱいに載り、🌲 は升目より左右に 3 画素ずつ狭い (40 で実測)。
+    ///   🌲 があるので、外接矩形 (升目) を枠にする直し方では赤くなる
+    /// - 🇯 🇵 (国旗 🇯🇵 の部品) は、CoreText が中身の無い仮の矩形を道筋として返すが、描かれるのは
+    ///   色の絵で、道筋より右と下へはみ出す。「道筋が無ければ描いて測る」の振り分けでは赤くなる
+    /// - `1`・`#`・U+20E3 は、Apple Color Emoji を指定すると同じく仮の道筋を持つ
+    /// - 既定の書体 (`nil`) の絵文字は `.AppleColorEmojiUI` から引かれ、升目が 2 画素ずれる
+    nonisolated static var colorGlyphCases: [(string: String, font: String?)] {
+        let singles: [String] = ["\u{1F534}", "\u{1F332}", "\u{1F1EF}", "\u{1F1F5}"]
+        return singles.flatMap { [($0, "Helvetica"), ($0, nil)] } + [
+            ("A\u{1F534}", "Helvetica"),
+            ("A \u{1F534} ", "Helvetica"),
+            ("A\u{1F534}", nil),
+            ("\u{1F1EF}\u{1F1F5}", nil),
+            ("1\u{20E3}", "Apple Color Emoji"),
+            ("#", "Apple Color Emoji"),
+        ]
+    }
+
+    @Test(
+        "色の字形を持つ書体の字と道筋の無い字の墨の枠は、nil でなく、CPU で描いた墨の外接から各辺 1 画素以内",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"),
+        arguments: colorGlyphCases)
+    func theBoundsHugTheDrawnInkOfColorGlyphs(_ item: (string: String, font: String?)) throws {
+        let note = "\(item.string.debugDescription) \(item.font ?? "既定の書体")"
+        let canvas = try makeCanvas()
+        if let font = item.font { canvas.textFont(font) } else { canvas.noTextFont() }
+        canvas.textSize(40)
+        let ink = try #require(
+            Self.referenceExtent(item.string, font: item.font, size: 40, x: 20, baseline: 80),
+            "前提: \(note) を描くと墨が出る")
+        let bounds = try #require(canvas.textBounds(item.string, 20, 80), "\(note): 枠が nil")
+        #expect(abs(CGFloat(bounds.x) - ink.left) <= 1, "\(note): 左 \(bounds.x) / 墨 \(ink.left)")
+        #expect(abs(CGFloat(bounds.y) - ink.top) <= 1, "\(note): 上 \(bounds.y) / 墨 \(ink.top)")
+        #expect(
+            abs(CGFloat(bounds.x + bounds.width) - ink.right) <= 1,
+            "\(note): 右 \(bounds.x + bounds.width) / 墨 \(ink.right)")
+        #expect(
+            abs(CGFloat(bounds.y + bounds.height) - ink.bottom) <= 1,
+            "\(note): 下 \(bounds.y + bounds.height) / 墨 \(ink.bottom)")
+    }
+
+    /// 国旗の部品は道筋 (仮の矩形) を持つが、描かれるのは Apple Color Emoji の絵である。輪郭は
+    /// 描く絵の形ではないので返さない。並べた字の輪郭はそのまま残る。
+    @Test(
+        "色の字形を持つ書体の字は、道筋を持っていても輪郭を返さない",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"),
+        arguments: ["\u{1F1EF}", "\u{1F1F5}"] as [Unicode.Scalar], ["Helvetica", nil] as [String?])
+    func aColorGlyphWithAPlaceholderPathHasNoOutline(_ scalar: Unicode.Scalar, _ font: String?)
+        throws
+    {
+        let (face, glyph) = try #require(
+            Self.referenceGlyph(scalar, in: Self.referenceFont(font, size: 40)))
+        try #require(
+            CTFontCreatePathForGlyph(face, glyph, nil) != nil,
+            "前提: CoreText は \(scalar) に道筋を返す")
+        try #require(
+            CTFontGetSymbolicTraits(face).contains(.traitColorGlyphs),
+            "前提: \(scalar) は色の字形を持つ書体から引かれる")
+        let canvas = try makeCanvas()
+        if let font { canvas.textFont(font) } else { canvas.noTextFont() }
+        canvas.textSize(40)
+        #expect(canvas.textOutline(String(scalar), 20, 80).isEmpty)
+        #expect(canvas.textOutline("A\(scalar)", 20, 80) == canvas.textOutline("A", 20, 80))
+    }
+
+    /// 焼き場の上限 (4096) に入らない大きさでは、字形を描いて測らない (巨大な絵を CPU に描かせ
+    /// ない)。枠は CoreText の外接矩形になり、道筋を持つ字と同じく枠を返す。
+    @Test(
+        "焼き場に入らない大きさの色を持つ字形は、描かずに外接矩形を枠にする",
+        .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
+    func aHugeColoredGlyphFallsBackToItsBoundingRect() throws {
+        let size: CGFloat = 6000
+        let canvas = try makeCanvas()
+        canvas.textSize(Float(size))
+        let base = CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        let text = String(coloredScalar) as CFString
+        let font = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        var units = Array(String(coloredScalar).utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        try #require(CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count))
+        let rect = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyphs, nil, 1)
+        try #require(rect.width > 4096, "前提: \(size) の 🔴 は焼き場の上限より大きい")
+        let bounds = try #require(canvas.textBounds(String(coloredScalar), 0, 0))
+        #expect(abs(CGFloat(bounds.x) - rect.minX) <= 0.5)
+        #expect(abs(CGFloat(bounds.width) - rect.width) <= 0.5)
+        #expect(abs(CGFloat(bounds.y) + rect.maxY) <= 0.5)
+        #expect(abs(CGFloat(bounds.height) - rect.height) <= 0.5)
     }
 }

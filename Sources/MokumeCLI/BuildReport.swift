@@ -23,6 +23,76 @@ struct BuildReport: Encodable, Equatable {
     /// 既定値のある `let` はメンバーワイズの初期化子に現れないので、組む側も変わらない。
     let schemaVersion = 1
 
+    /// 記録の、作業の場所からの相対の置き場所 (人へ見せる)。
+    static var statusRelativePath: String {
+        String(statusURL(under: URL(fileURLWithPath: "/")).path.dropFirst())
+    }
+
+    /// 組む口は 3 つで、**理由の無い `ok: true, launched: false` は作れない**
+    /// ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。約束「`launched: false` の
+    /// 記録は理由を名乗る」を型が守らせず、読み手が理由の無い記録に出会う形が残っていた。
+    /// メンバーワイズの口は閉じてある。
+    private init(
+        ok: Bool, status: Int32, output: String, stamp: String?, configuration: String,
+        launched: Bool, notStartedReason: String?, timings: Timings
+    ) {
+        self.ok = ok
+        self.status = status
+        self.output = output
+        self.stamp = stamp
+        self.configuration = configuration
+        self.launched = launched
+        self.notStartedReason = notStartedReason
+        self.timings = timings
+    }
+
+    /// 作り直しが通り、子も起こせた回。
+    static func launched(
+        output: String, stamp: String?, configuration: String, timings: Timings
+    ) -> BuildReport {
+        BuildReport(
+            ok: true, status: 0, output: output, stamp: stamp, configuration: configuration,
+            launched: true, notStartedReason: nil, timings: timings)
+    }
+
+    /// 作り直しが通らなかった回 (途中で止めた回・始める前に終わった回を含む)。**子は起こしていない。**
+    static func failed(
+        status: Int32, output: String, stamp: String?, configuration: String, timings: Timings
+    ) -> BuildReport {
+        BuildReport(
+            ok: false, status: status, output: output, stamp: stamp, configuration: configuration,
+            launched: false, notStartedReason: nil, timings: timings)
+    }
+
+    /// 作り直しは通ったが、子を起こさなかった (起こせなかった) 回。**理由は必ず持つ。**
+    ///
+    /// 理由は記録の本文の頭に置き、作り直しの出力を空行を挟んで後ろに続ける (作り直しの出力は
+    /// 長く、末尾に置いた理由は読まれない)。**記録の欄 (`notStartedReason`) にも持つ** — 本文の
+    /// 頭の規約は、この規則の前に書かれた記録には無いので、規約だけでは新旧を見分けられない。
+    ///
+    /// - Parameter reason: 理由。**空・空白だけのときは、理由が無いことを名乗る文に倒す。**
+    ///   空行は含められない (最初の空行までが理由と読まれる) ので、行を詰める。
+    static func notStarted(
+        reason: String, buildOutput: String, stamp: String?, configuration: String,
+        timings: Timings
+    ) -> BuildReport {
+        let reason = normalized(reason)
+        return BuildReport(
+            ok: true, status: 0, output: WatchSession.notLaunched(reason, buildOutput),
+            stamp: stamp, configuration: configuration, launched: false,
+            notStartedReason: reason, timings: timings)
+    }
+
+    /// 理由が無いと言う文 (理由として空を渡された回)。
+    static let unknownReason = "The sketch was not started, and no reason was given"
+
+    private static func normalized(_ reason: String) -> String {
+        let lines = reason.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return lines.isEmpty ? unknownReason : lines.joined(separator: "\n")
+    }
+
     /// 与えた基準の下の、記録の在処。
     ///
     /// **綴りはここ 1 つ。** 書くのは見張り、読むのは切り分けの口と窓口の 3 者いるので、
@@ -80,6 +150,11 @@ struct BuildReport: Encodable, Equatable {
     /// 「保存した → 作り直したと出た → 絵が止まっている」で、**記録のどこにも理由が
     /// 出なかった** ([#1066](https://github.com/mokume-metal/mokume/issues/1066))。
     let launched: Bool
+    /// 作り直しは通ったが子を起こさなかった回の理由。**その回だけが持ち、空でない。**
+    ///
+    /// 本文 (``output``) の頭にも同じものを置くが、頭の規約はこの欄が出来る前の記録には無い。
+    /// 欄があれば新しい形、無ければ理由が書かれていない古い記録、と読み手が見分けられる。
+    let notStartedReason: String?
     /// 分解した所要時間。
     ///
     /// **これだけは後から書き換わる。** 新しい絵が出るまで (``Timings/firstFrameMs``) は
@@ -95,14 +170,88 @@ struct BuildReport: Encodable, Equatable {
         if let stamp { parts.append("stamp=\(stamp)") }
         // **起こせなかった回を「作り直した」で終わらせない。** そこが最も分かりにくい
         // 壊れ方 (絵が止まっているのに成功と出る) だからである (#1066)
+        //
+        // **終われと言われて起こさなかった回を「起こせなかった」と言わない** (#2521)。本文の頭
+        // (``stopRequestedNotice``) と食い違うと、読む人はどちらが起きたのか分からない
         let lead =
             switch (ok, launched) {
             case (true, true): "Rebuilt: "
+            case (true, false) where notStartedReason?.hasPrefix(Self.stopRequestedNotice) == true:
+                "Rebuilt, not started because watching was ending: "
             case (true, false): "Rebuilt, but could not start it: "
             case (false, _): "Build failed: "
             }
         return lead + parts.joined(separator: " ")
     }
+
+    /// 作り直しは通ったのに子を起こさなかった回の、理由の頭 1 行。**それ以外の回は `nil`。**
+    ///
+    /// 読み手 (プレビューと `doctor`) が `(ok, launched)` の片方だけを見て、この回を成功と同じ
+    /// に扱っていた ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。
+    var notStartedHead: String? {
+        notStartedReason.flatMap(Self.firstLine)
+    }
+
+    /// 理由の頭 1 行。**記録 (JSON) から読んだ理由にも使う** (`doctor`)。
+    static func firstLine(_ reason: String) -> String? {
+        reason.split(whereSeparator: \.isNewline).first.map(String.init)
+    }
+
+    /// プレビューの 1 行の長さの上限。
+    ///
+    /// プレビューの印は 1 行の小さな字で、折り返しも省略もしない (窓の幅で切れる)。**肝心なのは
+    /// 末尾 (`(Permission denied)`) なので、長いときは中を詰める。**
+    static let noticeLimit = 80
+
+    /// プレビューへ重ねる、起こせなかった回の 1 行。**該当しない回は `nil`。**
+    ///
+    /// 要約 (``summary``) の頭と同じ言葉で言う — 端末が正で、プレビューはそれを映す。
+    /// **終われと言われて起こさなかった回は、その文をそのまま出す** (#2521)。「起こせなかった」
+    /// を前に付けると、起きたこととは別のことを言う。
+    ///
+    /// **「could not start」を重ねない。** 起こせなかった理由はふつう `Could not start <tool> in
+    /// <place>: …` で始まるので、前置きを足すと同じ言葉が 2 回出て、窓幅のぶんを使い切る。
+    var notStartedNotice: String? {
+        guard let head = notStartedHead else { return nil }
+        if head.hasPrefix(Self.stopRequestedNotice) { return head }
+        let tool = "Could not start"
+        let line =
+            head.hasPrefix(tool)
+            ? "Rebuilt, but could not start" + String(head.dropFirst(tool.count))
+            : "Rebuilt, but could not start it: " + head
+        return Self.abbreviated(line, to: Self.noticeLimit)
+    }
+
+    /// 長い 1 行を、頭と末尾を残して中を詰める。
+    static func abbreviated(_ line: String, to limit: Int) -> String {
+        guard line.count > limit else { return line }
+        let mark = " … "
+        let head = limit * 55 / 100
+        let tail = limit - head - mark.count
+        return String(line.prefix(head)) + mark + String(line.suffix(tail))
+    }
+
+    /// 作り直しの失敗ではないのに `ok: false` で書かれる記録 (見張りを終えたときの最後の記録)。
+    ///
+    /// 本文の頭が「失敗ではない」と名乗る ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+    /// 読み手が `ok` だけで「failed」と言うと、その名乗りを捨てることになる。
+    enum Interruption: Equatable {
+        /// 作り直しを途中で止めた。
+        case rebuildStopped
+        /// 最初の作り直しを始める前に終わった。
+        case beforeFirstBuild
+
+        /// 記録の本文から読む。**この規則の前の記録にも同じ頭が付いている。**
+        static func of(output: String) -> Interruption? {
+            if output.hasPrefix(WatchSession.stoppedRebuildNotice) { return .rebuildStopped }
+            if output.hasPrefix(WatchSession.notStartedNotice) { return .beforeFirstBuild }
+            return nil
+        }
+    }
+
+    /// 終われと言われた後に作り直しが通った回の、起こさなかった理由 (本文の頭に置く)。
+    static let stopRequestedNotice =
+        "Not started, because watching was ending — the build itself succeeded"
 
     private func round(_ value: Double) -> String {
         String(format: "%.1f", value)

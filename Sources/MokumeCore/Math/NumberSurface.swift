@@ -54,14 +54,14 @@ enum NumberValues {
 /// ```
 ///
 /// **このパッケージが角度を受け取る口は、すべてラジアンで名乗っている**
-/// (``Sketch/rotate(_:)`` の引数名が `radians`)。度で考えたい絵 — 円を 12 等分する、
+/// (``SketchPart/rotate(_:)`` の引数名が `radians`)。度で考えたい絵 — 円を 12 等分する、
 /// 30 度ずつ回す — は、ここを通してから渡す。
 ///
 /// **単位を切り替える状態は持たない。** `angleMode()` は無く、単位は呼んだ 1 行から
 /// 読める ([ADR-0033] 決定 4 が `colorMode()` を持たないのと同じ理由)。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func radians(_ degrees: Float) -> Float { degrees * .pi / 180 }
+public func radians(_ degrees: some ScalarConvertible) -> Float { degrees.asFloat * .pi / 180 }
 
 /// ラジアンを度に直す。``radians(_:)`` の逆。
 ///
@@ -71,7 +71,7 @@ public func radians(_ degrees: Float) -> Float { degrees * .pi / 180 }
 ///
 /// 角度を**読みたい**ときのためにある — 画面に出す、度で書かれた表と突き合わせる、
 /// といった用途である。描く口へ渡す値は直さなくてよい。
-public func degrees(_ radians: Float) -> Float { radians * 180 / .pi }
+public func degrees(_ radians: some ScalarConvertible) -> Float { radians.asFloat * 180 / .pi }
 
 // MARK: - 値を別の範囲へ写す
 
@@ -98,8 +98,11 @@ public func degrees(_ radians: Float) -> Float { radians * 180 / .pi }
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public func map(
-    _ value: Float, _ inLow: Float, _ inHigh: Float, _ outLow: Float, _ outHigh: Float
+    _ value: some ScalarConvertible, _ inLow: some ScalarConvertible, _ inHigh: some ScalarConvertible,
+    _ outLow: some ScalarConvertible, _ outHigh: some ScalarConvertible
 ) -> Float {
+    let (value, inLow, inHigh) = (value.asFloat, inLow.asFloat, inHigh.asFloat)
+    let (outLow, outHigh) = (outLow.asFloat, outHigh.asFloat)
     guard value.isFinite, inLow.isFinite, inHigh.isFinite, outLow.isFinite, outHigh.isFinite
     else {
         NumberValues.warnOnce(
@@ -158,7 +161,8 @@ private func proportion(_ value: Float, _ low: Float, _ high: Float) -> Float {
 /// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func lerp(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
+public func lerp(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
+    let (start, stop, amount) = (start.asFloat, stop.asFloat, amount.asFloat)
     guard start.isFinite, stop.isFinite, amount.isFinite else {
         NumberValues.warnOnce(
             .notANumber(.lerp),
@@ -217,7 +221,8 @@ func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
 /// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func constrain(_ value: Float, _ low: Float, _ high: Float) -> Float {
+public func constrain(_ value: some ScalarConvertible, _ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
+    let (value, low, high) = (value.asFloat, low.asFloat, high.asFloat)
     guard value.isFinite, low.isFinite, high.isFinite else {
         NumberValues.warnOnce(
             .notANumber(.constrain),
@@ -254,7 +259,8 @@ public func constrain(_ value: Float, _ low: Float, _ high: Float) -> Float {
 /// 言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func norm(_ value: Float, _ start: Float, _ stop: Float) -> Float {
+public func norm(_ value: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible) -> Float {
+    let (value, start, stop) = (value.asFloat, start.asFloat, stop.asFloat)
     guard value.isFinite, start.isFinite, stop.isFinite else {
         NumberValues.warnOnce(
             .notANumber(.norm),
@@ -299,7 +305,8 @@ public func norm(_ value: Float, _ start: Float, _ stop: Float) -> Float {
 /// 曲線を通さずに、窓の中の割合だけが欲しいなら ``norm(_:_:_:)`` を使う (こちらは締めない)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func smoothstep(_ edge0: Float, _ edge1: Float, _ x: Float) -> Float {
+public func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConvertible, _ x: some ScalarConvertible) -> Float {
+    let (edge0, edge1, x) = (edge0.asFloat, edge1.asFloat, x.asFloat)
     guard edge0.isFinite, edge1.isFinite, x.isFinite else {
         NumberValues.warnOnce(
             .notANumber(.smoothstep),

@@ -14,7 +14,7 @@ import MokumeDiagnostics
 ///
 /// ## 実際に鳴らす・鳴らさない
 ///
-/// 開くときに ``Sketch/clock`` を読み、``SoundFile`` と同じ区別をする。
+/// 開くときに ``SketchPart/clock`` を読み、``SoundFile`` と同じ区別をする。
 ///
 /// - **実時間** (窓に出しながら動かす) では、ラックを音の流れ (``RackPlayer``) へ入れて実際に鳴らす。
 ///   標本は音の側のスレッドが作る
@@ -33,9 +33,15 @@ final class SynthStage: Inlet {
     /// で、ここではない。スケッチが終わっても閉じられなかったとき (検査が閉じずに捨てるとき) に、
     /// 手放された後の同じ番地の別のスケッチが、前のステージを引き継がないようにするため、
     /// 持ち主も照らし合わせる。
-    private static var stages: [ObjectIdentifier: Weak] = [:]
+    ///
+    /// **`private` にしないのは検査のため** ([#2711])。番地の引き継ぎは割り当て器しだいで、待っても
+    /// 起きない機械がある。検査は、別のスケッチのステージを同じ鍵の下へ置いて、引き継いだ状態を
+    /// 直接作る。ここを書き換えてよいのはこの型と検査だけである。
+    ///
+    /// [#2711]: https://github.com/mokume-metal/mokume/issues/2711
+    static var stages: [ObjectIdentifier: Weak] = [:]
 
-    private struct Weak {
+    struct Weak {
         weak var stage: SynthStage?
     }
 
@@ -86,11 +92,18 @@ final class SynthStage: Inlet {
 
     /// `sketch` のステージ。まだ無ければ作って、走っているスケッチへ足す。
     ///
-    /// - Parameter flow: 鳴らす流れを差し替える (検査)。最初に作るときだけ効く。
+    /// 足せない所 (`setup()`・`draw()`・入力のコールバックの外) なら、`call` の名前で 1 度だけ警告し、
+    /// 足されていない (鳴らない) ステージを返す ([#2740])。
+    ///
+    /// - Parameters:
+    ///   - flow: 鳴らす流れを差し替える (検査)。最初に作るときだけ効く。
+    ///   - call: 警告に載せる作る口の名前。呼ぶ側の `#function` が入る (`"createSinOsc()"` など)。
+    ///
+    /// [#2740]: https://github.com/mokume-metal/mokume/issues/2740
     static func stage(
         for sketch: any Sketch, flow: SoundFlow? = nil,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        warn: @escaping (String) -> Void = Diagnostics.warn
+        warn: @escaping (String) -> Void = Diagnostics.warn, calledAs call: String = #function
     ) -> SynthStage {
         let key = ObjectIdentifier(sketch)
         if let existing = stages[key]?.stage, !existing.isClosed, existing.owner === sketch {
@@ -99,8 +112,10 @@ final class SynthStage: Inlet {
         stages = stages.filter { $0.value.stage != nil }
         let stage = SynthStage(owner: sketch, flow: flow, now: now, warn: warn)
         stages[key] = Weak(stage: stage)
-        // 走っていなければ足せない (足す口が診断に出す)。次に呼ばれたとき作り直す
-        if !sketch.attach(stage) { stages[key] = nil }
+        // 足せない所なら、作る口の名前で 1 度だけ警告する (`attach()` を名乗らない)。次に呼ばれたとき作り直す
+        if !sketch.attach(stage, calledAs: call, returning: "a sound that is never heard") {
+            stages[key] = nil
+        }
         return stage
     }
 
@@ -131,13 +146,12 @@ final class SynthStage: Inlet {
         frame = Self.frameIndex(of: owner)
         if let injectedFlow {
             speak(through: injectedFlow)
+        } else if let frameRate = owner.clock.soundFrameRate(onScreen: owner.isOnScreen) {
+            // 書き出しの経路。鳴らさずに、フレームの数から位置を決める
+            pace = .frames(perSecond: max(1, frameRate), origin: frame)
         } else {
-            switch owner.clock {
-            case .frameIndex(let frameRate):
-                pace = .frames(perSecond: max(1, frameRate), origin: frame)
-            case .wallClock:
-                speak(through: .speakers)
-            }
+            // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
+            speak(through: .speakers)
         }
     }
 

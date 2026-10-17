@@ -118,6 +118,22 @@ struct BuildDirectoryTests {
         #expect(names == ["hello"], "product 名と target 名が同じなら 1 つに畳む")
     }
 
+    /// **置き場の名前にできないものは押さえない。** `.`・`..` は押さえる記録の置き場 `owners/<name>` が
+    /// `owners` 自身か置き場の根を指す ([#2502](https://github.com/mokume-metal/mokume/issues/2502))。
+    @Test("押さえる名前から、置き場の名前にできない綴り (/ を含む・空・.・..) は落とす")
+    func contestedNamesDropSpellingsThatCannotBeNames() throws {
+        let package = try #require(
+            SwiftPM.package(
+                inDumpOf: """
+                    {"name":"x",
+                     "products":[{"name":"..","type":{"executable":null}}],
+                     "targets":[{"name":"."},{"name":"a/b"},{"name":""},{"name":"ok"},{"name":"..."}],
+                     "platforms":[],
+                     "dependencies":[]}
+                    """))
+        #expect(BuildDirectory.contestedNames(of: package) == ["ok", "..."])
+    }
+
     @Test("誰も使っていない名前は取れる")
     func afreeNameIsClaimed() throws {
         let store = try Self.directory()

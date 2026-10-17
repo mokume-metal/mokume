@@ -126,7 +126,7 @@ enum MCPCommand {
             fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
     ) throws(CommandFailure) -> (package: URL, facets: URL) {
         let parsed = try Arguments.parse(
-            arguments, surplus: .reject { "Only one directory: \($0)" })
+            arguments, positionalIsPlace: true, surplus: .reject { "Only one directory: \($0)" })
         let package = parsed.positional.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? currentDirectory
         // 在るかの判定は 1 本を通す (`ObjCBool` の受け渡しを写さない・#988)
@@ -151,9 +151,12 @@ enum MCPCommand {
         let directories = try directories(arguments: arguments)
         // 基準を環境変数が決めたのかどうかは、応えないときの案内が名乗る (#380)
         let given = WorkDirectory.given != nil
+        // 窓口を立てた場所と、そこがスケッチかも同じく起動の時点で決め、案内が名乗る (#2487)
+        let place = InterfacePlace.at(directories.package)
         let server = MCPServer(
             tools: Tools(
-                facets: Facets(directory: directories.facets, workDirectoryGiven: given),
+                facets: Facets(
+                    directory: directories.facets, workDirectoryGiven: given, place: place),
                 packageDirectory: directories.package),
             readLine: { Swift.readLine(strippingNewline: true) },
             write: { line in

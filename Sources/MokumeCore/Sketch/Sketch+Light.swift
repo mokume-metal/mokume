@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 光。
-extension Sketch {
+extension SketchPart {
     /// 全体を底上げする光を置く。向きを持たないので、どの面も同じだけ明るくなる。
     ///
     /// **色そのものが明るさの倍率**である。`1.0` は「その光を正面から受けた白い面が
@@ -10,7 +10,7 @@ extension Sketch {
     /// (`.linear(red: 2, green: 2, blue: 2)`)。強さを表す別の数は持たない。
     ///
     /// **この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない。** 同じ名前で素の数値を
-    /// 受ける口 (``ambientLight(_:_:_:)`` と ``ambientLight(_:)-51q6x``) は 0–255 の目盛りなので、
+    /// 受ける口 (``ambientLight(_:_:_:)`` と ``ambientLight(_:)-(ScalarConvertible)``) は 0–255 の目盛りなので、
     /// `ambientLight(0.52, 0.52, 0.53)` は「255 分の 0.52」として受けられ、ほぼ光の無い
     /// 真っ黒な絵になる。0…1 で書くときは `.linear(…)` を渡す。
     ///
@@ -45,16 +45,17 @@ extension Sketch {
     /// 初回だけ理由を知らせる。
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。初期化の
-    ///   ときに置いた光はどのフレームにも属さないので、警告して無視される。
+    ///   ときや、止まっている間の入力のコールバックで置いた光はどのフレームにも
+    ///   属さないので、警告して無視される。
     // shot: 1 snippet=5e98096a
-    public func ambientLight(_ color: LinearRGBA) { canvas.ambientLight(color) }
+    public func ambientLight(_ color: LinearRGBA) { Self.liveCanvas()?.ambientLight(color) }
 
     /// 向きだけを持つ光を置く (無限に遠くから差す光)。
     ///
     /// 渡すのは**光が進む向き**である。縦軸は下向きなので、`(0, 1, 0)` が真上から
     /// 差す光になる。斜めの成分を入れると、陰の境目が左右どちらかへ寄る。
     ///
-    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-fvb5`` と同じ)。
+    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(LinearRGBA)`` と同じ)。
     /// 素の数値で渡す同じ名前の口 ``directionalLight(_:_:_:_:_:_:)`` は塗りと同じ 0–255 の
     /// 目盛りなので、そちらへ `0.72` のように渡すとほぼ光が無くなる。
     ///
@@ -93,13 +94,14 @@ extension Sketch {
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=97d91466
     public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.directionalLight(color, x, y, z)
     }
 
     /// 位置を持つ光を置く。面から光源へ向かう向きで明るさが決まる。
     ///
-    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-fvb5`` と同じ)。
+    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(LinearRGBA)`` と同じ)。
     /// 素の数値で渡す同じ名前の口 ``pointLight(_:_:_:_:_:_:)`` は塗りと同じ 0–255 の
     /// 目盛りなので、そちらへ `0.72` のように渡すとほぼ光が無くなる。
     ///
@@ -135,13 +137,14 @@ extension Sketch {
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=ebd428d6
     public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.pointLight(color, x, y, z)
     }
 
     /// 位置と向きと広がりを持つ光を置く。広がりの外へは当たらない。
     ///
-    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-fvb5`` と同じ)。
+    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(LinearRGBA)`` と同じ)。
     /// 素の数値で渡す同じ名前の口 ``spotLight(_:_:_:_:_:_:_:_:_:angle:)`` は塗りと同じ 0–255 の
     /// 目盛りなので、そちらへ `0.72` のように渡すとほぼ光が無くなる。
     ///
@@ -223,6 +226,7 @@ extension Sketch {
         _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
         angle: some ScalarConvertible = Float.pi / 6
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
         canvas.spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
@@ -230,7 +234,7 @@ extension Sketch {
     /// ひととおりの光を置く — 底上げの光と、斜め上から差す光。
     ///
     /// 立体を「とりあえず立体らしく」見せるための組み合わせ。細かく決めたくなったら
-    /// ``ambientLight(_:)-fvb5`` と ``directionalLight(_:_:_:_:)`` を自分で並べる。
+    /// ``ambientLight(_:)-(LinearRGBA)`` と ``directionalLight(_:_:_:_:)`` を自分で並べる。
     ///
     /// **中身は絵で確かめられる。** 下は左から、底上げの光だけ・斜め上から差す光だけ・
     /// ``lights()`` の 3 つ。3 つ目には前の 2 つが両方出ている — **暗い側は 1 つ目と
@@ -285,7 +289,7 @@ extension Sketch {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     // shot: 1 snippet=44052481
-    public func lights() { canvas.lights() }
+    public func lights() { Self.liveCanvas()?.lights() }
 
     /// 置いた光をすべて取り除く。以降の立体は塗り 1 色で描かれる。
     ///
@@ -328,5 +332,5 @@ extension Sketch {
     /// - Note: 光は**フレームを越えない**ので、フレームの外 (初期化のときなど) には取り除く
     ///   光が無い。そこで呼ぶと、光を置く口と同じく警告して無視される。
     // shot: 1 snippet=a55d02ef
-    public func noLights() { canvas.noLights() }
+    public func noLights() { Self.liveCanvas()?.noLights() }
 }

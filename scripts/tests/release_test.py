@@ -18,6 +18,7 @@ git は一時リポジトリを本物で回す — 「前回のタグ以降に�
 import contextlib
 import importlib.util
 import io
+import re
 import subprocess
 import tempfile
 import unittest
@@ -137,7 +138,14 @@ class ListItemTests(unittest.TestCase):
     def test_a_multi_paragraph_entry_stays_in_its_item(self):
         self.assertEqual(
             release.as_list_item("1 段落目。\n\n2 段落目。"),
-            "- 1 段落目。\n\n  2 段落目。",
+            "- 1 段落目。\n"
+            "  <details><summary>詳しく</summary>\n"
+            "\n"
+            "  1 段落目。\n"
+            "\n"
+            "  2 段落目。\n"
+            "\n"
+            "  </details>",
         )
 
     def test_a_hard_wrapped_paragraph_stays_in_its_item(self):
@@ -166,6 +174,50 @@ class ListItemTests(unittest.TestCase):
         self.assertGreater(len(fragments), 0, "断片が 1 つも読めていない")
         escaped = lines_outside_their_item(release.notes(fragments))
         self.assertEqual(escaped, [], f"{len(escaped)} 行が項目の外へ出ている")
+
+
+class SummaryTests(unittest.TestCase):
+    """見せる要約は最初の文で、全文は畳む (#2766)。"""
+
+    def test_the_summary_is_the_first_sentence(self):
+        self.assertEqual(release.summary_of("足した。使い方はこう。"), "足した。")
+
+    def test_the_summary_stays_in_the_first_paragraph(self):
+        self.assertEqual(release.summary_of("文の終わりが無い\n\n次の段落。"), "文の終わりが無い")
+
+    def test_an_english_sentence_ends_at_a_period_and_a_space(self):
+        self.assertEqual(
+            release.summary_of("Works like p5.js in v0.27.0 now. More follows."),
+            "Works like p5.js in v0.27.0 now.",
+        )
+
+    def test_a_period_in_code_or_brackets_does_not_end_the_sentence(self):
+        self.assertEqual(
+            release.summary_of("`a。b` と書ける (p5.js と同じ。[#1](https://example.com/1))。続き。"),
+            "`a。b` と書ける (p5.js と同じ。[#1](https://example.com/1))。",
+        )
+
+    def test_a_bold_sentence_keeps_its_closing_marks(self):
+        self.assertEqual(
+            release.summary_of("**直しました。** これまでは違った。"), "**直しました。**"
+        )
+
+    def test_a_single_sentence_entry_is_not_folded(self):
+        self.assertNotIn("<details>", release.as_list_item("足した。"))
+        self.assertNotIn("<details>", release.as_list_item("足した。\n"))
+
+    def test_the_folded_body_keeps_every_line_of_the_entry(self):
+        entry = "変えた。\n\n移行:\n\n- `a` は `b` へ\n- `c` は消えた"
+        item = release.as_list_item(entry)
+        self.assertTrue(item.startswith("- 変えた。\n  <details><summary>詳しく</summary>\n\n"))
+        inside = item[item.index("</summary>") + len("</summary>"): item.index("</details>")]
+        self.assertEqual("\n".join(line.removeprefix("  ") for line in inside.split("\n")).strip(), entry)
+
+    def test_real_notes_show_far_less_than_they_fold(self):
+        # 本物の changelog.d を材料に、畳まずに見える分が全体の半分を下回ること
+        rendered = release.notes(release.all_fragments())
+        shown = re.sub(r"<details>.*?</details>", "", rendered, flags=re.DOTALL)
+        self.assertLess(len(shown), len(rendered) / 2)
 
 
 class LintTests(unittest.TestCase):
@@ -443,6 +495,17 @@ class PicturesTests(unittest.TestCase):
             release.fetch_pull = original_fetch
         self.assertIn("## 修正", output.getvalue())
         self.assertIn("![絵](https://i.gyazo.com/a.png)", output.getvalue())
+
+    def test_the_pictures_are_folded_under_a_count(self):
+        self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")
+        self.merge(11, "Sources/MokumeCore/Line.swift", "![線](https://i.gyazo.com/b.png)")
+        section = self.section()
+        visible, folded = section.split("<details><summary>絵を開く</summary>")
+        self.assertIn("描画が変わった PR が 2 本ある。", visible)
+        self.assertNotIn("gyazo", visible)
+        self.assertIn("### [#10", folded)
+        self.assertIn("![線](https://i.gyazo.com/b.png)", folded)
+        self.assertTrue(folded.rstrip().endswith("</details>"))
 
     def test_an_unreadable_pull_is_named_not_dropped(self):
         self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")

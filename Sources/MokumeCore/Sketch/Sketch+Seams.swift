@@ -6,12 +6,12 @@ import MokumeDiagnostics
 // 走っているスケッチへ差込口を足す・外す。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     /// 入り口を、走っているスケッチへ足す。
     ///
     /// **呼べば使える機能を作るための口である** ([ADR-0042] 決定 2)。カメラのような機能は、
-    /// 利用者に ``plugins`` へ書かせず、作る口の中でこれを呼ぶ。外のパッケージも同じ形を
+    /// 利用者に ``Sketch/plugins`` へ書かせず、作る口の中でこれを呼ぶ。外のパッケージも同じ形を
     /// 作れる — 呼べば入る手軽さは、組み込みだけのものではない。
     ///
     /// ```swift
@@ -36,7 +36,7 @@ extension Sketch {
     /// - 同じものを 2 度足しても 1 つのまま (開き直さない)
     /// - ``Inlet/supply()`` の中から頼んだときは、その巡回が終わってから開いて足す
     ///   (戻り値は `true`。開けなければ診断に出る)
-    /// - ``plugins`` で宣言したものと同じ並びに入る。閉じるのは ``detach(_:)-(Inlet)`` か、
+    /// - ``Sketch/plugins`` で宣言したものと同じ並びに入る。閉じるのは ``detach(_:)-(Inlet)`` か、
     ///   スケッチの終わり
     ///
     /// 下の例は、呼ばれた回数を数える入り口を 3 つ足し、数を棒の長さにしている。上の 2 つは
@@ -91,7 +91,7 @@ extension Sketch {
     @discardableResult
     public func attach(_ inlet: any Inlet) -> Bool {
         guard let runtime = runningSketch else {
-            Diagnostics.warn(OutsideCall.attach.notice)
+            OutsideRun.log.warn(.attach)
             return false
         }
         return runtime.attach(inlet)
@@ -140,7 +140,7 @@ extension Sketch {
     @discardableResult
     public func attach(_ outlet: any Outlet) -> Bool {
         guard let runtime = runningSketch else {
-            Diagnostics.warn(OutsideCall.attach.notice)
+            OutsideRun.log.warn(.attach)
             return false
         }
         return runtime.attach(outlet)
@@ -192,7 +192,7 @@ extension Sketch {
     // shot: 1 snippet=4e5e0378
     public func detach(_ inlet: any Inlet) {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.detach.notice)
+            return OutsideRun.log.warn(.detach)
         }
         runtime.detach(inlet)
     }
@@ -239,8 +239,43 @@ extension Sketch {
     // shot: 1 snippet=751061ce
     public func detach(_ outlet: any Outlet) {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.detach.notice)
+            return OutsideRun.log.warn(.detach)
         }
         runtime.detach(outlet)
+    }
+}
+
+// 外のモジュールの作る口 (MokumeAudio・MokumeNetwork の `loadSound`・`createTCPServer` など) が使う入口 ([#2740])。
+//
+// **呼んだ口の名前で言う。** 公開の ``SketchPart/attach(_:)-(Inlet)`` を素で呼ぶと、足せない所での警告が
+// 利用者の呼んでいない `attach()` を名乗り、投げる口も黙って生きていないものを返す。
+//
+// [#2740]: https://github.com/mokume-metal/mokume/issues/2740
+extension SketchPart {
+    /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げる作る口)。足せなければ、`call` の名前で
+    /// 1 度だけ警告して `notRunning(call:)` を投げる (文面は ``OutsideRun/notAttachedNotice(_:)``)。
+    ///
+    /// ファイルを読む・ポートを開く前に呼ぶ。足すのはその後の ``attach(_:)-(Inlet)`` で、同じ所から続けて呼ぶので
+    /// 足せる。#2683 の ``requireSurface(_:calledAs:)`` と同じ形で、理由が面でないことだけが違う。
+    package func requireAttachable<Failure: NotRunningFailure>(
+        _ failure: Failure.Type, calledAs call: String
+    ) throws(Failure) {
+        guard runningSketch != nil else {
+            // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
+            OutsideRun.log.warn(call, .thrownUnattached)
+            throw Failure.notRunning(call: call)
+        }
+    }
+
+    /// 入り口を、走っている実行へ足す (投げない作る口)。足せない所から呼ばれたら、`attach()` ではなく `call` の
+    /// 名前で 1 度だけ警告し、`false` を返す。`value` は、代わりに返したものの人が読む綴り
+    /// (`a sound that is never heard` など)。
+    @discardableResult
+    package func attach(_ inlet: any Inlet, calledAs call: String, returning value: String) -> Bool {
+        guard let runtime = runningSketch else {
+            OutsideRun.log.warn(call, .make(returning: value))
+            return false
+        }
+        return runtime.attach(inlet)
     }
 }

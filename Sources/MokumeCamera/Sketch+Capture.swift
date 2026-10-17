@@ -6,7 +6,7 @@ import MokumeCore
 // カメラ。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0042] 決定 1)。`plugins` には何も書かない —
-// 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -39,14 +39,16 @@ extension Sketch {
     ///   - width: 受け取る絵の幅 (画素)。
     ///   - height: 受け取る絵の高さ (画素)。
     ///   - device: 使うカメラ (``captureDevices()`` から選ぶ)。省けば既定の 1 台。
-    /// - Throws: 大きさが絵として置けないとき (``createImage(_:_:)`` と同じ)。
+    /// - Throws: 大きさが絵として置けないとき (``SketchPart/createImage(_:_:)`` と同じ ``ImageFailure``)。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
+    ///   機材を開く前に ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     public func createCapture(
         _ width: Int = 640, _ height: Int = 480, device: CaptureDevice? = nil
     ) throws(ImageFailure) -> Capture {
         let capture = Capture(
-            image: try createImage(width, height), device: device,
+            image: try createImage(width, height, calledAs: #function), device: device,
             name: device.map { "camera: \($0.name)" } ?? "camera",
             source: CameraSource(device: device, width: width, height: height), owner: self)
         attach(capture)
@@ -74,12 +76,15 @@ extension Sketch {
     /// ```
     ///
     /// - Parameter frames: 流す絵。大きさは最初の 1 枚に揃える。
-    /// - Throws: 列が空のとき (大きさが決まらない) か、大きさが絵として置けないとき。
+    /// - Throws: 列が空のとき (大きさが決まらない) か、大きさが絵として置けないとき (``ImageFailure``)。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createCapture(frames: [DisplayImage]) throws(ImageFailure) -> Capture {
         let capture = Capture(
-            image: try createImage(frames.first?.width ?? 0, frames.first?.height ?? 0),
+            image: try createImage(
+                frames.first?.width ?? 0, frames.first?.height ?? 0, calledAs: #function),
             device: nil, name: "camera (frames)", source: FramesSource(frames: frames),
             owner: self)
         attach(capture)

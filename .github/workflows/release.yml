@@ -6,6 +6,10 @@ name: Release
 # チェックが走らず merge queue に入れない。その迂回はリリースのたびに壊れる場所を
 # 増やす。ノートの置き場は Releases で足り、ファイルに写すと二重管理になる
 # (ADR-0001 原則 9)。判断の詳細は scripts/release.py の冒頭。
+#
+# **版は、下限 OS の release の検査 (release-check) が緑の SHA にだけ打つ** (#2662)。
+# release でだけ出る赤は merge の前には止めない (merge queue から外した) ので、main には
+# 入りうる。版には入れない。理由と代償は release-check の上。
 
 on:
   schedule:
@@ -28,13 +32,137 @@ on:
 permissions:
   contents: read
 
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  release:
+  # release のテストビルドと実行を、人が打たなくても走らせ、**緑のときだけ版を出す** (#1096・#2662)。
+  #
+  # **ci-check には足さない。** #761 完了条件 2 と AGENTS.md「性能は release で測る
+  # (`make test-release`)」が決めた形は動かさず、ci-check の外に別の入口を置く。
+  #
+  # 塞ぐのは release 側で起きて**誰にも見えない 2 つの赤**である (実害 3 件は #761 / #1021 /
+  # #1086。3 件目では誰も見ていない赤が 9 日間 main に残った):
+  #
+  #   入口が組めなくなる赤 … 明示の隔離を持たない isolated deinit が Sources/ に入ると
+  #                          release のテストビルドがコンパイルできない。debug でも
+  #                          swift build -c release でも通るので、足した本人には壊れて見えない
+  #   release でしか走らない検査の赤 … .enabled(if: !isDebugBuild) を持つ検査の失敗
+  #
+  # **1 つ目は #1083 の段 1 (make isolated-deinit) と重なるが、どちらも要る。** あちらは字句で
+  # 「isolated deinit が隔離を明示した型の中にあるか」を見るので、**誰からも参照されない型でも**
+  # 捕まえ、PR の ci-check で merge の前に止める。こちらはコンパイラ自身に言わせるので綴り以外の
+  # 形で壊れるものも捕まえるが、**誰からも参照されない internal 型では落ちない** (#1096 で実測)。
+  #
+  # **GPU を要する検査はここでも走らない。** GitHub ホストのランナーの GPU はこの世代の
+  # コマンド構造を持たないので、RenderDevice.isAvailable を条件に持つ Suite はスキップされる。
+  # GPU 付きの release は専用機の scheduled-release (render.yml・6 時間おき) が見て、版の関門
+  # ではない (GPU の停止という環境の故障で版が止まり、走る SHA も版と一致しないため)。
+  #
+  # **runs-on は macos-26 に固定する** (#1985)。ここと ci.yml の ci-check は、下限 (ADR-0009 の
+  # macOS 26) で走らせる唯一のホストである。**下限を引き上げるときは、この 2 つを同時に動かす。**
+  #
+  # **merge の前ではなく、版を出す前に置く** (#2662・#2610 の判断 2)。merge queue の必須だった
+  # 頃は、group ごとに約 12 分のホストの macOS を使い、queue の律速の 63% を占めた。日次の
+  # 検査に移すだけでは、検査の後から版を出すまでに merge された分が下限 OS の release を
+  # 通らずに版へ入る。版を出す run の中で、**タグを打つ SHA そのもの**を検査する:
+  #   - 出すものが無い日 (release.py が見送る日) も走らせる — changelog の断片を伴わない変更も
+  #     毎日見る、ホストの日次の検査を兼ねる
+  #   - release:now の出し直しも関門を通る (約 15 分遅れて出る)
+  # 代償: release でだけ出る赤は main に入りうる (気付くのは次の日次か専用機の定期)。日次の
+  # 1 回には複数の PR が入るので、原因の PR を絞る手間が増える。赤の間は版が出ない。
+  # 落ちた・切れた回は release-check-report が起票する (または開いた Issue へ追記する)。
+  #
+  # **起動の可否はここだけが持つ。** release は needs の暗黙の success() で、ここが走らなかった
+  # (skipped)・緑でなかった回には走らない。形は scripts/tests/release_workflow_test.py が固定する。
+  release-check:
     if: >-
       github.event_name != 'pull_request'
       || (github.event.pull_request.merged
       && contains(github.event.pull_request.labels.*.name, 'release:now'))
+    runs-on: macos-26
+    # いまは約 12 分。既定 (360 分) のまま止まると、ホストの macOS の枠 (5 本) を塞ぐ
+    timeout-minutes: 40
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # 端末出力を test-log に残す (起票の本文が末尾を載せる)。pipefail が make の赤を通す (#2609)
+      - run: |
+          mkdir -p .build
+          make test-release 2>&1 | tee .build/test-log.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-check-record
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  # 緑で終わらなかった release-check を起票する (または開いた Issue へ追記する)。
+  # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる release-check には
+  # 持たせない (render.yml の scheduled-report と同じ分け方・ADR-0019 決定 7)。落ちた
+  # (failure) 回に加え、切れた (cancelled) 回も起票する (#2084 と同じ理由)。`!=` で書かない:
+  # skipped で起票する。always() を外さない: 暗黙の success() が足され、赤の回に skipped になる
+  release-check-report:
+    needs: release-check
+    if: >-
+      always()
+      && (needs.release-check.result == 'failure' || needs.release-check.result == 'cancelled')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: write # 赤のときの起票 (#2662)
+    steps:
+      - uses: actions/checkout@v7
+      # ビルドで落ちて記録が上がらなかった回も起票する。artifact が無くても止まらない
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: release-check-record
+          path: record
+      # 置き場所は上げたファイルの共通の親で決まるので、名前で探す (render.yml の scheduled-report)
+      - name: 赤を発信する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.release-check.result }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          xml=$(find_one record test-results-release-swift-testing.xml)
+          log=$(find_one record test-log.txt)
+          bash scripts/report-release-check.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}"
+
+  # **版を出す run を 1 本ずつ並べる** (#2666)。日次と release:now の run が重なると、どちらも
+  # 同じ版を決め、後から push した側が既にあるタグで赤くなる。release-check (約 15 分) が
+  # 前にあるので、重なる窓は広い。待った側はこのジョブの checkout で先の版のタグを見てから
+  # 版を決める — 新しい木なら次の版を出し、古い木なら断片が増えていないので見送る。
+  #
+  # **掛けるのはこのジョブだけで、ワークフローにも release-check にも掛けない。** group に
+  # 置ける保留は 1 本で、新しい保留が古い保留を cancel する (queue: single)。この workflow は
+  # 全 PR の closed で起きるので、ワークフロー単位にすると、普通の PR の merge が待っている
+  # release:now の run を cancel する。
+  #
+  # **共有の group に入るのは release-check が緑の run だけ**にする。skipped のジョブが group に
+  # 入るかは公式に書かれていないので、それに頼らず、緑でない run は run ごとの group へ逃がす
+  # (式は needs を引けるので、needs が済んでから評価される)。
+  #
+  # 代償: 版を出す run が 3 本重なると、2 本目の保留は 3 本目に置き換えられて cancel (灰色) に
+  # なる。3 本目が古い木なら、2 本目の中身は次の版を待つ。queue: max (保留を並べる) は固定して
+  # いる actionlint が知らない (rhysd/actionlint#657)。形は scripts/tests/release_workflow_test.py
+  release:
+    needs: release-check
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ needs.release-check.result == 'success' && 'release-tag' || format('release-tag-unused-{0}', github.run_id) }}
+      cancel-in-progress: false
     permissions:
       contents: write # タグを push し、Release を作る
       pull-requests: read # 「この版の絵」に描画の PR の本文とラベルを読む (#2109)
@@ -71,12 +199,20 @@ jobs:
           python3 scripts/release.py notes > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
+      # タグは release-check が検査した SHA に打つ (#2662)。同じ run の checkout は同じ SHA を
+      # 取るはずだが、食い違えば検査していない木に版を打つことになるので、打たずに止まる
       - name: タグを打つ
         if: steps.version.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          CHECKED_SHA: ${{ needs.release-check.outputs.sha }}
         run: |
-          git tag "$VERSION"
+          head=$(git rev-parse HEAD)
+          if [ -z "$CHECKED_SHA" ] || [ "$head" != "$CHECKED_SHA" ]; then
+            echo "検査した SHA ($CHECKED_SHA) と版にする SHA ($head) が違う — 版を打たない" >&2
+            exit 1
+          fi
+          git tag "$VERSION" "$CHECKED_SHA"
           git push origin "$VERSION"
 
       - name: Release を作る

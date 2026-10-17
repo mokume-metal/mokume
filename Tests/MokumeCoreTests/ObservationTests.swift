@@ -43,6 +43,16 @@ struct ObservationTests {
         }
     }
 
+    /// 走る前 (自分の `init`) に描く口と読み取りを呼ぶ。どちらも落とさず警告になる (#2265)。
+    final class EarlyCaller: Sketch {
+        init() {
+            circle(0, 0, 10)
+            _ = width
+        }
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func draw() { background(.display(red: 0.2, green: 0.2, blue: 0.2)) }
+    }
+
     /// 一様に塗るだけ。
     final class Flat: Sketch {
         init() {}
@@ -130,6 +140,26 @@ struct ObservationTests {
         let report = try readReport(in: facet)
         #expect(report["id"] as? String == "a1")
         #expect(try frames(in: facet).count == 3)
+    }
+
+    /// 走っている実行の外から呼ばれた語彙の警告は、標準エラーだけでなく観測の応答にも載る。
+    /// 標準エラーは MCP から読めないので、載らないと `init` で読んだ値が 0 だった理由を
+    /// 観測で辿れない (#2265 の完了条件 3)。
+    @Test("走る前に呼んだ語彙の警告が、観測の応答に載る")
+    func carriesWarningsAboutCallsFromOutsideTheRun() throws {
+        let log = OutsideRun()
+        try OutsideRun.$current.withValue(log) {
+            let facet = try makeFacet()
+            let runtime = try makeRuntime(EarlyCaller(), facet: facet)
+            try runtime.advance()
+
+            try request(id: "a1", in: facet)
+            try runtime.advance()
+
+            let warnings = try readReport(in: facet)["warnings"] as? [String] ?? []
+            #expect(warnings.contains { $0.hasPrefix("circle(_:_:_:) only works inside setup()") })
+            #expect(warnings.contains { $0.hasPrefix("width is only known inside setup()") })
+        }
     }
 
     @Test("差し出した値が、その絵と同じ応答に載る")
@@ -580,7 +610,12 @@ struct FirstObservedFrameTests {
         init() {}
         private(set) var times: [Float] = []
         private(set) var deltas: [Float] = []
+        /// `setup()` で飛ぶ先の秒。最初の枚の時刻を面の既定値 (0) と違えるのに使う。
+        var jumpsInSetup: Float?
         var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func setup() {
+            if let jumpsInSetup { jumpTime(jumpsInSetup) }
+        }
         func draw() {
             background(.display(red: 0, green: 0, blue: 0))
             times.append(canvas.time)
@@ -625,23 +660,20 @@ struct FirstObservedFrameTests {
     func handsTheSurfaceThisFramesClock() throws {
         let facet = try makeFacet()
         let sketch = SurfaceClock()
-        // 実時間の時計を差し、進めた先を検査から決める。フレーム番号から導く時計だと
-        // 最初の 1 枚がちょうど面の既定値と重なり、落ちていても気付けない
-        nonisolated(unsafe) var clockReading = 0.0
+        // 最初の 1 枚は時計によらず時刻 0・経過 1 フレームぶんで、面の既定値 (0・60 分の 1 秒) と
+        // 重なり、落ちていても気付けない (#2413)。`setup()` で飛んで、時刻も経過も既定値と違える
+        // (飛んだ枚は経過 0)
+        sketch.jumpsInSetup = 0.1
         let runtime = try SketchRuntime(
-            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: { clockReading },
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: { 0 },
             observer: FrameObserver(directory: facet))
         runtime.pause()
 
-        // 経過の上限 (目標フレーム間隔の 10 倍・#874) に当たらない値を選ぶ。ここで
-        // 見たいのは「面へ渡る時刻がこのフレームの値か」で、上限の振る舞いは
-        // FrameTimingTests が別に固定している
-        clockReading = 0.1
         try request(id: "a1", in: facet)
         try runtime.advance()
 
         #expect(sketch.times == [0.1])
-        #expect(sketch.deltas == [0.1])
+        #expect(sketch.deltas == [0])
     }
 
     @Test("入り口が、この 1 枚にも値を供給する")

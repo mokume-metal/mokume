@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "status": 0,
+  "output": "Could not start hello in /Users/me/sketches/hello: /Users/me/sketches/hello/.build/arm64-apple-macosx/debug/hello is not executable (Permission denied)\n\nBuilding for debugging...\nBuild complete! (0.84s)\n",
+  "stamp": "7c1f9ab30d24",
+  "configuration": "debug",
+  "launched": false,
+  "notStartedReason": "Could not start hello in /Users/me/sketches/hello: /Users/me/sketches/hello/.build/arm64-apple-macosx/debug/hello is not executable (Permission denied)",
+  "timings": {
+    "detectMs": 128.4,
+    "buildMs": 742.9
+  }
+}

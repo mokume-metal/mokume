@@ -12,7 +12,7 @@ public enum InputEvent: Equatable, Sendable {
     case mouseMoved(x: Float, y: Float)
     /// どこへではなく、**どれだけ**動いたか (描く解像度の画素・縦軸は下向き)。位置は動かさない。
     ///
-    /// カーソルを捕まえている間 (``Sketch/requestPointerLock()``) の窓は、位置が動かないので
+    /// カーソルを捕まえている間 (``SketchPart/requestPointerLock()``) の窓は、位置が動かないので
     /// これを送る ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。外から送る線
     /// (`mouseMovedBy`) も同じ形で、捕まえていなくても量として届く。
     case mouseMovedBy(dx: Float, dy: Float)

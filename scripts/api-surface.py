@@ -41,6 +41,10 @@ import urllib.parse
 
 # 利用者が最初に触る層。ここだけ手本 (Processing / p5) の綴りが正になる (ADR-0020 決定 1)
 ENTRY_TYPE = "Sketch"
+# 上の層の語彙が実際に置かれている型。語彙は Sketch が継ぐ SketchPart の extension にあり
+# (ADR-0020 決定 7・#2616)、記号の経路の頭は SketchPart になる。上の層の検査はどちらも
+# Sketch として数える — 数えなければ、転送の対称性や説明文の正本の検査が黙って空振りする
+ENTRY_TYPES = {ENTRY_TYPE, "SketchPart"}
 # 転送先の層。ここは常に Swift の慣行が正
 LOWER_TYPE = "Canvas"
 
@@ -236,6 +240,12 @@ def owner(symbol: dict) -> str:
     return path[0] if len(path) > 1 else ""
 
 
+def layer(symbol: dict) -> str:
+    """持ち主を層で読む。上の層の型 (ENTRY_TYPES) はどれも ENTRY_TYPE に畳む。"""
+    name = owner(symbol)
+    return ENTRY_TYPE if name in ENTRY_TYPES else name
+
+
 def title(symbol: dict) -> str:
     return symbol.get("names", {}).get("title", "")
 
@@ -327,7 +337,7 @@ def check_forwarding(symbols: list[dict], requirements: set[str]) -> list[str]:
     entry = {
         title(s): s
         for s in symbols
-        if owner(s) == ENTRY_TYPE and s["identifier"]["precise"] not in requirements
+        if layer(s) == ENTRY_TYPE and s["identifier"]["precise"] not in requirements
     }
     lower = {title(s): s for s in symbols if owner(s) == LOWER_TYPE}
     lower_bases: dict[str, set[str]] = {}
@@ -355,7 +365,7 @@ def check_doc_canon(symbols: list[dict]) -> list[str]:
     突き合わせは名前だけでなく引数の型まで見る。名前だけで組にすると、同名の宣言が
     複数あるとき (`background(_:)`) どれと比べたかが行き当たりばったりになる (#315)。
     """
-    entry = {(title(s), signature(s)): s for s in symbols if owner(s) == ENTRY_TYPE}
+    entry = {(title(s), signature(s)): s for s in symbols if layer(s) == ENTRY_TYPE}
     lower = {(title(s), signature(s)): s for s in symbols if owner(s) == LOWER_TYPE}
 
     problems = []
@@ -423,7 +433,7 @@ FOREIGN_ALLOWLIST = {
     "RenderDevice.init(device:)": "既に持っている Metal の資源を持ち込む入口。意図して開けてある",
     "RenderTarget.writePNG(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
     "Shader.url": "読み込み元の在処。読んだファイルを指し直せる形で返す",
-    "Sketch.assetURL(_:)": "資材の在処を返す口。mokume が読まない形式を利用者や外のパッケージが読むのに、場所そのものを渡す (Shader.url と同じ理由)",
+    "SketchPart.assetURL(_:)": "資材の在処を返す口。mokume が読まない形式を利用者や外のパッケージが読むのに、場所そのものを渡す (Shader.url と同じ理由)",
     "SketchRuntime.renderFrame(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
     "WorkDirectory.base": "作業場所の在処。WorkDirectory は場所そのものを扱う型なので URL が本体",
     "WorkDirectory.facet(_:)": "作業場所の下位を指す (WorkDirectory.base と同じ理由)",
@@ -540,7 +550,7 @@ def check_sketch_coverage(
     """
     code = re.sub(r"/\*.*?\*/", "", sources, flags=re.DOTALL)
     code = re.sub(r"//[^\n]*", "", code)
-    bases = {title(s).split("(")[0] for s in symbols if owner(s) == ENTRY_TYPE}
+    bases = {title(s).split("(")[0] for s in symbols if layer(s) == ENTRY_TYPE}
     problems = []
     for base in sorted(bases - unshown.keys()):
         if re.search(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])", code):
@@ -719,7 +729,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "isMousePressed": READING,
     "key": READING,
     "keyCode": READING,
-    "isKeyDown": READING,
+    "keyboard": READING,
     "get": READING,
     "loadPixels": READING,
     "pixels": (READING, "画素の窓を返す。窓からの書き込みは set と同じく #1603 の R3 が扱う"),
@@ -870,9 +880,9 @@ def check_port_kinds(
     code = re.sub(r"//[^\n]*", "", code)
     overloads: dict[str, dict[str, int]] = {}
     for symbol in symbols:
-        if owner(symbol) in {ENTRY_TYPE, LOWER_TYPE}:
+        if layer(symbol) in {ENTRY_TYPE, LOWER_TYPE}:
             counts = overloads.setdefault(title(symbol).split("(")[0], {})
-            counts[owner(symbol)] = counts.get(owner(symbol), 0) + 1
+            counts[layer(symbol)] = counts.get(layer(symbol), 0) + 1
     bases = set(overloads)
     problems = []
     for base in sorted(bases - kinds.keys()):

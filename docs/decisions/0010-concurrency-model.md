@@ -46,6 +46,27 @@ SPDX-License-Identifier: MIT
 
 ライブラリのターゲットは既定の隔離を main actor に設定する。スケッチを書く人は並行性の注釈を一切書かない。ライブラリの公開 API も、既定では main actor 隔離として提供する。
 
+#### 改訂 (2026-10-14) — 新しい値型は main actor の外に置く
+
+**これから足す値型は `nonisolated` で宣言し、`Sendable`・`Hashable`・`Codable` を持たせる。走っているスケッチを読むメンバーだけを main actor に残す。** 先例は `Key` (`public nonisolated struct Key: Sendable, Hashable`・[ADR-0034](0034-input-surface-units.md) 決定 2) である。
+
+| 区分 | 例 | 隔離 |
+| --- | --- | --- |
+| 値型そのもの | `Vector2` / `Vector3`、2D と 3D の図形 (`Circle`・`Rect` ほか)、`Countdown` / `Stopwatch` の値 | `nonisolated` |
+| 値どうしの計算 | `intersects`・`contains`・`move(by:)`・`length` | どこからでも呼べる |
+| 走っているスケッチを読むメンバー | `draw()`・`isHovered`・`justPressed`、スケッチの時間を読む `remaining`・`isFinished` | main actor |
+
+理由は、決まった 2 つの道 ([ADR-0045](0045-game-direction.md)) が main actor の外で値を使うことにある。
+
+1. **外部サービスの結果を `ExternalQueue` で送る** (ADR-0045 決定 12)。どのスレッドからでも送れる約束なので、通信の完了ハンドラの中で `Vector2(x, y)` を作る。main actor の型だとコンパイルエラーになる
+2. **リプレイの記録** (ADR-0045 決定 10)。記録できるのは `Codable` な値である ([ADR-0028](0028-external-inputs.md) 決定 6 の改訂)。main actor の型の `Codable` は隔離された適合になり、main の外では使えない
+
+足した後で外すと、適合と初期化子の形が変わって作り直しになるので、足す前に決めた。
+
+**代償:** 同じ値型に、どこからでも呼べるメンバーと main だけのメンバーが混ざる。学生のスケッチは main で動くので、書き味には出ない。スケッチを書く人が並行性の注釈を書かないこと (上の決定と影響節の受け入れ検査) は変わらない。
+
+**範囲の外:** 既存の関数 (`map`・`lerp`・`color`・`noise`) を main actor の外へ出すかは、ゲームの方向と独立しているので [#2389](https://github.com/mokume-metal/mokume/issues/2389) で決める。
+
 ### 2. 暗黙のアクティブコンテキストは main actor 隔離のグローバルとして正式化する
 
 `circle(...)` のような直接呼べる描画関数が参照する「いま描いている対象」は、隠された裏口ではなく**明示的に main actor 隔離されたグローバル**として設計する。隔離されている以上、それが可変であることは問題にならない。

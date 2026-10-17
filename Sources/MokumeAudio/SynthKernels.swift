@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 // 合成の音の素 (#1980)。**どれも機材にも時計にも触れない純粋な型**で、1 標本ずつ進む状態機械
 // である。描かせる区切り方 (音の側の 1 回に何標本か) で結果が変わらないので、manual rendering
@@ -29,7 +30,7 @@ nonisolated enum WaveShape {
     static func sample(_ waveform: Waveform, phase: Double, step: Double) -> Float {
         switch waveform {
         case .sine:
-            return Float(sin(2 * Double.pi * phase))
+            return Float(RuntimeMath.sin(2 * Double.pi * phase))
         case .triangle:
             if phase < 0.25 { return Float(4 * phase) }
             if phase < 0.75 { return Float(2 - 4 * phase) }

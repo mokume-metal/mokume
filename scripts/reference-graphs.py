@@ -163,7 +163,10 @@ def place(
             swift_extension["extendedModule"] = surface
             extensions += 1
 
-    destination.write_text(json.dumps(graph), encoding="utf-8")
+    # **文字を逸脱させずに書く** (#2535)。既定の `ensure_ascii=True` は、説明文の絵文字
+    # (BMP の外の文字) を `\u` 逸脱のサロゲート対 (上位と下位の 2 つ) にし、手元の docc はそれを読んで
+    # 何も言わずに `Trace/BPT trap` で落ちる。素の UTF-8 なら通る
+    destination.write_text(json.dumps(graph, ensure_ascii=False), encoding="utf-8")
     return extensions, len(dropped), omitted
 
 

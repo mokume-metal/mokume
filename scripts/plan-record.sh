@@ -52,6 +52,9 @@ set -uo pipefail
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 REPO="$(this_repo)"
+# 「bot の手か」の判定と、その前提の宣言 (#2660 — 二重着手の跡見が使う)
+# shellcheck source=scripts/bot-hand.sh
+. "$(dirname "${BASH_SOURCE[0]}")/bot-hand.sh"
 
 # 投稿済み判定の目印。個人環境の同種フック (plan-record: <id>) と混ざらないよう
 # 接頭辞を分ける — 両方が動いていても互いの記録を「投稿済み」と誤読しない
@@ -354,7 +357,10 @@ posted() { # $1=種別 $2=番号 $3=記録 ID — GitHub 側にこの記録が�
   local bodies
   # 受けてから読む (#1900)。pipefail の下で gh を grep -q に流すと、目印が前の方のコメントに
   # あるとき grep が先に抜け、gh が SIGPIPE で止まって「未投稿」と返っていた
-  bodies=$(gh "$kind" view "$number" -R "$REPO" --json comments -q '.comments[].body' 2>/dev/null) || return 1
+  # **bot の手のコメントは読まない** (#2660 — 前提と判定は scripts/bot-hand.sh)。bot の追記は
+  # 検査の出力の抜粋を載せるので、記録 ID の綴りが混じると「投稿済み」と読んで記録を消す
+  bodies=$(gh "$kind" view "$number" -R "$REPO" --json comments \
+    -q "$BOT_HAND_JQ"' .comments[] | select(bot_hand | not) | .body' 2>/dev/null) || return 1
   grep -qF "$MARKER: $id" <<<"$bodies"
 }
 
@@ -426,33 +432,90 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
 #
 # GraphQL 1 回で N のコメントと参照元のコメントをまとめて引く (候補 1 件につき 1 回なので、
 # 呼び出しの回数は #642 のときと変わらない)。
+#
+# ### 窓から押し出されたプランも見る (#2660)
+#
+# 1 回目の問い合わせは N を新しい順に 100 件、参照元を 50 件までしか引かない。定期の検査・
+# 前検査の赤は同じ題の open な Issue へ `github-actions` が追記する (#2658) ので、追記が積もると
+# 着手時のプランが窓の外へ押し出され、別のセッションのプランを黙って見逃す。
+#
+# 「目印つきのコメントだけを引く」は採れない。GraphQL の comments が取る引数は
+# `orderBy,after,before,first,last` だけで、本文でも作者でも絞れない。検索は目印を含む
+# **Issue** を返すがコメントは返さないので、自分のセッションの目印を除いて数え、URL を名乗る
+# には足りない。
+#
+# そこで窓を広げずに、**窓の意味を「新しい順に人の手 100 件 (参照元は 50 件)」に揃える**。
+# 窓に収まらなかったと分かった Issue / PR (`totalCount` が引けた件数を超えたもの) で、窓の中の
+# 人の手が足りないときだけ、scripts/bot-hand.sh の recent_comments で人の手が足りるまでページを
+# 新しい順に遡る。全履歴は数えない — 溢れる前と同じく、終わった過去のセッションのプランまで
+# 「別のセッションのプラン」に入れない (#642 の向き)。添える URL は範囲の中の最新のプラン。
+# 窓に収まっていれば呼び出しも取得量も今と同じ。
+#
+# **遡るのには上限がある** (ページ数と秒数 — recent_comments の頭)。capture のフックは 20 秒で
+# 殺されるので、capture は跡見の全体に BOT_HAND_DEADLINE を置く。打ち切ったら集まった範囲で
+# 判定し、そう名乗る。最初のページも読めなければ窓の分だけで判定する (従来どおり)。
+#
+# **bot の手のコメントは、目印を含んでいてもプランと読まない** (前提と判定は
+# scripts/bot-hand.sh)。bot の追記は検査の出力の抜粋を載せるので、この検査自身の目印の
+# 綴り (<!-- mokume-plan-record: … -->) が混じりうる。
 
 readonly MARKS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      comments(last: 100) { nodes { body url } }
+      comments(last: 100) { totalCount nodes { body url author { __typename login } } }
       timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 50) {
         nodes { ... on CrossReferencedEvent { source {
-          ... on Issue { number state comments(last: 50) { nodes { body url } } }
-          ... on PullRequest { number state comments(last: 50) { nodes { body url } } }
+          ... on Issue { number state
+            comments(last: 50) { totalCount nodes { body url author { __typename login } } } }
+          ... on PullRequest { number state
+            comments(last: 50) { totalCount nodes { body url author { __typename login } } } }
         } } }
       }
     }
   }
 }'
 
+# 目印つきで、bot の手でないコメント
+MARKED_JQ="$BOT_HAND_JQ"' def marked: select(.body | contains("'"$MARKER: "'")) | select(bot_hand | not);'
+
+# 窓 (コメントの connection) から、範囲の目印つきのコメントを新しい順に 1 行 1 件の {url, body}
+# で出す。窓から押し出しがあり、窓の中の人の手が $3 件に満たなければ、人の手が $3 件
+# 集まるまで遡る (#2660)。遡り切れなかったら stderr で名乗る
+marked_in_range() { # $1=番号 $2=窓 (connection の JSON) $3=人の手の件数
+  local number=$1 window=$2 need=$3 short lines
+  short=$(printf '%s' "$window" | jq -r --argjson need "$need" "$BOT_HAND_JQ"'
+    (.totalCount // 0) > (.nodes | length)
+    and ([.nodes[] | select(bot_hand | not)] | length) < $need' 2>/dev/null)
+  if [ "$short" = true ] && lines=$(recent_comments "$REPO" "$number" "$need" 100); then
+    if [ "$(printf '%s\n' "$lines" | tail -n 1 | jq -r '.end // ""')" = capped ]; then
+      printf '跡見: #%s のコメントは上限まで遡って打ち切った — 新しい側の範囲だけで跡を見た\n' \
+        "$number" >&2
+    fi
+    printf '%s\n' "$lines" | jq -sc --argjson need "$need" "$MARKED_JQ"'
+      [.[] | select(has("body") and (.bot | not))][:$need][] | marked | {url, body}' 2>/dev/null
+    return
+  fi
+  # 窓に収まっている (またはそれ以上引けない) — 窓の全体が範囲
+  printf '%s' "$window" | jq -c "$MARKED_JQ"' .nodes | reverse[] | marked | {url, body}' 2>/dev/null
+}
+
 concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → 跡を 1 行 1 件で stdout へ
-  local number="$1" prefix="$2" json others count url plans plan source seen=''
+  local number="$1" prefix="$2" json mine others count url plans plan source seen='' window
 
   json=$(gh api graphql -f query="$MARKS_QUERY" -f owner="${REPO%%/*}" -f name="${REPO#*/}" \
     -F number="$number" 2>/dev/null) || return 0
   [ -n "$json" ] || return 0
 
-  # N 自身に載ったプラン。自分のセッションが載せたものは除く — 同じセッションで 2 度
-  # プランを取ったときに自分を指して「二重着手かもしれない」と言わないため
-  others=$(printf '%s' "$json" | jq -r --arg m "$MARKER: " --arg p "$prefix-" '
-    [ .data.repository.issue.comments.nodes[]? | select(.body | contains($m))
-      | select(.body | contains($m + $p) | not) ]
+  # N 自身に載った目印つきのコメント (新しい順)。範囲は新しい順に人の手 100 件 (#2660)
+  window=$(printf '%s' "$json" | jq -c '.data.repository.issue.comments // {nodes: []}' 2>/dev/null) ||
+    return 0
+  mine=$(marked_in_range "$number" "$window" 100) || return 0
+
+  # 自分のセッションが載せたものは除く — 同じセッションで 2 度
+  # プランを取ったときに自分を指して「二重着手かもしれない」と言わないため。
+  # mine は新しい順なので、添える URL (先頭) は最新のプラン (#2660)
+  others=$(printf '%s\n' "$mine" | jq -rs --arg m "$MARKER: " --arg p "$prefix-" '
+    [ .[] | select(.body | contains($m + $p) | not) ]
     | "\(length)\t\(.[0].url // "")"' 2>/dev/null) || return 0
 
   count=${others%%	*}
@@ -466,13 +529,24 @@ concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → �
       ;;
   esac
 
-  # open な参照元に載った、別のセッションのプラン (1 行 1 件の JSON)
-  plans=$(printf '%s' "$json" | jq -c --arg m "$MARKER: " --arg p "$prefix-" --argjson n "$number" '
-    .data.repository.issue.timelineItems.nodes[]?.source?
-    | select(type == "object" and .state == "OPEN" and .number != $n)
-    | .number as $source
-    | .comments.nodes[]? | select(.body | contains($m)) | select(.body | contains($m + $p) | not)
-    | {source: $source, url, body}' 2>/dev/null) || return 0
+  # open な参照元に載った、目印つきのコメント (1 行 1 件の JSON)。範囲は参照元ごとに、
+  # 新しい順に人の手 50 件 (#2660)
+  plans=''
+  while IFS= read -r source; do
+    [ -n "$source" ] || continue
+    window=$(printf '%s' "$json" | jq -c --argjson s "$source" '
+      [.data.repository.issue.timelineItems.nodes[]?.source? | select(type == "object")
+       | select(.number == $s)][0].comments // {nodes: []}' 2>/dev/null) || continue
+    plans+=$(marked_in_range "$source" "$window" 50 | jq -c --argjson s "$source" '{source: $s} + .')
+    plans+=$'\n'
+  done < <(printf '%s' "$json" | jq -r --argjson n "$number" '
+    [ .data.repository.issue.timelineItems.nodes[]?.source?
+      | select(type == "object" and .state == "OPEN" and .number != $n) | .number ]
+    | unique[]' 2>/dev/null)
+
+  # 別のセッションのプランだけを残す (自分のを除く理由は N と同じ)
+  plans=$(printf '%s\n' "$plans" | jq -c --arg m "$MARKER: " --arg p "$prefix-" '
+    select(.body | contains($m + $p) | not)' 2>/dev/null) || return 0
 
   while IFS= read -r plan; do
     [ -n "$plan" ] || continue
@@ -1003,11 +1077,21 @@ capture() {
   target=$(printf '%s' "$targets" | sed -n '1p')
   count=$(printf '%s' "$targets" | grep -c . || true)
 
+  # 指示した先を書き戻す。guard は解決を引き直すが、規約どおりに進めると解決は
+  # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
+  # 確定していないときは候補を全部残す (#646)。
+  # **跡見 (concurrent_marks) より前に書く** (#2660)。跡見はページを遡ることがあり、この
+  # フックの中で最も遅い区間になりうる — そこで timeout に殺されても、指示した先は残る
+  write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
+
   # 他のセッションが同じ Issue に既に着手していないかを見る (#642)。着手直後は PR が
   # まだ無いので投稿先は Issue になり、二重着手が問題になるのもその時点である。
   # **候補が複数なら Issue の候補を全部見る** (#1216) — 1 つのプランが複数の Issue を
   # まとめるとき、重なるのはたいてい 2 件目以降のまとめ先である
   marks=''
+  # 跡見がページを遡る上限 (#2660)。このフックは 20 秒で殺される (.claude/settings.json) ので、
+  # 起動から 14 秒を過ぎたら次のページを引かない — 残りで投稿の指示を出す
+  BOT_HAND_DEADLINE=${BOT_HAND_DEADLINE:-14}
   while IFS= read -r candidate; do
     case "$candidate" in
       'issue '*)
@@ -1019,11 +1103,6 @@ capture() {
   done <<< "$targets"
   marks=${marks%
 }
-
-  # 指示した先を書き戻す。guard は解決を引き直すが、規約どおりに進めると解決は
-  # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
-  # 確定していないときは候補を全部残す (#646)
-  write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
 
   if [ -n "$EXPLICIT_AGENT" ] && posted_anywhere "$id" "$targets"; then
     rm -f "$file" "$dir/$id.meta"

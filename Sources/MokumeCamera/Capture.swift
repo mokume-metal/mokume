@@ -78,7 +78,7 @@ public final class Capture: Inlet {
 
     /// 止める。カメラを閉じ、以後 ``image`` は変わらない。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``Sketch/detach(_:)-(Inlet)`` と同じ)。
+    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     public func stop() {
         owner?.detach(self)
     }

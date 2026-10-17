@@ -10,11 +10,11 @@
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "This request's identifier. The reply echoes it back. An id already answered is not processed again, even after the sketch relaunches: the answer left in the reply is the record. Do not reuse an id while the facet remains."
+      "description": "This request's identifier. The reply echoes it back. An id already answered is not processed again, even after the sketch relaunches: the answer left in the reply is the record. Do not reuse an id while the facet remains. **This includes a request that could not be read**: once it is answered, fixing it and placing it again under the same id is not processed — place the fixed request with a new id."
     },
     "values": {
       "type": "array",
-      "description": "The values to write. **Whatever does not go in appears in the reply's rejected, with a reason** — an unknown name, a type that differs, a value outside the choices: none of them is dropped in silence.",
+      "description": "The values to write. **Whatever does not go in appears in the reply's rejected, with a reason** — an unknown name, a type that differs, a value outside the choices, and **a write that cannot be read at all** (an unknown type, a value of the wrong shape, a number too large to read such as 1e400): none of them is dropped in silence, and the other writes in the same request still go in. **A request whose id can be read is always answered**: a values that is missing, null or not an array is answered with one rejected entry that has an empty name and typeMismatch, and nothing is written. A request whose id cannot be read (an id that is missing or not a string, or text that is not JSON, including JSON cut off part way) is answered with nothing, and a request whose id was already answered is not processed again (see id).",
       "items": {
         "type": "object",
         "required": ["name", "type", "value"],

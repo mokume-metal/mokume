@@ -16,7 +16,7 @@ Issue の起票から PR のマージまで、守ることは [AGENTS.md](AGENTS
 | Issue に何を書くか | **Issue の分類** — 型は Issue Type、ラベルは状態 (`status: *`) とトリアージ済みの印 (`verify: triaged`) |
 | 経過をどこに残すか | **コメント** — PR ができるまでは Issue、できてからは PR |
 | PR の出し方 | **進め方** の 6 と **コミット・PR の規約** — Conventional Commits・1 PR は 1 つの説明で筋が通る範囲・`Closes #N` は本文に・「確認方法」に完了条件の対応表 |
-| いつマージされるか | **マージの判断基準** — `ci-gate` が green なら、承認なしで merge queue に入る |
+| いつマージされるか | **マージの判断基準** — `ci-gate`・`pr-gate` が green なら、承認なしで merge queue に入る |
 | やってはいけないこと | **してはならないこと** — 帰属の不明なファイル・生成物のコミット・作例の無い先回り |
 | 見た目が変わる変更 | **描画に影響する変更** — before/after の絵を PR に載せる (入力欄へ落とせば GitHub が保管する) |
 
@@ -25,9 +25,9 @@ Issue の起票から PR のマージまで、守ることは [AGENTS.md](AGENTS
 fork から出してよい。**リポジトリへの書き込み権限が要る手順は、メンテナが引き取る。**
 
 1. 大きな変更は、先に Issue で相談すると早い。小さな修正なら PR から始めてよい (AGENTS.md **進め方** の 2)
-2. fork して枝を切り、触った範囲の検査 (`make test` など。段の並びは Makefile の `CI_CHECK_STEPS`) を通してから PR を出す。全段は CI が回す (手元なら `make ci-check`)。本文はテンプレートを埋める
+2. fork して枝を切り、触った範囲の検査 (`make test` など。段の並びは Makefile の `CI_CHECK_ALL`) を通してから PR を出す。全段は CI が回す (手元なら `make ci-check`)。本文はテンプレートを埋める
 3. 残りはメンテナが引き取る:
-   - ラベル (`verify: triaged` / `no-issue` / `no-visual-change`) を付け、赤い run があれば `gh run rerun <run-id> --failed` で打ち直す (新しい run は判定を付け直すだけで、赤い run の `ci-gate` は残る。fork の PR は stall-watch の当番が打たない。`verify: triaged` は Issue 側の操作で PR の run が起きないので、打ち直しが要る)
+   - ラベル (`verify: triaged` / `no-issue` / `no-visual-change`) を付ける。PR のラベルは `pr-gate` が付け直す。`verify: triaged` は Issue 側の操作で PR の run が起きないので、`pr-gate` の赤い run を `gh run rerun <run-id> --failed` で打ち直す
    - doc コメントの例を直した場合の撮り直し (`make example-shots`)。Gyazo の鍵が無くて撮れない例は、説明文の下に `// shot: 後で撮る` を添えれば検査は通る (`scripts/example-shots.py` の冒頭)
    - merge queue へ入れる
 

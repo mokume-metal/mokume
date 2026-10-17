@@ -86,7 +86,8 @@ struct ObservationTimeTests {
         #expect(try report(path)["appliedTime"] as? Double == Double(Float(0.1)))
         now = 105.01
         try runtime.advance()
-        #expect(scene.times.last == Float(5.01))
+        // 起点は最初の枚 (観測の枚・105 秒) で、指定秒でも起動からの経過でもない (#2413)
+        #expect(abs(scene.times.last! - 0.01) < 0.00001)
         #expect(abs(scene.deltas.last! - 0.01) < 0.00001)
     }
 

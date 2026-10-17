@@ -37,7 +37,7 @@ public nonisolated enum SourceState: String, Sendable, Equatable, Encodable {
 public nonisolated struct Arrival: Sendable, Equatable {
     /// 取り出したフレームの番号。
     public let frame: Int
-    /// 取り出したフレームの時刻 (秒)。``Sketch/time`` と同じ時計。
+    /// 取り出したフレームの時刻 (秒)。``SketchPart/time`` と同じ時計。
     public let time: Float
     /// 届いた瞬間の host time (`mach_absolute_time` の単位)。
     public let hostTime: UInt64

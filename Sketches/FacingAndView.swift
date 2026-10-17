@@ -36,13 +36,19 @@ final class FacingAndView: Sketch {
 
     func setup() {
         // 向きの成分は −1…1 なので、0…1 へ寄せてから色にする
-        painters = Self.fields.map { field, _ in
-            try? makeShader(
-                """
-                float4 paint(Fragment in, Values values) {
-                    return float4(in.\(field) * 0.5 + 0.5, 1.0);
-                }
-                """)
+        painters = Self.fields.map { (field, _) -> Shader? in
+            do {
+                return try makeShader(
+                    """
+                    float4 paint(Fragment in, Values values) {
+                        return float4(in.\(field) * 0.5 + 0.5, 1.0);
+                    }
+                    """)
+            } catch {
+                // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+                print(error)
+                return nil
+            }
         }
     }
 

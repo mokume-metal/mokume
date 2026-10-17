@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 効果。
-extension Sketch {
+extension SketchPart {
     /// このフレームの絵にかける効果を決める。
     ///
     /// 下は、描き終えた絵に、ぼかし → にじみ → 周辺減光の順で掛けたもの。にじむのは明るい
@@ -201,7 +201,7 @@ extension Sketch {
     // shot: 4 snippet=d6f7db6c
     // shot: 5 snippet=4e94538e
     // shot: 6 snippet=d2be289c
-    public func effects(_ effects: [Effect]) { canvas.effects(effects) }
+    public func effects(_ effects: [Effect]) { Self.liveCanvas()?.effects(effects) }
 
     /// 文字列から効果を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
@@ -325,13 +325,15 @@ extension Sketch {
     /// 使うときは ``Effect/custom(_:)`` として並びへ入れる。
     ///
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=51305187
     // shot: 2 snippet=6a15d68d
     // shot: 3 snippet=e53a59b0
     public func makeEffect(
         _ body: String, name: String = "effect", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try canvas.makeEffect(body, name: name, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).makeEffect(body, name: name, values: values)
     }
 
     /// ファイルから効果を読み込む。
@@ -342,10 +344,12 @@ extension Sketch {
     /// 書き方は文字列から作る ``makeEffect(_:name:values:)`` と同じで、例と絵はそちらにある。
     ///
     /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeEffect(_:name:values:)
     public func loadEffect(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try canvas.loadEffect(path, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).loadEffect(path, values: values)
     }
 }

@@ -62,8 +62,9 @@
 # 60 秒おきに引く (RENDER_TURN_INTERVAL で差し替え)。GITHUB_TOKEN の REST の上限は
 # リポジトリで 1 時間 1,000 件を共有する (review-gate・queue-sweep も同じ枠)。1 周に引くのは
 # merge_group で 2 件 (先端と前の run)、yield / wait で 2 件 (queued と in_progress) なので、
-# 門番 1 本で 1 時間 120 件になる。merge_group の門番が 4 本と定期の門番 1 本が同時に
-# 待っても約 600 件で、枠の内に収まる。
+# 門番 1 本で 1 時間 120 件になる。同時に待つ merge_group の門番は、queue が同時に組む
+# group の数 (main-protection.json の max_entries_to_build) より 1 本少ない。その数が 5 で
+# 門番が 4 本と定期の門番 1 本が同時に待っても約 600 件で、枠の内に収まる。
 #
 # ## 判定できないときは通す
 #

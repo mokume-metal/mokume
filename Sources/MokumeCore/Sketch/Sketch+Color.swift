@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-extension Sketch {
+extension SketchPart {
     /// 下地を、素の数値で塗る。**目盛りは 0–255** ([ADR-0033] 決定 1)。
     ///
     /// 3 つなら赤・緑・青、4 つ目は不透明度。
@@ -64,6 +64,7 @@ extension Sketch {
     public func background(
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.background(red, green, blue, alpha)
     }
@@ -143,6 +144,7 @@ extension Sketch {
     // shot: 1 snippet=724387cf
     // shot: 2 snippet=2e391461
     public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.background(gray, alpha)
     }
@@ -254,6 +256,7 @@ extension Sketch {
     // shot: 3 snippet=dacf980c
     // shot: 4 snippet=7d92c52c
     public func fill(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.fill(red, green, blue, alpha)
     }
@@ -304,6 +307,7 @@ extension Sketch {
     // shot: 1 snippet=40012a72
     // shot: 2 snippet=69804a28
     public func fill(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.fill(gray, alpha)
     }
@@ -377,6 +381,7 @@ extension Sketch {
     // shot: 1 snippet=bdde8bba
     // shot: 2 snippet=676235a6
     public func fill(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.fill(color, alpha.asFloat)
     }
 
@@ -438,6 +443,7 @@ extension Sketch {
     // shot: 1 snippet=c65d0ace
     // shot: 2 snippet=7ac96242
     public func stroke(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.stroke(red, green, blue, alpha)
     }
@@ -489,6 +495,7 @@ extension Sketch {
     // shot: 1 snippet=c77eab1c
     // shot: 2 snippet=85a0c76b
     public func stroke(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.stroke(gray, alpha)
     }
@@ -537,6 +544,7 @@ extension Sketch {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=d86e117e
     public func stroke(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.stroke(color, alpha.asFloat)
     }
 
@@ -616,6 +624,7 @@ extension Sketch {
     // shot: 1 snippet=71ced307
     // shot: 2 snippet=51be46d6
     public func tint(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.tint(red, green, blue, alpha)
     }
@@ -688,6 +697,7 @@ extension Sketch {
     // shot: 1 snippet=c4b369c6
     // shot: 2 snippet=2f7e5ef6
     public func tint(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.tint(gray, alpha)
     }

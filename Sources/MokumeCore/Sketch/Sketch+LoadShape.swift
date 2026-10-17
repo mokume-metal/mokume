@@ -6,7 +6,7 @@
 // 読み解きは ``SVGFile``、形にするのは面 (``Canvas``) の記録で、どちらも公開しない。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
     /// SVG のファイルを読み、保持した形 (``Shape``) にする。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var logo: Shape? -->
@@ -34,7 +34,12 @@ extension Sketch {
     ///
     /// - **位置**: ``shape(_:_:_:)`` に渡した位置が、SVG の原点 (`viewBox` の左上) になる
     /// - **大きさ**: SVG の 1 単位 (`px`) が 1 画素。`width` / `height` と `viewBox` が
-    ///   書いてあれば、その大きさへ写した形になる。変えるには ``scale(_:_:)`` か
+    ///   書いてあれば、その大きさへ写した形になる (根の `width` / `height` は属性でも CSS の
+    ///   `style` 属性・`<style>` でも書け、重なれば CSS が勝つ。`auto` は書いていないのと同じで、
+    ///   読めない値は書いていないものとして読み、捨てたものとして知らせる。0 は何も描かず、負の値も何も描かないうえに
+    ///   捨てたものとして知らせる)。片方だけなら、もう片方は `viewBox` の
+    ///   縦横比から決まる (片方を長さで書いた SVG は、ブラウザで開いたときと同じ大きさになる。
+    ///   根の割合 `50%` は `viewBox` の大きさに対して読む)。変えるには ``scale(_:_:)`` か
     ///   ``Placement/scale``。**拡大しても滑らかに出る** — 矩形・円・楕円は距離関数で描き、
     ///   曲線は 20 倍に拡大しても折れ目が見えない細かさで刻む
     /// - **色**: SVG に書いた塗りと線の色が形に焼き付く (``createShape(_:)`` と同じ)。
@@ -243,10 +248,13 @@ extension Sketch {
     ///   `encoding=""` など名前の形でない宣言は `malformed`)
     /// - XML として壊れている・根が `<svg>` でない: ``DataFailure/malformed(path:line:reason:)``
     ///   (壊れていた行が載る。行の終わりは LF・CRLF・CR のどれでもよく、捨てたものに添える行も同じ数え方)
+    /// - `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼んだ:
+    ///   ``DataFailure/notRunning(call:)``。ファイルを読んでから形を記録する面を取るので、読めない
+    ///   ファイルなら上のどれかが先に投げられる
     ///
     /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。URL からは読まない。
     ///
-    /// **形を記録する面が要るので、`setup()` か ``draw()`` の中で呼ぶ。** 同じ名前を読み直すと、
+    /// **形を記録する面が要るので、`setup()` か ``Sketch/draw()`` の中で呼ぶ。** 同じ名前を読み直すと、
     /// ファイルをもう一度読む。毎フレーム呼ばず、`setup()` で読んで持ち回る。
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
@@ -255,9 +263,10 @@ extension Sketch {
     // shot: 3 snippet=b33c97d0
     // shot: 4 snippet=8ae46fb2
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
+        Self.noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
         let url = try dataURL(path)
         let drawing = try SVGFile.parse(try TextFile.read(url, path: path), path: path)
-        return canvas.shape(of: drawing, readFrom: path)
+        return try Self.resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
     }
 
     /// SVG のファイルを読み、保持した形にする。**読んでいる間、他の仕事を止めない。**
@@ -279,16 +288,18 @@ extension Sketch {
     /// ``loadShape(_:)`` と同じ。
     ///
     /// 呼び方と届く前の扱いは ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、
-    /// そこから呼ぶ。** 届くまでの ``draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
+    /// そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
     ///
     /// > Note: 届いた形の見え方は ``loadShape(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは SVG の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
     ///
-    /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。
+    /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。ただし走っていないときは、ファイルを
+    ///   読む前に投げる。走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`)
+    ///   で呼ぶと ``DataFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
-        let surface = Self.requireLoadingCanvas("requestShape(_:)")
+        let surface = try Self.loadingCanvas(DataFailure.self)
         let url = try dataURL(path)
         let drawing = try await Self.readAway { () throws(DataFailure) in
             try SVGFile.parse(try TextFile.read(url, path: path), path: path)

@@ -55,7 +55,8 @@ extension Canvas {
         // **原文は 1 度だけ組む。** 3 つの入口は同じ原文にあるので、入口ごとに組むと
         // 同じものを 3 度組む (#728)
         let library = try gpu.shaders.makeComputeLibrary(
-            named: Self.particleShaderName, body: source)
+            named: Self.particleShaderName, body: source,
+            bodyName: ShaderLibraries.bundledName(Self.particleShaderName))
         var headers: [Numbers] = []
         for _ in 0..<(lengths.count - 1) { headers.append(try Numbers(gpu: gpu, count: 4)) }
         let particles = Particles(
@@ -235,9 +236,16 @@ extension Canvas {
     /// 所で呼ぶ** — 描き切りと、溜めた計算を描き切りより先に流す口 (読み戻し・面をまたぐ順)。
     ///
     /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
-    func commitParticleAdvances() {
+    ///
+    /// 投入 `submission` の結末を粒に待たせる。打ち切られたら、粒はその回の量を累計から戻す
+    /// (``Particles/submissionSettled(_:dropped:)``・[#2199])。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func commitParticleAdvances(by submission: UInt64) {
         for (particles, amount) in particleAdvancesThisFrame {
-            particles.value?.noteSubmittedAdvance(amount)
+            guard let particles = particles.value else { continue }
+            particles.noteSubmittedAdvance(amount, by: submission)
+            gpu.awaitSettlement(of: submission, by: particles)
         }
         particleAdvancesThisFrame.removeAll(keepingCapacity: true)
     }

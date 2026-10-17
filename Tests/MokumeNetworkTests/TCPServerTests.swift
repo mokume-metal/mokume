@@ -244,10 +244,18 @@ struct TCPServerTests {
     @Test("ポートの番号が 1〜65535 の外なら、作るときに投げる")
     func creationRefusesUnusablePorts() throws {
         let sketch = IdleSketch()
-        #expect(throws: NetworkFailure.invalidPort(0)) { try sketch.createTCPServer(0) }
-        #expect(throws: NetworkFailure.invalidPort(65536)) { try sketch.createTCPServer(65536) }
-        // 両端は通る (走っていないスケッチなので、ポートは開かない)
-        let edge = try sketch.createTCPServer(65535)
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: NetworkFailure.invalidPort(0)) { try sketch.createTCPServer(0) }
+            #expect(throws: NetworkFailure.invalidPort(65536)) { try sketch.createTCPServer(65536) }
+            // 両端は番号の検めを通る。走っていないスケッチなので、その後ポートを開く前に断る (#2740)
+            for port in [1, 65535] {
+                #expect(throws: NetworkFailure.notRunning(call: "createTCPServer(_:)")) {
+                    try sketch.createTCPServer(port)
+                }
+            }
+        }
+        // 足すもの (ポートは足したときに開くので、ここでは開かない)
+        let edge = sketch.tcpServer(port: 65535)
         #expect(edge.port == 65535)
         #expect(edge.state == .unavailable)
         #expect(edge.clientCount == 0)

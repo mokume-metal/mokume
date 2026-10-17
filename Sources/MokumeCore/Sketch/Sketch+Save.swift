@@ -6,7 +6,7 @@ import MokumeDiagnostics
 // 描いた絵をファイルにする。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     // MARK: - 1 枚
 
@@ -60,7 +60,7 @@ extension Sketch {
     // shot: 撮れない 画面の絵を何も変えずにファイルを書く口で、書き終わる時点もフレームに紐づかない (確かなのは endRecord の後かスケッチの終わり) ので、書いたものを同じスケッチで読み戻して見せる絵も決まらない
     public func save(_ path: String) {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.save.notice)
+            return OutsideRun.log.warn(.save)
         }
         runtime.save(path)
     }
@@ -182,7 +182,7 @@ extension Sketch {
     // shot: 1 snippet=5f85730d
     public func beginRecord(_ pattern: String) {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.beginRecord.notice)
+            return OutsideRun.log.warn(.beginRecord)
         }
         runtime.beginRecord(pattern)
     }
@@ -198,7 +198,7 @@ extension Sketch {
     // shot: 参照 beginRecord(_:)
     public func endRecord() {
         guard let runtime = runningSketch else {
-            return Diagnostics.warn(OutsideCall.endRecord.notice)
+            return OutsideRun.log.warn(.endRecord)
         }
         runtime.endRecord()
     }

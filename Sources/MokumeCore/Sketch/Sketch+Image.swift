@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 画像。
-extension Sketch {
+extension SketchPart {
     /// 絵を読む。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var grain: Image? -->
@@ -156,12 +156,17 @@ extension Sketch {
     /// 毎回新しいということは、**読んだ絵を塗り替えても次の読み込みには影響しない**
     /// ということでもある。走らせたままファイルを差し替えれば、次の読み込みからそちらが出る。
     ///
+    /// - Throws: 見つからないとき・画像として読めないとき・GPU 側へ置けないときに ``ImageFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     // shot: 1 snippet=33373ac5
     // shot: 2 snippet=57be30b4
     // shot: 3 snippet=78ae8dd3
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
-        try canvas.loadImage(path)
+        Self.noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
+        return try Self.resourceCanvas(ImageFailure.self).loadImage(path)
     }
 
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**
@@ -172,7 +177,7 @@ extension Sketch {
     /// 経路が面へ移すときと同じ)、有限の成分は面が表せる ±65504 で止まる。浮動小数の絵 (TIFF・
     /// OpenEXR など) の、白をずっと越える成分も同じである。
     ///
-    /// **`setup()` の中で `Task` を起こし、そこから呼ぶ。** `setup()` も ``draw()`` も
+    /// **`setup()` の中で `Task` を起こし、そこから呼ぶ。** `setup()` も ``Sketch/draw()`` も
     /// 待てないので、待つのは `Task` の仕事になる。
     ///
     /// <!-- example: 文脈 var grain: Image? -->
@@ -187,27 +192,31 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// **届くまでの ``draw()`` は、絵が無いまま呼ばれる。** 待っている間もフレームは進む
+    /// **届くまでの ``Sketch/draw()`` は、絵が無いまま呼ばれる。** 待っている間もフレームは進む
     /// ので、届く前の姿 (何も置かない・仮の絵を置く) を `draw()` の側で決めておく。届くのは
     /// フレームとフレームの間で、届いた次のフレームから置かれる。
     ///
-    /// **置くのは ``draw()`` の中で、`Task` の中ではない。** `Task` の中から描く口
-    /// (``image(_:_:_:)-(Image,_,_)`` や ``width``) を呼ぶと、走っていないとして止まる。`Task` がするのは、
-    /// 届いたものを持っておくところまでである。
+    /// **置くのは ``Sketch/draw()`` の中で、`Task` の中ではない。** `Task` の中から描く口
+    /// (``image(_:_:_:)-(Image,_,_)`` や ``width``) を呼んでも、そこからは面を取れないので描かれず、
+    /// 0 が返る (口ごとに 1 度だけ警告する)。`Task` がするのは、届いたものを持っておくところまでである。
     ///
-    /// 起こすのは ``draw()`` や入力のコールバックの中でもよい。そこで起こした `Task` も
-    /// 呼べる。呼べないのは、走っている実行から起こされていない所 — `init`・プロパティの
-    /// 初期化子・`Task.detached` — で、そこから呼ぶと止まる。
+    /// 起こすのは ``Sketch/draw()`` や入力のコールバックの中でもよい。そこで起こした `Task` も
+    /// 呼べる。呼べないのは、走っている実行から起こされていない所 — `init`・後片付けの後・
+    /// `Task.detached` — で、そこから呼ぶと ``ImageFailure/notRunning(call:)`` を投げる。
     ///
-    /// スケッチが終わった後に届いても落ちない。絵はそのまま返り、置く ``draw()`` が
+    /// スケッチが終わった後に届いても落ちない。絵はそのまま返り、置く ``Sketch/draw()`` が
     /// もう来ないだけである。
     ///
     /// > Note: 届いた絵の見え方は ``loadImage(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは絵の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
+    ///
+    /// - Throws: ``loadImage(_:)`` と同じ (``ImageFailure``)。
+    ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
-        try await Self.requireLoadingCanvas("requestImage(_:)").requestImage(path)
+        try await Self.loadingCanvas(ImageFailure.self).requestImage(path)
     }
 
     /// 空の絵を作る。中身は透明。
@@ -247,9 +256,11 @@ extension Sketch {
     ///
     /// - Throws: 幅・高さのどちらかが 1 を割るか面の上限を越えるときに
     ///   ``ImageFailure/unplaceable(width:height:)``。1 を割る指定を 1×1 へ丸めない。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=f455cc89
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
-        try canvas.createImage(width, height)
+        try Self.resourceCanvas(ImageFailure.self).createImage(width, height)
     }
 
     /// 絵を等倍で置く。
@@ -290,6 +301,7 @@ extension Sketch {
     /// }
     // shot: 1 snippet=484b5a23
     public func image(_ image: Image, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(image, x, y)
     }
@@ -328,6 +340,7 @@ extension Sketch {
     /// }
     // shot: 1 snippet=6c035e1b
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(image, a, b, c, d)
     }
@@ -376,6 +389,7 @@ extension Sketch {
         _ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
@@ -519,7 +533,7 @@ extension Sketch {
     // shot: 2 snippet=1c6055c2
     // shot: 3 snippet=bbc7b35e
     // shot: 4 snippet=04e1e495
-    public func imageMode(_ mode: ShapeMode) { canvas.imageMode(mode) }
+    public func imageMode(_ mode: ShapeMode) { Self.liveCanvas()?.imageMode(mode) }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
     ///
@@ -589,7 +603,7 @@ extension Sketch {
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=25c42a96
     // shot: 2 snippet=4775cb21
-    public func tint(_ color: LinearRGBA) { canvas.tint(color) }
+    public func tint(_ color: LinearRGBA) { Self.liveCanvas()?.tint(color) }
 
     /// 色掛けをやめる。
     ///
@@ -628,5 +642,5 @@ extension Sketch {
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=82db2864
-    public func noTint() { canvas.noTint() }
+    public func noTint() { Self.liveCanvas()?.noTint() }
 }

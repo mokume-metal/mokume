@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 // 合成の音を処理する素 (#1980)。``SynthKernels`` と同じく、機材にも時計にも触れず、1 標本ずつ
 // 進む状態機械である。状態の置き場は作るときに 1 度だけ確保し、標本を処理する間は確保しない
@@ -40,8 +41,8 @@ nonisolated struct Biquad {
         _ shape: FilterShape, frequency: Double, quality: Double, sampleRate: Double
     ) {
         let omega = 2 * Double.pi * frequency / sampleRate
-        let cosine = cos(omega)
-        let alpha = sin(omega) / (2 * quality)
+        let cosine = RuntimeMath.cos(omega)
+        let alpha = RuntimeMath.sin(omega) / (2 * quality)
         let a0 = 1 + alpha
         switch shape {
         case .lowPass:

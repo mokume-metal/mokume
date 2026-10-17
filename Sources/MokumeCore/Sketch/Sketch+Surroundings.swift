@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 周囲。
-extension Sketch {
+extension SketchPart {
     /// 立体を取り巻く周囲を置く。**金属や艶のある面は、これが無いと絵にならない。**
     ///
     /// 周囲は上・地平・下の 3 色の帯で、資材は要らない。置くと 2 つのことが起きる:
@@ -56,6 +56,7 @@ extension Sketch {
     /// - Note: 周囲は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=f1ee1778
     public func surroundings(_ surroundings: Surroundings) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.surroundings(surroundings)
     }
 
@@ -100,6 +101,7 @@ extension Sketch {
     /// }
     // shot: 1 snippet=0713ef18
     public func background(_ surroundings: Surroundings) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.background(surroundings)
     }
 }

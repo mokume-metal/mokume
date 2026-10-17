@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import Synchronization
 import Testing
 import mokume
 
@@ -31,11 +32,18 @@ struct WatchSessionTests {
         /// その回が探した product の名前。**土台が持つ名前とは別に置ける** — 宣言が
         /// 変わった回に、どちらの名前で名乗るかを見るため (#1067)。
         var product: String? = "sketch"
+        /// 宣言を読み直したときに道具立てが答えなかった理由 (#2575)。
+        var declarationFailure: CommandFailure?
         /// 作り直しの最中に待たせる口。**既定は何もしない。**
         ///
         /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
         /// でしか見えない (#834)。ここで待たせて、その隙に main actor の仕事を積む。
         var whileBuilding: () async -> Void = {}
+        /// 世代を取る最中に待たせる口。**既定は何もしない。** 使い方は ``whileBuilding`` と
+        /// 同じで、世代を待つ間に main actor が空くかを見る (#2518)。
+        var whileStamping: () async -> Void = {}
+        /// 世代を取った回数。**待っている間の巡回が読みを重ねないこと**を見る (#2518)。
+        var stampings = 0
         /// 作り直しを起こせなかったことにする誤り。**立っていれば、作り直しは投げる。**
         var failure: CommandFailure?
         /// 起こしたことにする子を返すか。**既定は返さない** (起こせなかった回になる)。
@@ -43,6 +51,9 @@ struct WatchSessionTests {
         /// 返すのは走らせていない `Process` である — 新しい絵が出るまでを測るのは子が居る回
         /// だけなので、居ることにだけ要る (#930)。
         var launchesChild = false
+        /// 起こせなかった回に投げる誤り。**理由が記録と端末に載るか**を見る (#2521)。
+        var launchFailure = CommandFailure.cannotLaunch(
+            tool: "sketch", place: "/stub", reason: "the stub starts nothing")
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
@@ -58,17 +69,22 @@ struct WatchSessionTests {
                     return RunCommand.Rebuilt(
                         status: self.buildStatus, output: self.buildOutput,
                         executable: self.productBuilt ? bin : nil, binPath: directory,
-                        product: self.product)
+                        product: self.product, declarationFailure: self.declarationFailure)
                 },
-                launch: { _, _, stamp, rate in
+                launch: { _, _, stamp, rate throws(CommandFailure) in
                     self.launches += 1
                     self.stampsGivenToChildren.append(stamp)
                     self.ratesGivenToChildren.append(rate)
                     self.clock += 0.03
-                    return self.launchesChild ? Process() : nil
+                    guard self.launchesChild else { throw self.launchFailure }
+                    return Process()
                 },
                 now: { self.clock },
-                stamp: { _ in self.stamp })
+                stamp: { _ in
+                    self.stampings += 1
+                    await self.whileStamping()
+                    return self.stamp
+                })
         }
     }
 
@@ -188,11 +204,231 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
 
-        // Recorder の launch は常に nil を返す (子を作らない)
+        // Recorder の launch は既定で起こせない (理由を投げる)
         let report = await session.start()
         #expect(report.ok, "作り直し自体は通っている")
         #expect(!report.launched)
         #expect(report.summary.contains("could not start it"))
+    }
+
+    /// **起こせなかった理由を捨てない** ([#2521](https://github.com/mokume-metal/mokume/issues/2521))。
+    /// `launched: false` だけでは、場所が消えたのか実行できないのかを誰も読めない — 理由は
+    /// 本文の頭に置き、作り直しの出力はその後に続ける (建っていない回と同じ形)。
+    @Test("建ったのに起こせなかった回は、起こせなかった理由を記録の本文の頭に載せる")
+    func aLaunchFailureLeadsTheRecordedOutput() async throws {
+        let recorder = Recorder()
+        let directory = try makeDirectory()
+        recorder.launchFailure = .placeUnusable(
+            tool: "sketch", place: "/gone", presence: .missing)
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: recorder.hooks())
+
+        let report = await session.start()
+        let reason = recorder.launchFailure.message
+        #expect(report.output == reason + "\n\n" + recorder.buildOutput)
+
+        let data = try Data(
+            contentsOf: directory.appendingPathComponent(".mokume/build/status.json"))
+        let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(decoded?["output"] as? String == report.output, "区画の記録に理由が載っていない")
+        #expect(decoded?["launched"] as? Bool == false)
+        #expect(decoded?["ok"] as? Bool == true)
+
+        // 端末には、要約の次の行に理由だけが出る — 作り直しの出力は流さない
+        let lines = WatchCommand.reportLines(
+            report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines == [report.summary, reason], "\(lines)")
+        #expect(report.summary.hasPrefix("Rebuilt, but could not start it: "))
+        // 窓の無い見張りは起こす前に止めるので、前の版は走っていない
+        #expect(!session.keepsPreviousRunning)
+    }
+
+    /// **端末には理由だけを出す** (#2521 の反証)。作り直しは通っているので、`swift build` の
+    /// 出力 (`[n/m] Compiling…`) を流しても読む人のすることは変わらない。理由が複数行でも
+    /// 最初の空行までを出す。
+    @Test("起こせなかった回の端末には、複数行の理由まで出して作り直しの出力は流さない")
+    func theTerminalShowsOnlyTheReason() async throws {
+        let recorder = Recorder()
+        recorder.buildOutput = "[1/3] Compiling app main.swift\n[3/3] Linking sketch\nBuild complete!"
+        // 2 行の理由
+        recorder.launchFailure = .placeUnusable(tool: "sketch", place: "/gone", presence: .missing)
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+
+        let report = await session.start()
+        let reason = recorder.launchFailure.message
+        #expect(reason.contains("\n"), "理由が 1 行では、複数行の区切りを確かめられない")
+        #expect(report.notStartedReason == reason)
+        let lines = WatchCommand.reportLines(report, holdingPrevious: false)
+        #expect(lines == [report.summary, reason])
+        #expect(!lines.joined().contains("Compiling"), "作り直しの出力を端末へ流した")
+    }
+
+    /// **窓のある見張りは、起こせなかった回も前の版を走らせ続ける** (#2521 の反証)。前の世代を
+    /// 退役待ちへ残してから起こすので、端末は「前の版のまま待つ」と名乗る。窓の無い見張りは
+    /// 起こす前に止めるので名乗らない。
+    @Test(
+        "起こせなかった回は、前の版が走り続けているときだけ前の版のまま待つと名乗る",
+        arguments: [true, false])
+    func aLaunchFailureHoldsThePreviousOnlyWhenItRuns(overlapping: Bool) async throws {
+        let recorder = Recorder()
+        let previous = Process()
+        previous.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        previous.arguments = ["30"]
+        // **待つ側が期限を持つ。** 残ったら殺す
+        defer { if previous.isRunning { kill(previous.processIdentifier, SIGKILL) } }
+        var hooks = recorder.hooks()
+        var launches = 0
+        hooks.launch = { _, _, _, _ throws(CommandFailure) in
+            launches += 1
+            guard launches == 1 else { throw recorder.launchFailure }
+            do { try previous.run() } catch { throw .cannotLaunch(tool: "sleep", place: "", reason: "\(error)") }
+            return previous
+        }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 1)
+        session.overlapsGenerations = overlapping
+        #expect(await session.start().launched)
+
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+        #expect(!report.launched)
+        #expect(session.keepsPreviousRunning == overlapping)
+        #expect(previous.isRunning == overlapping, "窓の有無で前の版の扱いが変わっていない")
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines.contains(WatchCommand.holdingLine) == overlapping, "\(lines)")
+        await session.end()
+    }
+
+    /// **作り直しは通ったが、成果物に実行ビットが無い** (#2521 の反証)。作り直しは実行できる
+    /// ものだけを「建った」と返すので、ここは起こす口まで届かず「建っていない」へ落ちていた。
+    /// 作り直しの戻り (``RunCommand/Rebuilt``) から記録と端末までを通して見る。
+    @Test("在るのに実行できない成果物は、建っていないではなく起こせないと名乗り、前の版を落とさない")
+    func anUnrunnableProductIsNotCalledUnbuilt() async throws {
+        let recorder = Recorder()
+        let directory = try makeDirectory()
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: recorder.hooks())
+        recorder.launchesChild = true
+        await session.start()
+
+        // Recorder は「建っていない」ときに置き場 (= directory) と product を返す
+        recorder.productBuilt = false
+        let product = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: product, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: product.path)
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+
+        let reason = CommandFailure.cannotLaunch(
+            tool: "sketch", place: directory.path,
+            reason: "\(product.path) is not executable (Permission denied)"
+        ).message
+        #expect(report.ok, "作り直しは通っている")
+        #expect(!report.launched)
+        #expect(report.output == reason + "\n\n" + recorder.buildOutput)
+        #expect(!report.output.contains("was never built"), "在るものを建っていないと言った")
+        #expect(recorder.launches == 1, "起こせないと分かっているのに差し替えに入った")
+        #expect(session.child != nil, "前の版を落とした")
+        #expect(WatchCommand.reportLines(report, holdingPrevious: false) == [report.summary, reason])
+
+        // 裏側: 本当に無ければ、いままでどおり「建っていない」
+        try FileManager.default.removeItem(at: product)
+        recorder.stamp = "ccc"
+        let unbuilt = try #require(await session.tick())
+        #expect(!unbuilt.ok)
+        #expect(unbuilt.output.contains("was never built"))
+    }
+
+    /// **作り直しの後に宣言を読み直して道具立てが答えなかった回を、「Package.swift を見よ」と
+    /// 言わない** (#2575)。`product == nil` が「宣言に実行ファイルが無い」と「道具立てが答えなかった」を
+    /// 混ぜていた。理由があれば記録の本文の頭にそれを名乗り、無ければ従来どおり。
+    @Test("宣言を読み直せなかった回は、Package.swift を指さず、道具立てが答えなかったと名乗る")
+    func anUnansweredDeclarationIsNotAMissingProduct() async throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        await session.start()
+
+        let failure = CommandFailure.toolchainFailed(
+            command: "swift package dump-package", status: 1)
+        recorder.productBuilt = false
+        recorder.product = nil
+        recorder.declarationFailure = failure
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+        #expect(!report.ok)
+        #expect(report.output.hasPrefix(failure.message + "\n\n"), "理由が本文の頭に無い")
+        #expect(!report.output.contains("Package.swift"))
+
+        // 裏側: 理由が無ければ (宣言に実行ファイルが無い)、いままでどおり
+        recorder.declarationFailure = nil
+        recorder.stamp = "ccc"
+        let plain = try #require(await session.tick())
+        #expect(plain.output.contains("Cannot find anything to run"))
+        #expect(plain.output.contains("Package.swift"))
+    }
+
+    /// **`launched: false` の口はどれも理由を名乗る** (#2521)。終われと言われた後に作り直しが
+    /// 通った回は、起こさないと決めたのは見張りの側で、本文にその 1 行が無いと起こせなかった回と
+    /// 見分けが付かない。
+    @Test("終われと言われた後で起こさなかった回は、そう名乗る")
+    func aSkippedLaunchAfterStopSaysWhy() async throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        // **作り直しの最中に言われる。** 始める前に言われた回は作り直しそのものを始めない
+        recorder.whileBuilding = { session.noteStopRequested() }
+
+        let report = await session.start()
+        #expect(recorder.builds == 1)
+        #expect(report.ok)
+        #expect(!report.launched)
+        #expect(recorder.launches == 0)
+        #expect(report.output == WatchSession.stopRequestedNotice + "\n\n" + recorder.buildOutput)
+        // **要約も本文と同じことを言う** (#2521 の反証)。「起こせなかった」と言うと本文の頭と食い違う
+        #expect(report.summary.hasPrefix("Rebuilt, not started because watching was ending: "))
+        #expect(!report.summary.contains("could not start"))
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines == [report.summary, WatchSession.stopRequestedNotice])
+    }
+
+    /// **本物の起こす口が、在処と原因を名乗る** (#2521)。替え玉の検査は投げる形なので、`live` の
+    /// 側で `try?` に戻っても緑のままになる — ここでは本物の `Process` を起こせない形で起こす。
+    @Test("本物の起こす口は、起こせなかった在処と原因を投げる")
+    func theLiveLaunchThrowsWhereAndWhy() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-unlaunchable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
+
+        // 実行ビットを外した実行ファイル。`Process.run()` は「無い」と投げるが、在る
+        let executable = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: executable.path)
+        #expect(
+            throws: CommandFailure.cannotLaunch(
+                tool: "sketch", place: directory.path,
+                reason: "\(executable.path) is not executable (Permission denied)")
+        ) {
+            try hooks.launch(executable, directory, nil, nil)
+        }
+
+        // 見張りの途中で消えた場所
+        let gone = directory.appendingPathComponent("gone", isDirectory: true)
+        #expect(
+            throws: CommandFailure.placeUnusable(tool: "sketch", place: gone.path, presence: .missing)
+        ) {
+            try hooks.launch(executable, gone, nil, nil)
+        }
+
+        // 走らせるものが無い (裏側。いままでどおり)
+        let absent = directory.appendingPathComponent("absent")
+        #expect(throws: CommandFailure.executableVanished(path: absent.path)) {
+            try hooks.launch(absent, directory, nil, nil)
+        }
     }
 
     @Test("最初の 1 回は、変化を待たずに作って走らせる")
@@ -315,13 +551,20 @@ struct WatchSessionTests {
     /// 上の検査は替え玉が投げる形なので、`live` の側で誤りを握り潰す形に戻っても緑のまま
     /// になる (#1100 の `try?` はそこに居た)。存在しない場所では `Process` が起動の時点で
     /// 投げるので、`swift` を 1 本も起こさずにその経路を通せる。
+    ///
+    /// **投げ返すのは、起こせなかった本当の理由である** (#2314)。以前はここが
+    /// `toolchainMissing("swift")` を期待していた — 場所が無いだけなのに「swift が無い」と
+    /// 名乗る読み替えを、検査が固定していた。
     @Test("本物の作り直しの口は、起こせなかった誤りを投げ返す")
     func theLiveRebuildThrowsWhatStoppedIt() async throws {
         let nowhere = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-nowhere-\(UUID().uuidString)", isDirectory: true)
         let hooks = WatchSession.Hooks.live(in: nowhere, invocation: Invocation())
 
-        await #expect(throws: CommandFailure.toolchainMissing("swift")) {
+        await #expect(
+            throws: CommandFailure.placeUnusable(
+                tool: "swift", place: nowhere.path, presence: .missing)
+        ) {
             try await hooks.rebuild(nowhere)
         }
     }
@@ -452,7 +695,7 @@ struct WatchSessionTests {
                     status: 0, output: "", executable: URL(fileURLWithPath: "/bin/sh"),
                     binPath: directory, product: "sketch")
             },
-            launch: { executable, _, _, _ in
+            launch: { executable, _, _, _ throws(CommandFailure) in
                 let process = Process()
                 process.executableURL = executable
                 process.arguments = ["-c", script]
@@ -460,7 +703,11 @@ struct WatchSessionTests {
                 process.standardInput = Pipe()
                 process.standardOutput = pipe
                 process.standardError = FileHandle.nullDevice
-                guard (try? process.run()) != nil else { return nil }
+                do {
+                    try process.run()
+                } catch {
+                    throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
+                }
                 ready.pipes.append(pipe)
                 return process
             },
@@ -481,7 +728,7 @@ struct WatchSessionTests {
 
         var waits = 0
         session.willWaitForFinish = { _ in waits += 1 }
-        #expect(session.end() == .terminated)
+        #expect(await session.end() == .terminated)
         #expect(!child.isRunning)
         // **いつもの終わり方は無言のまま。** 素直に終わる子を待つ間は名乗らない
         #expect(waits == 0)
@@ -499,11 +746,11 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(child.isRunning)
 
-        let started = ProcessInfo.processInfo.systemUptime
-        #expect(session.stop() == .killed)
+        // **戻ってきたこと自体が、期限の効いている証拠である** — 期限が無ければ戻らない。戻るまでの
+        // 秒数は見ない: 待ちは main の外で期限を測るが、戻りは main を通るので、同じ走者の他の検査が
+        // main を数秒塞いでいる間は、期限どおり落とした後でも戻りが遅れる (#2576)
+        #expect(await session.stop() == .killed)
         #expect(!child.isRunning)
-        // 数字は「戻ってきた」ことの確認でしかない — 期限が効いていなければ戻らないので
-        #expect(ProcessInfo.processInfo.systemUptime - started < 2)
     }
 
     /// **差し替えも同じ経路を通る。** 期限が無いと、終われないだけでなく**保存のたびに**
@@ -517,7 +764,7 @@ struct WatchSessionTests {
         await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.tick()
         #expect(!first.isRunning, "前の子が残っている")
@@ -533,9 +780,21 @@ struct WatchSessionTests {
     /// (``nudge(_:)``) が 1 行渡すからである — 1 行で終わる子だと、**頼まれていない子まで**
     /// 自分から終わって `.terminated` に見える。管が閉じれば `read` が偽を返して終わるので、
     /// 置き去りにされても生き続けない。
-    private func hooksClosingSlowly(ready: Ready) -> WatchSession.Hooks {
+    ///
+    /// - Parameter go: これが在るまで後始末に入らない (印は検査が置く)。**時間で終わらせない**
+    ///   — 待ちが main の外で期限を測るようになり、同じ走者の他の検査が数秒止まっている間に
+    ///   子が自分で終わると、「長く待つ間を名乗る」手前で決着してしまう (#2576)。
+    private func hooksClosingSlowly(ready: Ready, after go: URL) -> WatchSession.Hooks {
         hooks(
-            running: "trap 'sleep 0.6; exit 0' TERM; echo ready; while read line; do :; done",
+            running: "trap 'while [ ! -e \"\(go.path)\" ]; do sleep 0.02; done; sleep 0.6; exit 0' TERM; "
+                + "echo ready; while read line; do :; done",
+            ready: ready)
+    }
+
+    /// 後始末が終わらない子。**期限で落とすしかない。**
+    private func hooksNeverFinishingCleanup(ready: Ready) -> WatchSession.Hooks {
+        hooks(
+            running: "trap 'while :; do sleep 0.05; done' TERM; echo ready; while read line; do :; done",
             ready: ready)
     }
 
@@ -566,9 +825,10 @@ struct WatchSessionTests {
     @Test("見張りを終えるときは、後始末に時間のかかる子も待ってから、待っていると 1 度名乗る")
     func waitsForTheChildToFinishWhenWatchingEnds() async throws {
         let ready = Ready()
+        let go = try makeDirectory().appendingPathComponent("go")
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 30)
+            hooks: hooksClosingSlowly(ready: ready, after: go), stopTimeout: 0.2, finishTimeout: 30)
         await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
@@ -579,10 +839,12 @@ struct WatchSessionTests {
         // どちらかである (``nudge(_:)``)
         session.willWaitForFinish = {
             waits.append($0)
+            // **名乗られてから、後始末に入らせる。** 名乗りより先に子が終わる順は作れない
+            try? Data().write(to: go)
             nudge(child)
         }
 
-        #expect(session.end() == .terminated, "後始末の途中で落とした")
+        #expect(await session.end() == .terminated, "後始末の途中で落とした")
         #expect(!child.isRunning)
         #expect(waits.count == 1, "長く待つ間を名乗っていない (または 2 度以上名乗った)")
         // 名乗るのは「この先さらに待つ上限」で、全体の上限から最初の待ちを引いたもの
@@ -597,13 +859,13 @@ struct WatchSessionTests {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
+            hooks: hooksNeverFinishingCleanup(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
         var waits = 0
         session.willWaitForFinish = { _ in waits += 1 }
         await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.tick()
         #expect(!first.isRunning, "前の子が残っている")
@@ -701,7 +963,7 @@ struct WatchSessionTests {
         await session.start()
         ready.waitForLast()
 
-        #expect(session.stop() == .terminated)
+        #expect(await session.stop() == .terminated)
         #expect(session.departed() == nil)
     }
 
@@ -715,7 +977,7 @@ struct WatchSessionTests {
             hooks: hooks(ignoringTermination: false, ready: ready), stopTimeout: 1)
         await session.start()
         ready.waitForLast()
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.tick()
         ready.waitForLast()
@@ -731,7 +993,7 @@ struct WatchSessionTests {
     func overlappingKeepsTheOutgoingChildAlive() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -743,7 +1005,7 @@ struct WatchSessionTests {
         #expect(leaving.isRunning, "画面が入れ替わる前に止めている")
         #expect(session.child !== leaving)
 
-        session.retireOutgoing()
+        await session.retireOutgoing()
         waitUntilGone(leaving)
         #expect(!leaving.isRunning, "入れ替わりの合図で止まっていない")
         #expect(session.outgoing == nil)
@@ -755,7 +1017,7 @@ struct WatchSessionTests {
     func theOutgoingChildIsStoppedAtTheNextSwap() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -780,7 +1042,7 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; read line", ready: ready), stopTimeout: 0.5)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -796,7 +1058,7 @@ struct WatchSessionTests {
     func inputGoesToTheGenerationOnScreen() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -859,7 +1121,7 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; exec sleep 30", ready: ready), stopTimeout: 1)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
@@ -908,7 +1170,7 @@ struct WatchSessionTests {
         let arriving = try #require(session.child)
         #expect(session.outgoing === leaving)
 
-        session.stop()
+        await session.stop()
         waitUntilGone(leaving)
         waitUntilGone(arriving)
         #expect(!leaving.isRunning, "控えていた子を置いていった")
@@ -928,7 +1190,7 @@ struct WatchSessionTests {
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.overlapsGenerations = true
         await session.start()
-        session.generationPromoted()
+        await session.generationPromoted()
         return session
     }
 
@@ -957,7 +1219,7 @@ struct WatchSessionTests {
         #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
 
         recorder.clock += 0.2
-        session.generationPromoted()
+        await session.generationPromoted()
 
         let report = try #require(session.lastReport)
         let firstFrame = try #require(report.timings.firstFrameMs, "合図が来ても足されていない")
@@ -980,11 +1242,11 @@ struct WatchSessionTests {
         recorder.stamp = "bbb"
         await session.tick()
         recorder.clock += 0.2
-        session.generationPromoted()
+        await session.generationPromoted()
         let first = try #require(session.lastReport?.timings.firstFrameMs)
 
         recorder.clock += 0.05
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == first)
         #expect(try writtenTimings(of: session)?["firstFrameMs"] as? Double == first)
     }
@@ -998,13 +1260,13 @@ struct WatchSessionTests {
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         await session.start()
-        session.generationPromoted()
+        await session.generationPromoted()
 
         recorder.stamp = "bbb"
         await session.tick()
         recorder.clock += 0.2
         // 窓の無い実行に合図は来ないが、来ても測らない
-        session.generationPromoted()
+        await session.generationPromoted()
 
         let report = try #require(session.lastReport)
         #expect(report.timings.firstFrameMs == nil)
@@ -1028,7 +1290,7 @@ struct WatchSessionTests {
 
         await session.start()
         recorder.clock += 0.2
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == nil)
         #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
     }
@@ -1047,7 +1309,7 @@ struct WatchSessionTests {
         recorder.buildStatus = 1
         let failed = try #require(await session.tick())
         #expect(!failed.ok)
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == nil)
         #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
     }
@@ -1059,11 +1321,11 @@ struct WatchSessionTests {
     func aSwapBeforeThePreviousGenerationShowedIsNotMeasured() async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
-        defer { session.stop() }
+        defer { session.stopBlocking() }
 
         await session.start()
         ready.waitForLast()
-        session.generationPromoted()
+        await session.generationPromoted()
         // 2 世代目を起こし、**乗り換わらないうちに** 3 世代目へ差し替える
         await session.tick()
         ready.waitForLast()
@@ -1072,7 +1334,7 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(unshown.isRunning, "前の世代が生きている形を作れていない")
 
-        session.generationPromoted()
+        await session.generationPromoted()
         #expect(session.lastReport?.timings.firstFrameMs == nil, "どちらの世代の合図か分からないのに測った")
     }
 
@@ -1253,24 +1515,26 @@ struct SourceStampTests {
             ["Package.swift", "Sources/app/main.swift", "Sources/app/assets/v.txt",
              "Sources/app/assets/big.bin"], in: sketch)
 
-        var reads: [String] = []
+        // **読み手は main actor の外で呼ばれうる** (#2518) ので、数える先も錠で守る
+        let log = ReadLog()
         let reader = SourceStamp.Reader(summarize: { url in
-            reads.append(url.lastPathComponent)
+            log.names.withLock { $0.append(url.lastPathComponent) }
             return SourceStamp.Reader.digest(of: url)
         })
+        var reads: [String] { log.names.withLock { $0 } }
 
         let first = reader.current(for: sketch)
         #expect(
             Set(reads) == ["Package.swift", "main.swift", "v.txt", "big.bin"],
             "初回に読むべきものを読んでいない: \(reads)")
 
-        reads.removeAll()
+        log.names.withLock { $0.removeAll() }
         #expect(reader.current(for: sketch) == first)
         #expect(reads.isEmpty, "属性の変わらないファイルを読み直した: \(reads)")
 
         // 同じ大きさで書き換える。読み直すのはその 1 つだけ
         try write("two", to: "Sources/app/assets/v.txt", in: sketch)
-        reads.removeAll()
+        log.names.withLock { $0.removeAll() }
         let second = reader.current(for: sketch)
         #expect(reads == ["v.txt"], "書き換えた 1 つ以外も読み直した: \(reads)")
         #expect(second != first)
@@ -1311,6 +1575,11 @@ struct SourceStampTests {
         let second = reader.current(for: sketch)
         #expect(second != first, "属性の揃った書き換えを、控えのせいで取りこぼした")
         #expect(second == SourceStamp.current(for: sketch))
+    }
+
+    /// 要約を取った名前の帳面。
+    private nonisolated final class ReadLog: Sendable {
+        let names = Mutex<[String]>([])
     }
 
     /// 大きな資材を丸ごと記憶へ載せないために、要約は少しずつ読む。**少しずつ読んでも、
@@ -1392,7 +1661,7 @@ struct FrameRateHandoffTests {
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
 
         let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
-        let child = try #require(hooks.launch(executable, directory, nil, nil))
+        let child = try hooks.launch(executable, directory, nil, nil)
         child.waitUntilExit()
         #expect(try String(contentsOf: seen, encoding: .utf8) == WatchSession.viewportOwnerName)
         #expect(WatchSession.viewportOwnerName.hasSuffix(" watch"))

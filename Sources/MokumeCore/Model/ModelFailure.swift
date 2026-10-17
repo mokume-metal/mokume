@@ -17,10 +17,23 @@ public enum ModelFailure: Error, Equatable, Sendable {
     /// その名前の資材が見つからない。
     case notFound(path: String, searched: [String])
     /// 見つかったが、その形式として読めない。OBJ なら文字 (UTF-8) として読めない、STL なら
-    /// 文字の STL としてもバイナリの STL としても読めない (壊れている・途中で切れている・空)。
+    /// 文字の STL としてもバイナリの STL としても読めない (壊れている・途中で切れた文字の STL・空)。
+    /// 途中で切れたバイナリの STL は投げず、揃っている面だけを読む (揃った面が無ければ空のモデル)。
+    /// 見出しが `solid` で始まり `facet normal` を含むバイナリの STL は、一時の置き場に写しを書けないときも、
+    /// 壊れていなくてもこの場合になる (``SketchPart/loadModel(_:normalize:)``)。
     case unreadable(path: String)
     /// 対応していない形式。説明に、読める形式の一覧が載る。
     case unsupported(path: String, extensionName: String)
+    /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// (`"loadModel(_:normalize:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    ///
+    /// 面を取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで起こした
+    /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
+    /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした `Task` から
+    /// 同期の口を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)
+    /// と同じ事情)。
+    case notRunning(call: String)
 }
 
 extension ModelFailure: CustomStringConvertible {
@@ -57,6 +70,8 @@ extension ModelFailure: CustomStringConvertible {
                 The format of "\(path)" (.\(extensionName)) is not supported. \
                 Readable formats: \(readable)
                 """
+        case .notRunning(let call):
+            return OutsideRun.notRunningNotice(call)
         }
     }
 }

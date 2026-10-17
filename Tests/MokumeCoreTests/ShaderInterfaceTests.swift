@@ -377,6 +377,7 @@ struct ShaderInterfaceTests {
         [
             ("matrix", \.matrix), ("eye", \.eye), ("right", \.right), ("down", \.down),
             ("forward", \.forward), ("parameters", \.parameters), ("color", \.color), ("uv", \.uv),
+            ("shapeScale", \.shapeScale),
         ])
 
     static let flatFrame = layout(

@@ -119,7 +119,7 @@ struct EmissionCadence {
 
 /// たくさんの粒。
 ///
-/// 使い方は ``Sketch/makeParticles(count:)`` にある。
+/// 使い方は ``SketchPart/makeParticles(count:)`` にある。
 ///
 /// ## 置き場はすべて数の並び
 ///
@@ -693,9 +693,21 @@ public final class Particles {
 
     /// 進めの計算 1 回ぶんを GPU へ投入した。`amount` はその回の寿命を減らす量
     /// (``lifeStep(of:)``)。**面が、計算を投入した時点で呼ぶ** (``consumed``)。
-    func noteSubmittedAdvance(_ amount: Double) {
+    ///
+    /// **投入 `submission` の結末が届くまで、その回の量を覚える** ([#2199])。打ち切られたら GPU の寿命は
+    /// 減っていないので、累計から戻す (``submissionSettled(_:dropped:)``)。戻さないと、累計が GPU の
+    /// 寿命の先へ行き、生きている粒の上書きを注意しなくなる。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteSubmittedAdvance(_ amount: Double, by submission: UInt64) {
         consumed += amount
+        advancesInFlight.append((submission, amount))
     }
+
+    /// 投入した進めのうち、結末がまだ届いていないもの ([#2199])。置き場は持ち回る。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private var advancesInFlight: [(submission: UInt64, amount: Double)] = []
 
     /// フレーム番号から導く時計で、寿命 `span` 秒の粒が描かれる枚数 ⌊`span`·fps⌋ ([#1710])。
     ///
@@ -931,5 +943,26 @@ public final class Particles {
             .badWeakeningDistance,
             "attract / repel: weakeningBeyond takes a distance larger than 0 (\(distance) was passed). "
                 + "The pull was applied at full strength at every distance instead")
+    }
+}
+
+// MARK: - 打ち切られた進め (#2199)
+
+extension Particles: SettlementObserver {
+    /// 進めを投入した投入の結末が届いた。打ち切られていたら、その回の量を寿命の累計 (``consumed``) から
+    /// 戻す ([#2199])。枠の締切 (``deadline``) は投入の時点の累計で決めたままなので、打ち切りから結末が
+    /// 届くまでに置いた粒は、その分だけ長く生きているものとして扱う (上書きの注意が多めに出る側)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        var index = 0
+        while index < advancesInFlight.count {
+            guard advancesInFlight[index].submission == submission else {
+                index += 1
+                continue
+            }
+            if dropped { consumed -= advancesInFlight[index].amount }
+            advancesInFlight.remove(at: index)
+        }
     }
 }

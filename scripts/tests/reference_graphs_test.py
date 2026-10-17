@@ -43,5 +43,42 @@ class PlacedNameTest(unittest.TestCase):
         )
 
 
+class PlaceEncodingTest(unittest.TestCase):
+    """書き直したグラフが、説明文の文字を逸脱しないこと (#2535)。
+
+    絵文字のような BMP の外の文字を `\\ud83d\\udc4d` のサロゲート対にして渡すと、docc が
+    何も言わずに落ちる。`json.dumps` の既定のままだと必ずそうなる。
+    """
+
+    def test_BMPの外の文字は逸脱せず素のUTF8で書く(self):
+        import json
+        import tempfile
+
+        graph = {
+            "module": {"name": "MokumeCore"},
+            "symbols": [
+                {
+                    "identifier": {"precise": "s:test"},
+                    "pathComponents": ["Sketch", "text"],
+                    "docComment": {"lines": [{"text": "肌色の `👍🏽` と日本語"}]},
+                }
+            ],
+            "relationships": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "MokumeCore.symbols.json"
+            placed = Path(directory) / "placed.symbols.json"
+            source.write_text(json.dumps(graph, ensure_ascii=False), encoding="utf-8")
+            graphs.place(source, "mokume", INSIDE, set(), placed)
+            written = placed.read_text(encoding="utf-8")
+        self.assertNotIn("\\ud83d", written.lower())
+        self.assertIn("👍🏽", written)
+        # 読み直しても同じ文字列に戻る (逸脱が無くても中身は変わらない)
+        self.assertEqual(
+            json.loads(written)["symbols"][0]["docComment"]["lines"][0]["text"],
+            "肌色の `👍🏽` と日本語",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -716,6 +716,126 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 打ち切られた差し出し (#2735)
+
+    /// **差し出しの投入を GPU が打ち切ったら、枚数が進むのを待たずに同じ枚を出し直す。** 台は投入の
+    /// 直後に「出した」と記すので、記しを戻さないと、書き手が書くのをやめたとき (子の終了・異常終了・
+    /// 詰まり) 窓は打ち切られる前の絵のままになる
+    /// ([#2735](https://github.com/mokume-metal/mokume/issues/2735))。
+    ///
+    /// 打ち切りは GPU を止めずに作る (`dropsNextSubmissionForTesting` は結末の記録だけを打ち切りに
+    /// する)。見るのは差し出した回数である。打ち切りの無い側では、結末が届いた後も差し出しを
+    /// 足さない (ADR-0023 決定 5 — 毎リフレッシュの経路に乗る照会が、普段の差し出しを増やさない)。
+    @Test(
+        "差し出しの投入が打ち切られたら、枚数が進まなくても結末の後のリフレッシュで同じ枚を出し直す。無ければ出し直さない",
+        arguments: [true, false])
+    func aDroppedHandOverIsPresentedAgain(dropped: Bool) throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("redeliver"))
+            stage.open()
+            defer { stage.close() }
+            stage.displayLinkFired()
+            try #require(stage.presentations == 1, "最初の 1 枚を差し出していない (これでは何も測れない)")
+
+            // 書き手が 1 枚進めて書くのをやめる。その 1 枚の差し出しが打ち切られる
+            try draw(surface, frame: 2, gpu: gpu)
+            if dropped { gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim }
+            stage.displayLinkFired()
+            try #require(stage.presentations == 2, "2 枚目を差し出していない (これでは何も測れない)")
+
+            // 結末が届いた後のリフレッシュ。枚数は進んでいない
+            try gpu.settle()
+            awaitOutcomes(gpu)
+            stage.displayLinkFired()
+            #expect(
+                stage.presentations == (dropped ? 3 : 2),
+                "結末の後のリフレッシュで差し出した回数が違う (通算 \(stage.presentations))")
+
+            // 出し直した後も、打ち切りの無かった側も、枚数が進まなければ差し出さない
+            try gpu.settle()
+            awaitOutcomes(gpu)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(
+                stage.presentations == (dropped ? 3 : 2),
+                "枚数が進まないのに差し出し続けた (通算 \(stage.presentations))")
+            #expect(gpu.droppedDeliveriesRevoked == (dropped ? 1 : 0))
+            #expect(gpu.pendingRevocationCount == 0, "結末の届いた預けが刈られていない")
+        }
+    }
+
+    /// **後の差し出しが記し直していれば、前の差し出しの打ち切りでは出し直さない。** 後の絵が既に
+    /// 出ているので、出し直すと同じ絵の差し出しを 1 回足すだけになる。
+    @Test("打ち切られた差し出しの結末が届く前に新しい枚を出していれば、出し直さない")
+    func aDropOvertakenByANewerHandOverIsNotPresentedAgain() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("overtaken"))
+            stage.open()
+            defer { stage.close() }
+            stage.displayLinkFired()
+
+            try draw(surface, frame: 2, gpu: gpu)
+            gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
+            stage.displayLinkFired()
+            // 結末を照らす前に、書き手が次の 1 枚を出した。**照会を止めて**その順を作る — 止めないと、
+            // 2 枚目の結末が 3 枚目を差し出すリフレッシュの頭で先に照らされ、順が入れ替わらない
+            try draw(surface, frame: 3, gpu: gpu)
+            gpu.holdRevocations()
+            stage.displayLinkFired()
+            gpu.releaseRevocations()
+            try #require(stage.presentations == 3, "3 枚を差し出していない (これでは何も測れない)")
+
+            try gpu.settle()
+            awaitOutcomes(gpu)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(
+                stage.presentations == 3,
+                "後の差し出しが記し直した後に、前の打ち切りで出し直した (通算 \(stage.presentations))")
+            #expect(gpu.droppedDeliveriesRevoked == 1, "打ち切りの結末を照らしていない — 前提が崩れている")
+        }
+    }
+
+    /// **結末を失った差し出しも出し直す** ([#2735] の反証)。記帳を取り消す口は、確かめられない結末を
+    /// 正常の側へ倒す (#2199) が、台は同じ絵をもう一度出すだけなので、届けられなかった側へ倒す。
+    ///
+    /// 失った結末は `losesNextOutcomeForTesting` で作り、投げる読む口と同じ待ち (`droppedWork`) が
+    /// 期限で「結末を失った」と記してから照らす。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    @Test("差し出しの投入の結末を失ったら、結末の後のリフレッシュで同じ枚を出し直す")
+    func aHandOverWhoseOutcomeWasLostIsPresentedAgain() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            gpu.outcomeWaitLimit = .milliseconds(200)
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("lost"))
+            stage.open()
+            defer { stage.close() }
+            stage.displayLinkFired()
+
+            try draw(surface, frame: 2, gpu: gpu)
+            gpu.losesNextOutcomeForTesting = true
+            stage.displayLinkFired()
+            try #require(stage.presentations == 2, "2 枚目を差し出していない (これでは何も測れない)")
+
+            // 期限まで待って、届かなかった結末を「失った」と記す
+            try gpu.settle()
+            awaitOutcomes(gpu)
+            stage.displayLinkFired()
+            #expect(stage.presentations == 3, "結末を失った差し出しを出し直していない (通算 \(stage.presentations))")
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(stage.presentations == 3, "出し直した後も差し出し続けた (通算 \(stage.presentations))")
+        }
+    }
+
+    /// 積んである投入の結末がすべて届くまで待つ (`DroppedWorkRedeliveryTests` と同じ)。
+    private func awaitOutcomes(_ gpu: RenderDevice) {
+        _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+    }
+
     /// 面を 1 つ作り、目録を置いて、`drawing` 枚だけ焼く。
     ///
     /// **同じ区画へ 2 つ作ると、目録は後から置いたほうで上書きされる** — それが子の
@@ -749,6 +869,8 @@ struct SharedFrameStageTests {
         try shared.write(
             source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame),
             pointerLock: pointerLock)
+        // 名乗りは焼きの結末を見てからなので、結末が届くのを待ってから名乗らせる (#2735)
+        awaitOutcomes(gpu)
         try shared.publishPending()
     }
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 保持した形。
-extension Sketch {
+extension SketchPart {
     /// 形を組み立てて保持する。**毎フレーム組み立て直さずに済む。**
     ///
     /// 組み立てるのは `setup()` で 1 度だけ。`draw()` では、保持した形を ``shape(_:_:_:)`` で
@@ -120,7 +120,7 @@ extension Sketch {
     /// 列で引き、抜けた後の列は最初に書く直前の状態から続く。** 種を書く前に中で ``random()`` を引いた
     /// 分と、種を書かずに引いた分は、外で引いたのと同じく 1 本の列を進める。描き場所 (``createGraphics(_:_:)``) の
     /// `createShape { }` でも、``Canvas`` を直に作った面 (``Canvas/init(target:gpu:)``) とそこから作った
-    /// 描き場所の `createShape { }` でも、`setup()` と ``draw()`` のどちらで組み立てても同じである。
+    /// 描き場所の `createShape { }` でも、`setup()` と ``Sketch/draw()`` のどちらで組み立てても同じである。
     /// スケッチの口で書いた揺らぎの種と細かさも、どの面で組み立てても同じく戻る。
     ///
     /// ```swift
@@ -223,14 +223,41 @@ extension Sketch {
     ///
     /// ``Shape/group(_:)`` と `+` は形を**1 本の頂点の並びへ畳む**。子の一覧を持って
     /// 1 つずつ描く作りではないので、「保持にしたのに速くならない」が起きない。
+    ///
+    /// ## 面を取れない所で呼ぶと空の形になる
+    ///
+    /// 形を記録する面が要るので、`setup()` か ``Sketch/draw()`` の中で呼ぶ。その外
+    /// (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、落ちずに空の形 (``Shape/empty``) を返し、
+    /// 1 度だけ警告する。中身は呼ばれ、中の語彙も何もせずに警告する
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     // shot: 1 snippet=2caf9b37
     // shot: 2 snippet=77b00113
-    public func createShape(_ body: () -> Void) -> Shape { canvas.createShape(body) }
+    public func createShape(_ body: () -> Void) -> Shape {
+        // 走っていなければ、形を記録する面が無い。投げない口なので止めずに空の形を返し、1 度だけ
+        // 警告する (#2683・#2265 の決定)。中身は呼ぶ — 中の語彙も同じ控えへ言い、何を呼んでいたかが
+        // 警告に残る
+        guard let canvas = Self.liveCanvas(.make(returning: "an empty shape")) else {
+            body()
+            return .empty
+        }
+        return canvas.createShape(body)
+    }
 
     /// 保持した形を、**置き場所ぶんだけまとめて置く**。
     ///
-    /// 同じ形をたくさん置くときは、これがいちばん速い。形の頂点は 1 度しか置かれず、
-    /// 置き場所の数だけ描き足される — 1 万個置いても**描く回数は 1 回**になる。
+    /// 同じ形をたくさん置くときは、これがいちばん速い。渡した置き場所は 1 つの列に並べて描き足すので、
+    /// 1 万個置いても**描く回数は 1 回**になる。
+    ///
+    /// **描く回数が 1 回なのは、下の `box(6)` のように ``Shape/drawCallCount`` が 1 の形である。**
+    /// 立体だけでできた形も、``Shape/drawCallCount`` の回数で済む。三角形で組む図形 (`triangle`・
+    /// `beginShape()` など) と距離関数で描く図形 (`rect`・`circle`・`line` など) が混ざった形や、途中で
+    /// 混ぜ方・貼る絵・断片が変わる形のように、``Shape/drawCallCount`` が 2 以上で立体以外を含む形は、
+    /// 置き場所ごとにその回数ずつ描く — 1 万か所に置けば 1 万倍になり、1 つずつ置いたときと同じ回数で
+    /// ある。重なる置き場所の前後を、1 つずつ置いたときと同じ置き場所の順に保つためである。
+    ///
+    /// そうした形に立体が混ざっていると、立体の部分も置き場所ごとに置き直す (1 つずつ置いたときと同じ)。
+    /// 立体の頂点を置き場所の数だけ写し直し、半透明の所を持つ立体の裏 → 表の描き分けも置き場所ごとに
+    /// なる。立体だけの形なら、頂点は列ごとに 1 度だけ写して置き場所を並べる。
     ///
     /// ```swift
     /// let grain = createShape { box(6) }
@@ -246,6 +273,13 @@ extension Sketch {
     ///
     /// **1 つずつ置いたときと同じ絵になる。** `push()` / `translate()` / `pop()` の
     /// 繰り返しで書いても、まとめて渡しても、経路は 1 本しかない。
+    ///
+    /// **例外が 1 つある。** 立体だけでできていて ``Shape/drawCallCount`` が 2 以上の形 (途中で混ぜ方や
+    /// 貼る絵が変わる立体の形) は、区間ごとに置き場所を一巡して描く。重なる置き場所の、半透明の所
+    /// (透ける塗り・``Placement/fill`` の透ける色・`.blend` 以外の混ぜ方・透ける絵・断片) と同じ奥行きで
+    /// 重なる所では、重なりが区間の順になり、1 つずつ置いた絵と違うことがある
+    /// ([#2495](https://github.com/mokume-metal/mokume/issues/2495))。不透明で奥行きの違う所は、奥行きで
+    /// 前後が決まるので同じ絵になる。
     ///
     /// ``Placement/fill`` を渡すと、その置き場所の色に**掛かる** (渡さなければ何も
     /// 掛からない)。
@@ -309,6 +343,7 @@ extension Sketch {
     /// }
     // shot: 1 snippet=276142f3
     public func shape(_ shape: Shape, at placements: [Placement]) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.shape(shape, at: placements)
     }
 
@@ -365,6 +400,7 @@ extension Sketch {
     /// 置き直すので、置く数だけ描く回数が増える。
     // shot: 1 snippet=73a8868f
     public func shape(_ shape: Shape, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.shape(shape, x, y)
     }

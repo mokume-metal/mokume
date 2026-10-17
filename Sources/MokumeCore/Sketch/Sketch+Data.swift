@@ -13,7 +13,7 @@ import Foundation
 // ファイルだけを読む — URL から読む作例がまだ無い (#2070)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     // MARK: - 文字列
 
@@ -48,6 +48,7 @@ extension Sketch {
     ///   読めないときに ``DataFailure/unreadable(path:)``。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadStrings(_ path: String) throws(DataFailure) -> [String] {
+        Self.noticeBlockingLoad("loadStrings(_:)", instead: "requestStrings(_:)")
         let url = try dataURL(path)
         return TextFile.lines(of: try TextFile.read(url, path: path))
     }
@@ -69,7 +70,7 @@ extension Sketch {
     /// ```
     ///
     /// 読み方と失敗は ``loadStrings(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
-    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``draw()`` は
+    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 文字列が無いまま呼ばれる。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestStrings(_ path: String) async throws(DataFailure) -> [String] {
@@ -126,6 +127,7 @@ extension Sketch {
     ///   (``DataFailure/malformed(path:line:reason:)``) とき。
     // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadTable(_ path: String, header: Bool = false) throws(DataFailure) -> Table {
+        Self.noticeBlockingLoad("loadTable(_:header:)", instead: "requestTable(_:header:)")
         let url = try dataURL(path)
         return Table(try TableFile.parse(try TextFile.read(url, path: path), header: header, path: path))
     }
@@ -252,7 +254,8 @@ extension Sketch {
     /// - Throws: 上のどれか (``DataFailure``)。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadJSONObject(_ path: String) throws(DataFailure) -> JSONObject {
-        JSONObject(try JSONFile.parseObject(try readText(path), path: path))
+        Self.noticeBlockingLoad("loadJSONObject(_:)", instead: "requestJSONObject(_:)")
+        return JSONObject(try JSONFile.parseObject(try readText(path), path: path))
     }
 
     /// JSON のファイルか URL を読み、オブジェクトにする。**読んでいる間、他の仕事を止めない。**
@@ -285,7 +288,7 @@ extension Sketch {
     /// 灰色で、届かないときは画面の隅に理由 (``DataFailure`` の 1 文) を出す。
     ///
     /// 読み方と失敗は ``loadJSONObject(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
-    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``draw()`` は
+    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 値が無いまま呼ばれる。
     // shot: 撮れない 読んだ値を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestJSONObject(_ path: String) async throws(DataFailure) -> JSONObject {
@@ -341,7 +344,8 @@ extension Sketch {
     /// - Throws: ``DataFailure``。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadXML(_ path: String) throws(DataFailure) -> XML {
-        XML(try XMLFile.parse(try readText(path), path: path))
+        Self.noticeBlockingLoad("loadXML(_:)", instead: "requestXML(_:)")
+        return XML(try XMLFile.parse(try readText(path), path: path))
     }
 
     /// XML のファイルか URL を読み、根の要素にする。**読んでいる間、他の仕事を止めない。**

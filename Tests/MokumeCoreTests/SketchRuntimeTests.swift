@@ -33,16 +33,55 @@ struct FrameTimingTests {
         #expect(timing.deltaTime == Float(1.0 / 60))
     }
 
-    @Test("実時間の時計は、実際に流れた時間を返す")
+    @Test("実時間の時計は、最初の枚から実際に流れた時間を返す")
     func wallClockReportsElapsedTime() {
         let clock = ManualClock(100)
         let timing = FrameTiming(clock: .wallClock, now: clock.provider)
+        clock.now = 100
+        timing.advance()
         // 上限 (目標フレーム間隔の 10 倍) に当たらない範囲で見る。当たったときの
         // 振る舞いは「止めていた時間は上限で頭打ちになる」が別に固定している
         clock.now = 100.1
         timing.advance()
         #expect(abs(timing.time - 0.1) < 1e-5)
         #expect(abs(timing.deltaTime - 0.1) < 1e-5)
+    }
+
+    /// **最初の枚は、時計によらず `time == 0`・経過は目標の 1 フレームぶん** (`Sketch.time` の
+    /// 説明・[#2413](https://github.com/mokume-metal/mokume/issues/2413))。時計を作ってから
+    /// 最初の枚までの間 (アプリの起動・窓・`setup()`) は乗らない。
+    @Test("実時間の時計でも、時計を作ってから最初の枚までの長さは time にも経過にも乗らない", arguments: [0.1, 2.0, 600.0])
+    func wallClockStartsAtTheFirstFrame(gap: Double) {
+        let clock = ManualClock(100)
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: clock.provider)
+        clock.now = 100 + gap
+        timing.advance()
+        #expect(timing.time == 0)
+        #expect(timing.deltaTime == Float(1.0 / 60))
+
+        // 2 枚目からは、前の枚からの実際の経過 (上限に当たらない幅)
+        clock.now = 100 + gap + 0.02
+        timing.advance()
+        #expect(abs(Double(timing.time) - 0.02) < 1e-5)
+        #expect(abs(timing.deltaTime - 0.02) < 1e-5)
+    }
+
+    /// 時刻を指定した観測が最初の枚に当たっても、作者の時計はその枚を起点に進む
+    /// ([#2328](https://github.com/mokume-metal/mokume/issues/2328) の帳簿)。2 枚目は
+    /// 指定秒や起動からの経過ではなく、最初の枚からの実経過になる。
+    @Test("時刻を指定した観測が最初の枚に当たっても、2 枚目は最初の枚からの実経過で始まる")
+    func anObservedFirstFrameStillStartsTheAuthorsClock() {
+        let clock = ManualClock(100)
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: clock.provider)
+        clock.now = 102
+        timing.advance(at: 5)
+        #expect(timing.time == 5)
+        #expect(timing.deltaTime == 0)
+
+        clock.now = 102 + 1.0 / 60
+        timing.advance()
+        #expect(abs(Double(timing.time) - 1.0 / 60) < 1e-5)
+        #expect(abs(Double(timing.deltaTime) - 1.0 / 60) < 1e-5)
     }
 
     /// **寄せ直せない止まり方がある。** ディスプレイのスリープや駆動源の停止は
@@ -54,7 +93,6 @@ struct FrameTimingTests {
         let clock = ManualClock(0)
         let cap = FrameTiming.maximumDeltaTime(frameRate: 60)
         let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: clock.provider)
-        clock.now = 0.016
         timing.advance()
         // 10 秒止めてから再開した、を寄せ直さずに再現する
         clock.now = 10.016
@@ -73,11 +111,10 @@ struct FrameTimingTests {
     func wallClockCatchesUpAfterAnyStall(gap: Double) {
         let clock = ManualClock(0)
         let timing = FrameTiming(clock: .wallClock, now: clock.provider)
-        clock.now = 0.016
         timing.advance()
-        clock.now = 0.016 + gap
+        clock.now = gap
         timing.advance()
-        #expect(abs(Double(timing.time) - (0.016 + gap)) < 1e-2)
+        #expect(abs(Double(timing.time) - gap) < 1e-2)
     }
 
     @Test("寄せ直せば、再開後の最初の経過は 1 フレームぶんに収まる")
@@ -99,7 +136,6 @@ struct FrameTimingTests {
     func stepAfterStopReportsOneTargetFrame() {
         let clock = ManualClock(0)
         let timing = FrameTiming(clock: .wallClock, frameRate: 30, now: clock.provider)
-        clock.now = 0.016
         timing.advance()
 
         clock.now = 7
@@ -131,6 +167,7 @@ struct FrameTimingTests {
     func timeGoingBackwardsDoesNotProduceNegativeDelta() {
         let clock = ManualClock(100)
         let timing = FrameTiming(clock: .wallClock, now: clock.provider)
+        timing.advance()
         clock.now = 90
         timing.advance()
         #expect(timing.deltaTime == 0)
@@ -214,6 +251,78 @@ struct SketchRuntimeTests {
         try runtime.advance()
         #expect(sketch.drawCalls == 2)
         #expect(runtime.isRunning)
+    }
+
+    /// `Sketch.time` の説明「最初のフレームは 0」は時計によらない
+    /// ([#2413](https://github.com/mokume-metal/mokume/issues/2413))。窓の実時間の時計では、
+    /// ランタイムを作ってから最初の枚までにアプリの起動・窓の作成・`setup()` が挟まる。
+    @Test("実時間の時計でも、setup() にかかった時間は最初の枚の time にも deltaTime にも乗らない")
+    func setupTimeIsNotCountedOnTheWallClock() throws {
+        /// `setup()` で時計を 2 秒進め (重い準備の代わり)、描いた枚の時刻と経過を控える。
+        final class SlowSetup: Sketch {
+            var settings = SketchSettings(width: 8, height: 8, frameRate: 60)
+            var onSetup: () -> Void = {}
+            var seen: [(time: Float, delta: Float)] = []
+            init() {}
+            func setup() { onSetup() }
+            func draw() {
+                seen.append((time, deltaTime))
+                background(.linear(red: 0, green: 0, blue: 0))
+            }
+        }
+
+        let clock = FrameTimingTests.ManualClock(100)
+        let sketch = SlowSetup()
+        sketch.onSetup = { clock.now += 2 }
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: clock.provider)
+        try runtime.advance()
+        clock.now += 0.02
+        try runtime.advance()
+
+        try #require(sketch.seen.count == 2)
+        // 変更前は 2.0 と上限 (60 fps で 1/6 秒)
+        #expect(sketch.seen[0].time == 0)
+        #expect(sketch.seen[0].delta == Float(1.0 / 60))
+        // 2 枚目からは、前の枚からの実際の経過
+        #expect(abs(sketch.seen[1].time - 0.02) < 1e-5)
+        #expect(abs(sketch.seen[1].delta - 0.02) < 1e-5)
+    }
+
+    /// **いまの振る舞いを固定するだけ** (直さない)。最初の枚の起点は描き始め (`advance`) なので、
+    /// 最初のフレームの中で使った時間 — 最初の `draw()` の重い準備、`setup()` で置いて最初の
+    /// フレームへ持ち越した図形・画素を組む時間 — は、ほかのフレームと同じく 2 枚目の経過に乗る
+    /// (上限まで)。[#2413](https://github.com/mokume-metal/mokume/issues/2413) が寄せたのは
+    /// `setup()` の中で済む計算までである。
+    @Test("実時間の時計で、最初の draw() にかかった時間は 2 枚目の time と deltaTime に乗る (deltaTime は上限まで)")
+    func firstDrawTimeLandsOnTheSecondFrame() throws {
+        /// 最初の `draw()` で時計を 0.5 秒進め (重い準備の代わり)、描いた枚の時刻と経過を控える。
+        final class HeavyFirstDraw: Sketch {
+            var settings = SketchSettings(width: 8, height: 8, frameRate: 60)
+            var onFirstDraw: () -> Void = {}
+            var seen: [(time: Float, delta: Float)] = []
+            init() {}
+            func draw() {
+                seen.append((time, deltaTime))
+                if frameCount == 1 { onFirstDraw() }
+                background(.linear(red: 0, green: 0, blue: 0))
+            }
+        }
+
+        let clock = FrameTimingTests.ManualClock(100)
+        let sketch = HeavyFirstDraw()
+        sketch.onFirstDraw = { clock.now += 0.5 }
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: clock.provider)
+        try runtime.advance()
+        try runtime.advance()
+
+        try #require(sketch.seen.count == 2)
+        #expect(sketch.seen[0].time == 0)
+        #expect(sketch.seen[0].delta == Float(1.0 / 60))
+        // 2 枚目の時刻は最初の draw() の 0.5 秒ごと進み、経過は上限 (60 fps で 1/6 秒) で頭打ち
+        #expect(abs(sketch.seen[1].time - 0.5) < 1e-5)
+        #expect(sketch.seen[1].delta == Float(FrameTiming.maximumDeltaTime(frameRate: 60)))
     }
 
     @Test("止めて再開したとき、再開後の最初の経過は 1 フレームぶんに収まる")

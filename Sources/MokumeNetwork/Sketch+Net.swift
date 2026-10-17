@@ -7,7 +7,7 @@ import MokumeDiagnostics
 // TCP・UDP・WebSocket。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0041] の地図の「連携の口 (標準)」)。`plugins` には何も
-// 書かない — 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 書かない — 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // 名前 ([ADR-0020] 決定 1。2026-10-09 の段): 公開の型は方式を名乗る (`TCPServer`・
 // `WebSocketServer`・`UDPPort`)。TCP には Processing の `Server` (`write`・`clientCount`) という
@@ -54,14 +54,23 @@ extension Sketch {
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
     /// - Parameter port: 待つポート (1〜65535)。
-    /// - Throws: ポートの番号が 1〜65535 に入っていないとき。
+    /// - Throws: ポートの番号が 1〜65535 に入っていないとき。使える番号を `setup()`・`draw()`・入力の
+    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、ポートを開く前に
+    ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createTCPServer(_ port: Int) throws(NetworkFailure) -> TCPServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        let source = StreamSource(kind: .tcp, port: port, warn: { Diagnostics.warn($0) })
-        let server = TCPServer(
-            port: port, name: "tcp :\(port)", source: source, clients: source, owner: self)
+        try requireAttachable(NetworkFailure.self, calledAs: #function)
+        let server = tcpServer(port: port)
         attach(server)
         return server
+    }
+
+    /// ``createTCPServer(_:)`` が足すもの (番号は検めてある)。ポートは足したときに開く。走らせずに中身を
+    /// 確かめる検査も使う — 外で呼んだ作る口は投げて、何も返さないため (#2740)。
+    func tcpServer(port: Int) -> TCPServer {
+        let source = StreamSource(kind: .tcp, port: port, warn: { Diagnostics.warn($0) })
+        return TCPServer(
+            port: port, name: "tcp :\(port)", source: source, clients: source, owner: self)
     }
 
     /// WebSocket で繋いでくる相手 (ブラウザなど) を待つポートを開く。届いた 1 通ずつを
@@ -102,14 +111,22 @@ extension Sketch {
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
     /// - Parameter port: 待つポート (1〜65535)。
-    /// - Throws: ポートの番号が 1〜65535 に入っていないとき。
+    /// - Throws: ポートの番号が 1〜65535 に入っていないとき。使える番号を `setup()`・`draw()`・入力の
+    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、ポートを開く前に
+    ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createWebSocketServer(_ port: Int) throws(NetworkFailure) -> WebSocketServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        let source = StreamSource(kind: .webSocket, port: port, warn: { Diagnostics.warn($0) })
-        let server = WebSocketServer(
-            port: port, name: "websocket :\(port)", source: source, clients: source, owner: self)
+        try requireAttachable(NetworkFailure.self, calledAs: #function)
+        let server = webSocketServer(port: port)
         attach(server)
         return server
+    }
+
+    /// ``createWebSocketServer(_:)`` が足すもの (番号は検めてある)。``tcpServer(port:)`` と同じく、検査も使う。
+    func webSocketServer(port: Int) -> WebSocketServer {
+        let source = StreamSource(kind: .webSocket, port: port, warn: { Diagnostics.warn($0) })
+        return WebSocketServer(
+            port: port, name: "websocket :\(port)", source: source, clients: source, owner: self)
     }
 
     /// 記録した文字列の列を、TCP で繋いできた相手から届いたかのように流す。**ポートを開かない。**
@@ -138,6 +155,9 @@ extension Sketch {
     /// 繋いでくる相手は居ない (``TCPServer/clientCount`` は 0)。``TCPServer/write(_:)`` を呼んでも
     /// 何も出ない (1 度だけ知らせる)。
     ///
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
@@ -145,7 +165,7 @@ extension Sketch {
         let server = TCPServer(
             port: nil, name: "tcp (recorded)", source: RecordedSource(batches: messages),
             clients: nil, owner: self)
-        attach(server)
+        attach(server, calledAs: #function, returning: "a port that never receives anything")
         return server
     }
 
@@ -164,6 +184,9 @@ extension Sketch {
     /// 繋いでくる相手は居ない (``WebSocketServer/clientCount`` は 0)。``WebSocketServer/send(_:)`` を
     /// 呼んでも何も出ない (1 度だけ知らせる)。
     ///
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
@@ -171,7 +194,7 @@ extension Sketch {
         let server = WebSocketServer(
             port: nil, name: "websocket (recorded)", source: RecordedSource(batches: messages),
             clients: nil, owner: self)
-        attach(server)
+        attach(server, calledAs: #function, returning: "a port that never receives anything")
         return server
     }
 
@@ -202,25 +225,31 @@ extension Sketch {
     ///   macOS の受け口が黙って切るので、丸ごと捨てて数え、次のフレームで診断に出す (ちょうど
     ///   9216 バイトのものも捨てる)。``UDPPort/send(_:)`` も、UTF-8 で 9216 バイト以上の文字列は
     ///   送らず、知らせる
+    /// - 空の datagram (0 バイト) は空の文字列 `""` になる。ただし macOS の受け口は、空の datagram
+    ///   を受けるとその送り元の流れを閉じることがあり、そのとき空の直後 (1 ミリ秒ほどの間) に同じ
+    ///   送り元から届いたものは、数えず診断にも出さずに落ちる。`""` を送った直後に同じポートから
+    ///   送ったものも、相手が mokume の受け口なら落ちうる
     /// - **ポートを他のアプリが使っていても作れる。** ``TextPort/state`` が
     ///   ``SourceState/unavailable`` になり、空けば受け始める
     /// - 送り先を自分のポート (`("127.0.0.1", listen と同じ番号)`) にすれば、自分で送って自分で
     ///   受けられる。相手が居なくても動きを確かめられる
     /// - **送れないことは ``TextPort/state`` に出ない。** 送れないとき (宛先で誰も受けていない・
     ///   このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ
-    ///   診断に出す
+    ///   診断に出す。宛先に拒まれた後は、間 (既定 0.5 秒) を空けた次の送信まで拒まれずに終わって初めて
+    ///   「送れた」と読み、また診断に出せるように戻る
     ///
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
     /// - Parameters:
     ///   - port: 受けるポート (1〜65535)。
     ///   - destination: 送り先のホストとポート。省けば送らない。
-    /// - Throws: ポートの番号が 1〜65535 に入っていない・送り先のホストが空のとき。
+    /// - Throws: ポートの番号が 1〜65535 に入っていない・送り先のホストが空のとき。使える値を
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
+    ///   ポートを開く前に ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createUDP(
         listen port: Int, send destination: (host: String, port: Int)? = nil
     ) throws(NetworkFailure) -> UDPPort {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        var outbound: DatagramSender?
         if let destination {
             guard Endpoint.usablePorts.contains(destination.port) else {
                 throw .invalidPort(destination.port)
@@ -228,8 +257,10 @@ extension Sketch {
             guard Endpoint.isUsable(host: destination.host) else {
                 throw .invalidHost(destination.host)
             }
-            outbound = DatagramSender(
-                host: destination.host, port: destination.port, warn: { Diagnostics.warn($0) })
+        }
+        try requireAttachable(NetworkFailure.self, calledAs: #function)
+        let outbound = destination.map {
+            DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
         }
         let udp = UDPPort(
             port: port, name: "udp :\(port)",
@@ -263,6 +294,9 @@ extension Sketch {
     ///
     /// 送り先は持たない。``UDPPort/send(_:)`` を呼んでも何も出ない (1 度だけ知らせる)。
     ///
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
@@ -270,7 +304,7 @@ extension Sketch {
         let udp = UDPPort(
             port: nil, name: "udp (recorded)", source: RecordedSource(batches: messages),
             outbound: nil, owner: self)
-        attach(udp)
+        attach(udp, calledAs: #function, returning: "a port that never receives anything")
         return udp
     }
 }

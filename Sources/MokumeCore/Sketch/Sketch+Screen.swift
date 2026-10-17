@@ -6,7 +6,7 @@ import simd
 // 面の座標と空間の座標を行き来する。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-extension Sketch {
+extension SketchPart {
 
     // MARK: - 空間 → 画面
 
@@ -143,7 +143,7 @@ extension Sketch {
     // shot: 3 snippet=b4f7def8
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        return Self.drawingCanvas?.screenX(x, y) ?? 0
+        return Self.liveCanvas(.read(returning: "0"))?.screenX(x, y) ?? 0
     }
 
     /// 点が、いまの変換でどこへ移るか (縦)。
@@ -231,7 +231,7 @@ extension Sketch {
     // shot: 2 snippet=d464e610
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        return Self.drawingCanvas?.screenY(x, y) ?? 0
+        return Self.liveCanvas(.read(returning: "0"))?.screenY(x, y) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
@@ -285,7 +285,7 @@ extension Sketch {
     // shot: 1 snippet=25260204
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return Self.drawingCanvas?.screenX(x, y, z) ?? 0
+        return Self.liveCanvas(.read(returning: "0"))?.screenX(x, y, z) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (縦)。
@@ -335,7 +335,7 @@ extension Sketch {
     // shot: 1 snippet=45110c8e
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return Self.drawingCanvas?.screenY(x, y, z) ?? 0
+        return Self.liveCanvas(.read(returning: "0"))?.screenY(x, y, z) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの視点でどれだけ奥にあるか。
@@ -393,7 +393,7 @@ extension Sketch {
     // shot: 1 snippet=1263b738
     public func screenZ(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return Self.drawingCanvas?.screenZ(x, y, z) ?? 0
+        return Self.liveCanvas(.read(returning: "0"))?.screenZ(x, y, z) ?? 0
     }
 
     // MARK: - 画面 → 空間
@@ -495,16 +495,7 @@ extension Sketch {
     // shot: 2 snippet=7cd7de68
     public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> SIMD3<Float> {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
-        return Self.drawingCanvas?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
+        return Self.liveCanvas(.read(returning: "(0, 0, 0)"))?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
             ?? .zero
     }
-
-    /// いま描いている面。走っていなければ `nil`。
-    ///
-    /// 座標を読むのに ``canvas`` を通さないのは、あちらが**走っていなければ止める**
-    /// ためである。座標は読み取りなので決して落ちてはならず ([ADR-0020] 決定 5)、
-    /// 初期化の中や後片付けの後から呼ばれうる — 入力を読む道 (``mouseX``) が
-    /// 「走っていなければ空の状態」を返すのと同じ扱いにする。
-    @MainActor
-    private static var drawingCanvas: Canvas? { runningSketch?.canvas }
 }

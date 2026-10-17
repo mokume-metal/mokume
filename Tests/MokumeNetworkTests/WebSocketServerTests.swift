@@ -81,6 +81,22 @@ struct WebSocketServerTests {
         #expect(told.lines.isEmpty)
     }
 
+    @Test("空の文字列の send は、空の 1 通の text として届く")
+    func emptySendArrivesAsAnEmptyMessage() async throws {
+        let told = Told()
+        let (server, port) = try await listening(told: told)
+        defer { server.close() }
+        let peer = WebSocketClient(port: port)
+        defer { peer.close() }
+        #expect(await clients(server, reach: 1))
+
+        server.send("")
+        server.send("x")
+        #expect(await until { peer.received.count == 2 })
+        #expect(peer.received == ["", "x"])
+        #expect(told.lines.isEmpty)
+    }
+
     @Test("相手が切れたら clientCount が減り、相手が居ないときの send は 1 度だけ知らせる")
     func disconnectedClientsAreForgotten() async throws {
         let told = Told()
@@ -214,9 +230,18 @@ struct WebSocketServerTests {
     @Test("ポートの番号が 1〜65535 の外なら、作るときに投げる")
     func creationRefusesUnusablePorts() throws {
         let sketch = IdleSketch()
-        #expect(throws: NetworkFailure.invalidPort(0)) { try sketch.createWebSocketServer(0) }
-        #expect(throws: NetworkFailure.invalidPort(-1)) { try sketch.createWebSocketServer(-1) }
-        let edge = try sketch.createWebSocketServer(65535)
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: NetworkFailure.invalidPort(0)) { try sketch.createWebSocketServer(0) }
+            #expect(throws: NetworkFailure.invalidPort(-1)) { try sketch.createWebSocketServer(-1) }
+            // 両端は番号の検めを通る。走っていないスケッチなので、その後ポートを開く前に断る (#2740)
+            for port in [1, 65535] {
+                #expect(throws: NetworkFailure.notRunning(call: "createWebSocketServer(_:)")) {
+                    try sketch.createWebSocketServer(port)
+                }
+            }
+        }
+        // 足すもの (ポートは足したときに開くので、ここでは開かない)
+        let edge = sketch.webSocketServer(port: 65535)
         #expect(edge.port == 65535)
         #expect(edge.state == .unavailable)
         #expect(edge.report?.name == "websocket :65535")

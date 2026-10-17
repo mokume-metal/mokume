@@ -55,13 +55,41 @@ query=.
 prev=
 for arg in "$@"; do
   [ "$prev" = "-q" ] && query=$arg
+  [ "$prev" = "--jq" ] && query=$arg
   prev=$arg
 done
+# 窓から押し出しのあった Issue / PR のコメントを、新しい順にページで遡る (#2660 —
+# scripts/bot-hand.sh の recent_comments)。FAKE_GH_PAGES_<番号> に全コメント (古い順の配列) を
+# 置くと、本物と同じく last: size・before: cursor の 1 ページを返す (カーソルは添字の文字列)。
+# 無ければ引けなかったことにする。引いたページは FAKE_GH_PAGE_LOG へ残す
+if [ "$kind" = api ] && [ "${2:-}" = graphql ] && case "$*" in *issueOrPullRequest*) true ;; *) false ;; esac; then
+  number= size= cursor=
+  for arg in "$@"; do
+    case "$arg" in
+      number=*) number=${arg#number=} ;;
+      size=*) size=${arg#size=} ;;
+      cursor=*) cursor=${arg#cursor=} ;;
+    esac
+  done
+  eval "all=\\${FAKE_GH_PAGES_$number:-}"
+  [ -n "$all" ] || exit 1
+  [ -z "${FAKE_GH_PAGE_LOG:-}" ] || printf '%s %s\\n' "$number" "${cursor:-last}" >> "$FAKE_GH_PAGE_LOG"
+  printf '%s' "$all" | jq -c --argjson size "$size" --arg cursor "$cursor" '
+    length as $n | (if $cursor == "" then $n else ($cursor | tonumber) end) as $end
+    | ([$end - $size, 0] | max) as $start
+    | {data: {repository: {issueOrPullRequest: {state: "OPEN", comments: {
+        totalCount: $n, pageInfo: {hasPreviousPage: ($start > 0), startCursor: ($start | tostring)},
+        nodes: .[$start:$end]}}}}}'
+  exit 0
+fi
 # 二重着手の跡見 (#642・#1216) は GraphQL 1 回で、対象 Issue とその参照元のコメントを
 # JSON のまま引く。呼び手が jq を掛けるので絞り込まない。番号ごとに応答を変えられるよう、
 # FAKE_GH_GRAPHQL_<番号> があればそちらを、無ければ FAKE_GH_GRAPHQL を返す (どちらも無ければ
 # 引けなかったことにする)
 if [ "$kind" = api ] && [ "${2:-}" = graphql ]; then
+  # 跡見の途中でフックが timeout に殺されたことを演じる (#2660)。プロセスグループごと殺すので、
+  # 呼ぶ側は新しいセッションでフックを起こすこと
+  [ -z "${FAKE_GH_GRAPHQL_KILL:-}" ] || kill -KILL 0
   number=
   for arg in "$@"; do
     case "$arg" in number=*) number=${arg#number=} ;; esac
@@ -76,6 +104,12 @@ case "$*" in
   # PR には無い) は、両方が同じものを返す偽 gh では表現できない。
   # ${VAR-...} はコロン無し — 空文字を渡せば「そちらには無い」を明示できる
   *comments*)
+    # FAKE_GH_COMMENTS_JSON は view --json comments の応答の JSON。こちらは -q の式を
+    # 実物の jq で掛ける (式が作者を見るときの検査用 — #2660)
+    if [ -n "${FAKE_GH_COMMENTS_JSON:-}" ]; then
+      printf '%s' "$FAKE_GH_COMMENTS_JSON" | jq -r "$query"
+      exit 0
+    fi
     case "$kind" in
       pr)    printf '%s\\n' "${FAKE_GH_PR_COMMENTS-${FAKE_GH_COMMENTS:-}}" ;;
       issue) printf '%s\\n' "${FAKE_GH_ISSUE_COMMENTS-${FAKE_GH_COMMENTS:-}}" ;;
@@ -118,15 +152,28 @@ def plan_comment(rid, url, body="計画。"):
     return {"body": f"<!-- mokume-plan-record: {rid} -->\n{body}", "url": url}
 
 
-def issue_state(in_progress=False, plans=(), sources=()):
+def issue_state(in_progress=False, plans=(), sources=(), comments=None, total=None):
     """跡見 (#642・#1216) が引く GraphQL の応答を組む。
 
     plans は対象 Issue に載ったプランの (記録 ID, URL) の並び。sources は対象を参照して
-    いる Issue / PR の (番号, state, [plan_comment(...)]) の並び。
+    いる Issue / PR の (番号, state, [plan_comment(...)]) の並びで、4 つ目に全件数
+    (totalCount) を置ける。
+
+    comments を渡すと plans の代わりにそれを窓のコメントとし、total はその全件数
+    (totalCount — 窓から押し出しがあれば窓の件数より大きい。#2660)。省くと欄ごと返さない
+    (既存の検査の応答はこの形)。
 
     in_progress は「ラベルが在っても名乗らない」ことを見るために残してある
     (跡見はラベルを読まない — 付け主を判定できないため)。
     """
+
+    def connection(nodes, total):
+        out = {"nodes": list(nodes)}
+        if total is not None:
+            out["totalCount"] = total
+        return out
+
+    window = comments if comments is not None else [plan_comment(rid, url) for rid, url in plans]
     return json.dumps(
         {
             "data": {
@@ -135,19 +182,19 @@ def issue_state(in_progress=False, plans=(), sources=()):
                         "labels": {"nodes": [{"name": "status: in progress"}]}
                         if in_progress
                         else {"nodes": []},
-                        "comments": {
-                            "nodes": [plan_comment(rid, url) for rid, url in plans]
-                        },
+                        "comments": connection(window, total),
                         "timelineItems": {
                             "nodes": [
                                 {
                                     "source": {
                                         "number": number,
                                         "state": state,
-                                        "comments": {"nodes": list(comments)},
+                                        "comments": connection(
+                                            source_comments, rest[0] if rest else None
+                                        ),
                                     }
                                 }
-                                for number, state, comments in sources
+                                for number, state, source_comments, *rest in sources
                             ]
                         },
                     }
@@ -913,6 +960,28 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(len(self.records()), 1)
 
+    def test_guard_is_not_fooled_by_a_bot_comment_quoting_the_record_id(self):
+        """bot の追記の抜粋に記録 ID が混じっても、投稿済みと読まない (#2660)。
+
+        読めば記録を消し、プランは投稿されないまま催促も止まる。人の投稿は従来どおり数える
+        (gh の view は作者の型を返さないので、login だけで照らす — scripts/bot-hand.sh)
+        """
+        self.capture("計画。\n", FAKE_GH_PR="42")
+        marker = f"<!-- mokume-plan-record: {self.record_id()} -->"
+        bot = {"author": {"login": "github-actions"}, "body": f"```\nAssertionError: {marker}\n```"}
+        result = self.guard(
+            FAKE_GH_PR="42", FAKE_GH_COMMENTS_JSON=json.dumps({"comments": [bot]})
+        )
+        self.assertEqual(result.returncode, 2, "bot の抜粋で投稿済みと読んでいる")
+        self.assertEqual(len(self.records()), 1)
+
+        human = {"author": {"login": "someone"}, "body": marker + "\n計画。"}
+        result = self.guard(
+            FAKE_GH_PR="42", FAKE_GH_COMMENTS_JSON=json.dumps({"comments": [bot, human]})
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), [])
+
     def test_guard_clears_a_record_posted_to_a_merged_pull_request(self):
         self.capture("計画。\n", FAKE_GH_PR_JSON=MERGED_PR)
         result = self.guard(
@@ -1447,6 +1516,254 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
             ),
         )
         self.assertNotIn("二重着手", result.stderr)
+
+    # --- 窓から押し出されたプラン (#2660) ----------------------------------------
+    # 定期の検査・前検査の赤は、同じ題の open な Issue へ github-actions が追記する (#2658)。
+    # 追記が積もると、着手時のプランが comments(last: N) の窓の外へ押し出される。
+
+    BOT = {"__typename": "Bot", "login": "github-actions"}
+
+    @classmethod
+    def bot_comment(cls, i):
+        """github-actions の追記 (#2658)。GraphQL の comments.nodes と同じ形"""
+        return {
+            "body": f"定期の検査が赤い ({i} 回目)",
+            "url": f"https://example.invalid/bot/{i}",
+            "author": cls.BOT,
+        }
+
+    @staticmethod
+    def human_comment(i):
+        return {
+            "body": f"人の話 ({i})",
+            "url": f"https://example.invalid/human/{i}",
+            "author": {"__typename": "User", "login": "someone"},
+        }
+
+    def page_log(self):
+        return Path(self.workdir.name) / "page-calls"
+
+    def pages_called(self):
+        log = self.page_log()
+        return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+    def test_capture_finds_a_plan_pushed_out_by_bot_comments(self):
+        """完了条件 2 の例: プランの後に bot の追記が 120 件あっても、別のセッションのプランを名乗る。"""
+        plan = plan_comment(self.OTHER, "https://example.invalid/c/plan")
+        bots = [self.bot_comment(i) for i in range(120)]
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            # GraphQL の窓 (last: 100) は bot の追記だけで埋まり、プランは外にある
+            FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=121),
+            FAKE_GH_PAGES_123=json.dumps([plan] + bots),
+            FAKE_GH_PAGE_LOG=str(self.page_log()),
+        )
+        self.assertIn(
+            "#123 に別のセッションのプランが 1 件載っている (https://example.invalid/c/plan)",
+            result.stderr,
+        )
+        self.assertEqual(len(self.pages_called()), 2, "新しい順に 2 ページ遡っていない")
+        self.assertIn("着手を止めません", result.stderr)
+
+    def test_capture_counts_only_the_newest_hundred_human_comments(self):
+        """溢れても、数える範囲は溢れる前と同じ「新しい順に人の手 100 件」(#2660)。
+
+        全履歴を数えると、終わった過去のセッションのプランまで「別のセッションのプラン」に
+        入る (#642 の向きに反する)。添える URL は範囲の中の最新のプラン。
+        """
+        old = plan_comment(self.OTHER, "https://example.invalid/c/old")
+        newer = plan_comment("third999-1700000000", "https://example.invalid/c/newer")
+        newest = plan_comment(self.OTHER, "https://example.invalid/c/newest")
+        humans = [self.human_comment(i) for i in range(97)]
+        bots = [self.bot_comment(i) for i in range(120)]
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=221),
+            # 古い順: 範囲の外のプラン → 人の 97 件とプラン 2 件 (範囲は人の手 100 件) → bot の追記
+            FAKE_GH_PAGES_123=json.dumps(
+                [old, newer] + humans[:1] + [self.human_comment("x")] + humans[1:] + [newest] + bots
+            ),
+        )
+        self.assertIn(
+            "#123 に別のセッションのプランが 2 件載っている (https://example.invalid/c/newest)",
+            result.stderr,
+            "範囲の外の古いプランを数えたか、最新でないプランを指している",
+        )
+
+    def test_capture_stops_paging_at_the_limit_and_says_so(self):
+        """遡るのには上限がある (ページ数・秒数)。越えたら集まった範囲で判定して名乗る (#2660)。
+
+        capture のフックは 20 秒で殺される — 上限の無いページ送りは .meta を書いた後でも
+        投稿の指示を出せずに終わる
+        """
+        plan = plan_comment(self.OTHER, "https://example.invalid/c/plan")
+        bots = [self.bot_comment(i) for i in range(250)]
+        for name, env in (
+            ("ページ数", {"BOT_HAND_MAX_PAGES": "2"}),
+            ("跡見の締め切り", {"BOT_HAND_DEADLINE": "0"}),
+        ):
+            with self.subTest(name):
+                log = self.page_log()
+                log.unlink(missing_ok=True)
+                result = self.capture(
+                    "計画。\n",
+                    FAKE_GH_ISSUE="123",
+                    FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=251),
+                    FAKE_GH_PAGES_123=json.dumps([plan] + bots),
+                    FAKE_GH_PAGE_LOG=str(log),
+                    **env,
+                )
+                self.assertIn("#123 のコメントは上限まで遡って打ち切った", result.stderr)
+                self.assertNotIn("二重着手", result.stderr)
+                self.assertEqual(result.returncode, 2)  # 投稿の指示は出る
+                self.assertIn("scripts/comment.sh issue 123", result.stderr)
+                self.assertLessEqual(len(self.pages_called()), 2)
+
+    def test_capture_does_not_read_a_bot_comment_as_a_plan(self):
+        """bot の追記に目印の綴りが混じっても、プランと読まない (#2660 の反証 3)。
+
+        bot の追記は検査の出力の抜粋を載せるので、この検査自身の目印が混じりうる。
+        「bot の手か」は scripts/bot-hand.sh の 1 か所が答え、窓でも遡った先でも同じ定義が効く。
+        """
+        excerpt = (
+            "## 検査の出力\n\n```text\n"
+            "AssertionError: <!-- mokume-plan-record: someone-else-1700000000 -->\n```\n"
+        )
+        in_window = {
+            "body": excerpt,
+            "url": "https://example.invalid/bot/window",
+            "author": {"__typename": "Bot", "login": "github-actions"},
+        }
+        with self.subTest("窓 (GraphQL)"):
+            result = self.capture(
+                "計画。\n",
+                FAKE_GH_ISSUE="123",
+                FAKE_GH_GRAPHQL=issue_state(comments=[in_window], total=1),
+            )
+            self.assertNotIn("二重着手", result.stderr)
+        with self.subTest("遡った先 (recent_comments)"):
+            bots = [self.bot_comment(i) for i in range(120)]
+            pushed = dict(in_window, url="https://example.invalid/bot/pushed")
+            result = self.capture(
+                "計画。\n",
+                FAKE_GH_ISSUE="123",
+                FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=121),
+                FAKE_GH_PAGES_123=json.dumps([pushed] + bots),
+            )
+            self.assertNotIn("二重着手", result.stderr)
+        with self.subTest("人のプランは数える"):
+            result = self.capture(
+                "計画。\n",
+                FAKE_GH_ISSUE="123",
+                FAKE_GH_GRAPHQL=issue_state(
+                    comments=[
+                        in_window,
+                        dict(
+                            plan_comment(self.OTHER, "https://example.invalid/c/1"),
+                            author={"__typename": "User"},
+                        ),
+                    ],
+                    total=2,
+                ),
+            )
+            self.assertIn(
+                "#123 に別のセッションのプランが 1 件載っている (https://example.invalid/c/1)",
+                result.stderr,
+            )
+
+    def test_capture_keeps_its_targets_when_killed_while_looking_for_marks(self):
+        """跡見の途中で timeout に殺されても、指示した先は .meta に残る (#2660)。
+
+        跡見はページを遡ることがあり、フックの中で最も遅い区間になりうる。先に書いて
+        おかないと、guard が引き直す解決 (PR) だけになり、Issue への投稿を見落とす (#631)
+        """
+        payload = {
+            "tool_name": "ExitPlanMode",
+            "cwd": str(self.repo),
+            "session_id": "abcd1234-ef56-7890",
+            "tool_input": {"plan": "計画。\n" + RECHECK},
+        }
+        done = subprocess.run(
+            ["/bin/bash", str(SCRIPT), "capture"],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            cwd=str(self.repo),
+            env=self.env(FAKE_GH_ISSUE="123", FAKE_GH_GRAPHQL_KILL="1"),
+            timeout=30,
+            start_new_session=True,  # 偽 gh がグループごと殺す — 検査の走らせ手を巻き込まない
+        )
+        self.assertLess(done.returncode, 0, "跡見の途中で殺されていない")
+        metas = self.metas()
+        self.assertEqual(len(metas), 1)
+        self.assertIn("target=issue 123", metas[0].read_text(encoding="utf-8"))
+
+    def test_capture_does_not_point_at_its_own_plan_pushed_out(self):
+        """遡って拾っても、自分のセッションのプランは数えない。"""
+        own = plan_comment("abcd1234-1700000000", "https://example.invalid/c/own")
+        bots = [self.bot_comment(i) for i in range(120)]
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=121),
+            FAKE_GH_PAGES_123=json.dumps([own] + bots),
+        )
+        self.assertNotIn("二重着手", result.stderr)
+
+    def test_capture_finds_a_source_plan_pushed_out_by_bot_comments(self):
+        """参照元の窓 (last: 50) から押し出されたプランも、まとめ先を名乗っていれば名乗る。"""
+        plan = plan_comment(
+            self.OTHER, "https://example.invalid/c/912", "# #912 (+ #1082): 線の載り方\n\n### #1082\n"
+        )
+        bots = [self.bot_comment(i) for i in range(60)]
+        result = self.capture(
+            self.BUNDLE,
+            FAKE_GH_ISSUE="1",
+            FAKE_GH_GRAPHQL_913=issue_state(),
+            FAKE_GH_GRAPHQL_1082=issue_state(sources=[(912, "OPEN", bots[-50:], 61)]),
+            FAKE_GH_PAGES_912=json.dumps([plan] + bots),
+        )
+        self.assertIn(
+            "#1082 を名乗る別のセッションのプランが #912 に載っている "
+            "(https://example.invalid/c/912)",
+            result.stderr,
+        )
+
+    def test_capture_does_not_page_when_the_window_holds_everything(self):
+        """窓に収まっていれば遡らない (呼び出しも取得量も #642 のときと同じ)。
+
+        溢れていても、窓の中の人の手が 100 件あれば範囲は窓で尽きるので遡らない
+        """
+        plan = plan_comment(self.OTHER, "https://example.invalid/c/1")
+        humans = [self.human_comment(i) for i in range(99)]
+        for name, window, total in (
+            ("収まっている", [plan], 1),
+            ("溢れたが人の手が足りている", humans + [plan], 300),
+        ):
+            with self.subTest(name):
+                result = self.capture(
+                    "計画。\n",
+                    FAKE_GH_ISSUE="123",
+                    FAKE_GH_GRAPHQL=issue_state(comments=window, total=total),
+                    FAKE_GH_PAGES_123=json.dumps([plan] * total),
+                    FAKE_GH_PAGE_LOG=str(self.page_log()),
+                )
+                self.assertIn("別のセッションのプランが 1 件載っている", result.stderr)
+                self.assertEqual(self.pages_called(), [], "窓で足りるのに遡っている")
+
+    def test_capture_falls_back_to_the_window_when_paging_fails(self):
+        """遡れなければ、窓の分だけで判定する (従来どおり。黙って何も見なくはならない)。"""
+        result = self.capture(
+            "計画。\n",
+            FAKE_GH_ISSUE="123",
+            # 窓にもプランが 1 件ある。ページの応答は置かない = 引けない
+            FAKE_GH_GRAPHQL=issue_state(
+                comments=[plan_comment(self.OTHER, "https://example.invalid/c/1")], total=150
+            ),
+        )
+        self.assertIn("別のセッションのプランが 1 件載っている", result.stderr)
 
     def test_capture_records_the_target_it_pointed_at(self):
         """指示した先が記録に残ること。ここが空だと guard は引き直しだけに頼る。"""

@@ -56,6 +56,19 @@ enum DoctorCommand {
         var toolchain: String?
         /// 道具自身の版。**在処から導く** (#634)。
         var tool: String = ToolVersion.describe()
+        /// 道具立てを**聞かなかった**ときの、見ている場所。聞いたなら `nil`。
+        ///
+        /// **「聞いて読めなかった」(`toolchain == nil`) とは別に持つ。** 道具立ては見ている
+        /// 場所で起こす (`Toolchain`) ので、場所が無いと `swift` はそもそも起きない。それを
+        /// 「could not launch swift」と言うと、入っている `swift` を疑わせる
+        /// ([#2314](https://github.com/mokume-metal/mokume/issues/2314)・規律 3)。
+        var toolchainUnasked: URL? = nil
+        /// 道具立てを**聞いて答えなかった**ときの理由 (1 行)。答えたか、聞かなかったなら `nil`。
+        ///
+        /// **理由を捨てない** ([#2522](https://github.com/mokume-metal/mokume/issues/2522))。
+        /// 「聞いて読めなかった」の 1 文だけでは、`swift` が `PATH` に無い回も、入れない場所で
+        /// 起こせなかった回も、0 以外で終わった回も同じ顔になる (規律 3)。
+        var toolchainUnanswered: String? = nil
     }
 
     /// 手元の状態。
@@ -94,6 +107,11 @@ enum DoctorCommand {
         /// 黙らせうるが、2 つの版が別々の節に並ぶだけでは、人が見比べないと辿れなかった
         /// ([#1230](https://github.com/mokume-metal/mokume/issues/1230))。
         var tool: String? = nil
+        /// 見ている場所が在るか。**無い・ディレクトリでないことを名乗る** (#2314)。
+        ///
+        /// 「Package.swift が無い」だけでは、打ち間違えた場所と、まだ作っていない
+        /// スケッチの区別が付かない。
+        var presence: GivenPath.Presence = .directory
     }
 
     /// 共有のビルド置き場の姿。
@@ -152,6 +170,26 @@ enum DoctorCommand {
         var ok: Bool?
         /// いつ書かれたか。
         var at: Date
+        /// 差し替えたスケッチが立ち上がったか。**記録に無ければ (この欄を持たない古い書き手)
+        /// `nil`** — 作り直せたことだけで読む。
+        var launched: Bool?
+        /// 作り直しは通ったのに起こさなかった回の、理由の頭 1 行 (記録の `notStartedReason` の頭)。
+        /// **記録が理由を持たなければ `nil`** — 起こさなかった回でも、この欄ができる前の古い記録は
+        /// 理由を本文の頭に置いていないので、本文の最初の行を理由と読むと誤った断定になる。
+        var notStarted: String?
+        /// 作り直しの失敗ではないのに `ok: false` で書かれた記録か (見張りを終えたときの最後の記録)。
+        var interruption: BuildReport.Interruption?
+
+        init(
+            ok: Bool?, at: Date, launched: Bool? = nil, notStarted: String? = nil,
+            interruption: BuildReport.Interruption? = nil
+        ) {
+            self.ok = ok
+            self.at = at
+            self.launched = launched
+            self.notStarted = notStarted
+            self.interruption = interruption
+        }
     }
 
     static func run(_ arguments: [String]) {
@@ -168,10 +206,12 @@ enum DoctorCommand {
     ///   - environment: 環境。**検査から渡せる形にしてある** — 既定のままだと打った人の
     ///     手元の共有の置き場を覗くことになり、結果が機械によって変わる。
     ///   - home: ホームディレクトリ。同上。
+    ///   - currentDirectory: 相対の場所を解く基準 (走らせた場所)。同上。
     static func text(
         for arguments: [String], workDirectory: URL? = WorkDirectory.given,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        currentDirectory: URL = GivenPath.currentDirectory
     ) -> String {
         // 引数を解く骨格も、走らせる口と同じ 1 本を通る (#814)。**切り分けの口だけは
         // 止まらない** — 知らない引数で使い方を出して終わると、いちばん要るときに読めない。
@@ -179,8 +219,15 @@ enum DoctorCommand {
         // 値を取る選択肢が無いので投げどころは無いが、万一のときも止まらない側へ倒す
         let parsed = (try? Arguments.parse(arguments, surplus: .ignore)) ?? Arguments.Parsed()
         let ignored = parsed.ignored
-        // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)
-        let invocation = Invocation(place: parsed.positional)
+        // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)。場所は走らせた
+        // 場所から絶対パスに解く (#2323)
+        //
+        // **空の場所も断らずに名乗る** ([#2485](https://github.com/mokume-metal/mokume/issues/2485))。
+        // 空は場所を名指していないので、渡された場所を診たようには言えない — 走らせた場所を診る
+        // 代わりに、そう診たと先頭で名乗る (走らせる口は同じ誤りを使い方の誤りとして断る)
+        let emptyPlace = parsed.positional?.isEmpty == true
+        let invocation = Invocation(
+            place: emptyPlace ? nil : parsed.positional, currentDirectory: currentDirectory)
         let directory = invocation.directory
         let base = invocation.facetBase(workDirectory: workDirectory)
         return report(
@@ -188,16 +235,27 @@ enum DoctorCommand {
             state: probeState(in: directory, facetBase: base, environment: environment, home: home),
             base: base,
             given: workDirectory != nil,
-            ignored: ignored)
+            ignored: ignored,
+            emptyPlaceLookedAt: emptyPlace ? directory : nil)
     }
 
     // MARK: - 文
 
     /// 3 段に並べる。**上 2 段が切り分けの本体**で、3 段目は既にある一覧をそのまま出す。
     static func report(
-        environment: Environment, state: State, base: URL, given: Bool, ignored: [String] = []
+        environment: Environment, state: State, base: URL, given: Bool, ignored: [String] = [],
+        emptyPlaceLookedAt: URL? = nil
     ) -> String {
         var lines: [String] = []
+        if let place = emptyPlaceLookedAt {
+            // 投げずに言う (上の `ignored` と同じ理由)。**どこを診たかも言う** — 渡された場所を
+            // 診たと読ませない
+            lines += [
+                "An empty directory was given, which names no place."
+                    + " This looked where you ran it instead: \(place.path)",
+                "",
+            ]
+        }
         if !ignored.isEmpty {
             // 投げずに言う。切り分けの口が使い方で止まると、いちばん要るときに読めない
             lines += ["Ignored unknown arguments: \(ignored.joined(separator: " "))", ""]
@@ -227,7 +285,9 @@ enum DoctorCommand {
             machineLine(environment.machine),
             graphicsLine(environment.canDraw),
             resourcesLine(environment.resources),
-            toolchainLine(environment.toolchain),
+            toolchainLine(
+                environment.toolchain, unaskedIn: environment.toolchainUnasked,
+                unanswered: environment.toolchainUnanswered),
             "Tool: \(environment.tool)",
         ]
     }
@@ -266,9 +326,32 @@ enum DoctorCommand {
     }
 
     /// 道具立ての行。
-    static func toolchainLine(_ toolchain: String?) -> String {
-        guard let toolchain else { return "Toolchain: \(unknown) — could not launch swift" }
-        return "Toolchain: \(toolchain)"
+    ///
+    /// **聞かなかったことと、聞いて読めなかったことを分ける** (#2314)。見ている場所が無い・
+    /// ディレクトリでない・辿り着けないと `swift` はそこで起きないので、聞いていない。それを
+    /// 「could not launch swift」と言うと、入っている `swift` を疑わせる (規律 3)。何が
+    /// 使えないのかは `Place:` の行が言う。
+    ///
+    /// **聞いて読めなかった回は、読めなかった理由を名乗る** (#2522)。起こせなかった理由
+    /// (`swift` が無い・場所に入れない・OS の事情) も、0 以外での終了も、空の出力も、同じ
+    /// 1 文に畳むと、入っている `swift` を疑わせたり、無い `swift` を隠したりする。
+    ///
+    /// **代償: その間は、道具立てが本当に無いことも見えない** (場所を打ち間違えたうえに
+    /// Command Line Tools も入っていない組では、場所を直してから初めて分かる)。断定できない
+    /// ことを言い切らない向きを採った。
+    ///
+    /// - Parameter place: 道具立てを聞かなかったときの、見ている場所。
+    /// - Parameter reason: 聞いて答えなかったときの理由。
+    static func toolchainLine(
+        _ toolchain: String?, unaskedIn place: URL? = nil, unanswered reason: String? = nil
+    ) -> String {
+        if let toolchain { return "Toolchain: \(toolchain)" }
+        if let place {
+            return "Toolchain: \(unknown) — not asked, since swift cannot start in \(place.path)"
+                + " (see Place below)"
+        }
+        // 理由を持たない回 (聞いた記録が無い) も、起こせなかったとは決めつけない
+        return "Toolchain: \(unknown) — \(reason ?? "swift gave no answer")"
     }
 
     /// 共有の置き場を名乗る行。**1 行目が根と合計で、続く行が部屋の内訳。**
@@ -321,7 +404,7 @@ enum DoctorCommand {
     /// 手元の状態の各行。
     static func stateLines(_ state: State) -> [String] {
         var lines = [
-            "Place: \(state.place.path)",
+            placeLine(state.place, presence: state.presence),
             sketchLine(state.hasPackage),
             dependencyLine(state.dependency, tool: state.tool),
             // **在処まで書く。** 置き場は版ごとの共有へ移りうるので、在る / 無いだけでは
@@ -338,6 +421,17 @@ enum DoctorCommand {
         }
         lines.append(lastBuildLine(last))
         return lines
+    }
+
+    /// 見ている場所の行。**無い・ディレクトリでないときは、そう名乗る** (#2314)。
+    static func placeLine(_ place: URL, presence: GivenPath.Presence) -> String {
+        switch presence {
+        case .directory: "Place: \(place.path)"
+        case .missing: "Place: \(place.path) — nothing is there (check the path you gave)"
+        case .notDirectory: "Place: \(place.path) — not a directory (point at the sketch's directory)"
+        // **在るが辿り着けない場所を「無い」と言わない** — 在る場所を探させることになる
+        case .unreachable(let reason): "Place: \(place.path) — cannot be reached: \(reason)"
+        }
     }
 
     /// スケッチの体裁があるかの行。
@@ -384,6 +478,30 @@ enum DoctorCommand {
     /// 最後の作り直しの行。**結果ごとに文を持つ。**
     static func lastBuildLine(_ last: LastBuild) -> String {
         let at = Timestamp.text(last.at, seconds: true)
+        // **通ったが起こせなかった回を「succeeded」と言わない** (#2574)。切り分けの口が
+        // 成功と言うと、止まっている絵の原因から人を遠ざける
+        if last.ok == true, last.launched == false {
+            // **理由を持たない古い記録は、理由を名乗らない** (断定しない)。本文の最初の行は
+            // 作り直しの出力かもしれない
+            guard let head = last.notStarted else {
+                return "Last build: built at \(at), but not started — this record has no reason "
+                    + "(an older tool wrote it); the build output is in \(BuildReport.statusRelativePath)"
+            }
+            // **終われと言われて起こさなかった回は、その文をそのまま言う** (#2521)
+            if head.hasPrefix(BuildReport.stopRequestedNotice) {
+                return "Last build: built at \(at); \(head)"
+            }
+            return "Last build: built at \(at), but not started: \(head)"
+        }
+        // **作り直しの失敗ではない記録を「failed」と言わない。** 見張りを終えたときの最後の記録は
+        // `ok: false` だが、本文の頭が失敗ではないと名乗っている (#1147)
+        switch last.interruption {
+        case .rebuildStopped?:
+            return "Last build: stopped partway at \(at) because watching ended (not a build failure)"
+        case .beforeFirstBuild?:
+            return "Last build: none ran — watching ended at \(at), before the first build (not a build failure)"
+        case nil: break
+        }
         return switch last.ok {
         case true: "Last build: succeeded at \(at)"
         case false: "Last build: failed at \(at)"
@@ -406,14 +524,30 @@ enum DoctorCommand {
 
     // MARK: - 読み取り
 
+    /// 環境の前提を読む。
+    ///
+    /// **見ている場所がディレクトリでなければ、道具立てを聞かない** (#2314)。`swift` は
+    /// そこで起こすので起きず、聞けば「起こせなかった」としか言えない — 入っている `swift`
+    /// を疑わせる誤った断定になる (規律 3)。
     static func probeEnvironment(in directory: URL) -> Environment {
         let version = ProcessInfo.processInfo.operatingSystemVersion
+        let askable = GivenPath.Presence.of(directory) == .directory
+        var toolchain: String?
+        var unanswered: String?
+        if askable {
+            switch Toolchain.read(in: directory) {
+            case .version(let version): toolchain = version
+            case .unanswered(let reason): unanswered = reason
+            }
+        }
         return Environment(
             system: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
             machine: machine(),
             canDraw: RenderDevice.isAvailable,
             resources: BundledShaders.location,
-            toolchain: toolchain(in: directory))
+            toolchain: toolchain,
+            toolchainUnasked: askable ? nil : directory,
+            toolchainUnanswered: unanswered)
     }
 
     /// 機種の名乗り。
@@ -424,14 +558,6 @@ enum DoctorCommand {
             String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
         }
         return name.isEmpty ? unknown : name
-    }
-
-    /// 道具立ての名乗り 1 行。**起動できなければ黙って諦める** (投げない)。
-    ///
-    /// **読み方は ``Toolchain`` が持つ。** ビルドの置き場も同じ文字列を鍵の一部にするので、
-    /// ここで別に読むと片方だけが追随しなくなる。
-    static func toolchain(in directory: URL) -> String? {
-        Toolchain.describe(in: directory)
     }
 
     /// 手元の状態を読む。**何も作らない。**
@@ -458,7 +584,8 @@ enum DoctorCommand {
             sharedStore: sharedStore(at: root),
             lastBuild: lastBuild(under: facetBase),
             dependency: DependencyVersion.resolved(forPackageAt: directory),
-            tool: ToolVersion.release())
+            tool: ToolVersion.release(),
+            presence: GivenPath.Presence.of(directory))
     }
 
     /// 共有の置き場を読む。**何も作らず、何も消さない** (根が無ければ 0 通りと名乗る)。
@@ -560,7 +687,13 @@ enum DoctorCommand {
         else { return nil }
         let object = (try? Data(contentsOf: url))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-        return LastBuild(ok: object?["ok"] as? Bool, at: at)
+        let ok = object?["ok"] as? Bool
+        let launched = object?["launched"] as? Bool
+        return LastBuild(
+            ok: ok, at: at, launched: launched,
+            notStarted: (object?["notStartedReason"] as? String).flatMap(BuildReport.firstLine),
+            interruption: ok == false
+                ? BuildReport.Interruption.of(output: object?["output"] as? String ?? "") : nil)
     }
 
     private static func exists(_ url: URL) -> Bool {

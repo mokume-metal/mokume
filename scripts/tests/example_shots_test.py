@@ -43,6 +43,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -292,6 +293,30 @@ class ExampleShotsTest(unittest.TestCase):
         self.assertEqual(
             (package / "Package.swift").read_text(encoding="utf-8").count(".executableTarget"), 1
         )
+
+    def test_生成した入口は失敗を名乗って落ち_裸のtryを持たない(self):
+        # **裸の top-level `try` は Swift ランタイムの既定処理 (trap) へ落ちる** (#2541)。
+        # 入口の失敗は何が足りないかを名乗って exit(1) で終わる (規範は Sketches/main.swift の exitReporting)
+        found = self.collect()
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        main = (package / "Sources" / "example-shots" / "main.swift").read_text(encoding="utf-8")
+        tries = 0
+        for line in main.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("//") or not re.search(r"\btry\b", stripped):
+                continue
+            tries += 1
+            # 字下げの外 (= do の外) に try が無い
+            self.assertTrue(line[:1].isspace(), f"do の外に try が残っている: {stripped}")
+        self.assertGreater(tries, 0, "try を含む行が 1 つも無い — 検査が空回りしている")
+        self.assertRegex(main, r"(?m)^do \{$")
+        self.assertRegex(main, r"(?m)^\} catch \{$")
+        # catch の中で、標準エラーへ失敗の中身を書き、exit(1) で終わる
+        handler = main[main.index("} catch {"):]
+        self.assertIn("FileHandle.standardError.write", handler)
+        self.assertIn("\\(error)", handler)
+        self.assertIn("exit(1)", handler)
 
     def test_例のimportは重ねずに生成物の先頭へ集める(self):
         """#2216。2 本の例が同じ `import` を書いても、先頭には 1 回だけ出る。"""
@@ -1257,6 +1282,15 @@ class MemberCoverageTest(MemberTestCase):
         self.write(source)
         self.assertEqual([m.title for m in self.members()], ["mine()", "after()"])
 
+    def test_SketchPart_の_extension_も拾う(self):
+        """語彙は Sketch が継ぐ SketchPart に置いてある (#2616)。拾えないと口が 0 本に数えられる。"""
+        self.write("extension SketchPart {\n    public func shown() {}\n}\n")
+        self.assertEqual([m.key for m in self.members()], ["shown()"])
+
+    def test_名前が_Sketch_で始まる別の型は拾わない(self):
+        self.write("extension SketchSettings {\n    public func notMine() {}\n}\n")
+        self.assertEqual(self.members(), [])
+
     def test_extension_の波括弧が次の行にあっても拾う(self):
         self.write("extension Sketch\n{\n    public func shown() {}\n}\n")
         self.assertEqual([m.key for m in self.members()], ["shown()"])
@@ -1579,6 +1613,99 @@ class DeferredMemberTest(MemberTestCase):
         problems = self.judge(source, gaps=self.gap("circle(_:) (some ScalarConvertible)"))
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("許容一覧から消す", problems[0])
+
+
+VALUE_DIRECTORY = "Sources/MokumeCore/Geometry"
+
+
+class ValueMemberTest(MemberTestCase):
+    """値型の口 (#2600) — `struct` の本体と extension を見て、型の名前を前置して数える。"""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / VALUE_DIRECTORY).mkdir(parents=True)
+
+    def write_value(self, source, name="Ball.swift"):
+        (self.root / VALUE_DIRECTORY / name).write_text(source, encoding="utf-8")
+
+    def value_keys(self):
+        return [m.key for m in self.members() if VALUE_DIRECTORY in str(m.path)]
+
+    def test_本体と_extension_の公開の口を型の名前つきで拾う(self):
+        self.write_value(
+            "public nonisolated struct Ball: Sendable {\n"
+            + pictured("draw", parameters="")
+            + "    public var radius: Float\n"
+            + "    var hidden: Float\n"
+            + "    private func secret() {}\n"
+            + "}\n\n"
+            + "nonisolated extension Ball {\n"
+            + "    public func moved(by offset: Float) -> Ball { self }\n"
+            + "    func internalOnly() {}\n"
+            + "}\n"
+        )
+        self.assertEqual(
+            self.value_keys(), ["Ball.draw()", "Ball.radius", "Ball.moved(by:) (Float)"]
+        )
+
+    def test_型の本体は_public_でも中の口を公開にしない(self):
+        """Swift の規則どおり。`public extension` と違い、`public struct` は既定を変えない。"""
+        self.write_value("public struct Ball {\n    func roll() {}\n}\n")
+        self.assertEqual(self.value_keys(), [])
+
+    def test_演算子の引数名はラベルとして読まない(self):
+        self.write_value(
+            "extension Ball {\n"
+            "    public static func + (lhs: Ball, rhs: Ball) -> Ball { lhs }\n"
+            "    public static prefix func - (ball: Ball) -> Ball { ball }\n"
+            "}\n"
+        )
+        self.assertEqual(self.value_keys(), ["Ball.+(_:_:) (Ball, Ball)", "Ball.-(_:) (Ball)"])
+
+    def test_値型の口も例か宣言が無ければ名指しして赤い(self):
+        self.write(swift(pictured("circle")))
+        self.write_value("public struct Ball {\n    /// 転がす。\n    public func roll() {}\n}\n")
+        problems = self.judge()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(f"{VALUE_DIRECTORY}/Ball.swift:3", problems[0])
+        self.assertIn("Ball.roll()", problems[0])
+
+    def test_参照は型の名前つきの綴りで同じ名前の別の型の口と取り違えない(self):
+        self.write(swift(pictured("circle")))
+        self.write_value("public struct Ball {\n" + pictured("draw", parameters="") + "}\n")
+        self.write_value("public struct Box {\n" + pictured("draw", parameters="") + "}\n", "Box.swift")
+        self.write_value(
+            "extension Ball {\n"
+            "    /// 描く (別名)。\n"
+            "    // shot: 参照 Ball.draw()\n"
+            "    public func show() {}\n"
+            "}\n",
+            "Ball+Show.swift",
+        )
+        self.assertEqual(self.judge(), [])
+        self.assertIn("参照 1", self.output)
+
+    def test_型の名前の無い参照は行き先が無いと言う(self):
+        self.write(swift(pictured("circle")))
+        self.write_value(
+            "public struct Ball {\n"
+            + pictured("draw", parameters="")
+            + "    /// 描く (別名)。\n"
+            + "    // shot: 参照 draw()\n"
+            + "    public func show() {}\n"
+            + "}\n"
+        )
+        problems = self.judge()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("参照先 draw() が無い", problems[0])
+
+    def test_実物のソースから値型の口が拾える(self):
+        keys = {(m.path.name, m.key) for m in shots.collect_members(REPO)}
+        self.assertIn(("Circle.swift", "Circle.intersects(_:) (Rect)"), keys)
+        self.assertIn(("Rect.swift", "Rect.intersects(_:) (Circle)"), keys)
+        self.assertIn(("Rect.swift", "Rect.draw()"), keys)
+        self.assertIn(("Vector2.swift", "Vector2.+(_:_:) (Vector2, Vector2)"), keys)
+        self.assertIn(("Vector2.swift", "Vector2.init(_:_:) (some ScalarConvertible, some ScalarConvertible)"), keys)
 
 
 class MemberEntryTest(unittest.TestCase):

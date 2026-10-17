@@ -4,6 +4,11 @@
 import Foundation
 
 /// 外から送られてくる入力の要求。
+///
+/// **`events` が読めない要求 (配列でない・欠けた・`null`) も、`id` を読めれば応える**
+/// ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。解けなかった 1 件だけを持つ要求として
+/// 流し (``InputInbox/drain(into:)``)、`ignored` に 1 と数える — 解けなかったものを数える、
+/// 1 件の読めなさと同じ意味である (#1132)。
 struct InputRequest: ExchangeRequest {
     let id: String
     let events: [Entry]
@@ -20,13 +25,25 @@ struct InputRequest: ExchangeRequest {
         init(from decoder: Decoder) throws {
             event = (try? RawInputEvent(from: decoder))?.event
         }
+
+        /// 解けなかった 1 件。`events` の読めない要求は、これだけを持つ要求として流す (#2550)。
+        static var unreadable: Entry { Entry(event: nil) }
+
+        private init(event: InputEvent?) {
+            self.event = event
+        }
     }
 }
 
 /// 送られた入力に対する応答。
 ///
-/// **何件が届いて、何件が捨てられたかを返す。** 「送ったのに効かない」の切り分けが
-/// これだけで済む — 知らない種別を送っていたのか、溜めきれずに捨てられたのかが分かる。
+/// **何件が届いて、何件が捨てられたかを返す。** 「送ったのに効かない」の切り分けの入口で、
+/// 知らない種別を送っていたのか、溜めきれずに捨てられたのかが分かる。
+///
+/// **これだけでは済まないことがある** ([#2731](https://github.com/mokume-metal/mokume/issues/2731))。
+/// `accepted` に数えた移動・スクロールでも、当てるとき (フレームの頭) の状態で位置・差・和が
+/// 有限でなくなるなら、``InputState`` が捨てる。応答の時点ではまだ分からないので数には載らず、
+/// 知らせは標準エラーの警告に 1 度だけ出る。
 struct InputReport: Encodable, Equatable {
     /// この形式の版。**先頭の格納プロパティである** — 合成の `encode` は宣言順に
     /// 書き出すので、置き場所が鍵の並びを決める。
@@ -72,9 +89,18 @@ final class InputInbox {
     /// 要求が来ていれば流し込み、応答を書く。
     @discardableResult
     func drain(into state: InputState) -> InputReport? {
-        guard let request = requests.pending() else { return nil }
+        guard let pending = requests.pending() else { return nil }
         // 応えようとしたことは、応答を書けたかどうかによらず記録する (観測と同じ)
-        defer { requests.markHandled(request.id) }
+        defer { requests.markHandled(pending.id) }
+        let request: InputRequest
+        switch pending {
+        case .request(let read):
+            request = read
+        case .unreadable(let id, _):
+            // **`events` が読めない要求にも応える** (#2550)。解けなかった 1 件だけを持つ要求として
+            // 流すので、`accepted == 0`・`ignored == 1` が返り、何も流れ込まない
+            request = InputRequest(id: id, events: [.unreadable])
+        }
         var accepted = 0
         var ignored = 0
         for entry in request.events {

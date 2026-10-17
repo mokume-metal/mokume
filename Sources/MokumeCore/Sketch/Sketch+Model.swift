@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // モデル。
-extension Sketch {
+extension SketchPart {
     /// 外で作ったモデルを読む。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var head: Model? -->
@@ -25,6 +25,12 @@ extension Sketch {
     /// 区切りは読み飛ばす (何を読み飛ばしたかは ``Model/skippedLines``)。面の向きが書かれて
     /// いなければ**形から求める**ので、向きの無いモデルでも立体らしく光が付く。
     ///
+    /// **OBJ の面の角で、読み取り位置 (`vt`) や向き (`vn`) の番号が数として読めない・範囲の
+    /// 外のときは、その角にその番号を書いていないのと同じに読む。** 面は描き、読み飛ばした行
+    /// には数えない (`f 1/x/1 2/2/1 3/3/1` の 1 つ目の角は、`f 1//1 2/2/1 3/3/1` と同じ形になる)。
+    /// 向きの番号が読めない角は、向きを書かない角と同じく形から求めた向き (両面) になる。
+    /// 壊れた番号は知らされない。
+    ///
     /// **STL は 3D プリンタ向けに配られる形式で、文字の STL もバイナリの STL も読む。**
     /// OBJ と違うところが 3 つある:
     ///
@@ -35,11 +41,18 @@ extension Sketch {
     ///   置くと寝て見える。起こすなら `rotateX` で 4 分の 1 回す
     /// - **文字の STL で数として読めない座標は 0 として読まれる** (読み手の Model I/O がそう
     ///   読む)。OBJ のように読み飛ばして数えはしない。バイナリの STL で座標が数でない面は
-    ///   読み飛ばし、``Model/skippedLines`` に面の数として数える
+    ///   読み飛ばし、``Model/skippedLines`` に数える (面ごとに 1)
     ///
-    /// 読めない STL (壊れている・途中で切れている・空のファイル・小文字の `solid` で始まらない
+    /// 読めない STL (壊れている・途中で切れた文字の STL・空のファイル・小文字の `solid` で始まらない
     /// 文字の STL) は ``ModelFailure/unreadable(path:)`` を投げる。面を 1 つも持たない STL は
-    /// 投げない (下の Note)。
+    /// 投げない (下の Note)。**途中で切れたバイナリの STL は、揃っている面だけを読む** — 揃った面が
+    /// 1 つも無ければ (最初の面の途中で切れた・面の数を 0 と書いて後ろに余りがある)、大きさによらず
+    /// 投げずに空のモデルになる。**文字の STL は ASCII のものを読み、UTF-16 で書き出された文字の STL
+    /// (PowerShell 5 のリダイレクト・メモ帳の「Unicode」保存) は読めない。**
+    ///
+    /// 見出し (先頭の 80 バイト) が `solid` で始まり `facet normal` を含むバイナリの STL は、見出しを除いた写しを
+    /// 一時の置き場 (`FileManager.default.temporaryDirectory`) に書いて読む (写しは読み終えたら消す)。**そこへ
+    /// 書けないと、ファイルが壊れていなくても** ``ModelFailure/unreadable(path:)`` を投げる。
     ///
     /// **既定では、置いたら見える大きさへ整える** (`normalize`)。整えるのは 3 つ —
     /// 中心を原点へ、いちばん長い辺を面の短いほうの半分へ (一様に。軸の比は変わらない)、
@@ -167,10 +180,14 @@ extension Sketch {
     /// - Note: 読めても面が 1 つも無いことがある (``Model/isEmpty``)。そのときは
     ///   投げずに、置いたときに警告する — 「読めなかった」と「読めたが見えない」は
     ///   別の話なので、区別できるようにしてある。
+    /// - Throws: 見つからないとき・読めないとき・対応していない形式のときに ``ModelFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=422c10b2
     // shot: 2 snippet=c25f28d8
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
-        try canvas.loadModel(path, normalize: normalize)
+        Self.noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
+        return try Self.resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
     }
 
     /// 外で作ったモデルを読む。**読んでいる間、他の仕事を止めない。**
@@ -178,7 +195,7 @@ extension Sketch {
     /// 解釈を別の仕事として回すので、大きなモデルを読んでもフレームが詰まらない。
     ///
     /// **`setup()` の中で `Task` を起こし、そこから呼ぶ。** 呼び方と届く前の扱いは
-    /// ``requestImage(_:)`` と同じで、届くまでの ``draw()`` はモデルが無いまま呼ばれ、
+    /// ``requestImage(_:)`` と同じで、届くまでの ``Sketch/draw()`` はモデルが無いまま呼ばれ、
     /// 置くのは `draw()` の中である。
     ///
     /// <!-- example: 文脈 var head: Model? -->
@@ -196,11 +213,15 @@ extension Sketch {
     ///
     /// > Note: 届いたモデルの整え方と見え方は ``loadModel(_:normalize:)`` と同じなので、絵は
     /// > そちらを見ること。届くフレームは実行ごとに違うので、この口だけの絵は撮っていない。
+    ///
+    /// - Throws: ``loadModel(_:normalize:)`` と同じ (``ModelFailure``)。
+    ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
+    ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 loadModel(_:normalize:)
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model
     {
-        try await Self.requireLoadingCanvas("requestModel(_:normalize:)")
+        try await Self.loadingCanvas(ModelFailure.self)
             .requestModel(path, normalize: normalize)
     }
 
@@ -264,5 +285,5 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=84b7a99d
-    public func model(_ model: Model) { canvas.model(model) }
+    public func model(_ model: Model) { Self.liveCanvas()?.model(model) }
 }

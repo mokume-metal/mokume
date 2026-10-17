@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 直接呼べる描画のうち、基本図形。
-extension Sketch {
+extension SketchPart {
     /// 矩形を塗る。
     ///
     /// 4 つの数の読み方は ``rectMode(_:)`` が決める。既定は**左上の角と、幅と高さ**。
@@ -44,6 +44,7 @@ extension Sketch {
     // shot: 1 snippet=74598101
     // shot: 2 snippet=60541771
     public func rect(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.rect(a, b, c, d)
     }
@@ -68,6 +69,7 @@ extension Sketch {
     /// }
     // shot: 1 snippet=a14bfc0d
     public func square(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ extent: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, extent) = (a.asFloat, b.asFloat, extent.asFloat)
         canvas.square(a, b, extent)
     }
@@ -86,7 +88,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 濃い灰色の下地の中央に、直径 160 の橙色の円 | symmetric=xy -->
-    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/96181bf509092609adb70e0a39c9fe35.png)
+    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/317de77f2b2ae9704cd049ad1ffccbae.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -107,13 +109,14 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に重なる、直径 240・160・80 の 3 つの円 | symmetric=xy -->
-    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/179362f2c7ba97955a550ebdf9a38ba1.png)
+    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/062fc2de26cf77114506f26ffdd72667.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     // shot: 1 snippet=dddecdb4
     // shot: 2 snippet=ccc7b2b7
     public func circle(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ diameter: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, diameter) = (a.asFloat, b.asFloat, diameter.asFloat)
         canvas.circle(a, b, diameter)
     }
@@ -132,7 +135,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 画面の中央に、横に長い橙色の楕円 | symmetric=xy -->
-    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/ae195aa51d3fa91ee52980143a4d5f17.png)
+    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/796275b020867edd4ddd47574cb8873f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -151,13 +154,14 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に、横長と縦長の楕円が十字に重なる | symmetric=xy -->
-    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/22de3a16c890eca31fd83cad374ecb51.png)
+    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/b1b1cff37c194754aaf33a08442b2fd2.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     // shot: 1 snippet=5db22851
     // shot: 2 snippet=b47c6582
     public func ellipse(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.ellipse(a, b, c, d)
     }
@@ -257,6 +261,7 @@ extension Sketch {
     public func arc(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
         canvas.arc(a, b, c, d, start, stop)
     }
@@ -281,6 +286,7 @@ extension Sketch {
     public func triangle(
         _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ x3: some ScalarConvertible, _ y3: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x1, y1, x2, y2, x3, y3) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat)
         canvas.triangle(x1, y1, x2, y2, x3, y3)
     }
@@ -325,6 +331,7 @@ extension Sketch {
         _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
         _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
         canvas.quad(x1, y1, x2, y2, x3, y3, x4, y4)
     }
@@ -375,6 +382,7 @@ extension Sketch {
     // shot: 1 snippet=72c60508
     // shot: 2 snippet=8602b4e7
     public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.point(x, y)
     }
@@ -458,7 +466,7 @@ extension Sketch {
     // shot: 2 snippet=93b69e1a
     // shot: 3 snippet=76535701
     // shot: 4 snippet=f9d3d420
-    public func rectMode(_ mode: ShapeMode) { canvas.rectMode(mode) }
+    public func rectMode(_ mode: ShapeMode) { Self.liveCanvas()?.rectMode(mode) }
 
     /// 楕円と円弧に渡す座標の読み方。既定は ``ShapeMode/center``。
     ///
@@ -476,7 +484,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: (200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円 | symmetric=xy -->
-    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/081c472956dcaac395ba5c36ea71014b.png)
+    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/c708f09f06b46a68c73a9b7d738674c0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -494,7 +502,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円 -->
-    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/6de8f23b4bfb1c069f267af4ea1a5a19.png)
+    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/326e3fc677ed66bfcc721fef30c9227c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -502,7 +510,7 @@ extension Sketch {
     /// - Note: 座標の読み方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=7bc89b05
     // shot: 2 snippet=09181c0f
-    public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
+    public func ellipseMode(_ mode: ShapeMode) { Self.liveCanvas()?.ellipseMode(mode) }
 
     /// 線を引く。塗りは持たない。
     ///
@@ -545,6 +553,7 @@ extension Sketch {
     // shot: 1 snippet=f2777671
     // shot: 2 snippet=055b0309
     public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
         canvas.line(x1, y1, x2, y2)
     }

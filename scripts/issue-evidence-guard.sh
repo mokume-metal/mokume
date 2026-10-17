@@ -23,6 +23,10 @@
 #                             ので、宣言の照合は行頭に限っていない (check-drawing-evidence)。
 #                             語は 4096 バイトで切られるので、それより長い本文は素通し
 #
+# 本文を伴う gh issue edit は scripts/agent-comment-guard.sh が scripts/edit-body.sh へ回し
+# (#2615)、ラッパーが書き込む前に同じ照合を通す。ここで edit も見続けるのは、あちらの判定に
+# 穴があったときに照合まで一緒に抜けないためである (二重に止まっても害は無い)。
+#
 # **取りこぼしは許容する** (agent-comment-guard と同じ水準)。止めるのはうっかりで、
 # 回避ではない。$(cat …) で組んだ本文・scripts/sub-issue.sh などのスクリプト経由の起票・
 # gh api は見えない。人の Web 入力は対象外 (入力欄へ落とせば絵が付く)。

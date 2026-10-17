@@ -259,8 +259,8 @@ struct SolidTests {
             }
         }
 
-        // 箱と球で 2 つと、球の向きを借りる単位球が 1 つ (#1751)。フレーム数によらない
-        #expect(canvas.solidMeshesBuilt == 3)
+        // 箱と、球が共有する単位球の 2 つ (#1862)。フレーム数によらない
+        #expect(canvas.solidMeshesBuilt == 2)
     }
 
     @Test(
@@ -268,6 +268,9 @@ struct SolidTests {
         arguments: [3, 7, 24, 128])
     func spheresFromTheUnitMatchTheBuilder(detail: Int) throws {
         let canvas = try makeCanvas()
+        // 半径ごとに組む経路を見る。塗りは単位球を共有する (#1862) が、線・保持する形の記録・
+        // 半径 0 の球はこの経路で組む
+        canvas.sharesUnitShapes = false
         // 0 は向きの負の成分から -0 が出る。極小・非整数・大きい値で丸めの違いを探す
         let radii: [Float] = [0, 1e-30, 0.3, 6, 10.125, 1234.5678, 3e30]
         var mismatches: [String] = []
@@ -307,11 +310,25 @@ struct SolidTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.fill(red)
+            // 円錐は向きが寸法の比で変わるので、単位の形に乗らない (``SolidShape/unitScaling``)
+            canvas.cone(20, 20)
+            canvas.cone(30, 30)
+        }
+
+        #expect(canvas.solidMeshesBuilt == 2)
+    }
+
+    @Test("単位の形に乗る形は、寸法が変わっても組み立て直さない")
+    func unitShapesDoNotBuildAgain() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.fill(red)
             canvas.box(20)
             canvas.box(30)
         }
 
-        #expect(canvas.solidMeshesBuilt == 2)
+        // 単位の箱を 1 度だけ組み、寸法は置き場所が持つ (#2386)
+        #expect(canvas.solidMeshesBuilt == 1)
     }
 
     // 形と稜線の控えは、量の予算で切る (#1602)。寸法は鍵に入るので、大きさを動かし続ける
@@ -360,10 +377,11 @@ struct SolidTests {
         #expect(
             edgeBytes <= Canvas.solidCacheBudget,
             "残っている輪環だけで稜線の控えが \(edgeBytes) バイトあり、予算 \(Canvas.solidCacheBudget) を超えている")
-        // 7 種 × 40 通りの大きさを組み立てた (当たらないので毎回作る)。球は向きを借りる
-        // 単位球を 1 度だけ足す (#1751)
-        #expect(canvas.solidMeshesBuilt == 7 * 40 + 1)
-        #expect(canvas.spheresFromUnit == 40)
+        // 単位の形に乗らない 3 種 (楕円体・円錐・輪環) × 40 通りの大きさを組み立てた (当たらないので
+        // 毎回作る)。球・箱・平面・円柱は塗りも稜線も単位の形を 1 度だけ組んで共有し (#1862・#2386)、
+        // 寸法ごとの形は組まない
+        #expect(canvas.solidMeshesBuilt == 3 * 40 + 4)
+        #expect(canvas.spheresFromUnit == 0)
     }
 
     @Test("既定の細かさの形なら、64 種並べても控えに収まり、2 フレーム目から組み立て直さない")

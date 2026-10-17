@@ -241,10 +241,16 @@ struct InputCallbackTests {
                 return (deltaX, deltaY)
             }
 
-        #expect(delivered.map(\.0).reduce(0, +) == sent.map(\.0).reduce(0, +))
-        #expect(delivered.map(\.1).reduce(0, +) == sent.map(\.1).reduce(0, +))
+        // 和は型を明示して取り出す。#expect の中で `reduce(0, +)` を比べると型検査に 2 秒強
+        // かかる (#2596)
+        let deliveredX: Float = delivered.map(\.0).reduce(0, +)
+        let deliveredY: Float = delivered.map(\.1).reduce(0, +)
+        let sentX: Float = sent.map(\.0).reduce(0, +)
+        let sentY: Float = sent.map(\.1).reduce(0, +)
+        #expect(deliveredX == sentX)
+        #expect(deliveredY == sentY)
         // 部分累計を配っていれば 3a + 2b + c = 3*1 + 2*3 + 5 = 14 になる
-        #expect(delivered.map(\.0).reduce(0, +) == 9)
+        #expect(deliveredX == 9)
     }
 
     /// 引きずりも同じ規則で、**1 件ぶんを足し合わせるとフレーム合計 (``InputState/dragX``)
@@ -336,15 +342,15 @@ struct InputCallbackTests {
         #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyReleased])
     }
 
-    /// **押しっぱなしは連射する** — Processing と同じで、p5.js とは違う (p5.js は押したままの
-    /// キーでは呼び直さない)。
-    @Test("押しっぱなしのキーは、届いたぶんだけ配られる")
-    func repeatsWhileHeld() {
+    /// **押しっぱなしでは押下を配り直さない** — p5.js と同じで、Processing の連射は引き継がない
+    /// ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。リピートは打鍵にだけ届く。
+    @Test("押しっぱなしのキーは、押下を 1 回だけ配り、打鍵は届いたぶんだけ配る")
+    func repeatsReachOnlyTyping() {
         let events: [InputEvent] = [
             .keyDown(code: .a, characters: "a", isRepeat: false),
             .keyDown(code: .a, characters: "a", isRepeat: true),
         ]
-        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyPressed, .keyTyped])
+        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyTyped])
     }
 
     /// **「`characters` が空でない」では判定できない。** AppKit は矢印に私用領域
@@ -408,6 +414,233 @@ struct InputCallbackTests {
         #expect(dispatching.dragY == quiet.dragY)
         #expect(dispatching.scrollY == quiet.scrollY)
         #expect(dispatching.isMouseDown == quiet.isMouseDown)
+    }
+}
+
+/// 入力の層が見せる量 (位置・差・和) と配る量は有限である
+/// ([#2731](https://github.com/mokume-metal/mokume/issues/2731))。
+///
+/// 外から送る経路 (JSON) は ±3.4e38 までの有限の値を運べ、公開の ``InputState/enqueue(_:)`` には
+/// Swift から数でない値も無限も渡せる。当てると有限でなくなる出来事は、状態にも配りにも入れずに
+/// 捨て、1 度だけ言う (ADR-0020 決定 5)。**範囲の外の位置は丸めない** (`SurfaceMapping`)。
+@Suite("当てると有限でなくなる出来事")
+struct NonFiniteInputTests {
+    /// 溜めて 1 フレームぶん流し込み、配られた呼び出しの並びを返す。
+    private func run(_ state: InputState, _ events: [InputEvent]) -> [InputCallback] {
+        for event in events { state.enqueue(event) }
+        var seen: [InputCallback] = []
+        state.beginFrame { seen.append($0) }
+        return seen
+    }
+
+    /// 範囲の読み手 (位置・前の位置・動いた量・引きずった量・スクロール量) がどれも有限か。
+    private func readersAreFinite(_ state: InputState) -> Bool {
+        [
+            state.x, state.y, state.previousX, state.previousY, state.movedX, state.movedY,
+            state.dragX, state.dragY, state.scrollX, state.scrollY,
+        ].allSatisfy(\.isFinite)
+    }
+
+    @Test("押したまま極端な位置を 2 件送ると、差が溢れる 2 件目を捨て、1 度だけ言う")
+    func aDragWhoseDifferenceOverflowsIsDropped() {
+        let state = InputState()
+        let seen = run(
+            state,
+            [
+                .mouseDown(x: 100, y: 100, button: .left),
+                .mouseMoved(x: 3e38, y: 100),
+                // 差 −6e38 は Float に収まらず −∞ になる
+                .mouseMoved(x: -3e38, y: 100),
+            ])
+
+        let first: Float = 3e38 - 100
+        #expect(state.x == 3e38, "捨てた 2 件目の位置が当たっている")
+        #expect(state.dragX == first, "引きずった量が 1 件目の差のままでない: \(state.dragX)")
+        #expect(readersAreFinite(state))
+        #expect(seen == [.mousePressed, .mouseDragged(deltaX: first, deltaY: 0)], "\(seen)")
+        let said = state.warnings.message(for: .nonFiniteEvent)
+        #expect(said?.contains("mouseMoved(x: -3e+38") == true, "捨てたことを名乗っていない: \(String(describing: said))")
+    }
+
+    @Test("1 フレームのスクロールの和が溢れると、溢れさせる 1 件を捨てる")
+    func aScrollWhoseSumOverflowsIsDropped() {
+        let state = InputState()
+        let seen = run(state, [.scrolled(dx: 0, dy: 3e38), .scrolled(dx: 0, dy: 3e38)])
+
+        #expect(state.scrollY == 3e38)
+        #expect(readersAreFinite(state))
+        #expect(seen == [.mouseWheel(deltaX: 0, deltaY: 3e38)], "\(seen)")
+        #expect(state.warnings.hasWarned(.nonFiniteEvent))
+    }
+
+    @Test("1 フレームの動いた量の和が溢れると、溢れさせる 1 件を捨てる")
+    func aMovementWhoseSumOverflowsIsDropped() {
+        let state = InputState()
+        let seen = run(state, [.mouseMovedBy(dx: 3e38, dy: 0), .mouseMovedBy(dx: 3e38, dy: 0)])
+
+        #expect(state.movedX == 3e38)
+        #expect(readersAreFinite(state))
+        #expect(seen == [.mouseMoved, .mouseMovedBy(deltaX: 3e38, deltaY: 0)], "\(seen)")
+        #expect(state.warnings.hasWarned(.nonFiniteEvent))
+    }
+
+    /// Swift からは、JSON に書けない値も直に渡せる。
+    @Test(
+        "数でない値や無限を載せた移動とスクロールは、状態にも配りにも入らない",
+        arguments: [
+            InputEvent.mouseMovedBy(dx: .nan, dy: 0),
+            .mouseMoved(x: .infinity, y: 0),
+            .mouseMoved(x: 0, y: .nan),
+            .scrolled(dx: 0, dy: -.infinity),
+        ])
+    func movementsCarryingNonFiniteValuesAreDropped(_ event: InputEvent) {
+        let state = InputState()
+        _ = run(state, [.mouseMoved(x: 10, y: 20)])
+
+        let seen = run(state, [event])
+
+        #expect(seen.isEmpty, "捨てた出来事を配った: \(seen)")
+        #expect(readersAreFinite(state))
+        #expect(state.x == 10 && state.y == 20)
+        #expect(state.warnings.hasWarned(.nonFiniteEvent))
+    }
+
+    /// **押下と解放は捨てない** — 落とすのは位置だけで、釦の状態は残す (#935 の「どの種別も状態だけは
+    /// 残す」)。押下中に届いた解放を丸ごと捨てると、釦が押されたまま残り、後の移動が引きずりとして
+    /// 配られ足し込まれ続ける。
+    @Test("押下中に位置が有限でない解放が届いても、釦は離れ、位置だけが前のまま残る")
+    func aReleaseWithANonFinitePositionStillReleasesTheButton() {
+        let state = InputState()
+        _ = run(state, [.mouseDown(x: 10, y: 20, button: .left)])
+        #expect(state.isMouseDown)
+
+        let released = run(state, [.mouseUp(x: -.infinity, y: 0, button: .left)])
+
+        #expect(!state.isMouseDown, "釦が押されたまま残った")
+        #expect(state.x == 10 && state.y == 20, "有限でない位置が当たった")
+        #expect(readersAreFinite(state))
+        #expect(released == [.mouseReleased, .mouseClicked], "\(released)")
+        #expect(state.warnings.hasWarned(.nonFinitePosition))
+        #expect(!state.warnings.hasWarned(.nonFiniteEvent), "解放を捨てたことにしている")
+
+        // 離れたので、後の移動は引きずりではない
+        let moved = run(state, [.mouseMoved(x: 30, y: 20)])
+        #expect(moved == [.mouseMoved, .mouseMovedBy(deltaX: 20, deltaY: 0)], "\(moved)")
+        #expect(state.dragX == 0)
+    }
+
+    /// 押下を丸ごと捨てると、後の有限の解放が `mouseReleased` だけを配り、押した・クリックしたことが
+    /// どこにも残らない。
+    @Test("位置が有限でない押下も釦は押され、後の解放と組んでクリックになる")
+    func aPressWithANonFinitePositionStillPresses() {
+        let state = InputState()
+        _ = run(state, [.mouseMoved(x: 10, y: 20)])
+
+        let seen = run(
+            state, [.mouseDown(x: 0, y: .nan, button: .left), .mouseUp(x: 15, y: 25, button: .left)])
+
+        #expect(seen == [.mousePressed, .mouseReleased, .mouseClicked], "\(seen)")
+        #expect(!state.isMouseDown)
+        // 解放の位置は有限なので当たる
+        #expect(state.x == 15 && state.y == 25)
+        #expect(state.button == .left)
+        #expect(state.warnings.hasWarned(.nonFinitePosition))
+
+        // 押下だけなら、位置は前のまま
+        let pressing = InputState()
+        _ = run(pressing, [.mouseMoved(x: 10, y: 20)])
+        _ = run(pressing, [.mouseDown(x: .infinity, y: 5, button: .right)])
+        #expect(pressing.isMouseDown && pressing.button == .right)
+        #expect(pressing.x == 10 && pressing.y == 20)
+    }
+
+    /// `MouseButton` は綴りを持たないので、出来事をそのまま埋めると `MouseButton(rawValue: 0)` と出る。
+    @Test("注意の文面は、釦を名前 (名前の無い番号は番号) で書く")
+    func noticesSpellTheButton() {
+        let state = InputState()
+        _ = run(state, [.mouseDown(x: .nan, y: 0, button: .left)])
+        let said = state.warnings.message(for: .nonFinitePosition) ?? ""
+        #expect(said.contains("mouseDown(x: nan, y: 0.0, button: .left)"), "\(said)")
+        #expect(!said.contains("MouseButton("), "\(said)")
+
+        #expect(
+            InputState.spelled(.mouseUp(x: 1, y: 2, button: MouseButton(rawValue: 4)))
+                == "mouseUp(x: 1.0, y: 2.0, button: 4)")
+        #expect(InputState.spelled(.mouseMovedBy(dx: .nan, dy: 0)) == "mouseMovedBy(dx: nan, dy: 0.0)")
+    }
+
+    @Test("捨てた後に届いた出来事は、今までどおり当てて配る。言うのは最初の 1 件だけ")
+    func eventsAfterADropStillApply() {
+        let state = InputState()
+        let seen = run(
+            state,
+            [.mouseMovedBy(dx: .nan, dy: 0), .mouseMoved(x: .infinity, y: 0), .mouseMoved(x: 5, y: 6)])
+
+        #expect(state.x == 5 && state.y == 6)
+        #expect(state.movedX == 5 && state.movedY == 6)
+        #expect(seen == [.mouseMoved, .mouseMovedBy(deltaX: 5, deltaY: 6)], "\(seen)")
+        // 控えは最初に言った文面を持つ。2 件目で言い直していれば、ここが無限の 1 件になる
+        let said = state.warnings.message(for: .nonFiniteEvent)
+        #expect(said?.contains("mouseMovedBy(dx: nan") == true, "\(String(describing: said))")
+    }
+
+    /// 上限を越えると、``InputState/enqueue(_:)`` が古い 1 件をその場で状態へ当てる (#935)。
+    /// フレームの頭を通らないこの経路でも、同じに捨てる。
+    @Test("溜める上限を越えて押し出された出来事も、当てると有限でなくなるなら捨てる")
+    func eventsPushedOutOfTheQueueAreCheckedToo() {
+        let state = InputState()
+        let extreme: [InputEvent] = [
+            .mouseDown(x: 100, y: 100, button: .left),
+            .mouseMoved(x: 3e38, y: 100),
+            .mouseMoved(x: -3e38, y: 100),
+            .mouseMovedBy(dx: .nan, dy: 0),
+        ]
+        for event in extreme { state.enqueue(event) }
+        // 何も動かさない出来事で、上の 4 件を押し出す
+        for _ in 0..<InputState.queueLimit { state.enqueue(.scrolled(dx: 0, dy: 0)) }
+
+        #expect(state.droppedEvents == extreme.count)
+        // 押し出した時点で当たっている (フレームの頭はまだ通っていない)
+        #expect(state.x == 3e38)
+        #expect(readersAreFinite(state), "押し出す経路で非有限が溜まった: movedX \(state.movedX)")
+        #expect(state.warnings.hasWarned(.nonFiniteEvent))
+
+        state.beginFrame()
+        #expect(readersAreFinite(state))
+    }
+
+    @Test("範囲の外でも有限に収まる位置は、丸めずに当てて配る")
+    func farButFinitePositionsAreNotClamped() {
+        let state = InputState()
+        let seen = run(state, [.mouseMoved(x: 3e38, y: -3e38)])
+
+        #expect(state.x == 3e38 && state.y == -3e38)
+        #expect(state.movedX == 3e38 && state.movedY == -3e38)
+        #expect(seen == [.mouseMoved, .mouseMovedBy(deltaX: 3e38, deltaY: -3e38)], "\(seen)")
+        #expect(!state.warnings.hasWarned(.nonFiniteEvent))
+    }
+
+    /// ``InputState`` の `accumulateMotion` の約束 — 配る量と同じ値を同じ順で足す — は、
+    /// 捨てた出来事を挟んでも崩れない。捨てた 1 件は、どちらにも入らない。
+    @Test("捨てた出来事を挟んでも、配った引きずりの和はフレーム合計と一致する")
+    func droppedEventsKeepDeliveredAndAccumulatedAmountsInStep() {
+        let state = InputState()
+        var deltaX: Float = 0
+        for event: InputEvent in [
+            .mouseDown(x: 0, y: 0, button: .left), .mouseMoved(x: 1e38, y: 0),
+            // 差 −4e38 は溢れるので捨てる
+            .mouseMoved(x: -3e38, y: 0), .mouseMoved(x: 2e38, y: 0),
+        ] {
+            state.enqueue(event)
+        }
+        state.beginFrame { callback in
+            guard case .mouseDragged(let x, _) = callback else { return }
+            deltaX += x
+        }
+
+        #expect(state.x == 2e38)
+        #expect(deltaX == state.dragX)
+        #expect(state.dragX.isFinite)
     }
 }
 
@@ -636,6 +869,57 @@ struct InputInboxTests {
         let inbox = InputInbox(directory: facet)
         try send("{ これは JSON ではない", to: facet)
         #expect(inbox.drain(into: InputState()) == nil)
+    }
+
+    /// **`events` が読めなくても、`id` を読めれば応える** ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
+    /// 解けなかった 1 件だけを持つ要求として流すので、受けたのは 0 件・捨てたのは 1 件と返り、
+    /// 何も流れ込まない。応えないと、送り手には「届いたが読めなかった」と「走っていない」の
+    /// 見分けが付かない (ADR-0018 決定 3)。
+    @Test(
+        "events が読めない要求にも、id を echo し、1 件を捨てたと応える",
+        arguments: [
+            #"{"id":"i1","events":5}"#,
+            #"{"id":"i1"}"#,
+            #"{"id":"i1","events":null}"#,
+            #"{"id":"i1","events":{"type":"mouseMoved","x":1,"y":2}}"#,
+        ])
+    func answersARequestWhoseEventsCannotBeRead(_ request: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(request, to: facet)
+
+        let report = try #require(inbox.drain(into: state), "応答が書かれず、要求ごと黙った")
+        #expect(report.id == "i1")
+        #expect(report.accepted == 0)
+        #expect(report.ignored == 1)
+        state.beginFrame()
+        #expect(state.x == 0)
+        #expect(state.y == 0)
+        // 応えた要求は、置き直しても二度は流さない
+        try send(request, to: facet)
+        #expect(inbox.drain(into: state) == nil)
+    }
+
+    /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
+    /// JSON)。
+    @Test(
+        "id が読めない要求は、応答せず捨てる",
+        arguments: [
+            #"{"events":[{"type":"mouseMoved","x":1,"y":2}]}"#,
+            #"{"id":5,"events":[{"type":"mouseMoved","x":1,"y":2}]}"#,
+            #"{"id":"i1","events":[{"type":"mouseMoved","x":1,"y":2}"#,
+        ])
+    func dropsARequestWithoutAReadableID(_ request: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(request, to: facet)
+
+        #expect(inbox.drain(into: state) == nil)
+        #expect(!FileManager.default.fileExists(atPath: facet.appendingPathComponent("report.json").path))
+        state.beginFrame()
+        #expect(state.x == 0)
     }
 
     @Test("同じ識別子の要求を二度は流し込まない")

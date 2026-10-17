@@ -78,6 +78,185 @@ struct DoctorCommandTests {
         #expect(lines.contains("Toolchain: \(DoctorCommand.unknown)"))
     }
 
+    // MARK: - 見ている場所が無い (#2314)
+
+    /// 共有の置き場を打った人の手元へ向かせない環境 (結果を機械の状態で変えない)。
+    private static func isolated() -> [String: String] {
+        [
+            BuildDirectory.environmentKey: FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-doctor-store-\(UUID().uuidString)").path
+        ]
+    }
+
+    /// **場所が無いことを、道具立てのせいにしない** (規律 3)。道具立ては見ている場所で
+    /// `swift` を起こして読むので、場所が無いと起きない。それを「could not launch swift」と
+    /// 言うと、入っている `swift` を疑わせ、打ち間違えた場所からは遠ざける。
+    @Test("在らない場所を渡すと、場所が無いと名乗り、swift を起こせなかったとは言わない")
+    func aMissingPlaceIsNamedWithoutBlamingTheToolchain() {
+        let missing = "/nonexistent-\(UUID().uuidString)/xyz"
+        let text = DoctorCommand.text(for: [missing], workDirectory: nil, environment: Self.isolated())
+        #expect(text.contains("Place: \(missing) — nothing is there"))
+        #expect(!text.contains("could not launch swift"))
+        #expect(text.contains("Toolchain: \(DoctorCommand.unknown) — not asked"))
+    }
+
+    @Test("ファイルを渡すと、ディレクトリでないと名乗り、swift を起こせなかったとは言わない")
+    func aFileAsThePlaceIsNamed() throws {
+        let place = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: place) }
+        let file = place.appendingPathComponent("Package.swift")
+        try "".write(to: file, atomically: true, encoding: .utf8)
+        let text = DoctorCommand.text(
+            for: [file.path], workDirectory: nil, environment: Self.isolated())
+        #expect(text.contains("— not a directory"))
+        #expect(!text.contains("could not launch swift"))
+    }
+
+    /// **入れない場所を「無い」と言わない** (#2314 の反証)。`fileExists` は入れない場所も
+    /// 宛先の無い symlink も false にするので、それだけで「nothing is there」と言うと、在る
+    /// 場所を探させる。
+    @Test(
+        "入れない場所・宛先の無い symlink を渡すと、無いとは言わずに辿り着けない理由を言う",
+        arguments: ["locked", "dangling"])
+    func anUnreachablePlaceIsNamedWithItsReason(kind: String) throws {
+        let root = try Self.emptyDirectory()
+        let locked = root.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: locked.appendingPathComponent("child", isDirectory: true),
+            withIntermediateDirectories: true)
+        let dangling = root.appendingPathComponent("dangling")
+        try FileManager.default.createSymbolicLink(
+            atPath: dangling.path, withDestinationPath: root.appendingPathComponent("nowhere").path)
+        chmod(locked.path, 0)
+        defer {
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let (place, reason) =
+            kind == "locked"
+            ? (locked.appendingPathComponent("child").path, String(cString: strerror(EACCES)))
+            : (dangling.path, "a symbolic link to something that is not there")
+
+        let text = DoctorCommand.text(for: [place], workDirectory: nil, environment: Self.isolated())
+        #expect(text.contains("Place: \(place) — cannot be reached: \(reason)"))
+        #expect(!text.contains("nothing is there"))
+        #expect(!text.contains("could not launch swift"))
+    }
+
+    /// 裏側。場所が在れば、いままでどおり道具立てを聞いて名乗る — `..` で始まる場所でも、
+    /// 走らせた場所から解いた場所で聞く (#2314 の完了条件 1)。
+    @Test("`..` で始まる場所でも、そこで道具立てを読んで名乗る")
+    func aPlaceStartingWithDotDotIsReadThere() throws {
+        let root = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let plain = root.appendingPathComponent("plain", isDirectory: true)
+        let probe = root.appendingPathComponent("probe", isDirectory: true)
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: true)
+
+        let text = DoctorCommand.text(
+            for: ["../probe"], workDirectory: nil, environment: Self.isolated(),
+            currentDirectory: plain)
+        #expect(text.contains("Place: \(probe.standardizedFileURL.path)\n"))
+        #expect(!text.contains("Toolchain: \(DoctorCommand.unknown)"))
+    }
+
+    // MARK: - 道具立てを聞いて答えなかった理由 (#2522)
+
+    /// **入れない場所を「swift を起こせなかった」の 1 文に畳まない。** stat に要るのは親の探索権
+    /// だけなので、自身に x の無いディレクトリ (`chmod 000`) は `.directory` と読め、`swift` を
+    /// 聞きに行って起こせずに投げる — その理由を `try?` が捨てて、唯一の既定文になっていた。
+    @Test("入れない場所 (chmod 000) を渡すと、道具立ての行が入れないことを名乗る")
+    func aPlaceWithoutSearchPermissionIsNamedOnTheToolchainLine() throws {
+        let root = try Self.emptyDirectory()
+        let locked = root.appendingPathComponent("locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        chmod(locked.path, 0)
+        defer {
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let text = DoctorCommand.text(
+            for: [locked.path], workDirectory: nil, environment: Self.isolated())
+        #expect(
+            text.contains(
+                "Toolchain: \(DoctorCommand.unknown) — swift could not start in \(locked.path): "
+                    + String(cString: strerror(EACCES))))
+        #expect(!text.contains("could not launch swift"))
+    }
+
+    /// 聞く口を差し替えて、答えなかった理由ごとの名乗りを固める。**127 は `PATH` を差し替えずに
+    /// 通す** — 起こす側は `/usr/bin/env swift` を書き固めている。
+    @Test("道具立てが答えなかった理由は、無い・起こせない・0 以外・空で別々に名乗る")
+    func eachReasonTheToolchainDidNotAnswerIsNamedApart() {
+        let place = URL(fileURLWithPath: "/sketch", isDirectory: true)
+        func line(_ ask: @escaping (URL) throws(CommandFailure) -> (status: Int32, output: String))
+            -> String
+        {
+            switch Toolchain.read(in: place, asking: ask) {
+            case .version(let version): DoctorCommand.toolchainLine(version)
+            case .unanswered(let reason): DoctorCommand.toolchainLine(nil, unanswered: reason)
+            }
+        }
+        let unknown = DoctorCommand.unknown
+
+        // `env` が 127 で終わった (`swift` が `PATH` に無い) — 無いと言う
+        #expect(
+            line { _ throws(CommandFailure) in throw .toolchainMissing("swift") }
+                == "Toolchain: \(unknown) — swift was not found on the PATH — install the Xcode "
+                + "command line tools")
+        // 入れない・OS の事情で起こせない — 無いとは言わず、その理由を言う
+        #expect(
+            line { _ throws(CommandFailure) in
+                throw .cannotLaunch(tool: "swift", place: "/sketch", reason: "Bad CPU type in executable")
+            } == "Toolchain: \(unknown) — swift could not start in /sketch: Bad CPU type in executable")
+        // 起きて 0 以外で終わった・何も言わなかった
+        #expect(
+            line { _ throws(CommandFailure) in (status: 69, output: "") }
+                == "Toolchain: \(unknown) — swift --version exited with code 69")
+        #expect(
+            line { _ throws(CommandFailure) in (status: 0, output: "\n") }
+                == "Toolchain: \(unknown) — swift --version printed nothing")
+        // 答えたなら名乗りそのもの
+        #expect(
+            line { _ throws(CommandFailure) in (status: 0, output: "Apple Swift version 6.3.3\nTarget: x\n") }
+                == "Toolchain: Apple Swift version 6.3.3")
+    }
+
+    /// **置き場の鍵は、読めない回にいままでどおり共有しない側へ倒れる** (#2522 の完了条件 5)。
+    /// 理由を返す形にしても、`describe` の見え方は変えない。
+    @Test("置き場の鍵が読む describe は、答えなかった回に nil のまま")
+    func describeStaysNilWhenTheToolchainDoesNotAnswer() {
+        let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)", isDirectory: true)
+        #expect(Toolchain.describe(in: missing) == nil)
+        #expect(BuildDirectory.toolchainSegment(from: Toolchain.describe(in: missing)) == nil)
+    }
+
+    /// 文の形 (純関数)。
+    @Test("聞かなかった道具立てと、聞いて読めなかった道具立てを言い分ける")
+    func anUnaskedToolchainIsToldApart() {
+        let place = URL(fileURLWithPath: "/nowhere", isDirectory: true)
+        #expect(
+            DoctorCommand.toolchainLine(nil, unaskedIn: place)
+                == "Toolchain: \(DoctorCommand.unknown) — not asked, since swift cannot start in"
+                + " /nowhere (see Place below)")
+        // 聞いて読めなかった回は、理由を名乗る。理由を持たない回も「起こせなかった」とは決めつけない
+        #expect(
+            DoctorCommand.toolchainLine(nil, unanswered: "swift --version printed nothing")
+                == "Toolchain: \(DoctorCommand.unknown) — swift --version printed nothing")
+        #expect(
+            DoctorCommand.toolchainLine(nil)
+                == "Toolchain: \(DoctorCommand.unknown) — swift gave no answer")
+        #expect(DoctorCommand.placeLine(place, presence: .directory) == "Place: /nowhere")
+        #expect(DoctorCommand.placeLine(place, presence: .missing).contains("nothing is there"))
+        #expect(
+            DoctorCommand.placeLine(place, presence: .notDirectory).contains("not a directory"))
+        let unreachable = DoctorCommand.placeLine(
+            place, presence: .unreachable(reason: "Permission denied"))
+        #expect(unreachable == "Place: /nowhere — cannot be reached: Permission denied")
+    }
+
     /// 同梱の断片は実行時に組むので、スケッチのビルドは `metal` を起こさない。並べると
     /// 要らない Metal Toolchain を入れさせることになる
     /// ([#2351](https://github.com/mokume-metal/mokume/issues/2351))。
@@ -107,6 +286,112 @@ struct DoctorCommandTests {
         var unreadable = Self.state(place)
         unreadable.lastBuild = DoctorCommand.LastBuild(ok: nil, at: Date(timeIntervalSince1970: 0))
         #expect(DoctorCommand.stateLines(unreadable).joined().contains(DoctorCommand.unknown))
+    }
+
+    /// 作り直しは通ったが子を起こせなかった回 (`ok: true, launched: false`) を「succeeded」と
+    /// 言わない ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。`doctor` は
+    /// 「なぜ絵が止まっているか」を切り分ける口なので、そこで成功と言うと原因から遠ざかる。
+    @Test("最後の作り直しが通っても起こせなかったなら、succeeded と言わず理由の頭を言う")
+    func theLastBuildThatCouldNotStartIsNotCalledSucceeded() throws {
+        let place = URL(fileURLWithPath: "/tmp/demo", isDirectory: true)
+        let reason = "Cannot start sketch: permission denied: /stub/.build/debug/sketch"
+        var state = Self.state(place)
+        state.lastBuild = DoctorCommand.LastBuild(
+            ok: true, at: Date(timeIntervalSince1970: 0), launched: false,
+            notStarted: reason)
+        let text = DoctorCommand.stateLines(state).joined(separator: "\n")
+        #expect(!text.contains("succeeded"))
+        #expect(text.contains("built at"))
+        #expect(text.contains("but not started: " + reason))
+
+        // 起こせた回・`launched` を持たない古い記録は、従来どおり
+        state.lastBuild = DoctorCommand.LastBuild(
+            ok: true, at: Date(timeIntervalSince1970: 0), launched: true)
+        #expect(DoctorCommand.stateLines(state).joined().contains("succeeded at"))
+        state.lastBuild = DoctorCommand.LastBuild(ok: true, at: Date(timeIntervalSince1970: 0))
+        #expect(DoctorCommand.stateLines(state).joined().contains("succeeded at"))
+    }
+
+    /// 記録 (JSON) から読んで、理由の頭が行まで届く。**読み手が `launched` を読み落とした
+    /// 日に落ちる** — 行を組む側だけを見ると、記録を読む口の取りこぼしを見逃す。
+    @Test("watch が置いた起こせなかった回の記録を、doctor が理由つきで読む")
+    func theLastBuildIsReadWithItsLaunchedFlag() throws {
+        let work = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let reason = "Cannot start sketch: permission denied"
+        let report = BuildReport.notStarted(
+            reason: reason, buildOutput: "[1/1] Compiling…", stamp: nil,
+            configuration: "debug",
+            timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+        let status = BuildReport.statusURL(under: work)
+        try AtomicFile.writeJSON(report, to: status)
+
+        let last = try #require(DoctorCommand.lastBuild(under: work))
+        #expect(last.launched == false)
+        #expect(last.notStarted == reason)
+        let line = DoctorCommand.lastBuildLine(last)
+        #expect(!line.contains("succeeded"))
+        #expect(line.contains(reason))
+    }
+
+    /// **理由の欄を持たない古い記録の最初の行を、理由と読まない。** 欄ができる前の記録は、本文の頭が
+    /// 理由ではなく作り直しの出力で、「but not started: Building for debugging...」と断定すると
+    /// 誤りになる。理由が書かれていないことを言い、出力の在処を示す。
+    @Test("理由を持たない古い起こせなかった記録は、理由を断定せず出力の在処を言う")
+    func anOldNotStartedRecordDoesNotInventAReason() throws {
+        let work = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let status = BuildReport.statusURL(under: work)
+        try FileManager.default.createDirectory(
+            at: status.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let old =
+            #"{"schemaVersion":1,"ok":true,"status":0,"launched":false,"configuration":"debug","#
+            + #""output":"Building for debugging...\n\nBuild complete!","timings":{"buildMs":1}}"#
+        try Data(old.utf8).write(to: status)
+
+        let last = try #require(DoctorCommand.lastBuild(under: work))
+        #expect(last.launched == false)
+        #expect(last.notStarted == nil)
+        let line = DoctorCommand.lastBuildLine(last)
+        #expect(!line.contains("Building for debugging"), "出力の最初の行を理由と読んでいる")
+        #expect(!line.contains("succeeded"))
+        #expect(line.contains("but not started"))
+        #expect(line.contains("no reason"))
+        #expect(line.contains(BuildReport.statusRelativePath))
+    }
+
+    /// **作り直しの失敗ではない記録を「failed」と言わない。** 見張りを終えたときの最後の記録は
+    /// `ok: false` だが、本文の頭が失敗ではないと名乗っている (#1147)。普通の失敗は従来どおり。
+    @Test("見張りを終えたときの記録は、作り直しの失敗と言わない")
+    func aStoppedRebuildIsNotCalledAFailure() throws {
+        for (output, expected) in [
+            (WatchSession.stoppedRebuildNotice, BuildReport.Interruption.rebuildStopped),
+            (WatchSession.notStartedNotice, BuildReport.Interruption.beforeFirstBuild),
+        ] {
+            let work = try Self.emptyDirectory()
+            defer { try? FileManager.default.removeItem(at: work) }
+            let report = BuildReport.failed(
+                status: 130, output: output, stamp: nil, configuration: "debug",
+                timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+            try AtomicFile.writeJSON(report, to: BuildReport.statusURL(under: work))
+
+            let last = try #require(DoctorCommand.lastBuild(under: work))
+            #expect(last.interruption == expected)
+            let line = DoctorCommand.lastBuildLine(last)
+            #expect(!line.contains("failed"), "失敗ではない記録を failed と言っている: \(line)")
+            #expect(line.contains("not a build failure"))
+        }
+
+        // 普通の失敗は、従来どおり failed
+        let work = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let broken = BuildReport.failed(
+            status: 1, output: "error: boom", stamp: nil, configuration: "debug",
+            timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+        try AtomicFile.writeJSON(broken, to: BuildReport.statusURL(under: work))
+        let last = try #require(DoctorCommand.lastBuild(under: work))
+        #expect(last.interruption == nil)
+        #expect(DoctorCommand.lastBuildLine(last).contains("failed at"))
     }
 
     /// #464 と同じ状況 — 作ったばかりで区画がまだ無い。**出力を読むだけでそこへ到達できる。**

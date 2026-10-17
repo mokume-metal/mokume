@@ -3,7 +3,7 @@
 
 /// スケッチの呼び出しの外から頼まれて、断った口。**何を断ったか**を表す。
 ///
-/// 進行の口 (``Sketch/noLoop()`` など)・時刻の口 (``Sketch/pauseTime()`` など)・書き出しの口 (``Sketch/save(_:)`` など) は、
+/// 進行の口 (``SketchPart/noLoop()`` など)・時刻の口 (``SketchPart/pauseTime()`` など)・書き出しの口 (``SketchPart/save(_:)`` など) は、
 /// ``runningSketch`` が差さっている間 — `setup()`・`draw()`・入力のコールバックの中 —
 /// にしか頼めない。差すのは `SketchRuntime.withActiveRuntime(_:)` だけで、返れば外れる。
 /// 中で起こした `Task` の中身が走るのはその後なので、そこからの頼みは必ずここへ来る。
@@ -14,7 +14,11 @@
 /// (`init` から・終わった後) とも見分けられないので、**どちらでも事実である
 /// 「どこからなら受け付けるか」**を言う。
 ///
+/// **言うのは口ごとに 1 度だけで、観測の応答にも載る** (``OutsideRun``)。描く口・読み取りを外から
+/// 呼んだときと同じ事情なので、同じ控えで数える ([#2265])。
+///
 /// [#1322]: https://github.com/mokume-metal/mokume/issues/1322
+/// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
 enum OutsideCall: CaseIterable {
     case noLoop
     case loop
