@@ -49,8 +49,12 @@ STRING_OPENING = re.compile(r'(#*)("""|")')
 EXCLUDED_DIRECTORIES = {"frame-rate-probe"}
 
 
-def blank_comments(text):
-    """コメントを空白で塗りつぶした写しを返す。改行は残すので行番号は変わらない。"""
+def blank_comments(text, strings=False):
+    """コメントを空白で塗りつぶした写しを返す。改行は残すので行番号は変わらない。
+
+    strings=True なら、文字列リテラルの中身 (引用符は残す) も塗る。文字列補間の
+    `\\(…)` の中はコードなので塗らない。`scripts/check-runtime-math.py` が使う (#2751)。
+    """
     out = list(text)
 
     def blank(start, end):
@@ -111,6 +115,8 @@ def blank_comments(text):
                 stack.append(("code", 1))
                 i = after + 1
             else:
+                if strings:
+                    blank(i, min(after + 1, n))
                 i = after + 1  # エスケープした 1 文字を飛ばす (複数行の行継ぎの改行も含む)
             continue
         if text.startswith(closing, i):
@@ -119,6 +125,8 @@ def blank_comments(text):
             continue
         if char == "\n" and not multiline:
             stack.pop()  # 閉じない 1 行の文字列はコンパイルが通らない。行で打ち切って読み続ける
+        elif strings:
+            blank(i, i + 1)
         i += 1
     return "".join(out)
 
