@@ -152,16 +152,18 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `gh run download <run-id> -n <artifact 名>` で取る。
 4. **base の切り替えは `gh api -X PATCH` で行う。** 条件式の検証では、空コミットだけの Draft
    (重要パスに触れない) を作り、main と同じ SHA の一時ブランチへ base を向け、main へ戻す。
-   `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。切り替えのたびに `edited`
-   の run ができる。`changes.base` が効いて `ci-check` が積まれる
-   (skipped にならない) ことを、本文だけの編集 (対照・skipped になる) と並べて読む。
-   読み終えた macOS のジョブは 2 と同じく取り消す。
+   `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。base の切り替えも本文・
+   タイトルの編集も `edited` の出来事で、起きるのは `edited` を持つワークフロー (`PR gate`) だけ
+   である。`CI` は `edited` で起きない (#2718) ので、切り替えや編集の前後で
+   `gh run list --branch <枝> --workflow CI` の本数が変わらないことを読む。`edited` で起きた
+   run のジョブは `gh run view` で読む。
 
    ```bash
    SHA=$(git rev-parse origin/main)
    git push origin "${SHA}:refs/heads/tmp/base-switch-<N>" # zsh では波括弧が要る ($SHA:refs の :r が修飾子になる)
    gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=tmp/base-switch-<N>
    gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=main
+   gh run list --branch <枝> --workflow CI --json databaseId,event,createdAt --jq '.[] | [.databaseId, .event, .createdAt] | @tsv'
    gh run view <run-id> --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'
    ```
 
