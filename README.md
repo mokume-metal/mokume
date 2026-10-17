@@ -183,6 +183,8 @@ mv .build .build-held && open bundle/Grain.app ; mv .build-held .build
 claude mcp add mokume -- mokume mcp
 ```
 
+場所を渡さない窓口は、起こされた場所 (Claude Code ならそれを起動した場所) で立ち、`MOKUME_WORK_DIR` が無ければその場所の `.mokume/` を見ます。スケッチのディレクトリで起動するか、`mokume mcp <スケッチのディレクトリ>` と場所を渡して登録してください。スケッチでない場所で立てた窓口は、走っているスケッチと繋がりません (応えないときの答えがそう名乗ります)。
+
 ### うまく動かないとき
 
 スケッチのディレクトリで `mokume doctor` を実行すると、環境 (`What the environment provides`) とスケッチの状態 (`What is here`) が表示されます。何も変更しないので、問題の切り分けに気軽に使えます。

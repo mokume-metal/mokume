@@ -43,6 +43,21 @@ struct Facets {
     /// **応えないときの案内が名乗る。** 走らせる側と食い違っていても症状は「誰も応えない」
     /// でしかなく、それは「まだ起動していない」と見分けが付かない (#380 着手条件 2)。
     var workDirectoryGiven: Bool = false
+    /// 窓口を立てた場所と、そこがスケッチか (``InterfacePlace``)。
+    ///
+    /// **``workDirectoryGiven`` と同じく、起動の時点で決まる事実として持つ** (#2487)。窓口は
+    /// 在る場所なら受ける (#2321) ので、スケッチでない場所でも立つ。応えないときの案内は
+    /// 「窓口の場所 = スケッチの場所」を前提にせず、この事実から組む。`nil` は場所を知らない
+    /// 呼び手で、場所の話をしない (``Tools`` は組むときに必ず埋める)。
+    var place: InterfacePlace?
+
+    /// 区画の基準が、スケッチでない窓口の場所に落ちているか。
+    ///
+    /// `MOKUME_WORK_DIR` があれば基準は窓口の場所に依らないので、窓口をどこで立てたかは
+    /// 応えない原因にならない。無ければ基準は窓口を立てた場所で、そこにスケッチが無ければ、
+    /// 自分の場所で走るスケッチ (`watch`) とは噛み合わない。区画を読み書きする答え
+    /// (応えない・作り直しの記録が無い・置けない) が、場所の手を添えるのはこのときだけである。
+    var facetsOutsideSketch: Bool { !workDirectoryGiven && place?.isSketch == false }
 
     // 区画の名前も ``StartupReads`` から取る。窓口の側で綴りを持つと、スケッチが見る
     // 場所と黙って食い違いうる (#380)
@@ -131,8 +146,8 @@ struct Facets {
 
     /// 走っているスケッチが応えないときの答え。**その場で直せるところまで書く。**
     ///
-    /// 応えない理由は**打つ手の違う 2 つ**に分かれ、`existed` (要求を置く前に区画が在ったか)
-    /// が 1 つ目を絞る:
+    /// 応えない理由は**打つ手の違う 4 つ**に分かれる (4 つ目は窓口がスケッチでない場所で立った
+    /// ときだけ)。`existed` (要求を置く前に区画が在ったか) が 1 つ目を絞る:
     ///
     /// - **在らせたのがこの呼び出し自身** — 走っているスケッチは区画を持っていない。
     ///   区画を見るのは起動の瞬間だけなので、**起動し直す**以外に直らない
@@ -147,52 +162,103 @@ struct Facets {
     /// 文面は読む時点ごとに書き足さず、**起動の瞬間に決まるものの一覧を名指す**。一覧
     /// (``StartupReads``) に増えたものは `reference` の `startup` に自動で並ぶ。
     ///
-    /// **窓口がスケッチでない場所 (`Package.swift` の無い `packageDirectory`) で立っていれば、
-    /// 4 つ目の可能性として名乗り、起こし直す手を言う** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
-    /// 区画の基準もその場所になるので、別の場所で走るスケッチとは噛み合わない。断らずに候補の
-    /// 1 つとして並べる理由は ``Tools/outsideSketchMove(package:)`` が持つ。
-    func notRunning(
-        _ entry: StartupReads.Entry, existed: Bool, packageDirectory: URL? = nil
-    ) -> String {
-        // **読めたなら原因は確定している。** 候補を 3 つ並べる前に、そう言う
-        if let package = packageDirectory,
+    /// **文面は窓口の場所の事実 (``place``・``workDirectoryGiven``) から組む** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
+    /// 「窓口の場所 = スケッチの場所」を前提に書くと、スケッチでない場所で立った窓口では
+    /// 1 (起動し直せば区画を拾う) と 2 (基準が割れているなら `MOKUME_WORK_DIR` を揃える) が
+    /// 偽になり、4 と食い違う:
+    ///
+    /// - **2 には、`MOKUME_WORK_DIR` が無ければ「窓口をスケッチの場所で起こす」を常に載せる。**
+    ///   本当の条件は「窓口と走っているスケッチの区画の基準が割れている」で、`Package.swift` の
+    ///   有無はその代理でしかない — 別のスケッチの場所で立った窓口も同じ形で割れる
+    /// - **区画の基準がスケッチでない場所に落ちていれば (``facetsOutsideSketch``)、1 をその場所の
+    ///   話として言い直し、4 つ目の可能性として場所の手を言う。** 区画は今どおり作る (#2487 の
+    ///   案 B) — 組み上げた実行ファイルをその場所から起こすと、スケッチの区画もそこに置かれて
+    ///   正しく繋がるので、断らずに候補の 1 つとして並べる
+    func notRunning(_ entry: StartupReads.Entry, existed: Bool) -> String {
+        // **読めたなら原因は確定している。** 候補を並べる前に、そう言う
+        if let package = place?.directory,
             DependencyFacets.lacks(entry, forPackageAt: package) == true
         {
             return lacksFacet(entry)
         }
-        let outsideSketch = packageDirectory.flatMap { Tools.outsideSketchMove(package: $0) }
-        let count = outsideSketch == nil ? "three" : "four"
-        // 4 つ目は 1〜3 と同じ形 (見出しの下を 3 字下げる) で並べる。複数行の文字列へ
-        // 差し込んだ値は字下げされないので、ここで下げておく
-        let fourth = outsideSketch.map { move in
-            let body = move.split(separator: "\n", omittingEmptySubsequences: false)
-                .map { $0.isEmpty ? "" : "   \($0)" }.joined(separator: "\n")
-            return "\n\n4. \(Tools.outsideSketchHeading)\n\(body)"
-        } ?? ""
         let path = facet(entry).path
+        let outside = facetsOutsideSketch ? place : nil
+        let count = outside == nil ? "three" : "four"
         let opening = existed
             ? """
             The running sketch did not answer. \(entry.name) (\(path)) was already there
             before the request was placed, so this is not about the order facets are created in.
             There are \(count) possibilities, and each takes a different move.
-
-            1. Nothing is running yet, or it has stopped answering
-               Start `\(Command.name) watch` in the sketch's directory, then call again.
             """
             : """
             The running sketch did not answer. \(entry.name) (\(path)) was not there when
             the request was placed, so this call created it.
             There are \(count) possibilities, and each takes a different move.
-
-            1. The sketch launched without \(entry.name)
-               \(entry.note).
-               **Restart it.** The facet is there now, so it does not need creating again.
-
-                   \(Command.name) watch <sketch directory>
             """
-        return """
-            \(opening)
+        var items = [
+            firstPossibility(entry, existed: existed, outside: outside),
+            secondPossibility(),
+            """
+            3. The mokume the sketch depends on is a version without \(entry.name)
+               Facets have been added over time, so a sketch pinned to an older version can
+               be missing one. **Restarting will not fix that one either.** Which facets the
+               pinned version lacks is named by
 
+                   \(Command.name) doctor <sketch directory>
+            """,
+        ]
+        if let outside {
+            items.append("4. \(InterfacePlace.notASketchHeading)\n" + Self.indented(outside.restartMove))
+        }
+        return ([opening] + items + [
+            "What gets decided at launch is listed in `reference`, under `\(Tools.startupDocument)`."
+        ]).joined(separator: "\n\n")
+    }
+
+    /// 1 つ目の可能性。区画の基準がスケッチでない場所に落ちていれば (`outside`)、その場所の話と
+    /// して言う — `watch` は自分のスケッチの場所で走るので、そこを起動し直しても窓口の区画は
+    /// 見ない。この場所を見るのは、ここから起こした (組み上げた実行ファイルの) スケッチだけである。
+    private func firstPossibility(
+        _ entry: StartupReads.Entry, existed: Bool, outside: InterfacePlace?
+    ) -> String {
+        switch (existed, outside) {
+        case (true, nil):
+            return """
+                1. Nothing is running yet, or it has stopped answering
+                   Start `\(Command.name) watch` in the sketch's directory, then call again.
+                """
+        case (false, nil):
+            return """
+                1. The sketch launched without \(entry.name)
+                   \(entry.note).
+                   **Restart it.** The facet is there now, so it does not need creating again.
+
+                       \(Command.name) watch <sketch directory>
+                """
+        case (true, let place?):
+            return """
+                1. Nothing started from this interface's directory is running, or it has stopped answering
+                   Only a sketch started from that directory itself (a built app run there) uses
+                   the facets here: \(place.directory.path)
+                   `\(Command.name) watch` runs a sketch in its own directory instead, which is 4 below.
+                """
+        case (false, let place?):
+            return """
+                1. A sketch started from this interface's directory launched without \(entry.name)
+                   \(entry.note).
+                   What this call created is under the directory this interface was started in,
+                   not under a sketch's directory: \(place.directory.path)
+                   If a built app was started from there, **restart it** — the facet is there now.
+                   A sketch run from its own directory does not look here at all, which is 4 below.
+                """
+        }
+    }
+
+    /// 2 つ目の可能性。基準の 1 行は `watch` と同じ言葉で名乗る (#380) ので、ここでは変えない。
+    /// **`MOKUME_WORK_DIR` が無ければ、窓口をスケッチの場所で起こす手を常に載せる** — 基準は
+    /// それぞれが立った場所なので、窓口をスケッチの場所で起こせば揃う (#2487)。
+    private func secondPossibility() -> String {
+        var text = """
             2. The interface and the sketch disagree on the facet base
                What this interface is looking at:
 
@@ -202,16 +268,23 @@ struct Facets {
                differs from that, the two are looking at different facets.
                **Restarting will not fix that one.** Start both `watch` and the interface
                under the same \(StartupReads.workDirectory.key).
-
-            3. The mokume the sketch depends on is a version without \(entry.name)
-               Facets have been added over time, so a sketch pinned to an older version can
-               be missing one. **Restarting will not fix that one either.** Which facets the
-               pinned version lacks is named by
-
-                   \(Command.name) doctor <sketch directory>\(fourth)
-
-            What gets decided at launch is listed in `reference`, under `\(Tools.startupDocument)`.
             """
+        if !workDirectoryGiven {
+            text += "\n" + """
+                   With \(StartupReads.workDirectory.key) unset, each uses the directory it was started for,
+                   so starting this interface in the sketch's directory also makes them agree:
+
+                       \(Command.name) mcp <sketch directory>
+                """
+        }
+        return text
+    }
+
+    /// 見出しの下に並べる本文を、1〜3 と同じ 3 字に下げる。複数行の文字列へ差し込んだ値は
+    /// 字下げされないので、ここで下げる。空行は下げない。
+    private static func indented(_ body: String) -> String {
+        body.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.isEmpty ? "" : "   \($0)" }.joined(separator: "\n")
     }
     /// 依存がその面を持たないと読めたときの答え。
     ///
@@ -231,4 +304,44 @@ struct Facets {
         `\(Command.name) doctor <sketch directory>` lists which facets the pinned version lacks.
         """
     }
+}
+
+/// 窓口を立てた場所と、そこがスケッチか。**起動の時点で決まる事実** ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
+///
+/// 窓口は在る場所なら受ける (`claude mcp add mokume -- mokume mcp` は打った場所で起こす・#2321)
+/// ので、スケッチでない場所でも立つ。答えの文面は「窓口の場所 = スケッチの場所」を前提にせず、
+/// この事実から組む — 前提にしたまま 1 行を足すと、同じ答えの中で行どうしが食い違う。
+///
+/// **起動の時点で 1 度だけ見る。** 立てた後に `new` で `Package.swift` が置かれても追わない —
+/// 区画の基準 (``Facets/workDirectoryGiven``) と同じく、起動の瞬間に決まるものとして扱う。
+struct InterfacePlace: Equatable {
+    /// 窓口を立てた場所 (パッケージの場所)。
+    let directory: URL
+    /// そこに `Package.swift` があるか。`run`・`watch` が場所を受けるときと同じ見方。
+    let isSketch: Bool
+
+    /// 場所を見て決める。
+    static func at(_ directory: URL) -> InterfacePlace {
+        InterfacePlace(
+            directory: directory,
+            isSketch: FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("Package.swift").path))
+    }
+
+    /// スケッチの場所で立っていないことの名乗り。
+    static let notASketchHeading = "This interface was not started in a sketch's directory"
+
+    /// スケッチの場所で立っていないときの一手。**文の正典はここ 1 つ**で、応えないときの 4 つ目と、
+    /// 作り直しの記録が無い・置けない・版が引けないときの答えが使う。
+    var restartMove: String {
+        """
+        There is no Package.swift in \(directory.path).
+        If the sketch is in another directory, start this interface there instead:
+
+            \(Command.name) mcp <sketch directory>
+        """
+    }
+
+    /// 答えの後に添える段落。
+    var note: String { "\(Self.notASketchHeading). \(restartMove)" }
 }

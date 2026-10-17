@@ -33,6 +33,11 @@ struct Tools {
         makeID: @escaping () -> String = { UUID().uuidString.prefix(8).lowercased() }
     ) {
         let package = packageDirectory ?? facets.directory
+        // **窓口を立てた場所の事実は、組む時点で決める** (#2487)。立てる口 (`MCPCommand.run`) は
+        // 自分で渡す。渡されなければパッケージの場所を見て埋める — 検査が組む窓口も、
+        // 本物と同じく場所の事実を持つ
+        var facets = facets
+        if facets.place == nil { facets.place = .at(package) }
         self.facets = facets
         self.packageDirectory = package
         self.apiList = apiList ?? APIListLocator(directory: package)
@@ -340,56 +345,28 @@ struct Tools {
 
     private func buildStatus() -> (String, Bool) {
         guard let status = facets.read(facets.buildStatus) else {
+            let missing = """
+                No build has been recorded yet. Either `\(Command.name) watch` is not running,
+                or it has not built anything so far.
+                """
+            // **記録を書くのは `watch` で、書く先は `watch` の区画の基準** (スケッチの場所)。
+            // 窓口の区画の基準がスケッチでない場所に落ちていれば、走っている `watch` の記録は
+            // ここからは読めない (#2487)。その場所から組み上げた実行ファイルを起こす使い方では
+            // 作り直しがそもそも無いので、そう言い分ける — 一手を勧めるのは前者に対してだけである
+            guard facets.facetsOutsideSketch, let place = facets.place else { return (missing, true) }
             return (
-                withOutsideSketchNote(
-                    """
-                    No build has been recorded yet. Either `\(Command.name) watch` is not running,
-                    or it has not built anything so far.
-                    """), true
+                """
+                \(missing)
+
+                \(place.note)
+
+                `\(Command.name) watch` records its builds under the sketch's own directory, so an interface
+                started elsewhere does not see them. A built app started from \(place.directory.path)
+                itself is never rebuilt, so for that one there is no record to read.
+                """, true
             )
         }
         return (pretty(status), false)
-    }
-
-    // MARK: - スケッチでない場所で立った窓口 (#2487)
-
-    /// 窓口がスケッチの場所で立っていないことの名乗り。``outsideSketchMove(package:)`` と組む。
-    static let outsideSketchHeading = "This interface was not started in a sketch's directory"
-
-    /// 窓口がスケッチの場所で立っていないときに、答えへ添える一手。スケッチの場所なら `nil`。
-    ///
-    /// **窓口は `Package.swift` の無い場所でも立つ** — `claude mcp add mokume -- mokume mcp` は
-    /// 打った場所で起こすので、`MCPCommand.directories` は在る場所なら受ける (#2321 の決定)。
-    /// そこでは区画の基準もその場所になり、別の場所で走るスケッチとは噛み合わない。応えない・
-    /// 作り直しの記録が無い・版が引けない、という答えはどれも事実だが、原因がここにあると
-    /// 言わなければ、読み手は走っている `watch` を探しに行くなど直らない道へ進む
-    /// ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。
-    ///
-    /// **断らずに添える** (#2487 の案 B)。組み上げた実行ファイルをこの場所から起こすと、
-    /// スケッチの区画もここに置かれ (区画の既定はプロセスの作業ディレクトリ)、窓口は正しく
-    /// 繋がる。だから「スケッチの場所でない」は候補の 1 つとして言い、区画は今どおり作る。
-    ///
-    /// スケッチかどうかは `Package.swift` の有無で見る (`run`・`watch` が場所を受けるときと同じ)。
-    /// 文の正典はここ 1 つで、応えないとき (``Facets/notRunning(_:existed:packageDirectory:)``)・
-    /// 作り直しの記録が無いとき・公開 API の一覧の版が引けないときの答えが使う。
-    static func outsideSketchMove(package: URL) -> String? {
-        guard
-            !FileManager.default.fileExists(
-                atPath: package.appendingPathComponent("Package.swift").path)
-        else { return nil }
-        return """
-            There is no Package.swift in \(package.path).
-            If the sketch is in another directory, start this interface there instead:
-
-                \(Command.name) mcp <sketch directory>
-            """
-    }
-
-    /// 答えに、スケッチの場所で立っていないことと一手を段落で添える。スケッチの場所なら
-    /// そのまま返す。
-    func withOutsideSketchNote(_ text: String) -> String {
-        guard let move = Self.outsideSketchMove(package: packageDirectory) else { return text }
-        return "\(text)\n\n\(Self.outsideSketchHeading). \(move)"
     }
 
     private func sendInput(_ arguments: [String: Any]) -> (String, Bool) {
@@ -434,13 +411,17 @@ struct Tools {
                 let report = try facets.exchange(
                     facet: facet, request: request, id: id, extraWait: extraWait)
             else {
-                return .refused(
-                    facets.notRunning(
-                        entry, existed: existed, packageDirectory: packageDirectory))
+                return .refused(facets.notRunning(entry, existed: existed))
             }
             return .answered(report)
         } catch {
-            return .refused(error.message)
+            // **置けなかった回も、場所の手を添える** (#2487)。窓口は在る場所なら受けるので、
+            // `/` や読み取り専用の場所でも立つ。区画の基準がそこに落ちていれば、書き込めるか・
+            // 容量・`MOKUME_WORK_DIR` だけを言うと、場所を渡す手が抜ける
+            guard facets.facetsOutsideSketch, let place = facets.place else {
+                return .refused(error.message)
+            }
+            return .refused("\(error.message)\n\n\(place.note)")
         }
     }
 
@@ -492,9 +473,13 @@ struct Tools {
             let found = try apiList.read()
             return ("Source: \(found.source.text)\n\n\(found.text)", false)
         } catch let missing as APIListLocator.Missing {
-            // スケッチでない場所には `Package.resolved` も無い。版が引けない理由をそこに
-            // 結びつけないと、「パスで指しているとき」という理由だけが読まれる (#2487)
-            return (withOutsideSketchNote(missing.advice), true)
+            // **版が引けない回だけ、場所の手を添える** (#2487)。スケッチでない場所には
+            // `Package.resolved` も無いので、理由を「パスで指しているとき」とだけ言うと取り違える。
+            // 版を読むのはパッケージの場所なので、区画の基準 (`MOKUME_WORK_DIR`) には依らない。
+            // 取りに行けない・読めない回は場所のせいではないので添えない
+            guard missing.cause == .versionUnknown, let place = facets.place, !place.isSketch
+            else { return (missing.advice, true) }
+            return ("\(missing.advice)\n\n\(place.note)", true)
         } catch {
             return ("Could not read the public API list: \(error)", true)
         }
