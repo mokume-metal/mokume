@@ -76,7 +76,7 @@ final class MySketch: Sketch {
 
 `fill(77, 191, 242)` に変えて保存すると、ウィンドウを開き直さずに円が水色になります。ビルドに失敗したときは直前の絵が動き続け、エラーがターミナルに表示されます。
 
-使える API は [API リファレンス](https://mokume.org/documentation/mokume/) に、実行結果の絵つきでまとまっています。
+使える API は [API リファレンス](https://mokume.org/documentation/mokume/) に、実行結果の絵つきでまとまっています。Processing や p5.js から来たなら、先に [Swift で 3 つだけ違うこと](https://mokume.org/documentation/mokume/#Swift-で-3-つだけ違うこと)を読むと、最初の赤いエラーで迷いません。
 
 ## コマンド
 

@@ -139,6 +139,55 @@ MCP が作品側の mokume の更新を案内します。`time` を省けば、�
 撮れるのは1枚だけで、`count` と `every` は1に限ります。`noLoop()` 中も1枚描いて停止を保ちますが、
 外部からの停止中、録画中では指定時刻の要求を断ります。指定の枚の中から連続録画を始めることもできません。
 
+### Swift で 3 つだけ違うこと
+
+Processing や p5.js から来て最初に踏むのは、mokume の約束ではなく Swift の決まりです。
+次の 3 つを知っていれば足ります。
+
+**1. `.pi` だけでは型が決まらず、コンパイルエラーになります。** 描く口と数の口は `Float` も `Double` も受けるので、
+`.pi` がどちらか決まらないからです。`PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` の定数を使うか、
+`Float.pi` と書きます。
+
+<!-- example: 組めない `.pi` だけでは型が決まらずコンパイルエラーになることが主題の例 -->
+```swift
+rotate(.pi / 4)           // error: cannot infer contextual base in reference to member 'pi'
+```
+
+```swift
+rotate(QUARTER_PI)        // 定数は Float で、そのまま渡せます
+rotate(Float.pi / 4)      // 型を名乗っても通ります
+```
+
+`pow(2, 3)` のようにリテラルだけを渡す計算の関数も、同じ理由で型が決まらず組めません (上の「`import mokume` で通る語彙」)。
+
+**2. 割り算は、片方に小数点を付けます。** 整数だけの式は整数のまま計算され、`1 / 2` は 0 になります。
+**エラーにならず**、描かれる絵で気付くことになります。
+
+```swift
+circle(width / 2, height / 2, 1 / 2)     // 直径が 0 になり、何も描かれません
+circle(width / 2, height / 2, 1.0 / 2)   // 0.5 が渡ります
+```
+
+**3. 画像・描き場所・シェーダなどを作る口は、失敗を投げるので `try` が要ります。** Processing には `try` が
+ありません。`try?` は失敗の理由を捨てて `nil` にし、`do` / `catch` は理由を受け取ります。
+作例の多くは、読めなければ描かない `try?` と `guard let` の形です。
+
+```swift
+guard let photo = try? loadImage("assets/photo.png") else { return }   // 読めなければ nil
+image(photo, 0, 0)
+```
+
+```swift
+do {
+    let photo = try loadImage("assets/photo.png")
+    image(photo, 0, 0)
+} catch {
+    print("読み込めませんでした: \(error)")   // 理由を受け取れます
+}
+```
+
+1 と 2 は、次の節 (数の型) に理由と周辺の書き方があります。
+
 ### 数の型
 
 **変数を渡すときは型を気にしなくて構いません。** 描画へ渡す数は `Float`・`Double`・`Int` の
