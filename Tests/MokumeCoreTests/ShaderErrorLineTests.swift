@@ -136,11 +136,15 @@ struct ShaderErrorLineTests {
         #expect(text.contains("\(place): error"), "\(place) を名乗らない:\n\(text)")
     }
 
-    /// `name:` は利用者が何でも書ける。名乗りの中で逃がしても、誤りは書いた名前のまま出る。
-    @Test("引用符を含む名前の断片も組めて、誤りはその名前で出る")
-    func anOddNameIsReportedAsWritten() throws {
+    /// `name:` は利用者が何でも書ける。名乗りの中で逃がしても、誤りは書いた名前 (改行と制御文字は
+    /// 空白にした形) で出る。NUL は原稿をそこで切り、`??!` は三文字表記として `|` に読み替えられうる。
+    @Test("引用符・NUL・疑問符を含む名前の断片も組めて、誤りはその名前で出る", arguments: [
+        ("my \"odd\" shader", "my \"odd\" shader"),
+        ("nul\u{0}shader", "nul shader"),
+        ("what??!", "what??!"),
+    ])
+    func anOddNameIsReportedAsWritten(_ name: String, _ reported: String) throws {
         let canvas = try makeCanvas()
-        let name = "my \"odd\" shader"
         // 組めること: 名前が名乗りを壊すと、正しい断片まで組めなくなる
         _ = try canvas.makeShader(
             "float4 paint(Fragment in, Values values) { return in.color; }", name: name)
@@ -152,23 +156,48 @@ struct ShaderErrorLineTests {
         } catch {
             text = "\(error)"
         }
-        #expect(text.contains("\(name):2:12: error"), "\(text)")
+        #expect(text.contains("\(reported):2:12: error"), "\(text)")
+        // 名乗りの行への知らせ (三文字表記など) が混ざらない
+        #expect(!text.contains("trigraph"), "\(text)")
+        #expect(!text.contains(":1:"), "名乗りの行か本文の 1 行目への知らせが出た:\n\(text)")
     }
 
-    @Test("保存して差し替えに失敗したときの理由も、ファイル名と書いた行を名乗る")
-    func aFailedReloadPointsAtTheLineYouWrote() throws {
+    /// 経路ごとの、組める断片。
+    private static func workingBody(for route: Route) -> String {
+        switch route {
+        case .makeShader, .loadShader: "float4 paint(Fragment in, Values values) { return in.color; }"
+        case .makeEffect, .loadEffect: "float4 effect(Pixel in, Values values) { return in.color; }"
+        case .makeComputation, .loadComputation:
+            "kernel void probe(device float *out [[buffer(0)]], uint id [[thread_position_in_grid]]) { out[id] = 0.0; }"
+        }
+    }
+
+    /// 差し替えの経路は 3 者 (塗り・効果・計算) が別々に組み立ての口を呼ぶので、それぞれで見る。
+    @Test(
+        "保存して差し替えに失敗したときの理由も、ファイル名と書いた行を名乗る",
+        arguments: [Route.loadShader, .loadEffect, .loadComputation])
+    func aFailedReloadPointsAtTheLineYouWrote(_ route: Route) throws {
         let canvas = try makeCanvas()
         let directory = try makeTemporaryDirectory()
-        let url = directory.appendingPathComponent("waves.metal")
-        try "float4 paint(Fragment in, Values values) { return in.color; }"
-            .write(to: url, atomically: true, encoding: .utf8)
-        let shader = try canvas.loadShader(url.path)
+        let url = directory.appendingPathComponent("probe.metal")
+        try Self.workingBody(for: route).write(to: url, atomically: true, encoding: .utf8)
+        let reload: () -> String?
+        switch route {
+        case .loadShader:
+            let shader = try canvas.loadShader(url.path)
+            reload = { shader.reload(); return shader.failure }
+        case .loadEffect:
+            let effect = try canvas.loadEffect(url.path)
+            reload = { effect.reload(); return effect.failure }
+        default:
+            let computation = try canvas.loadComputation(url.path)
+            reload = { computation.reload(); return computation.failure }
+        }
 
-        let body = Self.brokenBody(for: .loadShader)
+        let body = Self.brokenBody(for: route)
         try body.write(to: url, atomically: true, encoding: .utf8)
-        shader.reload()
-        let failure = try #require(shader.failure)
-        #expect(failure.contains("waves.metal:\(try Self.location(of: "foo", in: body)): error"), "\(failure)")
+        let failure = try #require(reload())
+        #expect(failure.contains("probe.metal:\(try Self.location(of: "foo", in: body)): error"), "\(failure)")
         #expect(!failure.contains("program_source"), "\(failure)")
     }
 }

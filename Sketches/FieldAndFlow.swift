@@ -90,8 +90,13 @@ final class FieldAndFlow: Sketch {
                 """,
                 name: "stir",
                 values: ["grid": .pair(Float(columns), Float(rows)), "time": 0])
+        } catch {
+            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+            print(error)
+        }
 
-            // 場を色にする側。**格子より画素のほうが細かい**ので、隣の 4 マスから混ぜて読む
+        // 場を色にする側。**格子より画素のほうが細かい**ので、隣の 4 マスから混ぜて読む
+        do {
             paint = try makeShader(
                 """
                 static inline float mokume_cell(Fragment in, float2 grid, float2 at) {
@@ -128,7 +133,6 @@ final class FieldAndFlow: Sketch {
                     "high": .color(color(255, 194, 92)),
                 ])
         } catch {
-            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
             print(error)
         }
 
@@ -156,8 +160,12 @@ final class FieldAndFlow: Sketch {
                 """,
                 name: "slice",
                 values: ["columns": .number(Float(columns))])
+        } catch {
+            print(error)
+        }
 
-            // 断面を帯にする。**高さがそのまま値**で、帯の下から塗り上げる
+        // 断面を帯にする。**高さがそのまま値**で、帯の下から塗り上げる
+        do {
             graph = try makeShader(
                 """
                 float4 paint(Fragment in, Values values) {
@@ -185,7 +193,6 @@ final class FieldAndFlow: Sketch {
                     "high": .color(color(255, 194, 92)),
                 ])
         } catch {
-            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
             print(error)
         }
     }

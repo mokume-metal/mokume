@@ -62,13 +62,17 @@ struct ShaderSourceLineTests {
         #expect(ShaderSource.bodyName("ripple", url: nil) == "ripple")
     }
 
-    /// `name:` は利用者が何でも書ける。名乗りは C の文字列なので、`"` と `\` を逃がし、改行は
-    /// 空白にする — 逃がさないと、名前の途中で文字列が閉じて原稿ごと組めなくなる。
-    @Test("名前の中の引用符・逆斜線・改行は、名乗りを壊さない形にする", arguments: [
+    /// `name:` は利用者が何でも書ける。名乗りは C の文字列なので、`"` と `\` を逃がし、改行と
+    /// 制御文字 (NUL を含む) は空白にし、`?` は三文字表記を作らないよう `\?` と書く — 逃がさないと、
+    /// 名前の途中で文字列が閉じる・原稿が NUL で切れる・`??!` が `|` に読み替えられる。
+    @Test("名前の中の引用符・逆斜線・改行・制御文字・疑問符は、名乗りを壊さない形にする", arguments: [
         ("my \"odd\" name", "#line 1 \"my \\\"odd\\\" name\""),
         ("back\\slash", "#line 1 \"back\\\\slash\""),
         ("two\nlines", "#line 1 \"two lines\""),
         ("crlf\r\nname", "#line 1 \"crlf name\""),
+        ("nul\u{0}name", "#line 1 \"nul name\""),
+        ("tab\tname", "#line 1 \"tab name\""),
+        ("what??!", "#line 1 \"what\\?\\?!\""),
     ])
     func oddNamesAreEscaped(_ name: String, _ directive: String) {
         let source = ShaderSource.assemble(

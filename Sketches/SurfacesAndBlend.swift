@@ -60,6 +60,11 @@ final class SurfacesAndBlend: Sketch {
                 }
                 """,
                 name: "plain", values: settingsForBoard, surfaces: ["grain": .image(grain)])
+        } catch {
+            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+            print(error)
+        }
+        do {
             blended = try makeShader(
                 """
                 float4 paint(Fragment in, Values values, Surfaces surfaces) {
@@ -75,7 +80,6 @@ final class SurfacesAndBlend: Sketch {
                 name: "blended", values: settingsForBoard,
                 surfaces: ["grain": .image(grain), "smudge": .graphics(smudge)])
         } catch {
-            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
             print(error)
         }
     }

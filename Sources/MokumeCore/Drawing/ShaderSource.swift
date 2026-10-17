@@ -149,13 +149,25 @@ enum ShaderSource {
 
     /// 次の行を、その名前の 1 行目として名乗る行。
     ///
-    /// **名前は C の文字列なので、`"` と `\` を逃がし、改行は空白にする。** `name:` は利用者が
-    /// 何でも書ける。逃がさないと名前の途中で文字列が閉じ、原稿ごと組めなくなる。
+    /// **名前は C の文字列なので、壊さない形に直す。** `name:` は利用者が何でも書ける。
+    ///
+    /// - `"` と `\` は逃がす。逃がさないと名前の途中で文字列が閉じ、原稿ごと組めなくなる
+    /// - 改行と制御文字 (NUL を含む) は空白にする。改行は名乗りの行を割り、NUL は原稿をそこで
+    ///   切る (Metal へ渡す C の文字列が NUL で終わる)
+    /// - `?` は `\?` と書く。`??!`・`??/` などの三文字表記として読み替えられないように
     static func lineDirective(naming name: String) -> String {
-        let oneLine = name.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
-            .joined(separator: " ")
-        let escaped = oneLine.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        var escaped = ""
+        for character in name {
+            switch character {
+            case "\\": escaped += "\\\\"
+            case "\"": escaped += "\\\""
+            case "?": escaped += "\\?"
+            case _ where character.isNewline
+                || character.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }):
+                escaped += " "
+            default: escaped.append(character)
+            }
+        }
         return "#line 1 \"\(escaped)\"\n"
     }
 }
