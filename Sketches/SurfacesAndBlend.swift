@@ -50,29 +50,34 @@ final class SurfacesAndBlend: Sketch {
         let place = """
             float2 spot = in.shapePosition.xz * values.scale + 0.5;
             """
-        plain = try? makeShader(
-            """
-            float4 paint(Fragment in, Values values, Surfaces surfaces) {
-                \(place)
-                float4 wood = mokume_sample(surfaces.grain, spot);
-                return float4(wood.rgb * in.color.rgb, in.color.a);
-            }
-            """,
-            name: "plain", values: settingsForBoard, surfaces: ["grain": .image(grain)])
-        blended = try? makeShader(
-            """
-            float4 paint(Fragment in, Values values, Surfaces surfaces) {
-                \(place)
-                float4 wood = mokume_sample(surfaces.grain, spot);
-                // 汚しは濃さとして効かせる。**2 枚が別の役目を持つ**ので、
-                // 片方だけ届かなくなったときに絵の変わり方で読み分けられる
-                float dirt = mokume_sample(surfaces.smudge, spot).r;
-                return float4(
-                    wood.rgb * mix(1.0, dirt, values.amount) * in.color.rgb, in.color.a);
-            }
-            """,
-            name: "blended", values: settingsForBoard,
-            surfaces: ["grain": .image(grain), "smudge": .graphics(smudge)])
+        do {
+            plain = try makeShader(
+                """
+                float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                    \(place)
+                    float4 wood = mokume_sample(surfaces.grain, spot);
+                    return float4(wood.rgb * in.color.rgb, in.color.a);
+                }
+                """,
+                name: "plain", values: settingsForBoard, surfaces: ["grain": .image(grain)])
+            blended = try makeShader(
+                """
+                float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                    \(place)
+                    float4 wood = mokume_sample(surfaces.grain, spot);
+                    // 汚しは濃さとして効かせる。**2 枚が別の役目を持つ**ので、
+                    // 片方だけ届かなくなったときに絵の変わり方で読み分けられる
+                    float dirt = mokume_sample(surfaces.smudge, spot).r;
+                    return float4(
+                        wood.rgb * mix(1.0, dirt, values.amount) * in.color.rgb, in.color.a);
+                }
+                """,
+                name: "blended", values: settingsForBoard,
+                surfaces: ["grain": .image(grain), "smudge": .graphics(smudge)])
+        } catch {
+            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+            print(error)
+        }
     }
 
     private var settingsForBoard: [String: ShaderValue] {

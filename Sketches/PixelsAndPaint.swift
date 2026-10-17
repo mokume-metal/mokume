@@ -18,21 +18,26 @@ final class PixelsAndPaint: Sketch {
 
     func setup() {
         // 断片は文字列からも作れる。書くのは「その画素の色」だけ
-        ripple = try? makeShader(
-            """
-            float4 paint(Fragment in, Values values) {
-                float2 centre = float2(0.5, 0.5);
-                float distance = length(in.place - centre);
-                float wave = 0.5 + 0.5 * sin(distance * values.density - in.time * 2.0);
-                float3 colour = mix(values.deep.rgb, values.shallow.rgb, wave);
-                return float4(colour, 1.0);
-            }
-            """,
-            values: [
-                "density": 60,
-                "deep": .color(color(26, 38, 89)),
-                "shallow": .color(color(153, 230, 242)),
-            ])
+        do {
+            ripple = try makeShader(
+                """
+                float4 paint(Fragment in, Values values) {
+                    float2 centre = float2(0.5, 0.5);
+                    float distance = length(in.place - centre);
+                    float wave = 0.5 + 0.5 * sin(distance * values.density - in.time * 2.0);
+                    float3 colour = mix(values.deep.rgb, values.shallow.rgb, wave);
+                    return float4(colour, 1.0);
+                }
+                """,
+                values: [
+                    "density": 60,
+                    "deep": .color(color(26, 38, 89)),
+                    "shallow": .color(color(153, 230, 242)),
+                ])
+        } catch {
+            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+            print(error)
+        }
     }
 
     func draw() {

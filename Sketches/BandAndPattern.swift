@@ -47,10 +47,15 @@ final class BandAndPattern: Sketch {
     private var slipping: Shader?
 
     func setup() {
-        riding = try? makeShader(Self.stripes(from: "in.uv.x"), values: values)
-        // 帯の長さ (360) が面の幅 (960) に占める割合で、同じ縞の細かさに揃える
-        slipping = try? makeShader(
-            Self.stripes(from: "in.place.x * 960.0 / 360.0"), values: values)
+        do {
+            riding = try makeShader(Self.stripes(from: "in.uv.x"), values: values)
+            // 帯の長さ (360) が面の幅 (960) に占める割合で、同じ縞の細かさに揃える
+            slipping = try makeShader(
+                Self.stripes(from: "in.place.x * 960.0 / 360.0"), values: values)
+        } catch {
+            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+            print(error)
+        }
     }
 
     func draw() {

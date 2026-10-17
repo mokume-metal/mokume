@@ -12,9 +12,13 @@ extension SketchPart {
     /// //     float wave = 0.5 + 0.5 * sin(in.place.x * 20 + in.time * values.speed);
     /// //     return float4(values.tint.rgb * wave, 1);
     /// // }
-    /// waves = try? loadShader(
-    ///     "assets/waves.metal",
-    ///     values: ["speed": 2, "tint": .color(color(255, 128, 51))])
+    /// do {
+    ///     waves = try loadShader(
+    ///         "assets/waves.metal",
+    ///         values: ["speed": 2, "tint": .color(color(255, 128, 51))])
+    /// } catch {
+    ///     print(error)  // 組めなければ理由が出る。行と桁は waves.metal の中で数える
+    /// }
     /// ```
     ///
     /// 文字列から作る ``makeShader(_:name:values:surfaces:)`` も、ここに書いた規約のまま書ける。
@@ -60,10 +64,14 @@ extension SketchPart {
     /// guard let bark = try? loadImage("assets/bark.png"),
     ///     let smudge = try? createGraphics(256, 256)
     /// else { return }
-    /// blended = try? loadShader(
-    ///     "assets/blended.metal",
-    ///     values: ["amount": 0.7],
-    ///     surfaces: ["grain": .image(bark), "smudge": .graphics(smudge)])
+    /// do {
+    ///     blended = try loadShader(
+    ///         "assets/blended.metal",
+    ///         values: ["amount": 0.7],
+    ///         surfaces: ["grain": .image(bark), "smudge": .graphics(smudge)])
+    /// } catch {
+    ///     print(error)
+    /// }
     /// ```
     ///
     /// **面を宣言した断片だけ、受け取るものが 1 つ増える。** 宣言していない断片は
