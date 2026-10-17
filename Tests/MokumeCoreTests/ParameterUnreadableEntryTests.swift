@@ -233,6 +233,25 @@ struct ParameterUnreadableEntryTests {
         #expect(surface.drain() == nil)
     }
 
+    /// **読めなかった要求も応えた記録になる** — 直して同じ `id` で置き直しても処理し直さない (限界)。
+    /// `id` を使い回さない約束 (`params-request.schema.json` の `id`) の内側で、直した要求は新しい
+    /// `id` で置く。
+    @Test("読めなかった要求を直して同じ id で置き直しても当てず、新しい id なら当てる")
+    func aFixedRequestNeedsANewID() throws {
+        let (sketch, surface, facet) = try pairSurface()
+        _ = try answer(#"{"id":"x","values":5}"#, from: surface, in: facet)
+
+        try place(#"{"id":"x","values":[{"name":"count","type":"int","value":8}]}"#, in: facet)
+        #expect(surface.drain() == nil)
+        #expect(sketch.count == 3)
+
+        let report = try answer(
+            #"{"id":"x2","values":[{"name":"count","type":"int","value":8}]}"#, from: surface, in: facet)
+        #expect(report.id == "x2")
+        #expect(report.rejected.isEmpty)
+        #expect(sketch.count == 8)
+    }
+
     /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
     /// JSON・JSON でない)。確定させて捨て、応答は書き換わらない。
     @Test("id が読めない要求は、これまでどおり応答せず捨てる", arguments: [

@@ -13,11 +13,11 @@
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "This request's identifier. The reply echoes it back. An id already answered is not processed again, even after the sketch relaunches: the answer left in the reply is the record. Do not reuse an id while the facet remains."
+      "description": "This request's identifier. The reply echoes it back. An id already answered is not processed again, even after the sketch relaunches: the answer left in the reply is the record. Do not reuse an id while the facet remains. **This includes a request that could not be read**: once it is answered, fixing it and placing it again under the same id is not processed — place the fixed request with a new id."
     },
     "events": {
       "type": "array",
-      "description": "The events to send. They are fed in the order they appear. **An unknown type, or an event that cannot be read at all (one without type, or with a value of the wrong type), costs only that one event**: it counts in ignored and the rest still go through. **A request whose id can be read is always answered**: events that are missing, null or not an array count as one in ignored, and nothing is fed. Only a request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply.",
+      "description": "The events to send. They are fed in the order they appear. **An unknown type, or an event that cannot be read at all (one without type, or with a value of the wrong type), costs only that one event**: it counts in ignored and the rest still go through. **A request whose id can be read is always answered**: events that are missing, null or not an array count as one in ignored, and nothing is fed. A request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply, and a request whose id was already answered is not processed again (see id).",
       "items": {
         "type": "object",
         "required": [
