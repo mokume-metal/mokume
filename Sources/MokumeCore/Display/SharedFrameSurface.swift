@@ -133,6 +133,15 @@ final class SharedFrameSurface {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static let pointerLockAttribute = "mokume.pointerLock"
 
+    /// スケッチが矢印のカーソルを隠すよう頼んでいるかを載せる属性の名前 (1 で頼んでいる)
+    /// ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
+    ///
+    /// ``pointerLockAttribute`` と同じ形で、**隠すのは道具の窓である**。`NSCursor.hide()` は
+    /// プロセスごとに数えるので、子が隠しても道具の窓の上では隠れない。頼みは絵と同じ面に載せて
+    /// 毎フレーム渡し、道具の窓は**自分が映す世代の面**の頼みに従う。**載っていなければ頼んでいない**
+    /// — 古いライブラリの子は載せないので、道具の窓は隠さない。
+    static let cursorHiddenAttribute = "mokume.cursorHidden"
+
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
@@ -234,6 +243,7 @@ final class SharedFrameSurface {
         let submission: UInt64
         let numbers: FrameNumbers
         let pointerLock: Bool
+        let cursorHidden: Bool
         /// 焼いた書き込みの通し番号 (``writes``)。名乗るときの枚数になる。
         let number: Int
     }
@@ -497,9 +507,11 @@ final class SharedFrameSurface {
     ///   - numbers: この絵を描いたときの速さ。絵と一緒に控え、絵と一緒に載せる。
     ///   - pointerLock: この絵を描いたときに、スケッチがカーソルを捕まえるよう頼んでいたか
     ///     (``pointerLockAttribute``)。速さと同じく絵と一緒に載せる。
+    ///   - cursorHidden: この絵を描いたときに、スケッチが矢印のカーソルを隠すよう頼んでいたか
+    ///     (``cursorHiddenAttribute``)。捕まえの要求と同じく絵と一緒に載せる。
     func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
-        pointerLock: Bool = false
+        pointerLock: Bool = false, cursorHidden: Bool = false
     ) throws(RenderFailure) {
         try publishPending()
         writes += 1
@@ -518,7 +530,7 @@ final class SharedFrameSurface {
         pending.append(
             Burn(
                 slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
-                number: writes))
+                cursorHidden: cursorHidden, number: writes))
         nextSlot = (index + 1) % slots.count
     }
 
@@ -571,6 +583,7 @@ final class SharedFrameSurface {
         // 組み合わせは起きなくなる
         Self.publish(burn.numbers, to: slot.surface)
         Self.publishPointerLock(burn.pointerLock, to: slot.surface)
+        Self.publishCursorHidden(burn.cursorHidden, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
     }
@@ -621,6 +634,29 @@ final class SharedFrameSurface {
     /// 引いた面が名乗っている捕まえの要求。載っていなければ `false`。
     static func pointerLockRequested(on surface: IOSurfaceRef) -> Bool {
         number(pointerLockAttribute, on: surface)?.intValue == 1
+    }
+
+    /// 矢印を隠す要求を面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、
+    /// 消さなければ前に載せた要求が残る (``publishPointerLock(_:to:)`` と同じ)。
+    static func publishCursorHidden(_ requested: Bool, to surface: IOSurfaceRef) {
+        guard requested else {
+            IOSurfaceRemoveValue(surface, cursorHiddenAttribute as CFString)
+            return
+        }
+        IOSurfaceSetValue(surface, cursorHiddenAttribute as CFString, NSNumber(value: 1))
+    }
+
+    /// 面が名乗っている矢印を隠す要求。読み手の側の規則 (``publishCursorHidden(_:to:)`` と対)。
+    ///
+    /// - Returns: 引けない面・載っていない面は `false` (頼んでいない)。
+    static func cursorHiddenRequested(of id: UInt32) -> Bool {
+        guard let surface = IOSurfaceLookup(id) else { return false }
+        return cursorHiddenRequested(on: surface)
+    }
+
+    /// 引いた面が名乗っている矢印を隠す要求。載っていなければ `false`。
+    static func cursorHiddenRequested(on surface: IOSurfaceRef) -> Bool {
+        number(cursorHiddenAttribute, on: surface)?.intValue == 1
     }
 
     /// 測れた数だけを載せる。測れていなければ**消す**。

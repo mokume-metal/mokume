@@ -831,6 +831,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "mouseWheel": ASSEMBLY,
     "requestPointerLock": (ASSEMBLY, "窓へカーソルを捕まえるよう頼む。絵にもフレームの状態にも触れず、窓の無い実行では何もしない (#1144)"),
     "exitPointerLock": (ASSEMBLY, "requestPointerLock と同じ理由 (頼みを取り下げる)"),
+    "noCursor": (ASSEMBLY, "窓へ矢印のカーソルを隠すよう頼む。絵にもフレームの状態にも触れず、窓の無い実行では何もしない (#2439)"),
+    "cursor": (ASSEMBLY, "noCursor と同じ理由 (頼みを取り下げる)"),
     "save": (ASSEMBLY, "フレームの絵を外へ書き出す"),
     "saveTable": (ASSEMBLY, "表を外へ書き出す。絵にもフレームの状態にも触れない"),
     "beginRecord": (ASSEMBLY, "save と同じ理由"),
