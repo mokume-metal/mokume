@@ -142,16 +142,48 @@ EOF
 # 見出しが来るまでを節とみなし、節の中の小見出しは内容として残す。見出しの階層は
 # 問わない (## でも ### でもよい)。
 #
+# **コードブロック (``` / ~~~) の中の行は見出しではない** (#2768)。リリースノートの
+# 見本のように # で始まる行を載せたブロックが節の途中にあっても、節はそこで切れず、
+# ブロックの中身は節の内容として残る。フェンスの読みは CommonMark に合わせる — 字下げは
+# 3 桁まで・閉じは同じ種類で開きより長いか同じ長さ・閉じの行に文字は続けられない・
+# 閉じ忘れは本文の終わりまで続く
+#
+# $2 に heading を渡すと節の中身ではなく、見出しがあったかどうか (あれば found を 1 行)
+# だけを返す。見出しの有無を呼び出し側が別の正規表現で数えると、ブロックの中の見出しを
+# 数えて切り出しと食い違う。最後まで読んでから答えるのは、途中で抜けると書き手が
+# SIGPIPE で止まるからである (#1900)
+#
 # **切り出しの形は 1 つに保つ** — 「確認方法」(下の「3.」) と「反証」(下の「4.」) で
 # 同じ規則を使う。写しを 2 つ持つと、片方だけが直って節の境界が食い違う (#1662)
 body_section() {
-  awk -v word="$1" '
+  awk -v word="$1" -v mode="${2:-section}" '
+    function out(s) { if (mode == "section") print s }
+    {
+      match($0, /^ */); ind = RLENGTH
+      rest = substr($0, ind + 1); c = substr(rest, 1, 1)
+      isfence = 0
+      if (ind <= 3 && (c == "`" || c == "~")) {
+        match(rest, c "+"); n = RLENGTH; info = substr(rest, n + 1)
+        if (n >= 3 && !(c == "`" && index(info, "`"))) isfence = 1
+      }
+      if (infence) {
+        if (isfence && c == fc && n >= fn && info ~ /^[[:space:]]*$/) infence = 0
+        if (inside) out($0)
+        next
+      }
+      if (isfence) {
+        infence = 1; fc = c; fn = n
+        if (inside) out($0)
+        next
+      }
+    }
     /^#+[[:space:]]/ {
       match($0, /^#+/); lvl = RLENGTH
-      if (index($0, word)) { inside = 1; start = lvl; next }
+      if (index($0, word)) { inside = 1; found = 1; start = lvl; next }
       if (inside && lvl <= start) inside = 0
     }
-    inside { print }
+    inside { out($0) }
+    END { if (mode == "heading" && found) print "found" }
   '
 }
 
@@ -336,7 +368,8 @@ if [ -n "$bug_issues" ]; then
   # **here-string で読む** (#1900)。pipefail の下で `… | grep -q` と書くと、grep が最初の行で
   # 抜けたときに書き手が SIGPIPE で止まり、長い本文ほど条件が裏返る
   body=$(jq -r '.body // ""' <<<"$pr_json")
-  if ! grep -Eq '^#+[[:space:]].*反証' <<<"$body"; then
+  # コードブロックの中の見出しを数えないよう、切り出しと同じ規則 (body_section) で見る
+  if [ -z "$(body_section 反証 heading <<<"$body")" ]; then
     fail "閉じる Bug (${bug_issues# }) の PR 本文に「反証」の節が無い" \
          "$(missing_refute_message)"
   fi
