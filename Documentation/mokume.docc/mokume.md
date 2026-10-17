@@ -59,13 +59,19 @@ final class Game: Sketch {
 
 ### `import mokume` で通る語彙
 
-**面に記号のページが無くても、この 1 行で書けるものがある。** 三角関数 7 本 — `sin` / `cos` / `tan` / `asin` / `acos` / `atan` / `atan2` — は名指しで通してあるので、`import Foundation` を足さずにそのまま呼べる。角度の単位は radian で、``SketchPart/rotate(_:)`` に渡す値と同じである。度で書きたいときは ``radians(_:)`` を通す (こちらは mokume 自身の口なので、下にページがある)。
+**面に記号のページが無くても、この 1 行で書けるものがある。** 三角関数 7 本 — `sin` / `cos` / `tan` / `asin` / `acos` / `atan` / `atan2` — と、計算の関数 7 本 — `pow` / `sqrt` / `exp` / `log` / `floor` / `ceil` / `round` — は名指しで通してあるので、`import Foundation` を足さずにそのまま呼べる。角度の単位は radian で、``SketchPart/rotate(_:)`` に渡す値と同じである。度で書きたいときは ``radians(_:)`` を通す (こちらは mokume 自身の口なので、下にページがある)。
 
 ```swift
 circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
+let level: Float = 3
+circle(200, 150, 20 + pow(2, level))
 ```
 
-**説明の正典は標準ライブラリの側にある**ので、この面はページを持たない。ここに書いてあるのは「通る」ことだけである。
+**リテラルだけの `pow(2, 3)`・`exp(-1)`・`log(10)` は、型が決まらず組めない。** この 3 本は `Float` と `Double` の両方に口があり、どちらも同じだけ合うので、`ambiguous use of 'pow'` になる (`import Darwin` だけでも同じで、mokume の口ではない)。片方に型を持たせる — `pow(2, level)` (`level` が `Float`)・`pow(2.0, 3)`・`exp(Float(-1))` はどれも通る。`sqrt(2)`・`floor(2.5)` のように型を決めなくても通るものもある。
+
+**手本にあるが Darwin に無い (形が違う) 口は、mokume が持つ。** ``dist(_:_:_:_:)``・``mag(_:_:)``・``sq(_:)``・``fract(_:)``・``mod(_:_:)`` で、下にページがある。``mod(_:_:)`` は負の値も 0 以上へ畳む剰余で、`%` が小数に使えない代わりに、巡る値を足して引き直さずに書ける。値型 `Vector2` の側は `length` と名乗る — 関数の ``mag(_:_:)`` と `Vector2` の長さが並ぶのは、`circle()` と `Circle` の使い分けと同じである。
+
+**説明の正典は標準ライブラリの側にある**ので、名指しで通した関数はページを持たない。ここに書いてあるのは「通る」ことだけである。
 
 [mokume の入口](../../) — 入れ方と最初の 1 本はこちら。
 
@@ -664,6 +670,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``constrain(_:_:_:)``
 - ``norm(_:_:_:)``
 - ``smoothstep(_:_:_:)``
+- ``dist(_:_:_:_:)``
+- ``mag(_:_:)``
+- ``sq(_:)``
+- ``fract(_:)``
+- ``mod(_:_:)``
 
 ### GPU に計算させる
 

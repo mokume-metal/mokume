@@ -34,6 +34,11 @@ enum NumberValues {
             case constrain
             case norm
             case smoothstep
+            case dist
+            case mag
+            case sq
+            case fract
+            case mod
         }
     }
 
@@ -318,4 +323,207 @@ public func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConv
     // 締めは `constrain` を呼ばずに書く — 呼ぶと、そちらの名で注意が鳴りうる
     let t = min(max(proportion(x, edge0, edge1), 0), 1)
     return t * t * (3 - 2 * t)
+}
+
+// MARK: - 2 点の距離・二乗
+
+/// 2 点の間の距離。
+///
+/// ```swift
+/// let reach = dist(mouseX, mouseY, width / 2, height / 2)
+/// ```
+///
+/// 引数は 1 つ目の点の x・y、2 つ目の点の x・y の順 (手本と同じ並び)。広がる波の格子 —
+/// 中心からの距離で明るさを決め、波は 3 秒で一巡する。
+///
+/// ```swift
+/// func draw() {
+///     background(0)
+///     noStroke()
+///     for y in stride(from: Float(0), to: height, by: 20) {
+///         for x in stride(from: Float(0), to: width, by: 20) {
+///             let d = dist(x, y, width / 2, height / 2)
+///             let wave = fract(d / 120 - mod(time, 3) / 3)
+///             fill(255 * pow(wave, 3))
+///             circle(x, y, 8)
+///         }
+///     }
+/// }
+/// ```
+///
+/// **これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。値型 `Vector2` の側は
+/// `length` と名乗る — 関数の ``dist(_:_:_:_:)`` と `Vector2` の長さが並ぶのは、`circle()` と
+/// `Circle` の使い分けと同じである。平面の 2 点だけで、3 次元の形は無い。
+///
+/// **2 乗が `Float` で溢れる距離でも、距離は有限で返る** (`dist(0, 0, 3e19, 4e19)` は 5e19)。
+/// 結果そのものが `Float` の範囲を越えるときだけ ∞ を返す (数でない値は返さない)。
+///
+/// **数でない値・無限の値が混じったときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
+/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func dist(
+    _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible
+) -> Float {
+    let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
+    guard x1.isFinite, y1.isFinite, x2.isFinite, y2.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.dist),
+            "dist(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    return euclideanLength(x2 - x1, y2 - y1)
+}
+
+/// 原点からの距離。``dist(_:_:_:_:)`` の 1 つ目の点を原点 (0, 0) にしたもの。
+///
+/// ```swift
+/// let speed = mag(mouseX - pmouseX, mouseY - pmouseY)
+/// ```
+///
+/// `mag(3, 4)` は 5 を返す。**これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。
+/// 値型 `Vector2` の側は `length` と名乗る。平面の 2 成分だけで、3 次元の形は無い。
+///
+/// **2 乗が `Float` で溢れても距離は有限で返り、数でない値・無限の値が混じったときは 0 を
+/// 返す** (``dist(_:_:_:_:)`` と同じ)。注意は 1 度だけ言う。
+public func mag(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+    let (x, y) = (x.asFloat, y.asFloat)
+    guard x.isFinite, y.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.mag),
+            "mag(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    return euclideanLength(x, y)
+}
+
+/// ベクトル (`dx`, `dy`) の長さ。``dist(_:_:_:_:)`` と ``mag(_:_:)`` が共有する。**注意は言わない** —
+/// 値は数であること (差が溢れて ±∞ になったものは来てよい)。
+///
+/// **2 乗の和をそのまま開くのが常で、`3, 4` から 5 がちょうど返る。** ただし 2 乗が溢れるほど
+/// 大きい値 (1.8e19 を越える成分は 2 乗で ∞ になり、本当は有限の距離が ∞ になる) と、潰れるほど
+/// 小さい値 (1e-19 を下回る成分は 2 乗が 0 や非正規数になり、距離が 0 や粗い値になる) は、
+/// 大きいほうで割って開き直す。割った値は 1 以下なので溢れも潰れもしない。結果が `Float` の範囲を
+/// 越えるなら、掛け戻しで ∞ になる。
+private func euclideanLength(_ dx: Float, _ dy: Float) -> Float {
+    let (a, b) = (abs(dx), abs(dy))
+    let large = max(a, b)
+    if large == 0 { return 0 }
+    if large >= 1e-18 && large <= 1e18 { return (dx * dx + dy * dy).squareRoot() }
+    // 差が溢れて ∞ になったときは割れない。距離も `Float` の範囲を越えるので ∞
+    guard large.isFinite else { return .infinity }
+    let ratio = min(a, b) / large
+    return large * (1 + ratio * ratio).squareRoot()
+}
+
+/// 2 乗。
+///
+/// ```swift
+/// let radius: Float = 40
+/// let area = sq(radius) * Float.pi
+/// ```
+///
+/// `sq(-3)` は 9 を返す。**これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。
+/// 結果が `Float` の範囲を越えたら ∞ を返す (``map(_:_:_:_:_:)`` の外挿と同じ。数でない値は
+/// 返さない)。
+///
+/// **数でない値・無限の値が渡されたときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
+/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func sq(_ value: some ScalarConvertible) -> Float {
+    let value = value.asFloat
+    guard value.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.sq),
+            "sq(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    return value * value
+}
+
+// MARK: - 端数・剰余
+
+/// 小数部分。整数部分を引いた残りを、0 以上 1 未満で返す。
+///
+/// ```swift
+/// let phase = fract(time / 3)
+/// ```
+///
+/// **負の値も 0 以上に畳む** — `fract(-0.25)` は 0.75 (整数部分は床で、0 へ向けた切り捨て
+/// ではない)。断片 (GLSL・MSL) の `fract` と同じ名前・同じ定義で、シェーダに書いた式を
+/// そのまま写せる。周期の位相を出すときに、負の時刻でも巡る。
+///
+/// **返る値は 1 にならない。** 絶対値が 3e-8 ほどより小さい負の値は、`1 + x` が `Float` で 1 に
+/// 丸まる。1 周ぶんずれた 1 が返らないよう、その値は 0 へ畳む (周期の上では 0 と 1 は同じ
+/// 位相で、0 のほうが元の値に近い)。``mod(_:_:)`` と同じ畳み方である。
+///
+/// **数でない値・無限の値が渡されたときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
+/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func fract(_ value: some ScalarConvertible) -> Float {
+    let value = value.asFloat
+    guard value.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.fract),
+            "fract(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    return foldedIntoPeriod(value, by: 1)
+}
+
+/// 剰余。`value` を `divisor` で割った余りを、`0` 以上 `divisor` 未満で返す。
+///
+/// ```swift
+/// let cycle = mod(time, 12)       // 0 以上 12 未満を巡る
+/// let hue = mod(time * 90 - 30, 360)  // 負の角度も 0…360 へ畳む
+/// ```
+///
+/// `mod(7, 4)` は 3、`mod(-1, 4)` も 3 を返す。**負の値も 0 以上に畳む** — 手本の `%` は負の数
+/// に負を返すので、巡る値を書くたびに足して引き直す書き方になっていた (小数にも使える)。
+/// 断片 (GLSL) の `mod` と同じ定義である (MSL の `fmod` は C と同じく負を返す)。手本に名前の
+/// 無い口で、断片と同じ綴りを採った。
+///
+/// **返る値は `divisor` にならない。** 絶対値が小さい負の値に `divisor` を足すと、`Float` では
+/// `divisor` ちょうどに丸まる — `mod(-1e-6, 360)` がその例で、360 を返すと 1 周ぶんずれて読まれる。
+/// そうなる値は 0 へ畳む (色相の巻き戻しが #1533 で踏んだ境界と同じ手当て)。
+///
+/// **`divisor` が負なら、符号が `divisor` に従う** — 結果は `divisor` より大きく 0 以下になる
+/// (`mod(1, -4)` は -3)。
+///
+/// **`divisor` が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** 0 で割った余りは
+/// 定まらず、手本は NaN を返すが、毎フレーム呼ばれる口が数でない値を返すと、**絵が黙って消える**
+/// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` の幅 0 と同じく、注意は 1 度だけ言う。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func mod(_ value: some ScalarConvertible, _ divisor: some ScalarConvertible) -> Float {
+    let (value, divisor) = (value.asFloat, divisor.asFloat)
+    guard value.isFinite, divisor.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.mod),
+            "mod(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    guard divisor != 0 else {
+        NumberValues.warnOnce(
+            .emptyRange(.mod), "mod(): the divisor is zero, so 0 was returned")
+        return 0
+    }
+    return foldedIntoPeriod(value, by: divisor)
+}
+
+/// `value` を `divisor` の周期へ巻き戻す。``fract(_:)`` と ``mod(_:_:)`` が共有する。**注意は
+/// 言わない** — 値は有限で、`divisor` は 0 でなく有限であること。
+///
+/// **切り捨ての剰余は使わない。** `truncatingRemainder` は負の入力に負を返すので、符号が
+/// `divisor` と食い違うときだけ `divisor` を足す。余りそのものは正確 (丸めない)。足した結果が
+/// `divisor` ちょうどに丸まったら 0 へ畳む — 半開区間を外れた値を返さない。
+/// `HueSaturationBrightness.wrapped` が #1533 で踏んだ境界と同じである。
+func foldedIntoPeriod(_ value: Float, by divisor: Float) -> Float {
+    let remainder = value.truncatingRemainder(dividingBy: divisor)
+    // 余りが 0 なら符号の食い違いは起きない (-0 を返さないよう、0 は 0 で返す)
+    guard remainder != 0 else { return 0 }
+    let folded = (remainder < 0) != (divisor < 0) ? remainder + divisor : remainder
+    return abs(folded) < abs(divisor) ? folded : 0
 }
