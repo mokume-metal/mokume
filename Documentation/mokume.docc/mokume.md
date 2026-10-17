@@ -717,6 +717,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/movedY``
 - ``SketchPart/requestPointerLock()``
 - ``SketchPart/exitPointerLock()``
+- ``SketchPart/noCursor()``
+- ``SketchPart/cursor()``
 - ``SketchPart/keyboard``
 - ``Keyboard``
 - ``SketchPart/key``

@@ -189,6 +189,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 読むのは新しい枚数が来たときだけで (速さと同じ)、渡すのは毎リフレッシュである — 窓が
     /// 前に出たか・ポインタが面の上かは、要求と関係なく変わる。**検査から読む。**
     private(set) var pointerLockRequested = false
+    /// 出している世代のスケッチが、矢印のカーソルを隠すよう頼んでいるか。**面の属性から読む**
+    /// (``SharedFrameSurface/cursorHiddenAttribute``・[#2439](https://github.com/mokume-metal/mokume/issues/2439))。
+    /// 読み方と渡し方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。検査から読む。
+    private(set) var cursorHiddenRequested = false
     /// 続けて差し出せなかった数。**始まりと終わりだけ**言うために持つ。
     private var failures = FrameFailureLog()
 
@@ -334,7 +338,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         promoteIfReady()
         // **絵が出せない回も渡す。** 要求を読む・読まないは絵の有無に依るが、窓が退いた・
         // 要求が消えたで放すのは、絵が来ていなくても効く必要がある (#1144)
-        defer { self.view?.followPointerLock(requested: pointerLockRequested) }
+        defer {
+            self.view?.followPointerLock(requested: pointerLockRequested)
+            self.view?.followCursorHiding(requested: cursorHiddenRequested)
+        }
         guard let source, let newest = SharedFrameSurface.newest(among: source.ids) else { return }
         // **面に載ったもの (速さ・捕まえの要求) は、窓の有無と関係なく読む。** 絵を出す先が
         // 無くても、走っている側が名乗ったことは変わらない
@@ -372,6 +379,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         lastSeenFrame = newest.frame
         // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む
         pointerLockRequested = SharedFrameSurface.pointerLockRequested(of: newest.id)
+        cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(of: newest.id)
         guard let numbers = SharedFrameSurface.numbers(of: newest.id) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
     }

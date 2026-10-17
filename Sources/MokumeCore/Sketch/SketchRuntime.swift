@@ -347,6 +347,13 @@ public final class SketchRuntime {
     /// 子は共有面の属性に載せて道具の窓へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
     /// 窓の無い実行 (書き出し・窓を持たない `SketchRuntime`) では誰も読まないので、何も起きない。
     var pointerLockRequested = false
+    /// 矢印のカーソルを隠す要求 (``SketchPart/noCursor()``)。``SketchPart/cursor()`` まで残る。
+    ///
+    /// ``pointerLockRequested`` と同じく**読むのは窓である** — 直に走らせた窓は ``SketchApplication`` が
+    /// 毎リフレッシュ渡し、見張りの子は共有面の属性 (``SharedFrameSurface/cursorHiddenAttribute``) に載せて
+    /// 道具の窓へ渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。窓の無い実行では
+    /// 誰も読まないので、何も起きない。絵には触れない。
+    var cursorHidingRequested = false
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
     /// 視点 (シーンの記述) と違ってフレームごとには戻らない。まだ触っていなければ `nil`。
     var orbit: Orbit?

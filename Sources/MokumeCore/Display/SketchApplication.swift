@@ -841,6 +841,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private func followPointerLockRequest() {
         guard case .window(_, let surface, _) = outlet else { return }
         surface.followPointerLock(requested: runtime.pointerLockRequested)
+        // 矢印を隠す要求も同じ経路で渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))
+        surface.followCursorHiding(requested: runtime.cursorHidingRequested)
     }
 
     /// 書き出す経路で、もう描かないか。**決めた枚数を描いた後と、終わりに向かっている間。**
@@ -930,10 +932,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない。**名乗るのは
             // 前に焼いた 1 枚**で、いま焼く絵は次のリフレッシュで出る (#748)。止めている間も
             // ここは毎リフレッシュ通るので、控えが出ないまま残ることはない。捕まえの要求も
-            // 同じ面に載せて渡す — 捕まえるのは道具の窓である (#1144)
+            // 同じ面に載せて渡す — 捕まえるのは道具の窓である (#1144)。矢印を隠す要求も同じ (#2439)
             try shared.write(
                 runtime.target, using: presenter, numbers: runtime.frameNumbers,
-                pointerLock: runtime.pointerLockRequested)
+                pointerLock: runtime.pointerLockRequested,
+                cursorHidden: runtime.cursorHidingRequested)
         case .window(let window, let surface, let hasPresented):
             guard let layer = surface.metalLayer,
                 FramePresenter.shouldPresent(

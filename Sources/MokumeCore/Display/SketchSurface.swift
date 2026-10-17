@@ -64,6 +64,11 @@ final class SketchSurface: NSView {
     /// 窓を持つ側が ``followPointerLock(requested:)`` で渡す。
     let pointerLock = PointerLock()
 
+    /// 矢印のカーソルを隠すかの判定 ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
+    /// ``pointerLock`` と同じく、スケッチの要求は窓を持つ側が ``followCursorHiding(requested:)`` で渡し、
+    /// 窓の状況はこの面が答える。
+    let cursorHiding = CursorHiding()
+
     /// 最後に合流点へ名乗った位置 (キャンバスの座標)。**捕まえている間の押下と解放はここを
     /// 名乗る** — 捕まえた時点の位置で、捕まえている間は動かない。
     fileprivate var lastPoint: (x: Float, y: Float)?
@@ -280,8 +285,13 @@ extension SketchSurface {
 
     /// 押しが面そのものに当たったか (重ねた面の上ではないか)。
     private func landsOnSurface(_ event: NSEvent) -> Bool {
+        isOverSurface(atWindowPoint: event.locationInWindow)
+    }
+
+    /// 窓の座標の 1 点が、面そのものの上か (重ねた面の上ではないか)。
+    private func isOverSurface(atWindowPoint point: NSPoint) -> Bool {
         guard let superview else { return true }
-        return hitTest(superview.convert(event.locationInWindow, from: nil)) === self
+        return hitTest(superview.convert(point, from: nil)) === self
     }
 
     /// 出来事の釦。**番号を型へ絞る関所は、ここと外から送る経路 (`RawInputEvent`) の
@@ -465,6 +475,28 @@ extension SketchSurface {
         pointerLock.update(requested: requested, in: pointerSituation)
     }
 
+    /// 矢印のカーソルを隠すかの要求を渡す。**毎リフレッシュ呼ぶ** — ``followPointerLock(requested:)``
+    /// と同じく、窓を持つ側が要求の出どころから読んで渡す
+    /// ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
+    func followCursorHiding(requested: Bool) {
+        cursorHiding.update(requested: requested, in: cursorSituation)
+    }
+
+    /// 窓が前に出ているか・ポインタが**面そのもの**の上にあるか。窓が無ければどちらも偽。
+    ///
+    /// 面の上とは、(1) その点でいちばん手前の窓がこの窓で (別の窓が重なっていれば、面の座標は
+    /// 当たっていても見えているのは別の窓)、(2) 重ねたつまみの上ではない、こと。
+    private var cursorSituation: CursorHiding.Situation {
+        guard let window else { return .away }
+        let onTop =
+            NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0)
+            == window.windowNumber
+        return CursorHiding.Situation(
+            isKeyWindow: window.isKeyWindow,
+            pointerIsOverSurface: onTop
+                && isOverSurface(atWindowPoint: window.mouseLocationOutsideOfEventStream))
+    }
+
     /// 窓が前に出ているか・ポインタがこの面の上にあるか。窓が無ければどちらも偽。
     private var pointerSituation: PointerLock.Situation {
         guard let window else {
@@ -480,6 +512,7 @@ extension SketchSurface {
         super.viewWillMove(toWindow: newWindow)
         guard newWindow !== window else { return }
         pointerLock.tearDown()
+        cursorHiding.stop()
         stopObservingWindow()
     }
 
@@ -516,6 +549,7 @@ extension SketchSurface {
     /// **押しているキーと釦も離す** (``releaseHeld()``)。
     @objc private func windowDidResignKey(_ notification: Notification) {
         pointerLock.releaseByUser()
+        cursorHiding.stop()
         releaseHeld()
     }
 
@@ -540,10 +574,12 @@ extension SketchSurface {
     /// 窓が閉じる。
     @objc private func windowWillClose(_ notification: Notification) {
         pointerLock.tearDown()
+        cursorHiding.stop()
     }
 
     /// プロセスが終わる。
     @objc fileprivate func applicationWillTerminate(_ notification: Notification) {
         pointerLock.tearDown()
+        cursorHiding.stop()
     }
 }

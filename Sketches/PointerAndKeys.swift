@@ -60,6 +60,13 @@ import mokume
 /// Escape は普通のキーとしても届くので、左の列の「符号」が変わる。もう一度 L で
 /// `exitPointerLock()` を呼んで見回すのをやめる。
 ///
+/// ## 矢印を隠す
+///
+/// N で `noCursor()` ⇄ `cursor()` を切り替える ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
+/// 隠れるのは**作品の面の上にポインタがあるあいだだけ**で、窓の枠や別の窓へ出せば見える。L で
+/// 捕まえている間も隠れ、N で `cursor()` に戻しても捕まえている間は隠れたまま、放した後に
+/// 矢印が出る。**絵には出さない** — 触らずに書き出した絵 (台帳の 1 枚) は変えない。
+///
 /// 下の行の「動いた量」はフレームの合計 (`movedX`)、「1 件ずつの和」はそのフレームに
 /// `mouseMoved(deltaX:deltaY:)` と `mouseDragged(deltaX:deltaY:)` へ渡った量の和で、2 つは
 /// 一致する。針は見回している間だけ描く — 触らずに書き出した絵は変わらない。
@@ -99,6 +106,9 @@ final class PointerAndKeys: Sketch {
 
     /// 溜める上限。触り続けても際限なく伸びないようにする。
     static let keepAtMost = 40
+
+    /// 矢印を隠しているか (N で切り替える)。**絵には出さない** — 窓の上のカーソルを見て確かめる。
+    var cursorHidden = false
 
     /// 見回しているか (L で切り替える)。入っている間は毎フレーム捕まえを頼む。
     var looking = false
@@ -193,6 +203,9 @@ final class PointerAndKeys: Sketch {
             looking.toggle()
             // 頼むのは `draw()` (毎フレーム)。やめるときはここで取り下げる
             if !looking { exitPointerLock() }
+        case .n:
+            cursorHidden.toggle()
+            if cursorHidden { noCursor() } else { cursor() }
         default:
             break
         }

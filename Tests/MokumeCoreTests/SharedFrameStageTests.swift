@@ -514,6 +514,42 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 矢印を隠す要求 (#2439)
+
+    /// 隠すのは道具の窓で、要求は子が面の属性に載せる。**窓は自分が映す世代の頼みに従う** — 保存で
+    /// 子が入れ替わったら、新しい子の面で判定し直す (`noCursor()` を呼ばない子なら戻る)。捕まえの要求と
+    /// 別の属性なので、片方だけを頼む子も読み分けられる。窓を開かずに、台が読んだ値を見る。
+    @Test("子の矢印を隠す要求を面から読み、入れ替わった後は新しい世代の面で読み直す")
+    func readsTheCursorHidingRequestPerGeneration() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let hiding = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(hiding, frame: 1, gpu: gpu, cursorHidden: true)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("cursor-hiding"))
+            defer { stage.close() }
+
+            stage.displayLinkFired()
+            #expect(stage.cursorHiddenRequested, "子の要求を読んでいない")
+            #expect(!stage.pointerLockRequested, "捕まえの要求と取り違えた")
+
+            // 同じ子が cursor() で戻した
+            try draw(hiding, frame: 2, gpu: gpu, cursorHidden: false)
+            stage.displayLinkFired()
+            #expect(!stage.cursorHiddenRequested, "戻した要求が残っている")
+
+            // 隠していた子から、隠さない子へ入れ替わる
+            try draw(hiding, frame: 3, gpu: gpu, cursorHidden: true)
+            stage.displayLinkFired()
+            #expect(stage.cursorHiddenRequested)
+            let silent = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            stage.displayLinkFired()
+            #expect(stage.cursorHiddenRequested, "焼く前の世代の要求で判定した")
+            try draw(silent, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(!stage.cursorHiddenRequested, "入れ替わった後も前の世代の要求が残っている")
+        }
+    }
+
     // MARK: - 開く大きさ (#1624)
 
     /// **作品の窓は、直に走らせたときと同じ大きさで見える** ([ADR-0032] 決定 1)。差し出し元が
@@ -861,14 +897,14 @@ struct SharedFrameStageTests {
     /// 見えない — ここが見ているのは読み手の乗り換えであって、書き手の遅れ方ではない。
     private func draw(
         _ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice, width: Int = 32,
-        height: Int = 32, pointerLock: Bool = false
+        height: Int = 32, pointerLock: Bool = false, cursorHidden: Bool = false
     ) throws {
         let source = try RenderTarget(gpu: gpu, width: width, height: height)
         try source.fill(with: .linear(red: 0, green: 0, blue: 0))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         try shared.write(
             source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame),
-            pointerLock: pointerLock)
+            pointerLock: pointerLock, cursorHidden: cursorHidden)
         // 名乗りは焼きの結末を見てからなので、結末が届くのを待ってから名乗らせる (#2735)
         awaitOutcomes(gpu)
         try shared.publishPending()
