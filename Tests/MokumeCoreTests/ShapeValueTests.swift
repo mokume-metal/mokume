@@ -234,6 +234,94 @@ struct ShapeValueTests {
         #expect(vector == Vector2(10, -1))
     }
 
+    // MARK: - 向きと上限 (#2722)
+
+    @Test("normalized() は向きを保ったまま長さを 1 にする")
+    func vectorNormalized() {
+        #expect(Vector2(3, 4).normalized() == Vector2(0.6, 0.8))
+        #expect(Vector2(-3, 4).normalized() == Vector2(-0.6, 0.8))
+        #expect(Vector2(0, -7).normalized() == Vector2(0, -1))
+        let tilted = Vector2(1, 1).normalized()
+        #expect(abs(tilted.length - 1) < 1e-6)
+        #expect(tilted.x == tilted.y)
+        // 元の値は変わらない
+        let original = Vector2(3, 4)
+        _ = original.normalized()
+        #expect(original == Vector2(3, 4))
+    }
+
+    @Test("normalized() は長さ 0 の値を、数でない値にせず変えずに返す")
+    func vectorNormalizedZeroLength() {
+        let zero = Vector2(0, 0).normalized()
+        #expect(zero == Vector2(0, 0))
+        #expect(!zero.x.isNaN && !zero.y.isNaN)
+        // 2 乗が 0 に潰れて length が 0 になるほど小さい値も、変えずに返す
+        let tiny = Vector2(1e-30, 1e-30)
+        #expect(tiny.length == 0)
+        #expect(tiny.normalized() == tiny)
+    }
+
+    @Test("limited(to:) は上限を越えるときだけ、向きを保って長さを上限にする")
+    func vectorLimited() {
+        #expect(Vector2(6, 8).limited(to: 5) == Vector2(3, 4))
+        #expect(Vector2(-6, 8).limited(to: 5) == Vector2(-3, 4))
+        #expect(Vector2(1, 1).limited(to: 5) == Vector2(1, 1))
+        // 長さがちょうど上限のときも変わらない
+        #expect(Vector2(3, 4).limited(to: 5) == Vector2(3, 4))
+        // 引数は Int・Double の変数もそのまま渡せる (ADR-0035)
+        let intLimit = 5
+        let doubleLimit = 5.0
+        #expect(Vector2(6, 8).limited(to: intLimit) == Vector2(3, 4))
+        #expect(Vector2(6, 8).limited(to: doubleLimit) == Vector2(3, 4))
+        // 元の値は変わらない
+        let original = Vector2(6, 8)
+        _ = original.limited(to: 5)
+        #expect(original == Vector2(6, 8))
+    }
+
+    @Test("limited(to:) は上限が 0 以下なら Vector2(0, 0) にする (Processing の limit() は負で反転する)")
+    func vectorLimitedNonPositiveMaximum() {
+        #expect(Vector2(6, 8).limited(to: 0) == Vector2(0, 0))
+        #expect(Vector2(6, 8).limited(to: -5) == Vector2(0, 0))
+        // 上限が 0 以下なら、長さが 0 の値も、越えない値も同じ
+        #expect(Vector2(0, 0).limited(to: -1) == Vector2(0, 0))
+        #expect(Vector2(1, 1).limited(to: -5) == Vector2(0, 0))
+        // 数でない上限も 0 以下と同じに扱い、数でない値を絵に流さない
+        let none = Vector2(6, 8).limited(to: Float.nan)
+        #expect(none == Vector2(0, 0))
+    }
+
+    @Test("長さ 0 の値に limited(to:) を掛けても変わらない")
+    func vectorLimitedZeroLength() {
+        #expect(Vector2(0, 0).limited(to: 5) == Vector2(0, 0))
+    }
+
+    @Test("数でない成分を渡しても落ちない (扱いは四則と同じく決めていない)")
+    func vectorNonFiniteComponentsDoNotTrap() {
+        // 範囲の外 (#2722): 値の約束はしない。止まらず、返ってくることだけを見る
+        let nan = Vector2(Float.nan, 0)
+        _ = nan.normalized()
+        _ = nan.limited(to: 5)
+        let infinite = Vector2(Float.infinity, 0)
+        _ = infinite.normalized()
+        _ = infinite.limited(to: 5)
+    }
+
+    /// 通信の完了ハンドラのような main actor の外の文脈。**ここが組めることが検査である**
+    /// (`Vector2` が既定の隔離のままなら、この関数の中の呼び出しはコンパイルエラーになる)。
+    nonisolated static func steerOutsideTheMainActor() -> Vector2 {
+        let velocity = Vector2(1, 0) + Vector2(3, 4).normalized() * 2
+        return velocity.limited(to: 1.5)
+    }
+
+    @Test("normalized() と limited(to:) は main actor の外から呼べる")
+    func steeringUsableOutsideTheMainActor() async {
+        let result = await Task.detached { Self.steerOutsideTheMainActor() }.value
+        // (1, 0) + (0.6, 0.8) * 2 = (2.2, 1.6) は長さ 2.72 なので、1.5 に縮む
+        #expect(abs(result.length - 1.5) < 1e-5)
+        #expect(abs(result.x / result.y - 2.2 / 1.6) < 1e-5)
+    }
+
     // MARK: - 完了条件 6: 隔離の外で使える
 
     /// 通信の完了ハンドラのような、main actor の外の文脈。**ここが組めることが検査である** —
