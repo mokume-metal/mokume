@@ -73,6 +73,15 @@ public final class InputState {
     /// 最後に入力された文字。
     public private(set) var characters: String = ""
 
+    /// 入力の層が 1 度だけ言う注意の種類。
+    enum Warning: Hashable {
+        /// 当てると、見せる量か配る量が有限でなくなる出来事を捨てた (``apply(_:)``・#2731)。
+        case nonFiniteEvent
+    }
+
+    /// 1 度だけ言った注意の控え。**検査が読む。**
+    private(set) var warnings = WarningLog<Warning>()
+
     public init() {}
 
     /// 出来事を溜める。**窓からも外からも、入口はここ 1 つ。**
