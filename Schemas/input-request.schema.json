@@ -17,7 +17,7 @@
     },
     "events": {
       "type": "array",
-      "description": "The events to send. They are fed in the order they appear. **An unknown type, or an event that cannot be read at all (one without type, or with a value of the wrong type), costs only that one event**: it counts in ignored and the rest still go through.",
+      "description": "The events to send. They are fed in the order they appear. **An unknown type, or an event that cannot be read at all (one without type, or with a value of the wrong type), costs only that one event**: it counts in ignored and the rest still go through. **A request whose id can be read is always answered**: events that are missing, null or not an array count as one in ignored, and nothing is fed. Only a request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply.",
       "items": {
         "type": "object",
         "required": [

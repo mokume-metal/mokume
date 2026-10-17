@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/observe-request.schema.json",
   "title": "The observation request",
-  "description": "Asks the running sketch to be observed. The writer places this atomically by way of a temporary file, and id changes with every request (ADR-0018 decision 3). With count at 2 or more, shots are taken in succession without stopping the frame loop, and the catalogue is written last.",
+  "description": "Asks the running sketch to be observed. The writer places this atomically by way of a temporary file, and id changes with every request (ADR-0018 decision 3). With count at 2 or more, shots are taken in succession without stopping the frame loop, and the catalogue is written last. **A request whose id can be read is always answered**: one that cannot be read otherwise (a scale, count or every of the wrong type, such as \"0.5\" or true) takes no shot, the previous products are cleared, and the reply carries the reason in warnings. Only a request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply.",
   "type": "object",
   "required": [
     "id"

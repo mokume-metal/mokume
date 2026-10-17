@@ -29,7 +29,7 @@
     "ignored": {
       "type": "integer",
       "minimum": 0,
-      "description": "How many were dropped, for an unknown type or the like."
+      "description": "How many were dropped, for an unknown type or the like. A request whose events could not be read at all (missing, null or not an array) counts as 1."
     },
     "dropped": {
       "type": "integer",
