@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
@@ -148,17 +149,21 @@ struct ObservationTests {
     @Test("走る前に呼んだ語彙の警告が、観測の応答に載る")
     func carriesWarningsAboutCallsFromOutsideTheRun() throws {
         let log = OutsideRun()
-        try OutsideRun.$current.withValue(log) {
-            let facet = try makeFacet()
-            let runtime = try makeRuntime(EarlyCaller(), facet: facet)
-            try runtime.advance()
+        try Diagnostics.$digest.withValue(WarningDigest()) {
+            try OutsideRun.$current.withValue(log) {
+                let facet = try makeFacet()
+                let runtime = try makeRuntime(EarlyCaller(), facet: facet)
+                try runtime.advance()
 
-            try request(id: "a1", in: facet)
-            try runtime.advance()
+                try request(id: "a1", in: facet)
+                try runtime.advance()
 
-            let warnings = try readReport(in: facet)["warnings"] as? [String] ?? []
-            #expect(warnings.contains { $0.hasPrefix("circle(_:_:_:) only works inside setup()") })
-            #expect(warnings.contains { $0.hasPrefix("width is only known inside setup()") })
+                let warnings = try readReport(in: facet)["warnings"] as? [String] ?? []
+                #expect(
+                    warnings.filter { $0.hasPrefix("circle(_:_:_:) only works inside setup()") }.count == 1)
+                #expect(
+                    warnings.filter { $0.hasPrefix("width is only known inside setup()") }.count == 1)
+            }
         }
     }
 

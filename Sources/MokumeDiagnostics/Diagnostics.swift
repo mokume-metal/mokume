@@ -8,8 +8,9 @@ import Foundation
 /// ライブラリが人へ伝えることを 1 箇所に集める。**素の `print` で書かない** —
 /// 出力先はスケッチの標準出力であり、そこはスケッチ自身のものだからである。
 ///
-/// 持っているのは ``warn(_:)`` と、その文面に失敗を埋める ``reason(_:)`` だけで、段階も
-/// 分類もまだ無い。**要るものが分かった時点で足す** ([ADR-0001] 原則 4 / [ADR-0008] 決定 2)。
+/// 持っているのは ``warn(_:)`` と、その文面に失敗を埋める ``reason(_:)`` と、言った文面を
+/// 次の観測まで溜める ``takeUnreported()`` だけで、段階も分類もまだ無い。**要るものが
+/// 分かった時点で足す** ([ADR-0001] 原則 4 / [ADR-0008] 決定 2)。
 ///
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
@@ -32,8 +33,29 @@ public nonisolated enum Diagnostics {
     ///
     /// 何度も言うかどうかは呼び出し側が決める — 毎フレーム起きうることをそのまま
     /// 流すと、本当に読むべき 1 行が埋まる。
+    ///
+    /// **同じ文面を次の観測の応答にも載せるため、溜め場にも控える** (``WarningDigest``・#2761)。
+    /// 標準エラーの 1 行は MCP から読めないので、スケッチが言った警告を観測で辿れるようにする。
+    /// 言う口は呼び出し側のまま — 文面と頻度は変わらない。
     public static func warn(_ message: String) {
         FileHandle.standardError.write(Data("\(prefix): \(message)\n".utf8))
+        (digest ?? sharedDigest).record(message)
+    }
+
+    /// 検査が自分の溜め場を差す先。差していなければ ``sharedDigest``。
+    ///
+    /// 溜め場はプロセスで 1 つなので、並んで走る検査が観測の応答を読むと、互いの警告を取り合う。
+    /// 差しておけば、その検査の中で言われた警告だけを数えられる。**フレームの外へ逃がした仕事
+    /// (`Task.detached` など) にはタスクローカル値が届かない**ので、そこから言われた分は
+    /// プロセスの溜め場へ入る。
+    @TaskLocal package static var digest: WarningDigest?
+
+    /// プロセスの溜め場。
+    package static let sharedDigest = WarningDigest()
+
+    /// 言ったままで、まだ観測の応答に載せていない警告を、言った順に返して空にする。
+    package static func takeUnreported() -> [String] {
+        (digest ?? sharedDigest).takeUnreported()
     }
 
     /// 失敗を、**型と理由の 1 行**にする。``warn(_:)`` の文面に埋める (#2263)。

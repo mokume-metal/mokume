@@ -62,7 +62,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Anything that had to be noted while taking the shots. When it failed, the reason is here. An empty array when there is nothing."
+      "description": "Anything that had to be noted while taking the shots. When it failed, the reason is here. The warnings the sketch itself said (for example a call that was ignored) are added after that, once each: a warning appears in the first reply after it was said and not in later ones. At most 20 of them are kept per reply; when more were said, a last line gives the number left out. An empty array when there is nothing."
     },
     "stats": {
       "$ref": "#/$defs/stats",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
@@ -126,12 +127,14 @@ struct OutsideRunTests {
     @Test("観測の応答へは、言った後の最初の 1 回だけ渡す")
     func handsEachWarningToTheObservationOnce() {
         let log = OutsideRun()
-        OutsideRun.$current.withValue(log) {
-            Painter().circle(0, 0, 10)
-            #expect(log.takeUnreported().count == 1)
-            #expect(log.takeUnreported().isEmpty)
-            _ = Painter().width
-            #expect(log.takeUnreported().map { $0.hasPrefix("width") } == [true])
+        Diagnostics.$digest.withValue(WarningDigest()) {
+            OutsideRun.$current.withValue(log) {
+                Painter().circle(0, 0, 10)
+                #expect(Diagnostics.takeUnreported().count == 1)
+                #expect(Diagnostics.takeUnreported().isEmpty)
+                _ = Painter().width
+                #expect(Diagnostics.takeUnreported().map { $0.hasPrefix("width") } == [true])
+            }
         }
     }
 
