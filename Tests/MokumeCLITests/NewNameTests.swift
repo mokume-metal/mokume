@@ -42,7 +42,7 @@ struct NewNameTests {
     /// | `swift-syntax` | `product 'SwiftSyntaxMacros' … not found in package 'swift-syntax'` (同上。推移の依存) |
     /// | `MokumeCore` ほか・`SwiftSyntax` ほか | `multiple packages … declare targets with a conflicting name` |
     /// | `Foundation`・`Metal`・`Network`・`SwiftUI`・`simd` ほか SDK のモジュール 23 個 | `module dependency cycle` (mokume が import するモジュール。1 つずつ実測) |
-    /// | `foundation` | `swiftc` の失敗 (大小を区別しない置き場で、ひな形の `import Foundation` が自分の出力を読む。4 回とも) |
+    /// | `foundation` | `swiftc` の失敗 (大小を区別しない置き場で、`import Foundation` が自分の出力を読む。4 回とも。測ったのは、ひな形が `import Foundation` を持っていた頃) |
     /// | `Swift` | `module name "Swift" is reserved for the standard library` |
     @Test(
         "組めない名前は、使えない名前として止まり、名前と別の名前の例を言う",
@@ -183,10 +183,11 @@ struct NewNameTests {
         #expect(imported == NewCommand.templateModules, "ひな形の import が変わった: \(imported)")
         let missing = imported.subtracting(NewCommand.unusableModules)
         #expect(missing.isEmpty, "import するモジュールを NewCommand.unusableModules に足す: \(missing)")
-        // 大小を畳む一覧は、ひな形が import するモジュールだけ
+        // 大小を畳む一覧は、断るモジュールの小文字の綴りだけ (ひな形は `Foundation` を import
+        // しなくなった (#2416) が、作者が足す定番なので畳む範囲は変えない)
         #expect(
             NewCommand.caseFoldedModules.isSubset(
-                of: Set(NewCommand.templateModules.map { $0.lowercased() })))
+                of: Set(NewCommand.unusableModules.map { $0.lowercased() })))
     }
 
     /// 完了条件 4。**mokume の library product が辿るターゲット名を、宣言から導いて突き合わせる。**
