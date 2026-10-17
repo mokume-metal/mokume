@@ -121,6 +121,10 @@ enum ColorValues {
         case notANumberHSB
         /// 2 色の間を取る口に、数でない値・無限の `amount` が渡された。
         case notANumberLerpColor
+        /// 色の値と不透明度から色を作る口に、数でない値・無限の不透明度が渡された ([#2422])。
+        ///
+        /// [#2422]: https://github.com/mokume-metal/mokume/issues/2422
+        case notANumberFading
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
@@ -177,6 +181,70 @@ public func color(
 public func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) -> LinearRGBA {
     let gray = gray.asFloat
     return color(gray, gray, gray, alpha.asFloat)
+}
+
+/// 色の値の不透明度を薄めた色を作る。**不透明度は 0–255**、置き換えずに**掛ける**。
+///
+/// ```swift
+/// let ink = color(28, 28, 30)
+/// let faint = color(ink, 0.12 * 255)
+/// ```
+///
+/// ``SketchPart/fill(_:_:)-(LinearRGBA,_)`` の色の値と不透明度の形と同じ式で、描く状態ではなく**色の値**を作る。
+/// ``Placement/init(x:y:z:scale:rotation:fill:)`` の `fill` や
+/// ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` の `color`、``lerpColor(_:_:_:)`` の
+/// 両端のように、色の値を受ける口へ薄めた色を渡したいときに使う。色の成分 (乗算済み) を手で縮める
+/// 必要は無い。
+///
+/// @Row {
+///   @Column(size: 3) {
+///     ```swift
+///     background(240)
+///     noStroke()
+///     fill(242, 115, 64)
+///     rect(0, 110, width, 80)
+///     let ink = color(28, 28, 30)
+///     let faint = color(ink, 0.12 * 255)
+///     let half = color(ink, 128)
+///     let tile = createShape { rect(-45, -45, 90, 90) }
+///     shape(tile, at: [
+///         Placement(x: 70, y: 150, fill: faint),
+///         Placement(x: 200, y: 150, fill: half),
+///         Placement(x: 330, y: 150, fill: ink),
+///     ])
+///     ```
+///   }
+///   @Column {
+///     <!-- shot: 橙色の横帯の上に正方形が 3 つ。左は帯がほとんど透ける薄い墨、中央は帯が半分透ける墨、右だけが帯を隠す墨 | symmetric=y -->
+///     ![橙色の横帯の上に正方形が 3 つ。左は帯がほとんど透ける薄い墨、中央は帯が半分透ける墨、右だけが帯を隠す墨](https://i.gyazo.com/1a08d115e280d388319ca73fb21a578e.png)
+///     <!-- /shot -->
+///   }
+/// }
+///
+/// **0–255 で、0–1 ではない。** `color(c, 0.12)` はほぼ透明になる。0–1 の率で薄めたいときは
+/// `color(c, rate * 255)` と書く。
+///
+/// **置き換えない。** 色が元から持つ不透明度に `alpha / 255` を掛けるので、半透明の色に 255 を
+/// 渡しても不透明にはならない (`color(c, 255)` は `c` のまま)。`color(color(28, 28, 30, 128), 128)` の
+/// 不透明度は 64 あまりになる。不透明にしたいときは、不透明な色を作り直す。
+///
+/// **範囲の外は締める。色の成分は締めない** — 不透明度の 400 は 255 と同じで `c` のまま、-100 は 0 と
+/// 同じで完全な透明になる (掛ける率を 0–1 に締める)。成分は掛けるだけなので、255 を越える明るさの色は
+/// 越えたまま薄まる ([ADR-0033] 決定 3 の改訂・決定 6)。
+///
+/// **不透明度が数でない値・無限のときは受けず、透明な色を返す** (``color(_:_:_:_:)`` と同じ扱いで、
+/// 注意は 1 度だけ言う)。`c` の成分は検めない — 受ける口が断る。
+///
+/// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
+// shot: 1 snippet=8273a2d1
+public func color(_ color: LinearRGBA, _ alpha: some ScalarConvertible) -> LinearRGBA {
+    guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
+        ColorValues.warnOnce(
+            .notANumberFading,
+            "color(): got an opacity that is not a number, or an infinite one, so transparent was returned")
+        return .transparent
+    }
+    return faded
 }
 
 /// 16 進の綴りから色を作る。
