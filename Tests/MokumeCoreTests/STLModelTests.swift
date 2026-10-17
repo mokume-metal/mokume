@@ -883,6 +883,34 @@ struct STLModelTests {
         #expect(try read(Data(data.prefix(size))) == ModelFile.empty)
     }
 
+    /// 名前の添字 80〜83 に NUL や制御文字を持つ、5 面の文字の STL。名前の残りは NUL で埋める。添字 83 が NUL で添字
+    /// 80〜82 に 0x20 未満の字があるので、頭はバイナリと見分けられる (`solid` で始まる切れたバイナリと区別できない)。
+    static func textWithControlBytesAt80(_ tail: [UInt8]) -> Data {
+        precondition(tail.count == 4 && tail[3] == 0)
+        let name = Array("part".utf8) + Array(repeating: 0, count: 70) + tail
+        let text = ModelFixture.asciiSTL(
+            tetrahedron + [smallFacet], name: String(decoding: name, as: UTF8.self))
+        let data = Data(text.utf8)
+        precondition(Array(data[80..<84]) == tail && data[84] == 0x0A, "名前が添字 83 で終わっていない")
+        return data
+    }
+
+    /// **大きさが宣言と合わず、見出しが `solid` で始まるバイナリは、文字の STL とも決めきれない** (#2493 の反証)。
+    /// 揃った面が無い (宣言した面の数が 0) からといって空と決めず、文字として面が書かれていれば、読み手に読ませて
+    /// 書かれた面の数と照らす。main では読み手が文字として 5 面を読んでいた。
+    @Test(
+        "名前の添字 80〜83 に NUL や制御文字を持つ文字の STL は、バイナリと見分けられても空ではなく書かれた面を読む (#2493 の反証)",
+        arguments: [[0, 0, 0, 0], [0x09, 0x61, 0x62, 0], [0x1B, 0x1B, 0x1B, 0], [0x78, 0, 0, 0]] as [[UInt8]])
+    func textWithControlBytesAt80IsReadAsText(_ tail: [UInt8]) throws {
+        let data = Self.textWithControlBytesAt80(tail)
+        let facets = Self.tetrahedron + [Self.smallFacet]
+        #expect(ModelFile.stlLayout(of: data.prefix(128), size: data.count) == .binary)
+        // 読み手にじかに読ませても、文字として 5 面を読む (main の結果)
+        #expect(try readByModelIO(data)?.triangles == 5)
+        let parsed = try read(data)
+        #expect(parsed.positions == facets.flatMap(\.corners))
+    }
+
     /// 1 行目が 83 文字 (84 バイト目が改行) の面の無い solid。Model I/O は面を見つけられず、80〜83
     /// バイト目を面の数とするバイナリとして読み直し、でたらめな面を返す (#2391)。**名前に `facet` を
     /// 含んでも同じ** — 面の有無を `facet` の語の有無で代用すると、ここを取りこぼす。
