@@ -46,6 +46,7 @@ PR に付けるのは CI の判定を変える `no-issue` (Issue を閉じない
 
 PR 本文が揃い `ci-gate`・`pr-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で queue に入れてよい。承認はどの PR にも要らない (`.github/`・`.claude/` を変える PR も)。queue が合流後に再検証するので、手で merge しない。マージ後は main に戻って pull する。
 
+- **Draft は待つ理由があるときだけ使う** (人の確認・判断待ち / 前の PR 待ち / 後からコミットを足す / 使い捨て)。理由が無ければ Ready で出して auto-merge を掛ける。Draft は queue にも stall-watch にも見られないので、**出したら理由を本文の先頭に書き、同じセッションで人に確認して、解けたら Ready にして merge まで見届ける**。見届けられずに終えるとき (無人・利用制限) は、待ちの理由と再開の手順を PR にコメントする
 - **後からコミットを足す予定の PR は、足し終えるまで auto-merge を掛けない。** 必須チェックが green になった瞬間に queue へ入り、足す前に merge される。掛けたなら green になる前に `gh pr merge --disable-auto` で外す
 - **`BEHIND` でも "Update branch" は押さない。** 得るものが無く、auto-merge だけが外れる
 - check が 1 本も付かないのは main との衝突で、手元で解いて push する。他の止まり方は `bash scripts/stall-watch.sh` が読み分ける
