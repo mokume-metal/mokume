@@ -24,7 +24,7 @@
     "accepted": {
       "type": "integer",
       "minimum": 0,
-      "description": "How many were taken."
+      "description": "How many were taken. A taken event can still be dropped when it is applied, if it would make the pointer position, a movement, a drag or a scroll amount infinite (see the request's events); that is said once as a warning, not counted here."
     },
     "ignored": {
       "type": "integer",
