@@ -32,6 +32,10 @@ enum ConsumerFixture {
         name: String = "mokume", local: Bool = false, facets: [String] = ["observe"]
     ) throws -> (work: URL, schemas: URL) {
         let work = try makeDirectory("consumer")
+        // **消費側はパッケージである。** 窓口の答えは `Package.swift` の有無でスケッチの場所かを
+        // 見分ける (#2487) ので、無いままだとスケッチでない場所の答えを模してしまう。中身は
+        // 読まれない (面の在処はビルドの記録から解く)
+        try Data("// consumer\n".utf8).write(to: work.appendingPathComponent("Package.swift"))
         let package = try local
             ? makeDirectory("dependency")
             : work.appendingPathComponent(".build/checkouts/mokume", isDirectory: true)

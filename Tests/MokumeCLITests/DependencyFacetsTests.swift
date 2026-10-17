@@ -95,6 +95,9 @@ struct DependencyFacetsTests {
     @Test("応えないときの案内が、依存の版も原因に挙げる")
     func namesTheDependencyVersionAmongTheCauses() throws {
         let bare = try ConsumerFixture.makeDirectory()
+        // 依存は解決できないが、スケッチの場所ではある。`Package.swift` が無いと、4 つ目の
+        // 可能性 (スケッチでない場所で立った窓口・#2487) が足される
+        try Data("// sketch\n".utf8).write(to: bare.appendingPathComponent("Package.swift"))
         let tools = Tools(facets: Facets(directory: bare, waitLimit: 0.2), makeID: { "fixed" })
 
         let outcome = tools.call("observe", arguments: [:])
