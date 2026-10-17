@@ -269,7 +269,8 @@ struct OutputFunctionAgreementTests {
         let gpu = canvas.gpu
         let body = try gpu.shaders.bundledShaderSource(named: "Present") + "\n" + Self.probes
         let source = ShaderSource.assemble(
-            common: try gpu.shaders.preludedShaderSource(named: "Compute"), values: [:], body: body)
+            prelude: try gpu.shaders.prelude(named: "Compute"), values: [:],
+            body: .init(name: "probe", text: body))
         // 組み方は本番と同じ既定のまま。safe math は原文の中の指定 (`#pragma`) が効かせる
         let library = try gpu.device.makeLibrary(source: source, options: nil)
         return try Computation(

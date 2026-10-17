@@ -39,6 +39,8 @@ final class ShaderBox {
     let name: String
     /// 断片の在処。保存を拾い直すのに使う。持たなければ拾い直さない。
     let url: URL?
+    /// 組み立ての誤りが、本文の行に添えて名乗る名前 (``ShaderSource/bodyName(_:url:)``)。
+    var bodyName: String { ShaderSource.bodyName(name, url: url) }
     /// いま効いている値。
     private(set) var values: [String: ShaderValue]
     /// いまのファイルの中身で差し替えられていなければ、その理由。**いま効いている中身と

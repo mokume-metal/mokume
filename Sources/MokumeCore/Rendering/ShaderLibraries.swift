@@ -107,23 +107,25 @@ final class ShaderLibraries {
     ///
     /// **前置きは無条件。** 断片が既に宣言を持っているかは見ない (ShaderSource を参照)。
     func makeShapeLibrary(
-        named name: String, body: String, values: [String: ShaderValue] = [:],
-        surfaces: [String: ShaderSurface] = [:]
+        named name: String, body: String, bodyName: String? = nil,
+        values: [String: ShaderValue] = [:], surfaces: [String: ShaderSurface] = [:]
     ) throws(RenderFailure) -> any MTLLibrary {
-        try shapeLibraryJob(named: name, body: body, values: values, surfaces: surfaces).runNow()
+        try shapeLibraryJob(
+            named: name, body: body, bodyName: bodyName, values: values, surfaces: surfaces
+        ).runNow()
     }
 
-    /// ``makeShapeLibrary(named:body:values:surfaces:)`` の組み立てを、走らせずに用意する。
+    /// ``makeShapeLibrary(named:body:bodyName:values:surfaces:)`` の組み立てを、走らせずに用意する。
     /// 裏で組む経路 (``ShaderBox``・[#2365]) が使う。
     ///
     /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
     func shapeLibraryJob(
-        named name: String, body: String, values: [String: ShaderValue] = [:],
-        surfaces: [String: ShaderSurface] = [:]
+        named name: String, body: String, bodyName: String? = nil,
+        values: [String: ShaderValue] = [:], surfaces: [String: ShaderSurface] = [:]
     ) throws(RenderFailure) -> LibraryJob {
-        let common = try preludedShaderSource(named: "Common")
         let source = ShaderSource.assemble(
-            common: common, values: values, surfaces: surfaces, body: body)
+            prelude: try prelude(named: "Common"), values: values, surfaces: surfaces,
+            body: .init(name: bodyName ?? name, text: body))
         return job(source, name: name)
     }
 
@@ -132,33 +134,39 @@ final class ShaderLibraries {
     /// **前置きは無条件** (塗りと同じ理由 — ShaderSource を参照)。塗りと違って入口の
     /// 関数は用意せず、束ねる先の宣言ごと利用者が書く。
     func makeComputeLibrary(
-        named name: String, body: String, values: [String: ShaderValue] = [:]
+        named name: String, body: String, bodyName: String? = nil,
+        values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> any MTLLibrary {
-        try computeLibraryJob(named: name, body: body, values: values).runNow()
+        try computeLibraryJob(named: name, body: body, bodyName: bodyName, values: values).runNow()
     }
 
-    /// ``makeComputeLibrary(named:body:values:)`` の組み立てを、走らせずに用意する。
+    /// ``makeComputeLibrary(named:body:bodyName:values:)`` の組み立てを、走らせずに用意する。
     func computeLibraryJob(
-        named name: String, body: String, values: [String: ShaderValue] = [:]
+        named name: String, body: String, bodyName: String? = nil,
+        values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> LibraryJob {
-        let common = try preludedShaderSource(named: "Compute")
-        let source = ShaderSource.assemble(common: common, values: values, body: body)
+        let source = ShaderSource.assemble(
+            prelude: try prelude(named: "Compute"), values: values,
+            body: .init(name: bodyName ?? name, text: body))
         return job(source, name: name)
     }
 
     /// 効果の断片を、前置きと合わせて組み立てる。
     func makeEffectLibrary(
-        named name: String, body: String, values: [String: ShaderValue] = [:]
+        named name: String, body: String, bodyName: String? = nil,
+        values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> any MTLLibrary {
-        try effectLibraryJob(named: name, body: body, values: values).runNow()
+        try effectLibraryJob(named: name, body: body, bodyName: bodyName, values: values).runNow()
     }
 
-    /// ``makeEffectLibrary(named:body:values:)`` の組み立てを、走らせずに用意する。
+    /// ``makeEffectLibrary(named:body:bodyName:values:)`` の組み立てを、走らせずに用意する。
     func effectLibraryJob(
-        named name: String, body: String, values: [String: ShaderValue] = [:]
+        named name: String, body: String, bodyName: String? = nil,
+        values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> LibraryJob {
-        let common = try preludedShaderSource(named: "Effect")
-        let source = ShaderSource.assemble(common: common, values: values, body: body)
+        let source = ShaderSource.assemble(
+            prelude: try prelude(named: "Effect"), values: values,
+            body: .init(name: bodyName ?? name, text: body))
         return job(source, name: name)
     }
 
@@ -224,10 +232,22 @@ final class ShaderLibraries {
     /// `switch` する数で、ずれても例外は出ず別の種別として効くだけなので、Metal 側でも
     /// 1 箇所に集めて `mokume_kindLayout` が書き出せるようにしてある ([#802])。
     ///
+    /// 区切りは名前を持ち、組み立てた原稿の中で本体の名前 (``bundledName(_:)``) を名乗る
+    /// (``ShaderSource/assemble(prelude:values:surfaces:body:)``)。
+    ///
     /// [#802]: https://github.com/mokume-metal/mokume/issues/802
-    func preludedShaderSource(named name: String) throws(RenderFailure) -> String {
-        try bundledShaderSource(named: "Kinds") + "\n" + bundledShaderSource(named: name)
+    func prelude(named name: String) throws(RenderFailure) -> [ShaderSource.Part] {
+        [
+            .init(name: Self.bundledName("Kinds"), text: try bundledShaderSource(named: "Kinds")),
+            .init(name: Self.bundledName(name), text: try bundledShaderSource(named: name)),
+        ]
     }
+
+    /// 同梱している断片が、組み立てた原稿の中で名乗る名前 (`mokume/Common.metal`)。
+    ///
+    /// **頭に `mokume/` を付ける。** 利用者のファイルが `Common.metal` という名前でも、本体の
+    /// 前置きの行と見分けられる。
+    static func bundledName(_ name: String) -> String { "mokume/\(name).metal" }
 
     /// 同梱している断片を読む。
     ///
