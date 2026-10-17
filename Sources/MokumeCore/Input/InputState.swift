@@ -10,6 +10,15 @@ import Foundation
 /// 確かめたことが、人が触ったときにも同じように成り立つ。
 ///
 /// 溜めた出来事はフレームの頭で流し込まれ、**同じフレームの `draw()` から見える**。
+///
+/// ## 見せる量と配る量は有限である
+///
+/// 位置 (``x``・``previousX``)・動いた量 (``movedX``)・引きずった量 (``dragX``)・スクロール量
+/// (``scrollX``) と、配る量 (引きずり・移動・スクロールの 1 件ぶん) は、数でない値にも無限にも
+/// ならない。**当てるとそうなる出来事は、状態にも配りにも入れずに捨て、1 度だけ言う**
+/// ([#2731](https://github.com/mokume-metal/mokume/issues/2731))。外から送る経路は ±3.4e38 までの
+/// 極端な値を運べ、その差や和は `Float` に収まらないことがある。``enqueue(_:)`` には数でない値も
+/// 渡せる。**範囲の外の位置は丸めない** — 極端でも有限に収まる値は、窓から来る値と同じに当てて配る。
 @MainActor
 public final class InputState {
     /// 溜める上限。描画が停滞しても際限なく伸びないようにする。
@@ -97,7 +106,13 @@ public final class InputState {
     /// 引きずりとスクロールはフレームの頭で 0 に戻る量なので、捨てた分は失われる —
     /// 捨てた以上それが正しい。
     ///
+    /// **溜めた出来事でも、当てると位置・差・和が有限でなくなるなら捨てる** ([#2731])。数でない値や
+    /// 無限を載せた出来事と、極端な位置や量で差や和が `Float` に収まらなくなる出来事である。捨てた
+    /// 出来事は状態を動かさず、コールバックも呼ばない。捨てたことは最初の 1 件だけ警告で言う。
+    /// 決まるのは当てるとき (フレームの頭か、溢れて当てるとき) の状態なので、溜めた時点では分からない。
+    ///
     /// [#935]: https://github.com/mokume-metal/mokume/issues/935
+    /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
     public func enqueue(_ event: InputEvent) {
         if pending.count >= Self.queueLimit {
             apply(pending.removeFirst())
@@ -135,7 +150,9 @@ public final class InputState {
             // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
             let before = Before(
                 pressedButtons: pressedButtons, keyWasPressed: wasPressed(event), x: x, y: y)
-            apply(event)
+            // **捨てた出来事は配らない** (#2731)。状態に入らなかった量を配ると、配った量の和と
+            // 足し込んだ和 (``dragX`` ほか) が食い違う
+            guard apply(event) else { continue }
             dispatchCallbacks(for: event, before: before, to: dispatch)
         }
     }
@@ -271,7 +288,27 @@ public final class InputState {
         !wasPressed || !isRepeat
     }
 
-    private func apply(_ event: InputEvent) {
+    /// 出来事を状態へ当てる。**当てると有限でなくなる出来事は当てず、`false` を返す** (#2731)。
+    ///
+    /// 検めるのは当てる直前のここ 1 か所である。フレームの頭 (``beginFrame(dispatch:)``) も、溢れた
+    /// 1 件を当てる ``enqueue(_:)`` も、ここを通る。読み手 (``dragX``・``scrollY``・3 つの配り) ごとに
+    /// 検めると、読み手が増えるたびに漏れうる。
+    @discardableResult
+    private func apply(_ event: InputEvent) -> Bool {
+        guard keepsQuantitiesFinite(event) else {
+            warnings.warnOnce(
+                .nonFiniteEvent,
+                "Dropped the input event \(event): applying it would make the mouse position, "
+                    + "a movement, a drag or a scroll amount infinite or not a number "
+                    + "(later events like this are dropped without saying so again)")
+            return false
+        }
+        update(by: event)
+        return true
+    }
+
+    /// 出来事 1 件ぶん、状態を進める。**検めは済んでいる** (``apply(_:)`` からだけ呼ぶ)。
+    private func update(by event: InputEvent) {
         switch event {
         case .mouseDown(let x, let y, let button):
             self.x = x
@@ -312,6 +349,41 @@ public final class InputState {
             justReleasedKeys.insert(code)
             if !code.isModifier { lastKey = code }
         }
+    }
+
+    /// 当てた後も、見せる量と配る量がどれも有限か ([#2731])。
+    ///
+    /// **状態はいつも有限である** (有限でなくなる出来事は当てないので)。だから足した後の和が有限
+    /// なら、足した差も有限で、配る量 (差と、スクロールの 1 件ぶん) も有限になる。見るのは:
+    ///
+    /// - 位置の出来事: 位置そのもの。押下と解放も位置を動かす
+    /// - 位置の移動: 位置と、当てる前との差を足した後の ``movedX`` (押していれば ``dragX`` も)
+    /// - 相対の移動: 足した後の ``movedX`` (押していれば ``dragX`` も)
+    /// - スクロール: 足した後の ``scrollX``・``scrollY``
+    ///
+    /// **範囲の外の位置は丸めない** (`SurfaceMapping` の「帯の上は丸めない」)。極端でも有限に
+    /// 収まる値は、今までどおり当てる。
+    ///
+    /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
+    private func keepsQuantitiesFinite(_ event: InputEvent) -> Bool {
+        switch event {
+        case .mouseDown(let x, let y, _), .mouseUp(let x, let y, _):
+            x.isFinite && y.isFinite
+        case .mouseMoved(let x, let y):
+            x.isFinite && y.isFinite && keepsMotionFinite(deltaX: x - self.x, deltaY: y - self.y)
+        case .mouseMovedBy(let dx, let dy):
+            keepsMotionFinite(deltaX: dx, deltaY: dy)
+        case .scrolled(let dx, let dy):
+            (scrollX + dx).isFinite && (scrollY + dy).isFinite
+        case .keyDown, .keyUp:
+            true
+        }
+    }
+
+    /// 移動 1 件の量を足し込んでも、和が有限か (``accumulateMotion(deltaX:deltaY:)`` と同じ足し方)。
+    private func keepsMotionFinite(deltaX: Float, deltaY: Float) -> Bool {
+        guard (movedX + deltaX).isFinite, (movedY + deltaY).isFinite else { return false }
+        return !isMouseDown || ((dragX + deltaX).isFinite && (dragY + deltaY).isFinite)
     }
 
     /// 移動 1 件の量を足し込む。動いた量はいつも、引きずった量は押されている間だけ
