@@ -94,6 +94,17 @@ struct NumberSurfaceTests {
         /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
         static func entrance(at local: Float) -> Float { smoothstep(2.4, 5.4, local) }
 
+        /// [#2423] — フレームの長さに依らない追従・往復・最短の弧。
+        ///
+        /// [#2423]: https://github.com/mokume-metal/mokume/issues/2423
+        static func follow(_ current: Float, toward target: Float, over seconds: Float) -> Float {
+            damp(current, target, 6, seconds)
+        }
+
+        static func lid(at time: Float) -> Float { pingpong(time, 1) }
+
+        static func turn(from start: Float, to stop: Float) -> Float { lerpAngle(start, stop, 0.5) }
+
         /// [#1283] の `Tempo` が書いていた `Ease.ramp(beat, from, to)` — 窓を 0…1 へ写して締める。
         ///
         /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
@@ -115,6 +126,168 @@ struct NumberSurfaceTests {
         #expect(OutsideASketch.entrance(at: 9) == 1)
         #expect(OutsideASketch.ramp(6, from: 4, to: 8) == 0.5)
         #expect(OutsideASketch.ramp(10, from: 4, to: 8) == 1)
+    }
+
+    // MARK: - 目標へ寄る・往復する・角を混ぜる
+
+    /// 完了条件 1。**目標が一定なら、刻み方に依らず同じ軌跡になる。** 1 回で進めた値と、
+    /// 細かく刻んで重ねた値が同じになる。
+    @Test("damp は、1 回で進めても 60 回に刻んでも同じ値になる")
+    func dampIsIndependentOfTheStepSize() {
+        let once = damp(0, 10, 4, 1)
+        var sixty: Float = 0
+        for _ in 0..<60 { sixty = damp(sixty, 10, 4, 1.0 / 60) }
+        var thirty: Float = 0
+        for _ in 0..<30 { thirty = damp(thirty, 10, 4, 1.0 / 30) }
+        #expect(isNear(once, 10 * (1 - exp(Float(-4)))), "閉じた式 10 * (1 - e^-4) と合わない")
+        #expect(isNear(sixty, once, within: 1e-4))
+        #expect(isNear(thirty, once, within: 1e-4))
+        #expect(isNear(sixty, thirty, within: 1e-4))
+    }
+
+    /// 変更前の書き方 (1 枚ごとの率) は、刻みが変わると別の軌跡になる。**この対比が、
+    /// `damp` を足す理由そのもの** — 同じ 1 秒でも 60 枚と 30 枚で値が違う。
+    @Test("変更前の x += (target - x) * 0.1 は、刻みで値が変わる")
+    func theOldPerFrameRateDependsOnTheFrameCount() {
+        var sixty: Float = 0
+        for _ in 0..<60 { sixty += (10 - sixty) * 0.1 }
+        var thirty: Float = 0
+        for _ in 0..<30 { thirty += (10 - thirty) * 0.1 }
+        #expect(isNear(sixty, 9.98, within: 0.01))
+        #expect(isNear(thirty, 9.58, within: 0.01))
+        #expect(abs(sixty - thirty) > 0.3)
+    }
+
+    @Test("damp は、動かない・着く端をちょうど返す")
+    func dampEndpointsAreExact() {
+        #expect(damp(3, 10, 4, 0) == 3)  // 時間が経っていない
+        #expect(damp(3, 10, 0, 1) == 3)  // 硬さが無い
+        #expect(damp(7, 7, 4, 1) == 7)  // 既に着いている
+        #expect(damp(0, 10, 1000, 1) == 10)  // 十分に長ければ目標へちょうど着く
+        #expect(damp(0, 10, 3e38, 3e38) == 10)  // 積が溢れても目標
+        // 目標を越えない・戻らない (0 < 値 < 10 の間で単調に近づく)
+        var previous: Float = 0
+        for _ in 0..<20 {
+            let next = damp(previous, 10, 4, 1.0 / 60)
+            #expect(next > previous && next < 10)
+            previous = next
+        }
+    }
+
+    /// 負の `lambda`・負の `dt` は、式のまま通すと目標から遠ざかり、毎フレーム重ねると
+    /// 発散する。動かさずに今の値を返す (0 は負ではないので、動かないだけ)。
+    @Test("damp は、負の硬さ・負の時間では動かず、遠ざからない")
+    func dampRefusesToMoveAwayFromTheTarget() {
+        #expect(damp(3, 10, -4, 1) == 3)
+        #expect(damp(3, 10, 4, -1) == 3)
+        #expect(damp(3, 10, -4, -1) == 3)
+        // 発散しない — 重ねても動かない
+        var value: Float = 3
+        for _ in 0..<200 { value = damp(value, 10, 4, -0.5) }
+        #expect(value == 3)
+    }
+
+    @Test("pingpong は、0 から length まで上がって戻る")
+    func pingpongBouncesBetweenZeroAndLength() {
+        #expect(pingpong(2.5, 2) == 1.5)
+        #expect(pingpong(-0.5, 2) == 0.5)
+        // 2 秒で 0 → 1 → 0 (`pingpong(time, 1)`)
+        let seconds: [Float] = [0, 0.5, 1, 1.5, 2, 2.5, 3, 4]
+        #expect(seconds.map { pingpong($0, 1) } == [0, 0.5, 1, 0.5, 0, 0.5, 1, 0])
+        #expect(pingpong(0, 5) == 0)
+        #expect(pingpong(5, 5) == 5)
+    }
+
+    @Test("pingpong は、負の時刻でも巡り、区間の外へ出ない")
+    func pingpongSurvivesNegativeTime() {
+        var t: Float = -20
+        while t < 20 {
+            for length: Float in [1, 2, 360] {
+                let value = pingpong(t, length)
+                #expect(value >= 0 && value <= length, "pingpong(\(t), \(length)) = \(value)")
+                // 周期 2 * length で同じ値に戻る。負でも、正の側と同じ形
+                #expect(isNear(value, pingpong(t + 2 * length, length), within: 1e-3 * max(1, length)), "\(t) \(length)")
+            }
+            t += 0.37
+        }
+        // 小さな負の値が周期へ丸まる境目 (-1e-9 + 2 は Float で 2 ちょうど) でも 0 のまま
+        #expect(pingpong(-1e-9, 1) == 0)
+        #expect(pingpong(1e9, 1).isFinite && pingpong(-1e9, 1).isFinite)
+    }
+
+    @Test("pingpong は、負の length では負の側へ往復する")
+    func pingpongWithANegativeLength() {
+        #expect(pingpong(0.5, -1) == -0.5)
+        #expect(pingpong(1, -1) == -1)
+        #expect(pingpong(1.5, -1) == -0.5)
+        #expect(pingpong(-0.5, -2) == -0.5)
+    }
+
+    @Test("lerpAngle は、±π をまたぐときに 1 周回らない")
+    func lerpAngleTakesTheShortArc() {
+        // lerp は 1 周回って 0 を返す。lerpAngle は ±π の近くを返す
+        #expect(lerp(3, -3, 0.5) == 0)
+        #expect(isNear(lerpAngle(3, -3, 0.5), .pi, within: 1e-5))
+        #expect(isNear(lerpAngle(-3, 3, 0.5), -.pi, within: 1e-5))
+        // またがない向きは lerp と同じ
+        #expect(isNear(lerpAngle(0, 1, 0.5), 0.5))
+        #expect(isNear(lerpAngle(1, 0, 0.25), 0.75))
+        // 遠い向きどうし (差が 3π) も、短いほうへ
+        #expect(isNear(lerpAngle(0, 3 * Float.pi / 2, 0.5), -.pi / 4, within: 1e-5))
+    }
+
+    @Test("lerpAngle は、端の向きをちょうど返し、外挿する")
+    func lerpAngleEndpoints() {
+        #expect(lerpAngle(3, -3, 0) == 3)
+        // 1 では stop と同じ向き (値は stop + 2π のこともある)
+        let end = lerpAngle(3, -3, 1)
+        #expect(isNear(cos(end), cos(Float(-3)), within: 1e-5) && isNear(sin(end), sin(Float(-3)), within: 1e-5))
+        #expect(isNear(lerpAngle(0, 1, 2), 2))
+        #expect(isNear(lerpAngle(0, 1, -1), -1))
+        // 差がちょうど π のときは、stop - start の符号の側へ回る
+        #expect(isNear(lerpAngle(0, Float.pi, 0.5), .pi / 2, within: 1e-5))
+        #expect(isNear(lerpAngle(0, -Float.pi, 0.5), -.pi / 2, within: 1e-5))
+        #expect(isNear(lerpAngle(Float.pi, 0, 0.5), .pi / 2, within: 1e-5))
+    }
+
+    @Test("Int・Double の変数も、そのまま受ける")
+    func motionVocabularyTakesEveryStoredWidth() {
+        let current: Int = 0
+        let rate: Double = 4
+        let step: Double = 0.5
+        let damped: Float = damp(current, 10, rate, step)
+        #expect(isNear(damped, 10 * (1 - exp(Float(-2)))))
+        let bounced: Float = pingpong(Int(3), Double(2))
+        #expect(bounced == 1)
+        let turned: Float = lerpAngle(Int(3), Double(-3), Double(0.5))
+        #expect(isNear(turned, .pi, within: 1e-5))
+    }
+
+    @Test("非有限の値では、数でない値を返さない")
+    func motionVocabularyNeverReturnsNaN() {
+        let bad: [Float] = [.nan, .infinity, -.infinity]
+        for value in bad {
+            #expect(damp(3, 10, 4, value) == 3)
+            #expect(damp(3, value, 4, 1) == 3)
+            #expect(damp(3, 10, value, 1) == 3)
+            #expect(damp(value, 10, 4, 1) == 0)  // 今の値が数でなければ 0
+            #expect(pingpong(value, 2) == 0)
+            #expect(pingpong(2, value) == 0)
+            #expect(lerpAngle(1, value, 0.5) == 1)
+            #expect(lerpAngle(value, 1, 0.5) == 0)
+            #expect(lerpAngle(1, 2, value) == 1)
+        }
+        // 幅の無い往復は定まらない。0 を返して、数でない値を作らない
+        #expect(pingpong(2.5, 0) == 0)
+        // 差が Float で溢れる組は、畳めないので始まりを返す
+        #expect(lerpAngle(-3e38, 3e38, 0.5) == -3e38)
+    }
+
+    @Test("スケッチの外の型からも呼べる (damp・pingpong・lerpAngle)")
+    func theMotionEntriesAreNotSketchMethods() {
+        #expect(OutsideASketch.follow(0, toward: 10, over: 1) == damp(0, 10, 6, 1))
+        #expect(OutsideASketch.lid(at: -0.5) == 0.5)
+        #expect(isNear(OutsideASketch.turn(from: 3, to: -3), .pi, within: 1e-5))
     }
 
     // MARK: - 値を写す
@@ -514,6 +687,44 @@ struct NumberValueWarningTests {
         #expect(NumberValues.warnings.message(for: .notANumber(.map))?.hasPrefix("map()") == true)
         #expect(NumberValues.warnings.message(for: .emptyRange(.norm))?.hasPrefix("norm()") == true)
         #expect(NumberValues.warnings.message(for: .notANumber(.norm))?.hasPrefix("norm()") == true)
+    }
+
+    /// 動きの 3 つの口も、鍵を口ごとに持つ ([#2423])。`damp` の負の硬さ・負の時間は、数でない値や
+    /// 幅 0 と別の事情なので別の鍵で数える (先に鳴ったほうが他方を黙らせない)。
+    ///
+    /// [#2423]: https://github.com/mokume-metal/mokume/issues/2423
+    @Test("damp・pingpong・lerpAngle の注意は、口ごと・事情ごとに数えられる")
+    func theMotionVocabularyCountsItsOwnWarnings() {
+        #expect(damp(3, 10, 4, Float.nan) == 3)
+        #expect(damp(3, 10, -4, 1) == 3)
+        #expect(pingpong(Float.infinity, 2) == 0)
+        #expect(pingpong(2, 0) == 0)
+        #expect(lerpAngle(1, Float.nan, 0.5) == 1)
+        let notANumber: [(entry: NumberValues.Warning.Entry, name: String)] = [
+            (.damp, "damp()"), (.pingpong, "pingpong()"), (.lerpAngle, "lerpAngle()"),
+        ]
+        for (entry, name) in notANumber {
+            #expect(NumberValues.warnings.hasWarned(.notANumber(entry)), "\(name)")
+            #expect(
+                NumberValues.warnings.message(for: .notANumber(entry))?.hasPrefix(name) == true,
+                "\(name): \(NumberValues.warnings.message(for: .notANumber(entry)) ?? "(鳴っていない)")")
+        }
+        #expect(NumberValues.warnings.hasWarned(.negativeRate(.damp)))
+        #expect(NumberValues.warnings.message(for: .negativeRate(.damp))?.hasPrefix("damp()") == true)
+        #expect(NumberValues.warnings.hasWarned(.emptyRange(.pingpong)))
+        #expect(NumberValues.warnings.message(for: .emptyRange(.pingpong))?.hasPrefix("pingpong()") == true)
+    }
+
+    /// 0 は負ではない — `dt` が 0 のフレーム (止めている間) で、注意を鳴らさない。
+    @Test("damp は、dt が 0 や硬さが 0 でも、注意を言わない")
+    func dampStaysQuietAtZero() {
+        #expect(damp(3, 10, 4, 0) == 3)
+        #expect(damp(3, 10, 0, 1) == 3)
+        // 控えはモジュールに 1 つで、他の検査が負の値で鳴らしうる。ここで見るのは、
+        // 0 を渡した呼び出し自体が鳴らさないこと (鳴る前に他が鳴らした分は数えない)
+        let before = NumberValues.warnings.message(for: .negativeRate(.damp))
+        #expect(damp(3, 10, 4, 0) == 3)
+        #expect(NumberValues.warnings.message(for: .negativeRate(.damp)) == before)
     }
 
     /// `smoothstep` の幅 0 は段という答えを持つので、`map` / `norm` と違って注意を言わない

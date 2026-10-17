@@ -662,6 +662,9 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``constrain(_:_:_:)``
 - ``norm(_:_:_:)``
 - ``smoothstep(_:_:_:)``
+- ``damp(_:_:_:_:)``
+- ``pingpong(_:_:)``
+- ``lerpAngle(_:_:_:)``
 
 ### GPU に計算させる
 

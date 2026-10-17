@@ -26,6 +26,10 @@ enum NumberValues {
         /// ようがない形にするためで、綴りを並べる (`lerpNotANumber` …) と
         /// 足す人が使い回せてしまう。
         case notANumber(Entry)
+        /// 負の割合・負の時間が渡された。**口ごとに数える** (理由は ``notANumber(_:)`` と同じ)。
+        /// 目標へ寄る式は、負の割合や時間のまま通すと目標から**遠ざかる** (`1 - exp(+x)` は負) うえ、
+        /// 毎フレーム重ねると指数で発散するので、動かさずに知らせる。
+        case negativeRate(Entry)
 
         /// 注意を出した口。
         enum Entry: Hashable {
@@ -34,6 +38,9 @@ enum NumberValues {
             case constrain
             case norm
             case smoothstep
+            case damp
+            case pingpong
+            case lerpAngle
         }
     }
 
@@ -318,4 +325,170 @@ public func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConv
     // 締めは `constrain` を呼ばずに書く — 呼ぶと、そちらの名で注意が鳴りうる
     let t = min(max(proportion(x, edge0, edge1), 0), 1)
     return t * t * (3 - 2 * t)
+}
+
+// MARK: - 目標へ寄る・往復する・角を混ぜる
+
+/// 目標へ、フレームの長さに依らない硬さで寄る。
+///
+/// <!-- example: 文脈 var eyeX: Float = 200 -->
+/// ```swift
+/// eyeX = damp(eyeX, mouseX, 6, deltaTime)
+/// ```
+///
+/// 引数は今の値・目標・硬さ (`lambda`、大きいほど速く寄る・1 秒あたり)・経った秒の順
+/// (three.js の `MathUtils.damp` と同じ並び)。``lerp(_:_:_:)`` に `1 - exp(-lambda * dt)` を渡す
+/// のと同じである。
+///
+/// **目標が一定なら、刻み方に依らず同じ軌跡になる。** `damp(0, 10, 4, 1)` を 1 回呼んだ値と、
+/// `dt = 1/60` で 60 回重ねた値は同じになる。`x += (target - x) * 0.1` と書くと、1 枚ごとの率なので
+/// フレームが落ちると追従が遅れ、`frameRate` を変えると硬さも変わる。
+///
+/// マウスを追う目。`frameRate` を 30 にしても 60 にしても、`mokume render` で書き出しても、
+/// 同じ硬さで追う。瞳は ``lerpAngle(_:_:_:)`` で最短の向きへ回り、まぶたは ``pingpong(_:_:)`` で 2 秒で
+/// 往復する。
+///
+/// ```swift
+/// var eyeX: Float = 200
+/// var eyeY: Float = 150
+/// var look: Float = 0
+///
+/// func draw() {
+///     background(240)
+///     eyeX = damp(eyeX, mouseX, 6, deltaTime)
+///     eyeY = damp(eyeY, mouseY, 6, deltaTime)
+///     look = lerpAngle(look, atan2(mouseY - eyeY, mouseX - eyeX), 0.2)
+///     let lid = pingpong(time, 1)          // 0 → 1 → 0 を 2 秒で
+///     ellipse(eyeX, eyeY, 120, 120 * (0.3 + 0.7 * lid))
+///     circle(eyeX + cos(look) * 30, eyeY + sin(look) * 30, 30)
+/// }
+/// ```
+///
+/// **`deltaTime` を渡すと、積分で作った状態になる。** 実時計で動く窓では、フレームの長さが
+/// 実行ごとに違うので、同じ時刻の絵が実行ごとに揃わない ([ADR-0025] 決定 6 の「揃わない」側)。
+/// フレームの時計 (`mokume render`・設定の `clock: .frames`) では、`deltaTime` が毎回同じなので
+/// 揃う。時刻から絵が決まる作りにしたいなら、``damp(_:_:_:_:)`` ではなく ``smoothstep(_:_:_:)`` などで
+/// `time` から直に値を出す。
+///
+/// **名前と並びは three.js に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
+///
+/// **負の `lambda`・負の `dt` は、動かさずに今の値を返す。** 式のまま通すと目標から遠ざかり、
+/// 毎フレーム重ねると指数で発散して、絵が黙って消える。`dt` が 0 なら動かない (今の値が
+/// そのまま返る)。0 は負ではないので知らせない。注意は 1 度だけ言う。
+///
+/// **数でない値・無限の値が混じったときは、今の値を返す** (今の値が有限でなければ 0)。
+/// ``lerp(_:_:_:)`` が始まりを返すのと揃えてある。注意は 1 度だけ言う
+/// ([ADR-0020] 決定 5)。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+/// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+public func damp(
+    _ current: some ScalarConvertible, _ target: some ScalarConvertible, _ lambda: some ScalarConvertible,
+    _ dt: some ScalarConvertible
+) -> Float {
+    let (current, target, lambda, dt) = (current.asFloat, target.asFloat, lambda.asFloat, dt.asFloat)
+    guard current.isFinite, target.isFinite, lambda.isFinite, dt.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.damp),
+            "damp(): got a value that is not a number, or an infinite one, so the current value was returned")
+        return current.isFinite ? current : 0
+    }
+    guard lambda >= 0, dt >= 0 else {
+        NumberValues.warnOnce(
+            .negativeRate(.damp),
+            "damp(): lambda or dt is negative, so the current value was returned instead of moving away from the target")
+        return current
+    }
+    // 掛けた積が溢れて ∞ になっても、exp(-∞) は 0 で割合は 1 (目標へちょうど着く)
+    let amount = 1 - RuntimeMath.exp(-lambda * dt)
+    return interpolate(current, target, amount)
+}
+
+/// 0 から `length` まで上がって 0 へ戻る、三角の波。
+///
+/// ```swift
+/// let lid = pingpong(time, 1)   // 0 → 1 → 0 を 2 秒で
+/// ```
+///
+/// 引数は時刻 (どんな値でもよい)・折り返す長さの順 (three.js の `MathUtils.pingpong` と同じ並び)。
+/// 周期は `length` の 2 倍で、`pingpong(2.5, 2)` は 1.5、`pingpong(-0.5, 2)` は 0.5 を返す。
+///
+/// **負の `t` でも巡る。** `jumpTime` で時刻を戻しても、`abs(...)` と剰余で手書きした三角波のように
+/// 崩れない。返る値は 0 以上 `length` 以下である。
+///
+/// **`length` が負なら、0 から負の側へ往復する** — 返る値は `length` 以上 0 以下になる。
+///
+/// **`length` が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** 幅の無い往復は
+/// 定まらず、毎フレーム呼ばれる口が数でない値を返すと**絵が黙って消える**
+/// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` の幅 0 と同じく、注意は 1 度だけ言う。
+///
+/// **名前と並びは three.js に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
+/// 時刻を 0 以上 1 未満へ巡らせる口は別にある。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func pingpong(_ t: some ScalarConvertible, _ length: some ScalarConvertible) -> Float {
+    let (t, length) = (t.asFloat, length.asFloat)
+    guard t.isFinite, length.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.pingpong),
+            "pingpong(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    guard length != 0 else {
+        NumberValues.warnOnce(
+            .emptyRange(.pingpong), "pingpong(): the length is zero, so 0 was returned")
+        return 0
+    }
+    // 負の長さは、正の長さの往復を負の側へ写す
+    let reach = abs(length)
+    // 周期 2 * reach の中の位置 (0 以上)。切り捨ての剰余は負の入力に負を返すので、足して畳む。
+    // 足した結果が周期ちょうどに丸まっても、下の式は同じ 0 を返すので、畳み直さない
+    var position = t.truncatingRemainder(dividingBy: 2 * reach)
+    if position < 0 { position += 2 * reach }
+    let rising = reach - abs(position - reach)
+    return length < 0 ? -rising : rising
+}
+
+/// 最短の弧で、角を混ぜる (ラジアン)。
+///
+/// <!-- example: 文脈 var look: Float = 0 -->
+/// <!-- example: 文脈 var eyeX: Float = 200 -->
+/// <!-- example: 文脈 var eyeY: Float = 150 -->
+/// ```swift
+/// look = lerpAngle(look, atan2(mouseY - eyeY, mouseX - eyeX), 0.2)
+/// ```
+///
+/// 引数は始まり・終わり・その間のどこか、の順 (``lerp(_:_:_:)`` と同じ並び)。
+/// ``lerp(_:_:_:)`` で角を混ぜると、±π をまたぐところで 1 周回ってしまう —
+/// `lerp(3, -3, 0.5)` は 0 を返すが、`lerpAngle(3, -3, 0.5)` は ±π の近く (約 3.14) を返す。
+///
+/// **`amount` が 0 なら `start` が、1 なら `stop` と同じ向きがちょうど返る。** 返す値は
+/// `start` から短いほうへ進めた値で、**±π に畳まない** (`lerpAngle(3, -3, 1)` は -3 ではなく
+/// -3 + 2π を返す)。同じ向きなので描く口へそのまま渡せ、`atan2` の返す ±π の外へ
+/// 出ても、次のフレームの `start` にしてよい。2 つの向きがちょうど反対 (差が π) のときは、
+/// `stop - start` の符号の側へ回る。
+///
+/// **0…1 の外は締めない。** `amount` が 1 を越えれば、同じ向きへ回り続ける (``lerp(_:_:_:)`` の
+/// 外挿と同じ)。
+///
+/// **数でない値・無限の値が混じったときは `start` を返す** (`start` が有限でなければ 0)。
+/// ``lerp(_:_:_:)`` と同じく、注意は 1 度だけ言う ([ADR-0020] 決定 5)。
+///
+/// **名前と並びは Unity・Godot に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func lerpAngle(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
+    let (start, stop, amount) = (start.asFloat, stop.asFloat, amount.asFloat)
+    guard start.isFinite, stop.isFinite, amount.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.lerpAngle),
+            "lerpAngle(): got a value that is not a number, or an infinite one, so the start was returned")
+        return start.isFinite ? start : 0
+    }
+    // 差を -π…π へ畳む。差が溢れて ∞ になった組は、畳めないので始まりを返す
+    let turn = 2 * Float.pi
+    var delta = (stop - start).truncatingRemainder(dividingBy: turn)
+    guard delta.isFinite else { return start }
+    if delta > .pi { delta -= turn } else if delta < -.pi { delta += turn }
+    return interpolate(start, start + delta, amount)
 }
