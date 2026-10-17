@@ -242,11 +242,20 @@ nonisolated final class CommandFaultLog: Sendable {
 
     private let state = Mutex(State())
 
-    /// 検査が遅らせた結末 (`RenderDevice.holdsNextOutcomeForTesting`・[#2743])。正常に終わった投入の
-    /// 番号を、記録へ書かずに置く。製品の経路では常に空。
+    /// 検査が遅らせる結末 (`RenderDevice.holdsNextOutcomeForTesting`・[#2743])。製品の経路では常に空。
+    ///
+    /// - `registered`: 遅らせると決めた投入の番号。投入の前に足す (``registerHoldForTesting(_:)``)
+    /// - `arrived`: 遅らせた投入のうち、結末が届いて抱えている番号
+    ///
+    /// **放す (``releaseHeldForTesting()``) ときに、まだ結末の届いていない番号も遅らせるのをやめる。**
+    /// 放した後に届いた結末を抱えると、誰も放さないので届かなかったことになる。
     ///
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
-    private let heldForTesting = Mutex<[UInt64]>([])
+    private struct HeldForTesting {
+        var registered: Set<UInt64> = []
+        var arrived: [UInt64] = []
+    }
+    private let heldForTesting = Mutex(HeldForTesting())
 
     /// 結末の到着を待つ側を眠らせ、起こす。**状態はここに置かない** (上の `state` が守る)。
     private let arrival = NSCondition()
@@ -280,21 +289,32 @@ nonisolated final class CommandFaultLog: Sendable {
         }
     }
 
-    /// 番号 `submission` の投入が正常に終わったことを、**記さずに抱える** (検査の差し込み・[#2743])。
-    /// ``releaseHeldForTesting()`` が記す。
+    /// 番号 `submission` の投入の結末を遅らせると決める (検査の差し込み・[#2743])。投入の前に呼ぶ。
     ///
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
-    func holdForTesting(_ submission: UInt64) {
-        heldForTesting.withLock { $0.append(submission) }
+    func registerHoldForTesting(_ submission: UInt64) {
+        heldForTesting.withLock { _ = $0.registered.insert(submission) }
     }
 
-    /// 抱えた結末を、正常に終わったものとして記す (``holdForTesting(_:)``)。
-    func releaseHeldForTesting() {
-        let held = heldForTesting.withLock { held in
-            defer { held.removeAll() }
-            return held
+    /// 番号 `submission` の投入が正常に終わった結末を、**遅らせると決めてあれば記さずに抱える**。抱えたら
+    /// `true` (呼んだ側は記さない)。放した後に届いた結末は抱えずに `false` を返す。
+    func holdIfRegisteredForTesting(_ submission: UInt64) -> Bool {
+        heldForTesting.withLock { held in
+            guard held.registered.remove(submission) != nil else { return false }
+            held.arrived.append(submission)
+            return true
         }
-        for submission in held { noteFinished(submission) }
+    }
+
+    /// 抱えた結末を、正常に終わったものとして記す。まだ届いていない番号は、遅らせるのをやめる
+    /// (届いたときに、そのまま記される)。
+    func releaseHeldForTesting() {
+        let arrived = heldForTesting.withLock { held in
+            held.registered.removeAll()
+            defer { held.arrived.removeAll() }
+            return held.arrived
+        }
+        for submission in arrived { noteFinished(submission) }
     }
 
     /// 番号 `submission` の投入が正常に終わったことを記す。``unresolved`` を消す。
@@ -317,8 +337,12 @@ nonisolated final class CommandFaultLog: Sendable {
     ///
     /// - Returns: `drops` は範囲の打ち切り (届かなかったものを含む)。`waited` は実際に眠ったか
     ///   (呼んだ時点で揃っていなければ `true`)。`lost` は届かなかった結末があったか。
+    ///
+    /// - Parameter naming: 届かなかった結末の理由に名乗る待ちの長さ。省けば `limit`。待たずに諦めるとき
+    ///   (`limit` が `.zero`) に、それまで見に来続けた長さを名乗るために渡す。
     func drops(
-        after floor: UInt64, through last: UInt64, waitingUpTo limit: Duration
+        after floor: UInt64, through last: UInt64, waitingUpTo limit: Duration,
+        naming: Duration? = nil
     ) -> (drops: [Drop], waited: Bool, lost: Bool) {
         // **期限は単調な時計で持つ。** 壁時計で持つと、時刻合わせで待ちが伸び縮みする
         let deadline = ContinuousClock.now + limit
@@ -330,7 +354,8 @@ nonisolated final class CommandFaultLog: Sendable {
             waited = true
             let remaining = deadline - ContinuousClock.now
             guard remaining > .zero else {
-                state.withLock { $0.loseMissing(through: last, reason: Self.lostReason(after: limit)) }
+                let named = naming ?? limit
+                state.withLock { $0.loseMissing(through: last, reason: Self.lostReason(after: named)) }
                 lost = true
                 break
             }

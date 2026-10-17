@@ -485,8 +485,10 @@ import MokumeDiagnostics
             //
             // 検査が知らせを落としたことにした投入は、記録へ何も書かない。遅らせた投入は、正常に
             // 終わっていれば記録へ書かずに抱える (検査が後で書く)
-            if holdsOutcomeForTesting, feedback.error == nil, droppedForTesting == nil {
-                commandFaults.holdForTesting(submission)
+            if holdsOutcomeForTesting, feedback.error == nil, droppedForTesting == nil,
+                commandFaults.holdIfRegisteredForTesting(submission)
+            {
+                // 抱えた。検査が放すときに記す
             } else if !losesOutcomeForTesting {
                 if let reason = feedback.error.map(CommandFaultLog.reason(of:)) ?? droppedForTesting {
                     if commandFaults.note(reason, droppedAt: submission, wrote: wrote),
@@ -1320,7 +1322,10 @@ import MokumeDiagnostics
     ) -> [CommandFaultLog.Drop] {
         guard last > floor else { return [] }
         let limit = limit ?? outcomeWaitLimit
-        let answer = commandFaults.drops(after: floor, through: last, waitingUpTo: limit)
+        // 待たずに諦めるときは、それまで見に来続けた長さ (上限) を理由に名乗る
+        let answer = commandFaults.drops(
+            after: floor, through: last, waitingUpTo: limit,
+            naming: limit == .zero ? outcomeWaitLimit : limit)
         if answer.waited, limit > .zero { outcomeWaits += 1 }
         if answer.lost {
             Diagnostics.warn(
@@ -1462,6 +1467,7 @@ import MokumeDiagnostics
         losesNextOutcomeForTesting = false
         let holdsOutcomeForTesting = holdsNextOutcomeForTesting
         holdsNextOutcomeForTesting = false
+        if holdsOutcomeForTesting { commandFaults.registerHoldForTesting(submission) }
         // **結末を受け取るお願いを添える。** 添えなければ Metal は打ち切りを捨てるので、
         // 描き上げられなかった仕事も「終わった」としか見えない (#1065)
         queue.commit(
