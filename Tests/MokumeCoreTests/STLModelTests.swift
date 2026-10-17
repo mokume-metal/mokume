@@ -890,8 +890,8 @@ struct STLModelTests {
         facetNormalHeaderFacets, header: "solid part facet normal 0 0 1 outer loop")
 
     /// **見出しが `solid` で始まり `facet normal` を含むバイナリも、書かれた面のとおりに読む** ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
-    /// 読み手が返した面の数を、大きさから揃ったと読める面の数と照らし、合わなければ見出しを 0 にした写しで読み直す。
-    /// 途中で切れたものも、揃った面だけを読む (#2493 と両方が入った木で、どちらの約束も守る)。
+    /// 見出しが読み手の「文字」の規則に当たるので、見出しを 0 にした写しで読み、返った面の数を、大きさから揃ったと
+    /// 読める面の数と照らす。途中で切れたものも、揃った面だけを読む (#2493 と両方が入った木で、どちらの約束も守る)。
     @Test(
         "見出しが solid で始まり facet normal を含むバイナリの STL も、空の形ではなく書かれた面のとおりに読む (#2746)",
         arguments: [(334, 5), (333, 5), (332, 5), (283, 4), (233, 3), (183, 2), (182, 2), (133, 1), (132, 0)])
@@ -908,7 +908,7 @@ struct STLModelTests {
         }
     }
 
-    /// **写しは、読み手が返した面の数が合わず、見出しが `solid` で始まるときだけ作る** ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
+    /// **写しは、見出しが読み手の「文字」の規則に当たるときだけ作る** ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
     /// 普通のバイナリ (見出しが `solid` で始まらない・`facet normal` を含まない) は、元のファイルをそのまま読ませる。
     /// 置き場の更新日時を古い日に固定し、写しの置き場 (子の作成と削除) に触れたかを見る。
     @Test("普通のバイナリの STL は写しを作らずに読み、見出しが solid … facet normal のものだけ写しを作って残さない (#2746)")
@@ -976,6 +976,22 @@ struct STLModelTests {
         let facets = Self.tetrahedron + [Self.smallFacet]
         #expect(ModelFile.stlLayout(of: data.prefix(128), size: data.count) == .binary)
         #expect(ModelFile.completeBinaryFaces(head: data.prefix(128), size: data.count) > 0)
+        let parsed = try read(data)
+        #expect(parsed.positions == facets.flatMap(\.corners))
+    }
+
+    /// **大きさが宣言と合わず、見出しが `solid` で始まるバイナリは、文字の STL とも決めきれない** (#2493 の反証)。
+    /// 揃った面が無い (宣言した面の数が 0) からといって空と決めず、文字として面が書かれていれば、読み手に読ませて
+    /// 書かれた面の数と照らす。main では読み手が文字として 5 面を読んでいた。
+    @Test(
+        "名前の添字 80〜83 に NUL や制御文字を持つ文字の STL は、バイナリと見分けられても空ではなく書かれた面を読む (#2493 の反証)",
+        arguments: [[0, 0, 0, 0], [0x09, 0x61, 0x62, 0], [0x1B, 0x1B, 0x1B, 0], [0x78, 0, 0, 0]] as [[UInt8]])
+    func textWithControlBytesAt80IsReadAsText(_ tail: [UInt8]) throws {
+        let data = Self.textWithControlBytesAt80(tail)
+        let facets = Self.tetrahedron + [Self.smallFacet]
+        #expect(ModelFile.stlLayout(of: data.prefix(128), size: data.count) == .binary)
+        // 読み手にじかに読ませても、文字として 5 面を読む (main の結果)
+        #expect(try readByModelIO(data)?.triangles == 5)
         let parsed = try read(data)
         #expect(parsed.positions == facets.flatMap(\.corners))
     }
@@ -1968,5 +1984,23 @@ struct STLModelTests {
         var blanked = tricky
         blanked.replaceSubrange(0..<80, with: Data(count: 80))
         #expect(try readByModelIO(blanked)?.triangles == 5)
+        // 規則の境目: `facet normal` の綴りが添字 127 までに始まれば文字として読み (0 面)、128 からならバイナリとして
+        // 読む。前に空白・大文字の `SOLID`・区切りがタブなら、`facet normal` があってもバイナリとして読む。
+        // ``ModelFile/readerTakesForText(_:)`` は、どれも読み手と同じに決める
+        func spelled(_ header: String, at index: Int?) -> Data {
+            var data = ModelFixture.binarySTL(facets, header: header)
+            if let index { data.replaceSubrange(index..<index + 12, with: Array("facet normal".utf8)) }
+            return data
+        }
+        let samples: [(Data, Int)] = [
+            (spelled("solid part", at: 117), 0), (spelled("solid part", at: 127), 0),
+            (spelled("solid part", at: 128), 5), (spelled(" solid part facet normal", at: nil), 5),
+            (spelled("SOLID part facet normal", at: nil), 5), (spelled("solid part facet\tnormal", at: nil), 5),
+            (tricky, 0), (ModelFixture.binarySTL(facets, header: "solid part1"), 5),
+        ]
+        for (index, (data, triangles)) in samples.enumerated() {
+            #expect(try readByModelIO(data)?.triangles == triangles, "\(index)")
+            #expect(ModelFile.readerTakesForText(data.prefix(139)) == (triangles == 0), "\(index)")
+        }
     }
 }

@@ -107,10 +107,19 @@ import simd
 ///   0 なら、Model I/O に渡さず空にする — 面の数が 0 で後ろに余りがあるものも、最初の面の途中で切れたものも、
 ///   84 バイトから同じに空になる。128 バイトに満たないもの (Model I/O が必ず断る) と、128〜132 バイト (Model I/O が
 ///   面の無い形を返す) もここに入る。1 以上なら Model I/O に読ませ、**返った三角形の数 (数でない座標で読み飛ばした
-///   面も含む) が、揃ったと読める面の数と等しいときだけ採る** ([#2746])。合わず、見出しが `solid` で始まるときだけ、
-///   **見出しの 80 バイトを 0 にした写し**を読ませて照らし直す (``writeBlankHeader(head:rest:to:)``。面の数と面には
-///   触れない)。それでも合わない・写しを書けなければ、読めないとして返す — 面の無い形を空としては採らない。
-///   普通のバイナリ (見出しが `solid` で始まらない・`facet normal` を含まない) は 1 回目で合うので、写しを作らない
+///   面も含む) が、揃ったと読める面の数と等しいときだけ採る** ([#2746])。合わなければ読めないとして返す — 面の無い形を
+///   空としては採らない
+///   - **見出しが読み手の「文字」の規則に当たるバイナリ** (ちょうど `solid` で始まり、`facet normal` の綴りが添字 127
+///     までに始まる。``readerTakesForText(_:)``) は、読み手が文字として読んで面の無い形 (か見出しの文字の面) を返すので、
+///     元のファイルを読ませず、**見出しの 80 バイトを 0 にした写し**を読ませて照らす (``writeBlankHeader(head:rest:to:)``。
+///     面の数と面には触れない)。数が合っても見出しの面を採らないよう、数ではなく規則で決める。写しを書けなければ、
+///     読めないとして返す。規則に当たらない普通のバイナリ (見出しが `solid` で始まらない・`facet normal` を含まない) は
+///     写しを作らない
+///   - ただし、**見出しが `solid` で始まり大きさが宣言と合わない頭は、文字の STL とも決めきれない**
+///     (``isUndecidedBinary(head:size:)``。名前の添字 80〜83 に NUL や制御文字を持つ文字の STL も、この頭になる)。
+///     通読して文字として面が書かれていれば、上の文字の STL と同じく読み手に読ませ、書かれた面の数と照らして採る
+///     (見出しを 0 にした写しは掛けない — 掛けると、読み手が文字をバイナリとして読んだでたらめな面が数の上で合う)。
+///     面が書かれていなければ、バイナリとして上のとおりに扱う
 ///
 /// 上の境目 (128 バイトと 128〜132 バイトの癖・面の数の上限・途中で切れたバイナリの揃った面の数え方・文字を
 /// バイナリとして読むこと・読み直しの形・読めない文字を面の無い形で返すこと・VT と FF を空白として読むこと・
@@ -218,27 +227,39 @@ nonisolated extension ModelFile {
             }
             throw .unreadable(path: path)
         case .binary:
+            // **決めきれない頭は、文字として面が書かれていれば文字として読む** (#2493 の反証)。見出しが `solid` で
+            // 始まり大きさが宣言と合わないものは、切れたバイナリとも、名前の添字 80〜83 に NUL や制御文字を持つ文字の
+            // STL とも読める。揃った面が無い (宣言した面の数が 0) からといって空と決めず、読み手に読ませて照らす
+            if isUndecidedBinary(head: head, size: size),
+                let text = scanText(head: head, rest: isSmall ? nil : handle), text.shape.facets > 0
+            {
+                return try readWrittenFacets(
+                    url, path: path, head: head, rest: isSmall ? nil : handle, scratch: scratch,
+                    text: text, size: size)
+            }
             // **揃った面が無ければ、読み手に渡さず空にする** (#2493)。途中で切れていても、面の数が 0 で後ろに
             // 余りがあっても、大きさによらない。128 バイトに満たないもの (読み手が必ず断る) と、128〜132 バイト
             // (読み手が面の無い形を返す) もここに入る
             let faces = completeBinaryFaces(head: head, size: size)
             guard faces > 0 else { return empty }
-            // **返った面の数を、揃ったと読める面の数と照らす** (#2746)。読み手は、`solid` で始まり `facet normal` を
-            // 含む見出しのバイナリを文字として読み、面の無い形を返す。合わず、見出しが `solid` で始まるときだけ、見出しを
-            // 0 にした写しで読み直す — 普通のバイナリは 1 回目で合うので、写しを作らない
-            if let read = reading(url), agrees(read, facets: faces) { return read.parsed }
-            guard head.starts(with: "solid".utf8),
-                let read = try? readThroughCopy(
-                    in: scratch, fill: { try writeBlankHeader(head: head, rest: handle, to: $0) }),
-                agrees(read, facets: faces)
-            else { throw .unreadable(path: path) }
+            // **見出しが読み手の「文字」の規則に当たるなら、元のファイルを読ませず、見出しを 0 にした写しで読む** (#2746)。
+            // 読み手はそういう見出しのバイナリを文字として読み、面の無い形か、見出しに書かれた文字の面を返す — 数が
+            // 合っても見出しの面でありうるので、数ではなく規則で決める。規則に当たらない普通のバイナリは写しを作らない
+            let read: Reading?
+            if readerTakesForText(readerStart(head: head, handle: handle)) {
+                read = try? readThroughCopy(
+                    in: scratch, fill: { try writeBlankHeader(head: head, rest: handle, to: $0) })
+            } else {
+                read = reading(url)
+            }
+            // **返った面の数を、揃ったと読める面の数と照らす** (#2746)。合わなければ読めなかったのと同じである
+            guard let read, agrees(read, facets: faces) else { throw .unreadable(path: path) }
             return read.parsed
         case .text:
             guard let text = scanText(head: head, rest: isSmall ? nil : handle) else {
                 throw .unreadable(path: path)
             }
-            let scan = text.shape
-            guard scan.facets > 0 else {
+            guard text.shape.facets > 0 else {
                 // 面の書かれていない文字は、読み手に渡さない — 面を 1 つも読まないまま `endsolid`
                 // まで読み切ると、バイナリとして読み直されて、でたらめな面が返りうる
                 guard isEmptyText(head: head, rest: isSmall ? nil : handle) else {
@@ -246,19 +267,35 @@ nonisolated extension ModelFile {
                 }
                 return empty
             }
-            // 面の組み立てが崩れている (頂点が 3 つでない面・面の中に読み手が頂点と読む行がある) 文字は、
-            // 読み手が後ろの面の頂点を食ってでたらめな形を返しうるので、渡さない
-            guard scan.isWellFormed else { throw .unreadable(path: path) }
-            let read = askModelIO(
-                text: url, head: head, rest: isSmall ? nil : handle, scratch: scratch,
-                scan: text, size: size)
-            // **返ってきた三角形を、文字に書かれた面の数と照らす。** 読み手は、読めない文字 (CR だけの
-            // 改行など) を面の無い形で返す。数が合わなければ読めなかったのと同じである
-            guard let read, agrees(read, facets: scan.facets) else {
-                throw .unreadable(path: path)
-            }
-            return read.parsed
+            return try readWrittenFacets(
+                url, path: path, head: head, rest: isSmall ? nil : handle, scratch: scratch,
+                text: text, size: size)
         }
+    }
+
+    /// 面の書かれた文字の STL (`text` は通読した結果) を読み手に読ませ、返った三角形を書かれた面の数と照らして採る。
+    private static func readWrittenFacets(
+        _ url: URL, path: String, head: Data, rest: FileHandle?, scratch: URL, text: TextScan, size: Int
+    ) throws(ModelFailure) -> Parsed {
+        let scan = text.shape
+        // 面の組み立てが崩れている (頂点が 3 つでない面・面の中に読み手が頂点と読む行がある) 文字は、
+        // 読み手が後ろの面の頂点を食ってでたらめな形を返しうるので、渡さない
+        guard scan.isWellFormed else { throw .unreadable(path: path) }
+        let read = askModelIO(text: url, head: head, rest: rest, scratch: scratch, scan: text, size: size)
+        // **返ってきた三角形を、文字に書かれた面の数と照らす。** 読み手は、読めない文字 (CR だけの
+        // 改行など) を面の無い形で返す。数が合わなければ読めなかったのと同じである
+        guard let read, agrees(read, facets: scan.facets) else { throw .unreadable(path: path) }
+        return read.parsed
+    }
+
+    /// バイナリと見分けた頭のうち、**文字の STL とも決めきれない**ものか (#2493 の反証)。
+    ///
+    /// 見出しが `solid` で始まり、大きさが 84 + 50 × 宣言した面の数と合わない。``stlLayout(of:size:)`` は添字 83 が
+    /// 0 で添字 80〜82 に 0x20 未満の字があればバイナリとする — 見出しが `solid` の切れたバイナリ (宣言した面の数が
+    /// 小さい) を読むためだが、名前の添字 80〜83 に NUL や制御文字を持つ文字の STL も同じ頭になる。大きさが宣言と
+    /// 合う (完全なバイナリ) か、見出しが `solid` で始まらない (読み手も文字としては読まない) なら、確かなバイナリ。
+    static func isUndecidedBinary(head: Data, size: Int) -> Bool {
+        head.starts(with: "solid".utf8) && size != 84 + 50 * declaredBinaryFaces(in: head)
     }
 
     /// Model I/O が断らない STL の最小の大きさ (バイト)。**これに満たない STL は中身を見ずに断る。**
@@ -318,6 +355,8 @@ nonisolated extension ModelFile {
     /// 扱う** (名前に NUL を含む文字の STL)。面の数が 0x202020 (約 210 万面) 以上と宣言して大きさが合わない
     /// バイナリは 100 MB 超の宣言で、実在の (切れた) バイナリと区別できる。通常の小さい面の数を宣言した、
     /// 見出しが `solid` の切れたバイナリは、添字 80〜82 に 0x20 未満を持つので、これまでどおりバイナリである。
+    /// 名前の添字 80〜83 に NUL や制御文字を持つ文字の STL もこの頭になるので、読むとき (``loadSTL(_:path:scratch:)``)
+    /// は決めきれないものとして扱う (``isUndecidedBinary(head:size:)``)。
     static func stlLayout(of head: Data, size: Int? = nil) -> STLLayout {
         let base = head.startIndex
         if head.count >= 84, let size, size == 84 + 50 * declaredBinaryFaces(in: head) {
@@ -395,6 +434,40 @@ nonisolated extension ModelFile {
     static let facetNormalLimit = 128
 
     private static let facetNormalSpelling = Array("facet normal".utf8)
+
+    /// 先頭から ``facetNormalLimit`` バイトまでに、`facet normal` (間の空白は 1 つ) の綴りが始まるか。`bytes` は先頭から
+    /// ``facetNormalLimit`` − 1 + 12 バイト (添字 127 から始まる綴りが収まる長さ)。
+    static func spellsFacetNormalWithinReach(_ bytes: some ContiguousBytes) -> Bool {
+        bytes.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
+            guard let base = bytes.baseAddress,
+                let hit = memmem(base, bytes.count, facetNormalSpelling, facetNormalSpelling.count)
+            else { return false }
+            return base.distance(to: UnsafeRawPointer(hit)) < facetNormalLimit
+        }
+    }
+
+    /// 読み手が、ファイルを文字の STL として読みに行くか ([#2746])。**ちょうど小文字の `solid` で始まり、`facet normal`
+    /// の綴りが添字 127 までに始まる** (``spellsFacetNormalWithinReach(_:)``)。前に空白のある・大文字の `SOLID` の・区切りが
+    /// タブの頭は、バイナリとして読む。バイナリでも、この規則に当たる見出しなら文字として読み、面の無い形か、見出しに
+    /// 書かれた文字の面を返す (macOS 27 で測った。`STLModelTests.modelIOReadsASolidFacetNormalHeaderAsText`)。
+    ///
+    /// - Parameter start: 先頭から ``facetNormalLimit`` − 1 + 12 バイト (``readerStart(head:handle:)``)。
+    ///
+    /// [#2746]: https://github.com/mokume-metal/mokume/issues/2746
+    static func readerTakesForText(_ start: Data) -> Bool {
+        start.starts(with: "solid".utf8) && spellsFacetNormalWithinReach(start)
+    }
+
+    /// 読み手が文字の頭かを決めるのに見る、先頭の ``facetNormalLimit`` − 1 + 12 バイト。頭 (128 バイト) で足りなければ、
+    /// 続きを読む (読めなければ頭だけ)。
+    private static func readerStart(head: Data, handle: FileHandle) -> Data {
+        let wanted = facetNormalLimit - 1 + facetNormalSpelling.count
+        guard head.count < wanted else { return head.prefix(wanted) }
+        guard (try? handle.seek(toOffset: UInt64(head.count))) != nil,
+            let more = try? handle.read(upToCount: wanted - head.count)
+        else { return head }
+        return head + more
+    }
 
     /// 文字の STL の面を数える。`head` は頭で、続きは `rest` から `chunk` バイトずつ読む (`nil`
     /// なら頭がファイルの全部)。読めなければ `nil`。
@@ -610,13 +683,7 @@ nonisolated extension ModelFile {
             if lineHasBytes { endLine(at: position) }
             // 最後の `endfacet` の後ろに頂点が余っている面は、書き終えていない
             if vertices != 0 { text.shape.isWellFormed = false }
-            text.readerFindsFacets =
-                prefix.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
-                    guard let base = bytes.baseAddress,
-                        let hit = memmem(base, bytes.count, ModelFile.facetNormalSpelling, ModelFile.facetNormalSpelling.count)
-                    else { return false }
-                    return base.distance(to: UnsafeRawPointer(hit)) < ModelFile.facetNormalLimit
-                }
+            text.readerFindsFacets = ModelFile.spellsFacetNormalWithinReach(prefix)
             return text
         }
     }
