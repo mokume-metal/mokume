@@ -50,6 +50,81 @@ enum NumberValues {
     }
 }
 
+// MARK: - 円周率の定数
+
+/// 円周率 (π)。180 度をラジアンで書いた値。
+///
+/// ```swift
+/// rotate(PI / 4)
+/// ```
+///
+/// **`PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` は手本 (Processing・p5.js) の綴りのまま**
+/// で、Swift の命名 (lowerCamelCase) からは外れる。関数の層は手本で書けることを優先する
+/// ためで、理由は [ADR-0020] 決定 1 の 2026-10-14 改訂にある。`tau` と綴る案は、手本の綴りで
+/// 探せず、AI が書く `TWO_PI` が赤いままになるので採らなかった。
+///
+/// **総称の受け口へそのまま渡せる。** 描く口と数の口は `some ScalarConvertible` で受けるので、
+/// `.pi` だけでは `Float` と `Double` のどちらか決まらず、`rotate(.pi / 2)` は
+/// `ambiguous use of 'pi'` で赤くなる ([ADR-0035] 決定 6-a)。これらの定数は具体の `Float`
+/// なので、`rotate(HALF_PI)` も `map(i, 0, n, 0, TWO_PI)` も型を名乗らずに通る。
+/// `Float.pi` も正しい綴りで、書き換えは要らない。
+///
+/// **遮れる。** 自分で `let PI = 3.14` と宣言すれば、その範囲では自分の宣言が勝つ。
+///
+/// 時計の文字盤。12 本の目盛りを ``TWO_PI`` の 12 等分に置き、針は ``HALF_PI`` だけ戻して
+/// 12 時を上にする。
+///
+/// ```swift
+/// func draw() {
+///     background(245)
+///     translate(width / 2, height / 2)
+///     for i in 0..<12 {
+///         let a = map(i, 0, 12, 0, TWO_PI)
+///         line(cos(a) * 150, sin(a) * 150, cos(a) * 170, sin(a) * 170)
+///     }
+///     let hand = map(time.truncatingRemainder(dividingBy: 60), 0, 60, 0, TWO_PI) - HALF_PI
+///     line(0, 0, cos(hand) * 140, sin(hand) * 140)
+/// }
+/// ```
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+/// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
+public let PI: Float = .pi
+
+/// 円周率の半分 (π/2)。90 度。
+///
+/// ```swift
+/// rotate(HALF_PI)
+/// ```
+///
+/// 角度 0 は右向きなので、12 時を上にしたいときの戻し量にもなる (``PI`` の作例)。
+public let HALF_PI: Float = .pi / 2
+
+/// 円周率の 4 分の 1 (π/4)。45 度。
+///
+/// ```swift
+/// rotate(QUARTER_PI)
+/// ```
+public let QUARTER_PI: Float = .pi / 4
+
+/// 円周率の 2 倍 (2π)。1 周。
+///
+/// ```swift
+/// arc(0, 0, 100, 100, 0, TWO_PI)
+/// ```
+///
+/// 範囲を 1 周へ写すときにも使う — `map(i, 0, n, 0, TWO_PI)`。``TAU`` と同じ値。
+public let TWO_PI: Float = .pi * 2
+
+/// 1 周 (2π)。``TWO_PI`` と同じ値。
+///
+/// ```swift
+/// rotate(TAU / 8)
+/// ```
+///
+/// Processing・p5.js が `TWO_PI` と並べて持つ別名。
+public let TAU: Float = .pi * 2
+
 // MARK: - 角度の単位を直す
 
 /// 度をラジアンに直す。

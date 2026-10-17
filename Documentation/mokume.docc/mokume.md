@@ -213,8 +213,16 @@ fill(255, 255 * 50 / 100.0)              // 127.5 が渡ります
 `width` や `time` のように**面が返した数が式に入っていれば、そのまま書けます** — 全体が
 `Float` として計算されるからです (上の `width / 2` がそれです)。
 
+**円周率は定数で書けます。** `PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` は `Float` の定数で、
+手本 (Processing・p5.js) と同じ綴りです。型が決まっているので、そのまま渡せます。
+
+```swift
+rotate(HALF_PI)                          // 90 度
+let a = map(3, 0, 12, 0, TWO_PI)         // 12 等分した 3 つ目
+```
+
 **`.pi` のような書き方は、型を名乗ります。** 渡す先が型を決めなくなったので、`.pi` だけでは
-`Float` と `Double` のどちらか決まりません。
+`Float` と `Double` のどちらか決まりません。定数を使うか、`Float.pi` と綴ります。
 
 ```swift
 rotate(Float.pi / 2)                     // 型を名乗ります
@@ -663,6 +671,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 ### 角度と数を直す
 
+- ``PI``
+- ``HALF_PI``
+- ``QUARTER_PI``
+- ``TWO_PI``
+- ``TAU``
 - ``radians(_:)``
 - ``degrees(_:)``
 - ``map(_:_:_:_:_:)``

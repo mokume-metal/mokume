@@ -66,6 +66,90 @@ struct NumberSurfaceTests {
         #expect(isNear(turned.y, 1, within: 1e-6))
     }
 
+    // MARK: - 円周率の定数
+
+    /// 定数は `Float.pi` の倍数。単精度の掛け割りは同じ手順なら同じビットになるので、
+    /// ここは等値で見る — 近似で見ると、`.pi * 2` を `.pi * 2.0001` へ壊しても緑になりうる。
+    @Test("定数は、手本の 5 つと同じ値になる")
+    func theConstantsMatchTheReference() {
+        #expect(PI == Float.pi)
+        #expect(HALF_PI == Float.pi / 2)
+        #expect(QUARTER_PI == Float.pi / 4)
+        #expect(TWO_PI == Float.pi * 2)
+        #expect(TAU == TWO_PI)
+        // 互いの比 — 2 の冪の掛け割りなので、Float でも厳密に成り立つ
+        #expect(HALF_PI * 2 == PI)
+        #expect(QUARTER_PI * 4 == PI)
+        #expect(TWO_PI == PI * 2)
+    }
+
+    @Test("定数の型は Float で、暗黙メンバ参照が曖昧にならない")
+    func theConstantsAreFloats() {
+        // 型注釈なしの `let` が `Float` に決まる — `Double` や総称なら、ここは書けない
+        let pi = PI
+        let tau = TAU
+        #expect(type(of: pi) == Float.self)
+        #expect(type(of: tau) == Float.self)
+    }
+
+    @Test("定数は、度との往復で手本の角度に戻る")
+    func theConstantsRoundTripThroughDegrees() {
+        #expect(isNear(degrees(PI), 180))
+        #expect(isNear(degrees(HALF_PI), 90))
+        #expect(isNear(degrees(QUARTER_PI), 45))
+        #expect(isNear(degrees(TWO_PI), 360))
+        #expect(isNear(radians(360), TAU))
+    }
+
+    @Test("利用者が自分で PI を宣言すれば、そちらが勝つ")
+    func aUserDeclarationShadowsTheConstant() {
+        // 遮られても赤くならない。局所の宣言は取り込んだ名前より近い
+        let PI = 3
+        #expect(PI == 3)
+        let TWO_PI: Double = 6
+        #expect(TWO_PI == 6)
+        // 遮っていない名前は、そのまま本体の定数を指す
+        #expect(HALF_PI == Float.pi / 2)
+    }
+
+    /// 回す口と弧の口へ、型を名乗らずに渡せること。**呼ばない** — スケッチの外で呼ぶ口は
+    /// 何もしないので、見るのは型検査が通ること (`cannot find 'HALF_PI' in scope` と
+    /// `ambiguous use of 'pi'` で止まっていた形) である。値は上の検査が持つ。
+    private final class CompilesWithConstants: Sketch {
+        init() {}
+        func draw() {
+            rotate(HALF_PI)
+            rotate(PI / 4)
+            rotate(QUARTER_PI)
+            arc(0, 0, 100, 100, 0, TWO_PI)
+            arc(0, 0, 100, 100, 0, TAU)
+        }
+    }
+
+    @Test("回す口は、定数で回した向きと度で回した向きが同じになる")
+    func theRotationEntryTakesTheConstants() {
+        var byConstant = Transform.identity
+        byConstant.rotate(by: HALF_PI)
+        var byDegrees = Transform.identity
+        byDegrees.rotate(by: radians(90))
+        let a = byConstant.matrix * SIMD4<Float>(1, 0, 0, 0)
+        let b = byDegrees.matrix * SIMD4<Float>(1, 0, 0, 0)
+        #expect(isNear(a.x, b.x, within: 1e-6))
+        #expect(isNear(a.y, b.y, within: 1e-6))
+        #expect(isNear(a.y, 1, within: 1e-6))
+        _ = CompilesWithConstants()
+    }
+
+    @Test("1 周を n 等分した角度は、n 周で 1 周になる")
+    func aFullTurnSplitsEvenly() {
+        // 時計の文字盤の目盛り — 12 等分した角度は 30 度ずつ、最後の 1 つ手前から 12 番目が 0 度へ戻る
+        for i in 0..<12 {
+            let a = map(i, 0, 12, 0, TWO_PI)
+            #expect(isNear(degrees(a), Float(i) * 30, within: 1e-3))
+        }
+        #expect(map(12, 0, 12, 0, TWO_PI) == TWO_PI)
+    }
+
     // MARK: - スケッチの外
 
     /// スケッチの外に置いた型。実害はここで起きた — [#883] の `Ring` は、
