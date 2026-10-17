@@ -116,11 +116,22 @@ private struct KnobRow: View {
         }
     }
 
+    /// 実数のスライダー。**刻みを書いていれば刻みで動き、書いていなければ連続で動く** — 値は
+    /// 刻みへ丸めない (外からの書き込み・保存の復元・コードからの代入は、窓の外の入口である)。
+    @ViewBuilder
+    private func slider(value: Binding<Double>, in range: ParamRange, step: Double?) -> some View {
+        if let step {
+            Slider(value: value, in: range.lowerBound...range.upperBound, step: step)
+        } else {
+            Slider(value: value, in: range.lowerBound...range.upperBound)
+        }
+    }
+
     @ViewBuilder
     private func control(for declaration: ParamDeclaration) -> some View {
         switch KnobKind.forDeclaration(declaration) {
-        case .slider(let range):
-            Slider(value: KnobBinding.number(box, declaration.value), in: range.lowerBound...range.upperBound)
+        case .slider(let range, let step):
+            slider(value: KnobBinding.number(box, declaration.value), in: range, step: step)
         case .steppedSlider(let range):
             Slider(
                 value: KnobBinding.number(box, declaration.value),
@@ -131,12 +142,10 @@ private struct KnobRow: View {
         case .color:
             ColorPicker("", selection: KnobBinding.color(box))
                 .labelsHidden()
-        case .components(let count, let range):
+        case .components(let count, let range, let step):
             VStack(spacing: 2) {
                 ForEach(0..<count, id: \.self) { index in
-                    Slider(
-                        value: KnobBinding.component(box, at: index),
-                        in: range.lowerBound...range.upperBound)
+                    slider(value: KnobBinding.component(box, at: index), in: range, step: step)
                 }
             }
         case .choice(let choices):
