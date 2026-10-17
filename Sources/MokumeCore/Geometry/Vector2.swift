@@ -456,10 +456,11 @@ nonisolated extension Vector2 {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左下の小さな円から右上の水色の円へ向かう、長さ 100 の橙色の線。線は右上の円まで届かない -->
+    ///     ![左下の小さな円から右上の水色の円へ向かう、長さ 100 の橙色の線。線は右上の円まで届かない](https://i.gyazo.com/2d89ba039e95fc1fc72781ecc6da8387.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 後で撮る
+    // shot: 1 snippet=d4ed6bb5
     public func normalized() -> Vector2 {
         let magnitude = length
         guard magnitude > 0 else { return self }
@@ -495,10 +496,11 @@ nonisolated extension Vector2 {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左下から右上の水色の円へ向かって、はじめは詰まり、やがて等しい間隔で並ぶ橙色の点の列 -->
+    ///     ![左下から右上の水色の円へ向かって、はじめは詰まり、やがて等しい間隔で並ぶ橙色の点の列](https://i.gyazo.com/411de8eef950b9b7b6151a38feb76395.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 後で撮る
+    // shot: 1 snippet=91efd0d7
     public func limited(to maximum: some ScalarConvertible) -> Vector2 {
         let limit = maximum.asFloat
         guard limit > 0 else { return Vector2(0, 0) }
