@@ -18,12 +18,20 @@ import Metal
 ///
 /// ## 中身はフレームごとに書き換わる
 ///
-/// テクスチャは**使い回している 1 枚**なので ([ADR-0023] 決定 5)、``Outlet/receive(_:)``
-/// から返った後は次のフレームの絵になっている。持ち帰って後で読むなら
+/// テクスチャは**使い回している 1〜2 枚のどれか**なので ([ADR-0023] 決定 5)、``Outlet/receive(_:)``
+/// から返った後は、後のフレームの絵に書き換わる。持ち帰って後で読むなら
 /// ``bytes()`` で値にしてから渡す。
+///
+/// ## 届くのは描いた後のフレーム
+///
+/// 出口が受け取るのは、描いたフレームの 1 つ後のフレームの間である ([ADR-0023] の影響)。配る前に、
+/// その絵を組んだ投入を GPU が打ち切っていないかを確かめ、**打ち切っていたら配らない** — その番号は
+/// 届かない ([#2743])。確かめる結末が配る時点でまだ届いていなければ、もう 1 フレーム持ち越して 2 つ後に
+/// 届く (そのあいだのフレームを組むのが 2 枚目の置き場である)。番号の順は変わらない。
 ///
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+/// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
 public struct OutputFrame {
     /// 幅 (画素)。
     public let width: Int
