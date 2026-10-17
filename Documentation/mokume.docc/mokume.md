@@ -144,13 +144,21 @@ MCP が作品側の mokume の更新を案内します。`time` を省けば、�
 Processing や p5.js から来て最初に踏むのは、mokume の約束ではなく Swift の決まりです。
 次の 3 つを知っていれば足ります。
 
-**1. `.pi` だけでは型が決まらず、コンパイルエラーになります。** `Float.pi` と書きます。
+**1. `.pi` だけでは型が決まらず、コンパイルエラーになります。** 描く口と数の口は `Float` も `Double` も受けるので、
+`.pi` がどちらか決まらないからです。`PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` の定数を使うか、
+`Float.pi` と書きます。
 
 <!-- example: 組めない `.pi` だけでは型が決まらずコンパイルエラーになることが主題の例 -->
 ```swift
 rotate(.pi / 4)           // error: cannot infer contextual base in reference to member 'pi'
-rotate(Float.pi / 4)      // 型を名乗ります
 ```
+
+```swift
+rotate(QUARTER_PI)        // 定数は Float で、そのまま渡せます
+rotate(Float.pi / 4)      // 型を名乗っても通ります
+```
+
+`pow(2, 3)` のようにリテラルだけを渡す計算の関数も、同じ理由で型が決まらず組めません (上の「`import mokume` で通る語彙」)。
 
 **2. 割り算は、片方に小数点を付けます。** 整数だけの式は整数のまま計算され、`1 / 2` は 0 になります。
 **エラーにならず**、描かれる絵で気付くことになります。
