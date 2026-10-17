@@ -1140,6 +1140,40 @@ struct SaveFramesTests {
         }
     }
 
+    /// **打ち切られたフレームの次のフレームが面へ何も書かなければ、その絵も欠けている** (#2743 の
+    /// 反証 3)。打ち切られた投入は面を書かないので、何も書かない次のフレームの絵は打ち切りの前の
+    /// 絵のままである。範囲に打ち切りが入らなくても、面へ新しく書くまでは落とす (投げる読む口の
+    /// 持ち越し `heldDrop` と同じ規則)。
+    @Test("打ち切られたフレームの次が面へ何も書かなければ、その枚も書かず、面へ書いたら戻る")
+    func aFrameThatWritesNothingAfterADropIsNotWritten() throws {
+        try withTemporaryDirectory("mokume-record-dropped-then-idle") { directory in
+            let pattern = directory.appendingPathComponent("f-####.png").path
+            let runtime = try makeRuntime { sketch in
+                if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
+                // 4 枚目は面へ何も書かない
+                if sketch.frameCount != 4 {
+                    let level = Self.level(atFrame: sketch.frameCount)
+                    sketch.background(.display(red: level, green: level, blue: level))
+                }
+                if sketch.frameCount == 1 { sketch.beginRecord(pattern) }
+                if sketch.frameCount == 6 { sketch.endRecord() }
+            }
+            for _ in 0..<6 { try runtime.advance() }
+
+            let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+            #expect(names == ["f-0000.png", "f-0001.png", "f-0002.png"], "\(names)")
+            let levels = try names.map { try readBack(directory.appendingPathComponent($0))[0, 0].red }
+            let expected = [1, 2, 5].map { UInt8((Self.level(atFrame: $0) * 255).rounded()) }
+            #expect(
+                levels.count == expected.count
+                    && zip(levels, expected).allSatisfy { abs(Int($0) - Int($1)) <= 1 },
+                "書いた絵のフレームが違う: \(levels) (期待 \(expected))")
+            let said = try #require(runtime.recorderWarnings?.message(for: .droppedFrames))
+            #expect(said.contains("wrote 3 frames. 2 did not reach it"), "\(said)")
+            runtime.closePlugins()
+        }
+    }
+
     /// `save()` を頼んだフレームの投入が打ち切られたら、**次に配れたフレームの絵で書く** (#2743)。
     /// 描画が転んだフレームと同じ持ち越しで、ランタイムの警告がそう言う。
     @Test("save() を頼んだフレームの投入が打ち切られたら、次のフレームの絵で書き、1 度だけ言う")

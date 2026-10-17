@@ -47,6 +47,9 @@ struct SketchApplicationRenderTests {
         var jumpsTimeAt: (frame: Int, seconds: Float)?
         /// このフレームを描けなかったことにする (検査の穴 `failureForTesting`)。
         var failsAtFrame: Int?
+        /// このフレームの描き切りの投入を、GPU が打ち切ったことにする (検査の穴
+        /// `dropsNextSubmissionForTesting`・#2743)。
+        var dropsAtFrame: Int?
         private(set) var seen: [Moment] = []
 
         init() {}
@@ -54,6 +57,9 @@ struct SketchApplicationRenderTests {
 
         func draw() {
             canvas.failureForTesting = frameCount == failsAtFrame ? .timedOut(seconds: 5) : nil
+            if frameCount == dropsAtFrame {
+                canvas.gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
+            }
             seen.append(Moment(frame: frameCount, time: time, deltaTime: deltaTime))
             background(15)
             noStroke()
@@ -288,6 +294,24 @@ struct SketchApplicationRenderTests {
 
             #expect(ending.finishedCalls == 1, "描けなかった枚も枚数に数える")
             #expect(ending.exitStatus == 1, "穴があるのに 0 で終わる")
+            let written = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            #expect(written.count == 4)
+        }
+    }
+
+    /// **GPU が打ち切ったフレームも、描けなかったフレームと同じく穴として数える** (#2743)。打ち切った
+    /// フレームは出口へ配らないので、書き出しには入らない。描けなかった枚と同じく 0 以外で終わり、
+    /// 欠けた枚数を名乗る — `renderFrame(to:)` が打ち切りで投げるのとも揃う。
+    @Test("GPU が打ち切ったフレームがあれば、その枚を入れず、揃わなかったと 0 以外で言う")
+    func aFrameWhoseWorkWasDroppedEndsNonZero() async throws {
+        try await withTemporaryDirectory("mokume-render-dropped-frame") { directory in
+            let pattern = directory.appendingPathComponent("frame-###.png").path
+            let sketch = Sweep()
+            sketch.dropsAtFrame = 3
+            let ending = try render(sketch, frameRate: 30, frames: 5, to: pattern)
+
+            #expect(ending.finishedCalls == 1)
+            #expect(ending.exitStatus == 1, "打ち切りで欠けたのに 0 で終わる")
             let written = try FileManager.default.contentsOfDirectory(atPath: directory.path)
             #expect(written.count == 4)
         }

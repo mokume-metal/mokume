@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Testing
 
 @testable import MokumeCore
@@ -142,5 +143,142 @@ struct OutletDeferralTests {
         #expect(runtime.target.encodedImagesMade == 2, "置き場を作り足している")
         let said = try #require(runtime.warnings.message(for: .droppedOutletFrame))
         #expect(said.contains("frame 3"), "\(said)")
+    }
+
+    // MARK: - 反証への応え
+
+    /// 受け取るたびに転ぶ出口。受け取った番号を覚える。
+    final class AlwaysFailingOutlet: Outlet {
+        private(set) var frames: [Int] = []
+        func receive(_ frame: OutputFrame) { frames.append(frame.frame) }
+        var failure: String? { "always" }
+    }
+
+    /// **差込口の健康は、1 回の進めにつき 1 回だけ数える** (#2743 の反証 5)。持ち越した絵と次の絵を
+    /// 同じ進めで 2 枚配っても、続けて転んだ数は 1 つしか進まない。1 枚ごとに数えると、1 回きりの
+    /// 書き損じ (撮る係は新しい知らせが来るまで前の値を保つ・#1272) が 2 回ぶんに数えられ、1 回早く外れる。
+    @Test("持ち越した絵と次の絵を同じ進めで配っても、差込口の転びは 1 回ぶんだけ数える")
+    func seamHealthCountsOncePerAdvance() throws {
+        let failing = AlwaysFailingOutlet()
+        let (runtime, gpu) = try makeRuntime(failing) { sketch in
+            if sketch.frameCount == 1 { sketch.canvas.gpu.holdsNextOutcomeForTesting = true }
+        }
+        try runtime.advance()
+        // 1 枚目の結末が届いていないので持ち越す。ここではまだ配らない
+        try runtime.advance()
+        try #require(failing.frames.isEmpty, "結末の届いていない 1 枚目を配った")
+        gpu.releaseHeldOutcomesForTesting()
+        SharedFrameSurfaceTests.awaitOutcomes(gpu)
+
+        for _ in 0..<4 {
+            try runtime.advance()
+            SharedFrameSurfaceTests.awaitOutcomes(gpu)
+        }
+        // 3 回目の進めで 1・2 枚目をまとめて配り (数えは 1)、4・5 回目で 3・4 枚目 (2・3) で外れる。
+        // 1 枚ごとに数えると、3 回目で 2、4 回目で 3 になり、4 枚目を受け取らずに外れる
+        #expect(failing.frames == [1, 2, 3, 4], "\(failing.frames)")
+        runtime.closePlugins()
+    }
+
+    /// 止めて、押されたら画素を 1 つ書いて保存するスケッチ (#2743 の反証 4)。1 枚目の描き切りの投入は
+    /// 打ち切ったことにし、そのフレームでも保存を頼む。
+    final class StoppedSaver: Sketch {
+        nonisolated(unsafe) static var directory = URL(fileURLWithPath: "/")
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func setup() { noLoop() }
+        func draw() {
+            canvas.gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
+            background(255, 0, 0)
+            save(Self.directory.appendingPathComponent("first.png").path)
+        }
+        func mousePressed() {
+            set(0, 0, .linear(red: 0, green: 0, blue: 1))
+            save(Self.directory.appendingPathComponent("second.png").path)
+        }
+    }
+
+    /// **止まっている間に、打ち切りの後で面を書き直したら、組み直して保存する** (#2743 の反証 4)。
+    /// 打ち切られたフレームのままの面では組み直しても配れないので組み直さないが、書いた画素が面へ
+    /// 戻れば面の中身は新しい。そこで頼んだ保存は、次の描画を待たずに書く。
+    @Test("止まっている間に、打ち切りの後で面へ書けば、次の描画を待たずに保存する")
+    func aStoppedSketchSavesAfterWritingOverADroppedFrame() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-stopped-dropped-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        StoppedSaver.directory = directory
+        let runtime = try SketchRuntime(sketch: StoppedSaver(), gpu: try RenderDevice())
+        let first = directory.appendingPathComponent("first.png")
+        let second = directory.appendingPathComponent("second.png")
+
+        try runtime.advance()
+        // 打ち切られたフレームの絵では書かない
+        #expect(!FileManager.default.fileExists(atPath: first.path), "打ち切られた絵で保存した")
+
+        runtime.input.enqueue(.mouseDown(x: 4, y: 4, button: .left))
+        try runtime.advance()
+        // 押したコールバックが画素を書いたので、面の中身は新しい。止まったまま両方を書く
+        #expect(FileManager.default.fileExists(atPath: first.path), "書き直した後も、1 枚目の保存を待たせている")
+        #expect(FileManager.default.fileExists(atPath: second.path), "書き直した後の保存を、次の描画まで待たせている")
+        runtime.closePlugins()
+    }
+
+    /// **塞がずに閉じる口 (`closePlugins(.peek)`) は、結末を待たない** (#2743 の反証 6)。結末の届かない
+    /// 投入があっても、見に来るたびにすぐ返る。届かないまま待つ上限を過ぎたら、届かなかったものとして
+    /// 落として決着する。
+    @Test("塞がずに閉じる口は、結末の届かない絵に塞がれず、上限を過ぎたら落として決着する")
+    func peekingCloseDoesNotWaitForOutcomes() throws {
+        let outlet = FrameSyncTests.WatchingOutlet(readsBytes: false)
+        let (runtime, gpu) = try makeRuntime(outlet) { sketch in
+            if sketch.frameCount == 2 { sketch.canvas.gpu.losesNextOutcomeForTesting = true }
+        }
+        gpu.outcomeWaitLimit = .milliseconds(500)
+        try runtime.advance()
+        SharedFrameSurfaceTests.awaitOutcomes(gpu)
+        try runtime.advance()
+
+        let began = ContinuousClock.now
+        let settled = runtime.closePlugins(.peek)
+        let took = ContinuousClock.now - began
+        #expect(!settled, "結末の届かない絵があるのに、決着したと言った")
+        #expect(took < .milliseconds(200), "塞がずに見に来る口が \(took) 塞いだ")
+
+        // 見に来続ければ、上限を過ぎたところで届かなかったものとして落とし、決着する
+        let deadline = ContinuousClock.now + .seconds(10)
+        var done = false
+        while !done, ContinuousClock.now < deadline {
+            let peekBegan = ContinuousClock.now
+            done = runtime.closePlugins(.peek)
+            #expect(ContinuousClock.now - peekBegan < .milliseconds(200), "見に来る口が塞いだ")
+            if !done { Thread.sleep(forTimeInterval: 0.01) }
+        }
+        #expect(done, "上限を過ぎても決着しない")
+        #expect(outlet.frames.map(\.frame) == [1], "結末の届かない 2 枚目を配った")
+    }
+
+    /// **待たずに問う口は、そのフレームの範囲より前の結末の欠けで塞がれない** (#2743 の反証 6)。範囲の
+    /// 外の投入 (ここでは、フレームの間に積んだ空の投入) の結末が届かなくても、範囲の結末が揃って
+    /// いれば待たずに配る。
+    @Test("範囲より前の投入の結末が届かなくても、範囲が揃っていれば待たずに配る")
+    func aMissingOutcomeBeforeTheRangeDoesNotHoldFramesBack() throws {
+        let outlet = FrameSyncTests.WatchingOutlet(readsBytes: false)
+        let (runtime, gpu) = try makeRuntime(outlet)
+        gpu.outcomeWaitLimit = .seconds(2)
+        try runtime.advance()
+        SharedFrameSurfaceTests.awaitOutcomes(gpu)
+
+        // どのフレームの範囲にも入らない投入の結末を落とす
+        gpu.losesNextOutcomeForTesting = true
+        try gpu.withCommands { commands throws(RenderFailure) in gpu.commit(commands) }
+
+        let waits = gpu.outcomeWaits
+        for _ in 0..<4 {
+            try runtime.advance()
+            // 結末が届く間合いを置く (待つ口は使わない — 待てば欠けた結末で塞がれる)
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        #expect(gpu.outcomeWaits == waits, "範囲の外の欠けで結末を待った")
+        #expect(outlet.frames.map(\.frame) == [1, 2, 3, 4], "\(outlet.frames.map(\.frame))")
+        runtime.closePlugins()
     }
 }
