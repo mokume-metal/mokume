@@ -122,8 +122,8 @@ class PrGateWorkflowTest(unittest.TestCase):
         self.assertEqual(len(checkouts), 1)
         self.assertIn(
             "ref: ${{ github.event.repository.default_branch }}", checkouts[0],
-            "脱出口 (ADR-0031 決定 2) で pr-gate.yml の with: と ref の行を外す PR なら、この assertIn も"
-            " 同じ PR で外し、後続の PR で両方戻す",
+            "脱出口 (ADR-0031 決定 2) で pr-gate.yml の with: と ref の行を外す PR なら、"
+            "この assertIn も同じ PR で外し、後続の PR で両方戻す",
         )
         self.assertEqual(steps(self.gate)[0], checkouts[0], "checkout より前に何かを走らせている")
         for bad in ("pull_request.head", "pull_request.base", "github.sha", "github.head_ref", "github.ref }}"):
