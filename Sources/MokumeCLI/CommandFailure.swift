@@ -131,6 +131,13 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 紙の名前にもなる。`/` があると `--out` の下に余計なディレクトリを作って途中で止まり、
     /// `..` と組むと `--out` の外の `.app` を消していた。
     case identityNameUnusable(path: String, name: String)
+    /// 名乗りの `name` が、ファイル名にするには長すぎる。`length` は
+    /// ``AppIdentity/fileNameLength(of:)`` で数えた長さ。
+    ///
+    /// **組み立ての前に断る** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
+    /// `name` は包み (`<name>.app`) と開き方の紙のファイル名にもなり、長いほうの紙が上限を越えると、
+    /// ビルドと署名の後で紙が書けずに止まり、署名済みの `.app` が残っていた。
+    case identityNameTooLong(path: String, name: String, length: Int)
     /// カメラを使うスケッチなのに、名乗りに許可の文言が無い。
     ///
     /// **束ねずに止める。** 出来た包みは、触れた時点で OS に止められる — 作った手元では
@@ -247,6 +254,20 @@ nonisolated enum CommandFailure: Error, Equatable {
             In: \(path)
             The name is also the file name of the bundle (<name>.app) and of the note beside it,
             and "/" would put them in another folder. Pick a name without "/".
+            """
+        case .identityNameTooLong(let path, let name, let length):
+            """
+            The name in the identity is too long to be a file name: it is \(length) long, \
+            and it can be at most \(AppIdentity.maximumNameLength): \(name)
+            In: \(path)
+            The name is also the file name of the bundle (<name>.app) and of the note beside it.
+            The note's name is \(AppIdentity.fileNameLimit - AppIdentity.maximumNameLength) longer \
+            than the name, and a file name on APFS can be at most \(AppIdentity.fileNameLimit) units long.
+            Length is counted in UTF-16 units of the form macOS hands to the file system, with marks
+            split off from their letters: a letter with an accent (é) or a kana with a voiced mark
+            counts as 2, a letter with two marks (ệ) as 3, a Hangul syllable as 2 or 3, an emoji as 2,
+            a flag as 4, and a family emoji joined with zero-width joiners as 11.
+            Pick a shorter name.
             """
         case .cameraUsageMissing(let path, let files):
             """

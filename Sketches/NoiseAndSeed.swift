@@ -44,30 +44,35 @@ final class NoiseAndSeed: Sketch {
         noiseDetail(5, 0.5)
 
         // 断片の側。`mokume_noise` は前置きされているので宣言も配線も要らない
-        grain = try? makeShader(
-            """
-            float4 paint(Fragment in, Values values) {
-                // 板の中での位置 (0…1)。左の CPU 側と同じ座標を作るため、
-                // 画面の中の位置ではなく板からの位置で引く
-                float2 local = (in.position - values.origin) / values.extent;
-                float2 p = local * values.span;
+        do {
+            grain = try makeShader(
+                """
+                float4 paint(Fragment in, Values values) {
+                    // 板の中での位置 (0…1)。左の CPU 側と同じ座標を作るため、
+                    // 画面の中の位置ではなく板からの位置で引く
+                    float2 local = (in.position - values.origin) / values.extent;
+                    float2 p = local * values.span;
 
-                float drift = (mokume_noise(in, p * 0.6) - 0.5) * 0.9;
-                float radius = length(p - float2(values.span * 0.5, values.span * 1.6)) + drift;
-                float ring = fract(radius * 0.9);
-                float late = smoothstep(0.72, 0.9, ring) * (1.0 - smoothstep(0.94, 1.0, ring));
-                float fibre = (mokume_noise(in, float2(p.x * 2.0, p.y * 26.0)) - 0.5) * 0.14;
+                    float drift = (mokume_noise(in, p * 0.6) - 0.5) * 0.9;
+                    float radius = length(p - float2(values.span * 0.5, values.span * 1.6)) + drift;
+                    float ring = fract(radius * 0.9);
+                    float late = smoothstep(0.72, 0.9, ring) * (1.0 - smoothstep(0.94, 1.0, ring));
+                    float fibre = (mokume_noise(in, float2(p.x * 2.0, p.y * 26.0)) - 0.5) * 0.14;
 
-                return float4(mix(values.early.rgb, values.late.rgb, late) + fibre, 1.0);
-            }
-            """,
-            values: [
-                "origin": .pair(panel.x + gap, panel.y),
-                "extent": .pair(panel.width, panel.height),
-                "span": .number(span),
-                "early": .color(early),
-                "late": .color(late),
-            ])
+                    return float4(mix(values.early.rgb, values.late.rgb, late) + fibre, 1.0);
+                }
+                """,
+                values: [
+                    "origin": .pair(panel.x + gap, panel.y),
+                    "extent": .pair(panel.width, panel.height),
+                    "span": .number(span),
+                    "early": .color(early),
+                    "late": .color(late),
+                ])
+        } catch {
+            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
+            print(error)
+        }
     }
 
     func draw() {

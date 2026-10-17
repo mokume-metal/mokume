@@ -53,7 +53,8 @@ public final class EffectShader {
             name: name, url: url, body: body, values: values,
             label: "effect", valuesHint: "the values you pass when making it")
 
-        let library = try gpu.shaders.makeEffectLibrary(named: name, body: body, values: values)
+        let library = try gpu.shaders.makeEffectLibrary(
+            named: name, body: body, bodyName: box.bodyName, values: values)
         self.state = try pipeline.makeState(library: library, label: "mokume.effect.\(name)")
 
         box.watch { [weak self] in self?.reload() }
@@ -77,7 +78,8 @@ public final class EffectShader {
         box.reload(
             inBackground: gpu.shaderRebuildsRunInBackground,
             prepare: { (body: String) throws(RenderFailure) -> BuildJob<any MTLRenderPipelineState> in
-                let library = try gpu.shaders.effectLibraryJob(named: name, body: body, values: values)
+                let library = try gpu.shaders.effectLibraryJob(
+                    named: name, body: body, bodyName: box.bodyName, values: values)
                 let state = pipeline.stateJob(label: "mokume.effect.\(name)")
                 return BuildJob(
                     now: { () throws(RenderFailure) in try state.makeNow(library: library.runNow()) },

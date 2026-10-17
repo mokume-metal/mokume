@@ -85,8 +85,10 @@ jobs:
   # 中身 (タイトル・本文・ファイル一覧・ラベル・レビュー・Issue) をすべて API から読むので、
   # PR の木は要らない。ref を PR の base にしないのは、base は PR の側が選べるからである。
   # 判定を変える PR の効き目は merge の後の PR から始まる。ゲートが壊れていて、それを直す PR
-  # も同じゲートで赤になるときの脱出口は、その PR の中で checkout の ref の行を外すこと
-  # (外した行は後続の PR で戻す)。
+  # も同じゲートで赤になるときの脱出口は、その PR の中で 2 か所を外すこと: この checkout の
+  # with: と ref の 2 行 (ref だけを外すと空の with: を actionlint が赤にする) と、それを固定する
+  # scripts/tests/pr_gate_workflow_test.py の test_判定は既定ブランチの版で走らせる の ref の
+  # assertIn (外さないと必須の ci-gate で赤になる・#2724)。後続の PR で両方戻す (ADR-0031 決定 2)。
   #
   # **pull_request_target は使わない。** base の workflow で走るので PR が workflow を書き換えて
   # 自分を通す道は塞がるが、(1) この workflow が main に入るまで一度も走らず、足す PR で確かめ

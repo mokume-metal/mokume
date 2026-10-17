@@ -45,11 +45,13 @@
    打ち直す run の番号を出し、当番は打たない。新旧は suite の id で読み、cancelled が古い suite の
    ほう (#2710)・最新の suite の赤 (PR を読んだ結論)・必須が揃っていない BLOCKED (待ち・赤・欠け) は
    名乗らない。古い suite の結論は問わず、stale-checks と同じ PR でも名乗る (#2716 の反証 1・2・6)
-15. **段を走らせていない run の赤い ci-gate は、同じ SHA の検査の最新がどちらも緑なら打つ** (#2717)。
-   検査を打ち直して緑にしても、run の id の大きいその赤が必須を塞ぎ続ける。検査の最新が赤・
-   走っている途中・片方が無いなら打たない (読み直しても緑にならない)。検査の最新は ci-gate.sh と
-   同じく作成順で最新の run (suite) の、その中の最後の attempt で読み、作法のジョブを含む古い
-   run の赤は legacy-gate に残す (#2717 の反証・#2716 で ci-gate.sh を suite の順に揃えた)
+15. **段を走らせていない run の赤い ci-gate は、同じ SHA の検査の最新がどちらも緑なら、打たずに
+   移行期の行 (edited-gate) で名乗る** (#2717・#2718)。検査を打ち直して緑にしても、run の id の大きい
+   その赤が必須を塞ぎ続ける。#2718 で当番の打ち直し (reread) を外したので、黙ると誰も気付かない。
+   名乗りの行に打ち直す run の番号を出す。検査の最新が赤・走っている途中・片方が無いなら名乗らない
+   (読み直しても緑にならない)。検査の最新は ci-gate.sh と同じく作成順で最新の run (suite) の、その
+   中の最後の attempt で読み、作法のジョブを含む古い run の赤は legacy-gate に残す。legacy-gate の
+   対処は push だけを言う (本文の編集では新しい ci-gate が付かない)
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -966,7 +968,9 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch(STALL_MINUTES=60)
         self.assertEqual(self.classify(51, proc), ("legacy-gate", "name"), proc.stdout)
         line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("51 "))
-        self.assertIn("本文を編集", line)
+        self.assertIn("push", line)
+        # 本文の編集では ci.yml の run が立たず、新しい ci-gate が付かない (#2718)
+        self.assertNotIn("本文を編集", line)
         self.assertEqual(proc.returncode, 1, "猶予を超えた名乗りなのに赤くしない")
 
     def test_古い_run_の赤い_ci_gate_がコードの赤なら_legacy_gate_と名乗らない(self):
@@ -1012,7 +1016,8 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(self.classify(54, proc), ("masked-red", "name"), proc.stdout)
 
     def test_段を走らせた新しい_run_の緑は直った証拠として打つ(self):
-        # reopen・base の変更の run は段を走らせる。古いコードの赤は打ち直しの対象のまま
+        # reopen の run は段を走らせる (base の変更では ci.yml の run が立たない・#2718)。古いコードの
+        # 赤は打ち直しの対象のまま
         self.add_pr(
             55,
             auto=True,
@@ -1036,54 +1041,58 @@ class StallWatchTest(unittest.TestCase):
             check("ci-gate", "FAILURE", ago(at), run=run),
         ]
 
-    def test_本文の編集の_run_の赤い_ci_gate_は_検査を打ち直して緑になったら打つ(self):
-        """#2717。R1 の ci-check が赤で終わり、検査の途中に立った本文の編集の run (R2) の ci-gate が
-        それを読んで赤で終わった。R1 を打ち直して緑にしても、id の大きい R2 の赤が最新に残って
-        必須を塞ぐ。打ち直せば同じ SHA を読み直して緑になる。待ちの期限 (WAIT_LIMIT) を越えた赤も、
-        後で検査が緑になれば同じ形になる。"""
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査を打ち直して緑になったら移行期の行で名乗る(self):
+        """#2717・#2718。R1 の ci-check が赤で終わり、検査の途中に立った本文の編集の run (R2) の ci-gate が
+        それを読んで赤で終わった。R1 を打ち直して緑にしても、id の大きい R2 の赤が最新に残って必須を
+        塞ぐ。当番の打ち直し (reread) は外したので、打たずに名乗り、打ち直す run の番号を出す。黙ると
+        (出力なし・0 で終わる) 誰も気付かない。"""
         self.add_pr(56, auto=True, state="BLOCKED", checks=[
             check("ci-check", "SUCCESS", ago(10), run=100),
             check("ci-static", "SUCCESS", ago(100), run=100),
             check("ci-gate", "SUCCESS", ago(9), run=100),
         ] + self.red_edited_run(200))
-        proc = self.watch()
-        self.assertEqual(self.classify(56, proc), ("stale-checks", "act"), proc.stdout)
-        self.assertIn("本文の編集の run の ci-gate", proc.stdout)
+        proc = self.watch(STALL_MINUTES=30)
+        self.assertEqual(self.classify(56, proc), ("edited-gate", "name"), proc.stdout)
+        line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("56 "))
+        self.assertIn("gh run rerun 200 --failed", line)
+        self.assertIn("push", line)
+        self.assertEqual(proc.returncode, 1, "猶予を超えた名乗りなのに赤くしない")
+        self.assertNotIn("/rerun", self.gh_log(), "判定が打ち直している")
 
-    def test_本文の編集の_run_の赤い_ci_gate_は_検査の最新が赤なら打たない(self):
-        # 打ち直しても同じ赤を返すだけで、本当に赤いコードの検査を当番のたびに読み直す
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査の最新が赤なら名乗らない(self):
+        # 打ち直しても同じ赤を返すだけ。直すのはコードの側
         self.add_pr(57, auto=True, state="BLOCKED", checks=[
             check("ci-check", "FAILURE", ago(70), run=100),
             check("ci-static", "SUCCESS", ago(100), run=100),
             check("ci-gate", "FAILURE", ago(69), run=100),
         ] + self.red_edited_run(200))
         proc = self.watch()
-        self.assertNotEqual(self.classify(57, proc), ("stale-checks", "act"), proc.stdout)
+        self.assertNotEqual(self.classify(57, proc)[0], "edited-gate", proc.stdout)
 
-    def test_本文の編集の_run_の赤い_ci_gate_は_検査が走っている間は打たない(self):
-        # 打ち直しが終わる前に打つと、ci-gate は待ちに入って runner を占めるだけになる。次の回に回す
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査が走っている間は名乗らない(self):
+        # 打ち直しが終わる前に打つと、ci-gate は待ちに入って runner を占めるだけになる
         self.add_pr(58, auto=True, state="BLOCKED", checks=[
             check("ci-check", None, ago(5), run=100),
             check("ci-static", "SUCCESS", ago(100), run=100),
             check("ci-gate", None, ago(5), run=100),
         ] + self.red_edited_run(200))
         proc = self.watch()
-        self.assertNotEqual(self.classify(58, proc), ("stale-checks", "act"), proc.stdout)
+        self.assertNotEqual(self.classify(58, proc)[0], "edited-gate", proc.stdout)
 
-    def test_本文の編集の_run_の赤い_ci_gate_は_検査の片方が同じ_SHA_に無ければ打たない(self):
+    def test_本文の編集の_run_の赤い_ci_gate_は_検査の片方が同じ_SHA_に無ければ名乗らない(self):
         # ci-gate は skipped の検査ごとに同じ SHA の最新を読む。片方が無ければ打ち直しても赤い
         self.add_pr(60, auto=True, state="BLOCKED", checks=[
             check("ci-check", "SUCCESS", ago(10), run=100),
             check("ci-gate", "SUCCESS", ago(9), run=100),
         ] + self.red_edited_run(200))
         proc = self.watch()
-        self.assertNotEqual(self.classify(60, proc), ("stale-checks", "act"), proc.stdout)
+        self.assertNotEqual(self.classify(60, proc)[0], "edited-gate", proc.stdout)
 
     def test_本文の編集の_run_の赤い_ci_gate_は_検査の最新を_ci_gate_sh_と同じ_suite_の順で読む(self):
-        """#2717 の反証 2 (読み方を ci-gate.sh と揃える)。ci-gate.sh は作成順で最新の suite の、その中の
+        """#2717 の反証 2 (読み方をその run の版の ci-gate.sh と揃える)。作成順で最新の suite の、その中の
         最後の attempt を読む (#2716)。R1 の検査を後から打ち直した赤 (job の id は最大) は古い suite に
         載るので読まない — 読むのは R3 の緑で、打ち直せば緑を返す。同じ run の中では後の attempt を読み、
-        R3 の打ち直しが赤なら打たない。"""
+        R3 の打ち直しが赤なら名乗らない。"""
         older_rerun_red = [
             check("ci-check", "FAILURE", ago(10), run=100, job=900),
             check("ci-static", "SUCCESS", ago(100), run=100, job=101),
@@ -1106,13 +1115,13 @@ class StallWatchTest(unittest.TestCase):
             check("ci-gate", "SUCCESS", ago(39), run=300, job=303),
         ] + edited)
         proc = self.watch()
-        line61 = [l for l in proc.stdout.splitlines() if l.startswith("61 ")]
-        self.assertTrue(any("本文の編集の run の ci-gate" in l for l in line61), proc.stdout)
-        line63 = [l for l in proc.stdout.splitlines() if l.startswith("63 ")]
-        self.assertFalse(any("本文の編集の run の ci-gate" in l for l in line63), proc.stdout)
+        self.assertEqual(self.classify(61, proc)[0], "edited-gate", proc.stdout)
+        self.assertIn("gh run rerun 400 --failed", next(l for l in proc.stdout.splitlines() if l.startswith("61 ")))
+        self.assertNotEqual(self.classify(63, proc)[0], "edited-gate", proc.stdout)
 
     def test_作法のジョブを含む古い本文の編集の_run_の赤い_ci_gate_は_legacy_gate_と名乗る(self):
-        """#2717 の反証 1。stall-act はその run を丸ごと飛ばすので、打つ分類にすると何も打たれず黙る。"""
+        """#2717 の反証 1。段を走らせていない run の赤でも、作法のジョブを含む古い run のものは
+        legacy-gate と名乗る (その run は打ち直さず、push で新しい ci-gate を付ける)。"""
         self.add_pr(62, auto=True, state="BLOCKED", checks=[
             check("ci-check", "SUCCESS", ago(90), run=100),
             check("ci-static", "SUCCESS", ago(90), run=100),
@@ -1122,26 +1131,6 @@ class StallWatchTest(unittest.TestCase):
         ] + self.red_edited_run(200, at=80))
         proc = self.watch()
         self.assertEqual(self.classify(62, proc), ("legacy-gate", "name"), proc.stdout)
-
-    def test_本文の編集の_run_の赤い_ci_gate_を打ち直す(self):
-        """#2717 の対処。R1 の打ち直す前の attempt の赤は API が拒む (古い attempt) ので、R2 の
-        ci-gate に届くことを見る。"""
-        self.add_pr(59)
-        url = "https://github.com/o/r/actions/runs/{}/job/{}"
-        self.write(
-            "59.checkruns.json",
-            {
-                "check_runs": [
-                    {"name": "ci-check", "conclusion": "success", "id": 103, "details_url": url.format(100, 103)},
-                    {"name": "ci-gate", "conclusion": "success", "id": 104, "details_url": url.format(100, 104)},
-                    {"name": "ci-check", "conclusion": "skipped", "id": 201, "details_url": url.format(200, 201)},
-                    {"name": "ci-gate", "conclusion": "failure", "id": 202, "details_url": url.format(200, 202)},
-                ]
-            },
-        )
-        proc = self.act(["59 stale-checks act 5 本文の編集の run の ci-gate"])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("jobs/202/rerun", self.gh_log(), "本文の編集の run の赤い ci-gate へ打っていない")
 
     def test_判定は何も打たない(self):
         self.add_pr(11, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")], events=[removed("failed_checks", 10)])
@@ -1528,7 +1517,7 @@ class RequiredRuleTest(unittest.TestCase):
         self.assertRegex(text, r"(?m)^# ## 必須の判定が読む check run \(#2577\)$")
         header = self.prose(self.GATE)
         self.assertIn(re.sub(r"\s+", "", "作成順で最新の check suite (run) に載った"), header)
-        self.assertIn("未確認(#2692)", header)
+        self.assertIn("確かめていないこと(#2692)", header)
 
     def test_ほかは置き場を指し_食い違う言い方を残さない(self):
         pointer = re.sub(r"\s+", "", self.POINTER)

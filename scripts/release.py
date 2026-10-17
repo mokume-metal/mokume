@@ -25,6 +25,11 @@ render が見るのは触っていない絵の退行だけで、新しい絵の�
   - 本文とラベルは gh で読む。読めなかった PR は**黙って落とさず**名指しで残す
   - 題に `(#N)` の無いコミット (PR を経ない push) は PR の本文が無いので載らない
 
+**見えるのは要約で、全文は畳む** (#2766)。日次の版は断片が十数件・段落も複数に及び、
+全文を並べると Release のページで Assets (ダウンロード) まで長いスクロールが要った。
+項目は断片の最初の文を要約として見せ、全文を `<details>` に収める。絵の節も PR ごとの
+見出しと絵を 1 つの `<details>` に収める。どちらも畳むだけで、文面は 1 文字も落とさない。
+
 節の形を知っているのはこのスクリプトだけなので、**読む側もここに置く**
 (`picture_references`)。日次の publication が、載せた絵が生きているかを Release の本文から
 引く (#2268) ので、節の見出しや記法を変えると読む側が黙って 0 本になる — 書く関数と
@@ -88,6 +93,8 @@ UNSHOWN_PATTERN = re.compile(r"<!--.*?-->|^```.*?^```", re.DOTALL | re.MULTILINE
 
 # 「この版の絵」の節の見出し。書く側 (pictures) と読む側 (picture_references) が同じものを使う
 PICTURE_HEADING = "## この版の絵"
+# 節の絵を開く札
+PICTURE_DETAILS_SUMMARY = "絵を開く"
 # 節の中の PR ごとの見出し。`### [#N 題](URL)` と、PR を読めなかったときの `### #N`
 PULL_HEADING_PATTERN = re.compile(r"^### \[?#(?P<number>\d+)", re.MULTILINE)
 # 絵の参照の中の行き先。記法ごとの書き分けは PICTURE_PATTERN が持つので、ここは URL だけを抜く
@@ -179,18 +186,75 @@ def category_of(fragment: Path) -> str:
     return parts[-2] if len(parts) >= 3 else "feature"
 
 
+# 要約を切る文の終わり。英文の `.` は空白か本文の終わりが続くものだけ (`p5.js`・`v0.27.0` で切らない)
+SENTENCE_END_PATTERN = re.compile(r"。|\.(?=\s|$)")
+# 要約の切れ目に数えない入れ子。コードの中と括弧の中の句点は文の終わりではない
+OPENING_BRACKETS = "([（「"
+CLOSING_BRACKETS = ")]）」"
+# 畳んだ全文を開く札
+DETAILS_SUMMARY = "詳しく"
+
+
+def summary_of(entry: str) -> str:
+    """断片の本文の最初の文。ノートで畳まずに見せる要約になる (#2766)。
+
+    最初の段落の中で、コード (`` ` ``) と括弧の外にある最初の文の終わりまでを取る。
+    太字 (`**…。**`) の途中で切れるときは閉じの `**` まで含める — 含めないと要約の
+    太字が閉じず、続く行まで太字になる。文の終わりが無ければ最初の段落をまるごと取る。
+    """
+    paragraph = re.split(r"\n[ \t]*\n", entry.strip(), maxsplit=1)[0]
+    depth = 0
+    in_code = False
+    end = len(paragraph)
+    for index, character in enumerate(paragraph):
+        if character == "`":
+            in_code = not in_code
+        elif in_code:
+            continue
+        elif character in OPENING_BRACKETS:
+            depth += 1
+        elif character in CLOSING_BRACKETS:
+            depth = max(depth - 1, 0)
+        elif depth == 0 and SENTENCE_END_PATTERN.match(paragraph, index):
+            end = index + 1
+            break
+    summary = paragraph[:end]
+    if summary.count("**") % 2 == 1 and (closing := paragraph.find("**", end)) != -1:
+        summary = paragraph[: closing + 2]
+    return summary.rstrip()
+
+
+def indented(text: str) -> list[str]:
+    """項目の中身の列 (2 桁) まで下げた行。空行は空行のまま (桁を足すと末尾に空白が残る)。"""
+    return [f"  {line}" if line.strip() else "" for line in text.split("\n")]
+
+
 def as_list_item(entry: str) -> str:
     """断片の本文を箇条書きの 1 項目にする。
 
+    **要約の 1 文だけを見せ、全文は `<details>` に畳む** (#2766)。畳んだ中は本文を
+    そのまま置く — 要約と冒頭が重なるが、開いた人が文の欠けた全文を読まずに済む。
+    本文が要約の 1 文で尽きるなら畳むものが無いので、今までどおりの 1 項目になる。
+
     **継続行を項目の中身の列 (2 桁) まで下げる。** 下げないと、空行のあとの段落が
     項目の外へ出てそこでリストが終わり、続く項目は別のリストとして始まる — 移行手順が
-    それが属する破壊的変更から切り離されて描かれていた (#446)。
-
-    1 行だけの本文は `- 本文` のままで、出力は 1 文字も変わらない。
+    それが属する破壊的変更から切り離されて描かれていた (#446)。`<details>` の前後と
+    中身の間の空行も要る — GitHub は空行で区切らないと、HTML の塊の中の Markdown を描かない。
     """
-    first, *rest = entry.split("\n")
-    # 空行は空行のまま。桁を足すと末尾に空白が残る
-    return "\n".join([f"- {first}", *(f"  {line}" if line.strip() else "" for line in rest)])
+    summary = summary_of(entry)
+    folded = summary != entry.strip()
+    first, *rest = (summary if folded else entry).split("\n")
+    item = [f"- {first}", *(indented("\n".join(rest)) if rest else [])]
+    if not folded:
+        return "\n".join(item)
+    return "\n".join([
+        *item,
+        f"  <details><summary>{DETAILS_SUMMARY}</summary>",
+        "",
+        *indented(entry),
+        "",
+        "  </details>",
+    ])
 
 
 def merged_pulls(since: str | None) -> list[tuple[int, list[str]]]:
@@ -249,21 +313,34 @@ def pictures(since: str | None, fetch=None) -> str:
     """
     fetch = fetch or fetch_pull
     lines: list[str] = []
+    count = 0
     for number, files in merged_pulls(since):
         if not drawing_files(files):
             continue
         pull = fetch(number)
         if pull is None:
+            count += 1
             lines += [f"### #{number}", "", "PR を読めなかった。絵は PR の本文を開いて見る。", ""]
             continue
         if ESCAPE_LABEL in {label.get("name") for label in pull.get("labels") or []}:
             continue
+        count += 1
         lines += [f"### [#{number} {pull.get('title', '')}]({pull.get('url', '')})", ""]
         lines += pictures_of(pull.get("body", "")) or ["本文に絵が見つからない。"]
         lines.append("")
     if not lines:
         return ""
-    return "\n".join([PICTURE_HEADING, "", *lines]).strip() + "\n"
+    # 見出しと本数だけを見せ、PR ごとの見出しと絵は畳む (#2766)。読む側 (picture_references) は
+    # 節の見出しから次の `## ` までを見るので、畳んでも同じ URL を拾う
+    return "\n".join([
+        PICTURE_HEADING, "",
+        f"描画が変わった PR が {count} 本ある。",
+        "",
+        f"<details><summary>{PICTURE_DETAILS_SUMMARY}</summary>",
+        "",
+        *lines,
+        "</details>",
+    ]).strip() + "\n"
 
 
 class PictureReference(NamedTuple):

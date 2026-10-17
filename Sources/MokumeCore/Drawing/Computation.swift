@@ -58,7 +58,9 @@ import MokumeDiagnostics
     ) throws(RenderFailure) {
         try self.init(
             name: name, url: url, body: body, values: values,
-            library: gpu.shaders.makeComputeLibrary(named: name, body: body, values: values),
+            library: gpu.shaders.makeComputeLibrary(
+                named: name, body: body, bodyName: ShaderSource.bodyName(name, url: url),
+                values: values),
             gpu: gpu, pipeline: pipeline)
     }
 
@@ -105,7 +107,8 @@ import MokumeDiagnostics
         box.reload(
             inBackground: gpu.shaderRebuildsRunInBackground,
             prepare: { (body: String) throws(RenderFailure) -> BuildJob<any MTLComputePipelineState> in
-                let library = try gpu.shaders.computeLibraryJob(named: name, body: body, values: values)
+                let library = try gpu.shaders.computeLibraryJob(
+                    named: name, body: body, bodyName: box.bodyName, values: values)
                 let state = pipeline.stateJob(functionName: name, label: "mokume.computation.\(name)")
                 return BuildJob(
                     now: { () throws(RenderFailure) in try state.makeNow(library: library.runNow()) },

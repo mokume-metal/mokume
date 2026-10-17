@@ -20,10 +20,17 @@ enum StartupReadsReport {
     }
 
     /// 基準を決めたものの言い方。
+    ///
+    /// **`MOKUME_WORK_DIR` が無いときは「それぞれが立った場所」と言い、スケッチの場所とは
+    /// 言い切らない** (#2487)。この 1 行は `watch`・窓口・`doctor` が同じ言葉で名乗って照らし
+    /// 合わせるためのもの (#380) で、`watch` の場所はスケッチだが、窓口と `doctor` は在る場所
+    /// なら受けるのでスケッチでない場所でも立つ。そこで「スケッチの場所を使っている」と名乗ると、
+    /// 同じ答えの中の「スケッチの場所で立っていない」と食い違う。言葉は全員で揃えたまま、
+    /// どの立場から読んでも偽にならない言い方にする。
     static func origin(given: Bool) -> String {
         given
             ? "pointed at by \(StartupReads.workDirectory.key)"
-            : "\(StartupReads.workDirectory.key) is unset — using the sketch's own directory"
+            : "\(StartupReads.workDirectory.key) is unset — using the directory it was started for"
     }
 
     /// 一覧そのもの。`reference` の文書として配り、`doctor` が端末へも出す。

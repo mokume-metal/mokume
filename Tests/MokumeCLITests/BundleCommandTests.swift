@@ -196,6 +196,76 @@ struct BundleCommandTests {
                 == ["How to open \(name).txt", "\(name).app"].sorted())
     }
 
+    // MARK: - 名前の長さ (#2501)
+
+    /// **239 までの名前は、いままでどおり `--out` の直下に包みと紙ができる** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
+    /// 紙は `write(to:atomically: true)` で書くので、途中の一時ファイルの名前で上限が下がるなら
+    /// ここが赤くなる — 計算ではなく、紙を実際に書いて確かめる。名乗りの段を通して組み、
+    /// 線の内側であることも見る。`が` × 119 は、ファイルシステムへ渡る形 (か + 濁点) で 238。
+    @Test(
+        "239 までの名前は、--out の直下に包みと開き方の紙ができる (紙を実際に書く)",
+        arguments: [
+            RepeatedName("a", 239), RepeatedName("木", 239), RepeatedName("😀", 119, unitsEach: 2),
+            RepeatedName("\u{304C}", 119, unitsEach: 2),
+        ])
+    func aNameUpToTheLimitLandsDirectlyInTheOutput(given: RepeatedName) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let named = try AppIdentity.make(
+            from: AppIdentity.Wire(
+                name: given.name, identifier: "org.example.bund", version: "0.1.0"),
+            path: root.appendingPathComponent(AppIdentity.fileName).path)
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out)
+        let note = try BundleCommand.writeOpeningNote(for: named, beside: app)
+
+        #expect(FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Info.plist").path))
+        #expect(try String(contentsOf: note, encoding: .utf8) == BundleCommand.openingNote(for: named))
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: out.path).sorted()
+                == ["How to open \(given.name).txt", "\(given.name).app"].sorted())
+    }
+
+    /// 裏側。**線はちょうど「紙が書けなくなる長さ」の始まりにある** — 239 を越える名前は、検めが
+    /// 無くても `.app` までは作れて紙で落ちる (直す前に、ビルドと署名の後で起きていたこと)。
+    /// だから越える名前を断っても、成功していた名前は 1 つも失わない。名乗りを通らずに組んだ
+    /// `AppIdentity` で、実際のファイルシステムに書いて確かめる。
+    @Test(
+        "239 を越える名前は、検めが無ければ .app はできても紙が書けない",
+        arguments: [
+            RepeatedName("a", 240), RepeatedName("木", 240), RepeatedName("😀", 120, unitsEach: 2),
+            RepeatedName("\u{304C}", 120, unitsEach: 2),
+        ])
+    func aNameBeyondTheLimitCannotHaveItsNote(given: RepeatedName) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let unchecked = AppIdentity(
+            name: given.name, identifier: "org.example.bund", version: "0.1.0")
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: unchecked, minimumSystemVersion: "26.0", into: out)
+        #expect(throws: CommandFailure.self, "\(given.testDescription) の紙が書けた") {
+            try BundleCommand.writeOpeningNote(for: unchecked, beside: app)
+        }
+    }
+
+    /// 上限 (239) は紙の名前から決まる。**紙の名前を変えたら、上限も合わせて動かす** — 動かさないと
+    /// 紙が書けない名前を通すか、書ける名前を断る。ここがその食い違いで赤くなる。
+    @Test("上限ちょうどの名前で、開き方の紙の名前がちょうどファイル名の上限になる")
+    func theLimitIsWhereTheNoteFillsAFileName() {
+        let identity = AppIdentity(
+            name: String(repeating: "a", count: AppIdentity.maximumNameLength),
+            identifier: "org.example.bund", version: "0.1.0")
+        #expect(
+            AppIdentity.fileNameLength(of: BundleCommand.noteFileName(for: identity))
+                == AppIdentity.fileNameLimit)
+    }
+
     @Test("宣言された包みが入っていなければ止まる")
     func aMissingDeclaredBundleStops() throws {
         let root = try makeWorkspace()
@@ -328,6 +398,23 @@ struct BundleCommandTests {
         #expect(
             readme.contains("`\(fileName)`"),
             "README が開き方の紙を `\(fileName)` と書いていない (実際に作る名前と食い違っている)")
+    }
+
+    /// README は `name` の長さの上限も利用者に約束している (#2501)。**数は実装の上限から引く** —
+    /// 紙の名前と同じく、写しを持つと上限を動かした日に README だけが古くなる。
+    @Test("README が書く name の長さの上限は、実際の上限と同じ")
+    func theReadmeStatesTheNameLimitTheWayItIsChecked() throws {
+        let readme = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // MokumeCLITests
+                .deletingLastPathComponent()  // Tests
+                .deletingLastPathComponent()  // リポジトリ直下
+                .appendingPathComponent("README.md"),
+            encoding: .utf8)
+        let phrase = "長さは \(AppIdentity.maximumNameLength) まで"
+        #expect(
+            readme.contains(phrase),
+            "README が name の長さの上限を「\(phrase)」と書いていない (実際の上限と食い違っている)")
     }
 
     /// 手順を報せに書くと、読んだ送り手が伝え直すことになる。名指しなら物が動く。
@@ -674,6 +761,34 @@ struct BundleCommandTests {
                     atPath: root.appendingPathComponent(BundleCommand.defaultOutputDirectory).path),
                 "\(name) で bundle/ を作った")
             #expect(FileManager.default.fileExists(atPath: keep.path), "\(name) で隣の victim.app を消した")
+        }
+    }
+
+    /// **name がファイル名に収まらない長さなら、組み立ての前に止まる** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
+    /// 直す前は release のビルドと署名の後に紙が書けずに止まり、署名済みの `.app` が `bundle/` に
+    /// 残っていた。中身の無い `Package.swift` なので、名乗りの段を越えていれば `dump-package` で
+    /// 別の失敗になる (上の `/` の検査と同じ形)。
+    @Test("name がファイル名に収まらない長さなら、ビルドへ進まずに止まり、bundle/ を作らない")
+    func bundlingStopsBeforeBuildingWithATooLongName() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// 中身の無い宣言\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let identityFile = root.appendingPathComponent(AppIdentity.fileName)
+
+        for given in [RepeatedName("a", 240), RepeatedName("木", 240), RepeatedName("a", 245)] {
+            try #"{"name": "\#(given.name)", "identifier": "org.example.bund", "version": "0.1.0"}"#
+                .write(to: identityFile, atomically: true, encoding: .utf8)
+            #expect(
+                throws: CommandFailure.identityNameTooLong(
+                    path: identityFile.path, name: given.name, length: given.units)
+            ) {
+                try BundleCommand.run([root.path])
+            }
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: root.appendingPathComponent(BundleCommand.defaultOutputDirectory).path),
+                "\(given.testDescription) で bundle/ を作った")
         }
     }
 
