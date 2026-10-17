@@ -142,9 +142,9 @@ import MokumeDiagnostics
     var spareEncodedStorage: EncodedImage?
     /// 同期で読む ``encodeForDisplay(scale:)`` が出力段を通した絵の置き場 ([#1752])。
     ///
-    /// **出口へ渡す ``encodedStorage`` とは別に持つ。** あちらは次のフレームの頭まで出口へ
-    /// 渡すのを控えている (#927) ので、合間の同期の読み出しが同じ 1 枚へ組むと、控えの中身が
-    /// 書き換わる。頼まれてはじめて作り、以後は使い回す。
+    /// **出口へ渡す ``encodedStorage``・``spareEncodedStorage`` とは別に持つ。** あちらは出口へ渡すのを
+    /// 1〜2 フレーム控えている (#927・持ち越し #2743) ので、合間の同期の読み出しが同じ置き場へ組むと、
+    /// 控えの中身が書き換わる。頼まれてはじめて作り、以後は使い回す。
     ///
     /// [#1752]: https://github.com/mokume-metal/mokume/issues/1752
     var displayStorage: EncodedImage?
