@@ -753,6 +753,15 @@ package protocol NotRunningFailure: Error {
     static func notRunning(call: String) -> Self
 }
 
+extension NotRunningFailure {
+    /// 走っている実行へ足して使うものを作る口 (音・通信) の `notRunning(call:)` の文面
+    /// (``OutsideRun/notAttachedNotice(_:)``)。外のモジュールの型 (`AudioFailure` など) が `description` に使う
+    /// ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。
+    package nonisolated static func notAttachedNotice(_ call: String) -> String {
+        OutsideRun.notAttachedNotice(call)
+    }
+}
+
 extension RenderFailure: NotRunningFailure {}
 extension ImageFailure: NotRunningFailure {}
 extension ShaderFailure: NotRunningFailure {}

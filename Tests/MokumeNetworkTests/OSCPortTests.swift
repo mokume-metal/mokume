@@ -471,10 +471,15 @@ struct OSCPortTests {
         #expect(throws: OSCFailure.invalidHost(" ")) {
             try sketch.createOSC(listen: 9000, send: (" ", 7000))
         }
-        // 両端は通る (走っていないスケッチなので、ポートは開かない)
-        let edge = try sketch.createOSC(listen: 65535, send: ("127.0.0.1", 1))
-        #expect(edge.port == 65535)
-        #expect(edge.state == .unavailable)
+        // 両端は値の検めを通る。走っていないスケッチなので、その後ポートを開く前に断る (#2740)
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(listen:send:)")) {
+                try sketch.createOSC(listen: 65535, send: ("127.0.0.1", 1))
+            }
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(listen:send:)")) {
+                try sketch.createOSC(listen: 1, send: ("127.0.0.1", 65535))
+            }
+        }
     }
 
     // MARK: - 送れないとき
