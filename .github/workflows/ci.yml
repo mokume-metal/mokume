@@ -85,10 +85,6 @@ jobs:
   # ので、build の段が無ければ最初の段が swift build を自分で走らせる (約 1.5 分。2 段目以降は
   # 何もしない)。これらは render が見ない検査で、合流して初めて赤になる組み合わせ (片方の PR が
   # API を改名し、もう片方が旧名の例を足す) を拾うのは merge queue の役目である。
-  #
-  # merge_group は action の欄を持たないので、event_name の比較で先に短絡させる。素直に
-  # 並べると merge_group では null と文字列を突き合わせ、可否が式言語の型強制の解釈に乗る
-  # (外れたときの姿は「merge queue で ci-check が黙って走らない」)。
   ci-check:
     runs-on: macos-26
     steps:

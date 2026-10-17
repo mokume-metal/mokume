@@ -6,9 +6,15 @@
 #
 #   RESULTS=<toJSON(needs)> EVENT_NAME=<github.event_name> bash scripts/ci-gate.sh
 #
-# ## needs の failure と cancelled は赤
+# ## 赤にするもの
 #
-# ## pull_request の run の skipped も赤 (#2690・#2718)
+# - needs の failure と cancelled (どの event でも)
+# - pull_request の run の skipped (#2690・#2718。下の段落)
+# - EVENT_NAME が無い・知らない event (下の段落の最後)
+#
+# merge_group では skipped を通す。いまは merge_group で skipped になる段が無い。
+#
+# ## pull_request の run の skipped を赤にする理由 (#2690・#2718)
 #
 # ci.yml は本文・タイトル・base の編集 (edited) では起きない (#2718)。pull_request の run はどれも
 # コードを走らせる run (opened・synchronize・reopened) で、段を走らせる 2 つ (ci-check・ci-static) は
@@ -21,8 +27,8 @@
 # 重なって ubuntu の runner の枠を削り、待った末の赤は、検査を打ち直して緑にしても必須を塞ぎ続けた
 # (#2717・#2727)。編集で run を立てないことで、待つ理由ごと消した。
 #
-# merge_group は failure と cancelled だけを見る (いまは skipped になる段が無い)。EVENT_NAME が
-# 無い・知らない event は赤にする — 開く側に倒れると、渡し忘れひとつで素通しに戻る。
+# EVENT_NAME が無い・知らない event を赤にするのは、開く側に倒れると、渡し忘れひとつで素通しに
+# 戻るためである。
 #
 # ## 代償: PR の時点の ci-gate は、その SHA を最後に走らせた run の結論である (#2718)
 #
@@ -37,8 +43,8 @@
 #
 # ## 必須の判定が読む check run (#2577)
 #
-# **必須チェックの規則の置き場はここ 1 か所である** (ci.yml・stall-watch.sh・pr-gate.yml などは
-# ここを指す)。観測からの推定で、GitHub の文書では確かめていない:
+# **必須チェックの規則の置き場はここ 1 か所である** (ci.yml・stall-act.sh・stall-watch.sh・
+# pr-gate.yml はここを指す)。観測からの推定で、GitHub の文書では確かめていない:
 #
 # > 必須の判定は、**ワークフローごとに、作成順で最新の check suite (run) に載った、その名前の
 # > check run** を読む。古い suite の赤・cancelled は読まない。同じ run の打ち直しは同じ suite に

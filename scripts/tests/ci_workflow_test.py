@@ -13,7 +13,9 @@ release_workflow_test.py)。ここで固定するのは次の 2 つ:
   2. ci-gate (scripts/ci-gate.sh) は needs の failure と cancelled を赤にし、pull_request の run の
      skipped も素通しにせず赤にする (#2690 の穴)。同じ head SHA の検査の結論を待って読む形
      (#2690) には戻さない — 本文を編集するたびに待つ ci-gate が重なって runner の枠を削った
-     (#2718)。gh は PATH の先の代役で、呼ばれたら記録して落ちる (API を 1 度も呼ばない)
+     (#2718)。gh は PATH の先の代役で、呼ばれたら記録して落ちる (API を 1 度も呼ばない)。
+     stall-watch.sh が PR の rollup から名前で引く前提として、ci-check・ci-static という job 名は
+     ほかのワークフローに無い
 
 **段の振り分け (#2612)。** CI は `make ci-check` の段を、macOS の ci-check と ubuntu の ci-static に
 分けて走らせる (どちらも `make ci-check` を呼び、`CI_CHECK_HOST` で自分の段を選ぶ)。手元の
@@ -152,6 +154,24 @@ class CiWorkflowTest(unittest.TestCase):
         self.assertRegex(gate, r"(?m)^          sparse-checkout: scripts/ci-gate\.sh\s*$")
         # 同じ SHA の検査の結論を待って読む形 (#2690) は外した (#2718)。token を渡すと戻せてしまう
         self.assertNotIn("GH_TOKEN", gate)
+
+    def test_段を走らせる_job_の名前はほかのワークフローに無い(self):
+        # scripts/stall-watch.sh (gate_state・normalize_checks) は PR の rollup から、名前だけで ci-check・
+        # ci-static の最新を選ぶ。job に name: があると rollup の名前が job のキーとずれ、同じ名前の job が
+        # ほかのワークフローにあると、その結論が masked などの判定に混ざる
+        names = workflow.needs(self.jobs["ci-gate"])
+        for name in names:
+            with self.subTest(job=name):
+                self.assertNotRegex(self.jobs[name], r"(?m)^    name:")
+        for path in sorted(CI.parent.glob("*.yml")):
+            if path == CI:
+                continue
+            _, jobs = workflow.split(path.read_text(encoding="utf-8"))
+            with self.subTest(workflow=path.name):
+                self.assertEqual(set(jobs) & names, set())
+                for body in jobs.values():
+                    m = re.search(r"(?m)^    name: *['\"]?([^'\"\n]+?)['\"]?\s*$", body)
+                    self.assertNotIn(m.group(1) if m else None, names)
 
     def test_ci_static_は_ubuntu_で_make_ci_check_を呼ぶだけ(self):
         body = self.jobs["ci-static"]

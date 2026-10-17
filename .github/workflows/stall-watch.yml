@@ -1,6 +1,7 @@
 name: Stall watch
 
-# 止まった PR を見つけて、scripts/stall-watch.sh 冒頭の読み分け表の分類を名乗る (#961)。
+# 止まった PR を見つけて、scripts/stall-watch.sh 冒頭の読み分け表が定める対処を
+# 打つ (#961)。
 #
 # 表は PR が止まるたびに 1 行ずつ増えてきたが、読むのは人間とエージェントの目だけで、
 # 気付く経路が「誰かがたまたま見る」しか無かった (#840 は 2 時間 47 分・#690 は 45 分
@@ -12,13 +13,17 @@ name: Stall watch
 # 捕まえられない。時計を持つ機構が要る。
 #
 # ロジックを YAML に埋めないのは単体テストで固定できないため (#66 / triage.sh と同じ
-# 理由)。判定は scripts/stall-watch.sh、検査は scripts/tests/stall_watch_test.py。
+# 理由)。判定は scripts/stall-watch.sh、対処は scripts/stall-act.sh、検査は
+# scripts/tests/stall_watch_test.py。
 #
-# **名乗るだけで、何も打たない** (#2734)。かつては対処の step (scripts/stall-act.sh) が古い
-# 失敗ジョブを rerun していたが、必須は作成順で最新の check suite を読むので (scripts/ci-gate.sh
-# 冒頭の「必須の判定が読む check run」・#2577)、古い suite の赤は必須を塞がず、打ち直しは
-# macOS の枠を使うだけだった。打つ step と actions: write を外した。auto-merge の掛け直しも
-# 当番の権限では通らないので外してある (#2614)。どちらも名乗りの行を読んだ人が打つ。
+# **判定と対処をスクリプトごと分けてある。** 手元で様子を見るために判定を打っただけで
+# auto-merge が掛かってしまうのを防ぐためで、report-ruleset-drift.sh を
+# check-rulesets.sh から分けたのと同じ理由である。
+#
+# **対処は判定の終了コードに関わらず打つ。** ruleset-drift.yml が発信を
+# `if: steps.check.outputs.status != '0'` で絞っているのとはここが違う — 終了コードが
+# 表すのは「人手が要る名乗りが猶予を超えたか」であって、機械が打てる行があるかでは
+# ないからである。打つ行があるかは stall-act.sh が出力を読んで決める。
 #
 # **起票はしない。** publication.yml と同じ形で、赤くするところまでに留める
 # (ADR-0008 決定 5 の段 1)。赤を見落とす事象が実際に起きたら、そのとき
@@ -46,20 +51,39 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
-      # PR と run を読むだけ。書き込みの権限は持たない — 打つ step を外した (#2734)
+      # PR を読むだけ。auto-merge の掛け直しはやめた — 掛けるには contents: write が要り、
+      # 当番に書き込みを渡すかは人の判断なので名乗るだけにした (#2614・scripts/stall-act.sh 冒頭)
       pull-requests: read
-      actions: read # 専用機の render の run と job・pr-gate の run と job を読む
+      actions: write # 判定を固定している古い失敗ジョブの rerun
     steps:
       - uses: actions/checkout@v7
 
       - name: 止まった PR を判定する
+        id: watch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 終了コードは「人手が要る名乗りが猶予を超えて続いているか」(scripts/stall-watch.sh の冒頭)
-          if ! bash scripts/stall-watch.sh; then
-            echo "人手が要る詰まりが猶予を超えて続いている (分類と対処は上の行と、scripts/stall-watch.sh 冒頭の読み分け表)" >&2
+          # **標準出力は機械が読む契約なので、stderr を混ぜない** (ruleset-drift.yml が
+          # 2>&1 | tee を使っているのは、あちらの出力が人向けのログだからである)
+          set +e
+          bash scripts/stall-watch.sh > stall.log
+          status=$?
+          set -e
+          cat stall.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: 表が定める対処を打つ
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/stall-act.sh stall.log
+
+      - name: 名乗りの結果
+        env:
+          STATUS: ${{ steps.watch.outputs.status }}
+        run: |
+          if [ "$STATUS" != "0" ]; then
+            echo "人手が要る詰まりが猶予を超えて続いている (分類と対処は上のログ)" >&2
             exit 1
           fi
           # 猶予の内の名乗りと、猶予に数えない unreadable は残りうる
-          echo "ok: 猶予を超えた詰まりは無い (猶予の内の名乗りが出ていれば上の行)"
+          echo "ok: 猶予を超えた詰まりは無い (機械が打てる分は打ってある。猶予の内の名乗りが出ていれば上のログ)"
