@@ -261,14 +261,14 @@ enum NewCommand {
     static let unusableModules: Set<String> = [
         // mokume の library product が辿るターゲット
         "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
-        "MokumeDiagnostics", "MokumeMacros",
+        "MokumeGamepad", "MokumeDiagnostics", "MokumeMacros",
         // ひな形が import するモジュールと標準ライブラリ
         "Foundation", "Swift",
         // ライブラリのソースが import する SDK のモジュール
         "simd", "Metal", "Synchronization", "AppKit", "Darwin", "QuartzCore", "CoreGraphics",
         "AVFAudio", "Observation", "SwiftUI", "Accelerate", "AVFoundation", "Network", "CoreText",
         "ImageIO", "IOSurface", "CoreMedia", "CoreAudio", "VideoToolbox", "UniformTypeIdentifiers",
-        "ModelIO", "IOKit", "CoreVideo",
+        "ModelIO", "IOKit", "CoreVideo", "GameController",
         // ライブラリのソースが import する swift-syntax のモジュール
         "SwiftSyntax", "SwiftSyntaxMacros", "SwiftCompilerPlugin", "SwiftDiagnostics",
     ]
