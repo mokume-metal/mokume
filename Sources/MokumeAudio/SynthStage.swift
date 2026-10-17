@@ -92,11 +92,18 @@ final class SynthStage: Inlet {
 
     /// `sketch` のステージ。まだ無ければ作って、走っているスケッチへ足す。
     ///
-    /// - Parameter flow: 鳴らす流れを差し替える (検査)。最初に作るときだけ効く。
+    /// 足せない所 (`setup()`・`draw()`・入力のコールバックの外) なら、`call` の名前で 1 度だけ警告し、
+    /// 足されていない (鳴らない) ステージを返す ([#2740])。
+    ///
+    /// - Parameters:
+    ///   - flow: 鳴らす流れを差し替える (検査)。最初に作るときだけ効く。
+    ///   - call: 警告に載せる作る口の名前。呼ぶ側の `#function` が入る (`"createSinOsc()"` など)。
+    ///
+    /// [#2740]: https://github.com/mokume-metal/mokume/issues/2740
     static func stage(
         for sketch: any Sketch, flow: SoundFlow? = nil,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        warn: @escaping (String) -> Void = Diagnostics.warn
+        warn: @escaping (String) -> Void = Diagnostics.warn, calledAs call: String = #function
     ) -> SynthStage {
         let key = ObjectIdentifier(sketch)
         if let existing = stages[key]?.stage, !existing.isClosed, existing.owner === sketch {
@@ -105,8 +112,10 @@ final class SynthStage: Inlet {
         stages = stages.filter { $0.value.stage != nil }
         let stage = SynthStage(owner: sketch, flow: flow, now: now, warn: warn)
         stages[key] = Weak(stage: stage)
-        // 走っていなければ足せない (足す口が診断に出す)。次に呼ばれたとき作り直す
-        if !sketch.attach(stage) { stages[key] = nil }
+        // 足せない所なら、作る口の名前で 1 度だけ警告する (`attach()` を名乗らない)。次に呼ばれたとき作り直す
+        if !sketch.attach(stage, calledAs: call, returning: "a sound that is never heard") {
+            stages[key] = nil
+        }
         return stage
     }
 

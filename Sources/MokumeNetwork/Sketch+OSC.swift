@@ -60,12 +60,13 @@ extension Sketch {
     /// - Parameters:
     ///   - port: 受けるポート (1〜65535)。
     ///   - destination: 送り先のホストとポート。省けば送らない。
-    /// - Throws: ポートの番号が 1〜65535 に入っていない・送り先のホストが空のとき。
+    /// - Throws: ポートの番号が 1〜65535 に入っていない・送り先のホストが空のとき。使える値を
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
+    ///   ポートを開く前に ``OSCFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createOSC(
         listen port: Int, send destination: (host: String, port: Int)? = nil
     ) throws(OSCFailure) -> OSCPort {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        var outbound: DatagramSender?
         if let destination {
             guard Endpoint.usablePorts.contains(destination.port) else {
                 throw .invalidPort(destination.port)
@@ -73,8 +74,10 @@ extension Sketch {
             guard Endpoint.isUsable(host: destination.host) else {
                 throw .invalidHost(destination.host)
             }
-            outbound = DatagramSender(
-                host: destination.host, port: destination.port, warn: { Diagnostics.warn($0) })
+        }
+        try requireAttachable(OSCFailure.self, calledAs: #function)
+        let outbound = destination.map {
+            DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
         }
         let osc = OSCPort(
             port: port, name: "osc :\(port)",
@@ -110,6 +113,9 @@ extension Sketch {
     ///
     /// 送り先は持たない。``OSCPort/send(_:_:)`` を呼んでも何も出ない (1 度だけ知らせる)。
     ///
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    ///
     /// - Parameter messages: フレームごとに届くメッセージ。何も届かないフレームは空の並びにする。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
@@ -117,7 +123,7 @@ extension Sketch {
         let osc = OSCPort(
             port: nil, name: "osc (recorded)", source: RecordedSource(batches: messages),
             outbound: nil, owner: self)
-        attach(osc)
+        attach(osc, calledAs: #function, returning: "a port that never receives anything")
         return osc
     }
 }
