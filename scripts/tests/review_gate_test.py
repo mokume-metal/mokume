@@ -434,6 +434,109 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assert_blocked(proc, "対応表が無い")
 
+    # --- 3'. コードブロックの中の # の行は見出しではない (#2768) ------------
+
+    def fenced_gate(self, fence_open, fence_close, inner="## 破壊的変更", closes=12):
+        """「確認方法」節の途中にコードブロックを置き、その後ろに対応表を書いた本文を通す。
+
+        #2767 で踏んだ形そのもの。リリースノートの見本 (中に `## 破壊的変更`) を載せた
+        ブロックの後ろに `### Closes #N` の対応表が来る。GitHub の描画では対応表は
+        節の中にあるが、フェンスを見ない切り出しはブロックの中の見出しで節を閉じていた。
+        """
+        body = (
+            f"Closes #{closes}\n\n## 確認方法\n\nリリースノートの見本:\n\n"
+            f"{fence_open}\n# 見本の題\n{inner}\n{fence_close}\n\n"
+            f"### Closes #{closes}\n\n| 完了条件 | 現況 | 確かめたこと |\n| --- | --- | --- |\n"
+            "| 1. …… | まだ有効 | make ci-check が緑 |\n"
+        )
+        return self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+
+    def test_a_heading_inside_a_backtick_fence_does_not_end_the_section(self):
+        proc = self.fenced_gate("```markdown", "```")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_heading_inside_a_tilde_fence_does_not_end_the_section(self):
+        proc = self.fenced_gate("~~~markdown", "~~~")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_longer_fence_is_closed_only_by_an_equal_or_longer_one(self):
+        # 4 本のフェンスの中の 3 本は閉じではない。そこで閉じたと読むと、続く見出しで節が切れる
+        body = (
+            "Closes #12\n\n## 確認方法\n\n````markdown\n```\n## 破壊的変更\n```\n"
+            "## 別の見出し\n````\n\n### Closes #12\n\n対応表\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_fence_of_the_other_kind_inside_a_fence_is_content(self):
+        # ``` の中の ~~~ は閉じではなく、~~~ の中の ``` も閉じではない
+        for outer, inner in (("```", "~~~"), ("~~~", "```")):
+            with self.subTest(outer=outer):
+                proc = self.fenced_gate(outer, outer, inner=f"{inner}\n## 破壊的変更\n{inner}")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_closing_fence_with_text_after_it_does_not_close(self):
+        # 閉じのフェンスに文字は続けられない。```ruby は閉じではなく、中身の一部
+        proc = self.fenced_gate("```", "```ruby\n## まだブロックの中\n```")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_an_unclosed_fence_runs_to_the_end_of_the_body(self):
+        # 閉じ忘れたフェンスは本文の終わりまで続く (GitHub の描画と同じ)。その後ろの
+        # 対応表はブロックの中なので、節の中身としては数えるが、後ろの見出しでは切れない
+        body = (
+            "Closes #12\n\n## 確認方法\n\n```markdown\n## 破壊的変更\n\n### Closes #12\n\n対応表\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_heading_after_a_closed_fence_ends_the_section_again(self):
+        # フェンスを閉じたあとの見出しは、これまでどおり節を閉じる
+        body = (
+            "Closes #12\n\n## 確認方法\n\n```\n## 破壊的変更\n```\n\n"
+            "## 補足\n\n### Closes #12\n\n節の外\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assert_blocked(proc, "対応表が無い")
+
+    def test_an_indented_fence_marker_of_four_columns_is_not_a_fence(self):
+        # 4 桁以上の字下げは字下げコードブロックで、フェンスの開きではない。
+        # 開きと読むと、後ろの本物の見出しがブロックの中に隠れて節が閉じない
+        body = (
+            "Closes #12\n\n## 確認方法\n\n    ```\n\n## 補足\n\n"
+            "### Closes #12\n\n節の外\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assert_blocked(proc, "対応表が無い")
+
+    def test_a_number_only_inside_a_fence_still_counts_as_in_the_section(self):
+        # 節の中にあるブロックの中身は、節の内容に含まれる (番号がそこにしか無くても数える)
+        body = "Closes #12\n\n## 確認方法\n\n```\n### Closes #12\n```\n"
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_fence_before_the_section_does_not_swallow_it(self):
+        # 節の手前の閉じたブロックは、後ろの「確認方法」の見出しを隠さない。
+        # ブロックの中の「確認方法」の見出しは節の始まりではない
+        body = (
+            "Closes #12\n\n```\n## 確認方法\n### Closes #12\n```\n\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assert_blocked(proc, "対応表が無い")
+
+    def test_a_refute_heading_only_inside_a_fence_is_not_a_section(self):
+        # ブロックの中の「## 反証」は見出しではない。節そのものが無いと名乗って差し戻す
+        # (「空」と名乗ると、書き直す人は無い節を探すことになる)
+        body = "Closes #12\n\n```markdown\n## 反証\n\n指摘と応え\n```\n"
+        proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
+        self.assert_blocked(proc, "「反証」の節が無い")
+
+    def test_a_fence_in_the_refute_section_does_not_cut_it(self):
+        # 反証の節にコードブロックを載せ、その後ろに指摘を書いた形 (反証でも同じ切り出し
+        # を通ることの記録。変更前から緑で、見張るのはこの形が将来壊れないことだけ)
+        body = "Closes #12\n\n## 反証\n\n```\n## 見本\n```\n\n| 指摘 | 根拠 | 応え |\n| --- | --- | --- |\n"
+        proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
     # --- 4. Bug を閉じる PR の反証 (ADR-0040 決定 4 / #1662) -----------------
 
     def test_bug_with_a_refute_section_passes(self):
