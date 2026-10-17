@@ -94,6 +94,17 @@ struct NumberSurfaceTests {
         /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
         static func entrance(at local: Float) -> Float { smoothstep(2.4, 5.4, local) }
 
+        /// [#2416] — 2 点の距離と、負の時刻でも巡る位相。
+        ///
+        /// [#2416]: https://github.com/mokume-metal/mokume/issues/2416
+        static func reach(from start: (Float, Float), to stop: (Float, Float)) -> Float {
+            dist(start.0, start.1, stop.0, stop.1)
+        }
+
+        static func phase(at time: Float, period: Float) -> Float {
+            fract(time / period)
+        }
+
         /// [#1283] の `Tempo` が書いていた `Ease.ramp(beat, from, to)` — 窓を 0…1 へ写して締める。
         ///
         /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
@@ -115,6 +126,154 @@ struct NumberSurfaceTests {
         #expect(OutsideASketch.entrance(at: 9) == 1)
         #expect(OutsideASketch.ramp(6, from: 4, to: 8) == 0.5)
         #expect(OutsideASketch.ramp(10, from: 4, to: 8) == 1)
+    }
+
+    // MARK: - 距離・二乗・端数・剰余
+
+    @Test("距離・長さ・2 乗が、手本と同じ値になる")
+    func distanceMagnitudeAndSquare() {
+        #expect(dist(0, 0, 3, 4) == 5)
+        #expect(dist(1, 1, 4, 5) == 5)
+        #expect(dist(3, 4, 0, 0) == 5)  // 向きを入れ替えても同じ
+        #expect(dist(2, 2, 2, 2) == 0)
+        #expect(mag(3, 4) == 5)
+        #expect(mag(-3, -4) == 5)
+        #expect(mag(0, 0) == 0)
+        #expect(sq(-3) == 9)
+        #expect(sq(1.5) == 2.25)
+        #expect(sq(0) == 0)
+    }
+
+    @Test("端数と剰余は、負の値も 0 以上に畳む")
+    func fractionAndRemainderFoldNegatives() {
+        #expect(fract(-0.25) == 0.75)
+        #expect(fract(2.5) == 0.5)
+        #expect(fract(-2.5) == 0.5)
+        #expect(fract(3) == 0)
+        #expect(fract(-3) == 0)
+        #expect(mod(-1, 4) == 3)
+        #expect(mod(7, 4) == 3)
+        #expect(mod(8, 4) == 0)
+        #expect(mod(-8, 4) == 0)
+        #expect(mod(5.5, 2) == 1.5)
+        #expect(mod(-0.5, 2) == 1.5)
+        // 負の除数は、符号が除数に従う (結果は divisor < 結果 <= 0)
+        #expect(mod(1, -4) == -3)
+        #expect(mod(-1, -4) == -1)
+    }
+
+    /// `HueSaturationBrightness.wrapped` が #1533 で踏んだ境界。**`Float` では
+    /// `-1e-6 + 360` が 360 ちょうどに丸まる** — 足して返すと、半開区間の外の値が出て、
+    /// 1 周ぶんずれて読まれる。
+    @Test("負の小さな値の剰余は、divisor にならず 0 へ畳む")
+    func theResultNeverReachesTheDivisor() {
+        #expect(-1e-6 + Float(360) == 360)  // 前提 — 丸まる値であること
+        #expect(mod(-1e-6, 360) == 0)
+        #expect(mod(-1e-6, 360) < 360)
+        #expect(fract(-1e-10) == 0)
+        #expect(fract(-1e-10) < 1)
+        #expect(mod(1e-9, -360) == 0)  // 負の除数では、正の小さな値が反対側の端へ丸まる
+        // 区間の外へ出ないことを、境目の周りで総当たりする
+        var value: Float = -0.002
+        while value < 0.002 {
+            for divisor: Float in [1, 4, 360, -4] {
+                let folded = mod(value, divisor)
+                let inside = divisor > 0 ? (folded >= 0 && folded < divisor) : (folded <= 0 && folded > divisor)
+                #expect(inside, "mod(\(value), \(divisor)) = \(folded)")
+            }
+            let part = fract(value)
+            #expect(part >= 0 && part < 1, "fract(\(value)) = \(part)")
+            value += 0.0000731
+        }
+    }
+
+    @Test("端数と剰余は、0 の符号を持ち出さない")
+    func zeroHasNoSign() {
+        #expect(mod(-0.0, 4).sign == .plus)
+        #expect(mod(-8, 4).sign == .plus)
+        #expect(fract(-3).sign == .plus)
+    }
+
+    /// 旧い書き方 (`HueSaturationBrightness.wrapped` と `TimeAndScrub.cycle` が持っていた式) と、
+    /// 同じ値を返すこと — 置き換えても絵が変わらない。
+    @Test("自前の剰余から mod へ置き換えても、値が変わらない")
+    func theOldInlineRemaindersAgree() {
+        func oldWrapped(_ hue: Float) -> Float {
+            let remainder = hue.truncatingRemainder(dividingBy: 360)
+            let wrapped = remainder < 0 ? remainder + 360 : remainder
+            return wrapped < 360 ? wrapped : 0
+        }
+        func oldCycle(_ time: Float) -> Float {
+            let t = time.truncatingRemainder(dividingBy: 12)
+            return t < 0 ? t + 12 : t
+        }
+        let samples: [Float] = [
+            0, 1, 59.5, 60, 120, 359.999, 360, 360.5, 719, 721.25, -1, -0.5, -40, -359, -360, -361.75,
+            -1e-6, 1e-6, -1.4e-5, 123456.789, -123456.789, 12, 11.999, -12, 24.5, -0.001,
+        ]
+        for sample in samples {
+            #expect(mod(sample, 360) == oldWrapped(sample), "色相 \(sample)")
+            #expect(HueSaturationBrightness.wrapped(sample) == oldWrapped(sample), "色相 \(sample)")
+            #expect(mod(sample, 12) == oldCycle(sample), "時刻 \(sample)")
+        }
+    }
+
+    @Test("Int・Double の変数も、そのまま受ける")
+    func everyStoredWidthPasses() {
+        let whole: Int = 3
+        let half: Double = 0.5
+        #expect(dist(0, 0, whole, 4) == 5)
+        #expect(mag(whole, 4.0) == 5)
+        #expect(sq(whole) == 9)
+        #expect(sq(half) == 0.25)
+        #expect(fract(half) == 0.5)
+        #expect(fract(-half) == 0.5)
+        #expect(mod(-whole, 4) == 1)
+        #expect(mod(7.5, whole) == 1.5)
+    }
+
+    @Test("2 乗が溢れる大きさでも、潰れる小ささでも、距離は有限で返る")
+    func theDistanceSurvivesTheExtremes() {
+        // 3e19 の 2 乗は Float の上限 (3.4e38) を越える。そのまま 2 乗して開くと ∞
+        let far = dist(0, 0, 3e19, 4e19)
+        #expect(far.isFinite)
+        #expect(isNear(far / 5e19, 1, within: 1e-6))
+        #expect(isNear(mag(3e19, 4e19) / 5e19, 1, within: 1e-6))
+        // 1e-30 の 2 乗は 0 に潰れる。そのまま開くと 0
+        let near = dist(0, 0, 3e-30, 4e-30)
+        #expect(near > 0)
+        #expect(isNear(near / 5e-30, 1, within: 1e-6))
+        // 結果が Float の範囲を越えるときは ∞ (数でない値は返さない)
+        #expect(dist(-3e38, 0, 3e38, 0) == .infinity)
+        #expect(mag(3e38, 3e38) == .infinity)
+        #expect(sq(1e20) == .infinity)
+        // 境目の内側と外側が連続する
+        #expect(isNear(mag(1e18, 0) / 1e18, 1, within: 1e-6))
+        #expect(isNear(mag(1.1e18, 0) / 1.1e18, 1, within: 1e-6))
+    }
+
+    @Test("数でない値・無限・0 の除数でも、数でない値は返らない")
+    func distanceAndRemaindersNeverReturnNaN() {
+        let bad: [Float] = [.nan, .infinity, -.infinity]
+        for value in bad {
+            #expect(dist(value, 0, 3, 4) == 0)
+            #expect(dist(0, 0, 3, value) == 0)
+            #expect(mag(value, 4) == 0)
+            #expect(mag(3, value) == 0)
+            #expect(sq(value) == 0)
+            #expect(fract(value) == 0)
+            #expect(mod(value, 4) == 0)
+            #expect(mod(7, value) == 0)
+        }
+        // 0 で割った余りは定まらない。0 を返して、数でない値を作らない
+        #expect(mod(7, 0) == 0)
+        #expect(mod(-7, 0) == 0)
+    }
+
+    @Test("スケッチの外の型からも呼べる")
+    func theNewEntriesAreNotSketchMethods() {
+        #expect(OutsideASketch.reach(from: (0, 0), to: (6, 8)) == 10)
+        #expect(OutsideASketch.phase(at: -1, period: 4) == 0.75)
     }
 
     // MARK: - 値を写す
@@ -514,6 +673,41 @@ struct NumberValueWarningTests {
         #expect(NumberValues.warnings.message(for: .notANumber(.map))?.hasPrefix("map()") == true)
         #expect(NumberValues.warnings.message(for: .emptyRange(.norm))?.hasPrefix("norm()") == true)
         #expect(NumberValues.warnings.message(for: .notANumber(.norm))?.hasPrefix("norm()") == true)
+    }
+
+    /// 新しい 5 つの口も、鍵を口ごとに持つ ([#2416])。`mod` の除数 0 は幅 0 と同じ扱いで、
+    /// 数でない値の注意と別に数える。
+    ///
+    /// [#2416]: https://github.com/mokume-metal/mokume/issues/2416
+    @Test("距離・2 乗・端数・剰余の注意は、口ごとに数えられる")
+    func theRemainderVocabularyCountsItsOwnWarnings() {
+        #expect(dist(Float.nan, 0, 3, 4) == 0)
+        #expect(mag(Float.infinity, 4) == 0)
+        #expect(sq(Float.nan) == 0)
+        #expect(fract(Float.infinity) == 0)
+        #expect(mod(Float.nan, 4) == 0)
+        #expect(mod(7, 0) == 0)
+        let entries: [(entry: NumberValues.Warning.Entry, name: String)] = [
+            (.dist, "dist()"), (.mag, "mag()"), (.sq, "sq()"), (.fract, "fract()"), (.mod, "mod()"),
+        ]
+        for (entry, name) in entries {
+            #expect(NumberValues.warnings.hasWarned(.notANumber(entry)), "\(name)")
+            #expect(
+                NumberValues.warnings.message(for: .notANumber(entry))?.hasPrefix(name) == true,
+                "\(name): \(NumberValues.warnings.message(for: .notANumber(entry)) ?? "(鳴っていない)")")
+        }
+        #expect(NumberValues.warnings.hasWarned(.emptyRange(.mod)))
+        #expect(NumberValues.warnings.message(for: .emptyRange(.mod))?.hasPrefix("mod()") == true)
+    }
+
+    /// 同じ口を続けて呼んでも、注意は 1 度だけ (鳴った後は控えの文面が変わらない)。
+    @Test("同じ事情の注意は 1 度だけ言う")
+    func aWarningIsSaidOnce() {
+        #expect(mod(Float.nan, 4) == 0)
+        let first = NumberValues.warnings.message(for: .notANumber(.mod))
+        #expect(first != nil)
+        for _ in 0..<5 { #expect(mod(Float.nan, 5) == 0) }
+        #expect(NumberValues.warnings.message(for: .notANumber(.mod)) == first)
     }
 
     /// `smoothstep` の幅 0 は段という答えを持つので、`map` / `norm` と違って注意を言わない

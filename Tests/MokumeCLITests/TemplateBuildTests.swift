@@ -65,6 +65,60 @@ struct TemplateBuildTests {
         #expect(built.status == 0, "ひな形から作ったものが組み上がらない:\n\(built.output)")
     }
 
+    /// **計算の語彙が `import mokume` の 1 行だけで通る** ([#2416])。ひな形が `import Foundation`
+    /// を持たなくなったので、`pow` や `floor` を書いた人が最初に踏む場所である。
+    ///
+    /// **組み上げて見る理由。** 利用者のモジュールの中で、`mokume` だけを import したファイルを
+    /// 型検査する検査はここだけである — `make examples` が 1 本に包むファイルは、例のどれかが
+    /// 書いた `import Foundation` を全体へ持ち込むので、Darwin の再輸出が外れても組めてしまう
+    /// (`PackageStructureTests` も同じ理由で見分けられない)。
+    ///
+    /// [#2416]: https://github.com/mokume-metal/mokume/issues/2416
+    @Test("計算の関数と数の口が、import mokume だけで組み上がる")
+    func theCalculationVocabularyNeedsOnlyMokume() throws {
+        let root = try Self.generate("calc-sketch", in: SharedDebugScratch.sketches)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // ひな形の本体を、`import mokume` だけの計算の語彙の例へ差し替える。
+        // `Foundation` は書かない — 書いた時点で、この検査は何も見なくなる
+        try Self.write(
+            """
+            import mokume
+
+            @main
+            final class CalcSketch: Sketch {
+                var settings: SketchSettings { SketchSettings(width: 400, height: 300, title: "calc") }
+
+                func draw() {
+                    background(0)
+                    noStroke()
+                    // リテラルだけの `pow(2, 10)`・`exp(-1)`・`log(10)` は、Float か Double か決まらず
+                    // 組めない (`import Darwin` だけでも同じ。ここには書けない)
+                    circle(200, 150, sqrt(2))
+                    let plain = pow(2.0, 10)
+                    let level: Float = 3
+                    let r = pow(2, level)
+                    let roots: Float = sqrt(2) + exp(-1) + log(10)
+                    let steps: Float = floor(time) + ceil(0.2) + round(2.5)
+                    let big: Double = pow(2, 10)   // Double のままでも通る
+                    for y in stride(from: Float(0), to: height, by: 20) {
+                        for x in stride(from: Float(0), to: width, by: 20) {
+                            let d = dist(x, y, width / 2, height / 2)
+                            let wave = fract(d / 120 - mod(time, 3) / 3)
+                            fill(255 * pow(wave, 3))
+                            circle(x, y, 8 + sq(wave) + mag(1, 1) + (r + roots + steps + Float(big) + Float(plain)) * 0)
+                        }
+                    }
+                }
+            }
+            """,
+            to: root.appendingPathComponent("Sources/calc-sketch/CalcSketch.swift"))
+
+        let built = try BuildProcess.build(in: root, scratchPath: SharedDebugScratch.place)
+        #expect(built.killed == false, "組み上げが終わらないまま期限に達した")
+        #expect(built.status == 0, "import mokume だけでは計算の語彙が通らない:\n\(built.output)")
+    }
+
     @Test("置いた資材が、絵を探す場所へ運ばれる")
     func assetsLandWhereImagesAreLookedFor() throws {
         let root = try Self.generate("asset-sketch", in: SharedDebugScratch.sketches)
