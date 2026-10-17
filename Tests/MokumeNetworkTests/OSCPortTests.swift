@@ -22,7 +22,23 @@ nonisolated final class PortHolder: Sendable {
         let code: Int32
     }
 
-    init(port: Int, stream: Bool = false) throws {
+    /// 誰も受けない 127.0.0.1 の UDP の口を、**番号を手放さずに**作る (#2542)。
+    ///
+    /// 番号 0 で握った UDP の socket を、送り手ではない相手 (127.0.0.1:1) へ繋いでおく。繋いだ UDP の
+    /// socket は繋いだ相手以外からの datagram を受けないので、届いた datagram はどの socket にも
+    /// 当たらず、拒否 (ICMP の port unreachable) が送り手の次の送信の失敗として返る。**握っている間は、
+    /// 他のプロセスが同じ番号を bind できない** (`EADDRINUSE`)。番号を選んで手放してから狙う形は、
+    /// 手放してから狙うまでの間に他が番号を取りうる (#2359 と同じ隙間)。検査の終わりに ``release()``
+    /// で手放す。
+    static func unanswered() throws -> PortHolder {
+        try PortHolder(port: 0, stream: false, connectingAway: true)
+    }
+
+    convenience init(port: Int, stream: Bool = false) throws {
+        try self.init(port: port, stream: stream, connectingAway: false)
+    }
+
+    private init(port: Int, stream: Bool, connectingAway: Bool) throws {
         let descriptor = socket(AF_INET, stream ? SOCK_STREAM : SOCK_DGRAM, 0)
         guard descriptor >= 0 else { throw Failure(call: "socket", code: errno) }
         var address = sockaddr_in()
@@ -45,6 +61,23 @@ nonisolated final class PortHolder: Sendable {
             close(descriptor)
             throw Failure(call: "listen", code: code)
         }
+        if connectingAway {
+            var away = sockaddr_in()
+            away.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            away.sin_family = sa_family_t(AF_INET)
+            away.sin_port = in_port_t(UInt16(1).bigEndian)
+            away.sin_addr.s_addr = inet_addr("127.0.0.1")
+            let connected = withUnsafePointer(to: &away) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard connected == 0 else {
+                let code = errno
+                close(descriptor)
+                throw Failure(call: "connect", code: code)
+            }
+        }
         var actual = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         _ = withUnsafeMutablePointer(to: &actual) {
@@ -56,7 +89,22 @@ nonisolated final class PortHolder: Sendable {
         self.port = Int(UInt16(bigEndian: actual.sin_port))
     }
 
-    func release() { close(descriptor) }
+    /// 握っていた番号を手放す。
+    ///
+    /// **手放してから受け口が同じ番号を開き直すまでの間に、他のプロセスが番号を取りうる** (#2542)。
+    /// 「他が握っていれば unavailable、空けば受け始める」を確かめる検査は、この隙間そのものが目的
+    /// (空いたら受け始める) なので閉じる手が無い (#2359 の決定で残している)。取られても受け口は
+    /// unavailable のままで、検査は期限で赤くなるだけで、緑にはならない — 確かめることは変わらず、
+    /// 変わるのは揺れの確率だけである。
+    ///
+    /// 2 度目からは何もしない。検査の途中で手放す口 (受け手を同じ番号で開く前など) も、終わりの
+    /// `defer` で重ねて呼べる — 2 度閉じると、その間に同じ番号を振り直された別の descriptor を閉じうる。
+    func release() {
+        guard held.withLock({ held in defer { held = false }; return held }) else { return }
+        close(descriptor)
+    }
+
+    private let held = Mutex(true)
 }
 
 /// 知らせの行き先。どのスレッドから書かれてもよい。

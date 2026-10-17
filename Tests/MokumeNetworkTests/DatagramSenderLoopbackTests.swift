@@ -16,20 +16,38 @@ import Testing
 /// 待ちは待つ側が期限を持つ。「それ以上増えない」を見るところだけは、増えうる時間を置いてから数える。
 @Suite("本物の繋ぎで送り続ける", .serialized)
 struct DatagramSenderLoopbackTests {
-    /// 誰も受けていない 127.0.0.1 のポートの番号。
-    private func unlistenedPort() throws -> Int {
-        let holder = try PortHolder(port: 0)
-        defer { holder.release() }
-        return holder.port
-    }
+    /// 誰も受けていない 127.0.0.1 の UDP の口。**検査が手放すまで番号を握る** (``PortHolder/unanswered()``)。
+    ///
+    /// かつては番号 0 で握ってすぐ手放し、その番号を狙っていた。手放してから狙うまでの間に他の
+    /// プロセスがその番号を取ると、拒否が返らずに `refusals >= 1` が期限で落ちる (#2542・#2359 と
+    /// 同じ隙間)。握ったままなら、他は同じ番号を bind できない。
+    private func unanswered() throws -> PortHolder { try PortHolder.unanswered() }
 
     /// 送れないことの診断の数。
     private func refusals(_ told: Told) -> Int { told.count(containing: "Could not send") }
 
+    /// **握っている間は、他が同じ番号を取れない** (#2542)。隙間はめったに開かないので、握らない形へ
+    /// 戻しても下の検査は赤くならない — その代わりに、隙間が無いことをここで直に見る。
+    @Test("誰も受けない口は、握っている間、同じ番号を bind できない")
+    func theUnansweredPortCannotBeTakenWhileHeld() throws {
+        let nobody = try unanswered()
+        defer { nobody.release() }
+        do {
+            let other = try PortHolder(port: nobody.port)
+            other.release()
+            Issue.record("握っている番号 \(nobody.port) を、別の socket が bind できた")
+        } catch let failure as PortHolder.Failure {
+            #expect(failure.call == "bind")
+            #expect(failure.code == EADDRINUSE, "errno \(failure.code)")
+        }
+    }
+
     @Test("誰も受けていない宛先へ、フレームを挟んで 10 回送っても、診断は 1 行")
     func spacedSendsToNobodyAreToldOnce() async throws {
         let told = Told()
-        let sender = DatagramSender(host: "127.0.0.1", port: try unlistenedPort(), warn: told.append)
+        let nobody = try unanswered()
+        defer { nobody.release() }
+        let sender = DatagramSender(host: "127.0.0.1", port: nobody.port, warn: told.append)
         defer { sender.stop() }
 
         for index in 0..<10 {
@@ -44,7 +62,9 @@ struct DatagramSenderLoopbackTests {
     @Test("1 フレームの中で 10 回まとめて送っても、診断は 1 行で、自分で取り消した繋ぎの名乗りは混ざらない")
     func burstToNobodyIsToldOnceWithoutOwnCancellation() async throws {
         let told = Told()
-        let sender = DatagramSender(host: "127.0.0.1", port: try unlistenedPort(), warn: told.append)
+        let nobody = try unanswered()
+        defer { nobody.release() }
+        let sender = DatagramSender(host: "127.0.0.1", port: nobody.port, warn: told.append)
         defer { sender.stop() }
 
         // 拒否は最初の送信の後で届き、**次の送信**の失敗として返る。まとめて送ると、後ろの送信は
@@ -72,7 +92,9 @@ struct DatagramSenderLoopbackTests {
     @Test("OSCPort.send と UDPPort.send も、誰も受けていない宛先へ送り続けて、それぞれ 1 行")
     func portsToNobodyTellOnce() async throws {
         let told = Told()
-        let port = try unlistenedPort()
+        let nobody = try unanswered()
+        defer { nobody.release() }
+        let port = nobody.port
         let osc = OSCPort(
             port: nil, name: "osc (send only)", source: RecordedSource<OSCMessage>(batches: []),
             outbound: DatagramSender(host: "127.0.0.1", port: port, warn: told.append), owner: nil,
@@ -105,7 +127,11 @@ struct DatagramSenderLoopbackTests {
     @Test("受け手が開けば届き、届いた後で受け手が閉じれば、また 1 行だけ名乗る")
     func receiverComingAndGoing() async throws {
         let told = Told()
-        let port = try unlistenedPort()
+        // 受け手が開くまでは握る。**受け手は同じ番号で開くので、開く直前に手放す** — 手放してから
+        // 開くまでの間は、他のプロセスが番号を取りうる (``PortHolder/release()`` の説明・#2542)
+        let nobody = try unanswered()
+        defer { nobody.release() }
+        let port = nobody.port
         // 戻すまでの間は短くして、検査が待つ時間を詰める (本番の既定は 0.5 秒)
         let sender = DatagramSender(
             host: "127.0.0.1", port: port, confirmAfter: 0.1, warn: told.append)
@@ -119,6 +145,7 @@ struct DatagramSenderLoopbackTests {
         #expect(refusals(told) == 1, "診断: \(told.lines)")
 
         // 受け手が開く
+        nobody.release()
         let heard = Told()
         let source = DatagramSource<String>.text(
             port: port, host: "127.0.0.1", retryAfter: 0.05, warn: heard.append)
