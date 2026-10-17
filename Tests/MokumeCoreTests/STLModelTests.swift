@@ -952,6 +952,21 @@ struct STLModelTests {
         }
     }
 
+    /// 読み手の規則は、頭の 128 バイトをまたぐ綴り (添字 117〜127 から始まる `facet normal`) にも当たる。頭だけで決めると
+    /// 綴りが切れて規則に当たらず、元のファイルを読ませて面の無い形が返る ([#2746](https://github.com/mokume-metal/mokume/issues/2746))。
+    @Test("facet normal の綴りが頭の 128 バイトをまたぐバイナリの STL も、見出しを 0 にした写しで読む (#2746)")
+    func aSpellingAcrossTheHeadIsStillTheReadersRule() throws {
+        var data = ModelFixture.binarySTL(Self.facetNormalHeaderFacets, header: "solid part")
+        data.replaceSubrange(120..<132, with: Array("facet normal".utf8))
+        #expect(try readByModelIO(data)?.triangles == 0)
+        // 見出しを 0 にしたもの (綴りは面の中に残る) は、読み手がバイナリとして読む。同じ面になる
+        var blanked = data
+        blanked.replaceSubrange(0..<80, with: Data(count: 80))
+        let expected = try read(blanked)
+        #expect(expected.positions.count == 15)
+        #expect(try read(data).positions == expected.positions)
+    }
+
     /// 名前の添字 80〜83 に NUL や制御文字を持つ、5 面の文字の STL。名前の残りは NUL で埋める。添字 83 が NUL で添字
     /// 80〜82 に 0x20 未満の字があるので、頭はバイナリと見分けられる (`solid` で始まる切れたバイナリと区別できない)。
     static func textWithControlBytesAt80(_ tail: [UInt8]) -> Data {

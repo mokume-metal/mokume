@@ -19,6 +19,8 @@ public enum ModelFailure: Error, Equatable, Sendable {
     /// 見つかったが、その形式として読めない。OBJ なら文字 (UTF-8) として読めない、STL なら
     /// 文字の STL としてもバイナリの STL としても読めない (壊れている・途中で切れた文字の STL・空)。
     /// 途中で切れたバイナリの STL は投げず、揃っている面だけを読む (揃った面が無ければ空のモデル)。
+    /// 見出しが `solid` で始まり `facet normal` を含むバイナリの STL は、一時の置き場に写しを書けないときも、
+    /// 壊れていなくてもこの場合になる (``SketchPart/loadModel(_:normalize:)``)。
     case unreadable(path: String)
     /// 対応していない形式。説明に、読める形式の一覧が載る。
     case unsupported(path: String, extensionName: String)
