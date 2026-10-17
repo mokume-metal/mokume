@@ -6,6 +6,11 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     /// 断片が見つからない。探した場所を添える。
     case notFound(path: String, searched: [String])
     /// 断片を組み立てられない。理由はコンパイラの言葉のまま。
+    ///
+    /// **理由の行と桁は、書いた断片の中で数える** ([#2457](https://github.com/mokume-metal/mokume/issues/2457))。
+    /// 文字列から作った断片は `name:` の名前 (`shader:2:12`)、ファイルから読んだ断片はファイル名
+    /// (`waves.metal:2:12`) を名乗る。本体が前に足す宣言を指す知らせ (断片が前置きの定義を
+    /// 定義し直したときの「前の定義」など) は、本体の名前 (`mokume/Kinds.metal:29:15`) で出る。
     case notCompilable(path: String, reason: String)
     /// 渡す値が列 1 つぶんの区画に収まらない。float 換算の数と上限を添える。
     case tooManyValues(path: String, count: Int, capacity: Int)
