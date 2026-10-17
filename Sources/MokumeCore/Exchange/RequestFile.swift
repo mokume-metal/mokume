@@ -2,12 +2,49 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// 外から置かれる要求が持つもの。
 nonisolated protocol ExchangeRequest: Decodable {
     /// この要求の識別子。応答はこれを echo する。
     var id: String { get }
 }
+
+/// まだ応えていない要求 (``RequestFile/pending()``)。
+///
+/// **`id` だけ読めた要求も、応える相手として渡す** ([#2550])。要求の型として解けなくても
+/// (つまみの `values` が配列でない・入力の `events` が欠けた・観測の `scale` が文字列)、`id` を
+/// 読めれば echo する相手がいる。応えないと、書き手には「届いたが読めなかった」と「走っていない」の
+/// 見分けが付かない ([ADR-0018] 決定 3「失敗しても必ず応答する」・[ADR-0030] 決定 2)。応え方
+/// (どの語彙で理由を載せるか) は区画ごとに違うので、ここは理由を添えて渡すだけにする。列挙に
+/// してあるので、区画を足しても読めない要求の扱いを書き落とせない。
+///
+/// [#2550]: https://github.com/mokume-metal/mokume/issues/2550
+/// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+/// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+nonisolated enum PendingRequest<Request: ExchangeRequest> {
+    /// 解けた要求。
+    case request(Request)
+    /// `id` は読めたが、要求の形として解けなかった。`reason` は解けなかった理由の 1 行
+    /// (`DecodingError: … (at scale)`)。
+    case unreadable(id: String, reason: String)
+
+    /// 応答が echo する識別子。
+    var id: String {
+        switch self {
+        case .request(let request): request.id
+        case .unreadable(let id, _): id
+        }
+    }
+
+    /// 解けた要求。解けなかったなら `nil`。
+    var request: Request? {
+        if case .request(let request) = self { return request }
+        return nil
+    }
+}
+
+extension PendingRequest: Equatable where Request: Equatable {}
 
 /// 要求のファイルを見張る。
 ///
@@ -26,7 +63,8 @@ nonisolated protocol ExchangeRequest: Decodable {
 /// | 経路 | 確定するか | 理由 |
 /// | --- | --- | --- |
 /// | 読めない | しない | 書き手が置いている途中を掴んだだけ。次に拾えばよい |
-/// | 解けない | する | 壊れた要求は再読しても直らない |
+/// | 解けず、`id` も読めない (欠け・文字列でない・JSON でない・途中で切れた) | する | 壊れた要求は再読しても直らない。echo する相手も無いので応えない |
+/// | 解けないが、`id` は読める | ``markHandled(_:)`` まで待つ | 応える相手がいる。理由を添えて渡す (``PendingRequest/unreadable(id:reason:)``・[#2550](https://github.com/mokume-metal/mokume/issues/2550)) |
 /// | 応えた識別子と同じ (このプロセスが応えたもの、または作った時点・引き継いだ時点で応答に残っていたもの) | する | 既に応えている |
 /// | 拾えた | ``markHandled(_:)`` まで待つ | 応えようとするまでは、まだ見たことにしない |
 ///
@@ -132,8 +170,8 @@ final class RequestFile<Request: ExchangeRequest> {
         let id: String?
     }
 
-    /// まだ応えていない要求があれば返す。
-    func pending() -> Request? {
+    /// まだ応えていない要求があれば返す。**`id` だけ読めた要求も返す** (``PendingRequest``)。
+    func pending() -> PendingRequest<Request>? {
         pollCount += 1
         guard takeOverIfFree() else { return nil }
         guard let modified = modificationDate() else { return nil }
@@ -144,18 +182,30 @@ final class RequestFile<Request: ExchangeRequest> {
             // 書き手が置いている途中を掴んだ。**確定させずに**次の機会に拾い直す
             return nil
         }
-        guard let request = try? JSONDecoder().decode(Request.self, from: data) else {
-            // 壊れた要求で走っているスケッチを止めない。再読しても直らないので、
-            // ここで確定させて捨てる
-            lastModification = modified
-            return nil
+        let pending: PendingRequest<Request>
+        do {
+            pending = .request(try JSONDecoder().decode(Request.self, from: data))
+        } catch {
+            // **`id` を読めれば、解けなかった理由を添えて応える相手として渡す** (#2550)。読めなければ
+            // 壊れた要求で走っているスケッチを止めず、再読しても直らないので、ここで確定させて捨てる
+            guard let id = (try? JSONDecoder().decode(Identified.self, from: data))?.id else {
+                lastModification = modified
+                return nil
+            }
+            pending = .unreadable(id: id, reason: Diagnostics.reason(error))
         }
-        guard request.id != lastHandledID else {
+        guard pending.id != lastHandledID else {
             lastModification = modified
             return nil
         }
         handingOver = modified
-        return request
+        return pending
+    }
+
+    /// 解けなかった要求のうち、ここが読み直すのは識別子だけ。**文字列でなければ読めない**
+    /// (`{"id":5}` に echo する識別子は無い)。
+    private struct Identified: Decodable {
+        let id: String
     }
 
     /// 応えようとしたことを記録する。

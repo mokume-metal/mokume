@@ -61,7 +61,7 @@ struct ObservationProtocolTests {
 
         let first = observer.pendingRequest()
         #expect(first?.id == "a1")
-        #expect(first?.scale == 1)
+        #expect(first?.request?.scale == 1)
 
         observer.finish(report(id: "a1", image: "frame-000.png"))
 
@@ -75,7 +75,7 @@ struct ObservationProtocolTests {
         try write(request: #"{"id":"a2","scale":0.5}"#, to: facet)
         let second = observer.pendingRequest()
         #expect(second?.id == "a2")
-        #expect(second?.scale == 0.5)
+        #expect(second?.request?.scale == 0.5)
     }
 
     @Test("知らない鍵は無視する")
@@ -308,6 +308,65 @@ struct ObservationProtocolTests {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o644], ofItemAtPath: requestURL.path)
         #expect(observer.pendingRequest()?.id == "a1")
+    }
+
+    /// **型の違う値で解けない要求も、`id` を読めれば応える** ([#2550](https://github.com/mokume-metal/mokume/issues/2550)・
+    /// #2392 の 2.)。撮らずに、前回の成果物を先に消し、理由を `warnings` に載せた目録を書く
+    /// (ADR-0018 決定 3)。応えないと、書き手には「届いたが読めなかった」と「走っていない」の見分けが
+    /// 付かない。
+    @Test(
+        "型の違う値で解けない要求にも、撮らずに id を echo し、理由を載せて応える",
+        arguments: [
+            (#"{"id":"x1","scale":"0.5"}"#, "scale"),
+            (#"{"id":"x1","scale":true}"#, "scale"),
+            // 整数に読めない数。Foundation の理由は "The given data was not valid JSON." で、鍵を名乗らない
+            (#"{"id":"x1","count":2.5}"#, nil),
+        ] as [(String, String?)])
+    func answersARequestThatCannotBeDecoded(_ request: String, _ key: String?) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        // 前回の成果物が残っている
+        try Data([0]).write(to: facet.appendingPathComponent("frame-000.png"))
+        observer.finish(report(id: "old", image: "frame-000.png"))
+        try write(request: request, to: facet)
+
+        let pending = try #require(observer.pendingRequest(), "要求が黙って捨てられた")
+        #expect(pending.id == "x1")
+        #expect(pending.request == nil, "解けないのに、撮る要求として渡した")
+        guard case .unreadable(let id, let reason) = pending else { return }
+        if let key { #expect(reason.contains(key), "\(reason)") }
+        observer.refuse(id: id, reason: reason) { id, warnings in
+            report(id: id, image: nil, warnings: warnings)
+        }
+
+        let written = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: facet.appendingPathComponent("report.json"))) as? [String: Any]
+        #expect(written?["id"] as? String == "x1")
+        #expect(written?["image"] == nil)
+        let warnings = written?["warnings"] as? [String] ?? []
+        #expect(warnings.count == 1)
+        #expect(warnings.first?.contains("could not be read") == true, "\(warnings)")
+        #expect(warnings.first?.contains(reason) == true, "\(warnings)")
+        // 前回の絵は消してから書く。新しい id の目録と古い絵が組にならない
+        #expect(!FileManager.default.fileExists(atPath: facet.appendingPathComponent("frame-000.png").path))
+        // 応えた要求は二度拾わない
+        try write(request: request, to: facet)
+        #expect(observer.pendingRequest() == nil)
+    }
+
+    /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
+    /// JSON・JSON でない)。
+    @Test(
+        "id が読めない要求は、応える相手として渡さない",
+        arguments: [#"{"scale":0.5}"#, #"{"id":5,"scale":0.5}"#, #"{"id":"x1","scale":0.5"#, "not json"])
+    func dropsARequestWithoutAReadableID(_ request: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: request, to: facet)
+        #expect(observer.pendingRequest() == nil)
+        #expect(observer.readCount == 1)
+        #expect(observer.pendingRequest() == nil)
+        #expect(observer.readCount == 1)
     }
 
     @Test("解けない要求は 1 度だけ読んで捨てる")
