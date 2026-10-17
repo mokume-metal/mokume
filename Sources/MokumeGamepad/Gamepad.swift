@@ -35,7 +35,7 @@ import MokumeCore
 /// | ``SourceState/running`` | 繋がっている |
 /// | ``SourceState/disconnected`` | 抜かれた。挿し直せば戻る |
 /// | ``SourceState/unavailable`` | 走っていないスケッチから作った・記録した列が空 |
-/// | ``SourceState/stopped`` | スケッチから外した (``Sketch/detach(_:)-(Inlet)``) |
+/// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``) |
 ///
 /// 許可は要らない。**入力が届くのは、スケッチの窓が前面にある間だけ**である (GameController の
 /// 既定。窓のキーやマウスと同じ)。
@@ -57,7 +57,7 @@ public final class Gamepad: Inlet {
 
     /// 左スティックの傾き。各軸 -1〜1 で、倒していなければ 0。
     ///
-    /// **縦軸は下向き**で、手前に倒すと正になる (``Sketch/mouseY`` と同じ約束)。だから
+    /// **縦軸は下向き**で、手前に倒すと正になる (``SketchPart/mouseY`` と同じ約束)。だから
     /// `pos += pad.leftStick * 8` で、倒した向きへ画面の上の点が動く。
     public private(set) var leftStick: SIMD2<Float> = .zero
 
