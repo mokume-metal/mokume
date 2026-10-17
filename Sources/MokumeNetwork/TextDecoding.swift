@@ -17,7 +17,7 @@ extension DatagramSource where Message == String {
     }
 }
 
-/// 届いたバイト列を、``TextPort/messages`` に入れる文字列に読む決まり。
+/// 届いたバイト列を、``TextPort/messages``・``Serial/lines`` に入れる文字列に読む決まり。
 ///
 /// **末尾の改行は落とす。** `nc` で打った `0.3⏎` は `0.3\n` として届くので、落とさないと
 /// `Float("0.3\n")` が `nil` になり、最小の作例が動かない。**UTF-8 として読めないものは
@@ -40,9 +40,25 @@ nonisolated enum TextDecoding {
         return ([text], 0)
     }
 
-    /// 1 行 (TCP) を読む。UTF-8 として読めなければ `nil`。改行は ``LineSplitter`` が落としてある。
+    /// 1 行 (TCP・シリアル) を読む。UTF-8 として読めなければ `nil`。改行は ``LineSplitter`` が
+    /// 落としてある。
     static func line(_ bytes: [UInt8]) -> String? {
         String(validating: bytes, as: UTF8.self)
+    }
+
+    /// ``LineSplitter`` が切った行をまとめて読む。`unreadable` は、UTF-8 として読めなかった行と、
+    /// 上限を超えて捨てた行 (`overlong`) を合わせた数。
+    static func lines(_ cut: [[UInt8]], overlong: Int) -> (texts: [String], unreadable: Int) {
+        var texts: [String] = []
+        var unreadable = overlong
+        for bytes in cut {
+            if let text = line(bytes) {
+                texts.append(text)
+            } else {
+                unreadable += 1
+            }
+        }
+        return (texts, unreadable)
     }
 
     static let newline: UInt8 = 0x0A

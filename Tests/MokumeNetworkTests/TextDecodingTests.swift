@@ -74,4 +74,13 @@ struct TextDecodingTests {
         #expect(splitter.finish() == nil)
         #expect(lines(splitter.append(bytes("fine\n"))) == ["fine"])
     }
+
+    @Test("切った行をまとめて読み、読めない行と上限で捨てた行を合わせて数える")
+    func readsCutLines() {
+        let read = TextDecoding.lines([bytes("512"), [0x68, 0xFF], bytes(""), bytes("円")], overlong: 2)
+        #expect(read.texts == ["512", "", "円"])
+        #expect(read.unreadable == 3)
+        #expect(TextDecoding.lines([], overlong: 0).texts.isEmpty)
+        #expect(TextDecoding.lines([], overlong: 0).unreadable == 0)
+    }
 }
