@@ -79,6 +79,67 @@ struct NoiseFlatAxesTests {
         #expect(mismatches == 0)
     }
 
+    /// 4 つ目の軸 (`w`) が 0 の呼び方は、3 次元で引いた値と 1 ビットも違わない ([#2425])。
+    ///
+    /// 比べる相手は、**4 つ目の軸を足す前の ``ValueNoise/value(_:_:_:)``** (上の ``threeDimensional``) で、
+    /// 4 つ目の軸を足した後の同じ入口ではない — 同じ式どうしを比べると、4 つ目の軸を足したときに
+    /// 3 次元の値が動いても緑のままになる。`w` の `-0`・どの軸の組み合わせ・種・枚数を混ぜる。
+    ///
+    /// [#2425]: https://github.com/mokume-metal/mokume/issues/2425
+    @Test(
+        "4 つ目の軸が 0 なら、3 次元で引いた値とビット単位で一致する",
+        arguments: [(octaves: 1, falloff: Float(0.5)), (4, 0.5), (8, 0.35), (16, 0.9)])
+    func aZeroFourthAxisMatchesTheThreeDimensionalValue(octaves: Int, falloff: Float) {
+        var mismatches = 0
+        let sample = Array(Self.coordinates.enumerated().filter { $0.offset % 3 == 0 }.map(\.element))
+        for seed: UInt32 in [0, 7, 0xDEAD_BEEF] {
+            let noise = ValueNoise(seed: seed, octaves: octaves, falloff: falloff)
+            for x in sample {
+                for y in sample {
+                    for z in [Float(0), -0.0, 0.25, -3.5, 1e-30] {
+                        for w in [Float(0), -0.0] {
+                            if noise.value(x, y, z, w).bitPattern
+                                != threeDimensional(noise, x, y, z).bitPattern
+                            {
+                                mismatches += 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        #expect(mismatches == 0)
+    }
+
+    /// 4 つ目の軸を足しても、3 次元の格子点の値は動かない。**混ぜ合わせの 3 引数の口が、変える前の式と
+    /// 同じ並びで出す値**を、検査の中で組み直して比べる。
+    @Test("4 つ目の軸の項は、0 のときの格子点の値を動かさない")
+    func theFourthAxisTermLeavesTheLatticeAlone() {
+        func before(_ x: Int32, _ y: Int32, _ z: Int32, _ seed: UInt32) -> UInt32 {
+            var h = UInt32(bitPattern: x) &* 0x27D4_EB2D
+            h ^= UInt32(bitPattern: y) &* 0x1656_67B1
+            h ^= UInt32(bitPattern: z) &* 0x9E37_79B1
+            h ^= seed &* 0x85EB_CA6B
+            h ^= h >> 15
+            h = h &* 0x2C1B_3C6D
+            h ^= h >> 12
+            h = h &* 0x297A_2D39
+            h ^= h >> 15
+            return h
+        }
+        for x: Int32 in [0, 1, -1, 12345, .max, .min] {
+            for y: Int32 in [0, 7, -9, .max] {
+                for z: Int32 in [0, 3, -5, .min] {
+                    for seed: UInt32 in [0, 1, 0xDEAD_BEEF] {
+                        #expect(ValueNoise.hash(x, y, z, seed) == before(x, y, z, seed))
+                        #expect(ValueNoise.hash(x, y, z, 0, seed) == before(x, y, z, seed))
+                        #expect(ValueNoise.hash(x, y, z, 1, seed) != before(x, y, z, seed), "w の項が効いていない")
+                    }
+                }
+            }
+        }
+    }
+
     /// 奥行きが 0 でない呼び方は、今までどおり 3 次元の層を通る。
     @Test("奥行きのある揺らぎは、今までどおりの値を返す")
     func threeDimensionalCallsAreUnchanged() {

@@ -28,6 +28,13 @@
 /// そこでは融合や順序の入れ替えが起きうるが、段が浅いので差は最下位ビット数個に
 /// 留まる。検査の許容はそこから決めている。
 ///
+/// ## 4 つ目の座標
+///
+/// 座標は 4 つまで持てる (`w`・#2425)。2 次元の場を、時刻を円周に載せて (`noise(x, y, cos a, sin a)`)
+/// 継ぎ目なくループさせるのに要る。**`w` が 0 なら 3 次元と 1 ビットも違わない値**を返す — 4 つ目の
+/// 軸の格子が 0 の所では隅を引かず (#1788 と同じ扱い)、格子点の値の混ぜ合わせも 0 の項を足すだけで
+/// 動かない。だから今までの絵は動かない。`w` が 0 でなければ格子の隅は 16 (3 次元の 2 倍) になる。
+///
 /// ## 座標の範囲
 ///
 /// 扱えるのは ±1e6 まで (``coordinateLimit``)。外は端に張り付くので模様は止まるが、
@@ -61,9 +68,19 @@ struct ValueNoise: Equatable, Sendable {
     /// **`Common.metal` の `mokume_noiseHash` と 1 行ずつ対応する。** 片方を触ったら
     /// もう片方も触る (突き合わせは `NoiseParityTests`)。
     static func hash(_ x: Int32, _ y: Int32, _ z: Int32, _ seed: UInt32) -> UInt32 {
+        hash(x, y, z, 0, seed)
+    }
+
+    /// 4 つ目の軸 (`w`) を持つ混ぜ合わせ (#2425)。**`w` が 0 なら、3 次元の格子点の値とビット単位で
+    /// 同じ** — `w` の項は 0 を `^` するだけで、残りの混ぜ方は共有している。だから 4 つ目の軸の
+    /// 格子が 0 の所では、今までの絵が動かない。
+    ///
+    /// **`Common.metal` の `mokume_noiseHash` (4 つ目の軸を持つ側) と 1 行ずつ対応する。**
+    static func hash(_ x: Int32, _ y: Int32, _ z: Int32, _ w: Int32, _ seed: UInt32) -> UInt32 {
         var h = UInt32(bitPattern: x) &* 0x27D4_EB2D
         h ^= UInt32(bitPattern: y) &* 0x1656_67B1
         h ^= UInt32(bitPattern: z) &* 0x9E37_79B1
+        h ^= UInt32(bitPattern: w) &* 0xC2B2_AE3D
         h ^= seed &* 0x85EB_CA6B
         h ^= h >> 15
         h = h &* 0x2C1B_3C6D
@@ -75,7 +92,12 @@ struct ValueNoise: Equatable, Sendable {
 
     /// 格子点の値 (0…1)。
     private static func corner(_ x: Int32, _ y: Int32, _ z: Int32, _ seed: UInt32) -> Float {
-        Float(hash(x, y, z, seed) >> 8) * (1.0 / 16_777_216.0)
+        corner(x, y, z, 0, seed)
+    }
+
+    /// 4 つ目の軸を持つ格子点の値 (0…1)。
+    private static func corner(_ x: Int32, _ y: Int32, _ z: Int32, _ w: Int32, _ seed: UInt32) -> Float {
+        Float(hash(x, y, z, w, seed) >> 8) * (1.0 / 16_777_216.0)
     }
 
     /// 格子を繋いだ 1 枚ぶんの揺らぎ。
@@ -110,6 +132,58 @@ struct ValueNoise: Equatable, Sendable {
             mix(corner(x0, y0, z1, seed), corner(x1, y0, z1, seed), u),
             mix(corner(x0, y1, z1, seed), corner(x1, y1, z1, seed), u), v)
         return mix(near, far, w)
+    }
+
+    /// 4 つ目の軸 (`w`) を持つ格子を繋いだ 1 枚ぶんの揺らぎ (#2425)。格子の隅は 16。
+    ///
+    /// **`w` の 2 つの面は、3 次元の ``layer(_:_:_:_:)`` と同じ繋ぎ方で引き**、`w` の重みで混ぜる。
+    /// 重みは `w` の小数部で、整数の上 (`w` の格子が 0 など) では 0 になり、手前の面だけが効く。
+    /// 2 次元の場を時刻の円周 (`noise(x, y, cos θ, sin θ)`) でループさせるのに要る。
+    static func layer(_ x: Float, _ y: Float, _ z: Float, _ w: Float, _ seed: UInt32) -> Float {
+        let limit = ValueNoise.coordinateLimit
+        let cx = min(max(x, -limit), limit)
+        let cy = min(max(y, -limit), limit)
+        let cz = min(max(z, -limit), limit)
+        let cw = min(max(w, -limit), limit)
+        let xi = cx.rounded(.down)
+        let yi = cy.rounded(.down)
+        let zi = cz.rounded(.down)
+        let wi = cw.rounded(.down)
+        let xf = cx - xi
+        let yf = cy - yi
+        let zf = cz - zi
+        let wf = cw - wi
+        let u = xf * xf * (3 - 2 * xf)
+        let v = yf * yf * (3 - 2 * yf)
+        let s = zf * zf * (3 - 2 * zf)
+        let t = wf * wf * (3 - 2 * wf)
+
+        let x0 = Int32(xi)
+        let y0 = Int32(yi)
+        let z0 = Int32(zi)
+        let w0 = Int32(wi)
+
+        let before = slab(x0, y0, z0, w0, u, v, s, seed)
+        let after = slab(x0, y0, z0, w0 &+ 1, u, v, s, seed)
+        return mix(before, after, t)
+    }
+
+    /// `w` の格子の 1 つの面の上の、3 次元の繋ぎ。**``layer(_:_:_:_:)`` (3 次元) と同じ式の並び**で、
+    /// 隅を引くときに `w` を渡すだけが違う。
+    private static func slab(
+        _ x0: Int32, _ y0: Int32, _ z0: Int32, _ w: Int32,
+        _ u: Float, _ v: Float, _ s: Float, _ seed: UInt32
+    ) -> Float {
+        let x1 = x0 &+ 1
+        let y1 = y0 &+ 1
+        let z1 = z0 &+ 1
+        let near = mix(
+            mix(corner(x0, y0, z0, w, seed), corner(x1, y0, z0, w, seed), u),
+            mix(corner(x0, y1, z0, w, seed), corner(x1, y1, z0, w, seed), u), v)
+        let far = mix(
+            mix(corner(x0, y0, z1, w, seed), corner(x1, y0, z1, w, seed), u),
+            mix(corner(x0, y1, z1, w, seed), corner(x1, y1, z1, w, seed), u), v)
+        return mix(near, far, s)
     }
 
     /// 奥行き (`z`) が 0 の平面の上の 1 枚。**``layer(_:_:_:_:)`` と 1 ビットも違わない** ([#1788])。
@@ -176,6 +250,19 @@ struct ValueNoise: Equatable, Sendable {
         }
         return layered { frequency, seed in
             Self.layer(x * frequency, y * frequency, z * frequency, seed)
+        }
+    }
+
+    /// 4 つ目の座標 (`w`) を持つ揺らぎ (0…1) (#2425)。
+    ///
+    /// **`w` が 0 なら、3 次元の ``value(_:_:_:)`` をそのまま呼ぶ** (`-0` も)。値は 1 ビットも違わず、
+    /// 今までの絵が動かない。0 の軸の隅を引かない扱い (#1788) を 4 つ目の軸にも当てたもので、
+    /// 奥の 8 隅は結果に効かないので引かない。`w` が 0 でなければ 16 隅を引く。
+    func value(_ x: Float, _ y: Float, _ z: Float, _ w: Float) -> Float {
+        guard x.isFinite, y.isFinite, z.isFinite, w.isFinite else { return 0 }
+        if w == 0 { return value(x, y, z) }
+        return layered { frequency, seed in
+            Self.layer(x * frequency, y * frequency, z * frequency, w * frequency, seed)
         }
     }
 

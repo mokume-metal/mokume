@@ -80,7 +80,7 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 | **描き方** (どう描くか) | フレームを越える。一度書けば書き換えるまで残る | 塗り・線の色と太さ・端と折れ目の形・混ぜ方・座標の読み方・文字の設定・絵に掛ける色・貼る絵・断片・断片が読む数の並び・揺らぎの種と細かさ・露出 |
 | **シーンの記述** (何を描くか) | 越えない。`draw()` の中で毎フレーム書く | 視点・投影・光・材質・変換・影・周囲の光・効果・切り抜き |
 
-描き方は面ごとに持つ — 描き場所 (``SketchPart/createGraphics(_:_:)``) で塗りを変えても、画面の塗りは変わらない。**揺らぎの種と細かさだけはスケッチに 1 つ**で、画面と描き場所が同じものを読み書きする (``SketchPart/noiseSeed(_:)``)。断片の `mokume_noise` が、どの面でも ``SketchPart/noise(_:_:_:)`` と同じ模様を出すためである。
+描き方は面ごとに持つ — 描き場所 (``SketchPart/createGraphics(_:_:)``) で塗りを変えても、画面の塗りは変わらない。**揺らぎの種と細かさだけはスケッチに 1 つ**で、画面と描き場所が同じものを読み書きする (``SketchPart/noiseSeed(_:)``)。断片の `mokume_noise` が、どの面でも ``SketchPart/noise(_:_:_:_:)`` と同じ模様を出すためである。
 
 **乱数の種 (``SketchPart/randomSeed(_:)``) もスケッチに 1 つで、書き換えるまでフレームを越えて残る**が、上の 2 つには入らない — 描き方でもシーンの記述でもなく、引くたびに進む列の位置で、揺らぎと違って断片へは届かない。形の組み立て (``SketchPart/createShape(_:)``) の中で書いた種だけは、抜けると**最初に書く直前の列**へ戻る。
 
@@ -649,7 +649,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/random(_:)``
 - ``SketchPart/random(_:_:)``
 - ``SketchPart/randomSeed(_:)``
-- ``SketchPart/noise(_:_:_:)``
+- ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
 

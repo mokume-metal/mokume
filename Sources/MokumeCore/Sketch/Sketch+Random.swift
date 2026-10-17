@@ -235,13 +235,37 @@ extension SketchPart {
     /// 断片では**傾き**も引ける (`mokume_noiseGradient(in, p)`)。揺らぎを高さとみた面の
     /// 向きを、隣を引いて差を取らずに作れる。傾きは断片の側にだけあり、ここには無い。
     ///
+    /// 4 つ目の座標 `w` も同じ。**2 次元の場を、継ぎ目なくループさせる**のに使う — 時刻を円周に
+    /// 載せて (`cos a`・`sin a` を 3 つ目と 4 つ目に渡す)、`a` が 1 周する間に場が巡って元へ戻る。
+    /// 下は 2 秒で巡る流れ場で、格子の矢印の向きを揺らぎで決めている。`w` が 0 なら 3 つの座標で
+    /// 引いたのと同じ値で、今までの絵は動かない (`w` の格子が 0 の所では隅を 16 でなく 8 だけ引く)。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     background(15)
+    ///     stroke(230)
+    ///     let a = 2 * Float.pi * time.truncatingRemainder(dividingBy: 2) / 2
+    ///     for y in stride(from: Float(10), to: height, by: 20) {
+    ///         for x in stride(from: Float(10), to: width, by: 20) {
+    ///             let angle = noise(x * 0.01, y * 0.01, cos(a) * 0.8, sin(a) * 0.8) * 4 * Float.pi
+    ///             line(x, y, x + cos(angle) * 8, y + sin(angle) * 8)
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// 断片では `mokume_noise(in, float4(p, cos(a), sin(a)))` と書ける。
+    ///
     /// 座標として扱えるのは ±1e6 くらいまで。それを超えると模様は破綻するが、
     /// 落ちはしない (数でない座標には 0 が返る)。
     // shot: 1 snippet=235577a7
     // shot: 2 snippet=e807b119
-    public func noise(_ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0) -> Float {
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return Self.liveCanvas(.read(returning: "0"))?.noise(x, y, z) ?? 0
+    public func noise(
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0,
+        _ w: some ScalarConvertible = 0
+    ) -> Float {
+        let (x, y, z, w) = (x.asFloat, y.asFloat, z.asFloat, w.asFloat)
+        return Self.liveCanvas(.read(returning: "0"))?.noise(x, y, z, w) ?? 0
     }
 
     /// 揺らぎの種。**断片にも同じ種が届く**ので、配線しなくてよい。
