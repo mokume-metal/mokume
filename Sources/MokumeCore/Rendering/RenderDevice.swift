@@ -1309,10 +1309,19 @@ import MokumeDiagnostics
     ///
     /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
-    func droppedWork(after floor: UInt64, through last: UInt64) -> [CommandFaultLog.Drop] {
+    ///
+    /// - Parameter limit: 待つ上限。省けば ``outcomeWaitLimit``。`.zero` なら待たずに、届いていない結末を
+    ///   届かなかったものとして答える — 塞がずに閉じる口が、見に来続けて上限を過ぎたときに使う
+    ///   (`SketchRuntime.closePlugins(_:)`・[#2743])。待っていないので ``outcomeWaits`` には数えない。
+    ///
+    /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    func droppedWork(
+        after floor: UInt64, through last: UInt64, waitingUpTo limit: Duration? = nil
+    ) -> [CommandFaultLog.Drop] {
         guard last > floor else { return [] }
-        let answer = commandFaults.drops(after: floor, through: last, waitingUpTo: outcomeWaitLimit)
-        if answer.waited { outcomeWaits += 1 }
+        let limit = limit ?? outcomeWaitLimit
+        let answer = commandFaults.drops(after: floor, through: last, waitingUpTo: limit)
+        if answer.waited, limit > .zero { outcomeWaits += 1 }
         if answer.lost {
             Diagnostics.warn(
                 "Waited \(outcomeWaitLimit) for the GPU to report how its finished work ended, with no answer — treating that work as dropped")

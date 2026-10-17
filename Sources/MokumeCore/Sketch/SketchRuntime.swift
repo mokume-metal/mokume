@@ -117,7 +117,7 @@ public final class SketchRuntime {
         /// 作る作品で控えが増え続ける。
         case nonFiniteExposed
         /// フレームの絵を組んだ投入を GPU が打ち切ったので、そのフレームを出口へ配らなかった
-        /// (``settleOldestOutletFrame(waiting:)``・#2743)。**ランタイムで 1 度だけ** — 壊れた GPU は
+        /// (``settleOldestOutletFrame(_:)``・#2743)。**ランタイムで 1 度だけ** — 壊れた GPU は
         /// 打ち切りを続けうる。
         case droppedOutletFrame
     }
@@ -242,10 +242,24 @@ public final class SketchRuntime {
         /// 並びの時刻 (``OutputFrame/time``)。
         let time: Double
         /// そのフレームを描き始めたときの投入の番号 ([#2743])。**配る前に、これより後の投入の打ち切りを
-        /// 判定する** (``settleOldestOutletFrame(waiting:)``)。
+        /// 判定する** (``settleOldestOutletFrame(_:)``)。
         ///
         /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
         let drawnAfter: UInt64
+        /// 組み終えた時点で、出す先の面を最後に書き換えた投入の番号 (``RenderTarget/lastWriteSubmission``)。
+        /// 面の中身が欠けている印 (``outletHeldDrop``) を下ろすかを、この絵について決める。
+        let lastWriteAtEncode: UInt64
+    }
+
+    /// 結末がまだ届いていない絵を、どう決着させるか (#2743)。
+    private enum OutcomePatience {
+        /// 待たずに問い、届いていなければ控えを残す。毎フレームの経路と、塞がずに閉じる口。
+        case ask
+        /// 届くまで、上限 (`RenderDevice.outcomeWaitLimit`) まで待つ。次が来ない経路。
+        case wait
+        /// 待たずに、届いていない結末を届かなかったもの (打ち切り) として決着させる。塞がずに閉じる口が
+        /// 上限を過ぎたとき。
+        case giveUp
     }
 
     /// 組んだけれどまだ配っていない絵 (古い順・**高々 2 枚**)。**出口へ渡すのは 1 枚遅らせる** ([#927])。
@@ -273,14 +287,37 @@ public final class SketchRuntime {
     private var warnedEncodeFailed = false
     /// 描いているフレームを描き始めたときの投入の番号 (``PendingOutletFrame/drawnAfter`` の出どころ)。
     private var frameDrawnAfter: UInt64 = 0
-    /// 投入の打ち切りで出口へ配らなかった、最後のフレーム ([#2743])。まだ無ければ `nil`。
+    /// 決着させて、まだ出口へ渡していない絵 (古い順)。**渡すのは ``handOverReadyOutletFrames()`` の 1 か所で、
+    /// 1 回の巡回にまとめる** (#2743 の反証 5)。同じ進めで 2 枚決着しても、差込口の健康は 1 回ぶんだけ数える。
+    private var readyOutletFrames: [PendingOutletFrame] = {
+        var frames: [PendingOutletFrame] = []
+        frames.reserveCapacity(2)
+        return frames
+    }()
+    /// 決着した絵を渡している最中か。渡した出口の中から呼び直されても、同じ絵を 2 度渡さない。
+    private var isHandingOverOutletFrames = false
+    /// 出口へ配る前の判定を、最後に済ませた投入の番号 (#2743)。**次の判定の範囲はこれより後から** —
+    /// フレームの床 (``PendingOutletFrame/drawnAfter``) と大きいほう。止まっている間に組み直した絵が、
+    /// もう判定した打ち切りを数え直さない。面の中身が欠けているかは ``outletHeldDrop`` が持ち越す。
+    private var outletJudgedThrough: UInt64 = 0
+    /// 出口へ配る前の判定で見つけた、**出す先の面へ書いた投入**の打ち切り ([#2743])。出す先の面へ書く新しい
+    /// 投入 (``PendingOutletFrame/lastWriteAtEncode`` が `droppedAt` を越える) まで持ち越し、そのあいだの
+    /// 絵は範囲に打ち切りが無くても落とす。
     ///
-    /// **止まっている間は、このフレームの絵を組み直さない** (``settleWithoutAnotherFrame()``)。組み直して
-    /// も判定の範囲に同じ打ち切りが入るので配れず、止まっている間じゅう毎リフレッシュ組み直しと待ちを
-    /// 払い続けることになる。そこで頼まれた `save()` は、次に描いて配れたフレームの絵で書く。
+    /// 打ち切られた投入は 1 画素も書かないので、面の中身は欠けたままである。次のフレームが面へ何も書か
+    /// なければ (押している間だけ線を描くスケッチの、押していないフレーム)、その絵も欠けている。投げる
+    /// 読む口の持ち越し (``RenderTarget`` の `heldDrop`) と同じ規則で、面へ新しく書けば下ろす。
     ///
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
-    private var droppedOutletFrame: Int?
+    private var outletHeldDrop: (reason: String, droppedAt: UInt64)?
+    /// GPU の打ち切りで出口へ配らなかった枚数 (作ってから通算・#2743)。書き出す経路の終わり
+    /// (`SketchApplication`) が、揃わなかった枚数として名乗り、0 以外で終わる。
+    private(set) var outletFramesDropped = 0
+    /// 閉じる口が、控えの絵を決着させている最中か。**このあいだはフレームを進めない** (``runFrame()``)。
+    /// 塞がずに見に来る閉じ方 (``Patience/peek``) は、決着するまで何度も呼ばれる。
+    private var outletsClosing = false
+    /// 塞がずに見に来る閉じ方が、届いていない結末を諦める時刻 (#2743)。最初に見に来たときに決める。
+    private var closingOutcomesGiveUpAt: ContinuousClock.Instant?
 
     /// 外から観測されるための窓口。区画が無ければ `nil` で、**そのときフレームループは
     /// 観測の存在を一切払わない** (ADR-0018 の面が満たすべき性質)。
@@ -597,8 +634,24 @@ public final class SketchRuntime {
     @discardableResult
     func closePlugins(_ patience: Patience) -> Bool {
         // **閉じる前に決着させる。** 最後のフレームの絵はまだ誰にも渡っていないし (#927)、
-        // 止まっている間に頼まれた `save()` にとってはここが最後の機会である (#1300)
-        settleWithoutAnotherFrame()
+        // 止まっている間に頼まれた `save()` にとってはここが最後の機会である (#1300)。
+        //
+        // **塞がずに見に来る閉じ方では、結末も待たない** (#2743)。届いていない絵があれば、決着して
+        // いないと返して次に見に来るのを待つ。届かないまま待つ上限 (`outcomeWaitLimit`) を過ぎたら、
+        // 届かなかったものとして落として決着させる — 塞いで待つ閉じ方と同じ上限で諦める
+        outletsClosing = true
+        let outcomes: OutcomePatience
+        switch patience {
+        case .block:
+            outcomes = .wait
+        case .peek:
+            let now = ContinuousClock.now
+            let giveUpAt = closingOutcomesGiveUpAt ?? (now + target.gpu.outcomeWaitLimit)
+            closingOutcomesGiveUpAt = giveUpAt
+            outcomes = now >= giveUpAt ? .giveUp : .ask
+        }
+        guard settleWithoutAnotherFrame(outcomes) else { return false }
+        closingOutcomesGiveUpAt = nil
         // **撮る係はここでは閉じない。** 並びに居れば同じ `close()` が塞いで待つので、
         // 下で選んだ待ち方で閉じる
         for entry in outlets where entry.seam !== recorder { entry.seam.close() }
@@ -619,12 +672,16 @@ public final class SketchRuntime {
             closingRecorder = recorder
             self.recorder = nil
         }
-        guard let closingRecorder else { return true }
+        guard let closingRecorder else {
+            outletsClosing = false
+            return true
+        }
         // **最後に描いたフレームまでを録りの幅にする。** 撮る係が途中で外れていたら、
         // 末尾の欠けはここで教えないと落ちた数に入らない (#1626)
         guard closingRecorder.close(patience, through: drawnThrough) else { return false }
         if closingRecorder.hasFailedToWrite { recordingFailed = true }
         self.closingRecorder = nil
+        outletsClosing = false
         return true
     }
 
@@ -686,7 +743,8 @@ public final class SketchRuntime {
             }
             requestedTime = Float(observation.time!)
         }
-        guard closingRecorder == nil else { return }
+        // 閉じる口が控えの絵を決着させるのを待っている間も進めない (塞がずに見に来る閉じ方・#2743)
+        guard closingRecorder == nil, !outletsClosing else { return }
         observingAtTime = requestedTime != nil
         let keepStopped = observingAtTime && !isLooping
         defer { observingAtTime = false }
@@ -751,10 +809,11 @@ public final class SketchRuntime {
         if keepStopped { isLooping = false }
         // **配ってから組む。** 配るのは前のフレームで組んだ絵で、待つ番号もそれなので、
         // ここまでの CPU の仕事が前のフレームの GPU と重なる (#927)。**結末は待たない** — まだ
-        // 届いていない絵は次のフレームへ持ち越す (#2743)
-        if drawFailure == nil { deliverPendingToOutlets(waiting: false) }
-        // **外すのは配った後、組む前。** 1 枚だけ撮ったスケッチは配った時点で用済みに
-        // なるので、この順なら道を 2 回通らない (ADR-0023 決定 5)
+        // 届いていない絵は次のフレームへ持ち越す (#2743)。ここでは決着させるだけで、配るのは組む
+        // 直前 (``encodeForOutlets()``) にまとめる — 組む前にもう 1 枚決着させても巡回は 1 回で済む
+        if drawFailure == nil { settlePendingOutletFrames(.ask) }
+        // **外すのは配った後、組む前** (配るのは ``encodeForOutlets()`` の頭)。1 枚だけ撮ったスケッチは
+        // 配った時点で用済みになるので、この順なら道を 2 回通らない (ADR-0023 決定 5)
         detachRecorderIfDone()
         if drawFailure == nil { encodeForOutlets() }
         // **このフレームで止まったなら、組んだ絵をその場で配る。** 1 枚遅らせているのは
@@ -785,7 +844,10 @@ public final class SketchRuntime {
     ///   引きずった量・スクロール) が描くフレームから消える。
     private func drawSketchFrame(deliveredInput: Bool = false, at requestedTime: Float? = nil) throws(RenderFailure) {
         // **このフレームの絵が拠る投入は、ここより後に積まれる** (#2743)。出口へ配る前の判定の範囲の
-        // 始まりで、`setup()` で積んだもの (最初のフレーム) も入る
+        // 始まりである。`setup()` で積んだものが入るのは、`setup()` をここ (下の `start()`) で走らせる
+        // とき — ふつうの最初のフレーム — だけで、先に `start()` を呼んだ使い方 (公開の `start()`・時刻を
+        // 指定した観測) では範囲の外になり、出口の側は `setup()` の投入の打ち切りを判定しない。`setup()` で
+        // 置いたものは最初のフレームの描き切りが描くので、そちらは範囲に入る
         frameDrawnAfter = target.gpu.submissionCount
         start()
         // **測るのは `setup()` の後から** — `setup()` は描いていた時間ではない (``FrameBudget``)
@@ -986,7 +1048,7 @@ public final class SketchRuntime {
     /// スケッチが払わない。
     ///
     /// 組むだけで、GPU の完了は待たない。配るのは次のフレームの
-    /// ``deliverPendingToOutlets(waiting:)`` である ([#927])。
+    /// ``deliverPendingToOutlets(_:)`` である ([#927])。
     ///
     /// **まだ配っていない前のフレームの置き場へは組まない** ([#2743]・``outletStorageToAvoid()``)。
     ///
@@ -994,9 +1056,9 @@ public final class SketchRuntime {
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
     private func encodeForOutlets() {
-        guard outlets.contains(where: { $0.health.isAttached }) else { return }
+        // 組む前に置き場を空け、決着させた絵 (この進めで先に決着させた分も) を 1 回の巡回で配る
         let busy = outletStorageToAvoid()
-        // 置き場を空けるために配った絵で、1 枚だけ撮った係が用済みになったなら外して、組まない
+        // 配った絵で、1 枚だけ撮った係が用済みになったなら外して、組まない
         // (配った後に外す ``runFrame()`` と同じ理由・ADR-0023 決定 5)
         detachRecorderIfDone()
         guard outlets.contains(where: { $0.health.isAttached }) else { return }
@@ -1016,16 +1078,18 @@ public final class SketchRuntime {
         pendingOutletFrames.append(
             PendingOutletFrame(
                 image: image, frame: timing.frameCount, time: timing.timeline,
-                drawnAfter: frameDrawnAfter))
+                drawnAfter: frameDrawnAfter, lastWriteAtEncode: target.lastWriteSubmission))
     }
 
     /// 出力段を組む前に、**上書きしてはいけない置き場**を答える ([#2743])。いまの絵より前のフレームの、
     /// まだ配っていない絵の置き場である。
     ///
     /// 同じフレームの絵の置き場は上書きしてよい (同じ絵を組み直すだけ)。前のフレームの絵で 2 枚とも
-    /// 埋まっていたら、**古いほうを結末まで待って決着させてから**答える — 置き場は 2 枚までで、
-    /// 持ち越しが続いて埋まったときだけ待つ (打ち切りの無い普段の経路では、次のフレームで配るときに
-    /// 結末がほぼ必ず届いている)。
+    /// 埋まっていたら、古いほうを決着させる — 置き場は 2 枚までで、持ち越しが続いて埋まったときだけ
+    /// 待つ (打ち切りの無い普段の経路では、次のフレームで配るときに結末がほぼ必ず届いている)。
+    ///
+    /// **組む前に、決着させた絵を配る** (``handOverReadyOutletFrames()``)。置き場を空けるために決着させた
+    /// 絵は、組めば書き換わる。
     ///
     /// 出口へ配る絵のほか、観測の撮影・1 枚だけ描いて書き出す入口・名乗りの絵も、同じ置き場へ組む
     /// ので、ここを通す。
@@ -1040,14 +1104,15 @@ public final class SketchRuntime {
             target.gpu.waitForSubmissionQuietly(
                 target.lastEncodeSubmission,
                 orWarn: "Could not wait for the GPU before taking the frame that goes to an outlet")
-            if !settleOldestOutletFrame(waiting: false) {
-                settleOldestOutletFrame(waiting: true)
+            if !settleOldestOutletFrame(.ask) {
+                settleOldestOutletFrame(.wait)
             }
         }
+        handOverReadyOutletFrames()
         return pendingOutletFrames.first { $0.frame != current }?.image
     }
 
-    /// 控えてある絵を、古い順に出口へ配る。控えが無ければ何もしない。
+    /// 控えてある絵を古い順に決着させ、決着した絵を出口へ配る。控えが無ければ何もしない。
     ///
     /// **配る絵は中身が確定している。** 組んだ投入を名指しで待ってから渡すので、出口は
     /// 受け取った ``OutputFrame/texture`` をそのまま別のプロセスや機材へ手渡せる —
@@ -1055,44 +1120,64 @@ public final class SketchRuntime {
     /// ふつう何もせずに返る。
     ///
     /// **GPU が打ち切ったフレームは配らない** ([#2743])。中身を確定させるのは合図の待ちだが、合図は
-    /// 打ち切りでも進む。配る前に結末を確かめる (``settleOldestOutletFrame(waiting:)``)。
+    /// 打ち切りでも進む。配る前に結末を確かめる (``settleOldestOutletFrame(_:)``)。
     ///
     /// **転んだフレームでは配らない** ([ADR-0024] 決定 10)。控えはそのまま持ち越して、
     /// 次に描けたフレームか終わり (``closePlugins()``) で配る — 描けた絵を落とさない。
     ///
-    /// - Parameter waiting: 結末がまだ届いていない絵を、届くまで待って決着させるか。**毎フレームの
-    ///   経路 (``runFrame()``) は待たない** — 届いていない絵からあとは次のフレームへ持ち越す。待つのは
-    ///   次が来ない経路 (止め際・閉じ際・止まったスケッチの `save()`) だけである。
+    /// - Parameter patience: 結末がまだ届いていない絵の扱い。待つのは次が来ない経路 (止め際・閉じ際・
+    ///   止まったスケッチの `save()`) だけで、**毎フレームの経路 (``runFrame()``) は待たない**。
+    /// - Returns: 控えが全部決着したか。待たずに、届いていない絵が残ったら `false`。
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
-    private func deliverPendingToOutlets(waiting: Bool) {
-        while !pendingOutletFrames.isEmpty {
-            guard settleOldestOutletFrame(waiting: waiting) else { return }
-        }
+    @discardableResult
+    private func deliverPendingToOutlets(_ patience: OutcomePatience) -> Bool {
+        let settled = settlePendingOutletFrames(patience)
+        handOverReadyOutletFrames()
+        return settled
     }
 
-    /// 控えのうち最も古い絵を決着させる — 配るか、打ち切りなら配らずに捨てる ([#2743])。
+    /// 控えてある絵を古い順に決着させる。**配るのは呼んだ側** (``handOverReadyOutletFrames()``)。
     ///
-    /// **判定の範囲は、そのフレームを描き始めたときの投入の後から、置き場へ組んだ最後の出力段まで**。
-    /// 面へ書く投入に絞らない — 置いた別の描き場所の描画のように、絵が拠るのに面へは書かない投入も
-    /// あるので、投げる読む口 (``RenderTarget/readPixels()``) と同じく保守的に落とす側へ倒す。
-    /// 打ち切られた投入は 1 画素も書かないので、置き場には前の絵が残っている — それをそのフレームの
-    /// 番号で配ると、書き出しが前の絵をその番号で書く。
+    /// 毎フレームの経路は、ここで決着させた絵を組む前にまとめて配る (``encodeForOutlets()``) — 同じ進めで
+    /// 組む前にもう 1 枚決着させても、出口の巡回は 1 回で済む。
+    ///
+    /// - Returns: 控えが全部決着したか。
+    @discardableResult
+    private func settlePendingOutletFrames(_ patience: OutcomePatience) -> Bool {
+        while !pendingOutletFrames.isEmpty {
+            guard settleOldestOutletFrame(patience) else { return false }
+        }
+        return true
+    }
+
+    /// 控えのうち最も古い絵を決着させる — 配る絵に回すか、打ち切りなら配らずに捨てる ([#2743])。
+    ///
+    /// **判定の範囲は、そのフレームを描き始めたときの投入の後から、置き場へ組んだ最後の出力段まで**
+    /// (前に判定を済ませた投入より前は入れない・``outletJudgedThrough``)。面へ書く投入に絞らない — 置いた
+    /// 別の描き場所の描画のように、絵が拠るのに面へは書かない投入もあるので、投げる読む口
+    /// (``RenderTarget/readPixels()``) と同じく保守的に落とす側へ倒す。打ち切られた投入は 1 画素も書かない
+    /// ので、置き場には前の絵が残っている — それをそのフレームの番号で配ると、書き出しが前の絵をその
+    /// 番号で書く。
+    ///
+    /// **範囲に打ち切りが無くても、面の中身が欠けたままなら落とす** (``outletHeldDrop``)。出す先の面へ書いた
+    /// 投入が打ち切られた後、面へ新しく書くまでの絵である。
     ///
     /// **書き直さずに落とす。** 配るのは次のフレームの途中で、面には既に次のフレームを描いてあり、
     /// 打ち切られたフレームの絵を作り直す材料が残っていない。描画が転んだフレームと同じく出口へは
     /// 配らない (ADR-0024 決定 10) — 動画からはその枚が欠け (前の枚が 1 枚ぶん長く映り、ほかの枚の
     /// 時刻はずれない)、連番は詰まり、どちらも止め際に落ちた数として名乗る。`save()` は次に配れた
-    /// フレームの絵で書く。外から足した出口も同じに受け取らない。ランタイムで 1 度だけ言う。
+    /// フレームの絵で書く。外から足した出口も同じに受け取らない。ランタイムで 1 度だけ言い、書き出す
+    /// 経路は落とした枚数で揃わなかったと名乗る (``outletFramesDropped``)。
     ///
-    /// - Parameter waiting: 結末がまだ届いていなければ待つか (``deliverPendingToOutlets(waiting:)``)。
+    /// - Parameter patience: 結末がまだ届いていないときの扱い (``deliverPendingToOutlets(_:)``)。
     /// - Returns: 決着したか。待たずに、結末がまだ届いていなかったら `false` (控えは残す)。
     ///
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
     @discardableResult
-    private func settleOldestOutletFrame(waiting: Bool) -> Bool {
+    private func settleOldestOutletFrame(_ patience: OutcomePatience) -> Bool {
         guard let pending = pendingOutletFrames.first else { return true }
         guard outlets.contains(where: { $0.health.isAttached }) else {
             pendingOutletFrames.removeFirst()
@@ -1100,47 +1185,92 @@ public final class SketchRuntime {
         }
         // 置き場へ最後に組んだ出力段。同じフレームの絵を組み直していれば (観測の撮影など) それを指す
         let through = pending.image.pendingSubmission
+        let floor = max(pending.drawnAfter, outletJudgedThrough)
         let gpu = target.gpu
         gpu.waitForSubmissionQuietly(
             through, orWarn: "Could not wait for the GPU before handing the frame to an outlet")
-        let drops: [CommandFaultLog.Drop]
-        if waiting {
-            drops = gpu.droppedWork(after: pending.drawnAfter, through: through)
-        } else {
-            // **待たずに問う。** 結末は合図より遅れて届くので、間を空けずに回すと配る時点でまだ
-            // 届いていないことが多い。届いていなければ、この絵からあとを次のフレームへ持ち越す
-            guard let settled = gpu.settledDrops(after: pending.drawnAfter, through: through) else {
+        // **まず待たずに問う。** 結末は合図より遅れて届くので、間を空けずに回すと配る時点でまだ届いて
+        // いないことが多い。範囲の結末が揃っていれば、待つ形でも答えは同じである
+        var drops = gpu.settledDrops(after: floor, through: through)
+        if drops == nil {
+            switch patience {
+            case .ask:
+                // この絵からあとを次のフレームへ持ち越す
                 return false
+            case .wait:
+                drops = gpu.droppedWork(after: floor, through: through)
+            case .giveUp:
+                drops = gpu.droppedWork(after: floor, through: through, waitingUpTo: .zero)
             }
-            drops = settled
         }
         pendingOutletFrames.removeFirst()
-        if let dropped = drops.first {
-            droppedOutletFrame = pending.frame
-            warnings.warnOnce(
-                .droppedOutletFrame,
-                "The GPU dropped the work behind frame \(pending.frame) (\(dropped.reason)), so that "
-                    + "frame was not handed to the outlets: a recording leaves it out and counts it as "
-                    + "dropped when it stops, and a save() asked for in that frame writes the next "
-                    + "frame that is handed over (said once)")
+        outletJudgedThrough = max(outletJudgedThrough, through)
+        let surface = ObjectIdentifier(target)
+        if let drops, let dropped = drops.first {
+            // 出す先の面へ書いた投入が打ち切られていたら、面の中身が欠けている印を持ち越す
+            if let wrote = drops.last(where: { $0.wrote.contains(surface) }) {
+                outletHeldDrop = (wrote.reason, wrote.submission)
+            }
+            noteDroppedOutletFrame(pending.frame, reason: dropped.reason)
             return true
         }
-        handOver(pending)
+        if let held = outletHeldDrop {
+            // 面へ新しく書いていなければ、面の中身はまだ欠けている
+            guard pending.lastWriteAtEncode > held.droppedAt else {
+                noteDroppedOutletFrame(pending.frame, reason: held.reason)
+                return true
+            }
+            outletHeldDrop = nil
+        }
+        readyOutletFrames.append(pending)
         return true
     }
 
-    /// 決着した 1 枚を、並びの出口へ配る。
-    private func handOver(_ pending: PendingOutletFrame) {
-        let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
-        let joinedAt = outletJoinedAt
-        whileVisitingSeams {
-            Self.visit(&outlets) { outlet in
-                // 足される前に描いた絵は渡さない (``outletJoinedAt``)
-                if let since = joinedAt[ObjectIdentifier(outlet)], frame.frame < since { return }
-                outlet.receive(frame)
-            } failure: {
-                $0.failure
+    /// いま出す先の面の中身が、打ち切りで欠けたままか (``outletHeldDrop``)。
+    private var outletSurfaceLacksDroppedWork: Bool {
+        guard let held = outletHeldDrop else { return false }
+        return target.lastWriteSubmission <= held.droppedAt
+    }
+
+    /// 打ち切りで配らなかった 1 枚を数え、ランタイムで 1 度だけ言う。
+    private func noteDroppedOutletFrame(_ frame: Int, reason: String) {
+        outletFramesDropped += 1
+        warnings.warnOnce(
+            .droppedOutletFrame,
+            "The GPU dropped the work behind frame \(frame) (\(reason)), so that frame was not "
+                + "handed to the outlets: a recording leaves it out and counts it as dropped when it "
+                + "stops, and a save() asked for in that frame writes the next frame that is handed "
+                + "over (said once)")
+    }
+
+    /// 決着した絵を、古い順に並びの出口へ配る (``readyOutletFrames``)。
+    ///
+    /// **1 回の巡回で全部渡す** (#2743 の反証 5)。差込口の健康 (``SeamHealth``) は巡回 1 回につき 1 回数える
+    /// ので、持ち越した絵と次の絵を同じ進めで 2 枚配っても、続けて転んだ数は 1 つしか進まない。1 枚ごとに
+    /// 巡回すると、撮る係の 1 回きりの書き損じ (新しい知らせが来るまで前の値を保つ・#1272) が 2 回ぶんに
+    /// 数えられ、1 回早く外れる。
+    private func handOverReadyOutletFrames() {
+        guard !isHandingOverOutletFrames else { return }
+        isHandingOverOutletFrames = true
+        defer { isHandingOverOutletFrames = false }
+        while !readyOutletFrames.isEmpty {
+            let count = readyOutletFrames.count
+            let joinedAt = outletJoinedAt
+            whileVisitingSeams {
+                Self.visit(&outlets) { outlet in
+                    for index in 0..<count {
+                        let pending = self.readyOutletFrames[index]
+                        // 足される前に描いた絵は渡さない (``outletJoinedAt``)
+                        if let since = joinedAt[ObjectIdentifier(outlet)], pending.frame < since { continue }
+                        outlet.receive(
+                            OutputFrame(image: pending.image, frame: pending.frame, time: pending.time))
+                    }
+                } failure: {
+                    $0.failure
+                }
             }
+            // 渡している最中に決着した絵 (出口の中から呼び直された分) は、次の巡回で渡す
+            readyOutletFrames.removeFirst(count)
         }
     }
 
@@ -1449,7 +1579,7 @@ public final class SketchRuntime {
         // **控えを先に配る。** 撮り終わりは描き切りの中から呼ばれるので、ここで配らないと
         // 前のフレームの絵が誰にも渡らないまま録りが閉じる = 最後の 1 枚が落ちる (#927)。
         // 持ち越した絵も、結末を待ってここで決着させる (#2743)
-        deliverPendingToOutlets(waiting: true)
+        deliverPendingToOutlets(.wait)
         // **止めたフレームを一緒に渡す。** 撮る係が途中で外れていると最後の絵が届かないので、
         // どこまでが録りの幅かを教えないと、末尾の欠けが落ちた数に入らない (#1626)
         recorder.endRecord(through: drawnThrough)
@@ -1546,24 +1676,28 @@ public final class SketchRuntime {
     /// **予約が無ければ組み直さない。** 止まっている絵は変わらないので、毎フレーム組み直すと
     /// 止めたスケッチが回っているときと同じ費用を払い続ける (ADR-0023 決定 5)。
     ///
-    /// **次が来ないので、結末は待って決着させる** ([#2743])。持ち越した絵もここで配るか捨てる。
-    /// **いまの絵を組んだ投入が打ち切られていたら、組み直さない** (``droppedOutletFrame``)。組み直しても
-    /// 同じ打ち切りが判定の範囲に入って配れず、止まっている間じゅう毎回組み直して待つことになる。
-    /// その `save()` は、次に描いて配れたフレームの絵で書く (終わるまで描かなければ、閉じるときに
+    /// **次が来ないので、結末は待って決着させる** ([#2743])。持ち越した絵もここで配るか捨てる (塞がずに
+    /// 閉じる口だけは待たずに問い、届いていなければ `false` を返す)。**面の中身が打ち切りで欠けたまま
+    /// なら、組み直さない** (``outletSurfaceLacksDroppedWork``)。組み直しても配れず、止まっている間じゅう
+    /// 毎回組み直すことになる。コールバックが面へ書き直せば (画素を書くなど)、組み直して配る。書き直さ
+    /// なければ、その `save()` は次に描いて配れたフレームの絵で書く (終わるまで描かなければ、閉じるときに
     /// 書けなかったと言う)。
+    ///
+    /// - Parameter patience: 結末がまだ届いていない絵の扱い。止まっている間とふつうの閉じ方は待つ。
+    /// - Returns: 控えも予約の組み直しも決着したか。待たずに、届いていない絵が残ったら `false`。
     ///
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     /// [#1300]: https://github.com/mokume-metal/mokume/issues/1300
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
-    private func settleWithoutAnotherFrame() {
-        deliverPendingToOutlets(waiting: true)
-        if recorder?.hasUnwrittenShots(upTo: timing.frameCount) == true,
-            droppedOutletFrame != timing.frameCount
-        {
+    @discardableResult
+    private func settleWithoutAnotherFrame(_ patience: OutcomePatience = .wait) -> Bool {
+        defer { detachRecorderIfDone() }
+        guard deliverPendingToOutlets(patience) else { return false }
+        if recorder?.hasUnwrittenShots(upTo: timing.frameCount) == true, !outletSurfaceLacksDroppedWork {
             encodeForOutlets()
-            deliverPendingToOutlets(waiting: true)
+            return deliverPendingToOutlets(patience)
         }
-        detachRecorderIfDone()
+        return true
     }
 
     // MARK: - 観測に応える

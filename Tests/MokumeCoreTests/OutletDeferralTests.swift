@@ -213,14 +213,16 @@ struct OutletDeferralTests {
 
         try runtime.advance()
         // 打ち切られたフレームの絵では書かない
-        #expect(!FileManager.default.fileExists(atPath: first.path), "打ち切られた絵で保存した")
+        #expect(runtime.outletFramesDropped == 1, "打ち切られた 1 枚目を配った")
 
         runtime.input.enqueue(.mouseDown(x: 4, y: 4, button: .left))
         try runtime.advance()
-        // 押したコールバックが画素を書いたので、面の中身は新しい。止まったまま両方を書く
-        #expect(FileManager.default.fileExists(atPath: first.path), "書き直した後も、1 枚目の保存を待たせている")
-        #expect(FileManager.default.fileExists(atPath: second.path), "書き直した後の保存を、次の描画まで待たせている")
+        // 押したコールバックが画素を書いたので、面の中身は新しい。止まったまま両方を書く。書き込みは
+        // 隔離の外で走るので、閉じて書き終えるのを待ってから見る (閉じる口は描かない)
+        #expect(runtime.outletFramesDropped == 1, "書き直した面を、打ち切りのまま落とした")
         runtime.closePlugins()
+        #expect(FileManager.default.fileExists(atPath: first.path), "書き直した後も、1 枚目の保存を書いていない")
+        #expect(FileManager.default.fileExists(atPath: second.path), "書き直した後の保存を書いていない")
     }
 
     /// **塞がずに閉じる口 (`closePlugins(.peek)`) は、結末を待たない** (#2743 の反証 6)。結末の届かない

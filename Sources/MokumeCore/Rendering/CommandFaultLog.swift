@@ -177,10 +177,36 @@ nonisolated final class CommandFaultLog: Sendable {
         /// 忘れた分の番号は 1 つしか残していないので、範囲に入ったかを確かめられない側は打ち切りに
         /// 倒す。読む口が問う範囲は常に「いま積んである最後の投入まで」なので、忘れた分が範囲の終わり
         /// より後ろにあることは無く、この倒し方が実際に余計に投げることは無い。
+        ///
+        /// **出口へ配る口 (`SketchRuntime`) はこの前提を破る** ([#2743])。配るのは 1〜2 フレーム遅れた
+        /// 絵なので、範囲の終わりは「いま積んである最後」より前にある。範囲の終わりより後に打ち切りが
+        /// 上限 (``CommandFaultLog/rememberedDrops``) を越えて記されると、忘れた分が範囲の終わりより
+        /// 後ろにあっても範囲に入れて答え、無事なフレームを落とす。倒れるのは落とす側なので、そのままにする
+        /// (壊れた GPU が数百の投入を続けて打ち切っているときだけ起きる)。
+        ///
+        /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
         func drops(after floor: UInt64, through last: UInt64) -> [Drop] {
             var found = drops.filter { $0.submission > floor && $0.submission <= last }
             if let forgotten, forgotten.submission > floor { found.append(forgotten) }
             return found.sorted { $0.submission < $1.submission }
+        }
+
+        /// 番号が `floor` より大きく `last` 以下の投入の結末が、**すべて届いているか** ([#2743])。
+        ///
+        /// **範囲より前の欠けは見ない。** 1 から途切れずに届いた番号 (``arrivedThrough``) が範囲の終わりに
+        /// 届いていなくても、範囲の番号がどれも順を飛ばして届いていれば (``arrivedAhead``) 揃っている。
+        /// 範囲より前の結末 (`setup()` の投入・別の面の読み戻しなど) が遅れたり失われたりしても、それを
+        /// 待たない口 (``CommandFaultLog/settledDrops(after:through:)``) が塞がれない。
+        ///
+        /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+        func hasSettled(after floor: UInt64, through last: UInt64) -> Bool {
+            guard arrivedThrough < last else { return true }
+            var submission = max(floor, arrivedThrough) + 1
+            while submission <= last {
+                guard arrivedAhead.contains(submission) else { return false }
+                submission += 1
+            }
+            return true
         }
 
         /// 番号 `submission` の結末。届いていなければ `nil`、**打ち切られたと確かめられれば** `true`。
@@ -340,10 +366,13 @@ nonisolated final class CommandFaultLog: Sendable {
     /// 忘れた打ち切りに掛かりうる番号を、打ち切りの側に倒す)。出口へ絵を配る口が、毎フレーム main
     /// actor で眠らずに問うために使う — 届いていなければ、配るのを次のフレームへ持ち越す。
     ///
+    /// **揃ったかは範囲の番号だけで見る** (``State/hasSettled(after:through:)``)。範囲より前の結末が
+    /// 欠けていても塞がれない。
+    ///
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
     func settledDrops(after floor: UInt64, through last: UInt64) -> [Drop]? {
         state.withLock { state in
-            guard state.arrivedThrough >= last else { return nil }
+            guard state.hasSettled(after: floor, through: last) else { return nil }
             return state.drops(after: floor, through: last)
         }
     }
