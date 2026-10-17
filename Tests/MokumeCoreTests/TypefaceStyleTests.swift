@@ -81,7 +81,8 @@ enum FamilySurvey {
 @Suite("太斜体の面の引き当て")
 struct TypefaceStyleTests {
     private static func face(_ name: String, _ style: TextStyle) -> Typeface {
-        Typeface(request: TypefaceRequest(name: name, size: 12, style: style))
+        // 代わりの書体の知らせは見ない (`FallbackTypefaceStyleTests` が見る)
+        Typeface(request: TypefaceRequest(name: name, size: 12, style: style)) { _, _, _ in }
     }
 
     private static func traits(of font: CTFont) -> (bold: Bool, italic: Bool) {
