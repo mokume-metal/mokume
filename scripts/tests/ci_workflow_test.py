@@ -10,12 +10,12 @@ release_workflow_test.py)。ここで固定するのは次の 2 つ:
 
   1. ci.yml に test-release が戻っていない — 戻すと、PR か merge_group で macOS の枠を
      また取り合う (2026-10-13 は PR の ci-check が走り出すまで約 1 時間待った)
-  2. ci-gate (scripts/ci-gate.sh) は needs の failure と cancelled を赤にし、skipped を素通しに
-     しない — PR の run で skipped の検査は、同じ head SHA の skipped を除いた最新の check run が
-     success のときだけ通す (#2690)。走っている途中・赤・見つからない・API の失敗は赤で、
-     merge_group と、検査が走った run では API を呼ばない。gh は PATH の先の代役で、--jq を
-     実際に当てる (絞り込みの誤りを素通りさせない)。check_name で引く前提として、ci-check・
-     ci-static という job 名はほかのワークフローに無い
+  2. ci-gate (scripts/ci-gate.sh) は needs の failure と cancelled を赤にし、pull_request の run の
+     skipped も素通しにせず赤にする (#2690 の穴)。同じ head SHA の検査の結論を待って読む形
+     (#2690) には戻さない — 本文を編集するたびに待つ ci-gate が重なって runner の枠を削った
+     (#2718)。gh は PATH の先の代役で、呼ばれたら記録して落ちる (API を 1 度も呼ばない)。
+     stall-watch.sh が PR の rollup から名前で引く前提として、ci-check・ci-static という job 名は
+     ほかのワークフローに無い
 
 **段の振り分け (#2612)。** CI は `make ci-check` の段を、macOS の ci-check と ubuntu の ci-static に
 分けて走らせる (どちらも `make ci-check` を呼び、`CI_CHECK_HOST` で自分の段を選ぶ)。手元の
@@ -27,7 +27,8 @@ release_workflow_test.py)。ここで固定するのは次の 2 つ:
   4. ビルドの成果物を要する段 (build・test・examples・shaders・params・api・reference) は
      ubuntu へ出ず、合流後の木に当てる 5 段は merge_group の macOS に居る。hooks-test も
      macOS に居る — 検査がスクリプトを /bin/bash (3.2) で起こすことの保証 (#702)
-  5. ci-static は ubuntu で走り、ci-check と同じ条件で起動して、ci-gate が両方を待つ
+  5. ci-static は ubuntu で走り、ci-check と同じく `if:` を持たずにどの起動でも走って、ci-gate が
+     両方を待つ
   6. 段を走らせるジョブは `make ci-check` を呼ぶだけで (段の並びを ci.yml に持たない)、
      `CI_CHECK_HOST` の綴りを誤ると全段や 0 段に落ちずに make が止まる
 
@@ -45,10 +46,11 @@ ci.yml から読む。並びの写しをここに持たない。
 **作法の検査は ci.yml に居ない (#2611・#2669)。** タイトル・マージ判定・絵は pr-gate.yml の
 必須チェック pr-gate が持つ。ここで固定するのは次の 3 つ:
 
-  9. ci.yml は作法のためのイベント (labeled・unlabeled・pull_request_review) で起きない。
-     edited は base の変更のためだけに居る
-  10. 段を走らせる 2 つのジョブは、本文・タイトルだけの edited で走らず、base を変えた edited と
-      opened / synchronize / reopened・merge_group で走る (`if:` を評価して見る)
+  9. ci.yml は作法のためのイベント (labeled・unlabeled・pull_request_review) でも、本文・タイトル・
+     base の編集 (edited) でも起きない (#2718)。edited を戻すと、編集のたびに段を走らせない run と
+     その ci-gate が立つ
+  10. 段を走らせる 2 つのジョブは `if:` を持たず、opened / synchronize / reopened・merge_group の
+      どれでも走る
   11. ci-gate はコードの検査だけを待ち、ペイロードの可変な欄 (title / body / labels) を読む
       ジョブが ci.yml に無い — 戻すと、直す前の run の赤い ci-gate が同じコミットに残る (#2134)
 
@@ -132,29 +134,6 @@ def skip_of(body: str, event: str) -> str:
     return q.group(1) if event == "merge_group" else ""
 
 
-def evaluate(cond: str, event: str, action=None, base=None) -> bool:
-    """`if:` の式を、event・action・changes.base を与えて評価する。
-
-    読めるのは ci.yml が使う形 (`github.event_name`・`github.event.action`・
-    `github.event.changes.base` の比較と `||`・`&&`・`!`) だけで、知らない語があれば止まる。
-    Actions の式で null と文字列の `!=` は真になる (Python の None != '...' と同じ)。
-    """
-    names = {
-        "github.event_name": repr(event),
-        "github.event.action": repr(action),
-        "github.event.changes.base": repr(base),
-    }
-    expr = cond
-    for name, value in names.items():
-        expr = expr.replace(name, value)
-    expr = expr.replace("||", " or ").replace("&&", " and ")
-    expr = re.sub(r"!(?!=)", " not ", expr)
-    leftover = re.sub(r"'[^']*'|\b(or|and|not|None)\b|[(){}:,!=\s]", "", expr)
-    if leftover:
-        raise AssertionError(f"if: の式に読めない語がある: {leftover!r} ({cond})")
-    return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 — 上で語を絞った
-
-
 class CiWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -167,30 +146,19 @@ class CiWorkflowTest(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertNotIn("make test-release", body)
 
-    def test_ci_gate_は判定を_ci_gate_sh_に任せ_check_run_を読める(self):
+    def test_ci_gate_は判定を_ci_gate_sh_に任せ_API_を読まない(self):
         gate = self.jobs["ci-gate"]
         self.assertRegex(gate, r"(?m)^        run: bash scripts/ci-gate\.sh\s*$")
         self.assertRegex(gate, r"(?m)^          RESULTS: \$\{\{ toJSON\(needs\) \}\}\s*$")
-        # 同じ SHA を引くのは PR の head。合流 ref の SHA (github.sha) には check run が付かない
-        self.assertRegex(
-            gate, r"(?m)^          HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\s*$"
-        )
         self.assertRegex(gate, r"(?m)^          EVENT_NAME: \$\{\{ github\.event_name \}\}\s*$")
-        self.assertRegex(gate, r"(?m)^          GH_TOKEN: \$\{\{ github\.token \}\}\s*$")
-        self.assertRegex(gate, r"(?m)^      checks: read\b")
         self.assertRegex(gate, r"(?m)^          sparse-checkout: scripts/ci-gate\.sh\s*$")
-
-    def test_ci_gate_の_timeout_は待ちの期限の外側にある(self):
-        # 内側だと、期限の赤 (理由つき) より先に job が切られ、理由の無い cancelled になる
-        gate = self.jobs["ci-gate"]
-        minutes = int(re.search(r"(?m)^    timeout-minutes: (\d+)\s*$", gate).group(1))
-        limit = int(re.search(r"(?m)^WAIT_LIMIT=\$\{WAIT_LIMIT:-(\d+)\}$", GATE.read_text()).group(1))
-        self.assertGreater(minutes * 60, limit + 5 * 60)
+        # 同じ SHA の検査の結論を待って読む形 (#2690) は外した (#2718)。token を渡すと戻せてしまう
+        self.assertNotIn("GH_TOKEN", gate)
 
     def test_段を走らせる_job_の名前はほかのワークフローに無い(self):
-        # ci-gate.sh は needs のキーを check run の名前として、check_name で同じ SHA を引く。
-        # job に name: があると名前がキーとずれ、同じ名前の job がほかにあると別のワークフローの
-        # 結論を読んでしまう
+        # scripts/stall-watch.sh (gate_state・normalize_checks) は PR の rollup から、名前だけで ci-check・
+        # ci-static の最新を選ぶ。job に name: があると rollup の名前が job のキーとずれ、同じ名前の job が
+        # ほかのワークフローにあると、その結論が masked などの判定に混ざる
         names = workflow.needs(self.jobs["ci-gate"])
         for name in names:
             with self.subTest(job=name):
@@ -217,38 +185,26 @@ class CiWorkflowTest(unittest.TestCase):
         self.assertEqual(re.findall(r"make [a-z-]+", body), ["make ci-check"])
         self.assertEqual(host_of(body), "macos")
 
-    def test_段を走らせる_2_つのジョブは同じ条件で起動する(self):
-        # 片方だけが merge_group やラベルの付け外しで走らないと、その event の段が抜ける
-        self.assertTrue(workflow.condition(self.jobs["ci-check"]))
-        self.assertEqual(
-            workflow.condition(self.jobs["ci-static"]), workflow.condition(self.jobs["ci-check"])
-        )
+    def test_段を走らせる_2_つのジョブはどの起動でも走る(self):
+        # if: で起動を選ぶと、選ばなかった event の run では skipped になる。pull_request の run では
+        # ci-gate.sh がそれを赤にする (#2690 の穴を開けない) ので、選ぶ理由の無い if: を置かない。
+        # 片方だけが走らない event があると、その event の段が抜ける
+        for name in ("ci-check", "ci-static"):
+            with self.subTest(job=name):
+                self.assertEqual(workflow.condition(self.jobs[name]), "")
 
     def test_ci_gate_は段を走らせる_2_つのジョブを待つ(self):
         self.assertTrue({"ci-check", "ci-static"} <= workflow.needs(self.jobs["ci-gate"]))
 
-    # --- 作法の検査は ci.yml に居ない (#2669) ---------------------------------
+    # --- 作法の検査も本文の編集も ci.yml を起こさない (#2669・#2718) -----------
 
-    def test_作法のためのイベントでは起きない(self):
+    def test_作法と本文の編集のためのイベントでは起きない(self):
         top, _ = workflow.split(CI.read_text(encoding="utf-8"))
         triggers = set(re.findall(r"^  ([a-z_]+):", top["on"], re.M))
         self.assertEqual(triggers, {"pull_request", "merge_group"})
         types = re.search(r"(?m)^    types: \[(.*)\]\s*$", top["on"]).group(1)
-        self.assertEqual(
-            {s.strip() for s in types.split(",")}, {"opened", "synchronize", "reopened", "edited"}
-        )
-
-    def test_段を走らせるジョブは作法だけの_edited_で走らず_base_の変更で走る(self):
-        cond = workflow.condition(self.jobs["ci-check"])
-        runs = {
-            "opened": evaluate(cond, "pull_request", "opened"),
-            "synchronize": evaluate(cond, "pull_request", "synchronize"),
-            "reopened": evaluate(cond, "pull_request", "reopened"),
-            "edited (base)": evaluate(cond, "pull_request", "edited", {"ref": {"from": "main"}}),
-            "merge_group": evaluate(cond, "merge_group"),
-        }
-        self.assertEqual([k for k, v in runs.items() if not v], [], "走るべき起動で走らない")
-        self.assertFalse(evaluate(cond, "pull_request", "edited"), "本文・タイトルの編集で走る")
+        # edited を戻すと、本文・タイトルを直すたびに段を走らせない run と ci-gate が立つ (#2718)
+        self.assertEqual({s.strip() for s in types.split(",")}, {"opened", "synchronize", "reopened"})
 
     def test_ci_gate_はコードの検査だけを待つ(self):
         self.assertEqual(workflow.needs(self.jobs["ci-gate"]), {"ci-check", "ci-static"})
@@ -264,75 +220,15 @@ class CiWorkflowTest(unittest.TestCase):
 
 GATE = REPO / "scripts" / "ci-gate.sh"
 
-# gh の代役。呼ばれた引数を $GH_CALLS に書き、check-runs は check_name ごとの JSON に --jq を当てる
+# gh の代役。呼ばれたら引数を $GH_CALLS に書いて落ちる。ci-gate.sh は API を 1 度も呼ばない —
+# 同じ head SHA の検査の結論を待って読む形 (#2690) は外した (#2718)
 FAKE_GH = """#!/bin/bash
 printf '%s\\n' "$*" >> "$GH_CALLS"
-filter=""
-prev=""
-url=""
-for a in "$@"; do
-  if [ "$prev" = "--jq" ]; then filter=$a; fi
-  case "$a" in repos/*) url=$a ;; esac
-  prev=$a
-done
-case "$url" in
-  */check-runs\\?*)
-    # 先頭の CHECKRUNS_FAIL 回だけ落ちる
-    n=$(cat "$RUNS_DIR/fails" 2>/dev/null || echo 0)
-    if [ "$n" -lt "${CHECKRUNS_FAIL:-0}" ]; then
-      echo $((n + 1)) > "$RUNS_DIR/fails"
-      echo "gh: HTTP 504: Gateway Timeout" >&2; exit 1
-    fi
-    name=${url#*check_name=}; name=${name%%&*}
-    # 名前ごとの回数。<名前>.after.json があれば、AFTER 回目 (既定 2) からはそちらを返す
-    k=$(( $(cat "$RUNS_DIR/$name.count" 2>/dev/null || echo 0) + 1 ))
-    echo "$k" > "$RUNS_DIR/$name.count"
-    f="$RUNS_DIR/$name.json"
-    if [ -f "$RUNS_DIR/$name.after.json" ] && [ "$k" -ge "${AFTER:-2}" ]; then
-      f="$RUNS_DIR/$name.after.json"
-    fi
-    [ -f "$f" ] || f="$RUNS_DIR/none.json"
-    # --paginate はページごとに --jq を当てて連結する。2 ページ目があればそれも出す
-    jq -r "$filter" < "$f"
-    [ ! -f "$RUNS_DIR/$name.2.json" ] || jq -r "$filter" < "$RUNS_DIR/$name.2.json"
-    exit 0 ;;
-esac
-echo "代役が知らない呼び出し: $*" >&2
+echo "ci-gate.sh は gh を呼ばない (#2718): $*" >&2
 exit 2
 """
 
-# 時計の代役 (#2713)。sleep は眠らずに $FAKE_CLOCK を引数の秒だけ進めて $SLEEPS に書き、
-# date +%s はその時計を返す。時計が進むのは sleep だけなので、期限までの読み直しの回数は
-# 負荷にも秒の境目にも依らない。本物の時計 (bash の SECONDS) で測ると、秒の境目の直前に
-# 起きた回は WAIT_LIMIT=1 の期限が実時間で 0 秒近くで切れ、1 度しか読まない
-FAKE_SLEEP = """#!/bin/bash
-printf '%s\\n' "$1" >> "$SLEEPS"
-echo $(( $(cat "$FAKE_CLOCK") + $1 )) > "$FAKE_CLOCK"
-"""
-FAKE_DATE = """#!/bin/bash
-[ "$*" = "+%s" ] || { echo "代役が知らない呼び出し: date $*" >&2; exit 2; }
-cat "$FAKE_CLOCK"
-"""
-
-SHA = "0123abcd"
-RESULTS_EDITED = {"ci-check": {"result": "skipped"}, "ci-static": {"result": "skipped"}}
-
-
-RUN_ID = "555"
-
-
-def check_run(
-    id_: int, status: str, conclusion, app: str = "github-actions", run: str = "1"
-) -> dict:
-    url = f"https://github.com/o/r/actions/runs/{run}/job/{id_}"
-    return {
-        "id": id_,
-        "status": status,
-        "conclusion": conclusion,
-        "app": {"slug": app},
-        "details_url": url,
-        "html_url": url,
-    }
+RAN = {"ci-check": {"result": "success"}, "ci-static": {"result": "success"}}
 
 
 def needs_json(results: dict) -> str:
@@ -343,274 +239,67 @@ def needs_json(results: dict) -> str:
 
 
 class CiGateScriptTest(unittest.TestCase):
-    """scripts/ci-gate.sh の判定 (#2690)。"""
+    """scripts/ci-gate.sh の判定 (#2690・#2718)。"""
 
-    def run_gate(
-        self, runs: dict, *, event="pull_request", results=None, env_extra=None, page2=None,
-        after=None,
-    ):
-        """runs = {名前: [check run …]}・page2 = 2 ページ目・after = 読み直したときの応答。
-
-        (returncode, 出力, gh の呼び出し) を返す。既定の WAIT_LIMIT は 0 (1 度だけ読む)。
-        時計は代役で、進むのは sleep だけ (POLL_WAIT=0 の既定では進まない)。眠った秒の並びは
-        self.sleeps に残す。
-        """
+    def run_gate(self, results: dict, *, event="pull_request", env_extra=None):
+        """(returncode, 出力, gh の呼び出し) を返す。"""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             gh = tmp / "bin" / "gh"
             gh.parent.mkdir()
-            for name, text in (("gh", FAKE_GH), ("sleep", FAKE_SLEEP), ("date", FAKE_DATE)):
-                (gh.parent / name).write_text(text)
-                (gh.parent / name).chmod(0o755)
-            clock = tmp / "clock"
-            clock.write_text("1700000000\n")
-            sleeps = tmp / "sleeps"
-            sleeps.write_text("")
-            runs_dir = tmp / "runs"
-            runs_dir.mkdir()
-            (runs_dir / "none.json").write_text(json.dumps({"total_count": 0, "check_runs": []}))
-            for name, items in runs.items():
-                (runs_dir / f"{name}.json").write_text(
-                    json.dumps({"total_count": len(items), "check_runs": items})
-                )
-            for name, items in (after or {}).items():
-                (runs_dir / f"{name}.after.json").write_text(
-                    json.dumps({"total_count": len(items), "check_runs": items})
-                )
-            for name, items in (page2 or {}).items():
-                (runs_dir / f"{name}.2.json").write_text(
-                    json.dumps({"total_count": len(items), "check_runs": items})
-                )
+            gh.write_text(FAKE_GH)
+            gh.chmod(0o755)
             calls = tmp / "calls"
             calls.write_text("")
             env = {
                 "PATH": f"{gh.parent}{os.pathsep}{os.environ.get('PATH', '')}",
-                "RESULTS": needs_json(results if results is not None else RESULTS_EDITED),
+                "RESULTS": needs_json(results),
                 "EVENT_NAME": event,
-                "HEAD_SHA": SHA,
-                "GITHUB_REPOSITORY": "o/r",
-                "GITHUB_RUN_ID": RUN_ID,
-                "POLL_WAIT": "0",
-                "WAIT_LIMIT": "0",
                 "GH_CALLS": str(calls),
-                "RUNS_DIR": str(runs_dir),
-                "FAKE_CLOCK": str(clock),
-                "SLEEPS": str(sleeps),
                 **(env_extra or {}),
             }
             env = {k: v for k, v in env.items() if v is not None}
             proc = subprocess.run(
                 ["/bin/bash", str(GATE)], env=env, capture_output=True, text=True, timeout=30
             )
-            # --jq の式は複数行なので、呼び出しの頭 (api …) の行だけを数える
-            heads = [ln for ln in calls.read_text().splitlines() if ln.startswith("api ")]
-            self.sleeps = [int(s) for s in sleeps.read_text().split()]
-            return proc.returncode, proc.stdout + proc.stderr, heads
+            return proc.returncode, proc.stdout + proc.stderr, calls.read_text().splitlines()
 
-    def both(self, items):
-        return {"ci-check": items, "ci-static": [check_run(900, "completed", "success")]}
+    def test_検査が走った_run_は_needs_の結論を返す(self):
+        for results, want in (
+            (RAN, 0),
+            ({"ci-check": {"result": "failure"}, "ci-static": {"result": "success"}}, 1),
+            ({"ci-check": {"result": "success"}, "ci-static": {"result": "cancelled"}}, 1),
+        ):
+            for event in ("pull_request", "merge_group"):
+                with self.subTest(results=results, event=event):
+                    code, out, calls = self.run_gate(results, event=event)
+                    self.assertEqual(code, want, out)
+                    self.assertEqual(calls, [])
 
-    def test_同じ_SHA_の最新が_success_なら通す(self):
-        code, out, calls = self.run_gate(self.both([check_run(100, "completed", "success")]))
-        self.assertEqual(code, 0, out)
-        self.assertEqual(len(calls), 2, calls)
-        for call in calls:
-            self.assertIn(f"repos/o/r/commits/{SHA}/check-runs?check_name=", call)
-            # latest は completed_at の最新だけを返し、走っている途中も古い success も見えない
-            self.assertIn("filter=all", call)
-
-    def test_走っている途中なら終わるのを待って結論を返す(self):
-        # 変更前の素通しでは、opened の run の ci-check が走っている間に緑が付いた (#2577)。
-        # 途中で赤を返すと、後から緑が来ても打ち直すまで PR を塞ぐ (#2690 の実測)
-        for final, want in (("success", 0), ("failure", 1)):
-            with self.subTest(final=final):
-                code, out, calls = self.run_gate(
-                    self.both([check_run(100, "in_progress", None)]),
-                    after={"ci-check": [check_run(100, "completed", final)]},
-                    env_extra={"WAIT_LIMIT": "30", "AFTER": "3"},
-                )
-                self.assertEqual(code, want, out)
-                self.assertIn("待つ", out)
-                self.assertGreaterEqual(len(calls), 4, calls)  # ci-check を 3 回・ci-static を 1 回
-
-    # 期限の 2 検査は、本番の既定 (POLL_WAIT=30・WAIT_LIMIT=5400) を片方ずつ渡さずに走らせる。
-    # 両方を既定にすると 181 回読み直し、代役の起動だけで秒単位かかる。どちらも ci-check を
-    # 0, 1, 2, 3 回眠った時点の 4 回読み、期限に達した 4 回目で赤にする。期限を過ぎた
-    # ci-static は 1 度だけ読む
-
-    def test_期限まで終わらなければ赤(self):
-        code, out, calls = self.run_gate(
-            self.both([check_run(100, "in_progress", None)]),
-            env_extra={"POLL_WAIT": None, "WAIT_LIMIT": "90"},
-        )
-        self.assertEqual(code, 1, out)
-        self.assertIn("90 秒待っても結論が出ない", out)
-        self.assertIn("走っている途中", out)
-        # 期限までは既定の 30 秒おきに読み直し、期限で止まる
-        self.assertEqual(self.sleeps, [30, 30, 30])
-        self.assertEqual(len(calls), 4 + 1, calls)
-
-    def test_まだ見つからなければ現れるまで待つ(self):
-        # 本文の編集が、検査の run の job が作られるより先に届いた場合
-        code, out, _ = self.run_gate(
-            {"ci-static": [check_run(900, "completed", "success")]},
-            after={"ci-check": [check_run(100, "completed", "success")]},
-            env_extra={"WAIT_LIMIT": "30"},
-        )
-        self.assertEqual(code, 0, out)
-
-    def test_最新が赤なら赤(self):
-        for conclusion in ("failure", "cancelled", "timed_out"):
-            with self.subTest(conclusion=conclusion):
-                code, out, _ = self.run_gate(self.both([check_run(100, "completed", conclusion)]))
+    def test_pull_request_の_run_で_skipped_の段は赤(self):
+        """#2690 の穴を開け直さない。ci.yml は本文・タイトルの編集で起きず (#2718)、段を走らせる
+        2 つは if: を持たないので、pull_request の run では必ず走る。skipped が来たら、通すと検査して
+        いない run の緑の ci-gate が必須を満たす。同じ SHA の結論を読みに行かずに、その場で赤にする。"""
+        for results in (
+            {"ci-check": {"result": "skipped"}, "ci-static": {"result": "skipped"}},
+            # 境界: 片方だけが skipped でも、もう片方の緑で通さない
+            {"ci-check": {"result": "success"}, "ci-static": {"result": "skipped"}},
+        ):
+            with self.subTest(results=results):
+                code, out, calls = self.run_gate(results)
                 self.assertEqual(code, 1, out)
-                self.assertIn(conclusion, out)
-
-    def test_skipped_しか無ければ赤(self):
-        # この run 自身の skipped の check run は数えない
-        code, out, _ = self.run_gate(self.both([check_run(300, "completed", "skipped")]))
-        self.assertEqual(code, 1, out)
-        self.assertIn("走った ci-check が無い", out)
-
-    def test_同じ名前の_check_run_が無ければ赤(self):
-        code, out, _ = self.run_gate({"ci-static": [check_run(900, "completed", "success")]})
-        self.assertEqual(code, 1, out)
-        self.assertIn("走った ci-check が無い", out)
-
-    def test_新しい_skipped_の下の_success_を読む(self):
-        runs = self.both([
-            check_run(100, "completed", "success"),
-            check_run(300, "completed", "skipped"),
-        ])
-        code, out, _ = self.run_gate(runs)
-        self.assertEqual(code, 0, out)
-
-    def test_この_run_自身の_check_run_は読まない(self):
-        # skipped の job は ci-gate より遅れて作られ、作られた瞬間は completed でないことがある。
-        # それを最新と読むと、後から ci-gate を作る run が無いまま赤が固まる (#2690 の反証)
-        runs = self.both([
-            check_run(100, "completed", "success"),
-            check_run(300, "queued", None, run=RUN_ID),
-        ])
-        code, out, _ = self.run_gate(runs)
-        self.assertEqual(code, 0, out)
-
-    def test_id_は数の大きさで比べる(self):
-        runs = self.both([
-            check_run(100, "completed", "success"),
-            check_run(99, "completed", "failure"),
-        ])
-        code, out, _ = self.run_gate(runs)
-        self.assertEqual(code, 0, out)
-
-    def test_ページをまたいで最新を取る(self):
-        code, out, _ = self.run_gate(
-            self.both([check_run(100, "completed", "success")]),
-            page2={"ci-check": [check_run(200, "in_progress", None)]},
-        )
-        self.assertEqual(code, 1, out)
-        self.assertIn("走っている途中", out)
-
-    def test_最新は作成順_id_で決める(self):
-        # 返る並びは id の順とは限らない。古い赤の後に打ち直した緑があれば通し、逆なら赤
-        runs = self.both([
-            check_run(200, "completed", "success"),
-            check_run(100, "completed", "failure"),
-        ])
-        self.assertEqual(self.run_gate(runs)[0], 0)
-        runs = self.both([
-            check_run(100, "completed", "success"),
-            check_run(200, "completed", "failure"),
-        ])
-        self.assertEqual(self.run_gate(runs)[0], 1)
-
-    def test_ほかの_app_の_check_run_は読まない(self):
-        runs = self.both([
-            check_run(100, "completed", "failure"),
-            check_run(200, "completed", "success", app="someone-else"),
-        ])
-        code, out, _ = self.run_gate(runs)
-        self.assertEqual(code, 1, out)
-
-    def test_API_が失敗し続けたら理由を出して赤(self):
-        code, out, calls = self.run_gate(
-            self.both([check_run(100, "completed", "success")]),
-            env_extra={"CHECKRUNS_FAIL": "9999", "POLL_WAIT": "1800", "WAIT_LIMIT": None},
-        )
-        self.assertEqual(code, 1, out)
-        self.assertIn("5400 秒待っても結論が出ない", out)
-        self.assertIn("Gateway Timeout", out)
-        # 既定の 5400 秒の期限までは試し直し、期限で止まる
-        self.assertEqual(self.sleeps, [1800, 1800, 1800])
-        self.assertEqual(len(calls), 4 + 1, calls)
-
-    def test_API_の一時的な失敗は試し直す(self):
-        # 赤を返すと、打ち直すまで PR を塞ぐ
-        code, out, _ = self.run_gate(
-            self.both([check_run(100, "completed", "success")]),
-            env_extra={"CHECKRUNS_FAIL": "2", "WAIT_LIMIT": "30"},
-        )
-        self.assertEqual(code, 0, out)
+                skipped = [k for k, v in results.items() if v["result"] == "skipped"]
+                for name in skipped:
+                    self.assertIn(f"{name}: この run では skipped", out)
+                self.assertEqual(calls, [], "同じ SHA の結論を読みに行っている (待ちが戻った・#2718)")
 
     def test_event_が無いか知らなければ赤(self):
         # 開く側に倒れると、ci.yml の渡し忘れひとつで素通しに戻る
         for event in (None, "push"):
             with self.subTest(event=event):
-                code, out, calls = self.run_gate(
-                    self.both([check_run(100, "completed", "success")]), env_extra={"EVENT_NAME": event}
-                )
+                code, out, calls = self.run_gate(RAN, env_extra={"EVENT_NAME": event})
                 self.assertEqual(code, 1, out)
                 self.assertEqual(calls, [])
-
-    def test_検査が走った_run_では_API_を呼ばない(self):
-        for results, want in (
-            ({"ci-check": {"result": "success"}, "ci-static": {"result": "success"}}, 0),
-            ({"ci-check": {"result": "failure"}, "ci-static": {"result": "success"}}, 1),
-            ({"ci-check": {"result": "cancelled"}, "ci-static": {"result": "skipped"}}, 1),
-        ):
-            with self.subTest(results=results):
-                code, out, calls = self.run_gate({}, results=results)
-                self.assertEqual(code, want, out)
-                self.assertEqual(calls, [])
-
-    def test_merge_group_では_API_を呼ばない(self):
-        code, out, calls = self.run_gate({}, event="merge_group")
-        self.assertEqual(code, 0, out)
-        self.assertEqual(calls, [])
-
-    def test_最新は作成順で最新の_check_suite_で選ぶ(self):
-        """必須は作成順で最新の suite を読む (ci-gate.sh 冒頭の規則・#2577)。古い suite の検査を
-        打ち直すと check run の id は最大になるが、読むのは新しい suite の結論 (#2716 の反証 4)。"""
-        def in_suite(suite, *args, **kwargs):
-            item = check_run(*args, **kwargs)
-            item["check_suite"] = {"id": suite}
-            return item
-
-        # 古い suite (10) の打ち直しの赤 (id 500) より、新しい suite (20) の緑 (id 300) を読む
-        runs = self.both([in_suite(10, 500, "completed", "failure"), in_suite(20, 300, "completed", "success")])
-        self.assertEqual(self.run_gate(runs)[0], 0)
-        # 逆も同じ。古い suite の打ち直しの緑で、新しい suite の赤を覆わない
-        runs = self.both([in_suite(10, 500, "completed", "success"), in_suite(20, 300, "completed", "failure")])
-        self.assertEqual(self.run_gate(runs)[0], 1)
-        # 同じ suite の中では、打ち直し (後の attempt・id が大きい) の結論を読む
-        runs = self.both([in_suite(20, 300, "completed", "failure"), in_suite(20, 400, "completed", "success"),
-                          in_suite(10, 500, "completed", "failure")])
-        self.assertEqual(self.run_gate(runs)[0], 0)
-
-
-class EvaluateTest(unittest.TestCase):
-    """式の読み手そのものの検査 — 壊れた読み手は、上の検査を黙って緑にする。"""
-
-    def test_比較と論理を読む(self):
-        cond = "github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base"
-        self.assertTrue(evaluate(cond, "merge_group"))
-        self.assertFalse(evaluate(cond, "pull_request", "edited"))
-        self.assertTrue(evaluate(cond, "pull_request", "edited", {"ref": {}}))
-        self.assertFalse(evaluate("!(github.event_name == 'merge_group')", "merge_group"))
-
-    def test_知らない語で止まる(self):
-        with self.assertRaises(AssertionError):
-            evaluate("github.event.pull_request.draft", "pull_request")
 
 
 @unittest.skipUnless(MAKE, "make が PATH に無い")

@@ -871,6 +871,57 @@ struct InputInboxTests {
         #expect(inbox.drain(into: InputState()) == nil)
     }
 
+    /// **`events` が読めなくても、`id` を読めれば応える** ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
+    /// 解けなかった 1 件だけを持つ要求として流すので、受けたのは 0 件・捨てたのは 1 件と返り、
+    /// 何も流れ込まない。応えないと、送り手には「届いたが読めなかった」と「走っていない」の
+    /// 見分けが付かない (ADR-0018 決定 3)。
+    @Test(
+        "events が読めない要求にも、id を echo し、1 件を捨てたと応える",
+        arguments: [
+            #"{"id":"i1","events":5}"#,
+            #"{"id":"i1"}"#,
+            #"{"id":"i1","events":null}"#,
+            #"{"id":"i1","events":{"type":"mouseMoved","x":1,"y":2}}"#,
+        ])
+    func answersARequestWhoseEventsCannotBeRead(_ request: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(request, to: facet)
+
+        let report = try #require(inbox.drain(into: state), "応答が書かれず、要求ごと黙った")
+        #expect(report.id == "i1")
+        #expect(report.accepted == 0)
+        #expect(report.ignored == 1)
+        state.beginFrame()
+        #expect(state.x == 0)
+        #expect(state.y == 0)
+        // 応えた要求は、置き直しても二度は流さない
+        try send(request, to: facet)
+        #expect(inbox.drain(into: state) == nil)
+    }
+
+    /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
+    /// JSON)。
+    @Test(
+        "id が読めない要求は、応答せず捨てる",
+        arguments: [
+            #"{"events":[{"type":"mouseMoved","x":1,"y":2}]}"#,
+            #"{"id":5,"events":[{"type":"mouseMoved","x":1,"y":2}]}"#,
+            #"{"id":"i1","events":[{"type":"mouseMoved","x":1,"y":2}"#,
+        ])
+    func dropsARequestWithoutAReadableID(_ request: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(request, to: facet)
+
+        #expect(inbox.drain(into: state) == nil)
+        #expect(!FileManager.default.fileExists(atPath: facet.appendingPathComponent("report.json").path))
+        state.beginFrame()
+        #expect(state.x == 0)
+    }
+
     @Test("同じ識別子の要求を二度は流し込まない")
     func handlesEachRequestOnce() throws {
         let facet = try makeFacet()

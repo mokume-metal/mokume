@@ -13,7 +13,9 @@ import MokumeCore
 //
 // 作った音は、再生 (``SoundFile``) と同じ音の流れ (`SoundFlow`) へ入り、どれも同じ解析
 // (``AudioIn`` と同じ値の名前) を読める ([ADR-0042] 決定 6)。作る口は投げない — 作れなかった
-// ときは (64 個の上限) 診断に出し、何も鳴らさない音を返す。
+// ときは (64 個の上限) 診断に出し、何も鳴らさない音を返す。走っている実行へ足せない所で呼ばれ、音の流れ
+// (``SynthStage``) をまだ足していなければ、作る口の名前で 1 度だけ警告して、鳴らない音を返す (#2740)。`setup()`
+// などで先に合成音を作って流れを足してあれば、外から作った音もその流れに入って鳴る。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -44,7 +46,8 @@ extension Sketch {
     /// - 窓に出している間は実際に鳴り、書き出し (`mokume render`) では鳴らさずに、同じ操作から同じ
     ///   値を解析できる (``SynthSound``)
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
+    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・後片付けの後・`Task` の中) で
+    /// 呼んで、音の流れを走っている実行へ足せなければ、鳴らない音を返し、この口の名前で 1 度だけ警告する。
     public func createSinOsc() -> SinOsc {
         SinOsc(stage: SynthStage.stage(for: self))
     }

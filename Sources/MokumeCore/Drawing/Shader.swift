@@ -102,7 +102,7 @@ public final class Shader {
             label: "shader", valuesHint: "loadShader's values")
 
         let library = try gpu.shaders.makeShapeLibrary(
-            named: name, body: body, values: values, surfaces: surfaces)
+            named: name, body: body, bodyName: box.bodyName, values: values, surfaces: surfaces)
         self.states = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name)")
         self.solidStates = try pipeline.makeStates(
@@ -166,7 +166,8 @@ public final class Shader {
             inBackground: gpu.shaderRebuildsRunInBackground,
             prepare: { (body: String) throws(RenderFailure) -> BuildJob<Rebuilt> in
                 let library = try gpu.shaders.shapeLibraryJob(
-                    named: name, body: body, values: values, surfaces: surfaces)
+                    named: name, body: body, bodyName: box.bodyName, values: values,
+                    surfaces: surfaces)
                 let flat = pipeline.statesJob(label: "mokume.shader.\(name)")
                 let solid = pipeline.statesJob(
                     label: "mokume.shader.\(name).solid",

@@ -61,8 +61,28 @@ final class FrameObserver {
     }
 
     /// まだ応えていない要求があれば返す。規約は ``RequestFile`` が守る。
-    func pendingRequest() -> ObservationRequest? {
+    ///
+    /// **`id` だけ読めた要求も返す** (``PendingRequest/unreadable(id:reason:)``)。撮らずに
+    /// ``refuse(id:reason:report:)`` で応える。
+    func pendingRequest() -> PendingRequest<ObservationRequest>? {
         requests.pending()
+    }
+
+    /// `id` は読めたが解けなかった要求に、**撮らずに**応える ([#2550])。
+    ///
+    /// 手順は撮れなかった応答と同じで、**前回の成果物を先に消し**、絵を持たない目録に理由を
+    /// `warnings` へ載せて書く ([ADR-0018] 決定 3「失敗しても必ず応答する」)。応えないと、型の
+    /// 違う値 (`"scale":"0.5"`) を書いた書き手には「走っていない」と見分けが付かない。目録の
+    /// 中身 (フレーム・時刻・大きさ) は走らせている側が持つので、`report` で受け取る。
+    ///
+    /// [#2550]: https://github.com/mokume-metal/mokume/issues/2550
+    /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+    func refuse(
+        id: String, reason: String,
+        report: (_ id: String, _ warnings: [String]) -> ObservationReport
+    ) {
+        clearProducts()
+        finish(report(id, ["The request could not be read, so nothing was taken: \(reason)"]))
     }
 
     /// 前回の成果物を消す。**目録を先に、絵を後に**消す。

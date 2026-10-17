@@ -112,9 +112,47 @@ nonisolated struct AppIdentity: Equatable {
         guard !name.unicodeScalars.contains(where: { $0 == "/" || $0 == "\0" }) else {
             throw .identityNameUnusable(path: path, name: name)
         }
+        // **長さも同じ段で断る** (#2501)。紙の名前が上限を越える名前は、ビルドと署名の後で紙が
+        // 書けずに止まり、署名済みの `.app` を残していた。数え方は ``fileNameLength(of:)``
+        let length = fileNameLength(of: name)
+        guard length <= maximumNameLength else {
+            throw .identityNameTooLong(path: path, name: name, length: length)
+        }
         return AppIdentity(
             name: name, identifier: identifier, version: version,
             cameraUsage: written(wire.cameraUsage), microphoneUsage: written(wire.microphoneUsage))
+    }
+
+    /// ファイル名の長さの上限 (``fileNameLength(of:)`` の数え方で)。APFS は 255 まで作れて、256 で
+    /// `File name too long` になる ([#2501](https://github.com/mokume-metal/mokume/issues/2501) の実測)。
+    static let fileNameLimit = 255
+
+    /// `name` の長さの上限 (``fileNameLength(of:)`` の数え方で)。
+    ///
+    /// 名前から作るファイル名は包み (`<name>.app`) と開き方の紙
+    /// (``BundleCommand/noteFileName(for:)``) で、長いのは紙のほう — `How to open ` と `.txt` で 16 を
+    /// 足す。紙が ``fileNameLimit`` に収まる最大がここである。
+    ///
+    /// **線を「いま失敗する名前」のちょうど手前に引く。** 越える名前は、直す前から `.app` か紙の
+    /// どちらかで書けずに 1 で終わっていた。断っても成功していた名前は 1 つも失わず、変わるのは
+    /// 止まる場所 (ビルドと署名の前) と、署名済みの `.app` が残らないことだけである (#2501)。
+    /// **これは `--out` が APFS のときの話である。** exFAT・FAT32 のように名前を分解しない形で
+    /// 数える置き場では、成功していた名前 (`が` × 120 など) を断ることがある (#2773)。
+    static let maximumNameLength = 239
+
+    /// `name` をファイル名にしたときの長さ。
+    ///
+    /// **バイトでも、渡された文字列の UTF-16 の単位でもない。** Foundation は名前を分解した形
+    /// (HFS+ の分解) でファイルシステムへ渡し、APFS はそれを UTF-16 の単位で数える。`é` と濁点の
+    /// 付いた仮名と絵文字は 2、記号が 2 つ付く字 (`ệ`) は 3、ハングルの音節は 2〜3、国旗は 4、
+    /// ZWJ でつないだ家族の絵文字は 11 になる — 渡された形で数えると、`.app` は
+    /// 作れて紙で落ちる名前 (濁点の付いた仮名 120 字) を通してしまう。完全な NFD とも違う
+    /// (U+212B のオングストローム記号は分解されない) ので、Foundation がファイルシステムへ渡す形
+    /// そのもの (`fileSystemRepresentation`) から数える (#2501)。
+    ///
+    /// `/` と NUL を断った後に呼ぶ (NUL があると C の文字列がそこで切れる)。
+    static func fileNameLength(of name: String) -> Int {
+        String(cString: (name as NSString).fileSystemRepresentation).utf16.count
     }
 
     /// 名乗れる中身があるなら、前後を落とした文字列。無ければ `nil`。

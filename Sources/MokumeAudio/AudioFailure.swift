@@ -19,7 +19,18 @@ public enum AudioFailure: Error, Equatable, Sendable {
     case empty
     /// 標本化率が正でない。
     case invalidSampleRate(Float)
+    /// 走っている実行へ足せない所 (`setup()`・`draw()`・入力のコールバックの外 — 初期化子の中・
+    /// 後片付けの後・`Task` の中) で作る口を呼んだ。`call` は呼んだ口の名前 (`"loadSound(_:)"` など)。
+    /// 作ったものは走っている実行へ足さないと鳴らず解析もされないので、ファイルを読む前に断る。
+    /// `setup()` などから呼び直す ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。
+    /// 渡した標本列が使えないときは、こちらより先にその場合 (``empty``・``invalidSampleRate(_:)``) を投げる。
+    ///
+    /// **名前に反して、スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした
+    /// `Task` から呼んでもこの場合になる (``ImageFailure/notRunning(call:)`` と同じ)。
+    case notRunning(call: String)
 }
+
+extension AudioFailure: NotRunningFailure {}
 
 extension AudioFailure: CustomStringConvertible {
     public var description: String {
@@ -34,6 +45,8 @@ extension AudioFailure: CustomStringConvertible {
         case .invalidSampleRate(let rate):
             "The sample rate \(rate) is not usable. Pass a positive number of samples per second "
                 + "(44100 or 48000, for example)"
+        case .notRunning(let call):
+            Self.notAttachedNotice(call)
         }
     }
 }

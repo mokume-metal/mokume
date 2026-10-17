@@ -84,11 +84,68 @@ final class Typeface {
     /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
     let lacksRequestedStyle: Bool
 
-    init(request: TypefaceRequest) {
+    /// 代わりの書体から引いた字の面が、頼んだ太さ・傾きを欠くときに呼ぶ口 ([#2561])。渡すのは
+    /// この書体・その字・字を引いた書体で、知らせるのは書体を作らせた側 (`Canvas`) である。
+    ///
+    /// **省けない。** 書体を作る経路を足したときに、知らせが黙って落ちないよう、作る側に口を
+    /// 必ず決めさせる (知らせない検査は空の口を渡す)。
+    ///
+    /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
+    private let onFallbackLackingStyle: (Typeface, Unicode.Scalar, CTFont) -> Void
+
+    init(
+        request: TypefaceRequest,
+        onFallbackLackingStyle: @escaping (Typeface, Unicode.Scalar, CTFont) -> Void
+    ) {
         self.request = request
         (self.base, self.lacksRequestedStyle) = Self.makeFont(request)
         self.ascent = Float(CTFontGetAscent(base))
         self.descent = Float(CTFontGetDescent(base))
+        self.onFallbackLackingStyle = onFallbackLackingStyle
+    }
+
+    /// 頼んだ太さ・傾きを、CoreText の性質の印に直す。`.normal` は空。
+    static func traits(of style: TextStyle) -> CTFontSymbolicTraits {
+        switch style {
+        case .normal: []
+        case .bold: .traitBold
+        case .italic: .traitItalic
+        case .boldItalic: [.traitBold, .traitItalic]
+        }
+    }
+
+    /// 代わりの書体 (``glyph(for:)`` が、この書体が覆えない字を引いた別の書体) から引いた字が、
+    /// 頼んだ太さ・傾きを欠く面で描かれるか ([#2561])。何も頼んでいなければ欠かない。
+    ///
+    /// **知らせても直す手が無い字は、欠かないと見る。** 知らせは面 (`Canvas`) ごとに 1 度きりなので、
+    /// 直す手の無い字が先に鳴ると、後から来る直せる字 (欧文の斜体に混ぜた和文) が知らされなくなる。
+    ///
+    /// - **色の字形を持つ書体** (Apple Color Emoji。`traitColorGlyphs`) の字。字形は絵で、太さ・
+    ///   傾きの面という考えが無く、どの書体を指定しても太字や斜体の絵文字にはならない。見るのは
+    ///   書体の印で、``measuresByDrawing(_:path:)`` が絵文字を見分けるのと同じ印である。だから ❤
+    ///   (U+2764) のように**単色の書体 (Zapf Dingbats) から引く字は知らせる**
+    /// - **墨を持たない字** (``hasInk(_:in:)``)。面が違っても絵が変わらない
+    ///
+    /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
+    static func lacksStyle(
+        fallback font: CTFont, glyph: CGGlyph, requested: CTFontSymbolicTraits
+    ) -> Bool {
+        let traits = CTFontGetSymbolicTraits(font)
+        guard !traits.contains(requested), !traits.contains(.traitColorGlyphs) else { return false }
+        return hasInk(glyph, in: font)
+    }
+
+    /// その字形が墨を持つか ([#2561])。
+    ///
+    /// **道筋を持たない字形** (異体字セレクタ U+FE0E・和文の空白 U+3000 など。送り幅 0 のものも
+    /// 幅を持つものもある) と、**LastResort から引いた字形** (どの書体も持たない字の代わりに描く
+    /// 豆腐。私用領域 U+E000 など) は墨を持たないと見る。色の字形を持つ書体の字形は道筋を
+    /// 持たなくても絵を描くので、ここでは問わない (呼ぶ側が先に外す)。
+    static func hasInk(_ glyph: CGGlyph, in font: CTFont) -> Bool {
+        guard CTFontCopyPostScriptName(font) as String != "LastResort",
+            let path = CTFontCreatePathForGlyph(font, glyph, nil)
+        else { return false }
+        return !path.isEmpty
     }
 
     /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、引けた面と「無かった」を返す。
@@ -103,9 +160,7 @@ final class Typeface {
                 ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
         }
 
-        var traits: CTFontSymbolicTraits = []
-        if request.style == .bold || request.style == .boldItalic { traits.insert(.traitBold) }
-        if request.style == .italic || request.style == .boldItalic { traits.insert(.traitItalic) }
+        let traits = traits(of: request.style)
         guard !traits.isEmpty else { return (base, false) }
         return styledFace(of: base, traits: traits) {
             CTFontCreateCopyWithSymbolicTraits(base, size, nil, $0, $0)
@@ -210,12 +265,21 @@ final class Typeface {
     }
 
     /// 1 文字ぶんを引き当てる。字形が無ければ `nil`。
+    ///
+    /// **この書体が覆えない字は、環境が持つ別の書体から引き、その面のまま描く** — 欧文の斜体に混ぜた
+    /// 日本語は、斜体の面を持たない書体の立体で引かれる。その面が頼んだ太さ・傾きを欠けば
+    /// (``lacksStyle(fallback:glyph:requested:)``)、知らせの口 (``onFallbackLackingStyle``) を呼ぶ ([#2561])。
+    /// 呼ぶのは引き当てを控えに入れる時だけなので、同じ字では 1 度きりである。描画 (`text()`)・
+    /// 幅 (``advance(of:)``)・輪郭と墨の枠はどれもここを通るので、どの口から先に引いても同じ 1 度になる。
+    ///
+    /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
     func glyph(for scalar: Unicode.Scalar) -> ResolvedGlyph? {
         if let cached = resolved[scalar] { return cached }
 
         var font = base
         var glyph = Self.glyphIndex(of: scalar, in: font)
-        if glyph == 0 {
+        let fellBack = glyph == 0
+        if fellBack {
             // この書体が覆えない文字。環境が持つ別の書体から引く
             let text = String(scalar) as CFString
             font = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
@@ -231,6 +295,11 @@ final class Typeface {
             font: font, glyph: glyph, advance: Float(advance.width),
             fontKey: (CTFontCopyPostScriptName(font) as String?) ?? "")
         resolved[scalar] = entry
+        if fellBack,
+            Self.lacksStyle(fallback: font, glyph: glyph, requested: Self.traits(of: request.style))
+        {
+            onFallbackLackingStyle(self, scalar, font)
+        }
         return entry
     }
 

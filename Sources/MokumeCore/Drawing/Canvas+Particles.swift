@@ -55,7 +55,8 @@ extension Canvas {
         // **原文は 1 度だけ組む。** 3 つの入口は同じ原文にあるので、入口ごとに組むと
         // 同じものを 3 度組む (#728)
         let library = try gpu.shaders.makeComputeLibrary(
-            named: Self.particleShaderName, body: source)
+            named: Self.particleShaderName, body: source,
+            bodyName: ShaderLibraries.bundledName(Self.particleShaderName))
         var headers: [Numbers] = []
         for _ in 0..<(lengths.count - 1) { headers.append(try Numbers(gpu: gpu, count: 4)) }
         let particles = Particles(

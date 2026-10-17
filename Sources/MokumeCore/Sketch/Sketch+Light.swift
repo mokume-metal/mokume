@@ -45,7 +45,8 @@ extension SketchPart {
     /// 初回だけ理由を知らせる。
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。初期化の
-    ///   ときに置いた光はどのフレームにも属さないので、警告して無視される。
+    ///   ときや、止まっている間の入力のコールバックで置いた光はどのフレームにも
+    ///   属さないので、警告して無視される。
     // shot: 1 snippet=5e98096a
     public func ambientLight(_ color: LinearRGBA) { Self.liveCanvas()?.ambientLight(color) }
 

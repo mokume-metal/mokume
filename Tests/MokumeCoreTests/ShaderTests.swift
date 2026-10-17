@@ -847,17 +847,21 @@ struct ShaderTests {
     /// 完了条件 4「面を宣言していない断片は 1 ビットも変わらない」の機械側。
     ///
     /// 絵が動かないことは代表シーンの台帳が見る。ここが見るのは**組み上がる原稿**で、
-    /// 面を宣言していなければ前置きが 1 バイトも増えないこと。
+    /// 面を宣言していなければ前置きが 1 バイトも増えないこと。面の区切りの名乗り (`#line`・#2457)
+    /// も出さない。
     @Test("面を宣言しなければ、前置きは 1 バイトも増えない")
     func aFragmentWithoutSurfacesGetsNoPreamble() {
         #expect(ShaderSource.declaration(of: [:] as [String: ShaderSurface]).isEmpty)
 
         let values: [String: ShaderValue] = ["level": 0.5]
         let body = "float4 paint(Fragment in, Values values) { return values.level; }"
-        let withoutSurfaces = ShaderSource.assemble(common: "COMMON", values: values, body: body)
+        let withoutSurfaces = ShaderSource.assemble(
+            prelude: [.init(name: "mokume/Common.metal", text: "COMMON")], values: values,
+            body: .init(name: "shader", text: body))
         #expect(
             withoutSurfaces
-                == ShaderSource.declaration(of: values) + "COMMON" + "\n" + body + "\n")
+                == "#line 1 \"mokume/Values\"\n" + ShaderSource.declaration(of: values) + "\n"
+                + "#line 1 \"mokume/Common.metal\"\nCOMMON\n" + "#line 1 \"shader\"\n" + body + "\n")
     }
 
     /// 完了条件 3 の前提。**並びは名前順に固定**で、口の割り当てもこの順である。

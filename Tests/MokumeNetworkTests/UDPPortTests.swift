@@ -432,9 +432,14 @@ struct UDPPortTests {
         #expect(
             NetworkFailure.invalidPort(0).description
                 == "The port 0 is not usable. Pass a number from 1 to 65535 (9000, for example)")
-        // 両端は通る (走っていないスケッチなので、ポートは開かない)
-        let edge = try sketch.createUDP(listen: 65535, send: ("127.0.0.1", 1))
-        #expect(edge.port == 65535)
-        #expect(edge.state == .unavailable)
+        // 両端は値の検めを通る。走っていないスケッチなので、その後ポートを開く前に断る (#2740)
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: NetworkFailure.notRunning(call: "createUDP(listen:send:)")) {
+                try sketch.createUDP(listen: 65535, send: ("127.0.0.1", 1))
+            }
+            #expect(throws: NetworkFailure.notRunning(call: "createUDP(listen:send:)")) {
+                try sketch.createUDP(listen: 1, send: ("127.0.0.1", 65535))
+            }
+        }
     }
 }

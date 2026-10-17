@@ -221,10 +221,12 @@ final class ShapePipeline {
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
         self.pixelFormat = pixelFormat
         let library = try gpu.shaders.makeShapeLibrary(
-            named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"))
+            named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"),
+            bodyName: ShaderLibraries.bundledName("Shapes"))
         self.vertexLibrary = library
         let unitShapeLibrary = try gpu.shaders.makeShapeLibrary(
-            named: "UnitShape", body: gpu.shaders.bundledShaderSource(named: "UnitShape"))
+            named: "UnitShape", body: gpu.shaders.bundledShaderSource(named: "UnitShape"),
+            bodyName: ShaderLibraries.bundledName("UnitShape"))
         self.unitShapeLibrary = unitShapeLibrary
 
         let compiler = try gpu.shaders.compiler()
