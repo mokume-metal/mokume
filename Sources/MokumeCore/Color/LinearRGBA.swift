@@ -91,11 +91,33 @@ public struct LinearRGBA: Sendable {
         red: Float, green: Float, blue: Float, alpha: Float = 1
     ) -> LinearRGBA {
         let working = ColorPrimaries.working(
-            fromSRGB: SIMD3(
-                TransferFunction.decode(red), TransferFunction.decode(green),
-                TransferFunction.decode(blue)))
+            fromSRGB: SIMD3(decodeComponent(red), decodeComponent(green), decodeComponent(blue)))
         return LinearRGBA(
             straightRed: working.x, green: working.y, blue: working.z, alpha: alpha)
+    }
+
+    /// エンコードされた 1 成分を線形へ戻す。返す値は ``TransferFunction/decode(_:)`` と
+    /// **ビット単位で同じ**で、速さだけが違う ([#2377])。
+    ///
+    /// ``color(_:_:_:_:)`` が整数 `k` (0…255) を渡すと、ここへ来る値は `Float(k) / 255` になる。
+    /// その形の入力だけは `pow` を呼ばず、出口が使う 256 段の表 (``OutputStage/decodeLinear``) で
+    /// 引く。表は同じ `decode` から作ってあるので、引いた値は呼び直した値と一致する。
+    ///
+    /// **表へ通す条件は「`Float(k) / 255` とビットまで等しい」である。** 値の近さで決めない —
+    /// 近い値を表に丸めると、整数でない入力 (`color(map(noise(…)))` など) の結果が変わる。
+    /// ビットで比べるので、符号も効く。`-0` は `Float(0) / 255` (+0) とビットが違うため表を通らず、
+    /// `decode` の `-0` がそのまま原色の行列へ渡る。範囲の外・数でない値・無限は `k` の範囲か
+    /// ビットの比較で落ち、`decode` へ回る (`NaN` は比較が偽になるので `Int` への変換に届かない)。
+    ///
+    /// [#2377]: https://github.com/mokume-metal/mokume/issues/2377
+    private static func decodeComponent(_ encoded: Float) -> Float {
+        let step = (encoded * 255).rounded()
+        guard step >= 0, step <= 255 else { return TransferFunction.decode(encoded) }
+        let index = Int(step)
+        guard (Float(index) / 255).bitPattern == encoded.bitPattern else {
+            return TransferFunction.decode(encoded)
+        }
+        return OutputStage.decodeLinear[index]
     }
 
     /// **線形の値**から作る不透明な色 (アルファ 1)。
