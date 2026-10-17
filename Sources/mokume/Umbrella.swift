@@ -44,3 +44,20 @@
 @_exported import func Darwin.acos
 @_exported import func Darwin.atan
 @_exported import func Darwin.atan2
+
+// 計算の関数 7 本も、同じ基準で名指しして通す (ADR-0020 決定 7・#2416)。Processing の
+// Calculation が持つ `pow`・`sqrt`・`exp`・`log`・`floor`・`ceil`・`round` で、標準ライブラリに
+// あるのは `abs`・`min`・`max` だけなので、`pow` には代わりが無い。これで `import Foundation`
+// を足さずに書ける (雛形も `import Foundation` を持たない)。
+//
+// 丸ごと再輸出しない理由は上と同じ。**手本が持たない Darwin の関数は通さない** — `cbrt` や
+// `hypot` を通すと、名指しの境界が手本ではなく Darwin の品揃えになる。`dist`・`mag`・`sq`・
+// `fract`・`mod` は Darwin に無いか形が違うので、MokumeCore の側に自前で書いた
+// (Math/NumberSurface.swift)。Darwin の口は `Float`・`Double` の多重定義のまま届く。
+@_exported import func Darwin.pow
+@_exported import func Darwin.sqrt
+@_exported import func Darwin.exp
+@_exported import func Darwin.log
+@_exported import func Darwin.floor
+@_exported import func Darwin.ceil
+@_exported import func Darwin.round

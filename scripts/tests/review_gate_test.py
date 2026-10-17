@@ -537,6 +537,67 @@ class ReviewGateTest(unittest.TestCase):
         proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    # --- コメントとリスト項目の中のフェンス (#2816 a・b) ----------------------
+    # 期待は GitHub の描画 API で確かめた結果 (本文の読みは scripts/markdown-live.sh)
+
+    REFUTE_TABLE = "| 指摘 | 根拠 | 応え |\n| --- | --- | --- |\n| 兄弟の口 | Sources/Foo.swift:42 | 直した |\n"
+
+    def test_a_fence_marker_inside_a_block_comment_does_not_open_a_fence(self):
+        # 節の途中のコメントに ``` を書いても、後ろの見出しは見出しのまま (GitHub も同じ)。
+        # 開きと読むと閉じないフェンスが本文の終わりまで続き、「補足」の節の表が確認方法の中に見える
+        body = (
+            "Closes #12\n\n## 確認方法\n\n<!--\n```\n-->\n\n## 補足\n\n"
+            "### Closes #12\n\n節の外\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assert_blocked(proc, "対応表が無い")
+
+    def test_a_refute_heading_after_a_comment_with_a_fence_marker_is_found(self):
+        # コメントの中の ``` が後ろの「## 反証」を隠さない
+        body = f"Closes #12\n\n<!--\n```\n-->\n\n## 反証\n\n{self.REFUTE_TABLE}"
+        proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_refute_heading_inside_a_block_comment_is_not_a_section(self):
+        # コメントの中の「## 反証」は GitHub が描かない。節そのものが無いと名乗って差し戻す
+        body = f"Closes #12\n\n<!--\n## 反証\n\n{self.REFUTE_TABLE}-->\n"
+        proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
+        self.assert_blocked(proc, "「反証」の節が無い")
+
+    def test_a_comment_started_mid_line_does_not_protect_a_fence(self):
+        # `text <!--` は GitHub でもコメントとして保護されず、次の行頭の ``` はフェンスを開く
+        # (後ろの「## 反証」はコードブロックの中に描かれる)。保護の範囲を広げすぎないための固定
+        body = (
+            "Closes #12\n\n## 確認方法\n\n### Closes #12\n\n表\n\n"
+            f"text <!--\n```\n-->\n\n## 反証\n\n{self.REFUTE_TABLE}"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED, issue_type="Bug"))
+        self.assert_blocked(proc, "「反証」の節が無い")
+
+    def test_an_unclosed_fence_in_a_list_item_closes_at_a_shallower_line(self):
+        # 項目の中の閉じ忘れフェンスは、字下げの浅い次の行で閉じる (GitHub も同じ)。
+        # 閉じないと読むと、後ろの見出しが飲まれて「補足」の節の表が確認方法の中に見える
+        body = (
+            "Closes #12\n\n## 確認方法\n\n- 手順\n  ```\n  make ci-check\n\n## 補足\n\n"
+            "### Closes #12\n\n節の外\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assert_blocked(proc, "対応表が無い")
+
+    def test_a_refute_heading_after_an_unclosed_list_fence_is_found(self):
+        body = f"Closes #12\n\n- 見本\n  ```\n  code\n\n## 反証\n\n{self.REFUTE_TABLE}"
+        proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_deeper_line_in_a_list_item_fence_is_still_content(self):
+        # 項目の内容の幅と同じ字下げの行は、コードブロックの中 (描画 API でも見出しにならない)
+        body = (
+            "Closes #12\n\n## 確認方法\n\n- 手順\n  ```\n  make ci-check\n\n  ## 補足\n\n"
+            "  ### Closes #12\n\nそのまま節の中\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
     # --- 4. Bug を閉じる PR の反証 (ADR-0040 決定 4 / #1662) -----------------
 
     def test_bug_with_a_refute_section_passes(self):
@@ -839,6 +900,27 @@ class ReviewGateTest(unittest.TestCase):
         proc = self.agents_gate("<!--\nAGENTS.md の増分: +5\n-->\n", grow=5)
         self.assert_blocked(proc, "説明されていない")
         self.assertIn("宣言が無い", proc.stderr)
+
+    def test_a_declaration_only_inside_a_code_block_does_not_count(self):
+        # 書式の見本をコードブロックに載せた PR。見本を宣言と読まない (#2816 c)
+        for fence in ("```", "~~~", "````"):
+            with self.subTest(fence=fence):
+                proc = self.agents_gate(f"{fence}\nAGENTS.md の増分: +5\n{fence}\n", grow=5)
+                self.assert_blocked(proc, "説明されていない")
+                self.assertIn("宣言が無い", proc.stderr)
+
+    def test_a_sample_in_a_code_block_does_not_make_a_second_declaration(self):
+        # 本物の宣言 1 行とコードブロックの中の見本。見本を数えると「2 行ある」で赤くなる
+        body = "AGENTS.md の増分: +5\n\n書式の見本:\n\n```\nAGENTS.md の増分: +N\n```\n"
+        proc = self.agents_gate(body, grow=5)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_code_block_with_a_comment_start_does_not_swallow_the_declaration(self):
+        # コードブロックの中の `<!--` は閉じない。コメントを除く処理が先に走ると、後ろの
+        # 本物の宣言まで巻き込んで「宣言が無い」と読む
+        body = "```html\n<!-- 見本\n```\n\nAGENTS.md の増分: +5\n"
+        proc = self.agents_gate(body, grow=5)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_a_crlf_body_is_read(self):
         # GitHub の Web の入力欄で編集した本文は CRLF で返る

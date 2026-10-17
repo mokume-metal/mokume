@@ -146,6 +146,30 @@ struct ScalarConvertibleTests {
 )
 struct ScalarConvertibleSketchPortTests {
 
+    // MARK: - 円周率の定数
+
+    /// **`.pi` が総称の受け口で赤くなる** ([ADR-0035] 決定 6-a) — `degrees(2 * .pi)` は
+    /// `ambiguous use of 'pi'` で組めない。型の決まった定数 ([#2421]) は、この受け口へ
+    /// 型を名乗らずに渡せる。コンパイルエラーは検査に書けないので、渡せることだけを見る。
+    ///
+    /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
+    /// [#2421]: https://github.com/mokume-metal/mokume/issues/2421
+    @Test("円周率の定数は、トップレベルの総称の口へそのまま渡せる")
+    func piConstantsPassThroughTheGenericPorts() {
+        let turn: Float = degrees(TWO_PI)
+        #expect(turn == 360)
+        let half: Float = map(6, 0, 12, 0, TWO_PI)
+        #expect(half == Float.pi)
+        let middle: Float = lerp(0, TWO_PI, 0.5)
+        #expect(middle == Float.pi)
+        // 式の中でも型が決まる — `Int` のリテラルと混ぜても `Float` のまま
+        let quarter: Float = lerp(0, TWO_PI, 1 / 4.0)
+        #expect(quarter == HALF_PI)
+        let doubled: Float = degrees(2 * PI)
+        #expect(doubled == 360)
+        #expect(Transform.identity.apply(x: HALF_PI, y: 0).x == Float.pi / 2)
+    }
+
     // MARK: - Canvas.exposure
 
     private func exposure(after write: (Canvas) -> Void) throws -> Float {

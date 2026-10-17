@@ -29,9 +29,12 @@ extension Canvas {
     }
 
     // その座標の揺らぎ (0…1)。
-    public func noise(_ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0) -> Float {
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return noiseSettings.value(x, y, z)
+    public func noise(
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0,
+        _ w: some ScalarConvertible = 0
+    ) -> Float {
+        let (x, y, z, w) = (x.asFloat, y.asFloat, z.asFloat, w.asFloat)
+        return noiseSettings.value(x, y, z, w)
     }
 
     /// 受け取れない値を、初回だけ知らせる。

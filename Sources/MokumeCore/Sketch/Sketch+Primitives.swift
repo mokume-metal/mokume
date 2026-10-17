@@ -49,6 +49,60 @@ extension SketchPart {
         canvas.rect(a, b, c, d)
     }
 
+    /// 4 つの角を同じ半径で丸めた矩形を塗る。
+    ///
+    /// 5 つ目が角の半径で、前の 4 つの読み方は ``rect(_:_:_:_:)`` と同じ (``rectMode(_:)`` が決める)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
+    ///     rect(80, 60, 240, 180, 24)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 濃い灰色の下地に、角を半径 24 で丸めた 240x180 の橙色の長方形 | symmetric=xy -->
+    ///     ![濃い灰色の下地に、角を半径 24 で丸めた 240x180 の橙色の長方形](https://i.gyazo.com/eff30cf40825ab1b7dc74724b93e1667.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 半径は**短い辺の半分まで**で、それより大きく渡すと短い辺の半分に締める (Processing と同じ)。
+    /// 高さ 80 の矩形に半径 100 を渡すと、半径 40 の両端が半円の形になる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
+    ///     rect(60, 110, 280, 80, 100)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 濃い灰色の下地の中央に、両端が半円の横長の橙色の形 | symmetric=xy -->
+    ///     ![濃い灰色の下地の中央に、両端が半円の横長の橙色の形](https://i.gyazo.com/5c53007e79d3fb6071125ae4509977c2.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 輪郭 (`stroke`) も丸めた周を回る。角の丸い周には折れ目が無いので、``strokeJoin(_:)`` は
+    /// 半径が 0 より大きいときは効かない。角は円弧で描く (Processing は二次曲線で描くので、角の中ほどが
+    /// 半径の 4% ほど角に寄る)。
+    ///
+    /// 負の半径と数でない値は 0 として扱い、角を丸めずに描いて 1 度だけ知らせる。無限の半径は
+    /// 短い辺の半分に締める。幅か高さが 0 以下になる指定では**何も描かない** (半径があっても同じ)。
+    // shot: 1 snippet=e0feea22
+    // shot: 2 snippet=5c86dbd7
+    public func rect(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ r: some ScalarConvertible
+    ) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (a, b, c, d, r) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, r.asFloat)
+        canvas.rect(a, b, c, d, r)
+    }
+
     /// 正方形を塗る。
     ///
     /// 読み方は ``rect(_:_:_:_:)`` と同じで、幅と高さに同じ値を渡すのに等しい。

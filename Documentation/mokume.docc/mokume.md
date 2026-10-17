@@ -53,19 +53,25 @@ final class Game: Sketch {
 }
 ```
 
-語彙は、呼んだ時点で走っているスケッチへ描き、そのスケッチの状態を読む。付けずに `fill()` を書くと「`fill` が見つからない」で止まる。色を作る ``color(_:_:)`` のような純粋な計算は、付けなくてもどこからでも呼べる。
+語彙は、呼んだ時点で走っているスケッチへ描き、そのスケッチの状態を読む。付けずに `fill()` を書くと「`fill` が見つからない」で止まる。色を作る ``color(_:_:_:_:)`` のような純粋な計算は、付けなくてもどこからでも呼べる。
 
 **走る前 (部品の `init()` の中) に呼んでも落ちない。** 読み取りは 0 や空を返し (``SketchPart/width`` は 0)、描く口は何もしない。どちらも口ごとに 1 度だけ警告し、警告は観測の応答にも載る。面の大きさで決まる値は、``Sketch/setup()`` の中で部品を作り直して決める。後片付けの後と、``Sketch/draw()`` で起こした `Task` の中から呼んだときも同じである。面から作る資源 (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など) は、返すものを作れないので、口ごとに 1 度だけ警告して型のついたエラー (``ImageFailure/notRunning(call:)`` など) を投げる。`try?` で受ければ `nil` になる。投げない ``SketchPart/createShape(_:)`` は空の形を返す。音と通信の作る口 (``Sketch/loadSound(_:)``・``Sketch/createTCPServer(_:)`` など) も、スケッチの `init()` などで呼ぶと、作ったものを走っているスケッチへ足せないので、同じく口ごとに 1 度だけ警告して ``AudioFailure/notRunning(call:)`` などを投げる。投げない口は、口ごとに 1 度だけ警告して、足されていないものを返す — 合成音の口 (``Sketch/createSinOsc()`` など) は、音の流れをまだ足していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、その流れに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録を流す 4 口 (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``) は何も届かないポートを返す。止まるのは、面そのもの (``SketchPart/canvas``) を外から読んだときだけである。
 
 ### `import mokume` で通る語彙
 
-**面に記号のページが無くても、この 1 行で書けるものがある。** 三角関数 7 本 — `sin` / `cos` / `tan` / `asin` / `acos` / `atan` / `atan2` — は名指しで通してあるので、`import Foundation` を足さずにそのまま呼べる。角度の単位は radian で、``SketchPart/rotate(_:)`` に渡す値と同じである。度で書きたいときは ``radians(_:)`` を通す (こちらは mokume 自身の口なので、下にページがある)。
+**面に記号のページが無くても、この 1 行で書けるものがある。** 三角関数 7 本 — `sin` / `cos` / `tan` / `asin` / `acos` / `atan` / `atan2` — と、計算の関数 7 本 — `pow` / `sqrt` / `exp` / `log` / `floor` / `ceil` / `round` — は名指しで通してあるので、`import Foundation` を足さずにそのまま呼べる。角度の単位は radian で、``SketchPart/rotate(_:)`` に渡す値と同じである。度で書きたいときは ``radians(_:)`` を通す (こちらは mokume 自身の口なので、下にページがある)。
 
 ```swift
 circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
+let level: Float = 3
+circle(200, 150, 20 + pow(2, level))
 ```
 
-**説明の正典は標準ライブラリの側にある**ので、この面はページを持たない。ここに書いてあるのは「通る」ことだけである。
+**リテラルだけの `pow(2, 3)`・`exp(-1)`・`log(10)` は、型が決まらず組めない。** この 3 本は `Float` と `Double` の両方に口があり、どちらも同じだけ合うので、`ambiguous use of 'pow'` になる (`import Darwin` だけでも同じで、mokume の口ではない)。片方に型を持たせる — `pow(2, level)` (`level` が `Float`)・`pow(2.0, 3)`・`exp(Float(-1))` はどれも通る。`sqrt(2)`・`floor(2.5)` のように型を決めなくても通るものもある。
+
+**手本にあるが Darwin に無い (形が違う) 口は、mokume が持つ。** ``dist(_:_:_:_:)``・``mag(_:_:)``・``sq(_:)``・``fract(_:)``・``mod(_:_:)`` で、下にページがある。``mod(_:_:)`` は負の値も 0 以上へ畳む剰余で、`%` が小数に使えない代わりに、巡る値を足して引き直さずに書ける。値型 `Vector2` の側は `length` と名乗る — 関数の ``mag(_:_:)`` と `Vector2` の長さが並ぶのは、`circle()` と `Circle` の使い分けと同じである。
+
+**説明の正典は標準ライブラリの側にある**ので、名指しで通した関数はページを持たない。ここに書いてあるのは「通る」ことだけである。
 
 [mokume の入口](../../) — 入れ方と最初の 1 本はこちら。
 
@@ -80,7 +86,7 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 | **描き方** (どう描くか) | フレームを越える。一度書けば書き換えるまで残る | 塗り・線の色と太さ・端と折れ目の形・混ぜ方・座標の読み方・文字の設定・絵に掛ける色・貼る絵・断片・断片が読む数の並び・揺らぎの種と細かさ・露出 |
 | **シーンの記述** (何を描くか) | 越えない。`draw()` の中で毎フレーム書く | 視点・投影・光・材質・変換・影・周囲の光・効果・切り抜き |
 
-描き方は面ごとに持つ — 描き場所 (``SketchPart/createGraphics(_:_:)``) で塗りを変えても、画面の塗りは変わらない。**揺らぎの種と細かさだけはスケッチに 1 つ**で、画面と描き場所が同じものを読み書きする (``SketchPart/noiseSeed(_:)``)。断片の `mokume_noise` が、どの面でも ``SketchPart/noise(_:_:_:)`` と同じ模様を出すためである。
+描き方は面ごとに持つ — 描き場所 (``SketchPart/createGraphics(_:_:)``) で塗りを変えても、画面の塗りは変わらない。**揺らぎの種と細かさだけはスケッチに 1 つ**で、画面と描き場所が同じものを読み書きする (``SketchPart/noiseSeed(_:)``)。断片の `mokume_noise` が、どの面でも ``SketchPart/noise(_:_:_:_:)`` と同じ模様を出すためである。
 
 **乱数の種 (``SketchPart/randomSeed(_:)``) もスケッチに 1 つで、書き換えるまでフレームを越えて残る**が、上の 2 つには入らない — 描き方でもシーンの記述でもなく、引くたびに進む列の位置で、揺らぎと違って断片へは届かない。形の組み立て (``SketchPart/createShape(_:)``) の中で書いた種だけは、抜けると**最初に書く直前の列**へ戻る。
 
@@ -248,8 +254,16 @@ fill(255, 255 * 50 / 100.0)              // 127.5 が渡ります
 `width` や `time` のように**面が返した数が式に入っていれば、そのまま書けます** — 全体が
 `Float` として計算されるからです (上の `width / 2` がそれです)。
 
+**円周率は定数で書けます。** `PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` は `Float` の定数で、
+手本 (Processing・p5.js) と同じ綴りです。型が決まっているので、そのまま渡せます。
+
+```swift
+rotate(HALF_PI)                          // 90 度
+let a = map(3, 0, 12, 0, TWO_PI)         // 12 等分した 3 つ目
+```
+
 **`.pi` のような書き方は、型を名乗ります。** 渡す先が型を決めなくなったので、`.pi` だけでは
-`Float` と `Double` のどちらか決まりません。
+`Float` と `Double` のどちらか決まりません。定数を使うか、`Float.pi` と綴ります。
 
 ```swift
 rotate(Float.pi / 2)                     // 型を名乗ります
@@ -323,7 +337,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 素の数値は 0–255 の目盛りで、ラベル付きの口は名前が目盛りを名乗る ([ADR-0033](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md))。
 
-- ``color(_:_:)``
+- ``color(_:_:)-(ScalarConvertible,_)``
+- ``color(_:_:)-(LinearRGBA,_)``
 - ``color(_:_:_:_:)``
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
@@ -347,6 +362,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 2D の図形
 
 - ``SketchPart/rect(_:_:_:_:)``
+- ``SketchPart/rect(_:_:_:_:_:)``
 - ``SketchPart/square(_:_:_:)``
 - ``SketchPart/circle(_:_:_:)``
 - ``SketchPart/ellipse(_:_:_:_:)``
@@ -690,12 +706,17 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/random(_:)``
 - ``SketchPart/random(_:_:)``
 - ``SketchPart/randomSeed(_:)``
-- ``SketchPart/noise(_:_:_:)``
+- ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
 
 ### 角度と数を直す
 
+- ``PI``
+- ``HALF_PI``
+- ``QUARTER_PI``
+- ``TWO_PI``
+- ``TAU``
 - ``radians(_:)``
 - ``degrees(_:)``
 - ``map(_:_:_:_:_:)``
@@ -703,6 +724,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``constrain(_:_:_:)``
 - ``norm(_:_:_:)``
 - ``smoothstep(_:_:_:)``
+- ``dist(_:_:_:_:)``
+- ``mag(_:_:)``
+- ``sq(_:)``
+- ``fract(_:)``
+- ``mod(_:_:)``
 
 ### GPU に計算させる
 

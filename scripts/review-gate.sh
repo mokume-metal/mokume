@@ -52,6 +52,10 @@ REPO="$(this_repo)"
 # 大きな PR では一覧からファイルが落ちる
 # shellcheck source=scripts/pr-files.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
+# コードブロック・HTML コメントの中の行を生きた行と読まない規則は 1 か所に保つ (#2816)。
+# 本文を行で読む検査 (body_section・増分の宣言) はここを通す
+# shellcheck source=scripts/markdown-live.sh
+. "$(dirname "${BASH_SOURCE[0]}")/markdown-live.sh"
 
 fail() { # $1=理由 $2=次にすること (省略可)
   echo "review-gate: 差し戻し — $1" >&2
@@ -142,11 +146,11 @@ EOF
 # 見出しが来るまでを節とみなし、節の中の小見出しは内容として残す。見出しの階層は
 # 問わない (## でも ### でもよい)。
 #
-# **コードブロック (``` / ~~~) の中の行は見出しではない** (#2768)。リリースノートの
-# 見本のように # で始まる行を載せたブロックが節の途中にあっても、節はそこで切れず、
-# ブロックの中身は節の内容として残る。フェンスの読みは CommonMark に合わせる — 字下げは
-# 3 桁まで・閉じは同じ種類で開きより長いか同じ長さ・閉じの行に文字は続けられない・
-# 閉じ忘れは本文の終わりまで続く
+# **コードブロック (``` / ~~~) と、行頭から始まる HTML コメントの中の行は見出しではない**
+# (#2768・#2816)。リリースノートの見本のように # で始まる行を載せたブロックが節の途中に
+# あっても、節はそこで切れず、ブロックの中身は節の内容として残る。行の読みは
+# scripts/markdown-live.sh の md_kind が持つ (CommonMark = GitHub の描画に合わせる: フェンスの
+# 字下げ・長さ・閉じ忘れ、コメントの中の ```、リスト項目の中の閉じ忘れフェンスの暗黙の終わり)
 #
 # $2 に heading を渡すと節の中身ではなく、見出しがあったかどうか (あれば found を 1 行)
 # だけを返す。見出しの有無を呼び出し側が別の正規表現で数えると、ブロックの中の見出しを
@@ -156,23 +160,10 @@ EOF
 # **切り出しの形は 1 つに保つ** — 「確認方法」(下の「3.」) と「反証」(下の「4.」) で
 # 同じ規則を使う。写しを 2 つ持つと、片方だけが直って節の境界が食い違う (#1662)
 body_section() {
-  awk -v word="$1" -v mode="${2:-section}" '
+  awk -v word="$1" -v mode="${2:-section}" "$MARKDOWN_LINES_AWK"'
     function out(s) { if (mode == "section") print s }
     {
-      match($0, /^ */); ind = RLENGTH
-      rest = substr($0, ind + 1); c = substr(rest, 1, 1)
-      isfence = 0
-      if (ind <= 3 && (c == "`" || c == "~")) {
-        match(rest, c "+"); n = RLENGTH; info = substr(rest, n + 1)
-        if (n >= 3 && !(c == "`" && index(info, "`"))) isfence = 1
-      }
-      if (infence) {
-        if (isfence && c == fc && n >= fn && info ~ /^[[:space:]]*$/) infence = 0
-        if (inside) out($0)
-        next
-      }
-      if (isfence) {
-        infence = 1; fc = c; fn = n
+      if (md_kind($0)) {
         if (inside) out($0)
         next
       }
@@ -408,10 +399,12 @@ fi
 #    粗く見る — 文中で触れただけの行も呼ぶ側に倒すが、そのときは growth が「宣言なし・
 #    増分 0」として緑を返すだけである。宣言の形の揺れを名指しするのは growth の側。
 #
-#    本文は \r を落とし、HTML コメントを除いてから渡す (テンプレートの案内はコメントに
-#    書いてあり、そこの例を宣言と読まないため)。取得に失敗したら理由を名乗って落ちる —
-#    読めないまま通すと、増分の検査が黙って外れる
-agents_body=$(jq -r '.body // ""' <<<"$pr_json" | tr -d '\r' | strip_html_comments)
+#    本文は \r を落とし、コードブロックの中の行を潰し、HTML コメントを除いてから渡す
+#    (テンプレートの案内はコメントに、書式の見本はコードブロックに書いてあり、そこの例を
+#    宣言と読まないため・#2816)。**潰すのがコメントを除くより先** — 先に除くと、
+#    コードブロックの中の `<!--` が後ろの本物の宣言の行まで巻き込む。取得に失敗したら
+#    理由を名乗って落ちる — 読めないまま通すと、増分の検査が黙って外れる
+agents_body=$(jq -r '.body // ""' <<<"$pr_json" | tr -d '\r' | markdown_live_lines | strip_html_comments)
 if grep -qx 'AGENTS.md' <<<"$pr_paths" ||
    grep -q 'AGENTS\.md の増分' <<<"$agents_body"; then
   base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_json")

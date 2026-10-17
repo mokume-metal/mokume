@@ -57,7 +57,6 @@ mokume watch
 初回はライブラリの取得とビルドに少し時間がかかります。ウィンドウが開いたら、`Sources/my-sketch/MySketch.swift` を編集します:
 
 ```swift
-import Foundation
 import mokume
 
 @main

@@ -248,7 +248,7 @@ enum NewCommand {
     ///   `Metal`・`Network`・`Observation`・`SwiftUI` など) と swift-syntax のもの (`SwiftSyntax`・
     ///   `SwiftCompilerPlugin` など)。検査が `Sources/` の `import` から導いて突き合わせるので、
     ///   一覧を手で足さなくても、ライブラリが新しいモジュールを import したら赤になって知らせる
-    /// - ひな形が import するモジュール (`Foundation`・`mokume`)・標準ライブラリ (`Swift` は
+    /// - ひな形が import するモジュール (`mokume`)・標準ライブラリ (`Swift` は
     ///   `module name "Swift" is reserved for the standard library`)
     ///
     /// **限界: 導ける範囲に限る。** swift-syntax のターゲットのうち mokume が import しないもの
@@ -262,7 +262,8 @@ enum NewCommand {
         // mokume の library product が辿るターゲット
         "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
         "MokumeGamepad", "MokumeDiagnostics", "MokumeMacros",
-        // ひな形が import するモジュールと標準ライブラリ
+        // ひな形が import するモジュール (`mokume` は上) と標準ライブラリ。`Foundation` はひな形が
+        // import しなくなった (#2416) が、ライブラリのソースが import するので下の SDK の列にも要る
         "Foundation", "Swift",
         // ライブラリのソースが import する SDK のモジュール
         "simd", "Metal", "Synchronization", "AppKit", "Darwin", "QuartzCore", "CoreGraphics",
@@ -275,15 +276,18 @@ enum NewCommand {
 
     /// 大小を畳んで断るモジュール (小文字・大文字の綴り違いでも組めないもの)。
     ///
-    /// **ひな形が `import` するモジュールだけ** (`Foundation`・`mokume`)。作るターゲットの
-    /// 出力 (`<名前>.swiftmodule`) は大小を区別しない置き場の同じファイルになり、ひな形の
-    /// `import Foundation` が自分自身の出力を読む (`foundation` は 4 回とも `swiftc` の失敗)。
+    /// **作者が `import` する定番のモジュールだけ** (`Foundation`)。作るターゲットの
+    /// 出力 (`<名前>.swiftmodule`) は大小を区別しない置き場の同じファイルになり、スケッチの
+    /// `import Foundation` が自分自身の出力を読む (`foundation` は 4 回とも `swiftc` の失敗。
+    /// 2026-10-13 の実測は、ひな形が `import Foundation` を持っていた頃のもの)。ひな形は
+    /// `import Foundation` を持たなくなった (#2416) が、作者は `FileManager` や `Date` のために
+    /// 足すので、断る範囲は変えない — **ひな形のままなら組めるかは測っていない**。
     /// 小文字の `metal`・`appkit`・`network`・`swift`・`mokumecore` などは組めた (実測) ので畳まない。
     /// `mokume` は ``dependencyPackageNames`` の大小違いとして別に断る。
     static let caseFoldedModules: Set<String> = ["foundation"]
 
     /// ひな形が `Sketch.swift` で import するモジュール。
-    static let templateModules: Set<String> = ["Foundation", "mokume"]
+    static let templateModules: Set<String> = ["mokume"]
 
     /// 名前として使えるか。パッケージ名にもディレクトリ名にもなるので、両方で
     /// 困らない範囲に絞る。

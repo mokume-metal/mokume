@@ -36,10 +36,7 @@ final class TimeAndScrub: Sketch {
     var paused = false
 
     /// 1 巡の中の位置 (0 ..< ``length``)。負の秒へ飛んでも巡る。
-    var cycle: Float {
-        let t = time.truncatingRemainder(dividingBy: Self.length)
-        return t < 0 ? t + Self.length : t
-    }
+    var cycle: Float { mod(time, Self.length) }
 
     func keyPressed() {
         switch keyCode {

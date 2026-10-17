@@ -192,6 +192,25 @@ class AdrStatusTest(unittest.TestCase):
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_コードブロックの中の改訂の見出しは印を求めない(self):
+        # 見出しの書式の見本は改訂ではない (#2816 g)
+        self.place("採用 (2026-08-26)",
+                   "```markdown\n#### 改訂 (2026-10-06) — 見本\n```")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_コードブロックの中の状態の見出しは状態欄の見出しではない(self):
+        # 本文の見本に「## 状態」があっても、先にある本物の状態欄を読む。見本を先に読むと
+        # 「## 状態」の次の非空行 (コードブロックの中の行) を状態欄と取り違える
+        text = (
+            "# ADR-0003: 見出し\n\n```markdown\n## 状態\n\n見本の状態\n```\n\n"
+            "## 状態\n\n採用 (2026-08-26) / " + MARKER + "\n\n## 決定\n\n"
+            "#### 改訂 (2026-10-06) — 手段を変える\n"
+        )
+        (self.dir / "0003-agent-identity-separation.md").write_text(text, encoding="utf-8")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     def test_日付を持たない改訂の話は拾わない(self):
         # ADR-0006 決定 6 「ADR-0003 決定 1 の権限表は改訂しない」。改訂について
         # 語っているだけで改訂していない。素朴な grep はここで誤検出する
@@ -385,6 +404,29 @@ class AdrRevisionCountTest(unittest.TestCase):
         self.place(*prose, *deep, *self.revisions(5))
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_コードブロックの中の見出しは数えない(self):
+        # 見出しの書式の見本をコードブロックに載せた ADR。見本の見出しを改訂と数えない (#2816 g)
+        for fence in ("```", "~~~", "````"):
+            with self.subTest(fence=fence):
+                sample = f"{fence}markdown\n" + "\n".join(self.revisions(3)) + f"\n{fence}"
+                self.place(*self.revisions(5), sample)
+                r = self.run_script()
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_コードブロックの外の見出しは数え続ける(self):
+        sample = "```markdown\n" + "\n".join(self.revisions(3)) + "\n```"
+        self.place(*self.revisions(6), sample)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("6 個", r.stderr)
+
+    def test_コメントの中のフェンスの印の後ろの見出しも数える(self):
+        # REUSE のヘッダのような行頭のコメントに ``` が入っても、後ろの本物の見出しを隠さない
+        self.place("<!--\n```\n-->", *self.revisions(6))
+        r = self.run_script()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("6 個", r.stderr)
 
     # --- 案内: ADR を開かずに行動できる ---
 

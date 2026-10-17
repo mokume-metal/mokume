@@ -124,11 +124,13 @@ extension Canvas {
     ///   - axis: 形自身の横軸の向き (長さ 1)。線だけが線の向きを渡す。
     ///   - arc: 扇形の開始角と掃引。
     ///   - fills: この形が塗りを持ちうるか (線と点は持たない)。
+    ///   - cornerRadius: 矩形の角の半径 (形自身の座標。半幅・半高の小さいほう以下に締めてある・
+    ///     #2757)。矩形以外と、角を丸めない矩形は 0。
     ///   - cap: 端の形。渡さなければいまの設定。点は孤立した端として `square` を `project` に読み替える。
     func appendForm(
         _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
         axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero,
-        fills: Bool, cap: StrokeCap? = nil
+        fills: Bool, cap: StrokeCap? = nil, cornerRadius: Float = 0
     ) {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -146,7 +148,7 @@ extension Canvas {
         let instance = FormInstance(
             kind: kind, linear: SIMD4(x.x, x.y, y.x, y.y),
             offset: transform.apply(x: center.x, y: center.y), half: half, arc: arc,
-            halfWeight: style.strokeWeight / 2,
+            halfWeight: style.strokeWeight / 2, cornerRadius: cornerRadius,
             fill: style.fill.components, stroke: style.stroke.components,
             fills: drawsFill, strokes: drawsStroke,
             cap: cap ?? style.strokeCap, join: style.strokeJoin)

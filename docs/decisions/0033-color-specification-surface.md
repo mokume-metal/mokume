@@ -138,10 +138,21 @@ hue は 0–360 の**度**、saturation と brightness は 0–100 の**百分�
 | `background` / `fill` / `stroke` / `tint` | 1・2・3・4 引数 |
 | `ambient` / `emissive` / `ambientLight` | 1・3 引数 |
 | `directionalLight` / `pointLight` / `spotLight` | 3 成分のみ |
+| `color` (値の側) | 色の値と不透明度の 2 引数 `color(c, alpha)` (2026-10-18 追補・下の段) |
 
 **光に alpha 形と gray 形は足さない。** 手本に無く、`directionalLight(128, 64, 0, -1, 0)` の `64` が何を指すのかを説明できない。`set(x, y, color)` は手本も色の値を取るので、数値形を持たない。
 
 決定 1 が言うのは「手本があれば従う」であって「手本を超えて揃える」ではない。**機械的に全部へ 4 形を配ると、手本に無い口が生える。**
+
+#### 追補 (2026-10-18) — 値の側の `color(c, alpha)` ([#2422](https://github.com/mokume-metal/mokume/issues/2422))
+
+色の値と不透明度を取る `fill(c, alpha)` / `stroke(c, alpha)` ([#1553](https://github.com/mokume-metal/mokume/issues/1553)) は、値の側 (`color(c, alpha)`) を射程の外に置いた。2 作品 (Tempo・Cast) が同じ `fade` を、乗算済みの成分を手で縮めて書いたので、**値を作る形を 1 つ足す。** 手本 (Processing) に `color(rgb, alpha)` がある。
+
+- 式は `fill(c, alpha)` と同じ**掛ける**形で、置き換えない (内部の `DisplayScale.fading` が 1 つの正本)。置き換えにすると、不透明度 0 の色は成分を復元できず黒になる (決定 6 の契約 1)。率 `alpha / 255` を 0–1 に締め、色の成分は締めない (決定 3 の改訂・決定 6)
+- 数でない値・無限の不透明度は受けず、1 度だけ知らせて透明な色を返す (`color(_:_:_:_:)` と同じ倒し方。鍵は口ごとに分ける)。`c` の成分は検めない — 検めるのは受ける口である (`lerpColor` と同じ)
+- 置き場は `color()` / `red()` と同じトップレベルで、`Sketch` のメソッドにも下の層の転送先にもしない (決定 6・8 の対象外)
+
+退けた案: **`c.withAlpha(_:)` のようなメンバ** — 不透明度の部分は `color(c, alpha)` と二重になり、手本の綴りも無い。明るさ・彩度を変える口は、作例が来たときに別の `Feature` で決める。成分を書き換えられなくする案 (乗算済みを型の名前で名乗る) は [#2756](https://github.com/mokume-metal/mokume/issues/2756) で扱う。
 
 #### `lerpColor` と文字列の色を足す日
 

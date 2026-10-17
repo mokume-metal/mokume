@@ -593,6 +593,39 @@ class PicturesOfTests(unittest.TestCase):
         body = "<!-- ![例](https://i.gyazo.com/t.png) -->\n```markdown\n![例](https://i.gyazo.com/c.png)\n```\n"
         self.assertEqual(release.pictures_of(body), [])
 
+    def test_every_fence_form_hides_its_pictures(self):
+        # ~~~・4 本以上・字下げ 1〜3 桁も ``` と同じ規則で読む (#2816 f)。
+        # 行頭の ``` だけを見ていた頃は、これらの中の絵を「この版の絵」に載せていた
+        sample = "![例](https://i.gyazo.com/c.png)"
+        forms = {
+            "tilde": f"~~~\n{sample}\n~~~\n",
+            "4 本": f"````\n```\n{sample}\n```\n````\n",
+            "字下げ 1 桁": f" ```\n{sample}\n ```\n",
+            "字下げ 3 桁": f"   ~~~markdown\n{sample}\n   ~~~\n",
+        }
+        for name, body in forms.items():
+            with self.subTest(name):
+                self.assertEqual(release.pictures_of(body), [])
+
+    def test_a_picture_after_a_closed_fence_is_taken(self):
+        body = "~~~\n![例](https://i.gyazo.com/c.png)\n~~~\n\n![本物](https://i.gyazo.com/real.png)\n"
+        self.assertEqual(release.pictures_of(body), ["![本物](https://i.gyazo.com/real.png)"])
+
+    def test_a_four_column_indent_is_not_a_fence(self):
+        # 4 桁の字下げは字下げコードブロックでフェンスではない。後ろの絵を隠さない
+        body = "    ```\n\n![本物](https://i.gyazo.com/real.png)\n"
+        self.assertEqual(release.pictures_of(body), ["![本物](https://i.gyazo.com/real.png)"])
+
+    def test_a_fence_marker_inside_a_comment_does_not_hide_the_pictures_after_it(self):
+        # コメントの中の ``` を開きと読むと、閉じないフェンスが後ろの絵まで隠す
+        body = "<!--\n```\n-->\n![本物](https://i.gyazo.com/real.png)\n"
+        self.assertEqual(release.pictures_of(body), ["![本物](https://i.gyazo.com/real.png)"])
+
+    def test_a_comment_start_inside_a_fence_does_not_swallow_the_text_after_it(self):
+        # フェンスの中の `<!--` は閉じない。コメントとして先に取り除くと、後ろの絵まで巻き込む
+        body = "```html\n<!-- 見本\n```\n\n![本物](https://i.gyazo.com/real.png)\n"
+        self.assertEqual(release.pictures_of(body), ["![本物](https://i.gyazo.com/real.png)"])
+
 
 class PictureReferencesTests(unittest.TestCase):
     """ノートの本文から、載せた絵の URL を読む (#2268)。"""
