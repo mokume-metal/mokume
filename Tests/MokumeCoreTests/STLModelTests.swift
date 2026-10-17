@@ -952,6 +952,49 @@ struct STLModelTests {
         }
     }
 
+    /// 名前の添字 80〜83 に NUL や制御文字を持つ、5 面の文字の STL。名前の残りは NUL で埋める。添字 83 が NUL で添字
+    /// 80〜82 に 0x20 未満の字があるので、頭はバイナリと見分けられる (`solid` で始まる切れたバイナリと区別できない)。
+    static func textWithControlBytesAt80(_ tail: [UInt8]) -> Data {
+        precondition(tail.count == 4 && tail[3] == 0)
+        let name = Array("part".utf8) + Array(repeating: 0, count: 70) + tail
+        let text = ModelFixture.asciiSTL(
+            tetrahedron + [smallFacet], name: String(decoding: name, as: UTF8.self))
+        let data = Data(text.utf8)
+        precondition(Array(data[80..<84]) == tail && data[84] == 0x0A, "名前が添字 83 で終わっていない")
+        return data
+    }
+
+    /// **文字の STL とも決めきれない頭には、見出しを 0 にした写しを掛けない** (#2746 の反証)。名前の添字 80〜83 に
+    /// 制御文字と NUL を持つ文字の STL は、頭がバイナリと見分けられ、宣言した面の数が大きいので揃った面が 1 以上になる。
+    /// 見出しが `solid` で始まるだけで写しを掛けると、読み手が文字をバイナリとして読んだ 14 面のでたらめ
+    /// (最初の点が 1e30 級) が、数が合って採られていた。main と同じく、書かれた 5 面を読む。
+    @Test(
+        "名前の添字 80〜82 に制御文字を持つ文字の STL は、見出しを 0 にした写しで読まず、書かれた 5 面を読む (#2746 の反証)",
+        arguments: [[0x09, 0x61, 0x62, 0], [0x1B, 0x1B, 0x1B, 0], [0x78, 0, 0, 0]] as [[UInt8]])
+    func undecidedTextIsNotReadThroughABlankHeader(_ tail: [UInt8]) throws {
+        let data = Self.textWithControlBytesAt80(tail)
+        let facets = Self.tetrahedron + [Self.smallFacet]
+        #expect(ModelFile.stlLayout(of: data.prefix(128), size: data.count) == .binary)
+        #expect(ModelFile.completeBinaryFaces(head: data.prefix(128), size: data.count) > 0)
+        let parsed = try read(data)
+        #expect(parsed.positions == facets.flatMap(\.corners))
+    }
+
+    /// **見出しが読み手の「文字」の規則に当たるバイナリは、数が合っても写しで読む** (#2746 の反証)。見出しの 80 バイトに
+    /// 1 面ぶんの文字を書いた 1 面のバイナリを、読み手は文字として読んで見出しの 1 面を返す。数 (1) は揃った面の数と
+    /// 合うので、数で照らすだけでは見出しの面が採られていた。
+    @Test("見出しに 1 面ぶんの文字を書いた 1 面のバイナリの STL は、見出しの面ではなくバイナリの面を読む (#2746 の反証)")
+    func aHeaderHoldingATextFacetIsReadAsBinary() throws {
+        let header = "solid\nfacet normal 0 0 1\nouter loop\nvertex 1\nvertex 1\nvertex 1\nendloop\nendfacet\n"
+        #expect(header.utf8.count == 80)
+        let data = ModelFixture.binarySTL([Self.tetrahedron[0]], header: header)
+        #expect(data.count == 134)
+        // 読み手にじかに読ませると、見出しの文字の 1 面 (3 点とも (1, 0, 0)) が返る — 数だけは合う
+        #expect(try readByModelIO(data)?.triangles == 1)
+        let parsed = try read(data)
+        #expect(parsed.positions == Self.tetrahedron[0].corners)
+    }
+
     /// 1 行目が 83 文字 (84 バイト目が改行) の面の無い solid。Model I/O は面を見つけられず、80〜83
     /// バイト目を面の数とするバイナリとして読み直し、でたらめな面を返す (#2391)。**名前に `facet` を
     /// 含んでも同じ** — 面の有無を `facet` の語の有無で代用すると、ここを取りこぼす。
