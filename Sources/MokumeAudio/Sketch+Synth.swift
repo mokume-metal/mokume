@@ -13,8 +13,9 @@ import MokumeCore
 //
 // 作った音は、再生 (``SoundFile``) と同じ音の流れ (`SoundFlow`) へ入り、どれも同じ解析
 // (``AudioIn`` と同じ値の名前) を読める ([ADR-0042] 決定 6)。作る口は投げない — 作れなかった
-// ときは (64 個の上限) 診断に出し、何も鳴らさない音を返す。走っている実行へ足せない所で呼ばれたときも、
-// 作る口の名前で 1 度だけ警告して、鳴らない音を返す (#2740)。
+// ときは (64 個の上限) 診断に出し、何も鳴らさない音を返す。走っている実行へ足せない所で呼ばれ、音の流れ
+// (``SynthStage``) をまだ足していなければ、作る口の名前で 1 度だけ警告して、鳴らない音を返す (#2740)。`setup()`
+// などで先に合成音を作って流れを足してあれば、外から作った音もその流れに入って鳴る。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md

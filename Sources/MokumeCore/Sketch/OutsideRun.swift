@@ -37,8 +37,9 @@ final class OutsideRun {
         case act
         /// 読み取りの口。代わりに `value` (人が読む綴り: `0`・`.wallClock` など) を返した。
         case read(returning: String)
-        /// 値を作って返す口のうち、投げない口 (``SketchPart/createShape(_:)``)。代わりに `value`
-        /// (人が読む綴り: `an empty shape` など) を返した。
+        /// 値を作って返す口のうち、投げない口。代わりに `value` (人が読む綴り: `an empty shape` など) を返した。
+        /// ``SketchPart/createShape(_:)`` と、音と通信の投げない作る口 (合成音の `createSinOsc()` など・
+        /// `createAudioIn(device:)`・記録を流す `messages:` の 4 口。``SketchPart/attach(_:calledAs:returning:)``) が使う。
         case make(returning: String)
         /// 資源を作る口 (``SketchPart/loadImage(_:)`` など)。`notRunning(call:)` を投げた。
         ///
@@ -191,8 +192,9 @@ final class OutsideRun {
     /// 走っている実行へ足して使うものを作る口 (音・通信) を外から呼んだときの文面 (`AudioFailure`・
     /// `NetworkFailure`・`OSCFailure` の `notRunning(call:)` と、その前に 1 度言う警告) ([#2740])。
     ///
-    /// 返すもの (音・ポート) は、走っている実行へ足されて毎フレーム回されるので、足せない所で作っても
-    /// 鳴らず・届かない。理由は面ではないので、``notRunningNotice(_:)`` (面から作る口の文面) を使わない。
+    /// 返すもの (音・ポート) は、走っている実行へ足されて毎フレーム回され、終わるときに閉じられる。足せない所で
+    /// 作ると、音は鳴らず、ポートは受けない (送るだけなら届くが、終わっても閉じられない)。理由は面ではないので、
+    /// ``notRunningNotice(_:)`` (面から作る口の文面) を使わない。
     /// 形はそれと同じく、1 行目が起きたこと、2 行目が次にすることで、「走っていない」とは言わない
     /// ([#1322])。投げる口は、ファイルを読む・ポートを開く前に投げる。
     ///

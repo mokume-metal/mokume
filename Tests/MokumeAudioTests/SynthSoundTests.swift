@@ -114,6 +114,40 @@ struct SynthSoundTests {
         return AudioAnalysis.analyze(node.meter.latest(AudioAnalysis.windowSize))
     }
 
+    // MARK: - 走っている実行の外から作る (#2740)
+
+    /// **音の流れを先に足してあれば、外 (`draw()` で起こした `Task` など) から作った合成音も、その流れに入って
+    /// 解析され、警告は出ない** ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。ステージは
+    /// スケッチごとに 1 つで、既にあれば走っているかを見ずに返す。外で作ると鳴らない音を返すのは、流れをまだ
+    /// 足していないときだけである (`AudioOutsideRunTests`)。フレームとフレームの間は走っている実行の外にあたる。
+    @Test("setup() で合成音を作って流れを足した後なら、外から作った合成音もその流れで解析され、警告は出ない (#2740)")
+    func aSoundMadeOutsideJoinsAnExistingStage() throws {
+        let log = OutsideRun()
+        try OutsideRun.$current.withValue(log) {
+            var sketch: SynthSketch?
+            var late: SinOsc?
+            var heard: [Float] = []
+            let runtime = try run(
+                frames: 8,
+                setup: { made in
+                    sketch = made
+                    _ = made.createSinOsc()
+                },
+                draw: { _ in if let late { heard.append(late.level) } },
+                between: { frame in
+                    guard frame == 1, let sketch else { return }
+                    #expect(runningSketch == nil, "フレームの間は走っている実行の外")
+                    let osc = sketch.createSinOsc()
+                    osc.play(1000, 0.4)
+                    late = osc
+                })
+            runtime.closePlugins()
+            #expect(log.message(for: "createSinOsc()") == nil)
+            #expect(heard.count == 7)
+            #expect(heard.last ?? 0 > 0, "外で作った音が、先に足した流れで解析されていない")
+        }
+    }
+
     // MARK: - 書き出し (固定の時計) の窓
 
     @Test("固定の時計で回すと、鳴らし始めてからの標本で終わる窓が解析され、帯域は周波数のところにある")
