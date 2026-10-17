@@ -79,6 +79,24 @@ struct OutsideFrameNoticeTests {
         }
     }
 
+    /// **断る場面は `setup()` だけではない** ([#2723])。`noLoop()` で止まっている間のコールバック・
+    /// `Task.detached` の中・走る前・直に使う面の `draw { }` の外でも、同じ文が出る。鍵は種類ごとで、
+    /// 最初に断った場面の文しか出ないので、文は場面を名乗らずに「フレームの外」と言う。
+    ///
+    /// 置くことと画素を書くことの 2 文 ([#1672]) は、置ける場面として `setup()` を挙げるので除く。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
+    @Test("シーンの記述の文は、断った場面を setup と決め打ちせず、フレームの外で書いたと言う")
+    func sceneNoticesDoNotNameSetupAsTheScene() {
+        let scene = Canvas.OutsideFrame.allCases.filter { $0 != .placing && $0 != .pixelWrite }
+        #expect(scene.count == 11, "シーンの記述の種類が変わった — この検査の範囲を見直す")
+        for subject in scene {
+            #expect(!subject.notice.contains("setup"), "\(subject) の文が setup を名乗る: \(subject.notice)")
+            #expect(subject.notice.contains("outside a frame"), "\(subject) の文がフレームの外と言わない")
+        }
+    }
+
     @Test("鍵は種類ごとに分かれている")
     func keysAreDistinct() {
         // 畳むときに鍵を取り違えると、ある注意が別の注意を黙らせる。振る舞いの側は
