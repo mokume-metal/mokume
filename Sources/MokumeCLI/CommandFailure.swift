@@ -262,9 +262,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             In: \(path)
             The name is also the file name of the bundle (<name>.app) and of the note beside it.
             The note's name is \(AppIdentity.fileNameLimit - AppIdentity.maximumNameLength) longer \
-            than the name, and macOS allows \(AppIdentity.fileNameLimit) in a file name.
-            Length is counted the way macOS stores file names, in UTF-16 units with accents split off:
-            a letter with an accent counts as 2, and so do kana with a voiced mark and emoji.
+            than the name, and a file name on APFS can be at most \(AppIdentity.fileNameLimit) units long.
+            Length is counted in UTF-16 units of the form macOS hands to the file system, with marks
+            split off from their letters: a letter with an accent (é) or a kana with a voiced mark
+            counts as 2, a letter with two marks (ệ) as 3, a Hangul syllable as 2 or 3, an emoji as 2,
+            a flag as 4, and a family emoji joined with zero-width joiners as 11.
             Pick a shorter name.
             """
         case .cameraUsageMissing(let path, let files):
