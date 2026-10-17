@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 利用者が書く塗り。
-extension Sketch {
+extension SketchPart {
     /// 断片を読み込む。
     ///
     /// <!-- example: 文脈 var waves: Shader! -->
@@ -12,9 +12,13 @@ extension Sketch {
     /// //     float wave = 0.5 + 0.5 * sin(in.place.x * 20 + in.time * values.speed);
     /// //     return float4(values.tint.rgb * wave, 1);
     /// // }
-    /// waves = try? loadShader(
-    ///     "assets/waves.metal",
-    ///     values: ["speed": 2, "tint": .color(color(255, 128, 51))])
+    /// do {
+    ///     waves = try loadShader(
+    ///         "assets/waves.metal",
+    ///         values: ["speed": 2, "tint": .color(color(255, 128, 51))])
+    /// } catch {
+    ///     print(error)  // 組めなければ理由が出る。行と桁は waves.metal の中で数える
+    /// }
     /// ```
     ///
     /// 文字列から作る ``makeShader(_:name:values:surfaces:)`` も、ここに書いた規約のまま書ける。
@@ -60,10 +64,14 @@ extension Sketch {
     /// guard let bark = try? loadImage("assets/bark.png"),
     ///     let smudge = try? createGraphics(256, 256)
     /// else { return }
-    /// blended = try? loadShader(
-    ///     "assets/blended.metal",
-    ///     values: ["amount": 0.7],
-    ///     surfaces: ["grain": .image(bark), "smudge": .graphics(smudge)])
+    /// do {
+    ///     blended = try loadShader(
+    ///         "assets/blended.metal",
+    ///         values: ["amount": 0.7],
+    ///         surfaces: ["grain": .image(bark), "smudge": .graphics(smudge)])
+    /// } catch {
+    ///     print(error)
+    /// }
     /// ```
     ///
     /// **面を宣言した断片だけ、受け取るものが 1 つ増える。** 宣言していない断片は
@@ -91,12 +99,14 @@ extension Sketch {
     /// 組み上がってはじめて差し替わるので、片方だけ古い断片が効くことはない。
     ///
     /// - Throws: 見つからないとき・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeShader(_:name:values:surfaces:)
     public func loadShader(
         _ path: String, values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try canvas.loadShader(path, values: values, surfaces: surfaces)
+        try Self.resourceCanvas(ShaderFailure.self).loadShader(path, values: values, surfaces: surfaces)
     }
 
     /// 文字列から断片を作る。保存の拾い直しは効かない (在処が無いため)。
@@ -297,6 +307,8 @@ extension Sketch {
     /// }
     ///
     /// - Throws: 組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=7a78b249
     // shot: 2 snippet=3bf5c822
     // shot: 3 snippet=cfc04917
@@ -305,7 +317,7 @@ extension Sketch {
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try canvas.makeShader(body, name: name, values: values, surfaces: surfaces)
+        try Self.resourceCanvas(ShaderFailure.self).makeShader(body, name: name, values: values, surfaces: surfaces)
     }
 
     /// これから描くものを、この断片で塗る。
@@ -399,7 +411,7 @@ extension Sketch {
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=2acc7397
     // shot: 2 snippet=dc7bbac5
-    public func shader(_ shader: Shader) { canvas.shader(shader) }
+    public func shader(_ shader: Shader) { Self.liveCanvas()?.shader(shader) }
 
     /// 組み込みの塗りへ戻す。
     ///
@@ -441,5 +453,5 @@ extension Sketch {
     ///
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=17f903d5
-    public func resetShader() { canvas.resetShader() }
+    public func resetShader() { Self.liveCanvas()?.resetShader() }
 }

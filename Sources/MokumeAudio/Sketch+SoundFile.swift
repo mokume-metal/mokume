@@ -37,7 +37,7 @@ extension Sketch {
     /// ``AudioIn`` と同じ)。書き出し (`mokume render`) では鳴らさず、フレームの数から決めた
     /// 位置の音を解析するので、何度書き出しても同じ絵になる。
     ///
-    /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。読み込みは作るときに 1 度だけで、
+    /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。読み込みは作るときに 1 度だけで、
     /// 全体を手元に持つ。呼んだだけでは鳴らず、許可も要らない。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
@@ -46,14 +46,20 @@ extension Sketch {
     ///   AAC/M4A・FLAC など)。
     /// - Throws: 見つからない・音声として読めない (壊れている・対応していない形式)・標本が
     ///   1 つも無いとき。**作るときだけ投げ**、鳴らす・止める口は投げない ([ADR-0020] 決定 5)。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
+    ///   ファイルを読む前に ``AudioFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func loadSound(_ file: String) throws(AudioFailure) -> SoundFile {
-        try loadSound(file, flow: nil)
+        // 待たずに読む口は無いので、`setup()` だけを案内する (#2601)
+        Self.noticeBlockingLoad("loadSound(_:)", instead: nil)
+        return try loadSound(file, flow: nil)
     }
 
     /// 鳴らす流れを差し替えられる入口 (検査用)。`flow` を渡すと、時計によらずその流れで鳴らす。
     func loadSound(_ file: String, flow: SoundFlow?) throws(AudioFailure) -> SoundFile {
+        // 足せない所なら、ファイルを読む前に断る (#2740)。名乗るのは利用者が呼ぶ口
+        try requireAttachable(AudioFailure.self, calledAs: "loadSound(_:)")
         let buffer = try AudioFile.load(audioURL(file), path: file)
         let sound = SoundFile(name: file, buffer: buffer, owner: self, flow: flow)
         attach(sound)

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 表面の質感。
-extension Sketch {
+extension SketchPart {
     /// 艶の鋭さ。**0 なら艶を出さない** (既定)。
     ///
     /// 数が大きいほど艶は小さく鋭くなり、小さいほど広くぼやける — 粗い表面ほど
@@ -51,6 +51,7 @@ extension Sketch {
     ///   (書いてあれば警告が出る)。
     // shot: 1 snippet=d8f1f5d4
     public func shininess(_ amount: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.shininess(amount)
     }
@@ -58,7 +59,7 @@ extension Sketch {
     /// 金属らしさ。`0` が非金属 (既定)、`1` が金属。
     ///
     /// 金属は拡散を持たず、**周りを映すことでしか見えない**。映す先になるのは
-    /// ``surroundings(_:)`` で置いた周囲で、それが無ければ ``ambientLight(_:)-fvb5`` で
+    /// ``surroundings(_:)`` で置いた周囲で、それが無ければ ``ambientLight(_:)-(LinearRGBA)`` で
     /// 置いた底上げの光を一様な周りとして映す。**どちらも置かずに金属を上げると、
     /// 艶だけが残って暗くなる** (このとき警告が出る)。
     ///
@@ -96,11 +97,12 @@ extension Sketch {
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=06e03582
     public func metalness(_ amount: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.metalness(amount)
     }
 
-    /// 周りの光 (``ambientLight(_:)-fvb5``) をどれだけ返すか。既定は白 = 全部返す。
+    /// 周りの光 (``ambientLight(_:)-(LinearRGBA)``) をどれだけ返すか。既定は白 = 全部返す。
     ///
     /// 灰色を渡すとその分だけ返さなくなる — **物陰のように、周りの光が届きにくい
     /// ところを表す**のに使う。塗りに掛かるので、白は何も変えない。
@@ -115,7 +117,7 @@ extension Sketch {
     /// 同じ (周りの光の分) だが、陰の側はその光でしか照らされていないので、割合で見ると
     /// 大きく落ちる。結果として**陰影は深くなる**。
     ///
-    /// 光の置き方は ``emissive(_:)-uyuh`` の絵と同じで、左の球どうしは同じ絵になる。
+    /// 光の置き方は ``emissive(_:)-(LinearRGBA)`` の絵と同じで、左の球どうしは同じ絵になる。
     /// あちらとはここが逆になる (あちらは陰影を浅くする)。
     ///
     /// @Row {
@@ -148,7 +150,7 @@ extension Sketch {
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=49cec9a2
-    public func ambient(_ color: LinearRGBA) { canvas.ambient(color) }
+    public func ambient(_ color: LinearRGBA) { Self.liveCanvas()?.ambient(color) }
 
     /// 自ら出す光。光が当たっていない側にも同じだけ出る。
     ///
@@ -160,7 +162,7 @@ extension Sketch {
     /// **足されるのは明暗を問わず同じ量である。** 下は同じ球を、自ら出す光だけ変えて
     /// 3 つ描いたもの — 同じ量でも暗いところほど見た目の変化は大きいので、**陰影は
     /// 浅くなっていく**。右の球では、陰の側が左の 2.7 倍に持ち上がるあいだ、明るい側は
-    /// 2 割ほどしか上がらない。``ambient(_:)-9anin`` とはここが逆になる (あちらは陰影を深くする)。
+    /// 2 割ほどしか上がらない。``ambient(_:)-(LinearRGBA)`` とはここが逆になる (あちらは陰影を深くする)。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -192,5 +194,5 @@ extension Sketch {
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=dec7f776
-    public func emissive(_ color: LinearRGBA) { canvas.emissive(color) }
+    public func emissive(_ color: LinearRGBA) { Self.liveCanvas()?.emissive(color) }
 }

@@ -11,37 +11,94 @@
 # ために判定を打っただけで auto-merge が掛かってしまうのを防ぐため。打つのはここだけで、
 # 呼ぶのは .github/workflows/stall-watch.yml である。
 #
-# ## 打つのは 2 つの分類だけ
+# ## 打つのは 1 つの分類だけ
 #
-#   auto-merge-dropped   gh pr merge --auto --squash を掛け直す
 #   stale-checks         判定を固定している古い失敗ジョブを rerun する
+#
+# **打ち直すのはコードの検査の古い赤である。** 作法の検査 (タイトル・マージ判定・絵) の赤は
+# 打ち直す対象ではなくなった — pr-gate (.github/workflows/pr-gate.yml) は直せば新しい run が
+# 付け直し、ci.yml の ci-gate はもう作法を待たない (#2669)。かつて打ち直しの大半はこの作法の
+# 赤だった (#1160・#2134)。残るのは、同じコミットに段を走らせる ci.yml の run が複数立つ場面
+# (reopen・閉じて作り直した PR。base の変更では run が立たない・#2718) で、古い run の
+# ci-check・ci-gate の赤が新しい緑と並ぶときである。必須の判定は作成順で最新の check suite の
+# 結論を読む (規則と観測は
+# scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」・#2577)。この組の赤は古い suite に
+# 載っているので、**規則の下では必須を塞がず、打ち直しは要らない**。外すのは当番の振る舞いの
+# 変更なので記述の直しに混ぜず、別に扱う。それまでは残す — 打ち直しは冪等で、塞いでいない赤を
+# 消すだけである。新旧は run の id の順で読み、suite の作成順と同じに並ぶ (同じ冒頭)。
+# 本文の編集の run の緑 (段が skipped) は直った証拠ではないので、stall-watch.sh はそれを組に
+# 数えない (masked-red と名乗る・#2669 の反証 4)。
+#
+# ## 作法のジョブを含む古い ci.yml の run は丸ごと打たない (#2669 の移行)
+#
+# #2669 より前の ci.yml の run は作法のジョブ (LEGACY_JOBS) を含み、その ci-gate はそれらを
+# 待っていた。その pr-title を打つと古いタイトルを再生して赤を返し (#699)、その run の ci-gate を
+# 打つと needs の赤で赤く走り直して最新の ci-gate になり、通っていた PR を塞ぐ。除外の名前に
+# 足すだけでは ci-gate を外せないので、**その名前の check を 1 つでも含む run の失敗ジョブを
+# まとめて飛ばす**。人へは stall-watch.sh が legacy-gate と名乗って返す。作法のジョブを含む run を
+# head に持つ open な PR が無くなったら、この判定ごと消してよい。
 #
 # 名乗る (name) と黙る (quiet) の行には何もしない。**入力の 3 列目がその別**なので、
 # ここで分類名を数え直さない — 判定は 1 箇所に保つ (ADR-0001 原則 9)。
 #
-# **auto-merge の掛け直しはゲートを飛び越えない。** --auto は予約にすぎず、必須
-# チェックはそのまま効く (承認のゲートは ADR-0044 で外れた・#2108)。
+# ## auto-merge は掛け直さない (#2614)
 #
-# ## rerun は run 単位で打ってはいけない
+# 以前は auto-merge-dropped にも gh pr merge --auto --squash を打っていたが、**一度も
+# 成功しなかった** (2026-10-13 に数えた直近 60 回で 0 回)。当番の GITHUB_TOKEN
+# (contents: read) では enablePullRequestAutoMerge が `Resource not accessible by
+# integration` (FORBIDDEN) で拒まれ、contents: write を足すと通る (probe の run
+# 38541307087)。リポジトリへの書き込みを当番に渡すかは人の判断なので、権限は広げずに
+# 掛け直しを消した。stall-watch.sh が名乗り、外れてから猶予を超えたら赤で人に返す。
+# 掛け直すのは人である。
 #
-# `gh run rerun <run-id> --failed` は**その run の失敗ジョブを全部**打ち直す。
-# pr-title は ci.yml の同じ run の中に居るので、run 単位で打つと巻き添えで pr-title まで
-# rerun してしまう。pull_request の rerun は元のイベントを再生するので、**古いタイトルで
-# 判定され、その失敗が最新の結果になって打つ前より悪くなる** (#699)。
+# ## gh の失敗の理由を捨てない (#2614)
 #
-# だから**失敗ジョブを 1 つずつ `gh run rerun --job` で打ち、下の除外リストを飛ばす**。
+# 失敗の行には gh の stderr を 1 行に畳んで添える。以前は 2>/dev/null で捨てていたので、
+# 上の掛け直しが 60 回続けて落ちても理由がどこにも残らなかった。
+#
+# ## rerun はジョブ単位で打つ
+#
+# `gh run rerun <run-id> --failed` は**その run の失敗ジョブを全部**打ち直す。render.yml の
+# run では、打ってはならない render-pr (下の除外の基準) まで巻き添えにする。
+#
+# だから**失敗ジョブを 1 つずつジョブの rerun の API で打ち、下の除外リストを飛ばす**。
+# `gh run rerun --job` を使わないのは、拒まれたときに API の文面を捨てて
+# 「job N cannot be rerun」としか言わないためである (#2614)。`gh api` は文面を
+# 「gh: <message> (HTTP 403)」で返すので、下の 2 つを読み分けられる。
+#
+# ## 集約のジョブは最後に打つ (#1883)
+#
+# ジョブの rerun の API は、**打ったジョブと、それを needs で待つジョブ**を走らせ直す。ci-gate を
+# 先に打つと、ci-gate だけが前の結論 (落ちた ci-check) を読んで同じ赤を返し、その run が走って
+# いる間は ci-check の打ち直しが拒まれる。check run の並びが同じなら、次の回も同じ順で同じことが
+# 起きる (2026-09-30 の #1883 では、上流の review-gate がそうして打ち直されなかった)。だから
+# RERUN_LAST の名前は最後に回す。上流を打てば集約も一緒に走り直すので、そのときの集約の
+# 打ち直しは「走り直している」で拒まれ、名乗って進む (下)。
+#
+# ## 拒まれても赤にしない 2 つ (#2614)
+#
+# 次の 2 つは打つ側の失敗ではなく、打つ対象がその回に居ないだけなので、名乗って 0 のまま進む
+# (queue-sweep.sh が cancel の 409 を読み分けるのと同じ形)。文面は 2026-10-14 に実物で取った:
+#
+# - `The workflow run containing this job is already running` — 同じ run の別のジョブを
+#   先に打つと run が走り出し、残りは拒まれる。後続のジョブなら一緒に走り直している。
+#   そうでなければ、走り終わった後の次の回に打てる
+# - `Only jobs from the current attempt can be re-run` — commit の check run の一覧には、
+#   走り直す前の attempt のジョブも残る。それは打ち直せず、新しい attempt のジョブが同じ
+#   一覧に居る
+#
+# それ以外の拒否 (権限など) は理由を添えて 1 で終える。
 #
 # ## 除外の基準は名前ではなく「何を読むジョブか」
 #
 # 除外が要るのは「**凍結されたイベントペイロードの可変な欄** (title / body / labels) を
 # 読むジョブ」である。番号や sha は run の中で変わらないので、それだけを受け取る
-# ジョブ (review-gate / drawing-evidence) は rerun して安全である —
-# 本文は GH_TOKEN で都度取り直すからである。
+# ジョブは rerun して安全である — 本文やタイトルは GH_TOKEN で都度取り直すからである。
 #
-# いま当てはまるのは pr-title 1 本だけだが、**同じ形のジョブが増えたらここへ足さないと
-# 同じ壊れ方をする**。人手の対応にしないため、scripts/tests/stall_watch_test.py が
-# ci.yml を読んで「可変欄を env へ流しているジョブが、このリストに載っているか」を見る
-# (#801 と同じ形)。
+# いま当てはまるジョブは無い (当てはまっていた ci.yml の pr-title は #2669 で消えた。pr-gate は
+# タイトルも API から読む)。**同じ形のジョブが増えたらここへ足さないと同じ壊れ方をする**。
+# 人手の対応にしないため、scripts/tests/stall_watch_test.py が PR の head に check を付ける
+# ワークフローを読んで「可変欄を読むジョブが、このリストに載っているか」を見る (#801 と同じ形)。
 #
 # **もう 1 つの基準は「門番の後ろに居るジョブか」** (#2062)。render.yml の render-pr は、
 # GitHub ホストの門番 (render-turn) を通ってから専用機に積まれる。ジョブ単位の rerun は
@@ -50,6 +107,16 @@
 # merge は止まらない。cancel された render-pr (queue-sweep が group のできた瞬間に退かせた
 # もの・#2064、stall-watch の読み分け 9 で人が退かせたもの) が、
 # 別の check の stale-checks の巻き添えで戻ってくるのも、これで止まる。
+#
+# **3 つ目の基準は「最新の run の結論が判定になるジョブか」** (#2668)。pr-gate
+# (.github/workflows/pr-gate.yml) は直すと新しい run が付け直し、必須は作成順で最新の run の結論を
+# 読む (規則は scripts/ci-gate.sh の冒頭)。head SHA に残る古い赤・cancelled は必須が読まない名残で、
+# 打ち直しても得るものが無い (pr-gate は concurrency を持たないので、打っても他の run は止まらない・
+# #2716)。
+# stall-watch.sh の normalize_checks も古い pr-gate を stale-checks に数えない。必須が読む最新の
+# suite の pr-gate が cancelled で BLOCKED のままの形 (#2716) は、stall-watch.sh が stale-gate と
+# 名乗って打ち直す run の番号を出し、**打つのは人である** (分類は name なのでここへは来ない)。
+# 当番に打たせるかは、この除外を変える判断になる
 #
 # 検査は scripts/tests/stall_watch_test.py。
 set -euo pipefail
@@ -61,7 +128,14 @@ set -euo pipefail
 REPO="$(this_repo)"
 
 # rerun を打ってはならないジョブ。**readonly にしない** — 検査が差し替えて回すため
-RERUN_EXCLUDED=${RERUN_EXCLUDED:-"pr-title render-pr"}
+RERUN_EXCLUDED=${RERUN_EXCLUDED:-"render-pr pr-gate"}
+
+# 最後に打つジョブ (needs で他を待つ集約)。理由は冒頭の「集約のジョブは最後に打つ」
+RERUN_LAST=${RERUN_LAST:-"ci-gate"}
+
+# 作法のジョブの名前。この名前の check を含む run を古い run と読み、丸ごと打たない。
+# scripts/stall-watch.sh の LEGACY_JOBS と同じに保つ (検査が見る)
+readonly LEGACY_JOBS="pr-title review-gate drawing-evidence"
 
 LOG="${1:?stall-watch.sh の出力ファイルが必要}"
 [ -f "$LOG" ] || {
@@ -71,52 +145,94 @@ LOG="${1:?stall-watch.sh の出力ファイルが必要}"
 
 failed=0
 
+# gh の stderr の受け皿。標準出力を値として受ける呼び出しでも理由を拾えるように、
+# ファイルへ逃がしてから読む
+errfile=$(mktemp)
+trap 'rm -f "$errfile"' EXIT
+
 say() { printf '%s\n' "$*"; }
+
+# 直前の gh の stderr を 1 行に畳む。空なら空と言う (黙ると「理由なし」と読めない)
+reason() {
+  local text
+  text=$(tr '\n' ' ' <"$errfile" | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ $//')
+  printf '%s' "${text:-gh は理由を出さなかった}"
+}
 
 excluded() { # $1=ジョブ名
   case " $RERUN_EXCLUDED " in *" $1 "*) return 0 ;; esac
   return 1
 }
 
-rearm_auto_merge() { # $1=PR 番号
-  if gh pr merge "$1" --repo "$REPO" --auto --squash >/dev/null 2>&1; then
-    say "#$1: auto-merge を掛け直した"
-  else
-    say "#$1: auto-merge を掛け直せなかった" >&2
-    failed=1
+last() { # $1=ジョブ名
+  case " $RERUN_LAST " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# 1 つのジョブを打つ。打てたら 0、打たなかった・拒まれたら 1 (failed は自分で立てる)
+rerun_job() { # $1=PR 番号 $2=ジョブ名 $3=ジョブの id
+  local n=$1 name=$2 id=$3
+  if excluded "$name"; then
+    say "#$n: $name は rerun しない (凍結されたペイロードを読む #699・門番の後ろに居る #2062・最新の run が判定 #2668 のどれか)"
+    return 1
   fi
+  if gh api "repos/$REPO/actions/jobs/$id/rerun" -X POST --silent 2>"$errfile"; then
+    say "#$n: $name を rerun した"
+    return 0
+  fi
+  case "$(reason)" in
+    *"is already running"*)
+      say "#$n: $name は同じ run が走り直している (後続なら一緒に走り直す) — 残れば次の回に回す" ;;
+    *"Only jobs from the current attempt"*)
+      say "#$n: $name は古い attempt のジョブで打ち直せない — 新しい attempt の側を見る" ;;
+    *)
+      say "#$n: $name を rerun できなかった: $(reason)" >&2
+      failed=1
+      ;;
+  esac
+  return 1
 }
 
 rerun_stale_jobs() { # $1=PR 番号
-  local n=$1 sha runs name id acted=0
-  sha=$(gh pr view "$n" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null) || {
-    say "#$n: head の commit を読めなかった" >&2
+  local n=$1 sha runs name id run concl pass legacy=" " failing="" acted=0
+  sha=$(gh pr view "$n" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>"$errfile") || {
+    say "#$n: head の commit を読めなかった: $(reason)" >&2
     failed=1
     return 0
   }
-  # check run の id は、Actions のジョブ id そのものである
+  # check run の id は、Actions のジョブ id そのものである。古い run を見分けるため、失敗して
+  # いないものも含めて「id 結論 run 名前」で全部引く (名前は空白を含みうるので最後に置く)。
+  # --paginate の --jq はページごとに当たるので、run の束ね方はここではなく下の bash で行う
   runs=$(gh api "repos/$REPO/commits/$sha/check-runs" --paginate \
-    --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "cancelled"
-                                 or .conclusion == "timed_out" or .conclusion == "startup_failure")
-          | "\(.name) \(.id)"' 2>/dev/null) || {
-    say "#$n: check run の一覧を読めなかった" >&2
+    --jq '.check_runs[] | "\(.id) \(.conclusion // "-") \((.details_url // "")
+          | (capture("/actions/runs/(?<r>[0-9]+)").r // "0")) \(.name)"' 2>"$errfile") || {
+    say "#$n: check run の一覧を読めなかった: $(reason)" >&2
     failed=1
     return 0
   }
-  while read -r name id; do
-    [ -n "${id:-}" ] || continue
-    if excluded "$name"; then
-      say "#$n: $name は rerun しない (凍結されたペイロードを読む #699 か、門番の後ろに居る #2062)"
-      continue
-    fi
-    if gh run rerun --repo "$REPO" --job "$id" >/dev/null 2>&1; then
-      say "#$n: $name を rerun した"
-      acted=1
-    else
-      say "#$n: $name を rerun できなかった" >&2
-      failed=1
-    fi
+  while read -r id concl run name; do
+    [ -n "${name:-}" ] || continue
+    case " $LEGACY_JOBS " in *" $name "*) [ "$run" = 0 ] || legacy="$legacy$run " ;; esac
   done <<<"$runs"
+  while read -r id concl run name; do
+    [ -n "${name:-}" ] || continue
+    case "$concl" in failure | cancelled | timed_out | startup_failure) ;; *) continue ;; esac
+    case "$legacy" in
+      *" $run "*)
+        say "#$n: $name は作法のジョブを含む古い ci.yml の run ($run) に居るので rerun しない (古いイベントを再生し、ci-gate は needs の赤で赤く返す・#2669)"
+        continue
+        ;;
+    esac
+    failing+="$name $id"$'\n'
+  done <<<"$runs"
+  # 集約 (RERUN_LAST) を後ろへ回す 2 周。理由は冒頭の「集約のジョブは最後に打つ」
+  for pass in first last; do
+    while read -r name id; do
+      [ -n "${id:-}" ] || continue
+      if last "$name"; then [ "$pass" = last ] || continue; else [ "$pass" = first ] || continue; fi
+      if rerun_job "$n" "$name" "$id"; then acted=1; fi
+    done <<<"$failing"
+  done
   [ "$acted" -eq 1 ] || say "#$n: 打てる失敗ジョブが無かった"
 }
 
@@ -124,7 +240,6 @@ while read -r number kind action _rest; do
   [ -n "${number:-}" ] || continue
   [ "${action:-}" = act ] || continue
   case "$kind" in
-    auto-merge-dropped) rearm_auto_merge "$number" ;;
     stale-checks) rerun_stale_jobs "$number" ;;
     *) say "打ち方を知らない分類: $kind (#$number)" >&2; failed=1 ;;
   esac

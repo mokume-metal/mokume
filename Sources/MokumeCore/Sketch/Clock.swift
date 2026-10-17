@@ -19,6 +19,62 @@ public enum Clock: Equatable, Sendable {
     case frameIndex(frameRate: Int)
 }
 
+extension SketchSettings {
+    /// 窓で走らせるときの時計の選び方 (``SketchSettings/clock``)。
+    ///
+    /// 走っている時計そのもの (``Clock``) とは別の型にしてある。選ぶ側は刻みを書かずに
+    /// ``frames`` と書き、刻みは ``SketchSettings/frameRate`` から採る — 刻みを 2 か所に書くと、
+    /// 食い違ったときにどちらを取るかの答えが要る。
+    public nonisolated enum ClockMode: Sendable, Hashable, Codable {
+        /// 実際に流れた時間で進む (既定)。重いフレームでは時刻を進めて絵だけ抜く。
+        case wallClock
+        /// フレームの数で進む。``Sketch/draw()`` 1 回がちょうど 1 / ``SketchSettings/frameRate`` 秒で、
+        /// 重いフレームでは絵を抜かずに遅くなる。走っている間の ``SketchPart/clock`` は
+        /// ``Clock/frameIndex(frameRate:)`` になる。
+        case frames
+    }
+}
+
+extension Clock {
+    /// 窓・共有面の経路の時計を、作品の設定から決める。``SketchSettings/ClockMode/frames`` なら宣言の
+    /// 刻みのフレーム番号、既定は実時間である。
+    ///
+    /// 書き出しの頼みがあるときはここを通らず、頼みの刻みのフレーム番号になる (`SketchApplication`) —
+    /// `--fps` が作品の宣言と違っても、撮る係の刻み (`SketchRuntime.launchFrameRate`) と最後の 1 枚まで
+    /// 揃う。
+    ///
+    /// - Parameters:
+    ///   - mode: 作品が選んだ時計 (``SketchSettings/clock``)。
+    ///   - frameRate: 作品の宣言の刻み (``SketchSettings/frameRate``)。
+    static func launching(_ mode: SketchSettings.ClockMode, frameRate: Int) -> Clock {
+        switch mode {
+        case .wallClock: return .wallClock
+        case .frames: return .frameIndex(frameRate: frameRate)
+        }
+    }
+
+    /// 音 (音声ファイルの再生・合成音) をフレームの数で進めるなら、その刻み。実際に鳴らすなら `nil`。
+    ///
+    /// **鳴らさずに数で進めるのは、フレームの時計で、かつ画面へ出していないときだけ** — 書き出しと、
+    /// 窓を持たずに直に回す実行である。フレームの時計を選んだ窓 (``SketchSettings/ClockMode/frames``)
+    /// は鳴らす。時計だけで決めると、その窓が無音になる ([#2601])。代償として、処理落ちの間は音が
+    /// 実時間で進み、絵とずれる。
+    ///
+    /// - Parameter onScreen: 画面へ出しながら回しているか (`SketchRuntime.isOnScreen`)。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    package func soundFrameRate(onScreen: Bool) -> Int? {
+        guard case .frameIndex(let frameRate) = self, !onScreen else { return nil }
+        return frameRate
+    }
+}
+
+extension SketchPart {
+    /// 画面へ出しながら回しているか (`SketchRuntime.isOnScreen`)。音の口が鳴らすかを決めるのに読む
+    /// (``Clock/soundFrameRate(onScreen:)``)。走っていなければ `false`。
+    package var isOnScreen: Bool { runningSketch?.isOnScreen ?? false }
+}
+
 /// 1 フレームの長さ。
 ///
 /// **フレーム番号から導く時計では、秒ではなく「fps 分の 1 秒」のまま持つ** ([#1640])。
@@ -45,7 +101,7 @@ enum FrameStep: Equatable {
         }
     }
 
-    /// 利用者に見せる単精度の秒 (``Sketch/deltaTime``)。
+    /// 利用者に見せる単精度の秒 (``SketchPart/deltaTime``)。
     var deltaTime: Float { Float(seconds) }
 }
 
@@ -53,7 +109,8 @@ enum FrameStep: Equatable {
 ///
 /// 実時間で動かすときの落とし穴を 1 つ引き受ける: **止めている間も実時間は進む。**
 /// 止めて再開したとき起点を寄せ直さないと、止めていた時間まるごとが 1 フレームの
-/// 経過時間として渡り、それを積分に使う側は 1 回で破綻する。止まり方で口が 2 つある:
+/// 経過時間として渡り、それを積分に使う側は 1 回で破綻する。止まり方で口が 2 つあり、
+/// 最初の枚も同じ扱いにする:
 ///
 /// - 外から止めて再開した (`SketchRuntime.resume()`) — ``resync()`` で起点を寄せ直し、
 ///   再開してから次のフレームまでの経過を渡す
@@ -61,6 +118,9 @@ enum FrameStep: Equatable {
 ///   ``stepOneFrameNext()`` で、次の 1 枚の経過を**目標の 1 フレームぶん**にする。寄せ直すと
 ///   頼んだ直後に描くので経過がほぼ 0 になり、`deltaTime` で動かすものが 1 枚進めても
 ///   動かない ([#1366])。フレーム番号から導く時計の 1 枚と同じ値になる
+/// - 最初の枚 — 時計を作ってから最初の枚までの間 (アプリの起動・窓・`setup()`) は描いていた
+///   時間ではない。最初の ``advance(at:)`` が起点をその枚へ寄せ、同じ印で経過を目標の
+///   1 フレームぶんにする ([#2413])
 ///
 /// **寄せ直せない止まり方もある。** ディスプレイのスリープや駆動源の停止は
 /// `pause()` を通らないので ``resync()`` が呼ばれない ([#874])。そこで経過そのものに
@@ -70,16 +130,21 @@ enum FrameStep: Equatable {
 ///
 /// [#874]: https://github.com/mokume-metal/mokume/issues/874
 /// [#1366]: https://github.com/mokume-metal/mokume/issues/1366
+/// [#2413]: https://github.com/mokume-metal/mokume/issues/2413
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 @MainActor
 final class FrameTiming {
-    /// 時刻の出どころ。``Sketch/clock`` が読む。
+    /// 時刻の出どころ。``SketchPart/clock`` が読む。
     let clock: Clock
     /// 実時間の出どころ。検査が時間を操れるよう差し替えられる形にしてある。
     private let now: () -> Double
     /// 作者への知らせの出口。検査が文面と回数を受け取れるよう差し替えられる形にしてある。
     private let warn: (String) -> Void
-    private let started: Double
+    /// 実時間の時計の起点。**最初の枚で、その枚の時刻へ寄せ直す** ([#2413])。作ったときの
+    /// 時刻のままにすると、最初の枚の ``time`` に起動・窓・`setup()` の長さが乗る。
+    ///
+    /// [#2413]: https://github.com/mokume-metal/mokume/issues/2413
+    private var started: Double
     private var previous: Double
 
     /// これまでに進めたフレームの数。最初のフレームの最中は 1。
@@ -103,12 +168,22 @@ final class FrameTiming {
     private(set) var timeline: Double = 0
     /// 前のフレームからの経過 (秒)。``step`` の単精度の写しで、利用者に見せる値。
     var deltaTime: Float { step.deltaTime }
+    /// これまでの枚の経過 (``step``) を足し込んだもの (秒)。``Countdown`` が減る元 ([#2602])。
+    ///
+    /// 経過が 0 の枚 (``pauseTime()`` の間・``jumpTime(_:)`` の枚・時刻を指定した観測の枚) では増えず、
+    /// 枚が来ない間 (`noLoop()`・外からの停止) も増えない。倍精度で足すので、1/60 を足し続けた丸めは
+    /// 単精度の秒 (``Countdown`` が比べる単位) に届かない。
+    ///
+    /// [#2602]: https://github.com/mokume-metal/mokume/issues/2602
+    private(set) var elapsed: Double = 0
 
     /// 1 フレームぶんとして渡す経過の上限 (秒)。**実時間で動かすときだけ効く。**
     private let maximumDeltaTime: Double
-    /// 目標の 1 フレームぶんの間隔 (秒)。``stepOneFrameNext()`` が渡す経過。
+    /// 目標の 1 フレームぶんの間隔 (秒)。止めていたところから描く 1 枚 (``stepOneFrameNext()``) と
+    /// 実時間の時計の最初の枚に渡す経過。
     private let frameInterval: Double
-    /// 次の ``advance()`` の経過を ``frameInterval`` にするか。1 枚で落ちる。
+    /// 次の ``advance()`` の経過を ``frameInterval`` にするか。1 枚で落ちる。立てるのは
+    /// ``stepOneFrameNext()`` と、実時間の時計の最初の ``advance(at:)``。
     private var stepsOneFrame = false
 
     /// 時計の生の時刻に足す、原点のずれ (秒)。作者が止めた・飛んだぶんだけ動く ([#1286])。
@@ -142,8 +217,8 @@ final class FrameTiming {
 
     /// - Parameters:
     ///   - clock: 時刻の出どころ。
-    ///   - frameRate: 目標のフレームレート。**実時間で動かすときの**経過の上限と、止めていた
-    ///     ところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
+    ///   - frameRate: 目標のフレームレート。**実時間で動かすときの**経過の上限と、最初の枚・
+    ///     止めていたところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
     ///   - warn: 作者への知らせの出口。
@@ -180,6 +255,16 @@ final class FrameTiming {
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     func advance(at requestedTime: Float? = nil) {
         let now = now()
+        if frameCount == 0, clock == .wallClock {
+            // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``SketchPart/time``
+            // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
+            // 作ってからここまでの間 (起動・窓・`setup()`) は、描いていた時間ではない。
+            // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い
+            //
+            // [#2413]: https://github.com/mokume-metal/mokume/issues/2413
+            started = now
+            stepsOneFrame = true
+        }
         frameCount += 1
         defer { stepsOneFrame = false }
         let raw: Double
@@ -226,6 +311,8 @@ final class FrameTiming {
             time = requestedTime
             step = .seconds(0)
         }
+        // **見せる経過そのものを足す** — 止めた枚・飛んだ枚・観測の枚は 0 で、積み上げは動かない
+        elapsed += step.seconds
     }
 
     /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、

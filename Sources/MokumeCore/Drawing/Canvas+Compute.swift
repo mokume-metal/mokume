@@ -302,6 +302,8 @@ extension Canvas {
     ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     private func runPendingComputations() {
+        // **打ち切られた投入の控えを、流すものがあるかを見る前に立て直す** (#2199)。読む前に届け直す
+        gpu.revokeDroppedDeliveries()
         guard !pendingComputations.isEmpty || !gpu.pendingUploads.isEmpty else { return }
         // **値の区画と控えの置き場へ書く前に待つ。** ここは描き切りを通らないので、フレームの
         // 環を進める `frameRing.advance()` の待ちが効かない — 直前のフレームの投入が、
@@ -329,25 +331,43 @@ extension Canvas {
     /// 呼んでよいのは、値の区画と控えの置き場のいまのスロットを読む投入が終わっているときだけ
     /// (読み戻しなら全完了を待った後・面をまたぐ順なら環を進めた後)。
     private func submitPendingComputationsAndUploads() throws(RenderFailure) {
-        let uploaded = try gpu.withCommands {
-            commands throws(RenderFailure) -> EncodedUploads in
+        // **打ち切られた投入の控えを、積む前に立て直す** (#2199)。面をまたぐ早い投入
+        // (`submitPendingComputations()`) も通るので、他の面の計算が届いていない入力を読んで流れない
+        gpu.revokeDroppedDeliveries()
+        let assembled = try gpu.withCommands {
+            commands throws(RenderFailure) -> (uploaded: EncodedUploads, submission: UInt64) in
             // **控えが先、計算が後。** 計算は書いた値を読む
             let uploaded = try encodeUploads(into: commands)
             try encodeComputations(into: commands)
-            gpu.commit(commands, retaining: imageInputPass.map { [$0] } ?? [])
-            return uploaded
+            let submission = gpu.commit(commands, retaining: imageInputPass.map { [$0] } ?? [])
+            return (uploaded, submission)
         }
         // **いまのスロットを読む投入として記録する。** 描き切りと同じ置き場へ書いたので、
         // 記録しないと、下の待ちが期限切れになったときにそのスロットが「読み終わった」
         // ことになってしまう (#754)
         frameRing.noteSubmission()
-        gpu.pendingUploads.markUploaded(uploaded)
+        // この投入が打ち切られたら、運んだ控えを立て直す (#2199)
+        gpu.noteUploaded(assembled.uploaded, by: assembled.submission)
+        noteComputationWrites(by: assembled.submission)
         // **流したものは溜め場から降ろす** — 降ろさないとフレーム末尾の描き切りが同じ計算を
         // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
         // いるので、残すと 2 度走る (#1183)
         pendingComputations.removeAll(keepingCapacity: true)
         // 流した計算に粒の進めがあれば、寿命を減らした量として数える (#1710)
-        commitParticleAdvances()
+        commitParticleAdvances(by: assembled.submission)
+    }
+
+    /// 溜めた計算が書く並びに、書いた投入の番号を覚えさせる ([#2199])。**溜めた計算を積んだ投入の後で、
+    /// 溜め場を空にする前に呼ぶ。** 打ち切られた投入の控えを届け直すとき、その後で計算が書いた並びは
+    /// 届け直さない (``Numbers/submissionSettled(_:dropped:)``)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteComputationWrites(by submission: UInt64) {
+        for dispatch in pendingComputations {
+            for numbers in dispatch.buffers.suffix(dispatch.writeCount) {
+                numbers.noteWrittenByGPU(in: submission)
+            }
+        }
     }
 
     // MARK: - 面をまたいで、頼んだ順に効かせる

@@ -225,4 +225,67 @@ struct OrbitControlTests {
 
         #expect(sketch.projection == Camera.defaultOrthographic(width: 64, height: 64))
     }
+
+    // MARK: - 書く口 (#2643)
+
+    /// `orbit` を書いてから `orbitControl()` を呼ぶスケッチ。
+    final class Writer: Sketch {
+        var write: (inout Orbit) -> Void = { _ in }
+        var seen: Orbit?
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 64, height: 48) }
+        func draw() {
+            background(.display(red: 0, green: 0, blue: 0))
+            var value = orbit
+            write(&value)
+            orbit = value
+            orbitControl()
+            seen = orbit
+        }
+    }
+
+    /// 書いた値と、倒れた先が正しいかの確かめ。
+    private func written(_ write: @escaping (inout Orbit) -> Void) throws -> (Orbit, Canvas) {
+        let sketch = Writer()
+        sketch.write = write
+        let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 })
+        try runtime.advance()
+        return (try #require(sketch.seen), runtime.canvas)
+    }
+
+    /// 既定へ倒すのは変えず、**倒したことを警告する** (ADR-0020 決定 5)。
+    @Test("収めようのない値を書くと、既定へ倒して注意が出る")
+    func writingUnusableValuesWarns() throws {
+        let cases: [(String, (inout Orbit) -> Void, (Orbit) -> Bool)] = [
+            ("yaw = .nan", { $0.yaw = .nan }, { $0.yaw == 0 }),
+            ("pitch = .infinity", { $0.pitch = .infinity }, { $0.pitch == 0 }),
+            ("distance = .nan", { $0.distance = .nan }, { $0.distance == $0.minimumDistance }),
+            ("minimumDistance = .nan", { $0.minimumDistance = .nan }, { $0.minimumDistance == 1 }),
+            ("inertia = .nan", { $0.inertia = .nan }, { $0.inertia == 0 }),
+            // 見ている先は、道具の始まりと同じ面の中央へ倒す
+            ("center = (.nan, 0, 0)", { $0.center = SIMD3(.nan, 0, 0) }, { $0.center == SIMD3(32, 24, 0) }),
+            (
+                "Orbit.fitting(width: .nan, height: 48)", { $0 = Orbit.fitting(width: Float.nan, height: 48) },
+                { $0.center == SIMD3(32, 24, 0) }
+            ),
+        ]
+        for (name, write, fellBack) in cases {
+            let (orbit, canvas) = try written(write)
+            #expect(fellBack(orbit), "\(name) の後が \(orbit)")
+            #expect(canvas.warnings.message(for: .badOrbit)?.hasPrefix("orbit:") == true, "\(name) で注意が出ない")
+            // 倒した先は視点として成り立つ (呼んでもいない camera() の文面で断られない)
+            #expect(!canvas.warnings.hasWarned(.badCamera), "\(name) で視点が成り立たなかった")
+        }
+    }
+
+    @Test("限界の外を書いても、収めるだけなら注意は出ない")
+    func writingOutOfRangeValuesDoesNotWarn() throws {
+        let (orbit, canvas) = try written {
+            $0.pitch = 10
+            $0.distance = 1e9
+        }
+        #expect(orbit.pitch == Orbit.pitchLimit)
+        #expect(orbit.distance == orbit.maximumDistance)
+        #expect(!canvas.warnings.hasWarned(.badOrbit))
+    }
 }

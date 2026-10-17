@@ -198,6 +198,107 @@ struct MCPServerTests {
         #expect(answers.map(errorCode) == [nil, -32600])
     }
 
+    /// `Double` に収まらない数は、符号によらず読めない行として断る (#2476)。`JSONSerialization` は
+    /// 正の側 (`1e400`) は投げるが、負の側 (`-1e400`) は投げずに `-inf` で読むので、通すと `id` が
+    /// JSON に戻せず `lastResort` (`id` が `null`・-32603) へ落ち、引数の数は `-inf` のまま道具へ渡る。
+    /// 書く位置 (id・引数・配列の中・最上位・通知) によらず、`1e400` と同じ失敗にする。
+    nonisolated private static let unfitLines: [String] = {
+        func call(id: String = "1", arguments: String = "{}") -> String {
+            #"{"jsonrpc":"2.0","id":"# + id
+                + #","method":"tools/call","params":{"name":"observe","arguments":"# + arguments + "}}"
+        }
+        return [
+            call(id: "-1e400"), call(id: "-1.8e308"), call(id: "-1E400"),
+            call(id: "-1e+400"), call(id: "-0.5e999999999"),
+            call(arguments: #"{"scale":-1e400}"#),
+            call(arguments: #"{"events":[1,[2,{"x":-1e400}]]}"#),
+            call(arguments: #"{"events":[-1.8e308]}"#),
+            // 通知 (id が無い) でも、壊れた行として答える
+            #"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"observe","arguments":{"scale":-1e400}}}"#,
+            // 応答の形の行の中でも
+            #"{"jsonrpc":"2.0","id":-1e400,"result":{}}"#,
+            // 最上位が数だけの行も、形の誤りではなく読めない行
+            "-1e400",
+        ]
+    }()
+
+    @Test("Double に収まらない負の数が木に残る行は、道具を走らせずに -32700 で断る", arguments: unfitLines)
+    func refusesNegativeNumbersThatDoNotFit(line: String) throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [line, #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#])
+        server.serve()
+
+        // 1 行目は誤りの 1 行 (id は読めないので null)。lastResort (-32603) へは落ちない。
+        // 繋がりは切れず、次の呼び出しには答える
+        try #require(recorder.written.count == 2)
+        let refused = try decode(recorder.written[0])
+        #expect(errorCode(refused) == JSONRPC.parseError)
+        #expect(idOf(refused) == "null")
+        #expect(idOf(try decode(recorder.written[1])) == "2")
+        // 道具は走っていない。走ると観測の区画に要求が置かれる
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path))
+    }
+
+    @Test("収まらない数の断りは、正の側 (1e400) と負の側 (-1e400) で同じ失敗になる")
+    func refusesBothSignsAlike() throws {
+        // 応答の組み立ては鍵の並びを決めないので、文字ではなく読んだ中身で比べる
+        func reply(_ line: String) throws -> NSDictionary {
+            guard case .refused(let reply) = JSONRPC.parse(line) else {
+                Issue.record("断られていない: \(line)")
+                return [:]
+            }
+            return try decode(reply) as NSDictionary
+        }
+        let positive = try reply(#"{"jsonrpc":"2.0","id":1e400,"method":"tools/list"}"#)
+        let negative = try reply(#"{"jsonrpc":"2.0","id":-1e400,"method":"tools/list"}"#)
+        #expect(positive.count == 3)
+        #expect(positive == negative)
+        #expect(try reply("1e400") == reply("-1e400"))
+    }
+
+    /// **限界の明示。** 同じキーを 2 度書いた行の、後ろの値は読み手が木から落とすので、木を歩く
+    /// 検めには見えない (`1e400` を同じ位置に置くと `JSONSerialization` が行ごと投げて断られる)。
+    /// 道具へ渡るのは残った有限の値だけで、`-inf` は届かない。文字から探す読み手 (`MokumeCore` の
+    /// `JSONFile`) なら落ちた数も断れるが、`MokumeCLI` から使える口が無い (#2476)。ここは**いま
+    /// 断られない**ことを固定する — 将来塞ぐなら、この検査を断る側へ書き換える。
+    @Test(
+        "同じキーを 2 度書いて、後ろの収まらない負の数が木から落ちる行は、いまは断らず残った値で答える",
+        arguments: [
+            #"{"jsonrpc":"2.0","id":1,"id":-1e400,"method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"a":2,"a":{"x":-1e400}}}"#,
+        ])
+    func doesNotSeeNumbersDroppedFromTheTree(line: String) throws {
+        let (server, recorder) = makeServer(directory: try makeDirectory(), input: [line])
+        server.serve()
+
+        try #require(recorder.written.count == 1)
+        let answer = try decode(recorder.written[0])
+        #expect(errorCode(answer) == nil)
+        #expect(idOf(answer) == "1")
+        #expect(answer["result"] != nil)
+    }
+
+    @Test("Double の最小値・最大値ちょうどの数は、これまでどおり読める")
+    func readsTheExtremesThatFit() throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [
+                #"{"jsonrpc":"2.0","id":-1.7976931348623157e308,"method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":1.7976931348623157e308,"method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"reference","arguments":{"name":"x","extra":-1.7976931348623157e308}}}"#,
+            ])
+        server.serve()
+
+        let answers = try recorder.written.map(decode)
+        try #require(answers.count == 3)
+        #expect(answers.map(errorCode) == [nil, nil, nil])
+        #expect(answers.allSatisfy { $0["result"] != nil })
+        #expect(idOf(answers[2]) == "3")
+    }
+
     @Test("id のある tools/call は、窓口越しに道具を走らせ、その id で結果を返す")
     func runsAToolForACall() throws {
         let directory = try makeDirectory()
@@ -305,7 +406,7 @@ struct MCPServerTests {
 
     @Test("走っているスケッチが無ければ、何をすればよいかを添えて答える")
     func explainsWhenNothingIsRunning() throws {
-        let directory = try makeDirectory()
+        let directory = try makeSketch()
         let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
         // 誰も応えないので待ちの上限に達する。上限は短くしてある
         let outcome = tools.call("build_status", arguments: [:])
@@ -315,7 +416,7 @@ struct MCPServerTests {
 
     @Test("区画を起動より後に作っていたら、起動し直すことと、その理由を答える")
     func tellsToRestartWhenTheFacetWasMissing() throws {
-        let directory = try makeDirectory()
+        let directory = try makeSketch()
         let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
         // 区画が無いまま観測を頼む。要求は置かれるが、走っているスケッチは観測を持っていない
         let outcome = tools.call("observe", arguments: [:])
@@ -331,7 +432,7 @@ struct MCPServerTests {
 
     @Test("区画が先から在れば、順序ではなく立ち上がっていない側を答える")
     func tellsToLaunchWhenTheFacetWasAlreadyThere() throws {
-        let directory = try makeDirectory()
+        let directory = try makeSketch()
         try FileManager.default.createDirectory(
             at: directory.appendingPathComponent(".mokume/observe", isDirectory: true),
             withIntermediateDirectories: true)
@@ -372,12 +473,19 @@ struct MCPServerTests {
             #expect(outcome.text.contains("Restarting will not fix that one"))
             // 一覧への辿り口 (読む時点ごとに文面を書き足す形にしない)
             #expect(outcome.text.contains(Tools.startupDocument))
+            // **MOKUME_WORK_DIR があれば、窓口をどこで立てたかは応えない原因にならない** (#2487)。
+            // パッケージの場所 (`split`) に Package.swift は無いが、区画の基準は場所に依らないので、
+            // 4 つ目 (スケッチでない場所) も、2 の「窓口をスケッチの場所で起こす」手も出さない
+            #expect(outcome.text.contains("three possibilities"), "\(outcome.text)")
+            #expect(!outcome.text.contains("4. "), "\(outcome.text)")
+            #expect(!outcome.text.contains(InterfacePlace.notASketchHeading))
+            #expect(!outcome.text.contains("mcp <sketch directory>"))
         }
     }
 
     @Test("基準を決めたものの言い方が、環境変数の有無で変わる")
     func tellsWhoDecidedTheFacetBase() throws {
-        let directory = try makeDirectory()
+        let directory = try makeSketch()
         let given = Tools(
             facets: Facets(directory: directory, waitLimit: 0.2, workDirectoryGiven: true),
             makeID: { "fixed" })
@@ -391,7 +499,7 @@ struct MCPServerTests {
 
     @Test("起動の瞬間に決まるものを、reference が一覧で配る")
     func servesTheStartupList() throws {
-        let directory = try makeDirectory()
+        let directory = try makeSketch()
         let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
 
         let outcome = tools.call("reference", arguments: ["name": Tools.startupDocument])
@@ -407,7 +515,7 @@ struct MCPServerTests {
 
     @Test("入力でも同じ切り分けが効き、案内はその区画を名指す")
     func tellsToRestartForTheInputFacetToo() throws {
-        let directory = try makeDirectory()
+        let directory = try makeSketch()
         let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
         let outcome = tools.call(
             "input", arguments: ["events": [["type": "keyDown", "key": "a"]]])
@@ -415,6 +523,253 @@ struct MCPServerTests {
         #expect(outcome.text.contains("Restart it"))
         #expect(outcome.text.contains(".mokume/input"))
         #expect(!outcome.text.contains(".mokume/observe"))
+    }
+
+    // MARK: - スケッチでない場所で立てた窓口 (#2487)
+
+    /// 窓口を立てる場所。`sketch` なら中身の無い `Package.swift` を置く。
+    private func makePlace(sketch: Bool) throws -> URL {
+        let place = try makeDirectory()
+        if sketch {
+            try "// 中身の無い宣言\n".write(
+                to: place.appendingPathComponent("Package.swift"), atomically: true,
+                encoding: .utf8)
+        }
+        return place
+    }
+
+    /// スケッチの場所 (`Package.swift` がある)。**スケッチの中の答えを見る検査はここで組む** —
+    /// `Package.swift` の無い場所で組むと、スケッチでない場所の答えを受けたまま緑になる (#2487)。
+    private func makeSketch() throws -> URL { try makePlace(sketch: true) }
+
+    /// 区画へ往復する道具 (`roundTrip` を通る口のすべて) を、誰も走っていない区画で呼ぶ。
+    ///
+    /// **区画の基準 (`base`) と窓口を立てた場所 (`package`) を別々に渡せる** — 判定がどちらの
+    /// 軸を見ているかを、検査が固定できるようにする。
+    private func callUnanswered(
+        _ tool: String, base: URL, package: URL, given: Bool = false, facetExisted: Bool = false
+    ) throws -> (text: String, isError: Bool) {
+        let entry = tool == "observe" ? StartupReads.observe : StartupReads.input
+        if facetExisted {
+            try FileManager.default.createDirectory(
+                at: WorkDirectory.facet(entry.key, under: base), withIntermediateDirectories: true)
+        }
+        let tools = Tools(
+            facets: Facets(directory: base, waitLimit: 0.2, workDirectoryGiven: given),
+            packageDirectory: package, makeID: { "fixed" })
+        let arguments: [String: Any] =
+            tool == "observe" ? [:] : ["events": [["type": "keyDown", "code": 0]]]
+        return tools.call(tool, arguments: arguments)
+    }
+
+    /// **スケッチでない場所で立てた窓口は、応えないときにそのことと起こし直す手を言う**
+    /// ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。`claude mcp add mokume -- mokume mcp`
+    /// は打った場所で起こすので、`Package.swift` の無い場所でも立つ (#2321 の決定で受ける)。
+    /// そこでは区画の基準もその場所になり、自分の場所で走るスケッチとは噛み合わない。
+    ///
+    /// 区画は今どおり作る (案 B)。組み上げた実行ファイルをこの場所から起こした使い方は正しく
+    /// 繋がるので、断らずに 4 つ目の可能性として足す。**答えの中の 1・2 も同じ事実から組む** —
+    /// 「窓口の場所 = スケッチの場所」のまま 1 行だけ足すと、1 (起動し直せば区画を拾う) と
+    /// 基準の 1 行 (スケッチの場所を使っている) が 4 と食い違う。
+    @Test(
+        "スケッチでない場所で立てた窓口は、応えないとき Package.swift が無いことと mcp <sketch directory> の手を答え、1・2 もその場所の話として言う",
+        arguments: ["observe", "input"], [false, true])
+    func tellsWhenStartedOutsideASketch(tool: String, facetExisted: Bool) throws {
+        let place = try makePlace(sketch: false)
+        defer { try? FileManager.default.removeItem(at: place) }
+        let outcome = try callUnanswered(
+            tool, base: place, package: place, facetExisted: facetExisted)
+        let text = outcome.text
+
+        #expect(outcome.isError)
+        #expect(text.contains("four possibilities"), "\(text)")
+        // 4 — 場所のパスを名指して Package.swift が無いと言い、起こし直す手を言う
+        #expect(text.contains("4. \(InterfacePlace.notASketchHeading)"), "\(text)")
+        #expect(text.contains("There is no Package.swift in \(place.path)"), "\(text)")
+        #expect(text.contains("\(Command.name) mcp <sketch directory>"), "\(text)")
+        // 1 — 窓口の場所の話として言う。スケッチの場所の言い方 (起動し直せば拾う) を言わない
+        if facetExisted {
+            #expect(text.contains("1. Nothing started from this interface's directory is running"))
+            #expect(!text.contains("1. Nothing is running yet"))
+        } else {
+            #expect(
+                text.contains(
+                    "1. A sketch started from this interface's directory launched without"))
+            #expect(!text.contains("The facet is there now, so it does not need creating again"))
+            // 区画を作った回は、作ったことを名乗る (当初の完了条件 2 の「作ったことを名乗る」)
+            #expect(text.contains("this call created it"))
+        }
+        // 2 — 基準の 1 行は「スケッチの場所」と言い切らない。窓口をスケッチの場所で起こす手を載せる
+        #expect(text.contains("2. The interface and the sketch disagree on the facet base"))
+        #expect(!text.contains("sketch's own directory"), "\(text)")
+        #expect(text.contains("using the directory it was started for"))
+        #expect(text.contains("starting this interface in the sketch's directory also makes them agree"))
+        // 3 は残る
+        #expect(text.contains("3. The mokume the sketch depends on"))
+    }
+
+    /// 裏側。**スケッチの場所で立てた窓口では、4 つ目を出さず、1 はスケッチの言い方のまま。**
+    /// 2 の「窓口をスケッチの場所で起こす」手は、`MOKUME_WORK_DIR` が無ければここでも載る —
+    /// 本当の条件は区画の基準が割れていることで、別のスケッチの場所で立った窓口も同じ形で
+    /// 割れるため (`Package.swift` の有無はその代理でしかない)。
+    @Test(
+        "スケッチの場所で立てた窓口の案内は、従来どおりの 3 つで、4 つ目を足さない",
+        arguments: ["observe", "input"], [false, true])
+    func keepsTheThreePossibilitiesInASketch(tool: String, facetExisted: Bool) throws {
+        let place = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: place) }
+        let outcome = try callUnanswered(
+            tool, base: place, package: place, facetExisted: facetExisted)
+        let text = outcome.text
+
+        #expect(outcome.isError)
+        #expect(text.contains("three possibilities"), "\(text)")
+        #expect(!text.contains("4. "), "\(text)")
+        #expect(!text.contains(InterfacePlace.notASketchHeading))
+        #expect(!text.contains("There is no Package.swift"))
+        #expect(
+            text.contains(
+                facetExisted
+                    ? "1. Nothing is running yet"
+                    : "The facet is there now, so it does not need creating again"))
+        #expect(text.contains("starting this interface in the sketch's directory also makes them agree"))
+        #expect(text.contains("\(Command.name) mcp <sketch directory>"))
+    }
+
+    /// **`MOKUME_WORK_DIR` があれば、窓口をどこで立てたかは応えない原因にならない** — 区画の
+    /// 基準が場所に依らないので、4 つ目も 2 の場所の手も出さず、1 はスケッチの言い方のまま。
+    @Test(
+        "MOKUME_WORK_DIR があれば、スケッチでない場所で立てた窓口でも 4 つ目を出さない",
+        arguments: ["observe", "input"])
+    func noFourthWhenTheWorkDirectoryIsGiven(tool: String) throws {
+        let base = try makeDirectory()
+        let package = try makePlace(sketch: false)
+        defer {
+            try? FileManager.default.removeItem(at: base)
+            try? FileManager.default.removeItem(at: package)
+        }
+        let outcome = try callUnanswered(tool, base: base, package: package, given: true)
+        let text = outcome.text
+
+        #expect(outcome.isError)
+        #expect(text.contains("three possibilities"), "\(text)")
+        #expect(!text.contains("4. "), "\(text)")
+        #expect(!text.contains(InterfacePlace.notASketchHeading))
+        #expect(!text.contains("mcp <sketch directory>"))
+        #expect(text.contains("**Restart it.** The facet is there now"))
+        #expect(text.contains("pointed at by MOKUME_WORK_DIR"))
+    }
+
+    /// **判定は「窓口を立てた場所」の軸で見る。区画の基準の軸ではない** (#2487 の反証 5)。
+    /// 本番では `MOKUME_WORK_DIR` が無ければ 2 つは同じ場所に重なるので、重ねたままの検査では
+    /// 区画の基準を見る誤りも緑になる。ここは軸を固定するために、あえて 2 つをずらして組む。
+    @Test("スケッチかどうかは、区画の基準ではなく窓口を立てた場所で決まる")
+    func judgesThePlaceWhereTheInterfaceWasStarted() throws {
+        let sketch = try makeSketch()
+        let elsewhere = try makePlace(sketch: false)
+        defer {
+            try? FileManager.default.removeItem(at: sketch)
+            try? FileManager.default.removeItem(at: elsewhere)
+        }
+        // 区画の基準はスケッチ、窓口を立てた場所はスケッチでない → 4 つ目が出る
+        let outside = try callUnanswered("observe", base: sketch, package: elsewhere)
+        #expect(outside.text.contains("There is no Package.swift in \(elsewhere.path)"), "\(outside.text)")
+        // 区画の基準はスケッチでない、窓口を立てた場所はスケッチ → 出ない
+        let inside = try callUnanswered("observe", base: elsewhere, package: sketch)
+        #expect(!inside.text.contains(InterfacePlace.notASketchHeading), "\(inside.text)")
+
+        // 版を読むのもパッケージの場所 (区画の基準 = MOKUME_WORK_DIR に依らない)
+        for (base, package, expected) in [(sketch, elsewhere, true), (elsewhere, sketch, false)] {
+            let tools = Tools(
+                facets: Facets(directory: base, waitLimit: 0.2, workDirectoryGiven: true),
+                packageDirectory: package, makeID: { "fixed" })
+            let outcome = tools.call("reference", arguments: ["name": Tools.apiDocument])
+            #expect(
+                outcome.text.contains(InterfacePlace.notASketchHeading) == expected,
+                "package=\(package.path): \(outcome.text)")
+        }
+    }
+
+    /// 兄弟 — **直近の作り直しの記録が無いときも、同じ手を添える。** 区画の基準がスケッチでない
+    /// 場所に落ちていれば、走っている `watch` の記録は読めない。「watch が走っていない」とだけ
+    /// 言うと、走っている `watch` を探しに行かせる。**ただし組み上げた実行ファイルをその場所から
+    /// 起こす使い方では作り直しが無いので、そう言い分ける** (反証 8)。`MOKUME_WORK_DIR` があれば
+    /// 記録の在処は場所に依らないので添えない。
+    @Test("スケッチでない場所で立てた窓口は、作り直しの記録が無いときも、起こし直す手を添える")
+    func buildStatusTellsWhenStartedOutsideASketch() throws {
+        for (sketch, given, expected) in [(false, false, true), (true, false, false), (false, true, false)] {
+            let place = try makePlace(sketch: sketch)
+            defer { try? FileManager.default.removeItem(at: place) }
+            let tools = Tools(
+                facets: Facets(directory: place, waitLimit: 0.2, workDirectoryGiven: given),
+                packageDirectory: place, makeID: { "fixed" })
+            let outcome = tools.call("build_status", arguments: [:])
+            let label = "sketch=\(sketch) given=\(given): \(outcome.text)"
+
+            #expect(outcome.isError)
+            #expect(outcome.text.contains("No build has been recorded yet"))
+            #expect(outcome.text.contains("There is no Package.swift in \(place.path)") == expected, "\(label)")
+            #expect(outcome.text.contains("\(Command.name) mcp <sketch directory>") == expected, "\(label)")
+            // 組み上げた実行ファイルをこの場所から起こす使い方には、記録が無いのが当然だと言う
+            #expect(outcome.text.contains("is never rebuilt") == expected, "\(label)")
+        }
+    }
+
+    /// 兄弟 — **公開 API の一覧の版が引けないときも、同じ手を添える。** スケッチでない場所には
+    /// `Package.resolved` も無いので版は引けないが、その理由を「パスで mokume を指しているとき」
+    /// とだけ言うと、原因を取り違えさせる。**取りに行けない回は場所のせいではないので添えない**
+    /// (反証 9)。
+    @Test("スケッチでない場所で立てた窓口は、公開 API の一覧の版が引けないときだけ、起こし直す手を添える")
+    func apiReferenceTellsWhenStartedOutsideASketch() throws {
+        for sketch in [false, true] {
+            let place = try makePlace(sketch: sketch)
+            defer { try? FileManager.default.removeItem(at: place) }
+            let outcome = makeTools(directory: place, fetches: Fetches())
+                .call("reference", arguments: ["name": Tools.apiDocument])
+
+            #expect(outcome.isError)
+            #expect(outcome.text.contains("Cannot tell which version is depended on"))
+            #expect(
+                outcome.text.contains("There is no Package.swift in \(place.path)") == !sketch,
+                "sketch=\(sketch): \(outcome.text)")
+            #expect(
+                outcome.text.contains("\(Command.name) mcp <sketch directory>") == !sketch,
+                "sketch=\(sketch): \(outcome.text)")
+        }
+
+        // 版は引けたが取りに行けない — スケッチでない場所でも、場所の手は添えない
+        let place = try makePlace(sketch: false)
+        defer { try? FileManager.default.removeItem(at: place) }
+        try writeResolved(place, pins: pin("mokume", "0.1.0"))
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("the response was 404"))
+        let outcome = makeTools(directory: place, fetches: fetches)
+            .call("reference", arguments: ["name": Tools.apiDocument])
+        #expect(outcome.isError)
+        #expect(outcome.text.contains("the response was 404"))
+        #expect(!outcome.text.contains(InterfacePlace.notASketchHeading), "\(outcome.text)")
+    }
+
+    /// 兄弟 — **区画を置けなかった回も、場所の手を添える** (反証 1)。窓口は在る場所なら受けるので、
+    /// 読み取り専用の場所でも立つ。書き込めるか・容量・`MOKUME_WORK_DIR` だけを言うと、場所を
+    /// 渡す手が抜ける。スケッチの場所なら、従来どおりの答えのまま。
+    @Test("スケッチでない書けない場所で立てた窓口は、置けなかったときも起こし直す手を添える")
+    func unwritablePlaceTellsWhenStartedOutsideASketch() throws {
+        for sketch in [false, true] {
+            let place = try makePlace(sketch: sketch)
+            chmod(place.path, 0o555)
+            defer {
+                chmod(place.path, 0o755)
+                try? FileManager.default.removeItem(at: place)
+            }
+            let outcome = try callUnanswered("observe", base: place, package: place)
+            let label = "sketch=\(sketch): \(outcome.text)"
+
+            #expect(outcome.isError)
+            #expect(outcome.text.hasPrefix("Could not place the request: "), "\(label)")
+            #expect(outcome.text.contains("There is no Package.swift in \(place.path)") == !sketch, "\(label)")
+            #expect(outcome.text.contains("\(Command.name) mcp <sketch directory>") == !sketch, "\(label)")
+        }
     }
 
     @Test("直近の作り直しの結果を、そのまま返す")
@@ -949,7 +1304,7 @@ struct MCPServerTests {
         #expect(fetches.urls.first?.absoluteString.contains("v0.2.0") == true)
 
         // 名前が似ているだけの依存しかなければ、版は引けない
-        let other = try makeDirectory()
+        let other = try makeSketch()
         try writeResolved(other, pins: pin("mokume-extras", "9.9.9"))
         let otherFetches = Fetches()
         let outcome = makeTools(directory: other, fetches: otherFetches)
@@ -960,7 +1315,7 @@ struct MCPServerTests {
 
     @Test("版が引けなければ、組み立てて置く一手を添えて答える")
     func explainsHowToBuildTheListWhenTheVersionIsUnknown() throws {
-        let directory = try makeDirectory()  // Package.resolved が無い = パスで指している
+        let directory = try makeSketch()  // Package.resolved が無い = パスで指している (スケッチの場所で)
         let fetches = Fetches()
         let outcome = makeTools(directory: directory, fetches: fetches)
             .call("reference", arguments: ["name": "api"])
@@ -1031,6 +1386,78 @@ struct MCPServerTests {
         let outcome = tools.call("reference", arguments: try decode(#"{"name":null}"#))
         #expect(!outcome.isError)
         #expect(outcome.text.contains("Documents this interface serves"))
+    }
+
+    /// 仕様の置き場の隣 (1 つ上) と、置き場の中のサブディレクトリに、`*.schema.json` を置いた
+    /// 消費側。**どれも一覧 (`SchemasLocator.names(in:)`) には載らない。**
+    private func consumerWithStrayDocuments() throws -> (tools: Tools, outside: URL) {
+        let consumer = try ConsumerFixture.make()
+        let manager = FileManager.default
+        let outside = consumer.schemas.deletingLastPathComponent()
+            .appendingPathComponent("outside.schema.json")
+        try Data("OUTSIDE-SECRET".utf8).write(to: outside)
+        let nested = consumer.schemas.appendingPathComponent("nested", isDirectory: true)
+        try manager.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data("NESTED-SECRET".utf8).write(to: nested.appendingPathComponent("inner.schema.json"))
+        let tools = Tools(
+            facets: Facets(directory: consumer.work, waitLimit: 0.2), makeID: { "fixed" })
+        return (tools, outside)
+    }
+
+    /// `name` を検めずに `<置き場>/<name>.schema.json` へ繋ぐと、`../` で置き場の外の
+    /// `*.schema.json` を読める (#2395)。**配っている一覧に無い名前は読まない** という約束を、
+    /// 綴りの検め (`../`・区切り・絶対パス…) ではなく一覧との照合で守るので、兄弟の綴りも同じ表で見る。
+    @Test(
+        "一覧に無い文書の名前は、置き場の外や中のサブディレクトリを指していても読まずに断る",
+        arguments: [
+            "../outside", "..", ".", "", "a/b", "nested/inner", "/nested/inner",
+            "../Schemas/observe-report", "observe-report/../../outside",
+            "observe-report\0",
+        ])
+    func refusesDocumentNamesNotInTheList(name: String) throws {
+        let (tools, _) = try consumerWithStrayDocuments()
+        let outcome = tools.call("reference", arguments: ["name": name])
+        #expect(outcome.isError)
+        #expect(outcome.text == "There is no document by that name: \(name)")
+        #expect(!outcome.text.contains("SECRET"))
+    }
+
+    /// 先頭が区切りの名前は、置き場の外には出ないが、`<置き場>/<name>.schema.json` への繋ぎが
+    /// 区切りを 1 つに畳むので、**一覧の綴りと違うまま置き場の中を読める** (`/observe-report` は
+    /// `observe-report` と同じファイルを開く)。直す前に赤になる綴り。絶対パスそのもの
+    /// (`/private/…/outside`) は繋ぎの後も置き場の中の在らない場所を指すので、直す前から
+    /// 読めず、この検査の入力にはならない。
+    @Test(
+        "先頭が区切りの名前は、一覧の綴りと違うので、置き場の中を指していても読まずに断る",
+        arguments: ["/observe-report", "//observe-report", "/nested/inner", "Observe-Report"])
+    func refusesNamesThatOnlyResolveToAListedFile(name: String) throws {
+        let (tools, _) = try consumerWithStrayDocuments()
+        let outcome = tools.call("reference", arguments: ["name": name])
+        #expect(outcome.isError)
+        #expect(outcome.text == "There is no document by that name: \(name)")
+    }
+
+    @Test("絶対パスで置き場の外のファイルを指す名前も、読まずに断る")
+    func refusesAnAbsolutePathName() throws {
+        // 繋ぎが置き場の中へ畳むので、直す前でも読めない (守りの検査。赤になる入力は上の表)
+        let (tools, outside) = try consumerWithStrayDocuments()
+        let name = String(outside.path.dropLast(".schema.json".count))
+        let outcome = tools.call("reference", arguments: ["name": name])
+        #expect(outcome.isError)
+        #expect(outcome.text == "There is no document by that name: \(name)")
+        #expect(!outcome.text.contains("SECRET"))
+    }
+
+    @Test("一覧にある名前は、置き場の外にファイルがあっても従来どおり読める")
+    func stillServesNamesInTheList() throws {
+        let (tools, _) = try consumerWithStrayDocuments()
+        let outcome = tools.call("reference", arguments: ["name": "observe-report"])
+        #expect(!outcome.isError)
+        #expect(outcome.text.contains("observe-report"))
+        // 一覧は置き場の 1 つ上のファイルを含まない
+        let catalog = tools.call("reference", arguments: [:])
+        #expect(catalog.text.contains("- observe-report"))
+        #expect(!catalog.text.contains("outside"))
     }
 
     /// **組めなかった応答を空行で返さない。**

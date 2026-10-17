@@ -4,7 +4,7 @@
 import Foundation
 
 // 資材の場所。
-extension Sketch {
+extension SketchPart {
     /// 資材の名前を、実際に在るファイルの場所へ解く。
     ///
     /// <!-- example: 文脈 var notes: String? -->

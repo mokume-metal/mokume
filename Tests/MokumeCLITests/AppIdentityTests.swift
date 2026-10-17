@@ -43,6 +43,28 @@ struct AppIdentityTests {
         #expect(CommandFailure.identityMissing(path: path).message.contains(AppIdentity.example))
     }
 
+    /// **在るのに読めないファイルを「無い」と言わない** (#2575)。`try?` は権限の無いファイルも
+    /// ディレクトリも、無いファイルと同じ顔にする — 「There is none」と言うと、在るものを
+    /// 書きに行かせて、上書きを促すことになる。
+    @Test("在るのに読めない名乗りは、無いとは言わず読めないと言う", arguments: ["locked", "directory"])
+    func anIdentityThatIsThereButCannotBeReadIsNotMissing(kind: String) throws {
+        let root = try makeSketch(identity: nil)
+        let url = root.appendingPathComponent(AppIdentity.fileName)
+        if kind == "locked" {
+            try AppIdentity.example.write(to: url, atomically: true, encoding: .utf8)
+            chmod(url.path, 0)
+        } else {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        defer {
+            chmod(url.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+        #expect(throws: CommandFailure.identityUnreadable(path: url.path)) {
+            try AppIdentity.read(in: root)
+        }
+    }
+
     @Test("形が壊れていれば、その旨を言う")
     func anUnreadableIdentityStops() throws {
         let root = try makeSketch(identity: "{ これは JSON ではない")
@@ -112,6 +134,71 @@ struct AppIdentityTests {
             from: AppIdentity.Wire(name: name, identifier: "org.example.bund", version: "0.1.0"),
             path: "/demo/mokume-app.json")
         #expect(identity.name == name)
+    }
+
+    // MARK: - 名前の長さ (#2501)
+
+    /// **ファイル名にできない長さの名前も、組み立ての前に断る** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
+    /// 名前から作るファイル名で長いのは開き方の紙 (`How to open <name>.txt`) で、ファイル名の上限
+    /// (255) に収まるのは `name` が 239 まで。240 からは、直す前はビルドと署名の後で紙が書けずに
+    /// 止まり、署名済みの `.app` が残っていた。
+    ///
+    /// **数えるのは、ファイルシステムへ渡る形の UTF-16 の単位** — バイトではない (`木` は 3 バイト
+    /// でも 1)。Foundation は名前を分解した形で渡すので、`が` (U+304C) は か + 濁点の 2 になる。
+    /// `が` × 120 は渡した文字列では 120 だが、`.app` までは作れて紙で落ちる、この Issue の症状
+    /// そのものを起こす。
+    @Test(
+        "name がファイル名に収まらない長さなら、長さと使える長さ (239) を名指して止まる",
+        arguments: [
+            RepeatedName("a", 240), RepeatedName("木", 240), RepeatedName("a", 245),
+            RepeatedName("😀", 120, unitsEach: 2), RepeatedName("\u{304C}", 120, unitsEach: 2),
+        ])
+    func aNameTooLongForAFileNameIsRefused(given: RepeatedName) {
+        let path = "/demo/mokume-app.json"
+        let thrown = #expect(throws: CommandFailure.self) {
+            try AppIdentity.make(
+                from: AppIdentity.Wire(
+                    name: given.name, identifier: "org.example.bund", version: "0.1.0"),
+                path: path)
+        }
+        #expect(thrown == .identityNameTooLong(path: path, name: given.name, length: given.units))
+        let message = thrown?.message ?? ""
+        #expect(message.contains("too long"), "長すぎることを言っていない: \(message)")
+        #expect(message.contains("at most 239"), "使える長さ (239) を言っていない: \(message)")
+        #expect(message.contains("\(given.units)"), "数えた長さを言っていない: \(message)")
+        #expect(message.contains(given.name), "渡された名前を名乗っていない: \(message)")
+        #expect(message.contains(path), "名乗りの場所を名乗っていない: \(message)")
+    }
+
+    /// 裏側。**239 までは、いままでどおり通る。** 線は「いま失敗する名前」のちょうど手前にあり、
+    /// 成功していた名前は断らない。`木` × 100 は UTF-8 で 300 バイトだが、数えるのはバイトでは
+    /// ないので 100 で通る。
+    @Test(
+        "ファイル名に収まる長さ (239 まで) の name は、いままでどおり通る",
+        arguments: [
+            RepeatedName("a", 239), RepeatedName("木", 239), RepeatedName("木", 100),
+            RepeatedName("😀", 119, unitsEach: 2), RepeatedName("\u{304C}", 119, unitsEach: 2),
+        ])
+    func aNameThatFitsAFileNamePasses(given: RepeatedName) throws {
+        let identity = try AppIdentity.make(
+            from: AppIdentity.Wire(
+                name: given.name, identifier: "org.example.bund", version: "0.1.0"),
+            path: "/demo/mokume-app.json")
+        #expect(identity.name == given.name)
+        #expect(AppIdentity.fileNameLength(of: given.name) == given.units)
+    }
+
+    /// 数え方は、Foundation がファイルシステムへ渡す形に従う。**完全な NFD とは違う** —
+    /// `Å` (U+212B) は NFD では A + 上の輪の 2 だが、ファイル名では分解されずに 1 で載る。
+    @Test("長さは、ファイルシステムへ渡る形の UTF-16 の単位で数える")
+    func theLengthIsCountedAsTheFileSystemReceivesIt() {
+        #expect(AppIdentity.fileNameLength(of: "Grain") == 5)
+        #expect(AppIdentity.fileNameLength(of: "木目") == 2)
+        #expect(AppIdentity.fileNameLength(of: "😀") == 2)
+        #expect(AppIdentity.fileNameLength(of: "\u{304C}") == 2)  // が → か + 濁点
+        #expect(AppIdentity.fileNameLength(of: "\u{E9}") == 2)  // é → e + 鋭アクセント
+        #expect(AppIdentity.fileNameLength(of: "\u{D55C}") == 3)  // 한 → 字母 3 つ
+        #expect(AppIdentity.fileNameLength(of: "\u{212B}") == 1)  // Å (オングストローム) は分解されない
     }
 
     @Test("名乗りが、包みが読む一覧になる")
@@ -215,4 +302,24 @@ struct AppIdentityTests {
                 "com.apple.security.device.audio-input": true,
             ])
     }
+}
+
+/// 同じ字を並べた `name` と、ファイルシステムへ渡る形での長さ (UTF-16 の単位) の見込み。
+///
+/// **見込みは実装から引かずに手で書く** — 字 1 つが何単位になるか (`unitsEach`) を、検査の側が
+/// 独立に持つ。検査の名前には並べた字と数だけを出す (名前そのものは 240 字ある)。
+nonisolated struct RepeatedName: CustomTestStringConvertible, Sendable {
+    let unit: String
+    let count: Int
+    let unitsEach: Int
+
+    init(_ unit: String, _ count: Int, unitsEach: Int = 1) {
+        self.unit = unit
+        self.count = count
+        self.unitsEach = unitsEach
+    }
+
+    var name: String { String(repeating: unit, count: count) }
+    var units: Int { count * unitsEach }
+    var testDescription: String { "\(unit) × \(count) (\(units) 単位)" }
 }

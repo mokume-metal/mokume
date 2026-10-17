@@ -177,6 +177,30 @@ extension Canvas {
         if assembled.wroteBack { target.markPixelsWrittenBack(by: assembled.submission) }
         targetChangedSinceUpscale = false
         placingCatchUpDeferred = false
+        noteUpscaled(by: assembled.submission)
+    }
+
+    /// 拡大を積んだ投入 `submission` の結末を待つ ([#2199])。拡大を積んで印を下ろした直後に呼ぶ
+    /// (フレームの終わりの描き切りと ``catchUpOutput()``)。拡大の段が無い面では呼ばない。
+    ///
+    /// 打ち切られた拡大は出す先を書いていないので、出す先は前の絵のままである。印が下りたままだと、
+    /// 止まっている間 (描く先が変わらない間) は出す先を読む口が追い付き直さない。拡大は出す先の全体を
+    /// 書くので、覚えるのは最後に拡大した投入だけでよい (``upscaleDropped(_:)``)。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteUpscaled(by submission: UInt64) {
+        upscaledBy = submission
+        gpu.awaitSettlement(of: submission, by: self)
+    }
+
+    /// 拡大を積んだ投入 `submission` が打ち切られた。**それが最後に拡大した投入なら、拡大の後に描く先が
+    /// 変わった印を立て直す** — 次のフレームの終わりの拡大か、出す先を読む口の追い付きが広げ直す
+    /// ([#2199])。後の投入が拡大し直していれば何もしない。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func upscaleDropped(_ submission: UInt64) {
+        guard submission == upscaledBy else { return }
+        targetChangedSinceUpscale = true
     }
 
     /// 置く口が追い付かせる要があるか ([#2042])。拡大の段があり、描き切らせて描く先が出す先より

@@ -123,7 +123,7 @@ final class ShapesAndStyle: Sketch {
 
         // 点 — 大きさは輪郭の太さで決まる。角度は度で数えて弧度へ直す
         stroke(217, 230, 255)
-        for (index, degree) in stride(from: Float(0), to: degrees(2 * .pi), by: 30).enumerated() {
+        for (index, degree) in stride(from: Float(0), to: degrees(2 * Float.pi), by: 30).enumerated() {
             strokeWeight(2 + index)
             let angle = radians(degree)
             point(520 + cos(angle) * 55, 620 + sin(angle) * 55)

@@ -224,8 +224,9 @@ nonisolated final class WebSocketClient: @unchecked Sendable {
                 ended.withLock { $0 = true }
                 return
             }
-            if metadata.opcode == .text, let content {
-                texts.withLock { $0.append(String(decoding: content, as: UTF8.self)) }
+            // 空の 1 通は content が nil で届く。落とさずに空の文字列として積む
+            if metadata.opcode == .text {
+                texts.withLock { $0.append(String(decoding: content ?? Data(), as: UTF8.self)) }
             }
             receive()
         }

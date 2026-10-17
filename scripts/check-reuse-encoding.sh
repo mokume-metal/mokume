@@ -27,9 +27,8 @@ command -v reuse >/dev/null 2>&1 || {
 reuse --version >/dev/null 2>&1 || {
   cat >&2 <<EOF
 reuse が起動できない (REUSE_ENCODING_MODULE=${REUSE_ENCODING_MODULE:-未指定})。
-指定した判定モジュールが入っていない:
-
-  pipx install reuse && pipx inject reuse chardet
+指定した判定モジュールが入っていない。CI と同じ版の reuse と chardet の入れ方は
+make setup が示す (版の正本は scripts/ci-tools.txt)。
 
 Homebrew 版の reuse には chardet が同梱されていないため、入れ直しが要る。
 EOF
@@ -62,9 +61,8 @@ reuse が SPDX ヘッダを読み落とした (#48 の再発)。
 あるのに「帰属情報が無い」と判定されている。原因は reuse の encoding 判定
 モジュールで、charset_normalizer が選ばれていると起きる。
 
-直し方 — 判定モジュールを chardet に固定する:
-
-  pipx install reuse && pipx inject reuse chardet
+直し方 — 判定モジュールを chardet に固定する。CI と同じ版の reuse と chardet の
+入れ方は make setup が示す (版の正本は scripts/ci-tools.txt)。
 
 Homebrew 版の reuse には chardet が同梱されていないため、そのままでは固定
 できない (REUSE_ENCODING_MODULE=chardet を指定すると Traceback で落ちる)。

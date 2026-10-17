@@ -18,7 +18,7 @@
      持たせない (ADR-0001 原則 9)
   5. 本文が「解消したら閉じる」を言う — 自動では閉じないので、閉じ忘れが次の赤を
      黙らせることを動く人が読む場所へ書く
-  6. 共通部品を通っている — 同名の Issue が open なら二重に立てない。ここが写しに
+  6. 共通部品を通っている — 同名の Issue が open なら二重に立てず追記する (#2658)。ここが写しに
      なると、片方だけが直ったときに黙って壊れる (ADR-0008 決定 6)
   7. 本文が job ごとの結論を名乗り、分かっていることだけを言う (#2084。#2211 はここを
      読み違えさせた)。切れた (`cancelled`) job は切れる 3 つの経路 (timeout・人の cancel・
@@ -68,6 +68,13 @@ case "$1 $2" in
       *issueType*) json='{"issueType":null}' ;;
       *) json='{"labels":[]}' ;;
     esac ;;
+  "issue comment")
+    prev=
+    for a in "$@"; do
+      [ "$prev" = "--body-file" ] && cp "$a" "$FAKE_BODY_OUT"
+      prev=$a
+    done
+    exit 0 ;;
   "issue edit") exit 0 ;;
   *) exit 1 ;;
 esac
@@ -293,20 +300,23 @@ class ReportScheduledRenderTest(unittest.TestCase):
         self.assertIn('make ci-check CI_CHECK_STEPS="build test gpu-ran"', body)
         self.assertNotIn("--skip", body)
 
-    def test_台帳を外している理由を言う(self):
+    def test_release_も台帳を含むと言う(self):
         self.report()
-        self.assertIn("#1736", self.body.read_text())
+        self.assertIn("台帳を含む", self.body.read_text())
 
     def test_本文が解消したら閉じることを言う(self):
         self.report()
         body = self.body.read_text()
         self.assertIn("解消したらこの Issue を閉じる", body)
-        self.assertIn("重複起票を抑える", body)
+        self.assertIn("この Issue へ追記される", body)
+        # 追記された別の赤を、前の赤の直しと一緒に黙って閉じない (#2658 の反証)
+        self.assertIn("追記された分も同じ直しで解けたか", body)
 
-    def test_同じ_Issue_が_open_なら二重に立てない(self):
+    def test_同じ_Issue_が_open_なら二重に立てずに追記する(self):
         r = self.report(issue_list=f'[{{"number":42,"title":"{TITLE}"}}]')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("issue create", self.gh_log())
+        self.assertIn("issue comment 42", self.gh_log())
         self.assertIn("#42", r.stdout)
 
     def test_引数が足りなければ_64_で返る(self):

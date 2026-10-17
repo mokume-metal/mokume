@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -20,6 +20,9 @@ export REUSE_ENCODING_MODULE := chardet
 
 # python3 は 3.10 以上 (#2030)。scripts/ が match 文や評価時の `X | None` を使うので、
 # macOS 同梱の 3.9 (xcode-select で入るもの) では changelog-lint・hooks-test・agents-md-size が落ちる
+#
+# reuse・chardet・check-jsonschema は CI と同じ版を求める (#2612)。版の正本は scripts/ci-tools.txt で、
+# 突き合わせと版つきの入れ方の案内は scripts/ci_tools.py が持つ (ここに版を写さない)
 setup: ## 開発ツールを確認する
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: brew install python (3.10 以上)"; exit 1; }
 	@python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || { \
@@ -27,12 +30,7 @@ setup: ## 開発ツールを確認する
 	@for cmd in gh jq openssl; do \
 		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd が見つからない: brew install $$cmd"; exit 1; }; \
 	done
-	@command -v reuse >/dev/null 2>&1 || { echo "reuse が見つからない: pipx install reuse && pipx inject reuse chardet"; exit 1; }
-	@reuse --version >/dev/null 2>&1 || { \
-		echo "reuse が $(REUSE_ENCODING_MODULE) を使えない (#48 の回避に必要):"; \
-		echo "  pipx install reuse && pipx inject reuse chardet"; \
-		echo "Homebrew 版には chardet が同梱されていないため入れ直しが要る"; exit 1; }
-	@command -v check-jsonschema >/dev/null 2>&1 || { echo "check-jsonschema が見つからない: pipx install check-jsonschema"; exit 1; }
+	@python3 scripts/ci_tools.py check
 	@echo "ok: 必要なツールは揃っている"
 
 check: setup
@@ -40,9 +38,10 @@ check: setup
 # ci-check が走らせる段の並び。
 #
 # **この並びは「CI と同一」から 1 つだけ意図的にずれている。** drawing-evidence は CI では
-# 必ず no-op になる — ci-check のジョブへ GH_TOKEN を持ち込まない設計 (.github/workflows/ci.yml
-# の drawing-evidence ジョブの冒頭) のため理由を述べて 0 で抜け、本物の判定は同じファイルの
-# 独立したジョブ (drawing-evidence) が持つ。ここに置いてあるのは手元のためである
+# 必ず no-op になる — 段を走らせるジョブ (ci-check・ci-static) へ GH_TOKEN を持ち込まない設計
+# (.github/workflows/ci.yml の ci-static の冒頭) のため理由を述べて 0 で抜け、本物の判定は
+# .github/workflows/pr-gate.yml の pr-gate (drawing-evidence の step) が持つ。ここに置いてあるのは
+# 手元のためである
 #
 # **描画の検査は、ここでは GPU のある機械でだけ実際に走る。** merge の判定としては、
 # 専用機の描画ジョブ (.github/workflows/render.yml の render) が merge queue の合流後の木で
@@ -53,6 +52,28 @@ check: setup
 # 変わらない。build を外しても examples / params / api / reference は prerequisite の build を
 # 自分で走らせるので、合流後の木での検査は残る
 CI_CHECK_SKIP ?=
+
+# **CI は並びを 2 つのジョブに分けて走らせる** (#2612)。木だけを読む段 (CI_STATIC_STEPS) は
+# ubuntu の ci-static が、残り — ビルドの成果物か macOS が要る段 — は macOS の ci-check が持つ
+# (.github/workflows/ci.yml)。安い赤を、macOS の枠の待ちと build・test の後ではなく数分で返すため。
+#
+# **入口は ci-check の 1 つのまま** (ADR-0001 原則 8)。CI のジョブは CI_CHECK_HOST に ubuntu か
+# macos を渡して make ci-check を呼び、並びはそのジョブの段だけに絞られる。既定は空で、手元の
+# make ci-check は今までどおり全段を走らせる。並びから選ぶだけなので、並びの順と CI_CHECK_SKIP は
+# どちらのジョブにも効く。2 つを合わせると全段にちょうど一致する (抜けも二重も無い) ことは
+# scripts/tests/ci_workflow_test.py が PR と merge_group の両方で見る。
+#
+# ubuntu へ出してよいのは、要る OS・ビルドの成果物・GitHub の文脈のどれにも縛られない段だけ:
+#   - build・test と、組み上げを要する examples・shaders・params・api・reference は macOS に残る
+#     (ADR-0009。merge_group で合流後の木に当てるのもここ — ci.yml の ci-check のコメント)
+#   - hooks-test は macOS に残る。検査のファイルの 6 割がスクリプトを /bin/bash で起こし、その 3.2 と
+#     BSD の道具での動き — 手元とエージェントのフックが走る環境 — を保証している (#702)。
+#     ubuntu へ出す段のうちシェルで書いたもの (adrs・file-modes など) の 3.2 での動きも、
+#     macOS に残る hooks-test の各段の検査 (adrs_test など) が持つ。ubuntu の段が起こす
+#     scripts/*.sh のどれにもその検査があることは ci_workflow_test.py が見る
+#   - drawing-evidence は CI ではどちらでも理由を述べて 0 で抜ける (上の並びの注釈)。ubuntu に置く
+CI_STATIC_STEPS := schemas tool-language isolated-deinit entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
+CI_CHECK_HOST ?=
 
 # **手元で回す段は、触ったものから選ぶ。** AGENTS.md「コミット・PR の規約」の「触った範囲の段」は
 # ここを指す (#2133)。段の名前からは「触ったもの → 回す段」が引けず、取り違えた PR が queue で
@@ -77,7 +98,17 @@ CI_CHECK_SKIP ?=
 #      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤
 #      (他のセッションの GPU 負荷など) が約 70 本並ぶ中に本物が 1 本混ざることがあり、
 #      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした
-CI_CHECK_STEPS := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
+CI_CHECK_ALL := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
+ifeq ($(CI_CHECK_HOST),)
+CI_CHECK_STEPS := $(CI_CHECK_ALL)
+else ifeq ($(CI_CHECK_HOST),ubuntu)
+CI_CHECK_STEPS := $(filter $(CI_STATIC_STEPS),$(CI_CHECK_ALL))
+else ifeq ($(CI_CHECK_HOST),macos)
+CI_CHECK_STEPS := $(filter-out $(CI_STATIC_STEPS),$(CI_CHECK_ALL))
+else
+# 綴りを誤ったまま全段や 0 段へ落ちると、そのジョブの段が黙って抜ける
+$(error CI_CHECK_HOST は ubuntu か macos (空なら全段): '$(CI_CHECK_HOST)')
+endif
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -306,9 +337,9 @@ test:
 # scripts/read-test-record.py が持つ (端末の出力は行を落とすので読まない・#1056)。
 # 検査は scripts/tests/gpu_ran_test.py
 #
-# **代表の Suite は GPU_RAN_SUITE で差し替えられる** (#1983)。台帳を外した定期の release
-# (下の test-release-scheduled) では SceneLedgerTests が記録に無いので、同じく Suite 全体が
-# GPU の有無で飛ぶ ShapeTests を代表にする。既定は台帳のまま
+# **代表の Suite は GPU_RAN_SUITE で差し替えられる** (#1983)。台帳を外した記録を読むときは、
+# 同じく Suite 全体が GPU の有無で飛ぶ ShapeTests を代表にする。既定は台帳のまま。定期の
+# release も台帳ごと走らせるようになったので (#1736)、いまは既定で読む
 GPU_RAN_SUITE ?= MokumeCoreTests.SceneLedgerTests
 
 gpu-ran:
@@ -336,7 +367,7 @@ gpu-ran:
 # 見ながら打つ器なので、同じものが 2 つ要らない
 #
 # **TEST_RELEASE_ARGS は swift test へそのまま渡す追加の引数** (既定は空)。素で打ったときの
-# 動作は変えない。定期の検査 (下の test-release-scheduled) が範囲を絞る口として使う (#1983)
+# 動作は変えない。範囲を絞る口で、手元で台帳だけを回すときなどに使う
 TEST_RELEASE_ARGS ?=
 
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
@@ -352,15 +383,21 @@ test-release: ## release でテストを回す (性能の計測用。ci-check �
 # 範囲の正本はここ 1 箇所**で、workflow (.github/workflows/render.yml)・起票の本文
 # (scripts/report-scheduled-render.sh)・手元の再現がみなこの的を指す。
 #
-# release の台帳 (SceneLedgerTests) だけを外す。release で台帳が合うべきかは #1736 が決める
-# 途中で、素で走らせると決着するまで毎回赤になる。#1736 が決着したら、ここの --skip を外して
-# 戻す。代償: 台帳にだけ出る release の差は、定期の検査では見えない。
+# release も台帳 (SceneLedgerTests) ごと走らせる。release でも debug と同じ台帳に合う
+# (ADR-0025 決定 7・#1736)。#1736 が決着するまでは台帳だけを外していた。
 #
-# 「GPU が見えないので全部飛ばした」まま緑になるのは gpu-ran が止める。代表は ShapeTests —
-# Suite 全体が GPU の有無で飛び、#1086 の速さの検査 (release でしか走らない) を含む
-test-release-scheduled: ## 定期の release の検査 (台帳を外す。専用機の schedule が走らせる)
-	$(MAKE) test-release TEST_RELEASE_ARGS='--skip MokumeCoreTests.SceneLedgerTests'
-	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE) GPU_RAN_SUITE=MokumeCoreTests.ShapeTests
+# 「GPU が見えないので全部飛ばした」まま緑になるのは gpu-ran が止める。代表は debug と同じ台帳
+test-release-scheduled: ## 定期の release の検査 (専用機の schedule が走らせる)
+	$(MAKE) test-release
+	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE)
+
+# 外のパッケージ mokume-syphon の main を、この木に向けて組み、GPU の検査まで走らせる (#1973)。
+# 本体の変更が mokume-syphon の振る舞いを壊したかは、API の一覧の差分には出ない
+# (mokume-metal/mokume-syphon#26)。**ci-check には入れない** — 外のリポジトリの検査が
+# 不安定でも本体の PR を止めないため。CI では render.yml の render-pr が、PR の木と base の木を
+# 比べる口 (scripts/syphon-check-pr.sh) から呼ぶ。終了コードの読み方は scripts/syphon-check.sh
+syphon-check: ## mokume-syphon の main をこの木に向けて組み、検査する (ci-check の外)
+	bash scripts/syphon-check.sh . .build/syphon-check/local
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは
@@ -427,7 +464,8 @@ tool-language: ## Sources/ の Swift でコメントの外に日本語を置い�
 # (製品) も通る — **足した本人には壊れて見えない**形で 2 度起きた (#761 → #1021)。
 #
 # **段 1 を採っている** (ADR-0008 決定 5)。本物の判定はコンパイラで、release のテストビルドは
-# ci.yml の test-release ジョブが毎 PR で回している (段 2・#1096)。ここが引き受けるのは
+# release.yml の release-check が版を出す前に回している (段 2・#1096・#2662)。merge の前に
+# 止めるのはここだけである。ここが引き受けるのは
 # **赤が理由の正典まで案内すること**である — 再発の経路は「散文で書いた作法が読まれなかった」
 # 1 本なので、コンパイラの診断 (正典を指さない) では 3 度目を止められない。
 #

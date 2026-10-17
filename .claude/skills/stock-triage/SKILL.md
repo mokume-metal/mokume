@@ -98,7 +98,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 想定例を実測と呼ばない。たとえば未実装の案なら「保存すると窓が消える → 消さずに絵を切り替えたい」
 と期待を示せばよく、完成した動画を起票者へ要求しない。
 
-本文の編集は `gh issue edit <番号> -R mokume-metal/mokume --body-file <ファイル>`。
+本文の編集は `bash scripts/edit-body.sh issue <番号> --fetch <ファイル>` で取得したファイルを直し、`bash scripts/edit-body.sh issue <番号> --body-file <ファイル>` で書き込む (取得の後に誰かが本文を変えていれば止まる。#2615)。
 
 ### 既存の採択で進められるかを確かめる
 

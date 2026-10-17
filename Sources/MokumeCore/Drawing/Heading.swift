@@ -5,7 +5,7 @@ import simd
 
 /// 粒がどちらへ飛ぶか。
 ///
-/// 使い方は ``Sketch/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
+/// 使い方は ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
 ///
 /// **飛ぶ向きだけを決める。** どこから出るかは ``Emitter`` が決めるので、向きを差し替えても
 /// 出る場所は変わらない (``Emitter`` と対になる)。速さも別で、`emit` の `speed` の幅から引く —
@@ -46,14 +46,14 @@ public enum Heading: Equatable, Sendable {
         switch self {
         case .plane(let angle):
             let turn = randomness.value(from: angle.lowerBound, to: angle.upperBound)
-            return SIMD3(cos(turn), sin(turn), 0)
+            return SIMD3(RuntimeMath.cos(turn), RuntimeMath.sin(turn), 0)
         case .sphere:
             // **高さ (z) を一様に引く。** 球面は高さで等間隔に輪切りにすると、どの帯も面積が
             // 等しい。仰角を角度のまま一様に引くと極へ寄る (`Emitter.sphere` と同じ理由)
             let around = randomness.unitValue() * 2 * .pi
             let height = randomness.unitValue() * 2 - 1
             let ring = sqrt(max(0, 1 - height * height))
-            return SIMD3(cos(around) * ring, sin(around) * ring, height)
+            return SIMD3(RuntimeMath.cos(around) * ring, RuntimeMath.sin(around) * ring, height)
         }
     }
 }

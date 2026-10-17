@@ -12,16 +12,14 @@
 1. **台帳の検査が走って通った記録だけを緑にする。** 全部飛ばされた・記録に
 無い・落ちている・記録を読めない、はどれも赤にする。一部が飛んだだけ (基準の版でない
 OS の字形の行など) は緑のままにする。
-2. **代表の Suite は `GPU_RAN_SUITE` で差し替えられ、定期の release の範囲だけが台帳を外す**
-   (#1983)。台帳を外した記録でも、代表を ShapeTests にした `make test-release-scheduled` の
-   gpu-ran は GPU が見えていれば緑で、見えなければ赤になる。**素の `make test-release` の
-   動作は変えない** (`--skip` を足さない)
+2. **代表の Suite は `GPU_RAN_SUITE` で差し替えられる** (#1983)。台帳を外した記録でも、
+   代表を ShapeTests にすれば GPU が見えていれば緑で、見えなければ赤になる。定期の release
+   (`make test-release-scheduled`) は台帳ごと走らせ、既定の代表で読む (#1736)
 
 本物の Makefile の的を、偽の記録を指して走らせる。Swift も GPU も要らない。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
-import re
 import subprocess
 import tempfile
 import unittest
@@ -153,16 +151,16 @@ class ScheduledReleaseRangeTest(unittest.TestCase):
         self.assertIn("swift test -c release", out)
         self.assertNotIn("--skip", out)
 
-    def test_scheduled_release_skips_only_the_ledger(self):
+    def test_scheduled_release_skips_nothing(self):
+        # 台帳も外さない。release でも debug と同じ台帳に合う (#1736)
         out = _dry_run("test-release-scheduled")
-        # 同じ指定が子 make の引数と swift test の両方に出るので、集合で見る
-        skipped = set(re.findall(r"--skip (\S+?)(?:'|\s|$)", out))
-        self.assertEqual(skipped, {LEDGER}, out)
+        self.assertIn("swift test -c release", out)
+        self.assertNotIn("--skip", out)
 
-    def test_scheduled_release_reads_the_release_record_with_shape_tests(self):
+    def test_scheduled_release_reads_the_release_record_with_the_ledger(self):
         out = _dry_run("test-release-scheduled")
         self.assertIn("TEST_RECORD=.build/test-results-release-swift-testing.xml", out)
-        self.assertIn(f"GPU_RAN_SUITE={SHAPE}", out)
+        self.assertNotIn("GPU_RAN_SUITE=", out)
 
 
 if __name__ == "__main__":

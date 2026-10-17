@@ -6,11 +6,11 @@ import MokumeDiagnostics
 
 /// CPU と GPU で分け合う数の並び。
 ///
-/// 使い方は ``Sketch/makeNumbers(count:)`` にある。
+/// 使い方は ``SketchPart/makeNumbers(count:)`` にある。
 ///
 /// ## 読む道は 1 本しかない
 ///
-/// **この型に読む口は無い。** 値を取り出す道は ``Sketch/read(_:)`` だけで、そこは必ず
+/// **この型に読む口は無い。** 値を取り出す道は ``SketchPart/read(_:)`` だけで、そこは必ず
 /// 計算の完了まで待つ。同じメモリを見ているので値は「読めて」しまうが、それが計算の前
 /// なのか後なのかは呼んだ側に分からず、絵か音がおかしくなって初めて気付く形になる。
 ///
@@ -29,7 +29,7 @@ import MokumeDiagnostics
 ///
 /// **計算には、頼んだ順に効く。** 書いた後に頼んだ計算は書いた値を、**書く前に頼んだ計算は
 /// 書く前の中身を**読む。書く前に頼んだ計算がこの並びへ書いても、後から書いた値が残る。
-/// ``Sketch/read(_:)`` を挟んでも挟まなくても、描き場所 (``Sketch/createGraphics(_:_:)``) を
+/// ``SketchPart/read(_:)`` を挟んでも挟まなくても、描き場所 (``SketchPart/createGraphics(_:_:)``) を
 /// またいでも同じである。
 ///
 /// 書く前に頼んだ計算がこの並びに触れるときだけ、書く口はその計算を先に GPU へ送る (完了は
@@ -38,7 +38,7 @@ import MokumeDiagnostics
 /// 送るたびにフレームの環を 1 つ進めるので、繰り返しが環の深さを越えると、書く口が GPU を待つ。
 /// 繰り返す値は、並びの別の番地へ書いて 1 度に頼むほうが速い。
 ///
-/// **図形には、描き切りの時点の中身が効く。** ``Sketch/numbers(_:)`` で渡した並びを読む図形は、
+/// **図形には、描き切りの時点の中身が効く。** ``SketchPart/numbers(_:)`` で渡した並びを読む図形は、
 /// 置いた順ではなく、それを置いた面が描き切られる時点の中身で描かれる。図形は並びの値を写さず
 /// 並びそのものを持ち、書いた値は描き切りが GPU 側のコピーで届けるので、**同じフレームで
 /// 書き換えれば、先に置いた図形も後の値で描かれる**。``Image`` は、描いた後で書き換えても、その
@@ -57,14 +57,14 @@ import MokumeDiagnostics
 /// }
 /// ```
 ///
-/// 途中で描き切りを挟めば、その時点の中身で描き切られる。画素を読む口 (``Sketch/loadPixels()``・
-/// ``Sketch/get(_:_:)`` など) は、そこまでに置いた図形をその場で描き切るので、**挟む前に置いた
+/// 途中で描き切りを挟めば、その時点の中身で描き切られる。画素を読む口 (``SketchPart/loadPixels()``・
+/// ``SketchPart/get(_:_:)`` など) は、そこまでに置いた図形をその場で描き切るので、**挟む前に置いた
 /// 図形は、挟んだ後に書いた値を読まない**。挟まなければ読む。描き切りの時点が早まるだけで、理屈は
-/// 同じである (``Sketch/pixels`` の「いつの絵が読めるか」)。
+/// 同じである (``SketchPart/pixels`` の「いつの絵が読めるか」)。
 ///
 /// **断片の値 (``Shader/set(_:_:)-(_,ShaderValue)``) とは向きが逆である。** あちらは置いた時点の
 /// 値を持つので、変える前に置いた図形は変える前の値で描かれる。値を変えながら同じ断片で描き分け
-/// たいときは、並びを別に作って、図形ごとに ``Sketch/numbers(_:)`` で渡す。
+/// たいときは、並びを別に作って、図形ごとに ``SketchPart/numbers(_:)`` で渡す。
 ///
 /// [#749]: https://github.com/mokume-metal/mokume/issues/749
 /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
@@ -152,6 +152,15 @@ import MokumeDiagnostics
     /// 残す。検査が差し替える。
     var dirtyRangeLimit = 256
 
+    /// 投入に載せて届けた区間のうち、結末がまだ届いていないもの ([#2199])。投入ごとに
+    /// ``inFlightRanges`` の `start` から `count` 本。**置き場は持ち回る** — 毎フレーム届ける並びで確保しない。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    private var inFlight: [(submission: UInt64, start: Int, count: Int)] = []
+    private var inFlightRanges: [Range<Int>] = []
+    /// 計算がこの並びへ書いた最後の投入の番号 ([#2199])。打ち切りの後に書いていれば届け直さない。
+    private var lastGPUWrite: UInt64 = 0
+
     /// 書き込みの世代。書くたびに進む。
     private(set) var writeGeneration: UInt64 = 0
 
@@ -193,7 +202,7 @@ import MokumeDiagnostics
         gpu.pendingUploads.enqueue(self)
         // 細切れすぎる書き込みだけは、ここで待って届ける。待てなければ控えに残す (#934)
         if dirty.count > dirtyRangeLimit, let uploaded = uploadDirectly() {
-            markUploaded(through: uploaded)
+            markUploaded(through: uploaded, by: nil)
         }
     }
 
@@ -380,8 +389,48 @@ extension Numbers: PendingUpload {
         return writeGeneration
     }
 
-    func markUploaded(through generation: UInt64) {
-        guard generation == writeGeneration else { return }
+    @discardableResult
+    func markUploaded(through generation: UInt64, by submission: UInt64?) -> Bool {
+        guard generation == writeGeneration, !dirty.isEmpty else { return false }
+        if let submission {
+            // 運んだ区間を、結末が届くまで覚える。置き場は持ち回る (毎フレーム確保しない)
+            inFlight.append((submission, inFlightRanges.count, dirty.count))
+            inFlightRanges.append(contentsOf: dirty)
+        }
         dirty.removeAll(keepingCapacity: true)
+        return submission != nil
+    }
+
+    /// 投入 `submission` の中で、計算がこの並びへ書いた ([#2199])。計算を積んだ投入の後で呼ぶ。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func noteWrittenByGPU(in submission: UInt64) {
+        lastGPUWrite = max(lastGPUWrite, submission)
+    }
+
+    /// 届けた投入の結末が届いた。**打ち切られていたら、その投入が運んだ区間だけ**を汚れ区間へ戻す
+    /// ([#2199])。区間の外は GPU の計算が書き換えているかもしれないので、届け直さない (``shadow`` の約束)。
+    /// 影はその区間の値を持ったままである — 打ち切りの後で同じ番地を書いていれば、影は新しい値で、
+    /// 区間は既に汚れている (畳まれて 1 つになる)。
+    ///
+    /// **打ち切りの後に、この並びへ GPU が書く投入 (計算) があれば届け直さない。** 届け直しは CPU が最後に
+    /// 書いた値へ戻すので、その計算が書いた結果を潰す — 粒なら、打ち切りの後に進めた粒が生まれた位置へ
+    /// 跳ね戻る (#2199 の反証 2・4)。そのときは届けた区間を取り戻さない側に置く。区間を読む計算は届いて
+    /// いない入力を読んでおり、その結果も含めて打ち切られた回の計算と同じく失われる。
+    ///
+    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+    func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        guard let index = inFlight.firstIndex(where: { $0.submission == submission }) else { return }
+        let record = inFlight[index]
+        let ranges = record.start..<(record.start + record.count)
+        if dropped, lastGPUWrite <= submission {
+            for range in inFlightRanges[ranges] { markDirty(range) }
+            writeGeneration &+= 1
+            gpu.pendingUploads.enqueue(self)
+        }
+        // 運んだ区間を手放し、後ろの記録の位置を詰める
+        inFlightRanges.removeSubrange(ranges)
+        inFlight.remove(at: index)
+        for later in index..<inFlight.count { inFlight[later].start -= record.count }
     }
 }

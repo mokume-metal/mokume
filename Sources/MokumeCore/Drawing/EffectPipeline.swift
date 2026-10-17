@@ -154,11 +154,14 @@ final class EffectPipeline {
         self.compiler = compiler
 
         let library = try gpu.shaders.makeEffectLibrary(
-            named: "builtin", body: try gpu.shaders.bundledShaderSource(named: "Builtin"))
+            named: "builtin", body: try gpu.shaders.bundledShaderSource(named: "Builtin"),
+            bodyName: ShaderLibraries.bundledName("Builtin"))
         self.builtinLibrary = library
-        self.builtin = try Self.makeState(
-            compiler: compiler, library: library, pixelFormat: pixelFormat,
-            label: "mokume.effect.builtin")
+        self.builtin = try StateJob(
+            compiler: compiler, pixelFormat: pixelFormat, label: "mokume.effect.builtin",
+            vertexFunctionName: Self.vertexFunctionName,
+            fragmentFunctionName: Self.fragmentFunctionName
+        ).makeNow(library: library)
 
         passBuffer = try passStorage.buffer(holding: 8)
         tablePool = ArgumentTablePool(
@@ -170,8 +173,17 @@ final class EffectPipeline {
     func makeState(library: any MTLLibrary, label: String) throws(RenderFailure)
         -> any MTLRenderPipelineState
     {
-        try Self.makeState(
-            compiler: compiler, library: library, pixelFormat: pixelFormat, label: label)
+        try stateJob(label: label).makeNow(library: library)
+    }
+
+    /// ``makeState(library:label:)`` を、断片のライブラリが出来る前に用意する。裏で組む経路
+    /// (``ShaderBox``・[#2365]) が使う。
+    ///
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    func stateJob(label: String, fragment: String = EffectPipeline.fragmentFunctionName) -> StateJob {
+        StateJob(
+            compiler: compiler, pixelFormat: pixelFormat, label: label,
+            vertexFunctionName: Self.vertexFunctionName, fragmentFunctionName: fragment)
     }
 
     /// 変わった画素だけを重ねるパイプライン。無ければ組む ([#1524])。
@@ -183,39 +195,61 @@ final class EffectPipeline {
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     func keepChangedState() throws(RenderFailure) -> any MTLRenderPipelineState {
         if let keepChangedStorage { return keepChangedStorage }
-        let made = try Self.makeState(
-            compiler: compiler, library: builtinLibrary, pixelFormat: pixelFormat,
-            label: "mokume.effect.keepChanged", fragment: Self.keepChangedFunctionName)
+        let made = try stateJob(
+            label: "mokume.effect.keepChanged", fragment: Self.keepChangedFunctionName
+        ).makeNow(library: builtinLibrary)
         keepChangedStorage = made
         return made
     }
 
-    private static func makeState(
-        compiler: any MTL4Compiler, library: any MTLLibrary, pixelFormat: MTLPixelFormat,
-        label: String, fragment: String = fragmentFunctionName
-    ) throws(RenderFailure) -> any MTLRenderPipelineState {
-        let vertexFunction = MTL4LibraryFunctionDescriptor()
-        vertexFunction.name = vertexFunctionName
-        vertexFunction.library = library
+    /// 1 本の組み方。**main で決めた値だけを持つ** ので、裏の糸でも組める (``ShapePipeline/StatePlan``
+    /// と同じ理由・[#2365])。
+    ///
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    nonisolated struct StateJob: Sendable {
+        let compiler: any MTL4Compiler
+        let pixelFormat: MTLPixelFormat
+        let label: String
+        let vertexFunctionName: String
+        let fragmentFunctionName: String
 
-        let fragmentFunction = MTL4LibraryFunctionDescriptor()
-        fragmentFunction.name = fragment
-        fragmentFunction.library = library
+        private func descriptor(library: any MTLLibrary) -> MTL4RenderPipelineDescriptor {
+            let vertexFunction = MTL4LibraryFunctionDescriptor()
+            vertexFunction.name = vertexFunctionName
+            vertexFunction.library = library
 
-        let descriptor = MTL4RenderPipelineDescriptor()
-        descriptor.label = label
-        descriptor.vertexFunctionDescriptor = vertexFunction
-        descriptor.fragmentFunctionDescriptor = fragmentFunction
-        let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = pixelFormat
-        // **混ぜない。** 段は入りの絵を丸ごと受け取って出りの絵を丸ごと書くので、
-        // 下地と混ぜる余地が無い (混ぜたい効果は自分で相手を読む)
-        attachment.blendingState = .disabled
+            let fragmentFunction = MTL4LibraryFunctionDescriptor()
+            fragmentFunction.name = fragmentFunctionName
+            fragmentFunction.library = library
 
-        do {
-            return try compiler.makeRenderPipelineState(descriptor: descriptor)
-        } catch {
-            throw .pipelineUnavailable(reason: error.localizedDescription)
+            let descriptor = MTL4RenderPipelineDescriptor()
+            descriptor.label = label
+            descriptor.vertexFunctionDescriptor = vertexFunction
+            descriptor.fragmentFunctionDescriptor = fragmentFunction
+            let attachment = descriptor.colorAttachments[0]!
+            attachment.pixelFormat = pixelFormat
+            // **混ぜない。** 段は入りの絵を丸ごと受け取って出りの絵を丸ごと書くので、
+            // 下地と混ぜる余地が無い (混ぜたい効果は自分で相手を読む)
+            attachment.blendingState = .disabled
+            return descriptor
+        }
+
+        /// その場で組む。
+        func makeNow(library: any MTLLibrary) throws(RenderFailure) -> any MTLRenderPipelineState {
+            do {
+                return try compiler.makeRenderPipelineState(descriptor: descriptor(library: library))
+            } catch {
+                throw .pipelineUnavailable(reason: error.localizedDescription)
+            }
+        }
+
+        /// 裏で組む。組んでいる間、呼んだ側の糸を塞がない。
+        func make(library: any MTLLibrary) async throws(RenderFailure) -> any MTLRenderPipelineState {
+            do {
+                return try await compiler.makeRenderPipelineState(descriptor: descriptor(library: library))
+            } catch {
+                throw .pipelineUnavailable(reason: error.localizedDescription)
+            }
         }
     }
 

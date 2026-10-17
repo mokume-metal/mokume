@@ -7,7 +7,7 @@
 
   1. ドリフトを検出したら Issue が立ち、本文に差分そのものが載る
      (run のログを開かないと何がずれたか分からない起票は、無いのとあまり変わらない)
-  2. 同じ Issue が open なら二重に立てない — 日次で回る検査なので、放置された
+  2. 同じ Issue が open なら二重に立てず追記する (#2658) — 日次で回る検査なので、放置された
      ドリフトが毎日 1 本ずつ Issue を産まない
   3. 重複判定はタイトルの完全一致で行う — GitHub の検索は語で当たるため、似た
      タイトルの別 Issue を「既にある」と誤認すると、本物のドリフトが黙殺される
@@ -72,6 +72,13 @@ case "$1 $2" in
       *issueType*) json='{"issueType":null}' ;;
       *) json='{"labels":[]}' ;;
     esac ;;
+  "issue comment")
+    prev=
+    for a in "$@"; do
+      [ "$prev" = "--body-file" ] && cp "$a" "$FAKE_BODY_OUT"
+      prev=$a
+    done
+    exit 0 ;;
   "issue edit") exit 0 ;;
   *) exit 1 ;;
 esac
@@ -150,10 +157,11 @@ class ReportDriftTest(unittest.TestCase):
         self.assertIn("required_approving_review_count", body)
         self.assertIn("main-protection", body)
 
-    def test_同じ_Issue_が_open_なら二重に立てない(self):
+    def test_同じ_Issue_が_open_なら二重に立てずに追記する(self):
         r = self.report(issue_list=f'[{{"number":42,"title":"{TITLE}"}}]')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("issue create", self.gh_log())
+        self.assertIn("issue comment 42", self.gh_log())
         self.assertIn("#42", r.stdout)
 
     def test_似たタイトルの別_Issue_は重複とみなさない(self):

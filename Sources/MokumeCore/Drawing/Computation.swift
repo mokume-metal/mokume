@@ -7,7 +7,7 @@ import MokumeDiagnostics
 
 /// 利用者が書いた計算。
 ///
-/// 使い方は ``Sketch/makeComputation(_:name:values:)`` にある。
+/// 使い方は ``SketchPart/makeComputation(_:name:values:)`` にある。
 // `Canvas` と同じ隔離で使う型なので隔離を明示する。**理由は `RenderDevice` の冒頭が
 // 持つ** (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
 @MainActor public final class Computation {
@@ -58,7 +58,9 @@ import MokumeDiagnostics
     ) throws(RenderFailure) {
         try self.init(
             name: name, url: url, body: body, values: values,
-            library: gpu.shaders.makeComputeLibrary(named: name, body: body, values: values),
+            library: gpu.shaders.makeComputeLibrary(
+                named: name, body: body, bodyName: ShaderSource.bodyName(name, url: url),
+                values: values),
             gpu: gpu, pipeline: pipeline)
     }
 
@@ -98,15 +100,26 @@ import MokumeDiagnostics
 
     // MARK: - 差し替え
 
-    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
+    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(inBackground:prepare:adopt:)``)。
+    ///
+    /// 窓の経路では裏で組む (``Shader/reload()`` と同じ)。
     func reload() {
-        box.reload { (body: String) throws(RenderFailure) in
-            let library = try gpu.shaders.makeComputeLibrary(named: name, body: body, values: values)
-            let rebuilt = try pipeline.makeState(
-                library: library, functionName: name, label: "mokume.computation.\(name)")
-            // 入れ替えた古い状態は、投入済みの計算が終わるまで抱える (``Shader/reload()`` と同じ)
-            gpu.holdUntilSubmittedWorkFinishes([state])
-            state = rebuilt
-        }
+        box.reload(
+            inBackground: gpu.shaderRebuildsRunInBackground,
+            prepare: { (body: String) throws(RenderFailure) -> BuildJob<any MTLComputePipelineState> in
+                let library = try gpu.shaders.computeLibraryJob(
+                    named: name, body: body, bodyName: box.bodyName, values: values)
+                let state = pipeline.stateJob(functionName: name, label: "mokume.computation.\(name)")
+                return BuildJob(
+                    now: { () throws(RenderFailure) in try state.makeNow(library: library.runNow()) },
+                    later: { () async throws(RenderFailure) in
+                        try await state.make(library: library.run())
+                    })
+            },
+            adopt: { rebuilt in
+                // 入れ替えた古い状態は、投入済みの計算が終わるまで抱える (``Shader/reload()`` と同じ)
+                gpu.holdUntilSubmittedWorkFinishes([state])
+                state = rebuilt
+            })
     }
 }

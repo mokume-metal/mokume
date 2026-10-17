@@ -125,13 +125,27 @@ struct WindowNumbersTextTests {
         #expect(shown["t"] == "0.00")
     }
 
+    /// 予算を越えた数は数え上げなので常に数字で、いちばん重いフレームは測るまで欠測 (#2601)。
+    @Test("予算を越えた数と、いちばん重かったフレームの番号が出る")
+    func overBudgetFramesAndTheHeaviestAreShown() {
+        let fresh = cells(FrameNumbers(frameCount: 0, time: 0, frameRate: nil, frameTimeMs: nil))
+        #expect(fresh["slow"] == "0")
+        #expect(fresh["worst"] == KnobText.notMeasured)
+        let slowed = cells(
+            FrameNumbers(
+                frameCount: 120, time: 1.98, frameRate: 58, frameTimeMs: 17.2,
+                overBudgetFrames: 3, heaviestFrame: 97))
+        #expect(slowed["slow"] == "3")
+        #expect(slowed["worst"] == "#97")
+    }
+
     /// 走っているのが別のプロセスのときは、数字そのものが届いていないことがある (#718)。
     /// **そのときは枚数も時刻も欠測である** — 進んでいない相手の枚数を 0 と書くと、
     /// 「1 枚目を描いたところ」と区別が付かなくなる。
-    @Test("数字が届いていなければ、4 つとも同じ綴りで出る")
+    @Test("数字が届いていなければ、どれも同じ綴りで出る")
     func nothingArrivedShowsOneSpellingEverywhere() {
         let shown = KnobText.numbers(nil)
-        #expect(shown.map(\.label) == ["fps", "ms", "frame", "t"])
+        #expect(shown.map(\.label) == ["fps", "ms", "frame", "t", "slow", "worst"])
         #expect(shown.allSatisfy { $0.value == KnobText.notMeasured })
     }
 }
@@ -255,11 +269,12 @@ struct WindowNumbersSourceTests {
     /// 応答の側の欠測の形。**鍵ごと省く** — 窓が「—」と描くのと同じ意味である。
     @Test("測れていない値は、応答から鍵ごと消える")
     func unmeasuredValuesAreOmittedFromTheReport() throws {
-        let empty = RuntimeLoad.sample(tempo: FrameTempo(), now: 0)
+        let empty = RuntimeLoad.sample(tempo: FrameTempo(), budget: FrameBudget(frameRate: 60), now: 0)
         let encoded = try JSONEncoder().encode(empty)
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
         #expect(object["frameRate"] == nil)
         #expect(object["frameTimeMs"] == nil)
+        #expect(object["heaviestFrame"] == nil)
         #expect(object["thermalState"] != nil)
     }
 }

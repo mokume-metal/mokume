@@ -145,6 +145,20 @@ extension Canvas {
         ///
         /// [#1495]: https://github.com/mokume-metal/mokume/issues/1495
         case badCamera
+        /// ``SketchPart/orbitControl(_:_:_:)`` の感度に、数でない値・無限の値が渡され、
+        /// その軸を効かせなかった ([#2643])。
+        ///
+        /// **``badCamera`` とは鍵を分ける。** あちらは視点を当てず、こちらは視点を当てる。
+        /// 下の 2 つとも分ける — こちらは受け口に渡された値、あちらは進めた結果と書かれた値の話。
+        ///
+        /// [#2643]: https://github.com/mokume-metal/mokume/issues/2643
+        case badOrbitSensitivity
+        /// 有限の感度で、引きずった量・スクロールとの積が数でない・無限になり (溢れた・
+        /// 届いた量が無限)、その軸をそのフレームだけ進めなかった ([#2643])。
+        case orbitStepHeld
+        /// ``SketchPart/orbit`` に収めようのない値 (数でない値・無限の角など) が書かれ、
+        /// 既定へ倒した ([#2643])。
+        case badOrbit
         /// 受け取れない切り抜きが渡された。
         case badClip
         /// ``strokeWeight(_:)`` に負の値・数でない値・無限が渡され、0 に丸めた ([#1698])。
@@ -275,6 +289,20 @@ extension Canvas {
 
         /// 無い書体を指定された。
         case missingFont
+        /// ``Canvas/textStyle(_:)`` の太さ・傾きの面を、書体が持っていなかった ([#2444])。
+        ///
+        /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
+        case missingTypefaceStyle
+        /// 指定した書体が覆えず別の書体から引いた字の面が、``Canvas/textStyle(_:)`` の太さ・傾きを
+        /// 持っていなかった ([#2561])。色の字形を持つ書体から引いた字と、墨を持たない字は数えない
+        /// (``Typeface/lacksStyle(fallback:glyph:requested:)``)。
+        ///
+        /// **``missingTypefaceStyle`` と鍵を分ける。** 共有すると、指定した書体の面の知らせと
+        /// 代わりの書体の面の知らせのうち、先に言った側がもう片方を黙らせる — どちらも
+        /// 「効かない指定を効いたように見せる」ことを防ぐ知らせで、片方で他方は分からない。
+        ///
+        /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
+        case missingFallbackTypefaceStyle
         /// ``Canvas/textSize(_:)``・``Canvas/textLeading(_:)`` に、数でない値・無限・上限
         /// (``Canvas/largestTextMeasure``) を越える値が渡された ([#1587])。
         ///

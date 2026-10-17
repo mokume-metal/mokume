@@ -22,7 +22,7 @@ SCHEMA_DIR=Schemas
 EXAMPLE_DIR=Schemas/examples
 
 if ! command -v check-jsonschema >/dev/null 2>&1; then
-  echo "check-jsonschema が見つからない: pipx install check-jsonschema" >&2
+  echo "check-jsonschema が見つからない: CI と同じ版の入れ方は make setup が示す (版の正本は scripts/ci-tools.txt)" >&2
   exit 1
 fi
 

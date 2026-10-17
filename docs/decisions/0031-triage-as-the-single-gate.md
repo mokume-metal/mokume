@@ -95,9 +95,17 @@ Bug を閉じる PR については、[ADR-0040](0040-bugs-as-broken-promises.md
 
 **捨てたもの**: 判定を変える PR が、その変更をその PR 自身で試せること。判定の変更は merge の後の PR から効く。
 
-**脱出口**: ゲートが壊れていて、それを直す PR も同じゲートで赤になるときは、その PR の中で `ci.yml` の該当ジョブから `ref` の行を外す。外した行は後続の PR で戻す。
+**脱出口**: ゲートが壊れていて、それを直す PR も同じゲートで赤になるときは、その PR の中で 2 か所を外す。`.github/workflows/pr-gate.yml` の `pr-gate` ジョブの checkout から `with:` と `ref` の 2 行と、それを固定する `scripts/tests/pr_gate_workflow_test.py` の `test_判定は既定ブランチの版で走らせる` の `ref` の固定 (`assertIn`) である。外した行と固定は、後続の PR で両方戻す (下の 2026-10-17 の改訂)。
 
 **→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) で承認が無くなり、この脱出口は人を一度通さなくなった (同 ADR の影響)。**
+
+#### 改訂 (2026-10-14) — 決定 2 の判定を走らせる置き場を `pr-gate.yml` へ移す
+
+当初 (2026-10-03 の改訂) は、`review-gate` と `drawing-evidence` を `.github/workflows/ci.yml` の別々のジョブとして走らせ、コードの検査と同じ必須チェック `ci-gate` がそれらを待っていた。脱出口も `ci.yml` の該当ジョブの `ref` の行だった。[#2611](https://github.com/mokume-metal/mokume/issues/2611) で PR の作法の検査をコードの検査と別の必須チェックに分け、[#2669](https://github.com/mokume-metal/mokume/issues/2669) で `ci.yml` から外した。いまは `.github/workflows/pr-gate.yml` の `pr-gate` ジョブの step として走る。分けた理由は、作法を直して新しい run が緑になっても、直す前の run の赤い `ci-gate` が同じコミットに残り、必須チェックを赤のままにしたことである ([#2134](https://github.com/mokume-metal/mokume/issues/2134))。既定ブランチの版を checkout して判定する形と、脱出口の形 (checkout の `ref` の行を外す) は変わらない。
+
+#### 改訂 (2026-10-17) — 決定 2 の脱出口に、検査の固定と空になる `with:` を外す手順を足す
+
+当初の脱出口は「checkout から `ref` の行を外す。外した行は後続の PR で戻す」だけを書いていた。その手順だけに従った PR は、必須の `ci-gate` で 2 度止まる ([#2724](https://github.com/mokume-metal/mokume/issues/2724))。`ref` の行は `scripts/tests/pr_gate_workflow_test.py` の `test_判定は既定ブランチの版で走らせる` が固定していて `make hooks-test` が赤になり、`ref` だけを外すと checkout の `with:` が空になって `actionlint` (`make workflows-lint`) が赤になる。壊れた判定で止まっている最中にこれを知ると、もう 1 往復する。そこで、外すものを `with:` と `ref` の 2 行と検査の `ref` の固定に広げ、戻すときも両方戻すとした。PR の版の判定で通す、という脱出口の形と、それが PR の diff に現れるという代償 ([ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) の影響) は変わらない。外すものは `pr-gate.yml` のコメントと、その検査の docstring にも書いてある。
 
 ### 3. 1 PR の粒度を「1 つの説明で筋が通る範囲」とする
 

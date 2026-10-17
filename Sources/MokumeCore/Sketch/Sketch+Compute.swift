@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 描く前の計算。
-extension Sketch {
+extension SketchPart {
     /// 数の並びを用意する。**CPU と GPU で同じものを見る。**
     ///
     /// 下は、長さ (`count`) を 4・8・16 と動かした並びを作り、`setup()` で CPU から明るさの段を
@@ -65,9 +65,11 @@ extension Sketch {
     ///
     /// - Throws: 領域を取れないときと、`count` が 1 を割るとき (``RenderFailure/invalidCount(_:)``。
     ///   1 個へ丸めない) に ``RenderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=fc61cf1e
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
-        try canvas.makeNumbers(count: count)
+        try Self.resourceCanvas(RenderFailure.self).makeNumbers(count: count)
     }
 
     /// 文字列から計算を作る。保存の拾い直しは効かない (在処が無いため)。
@@ -206,12 +208,14 @@ extension Sketch {
     /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。
     ///
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=d76ea602
     // shot: 2 snippet=e8f5dab5
     public func makeComputation(
         _ body: String, name: String = "computation", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try canvas.makeComputation(body, name: name, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).makeComputation(body, name: name, values: values)
     }
 
     /// ファイルから計算を読み込む。**入口の関数の名前はファイル名**になる。
@@ -222,11 +226,13 @@ extension Sketch {
     /// こと (``makeComputation(_:name:values:)`` の「保存したら差し替わる」) である。
     ///
     /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeComputation(_:name:values:)
     public func loadComputation(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try canvas.loadComputation(path, values: values)
+        try Self.resourceCanvas(ShaderFailure.self).loadComputation(path, values: values)
     }
 
     /// 描く前に計算させる (1 次元)。
@@ -375,8 +381,8 @@ extension Sketch {
     ///
     /// ## 描くところで頼む
     ///
-    /// `draw()` の中だけで効く。`setup()` や初期化から頼んだ計算はどのフレームにも
-    /// 属さないので、**無視して理由を知らせる**。
+    /// `draw()` の中だけで効く。`setup()` や初期化、止まっている間の入力のコールバックから
+    /// 頼んだ計算はどのフレームにも属さないので、**無視して理由を知らせる**。
     ///
     /// 下は、同じ計算を、上の帯の並びへは `setup()` で、下の帯の並びへは `draw()` で頼んだもの。
     /// `setup()` で頼んだほうは走らず、上の帯は CPU が埋めた暗い灰色のまま残る。
@@ -439,6 +445,7 @@ extension Sketch {
         _ computation: Computation, over count: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.compute(computation, over: count, reads: reads, writes: writes)
     }
 
@@ -598,7 +605,7 @@ extension Sketch {
     // shot: 1 snippet=d9bf43e4
     // shot: 2 snippet=0bc34129
     // shot: 3 snippet=5ec9d11e
-    public func numbers(_ numbers: Numbers) { canvas.numbers(numbers) }
+    public func numbers(_ numbers: Numbers) { Self.liveCanvas()?.numbers(numbers) }
 
     /// 並びを読まない状態へ戻す。
     ///
@@ -689,7 +696,7 @@ extension Sketch {
     /// - Note: 並びは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=b40dc8fc
     // shot: 2 snippet=b4da70c9
-    public func resetNumbers() { canvas.resetNumbers() }
+    public func resetNumbers() { Self.liveCanvas()?.resetNumbers() }
 
     /// 描く前に計算させる (2 次元)。
     ///
@@ -763,6 +770,7 @@ extension Sketch {
         _ computation: Computation, over width: Int, by height: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.compute(computation, over: width, by: height, reads: reads, writes: writes)
     }
 
@@ -886,5 +894,5 @@ extension Sketch {
     /// }
     // shot: 1 snippet=d7424f97
     // shot: 2 snippet=9dfc4082
-    public func read(_ numbers: Numbers) -> [Float] { canvas.read(numbers) }
+    public func read(_ numbers: Numbers) -> [Float] { Self.liveCanvas(.read(returning: "[]"))?.read(numbers) ?? [] }
 }

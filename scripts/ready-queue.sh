@@ -11,9 +11,11 @@
 # ## ここは何も打たない
 #
 # 呼ぶのは `gh issue list` / `gh pr list` / `git worktree list` の 3 つで、ラベルも付けず
-# auto-merge も掛けない。読み取りが増えるのは 2 つの場合だけである — 自分に証拠の無い
+# auto-merge も掛けない。読み取りが増えるのは 3 つの場合だけである — 自分に証拠の無い
 # 着手印があるときは、その
-# 家族を読む `gh api graphql` が 1 回加わる (下の「落ちて見えるか」)。open な Bug か ready の
+# 家族を読む `gh api graphql` が 1 回加わる (下の「落ちて見えるか」)。最近動いた着手印か
+# 家族があるときは、その手が人か bot かを読む `gh api graphql` が 1 回ずつ (最大 2 回) 加わる
+# (下の「bot の追記は数えない」)。open な Bug か ready の
 # 候補があるときは、その親を読む `gh api graphql` が 1 回加わる (下の「根と判断」)。scripts/stall-watch.sh と
 # 同じ性質で、**手元でいつ打っても安全である**。打つ側 (stall-act.sh に当たるもの) はこのリポジトリには来ない — 打つのは
 # 外に居るディスパッチャの仕事で、こちらが実行まで持つと「様子を見るために打ったら着手が
@@ -86,7 +88,31 @@
 # 定める枝の形は `<type>/<短い説明>` で、番号はどこにも入らない。worktree の照合だけに頼ると
 # 「いま着手した Issue」がそのまま dropped に出る (実際にこのスクリプト自身の #1028 で出た)。
 # 静かさは Issue の updatedAt で測る — 着手すればラベルが動きプランが投稿されるので、
-# 生きている着手は必ず新しい。
+# 生きている着手は必ず新しい。**ただし bot の手は数えない** (次の節)。
+#
+# ### bot の追記は数えない (#2660)
+#
+# 逆向きは成り立たない — 新しいからといって生きているとは限らない。Issue の活動には bot の手が
+# 混じる (前提の宣言と「bot の手か」の判定は scripts/bot-hand.sh)。bot の追記は updatedAt を
+# 動かすので、止まった着手印でも追記から 120 分は「まだ動いている」に見え、前検査が
+# merge_group ごとに追記すると queue が回る間ずっと隠れる。
+#
+# 項目の種類は限らない — 窓の timeline はどの種類にも作者 / actor を引かせ (bot-hand.sh の
+# 断片)、Bot のものを全部 bot の手として扱う。
+# だから updatedAt が新しいだけの着手印 (PR も手元の worktree / 枝も無い) は、**窓の中
+# (DROPPED_MINUTES 分) の timeline を引いて、人の手があるかを見る**。窓の中に bot の手が
+# **少なくとも 1 つあり**、それ以外が無いときだけ静かとみなして家族の判定へ回す — 新しさを
+# 説明しているのが bot の手だと分かるときに限る。それ以外 (人の手・作者の分からない項目・
+# 本文の編集・窓に 100 件を超えて見えない項目・**窓が空**) は今までどおり動いているとみなす —
+# **bot と分かるものだけを除く**。窓が空でも新しいのは、timeline に出ない動き (既存のコメントの
+# 編集・子の close による親の更新など) が updatedAt を動かしたときで、それが人の手でないとは
+# 言えない。家族の open な者も同じ式で測る。閉じた家族は「閉じたばかり」
+# のまま (bot が追記するのは open な Issue だけ — scripts/report-check-failure.sh)。
+#
+# 問い合わせは、そういう着手印があるときに 1 回、家族にそういう者があるときにもう 1 回で、
+# どちらも GraphQL 1 回にまとめる。**読めなかったら従来どおり updatedAt で測り、そう名乗る** —
+# 親を読めなかったとき (下の「根と判断」) と同じ作法で、精密化が読めないことで元の判定より
+# 悪くしない。
 #
 # ### 家族も見る (#1391)
 #
@@ -133,6 +159,9 @@ set -euo pipefail
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+# 「bot の手か」の判定と、その前提の宣言 (#2660)
+# shellcheck source=scripts/bot-hand.sh
+. "$(dirname "${BASH_SOURCE[0]}")/bot-hand.sh"
 
 REPO="$(this_repo)"
 
@@ -207,6 +236,8 @@ WORKTREE_NAMES=$(git worktree list --porcelain 2>/dev/null |
 ready='' stock='' dropped='' busy='' decide='' ready_count=0 decide_count=0
 # 自分に証拠の無い着手印。「<番号> <タイトル>」の並びで、家族を読んでから分ける
 candidates=''
+# updatedAt だけが新しい着手印。「<番号> <updatedAt> <タイトル>」の並びで、人の手を読んでから分ける
+recent=''
 # ready の候補 (「<番号> <タイトル>」) と、未トリアージの Design
 # (「<番号> <タイトル>」)。どちらも親を読んでから分ける (#1661)
 ready_rows='' designs=''
@@ -226,7 +257,8 @@ while IFS= read -r row; do
     elif seen_locally "$n"; then
       busy+="$n busy 手元に worktree か枝がある ($title)"$'\n'
     elif [[ $updated > $QUIET_BEFORE ]]; then
-      busy+="$n busy まだ動いている ($updated ・$title)"$'\n'
+      # 新しいのが人の手か bot の追記かは、まとめて読んでから分ける (#2660)
+      recent+="$n $updated $title"$'\n'
     else
       candidates+="$n $title"$'\n'
     fi
@@ -249,6 +281,76 @@ while IFS= read -r row; do
     *"$AGENT_MARK"*) stock+="$n stock [$type] エージェントの起票が無印のまま ($title)"$'\n' ;;
   esac
 done < <(jq -c '.[]' <<<"$issues_json")
+
+# --- 人の手 (#2660) ----------------------------------------------------------
+
+# 窓の中に人の手があるかを 1 回で読む。「<番号> human|quiet」を 1 行 1 件で出す。
+#
+# quiet は「窓の中が bot の手 (scripts/bot-hand.sh) だけで、少なくとも 1 つある」ときに限る。
+# 作者の分からない項目 (退会した人・断片の並びに無い種類)・本文の編集・窓に収まらない項目・
+# 空の窓は human に倒す (冒頭の「bot の追記は数えない」— bot と分かるものだけを除く)。
+#
+# 「窓に収まらない」は filteredCount と引けた件数で見る。**filteredCount は since を反映した
+# 窓の中の件数で、totalCount は反映しない** — 2026-10-16 に #2251 で確かめた (since なし:
+# total 29・filtered 29。since つき last: 100: total 29・filtered 5・引けた 5。since つき
+# last: 2: total 29・filtered 5・引けた 2)。totalCount で比べると、窓より前に履歴のある
+# Issue はほぼ常に human に倒れて黙って効かなくなる
+read_hands() { # $1=番号 (空白区切り)
+  local owner=${REPO%%/*} name=${REPO#*/} q='' n
+  for n in $1; do
+    q+="i$n: issue(number: $n) { lastEditedAt timelineItems(since: \"$QUIET_BEFORE\", last: 100) {"
+    q+=" filteredCount nodes { __typename ...hand } } } "
+  done
+  gh api graphql \
+    -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } } $BOT_HAND_TIMELINE_FRAGMENT" \
+    --jq "$BOT_HAND_JQ"'
+      .data.repository | to_entries[]
+      | .value.timelineItems as $t
+      | (any($t.nodes[]?; bot_hand | not)
+         or ($t.nodes | length) == 0
+         or ($t.filteredCount // 0) > ($t.nodes | length)
+         or (.value.lastEditedAt // "") > "'"$QUIET_BEFORE"'") as $hand
+      | "\(.key | ltrimstr("i")) \(if $hand then "human" else "quiet" end)"'
+}
+
+# 読んだ答え。「<番号> human|quiet|unread」を 1 行 1 件で溜める
+hands=''
+
+# 答えを読み足す。読めなかった番号は unread として溜め、そう名乗る — その番号は従来どおり
+# updatedAt で測る
+read_hands_into() { # $1=番号 (空白区切り)
+  local more n
+  [ -n "${1// /}" ] || return 0
+  if more=$(read_hands "$1"); then
+    hands+="$more"$'\n'
+  else
+    for n in $1; do hands+="$n unread"$'\n'; done
+    echo "人の手か bot の追記かを読めなかった — 静けさは updatedAt のまま測った" >&2
+  fi
+}
+
+# 読んだ答え 1 つ。問い合わせに載せなかった番号は空
+hand_of() { # $1=番号
+  awk -v n="$1" '$1 == n { print $2; exit }' <<<"$hands"
+}
+
+# 新しさを「動いている」と読むときの注記。読めなかったときだけ名乗る
+hand_note() { # $1=番号
+  [ "$(hand_of "$1")" != unread ] || printf '・作者を読めなかった'
+}
+
+if [ -n "$recent" ]; then
+  read_hands_into "$(awk '{ print $1 }' <<<"$recent" | tr '\n' ' ')"
+  while read -r n updated title; do
+    [ -n "$n" ] || continue
+    # **quiet と答えたときだけ**静かとみなす。分からなければ従来どおり動いている
+    if [ "$(hand_of "$n")" = quiet ]; then
+      candidates+="$n $title"$'\n'
+    else
+      busy+="$n busy まだ動いている ($updated$(hand_note "$n") ・$title)"$'\n'
+    fi
+  done <<<"$recent"
+fi
 
 # --- 家族 (#1391) -------------------------------------------------------------
 
@@ -284,8 +386,9 @@ member_evidence() { # $1=番号 $2=state $3=updatedAt
       echo "家族 #$1 の worktree か枝が手元にある"
       return 0
     fi
-    if [[ $3 > $QUIET_BEFORE ]]; then
-      echo "家族 #$1 がまだ動いている ($3)"
+    # 新しくても bot の追記だけなら数えない (#2660)
+    if [[ $3 > $QUIET_BEFORE ]] && [ "$(hand_of "$1")" != quiet ]; then
+      echo "家族 #$1 がまだ動いている ($3$(hand_note "$1"))"
       return 0
     fi
   elif [[ $3 > $QUIET_BEFORE ]]; then
@@ -299,6 +402,16 @@ if [ -n "$candidates" ]; then
   family_note=''
   families=$(read_families "$(awk '{ print $1 }' <<<"$candidates" | tr '\n' ' ')") ||
     { families='' family_note='・家族を読めなかった'; }
+
+  # 新しさだけが証拠になりうる open な家族の手を読む (#2660)。PR か手元の worktree / 枝が
+  # あればそれで足り、既に読んだ番号は読み直さない
+  read_hands_into "$(while read -r _ m state updated; do
+    [ "$state" = OPEN ] && [[ $updated > $QUIET_BEFORE ]] || continue
+    [ -z "$(awk -v n="$m" '$1 == n { print $2; exit }' <<<"$claims")" ] || continue
+    ! seen_locally "$m" || continue
+    [ -z "$(hand_of "$m")" ] || continue
+    echo "$m"
+  done <<<"$families" | awk '!seen[$1]++ { printf "%s ", $1 }')"
 
   while read -r n title; do
     [ -n "$n" ] || continue

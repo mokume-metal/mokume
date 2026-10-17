@@ -10,8 +10,9 @@ extension Canvas {
     //
     // **形の組み立ての中では断る** (#1529)。描き方なのでフレームの外でも効くが、面全体の
     // 明るさを決めるもので、形には焼き付かない
-    public func exposure(_ multiplier: Float) {
+    public func exposure(_ multiplier: some ScalarConvertible) {
         guard admits(.brightness) else { return }
+        let multiplier = multiplier.asFloat
         guard multiplier.isFinite, multiplier >= 0 else { return warnBadExposure() }
         target.brightness.exposure = multiplier
     }

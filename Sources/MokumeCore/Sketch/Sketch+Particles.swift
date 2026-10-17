@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 粒。
-extension Sketch {
+extension SketchPart {
     /// 粒を用意する。**同時に持てる数をここで決める。**
     ///
     /// <!-- example: 文脈 var dust: Particles! -->
@@ -118,10 +118,12 @@ extension Sketch {
     ///
     /// - Throws: 置き場を取れないときと、`count` が 1 を割るとき
     ///   (``RenderFailure/invalidCount(_:)``) に ``RenderFailure``。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=ed20505f
     // shot: 2 snippet=ee77bf99
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
-        try canvas.makeParticles(count: count)
+        try Self.resourceCanvas(RenderFailure.self).makeParticles(count: count)
     }
 
     /// 粒を出す。
@@ -390,15 +392,15 @@ extension Sketch {
     public func emit(
         _ particles: Particles, from source: Emitter,
         toward heading: Heading = .plane(0...(2 * Float.pi)),
-        rate: Float,
+        rate: some ScalarConvertible,
         speed: ClosedRange<Float> = 20...60,
         life: ClosedRange<Float> = 1...2,
         size: ClosedRange<Float> = 2...6,
         color: LinearRGBA? = nil
     ) {
-        let runtime = Self.requireRuntime()
-        canvas.emit(
-            particles, from: source, toward: heading, rate: rate, speed: speed, life: life,
+        guard let runtime = Self.liveRuntime() else { return }
+        runtime.canvas.emit(
+            particles, from: source, toward: heading, rate: rate.asFloat, speed: speed, life: life,
             size: size, color: color, using: &runtime.randomness)
     }
 
@@ -512,6 +514,7 @@ extension Sketch {
     // shot: 1 snippet=4426839e
     // shot: 2 snippet=878e959d
     public func force(_ particles: Particles, _ forces: Force...) {
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.force(particles, forces)
     }
 
@@ -676,5 +679,5 @@ extension Sketch {
     /// }
     // shot: 1 snippet=07f084f9
     // shot: 2 snippet=468ad272
-    public func particles(_ particles: Particles) { canvas.particles(particles) }
+    public func particles(_ particles: Particles) { Self.liveCanvas()?.particles(particles) }
 }

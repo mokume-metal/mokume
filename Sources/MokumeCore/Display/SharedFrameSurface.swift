@@ -71,8 +71,17 @@ final class SharedFrameSurface {
     /// 費用はキャンバス大の面 1 枚ぶんで払う。読み手は枚数を番号の並び (``Manifest``) から
     /// 取るので、版の違う道具ともそのまま噛み合う。
     ///
+    /// **焼きの結末を見てから名乗るので 5 枚持つ** ([#2735])。結末は合図より遅れて届き、GPU を
+    /// 待った直後には届いていない (手元の実測で 300 回中 300 回。1 リフレッシュ後なら 119 回中 0 回)。
+    /// 届いていない面は名乗りを次の書き込みまで遅らせる (``publishPending()``) ので、名乗っていない
+    /// 面がもう 1 枚先を回る。4 枚のままだと、遅らせるたびに焼く面が読み手の掴んだ面に当たり、
+    /// 焼きを見送る (``write(_:using:numbers:pointerLock:)``) — GPU に縛られたスケッチでは毎回
+    /// 遅れるので、渡せる枚数が半分になる。#748 と同じく猶予を縮めずに保つほうへ倒し、費用は
+    /// キャンバス大の面 1 枚ぶんで払う。
+    ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
-    static let slotCount = 4
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    static let slotCount = 5
 
     /// 書き終わった枚数を載せる属性の名前。
     static let frameAttribute = "mokume.frame"
@@ -104,6 +113,10 @@ final class SharedFrameSurface {
         static let frameRate = "mokume.frameRate"
         /// 直近のフレーム時間の平均 (ミリ秒)。**測れていなければ載らない。**
         static let frameTimeMs = "mokume.frameTimeMs"
+        /// 1 フレームの予算を越えたフレームの数 (#2601)。
+        static let overBudgetFrames = "mokume.overBudgetFrames"
+        /// いちばん重かったフレームの番号。**まだ測っていなければ載らない。**
+        static let heaviestFrame = "mokume.heaviestFrame"
     }
 
     /// スケッチがカーソルを捕まえるよう頼んでいるかを載せる属性の名前 (1 で頼んでいる)
@@ -215,12 +228,54 @@ final class SharedFrameSurface {
     private let manifestURL: URL
     /// 焼いた投入を名指しで待つために持つ。
     private let gpu: RenderDevice
-    /// 焼いたがまだ名乗っていない 1 枚。**次の書き込みの先頭で公開する** ([#748])。
+    /// 焼いた 1 枚。名乗るまで控える。
+    private struct Burn {
+        let slot: Int
+        let submission: UInt64
+        let numbers: FrameNumbers
+        let pointerLock: Bool
+        /// 焼いた書き込みの通し番号 (``writes``)。名乗るときの枚数になる。
+        let number: Int
+    }
+
+    /// 焼いたがまだ名乗っていない面。焼いた順。**次の書き込みの先頭で公開する** ([#748])。
+    ///
+    /// **2 枚まで** ([#2735])。焼きの結末がまだ届いていない 1 枚 (名乗りを遅らせている) と、その後に
+    /// 焼いた 1 枚である。置き場は持ち回る — 毎フレーム通る口で確保しない。
     ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
-    private var pending: (slot: Int, submission: UInt64, numbers: FrameNumbers, pointerLock: Bool)?
-    /// これまでに名乗った枚数。**1 から数える** — 0 は「まだ 1 枚も書いていない」を
-    /// 表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている 1 枚は数えない。**
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    private var pending: [Burn] = []
+    /// 次に焼く面。**焼くたびに 1 つ進む** — 名乗った枚数からは決めない。名乗りを遅らせたり見送ったり
+    /// しても、焼く面は書き込みごとに 1 つずつ回る ([#2735])。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    private var nextSlot = 0
+    /// いま最新として名乗っている面。まだ 1 枚も名乗っていなければ `nil`。
+    private var newestSlot: Int?
+    /// 直近 3 回の書き込みの時点で最新として名乗っていた面 (読み手が掴んでいるかもしれない面)。
+    /// **ここに載っている面へは焼かない** ([#2735])。読み手は書き込みの合間に最新を掴み、GPU の完了を
+    /// 待たずに差し出すので、掴んだ面が続く 2 回の書き込みで書き直されないことが途中の絵を読ませない
+    /// ことの実体である (``slotCount``)。名乗りを遅らせても、この約束を枚数の数え方に頼らず守る。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    private var heldSlots: [Int?] = [nil, nil, nil]
+    /// ``heldSlots`` の次に書く位置。
+    private var heldCursor = 0
+    /// 読み手が掴んでいるかもしれない面に当たって、焼きを見送った回数 (作ってから通算)。**検査から読む。**
+    private(set) var burnsDeferred = 0
+    /// 書き込みの通し番号。**1 から数える。** 焼いた面が名乗る枚数はこれで決まる。
+    private var writes = 0
+    /// 最後に名乗った面の枚数 (その面を焼いた書き込みの通し番号)。**1 から数える** — 0 は「まだ
+    /// 1 枚も書いていない」を表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている面は
+    /// 数えない。**
+    ///
+    /// **名乗った回数ではない** ([#2735])。打ち切られた・結末を失った焼きは名乗らず、読み手の掴んで
+    /// いる面に当たった書き込みは焼かないので、その書き込みの番号は飛ぶ。名乗った回数で数えると、
+    /// 面の絵と枚数がずれる (後の書き込みの絵が前の書き込みの枚数を名乗る)。読み手は枚数の大小と
+    /// 変わったかだけを見るので、飛んでも噛み合う。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     private(set) var frameNumber = 0
 
     /// 窓を持つ道具に起こされ、区画もあるときだけ作る。**綴りは ``StartupReads`` が正典** (#380)。
@@ -354,6 +409,7 @@ final class SharedFrameSurface {
         }
         self.slots = slots
         self.ids = slots.map { IOSurfaceGetID($0.surface) }
+        pending.reserveCapacity(2)
     }
 
     /// **面に被せたテクスチャを常駐から退かせる** ([#795])。
@@ -432,9 +488,11 @@ final class SharedFrameSurface {
     ///
     /// 焼く投入は待たない。いま焼いた絵が名乗るのは次の書き込みのときである ([#748])。
     /// 走っているスケッチは止めている間も毎リフレッシュここを通るので、控えた 1 枚は
-    /// 次のリフレッシュで必ず出る。
+    /// 次のリフレッシュで出る。焼きの結末がまだ届いていなければもう 1 回遅れ、GPU が打ち切って
+    /// いれば名乗らずに次に焼いた面が出る ([#2735]・``publishPending()``)。
     ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     /// - Parameters:
     ///   - numbers: この絵を描いたときの速さ。絵と一緒に控え、絵と一緒に載せる。
     ///   - pointerLock: この絵を描いたときに、スケッチがカーソルを捕まえるよう頼んでいたか
@@ -444,40 +502,83 @@ final class SharedFrameSurface {
         pointerLock: Bool = false
     ) throws(RenderFailure) {
         try publishPending()
-        // **焼く面は、公開した枚数から決まる。** 控えを出した後なので、公開済みの最新面の
-        // 次を踏む — 最新面そのものへは戻らない
-        let index = frameNumber % slots.count
+        writes += 1
+        // 読み手が掴んでいるかもしれない面を記す: いまの最新と、直前 2 回の書き込みのときの最新
+        heldSlots[heldCursor] = newestSlot
+        heldCursor = (heldCursor + 1) % heldSlots.count
+        // **焼く面は書き込みごとに 1 つ回る。** 読み手が掴んでいるかもしれない面と、名乗りを遅らせて
+        // いる面には焼かない — 当たったらこの回は焼かずに見送り、次の書き込みが同じ面を試す。普段の
+        // 経路 (名乗りを遅らせない・遅らせても 1 回の書き込みのうちに届く) では当たらない (``slotCount``)
+        let index = nextSlot
+        guard !heldSlots.contains(index), !pending.contains(where: { $0.slot == index }) else {
+            burnsDeferred += 1
+            return
+        }
         let submission = try presenter.draw(source, into: slots[index].texture)
-        pending = (index, submission, numbers, pointerLock)
+        pending.append(
+            Burn(
+                slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
+                number: writes))
+        nextSlot = (index + 1) % slots.count
     }
 
-    /// 控えている 1 枚を名乗らせる。控えが無ければ何もしない。
+    /// 控えている面を、焼いた順に名乗らせる。控えが無ければ何もしない。
     ///
     /// **書き終わってから名乗る。** 属性を先に載せると、読み手が書きかけの面を掴む。
     /// 焼いた投入を名指しで待ってから載せるので、名乗った時点で面の中身は揃っている。
     /// 待つのは 1 本だけで、1 枚遅らせているぶん普通は何もせずに返る。
     ///
-    /// **待てなければ名乗らない。** 控えは先に手放すので、次の書き込みは同じ面を焼き直す。
+    /// **待てなければ名乗らない。** その面の控えは先に手放す。
+    ///
+    /// **焼きを GPU が打ち切っていても名乗らない** ([#2735])。合図は打ち切りでも進むので、待てた
+    /// だけでは面の中身は揃っていない — 名乗ると、読み手は前に焼いた絵か書いていない面を「最新の絵」
+    /// として掴み、書き手がその後で書くのをやめれば (終了・異常終了・詰まり) 窓はそのまま残る。名乗ら
+    /// なければ、読み手は前に名乗った面を出し続け、次に焼いた面が名乗る。**結末を失った焼きも名乗らない**
+    /// (``RenderDevice/undelivered(_:)`` は確かめられないものを届けられなかった側へ倒す)。
+    ///
+    /// **結末を待たない** ([#2735])。毎フレーム main actor で通る口なので、届くまで眠らない
+    /// (``RenderDevice/droppedWork(after:through:)`` は、範囲より前の結末まで揃うのを待つ)。結末がまだ
+    /// 届いていなければ、その面の名乗りを次の書き込みまで遅らせる。次の書き込みでも届いていなければ
+    /// (1 回の書き込みの間、届かなかった・結末を失った)、後に焼いた面があるので見送る。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
     func publishPending() throws(RenderFailure) {
-        guard let written = pending else { return }
-        pending = nil
-        try gpu.waitForSubmission(written.submission)
-        let slot = slots[written.slot]
-        frameNumber += 1
+        while !pending.isEmpty {
+            let burn = pending.removeFirst()
+            try gpu.waitForSubmission(burn.submission)
+            switch gpu.undelivered(burn.submission) {
+            case false?:
+                name(burn)
+            case true?:
+                continue
+            case nil:
+                // 後に焼いた面が無ければ、次の書き込みまで遅らせる。あれば見送る
+                guard pending.isEmpty else { continue }
+                pending.append(burn)
+                return
+            }
+        }
+    }
+
+    /// 焼いた面を名乗らせる。
+    private func name(_ burn: Burn) {
+        let slot = slots[burn.slot]
+        frameNumber = burn.number
+        newestSlot = burn.slot
         // **速さを枚数より先に載せる。** 読み手は枚数がいちばん大きい面を選ぶので、枚数を
         // 最後にすれば、選ばれた面の速さは必ずその枚数のときのものになる。属性を 1 つずつ
         // 載せる以上まとめて差し替わることはないが、順序だけで「古い速さと新しい枚数」の
         // 組み合わせは起きなくなる
-        Self.publish(written.numbers, to: slot.surface)
-        Self.publishPointerLock(written.pointerLock, to: slot.surface)
+        Self.publish(burn.numbers, to: slot.surface)
+        Self.publishPointerLock(burn.pointerLock, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
     }
 
-    /// 焼いたがまだ名乗っていない面の番号。控えが無ければ `nil`。
+    /// 最後に焼いてまだ名乗っていない面の番号。控えが無ければ `nil`。
     ///
     /// 検査が読む — 「焼いている面が、読み手の掴んでいる面ではない」を確かめる口。
-    var pendingID: UInt32? { pending.map { ids[$0.slot] } }
+    var pendingID: UInt32? { pending.last.map { ids[$0.slot] } }
 
     /// 速さを面へ載せる。
     ///
@@ -492,6 +593,10 @@ final class SharedFrameSurface {
         IOSurfaceSetValue(surface, TempoAttribute.time as CFString, NSNumber(value: numbers.time))
         set(numbers.frameRate, as: TempoAttribute.frameRate, on: surface)
         set(numbers.frameTimeMs, as: TempoAttribute.frameTimeMs, on: surface)
+        IOSurfaceSetValue(
+            surface, TempoAttribute.overBudgetFrames as CFString,
+            NSNumber(value: numbers.overBudgetFrames))
+        set(numbers.heaviestFrame.map(Double.init), as: TempoAttribute.heaviestFrame, on: surface)
     }
 
     /// 捕まえの要求を面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、
@@ -588,7 +693,9 @@ final class SharedFrameSurface {
         return FrameNumbers(
             frameCount: count, time: time,
             frameRate: number(TempoAttribute.frameRate, on: surface)?.doubleValue,
-            frameTimeMs: number(TempoAttribute.frameTimeMs, on: surface)?.doubleValue)
+            frameTimeMs: number(TempoAttribute.frameTimeMs, on: surface)?.doubleValue,
+            overBudgetFrames: number(TempoAttribute.overBudgetFrames, on: surface)?.intValue ?? 0,
+            heaviestFrame: number(TempoAttribute.heaviestFrame, on: surface)?.intValue)
     }
 
     private static func number(_ name: String, on surface: IOSurfaceRef) -> NSNumber? {

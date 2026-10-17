@@ -16,7 +16,14 @@ import QuartzCore
 /// 進め方が変わっても描かれる中身は変わらない。だから画面を持たない実行と画面に出す
 /// 実行が、別の実装に分かれない。
 ///
+/// 例外は 1 つで、**経路** (進め方ではない) で変わる。窓・共有面の経路では、保存した利用者の断片を
+/// 裏で組み、組み上がった後のフレームから効かせる ([#2365]・[ADR-0025] 決定 1 の追補 2026-10-14)。
+/// 書き出しと、この型を直に作って回す場合は、保存の次のフレームから効く。どちらの経路でも、
+/// 叩き方 (main actor を譲るか) で届き方は変わらない。
+///
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
+/// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+/// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
 @MainActor
 public final class SketchRuntime {
     /// 走らせているスケッチ。
@@ -105,7 +112,7 @@ public final class SketchRuntime {
     enum Warning: Hashable {
         /// 走っている最中に ``SketchSettings/frameRate`` が起動のときの値から変わった。
         case frameRateChangedWhileRunning
-        /// 観測へ差し出された値が非有限の数だった (``Sketch/expose(_:_:)-(_,Double)``)。
+        /// 観測へ差し出された値が非有限の数だった (``SketchPart/expose(_:_:)-(_,Double)``)。
         /// **ランタイムで 1 度だけ** — 毎フレーム差し出す口で、名前ごとに言うと名前を動的に
         /// 作る作品で控えが増え続ける。
         case nonFiniteExposed
@@ -113,6 +120,10 @@ public final class SketchRuntime {
 
     /// 1 度だけ言った注意の控え。**検査が読む。**
     private(set) var warnings = WarningLog<Warning>()
+
+    /// `draw()` の中の同期の読み込みを、口ごとに 1 度だけ知らせる控え (#2601)。読み込みの口が
+    /// ``SketchPart/noticeBlockingLoad(_:instead:)`` から言う。
+    let blockingLoads = BlockingLoads()
 
     /// 走っている最中の ``SketchSettings/frameRate`` への代入を、1 度だけ警告して断る
     /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
@@ -253,7 +264,7 @@ public final class SketchRuntime {
     private let paramStore: ParamStore?
     /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
-    /// カーソルを捕まえる要求 (``Sketch/requestPointerLock()``)。``Sketch/exitPointerLock()`` まで残る。
+    /// カーソルを捕まえる要求 (``SketchPart/requestPointerLock()``)。``SketchPart/exitPointerLock()`` まで残る。
     ///
     /// **読むのは窓である** — 直に走らせた窓は ``SketchApplication`` が毎リフレッシュ渡し、見張りの
     /// 子は共有面の属性に載せて道具の窓へ渡す ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
@@ -311,6 +322,13 @@ public final class SketchRuntime {
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     private var tempo = FrameTempo()
+    /// 1 フレームの予算を越えたフレームの控え ([#2601])。速さと同じく、窓に出る数字も観測の重さも
+    /// ここから採る。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    private var budget: FrameBudget
+    /// いま描いているフレームの仕事を始めた時刻 (``budget`` が測る長さの起点)。`setup()` の後に置く。
+    private var frameWorkBegan: Double?
 
     /// 窓に出す数字。**観測の応答が返すものと同じ集計器から採る** (ADR-0030 決定 7)。
     var frameNumbers: FrameNumbers {
@@ -319,7 +337,9 @@ public final class SketchRuntime {
             frameCount: timing.frameCount,
             time: Double(timing.time),
             frameRate: tempo.frameRate(now: moment),
-            frameTimeMs: tempo.frameTimeMs(now: moment)?.mean)
+            frameTimeMs: tempo.frameTimeMs(now: moment)?.mean,
+            overBudgetFrames: budget.overBudgetFrames,
+            heaviestFrame: budget.heaviest?.frame)
     }
 
     /// これまでに描いたフレームの数。
@@ -328,8 +348,20 @@ public final class SketchRuntime {
     public var time: Float { timing.time }
     /// 前のフレームからの経過 (秒)。
     public var deltaTime: Float { timing.deltaTime }
-    /// 時刻の出どころ。意味の説明は ``Sketch/clock`` が正本。
+    /// 時刻の出どころ。意味の説明は ``SketchPart/clock`` が正本。
     var clock: Clock { timing.clock }
+    /// 描いたフレームの経過を足し込んだもの (秒・``Countdown`` が読む)。
+    var elapsed: Double { timing.elapsed }
+
+    /// 画面へ出しながら回しているか。**外の時間で動くもの (音の再生) は、これが真なら実際に鳴らす。**
+    ///
+    /// 窓・共有面の経路 (`SketchApplication`) が組み立てで頼めば、時計によらず真 — 作品がフレームの
+    /// 時計を選んでいても鳴らす ([#2601])。時計だけを見て決めると、フレームの時計を選んだ窓が無音に
+    /// なる。頼まなければ時計から決まり、実時間の時計なら真、フレームの時計なら偽 (書き出しと、窓を
+    /// 持たずに直に回す実行) である。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    let isOnScreen: Bool
 
     /// スケッチとその舞台を組み立てる。
     ///
@@ -348,20 +380,31 @@ public final class SketchRuntime {
 
     /// 実時間の出どころを差し替えられる入口 (検査用)。
     ///
-    /// - Parameter displays: ディスプレイの一覧の出どころ (``stage(for:displays:)``)。既定は
-    ///   いま繋がっているもの。**検査と、窓を開く側 (`SketchApplication`) から渡す。**
+    /// - Parameters:
+    ///   - displays: ディスプレイの一覧の出どころ (``stage(for:displays:)``)。既定は
+    ///     いま繋がっているもの。**検査と、窓を開く側 (`SketchApplication`) から渡す。**
+    ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**窓・共有面の経路だけが立てる。**
+    ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
+    ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
+    ///
+    /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
     init(
         sketch: any Sketch,
         gpu: RenderDevice,
         clock: Clock?,
         now: @escaping () -> Double,
-        displays: () -> [Display] = { Display.connected }
+        displays: () -> [Display] = { Display.connected },
+        onScreen: Bool = false
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         try Self.checkWindowScale(settings.windowScale)
         let stage = try Self.stage(for: settings, displays: displays)
-        let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
+        let clock =
+            clock
+            ?? (onScreen
+                ? Clock.launching(settings.clock, frameRate: settings.frameRate)
+                : .frameIndex(frameRate: settings.frameRate))
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
         self.windowScale = settings.windowScale
@@ -372,6 +415,8 @@ public final class SketchRuntime {
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
+        self.isOnScreen = onScreen || clock == .wallClock
+        self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
@@ -413,6 +458,8 @@ public final class SketchRuntime {
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
+        self.isOnScreen = clock == .wallClock
+        self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
         self.observer = observer
         self.inbox = inbox
@@ -574,7 +621,14 @@ public final class SketchRuntime {
         // 駆動源の側で止めないのは、3 本のどれを止め忘れても同じ穴になるためである
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
-        let observation = capture == nil ? observer?.pendingRequest() : nil
+        let observation = capture == nil ? takeObservationRequest() : nil
+        // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
+        // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
+        // このフレームの中なので、ここで立てれば覆える
+        //
+        // [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+        canvas.gpu.waitsForShaderRebuilds = observation != nil || capture != nil
+        defer { canvas.gpu.waitsForShaderRebuilds = false }
         var requestedTime: Float?
         if let observation, observation.time != nil, let observer {
             var refusal = observation.timeWarning
@@ -667,6 +721,11 @@ public final class SketchRuntime {
         // 次のフレームの CPU と重ねるためなので、次が来ないなら遅らせる意味が無い (#1300)。
         // ここでの `redrawRequested` は上で落としてあるので、残る理由は作者の `noLoop()` である
         if !isLooping { settleWithoutAnotherFrame() }
+        // **組み終えたところで測る。** 観測に応える仕事 (絵を書き出す) は作品の重さではない
+        if let began = frameWorkBegan {
+            budget.record(frame: timing.frameCount, seconds: now() - began)
+            frameWorkBegan = nil
+        }
         serveObservationIfRequested(request: observation, drawFailure: drawFailure, appliedTime: requestedTime)
         if let drawFailure { throw drawFailure }
     }
@@ -686,6 +745,8 @@ public final class SketchRuntime {
     ///   引きずった量・スクロール) が描くフレームから消える。
     private func drawSketchFrame(deliveredInput: Bool = false, at requestedTime: Float? = nil) throws(RenderFailure) {
         start()
+        // **測るのは `setup()` の後から** — `setup()` は描いていた時間ではない (``FrameBudget``)
+        frameWorkBegan = now()
         timing.advance(at: requestedTime)
         // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
         defer { drawnThrough = timing.frameCount }
@@ -705,7 +766,14 @@ public final class SketchRuntime {
         try canvas.draw {
             withActiveRuntime {
                 if !deliveredInput { input.beginFrame { deliver($0) } }
+                // **押した・離した (`keyboard.justPressed`) は、描いたフレームの終わりで消す。**
+                // 止めている間に配った分は、ここを通るまで残る (`InputState.endFrame()`)
+                defer { input.endFrame() }
                 supplyFromInlets()
+                // **`draw()` の間だけ立てる。** 同期の読み込みを知らせるのはここだけで、`setup()` と
+                // 入力のコールバック (上の配り) では言わない (``BlockingLoads``)
+                blockingLoads.isDrawing = true
+                defer { blockingLoads.isDrawing = false }
                 sketch.draw()
             }
         }
@@ -929,7 +997,7 @@ public final class SketchRuntime {
 
     // MARK: - 実行中に差込口を足す・外す
 
-    /// 入り口を並びへ足す。転送 (正本は ``Sketch/attach(_:)-(Inlet)``)。
+    /// 入り口を並びへ足す。転送 (正本は ``SketchPart/attach(_:)-(Inlet)``)。
     ///
     /// - Returns: 並びに居るか (開けた・既に居た・巡回の後に回した)。
     @discardableResult
@@ -941,7 +1009,7 @@ public final class SketchRuntime {
         return attachNow(inlet)
     }
 
-    /// 出口を並びへ足す。転送 (正本は ``Sketch/attach(_:)-(Outlet)``)。
+    /// 出口を並びへ足す。転送 (正本は ``SketchPart/attach(_:)-(Outlet)``)。
     @discardableResult
     public func attach(_ outlet: any Outlet) -> Bool {
         guard seamVisitDepth == 0 else {
@@ -951,7 +1019,7 @@ public final class SketchRuntime {
         return attachNow(outlet)
     }
 
-    /// 入り口を並びから外して閉じる。転送 (正本は ``Sketch/detach(_:)-(Inlet)``)。
+    /// 入り口を並びから外して閉じる。転送 (正本は ``SketchPart/detach(_:)-(Inlet)``)。
     public func detach(_ inlet: any Inlet) {
         guard seamVisitDepth == 0 else {
             deferredSeamChanges.append { [unowned self] in self.detachNow(inlet) }
@@ -960,7 +1028,7 @@ public final class SketchRuntime {
         detachNow(inlet)
     }
 
-    /// 出口を並びから外して閉じる。転送 (正本は ``Sketch/detach(_:)-(Outlet)``)。
+    /// 出口を並びから外して閉じる。転送 (正本は ``SketchPart/detach(_:)-(Outlet)``)。
     public func detach(_ outlet: any Outlet) {
         guard seamVisitDepth == 0 else {
             deferredSeamChanges.append { [unowned self] in self.detachNow(outlet) }
@@ -1108,7 +1176,7 @@ public final class SketchRuntime {
         exposedValues.merge(measuredValues) { _, measured in measured }
     }
 
-    /// 進めるのを止める。**外から止める口** (作者の口は ``Sketch/noLoop()``)。
+    /// 進めるのを止める。**外から止める口** (作者の口は ``SketchPart/noLoop()``)。
     ///
     /// 止めている間は入力も集めない。観測にだけ応える。
     public func pause() { isPaused = true }
@@ -1120,7 +1188,7 @@ public final class SketchRuntime {
     ///
     /// ## 作者の `noLoop()` は覆さない
     ///
-    /// 止まる理由は 2 つある — 外 (``pause()``) と作者 (``Sketch/noLoop()``)。
+    /// 止まる理由は 2 つある — 外 (``pause()``) と作者 (``SketchPart/noLoop()``)。
     /// これが戻すのは**外の理由だけ**で、作者が止めたスケッチは再開しても止まったまま
     /// である。「1 度だけ描く」ことが作品の主題であるとき、ホストが再開しただけで
     /// 動き出すと作品の意味が壊れるため
@@ -1128,41 +1196,41 @@ public final class SketchRuntime {
     ///
     /// 判定する関門は ``advance()`` の中の 1 か所で、外が止めていればそちらが先に効く
     /// (作者の口がコールバックから呼ばれることもない)。外が止めている間に頼まれた
-    /// ``Sketch/redraw()`` は、再開した後の最初のフレームで効く。
+    /// ``SketchPart/redraw()`` は、再開した後の最初のフレームで効く。
     public func resume() {
         isPaused = false
         timing.resync()
     }
 
-    /// 外から止められていないか。**作者の ``Sketch/noLoop()`` はここに現れない** —
+    /// 外から止められていないか。**作者の ``SketchPart/noLoop()`` はここに現れない** —
     /// 意味の違いは ``resume()`` の説明にある。
     public var isRunning: Bool { !isPaused }
 
-    /// 作者の口の転送 (正本は ``Sketch/noLoop()``)。
+    /// 作者の口の転送 (正本は ``SketchPart/noLoop()``)。
     func noLoop() { isLooping = false }
 
-    /// 作者の口の転送 (正本は ``Sketch/loop()``)。
+    /// 作者の口の転送 (正本は ``SketchPart/loop()``)。
     func loop() {
         guard !isLooping else { return }
         isLooping = true
         // 止まっていた間の実時間を、再開後の最初の経過に乗せない (``resume()`` と同じ理由)。
-        // 寄せ直すのではなく 1 フレームぶんにするのは、``Sketch/redraw()`` の 1 枚と揃える
+        // 寄せ直すのではなく 1 フレームぶんにするのは、``SketchPart/redraw()`` の 1 枚と揃える
         // ため。コールバックから呼ばれたときは ``runFrame()`` も同じ印を付ける
         timing.stepOneFrameNext()
     }
 
-    /// 作者の口の転送 (正本は ``Sketch/redraw()``)。
+    /// 作者の口の転送 (正本は ``SketchPart/redraw()``)。
     ///
     /// 回っている間に呼ばれても旗を立てるだけで、そのフレームを描いた後に落ちる。
     func redraw() { redrawRequested = true }
 
-    /// 作者の口の転送 (正本は ``Sketch/pauseTime()``)。
+    /// 作者の口の転送 (正本は ``SketchPart/pauseTime()``)。
     func pauseTime() { timing.pauseTime() }
 
-    /// 作者の口の転送 (正本は ``Sketch/playTime()``)。
+    /// 作者の口の転送 (正本は ``SketchPart/playTime()``)。
     func playTime() { timing.playTime() }
 
-    /// 作者の口の転送 (正本は ``Sketch/jumpTime(_:)``)。
+    /// 作者の口の転送 (正本は ``SketchPart/jumpTime(_:)``)。
     func jumpTime(_ seconds: Float) { timing.jumpTime(Double(seconds)) }
 
     // MARK: - 使いやすい入口
@@ -1192,7 +1260,7 @@ public final class SketchRuntime {
 
     // MARK: - 絵をファイルにする
 
-    /// このフレームの絵を 1 枚だけ書き出すよう頼む。転送 (正本は ``Sketch/save(_:)``)。
+    /// このフレームの絵を 1 枚だけ書き出すよう頼む。転送 (正本は ``SketchPart/save(_:)``)。
     public func save(_ path: String) {
         // **頼まれたフレームを一緒に渡す。** 配るのは 1 枚遅れるので、番号が無いと
         // 「そのフレームの絵」ではなく 1 つ前の絵が書かれる (#927)
@@ -1200,7 +1268,7 @@ public final class SketchRuntime {
         attachRecorderIfNeeded()
     }
 
-    /// 連番を始める。転送 (正本は ``Sketch/beginRecord(_:)``)。
+    /// 連番を始める。転送 (正本は ``SketchPart/beginRecord(_:)``)。
     public func beginRecord(_ pattern: String) {
         guard !observingAtTime else {
             Diagnostics.warn("beginRecord(): cannot start recording in a specified-time observation; start on a normal frame")
@@ -1212,7 +1280,7 @@ public final class SketchRuntime {
         attachRecorderIfNeeded()
     }
 
-    /// 連番を止める。転送 (正本は ``Sketch/endRecord()``)。
+    /// 連番を止める。転送 (正本は ``SketchPart/endRecord()``)。
     public func endRecord() {
         guard let recorder else {
             Diagnostics.warn("endRecord(): nothing is being recorded")
@@ -1330,7 +1398,7 @@ public final class SketchRuntime {
 
     // MARK: - 観測に応える
 
-    /// 外から値を差し出す (``Sketch/expose(_:_:)-(_,Double)`` から呼ばれる)。
+    /// 外から値を差し出す (``SketchPart/expose(_:_:)-(_,Double)`` から呼ばれる)。
     ///
     /// 観測が有効でなければ溜めない。
     ///
@@ -1358,7 +1426,7 @@ public final class SketchRuntime {
             + "so it is not exposed (said once)"
     }
 
-    /// 処理を 1 度走らせ、かかった実時間をミリ秒で差し出す (``Sketch/measure(_:_:)`` から
+    /// 処理を 1 度走らせ、かかった実時間をミリ秒で差し出す (``SketchPart/measure(_:_:)`` から
     /// 呼ばれる)。
     ///
     /// **時計は ``now`` を読む。** フレームの時刻 (``FrameTiming``) はフレームの途中で
@@ -1505,21 +1573,49 @@ public final class SketchRuntime {
         id: String, through observer: FrameObserver,
         frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String], appliedTime: Float? = nil
     ) {
-        let last = complete ? frames.last : nil
         observer.finish(
-            ObservationReport(
-                id: id,
-                image: last?.image,
-                frame: timing.frameCount,
-                time: Double(timing.time),
-                size: ObservationReport.Size(width: target.width, height: target.height),
-                warnings: warnings,
-                stats: last?.stats,
-                load: RuntimeLoad.sample(tempo: tempo, now: now()),
-                values: exposedValues.isEmpty ? nil : exposedValues,
-                inputs: inputReports,
-                stamp: SourceStamp.current,
-                frames: frames, appliedTime: complete ? appliedTime.map(Double.init) : nil))
+            report(id: id, frames: frames, complete: complete, warnings: warnings, appliedTime: appliedTime))
+    }
+
+    /// 観測の要求を拾う。**`id` だけ読めた要求は、撮らずにここで応えて `nil` を返す** (#2550)。
+    /// 時刻の指定を断るのと同じく、前回の成果物を消し、理由を載せた目録を書く
+    /// (``FrameObserver/refuse(id:reason:report:)``)。
+    private func takeObservationRequest() -> ObservationRequest? {
+        guard let observer, let pending = observer.pendingRequest() else { return nil }
+        switch pending {
+        case .request(let request):
+            return request
+        case .unreadable(let id, let reason):
+            observer.refuse(id: id, reason: reason) { id, warnings in
+                report(id: id, frames: [], complete: false, warnings: warnings)
+            }
+            return nil
+        }
+    }
+
+    /// 目録を組む。``finish(id:through:frames:complete:warnings:appliedTime:)`` と、読めない要求への
+    /// 応え (``takeObservationRequest()``) が同じ中身を書く。
+    private func report(
+        id: String, frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String],
+        appliedTime: Float? = nil
+    ) -> ObservationReport {
+        let last = complete ? frames.last : nil
+        return ObservationReport(
+            id: id,
+            image: last?.image,
+            frame: timing.frameCount,
+            time: Double(timing.time),
+            size: ObservationReport.Size(width: target.width, height: target.height),
+            // 走っている実行の外から呼ばれた語彙 (#2265) の警告も、言った後の最初の応答に
+            // 1 度だけ載せる。標準エラーの 1 行は MCP から読めず、`init` で読んだ `width` が
+            // 0 だったことを観測で辿れなくなる。最後に足すので、失敗の理由より前には来ない
+            warnings: warnings + OutsideRun.log.takeUnreported(),
+            stats: last?.stats,
+            load: RuntimeLoad.sample(tempo: tempo, budget: budget, now: now()),
+            values: exposedValues.isEmpty ? nil : exposedValues,
+            inputs: inputReports,
+            stamp: SourceStamp.current,
+            frames: frames, appliedTime: complete ? appliedTime.map(Double.init) : nil)
     }
 
     /// 名乗りを持つ入り口の状態 (``Inlet/report``)。1 つも無ければ `nil` で、応答から鍵ごと落ちる。

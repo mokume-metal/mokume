@@ -26,8 +26,12 @@ public final class InputState {
     /// 前のフレームでの位置。
     public private(set) var previousX: Float = 0
     public private(set) var previousY: Float = 0
-    /// 押されているか。
-    public private(set) var isMouseDown = false
+    /// どれかの釦が押されているか。
+    public var isMouseDown: Bool { !pressedButtons.isEmpty }
+    /// 押されている釦。**釦ごとに持つ** — 1 つの真偽値で持っていた頃は、左を押したまま
+    /// 右を押して離すと、左も離した扱いになった
+    /// ([#2599](https://github.com/mokume-metal/mokume/issues/2599))。
+    private(set) var pressedButtons: Set<MouseButton> = []
     /// 最後に押されたか離された釦。まだ何も来ていなければ `nil`。
     public private(set) var button: MouseButton?
     /// 直近のスクロール量 (このフレームぶん)。
@@ -54,6 +58,16 @@ public final class InputState {
     public private(set) var movedY: Float = 0
     /// 押されているキー。
     public private(set) var pressedKeys: Set<Key> = []
+    /// 描いたフレームの間に、押されていない状態から押されたキーと、押されている状態から
+    /// 離されたキー (``SketchPart/keyboard`` の `justPressed` / `justReleased`)。
+    ///
+    /// **消すのはフレームの頭ではなく、描いたフレームの終わり (``endFrame()``)。** 止めている間
+    /// (`noLoop()`) も、届いた入力はフレームの外で ``beginFrame(dispatch:)`` を通って配られる。
+    /// 頭で消すと、止めている間に離したキーが次に描くフレームの `draw()` から見えない。
+    ///
+    /// 1 フレームに押して離せば、両方に入る (速い連打を落とさない)。
+    private(set) var justPressedKeys: Set<Key> = []
+    private(set) var justReleasedKeys: Set<Key> = []
     /// 最後に押されたか離されたキー。まだ何も来ていなければ `nil`。
     public private(set) var lastKey: Key?
     /// 最後に入力された文字。
@@ -110,20 +124,42 @@ public final class InputState {
         pending.removeAll(keepingCapacity: true)
         for event in events {
             // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
-            let before = Before(isMouseDown: isMouseDown, x: x, y: y)
+            let before = Before(
+                pressedButtons: pressedButtons, keyWasPressed: wasPressed(event), x: x, y: y)
             apply(event)
             dispatchCallbacks(for: event, before: before, to: dispatch)
         }
     }
 
+    /// 描いたフレームを終える。**このフレームの押した・離したを消す** (``justPressedKeys``)。
+    ///
+    /// ランタイムが `draw()` の後に呼ぶ。止めている間に配った分は、ここを通らないので
+    /// 次に描くフレームまで残る。
+    func endFrame() {
+        justPressedKeys.removeAll(keepingCapacity: true)
+        justReleasedKeys.removeAll(keepingCapacity: true)
+    }
+
     /// 出来事を当てる前の姿。**呼び出しを決めるのに要るぶんだけ持つ。**
     ///
-    /// 配るのは当てた後だが、「押下を伴う解放か」も「1 件で何画素動いたか」も、当てる
-    /// 前の値がないと決まらない。
+    /// 配るのは当てた後だが、「押下を伴う解放か」も「1 件で何画素動いたか」も「押されて
+    /// いないキーが押されたか」も、当てる前の値がないと決まらない。
     private struct Before {
-        let isMouseDown: Bool
+        let pressedButtons: Set<MouseButton>
+        /// キーの出来事なら、そのキーが当てる前に押されていたか。ほかの出来事では `false`。
+        let keyWasPressed: Bool
         let x: Float
         let y: Float
+
+        var isMouseDown: Bool { !pressedButtons.isEmpty }
+    }
+
+    /// キーの出来事なら、そのキーがいま押されているか。
+    private func wasPressed(_ event: InputEvent) -> Bool {
+        switch event {
+        case .keyDown(let code, _, _), .keyUp(let code): pressedKeys.contains(code)
+        default: false
+        }
     }
 
     /// その 1 件が生む呼び出しを、生む順に配る。**写し方の正本はここ 1 つ。**
@@ -133,11 +169,12 @@ public final class InputState {
         switch event {
         case .mouseDown:
             dispatch(.mousePressed)
-        case .mouseUp:
+        case .mouseUp(_, _, let button):
             dispatch(.mouseReleased)
             // **押下を伴う解放だけがクリックになる。** 押していないところで離しても
-            // 解放は起きる (窓の外で押して中で離す・上限で押下が捨てられた、など)
-            if before.isMouseDown { dispatch(.mouseClicked) }
+            // 解放は起きる (窓の外で押して中で離す・上限で押下が捨てられた、など)。
+            // 見るのは**その釦が**押されていたかで、ほかの釦の押下では数えない
+            if before.pressedButtons.contains(button) { dispatch(.mouseClicked) }
         case .mouseMoved(let x, let y):
             // **窓にしか無い情報を使わずに、押下状態から導く。** 窓は押している間の
             // 移動を `mouseDragged` として拾うが、合流点へは窓の出来事の区別が流れないので
@@ -151,11 +188,22 @@ public final class InputState {
             // **位置を持たない移動も、同じ分け方で配る** (#1144)。差を作らずに量そのものを
             // 渡す — 位置は動かないので、当てる前との差は常に 0 になる
             dispatchMotion(deltaX: dx, deltaY: dy, before: before, to: dispatch)
-        case .keyDown(_, let characters, _):
-            dispatch(.keyPressed)
+        case .keyDown(let code, let characters, let isRepeat):
+            // **修飾キーは押下の状態だけを変える** (``Key/isModifier``)
+            guard !code.isModifier else { return }
+            // **押されていないキーが押されたとき、またはリピートでない押下が届いたときに呼ぶ**
+            // (``isFreshPress(wasPressed:isRepeat:)``)。押しっぱなしのキーリピートは打鍵
+            // (`keyTyped()`) にだけ流す — 連射していた頃は、「1 回だけ切り替える」に押したままかの
+            // 印を作者が持つ必要があった ([#2400](https://github.com/mokume-metal/mokume/issues/2400))
+            if Self.isFreshPress(wasPressed: before.keyWasPressed, isRepeat: isRepeat) {
+                dispatch(.keyPressed)
+            }
             // **文字を生むキーだけが打鍵になる。** 矢印やファンクションキーでは呼ばない
             if Self.producesText(characters) { dispatch(.keyTyped) }
-        case .keyUp:
+        case .keyUp(let code):
+            // **押されているキーが離されたときだけ呼ぶ。** 窓が退いて離した扱いにした後で
+            // 本物の解放が届いても、2 度は呼ばない
+            guard !code.isModifier, before.keyWasPressed else { return }
             dispatch(.keyReleased)
         case .scrolled(let dx, let dy):
             // 1 件ぶんが出来事にそのまま載っているので、控えずに渡せる
@@ -188,7 +236,7 @@ public final class InputState {
     /// ([#805](https://github.com/mokume-metal/mokume/issues/805))。
     ///
     /// 判定は「制御文字でも私用領域でもないスカラを 1 つ以上含むこと」。打鍵の合図と、
-    /// ``characters`` (``Sketch/key``) の更新が同じここを見る — 割れていた頃は、矢印を
+    /// ``characters`` (``SketchPart/key``) の更新が同じここを見る — 割れていた頃は、矢印を
     /// 押すと `key` が見えない文字になっていた。
     static func producesText(_ characters: String) -> Bool {
         characters.unicodeScalars.contains { scalar in
@@ -201,18 +249,31 @@ public final class InputState {
         }
     }
 
+    /// 押下 1 件が、新しく押したことになるか。**押されていなかったキーか、リピートでない押下。**
+    ///
+    /// 押されていなかったキーなら、リピートでも新しい押下として入る — 窓が退いて離した扱いに
+    /// した後で、押し続けていたキーのリピートが戻ってきた形である。
+    ///
+    /// 押されているはずのキーにリピートでない押下が届いたら、**解放を取りこぼした印**として
+    /// 新しい押下に数える。集合に古い押下が残ったままだと、次に本当に押したときに
+    /// `keyPressed()` も `justPressed` も起きず、押下が 1 回無視される (窓が key のまま解放だけが
+    /// 届かない経路は、すべては塞げない)。
+    static func isFreshPress(wasPressed: Bool, isRepeat: Bool) -> Bool {
+        !wasPressed || !isRepeat
+    }
+
     private func apply(_ event: InputEvent) {
         switch event {
         case .mouseDown(let x, let y, let button):
             self.x = x
             self.y = y
             self.button = button
-            isMouseDown = true
+            pressedButtons.insert(button)
         case .mouseUp(let x, let y, let button):
             self.x = x
             self.y = y
             self.button = button
-            isMouseDown = false
+            pressedButtons.remove(button)
         case .mouseMoved(let x, let y):
             accumulateMotion(deltaX: x - self.x, deltaY: y - self.y)
             self.x = x
@@ -224,15 +285,23 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             scrollX += dx
             scrollY += dy
-        case .keyDown(let code, let characters, _):
-            pressedKeys.insert(code)
+        case .keyDown(let code, let characters, let isRepeat):
+            let wasPressed = !pressedKeys.insert(code).inserted
+            if Self.isFreshPress(wasPressed: wasPressed, isRepeat: isRepeat) {
+                justPressedKeys.insert(code)
+            }
+            // **修飾キーは `keyCode` も `key` も動かさない。** 大文字を打った後に `keyCode` が
+            // `.shift` のまま残らないようにする (#2435)
+            guard !code.isModifier else { return }
             lastKey = code
             // **打鍵と同じ判定を使う。** 空でないことで見ていた頃は、矢印を押すと
             // ここが私用領域の文字になっていた (#805)
             if Self.producesText(characters) { self.characters = characters }
         case .keyUp(let code):
-            pressedKeys.remove(code)
-            lastKey = code
+            // 押されていないキーの解放は、呼び出しを生まないので `keyCode` も動かさない
+            guard pressedKeys.remove(code) != nil else { return }
+            justReleasedKeys.insert(code)
+            if !code.isModifier { lastKey = code }
         }
     }
 

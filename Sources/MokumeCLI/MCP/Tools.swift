@@ -33,6 +33,11 @@ struct Tools {
         makeID: @escaping () -> String = { UUID().uuidString.prefix(8).lowercased() }
     ) {
         let package = packageDirectory ?? facets.directory
+        // **窓口を立てた場所の事実は、組む時点で決める** (#2487)。立てる口 (`MCPCommand.run`) は
+        // 自分で渡す。渡されなければパッケージの場所を見て埋める — 検査が組む窓口も、
+        // 本物と同じく場所の事実を持つ
+        var facets = facets
+        if facets.place == nil { facets.place = .at(package) }
         self.facets = facets
         self.packageDirectory = package
         self.apiList = apiList ?? APIListLocator(directory: package)
@@ -61,9 +66,9 @@ struct Tools {
             case .observe:
                 "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew. With time, redraw exactly one frame at those seconds (deltaTime=0). This changes the shown picture and retains draw side effects; it is not a rewind. noLoop stays stopped. External pause and recording refuse it."
             case .buildStatus:
-                "Return the result of the most recent build (whether it passed, the exit code, the output, a breakdown of how long it took, and the source stamp). Read this when you want to know why the drawing did not change."
+                "Return the result of the most recent build (whether it passed, whether the sketch was started, the exit code, the output, a breakdown of how long it took, and the source stamp). A build that passed but did not start the sketch (ok true, launched false) leaves the drawing frozen; notStartedReason says why. Read this when you want to know why the drawing did not change."
             case .input:
-                "Send input events to the running sketch. Coordinates are in the canvas coordinate system. The types are mouseDown / mouseUp / mouseMoved / mouseMovedBy / scrolled / keyDown / keyUp. The three positional types need x and y; the two key types need code (the macOS virtual key code: 49 = Space, 0 = A, 126 = up arrow). An event missing one is counted in ignored and the rest still go through. mouseMovedBy moves by dx and dy (canvas pixels, down is positive) without changing mouseX / mouseY, as a sketch that holds the pointer (requestPointerLock()) receives it; it reaches mouseMoved(deltaX:deltaY:), or mouseDragged(deltaX:deltaY:) while a button is held. button / dx / dy / characters / isRepeat can be left out. button is the macOS button number (0 = left, the primary one, and the default; 1 = right; 2 = center), which is not the browser order, where 1 is the middle button and 2 the secondary one."
+                "Send input events to the running sketch. Coordinates are in the canvas coordinate system. The types are mouseDown / mouseUp / mouseMoved / mouseMovedBy / scrolled / keyDown / keyUp. The three positional types need x and y; the two key types need code (the macOS virtual key code: 49 = Space, 0 = A, 126 = up arrow). An event missing one is counted in ignored and the rest still go through. mouseMovedBy moves by dx and dy (canvas pixels, down is positive) without changing mouseX / mouseY, as a sketch that holds the pointer (requestPointerLock()) receives it; it reaches mouseMoved(deltaX:deltaY:), or mouseDragged(deltaX:deltaY:) while a button is held. button / dx / dy / characters / isRepeat can be left out. keyPressed() fires only when a key that is not held goes down, so a repeat (isRepeat true) reaches keyTyped() alone. The modifier keys (56 / 60 = Shift, 59 / 62 = Control, 58 / 61 = Option, 55 / 54 = Command) only change which keys are held, which the sketch reads with keyboard.isPressed(.shift). button is the macOS button number (0 = left, the primary one, and the default; 1 = right; 2 = center), which is not the browser order, where 1 is the middle button and 2 the secondary one."
             case .reference:
                 "Return a document this interface serves. With no argument you get the list; pass name for one of them. Pass api for the public API of the version currently depended on (which types and functions exist, and how to call them). Pass startup for the things decided the moment a process starts (the ones that have no effect while it runs). The rest are surface specs (the shape of requests and replies)."
             }
@@ -101,8 +106,8 @@ struct Tools {
                                 """
                                 Take a shot every N frames (\(ObservationRequest.minimumEvery)…\(ObservationRequest.maximumEvery)). \
                                 Omit to take every frame. Counted in frames rather than seconds, \
-                                and the sketch being observed runs on the wall clock, so the shots \
-                                are not evenly spaced in time — lay the series out by each entry's \
+                                and the sketch being observed runs on the wall clock unless it chose \
+                                `clock: .frames`, so the shots are not evenly spaced in time — lay the series out by each entry's \
                                 `time` in the reply's catalogue, rather than assuming an even gap. \
                                 For motion with evenly spaced times, write it with `mokume render` \
                                 instead (a fixed frame rate, every frame written).
@@ -159,8 +164,12 @@ struct Tools {
         var request: [String: Any] = ["id": id]
         // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
         // 真偽値は `NSNumber` 経由で 1 に読めてしまうので、型で見分ける (`time` と揃える・#2319)。
-        // 有限でない数も断る — JSON の読み手は `-1e400` を `-inf` に読み、通すと区画を作った
-        // 後で書けずに、置き場所のせいにした案内が返る。範囲では切らない — 範囲の外は撮る側が
+        // 有限でない数も断る — 通すと区画を作った後で書けずに、置き場所のせいにした案内が
+        // 返る。窓口の入口 (`JSONRPC.parse`) が、木に残った `-1e400` (`-inf` と読まれる) を行ごと
+        // 断るので、ここへは通常来ない。**多層防御として残す** — 入口が見るのは読んだ木で、
+        // 同じキーを 2 度書いた行の後ろの値のように木から落ちた数は見ないが、落ちた数は
+        // ここへも届かない。`Tools` を直に呼ぶ口 (検査・将来の呼び元) のためにも判定は持つ。
+        // 範囲では切らない — 範囲の外は撮る側が
         // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は従来どおり省略と同じに
         // 読む (方針は #2393 で決める)
         if let raw = arguments["scale"], !(raw is NSNull) {
@@ -336,10 +345,24 @@ struct Tools {
 
     private func buildStatus() -> (String, Bool) {
         guard let status = facets.read(facets.buildStatus) else {
-            return (
-                """
+            let missing = """
                 No build has been recorded yet. Either `\(Command.name) watch` is not running,
                 or it has not built anything so far.
+                """
+            // **記録を書くのは `watch` で、書く先は `watch` の区画の基準** (スケッチの場所)。
+            // 窓口の区画の基準がスケッチでない場所に落ちていれば、走っている `watch` の記録は
+            // ここからは読めない (#2487)。その場所から組み上げた実行ファイルを起こす使い方では
+            // 作り直しがそもそも無いので、そう言い分ける — 一手を勧めるのは前者に対してだけである
+            guard facets.facetsOutsideSketch, let place = facets.place else { return (missing, true) }
+            return (
+                """
+                \(missing)
+
+                \(place.note)
+
+                `\(Command.name) watch` records its builds under the sketch's own directory, so an interface
+                started elsewhere does not see them. A built app started from \(place.directory.path)
+                itself is never rebuilt, so for that one there is no record to read.
                 """, true
             )
         }
@@ -388,13 +411,17 @@ struct Tools {
                 let report = try facets.exchange(
                     facet: facet, request: request, id: id, extraWait: extraWait)
             else {
-                return .refused(
-                    facets.notRunning(
-                        entry, existed: existed, packageDirectory: packageDirectory))
+                return .refused(facets.notRunning(entry, existed: existed))
             }
             return .answered(report)
         } catch {
-            return .refused(error.message)
+            // **置けなかった回も、場所の手を添える** (#2487)。窓口は在る場所なら受けるので、
+            // `/` や読み取り専用の場所でも立つ。区画の基準がそこに落ちていれば、書き込めるか・
+            // 容量・`MOKUME_WORK_DIR` だけを言うと、場所を渡す手が抜ける
+            guard facets.facetsOutsideSketch, let place = facets.place else {
+                return .refused(error.message)
+            }
+            return .refused("\(error.message)\n\n\(place.note)")
         }
     }
 
@@ -446,7 +473,13 @@ struct Tools {
             let found = try apiList.read()
             return ("Source: \(found.source.text)\n\n\(found.text)", false)
         } catch let missing as APIListLocator.Missing {
-            return (missing.advice, true)
+            // **版が引けない回だけ、場所の手を添える** (#2487)。スケッチでない場所には
+            // `Package.resolved` も無いので、理由を「パスで指しているとき」とだけ言うと取り違える。
+            // 版を読むのはパッケージの場所なので、区画の基準 (`MOKUME_WORK_DIR`) には依らない。
+            // 取りに行けない・読めない回は場所のせいではないので添えない
+            guard missing.cause == .versionUnknown, let place = facets.place, !place.isSketch
+            else { return (missing.advice, true) }
+            return ("\(missing.advice)\n\n\(place.note)", true)
         } catch {
             return ("Could not read the public API list: \(error)", true)
         }

@@ -54,7 +54,7 @@ extension Canvas {
                 kind: .spot, color: color,
                 position: transform.apply(x: x, y: y, z: z),
                 direction: transformedDirection(directionX, directionY, directionZ),
-                coneCosine: cos(used)),
+                coneCosine: RuntimeMath.cos(used)),
             color: color, entry: .spotLight)
     }
 
@@ -89,8 +89,9 @@ extension Canvas {
     /// 光を置き場へ足す。**列をその場で閉じる**ので、既に置いた立体は置いた時点の
     /// 光で描かれる ([ADR-0021] 決定 2 の「記録した列だけで絵が決まる」)。
     ///
-    /// フレームの外 (初期化のとき) に置かれた光は、どのフレームにも属さないので
-    /// 警告して無視する (同 決定 4)。黙って捨てると「書いたのに効かない」だけが残る。
+    /// フレームの外 (初期化のとき・止まっている間の入力のコールバック) に置かれた光は、
+    /// どのフレームにも属さないので警告して無視する (同 決定 4)。黙って捨てると「書いたのに
+    /// 効かない」だけが残る。
     ///
     /// **光の色 (`color`) の赤・緑・青が数でない値・無限なら置かない** ([#1706])。不透明度は
     /// 光に持ち込まない (``Light``) ので見ない。フレームの外の断りを先に言う

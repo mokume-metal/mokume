@@ -100,6 +100,32 @@
             }
           }
         },
+        "overBudgetFrames": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many frames since launch took longer than one frame's budget (1 / the declared frame rate). Measured as the frame's own work — from advancing the time to finishing the picture — so setup() and waiting for the display are not counted. **Under the frame clock (`clock: .frames`) each of these frames is a slowdown**, since the picture is never skipped. A count, so it is always present in a reply written by this version."
+        },
+        "heaviestFrame": {
+          "type": "object",
+          "description": "The frame since launch whose work took longest. Omitted before any frame has been measured.",
+          "required": [
+            "frame",
+            "ms"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "frame": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The frame number, counted like frameCount (the first frame is 1)."
+            },
+            "ms": {
+              "type": "number",
+              "minimum": 0,
+              "description": "How long its work took, in milliseconds."
+            }
+          }
+        },
         "memoryMB": {
           "type": "number",
           "minimum": 0,

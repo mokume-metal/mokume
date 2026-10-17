@@ -4,7 +4,7 @@ AI エージェントと人間に等しく効く規約の正典で、**作業に
 
 ## プロジェクト
 
-mokume は macOS / Apple Silicon 専用のクリエイティブコーディング環境 (Swift + Metal)。宣言的・フレームベースのスケッチ API を提供する。
+mokume は Apple Silicon の macOS で動くクリエイティブコーディング環境 (Swift + Metal)。宣言的・フレームベースのスケッチ API を提供する。ゲームも書け、iOS / iPadOS へも出せる方向へ広げている (ADR-0045。iOS は未実装)。
 
 ## 正典の在処
 
@@ -44,15 +44,17 @@ PR に付けるのは CI の判定を変える `no-issue` (Issue を閉じない
 
 ## マージの判断基準
 
-PR 本文が揃い `ci-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で queue に入れてよい。承認はどの PR にも要らない (`.github/`・`.claude/` を変える PR も)。queue が合流後に再検証するので、手で merge しない。マージ後は main に戻って pull する。
+PR 本文が揃い `ci-gate`・`pr-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で queue に入れてよい。承認はどの PR にも要らない (`.github/`・`.claude/` を変える PR も)。queue が合流後に再検証するので、手で merge しない。マージ後は main に戻って pull する。
 
-- **後からコミットを足す予定の PR は、足し終えるまで auto-merge を掛けない。** `ci-gate` が green になった瞬間に queue へ入り、足す前に merge される。掛けたなら green になる前に `gh pr merge --disable-auto` で外す
+- **後からコミットを足す予定の PR は、足し終えるまで auto-merge を掛けない。** 必須チェックが green になった瞬間に queue へ入り、足す前に merge される。掛けたなら green になる前に `gh pr merge --disable-auto` で外す
 - **`BEHIND` でも "Update branch" は押さない。** 得るものが無く、auto-merge だけが外れる
 - check が 1 本も付かないのは main との衝突で、手元で解いて push する。他の止まり方は `bash scripts/stall-watch.sh` が読み分ける
 
 ## 説明と報告
 
-合意済みの仕様の内側の修正は進める。公開 API の意味・互換性方針・原則・重要な代償、検査の保証範囲・権限・委任範囲を新たに選ぶときは、Issue に具体例・選択肢・推奨を示し、人が先に判断する。既存の採択を根拠にできれば再確認は要らない。既存仕様へ戻す修正でも、移行方法や提供時期が未合意ならそこを先に確定する。沈黙を同意とせず、委任範囲を広げない。
+依頼の目的・制約・委任範囲を基準に、判断に影響する前提と作業の必要性を確かめる。変更・現状維持・代案を同じ基準で評価し、必要な作業を進め、不要なら理由を示す。合意済みの判断は、結論に影響する新しい根拠や条件変更があるときに見直す。
+
+公開 API の意味・互換性方針・原則・重要な代償、検査の保証範囲・権限・委任範囲を新たに選ぶときは、Issue に具体例・選択肢・推奨を示し、人が先に判断する。既存仕様へ戻す修正でも、移行方法や提供時期が未合意ならそこを先に確定する。沈黙を同意としない。
 
 完了条件には、具体的な入力・操作と変更前後の結果・代償を最低 1 例書き、実物 (画像・動画) も可能な範囲で添える。PR では結果を更新する。複数の変更の方向性を伝える報告は `.claude/skills/visual-evidence/report.md` で束ねる。
 
@@ -60,13 +62,13 @@ PR 本文が揃い `ci-gate` が green なら、指示を待たず `gh pr merge 
 
 置き場は、PR ができるまでは Issue、できてからは PR。ただし完了条件が動く話と完了報告 (条件と PR の対応表を 1 通) は Issue、恒久的な決定は ADR。Issue に「実装 PR は #N」とは書かない (GitHub が相互リンクを描く)。
 
-AI エージェントは、このリポジトリへの発言 (コメント・`gh pr review` の本文・close / reopen の発言) を `bash scripts/comment.sh {issue|pr} <番号> --body-file <ファイル>` で投稿し、署名をラッパーに付けさせる。close / reopen は発言を投稿してから、状態だけを発言なしで変える。他のリポジトリへは素の `gh` で書く。
+AI エージェントは、このリポジトリへの発言 (コメント・`gh pr review` の本文・close / reopen の発言) を `bash scripts/comment.sh {issue|pr} <番号> --body-file <ファイル>` で投稿し、署名をラッパーに付けさせる。close / reopen は発言を投稿してから、状態だけを発言なしで変える。本文の書き換えは `bash scripts/edit-body.sh {issue|pr} <番号>` の `--fetch <ファイル>` で取得して直し、`--body-file` で書き込む。他のリポジトリへは素の `gh` で書く。
 
 ## コミット・PR の規約
 
 - Conventional Commits (`<type>(<scope>): <要約>`、type は feat / fix / docs / refactor / test / chore / ci / perf / build)。要約は日本語でよい。PR タイトルも同じ形で書く (squash のコミットになる)
 - 1 コミット 1 関心。1 PR は 1 つの説明で筋が通る範囲 (同じ親の sub-issue 群や、作業中に起票した障害もまとめて閉じてよい)
-- 検証の入口は `make ci-check`。手元では触った範囲の段 (`make <段>`。触ったものごとの段は `Makefile` の `CI_CHECK_STEPS` の注釈) を通して push し、全段は CI に任せる
+- 検証の入口は `make ci-check`。手元では触った範囲の段 (`make <段>`。触ったものごとの段は `Makefile` の `CI_CHECK_ALL` の注釈) を通して push し、全段は CI に任せる
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 つ置く (CHANGELOG を直接編集しない)
 - PR・コミットはメンテナ自身の `gh` 認証と署名で作る (外部の人は自分の名義)
 
@@ -74,7 +76,7 @@ AI エージェントは、このリポジトリへの発言 (コメント・`gh
 
 - 生成物・バイナリ (画像・動画・モデル) をコミットしない。視覚的な証跡は外部に上げて URL で参照する
 - 帰属 (著作権・ライセンス) の不明なファイルを持ち込まない。第三者素材は正確な帰属の宣言と同時にだけ入れる
-- 想定だけの API を先回りで作らない。機能は `Feature` の Issue に作例 (作りたい絵・動き) を先に置き、メンテナが `verify: triaged` を付けてから作例が要る分だけ作る。本体が標準で持つ領域は、作品の実需を待たずに入れてよい: カメラ・音 (入力の解析・再生・Processing Sound 並みの合成)・動画・シリアル・ゲームパッド・3D モデルの形式・文字列 / CSV / JSON / XML / URL の読み込み・SVG の読み込み・全画面、連携の口として OSC・MIDI (入出力とクロック)・TCP / UDP / WebSocket。ベクター書き出し・Vision・書き出しへの音声は領域ごとの `Design` で決める。深度カメラ・Syphon・NDI は外のパッケージ、マッピング・照明 (DMX)・Audio Unit のホスト・画面のキャプチャ・物理・Web の描画・GUI エディタはやらない。ここに無い領域は、地図の改訂が先
+- 想定だけの API を先回りで作らない。機能は `Feature` の Issue に作例 (作りたい絵・動き) を先に置き、メンテナが `verify: triaged` を付けてから作例が要る分だけ作る。本体が標準で持つ領域は、作品の実需を待たずに入れてよい: カメラ・音 (入力の解析・再生・Processing Sound 並みの合成)・動画・シリアル・ゲームパッド・3D モデルの形式・文字列 / CSV / JSON / XML / URL の読み込み・SVG の読み込み・全画面、連携の口として OSC・MIDI (入出力とクロック)・TCP / UDP / WebSocket。ゲーム (シーン・アーケード物理・タイルマップ・セーブ) も本体の領域 (`MokumeGame`) に入る。ベクター書き出し・Vision・書き出しへの音声は領域ごとの `Design` で決める。深度カメラ・剛体物理・Syphon・NDI は外のパッケージ、マッピング・照明 (DMX)・Audio Unit のホスト・画面のキャプチャ・Web の描画・GUI エディタはやらない。ここに無い領域は、地図の改訂が先
 - このリポジトリから作品を参照しない。作品で踏んだバグは `Bug` で起票し、最小のスケッチかテストに落とす
 - 新しいゲート・検査・hook・ラベル・ワークフローは、塞ぐ実害を Issue 番号で示せるときだけ足す (消すには要らない)。「あると良さそう」なら起票して待たせる。足すときも既存の責務を広げる / native で済ませる / 置き換える、の順に検討し、選んだ段を PR 本文に書く。コードの写しを畳むのも足すことに数える
 
@@ -97,7 +99,7 @@ AI エージェントは、このリポジトリへの発言 (コメント・`gh
 | 待ちを含む検査を書く | 待つ側が期限を持ち、越えたら殺す。`.timeLimit` は使わない (main actor 上で検査全体の秒数を縛る) |
 | queue から弾かれた | 落ちた `render` の run を読む (`render-pr` は早期の情報で必須ではない)。専用機は画面とキーボードで操作する |
 | 止まって見える | `bash scripts/stall-watch.sh` (冒頭に症状と対処)。対象から外すなら Draft に |
-| 版の出方 | 日に 1 度自動で出る。出し直しだけ `release:now` (`scripts/release.py` 冒頭) |
+| 版の出方 | 日に 1 度自動で出る。下限 OS の release の検査が赤なら出ない (`release.yml`)。出し直しだけ `release:now` (`scripts/release.py` 冒頭) |
 | ブランチ保護の正本 | `.github/rulesets/*.json` を PR で変え、適用 (`scripts/apply-rulesets.sh --apply`) はメンテナが merge 後に行う。必須チェックを消すときだけ適用が先 |
 | sub-issue の使い方 | `scripts/sub-issue.sh <親番号> <タイトル>`。階層は 3 段までで、独立した Issue を無理にツリーにしない。open の子を残す親は not planned で閉じる |
 | 手元機が落ちた・画面が固まった | GPU の検査の起動元を `scripts/gpu-slot.py` 冒頭「起動元の記録」で引く |

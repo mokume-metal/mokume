@@ -7,7 +7,7 @@ import MokumeDiagnostics
 
 /// 利用者が書いた塗り。
 ///
-/// 使い方は ``Sketch/loadShader(_:values:surfaces:)`` にある。
+/// 使い方は ``SketchPart/loadShader(_:values:surfaces:)`` にある。
 public final class Shader {
     /// 断片・値・保存の拾い直しを持つ骨。**3 者で 1 つ** (``ShaderBox``)。
     private let box: ShaderBox
@@ -28,6 +28,12 @@ public final class Shader {
     var watcher: FileWatcher? { box.watcher }
     /// 診断: 差し替えの失敗を知らせた回数 (``ShaderBox/failureReports``)。
     var failureReports: Int { box.failureReports }
+    /// 診断: 裏で組みに行った回数 (``ShaderBox`` の「裏で組む」)。
+    var backgroundBuildsStarted: Int { box.backgroundBuildsStarted }
+    /// 診断: 裏で組んでいる仕事があるか。
+    var isBuildingInBackground: Bool { box.isBuildingInBackground }
+    /// 診断: 裏で組んでいる仕事が組み上がっているか (まだ差し替えていない)。
+    var backgroundBuildFinished: Bool { box.backgroundBuildFinished }
 
     /// いま渡している面。**名前ごとに口を 1 つ使う** ([#407])。
     ///
@@ -65,6 +71,10 @@ public final class Shader {
     /// **断片は 1 つで、頂点の落とし方だけが違う。** 平面と立体で断片を別々に
     /// 組み立てると、同じ断片なのに片方だけ差し替わる状態が作れてしまう。
     private(set) var solidStates: ShapePipeline.BlendStates
+    /// 正の寸法の球・箱・平面・円柱を塗るときのパイプライン (``ShapePipeline/unitShapeStates`` の、
+    /// この断片の版)。
+    /// 断片は ``solidStates`` と同じで、3 組は**揃って**差し替わる (``reload()``)。
+    private(set) var unitShapeStates: ShapePipeline.BlendStates
 
     private let pipeline: ShapePipeline
     private let gpu: RenderDevice
@@ -92,12 +102,15 @@ public final class Shader {
             label: "shader", valuesHint: "loadShader's values")
 
         let library = try gpu.shaders.makeShapeLibrary(
-            named: name, body: body, values: values, surfaces: surfaces)
+            named: name, body: body, bodyName: box.bodyName, values: values, surfaces: surfaces)
         self.states = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name)")
         self.solidStates = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name).solid",
             vertexFunctionName: ShapePipeline.solidVertexFunctionName)
+        self.unitShapeStates = try pipeline.makeStates(
+            fragmentLibrary: library, label: "mokume.shader.\(name).unit-shape",
+            vertexFunctionName: ShapePipeline.unitShapeVertexFunctionName)
 
         box.watch { [weak self] in self?.reload() }
     }
@@ -145,24 +158,57 @@ public final class Shader {
 
     // MARK: - 差し替え
 
-    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
+    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(inBackground:prepare:adopt:)``)。
+    ///
+    /// 窓の経路では裏で組み、組み上がった後のフレームの頭で差し替える (``ShaderBox`` の「裏で組む」)。
     func reload() {
-        box.reload { (body: String) throws(RenderFailure) in
-            let library = try gpu.shaders.makeShapeLibrary(
-                named: name, body: body, values: values, surfaces: surfaces)
-            // **両方が組み上がってから差し替える。** 片方だけ差し替わると、平面と
-            // 立体で違う断片が効いている状態になる
-            let flat = try pipeline.makeStates(
-                fragmentLibrary: library, label: "mokume.shader.\(name)")
-            let solid = try pipeline.makeStates(
-                fragmentLibrary: library, label: "mokume.shader.\(name).solid",
-                vertexFunctionName: ShapePipeline.solidVertexFunctionName)
-            // **入れ替えた古い状態は、投入済みのフレームが終わるまで抱える** (#1830 の 2 回目の
-            // 反証 2・``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。列が抱えるのは塗り
-            // そのもので、前のフレームが組んだ状態は誰も抱えていない
-            gpu.holdUntilSubmittedWorkFinishes(states.all + solidStates.all)
-            states = flat
-            solidStates = solid
-        }
+        box.reload(
+            inBackground: gpu.shaderRebuildsRunInBackground,
+            prepare: { (body: String) throws(RenderFailure) -> BuildJob<Rebuilt> in
+                let library = try gpu.shaders.shapeLibraryJob(
+                    named: name, body: body, bodyName: box.bodyName, values: values,
+                    surfaces: surfaces)
+                let flat = pipeline.statesJob(label: "mokume.shader.\(name)")
+                let solid = pipeline.statesJob(
+                    label: "mokume.shader.\(name).solid",
+                    vertexFunctionName: ShapePipeline.solidVertexFunctionName)
+                let unitShape = pipeline.statesJob(
+                    label: "mokume.shader.\(name).unit-shape",
+                    vertexFunctionName: ShapePipeline.unitShapeVertexFunctionName)
+                return BuildJob(
+                    now: { () throws(RenderFailure) in
+                        let made = try library.runNow()
+                        return Rebuilt(
+                            flat: try flat.makeNow(fragmentLibrary: made),
+                            solid: try solid.makeNow(fragmentLibrary: made),
+                            unitShape: try unitShape.makeNow(fragmentLibrary: made))
+                    },
+                    later: { () async throws(RenderFailure) in
+                        let made = try await library.run()
+                        return Rebuilt(
+                            flat: try await flat.make(fragmentLibrary: made),
+                            solid: try await solid.make(fragmentLibrary: made),
+                            unitShape: try await unitShape.make(fragmentLibrary: made))
+                    })
+            },
+            adopt: { rebuilt in
+                // **全部が組み上がってから差し替える。** 1 組だけ差し替わると、平面と
+                // 立体 (と単位の形) で違う断片が効いている状態になる
+                // **入れ替えた古い状態は、投入済みのフレームが終わるまで抱える** (#1830 の 2 回目の
+                // 反証 2・``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。列が抱えるのは塗り
+                // そのもので、前のフレームが組んだ状態は誰も抱えていない
+                gpu.holdUntilSubmittedWorkFinishes(
+                    states.all + solidStates.all + unitShapeStates.all)
+                states = ShapePipeline.BlendStates(rebuilt.flat)
+                solidStates = ShapePipeline.BlendStates(rebuilt.solid)
+                unitShapeStates = ShapePipeline.BlendStates(rebuilt.unitShape)
+            })
+    }
+
+    /// 組み直した平面・立体・単位の形の 3 本ずつ。
+    struct Rebuilt: Sendable {
+        let flat: ShapePipeline.BuiltStates
+        let solid: ShapePipeline.BuiltStates
+        let unitShape: ShapePipeline.BuiltStates
     }
 }

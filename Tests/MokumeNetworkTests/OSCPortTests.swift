@@ -9,13 +9,6 @@ import Testing
 @testable import MokumeCore
 @testable import MokumeNetwork
 
-/// 空いている UDP のポートを 1 つ選ぶ。127.0.0.1 で番号 0 を開いて OS が選んだ番号を読み、閉じる。
-nonisolated func freeUDPPort() throws -> Int {
-    let holder = try PortHolder(port: 0)
-    defer { holder.release() }
-    return holder.port
-}
-
 /// 127.0.0.1 のポートを握る。他のアプリがそのポートを使っている状態を作る。
 ///
 /// 既定は UDP のソケット。`stream` なら TCP のソケットで握り、待ち受けまで始める
@@ -29,7 +22,23 @@ nonisolated final class PortHolder: Sendable {
         let code: Int32
     }
 
-    init(port: Int, stream: Bool = false) throws {
+    /// 誰も受けない 127.0.0.1 の UDP の口を、**番号を手放さずに**作る (#2542)。
+    ///
+    /// 番号 0 で握った UDP の socket を、送り手ではない相手 (127.0.0.1:1) へ繋いでおく。繋いだ UDP の
+    /// socket は繋いだ相手以外からの datagram を受けないので、届いた datagram はどの socket にも
+    /// 当たらず、拒否 (ICMP の port unreachable) が送り手の次の送信の失敗として返る。**握っている間は、
+    /// 他のプロセスが同じ番号を bind できない** (`EADDRINUSE`)。番号を選んで手放してから狙う形は、
+    /// 手放してから狙うまでの間に他が番号を取りうる (#2359 と同じ隙間)。検査の終わりに ``release()``
+    /// で手放す。
+    static func unanswered() throws -> PortHolder {
+        try PortHolder(port: 0, stream: false, connectingAway: true)
+    }
+
+    convenience init(port: Int, stream: Bool = false) throws {
+        try self.init(port: port, stream: stream, connectingAway: false)
+    }
+
+    private init(port: Int, stream: Bool, connectingAway: Bool) throws {
         let descriptor = socket(AF_INET, stream ? SOCK_STREAM : SOCK_DGRAM, 0)
         guard descriptor >= 0 else { throw Failure(call: "socket", code: errno) }
         var address = sockaddr_in()
@@ -52,6 +61,23 @@ nonisolated final class PortHolder: Sendable {
             close(descriptor)
             throw Failure(call: "listen", code: code)
         }
+        if connectingAway {
+            var away = sockaddr_in()
+            away.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            away.sin_family = sa_family_t(AF_INET)
+            away.sin_port = in_port_t(UInt16(1).bigEndian)
+            away.sin_addr.s_addr = inet_addr("127.0.0.1")
+            let connected = withUnsafePointer(to: &away) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard connected == 0 else {
+                let code = errno
+                close(descriptor)
+                throw Failure(call: "connect", code: code)
+            }
+        }
         var actual = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         _ = withUnsafeMutablePointer(to: &actual) {
@@ -63,7 +89,22 @@ nonisolated final class PortHolder: Sendable {
         self.port = Int(UInt16(bigEndian: actual.sin_port))
     }
 
-    func release() { close(descriptor) }
+    /// 握っていた番号を手放す。
+    ///
+    /// **手放してから受け口が同じ番号を開き直すまでの間に、他のプロセスが番号を取りうる** (#2542)。
+    /// 「他が握っていれば unavailable、空けば受け始める」を確かめる検査は、この隙間そのものが目的
+    /// (空いたら受け始める) なので閉じる手が無い (#2359 の決定で残している)。取られても受け口は
+    /// unavailable のままで、検査は期限で赤くなるだけで、緑にはならない — 確かめることは変わらず、
+    /// 変わるのは揺れの確率だけである。
+    ///
+    /// 2 度目からは何もしない。検査の途中で手放す口 (受け手を同じ番号で開く前など) も、終わりの
+    /// `defer` で重ねて呼べる — 2 度閉じると、その間に同じ番号を振り直された別の descriptor を閉じうる。
+    func release() {
+        guard held.withLock({ held in defer { held = false }; return held }) else { return }
+        close(descriptor)
+    }
+
+    private let held = Mutex(true)
 }
 
 /// 知らせの行き先。どのスレッドから書かれてもよい。
@@ -72,6 +113,26 @@ nonisolated final class Told: Sendable {
     func append(_ line: String) { store.withLock { $0.append(line) } }
     var lines: [String] { store.withLock { $0 } }
     func count(containing text: String) -> Int { lines.filter { $0.contains(text) }.count }
+}
+
+/// 受けるポートを OS が選ぶ入り口 (番号 0) の送り先。受け始めて番号が分かってから、そこへ向ける。
+///
+/// **空きポートの番号を先に選んで手放し、あとから開く形にしない。** 手放してから開くまでの間に
+/// 別のプロセス (並行する他のセッションの検査など) がその番号を取ると、使用中として断られて
+/// 落ちる (#2359)。番号は 0 を頼んで、開いた後に読む。
+nonisolated final class AimedSender: DatagramSending {
+    private let target = Mutex<DatagramSender?>(nil)
+    private let warn: @Sendable (String) -> Void
+
+    init(warn: @escaping @Sendable (String) -> Void) { self.warn = warn }
+
+    /// 127.0.0.1 の `port` へ向ける。
+    func aim(at port: Int) {
+        target.withLock { $0 = DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
+    }
+
+    func send(_ bytes: [UInt8]) { target.withLock { $0?.send(bytes) } }
+    func stop() { target.withLock { $0?.stop() } }
 }
 
 /// 検査から動かせる時計 (秒)。受け口が送り元の黙りを測る時計の代わりに渡す。
@@ -114,7 +175,40 @@ struct OSCPortTests {
         return received
     }
 
-    /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す。
+    /// 127.0.0.1 で、OS が選んだポート (0 を頼む) で受け、送り先も同じポートにした入り口。開いて、
+    /// 受け始めてから、実際に開いたポートと一緒に返す。
+    ///
+    /// 空きポートを先に選んで手放すと、開くまでの間に別のプロセスに取られうる (#2359) ので、
+    /// 受けるポートはここでしか決めない。
+    private func listening(
+        told: Told, idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
+        now: (@Sendable () -> TimeInterval)? = nil
+    ) async throws -> (osc: OSCPort, port: Int) {
+        let aimed = AimedSender(warn: told.append)
+        let osc = try loopback(
+            port: 0, told: told, outbound: aimed, idleAfter: idleAfter, now: now)
+        let running = await until { osc.state == .running }
+        guard running else {
+            osc.close()
+            throw ListeningFailure(state: osc.state)
+        }
+        guard let port = (osc.source as? NetworkOSCSource)?.boundPort else {
+            osc.close()
+            throw ListeningFailure(state: osc.state)
+        }
+        aimed.aim(at: port)
+        return (osc, port)
+    }
+
+    /// 受け始められなかった。`state` はそのときの状態。
+    private struct ListeningFailure: Error {
+        let state: SourceState
+    }
+
+    /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す (受け始めるのは待たない)。
+    ///
+    /// 受けるポートの番号が要るなら ``listening(told:idleAfter:now:)`` を使う。
+    /// こちらは番号を決めて渡す口で、他のアプリが握っているポートを名指しする検査だけが使う。
     private func loopback(
         port: Int, told: Told, outbound: (any DatagramSending)? = nil,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
@@ -170,17 +264,15 @@ struct OSCPortTests {
     @Test("自分で送ったメッセージを、自分のポートで受ける")
     func sendsToItselfAndReceives() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let osc = try loopback(port: port, told: told)
+        let osc = try await listening(told: told).osc
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
 
         osc.send("/size", Float(0.25))
         osc.send("/hit", 1)
         let received = await collect(osc, count: 2)
         #expect(received == [OSCMessage("/size", Float(0.25)), OSCMessage("/hit", 1)])
         #expect(osc.lastArrival != nil)
-        #expect(osc.report == SourceReport(name: "osc :\(port)", state: .running, lastArrival: osc.lastArrival))
+        #expect(osc.report == SourceReport(name: "osc :0", state: .running, lastArrival: osc.lastArrival))
         #expect(told.lines.isEmpty)
 
         osc.close()
@@ -191,10 +283,8 @@ struct OSCPortTests {
     @Test("同じメッセージの列は、ポートで受けても注入しても同じ結果になる")
     func injectedMessagesGiveTheSameOutcome() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let live = try loopback(port: port, told: told)
+        let live = try await listening(told: told).osc
         defer { live.close() }
-        #expect(await until { live.state == .running })
         for message in Self.script {
             live.send(message)
         }
@@ -239,10 +329,8 @@ struct OSCPortTests {
     @Test("読めない部分を含むパケットは、そこから後ろを捨てて数える。前と次のパケットは届く")
     func unreadablePacketIsCutOffAndCounted() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let osc = try loopback(port: port, told: told)
+        let (osc, port) = try await listening(told: told)
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
 
         let before = OSCMessage("/before", 1)
         let after = OSCMessage("/after", 2)
@@ -263,10 +351,8 @@ struct OSCPortTests {
     @Test("9216 バイト以上のパケットは丸ごと捨てて数え、束の頭のメッセージだけを渡すことはしない")
     func oversizedPacketIsDiscardedWhole() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let osc = try loopback(port: port, told: told)
+        let (osc, port) = try await listening(told: told)
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
         let peer = try RawDatagramSocket()
         defer { peer.release() }
 
@@ -285,18 +371,44 @@ struct OSCPortTests {
         #expect(told.lines.isEmpty)
     }
 
+    @Test("空の datagram は、Network.framework が送り元の流れの終わりと名乗っても読めないものとして数え、後から届いたメッセージも受ける")
+    func emptyDatagramIsCountedAndLaterMessagesArrive() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let source = try #require(osc.source as? NetworkOSCSource)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 送り元の流れができて受けを待っているところへ空を送る。この形の空の datagram を、
+        // Network.framework は毎回、流れの終わり (`isFinal`) と名乗って渡す (macOS 27.0.1 で実測)
+        let message = OSCMessage("/m", arguments: [])
+        let packet = try Wire.encoded(message)
+        #expect(peer.send(packet, to: port) == packet.count)
+        var received = await collect(osc, count: 1)
+        #expect(peer.send([], to: port) == 0)
+        #expect(await until { osc.input.unreadable == 1 })
+
+        // 終わりを名乗った空を数えたら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
+        #expect(await until { source.tally.ended >= 1 })
+        for _ in 0..<5 {
+            #expect(peer.send(packet, to: port) == packet.count)
+        }
+        received += await collect(osc, count: 5)
+        #expect(received == Array(repeating: message, count: 6))
+        #expect(osc.input.unreadable == 1)
+    }
+
     @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
     func manySendersAreAllHeardThenSwept() async throws {
         let told = Told()
-        let port = try freeUDPPort()
         // 黙りは手で進める時計で測る。本物の時計だと、受け入れが遅い機械 (負荷のある CI) では
         // 70 本を受け入れる途中で最初の送り元が `idleAfter` 秒黙ったことになって閉じられ、
         // 数が受け入れの速さで揺れる (#2225)
         let clock = ManualClock(0)
         let idleAfter: TimeInterval = 1
-        let osc = try loopback(port: port, told: told, idleAfter: idleAfter, now: clock.provider)
+        let (osc, port) = try await listening(told: told, idleAfter: idleAfter, now: clock.provider)
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
         let source = try #require(osc.source as? NetworkOSCSource)
 
         // 送り手ごとに別のポートから送る (使い捨てのソケットで送るスクリプトと同じ形)。
@@ -330,17 +442,20 @@ struct OSCPortTests {
         late.send(try Wire.encoded(OSCMessage("/late", 1)))
         #expect(await collect(osc, count: 1) == [OSCMessage("/late", 1)])
         #expect(source.connectionCount == 1)
+
+        // 黙りで閉じた送り元の待っていた受けは、空の datagram と同じ形 (content も error も nil) で
+        // 返る。届いていない空を読めない数に足さない (#2324 の直しの反対側。実測で 70 個湧いた)
+        let phantom = await until(1) { osc.input.unreadable > 0 }
+        #expect(!phantom)
     }
 
     @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")
     func idleSendersAreSweptOnTheDefaultClock() async throws {
         let told = Told()
-        let port = try freeUDPPort()
         // 時計は差し替えない (本番と同じ既定の時計)。前の検査は手で進める時計で回すので、既定の
         // 時計が黙りを測れなくなる退行 (止まった時計への差し替えなど) はここでしか捕まらない
-        let osc = try loopback(port: port, told: told, idleAfter: 0.05)
+        let (osc, port) = try await listening(told: told, idleAfter: 0.05)
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
         let source = try #require(osc.source as? NetworkOSCSource)
 
         // 目安の数だけの送り元から送り、全部を読ませる
@@ -404,10 +519,15 @@ struct OSCPortTests {
         #expect(throws: OSCFailure.invalidHost(" ")) {
             try sketch.createOSC(listen: 9000, send: (" ", 7000))
         }
-        // 両端は通る (走っていないスケッチなので、ポートは開かない)
-        let edge = try sketch.createOSC(listen: 65535, send: ("127.0.0.1", 1))
-        #expect(edge.port == 65535)
-        #expect(edge.state == .unavailable)
+        // 両端は値の検めを通る。走っていないスケッチなので、その後ポートを開く前に断る (#2740)
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(listen:send:)")) {
+                try sketch.createOSC(listen: 65535, send: ("127.0.0.1", 1))
+            }
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(listen:send:)")) {
+                try sketch.createOSC(listen: 1, send: ("127.0.0.1", 65535))
+            }
+        }
     }
 
     // MARK: - 送れないとき
@@ -502,10 +622,8 @@ struct OSCPortTests {
     @Test("本物の宛先でも、上限に入らないメッセージは送らず、続けて送ったメッセージは届く")
     func oversizedSendLeavesTheDestinationReachable() async throws {
         let told = Told()
-        let port = try freeUDPPort()
-        let osc = try loopback(port: port, told: told)
+        let osc = try await listening(told: told).osc
         defer { osc.close() }
-        #expect(await until { osc.state == .running })
 
         osc.send(OSCMessage("/big", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
         osc.send("/after", 1)

@@ -15,7 +15,7 @@ import mokume
 /// ## 状態と出来事の両方を出す
 ///
 /// 左の列に出るのは**いまの状態** (`mouseX` / `pmouseX` / `isMousePressed` / `dragX` /
-/// `scrollX` / `key` / `isKeyDown(_:)` / `deltaTime`)、面に溜まるのは**起きた出来事** —
+/// `scrollX` / `key` / `keyboard.isPressed(_:)` / `deltaTime`)、面に溜まるのは**起きた出来事** —
 /// 押した点 (橙の塗り)・離した点 (水色の輪)・クリックした点 (白い点)・引きずった線・
 /// 打った文字・最後に離したキー・押さずに動いた件数である。出来事はコールバックの中で
 /// 記録していて、`draw()` は描くだけである。
@@ -28,7 +28,7 @@ import mokume
 ///
 /// space で止める (`noLoop()`)・もう一度で再開する (`loop()`)。止まっている間は return で
 /// 1 枚だけ進む (`redraw()`) — 左の列のフレーム番号が 1 つずつ増える。矢印を押している間は
-/// 右の四角が動く (`isKeyDown(_:)` を `draw()` で読み、`deltaTime` で積む)。止めて矢印を
+/// 右の四角が動く (`keyboard.isPressed(_:)` を `draw()` で読み、`deltaTime` で積む)。止めて矢印を
 /// 押したまま return を打つと、描いた 1 枚ごとに**回っているときの 1 枚ぶん**だけ進む —
 /// 描き直しの 1 枚の `deltaTime` は、止めていた長さによらず目標の 1 フレームぶんだからで
 /// (`redraw()` の説明)、左の列の Δt は約 16.7 ms を出す (60 fps のとき)。
@@ -91,12 +91,6 @@ final class PointerAndKeys: Sketch {
     /// 回しているか。**止めた・再開したを自分で覚える** — 進行の口は頼むだけで、
     /// いまの状態を読む口は無い。
     var looping = true
-    /// space を押したままか。`keyPressed()` は押しっぱなしで連射されるので、これが
-    /// 無いと押している間じゅう止める・再開するが入れ替わり続ける。
-    ///
-    /// **`isKeyDown(.space)` では代わりにならない。** `keyPressed()` が呼ばれた時点で
-    /// そのキーは既に押されている集合に入っており、最初の 1 回でも `true` になる。
-    var spaceHeld = false
 
     /// 矢印で動かす四角の位置。押している間だけ、1 秒あたり ``shipSpeed`` 画素進む。
     var shipX: Float = 760
@@ -108,9 +102,6 @@ final class PointerAndKeys: Sketch {
 
     /// 見回しているか (L で切り替える)。入っている間は毎フレーム捕まえを頼む。
     var looking = false
-    /// L を押したままか。`keyPressed()` は押しっぱなしで連射されるので、space と同じく
-    /// 印が無いと押している間じゅう切り替わり続ける。
-    var lookKeyHeld = false
     /// 見回した向き (ラジアン)。**フレーム合計 (`movedX` / `movedY`) を `draw()` で積む。**
     var yaw: Float = 0
     var pitch: Float = 0
@@ -185,19 +176,20 @@ final class PointerAndKeys: Sketch {
     ///
     /// 止まっている間はフレームの外で呼ばれる。ここでは頼むだけで、描くのは
     /// `draw()` に任せる。
+    ///
+    /// **押した 1 回だけ呼ばれる** — 押しっぱなしのキーリピートでは呼び直されないので、
+    /// space や L を押したままにしても切り替わり続けない。押したままかの印は要らない。
     func keyPressed() {
         lastKeyCode = keyCode?.rawValue
         switch keyCode {
-        case .space where !spaceHeld:
-            spaceHeld = true
+        case .space:
             if looping { noLoop() } else { loop() }
             looping.toggle()
         case .enter:
             // 回っている間は何もしない口なので、止まっているかを見ずに呼んでよい。
-            // 押しっぱなしの連射は 1 枚ずつ進む送りとしてそのまま使う
+            // 押すたびに 1 枚進む
             redraw()
-        case .l where !lookKeyHeld:
-            lookKeyHeld = true
+        case .l:
             looking.toggle()
             // 頼むのは `draw()` (毎フレーム)。やめるときはここで取り下げる
             if !looking { exitPointerLock() }
@@ -206,25 +198,24 @@ final class PointerAndKeys: Sketch {
         }
     }
 
-    /// 離したキーを覚える。space と L の押しっぱなしの印もここで外す。
+    /// 離したキーを覚える。**窓が前から退いたときも呼ばれる** — 押していたキーは離された
+    /// 扱いになる (`keyboard` の説明)。
     func keyReleased() {
         lastReleased = keyCode
-        if keyCode == .space { spaceHeld = false }
-        if keyCode == .l { lookKeyHeld = false }
     }
 
     func draw() {
         background(15, 18, 23)
 
-        // 矢印を押している間だけ四角が進む。**押しっぱなしは状態で読む** — 連射される
-        // `keyPressed()` で進めると、進み方が OS のキーリピートの間隔に縛られる。
+        // 矢印を押している間だけ四角が進む。**押しっぱなしは状態で読む** — `keyPressed()` は
+        // 押した 1 回しか呼ばれない。押したまま ⌘Tab で窓を離れると離した扱いになり、止まる。
         // 止めていたところから描く 1 枚 (return の描き直し・space の再開) の `deltaTime` は
         // 目標の 1 フレームぶんなので、止めていた時間ぶん飛ばず、止まったままにもならない
         let step = Self.shipSpeed * deltaTime
-        if isKeyDown(.arrowLeft) { shipX -= step }
-        if isKeyDown(.arrowRight) { shipX += step }
-        if isKeyDown(.arrowUp) { shipY -= step }
-        if isKeyDown(.arrowDown) { shipY += step }
+        if keyboard.isPressed(.arrowLeft) { shipX -= step }
+        if keyboard.isPressed(.arrowRight) { shipX += step }
+        if keyboard.isPressed(.arrowUp) { shipY -= step }
+        if keyboard.isPressed(.arrowDown) { shipY += step }
         shipX = constrain(shipX, 0, width)
         shipY = constrain(shipY, 0, height)
 
@@ -273,7 +264,7 @@ final class PointerAndKeys: Sketch {
         }
 
         // 矢印で動かす四角。押している矢印があれば明るくなる
-        let steering = [Key.arrowLeft, .arrowRight, .arrowUp, .arrowDown].filter(isKeyDown)
+        let steering = [Key.arrowLeft, .arrowRight, .arrowUp, .arrowDown].filter(keyboard.isPressed)
         fill(steering.isEmpty ? color(140, 120, 230, 180) : color(190, 170, 255, 240))
         square(shipX - 14, shipY - 14, 28)
 
@@ -332,7 +323,11 @@ final class PointerAndKeys: Sketch {
         text("キー \(key.isEmpty ? "—" : key)   符号 \(lastKeyCode.map(String.init) ?? "—")", 24, 172)
         text("打った \(typed.isEmpty ? "—" : typed)", 24, 204)
         text("離した \(lastReleased.map(Self.name(of:)) ?? "—")", 24, 236)
-        text("矢印 \(steering.isEmpty ? "—" : steering.map(Self.name(of:)).joined(separator: " "))", 24, 268)
+        // 修飾キーは押しているときだけ足す (左右どちらでも名前で問える)。触らずに書き出した
+        // 絵は変えない
+        let modifiers = [Key.shift, .control, .option, .command].filter(keyboard.isPressed)
+        let held = (steering + modifiers).map(Self.name(of:)).joined(separator: " ")
+        text("矢印 \(held.isEmpty ? "—" : held)", 24, 268)
 
         // 進行の状態。止めたフレームは描き切られてから止まるので、止まっている間は
         // 「止まっている」を出した絵のまま残る
@@ -386,6 +381,10 @@ final class PointerAndKeys: Sketch {
         case .arrowRight: "→"
         case .arrowUp: "↑"
         case .arrowDown: "↓"
+        case .shift: "⇧"
+        case .control: "⌃"
+        case .option: "⌥"
+        case .command: "⌘"
         default: "符号 \(key.rawValue)"
         }
     }

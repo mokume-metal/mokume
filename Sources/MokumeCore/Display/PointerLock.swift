@@ -10,7 +10,7 @@ import MokumeDiagnostics
 /// ## 判定をここに集める
 ///
 /// 捕まえるかどうかは、スケッチの要求・面が押されたか・窓が前に出ているか・ポインタが面の
-/// 上にあるか の 4 つで決まり、外れ方は 4 通りある (``Sketch/requestPointerLock()`` の説明)。
+/// 上にあるか の 4 つで決まり、外れ方は 4 通りある (``SketchPart/requestPointerLock()`` の説明)。
 /// **窓の部品 (``SketchSurface``) はそれを観て伝えるだけ**で、決めるのはここ 1 か所である。
 /// 直に走らせた窓も、道具の 2 つの窓も同じ部品なので、捕まえ方の規則は 1 つで済む。
 ///
@@ -103,7 +103,7 @@ final class PointerLock {
 
     /// スケッチの要求を渡し、捕まえ直すか放すかを決める。**毎リフレッシュ呼ばれる。**
     ///
-    /// 要求が消えた (``Sketch/exitPointerLock()``) なら放す。窓が退いていたら、利用者に外された
+    /// 要求が消えた (``SketchPart/exitPointerLock()``) なら放す。窓が退いていたら、利用者に外された
     /// ものとして放す — 退いた知らせ (``releaseByUser()``) を取りこぼした回の備えである。
     func update(requested: Bool, in situation: Situation) {
         isRequested = requested

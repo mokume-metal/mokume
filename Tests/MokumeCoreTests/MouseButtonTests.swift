@@ -110,7 +110,8 @@ struct MouseButtonSurfaceTests {
 
     /// `mouseReleased()` の中から「どの釦が離されたか」を知る口は他に無い
     /// ([ADR-0034] 影響節の `keyCode` と同じ)。押した釦と違う釦で離すと、離した側に
-    /// 入れ替わる。
+    /// 入れ替わる。押下は釦ごとに持つので、押した右はまだ押されたまま
+    /// ([#2599](https://github.com/mokume-metal/mokume/issues/2599))。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     @Test("最後に動いた釦は、押しても離しても入れ替わる")
@@ -122,7 +123,7 @@ struct MouseButtonSurfaceTests {
 
         state.enqueue(.mouseUp(x: 1, y: 2, button: .center))
         state.beginFrame()
-        #expect(!state.isMouseDown)
+        #expect(state.isMouseDown)
         #expect(state.button == .center)
     }
 }

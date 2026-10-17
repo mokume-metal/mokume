@@ -52,6 +52,14 @@ final class ShapePipeline {
         /// (``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。
         var all: [AnyObject] { [composite, blend, replace] }
 
+        /// ``StatesJob`` が組んだ 3 本 (`composite`・`blend`・`replace` の順) から。
+        init(_ built: BuiltStates) {
+            precondition(built.states.count == 3, "a blend set is built from exactly three states")
+            composite = built.states[0]
+            blend = built.states[1]
+            replace = built.states[2]
+        }
+
         /// その列を描くパイプライン。**置き換える列のうち、細い線を広げた頂点を持つ列だけは
         /// 下地を読む列** (`composite`) で描く (#1637)。広げた帯は覆う割合だけを置き換え、残りの
         /// 下地を残す (`mokume_fragmentMain` の置き換えの枝)。
@@ -125,6 +133,15 @@ final class ShapePipeline {
 
     /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
     let solidStates: BlendStates
+    /// 正の寸法の球・箱・平面・円柱の塗りを、単位の形の頂点と置き場所の軸ごとの寸法で描く
+    /// パイプライン ([#1862]・[#2386])。頂点関数だけが別のライブラリ (`UnitShape.metal`) にあり、
+    /// 断片は ``solidStates`` と同じ。
+    ///
+    /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
+    /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
+    let unitShapeStates: BlendStates
+    /// 単位の形の列を影へ焼くパイプライン (``shadowState`` の単位の形の版)。
+    let unitShapeShadowState: any MTLRenderPipelineState
     let solidStrokeStates: BlendStates
     let solidStrokeShadowState: any MTLRenderPipelineState
 
@@ -144,20 +161,23 @@ final class ShapePipeline {
     /// で特化できる ([#771])。鍵は旗 (``FormInstance/fillsFlag`` | `strokesFlag`) —
     /// 塗りも輪郭も無い図形は置かれないので 0 は使わない。
     ///
-    /// **1 画素より細い塗りを含むかでも分かれる** (``FormInstance/thinFillsFlag``・[#1477])。
-    /// 塗りを持つ組 (旗 1 と 3) にだけ、細い塗りの枝を残した組 (旗 5 と 7) がある。
+    /// **1 画素より細い塗り・輪郭の帯の細い穴を含むかでも分かれる** (``FormInstance/thinFillsFlag``・
+    /// [#1477]・[#2186])。3 つの組 (旗 1・2・3) のそれぞれに、細い枝を残した組 (旗 5・6・7) がある。
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
     /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
     private let formStatesByFlags: [UInt32: BlendStates]
 
-    /// 組むパイプラインの旗の組。細い塗りの旗は塗りを持つ組にしか立たない
-    /// (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` が塗りの無い形に「含まない」と答える)。
+    /// 組むパイプラインの旗の組。細い枝の旗は、塗りだけの組には細い塗りで、輪郭だけの組には
+    /// 帯の細い穴で立つ (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` は塗りの無い形に、
+    /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)`` は輪郭の無い形に「含まない」と答える)。
     static let formFlagCombinations: [UInt32] = [
         FormInstance.fillsFlag, FormInstance.strokesFlag,
         FormInstance.fillsFlag | FormInstance.strokesFlag,
         FormInstance.fillsFlag | FormInstance.thinFillsFlag,
+        FormInstance.strokesFlag | FormInstance.thinFillsFlag,
         FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.thinFillsFlag,
     ]
 
@@ -192,14 +212,22 @@ final class ShapePipeline {
     let argumentTable: any MTL4ArgumentTable
 
     private let vertexLibrary: any MTLLibrary
+    /// 単位の形の頂点関数だけを持つライブラリ。**Shapes とは別に組む** — 同じライブラリへ足すと、
+    /// 既存の頂点関数の組み上がり方が変わりうる (`UnitShape.metal` の冒頭)。
+    private let unitShapeLibrary: any MTLLibrary
     private let compiler: any MTL4Compiler
     private let pixelFormat: MTLPixelFormat
 
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
         self.pixelFormat = pixelFormat
         let library = try gpu.shaders.makeShapeLibrary(
-            named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"))
+            named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"),
+            bodyName: ShaderLibraries.bundledName("Shapes"))
         self.vertexLibrary = library
+        let unitShapeLibrary = try gpu.shaders.makeShapeLibrary(
+            named: "UnitShape", body: gpu.shaders.bundledShaderSource(named: "UnitShape"),
+            bodyName: ShaderLibraries.bundledName("UnitShape"))
+        self.unitShapeLibrary = unitShapeLibrary
 
         let compiler = try gpu.shaders.compiler()
         self.compiler = compiler
@@ -212,6 +240,13 @@ final class ShapePipeline {
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
             pixelFormat: pixelFormat, label: "mokume.solids",
             vertexFunctionName: Self.solidVertexFunctionName)
+        self.unitShapeStates = try Self.makeBlendStates(
+            compiler: compiler, vertexLibrary: unitShapeLibrary, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.unit-shapes",
+            vertexFunctionName: Self.unitShapeVertexFunctionName)
+        self.unitShapeShadowState = try Self.makeDepthOnlyState(
+            compiler: compiler, vertexLibrary: unitShapeLibrary, label: "mokume.unit-shape-shadow",
+            vertexFunctionName: Self.unitShapeVertexFunctionName)
 
         self.solidStrokeStates = try Self.makeBlendStates(
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
@@ -223,8 +258,8 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
-        // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、塗りを持つ組に
-        // 1 画素より細い塗りの枝を残したもの (5・7)
+        // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、それぞれに
+        // 1 画素より細い塗り・帯の細い穴の枝を残したもの (5・6・7)
         var formStates: [UInt32: BlendStates] = [:]
         for flags in Self.formFlagCombinations {
             formStates[flags] = try Self.makeBlendStates(
@@ -271,6 +306,8 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
+    /// 単位の形の塗りの頂点を落とす関数の名前 (`UnitShape.metal`)。
+    static let unitShapeVertexFunctionName = "unitShapeVertexMain"
     static let solidStrokeVertexFunctionName = "solidStrokeVertexMain"
     /// 三角形の経路の断片の名前 (下地を読む側)。
     static let flatFragmentFunctionName = "mokume_fragmentMain"
@@ -303,8 +340,27 @@ final class ShapePipeline {
         vertexFunctionName: String = ShapePipeline.flatVertexFunctionName
     ) throws(RenderFailure) -> BlendStates {
         try Self.makeBlendStates(
-            compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary,
+            compiler: compiler, vertexLibrary: vertexLibrary(for: vertexFunctionName),
+            fragmentLibrary: fragmentLibrary,
             pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName)
+    }
+
+    /// ``makeStates(fragmentLibrary:label:vertexFunctionName:)`` を、断片のライブラリが出来る前に
+    /// 用意する。裏で組む経路 (``ShaderBox``・[#2365]) が使い、組み方は同じ 3 本である。
+    ///
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    func statesJob(
+        label: String, vertexFunctionName: String = ShapePipeline.flatVertexFunctionName
+    ) -> StatesJob {
+        StatesJob(
+            compiler: compiler, vertexLibrary: vertexLibrary(for: vertexFunctionName),
+            plans: Self.blendPlans(
+                pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName))
+    }
+
+    /// 頂点関数を持つライブラリ。単位の形の頂点関数だけが別のライブラリにある。
+    private func vertexLibrary(for vertexFunctionName: String) -> any MTLLibrary {
+        vertexFunctionName == Self.unitShapeVertexFunctionName ? unitShapeLibrary : vertexLibrary
     }
 
     /// 同じ絵を描く 3 本を組む (``BlendStates``)。
@@ -320,23 +376,39 @@ final class ShapePipeline {
         replaceFragmentFunctionName: String = ShapePipeline.flatReplaceFragmentFunctionName,
         formFlags: UInt32? = nil
     ) throws(RenderFailure) -> BlendStates {
-        BlendStates(
-            composite: try makeState(
-                compiler: compiler, vertexLibrary: vertexLibrary,
-                fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
+        let built = try StatesJob(
+            compiler: compiler, vertexLibrary: vertexLibrary,
+            plans: blendPlans(
+                pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName,
+                fragmentFunctionName: fragmentFunctionName,
+                blendFragmentFunctionName: blendFragmentFunctionName,
+                replaceFragmentFunctionName: replaceFragmentFunctionName, formFlags: formFlags)
+        ).makeNow(fragmentLibrary: fragmentLibrary)
+        return BlendStates(built)
+    }
+
+    /// 3 本の組み方。`composite`・`blend`・`replace` の順 (``BlendStates/init(_:)`` が読む順)。
+    private static func blendPlans(
+        pixelFormat: MTLPixelFormat, label: String, vertexFunctionName: String,
+        fragmentFunctionName: String = ShapePipeline.flatFragmentFunctionName,
+        blendFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
+        replaceFragmentFunctionName: String = ShapePipeline.flatReplaceFragmentFunctionName,
+        formFlags: UInt32? = nil
+    ) -> [StatePlan] {
+        [
+            plan(
                 label: label, vertexFunctionName: vertexFunctionName,
-                fragmentFunctionName: fragmentFunctionName, formFlags: formFlags),
-            blend: try makeState(
-                compiler: compiler, vertexLibrary: vertexLibrary,
-                fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
+                fragmentFunctionName: fragmentFunctionName, sourceOver: false,
+                formFlags: formFlags, pixelFormat: pixelFormat),
+            plan(
                 label: "\(label).blend", vertexFunctionName: vertexFunctionName,
                 fragmentFunctionName: blendFragmentFunctionName, sourceOver: true,
-                formFlags: formFlags),
-            replace: try makeState(
-                compiler: compiler, vertexLibrary: vertexLibrary,
-                fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
+                formFlags: formFlags, pixelFormat: pixelFormat),
+            plan(
                 label: "\(label).replace", vertexFunctionName: vertexFunctionName,
-                fragmentFunctionName: replaceFragmentFunctionName, formFlags: formFlags))
+                fragmentFunctionName: replaceFragmentFunctionName, sourceOver: false,
+                formFlags: formFlags, pixelFormat: pixelFormat),
+        ]
     }
 
     /// 塗りの有無を渡す function constant の番号 (シェーダ側の `kFormHasFill`)。
@@ -426,85 +498,182 @@ final class ShapePipeline {
     /// いるので、Metal 側が変われば赤で知らせる。
     ///
     /// [#776]: https://github.com/mokume-metal/mokume/issues/776
-    private static func specialized(
-        _ function: MTL4LibraryFunctionDescriptor, _ constants: FragmentConstants
+    nonisolated static func specialized(
+        _ function: MTL4LibraryFunctionDescriptor, _ values: [StatePlan.BoolConstant]
     ) -> MTL4FunctionDescriptor {
-        let formFlags = constants.formFlags
-        guard formFlags != nil || constants.lit != nil else { return function }
-        let values = MTLFunctionConstantValues()
-        if let formFlags {
-            var hasFill = (formFlags & FormInstance.fillsFlag) != 0
-            var hasStroke = (formFlags & FormInstance.strokesFlag) != 0
-            var hasThinFill = (formFlags & FormInstance.thinFillsFlag) != 0
-            values.setConstantValue(&hasFill, type: .bool, index: formHasFillConstantIndex)
-            values.setConstantValue(&hasStroke, type: .bool, index: formHasStrokeConstantIndex)
-            values.setConstantValue(
-                &hasThinFill, type: .bool, index: formHasThinFillConstantIndex)
-        }
-        if var lit = constants.lit {
-            values.setConstantValue(&lit, type: .bool, index: shapeLitConstantIndex)
+        guard !values.isEmpty else { return function }
+        let constants = MTLFunctionConstantValues()
+        for value in values {
+            var flag = value.value
+            constants.setConstantValue(&flag, type: .bool, index: value.index)
         }
 
         let descriptor = MTL4SpecializedFunctionDescriptor()
         descriptor.functionDescriptor = function
-        descriptor.constantValues = values
+        descriptor.constantValues = constants
         return descriptor
     }
 
-    private static func makeState(
-        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
-        fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String,
-        vertexFunctionName: String = ShapePipeline.flatVertexFunctionName,
-        fragmentFunctionName: String = "mokume_fragmentMain",
-        sourceOver: Bool = false,
-        formFlags: UInt32? = nil
-    ) throws(RenderFailure) -> any MTLRenderPipelineState {
-        let vertexFunction = MTL4LibraryFunctionDescriptor()
-        vertexFunction.name = vertexFunctionName
-        vertexFunction.library = vertexLibrary
+    /// 特化の値を、渡す番号と組にして並べる (``specialized(_:_:)`` へ渡す形)。
+    private static func specializationValues(
+        _ constants: FragmentConstants
+    ) -> [StatePlan.BoolConstant] {
+        var values: [StatePlan.BoolConstant] = []
+        if let formFlags = constants.formFlags {
+            values.append(.init(index: formHasFillConstantIndex, value: (formFlags & FormInstance.fillsFlag) != 0))
+            values.append(.init(index: formHasStrokeConstantIndex, value: (formFlags & FormInstance.strokesFlag) != 0))
+            values.append(.init(index: formHasThinFillConstantIndex, value: (formFlags & FormInstance.thinFillsFlag) != 0))
+        }
+        if let lit = constants.lit {
+            values.append(.init(index: shapeLitConstantIndex, value: lit))
+        }
+        return values
+    }
 
-        let fragmentFunction = MTL4LibraryFunctionDescriptor()
-        fragmentFunction.name = fragmentFunctionName
-        fragmentFunction.library = fragmentLibrary
-
-        let descriptor = MTL4RenderPipelineDescriptor()
-        descriptor.label = label
-        descriptor.vertexFunctionDescriptor = vertexFunction
-        // 基本図形の断片は光の有無を読まず、三角形の経路の断片は旗を読まない
-        descriptor.fragmentFunctionDescriptor = specialized(
-            fragmentFunction,
-            fragmentConstants(vertexFunctionName: vertexFunctionName, formFlags: formFlags))
-
-        // **固定機能のブレンドを使うのは、乗算済みの source-over だけ。** 色は
-        // アルファ乗算済みなので ([ADR-0011] 決定 4)、重ねるのは
-        // `source + destination × (1 − source.a)` の 1 本で、係数の組
-        // (`one` / `oneMinusSourceAlpha`) がそのままこの式になる — 断片が書いていた
-        // 式と一致するので、割ったことでアルファの扱いがばらつく余地は無い。
-        //
-        // 残りの混ぜ方は係数の組では表せないので、今までどおり断片が下地を読んで
-        // 混ぜる (`mokume_composite`)。
-        //
-        // [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-        let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = pixelFormat
-        if sourceOver {
-            attachment.blendingState = .enabled
-            attachment.rgbBlendOperation = .add
-            attachment.alphaBlendOperation = .add
-            attachment.sourceRGBBlendFactor = .one
-            attachment.sourceAlphaBlendFactor = .one
-            attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-            attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        } else {
-            attachment.blendingState = .disabled
+    /// パイプライン 1 本の組み方。**main で解いた平たい値だけを持つ** ので、裏の糸でも記述子を
+    /// 組める ([#2365])。
+    ///
+    /// 記述子は関数の記述を代入の時点で写し取る (`copy`) ので、ライブラリが出来る前に組んで
+    /// おいて後から差すことはできない。裏で組む経路は、ライブラリが出来た後にここから組む。
+    /// その場で組む経路も同じここを通る — 組み方を 2 か所に持たない。
+    ///
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    nonisolated struct StatePlan: Sendable {
+        /// 特化で渡す真偽の値 1 つ。
+        struct BoolConstant: Sendable, Equatable {
+            let index: Int
+            let value: Bool
         }
 
-        do {
-            return try compiler.makeRenderPipelineState(descriptor: descriptor)
-        } catch {
-            throw .pipelineUnavailable(reason: error.localizedDescription)
+        let label: String
+        let vertexFunctionName: String
+        /// 断片の名前。`nil` なら奥行きだけを書く (色の面も宣言しない)。
+        let fragmentFunctionName: String?
+        let specialization: [BoolConstant]
+        let sourceOver: Bool
+        let pixelFormat: MTLPixelFormat
+
+        func descriptor(
+            vertexLibrary: any MTLLibrary, fragmentLibrary: any MTLLibrary
+        ) -> MTL4RenderPipelineDescriptor {
+            let vertexFunction = MTL4LibraryFunctionDescriptor()
+            vertexFunction.name = vertexFunctionName
+            vertexFunction.library = vertexLibrary
+
+            let descriptor = MTL4RenderPipelineDescriptor()
+            descriptor.label = label
+            descriptor.vertexFunctionDescriptor = vertexFunction
+            guard let fragmentFunctionName else {
+                descriptor.fragmentFunctionDescriptor = nil
+                return descriptor
+            }
+
+            let fragmentFunction = MTL4LibraryFunctionDescriptor()
+            fragmentFunction.name = fragmentFunctionName
+            fragmentFunction.library = fragmentLibrary
+            // 基本図形の断片は光の有無を読まず、三角形の経路の断片は旗を読まない
+            descriptor.fragmentFunctionDescriptor = ShapePipeline.specialized(
+                fragmentFunction, specialization)
+
+
+            // **固定機能のブレンドを使うのは、乗算済みの source-over だけ。** 色は
+            // アルファ乗算済みなので ([ADR-0011] 決定 4)、重ねるのは
+            // `source + destination × (1 − source.a)` の 1 本で、係数の組
+            // (`one` / `oneMinusSourceAlpha`) がそのままこの式になる — 断片が書いていた
+            // 式と一致するので、割ったことでアルファの扱いがばらつく余地は無い。
+            //
+            // 残りの混ぜ方は係数の組では表せないので、今までどおり断片が下地を読んで
+            // 混ぜる (`mokume_composite`)。
+            //
+            // [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+            let attachment = descriptor.colorAttachments[0]!
+            attachment.pixelFormat = pixelFormat
+            if sourceOver {
+                attachment.blendingState = .enabled
+                attachment.rgbBlendOperation = .add
+                attachment.alphaBlendOperation = .add
+                attachment.sourceRGBBlendFactor = .one
+                attachment.sourceAlphaBlendFactor = .one
+                attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+                attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            } else {
+                attachment.blendingState = .disabled
+            }
+            return descriptor
+        }
+
+        /// その場で組む。
+        func makeNow(
+            compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
+            fragmentLibrary: any MTLLibrary
+        ) throws(RenderFailure) -> any MTLRenderPipelineState {
+            let descriptor = descriptor(vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary)
+            do {
+                return try compiler.makeRenderPipelineState(descriptor: descriptor)
+            } catch {
+                throw .pipelineUnavailable(reason: error.localizedDescription)
+            }
+        }
+
+        /// 裏で組む。組んでいる間、呼んだ側の糸を塞がない。
+        func make(
+            compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
+            fragmentLibrary: any MTLLibrary
+        ) async throws(RenderFailure) -> any MTLRenderPipelineState {
+            let descriptor = descriptor(vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary)
+            do {
+                return try await compiler.makeRenderPipelineState(descriptor: descriptor)
+            } catch {
+                throw .pipelineUnavailable(reason: error.localizedDescription)
+            }
         }
     }
+
+    /// 混ぜ方ごとの 3 本を、利用者の断片のライブラリが出来てから組む仕事 ([#2365])。
+    ///
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    nonisolated struct StatesJob: Sendable {
+        let compiler: any MTL4Compiler
+        let vertexLibrary: any MTLLibrary
+        /// `composite`・`blend`・`replace` の順。
+        let plans: [StatePlan]
+
+        func makeNow(fragmentLibrary: any MTLLibrary) throws(RenderFailure) -> BuiltStates {
+            var states: [any MTLRenderPipelineState] = []
+            for plan in plans {
+                states.append(try plan.makeNow(
+                    compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary))
+            }
+            return BuiltStates(states: states)
+        }
+
+        func make(fragmentLibrary: any MTLLibrary) async throws(RenderFailure) -> BuiltStates {
+            var states: [any MTLRenderPipelineState] = []
+            for plan in plans {
+                states.append(try await plan.make(
+                    compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary))
+            }
+            return BuiltStates(states: states)
+        }
+    }
+
+    /// ``StatesJob`` が組んだ 3 本。main で ``BlendStates`` に収める。
+    nonisolated struct BuiltStates: Sendable {
+        let states: [any MTLRenderPipelineState]
+    }
+
+    private static func plan(
+        label: String, vertexFunctionName: String, fragmentFunctionName: String,
+        sourceOver: Bool, formFlags: UInt32?, pixelFormat: MTLPixelFormat
+    ) -> StatePlan {
+        StatePlan(
+            label: label, vertexFunctionName: vertexFunctionName,
+            fragmentFunctionName: fragmentFunctionName,
+            specialization: specializationValues(
+                fragmentConstants(vertexFunctionName: vertexFunctionName, formFlags: formFlags)),
+            sourceOver: sourceOver, pixelFormat: pixelFormat)
+    }
+
 
     /// 奥行きだけを書くパイプラインを組む (影の焼き付け)。
     ///
@@ -514,19 +683,9 @@ final class ShapePipeline {
         compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary, label: String,
         vertexFunctionName: String
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
-        let vertexFunction = MTL4LibraryFunctionDescriptor()
-        vertexFunction.name = vertexFunctionName
-        vertexFunction.library = vertexLibrary
-
-        let descriptor = MTL4RenderPipelineDescriptor()
-        descriptor.label = label
-        descriptor.vertexFunctionDescriptor = vertexFunction
-        descriptor.fragmentFunctionDescriptor = nil
-
-        do {
-            return try compiler.makeRenderPipelineState(descriptor: descriptor)
-        } catch {
-            throw .pipelineUnavailable(reason: error.localizedDescription)
-        }
+        try StatePlan(
+            label: label, vertexFunctionName: vertexFunctionName, fragmentFunctionName: nil,
+            specialization: [], sourceOver: false, pixelFormat: .invalid
+        ).makeNow(compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
     }
 }

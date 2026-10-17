@@ -6,6 +6,10 @@
 組み立ての順 (値の宣言 → Kinds → 前置き → 断片) は変えていない。固定するのは**見る範囲**
 で、基準は「`git add -A` したときに CI の木になるもの」(追跡 + 未追跡 − 無視)。
 
+加えて、**区切りごとの名乗り** (#2457) を固定する。実行時の `ShaderSource.assemble` と同じく、
+区切りの頭に `#line 1 "<名前>"` を差し、区切りの後に改行を 1 つ足す。差さないと、同梱した
+断片の誤りが、つないだ一時のファイルの行で出る。
+
 - **無視された前置きを在ると数えない** — 手元にだけ在る `Common.metal` で断片を組み立てると
   手元では通り、前置きの無い CI の木では断片が単体で組み立てられて落ちる。手元でも落とす
 - **無視されたシェーダは組み立てない** — CI の木に無いものの合否は CI に届かない
@@ -32,6 +36,8 @@ SCRIPT = REPO / "scripts" / "check-shaders.sh"
 XCRUN = """#!/bin/bash
 if [ "$2" = "--version" ]; then echo "Apple metal version 0"; exit 0; fi
 src="$3"
+# 組み立てた原文を残す (名乗りの検査が読む)
+if [ -n "${CHECK_SHADERS_KEEP:-}" ]; then cp "$src" "$CHECK_SHADERS_KEEP/"; fi
 if grep -q broken "$src"; then echo "error: broken" >&2; exit 1; fi
 if grep -q needs_common "$src" && ! grep -q common_defined "$src"; then
   echo "error: use of undeclared identifier" >&2; exit 1
@@ -71,8 +77,10 @@ class ShadersScopeTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
-    def run_check(self):
+    def run_check(self, keep=None):
         env = dict(os.environ, PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}")
+        if keep is not None:
+            env["CHECK_SHADERS_KEEP"] = str(keep)
         return subprocess.run(
             ["/bin/bash", str(self.root / "scripts" / "check-shaders.sh")],
             cwd=self.root,
@@ -91,6 +99,30 @@ class ShadersScopeTest(unittest.TestCase):
         r = self.run_check()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(f"ok: {SHADERS}/Shapes.metal (共通部分つき)", r.stdout)
+
+    def test_every_part_names_itself_with_line(self):
+        # 区切りの頭で、木の中のパス (値の宣言は実行時と同じ mokume/Values) と 1 行目を名乗る。
+        # 区切りの後の改行は、最後の行に改行の無いファイルでも次の名乗りを行頭に置く
+        self.write(f"{SHADERS}/Kinds.metal", "// kinds\n")
+        self.write(f"{SHADERS}/Common.metal", "// common_defined\n")
+        self.write(f"{SHADERS}/Shapes.metal", "// needs_common")
+        self.write("Sources/Core/Solo.metal", "// solo\n")
+        keep = self.root / ".kept"
+        keep.mkdir()
+        r = self.run_check(keep=keep)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            (keep / "Shapes.metal").read_text(encoding="utf-8"),
+            '#line 1 "mokume/Values"\n'
+            "struct Values {\n    float4 mokume_unused;\n};\n\n"
+            f'#line 1 "{SHADERS}/Kinds.metal"\n// kinds\n\n'
+            f'#line 1 "{SHADERS}/Common.metal"\n// common_defined\n\n'
+            f'#line 1 "{SHADERS}/Shapes.metal"\n// needs_common\n',
+        )
+        self.assertEqual(
+            (keep / "Solo.metal").read_text(encoding="utf-8"),
+            '#line 1 "Sources/Core/Solo.metal"\n// solo\n\n',
+        )
 
     def test_ignored_common_does_not_count(self):
         # 手元にだけ在る前置きで組み立てると手元で通り、CI の木では単体で組まれて落ちる

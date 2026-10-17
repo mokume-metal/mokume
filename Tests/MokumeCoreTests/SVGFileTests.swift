@@ -183,6 +183,106 @@ struct SVGFileTests {
         #expect(SVGFile.parseLength("2em", reference: 0) == nil)
     }
 
+    /// 数は SVG / CSS の数の文法 (10 進の綴り) で読む。Swift の `Float(String)` が受ける 16 進・
+    /// `nan`・`inf` は数でなく、数と単位のあいだの空白も読めない値のまま ([#2513])。
+    ///
+    /// [#2513]: https://github.com/mokume-metal/mokume/issues/2513
+    @Test("長さと色の成分は 10 進の綴りだけを数にする (#2513)")
+    func numbersAreDecimalOnly() {
+        for text in ["0x10", "0x10mm", "0x10%", "0x1p-1", "0X2px", "nan", "inf", "10 px", "1e39"] {
+            #expect(SVGFile.parseLength(text, reference: 100) == nil, "\(text)")
+        }
+        #expect(SVGFile.parseLength(" .5px\n", reference: 0) == 0.5)
+        #expect(SVGFile.parseLength("+1e1", reference: 0) == 10)
+        #expect(SVGFile.parseLength("-0.5in", reference: 0) == -48)
+        for text in ["rgb(0x10, 0, 0)", "rgb(0x10%, 0%, 0%)", "rgba(0, 0, 0, 0x1p-1)", "rgb(nan, 0, 0)"] {
+            #expect(SVGFile.parseColor(text) == nil, "\(text)")
+        }
+        #expect(SVGFile.parseColor("rgb(16, 0, 0)") == SVGFile.Color(red: 16 / 255, green: 0, blue: 0, alpha: 1))
+    }
+
+    @Test(
+        "16 進の数は、同じ口に abc を置いたときと同じく読めない値として名乗る (#2513)",
+        arguments: ["0x10", "0x1p-1", "0X2", "abc"])
+    func hexadecimalValuesAreUnreadable(_ bad: String) throws {
+        let drawing = try document(
+            """
+            <rect width="\(bad)" height="10"/>
+            <rect width="10" height="10" stroke="red" stroke-width="\(bad)"/>
+            <rect width="10" height="10" opacity="\(bad)"/>
+            <rect width="10" height="10" fill-opacity="\(bad)%"/>
+            <rect width="10" height="10" fill="rgb(\(bad), 0, 0)"/>
+            <rect width="\(bad)mm" height="10"/>
+            <rect width="10" height="10" stroke="red" stroke-opacity="\(bad)"/>
+            <rect x="\(bad)" width="10" height="10"/>
+            <rect y="\(bad)" width="10" height="10"/>
+            <circle cx="\(bad)" r="5"/>
+            <circle r="\(bad)"/>
+            <ellipse rx="\(bad)" ry="5"/>
+            <ellipse rx="5" ry="\(bad)"/>
+            <line x1="\(bad)" x2="5" stroke="red"/>
+            <line y2="\(bad)" x2="5" stroke="red"/>
+            """)
+        #expect(
+            drawing.skipped.map(\.what) == [
+                "<rect width=\"\(bad)\">", "stroke-width \"\(bad)\"", "opacity \"\(bad)\"",
+                "fill-opacity \"\(bad)%\"", "fill \"rgb(\(bad), 0, 0)\"", "<rect width=\"\(bad)mm\">",
+                "stroke-opacity \"\(bad)\"", "<rect x=\"\(bad)\">", "<rect y=\"\(bad)\">",
+                "<circle cx=\"\(bad)\">", "<circle r=\"\(bad)\">", "<ellipse rx=\"\(bad)\">",
+                "<ellipse ry=\"\(bad)\">", "<line x1=\"\(bad)\">", "<line y2=\"\(bad)\">",
+            ], "\(bad)")
+        // 寸法・位置の読めない図形は描かず、読めない宣言は捨てて既定 (線の太さ 1・不透明・黒) のまま
+        #expect(drawing.items.count == 5)
+        #expect(drawing.items.first?.strokeWidth == 1)
+        #expect(drawing.items.dropFirst().prefix(3).map(\.fill) == [.black, .black, .black])
+        #expect(drawing.items.last?.stroke == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
+    }
+
+    @Test("10 進で書いた長さ・不透明度・rgb() は変わらず読む (#2513 の陰性対照)")
+    func decimalValuesStillRead() throws {
+        let drawing = try document(
+            """
+            <rect width="10" height="10" stroke="red" stroke-width="2" opacity=".5"/>
+            <rect width="1e1" height="10" fill="rgb(16, 0, 0)" fill-opacity="50%"/>
+            """)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items.map(\.strokeWidth) == [2, 1])
+        #expect(drawing.items[0].fill == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 0.5))
+        #expect(drawing.items[1].outline == .rect(x: 0, y: 0, width: 10, height: 10))
+        #expect(drawing.items[1].fill == SVGFile.Color(red: 16 / 255, green: 0, blue: 0, alpha: 0.5))
+    }
+
+    @Test("transform の名前と括弧のあいだの改行は空白として落とす (#2513)")
+    func newlineBetweenTransformNameAndParenthesis() throws {
+        for text in ["translate\n(10)", "translate\r\n(10)", "translate \t(10)", "\ntranslate\n(10)\n"] {
+            let read = try #require(SVGFile.parseTransform(text), "\(text.debugDescription)")
+            #expect(read == .translate(10, 0), "\(text.debugDescription)")
+        }
+        // 属性に文字参照で書いた改行も、同じ変換になる
+        let drawing = try document(#"<rect width="1" height="1" transform="translate&#10;(10)"/>"#)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items.first?.transform == .translate(10, 0))
+    }
+
+    /// `rgb()` の引数の区切りの空白には改行も数える (CSS の空白)。`<style>` の値は改行を残して
+    /// 渡るので、`fill: rgb(255,` で折り返した規則が読めないと名乗られていた (#2513 の反証)。
+    @Test("rgb() の引数のあいだの改行は空白として区切る (#2513)")
+    func newlinesSeparateRgbArguments() throws {
+        let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
+        for text in ["rgb(255,\n 0, 0)", "rgb(255\r\n0\n0)", "rgba(255, 0,\n0 /\n100%)"] {
+            #expect(SVGFile.parseColor(text) == red, "\(text.debugDescription)")
+        }
+        let drawing = try document(
+            """
+            <style>.a { fill: rgb(255,
+              0, 0) }</style>
+            <rect class="a" width="1" height="1"/>
+            <rect width="1" height="1" fill="rgb(255,&#10;0,&#13;&#10;0)"/>
+            """)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items.map(\.fill) == [red, red])
+    }
+
     // MARK: - 文書
 
     @Test("基本図形と、群の変換を畳んだ置き場所を読む")
@@ -235,6 +335,382 @@ struct SVGFileTests {
             "<rect width=\"10\" height=\"10\"/>",
             root: "<svg width=\"200\" height=\"100\" viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\">")
         #expect(isClose(stretched.items[0].transform.apply(SIMD2(100, 100)), SIMD2(200, 100)))
+    }
+
+    /// 根の `<svg>` に幅か高さの片方と `viewBox` だけを書くと、書いていない側は `viewBox` の
+    /// 縦横比から決まる (CSS Images 3 の既定の大きさの決め方。ブラウザの `<img>`・resvg・librsvg
+    /// の大きさ) ([#2333])。
+    ///
+    /// [#2333]: https://github.com/mokume-metal/mokume/issues/2333
+    @Test(
+        "根の幅か高さの片方だけなら、もう片方は viewBox の縦横比から決まる (#2333)",
+        arguments: [
+            // (根の属性, viewBox の右下の角, 写った先)
+            (#"width="50" viewBox="0 0 10 20""#, SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"height="50" viewBox="0 0 20 10""#, SIMD2(20, 10), SIMD2(100, 50)),
+            (#"width="50" viewBox="0 0 10 20" preserveAspectRatio="none""#, SIMD2(10, 20), SIMD2(50, 100)),
+            (#"height="50" viewBox="0 0 20 10" preserveAspectRatio="xMidYMid slice""#, SIMD2(20, 10), SIMD2(100, 50)),
+            // 書いた側を割合で書いても、割合を読んだ後の大きさから導く。根の割合を viewBox に
+            // 対して読むのは mokume の決まりで、ブラウザで開いたときの大きさと同じとは限らない
+            (#"width="500%" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+            // SVG 2 の auto と読めない値は、書いていないのと同じ
+            (#"width="50" height="auto" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+            (#"width="auto" height="100" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+            (#"width="50" height="abc" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(50, 100)),
+        ])
+    func oneRootSideFollowsTheViewBoxAspect(_ sample: (String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(.zero), .zero), "\(sample.0): \(transform.apply(.zero))")
+        #expect(isClose(transform.apply(sample.1), sample.2), "\(sample.0): \(transform.apply(sample.1))")
+    }
+
+    @Test("viewBox の原点が 0 でない根でも、片方だけなら縦横比から導き、viewBox の左上が原点へ写る (#2333)")
+    func oneRootSideWithAnOffsetViewBox() throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="50" viewBox="10 10 10 20">"#)
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(SIMD2(10, 10)), .zero), "\(transform.apply(SIMD2(10, 10)))")
+        #expect(isClose(transform.apply(SIMD2(20, 30)), SIMD2(50, 100)), "\(transform.apply(SIMD2(20, 30)))")
+    }
+
+    /// 入れ子の `<svg>` の書いていない側は、根と違って親の座標の決まりの 100% (SVG 2 の `auto`)
+    /// のままで、縦横比からは導かない。
+    @Test("入れ子の <svg> に片方だけ書けば、もう片方は親の 100% のまま (#2333)")
+    func nestedSvgWithOneSideKeepsTheParentSize() throws {
+        let drawing = try document(
+            #"<svg width="20" viewBox="0 0 10 20"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        let transform = drawing.items[0].transform
+        // 20×100 の枠に meet で 2 倍、縦の余り 100 − 40 の半分だけ下へ寄せる
+        // (縦横比から導くと 20×40 の枠になり、ずれは出ない)
+        #expect(isClose(transform.apply(.zero), SIMD2(0, 30)), "\(transform.apply(.zero))")
+        #expect(isClose(transform.apply(SIMD2(10, 20)), SIMD2(20, 70)), "\(transform.apply(SIMD2(10, 20)))")
+    }
+
+    /// 導いた側が `Float` に収まらない (無限大・0 へ潰れる) ときは、導けないものとして直す前と
+    /// 同じ `viewBox` の大きさに倒す。途中の積があふれても答えが収まるなら、その答えを使う。
+    @Test(
+        "根の片方から導いた大きさが Float に収まらなければ、viewBox の大きさに倒す (#2333)",
+        arguments: [
+            // (根の属性, viewBox の右下の角, 写った先)
+            // 導くと高さ 1e39 (無限大)。viewBox の高さ 10 に倒し、縦は等倍・横は余りの半分だけ寄る
+            (#"width="1e38" viewBox="0 0 1 10""#, SIMD2<Float>(1, 10), SIMD2<Float>(5e37, 10)),
+            // 縦横比そのものが 1e40 (無限大)。viewBox の高さに倒し、縦は等倍・横は余りの半分 50 だけ寄る
+            (#"width="100" viewBox="0 0 1e-20 1e20""#, SIMD2(1e-20, 1e20), SIMD2(50, 1e20)),
+            // 縦横比が 1e-60 (0 へ潰れる)。viewBox の高さ 1e-30 に倒し、縦は等倍
+            (#"width="100" viewBox="0 0 1e30 1e-30""#, SIMD2(1e30, 1e-30), SIMD2(100, 1e-30)),
+            // 書いた幅 × viewBox の高さは 1e40 であふれるが、答えの 1e30 は収まる
+            (#"width="1e30" viewBox="0 0 1e10 1e10""#, SIMD2(1e10, 1e10), SIMD2(1e30, 1e30)),
+        ])
+    func derivedRootSideThatDoesNotFitFallsBack(_ sample: (String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        let item = try #require(drawing.items.first, "\(sample.0): 描かれなかった")
+        let transform = item.transform
+        let coefficients = [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f]
+        let isFinite = coefficients.allSatisfy { $0.isFinite }
+        #expect(isFinite, "\(sample.0): \(transform)")
+        let mapped = transform.apply(sample.1)
+        // 桁が大きく離れるので、相対の誤差で比べる
+        let matches = (0..<2).allSatisfy { abs(mapped[$0] - sample.2[$0]) <= 1e-3 * max(1, abs(sample.2[$0])) }
+        #expect(matches, "\(sample.0): \(mapped)")
+    }
+
+    @Test(
+        "根に幅と高さの両方か、どちらも書かなければ、写し方は変わらない (#2333 の陰性対照)",
+        arguments: [
+            // 両方を書けば、その枠へ写す
+            (#"width="50" height="100" viewBox="0 0 10 20""#, SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // 両方を書いて縦横比が違えば、縦横比を保って中央へ (片方から導かない)
+            (#"width="50" height="50" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(37.5, 50)),
+            // どちらも書かなければ等倍
+            (#"viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(10, 20)),
+            (#"width="auto" height="auto" viewBox="0 0 10 20""#, SIMD2(10, 20), SIMD2(10, 20)),
+            // viewBox が無ければ導けない。書いていない側は 100 で、変換は掛からない
+            (#"width="50""#, SIMD2(10, 20), SIMD2(10, 20)),
+        ])
+    func rootWithBothOrNeitherSideIsUnchanged(_ sample: (String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(sample.1), sample.2), "\(sample.0): \(transform.apply(sample.1))")
+    }
+
+    /// 長さを取る口に `auto` 以外の読めない値を書くと、書いていないのと同じに読んだうえで**名乗る**
+    /// ([#2556])。`auto` と書いていない口は名乗らない。
+    ///
+    /// [#2556]: https://github.com/mokume-metal/mokume/issues/2556
+    @Test(
+        "根の幅・高さの読めない値は、書いていないものとして読んで skipped に載る (#2556)",
+        arguments: [
+            // (根の属性, 載るはずの名乗り, viewBox の右下の角の写った先)
+            (#"width="50" height="abc" viewBox="0 0 10 20""#, #"<svg height="abc">"#, SIMD2<Float>(50, 100)),
+            (#"width="abc" height="100" viewBox="0 0 10 20""#, #"<svg width="abc">"#, SIMD2<Float>(50, 100)),
+            // 空・16 進・読めない単位
+            (#"width="50" height="" viewBox="0 0 10 20""#, #"<svg height="">"#, SIMD2(50, 100)),
+            (#"width="50" height="0x10" viewBox="0 0 10 20""#, #"<svg height="0x10">"#, SIMD2(50, 100)),
+            (#"width="50" height="10em" viewBox="0 0 10 20""#, #"<svg height="10em">"#, SIMD2(50, 100)),
+            // 両方が読めなければ、どちらも書いていないのと同じ (等倍)
+            (#"width="abc" height="abc" viewBox="0 0 10 20""#, #"<svg width="abc">"#, SIMD2(10, 20)),
+        ])
+    func unreadableRootSizeIsNamed(_ sample: (String, String, SIMD2<Float>)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.first?.what == sample.1, "\(sample.0): \(drawing.skipped)")
+        let transform = drawing.items[0].transform
+        #expect(isClose(transform.apply(SIMD2(10, 20)), sample.2), "\(sample.0): \(transform.apply(SIMD2(10, 20)))")
+    }
+
+    @Test(
+        "根の幅・高さが auto・空白つきの AUTO・書いていないときは、名乗らない (#2556 の陰性対照)",
+        arguments: [
+            #"width="50" height="auto" viewBox="0 0 10 20""#,
+            #"width=" AUTO " height="100" viewBox="0 0 10 20""#,
+            #"width="50" viewBox="0 0 10 20""#,
+            #"viewBox="0 0 10 20""#,
+        ])
+    func autoAndAbsentRootSizeAreNotNamed(_ attributes: String) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(attributes)>")
+        #expect(drawing.skipped.isEmpty, "\(attributes): \(drawing.skipped)")
+    }
+
+    @Test("入れ子の <svg> の x・y・width・height の読めない値も名乗る。auto は width・height だけ許す (#2556)")
+    func unreadableNestedSvgLengthsAreNamed() throws {
+        let drawing = try document(
+            #"<svg x="abc" y="0x1" width="xyz" height="auto"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(
+            drawing.skipped.map(\.what) == [#"<svg x="abc">"#, #"<svg y="0x1">"#, #"<svg width="xyz">"#],
+            "\(drawing.skipped)")
+        // x・y は auto を取らない
+        let autoPosition = try document(
+            #"<svg x="auto"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(autoPosition.skipped.map(\.what) == [#"<svg x="auto">"#])
+        // 読めた値・書いていない値は名乗らない
+        let readable = try document(
+            #"<svg x="5" y="10px" width="auto"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(readable.skipped.isEmpty, "\(readable.skipped)")
+    }
+
+    @Test("rect の rx・ry の読めない値は名乗り、書いていないものとして読む。auto・書いていない・負の値は名乗らない (#2556)")
+    func unreadableCornerRadiusIsNamed() throws {
+        let bad = try document(#"<rect width="10" height="10" rx="abc"/>"#)
+        #expect(bad.skipped.map(\.what) == [#"<rect rx="abc">"#], "\(bad.skipped)")
+        // 角は丸めない (rx を書いていないのと同じ)
+        #expect(bad.items[0].outline == .rect(x: 0, y: 0, width: 10, height: 10))
+        // ry だけ読めなければ、読めた rx がもう片方にも使われる
+        let half = try document(#"<rect width="10" height="10" rx="2" ry="0x3"/>"#)
+        #expect(half.skipped.map(\.what) == [#"<rect ry="0x3">"#], "\(half.skipped)")
+        guard case .path = half.items[0].outline else {
+            Issue.record("角が丸まっていない: \(half.items[0].outline)")
+            return
+        }
+        for radii in [#"rx="auto""#, #"rx="auto" ry=" Auto ""#, "", #"rx="-3""#, #"ry="2""#] {
+            let clean = try document(#"<rect width="10" height="10" \#(radii)/>"#)
+            #expect(clean.skipped.isEmpty, "\(radii): \(clean.skipped)")
+        }
+    }
+
+    /// SVG 2 では `width` / `height` は CSS の性質でもあるので、根の大きさを `style` 属性や `<style>` で
+    /// 書いた SVG は属性と同じに効く。重なれば CSS が属性に勝つ ([#2557])。
+    ///
+    /// [#2557]: https://github.com/mokume-metal/mokume/issues/2557
+    @Test(
+        "根の幅・高さを CSS で書いても、属性と同じに効き、CSS が属性に勝つ (#2557)",
+        arguments: [
+            // (根の属性, <style> の中身, viewBox の右下の角, 写った先)
+            (#"viewBox="0 0 10 20" style="width:50px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 20 10" style="height:50px""#, "", SIMD2<Float>(20, 10), SIMD2<Float>(100, 50)),
+            (#"viewBox="0 0 10 20" style="width: 50px; height: 100px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20""#, "svg { width: 50px }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20""#, "* { width: 50px }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20" class="logo""#, ".logo { width: 50px; }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // 割合は viewBox に対して読む (根の決まり)
+            (#"viewBox="0 0 10 20" style="width:500%""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // CSS が属性に勝つ
+            (#"viewBox="0 0 10 20" width="10" style="width:50px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            (#"viewBox="0 0 10 20" width="10""#, "svg { width: 50px }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // !important の規則は、重なる style 属性にも勝つ
+            (#"viewBox="0 0 10 20" style="width:10px""#, "svg { width: 50px !important }", SIMD2<Float>(10, 20), SIMD2<Float>(50, 100)),
+            // 属性で書いた片方と、CSS で書いたもう片方 (両方が揃えば縦横比は導かない)
+            (#"viewBox="0 0 10 20" width="50" style="height:50px""#, "", SIMD2<Float>(10, 20), SIMD2<Float>(37.5, 50)),
+        ])
+    func rootSizeWrittenInCSSIsRead(_ sample: (String, String, SIMD2<Float>, SIMD2<Float>)) throws {
+        let drawing = try document(
+            "<style>\(sample.1)</style><rect width=\"1\" height=\"1\"/>",
+            root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.isEmpty, "\(sample.0) \(sample.1): \(drawing.skipped)")
+        let transform = drawing.items[0].transform
+        #expect(
+            isClose(transform.apply(sample.2), sample.3), "\(sample.0) \(sample.1): \(transform.apply(sample.2))")
+    }
+
+    @Test("根の幅・高さを CSS で読めない値に書けば名乗り、auto に書けば属性の値も消える (#2557)")
+    func unreadableOrAutoRootSizeInCSS() throws {
+        let bad = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20" style="width:abc">"#)
+        #expect(bad.skipped.map(\.what) == [#"<svg width="abc">"#], "\(bad.skipped)")
+        #expect(isClose(bad.items[0].transform.apply(SIMD2(10, 20)), SIMD2(10, 20)))
+        // calc() など、読まない書き方も名乗る
+        let calc = try document(
+            "<style>svg { height: calc(50px + 1px) }</style><rect width=\"1\" height=\"1\"/>",
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20">"#)
+        #expect(calc.skipped.map(\.what) == [#"<svg height="calc(50px + 1px)">"#], "\(calc.skipped)")
+        // CSS の auto は属性の width="50" に勝つ: どちらも書いていないのと同じ (等倍)
+        let auto = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20" width="50" style="width:auto">"#)
+        #expect(auto.skipped.isEmpty, "\(auto.skipped)")
+        #expect(isClose(auto.items[0].transform.apply(SIMD2(10, 20)), SIMD2(10, 20)))
+    }
+
+    /// CSS では読めない (無効な) 宣言は捨てられ、順位の下の宣言が残る。勝った宣言が読めない値なら、読める
+    /// 下の宣言 (属性など) を採り、読めなかった宣言を名乗る。
+    @Test(
+        "CSS で書いた読めない値は、読める属性に勝たず、名乗る",
+        arguments: [
+            // (根の属性, <style> の中身, 名乗りの並び)。viewBox は 512×256 で、属性の 24 (縦横比から 24×12) が残れば右下が (24, 12)
+            (#"width="24" style="width:1em""#, "", [#"<svg width="1em">"#]),
+            (#"width="24" style="width:1rem""#, "", [#"<svg width="1rem">"#]),
+            (#"width="24" style="width:100vw""#, "", [#"<svg width="100vw">"#]),
+            (#"width="24" style="width:calc(100% - 4px)""#, "", [#"<svg width="calc(100% - 4px)">"#]),
+            (#"height="12" style="height:fit-content""#, "", [#"<svg height="fit-content">"#]),
+            // <style> の規則でも、!important でも同じ
+            (#"width="24""#, "svg { width: 1em }", [#"<svg width="1em">"#]),
+            (#"width="24""#, "svg { width: 1em !important }", [#"<svg width="1em">"#]),
+            // 読めない宣言が 2 つ重なれば、順位の高いほうから両方を名乗る
+            (#"width="24" style="width:2rem""#, "svg { width: 1em }", [#"<svg width="2rem">"#, #"<svg width="1em">"#]),
+            // 読める宣言のあいだに読めない宣言があれば、読めない宣言だけを飛ばす
+            (#"width="24" style="width:1em""#, "svg { width: 24px }", [#"<svg width="1em">"#]),
+        ])
+    func unreadableCSSSizeDoesNotBeatReadableOne(_ sample: (String, String, [String])) throws {
+        let drawing = try document(
+            "<style>\(sample.1)</style><rect width=\"1\" height=\"1\"/>",
+            root: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 256\" \(sample.0)>")
+        #expect(drawing.skipped.map(\.what) == sample.2, "\(sample.0) \(sample.1): \(drawing.skipped)")
+        let mapped = drawing.items[0].transform.apply(SIMD2(512, 256))
+        #expect(isClose(mapped, SIMD2(24, 12)), "\(sample.0) \(sample.1): \(mapped)")
+    }
+
+    @Test("CSS の読めない値だけが重なれば、全部を名乗り、書いていないのと同じ (viewBox の大きさ) に読む")
+    func onlyUnreadableSizesFallBackToTheViewBox() throws {
+        let drawing = try document(
+            #"<style>svg { width: 1em }</style><rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="abc">"#)
+        #expect(drawing.skipped.map(\.what) == [#"<svg width="1em">"#, #"<svg width="abc">"#], "\(drawing.skipped)")
+        #expect(isClose(drawing.items[0].transform.apply(SIMD2(512, 512)), SIMD2(512, 512)))
+    }
+
+    /// `initial` と `unset` は、`width` / `height` では初めの値 `auto` と同じ。読める宣言として名乗らず、
+    /// 下の属性を消して書いていないのと同じにする (CSS の `auto` と同じ)。
+    @Test("CSS の initial と unset は auto と同じ (名乗らず、属性を消す)", arguments: ["initial", "unset", " AUTO "])
+    func initialAndUnsetAreAuto(_ keyword: String) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#,
+            root:
+                #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="24" height="24" style="width:\#(keyword)">"#
+        )
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        // 幅は auto (書いていない) で、高さは 24 だけが残る: 縦横比 1:1 から幅も 24
+        #expect(isClose(drawing.items[0].transform.apply(SIMD2(512, 512)), SIMD2(24, 24)))
+    }
+
+    /// `ellipse` の `rx` / `ry` の `auto` は、`rect` と同じに名乗らず、書いていないのと同じに読む (SVG 2:
+    /// 片方が `auto` なら、もう片方を使う。両方なら 0 で描かない)。
+    @Test("ellipse の rx・ry の auto は名乗らず、片方が auto ならもう片方を使う")
+    func ellipseAutoRadius() throws {
+        let one = try document(#"<ellipse cx="10" cy="10" rx="auto" ry="5"/>"#)
+        #expect(one.skipped.isEmpty, "\(one.skipped)")
+        #expect(one.items.first?.outline == .ellipse(centerX: 10, centerY: 10, radiusX: 5, radiusY: 5))
+        let other = try document(#"<ellipse cx="10" cy="10" rx="7" ry=" Auto "/>"#)
+        #expect(other.skipped.isEmpty, "\(other.skipped)")
+        #expect(other.items.first?.outline == .ellipse(centerX: 10, centerY: 10, radiusX: 7, radiusY: 7))
+        let both = try document(#"<ellipse cx="10" cy="10" rx="auto" ry="auto"/>"#)
+        #expect(both.skipped.isEmpty, "\(both.skipped)")
+        #expect(both.items.isEmpty)
+        // 読めない値は、これまでどおり名乗って描かない
+        let bad = try document(#"<ellipse cx="10" cy="10" rx="abc" ry="5"/>"#)
+        #expect(bad.skipped.map(\.what) == [#"<ellipse rx="abc">"#], "\(bad.skipped)")
+        #expect(bad.items.isEmpty)
+    }
+
+    @Test("rect の width・height の auto は、rx と同じに名乗らず、0 として描かない。読めない値は名乗る")
+    func rectAutoSize() throws {
+        let auto = try document(#"<rect width="auto" height="10"/><rect width="10" height=" auto "/>"#)
+        #expect(auto.skipped.isEmpty, "\(auto.skipped)")
+        #expect(auto.items.isEmpty)
+        let bad = try document(#"<rect width="abc" height="10"/>"#)
+        #expect(bad.skipped.map(\.what) == [#"<rect width="abc">"#], "\(bad.skipped)")
+        #expect(bad.items.isEmpty)
+    }
+
+    /// 根の `width` / `height` が負なら、描かない (SVG の約束) のは今までどおりだが、読めない値と同じに
+    /// 名乗る ([#2625])。`0` は約束どおりの「描かない」で、名乗らない。
+    ///
+    /// [#2625]: https://github.com/mokume-metal/mokume/issues/2625
+    @Test(
+        "根の width・height が負なら、描かないまま skipped に載る (#2625)",
+        arguments: [
+            // (根の属性, 載るはずの名乗り)
+            (#"width="-5" height="10" viewBox="0 0 10 10""#, [#"<svg width="-5">"#]),
+            (#"width="10" height="-5" viewBox="0 0 10 10""#, [#"<svg height="-5">"#]),
+            // 片方だけ負で、もう片方は書いていない
+            (#"width="-5" viewBox="0 0 10 10""#, [#"<svg width="-5">"#]),
+            // 単位つき・小数・空白つき (空白は落とした文字で名乗る)
+            (#"width="-0.5in" height="10" viewBox="0 0 10 10""#, [#"<svg width="-0.5in">"#]),
+            (#"width=" -5 " height="10""#, [#"<svg width="-5">"#]),
+            // 両方が負なら、両方を名乗る
+            (#"width="-5" height="-6""#, [#"<svg width="-5">"#, #"<svg height="-6">"#]),
+            // CSS で書いても同じ (CSS が勝つので、読める属性の下で名乗りも出る)
+            (#"width="10" height="10" style="width:-5px""#, [#"<svg width="-5px">"#]),
+        ])
+    func negativeRootSizeIsNamed(_ sample: (String, [String])) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        // 描かないのは変えない。名乗りは「負の値を捨てた」ではなく「この値で根を描かない」の意味で、
+        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2648 に置いてある
+        #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "根の width・height が 0 なら、描かず、名乗らない。正の値は描く (#2625 の陰性対照)",
+        arguments: [
+            (#"width="0" height="10" viewBox="0 0 10 10""#, false),
+            (#"width="10" height="0" viewBox="0 0 10 10""#, false),
+            (#"width="-0" height="10" viewBox="0 0 10 10""#, false),
+            (#"width="5" height="10" viewBox="0 0 10 10""#, true),
+        ])
+    func zeroRootSizeIsNotNamed(_ sample: (String, Bool)) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.isEmpty == !sample.1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test("入れ子の svg の width・height が負でも、同じに名乗り、その中は描かない。外は描く (#2625)")
+    func negativeNestedSvgSizeIsNamed() throws {
+        let drawing = try document(
+            #"<svg width="-5" height="10"><rect width="1" height="1"/></svg><rect width="2" height="2"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(drawing.skipped.map(\.what) == [#"<svg width="-5">"#], "\(drawing.skipped)")
+        #expect(drawing.items.map(\.outline) == [.rect(x: 0, y: 0, width: 2, height: 2)])
+    }
+
+    @Test("CSS の width は svg 以外の要素の大きさを変えない (#2557 の陰性対照)")
+    func cssWidthDoesNotTouchOtherElements() throws {
+        let drawing = try document(
+            #"<style>rect { width: 50px }</style><rect width="10" height="10"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">"#)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        #expect(drawing.items[0].outline == .rect(x: 0, y: 0, width: 10, height: 10))
     }
 
     @Test("書き方の優先は 属性 < 要素名の規則 < クラスの規則 < style 属性")
@@ -390,7 +866,8 @@ struct SVGFileTests {
             ("fill: red !imp", "red !imp", false),
         ])
     func importantMarkerIsSplitFromTheValue(_ sample: (text: String, value: String, isImportant: Bool)) {
-        let declarations = SVGFile.parseDeclarations(sample.text)
+        let (declarations, unreadable) = SVGFile.parseDeclarations(sample.text)
+        #expect(unreadable.isEmpty, "\(sample.text): \(unreadable)")
         #expect(declarations.count == 1, "\(sample.text)")
         #expect(declarations.first?.name == "fill", "\(sample.text)")
         #expect(declarations.first?.value == sample.value, "\(sample.text)")
@@ -492,6 +969,536 @@ struct SVGFileTests {
             """)
         #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
         #expect(drawing.items.map(\.outline) == [.rect(x: 0, y: 0, width: 2, height: 2)])
+    }
+
+    /// `visibility` の読めない値 (`abc`・空) は、`hidden` と同じに隠さず、無かったものとして親の値を受け継いで
+    /// 描き、`fill-rule "abc"` などと同じ形で名乗る ([#2626])。
+    ///
+    /// [#2626]: https://github.com/mokume-metal/mokume/issues/2626
+    @Test(
+        "visibility の読めない値は隠さず、親の値を受け継いで描き、skipped に載る (#2626)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 描かれる矩形の数)
+            (#"<rect width="10" height="10" visibility="abc"/>"#, [#"visibility "abc""#], 1),
+            (#"<rect width="10" height="10" visibility=""/>"#, [#"visibility """#], 1),
+            // 空白つきは落とした文字で名乗る
+            (#"<rect width="10" height="10" visibility=" abc "/>"#, [#"visibility "abc""#], 1),
+            // CSS の宣言 (style 属性・<style>) でも同じ
+            (#"<rect width="10" height="10" style="visibility:abc"/>"#, [#"visibility "abc""#], 1),
+            (#"<style>rect { visibility: abc }</style><rect width="10" height="10"/>"#, [#"visibility "abc""#], 1),
+            // 親が visible なら描き、hidden なら受け継いで隠れたまま (読めない値は hidden に変えず、visible にも戻さない)
+            (#"<g visibility="visible"><rect width="10" height="10" visibility="abc"/></g>"#, [#"visibility "abc""#], 1),
+            (#"<g visibility="hidden"><rect width="10" height="10" visibility="abc"/></g>"#, [#"visibility "abc""#], 0),
+            // 祖先の読めない値は、祖先の resolve で名乗られる (中身が空でも載る。祖先 1 つで 1 件)。子は受け継ぐだけで名乗らない
+            (#"<g visibility="abc"><rect width="10" height="10"/><rect width="10" height="10"/></g>"#, [#"visibility "abc""#], 2),
+        ])
+    func unreadableVisibilityIsNamedAndInherited(_ sample: (String, [String], Int)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "visibility の visible・hidden・collapse は今までどおりで、名乗らない (#2626 の陰性対照)",
+        arguments: [
+            (#"<rect width="10" height="10" visibility="visible"/>"#, 1),
+            (#"<rect width="10" height="10" visibility=" VISIBLE "/>"#, 1),
+            (#"<rect width="10" height="10" visibility="hidden"/>"#, 0),
+            (#"<rect width="10" height="10" visibility="collapse"/>"#, 0),
+            (#"<rect width="10" height="10" style="visibility:hidden"/>"#, 0),
+            (#"<rect width="10" height="10" style="visibility:collapse"/>"#, 0),
+            (#"<style>rect { visibility: hidden }</style><rect width="10" height="10"/>"#, 0),
+            // inherit は親の値のまま (hidden の親なら隠れる)
+            (#"<g visibility="hidden"><rect width="10" height="10" visibility="inherit"/></g>"#, 0),
+            (#"<rect width="10" height="10" visibility="inherit"/>"#, 1),
+            // 親が hidden でも、子が visible なら描く
+            (#"<g visibility="hidden"><rect width="10" height="10" visibility="visible"/></g>"#, 1),
+        ])
+    func readableVisibilityIsUnchanged(_ sample: (String, Int)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.1, "\(sample.0): \(drawing.items)")
+    }
+
+    // MARK: 読めない値を一方へ倒さない ([#2649])
+    //
+    // [#2649]: https://github.com/mokume-metal/mokume/issues/2649
+
+    /// `viewBox="0 0 10 10"` を 100×50 の根へ写した変換で、viewBox の左上と右下が写る先。
+    private func aspectCorners(_ aspect: String?) throws -> (drawing: SVGFile.Drawing, corners: [SIMD2<Float>]) {
+        let written = aspect.map { #" preserveAspectRatio="\#($0)""# } ?? ""
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="100" height="50"\#(written)>"#)
+        let transform = try #require(drawing.items.first, "\(aspect ?? "なし"): 描かれなかった").transform
+        return (drawing, [transform.apply(.zero), transform.apply(SIMD2(10, 10))])
+    }
+
+    /// `preserveAspectRatio` の読めない値は、SVG では書いていないのと同じ (`xMidYMid meet`) に読まれる。
+    /// 左上寄せ (xMinYMin) に倒さず、`visibility "abc"` などと同じ形で名乗る。
+    @Test(
+        "preserveAspectRatio の読めない値は、書いていないときと同じ中央寄せで写し、skipped に載る (#2649)",
+        arguments: [
+            // (書いた値, 載るはずの名乗り)
+            ("foo", #"preserveAspectRatio "foo""#),
+            (" foo ", #"preserveAspectRatio "foo""#),
+            ("xMidYMid foo", #"preserveAspectRatio "xMidYMid foo""#),
+            ("xMidYMid meet slice", #"preserveAspectRatio "xMidYMid meet slice""#),
+            ("xMidYMin2", #"preserveAspectRatio "xMidYMin2""#),
+            ("defer", #"preserveAspectRatio "defer""#),
+            ("", #"preserveAspectRatio """#),
+        ])
+    func unreadableAspectRatioIsNamedAndCentred(_ sample: (String, String)) throws {
+        let (drawing, corners) = try aspectCorners(sample.0)
+        let (_, expected) = try aspectCorners(nil)
+        // 書いていなければ 5 倍で写し、横の余り 50 の半分だけ右へ寄せる
+        #expect(expected == [SIMD2(25, 0), SIMD2(75, 50)])
+        #expect(corners == expected, "\(sample.0): \(corners)")
+        #expect(drawing.skipped.map(\.what) == [sample.1], "\(sample.0): \(drawing.skipped)")
+    }
+
+    @Test(
+        "preserveAspectRatio の読める値は今までどおりで、名乗らない (#2649 の陰性対照)",
+        arguments: [
+            // (書いた値, viewBox の左上と右下が写る先)
+            ("none", [SIMD2<Float>(0, 0), SIMD2<Float>(100, 50)]),
+            ("none slice", [SIMD2(0, 0), SIMD2(100, 50)]),
+            ("xMidYMid", [SIMD2(25, 0), SIMD2(75, 50)]),
+            ("xMinYMin slice", [SIMD2(0, 0), SIMD2(100, 100)]),
+            ("xMidYMid slice", [SIMD2(0, -25), SIMD2(100, 75)]),
+            ("xMaxYMax", [SIMD2(50, 0), SIMD2(100, 50)]),
+            ("XMINYMID meet", [SIMD2(0, 0), SIMD2(50, 50)]),
+            ("defer xMaxYMin meet", [SIMD2(50, 0), SIMD2(100, 50)]),
+        ])
+    func readableAspectRatioIsUnchanged(_ sample: (String, [SIMD2<Float>])) throws {
+        let (drawing, corners) = try aspectCorners(sample.0)
+        #expect(corners == sample.1, "\(sample.0): \(corners)")
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+    }
+
+    @Test("入れ子の svg の preserveAspectRatio の読めない値も、中央寄せで写して名乗る (#2649)")
+    func unreadableNestedAspectRatioIsNamed() throws {
+        let drawing = try document(
+            #"<svg viewBox="0 0 10 10" width="100" height="50" preserveAspectRatio="foo"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">"#)
+        #expect(drawing.items[0].transform.apply(.zero) == SIMD2(25, 0))
+        #expect(drawing.skipped.map(\.what) == [#"preserveAspectRatio "foo""#], "\(drawing.skipped)")
+    }
+
+    /// `stroke-dasharray` の読めない値と負の値は SVG では宣言ごと無効で、破線にならない。「破線あり」に倒して
+    /// 「破線を捨てた」と名乗らず、無かったものとして受け継いだ値のまま、値が読めなかったと名乗る。
+    @Test(
+        "stroke-dasharray の読めない値・負の値は、破線ありに倒さず skipped に載り、下の none を消さない (#2649)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り)
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="abc"/>"#, [#"stroke-dasharray "abc""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="-1 2"/>"#, [#"stroke-dasharray "-1 2""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5em"/>"#, [#"stroke-dasharray "5em""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5,,3"/>"#, [#"stroke-dasharray "5,,3""#]),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray=""/>"#, [#"stroke-dasharray """#]),
+            // 線を引かなくても、読めない値は名乗る (visibility などと同じ)
+            (#"<rect width="10" height="10" stroke-dasharray="abc"/>"#, [#"stroke-dasharray "abc""#]),
+            // 下の順位の有効な none は、読めない宣言に消されない
+            (
+                #"<rect width="10" height="10" stroke="black" stroke-dasharray="none" style="stroke-dasharray:abc"/>"#,
+                [#"stroke-dasharray "abc""#]
+            ),
+            (
+                #"<style>rect { stroke-dasharray: abc }</style><rect width="10" height="10" stroke="black" stroke-dasharray="none"/>"#,
+                [#"stroke-dasharray "abc""#]
+            ),
+            // 親の破線は受け継ぐ (読めない値は破線を消しもしない)。読めた破線は今までどおり「捨てた」と名乗る
+            (
+                #"<g stroke-dasharray="5 3"><rect width="10" height="10" stroke="black" stroke-dasharray="abc"/></g>"#,
+                [#"stroke-dasharray "abc""#, "stroke-dasharray"]
+            ),
+        ])
+    func unreadableDashArrayIsNamedAndIgnored(_ sample: (String, [String])) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "stroke-dasharray の読める値は今までどおりで、0 の並びは破線にしない (#2649 の陰性対照)",
+        arguments: [
+            // (SVG の本体, 破線を捨てたと名乗るか)
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5 3"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5,3"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray=" 5 , 3 "/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5pt 3%"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="none"/>"#, false),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray=" NONE "/>"#, false),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="0pt"/>"#, false),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="0, 0px"/>"#, false),
+            // 線を引かなければ、読めた破線も名乗らない
+            (#"<rect width="10" height="10" stroke-dasharray="5 3"/>"#, false),
+            // 上の順位の有効な値が勝つ
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="none" style="stroke-dasharray:5 3"/>"#, true),
+            (#"<rect width="10" height="10" stroke="black" stroke-dasharray="5 3" style="stroke-dasharray:none"/>"#, false),
+            (#"<g stroke-dasharray="none"><rect width="10" height="10" stroke="black" stroke-dasharray="inherit"/></g>"#, false),
+        ])
+    func readableDashArrayIsUnchanged(_ sample: (String, Bool)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == (sample.1 ? ["stroke-dasharray"] : []), "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    /// `url(#a) abc` の代わりの色が読めなければ、CSS では宣言ごと無効になる。参照としても読まず、読めない値として
+    /// 名乗るだけで、下の順位の宣言・受け継いだ値が残る (他の読めない値と同じ)。
+    @Test(
+        "塗りの参照の代わりの色が読めなければ、宣言ごと読めない値として名乗り、下の宣言・受け継いだ値が残る (#2649)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 塗りの色)
+            // 書いていないときの塗りは黒 (受け継ぐ初めの値)
+            (#"<rect width="10" height="10" fill="url(#a) abc"/>"#, [#"fill "url(#a) abc""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a)abc"/>"#, [#"fill "url(#a)abc""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a) inherit"/>"#, [#"fill "url(#a) inherit""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a) url(#b)"/>"#, [#"fill "url(#a) url(#b)""#], SVGFile.Color.black),
+            // 線は引かれないまま (初めの値の none)
+            (#"<rect width="10" height="10" stroke="url(#a) abc"/>"#, [#"stroke "url(#a) abc""#], SVGFile.Color.black),
+            // 下の順位の宣言を消さない (属性 < <style> の規則 < style 属性)
+            (
+                #"<rect width="10" height="10" fill="red" style="fill: url(#a) abc"/>"#,
+                [#"fill "url(#a) abc""#], Ink.red
+            ),
+            (
+                ##"<style>rect { fill: url(#a) abc }</style><rect width="10" height="10" fill="#0000ff"/>"##,
+                [#"fill "url(#a) abc""#], Ink.blue
+            ),
+            // 受け継いだ値も消さない
+            (#"<g fill="red"><rect width="10" height="10" fill="url(#a) abc"/></g>"#, [#"fill "url(#a) abc""#], Ink.red),
+        ] as [(String, [String], SVGFile.Color?)])
+    func unreadablePaintFallbackIsNamed(_ sample: (String, [String], SVGFile.Color?)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
+        #expect(drawing.items.first?.stroke == nil, "\(sample.0): \(drawing.items)")
+    }
+
+    /// `style` 属性と `<style>` の、宣言の形をしていない部分 (`:` が無い・名前が空) は CSS では捨てられる。
+    /// 黙って落とさず、`CSS declaration "fill red"` の形で名乗る。下の宣言は残る。
+    @Test(
+        "宣言の形をしていない CSS の部分は、skipped に載り、下の宣言を消さない (#2649)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 塗りの色)
+            (##"<rect width="10" height="10" fill="#0000ff" style="fill red"/>"##, [#"CSS declaration "fill red""#], Ink.blue),
+            (##"<rect width="10" height="10" fill="#0000ff" style=": red"/>"##, [#"CSS declaration ": red""#], Ink.blue),
+            // 同じ style 属性の読める宣言は効く
+            (##"<rect width="10" height="10" style="fill red; fill: #00ff00"/>"##, [#"CSS declaration "fill red""#], Ink.green),
+            (
+                ##"<style>rect { fill red }</style><rect width="10" height="10" fill="#0000ff"/>"##,
+                [#"CSS declaration "fill red""#], Ink.blue
+            ),
+            (
+                #"<style>rect { fill: red; stroke }</style><rect width="10" height="10"/>"#,
+                [#"CSS declaration "stroke""#], Ink.red
+            ),
+            // 読めない規則の中身は、規則ごと名乗るので別に名乗らない
+            (#"<style>g .deep { fill red }</style><rect width="10" height="10"/>"#, [#"CSS rule "g .deep""#], SVGFile.Color.black),
+        ])
+    func malformedDeclarationIsNamed(_ sample: (String, [String], SVGFile.Color)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "空の宣言 (;; と末尾の ;) と空の style は、名乗らない (#2649 の陰性対照)",
+        arguments: [
+            #"<rect width="10" height="10" style="fill: red;"/>"#,
+            #"<rect width="10" height="10" style=" ; fill: red ;; "/>"#,
+            #"<rect width="10" height="10" fill="red" style=""/>"#,
+            #"<rect width="10" height="10" fill="red" style="/* 註 */"/>"#,
+            #"<style>rect { fill: red; }</style><rect width="10" height="10"/>"#,
+            #"<style>rect { ; fill: red ;; }</style><rect width="10" height="10"/>"#,
+        ])
+    func emptyDeclarationsAreNotNamed(_ sample: String) throws {
+        let drawing = try document(sample)
+        #expect(drawing.skipped.isEmpty, "\(sample): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == Ink.red, "\(sample): \(drawing.items)")
+    }
+
+    @Test(
+        "塗りの参照の読める代わりの色は今までどおりで、参照だけを名乗る (#2649 の陰性対照)",
+        arguments: [
+            (#"<rect width="10" height="10" fill="url(#a) red"/>"#, Ink.red),
+            (#"<rect width="10" height="10" fill="url(#a)  #0000ff "/>"#, Ink.blue),
+            (#"<rect width="10" height="10" fill="url(#a)"/>"#, nil),
+            (#"<rect width="10" height="10" fill="url(#a) none"/>"#, nil),
+            (##"<rect width="10" height="10" color="#00ff00" fill="url(#a) currentColor"/>"##, Ink.green),
+        ] as [(String, SVGFile.Color?)])
+    func readablePaintFallbackIsUnchanged(_ sample: (String, SVGFile.Color?)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == [#"fill="url(…)""#], "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.first?.fill == sample.1, "\(sample.0): \(drawing.items)")
+    }
+
+    // MARK: 勝った宣言だけが効く ([#2410]・[#2650])
+    //
+    // 同じ性質に宣言が重なったら、読める宣言のうち順位が最も高い 1 つだけが効き、負けた宣言の値は残らない
+    // (CSS Cascade)。勝った宣言が `inherit` なら親の値、`none` なら効果なし、読めない値なら無かったことになる。
+    // 期待値は CSS の規則から手で導く。
+    //
+    // [#2410]: https://github.com/mokume-metal/mokume/issues/2410
+    // [#2650]: https://github.com/mokume-metal/mokume/issues/2650
+
+    @Test(
+        "勝った宣言が inherit なら、負けた宣言の値を残さず親の値になる。出どころに依らない (#2410)",
+        arguments: [
+            // (SVG の本体, 塗り, 線)。親は青、子の負けた宣言は赤
+            // 1a: style 属性の inherit が属性に勝つ
+            (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: inherit"/></g>"#, Ink.blue, nil),
+            // 1b: <style> の !important の inherit が style 属性に勝つ
+            (
+                #"<style>rect { fill: inherit !important }</style><g fill="blue"><rect width="1" height="1" style="fill: red"/></g>"#,
+                Ink.blue, nil
+            ),
+            // 1c: <style> の inherit が属性に勝つ
+            (#"<style>rect { fill: inherit }</style><g fill="blue"><rect width="1" height="1" fill="red"/></g>"#, Ink.blue, nil),
+            // 属性の inherit (負けた宣言が無い) は今までどおり
+            (#"<g fill="blue"><rect width="1" height="1" fill="inherit"/></g>"#, Ink.blue, nil),
+            // 1d: 線も同じ
+            (
+                #"<g stroke="blue"><rect width="1" height="1" fill="none" stroke="red" style="stroke: inherit"/></g>"#,
+                nil, Ink.blue
+            ),
+            // 1e: color 自身の currentColor は inherit と同じ
+            (
+                #"<g color="blue"><rect width="1" height="1" fill="currentColor" color="red" style="color: currentColor"/></g>"#,
+                Ink.blue, nil
+            ),
+            // 陰性対照: 勝った宣言が読める値なら、その値 (親の値を取らない)
+            (#"<g fill="blue"><rect width="1" height="1" fill="inherit" style="fill: red"/></g>"#, Ink.red, nil),
+        ] as [(String, SVGFile.Color?, SVGFile.Color?)])
+    func winningInheritTakesTheParentValue(_ sample: (String, SVGFile.Color?, SVGFile.Color?)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+        #expect(drawing.items.first?.fill == sample.1, "\(sample.0): \(drawing.items)")
+        #expect(drawing.items.first?.stroke == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "受け継がない display・opacity も、勝った inherit は親の値を取る (#2410 の 1f・1g)",
+        arguments: [
+            // (SVG の本体, 描く矩形の数, 塗りの不透明度)
+            // 1f: 親は表示されているので描く
+            (#"<g><rect width="1" height="1" display="none" style="display: inherit"/></g>"#, 1, 1),
+            (#"<style>rect { display: inherit }</style><g><rect width="1" height="1" display="none"/></g>"#, 1, 1),
+            // 1g: 親自身の opacity 0.5 を受け、群の 0.5 と掛かる
+            (#"<g opacity="0.5"><rect width="1" height="1" opacity="0.2" style="opacity: inherit"/></g>"#, 1, 0.25),
+            // 根の要素の inherit は初めの値 (1)
+            (#"<rect width="1" height="1" opacity="0.2" style="opacity: inherit"/>"#, 1, 1),
+            // 陰性対照: 勝った宣言が読める値なら、その値
+            (#"<g opacity="0.5"><rect width="1" height="1" opacity="inherit" style="opacity: 0.2"/></g>"#, 1, 0.1),
+            (#"<g><rect width="1" height="1" display="inherit" style="display: none"/></g>"#, 0, 0),
+        ] as [(String, Int, Float)])
+    func winningInheritOfUninheritedProperties(_ sample: (String, Int, Float)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.1, "\(sample.0): \(drawing.items)")
+        if let alpha = drawing.items.first?.fill?.alpha {
+            #expect(abs(alpha - sample.2) < 1e-6, "\(sample.0): \(alpha)")
+        }
+    }
+
+    @Test(
+        "描けない効果の inherit は、親が効果を持つときだけ名乗る (#2410)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗りと数)。親の効果は親の分として 1 度名乗られる
+            (#"<g clip-path="url(#c)"><rect width="1" height="1" style="clip-path: inherit"/></g>"#, ["clip-path": 2]),
+            (#"<g><rect width="1" height="1" clip-path="url(#c)" style="clip-path: inherit"/></g>"#, [:]),
+            (#"<g filter="url(#f)"><rect width="1" height="1" filter="inherit"/></g>"#, ["filter": 2]),
+            (#"<g mix-blend-mode="multiply"><rect width="1" height="1" style="mix-blend-mode: inherit"/></g>"#, ["mix-blend-mode": 2]),
+            (#"<g marker-end="url(#m)"><path d="M0 0 L1 1" stroke="black" style="marker: inherit"/></g>"#, ["marker": 2]),
+            // 陰性対照: 書かなければ受け継がない
+            (#"<g clip-path="url(#c)"><rect width="1" height="1"/></g>"#, ["clip-path": 1]),
+        ] as [(String, [String: Int])])
+    func inheritedEffectFollowsTheParent(_ sample: (String, [String: Int])) throws {
+        let drawing = try document(sample.0)
+        let counts = Dictionary(uniqueKeysWithValues: drawing.skipped.map { ($0.what, $0.count) })
+        #expect(counts == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "勝った宣言が none・normal なら、下の宣言の効果を打ち消し、何も名乗らない (#2410 の 2)",
+        arguments: [
+            // 2a〜2c
+            #"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: none"/>"#,
+            #"<rect width="1" height="1" filter="url(#f)" style="filter: none"/>"#,
+            #"<rect width="1" height="1" mix-blend-mode="multiply" style="mix-blend-mode: normal"/>"#,
+            #"<rect width="1" height="1" mask="url(#m)" style="mask: none"/>"#,
+            #"<style>rect { clip-path: url(#c) }</style><rect width="1" height="1" style="clip-path: NONE"/>"#,
+            #"<rect width="1" height="1" style="clip-path: url(#c); clip-path: none"/>"#,
+            // 短縮形の marker は、3 つの性質をまとめて打ち消す
+            #"<path d="M0 0 L1 1" stroke="black" marker-start="url(#m)" style="marker: none"/>"#,
+            #"<path d="M0 0 L1 1" stroke="black" marker="url(#m)" style="marker-start: none; marker-mid: none; marker-end: none"/>"#,
+        ])
+    func winningNoneCancelsTheEffect(_ body: String) throws {
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+    }
+
+    @Test(
+        "勝った宣言が効果を持てば、下の none に負けず名乗る。宣言が重なっても数えるのは要素ごとに 1 度 (#2410 の 2 の陰性対照)",
+        arguments: [
+            (#"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: url(#d)"/>"#, "clip-path"),
+            (#"<rect width="1" height="1" clip-path="none" style="clip-path: url(#d)"/>"#, "clip-path"),
+            (#"<style>rect { clip-path: url(#c) !important }</style><rect width="1" height="1" style="clip-path: none"/>"#, "clip-path"),
+            (#"<rect width="1" height="1" mix-blend-mode="normal" style="mix-blend-mode: screen"/>"#, "mix-blend-mode"),
+            // 短縮形の marker の後に 1 つだけ打ち消しても、残りの 2 つが効く
+            (#"<path d="M0 0 L1 1" stroke="black" marker="url(#m)" style="marker-start: none"/>"#, "marker"),
+            // 矢じりの 3 つの性質のどれが効いても、1 つの要素で数えるのは 1 度
+            (#"<path d="M0 0 L1 1" stroke="black" marker-start="url(#m)" marker-end="url(#m)"/>"#, "marker"),
+        ])
+    func winningEffectIsStillNamed(_ sample: (String, String)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == [sample.1], "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.skipped.first?.count == 1, "\(sample.0): \(drawing.skipped)")
+    }
+
+    /// 属性は辞書で届き、巡る順は辞書ごとに変わる。短縮形の `marker` と個別の `marker-*` を属性に両方書いたとき、
+    /// どちらが勝つかがその順に依らないこと (個別の性質が勝つ) を、同じ文字を何度も読んで見る。
+    @Test(
+        "属性に短縮形の marker と個別の marker-* を両方書けば個別の性質が勝ち、何度読んでも同じ (#2410)",
+        arguments: [
+            (#"<path d="M0 0 L1 1" stroke="black" marker="none" marker-start="url(#m)"/>"#, ["marker"]),
+            (#"<path d="M0 0 L1 1" stroke="black" marker-end="none" marker="url(#m)" marker-start="none" marker-mid="none"/>"#, []),
+        ])
+    func markerAttributesResolveTheSameEveryTime(_ sample: (String, [String])) throws {
+        for _ in 0..<64 {
+            let drawing = try document(sample.0)
+            #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        }
+    }
+
+    @Test(
+        "描けない効果の読めない値は、効果ありへ倒さず値の形で名乗り、下の宣言が残る (#2410 の 3d)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り)
+            (#"<rect width="1" height="1" style="clip-path: bogus"/>"#, [#"clip-path "bogus""#]),
+            (#"<rect width="1" height="1" clip-path="none" style="clip-path: bogus"/>"#, [#"clip-path "bogus""#]),
+            (#"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: bogus"/>"#, [#"clip-path "bogus""#, "clip-path"]),
+            (#"<rect width="1" height="1" clip-path="url(#c) fill-box"/>"#, [#"clip-path "url(#c) fill-box""#]),
+            (#"<rect width="1" height="1" clip-path="circle(50%"/>"#, [#"clip-path "circle(50%""#]),
+            (#"<rect width="1" height="1" clip-path="circle(1px) ellipse(1px)"/>"#, [#"clip-path "circle(1px) ellipse(1px)""#]),
+            (#"<rect width="1" height="1" clip-path="initial"/>"#, [#"clip-path "initial""#]),
+            (#"<rect width="1" height="1" style="filter: bogus"/>"#, [#"filter "bogus""#]),
+            (#"<rect width="1" height="1" filter="blur(2px) bogus"/>"#, [#"filter "blur(2px) bogus""#]),
+            (#"<rect width="1" height="1" style="marker: bogus"/>"#, [#"marker "bogus""#]),
+            (#"<rect width="1" height="1" marker-start="url(#m) url(#n)"/>"#, [#"marker-start "url(#m) url(#n)""#]),
+            (#"<rect width="1" height="1" mix-blend-mode="bogus"/>"#, [#"mix-blend-mode "bogus""#]),
+            (#"<rect width="1" height="1" mask="bogus"/>"#, [#"mask "bogus""#]),
+            (#"<rect width="1" height="1" mask="url(#a) url(#b)"/>"#, [#"mask "url(#a) url(#b)""#]),
+            (#"<rect width="1" height="1" mask="url(#m),"/>"#, [#"mask "url(#m),""#]),
+            (#"<rect width="1" height="1" mask=""/>"#, [#"mask """#]),
+            (#"<rect width="1" height="1" mask="url(#m)" style="mask: blur(1px)"/>"#, [#"mask "blur(1px)""#, "mask"]),
+            // mix-blend-mode に none の語は無い
+            (#"<rect width="1" height="1" mix-blend-mode="none"/>"#, [#"mix-blend-mode "none""#]),
+            // 下の none (normal) を消さない
+            (#"<rect width="1" height="1" mix-blend-mode="normal" style="mix-blend-mode: bogus"/>"#, [#"mix-blend-mode "bogus""#]),
+            (#"<style>rect { filter: bogus }</style><rect width="1" height="1" filter="none"/>"#, [#"filter "bogus""#]),
+        ])
+    func unreadableEffectIsNamedAndIgnored(_ sample: (String, [String])) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "描けない効果の読める値は今までどおり、効果の名前で 1 度名乗る (#2410 の 3d の陰性対照)",
+        arguments: [
+            (#"clip-path="url(#c)""#, "clip-path"),
+            (#"clip-path=" URL(#c) ""#, "clip-path"),
+            (#"clip-path="circle(50%)""#, "clip-path"),
+            (#"clip-path="inset(1px round 2px)""#, "clip-path"),
+            (#"clip-path="fill-box""#, "clip-path"),
+            (#"clip-path="circle(50%) view-box""#, "clip-path"),
+            (#"clip-path="stroke-box polygon(0 0, 1px 0, 1px 1px)""#, "clip-path"),
+            (#"filter="url(#f)""#, "filter"),
+            (#"filter="blur(2px)""#, "filter"),
+            (#"filter="drop-shadow(1px 1px 2px black) url(#f)""#, "filter"),
+            (#"filter="blur(2px)grayscale(1)""#, "filter"),
+            (#"mask="url(#m)""#, "mask"),
+            (#"mask="url(#m) luminance""#, "mask"),
+            (#"mask="linear-gradient(black, transparent)""#, "mask"),
+            (#"mask="url(#m) center / contain no-repeat""#, "mask"),
+            (#"mask="none, url(#m) 10px 50%""#, "mask"),
+            (#"marker="url(#m)""#, "marker"),
+            (#"marker-end="url(#m)""#, "marker"),
+            (#"mix-blend-mode="multiply""#, "mix-blend-mode"),
+            (#"style="mix-blend-mode: SCREEN ""#, "mix-blend-mode"),
+            (#"mix-blend-mode="plus-lighter""#, "mix-blend-mode"),
+        ])
+    func readableEffectIsNamed(_ sample: (String, String)) throws {
+        let body = #"<rect width="1" height="1" \#(sample.0)/>"#
+        let drawing = try document(body)
+        #expect(drawing.skipped.map(\.what) == [sample.1], "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+    }
+
+    /// `mask` の短縮形で、どの層の画像も `none` (書いていない) なら切り抜かない (CSS Masking)。語だけの値を
+    /// 「マスクを捨てた」と名乗らず、下の宣言も打ち消す。
+    @Test(
+        "mask の層に画像が無ければ効果なしで名乗らず、下の mask を打ち消す (#2410)",
+        arguments: [
+            #"<rect width="1" height="1" mask="luminance"/>"#,
+            #"<rect width="1" height="1" mask="alpha center / contain no-repeat"/>"#,
+            #"<rect width="1" height="1" mask="none, luminance"/>"#,
+            #"<rect width="1" height="1" mask="url(#m)" style="mask: luminance"/>"#,
+        ])
+    func maskWithoutImageHasNoEffect(_ body: String) throws {
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+    }
+
+    @Test(
+        "display の読めない値は、下の none を消さず無かったものとして名乗る。none に決まった要素は名乗らない (#2650)",
+        arguments: [
+            // (SVG の本体, 載るはずの名乗り, 描く矩形の数)
+            (#"<rect width="10" height="10" display="none" style="display:abc"/>"#, [], 0),
+            (#"<style>rect{display:abc}</style><rect width="10" height="10" display="none"/>"#, [], 0),
+            (#"<rect width="10" height="10" display="abc"/>"#, [#"display "abc""#], 1),
+            (#"<rect width="10" height="10" display=" abc "/>"#, [#"display "abc""#], 1),
+            (#"<rect width="10" height="10" display=""/>"#, [#"display """#], 1),
+            (#"<rect width="10" height="10" display="-webkit-box"/>"#, [#"display "-webkit-box""#], 1),
+            (#"<rect width="10" height="10" display="block inline"/>"#, [#"display "block inline""#], 1),
+            (#"<rect width="10" height="10" display="block block"/>"#, [#"display "block block""#], 1),
+            (#"<rect width="10" height="10" display="list-item flex"/>"#, [#"display "list-item flex""#], 1),
+            (#"<rect width="10" height="10" display="flex grid"/>"#, [#"display "flex grid""#], 1),
+            (#"<rect width="10" height="10" display="list-item math"/>"#, [#"display "list-item math""#], 1),
+            // none に決まった要素は、その要素の読めない値 (宣言の形でない部分・描けない効果の読めない値も) を名乗らない
+            (#"<rect width="10" height="10" display="none" fill="abc"/>"#, [], 0),
+            (#"<rect width="10" height="10" display="none" visibility="abc"/>"#, [], 0),
+            (#"<rect width="10" height="10" display="none" style="fill red; clip-path: bogus"/>"#, [], 0),
+            // none でない要素の名乗りは今までどおり
+            (#"<rect width="10" height="10" display="block" fill="abc"/>"#, [#"fill "abc""#], 1),
+        ] as [(String, [String], Int)])
+    func unreadableDisplayIsNamedAndIgnored(_ sample: (String, [String], Int)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.count == sample.2, "\(sample.0): \(drawing.items)")
+    }
+
+    @Test(
+        "display の読める値は、下の none を打ち消して描き、名乗らない (#2650 の陰性対照)",
+        arguments: [
+            "block", "inline", "contents", "block flow", "inline flow-root", "flow-root inline", "list-item",
+            "list-item block flow", "inline list-item", "flow list-item", "inline-block", "table-cell", "ruby-text-container",
+            "initial", "unset", "revert", "revert-layer", " Inline ", "BLOCK  FLOW", "math", "block math", "inline math",
+        ])
+    func readableDisplayCancelsNone(_ value: String) throws {
+        let body = #"<rect width="10" height="10" display="none" style="display: \#(value)"/>"#
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1, "\(body): \(drawing.items)")
+        // 上に none が勝てば描かない
+        let hidden = try document(#"<rect width="10" height="10" display="\#(value)" style="display: none"/>"#)
+        #expect(hidden.items.isEmpty, "\(value): \(hidden.items)")
     }
 
     @Test("角丸の矩形は線の集まりに、片方だけ書いた半径はもう片方にも使う")

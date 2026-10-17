@@ -285,7 +285,9 @@ struct StoppedUpscaleOutletsTests {
             try shared.write(
                 runtime.target, using: presenter,
                 numbers: FrameNumbers(frameCount: 1, time: 0, frameRate: 60, frameTimeMs: 16.7))
-            // 公開は 1 枚遅れるので、控えも名乗らせてから読む (#748)
+            // 公開は 1 枚遅れるので、控えも名乗らせてから読む (#748)。名乗りは焼きの結末を見てから
+            // なので、結末が届くのを待つ (#2735)
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
             try shared.publishPending()
             let point = try #require(SharedSurfaceReader.pixel(id: shared.ids[0], x: 80, y: 80))
 

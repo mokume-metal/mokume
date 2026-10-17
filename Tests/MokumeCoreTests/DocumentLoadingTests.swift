@@ -798,10 +798,13 @@ struct DocumentLoadingTests {
     /// **待つ側 (この検査) も期限を持つ。** `limit` に 3 秒足した時間を越えたら、応答を打ち切って
     /// (``CannedResponses/cut(_:)``) `nil` を返す — 期限で返らない実装でも、検査は止まらずに赤になる。
     /// `.timeLimit` は使わない (main actor の上で検査全体の秒数を縛るため)。
-    private func fetchOffMain(_ url: String, limit: Duration) -> (outcome: Result<Data, DataFailure>, took: Duration)? {
+    private func fetchOffMain(
+        _ url: String, limit: Duration
+    ) -> (outcome: Result<Data, DataFailure>, called: ContinuousClock.Instant, took: Duration)? {
         // 受け取りの糸が書き、合図を待った後にだけ読む (打ち切ったときは読まない)
         nonisolated final class Box: @unchecked Sendable {
             var outcome: Result<Data, DataFailure>?
+            var called = ContinuousClock.now
             var took = Duration.zero
         }
         guard let target = URL(string: url) else {
@@ -813,6 +816,7 @@ struct DocumentLoadingTests {
         DispatchQueue.global().async {
             let clock = ContinuousClock()
             let start = clock.now
+            box.called = start
             box.outcome = Result { () throws(DataFailure) in try WebFile.fetchWaiting(target, path: url, limit: limit) }
             box.took = clock.now - start
             returned.signal()
@@ -823,24 +827,35 @@ struct DocumentLoadingTests {
             _ = returned.wait(timeout: .now() + patience)
             return nil
         }
-        return box.outcome.map { ($0, box.took) }
+        return box.outcome.map { ($0, box.called, box.took) }
     }
 
     @Test("少しずつ返し続ける応答でも、呼んでからの総時間が期限を越えたら取り消して unreachable で投げる")
     func tricklePastLimitIsUnreachable() throws {
-        // 20 ミリ秒ごとに 1 バイト。音沙汰の無い間は期限に届かないので、受け口の時間切れでは切れない
-        let url = CannedResponses.serve(.trickle(body: Data(repeating: 0x20, count: 100_000), every: .milliseconds(20)))
+        // 20 ミリ秒ごとに 1 バイト。音沙汰の無い間は期限に届かないので、受け口の時間切れでは切れない。
+        // **ただしそれは、呼んでから返るまで、期限以上の空白が 1 度も無かった回に限る** — 並列の
+        // 負荷の下では、届き始めるまでに期限が過ぎる回がある (#2689)。その回は受け口の時間切れでも
+        // 同じ失敗で返り、総時間で切る実装かを見分けられないので、新しい応答でやり直す
         let limit = Duration.milliseconds(300)
-        let returned = try #require(fetchOffMain(url, limit: limit), "期限で返らず、検査の側の期限で打ち切った")
-        #expect(
-            returned.outcome == .failure(.unreachable(url: url, reason: "no complete answer came back within 0.3 seconds")))
-        #expect(returned.took >= limit)
-        #expect(CannedResponses.delivered(url) >= 2, "期限までの間に、本文は届き続けていた")
-        // 諦めた受け取りは取り消すので、受け口が応答を止める。止めるのは受け口の糸で少し遅れる
-        // ので、待つ側が 2 秒の期限を持って待つ
-        let until = ContinuousClock.now + .seconds(2)
-        while !CannedResponses.stopped(url), ContinuousClock.now < until { Thread.sleep(forTimeInterval: 0.01) }
-        #expect(CannedResponses.stopped(url), "期限を越えた受け取りを取り消していない")
+        for _ in 1...5 {
+            let url = CannedResponses.serve(.trickle(body: Data(repeating: 0x20, count: 100_000), every: .milliseconds(20)))
+            let returned = try #require(fetchOffMain(url, limit: limit), "期限で返らず、検査の側の期限で打ち切った")
+            let arrivals = CannedResponses.arrivals(url)
+            let marks = [returned.called] + arrivals + [returned.called + returned.took]
+            let longestSilence = zip(marks, marks.dropFirst()).map { $1 - $0 }.max() ?? .zero
+            guard arrivals.count >= 2, longestSilence < limit else { continue }
+            #expect(
+                returned.outcome
+                    == .failure(.unreachable(url: url, reason: "no complete answer came back within 0.3 seconds")))
+            #expect(returned.took >= limit)
+            // 諦めた受け取りは取り消すので、受け口が応答を止める。止めるのは受け口の糸で少し遅れる
+            // ので、待つ側が 2 秒の期限を持って待つ
+            let until = ContinuousClock.now + .seconds(2)
+            while !CannedResponses.stopped(url), ContinuousClock.now < until { Thread.sleep(forTimeInterval: 0.01) }
+            #expect(CannedResponses.stopped(url), "期限を越えた受け取りを取り消していない")
+            return
+        }
+        try Test.cancel("5 回とも、期限 0.3 秒以上の空白を挟まずに本文を返し続けられなかった (前提の不成立)")
     }
 
     @Test("何も返さない応答も、期限で取り消して同じ unreachable で投げる")
@@ -897,7 +912,8 @@ struct DocumentLoadingTests {
     func trickleWithinLimitIsRead() throws {
         let body = Data(#"{"t": 1}"#.utf8)
         let url = CannedResponses.serve(.trickle(body: body, every: .milliseconds(10)))
-        let returned = try #require(fetchOffMain(url, limit: .seconds(2)), "期限で返らず、検査の側の期限で打ち切った")
+        // 刻み終えるのは 0.1 秒ほどだが、負荷の下でも期限の内に収まる長さにしておく (#2689)
+        let returned = try #require(fetchOffMain(url, limit: .seconds(5)), "期限で返らず、検査の側の期限で打ち切った")
         #expect(returned.outcome == .success(body))
         #expect(CannedResponses.delivered(url) == body.count)
     }

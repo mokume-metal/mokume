@@ -4,7 +4,7 @@
 import Foundation
 
 /// JSON のオブジェクト (`{ "キー": 値, … }`)。ファイルか URL から読んで作り
-/// (``Sketch/loadJSONObject(_:)``)、キーで値を取り出す。
+/// (``SketchPart/loadJSONObject(_:)``)、キーで値を取り出す。
 ///
 /// <!-- example: 文脈 var temp: Float? -->
 /// ```swift
@@ -48,10 +48,13 @@ public struct JSONObject: Equatable, Sendable {
     /// circle(width / 2, height / 2, 100 + temp * 4)
     /// ```
     ///
-    /// 数の値はそのまま、数の文字 (`"18.5"`。前後の空白は落とす) は数として読む。
+    /// 数の値はそのまま、数の文字 (`"18.5"`) は数として読む。数の文字とするのは **10 進の綴り
+    /// だけ** (`"-2"`・`"+5"`・`".5"`・`"1e3"`) で、前後の空白は改行も含めて落とす。`Float` に
+    /// 収まらない数 (`1e39`・`"1e39"`) は無限大になる。
     ///
     /// **数にならないときは NaN を返し、初回だけ理由を知らせる** — キーが無い・値が
     /// `true` / `false` / `null`・オブジェクト・配列・数でない文字のどれでも (キーごとに 1 度)。
+    /// 文字の `"nan"`・`"NaN"`・`"inf"`・`"Infinity"`・16 進 (`"0x10"`) も、数でない文字である。
     /// 読み取りは落ちない ([ADR-0020] 決定 5)。NaN は表の ``TableRow/getFloat(_:)-(String)`` が
     /// 欠けた値に返すものと同じで、0 のように黙って別の値に化けない。
     ///
@@ -62,7 +65,7 @@ public struct JSONObject: Equatable, Sendable {
         case .number(let number):
             return Float(number)
         case .string(let text):
-            if let number = Float(text.trimmingCharacters(in: .whitespaces)) { return number }
+            if let number = DecimalText.float(text) { return number }
         default:
             break
         }

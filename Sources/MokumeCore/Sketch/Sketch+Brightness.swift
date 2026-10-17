@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 明るさを画面へ写す。
-extension Sketch {
+extension SketchPart {
     /// 画面全体の明るさの倍率。既定は `1`。
     ///
     /// **画面の性質なので、材質や光と違ってフレームを越える** — 一度書けば書き換える
@@ -99,7 +99,7 @@ extension Sketch {
     // shot: 2 snippet=64e28a7d
     // shot: 3 snippet=47e0d876
     public func exposure(_ multiplier: some ScalarConvertible) {
-        let multiplier = multiplier.asFloat
+        guard let canvas = Self.liveCanvas() else { return }
         canvas.exposure(multiplier)
     }
 
@@ -171,5 +171,5 @@ extension Sketch {
     /// - Note: ``exposure(_:)`` と同じく**画面の性質**で、フレームを越える。
     // shot: 1 snippet=26a7b873
     // shot: 2 snippet=f52b49c4
-    public func toneMapping(_ mode: ToneMapping) { canvas.toneMapping(mode) }
+    public func toneMapping(_ mode: ToneMapping) { Self.liveCanvas()?.toneMapping(mode) }
 }

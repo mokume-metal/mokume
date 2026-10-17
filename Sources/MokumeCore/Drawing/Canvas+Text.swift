@@ -13,11 +13,12 @@ extension Canvas {
     /// **この環境に無い名前は効かない。** 名前を取り違えても別の書体が返るだけで
     /// 気付けないので、無い名前は警告して指定を変えない。
     public func textFont(_ name: String) {
-        guard Typeface.exists(name: name) else {
+        let name = Typeface.canonicalName(name)
+        guard let resolved = Typeface.resolvedName(of: name) else {
             warnMissingFontOnce(name)
             return
         }
-        style.fontName = name
+        style.fontName = resolved
     }
 
     /// 既定の書体へ戻す。
@@ -101,7 +102,8 @@ extension Canvas {
 
     /// 文字列の送り幅 (画素)。
     ///
-    /// **1 文字ずつの送り幅の合計**なので、部分に切って足しても全体と一致する。
+    /// **Unicode のスカラ 1 つずつの送り幅の合計**なので、部分に切って足しても全体と一致する。
+    /// 組版をしないので、複数のスカラでできた絵文字の幅は部品の幅の和になる。
     /// 末尾の空白も幅に数える。改行を含む文字列では、いちばん長い行の幅を返す。
     ///
     /// **大きさ 0 では 0 を返す** (高さと深さも同じ)。描く口と同じ見張りで帰る — 大きさ 0 を
@@ -129,6 +131,7 @@ extension Canvas {
     ///
     /// 縦の基準は ``textAlign(_:_:)`` が決める。既定は**基準線** — `y` が字の乗る線になる。
     /// 改行で行が分かれ、行の間隔は ``textLeading(_:)`` が決める。
+    /// 字は Unicode のスカラ 1 つずつ引き当てて並べ、組版はしない (複数のスカラでできた絵文字は部品ごとに描かれる)。
     public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
@@ -470,9 +473,18 @@ extension Canvas {
     /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
     /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
     /// などでは `A` が外周 1 つと穴 1 つになる。
+    ///
+    /// **色やビットマップの字形を持つ書体の字 (絵文字) は周を返さない** (送りは進める)。描かれるのは
+    /// 絵で、書体が道筋を持っていても描く絵の形ではない (国旗の部品 🇯 の矩形など) ([#2308])。
+    /// どの字がそれに当たるかは、``textBounds(_:_:_:)`` が描いて測る字と同じ
+    /// (`Typeface.measuresByDrawing(_:path:)`) — 返る周の外接は、いつも枠と揃う。
+    ///
+    /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         var contours: [TextContour] = []
-        forEachGlyphPath(in: string, x.asFloat, y.asFloat) { path, pen, baseline in
+        forEachGlyph(in: string, x.asFloat, y.asFloat) { _, resolved, path, pen, baseline in
+            // 道筋を持たない字 (空白・ビットマップの字形) と、道筋が描く絵の形ではない字には周が無い
+            guard let path, !Typeface.measuresByDrawing(resolved, path: path) else { return }
             // 字ごとに、外側の周を先に、穴を後ろに並べる
             let rings = Self.rings(of: path, originX: pen, baseline: baseline)
             contours += rings.filter { !$0.isHole }
@@ -484,14 +496,26 @@ extension Canvas {
     /// 文字列の墨が載る範囲。意味の説明は `Sketch` が正本 ([ADR-0020] 決定 4)。
     ///
     /// **``textOutline(_:_:_:)`` と同じ字形・同じ送り・同じ基準線から取る** ([#1284])。枠は
-    /// 字形の道筋の外接の和で、輪郭の点の外接と、曲線をほどいた細かさのぶんしか違わない。
+    /// 字ごとの墨の範囲の和で、字の墨の取り方は 2 通りある ([#2308]):
+    ///
+    /// - 書体が道筋で描く字は、**道筋の外接**。輪郭の点の外接と、曲線をほどいた細かさの
+    ///   ぶんしか違わない
+    /// - 色やビットマップの字形を持つ書体の字 (絵文字) と、道筋を持たない字は、**焼き場と同じ
+    ///   描き方で描いた墨の範囲** (`Typeface.drawnInk(of:_:)`)。道筋が無いか、あっても描く絵と別の
+    ///   仮の形なので、道筋で測ると `text()` が描く絵文字が枠の外へはみ出す。どちらで測るかは
+    ///   `Typeface.measuresByDrawing(_:path:)` が決める
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1284]: https://github.com/mokume-metal/mokume/issues/1284
+    /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
     public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
         var box = CGRect.null
-        forEachGlyphPath(in: string, x.asFloat, y.asFloat) { path, pen, baseline in
-            let glyph = path.boundingBoxOfPath
+        let face = typeface
+        forEachGlyph(in: string, x.asFloat, y.asFloat) { scalar, resolved, path, pen, baseline in
+            let measured =
+                Typeface.measuresByDrawing(resolved, path: path)
+                ? face.drawnInk(of: scalar, resolved) : path?.boundingBoxOfPath
+            guard let glyph = measured else { return }
             // 道筋を持つが面積の無い字 (点 1 つだけの道筋) は墨に数えない
             guard !glyph.isNull, glyph.width > 0 || glyph.height > 0 else { return }
             // 書体の座標は基準線から上向きなので、面の縦向きへ折り返す (`rings` と同じ)
@@ -511,10 +535,15 @@ extension Canvas {
     /// 同じ歩き方を読む — 別々に歩くと、整列や行送りが片方でだけずれる形で食い違う。
     ///
     /// 読み取りの口から呼ぶので、数でない位置・無限の位置・大きさ 0 では何も渡さない (#1587)。
-    /// 道筋を持たない字 (空白) は渡さないが、送りは進める。
-    private func forEachGlyphPath(
+    /// **道筋を持たない字も渡す** (道筋は `nil`)。空白だけでなく、色を持つ字形 (絵文字) も道筋を
+    /// 持たない — 「道筋が無い字 = 空白」と読んで飛ばすと、絵文字の墨を落とす (#2308)。道筋を
+    /// どう読むか (外接を取るか、描いて測るか) は受け取る側が決める。
+    private func forEachGlyph(
         in string: String, _ x: Float, _ y: Float,
-        _ body: (_ path: CGPath, _ pen: Float, _ baseline: Float) -> Void
+        _ body: (
+            _ scalar: Unicode.Scalar, _ resolved: ResolvedGlyph, _ path: CGPath?, _ pen: Float,
+            _ baseline: Float
+        ) -> Void
     ) {
         guard !string.isEmpty, style.textSize > 0, x.isFinite, y.isFinite else { return }
         let face = typeface
@@ -526,10 +555,9 @@ extension Canvas {
             var pen = penStart(at: x, face: face, line: line)
             for scalar in line.unicodeScalars {
                 guard let resolved = face.glyph(for: scalar) else { continue }
-                defer { pen += resolved.advance }
-                guard let path = CTFontCreatePathForGlyph(resolved.font, resolved.glyph, nil)
-                else { continue }
-                body(path, pen, baseline)
+                let path = CTFontCreatePathForGlyph(resolved.font, resolved.glyph, nil)
+                body(scalar, resolved, path, pen, baseline)
+                pen += resolved.advance
             }
             baseline += leading
         }

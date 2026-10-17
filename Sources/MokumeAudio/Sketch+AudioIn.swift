@@ -7,7 +7,7 @@ import MokumeCore
 // 音の入力。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0042] 決定 1)。`plugins` には何も書かない —
-// 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -34,14 +34,15 @@ extension Sketch {
     /// - 初めて使うときは OS が許可を求める。束ねずに動かしている間は、許可はスケッチを
     ///   起動した端末のアプリに付く。束ねるときは `mokume-app.json` に `microphoneUsage` を書く
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
+    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・後片付けの後・`Task` の中) で
+    /// 呼ぶと、機材を開かずに何も受けない入力を返し、この口の名前で 1 度だけ警告する。
     ///
     /// - Parameter device: 使う機材 (``audioInputDevices()`` から選ぶ)。省けば既定の入力。
     public func createAudioIn(device: AudioDevice? = nil) -> AudioIn {
         let audio = AudioIn(
             device: device, name: device.map { "microphone: \($0.name)" } ?? "microphone",
             source: MicrophoneSource(device: device), owner: self)
-        attach(audio)
+        attach(audio, calledAs: #function, returning: "an input that never hears anything")
         return audio
     }
 
@@ -63,15 +64,18 @@ extension Sketch {
     /// 固定の時計で書き出すと、何度書き出しても同じフレームが同じ値を受け取る
     /// ([ADR-0028] 決定 7)。マイクを使うスケッチを、機材の無い場所で確かめるときにも使う。
     ///
-    /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。読み込みは作るときに 1 度だけで、
+    /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。読み込みは作るときに 1 度だけで、
     /// 全体を標本列として持つ。
     ///
     /// - Parameter file: 音声ファイルの名前。macOS が読める形式 (WAV・AIFF・CAF・MP3・
     ///   AAC/M4A・FLAC など)。
-    /// - Throws: 見つからない・音声として読めない・標本が 1 つも無いとき。
+    /// - Throws: 見つからない・音声として読めない・標本が 1 つも無いとき。`setup()`・`draw()`・入力の
+    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、ファイルを読む前に
+    ///   ``AudioFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createAudioIn(file: String) throws(AudioFailure) -> AudioIn {
+        try requireAttachable(AudioFailure.self, calledAs: #function)
         let decoded = try AudioFile.read(audioURL(file), path: file)
         return attachRecorded(
             samples: decoded.samples, sampleRate: decoded.sampleRate, name: "audio file: \(file)")
@@ -102,10 +106,13 @@ extension Sketch {
     /// - Parameters:
     ///   - samples: 標本 (-1〜1 が全振幅)。1 チャンネル。
     ///   - sampleRate: 1 秒あたりの標本の数。
-    /// - Throws: 標本が 1 つも無いか、標本化率が正でないとき。
+    /// - Throws: 標本が 1 つも無いか、標本化率が正でないとき。使える標本列を `setup()`・`draw()`・入力の
+    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと ``AudioFailure/notRunning(call:)``
+    ///   (プロセスは落ちない)。
     public func createAudioIn(samples: [Float], sampleRate: Float) throws(AudioFailure) -> AudioIn {
         guard !samples.isEmpty else { throw .empty }
         guard sampleRate > 0, sampleRate.isFinite else { throw .invalidSampleRate(sampleRate) }
+        try requireAttachable(AudioFailure.self, calledAs: #function)
         return attachRecorded(samples: samples, sampleRate: sampleRate, name: "audio (samples)")
     }
 

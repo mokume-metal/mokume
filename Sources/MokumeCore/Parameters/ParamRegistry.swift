@@ -52,6 +52,11 @@ struct ParamRegistry {
     /// ([#994](https://github.com/mokume-metal/mokume/issues/994) の 13)。
     var knobs: [any DeclaredParam] { boxes.map(\.box) }
 
+    /// その名前の宣言があるか。
+    func declares(_ name: String) -> Bool {
+        boxes.contains { $0.name == name }
+    }
+
     /// 名前を指して書き換える。
     func write(_ value: ParamValue, to name: String) -> ParamOutcome? {
         guard let entry = boxes.first(where: { $0.name == name }) else { return nil }

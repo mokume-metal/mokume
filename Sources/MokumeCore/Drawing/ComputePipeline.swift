@@ -48,18 +48,51 @@ final class ComputePipeline {
     func makeState(
         library: any MTLLibrary, functionName: String, label: String
     ) throws(RenderFailure) -> any MTLComputePipelineState {
-        let function = MTL4LibraryFunctionDescriptor()
-        function.name = functionName
-        function.library = library
+        try stateJob(functionName: functionName, label: label).makeNow(library: library)
+    }
 
-        let descriptor = MTL4ComputePipelineDescriptor()
-        descriptor.label = label
-        descriptor.computeFunctionDescriptor = function
+    /// ``makeState(library:functionName:label:)`` を、ライブラリが出来る前に用意する。裏で組む
+    /// 経路 (``ShaderBox``・[#2365]) が使う。
+    ///
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    func stateJob(functionName: String, label: String) -> StateJob {
+        StateJob(compiler: compiler, functionName: functionName, label: label)
+    }
 
-        do {
-            return try compiler.makeComputePipelineState(descriptor: descriptor)
-        } catch {
-            throw .pipelineUnavailable(reason: error.localizedDescription)
+    /// 1 本の組み方。main で決めた値だけを持つので、裏の糸でも組める
+    /// (``ShapePipeline/StatePlan`` と同じ理由)。
+    nonisolated struct StateJob: Sendable {
+        let compiler: any MTL4Compiler
+        let functionName: String
+        let label: String
+
+        private func descriptor(library: any MTLLibrary) -> MTL4ComputePipelineDescriptor {
+            let function = MTL4LibraryFunctionDescriptor()
+            function.name = functionName
+            function.library = library
+
+            let descriptor = MTL4ComputePipelineDescriptor()
+            descriptor.label = label
+            descriptor.computeFunctionDescriptor = function
+            return descriptor
+        }
+
+        /// その場で組む。
+        func makeNow(library: any MTLLibrary) throws(RenderFailure) -> any MTLComputePipelineState {
+            do {
+                return try compiler.makeComputePipelineState(descriptor: descriptor(library: library))
+            } catch {
+                throw .pipelineUnavailable(reason: error.localizedDescription)
+            }
+        }
+
+        /// 裏で組む。組んでいる間、呼んだ側の糸を塞がない。
+        func make(library: any MTLLibrary) async throws(RenderFailure) -> any MTLComputePipelineState {
+            do {
+                return try await compiler.makeComputePipelineState(descriptor: descriptor(library: library))
+            } catch {
+                throw .pipelineUnavailable(reason: error.localizedDescription)
+            }
         }
     }
 }

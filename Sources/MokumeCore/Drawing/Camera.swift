@@ -63,7 +63,7 @@ public struct Camera: Equatable, Sendable {
     /// 既定の視点はここに置く。だから何も指定せずに置いた立体は**画素の大きさで
     /// 見える** — `box(120)` は 120 画素の箱として出る ([ADR-0021] 決定 1)。
     static func fittingDistance(height: Float) -> Float {
-        (height / 2) / tan(defaultFieldOfView / 2)
+        (height / 2) / RuntimeMath.tan(defaultFieldOfView / 2)
     }
 
     /// 面がちょうど収まる位置から、面の正面を見る視点。
@@ -152,7 +152,7 @@ public struct Camera: Equatable, Sendable {
         switch projection {
         case let .perspective(fieldOfView, _, near, _):
             let depth = max(dot(position - eye, forward), near)
-            y = 2 * tan(fieldOfView / 2) * depth / height
+            y = 2 * RuntimeMath.tan(fieldOfView / 2) * depth / height
         case let .orthographic(_, _, bottom, top, _, _):
             // 距離によらず同じ大きさで写るので、奥行きを見ない
             y = abs(bottom - top) / height
@@ -202,7 +202,7 @@ public struct Camera: Equatable, Sendable {
         switch projection {
         case let .perspective(fieldOfView, aspect, _, _):
             center = eye + forward * distance
-            halfHeight = distance * tan(fieldOfView / 2)
+            halfHeight = distance * RuntimeMath.tan(fieldOfView / 2)
             halfWidth = halfHeight * aspect
         case let .orthographic(left, rightEdge, bottom, top, _, _):
             // 縦は下向き (bottom のほうが大きい数)。中心がずれた投影でも合うように、
@@ -290,7 +290,7 @@ public struct Camera: Equatable, Sendable {
     var projectionMatrix: simd_float4x4 {
         switch projection {
         case let .perspective(fieldOfView, aspect, near, far):
-            let y = 1 / tan(fieldOfView / 2)
+            let y = 1 / RuntimeMath.tan(fieldOfView / 2)
             let x = y / aspect
             let z = far / (near - far)
             return simd_float4x4(

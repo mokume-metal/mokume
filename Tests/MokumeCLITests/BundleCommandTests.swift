@@ -196,6 +196,76 @@ struct BundleCommandTests {
                 == ["How to open \(name).txt", "\(name).app"].sorted())
     }
 
+    // MARK: - 名前の長さ (#2501)
+
+    /// **239 までの名前は、いままでどおり `--out` の直下に包みと紙ができる** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
+    /// 紙は `write(to:atomically: true)` で書くので、途中の一時ファイルの名前で上限が下がるなら
+    /// ここが赤くなる — 計算ではなく、紙を実際に書いて確かめる。名乗りの段を通して組み、
+    /// 線の内側であることも見る。`が` × 119 は、ファイルシステムへ渡る形 (か + 濁点) で 238。
+    @Test(
+        "239 までの名前は、--out の直下に包みと開き方の紙ができる (紙を実際に書く)",
+        arguments: [
+            RepeatedName("a", 239), RepeatedName("木", 239), RepeatedName("😀", 119, unitsEach: 2),
+            RepeatedName("\u{304C}", 119, unitsEach: 2),
+        ])
+    func aNameUpToTheLimitLandsDirectlyInTheOutput(given: RepeatedName) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let named = try AppIdentity.make(
+            from: AppIdentity.Wire(
+                name: given.name, identifier: "org.example.bund", version: "0.1.0"),
+            path: root.appendingPathComponent(AppIdentity.fileName).path)
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: named, minimumSystemVersion: "26.0", into: out)
+        let note = try BundleCommand.writeOpeningNote(for: named, beside: app)
+
+        #expect(FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Info.plist").path))
+        #expect(try String(contentsOf: note, encoding: .utf8) == BundleCommand.openingNote(for: named))
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: out.path).sorted()
+                == ["How to open \(given.name).txt", "\(given.name).app"].sorted())
+    }
+
+    /// 裏側。**線はちょうど「紙が書けなくなる長さ」の始まりにある** — 239 を越える名前は、検めが
+    /// 無くても `.app` までは作れて紙で落ちる (直す前に、ビルドと署名の後で起きていたこと)。
+    /// だから越える名前を断っても、成功していた名前は 1 つも失わない。名乗りを通らずに組んだ
+    /// `AppIdentity` で、実際のファイルシステムに書いて確かめる。
+    @Test(
+        "239 を越える名前は、検めが無ければ .app はできても紙が書けない",
+        arguments: [
+            RepeatedName("a", 240), RepeatedName("木", 240), RepeatedName("😀", 120, unitsEach: 2),
+            RepeatedName("\u{304C}", 120, unitsEach: 2),
+        ])
+    func aNameBeyondTheLimitCannotHaveItsNote(given: RepeatedName) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let unchecked = AppIdentity(
+            name: given.name, identifier: "org.example.bund", version: "0.1.0")
+
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: unchecked, minimumSystemVersion: "26.0", into: out)
+        #expect(throws: CommandFailure.self, "\(given.testDescription) の紙が書けた") {
+            try BundleCommand.writeOpeningNote(for: unchecked, beside: app)
+        }
+    }
+
+    /// 上限 (239) は紙の名前から決まる。**紙の名前を変えたら、上限も合わせて動かす** — 動かさないと
+    /// 紙が書けない名前を通すか、書ける名前を断る。ここがその食い違いで赤くなる。
+    @Test("上限ちょうどの名前で、開き方の紙の名前がちょうどファイル名の上限になる")
+    func theLimitIsWhereTheNoteFillsAFileName() {
+        let identity = AppIdentity(
+            name: String(repeating: "a", count: AppIdentity.maximumNameLength),
+            identifier: "org.example.bund", version: "0.1.0")
+        #expect(
+            AppIdentity.fileNameLength(of: BundleCommand.noteFileName(for: identity))
+                == AppIdentity.fileNameLimit)
+    }
+
     @Test("宣言された包みが入っていなければ止まる")
     func aMissingDeclaredBundleStops() throws {
         let root = try makeWorkspace()
@@ -306,6 +376,45 @@ struct BundleCommandTests {
         #expect(note.contains("Grain.app"))
         #expect(note.contains("Privacy & Security"))
         #expect(note.contains("Open Anyway"))
+    }
+
+    /// README は紙の名前を利用者に約束している。**名前は実関数から引く** — 検査の側に
+    /// 写しを持つと、実装と README と検査の 3 か所が別々に古くなる ([#2488])。`<name>` は
+    /// README が作品名の場所に書く綴りで、`name` に入れて求めた名前がそのまま載る。
+    ///
+    /// [#2488]: https://github.com/mokume-metal/mokume/issues/2488
+    @Test("README が書く開き方の紙の名前は、実際に作る名前と同じ")
+    func theReadmeNamesTheOpeningNoteTheWayItIsWritten() throws {
+        let readme = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // MokumeCLITests
+                .deletingLastPathComponent()  // Tests
+                .deletingLastPathComponent()  // リポジトリ直下
+                .appendingPathComponent("README.md"),
+            encoding: .utf8)
+        let placeholder = AppIdentity(
+            name: "<name>", identifier: "org.example.grain", version: "0.1.0")
+        let fileName = BundleCommand.noteFileName(for: placeholder)
+        #expect(
+            readme.contains("`\(fileName)`"),
+            "README が開き方の紙を `\(fileName)` と書いていない (実際に作る名前と食い違っている)")
+    }
+
+    /// README は `name` の長さの上限も利用者に約束している (#2501)。**数は実装の上限から引く** —
+    /// 紙の名前と同じく、写しを持つと上限を動かした日に README だけが古くなる。
+    @Test("README が書く name の長さの上限は、実際の上限と同じ")
+    func theReadmeStatesTheNameLimitTheWayItIsChecked() throws {
+        let readme = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // MokumeCLITests
+                .deletingLastPathComponent()  // Tests
+                .deletingLastPathComponent()  // リポジトリ直下
+                .appendingPathComponent("README.md"),
+            encoding: .utf8)
+        let phrase = "長さは \(AppIdentity.maximumNameLength) まで"
+        #expect(
+            readme.contains(phrase),
+            "README が name の長さの上限を「\(phrase)」と書いていない (実際の上限と食い違っている)")
     }
 
     /// 手順を報せに書くと、読んだ送り手が伝え直すことになる。名指しなら物が動く。
@@ -453,6 +562,99 @@ struct BundleCommandTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
     }
 
+    /// **`codesign` が無いことを、署名の失敗と取り違えない** (#2483・#2575)。`env` 越しに起こす
+    /// ので、`PATH` に無い回は `env` が 127 で終わる。それを「Signing failed (exit code 127)」と
+    /// 名乗ると、Xcode の道具を入れ直す方へ向かわず、署名の中身を疑わせる (#1157・#2314 の逆向き)。
+    @Test("codesign が PATH に無ければ、署名の失敗ではなく codesign が無いと名乗る")
+    func aMissingCodesignIsAMissingTool() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+
+        #expect(throws: CommandFailure.toolchainMissing("codesign")) {
+            try BundleCommand.sign(app, as: nil, environment: ["PATH": "/nonexistent"])
+        }
+    }
+
+    /// 裏側。`codesign` が起きて 0 以外で終わった回は、いままでどおり署名の失敗である。
+    @Test("codesign が起きて失敗したときは、いままでどおり署名の失敗と名乗る")
+    func aFailingCodesignIsStillASigningFailure() {
+        let nowhere = URL(
+            fileURLWithPath: "/nonexistent-\(UUID().uuidString)/Demo.app", isDirectory: true)
+        let failure = #expect(throws: CommandFailure.self) {
+            try BundleCommand.sign(nowhere, as: nil)
+        }
+        guard case .codesignFailed(let status) = failure else {
+            Issue.record("署名の失敗と名乗らなかった: \(String(describing: failure))")
+            return
+        }
+        #expect(status != 0 && status != 127)
+    }
+
+    /// **合図で落ちた `codesign` を、終了コードの形で名乗らない** ([#2315](https://github.com/mokume-metal/mokume/issues/2315))。
+    /// `terminationStatus` を直に読むと SIGKILL の 9 が「Signing failed (exit code 9)」になり、
+    /// `exit(9)` で終わった回と見分けがつかない。`PATH` の先に置いた偽の `codesign` で、自分で
+    /// 終わる回と合図で落ちる回を作り、`sign` が名乗る数を見る。
+    @Test("codesign が合図で落ちたら、128 + 番号で名乗る。自分で終わったら、終了コードのまま")
+    func aSignalledCodesignIsNamedByShellStatus() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+        let tools = root.appendingPathComponent("tools", isDirectory: true)
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        let fake = tools.appendingPathComponent("codesign")
+        try "#!/bin/sh\n".write(to: fake, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+        let environment = ["PATH": "\(tools.path):/usr/bin:/bin"]
+
+        for (script, status) in [
+            ("exit 9", Int32(9)), ("kill -s KILL $$", 128 + SIGKILL), ("kill -s TRAP $$", 128 + SIGTRAP),
+        ] {
+            // 実行ビットを保つため、同じファイルへ書き足す (置き換えない)
+            try "#!/bin/sh\n\(script)\n".write(to: fake, atomically: false, encoding: .utf8)
+            #expect(throws: CommandFailure.codesignFailed(status: status), "\(script)") {
+                try BundleCommand.sign(app, as: nil, environment: environment)
+            }
+        }
+    }
+
+    /// **道具立てが答えなかった回を、宣言の不備と名乗らない** (#2483)。`dump-package` は
+    /// 宣言を道具立てが読めない (`Package.swift` が壊れている) と 0 以外で終わり、`bundle` は
+    /// それを「Package.swift が実行ファイルを宣言していない」と名乗っていた。打ったコマンドと
+    /// 終了コードを名乗る形 (`binPath` の #2316 と同じ) にする。
+    @Test("宣言を道具立てが読めなかった回は、宣言に実行ファイルが無いとは名乗らない")
+    func anUnreadableManifestIsTheToolchainsFailureNotAMissingProduct() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "this is not a manifest\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try #"{"name": "Demo", "identifier": "org.example.demo", "version": "0.1.0"}"#.write(
+            to: root.appendingPathComponent(AppIdentity.fileName), atomically: true, encoding: .utf8)
+
+        let thrown = #expect(throws: CommandFailure.self) {
+            try BundleCommand.run([root.path])
+        }
+        guard let failure = thrown, case .toolchainFailed(let command, let status) = failure else {
+            Issue.record("道具立ての失敗と名乗らなかった: \(String(describing: thrown))")
+            return
+        }
+        #expect(command == "swift package dump-package")
+        #expect(status != 0)
+        #expect(!failure.message.contains("declares an executable"))
+    }
+
+    /// 署名の前まで組んだ包み (本物の Mach-O を主実行ファイルにする)。
+    private func makeApplicationToSign(in root: URL) throws -> URL {
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let executable = bin.appendingPathComponent("demo")
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: "/usr/bin/true"), to: executable)
+        return try BundleCommand.assemble(
+            executable: executable, identity: identity, minimumSystemVersion: "26.0",
+            into: root.appendingPathComponent("out", isDirectory: true))
+    }
+
     /// 本物の Mach-O を主実行ファイルにした包みを組んで、`sign` を通す。
     private func makeSignedApplication(
         identity signature: String?, entitlements: [String: Bool],
@@ -531,7 +733,7 @@ struct BundleCommandTests {
 
     /// **name に `/` があれば、組み立ての前に止まる** ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
     /// 中身の無い `Package.swift` なので、名乗りの段を越えていれば `dump-package` で別の失敗
-    /// (`noExecutable`) になる。`../victim` は 2 回打っても、隣の `victim.app` を消さない。
+    /// (`toolchainFailed`) になる。`../victim` は 2 回打っても、隣の `victim.app` を消さない。
     @Test("name に / があれば、ビルドへ進まずに止まり、bundle/ の下にも隣にも触れない")
     func bundlingStopsBeforeBuildingWithASlashInTheName() throws {
         let root = try makeWorkspace()
@@ -559,6 +761,34 @@ struct BundleCommandTests {
                     atPath: root.appendingPathComponent(BundleCommand.defaultOutputDirectory).path),
                 "\(name) で bundle/ を作った")
             #expect(FileManager.default.fileExists(atPath: keep.path), "\(name) で隣の victim.app を消した")
+        }
+    }
+
+    /// **name がファイル名に収まらない長さなら、組み立ての前に止まる** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
+    /// 直す前は release のビルドと署名の後に紙が書けずに止まり、署名済みの `.app` が `bundle/` に
+    /// 残っていた。中身の無い `Package.swift` なので、名乗りの段を越えていれば `dump-package` で
+    /// 別の失敗になる (上の `/` の検査と同じ形)。
+    @Test("name がファイル名に収まらない長さなら、ビルドへ進まずに止まり、bundle/ を作らない")
+    func bundlingStopsBeforeBuildingWithATooLongName() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// 中身の無い宣言\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let identityFile = root.appendingPathComponent(AppIdentity.fileName)
+
+        for given in [RepeatedName("a", 240), RepeatedName("木", 240), RepeatedName("a", 245)] {
+            try #"{"name": "\#(given.name)", "identifier": "org.example.bund", "version": "0.1.0"}"#
+                .write(to: identityFile, atomically: true, encoding: .utf8)
+            #expect(
+                throws: CommandFailure.identityNameTooLong(
+                    path: identityFile.path, name: given.name, length: given.units)
+            ) {
+                try BundleCommand.run([root.path])
+            }
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: root.appendingPathComponent(BundleCommand.defaultOutputDirectory).path),
+                "\(given.testDescription) で bundle/ を作った")
         }
     }
 

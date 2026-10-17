@@ -560,7 +560,7 @@ extension Canvas {
         guard trace > 0, trace.isFinite else { return SIMD4(repeating: 0) }
         func coarse(_ value: Float) -> Float { (value * 4096).rounded() / 4096 }
         return SIMD4(
-            coarse(log2(trace)), coarse(gram.columns.0.x / trace), coarse(gram.columns.1.x / trace),
+            coarse(RuntimeMath.log2(trace)), coarse(gram.columns.0.x / trace), coarse(gram.columns.1.x / trace),
             coarse(gram.columns.1.y / trace))
     }
 

@@ -50,6 +50,7 @@ nonisolated final class PortListener: @unchecked Sendable {
     private let queue: DispatchQueue
     private let parameters: @Sendable () -> NWParameters
     private let changed: @Sendable (Event) -> Void
+    private let closed: @Sendable () -> Void
     private var accepting: (@Sendable (NWConnection) -> Void)?
     private var listener: NWListener?
     private var stopped = false
@@ -61,10 +62,13 @@ nonisolated final class PortListener: @unchecked Sendable {
     ///   - queue: 持ち主の待ち行列。手続きはすべてここで走る。
     ///   - parameters: 開くたびに作る通信の設定 (UDP・TCP・WebSocket)。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
+    ///   - closed: 開いていた受け口が失敗して、こちらで閉じた (開き直す前)。受け口から作った
+    ///     繋ぎを持つ側が片付けるための知らせ。``queue`` の上で呼ばれる。
     init(
         port: Int, host: String?, retryAfter: TimeInterval, queue: DispatchQueue,
         parameters: @escaping @Sendable () -> NWParameters,
-        changed: @escaping @Sendable (Event) -> Void
+        changed: @escaping @Sendable (Event) -> Void,
+        closed: @escaping @Sendable () -> Void = {}
     ) {
         self.port = port
         self.host = host
@@ -72,6 +76,7 @@ nonisolated final class PortListener: @unchecked Sendable {
         self.queue = queue
         self.parameters = parameters
         self.changed = changed
+        self.closed = closed
     }
 
     /// 開き始める。待たずに返る。繋いできたものは `accepting` へ ``queue`` の上で渡す。
@@ -137,6 +142,7 @@ nonisolated final class PortListener: @unchecked Sendable {
             // 両方で実測。TCP も同じ — 検査が固定している)。閉じて、間を空けて自分で開き直す
             opened.cancel()
             listener = nil
+            closed()
             fail(Self.event(for: error))
         default:
             break

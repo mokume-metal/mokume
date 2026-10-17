@@ -30,24 +30,30 @@
 /// 同じ理由で、暗黙メンバ参照は解決しない — `rotate(.pi / 2)` ではなく
 /// `rotate(Float.pi / 2)` と綴る ([ADR-0035] 決定 6)。
 ///
+/// **要件と適合は隔離の外に置く** ([#2600])。ライブラリ全体が main actor を既定の隔離として
+/// いるので ([ADR-0010] 決定 1)、何も書かないと要件も適合も隔離され、隔離の外の値型
+/// (``Vector2``・``Circle``・``Rect``) の初期化子から数を読めなくなる。
+///
+/// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
 /// [#976]: https://github.com/mokume-metal/mokume/issues/976
 /// [#1018]: https://github.com/mokume-metal/mokume/issues/1018
 /// [#1797]: https://github.com/mokume-metal/mokume/issues/1797
-public protocol ScalarConvertible {
+/// [#2600]: https://github.com/mokume-metal/mokume/issues/2600
+public nonisolated protocol ScalarConvertible {
     /// 描画へ渡す幅 (32 bit)。
     var asFloat: Float { get }
 }
 
-extension Float: ScalarConvertible {
+nonisolated extension Float: ScalarConvertible {
     @inlinable public var asFloat: Float { self }
 }
 
-extension Double: ScalarConvertible {
+nonisolated extension Double: ScalarConvertible {
     @inlinable public var asFloat: Float { Float(self) }
 }
 
-extension Int: ScalarConvertible {
+nonisolated extension Int: ScalarConvertible {
     @inlinable public var asFloat: Float { Float(self) }
 }

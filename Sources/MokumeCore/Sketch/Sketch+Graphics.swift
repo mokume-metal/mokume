@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // 描き場所と、貼る絵。
-extension Sketch {
+extension SketchPart {
     /// 画面とは別の描き場所を作る。**焼いた絵を置いたり、重ねたり、積み上げたりできる。**
     ///
     /// <!-- example: 文脈 var trail: Canvas! -->
@@ -66,7 +66,7 @@ extension Sketch {
     /// ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ置ける。**外で置くと 1 度注意して、
     /// 置かない。** `setup()` の中でも同じで、`setup()` で描き場所に描くなら対で挟む (上の例)。
     ///
-    /// 画面の側と違うのは、次のフレームを約束する者が違うからである。画面では ``setup()`` と
+    /// 画面の側と違うのは、次のフレームを約束する者が違うからである。画面では ``Sketch/setup()`` と
     /// 止まっている間のコールバックで置いたものを、ランタイムが次に描くフレームへ持ち越す。
     /// 描き場所の次の絵を決めるのは書き手の `beginDraw()` / `endDraw()` なので、その外で置いた
     /// ものには出る先が無い ([ADR-0021] 決定 4 の追補 (2026-09-27))。
@@ -74,7 +74,7 @@ extension Sketch {
     /// `beginDraw()` で開いたまま `endDraw()` を忘れると、そのフレームは**画面の次のフレームの頭で
     /// 描かずに捨てる** (1 度注意する・[#1834])。``noLoop()`` で止まっている間は、止まっている間の
     /// コールバックに入る前に捨てる。捨てた後に読めば捨てる前の絵が返り、遅れて呼んだ
-    /// `endDraw()` は何もしない。``setup()`` や止まっている間のコールバックで開いて次の ``draw()`` で
+    /// `endDraw()` は何もしない。``Sketch/setup()`` や止まっている間のコールバックで開いて次の ``Sketch/draw()`` で
     /// 閉じる対は、次に描くフレームに属するので捨てない。
     ///
     /// ## 既定で透けていて、自動では消えない
@@ -100,6 +100,8 @@ extension Sketch {
     /// - Throws: 描き場所を確保できないときと、幅・高さのどちらかが 1 を割るとき
     ///   (``RenderFailure/invalidSize(width:height:)``。1×1 へ丸めない) に ``RenderFailure``。
     ///   **組み立てのときに投げる** ([ADR-0020] 決定 5) ので、`setup()` で作って持ち回る。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
+    ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
@@ -107,7 +109,7 @@ extension Sketch {
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     // shot: 1 snippet=952dfdc7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
-        try canvas.createGraphics(width, height)
+        try Self.resourceCanvas(RenderFailure.self).createGraphics(width, height)
     }
 
     /// 描き場所を等倍で置く。
@@ -146,12 +148,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している -->
-    ///     ![120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/95f2ed272775ec6f80453ef2165dca84.png)
+    ///     ![120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/cee09c7f5e6322052d5f2457c5207368.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     // shot: 1 snippet=b01c8b0c
     public func image(_ graphics: Canvas, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(graphics, x, y)
     }
@@ -184,12 +187,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている -->
-    ///     ![左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている](https://i.gyazo.com/347b4f47eee1b8ca043dde81a4b1f57f.png)
+    ///     ![左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている](https://i.gyazo.com/5dd046b52d65cfbbfe205be1b52eb955.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     // shot: 1 snippet=eca56bd9
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(graphics, a, b, c, d)
     }
@@ -225,7 +229,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの -->
-    ///     ![左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの](https://i.gyazo.com/df23974de3604619cb716b0f394e1719.png)
+    ///     ![左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの](https://i.gyazo.com/415dd5a9f368feb579a7a5cf2d59ab21.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -234,6 +238,7 @@ extension Sketch {
         _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
+        guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(graphics, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
@@ -373,7 +378,7 @@ extension Sketch {
     // shot: 1 snippet=c9428b67
     // shot: 2 snippet=f943b654
     // shot: 3 snippet=beee00de
-    public func texture(_ image: Image) { canvas.texture(image) }
+    public func texture(_ image: Image) { Self.liveCanvas()?.texture(image) }
 
     /// これから置く塗りに描き場所を貼る。
     ///
@@ -464,7 +469,7 @@ extension Sketch {
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=ce04dd39
     // shot: 2 snippet=5d6b5918
-    public func texture(_ graphics: Canvas) { canvas.texture(graphics) }
+    public func texture(_ graphics: Canvas) { Self.liveCanvas()?.texture(graphics) }
 
     /// 絵を貼るのをやめる。
     ///
@@ -549,5 +554,5 @@ extension Sketch {
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=5281a349
     // shot: 2 snippet=346300b3
-    public func noTexture() { canvas.noTexture() }
+    public func noTexture() { Self.liveCanvas()?.noTexture() }
 }

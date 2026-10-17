@@ -74,6 +74,7 @@ let package = Package(
                 .copy("Drawing/Shaders/Effects/Builtin.metal"),
                 .copy("Drawing/Shaders/Kinds.metal"),
                 .copy("Drawing/Shaders/Shapes.metal"),
+                .copy("Drawing/Shaders/UnitShape.metal"),
             ],
             swiftSettings: .mokume),
         // 層: コア依存 — 描画コアの上に載り、外とやりとりする領域 (ADR-0042 決定 3)。
@@ -117,6 +118,11 @@ let package = Package(
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
+        // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせると窓を開くので、
+        // 解き方だけを ProbeArguments.swift に出して、ここから呼ぶ
+        .testTarget(
+            name: "FrameRateProbeTests", dependencies: ["frame-rate-probe"],
+            swiftSettings: .mokume),
         .testTarget(
             name: "MokumeCameraTests", dependencies: ["mokume", "MokumeCamera"],
             swiftSettings: .mokume),

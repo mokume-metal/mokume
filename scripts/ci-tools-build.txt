@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# reuse の sdist を組む道具の版と照合値 (#2612)。理由は scripts/ci-tools.txt の冒頭。
+# reuse の build-system (sdist の pyproject.toml) が求めるのは poetry-core>=1.1.0 だけで、
+# poetry-core は依存を持たない。ci.yml の ci-static が ci-tools.txt より先にここから入れる。
+#
+# 上げ方:
+#   printf 'poetry-core\n' |
+#     uv pip compile - --generate-hashes --no-header --no-annotate \
+#       --python-version 3.12 --python-platform x86_64-manylinux_2_39 \
+#       --only-binary :all: --exclude-newer <7 日前の日付>
+--require-hashes
+--only-binary :all:
+poetry-core==2.5.0 \
+    --hash=sha256:81d04c9253b19d0604718268d781867c8f7b2128e5b25bbf1e84141eec6b89c4 \
+    --hash=sha256:98ee465b66f7e14bb9fbe68fb5e00d0cff184f036993ec94610ae4b5612f3add

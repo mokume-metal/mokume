@@ -416,7 +416,8 @@ def dead_report(
     if any(where.startswith(RELEASE_ORIGIN_PREFIX) for _url, _reason, wheres in dead for where in wheres):
         lines += [
             f"出所が `{RELEASE_ORIGIN_PREFIX}<タグ> (#PR)` の絵は、リリースノートに写された URL である。"
-            "PR 本文 (`gh pr edit`) とそのリリースのノート (`gh release edit <タグ> --notes-file`) の"
+            "PR 本文 (`scripts/edit-body.sh pr <番号>` の `--fetch <ファイル>` で取得して直し、"
+            "`--body-file <ファイル>` で書き込む) とそのリリースのノート (`gh release edit <タグ> --notes-file`) の"
             "両方で差し替える。",
         ]
     return lines

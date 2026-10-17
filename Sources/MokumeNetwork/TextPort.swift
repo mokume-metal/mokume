@@ -19,7 +19,7 @@ import MokumeDiagnostics
 ///     func setup() { server = try? createTCPServer(5204) }
 ///     func draw() {
 ///         for line in server?.messages ?? [] {
-///             size = Float(line) ?? size   // 0.3 のような数だけを読む
+///             size = Float(line) ?? size   // Float として読めた行だけを使う ("nan"・"inf" も数として読む)
 ///         }
 ///         circle(width / 2, height / 2, size * height)
 ///     }
@@ -118,7 +118,7 @@ public class TextPort: Inlet {
 
     /// 止める。ポートを閉じ、以後 ``messages`` は空のままで、送っても何も出ない。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``Sketch/detach(_:)-(Inlet)`` と同じ)。
+    /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     public func stop() {
         owner?.detach(self)
     }

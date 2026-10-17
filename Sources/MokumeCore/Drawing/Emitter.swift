@@ -5,7 +5,7 @@ import simd
 
 /// 粒がどこから出るか。
 ///
-/// 使い方は ``Sketch/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
+/// 使い方は ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` にある。
 ///
 /// **出る場所だけを決める。** どちらへ飛ぶかは ``Heading`` が決めるので、形を差し替えても
 /// 飛ぶ向きは変わらない — 2 つを 1 つの指定へ混ぜると、形を変えた瞬間に向きまで変わる。
@@ -58,17 +58,17 @@ public enum Emitter: Equatable, Sendable {
             // **半径は平方根で引く。** そのまま引くと中心へ寄る
             let around = randomness.unitValue() * 2 * .pi
             let distance = abs(radius) * sqrt(randomness.unitValue())
-            return SIMD3(x + cos(around) * distance, y + sin(around) * distance, 0)
+            return SIMD3(x + RuntimeMath.cos(around) * distance, y + RuntimeMath.sin(around) * distance, 0)
         case .sphere(let x, let y, let z, let radius):
             // 向きを 2 つの角から作り、半径は 3 乗根で引く (円と同じ理由の 3 次元版)
             let around = randomness.unitValue() * 2 * .pi
             let height = randomness.unitValue() * 2 - 1
-            let distance = abs(radius) * pow(randomness.unitValue(), 1.0 / 3)
+            let distance = abs(radius) * RuntimeMath.pow(randomness.unitValue(), 1.0 / 3)
             let ring = sqrt(max(0, 1 - height * height))
             return SIMD3(
-                x + cos(around) * ring * distance,
+                x + RuntimeMath.cos(around) * ring * distance,
                 y + height * distance,
-                z + sin(around) * ring * distance)
+                z + RuntimeMath.sin(around) * ring * distance)
         }
     }
 }

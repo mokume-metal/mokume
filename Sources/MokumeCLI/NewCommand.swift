@@ -61,12 +61,13 @@ enum NewCommand {
         let parsed = try Arguments.parse(
             arguments,
             options: [
-                Arguments.Option(["--path"]) { "\($0) needs a directory after it" },
-                Arguments.Option(["--local"]) { "\($0) needs the library's path after it" },
+                Arguments.Option(["--path"], takesPlace: true) { "\($0) needs a directory after it" },
+                Arguments.Option(["--local"], takesPlace: true) { "\($0) needs the library's path after it" },
             ],
             surplus: .reject { "Only one name: \($0)" })
         guard let name = parsed.positional else { throw .nameMissing }
         guard isValid(name: name) else { throw .invalidName(name) }
+        if let reason = unusableReason(name: name) { throw .unusableName(name: name, reason: reason) }
         return Options(
             name: name, path: parsed.values["--path"] ?? ".", local: parsed.values["--local"])
     }
@@ -92,13 +93,20 @@ enum NewCommand {
                     from: "\(Templates.libraryMinimumVersion)")
                 """
             }
+        let identity = packageIdentity(local: options.local, sketch: options.root(from: base))
+        // **作るパッケージの名前と、依存の名前が同じだと組めない** — 作るディレクトリの名前が
+        // identity になるので、同じ名前で終わる場所を指すと、自分自身に依存する形になる (#2310)
+        if options.name.lowercased() == identity {
+            throw .unusableName(
+                name: options.name,
+                reason: "The package would have the same name as the one it depends on (\(identity)).")
+        }
         let values = [
             "NAME": options.name,
             "TARGET": target,
             "TYPE": type,
             "DEPENDENCY": dependency,
-            "PACKAGE": swiftStringContents(
-                packageIdentity(local: options.local, sketch: options.root(from: base))),
+            "PACKAGE": swiftStringContents(identity),
         ]
         return [
             ("Package.swift", try Templates.render("Package.swift.template", values)),
@@ -152,7 +160,7 @@ enum NewCommand {
     ///
     /// - Parameter sketch: 作られるスケッチの場所 (``Options/root(from:)``)。
     static func packageIdentity(local: String?, sketch: URL) -> String {
-        guard let local else { return "mokume" }
+        guard let local else { return libraryPackageName }
         let (base, relative) =
             local.hasPrefix("~/")
             ? (NSHomeDirectory(), String(local.dropFirst(2))) : (onDisk(sketch).path, local)
@@ -166,7 +174,7 @@ enum NewCommand {
         }
         var name = parts.last ?? ""
         if name.hasSuffix(".git") { name.removeLast(4) }
-        return name.isEmpty ? "mokume" : name.lowercased()
+        return name.isEmpty ? libraryPackageName : name.lowercased()
     }
 
     /// 場所の実体 (symlink を解いた絶対パス)。**まだ無い末尾は、在る祖先を解いた後に足す。**
@@ -205,11 +213,112 @@ enum NewCommand {
         return escaped
     }
 
+    /// 依存する mokume のパッケージの名前 (url で指すときの identity)。
+    static let libraryPackageName = "mokume"
+
+    /// 作るパッケージが (推移で) 依存するパッケージの identity。**作るディレクトリの名前が identity に
+    /// なるので、同じ名前 (大小は問わない) だと組めない** (`new swift-syntax` は
+    /// `product 'SwiftSyntaxMacros' … not found in package 'swift-syntax'`)。検査が `Package.swift` の
+    /// 依存の宣言から導いて突き合わせる。
+    static let dependencyPackageNames: Set<String> = [libraryPackageName, "swift-syntax"]
+
+    /// ひな形 `Sketch.swift` が mokume から使う型。**作る型の名前がこれと同じだと組めない**
+    /// (`'Sketch' inherits from itself`・使いたい型を隠す)。ひな形に型の参照を足したら、ここへ
+    /// 足す (検査が突き合わせる)。
+    static let templateTypes: Set<String> = ["Sketch", "SketchSettings"]
+
+    /// 型の名前にできない綴り (`keyword 'Self' cannot be used as an identifier here`)。
+    /// **大文字で始まる Swift のキーワードは `Self` と `Any` だけ** (言語仕様) なので、型名
+    /// (`typeName(for:)` は各部分の先頭を大文字にする) で衝突しうるのはこの 2 つで足りる。
+    /// `Type`・`Protocol`・`Never`・`Error`・`Main` は型の名前にできた (`swift build` で実測)。
+    /// 小文字のキーワード (`init`・`func`・`default`・`import`・`let`・`struct`) はモジュール名にも
+    /// 型名 (先頭が大文字になる) にもでき、組めた (実測)。
+    static let keywordTypes: Set<String> = ["Self", "Any"]
+
+    /// 作るパッケージの名前 (= ターゲットの名前) にできないモジュール。
+    ///
+    /// **同じ名前のモジュールが、作るパッケージの依存の中に在る。** 依存のターゲットとは
+    /// `multiple packages … declare targets with a conflicting name`、SDK のモジュールとは
+    /// `module dependency cycle` で組めない。`swift build` で名前ごとに確かめた (2026-10-13・
+    /// Swift 6.3・macOS 26)。
+    ///
+    /// - mokume の library product が辿るターゲット (検査が `Package.swift` の宣言から導いて
+    ///   突き合わせる)
+    /// - **mokume のライブラリのソースが `import` するモジュール** — SDK のもの (`Foundation`・
+    ///   `Metal`・`Network`・`Observation`・`SwiftUI` など) と swift-syntax のもの (`SwiftSyntax`・
+    ///   `SwiftCompilerPlugin` など)。検査が `Sources/` の `import` から導いて突き合わせるので、
+    ///   一覧を手で足さなくても、ライブラリが新しいモジュールを import したら赤になって知らせる
+    /// - ひな形が import するモジュール (`Foundation`・`mokume`)・標準ライブラリ (`Swift` は
+    ///   `module name "Swift" is reserved for the standard library`)
+    ///
+    /// **限界: 導ける範囲に限る。** swift-syntax のターゲットのうち mokume が import しないもの
+    /// (`SwiftParser` など) と、mokume が import しない SDK のモジュールも同じ形で組めなくなるが
+    /// (swift-syntax 側は実測)、導けないので一覧に無い。一覧は CLI と同じ版の宣言から導いたもので、
+    /// 生成物が引く最新のライブラリが足したターゲットとは食い違いうる。
+    ///
+    /// **大小は区別する。** `mokumecore` は組めた (実測)。区別しない名前は
+    /// ``caseFoldedModules`` で別にする。
+    static let unusableModules: Set<String> = [
+        // mokume の library product が辿るターゲット
+        "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
+        "MokumeDiagnostics", "MokumeMacros",
+        // ひな形が import するモジュールと標準ライブラリ
+        "Foundation", "Swift",
+        // ライブラリのソースが import する SDK のモジュール
+        "simd", "Metal", "Synchronization", "AppKit", "Darwin", "QuartzCore", "CoreGraphics",
+        "AVFAudio", "Observation", "SwiftUI", "Accelerate", "AVFoundation", "Network", "CoreText",
+        "ImageIO", "IOSurface", "CoreMedia", "CoreAudio", "VideoToolbox", "UniformTypeIdentifiers",
+        "ModelIO", "IOKit", "CoreVideo",
+        // ライブラリのソースが import する swift-syntax のモジュール
+        "SwiftSyntax", "SwiftSyntaxMacros", "SwiftCompilerPlugin", "SwiftDiagnostics",
+    ]
+
+    /// 大小を畳んで断るモジュール (小文字・大文字の綴り違いでも組めないもの)。
+    ///
+    /// **ひな形が `import` するモジュールだけ** (`Foundation`・`mokume`)。作るターゲットの
+    /// 出力 (`<名前>.swiftmodule`) は大小を区別しない置き場の同じファイルになり、ひな形の
+    /// `import Foundation` が自分自身の出力を読む (`foundation` は 4 回とも `swiftc` の失敗)。
+    /// 小文字の `metal`・`appkit`・`network`・`swift`・`mokumecore` などは組めた (実測) ので畳まない。
+    /// `mokume` は ``dependencyPackageNames`` の大小違いとして別に断る。
+    static let caseFoldedModules: Set<String> = ["foundation"]
+
+    /// ひな形が `Sketch.swift` で import するモジュール。
+    static let templateModules: Set<String> = ["Foundation", "mokume"]
+
     /// 名前として使えるか。パッケージ名にもディレクトリ名にもなるので、両方で
     /// 困らない範囲に絞る。
     static func isValid(name: String) -> Bool {
         guard let first = name.first, first.isLetter else { return false }
         return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+    }
+
+    /// 名前が、組めないパッケージを作るなら、その理由 (英語の 1 文)。組めるなら `nil`。
+    ///
+    /// **文字の種類は見ない** (``isValid(name:)``)。ここは文字としては使える名前のうち、型の名前・
+    /// ターゲットの名前が mokume や Swift の名前と衝突するものを断る
+    /// ([#2310](https://github.com/mokume-metal/mokume/issues/2310))。実際に `swift build` で
+    /// 確かめた結果が土台で、`new` が `Created` と言ったものは組める、を守る。
+    ///
+    /// 依存の名前 (`--local` の末尾) との衝突は、場所を解いてからでないと分からないので
+    /// ``files(for:base:)`` が見る。
+    static func unusableReason(name: String) -> String? {
+        let type = typeName(for: name)
+        if templateTypes.contains(type) {
+            return "The sketch's class would be called \(type), the same as a type in mokume that the template builds on."
+        }
+        if keywordTypes.contains(type) {
+            return "The sketch's class would be called \(type), which Swift does not allow as a type name."
+        }
+        if let package = dependencyPackageNames.first(where: { $0 == name.lowercased() }) {
+            return "The package would have the same name as \(package), which it depends on."
+        }
+        if unusableModules.contains(name) {
+            return "\(name) is already the name of a module the sketch builds with."
+        }
+        if caseFoldedModules.contains(name.lowercased()) {
+            return "\(name) differs only in letter case from a module the sketch imports, and the build writes both to the same file."
+        }
+        return nil
     }
 
     /// `my-sketch` から `MySketch` を作る。型の名前は識別子でなければならない。

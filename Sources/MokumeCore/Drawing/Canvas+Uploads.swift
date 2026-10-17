@@ -3,8 +3,13 @@
 
 import Metal
 
-/// 積んだ控えと、その世代。**投入した後で** ``PendingUploads/markUploaded(_:)`` へ渡す。
-typealias EncodedUploads = [(owner: any PendingUpload, generation: UInt64)]
+/// 積んだ控えと、その世代。**投入した後で** ``RenderDevice/noteUploaded(_:by:)`` へ渡す。
+///
+/// `direct` は逃げ道で待って直接書いた分 (``PendingUpload/uploadDirectly()``)。投入に載らないので、
+/// 投入が打ち切られても取り消さない ([#2199])。
+///
+/// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+typealias EncodedUploads = [(owner: any PendingUpload, generation: UInt64, direct: Bool)]
 
 // 数の並びと画像へ CPU が書いた控えを、GPU 側のコピーで届ける。
 //
@@ -28,7 +33,7 @@ extension Canvas {
     /// ある (描き切りなら `frameRing.advance()` の後、読み戻しなら全完了を待った後)。
     ///
     /// - Returns: 積んだ (か、逃げ道で直接書いた) 控えと世代。**投入した後で**
-    ///   ``PendingUploads/markUploaded(_:)`` へ渡す。
+    ///   ``RenderDevice/noteUploaded(_:by:)`` へ渡す。
     func encodeUploads(into commands: any MTL4CommandBuffer) throws(RenderFailure)
         -> EncodedUploads
     {
@@ -44,7 +49,7 @@ extension Canvas {
                 // **大きすぎる品は、待って直接書く。** 待てなければ控えに残る (#934)。
                 // 直接書いた分は投入によらず届いているが、下ろすのは他と揃えて投入の後
                 if let generation = owner.uploadDirectly() {
-                    uploaded.append((owner, generation))
+                    uploaded.append((owner, generation, direct: true))
                 }
                 continue
             }
@@ -71,7 +76,7 @@ extension Canvas {
                         image, into: bytes.advanced(by: item.offset), of: staging, at: item.offset,
                         slot: frameRing.slot, index: imageIndex, in: commands)
                     imageIndex += 1
-                    uploaded.append((image, generation))
+                    uploaded.append((image, generation, direct: false))
                     uploadBarriersEncoded += 1
                     continue
                 } catch {
@@ -90,7 +95,7 @@ extension Canvas {
             let generation = item.owner.stageUpload(
                 into: bytes.advanced(by: item.offset), of: staging, at: item.offset,
                 on: encoder)
-            uploaded.append((item.owner, generation))
+            uploaded.append((item.owner, generation, direct: false))
         }
         // **届け終わるのを、続く計算・描画・書き戻しが待つ。** 同じコマンドの中の encoder を
         // またぐ依存は自動では張られない (#341)。`.device` を渡さないと実行順だけ揃って

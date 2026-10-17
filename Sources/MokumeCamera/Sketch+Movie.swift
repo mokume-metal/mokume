@@ -7,7 +7,7 @@ import MokumeCore
 // 動画ファイル。**説明文の正本はこちら** ([ADR-0020] 決定 4)。
 //
 // 呼べば使える標準の機能である ([ADR-0042] 決定 1)。`plugins` には何も書かない —
-// 作る口が、走っているスケッチへ自分で入り口を足す (``Sketch/attach(_:)-(Inlet)``)。
+// 作る口が、走っているスケッチへ自分で入り口を足す (``SketchPart/attach(_:)-(Inlet)``)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -39,16 +39,20 @@ extension Sketch {
     /// - 絵の大きさは動画の大きさ。色は動画が名乗る色空間から作業空間へ移してある ([ADR-0011])
     /// - 音は鳴らさない。回転の印 (縦に撮った動画の向き) は当てず、記録された向きのまま映す
     ///
-    /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。開くときに最初のコマまで読んで
+    /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。開くときに最初のコマまで読んで
     /// 確かめる。`setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
     /// - Parameter file: 動画ファイルの名前。macOS が再生できる形式 (QuickTime の `.mov`・
     ///   MPEG-4 の `.mp4` / `.m4v` で、H.264・HEVC・ProRes など)。
-    /// - Throws: 見つからない・動画として読めない・映像が入っていない・絵として置けないとき。
+    /// - Throws: 見つからない・動画として読めない・映像が入っていない・絵として置けないとき
+    ///   (``MovieFailure``)。`setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・
+    ///   `Task` の中) で呼ぶと、ファイルを開く前に ``MovieFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createVideo(_ file: String) throws(MovieFailure) -> Movie {
+        // 映す絵を作る面を取れなければ、ファイルを開く (最初のコマまで読む) 前に断る
+        try requireSurface(MovieFailure.self, calledAs: #function)
         let url: URL
         do {
             url = try assetURL(file)
@@ -60,9 +64,15 @@ extension Sketch {
         let reader = try MovieReader(url: url, path: file)
         let image: Image
         do {
-            image = try createImage(reader.width, reader.height)
+            image = try createImage(reader.width, reader.height, calledAs: #function)
         } catch {
-            throw .unplaceable(width: reader.width, height: reader.height)
+            // **大きさの失敗だけを言い換える。** 面を取れないことまで大きさの話にすると、利用者は
+            // 置ける大きさを探しに行く (#2683 の反証 1)
+            switch error {
+            case .notRunning(let call): throw .notRunning(call: call)
+            case .notFound, .undecodable, .unplaceable:
+                throw .unplaceable(width: reader.width, height: reader.height)
+            }
         }
         let movie = Movie(image: image, reader: reader, name: "video: \(file)", owner: self)
         attach(movie)

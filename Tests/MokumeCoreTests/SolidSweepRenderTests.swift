@@ -179,7 +179,7 @@ struct SolidSweepRenderTests {
             let model = Model.make(
                 name: "cube", parsed: ModelFile.parse(Self.cubeWithNormals(inward: true)), fitting: nil)
             #expect(model.winding == .inward)
-            #expect(!model.hasDerivedNormals)
+            #expect(!model.mesh.points.contains { $0.isDerivedNormal })
             let box = canvas.createShape {
                 canvas.noStroke()
                 canvas.fill(255)
@@ -504,7 +504,7 @@ struct SolidSweepRenderTests {
         let model = Model.make(
             name: "cube", parsed: ModelFile.parse(Self.cubeWithoutNormals(inward: inward)),
             fitting: nil)
-        #expect(model.hasDerivedNormals)
+        #expect(model.mesh.points.allSatisfy { $0.isDerivedNormal })
         #expect(model.winding == (inward ? .inward : .outward))
         return canvas.createShape {
             canvas.noStroke()

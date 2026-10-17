@@ -153,7 +153,8 @@ struct PointerLockSketchTests {
         let pipe = Pipe()
         defer { try? pipe.fileHandleForWriting.close() }
         let sketch = PointerLockLooker()
-        let application = try SketchApplication(sketch: sketch, gpu: RenderDevice())
+        let gpu = try RenderDevice()
+        let application = try SketchApplication(sketch: sketch, gpu: gpu)
         application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
         application.toolInput = pipe.fileHandleForReading.fileDescriptor
         defer { application.willTerminate() }
@@ -161,13 +162,19 @@ struct PointerLockSketchTests {
         application.resolveOutlet(at: facet, owner: "mokume watch")
         #expect(!application.endsAfterLastWindowClosed, "共有面の経路になっていない")
 
-        for _ in 0..<3 { application.displayLinkFired() }
+        // **リフレッシュの間合いを作る。** 子は焼きの結末を見てから名乗る (#2735) ので、結末が届く
+        // 前に続けて回すと名乗りが遅れる。本番のリフレッシュの間には届いている
+        func refresh() {
+            application.displayLinkFired()
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+        }
+        for _ in 0..<3 { refresh() }
         let manifest = try #require(SharedFrameSurface.readManifest(at: facet))
         let requested = try #require(SharedFrameSurface.newest(among: manifest.ids))
         #expect(SharedFrameSurface.pointerLockRequested(of: requested.id))
 
         sketch.releases = true
-        for _ in 0..<3 { application.displayLinkFired() }
+        for _ in 0..<3 { refresh() }
         let released = try #require(SharedFrameSurface.newest(among: manifest.ids))
         #expect(released.frame > requested.frame)
         #expect(!SharedFrameSurface.pointerLockRequested(of: released.id))

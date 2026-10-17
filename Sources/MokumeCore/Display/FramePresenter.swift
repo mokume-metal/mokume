@@ -44,6 +44,16 @@ final class FramePresenter {
     /// ([#357](https://github.com/mokume-metal/mokume/issues/357))。
     private var lastDrawableSize = (width: 0, height: 0)
 
+    /// 最後に差し出した投入の番号。まだ 1 枚も差し出していなければ 0。
+    ///
+    /// ``present(_:to:)`` が `true` を返した直後に読む。**差し出した側が結末を待つための口**で、
+    /// 投入を GPU が打ち切ったら同じ絵を出し直す ([#2735]。道具の窓 ``SharedFrameStage`` が使う)。
+    /// 返り値の形 (`Bool`) を変えないのは、毎リフレッシュ差し出す走っているスケッチの窓
+    /// (`SketchApplication`) は出し直しを待つ必要が無く、番号を要らないためである。
+    ///
+    /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    private(set) var lastSubmission: UInt64 = 0
+
     /// 描いた絵を画面へ出すべきか。
     ///
     /// 窓が見えていない間は出さない — 誰も見ない絵のために `nextDrawable()` の待ちを
@@ -82,10 +92,10 @@ final class FramePresenter {
         gpu.makeDrawableResident(drawable.texture)
 
         gpu.waitForDrawable(drawable)
-        try gpu.withCommands { commands throws(RenderFailure) in
+        lastSubmission = try gpu.withCommands { commands throws(RenderFailure) in
             try encode(source, into: drawable.texture, using: commands)
             // GPU の完了を待たない — 待てば表示のたびに CPU が止まる
-            gpu.commit(commands, signalling: drawable)
+            return gpu.commit(commands, signalling: drawable)
         }
         // **この投入が、いまのスロットの設定を読む。** 次に同じスロットが回ってきた
         // ときの待ち先になる (#754)

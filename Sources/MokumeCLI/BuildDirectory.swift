@@ -14,6 +14,18 @@ import mokume
 /// 40MB。置き場を 1 つにすると 2 本目以降が **2.5 秒 / +14MB** で済む
 /// ([#1055](https://github.com/mokume-metal/mokume/issues/1055) に実測)。
 ///
+/// **2.5 秒は、直前に組んだスケッチと親ディレクトリが同じときに限る。** 道具立ての既定の
+/// ビルド方式 (Swift Build) は、依存のコンパイル命令に `-working-directory <ルートパッケージの親>`
+/// を入れる。親が変わると命令が変わるので、置き場を分け持っていても mokume 本体を
+/// 組み直す (`p1/alpha` の直後に `p2/beta` を組むと 6〜9 秒、`p1/gamma` なら 2 秒前後)。
+///
+/// 下の「鍵で区切るのは必須」と同じ往復の遅さだが、**区切らない。** 版は数えるほどしか
+/// 無いが、親はスケッチを置いたフォルダの数だけあり、鍵に入れると親ごとに初回の 17 秒と
+/// 約 400MB を払う。往復の 6〜9 秒は初回よりも安い。`--build-system native` を渡せば
+/// 起きないが、道具立てが廃止を予告している口なので頼らない
+/// ([#2687](https://github.com/mokume-metal/mokume/issues/2687)。上流へは
+/// [swiftlang/swift-package-manager#10681](https://github.com/swiftlang/swift-package-manager/issues/10681) で報告した)。
+///
 /// **部分だけ共有する口は無い。** `--cache-path` を別に与えても置き場は 393MB のまま
 /// (キャッシュ側が持つのは圧縮された種で、置き場は展開後の写しを別に持つ)。内容で
 /// 決まる = 取り違えの危険が無いものだけを寄せる、という安全な形は選べないので、
@@ -286,8 +298,12 @@ nonisolated enum BuildDirectory {
         if let product = package.executableProductName { names.append(product) }
         names.append(contentsOf: package.targets.map(\.name))
         var seen = Set<String>()
-        // 置き場の名前にできないものは押さえようがないので落とす
-        return names.filter { !$0.contains("/") && !$0.isEmpty && seen.insert($0).inserted }
+        // 置き場の名前にできないものは押さえようがないので落とす。**`.`・`..` も** — 押さえる記録の
+        // 置き場 `owners/<name>` が `owners` 自身か置き場の根を指し、先客と読めない記録で
+        // 共有を諦める理由が不正確になる ([#2502](https://github.com/mokume-metal/mokume/issues/2502))
+        return names.filter {
+            !$0.contains("/") && !$0.isEmpty && $0 != "." && $0 != ".." && seen.insert($0).inserted
+        }
     }
 
     /// 共有の置き場で名前を押さえる。

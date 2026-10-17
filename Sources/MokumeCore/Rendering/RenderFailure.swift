@@ -7,8 +7,8 @@
 ///
 /// **大半は「環境かリソースが足りない」形だが、それに限らない。** 頼んだ値が通らないもの
 /// (``invalidSize(width:height:)`` / ``invalidPixelDensity(_:)`` / ``invalidFrameRate(_:)`` /
-/// ``invalidWindowScale(_:)`` / ``invalidDisplay(_:)`` / ``invalidCount(_:)``) と、呼ぶ順序が誤っているもの
-/// (``commandsAlreadyOpen``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
+/// ``invalidWindowScale(_:)`` / ``invalidDisplay(_:)`` / ``invalidCount(_:)``) と、呼ぶ順序や場所が誤っているもの
+/// (``commandsAlreadyOpen`` / ``notRunning(call:)``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
 /// 起きたことで、運び方を分けても受け取る場所が増えるだけだからである ([#792])。
 ///
 /// **区別を持つのは ``description`` のほうである。** 資源が足りないなら「走ったままの
@@ -147,7 +147,7 @@ public enum RenderFailure: Error, Equatable, Sendable {
     ///
     /// **組み立てで断り、別の画面へは倒さない** ([ADR-0020] 決定 5 の 2 行目)。展示でプロジェクタへ
     /// 出すつもりの作品が、黙って手元の画面を全画面で塞ぐことになるからである。繋がっていなければ
-    /// 窓で開く、としたい作品は ``Sketch/displays`` を読んで自分で選ぶ
+    /// 窓で開く、としたい作品は ``SketchPart/displays`` を読んで自分で選ぶ
     /// (``SketchSettings/fullScreen(_:)`` の例)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -178,6 +178,17 @@ public enum RenderFailure: Error, Equatable, Sendable {
 
     /// テクスチャの読み取り方を作れない。
     case samplerUnavailable
+
+    /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
+    /// (`"createGraphics(_:_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    ///
+    /// 面を取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで起こした
+    /// `Task` の中も) だけで、初期化子の中・後片付けの後・`Task` の中からは取れない。**名前に反して、
+    /// スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした `Task` から
+    /// 同期の口を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)
+    /// と同じ事情)。
+    case notRunning(call: String)
 }
 
 extension RenderFailure: CustomStringConvertible {
@@ -351,6 +362,8 @@ extension RenderFailure: CustomStringConvertible {
             Cannot create a way to read from a texture.
             \(Self.exhaustedAdvice)
             """
+        case .notRunning(let call):
+            OutsideRun.notRunningNotice(call)
         }
     }
 

@@ -486,7 +486,7 @@ extension Canvas {
         points.reserveCapacity(count)
         for index in 0..<count {
             let angle = start + step * Float(index)
-            points.append(SIMD2(radiusX * cos(angle), radiusY * sin(angle)))
+            points.append(SIMD2(radiusX * RuntimeMath.cos(angle), radiusY * RuntimeMath.sin(angle)))
         }
         return points
     }
@@ -542,7 +542,7 @@ extension Canvas {
         // **倍精度で解く。** 半径が大きいほど `1 − tolerance/r` は 1 に貼り付き、
         // 単精度では引き算で桁が落ちる — 半径 20000 で 629 ではなく 628 を返し、
         // 上限とは別に保証を 0.2% 外していた ([#429])
-        let radians = acos(max(-1, 1 - tolerance / Double(radius)))
+        let radians = RuntimeMath.acos(max(-1, 1 - tolerance / Double(radius)))
         // 角度が潰れるのは半径が大きすぎるとき。いちばん**細かい**側へ倒す
         // (かつては 3 を返し、半径 10⁷ の円が三角形になっていた)
         guard radians > 0 else { return cap }

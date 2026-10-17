@@ -317,6 +317,47 @@ struct SceneOutsideFrameTests {
         }
     }
 
+    // MARK: - 止まっている間の入力のコールバック (#2723)
+
+    /// `noLoop()` で止め、押されたら変換を書くスケッチ ([#2723] の本文の例)。止まっている間の
+    /// 入力は、描かずに配る区間 (`SketchRuntime` の `carryingOver`) で配られ、そこでは
+    /// `isDrawing` が立たない。
+    ///
+    /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
+    final class TranslatesWhenPressed: Sketch {
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        private(set) var presses = 0
+        func setup() { noLoop() }
+        func draw() {}
+        func mousePressed() {
+            presses += 1
+            translate(10, 0)
+        }
+    }
+
+    /// 文面の字面の検査 (`OutsideFrameNoticeTests`) だけでは、止まっている間の入力のコールバックで
+    /// 実際にどの注意が出るかは見えない。ランタイムを回し、その経路で出た文を取る。
+    @Test("止まっている間の入力のコールバックで変換を書くと、setup を名乗らない注意で無視する (#2723)")
+    func aTransformInAStoppedCallbackIsRefusedWithoutNamingSetup() throws {
+        let sketch = TranslatesWhenPressed()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+        // setup() で止め、最初の 1 枚を描く
+        try runtime.advance()
+        try #require(
+            !runtime.canvas.warnings.hasWarned(.transformOutsideFrame), "押す前に変換の注意が出ている")
+
+        runtime.input.enqueue(.mouseDown(x: 4, y: 4, button: .left))
+        try runtime.advance()
+
+        try #require(sketch.presses == 1, "止まっている間に mousePressed() が配られていない")
+        let said = try #require(
+            runtime.canvas.warnings.message(for: .transformOutsideFrame),
+            "止まっている間のコールバックで書いた変換を、黙って捨てている")
+        #expect(said == Canvas.OutsideFrame.transform.notice)
+        #expect(!said.contains("setup"), "setup で書いたと名乗る: \(said)")
+        #expect(runtime.canvas.transform == .identity, "止まっている間のコールバックで変換が効いている")
+    }
+
     @Test("Sketch にだけある口も、setup() で呼ぶと注意して無視する")
     func sketchOnlyMouthsOutsideAFrameAreIgnored() throws {
         let gpu = try RenderDevice()

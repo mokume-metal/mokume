@@ -241,10 +241,16 @@ struct InputCallbackTests {
                 return (deltaX, deltaY)
             }
 
-        #expect(delivered.map(\.0).reduce(0, +) == sent.map(\.0).reduce(0, +))
-        #expect(delivered.map(\.1).reduce(0, +) == sent.map(\.1).reduce(0, +))
+        // 和は型を明示して取り出す。#expect の中で `reduce(0, +)` を比べると型検査に 2 秒強
+        // かかる (#2596)
+        let deliveredX: Float = delivered.map(\.0).reduce(0, +)
+        let deliveredY: Float = delivered.map(\.1).reduce(0, +)
+        let sentX: Float = sent.map(\.0).reduce(0, +)
+        let sentY: Float = sent.map(\.1).reduce(0, +)
+        #expect(deliveredX == sentX)
+        #expect(deliveredY == sentY)
         // 部分累計を配っていれば 3a + 2b + c = 3*1 + 2*3 + 5 = 14 になる
-        #expect(delivered.map(\.0).reduce(0, +) == 9)
+        #expect(deliveredX == 9)
     }
 
     /// 引きずりも同じ規則で、**1 件ぶんを足し合わせるとフレーム合計 (``InputState/dragX``)
@@ -336,15 +342,15 @@ struct InputCallbackTests {
         #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyReleased])
     }
 
-    /// **押しっぱなしは連射する** — Processing と同じで、p5.js とは違う (p5.js は押したままの
-    /// キーでは呼び直さない)。
-    @Test("押しっぱなしのキーは、届いたぶんだけ配られる")
-    func repeatsWhileHeld() {
+    /// **押しっぱなしでは押下を配り直さない** — p5.js と同じで、Processing の連射は引き継がない
+    /// ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。リピートは打鍵にだけ届く。
+    @Test("押しっぱなしのキーは、押下を 1 回だけ配り、打鍵は届いたぶんだけ配る")
+    func repeatsReachOnlyTyping() {
         let events: [InputEvent] = [
             .keyDown(code: .a, characters: "a", isRepeat: false),
             .keyDown(code: .a, characters: "a", isRepeat: true),
         ]
-        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyPressed, .keyTyped])
+        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyTyped])
     }
 
     /// **「`characters` が空でない」では判定できない。** AppKit は矢印に私用領域
@@ -636,6 +642,57 @@ struct InputInboxTests {
         let inbox = InputInbox(directory: facet)
         try send("{ これは JSON ではない", to: facet)
         #expect(inbox.drain(into: InputState()) == nil)
+    }
+
+    /// **`events` が読めなくても、`id` を読めれば応える** ([#2550](https://github.com/mokume-metal/mokume/issues/2550))。
+    /// 解けなかった 1 件だけを持つ要求として流すので、受けたのは 0 件・捨てたのは 1 件と返り、
+    /// 何も流れ込まない。応えないと、送り手には「届いたが読めなかった」と「走っていない」の
+    /// 見分けが付かない (ADR-0018 決定 3)。
+    @Test(
+        "events が読めない要求にも、id を echo し、1 件を捨てたと応える",
+        arguments: [
+            #"{"id":"i1","events":5}"#,
+            #"{"id":"i1"}"#,
+            #"{"id":"i1","events":null}"#,
+            #"{"id":"i1","events":{"type":"mouseMoved","x":1,"y":2}}"#,
+        ])
+    func answersARequestWhoseEventsCannotBeRead(_ request: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(request, to: facet)
+
+        let report = try #require(inbox.drain(into: state), "応答が書かれず、要求ごと黙った")
+        #expect(report.id == "i1")
+        #expect(report.accepted == 0)
+        #expect(report.ignored == 1)
+        state.beginFrame()
+        #expect(state.x == 0)
+        #expect(state.y == 0)
+        // 応えた要求は、置き直しても二度は流さない
+        try send(request, to: facet)
+        #expect(inbox.drain(into: state) == nil)
+    }
+
+    /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
+    /// JSON)。
+    @Test(
+        "id が読めない要求は、応答せず捨てる",
+        arguments: [
+            #"{"events":[{"type":"mouseMoved","x":1,"y":2}]}"#,
+            #"{"id":5,"events":[{"type":"mouseMoved","x":1,"y":2}]}"#,
+            #"{"id":"i1","events":[{"type":"mouseMoved","x":1,"y":2}"#,
+        ])
+    func dropsARequestWithoutAReadableID(_ request: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(request, to: facet)
+
+        #expect(inbox.drain(into: state) == nil)
+        #expect(!FileManager.default.fileExists(atPath: facet.appendingPathComponent("report.json").path))
+        state.beginFrame()
+        #expect(state.x == 0)
     }
 
     @Test("同じ識別子の要求を二度は流し込まない")

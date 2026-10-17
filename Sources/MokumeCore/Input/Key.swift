@@ -3,11 +3,11 @@
 
 /// キーボードのキー。
 ///
-/// 意味の説明は ``Sketch/keyCode`` が正本で、ここは値の定義である ([ADR-0020] 決定 4)。
+/// 意味の説明は ``SketchPart/keyCode`` が正本で、ここは値の定義である ([ADR-0020] 決定 4)。
 ///
 /// 綴りは W3C `KeyboardEvent.code` の語彙に沿う。**表しているのは打たれた文字ではなく
 /// キーの物理的な位置**なので、配列を変えても同じ指の位置が同じ綴りになる。打たれた
-/// 文字が要るなら ``Sketch/key`` を読む。
+/// 文字が要るなら ``SketchPart/key`` を読む。
 ///
 /// 名前を持たないキーも ``init(rawValue:)`` で表せる。**外から任意の符号が送られて
 /// くる**ので ([ADR-0018] 決定 1)、名前の付いたものしか表せない形にすると、知らない
@@ -141,4 +141,48 @@ nonisolated extension Key {
     public static let arrowDown = Key(rawValue: 125)
     /// ↑ の矢印。
     public static let arrowUp = Key(rawValue: 126)
+}
+
+// MARK: - 修飾キー
+
+nonisolated extension Key {
+    /// Shift。**左右どちらの Shift でも、押されている扱いになる** (``Keyboard/isPressed(_:)``)。
+    ///
+    /// 番号は左の Shift (macOS の `kVK_Shift` = 56)。右だけを読みたいときは
+    /// `Key(rawValue: 60)` で問う。左だけを区別する口は無い — `Key(rawValue: 56)` は
+    /// この定数と同じ値になる。
+    ///
+    /// **修飾キーは押下の状態だけを変える。** 押しても ``Sketch/keyPressed()`` は呼ばれず、
+    /// ``SketchPart/keyCode`` と ``SketchPart/key`` も動かない — ⌘Tab で Command の
+    /// `keyPressed()` が呼ばれたり、大文字を打った後に `keyCode` が Shift のまま残ったり
+    /// しないためである。
+    public static let shift = Key(rawValue: 56)
+    /// Control。左右どちらでも押されている扱いになる (``shift`` と同じ約束。右は 62)。
+    public static let control = Key(rawValue: 59)
+    /// Option。左右どちらでも押されている扱いになる (``shift`` と同じ約束。右は 61)。
+    public static let option = Key(rawValue: 58)
+    /// Command。左右どちらでも押されている扱いになる (``shift`` と同じ約束。右は 54)。
+    public static let command = Key(rawValue: 55)
+
+    /// 名前の付いた修飾キー (左) から、右の番号を引く。
+    private static let rightSide: [Key: Key] = [
+        .shift: Key(rawValue: 60),
+        .control: Key(rawValue: 62),
+        .option: Key(rawValue: 61),
+        .command: Key(rawValue: 54),
+    ]
+
+    /// 修飾キーか (左右の 8 つ)。**押下の状態だけを変え、呼び出しも `keyCode` も生まない。**
+    ///
+    /// 窓から届く経路 (`flagsChanged`) と外から送る経路 (`keyDown` の `code`) は、どちらも
+    /// ここで同じに扱う。
+    var isModifier: Bool {
+        Self.rightSide.keys.contains(self) || Self.rightSide.values.contains(self)
+    }
+
+    /// 問い合わせで同じキーとして読む番号。名前の付いた修飾キーは左右、ほかは自分だけ。
+    var sides: [Key] {
+        if let right = Self.rightSide[self] { return [self, right] }
+        return [self]
+    }
 }

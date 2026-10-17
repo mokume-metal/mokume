@@ -18,7 +18,17 @@ public enum MovieFailure: Error, Equatable, Sendable {
     case noVideo(path: String)
     /// 動画の大きさの絵を GPU に置けない。
     case unplaceable(width: Int, height: Int)
+    /// 走っている面を取れない所 (`setup()`・`draw()`・入力のコールバックの外 — 初期化子の中・
+    /// 後片付けの後・`Task` の中) で呼んだ。`call` は呼んだ口の名前 (`"createVideo(_:)"`)。
+    /// 映す絵を走っている面からしか作れないので、`setup()` などから呼び直す
+    /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
+    ///
+    /// **名前に反して、スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで
+    /// 起こした `Task` から呼んでもこの場合になる (``ImageFailure/notRunning(call:)`` と同じ)。
+    case notRunning(call: String)
 }
+
+extension MovieFailure: NotRunningFailure {}
 
 extension MovieFailure: CustomStringConvertible {
     public var description: String {
@@ -34,6 +44,8 @@ extension MovieFailure: CustomStringConvertible {
                 + "createAudioIn(file:) instead"
         case .unplaceable(let width, let height):
             ImageFailure.unplaceable(width: width, height: height).description
+        case .notRunning(let call):
+            ImageFailure.notRunning(call: call).description
         }
     }
 }

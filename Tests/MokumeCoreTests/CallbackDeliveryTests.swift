@@ -153,11 +153,10 @@ struct CallbackDeliveryTests {
     final class OncePerPress: Sketch {
         /// `setup()` で ``Sketch/noLoop()`` を呼ぶか。
         var stopsInSetup = false
-        var spaceHeld = false
         /// 1 回だけ効かせたいことが、実際に効いた回数。
         var fired = 0
-        /// 呼ばれた時点で `isKeyDown(.space)` が返した値。
-        var seenKeyDown: [Bool] = []
+        /// 呼ばれた時点で `keyboard.justPressed(.space)` が返した値。
+        var seenJustPressed: [Bool] = []
         var drawCalls = 0
         init() {}
         var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
@@ -170,25 +169,19 @@ struct CallbackDeliveryTests {
             background(.display(red: 0, green: 0, blue: 0))
         }
         func keyPressed() {
-            seenKeyDown.append(isKeyDown(.space))
-            guard keyCode == .space, !spaceHeld else { return }
-            spaceHeld = true
-            fired += 1
-        }
-        func keyReleased() {
-            if keyCode == .space { spaceHeld = false }
+            seenJustPressed.append(keyboard.justPressed(.space))
+            if keyCode == .space { fired += 1 }
         }
     }
 
-    /// **連射と最初の 1 回の違いは、送る列の `isRepeat` にしか無い** — 窓の実操作でも
-    /// OS のキーリピートは同じ形で届く。スケッチからはそれが読めないので、勧める書き方が
-    /// 見分けに使えるのは押下と解放の対だけである
-    /// ([#1365](https://github.com/mokume-metal/mokume/issues/1365))。
+    /// **`keyPressed()` は押した 1 回だけ呼ばれる** ([#2400](https://github.com/mokume-metal/mokume/issues/2400))。
+    /// 窓の実操作でも OS のキーリピートは同じ形 (`isRepeat`) で届くので、外から送った列で
+    /// 窓の振る舞いを見られる ([#1365](https://github.com/mokume-metal/mokume/issues/1365))。
     ///
     /// 止めた側も見るのは、止めている間は `draw()` が呼ばれず、前のフレームと比べる
     /// 形が使えないためである。コールバックだけで閉じていれば、そこでも同じに効く。
     @Test(
-        "keyPressed の説明が勧める書き方なら、押しっぱなしの連射では効かず、押し直すと効く",
+        "keyPressed は押しっぱなしのリピートでは呼ばれず、押し直すと呼ばれる",
         arguments: [false, true])
     func recommendedFormFiresOncePerPress(stopsInSetup: Bool) throws {
         let facet = try makeFacet()
@@ -210,10 +203,95 @@ struct CallbackDeliveryTests {
         try runtime.advance()
 
         #expect(sketch.fired == 2, "押した 2 回のぶんだけ効くはずが、\(sketch.fired) 回効いた")
-        // 説明が名乗る事実: 呼ばれた時点でそのキーは既に押されている集合に入っている。
-        // **最初の 1 回でも `true`** なので、`isKeyDown` では連射と見分けられない
-        #expect(sketch.seenKeyDown == [true, true, true, true])
+        // 呼ばれた中からも、押した瞬間として読める (止めている間に配った分も含む)
+        #expect(sketch.seenJustPressed == [true, true])
         // 止めた側は、止まった経路 (`draw()` を呼ばずにコールバックだけを配る) を通っている
         #expect(sketch.drawCalls == (stopsInSetup ? 1 : 2))
+    }
+    /// `draw()` から見た押下の 3 語を、描いたフレームごとに控えるスケッチ。
+    final class EdgeReader: Sketch {
+        enum Stop { case none, noLoop, pauseTime }
+        var stop = Stop.none
+        /// 描いたフレームごとの (`isPressed`, `justPressed`, `justReleased`) (space)。
+        var seen: [Seen] = []
+        struct Seen: Equatable {
+            let isPressed: Bool
+            let justPressed: Bool
+            let justReleased: Bool
+        }
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
+
+        func setup() {
+            switch stop {
+            case .none: break
+            case .noLoop: noLoop()
+            case .pauseTime: pauseTime()
+            }
+        }
+        func draw() {
+            seen.append(
+                Seen(
+                    isPressed: keyboard.isPressed(.space),
+                    justPressed: keyboard.justPressed(.space),
+                    justReleased: keyboard.justReleased(.space)))
+            background(.display(red: 0, green: 0, blue: 0))
+        }
+        /// 止めている間に 1 枚描かせる口
+        func keyPressed() {
+            if keyCode == .enter { redraw() }
+        }
+    }
+
+    /// **端を消すのは描いたフレームの終わり** (#2599 の条件 7・#2580 の R2)。止めている間
+    /// (`noLoop()`) の配りはフレームの外で回るので、頭で消すと次に描く 1 枚から見えない。
+    /// 時刻を止めている間 (`pauseTime()`) はフレームが回るので、解放の次のフレームで読める。
+    @Test("止めている間に離したキーは、次に描くフレームで 1 度だけ justReleased になる")
+    func releaseWhileStoppedShowsInTheNextDrawnFrame() throws {
+        let enterDown = #"{"type":"keyDown","code":36},{"type":"keyUp","code":36}"#
+
+        // noLoop: 押す・離すは止まった配りで届き、return の描き直しで初めて描く
+        let facet = try makeFacet()
+        let stopped = EdgeReader()
+        stopped.stop = .noLoop
+        let runtime = try SketchRuntime(
+            sketch: stopped, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try send(#"{"type":"keyDown","code":49,"characters":" "}"#, id: "s1", to: facet)
+        try runtime.advance()
+        try send(#"{"type":"keyUp","code":49}"#, id: "s2", to: facet)
+        try runtime.advance()
+        try send(enterDown, id: "s3", to: facet)
+        try runtime.advance()
+        try send(enterDown, id: "s4", to: facet)
+        try runtime.advance()
+        #expect(
+            stopped.seen == [
+                .init(isPressed: false, justPressed: false, justReleased: false),
+                .init(isPressed: false, justPressed: true, justReleased: true),
+                .init(isPressed: false, justPressed: false, justReleased: false),
+            ])
+
+        // pauseTime: フレームは回るので、解放の次のフレームで 1 度だけ立つ
+        let pausedFacet = try makeFacet()
+        let paused = EdgeReader()
+        paused.stop = .pauseTime
+        let pausedRuntime = try SketchRuntime(
+            sketch: paused, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: pausedFacet))
+        try pausedRuntime.advance()
+        try send(#"{"type":"keyDown","code":49,"characters":" "}"#, id: "p1", to: pausedFacet)
+        try pausedRuntime.advance()
+        try send(#"{"type":"keyUp","code":49}"#, id: "p2", to: pausedFacet)
+        try pausedRuntime.advance()
+        try pausedRuntime.advance()
+        #expect(
+            paused.seen == [
+                .init(isPressed: false, justPressed: false, justReleased: false),
+                .init(isPressed: true, justPressed: true, justReleased: false),
+                .init(isPressed: false, justPressed: false, justReleased: true),
+                .init(isPressed: false, justPressed: false, justReleased: false),
+            ])
     }
 }
