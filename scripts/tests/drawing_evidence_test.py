@@ -213,6 +213,35 @@ class DrawingEvidenceTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertIn("ok:", r.stdout)
 
+    def test_コードブロックの中の絵の記法は絵として数えない(self):
+        # 書式の見本として載せた記法・URL は GitHub が絵として描かない (#2816 d)
+        sample = {
+            "backtick": "```markdown\n![before](https://example.invalid/a.png)\n```",
+            "tilde": "~~~\nhttps://i.gyazo.com/0123456789abcdef.png\n~~~",
+            "4 本": "````\n```\n<img src=\"https://example.invalid/a.webp\">\n```\n````",
+            "字下げ 1 桁": " ```\n![x](https://example.invalid/a)\n ```",
+        }
+        for name, body in sample.items():
+            with self.subTest(name):
+                r = self.run_script(body=f"## 確認方法\n\n見本:\n\n{body}\n")
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn("絵が無い", r.stderr)
+
+    def test_コードブロックの外の絵はコードブロックがあっても数える(self):
+        body = "```\n見本\n```\n\n![after](https://example.invalid/after.png)\n"
+        r = self.run_script(body=body)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_閉じ忘れたコードブロックの後ろの絵は数えない(self):
+        # GitHub は閉じないフェンスを本文の終わりまで続ける。そこにある URL は絵として描かれない
+        r = self.run_script(body="```\n見本\n\n![after](https://example.invalid/after.png)\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+
+    def test_コメントの中の_フェンスの印は後ろの絵を隠さない(self):
+        body = "<!--\n```\n-->\n\n![after](https://example.invalid/after.png)\n"
+        r = self.run_script(body=body)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     # --- 赤くしてはいけないとき -------------------------------------------
 
     def test_逃がしのラベルが付いていれば通る(self):
@@ -475,6 +504,21 @@ class IssueBodyTest(unittest.TestCase):
             with self.subTest(dash):
                 r = self.check(f"`Shapes.metal` の overflow\n\n絵: なし {dash} 落ちるだけで描かない")
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_コードブロックの中の絵は絵として数えない(self):
+        # 起票の書式の見本として載せた記法を、絵が貼られたと読まない (#2816 d)
+        r = self.check("`Shapes.metal` の漏れ\n\n```markdown\n![](https://i.gyazo.com/abc.png)\n```\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Shapes.metal", r.stderr)
+
+    def test_コードブロックの中の宣言は宣言として数えない(self):
+        r = self.check("`Shapes.metal` の漏れ\n\n見本:\n\n```\n絵: なし — 見本の理由\n```\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+
+    def test_コードブロックの中でも描画のファイル名は名指しとして数える(self):
+        # 名指しは広く取る側 (迷ったら絵を求める)。再現のコードに書かれたファイル名も拾う
+        r = self.check("再現:\n\n```\nopen Sources/MokumeCore/Drawing/Canvas.swift\n```\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
 
     def test_理由の無い宣言は赤い(self):
         for line in ("絵: なし", "絵: なし —", "絵: なし —   "):

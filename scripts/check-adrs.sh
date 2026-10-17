@@ -95,6 +95,11 @@
 # DRAWING_PATHS で同じことをしているのに倣う。
 set -euo pipefail
 
+# コードブロックの中の行を見出しと読まない規則は 1 か所に保つ (#2816)。**cd の前に引く**
+# — BASH_SOURCE が相対のとき、リポジトリの根へ移った後では辿れない
+# shellcheck source=scripts/markdown-live.sh
+. "$(dirname "${BASH_SOURCE[0]}")/markdown-live.sh"
+
 DIR="${1:-}"
 if [ -z "$DIR" ]; then
   cd "$(git rev-parse --show-toplevel)"
@@ -164,17 +169,24 @@ SWITCH_DATE='2026-10-05'
 # 本文の改訂の見出しの上限 (#2140)。この数までは通し、超えたら赤い (下の (c))
 MAX_REVISIONS=5
 
-# 「## 状態」の次に来る最初の非空行を状態欄とする
+# 「## 状態」の次に来る最初の非空行を状態欄とする。コードブロックの中の「## 状態」は見出し
+# ではない (#2816)。変数へ受けてから読むのは、awk が先に抜けて書き手が SIGPIPE で止まり、
+# 判定が裏返るのを避けるため (#1900)
 status_of() {
-  awk '/^## 状態[[:space:]]*$/ { seen = 1; next } seen && NF { print; exit }' "$1"
+  local live
+  live=$(markdown_live_lines <"$1")
+  awk '/^## 状態[[:space:]]*$/ { seen = 1; next } seen && NF { print; exit }' <<<"$live"
 }
 
-# 本文の改訂の見出し — 「改訂」か「追補」と日付を両方持つ `##`〜`####` の行。1 行が
+# 本文の改訂の見出し — 「改訂」か「追補」と日付を両方持つ `##`〜`####` の行 (コードブロックの
+# 中の行は見出しではない・#2816)。1 行が
 # 1 つの改訂で、日付が前にあっても後ろにあっても拾う。(a) が改訂を抱えているかを
 # 読むのも、(c) が数えるのも、この定義 1 つに揃える。1 つも無いのは正常なので、
 # 空振りした grep で set -e に落ちないよう受ける
 revision_headings_of() {
-  grep -E '^#{2,4} ' "$1" \
+  local live
+  live=$(markdown_live_lines <"$1")
+  grep -E '^#{2,4} ' <<<"$live" \
     | grep -E '改訂|追補' \
     | grep -E '20[0-9]{2}-[0-9]{2}-[0-9]{2}' || true
 }

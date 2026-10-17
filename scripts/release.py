@@ -71,6 +71,9 @@ REFERENCE_LINK_PATTERN = re.compile(r"\[[^\]]*\]\[[^\]]*\]")
 # 描画に触れたかの照合。ノートは REPO を差し替えて検査するので、照合はこのスクリプトの
 # 隣から引く (照合の実体は drawing-paths.sh の 1 つ)
 DRAWING_PATHS_SCRIPT = Path(__file__).resolve().parent / "drawing-paths.sh"
+# コードブロックの中の行を生きた行と読まない規則 (#2816)。PR 本文を行で読む他の検査と同じ 1 つを
+# 通す — 写しを持つと ~~~・4 本以上・字下げ 1〜3 桁の扱いが片方だけ直る
+MARKDOWN_LIVE_SCRIPT = Path(__file__).resolve().parent / "markdown-live.sh"
 # 絵は変わらないという申告。読み手は drawing-evidence と、ここ
 ESCAPE_LABEL = "no-visual-change"
 # squash のコミットの題の末尾に GitHub が付ける PR の番号
@@ -88,8 +91,9 @@ PICTURE_PATTERN = re.compile(
 )
 # 裸の URL のうち、画像の記法に包めば絵として描かれるもの
 BARE_IMAGE_PATTERN = re.compile(r"^https?://\S+\.(?:png|jpe?g|gif|webp|avif)$", re.IGNORECASE)
-# 絵の参照として読まない所。テンプレートの注釈と、記法の例を書いたコードブロック
-UNSHOWN_PATTERN = re.compile(r"<!--.*?-->|^```.*?^```", re.DOTALL | re.MULTILINE)
+# 絵の参照として読まない所のうち、テンプレートの注釈。記法の例を書いたコードブロックは
+# live_text が先に潰す (コードブロックの中の `<!--` が後ろの本文まで巻き込まないように)
+COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
 
 # 「この版の絵」の節の見出し。書く側 (pictures) と読む側 (picture_references) が同じものを使う
 PICTURE_HEADING = "## この版の絵"
@@ -293,10 +297,22 @@ def fetch_pull(number: int) -> dict | None:
     return json.loads(result.stdout)
 
 
+def live_text(body: str) -> str:
+    """本文のコードブロックの中の行を空行へ潰す。読み方は markdown-live.sh の 1 つ (#2816)。"""
+    result = subprocess.run(
+        ["/bin/bash", "-c", '. "$1" && markdown_live_lines', "markdown-live", str(MARKDOWN_LIVE_SCRIPT)],
+        input=body, check=True, capture_output=True, text=True,
+    )
+    return result.stdout
+
+
 def pictures_of(body: str) -> list[str]:
-    """本文から絵の参照を出てきた順に抜く。同じものは 1 度だけ。"""
+    """本文から絵の参照を出てきた順に抜く。同じものは 1 度だけ。
+
+    コードブロックの中 (記法の例) と HTML コメントの中 (テンプレートの注釈) は絵として読まない。
+    """
     found: list[str] = []
-    for match in PICTURE_PATTERN.finditer(UNSHOWN_PATTERN.sub("", body or "")):
+    for match in PICTURE_PATTERN.finditer(COMMENT_PATTERN.sub("", live_text(body or ""))):
         picture = match.group(0)
         if BARE_IMAGE_PATTERN.match(picture):
             picture = f"![]({picture})"
