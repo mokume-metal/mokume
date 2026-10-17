@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/input-report.schema.json",
   "title": "The input reply",
-  "description": "What was done with the input that was sent. This alone tells apart the case of sending something that had no effect.",
+  "description": "What was done with the input that was sent: how many were taken, ignored as unreadable, or dropped because they could not be held. Together with the warnings on the sketch's standard error, this tells apart the case of sending something that had no effect: a taken event can still be dropped when it is applied, if it would overflow the pointer position or a movement, drag or scroll amount, and that is said only there, once.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -24,7 +24,7 @@
     "accepted": {
       "type": "integer",
       "minimum": 0,
-      "description": "How many were taken."
+      "description": "How many were taken. A taken movement or scroll can still be dropped when it is applied, if it would make the pointer position, a movement, a drag or a scroll amount overflow (see the request's events); that is said once as a warning on standard error, not counted here."
     },
     "ignored": {
       "type": "integer",

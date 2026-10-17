@@ -57,6 +57,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "synth-and-filter") { SynthAndFilter() },
     ReferenceSketch(name: "table-and-text") { TableAndText() },
     ReferenceSketch(name: "json-and-xml") { JSONAndXML() },
+    ReferenceSketch(name: "gamepad-and-players") { GamepadAndPlayers() },
     // 実物のポートを開く。窓で走らせるだけで、書き出しと台帳には入れない
     ReferenceSketch(name: "osc-and-reply", reachesOutside: true) { OSCAndReply() },
     ReferenceSketch(name: "net-and-reply", reachesOutside: true) { NetAndReply() },
