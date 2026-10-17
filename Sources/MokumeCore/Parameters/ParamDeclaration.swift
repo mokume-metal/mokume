@@ -98,14 +98,62 @@ public struct ParamDeclaration: Equatable, Sendable {
     public let range: ParamRange?
     /// 許した候補。文字の値にだけ付く。
     public let choices: [String]?
+    /// スライダーの刻み。**実数の範囲 (`float`・`vec2`・`vec3`) にだけ付き**、書かれていなければ `nil`。
+    ///
+    /// **窓のスライダーの動き方だけを決める** — 外からの書き込み・保存の復元・コードからの代入は
+    /// 刻みへ丸めない。範囲へ収めたことを名乗る `clamped` の意味も変わらない
+    /// ([ADR-0013] 決定 2・[#2438](https://github.com/mokume-metal/mokume/issues/2438))。
+    ///
+    /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
+    public let step: Double?
 
-    public init(name: String, value: ParamValue, range: ParamRange? = nil, choices: [String]? = nil) {
+    public init(
+        name: String, value: ParamValue, range: ParamRange? = nil, choices: [String]? = nil,
+        step: Double? = nil
+    ) {
         self.name = name
         self.value = value
         self.range = range
         self.choices = choices
+        self.step = step
     }
 
     /// 形式の中で名乗る型の名前。
     public var typeName: String { value.typeName }
+}
+
+/// `step:` に書かれた刻みを検める。**検める所は ``ParamBox`` の初期化の 1 点** ([#2438])。
+///
+/// 刻みは窓のスライダーの動き方だけを決める。0 以下・非有限の刻みはスライダーを組めず、
+/// 実数でない値 (整数・真偽・文字・色) には刻みの意味が無い。どちらも**置かずに** (刻みの無い
+/// スライダーのまま)、書いた人へ 1 度だけ名乗る — 黙って捨てると、書いたのに効かない刻みになる。
+///
+/// [#2438]: https://github.com/mokume-metal/mokume/issues/2438
+enum ParamStep {
+    /// 検めた刻みと、置かなかったときの理由 (名乗る 1 行の後半)。
+    struct Verdict: Equatable {
+        /// 置いてよい刻み。置かないなら `nil`。
+        let step: Double?
+        /// 置かなかった理由。置いた・書かれていなければ `nil`。
+        let refusal: String?
+    }
+
+    /// 刻みを検める。書かれていなければ `nil` をそのまま返す (理由も無い)。
+    static func check(_ step: Double?, for value: ParamValue) -> Verdict {
+        guard let step else { return Verdict(step: nil, refusal: nil) }
+        guard step.isFinite, step > 0 else {
+            return Verdict(
+                step: nil,
+                refusal: "a step has to be a finite number above 0, so the slider moves without one")
+        }
+        switch value {
+        case .float, .vector2, .vector3:
+            return Verdict(step: step, refusal: nil)
+        case .int, .bool, .string, .color:
+            return Verdict(
+                step: nil,
+                refusal:
+                    "a step applies to a real-number knob (float, vec2, vec3), not \(value.typeName), so it is ignored")
+        }
+    }
 }
