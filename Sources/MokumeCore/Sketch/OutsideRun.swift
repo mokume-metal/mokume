@@ -16,10 +16,12 @@
 /// 持つ口で、先に踏んだ側がもう一方を永久に黙らせないためである。毎フレーム呼ばれる口でも 1 行で
 /// 済み、控えは口の種類の数で止まる。
 ///
-/// **言った警告は、次の観測の応答にも 1 度だけ載る** (``takeUnreported()``)。標準エラーの 1 行は
-/// MCP から読めず、部品が (0, −30) に居続ける理由を AI が観測で辿れなくなるためである。毎回載せると、
-/// `init` で 1 度踏んだ古い警告が、無関係な観測の失敗の理由 (時刻を指定した観測は `warnings` を
-/// そのまま理由にする) に混ざり続ける。
+/// **言った警告は、次の観測の応答にも 1 度だけ載る。** 標準エラーの 1 行は MCP から読めず、部品が
+/// (0, −30) に居続ける理由を AI が観測で辿れなくなるためである。載せるのはここではなく
+/// ``Diagnostics/takeUnreported()`` の 1 本で、スケッチが言った警告すべてと同じ経路を通る
+/// ([#2761])。ここも ``WarningLog`` の控えを通って ``Diagnostics/warn(_:)`` へ言うので、
+/// 載せる口を別に持つと同じ行が 2 度載る。毎回載せると、`init` で 1 度踏んだ古い警告が、
+/// 無関係な観測の失敗の理由 (時刻を指定した観測は `warnings` をそのまま理由にする) に混ざり続ける。
 ///
 /// 呼び出しの外から頼まれた進行・時刻・書き出し・繋ぎの口 (``OutsideCall``) も、同じ控えで言う。
 ///
@@ -29,6 +31,7 @@
 ///
 /// [#1322]: https://github.com/mokume-metal/mokume/issues/1322
 /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
+/// [#2761]: https://github.com/mokume-metal/mokume/issues/2761
 @MainActor
 final class OutsideRun {
     /// 外から呼ばれたとき、どう倒したか。
@@ -74,10 +77,9 @@ final class OutsideRun {
     }
 
     private var said = WarningLog<Key>()
-    /// 言った順。観測の応答はこの順で載せる (対応表の順は定まらない)。
+    /// 言った順 (対応表の順は定まらない)。**検査が読む。** 観測の応答へは、同じ文面が
+    /// ``Diagnostics/takeUnreported()`` を通って載る。
     private(set) var messages: [String] = []
-    /// ``messages`` のうち、観測の応答に載せ終えた数。
-    private var reported = 0
 
     /// その口について、まだ言っていなければ 1 度だけ言う。
     func warn(_ call: String, _ use: Use) {
@@ -97,12 +99,6 @@ final class OutsideRun {
         guard !said.hasWarned(key) else { return }
         said.warnOnce(key, text())
         if let said = said.message(for: key) { messages.append(said) }
-    }
-
-    /// まだ観測の応答に載せていない警告を、言った順に返して、載せたことにする。
-    func takeUnreported() -> [String] {
-        defer { reported = messages.count }
-        return Array(messages[reported...])
     }
 
     /// 呼んだ口について言った文面。まだ言っていなければ `nil`。**検査が読む。**

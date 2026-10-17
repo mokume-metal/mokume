@@ -1913,10 +1913,11 @@ public final class SketchRuntime {
             frame: timing.frameCount,
             time: Double(timing.time),
             size: ObservationReport.Size(width: target.width, height: target.height),
-            // 走っている実行の外から呼ばれた語彙 (#2265) の警告も、言った後の最初の応答に
-            // 1 度だけ載せる。標準エラーの 1 行は MCP から読めず、`init` で読んだ `width` が
-            // 0 だったことを観測で辿れなくなる。最後に足すので、失敗の理由より前には来ない
-            warnings: warnings + OutsideRun.log.takeUnreported(),
+            // スケッチのプロセスが言った警告 (走っている実行の外から呼ばれた語彙 (#2265) も含む) を、
+            // 言った後の最初の応答に 1 度だけ載せる (#2761)。標準エラーの 1 行は MCP から読めず、
+            // `init` で読んだ `width` が 0 だったことを観測で辿れなくなる。最後に足すので、失敗の
+            // 理由より前には来ない
+            warnings: warnings + Diagnostics.takeUnreported(),
             stats: last?.stats,
             load: RuntimeLoad.sample(tempo: tempo, budget: budget, now: now()),
             values: exposedValues.isEmpty ? nil : exposedValues,

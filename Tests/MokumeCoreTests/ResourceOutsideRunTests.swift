@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
@@ -128,19 +129,21 @@ struct ResourceOutsideRunTests {
     @Test("投げる前に口ごとに 1 度だけ警告し、観測の応答にも載る (try? で受けても残る)")
     func throwingLeavesAWarningOnce() {
         let log = OutsideRun()
-        OutsideRun.$current.withValue(log) {
-            let game = Game()
-            _ = Game()
-            #expect(game.ship.sprite == nil)
-            // 2 つ作っても 1 行
-            #expect(log.messages.count == 1)
-            let message = log.message(for: "loadImage(_:)")
-            #expect(message?.hasPrefix("loadImage(_:) only works inside setup()") == true)
-            #expect(message?.contains("It threw an error instead of returning anything.") == true)
-            #expect(message?.hasSuffix("Call it from setup()") == true)
-            // 標準エラーへは 1 行しか流せない
-            #expect(message?.contains("\n") == false)
-            #expect(log.takeUnreported() == message.map { [$0] })
+        Diagnostics.$digest.withValue(WarningDigest()) {
+            OutsideRun.$current.withValue(log) {
+                let game = Game()
+                _ = Game()
+                #expect(game.ship.sprite == nil)
+                // 2 つ作っても 1 行
+                #expect(log.messages.count == 1)
+                let message = log.message(for: "loadImage(_:)")
+                #expect(message?.hasPrefix("loadImage(_:) only works inside setup()") == true)
+                #expect(message?.contains("It threw an error instead of returning anything.") == true)
+                #expect(message?.hasSuffix("Call it from setup()") == true)
+                // 標準エラーへは 1 行しか流せない
+                #expect(message?.contains("\n") == false)
+                #expect(Diagnostics.takeUnreported() == message.map { [$0] })
+            }
         }
     }
 
