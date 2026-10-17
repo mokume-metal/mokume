@@ -20,17 +20,18 @@ enum HueSaturationBrightness {
 
     /// 0 以上 360 未満 (半開区間) へ巻き戻す。**360 は返さない。**
     ///
-    /// **切り捨ての剰余は使わない。** `truncatingRemainder` は負の入力に負を返すので、
-    /// `hue: -40` が区画の添字を負にする。`color(hue: Float(frameCount), …)` を
-    /// 剰余なしで書けることがこの口の値打ちなので、負の側も畳む。
+    /// 巻き戻しは ``mod(_:_:)`` と同じ計算 (``foldedIntoPeriod(_:by:)``) を通す。負の入力へ
+    /// 負を返す `truncatingRemainder` を直に使うと `hue: -40` が区画の添字を負にする。
+    /// `color(hue: Float(frameCount), …)` を剰余なしで書けることがこの口の値打ちなので、負の側も
+    /// 畳む。絶対値が 1.5e-5 ほどより小さい負の値に 360 を足すと Float では 360.0 ちょうどに
+    /// 丸まるが、その値は 0 へ畳む — 赤の色相は作業空間との往復の残差でそういう値になり、畳まないと
+    /// 1 周ぶんずれた 360 が読み出される (#1533)。
     ///
-    /// **360 に丸まった値は 0 へ畳む。** 絶対値が 1.5e-5 ほどより小さい負の値に 360 を
-    /// 足すと、Float では 360.0 ちょうどに丸まる。赤の色相は作業空間との往復の残差で
-    /// そういう値になるので、畳まないと 1 周ぶんずれた 360 が読み出される (#1533)。
+    /// **数でない値・無限の値は 0 を返す。** ``mod(_:_:)`` を直に呼ぶと、こちらの呼び出しの
+    /// 名で注意が鳴るので、中の計算だけを通す。呼ぶ側 (``components(hue:saturation:brightness:)``) は
+    /// 先に弾いているので、ここへは来ない。
     static func wrapped(_ hue: Float) -> Float {
-        let remainder = hue.truncatingRemainder(dividingBy: turn)
-        let wrapped = remainder < 0 ? remainder + turn : remainder
-        return wrapped < turn ? wrapped : 0
+        hue.isFinite ? foldedIntoPeriod(hue, by: turn) : 0
     }
 
     /// 色相・彩度・明度 → 0–255 のエンコード値。**非有限の値は受け取らない。**

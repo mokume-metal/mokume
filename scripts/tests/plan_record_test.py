@@ -1121,6 +1121,28 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertNotIn("issue 3", result.stderr)
         self.assertNotIn("issue 1 ", result.stderr)
 
+    def test_capture_ignores_a_heading_looking_line_inside_a_code_block(self):
+        """コードブロックの中の `# #N` (シェルのコメントなど) を投稿先の番号と読まない (#2816 e)。
+
+        プランは手順をコードブロックで示す。`# #123 ...` と書いたシェルのコメントを見出しと
+        読むと、無関係な Issue が候補に混ざって毎回「確定できません」に落ちる。見出しの外の
+        番号 (名乗り) は、ブロックの外にあれば従来どおり確定する。
+        """
+        plan = (
+            "## 変更点\n\n```sh\n# #631 の確認\nmake ci-check\n```\n\nCloses #646\n"
+        )
+        result = self.capture(plan, FAKE_GH_ISSUE="1")
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+        self.assertNotIn("issue 631", result.stderr)
+
+    def test_capture_still_reads_a_heading_after_a_closed_code_block(self):
+        plan = "```sh\n# #631 の確認\n```\n\n# #646 見出し\n"
+        result = self.capture(plan, FAKE_GH_ISSUE="1")
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+        self.assertNotIn("issue 631", result.stderr)
+
     def test_capture_falls_back_to_the_branch_without_heading_or_claim(self):
         """見出しも名乗りも無ければ従来どおりブランチ名 (実測で 6 件)。"""
         result = self.capture("番号をどこにも書かない計画。\n", FAKE_GH_ISSUE="1")

@@ -45,6 +45,9 @@ set -euo pipefail
 # files は上限のある口なので、大きな PR では描画のパスが一覧から落ち、絵の要求が外れる
 # shellcheck source=scripts/pr-files.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
+# 本文のコードブロックの中の行を生きた行と読まない規則も 1 つに保つ (#2816)
+# shellcheck source=scripts/markdown-live.sh
+. "$(dirname "${BASH_SOURCE[0]}")/markdown-live.sh"
 
 # 逃がしのラベル。描画のパスに居るが絵が変わらない変更 (コメントの修正・内部の
 # リファクタ) のための例外印で、**読み手はこのスクリプトだけ**である
@@ -61,13 +64,19 @@ give_up() { say "判定しない — $1"; exit 0; }
 # visual-evidence — 本線の Gyazo と、退避路である同じ user-attachments) の
 # 両方を通す。**広く取る** — 狭いと絵を貼った PR が赤くなり、
 # 逃がしラベルで外す癖がついて機構ごと形骸化する
+#
+# **コードブロックの中は数えない** (#2816)。書式の見本として載せた `![](…)` や URL は GitHub が
+# 絵として描かないので、絵を貼ったことにならない。変数へ受けてから読むのは、grep -q が先に
+# 抜けて書き手が SIGPIPE で止まり、判定が裏返るのを避けるため (#1900)
 has_evidence() {
+  local live
+  live=$(markdown_live_lines)
   grep -Eqi \
     -e '!\[[^]]*\]\([^)]+\)' \
     -e '<(img|video)[[:space:]>]' \
     -e 'https?://[^[:space:])"]+\.(png|jpe?g|gif|webp|avif|mp4|mov|webm)' \
     -e 'https?://(i\.)?gyazo\.com/' \
-    -e 'https://github\.com/user-attachments/'
+    -e 'https://github\.com/user-attachments/' <<<"$live"
 }
 
 # PR がまだ無いブランチで、作る前に絵とラベルの要否を知らせる (#2153)。
@@ -156,14 +165,17 @@ mentioned_drawing_files() { # 標準入力 = 本文
 }
 
 check_issue_body() { # $1=本文のファイル
-  local body mentioned
+  local body live mentioned
   body=$(cat "$1" 2>/dev/null) || give_up "本文 $1 を読めなかった"
   if has_evidence <<<"$body"; then
     say "ok: Issue の本文に絵がある"
     exit 0
   fi
-  if grep -Eq "(^|[[:space:]])${DECLARATION}([[:space:]]|$)" <<<"$body"; then
-    if grep -Eq "(^|[[:space:]])${DECLARATION}[[:space:]]*(—|--?)[[:space:]]*[^[:space:]]" <<<"$body"; then
+  # 宣言もコードブロックの中の見本は数えない (#2816)。名指しの拾い (mentioned) は広く取る側
+  # なので、コードブロックの中のファイル名も拾ったままにする
+  live=$(markdown_live_lines <<<"$body")
+  if grep -Eq "(^|[[:space:]])${DECLARATION}([[:space:]]|$)" <<<"$live"; then
+    if grep -Eq "(^|[[:space:]])${DECLARATION}[[:space:]]*(—|--?)[[:space:]]*[^[:space:]]" <<<"$live"; then
       say "ok: 絵は無いという宣言がある"
       exit 0
     fi

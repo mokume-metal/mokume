@@ -100,6 +100,87 @@ struct NoiseParityTests {
         return canvas.get(4, 4).red
     }
 
+    /// 4 つ目の軸 (`w`) を持つ座標の突き合わせ先 ([#2425])。**`w` が 0 でない点が主**で、`w` が整数の
+    /// 上・負の側・遠くを混ぜる。`w` が 0 の点は 3 次元の経路 (CPU) と 4 次元の断片が一致することを見る。
+    ///
+    /// [#2425]: https://github.com/mokume-metal/mokume/issues/2425
+    nonisolated static let places4: [SIMD4<Float>] = [
+        SIMD4(0, 0, 0, 0),
+        SIMD4(0.5, 0.5, 0.5, 0.5),
+        SIMD4(1, 2, 3, 4),
+        SIMD4(3.25, 7.75, 1.125, 0.375),
+        SIMD4(-1, -2, -3, -4),
+        SIMD4(-0.5, -0.25, -0.125, -0.0625),
+        SIMD4(-12.3, 45.6, -78.9, 10.1),
+        SIMD4(1234.5, -6789.25, 42.0625, -99.875),
+        SIMD4(0.31, 0.77, 1, -1.7e-7),
+        SIMD4(0.31, 0.77, 1, 0),
+        SIMD4(99999.5, 0, 0, 7.25),
+    ]
+
+    /// 4 次元の断片が返すのも**差そのもの**。
+    private static let comparison4 = """
+        float4 paint(Fragment in, Values values) {
+            float mine = mokume_noise(in, float4(values.place, values.depth, values.fourth));
+            return float4(abs(mine - values.expected), 0.0, 0.0, 1.0);
+        }
+        """
+
+    /// その設定・その座標 (4 つ) で、断片が出した値と CPU が出した値の差を読む。
+    private func gap4(
+        seed: Int, octaves: Int, falloff: Float, at place: SIMD4<Float>
+    ) throws -> Float {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 8, height: 8)
+        let canvas = try Canvas(target: target, gpu: gpu)
+
+        canvas.noiseSeed(seed)
+        canvas.noiseDetail(octaves, falloff)
+        let expected = canvas.noise(place.x, place.y, place.z, place.w)
+
+        let shader = try canvas.makeShader(
+            Self.comparison4,
+            values: [
+                "place": .pair(place.x, place.y),
+                "depth": .number(place.z),
+                "fourth": .number(place.w),
+                "expected": .number(expected),
+            ])
+
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.blendMode(.replace)
+            canvas.noStroke()
+            canvas.shader(shader)
+            canvas.rect(0, 0, 8, 8)
+        }
+        return canvas.get(4, 4).red
+    }
+
+    @Test("4 つの座標で、既定の設定の代表点がすべて一致する", arguments: NoiseParityTests.places4)
+    func fourDimensionsAgree(_ place: SIMD4<Float>) throws {
+        let gap = try gap4(seed: 0, octaves: 4, falloff: 0.5, at: place)
+        #expect(gap < Self.tolerance, "\(place) で \(gap) ずれている")
+    }
+
+    @Test("4 つの座標で、種を変えても一致する", arguments: [1, 42, -7, 20260829])
+    func fourDimensionsAgreeForEverySeed(_ seed: Int) throws {
+        for place in Self.places4 {
+            let gap = try gap4(seed: seed, octaves: 4, falloff: 0.5, at: place)
+            #expect(gap < Self.tolerance, "種 \(seed) の \(place) で \(gap) ずれている")
+        }
+    }
+
+    @Test("4 つの座標で、細かさを変えても一致する", arguments: [(1, Float(0.5)), (8, 0.25), (16, 1.0), (3, 0.0)])
+    func fourDimensionsAgreeForEveryDetail(_ detail: (octaves: Int, falloff: Float)) throws {
+        for place in Self.places4 {
+            let gap = try gap4(seed: 5, octaves: detail.octaves, falloff: detail.falloff, at: place)
+            #expect(
+                gap < Self.tolerance,
+                "\(detail.octaves) 枚 / 弱まり \(detail.falloff) の \(place) で \(gap) ずれている")
+        }
+    }
+
     @Test("既定の設定で、代表の座標がすべて一致する", arguments: NoiseParityTests.places)
     func theDefaultSettingsAgree(_ place: SIMD3<Float>) throws {
         let gap = try gap(seed: 0, octaves: 4, falloff: 0.5, at: place)
