@@ -12,8 +12,9 @@ import Testing
 /// 畳んだとき「頼んだ」が「頼んた」になり ([#947]・語幹だけを差し替えて音便を落とした)、
 /// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。切り抜きの
 /// 1 文 ([#1505]) と効果の 1 文 ([#1605]) は後から足した。置くことと画素を書くことの 2 文
-/// ([#1672]) はシーンの記述ではなく、置ける場面を名乗る。シーンの記述の 11 文は、断った場面を
-/// 名乗らずに「フレームの外で」と言う形へ直した ([#2723])。前は「setup の間に」と決め打ちしていた。
+/// ([#1672]) はシーンの記述ではなく、置ける場面を名乗る。シーンの記述の 11 文の第 2 文は、断った
+/// 場面を名乗らずに「フレームの外で呼ばれた」と言う同じ 1 文へ直した ([#2723])。前は「setup の間に」
+/// と決め打ちし、動詞も口によっては偽 (`noLights()` に「置いた」など) だった。
 ///
 /// [#947]: https://github.com/mokume-metal/mokume/issues/947
 /// [#1505]: https://github.com/mokume-metal/mokume/issues/1505
@@ -23,39 +24,38 @@ import Testing
 private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
         "The camera and projection are placed again every frame, so call this from "
-            + "draw(). This camera was placed outside a frame, so it belongs to no frame, "
-            + "and was ignored",
-    .transform:
-        "Transforms are written again every frame, so call this from draw(). This "
-            + "transform was written outside a frame, so it belongs to no frame, and was ignored",
-    .style:
-        "Pushing and popping style only works inside a frame. This style was pushed outside "
-            + "a frame, so it belongs to no frame, and was ignored",
-    .clip:
-        "The clip is written again every frame, so call this from draw(). This clip was "
-            + "written outside a frame, so it belongs to no frame, and was ignored",
-    .effects:
-        "Effects are written again every frame, so call this from draw(). These effects "
-            + "were written outside a frame, so they belong to no frame, and were ignored",
-    .light:
-        "Lights are placed again every frame, so call this from draw(). This light was "
-            + "placed outside a frame, so it belongs to no frame, and was ignored",
-    .surroundings:
-        "The surroundings are placed again every frame, so call this from draw(). These "
-            + "surroundings were placed outside a frame, so they belong to no frame, and were "
+            + "draw(). This was called outside a frame, so it belongs to no frame, and was "
             + "ignored",
+    .transform:
+        "Transforms are written again every frame, so call this from draw(). This was "
+            + "called outside a frame, so it belongs to no frame, and was ignored",
+    .style:
+        "Pushing and popping style only works inside a frame. This was called outside a "
+            + "frame, so it belongs to no frame, and was ignored",
+    .clip:
+        "The clip is written again every frame, so call this from draw(). This was "
+            + "called outside a frame, so it belongs to no frame, and was ignored",
+    .effects:
+        "Effects are written again every frame, so call this from draw(). This was "
+            + "called outside a frame, so it belongs to no frame, and was ignored",
+    .light:
+        "Lights are placed again every frame, so call this from draw(). This was "
+            + "called outside a frame, so it belongs to no frame, and was ignored",
+    .surroundings:
+        "The surroundings are placed again every frame, so call this from draw(). This "
+            + "was called outside a frame, so it belongs to no frame, and was ignored",
     .shadow:
-        "Shadows are written again every frame, so call this from draw(). This shadow was "
-            + "written outside a frame, so it belongs to no frame, and was ignored",
+        "Shadows are written again every frame, so call this from draw(). This was "
+            + "called outside a frame, so it belongs to no frame, and was ignored",
     .material:
-        "Materials are written again every frame, so call this from draw(). This material "
-            + "was written outside a frame, so it belongs to no frame, and was ignored",
+        "Materials are written again every frame, so call this from draw(). This was "
+            + "called outside a frame, so it belongs to no frame, and was ignored",
     .particles:
-        "Particles are handled where you draw, in draw(). These particles were emitted "
-            + "outside a frame, so they belong to no frame, and were ignored",
+        "Particles are handled where you draw, in draw(). This was called outside a "
+            + "frame, so it belongs to no frame, and was ignored",
     .compute:
-        "Compute is a preamble to drawing, so ask for it from draw(). This compute was "
-            + "asked for outside a frame, so it belongs to no frame, and was ignored",
+        "Compute is a preamble to drawing, so ask for it from draw(). This was called "
+            + "outside a frame, so it belongs to no frame, and was ignored",
     .placing:
         "Shapes, images and backgrounds are placed in setup(), draw() or an input "
             + "callback, or between beginDraw() and endDraw() on a drawing target. This was "
@@ -83,21 +83,30 @@ struct OutsideFrameNoticeTests {
         }
     }
 
-    /// **断る場面は `setup()` だけではない** ([#2723])。`noLoop()` で止まっている間のコールバック・
-    /// `Task.detached` の中・走る前・直に使う面の `draw { }` の外でも、同じ文が出る。鍵は種類ごとで、
-    /// 最初に断った場面の文しか出ないので、文は場面を名乗らずに「フレームの外」と言う。
+    /// **断る場面は `setup()` だけではない** ([#2723])。止まっている間 (`noLoop()`) の入力の
+    /// コールバックでも、面を直に持って呼ぶ形 (直に使う `Canvas` の `draw { }` の外など) でも、
+    /// 同じ文が出る。#2723 は文面だけを直すと決めたので、文は場面を名乗らずに「フレームの外」と
+    /// 言う (場面を名乗る文面は [#2780])。
+    ///
+    /// **第 2 文の動詞は、種類が受け持つどの口でも真でなければならない。** 同じ鍵を、光なら
+    /// `noLights()`、視点なら `perspective()`・`ortho()`、スタイルなら `popStyle()`、粒なら
+    /// `force()`・`particles()` も使う。そこで 11 種とも同じ「呼ばれた」の 1 文にそろえた。
     ///
     /// 置くことと画素を書くことの 2 文 ([#1672]) は、置ける場面として `setup()` を挙げるので除く。
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
-    @Test("シーンの記述の文は、断った場面を setup と決め打ちせず、フレームの外で書いたと言う")
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    @Test("シーンの記述の文は、断った場面を setup と決め打ちせず、どの口でも真の 1 文でフレームの外と言う")
     func sceneNoticesDoNotNameSetupAsTheScene() {
         let scene = Canvas.OutsideFrame.allCases.filter { $0 != .placing && $0 != .pixelWrite }
         #expect(scene.count == 11, "シーンの記述の種類が変わった — この検査の範囲を見直す")
         for subject in scene {
             #expect(!subject.notice.contains("setup"), "\(subject) の文が setup を名乗る: \(subject.notice)")
-            #expect(subject.notice.contains("outside a frame"), "\(subject) の文がフレームの外と言わない")
+            #expect(
+                subject.notice.hasSuffix(
+                    ". This was called outside a frame, so it belongs to no frame, and was ignored"),
+                "\(subject) の第 2 文が、どの口でも真の 1 文になっていない: \(subject.notice)")
         }
     }
 

@@ -13,15 +13,25 @@ extension Canvas {
     /// **鍵は種類ごとに分けたままにしてある** — 光の注意が視点の注意を黙らせないことを
     /// `WarnOnceTests` が契約として見ている。ここが畳むのは文面だけである。
     ///
-    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 11 種) の文は、断った場面を名乗らない** —
-    /// 「フレームの外で」とだけ言う ([#2723])。断るのは `setup()` の中だけではなく、止まっている間の
-    /// コールバック・`Task.detached` の中・走る前・直に使う面の `draw { }` の外でも同じ文が出る。
-    /// かつては「`setup()` の間に書いた」と決め打ちしていて、止めた後のコールバックで書いた人に
-    /// 直す場所を取り違えさせた。場面ごとに文を変えないのは、鍵が種類ごとで、最初に断った場面の
-    /// 文しか出ないからである。
+    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 11 種) の第 2 文は、断った場面を名乗らず、
+    /// どの口でも同じ 1 文で「フレームの外で呼ばれた」とだけ言う** ([#2723])。
+    ///
+    /// - **場面**: 断るのは `setup()` の中だけではない。止まっている間 (`noLoop()`) の入力の
+    ///   コールバックでも、面を直に持って呼ぶ形 (直に使う ``Canvas`` の `draw { }` の外など) でも
+    ///   同じ文が出る。かつては「`setup()` の間に書いた」と決め打ちしていて、止めた後のコールバックで
+    ///   書いた人に直す場所を取り違えさせた。スケッチの語彙を走っていないところ (`Task` の続き
+    ///   など) から呼んだときは、面へ届かず、走っていない口の注意 (`OutsideRun`) になる
+    /// - **動詞**: 同じ鍵を、種類の違う口が共有する — 光の鍵は `noLights()` も、視点の鍵は
+    ///   `perspective()`・`ortho()` も、スタイルの鍵は `popStyle()` も、粒の鍵は `force()`・
+    ///   `particles()` も使う。「置いた」「積んだ」「湧かせた」のような口ごとの動詞は、ほかの口で
+    ///   偽になるので、どの口でも真の「呼ばれた」にそろえる
+    ///
+    /// 場面を名乗る文面 (描き場所の面では `beginDraw()`〜`endDraw()` を案内する、など) は、#2723 が
+    /// 文面を直すだけと決めたので、別の Issue ([#2780]) に分けた。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
     /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
     enum OutsideFrame: CaseIterable {
         case camera
         case transform
@@ -80,39 +90,38 @@ extension Canvas {
             switch self {
             case .camera:
                 "The camera and projection are placed again every frame, so call this from "
-                    + "draw(). This camera was placed outside a frame, so it belongs to no frame, "
-                    + "and was ignored"
-            case .transform:
-                "Transforms are written again every frame, so call this from draw(). This "
-                    + "transform was written outside a frame, so it belongs to no frame, and was ignored"
-            case .style:
-                "Pushing and popping style only works inside a frame. This style was pushed outside "
-                    + "a frame, so it belongs to no frame, and was ignored"
-            case .clip:
-                "The clip is written again every frame, so call this from draw(). This clip was "
-                    + "written outside a frame, so it belongs to no frame, and was ignored"
-            case .effects:
-                "Effects are written again every frame, so call this from draw(). These effects "
-                    + "were written outside a frame, so they belong to no frame, and were ignored"
-            case .light:
-                "Lights are placed again every frame, so call this from draw(). This light was "
-                    + "placed outside a frame, so it belongs to no frame, and was ignored"
-            case .surroundings:
-                "The surroundings are placed again every frame, so call this from draw(). These "
-                    + "surroundings were placed outside a frame, so they belong to no frame, and were "
+                    + "draw(). This was called outside a frame, so it belongs to no frame, and was "
                     + "ignored"
+            case .transform:
+                "Transforms are written again every frame, so call this from draw(). This was "
+                    + "called outside a frame, so it belongs to no frame, and was ignored"
+            case .style:
+                "Pushing and popping style only works inside a frame. This was called outside a "
+                    + "frame, so it belongs to no frame, and was ignored"
+            case .clip:
+                "The clip is written again every frame, so call this from draw(). This was "
+                    + "called outside a frame, so it belongs to no frame, and was ignored"
+            case .effects:
+                "Effects are written again every frame, so call this from draw(). This was "
+                    + "called outside a frame, so it belongs to no frame, and was ignored"
+            case .light:
+                "Lights are placed again every frame, so call this from draw(). This was "
+                    + "called outside a frame, so it belongs to no frame, and was ignored"
+            case .surroundings:
+                "The surroundings are placed again every frame, so call this from draw(). This "
+                    + "was called outside a frame, so it belongs to no frame, and was ignored"
             case .shadow:
-                "Shadows are written again every frame, so call this from draw(). This shadow was "
-                    + "written outside a frame, so it belongs to no frame, and was ignored"
+                "Shadows are written again every frame, so call this from draw(). This was "
+                    + "called outside a frame, so it belongs to no frame, and was ignored"
             case .material:
-                "Materials are written again every frame, so call this from draw(). This material "
-                    + "was written outside a frame, so it belongs to no frame, and was ignored"
+                "Materials are written again every frame, so call this from draw(). This was "
+                    + "called outside a frame, so it belongs to no frame, and was ignored"
             case .particles:
-                "Particles are handled where you draw, in draw(). These particles were emitted "
-                    + "outside a frame, so they belong to no frame, and were ignored"
+                "Particles are handled where you draw, in draw(). This was called outside a "
+                    + "frame, so it belongs to no frame, and was ignored"
             case .compute:
-                "Compute is a preamble to drawing, so ask for it from draw(). This compute was "
-                    + "asked for outside a frame, so it belongs to no frame, and was ignored"
+                "Compute is a preamble to drawing, so ask for it from draw(). This was called "
+                    + "outside a frame, so it belongs to no frame, and was ignored"
             case .placing:
                 "Shapes, images and backgrounds are placed in setup(), draw() or an input "
                     + "callback, or between beginDraw() and endDraw() on a drawing target. This was "
