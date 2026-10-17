@@ -15,10 +15,18 @@ import Foundation
 ///
 /// 位置 (``x``・``previousX``)・動いた量 (``movedX``)・引きずった量 (``dragX``)・スクロール量
 /// (``scrollX``) と、配る量 (引きずり・移動・スクロールの 1 件ぶん) は、数でない値にも無限にも
-/// ならない。**当てるとそうなる出来事は、状態にも配りにも入れずに捨て、1 度だけ言う**
-/// ([#2731](https://github.com/mokume-metal/mokume/issues/2731))。外から送る経路は ±3.4e38 までの
-/// 極端な値を運べ、その差や和は `Float` に収まらないことがある。``enqueue(_:)`` には数でない値も
-/// 渡せる。**範囲の外の位置は丸めない** — 極端でも有限に収まる値は、窓から来る値と同じに当てて配る。
+/// ならない ([#2731](https://github.com/mokume-metal/mokume/issues/2731))。外から送る経路は
+/// ±3.4e38 までの極端な値を運べ、その差や和は `Float` に収まらないことがある (差は絶対値が約 1.7e38
+/// を越える位置どうしで、和はずっと小さい量の繰り返しでも溢れる)。``enqueue(_:)`` には数でない値も
+/// 渡せる。
+///
+/// - **移動とスクロール** (`mouseMoved`・`mouseMovedBy`・`scrolled`) は、当てるとそうなるなら、
+///   状態にも配りにも入れずに捨て、1 度だけ言う
+/// - **押下と解放** (`mouseDown`・`mouseUp`) は、位置が有限でなければ**位置だけを捨てる**。釦の
+///   状態は当てて、呼び出しも配る — 位置は前の値のまま。落とすと釦が押されたまま残り
+///   (``enqueue(_:)`` の「どの種別も状態だけは残す」・#935 と同じ理由)、押下と解放の組も崩れる
+///
+/// **範囲の外の位置は丸めない** — 極端でも有限に収まる値は、窓から来る値と同じに当てて配る。
 @MainActor
 public final class InputState {
     /// 溜める上限。描画が停滞しても際限なく伸びないようにする。
@@ -84,8 +92,10 @@ public final class InputState {
 
     /// 入力の層が 1 度だけ言う注意の種類。
     enum Warning: Hashable {
-        /// 当てると、見せる量か配る量が有限でなくなる出来事を捨てた (``apply(_:)``・#2731)。
+        /// 当てると、見せる量か配る量が有限でなくなる移動・スクロールを捨てた (``apply(_:)``・#2731)。
         case nonFiniteEvent
+        /// 位置が有限でない押下・解放の、位置だけを捨てた (釦の状態は当てた・``apply(_:)``・#2731)。
+        case nonFinitePosition
     }
 
     /// 1 度だけ言った注意の控え。**検査が読む。**
@@ -106,10 +116,16 @@ public final class InputState {
     /// 引きずりとスクロールはフレームの頭で 0 に戻る量なので、捨てた分は失われる —
     /// 捨てた以上それが正しい。
     ///
-    /// **溜めた出来事でも、当てると位置・差・和が有限でなくなるなら捨てる** ([#2731])。数でない値や
-    /// 無限を載せた出来事と、極端な位置や量で差や和が `Float` に収まらなくなる出来事である。捨てた
-    /// 出来事は状態を動かさず、コールバックも呼ばない。捨てたことは最初の 1 件だけ警告で言う。
-    /// 決まるのは当てるとき (フレームの頭か、溢れて当てるとき) の状態なので、溜めた時点では分からない。
+    /// **溜めた移動とスクロールでも、当てると位置・差・和が有限でなくなるなら捨てる** ([#2731])。
+    /// 数でない値や無限を載せたものと、極端な位置や量で差や和が `Float` に収まらなくなるものである。
+    /// 捨てた出来事は状態を動かさず、コールバックも呼ばない。**押下と解放は捨てない** — 位置が有限で
+    /// なければ位置だけを捨て、釦の状態は当てて配る (上の「どの種別も状態だけは残す」)。どちらも、
+    /// 最初の 1 件だけ警告で言う。決まるのは当てるとき (フレームの頭か、溢れて当てるとき) の状態なので、
+    /// 溜めた時点では分からない。
+    ///
+    /// **溢れて当てる 1 件は、フレームの頭で 0 に戻る前の和に足して検める。** だから 1e38 級の量では、
+    /// フレームの頭で当てれば収まった移動・スクロールを捨てうる。溢れたときだけ通る経路で、そこで
+    /// 足し込んだ引きずり・スクロールは、どのみちフレームの頭で 0 に戻って失われる量である。
     ///
     /// [#935]: https://github.com/mokume-metal/mokume/issues/935
     /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
@@ -151,9 +167,10 @@ public final class InputState {
             let before = Before(
                 pressedButtons: pressedButtons, keyWasPressed: wasPressed(event), x: x, y: y)
             // **捨てた出来事は配らない** (#2731)。状態に入らなかった量を配ると、配った量の和と
-            // 足し込んだ和 (``dragX`` ほか) が食い違う
-            guard apply(event) else { continue }
-            dispatchCallbacks(for: event, before: before, to: dispatch)
+            // 足し込んだ和 (``dragX`` ほか) が食い違う。配るのは当てた形 (位置を捨てた押下・解放は、
+            // 前の位置のまま)
+            guard let applied = apply(event) else { continue }
+            dispatchCallbacks(for: applied, before: before, to: dispatch)
         }
     }
 
@@ -288,23 +305,72 @@ public final class InputState {
         !wasPressed || !isRepeat
     }
 
-    /// 出来事を状態へ当てる。**当てると有限でなくなる出来事は当てず、`false` を返す** (#2731)。
+    /// 出来事を状態へ当て、**当てた形を返す** (#2731)。当てると有限でなくなる移動・スクロールは
+    /// 当てずに `nil` を返す。位置が有限でない押下・解放は、位置を前の値に替えて当てる。
     ///
     /// 検めるのは当てる直前のここ 1 か所である。フレームの頭 (``beginFrame(dispatch:)``) も、溢れた
     /// 1 件を当てる ``enqueue(_:)`` も、ここを通る。読み手 (``dragX``・``scrollY``・3 つの配り) ごとに
     /// 検めると、読み手が増えるたびに漏れうる。
+    ///
+    /// **押下と解放は捨てない。** 捨てると、押下中に届いた解放なら釦が押されたまま残って後の移動が
+    /// 引きずりとして足し込まれ続け、押下なら後の解放が `mousePressed` も `mouseClicked` も伴わずに
+    /// 配られる。#935 が溢れの経路で守った「落とすのは呼び出しであって状態ではない」と同じ向きで、
+    /// ここでは呼び出しも落とさない (位置を捨てても、押した・離したことは本当に起きている)。
     @discardableResult
-    private func apply(_ event: InputEvent) -> Bool {
-        guard keepsQuantitiesFinite(event) else {
-            warnings.warnOnce(
-                .nonFiniteEvent,
-                "Dropped the input event \(event): applying it would make the mouse position, "
-                    + "a movement, a drag or a scroll amount infinite or not a number "
-                    + "(later events like this are dropped without saying so again)")
-            return false
+    private func apply(_ event: InputEvent) -> InputEvent? {
+        let applied: InputEvent
+        switch event {
+        case .mouseDown(let x, let y, let button) where !(x.isFinite && y.isFinite):
+            warnPositionKept(event)
+            applied = .mouseDown(x: self.x, y: self.y, button: button)
+        case .mouseUp(let x, let y, let button) where !(x.isFinite && y.isFinite):
+            warnPositionKept(event)
+            applied = .mouseUp(x: self.x, y: self.y, button: button)
+        default:
+            guard keepsQuantitiesFinite(event) else {
+                warnings.warnOnce(
+                    .nonFiniteEvent,
+                    "Dropped the input event \(Self.spelled(event)): applying it would make the "
+                        + "mouse position, a movement, a drag or a scroll amount infinite or not a "
+                        + "number (later events like this are dropped without saying so again)")
+                return nil
+            }
+            applied = event
         }
-        update(by: event)
-        return true
+        update(by: applied)
+        return applied
+    }
+
+    /// 位置が有限でない押下・解放の位置だけを捨てたことを、1 度だけ言う。
+    private func warnPositionKept(_ event: InputEvent) {
+        warnings.warnOnce(
+            .nonFinitePosition,
+            "The input event \(Self.spelled(event)) has a position that is not a finite number, "
+                + "so its button change was applied and the mouse position was left where it was "
+                + "(later events like this are handled the same way without saying so again)")
+    }
+
+    /// 注意に載せる出来事の綴り。**釦は名前で書く** — ``MouseButton`` は綴りを持たないので、
+    /// 出来事をそのまま埋めると `MouseButton(rawValue: 0)` と出る。名前の無い番号は番号で書く。
+    static func spelled(_ event: InputEvent) -> String {
+        switch event {
+        case .mouseDown(let x, let y, let button):
+            "mouseDown(x: \(x), y: \(y), button: \(spelled(button)))"
+        case .mouseUp(let x, let y, let button):
+            "mouseUp(x: \(x), y: \(y), button: \(spelled(button)))"
+        default:
+            "\(event)"
+        }
+    }
+
+    /// 釦の綴り (`.left`・`.right`・`.center`。ほかは番号)。
+    static func spelled(_ button: MouseButton) -> String {
+        switch button {
+        case .left: ".left"
+        case .right: ".right"
+        case .center: ".center"
+        default: "\(button.rawValue)"
+        }
     }
 
     /// 出来事 1 件ぶん、状態を進める。**検めは済んでいる** (``apply(_:)`` からだけ呼ぶ)。
@@ -356,7 +422,8 @@ public final class InputState {
     /// **状態はいつも有限である** (有限でなくなる出来事は当てないので)。だから足した後の和が有限
     /// なら、足した差も有限で、配る量 (差と、スクロールの 1 件ぶん) も有限になる。見るのは:
     ///
-    /// - 位置の出来事: 位置そのもの。押下と解放も位置を動かす
+    /// - 押下と解放: 位置そのもの。有限でなければ ``apply(_:)`` が先に位置だけを捨てるので、
+    ///   ここへは有限の位置しか来ない
     /// - 位置の移動: 位置と、当てる前との差を足した後の ``movedX`` (押していれば ``dragX`` も)
     /// - 相対の移動: 足した後の ``movedX`` (押していれば ``dragX`` も)
     /// - スクロール: 足した後の ``scrollX``・``scrollY``

@@ -486,15 +486,14 @@ struct NonFiniteInputTests {
 
     /// Swift からは、JSON に書けない値も直に渡せる。
     @Test(
-        "数でない値や無限を載せた出来事は、状態にも配りにも入らない",
+        "数でない値や無限を載せた移動とスクロールは、状態にも配りにも入らない",
         arguments: [
             InputEvent.mouseMovedBy(dx: .nan, dy: 0),
             .mouseMoved(x: .infinity, y: 0),
-            .mouseDown(x: 0, y: .nan, button: .left),
-            .mouseUp(x: -.infinity, y: 0, button: .left),
+            .mouseMoved(x: 0, y: .nan),
             .scrolled(dx: 0, dy: -.infinity),
         ])
-    func eventsCarryingNonFiniteValuesAreDropped(_ event: InputEvent) {
+    func movementsCarryingNonFiniteValuesAreDropped(_ event: InputEvent) {
         let state = InputState()
         _ = run(state, [.mouseMoved(x: 10, y: 20)])
 
@@ -503,8 +502,71 @@ struct NonFiniteInputTests {
         #expect(seen.isEmpty, "捨てた出来事を配った: \(seen)")
         #expect(readersAreFinite(state))
         #expect(state.x == 10 && state.y == 20)
-        #expect(!state.isMouseDown)
         #expect(state.warnings.hasWarned(.nonFiniteEvent))
+    }
+
+    /// **押下と解放は捨てない** — 落とすのは位置だけで、釦の状態は残す (#935 の「どの種別も状態だけは
+    /// 残す」)。押下中に届いた解放を丸ごと捨てると、釦が押されたまま残り、後の移動が引きずりとして
+    /// 配られ足し込まれ続ける。
+    @Test("押下中に位置が有限でない解放が届いても、釦は離れ、位置だけが前のまま残る")
+    func aReleaseWithANonFinitePositionStillReleasesTheButton() {
+        let state = InputState()
+        _ = run(state, [.mouseDown(x: 10, y: 20, button: .left)])
+        #expect(state.isMouseDown)
+
+        let released = run(state, [.mouseUp(x: -.infinity, y: 0, button: .left)])
+
+        #expect(!state.isMouseDown, "釦が押されたまま残った")
+        #expect(state.x == 10 && state.y == 20, "有限でない位置が当たった")
+        #expect(readersAreFinite(state))
+        #expect(released == [.mouseReleased, .mouseClicked], "\(released)")
+        #expect(state.warnings.hasWarned(.nonFinitePosition))
+        #expect(!state.warnings.hasWarned(.nonFiniteEvent), "解放を捨てたことにしている")
+
+        // 離れたので、後の移動は引きずりではない
+        let moved = run(state, [.mouseMoved(x: 30, y: 20)])
+        #expect(moved == [.mouseMoved, .mouseMovedBy(deltaX: 20, deltaY: 0)], "\(moved)")
+        #expect(state.dragX == 0)
+    }
+
+    /// 押下を丸ごと捨てると、後の有限の解放が `mouseReleased` だけを配り、押した・クリックしたことが
+    /// どこにも残らない。
+    @Test("位置が有限でない押下も釦は押され、後の解放と組んでクリックになる")
+    func aPressWithANonFinitePositionStillPresses() {
+        let state = InputState()
+        _ = run(state, [.mouseMoved(x: 10, y: 20)])
+
+        let seen = run(
+            state, [.mouseDown(x: 0, y: .nan, button: .left), .mouseUp(x: 15, y: 25, button: .left)])
+
+        #expect(seen == [.mousePressed, .mouseReleased, .mouseClicked], "\(seen)")
+        #expect(!state.isMouseDown)
+        // 解放の位置は有限なので当たる
+        #expect(state.x == 15 && state.y == 25)
+        #expect(state.button == .left)
+        #expect(state.warnings.hasWarned(.nonFinitePosition))
+
+        // 押下だけなら、位置は前のまま
+        let pressing = InputState()
+        _ = run(pressing, [.mouseMoved(x: 10, y: 20)])
+        _ = run(pressing, [.mouseDown(x: .infinity, y: 5, button: .right)])
+        #expect(pressing.isMouseDown && pressing.button == .right)
+        #expect(pressing.x == 10 && pressing.y == 20)
+    }
+
+    /// `MouseButton` は綴りを持たないので、出来事をそのまま埋めると `MouseButton(rawValue: 0)` と出る。
+    @Test("注意の文面は、釦を名前 (名前の無い番号は番号) で書く")
+    func noticesSpellTheButton() {
+        let state = InputState()
+        _ = run(state, [.mouseDown(x: .nan, y: 0, button: .left)])
+        let said = state.warnings.message(for: .nonFinitePosition) ?? ""
+        #expect(said.contains("mouseDown(x: nan, y: 0.0, button: .left)"), "\(said)")
+        #expect(!said.contains("MouseButton("), "\(said)")
+
+        #expect(
+            InputState.spelled(.mouseUp(x: 1, y: 2, button: MouseButton(rawValue: 4)))
+                == "mouseUp(x: 1.0, y: 2.0, button: 4)")
+        #expect(InputState.spelled(.mouseMovedBy(dx: .nan, dy: 0)) == "mouseMovedBy(dx: nan, dy: 0.0)")
     }
 
     @Test("捨てた後に届いた出来事は、今までどおり当てて配る。言うのは最初の 1 件だけ")
