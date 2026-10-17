@@ -551,15 +551,88 @@ struct TextTests {
         }
         #expect(canvas.warnings.hasWarned(.missingFallbackTypefaceStyle))
         let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
-        #expect(message.contains("\"あ\""), "\(message)")
-        #expect(message.contains("\"Helvetica\""), "\(message)")
+        // 字はコードポイントを添えて、持たなかったのは頼んだ面 (家族ではない) と言う
+        #expect(message.contains("\"あ\" (U+3042)"), "\(message)")
+        #expect(message.contains("\"Helvetica-Oblique\", the face drawn for .italic"), "\(message)")
         #expect(message.contains("\"HiraginoSans-W3\" (regular weight, upright)"), "\(message)")
-        #expect(message.contains("italic"), "\(message)")
+        #expect(!message.contains("family"), "\(message)")
         // 次のフレームで別の字が代わりの書体へ落ちても、2 度目は言わない (最初の文面のまま)
         try canvas.draw { canvas.text("もくめ", 20, 50) }
         #expect(canvas.warnings.message(for: .missingFallbackTypefaceStyle) == message)
         // 欧文の書体の斜体は面を持つので、指定した書体の面の警告は出ない
         #expect(!canvas.warnings.hasWarned(.missingTypefaceStyle))
+    }
+
+    /// 墨を持たない字 (異体字セレクタ U+FE0E・私用領域 U+E000 の豆腐) が先に代わりの書体へ落ちても、
+    /// 1 度きりの知らせを使い切らない。後の和文が知らされる。
+    @Test("墨を持たない字が先にあっても、後の和文の面の警告が出る", arguments: ["\u{FE0E}", "\u{E000}"])
+    func anInklessCharacterDoesNotUseUpTheWarning(_ lead: String) throws {
+        try Self.requireHiraginoFallback()
+        let canvas = try makeCanvas()
+        canvas.textStyle(.italic)
+        try canvas.draw { canvas.text("a\(lead) もくめ", 20, 50) }
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"も\" (U+3082)"), "\(message)")
+    }
+
+    /// 既定の書体では、面も代わりの書体も `.` で始まる内部名を持つ。`textFont()` が断る名前なので、
+    /// 文面は名乗らず「system typeface」と言う。
+    @Test("既定の書体の警告は、textFont() に渡せない内部名を名乗らない")
+    func theSystemTypefaceIsNotNamedByItsInternalName() throws {
+        let system = try #require(CTFontCreateUIFontForLanguage(.system, 32, nil))
+        let italic = try #require(
+            CTFontCreateCopyWithSymbolicTraits(system, 32, nil, .traitItalic, .traitItalic))
+        let fallback = CTFontCreateForString(italic, "も" as CFString, CFRangeMake(0, 1))
+        try #require(
+            (CTFontCopyPostScriptName(fallback) as String).hasPrefix("."),
+            "前提: 既定の書体の斜体に無い「も」を、内部名の書体から引く")
+        let canvas = try makeCanvas()
+        canvas.noTextFont()
+        canvas.textStyle(.italic)
+        _ = canvas.textWidth("もくめ")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("the system typeface's face for .italic"), "\(message)")
+        #expect(message.contains("from a system typeface (regular weight, upright)"), "\(message)")
+        #expect(message.contains("\"も\" (U+3082)"), "\(message)")
+        #expect(!message.contains("\"."), "内部名を名乗った: \(message)")
+    }
+
+    /// 判定は書体の印で、絵文字かどうかではない。❤ (U+2764) は単色の Zapf Dingbats から引かれ、
+    /// 太字の面を持たないので知らせる (後ろの U+FE0F は色の書体から引く印で、知らせない)。
+    @Test("単色の書体から引く ❤ は、太字の面を持たないことを警告する")
+    func aMonochromeHeartIsWarned() throws {
+        let fallback = Self.fallbackPostScriptName(of: "\u{2764}", in: fontName, .traitBold)
+        try #require(
+            fallback == "ZapfDingbatsITC", "前提: Helvetica の太字に無い ❤ を ZapfDingbatsITC から引く")
+        let canvas = try makeCanvas()
+        canvas.textStyle(.bold)
+        _ = canvas.textWidth("\u{2764}\u{FE0F}")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"\u{2764}\" (U+2764)"), "\(message)")
+        #expect(message.contains("\"ZapfDingbatsITC\" (regular weight, upright)"), "\(message)")
+    }
+
+    /// 字を持たないのは頼んだ面で、家族の別の面が持つ字もある (Euphemia UCAS の斜体に無く、立体にある
+    /// U+1400)。文面は面を名乗り、家族に無いとは言わない。
+    @Test("家族の別の面が持つ字でも、文面は頼んだ面に無いと言う")
+    func theWarningNamesTheFaceNotTheFamily() throws {
+        let italic = try #require(
+            CTFontCreateCopyWithSymbolicTraits(
+                CTFontCreateWithName("EuphemiaUCAS" as CFString, 32, nil), 32, nil, .traitItalic,
+                .traitItalic))
+        try #require(
+            CTFontCopyPostScriptName(italic) as String == "EuphemiaUCAS-Italic",
+            "前提: Euphemia UCAS の斜体がある")
+        try #require(
+            Self.fallbackPostScriptName(of: "\u{1400}", in: "EuphemiaUCAS", .traitItalic) == "EuphemiaUCAS",
+            "前提: 斜体に無い U+1400 を、同じ家族の立体から引く")
+        let canvas = try makeCanvas()
+        canvas.textFont("EuphemiaUCAS")
+        canvas.textStyle(.italic)
+        _ = canvas.textWidth("\u{1400}")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        #expect(message.contains("\"EuphemiaUCAS-Italic\", the face drawn for .italic, has no"), "\(message)")
+        #expect(message.contains("drawn from \"EuphemiaUCAS\" (regular weight, upright)"), "\(message)")
     }
 
     @Test("警告しても、代わりの書体から引いた字の絵は変わらない (傾けて描かない)")

@@ -87,12 +87,15 @@ final class Typeface {
     /// 代わりの書体から引いた字の面が、頼んだ太さ・傾きを欠くときに呼ぶ口 ([#2561])。渡すのは
     /// この書体・その字・字を引いた書体で、知らせるのは書体を作らせた側 (`Canvas`) である。
     ///
+    /// **省けない。** 書体を作る経路を足したときに、知らせが黙って落ちないよう、作る側に口を
+    /// 必ず決めさせる (知らせない検査は空の口を渡す)。
+    ///
     /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
-    private let onFallbackLackingStyle: ((Typeface, Unicode.Scalar, CTFont) -> Void)?
+    private let onFallbackLackingStyle: (Typeface, Unicode.Scalar, CTFont) -> Void
 
     init(
         request: TypefaceRequest,
-        onFallbackLackingStyle: ((Typeface, Unicode.Scalar, CTFont) -> Void)? = nil
+        onFallbackLackingStyle: @escaping (Typeface, Unicode.Scalar, CTFont) -> Void
     ) {
         self.request = request
         (self.base, self.lacksRequestedStyle) = Self.makeFont(request)
@@ -111,18 +114,38 @@ final class Typeface {
         }
     }
 
-    /// 代わりの書体 (``glyph(for:)`` が、この書体が覆えない字を引いた別の書体) の面が、頼んだ
-    /// 太さ・傾きを欠くか ([#2561])。何も頼んでいなければ欠かない。
+    /// 代わりの書体 (``glyph(for:)`` が、この書体が覆えない字を引いた別の書体) から引いた字が、
+    /// 頼んだ太さ・傾きを欠く面で描かれるか ([#2561])。何も頼んでいなければ欠かない。
     ///
-    /// **色の字形を持つ書体 (Apple Color Emoji。`traitColorGlyphs`) は欠かないと見る。** 絵文字の
-    /// 書体は太さ・傾きの面を持たないので、見ると太字の文に絵文字があるたびに知らせることになる
-    /// (#2444 が代わりの書体を知らせの外に置いた理由はこの洪水だけだった)。色の字形の印は
-    /// ``measuresByDrawing(_:path:)`` が絵文字を見分けるのと同じものである。
+    /// **知らせても直す手が無い字は、欠かないと見る。** 知らせは面 (`Canvas`) ごとに 1 度きりなので、
+    /// 直す手の無い字が先に鳴ると、後から来る直せる字 (欧文の斜体に混ぜた和文) が知らされなくなる。
+    ///
+    /// - **色の字形を持つ書体** (Apple Color Emoji。`traitColorGlyphs`) の字。字形は絵で、太さ・
+    ///   傾きの面という考えが無く、どの書体を指定しても太字や斜体の絵文字にはならない。見るのは
+    ///   書体の印で、``measuresByDrawing(_:path:)`` が絵文字を見分けるのと同じ印である。だから ❤
+    ///   (U+2764) のように**単色の書体 (Zapf Dingbats) から引く字は知らせる**
+    /// - **墨を持たない字** (``hasInk(_:in:)``)。面が違っても絵が変わらない
     ///
     /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
-    static func lacksStyle(fallback font: CTFont, requested: CTFontSymbolicTraits) -> Bool {
+    static func lacksStyle(
+        fallback font: CTFont, glyph: CGGlyph, requested: CTFontSymbolicTraits
+    ) -> Bool {
         let traits = CTFontGetSymbolicTraits(font)
-        return !traits.contains(requested) && !traits.contains(.traitColorGlyphs)
+        guard !traits.contains(requested), !traits.contains(.traitColorGlyphs) else { return false }
+        return hasInk(glyph, in: font)
+    }
+
+    /// その字形が墨を持つか ([#2561])。
+    ///
+    /// **道筋を持たない字形** (異体字セレクタ U+FE0E・和文の空白 U+3000 など。送り幅 0 のものも
+    /// 幅を持つものもある) と、**LastResort から引いた字形** (どの書体も持たない字の代わりに描く
+    /// 豆腐。私用領域 U+E000 など) は墨を持たないと見る。色の字形を持つ書体の字形は道筋を
+    /// 持たなくても絵を描くので、ここでは問わない (呼ぶ側が先に外す)。
+    static func hasInk(_ glyph: CGGlyph, in font: CTFont) -> Bool {
+        guard CTFontCopyPostScriptName(font) as String != "LastResort",
+            let path = CTFontCreatePathForGlyph(font, glyph, nil)
+        else { return false }
+        return !path.isEmpty
     }
 
     /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、引けた面と「無かった」を返す。
@@ -245,7 +268,7 @@ final class Typeface {
     ///
     /// **この書体が覆えない字は、環境が持つ別の書体から引き、その面のまま描く** — 欧文の斜体に混ぜた
     /// 日本語は、斜体の面を持たない書体の立体で引かれる。その面が頼んだ太さ・傾きを欠けば
-    /// (``lacksStyle(fallback:requested:)``)、知らせの口 (``onFallbackLackingStyle``) を呼ぶ ([#2561])。
+    /// (``lacksStyle(fallback:glyph:requested:)``)、知らせの口 (``onFallbackLackingStyle``) を呼ぶ ([#2561])。
     /// 呼ぶのは引き当てを控えに入れる時だけなので、同じ字では 1 度きりである。描画 (`text()`)・
     /// 幅 (``advance(of:)``)・輪郭と墨の枠はどれもここを通るので、どの口から先に引いても同じ 1 度になる。
     ///
@@ -272,8 +295,10 @@ final class Typeface {
             font: font, glyph: glyph, advance: Float(advance.width),
             fontKey: (CTFontCopyPostScriptName(font) as String?) ?? "")
         resolved[scalar] = entry
-        if fellBack, Self.lacksStyle(fallback: font, requested: Self.traits(of: request.style)) {
-            onFallbackLackingStyle?(self, scalar, font)
+        if fellBack,
+            Self.lacksStyle(fallback: font, glyph: glyph, requested: Self.traits(of: request.style))
+        {
+            onFallbackLackingStyle(self, scalar, font)
         }
         return entry
     }

@@ -58,21 +58,45 @@ extension Canvas {
     }
 
     /// 指定した書体が覆えず別の書体から引いた字が、頼んだ太さ・傾きの面で描けないことを、初回だけ
-    /// 知らせる ([#2561])。**字・字を引いた書体・描いた面を名乗る** — 指定した書体の面は揃っているので、
-    /// どの字がどこから来たかを言わないと、効かない理由に辿り着けない。絵は変えない (傾けて合成しない)。
+    /// 知らせる ([#2561])。**字・字を持たなかった面・字を引いた書体・描いた面を名乗る** — 指定した
+    /// 書体の面は揃っているので、どの字がどこから来たかを言わないと、効かない理由に辿り着けない。
+    /// 絵は変えない (傾けて合成しない)。
+    ///
+    /// - **字を持たないと言うのは面である。** 判定は頼んだ面 (`face.base`) が字形を持つかで、家族の
+    ///   別の面が持つ字もここに来る (Euphemia UCAS の斜体に無く、立体にある U+1400)
+    /// - **字にはコードポイントを添える。** 結合する字や見えない字 (U+3099・U+20E3) は字だけでは読めない
+    /// - **`.` で始まる内部名は名乗らない** (``passableName(_:)``)。``textFont(_:)`` が受け付けない
+    ///   名前で、結びの「`textFont()` に渡せ」と食い違う
     ///
     /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
     private func warnFallbackLackingStyleOnce(
         _ face: Typeface, _ scalar: Unicode.Scalar, _ fallback: CTFont
     ) {
+        let style = ".\(face.request.style)"
+        let missing =
+            Self.passableName(face.base).map { "\"\($0)\", the face drawn for \(style)," }
+            ?? "the system typeface's face for \(style)"
+        let source =
+            Self.passableName(fallback).map { "\"\($0)\"" } ?? "a system typeface"
         warnOnce(
             .missingFallbackTypefaceStyle,
-            "textStyle(): \"\(Character(scalar))\" is not in the typeface family "
-                + "\"\(CTFontCopyFamilyName(face.base) as String)\", so it is drawn from "
-                + "\"\(CTFontCopyPostScriptName(fallback) as String)\" (\(Self.faceTraits(of: fallback))) "
-                + "without the .\(face.request.style) style. This is said once for all the characters "
-                + "taken from other typefaces; to change how they look, draw them with textFont() set "
-                + "to a typeface that has them")
+            "textStyle(): \(missing) has no \(Self.quoted(scalar)), so it is drawn from \(source) "
+                + "(\(Self.faceTraits(of: fallback))) without the \(style) style. This is said once for "
+                + "all such characters; to draw them in \(style), set textFont() to a typeface that "
+                + "has these characters in a face for \(style)")
+    }
+
+    /// ``textFont(_:)`` に渡せる書体の名前 (PostScript 名)。**`.` で始まる内部名 (`.HiraKakuInterface-W4`) は
+    /// `nil`** — ``textFont(_:)`` が断る名前なので、名乗っても渡し直せない。
+    private static func passableName(_ font: CTFont) -> String? {
+        let name = CTFontCopyPostScriptName(font) as String
+        return name.hasPrefix(".") ? nil : name
+    }
+
+    /// 字を、引用符とコードポイントで言う (`"も" (U+3082)`)。
+    private static func quoted(_ scalar: Unicode.Scalar) -> String {
+        let hex = String(scalar.value, radix: 16, uppercase: true)
+        return "\"\(Character(scalar))\" (U+\(String(repeating: "0", count: max(0, 4 - hex.count)) + hex))"
     }
 
     /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる — 上限の面なら、同じ
