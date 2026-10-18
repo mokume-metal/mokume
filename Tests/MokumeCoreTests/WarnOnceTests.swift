@@ -76,6 +76,27 @@ struct OutsideFrameNoticeTests {
         }
     }
 
+    /// 描き場所の面の 1 文 ([#2780])。**13 種に共通**で、直す場所 (`beginDraw()` と `endDraw()` の
+    /// 間) を言い、本体の場面 (`draw()`・`setup()`・入力のコールバック) は言わない。本体の文
+    /// (上の ``outsideFrameNotices``) とは別に写して突き合わせる。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    @Test("描き場所の面の文は、beginDraw() と endDraw() の間を案内する 1 文")
+    func drawingTargetNoticeKeepsItsWording() {
+        #expect(
+            Canvas.OutsideFrame.drawingTargetNotice
+                == "On a drawing target this only works between beginDraw() and endDraw(), so call it "
+                + "there. This was called outside them, so it belongs to no frame, and was ignored")
+        let notice = Canvas.OutsideFrame.drawingTargetNotice
+        for scene in ["setup()", "draw()", "input callback"] {
+            #expect(!notice.contains(scene), "描き場所の文が本体の場面 \(scene) を名乗る")
+        }
+        // 本体の文のどれとも違う (面で選ばれていることを見分けられる)
+        for subject in Canvas.OutsideFrame.allCases {
+            #expect(subject.notice != notice, "\(subject) の本体の文が描き場所の文と同じ")
+        }
+    }
+
     @Test("種類を足したら、原文も足すことになる")
     func everySubjectHasAnOriginal() {
         for subject in Canvas.OutsideFrame.allCases {
@@ -697,13 +718,16 @@ struct ShapeNotBegunWarningTests {
     }
 }
 
-/// 開いたまま境目を越えた形を捨てたときの原文 ([#1591])。
+/// 開いたまま境目を越えた形を捨てたときの原文 ([#1591])。捨てる場面は、`draw()`・`setup()`・
+/// 入力のコールバック・`createShape()` の本体・描き場所の `beginDraw()`〜`endDraw()` をすべて
+/// 挙げる ([#2780])。
 ///
 /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+/// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
 private let shapeNotEndedNotice =
-    "beginShape(): a shape was left open past the end of the draw(), setup() or createShape() body "
-    + "that began it, so it was dropped without being drawn. End each shape with endShape() in the "
-    + "same body"
+    "beginShape(): a shape was left open past the end of the draw(), setup(), input callback or "
+    + "createShape() body that began it, or past the endDraw() of the beginDraw() that began it, so "
+    + "it was dropped without being drawn. End each shape with endShape() in the same place"
 
 /// 開いたまま境目を越えた形の注意 ([#1591])。GPU を要する。
 ///
@@ -746,6 +770,23 @@ struct ShapeNotEndedWarningTests {
         #expect(warnedOnEntry == openedOutside, "捨てて言う境目が違う")
         #expect(canvas.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
         #expect(!canvas.warnings.hasWarned(.shapeNotBegun), "対の始まりの注意を言った")
+    }
+
+    /// 描き場所の `beginDraw()` で開いた形も、`endDraw()` を越えると捨てる ([#2780])。文は、その
+    /// 場面を名乗る (本体の `draw()` だけを挙げると、描き場所で開いた人に直す場所が分からない)。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    @Test("描き場所で開いたまま endDraw() を越えた形も、同じ注意で、beginDraw() を名乗る")
+    func warnsWhenAShapeCrossesTheEndOfADrawingTarget() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+        layer.beginDraw()
+        layer.beginShape()
+        layer.vertex(0, 0)
+        layer.endDraw()
+        #expect(layer.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
+        #expect(shapeNotEndedNotice.contains("endDraw() of the beginDraw()"))
+        #expect(layer.shapePoints.isEmpty, "形が捨てられていない")
     }
 
     /// 文面は値を含まないので、2 度目も言っていれば控えが上書きされる形では見分けられない。

@@ -26,8 +26,9 @@ extension Canvas {
     ///   `particles()` も使う。「置いた」「積んだ」「湧かせた」のような口ごとの動詞は、ほかの口で
     ///   偽になるので、どの口でも真の「呼ばれた」にそろえる
     ///
-    /// 場面を名乗る文面 (描き場所の面では `beginDraw()`〜`endDraw()` を案内する、など) は、#2723 が
-    /// 文面を直すだけと決めたので、別の Issue ([#2780]) に分けた。
+    /// 場面を名乗る文面は、#2723 が文面を直すだけと決めたので別の Issue ([#2780]) に分けた。そこで
+    /// 描き場所の面だけ、13 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
+    /// (``drawingTargetNotice``)。本体の面は上の文のまま — 場面を言い分けない。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
     /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
@@ -57,6 +58,17 @@ extension Canvas {
         ///
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWrite
+
+        /// **描き場所の面が断ったときの 1 文。13 種に共通で、本体の面の ``notice`` とは別に持つ**
+        /// ([#2780])。描き場所は `beginDraw()` と `endDraw()` の間でだけ効く (ADR-0021 決定 4)。
+        /// 本体向けの文は、利用者が `draw()` の中に居ても出うる描き場所の面では直す場所を取り違えさせ、
+        /// 本当の直し先 (`beginDraw()` / `endDraw()`) をどこにも書かない。種類ごとに分けないのは、
+        /// どの種類でも直す場所が同じ 1 つだからである。
+        ///
+        /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+        static let drawingTargetNotice =
+            "On a drawing target this only works between beginDraw() and endDraw(), so call it "
+            + "there. This was called outside them, so it belongs to no frame, and was ignored"
 
         /// 初回だけ言うための鍵。
         var warning: Warning {
@@ -136,6 +148,15 @@ extension Canvas {
 
     /// フレームの外で設定を置き直したことを、初回だけ知らせる。
     ///
+    /// **文は面で選ぶ** ([#2780])。描き場所 (`createGraphics`) の面は、`draw()` の中に居ても
+    /// `beginDraw()`〜`endDraw()` の外ならフレームの外である (`isDrawing` は面ごとに持つ)。本体向けの
+    /// 「call this from draw()」を言うと、すでに `draw()` の中に居る利用者に直す場所を取り違えさせる
+    /// ので、描き場所の面には ``OutsideFrame/drawingTargetNotice`` を言う。控えは面ごとなので、
+    /// 描き場所の面の 1 通は必ず描き場所の場面で出る。面の見分けは `timebase.owner` (本体は自分が
+    /// 持ち主で、描き場所は作った面の置き場を指す)。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    ///
     /// 呼ぶ側は `guard admits(.shadow) else { return }` の形になる。
     /// 守り (``admits(_:)``) はフレームの外と形の組み立ての中を 1 か所で見る (#1529)。
     /// **`guard` そのものは畳んでいない** — 値の検査を挟む口があり、守りと検査の
@@ -143,6 +164,9 @@ extension Canvas {
     /// `Canvas+LightColor.swift` の数で書く光・材質の口は検査が先)。
     /// 順序を揃えると診断の出方が変わるので、それは畳みとは別の判断として分ける。
     func warnOutsideFrame(_ subject: OutsideFrame) {
-        warnOnce(subject.warning, subject.notice)
+        let onDrawingTarget = timebase.owner !== self
+        warnOnce(
+            subject.warning,
+            onDrawingTarget ? OutsideFrame.drawingTargetNotice : subject.notice)
     }
 }

@@ -188,6 +188,17 @@ enum PlacingSurface: CaseIterable, CustomTestStringConvertible {
         case .direct: return host
         }
     }
+
+    /// この面が断ったときに言う文。**描き場所の面は 13 種共通の 1 文**で `beginDraw()` と `endDraw()` を
+    /// 案内し、直に使う `Canvas` は本体向けの文のまま ([#2780])。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    func notice(_ subject: Canvas.OutsideFrame) -> String {
+        switch self {
+        case .graphics: Canvas.OutsideFrame.drawingTargetNotice
+        case .direct: subject.notice
+        }
+    }
 }
 
 /// 持ち越しの区間の外で置いたもの・書いた画素を断る ([#1672])。GPU を要する。
@@ -203,8 +214,6 @@ enum PlacingSurface: CaseIterable, CustomTestStringConvertible {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct PlacingOutsideFrameTests {
-    private let placingNotice = Canvas.OutsideFrame.placing.notice
-    private let pixelWriteNotice = Canvas.OutsideFrame.pixelWrite.notice
 
     /// 溜め場の中身の数。開いている列の有無は入れない — 区間の外でも、描き方を替えれば列は閉じる。
     private static func stored(in canvas: Canvas) -> [Int] {
@@ -230,7 +239,7 @@ struct PlacingOutsideFrameTests {
 
         call.call(on: canvas, props)
 
-        #expect(canvas.warnings.message(for: .placingOutsideFrame) == placingNotice)
+        #expect(canvas.warnings.message(for: .placingOutsideFrame) == surface.notice(.placing))
         #expect(canvas.hasNothingPending, "区間の外の \(call) が溜め場に積んだ")
         #expect(!canvas.isBuildingShape, "区間の外の \(call) が形を開いた")
         #expect(canvas.shapePoints.isEmpty, "区間の外の \(call) が点を積んだ")
@@ -307,7 +316,9 @@ struct PlacingOutsideFrameTests {
         // 積み足しも、持ち越したものを捨てることもしない (区間の外の塗り直しは、溜めたものを
         // 捨てる前に断る)
         #expect(Self.stored(in: canvas) == carried, "区間の外の \(call) が溜め場を変えた")
-        #expect(canvas.warnings.message(for: .placingOutsideFrame) == placingNotice)
+        #expect(
+            canvas.warnings.message(for: .placingOutsideFrame)
+                == PlacingSurface.direct.notice(.placing))
         try canvas.draw {}
         #expect(canvas.placementsFoundOutsideRegions == 0)
     }
@@ -415,7 +426,9 @@ struct PlacingOutsideFrameTests {
         canvas.beginShape()
         call.call(on: canvas)
 
-        #expect(canvas.warnings.message(for: .placingOutsideFrame) == placingNotice)
+        #expect(
+            canvas.warnings.message(for: .placingOutsideFrame)
+                == PlacingSurface.graphics.notice(.placing))
         #expect(!canvas.warnings.hasWarned(.vertexOutsideShape), "形の外を先に言った")
         #expect(!canvas.isBuildingShape)
         #expect(canvas.shapePoints.isEmpty)
@@ -455,7 +468,8 @@ struct PlacingOutsideFrameTests {
         let before = canvas.get(2, 2)
         call.call(on: canvas)
 
-        #expect(canvas.warnings.message(for: .pixelWriteOutsideFrame) == pixelWriteNotice)
+        #expect(
+            canvas.warnings.message(for: .pixelWriteOutsideFrame) == surface.notice(.pixelWrite))
         #expect(canvas.target.pixelMirror?.hasPendingWrites != true, "写しに書いた")
         #expect(canvas.get(2, 2) == before, "読む口 (get) に書いた画素が出た")
         #expect(!canvas.warnings.hasWarned(.placingOutsideFrame), "画素を図形として言った")
@@ -607,8 +621,12 @@ struct PlacingOutsideFrameTests {
             canvas.set(1, 1, PixelWriteCall.color)
             canvas.rect(0, 0, 4, 4)
         }
-        #expect(canvas.warnings.message(for: .placingOutsideFrame) == placingNotice)
-        #expect(canvas.warnings.message(for: .pixelWriteOutsideFrame) == pixelWriteNotice)
+        #expect(
+            canvas.warnings.message(for: .placingOutsideFrame)
+                == PlacingSurface.graphics.notice(.placing))
+        #expect(
+            canvas.warnings.message(for: .pixelWriteOutsideFrame)
+                == PlacingSurface.graphics.notice(.pixelWrite))
     }
 }
 
