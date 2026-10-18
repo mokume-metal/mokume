@@ -173,23 +173,21 @@ struct Tools {
         // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は従来どおり省略と同じに
         // 読む (方針は #2393 で決める)
         if let raw = arguments["scale"], !(raw is NSNull) {
-            guard let scale = raw as? NSNumber, CFGetTypeID(scale) != CFBooleanGetTypeID(),
-                scale.doubleValue.isFinite else {
+            guard let scale = JSONRPC.number(raw), scale.doubleValue.isFinite else {
                 return ("scale must be a finite number", true)
             }
             request["scale"] = scale.doubleValue
         }
         var requestedTime: Double?
         if let raw = arguments["time"] {
-            guard let value = raw as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+            guard let value = JSONRPC.number(raw),
                 value.doubleValue.isFinite, value.doubleValue >= 0,
                 value.doubleValue <= Double(Float.greatestFiniteMagnitude) else {
                 return ("time must be finite, non-negative seconds within the Float range", true)
             }
             for key in ["count", "every"] {
                 if let raw = arguments[key] {
-                    guard let value = raw as? NSNumber,
-                        CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue == 1 else {
+                    guard let value = JSONRPC.number(raw), value.doubleValue == 1 else {
                         return ("A specified time requires count=1 and every=1", true)
                     }
                 }
@@ -265,13 +263,10 @@ struct Tools {
         }
         let expected = Double(Float(requested))
         guard applied == expected,
-            let appliedNumber = report["appliedTime"] as? NSNumber,
-            CFGetTypeID(appliedNumber) != CFBooleanGetTypeID(),
-            let topTime = report["time"] as? NSNumber,
-            CFGetTypeID(topTime) != CFBooleanGetTypeID(), topTime.doubleValue == expected,
+            JSONRPC.number(report["appliedTime"]) != nil,
+            let topTime = JSONRPC.number(report["time"]), topTime.doubleValue == expected,
             let frames = report["frames"] as? [[String: Any]], frames.count == 1,
-            let frameTime = frames[0]["time"] as? NSNumber,
-            CFGetTypeID(frameTime) != CFBooleanGetTypeID(), frameTime.doubleValue == expected,
+            let frameTime = JSONRPC.number(frames[0]["time"]), frameTime.doubleValue == expected,
             let image = report["image"] as? String, !image.isEmpty,
             frames[0]["image"] as? String == image else {
             return "The reply does not match the requested time or single image. No time-specific result was accepted."
@@ -334,9 +329,7 @@ struct Tools {
     static func seriesArgument(_ raw: Any?, key: String) -> SeriesArgument {
         guard let raw else { return .omitted }
         let refusal = SeriesArgument.refused("\(key) must be a whole number")
-        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
-            return refusal
-        }
+        guard let number = JSONRPC.number(raw) else { return refusal }
         if let exact = raw as? Int { return .value(exact) }
         let double = number.doubleValue
         guard double.isFinite, double == double.rounded() else { return refusal }

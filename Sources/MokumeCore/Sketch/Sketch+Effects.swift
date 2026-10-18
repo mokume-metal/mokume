@@ -343,7 +343,9 @@ extension SketchPart {
     ///
     /// 書き方は文字列から作る ``makeEffect(_:name:values:)`` と同じで、例と絵はそちらにある。
     ///
-    /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
+    ///   場所が載る ``ShaderFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めないとき
+    ///   (``ShaderFailure/unreadable(path:)``)・組み立てられないときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeEffect(_:name:values:)

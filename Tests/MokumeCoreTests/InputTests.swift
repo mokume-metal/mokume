@@ -750,6 +750,56 @@ struct InputInboxTests {
         #expect(state.y == 9)
     }
 
+    /// **出来事の中の省略できる欄の `null` は、省略と同じに読む** (#2392)。観測の要求の `null` と
+    /// 揃う。`Schemas/input-request.schema.json` も、省略できる欄が `null` を受けると書く。
+    @Test("省略できる欄の null は、欄を書かなかった 1 件と同じに通る")
+    func readsANullFieldAsOmitted() throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(
+            #"{"id":"n1","events":[{"type":"mouseDown","x":1,"y":2,"button":null},"#
+                + #"{"type":"mouseMovedBy","dx":null,"dy":3},"#
+                + #"{"type":"keyDown","code":0,"characters":null,"isRepeat":null}]}"#,
+            to: facet)
+
+        let report = try #require(inbox.drain(into: state))
+        #expect(report.accepted == 3)
+        #expect(report.ignored == 0)
+        state.beginFrame()
+        #expect(state.isMouseDown)
+        #expect(state.button == .left, "button の null は主釦")
+
+        // 量の null は 0 (欄を書かなかった 1 件と同じ量になる)
+        let omitted = InputState()
+        let nulled = InputState()
+        for (body, target) in [(#"{"type":"mouseMovedBy","dy":3}"#, omitted), (#"{"type":"mouseMovedBy","dx":null,"dy":3}"#, nulled)] {
+            let facet = try makeFacet()
+            try send(#"{"id":"n3","events":[\#(body)]}"#, to: facet)
+            #expect(InputInbox(directory: facet).drain(into: target)?.accepted == 1)
+            target.beginFrame()
+        }
+        #expect(nulled.movedX == omitted.movedX)
+        #expect(nulled.movedY == omitted.movedY)
+        #expect(nulled.movedY == 3)
+    }
+
+    @Test("必須の値の null は、欠けたのと同じに、その 1 件が通らない")
+    func rejectsANullInARequiredField() throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(
+            #"{"id":"n2","events":[{"type":"mouseDown","x":null,"y":2},{"type":"keyUp","code":null}]}"#,
+            to: facet)
+
+        let report = try #require(inbox.drain(into: state))
+        #expect(report.accepted == 0)
+        #expect(report.ignored == 2)
+        state.beginFrame()
+        #expect(!state.isMouseDown)
+    }
+
     @Test(
         "意味を持つ既定値が無い値が欠けていたら、その 1 件は通らない",
         arguments: [

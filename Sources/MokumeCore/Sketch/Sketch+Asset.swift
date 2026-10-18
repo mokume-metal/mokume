@@ -21,6 +21,14 @@ extension SketchPart {
     /// そのまま使う。mokume が読まない形式のファイルを、同梱した資材から読むのに使う。
     /// 外のパッケージが資材を読むときも、これを使えば利用者の置き方と食い違わない。
     ///
+    /// **在れば、ディレクトリでも返す** — フォルダを資材として解く使い方のため。だから作業
+    /// ディレクトリに同じ名前のフォルダがあると、同梱した本物のファイルより先にそれが解ける。
+    /// mokume の読む口 (``loadImage(_:)``・``loadTable(_:header:)`` など) はここと同じ並びで解いた先を
+    /// 開き、ディレクトリや読む権利の無いファイルは、見つからないとは言わずに**開けないもの**として、
+    /// 解けた場所と OS の事情を添えて投げる (``ImageFailure/unopenable(path:location:reason:)``・
+    /// ``DataFailure/unopenable(path:location:reason:)`` など・
+    /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+    ///
     /// - Throws: どこにも無いとき。説明には探した場所が載る。
     // shot: 撮れない 返すのはファイルの場所で、解く先の資材ファイルがこのリポジトリの例には無い
     public func assetURL(_ path: String) throws(AssetFailure) -> URL {

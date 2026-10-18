@@ -99,14 +99,18 @@ extension Canvas {
     /// ([#1151] — 手元の表示を `noLights()` から描いて影が丸ごと消えた)。
     ///
     /// [#1151]: https://github.com/mokume-metal/mokume/issues/1151
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
     func warnIfShadowHasNoCaster() {
         guard shadowsEnabled, shadowCaster == nil else { return }
+        // 直し先は面で違う ([#2780])。本体の面は `draw()`、自分でフレームを開く面はその対の中
+        let lateIn = isRuntimeSurface ? "draw()" : "the frame (between beginDraw() and endDraw())"
         warnOnce(
             .shadowWithoutCaster,
             "shadows(): the frame ended with no directionalLight() in place, so what is drawn "
                 + "at the end of the frame has no shadows. "
                 + "Shadows are baked when the frame is drawn out, from the lights in place then, "
-                + "so a noLights() late in draw() removes the shadows of everything drawn before it too")
+                + "so a noLights() late in \(lateIn) removes the shadows of everything drawn before "
+                + "it too")
     }
 
     /// 受け取れない値を、初回だけ知らせる。

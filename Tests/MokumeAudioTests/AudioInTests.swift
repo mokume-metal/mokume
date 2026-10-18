@@ -300,6 +300,21 @@ struct AudioInTests {
         runtime.closePlugins()
     }
 
+    @Test("ディレクトリと読む権利の無いファイルは、unopenable で開けない事情を名乗る (#2358)")
+    func unopenableNamesWhy() throws {
+        let places = UnopenablePlaces()
+        defer { places.cleanUp() }
+        let placed = try places.place("kick.wav")
+        var failures: [AudioFailure] = []
+        let runtime = try run(frames: 1, setup: { sketch in
+            for (path, _) in placed {
+                do throws(AudioFailure) { _ = try sketch.createAudioIn(file: path) } catch { failures.append(error) }
+            }
+        })
+        runtime.closePlugins()
+        #expect(failures == placed.map { .unopenable(path: $0.path, location: $0.path, reason: $0.reason) })
+    }
+
     // MARK: - 来ないときの知らせ
 
     private func stuck(

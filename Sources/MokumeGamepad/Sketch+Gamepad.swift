@@ -47,10 +47,10 @@ extension Sketch {
     /// - **呼んだときだけ見張り始める。** `import mokume` しただけでは、GameController に触れない
     /// - 許可は要らない。入力が届くのは、スケッチの窓が前面にある間だけである
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外で呼ぶと、返るパッドは走っている
-    /// スケッチに足されず、値が入らない。
+    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
+    /// 返るパッドは走っているスケッチに足されず、値が入らない。繋がっているパッドが 0 台でも、この口の名前で 1 度だけ警告する。
     public func gamepads() -> [Gamepad] {
-        GamepadRoster.roster(for: self).gamepads(for: self, from: .shared)
+        GamepadRoster.roster(for: self).gamepads(for: self, from: .shared, calledAs: #function)
     }
 
     /// 記録した入力の列を、ゲームパッドの代わりに流す。**機材を使わない。**
@@ -83,12 +83,15 @@ extension Sketch {
     /// 実機のパッドと同じ入れ物を通る — スティックは最新の 1 つ、釦は前のフレームとの差が
     /// 押し離しの出来事として落とさない列に入る。識別子は `"recorded #1"` の形になる。
     ///
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、走っている
+    /// スケッチに足されず何も入らない ``Gamepad`` を返し、この口の名前で 1 度だけ警告する。
+    ///
     /// - Parameter inputs: フレームごとの入力。抜かれているフレームは `nil`。空なら
     ///   ``Gamepad/state`` が ``SourceState/unavailable`` のまま何も入らない。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createGamepad(inputs: [GamepadInput?]) -> Gamepad {
-        GamepadRoster.roster(for: self).recorded(inputs, for: self)
+        GamepadRoster.roster(for: self).recorded(inputs, for: self, calledAs: #function)
     }
 }
 
@@ -122,24 +125,33 @@ final class GamepadRoster {
     }
 
     /// 係が振った識別子ごとのパッド。まだ無い・外されたものは作り、走っているスケッチへ足す。
-    func gamepads(for sketch: any Sketch, from hub: GamepadHub) -> [Gamepad] {
+    func gamepads(for sketch: any Sketch, from hub: GamepadHub, calledAs call: String) -> [Gamepad] {
+        // 繋がっているパッドが 0 台でも、外なら 1 度言う。他の作る口と同じく、見張り始める前に確かめる
+        _ = sketch.canAttach(calledAs: call, returning: Self.inertPads)
         hub.start()
         return hub.slots.known.map { id in
             if let pad = pads[id]?.pad, !pad.isClosed { return pad }
             let pad = Gamepad(
                 id: id, name: "gamepad: \(id)", source: ControllerSource(id: id, hub: hub))
-            // 走っていなければ足せない (足す口が診断に出す)。次に呼ばれたとき作り直す
-            if sketch.attach(pad) { pads[id] = WeakPad(pad: pad) }
+            // 走っていなければ足せない (上で言った)。次に呼ばれたとき作り直す
+            if sketch.attach(pad, calledAs: call, returning: Self.inertPads) {
+                pads[id] = WeakPad(pad: pad)
+            }
             return pad
         }
     }
 
+    /// 足されなかったときに返すものの綴り。
+    private static let inertPads = "gamepads that never report anything"
+
     /// 記録した入力を流すパッドを作り、走っているスケッチへ足す。
-    func recorded(_ inputs: [GamepadInput?], for sketch: any Sketch) -> Gamepad {
-        recordedCount += 1
-        let id = "recorded #\(recordedCount)"
+    func recorded(_ inputs: [GamepadInput?], for sketch: any Sketch, calledAs call: String) -> Gamepad {
+        // 番号は足せたときだけ進める。外で足せなかったパッドが番号を使うと、後の `setup()` のパッドが `recorded #2` から始まる
+        let id = "recorded #\(recordedCount + 1)"
         let pad = Gamepad(id: id, name: "gamepad (\(id))", source: RecordedGamepadSource(inputs: inputs))
-        sketch.attach(pad)
+        if sketch.attach(pad, calledAs: call, returning: "a gamepad that never reports anything") {
+            recordedCount += 1
+        }
         return pad
     }
 }

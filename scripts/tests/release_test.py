@@ -138,10 +138,7 @@ class ListItemTests(unittest.TestCase):
     def test_a_multi_paragraph_entry_stays_in_its_item(self):
         self.assertEqual(
             release.as_list_item("1 段落目。\n\n2 段落目。"),
-            "- 1 段落目。\n"
-            "  <details><summary>詳しく</summary>\n"
-            "\n"
-            "  1 段落目。\n"
+            "- <details><summary>1 段落目。</summary>\n"
             "\n"
             "  2 段落目。\n"
             "\n"
@@ -176,6 +173,41 @@ class ListItemTests(unittest.TestCase):
         self.assertEqual(escaped, [], f"{len(escaped)} 行が項目の外へ出ている")
 
 
+def folded_body(item: str) -> str:
+    """畳んだ項目の、開いた中身 (2 桁の下げを戻したもの)。"""
+    inside = item[item.index("</summary>") + len("</summary>"): item.index("</details>")]
+    return "\n".join(line.removeprefix("  ") for line in inside.split("\n")).strip()
+
+
+class InlineHtmlTests(unittest.TestCase):
+    """要約を `<summary>` に置く HTML へ直す (#2871)。"""
+
+    def test_bold_becomes_strong(self):
+        self.assertEqual(release.inline_html("**直した。**"), "<strong>直した。</strong>")
+
+    def test_code_is_escaped_and_not_read_as_markup(self):
+        self.assertEqual(release.inline_html("`a**b**<c` と書く"), "<code>a**b**&lt;c</code> と書く")
+
+    def test_a_link_becomes_an_anchor(self):
+        self.assertEqual(
+            release.inline_html("直した ([#1](https://example.com/1))。"),
+            '直した (<a href="https://example.com/1">#1</a>)。',
+        )
+
+    def test_an_autolink_becomes_an_anchor(self):
+        self.assertEqual(
+            release.inline_html("<https://mokume.org/> の入口"),
+            '<a href="https://mokume.org/">https://mokume.org/</a> の入口',
+        )
+
+    def test_bare_markup_characters_are_escaped(self):
+        self.assertEqual(release.inline_html("a < b & c"), "a &lt; b &amp; c")
+
+    def test_a_line_break_becomes_a_space(self):
+        # `<summary>` の中に改行を残さない (空行になれば HTML の塊が切れる)
+        self.assertEqual(release.inline_html("折り返した\n続き。"), "折り返した 続き。")
+
+
 class SummaryTests(unittest.TestCase):
     """見せる要約は最初の文で、全文は畳む (#2766)。"""
 
@@ -206,12 +238,30 @@ class SummaryTests(unittest.TestCase):
         self.assertNotIn("<details>", release.as_list_item("足した。"))
         self.assertNotIn("<details>", release.as_list_item("足した。\n"))
 
-    def test_the_folded_body_keeps_every_line_of_the_entry(self):
+    def test_the_summary_and_the_folded_body_make_the_whole_entry(self):
+        # 開いた中身は要約の後から始まり、要約と合わせて全文になる (#2871)
         entry = "変えた。\n\n移行:\n\n- `a` は `b` へ\n- `c` は消えた"
         item = release.as_list_item(entry)
-        self.assertTrue(item.startswith("- 変えた。\n  <details><summary>詳しく</summary>\n\n"))
-        inside = item[item.index("</summary>") + len("</summary>"): item.index("</details>")]
-        self.assertEqual("\n".join(line.removeprefix("  ") for line in inside.split("\n")).strip(), entry)
+        self.assertTrue(item.startswith("- <details><summary>変えた。</summary>\n\n  移行:\n"))
+        self.assertEqual(folded_body(item), "移行:\n\n- `a` は `b` へ\n- `c` は消えた")
+
+    def test_a_summary_cut_mid_paragraph_opens_on_the_rest_of_it(self):
+        item = release.as_list_item("足した。使い方はこう。\n\n次の段落。")
+        self.assertEqual(folded_body(item), "使い方はこう。\n\n次の段落。")
+
+    def test_no_item_carries_a_separate_label_line(self):
+        # 「詳しく」の札の行は出ない。要約そのものが開く札になる (#2871)
+        item = release.as_list_item("変えた。続き。")
+        self.assertEqual(item.split("\n")[0], "- <details><summary>変えた。</summary>")
+        self.assertNotIn("詳しく", item)
+
+    def test_real_summaries_carry_no_raw_markdown(self):
+        # 本物の changelog.d で、`<summary>` に描かれない Markdown の記号が残らないこと
+        rendered = release.notes(release.all_fragments())
+        summaries = re.findall(r"^- <details><summary>(.*?)</summary>$", rendered, flags=re.MULTILINE)
+        self.assertGreater(len(summaries), 0, "畳んだ項目が 1 つも無い")
+        raw = [s for s in summaries if re.search(r"\*\*|`|\]\(", re.sub(r"<code>.*?</code>", "", s))]
+        self.assertEqual(raw, [], f"{len(raw)} 件の要約に Markdown の記号が残っている")
 
     def test_real_notes_show_far_less_than_they_fold(self):
         # 本物の changelog.d を材料に、畳まずに見える分が全体の半分を下回ること

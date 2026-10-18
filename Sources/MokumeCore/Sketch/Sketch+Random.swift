@@ -138,6 +138,154 @@ extension SketchPart {
         return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: low, to: high) ?? 0
     }
 
+    /// 配列から 1 つ選んだ要素。**空の配列なら `nil`** (落ちない)。p5.js の `random(choices)` と同じ名前。
+    ///
+    /// ``random()`` と同じ列から引き、**呼ぶたびに列を 1 つ進める** (空の配列でも 1 つ進む)。粒の放出
+    /// (``emit(_:from:toward:rate:speed:life:size:color:)``) とも同じ列なので、``randomSeed(_:)`` を
+    /// 決めれば何度走らせても同じ要素が選ばれる。
+    ///
+    /// **Swift の `randomElement()` は種に従わない。** 同じ配列から選んでも、走らせるたびに違う
+    /// 要素が出る。種で揃えたい選択はこちらで書く。
+    ///
+    /// 下は 3 色のパレットから、四角ごとに 1 色を選んで塗ったもの。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     randomSeed(42)
+    ///     let palette = [color(240, 90, 60), color(250, 200, 80), color(80, 140, 220)]
+    ///     for row in 0..<6 {
+    ///         for column in 0..<8 {
+    ///             fill(random(palette) ?? color(0))
+    ///             square(14 + column * 48, 9 + row * 48, 40)
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 6 行 8 列の四角が、赤・黄・青の 3 色でばらばらに塗られている -->
+    ///     ![6 行 8 列の四角が、赤・黄・青の 3 色でばらばらに塗られている](https://i.gyazo.com/156c36111df16f17afbdabfd00120af5.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=70d9ff8d
+    public func random<Element>(_ choices: [Element]) -> Element? {
+        guard let runtime = Self.liveRuntime(.read(returning: "nil")) else { return nil }
+        return runtime.randomness.index(below: choices.count).map { choices[$0] }
+    }
+
+    /// 平均 0・標準偏差 1 の正規分布に従う値。Processing・p5.js の `randomGaussian()` と同じ。
+    ///
+    /// 0 のまわりに寄り、絶対値が 1 を超えるのは 3 回に 1 回ほど、2 を超えるのは 20 回に 1 回ほど。
+    /// 中心へ寄せて散らすのに使う。``random()`` と同じ列から引き、**1 回で列を 2 つ進める**。
+    /// 粒の放出 (``emit(_:from:toward:rate:speed:life:size:color:)``) とも同じ列で、``randomSeed(_:)``
+    /// を決めれば何度走らせても同じ値が出る。
+    ///
+    /// 下は 400 個の点を、中央から横へ `randomGaussian() * 60`・縦へ `randomGaussian() * 35` だけ
+    /// ずらして置いたもの。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 115, 64, 170)
+    ///     randomSeed(42)
+    ///     for _ in 0..<400 {
+    ///         circle(200 + randomGaussian() * 60, 150 + randomGaussian() * 35, 5)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 中央に寄った橙の点の群れ。中心ほど密で、外へ向かうほど疎らになる -->
+    ///     ![中央に寄った橙の点の群れ。中心ほど密で、外へ向かうほど疎らになる](https://i.gyazo.com/b74de3c8d079d0eb36f2c2266b0ed1ff.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=768b4289
+    public func randomGaussian() -> Float {
+        Self.liveRuntime(.read(returning: "0"))?.randomness.gaussian() ?? 0
+    }
+
+    /// 平均 `mean`・標準偏差 `sd` の正規分布に従う値。p5.js の `randomGaussian(mean, sd)` と同じ並び。
+    ///
+    /// ``randomGaussian()`` の値に `sd` を掛けて `mean` を足したもので、列の進め方も同じ (1 回で 2 つ)。
+    ///
+    /// 下は中央の縦線を平均にして、点の横の位置を引いたもの。標準偏差は上の段から 10・30・60。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     stroke(90)
+    ///     line(200, 0, 200, height)
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     randomSeed(42)
+    ///     for sd in [10, 30, 60] {
+    ///         for _ in 0..<80 {
+    ///             circle(randomGaussian(200, sd), 20 + random(60), 5)
+    ///         }
+    ///         translate(0, 100)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 3 段の点。どの段も中央の縦線のまわりに寄り、上の段は狭く、下の段ほど横へ広がる -->
+    ///     ![3 段の点。どの段も中央の縦線のまわりに寄り、上の段は狭く、下の段ほど横へ広がる](https://i.gyazo.com/6cc0b53fbb25353726ae6249b113c5f0.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=ec7af996
+    public func randomGaussian(_ mean: some ScalarConvertible, _ sd: some ScalarConvertible) -> Float {
+        let (mean, sd) = (mean.asFloat, sd.asFloat)
+        guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
+        return runtime.randomness.gaussian() * sd + mean
+    }
+
+    /// 要素を並べ替えた**新しい配列**。渡した配列は変わらない。p5.js の `shuffle(array)` と同じ名前。
+    ///
+    /// 結果を捨てると `unused result` の警告が出る — `shuffle(cards)` と書いても `cards` は混ざらない
+    /// ので、`cards = shuffle(cards)` と受け取る。
+    ///
+    /// ``random()`` と同じ列から引き、**要素の数より 1 少ない数だけ列を進める**。粒の放出
+    /// (``emit(_:from:toward:rate:speed:life:size:color:)``) とも同じ列で、``randomSeed(_:)`` を
+    /// 決めれば何度走らせても同じ並びになる。**Swift の `shuffled()` は種に従わない** — 走らせる
+    /// たびに違う並びになる。
+    ///
+    /// 下は左に低い順の灰色の棒、右に同じ高さを `shuffle` で並べ替えた橙の棒を置いたもの。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     randomSeed(42)
+    ///     let heights: [Float] = [30, 60, 90, 120, 150, 180, 210, 240]
+    ///     fill(90)
+    ///     for (i, h) in heights.enumerated() {
+    ///         rect(20 + i * 22, 270 - h, 18, h)
+    ///     }
+    ///     fill(242, 115, 64)
+    ///     for (i, h) in shuffle(heights).enumerated() {
+    ///         rect(210 + i * 22, 270 - h, 18, h)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左に灰色の棒が低い順に 8 本、右に同じ高さの橙の棒 8 本が入れ替わった順で並ぶ -->
+    ///     ![左に灰色の棒が低い順に 8 本、右に同じ高さの橙の棒 8 本が入れ替わった順で並ぶ](https://i.gyazo.com/9703b5d3037523dbaa89747b12897aec.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=092f4a6d
+    public func shuffle<Element>(_ array: [Element]) -> [Element] {
+        guard let runtime = Self.liveRuntime(.read(returning: "the array unchanged")) else { return array }
+        return runtime.randomness.shuffled(array)
+    }
+
     /// 乱数の種。同じ種を置いてから同じ順に呼べば、いつでも同じ列が出る。
     ///
     /// 下は 3 つの枠の中で、種を置いてから 30 個の点の位置を引いたもの。種は左から 7・7・8。

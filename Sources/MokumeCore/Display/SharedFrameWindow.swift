@@ -84,6 +84,16 @@ public final class SharedFrameWindow {
         set { stage.onGenerationPromoted = newValue }
     }
 
+    /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。
+    ///
+    /// **入れ替わりの知らせより遅いことがある。** 最初の世代は絵が来る前に採用されるので、
+    /// 「絵が見えるようになった」を待つ側はこちらを使う
+    /// ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
+    public var onGenerationShown: (() -> Void)? {
+        get { stage.onGenerationShown }
+        set { stage.onGenerationShown = newValue }
+    }
+
     /// × と `⌘W` を押されたときに確かめ、確定したら知らせる。
     ///
     /// **確かめている間は閉じない。** 繋がなければ AppKit の既定で閉じるので、絵の出口

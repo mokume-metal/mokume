@@ -36,6 +36,20 @@ enum RenderCommand {
     static let secondsFlags = ["--seconds"]
     static let outFlags = ["--out"]
 
+    /// 書き出しの選択肢の宣言 (`run` の選択肢に足すぶん)。``Command/valueOptions`` が `doctor` に
+    /// 同じ宣言を渡す。
+    static var options: [Arguments.Option] {
+        [
+            Arguments.Option(frameRateFlags) {
+                "\($0) needs a frame rate after it (frames per second, a whole number)"
+            },
+            Arguments.Option(secondsFlags) { "\($0) needs a length after it (in seconds)" },
+            Arguments.Option(outFlags, takesPlace: true) {
+                "\($0) needs somewhere to write after it (a .mov, or out/frame-####.png)"
+            },
+        ]
+    }
+
     static func run(_ arguments: [String]) throws(CommandFailure) {
         // **ビルドの前に解く。** 引数の誤りを、数分のビルドの後で知らせない
         let options = try parse(arguments)
@@ -103,16 +117,7 @@ enum RenderCommand {
         _ arguments: [String], currentDirectory: URL = GivenPath.currentDirectory
     ) throws(CommandFailure) -> Options {
         let (invocation, values) = try Invocation.parse(
-            arguments,
-            adding: [
-                Arguments.Option(frameRateFlags) {
-                    "\($0) needs a frame rate after it (frames per second, a whole number)"
-                },
-                Arguments.Option(secondsFlags) { "\($0) needs a length after it (in seconds)" },
-                Arguments.Option(outFlags, takesPlace: true) {
-                    "\($0) needs somewhere to write after it (a .mov, or out/frame-####.png)"
-                },
-            ], from: currentDirectory)
+            arguments, adding: options, from: currentDirectory)
 
         guard let rateText = values[frameRateFlags[0]], let secondsText = values[secondsFlags[0]],
             let out = values[outFlags[0]]

@@ -152,6 +152,57 @@ struct OrbitControlTests {
         #expect(try yaw(callsPerFrame: 1) == yaw(callsPerFrame: 2))
     }
 
+    // MARK: - 右ドラッグ・⌥ ドラッグで平行移動 (#2461)
+
+    /// 押して横へ 100 画素引きずった後の視点。`before` は押す前に流す出来事 (⌥ を押すなど)。
+    private func orbitAfterDragging(
+        _ button: MouseButton, before: [InputEvent] = []
+    ) throws -> (start: Orbit, end: Orbit, moved: Bool) {
+        let sketch = Subject()
+        let runtime = try makeRuntime(sketch)
+        for event in before { runtime.input.enqueue(event) }
+        runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: button))
+        try runtime.advance()
+        let start = try #require(sketch.seenOrbit)
+        let atPress = try pixels(runtime)
+        runtime.input.enqueue(.mouseMoved(x: 110, y: 32))
+        try runtime.advance()
+        return (start, try #require(sketch.seenOrbit), try pixels(runtime) != atPress)
+    }
+
+    /// 既定の視点では、注視点の奥行きの 1 画素が世界の 1 の長さになる (`Camera.fittingDistance`)。
+    /// だから 100 画素は、画面の横 (世界の +x) の向きに 100 である。
+    private func expectPannedLeft(_ start: Orbit, _ end: Orbit, _ label: String) {
+        #expect(end.yaw == start.yaw, "\(label): 平行移動で回った (\(start.yaw) → \(end.yaw))")
+        #expect(end.pitch == start.pitch, "\(label): 平行移動で傾いた")
+        #expect(abs(end.center.x - (start.center.x - 100)) < 1e-3, "\(label): 注視点が左へ 100 動いていない: \(end.center)")
+        #expect(abs(end.center.y - start.center.y) < 1e-3, "\(label): 注視点が縦に動いた")
+        #expect(abs(end.center.z - start.center.z) < 1e-3, "\(label): 注視点が奥行きに動いた")
+    }
+
+    @Test("右ボタンで右へ 100 画素引くと、回らずに注視点が画面の左の向きへ 100 画素ぶん動く")
+    func rightDragPans() throws {
+        let (start, end, moved) = try orbitAfterDragging(.right)
+        expectPannedLeft(start, end, "右ボタン")
+        #expect(moved, "平行移動しても絵が変わらない")
+    }
+
+    @Test("⌥ を押したまま左ボタンで引いても、右ボタンと同じに動く")
+    func optionLeftDragPans() throws {
+        let (start, end, _) = try orbitAfterDragging(
+            .left, before: [.keyDown(code: .option, characters: "", isRepeat: false)])
+        expectPannedLeft(start, end, "⌥ + 左ボタン")
+        let right = try orbitAfterDragging(.right)
+        #expect(end == right.end)
+    }
+
+    @Test("⌥ を押さない左ボタンは、今までどおり 100 画素で −1 ラジアン回り、注視点は動かない")
+    func plainLeftDragStillTurns() throws {
+        let (start, end, _) = try orbitAfterDragging(.left)
+        #expect(abs(end.yaw - (start.yaw - 100 * Orbit.radiansPerPixel)) < 1e-5)
+        #expect(end.center == start.center)
+    }
+
     // MARK: - 寄る
 
     @Test("スクロールすると寄り、絵が変わる")

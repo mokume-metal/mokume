@@ -440,4 +440,65 @@ extension SketchPart {
         let (left, right, bottom, top, near, far) = (left.asFloat, right.asFloat, bottom.asFloat, top.asFloat, near.asFloat, far.asFloat)
         canvas.ortho(left, right, bottom, top, near, far)
     }
+
+    /// 床の格子と 3 本の軸を出し、立体の空間の向きを読めるようにする。
+    ///
+    /// 縦軸が**下向き**・奥行きが**手前で正**という空間は手本の Processing と同じだが、
+    /// three.js や Blender から来ると読み違えやすい。`draw()` に 1 行書くと、面の中心・奥行き 0
+    /// (`(width / 2, height / 2, 0)`、既定の視点と ``orbit`` の見ている先と同じ所) を通る
+    /// 水平の面 (xz の面) に格子が出て、そこから 3 本の軸が伸びる。**軸の色は x が赤・y が緑・
+    /// z が青** (p5.js と同じ)。緑の軸が**画面の下へ**伸びるのが、縦軸が下向きであることの印である。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     // 斜め上から見下ろす
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     debugMode()
+    ///     lights()
+    ///     noStroke()
+    ///     fill(242, 115, 64)
+    ///     push()
+    ///     translate(260, 120, -60)
+    ///     box(50)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 斜め上から見た灰色の床の格子の中央から、赤・緑・青の短い軸が伸び、緑は下へ向かう。格子の右奥の上に橙色の箱が浮く -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// - 格子: 1 辺が面の短いほうの辺と同じ長さで、10 に割る。灰色で、太さは 1 画素
+    /// - 軸: 中心から +x・+y・+z へ、面の短いほうの辺の 1/4 の長さ。太さは 2 画素
+    ///
+    /// 描くのは**そのフレームの終わり**で、最後に効いていた視点から見た位置に出る。立体の陰に
+    /// 入れば隠れる。`translate()` などの変換・`stroke()` などのスタイル・``shader(_:)`` は効かない
+    /// (書いた値はそのまま次の図形に効き続ける)。大きさや分割を選ぶ引数はまだ無い。
+    ///
+    /// - Note: **シーンの記述なので、`draw()` の中で毎フレーム書く。** 書かなかったフレームには
+    ///   出ない。手本の p5.js は `setup()` で 1 度だけ書く形だが、ここでは `setup()` や止まっている
+    ///   間の入力のコールバックで書くと、ほかのシーンの記述 (``camera()``・``lights()`` など) と
+    ///   同じく警告して無視される。同じフレームで後から消すときは ``noDebugMode()``。
+    // shot: 後で撮る
+    public func debugMode() { Self.liveCanvas()?.debugMode() }
+
+    /// このフレームでは、``debugMode()`` の格子と軸を出さない。
+    ///
+    /// **同じフレームで後に書いたほうが勝つ。** `debugMode()` の後に書けば消え、前に書いても
+    /// 何も起きない。書かなかったフレームには最初から出ないので、出したくないときは
+    /// `debugMode()` を書かなければ足りる — これは、いつも `debugMode()` を書く部品の後で、
+    /// そのフレームだけ消したいときの口である。
+    ///
+    /// <!-- example: 文脈 var showsGuides = false -->
+    /// ```swift
+    /// debugMode()
+    /// if !showsGuides { noDebugMode() }   // 切り替えで消す
+    /// ```
+    ///
+    /// - Note: ``debugMode()`` と同じくシーンの記述で、`draw()` の外で書くと警告して無視される。
+    // shot: 参照 debugMode()
+    public func noDebugMode() { Self.liveCanvas()?.noDebugMode() }
 }

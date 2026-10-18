@@ -513,6 +513,7 @@ public final class SketchRuntime {
         let store = ParamStore.makeIfNeeded(for: registry)
         self.paramStore = store
         self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
+        canvas.isRuntimeSurface = true
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -551,6 +552,7 @@ public final class SketchRuntime {
         self.paramRegistry = ParamRegistry(of: sketch)
         self.params = params
         self.paramStore = paramStore
+        canvas.isRuntimeSurface = true
     }
 
     // MARK: - 進める
@@ -746,7 +748,9 @@ public final class SketchRuntime {
             }
             if let refusal {
                 observer.clearProducts()
-                finish(id: observation.id, through: observer, frames: [], complete: false, warnings: [refusal])
+                finish(
+                    id: observation.id, through: observer, frames: [], complete: false,
+                    warnings: [observation.unknownKeysWarning, refusal].compactMap { $0 })
                 return
             }
             requestedTime = Float(observation.time!)
@@ -811,6 +815,7 @@ public final class SketchRuntime {
         } catch {
             drawFailure = error
         }
+        lastFrameFailedToDraw = drawFailure != nil
         // **落とすのは描いた後。** `draw()` の中で呼ばれた `redraw()` を次のフレームへ
         // 持ち越すと、止めたはずのスケッチが回り続ける (手本も draw の中では効かない)
         redrawRequested = false
@@ -1233,6 +1238,14 @@ public final class SketchRuntime {
         readyOutletFrames.append(pending)
         return true
     }
+
+    /// 最後に進めたフレームの描画が転んだか ([#2769])。**転んだ間は、面の絵が描き終えていない**。止まって
+    /// いるスケッチが頼まれた `save()` のために絵を組み直す道 (``settleWithoutAnotherFrame(_:)``) は、
+    /// 閉じるときも含めて、転ぶ前の絵をそのフレームの番号で書いてしまうので通らない。予約は残り、次に
+    /// 描けた絵で書く。次に描けたフレームで下りる。
+    ///
+    /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
+    private var lastFrameFailedToDraw = false
 
     /// いま出す先の面の中身が、打ち切りで欠けたままか (``outletHeldDrop``)。
     private var outletSurfaceLacksDroppedWork: Bool {
@@ -1697,11 +1710,14 @@ public final class SketchRuntime {
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     /// [#1300]: https://github.com/mokume-metal/mokume/issues/1300
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
     @discardableResult
     private func settleWithoutAnotherFrame(_ patience: OutcomePatience = .wait) -> Bool {
         defer { detachRecorderIfDone() }
         guard deliverPendingToOutlets(patience) else { return false }
-        if recorder?.hasUnwrittenShots(upTo: timing.frameCount) == true, !outletSurfaceLacksDroppedWork {
+        if recorder?.hasUnwrittenShots(upTo: timing.frameCount) == true,
+            !outletSurfaceLacksDroppedWork, !lastFrameFailedToDraw
+        {
             encodeForOutlets()
             return deliverPendingToOutlets(patience)
         }

@@ -316,6 +316,8 @@ extension Canvas {
                 orWarn: "Could not wait for the GPU before writing compute values, so the write "
                     + "was called off")
         else { return }
+        // 全部を待てたので、環のいまのスロットへも書いてよい。書き込み口がこの印を見る (#2258)
+        frameRing.noteSettled()
         do {
             try submitPendingComputationsAndUploads()
             try gpu.settle()

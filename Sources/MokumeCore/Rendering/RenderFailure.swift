@@ -165,6 +165,16 @@ public enum RenderFailure: Error, Equatable, Sendable {
     case shaderSourceMissing(name: String)
 
     /// シェーダを組み立てられない。
+    ///
+    /// 理由はコンパイラの言葉のままだが、**入口を書き違えた断片では、期待する入口の形を
+    /// `<断片の名前>: error: …` の 1 行で先頭に足す** ([#2782](https://github.com/mokume-metal/mokume/issues/2782))。
+    /// リンクの段の `Undefined symbol(s)` は書いた断片のどこも指さないので、そのままでは説明の
+    /// 「理由が指す所を、書いた断片の中で直せ」が成り立たない。計算の入口の関数が無いときも、この
+    /// case で言う (組んだライブラリを見て断る。Metal に任せるとプロセスごと落ちる)。
+    ///
+    /// **`values:`・`surfaces:` の名前の誤りもこの case で言う** ([#2783](https://github.com/mokume-metal/mokume/issues/2783))。
+    /// 書けない字の並びは組み立ての前に断り、Metal で使えない名前 (予約語・型・マクロ) は組み立ての
+    /// 誤りに名指しの 1 行を足す。直す先は Swift の引数なので、説明の最後の行はそちらも挙げる。
     case shaderCompilationFailed(name: String, reason: String)
 
     /// シェーダを組み立てる口を作れない。
@@ -340,7 +350,8 @@ extension RenderFailure: CustomStringConvertible {
             """
             Cannot build the shader: \(name)
             \(reason)
-            Fix what the reason above points at, in the fragment you wrote.
+            Fix what the reason above points at — in the fragment you wrote, or, where it names
+            values: or surfaces:, in the names you pass from Swift.
             """
         case .shaderCompilerUnavailable:
             """

@@ -18,6 +18,9 @@ nonisolated struct Playhead: Equatable {
     private(set) var isPlaying = false
     /// 終わりから頭へ戻り続けるか。
     private(set) var isLooping = false
+    /// いまの区切りを、鳴っている間に飛んで始めたか (``jump(to:)``)。そうなら窓の区切りより前を
+    /// ファイルの標本で埋める — 飛ぶ前からその位置まで鳴っていたのと同じ窓にする。
+    private(set) var leapt = false
 
     init(length: Int) {
         self.length = max(1, length)
@@ -42,6 +45,16 @@ nonisolated struct Playhead: Equatable {
         if isPlaying { start = 0 }
         isPlaying = true
         isLooping = looping
+        leapt = false
+    }
+
+    /// 位置を `sample` へ移す。0 より前は頭、``length`` より後は終わりへ寄せる。
+    ///
+    /// 鳴っていれば、呼んだ側がそこから区切りを始め直す。その区切りの窓は、始まりより前を 0 でなく
+    /// ファイルの標本で埋める (``leapt``)。止まっていれば位置だけが動き、次に鳴らし始める位置になる。
+    mutating func jump(to sample: Int) {
+        start = min(max(sample, 0), length)
+        leapt = isPlaying
     }
 
     /// 止めて、いまの位置を覚える。鳴り終わっていれば頭へ戻す。
@@ -49,12 +62,14 @@ nonisolated struct Playhead: Equatable {
         guard isPlaying else { return }
         start = hasEnded(after: played) ? 0 : position(after: played)
         isPlaying = false
+        leapt = false
     }
 
     /// 止めて頭へ戻す。
     mutating func stop() {
         start = 0
         isPlaying = false
+        leapt = false
     }
 
     /// 鳴り終わっていれば止めて頭へ戻す。止めたなら `true`。
@@ -68,7 +83,8 @@ nonisolated struct Playhead: Equatable {
     /// 窓で、入力の窓 (``AudioAnalysis/window(of:sampleRate:endingAt:)``) と同じく古い順に並ぶ。
     ///
     /// - 止まっていれば全部 0
-    /// - 区切りの始まりより前は 0 (まだ鳴らしていない)
+    /// - 区切りの始まりより前は 0 (まだ鳴らしていない)。ただし鳴っている間に飛んで始めた区切り
+    ///   (``leapt``) は、始まりより前をファイルの標本で埋める (ファイルの頭より前は 0)
     /// - 1 度だけなら、終わりより後は 0。ループなら頭へ戻って続ける
     func window(of samples: [Float], after played: Int, size: Int = AudioAnalysis.windowSize)
         -> [Float]
@@ -77,8 +93,8 @@ nonisolated struct Playhead: Equatable {
         let played = max(0, played)
         return (0..<size).map { offset in
             let step = played - size + offset
-            guard step >= 0 else { return 0 }
             let index = start + step
+            guard step >= 0 else { return leapt && 0 <= index && index < samples.count ? samples[index] : 0 }
             if isLooping { return samples[index % samples.count] }
             return index < samples.count ? samples[index] : 0
         }
