@@ -305,7 +305,9 @@ struct ParameterStoreTests {
         try "これは JSON ではない".write(to: url, atomically: true, encoding: .utf8)
         let sketch = Knobbed()
         let restoration = store(for: sketch, at: url).restore()
-        #expect(restoration.isEmpty)
+        // 捨てたことは最初の応答に名前の無い 1 件で載る (#2806)
+        #expect(restoration.discarded == [.init(name: "", reason: .typeMismatch)])
+        #expect(restoration.clamped.isEmpty)
         #expect(sketch.radius == 80)
     }
 
@@ -491,6 +493,146 @@ struct ParameterStoreTests {
         let discarded = report["discarded"] as? [[String: Any]] ?? []
         #expect(discarded.contains { $0["name"] as? String == "count" })
         #expect(discarded.contains { $0["reason"] as? String == "unknownName" })
+    }
+
+    // MARK: - 読めない保存 (#2806)
+
+    /// 保存を置いて戻し、最初の応答まで通す。応答の `discarded` を `[名前: 理由]` の並びで返す。
+    private func restoreThroughTheFirstReport(
+        _ saved: String, into sketch: any Sketch, warnings: inout [String]
+    ) throws -> (restoration: ParamStore.Restoration, discarded: [[String: String]]) {
+        let url = try makeFile()
+        try saved.write(to: url, atomically: true, encoding: .utf8)
+        let facet = url.deletingLastPathComponent().appendingPathComponent("params", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let registry = ParamRegistry(of: sketch)
+        var said: [String] = []
+        let restoration = ParamStore(registry: registry, at: url, warn: { said.append($0) }).restore()
+        warnings = said
+        ParamSurface(directory: facet, registry: registry).start(after: restoration)
+        let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
+        let report = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let discarded = (report["discarded"] as? [[String: Any]] ?? []).map { entry in
+            entry.compactMapValues { $0 as? String }
+        }
+        return (restoration, discarded)
+    }
+
+    @Test("知らない type を 1 件含む保存は、その 1 件だけを捨て、残りは戻す")
+    func anUnknownTypeIsDiscardedAlone() throws {
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let (restoration, discarded) = try restoreThroughTheFirstReport(
+            #"{"schemaVersion":1,"values":[{"name":"radius","type":"float","value":40},{"name":"count","type":"matrix","value":1}]}"#,
+            into: sketch, warnings: &warnings)
+
+        #expect(restoration.discarded == [.init(name: "count", reason: .typeMismatch)])
+        #expect(discarded == [["name": "count", "reason": "typeMismatch"]])
+        #expect(sketch.radius == 40, "読めた値まで捨てた")
+        #expect(sketch.count == 3)
+        let line = try #require(warnings.first, "捨てたのに黙っていた")
+        #expect(warnings.count == 1)
+        #expect(line.contains("count"))
+        #expect(!line.contains("The declarations have changed"), "読めなかった値を宣言の変化のせいにした: \(line)")
+    }
+
+    @Test("Double に収まらない数を 1 件含む保存は、その 1 件だけを notFinite で捨て、残りは戻す")
+    func anOverflowingNumberIsDiscardedAlone() throws {
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let (restoration, discarded) = try restoreThroughTheFirstReport(
+            #"{"schemaVersion":1,"values":[{"name":"radius","type":"float","value":1e400},{"name":"count","type":"int","value":5}]}"#,
+            into: sketch, warnings: &warnings)
+
+        #expect(restoration.discarded == [.init(name: "radius", reason: .notFinite)])
+        #expect(discarded == [["name": "radius", "reason": "notFinite"]])
+        #expect(sketch.count == 5, "読めた値まで捨てた")
+        #expect(sketch.radius == 80)
+        #expect(warnings.count == 1 && warnings[0].contains("radius"), "\(warnings)")
+    }
+
+    @Test(
+        "外枠が読めない保存は、名前の無い typeMismatch を 1 件載せ、値はすべて既定",
+        arguments: [
+            #"{"schemaVersion":1,"values":3}"#,
+            "これは JSON ではない",
+            #"{"schemaVersion":1}"#,
+            #"{"schemaVersion":1,"values":null}"#,
+        ])
+    func anUnreadableFrameIsOneNamelessDiscard(_ saved: String) throws {
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let (restoration, discarded) = try restoreThroughTheFirstReport(
+            saved, into: sketch, warnings: &warnings)
+
+        #expect(restoration.discarded == [.init(name: "", reason: .typeMismatch)])
+        #expect(discarded == [["name": "", "reason": "typeMismatch"]])
+        #expect(sketch.radius == 80 && sketch.count == 3)
+        #expect(warnings.count == 1, "1 行で言う: \(warnings)")
+        #expect(warnings.first?.contains("Starting from the defaults") == true)
+    }
+
+    /// 宣言は組と色を持つ (#2805 の反証で見つかった、成分や整数の読み違いの経路)。
+    final class Shaped: Sketch {
+        @Param(0...10) var count: Int = 3
+        @Param var pair: SIMD2<Float> = SIMD2(1, 2)
+        @Param var triple: SIMD3<Float> = SIMD3(1, 2, 3)
+        @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
+        @Param var spinning: Bool = true
+    }
+
+    @Test(
+        "整数でない int・成分の 1e400 も、その 1 件だけを名指しで捨てる",
+        arguments: [
+            (#"{"name":"count","type":"int","value":2.5}"#, "count", "typeMismatch"),
+            (#"{"name":"pair","type":"vec2","value":[1e400,0]}"#, "pair", "notFinite"),
+            (#"{"name":"triple","type":"vec3","value":[0,0,-1e400]}"#, "triple", "notFinite"),
+            (#"{"name":"tint","type":"color","value":{"red":1e400,"green":0,"blue":0,"alpha":1}}"#, "tint", "notFinite"),
+            (#"{"name":"pair","type":"vec2","value":[1,2,3]}"#, "pair", "typeMismatch"),
+        ])
+    func anUnreadableEntryIsNamed(entry: String, name: String, reason: String) throws {
+        let sketch = Shaped()
+        var warnings: [String] = []
+        let (_, discarded) = try restoreThroughTheFirstReport(
+            #"{"schemaVersion":1,"values":[\#(entry),{"name":"spinning","type":"bool","value":false}]}"#,
+            into: sketch, warnings: &warnings)
+
+        #expect(discarded == [["name": name, "reason": reason]])
+        #expect(sketch.spinning == false, "同じ保存の読めた値まで捨てた")
+        #expect(sketch.count == 3 && sketch.pair == SIMD2(1, 2) && sketch.triple == SIMD3(1, 2, 3))
+        let line = try #require(warnings.first)
+        #expect(warnings.count == 1)
+        #expect(!line.contains("not valid JSON"), "数の読み違いを JSON でないと言った: \(line)")
+    }
+
+    @Test("宣言に無い名前は、中身が読めなくても unknownName。名前の読めない 1 件は名前を空にする")
+    func theNameComesFirstAndANamelessEntryIsEmpty() throws {
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let (_, discarded) = try restoreThroughTheFirstReport(
+            #"{"schemaVersion":1,"values":[{"name":"ghost","type":"matrix","value":1},{"type":"float","value":1},{"name":"count","type":"int","value":6}]}"#,
+            into: sketch, warnings: &warnings)
+
+        #expect(
+            discarded == [
+                ["name": "", "reason": "typeMismatch"],
+                ["name": "ghost", "reason": "unknownName"],
+            ])
+        #expect(sketch.count == 6)
+    }
+
+    @Test("宣言と合わない値と読めない値が混ざっても 1 行で言い、宣言の変化は合わなかったほうにだけ帰す")
+    func mixedDiscardsAreSaidInOneLine() throws {
+        let line = try #require(
+            ParamStore.notice(
+                for: [.init(name: "shape", reason: .notInChoices)],
+                unreadable: [.init(name: "count", reason: .typeMismatch), .init(name: "", reason: .typeMismatch)]))
+        #expect(!line.contains("\n"))
+        #expect(line.contains("Threw away 1 of the saved values: shape"))
+        #expect(line.contains("The declarations have changed"))
+        #expect(line.contains("Could not read 2 of the saved values"))
+        #expect(line.contains("count"))
+        #expect(ParamStore.notice(for: [], unreadable: []) == nil)
     }
 }
 

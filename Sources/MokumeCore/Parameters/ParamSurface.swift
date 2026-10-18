@@ -88,6 +88,22 @@ struct ParamRequest: ExchangeRequest {
             }
         }
 
+        /// 読めなかった 1 件の断り。読めた 1 件は `nil`。
+        ///
+        /// **名前が先** — 名前が読めて宣言に無いなら、読めなかった中身によらず `unknownName`
+        /// (上の「理由を決める順」)。要求に応える ``ParamSurface`` と保存を戻す ``ParamStore`` が
+        /// 同じ規則で名指すように、ここ 1 つに置く ([#2806](https://github.com/mokume-metal/mokume/issues/2806))。
+        func refusal(declaredIn registry: ParamRegistry) -> ParamReport.Rejection? {
+            switch reading {
+            case .value:
+                nil
+            case .unreadable(let reason):
+                .init(name: name, reason: registry.declares(name) ? reason : .unknownName)
+            case .nameless:
+                .init(name: "", reason: .typeMismatch)
+            }
+        }
+
         /// 読めなかった理由。
         private static func reason(unreadableBecauseOf error: any Error, typeName: ParamTypeName?)
             -> ParamReport.Rejection.Reason
@@ -338,20 +354,13 @@ final class ParamSurface: DeclarationWatcher {
         var rejected: [ParamReport.Rejection] = []
         var clamped: [ParamReport.Clamp] = []
         for entry in request.valuesInApplicationOrder {
-            // **読めなかった 1 件は、その 1 件だけ理由つきで載せ、残りは当てる** (#2496)
-            let value: ParamValue
-            switch entry.reading {
-            case .value(let read):
-                value = read
-            case .unreadable(let reason):
-                // **名前が先** — 綴りを間違えた書き手には、中身の誤りより先にそれを伝える
-                rejected.append(
-                    .init(name: entry.name, reason: registry.declares(entry.name) ? reason : .unknownName))
-                continue
-            case .nameless:
-                rejected.append(.init(name: "", reason: .typeMismatch))
+            // **読めなかった 1 件は、その 1 件だけ理由つきで載せ、残りは当てる** (#2496)。
+            // 名前が先 — 綴りを間違えた書き手には、中身の誤りより先にそれを伝える
+            if let refusal = entry.refusal(declaredIn: registry) {
+                rejected.append(refusal)
                 continue
             }
+            guard case .value(let value) = entry.reading else { continue }
             guard let outcome = registry.write(value, to: entry.name) else {
                 rejected.append(.init(name: entry.name, reason: .unknownName))
                 continue
