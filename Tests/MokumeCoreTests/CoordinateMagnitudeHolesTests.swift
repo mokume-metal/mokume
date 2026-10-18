@@ -105,6 +105,11 @@ struct CoordinateMagnitudeHolesTests {
         let low = probe.outer.reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) }
         let high = probe.outer.reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) }
         let step = SIMD2<Double>(high - low) / 24
+        // 三角形を 1 度だけ `Double` へ広げ、囲みの箱を添える (標本ごとに広げ直さない。debug は遅い)
+        let wideTriangles = triangles.map { t in
+            let (a, b, c) = (SIMD2<Double>(t.0), SIMD2<Double>(t.1), SIMD2<Double>(t.2))
+            return (a: a, b: b, c: c, low: simd_min(a, simd_min(b, c)), high: simd_max(a, simd_max(b, c)))
+        }
         var mismatches = 0
         for row in 0..<24 {
             for column in 0..<24 {
@@ -114,9 +119,11 @@ struct CoordinateMagnitudeHolesTests {
                 var turns = winding(point, outerD)
                 for hole in holesD { turns += winding(point, hole) }
                 var covered = 0
-                for t in triangles
-                where contains(point, SIMD2<Double>(t.0), SIMD2<Double>(t.1), SIMD2<Double>(t.2)) {
-                    covered += 1
+                for t in wideTriangles {
+                    // 囲みの箱の外は、中でも外でも結果が同じ (数えない) ので先に捨てる
+                    guard point.x >= t.low.x, point.x <= t.high.x, point.y >= t.low.y, point.y <= t.high.y
+                    else { continue }
+                    if contains(point, t.a, t.b, t.c) { covered += 1 }
                 }
                 if (covered > 0) != (turns != 0) || covered > 1 { mismatches += 1 }
             }

@@ -446,11 +446,18 @@ nonisolated struct StrokeCarving {
     // MARK: - 凸多角形の差
 
     /// 符号付きの面積の 2 倍。反時計回りで正。
+    ///
+    /// **最初の点からの差で足す。** 絶対座標のまま足すと、原点から遠い座標 (1e5) の小さな片で
+    /// 項が 1e10 になって `Float` の刻みが面積を越え、符号が反転する・0 に潰れる (片が裏返る・
+    /// 消える)。``Triangulation/signedArea(_:)`` と同じ ([#2725])。
+    ///
+    /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
     private static func twiceArea(_ points: [SIMD2<Float>], _ range: Range<Int>) -> Float {
+        let origin = points[range.lowerBound]
         var sum: Float = 0
-        var previous = points[range.upperBound - 1]
+        var previous = points[range.upperBound - 1] - origin
         for index in range {
-            let point = points[index]
+            let point = points[index] - origin
             sum += previous.x * point.y - previous.y * point.x
             previous = point
         }
