@@ -122,16 +122,16 @@ struct FormInstance {
     /// 穴の大きさは断片と同じ式で出す (`rect` は半幅 − 太さの半分、楕円は ``ellipseHole(radii:halfWeight:)``)。
     /// 潰れた穴 (どちらかの向きが 0 以下) は、描く画素によらず「含む」。
     ///
-    /// 扇 (`arc`) と線・点、輪郭の無い形は枝を持たないので、常に「含まない」。
+    /// 扇 (`arc`) の穴は、内接円の半径の上限 (``sectorDepthBound(radii:sweep:)``) から太さの半分を引いた
+    /// 1 つの半径で測る ([#2747])。線・点、輪郭の無い形は枝を持たないので、常に「含まない」。
     ///
     /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
     func mayHaveThinHole(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
         guard meta.w & Self.strokesFlag != 0,
-            meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue
+            meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || meta.x == Kind.arc.rawValue
         else { return false }
-        let half = SIMD2(size.x, size.y)
-        let hole = meta.x == Kind.ellipse.rawValue
-            ? Self.ellipseHole(radii: half, halfWeight: size.z) : half - size.z
+        let hole = holeHalfSize()
         guard hole.x > 0, hole.y > 0 else { return true }
         return isThin(half: hole, unitsPerDrawnPixel: unitsPerDrawnPixel)
     }
@@ -150,14 +150,15 @@ struct FormInstance {
     /// 特異値の上下の端の比べを解くぶん増える。特異値の端を平方根を使わずに 2 乗で比べて、決まらないときだけ
     /// 特異値を解く形にして、19.8 ns から縮めた。
     func mayHaveThinPart(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
-        guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue else { return false }
-        let fills = meta.w & Self.fillsFlag != 0
+        let isArc = meta.x == Kind.arc.rawValue
+        guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || isArc else { return false }
+        // 扇の塗りは細い枝を持たない
+        let fills = meta.w & Self.fillsFlag != 0 && !isArc
         let strokes = meta.w & Self.strokesFlag != 0
         let half = SIMD2(size.x, size.y)
         var hole = SIMD2<Float>(1, 1)
         if strokes {
-            hole = meta.x == Kind.ellipse.rawValue
-                ? Self.ellipseHole(radii: half, halfWeight: size.z) : half - size.z
+            hole = holeHalfSize()
             // 潰れた穴は描く画素によらず細い
             if hole.x <= 0 || hole.y <= 0 { return true }
         }
@@ -173,10 +174,34 @@ struct FormInstance {
         }
         if (fills && thin(half)) || (strokes && thin(hole)) { return true }
         // 近似の距離場では輪郭の位置がずれすぎる楕円 (``mayNeedExactRing(unitsPerDrawnPixel:)``)
-        return strokes && meta.x == Kind.ellipse.rawValue && size.x != size.y
+        return strokes && (meta.x == Kind.ellipse.rawValue || isArc) && size.x != size.y
             && Self.exactRingIsNeeded(
                 radii: half, halfWeight: size.z, rowNormsSquared: rowX + rowY,
                 determinant: determinant, unitsPerDrawnPixel: unitsPerDrawnPixel)
+    }
+
+    /// 輪郭の帯の穴の、形自身の座標での半幅・半径 (種別ごと。潰れていれば 0 以下)。`rect` は半幅 − 太さの
+    /// 半分、楕円は ``ellipseHole(radii:halfWeight:)``、扇は内接円の半径の上限から太さの半分を引いた 1 つの
+    /// 半径 (``sectorDepthBound(radii:sweep:)``・#2747)。断片の頂点関数と同じ式。
+    private func holeHalfSize() -> SIMD2<Float> {
+        let half = SIMD2(size.x, size.y)
+        switch meta.x {
+        case Kind.ellipse.rawValue:
+            return Self.ellipseHole(radii: half, halfWeight: size.z)
+        case Kind.arc.rawValue:
+            return SIMD2(repeating: Self.sectorDepthBound(radii: half, sweep: offset.w) - size.z)
+        default:
+            return half - size.z
+        }
+    }
+
+    /// 扇の中で、輪郭から最も深い所の深さ (扇に内接する円の半径) の上限 (形自身の座標)。断片の
+    /// `mokume_sectorDepthBound` (`Shapes.metal`) と同じ式で、理由もそちらにある。
+    static func sectorDepthBound(radii: SIMD2<Float>, sweep: Float) -> Float {
+        let longRadius = max(radii.x, radii.y)
+        let shortRadius = min(radii.x, radii.y)
+        let halfSine = sin(0.5 * min(sweep, Float.pi))
+        return min(shortRadius, longRadius * halfSine / (1 + halfSine))
     }
 
     /// 楕円の輪郭の内縁・外縁を、近似の距離場ではなく**真の距離**で解く枝に入りうるか ([#2742])。
@@ -190,7 +215,8 @@ struct FormInstance {
     ///
     /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
     func mayNeedExactRing(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
-        guard meta.w & Self.strokesFlag != 0, meta.x == Kind.ellipse.rawValue, size.x != size.y
+        guard meta.w & Self.strokesFlag != 0,
+            meta.x == Kind.ellipse.rawValue || meta.x == Kind.arc.rawValue, size.x != size.y
         else { return false }
         let determinant = linear.x * linear.w - linear.y * linear.z
         let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
