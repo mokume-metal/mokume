@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// URL の向こうの本文を受け取る。JSON (``SketchPart/loadJSONObject(_:)``) と XML
 /// (``SketchPart/loadXML(_:)``) が、名前が `http://` か `https://` で始まるときに使う。
@@ -145,7 +146,10 @@ nonisolated enum WebFile {
     }
 
     /// 受け取れなかった事情を、人が読む 1 文にする。
+    ///
+    /// **下に POSIX の事情があれば、その番号の C の文面** (``Diagnostics/posixReason(_:)``・#2839)。
+    /// 受け口の失敗 (繋がらない・名前が引けない、など) は今までどおり失敗の説明を返す。
     private static func reason(of error: any Error) -> String {
-        (error as NSError).localizedDescription
+        Diagnostics.posixCode(in: error).map(Diagnostics.posixReason) ?? (error as NSError).localizedDescription
     }
 }
