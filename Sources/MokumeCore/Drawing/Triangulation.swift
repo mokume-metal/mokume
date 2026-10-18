@@ -744,9 +744,12 @@ extension Triangulation {
         /// (ここでは止まることだけを約束している)。凸でない角は索引 (``ConcaveCorners``) から、
         /// 三角形に掛かりうる所だけを引く。
         ///
-        /// **角と同じ位置にある点は数えない。** 周が同じ点を 2 度通る形では、その点が三角形の
-        /// 角に重なる。数えると耳が永久に見つからない。位置を比べるのは中と判定された点だけで
-        /// よい (角に重なる点は必ず中と判定される) ので、比べる手間は大半の点で掛からない。
+        /// **角と同じ位置にある点は、その辺が耳の中へ入るときだけ数える。** 周が同じ点を 2 度通る
+        /// 形では、その点が三角形の角に重なる。位置が重なるだけで数えると耳が永久に見つからない。
+        /// 位置を比べるのは中と判定された点だけでよい (角に重なる点は必ず中と判定される) ので、
+        /// 比べる手間は大半の点で掛からない ([#2647])。
+        ///
+        /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
         func isEar(_ a: Int, _ b: Int, _ c: Int, comparisons: inout Int) -> Bool {
             let triangle = EarTriangle(
                 indices: (vertex[a], vertex[b], vertex[c]),
@@ -755,7 +758,8 @@ extension Triangulation {
                 return false
             }
             return !concave.anyBlocks(
-                triangle, vertex: vertex, points: points, comparisons: &comparisons)
+                triangle, vertex: vertex, previous: previous, next: next, points: points,
+                comparisons: &comparisons)
         }
     }
 
@@ -777,9 +781,19 @@ extension Triangulation {
         }
 
         /// その点が、三角形を耳でなくするか。比べた回数を `comparisons` へ積む。
+        ///
+        /// **三角形の角と同じ位置にある角は、その辺が耳の中へ入るときだけ塞ぐ** ([#2647])。
+        /// 周が同じ点を 2 度通る (穴が別の穴に触れる点) と、別の通り道の角が耳の角に重なる。
+        /// 数えると耳が永久に見つからないので、位置が重なるだけでは塞がない。ただし重なった角の
+        /// 辺 (前と後の点への向き) が耳の角の内側へ入るなら、その耳は形の中に入り込んでいる —
+        /// 通すと 2 つの穴の間の塗る所を 1 枚の三角形が跨いで、形の外を塗る。
+        ///
+        /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
         func isBlocked(
-            by index: Int, points: [SIMD2<Float>], comparisons: inout Int
+            by node: Int, vertex: [Int], previous: [Int], next: [Int], points: [SIMD2<Float>],
+            comparisons: inout Int
         ) -> Bool {
+            let index = vertex[node]
             if index == indices.0 || index == indices.1 || index == indices.2 { return false }
             let point = points[index]
             comparisons += 1
@@ -788,7 +802,20 @@ extension Triangulation {
                 ? Triangulation.isInside(point, a, b, c, margins: margins)
                 : Triangulation.isInside(point, a, b, c)
             guard inside else { return false }
-            return point != a && point != b && point != c
+            guard point == a || point == b || point == c else { return true }
+            let before = points[vertex[previous[node]]] - point
+            let after = points[vertex[next[node]]] - point
+            return entersCorner(at: point, toward: before) || entersCorner(at: point, toward: after)
+        }
+
+        /// 角 `point` から `direction` へ出る線が、耳の三角形の内側へ入るか (辺に沿うのは入らない)。
+        private func entersCorner(at point: SIMD2<Float>, toward direction: SIMD2<Float>) -> Bool {
+            guard direction != .zero else { return false }
+            // 三角形は反時計回り (`a`→`b`→`c`) で、内側は各辺の左
+            func left(_ edge: SIMD2<Float>) -> Bool { Triangulation.cross(edge, direction) > 0 }
+            if point == a { return left(b - a) && left(a - c) }
+            if point == b { return left(b - a) && left(c - b) }
+            return left(c - b) && left(a - c)
         }
 
         /// 箱 (`minX, minY, maxX, maxY`) の中の点が、三角形の中と判定されうるか。
@@ -994,22 +1021,25 @@ extension Triangulation {
 
         /// 三角形を耳でなくする角があるか。比べた回数を `comparisons` へ積む。
         func anyBlocks<Margin: EarMargin>(
-            _ triangle: EarTriangle<Margin>, vertex: [Int], points: [SIMD2<Float>],
-            comparisons: inout Int
+            _ triangle: EarTriangle<Margin>, vertex: [Int], previous: [Int], next: [Int],
+            points: [SIMD2<Float>], comparisons: inout Int
         ) -> Bool {
             for node in loose
-            where triangle.isBlocked(by: vertex[node], points: points, comparisons: &comparisons) {
+            where triangle.isBlocked(
+                by: node, vertex: vertex, previous: previous, next: next, points: points,
+                comparisons: &comparisons)
+            {
                 return true
             }
             guard !items.isEmpty else { return false }
             return anyBlocks(
-                triangle, level: levelStart.count - 2, box: 0, vertex: vertex, points: points,
-                comparisons: &comparisons)
+                triangle, level: levelStart.count - 2, box: 0, vertex: vertex, previous: previous,
+                next: next, points: points, comparisons: &comparisons)
         }
 
         private func anyBlocks<Margin: EarMargin>(
-            _ triangle: EarTriangle<Margin>, level: Int, box: Int, vertex: [Int], points: [SIMD2<Float>],
-            comparisons: inout Int
+            _ triangle: EarTriangle<Margin>, level: Int, box: Int, vertex: [Int], previous: [Int],
+            next: [Int], points: [SIMD2<Float>], comparisons: inout Int
         ) -> Bool {
             let flat = levelStart[level] + box
             guard alive[flat] > 0, triangle.mayContainPoints(in: boxes[flat]) else { return false }
@@ -1017,7 +1047,8 @@ extension Triangulation {
             if level == 0 {
                 for index in first..<min(first + Self.fanOut, items.count) where itemAlive[index] {
                     if triangle.isBlocked(
-                        by: vertex[items[index]], points: points, comparisons: &comparisons)
+                        by: items[index], vertex: vertex, previous: previous, next: next,
+                        points: points, comparisons: &comparisons)
                     {
                         return true
                     }
@@ -1027,8 +1058,8 @@ extension Triangulation {
             let childCount = levelStart[level] - levelStart[level - 1]
             for child in first..<min(first + Self.fanOut, childCount)
             where anyBlocks(
-                triangle, level: level - 1, box: child, vertex: vertex, points: points,
-                comparisons: &comparisons)
+                triangle, level: level - 1, box: child, vertex: vertex, previous: previous,
+                next: next, points: points, comparisons: &comparisons)
             {
                 return true
             }

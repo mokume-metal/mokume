@@ -240,4 +240,36 @@ struct ContourFillTests {
         #expect(result.missing == 0)
         #expect(result.spilled == 0)
     }
+
+    /// 辺を共有する穴 ([#2647])。三角形の面積は `SharedEdgeHolesTests` が CPU だけで数えるので、
+    /// ここは画素に出ることを 2 場面で 1 回ずつ確かめる。穴は外周と逆回り (画面の座標で)。
+    ///
+    /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
+    @Test("辺を共有する 2 つの穴は、穴だけが抜ける (#2647)")
+    func holesSharingAnEdgeArePunched() throws {
+        func box(_ x0: Float, _ y0: Float, _ x1: Float, _ y1: Float) -> [SIMD2<Float>] {
+            [SIMD2(x0, y0), SIMD2(x0, y1), SIMD2(x1, y1), SIMD2(x1, y0)]
+        }
+        // 穴 A (30..40 × 30..50) と穴 B (20..40 × 50..80) が、y = 50 の x 30..40 の辺を共有する
+        let result = try tally([square, box(30, 30, 40, 50), box(20, 50, 40, 80)])
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+        #expect(result.painted == 140 * 140 - 200 - 600)
+    }
+
+    @Test("辺を共有する穴が、別の 2 つの穴の角に触れても、穴だけが抜ける (#2647)")
+    func aSharedEdgeBetweenTouchingHolesIsPunched() throws {
+        func box(_ x0: Float, _ y0: Float, _ x1: Float, _ y1: Float) -> [SIMD2<Float>] {
+            [SIMD2(x0, y0), SIMD2(x0, y1), SIMD2(x1, y1), SIMD2(x1, y0)]
+        }
+        // H1 (90..120 × 80..90)・H2 (90..110 × 100..130)・H3 (70..90 × 90..100)・H4 (70..80 × 100..110)。
+        // H3 は H1 と H2 の角に触れ、H4 の上辺が H3 の下辺に載る
+        let result = try tally([
+            square, box(90, 80, 120, 90), box(90, 100, 110, 130), box(70, 90, 90, 100),
+            box(70, 100, 80, 110),
+        ])
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+        #expect(result.painted == 140 * 140 - 300 - 600 - 200 - 100)
+    }
 }
