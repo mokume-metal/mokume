@@ -95,6 +95,20 @@ nonisolated struct Invocation: Equatable {
     /// ビルドの置き場を選ぶ綴り。構成と同じ理由で道具立てに合わせる。
     static let scratchPathFlags = ["--scratch-path"]
 
+    /// 走らせる部分の選択肢の宣言 (構成・置き場)。**宣言はここに 1 つだけ置く** — `doctor` が
+    /// 値を場所に取り違えないように同じ宣言を使う (``Command/valueOptions``)。写すと、
+    /// 片方だけが `takesPlace` を持つようにずれる ([#2484](https://github.com/mokume-metal/mokume/issues/2484))。
+    @MainActor static var options: [Arguments.Option] {
+        [
+            Arguments.Option(configurationFlags, accepts: { configurations.contains($0) }) {
+                "\($0) needs a configuration after it (\(configurations.joined(separator: " / ")))"
+            },
+            Arguments.Option(scratchPathFlags, takesPlace: true) {
+                "\($0) needs a build directory after it"
+            },
+        ]
+    }
+
     /// 引数を解く。
     ///
     /// **骨格は ``Arguments`` が持つ。** ここに書くのは宣言 — どの綴りが値を取るかと、
@@ -131,15 +145,7 @@ nonisolated struct Invocation: Equatable {
         from currentDirectory: URL = GivenPath.currentDirectory
     ) throws(CommandFailure) -> (invocation: Invocation, values: [String: String]) {
         let parsed = try Arguments.parse(
-            arguments,
-            options: [
-                Arguments.Option(configurationFlags) {
-                    "\($0) needs a configuration after it (\(configurations.joined(separator: " / ")))"
-                },
-                Arguments.Option(scratchPathFlags, takesPlace: true) {
-                    "\($0) needs a build directory after it"
-                },
-            ] + extra, positionalIsPlace: true,
+            arguments, options: options + extra, positionalIsPlace: true,
             surplus: .reject { "Only one directory: \($0)" })
         let configuration = parsed.values[configurationFlags[0]]
         // 打たれた綴りは解いた結果に残らないので、両方を名乗る

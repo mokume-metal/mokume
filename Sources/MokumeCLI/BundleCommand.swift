@@ -118,15 +118,19 @@ enum BundleCommand {
 
     // MARK: - 引数
 
+    /// 選択肢の宣言。``Command/valueOptions`` が `doctor` に同じ宣言を渡す。
+    static var options: [Arguments.Option] {
+        [
+            Arguments.Option(["--out"], takesPlace: true) {
+                "\($0) needs a directory\n\n" + Command.usage()
+            }
+        ]
+    }
+
     /// 引数を解く。骨格は ``Arguments`` が持ち、ここは宣言だけを書く。
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Options {
         let parsed = try Arguments.parse(
-            arguments,
-            options: [
-                Arguments.Option(["--out"], takesPlace: true) {
-                    "\($0) needs a directory\n\n" + Command.usage()
-                }
-            ],
+            arguments, options: options,
             positionalIsPlace: true,
             surplus: .reject { "Only one directory: \($0)" })
         return Options(
@@ -352,19 +356,38 @@ enum BundleCommand {
 
           \(note.path)
 
-        Before sending, check that nothing still resolves through the author's environment:
+        Before sending, check that nothing still resolves through the author's environment.
+        Once it draws, quit the app: .build is put back as soon as it closes,
+        or if you stop this with Ctrl-C.
 
           \(checkLine(for: app, package: package))
 
-        If it still draws with .build moved aside, the bundle carries all it needs.
+        If it draws with .build moved aside, the bundle carries all it needs.
         """
     }
 
     /// 確かめ方の 1 行。スケッチの `.build` を退避して `.app` を開き、戻す。
+    ///
+    /// **`open -W` で、アプリを閉じるまで `.build` を戻さない** (#2833)。`open` は起動を
+    /// 頼むとすぐ戻るので、アプリが資材を読む前に `.build` が戻りうる。そうなると作者の環境
+    /// (`.build` の下の束) を通して読めてしまい、確かめ方が素通りする。代償は、アプリを
+    /// 閉じるまで端末に戻らないこと — ``report(for:package:note:signedAs:)`` が閉じるよう言う。
+    ///
+    /// **`-n` で、動いているアプリがあっても新しく起こす。** `-W` だけでは、同じアプリが
+    /// 既に動いていると、新しく起動せずそれを前に出してその終了を待つだけになる。資材を読み
+    /// 終えたアプリが描いているのを見て、確かめ方が素通りする。
+    ///
+    /// **待つ間に止められても `.build` を戻す。** 待ちが長いので、Ctrl-C や端末を閉じる
+    /// (HUP・INT・TERM) が起きうる。戻す手が行の最後にあるだけだと `.build` が
+    /// `.build-held` のまま残り、次のビルドが全部やり直しになる。包む殻 `( … )` の中で EXIT に
+    /// 戻す手を掛け、信号は `exit` に倒して EXIT を通す。殻の中で変数に置くので、貼った人の
+    /// 殻に名前が残らず、trap の文字列にパスを写さずに済む (パスの引用は変数の代入が受け持つ)。
     static func checkLine(for app: URL, package: URL) -> String {
         let build = GivenPath.shellWord(package.appendingPathComponent(".build"))
         let held = GivenPath.shellWord(package.appendingPathComponent(".build-held"))
-        return "mv \(build) \(held) && open \(GivenPath.shellWord(app)) ; mv \(held) \(build)"
+        return "( build=\(build); held=\(held); mv \"$build\" \"$held\" || exit;"
+            + " trap 'mv \"$held\" \"$build\"' EXIT; trap exit HUP INT TERM;"
+            + " open -n -W \(GivenPath.shellWord(app)) )"
     }
 
     /// どちらの段で署名したかを 1 行で言う。

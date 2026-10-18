@@ -57,18 +57,75 @@ enum ShaderSource {
         return body
     }
 
-    /// 値の名前と、その形。
+    /// `values:`・`surfaces:` の名前が、断片の中で `values.<名前>`・`surfaces.<名前>` と書ける字の並びか
+    /// ([#2783])。
     ///
-    /// 名前は**断片の中でそのまま書ける識別子**になる。並べる順は名前順に固定する
-    /// (辞書の順序に依らせると、同じ断片が実行のたびに別の原稿になる)。
-    static func declaration(of values: [String: ShaderValue]) -> String {
+    /// 受けるのは、文字か `_` で始まり、文字・数字・`_` が続く空でない名前。**ASCII の外の文字も
+    /// 受ける** — Metal は `波` を識別子として通すので、ASCII に絞ると今組める名前を断る。判定は
+    /// C++ の識別子と同じ Unicode の XID_Start / XID_Continue で引く。
+    ///
+    /// 字の並びが通っても Metal で使えない名前 (予約語・組み込みの型・前置きのマクロ) は、表を
+    /// 持たずに組み立ての誤りから言い直す (``DeclaredNames``)。
+    ///
+    /// [#2783]: https://github.com/mokume-metal/mokume/issues/2783
+    static func isUsableName(_ name: String) -> Bool {
+        guard let first = name.unicodeScalars.first, first == "_" || first.properties.isXIDStart else {
+            return false
+        }
+        return name.unicodeScalars.dropFirst().allSatisfy { $0.properties.isXIDContinue }
+    }
+
+    /// `values:`・`surfaces:` の名前のうち、字の並びが書けないものを名指しする理由 ([#2783])。
+    /// 1 つも無ければ `nil`。
+    ///
+    /// **組み立てに任せない。** 名前は宣言 (`declaration(of:)`) へそのまま書かれるので、
+    /// `tint color` は本体の前置きの名 (`mokume/Values:2:15: error: …`) で出て、直す先が Swift の
+    /// 引数だと分からない。空の名前と `;` を含む名前はそもそも誤りにならず、宣言の欄と詰める値
+    /// (``pack(_:)``) がずれたまま組み上がって、断片が別の値を読む。
+    ///
+    /// 呼ぶのは利用者の断片を組む唯一の口 (`ShaderLibraries` の利用者の断片の仕事) で、組み立ての
+    /// 前に断る。行の形は入口の言い直し (``ShaderEntryPoint``) と同じ `<断片の名前>: error: …`。
+    ///
+    /// [#2783]: https://github.com/mokume-metal/mokume/issues/2783
+    static func unusableNames(
+        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:], in fragment: String
+    ) -> String? {
+        let unusable =
+            values.keys.filter { !isUsableName($0) }.sorted().map { ("values:", "values", $0) }
+            + surfaces.keys.filter { !isUsableName($0) }.sorted().map { ("surfaces:", "surfaces", $0) }
+        guard !unusable.isEmpty else { return nil }
+        return unusable.map { argument, prefix, name in
+            "\(oneLine(fragment)): error: the name \(name.debugDescription) in \(argument) cannot be "
+                + "read in the fragment as \(prefix).<name>. A name has to start with a letter or an "
+                + "underscore and hold only letters, digits and underscores, so rename it where you "
+                + "pass \(argument)"
+        }.joined(separator: "\n")
+    }
+
+    /// 宣言の 1 行と、その行に書いた名前 (名前を書かない行は `nil`)。
+    typealias DeclarationLine = (text: String, name: String?)
+
+    /// 値の宣言の行。1 行目が `struct Values {` で、名前の行は ``pack(_:)`` と同じ並び。
+    static func declarationLines(of values: [String: ShaderValue]) -> [DeclarationLine] {
         // 4 成分のものを先に並べる。16 バイト境界に揃うものを先に置けば、
         // 詰め物の入り方が Swift 側の並べ方と一致する
         let sorted = values.sorted { ($0.value.componentCount, $0.key) > ($1.value.componentCount, $1.key) }
-        let fields = sorted.map { "    \($0.value.metalType) \($0.key);" }
         // 空の構造体は大きさが処理系任せになるので、必ず 1 つは入れておく
-        let body = fields.isEmpty ? "    float4 mokume_unused;" : fields.joined(separator: "\n")
-        return "struct Values {\n\(body)\n};\n"
+        let fields: [DeclarationLine] =
+            sorted.isEmpty
+            ? [("    float4 mokume_unused;", nil)]
+            : sorted.map { ("    \($0.value.metalType) \($0.key);", $0.key) }
+        return [("struct Values {", nil)] + fields + [("};", nil)]
+    }
+
+    /// 値の名前と、その形。
+    ///
+    /// 名前は**断片の中でそのまま書ける識別子**になる (字の並びは組み立ての前に
+    /// ``unusableNames(values:surfaces:in:)`` が検め、Metal で使えない名前は ``DeclaredNames`` が
+    /// 言い直す)。並べる順は名前順に固定する
+    /// (辞書の順序に依らせると、同じ断片が実行のたびに別の原稿になる)。
+    static func declaration(of values: [String: ShaderValue]) -> String {
+        declarationLines(of: values).map(\.text).joined(separator: "\n") + "\n"
     }
 
     /// 値を、宣言した並びのとおりに詰める。
@@ -80,6 +137,27 @@ enum ShaderSource {
         // 構造体の大きさは 16 バイト境界へ切り上がる
         while packed.count % 4 != 0 { packed.append(0) }
         return packed
+    }
+
+    /// 面の宣言の行。1 枚も無ければ空。
+    static func declarationLines(of surfaces: [String: ShaderSurface]) -> [DeclarationLine] {
+        let names = surfaces.keys.sorted()
+        guard !names.isEmpty else { return [] }
+        let slots = (0..<ShapePipeline.surfaceCapacity)
+            .map { "metal::texture2d<float> s\($0)" }.joined(separator: ", ")
+        var lines: [DeclarationLine] = [
+            ("#define MOKUME_SURFACES \(names.count)", nil), ("struct Surfaces {", nil),
+        ]
+        // **名前空間ごと書く。** この前置きは共通部分より前に出るので、`using namespace
+        // metal;` がまだ効いていない (裸の `texture2d` は「そんな型は無い」で落ちる)
+        lines += names.map { ("    metal::texture2d<float> \($0);", $0) }
+        lines += [
+            ("};", nil), ("static inline Surfaces mokume_surfaces(\(slots)) {", nil),
+            ("    Surfaces surfaces;", nil),
+        ]
+        lines += names.enumerated().map { ("    surfaces.\($0.element) = s\($0.offset);", $0.element) }
+        lines += [("    return surfaces;", nil), ("}", nil)]
+        return lines
     }
 
     /// 面の名前と、断片からの受け取り方。
@@ -96,27 +174,90 @@ enum ShaderSource {
     ///
     /// [#407]: https://github.com/mokume-metal/mokume/issues/407
     static func declaration(of surfaces: [String: ShaderSurface]) -> String {
-        let names = surfaces.keys.sorted()
-        guard !names.isEmpty else { return "" }
-        // **名前空間ごと書く。** この前置きは共通部分より前に出るので、`using namespace
-        // metal;` がまだ効いていない (裸の `texture2d` は「そんな型は無い」で落ちる)
-        let fields = names.map { "    metal::texture2d<float> \($0);" }.joined(separator: "\n")
-        let slots = (0..<ShapePipeline.surfaceCapacity)
-            .map { "metal::texture2d<float> s\($0)" }.joined(separator: ", ")
-        let assignments = names.enumerated()
-            .map { "    surfaces.\($0.element) = s\($0.offset);" }.joined(separator: "\n")
-        return """
-            #define MOKUME_SURFACES \(names.count)
-            struct Surfaces {
-            \(fields)
-            };
-            static inline Surfaces mokume_surfaces(\(slots)) {
-                Surfaces surfaces;
-            \(assignments)
-                return surfaces;
-            }
+        let lines = declarationLines(of: surfaces)
+        guard !lines.isEmpty else { return "" }
+        return lines.map(\.text).joined(separator: "\n") + "\n"
+    }
 
-            """
+    /// 本体が渡された名前から作った宣言の、行ごとの名前。組み立ての誤りが宣言を指したら、その名前を
+    /// Swift の引数として名指す ([#2783] の反証)。
+    ///
+    /// 字の並びは通っても Metal で使えない名前がある — 予約語や組み込みの型 (`half` は
+    /// `float half;` になる)、前置きのマクロ (`MOKUME_SURFACES`)。**表は持たない。** 予約語・型・
+    /// マクロは Metal と前置きの版で増えるので、表はいずれ食い違う。代わりに組み立ての誤りを読む:
+    ///
+    /// - 誤り (error) が `mokume/Values:<行>` か `mokume/Surfaces:<行>` を指したら、その行に書いた名前
+    /// - `note: expanded from macro '<名前>'` の名前が渡した名前なら、その名前 (前置きのマクロと同じ
+    ///   名前の値を断片で読むと、誤りは書いた断片の行に出て、マクロの知らせが添う)
+    ///
+    /// 言い直しは理由の先頭に `<断片の名前>: error: the name "<名前>" in values: …` を名前ごとに
+    /// 1 行ずつ足し、Metal の文面は下に残す。
+    ///
+    /// [#2783]: https://github.com/mokume-metal/mokume/issues/2783
+    nonisolated struct DeclaredNames: Sendable {
+        /// `mokume/Values` の行 (1 から) ごとの名前。
+        let valueLines: [Int: String]
+        /// `mokume/Surfaces` の行 (1 から) ごとの名前。
+        let surfaceLines: [Int: String]
+        let values: Set<String>
+        let surfaces: Set<String>
+
+        /// 理由を、名指しの行を先頭に足した形で返す。宣言の名前に当たらなければそのまま返す。
+        func restating(_ reason: String, in fragment: String) -> String {
+            var named: [(argument: String, name: String)] = []
+            func note(_ argument: String, _ name: String?) {
+                guard let name, !named.contains(where: { $0.argument == argument && $0.name == name })
+                else { return }
+                named.append((argument, name))
+            }
+            for line in reason.split(separator: "\n") {
+                if let row = Self.row(of: line, in: "mokume/Values") {
+                    note("values:", valueLines[row])
+                } else if let row = Self.row(of: line, in: "mokume/Surfaces") {
+                    note("surfaces:", surfaceLines[row])
+                } else if let macro = Self.expandedMacro(in: line) {
+                    if values.contains(macro) { note("values:", macro) }
+                    if surfaces.contains(macro) { note("surfaces:", macro) }
+                }
+            }
+            guard !named.isEmpty else { return reason }
+            let lines = named.map { argument, name in
+                "\(ShaderSource.oneLine(fragment)): error: the name \(name.debugDescription) in "
+                    + "\(argument) cannot be used in Metal (a keyword, a type or a macro takes it), so "
+                    + "rename it where you pass \(argument)"
+            }
+            return (lines + [reason]).joined(separator: "\n")
+        }
+
+        /// `<区切り>:<行>:<桁>: error:` の行の、行。誤り (error) の行だけを読む。
+        private static func row(of line: Substring, in part: String) -> Int? {
+            guard line.hasPrefix(part + ":"), line.contains(": error:") else { return nil }
+            return Int(line.dropFirst(part.count + 1).prefix { $0.isNumber })
+        }
+
+        /// `note: expanded from macro '<名前>'` の名前。
+        private static func expandedMacro(in line: Substring) -> String? {
+            let marker = "note: expanded from macro '"
+            guard let start = line.range(of: marker)?.upperBound,
+                let end = line[start...].firstIndex(of: "'")
+            else { return nil }
+            return String(line[start..<end])
+        }
+    }
+
+    /// ``DeclaredNames`` を、宣言と同じ行の並び (`declarationLines(of:)`) から作る。
+    static func declaredNames(
+        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:]
+    ) -> DeclaredNames {
+        func rows(_ lines: [DeclarationLine]) -> [Int: String] {
+            var rows: [Int: String] = [:]
+            for (index, line) in lines.enumerated() { rows[index + 1] = line.name }
+            return rows
+        }
+        return DeclaredNames(
+            valueLines: rows(declarationLines(of: values)),
+            surfaceLines: rows(declarationLines(of: surfaces)),
+            values: Set(values.keys), surfaces: Set(surfaces.keys))
     }
 
     /// 原稿の 1 区切りと、その名前。組み立てた原稿の中で、区切りの頭の `#line` がこの名前と
@@ -180,13 +321,23 @@ enum ShaderSource {
             case "\\": escaped += "\\\\"
             case "\"": escaped += "\\\""
             case "?": escaped += "\\?"
-            case _ where character.isNewline
-                || character.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }):
-                escaped += " "
+            case _ where breaksTheLine(character): escaped += " "
             default: escaped.append(character)
             }
         }
         return "#line 1 \"\(escaped)\"\n"
+    }
+
+    /// 改行と制御文字 (NUL を含む) か。1 行に収める文面で、空白に直す字。
+    nonisolated static func breaksTheLine(_ character: Character) -> Bool {
+        character.isNewline
+            || character.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
+    }
+
+    /// 名前を、1 行を割らない形にする (改行と制御文字を空白に)。`name:` は利用者が何でも書けるので、
+    /// 言い直しの 1 行 (`<断片の名前>: error: …`) に入れる前に通す。
+    nonisolated static func oneLine(_ name: String) -> String {
+        String(name.map { breaksTheLine($0) ? " " : $0 })
     }
 }
 

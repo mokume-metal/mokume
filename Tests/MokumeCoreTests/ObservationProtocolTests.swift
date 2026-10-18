@@ -85,12 +85,78 @@ struct ObservationProtocolTests {
         #expect(Self.request(second)?.scale == 0.5)
     }
 
-    @Test("知らない鍵は無視する")
-    func ignoresUnknownKeys() throws {
+    /// **知らない鍵があっても、要求は失敗させず撮る** (ADR-0018 決定 3。新しい書き手が足したキーを
+    /// 古いスケッチが断らない)。ただし**黙って捨てない** — `scale` の綴りの誤りが、警告なしの等倍に
+    /// なる (#2392)。応答の `warnings` に知らない名前を載せる。
+    @Test("知らない鍵は無視して撮り、警告で名乗る")
+    func ignoresUnknownKeysAndNamesThem() throws {
         let facet = try makeFacet()
         let observer = FrameObserver(directory: facet)
         try write(request: #"{"id":"a1","somethingNew":42}"#, to: facet)
-        #expect(observer.pendingRequest()?.id == "a1")
+        let pending = observer.pendingRequest()
+        #expect(pending?.id == "a1")
+        let request = try #require(Self.request(pending), "知らない鍵で要求が解けなくなった")
+        #expect(request.unknownKeys == ["somethingNew"])
+        let warnings = request.clamped().warnings
+        #expect(warnings.count == 1, "\(warnings)")
+        #expect(warnings.first?.contains("somethingNew") == true, "\(warnings)")
+    }
+
+    @Test("綴りを誤った鍵は、等倍で撮ったうえで名乗る")
+    func namesAMisspelledKey() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"x3","sacle":0.5}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request.id == "x3")
+        #expect(request.scale == 1, "知らない鍵 sacle を scale として読んだ")
+        #expect(request.clamped().warnings.contains { $0.contains("sacle") })
+    }
+
+    /// **読めない要求の応答にも、知らない鍵を名乗る** (#2392)。`sacle` の綴りの誤りに加えて別の鍵の型も
+    /// 誤っているとき、直したのに次の応答で初めて `sacle` が出る、という 2 度手間にしない。
+    @Test(
+        "読めない要求の理由にも、知らない鍵を名乗る",
+        arguments: [
+            (#"{"id":"u","sacle":0.5,"count":2.5}"#, "count"),
+            (#"{"id":"u","sacle":0.5,"scale":"0.5"}"#, "scale"),
+            (#"{"id":"u","sacle":0.5,"every":true}"#, "every"),
+        ] as [(String, String)])
+    func namesAnUnknownKeyInAnUnreadableRequestToo(_ request: String, _ key: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: request, to: facet)
+        guard case .unreadable(_, let reason) = try #require(observer.pendingRequest()) else {
+            Issue.record("読めないはずの要求が読めた")
+            return
+        }
+        #expect(reason.contains(key), "\(reason)")
+        #expect(reason.contains("sacle"), "知らない鍵が名乗られない: \(reason)")
+    }
+
+    @Test("知らない鍵が無ければ、警告は足さない")
+    func namesNothingWhenEveryKeyIsKnown() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"k1","scale":0.5,"count":2,"every":3}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request.unknownKeys.isEmpty)
+        #expect(request.clamped().warnings.isEmpty)
+    }
+
+    /// 名乗る名前は書き手が置いた長さのままには写さない (数の字面を写さないのと同じ)。
+    @Test("知らない鍵が多くても長くても、名乗りは伸び続けない")
+    func boundsTheNamingOfUnknownKeys() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        let many = (0..<50).map { "\"extra\($0)\":1" }.joined(separator: ",")
+        let long = String(repeating: "k", count: 5000)
+        try write(request: "{\"id\":\"b1\",\"\(long)\":1,\(many)}", to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        let warnings = request.clamped().warnings
+        #expect(warnings.count == 1, "\(warnings)")
+        #expect((warnings.first?.count ?? 0) < 400, "\(warnings.first?.count ?? 0) 文字")
+        #expect(warnings.first?.contains("extra0") == true, "\(warnings)")
     }
 
     @Test("壊れた要求で走っているスケッチを止めない")
@@ -326,8 +392,11 @@ struct ObservationProtocolTests {
         arguments: [
             (#"{"id":"x1","scale":"0.5"}"#, "scale"),
             (#"{"id":"x1","scale":true}"#, "scale"),
-            // 整数に読めない数。Foundation の理由は "The given data was not valid JSON." で、鍵を名乗らない
-            (#"{"id":"x1","count":2.5}"#, nil),
+            // 整数でない数。Foundation が外へ出す誤りは場所が空で "The given data was not valid JSON."
+            // と言う (JSON でない、は嘘) ので、読む鍵ごとに受けて鍵と理由を言い直す (#2805)。
+            // 桁あふれの大きな数 (`1e19` など) は読めない要求にせず、範囲の丸めで撮る (下の検査)
+            (#"{"id":"x1","count":2.5}"#, "count"),
+            (#"{"id":"x1","every":0.5}"#, "every"),
         ] as [(String, String?)])
     func answersARequestThatCannotBeDecoded(_ request: String, _ key: String?) throws {
         let facet = try makeFacet()
@@ -342,6 +411,8 @@ struct ObservationProtocolTests {
         #expect(Self.request(pending) == nil, "解けないのに、撮る要求として渡した")
         guard case .unreadable(let id, let reason) = pending else { return }
         if let key { #expect(reason.contains(key), "\(reason)") }
+        // 構文の誤りではないのに「JSON でない」と言わない (スキーマは JSON でないものには応えないと書く)
+        #expect(!reason.contains("not valid JSON"), "\(reason)")
         observer.refuse(id: id, reason: reason) { id, warnings in
             report(id: id, image: nil, warnings: warnings)
         }
@@ -359,6 +430,118 @@ struct ObservationProtocolTests {
         // 応えた要求は二度拾わない
         try write(request: request, to: facet)
         #expect(observer.pendingRequest() == nil)
+    }
+
+    /// **省略できる欄の `null` は、省略と同じに読む** (#2392)。`time: null` は「時刻なし」で、断らない。
+    /// MCP の窓口はいまの `time`・`count`・`every` の `null` を断る。窓口の側は #2393 で揃える。
+    @Test(
+        "省略できる欄の null は、書かなかった要求と同じに撮る",
+        arguments: ["scale", "count", "every", "time"])
+    func readsANullAsOmitted(_ key: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"n1","\#(key)":null}"#, to: facet)
+
+        let request = try #require(Self.request(observer.pendingRequest()), "null で解けなかった")
+        #expect(request == ObservationRequest(id: "n1"))
+        #expect(request.time == nil)
+        #expect(request.timeWarning == nil)
+        #expect(request.clamped().warnings.isEmpty)
+    }
+
+    @Test("すべての欄が null でも、書かなかった要求と同じに撮る")
+    func readsEveryNullAtOnce() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"n2","scale":null,"count":null,"every":null,"time":null}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request == ObservationRequest(id: "n2"))
+        #expect(request.timeWarning == nil)
+    }
+
+    /// `null` を受けても、**型の違う `time` は今までどおり断る** (「時刻なし」として成功させない)。
+    @Test("time の型の違う値は、null を受けても断る", arguments: [#""5""#, "true", "[]", "1e400"])
+    func stillRefusesATimeOfTheWrongType(_ value: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"t2","time":\#(value)}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request.timeWarning != nil, "time: \(value) を時刻なしとして通した")
+    }
+
+    /// **型に収まる整数・数の範囲を越えた大きな数は、読めない要求にしない** (#2805)。スキーマの integer / number は
+    /// 桁に上限が無く、`1e19` は正しい型で範囲の外の値である。符号の側の端へ寄せ、範囲の丸め (枚数・間隔) と
+    /// 実寸 (縮小率) で撮って `warnings` で名乗る — MCP の窓口が同じ値を寄せるのと揃う (`Tools.seriesArgument`)。
+    @Test(
+        "範囲を越えた大きな数は、符号の側の端へ寄せて丸め、warnings で名乗って撮る",
+        arguments: [
+            (#"{"id":"x1","count":1e19}"#, "the ceiling is 120"),
+            (#"{"id":"x1","count":123456789012345678901234567890}"#, "the ceiling is 120"),
+            (#"{"id":"x1","count":-123456789012345678901234567890}"#, "the floor is 1"),
+            (#"{"id":"x1","every":-1e400}"#, "the floor is 1"),
+            (#"{"id":"x1","every":1e400}"#, "the ceiling is 60"),
+            (#"{"id":"x1","scale":1e400}"#, "the ceiling is 1.0"),
+            (#"{"id":"x1","scale":-1e400}"#, "full size was used"),
+        ] as [(String, String)])
+    func clampsABigNumberToTheEndOfItsSign(_ request: String, _ expected: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: request, to: facet)
+        let read = try #require(Self.request(observer.pendingRequest()), "読めない要求にした")
+        #expect(read.id == "x1")
+        let warnings = read.clamped().warnings
+        #expect(warnings.count == 1, "\(warnings)")
+        #expect(warnings.first?.contains(expected) == true, "\(warnings)")
+        #expect(read.timeWarning == nil)
+    }
+
+    @Test("1e19 の枚数は、Int の上限と同じに丸める")
+    func readsABigCountAsTheTopOfInt() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"x1","count":1e19}"#, to: facet)
+        let read = try #require(Self.request(observer.pendingRequest()))
+        #expect(read.count == Int.max)
+        let expected = ObservationRequest(id: "x1", count: Int.max).clamped()
+        #expect(read.clamped().count == expected.count)
+        #expect(read.clamped().warnings == expected.warnings)
+    }
+
+    /// 名乗りは**数の字面を写さない** (#2805)。桁が多いほど応答の 1 行が伸びると、書き手の置いた長さが
+    /// そのまま返る。
+    @Test("桁の多すぎる整数でも、名乗りは字面の長さに比例して伸びない")
+    func doesNotEchoTheDigitsOfANumberThatDoesNotFit() throws {
+        func warnings(ofDigits count: Int, key: String) throws -> [String] {
+            let facet = try makeFacet()
+            let observer = FrameObserver(directory: facet)
+            try write(
+                request: "{\"id\":\"x1\",\"\(key)\":" + String(repeating: "9", count: count) + "}",
+                to: facet)
+            return try #require(Self.request(observer.pendingRequest())).clamped().warnings
+        }
+        let few = try warnings(ofDigits: 30, key: "count")
+        let many = try warnings(ofDigits: 5000, key: "count")
+        #expect(many == few, "字面の長さで名乗りが変わる")
+        #expect(many.joined().count < 200)
+        #expect(!many.joined().contains("9999"), "数の字面を写した")
+    }
+
+    /// 整数でない数の理由も、字面を写さない。
+    @Test("整数でない数の理由は、桁の多さで伸びない")
+    func doesNotEchoTheDigitsOfAFraction() throws {
+        func reason(_ fraction: String) throws -> String {
+            let facet = try makeFacet()
+            let observer = FrameObserver(directory: facet)
+            try write(request: "{\"id\":\"x1\",\"count\":\(fraction)}", to: facet)
+            guard case .unreadable(_, let reason) = try #require(observer.pendingRequest()) else {
+                Issue.record("解けないはずの要求が解けた")
+                return ""
+            }
+            return reason
+        }
+        let long = try reason("0." + String(repeating: "7", count: 5000))
+        #expect(long.count < 200, "\(long.count) 文字")
+        #expect(!long.contains("7777"), "数の字面を写した")
     }
 
     /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた

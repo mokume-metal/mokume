@@ -6,7 +6,8 @@ import MokumeCore
 /// ``TCPServer``・``WebSocketServer``・``UDPPort`` を作れなかったこと。
 ///
 /// **作るときに投げ、フレームの間は投げない** ([ADR-0020] 決定 5)。投げるのは渡した値が
-/// そもそも使えないときだけで、ポートを他のアプリが使っているときは投げずに作り、
+/// そもそも使えないときと、走っている実行へ足せない所から呼んだとき (``notRunning(call:)``) だけで、
+/// ポートを他のアプリが使っているときは投げずに作り、
 /// ``TextPort/state`` が ``SourceState/unavailable`` を名乗る (空けば受け始める)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

@@ -6,7 +6,7 @@
 ADR-0019 決定 7 は、専用機に届くきっかけを 3 つ (merge_group・同じリポジトリの PR・
 schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権限の 1 行が崩れると、理由ごと
 外れる** — しかも崩れても run は緑のままで、気付くのは専用機に想定外のものが届いた後になる。
-ここで固定するのは次の 12 個:
+ここで固定するのは次の 13 個:
 
   1. schedule の cron は 6 時間おきで、毎時 0 分を避けている (このリポジトリの慣習)
   2. `render` (必須) と `render-pr` は schedule では起動しない — 必須チェックの結論を
@@ -39,6 +39,15 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
  12. 外のパッケージ mokume-syphon の検査 (`scripts/syphon-check-pr.sh`) は `render-pr` にだけ
      あり、`continue-on-error` で merge を止めない (#1973)。必須の `render` や定期のジョブに
      入ると、外のリポジトリの赤が本体の merge や起票を動かす
+ 13. 専用機のジョブの、前検査より後の共通の step (検査の make・落ちた文面の要約・artifact)
+     が揃っている (#2267)。debug の 3 本 (`render`・`render-pr`・`scheduled-debug`) は、
+     その 4 step が artifact の名前を除いて同じ。段の違う `scheduled-release` を含む 4 本
+     すべてで、検査の make は `CI=` を渡し、要約は自分が上げる記録を読み、artifact は
+     `include-hidden-files: true` を持つ。step は 4 本へ手で写してあり、**割れても黙って
+     緑になる側がある** — `CI=` を落とすと Metal の検証レイヤが切れたまま緑になり
+     (Makefile の METAL_VALIDATION)、`include-hidden-files` を落とすと `.build/` の記録が
+     1 つも上がらない。違うべき部分 (artifact の名前・`if`・`concurrency`・`render-pr` の
+     checkout の `with:` と末尾の 2 step・release の段) は比べない
 
 5・6 は権限の置き場の方針で、ジョブが打つ書き込みと権限の対応 (要る権限を持つか・使わない
 権限を持たないか) は workflow_permissions_test.py が全 workflow ぶんを見る (#2675)。
@@ -56,6 +65,7 @@ REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "render.yml"
 
 RUNNER_JOBS = ("render", "render-pr", "scheduled-debug", "scheduled-release")
+DEBUG_RUNNER_JOBS = ("render", "render-pr", "scheduled-debug")
 TURN_JOBS = ("render-turn", "scheduled-release-turn")
 TURN_SCRIPT = REPO / "scripts" / "render-turn.sh"
 RULESET = REPO / ".github" / "rulesets" / "main-protection.json"
@@ -109,6 +119,24 @@ def condition(body):
             parts.append(nxt.strip())
         return " ".join(" ".join(parts).split())
     return ""
+
+
+def steps(body):
+    """ジョブの `steps:` を step ごとの本文 (行の並び) にして返す。無ければ空。"""
+    lines = body.splitlines()
+    try:
+        start = lines.index("    steps:")
+    except ValueError:
+        return []
+    out = []
+    for ln in lines[start + 1 :]:
+        if re.match(r"^    \S", ln):
+            break
+        if ln.startswith("      - "):
+            out.append([ln])
+        elif out and ln.strip():
+            out[-1].append(ln)
+    return ["\n".join(s) for s in out]
 
 
 class RenderWorkflowTest(unittest.TestCase):
@@ -218,6 +246,53 @@ class RenderWorkflowTest(unittest.TestCase):
             self.assertRegex(
                 self.jobs[name], r"(?m)^      - id: preflight\n        run: bash scripts/runner-preflight.sh$", name
             )
+
+    def test_debug_の専用機のジョブは前検査の後の_step_が揃う(self):
+        # 4 step は 3 本へ手で写してある。1 本だけ割れると、割れた側だけが黙って違う検査になる。
+        # 違ってよいのは artifact の名前 (上げ先が job ごとに分かれる) だけで、ほかは一字一句比べる。
+        # render-pr の checkout の with: (fetch-depth) と末尾の 2 step は比べる範囲の外
+        def common(name):
+            body = steps(self.jobs[name])[2:6]
+            return [re.sub(r"(?m)^          name: \S+$", "          name: <artifact>", s) for s in body]
+
+        base = common("render")
+        self.assertEqual(len(base), 4)
+        self.assertTrue(base[0].startswith("      - run: make ci-check "), base[0])
+        self.assertIn("scripts/read-test-record.py --failure-messages", base[1])
+        for s in base[2:]:
+            self.assertTrue(s.startswith("      - uses: actions/upload-artifact@"), s)
+        for name in DEBUG_RUNNER_JOBS:
+            self.assertEqual(common(name), base, f"{name} の step が render と割れている")
+
+    def test_専用機のジョブは検査に_CI_を渡し記録を隠しファイルごと上げる(self):
+        # 段の違う scheduled-release も含めて 4 本すべてで見る。3 本が揃って落としても、
+        # 上の揃いの検査は緑のままなので、黙って壊れる 2 点はここで名指しする。
+        # 段の名前 (ci-check / test-release-scheduled) と記録の名前は固定しない
+        for name in RUNNER_JOBS:
+            body = steps(self.jobs[name])
+            runs = [s for s in body if re.search(r"(?m)^\s*(- run: )?make [\w-]+", s)]
+            self.assertEqual(len(runs), 1, f"{name} の検査の make が 1 つでない")
+            make = re.search(r"make [^|\n]*", runs[0]).group(0)
+            # CI= で GitHub の CI=true を空に戻す。無いと Metal の検証レイヤが切れたまま緑になる
+            self.assertRegex(make, r"\sCI=(\s|$)", name)
+
+            summaries = [s for s in body if "name: 落ちた検査の文面を要約へ書く" in s]
+            self.assertEqual(len(summaries), 1, name)
+            self.assertIn("if: failure()", summaries[0], name)
+            record = re.search(r"--failure-messages (\S+)", summaries[0]).group(1)
+
+            uploads = [s for s in body if s.startswith("      - uses: actions/upload-artifact@")]
+            self.assertTrue(uploads, name)
+            for s in uploads:
+                # .build は隠しディレクトリで、無いと記録が 1 つも上がらないまま緑になる
+                self.assertIn("include-hidden-files: true", s, name)
+                self.assertIn("if-no-files-found: ignore", s, name)
+                self.assertIn("retention-days: 14", s, name)
+            # 要約が読む記録と test-log は、成否によらず上がる artifact に入っている
+            always = [s for s in uploads if "if: always()" in s]
+            self.assertEqual(len(always), 1, name)
+            self.assertIn(record, always[0], name)
+            self.assertIn(".build/test-log.txt", always[0], name)
 
     def test_mokume_syphon_の検査は_render_pr_にだけあり_merge_を止めない(self):
         holders = [name for name, body in self.jobs.items() if "syphon-check" in body]
@@ -340,6 +415,17 @@ class SplitterTest(unittest.TestCase):
         self.assertEqual(set(jobs), {"a", "b"})
         self.assertEqual(condition(jobs["a"]), "x == 1")
         self.assertEqual(condition(jobs["b"]), "y && z")
+
+    def test_step_を切り_steps_の外の行を混ぜない(self):
+        text = (
+            "jobs:\n  a:\n    steps:\n      - uses: x\n        with:\n          k: v\n"
+            "      # 説明\n      - run: make t CI=\n    timeout-minutes: 5\n"
+        )
+        _, jobs = split(text)
+        self.assertEqual(
+            steps(jobs["a"]), ["      - uses: x\n        with:\n          k: v", "      - run: make t CI="]
+        )
+        self.assertEqual(steps("    runs-on: r"), [])
 
 
 if __name__ == "__main__":

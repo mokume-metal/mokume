@@ -123,10 +123,9 @@ final class ShaderLibraries {
         named name: String, body: String, bodyName: String? = nil,
         values: [String: ShaderValue] = [:], surfaces: [String: ShaderSurface] = [:]
     ) throws(RenderFailure) -> LibraryJob {
-        let source = ShaderSource.assemble(
-            prelude: try prelude(named: "Common"), values: values, surfaces: surfaces,
-            body: .init(name: bodyName ?? name, text: body))
-        return job(source, name: name)
+        try userJob(
+            prelude: "Common", named: name, body: body, bodyName: bodyName, values: values,
+            surfaces: surfaces, entry: .paint(surfaces: !surfaces.isEmpty))
     }
 
     /// 計算の断片を、共通部分を前置きしてから組み立てる。
@@ -145,10 +144,9 @@ final class ShaderLibraries {
         named name: String, body: String, bodyName: String? = nil,
         values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> LibraryJob {
-        let source = ShaderSource.assemble(
-            prelude: try prelude(named: "Compute"), values: values,
-            body: .init(name: bodyName ?? name, text: body))
-        return job(source, name: name)
+        try userJob(
+            prelude: "Compute", named: name, body: body, bodyName: bodyName, values: values,
+            entry: nil)
     }
 
     /// 効果の断片を、前置きと合わせて組み立てる。
@@ -164,10 +162,39 @@ final class ShaderLibraries {
         named name: String, body: String, bodyName: String? = nil,
         values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> LibraryJob {
+        try userJob(
+            prelude: "Effect", named: name, body: body, bodyName: bodyName, values: values,
+            entry: .effect)
+    }
+
+    /// 利用者の断片を組む仕事。**塗り・効果・計算の利用者の断片は、すべてここを通る。**
+    ///
+    /// - **`values:`・`surfaces:` の名前の字の並びを、組み立ての前に検める** ([#2783])。書けない名前
+    ///   (`tint color`・空・`;` を含む) は組まずに断る。検めをここ 1 か所に置くのは、断片を作る
+    ///   口 (文字列・ファイル × 3 種) と差し替えの経路がすべて通るからで、口ごとに写すと足し忘れる
+    ///   口ができる
+    /// - 組めなかった理由は、入口の書き違え ([#2782]) と、Metal で使えない名前 ([#2783] の反証) を
+    ///   言い直す (``LibraryJob/Restatement``)
+    ///
+    /// [#2782]: https://github.com/mokume-metal/mokume/issues/2782
+    /// [#2783]: https://github.com/mokume-metal/mokume/issues/2783
+    private func userJob(
+        prelude preludeName: String, named name: String, body: String, bodyName: String?,
+        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:],
+        entry: ShaderEntryPoint?
+    ) throws(RenderFailure) -> LibraryJob {
+        let fragment = bodyName ?? name
+        if let reason = ShaderSource.unusableNames(values: values, surfaces: surfaces, in: fragment) {
+            throw .shaderCompilationFailed(name: name, reason: reason)
+        }
         let source = ShaderSource.assemble(
-            prelude: try prelude(named: "Effect"), values: values,
-            body: .init(name: bodyName ?? name, text: body))
-        return job(source, name: name)
+            prelude: try prelude(named: preludeName), values: values, surfaces: surfaces,
+            body: .init(name: fragment, text: body))
+        return job(
+            source, name: name,
+            restatement: .init(
+                fragment: fragment, entry: entry,
+                names: ShaderSource.declaredNames(values: values, surfaces: surfaces)))
     }
 
     /// 原文を組む。
@@ -185,11 +212,14 @@ final class ShaderLibraries {
     /// - Parameters:
     ///   - name: 数えるときの名前。
     ///   - reported: 組めなかったときに名乗る名前。省けば `name`。
+    ///   - restatement: 組めなかった理由の言い直しに要るもの。利用者の断片だけが持つ。
     private func job(
-        _ source: String, name: String, reportedAs reported: String? = nil
+        _ source: String, name: String, reportedAs reported: String? = nil,
+        restatement: LibraryJob.Restatement? = nil
     ) -> LibraryJob {
         librariesBuilt[name, default: 0] += 1
-        return LibraryJob(device: device, source: source, reportedName: reported ?? name)
+        return LibraryJob(
+            device: device, source: source, reportedName: reported ?? name, restatement: restatement)
     }
 
     /// 原文を組む仕事 1 つ。**その場で組むことも、裏で組むこともできる** ([#2365])。
@@ -202,6 +232,23 @@ final class ShaderLibraries {
         let device: any MTLDevice
         let source: String
         let reportedName: String
+        let restatement: Restatement?
+
+        /// 利用者の断片の、組めなかった理由の言い直しに要るもの。
+        struct Restatement: Sendable {
+            /// 断片が名乗る名前 (``ShaderSource/bodyName(_:url:)``)。
+            let fragment: String
+            /// 前置きが呼ぶ入口。計算は前置きが入口を呼ばないので持たない (入口は
+            /// ``ComputePipeline/StateJob`` が見る)。
+            let entry: ShaderEntryPoint?
+            /// 渡された名前から作った宣言の、行ごとの名前。
+            let names: ShaderSource.DeclaredNames
+
+            func restating(_ reason: String) -> String {
+                let named = names.restating(reason, in: fragment)
+                return entry?.restating(named, in: fragment) ?? named
+            }
+        }
 
         /// その場で組む。
         func runNow() throws(RenderFailure) -> any MTLLibrary {
@@ -221,8 +268,12 @@ final class ShaderLibraries {
             }
         }
 
+        /// 組めなかった理由。**入口を書き違えた断片なら期待する入口の形を (#2782)、Metal で使えない
+        /// 名前を渡した断片ならその名前を (#2783)、先頭に足す。**
         private func failure(_ error: any Error) -> RenderFailure {
-            .shaderCompilationFailed(name: reportedName, reason: error.localizedDescription)
+            let reason = error.localizedDescription
+            return .shaderCompilationFailed(
+                name: reportedName, reason: restatement?.restating(reason) ?? reason)
         }
     }
 

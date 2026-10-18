@@ -108,6 +108,47 @@ struct PlayheadTests {
         #expect(head.window(of: indices, after: 1302, size: 4) == [1999, 2000, 1, 2])
     }
 
+    // MARK: - 飛ぶ (#2464)
+
+    @Test("止まっている間に飛ぶと位置だけが動き、次に鳴らすとそこから。範囲の外は端へ寄せる")
+    func jumpWhileStoppedMovesTheStart() {
+        var head = Playhead(length: 2000)
+        head.jump(to: 1200)
+        #expect(!head.isPlaying)
+        #expect(head.start == 1200)
+        #expect(head.position(after: 500) == 1200)
+        head.play(looping: false)
+        #expect(head.position(after: 300) == 1500)
+        // 止まっている間に飛んでから鳴らした区切りは、普通に鳴らし始めたのと同じく前を 0 で埋める
+        #expect(head.window(of: indices, after: 2, size: 4) == [0, 0, 1201, 1202])
+
+        head.stop()
+        head.jump(to: -50)
+        #expect(head.start == 0)
+        head.jump(to: 2500)
+        #expect(head.start == 2000)
+    }
+
+    @Test("鳴っている間に飛んだ区切りは、始まりより前をファイルの標本で埋める (頭より前は 0)")
+    func jumpWhilePlayingFillsTheWindowFromTheFile() {
+        var head = Playhead(length: 2000)
+        head.play(looping: false)
+        head.jump(to: 1000)
+        #expect(head.isPlaying)
+        #expect(head.position(after: 0) == 1000)
+        // 飛び先で終わる窓 (1000 標本目の手前 4 つ)
+        #expect(head.window(of: indices, after: 0, size: 4) == [997, 998, 999, 1000])
+        #expect(head.window(of: indices, after: 2, size: 4) == [999, 1000, 1001, 1002])
+
+        head.jump(to: 2)
+        #expect(head.window(of: indices, after: 0, size: 4) == [0, 0, 1, 2])
+
+        // 止めて鳴らし直せば、また普通の区切り (前は 0)
+        head.pause(after: 0)
+        head.play(looping: false)
+        #expect(head.window(of: indices, after: 0, size: 4) == [0, 0, 0, 0])
+    }
+
     @Test("長さ 0 を渡しても、1 標本として扱って割り算で落ちない")
     func emptyLengthIsGuarded() {
         var head = Playhead(length: 0)
