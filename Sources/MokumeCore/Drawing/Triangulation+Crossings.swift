@@ -256,13 +256,18 @@ nonisolated extension Triangulation {
         return total
     }
 
-    /// 番号で引く周の、符号付きの面積の 2 倍。
+    /// 番号で引く周の、符号付きの面積の 2 倍。最初の点からの差で足す
+    /// (``Triangulation/signedArea(_:)``・[#2725])。
+    ///
+    /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
     private static func signedArea(of ring: [Int], points: [SIMD2<Float>]) -> Float {
+        guard let first = ring.first else { return 0 }
+        let origin = points[first]
         var sum: Float = 0
         for index in ring.indices {
-            let a = points[ring[index]]
-            let b = points[ring[(index + 1) % ring.count]]
-            sum += a.x * b.y - b.x * a.y
+            let a = points[ring[index]] - origin
+            let b = points[ring[(index + 1) % ring.count]] - origin
+            sum += cross(a, b)
         }
         return sum
     }
