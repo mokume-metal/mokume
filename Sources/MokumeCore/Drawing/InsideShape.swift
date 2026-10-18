@@ -13,8 +13,9 @@ extension Canvas {
     ///   焼き付く先が無い — 塗り直しは面全体を描き直すことで、画素はまだ描いていない形を読めない
     /// - 描き切りそのものは断れない口がある。揺らぎの設定の書き換えと置いた描き場所の描き換えは、
     ///   置いた時点のものを列が持ち歩くので描き切らず、組み立ての中で自分のフレームを閉じること
-    ///   (`endDraw()`) は出口まで待たせる ([#1855]・``frameEnd``)。それでも描き切るか捨てる道が残り、
-    ///   そこは出口が見て、空の形を返す (``drawnOut``)
+    ///   (`endDraw()`) は出口まで待たせる ([#1855]・``frameEnd``)。置いた側が写しを持てない描き換えも、
+    ///   組み立ての前に置いた列だけを描き切って組み立てた区間は残す ([#2850])。製品の経路には溜め場を
+    ///   捨てる道は残っておらず、万一捨てたときは出口が見て、空の形を返す (``drawnOut``)
     /// - 組み立ての中で自分のフレームを始めること (`beginDraw()`・`draw { }`) は、呼ばれた時点で断る
     ///   ([#2201]・``frameStart``)。始めると、閉じ忘れたフレームとして、またはフレームの外で置いたものと
     ///   して、組み立てた分が捨てられていた
@@ -29,12 +30,14 @@ extension Canvas {
     /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
     enum InsideShape: CaseIterable {
         /// 塗り直した。塗り 1 色の背景と周囲の背景の 2 系統が鍵を共有する。
         case background
         /// 画素を読み書きした。`get` / `set` / `pixels` / `loadPixels()` の 4 つが鍵を共有する。
         case pixels
         /// 記録の途中で溜め場が描き切られるか捨てられ、記録したものを失った。**出口の安全網**が言う。
+        /// **製品の経路にはもう来ない — 来たら mokume の不具合である** (文面もそう名乗る)。
         ///
         /// [#1855] で、揺らぎの設定の書き換え (列ごとに写す)・置いた描き場所の描き換え (組み立ての
         /// 入口より前の列だけを写しへ差し替える)・組み立ての中で自分のフレームを閉じること (`endDraw()`。
@@ -44,16 +47,17 @@ extension Canvas {
         /// `Canvas` を直に回す使い方) も来なくなった — 本体のフレームの始まりは、組み立て中の描き場所の
         /// 開いたままのフレームをその場では捨てず (#1834 の捨てる規則を組み立ての出口まで延ばした)、組み立ての
         /// 出口で捨てる (`Canvas.dropAwaitingShape`)。形は組み立てたぶんを持ち、捨てるのは出口の後である。
-        /// 残る経路は 1 つ:
+        /// [#2850] で、最後に残っていた経路も来なくなった — 同じフレームで置いた描き場所の描き換えのうち、
+        /// 置いた側がもう 1 枚の写しを持てなかったもの (写しの上限 ``Canvas/placedPictureCopyLimit`` に達したか、
+        /// 写しを用意できなかった) は、置いた時点の絵を守るために置いた側を描き切るが、描き切るのは組み立ての
+        /// 前に置いた列だけで、組み立てている区間は溜め場に残す (``Canvas/flushBeforeBuild()``)。形は組み立てた
+        /// ぶんを持ち、フレームには描かれない。
         ///
-        /// - 同じフレームで置いた描き場所の描き換えのうち、置いた側がもう 1 枚の写しを持てなかったもの
-        ///   (写しの上限 ``Canvas/placedPictureCopyLimit`` に達したか、写しを用意できなかった)。置いた時点の
-        ///   絵を守るほうを取って描き切るので、それまでに組み立てたぶんはフレームに描かれる
-        ///
-        /// 描き切り (捨てる) そのものは断れない (#1684)。
+        /// 描き切り (捨てる) そのものは断れない (#1684)。この網は、将来の口が溜め場を捨てたときのために残す。
         ///
         /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
         /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
+        /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
         case drawnOut
         /// 組み立ての中で、組み立ての前に開いた自分のフレームを `endDraw()` で閉じようとした ([#1855] の
         /// 案 G)。**フレームはその時点では閉じず、一番外の組み立ての出口で閉じる** (``Canvas/createShape(_:)``)。
@@ -169,10 +173,10 @@ extension Canvas {
                     + "there has not been drawn yet. There, get() returns transparent, set() and "
                     + "loadPixels() do nothing, and pixels is not read again"
             case .drawnOut:
-                "createShape { }: the frame was drawn out while the shape was being built (a "
-                    + "drawing target placed earlier was changed when this canvas could not keep one "
-                    + "more copy of it), so what was built up to then was drawn into the frame, and "
-                    + "the shape is empty. Do that before or after building the shape"
+                "createShape { }: the frame was drawn out while the shape was being built, so what "
+                    + "was built up to then was drawn into the frame, and the shape is empty. This is "
+                    + "most likely a fault inside mokume — please report it with this message at "
+                    + "https://github.com/mokume-metal/mokume/issues (#2850)"
             case .frameEnd:
                 "createShape { }: the frame of the canvas being built on was closed inside the shape "
                     + "by endDraw(), so it stays open until the shape is finished and closes there; "

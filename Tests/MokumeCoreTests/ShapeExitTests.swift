@@ -83,8 +83,8 @@ enum ShapeExit {
         ]
         let detached = [
             "transformStack", "styleStack", "recordingShape",
-            // 一番外の組み立てが控える列の位置 (#1855 の案 E)。recordingShape と対で戻す
-            "shapeRecordingRunStart",
+            // 組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす
+            "shapeMarks",
             // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
             // (#1855 の案 G)。一番外の出口が閉じて下ろす
             "frameEndAwaitingShape",
@@ -132,7 +132,7 @@ enum ShapeExit {
         let cache = "控え。中身は入力で決まり、組み立てとは関わらない"
         let count = "計数。数で確かめる検査が読む"
         let testing = "検査の差し込み・上限。製品の経路では既定のまま"
-        let flush = "描き切りの印。組み立ての中で描き切るのは、置いた側の写しが上限に達した後の描き換えと、組み立ての中で自分のフレームを開き直すことだけで、出口の安全網 (空の形と注意) が扱う (#1855)"
+        let flush = "描き切りの印。組み立ての中で描き切るのは、置いた側の写しが上限に達した後の描き換えだけで、組み立ての前の列だけを描き切り、組み立てた区間は残す (#2850)。溜め場を捨てた場合は出口の安全網 (空の形と注意) が扱う (#1855)"
         let frame = "フレームの内外と境目の印。境目の関数だけが書く"
         let transient = "呼び出しの中でだけ立ち、抜ける前に戻る一時の値"
         let unused = "記録の間は使わない (組み込みの立体は置き場所ごとに頂点へ焼き、平面は畳まない)"
@@ -226,7 +226,7 @@ enum ShapeExit {
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
             "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
-            "failEarlySubmissionForTesting": testing,
+            "failEarlySubmissionForTesting": testing, "failPlacedPictureCopyForTesting": testing,
         ]
         return restored.map { ($0.0, .restore($0.1)) }
             + detached.map { ($0, .detach) }

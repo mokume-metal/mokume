@@ -26,12 +26,14 @@ extension Canvas {
         listener?.shapeAssemblyBegan()
         defer { listener?.shapeAssemblyEnded() }
         closeBatch()
-        let vertexStart = vertices.count
-        let solidStart = solidVertices.count
-        let solidIndexStart = solidIndices.count
-        let formStart = formInstances.count
-        let instanceStart = solidInstances.count
-        let runStart = batches.count
+        // **入口の長さは、局所変数ではなく溜め場の側に積む** ([#2850])。組み立ての途中で置いた側を描き切る
+        // 逃げ道 (``flushBeforeBuild()``) が、組み立てている区間を溜め場の先頭へ引き戻すとき、入れ子の
+        // 内側を含めて印も同じ量だけ引く。出口はここから読む
+        //
+        // [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+        shapeMarks.append(ShapeMark(of: self))
+        let level = shapeMarks.count - 1
+        defer { shapeMarks.removeLast() }
 
         // 記録の間に触った状態は外へ出さない。**形自身の座標で記録する**ので、
         // 変換も畳んでおく — そうしないと、組み立てた場所でしか置けない形になる
@@ -65,10 +67,6 @@ extension Canvas {
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
         recordingShape = true
-        // **一番外の組み立てだけが、フレームに置いた列との境目を控える** (#1855 の案 E)。置いた描き場所が
-        // 組み立ての途中で描き換わっても、写しへ差し替えるのはここより前の列だけにする
-        let savedRecordingRunStart = shapeRecordingRunStart
-        if !savedRecording { shapeRecordingRunStart = runStart }
         // **積んだ履歴は記録の中で閉じる。** 記録の間も `push()` / `pop()` は効く
         // (`Canvas.isShaping`) ので、切り離さないと記録の中の `pop()` が記録より前に
         // 積んだ段を取り、記録の中で積んだまま抜けた段はあとの `pop()` に拾われる
@@ -83,20 +81,28 @@ extension Canvas {
         //
         // [#1607]: https://github.com/mokume-metal/mokume/issues/1607
         let savedShape = takeOpenShape()
-        let strokeRangeStart = recordedStrokeRanges.count
-        let fillRangeStart = recordedFillRanges.count
-        let solidStrokeStart = recordedSolidStrokes.count
-        let gpuStrokeStart = recordedGPUStrokes.count
-        let discardsAtStart = pendingDiscards
 
         body()
+
+        // 入口の長さ。**逃げ道が組み立てた区間を引き戻していれば、その分だけ引かれている** ([#2850])
+        let mark = shapeMarks[level]
+        let vertexStart = mark.vertices
+        let solidStart = mark.solidVertices
+        let solidIndexStart = mark.solidIndices
+        let formStart = mark.forms
+        let instanceStart = mark.instances
+        let runStart = mark.runs
+        let strokeRangeStart = mark.strokeRanges
+        let fillRangeStart = mark.fillRanges
+        let solidStrokeStart = mark.solidStrokes
+        let gpuStrokeStart = mark.gpuStrokes
+        let discardsAtStart = mark.discards
 
         // 記録の中で開いたまま抜けた形は、形ごと捨てて 1 度知らせる。外で開いていた形はその後に
         // 戻す — 記録の中からは続けられない
         discardShapeLeftOpen()
         restoreOpenShape(savedShape)
         recordingShape = savedRecording
-        shapeRecordingRunStart = savedRecordingRunStart
         // 断った `beginDraw()` の数は、一番外の出口で下ろす (#2834)
         if !savedRecording { refusedBeginDrawsInsideShape = 0 }
         restore(savedStacks)
@@ -113,10 +119,11 @@ extension Canvas {
         // 中で断り、揺らぎの書き換え・置いた描き場所の描き換え・自分のフレームの終わり (`endDraw()`) は
         // 描き切らない (#1855)。組み立て中の描き場所の開いたままのフレームを本体の次のフレームの頭が
         // 閉じ忘れとして捨てることも、捨てるのを出口まで延ばして (``dropAwaitingShape``) 無くした (#2509)。
-        // それでも描き切る道が残る — 置いた側がもう 1 枚の写しを持てない (上限・失敗) ときの描き換え。
-        // 描き切る前に記録したものはもう描かれていて取り戻せないので、描き切った後に
-        // 記録した残りも溜め場から抜き、空の形を返す。見分けは長さではなく捨てた回数で行う
-        // (``pendingDiscards``)
+        // 置いた側がもう 1 枚の写しを持てない (上限・失敗) ときの描き換えも、組み立ての前の列だけを描き切って
+        // 組み立てた区間は溜め場に残す (``flushBeforeBuild()``・#2850)。**製品の経路にはもう溜め場を捨てる道は
+        // 無い。** ここは mokume の不具合に備えた網で、捨てられていたら、描き切る前に記録したものはもう描かれて
+        // 取り戻せないので、描き切った後に記録した残りも溜め場から抜き、空の形を返す。見分けは長さではなく
+        // 捨てた回数で行う (``pendingDiscards``)
         //
         // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         guard pendingDiscards == discardsAtStart else {
@@ -193,6 +200,219 @@ extension Canvas {
             forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes,
             fillRanges: recordedFills,
             solidStrokes: recordedPieces, gpuStrokes: recordedGPU, solidParts: recordedParts)
+    }
+
+    /// 形の組み立ての入口が控える、溜め場の各並びの長さ ([#2850])。
+    ///
+    /// 出口は、ここから後ろを形として抜く。入れ子は 1 段ずつ積む (``Canvas/shapeMarks``)。**組み立ての途中で置いた側を
+    /// 描き切る逃げ道 (``flushBeforeBuild()``) は、組み立てている区間を溜め場の先頭へ引き戻す** ので、積んである印を
+    /// 全部同じ量だけ引く (``rebase(from:to:)``)。溜め場の並びを足すときは、ここと ``HeldBuild`` に足す。
+    ///
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+    struct ShapeMark {
+        var vertices: Int
+        var solidVertices: Int
+        var solidIndices: Int
+        var forms: Int
+        var instances: Int
+        var runs: Int
+        var strokeRanges: Int
+        var fillRanges: Int
+        var solidStrokes: Int
+        var gpuStrokes: Int
+        /// 入口で数えた溜め場を捨てた回数 (``Canvas/pendingDiscards``)。出口の安全網が、記録の途中で捨てたかを
+        /// 見分けるのに比べる。
+        var discards: Int
+
+        init(of canvas: Canvas) {
+            vertices = canvas.vertices.count
+            solidVertices = canvas.solidVertices.count
+            solidIndices = canvas.solidIndices.count
+            forms = canvas.formInstances.count
+            instances = canvas.solidInstances.count
+            runs = canvas.batches.count
+            strokeRanges = canvas.recordedStrokeRanges.count
+            fillRanges = canvas.recordedFillRanges.count
+            solidStrokes = canvas.recordedSolidStrokes.count
+            gpuStrokes = canvas.recordedGPUStrokes.count
+            discards = canvas.pendingDiscards
+        }
+
+        /// 長さを、`origin` を起点とした位置から `base` を起点とした位置へ移す。
+        mutating func rebase(from origin: ShapeMark, to base: ShapeMark) {
+            vertices += base.vertices - origin.vertices
+            solidVertices += base.solidVertices - origin.solidVertices
+            solidIndices += base.solidIndices - origin.solidIndices
+            forms += base.forms - origin.forms
+            instances += base.instances - origin.instances
+            runs += base.runs - origin.runs
+            strokeRanges += base.strokeRanges - origin.strokeRanges
+            fillRanges += base.fillRanges - origin.fillRanges
+            solidStrokes += base.solidStrokes - origin.solidStrokes
+            gpuStrokes += base.gpuStrokes - origin.gpuStrokes
+        }
+    }
+
+    /// 組み立てている区間を、描き切りの間だけ溜め場から預かった入れ物 ([#2850])。
+    ///
+    /// 預かるのは一番外の印 (``ShapeMark``) より後ろの区間で、溜め場の並びは印の長さまで切り詰める。**戻すときは、
+    /// 出口が形を抜くときと同じ計算** (``Canvas/createShape(_:)`` の `shifted(by:)` と `run.start` の引き) で、
+    /// 区間の中の位置を戻す先の起点へ移す。戻す先は描き切りが空にした溜め場の末尾 (ふつうは先頭)。
+    struct HeldBuild {
+        let origin: ShapeMark
+        var vertices: [ShapeVertex]
+        var solidVertices: [SolidVertex]
+        var solidIndices: [UInt32]
+        var forms: [FormInstance]
+        var instances: [SolidInstance]
+        var strokeRanges: [StrokeRange]
+        var fillRanges: [RingFillRange]
+        var solidStrokes: [SolidStrokePiece]
+        var gpuStrokes: [RetainedGPUStroke]
+        var batches: [Batch]
+        /// 切り詰める前の被覆。描き切りが投げたときは丸ごと戻す。
+        let coverageBefore: [CoverageSpan]
+
+        /// `canvas` から `origin` より後ろの区間を預け、並びを切り詰める。
+        init(taking canvas: Canvas, after origin: ShapeMark) {
+            self.origin = origin
+            coverageBefore = canvas.coverageSpans
+            vertices = Array(canvas.vertices[origin.vertices...])
+            canvas.vertices.removeLast(vertices.count)
+            solidVertices = Array(canvas.solidVertices[origin.solidVertices...])
+            canvas.solidVertices.removeLast(solidVertices.count)
+            solidIndices = Array(canvas.solidIndices[origin.solidIndices...])
+            canvas.solidIndices.removeLast(solidIndices.count)
+            forms = Array(canvas.formInstances[origin.forms...])
+            canvas.formInstances.removeLast(forms.count)
+            instances = Array(canvas.solidInstances[origin.instances...])
+            canvas.solidInstances.removeLast(instances.count)
+            strokeRanges = Array(canvas.recordedStrokeRanges[origin.strokeRanges...])
+            canvas.recordedStrokeRanges.removeLast(strokeRanges.count)
+            fillRanges = Array(canvas.recordedFillRanges[origin.fillRanges...])
+            canvas.recordedFillRanges.removeLast(fillRanges.count)
+            solidStrokes = Array(canvas.recordedSolidStrokes[origin.solidStrokes...])
+            canvas.recordedSolidStrokes.removeLast(solidStrokes.count)
+            gpuStrokes = Array(canvas.recordedGPUStrokes[origin.gpuStrokes...])
+            canvas.recordedGPUStrokes.removeLast(gpuStrokes.count)
+            batches = Array(canvas.batches[origin.runs...])
+            canvas.batches.removeLast(batches.count)
+            // 被覆は頂点の番号で持つ。描き切りが頂点より先の番号を引かないよう、切り詰めた先を指す分は落とす
+            canvas.trimCoverage(to: origin.vertices)
+        }
+
+        /// 描き切りが投げたとき、預けた区間を元の位置へそのまま戻す。
+        func putBack(on canvas: Canvas) {
+            canvas.vertices.append(contentsOf: vertices)
+            canvas.solidVertices.append(contentsOf: solidVertices)
+            canvas.solidIndices.append(contentsOf: solidIndices)
+            canvas.formInstances.append(contentsOf: forms)
+            canvas.solidInstances.append(contentsOf: instances)
+            canvas.recordedStrokeRanges.append(contentsOf: strokeRanges)
+            canvas.recordedFillRanges.append(contentsOf: fillRanges)
+            canvas.recordedSolidStrokes.append(contentsOf: solidStrokes)
+            canvas.recordedGPUStrokes.append(contentsOf: gpuStrokes)
+            canvas.batches.append(contentsOf: batches)
+            canvas.coverageSpans = coverageBefore
+        }
+
+        /// 描き切りが済んだ溜め場の末尾 (`base`) へ、預けた区間を引き戻して戻す。
+        func putBack(rebasedTo base: ShapeMark, on canvas: Canvas) {
+            let vertexShift = base.vertices - origin.vertices
+            let solidShift = base.solidVertices - origin.solidVertices
+            let indexShift = base.solidIndices - origin.solidIndices
+            let formShift = base.forms - origin.forms
+            canvas.vertices.append(contentsOf: vertices)
+            canvas.solidVertices.append(contentsOf: solidVertices)
+            canvas.solidIndices.append(
+                contentsOf: solidIndices.map { UInt32(Int($0) + solidShift) })
+            canvas.formInstances.append(contentsOf: forms)
+            canvas.solidInstances.append(contentsOf: instances)
+            canvas.recordedStrokeRanges.append(
+                contentsOf: strokeRanges.map { $0.shifted(by: vertexShift) })
+            canvas.recordedFillRanges.append(
+                contentsOf: fillRanges.map { $0.shifted(by: vertexShift) })
+            canvas.recordedSolidStrokes.append(
+                contentsOf: solidStrokes.map { piece in
+                    var piece = piece
+                    piece.vertexStart += solidShift
+                    return piece
+                })
+            canvas.recordedGPUStrokes.append(
+                contentsOf: gpuStrokes.map { stroke in
+                    var stroke = stroke
+                    stroke.vertices =
+                        (stroke.vertices.lowerBound + solidShift)..<(stroke.vertices.upperBound + solidShift)
+                    return stroke
+                })
+            for var batch in batches {
+                // 列の位置は並びごとに違う (出口が形を抜くときと同じ分け方)。自分の頂点の置き場を持つ列
+                // (粒・読み込んだモデル) は、溜め場の頂点を指さないので位置を動かさない。**置き場所の位置
+                // (`instanceStart`・`backFaceInstances`) は動かさない** — 預けた列はもう描かれず、出口が
+                // 形として抜くだけで、出口は置き場所を捨てる (形は何も動かさない置き場所で置き直される)
+                switch batch.source {
+                case .flat:
+                    batch.run.start += vertexShift
+                case .solid:
+                    if batch.ownVertices == nil {
+                        batch.run.start += solidShift
+                        if batch.run.isIndexed { batch.run.indexStart += indexShift }
+                    }
+                    batch.backFaceParts = batch.backFaceParts.map {
+                        $0.shifted(by: $0.isIndexed ? indexShift : solidShift)
+                    }
+                case .form:
+                    batch.run.start += formShift
+                }
+                canvas.batches.append(batch)
+            }
+            // 被覆の区間と模型の頂点の控えは戻さない。どちらも預けた区間の中を指すが、被覆は出口が捨てる
+            // (`trimCoverage`)・控えは同じ模型を置き直すときに頂点を積み直すだけ (描き切りが空にした控えから
+            // 始めて、預けた区間の頂点を指さない) で、形にも絵にも影響しない
+        }
+    }
+
+    /// 置いた側を描き切る。**形を組み立てている最中なら、組み立てている区間は描き切りへ渡さずに残す** ([#2850])。
+    ///
+    /// 置いた描き場所の描き換えが、置いた側の写しの上限に達したか写しの取得に失敗したとき、置いた時点の絵を守る
+    /// ために置いた側 (``keepPicture(placedFrom:)``) を描き切る。溜め場ごと描き切ると、組み立てた区間が形に
+    /// ならずフレームに出て、形が空になっていた (出口の安全網・``InsideShape/drawnOut``)。描き切るのは**組み立ての前に
+    /// 置いた列だけ**でよい — 組み立てた列は形として抜かれ、フレームには描かれない。
+    ///
+    /// 手順: 組み立てている区間を預ける → 組み立ての前の列を描き切る → 預けた区間を溜め場の先頭へ引き戻す。
+    /// 入れ子の印も同じ量だけ引く。組み立ての前の列はもう描いたので、以降の描き換えで写しは要らない
+    /// (``Canvas/shapeRecordingRunStart`` が先頭を指す)。描き切りが進める溜め場を捨てた回数は、出口の安全網の
+    /// 見分けに響かないよう印の側へ足す。**描き切りが投げたら、預けた区間を元の位置へ戻す** (組み立てが欠けない)。
+    ///
+    /// 組み立ての外では、ただの途中の描き切りである。
+    ///
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+    func flushBeforeBuild() throws(RenderFailure) {
+        guard recordingShape, let origin = shapeMarks.first else {
+            try flush(applyingEffects: false)
+            return
+        }
+        // 開いている列は組み立ての列である。閉じてから預ける
+        closeBatch()
+        let held = HeldBuild(taking: self, after: origin)
+        let discards = pendingDiscards
+        do {
+            // 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない
+            try flush(applyingEffects: false)
+        } catch {
+            held.putBack(on: self)
+            throw error
+        }
+        // 描き切りは溜め場を捨てた回数を進める。組み立ての区間を捨てたのではないので、印の側へ足して、出口の
+        // 安全網の見分け (記録の途中で捨てたか) に響かせない。読む面 (``currentTexture``) も描き切りが焼き場へ
+        // 戻すが、それは開いている列の控えで、次に置くときに塗りから取り直される
+        let bumped = pendingDiscards &- discards
+        let base = ShapeMark(of: self)
+        held.putBack(rebasedTo: base, on: self)
+        for index in shapeMarks.indices {
+            shapeMarks[index].rebase(from: origin, to: base)
+            shapeMarks[index].discards &+= bumped
+        }
     }
 
     /// 形の組み立ての出口で、組み立て前へ戻す状態 ([#1684])。入口で写し、出口で戻す。

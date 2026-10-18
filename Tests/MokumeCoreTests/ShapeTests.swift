@@ -1480,10 +1480,10 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
             + "not been drawn yet. There, get() returns transparent, set() and loadPixels() do "
             + "nothing, and pixels is not read again",
     .drawnOut:
-        "createShape { }: the frame was drawn out while the shape was being built (a drawing "
-            + "target placed earlier was changed when this canvas could not keep one more copy of "
-            + "it), so what was built up to then was drawn into the frame, and the shape is empty. "
-            + "Do that before or after building the shape",
+        "createShape { }: the frame was drawn out while the shape was being built, so what was "
+            + "built up to then was drawn into the frame, and the shape is empty. This is most "
+            + "likely a fault inside mokume — please report it with this message at "
+            + "https://github.com/mokume-metal/mokume/issues (#2850)",
     .frameEnd:
         "createShape { }: the frame of the canvas being built on was closed inside the shape by "
             + "endDraw(), so it stays open until the shape is finished and closes there; until then "
@@ -2021,44 +2021,303 @@ extension ShapeTests {
         }
     }
 
-    /// 経路 2 の逃げ道 ([#1855] の案 E の代償)。置いた側の写しが上限 (``Canvas/placedPictureCopyLimit``)
-    /// に達していれば、組み立ての中でも今までどおり描き切って置いた時点の絵を守り、出口の安全網が
-    /// 空の形を返して注意する。**安全網に届く経路が残っていることを名乗る検査**でもある。
-    ///
-    /// 直す前は組み立ての中では写しを試さずに描き切ったので、上限に達した回数を数えない。
+    /// 置いた側が置いた時点の絵の写しを持てない場面。
+    enum NoPictureCopy: CaseIterable, CustomTestStringConvertible {
+        /// 写しの上限 (``Canvas/placedPictureCopyLimit``) に達した
+        case limitReached
+        /// 写しを取るのに失敗した
+        case copyFails
+
+        var testDescription: String {
+            switch self {
+            case .limitReached: "写しの上限"
+            case .copyFails: "写しの失敗"
+            }
+        }
+    }
+
+    /// 経路 2 の逃げ道 ([#1855] の案 E の代償・[#2850])。置いた側の写しが上限 (``Canvas/placedPictureCopyLimit``)
+    /// に達しているか写しの取得が失敗すれば、置いた時点の絵を守るために置いた側を描き切る。**描き切るのは組み立ての
+    /// 前に置いた列だけで、組み立てている区間は描き切らずに残す** — 形は組み立てた中身を持ち、安全網の注意は出ない。
+    /// 直す前は組み立ての区間ごと描き切って空の形を返し、組み立てた円がフレームに出た。
     ///
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
-    @Test("置いた側の写しが上限に達していれば、組み立ての中の描き換えは描き切って空の形を返す")
-    func changingAPlacedTargetBeyondTheCopyLimitInsideABuildGivesAnEmptyShape() throws {
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+    @Test(
+        "置いた側が写しを持てなくても、組み立ての中の描き換えは組み立てた中身を残し、先に置いた所だけを描き切る",
+        arguments: NoPictureCopy.allCases)
+    func changingAPlacedTargetWithoutACopyInsideABuildKeepsTheShape(cause: NoPictureCopy) throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         let layer = try canvas.createGraphics(8, 8)
         var shape = Shape.empty
+        var passes = -1
         try canvas.draw {
             canvas.background(Self.black)
-            // 「置く → 描き換える」を上限の回数だけ繰り返し、写しを使い切る
-            for _ in 0..<Canvas.placedPictureCopyLimit {
-                canvas.image(layer, 8, 0)
+            switch cause {
+            case .limitReached:
+                // 「置く → 描き換える」を上限の回数だけ繰り返し、写しを使い切る
+                for _ in 0..<Canvas.placedPictureCopyLimit {
+                    canvas.image(layer, 8, 0)
+                    layer.beginDraw()
+                    layer.background(Self.blue)
+                    layer.endDraw()
+                }
+            case .copyFails:
                 layer.beginDraw()
                 layer.background(Self.blue)
                 layer.endDraw()
             }
             canvas.image(layer, 8, 0)
+            if cause == .copyFails { canvas.failPlacedPictureCopyForTesting = .encoderUnavailable }
             shape = canvas.createShape {
                 placeCircle(canvas)
                 layer.beginDraw()
                 layer.background(Self.magenta)
                 layer.endDraw()
+                // 描き切りの後にも組み立てる (左下)
+                canvas.image(layer, 0, 8)
+                // さらに描き換えても、組み立てた区間は写しへ差し替えず、描き場所のいまの絵を読み続ける
+                // (組み立ての前の列はもう描いたので、写すものが無い)
+                layer.beginDraw()
+                layer.background(Self.red)
+                layer.endDraw()
             }
-            #expect(canvas.hasNothingPending, "組み立ての残りが溜め場に残った")
+            canvas.failPlacedPictureCopyForTesting = nil
+            passes = canvas.passesThisFrame
         }
-        #expect(canvas.placedPictureCopyLimitReached == 1, "組み立ての中で写しを試していない")
-        #expect(shape.isEmpty)
-        #expect(
-            canvas.warnings.message(for: .shapeDrawnOutWhileBuilding)
-                == insideShapeNotices[.drawnOut])
-        // 描き切りで置いた時点の絵 (青) を守る。描き切りまでに組み立てた円はフレームに出る
+        switch cause {
+        case .limitReached:
+            #expect(canvas.placedPictureCopyLimitReached == 1, "組み立ての中で写しを試していない")
+        case .copyFails:
+            #expect(canvas.placedPicturesCopied == 0, "写しの失敗が差し込まれていない")
+        }
+        #expect(passes == 1, "置いた側を描き切っていない (検査の前提)")
+        #expect(!shape.isEmpty, "組み立てた中身が形に残っていない")
+        #expect(!canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いた")
+        // 描き切りは組み立ての前の列だけ。置いた時点の絵 (青) を守り、組み立てた分はフレームに出ない
         #expect(canvas.get(12, 4) == Self.blue, "先に置いた描き場所が置いた時点の絵で出ていない")
-        #expect(canvas.get(3, 3) == Self.green, "描き切りまでに組み立てた円がフレームに出ていない")
+        #expect(canvas.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
+        #expect(canvas.get(4, 12) == Self.black, "組み立ての中で置いた描き場所がフレームに出た")
+
+        try canvas.draw {
+            canvas.background(Self.black)
+            canvas.shape(shape)
+        }
+        #expect(canvas.get(3, 3) == Self.green, "描き切りより前に組み立てた円が形に入っていない")
+        #expect(canvas.get(4, 12) == Self.red, "描き切りの後に組み立てた描き場所が、描き場所のいまの絵を読んでいない")
+    }
+
+    /// 形の記録の特徴を文字にしたもの。読む面 (描き場所) は面ごとに別なので含めず、頂点・添字・置き場所・
+    /// 区間の位置と数・輪郭・塗りの区間・線・部品を比べる。
+    ///
+    /// **続く区間で設定が同じものは 1 本にして比べる。** 逃げ道は開いている列を閉じてから預けるので、描き切りの
+    /// 前後で同じ設定の列が 2 本に分かれる。描く順も絵も変わらない (列の切れ目だけが違う)。
+    private func signature(of shape: Shape) -> String {
+        var merged: [Shape.Run] = []
+        for run in shape.runs {
+            if var last = merged.last, last.sameSettings(as: run), last.start + last.count == run.start,
+                last.indexStart + last.indexCount == run.indexStart || run.indexCount == 0
+            {
+                last.count += run.count
+                last.indexCount += run.indexCount
+                merged[merged.count - 1] = last
+            } else {
+                merged.append(run)
+            }
+        }
+        let runs = merged.map {
+            "\($0.source) \($0.mode) \($0.start) \($0.count) \($0.indexStart) \($0.indexCount)"
+        }
+        return [
+            "vertices \(shape.vertices)", "solid \(shape.solidVertices)", "indices \(shape.solidIndices)",
+            "forms \(shape.forms)", "runs \(runs)", "strokes \(shape.strokeRanges)",
+            "fills \(shape.fillRanges)", "solidStrokes \(shape.solidStrokes)",
+            "gpuStrokes \(shape.gpuStrokes)", "parts \(shape.solidParts)",
+        ].joined(separator: "\n")
+    }
+
+    /// 2 つの文字の、最初に違う行。
+    private func difference(_ left: String, _ right: String) -> String {
+        for (a, b) in zip(left.split(separator: "\n"), right.split(separator: "\n")) where a != b {
+            return "\(a.prefix(400)) <> \(b.prefix(400))"
+        }
+        return ""
+    }
+
+    /// 平面・基本図形・細い輪郭・立体・入れ子の形を、`between` の前後で記録する。
+    private func buildMixed(_ canvas: Canvas, picture: Canvas, between: () -> Void) {
+        canvas.noStroke()
+        canvas.fill(Self.green)
+        canvas.circle(6, 6, 8)
+        canvas.fill(Self.red)
+        canvas.triangle(2, 12, 10, 12, 6, 20)
+        canvas.stroke(Self.blue)
+        canvas.strokeWeight(0.3)
+        canvas.line(0, 0, 20, 14)
+        // 輪郭のある立体 (立体の線の元)
+        canvas.stroke(Self.green)
+        canvas.strokeWeight(0.5)
+        canvas.fill(Self.magenta)
+        canvas.push()
+        canvas.translate(14, 14, 0)
+        canvas.box(6)
+        canvas.pop()
+        canvas.noStroke()
+        patch(canvas, indexed: true)
+        // 太い輪郭のある三角形と楕円 (輪郭の区間・輪の塗りの区間)
+        canvas.stroke(Self.red)
+        canvas.strokeWeight(2)
+        canvas.fill(Self.blue)
+        canvas.triangle(12, 10, 20, 10, 16, 16)
+        // 絵を貼った塗りは基本図形の経路に乗らず、輪の塗りの区間を記録する
+        canvas.texture(picture)
+        canvas.ellipse(10, 10, 12, 8)
+        canvas.noTexture()
+        canvas.noStroke()
+        between()
+        patch(canvas, indexed: true, x: 2)
+        canvas.fill(Self.blue)
+        canvas.rect(12, 2, 6, 6)
+        canvas.stroke(Self.green)
+        canvas.strokeWeight(1)
+        canvas.line(2, 18, 18, 18)
+        canvas.noStroke()
+        canvas.fill(Self.red)
+        canvas.push()
+        canvas.translate(6, 14, 0)
+        canvas.sphere(3, detail: 8)
+        canvas.pop()
+        let inner = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(Self.green)
+            canvas.circle(3, 3, 4)
+            canvas.box(2)
+        }
+        canvas.shape(inner, 1, 1)
+    }
+
+    /// 完了条件 2 ([#2850])。置いた側を描き切る逃げ道に入った組み立ては、**描き切りの無い組み立てと同じ形**になる。
+    /// 描き切りは組み立てている区間を預けて溜め場の先頭へ引き戻すので、区間の位置 (頂点・添字・置き場所・列) が
+    /// ずれると、形が欠けるか別のものを指す。組み立ての前にも、平面・立体・基本図形・細い輪郭を置いて、起点が 0
+    /// でない所から戻す。`nested` は入れ子の内側で逃げ道に入る (外側の印も引く)。
+    ///
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+    @Test("置いた側を描き切る逃げ道に入った組み立ては、描き切りの無い組み立てと同じ形になる", arguments: [false, true])
+    func aBuildThatDrawsOutThePlacedPartIsTheSameShape(nested: Bool) throws {
+        func run(drawsOut: Bool) throws -> (shape: Shape, passes: Int, canvas: Canvas) {
+            let canvas = try makeCanvas(width: 24, height: 24)
+            let layer = try canvas.createGraphics(8, 8)
+            var shape = Shape.empty
+            var passes = -1
+            try canvas.draw {
+                canvas.background(Self.black)
+                // 組み立ての前に置いたもの。どの並びも起点が 0 でなくなる
+                canvas.noStroke()
+                canvas.fill(Self.red)
+                canvas.rect(0, 0, 3, 3)
+                canvas.stroke(Self.green)
+                canvas.strokeWeight(0.3)
+                canvas.line(0, 23, 23, 0)
+                canvas.noStroke()
+                canvas.fill(Self.blue)
+                canvas.push()
+                canvas.translate(20, 20, 0)
+                canvas.sphere(2, detail: 8)
+                canvas.pop()
+                canvas.image(layer, 16, 0)
+                // 添字のある立体も組み立ての前に置く (添字の並びの起点も 0 でなくなる)
+                patch(canvas, indexed: true, x: 3)
+                if drawsOut { canvas.failPlacedPictureCopyForTesting = .encoderUnavailable }
+                let between = {
+                    guard drawsOut else { return }
+                    layer.beginDraw()
+                    layer.background(Self.magenta)
+                    layer.endDraw()
+                }
+                if nested {
+                    shape = canvas.createShape {
+                        canvas.noStroke()
+                        canvas.fill(Self.red)
+                        canvas.rect(20, 20, 3, 3)
+                        let inner = canvas.createShape { self.buildMixed(canvas, picture: layer, between: between) }
+                        canvas.shape(inner)
+                    }
+                } else {
+                    shape = canvas.createShape { buildMixed(canvas, picture: layer, between: between) }
+                }
+                canvas.failPlacedPictureCopyForTesting = nil
+                passes = canvas.passesThisFrame
+                // 描き切りの無いほうも、組み立ての後に同じ絵へ描き換える (形が読む描き場所の絵を揃える)
+                if !drawsOut {
+                    layer.beginDraw()
+                    layer.background(Self.magenta)
+                    layer.endDraw()
+                }
+            }
+            return (shape, passes, canvas)
+        }
+        let plain = try run(drawsOut: false)
+        let drawn = try run(drawsOut: true)
+        #expect(plain.passes == 0, "検査の前提: 描き切りの無い組み立てが描き切った")
+        // 検査の前提: 並べ替えを見たい並びが、どれも中身を持つ
+        #expect(!plain.shape.strokeRanges.isEmpty, "輪郭の区間が無い")
+        #expect(!plain.shape.fillRanges.isEmpty, "輪の塗りの区間が無い")
+        #expect(!plain.shape.solidIndices.isEmpty, "添字が無い")
+        #expect(!plain.shape.solidStrokes.isEmpty, "立体の線が無い")
+        #expect(drawn.passes == 1, "検査の前提: 逃げ道に入っていない")
+        #expect(!drawn.canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いた")
+        #expect(
+            signature(of: drawn.shape) == signature(of: plain.shape),
+            Comment(rawValue: "預けて戻した形が、描き切りの無い形と違う: " + difference(signature(of: drawn.shape), signature(of: plain.shape))))
+
+        // 形を置いた絵も同じ
+        func picture(_ run: (shape: Shape, passes: Int, canvas: Canvas)) throws -> [LinearRGBA] {
+            var pixels: [LinearRGBA] = []
+            try run.canvas.draw {
+                run.canvas.background(Self.black)
+                run.canvas.shape(run.shape)
+            }
+            for y in 0..<24 { for x in 0..<24 { pixels.append(run.canvas.get(x, y)) } }
+            return pixels
+        }
+        #expect(try picture(drawn) == picture(plain), "形を置いた絵が違う")
+    }
+
+    /// 逃げ道の描き切りが投げても ([#2850])、預けた組み立ての区間は元の位置へ戻り、形は欠けない。描き切れなかった
+    /// 組み立ての前の列は溜め場に残り、フレームの終わりの描き切りが描く。
+    ///
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+    @Test("置いた側の描き切りが失敗しても、組み立てた区間は元の位置へ戻り、形は欠けない")
+    func aFailedDrawOutKeepsTheBuiltShape() throws {
+        func build(failing: Bool) throws -> Shape {
+            let canvas = try makeCanvas(width: 24, height: 24)
+            let layer = try canvas.createGraphics(8, 8)
+            var shape = Shape.empty
+            try canvas.draw {
+                canvas.background(Self.black)
+                canvas.noStroke()
+                canvas.fill(Self.red)
+                canvas.rect(0, 0, 3, 3)
+                canvas.image(layer, 16, 0)
+                if failing {
+                    canvas.failPlacedPictureCopyForTesting = .encoderUnavailable
+                    canvas.failureForTesting = .encoderUnavailable
+                }
+                shape = canvas.createShape {
+                    buildMixed(canvas, picture: layer) {
+                        guard failing else { return }
+                        layer.beginDraw()
+                        layer.background(Self.magenta)
+                        layer.endDraw()
+                    }
+                }
+                canvas.failPlacedPictureCopyForTesting = nil
+                canvas.failureForTesting = nil
+                #expect(!canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いた")
+            }
+            return shape
+        }
+        #expect(try signature(of: build(failing: true)) == signature(of: build(failing: false)))
     }
 
     /// 経路 3 ([#1855] の案 G)。描き場所の組み立ての中で、その描き場所の `endDraw()` を呼ぶと、1 度
