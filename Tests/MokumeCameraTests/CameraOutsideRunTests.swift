@@ -29,14 +29,14 @@ struct CameraOutsideRunTests {
         let log = OutsideRun()
         OutsideRun.$current.withValue(log) {
             let sketch = Bare()
-            #expect(throws: ImageFailure.notRunning(call: "createCapture(_:_:device:)")) {
+            #expect(throws: ImageFailure.notRunning(call: "createCapture(_:_:device:mirrored:)")) {
                 try sketch.createCapture()
             }
-            #expect(throws: ImageFailure.notRunning(call: "createCapture(frames:)")) {
+            #expect(throws: ImageFailure.notRunning(call: "createCapture(frames:mirrored:)")) {
                 try sketch.createCapture(frames: [])
             }
-            #expect(log.message(for: "createCapture(_:_:device:)") != nil)
-            #expect(log.message(for: "createCapture(frames:)") != nil)
+            #expect(log.message(for: "createCapture(_:_:device:mirrored:)") != nil)
+            #expect(log.message(for: "createCapture(frames:mirrored:)") != nil)
             #expect(log.message(for: "createImage(_:_:)") == nil, "中で使った口の名前で言っている")
         }
     }
