@@ -536,9 +536,11 @@ struct ShapeExitTests {
         /// 描き場所の組み立ての中で自分の `endDraw()` を呼ぶ。**閉じるのは出口で状態を戻した後**
         /// (#1855 の案 G)
         case endDrawInside
-        /// 描き場所の組み立ての中で本体の次のフレームを始め、本体の頭が描き場所の閉じ忘れたフレームを
-        /// 捨てる (#1834)。**組み立ての途中でフレームが閉じる、残った道**で、出口の安全網に届く (#1855)
-        case droppedByTheMainFrame
+        /// 描き場所の組み立ての中で本体の次のフレームを始める。本体の頭は、組み立て中の描き場所の開いた
+        /// フレームを閉じ忘れとして**捨てない** (#2509。#1834 の捨てる規則から組み立て中の面を除いた)。
+        /// 組み立ての途中でフレームが閉じる道はこれで無くなり、フレームは出口の後も開いたまま続く。閉じるのは
+        /// 出口の後の `endDraw()`。以前は本体の頭が捨てて、出口の安全網に届いていた (#1855)
+        case startedByTheMainFrame
 
         var testDescription: String { "\(self)" }
     }
@@ -550,7 +552,10 @@ struct ShapeExitTests {
     /// 同じ破れ方)。
     ///
     /// 組み立ての中の自分の `endDraw()` は、#1855 から出口まで閉じるのを待たせる (状態を戻した後に
-    /// 閉じる)。組み立ての途中で閉じる道は、本体の頭が閉じ忘れを捨てる形が残っている。両方を通す。
+    /// 閉じる)。組み立ての途中で閉じる道は、本体の頭が閉じ忘れを捨てる形が残っていたが、#2509 で組み立て中の
+    /// 描き場所を捨てる相手から外したので、無くなった。本体のフレームが始まっても閉じないこと (出口が
+    /// 開いたフレームの値のまま何も書き戻さず、出口の後の `endDraw()` で閉じれば既定へ戻る) を、
+    /// 待たせる形とあわせて通す。
     ///
     /// 表の「断る」で汚す手順を持つものを全部汚し、フレームを閉じ、出口の直後と次のフレームで
     /// 見る。**`Style` のフィールドは手順が必須** — 出口は `Style` を写して戻すので、ここが表と
@@ -601,16 +606,29 @@ struct ShapeExitTests {
                 after = closed
             }
             #expect(!layer.isDrawing, "出口でフレームが閉じていない")
-        case .droppedByTheMainFrame:
+        case .startedByTheMainFrame:
             try host.draw { open() }
-            _ = layer.createShape {
+            var insideTheBuild: [String: String] = [:]
+            let shape = layer.createShape {
                 layer.rect(0, 0, 4, 4)
-                // 本体の次のフレームの頭が、開いたままの描き場所のフレームを捨てる
+                // 本体の次のフレームの頭は、組み立て中の描き場所の開いたフレームを捨てない (#2509)
                 try? host.draw {}
-                closed = ShapeExit.fingerprint(of: layer, refused)
+                insideTheBuild = ShapeExit.fingerprint(of: layer, refused)
             }
-            after = ShapeExit.fingerprint(of: layer, refused)
-            #expect(layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いていない")
+            #expect(!shape.isEmpty, "本体のフレームの始まりが形を空にした")
+            #expect(!layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いた")
+            #expect(layer.isDrawing, "組み立てている間にフレームが閉じた")
+            // 本体のフレームの始まりは、組み立て中のフレームの値に触らない。出口も書き戻さない
+            let afterTheExit = ShapeExit.fingerprint(of: layer, refused)
+            for name in refused.sorted() {
+                #expect(insideTheBuild[name] == before[name], "\(name) を本体のフレームの始まりが戻した")
+                #expect(afterTheExit[name] == before[name], "\(name) を出口が書き換えた")
+            }
+            // 開いたままのフレームは、出口の後の endDraw() で閉じる。ここで既定へ戻る
+            layer.endDraw()
+            #expect(!layer.isDrawing, "出口の後の endDraw() が閉じていない")
+            closed = ShapeExit.fingerprint(of: layer, refused)
+            after = closed
         }
         try host.draw {
             layer.beginDraw()

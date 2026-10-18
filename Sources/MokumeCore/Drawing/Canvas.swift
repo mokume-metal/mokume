@@ -1051,9 +1051,11 @@ public final class Canvas {
     /// **入るときに、時刻の置き場の描き場所のうち、前のフレームに属したまま閉じ忘れたフレームを
     /// 捨てる** ([#1834])。区間は次に描くフレームに属するので、そのフレームが始まる所として本体の
     /// 頭と同じ規則で捨てる (止まっている間は、頭が来ない)。区間の中で開いたものは次に描くフレームに
-    /// 属するので捨てない (``dropFrameLeftOpen(before:)``)。
+    /// 属するので捨てない (``dropFrameLeftOpen(before:)``)。形を組み立てている最中の描き場所
+    /// (``recordingShape``) のフレームも、本体のフレームの頭と同じく捨てない ([#2509])。
     ///
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
+    /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     var carriesOver = false {
         didSet {
             if !oldValue, carriesOver, !isDrawing, timebase.owner === self {
@@ -2696,7 +2698,9 @@ public final class Canvas {
     ///   捨てない。捨てた後の描き場所はフレームの外に居る。越えた後に読めば (``get(_:_:)``・
     ///   ``pixels``・``loadPixels()``) 捨てる前の絵が返り、置けば注意して置かない。遅れて呼んだ ``endDraw()`` は、既に捨てたことを言って
     ///   何もしない。この描き場所を置いた面が描き換わっても、数の並びを読んでも、捨てた中身は
-    ///   描かれず、頼んだ計算は走らない
+    ///   描かれず、頼んだ計算は走らない。**ただし、この描き場所が形の組み立て (``createShape(_:)``) の
+    ///   中なら、捨てずに開いたまま出口まで待たせる** ([#2509])。出口の後は、境目を越えたまま閉じ忘れた
+    ///   フレームと同じに終わる (出口の後の ``endDraw()`` が閉じる / 本体の次のフレームの頭が捨てる)
     /// - 本体・直に使う面では、自分の次のフレームの頭 (`beginDraw()` か ``draw(_:)``) で捨て、
     ///   描き始め直す
     ///
@@ -2735,6 +2739,7 @@ public final class Canvas {
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     public func beginDraw() {
         // **組み立ての中では、組み立てている面のフレームを始めない** ([#2201])。捨てる道へ入る前に見る
         if startsFrameInsideShape { return warnInsideShape(.frameStart) }
@@ -2781,10 +2786,11 @@ public final class Canvas {
     /// 中の描き場所) 立たず、口は今までどおりその続きとして扱う。
     ///
     /// 見るのは**この面の**組み立てだけである (``recordingShape`` は面ごと)。別の面の組み立ての中で
-    /// 描き場所を開いて閉じるのは今までどおりで、本体の頭が組み立て中の描き場所の閉じ忘れを捨てる形は
-    /// 出口の安全網に残る (``InsideShape/drawnOut``)。
+    /// 描き場所を開いて閉じるのは今までどおりである。本体のフレームの始まりが組み立て中の描き場所のフレームに
+    /// 触れる形は、捨てずに開いたまま待たせる (``dropFrameLeftOpen(before:)``・[#2509])。
     ///
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     private var startsFrameInsideShape: Bool {
         recordingShape && (!isDrawing || leftOpenAcrossBoundary || frameEndAwaitingShape)
     }
@@ -2958,11 +2964,23 @@ public final class Canvas {
     /// **``draw(_:)`` が開いたフレームは捨てない** — 閉包を抜けるときに同じ呼び出しが閉じる
     /// (閉包の中から本体のフレームを回した場合も、そのまま続く)。
     ///
+    /// **形を組み立てている最中の描き場所 (``recordingShape``) のフレームも捨てない** ([#2509])。
+    /// 捨てると、組み立てた分が溜め場ごと消えて形が空になる。組み立ては、スケッチの `canvas.beginDraw()` /
+    /// `canvas.draw { }` (`Sketch.canvas` は公開) からも、`Canvas` を直に回す道具からも、本体のフレームの
+    /// 始まりを呼べる。組み立てているのは描き場所で、始めるのは本体だが、利用者の書いたものを捨てて
+    /// 「mokume の不具合」を名乗る注意を出すより、開いたまま出口まで待たせる。本体のフレームの番号は
+    /// 進むので、出口の後の描き場所のフレームは境目を越えた扱いになり、組み立てていない描き場所の閉じ忘れと
+    /// 同じに終わる — 出口の後の ``endDraw()`` が閉じるか、本体の次のフレームの頭が (組み立てていないので)
+    /// 捨てる。
+    ///
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
+    /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     private func dropFrameLeftOpen(before frame: Int) {
         // 前に捨てたことを名乗る印は、次の区切りまで (``droppedAtTheMainFrame``)
         droppedAtTheMainFrame = false
-        guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self, opened < frame else {
+        guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self, opened < frame,
+            !recordingShape
+        else {
             return
         }
         warnFrameDroppedAtTheMainFrame()
