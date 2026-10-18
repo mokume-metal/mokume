@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 道具が返す失敗。
 ///
@@ -20,6 +21,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// こちらは名前が mokume や Swift の名前と衝突していて、直し方は別の名前を選ぶこと
     /// ([#2310](https://github.com/mokume-metal/mokume/issues/2310))。
     case unusableName(name: String, reason: String)
+    /// 文字は使えるが、組めないほど長い名前。`length` は ``FileNameLength/of(_:)`` で数えた長さ。
+    ///
+    /// **作る前に断る** ([#2774](https://github.com/mokume-metal/mokume/issues/2774))。名前は作るパッケージの
+    /// ターゲット名で、組み立てが `<名前>_const_extract_protocols.json` のように名前に足したファイルを
+    /// 作る。越えると `swift build` が `File name too long` になり、`Created` と言ったものが組めない。
+    /// ``invalidName(_:)`` (文字の種類) とも ``unusableName(name:reason:)`` (名前の衝突) とも直し方は同じ
+    /// (別の名前を選ぶ) だが、理由が数で言えるので分ける。
+    case nameTooLong(name: String, length: Int)
     case directoryExists(path: String)
     case cannotCreate(path: String, reason: String)
     case templatesMissing
@@ -31,6 +40,17 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 窓口 (`mcp`) は `Package.swift` の無い場所でも起こされうる
     /// ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
     case directoryNotFound(path: String)
+    /// 走らせた場所が読めない (作業ディレクトリが消えた) のに、それを基準に解く相対パス
+    /// (または場所の省略) を受けた。`given` は解けなかった綴り (省略は `.`)。
+    ///
+    /// **``directoryNotFound(path:)`` と分ける。** あちらは渡された場所が在らない失敗で、
+    /// 直し方は場所を打ち直すこと。こちらは場所の綴りに誤りは無く、道具が走っている場所が
+    /// 読めない — 直し方は絶対パスで渡すか、在る場所から走らせることである
+    /// ([#2497](https://github.com/mokume-metal/mokume/issues/2497))。
+    ///
+    /// `variable` は、綴りが環境変数 (`MOKUME_WORK_DIR`・`MOKUME_BUILD_DIR`) から来たときのその名前。
+    /// 引数から来たなら `nil`。
+    case currentDirectoryUnreadable(given: String, variable: String? = nil)
     case buildFailed(status: Int32)
     /// 走らせたスケッチが 0 以外で終わった。**道具の失敗ではない。**
     case sketchExited(status: Int32)
@@ -58,6 +78,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     ///
     /// **終わり方を持つ。** 子が合図で落ちた回を「exited with code N」と名乗らない (#2315)。
     case renderIncomplete(destination: String, ending: ChildEnding)
+    /// 子は 0 で終わったが、書き出し先に頼んだものが揃っていなかった (`render`・
+    /// [#2481](https://github.com/mokume-metal/mokume/issues/2481))。
+    ///
+    /// **``renderIncomplete(destination:ending:)`` と分ける。** あちらは子が自分で失敗を名乗った回で、
+    /// こちらは子が何も言わずに終わったので、道具が書き出し先を見て気付いた。頼みを読まずに終わる
+    /// 古い版の子 (道具と依存の版のずれ) がこちらに来る。
+    case renderOutputShort(
+        destination: String, expected: Int, shortfall: RenderRequest.Shortfall)
     case noExecutable(path: String)
     /// 起こそうとした実行ファイルが、起こす時点で無かった。
     ///
@@ -132,7 +160,7 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// `..` と組むと `--out` の外の `.app` を消していた。
     case identityNameUnusable(path: String, name: String)
     /// 名乗りの `name` が、ファイル名にするには長すぎる。`length` は
-    /// ``AppIdentity/fileNameLength(of:)`` で数えた長さ。
+    /// ``FileNameLength/of(_:)`` で数えた長さ。
     ///
     /// **組み立ての前に断る** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
     /// `name` は包み (`<name>.app`) と開き方の紙のファイル名にもなり、長いほうの紙が上限を越えると、
@@ -172,6 +200,25 @@ nonisolated enum CommandFailure: Error, Equatable {
         }
     }
 
+    /// 解けなかった綴りの言い方。省略 (`.`) は、打たれた綴りではなく既定の場所と言う。
+    static func unresolvedPhrase(_ given: String, variable: String? = nil) -> String {
+        if let variable {
+            return "\(variable) (the relative path \(GivenPath.shellWord(display: given)))"
+        }
+        return given == "."
+            ? "the place it defaults to"
+            : "the relative path \(GivenPath.shellWord(display: given))"
+    }
+
+    /// ``currentDirectoryUnreadable(given:)`` の文面。`doctor` の先頭の名乗りは、言い方 (``unresolvedPhrase(_:)``) を共有する。
+    static func currentDirectoryUnreadableText(given: String, variable: String? = nil) -> String {
+        """
+            Cannot read the directory this was run from (it may have been deleted),
+            so \(unresolvedPhrase(given, variable: variable)) cannot be resolved
+            Give an absolute path\(variable.map { " in \($0)" } ?? ""), or run it from a directory that exists
+            """
+    }
+
     var message: String {
         switch self {
         case .usage(let text):
@@ -182,6 +229,13 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
             \(name.isEmpty ? "The name is empty" : "That name has characters a sketch cannot use: \(name)")
             Use letters, digits, hyphens and underscores, and start with a letter
+            """
+        case .nameTooLong(let name, let length):
+            """
+            That name is too long for the sketch to build: \(length) (\(name))
+            The build writes files named after it, so it can be at most \(NewCommand.maximumNameLength) \
+            counted as the file system counts it (an accented letter or a kana with a voiced mark \
+            counts as 2). Pick a shorter name
             """
         case .unusableName(let name, let reason):
             """
@@ -212,6 +266,8 @@ nonisolated enum CommandFailure: Error, Equatable {
             No such directory: \(path)
             Point at a directory that exists
             """
+        case .currentDirectoryUnreadable(let given, let variable):
+            Self.currentDirectoryUnreadableText(given: given, variable: variable)
         case .resourcesNotDeclared(let directory):
             """
             \(directory) holds assets, but Package.swift does not declare them.
@@ -341,6 +397,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             Rendering did not complete: \(destination) is missing frames or was not written.
             The sketch said why above — it \(ending.phrase)
             """
+        case .renderOutputShort(let destination, let expected, let shortfall):
+            """
+            Rendering did not complete: \(Self.describe(shortfall, expected: expected, destination: destination))
+            \(Self.advice(for: shortfall))
+            """
         case .noExecutable(let path):
             """
             Cannot find anything to run: \(path)
@@ -376,6 +437,43 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
             The toolchain did not answer (exit code \(status)): \(command)
             It said why on standard error; run that command in the sketch's directory to see it again
+            """
+        }
+    }
+
+    /// ``renderOutputShort(destination:expected:shortfall:)`` の、何が足りなかったかの 1 行。
+    private static func describe(
+        _ shortfall: RenderRequest.Shortfall, expected: Int, destination: String
+    ) -> String {
+        switch shortfall {
+        case .notWritten:
+            "nothing was written to \(destination) by this run (\(expected) frames were asked for)"
+        case .unreadable:
+            "\(destination) is there but cannot be read as a movie (\(expected) frames were asked for)"
+        case .frames(let found) where found > expected:
+            "\(destination) holds \(found) frames, but \(expected) were asked for"
+        case .frames(let found):
+            "only \(found) of \(expected) frames are in \(destination)"
+        case .leadingFrames(let found):
+            "only the first \(found) of \(expected) frames are in \(destination) "
+                + "(frame number \(found), counting from 0, was not written by this run)"
+        }
+    }
+
+    /// 足りなかった回の次の一手。**何も書かれていない回だけ、版のずれを疑わせる** — 頼みを読まない版の
+    /// スケッチは何も書かずに 0 で終わる。一部だけ書かれた回や多すぎる回は、その説明に当たらない。
+    private static func advice(for shortfall: RenderRequest.Shortfall) -> String {
+        switch shortfall {
+        case .notWritten, .frames(found: 0), .leadingFrames(found: 0):
+            """
+            The sketch itself ended without an error. A sketch that uses another version of mokume \
+            than this tool does not read the request and writes nothing — run `mokume doctor` to \
+            compare the two, and bring them to the same version
+            """
+        case .unreadable, .frames, .leadingFrames:
+            """
+            The sketch itself ended without an error and did not say why. Check what is at that \
+            place (another program may be writing there), and run the command again
             """
         }
     }

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
+import mokume
 
 /// スケッチ一式を作る。
 enum NewCommand {
@@ -18,14 +20,14 @@ enum NewCommand {
         /// 作るスケッチの場所。`--path` を走らせた場所から解き、名前を足す (#2323)。
         ///
         /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
-        func root(from base: URL = GivenPath.currentDirectory) -> URL {
-            GivenPath.resolve(path, from: base).appendingPathComponent(name, isDirectory: true)
+        func root(from base: URL? = GivenPath.currentDirectory) throws(CommandFailure) -> URL {
+            try GivenPath.resolve(path, from: base).appendingPathComponent(name, isDirectory: true)
         }
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let options = try parse(arguments)
-        let root = options.root()
+        let root = try options.root()
         guard !FileManager.default.fileExists(atPath: root.path) else {
             throw .directoryExists(path: root.path)
         }
@@ -36,7 +38,11 @@ enum NewCommand {
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try contents.write(to: url, atomically: true, encoding: .utf8)
             } catch {
-                throw .cannotCreate(path: url.path, reason: "\(error)")
+                // OS の事情は C の文面で名乗り、置き換えて書くときのディレクトリの ENOENT は
+                // EISDIR と名乗る (#2839)
+                throw .cannotCreate(
+                    path: url.path,
+                    reason: Diagnostics.writingPosixReason(error, at: url) ?? Diagnostics.reason(error))
             }
         }
         print(guidance(for: root))
@@ -73,6 +79,10 @@ enum NewCommand {
             surplus: .reject { "Only one name: \($0)" })
         guard let name = parsed.positional else { throw .nameMissing }
         guard isValid(name: name) else { throw .invalidName(name) }
+        // **長さも、何かを作る前に断る** (#2774)。`isValid` が通した名前には `/` も NUL も無いので、
+        // そのまま数えられる
+        let length = FileNameLength.of(name) ?? 0
+        guard length <= maximumNameLength else { throw .nameTooLong(name: name, length: length) }
         if let reason = unusableReason(name: name) { throw .unusableName(name: name, reason: reason) }
         return Options(
             name: name, path: parsed.values["--path"] ?? ".", local: parsed.values["--local"])
@@ -81,7 +91,7 @@ enum NewCommand {
     /// 作るファイルと中身。
     ///
     /// - Parameter base: 走らせた場所。`--local` の名前を作る場所から解くのに要る。
-    static func files(for options: Options, base: URL = GivenPath.currentDirectory)
+    static func files(for options: Options, base: URL? = GivenPath.currentDirectory)
         throws(CommandFailure) -> [(String, String)]
     {
         let target = options.name
@@ -99,7 +109,7 @@ enum NewCommand {
                     from: "\(Templates.libraryMinimumVersion)")
                 """
             }
-        let identity = packageIdentity(local: options.local, sketch: options.root(from: base))
+        let identity = packageIdentity(local: options.local, sketch: try options.root(from: base))
         // **作るパッケージの名前と、依存の名前が同じだと組めない** — 作るディレクトリの名前が
         // identity になるので、同じ名前で終わる場所を指すと、自分自身に依存する形になる (#2310)
         if options.name.lowercased() == identity {
@@ -294,6 +304,27 @@ enum NewCommand {
 
     /// ひな形が `Sketch.swift` で import するモジュール。
     static let templateModules: Set<String> = ["mokume"]
+
+    /// 名前の長さの上限 (``FileNameLength/of(_:)`` の数え方で)・#2774。
+    ///
+    /// **ひな形のとおりに作ったパッケージで測った線である。** 資材の置き場 (`resources`) を宣言した
+    /// 実行ファイルは、資材の包みのターゲット `<名前>_<名前>` を持ち、その名前が 2 回入るファイルを
+    /// 組み立てが作る。名前 1 つぶんの線 (`<名前>_const_extract_protocols.json` = 名前 + 29 で 226) では
+    /// 足りない。実測 (APFS・macOS 27.0・Swift 6.4。依存の無い、ひな形と同じ形の最小のパッケージ):
+    ///
+    /// | 組み立ての系統 | 組めない最初の名前 | 落ちるファイル |
+    /// | --- | --- | --- |
+    /// | `swift build` の既定 (Swift Build) | 119 | `<名前>_<名前>.bundle.xcent.der` (2n + 18) |
+    /// | `--build-system native` | 124 | `<名前>_<名前>.bundle` (2n + 8) |
+    ///
+    /// 系統は利用者の道具立てで決まり、`new` の段では分からない。**組める系統が無い名前を断る**ので、
+    /// 線は両方に収まる 118 に引く — `Created` と言ったものは、測った両方の系統で組める。native なら
+    /// 組める 119〜123 の名前も断る (それより長い名前を付ける人は見つかっていない)。
+    /// **越える名前は、どちらの系統でも `swift build` が `File name too long` 等で組めなかった**
+    /// (118 を越えて native だけ組める名前を除く)。
+    ///
+    /// 見るのは長さだけで、置き場の形式 (exFAT・FAT32 など) とパスの長さは見ない (#2773)。
+    nonisolated static let maximumNameLength = 118
 
     /// 名前として使えるか。パッケージ名にもディレクトリ名にもなるので、両方で
     /// 困らない範囲に絞る。

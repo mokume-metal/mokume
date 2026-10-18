@@ -49,6 +49,12 @@ extension Canvas {
         /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの
         /// 名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
         case svgSkipped(path: String)
+        /// 読んだ SVG の `opacity` を、子ごとに掛ける近似で描いていて、重なった所が SVG より濃く出る
+        /// (#2884)。**ファイルの名前ごとに 1 度**。捨てたもの (``svgSkipped(path:)``) とは別の知らせ —
+        /// 描いてはいる。層の `opacity` を本体が持てば ([#2878]) 消える。
+        ///
+        /// [#2878]: https://github.com/mokume-metal/mokume/issues/2878
+        case svgApproximated(path: String)
         /// 置けない置き場所が混ざっていた。
         case badPlacement
         /// 立体の寸法が受け取れない値だった。

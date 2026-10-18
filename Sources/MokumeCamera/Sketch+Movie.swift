@@ -37,6 +37,8 @@ extension Sketch {
     /// - **どのコマが映るかはスケッチの時刻で決まる。** 固定の時計で書き出す (`mokume render`) と、
     ///   何度書き出しても同じフレーム番号に同じコマが出る ([ADR-0028] 決定 7)
     /// - 絵の大きさは動画の大きさ。色は動画が名乗る色空間から作業空間へ移してある ([ADR-0011])
+    /// - 透過の動画 (ProRes 4444・アルファ付き HEVC) は、透明・半透明のまま映る。背景を描いてから
+    ///   重ねれば、動画の透明な所で背景が見える
     /// - 音は鳴らさない。回転の印 (縦に撮った動画の向き) は当てず、記録された向きのまま映す
     ///
     /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。開くときに最初のコマまで読んで
@@ -72,7 +74,7 @@ extension Sketch {
             // 置ける大きさを探しに行く (#2683 の反証 1)
             switch error {
             case .notRunning(let call): throw .notRunning(call: call)
-            case .notFound, .unopenable, .undecodable, .unplaceable:
+            case .notFound, .unopenable, .undecodable, .unplaceable, .unwritable:
                 throw .unplaceable(width: reader.width, height: reader.height)
             }
         }

@@ -48,6 +48,12 @@ struct StartupReadsTests {
         "Sources/MokumeAudio/AudioIn.swift":
             "許可を問われるアプリの名前 (Capture.swift と同じ理由)。読むのはマイクの許可で"
             + "止まっていると知らせるその時だけである (ADR-0042 決定 8)",
+        "Sources/MokumeCLI/GivenPath.swift":
+            "既定引数。読んだ環境はそのまま WorkDirectory.resolution(environment:) へ渡すので、"
+            + "規則そのものは一覧を通っている (読めない作業ディレクトリを断る入口・#2497)",
+        "Sources/MokumeCLI/Invocation.swift":
+            "既定引数。読んだ環境は GivenPath.workDirectory(environment:) へそのまま渡し、"
+            + "規則そのものは一覧を通っている (読めない作業ディレクトリを断る入口・#2497)",
         "Sources/MokumeCLI/MCP/SchemasLocator.swift":
             "同上 — 置き場の在処を並べるために読む。規則そのものは BuildDirectory の"
             + "1 箇所にあり、ここが読んだ環境はそこへそのまま渡す",

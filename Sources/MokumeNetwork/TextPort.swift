@@ -6,7 +6,7 @@ import MokumeCore
 import MokumeDiagnostics
 
 /// 文字列で他のアプリや機械とやりとりする入り口に共通の口。``TCPServer``・``WebSocketServer``・
-/// ``UDPPort`` がこれを継ぐ。
+/// ``TCPClient``・``WebSocketClient``・``UDPPort`` がこれを継ぐ。
 ///
 /// 毎フレーム呼ぶ口は無い。`draw()` の前に、前のフレームの後に届いた文字列が**全部**、
 /// 届いた順に ``messages`` へ入っている ([ADR-0024] 決定 6)。最新の 1 つだけではないので、
@@ -32,6 +32,8 @@ import MokumeDiagnostics
 /// | --- | --- | --- |
 /// | TCP (``Sketch/createTCPServer(_:)``) | 改行で区切った 1 行 | ``TCPServer/write(_:)`` — 繋いでいる相手全員へ |
 /// | WebSocket (``Sketch/createWebSocketServer(_:)``) | 1 通 | ``WebSocketServer/send(_:)`` — 繋いでいる相手全員へ 1 通ずつ |
+/// | TCP のクライアント (``Sketch/createTCPClient(_:_:)``) | 改行で区切った 1 行 | ``TCPClient/write(_:)`` — 繋いだ先のサーバへ |
+/// | WebSocket のクライアント (``Sketch/createWebSocketClient(_:)``) | 1 通 | ``WebSocketClient/send(_:)`` — 繋いだ先のサーバへ 1 通 |
 /// | UDP (``Sketch/createUDP(listen:send:)``) | 1 つの datagram | ``UDPPort/send(_:)`` — 作るときに決めた宛先へ |
 ///
 /// **送る動詞は、区切りを誰が持つかで分ける。** TCP は流れなので、``TCPServer/write(_:)`` は
@@ -54,10 +56,15 @@ import MokumeDiagnostics
 /// | ``SourceState/running`` | 受けている |
 /// | ``SourceState/unavailable`` | 開く途中か、他のアプリがそのポートを使っている。空けば受け始める |
 /// | ``SourceState/denied`` | macOS がローカルネットワークを拒んでいる |
-/// | ``SourceState/disconnected`` | 受けていたが、失敗した。開き直し続ける |
+/// | ``SourceState/disconnected`` | 受けていたが、失敗した。開き直し続ける (クライアントは、繋がっていたのが切れた。繋ぎ直し続ける) |
 /// | ``SourceState/stopped`` | ``stop()`` した |
 ///
 /// 使用中・拒まれた・失敗したときは、1 度だけ診断に出す。
+///
+/// **繋ぎに行く入り口 (``TCPClient``・``WebSocketClient``) の読み方。** 繋げていない間 (まだ一度も繋がっていない)
+/// は ``SourceState/unavailable``、繋がると ``SourceState/running``、繋がっていたのが切れると
+/// ``SourceState/disconnected`` を名乗る。切れても繋げなくても、**1 秒ごとに繋ぎ直し続ける** — 間隔は
+/// 固定で、変える口は無い。返事をしない相手は 5 秒で諦めて繋ぎ直す。サーバが戻れば ``SourceState/running`` に戻り、止めるのは ``stop()`` だけ。
 ///
 /// ## 相手が居ないことも読める
 ///
@@ -80,7 +87,7 @@ import MokumeDiagnostics
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public class TextPort: Inlet {
-    /// 受けているポート。記録した列を流しているなら `nil`。
+    /// 受けているポート。記録した列を流している・繋ぎに行く入り口 (``TCPClient``・``WebSocketClient``) なら `nil`。
     public let port: Int?
     /// このフレームの前に届いた文字列。届いた順。何も届いていなければ空。
     public private(set) var messages: [String] = []
@@ -175,6 +182,32 @@ public class TextPort: Inlet {
             return
         }
         forget("noClient")
+        clients.broadcast(text)
+    }
+
+    /// 繋いだ先のサーバへ書く (繋ぎに行く入り口)。止めた後・記録した列・繋がっていないときは、理由ごとに
+    /// 1 度だけ知らせて何もしない。`kind` は文面の名乗り (`TCP client` など)、`target` は繋ぎ先の綴り、
+    /// `verb` は `written` か `sent`。
+    func sendToServer(_ text: String, by kind: String, target: String, verb: String) {
+        guard !closed else {
+            tellOnce("stopped", "This \(kind) is stopped, so \(Self.preview(text)) was not \(verb)")
+            return
+        }
+        guard let clients else {
+            tellOnce(
+                "recorded",
+                "This \(kind) replays recorded messages and has no server, so "
+                    + "\(Self.preview(text)) was not \(verb)")
+            return
+        }
+        guard clients.clientCount > 0 else {
+            tellOnce(
+                "notConnected",
+                "The \(kind) is not connected to \(target), so \(Self.preview(text)) was not "
+                    + "\(verb). It reaches the server only while connected")
+            return
+        }
+        forget("notConnected")
         clients.broadcast(text)
     }
 

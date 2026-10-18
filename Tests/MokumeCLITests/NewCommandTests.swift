@@ -72,7 +72,7 @@ struct NewCommandTests {
     ) throws {
         let options = NewCommand.Options(name: "foo", path: path, local: local)
         let base = URL(fileURLWithPath: typedFrom, isDirectory: true)
-        let sketch = options.root(from: base)
+        let sketch = try options.root(from: base)
         #expect(NewCommand.packageIdentity(local: local, sketch: sketch) == identity)
         // 自分自身を指す行 (末尾が `.`) は、自分に依存するパッケージになり組めないので断る (#2310)
         guard identity != options.name else {
@@ -104,7 +104,7 @@ struct NewCommandTests {
             atPath: work.appendingPathComponent("link").path, withDestinationPath: "../real/lib")
 
         let options = NewCommand.Options(name: "foo", path: "link", local: "..")
-        let sketch = options.root(from: work)
+        let sketch = try options.root(from: work)
         #expect(NewCommand.packageIdentity(local: "..", sketch: sketch) == "lib")
         // 在る場所が symlink を含まなければ、いままでどおり字面と同じ
         #expect(
@@ -168,7 +168,7 @@ struct NewCommandTests {
         let options = NewCommand.Options(
             name: "quoted", path: workspace.path,
             local: workspace.appendingPathComponent(#"q"dir\x"#).path)
-        let root = options.root()
+        let root = try options.root()
         for (path, contents) in try NewCommand.files(for: options) {
             let url = root.appendingPathComponent(path)
             try FileManager.default.createDirectory(
@@ -213,7 +213,7 @@ struct NewCommandTests {
         let typedFrom = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-new-guide-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: typedFrom) }
-        let root = NewCommand.Options(name: "hint", path: path).root(from: typedFrom)
+        let root = try NewCommand.Options(name: "hint", path: path).root(from: typedFrom)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let guidance = NewCommand.guidance(for: root)
@@ -225,8 +225,8 @@ struct NewCommandTests {
 
     /// 文面の固定。`--path` と空白を含む場所で、引用した絶対パスを名指しする。
     @Test("作った後の案内は、作った場所を引用した絶対パスで名指しする")
-    func theGuidanceNamesTheQuotedPlace() {
-        let root = NewCommand.Options(name: "hint", path: "dir with space")
+    func theGuidanceNamesTheQuotedPlace() throws {
+        let root = try NewCommand.Options(name: "hint", path: "dir with space")
             .root(from: URL(fileURLWithPath: "/work", isDirectory: true))
         #expect(
             NewCommand.guidance(for: root) == """
@@ -352,5 +352,58 @@ struct NewCommandTests {
         #expect(
             !package.contains("upToNextMinor"),
             "上限を切ると Templates.libraryMinimumVersion の鮮度が効いてしまう")
+    }
+
+    // MARK: - 名前の長さ ([#2774])
+
+    /// 組み立てが名前から作るファイル名 (資材の包み `<名前>_<名前>.bundle.xcent.der` など。名前が 2 回入る)
+    /// が上限を越える名前は、`Created` と言ったのに `swift build` が組めない。作る前に断る。
+    /// 線は、ひな形と同じ形のパッケージでの実測 (118 は組め、119 は Swift Build で組めない)。
+    ///
+    /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
+    @Test("組めない長さの名前は、長さと使える長さを名乗って parse の段で断る")
+    func aNameTooLongToBuildIsRefused() throws {
+        #expect(NewCommand.maximumNameLength == 118)
+        // 線ちょうどは通る — 成功していた名前を失わない
+        let atTheLine = String(repeating: "a", count: 118)
+        #expect(try NewCommand.parse([atTheLine]).name == atTheLine)
+        let over = String(repeating: "a", count: 119)
+        #expect(throws: CommandFailure.nameTooLong(name: over, length: 119)) {
+            try NewCommand.parse([over])
+        }
+        // ファイルを作り始めて止まる 250 字以上も同じ段で止まる
+        let long = String(repeating: "a", count: 130)
+        #expect(throws: CommandFailure.nameTooLong(name: long, length: 130)) {
+            try NewCommand.parse([long])
+        }
+        let message = CommandFailure.nameTooLong(name: over, length: 119).message
+        #expect(message.contains("119"))
+        #expect(message.contains("118"))
+        #expect(message.contains(over))
+    }
+
+    /// **数え方は分解した後の UTF-16 の単位。** `が` は 2 と数えるので、59 字が線ちょうど。
+    @Test("分解で 2 と数える字は、数え方どおりに線を越える")
+    func aDecomposedCharacterCountsTwice() throws {
+        let fits = String(repeating: "が", count: 59)
+        #expect(try NewCommand.parse([fits]).name == fits)
+        let over = String(repeating: "が", count: 60)
+        #expect(throws: CommandFailure.nameTooLong(name: over, length: 120)) {
+            try NewCommand.parse([over])
+        }
+    }
+
+    @Test("長すぎる名前は、何も作らずに止まる")
+    func aTooLongNameCreatesNothing() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-new-long-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let name = String(repeating: "a", count: 130)
+        #expect(throws: CommandFailure.nameTooLong(name: name, length: 130)) {
+            try NewCommand.run([name, "--path", workspace.path])
+        }
+        let left = try FileManager.default.contentsOfDirectory(atPath: workspace.path)
+        #expect(left.isEmpty, "半端なスケッチが残っている: \(left)")
     }
 }

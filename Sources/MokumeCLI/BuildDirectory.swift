@@ -173,12 +173,25 @@ nonisolated enum BuildDirectory {
     /// - Parameters:
     ///   - environment: 環境。`MOKUME_BUILD_DIR` があればそれを基準にする。
     ///   - home: ホームディレクトリ。**検査から渡せる形にしてある。**
-    static func root(environment: [String: String], home: URL) -> URL {
+    ///   - currentDirectory: 相対の値を解く基準 (走らせた場所)。**読めない回 (`nil`) は、相対の値を
+    ///     相対のまま返さずに断る** ([#2497](https://github.com/mokume-metal/mokume/issues/2497))。
+    ///     検査から渡せる形にしてある。
+    static func root(
+        environment: [String: String], home: URL,
+        currentDirectory: URL? = GivenPath.currentDirectory
+    ) throws(CommandFailure) -> URL {
         if let given = environment[environmentKey],
             !given.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             let expanded = NSString(string: given).expandingTildeInPath
-            return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL
+            if expanded.hasPrefix("/") {
+                return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL
+            }
+            guard let currentDirectory else {
+                throw .currentDirectoryUnreadable(given: given, variable: environmentKey)
+            }
+            return URL(fileURLWithPath: expanded, isDirectory: true, relativeTo: currentDirectory)
+                .standardizedFileURL
         }
         return home.appendingPathComponent(defaultRootPath, isDirectory: true).standardizedFileURL
     }

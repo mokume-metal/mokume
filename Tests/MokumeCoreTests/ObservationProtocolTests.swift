@@ -200,6 +200,31 @@ struct ObservationProtocolTests {
                 atPath: facet.appendingPathComponent("report.json").path))
     }
 
+    /// 目録や絵の名前をディレクトリが使っていても、`removeItem` のように中身ごと消さない。
+    /// 消さなかったものは、消した並びに入れない。
+    @Test("撮り始める前の掃除は、目録や絵の名前のディレクトリを中身ごと消さない")
+    func clearingKeepsDirectoriesThatUseTheNames() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        let report = facet.appendingPathComponent("report.json")
+        let picture = facet.appendingPathComponent("frame-000.png")
+        for directory in [report, picture] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("keep".utf8).write(to: directory.appendingPathComponent("inner.txt"))
+        }
+        let ordinary = facet.appendingPathComponent("frame-001.png")
+        try Data("古い絵".utf8).write(to: ordinary)
+
+        let removed = observer.clearProducts().map(\.lastPathComponent)
+
+        #expect(removed == ["frame-001.png"], "残したものを消した並びに入れている: \(removed)")
+        for directory in [report, picture] {
+            let inner = directory.appendingPathComponent("inner.txt")
+            #expect(FileManager.default.fileExists(atPath: inner.path), "\(directory.lastPathComponent) の中身が消えた")
+        }
+        #expect(!FileManager.default.fileExists(atPath: ordinary.path))
+    }
+
     @Test("消すのは目録が先で、絵は後")
     func removesTheIndexBeforeTheImagesItPointsAt() throws {
         // 逆順だと、古い目録が指す絵だけが消えた状態を読み手が掴む窓が空く

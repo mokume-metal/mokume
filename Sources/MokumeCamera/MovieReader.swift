@@ -118,7 +118,8 @@ final class MovieReader {
         self.duration = duration
         width = CVPixelBufferGetWidth(first.buffer)
         height = CVPixelBufferGetHeight(first.buffer)
-        converter = FrameConverter(width: width, height: height)
+        // 動画は透過を持ちうるので、不透明度を乗算していないまま運ぶ (#2881)
+        converter = FrameConverter(width: width, height: height, alpha: .straight)
         reader = opened.reader
         output = opened.output
         serial = 1

@@ -121,13 +121,61 @@ nonisolated public enum WorkDirectory {
             ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
     }
 
+    /// 環境変数が与えた基準の解き方の結果。
+    package enum Resolution: Equatable {
+        /// 基準を与えていない。
+        case unset
+        /// 絶対パスに解けた。
+        case place(URL)
+        /// 相対の綴りなのに、基準にする作業ディレクトリが読めない (消えた)。`spelling` は打たれた綴り。
+        ///
+        /// **相対のまま返さない。** 作業ディレクトリが消えたプロセスでは `currentDirectoryPath` が
+        /// 空文字列を返し、そこから作った URL は基準を持たない。そのまま `relativeTo:` に使うと、
+        /// 絶対パスにしたはずの基準が相対のまま出る ([#2497](https://github.com/mokume-metal/mokume/issues/2497))。
+        case unreadable(spelling: String)
+    }
+
+    /// 作業ディレクトリを読む。**読めない (消えた) 回は `nil`。**
+    ///
+    /// 作業ディレクトリを消したプロセスでは `FileManager.currentDirectoryPath` が空文字列を返す
+    /// (実測)。読み取りは検査から差し替えられる形にしてある。
+    package static func currentDirectory(
+        reading path: () -> String = { FileManager.default.currentDirectoryPath }
+    ) -> URL? {
+        let text = path()
+        return text.isEmpty ? nil : URL(fileURLWithPath: text, isDirectory: true)
+    }
+
+    /// 環境変数が与えた基準を、**読めない作業ディレクトリを呼び手へ返す形**で解く。
+    ///
+    /// 絶対パス (`~` 展開後) は作業ディレクトリに触れず通る。相対パスは `currentDirectory` を
+    /// 基準に絶対化し、基準が読めなければ ``Resolution/unreadable(spelling:)`` を返す。
+    package static func resolution(
+        environment: [String: String], currentDirectory: URL? = currentDirectory()
+    ) -> Resolution {
+        guard let given = environment[environmentKey], !given.isEmpty else { return .unset }
+        let expanded = NSString(string: given).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return .place(URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL)
+        }
+        guard let currentDirectory else { return .unreadable(spelling: given) }
+        return .place(
+            URL(fileURLWithPath: expanded, isDirectory: true, relativeTo: currentDirectory)
+                .standardizedFileURL)
+    }
+
     /// 与えられた環境が基準を指定しているか (検査から呼べる形)。
     ///
-    /// 相対パスと `~` 始まりは、読み取り側の作業ディレクトリを基準に絶対化する。
+    /// 相対パスと `~` 始まりは、読み取り側の作業ディレクトリを基準に絶対化する。作業ディレクトリが
+    /// 読めない回に相対の綴りが来たときは、**断れる口を持たないここでは**従来どおり相対のまま返す
+    /// (スケッチの側。断るのは道具の入口で、``resolution(environment:currentDirectory:)`` を読む)。
     public static func given(environment: [String: String]) -> URL? {
-        guard let given = environment[environmentKey], !given.isEmpty else { return nil }
-        let current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        let expanded = NSString(string: given).expandingTildeInPath
-        return URL(fileURLWithPath: expanded, isDirectory: true, relativeTo: current).standardizedFileURL
+        switch resolution(environment: environment) {
+        case .unset: return nil
+        case .place(let url): return url
+        case .unreadable(let spelling):
+            let expanded = NSString(string: spelling).expandingTildeInPath
+            return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL
+        }
     }
 }

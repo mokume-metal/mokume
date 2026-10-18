@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import mokume
 
 /// 走らせているスケッチの番号。**居なければ 0。**
@@ -50,7 +51,7 @@ enum RunCommand {
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let invocation = try Invocation.parse(arguments)
-        let directory = invocation.directory
+        let directory = try invocation.directory
         let package = directory.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: package.path) else {
             throw .packageNotFound(path: directory.path)
@@ -64,7 +65,7 @@ enum RunCommand {
         // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
         // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
         print("Tool: \(ToolVersion.describe())")
-        if let notice = sharedSurfaceNotice(for: invocation) { print(notice) }
+        if let notice = try sharedSurfaceNotice(for: invocation) { print(notice) }
 
         // **置き場は 1 度だけ決めて持ち回る。** 作り直しと実行ファイルの解決へ別々に
         // 判断を渡すと、片方が共有・片方がパッケージ直下という組み合わせになる
@@ -116,7 +117,7 @@ enum RunCommand {
 
         // **明示されたら理由を確かめない。** 選んだのは人である。解く基準は走らせた場所で、
         // 解くのは ``Invocation`` の 1 か所 (#2323)
-        if let given = invocation.scratchDirectory {
+        if let given = try invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
                 place: .outside(given, given: true), product: product)
@@ -131,7 +132,8 @@ enum RunCommand {
                 place: .inPackage(.unreadableManifest), product: nil)
         }
 
-        let root = BuildDirectory.root(environment: environment, home: home)
+        let root = try BuildDirectory.root(
+            environment: environment, home: home, currentDirectory: invocation.currentDirectory)
         let toolchain = Toolchain.describe(in: directory)
         var pin = DependencyVersion.pin(forPackageAt: directory)
         var shareability = BuildDirectory.shareability(
@@ -192,8 +194,8 @@ enum RunCommand {
     /// [#2028]: https://github.com/mokume-metal/mokume/issues/2028
     static func sharedSurfaceNotice(
         for invocation: Invocation, workDirectory: URL? = WorkDirectory.given
-    ) -> String? {
-        let base = invocation.facetBase(workDirectory: workDirectory)
+    ) throws(CommandFailure) -> String? {
+        let base = try invocation.facetBase(workDirectory: workDirectory)
         let facet = WatchCommand.viewportFacet(under: base)
         guard FileManager.default.fileExists(atPath: facet.path) else { return nil }
         // **在処をそのまま出す。** 基準は環境変数が動かせるので、`.mokume/…` とだけ
@@ -677,7 +679,8 @@ enum RunCommand {
     ///   名乗り**。見張り (`watch`) は渡さない — 子は窓を持たず、確認は道具の側が出す
     ///   ([ADR-0032] 決定 1)。
     /// - Parameter rendering: 窓を開かずに書き出させるなら、その頼み (`render` だけが渡す)。
-    ///   値の形は読み手と同じ型 (`RenderRequest`) が組むので、ここでは綴らない。
+    ///   値の形は読み手と同じ型 (`RenderRequest`) が組むので、ここでは綴らない。**渡さなければ、
+    ///   親の環境に在っても落とす** (``viewportOwner`` と同じ・#2481)。
     /// - Parameter viewportOwner: 子の窓を道具が持つなら、**自分の名乗り** (`watch` だけが
     ///   渡す)。子は区画 `viewport` も在れば窓を開かずに共有面へ差し出し、標準入力の管を
     ///   読む ([ADR-0032] 決定 1・4)。
@@ -706,7 +709,10 @@ enum RunCommand {
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
         if let tool { environment[StartupReads.closeConfirmation.key] = tool }
-        if let request { environment[StartupReads.render.key] = request.environmentValue }
+        // **渡さなければ、親の環境に在っても落とす** (`viewportOwner` と同じ)。書き出しの頼みは起こした
+        // 道具にしか決められない。シェルに残った読めない値は `run`・`watch` の子を毎回落とし、読める値は
+        // 窓を開かずに書き出させる (#2481)
+        environment[StartupReads.render.key] = request?.environmentValue
         environment[StartupReads.viewportOwner.key] = viewportOwner
         return environment
     }
@@ -837,7 +843,15 @@ enum RunCommand {
         of process: Process, error: any Error, executableMissing: CommandFailure
     ) -> CommandFailure {
         let tool = toolName(of: process)
-        let place = process.currentDirectoryURL ?? GivenPath.currentDirectory
+        // 起こす場所が決まっていなければ、子は走らせた場所で動く。それが読めなければ、使えない場所
+        // として名乗る。**この枝は今の呼び元からは辿れない** (`launch`・`capture`・見張りの起動は
+        // どれも `currentDirectoryURL` を据える) が、据え忘れた口が足されたときに、作業ディレクトリが
+        // 消えた回を「在らない場所」と誤って言わないための受け皿である
+        guard let place = process.currentDirectoryURL ?? GivenPath.currentDirectory else {
+            return .placeUnusable(
+                tool: tool, place: "(the directory this was run from)",
+                presence: .unreachable(reason: "the directory this was run from cannot be read"))
+        }
         let presence = GivenPath.Presence.of(place)
         guard presence == .directory else {
             return .placeUnusable(tool: tool, place: place.path, presence: presence)
@@ -900,22 +914,18 @@ enum RunCommand {
 
     /// 起こせなかった事情の文面 (場所でも実行ファイルの不在でもないとき)。
     ///
-    /// **POSIX の事情 (失敗そのものか、その下の `NSUnderlyingErrorKey`) なら、その番号から
+    /// **POSIX の事情 (失敗そのものか、`NSUnderlyingErrorKey` を辿った先) なら、その番号から
     /// C の文面を引く** (``GivenPath/errorText(_:)``)。Foundation の説明は言語の設定に左右
     /// されうるが、道具が話す言葉は英語である (ADR-0038 決定 1・2)。
     ///
     /// **例外: POSIX の事情を持たない誤り** (下に POSIX の誤りを持たない Cocoa の誤り — たとえば
     /// `NSFileNoSuchFileError` だけのもの) は、引ける番号が無いので `localizedDescription` に
     /// 落とす。その文面は言語の設定で変わりうる。
+    ///
+    /// 番号の取り出し方は本体と 1 つ (``Diagnostics/posixCode(in:)``・#2839)。
     nonisolated static func launchReason(of error: any Error) -> String {
-        let failure = error as NSError
-        let posix =
-            failure.domain == NSPOSIXErrorDomain
-            ? failure : failure.userInfo[NSUnderlyingErrorKey] as? NSError
-        guard let posix, posix.domain == NSPOSIXErrorDomain else {
-            return failure.localizedDescription
-        }
-        return GivenPath.errorText(Int32(posix.code))
+        guard let code = Diagnostics.posixCode(in: error) else { return (error as NSError).localizedDescription }
+        return GivenPath.errorText(code)
     }
 
     /// 道具立てを探させる口。**`PATH` を引くのは `env` に任せる。**

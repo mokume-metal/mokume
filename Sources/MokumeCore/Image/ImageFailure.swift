@@ -26,6 +26,10 @@ public enum ImageFailure: Error, Equatable, Sendable {
     /// 直す) で、分けても選び分ける先が無い (``RenderFailure/invalidSize(width:height:)`` と
     /// 同じ理由・[#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     case unplaceable(width: Int, height: Int)
+    /// 書き出せなかった。`path` は頼んだ行き先、`reason` は書けなかった事情 (置き場が無い・書く権利が
+    /// 無いなど)。``Image/save(_:)`` が投げる
+    /// (``DataFailure/unwritable(path:reason:)`` と同じ形)。
+    case unwritable(path: String, reason: String)
     /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
     /// (`"loadImage(_:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
@@ -64,6 +68,8 @@ extension ImageFailure: CustomStringConvertible {
                 A side has to be at least 1 and at most \(RenderDevice.maxTextureSide) pixels — \
                 check that it is within that
                 """
+        case .unwritable(let path, let reason):
+            return "Cannot write \"\(path)\": \(reason)"
         case .notRunning(let call):
             return OutsideRun.notRunningNotice(call)
         }

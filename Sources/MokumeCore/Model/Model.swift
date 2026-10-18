@@ -87,7 +87,7 @@ public struct Model: Equatable, Sendable {
 
     /// **番号は受け取らない** — 作るたびに ``nextIdentity()`` から取る。外から番号を渡せると、
     /// 「別々に読んだモデルは違う番号を持つ」を呼ぶ側が守る約束になってしまう (#1846)。
-    private init(
+    nonisolated private init(
         name: String, mesh: SolidMesh, skippedLines: Int, size: SIMD3<Float>,
         center: SIMD3<Float>
     ) {
@@ -112,7 +112,7 @@ extension Model {
     }
 
     /// 求めた向きの控え。`Model` は値なので、控えは参照で持って写しどうしで共有する。
-    final class WindingCache: Sendable {
+    nonisolated final class WindingCache: Sendable {
         private let stored = Mutex<SolidWinding?>(nil)
 
         /// 控えた向き。まだ無ければ `compute` で求めて控える。
@@ -149,9 +149,16 @@ extension Model {
 
     /// 読み取った並びを、置ける形へ整える。
     ///
+    /// **main actor に縛らない。** 全頂点を何度も走るので、50 万三角形で数十 ms かかる。
+    /// 待たない読み方 (``Canvas/requestModel(_:normalize:)``) はこれを読み込みと同じ別の仕事で
+    /// 済ませ、main には控えへの登録だけを残す (#2801)。面にも控えにも触れない純粋な計算
+    /// なので、どの隔離から呼んでもよい。
+    ///
     /// - Parameters:
     ///   - fitting: 整えるときに、いちばん長い辺を合わせる長さ。`nil` なら整えない。
-    static func make(name: String, parsed: ModelFile.Parsed, fitting: Float?) -> Model {
+    nonisolated static func make(
+        name: String, parsed: ModelFile.Parsed, fitting: Float?
+    ) -> Model {
         var positions = parsed.positions
         var normals = parsed.normals
         var lowest = SIMD3<Float>(repeating: .infinity)

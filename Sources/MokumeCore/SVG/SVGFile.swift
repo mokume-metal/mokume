@@ -50,7 +50,21 @@ nonisolated enum SVGFile {
         var items: [Item]
         /// 描かずに捨てたもの。最初に出た順。
         var skipped: [Skip]
+        /// **描いているが、SVG と見え方が違う**ものの名乗り。最初に出た順。群や、塗りと線を両方持つ
+        /// 要素の `opacity` を子の色ごとに掛けるので、重なった所が SVG より濃く出る (#2884)。
+        /// ``skipped`` には混ぜない — 捨てたのではなく、近似で描いている。
+        ///
+        /// **つなぎの欄である。** 層の `opacity` を本体が持ち、群をそれで描くようになれば ([#2878]) 、
+        /// この欄と名乗りごと消える。
+        ///
+        /// [#2878]: https://github.com/mokume-metal/mokume/issues/2878
+        var approximated: [Skip] = []
     }
+
+    /// 近似の名乗りの種類 (``Drawing/approximated`` の ``Skip/what``)。
+    static let groupOpacityNote = "opacity on a group whose shapes overlap"
+    static let fillAndStrokeOpacityNote = "opacity on a shape with both fill and stroke"
+    static let strokeSubpathsOpacityNote = "translucent stroke on a path whose subpaths overlap"
 
     /// 描かずに捨てたものの 1 種類。
     struct Skip: Sendable, Equatable {
@@ -128,7 +142,7 @@ nonisolated enum SVGFile {
         var walk = Walk(prefix: prefix)
         for style in reader.styles { walk.read(styleSheet: style.text, line: style.line) }
         for event in reader.events { walk.visit(event) }
-        return Drawing(items: walk.items, skipped: walk.tally.skips)
+        return Drawing(items: walk.items, skipped: walk.tally.skips, approximated: walk.approximations.skips)
     }
 
     /// 要素の名前のうち、描かずに捨てて**名乗る**もの。
@@ -214,9 +228,12 @@ nonisolated enum SVGFile {
         private(set) var skips: [Skip] = []
         private var index: [String: Int] = [:]
 
-        mutating func note(_ what: String, line: Int) {
+        /// - Parameter earliest: 立てると、後から数えたものがより前の行なら、最初の行をそちらへ直す
+        ///   (入れ子の群は内側が先に閉じるので、数えた順と行の順が食い違う)。
+        mutating func note(_ what: String, line: Int, earliest: Bool = false) {
             if let at = index[what] {
                 skips[at].count += 1
+                if earliest, line < skips[at].line { skips[at].line = line }
             } else {
                 index[what] = skips.count
                 skips.append(Skip(what: what, count: 1, line: line))
@@ -301,6 +318,90 @@ nonisolated enum SVGFile {
         var mode: Mode
         /// `switch` が子を選び終えたか。
         var chose = false
+        /// この要素が `opacity` < 1 の容器なら、``Walk/groups`` の中の番号 (#2884)。
+        var group: Int?
+    }
+
+    /// 外接矩形 (形の座標)。``Drawing/approximated`` の重なりの判定にだけ使う。
+    struct Box {
+        var low: SIMD2<Float>
+        var high: SIMD2<Float>
+
+        init(low: SIMD2<Float>, high: SIMD2<Float>) {
+            self.low = low
+            self.high = high
+        }
+
+        init(points: [SIMD2<Float>]) {
+            var low = points[0]
+            var high = points[0]
+            for point in points.dropFirst() {
+                low = pointwiseMin(low, point)
+                high = pointwiseMax(high, point)
+            }
+            self.init(low: low, high: high)
+        }
+
+        func expanded(by amount: Float) -> Box { Box(low: low - amount, high: high + amount) }
+
+        /// 面積のある重なりがあるか (辺が接するだけなら重ならない)。
+        func overlaps(_ other: Box) -> Bool {
+            low.x < other.high.x && other.low.x < high.x && low.y < other.high.y && other.low.y < high.y
+        }
+    }
+
+    /// `opacity` < 1 の容器 1 つ。描くものの外接矩形を集め、重なりを見つけたら 1 度だけ名乗る。
+    struct OpacityGroup {
+        var line: Int
+        var boxes: [Box] = []
+    }
+
+    /// 外接矩形のうち、面積のある重なりが 1 組でもあるかを、**最初に見つかった時点で打ち切って**調べる。
+    ///
+    /// 全部を総当たりにすると子の数の 2 乗になり、`loadShape` は呼んだスレッドを止める。**長さのばらつきが
+    /// 少ない軸で並べて掃く** (sweep and prune): 並べた順に、その軸で届いている矩形 (``active``) とだけ
+    /// 比べる。ロゴの子のように散らばった矩形なら、届いているのはわずかで、ほぼ線形で済む。
+    /// 軸は、矩形の長さの和を全体の幅で割った値が小さいほう (同じ軸で重なりやすくないほう) を選ぶ —
+    /// 縦に積んだ行を横の軸で掃くと、全部が同時に届いて 2 乗になる。
+    ///
+    /// - Returns: `found` は重なりがあったか。`comparisons` は矩形どうしを比べた回数 (検査が読む)。
+    static func firstOverlap(in boxes: [Box]) -> (found: Bool, comparisons: Int) {
+        guard boxes.count > 1 else { return (false, 0) }
+        func spread(_ axis: Int) -> Float {
+            var low = Float.infinity
+            var high = -Float.infinity
+            var total: Float = 0
+            for box in boxes {
+                low = min(low, box.low[axis])
+                high = max(high, box.high[axis])
+                total += box.high[axis] - box.low[axis]
+            }
+            let range = high - low
+            return range > 0 ? total / range : Float.infinity
+        }
+        let axis = spread(0) <= spread(1) ? 0 : 1
+        let other = 1 - axis
+        let order = boxes.indices.sorted { boxes[$0].low[axis] < boxes[$1].low[axis] }
+        var active: [Int] = []
+        var comparisons = 0
+        for index in order {
+            let box = boxes[index]
+            var kept = 0
+            for position in active.indices {
+                let candidate = active[position]
+                comparisons += 1
+                // この軸で届かなくなった矩形は、以降のどの矩形とも重ならない (並べた順に低い端が上がる)
+                if boxes[candidate].high[axis] <= box.low[axis] { continue }
+                if boxes[candidate].low[other] < box.high[other], box.low[other] < boxes[candidate].high[other] {
+                    return (true, comparisons)
+                }
+                active[kept] = candidate
+                kept += 1
+            }
+            active.removeSubrange(kept...)
+            active.append(index)
+        }
+        return (false, comparisons)
     }
 
     /// 並びを前から辿り、描くものと捨てたものを集める。
@@ -308,6 +409,10 @@ nonisolated enum SVGFile {
         let prefix: String
         var items: [Item] = []
         var tally = Tally()
+        /// 描いているが SVG と見え方が違うもの (``Drawing/approximated``)。
+        var approximations = Tally()
+        /// `opacity` < 1 の容器 (開いたものの順)。
+        private var groups: [OpacityGroup] = []
         private var rules: [StyleRule] = []
         private var stack: [Frame] = []
 
@@ -323,7 +428,10 @@ nonisolated enum SVGFile {
         mutating func visit(_ event: Event) {
             switch event {
             case .end:
-                _ = stack.popLast()
+                // 半透明の群は、閉じるときに、集めた子の矩形に重なりがあるかを 1 度だけ調べる
+                if let index = stack.popLast()?.group, SVGFile.firstOverlap(in: groups[index].boxes).found {
+                    approximations.note(SVGFile.groupOpacityNote, line: groups[index].line, earliest: true)
+                }
             case .start(let rawName, let attributes, let line):
                 start(rawName, attributes, line)
             }
@@ -339,6 +447,15 @@ nonisolated enum SVGFile {
             let parent = stack.last ?? Frame(context: Context(), mode: .render)
             func push(_ mode: Frame.Mode, _ context: Context? = nil) {
                 stack.append(Frame(context: context ?? parent.context, mode: mode))
+            }
+            // 半透明の容器は、描くものの重なりを見るために登録する (#2884)
+            func pushContainer(_ mode: Frame.Mode, _ context: Context) {
+                var frame = Frame(context: context, mode: mode)
+                if context.own.opacity < 1 {
+                    groups.append(OpacityGroup(line: line))
+                    frame.group = groups.count - 1
+                }
+                stack.append(frame)
             }
             guard let name = localName(rawName) else { return push(.inert) }
             switch parent.mode {
@@ -375,13 +492,13 @@ nonisolated enum SVGFile {
                 else { return push(.inert) }
                 context.transform = context.transform * viewport.transform
                 context.viewport = viewport.size
-                push(.render, context)
+                pushContainer(.render, context)
             case "g", "a":
                 context.transform = context.transform * ownTransform(attributes, line: line)
-                push(.render, context)
+                pushContainer(.render, context)
             case "switch":
                 context.transform = context.transform * ownTransform(attributes, line: line)
-                push(.choose, context)
+                pushContainer(.choose, context)
             case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
                 context.transform = context.transform * ownTransform(attributes, line: line)
                 if context.isVisible, let outline = outline(name, attributes, context, line: line) {
@@ -854,12 +971,73 @@ nonisolated enum SVGFile {
             if context.strokeIsReference { tally.note("stroke=\"url(…)\"", line: line) }
             if stroke != nil, context.isDashed { tally.note("stroke-dasharray", line: line) }
             if fill == nil && stroke == nil { return }
+            noteOpacityApproximations(outline, context, fill: fill, stroke: stroke, line: line)
             items.append(
                 Item(
                     outline: outline, fill: fill, fillRule: context.fillRule, stroke: stroke,
                     strokeWidth: context.strokeWidth, cap: context.cap, join: context.join,
                     transform: context.transform))
         }
+
+    /// 描くもの 1 つについて、`opacity` を子の色ごとに掛ける近似が SVG と違う絵になるかを見て、
+    /// なるなら名乗りに数える (#2884)。
+    ///
+    /// 違う絵になるのは 3 つの場合である。
+    ///
+    /// - **開いている半透明の群の中で、描くものどうしの外接矩形が重なる**。ここでは矩形を群に渡すだけで、
+    ///   重なりは群が閉じるときに調べる (群ごとに 1 度だけ数える)
+    /// - **塗りと線を両方持つものが、祖先まで含めて半透明**。線の内側の半分が塗りに重なる
+    /// - **半透明の線で、部分パスが 2 本以上あり、その線どうしが重なる**。部分パスの線は 1 本ずつ別の形で
+    ///   引くので、重なった所に不透明度が 2 回掛かる (SVG は 1 つの線の形として 1 度だけ掛ける)。`opacity` を
+    ///   直に書いた線だけの要素と、`stroke-opacity` だけの要素もここに入る
+    ///
+    /// 外接矩形で見るので、形が実際には重ならないのに名乗ることがある (名乗り過ぎる側に倒す)。
+    private mutating func noteOpacityApproximations(
+        _ outline: Outline, _ context: Context, fill: Color?, stroke: Color?, line: Int
+    ) {
+        if fill != nil, stroke != nil, context.opacity < 1 {
+            approximations.note(SVGFile.fillAndStrokeOpacityNote, line: line)
+        }
+        // 線の太さの半分で広げるだけでは、尖った角 (最大 √2 × 太さの半分) と、四角い端の隅が足りない
+        let reach = stroke == nil ? 0 : context.strokeWidth / 2 * context.transform.largestScale * Float(2).squareRoot()
+        if let stroke, stroke.alpha < 1, case .path(let subpaths) = outline, subpaths.count > 1 {
+            let boxes = subpaths.map { Self.box(of: .path([$0]), context.transform).expanded(by: reach) }
+            if SVGFile.firstOverlap(in: boxes).found {
+                approximations.note(SVGFile.strokeSubpathsOpacityNote, line: line)
+            }
+        }
+        let open = stack.compactMap(\.group)
+        guard !open.isEmpty else { return }
+        let box = Self.box(of: outline, context.transform).expanded(by: reach)
+        for index in open { groups[index].boxes.append(box) }
+    }
+
+    /// 輪郭の外接矩形 (形の座標)。曲線は制御点を含めた矩形にする (曲線は制御点の外へ出ない)。
+    private static func box(of outline: Outline, _ transform: Affine) -> Box {
+        var points: [SIMD2<Float>] = []
+        switch outline {
+        case .path(let subpaths):
+            for subpath in subpaths {
+                points.append(subpath.start)
+                for segment in subpath.segments {
+                    switch segment {
+                    case .line(let point): points.append(point)
+                    case .cubic(let first, let second, let point): points += [first, second, point]
+                    }
+                }
+            }
+        case .rect(let x, let y, let width, let height):
+            points = [SIMD2(x, y), SIMD2(x + width, y), SIMD2(x, y + height), SIMD2(x + width, y + height)]
+        case .ellipse(let centerX, let centerY, let radiusX, let radiusY):
+            points = [
+                SIMD2(centerX - radiusX, centerY - radiusY), SIMD2(centerX + radiusX, centerY - radiusY),
+                SIMD2(centerX - radiusX, centerY + radiusY), SIMD2(centerX + radiusX, centerY + radiusY),
+            ]
+        case .line(let from, let to):
+            points = [from, to]
+        }
+        return Box(points: points.map(transform.apply))
+    }
     }
 
     /// 描き方として読む属性の名前 (属性に書いても `style` に書いても同じ意味のもの)。

@@ -279,6 +279,52 @@ let turn = width / 400                   // Float
 rotate(turn * .pi)                       // 他の項が Float なら .pi のままで通る
 ```
 
+### 手本の名前から引く
+
+**Processing・p5.js の名前で書いて通らない・動きが違うときに、mokume のどの口へ直すかを引く表である。** 名前は手本から採っているので、多くはそのまま写せる。ここに並ぶのは、写すと黙ってずれるか、綴りが変わる口だけである。違う理由と詳しい振る舞いは、リンク先の説明にある。
+
+#### 通るのに呼ばれない
+
+手本の形のまま書くとコンパイルは通るが、一度も呼ばれない。Swift は、名前が同じで引数の違うメソッドを咎めない。
+
+| 手本 | mokume | 写すときの直し方 |
+| --- | --- | --- |
+| `mouseDragged()` | ``Sketch/mouseDragged(deltaX:deltaY:)`` | `func mouseDragged(deltaX: Float, deltaY: Float)` と書く。量を使わなくても引数は要る |
+| `mouseWheel()` | ``Sketch/mouseWheel(deltaX:deltaY:)`` | `func mouseWheel(deltaX: Float, deltaY: Float)` と書く。回した量は引数で受け取る |
+
+#### 数え方が違う
+
+名前も形も手本と同じで、数える単位や範囲が違う。型では止まらない。
+
+| 手本 | mokume | 写すときの直し方 |
+| --- | --- | --- |
+| `saveFrame("f-####.png")` | ``SketchPart/beginRecord(_:)`` と ``SketchPart/endRecord()`` | 録る間を 2 つで挟む。`####` はフレーム番号ではなく、録りの中の通し番号 (0 から) |
+| p5 `deltaTime` (ミリ秒) | ``SketchPart/deltaTime`` (秒) | ミリ秒を前提にした係数を 1000 倍する (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`) |
+| p5 `movedX` (最新の 1 件) | ``SketchPart/movedX`` (フレームの合計) | `draw()` で読む。1 件ぶんは ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る |
+| Processing `keyPressed()` (押したままで連射) | ``Sketch/keyPressed()`` (押した 1 回だけ) | 押している間ずっと効かせるものは、`draw()` で `keyboard.isPressed(_:)` を読む |
+
+#### 綴りが変わる
+
+型か書き方が違うので、写すとコンパイルで止まる。
+
+| 手本 | mokume | 写すときの直し方 |
+| --- | --- | --- |
+| p5 `keyIsDown(code)` | ``Keyboard/isPressed(_:)`` | `keyboard.isPressed(.arrowLeft)` と ``SketchPart/keyboard`` に問う |
+| `keyCode == UP` | ``SketchPart/keyCode`` | `keyCode == .arrowUp` と ``Key`` で書く |
+| `mouseButton == LEFT` | ``SketchPart/mouseButton`` | `mouseButton == .left` と ``MouseButton`` で書く |
+| p5 `mouseIsPressed` | ``SketchPart/isMousePressed`` | `isMousePressed` を読む |
+| `size(w, h)`・`frameRate(n)`・`fullScreen()` | ``Sketch/settings`` | 呼ばずに `settings` で返す (`SketchSettings(width: w, height: h, frameRate: n)`・``SketchSettings/fullScreen(_:)``) |
+| `PVector`・`p5.Vector` と `mag()` | ``Vector2`` と ``Vector2/length`` | `Vector2(x, y)` で作り、長さは `v.length` で読む |
+| `colorMode(HSB)` | ``color(hue:saturation:brightness:alpha:)`` | 色の体系を切り替えず、色相・彩度・明度で作る色にだけラベルを付ける |
+| p5 `textToContours` | ``SketchPart/textOutline(_:_:_:)`` | 返る点は曲線をほどいた折れ目の点で、間隔は揃っていない |
+| p5 `spotLight(…, angle, concentration)` | ``SketchPart/spotLight(_:_:_:_:_:_:_:angle:)`` | 角度に `angle:` を付ける。`concentration` は渡さない |
+
+#### 手本に有って mokume に無いもの
+
+| 手本 | mokume | 写すときの直し方 |
+| --- | --- | --- |
+| `noCursor()`・`cursor(HAND)` | ``SketchPart/noCursor()`` と ``SketchPart/cursor()`` | `noCursor()` はそのまま写せる。形を選ぶ `cursor(HAND)` などは無く、`cursor()` は矢印へ戻すだけ |
+
 ## Topics
 
 ### スケッチを書く
@@ -504,11 +550,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 ### カメラを使う
 
-- ``Sketch/createCapture(_:_:device:)``
-- ``Sketch/createCapture(frames:)``
+- ``Sketch/createCapture(_:_:device:mirrored:)``
+- ``Sketch/createCapture(frames:mirrored:)``
 - ``Sketch/captureDevices()``
 - ``Capture``
 - ``CaptureDevice``
+- ``CaptureFormat``
 
 ### 動画を流す
 
@@ -578,13 +625,19 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 - ``Sketch/createTCPServer(_:)``
 - ``Sketch/createWebSocketServer(_:)``
+- ``Sketch/createTCPClient(_:_:)``
+- ``Sketch/createWebSocketClient(_:)``
 - ``Sketch/createUDP(listen:send:)``
 - ``Sketch/createTCPServer(messages:)``
 - ``Sketch/createWebSocketServer(messages:)``
+- ``Sketch/createTCPClient(messages:)``
+- ``Sketch/createWebSocketClient(messages:)``
 - ``Sketch/createUDP(messages:)``
 - ``TextPort``
 - ``TCPServer``
 - ``WebSocketServer``
+- ``TCPClient``
+- ``WebSocketClient``
 - ``UDPPort``
 - ``NetworkFailure``
 

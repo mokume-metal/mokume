@@ -234,6 +234,12 @@ nonisolated final class MovieFile {
     }
 
     init(path: String, width: Int, height: Int, frameRate: Int) throws(MovieWriteFailure) {
+        // **書き出し先がディレクトリなら、消さずに断る。** 下の「同じ名前が残っていると開けない」の
+        // `removeItem` はディレクトリを中身ごと消す。出力先は利用者が指定するパスなので、取り違えて
+        // ディレクトリを指すと、そのディレクトリが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859))
+        if AtomicFile.isDirectory(URL(fileURLWithPath: path), following: false) {
+            throw .writeFailed(path: path, reason: Diagnostics.posixReason(EISDIR))
+        }
         guard let supported = Self.supportedProperties(width: width, height: height) else {
             throw .encoderUnavailable
         }
@@ -286,7 +292,7 @@ nonisolated final class MovieFile {
         guard writer.canAdd(input) else { throw .destinationUnavailable(path: path) }
         writer.add(input)
         guard writer.startWriting() else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
     }
 
@@ -309,7 +315,7 @@ nonisolated final class MovieFile {
             try? await Task.sleep(for: .milliseconds(1))
         }
         guard writer.status == .writing else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
         guard let pool = adaptor.pixelBufferPool else { throw .bufferUnavailable }
         // **器は借りて返す。** フレームごとに確保すると、長く撮ったときにだけ重くなる
@@ -321,7 +327,7 @@ nonisolated final class MovieFile {
 
         fill(buffer, with: image)
         guard adaptor.append(buffer, withPresentationTime: stamp) else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
     }
 
@@ -339,7 +345,7 @@ nonisolated final class MovieFile {
         writer.endSession(atSourceTime: Self.stamp(time + frameDuration))
         await writer.finishWriting()
         guard writer.status == .completed else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
     }
 
