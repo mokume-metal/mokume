@@ -8,16 +8,16 @@ import Foundation
 // 描き場所に触れないので、``Canvas`` に転送先を持たない。走っていなくても (`init` の中でも)
 // 読み書きできる。
 //
-// JSON と XML の口は、名前が `http://` か `https://` で始まれば URL から読む (Processing の
-// `loadJSONObject` / `loadXML` と同じく、同じ口が URL を受ける)。文字列と表の口は、いまは
-// ファイルだけを読む — URL から読む作例がまだ無い (#2070)。
+// 読む口はどれも、名前が `http://` か `https://` で始まれば URL から読む (Processing の
+// `loadStrings` / `loadTable` / `loadJSONObject` / `loadXML` と同じく、同じ口が URL を受ける)。
+// URL かどうかの判定と取得は ``WebFile`` の 1 か所を通る (#2070・#2470)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 extension SketchPart {
 
     // MARK: - 文字列
 
-    /// 文字のファイルを読み、1 行ずつの文字列にする。読み終わるまで返らない。
+    /// 文字のファイルか URL を読み、1 行ずつの文字列にする。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var lines: [String] = [] -->
     /// ```swift
@@ -37,23 +37,25 @@ extension SketchPart {
     /// 改行は含まれない。**最後の改行は行を作らない** (`"a\nb\n"` は 2 行)。途中の空の行は
     /// 空の文字列として残る。先頭の BOM は読み飛ばす。
     ///
-    /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。
+    /// **名前が `http://` か `https://` で始まれば、その URL から読む。** それ以外はファイルの
+    /// 名前で、探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。URL の扱い (届くまで返らない・
+    /// 最長 60 秒・2xx 以外は届かなかったものとして投げる) は ``loadJSONObject(_:)`` と同じ。
     ///
     /// **読み込みは投げる。** 読めなかったときに別の道を選ぶ判断が要るので、黙って空へ
     /// 倒さない。見つからないときの説明には**探した場所**が載る。
     ///
     /// - Throws: 見つからないときに ``DataFailure/notFound(path:searched:)``、見つかったが開け
     ///   ない (ディレクトリだった・読む権利が無い) ときに
-    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)、UTF-8 の文字として
-    ///   読めないときに ``DataFailure/unreadable(path:)``。
+    ///   ``DataFailure/unopenable(path:location:reason:)`` (解けた場所が載る)、URL から受け取れない
+    ///   (繋がらない・時間切れ・2xx 以外の状態) ときに ``DataFailure/unreachable(url:reason:)``、
+    ///   UTF-8 の文字として読めないときに ``DataFailure/unreadable(path:)``。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadStrings(_ path: String) throws(DataFailure) -> [String] {
         Self.noticeBlockingLoad("loadStrings(_:)", instead: "requestStrings(_:)")
-        let url = try dataURL(path)
-        return TextFile.lines(of: try TextFile.read(url, path: path))
+        return TextFile.lines(of: try readText(path))
     }
 
-    /// 文字のファイルを読み、1 行ずつの文字列にする。**読んでいる間、他の仕事を止めない。**
+    /// 文字のファイルか URL を読み、1 行ずつの文字列にする。**読んでいる間、他の仕事を止めない。**
     ///
     /// <!-- example: 文脈 var lines: [String] = [] -->
     /// ```swift
@@ -74,10 +76,7 @@ extension SketchPart {
     /// 文字列が無いまま呼ばれる。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestStrings(_ path: String) async throws(DataFailure) -> [String] {
-        let url = try dataURL(path)
-        return try await Self.readAway { () throws(DataFailure) in
-            TextFile.lines(of: try TextFile.read(url, path: path))
-        }
+        try await requestParsed(path) { text throws(DataFailure) in TextFile.lines(of: text) }
     }
 
     /// 文字列を 1 行ずつ、文字のファイルにする。書き終わるまで返らない。
@@ -110,7 +109,7 @@ extension SketchPart {
 
     // MARK: - 表
 
-    /// CSV のファイルを読み、表にする。読み終わるまで返らない。
+    /// CSV のファイルか URL を読み、表にする。読み終わるまで返らない。
     ///
     /// <!-- example: 文脈 var table: Table? -->
     /// ```swift
@@ -146,48 +145,58 @@ extension SketchPart {
     /// 添えて投げる** (``DataFailure/malformed(path:line:reason:)``)。詰めたり捨てたりして
     /// 読み進めると、値が 1 列ずつずれた表が黙って返るためである。
     ///
-    /// 探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。
+    /// **名前が `http://` か `https://` で始まれば、その URL から読む** (「ウェブに公開」した
+    /// スプレッドシートの CSV など)。それ以外はファイルの名前で、探す場所は ``loadImage(_:)`` と同じ
+    /// (``assetURL(_:)``)。URL の扱い (届くまで返らない・最長 60 秒・2xx 以外は届かなかったものとして
+    /// 投げる) は ``loadJSONObject(_:)`` と同じで、URL の本文もファイルと同じ決まりで読む。
     ///
     /// - Throws: ``DataFailure``。見つからない (``DataFailure/notFound(path:searched:)``)・
     ///   見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る。
-    ///   ``DataFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めない
+    ///   ``DataFailure/unopenable(path:location:reason:)``)・URL から受け取れない
+    ///   (``DataFailure/unreachable(url:reason:)``)・UTF-8 の文字として読めない
     ///   (``DataFailure/unreadable(path:)``)・CSV として壊れている
     ///   (``DataFailure/malformed(path:line:reason:)``) とき。
     // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadTable(_ path: String, header: Bool = false) throws(DataFailure) -> Table {
         Self.noticeBlockingLoad("loadTable(_:header:)", instead: "requestTable(_:header:)")
-        let url = try dataURL(path)
-        return Table(try TableFile.parse(try TextFile.read(url, path: path), header: header, path: path))
+        return Table(try TableFile.parse(try readText(path), header: header, path: path))
     }
 
-    /// CSV のファイルを読み、表にする。**読んでいる間、他の仕事を止めない。**
+    /// CSV のファイルか URL を読み、表にする。**読んでいる間、他の仕事を止めない。**
     ///
     /// <!-- example: 文脈 var table: Table? -->
     /// ```swift
     /// func setup() {
-    ///     Task { table = try? await requestTable("data/temperatures.csv", header: true) }
+    ///     Task {
+    ///         while true {
+    ///             table = try? await requestTable("https://sheets.example/pub?output=csv", header: true)
+    ///             try? await Task.sleep(for: .seconds(30))
+    ///         }
+    ///     }
     /// }
     ///
     /// func draw() {
     ///     background(23, 26, 31)
     ///     guard let table else { return }
     ///     for (i, row) in table.rows.enumerated() {
-    ///         let high = row.getFloat("high") * 10
-    ///         rect(Float(i) * 3, height - high, 2, high)
+    ///         let high = row.getFloat("value") * 4
+    ///         rect(40 + Float(i) * 30, height - high, 24, high)
     ///     }
     /// }
     /// ```
     ///
+    /// 「ウェブに公開」したスプレッドシートの CSV を 30 秒ごとに読み直し、値の列を棒の高さにする。
+    /// スプレッドシートの値を書き換えると、30 秒以内に棒が変わる。
+    ///
     /// 読み方と失敗は ``loadTable(_:header:)`` と同じ。呼び方と届く前の扱いは
     /// ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。**
     /// 大きな表を読んでもフレームが詰まらない。
-    // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
+    // shot: 撮れない 読んだ表を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestTable(_ path: String, header: Bool = false) async throws(DataFailure) -> Table {
-        let url = try dataURL(path)
-        let parsed = try await Self.readAway { () throws(DataFailure) in
-            try TableFile.parse(try TextFile.read(url, path: path), header: header, path: path)
-        }
-        return Table(parsed)
+        Table(
+            try await requestParsed(path) { text throws(DataFailure) in
+                try TableFile.parse(text, header: header, path: path)
+            })
     }
 
     /// 表を CSV のファイルにする。書き終わるまで返らない。
