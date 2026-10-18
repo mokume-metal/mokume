@@ -397,10 +397,11 @@ struct MovieTests {
 
         let rows = try recordAcrossAnObservation(url, before: 15, at: 5, after: 5)
         #expect(rows.count == 21)
-        // 観測の枚 (16 枚目): 位置は作者の時計の 15/30 秒、映すコマは 5 秒に当たる終わりのコマ
+        // 観測の枚 (16 枚目): 映すコマは 5 秒に当たる終わりのコマで、`draw()` の中で読む位置も映している
+        // コマの位置 (3 秒) に揃う。再生の状態は作者の時計の 15/30 秒のままで、次の枚から続く (下)
         let observed = rows[15]
-        #expect(abs(observed.time - 0.5) < 1e-4, "観測の枚の位置が観測の秒に進んだ: \(observed.time)")
         #expect(observed.pixels == expected[expected.count - 1], "5 秒に当たる終わりのコマが映っていない")
+        #expect(abs(observed.time - 3) < 1e-4, "映しているコマの位置を返していない: \(observed.time)")
         // 観測の後は、作者の時計の 1 枚ぶんずつ進む (終わりで止まったままにならない)
         for index in 16..<21 {
             let seconds = Float(index) / 30
@@ -408,6 +409,24 @@ struct MovieTests {
         }
         // 観測の前は普通に進んでいる
         #expect(abs(rows[14].time - Float(14.0 / 30)) < 1e-4)
+    }
+
+    /// 観測の枚の作者の時計の秒で、ちょうど動画の終わりに達する場合も、映すのは観測の秒のコマ。
+    /// 観測の秒が終わりより手前なら、終わりのコマを映さない。
+    @Test("観測の枚でちょうど終わりに達する動画も、手前の観測の秒ならそのコマを映す")
+    func anObservedFrameThatReachesTheEndStillShowsTheObservedSecond() async throws {
+        let url = try await TestMovie.write(frames: 30, pixel: TestMovie.noise)  // 1 秒
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+
+        // 30 枚目 (作者の時計の 29/30 秒) の次の 31 枚目 = 作者の時計の 1 秒で終わりに達する枚を、0.2 秒で観測する
+        let rows = try recordAcrossAnObservation(url, before: 30, at: 0.2, after: 2)
+        #expect(rows.count == 33)
+        let observed = rows[30]
+        #expect(abs(observed.time - 0.2) < 1e-4, "観測の秒のコマの位置: \(observed.time)")
+        #expect(observed.pixels == expected[6], "0.2 秒に当たるコマ (7 枚目) が映っていない")
+        // 観測の後は、終わりに達した状態が続く (流れ終わって止まる)
+        #expect(abs(rows[31].time - 1) < 1e-4)
     }
 
     /// 観測の直前の枚で `play()` した動画は、起点が観測の秒になり、作者の時計が観測の秒に届くまで
@@ -421,8 +440,9 @@ struct MovieTests {
             url, before: 3, at: 5, after: 3, prepare: { _ in },
             during: { sketch, movie in if sketch.frameCount == 3 { movie.play() } })
         #expect(rows.count == 7)
-        // play() は次の枚 (4 枚目 = 観測の枚) から効く: 起点は作者の時計の 3/30 秒、位置 0
-        #expect(abs(rows[3].time - 0) < 1e-4)
+        // play() は次の枚 (4 枚目 = 観測の枚) から効く: 起点は作者の時計の 3/30 秒、位置 0。観測の枚の
+        // `draw()` の中では、5 秒に当たる映しているコマ (終わり = 3 秒) の位置を読む
+        #expect(abs(rows[3].time - 3) < 1e-4)
         // 5 枚目以降は起点から 1 枚ぶんずつ進む。起点が観測の秒だと、負の位置で 0 のまま
         for index in 4..<7 {
             let expected = Float(index - 3) / 30

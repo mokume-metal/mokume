@@ -38,7 +38,7 @@
       "type": ["number", "null"],
       "minimum": 0,
       "maximum": 3.4028234663852886e+38,
-      "description": "Draw exactly one frame at these seconds before taking it. Rounded to Float. deltaTime is zero and frameCount advances once. The picture is shown and draw side effects remain; this is not a rewind. Only count=1 and every=1 are allowed. noLoop stays stopped; external pause and recording refuse the request. Omit it to observe normally; null reads the same as omitted, but a sketch older than this schema refuses a null time (it reads it as a time of the wrong type), so omitting is the safe way. Check appliedTime and frames[0].time in the reply; older sketches may ignore this key."
+      "description": "Draw exactly one frame at these seconds before taking it. Rounded to Float. deltaTime is zero and frameCount advances once. The picture is shown and draw side effects remain; this is not a rewind. Only draw() reads this time: input callbacks read the author's clock, and a playing video or a recorded sound does not keep this time as its position or start. Only count=1 and every=1 are allowed. noLoop stays stopped; external pause and recording refuse the request. Omit it to observe normally; null reads the same as omitted, but a sketch older than this schema refuses a null time (it reads it as a time of the wrong type), so omitting is the safe way. Check appliedTime and frames[0].time in the reply; older sketches may ignore this key."
     }
   },
   "allOf": [

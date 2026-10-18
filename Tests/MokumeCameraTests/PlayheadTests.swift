@@ -191,4 +191,20 @@ struct PlayheadTests {
             }
         }
     }
+
+    /// 作者の時計の秒でちょうど終わりに達する枚でも、観測の秒が手前なら、手前のコマを映す
+    /// (終わりに達した枚は止まった状態になるが、その枚の起点から数え直す)。
+    @Test("その枚で終わりに達しても、手前の時刻を覗けば手前の位置")
+    func positionAtCountsBackWhenTheFrameReachedTheEnd() {
+        var head = Playhead(duration: 3)
+        head.play()
+        _ = head.advance(to: 0)  // 起点
+        #expect(head.advance(to: 3) == 3)  // 作者の時計の 3 秒で終わりに達する
+        #expect(!head.isPlaying)
+        #expect(head.position(at: 0.2) == 0.2)
+        #expect(head.position(at: 9) == 3)
+        // 次の枚は、止まった状態のまま
+        #expect(head.advance(to: 4) == 3)
+        #expect(head.position(at: 0.2) == 3, "覗く元が古い枚の起点のまま")
+    }
 }
