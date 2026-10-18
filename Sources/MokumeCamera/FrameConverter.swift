@@ -30,6 +30,14 @@ import MokumeCore
 /// 大きさが頼んだものと違って届いたときは、真ん中を頼んだ縦横比で切り取ってから縮める
 /// (ゆがめない)。
 ///
+/// ## 不透明度は呼ぶ側が決める (``Alpha``)
+///
+/// カメラの BGRA に不透明度の意味は無い (絵は不透明) ので、**行き先から不透明度を外し、
+/// 255 で埋める** (``Alpha/opaque``)。動画は透過を持ちうる (ProRes 4444 の演出素材) ので、
+/// **乗算していない (straight) まま運ぶ** (``Alpha/straight``) — ``DisplayImage`` の
+/// 約束がそれである。不透明度を外した行き先へ変換すると、vImage は透けた画素を黒へ平坦化して
+/// しまう (半透明の色が暗くなり、透明な所は黒い不透明になる。#2881)。
+///
 /// **スレッドを持たない。** 1 つの変換器を呼ぶのは 1 本の流れだけで (カメラは受け取りの
 /// 待ち行列 — ``CameraSource``、動画は main actor — ``MovieReader``)、この型はその上に閉じている。
 ///
@@ -48,8 +56,17 @@ nonisolated final class FrameConverter {
         }
     }
 
+    /// 元の絵の不透明度の扱い。
+    enum Alpha: Equatable {
+        /// 不透明として扱う。元の不透明度は読まず、すべての画素を 255 で埋める (カメラ)。
+        case opaque
+        /// 元の不透明度を、乗算していないまま運ぶ (動画)。元が乗算済みを名乗れば、乗算を戻してから変換する。
+        case straight
+    }
+
     let width: Int
     let height: Int
+    let alpha: Alpha
 
     /// 持ち回している変換器と、それを作ったときの元の形式。
     private var cached: (key: Key, converter: vImageConverter, sourceCount: Int)?
@@ -59,9 +76,10 @@ nonisolated final class FrameConverter {
         let colorSpace: String?
     }
 
-    init(width: Int, height: Int) {
+    init(width: Int, height: Int, alpha: Alpha = .opaque) {
         self.width = width
         self.height = height
+        self.alpha = alpha
     }
 
     /// 1 枚を変換する。
@@ -75,10 +93,28 @@ nonisolated final class FrameConverter {
             &sources, converter, buffer, vImage_Flags(kvImageNoAllocate))
         guard initialized == kvImageNoError else { throw .conversion(initialized) }
 
+        // **乗算済みを名乗る元 (アルファ付きの HEVC) は、乗算を戻してから変換する。** 色の変換は
+        // 曲線を掛けるので、乗算したまま掛けると半透明の色が狂う。vImage は元の乗算の有無を
+        // 読まない (名乗りの無い BGRA と同じく、乗算していないものとして扱う)
+        var straightened: UnsafeMutableRawPointer?
+        defer { straightened?.deallocate() }
+        if alpha == .straight, sourceCount == 1, Self.declaresPremultipliedAlpha(buffer) {
+            let rowBytes = Int(sources[0].width) * 4
+            let made = UnsafeMutableRawPointer.allocate(
+                byteCount: rowBytes * Int(sources[0].height), alignment: 16)
+            straightened = made
+            var target = vImage_Buffer(
+                data: made, height: sources[0].height, width: sources[0].width, rowBytes: rowBytes)
+            let unpremultiplied = vImageUnpremultiplyData_RGBA8888(
+                &sources[0], &target, vImage_Flags(kvImageNoFlags))
+            guard unpremultiplied == kvImageNoError else { throw .conversion(unpremultiplied) }
+            sources[0] = target
+        }
+
         let sourceWidth = CVPixelBufferGetWidth(buffer)
         let sourceHeight = CVPixelBufferGetHeight(buffer)
         if sourceWidth == width, sourceHeight == height {
-            return try Self.picture(width: width, height: height) { destination in
+            return try Self.picture(width: width, height: height, alpha: alpha) { destination in
                 vImageConvert_AnyToAny(converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
             }
         }
@@ -91,14 +127,31 @@ nonisolated final class FrameConverter {
             return vImageConvert_AnyToAny(converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
         }
         guard converted == kvImageNoError else { throw .conversion(converted) }
-        return try Self.picture(width: width, height: height) { destination in
+        return try Self.picture(width: width, height: height, alpha: alpha, scaled: true) { destination in
             full.withUnsafeMutableBytes { raw in
+                var whole = vImage_Buffer(
+                    data: raw.baseAddress, height: vImagePixelCount(sourceHeight),
+                    width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * 4)
+                // **縮めるあいだは乗算する。** 乗算していないまま混ぜると、透明な画素の色が
+                // 不透明な画素の縁へにじむ
+                if alpha == .straight {
+                    let premultiplied = vImagePremultiplyData_RGBA8888(
+                        &whole, &whole, vImage_Flags(kvImageNoFlags))
+                    guard premultiplied == kvImageNoError else { return premultiplied }
+                }
                 var crop = Self.centreCrop(
                     of: raw.baseAddress!, width: sourceWidth, height: sourceHeight,
                     toAspectOf: width, height)
                 return vImageScale_ARGB8888(&crop, &destination, nil, vImage_Flags(kvImageNoFlags))
             }
         }
+    }
+
+    /// バッファが、不透明度を乗算済みと名乗っているか。
+    private static func declaresPremultipliedAlpha(_ buffer: CVPixelBuffer) -> Bool {
+        guard let mode = CVBufferCopyAttachment(buffer, kCVImageBufferAlphaChannelModeKey, nil)
+        else { return false }
+        return CFEqual(mode, kCVImageBufferAlphaChannelMode_PremultipliedAlpha)
     }
 
     // MARK: - 変換器
@@ -122,7 +175,7 @@ nonisolated final class FrameConverter {
         let key = Key(pixelFormat: pixelFormat, colorSpace: colorSpace?.name as String?)
         if let cached, cached.key == key { return (cached.converter, cached.sourceCount) }
 
-        var destination = Self.destinationFormat
+        var destination = Self.destinationFormat(alpha)
         var error = kvImageNoError
         guard
             let made = vImageConverter_CreateForCVToCGImageFormat(
@@ -135,24 +188,32 @@ nonisolated final class FrameConverter {
         return (made, count)
     }
 
-    /// 行き先の形式: Display P3・1 画素 4 バイトを赤・緑・青・(飛ばす) の順で。
+    /// 行き先の形式: Display P3・1 画素 4 バイトを赤・緑・青・不透明度の順で。
     ///
-    /// 不透明度は飛ばして受け、変換の後で 255 に埋める (カメラの絵は不透明)。
-    private static var destinationFormat: vImage_CGImageFormat {
-        vImage_CGImageFormat(
+    /// ``Alpha/opaque`` は不透明度を飛ばして受け、変換の後で 255 に埋める (カメラの絵は不透明)。
+    /// ``Alpha/straight`` は乗算していない不透明度を受ける (``DisplayImage`` の約束)。
+    private static func destinationFormat(_ alpha: Alpha) -> vImage_CGImageFormat {
+        let info =
+            switch alpha {
+            case .opaque: CGImageAlphaInfo.noneSkipLast
+            case .straight: CGImageAlphaInfo.last
+            }
+        return vImage_CGImageFormat(
             bitsPerComponent: 8, bitsPerPixel: 32,
             colorSpace: Unmanaged.passUnretained(CGColorSpace(name: CGColorSpace.displayP3)!),
-            bitmapInfo: CGBitmapInfo(
-                rawValue: CGImageAlphaInfo.noneSkipLast.rawValue
-                    | CGBitmapInfo.byteOrder32Big.rawValue),
+            bitmapInfo: CGBitmapInfo(rawValue: info.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
             version: 0, decode: nil, renderingIntent: .defaultIntent)
     }
 
-    /// 詰め物の無い `width * height * 4` の器を作り、`fill` に書かせ、不透明度を 255 に埋めて返す。
+    /// 詰め物の無い `width * height * 4` の器を作り、`fill` に書かせて返す。
     ///
-    /// - Parameter fill: 器へ書き、vImage の結果を返す。
+    /// - Parameters:
+    ///   - alpha: ``Alpha/opaque`` なら不透明度を 255 に埋める。
+    ///   - scaled: `fill` が乗算したまま縮めた絵を書くとき `true`。乗算を戻す。
+    ///   - fill: 器へ書き、vImage の結果を返す。
     private static func picture(
-        width: Int, height: Int, fill: (inout vImage_Buffer) -> vImage_Error
+        width: Int, height: Int, alpha: Alpha, scaled: Bool = false,
+        fill: (inout vImage_Buffer) -> vImage_Error
     ) throws(Failure) -> DisplayImage {
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let status = bytes.withUnsafeMutableBytes { raw in
@@ -161,10 +222,17 @@ nonisolated final class FrameConverter {
                 width: vImagePixelCount(width), rowBytes: width * 4)
             let filled = fill(&destination)
             guard filled == kvImageNoError else { return filled }
-            // 1 画素 4 バイトのうち最後 (不透明度) だけを埋める。vImage の印は先頭の
-            // バイトが 0x8、最後のバイトが 0x1
-            return vImageOverwriteChannelsWithScalar_ARGB8888(
-                255, &destination, &destination, 0x1, vImage_Flags(kvImageNoFlags))
+            switch alpha {
+            case .opaque:
+                // 1 画素 4 バイトのうち最後 (不透明度) だけを埋める。vImage の印は先頭の
+                // バイトが 0x8、最後のバイトが 0x1
+                return vImageOverwriteChannelsWithScalar_ARGB8888(
+                    255, &destination, &destination, 0x1, vImage_Flags(kvImageNoFlags))
+            case .straight:
+                guard scaled else { return kvImageNoError }
+                return vImageUnpremultiplyData_RGBA8888(
+                    &destination, &destination, vImage_Flags(kvImageNoFlags))
+            }
         }
         guard status == kvImageNoError else { throw .conversion(status) }
         return DisplayImage(width: width, height: height, bytes: bytes)

@@ -95,6 +95,113 @@ nonisolated enum TestMovie {
         return url
     }
 
+    /// この機械に ProRes 4444 の符号化器が (専用回路を使わない側で) あるか。無ければ透過の動画を作る検査は飛ぶ。
+    static let canWriteTransparent: Bool = {
+        var encoder: CFString?
+        var properties: CFDictionary?
+        return VTCopySupportedPropertyDictionaryForEncoder(
+            width: 64, height: 48, codecType: kCMVideoCodecType_AppleProRes4444,
+            encoderSpecification: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: false]
+                as CFDictionary,
+            encoderIDOut: &encoder, supportedPropertiesOut: &properties) == noErr
+    }()
+
+    /// この機械に、アルファ付きの HEVC の符号化器があるか。
+    static let canWriteHEVCWithAlpha: Bool = {
+        var encoder: CFString?
+        var properties: CFDictionary?
+        return VTCopySupportedPropertyDictionaryForEncoder(
+            width: 64, height: 64, codecType: kCMVideoCodecType_HEVCWithAlpha, encoderSpecification: nil,
+            encoderIDOut: &encoder, supportedPropertiesOut: &properties) == noErr
+    }()
+
+    /// 乗算していない RGBA の 1 画素 (`alpha` を含む)。
+    typealias Straight = (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8)
+
+    /// 透過の動画を書く。`pixel(index, x, y)` は **乗算していない** RGBA。
+    ///
+    /// 既定の ProRes 4444 は、mokume 自身が書き出す動画と同じく、乗算していないアルファのまま
+    /// 符号化器へ渡す (`StraightAlpha`)。`hevcWithAlpha` は乗算済みを受けるので、乗算して渡す
+    /// (読むと `PremultipliedAlpha` を名乗って届く)。
+    static func writeTransparent(
+        codec: AVVideoCodecType = .proRes4444, frames: Int, fps: Int32 = 30, width: Int = 8,
+        height: Int = 4, pixel: @Sendable (Int, Int, Int) -> Straight
+    ) async throws -> URL {
+        let url = temporaryURL()
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let straight = codec == .proRes4444
+        var settings: [String: Any] = [:]
+        if straight {
+            settings[AVVideoEncoderSpecificationKey] = [
+                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false
+            ]
+            settings[AVVideoCompressionPropertiesKey] = [
+                kVTCompressionPropertyKey_AlphaChannelMode as String:
+                    kVTAlphaChannelMode_StraightAlpha as String
+            ]
+        }
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: settings.merging([
+                AVVideoCodecKey: codec,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
+                // 作業空間と同じ Display P3 を名乗らせる (mokume の書き出しと同じ)。
+                // 名乗りが同じなら、色空間の変換は動かさない
+                AVVideoColorPropertiesKey: [
+                    AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
+                    AVVideoTransferFunctionKey: AVVideoTransferFunction_IEC_sRGB,
+                    AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+                ],
+            ]) { current, _ in current })
+        input.expectsMediaDataInRealTime = false
+        input.mediaTimeScale = fps
+        writer.movieTimeScale = fps
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+            ])
+        writer.add(input)
+        try #require(writer.startWriting(), "\(String(describing: writer.error))")
+        writer.startSession(atSourceTime: .zero)
+        for index in 0..<frames {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(1)) }
+            let pool = try #require(adaptor.pixelBufferPool)
+            var made: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+            let buffer = try #require(made)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            let base = try #require(CVPixelBufferGetBaseAddress(buffer))
+            let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+            for y in 0..<height {
+                for x in 0..<width {
+                    var value = pixel(index, x, y)
+                    if !straight {
+                        func multiplied(_ channel: UInt8) -> UInt8 {
+                            UInt8((Double(channel) * Double(value.alpha) / 255).rounded())
+                        }
+                        value = (multiplied(value.red), multiplied(value.green), multiplied(value.blue), value.alpha)
+                    }
+                    let at = base.advanced(by: y * rowBytes + x * 4).assumingMemoryBound(to: UInt8.self)
+                    at[0] = value.blue
+                    at[1] = value.green
+                    at[2] = value.red
+                    at[3] = value.alpha
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            #expect(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: fps)))
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(frames), timescale: fps))
+        await writer.finishWriting()
+        try #require(writer.status == .completed, "\(String(describing: writer.error))")
+        return url
+    }
+
     /// 枚ごとに明るさの違う一色 (8 階調ずつ)。32 枚までは重ならない。
     static func grey(_ index: Int, _ x: Int, _ y: Int) -> (blue: UInt8, green: UInt8, red: UInt8) {
         let level = UInt8(min(255, index * 8))
@@ -155,7 +262,7 @@ nonisolated enum TestMovie {
         while let sample = output.copyNextSampleBuffer() {
             guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             let made = converter ?? FrameConverter(
-                width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+                width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer), alpha: .straight)
             converter = made
             frames.append(
                 (CMSampleBufferGetPresentationTimeStamp(sample).seconds, try made.convert(buffer)))

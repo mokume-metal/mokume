@@ -43,6 +43,36 @@ struct FrameConverterTests {
         return buffer
     }
 
+    /// 不透明度を持つ BGRA の器。`pixel` は (赤, 緑, 青, 不透明度) で、バッファへそのまま書く。
+    /// `mode` はバッファが名乗る不透明度の形式 (`kCVImageBufferAlphaChannelMode_*`)。
+    private func alphaBuffer(
+        width: Int, height: Int, mode: CFString?,
+        pixel: (Int, Int) -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8)
+    ) throws -> CVPixelBuffer {
+        var made: CVPixelBuffer?
+        CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, nil, &made)
+        let buffer = try #require(made)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let base = try #require(CVPixelBufferGetBaseAddress(buffer))
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<height {
+            for x in 0..<width {
+                let value = pixel(x, y)
+                let at = base.advanced(by: y * rowBytes + x * 4).assumingMemoryBound(to: UInt8.self)
+                at[0] = value.blue
+                at[1] = value.green
+                at[2] = value.red
+                at[3] = value.alpha
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        CVBufferSetAttachment(
+            buffer, kCVImageBufferCGColorSpaceKey, CGColorSpace(name: CGColorSpace.displayP3)!,
+            .shouldPropagate)
+        if let mode { CVBufferSetAttachment(buffer, kCVImageBufferAlphaChannelModeKey, mode, .shouldPropagate) }
+        return buffer
+    }
+
     private func rgba(_ picture: DisplayImage, _ x: Int, _ y: Int) -> [Int] {
         let at = (y * picture.width + x) * 4
         return picture.bytes[at..<at + 4].map(Int.init)
@@ -145,5 +175,84 @@ struct FrameConverterTests {
                 #expect(near(rgba(picture, x, y), [255, 0, 0, 255]), "(\(x), \(y)) に端の青が混ざった")
             }
         }
+    }
+
+    // MARK: - 不透明度 (#2881)
+
+    /// 左から 透明 / 半透明 / 不透明 の 3 画素 (乗算していない赤橙)。
+    private func strip(_ x: Int, _ y: Int) -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
+        switch x {
+        case 0: (0, 0, 0, 0)
+        case 1: (240, 150, 70, 128)
+        default: (240, 150, 70, 255)
+        }
+    }
+
+    @Test("動画 (.straight): 乗算していない不透明度を保ち、半透明の色を暗くしない")
+    func straightKeepsAlphaAndColour() throws {
+        let source = try alphaBuffer(
+            width: 3, height: 2, mode: kCVImageBufferAlphaChannelMode_StraightAlpha, pixel: strip)
+        let picture = try FrameConverter(width: 3, height: 2, alpha: .straight).convert(source)
+        #expect(rgba(picture, 0, 0)[3] == 0)
+        #expect(near(rgba(picture, 1, 1), [240, 150, 70, 128]))
+        #expect(near(rgba(picture, 2, 0), [240, 150, 70, 255]))
+    }
+
+    @Test("動画 (.straight): 乗算済みを名乗る元は、乗算を戻して運ぶ")
+    func straightUndoesPremultipliedSources() throws {
+        // 乗算済みの (120, 75, 35, 128) は、乗算していない (240, 150, 70, 128)
+        let source = try alphaBuffer(
+            width: 3, height: 2, mode: kCVImageBufferAlphaChannelMode_PremultipliedAlpha
+        ) { x, _ in
+            switch x {
+            case 0: (0, 0, 0, 0)
+            case 1: (120, 75, 35, 128)
+            default: (240, 150, 70, 255)
+            }
+        }
+        let picture = try FrameConverter(width: 3, height: 2, alpha: .straight).convert(source)
+        #expect(rgba(picture, 0, 0)[3] == 0)
+        #expect(near(rgba(picture, 1, 0), [240, 150, 70, 128], within: 3), "\(rgba(picture, 1, 0))")
+        #expect(near(rgba(picture, 2, 0), [240, 150, 70, 255]))
+    }
+
+    @Test("カメラ (.opaque、既定): 元の不透明度によらず、すべて 255 のまま")
+    func opaqueIgnoresSourceAlpha() throws {
+        let source = try alphaBuffer(
+            width: 3, height: 2, mode: kCVImageBufferAlphaChannelMode_StraightAlpha, pixel: strip)
+        for converter in [FrameConverter(width: 3, height: 2), FrameConverter(width: 3, height: 2, alpha: .opaque)] {
+            let picture = try converter.convert(source)
+            for x in 0..<3 { #expect(rgba(picture, x, 0)[3] == 255, "x=\(x)") }
+        }
+    }
+
+    @Test("不透明な絵は、.straight でも .opaque と 1 バイトも変わらない (縮める道も)")
+    func opaqueSourcesAreIdenticalInBothModes() throws {
+        let source = try buffer(width: 8, height: 4, colorSpace: CGColorSpace.sRGB) { x, y in
+            (blue: UInt8(30 * x), green: UInt8(60 * y), red: UInt8(255 - 20 * x))
+        }
+        for (width, height) in [(8, 4), (4, 4), (3, 2)] {
+            let opaque = try FrameConverter(width: width, height: height, alpha: .opaque).convert(source)
+            let straight = try FrameConverter(width: width, height: height, alpha: .straight).convert(source)
+            #expect(opaque == straight, "\(width)x\(height)")
+        }
+    }
+
+    @Test("縮める道: 透明な画素の色が、不透明な画素の縁へにじまない")
+    func scalingDoesNotBleedTransparentColour() throws {
+        // 左の 1 列は透明な青、残りは不透明な赤。4x4 を 3x3 へ縮めると、左端は両方を混ぜる
+        let source = try alphaBuffer(
+            width: 4, height: 4, mode: kCVImageBufferAlphaChannelMode_StraightAlpha
+        ) { x, _ in x == 0 ? (0, 0, 255, 0) : (255, 0, 0, 255) }
+        let picture = try FrameConverter(width: 3, height: 3, alpha: .straight).convert(source)
+        for y in 0..<3 {
+            for x in 0..<3 {
+                let pixel = rgba(picture, x, y)
+                // 見える画素 (不透明度がある) の青は、混ざった分だけ増えてはいけない
+                if pixel[3] > 16 { #expect(pixel[2] <= 8, "(\(x), \(y)) に透明な青がにじんだ: \(pixel)") }
+            }
+        }
+        // 右の画素は不透明な赤のまま
+        #expect(near(rgba(picture, 2, 1), [255, 0, 0, 255], within: 4))
     }
 }
