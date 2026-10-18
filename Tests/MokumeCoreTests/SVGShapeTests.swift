@@ -251,6 +251,68 @@ struct SVGShapeTests {
         }
     }
 
+    /// 透明な背景に読んだ形を置くスケッチ (出力の不透明度を読むため)。
+    final class OnTransparent: Sketch {
+        var settings = SketchSettings(width: 100, height: 100)
+        var path = ""
+        var mark: Shape?
+        init() {}
+        func setup() { mark = try? loadShape(path) }
+        func draw() {
+            background(.transparent)
+            if let mark { shape(mark) }
+        }
+    }
+
+    @Test("重なりのある群の opacity は、近似で描くことをファイルにつき 1 度知らせる。絵は変えない (#2884)")
+    func overlappingGroupOpacityIsNamedOnceAndDrawnAsBefore() throws {
+        let path = try Self.written(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+            <g opacity="0.5">
+            <circle cx="40" cy="50" r="25" fill="#f00"/>
+            <circle cx="60" cy="50" r="25" fill="#00f"/>
+            </g>
+            </svg>
+            """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let sketch = OnTransparent()
+        sketch.path = path
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        try runtime.advance()
+        let message = try #require(
+            runtime.canvas.warnings.message(for: .svgApproximated(path: path)), "近似を知らせていない")
+        #expect(message.contains("opacity"))
+        #expect(message.contains("line 2"), "群の行")
+        #expect(runtime.canvas.warnings.message(for: .svgSkipped(path: path)) == nil, "捨ててはいない")
+
+        // 絵は変わらない: 1 つの円だけの所は alpha 0.5、重なる所は子ごとに掛けた 1 - 0.5 * 0.5 = 0.75
+        let image = try runtime.target.encodeForDisplay()
+        #expect(abs(Int(image[30, 50].alpha) - 128) <= 1, "\(image[30, 50])")
+        #expect(abs(Int(image[50, 50].alpha) - 191) <= 1, "\(image[50, 50])")
+    }
+
+    @Test("重ならない群の opacity は、知らせない (#2884)")
+    func separateGroupOpacityIsNotNamed() throws {
+        let path = try Self.written(
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+            <g opacity="0.5">
+            <circle cx="20" cy="20" r="10" fill="#f00"/>
+            <circle cx="80" cy="80" r="10" fill="#00f"/>
+            </g>
+            </svg>
+            """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let sketch = OnTransparent()
+        sketch.path = path
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        #expect(sketch.mark?.isEmpty == false)
+        #expect(runtime.canvas.warnings.message(for: .svgApproximated(path: path)) == nil)
+    }
+
     @Test("描けないものを含む SVG は、描ける部分を描いて、捨てたものをファイルにつき 1 度知らせる")
     func partlyDrawableFileWarnsOnce() throws {
         let path = try Self.written(
