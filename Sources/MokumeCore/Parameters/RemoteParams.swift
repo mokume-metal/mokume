@@ -36,10 +36,22 @@ final class RemoteParams {
     /// 全体が `WatchedFile` に捨てられ、つまみが 1 つも並ばない — 子が新しい版のライブラリで
     /// 知らない `type` を名乗ったときに起きる ([#2856](https://github.com/mokume-metal/mokume/issues/2856))。
     /// 外枠 (`params` が配列でない・JSON でない) が読めない応答は、いままでどおり全体を断る。
+    ///
+    /// **外枠も、使わないものと型の外れた付随を理由に捨てない。** `revision` は取り込みに使わないので
+    /// 読まない (型がずれても応答ごと捨てられていた)。`id` は自分の要求の echo かを見るのに使うが、
+    /// 文字列でなければ「何も応えていない」と同じに読む — 自分の要求の識別子は文字列なので、
+    /// 文字列でない値が自分の echo であることはない。
     private struct Report: Decodable {
-        let revision: Int
         let id: String?
         let params: [Reading]
+
+        private enum CodingKeys: String, CodingKey { case id, params }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try? container.decode(String.self, forKey: .id)
+            params = try container.decode([Reading].self, forKey: .params)
+        }
     }
 
     /// 宣言 1 件の読み。保存の復元が 1 件ずつ読むのと同じ向き (``ParamStore/SavedReading``・#2806)。
@@ -82,9 +94,11 @@ final class RemoteParams {
     private var idsBeforeRequests: Set<String?> = []
     /// 最後に取り込んだ応答の識別子。置く直前に応答を読み直せないときに、その代わりに使う。
     private var lastSeenId: String?
-    /// 読めずに飛ばしたと名乗った宣言の鍵 (名前が読めなければ配列の位置)。**応答は値が動くたびに
-    /// 書き直され、飛ばした宣言は読み直しのたびに同じ姿で居続ける**ので、鍵を控えて繰り返さない。
-    private var announcedSkips: Set<String> = []
+    /// いま飛ばしている宣言の鍵 (名前が読めなければ配列の位置、と読めなかった理由)。**応答は値が
+    /// 動くたびに書き直され、飛ばした宣言は読み直しのたびに同じ姿で居続ける**ので、前の応答でも
+    /// 飛ばしていた宣言は繰り返さない。読めるようになってから再び壊れた・別の理由で読めなくなった
+    /// 宣言は、新しく飛ばしたものとして言い直す。
+    private var skipped: Set<String> = []
 
     /// 読めない宣言を飛ばしたことの名乗り。**検査から差し替える** — 既定は標準エラー。
     private let warn: (String) -> Void
@@ -140,13 +154,16 @@ final class RemoteParams {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     private func readable(_ readings: [Reading]) -> [ParamDeclaration] {
         var declarations: [ParamDeclaration] = []
+        var skippedNow: Set<String> = []
+        defer { skipped = skippedNow }
         for (index, reading) in readings.enumerated() {
             switch reading {
             case .declaration(let declaration):
                 declarations.append(declaration)
             case .unreadable(let name, let reason):
-                let key = name ?? "#\(index)"
-                guard announcedSkips.insert(key).inserted else { continue }
+                let key = "\(name ?? "#\(index)")|\(reason)"
+                skippedNow.insert(key)
+                guard !skipped.contains(key) else { continue }
                 let subject = name.map { "The knob \"\($0)\"" } ?? "A knob declaration (entry \(index))"
                 warn(
                     "\(subject) in the sketch's report could not be read, so it is left out "

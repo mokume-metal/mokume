@@ -466,9 +466,11 @@ struct RemoteParamsTests {
         }
     }
 
-    /// 外枠が読めない応答は、いままでどおり確定させずに黙って次を待つ (飛ばす単位は宣言 1 件)。
-    @Test("params が配列でない応答は、従来どおりつまみを並べない")
-    func anUnreadableEnvelopeIsStillLeftAlone() throws {
+    /// **外枠は今どおり (黙って捨てる) で、この PR の範囲の外**: `params` が配列でない・JSON でない応答は、
+    /// `WatchedFile` が確定させず次を待つ。飛ばす単位は宣言 1 件で、外枠が壊れた応答を名乗る仕組みは
+    /// 別の約束 (`WatchedFile` は他の読み手も使う) なので、ここでは振る舞いを変えないことだけを固定する。
+    @Test("(範囲外) params が配列でない応答は、従来どおり黙ってつまみを並べない")
+    func anUnreadableEnvelopeIsStillDroppedSilently() throws {
         try withFacet { facet in
             try publishRaw(params: #"{"name":"a"}"#, at: facet)
             var said: [String] = []
@@ -476,6 +478,65 @@ struct RemoteParamsTests {
             #expect(!params.refresh())
             #expect(params.boxes.isEmpty)
             #expect(said.isEmpty)
+        }
+    }
+
+    /// 取り込みに使わない `revision` と、型の外れた `id` で、読めた宣言まで捨てない。
+    @Test(
+        "使わない revision や型の外れた id では、応答を捨てずにつまみを並べる",
+        arguments: [
+            #""revision":"x","id":"r1""#,
+            #""id":7"#,
+            #""revision":1.5,"id":null"#,
+            #""revision":null"#,
+        ])
+    func looseEnvelopeFieldsDoNotDropTheReport(fields: String) throws {
+        try withFacet { facet in
+            let json = #"{"schemaVersion":2,\#(fields),"params":[{"name":"a","type":"float","value":1}],"rejected":[],"clamped":[],"discarded":[]}"#
+            try AtomicFile.write(Data(json.utf8), to: WorkDirectory.reportURL(under: facet))
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["a"])
+        }
+    }
+
+    /// 前の応答でも飛ばしていた宣言は繰り返さないが、**読めるようになってから再び壊れた**宣言や、
+    /// 別の理由で読めなくなった宣言は、新しく飛ばしたものとして言い直す。
+    @Test("読めるようになってから再び壊れた宣言・別の理由で壊れた宣言は、言い直す")
+    func saysAgainWhenADeclarationBreaksAgainOrDifferently() throws {
+        try withFacet { facet in
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            @MainActor func publishAndRead(_ declarations: String, revision: Int) throws {
+                try publishRaw(params: declarations, revision: revision, at: facet)
+                try stamp(
+                    WorkDirectory.reportURL(under: facet), Date().addingTimeInterval(Double(revision) * 5))
+                params.refresh()
+            }
+            let broken = #"[{"name":"b","type":"quantum","value":1}]"#
+            try publishAndRead(broken, revision: 1)
+            #expect(said.count == 1)
+            try publishAndRead(broken, revision: 2)
+            #expect(said.count == 1, "続いて飛ばしているものは繰り返さない")
+            try publishAndRead(#"[{"name":"b","type":"float","value":1}]"#, revision: 3)
+            #expect(params.boxes.map(\.name) == ["b"], "読めるようになったらつまみが並ぶ")
+            try publishAndRead(broken, revision: 4)
+            #expect(said.count == 2, "直ってから再び壊れたら言い直す: \(said)")
+            try publishAndRead(#"[{"name":"b","type":"float","value":"not a number"}]"#, revision: 5)
+            #expect(said.count == 3, "別の理由で壊れたら言い直す: \(said)")
+        }
+    }
+
+    /// 名前の無い宣言は位置で指す。別々の宣言が同じ位置の鍵に畳まれて黙らされない。
+    @Test("名前の無い宣言は、位置と理由で別々に名乗る")
+    func namelessDeclarationsAreToldApartByPosition() throws {
+        try withFacet { facet in
+            try publishRaw(params: #"[42,{"name":"a","type":"float","value":1},"x"]"#, at: facet)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["a"])
+            #expect(said.count == 2, "2 件とも名乗る: \(said)")
         }
     }
 }
