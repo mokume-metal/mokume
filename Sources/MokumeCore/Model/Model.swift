@@ -149,14 +149,16 @@ extension Model {
 
     /// 読み取った並びを、置ける形へ整える。
     ///
-    /// **main actor に載せない。** 全頂点を何度も走るので、50 万三角形で約 80 ms かかる。
+    /// **main actor に縛らない。** 全頂点を何度も走るので、50 万三角形で数十 ms かかる。
     /// 待たない読み方 (``Canvas/requestModel(_:normalize:)``) はこれを読み込みと同じ別の仕事で
     /// 済ませ、main には控えへの登録だけを残す (#2801)。面にも控えにも触れない純粋な計算
     /// なので、どの隔離から呼んでもよい。
     ///
     /// - Parameters:
     ///   - fitting: 整えるときに、いちばん長い辺を合わせる長さ。`nil` なら整えない。
-    nonisolated static func make(name: String, parsed: ModelFile.Parsed, fitting: Float?) -> Model {
+    nonisolated static func make(
+        name: String, parsed: ModelFile.Parsed, fitting: Float?
+    ) -> Model {
         var positions = parsed.positions
         var normals = parsed.normals
         var lowest = SIMD3<Float>(repeating: .infinity)
