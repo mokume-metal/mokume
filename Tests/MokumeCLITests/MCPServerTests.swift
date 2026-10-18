@@ -168,6 +168,9 @@ struct MCPServerTests {
         #expect(answers.map(errorCode) == [-32600, -32600])
         #expect(answers.allSatisfy { $0["result"] == nil })
         #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path))
+        // 型の違う `id` とは別の言い方で、`null` を名指す (省けば通知になる)
+        let message = refusal(#"{"jsonrpc":"2.0","id":null,"method":"tools/list"}"#)?.message
+        #expect(message?.contains("id must not be null") == true, "\(String(describing: message))")
     }
 
     // ------------------------------------- 呼び出しの形の検め (#2353・JSON-RPC 2.0 §4・§5.1)
@@ -193,7 +196,7 @@ struct MCPServerTests {
             (#"{"jsonrpc":"2.0","id":true,"method":"tools/list"}"#, "null"),
             (#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":[1]}"#, "3"),
             (#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":"x"}"#, "3"),
-            (#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":null}"#, "3"),
+            (#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":7}"#, "3"),
             (#"{"jsonrpc":"2.0","id":null,"method":"tools/list"}"#, "null"),
             // 通知の形 (`id` 無し) も、形が違えば通知かどうかを見ずに断る
             (#"{"method":"notifications/initialized"}"#, "null"),
@@ -209,15 +212,43 @@ struct MCPServerTests {
         #expect(refused.message?.hasPrefix("invalid request: ") == true, "\(line)")
     }
 
+    /// **「`NSNumber` だが真偽でない」の判定は 1 つ** (`id` も道具の引数もここを通る)。
+    @Test("数の判定は、真偽を数と読まない")
+    func aBooleanIsNotANumber() {
+        #expect(JSONRPC.number(1) != nil)
+        #expect(JSONRPC.number(1.5) != nil)
+        #expect(JSONRPC.number(true) == nil)
+        #expect(JSONRPC.number(false) == nil)
+        #expect(JSONRPC.number("1") == nil)
+        #expect(JSONRPC.number(nil) == nil)
+        // JSON から読んだ真偽・数も同じ
+        let object = try? JSONSerialization.jsonObject(with: Data(#"{"t":true,"n":1}"#.utf8))
+        let fields = object as? [String: Any]
+        #expect(JSONRPC.number(fields?["t"]) == nil)
+        #expect(JSONRPC.number(fields?["n"]) != nil)
+    }
+
+    /// 通知で `params` が `null` でも黙る (省略と同じ)。
+    @Test("params が null の通知は、省略と同じに黙る")
+    func staysSilentForANotificationWithNullParams() throws {
+        let (server, recorder) = makeServer(
+            directory: try makeDirectory(),
+            input: [#"{"jsonrpc":"2.0","method":"notifications/initialized","params":null}"#])
+        server.serve()
+        #expect(recorder.written.isEmpty)
+    }
+
     @Test(
         "形の正しい呼び出しと通知は、いままでどおり呼び出しとして読む",
         arguments: [
             #"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#,
             #"{"jsonrpc":"2.0","id":"seven","method":"tools/list"}"#,
             #"{"jsonrpc":"2.0","id":1.5,"method":"tools/list"}"#,
-            // `params` を省いたもの・空のオブジェクト
+            // `params` を省いたもの・空のオブジェクト・`null` (省いたのと同じに読む。
+            // `arguments`・`scale` の `null` が省略と同じなのと揃える・#2393)
             #"{"jsonrpc":"2.0","id":8,"method":"ping"}"#,
             #"{"jsonrpc":"2.0","id":9,"method":"initialize","params":{}}"#,
+            #"{"jsonrpc":"2.0","id":10,"method":"ping","params":null}"#,
             // 通知
             #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
         ])
@@ -1546,7 +1577,7 @@ struct MCPServerTests {
     @Test("組めない応答は、空行ではなく失敗として返る")
     func unencodableResultsBecomeFailures() throws {
         // JSONSerialization は非数を受け付けない
-        let line = JSONRPC.response(id: 7, result: ["value": Double.nan])
+        let line = JSONRPC.response(id: .number(7), result: ["value": Double.nan])
         #expect(!line.isEmpty)
 
         let object = try decode(line)
@@ -1560,7 +1591,7 @@ struct MCPServerTests {
     /// **失敗を伝える手段そのものが無くなる。**
     @Test("id すら組めなくても、失敗の 1 行は返る")
     func theFailureLineIsAlwaysBuildable() throws {
-        let line = JSONRPC.failure(id: Double.nan, code: -32602, message: "だめ")
+        let line = JSONRPC.failure(id: .number(NSNumber(value: Double.nan)), code: -32602, message: "だめ")
 
         let object = try decode(line)
         // どの呼び出しへの応答かは照合できなくなるが、黙るよりはよい

@@ -10,9 +10,49 @@ import Foundation
 /// 黙って落とすのもいけない。`id` を読める行に黙ると、繋いでいる側は来ない答えを待ち
 /// 続ける (JSON-RPC 2.0 §5・#2317)。
 enum JSONRPC {
+    /// 呼び出しの `id`。**String か Number だけ** (JSON-RPC 2.0 §4。要求では Null も不可)。
+    ///
+    /// 型で持つので、答えに載る `id` が「無いか String か Number」であることを、読む側が
+    /// 検めなくても保証できる ([#2353](https://github.com/mokume-metal/mokume/issues/2353))。
+    enum ID {
+        case string(String)
+        case number(NSNumber)
+
+        /// 木から読んだ値を `id` にする。String か (真偽でない) Number でなければ `nil`。
+        init?(_ raw: Any?) {
+            if let text = raw as? String {
+                self = .string(text)
+            } else if let number = JSONRPC.number(raw) {
+                self = .number(number)
+            } else {
+                return nil
+            }
+        }
+
+        /// JSON に載せる値。
+        var json: Any {
+            switch self {
+            case .string(let text): text
+            case .number(let number): number
+            }
+        }
+    }
+
+    /// 数として読める値 (`NSNumber`) を取り出す。**真偽は数ではない。**
+    ///
+    /// `JSONSerialization` は `true` も `NSNumber` で渡し、`doubleValue` が 1 に読めてしまうので、
+    /// 型で外す。「`NSNumber` だが真偽でない」の判定はここ 1 か所に置く — `id` と道具の引数が
+    /// 別々に写すと、片方だけが外れる。
+    static func number(_ raw: Any?) -> NSNumber? {
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            return nil
+        }
+        return number
+    }
+
     /// 受け取った呼び出し。
     struct Call {
-        let id: Any?
+        let id: ID?
         let method: String
         let params: [String: Any]
 
@@ -92,7 +132,7 @@ enum JSONRPC {
         if fields["method"] == nil, fields["result"] != nil || fields["error"] != nil {
             return .response
         }
-        let readableID = readableID(fields["id"])
+        let readableID = ID(fields["id"])
         func refuse(_ message: String) -> Line {
             .refused(
                 reply: failure(
@@ -104,32 +144,25 @@ enum JSONRPC {
         guard fields["jsonrpc"] as? String == "2.0" else {
             return refuse(#"jsonrpc must be "2.0""#)
         }
-        switch fields["id"] {
-        case nil: break
-        case is NSNull: return refuse("id must not be null in a request (omit it for a notification)")
-        default:
-            guard readableID != nil else { return refuse("id must be a string or a number") }
+        if fields["id"] is NSNull {
+            return refuse("id must not be null in a request (omit it for a notification)")
         }
-        // 省くのは可 (`params` の無い要求)。`null` や配列は、黙って空に倒さず断る
+        if fields["id"] != nil, readableID == nil {
+            return refuse("id must be a string or a number")
+        }
+        // **`params` の省略と `null` は同じに読む** — 省ける欄の `null` は省略と同じ
+        // (`arguments`・`scale` の `null` を省略と読むのと揃える・#2393)。オブジェクトでない値
+        // (配列・数・文字列) は、黙って空に倒さず断る。`arguments` の型の誤りが -32602 (道具の
+        // 引数の誤り) なのに対し、`params` の型の誤りは Request object として成り立たない
+        // (§5.1) ので -32600 である
         var params: [String: Any] = [:]
-        if let given = fields["params"] {
+        if let given = fields["params"], !(given is NSNull) {
             guard let object = given as? [String: Any] else {
                 return refuse("params must be an object")
             }
             params = object
         }
-        return .call(Call(id: fields["id"], method: method, params: params))
-    }
-
-    /// 答えに載せてよい `id` (String か Number)。読めなければ `nil` で、答えの `id` は `null`。
-    ///
-    /// 真偽は数ではない — `JSONSerialization` は `true` も `NSNumber` で渡すので、型で外す。
-    private static func readableID(_ value: Any?) -> Any? {
-        switch value {
-        case let text as String: text
-        case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID(): number
-        default: nil
-        }
+        return .call(Call(id: readableID, method: method, params: params))
     }
 
     /// 読んだ木の数が、残らず有限か。
@@ -153,15 +186,15 @@ enum JSONRPC {
     ///
     /// **組めなかったら失敗として返す。** 空行を返すと、繋いでいる側からは
     /// 「応答が来ない」と見分けが付かず、呼び出しが返らないまま待ち続ける。
-    static func response(id: Any?, result: [String: Any]) -> String {
-        line(["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result])
+    static func response(id: ID?, result: [String: Any]) -> String {
+        line(["jsonrpc": "2.0", "id": id?.json ?? NSNull(), "result": result])
             ?? failure(id: id, code: internalError, message: "could not turn the reply into JSON")
     }
 
     /// 失敗を返す 1 行。**この 1 行は必ず返る。**
-    static func failure(id: Any?, code: Int, message: String) -> String {
+    static func failure(id: ID?, code: Int, message: String) -> String {
         line([
-            "jsonrpc": "2.0", "id": id ?? NSNull(),
+            "jsonrpc": "2.0", "id": id?.json ?? NSNull(),
             "error": ["code": code, "message": message],
         ]) ?? lastResort
     }
