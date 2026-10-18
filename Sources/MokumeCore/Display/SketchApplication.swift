@@ -960,8 +960,20 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 穴になる — 揃ったかを終了コードで言うのに要る (``concludeRender()``)
         if case .render = outlet { framesFailedToDraw += 1 }
         guard frameFailures.note() else { return }
-        Diagnostics.warn(
-            "Could not draw the frame: \(failure.headline) — trying again on the next refresh")
+        Diagnostics.warn(Self.frameFailureNotice(headline: failure.headline))
+    }
+
+    /// 描けなかったときの 1 行 (転び始めに 1 度だけ言う)。
+    ///
+    /// **`save()` がどうなるかを常に言い添える** ([#2769])。描けなかったフレームは出口へ配られず、そこで
+    /// 頼んだ `save()` は次に描けた絵で書く。GPU が打ち切ったときの警告 (`droppedOutletFrame`) と同じ
+    /// 言い方にそろえる。頼みの有無で出し分けないのは、警告が転び始めの 1 度きりで、その後の周期の
+    /// 途中で頼まれた `save()` を言いそびれるため。
+    ///
+    /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
+    static func frameFailureNotice(headline: String) -> String {
+        "Could not draw the frame: \(headline) — trying again on the next refresh. A save() "
+            + "asked for in a frame that could not be drawn writes the next frame that is drawn"
     }
 
     /// 描けるようになったことを言う。飛ばした数を添える。

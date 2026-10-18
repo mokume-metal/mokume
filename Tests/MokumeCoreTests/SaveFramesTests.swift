@@ -1221,6 +1221,44 @@ struct SaveFramesTests {
         }
     }
 
+    /// `save()` を頼んだフレームの描画が転んだら、**次に描けたフレームの絵で書く** (#2769)。
+    /// 転んだフレームは出口へ配られず、予約はその番号以下の絵が届くまで残る。打ち切りの検査
+    /// (``aSaveInADroppedFrameWritesTheNextFrame()``) の、描画が転ぶ側。
+    @Test("save() を頼んだフレームの描画が転んだら、次に描けたフレームの絵で書く")
+    func aSaveInAFailedFrameWritesTheNextDrawnFrame() throws {
+        try withTemporaryDirectory("mokume-save-failed-frame") { directory in
+            let url = directory.appendingPathComponent("shot.png")
+            let runtime = try makeRuntime { sketch in
+                let level = Self.level(atFrame: sketch.frameCount)
+                sketch.background(.display(red: level, green: level, blue: level))
+                if sketch.frameCount == 3 {
+                    sketch.save(url.path)
+                    // 描き切りだけを転ばせる (draw() は最後まで走る)
+                    sketch.canvas.failureForTesting = .encoderUnavailable
+                } else {
+                    sketch.canvas.failureForTesting = nil
+                }
+            }
+            for frame in 1...5 {
+                if frame == 3 {
+                    #expect(throws: RenderFailure.self) { try runtime.advance() }
+                } else {
+                    try runtime.advance()
+                }
+                if frame == 3 {
+                    #expect(
+                        !FileManager.default.fileExists(atPath: url.path),
+                        "転んだフレームのうちにファイルができた")
+                }
+            }
+            runtime.closePlugins()
+
+            let written = try readBack(url)[0, 0].red
+            let fourth = UInt8((Self.level(atFrame: 4) * 255).rounded())
+            #expect(abs(Int(written) - Int(fourth)) <= 1, "4 枚目の絵で書いていない: \(written) (期待 \(fourth))")
+        }
+    }
+
     // MARK: - 転んだとき
 
     @Test("書き損じが続くと、その差込口が外れる")
@@ -1245,6 +1283,27 @@ struct SaveFramesTests {
             #expect(runtime.target.encodePassCount == passesWhileFailing)
             #expect(passesWhileFailing < 30)
         }
+    }
+}
+
+/// 描けなかったときの警告の文面 ([#2769])。GPU は要らない。
+///
+/// 描けなかったフレームも GPU が打ち切ったフレームも出口へ配られず、そこで頼んだ `save()` は
+/// 次に描けた絵で書く。打ち切りの警告 (`droppedOutletFrame`) はそう言うので、描けなかった側の
+/// 警告も同じことを言う。**頼みの有無によらず常に言い添える** — 警告は転び始めの 1 度きりで、
+/// その後の周期の途中で頼まれた `save()` を、頼みを見て出し分けると言いそびれる。
+///
+/// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
+@Suite("描けなかったフレームの警告")
+struct FrameFailureNoticeTests {
+    @Test("描けなかった理由に加え、save() は次に描けた絵で書くことを言う")
+    func theNoticeSaysWhatBecomesOfASave() {
+        let notice = SketchApplication.frameFailureNotice(headline: "the GPU is unavailable")
+        #expect(notice.hasPrefix("Could not draw the frame: the GPU is unavailable"), "\(notice)")
+        #expect(notice.contains("trying again on the next refresh"), "\(notice)")
+        #expect(notice.contains("save()"), "save() がどうなるかを言っていない: \(notice)")
+        #expect(notice.contains("next frame that is drawn"), "\(notice)")
+        #expect(!notice.contains("\n"), "警告が 1 行に収まっていない")
     }
 }
 
