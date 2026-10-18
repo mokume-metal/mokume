@@ -216,9 +216,15 @@ enum DoctorCommand {
         // 引数を解く骨格も、走らせる口と同じ 1 本を通る (#814)。**切り分けの口だけは
         // 止まらない** — 知らない引数で使い方を出して終わると、いちばん要るときに読めない。
         // その特例は `Surplus.ignore` という**宣言の 1 値**で、別のパーサではない。
-        // 値を取る選択肢が無いので投げどころは無いが、万一のときも止まらない側へ倒す
-        let parsed = (try? Arguments.parse(arguments, surplus: .ignore)) ?? Arguments.Parsed()
-        let ignored = parsed.ignored
+        // **どの口の値を取る選択肢も宣言し、値ごと脇へ置く** (#2484)。宣言が無いと
+        // `doctor -c release` の `release` や `doctor --fps 60` の `60` が場所として診られ、
+        // 在らない場所を診たと名乗る。使うためではなく、値が場所に化けないための宣言で、
+        // 宣言は各口が持つ 1 つを使う (``Command/valueOptions``)。
+        // 投げどころは無い (`.ignore` は値が欠けていても止まらない)が、万一のときも止まらない側へ倒す
+        let parsed =
+            (try? Arguments.parse(arguments, options: Command.valueOptions, surplus: .ignore))
+            ?? Arguments.Parsed()
+        let ignored = parsed.setAside
         // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)。場所は走らせた
         // 場所から絶対パスに解く (#2323)
         //
@@ -258,7 +264,7 @@ enum DoctorCommand {
         }
         if !ignored.isEmpty {
             // 投げずに言う。切り分けの口が使い方で止まると、いちばん要るときに読めない
-            lines += ["Ignored unknown arguments: \(ignored.joined(separator: " "))", ""]
+            lines += ["Ignored arguments doctor does not take: \(ignored.joined(separator: " "))", ""]
         }
         lines += ["What the environment provides", ""]
         lines += environmentLines(environment).map { "  \($0)" }

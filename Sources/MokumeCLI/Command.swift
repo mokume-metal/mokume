@@ -32,6 +32,15 @@ enum Command {
         return last.isEmpty ? "mokume" : last
     }
 
+    /// どの口でも、値を取る選択肢の宣言の和集合。**宣言は各口が 1 つずつ持ち、ここは並べるだけ。**
+    ///
+    /// `doctor` が使う。値を取る選択肢を知らないと、`doctor --fps 60` の `60` が場所として診られる
+    /// ([#2484](https://github.com/mokume-metal/mokume/issues/2484))。口に選択肢を足したら、
+    /// ここに並べる — 並べ忘れは `ArgumentsTests` が全口の綴りで見つける。`mcp` は選択肢を取らない。
+    static var valueOptions: [Arguments.Option] {
+        Invocation.options + RenderCommand.options + BundleCommand.options + NewCommand.options
+    }
+
     /// 打てる口。
     ///
     /// **綴りの正典はここ 1 つ。** かつては口の名前が dispatch の `switch` と案内文に

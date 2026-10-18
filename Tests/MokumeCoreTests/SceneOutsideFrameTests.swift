@@ -157,8 +157,37 @@ struct SceneOutsideFrameTests {
                 #expect(
                     canvas.warnings.hasWarned(subject.warning),
                     "\(mouth.name) がフレームの外で黙って捨てている (\(subject) の注意が無い)")
+                // 直に使う `Canvas` は自分でフレームを開く面で、本体の面ではない (#2780)
+                #expect(
+                    canvas.warnings.message(for: subject.warning) == subject.drawingTargetNotice,
+                    "\(mouth.name) が、自分でフレームを開く面の文を言っていない")
             }
             expectUntouched(canvas, after: mouth.name)
+        }
+    }
+
+    /// 描き場所は `draw()` の中に居ても `beginDraw()` の外ならフレームの外で、本体の面の
+    /// 「call this from draw()」は直す場所を取り違えさせる ([#2780])。**公開の口を通して**、描き場所の
+    /// 文が出ることを見る。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    @Test("シーンの記述の口は、描き場所の beginDraw() の外で呼ぶと、直し先を案内して無視する (#2780)")
+    func sceneDescriptionsOnALayerOutsideBeginDrawGuideToBeginDraw() throws {
+        let gpu = try RenderDevice()
+        for mouth in mouths {
+            let host = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+            let layer = try host.createGraphics(16, 16)
+            try host.draw {
+                do { try mouth.write(layer) } catch { Issue.record("\(mouth.name) が投げた: \(error)") }
+            }
+            for subject in mouth.says {
+                let said = layer.warnings.message(for: subject.warning)
+                #expect(
+                    said == subject.drawingTargetNotice,
+                    "\(mouth.name) が描き場所の文を言っていない: \(said ?? "(注意なし)")")
+                #expect(said?.contains("beginDraw()") == true, "\(mouth.name)")
+            }
+            expectUntouched(layer, after: mouth.name)
         }
     }
 

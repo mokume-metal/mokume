@@ -1974,6 +1974,7 @@ struct CanvasTests {
             "frameEndAwaitingShape": "組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を出口まで待たせる印 (#1855)。一番外の出口が閉じて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
             "placementsFoundOutsideRegions": count,
+            "isRuntimeSurface": "ランタイムの本体の面かの印。ランタイムが作ったときに 1 度だけ立て、境目では動かない (#2780)",
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
             "sweepPolicy": testing, "sharesUnitShapes": testing,

@@ -1242,19 +1242,28 @@ extension Canvas {
     /// 開いたまま境目を越えた形を捨てたことを、初回だけ知らせる ([#1591])。
     ///
     /// **名乗るのは `beginShape()`** — 境目で呼ばれる関数は利用者が書いたものではなく、
-    /// 直す先は開いた側 (対の終わりを、開いたのと同じ `draw()`・`setup()`・`createShape()` の
-    /// 本体に置く) だからである。フレームの頭で捨てる形 (`setup()` で開いた) と終わりで捨てる
-    /// 形 (`draw()` で開いた) の両方に当たるよう、どちらの境目かは言わない。形の外の注意
+    /// 直す先は開いた側 (対の終わりを、開いたのと同じ場所に置く) だからである。
+    ///
+    /// **文は、形を開いた場面をすべて挙げ、捨てる境目は実際のものを言う** ([#2780]): 形を開いた
+    /// 場面は `setup()`・`draw()`・入力のコールバック (止まっている間のものを含む)・`createShape()` の
+    /// 本体・描き場所の `beginDraw()`〜`endDraw()`。捨てる境目は、フレーム (本体) が閉じたときと、新しい
+    /// フレームが始まったときである。捨てる経路は 3 つある — フレームの終わり (``abandonFrame()``・
+    /// 描き場所の `endDraw()` もここ)・形の組み立ての出口・フレームの頭 (`setup()` や止まっている間の
+    /// コールバックで開いた形、本体の頭が捨てる閉じ忘れの描き場所、`beginDraw()` を重ねたとき)。
+    /// `endDraw()` を呼んだとは限らず、`setup()` で開いた形はその本体の終わりでは捨てないので、
+    /// 「その本体の終わりを越えた」とも「`endDraw()` を越えた」とも言わない。形の外の注意
     /// (``warnVertexOutsideShapeOnce(_:)``) とは言うことが違うので鍵を分ける。捨てた後の
     /// フレームで閉じ忘れた形へ `vertex()` を足し続けると、あちらも言う。
     ///
     /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
     private func warnShapeNotEndedOnce() {
         warnOnce(
             .shapeNotEnded,
-            "beginShape(): a shape was left open past the end of the draw(), setup() or "
-                + "createShape() body that began it, so it was dropped without being drawn. End "
-                + "each shape with endShape() in the same body")
+            "beginShape(): a shape begun in setup(), draw(), an input callback, a createShape() "
+                + "body or between beginDraw() and endDraw() was still open when the frame or body "
+                + "ended, or when the next frame started, so it was dropped without being drawn. End "
+                + "each shape with endShape() in the same place that began it")
     }
 
     /// 形を閉じないまま ``beginShape(_:)`` をもう一度呼び、前の形を捨てたことを、初回だけ

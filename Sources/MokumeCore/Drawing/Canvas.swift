@@ -1103,6 +1103,15 @@ public final class Canvas {
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     var writesToSurface: Bool { isDrawing || carriesOver }
 
+    /// この面が、``SketchRuntime`` の本体の面か ([#2780])。**ランタイムが自分の面を作ったときに 1 度だけ
+    /// 立てる。** 本体の面ではランタイムがフレームを開き、持ち越しの区間 (``carriesOver``) と `setup()` を
+    /// 約束する。描き場所と、直に使う ``Canvas`` (`init(target:gpu:)`) は立てず、フレームは作者の
+    /// ``beginDraw()``・``draw(_:)`` が開く。フレームの外で断った注意の文を選ぶのに読む
+    /// (``warnOutsideFrame(_:)``)。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    var isRuntimeSurface = false
+
     /// 置いてよいか。**フレームの中・形を組み立てている間・持ち越しの区間** ([#1672])。
     ///
     /// ``isShaping`` と同じ形で、持ち越しの区間 (``carriesOver``) を足したもの。図形が溜め場に

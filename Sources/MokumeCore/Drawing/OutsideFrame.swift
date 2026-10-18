@@ -26,8 +26,9 @@ extension Canvas {
     ///   `particles()` も使う。「置いた」「積んだ」「湧かせた」のような口ごとの動詞は、ほかの口で
     ///   偽になるので、どの口でも真の「呼ばれた」にそろえる
     ///
-    /// 場面を名乗る文面 (描き場所の面では `beginDraw()`〜`endDraw()` を案内する、など) は、#2723 が
-    /// 文面を直すだけと決めたので、別の Issue ([#2780]) に分けた。
+    /// 場面を名乗る文面は、#2723 が文面を直すだけと決めたので別の Issue ([#2780]) に分けた。そこで
+    /// 描き場所の面だけ、13 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
+    /// (``drawingTargetNotice``)。本体の面は上の文のまま — 場面を言い分けない。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
     /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
@@ -61,6 +62,44 @@ extension Canvas {
         ///
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWrite
+
+        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 13 種で共通の
+        /// 型にする** ([#2780])。自分でフレームを開く面とは、描き場所 (`createGraphics`) と、直に使う
+        /// ``Canvas`` (`init(target:gpu:)`) である — ランタイムが持ち越しの区間を約束する本体の面
+        /// (``Canvas/isRuntimeSurface``) ではない。
+        ///
+        /// 本体向けの ``notice`` は、利用者が `draw()` の中に居ても出うるこの面では直す場所を取り違えさせ、
+        /// 本当の直し先 (`beginDraw()` と `endDraw()` の間・`draw { }` の中) をどこにも書かない。先頭の主語
+        /// (何が断られたか) は ``notice`` と同じ種類名にそろえる — 違う口を呼んだ人が、2 行を見分けられる
+        /// ように。**`only works` とは言わない**: この面でも ``Canvas/draw(_:)`` がフレームを開くので、
+        /// 直し先は `beginDraw()`〜`endDraw()` だけではない。
+        ///
+        /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+        var drawingTargetNotice: String {
+            let subject: String
+            switch self {
+            case .camera: subject = "The camera and projection are placed again every frame"
+            case .transform: subject = "Transforms are written again every frame"
+            case .style: subject = "Pushing and popping style only works inside a frame"
+            case .clip: subject = "The clip is written again every frame"
+            case .effects: subject = "Effects are written again every frame"
+            case .light: subject = "Lights are placed again every frame"
+            case .surroundings: subject = "The surroundings are placed again every frame"
+            case .shadow: subject = "Shadows are written again every frame"
+            case .material: subject = "Materials are written again every frame"
+            case .particles: subject = "Particles are handled where you draw"
+            case .compute: subject = "Compute is a preamble to drawing"
+            case .placing: subject = "Shapes, images and backgrounds are placed inside a frame"
+            case .pixelWrite: subject = "Pixels are written inside a frame"
+            }
+            return subject + ". " + Self.drawingTargetTail
+        }
+
+        /// ``drawingTargetNotice`` の、13 種で共通の直し先の案内。
+        static let drawingTargetTail =
+            "On a surface you open yourself, call this between beginDraw() and endDraw(), or "
+            + "inside its draw { }. This was called outside them, so it belongs to no frame, and "
+            + "was ignored"
 
         /// 初回だけ言うための鍵。
         var warning: Warning {
@@ -147,6 +186,16 @@ extension Canvas {
 
     /// フレームの外で設定を置き直したことを、初回だけ知らせる。
     ///
+    /// **文は面で選ぶ** ([#2780])。ランタイムの面 (``isRuntimeSurface``) の外 — 描き場所
+    /// (`createGraphics`) と、直に使う ``Canvas`` — は、自分でフレームを開く。描き場所は `draw()` の
+    /// 中に居ても `beginDraw()`〜`endDraw()` の外ならフレームの外で (`isDrawing` は面ごとに持つ)、直に使う
+    /// 面も `setup()` や入力のコールバックを持たない。本体向けの「call this from draw()」「placed in
+    /// setup(), draw() or an input callback」を言うと、すでに `draw()` の中に居る利用者に直す場所を取り
+    /// 違えさせるので、そちらには ``OutsideFrame/drawingTargetNotice`` を言う。控えは面ごとなので、その面の
+    /// 1 通は必ずその面の場面で出る。ランタイムの面の文は変えない。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    ///
     /// 呼ぶ側は `guard admits(.shadow) else { return }` の形になる。
     /// 守り (``admits(_:)``) はフレームの外と形の組み立ての中を 1 か所で見る (#1529)。
     /// **`guard` そのものは畳んでいない** — 値の検査を挟む口があり、守りと検査の
@@ -154,6 +203,9 @@ extension Canvas {
     /// `Canvas+LightColor.swift` の数で書く光・材質の口は検査が先)。
     /// 順序を揃えると診断の出方が変わるので、それは畳みとは別の判断として分ける。
     func warnOutsideFrame(_ subject: OutsideFrame) {
-        warnOnce(subject.warning, subject.notice)
+        let opensItsOwnFrames = !isRuntimeSurface
+        warnOnce(
+            subject.warning,
+            opensItsOwnFrames ? subject.drawingTargetNotice : subject.notice)
     }
 }
