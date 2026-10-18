@@ -748,7 +748,9 @@ public final class SketchRuntime {
             }
             if let refusal {
                 observer.clearProducts()
-                finish(id: observation.id, through: observer, frames: [], complete: false, warnings: [refusal])
+                finish(
+                    id: observation.id, through: observer, frames: [], complete: false,
+                    warnings: [observation.unknownKeysWarning, refusal].compactMap { $0 })
                 return
             }
             requestedTime = Float(observation.time!)
