@@ -46,6 +46,46 @@ struct Randomness: Sendable {
         return Self.scaled(unitValue(), from: low, to: high)
     }
 
+    /// 平均 0・標準偏差 1 の正規分布に従う値 (Box–Muller)。**列を 2 つ進める。**
+    ///
+    /// **2 つ目の値を取り置かない。** 手本 (Processing の `nextGaussian`・p5.js) は 1 回の計算で
+    /// 出る 2 つの値の片方を次の呼び出しへ取り置くが、取り置くと、種を書いた直後の 1 つ目が
+    /// 書く前の列で決まる ([ADR-0001] 原則 2 の「同じ種から同じ列」が崩れる)。
+    ///
+    /// `1 - unit` は 0 にならない (`unit` は 1 未満) ので、対数に 0 を渡さない。いちばん外れた
+    /// 値でも絶対値は 5.8 ほどに収まる。自然対数は `log2` に ln 2 を掛けて作る (``RuntimeMath``
+    /// に自然対数の口が無いため)。
+    ///
+    /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
+    mutating func gaussian() -> Float {
+        let radius = 1 - Double(unitValue())
+        let angle = Double(unitValue())
+        let magnitude = (-2 * Self.ln2 * RuntimeMath.log2(radius)).squareRoot()
+        return Float(magnitude * RuntimeMath.cos(2 * .pi * angle))
+    }
+
+    private static let ln2 = 0.693_147_180_559_945_3
+
+    /// 0 以上 `count` 未満の添字。**空 (`count` が 0 以下) でも列を 1 つ進めて `nil` を返す** —
+    /// 呼ぶたびに 1 つ進むので、空の回が混ざっても後の列がずれない (p5.js の `random(choices)` と同じ)。
+    mutating func index(below count: Int) -> Int? {
+        let unit = Double(unitValue())
+        guard count > 0 else { return nil }
+        // `unit` は 1 未満でも、積が `count` へ丸まりうるので最後の添字で止める
+        return min(Int(unit * Double(count)), count - 1)
+    }
+
+    /// 並べ替えた新しい配列 (Fisher–Yates)。**要素の数より 1 少ない数だけ列を進める** (p5.js の
+    /// `shuffle` と同じ数)。
+    mutating func shuffled<Element>(_ elements: [Element]) -> [Element] {
+        var result = elements
+        for last in stride(from: result.count - 1, to: 0, by: -1) {
+            guard let pick = index(below: last + 1) else { break }
+            result.swapAt(last, pick)
+        }
+        return result
+    }
+
     /// 0 以上 1 未満の `unit` を、下から上まで (上は含まない) へ移す。端は有限であること。
     ///
     /// **上の直前で止める。** `unit` は 1 未満でも、そのあとの積と和で `Float` が上へ

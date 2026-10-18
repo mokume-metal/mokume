@@ -74,4 +74,5 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "crowd-and-model") { CrowdAndModel() },
     ReferenceSketch(name: "parts-and-formats") { PartsAndFormats() },
     ReferenceSketch(name: "shapes-from-svg") { ShapesFromSVG() },
+    ReferenceSketch(name: "chance-and-choice") { ChanceAndChoice() },
 ]

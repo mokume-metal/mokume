@@ -736,6 +736,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "read": READING,
     "noise": READING,
     "random": (READING, "値を返す。種は randomSeed が持つ"),
+    "randomGaussian": (READING, "random と同じ列から値を返す"),
+    "shuffle": (READING, "並べ替えた新しい配列を返す (渡した配列は変えない)。random と同じ列から引く"),
     "screenX": READING,
     "screenY": READING,
     "screenZ": READING,
