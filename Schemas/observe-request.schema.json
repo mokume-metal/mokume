@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/observe-request.schema.json",
   "title": "The observation request",
-  "description": "Asks the running sketch to be observed. The writer places this atomically by way of a temporary file, and id changes with every request (ADR-0018 decision 3). With count at 2 or more, shots are taken in succession without stopping the frame loop, and the catalogue is written last. **A request whose id can be read is always answered**: one that cannot be read otherwise (a scale, count or every of the wrong type, such as \"0.5\" or true) takes no shot, the previous products are cleared, and the reply carries the reason in warnings. A request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply, and a request whose id was already answered is not processed again (see id).",
+  "description": "Asks the running sketch to be observed. The writer places this atomically by way of a temporary file, and id changes with every request (ADR-0018 decision 3). With count at 2 or more, shots are taken in succession without stopping the frame loop, and the catalogue is written last. **A request whose id can be read is always answered**: one that cannot be read otherwise (a scale, count or every of the wrong type, such as \"0.5\" or true, or a count or every that is not a whole number, such as 2.5) takes no shot, the previous products are cleared, and the reply carries the reason in warnings. A request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply, and a request whose id was already answered is not processed again (see id).",
   "type": "object",
   "required": [
     "id"
@@ -18,21 +18,21 @@
       "type": "number",
       "exclusiveMinimum": 0,
       "maximum": 1,
-      "description": "How far to scale the written image down (1 = full size). 1 when omitted. A scale outside this range is never replaced in silence: above 1, or at or below 0, the image is written at full size and the reply's warnings say so."
+      "description": "How far to scale the written image down (1 = full size). 1 when omitted. A scale outside this range is never replaced in silence: above 1, or at or below 0, the image is written at full size and the reply's warnings say so. This holds however large the number is (1e400 too)."
     },
     "count": {
       "type": "integer",
       "minimum": 1,
       "maximum": 120,
       "default": 1,
-      "description": "How many shots to take. 1 when omitted. Asking outside the range is never clamped in silence: the count used, and whether the ceiling or the floor cut it, appear in the reply's warnings."
+      "description": "How many shots to take. 1 when omitted. Asking outside the range is never clamped in silence: the count used, and whether the ceiling or the floor cut it, appear in the reply's warnings. This holds however large the number is (1e19, or -1e400 for the floor): it is not an unreadable request."
     },
     "every": {
       "type": "integer",
       "minimum": 1,
       "maximum": 60,
       "default": 1,
-      "description": "Take a shot every this many frames. Every frame when omitted. Asking outside the range is never clamped in silence, as with count. **Counted in frames rather than seconds**, so the shots follow the frames the sketch actually draws. The sketch being observed runs on the wall clock unless it chose `clock: .frames`, and writing the images makes frames heavier, so **the shots are not evenly spaced in time** — lay the series out by each entry's `time` in the catalogue (frames), rather than assuming an even gap. For motion with evenly spaced times, write it with `mokume render` instead: it runs the sketch at a fixed frame rate and writes every frame, so nothing needs laying out again."
+      "description": "Take a shot every this many frames. Every frame when omitted. Asking outside the range is never clamped in silence, as with count, however large the number is. **Counted in frames rather than seconds**, so the shots follow the frames the sketch actually draws. The sketch being observed runs on the wall clock unless it chose `clock: .frames`, and writing the images makes frames heavier, so **the shots are not evenly spaced in time** — lay the series out by each entry's `time` in the catalogue (frames), rather than assuming an even gap. For motion with evenly spaced times, write it with `mokume render` instead: it runs the sketch at a fixed frame rate and writes every frame, so nothing needs laying out again."
     },
     "time": {
       "type": "number",

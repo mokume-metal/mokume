@@ -149,12 +149,50 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         case id, scale, count, every, time
     }
 
+    /// 整数の鍵を読む。**範囲を越えた大きな数は、符号の側の端へ寄せる** (#2805)。
+    ///
+    /// `1e19` も 30 桁の整数も `Int.max` も「上限より大きい」ことに変わりはなく、読み終えた後の
+    /// ``clamped()`` が範囲へ丸めて警告で名乗る (スキーマの約束。MCP の窓口 `Tools.seriesArgument` が
+    /// 同じ値を同じ端へ寄せるのと揃える)。読めない要求にして鍵と理由を名乗るのは、`2.5` のような
+    /// **整数でない数**だけである。理由に数の字面は写さない — 桁が多いほど応答の 1 行が伸びてしまう。
+    private nonisolated static func integer(
+        in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> Int? {
+        switch try container.decodeWireNumber(Int.self, forKey: key) {
+        case .absent: return nil
+        case .value(let value): return value
+        case .overflow(let negative): return negative ? Int.min : Int.max
+        case .notWhole:
+            throw DecodingError.typeMismatch(
+                Int.self,
+                DecodingError.Context(
+                    codingPath: [key], debugDescription: "The value is not a whole number"))
+        }
+    }
+
+    /// 縮小率の鍵を読む。`Double` に収まらない大きな数 (`1e400`) は、符号の側の無限大として読み、
+    /// 丸める段が実寸に倒して名乗る。
+    private nonisolated static func scale(
+        in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> Double? {
+        switch try container.decodeWireNumber(Double.self, forKey: key) {
+        case .absent: return nil
+        case .value(let value): return value
+        case .overflow(let negative): return negative ? -.infinity : .infinity
+        case .notWhole:
+            throw DecodingError.typeMismatch(
+                Double.self,
+                DecodingError.Context(
+                    codingPath: [key], debugDescription: "The value is not a number that fits in Double"))
+        }
+    }
+
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
-        self.scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1
-        self.count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 1
-        self.every = try container.decodeIfPresent(Int.self, forKey: .every) ?? 1
+        self.scale = try Self.scale(in: container, forKey: .scale) ?? 1
+        self.count = try Self.integer(in: container, forKey: .count) ?? 1
+        self.every = try Self.integer(in: container, forKey: .every) ?? 1
         // 型が違っても「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
         self.time = container.contains(.time)
             ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
