@@ -2740,9 +2740,14 @@ public final class Canvas {
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
+    /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
     public func beginDraw() {
-        // **組み立ての中では、組み立てている面のフレームを始めない** ([#2201])。捨てる道へ入る前に見る
-        if startsFrameInsideShape { return warnInsideShape(.frameStart) }
+        // **組み立ての中では、組み立てている面のフレームを始めない** ([#2201])。捨てる道へ入る前に見る。
+        // 断った数を控え、対の ``endDraw()`` が何もしないようにする ([#2834])
+        if startsFrameInsideShape {
+            refusedBeginDrawsInsideShape += 1
+            return warnInsideShape(.frameStart)
+        }
         // 閉じ忘れたまま境目を越えたフレームだけを捨てる。越えていない重ね呼びで捨てると、
         // 本体の面の `draw()` で `canvas.beginDraw()` を呼んだだけで、あるいは補助の関数が
         // 同じフレームで描き場所を開き直しただけで、それまでに描いたものが消える
@@ -2810,21 +2815,27 @@ public final class Canvas {
     /// ``beginDraw()`` か ``draw(_:)`` を呼んでも、持ち主の面でも描き場所でもフレームを始め直さず、注意して
     /// 断る ([#2201])。
     ///
-    /// 組み立ての中で閉じるフレームが無いとき (組み立ての中の ``beginDraw()`` が始めなかったとき) も、
-    /// 同じ注意で断る。
+    /// 組み立ての中で断られた ``beginDraw()`` と対の `endDraw()` は、何もしない (閉じるフレームを
+    /// 始めていない・[#2834])。対の ``beginDraw()`` が無い `endDraw()` は、フレームの外なら `notDrawing`
+    /// を言う。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
     public func endDraw() {
+        // **組み立ての中で断った ``beginDraw()`` と対の `endDraw()` は、何もしない** ([#2834])。閉じるものを
+        // 始めていないので、組み立ての前に開いたフレームを閉じも待たせもせず、フレームの外でも「`beginDraw()`
+        // より前」と言わない (`beginDraw()` が断ったことを既に言っている)。数は組み立ての出口で下ろす
+        if recordingShape, refusedBeginDrawsInsideShape > 0 {
+            refusedBeginDrawsInsideShape -= 1
+            return
+        }
         guard isDrawing else {
-            // 捨てたことを名乗るのは 1 度だけ。2 度目からは、`beginDraw()` を書いていない誤りである
-            guard droppedAtTheMainFrame else {
-                // 組み立ての中なら、対の `beginDraw()` が始めなかったフレームである (#2201)。「`beginDraw()`
-                // より前」とは言わず、始めなかった注意と同じ鍵で言う
-                return recordingShape ? warnInsideShape(.frameStart) : warnNotDrawing()
-            }
+            // 捨てたことを名乗るのは 1 度だけ。2 度目からは、`beginDraw()` を書いていない誤りである。
+            // 組み立ての中でも同じ — 対の `beginDraw()` が無いので、始めようとしたとは言わない (#2834)
+            guard droppedAtTheMainFrame else { return warnNotDrawing() }
             droppedAtTheMainFrame = false
             return warnEndDrawAfterFrameDropped()
         }
@@ -3011,6 +3022,16 @@ public final class Canvas {
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     private(set) var frameEndAwaitingShape = false
+
+    /// 形の組み立ての中で、``beginDraw()`` が断ったのに対の ``endDraw()`` がまだ来ていない数 ([#2834])。
+    ///
+    /// 立てる (増やす) のは断った ``beginDraw()`` だけで、対の ``endDraw()`` が 1 つずつ下ろす。対の
+    /// `beginDraw()` が無い `endDraw()` (組み立ての前に開いたフレームを閉じる #1855 の案 G・`beginDraw()` の
+    /// 書き忘れ) は数が 0 なので、今までどおり扱う。**一番外の組み立ての出口で 0 に戻す** — 対の
+    /// `endDraw()` を書き忘れても、次の組み立ての `endDraw()` が前の断りと対にならない。
+    ///
+    /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
+    var refusedBeginDrawsInsideShape = 0
 
     /// 組み立ての中で自分のフレームを閉じようとした口が、閉じずに出口まで待たせる ([#1855] の案 G)。
     /// 1 度注意する。

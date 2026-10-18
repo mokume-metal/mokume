@@ -1491,7 +1491,7 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
     .frameStart:
         "createShape { }: a frame of the canvas being built on was started inside the shape (by "
             + "beginDraw() or draw { }). Starting it would drop what was built, so it was not "
-            + "started: beginDraw() does nothing there, nor does an endDraw() with no frame to close, "
+            + "started: beginDraw() does nothing there, nor does the endDraw() that pairs with it, "
             + "and draw { } runs its block as part of the shape. Start the frame before or after "
             + "building the shape",
     .camera:
@@ -2387,6 +2387,110 @@ extension ShapeTests {
         layer.shape(shape, 8, 8)
         layer.endDraw()
         #expect(layer.get(8, 8) == Self.green, "組み立てた円が形に入っていない")
+    }
+
+    /// [#2834] の完了条件 1。持ち主の面 (直に作った面) が `beginDraw()` で開いたフレームの中の組み立てで、
+    /// 補助の関数が `beginDraw()`〜`endDraw()` の対を呼ぶ。`beginDraw()` は断られる (`frameStart`) ので、
+    /// **対の `endDraw()` も何もしない** — 外のフレームを閉じず、出口まで待たせもしない。出口の後に置いた
+    /// ものはフレームに描かれ、呼び手の最後の `endDraw()` がフレームを閉じて `notDrawing` を言わない。
+    /// 直す前は、対の `endDraw()` が外のフレームを出口で閉じ、出口の後に置いたものはフレームの外として
+    /// 捨てられ、最後の `endDraw()` は `notDrawing` を言っていた。
+    ///
+    /// `nested` は入れ子の内側の組み立てで呼ぶ。
+    ///
+    /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
+    @Test(
+        "組み立ての中で断られた beginDraw() と対の endDraw() は何もせず、外のフレームは呼び手の endDraw() が閉じる",
+        arguments: [false, true])
+    func anEndDrawPairedWithARefusedBeginDrawDoesNothing(nested: Bool) throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        canvas.beginDraw()
+        canvas.background(Self.black)
+        placeTriangle(canvas)
+        let framesBefore = canvas.framesDrawn
+        func helper() {
+            canvas.beginDraw()
+            canvas.endDraw()
+        }
+        var openAfterTheHelper = false
+        let build = {
+            canvas.createShape {
+                placeCircle(canvas)
+                helper()
+                openAfterTheHelper = canvas.isDrawing
+            }
+        }
+        let shape = nested ? canvas.createShape { canvas.shape(build()) } : build()
+        #expect(!shape.isEmpty)
+        #expect(openAfterTheHelper, "対の endDraw() が外のフレームを閉じた")
+        #expect(canvas.isDrawing, "対の endDraw() が外のフレームを出口で閉じた")
+        #expect(canvas.framesDrawn == framesBefore)
+        #expect(
+            !canvas.warnings.hasWarned(.frameEndInsideShape), "断られた beginDraw() と対の endDraw() を出口まで待たせた")
+        #expect(
+            canvas.warnings.message(for: .frameStartInsideShape) == insideShapeNotices[.frameStart])
+        canvas.fill(Self.blue)
+        canvas.rect(4, 4, 2, 2)
+        canvas.endDraw()
+        #expect(!canvas.isDrawing, "呼び手の endDraw() が閉じていない")
+        #expect(canvas.framesDrawn == framesBefore + 1)
+        #expect(!canvas.warnings.hasWarned(.notDrawing), "呼び手の endDraw() を beginDraw() より前と言った")
+        #expect(canvas.get(11, 11) == Self.red, "組み立ての前に置いた三角形が出ていない")
+        #expect(canvas.get(5, 5) == Self.blue, "出口の後に置いた四角がフレームに描かれていない")
+        #expect(canvas.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
+    }
+
+    /// [#2834] の完了条件 2。フレームの外の描き場所の組み立ての中で、`beginDraw()` を書き忘れて `endDraw()` を
+    /// 呼ぶ。対の `beginDraw()` が無いので、本来の `notDrawing` を言い、`frameStart` (「`beginDraw()` で
+    /// フレームを始めようとした」) は言わない。その後に本当に断った `beginDraw()` は `frameStart` を言う
+    /// (鍵を先に使い切らない)。
+    ///
+    /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
+    @Test("組み立ての中で beginDraw() の無い endDraw() は notDrawing を言い、frameStart の鍵は使わない")
+    func anEndDrawWithoutABeginDrawInsideABuildSaysNotDrawing() throws {
+        let host = try makeCanvas(width: 16, height: 16)
+        let layer = try host.createGraphics(16, 16)
+        let first = layer.createShape {
+            placeCircle(layer)
+            layer.endDraw()
+        }
+        #expect(!first.isEmpty)
+        #expect(layer.warnings.hasWarned(.notDrawing), "beginDraw() の書き忘れを言っていない")
+        #expect(!layer.warnings.hasWarned(.frameStartInsideShape), "始めようとしていないのに frameStart を言った")
+        #expect(!layer.warnings.hasWarned(.frameEndInsideShape))
+
+        _ = layer.createShape {
+            placeCircle(layer)
+            layer.beginDraw()
+        }
+        #expect(
+            layer.warnings.message(for: .frameStartInsideShape) == insideShapeNotices[.frameStart],
+            "本当に断った beginDraw() が frameStart を言わない")
+    }
+
+    /// [#2834] の完了条件 2・3 の境目。断られた `beginDraw()` の数は組み立ての出口で下ろす — 対の
+    /// `endDraw()` を書き忘れても、次の組み立ての `endDraw()` (組み立ての前に開いたフレームを閉じる
+    /// #1855 の案 G) が、前の組み立ての断った数と対にならない。
+    ///
+    /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
+    @Test("断られた beginDraw() の数は組み立ての出口で下ろし、次の組み立ての endDraw() は出口まで待たせる")
+    func refusedBeginDrawsDoNotCarryToTheNextBuild() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        canvas.beginDraw()
+        canvas.background(Self.black)
+        _ = canvas.createShape {
+            placeCircle(canvas)
+            canvas.beginDraw()  // 断られる。対の endDraw() は書き忘れた
+        }
+        let shape = canvas.createShape {
+            placeCircle(canvas)
+            canvas.endDraw()  // 組み立ての前に開いたフレームを閉じる (#1855)
+        }
+        #expect(!shape.isEmpty)
+        #expect(
+            canvas.warnings.message(for: .frameEndInsideShape) == insideShapeNotices[.frameEnd],
+            "次の組み立ての endDraw() を、前の組み立ての断った beginDraw() と対にした")
+        #expect(!canvas.isDrawing, "待たせたフレームが出口で閉じていない")
     }
 
     /// [#2509] の完了条件 1。本文の再現をスケッチの `setup()` でそのまま踏み、形が円を持ち、
