@@ -122,13 +122,14 @@ enum MCPCommand {
     static func directories(
         arguments: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        currentDirectory: URL = URL(
-            fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        currentDirectory: URL? = GivenPath.currentDirectory
     ) throws(CommandFailure) -> (package: URL, facets: URL) {
         let parsed = try Arguments.parse(
             arguments, positionalIsPlace: true, surplus: .reject { "Only one directory: \($0)" })
-        let package = parsed.positional.map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? currentDirectory
+        // **場所は受け取った時点で 1 度だけ絶対パスにする** (``GivenPath``・#2497)。相対の
+        // `URL` のまま持ち回ると、在るかの判定も道具たちも、その時点の作業ディレクトリから
+        // 渡された基準を無視して解く。省略は走らせた場所
+        let package = try GivenPath.resolve(parsed.positional ?? ".", from: currentDirectory)
         // 在るかの判定は 1 本を通す (`ObjCBool` の受け渡しを写さない・#988)
         guard WorkDirectory.directoryExists(at: package) else {
             throw .directoryNotFound(path: package.path)

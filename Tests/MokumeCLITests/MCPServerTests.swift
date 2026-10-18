@@ -1200,6 +1200,51 @@ struct MCPServerTests {
         #expect(environmentOnly.facets.path == elsewhere)
     }
 
+    // ---------------------------------------------------------- 場所の解き方 (#2497)
+
+    /// **場所は渡された基準から解く。** 相対の `URL` のまま持ち回ると、`directoryExists` が
+    /// プロセスの作業ディレクトリから解いてしまい、渡した基準が無視される。
+    @Test("相対の場所は、渡された基準から絶対パスに解く")
+    func aRelativePlaceIsResolvedFromTheGivenBase() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["sub", "a", "x"] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name, isDirectory: true),
+                withIntermediateDirectories: true)
+        }
+
+        let sub = try MCPCommand.directories(
+            arguments: ["sub"], environment: [:], currentDirectory: root)
+        #expect(sub.package.path == root.appendingPathComponent("sub").path)
+        #expect(sub.package.baseURL == nil, "相対の URL のまま: \(sub.package)")
+        #expect(sub.facets.path == sub.package.path)
+
+        // `..` は畳む (`GivenPath.resolve` と同じ)
+        let up = try MCPCommand.directories(
+            arguments: ["../x"], environment: [:],
+            currentDirectory: root.appendingPathComponent("a", isDirectory: true))
+        #expect(up.package.path == root.appendingPathComponent("x").path)
+        #expect(!up.package.pathComponents.contains(".."))
+        #expect(up.package.baseURL == nil)
+    }
+
+    /// 引用して打たれた `~` はシェルが展開しないので、道具が home へ展開する
+    /// (`GivenPath.resolve` と同じ)。在らない場所は断るので、断る道が展開済みであることで見る。
+    @Test("引用された ~ は home の下に展開する")
+    func aQuotedTildeIsExpanded() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missing = "~/mokume-no-such-place-\(UUID().uuidString)"
+        let thrown = #expect(throws: CommandFailure.self) {
+            try MCPCommand.directories(
+                arguments: [missing], environment: [:], currentDirectory: root)
+        }
+        let expanded = try GivenPath.resolve(missing, from: root).path
+        #expect(expanded.hasPrefix(NSHomeDirectory()))
+        #expect(thrown == .directoryNotFound(path: expanded))
+    }
+
     // ---------------------------------------------------------- 引数の解き方 (#2321)
 
     /// **引数を取る口は、共有の解き手を通す** (`Arguments.parse`・#680・#814)。窓口だけが

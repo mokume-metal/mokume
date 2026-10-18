@@ -54,22 +54,27 @@ enum BundleCommand {
         /// と `swift build` の作業ディレクトリへこのまま渡る (#2314)。
         ///
         /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
-        func directory(from base: URL = GivenPath.currentDirectory) -> URL {
-            GivenPath.resolve(path, from: base)
+        func directory(from base: URL? = GivenPath.currentDirectory) throws(CommandFailure) -> URL {
+            try GivenPath.resolve(path, from: base)
         }
 
         /// 置き場。渡されなければ `nil` (スケッチの下の ``defaultOutputDirectory``)。
         /// **場所と同じく、走らせた場所から解いた絶対パス** (``GivenPath``)。
         ///
         /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
-        func outDirectory(from base: URL = GivenPath.currentDirectory) -> URL? {
-            out.map { GivenPath.resolve($0, from: base) }
+        func outDirectory(from base: URL? = GivenPath.currentDirectory) throws(CommandFailure) -> URL? {
+            guard let out else { return nil }
+            return try GivenPath.resolve(out, from: base)
         }
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let options = try parse(arguments)
-        let directory = options.directory()
+        let directory = try options.directory()
+        // **ビルドの前に解く。** 走らせた場所が読めない回の誤りを、数分のビルドの後で知らせない
+        let out =
+            try options.outDirectory()
+            ?? directory.appendingPathComponent(defaultOutputDirectory, isDirectory: true)
         guard
             FileManager.default.fileExists(
                 atPath: directory.appendingPathComponent("Package.swift").path)
@@ -100,9 +105,6 @@ enum BundleCommand {
         let context = BuildContext(
             configuration: configuration, place: .inPackage(.packaging), product: product)
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
-        let out =
-            options.outDirectory()
-            ?? directory.appendingPathComponent(defaultOutputDirectory, isDirectory: true)
 
         let app = try assemble(
             executable: executable, identity: identity,
@@ -133,7 +135,7 @@ enum BundleCommand {
             positionalIsPlace: true,
             surplus: .reject { "Only one directory: \($0)" })
         return Options(
-            path: parsed.positional ?? FileManager.default.currentDirectoryPath,
+            path: parsed.positional ?? ".",
             out: parsed.values["--out"])
     }
 

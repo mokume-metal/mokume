@@ -50,7 +50,7 @@ enum RunCommand {
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let invocation = try Invocation.parse(arguments)
-        let directory = invocation.directory
+        let directory = try invocation.directory
         let package = directory.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: package.path) else {
             throw .packageNotFound(path: directory.path)
@@ -64,7 +64,7 @@ enum RunCommand {
         // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
         // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
         print("Tool: \(ToolVersion.describe())")
-        if let notice = sharedSurfaceNotice(for: invocation) { print(notice) }
+        if let notice = try sharedSurfaceNotice(for: invocation) { print(notice) }
 
         // **置き場は 1 度だけ決めて持ち回る。** 作り直しと実行ファイルの解決へ別々に
         // 判断を渡すと、片方が共有・片方がパッケージ直下という組み合わせになる
@@ -116,7 +116,7 @@ enum RunCommand {
 
         // **明示されたら理由を確かめない。** 選んだのは人である。解く基準は走らせた場所で、
         // 解くのは ``Invocation`` の 1 か所 (#2323)
-        if let given = invocation.scratchDirectory {
+        if let given = try invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
                 place: .outside(given, given: true), product: product)
@@ -192,8 +192,8 @@ enum RunCommand {
     /// [#2028]: https://github.com/mokume-metal/mokume/issues/2028
     static func sharedSurfaceNotice(
         for invocation: Invocation, workDirectory: URL? = WorkDirectory.given
-    ) -> String? {
-        let base = invocation.facetBase(workDirectory: workDirectory)
+    ) throws(CommandFailure) -> String? {
+        let base = try invocation.facetBase(workDirectory: workDirectory)
         let facet = WatchCommand.viewportFacet(under: base)
         guard FileManager.default.fileExists(atPath: facet.path) else { return nil }
         // **在処をそのまま出す。** 基準は環境変数が動かせるので、`.mokume/…` とだけ
@@ -837,7 +837,10 @@ enum RunCommand {
         of process: Process, error: any Error, executableMissing: CommandFailure
     ) -> CommandFailure {
         let tool = toolName(of: process)
-        let place = process.currentDirectoryURL ?? GivenPath.currentDirectory
+        // 起こす場所が決まっていなければ、子は走らせた場所で動く。それが読めなければ名乗る場所が無い
+        guard let place = process.currentDirectoryURL ?? GivenPath.currentDirectory else {
+            return .currentDirectoryUnreadable(given: ".")
+        }
         let presence = GivenPath.Presence.of(place)
         guard presence == .directory else {
             return .placeUnusable(tool: tool, place: place.path, presence: presence)

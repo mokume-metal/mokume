@@ -72,7 +72,7 @@ struct NewCommandTests {
     ) throws {
         let options = NewCommand.Options(name: "foo", path: path, local: local)
         let base = URL(fileURLWithPath: typedFrom, isDirectory: true)
-        let sketch = options.root(from: base)
+        let sketch = try options.root(from: base)
         #expect(NewCommand.packageIdentity(local: local, sketch: sketch) == identity)
         // 自分自身を指す行 (末尾が `.`) は、自分に依存するパッケージになり組めないので断る (#2310)
         guard identity != options.name else {
@@ -104,7 +104,7 @@ struct NewCommandTests {
             atPath: work.appendingPathComponent("link").path, withDestinationPath: "../real/lib")
 
         let options = NewCommand.Options(name: "foo", path: "link", local: "..")
-        let sketch = options.root(from: work)
+        let sketch = try options.root(from: work)
         #expect(NewCommand.packageIdentity(local: "..", sketch: sketch) == "lib")
         // 在る場所が symlink を含まなければ、いままでどおり字面と同じ
         #expect(
@@ -168,7 +168,7 @@ struct NewCommandTests {
         let options = NewCommand.Options(
             name: "quoted", path: workspace.path,
             local: workspace.appendingPathComponent(#"q"dir\x"#).path)
-        let root = options.root()
+        let root = try options.root()
         for (path, contents) in try NewCommand.files(for: options) {
             let url = root.appendingPathComponent(path)
             try FileManager.default.createDirectory(
@@ -213,7 +213,7 @@ struct NewCommandTests {
         let typedFrom = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-new-guide-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: typedFrom) }
-        let root = NewCommand.Options(name: "hint", path: path).root(from: typedFrom)
+        let root = try NewCommand.Options(name: "hint", path: path).root(from: typedFrom)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let guidance = NewCommand.guidance(for: root)
@@ -225,8 +225,8 @@ struct NewCommandTests {
 
     /// 文面の固定。`--path` と空白を含む場所で、引用した絶対パスを名指しする。
     @Test("作った後の案内は、作った場所を引用した絶対パスで名指しする")
-    func theGuidanceNamesTheQuotedPlace() {
-        let root = NewCommand.Options(name: "hint", path: "dir with space")
+    func theGuidanceNamesTheQuotedPlace() throws {
+        let root = try NewCommand.Options(name: "hint", path: "dir with space")
             .root(from: URL(fileURLWithPath: "/work", isDirectory: true))
         #expect(
             NewCommand.guidance(for: root) == """

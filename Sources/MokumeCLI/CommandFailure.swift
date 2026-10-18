@@ -31,6 +31,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 窓口 (`mcp`) は `Package.swift` の無い場所でも起こされうる
     /// ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
     case directoryNotFound(path: String)
+    /// 走らせた場所が読めない (作業ディレクトリが消えた) のに、それを基準に解く相対パス
+    /// (または場所の省略) を受けた。`given` は解けなかった綴り (省略は `.`)。
+    ///
+    /// **``directoryNotFound(path:)`` と分ける。** あちらは渡された場所が在らない失敗で、
+    /// 直し方は場所を打ち直すこと。こちらは場所の綴りに誤りは無く、道具が走っている場所が
+    /// 読めない — 直し方は絶対パスで渡すか、在る場所から走らせることである
+    /// ([#2497](https://github.com/mokume-metal/mokume/issues/2497))。
+    case currentDirectoryUnreadable(given: String)
     case buildFailed(status: Int32)
     /// 走らせたスケッチが 0 以外で終わった。**道具の失敗ではない。**
     case sketchExited(status: Int32)
@@ -172,6 +180,22 @@ nonisolated enum CommandFailure: Error, Equatable {
         }
     }
 
+    /// 解けなかった綴りの言い方。省略 (`.`) は、打たれた綴りではなく既定の場所と言う。
+    static func unresolvedPhrase(_ given: String) -> String {
+        given == "."
+            ? "the place it defaults to"
+            : "the relative path \(GivenPath.shellWord(display: given))"
+    }
+
+    /// ``currentDirectoryUnreadable(given:)`` の文面。`doctor` の先頭の名乗りは、言い方 (``unresolvedPhrase(_:)``) を共有する。
+    static func currentDirectoryUnreadableText(given: String) -> String {
+        """
+            Cannot read the directory this was run from (it may have been deleted),
+            so \(unresolvedPhrase(given)) cannot be resolved
+            Give an absolute path, or run it from a directory that exists
+            """
+    }
+
     var message: String {
         switch self {
         case .usage(let text):
@@ -212,6 +236,8 @@ nonisolated enum CommandFailure: Error, Equatable {
             No such directory: \(path)
             Point at a directory that exists
             """
+        case .currentDirectoryUnreadable(let given):
+            Self.currentDirectoryUnreadableText(given: given)
         case .resourcesNotDeclared(let directory):
             """
             \(directory) holds assets, but Package.swift does not declare them.

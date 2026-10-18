@@ -512,7 +512,7 @@ struct RunCommandTests {
         let recorder = try makeWorkingDirectoryRecorder()
         let invocation = Invocation(place: place, currentDirectory: typedFrom)
 
-        try RunCommand.launch(recorder.executable, in: invocation.directory)
+        try RunCommand.launch(recorder.executable, in: try invocation.directory)
 
         let ran = try String(contentsOf: recorder.marker, encoding: .utf8)
             .trimmingCharacters(in: .newlines)
@@ -527,9 +527,9 @@ struct RunCommandTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let recorder = try makeWorkingDirectoryRecorder()
         let invocation = Invocation(place: "..", currentDirectory: typedFrom)
-        let hooks = WatchSession.Hooks.live(in: invocation.directory, invocation: invocation)
+        let hooks = WatchSession.Hooks.live(in: try invocation.directory, invocation: invocation)
 
-        let process = try hooks.launch(recorder.executable, invocation.directory, nil, nil)
+        let process = try hooks.launch(recorder.executable, try invocation.directory, nil, nil)
         // **待つ側が期限を持つ。** 越えたら子を殺して赤にする
         defer { if process.isRunning { process.terminate() } }
         let ran = try #require(Self.waitForText(in: recorder.marker), "期限までに書かれなかった")
@@ -574,7 +574,7 @@ struct RunCommandTests {
             encoding: .utf8)
 
         let invocation = Invocation(place: "../c", currentDirectory: typedFrom)
-        let declared = try RunCommand.dumpPackage(in: invocation.directory)
+        let declared = try RunCommand.dumpPackage(in: try invocation.directory)
         #expect(declared?.executableProductName == "probe")
     }
 
