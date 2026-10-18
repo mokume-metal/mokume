@@ -602,8 +602,49 @@ struct DoctorCommandTests {
         let text = DoctorCommand.report(
             environment: Self.sound, state: Self.state(URL(fileURLWithPath: "/tmp/demo")),
             base: URL(fileURLWithPath: "/tmp/demo"), given: false, ignored: ["--wat"])
-        #expect(text.contains("Ignored unknown arguments"))
+        #expect(text.contains("Ignored arguments doctor does not take"))
         #expect(text.contains("--wat"))
+    }
+
+    /// **値を取る選択肢は、値ごと脇へ置く** ([#2484](https://github.com/mokume-metal/mokume/issues/2484))。
+    /// 宣言が無い頃は `doctor -c release` の `release` が場所になり、在らない `./release` を診たと
+    /// 名乗っていた。走らせる口と同じ綴りの 3 つ (`-c`・`--configuration`・`--scratch-path`) を見る。
+    @Test(
+        "値を取る選択肢は値ごと脇へ置き、走らせた場所を診る",
+        arguments: [
+            (["-c", "release"], "-c release"),
+            (["--configuration", "debug"], "--configuration debug"),
+            (["--scratch-path", "out"], "--scratch-path out"),
+            // 値が無くても止まらない
+            (["-c"], "-c"),
+        ])
+    func declaredOptionsAreSetAsideWithTheirValue(arguments: [String], ignored: String) throws {
+        let here = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: here) }
+        let text = DoctorCommand.text(
+            for: arguments, workDirectory: nil, environment: [:], home: here, currentDirectory: here)
+        #expect(
+            text.hasPrefix("Ignored arguments doctor does not take: \(ignored)\n"), "\(text)")
+        // 値を場所として診ていない: 走らせた場所を診て、`release` という場所は出てこない
+        #expect(text.contains("Place: \(here.path)\n"), "\(text)")
+        #expect(!text.contains("nothing is there"), "\(text)")
+    }
+
+    /// 選択肢の後ろに場所を置いても、診るのはその場所 (場所の読み取りは変わらない)。
+    @Test("場所と選択肢を両方渡すと、場所を診て選択肢を脇へ置く")
+    func thePlaceIsStillReadNextToAnOption() throws {
+        let here = try Self.emptyDirectory()
+        let sketch = here.appendingPathComponent("sketch", isDirectory: true)
+        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: here) }
+        for arguments in [[sketch.path, "-c", "release"], ["-c", "release", sketch.path]] {
+            let text = DoctorCommand.text(
+                for: arguments, workDirectory: nil, environment: [:], home: here,
+                currentDirectory: here)
+            #expect(
+                text.hasPrefix("Ignored arguments doctor does not take: -c release\n"), "\(text)")
+            #expect(text.contains("Place: \(sketch.path)\n"), "\(text)")
+        }
     }
 
     /// 切り分けの口自身が、切り分けたい「区画の割れ」を再現していた

@@ -52,6 +52,10 @@ enum Arguments {
         /// - Parameter extraPositional: 位置引数が 2 つ目に来たときの言い方。
         case reject(extraPositional: (String) -> String)
         /// 脇へ置いて解き続ける。`doctor` だけがこちらを選ぶ。
+        ///
+        /// **宣言した選択肢も、値ごと脇へ置く** (#2484)。値を取る選択肢を宣言するのは、
+        /// 値が位置引数 (場所) に化けないようにするためで、使うためではない — `doctor -c release`
+        /// の `release` を場所として診ない。値が欠けていても (`doctor -c`)、空でも止まらない。
         case ignore
     }
 
@@ -66,6 +70,7 @@ enum Arguments {
         /// 選択肢の値。鍵は ``Option/key``。
         var values: [String: String] = [:]
         /// 脇へ置いたもの。``Surplus/ignore`` のときだけ増える。**打たれた順に並ぶ。**
+        /// 宣言した選択肢は、打たれた綴りと値を 1 つにして載る (`-c release`)。
         var ignored: [String] = []
     }
 
@@ -86,6 +91,20 @@ enum Arguments {
                 + " (is a variable you passed unset?)")
     }
 
+    /// `--x=値` の綴りで、`=` の前が宣言済みの綴りなら、空白で区切るよう案内する文。
+    ///
+    /// **受け付ける形は増やさない** ([#2484](https://github.com/mokume-metal/mokume/issues/2484))。
+    /// `Unknown option` と言うと、`run -c release` が通る人には綴りの何が違うのか分からない。
+    /// 宣言されていない綴り (`--nope=1`) は、これまでどおり知らない選択肢である。
+    private static func separatedSpelling(of argument: String, in options: [Option]) -> String? {
+        guard let equals = argument.firstIndex(of: "=") else { return nil }
+        let flag = String(argument[..<equals])
+        guard options.contains(where: { $0.flags.contains(flag) }) else { return nil }
+        let value = String(argument[argument.index(after: equals)...])
+        return "\(argument) is not accepted: separate the value from \(flag) with a space,"
+            + " as in \(flag) \(value.isEmpty ? "<value>" : value)"
+    }
+
     /// 解く。
     ///
     /// - Parameter positionalIsPlace: 位置引数が場所か。**場所なら、空を断る**
@@ -100,6 +119,16 @@ enum Arguments {
             let argument = arguments[index]
             if let option = options.first(where: { $0.flags.contains(argument) }) {
                 index += 1
+                if case .ignore = surplus {
+                    // 値ごと脇へ置く。値が無い・空でも止まらない (切り分けの口は止まらない)
+                    if index < arguments.count {
+                        parsed.ignored.append("\(argument) \(arguments[index])")
+                    } else {
+                        parsed.ignored.append(argument)
+                    }
+                    index += 1
+                    continue
+                }
                 guard index < arguments.count else { throw .usage(option.missingValue(argument)) }
                 if option.takesPlace, arguments[index].isEmpty { throw emptyPlace(argument) }
                 parsed.values[option.key] = arguments[index]
@@ -107,7 +136,11 @@ enum Arguments {
                 // **知らない選択肢を黙って位置引数にしない。** `-c` が場所として解釈された
                 // 結果が「スケッチが見つからない: …/-c」で、何を直せばよいか分からない (#680)
                 switch surplus {
-                case .reject: throw .usage("Unknown option: \(argument)\n\n" + Command.usage())
+                case .reject:
+                    if let spelling = separatedSpelling(of: argument, in: options) {
+                        throw .usage(spelling + "\n\n" + Command.usage())
+                    }
+                    throw .usage("Unknown option: \(argument)\n\n" + Command.usage())
                 case .ignore: parsed.ignored.append(argument)
                 }
             } else if parsed.positional == nil {

@@ -35,13 +35,51 @@ struct ArgumentsTests {
     @Test("宣言に無い綴りは、値を取らずに余りへ回る")
     func onlyDeclaredFlagsTakeAValue() throws {
         let parsed = try Arguments.parse(
-            ["--path", "/tmp", "--other", "x"],
+            ["--other", "x"],
             options: [Arguments.Option(["--path"]) { "\($0) needs a directory after it" }],
             surplus: .ignore)
         // `--other` は宣言に無いので値を食わない。`x` は位置引数として残る
-        #expect(parsed.values == ["--path": "/tmp"])
         #expect(parsed.ignored == ["--other"])
         #expect(parsed.positional == "x")
+
+        let declared = try Arguments.parse(
+            ["--path", "/tmp"],
+            options: [Arguments.Option(["--path"]) { "\($0) needs a directory after it" }],
+            surplus: .reject { "Only one directory: \($0)" })
+        #expect(declared.values == ["--path": "/tmp"])
+        #expect(declared.positional == nil)
+    }
+
+    /// **宣言した選択肢は、余りを `ignore` にしても値を食う** (#2484)。食わないと、`doctor -c release`
+    /// の `release` が場所になる。食った値は使わず、打たれた綴りと値を 1 つにして脇へ置く。
+    @Test("余りを ignore にしても、宣言した選択肢は値ごと脇へ置く")
+    func ignoringSurplusSetsDeclaredOptionsAsideWithTheirValues() throws {
+        let option = Arguments.Option(["-c", "--configuration"]) { "\($0) needs a configuration" }
+        let parsed = try Arguments.parse(
+            ["/tmp/a", "-c", "release", "--fast", "--configuration", "debug"],
+            options: [option], surplus: .ignore)
+        #expect(parsed.positional == "/tmp/a")
+        #expect(parsed.ignored == ["-c release", "--fast", "--configuration debug"])
+        #expect(parsed.values.isEmpty)
+
+        // 値は場所に化けない。場所は後ろにあってもよい
+        let before = try Arguments.parse(["-c", "release", "/tmp/b"], options: [option], surplus: .ignore)
+        #expect(before.positional == "/tmp/b")
+        #expect(before.ignored == ["-c release"])
+    }
+
+    /// 切り分けの口は止まらない: 値が欠けていても、脇へ置いて続ける。
+    @Test("余りを ignore にすると、値の欠けた宣言済みの選択肢でも止まらない")
+    func ignoringSurplusDoesNotStopOnAMissingValue() throws {
+        let option = Arguments.Option(["-c", "--configuration"], takesPlace: true) {
+            "\($0) needs a configuration"
+        }
+        let parsed = try Arguments.parse(["/tmp/a", "-c"], options: [option], surplus: .ignore)
+        #expect(parsed.positional == "/tmp/a")
+        #expect(parsed.ignored == ["-c"])
+        // 場所を取る選択肢の空の値も、断らずに脇へ置く
+        let empty = try Arguments.parse(["-c", ""], options: [option], surplus: .ignore)
+        #expect(empty.ignored == ["-c "])
     }
 
     /// **値は打たれた綴りではなく、宣言の先頭の綴りで引く。** `-c` と `--configuration`
@@ -50,11 +88,15 @@ struct ArgumentsTests {
     func aliasesLandUnderTheFirstSpelling() throws {
         let option = Arguments.Option(["-c", "--configuration"]) { "\($0) が要る" }
         #expect(
-            try Arguments.parse(["--configuration", "release"], options: [option], surplus: .ignore)
-                .values == ["-c": "release"])
+            try Arguments.parse(
+                ["--configuration", "release"], options: [option],
+                surplus: .reject { "Only one directory: \($0)" }
+            ).values == ["-c": "release"])
         #expect(
-            try Arguments.parse(["-c", "release"], options: [option], surplus: .ignore)
-                .values == ["-c": "release"])
+            try Arguments.parse(
+                ["-c", "release"], options: [option],
+                surplus: .reject { "Only one directory: \($0)" }
+            ).values == ["-c": "release"])
     }
 
     /// **値の欠落は、打たれた綴りで名指す。** `-c` と打った人に `--configuration` の話を
@@ -63,11 +105,15 @@ struct ArgumentsTests {
     func namesTheSpellingAsTyped() {
         let option = Arguments.Option(["-c", "--configuration"]) { "\($0) needs a configuration" }
         #expect(
-            usageMessage { _ = try Arguments.parse(["-c"], options: [option], surplus: .ignore) }
-                == "-c needs a configuration")
+            usageMessage {
+                _ = try Arguments.parse(
+                    ["-c"], options: [option], surplus: .reject { "Only one directory: \($0)" })
+            } == "-c needs a configuration")
         #expect(
             usageMessage {
-                _ = try Arguments.parse(["--configuration"], options: [option], surplus: .ignore)
+                _ = try Arguments.parse(
+                    ["--configuration"], options: [option],
+                    surplus: .reject { "Only one directory: \($0)" })
             } == "--configuration needs a configuration")
     }
 
@@ -134,7 +180,7 @@ struct ArgumentsTests {
     @Test("切り分けの口は、知らない引数を無視したと言って続ける")
     func theDoctorVerbNeverStops() {
         let text = DoctorCommand.text(for: ["--fast", "-x"], workDirectory: nil)
-        #expect(text.hasPrefix("Ignored unknown arguments: --fast -x\n"))
+        #expect(text.hasPrefix("Ignored arguments doctor does not take: --fast -x\n"))
         #expect(text.contains("What the environment provides"))
     }
 
@@ -151,7 +197,53 @@ struct ArgumentsTests {
         let second = root.appendingPathComponent("b", isDirectory: true)
         let text = DoctorCommand.text(
             for: [first.path, second.path], workDirectory: nil, environment: [:], home: root)
-        #expect(text.hasPrefix("Ignored unknown arguments: \(second.path)\n"), "\(text)")
+        #expect(text.hasPrefix("Ignored arguments doctor does not take: \(second.path)\n"), "\(text)")
         #expect(text.contains(StartupReadsReport.baseLine(base: first, given: false)), "\(text)")
+    }
+
+    // ------------------------------------------------------- `--x=値` の綴り (#2484)
+
+    /// **受け付ける形は増やさない。** `=` の前が宣言済みの綴りなら、`Unknown option` ではなく
+    /// 空白で区切るよう案内する。`Arguments.parse` を通る全ての口で同じ。
+    @Test(
+        "宣言済みの綴りの = 付きは、空白で区切るよう案内して使い方の誤りで終わる",
+        arguments: [
+            ("--configuration=release", "--configuration release"),
+            ("-c=release", "-c release"),
+            ("--scratch-path=out", "--scratch-path out"),
+            ("--configuration=", "--configuration <value>"),
+        ])
+    func separatedSpellingIsExplained(argument: String, advice: String) {
+        let expected =
+            "\(argument) is not accepted: separate the value from "
+            + "\(argument.split(separator: "=", omittingEmptySubsequences: false)[0]) with a space,"
+            + " as in \(advice)\n\n" + Command.usage()
+        #expect(usageMessage { _ = try Invocation.parse([argument]) } == expected)
+        #expect(usageMessage { _ = try Invocation.parse([argument, "x"]) } == expected)
+    }
+
+    @Test("口ごとの宣言済みの綴りも、= 付きなら空白で区切るよう案内する")
+    func separatedSpellingIsExplainedByEveryVerb() throws {
+        for arguments in [["--path=out"], ["--local=lib"]] {
+            let message = try #require(usageMessage { _ = try NewCommand.parse(["demo"] + arguments) })
+            #expect(message.hasPrefix("\(arguments[0]) is not accepted: separate the value from"))
+        }
+        let bundle = try #require(usageMessage { _ = try BundleCommand.parse(["--out=out"]) })
+        #expect(bundle.hasPrefix("--out=out is not accepted: separate the value from --out"))
+        // 選択肢を宣言しない口 (窓口) には、案内する綴りが無い。いまどおり知らない選択肢
+        #expect(
+            usageMessage {
+                _ = try MCPCommand.directories(
+                    arguments: ["--configuration=release"], environment: [:],
+                    currentDirectory: URL(fileURLWithPath: "/"))
+            }?.hasPrefix("Unknown option: --configuration=release\n") == true)
+    }
+
+    @Test("宣言されていない綴りの = 付きは、いまどおり知らない選択肢")
+    func undeclaredSpellingWithEqualsStaysUnknown() {
+        let expected = "Unknown option: --nope=1\n\n" + Command.usage()
+        #expect(usageMessage { _ = try Invocation.parse(["--nope=1"]) } == expected)
+        #expect(usageMessage { _ = try NewCommand.parse(["--nope=1"]) } == expected)
+        #expect(usageMessage { _ = try BundleCommand.parse(["--nope=1"]) } == expected)
     }
 }
