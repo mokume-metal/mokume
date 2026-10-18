@@ -76,9 +76,10 @@ nonisolated struct ShaderEntryPoint: Sendable {
 
     /// 理由を、言い直しの 1 行を先頭に足した形で返す。入口の取り違えと読めなければそのまま返す。
     ///
-    /// - Parameter fragment: 断片が名乗る名前 (``ShaderSource/bodyName(_:url:)``)。
+    /// - Parameter fragment: 断片が名乗る名前 (``ShaderSource/bodyName(_:url:)``)。`name:` は利用者が
+    ///   何でも書けるので、改行と制御文字は空白にして 1 行を割らない (``ShaderSource/oneLine(_:)``)。
     func restating(_ reason: String, in fragment: String) -> String {
-        guard let line = restatement(of: reason, in: fragment) else { return reason }
+        guard let line = restatement(of: reason, in: ShaderSource.oneLine(fragment)) else { return reason }
         return "\(line)\n\(reason)"
     }
 
@@ -94,7 +95,7 @@ nonisolated struct ShaderEntryPoint: Sendable {
 
     /// 計算の入口の関数が、組んだライブラリに無いときの言い直し。
     static func missingKernel(named name: String, in fragment: String) -> String {
-        "\(fragment): error: the fragment does not define its entry point kernel void \(name)(…). "
+        "\(ShaderSource.oneLine(fragment)): error: the fragment does not define its entry point kernel void \(name)(…). "
             + "A computation runs the kernel function named after it (its name:, or the file name "
             + "for a file)"
     }

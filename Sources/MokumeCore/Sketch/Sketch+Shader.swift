@@ -46,8 +46,9 @@ extension SketchPart {
     /// (``Shader/set(_:_:)-(_,ShaderValue)``)。
     ///
     /// 名前は文字か `_` で始まり、文字・数字・`_` が続くもの (`tint`・`_k1`・`波`) に限る。
-    /// 空白や記号を含む名前 (`"tint color"`) や空の名前は、読み込みの時点で名指しで断られる
-    /// (``ShaderFailure/notCompilable(path:reason:)``)。`surfaces` の名前も同じ。
+    /// 空白や記号を含む名前 (`"tint color"`) や空の名前、Metal の予約語や型と同じ名前 (`half`) は、
+    /// 読み込みの時点で名指しで断られる (``ShaderFailure/notCompilable(path:reason:)``)。`surfaces` の
+    /// 名前も同じ。
     ///
     /// 渡せるのは **float 換算で 64 個まで** (色は 4 個ぶん・2 つ組は 2 個ぶん) — 値は列
     /// ごとに 1 区画へ載せるので、上限は動かせない。超えた宣言は読み込みの時点で断られる。

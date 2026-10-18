@@ -427,4 +427,82 @@ struct ShaderErrorLineTests {
             """
         try build(body, via: route, on: canvas, surfaces: ["波": .image(image), "_k1": .image(image)])
     }
+
+    // MARK: - Metal で使えない名前 (#2783 の反証)
+
+    /// 名指しの行の頭。
+    private static func namedLine(_ fragment: String, _ name: String, _ argument: String) -> String {
+        "\(fragment): error: the name \"\(name)\" in \(argument) cannot be used in Metal"
+    }
+
+    /// 予約語・組み込みの型と同じ値の名前は字の並びを通り、`float half;` で組み立てが落ちる。変更前は
+    /// 誤りが `mokume/Values:2:11` を名乗るだけで、直す先が Swift の引数だと言わなかった。
+    @Test(
+        "予約語・組み込みの型と同じ値の名前は、組み立ての誤りに values: の名前としての名指しが先に立つ",
+        arguments: Route.allCases, ["half", "float", "return"])
+    func aKeywordValueNameIsNamed(_ route: Route, _ name: String) throws {
+        let text = try #require(
+            try failure(of: Self.workingBody(for: route), via: route, on: makeCanvas(), values: [name: 1]))
+        let line = try Self.lineAfterHeadline(in: text)
+        #expect(line.hasPrefix(Self.namedLine(Self.expectedName(for: route), name, "values:")), "\(text)")
+        #expect(text.contains("mokume/Values:"), "Metal の文面が下に残らない:\n\(text)")
+    }
+
+    @Test("予約語・組み込みの型と同じ面の名前は、surfaces: の名前として名指す", arguments: [Route.makeShader, .loadShader])
+    func aKeywordSurfaceNameIsNamed(_ route: Route) throws {
+        let canvas = try makeCanvas()
+        let text = try #require(try failure(
+            of: "float4 paint(Fragment in, Values values, Surfaces surfaces) { return in.color; }",
+            via: route, on: canvas, surfaces: ["half": .image(try canvas.createImage(2, 2))]))
+        let line = try Self.lineAfterHeadline(in: text)
+        #expect(line.hasPrefix(Self.namedLine(Self.expectedName(for: route), "half", "surfaces:")), "\(text)")
+    }
+
+    /// 前置きのマクロと同じ名前。面の名前なら宣言の行で落ち、値の名前なら断片で読んだ行で落ちて
+    /// マクロの知らせが添う (計算の `MOKUME_VALUES` は `mokume/Compute.metal` のマクロ)。
+    @Test("前置きのマクロと同じ名前は、渡した口の名前として名指す")
+    func aMacroNameIsNamed() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 2)
+        let surfaceText = try #require(try failure(
+            of: "float4 paint(Fragment in, Values values, Surfaces surfaces) { return in.color; }",
+            via: .makeShader, on: canvas, surfaces: ["MOKUME_SURFACES": .image(image)]))
+        #expect(
+            try Self.lineAfterHeadline(in: surfaceText)
+                .hasPrefix(Self.namedLine("shader", "MOKUME_SURFACES", "surfaces:")), "\(surfaceText)")
+
+        let valueText = try #require(try failure(
+            of: "float4 paint(Fragment in, Values values, Surfaces surfaces) { return in.color * values.MOKUME_SURFACES; }",
+            via: .makeShader, on: canvas, values: ["MOKUME_SURFACES": 1], surfaces: ["grain": .image(image)]))
+        #expect(
+            try Self.lineAfterHeadline(in: valueText)
+                .hasPrefix(Self.namedLine("shader", "MOKUME_SURFACES", "values:")), "\(valueText)")
+
+        let computeText = try #require(try failure(
+            of: """
+                kernel void probe(device float *out [[buffer(0)]],
+                                  constant Values &values [[buffer(MOKUME_VALUES)]],
+                                  uint id [[thread_position_in_grid]]) {
+                    out[id] = values.MOKUME_VALUES;
+                }
+                """,
+            via: .makeComputation, on: canvas, values: ["MOKUME_VALUES": 1]))
+        #expect(
+            try Self.lineAfterHeadline(in: computeText)
+                .hasPrefix(Self.namedLine("probe", "MOKUME_VALUES", "values:")), "\(computeText)")
+    }
+
+    /// 構造体と同じ名前の欄 (`struct Values { float Values; }`) は Metal が通し、断片から読める
+    /// (2026-10-18 に実測)。断る必要が無いので、組めることを守る。
+    @Test("構造体と同じ名前 (Values・Surfaces) は、組めて断片から読める")
+    func structNamesBuild() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 2)
+        try build(
+            "float4 paint(Fragment in, Values values) { return in.color * values.Values; }",
+            via: .makeShader, on: canvas, values: ["Values": 1])
+        try build(
+            "float4 paint(Fragment in, Values values, Surfaces surfaces) { return mokume_sample(surfaces.Surfaces, in.uv); }",
+            via: .makeShader, on: canvas, surfaces: ["Surfaces": .image(image)])
+    }
 }

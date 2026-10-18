@@ -20,9 +20,10 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     ///
     /// **`values:`・`surfaces:` に断片の中で書けない名前を渡すと、組み立ての前にこの case で断る**
     /// ([#2783](https://github.com/mokume-metal/mokume/issues/2783))。理由は渡した口と名前を名指しする。
-    /// 受けるのは文字か `_` で始まり、文字・数字・`_` が続く名前 (ASCII の外の文字も受ける)。予約語
-    /// (`float` など) は検めないので、`mokume/Values`・`mokume/Surfaces` を名乗る組み立ての誤りで出る
-    /// — 渡した名前から作った宣言の誤りなので、Swift の側でその名前を直す。
+    /// 受けるのは文字か `_` で始まり、文字・数字・`_` が続く名前 (ASCII の外の文字も受ける)。字の並びは
+    /// 通っても Metal で使えない名前 (予約語・組み込みの型の `half`・前置きのマクロの `MOKUME_SURFACES`
+    /// など) は、組み立ての誤りの前に `shader: error: the name "half" in values: cannot be used in Metal…`
+    /// の 1 行で名指しする。どちらも Swift の側でその名前を直す。
     case notCompilable(path: String, reason: String)
     /// 渡す値が列 1 つぶんの区画に収まらない。float 換算の数と上限を添える。
     case tooManyValues(path: String, count: Int, capacity: Int)

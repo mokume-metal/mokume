@@ -46,23 +46,25 @@ final class ComputePipeline {
 
     /// 利用者の断片から計算のパイプラインを組む。
     ///
-    /// - Parameter fragment: 入口の関数が無いときに断片が名乗る名前
-    ///   (``ShaderSource/bodyName(_:url:)``)。省けば `functionName`。
+    /// - Parameter bodyName: 入口の関数が無いときに、断片の本文が名乗る名前
+    ///   (``ShaderSource/bodyName(_:url:)``。`waves.metal` か `name:`)。省けば `functionName`。
+    ///   **効果の `stateJob(label:fragment:)` の `fragment` (描画のフラグメント関数の名前) とは別物**
+    ///   なので、名前を分けてある。
     func makeState(
-        library: any MTLLibrary, functionName: String, label: String, fragment: String? = nil
+        library: any MTLLibrary, functionName: String, label: String, bodyName: String? = nil
     ) throws(RenderFailure) -> any MTLComputePipelineState {
-        try stateJob(functionName: functionName, label: label, fragment: fragment)
+        try stateJob(functionName: functionName, label: label, bodyName: bodyName)
             .makeNow(library: library)
     }
 
-    /// ``makeState(library:functionName:label:)`` を、ライブラリが出来る前に用意する。裏で組む
+    /// ``makeState(library:functionName:label:bodyName:)`` を、ライブラリが出来る前に用意する。裏で組む
     /// 経路 (``ShaderBox``・[#2365]) が使う。
     ///
     /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
-    func stateJob(functionName: String, label: String, fragment: String? = nil) -> StateJob {
+    func stateJob(functionName: String, label: String, bodyName: String? = nil) -> StateJob {
         StateJob(
             compiler: compiler, functionName: functionName, label: label,
-            fragment: fragment ?? functionName)
+            bodyName: bodyName ?? functionName)
     }
 
     /// 1 本の組み方。main で決めた値だけを持つので、裏の糸でも組める
@@ -71,8 +73,8 @@ final class ComputePipeline {
         let compiler: any MTL4Compiler
         let functionName: String
         let label: String
-        /// 入口の関数が無いときに、断片が名乗る名前。
-        let fragment: String
+        /// 入口の関数が無いときに、断片の本文が名乗る名前 (``ShaderSource/bodyName(_:url:)``)。
+        let bodyName: String
 
         /// **入口の関数がライブラリに無ければ、パイプラインを作る前に断る** (#2782)。
         ///
@@ -85,7 +87,7 @@ final class ComputePipeline {
             guard library.makeFunction(name: functionName)?.functionType != .kernel else { return }
             throw .shaderCompilationFailed(
                 name: functionName,
-                reason: ShaderEntryPoint.missingKernel(named: functionName, in: fragment))
+                reason: ShaderEntryPoint.missingKernel(named: functionName, in: bodyName))
         }
 
         private func descriptor(library: any MTLLibrary) -> MTL4ComputePipelineDescriptor {

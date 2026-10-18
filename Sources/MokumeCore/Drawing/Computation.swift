@@ -82,7 +82,7 @@ import MokumeDiagnostics
 
         self.state = try pipeline.makeState(
             library: library, functionName: name, label: "mokume.computation.\(name)",
-            fragment: box.bodyName)
+            bodyName: box.bodyName)
         box.watch { [weak self] in self?.reload() }
     }
 
@@ -111,7 +111,7 @@ import MokumeDiagnostics
                 let library = try gpu.shaders.computeLibraryJob(
                     named: name, body: body, bodyName: box.bodyName, values: values)
                 let state = pipeline.stateJob(
-                    functionName: name, label: "mokume.computation.\(name)", fragment: box.bodyName)
+                    functionName: name, label: "mokume.computation.\(name)", bodyName: box.bodyName)
                 return BuildJob(
                     now: { () throws(RenderFailure) in try state.makeNow(library: library.runNow()) },
                     later: { () async throws(RenderFailure) in

@@ -98,6 +98,13 @@ struct ShaderEntryPointTests {
         #expect(ShaderEntryPoint.paint(surfaces: false).restating(reason, in: "shader") == reason)
     }
 
+    @Test("断片の名前に改行があっても、入口の言い直しは 1 行に収まる")
+    func aFragmentNameWithANewlineStaysOnOneLine() {
+        let restated = ShaderEntryPoint.effect.restating(Self.undefined("_Z6effect5Pixel6Values"), in: "my\neffect")
+        #expect(restated.components(separatedBy: "\n").first?.hasPrefix("my effect: error: ") == true, "\(restated)")
+        #expect(!ShaderEntryPoint.missingKernel(named: "probe", in: "my\nprobe").contains("\n"))
+    }
+
     @Test("組み立ての誤りは言い直さない")
     func compileErrorsAreLeftAlone() {
         let reason = "shader:2:12: error: use of undeclared identifier 'foo'"
@@ -124,17 +131,9 @@ struct ShaderValueNameTests {
 
     @Test("断るときは、渡した口 (values: か surfaces:) と名前を名指しし、本体の前置きの名を出さない")
     func theFailureNamesTheArgument() throws {
-        var caught: ShaderFailure?
-        do {
-            try ShaderSource.checkNames(values: ["tint color": 1, "ok": 2], path: "shader")
-        } catch {
-            caught = error
-        }
-        guard case .notCompilable(let path, let reason) = try #require(caught) else {
-            Issue.record("notCompilable で断らない: \(String(describing: caught))")
-            return
-        }
-        #expect(path == "shader")
+        let reason = try #require(
+            ShaderSource.unusableNames(values: ["tint color": 1, "ok": 2], in: "shader"))
+        #expect(reason.hasPrefix("shader: error: "), "\(reason)")
         #expect(reason.contains("\"tint color\""), "\(reason)")
         #expect(reason.contains("values:"), "\(reason)")
         #expect(!reason.contains("\"ok\""), "受ける名前まで名指しした:\n\(reason)")
@@ -142,7 +141,97 @@ struct ShaderValueNameTests {
     }
 
     @Test("識別子の名前だけなら断らない")
-    func usableNamesPass() throws {
-        try ShaderSource.checkNames(values: ["tint": 1, "_k1": 2, "波": 3], path: "shader")
+    func usableNamesPass() {
+        #expect(ShaderSource.unusableNames(values: ["tint": 1, "_k1": 2, "波": 3], in: "shader") == nil)
+    }
+}
+
+/// 字の並びは通っても Metal で使えない名前の言い直し (#2783 の反証)。**GPU を使わない** — 実測した
+/// Metal の理由の文面の例 (2026-10-18・手元の GPU) を入れて、宣言の行から名前を引く照合だけを見る。
+/// 実際の断片で出ることは `ShaderErrorLineTests` が GPU で見る。
+@Suite("Metal で使えない名前の言い直し")
+struct ShaderDeclaredNameTests {
+    /// 値の宣言の行は、4 成分のものが先で、同じ成分の数なら名前の降順 (``ShaderSource/pack(_:)`` と同じ)。
+    /// `c` (色) が 2 行目、`half` が 3 行目、`a` が 4 行目。
+    private static let values: [String: ShaderValue] = [
+        "a": 1, "half": 2, "c": .color(LinearRGBA(straightRed: 1, green: 1, blue: 1)),
+    ]
+
+    @Test("誤りが値の宣言の行を指したら、その行の名前を values: の名前として名指す")
+    func anErrorOnAValueLineNamesThatValue() throws {
+        let reason = """
+            mokume/Values:3:11: error: cannot combine with previous 'float' declaration specifier
+                float half;
+            mokume/Values:3:5: warning: declaration does not declare anything [-Wmissing-declarations]
+            """
+        let names = ShaderSource.declaredNames(values: Self.values)
+        let restated = names.restating(reason, in: "shader")
+        let first = try #require(restated.components(separatedBy: "\n").first)
+        #expect(first.hasPrefix("shader: error: the name \"half\" in values: "), "\(restated)")
+        #expect(restated.components(separatedBy: "\n").count == reason.components(separatedBy: "\n").count + 1)
+        #expect(restated.hasSuffix("\n" + reason), "Metal の文面がそのまま下に残らない")
+    }
+
+    @Test("宣言の行が並びのとおりに名前へ対応する")
+    func declarationRowsFollowTheDeclaration() {
+        let names = ShaderSource.declaredNames(values: Self.values)
+        #expect(names.valueLines == [2: "c", 3: "half", 4: "a"])
+        let lines = ShaderSource.declaration(of: Self.values).components(separatedBy: "\n")
+        #expect(lines[1] == "    float4 c;")
+        #expect(lines[2] == "    float half;")
+        #expect(lines[3] == "    float a;")
+    }
+
+    @Test("誤りが面の宣言の行を指したら、その行の名前を surfaces: の名前として名指す")
+    func anErrorOnASurfaceLineNamesThatSurface() throws {
+        let reason = """
+            mokume/Surfaces:3:29: error: expected member name or ';' after declaration specifiers
+                metal::texture2d<float> MOKUME_SURFACES;
+            mokume/Surfaces:1:25: note: expanded from macro 'MOKUME_SURFACES'
+            mokume/Surfaces:7:14: error: expected unqualified-id
+                surfaces.MOKUME_SURFACES = s0;
+            """
+        let names = ShaderSource.DeclaredNames(
+            valueLines: [:], surfaceLines: [3: "MOKUME_SURFACES", 7: "MOKUME_SURFACES"],
+            values: [], surfaces: ["MOKUME_SURFACES"])
+        let restated = names.restating(reason, in: "waves.metal")
+        let lines = restated.components(separatedBy: "\n")
+        #expect(lines[0].hasPrefix("waves.metal: error: the name \"MOKUME_SURFACES\" in surfaces: "), "\(restated)")
+        // 同じ名前を 2 度名指さない
+        #expect(lines[1] == reason.components(separatedBy: "\n")[0], "\(restated)")
+    }
+
+    /// 前置きのマクロと同じ名前の値を断片で読むと、誤りは書いた断片の行に出て、マクロの知らせが添う。
+    @Test("渡した名前のマクロが展開されたと出たら、その名前を名指す")
+    func anExpandedMacroWithAPassedNameIsNamed() throws {
+        let reason = """
+            probe:1:159: error: expected unqualified-id
+            kernel void probe(…) { out[id] = values.MOKUME_VALUES; }
+            mokume/Compute.metal:19:23: note: expanded from macro 'MOKUME_VALUES'
+            #define MOKUME_VALUES 15
+            """
+        let names = ShaderSource.declaredNames(values: ["MOKUME_VALUES": 1])
+        let first = try #require(names.restating(reason, in: "probe").components(separatedBy: "\n").first)
+        #expect(first.hasPrefix("probe: error: the name \"MOKUME_VALUES\" in values: "), "\(first)")
+        // 渡していない名前のマクロは名指さない
+        #expect(ShaderSource.declaredNames(values: ["tint": 1]).restating(reason, in: "probe") == reason)
+    }
+
+    @Test("宣言を指さない誤り・宣言の行への警告だけなら、言い直さない")
+    func otherReasonsAreLeftAlone() {
+        let names = ShaderSource.declaredNames(values: Self.values)
+        let inTheFragment = "shader:2:12: error: use of undeclared identifier 'foo'"
+        #expect(names.restating(inTheFragment, in: "shader") == inTheFragment)
+        let warningOnly = "mokume/Values:3:5: warning: declaration does not declare anything"
+        #expect(names.restating(warningOnly, in: "shader") == warningOnly)
+    }
+
+    @Test("断片の名前に改行があっても、言い直しは 1 行に収まる")
+    func aNameWithANewlineStaysOnOneLine() {
+        let reason = "mokume/Values:3:11: error: cannot combine with previous 'float' declaration specifier"
+        let restated = ShaderSource.declaredNames(values: Self.values).restating(reason, in: "my\nshader")
+        #expect(restated.components(separatedBy: "\n").first?.hasPrefix("my shader: error: ") == true, "\(restated)")
+        let unusable = ShaderSource.unusableNames(values: ["a b": 1], in: "my\nshader") ?? ""
+        #expect(!unusable.contains("\n"), "\(unusable)")
     }
 }

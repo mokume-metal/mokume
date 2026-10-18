@@ -75,7 +75,6 @@ extension Canvas {
                     + "fragment, so it has to start with a letter or an underscore and hold "
                     + "only letters, digits and underscores")
         }
-        try ShaderSource.checkNames(values: values, path: url?.path ?? name)
         // **区画に収まらない宣言は、ここで断る。** 値は頼みごとの区画へ載るので、塗りの
         // 列と同じ上限が効く (#932)。断り方も塗りと 1 か所を共有する
         try Self.checkValuesFit(values, path: url?.path ?? name)

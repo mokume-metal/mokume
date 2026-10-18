@@ -15,7 +15,6 @@ extension Canvas {
     ) throws(ShaderFailure) -> Shader {
         let (url, body, name) = try ShaderSource.read(at: path)
 
-        try ShaderSource.checkNames(values: values, surfaces: surfaces, path: path)
         try Self.checkValuesFit(values, path: path)
         try Self.checkSurfacesFit(surfaces, path: path)
 
@@ -36,7 +35,6 @@ extension Canvas {
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try ShaderSource.checkNames(values: values, surfaces: surfaces, path: name)
         try Self.checkValuesFit(values, path: name)
         try Self.checkSurfacesFit(surfaces, path: name)
 

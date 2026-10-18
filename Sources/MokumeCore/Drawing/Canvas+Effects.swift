@@ -60,7 +60,6 @@ extension Canvas {
     private func makeEffect(
         name: String, url: URL?, body: String, values: [String: ShaderValue]
     ) throws(ShaderFailure) -> EffectShader {
-        try ShaderSource.checkNames(values: values, path: url?.path ?? name)
         guard values.count * 4 <= EffectPipeline.valueSlotCapacity else {
             throw .notCompilable(
                 path: url?.path ?? name,
