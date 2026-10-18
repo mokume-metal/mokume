@@ -19,7 +19,7 @@ import Testing
 @MainActor
 @Suite("走っている実行の外から呼んだ通信の作る口")
 struct NetworkOutsideRunTests {
-    @Test("投げる 5 口は、ポートを開く前に呼んだ口の名前で notRunning を投げ、口ごとに 1 度だけ警告する")
+    @Test("投げる 7 口は、ポートを開く前・繋ぐ前に呼んだ口の名前で notRunning を投げ、口ごとに 1 度だけ警告する")
     func throwingMakersThrowNotRunning() throws {
         let log = OutsideRun()
         try OutsideRun.$current.withValue(log) {
@@ -30,6 +30,12 @@ struct NetworkOutsideRunTests {
                 }
                 #expect(throws: NetworkFailure.notRunning(call: "createWebSocketServer(_:)")) {
                     try sketch.createWebSocketServer(8025)
+                }
+                #expect(throws: NetworkFailure.notRunning(call: "createTCPClient(_:_:)")) {
+                    try sketch.createTCPClient("127.0.0.1", 7000)
+                }
+                #expect(throws: NetworkFailure.notRunning(call: "createWebSocketClient(_:)")) {
+                    try sketch.createWebSocketClient("ws://127.0.0.1:8025")
                 }
                 #expect(throws: NetworkFailure.notRunning(call: "createUDP(listen:send:)")) {
                     try sketch.createUDP(listen: 6000, send: ("127.0.0.1", 6001))
@@ -43,7 +49,8 @@ struct NetworkOutsideRunTests {
                 }
             }
             let calls = [
-                "createTCPServer(_:)", "createWebSocketServer(_:)", "createUDP(listen:send:)",
+                "createTCPServer(_:)", "createWebSocketServer(_:)", "createTCPClient(_:_:)",
+                "createWebSocketClient(_:)", "createUDP(listen:send:)",
                 "createOSC(listen:send:)", "createSerial(_:baudRate:)",
             ]
             #expect(log.messages.count == calls.count, "口ごとに 1 行")
@@ -57,7 +64,7 @@ struct NetworkOutsideRunTests {
         }
     }
 
-    @Test("投げない 5 口は、今までどおり足されていないポートを返し、呼んだ口の名前で 1 度だけ警告する")
+    @Test("投げない 7 口は、今までどおり足されていないポートを返し、呼んだ口の名前で 1 度だけ警告する")
     func recordedMakersWarnByTheirOwnName() {
         let log = OutsideRun()
         OutsideRun.$current.withValue(log) {
@@ -65,15 +72,19 @@ struct NetworkOutsideRunTests {
             for _ in 0..<2 {
                 let tcp = sketch.createTCPServer(messages: [["a"]])
                 let socket = sketch.createWebSocketServer(messages: [["a"]])
+                let tcpClient = sketch.createTCPClient(messages: [["a"]])
+                let socketClient = sketch.createWebSocketClient(messages: [["a"]])
                 let udp = sketch.createUDP(messages: [["a"]])
                 let osc = sketch.createOSC(messages: [[OSCMessage("/a", 1)]])
                 let serial = sketch.createSerial(lines: [["1"]])
                 // 足されていないので、回されず何も届かない (今までどおり)
                 #expect(tcp.messages.isEmpty && socket.messages.isEmpty && udp.messages.isEmpty)
+                #expect(tcpClient.messages.isEmpty && socketClient.messages.isEmpty)
                 #expect(osc.messages.isEmpty && serial.lines.isEmpty)
             }
             let calls = [
-                "createTCPServer(messages:)", "createWebSocketServer(messages:)", "createUDP(messages:)",
+                "createTCPServer(messages:)", "createWebSocketServer(messages:)",
+                "createTCPClient(messages:)", "createWebSocketClient(messages:)", "createUDP(messages:)",
                 "createOSC(messages:)", "createSerial(lines:)",
             ]
             #expect(log.messages.count == calls.count, "口ごとに 1 行")
@@ -105,6 +116,8 @@ struct NetworkOutsideRunTests {
         let cases: [(type: String, run: () -> Void)] = [
             ("TCPServer", { let port = sketch.createTCPServer(messages: [["a"]]); port.stop(); port.stop() }),
             ("WebSocketServer", { let port = sketch.createWebSocketServer(messages: [["a"]]); port.stop(); port.stop() }),
+            ("TCPClient", { let port = sketch.createTCPClient(messages: [["a"]]); port.stop(); port.stop() }),
+            ("WebSocketClient", { let port = sketch.createWebSocketClient(messages: [["a"]]); port.stop(); port.stop() }),
             ("UDPPort", { let port = sketch.createUDP(messages: [["a"]]); port.stop(); port.stop() }),
             ("OSCPort", { let port = sketch.createOSC(messages: [[OSCMessage("/a", 1)]]); port.stop(); port.stop() }),
             ("Serial", { let port = sketch.createSerial(lines: [["1"]]); port.stop(); port.stop() }),

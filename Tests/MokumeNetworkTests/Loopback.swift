@@ -173,7 +173,7 @@ nonisolated final class StreamClient: @unchecked Sendable {
 }
 
 /// 127.0.0.1 のポートへ WebSocket で繋ぐ相手 (ブラウザの代わり)。届いた text を 1 通ずつ溜める。
-nonisolated final class WebSocketClient: @unchecked Sendable {
+nonisolated final class BrowserSocket: @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態は錠の内側だけ。手続きは ``queue`` で走る。
     private let queue = DispatchQueue(label: "org.mokume.test.websocket")
     private let connection: NWConnection
