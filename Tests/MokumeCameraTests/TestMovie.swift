@@ -26,6 +26,15 @@ nonisolated enum TestMovie {
             encoderIDOut: &encoder, supportedPropertiesOut: &properties) == noErr
     }()
 
+    /// この機械に HEVC の符号化器があるか。
+    static let canWriteHEVC: Bool = {
+        var encoder: CFString?
+        var properties: CFDictionary?
+        return VTCopySupportedPropertyDictionaryForEncoder(
+            width: 64, height: 48, codecType: kCMVideoCodecType_HEVC, encoderSpecification: nil,
+            encoderIDOut: &encoder, supportedPropertiesOut: &properties) == noErr
+    }()
+
     /// 一時ディレクトリの中の、重ならない名前。
     static func temporaryURL(_ suffix: String = "mov") -> URL {
         FileManager.default.temporaryDirectory
@@ -33,24 +42,75 @@ nonisolated enum TestMovie {
     }
 
     /// `frames` 枚の動画を `fps` で書く。`index` 枚目の画素 (x, y) の BGR は `pixel(index, x, y)`。
+    ///
+    /// `keyFrameInterval` を渡すと、鍵のコマ (それだけで復号できるコマ) をその枚数ごとに置く。そのときは
+    /// 次の 2 つで、置く位置を揺らさない (どれも実測):
+    ///
+    /// - **ソフトの符号化器で書く。** ハードの符号化器は、検査が並んで枠が埋まると余計な鍵のコマを置く
+    ///   (24 本を同時に書くと `[0, 1, 31, 61]` が混ざる)。枠が無ければ黙ってソフトへ落ちもする
+    /// - **並べ替え (B フレーム) を止める。** ハードで並べ替えを許すと、30 を頼んでも H.264 で 29 枚・
+    ///   HEVC で 28 枚ごとに置く。`reordersFrames` で許せる
+    ///
+    /// 絵は穏やかに動くもの (``stripe``・128×96 以上) にする。小さな絵で大きく変わる柄は、ソフトの
+    /// 符号化器が場面の変わり目と見て鍵のコマを足す。
     static func write(
-        frames: Int, fps: Int32 = 30, width: Int = 32, height: Int = 16,
+        frames: Int, fps: Int32 = 30, width: Int = 32, height: Int = 16, codec: AVVideoCodecType = .h264,
+        keyFrameInterval: Int? = nil, reordersFrames: Bool = false,
         pixel: (Int, Int, Int) -> (blue: UInt8, green: UInt8, red: UInt8) = TestMovie.grey
+    ) async throws -> URL {
+        try await write(
+            frames: frames, fps: fps, width: width, height: height, codec: codec,
+            keyFrameInterval: keyFrameInterval, reordersFrames: reordersFrames
+        ) { buffer, index in
+            let base = CVPixelBufferGetBaseAddress(buffer)!
+            let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let (blue, green, red) = pixel(index, x, y)
+                    let at = base.advanced(by: y * rowBytes + x * 4).assumingMemoryBound(to: UInt8.self)
+                    at[0] = blue
+                    at[1] = green
+                    at[2] = red
+                    at[3] = 255
+                }
+            }
+        }
+    }
+
+    /// `frames` 枚の動画を書く。`index` 枚目の 32BGRA の器を `paint(buffer, index)` が塗る (器は
+    /// 錠を掛けて渡す)。大きな動画を画素ごとの呼び出しなしに書くための口。`keyFrameInterval` の扱いは
+    /// 上の `write(…pixel:)` と同じで、`hardware` なら位置を揺らさない 2 つを外し、ハードの符号化器に
+    /// 並べ替えも任せる (普通の動画に近い。性能を測る動画)。`bitRate` (bit/s) を渡さなければ符号化器の既定。
+    static func write(
+        frames: Int, fps: Int32 = 30, width: Int, height: Int, codec: AVVideoCodecType = .h264,
+        keyFrameInterval: Int? = nil, reordersFrames: Bool = false, hardware: Bool = false, bitRate: Int? = nil,
+        paint: (CVPixelBuffer, Int) -> Void
     ) async throws -> URL {
         let url = temporaryURL()
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let input = AVAssetWriterInput(
-            mediaType: .video,
-            outputSettings: [
-                AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: width,
-                AVVideoHeightKey: height,
-                AVVideoColorPropertiesKey: [
-                    AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                    AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                    AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-                ],
-            ])
+        var compression: [String: Any] = [:]
+        if let keyFrameInterval {
+            compression[AVVideoMaxKeyFrameIntervalKey] = keyFrameInterval
+            if !hardware { compression[AVVideoAllowFrameReorderingKey] = reordersFrames }
+        }
+        if let bitRate { compression[AVVideoAverageBitRateKey] = bitRate }
+        var settings: [String: Any] = [
+            AVVideoCodecKey: codec,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
+        ]
+        if !compression.isEmpty { settings[AVVideoCompressionPropertiesKey] = compression }
+        if keyFrameInterval != nil, !hardware {
+            settings[AVVideoEncoderSpecificationKey] = [
+                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false
+            ]
+        }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
         // **刻みを書き手へ渡す** (#2307)。`CMTime` を fps の刻みで作るだけでは、トラックも容れ物も
         // 既定の 600 で書かれ、600 を割り切らない fps (48 など) の時刻が丸まる
@@ -73,18 +133,8 @@ nonisolated enum TestMovie {
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
             let buffer = try #require(made)
             CVPixelBufferLockBaseAddress(buffer, [])
-            let base = try #require(CVPixelBufferGetBaseAddress(buffer))
-            let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
-            for y in 0..<height {
-                for x in 0..<width {
-                    let (blue, green, red) = pixel(index, x, y)
-                    let at = base.advanced(by: y * rowBytes + x * 4).assumingMemoryBound(to: UInt8.self)
-                    at[0] = blue
-                    at[1] = green
-                    at[2] = red
-                    at[3] = 255
-                }
-            }
+            try #require(CVPixelBufferGetBaseAddress(buffer) != nil)
+            paint(buffer, index)
             CVPixelBufferUnlockBaseAddress(buffer, [])
             #expect(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: fps)))
         }
@@ -200,6 +250,41 @@ nonisolated enum TestMovie {
         await writer.finishWriting()
         try #require(writer.status == .completed, "\(String(describing: writer.error))")
         return url
+    }
+
+    /// 行ごとの縞の上に、枚ごとに 1 画素ずつ右へ動く白い帯を置く (`write(…paint:)` に渡す)。青の
+    /// 階調も枚ごとに変わる。**動きが穏やかなので、符号化器が場面の変わり目と見て鍵のコマを足さない**
+    /// — 枚ごとに絵が丸ごと変わる柄 (``noise``) や、小さな絵で大きく跳ぶ帯では、ソフトの符号化器
+    /// (検査が並ぶとハードの枠が埋まって落ちてくる) が鍵のコマを足す (実測)。128×96 以上で使う。
+    static func stripe(_ buffer: CVPixelBuffer, _ index: Int) {
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        let bar = max(1, min(64, width / 8))
+        let barX = index % max(1, width - bar)
+        for y in 0..<height {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt32.self)
+            let level = UInt32(truncatingIfNeeded: (y * 2) & 0xff)
+            row.update(
+                repeating: 0xff00_0000 | level << 16 | UInt32((y >> 2) & 0xff) << 8 | UInt32((index * 2) & 0xff),
+                count: width)
+            (row + barX).update(repeating: 0xffff_ffff, count: bar)
+        }
+    }
+
+    /// 動画の鍵のコマ (完全なもの) の表示時刻を、目録から順に全部引く。**検査の前提を確かめる。**
+    static func keyFrameTimes(_ url: URL) async throws -> [Double] {
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let cursor = try #require(track.makeSampleCursor(presentationTimeStamp: .zero))
+        var times: [Double] = []
+        repeat {
+            if cursor.currentSampleSyncInfo.sampleIsFullSync.boolValue {
+                times.append(cursor.presentationTimeStamp.seconds)
+            }
+        } while cursor.stepInDecodeOrder(byCount: 1) == 1
+        return times.sorted()
     }
 
     /// 枚ごとに明るさの違う一色 (8 階調ずつ)。32 枚までは重ならない。
