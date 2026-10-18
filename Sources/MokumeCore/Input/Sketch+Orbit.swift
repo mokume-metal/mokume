@@ -6,10 +6,19 @@ import simd
 // 引きずって回し、スクロールで寄る。
 extension SketchPart {
 
-    /// 引きずって回し、スクロールで寄れるようにする。
+    /// 引きずって回し、右ドラッグで覗き込み、スクロールで寄れるようにする。
     ///
-    /// `draw()` の中で毎フレーム 1 回呼ぶ。押したまま動かすと注視点のまわりを回り、
-    /// スクロールすると寄る・引く。**指の向きへ被写体が回る** (掴んで回す向き)。
+    /// `draw()` の中で毎フレーム 1 回呼ぶ。
+    ///
+    /// | 操作 | 動き |
+    /// | --- | --- |
+    /// | 左ドラッグ (中ボタンなど、ほかのボタンも) | 注視点のまわりを回る。**指の向きへ被写体が回る** (掴んで回す向き) |
+    /// | 右ドラッグ・⌥ を押したまま左ドラッグ | 注視点を画面の面に沿ってずらす (平行移動)。**被写体が指に付いて動く** |
+    /// | スクロール | 寄る・引く |
+    ///
+    /// 平行移動の量は、注視点の奥行きで 1 画素が覆う長さで測る。注視点の奥行きにある点は、
+    /// 指にぴったり付いて動く。感度の引数は回す・寄るの効きで、平行移動には掛からない。
+    /// トラックパッドでは、⌥ を押したまま引きずると平行移動になる。
     ///
     /// ```swift
     /// func draw() {
@@ -47,6 +56,9 @@ extension SketchPart {
     ///   届くと同じ量を何度も食うことになる (2 度目からは食わない作りにしてあるが、
     ///   そのぶん残りの呼び出しでは何も起きない)。`draw()` の中で 1 回呼ぶ形にする。
     ///
+    /// - Note: **右ドラッグは平行移動である** (#2461 で回すから変わった)。手本の p5.js の
+    ///   `orbitControl()` と同じ割り当てで、回すのは左ドラッグ。
+    ///
     /// - Note: 視点と同じく**フレームを越えない**。`setup()` や止まっている間の入力の
     ///   コールバックで呼ぶと、警告して無視される (道具の状態も進めない)。
     public func orbitControl(
@@ -80,18 +92,31 @@ extension SketchPart {
         if runtime.orbitAdvancedAt != runtime.frameCount {
             runtime.orbitAdvancedAt = runtime.frameCount
             let input = runtime.input
+            // 右ボタンか、⌥ を押したままの左ボタンなら平行移動 (#2461)。ほかの押下は今までどおり回す
+            let pans =
+                input.pressedButtons.contains(.right)
+                || (input.pressedButtons.contains(.left) && Keyboard(state: input).isPressed(.option))
+            // **平行移動の量は動かす前の視点で測る。** 投影はいまのもの (`orbitControl` は書き換えない)
+            var view = canvas.currentCamera
+            (view.eye, view.center, view.up) = (orbit.eye, orbit.center, orbit.up)
+            // 平行移動の間は回さない。回す軸は 0 の引きずりとして進め、慣性の速さも捨てる
             let held = orbit.advance(
-                dragX: input.dragX, dragY: input.dragY, scroll: input.scrollY,
+                dragX: pans ? 0 : input.dragX, dragY: pans ? 0 : input.dragY, scroll: input.scrollY,
                 isDragging: input.isMouseDown, sensitivity: sensitivity)
+            let panHeld =
+                pans
+                && !orbit.pan(
+                    dragX: input.dragX, dragY: input.dragY, through: view, width: canvas.width,
+                    height: canvas.height)
             // 感度が有限なのに進めなかった軸 — 積が溢れた・届いた量が数でない・無限。
-            // 別の軸の感度が使えなくても、こちらは別に知らせる
+            // 別の軸の感度が使えなくても、こちらは別に知らせる。平行移動は感度を使わない
             let overflowed =
                 (held.turn && sensitivity.x.isFinite) || (held.tilt && sensitivity.y.isFinite)
-                || (held.zoom && sensitivity.z.isFinite)
+                || (held.zoom && sensitivity.z.isFinite) || panHeld
             if overflowed {
                 canvas.warnOnce(
                     .orbitStepHeld,
-                    "orbitControl(): a turn or zoom came out as not a number or infinite (too large a sensitivity or movement), so that axis was left as it was for the frame")
+                    "orbitControl(): a turn, pan or zoom came out as not a number or infinite (too large a sensitivity or movement), so that axis was left as it was for the frame")
             }
         } else {
             orbit.clampToLimits()
