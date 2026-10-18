@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// スケッチの語彙 (``fill(_:)``・``circle(_:_:_:)``・``mouseX``・``random(_:)`` など) を
+/// スケッチの語彙 (``fill(_:)``・``circle(_:_:_:)``・``mouseX``・``random(_:_:)`` など) を
 /// 使える型。
 ///
 /// ``Sketch`` はこれを継いでいるので、スケッチの中ではいつでも使える。自分で書いた型も

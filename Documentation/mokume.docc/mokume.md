@@ -721,8 +721,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 乱数と揺らぎ
 
 - ``SketchPart/random()``
-- ``SketchPart/random(_:)``
+- ``SketchPart/random(_:)-(ScalarConvertible)``
 - ``SketchPart/random(_:_:)``
+- ``SketchPart/randomGaussian()``
+- ``SketchPart/randomGaussian(_:_:)``
+- ``SketchPart/random(_:)-([Element])``
+- ``SketchPart/shuffle(_:)``
 - ``SketchPart/randomSeed(_:)``
 - ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
