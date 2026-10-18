@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import mokume
 
 /// 作品を、作者以外の環境で動く形に束ねる。
@@ -193,7 +194,7 @@ enum BundleCommand {
         } catch {
             throw .cannotCreate(
                 path: contents.appendingPathComponent("Info.plist").path,
-                reason: error.localizedDescription)
+                reason: Diagnostics.failureText(error))
         }
         return app
     }
@@ -315,7 +316,7 @@ enum BundleCommand {
                 fromPropertyList: entitlements, format: .xml, options: 0)
             try data.write(to: url)
         } catch {
-            throw .cannotCreate(path: url.path, reason: error.localizedDescription)
+            throw .cannotCreate(path: url.path, reason: Diagnostics.failureText(error))
         }
         return url
     }
@@ -418,7 +419,10 @@ enum BundleCommand {
         do {
             try openingNote(for: identity).write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            throw .cannotCreate(path: url.path, reason: error.localizedDescription)
+            // 置き換えて書くので、行き先がディレクトリだと下の失敗は ENOENT になる (#2839)
+            throw .cannotCreate(
+                path: url.path,
+                reason: Diagnostics.writingPosixReason(error, at: url) ?? error.localizedDescription)
         }
         return url
     }
@@ -458,7 +462,7 @@ enum BundleCommand {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
         } catch {
-            throw .cannotCreate(path: directory.path, reason: error.localizedDescription)
+            throw .cannotCreate(path: directory.path, reason: Diagnostics.failureText(error))
         }
     }
 
@@ -466,7 +470,7 @@ enum BundleCommand {
         do {
             try FileManager.default.copyItem(at: source, to: destination)
         } catch {
-            throw .cannotCreate(path: destination.path, reason: error.localizedDescription)
+            throw .cannotCreate(path: destination.path, reason: Diagnostics.failureText(error))
         }
     }
 }

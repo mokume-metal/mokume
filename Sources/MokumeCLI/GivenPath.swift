@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import mokume
 
 /// 利用者が打ったパスを、場所 (絶対パスの URL) へ解く。**基準は走らせた場所。**
@@ -105,15 +106,10 @@ nonisolated enum GivenPath {
         }
     }
 
-    /// `errno` の C の文面 (`strerror_r`)。
-    ///
-    /// **Foundation の説明は言語の設定に左右されうるが、道具が話す言葉は英語で、設定で
-    /// 切り替えない** (ADR-0038 決定 1・2)。`strerror` でなく `strerror_r` なのは、見張りの
-    /// 作り直しが別の糸から呼ぶため。
+    /// `errno` の C の文面。作り方は本体と 1 つ (``Diagnostics/posixReason(_:)``・#2839) で、
+    /// 見張りの作り直しが別の糸から呼んでもよい。
     static func errorText(_ code: Int32) -> String {
-        var text = [CChar](repeating: 0, count: 256)
-        guard strerror_r(code, &text, text.count) == 0 else { return "error \(code)" }
-        return text.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        Diagnostics.posixReason(code)
     }
 
     /// 案内に載せる形。**シェルにそのまま貼れる 1 語**にする。

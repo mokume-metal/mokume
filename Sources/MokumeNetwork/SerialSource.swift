@@ -4,6 +4,7 @@
 import Darwin
 import Foundation
 import MokumeCore
+import MokumeDiagnostics
 
 // シリアルポートを開いて読む層。termios で開き、届いたバイト列を TCP の行と同じ決まり
 // (``LineSplitter``・``TextDecoding``) で行に切って、落とさない列へ入れる。
@@ -75,8 +76,9 @@ nonisolated enum SerialDevice {
             }
         }
 
+        /// OS の事情の文面。作り方は本体と 1 つ (``Diagnostics/posixReason(_:)``・#2839)。
         private static func text(_ code: Int32) -> String {
-            String(cString: strerror(code))
+            Diagnostics.posixReason(code)
         }
     }
 

@@ -286,7 +286,7 @@ nonisolated final class MovieFile {
         guard writer.canAdd(input) else { throw .destinationUnavailable(path: path) }
         writer.add(input)
         guard writer.startWriting() else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
     }
 
@@ -309,7 +309,7 @@ nonisolated final class MovieFile {
             try? await Task.sleep(for: .milliseconds(1))
         }
         guard writer.status == .writing else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
         guard let pool = adaptor.pixelBufferPool else { throw .bufferUnavailable }
         // **器は借りて返す。** フレームごとに確保すると、長く撮ったときにだけ重くなる
@@ -321,7 +321,7 @@ nonisolated final class MovieFile {
 
         fill(buffer, with: image)
         guard adaptor.append(buffer, withPresentationTime: stamp) else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
     }
 
@@ -339,7 +339,7 @@ nonisolated final class MovieFile {
         writer.endSession(atSourceTime: Self.stamp(time + frameDuration))
         await writer.finishWriting()
         guard writer.status == .completed else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
+            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
         }
     }
 

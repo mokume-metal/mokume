@@ -132,6 +132,11 @@ public protocol Sketch: AnyObject, SketchPart {
     /// }
     /// ```
     ///
+    /// **手本 (Processing・p5.js) の引数なしの形 `func mouseDragged()` で書くと、コンパイルは
+    /// 通るが一度も呼ばれない。** Swift は、名前が同じで引数の違うメソッドを咎めない。上の形の
+    /// `func mouseDragged(deltaX: Float, deltaY: Float)` に書き直せば、ドラッグで呼ばれる。量を
+    /// 使わなくても引数は要る ([ADR-0034] 決定 5 の追補に、作品が踏んだ記録がある)。
+    ///
     /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれ、渡る量はそれぞれの 1 件ぶんに
     /// なる。**3 つ足せばフレーム合計 (``SketchPart/dragX``) と一致する** — 面から読む量とここへ
     /// 渡る量は、用途が違うだけで食い違わない ([ADR-0034] 決定 5)。
@@ -152,6 +157,11 @@ public protocol Sketch: AnyObject, SketchPart {
     ///     size = min(max(size + deltaY * 4, 20), 400)
     /// }
     /// ```
+    ///
+    /// **手本 (Processing・p5.js) の形をまねて引数なしの `func mouseWheel()` と書くと、コンパイルは
+    /// 通るが一度も呼ばれない** (``mouseDragged(deltaX:deltaY:)`` と同じ)。上の形の
+    /// `func mouseWheel(deltaX: Float, deltaY: Float)` に書き直す。回した量は手本の `event` から
+    /// 読む代わりに、引数で受け取る。
     ///
     /// **``SketchPart/scrollY`` をここで読んではいけない。** あちらはフレームの頭から足し込む
     /// 合計なので、1 フレームに 3 件届くと `a` + `(a+b)` + `(a+b+c)` を足し込む形に
