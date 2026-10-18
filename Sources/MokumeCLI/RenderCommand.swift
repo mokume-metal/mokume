@@ -53,7 +53,7 @@ enum RenderCommand {
     static func run(_ arguments: [String]) throws(CommandFailure) {
         // **ビルドの前に解く。** 引数の誤りを、数分のビルドの後で知らせない
         let options = try parse(arguments)
-        let directory = options.invocation.directory
+        let directory = try options.invocation.directory
         let package = directory.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: package.path) else {
             throw .packageNotFound(path: directory.path)
@@ -64,8 +64,26 @@ enum RenderCommand {
         let context = try RunCommand.context(in: directory, invocation: options.invocation)
         if let notice = context.place.notice { print(notice) }
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
-        try launch(executable, in: directory, request: options.request)
+        try render(executable, in: directory, request: options.request)
         print(report(options.request))
+    }
+
+    /// 走らせて、書き出し先に頼んだものが揃ったことまで確かめる。**``report(_:)`` はこの後でだけ出す。**
+    ///
+    /// 子の終了コードは「子が自分を終えた」としか言わない。頼みを読まずに窓を開いて 0 で終わる古い版の
+    /// 子 (道具と依存の版のずれ) は、何も書かずに 0 で終わる。書き出し先を事後に見て、足りなければ
+    /// 名乗って 0 以外で終わる ([#2481](https://github.com/mokume-metal/mokume/issues/2481))。
+    static func render(_ executable: URL, in directory: URL, request: RenderRequest) throws(
+        CommandFailure
+    ) {
+        // 子を起こす前の時刻。前の回が同じ行き先に残したファイルを、この回のものと取り違えない
+        let start = Date()
+        try launch(executable, in: directory, request: request)
+        if let shortfall = request.inspectOutput(since: start) {
+            throw .renderOutputShort(
+                destination: request.destination, expected: request.frameCount,
+                shortfall: shortfall)
+        }
     }
 
     /// 走らせて、書き終えるまで待つ。
@@ -76,6 +94,7 @@ enum RenderCommand {
     /// それまでの枚が入った開けるファイルが残り、道具は子が閉じ終えるのを待ってから終わる。
     ///
     /// 子が 0 以外で終わったら、揃わなかったと名乗る。理由は子が既に名乗っている。
+    /// 0 で終わった後の書き出し先の確かめは、呼び出し側 (``render(_:in:request:)``) が持つ。
     static func launch(_ executable: URL, in directory: URL, request: RenderRequest) throws(
         CommandFailure
     ) {
@@ -114,7 +133,7 @@ enum RenderCommand {
     ///   `--scratch-path` も同じ基準で解く (#2320 — `--scratch-path` だけがスケッチの場所から
     ///   解かれ、隣に並ぶ `--out` と基準が割れていた)。
     static func parse(
-        _ arguments: [String], currentDirectory: URL = GivenPath.currentDirectory
+        _ arguments: [String], currentDirectory: URL? = GivenPath.currentDirectory
     ) throws(CommandFailure) -> Options {
         let (invocation, values) = try Invocation.parse(
             arguments, adding: options, from: currentDirectory)
@@ -133,7 +152,7 @@ enum RenderCommand {
         }
         let frameRate = try parseFrameRate(rateText)
         let frameCount = try parseFrameCount(seconds: secondsText, frameRate: frameRate)
-        let destination = GivenPath.resolve(out, from: currentDirectory, isDirectory: false).path
+        let destination = try GivenPath.resolve(out, from: currentDirectory, isDirectory: false).path
         // **形は打った綴りでも見る** (#2313)。絶対パスにすると末尾の `/` と `.`・`..` が消え、
         // 最後の部品が変わる — `take#1/` (フォルダ) が `…/take#1` になり、`take#1` の `#` を
         // 番号にして連番として通ってしまう。書く API は `take#1/` を断るので、道具だけが通すと
@@ -157,6 +176,11 @@ enum RenderCommand {
             throw .usage(
                 "\(outFlags[0]) takes a movie ending in .mov, or a numbered series with a run of #"
                     + " in the file name where the number goes (out/frame-####.png): \(out)")
+        }
+        // **ファイル名の長さも、ビルドの前に見る** (#2774)。子の中で落ちると、ビルドの後に、長さが理由
+        // だと言われずに分かる。連番は番号が桁に収まらずに伸びた後の、最後の枚の名前で見る
+        if let long = RenderRequest.nameTooLong(destination: destination, frameCount: frameCount) {
+            throw .usage("\(outFlags[0]): \(RenderRequest.tooLongReason(long))")
         }
         return Options(invocation: invocation, request: request)
     }

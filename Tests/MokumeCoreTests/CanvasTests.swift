@@ -1970,8 +1970,9 @@ struct CanvasTests {
             "templateStrokeMatrix": transient, "openBatchHasThinCoverage": transient,
             "coverageStorage": resource, "thinStrokesRebuilt": count,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
-            "shapeRecordingRunStart": "一番外の組み立てが入口で控えた列の位置 (#1855)。recordingShape と対で入口と出口が戻す。閉包なので境目をまたがない",
             "frameEndAwaitingShape": "組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を出口まで待たせる印 (#1855)。一番外の出口が閉じて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
+            "shapeMarks": "形の組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす。閉包なので境目をまたがない",
+            "refusedBeginDrawsInsideShape": "形の組み立ての中で断った beginDraw() の数で、対の endDraw() が下ろす (#2834)。一番外の組み立ての出口が 0 に戻すので、境目をまたがない",
             "dropAwaitingShape": "本体のフレームが始まる所で捨てることになった組み立て中の自分のフレームを、出口まで待たせる印 (#2509)。一番外の出口が捨てて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
             "placementsFoundOutsideRegions": count,
@@ -1982,7 +1983,7 @@ struct CanvasTests {
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
             "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
-            "failEarlySubmissionForTesting": testing,
+            "failEarlySubmissionForTesting": testing, "failPlacedPictureCopyForTesting": testing,
         ]
     }
 

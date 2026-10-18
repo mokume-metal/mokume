@@ -741,6 +741,8 @@ struct DocumentLoadingTests {
         }
         #expect(named == url)
         #expect(reason.contains("404"))
+        // 状態の句は地域化されない RFC の句 (#2839)
+        #expect(reason == "the server answered 404 (Not Found)")
         #expect(failure!.description.hasPrefix("Cannot read \"\(url)\""))
         await #expect(throws: failure!) { try await Bare().requestJSONObject(url) }
         let server = CannedResponses.serve("<oops/>", status: 503)

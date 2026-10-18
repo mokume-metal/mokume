@@ -63,7 +63,8 @@ public nonisolated enum Diagnostics {
     /// **符号化・復号の失敗に `localizedDescription` を使わない** — `EncodingError` /
     /// `DecodingError` では「正しい形式でない」とだけ言い、どの値が何で拒まれたかを落とす。
     /// それらは文脈の説明と、拒まれた場所 (`values[1].value` の形) を出す。他の失敗
-    /// (ファイルの読み書きなど) は `localizedDescription` が人の読む理由を持っている。
+    /// (ファイルの読み書きなど) は、下に POSIX の事情があればその番号の C の文面
+    /// (``posixReason(_:)``)、無ければ `localizedDescription` が人の読む理由を持っている。
     package static func reason(_ error: any Error) -> String {
         let detail: String
         switch error {
@@ -75,10 +76,69 @@ public nonisolated enum Diagnostics {
             DecodingError.valueNotFound(_, let context):
             detail = described(context)
         default:
-            detail = error.localizedDescription
+            detail = failureText(error)
         }
         let line = detail.split(whereSeparator: \.isNewline).joined(separator: " ")
         return "\(kind(of: error)): \(line)"
+    }
+
+    /// POSIX の失敗の番号 (`errno`) を、人が読む短い句にする (`Is a directory`・`Permission denied`)。
+    /// 引けなければ `error <番号>`。
+    ///
+    /// **OS の事情を文にするのはここだけにする** ([#2839](https://github.com/mokume-metal/mokume/issues/2839))。
+    /// 口ごとに作り方が割れると、同じ事情が口によって別の文面になる。
+    ///
+    /// **C の文面 (`strerror_r`) で引く。** Foundation の説明 (`localizedDescription`) は言語の
+    /// 設定に左右されうるが、道具が話す言葉は英語で、設定で切り替えない ([ADR-0038] 決定 1・2)。
+    /// `strerror` ではなく `strerror_r` なのは、待たない読み込みや見張りの作り直しが別の糸から
+    /// 呼ぶため。
+    ///
+    /// [ADR-0038]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0038-language-of-the-tool.md
+    package static func posixReason(_ code: Int32) -> String {
+        var text = [CChar](repeating: 0, count: 256)
+        guard strerror_r(code, &text, text.count) == 0 else { return "error \(code)" }
+        return text.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+    }
+
+    /// 失敗そのものか、`NSUnderlyingErrorKey` を辿った先が POSIX の失敗なら、その番号。無ければ `nil`。
+    ///
+    /// Foundation のファイルの失敗は、Cocoa の失敗の下に POSIX の失敗を持つ形で届く
+    /// (`NSCocoaErrorDomain 512` の下に `NSPOSIXErrorDomain 21`)。下の下まで辿る。
+    package static func posixCode(in error: any Error) -> Int32? {
+        var current: NSError? = error as NSError
+        // 自分を指す下の失敗で回り続けないよう、辿る深さに上限を置く
+        for _ in 0..<8 {
+            guard let failure = current else { return nil }
+            // 番号が `Int32` に収まらないものは、POSIX の番号として読まない (落とさない)
+            if failure.domain == NSPOSIXErrorDomain { return Int32(exactly: failure.code) }
+            current = failure.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return nil
+    }
+
+    /// 失敗の理由の句。下に POSIX の事情があればその番号の C の文面 (``posixReason(_:)``)、無ければ
+    /// 今までどおり `localizedDescription`。``reason(_:)`` と違い、型の名乗りを前に付けない —
+    /// 口ごとの失敗の型 (`unreachable(url:reason:)` など) の `reason` に、そのまま入れる句である。
+    package static func failureText(_ error: any Error) -> String {
+        posixCode(in: error).map(posixReason) ?? error.localizedDescription
+    }
+
+    /// 書けなかった失敗の、POSIX の事情の句。POSIX の事情が無ければ `nil` (呼び手が今の文面に落とす)。
+    ///
+    /// **置き換えて書く (`.atomic`) と、行き先がディレクトリのときの下の失敗は ENOENT になる**
+    /// (#2839 の実測)。そのまま `No such file or directory` と言うと、在るものを無いと言ってしまう。
+    /// だから下の番号が ENOENT で、行き先**そのもの**がディレクトリなら EISDIR (`Is a directory`) を
+    /// 名乗る。
+    ///
+    /// - 呼ぶのは**書くのに失敗したときだけ**にする (書けた経路に判定を足さない)
+    /// - 行き先は **symlink を辿らずに** (`lstat`) 見る。ディレクトリを指す symlink への書き込みが
+    ///   別の理由 (書く権利が無い・EACCES) で失敗したのを、`Is a directory` と偽らない
+    package static func writingPosixReason(_ error: any Error, at url: URL) -> String? {
+        guard let code = posixCode(in: error) else { return nil }
+        guard code == ENOENT else { return posixReason(code) }
+        var status = stat()
+        let isDirectory = lstat(url.path, &status) == 0 && status.st_mode & S_IFMT == S_IFDIR
+        return posixReason(isDirectory ? EISDIR : code)
     }
 
     /// 失敗の型。**Foundation が返す失敗は `NSError` としか名乗らない**ので、領域と番号

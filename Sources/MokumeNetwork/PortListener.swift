@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import MokumeDiagnostics
 import Network
 
 // ポートを開く層。**UDP・TCP・WebSocket の受け口に共通の部分だけを持つ** — 開く・使用中を
@@ -166,6 +167,10 @@ nonisolated final class PortListener: @unchecked Sendable {
             return .portInUse
         case .dns(let code) where code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied):
             return .denied
+        case .posix(let code):
+            // **OS の事情は C の文面で名乗る** (``Diagnostics/posixReason(_:)``・#2839)。
+            // `localizedDescription` は言語の設定に左右されうる
+            return .failed(Diagnostics.posixReason(code.rawValue))
         default:
             return .failed(error.localizedDescription)
         }

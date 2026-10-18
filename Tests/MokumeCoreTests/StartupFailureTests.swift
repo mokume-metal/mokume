@@ -66,6 +66,7 @@ struct StartupFailureTests {
         ("argumentTableUnavailable", .argumentTableUnavailable(reason: "テーブルを作れない")),
         ("samplerUnavailable", .samplerUnavailable),
         ("notRunning", .notRunning(call: "createGraphics(_:_:)")),
+        ("unreadableRenderRequest", .unreadableRenderRequest(value: "not a request")),
     ]
 
     /// リポジトリ直下。原文を読む検査が使う。

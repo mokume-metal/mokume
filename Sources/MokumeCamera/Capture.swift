@@ -5,7 +5,7 @@ import Foundation
 import MokumeCore
 import MokumeDiagnostics
 
-/// カメラの絵を受け取る入り口。``Sketch/createCapture(_:_:device:)`` が作り、走っている
+/// カメラの絵を受け取る入り口。``Sketch/createCapture(_:_:device:mirrored:)`` が作り、走っている
 /// スケッチへ足す。
 ///
 /// 受け取った絵は ``image`` に入り、普通の ``Image`` として描ける (貼る・効果を通す・
@@ -15,7 +15,7 @@ import MokumeDiagnostics
 /// ```swift
 /// final class Mirror: Sketch {
 ///     var camera: Capture?
-///     func setup() { camera = try? createCapture(640, 480) }
+///     func setup() { camera = try? createCapture(640, 480, mirrored: true) }
 ///     func draw() {
 ///         guard let camera else { return }
 ///         image(camera.image, 0, 0)
@@ -42,6 +42,8 @@ public final class Capture: Inlet {
 
     let input: ExternalInput<DisplayImage>
     private let source: any CaptureSource
+    /// 届いた 1 枚の左右を入れ替えるか。機材の道も注入の道も、ここで当てる。
+    private let mirrored: Bool
     private weak var owner: (any Sketch)?
     private let now: () -> TimeInterval
     private let warn: (String) -> Void
@@ -54,13 +56,14 @@ public final class Capture: Inlet {
 
     init(
         image: Image, device: CaptureDevice?, name: String, source: any CaptureSource,
-        owner: (any Sketch)?,
+        mirrored: Bool = false, owner: (any Sketch)?,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
         self.image = image
         self.device = device
         self.source = source
+        self.mirrored = mirrored
         self.owner = owner
         self.now = now
         self.warn = warn
@@ -94,7 +97,7 @@ public final class Capture: Inlet {
     public func supply() {
         source.pump(into: input)
         if let picture = input.take() {
-            image.write(picture)
+            image.write(mirrored ? picture.horizontallyReflected() : picture)
             isNewFrame = true
         } else {
             isNewFrame = false

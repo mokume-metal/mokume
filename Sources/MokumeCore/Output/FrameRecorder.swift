@@ -141,6 +141,10 @@ final class FrameRecorder: Outlet {
         case patternWithoutNumber
         /// `.mov` に書ける速さ (``FrameRecorder/movieFrameRateLimit``) を越える fps で撮り始めようとした。
         case movieFrameRateTooHigh
+        /// 作れない長さのファイル名で撮り始めようとした ([#2774])。
+        ///
+        /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
+        case fileNameTooLong
         /// 撮っていないのに止めようとした。
         case notRecording
         /// 出口へ届かなかったフレームがあった。
@@ -312,7 +316,19 @@ final class FrameRecorder: Outlet {
     /// このフレームの絵を 1 枚だけ頼む。
     ///
     /// - Parameter frame: 頼まれたフレームの番号。**この番号の絵が届いたときに書く。**
+    ///
+    /// **作れない長さの名前は積まない** ([#2774])。書く段で落ちると長さが理由だと言えず、`render` ではビルドの
+    /// 後に分かる。頼んだ時点で、書き損じとして行き先ごとに名乗る (``noteImageFailure(_:)``)。
+    ///
+    /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
     func save(_ path: String, at frame: Int) {
+        if let long = Self.shotNameTooLong(path) {
+            noteImageFailure(
+                WriteFailure(
+                    destination: FrameWriter.destination(of: path),
+                    reason: "save(\"\(path)\"): \(Self.tooLongReason(long)). Nothing was saved"))
+            return
+        }
         oneShots.append((frame, path))
     }
 
@@ -333,6 +349,15 @@ final class FrameRecorder: Outlet {
     func beginRecord(_ pattern: String, at frame: Int) {
         guard !isRecording else {
             warnOnce(.alreadyRecording, "beginRecord(): already recording. Carrying on with the current one")
+            return
+        }
+        // **1 枚目の名前が作れない長さなら始めない** ([#2774])。録りの途中で桁が伸びて越える回は、枚数が
+        // 先に分からないので始める前には断れない — 断ると、そこまで撮れていた録りを失う。書く段で
+        // 書き損じとして名乗る
+        if let long = Self.nameTooLong(pattern) {
+            warnOnce(
+                .fileNameTooLong,
+                "beginRecord(\"\(pattern)\"): \(Self.tooLongReason(long)). Not starting")
             return
         }
         if Self.isMovie(pattern) {
@@ -376,6 +401,83 @@ final class FrameRecorder: Outlet {
     /// 広げた日に道具だけが古い規則で断る。
     nonisolated static func accepts(_ pattern: String) -> Bool {
         isMovie(pattern) || FrameSequence(pattern: pattern) != nil
+    }
+
+    /// 静止画 (PNG) のファイル名の長さの上限 (``FileNameLength/of(_:)`` の数え方で)。
+    ///
+    /// **ファイルシステムの上限 (``FileNameLength/limit``) より 8 短い** ([#2774] の実測・APFS・macOS 27.0)。
+    /// ImageIO の `CGImageDestinationCreateWithURL` は、名前が 248 から 255 のとき nil を返して書けない
+    /// (247 までは書けた。拡張子の有無や `-0000.png` の形によらず、`が` のような分解で 2 と数える字を
+    /// 混ぜても数え方どおり)。動画は ``FileNameLength/limit`` まで書けた。
+    ///
+    /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
+    nonisolated static let imageNameLimit = 247
+
+    /// 行き先のファイル名が、作れない長さか。作れれば `nil` ([#2774])。
+    ///
+    /// 見るのは部品ごとの長さである: 作るディレクトリの部品は ``FileNameLength/limit``、ファイル名
+    /// (最後の `/` より後ろ) は静止画 ``imageNameLimit``・動画 ``FileNameLength/limit``。NUL を含む
+    /// 部品は書けない名前として断る。長さ以外の理由 (非文字・結合文字の連続)・APFS 以外の置き場・
+    /// パス全体の長さは見ない ([#2773])。**線は「いま書けない名前」のちょうど手前**で、
+    /// 書けていた名前は 1 つも断らない。
+    ///
+    /// 連番は番号が桁に収まらなくなると桁が伸びるので、後ろの枚ほど長い。`frameCount` が分かるとき
+    /// (`mokume render`) は最後の枚 (`frameCount - 1`) の名前で見る。分からないとき (`beginRecord`) は
+    /// 0 枚目で見る — 録りの枚数が先に分からないので、途中で越える回は書く段で名乗る。
+    ///
+    /// - Parameter frameCount: 書く枚数。連番にだけ効く。
+    ///
+    /// [#2773]: https://github.com/mokume-metal/mokume/issues/2773
+    /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
+    nonisolated static func nameTooLong(_ pattern: String, frameCount: Int? = nil) -> LongFileName? {
+        if !isMovie(pattern), let sequence = FrameSequence(pattern: pattern) {
+            let last = max((frameCount ?? 1) - 1, 0)
+            return tooLong(
+                sequence.name(at: last), limit: imageNameLimit, index: frameCount == nil ? nil : last)
+        }
+        return tooLong(pattern, limit: isMovie(pattern) ? FileNameLength.limit : imageNameLimit)
+    }
+
+    /// `save()` の行き先のファイル名が、作れない長さか。**`save()` は綴りのままのファイル名で PNG を書く**
+    /// (拡張子や `#` の並びによらない) ので、静止画の上限で綴りのまま見る。
+    nonisolated static func shotNameTooLong(_ path: String) -> LongFileName? {
+        tooLong(path, limit: imageNameLimit)
+    }
+
+    /// 作る前に検める: 先に作るディレクトリの部品 (上限は ``FileNameLength/limit``)、次にファイル名
+    /// (`limit`)。**部品 1 つが越えても、ファイルシステムは同じ `File name too long` で断る**
+    /// (`createDirectory` が書く段で落ちる)。NUL を含む部品は数えられず、書けない名前として断る。
+    /// パス全体の長さは見ない (#2773)。
+    ///
+    /// - Parameter path: ファイル名の部分は、呼ぶ側が連番の番号を入れた後のもの。
+    private nonisolated static func tooLong(_ path: String, limit: Int, index: Int? = nil)
+        -> LongFileName?
+    {
+        for directory in FileNameLength.directoryComponents(of: path) {
+            let length = FileNameLength.of(directory)
+            if length == nil || length! > FileNameLength.limit {
+                return LongFileName(
+                    name: directory, length: length, limit: FileNameLength.limit, index: nil,
+                    isDirectory: true)
+            }
+        }
+        let name = FileNameLength.lastComponent(of: path)
+        let length = FileNameLength.of(name)
+        guard length == nil || length! > limit else { return nil }
+        return LongFileName(
+            name: name, length: length, limit: limit, index: index, isDirectory: false)
+    }
+
+    /// 作れない長さの名前を断るときの理由 (1 文)。
+    nonisolated static func tooLongReason(_ long: LongFileName) -> String {
+        let shown = long.name.replacingOccurrences(of: "\0", with: "\\0")
+        let kind = long.isDirectory ? "directory name" : "file name"
+        guard let length = long.length else {
+            return "the \(kind) is empty or contains a NUL character, which a name cannot be: \"\(shown)\""
+        }
+        let place = long.index.map { " of frame number \($0) in the series" } ?? ""
+        return "the \(kind)\(place) is \(length) long, and at most \(long.limit) can be written "
+            + "(counted as the file system counts it): \(shown)"
     }
 
     /// `.mov` に書ける fps の上限。**時刻の刻み (``MovieFile/timescale``) そのものである** ([#2307])。

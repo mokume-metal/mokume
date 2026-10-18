@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Synchronization
 import Testing
 import simd
 
@@ -111,5 +112,81 @@ struct ModelLoadingTests {
         #expect(requested.triangleCount == 6)
         #expect(requested.mesh.points.map(\.position) == waited.mesh.points.map(\.position))
         #expect(requested.mesh.points.map(\.normal) == waited.mesh.points.map(\.normal))
+    }
+
+    // MARK: - 待たない読み方は、整えるところまで main の外で済ませる (#2801)
+
+    /// 待つ読み方と待たない読み方を比べる検体。**形式と展開の書き方が違うものを並べる** —
+    /// OBJ の `vt`・`vn` の有無と、混ざったもの、STL、面の無いもの。
+    enum Prepared: CaseIterable, CustomTestStringConvertible {
+        case pyramid, unwrapped, mixedUnwrap, ridge, pyramidSTL, empty
+
+        var testDescription: String { "\(self)" }
+
+        var path: String {
+            switch self {
+            case .pyramid: ModelFixture.pyramid
+            case .unwrapped: ModelFixture.unwrapped
+            case .mixedUnwrap: ModelFixture.mixedUnwrap
+            case .ridge: ModelFixture.ridge
+            case .pyramidSTL: ModelFixture.pyramidSTL
+            case .empty: ModelFixture.empty
+            }
+        }
+    }
+
+    /// 待たない読み方の整えは別の仕事で走るので、**同じ計算を同じ値で回していること**を
+    /// 待つ読み方と突き合わせて見る。整える長さを面から採り損ねる (別の仕事へ渡し損ねる)
+    /// と、大きさと中心がずれる。鏡映 (`normalize: true`) の巻き方の戻しは三角形の順に出る。
+    @Test(
+        "待たない読み方も、待つ読み方と同じ形・大きさ・読み飛ばしを返す",
+        arguments: Prepared.allCases, [true, false])
+    func requestingMatchesLoading(_ prepared: Prepared, normalize: Bool) async throws {
+        let path = prepared.path
+        // 控え (同じ名前は読み直さない) に当たらないよう、同じ大きさの別の面で読む
+        let waited = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+            .loadModel(path, normalize: normalize)
+        let requested = try await CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+            .requestModel(path, normalize: normalize)
+        #expect(requested.mesh.points == waited.mesh.points)
+        #expect(requested.size == waited.size)
+        #expect(requested.center == waited.center)
+        #expect(requested.skippedLines == waited.skippedLines)
+        #expect(requested.name == waited.name)
+        // 別々に読んだものは別のもの (#1846)
+        #expect(requested != waited)
+    }
+
+    /// **main を塞いだまま、整え終わるのを待つ。** 整えが main に載っていれば、塞いでいる
+    /// 間は走れないので期限まで待って落ちる。時間の長さではなく「main 無しで終わるか」を
+    /// 見るので、機械の速さにも検体の大きさにもよらない。
+    @Test("待たない読み方は、main を塞いでいても整え終わる")
+    func requestingPreparesOffTheMainActor() async throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+        let prepared = Mutex<Model?>(nil)
+        let request = Task {
+            try await canvas.requestModel(ModelFixture.pyramid, normalize: true) { model in
+                prepared.withLock { $0 = model }
+            }
+        }
+        // 読み込みを別の仕事へ渡すところまで進める (main の仕事は順に回る)
+        await Task.yield()
+        let settled = pollUntilSettled(within: 30) { prepared.withLock { $0 != nil } }
+        #expect(settled, "main を塞いでいる間に整え終わらなかった — 整えが main に載っている")
+        let model = try await request.value
+        #expect(prepared.withLock { $0 } == model)
+    }
+
+    /// 控えに当たったら、読み込みも整えも起こさない (いまの約束を保つ)。
+    @Test("待たない読み方は、控えに当たれば整え直さない")
+    func requestingFromTheCacheDoesNotPrepareAgain() async throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+        let first = try await canvas.requestModel(ModelFixture.ridge)
+        let preparedAgain = Mutex(false)
+        let second = try await canvas.requestModel(ModelFixture.ridge, normalize: true) { _ in
+            preparedAgain.withLock { $0 = true }
+        }
+        #expect(second == first)
+        #expect(!preparedAgain.withLock { $0 })
     }
 }

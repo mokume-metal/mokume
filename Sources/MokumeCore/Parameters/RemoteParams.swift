@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import Observation
 
 /// 別のプロセスが宣言したつまみを、面越しに読み書きする。
@@ -30,10 +31,47 @@ import Observation
 @MainActor
 final class RemoteParams {
     /// 面の応答のうち、つまみを組むのに要るところ。
+    ///
+    /// **宣言は 1 件ずつ緩く読む** (``Reading``)。配列ごと厳しく読むと、1 件が読めないだけで応答
+    /// 全体が `WatchedFile` に捨てられ、つまみが 1 つも並ばない — 子が新しい版のライブラリで
+    /// 知らない `type` を名乗ったときに起きる ([#2856](https://github.com/mokume-metal/mokume/issues/2856))。
+    /// 外枠 (`params` が配列でない・JSON でない) が読めない応答は、いままでどおり全体を断る。
+    ///
+    /// **外枠も、使わないものと型の外れた付随を理由に捨てない。** `revision` は取り込みに使わないので
+    /// 読まない (型がずれても応答ごと捨てられていた)。`id` は自分の要求の echo かを見るのに使うが、
+    /// 文字列でなければ「何も応えていない」と同じに読む — 自分の要求の識別子は文字列なので、
+    /// 文字列でない値が自分の echo であることはない。
     private struct Report: Decodable {
-        let revision: Int
         let id: String?
-        let params: [ParamDeclaration]
+        let params: [Reading]
+
+        private enum CodingKeys: String, CodingKey { case id, params }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try? container.decode(String.self, forKey: .id)
+            params = try container.decode([Reading].self, forKey: .params)
+        }
+    }
+
+    /// 宣言 1 件の読み。保存の復元が 1 件ずつ読むのと同じ向き (``ParamStore/SavedReading``・#2806)。
+    private enum Reading: Decodable {
+        case declaration(ParamDeclaration)
+        /// 読めなかった 1 件。`name` は名前だけでも読めたとき、`reason` は読めなかった理由。
+        case unreadable(name: String?, reason: String)
+
+        private enum NameKey: String, CodingKey { case name }
+
+        init(from decoder: any Decoder) throws {
+            do {
+                self = .declaration(try ParamDeclaration(from: decoder))
+            } catch {
+                // 要素がオブジェクトでない・名前が文字列でないときは、名指しできない
+                let name = try? decoder.container(keyedBy: NameKey.self)
+                    .decode(String.self, forKey: .name)
+                self = .unreadable(name: name, reason: Diagnostics.reason(error))
+            }
+        }
     }
 
     let directory: URL
@@ -56,9 +94,18 @@ final class RemoteParams {
     private var idsBeforeRequests: Set<String?> = []
     /// 最後に取り込んだ応答の識別子。置く直前に応答を読み直せないときに、その代わりに使う。
     private var lastSeenId: String?
+    /// いま飛ばしている宣言の鍵 (名前が読めなければ配列の位置、と読めなかった理由)。**応答は値が
+    /// 動くたびに書き直され、飛ばした宣言は読み直しのたびに同じ姿で居続ける**ので、前の応答でも
+    /// 飛ばしていた宣言は繰り返さない。読めるようになってから再び壊れた・別の理由で読めなくなった
+    /// 宣言は、新しく飛ばしたものとして言い直す。
+    private var skipped: Set<String> = []
 
-    init(directory: URL) {
+    /// 読めない宣言を飛ばしたことの名乗り。**検査から差し替える** — 既定は標準エラー。
+    private let warn: (String) -> Void
+
+    init(directory: URL, warn: @escaping (String) -> Void = Diagnostics.warn) {
         self.directory = directory
+        self.warn = warn
         self.report = WatchedFile(url: WorkDirectory.reportURL(under: directory))
     }
 
@@ -81,21 +128,49 @@ final class RemoteParams {
             idsBeforeRequests = []
         }
 
-        let incoming = report.params.map(Self.face(of:))
+        let declarations = readable(report.params)
+        let incoming = declarations.map(Self.face(of:))
         guard incoming != signature else {
             if settled {
-                for (box, declaration) in zip(boxes, report.params) { box.adopt(declaration.value) }
+                for (box, declaration) in zip(boxes, declarations) { box.adopt(declaration.value) }
             }
             return false
         }
         // 顔ぶれが変わった = 別の宣言を持つスケッチが走っている。**組み直す**
         signature = incoming
-        boxes = report.params.map { declaration in
+        boxes = declarations.map { declaration in
             RemoteParam(declaration: declaration) { [weak self] name, value in
                 self?.send(name: name, value: value)
             }
         }
         return true
+    }
+
+    /// 読めた宣言だけを返す。読めずに飛ばした宣言は、**初めて見たときに 1 度だけ**名乗る。
+    ///
+    /// 名乗らずに飛ばすと、つまみが足りない理由が追えない ([ADR-0030] 決定 6 の「捨てたことを
+    /// 診断に出す」と同じ向き)。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    private func readable(_ readings: [Reading]) -> [ParamDeclaration] {
+        var declarations: [ParamDeclaration] = []
+        var skippedNow: Set<String> = []
+        defer { skipped = skippedNow }
+        for (index, reading) in readings.enumerated() {
+            switch reading {
+            case .declaration(let declaration):
+                declarations.append(declaration)
+            case .unreadable(let name, let reason):
+                let key = "\(name ?? "#\(index)")|\(reason)"
+                skippedNow.insert(key)
+                guard !skipped.contains(key) else { continue }
+                let subject = name.map { "The knob \"\($0)\"" } ?? "A knob declaration (entry \(index))"
+                warn(
+                    "\(subject) in the sketch's report could not be read, so it is left out "
+                        + "(the other knobs are still shown): \(reason) (said once for this knob)")
+            }
+        }
+        return declarations
     }
 
     /// この応答で、子の値を採ってよいか。

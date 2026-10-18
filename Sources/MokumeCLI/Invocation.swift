@@ -34,11 +34,21 @@ nonisolated struct Invocation: Equatable {
     var scratchPath: String?
     /// 相対パスを解く基準。**走らせた場所である** — 場所も置き場も同じ基準から解く
     /// ([#2323](https://github.com/mokume-metal/mokume/issues/2323))。検査から渡せる形にしてある。
-    var currentDirectory: URL = GivenPath.currentDirectory
+    ///
+    /// **読めない回 (作業ディレクトリが消えた) は `nil`。** 絶対パスで渡された場所と置き場だけが
+    /// 通り、相対のもの (場所の省略も含む) は ``directory``・``scratchDirectory`` が断る (#2497)。
+    var currentDirectory: URL? = GivenPath.currentDirectory
 
     /// スケッチの場所。**走らせた場所から解いた絶対パス**で、子の作業ディレクトリにも
     /// このまま渡る — 相対の `URL` のまま渡すと先頭の `..` が落ちる (``GivenPath``)。
-    var directory: URL { GivenPath.resolve(place ?? ".", from: currentDirectory) }
+    ///
+    /// 走らせた場所が読めず、場所が相対 (または省略) なら
+    /// ``CommandFailure/currentDirectoryUnreadable(given:)`` で止まる。
+    var directory: URL {
+        get throws(CommandFailure) {
+            try GivenPath.resolve(place ?? ".", from: currentDirectory)
+        }
+    }
 
     /// 指定されたビルドの置き場。渡されなければ `nil`。
     ///
@@ -46,7 +56,10 @@ nonisolated struct Invocation: Equatable {
     /// 中で走らせれば `--scratch-path .build` はいままでどおりスケッチの下を指し、外から
     /// 場所を渡したときだけ、打った場所の下を指す — `render --out` と同じ基準になる。
     var scratchDirectory: URL? {
-        scratchPath.map { GivenPath.resolve($0, from: currentDirectory) }
+        get throws(CommandFailure) {
+            guard let scratchPath else { return nil }
+            return try GivenPath.resolve(scratchPath, from: currentDirectory)
+        }
     }
 
     /// 名乗るときの構成の名前。
@@ -57,8 +70,8 @@ nonisolated struct Invocation: Equatable {
     /// - Parameter workDirectory: 環境変数が与えた基準 (`nil` なら与えられていない)。
     ///   **検査から渡せる形にしてある** — 既定の ``WorkDirectory/given`` はプロセス起動時に
     ///   一度だけ評価されるので、環境変数を与えた状況を検査から作れない。
-    func facetBase(workDirectory: URL? = WorkDirectory.given) -> URL {
-        Self.facetBase(under: directory, workDirectory: workDirectory)
+    func facetBase(workDirectory: URL? = WorkDirectory.given) throws(CommandFailure) -> URL {
+        Self.facetBase(under: try directory, workDirectory: workDirectory)
     }
 
     /// 区画の基準を決める、**ただ 1 つの計算**。
@@ -123,9 +136,10 @@ nonisolated struct Invocation: Equatable {
     /// (`Task.detached`) へ渡すのに要るのは格納された値のほうで、解く手続きではない。
     @MainActor
     static func parse(
-        _ arguments: [String], from currentDirectory: URL = GivenPath.currentDirectory
+        _ arguments: [String], from currentDirectory: URL? = GivenPath.currentDirectory,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws(CommandFailure) -> Invocation {
-        try parse(arguments, adding: [], from: currentDirectory).invocation
+        try parse(arguments, adding: [], from: currentDirectory, environment: environment).invocation
     }
 
     /// 口が自分の選択肢を足して解く。**走らせる部分 (場所・構成・置き場) の解き方は共有する。**
@@ -142,7 +156,8 @@ nonisolated struct Invocation: Equatable {
     @MainActor
     static func parse(
         _ arguments: [String], adding extra: [Arguments.Option],
-        from currentDirectory: URL = GivenPath.currentDirectory
+        from currentDirectory: URL? = GivenPath.currentDirectory,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws(CommandFailure) -> (invocation: Invocation, values: [String: String]) {
         let parsed = try Arguments.parse(
             arguments, options: options + extra, positionalIsPlace: true,
@@ -158,6 +173,14 @@ nonisolated struct Invocation: Equatable {
         let invocation = Invocation(
             place: parsed.positional, configuration: configuration,
             scratchPath: parsed.values[scratchPathFlags[0]], currentDirectory: currentDirectory)
+        // **受け取った時点で解く** (#2323)。走らせた場所が読めない回に相対の場所・置き場を
+        // 受けたら、ビルドの道具を起こす前にここで止まる — 後で使う側が解くと、
+        // `dump-package` の後で初めて知らせることになる (#2497)
+        _ = try invocation.directory
+        _ = try invocation.scratchDirectory
+        // 区画の基準 (`MOKUME_WORK_DIR`) も同じ約束を負う。相対の綴りが読めない作業ディレクトリに
+        // 当たる回は、引数の場所と同じ失敗で止める (#2497)
+        _ = try GivenPath.workDirectory(environment: environment, from: currentDirectory)
         return (invocation, parsed.values)
     }
 }

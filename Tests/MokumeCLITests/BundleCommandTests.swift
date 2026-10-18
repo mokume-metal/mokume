@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -262,7 +263,7 @@ struct BundleCommandTests {
             name: String(repeating: "a", count: AppIdentity.maximumNameLength),
             identifier: "org.example.bund", version: "0.1.0")
         #expect(
-            AppIdentity.fileNameLength(of: BundleCommand.noteFileName(for: identity))
+            FileNameLength.of(BundleCommand.noteFileName(for: identity))
                 == AppIdentity.fileNameLimit)
     }
 
@@ -942,5 +943,38 @@ struct BundleCommandTests {
         #expect(try BundleCommand.parse([]).out == nil)
         #expect(throws: (any Error).self) { try BundleCommand.parse(["--out"]) }
         #expect(throws: (any Error).self) { try BundleCommand.parse(["a", "b"]) }
+    }
+
+    /// 書けなかった事情は、言語の設定に左右されない OS の文面で名乗る (#2839)。置き換えて書く紙は、
+    /// 行き先がディレクトリだと下の失敗が ENOENT になるが、`Is a directory` と名乗る。
+    @Test("書けなかった事情は OS の文面で名乗り、ディレクトリへ置き換えて書く失敗は Is a directory")
+    func unwritableReasonsAreTheOSWords() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("Demo.app")
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(BundleCommand.noteFileName(for: identity)),
+            withIntermediateDirectories: false)
+        do {
+            _ = try BundleCommand.writeOpeningNote(for: identity, beside: app)
+            Issue.record("ディレクトリへ紙を書けてしまった")
+        } catch {
+            guard case .cannotCreate(_, let reason) = error else {
+                Issue.record("cannotCreate で投げていない: \(error)")
+                return
+            }
+            #expect(reason == String(cString: strerror(EISDIR)))
+        }
+        let missing = root.appendingPathComponent("no-such-folder")
+        do {
+            _ = try BundleCommand.writeEntitlements(["com.apple.security.app-sandbox": false], in: missing)
+            Issue.record("無い置き場へ書けてしまった")
+        } catch {
+            guard case .cannotCreate(_, let reason) = error else {
+                Issue.record("cannotCreate で投げていない: \(error)")
+                return
+            }
+            #expect(reason == String(cString: strerror(ENOENT)))
+        }
     }
 }

@@ -102,6 +102,10 @@ enum ModelFixture {
     /// 書き出した「一直線に並ぶ稜を持つ形」の場所。
     static let ridge: String = written(ridgeText, as: "ridge.obj")
 
+    /// 面が 1 つも無い OBJ。読めるが見えないモデルになる (``Model/isEmpty``)。点の行は読むので、
+    /// 読み飛ばす行は無い。
+    static let empty: String = written("# 面の無いモデル\nv 0 0 0\nv 1 0 0\n", as: "empty.obj")
+
     /// ``pyramidText`` と**同じ三角形を、同じ順・同じ巻き方で**並べた ASCII の STL。底の四角形は、
     /// OBJ の読み手と同じく扇状に割った 2 枚 (4 3 2・4 2 1) で書いてある。
     ///

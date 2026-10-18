@@ -75,15 +75,50 @@ struct RenderRequestTests {
         #expect(RenderRequest(environmentValue: value) == nil)
     }
 
-    /// **合図が無ければ、いつもの窓の経路。** 読めない合図も窓の経路へ倒す (名乗ってから)。
-    @Test("起動の瞬間の読みは、合図が無いか読めなければ頼みを持たない")
-    func theStartupReadFallsBackToTheWindow() {
+    /// **合図が無ければ、いつもの窓の経路。** 合図が在って読めなければ、窓へ倒さず断る ([#2481])。
+    /// 窓を開いて 0 で終わると、`mokume render` は書けたと読んで、何も書かれていないのに名乗っていた。
+    ///
+    /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
+    @Test("起動の瞬間の読みは、合図が無ければ頼みを持たず、読めない合図は断る")
+    func theStartupReadRefusesAnUnreadableSignal() throws {
         let key = StartupReads.render.key
-        #expect(RenderRequest.startup(environment: [:]) == nil)
-        #expect(RenderRequest.startup(environment: [key: "not a request"]) == nil)
+        #expect(try RenderRequest.startup(environment: [:]) == nil)
         #expect(
-            RenderRequest.startup(environment: [key: "24:48:/tmp/a.mov"])
+            try RenderRequest.startup(environment: [key: "24:48:/tmp/a.mov"])
                 == RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/a.mov"))
+        // 窓へ倒す (`nil`) のでなく、読めなかった値を名乗って断る
+        for value in ["not a request", "", "30:120", "0:10:/tmp/a.mov", "24:48:/tmp/a.png"] {
+            #expect(
+                throws: RenderFailure.unreadableRenderRequest(value: value),
+                "読めない値 \(value.debugDescription) を窓へ倒している"
+            ) {
+                try RenderRequest.startup(environment: [key: value])
+            }
+        }
+    }
+
+    /// 書き出せない組 (fps が `.mov` の上限を越える) も、形は読めても断る。
+    @Test("書き出せない組も、窓へ倒さず断る")
+    func anUnwritableRequestIsRefusedToo() {
+        let key = StartupReads.render.key
+        let value = "\(RenderRequest.movieFrameRateLimit + 1):10:/tmp/a.mov"
+        #expect(throws: RenderFailure.unreadableRenderRequest(value: value)) {
+            try RenderRequest.startup(environment: [key: value])
+        }
+    }
+
+    /// 起動の行が出す文面に、読めなかった値と、直し方が載る。
+    @Test("断った起動の文面は、読めなかった値と環境変数の名前を名乗る")
+    func theRefusalNamesTheValueAndTheVariable() {
+        let value = "not a request"
+        let text = startupFailureText(.unreadableRenderRequest(value: value))
+        #expect(text.contains(value))
+        #expect(text.contains(StartupReads.render.key))
+        #expect(text.contains("<fps>:<frames>:<where to write>"))
+        // 版のずれが原因のとき、打つ手になる案内 (doctor) を出す。作り直しは勧めない
+        #expect(text.contains("mokume doctor"))
+        #expect(!text.contains("build the sketch again"))
+        #expect(text.hasSuffix("\n"))
     }
 
     /// 道具が決めて子へ渡すもの。一覧に載っていれば `doctor` と窓口の案内にも出る。

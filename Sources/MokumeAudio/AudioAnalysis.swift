@@ -89,7 +89,7 @@ nonisolated enum AudioAnalysis {
     /// 標本列から、時刻 `time` (秒) で終わる窓を切り出す。
     ///
     /// - 列の始まりより前は 0 (鳴る前の無音)
-    /// - 列の終わりより後は、始まりへ戻って続ける (``Sketch/createCapture(frames:)`` と同じ)
+    /// - 列の終わりより後は、始まりへ戻って続ける (``Sketch/createCapture(frames:mirrored:)`` と同じ)
     static func window(of samples: [Float], sampleRate: Float, endingAt time: Double) -> [Float] {
         guard !samples.isEmpty, sampleRate > 0 else {
             return Array(repeating: 0, count: windowSize)

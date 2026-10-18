@@ -414,16 +414,12 @@ struct MidFrameCutTests {
                     // 画面の外の小さな平面 (組み立ての中の描き切りが描き切る溜めたもの)
                     canvas.rect(-10, -10, 1, 1)
                     if drawsOutAShape {
-                        // 安全網に届く経路は、置いた側の写しが上限に達した後の描き換え (#1855 の案 E の
-                        // 逃げ道)。画面の外へ置いて描き換えるのを上限の回数だけ繰り返し、写しを使い切る
-                        for _ in 0..<Canvas.placedPictureCopyLimit {
-                            canvas.image(rig.layer, -20, -20)
-                            rig.cut(.placedLayer)
-                        }
-                        canvas.image(rig.layer, -20, -20)
+                        // 安全網に届く経路は、製品にはもう無い (置いた側の写しが上限に達した後の描き換えも、
+                        // 組み立ての区間を残して組み立ての前の列だけを描き切る・#2850)。mokume の不具合に備えた
+                        // 網なので、組み立ての途中で溜め場ごと描き切って (かつての逃げ道と同じ)、その不具合を模す
                         _ = canvas.createShape {
                             canvas.rect(-10, -10, 1, 1)
-                            rig.cut(.placedLayer)
+                            try? canvas.flush(applyingEffects: false)
                         }
                         #expect(canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いていない")
                     }
