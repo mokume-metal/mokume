@@ -80,4 +80,48 @@ struct SVGEvenOddSelfCrossingTests {
         #expect(result.arm > 0.5)
         #expect(result.center < 0.1, "中央が塗られている: \(result)")
     }
+
+    @Test("<style> のクラスで指定した evenodd も、自分と交わる周に届く (#2880)")
+    func classFillRuleReachesTheStar() throws {
+        let text = """
+            <svg xmlns='http://www.w3.org/2000/svg' width='240' height='160'>\
+            <style>.hollow { fill: white; fill-rule: evenodd; }</style>\
+            <path class='hollow' d='M120 15 L160 140 L55 65 L185 65 L80 140 Z'/></svg>
+            """
+        let result = try probe(text)
+        #expect(result.arm > 0.5, "先端が塗られていない: \(result)")
+        #expect(result.center < 0.1, "中央が塗られている: \(result)")
+    }
+
+    /// 2 本の subpath が交わる形 (重なる 2 つの長方形・同じ向き。どちらの始点も相手の外にあるので、向きを揃える `alternatingWinding` は何も変えない)。重なった所は回り数 2 で、
+    /// `evenodd` では抜け、`nonzero` では塗られる。複数の subpath の道 (`beginContour`) でも同じ。
+    @Test("交わる 2 本の subpath は、evenodd で重なりが抜け、nonzero で塗られる (#2880)")
+    func crossingSubpathsFollowTheRule() throws {
+        func text(_ rule: String) -> String {
+            """
+            <svg xmlns='http://www.w3.org/2000/svg' width='240' height='160'>\
+            <path fill='white' fill-rule='\(rule)' \
+            d='M20 20 H100 V80 H20 Z M140 50 V110 H60 V50 Z'/></svg>
+            """
+        }
+        func sample(_ rule: String) throws -> (first: Double, overlap: Double, second: Double) {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-svg-crossing-\(UUID().uuidString).svg")
+            try text(rule).write(to: url, atomically: true, encoding: .utf8)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let sketch = Loaded()
+            sketch.path = url.path
+            let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+            try runtime.advance()
+            _ = try #require(sketch.mark, "SVG を読めていない")
+            let pixels = try runtime.target.readPixels()
+            func red(_ x: Int, _ y: Int) -> Double { Double(pixels.components[(y * pixels.width + x) * 4]) }
+            return (red(30, 30), red(80, 65), red(120, 100))
+        }
+        let evenOdd = try sample("evenodd")
+        #expect(evenOdd.first > 0.5 && evenOdd.second > 0.5, "重ならない所が塗られていない: \(evenOdd)")
+        #expect(evenOdd.overlap < 0.1, "evenodd で重なりが塗られている: \(evenOdd)")
+        let nonzero = try sample("nonzero")
+        #expect(nonzero.first > 0.5 && nonzero.second > 0.5 && nonzero.overlap > 0.5, "\(nonzero)")
+    }
 }

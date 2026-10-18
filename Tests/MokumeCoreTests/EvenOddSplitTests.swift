@@ -154,7 +154,13 @@ struct EvenOddSplitTests {
         #expect(evenOdd.wrong == 0, "食い違う標本 \(evenOdd.wrong)")
         let nonzero = Self.mismatches(rings, evenOdd: false)
         #expect(nonzero.wrong == 0, "nonzero: 食い違う標本 \(nonzero.wrong)")
-        #expect(evenOdd.painted < nonzero.painted || reversed, "\(evenOdd.painted) / \(nonzero.painted)")
+        if reversed {
+            // 向きが逆なら重なりの回り数は 0 で、どちらの規則でも抜ける。塗る標本は同じ
+            #expect(evenOdd.painted == nonzero.painted, "\(evenOdd.painted) / \(nonzero.painted)")
+        } else {
+            // 同じ向きなら重なりは回り数 2 で、nonzero は塗り、evenodd は抜ける
+            #expect(evenOdd.painted < nonzero.painted, "\(evenOdd.painted) / \(nonzero.painted)")
+        }
     }
 
     /// 同じ周を 2 度重ねると、どの所も回り数が偶数で、何も塗られない。
