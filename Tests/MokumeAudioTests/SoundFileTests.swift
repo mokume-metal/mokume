@@ -94,7 +94,7 @@ struct SoundFileTests {
                 guard let sound else { return }
                 heard.append(
                     Heard(
-                        isPlaying: sound.isPlaying, position: sound.position, level: sound.level,
+                        isPlaying: sound.isPlaying, position: sound.samplePosition, level: sound.level,
                         rms: sound.rms, spectrum: sound.spectrum))
                 act(sound, sketch.frameCount)
             },
@@ -191,7 +191,7 @@ struct SoundFileTests {
             },
             draw: { sketch in
                 times.append(sketch.time)
-                positions.append(sound?.position ?? -1)
+                positions.append(sound?.samplePosition ?? -1)
             })
         #expect(times == [0, 0, 0, 0])
         #expect(positions == [0, 800, 1600, 2400])
@@ -324,6 +324,181 @@ struct SoundFileTests {
         runtime.closePlugins()
         #expect(sound?.isPlaying == false)
         #expect(sound?.level == 0)
+    }
+
+    // MARK: - 位置・長さ・飛ぶ (#2464)
+
+    /// 10 秒・48 kHz の音 (拍で揺れる和音を繰り返す)。
+    private static let tenSeconds: [Float] = (0..<480_000).map { chord[$0 % chord.count] }
+
+    /// 標本の位置を秒にしたもの (`SoundFile.position` と同じ割り方)。
+    private static func seconds(_ sample: Int) -> Float { Float(Double(sample) / 48_000) }
+
+    /// 1 フレームで聞こえたもの (秒の位置と、`draw()` の中で操作した直後の位置)。
+    private struct Moment: Equatable {
+        var isPlaying: Bool
+        var position: Float
+        var level: Float
+        var spectrum: [Float]
+        var afterAct: Float
+    }
+
+    private func moments(
+        frames: Int, flow: SoundFlow? = nil, url: URL,
+        start: @escaping (SoundFile) -> Void = { $0.play() },
+        act: @escaping (SoundFile, Int) -> Void,
+        between: (Int) throws -> Void = { _ in }
+    ) throws -> [Moment] {
+        var sound: SoundFile?
+        var seen: [Moment] = []
+        let runtime = try run(
+            frames: frames,
+            setup: { sketch in
+                let made = try flow.map { try sketch.loadSound(url.path, flow: $0) } ?? sketch.loadSound(url.path)
+                start(made)
+                sound = made
+            },
+            draw: { sketch in
+                guard let sound else { return }
+                let before = Moment(
+                    isPlaying: sound.isPlaying, position: sound.position, level: sound.level,
+                    spectrum: sound.spectrum, afterAct: 0)
+                act(sound, sketch.frameCount)
+                seen.append(Moment(
+                    isPlaying: before.isPlaying, position: before.position, level: before.level,
+                    spectrum: before.spectrum, afterAct: sound.position))
+            },
+            between: between)
+        runtime.closePlugins()
+        return seen
+    }
+
+    @Test("10 秒の音を 60 fps で鳴らすと、121 フレーム目の position は 2.0 秒で、duration は 10.0 秒")
+    func positionAndDurationAreSeconds() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var duration: Float = 0
+        let seen = try moments(frames: 121, url: url, act: { sound, _ in duration = sound.duration })
+        #expect(seen.count == 121)
+        #expect(seen.first?.position == 0)
+        #expect(seen[60].position == 1.0)
+        #expect(seen.last?.position == 2.0)
+        #expect(duration == 10.0)
+    }
+
+    @Test("鳴っている間の jump(5) は、呼んだ直後から 5.0 を返し、次のフレームでちょうど 5.0 から鳴って、解析は 5.0 秒で終わる窓になる")
+    func jumpWhilePlayingLandsOnTheNextFrame() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let act: (SoundFile, Int) -> Void = { sound, frame in if frame == 3 { sound.jump(5) } }
+        let seen = try moments(frames: 5, url: url, act: act)
+
+        #expect(seen.map(\.position) == [0, Self.seconds(800), Self.seconds(1600), 5, Self.seconds(240_800)])
+        // 呼んだ直後 (同じフレームの続き) から飛び先を見せる
+        #expect(seen[2].afterAct == 5)
+        #expect(seen.allSatisfy { $0.isPlaying })
+        let landing = AudioAnalysis.analyze(
+            AudioAnalysis.window(of: Self.tenSeconds, sampleRate: 48_000, endingAt: 5.0))
+        #expect(seen[3].level == landing.level)
+        #expect(seen[3].spectrum == landing.spectrum)
+        #expect(seen[3].level > 0)
+
+        // 実際に鳴らす経路でも同じ値になり、飛んだフレームから 5 秒の位置の音が鳴る
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        var heardSound: [[Float]] = []
+        let played = try moments(
+            frames: 5, flow: flow, url: url, act: act,
+            between: { _ in heardSound.append(try render(flow, Self.perFrame)) })
+        #expect(played == seen)
+        let landed = heardSound[3]
+        let worst = zip(landed, Self.tenSeconds[240_000..<240_800]).map { abs($0 - $1) }.max() ?? 1
+        #expect(worst < 1e-6, "飛んだフレームに鳴った音が 5 秒の位置の音でない")
+    }
+
+    @Test("止めている間の jump(5) は位置だけを動かして鳴らさず、次の play() がそこから鳴らす")
+    func jumpWhilePausedOnlyMoves() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let seen = try moments(frames: 5, url: url) { sound, frame in
+            switch frame {
+            case 2: sound.pause()
+            case 3: sound.jump(5)
+            case 4: sound.play()
+            default: break
+            }
+        }
+        #expect(seen.map(\.isPlaying) == [true, true, false, false, true])
+        #expect(seen[2].afterAct == 5)
+        #expect(seen[3].position == 5)
+        #expect(seen[3].level == 0, "止めている間は鳴らない")
+        // play() の区切りは呼んだフレームから数える (止めた位置から鳴らすときと同じ)
+        #expect(seen[4].position == Self.seconds(240_800))
+    }
+
+    @Test("頭へ戻した後と鳴り終えた後の jump → play() は、飛び先から鳴らす")
+    func jumpAfterStopOrEndThenPlay() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let stopped = try moments(frames: 3, url: url) { sound, frame in
+            if frame == 2 {
+                sound.stop()
+                sound.jump(5)
+                sound.play()
+            }
+        }
+        #expect(stopped[1].afterAct == 5)
+        #expect(stopped[2].position == Self.seconds(240_800))
+
+        // 2000 標本の音は 4 フレーム目で鳴り終わって頭へ戻る
+        let short = sine(band: 40, amplitude: 0.5, count: 2000)
+        let shortURL = try writeWAV(short, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: shortURL) }
+        let ended = try moments(frames: 6, url: shortURL) { sound, frame in
+            if frame == 5 {
+                sound.jump(0.015625)  // 750 標本
+                sound.play()
+            }
+        }
+        #expect(ended.map(\.isPlaying) == [true, true, true, false, false, true])
+        #expect(ended[4].position == 0)
+        #expect(ended[4].afterAct == Self.seconds(750))
+        #expect(ended[5].position == Self.seconds(1550))
+    }
+
+    @Test("範囲の外は知らせずに端へ寄せ、数でない値は位置を変えずに 1 度だけ知らせる")
+    func jumpClampsAndIgnoresNonNumbers() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var notices: [String] = []
+        var reported: [Float] = []
+        let runtime = try run(
+            frames: 2,
+            setup: { sketch in
+                let loaded = try AudioFile.load(url, path: "ten.wav")
+                let sound = SoundFile(
+                    name: "ten.wav", buffer: loaded, owner: sketch, flow: nil,
+                    warn: { notices.append($0) })
+                sketch.attach(sound)
+                sound.jump(-1)
+                reported.append(sound.position)
+                sound.jump(11)
+                reported.append(sound.position)
+                #expect(notices.isEmpty, "範囲の外は知らせない: \(notices)")
+                sound.jump(.nan)
+                sound.jump(.infinity)
+                sound.jump(-.infinity)
+                reported.append(sound.position)
+                // 鳴っている間に頼んだ範囲の外も、呼んだ直後から端を見せる
+                sound.play()
+                sound.jump(-3)
+                reported.append(sound.position)
+                sound.jump(12)
+                reported.append(sound.position)
+            })
+        runtime.closePlugins()
+        #expect(reported == [0, 10, 10, 0, 10])
+        #expect(notices.count == 1, "\(notices)")
+        #expect(notices.first?.contains("not a number") == true)
     }
 
     // MARK: - 作れないとき
