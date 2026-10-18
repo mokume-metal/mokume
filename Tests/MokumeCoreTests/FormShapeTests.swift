@@ -2118,8 +2118,15 @@ struct FormShapeTests {
         #expect(form(1.9, 1.9, weight: 1, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 1.9 の円")
         #expect(!form(2, 2, weight: 1, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 2 の円")
         #expect(!form(700, 700, weight: 7, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 700 の円")
-        // 扇・輪郭の無い形は枝を持たないので含まない
-        #expect(!form(0.6, 20, weight: 1, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "扇")
+        // 扇 (#2747): 内接円の半径の上限から太さの半分を引いた半径で測る。この form の扇は掃引 1 の円弧
+        // (内接円の半径の上限は 短半径 · sin(0.5) / (1 + sin(0.5)))。潰れた扇・細い穴の扇は含み、
+        // 太い穴の扇は含まない
+        #expect(form(0.6, 20, weight: 1, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "潰れた扇 (扇 0.6×20・太さ 1)")
+        #expect(form(40, 40, weight: 16, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "細い穴の扇 (穴の半径 0.23)")
+        #expect(!form(40, 40, weight: 2, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "穴の太い扇")
+        #expect(!form(200, 200, weight: 7, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 200 の扇")
+        // 輪郭の無い形は枝を持たないので含まない
+        #expect(!form(0.6, 20, weight: 1, kind: .arc, strokes: false).mayHaveThinHole(unitsPerDrawnPixel: one), "輪郭の無い扇")
         #expect(!form(0.6, 20, weight: 1, strokes: false).mayHaveThinHole(unitsPerDrawnPixel: one), "輪郭の無い形")
         // 拡大の下では画面の大きさで答える: scale(0.25) の穴の幅 3 は画面で 0.75
         let quarter = SIMD4<Float>(0.25, 0, 0, 0.25)
@@ -2173,7 +2180,9 @@ struct FormShapeTests {
         // 輪郭の無い形・楕円でない形は含まない
         #expect(!form(100, 6, weight: 4, strokes: false).mayNeedExactRing(unitsPerDrawnPixel: one), "輪郭の無い楕円")
         #expect(!form(100, 6, weight: 4, kind: .rect).mayNeedExactRing(unitsPerDrawnPixel: one), "rect")
-        #expect(!form(100, 6, weight: 4, kind: .arc).mayNeedExactRing(unitsPerDrawnPixel: one), "扇")
+        // 扇 (#2747) も、持つ楕円の弧が同じ外れ方をする。円の扇は距離場が真の距離なので含まない
+        #expect(form(100, 6, weight: 4, kind: .arc).mayNeedExactRing(unitsPerDrawnPixel: one), "細長い楕円の扇")
+        #expect(!form(60, 60, weight: 40, kind: .arc).mayNeedExactRing(unitsPerDrawnPixel: one), "円の扇")
         // ほとんど円の楕円や細い輪郭は、ずれが小さいので含まない (絵は動かない)
         #expect(!form(200, 199, weight: 4).mayNeedExactRing(unitsPerDrawnPixel: one), "ほとんど円の楕円")
         #expect(!form(200, 100, weight: 0.1).mayNeedExactRing(unitsPerDrawnPixel: one), "極細の輪郭")
@@ -2233,5 +2242,47 @@ struct FormShapeTests {
             "短半径/長半径 \(ratio)・太さの半分/曲率半径 \(relativeWeight): 見積もり \(estimate) < 実測 \(measured)")
         // 見積もりが実測の数倍に膨らんでいない (膨らむと細い楕円の絵まで動かす)
         #expect(estimate < 4 * measured, "見積もりが粗い: 見積もり \(estimate)・実測 \(measured)")
+    }
+
+    /// 扇の内接円の半径の上限 (`sectorDepthBound`) は、実際の最大の深さを下回らず、円の扇では厳密に近い
+    /// ([#2747])。
+    ///
+    /// 扇の中で輪郭 (2 本の半径と弧) までの距離が最も大きい所を、64 bit の模型で格子から探す。上限は
+    /// 穴が潰れていると言うために使うので、下回ると穴のある扇を潰れたと言い、帯が穴ごと塗り潰される。
+    /// 円の扇は式が厳密なので、実測の 1% 以内に収まる。
+    ///
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+    @Test(
+        "扇の内接円の半径の上限は、実測の最大の深さを下回らない",
+        arguments: [
+            (20.0, 20.0, Double.pi / 3), (20.0, 20.0, Double.pi / 2), (20.0, 20.0, Double.pi),
+            (20.0, 20.0, 1.5 * Double.pi), (20.0, 20.0, 1.95 * Double.pi),
+            (50.0, 3.0, Double.pi), (40.0, 10.0, 1.0), (30.0, 20.0, 2.0), (10.0, 40.0, 2.5),
+        ])
+    func sectorDepthBoundIsNeverBelowTheTrueDepth(_ rx: Double, _ ry: Double, _ sweep: Double) {
+        let radii = SIMD2(rx, ry)
+        let start = 0.4
+        let boundary = PixelGridTests.makeArcBoundaryDistance(radii: radii, start: start, sweep: sweep)
+        var deepest = 0.0
+        let step = 0.125
+        var y = -ry
+        while y <= ry {
+            var x = -rx
+            while x <= rx {
+                let point = SIMD2(x, y)
+                if PixelGridTests.sectorContains(point, radii: radii, start: start, sweep: sweep) {
+                    deepest = max(deepest, boundary(point))
+                }
+                x += step
+            }
+            y += step
+        }
+        let bound = Double(
+            FormInstance.sectorDepthBound(radii: SIMD2(Float(rx), Float(ry)), sweep: Float(sweep)))
+        // 格子の刻みぶん (対角の半分) だけ、実測は真の最大より小さく出る
+        #expect(bound >= deepest - 0.1, "\(rx)×\(ry)・掃引 \(sweep): 上限 \(bound) < 実測 \(deepest)")
+        if rx == ry {
+            #expect(bound <= deepest * 1.01 + 0.1, "円の扇の上限が緩い: 上限 \(bound)・実測 \(deepest)")
+        }
     }
 }
