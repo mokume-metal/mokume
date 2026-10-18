@@ -2320,6 +2320,56 @@ extension ShapeTests {
         #expect(try signature(of: build(failing: true)) == signature(of: build(failing: false)))
     }
 
+    /// 面どうしが置き合っていると、置いた側を描き切る逃げ道の中で、同じ面の逃げ道へもう一度入る ([#2850] の反証)。
+    /// 描き切りは先に、自分を置いた面に絵を写させる (`settlePlacersBeforeChange()`) ので、P の描き切りが Q に写させ、
+    /// Q の描き切りが P に写させる。内側は溜め場が空で走り、外側は描き切りの後でもう一度印を引く — 二重に引くと
+    /// 印が負になり、形が欠けるか、安全網が空の形を返す。
+    ///
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+    @Test("置き合う面で逃げ道が入れ子になっても、印を二重に引かず、形は組み立てた中身を持つ")
+    func aReenteredDrawOutDoesNotRebaseTwice() throws {
+        func build(reentering: Bool) throws -> (shape: Shape, canvas: Canvas) {
+            let main = try makeCanvas(width: 24, height: 24)
+            let p = try main.createGraphics(24, 24)
+            let q = try main.createGraphics(24, 24)
+            let r = try main.createGraphics(8, 8)
+            var shape = Shape.empty
+            try main.draw {
+                // P と Q は描いている最中 (置いても注意だけで置ける)
+                p.beginDraw()
+                q.beginDraw()
+                p.background(Self.black)
+                // P は R と Q を置き、Q は P を置く。R が描き換わると、P の描き切りが Q に写させ、Q の描き切りが
+                // P に写させる
+                p.image(r, 16, 0)
+                p.image(q, 0, 16)
+                q.image(p, 0, 0)
+                if reentering {
+                    p.failPlacedPictureCopyForTesting = .encoderUnavailable
+                    q.failPlacedPictureCopyForTesting = .encoderUnavailable
+                }
+                shape = p.createShape {
+                    self.buildMixed(p, picture: r) {
+                        guard reentering else { return }
+                        r.beginDraw()
+                        r.background(Self.magenta)
+                        r.endDraw()
+                    }
+                }
+                p.failPlacedPictureCopyForTesting = nil
+                q.failPlacedPictureCopyForTesting = nil
+                #expect(!p.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いた")
+                p.endDraw()
+                q.endDraw()
+            }
+            return (shape, p)
+        }
+        let plain = try build(reentering: false)
+        let nested = try build(reentering: true)
+        #expect(!nested.shape.isEmpty)
+        #expect(signature(of: nested.shape) == signature(of: plain.shape), "入れ子の逃げ道を通った形が、通らない形と違う")
+    }
+
     /// 経路 3 ([#1855] の案 G)。描き場所の組み立ての中で、その描き場所の `endDraw()` を呼ぶと、1 度
     /// 注意して**一番外の組み立ての出口まで閉じるのを待たせる**。直す前は呼んだ時点でフレームを閉じ、
     /// 描き切りが組み立ての区間を空にして、空の形を返していた。

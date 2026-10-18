@@ -2520,7 +2520,7 @@ public final class Canvas {
     ///
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
-    var shapeRecordingRunStart: Int? { recordingShape ? shapeMarks.first?.runs : nil }
+    var shapeRecordingRunStart: Int? { recordingShape ? shapeMarks.first?.batches : nil }
 
     /// 形の組み立ての入口が控えた溜め場の各並びの長さ。入れ子は 1 段ずつ積む ([#2850])。入口と出口が対で積み・降ろし、
     /// 出口が読む。組み立ての途中で置いた側を描き切る逃げ道 (``flushBeforeBuild()``) が、組み立てている区間を

@@ -46,6 +46,13 @@ enum ShapeExit {
     /// **「戻す」は上から順に汚す。** 揺らぎの設定はどこで書き換えても組み立ての途中の面を描き切ら
     /// ない (#1855) が、先頭に置いたままにする。塗り・線は、外す口 (`noFill()` / `noStroke()`) より
     /// 先に色を書く (色を書く口は外した印を戻す)。読む面は、輪郭を外してから貼る絵で置いて替える。
+    /// 溜め場の並び。組み立てが入口で長さを控え、出口でそこから後ろを形として抜く。**組み立ての途中で置いた側を
+    /// 描き切る逃げ道は、ここの全部を預けて引き戻す** (``Canvas/ShapeMark``・``Canvas/HeldBuild``・#2850)。
+    static let poolStorageNames = [
+        "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
+        "recordedStrokeRanges", "recordedFillRanges", "recordedSolidStrokes", "recordedGPUStrokes",
+    ]
+
     static var table: [(name: String, exit: ShapeExit)] {
         let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
         let restored: [(String, (Canvas, Fixture) -> Void)] = [
@@ -96,12 +103,10 @@ enum ShapeExit {
             // 組み立て中の形 (#1607)。``CanvasTests/shapeState`` と同じ群
             "isBuildingShape", "shapeKind", "currentNormal", "shapePoints", "shapeHasDepth",
             "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
-            // 溜め場。記録したぶんを形として抜き、組み立て前の長さへ戻す
-            "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
-            "recordedStrokeRanges", "recordedFillRanges", "recordedSolidStrokes", "recordedGPUStrokes",
+            // 溜め場 (``poolStorageNames``)。記録したぶんを形として抜き、組み立て前の長さへ戻す
             // 平面の頂点ごとの被覆の区間 (#1637)。溜め場の頂点と対で切り詰める
             "coverageSpans",
-        ]
+        ] + Self.poolStorageNames
         let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
         let refused: [(String, ((Canvas, Fixture) -> Void)?)] = [
             // シーンの記述 (#1529)。閉じる側が既定へ戻すものは汚す手順を持つ
@@ -364,6 +369,20 @@ final class RuntimeBlank: Sketch {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct ShapeExitTests {
+    /// 溜め場の並びを足したら、印 (``Canvas/ShapeMark``) と預かる入れ物 (``Canvas/HeldBuild``) にも足す (#2850)。
+    /// 足し忘れると、逃げ道に入った組み立てが、その並びだけ元の位置のまま (引き戻されずに) 形を抜く。
+    @Test("溜め場の並びの表は、組み立ての印と預かる入れ物の欄と同じ名前の集まりである")
+    func shapeMarkAndHeldBuildCoverTheStorageLists() throws {
+        let names = Set(ShapeExit.poolStorageNames)
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+        let mark = Set(Mirror(reflecting: Canvas.ShapeMark(of: canvas)).children.compactMap(\.label))
+        #expect(mark.subtracting(["discards"]) == names, "ShapeMark の欄が溜め場の並びの表と違う")
+        let held = Set(
+            Mirror(reflecting: Canvas.HeldBuild(taking: canvas, after: Canvas.ShapeMark(of: canvas)))
+                .children.compactMap(\.label))
+        #expect(held.subtracting(["origin", "coverageBefore"]) == names, "HeldBuild の欄が溜め場の並びの表と違う")
+    }
+
     private func makeCanvas(width: Int = 16, height: Int = 16) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
