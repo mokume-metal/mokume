@@ -157,6 +157,16 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **知らせるだけで、止めるのはここではない。** 古い子を止めるのは道具 (`WatchCommand`)
     /// の仕事で、この台は絵の出口しか知らない。
     var onGenerationPromoted: (() -> Void)?
+    /// 出す世代の最初の 1 枚を画面へ出したことの知らせ ([#2875])。
+    ///
+    /// **入れ替わりの知らせとは別に持つ。** 最初の世代は絵が来る前に採用されるので
+    /// (``promoteIfReady()``)、入れ替わりの知らせでは子の `setup()` の間を覆えない。
+    /// 受け取る側 (プレビューの「起こしている」表示) が畳む合図はこちらである。
+    ///
+    /// [#2875]: https://github.com/mokume-metal/mokume/issues/2875
+    var onGenerationShown: (() -> Void)?
+    /// いま出している世代の絵を、もう 1 枚でも出したか。**採用のたびに下ろす。**
+    private var shownCurrentGeneration = false
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
     /// 確定させずに次の機会へ回る (``WatchedFile``)。
     private let manifest: WatchedFile<SharedFrameSurface.Manifest>
@@ -271,6 +281,14 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             device: gpu.device, input: InputState(), canvasSize: (1, 1))
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]
+        // **絵が来るまでは黒で塗る** ([#2875])。窓は作り直しより先に開くので、最初の 1 枚
+        // までは drawable を一度も受け取っていない層が見え、中身が透明か不定になる。黒は
+        // 絵が収まらない帯の色 (`FramePresenter`) と同じで、作品の表示に無いものを足さない
+        // — 言葉も印も載せないのは ADR-0032 決定 6 の追補のとおり。直に走らせる窓は
+        // 層を作る側 (`SketchSurface`) が同じなので、塗るのは道具の窓のここだけにする
+        //
+        // [#2875]: https://github.com/mokume-metal/mokume/issues/2875
+        view.metalLayer?.backgroundColor = CGColor(gray: 0, alpha: 1)
         // **窓より先に繋ぐ。** 出してから繋ぐと、その隙間に触ったぶんが落ちる
         view.relay = { [weak self] line in self?.onInput?(line) }
         window.contentView = view
@@ -358,6 +376,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
                 // **記した直後に結末を預ける** (#2199 の作法)。打ち切られたら記しを戻す
                 lastFrameSubmission = presenter.lastSubmission
                 gpu.awaitSettlement(of: lastFrameSubmission, by: self)
+                if !shownCurrentGeneration {
+                    shownCurrentGeneration = true
+                    onGenerationShown?()
+                }
             }
             noteRecovery()
         } catch {
@@ -448,6 +470,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // いない世代なら、そこで外れる
         lastFrame = 0
         lastSeenFrame = 0
+        shownCurrentGeneration = false
         onGenerationPromoted?()
     }
 
