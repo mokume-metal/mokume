@@ -25,9 +25,11 @@ extension Canvas {
         ///
         /// [#771]: https://github.com/mokume-metal/mokume/issues/771
         var flags: UInt32
-        /// この列に、描く画素で 1 画素より細い塗りか、1 画素より細い (潰れた) 輪郭の帯の穴を
-        /// 含みうる図形が 1 つでもあるか (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)``・
-        /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)``・#2186)。
+        /// この列に、描く画素で 1 画素より細い塗りか、1 画素より細い (潰れた) 輪郭の帯の穴か、
+        /// 近似の距離場では輪郭の位置がずれすぎる楕円を含みうる図形が 1 つでもあるか
+        /// (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)``・
+        /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)``・#2186・
+        /// ``FormInstance/mayNeedExactRing(unitsPerDrawnPixel:)``・#2742)。
         ///
         /// 立っていれば、閉じるときに ``FormInstance/thinFillsFlag`` を足して、断片の枝を
         /// 残した組で描く。**変わっても列を切らない** — 細い塗りと太い塗りが混ざった列は

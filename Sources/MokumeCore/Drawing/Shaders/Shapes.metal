@@ -765,10 +765,11 @@ struct FormFragmentIn {
     float4 inverseRows [[flat]];
     /// 輪郭と線を評価する位置のずらし (形自身の座標)。画面の (0.5, 0.5) を写したもの (下の説明)
     float2 strokeShift [[flat]];
-    /// 塗りと輪郭を両方持つ楕円の輪郭を、塗りの距離場からずらして出してよいか。楕円の
-    /// インスタンスごとに決まる (`mokume_canShiftRing`)。0: 輪郭の位置で解き直す・
-    /// 1: 距離場そのものの勾配でずらす (`mokume_shiftedBySlope`)・2: 円なので法線でずらす
-    /// (`mokume_shifted`)
+    /// 楕円の輪郭の距離場をどう出すか。楕円のインスタンスごとに決まる (`mokume_canShiftRing`・
+    /// `mokume_needsExactRing`)。0: 輪郭の位置で近似の距離場を解き直す・
+    /// 1: 塗りの距離場から、距離場そのものの勾配でずらす (`mokume_shiftedBySlope`)・
+    /// 2: 円なので塗りの距離場から法線でずらす (`mokume_shifted`)・
+    /// 3: 輪郭の位置で**真の距離**を解く (`mokume_ellipseExactField`・#2742)
     uint ringFromFill [[flat]];
     /// 輪郭の帯の穴が、描く画素で 1 画素より細いか潰れているか (`mokume_thinHole`)。`rect` と楕円の
     /// インスタンスごとに決まる。0: 縁 1 本の距離場で数える・1: 両縁を見る積で数える
@@ -831,6 +832,46 @@ static inline bool mokume_canShiftRing(
             <= 2.0 * kFormShiftTolerance * innerRadius;
 }
 
+/// 楕円の輪郭の内縁・外縁の位置のずれを許す大きさ (描く画素に対する比・`mokume_needsExactRing`)。
+/// ADR-0039 の上限 1% の半分である (見積もりの粗さと、半精度の揺れの余裕)。
+constant float kFormExactTolerance = 1.0 / 200.0;
+
+/// 楕円の輪郭の内縁・外縁を、近似の距離場 (`mokume_ellipseField`) ではなく**真の距離**
+/// (`mokume_ellipseExactField`) で数えるか ([#2742])。
+///
+/// 近似の距離場は縁の上でだけ真の距離と一致し、縁から離れるとずれる。内縁・外縁は縁から太さの
+/// 半分だけ離れた所なので、そこでのずれが帯の位置のずれになる。長軸の端 (曲率半径
+/// `短半径² / 長半径`) の近くで最も大きく、太さの半分がそれを越えると、内縁は長軸に沿って実際の穴の
+/// 端を大きく越えて伸び、外縁は先端の外へはみ出す (`ellipse(0, 0, 100, 6)`・太さ 4 は帯が長軸に沿って
+/// 丸ごと抜けた)。
+///
+/// **ずれの見積もりは `0.35 · (長半径 − 短半径) · 太さの半分² / 短半径²` (形自身の座標)。** 縁から
+/// `h` (太さの半分) だけ離れた平行曲線の上で、近似の距離場と目標 (±`h`) の差を、CPU の 64 bit の
+/// 模型で測った。`ρ = 短半径² / 長半径` として `h / ρ` が 0.1〜1、短半径 / 長半径が 0.01〜0.5 の範囲で、
+/// 内縁側の差は `h · 0.31 · (1 − 短半径 / 長半径) · h / ρ` 以下 (外縁側はそれより小さい)。
+/// 見積もりの係数 0.35 はそれを 1 割ほど上回る。`h / ρ` が 1 を越えると係数は 0.37 (h/ρ = 2) から
+/// 増えて見積もりを下回るが、そこまで来れば見積もりは許容を大きく越える。円は距離場が真の
+/// 距離なので 0。
+///
+/// 見積もりが描く画素の `kFormExactTolerance` に収まる楕円は、今までどおり近似の距離場で解く
+/// (絵は 1 ビットも変わらない)。画素の大きさは、縦横で違う拡大・剪断でも保守側になるよう
+/// 「描く画素 → 形自身の座標」の小さいほうの特異値で測る (`mokume_canShiftRing` と同じ)。
+/// **大きさが 0・壊れた変換は、割り算を避けて比べるので常に真の距離の側**に倒れる。
+///
+/// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+static inline bool mokume_needsExactRing(float2 radii, float halfWeight, float4 drawnRows) {
+    float longRadius = max(radii.x, radii.y);
+    float shortRadius = max(min(radii.x, radii.y), 1e-30);
+    float error = 0.35 * halfWeight * halfWeight * (longRadius - shortRadius)
+        / (shortRadius * shortRadius);
+    float determinant = abs(drawnRows.x * drawnRows.w - drawnRows.y * drawnRows.z);
+    float squares = dot(drawnRows, drawnRows);
+    float largest = sqrt(
+        0.5 * (squares + sqrt(max(squares * squares - 4.0 * determinant * determinant, 0.0))));
+    // 小さいほうの特異値は |det| / 大きいほう。割らずに「見積もり · 大きいほう > 許容 · |det|」で比べる
+    return error * largest > kFormExactTolerance * determinant;
+}
+
 /// 輪郭の帯の穴 (内縁の内) が、描く画素で 1 画素より細いか潰れているか ([#2186])。
 /// `hole` は穴の半幅・半径 (形自身の座標。潰れていれば 0 以下)。
 ///
@@ -846,12 +887,12 @@ static inline bool mokume_canShiftRing(
 /// それより太い穴は縁 1 本の式のまま (絵は 1 ビットも変わらない)。判定はインスタンスごとの量
 /// なので、頂点関数が 1 度だけ出して断片へ渡す (`FormFragmentIn.thinHole`)。
 ///
-/// **楕円の近似の距離場の外れそのものは直していない。** 太さの半分が長軸の端の曲率半径
-/// (`短半径² / 長半径`) を越えると、長軸の上で先端までの距離を返す近似は、穴が 1 画素以上ある
-/// 楕円でも内縁を実際の穴の端より先まで伸ばす。ここで直るのは穴が潰れているか 1 画素より細い
-/// ときだけで、境目の手前と先で絵が跳ぶ (`noFill()` の `ellipse(0, 0, 100, 6)` は太さ 5.0 で
-/// 長軸に沿って帯が丸ごと抜け、5.02 で抜けない)。距離場の側は [#2742] で直す。扇の帯の穴も
-/// 縁 1 本のままである ([#2747])。
+/// **楕円の近似の距離場の外れは、別の枝で直す** ([#2742])。太さの半分が長軸の端の曲率半径
+/// (`短半径² / 長半径`) を越える細長い楕円は、近似の距離場が帯の内縁・外縁を大きくずらすので、
+/// 輪郭を真の距離で解く (`mokume_needsExactRing`・`mokume_ellipseExactField`)。ここで数えるのは
+/// 穴が潰れているか 1 画素より細いときだけで、それより太い穴は真の距離の縁 1 本で数える。
+/// 境目 (穴の幅が 1 画素) の両側で同じ帯が出る (`noFill()` の `ellipse(0, 0, 100, 6)` は太さ 5.0 の
+/// 前後で欠けない)。扇の帯の穴は縁 1 本のままである ([#2747])。
 ///
 /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
 /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
@@ -952,10 +993,16 @@ vertex FormFragmentIn formVertexMain(
     out.strokeShift = 0.5 * float2(inverseRows.x + inverseRows.y, inverseRows.z + inverseRows.w);
     // 楕円の輪郭を塗りの距離場からずらしてよいか。インスタンスごとの量なので、頂点で 1 度
     // だけ出して断片へ渡す (断片で出すと、画素ごとに同じ式を解く)
-    out.ringFromFill =
-        (form.meta.x == kFormEllipse
-            && mokume_canShiftRing(form.size.xy, halfWeight, out.strokeShift, drawnRows))
-        ? (form.size.x == form.size.y ? 2u : 1u) : 0u;
+    // 近似の距離場が内縁・外縁をずらしすぎる楕円は、真の距離で解く (3・#2742)。ずらす近似
+    // (1・2) は近似の距離場そのものを足し引きするので、そもそも使えない
+    out.ringFromFill = 0u;
+    if (form.meta.x == kFormEllipse) {
+        if (mokume_needsExactRing(form.size.xy, halfWeight, drawnRows)) {
+            out.ringFromFill = 3u;
+        } else if (mokume_canShiftRing(form.size.xy, halfWeight, out.strokeShift, drawnRows)) {
+            out.ringFromFill = form.size.x == form.size.y ? 2u : 1u;
+        }
+    }
     // 輪郭の帯の穴が 1 画素より細いか潰れているか。これもインスタンスごとの量なので頂点で 1 度だけ
     // 出す — 断片で出すと、楕円の穴の半径 (平方根 2 つ) を画素ごとに解き、面を覆う円で GPU 時間が
     // 2 割増えた (#2186)。断片の `unitsPerPixel` と同じ式で描く画素の大きさを出す
@@ -1173,6 +1220,63 @@ static inline float2 mokume_ellipseSlope(float2 p, float2 radii, FormField field
         - field.gradient / (radii * radii) * (field.distance / k2);
 }
 
+/// 原点を中心とする楕円の**真の**符号つき距離場 (内で負・[#2742])。`mokume_ellipseField` は
+/// 縁から離れると真の距離からずれるが、こちらは縁から遠い所でも厳密である。反復があるので、
+/// 近似では輪郭の帯の位置がずれすぎる楕円だけが使う (`mokume_needsExactRing`・`ringFromFill`)。
+///
+/// 解き方は D. Eberly の "Distance from a Point to an Ellipse" で、第 1 象限の点 (長い軸を x に
+/// 揃える) から縁までのいちばん近い点を、乗数 `t` の方程式
+/// `g(t) = (r · zx / (t + r))² + (zy / (t + 1))² − 1 = 0` の根で出す。`z = p / 半径`、`r` は
+/// (長半径 / 短半径)²。根は `t > zy − 1` にただ 1 つで、`g` はそこで**凸で単調に減る**ので、
+/// 左側 (`g > 0`) から始めるニュートン法は、行き過ぎずに単調に根へ近づく。
+///
+/// **`u = t + 1` で解く。** `t` のままだと、長軸の近くの点 (`zy` が 0 に近い) で根が −1 の
+/// すぐ上に来て、32 bit の浮動小数点では `t + 1` が表せない。`u` なら 0 に近い値も表せる。
+/// 外の点は `u = 1` (縁の上の点の根) が左側にあたり、内の点は下限の `zy` から始める。
+/// 長軸の上の点 (`zy = 0`) は、縮閉線の尖りの内側では軸の外に最も近い点が 2 つあり、
+/// 軸の上に根が無い (0/0) ので、`zy` を 1e-12 で押さえる — 根は `u ≈ zy` の近くに出て、
+/// 最も近い点は軸の外の 1 つ (上側) になる。距離は 2 つで同じ。
+///
+/// **反復は、1 回の動きが `u` の 1e-4 に収まったら止め、多くても 16 回。** 縁の近くの点は 4 回
+/// (中央値)・8 回 (99%) ほどで収まる。長半径 / 短半径が 1000 までの楕円で、縁から太さの半分 + 1.5 画素の
+/// 内の点を 1/16 刻みで走査し、32 bit で真の距離 (64 bit の二分法) との差が 1.0e-4 以内に収まった
+/// (固定 10 回では 1.0 がずれる点が出た)。
+///
+/// 返す勾配は、いちばん近い縁の点での外向きの法線 (長さ 1)。
+static inline FormField mokume_ellipseExactField(float2 p, float2 radii) {
+    // 長いほうを x に揃え、第 1 象限へ折る
+    bool swapped = radii.x < radii.y;
+    float a = max(swapped ? radii.y : radii.x, 1e-6);
+    float b = max(swapped ? radii.x : radii.y, 1e-6);
+    float2 folded = abs(swapped ? p.yx : p);
+    float zx = folded.x / a;
+    float zy = max(folded.y / b, 1e-12);
+    // 長半径 / 短半径の 2 乗から 1 を引いたもの (桁落ちを避けて積で出す)
+    float m = (a - b) * (a + b) / (b * b);
+    float n0 = (1.0 + m) * zx;
+    bool inside = zx * zx + zy * zy <= 1.0;
+    float u = inside ? zy : 1.0;
+    for (int i = 0; i < 16; i++) {
+        float ua = n0 / (u + m);
+        float ub = zy / u;
+        float g = ua * ua + ub * ub - 1.0;
+        float slope = min(-2.0 * (ua * ua / (u + m) + ub * ub / u), -1e-30);
+        float next = max(u - g / slope, zy);
+        bool done = abs(next - u) <= 1e-4 * next;
+        u = next;
+        if (done) { break; }
+    }
+    // いちばん近い縁の点を単位円の点 (ua, ub) で持つ
+    float ua = n0 / (u + m);
+    float ub = zy / u;
+    float distance = length(float2(a * ua - folded.x, b * ub - zy * b));
+    float2 normal = mokume_direction(float2(ua / a, ub / b), float2(1.0, 0.0));
+    // 折った分を戻す
+    float2 signs = float2(p.x < 0.0 ? -1.0 : 1.0, p.y < 0.0 ? -1.0 : 1.0);
+    normal = swapped ? normal.yx : normal;
+    return mokume_field(inside ? -distance : distance, normal * signs);
+}
+
 /// 原点から `end` へ引いた線分までの距離場 (符号なし)。
 static inline FormField mokume_segmentField(float2 p, float2 end) {
     float h = saturate(dot(p, end) / max(dot(end, end), 1e-12));
@@ -1337,6 +1441,9 @@ static inline FormPaint mokume_formPaint(
     // 輪郭の帯の穴 (内縁の内) が画面で 1 画素より細いか潰れているときも同じ (`mokume_thinHole`)
     bool isThinHole = false;
     float thinHoleCoverage = 0.0;
+    // 帯の穴の被覆の上限。穴の端が尖る楕円 (`mokume_ellipseExactField` で数える、太さの半分が長い軸の
+    // 端の曲率半径を越える楕円) の内縁は、縁 1 本では端の先を数えすぎる (#2742)。1 のときは何もしない
+    float holeCap = 1.0;
     if (kind == kFormRect) {
         float2 extent = form.size.xy;
         // 角の半径 (#2757)。0 なら従来の箱と同じ式を通る
@@ -1434,7 +1541,12 @@ static inline FormPaint mokume_formPaint(
         }
         if (kFormHasStroke) {
             FormField ring;
-            if (layered && kFormHasFill && in.ringFromFill == 2) {
+            if (kFormHasThinFill && in.ringFromFill == 3) {
+                // 近似の距離場では内縁・外縁がずれすぎる細長い楕円 (`mokume_needsExactRing`)。
+                // **輪郭の位置で真の距離を解く** — 塗りの距離場からはずらせない。列に含む形が
+                // あるときだけ枝を残す (`kFormHasThinFill`)
+                ring = mokume_ellipseExactField(q, form.size.xy);
+            } else if (layered && kFormHasFill && in.ringFromFill == 2) {
                 ring = mokume_shifted(fill, in.strokeShift);
             } else if (layered && kFormHasFill && in.ringFromFill == 1) {
                 ring = mokume_shiftedBySlope(
@@ -1446,7 +1558,8 @@ static inline FormPaint mokume_formPaint(
             // 帯の穴が潰れている・1 画素より細いときは、両縁を見る積で数える (`mokume_thinHole`・
             // `mokume_thinEllipseHoleCoverage`・[#2186](https://github.com/mokume-metal/mokume/issues/2186))。
             // 太さの半分が短半径以上なら穴は無い。穴が 1 画素以上ある細長い楕円の内縁の外れは
-            // 距離場の近似の側にあり、ここでは直らない ([#2742](https://github.com/mokume-metal/mokume/issues/2742))
+            // 輪郭を真の距離で解く枝が直す (`ringFromFill == 3`・
+            // [#2742](https://github.com/mokume-metal/mokume/issues/2742))
             if (kFormHasThinFill && in.thinHole != 0) {
                 float2 hole = mokume_ellipseHole(form.size.xy, halfWeight);
                 isThinHole = true;
@@ -1455,6 +1568,22 @@ static inline FormPaint mokume_formPaint(
                     : 0.0;
             } else {
                 inner = mokume_grown(ring, -halfWeight);
+                // 太さの半分が長い軸の端の曲率半径を越えると、穴の端は 2 本の平行曲線が交わる尖りに
+                // なる。真の距離でも縁 1 本の式は、尖りの先の画素で穴を挟む 2 本の縁の片方しか見ず、
+                // 穴の面積より大きく数える (内縁の被覆が穴の端の先に残り、`ellipse(0, 0, 100, 6)`・
+                // 太さ 4 で帯に丸ごと入る画素に最大 35% の欠けが出た。#2186 の細い穴と同じ口)。両縁を見る
+                // 積 (`mokume_thinEllipseHoleCoverage`) を上限に置く — 穴が広い所では積も縁 1 本とほぼ
+                // 一致するので、上限は尖りの先でしか効かない
+                if (kFormHasThinFill && in.ringFromFill == 3
+                    && halfWeight * max(form.size.x, form.size.y)
+                        > min(form.size.x, form.size.y) * min(form.size.x, form.size.y))
+                {
+                    float2 hole = mokume_ellipseHole(form.size.xy, halfWeight);
+                    holeCap = all(hole > 0.0)
+                        ? mokume_thinEllipseHoleCoverage(
+                            q, form.size.xy, halfWeight, hole, unitsPerPixel)
+                        : 0.0;
+                }
             }
         }
     } else if (kind == kFormArc) {
@@ -1526,7 +1655,8 @@ static inline FormPaint mokume_formPaint(
     }
     if (kFormHasStroke) {
         float outerCoverage = mokume_formCoverage(outer, in.inverseRows);
-        float innerCoverage = isThinHole ? thinHoleCoverage : mokume_formCoverage(inner, in.inverseRows);
+        float innerCoverage = isThinHole
+            ? thinHoleCoverage : min(mokume_formCoverage(inner, in.inverseRows), holeCap);
         // **帯の被覆は、外縁の被覆 − 内縁の被覆。** 縁は画素の幅では平行とみなせるので、
         // 帯 = (外縁の内) − (内縁の内) で、画素の中の面積も引き算になる。2 つを掛け合わせる
         // 式 (外縁の内 × 内縁の外) は 2 つが画素の中で無関係に散らばっているとみなすので、

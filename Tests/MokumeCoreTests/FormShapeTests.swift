@@ -2136,10 +2136,102 @@ struct FormShapeTests {
                     #expect(
                         shape.mayHaveThinPart(unitsPerDrawnPixel: one)
                             == (shape.mayHaveThinFill(unitsPerDrawnPixel: one)
-                                || shape.mayHaveThinHole(unitsPerDrawnPixel: one)),
+                                || shape.mayHaveThinHole(unitsPerDrawnPixel: one)
+                                || shape.mayNeedExactRing(unitsPerDrawnPixel: one)),
                         "\(kind) \(width)×\(height)・太さ \(weight)")
                 }
             }
         }
+    }
+
+    /// 楕円の輪郭を真の距離で解く枝に入るかの判定 (`mayNeedExactRing`) ([#2742])。
+    ///
+    /// 近似の距離場が内縁・外縁に落とすずれの見積もりが、描く画素の 1/200 を越える楕円だけ「含む」。
+    /// 円は距離場が真の距離なので、どれだけ太い輪郭でも含まない。含み損ねると、近似の外れた帯が
+    /// 出る。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    @Test("楕円の輪郭を真の距離で解く判定は、円と細くずれの小さい楕円を含まず、太い細長い楕円を含む")
+    func exactRingJudgement() {
+        func form(
+            _ width: Float, _ height: Float, weight: Float, kind: FormInstance.Kind = .ellipse,
+            linear: SIMD4<Float> = SIMD4(1, 0, 0, 1), strokes: Bool = true
+        ) -> FormInstance {
+            FormInstance(
+                kind: kind, linear: linear, offset: SIMD2(10, 10),
+                half: SIMD2(width / 2, height / 2), halfWeight: weight / 2,
+                fill: SIMD4(1, 1, 1, 1), stroke: SIMD4(1, 1, 1, 1),
+                fills: true, strokes: strokes, cap: .round, join: .miter)
+        }
+        let one = SIMD2<Float>(1, 1)
+        // #2742 の本文の形
+        #expect(form(100, 6, weight: 4).mayNeedExactRing(unitsPerDrawnPixel: one), "ellipse(0, 0, 100, 6)・太さ 4")
+        #expect(form(84, 26, weight: 7).mayNeedExactRing(unitsPerDrawnPixel: one), "ellipse(0, 0, 84, 26)・太さ 7")
+        #expect(form(40, 10, weight: 6).mayNeedExactRing(unitsPerDrawnPixel: one), "ellipse(0, 0, 40, 10)・太さ 6")
+        // 円は距離場が真の距離。どれだけ太くても含まない
+        #expect(!form(60, 60, weight: 40).mayNeedExactRing(unitsPerDrawnPixel: one), "太い輪郭の円")
+        // 輪郭の無い形・楕円でない形は含まない
+        #expect(!form(100, 6, weight: 4, strokes: false).mayNeedExactRing(unitsPerDrawnPixel: one), "輪郭の無い楕円")
+        #expect(!form(100, 6, weight: 4, kind: .rect).mayNeedExactRing(unitsPerDrawnPixel: one), "rect")
+        #expect(!form(100, 6, weight: 4, kind: .arc).mayNeedExactRing(unitsPerDrawnPixel: one), "扇")
+        // ほとんど円の楕円や細い輪郭は、ずれが小さいので含まない (絵は動かない)
+        #expect(!form(200, 199, weight: 4).mayNeedExactRing(unitsPerDrawnPixel: one), "ほとんど円の楕円")
+        #expect(!form(200, 100, weight: 0.1).mayNeedExactRing(unitsPerDrawnPixel: one), "極細の輪郭")
+        // 描く画素で測る: scale(4) で拡大すると、同じ形でも描く画素 1 つが形自身の座標で小さく
+        // なるので含み、scale(0.25) で縮めると含まなくなる
+        let quarter = SIMD4<Float>(0.25, 0, 0, 0.25)
+        let four = SIMD4<Float>(4, 0, 0, 4)
+        #expect(!form(100, 60, weight: 1, linear: quarter).mayNeedExactRing(unitsPerDrawnPixel: one), "scale(0.25)")
+        #expect(form(100, 60, weight: 1, linear: four).mayNeedExactRing(unitsPerDrawnPixel: one), "scale(4)")
+        // 縦横で違う拡大: 小さいほうの画素で測る
+        #expect(
+            form(100, 60, weight: 1, linear: SIMD4(1, 0, 0, 8)).mayNeedExactRing(unitsPerDrawnPixel: one),
+            "縦 8 倍")
+    }
+
+    /// 見積もり (`exactRingError`) は、近似の距離場が内縁・外縁に落とす実際のずれを下回らない
+    /// ([#2742])。
+    ///
+    /// 近似の距離場 (`mokume_ellipseField`) を 64 bit で写し、縁から太さの半分だけ離れた平行曲線の
+    /// 上で目標 (±太さの半分) との差を測る。内縁は真の距離が太さの半分に一致する点だけ (平行曲線が
+    /// 尖りを越えた先は内縁ではない)。見積もりの根拠は太さの半分 / 曲率半径 ≤ 1 の範囲である。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    @Test(
+        "近似の距離場のずれの見積もりは、CPU の模型の実測を下回らない",
+        arguments: [0.5, 0.25, 0.1, 0.03], [0.1, 0.25, 0.5, 1.0])
+    func exactRingErrorBoundsTheApproximation(_ ratio: Double, _ relativeWeight: Double) {
+        let short = 10.0
+        let long = short / ratio
+        // 長い軸の端の曲率半径に対する太さの半分
+        let halfWeight = relativeWeight * short * short / long
+        func approximate(_ x: Double, _ y: Double) -> Double {
+            let qx = x / long, qy = y / short
+            let k1 = (qx * qx + qy * qy).squareRoot()
+            let k2 = (qx * qx / (long * long) + qy * qy / (short * short)).squareRoot()
+            return k1 * (k1 - 1) / max(k2, 1e-9)
+        }
+        var measured = 0.0
+        for index in 0...4000 {
+            let t = Double(index) / 4000 * .pi / 2
+            let x = long * cos(t), y = short * sin(t)
+            var nx = cos(t) / long, ny = sin(t) / short
+            let length = (nx * nx + ny * ny).squareRoot()
+            nx /= length
+            ny /= length
+            measured = max(measured, abs(approximate(x + halfWeight * nx, y + halfWeight * ny) - halfWeight))
+            let inner = (x - halfWeight * nx, y - halfWeight * ny)
+            if abs(PixelGridTests.ellipseDistance(SIMD2(inner.0, inner.1), SIMD2(long, short)) + halfWeight) < 1e-6 {
+                measured = max(measured, abs(approximate(inner.0, inner.1) + halfWeight))
+            }
+        }
+        let estimate = Double(
+            FormInstance.exactRingError(
+                radii: SIMD2(Float(long), Float(short)), halfWeight: Float(halfWeight)))
+        #expect(
+            estimate >= measured,
+            "短半径/長半径 \(ratio)・太さの半分/曲率半径 \(relativeWeight): 見積もり \(estimate) < 実測 \(measured)")
+        // 見積もりが実測の数倍に膨らんでいない (膨らむと細い楕円の絵まで動かす)
+        #expect(estimate < 4 * measured, "見積もりが粗い: 見積もり \(estimate)・実測 \(measured)")
     }
 }

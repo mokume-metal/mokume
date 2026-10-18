@@ -595,7 +595,9 @@ struct PixelGridTests {
     /// 地の側へはみ出した分を、範囲の端から地までの距離で割ったもの。
     private func seamLeaks(
         _ shape: SeamShape, _ mode: BlendMode, fills: Bool, canvasSize: Int, center: SIMD2<Float>
-    ) throws -> (worst: Double, total: Double, counted: Int, where: String) {
+    ) throws -> (
+        worst: Double, total: Double, counted: Int, where: String, worstExcess: Double, excessAt: String
+    ) {
         let (groundValue, inkValue) = seamPalette(mode)
         let ground = LinearRGBA.linear(red: groundValue, green: groundValue, blue: groundValue)
         let ink = LinearRGBA.linear(red: inkValue, green: inkValue, blue: inkValue)
@@ -629,6 +631,16 @@ struct PixelGridTests {
         var worstAt = ""
         var total = 0.0
         var counted = 0
+        // 帯の外 (穴の中も) に丸ごと入る画素に、帯が滲み出た分 (#2742)。帯に丸ごと入る画素の欠けと
+        // 対になる。楕円の帯だけ、画素の中心が帯の縁から 0.9 画素より外にある画素 (1/8 画素広げた
+        // 四角は中心から 0.9 画素の内に収まる) を数える
+        var worstExcess = 0.0
+        var excessAt = ""
+        func excess(_ value: Double) -> Double {
+            groundLevel < low
+                ? max(0, value - groundLevel) / (low - groundLevel)
+                : max(0, groundLevel - value) / (groundLevel - high)
+        }
         let halfWeight = Double(shape.weight) / 2
         for placement in Self.seamPlacements {
             let origin = SIMD2<Double>(Double(center.x + placement.x), Double(center.y + placement.y))
@@ -688,6 +700,17 @@ struct PixelGridTests {
                             }
                         }
                     }
+                    if !inside, shape.isEllipse, !fills {
+                        let center = local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift
+                        let away = abs(abs(Self.ellipseDistance(center, shape.half)) - halfWeight)
+                        if away > 0.9 {
+                            let extra = excess(Double(pixels.components[(y * canvasSize + x) * 4]))
+                            if extra > worstExcess {
+                                worstExcess = extra
+                                excessAt = "(\(x), \(y)) を \(placement) で"
+                            }
+                        }
+                    }
                     guard inside else { continue }
                     let leaked = leak(Double(pixels.components[(y * canvasSize + x) * 4]))
                     if leaked > worst {
@@ -699,7 +722,7 @@ struct PixelGridTests {
                 }
             }
         }
-        return (worst, total, counted, worstAt)
+        return (worst, total, counted, worstAt, worstExcess, excessAt)
     }
 
     /// 1 画素より細い塗りに輪郭を付けた形 (#2186 の完了条件 1)。
@@ -802,6 +825,87 @@ struct PixelGridTests {
         #expect(
             measured.total / Double(max(measured.counted, 1)) < 0.001,
             "\(shape): 帯が欠ける: 平均 \(measured.total / Double(max(measured.counted, 1)))")
+    }
+
+    // MARK: - 細長い楕円の帯の内縁・外縁 (#2742)
+
+    /// 太さの半分が長い軸の端の曲率半径 (`短半径² / 長半径`) を越える細長い楕円。穴は 1 画素以上
+    /// ある太さを選ぶ (穴が 1 画素より細い枝は #2186 が数える)。
+    nonisolated static let elongatedRingShapes: [SeamShape] = [
+        // 本文の 2 つ
+        SeamShape(name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: 4),
+        SeamShape(name: "ellipse(0, 0, 84, 26)", isEllipse: true, half: SIMD2(42, 13), weight: 7),
+        // 帯が丸ごと抜けていた形 (2026-10-15 のコメント)
+        SeamShape(name: "ellipse(0, 0, 84, 26)", isEllipse: true, half: SIMD2(42, 13), weight: 14),
+        SeamShape(name: "ellipse(0, 0, 40, 10)", isEllipse: true, half: SIMD2(20, 5), weight: 6),
+        SeamShape(name: "ellipse(0, 0, 30, 6)", isEllipse: true, half: SIMD2(15, 3), weight: 4),
+        // 太さ 5.0 は穴の幅がちょうど 1 で #2186 の細い穴の枝に入らず、帯が丸ごと抜けていた
+        SeamShape(name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: 5),
+        // 縦長 (長い向きが y)
+        SeamShape(name: "ellipse(0, 0, 26, 84)", isEllipse: true, half: SIMD2(13, 42), weight: 7),
+    ]
+
+    /// 細長い楕円の帯の内縁・外縁は、真の幾何から 1% の内に収まる ([#2742])。
+    ///
+    /// 楕円の近似の距離場 (`mokume_ellipseField`) は、縁から離れると真の距離からずれる。太さの半分が
+    /// 長い軸の端の曲率半径を越える細長い楕円では、長軸の上で先端までの距離を返し、内縁が実際の穴の
+    /// 端より先まで伸びて帯が丸ごと抜けた。帯に丸ごと入る画素の欠け (`seamLeaks` の worst) と、
+    /// 帯の外 (穴の中も) に丸ごと入る画素への滲み (worstExcess) の両方を、上限 1% で見る。
+    /// 輪郭だけの帯は混ぜ方によらず同じ被覆で混ぜるので `.blend` で数える。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    @Test(
+        "細長い楕円の輪郭の帯は、内縁も外縁も真の幾何から 1% の内に収まる",
+        arguments: PixelGridTests.elongatedRingShapes)
+    func elongatedEllipseRingFollowsTheTrueGeometry(_ shape: SeamShape) throws {
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: 160, center: SIMD2(80, 80))
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.total / Double(max(measured.counted, 1)) < 0.001,
+            "\(shape): 帯が欠ける: 平均 \(measured.total / Double(max(measured.counted, 1)))")
+        #expect(
+            measured.worstExcess < 0.01,
+            "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
+    }
+
+    /// 太さを動かしても、#2186 の細い穴の枝の境目で帯が跳ばない ([#2742])。
+    ///
+    /// `ellipse(0, 0, 100, 6)` は太さ 5.0 で穴の幅がちょうど 1 画素になる。穴の幅が 1 画素より細い枝
+    /// (両縁を見る積) と、それ以上の枝 (距離場) が、境目の両側で同じ帯を出す。太さ 5.0 で 100%
+    /// 欠け、5.02 で 0 だった。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    @Test(
+        "太さを動かしても、細い穴の枝の境目で帯が欠けない",
+        arguments: [Float(4.5), 4.9, 4.98, 5, 5.01, 5.02, 5.05, 5.1, 5.5])
+    func elongatedEllipseRingDoesNotJumpAtTheThinHoleBoundary(_ weight: Float) throws {
+        let shape = SeamShape(
+            name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: weight)
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: 160, center: SIMD2(80, 80))
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.worstExcess < 0.01,
+            "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
+    }
+
+    /// 塗りのある細長い楕円も、帯の抜けた所に塗りの色が出ない ([#2742])。
+    ///
+    /// 塗りと輪郭を重ねる断片 (`.blend`) と、下地を読んで 4 つの面積に分ける断片 (`.difference`)
+    /// の両方で、塗り ∪ 帯に丸ごと入る画素に下地が透けない。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    @Test(
+        "塗りのある細長い楕円も、輪郭の帯が欠けない",
+        arguments: [BlendMode.blend, .difference],
+        PixelGridTests.elongatedRingShapes.indices)
+    func elongatedEllipseWithFillLeavesNoSeam(_ mode: BlendMode, _ index: Int) throws {
+        let shape = Self.elongatedRingShapes[index]
+        let measured = try seamLeaks(shape, mode, fills: true, canvasSize: 160, center: SIMD2(80, 80))
+        #expect(measured.counted > 0, "\(mode)・\(shape): 丸ごと覆われる画素が無い")
+        #expect(
+            measured.worst < 0.01, "\(mode)・\(shape): 継ぎ目で下地が漏れる: 最悪 \(measured.worst) \(measured.where)")
     }
 
     /// 帯の穴が 1 画素より細い `rect` の輪郭は、帯の面積ぶんの光を出す ([#2186])。
