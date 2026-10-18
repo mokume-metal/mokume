@@ -351,19 +351,25 @@ enum BundleCommand {
 
           \(note.path)
 
-        Before sending, check that nothing still resolves through the author's environment:
+        Before sending, check that nothing still resolves through the author's environment.
+        Once it draws, quit the app: .build is put back as soon as the app closes.
 
           \(checkLine(for: app, package: package))
 
-        If it still draws with .build moved aside, the bundle carries all it needs.
+        If it draws with .build moved aside, the bundle carries all it needs.
         """
     }
 
     /// 確かめ方の 1 行。スケッチの `.build` を退避して `.app` を開き、戻す。
+    ///
+    /// **`open -W` で、アプリを閉じるまで `.build` を戻さない** (#2833)。`open` は起動を
+    /// 頼むとすぐ戻るので、アプリが資材を読む前に `.build` が戻りうる。そうなると作者の環境
+    /// (`.build` の下の束) を通して読めてしまい、確かめ方が素通りする。代償は、アプリを
+    /// 閉じるまで端末に戻らないこと — ``report(for:package:note:signedAs:)`` が閉じるよう言う。
     static func checkLine(for app: URL, package: URL) -> String {
         let build = GivenPath.shellWord(package.appendingPathComponent(".build"))
         let held = GivenPath.shellWord(package.appendingPathComponent(".build-held"))
-        return "mv \(build) \(held) && open \(GivenPath.shellWord(app)) ; mv \(held) \(build)"
+        return "mv \(build) \(held) && open -W \(GivenPath.shellWord(app)) ; mv \(held) \(build)"
     }
 
     /// どちらの段で署名したかを 1 行で言う。

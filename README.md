@@ -166,10 +166,10 @@ MOKUME_SIGN_IDENTITY="Developer ID Application: 名前 (TEAMID)" mokume bundle
 
 Hardened Runtime とタイムスタンプ付きで署名し、公証に提出できる形になります。公証 (`notarytool` での提出と `stapler` での添付) は `mokume bundle` の外で行ってください。どちらの署名を使ったかは出力に表示されます。
 
-配布前に、手元のビルド結果に依存していないかは次で確かめられます:
+配布前に、手元のビルド結果に依存していないかは次で確かめられます。描けたらアプリを閉じてください (閉じると `.build` が戻ります):
 
 ```bash
-mv .build .build-held && open bundle/Grain.app ; mv .build-held .build
+mv .build .build-held && open -W bundle/Grain.app ; mv .build-held .build
 ```
 
 </details>

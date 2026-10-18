@@ -297,8 +297,10 @@ struct BundleCommandTests {
     /// 無く、何も確かめずに失敗していた。動かすのはスケッチの `.build` である (束ねるときの
     /// 置き場はパッケージ直下に固定 — `BuildDirectory.Fallback.packaging`)。
     ///
-    /// `open` は偽物を `PATH` の先に置き、呼ばれた時点で `.build` が退避されているかを
-    /// 書き残させる — 本物の `.app` を開かずに、手順の順序まで見る。
+    /// `open` は偽物を `PATH` の先に置く。本物と同じに、`-W` が無ければ起動を頼んですぐ戻り
+    /// (アプリは遅れて資材を読む)、`-W` があればアプリが終わるまで待つ。アプリが資材を読む
+    /// 時点で `.build` が退避されているかを書き残させる — 本物の `.app` を開かずに、
+    /// 手順の順序と、`-W` で `.build` を戻すのを遅らせていることまで見る (#2833)。
     @Test(
         "確かめ方の行は、スケッチの親から貼っても、スケッチの .build を退避して戻す",
         arguments: ["bund", "bund with space", "it's bund"])
@@ -316,11 +318,19 @@ struct BundleCommandTests {
         try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
         let record = parent.appendingPathComponent("opened")
         let open = tools.appendingPathComponent("open")
+        let quotedBuild = sketch.path.replacingOccurrences(of: "'", with: #"'\''"#) + "/.build"
         try """
             #!/bin/sh
-            { printf '%s\\n' "$1"
-              if [ -e '\(sketch.path.replacingOccurrences(of: "'", with: #"'\''"#))/.build' ]
-              then echo present; else echo held; fi; } > '\(record.path)'
+            waits=no
+            for argument in "$@"; do
+              if [ "$argument" = -W ]; then waits=yes; else app="$argument"; fi
+            done
+            # アプリは起動してから少し遅れて資材を読む。そのとき .build があるかを書き残す
+            ( sleep 0.5
+              { printf '%s\\n' "$app"
+                if [ -e '\(quotedBuild)' ]
+                then echo present; else echo held; fi; } > '\(record.path)' ) >/dev/null 2>&1 &
+            if [ "$waits" = yes ]; then wait; fi
             """.write(to: open, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: open.path)
 
@@ -338,7 +348,9 @@ struct BundleCommandTests {
         let result = try RunCommand.capture(process, capturing: true, errors: .inherit)
 
         #expect(result.status == 0, "確かめ方の行が通らない: \(line)")
-        // `open` の時点でスケッチの .build は退避されていて、開いたのは束ねた .app
+        // `-W` が無いと、行は偽物のアプリが書き残すより先に戻る。遅れて書くのを待つ
+        Thread.sleep(forTimeInterval: 1.0)
+        // アプリが資材を読む時点でスケッチの .build は退避されていて、開いたのは束ねた .app
         #expect(
             try String(contentsOf: record, encoding: .utf8) == "\(app.path)\nheld\n",
             "打った行: \(line)")
@@ -360,8 +372,22 @@ struct BundleCommandTests {
         #expect(
             report.contains(
                 "  mv '/work/bund with space/.build' '/work/bund with space/.build-held'"
-                    + " && open '/work/bund with space/bundle/Bund.app'"
+                    + " && open -W '/work/bund with space/bundle/Bund.app'"
                     + " ; mv '/work/bund with space/.build-held' '/work/bund with space/.build'\n"))
+    }
+
+    /// 確かめ方の行は、アプリを閉じるまで端末に戻らない (`open -W`)。戻らないことを
+    /// 読んだ人が知らないと、描けているのに手が止まっているように見える (#2833)。
+    @Test("確かめ方の説明が、描けたらアプリを閉じること、閉じると .build が戻ることを言う")
+    func theReportSaysToQuitTheApp() {
+        let report = BundleCommand.report(
+            for: URL(fileURLWithPath: "/tmp/Demo.app"),
+            package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
+        #expect(
+            report.contains(
+                "Once it draws, quit the app: .build is put back as soon as the app closes."))
+        #expect(report.contains("If it draws with .build moved aside, the bundle carries all it needs."))
     }
 
     /// 受け取った側の往復は消せない。消せない代わりに、説明を**送り手の記憶から外す** —
