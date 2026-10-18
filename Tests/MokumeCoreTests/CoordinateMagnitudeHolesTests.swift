@@ -22,11 +22,27 @@ struct CoordinateMagnitudeHolesTests {
     }
 
     nonisolated static let identity = Mapping(name: "写さない", scale: 1, offset: 0)
-    nonisolated static let mappings: [Mapping] = [
+    nonisolated static let translated1e4 = Mapping(name: "原点から 1e4 の平行移動", scale: 1, offset: 10_000)
+    nonisolated static let translated1e5 = Mapping(name: "原点から 1e5 の平行移動", scale: 1, offset: 100_000)
+
+    /// 拡大と、原点から 1e4 までの平行移動。
+    nonisolated static let nearMappings: [Mapping] = [
         Mapping(name: "10 倍", scale: 10, offset: 0),
         Mapping(name: "1000 倍", scale: 1000, offset: 0),
-        Mapping(name: "原点から 1e4 の平行移動", scale: 1, offset: 10_000),
-        Mapping(name: "原点から 1e5 の平行移動", scale: 1, offset: 100_000),
+        translated1e4,
+    ]
+
+    /// 原点から離した平行移動。**1e5 までを保証する** ([#2725])。1e6 は保証の外である。
+    ///
+    /// 3e4 で 25・5e4 で 463・65536 で 751 の場面が誤っていた (直す前)。
+    ///
+    /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
+    nonisolated static let farMappings: [Mapping] = [
+        Mapping(name: "原点から 3e4 の平行移動", scale: 1, offset: 30_000),
+        Mapping(name: "原点から 5e4 の平行移動", scale: 1, offset: 50_000),
+        Mapping(name: "原点から 65536 の平行移動", scale: 1, offset: 65_536),
+        translated1e5,
+        Mapping(name: "10 倍して原点から 1e5 の平行移動", scale: 10, offset: 100_000),
     ]
 
     /// 測る場面。穴は**写す前の小さな座標で**外周と逆回りに揃えておく。
@@ -171,27 +187,28 @@ struct CoordinateMagnitudeHolesTests {
     /// 2 のべきでない拡大と、原点から 1e4 までの平行移動。
     @Test(
         "写す前に正しかった場面は、拡大と 1e4 の平行移動で新しく誤らない",
-        arguments: mappings.filter { $0.offset <= 10_000 })
+        arguments: nearMappings)
     func scaledOrNearbyScenesStayRight(_ mapping: Mapping) {
-        #expect(Self.newlyWrong(mapping) == [])
+        let wrong = Self.newlyWrong(mapping)
+        #expect(wrong.isEmpty, "新しく誤る \(wrong.count) 場面: \(wrong.prefix(5))")
     }
 
-    /// **原点から 1e5 離すと、1133 場面のうち 936 場面が新しく誤る** ([#2725])。3e4 で 25・5e4 で 463 と
-    /// 離すほど増え、2e4 までは 0 である。拡大 (1e4 倍まで) では誤らない。保証する座標の範囲は
-    /// 人が選ぶので、ここでは直さずに記録する。直ったら上の検査の `arguments` へ移す。
+    /// 原点から 1e5 まで離しても、写す前に正しかった場面は新しく誤らない ([#2725])。直す前は
+    /// 1e5 で 1133 場面のうち 936 場面が誤った。1e6 は保証の外で、ここでは測らない。
     ///
     /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
-    @Test("原点から 1e5 離すと、写す前に正しかった場面が新しく誤る (#2725)")
-    func farTranslatedScenesGoWrong() {
-        withKnownIssue("#2725: 原点から 1e5 離すと塗りが欠ける・重なる") {
-            #expect(Self.newlyWrong(Self.mappings.last!) == [])
-        }
+    @Test(
+        "写す前に正しかった場面は、原点から 1e5 離しても新しく誤らない (#2725)",
+        arguments: farMappings)
+    func farTranslatedScenesStayRight(_ mapping: Mapping) {
+        let wrong = Self.newlyWrong(mapping)
+        #expect(wrong.isEmpty, "新しく誤る \(wrong.count) 場面: \(wrong.prefix(5))")
     }
 
-    /// 新しく誤る場面のうちいちばん小さいもの: 外周 320 四方に、40×20 の長方形の穴が 1 つ
+    /// 以前に誤っていた最小の場面: 外周 320 四方に、40×20 の長方形の穴が 1 つ
     /// (`AlignedHolesTests.lattice` の 6)。原点から 1e5 離すと、面積が約 0.8% 違い、標本点 3 つが
-    /// 食い違う。写す前と、1e4 離したときは正しい。
-    @Test("外周 320 四方に長方形の穴 1 つでも、原点から 1e5 離すと誤る (#2725)")
+    /// 食い違った。
+    @Test("外周 320 四方に長方形の穴 1 つでも、原点から 1e5 離して正しく塗れる (#2725)")
     func smallestFarTranslatedScene() {
         let probe = Probe(
             "長方形の穴 1 つ",
@@ -199,9 +216,23 @@ struct CoordinateMagnitudeHolesTests {
                 index: 0, outer: [SIMD2(0, 0), SIMD2(320, 0), SIMD2(320, 320), SIMD2(0, 320)],
                 holes: [[SIMD2(180, 260), SIMD2(180, 280), SIMD2(220, 280), SIMD2(220, 260)]]))
         #expect(!Self.isWrong(Self.judge(probe, Self.identity)))
-        #expect(!Self.isWrong(Self.judge(probe, Self.mappings[2])))
-        withKnownIssue("#2725: 原点から 1e5 離すと塗りが欠ける・重なる") {
-            #expect(!Self.isWrong(Self.judge(probe, Self.mappings[3])))
-        }
+        #expect(!Self.isWrong(Self.judge(probe, Self.translated1e4)))
+        let far = Self.judge(probe, Self.translated1e5)
+        #expect(!Self.isWrong(far), "面積の誤差 \(far.areaError)・標本の食い違い \(far.mismatches)")
+    }
+
+    /// 外周と同じ向きの穴 (回り数 2 の所は塗る) を、原点から 1e5 離しても同じ向きと読む。
+    /// 向きを読み違えると穴として抜き、塗るべき所が欠ける (`Triangulation+Crossings` の
+    /// `signedArea(of:points:)`)。組み直しが要ると決められた形は `splitForNonzero` が `nil` でなく返す。
+    @Test("外周と同じ向きの穴は、原点から 1e5 離しても組み直す対象と読む (#2725)", arguments: [0.0, 100_000])
+    func sameDirectionHoleIsReadFarFromOrigin(_ offset: Double) {
+        let shift = SIMD2<Float>(repeating: Float(offset))
+        let outer: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(320, 0), SIMD2(320, 320), SIMD2(0, 320)]
+        let hole: [SIMD2<Float>] = [SIMD2(180, 260), SIMD2(220, 260), SIMD2(220, 280), SIMD2(180, 280)]
+        let points = (outer + hole).map { $0 + shift }
+        #expect(Triangulation.signedArea(Array(points[0..<4])) > 0)
+        #expect(Triangulation.signedArea(Array(points[4..<8])) > 0)
+        let split = Triangulation.splitForNonzero(rings: [[0, 1, 2, 3], [4, 5, 6, 7]], points: points)
+        #expect(split != nil)
     }
 }

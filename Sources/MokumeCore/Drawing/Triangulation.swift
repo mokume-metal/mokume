@@ -31,6 +31,13 @@ import simd
 /// どの耳をどの順に切るかは割り方として絵に出うる (頂点ごとの色・光・読み取り位置) が、
 /// 割り方は公開の説明で約束していない。不透明の一様な塗りは、割り方に依らず同じ画素を覆う。
 ///
+/// **座標の大きさは、原点から 1e5 までを保証する** ([#2725])。形を平行移動しても、穴を抜いた
+/// 塗りは同じ領域を覆う。向きは面積の符号で決めるので、面積は最初の点からの差で足す
+/// (``signedArea(_:)``)。**1e6 は保証の外**で、`Float` の刻みが 0.06 になり、辺と点の位置関係が
+/// 丸めで入れ替わりうる。辺ごとの外積は差を取ってから掛けるので、座標の大きさに
+/// 左右されにくい。
+///
+/// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
 /// **字形の輪郭が普通に持つ 3 つの形を、正しい入力として扱う** ([#1148]・[#1211])。
 /// どれも利用者が作った不正な形ではなく、`textOutline` で取った字をそのまま塗ると必ず現れる:
 ///
@@ -223,12 +230,19 @@ nonisolated enum Triangulation {
     // MARK: - 部品
 
     /// 符号付きの面積。向きの判定に使う (大きさは見ない)。
+    ///
+    /// **最初の点からの差で足す。** 絶対座標のまま `a.x * b.y - b.x * a.y` を足すと、原点から
+    /// 1e5 離れた形では項が 1e10 になり、`Float` の刻み (1024) が小さな穴の面積を越えて、向きの
+    /// 符号が丸めで反転する ([#2725])。差を取れば項の大きさは形の大きさで決まり、平行移動に
+    /// 依らない。原点から 1e5 までを保証し、1e6 は保証の外である (座標そのものが `Float` の
+    /// 刻みに近づき、差を取る前に点の位置が丸まる)。
+    ///
+    /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
     static func signedArea(_ points: [SIMD2<Float>]) -> Float {
+        guard let origin = points.first else { return 0 }
         var sum: Float = 0
         for index in points.indices {
-            let a = points[index]
-            let b = points[(index + 1) % points.count]
-            sum += a.x * b.y - b.x * a.y
+            sum += cross(points[index] - origin, points[(index + 1) % points.count] - origin)
         }
         return sum / 2
     }
