@@ -132,5 +132,77 @@ struct UnopenableAssetTests {
                 }
             }
         }
+
+        /// UTF-8 でない (Shift_JIS の「あ」) 断片。0x82 は UTF-8 の先頭に来ないバイト。
+        static let shiftJIS = Data([0x2F, 0x2F, 0x20, 0x82, 0xA0, 0x0A])
+
+        /// 開けたが UTF-8 の文字として読めない断片は、見つからない (資源の宣言を確かめよ) ではなく
+        /// `unreadable` で断る。
+        @Test(
+            "開けたが UTF-8 でない断片は、notFound ではなく unreadable で断る",
+            arguments: [Door.loadShader, .loadEffect, .loadComputation])
+        @MainActor
+        func unreadableFragmentSaysUTF8(_ door: Door) async throws {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+            let scratch = Scratch()
+            defer { scratch.cleanUp() }
+            let placed = try scratch.file(door.fileName, Self.shiftJIS)
+            do {
+                try await door.read(placed, on: canvas)
+                Issue.record("\(door) が UTF-8 でない断片を読めてしまった")
+            } catch let failure as ShaderFailure {
+                #expect(failure == .unreadable(path: placed))
+                #expect(failure.description.contains("UTF-8"), "\(failure)")
+                #expect(!failure.description.contains("resources"), "資源の宣言の助言を出している: \(failure)")
+            }
+        }
+
+        /// 読み直しで読めなくなったもの。
+        nonisolated enum Spoil: CaseIterable, Sendable {
+            /// ファイルを消して、同じ名前のディレクトリを置く。
+            case directory
+            /// 読む権利を外す。
+            case noPermission
+            /// 中身を UTF-8 でないもの (Shift_JIS) にする。
+            case notUTF8
+
+            /// 理由に出るはずの句。
+            var phrase: String {
+                switch self {
+                case .directory: String(cString: strerror(EISDIR))
+                case .noPermission: String(cString: strerror(EACCES))
+                case .notUTF8: "UTF-8"
+                }
+            }
+        }
+
+        /// 保存を拾って読み直す経路 (``ShaderBox``) も、読めなくなった事情を名乗る。場所だけを
+        /// 言って、開けないのか UTF-8 でないのかを落とさない。
+        @Test("読み直しで読めなくなった断片は、開けない事情か UTF-8 でないことを名乗る", arguments: Spoil.allCases)
+        @MainActor
+        func reloadNamesWhy(_ spoil: Spoil) throws {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+            let scratch = Scratch()
+            defer { scratch.cleanUp() }
+            let placed = try scratch.file(
+                "paint.metal",
+                Data("float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }".utf8))
+            let shader = try canvas.loadShader(placed)
+            try #require(shader.failure == nil, "検査の前提: 読めた断片が失敗を名乗っている")
+            switch spoil {
+            case .directory:
+                try FileManager.default.removeItem(atPath: placed)
+                try FileManager.default.createDirectory(atPath: placed, withIntermediateDirectories: false)
+            case .noPermission:
+                try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: placed)
+                try #require(!FileManager.default.isReadableFile(atPath: placed), "読む権利を外せていない")
+            case .notUTF8:
+                try Self.shiftJIS.write(to: URL(fileURLWithPath: placed))
+            }
+            shader.reload()
+            let failure = try #require(shader.failure, "読めなくなったのに失敗を名乗らない")
+            #expect(failure.contains(spoil.phrase), "\(failure)")
+            #expect(failure.contains(placed), "場所を名乗っていない: \(failure)")
+        }
     }
 }

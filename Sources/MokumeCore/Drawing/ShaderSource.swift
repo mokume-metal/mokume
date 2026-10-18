@@ -25,9 +25,7 @@ enum ShaderSource {
     /// 3 者が同じ 7 行を持っていたので畳んだ — 候補の探し方が割れると、「読めない」が
     /// 断片の種類によって別の理由で出るようになる。
     ///
-    /// **見つかったが開けないものを「見つからない」と名乗らない** ([#2358])。ディレクトリや読む
-    /// 権利の無いファイルは、資源の宣言を確かめよという助言ではなく
-    /// ``ShaderFailure/unopenable(path:location:reason:)`` で、解けた場所と OS の事情を名乗る。
+    /// **見つかったものを「見つからない」と名乗らない** ([#2358])。中身は ``body(at:path:)`` が読む。
     ///
     /// [#895]: https://github.com/mokume-metal/mokume/issues/895
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
@@ -39,13 +37,24 @@ enum ShaderSource {
         else {
             throw .notFound(path: path, searched: candidates.map(\.path))
         }
+        return (url, try body(at: url, path: path), url.deletingPathExtension().lastPathComponent)
+    }
+
+    /// 場所が分かった断片の中身を読む。保存を拾って読み直す経路 (``ShaderBox``) もここを通す。
+    ///
+    /// **読めなかった事情を落とさない** ([#2358])。ディレクトリや読む権利の無いファイルは
+    /// ``ShaderFailure/unopenable(path:location:reason:)`` で、解けた場所と OS の事情を名乗る。
+    /// 開けたが UTF-8 の文字でない中身 (Shift_JIS で保存した断片など) は
+    /// ``ShaderFailure/unreadable(path:)`` で、UTF-8 で保存し直すよう言う。どちらも、資源の宣言を
+    /// 確かめよという助言 (見つからないとき) は出さない。
+    static func body(at url: URL, path: String) throws(ShaderFailure) -> String {
         if let refusal = AssetOpening.refusal(at: url) {
             throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
         }
         guard let body = try? String(contentsOf: url, encoding: .utf8) else {
-            throw .notFound(path: path, searched: candidates.map(\.path))
+            throw .unreadable(path: path)
         }
-        return (url, body, url.deletingPathExtension().lastPathComponent)
+        return body
     }
 
     /// 値の名前と、その形。

@@ -148,8 +148,17 @@ final class ShaderBox {
         adopt: (Built) -> Void
     ) {
         guard let url else { return }
-        guard let body = try? String(contentsOf: url, encoding: .utf8) else {
-            let reason = "Could not read the fragment: \(url.path)"
+        let body: String
+        do {
+            body = try ShaderSource.body(at: url, path: url.path)
+        } catch {
+            // **読めなかった事情を名乗る** (#2358)。開けない (ディレクトリになった・読む権利が無い) のか、
+            // UTF-8 でないのかで直す所が違う。消えたファイルも開けないので「見つかった」とは言わない
+            let reason =
+                switch error {
+                case .unopenable(_, let location, let why): "Could not read the fragment \"\(location)\": \(why)"
+                default: "Could not read the fragment: \(error.description)"
+                }
             // 読めないままなら言い直さない (下の「失敗した中身も控える」と同じ理由)
             guard failure != reason else { return }
             failure = reason

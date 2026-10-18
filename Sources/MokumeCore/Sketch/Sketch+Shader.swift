@@ -99,8 +99,8 @@ extension SketchPart {
     /// 組み上がってはじめて差し替わるので、片方だけ古い断片が効くことはない。
     ///
     /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
-    ///   場所が載る ``ShaderFailure/unopenable(path:location:reason:)``)・組み立てられないとき・値や面が
-    ///   多すぎるときに ``ShaderFailure``。
+    ///   場所が載る ``ShaderFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めないとき
+    ///   (``ShaderFailure/unreadable(path:)``)・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeShader(_:name:values:surfaces:)
