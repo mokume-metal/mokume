@@ -2118,11 +2118,13 @@ struct FormShapeTests {
         #expect(form(1.9, 1.9, weight: 1, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 1.9 の円")
         #expect(!form(2, 2, weight: 1, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 2 の円")
         #expect(!form(700, 700, weight: 7, kind: .ellipse).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 700 の円")
-        // 扇 (#2747): 内接円の半径の上限から太さの半分を引いた半径で測る。この form の扇は掃引 1 の円弧
-        // (内接円の半径の上限は 短半径 · sin(0.5) / (1 + sin(0.5)))。潰れた扇・細い穴の扇は含み、
-        // 太い穴の扇は含まない
+        // 扇 (#2747): 内接円の半径の下限から太さの半分を引いた半径を、画素の 3 つ分で測る。この form の扇は
+        // 掃引 1 の円弧 (内接円の半径は 半径 · sin(0.5) / (1 + sin(0.5)) = 0.324 · 半径)。潰れた扇・細い穴の
+        // 扇は含み、穴の太い扇は含まない
         #expect(form(0.6, 20, weight: 1, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "潰れた扇 (扇 0.6×20・太さ 1)")
-        #expect(form(40, 40, weight: 16, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "細い穴の扇 (穴の半径 0.23)")
+        // 半径 20 の扇の内接円は 6.5: 太さ 16 なら穴の半径は −1.5 (潰れている)、太さ 11 なら 1.0 (画素 3 つ分より小さい)
+        #expect(form(40, 40, weight: 16, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "潰れた扇")
+        #expect(form(40, 40, weight: 11, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "穴の半径 1.0 の扇")
         #expect(!form(40, 40, weight: 2, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "穴の太い扇")
         #expect(!form(200, 200, weight: 7, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 200 の扇")
         // 輪郭の無い形は枝を持たないので含まない
@@ -2144,7 +2146,8 @@ struct FormShapeTests {
                         shape.mayHaveThinPart(unitsPerDrawnPixel: one)
                             == (shape.mayHaveThinFill(unitsPerDrawnPixel: one)
                                 || shape.mayHaveThinHole(unitsPerDrawnPixel: one)
-                                || shape.mayNeedExactRing(unitsPerDrawnPixel: one)),
+                                || shape.mayNeedExactRing(unitsPerDrawnPixel: one)
+                                || shape.mayNeedApexSampling()),
                         "\(kind) \(width)×\(height)・太さ \(weight)")
                 }
             }
@@ -2281,8 +2284,37 @@ struct FormShapeTests {
             FormInstance.sectorDepthBound(radii: SIMD2(Float(rx), Float(ry)), sweep: Float(sweep)))
         // 格子の刻みぶん (対角の半分) だけ、実測は真の最大より小さく出る
         #expect(bound >= deepest - 0.1, "\(rx)×\(ry)・掃引 \(sweep): 上限 \(bound) < 実測 \(deepest)")
+        // 下限も実測を上回らない (細い穴かの判定は下限から測る)
+        let lower = Double(
+            FormInstance.sectorDepthLower(radii: SIMD2(Float(rx), Float(ry)), sweep: Float(sweep)))
+        #expect(lower <= deepest + 0.1, "\(rx)×\(ry)・掃引 \(sweep): 下限 \(lower) > 実測 \(deepest)")
         if rx == ry {
             #expect(bound <= deepest * 1.01 + 0.1, "円の扇の上限が緩い: 上限 \(bound)・実測 \(deepest)")
         }
+    }
+
+    /// 中心の角が尖った扇の判定 (`mayNeedApexSampling`) ([#2747])。掃引が π 未満で、角の半分の正弦が 0.5
+    /// 未満 (角が 60° 未満) の扇だけが含む。楕円の扇は、媒介変数の角ではなく弧の端の位置ベクトルの向きで測る。
+    ///
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+    @Test("中心の角が尖った扇の判定は、角が 60° 未満の扇だけを含む")
+    func sharpApexJudgement() {
+        func arc(_ w: Float, _ h: Float, start: Float, sweep: Float, strokes: Bool = true) -> FormInstance {
+            FormInstance(
+                kind: .arc, linear: SIMD4(1, 0, 0, 1), offset: SIMD2(10, 10), half: SIMD2(w / 2, h / 2),
+                arc: SIMD2(start, sweep), halfWeight: 1, fill: SIMD4(1, 1, 1, 1), stroke: SIMD4(1, 1, 1, 1),
+                fills: true, strokes: strokes, cap: .round, join: .miter)
+        }
+        #expect(arc(400, 400, start: 0.3, sweep: 0.1).mayNeedApexSampling(), "掃引 0.1")
+        #expect(arc(120, 120, start: 0.3, sweep: 0.6).mayNeedApexSampling(), "掃引 0.6 (34°)")
+        #expect(arc(120, 120, start: 0, sweep: 1.0).mayNeedApexSampling(), "掃引 1.0 (57°)")
+        #expect(!arc(120, 120, start: 0, sweep: 1.1).mayNeedApexSampling(), "掃引 1.1 (63°)")
+        #expect(!arc(120, 120, start: 0, sweep: .pi).mayNeedApexSampling(), "半円")
+        #expect(!arc(120, 120, start: 0, sweep: 5).mayNeedApexSampling(), "掃引 5")
+        #expect(!arc(400, 400, start: 0.3, sweep: 0.1, strokes: false).mayNeedApexSampling(), "輪郭の無い扇")
+        // 楕円の扇: 角は弧の端の位置ベクトルの向きで測る。媒介変数の掃引 0.3 (円なら 17°) の細長い楕円の扇は
+        // 40° で尖り、掃引 1.2 の同じ扇は弧の端の向きが 140° 開いて尖らない
+        #expect(arc(200, 20, start: 1.2, sweep: 0.3).mayNeedApexSampling(), "細長い楕円の狭い扇")
+        #expect(!arc(200, 20, start: 0.5, sweep: 1.2).mayNeedApexSampling(), "細長い楕円の広い扇")
     }
 }

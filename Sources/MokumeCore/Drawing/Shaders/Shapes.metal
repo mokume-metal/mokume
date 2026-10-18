@@ -772,7 +772,8 @@ struct FormFragmentIn {
     /// 3: 輪郭の位置で**真の距離**を解く (`mokume_ellipseExactField`・#2742)
     uint ringFromFill [[flat]];
     /// 輪郭の帯の穴が、描く画素で 1 画素より細いか潰れているか (`mokume_thinHole`)。`rect`・楕円・扇の
-    /// インスタンスごとに決まる。0: 縁 1 本の距離場で数える・1: 両縁を見る積 (扇は画素の中の標本) で数える
+    /// インスタンスごとに決まる。0: 縁 1 本の距離場で数える・1: 両縁を見る積 (扇は画素の中の標本) で数える・
+    /// 2: 穴は細くないが中心の角が尖った扇で、尖りの先の画素だけ標本で数える (`mokume_sectorApex`)
     uint thinHole [[flat]];
     uint instance [[flat]];
 };
@@ -946,6 +947,41 @@ static inline float mokume_sectorDepthBound(float2 radii, float sweep) {
     return min(shortRadius, longRadius * halfSine / (1.0 + halfSine));
 }
 
+/// 扇の中で、輪郭から最も深い所の深さの**下限** (形自身の座標・[#2747])。上の上限と対で、真の深さは
+/// 2 つの間にある。円の扇は上限と一致する。楕円の扇は、媒介変数の空間の単位円の扇の内接円 (半径
+/// `半径比`) の像が楕円で、その中に半径 `短半径 · 半径比` の円が入るので、`短半径 · sin(θ/2) / (1 + sin(θ/2))`
+/// (`arc(0, 0, 100, 60, 0, π)` で 15・上限は 25・実際は 15 ほど)。
+///
+/// **穴が細いかは、上限ではなく下限から測る。** 上限だけだと、楕円の扇は上限が実際の 1.7〜2 倍に緩く、
+/// 本当は細い穴を太いと外す (太さ 30.1 で帯が最悪 45% 欠けた)。下限から測れば、細いかもしれない扇は
+/// 標本の枝に入る (標本は真の距離で数えるので、細くなくても絵は縁 1 本と同じに近い)。
+static inline float mokume_sectorDepthLower(float2 radii, float sweep) {
+    float halfSine = sin(0.5 * min(sweep, M_PI_F));
+    return min(radii.x, radii.y) * halfSine / (1.0 + halfSine);
+}
+
+/// 扇の穴の半径が、描く画素のいくつ分より小さければ「細い」として標本で数えるか。穴の端は尖り (内縁を
+/// 作る縁が鋭い角で交わる)、縁 1 本の距離場は尖りの先で穴の向こう側の縁を見られない。半円の穴の半径で
+/// 測ると、穴の半径 1.0 の欠けは 12.5%・2.5 は 7% で、1.5・2・3・4 は出なかった (4 通りの置き方)。
+constant float kFormSectorHoleReach = 3.0;
+
+/// 扇の中心の角が作る穴の尖り (`float4`): xy は尖りの位置 (形自身の座標)、z は角の半分の正弦、w は
+/// 尖った角か (掃引が π 未満で、角の半分の正弦が 0.5 未満・角が 60° 未満)。
+///
+/// 中心の角 (掃引 θ) は、内側へ太さの半分だけ縮めても同じ角度の尖りになる。縁 1 本の距離場は、尖りの
+/// 先の画素で距離が小さいまま長く残り、尖りから離れた画素まで被覆が残る — 尖りまでの距離 t のとき被覆の
+/// 余りは `0.5 − t · sin(θ/2)` で、θ が小さいほど遠くまで残る (`arc(0, 0, 400, 400, …, 0.1)`・太さ 10 で、
+/// 穴は太い (半径 4.5) のに尖りの先の画素が 52% 欠けた)。角は 2 本の半径の向きで決まる (楕円の扇は
+/// 媒介変数の角ではなく、弧の端の位置ベクトルの向き)。
+static inline float4 mokume_sectorApex(float2 radii, float start, float sweep, float halfWeight) {
+    float2 direction1 = normalize(radii * float2(cos(start), sin(start)));
+    float2 direction2 = normalize(radii * float2(cos(start + sweep), sin(start + sweep)));
+    float2 bisector = normalize(direction1 + direction2);
+    float sineHalf = abs(direction1.x * bisector.y - direction1.y * bisector.x);
+    float2 tip = bisector * (halfWeight / max(sineHalf, 1e-6));
+    return float4(tip, sineHalf, (sweep < M_PI_F && sineHalf < 0.5) ? 1.0 : 0.0);
+}
+
 vertex FormFragmentIn formVertexMain(
     uint index [[vertex_id]],
     uint instance [[instance_id]],
@@ -1030,15 +1066,25 @@ vertex FormFragmentIn formVertexMain(
     // 出す — 断片で出すと、楕円の穴の半径 (平方根 2 つ) を画素ごとに解き、面を覆う円で GPU 時間が
     // 2 割増えた (#2186)。断片の `unitsPerPixel` と同じ式で描く画素の大きさを出す
     float2 drawnUnits = float2(length(drawnRows.xy), length(drawnRows.zw));
+    // 扇の穴は、内接円の半径の下限から太さの半分を引いた半径を、`kFormSectorHoleReach` 画素で測る
+    // (半径が画素の 3 つ分より小さければ細い)。`mokume_thinHole` は半幅が画素の半分より小さいかを
+    // 見るので、半径を 2 · `kFormSectorHoleReach` で割って渡す
     float2 hole = form.meta.x == kFormEllipse
         ? mokume_ellipseHole(form.size.xy, halfWeight)
         : (form.meta.x == kFormArc
-            ? float2(mokume_sectorDepthBound(form.size.xy, form.offset.w) - halfWeight)
+            ? float2(mokume_sectorDepthLower(form.size.xy, form.offset.w) - halfWeight)
+                / (2.0 * kFormSectorHoleReach)
             : form.size.xy - halfWeight);
     out.thinHole =
         ((form.meta.x == kFormRect || form.meta.x == kFormEllipse || form.meta.x == kFormArc)
             && mokume_thinHole(hole, drawnUnits))
         ? 1u : 0u;
+    // 穴が細くない扇でも、中心の角が尖っていれば、尖りの先の画素を標本で数える (2)
+    if (out.thinHole == 0u && form.meta.x == kFormArc
+        && mokume_sectorApex(form.size.xy, form.offset.z, form.offset.w, halfWeight).w > 0.0)
+    {
+        out.thinHole = 2u;
+    }
     out.instance = instance;
     return out;
 }
@@ -1380,7 +1426,7 @@ static inline FormField mokume_sectorField(
 /// 決まり、穴は弧と 2 本の半径の 3 つの縁に囲まれる) ので、**画素の中を格子で標本して、内縁の内に入る
 /// 標本の割合で数える**。穴から画素の半対角より離れた画素は、標本を取らずに 0 と 1 を返す。
 ///
-/// 標本は 16×16 (256 通り・表示の 1 段と同じ細かさ)。穴に掛かる画素は細い穴の周りのごく一部で、費用は
+/// 標本は 8×8 (楕円の尖りの先と同じ・1 標本 = 1.6%。16×16 は 1 標本が表示の 1 段になるが、GPU 時間がかさむ。楕円の尖りの先では全体で 3.5 倍になった)。穴に掛かる画素は細い穴の周りのごく一部で、費用は
 /// 穴が細いか潰れた扇を含む列だけが払う (`kFormHasThinFill`)。
 static inline float mokume_sectorHoleCoverage(
     float2 q, float2 radii, float start, float sweep, float halfWeight, float depthBound,
@@ -1394,7 +1440,7 @@ static inline float mokume_sectorHoleCoverage(
     float margin = mokume_sectorField(q, radii, start, sweep, exact).distance + halfWeight;
     if (margin > reach) { return 0.0; }
     if (margin < -reach) { return 1.0; }
-    const int n = 16;
+    const int n = 8;
     int inside = 0;
     for (int j = 0; j < n; j++) {
         for (int i = 0; i < n; i++) {
@@ -1719,11 +1765,20 @@ static inline FormPaint mokume_formPaint(
             // 判定は頂点関数が決める (`thinHole`・`mokume_sectorDepthBound`)。それより太い穴は縁 1 本の
             // 距離場のまま (絵は 1 ビットも変わらない)
             if (kFormHasThinFill && in.thinHole != 0) {
-                isThinHole = true;
-                thinHoleCoverage = mokume_sectorHoleCoverage(
-                    q, form.size.xy, form.offset.z, form.offset.w, halfWeight,
-                    mokume_sectorDepthBound(form.size.xy, form.offset.w), in.inverseRows,
-                    in.ringFromFill == 3);
+                bool sampled = in.thinHole == 1u;
+                if (!sampled) {
+                    // 尖りの先 (尖りまでの距離 t で縁 1 本の被覆の余りが 0.5 − t · sin(θ/2) になる範囲) だけ
+                    float4 apex = mokume_sectorApex(form.size.xy, form.offset.z, form.offset.w, halfWeight);
+                    sampled = length(q - apex.xy)
+                        < (2.0 / apex.z + 2.0) * max(unitsPerPixel.x, unitsPerPixel.y);
+                }
+                if (sampled) {
+                    isThinHole = true;
+                    thinHoleCoverage = mokume_sectorHoleCoverage(
+                        q, form.size.xy, form.offset.z, form.offset.w, halfWeight,
+                        mokume_sectorDepthBound(form.size.xy, form.offset.w), in.inverseRows,
+                        in.ringFromFill == 3);
+                }
             }
         }
     } else if (kFormHasStroke) {
