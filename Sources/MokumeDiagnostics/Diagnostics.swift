@@ -76,7 +76,7 @@ public nonisolated enum Diagnostics {
             DecodingError.valueNotFound(_, let context):
             detail = described(context)
         default:
-            detail = posixCode(in: error).map(posixReason) ?? error.localizedDescription
+            detail = failureText(error)
         }
         let line = detail.split(whereSeparator: \.isNewline).joined(separator: " ")
         return "\(kind(of: error)): \(line)"
@@ -109,10 +109,36 @@ public nonisolated enum Diagnostics {
         // 自分を指す下の失敗で回り続けないよう、辿る深さに上限を置く
         for _ in 0..<8 {
             guard let failure = current else { return nil }
-            if failure.domain == NSPOSIXErrorDomain { return Int32(failure.code) }
+            // 番号が `Int32` に収まらないものは、POSIX の番号として読まない (落とさない)
+            if failure.domain == NSPOSIXErrorDomain { return Int32(exactly: failure.code) }
             current = failure.userInfo[NSUnderlyingErrorKey] as? NSError
         }
         return nil
+    }
+
+    /// 失敗の理由の句。下に POSIX の事情があればその番号の C の文面 (``posixReason(_:)``)、無ければ
+    /// 今までどおり `localizedDescription`。``reason(_:)`` と違い、型の名乗りを前に付けない —
+    /// 口ごとの失敗の型 (`unreachable(url:reason:)` など) の `reason` に、そのまま入れる句である。
+    package static func failureText(_ error: any Error) -> String {
+        posixCode(in: error).map(posixReason) ?? error.localizedDescription
+    }
+
+    /// 書けなかった失敗の、POSIX の事情の句。POSIX の事情が無ければ `nil` (呼び手が今の文面に落とす)。
+    ///
+    /// **置き換えて書く (`.atomic`) と、行き先がディレクトリのときの下の失敗は ENOENT になる**
+    /// (#2839 の実測)。そのまま `No such file or directory` と言うと、在るものを無いと言ってしまう。
+    /// だから下の番号が ENOENT で、行き先**そのもの**がディレクトリなら EISDIR (`Is a directory`) を
+    /// 名乗る。
+    ///
+    /// - 呼ぶのは**書くのに失敗したときだけ**にする (書けた経路に判定を足さない)
+    /// - 行き先は **symlink を辿らずに** (`lstat`) 見る。ディレクトリを指す symlink への書き込みが
+    ///   別の理由 (書く権利が無い・EACCES) で失敗したのを、`Is a directory` と偽らない
+    package static func writingPosixReason(_ error: any Error, at url: URL) -> String? {
+        guard let code = posixCode(in: error) else { return nil }
+        guard code == ENOENT else { return posixReason(code) }
+        var status = stat()
+        let isDirectory = lstat(url.path, &status) == 0 && status.st_mode & S_IFMT == S_IFDIR
+        return posixReason(isDirectory ? EISDIR : code)
     }
 
     /// 失敗の型。**Foundation が返す失敗は `NSError` としか名乗らない**ので、領域と番号

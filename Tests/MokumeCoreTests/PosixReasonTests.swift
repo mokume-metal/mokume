@@ -57,6 +57,22 @@ struct PosixReasonTests {
         #expect(Diagnostics.posixCode(in: URLError(.cannotConnectToHost)) == nil)
     }
 
+    @Test("POSIX の領域でも Int32 に収まらない番号は、落ちずに POSIX として扱わない")
+    func codeOutsideInt32IsNotPosix() {
+        let huge = NSError(
+            domain: NSPOSIXErrorDomain, code: Int(Int32.max) + 1, userInfo: [NSLocalizedDescriptionKey: Self.fake])
+        #expect(Diagnostics.posixCode(in: huge) == nil)
+        #expect(Diagnostics.failureText(huge) == Self.fake)
+    }
+
+    @Test("HTTP の状態の句は、地域化されない RFC の句か、百の位の分類")
+    func statusPhrasesAreNotLocalized() {
+        #expect(WebFile.statusPhrase(404) == "Not Found")
+        #expect(WebFile.statusPhrase(503) == "Service Unavailable")
+        #expect(WebFile.statusPhrase(499) == "client error")
+        #expect(WebFile.statusPhrase(599) == "server error")
+    }
+
     @Test("Diagnostics.reason は、下に POSIX の事情があれば C の文面、無ければ今の説明のまま")
     func diagnosticsReason() {
         let reason = Diagnostics.reason(Self.nested(EISDIR, depth: 2))
@@ -115,6 +131,27 @@ struct PosixReasonTests {
             return
         }
         #expect(writeReason == readReason)
+    }
+
+    /// 書く権利の無い置き場の中の、ディレクトリを指す symlink へ書く。下の失敗は書く権利の無さ
+    /// (EACCES) で、`Is a directory` と偽らない (symlink を辿って行き先を見ると偽る)。
+    @Test("書く権利の無い置き場の、ディレクトリを指す symlink へ書くと、Permission denied のまま")
+    func writingOntoLinkToDirectoryInLockedFolder() throws {
+        let folder = try Self.folder()
+        let elsewhere = try Self.folder()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+            try? FileManager.default.removeItem(at: folder)
+            try? FileManager.default.removeItem(at: elsewhere)
+        }
+        let table = try Self.table(in: elsewhere)
+        let out = folder.appendingPathComponent("out.csv")
+        try FileManager.default.createSymbolicLink(at: out, withDestinationURL: elsewhere)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        try #require(!FileManager.default.isWritableFile(atPath: folder.path), "書く権利を外せていない")
+
+        let written = #expect(throws: DataFailure.self) { try Bare().saveTable(table, out.path) }
+        #expect(written == .unwritable(path: out.path, reason: String(cString: strerror(EACCES))))
     }
 
     @Test("書く権利の無い置き場へ書くと、unwritable の理由は C の文面 (Permission denied)")
