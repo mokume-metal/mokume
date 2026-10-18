@@ -53,11 +53,10 @@ struct ParameterStoreTests {
 
     /// 非有限の数を宣言として返す代役の置き場。
     ///
-    /// **`@Param` は、値を書き換える口ではもう非有限を載せない** ([#2271](https://github.com/mokume-metal/mokume/issues/2271))
-    /// ので、符号化の守り (#2263) は書き換えからは踏めない。残る入口は生まれのときの値 (初期値・
-    /// `init` の中の代入・[#2394](https://github.com/mokume-metal/mokume/issues/2394)) で、
-    /// 関所を抜けた非有限が届いても保存が黙って止まらないことを、関所の外の口
-    /// (``DeclaredParam`` の別の実装) から見る。
+    /// **`@Param` はもう非有限を載せない** — 値を書き換える口 ([#2271](https://github.com/mokume-metal/mokume/issues/2271))
+    /// でも、生まれのときの値 (初期値・`init` の中の代入・[#2394](https://github.com/mokume-metal/mokume/issues/2394))
+    /// でもである。だから符号化の守り (#2263) は `@Param` からは踏めない。関所を抜けた非有限が
+    /// 届いても保存が黙って止まらないことを、関所の外の口 (``DeclaredParam`` の別の実装) から見る。
     @MainActor
     final class Unbounded: DeclaredParam {
         var number: Double = .nan

@@ -40,6 +40,11 @@ public struct ParamRange: Equatable, Sendable {
         lhs.lowerBound == rhs.lowerBound && lhs.upperBound == rhs.upperBound
     }
 
+    /// 両端が有限か。**偽の範囲は、置き場が書かなかったものとして扱う** — 応答の `min` / `max` は
+    /// JSON に書けず、窓のスライダーは有限の幅を持たない
+    /// ([#2475](https://github.com/mokume-metal/mokume/issues/2475))。整数で書いた範囲は常に真。
+    var hasFiniteBounds: Bool { lowerBound.isFinite && upperBound.isFinite }
+
     /// 範囲へ収めた値を返す。
     public func clamped(_ value: Double) -> Double {
         min(max(value, lowerBound), upperBound)
