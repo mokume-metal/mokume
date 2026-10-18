@@ -146,6 +146,34 @@ struct MovieTests {
         #expect(zip(first, first.dropFirst()).filter { $0.pixels != $1.pixels }.count > 10)
     }
 
+    @Test(
+        "鍵のコマの間隔が違う動画でも、ループと jump(2.5)・jump(0.9) を混ぜて 2 度回すとフレームごとのコマが一致し、位置のコマが出る",
+        arguments: [30, 90])
+    func twoRunsMatchAcrossKeyFrames(keyFrameInterval: Int) async throws {
+        let url = try await TestMovie.write(
+            frames: 90, width: 128, height: 96, keyFrameInterval: keyFrameInterval, paint: TestMovie.stripe)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+        // 30 fps の時計で 300 フレーム。継ぎ目を 2 度越え、読み進める飛びと読み直す飛びを混ぜる (#2764)
+        let during: (MovieSketch, Movie) -> Void = { sketch, movie in
+            switch sketch.frameCount {
+            case 100: movie.jump(2.5)
+            case 140: movie.jump(0.9)
+            case 160: movie.jump(0.5)
+            case 161: movie.jump(1.4)
+            default: break
+            }
+        }
+        let first = try record(url, frames: 300, during: during)
+        let second = try record(url, frames: 300, during: during)
+        #expect(first.count == 300)
+        #expect(first == second)
+        for row in first {
+            let index = min(89, Int((Double(row.time) * 30 + 0.03).rounded(.down)))
+            #expect(row.pixels == expected[index], "\(row.frame) 枚目 (\(row.time) 秒)")
+        }
+    }
+
     // MARK: - 操作
 
     @Test("作っただけでは流れず、最初のコマが映ったまま")
