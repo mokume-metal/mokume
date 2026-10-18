@@ -101,25 +101,29 @@ struct NetworkOutsideRunTests {
     @Test("外で止める口 stop() は、呼んでいない detach() ではなく stop() を名乗り、1 度だけ警告する")
     func stopNamesItselfOutsideTheRun() {
         let sketch = IdleSketch()
-        // 作って、2 度止める。止める前の作る口の警告は、`stop()` で始まらないので数えない
-        let cases: [(String, () -> Void)] = [
+        // 作って、2 度止める。止める前の作る口の警告は `stop()` を含まないので数えない
+        let cases: [(type: String, run: () -> Void)] = [
             ("TCPServer", { let port = sketch.createTCPServer(messages: [["a"]]); port.stop(); port.stop() }),
             ("WebSocketServer", { let port = sketch.createWebSocketServer(messages: [["a"]]); port.stop(); port.stop() }),
             ("UDPPort", { let port = sketch.createUDP(messages: [["a"]]); port.stop(); port.stop() }),
             ("OSCPort", { let port = sketch.createOSC(messages: [[OSCMessage("/a", 1)]]); port.stop(); port.stop() }),
             ("Serial", { let port = sketch.createSerial(lines: [["1"]]); port.stop(); port.stop() }),
         ]
-        for (type, run) in cases {
-            // 控えは型ごとに差す。口の名前 `stop()` は型をまたいで 1 度だけ数えるので、共有すると 2 つ目以降が黙る
-            let log = OutsideRun()
-            OutsideRun.$current.withValue(log, operation: run)
-            let said = log.messages.filter { $0.hasPrefix("stop()") }
-            #expect(said.count == 1, "\(type): stop() を 2 度呼んでも 1 行")
-            #expect(said.first?.hasPrefix("stop() only works inside setup()") == true, "\(type)")
-            #expect(said.first?.contains("so it did nothing") == true, "\(type)")
-            #expect(log.message(for: "detach") == nil, "\(type): 呼んでいない detach() を名乗らない")
-            #expect(!log.messages.contains { $0.contains("detach()") }, "\(type)")
+        // **控えは 1 つを共有する。** `Task` の中で続けて止めたとき、先に言った型が後の型を黙らせてはならない。
+        // 口の名前は型を含み、型ごとに 1 度ずつ言う
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            for (_, run) in cases { run() }
         }
+        let said = log.messages.filter { $0.contains(".stop()") }
+        #expect(said.count == cases.count, "型ごとに 1 行 (2 度呼んでも増えず、続けて呼んでも黙らない)")
+        for (type, _) in cases {
+            let message = log.message(for: "\(type).stop()")
+            #expect(message?.hasPrefix("\(type).stop() only works inside setup()") == true, "\(type)")
+            #expect(message?.contains("so it did nothing") == true, "\(type)")
+        }
+        #expect(log.message(for: "detach") == nil, "呼んでいない detach() を名乗らない")
+        #expect(!log.messages.contains { $0.contains("detach()") })
     }
 
     @Test("notRunning の文面は口の名前と呼べる場所を名乗り、面の話をしない")

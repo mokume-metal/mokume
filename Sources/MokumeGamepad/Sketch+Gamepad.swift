@@ -48,7 +48,7 @@ extension Sketch {
     /// - 許可は要らない。入力が届くのは、スケッチの窓が前面にある間だけである
     ///
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
-    /// 返るパッドは走っているスケッチに足されず、値が入らない。この口の名前で 1 度だけ警告する。
+    /// 返るパッドは走っているスケッチに足されず、値が入らない。繋がっているパッドが 0 台でも、この口の名前で 1 度だけ警告する。
     public func gamepads() -> [Gamepad] {
         GamepadRoster.roster(for: self).gamepads(for: self, from: .shared, calledAs: #function)
     }
@@ -126,25 +126,32 @@ final class GamepadRoster {
 
     /// 係が振った識別子ごとのパッド。まだ無い・外されたものは作り、走っているスケッチへ足す。
     func gamepads(for sketch: any Sketch, from hub: GamepadHub, calledAs call: String) -> [Gamepad] {
+        // 繋がっているパッドが 0 台でも、外なら 1 度言う。他の作る口と同じく、見張り始める前に確かめる
+        _ = sketch.canAttach(calledAs: call, returning: Self.inertPads)
         hub.start()
         return hub.slots.known.map { id in
             if let pad = pads[id]?.pad, !pad.isClosed { return pad }
             let pad = Gamepad(
                 id: id, name: "gamepad: \(id)", source: ControllerSource(id: id, hub: hub))
-            // 走っていなければ足せない (呼んだ口の名前で診断に出す)。次に呼ばれたとき作り直す
-            if sketch.attach(pad, calledAs: call, returning: "a gamepad that never reports anything") {
+            // 走っていなければ足せない (上で言った)。次に呼ばれたとき作り直す
+            if sketch.attach(pad, calledAs: call, returning: Self.inertPads) {
                 pads[id] = WeakPad(pad: pad)
             }
             return pad
         }
     }
 
+    /// 足されなかったときに返すものの綴り。
+    private static let inertPads = "gamepads that never report anything"
+
     /// 記録した入力を流すパッドを作り、走っているスケッチへ足す。
     func recorded(_ inputs: [GamepadInput?], for sketch: any Sketch, calledAs call: String) -> Gamepad {
-        recordedCount += 1
-        let id = "recorded #\(recordedCount)"
+        // 番号は足せたときだけ進める。外で足せなかったパッドが番号を使うと、後の `setup()` のパッドが `recorded #2` から始まる
+        let id = "recorded #\(recordedCount + 1)"
         let pad = Gamepad(id: id, name: "gamepad (\(id))", source: RecordedGamepadSource(inputs: inputs))
-        sketch.attach(pad, calledAs: call, returning: "a gamepad that never reports anything")
+        if sketch.attach(pad, calledAs: call, returning: "a gamepad that never reports anything") {
+            recordedCount += 1
+        }
         return pad
     }
 }

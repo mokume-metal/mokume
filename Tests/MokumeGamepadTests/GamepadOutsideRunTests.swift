@@ -46,6 +46,24 @@ struct GamepadOutsideRunTests {
         }
     }
 
+    @Test("繋がっているパッドが 0 台でも、外で呼んだ gamepads() は 1 度だけ警告する")
+    func emptyRosterStillWarns() {
+        let hub = GamepadHub(watches: false)
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            let sketch = Bare()
+            for _ in 0..<2 {
+                let pads = GamepadRoster.roster(for: sketch).gamepads(
+                    for: sketch, from: hub, calledAs: "gamepads()")
+                #expect(pads.isEmpty)
+            }
+            #expect(log.messages.count == 1, "2 度呼んでも 1 行")
+            let message = log.message(for: "gamepads()")
+            #expect(message?.hasPrefix("gamepads() only works inside setup()") == true)
+            #expect(message?.contains("was returned instead") == true)
+        }
+    }
+
     @Test("gamepads() の一覧は、足されていないパッドを返し、口の名前を渡されて 1 度だけ警告する")
     func rosterWarnsByTheNameItIsGiven() throws {
         let hub = GamepadHub(watches: false)

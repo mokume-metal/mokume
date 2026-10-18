@@ -95,9 +95,9 @@ public final class Serial: Inlet {
     /// 書き込みなど) が開けるようになる。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
-    /// 外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと何もせず、`stop()` の名前で 1 度だけ警告する。
+    /// 外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと何もせず、`Serial.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
-        owner?.detach(self, calledAs: #function)
+        owner?.detach(self, calledAs: "Serial.stop()")
     }
 
     // MARK: - Inlet

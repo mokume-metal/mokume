@@ -146,9 +146,9 @@ struct AudioOutsideRunTests {
             let audio = sketch.createAudioIn()
             audio.stop()
             audio.stop()
-            let said = log.messages.filter { $0.hasPrefix("stop()") }
+            let said = log.messages.filter { $0.contains(".stop()") }
             #expect(said.count == 1, "2 度呼んでも 1 行")
-            #expect(said.first?.hasPrefix("stop() only works inside setup()") == true)
+            #expect(said.first?.hasPrefix("AudioIn.stop() only works inside setup()") == true)
             #expect(said.first?.contains("so it did nothing") == true)
             #expect(log.message(for: "detach") == nil)
             #expect(!log.messages.contains { $0.contains("detach()") })

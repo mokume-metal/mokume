@@ -267,6 +267,19 @@ extension SketchPart {
         }
     }
 
+    /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げない作る口)。足せなければ、`call` の名前で
+    /// 1 度だけ警告して `false` を返す。`value` は、代わりに返すものの人が読む綴り。
+    ///
+    /// 返すものが 0 個かもしれない口 (`gamepads()` は繋がっているパッドの数だけ足す) が、数に依らず外なら 1 度言うために、
+    /// 先に呼ぶ。足すのはその後の ``attach(_:calledAs:returning:)`` で、同じ口の名前・同じ綴りなら重ねて言わない。
+    package func canAttach(calledAs call: String, returning value: String) -> Bool {
+        guard runningSketch != nil else {
+            OutsideRun.log.warn(call, .make(returning: value))
+            return false
+        }
+        return true
+    }
+
     /// 入り口を、走っている実行へ足す (投げない作る口)。足せない所から呼ばれたら、`attach()` ではなく `call` の
     /// 名前で 1 度だけ警告し、`false` を返す。`value` は、代わりに返したものの人が読む綴り
     /// (`a sound that is never heard` など)。
@@ -282,8 +295,10 @@ extension SketchPart {
     /// 入り口を、走っている実行から外す (止める口 `stop()`)。外から呼ばれたら、利用者が呼んでいない `detach()` ではなく
     /// `call` の名前で 1 度だけ警告し、何もしない ([#2793])。
     ///
-    /// 外で断ること自体は ``detach(_:)-(Inlet)`` と同じ約束で、変わるのは名乗りだけである。`call` は呼ぶ側の
-    /// `#function` (`stop()`)。警告は「何もしなかった」と言う (``OutsideRun/Use/act``) ので、呼んだ場所が `Task` の中でも、
+    /// 外で断ること自体は ``detach(_:)-(Inlet)`` と同じ約束で、変わるのは名乗りだけである。`call` は型を付けた口の名前
+    /// (`AudioIn.stop()` など)。型を付けるのは、``OutsideRun`` が口の名前ごとに 1 度だけ言うので、`Task` の中で
+    /// `mic.stop(); camera.stop()` と続けて呼んだとき、先に言った型が後の型を黙らせないためである
+    /// (`Countdown.restart()` と同じ)。警告は「何もしなかった」と言う (``OutsideRun/Use/act``) ので、呼んだ場所が `Task` の中でも、
     /// スケッチが終わった後 (終わりの処理が既に閉じている) でも事実である。
     ///
     /// [#2793]: https://github.com/mokume-metal/mokume/issues/2793

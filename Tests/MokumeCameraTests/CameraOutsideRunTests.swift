@@ -54,26 +54,28 @@ struct CameraOutsideRunTests {
     }
 
     /// `Capture` は面の絵を持つので、足せる所で作るには GPU を要する。外で呼ぶ側は何も使わない。
+    ///
+    /// 後片付け (`closePlugins()`) の後に呼ぶ。外の中でも、終わりの処理が既に閉じた後が文面の分かれ目になる。
     @Test(
-        "走り終えた後に Capture の stop() を呼ぶと、呼んでいない detach() ではなく stop() を名乗り、カメラは閉じない (#2793)",
+        "後片付けの後に Capture の stop() を呼ぶと、呼んでいない detach() ではなく Capture.stop() を名乗る (#2793)",
         .enabled(if: RenderDevice.isAvailable, "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする"))
-    func stopAfterTheSketchEndedNamesItself() throws {
+    func stopAfterTeardownNamesItself() throws {
         let sketch = Filming()
         let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
         try runtime.advance()
         let capture = try #require(sketch.capture)
+        runtime.closePlugins()
+        #expect(capture.state == .stopped, "終わりの処理が閉じている")
         let log = OutsideRun()
         OutsideRun.$current.withValue(log) {
             capture.stop()
             capture.stop()
         }
         #expect(log.messages.count == 1, "2 度呼んでも 1 行")
-        let message = log.message(for: "stop()")
-        #expect(message?.hasPrefix("stop() only works inside setup()") == true)
+        let message = log.message(for: "Capture.stop()")
+        #expect(message?.hasPrefix("Capture.stop() only works inside setup()") == true)
         #expect(message?.contains("so it did nothing") == true)
         #expect(log.message(for: "detach") == nil)
-        #expect(capture.state != .stopped, "外では断る約束なので、止まらない")
-        runtime.closePlugins()
     }
 
     @Test("読める動画でも、createVideo は大きさの失敗ではなく notRunning を投げる")
