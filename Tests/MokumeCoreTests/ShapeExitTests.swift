@@ -88,6 +88,8 @@ enum ShapeExit {
             // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
             // (#1855 の案 G)。一番外の出口が閉じて下ろす
             "frameEndAwaitingShape",
+            // 組み立ての中で断った beginDraw() の数 (#2834)。対の endDraw() が下ろし、一番外の出口が 0 に戻す
+            "refusedBeginDrawsInsideShape",
             // 本体のフレームが始まる所で捨てることになったフレームを出口まで待たせる印 (#2509)。
             // 一番外の出口が捨てて下ろす
             "dropAwaitingShape",

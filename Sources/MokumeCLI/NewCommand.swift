@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// スケッチ一式を作る。
 enum NewCommand {
@@ -36,7 +37,11 @@ enum NewCommand {
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try contents.write(to: url, atomically: true, encoding: .utf8)
             } catch {
-                throw .cannotCreate(path: url.path, reason: "\(error)")
+                // OS の事情は C の文面で名乗り、置き換えて書くときのディレクトリの ENOENT は
+                // EISDIR と名乗る (#2839)
+                throw .cannotCreate(
+                    path: url.path,
+                    reason: Diagnostics.writingPosixReason(error, at: url) ?? Diagnostics.reason(error))
             }
         }
         print(guidance(for: root))

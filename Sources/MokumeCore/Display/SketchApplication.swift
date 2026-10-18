@@ -542,8 +542,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         do {
             try shared.publishManifest()
         } catch {
+            // **どのファイルかを添える** (#2839)。理由は POSIX の事情を優先して外側の説明
+            // (ファイル名入り) を捨てるので、場所は自分で名乗る
             announce(
-                "Could not place the identifiers of the surfaces frames go to: "
+                "Could not place the identifiers of the surfaces frames go to "
+                    + "(\(directory.appendingPathComponent(SharedFrameSurface.manifestName).path)): "
                     + "\(Diagnostics.reason(error)) — opening a window and carrying on")
             return nil
         }
