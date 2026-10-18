@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import mokume
 
 /// 走らせているスケッチの番号。**居なければ 0。**
@@ -900,22 +901,18 @@ enum RunCommand {
 
     /// 起こせなかった事情の文面 (場所でも実行ファイルの不在でもないとき)。
     ///
-    /// **POSIX の事情 (失敗そのものか、その下の `NSUnderlyingErrorKey`) なら、その番号から
+    /// **POSIX の事情 (失敗そのものか、`NSUnderlyingErrorKey` を辿った先) なら、その番号から
     /// C の文面を引く** (``GivenPath/errorText(_:)``)。Foundation の説明は言語の設定に左右
     /// されうるが、道具が話す言葉は英語である (ADR-0038 決定 1・2)。
     ///
     /// **例外: POSIX の事情を持たない誤り** (下に POSIX の誤りを持たない Cocoa の誤り — たとえば
     /// `NSFileNoSuchFileError` だけのもの) は、引ける番号が無いので `localizedDescription` に
     /// 落とす。その文面は言語の設定で変わりうる。
+    ///
+    /// 番号の取り出し方は本体と 1 つ (``Diagnostics/posixCode(in:)``・#2839)。
     nonisolated static func launchReason(of error: any Error) -> String {
-        let failure = error as NSError
-        let posix =
-            failure.domain == NSPOSIXErrorDomain
-            ? failure : failure.userInfo[NSUnderlyingErrorKey] as? NSError
-        guard let posix, posix.domain == NSPOSIXErrorDomain else {
-            return failure.localizedDescription
-        }
-        return GivenPath.errorText(Int32(posix.code))
+        guard let code = Diagnostics.posixCode(in: error) else { return (error as NSError).localizedDescription }
+        return GivenPath.errorText(code)
     }
 
     /// 道具立てを探させる口。**`PATH` を引くのは `env` に任せる。**

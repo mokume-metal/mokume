@@ -281,9 +281,8 @@ import simd
         } catch let failure as ImageWriteFailure {
             throw .unwritable(path: path, reason: Self.reason(of: failure))
         } catch {
-            let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
-            throw .unwritable(
-                path: path, reason: (underlying ?? (error as NSError)).localizedDescription)
+            // 置き場を作れない事情は OS の文面で名乗る (#2839 の 1 か所)
+            throw .unwritable(path: path, reason: Diagnostics.reason(error))
         }
     }
 

@@ -115,6 +115,14 @@ final class FrameWriter {
             // 少なくとも 1 つの結果が置かれていると当てにできる
             do {
                 try Self.createParentDirectory(of: url)
+            } catch {
+                // 置き場を作れない事情は OS の文面で名乗る (#2839)。`"\(error)"` は NSError の
+                // 中身をそのまま並べ、言語の設定に左右されうる説明も混ざる
+                lastOutcome.fail("Could not write \(path): \(Diagnostics.reason(error))", at: destination)
+                release()
+                return
+            }
+            do {
                 try encode(image, url)
                 lastOutcome.succeed()
             } catch {

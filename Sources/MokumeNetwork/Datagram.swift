@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import MokumeDiagnostics
 import Network
 
 // UDP の受け・送り。**中身のバイト列をどう読むかは持たない** — 上の層 (OSC の ``OSCCodec``・
@@ -531,9 +532,10 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
         }
     }
 
-    /// 失敗の名乗り。POSIX の失敗は OS の文面 (`Network is down` など) にする。
+    /// 失敗の名乗り。POSIX の失敗は OS の文面 (`Network is down` など) にする。作り方は本体と 1 つ
+    /// (``Diagnostics/posixReason(_:)``・#2839)。
     static func describe(_ error: NWError) -> String {
         guard case .posix(let code) = error else { return error.debugDescription }
-        return String(cString: strerror(code.rawValue))
+        return Diagnostics.posixReason(code.rawValue)
     }
 }
