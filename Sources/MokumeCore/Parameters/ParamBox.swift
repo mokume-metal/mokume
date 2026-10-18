@@ -37,11 +37,21 @@ import Observation
 /// へ入り、setter は走らない。前の値が無いので「保つ」が成り立たず、何を既定にするかは
 /// 判断が要る ([#2394](https://github.com/mokume-metal/mokume/issues/2394))。
 ///
+/// ## 値の型は 2 通りの `init` で受ける ([#2438])
+///
+/// 面に出る値の型 (``ParamRepresentable``) は、その型自身が往復を持つ。**String を生の値に持つ
+/// `CaseIterable` の enum** (`enum Palette: String, CaseIterable { … }`) は、型の側に何も書かずに
+/// `@Param var palette: Palette` と宣言できる — `ParamRepresentable` の既定実装では、enum が
+/// `: ParamRepresentable` を宣言しない限り組めないので、**置き場の `init` を型の性質で振り分ける**。
+/// 面に出る型は `string` のままで (ADR-0030 決定 4 の 6 型は増えない)、候補は `allCases` の生の値から
+/// 作る。往復は置き場が `init` の中で持つので、型を伏せた ``DeclaredParam`` の側は enum を知らない。
+///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 /// [#1782]: https://github.com/mokume-metal/mokume/issues/1782
 /// [#2271]: https://github.com/mokume-metal/mokume/issues/2271
-public final class ParamBox<Value: ParamRepresentable> {
+/// [#2438]: https://github.com/mokume-metal/mokume/issues/2438
+public final class ParamBox<Value> {
     /// いまの値。
     ///
     /// **非有限の数 (NaN・無限、組と色は成分のどれか) を書いても、前の値のまま**で、そのことを
@@ -60,7 +70,7 @@ public final class ParamBox<Value: ParamRepresentable> {
         }
         set {
             // 置かないときは変化の通知も出さない (値は動いていない)
-            guard newValue.paramValue.hasOnlyFiniteNumbers else {
+            guard toParam(newValue).hasOnlyFiniteNumbers else {
                 refuse(newValue, keeping: storedValue)
                 return
             }
@@ -76,7 +86,7 @@ public final class ParamBox<Value: ParamRepresentable> {
             // 形ではなくなるが、値は小さく、通知の順 (willSet → 置く → didSet) は同じである
             var working = storedValue
             yield &working
-            if working.paramValue.hasOnlyFiniteNumbers {
+            if toParam(working).hasOnlyFiniteNumbers {
                 observation.withMutation(of: self, keyPath: valueKeyPath) {
                     storedValue = working
                 }
@@ -93,6 +103,8 @@ public final class ParamBox<Value: ParamRepresentable> {
     enum Warning: Hashable {
         /// 非有限の数を渡されて、受け取らなかった。
         case notFinite
+        /// `step:` の刻みを置かなかった (0 以下・非有限・実数でない値に付けた)。
+        case step
     }
 
     /// 言った注意の控え。**検査が読む** (標準エラーへ実際に出た行は検査から読めない)。
@@ -107,13 +119,72 @@ public final class ParamBox<Value: ParamRepresentable> {
     public let range: ParamRange?
     /// 許した候補。
     public let choices: [String]?
+    /// スライダーの刻み。**検めた後の値** (``ParamStep``)。書かれていない・置かなかったなら `nil`。
+    public let step: Double?
 
-    public init(name: String, value: Value, range: ParamRange? = nil, choices: [String]? = nil) {
+    /// 値を面に出る表現へ移す。**置き場が持つ** — `Value` が `ParamRepresentable` かどうかを、
+    /// `init` を選んだ時点で終えておく (``ParamBox`` の説明の「2 通りの `init`」)。
+    private let toParam: (Value) -> ParamValue
+    /// 面から来た表現を、この型として読む。型が違えば `nil`。
+    private let fromParam: (ParamValue) -> Value?
+
+    /// 往復を渡して置き場を作る。**公開の `init` はここへ落ちる。**
+    private init(
+        name: String, value: Value, range: ParamRange?, choices: [String]?, step: Double?,
+        toParam: @escaping (Value) -> ParamValue, fromParam: @escaping (ParamValue) -> Value?
+    ) {
         self.name = name
         self.storedValue = value
         self.valueKeyPath = \ParamBox<Value>.value
         self.range = range
         self.choices = choices
+        self.toParam = toParam
+        self.fromParam = fromParam
+        // **刻みを検める 1 点** (``ParamStep``)。生まれのときの値と同じく、ここで 1 度だけ
+        let verdict = ParamStep.check(step, for: toParam(value))
+        self.step = verdict.step
+        if let refusal = verdict.refusal, let step {
+            warnings.warnOnce(
+                .step,
+                "The knob \"\(name)\" was given step \(step): \(refusal) (said once for this knob)")
+        }
+    }
+
+    /// 面に出る型 (``ParamRepresentable``) の値の置き場。
+    public convenience init(
+        name: String, value: Value, range: ParamRange? = nil, choices: [String]? = nil,
+        step: Double? = nil
+    ) where Value: ParamRepresentable {
+        self.init(
+            name: name, value: value, range: range, choices: choices, step: step,
+            toParam: { $0.paramValue }, fromParam: { Value(paramValue: $0) })
+    }
+
+    /// **String を生の値に持つ `CaseIterable` の enum の置き場。** 候補は `allCases` の生の値から作る
+    /// ので、`switch` は網羅され、候補の外 (綴り間違い) は外からの書き込みでも断られる。
+    public convenience init(
+        name: String, value: Value, range: ParamRange? = nil, step: Double? = nil
+    ) where Value: RawRepresentable & CaseIterable, Value.RawValue == String {
+        self.init(
+            name: name, value: value, range: range,
+            choices: Value.allCases.map(\.rawValue), step: step,
+            toParam: { .string($0.rawValue) },
+            fromParam: { paramValue in
+                guard case .string(let text) = paramValue else { return nil }
+                return Value(rawValue: text)
+            })
+    }
+
+    /// 面に出る型を自分で書いた enum の置き場。**どちらの `init` にも当たる型を曖昧にしない** —
+    /// `ParamRepresentable` を自分で書いた enum は、その往復に従い、候補だけ `allCases` から補う。
+    public convenience init(
+        name: String, value: Value, range: ParamRange? = nil, step: Double? = nil
+    )
+    where Value: ParamRepresentable & RawRepresentable & CaseIterable, Value.RawValue == String {
+        self.init(
+            name: name, value: value, range: range,
+            choices: Value.allCases.map(\.rawValue), step: step,
+            toParam: { $0.paramValue }, fromParam: { Value(paramValue: $0) })
     }
 
     /// 非有限の数を受け取らなかったことを、**この置き場で 1 度だけ**名乗る。
@@ -134,7 +205,8 @@ extension ParamBox: nonisolated Observable {}
 extension ParamBox: DeclaredParam {
     /// 面から見えるいまの姿。
     public var declaration: ParamDeclaration {
-        ParamDeclaration(name: name, value: value.paramValue, range: range, choices: choices)
+        ParamDeclaration(
+            name: name, value: toParam(value), range: range, choices: choices, step: step)
     }
 
     /// 面から来た値を書き込む。
@@ -158,10 +230,10 @@ extension ParamBox: DeclaredParam {
             return .notInChoices
         }
         let (settled, clamp) = clamped(incoming)
-        guard let typed = Value(paramValue: settled) else { return .typeMismatch }
+        guard let typed = fromParam(settled) else { return .typeMismatch }
         // 入ってきた値と、読み替えた値の両方を見る。範囲へ収めると無限が端に化けるので、
         // 収める前の値を見ないと「無限を書かれた」ことが応答から消える
-        guard incoming.hasOnlyFiniteNumbers, typed.paramValue.hasOnlyFiniteNumbers else {
+        guard incoming.hasOnlyFiniteNumbers, toParam(typed).hasOnlyFiniteNumbers else {
             return .notFinite
         }
         value = typed

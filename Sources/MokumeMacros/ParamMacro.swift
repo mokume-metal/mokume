@@ -45,7 +45,7 @@ public enum ParamMacro {
         let type: TypeSyntax
         /// 面から指す名前。
         let name: String
-        /// 置き場を作るときに添える引数 (`range:` / `choices:`)。書かれたものをそのまま運ぶ。
+        /// 置き場を作るときに添える引数 (`range:` / `choices:` / `step:`)。書かれたものをそのまま運ぶ。
         let metadata: [LabeledExprSyntax]
 
         /// 置き場のプロパティ名。
@@ -100,6 +100,10 @@ public enum ParamMacro {
             case "choices":
                 metadata.append(
                     LabeledExprSyntax(label: "choices", expression: argument.expression))
+            case "step":
+                // 刻みの検め (0 以下・非有限・実数でない値) は置き場の初期化に 1 点で持つ (ParamStep)。
+                // ここは書かれたものをそのまま運ぶ
+                metadata.append(LabeledExprSyntax(label: "step", expression: argument.expression))
             case nil:
                 metadata.append(
                     LabeledExprSyntax(

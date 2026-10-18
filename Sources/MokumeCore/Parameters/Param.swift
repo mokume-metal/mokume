@@ -14,6 +14,30 @@
 /// }
 /// ```
 ///
+/// 候補は **Swift の enum でも書ける** — String を生の値に持つ `CaseIterable` の enum を、型の側に
+/// 何も書き足さずにそのまま宣言する。`switch` が網羅されるので、綴り間違いは組む時点で止まる:
+///
+/// ```swift
+/// enum Palette: String, CaseIterable { case ember, tide, moss }
+///
+/// final class MySketch: Sketch {
+///     @Param var palette: Palette = .ember
+///
+///     func draw() {
+///         switch palette {
+///         case .ember: background(40, 12, 8)
+///         case .tide: background(8, 24, 40)
+///         case .moss: background(16, 30, 12)
+///         }
+///     }
+/// }
+/// ```
+///
+/// 面に出る型は `string` のままで、候補は enum の `allCases` から作る。外から書く値も、保存から
+/// 戻す値も、**候補の外 (enum に無い case の生の値) は文字の候補と同じ理由で断る**。保存した case を
+/// 消す・名前を変えると、その保存は候補の外として捨てて名乗り、コードの既定値の case が効く。case を
+/// 足しただけなら、保存した値はそのまま戻る。
+///
 /// 宣言した値は名前・型・範囲つきで面から見える。読み書きは普通のプロパティと
 /// 変わらない — 書いた後に動かせるようになるだけである。例外は 1 つで、次の項にある。
 ///
@@ -31,6 +55,8 @@
 ///   (置き場の型が決まらない)
 /// - **範囲を書かなかった数値には、窓のつまみが出ない** ([ADR-0030] 決定 8)。値は
 ///   面に出るし外からは書ける。つまみが要るなら範囲を書く
+/// - **実数のスライダーの刻みは `step:` で書く** (`@Param(0...1, step: 0.05)`)。刻みは窓の動き方
+///   だけを決め、値は刻みへ丸めない。整数のスライダーは 1 刻みのまま
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 @attached(accessor, names: named(init), named(get), named(set))
@@ -42,6 +68,26 @@ public macro Param(name: String? = nil) =
 @attached(accessor, names: named(init), named(get), named(set))
 @attached(peer, names: prefixed(_), arbitrary)
 public macro Param(_ range: ClosedRange<Double>, name: String? = nil) =
+    #externalMacro(module: "MokumeMacros", type: "ParamMacro")
+
+/// 走らせたまま動かせる値として、動ける幅と、スライダーの刻みを添えて宣言する。
+///
+/// ```swift
+/// final class Dots: Sketch {
+///     @Param(0...1, step: 0.05) var density: Double = 0.4
+/// }
+/// ```
+///
+/// 窓のスライダーが 0.05 ずつ動く (0.4 の次は 0.45)。**刻みはスライダーの動き方だけを決める** —
+/// 外から書いた値 (`0.37`)・保存からの復元・コードからの代入は刻みへ丸めず、そのまま入る。
+/// 範囲へ収めたことを名乗る `clamped` の意味も変わらない。**整数の範囲 (`0...10`) の刻みは 1 の
+/// まま**で、`step:` は実数の範囲 (`float`・`vec2`・`vec3`) にだけ付く。
+///
+/// 刻みが 0 以下・非有限、または実数でない値 (整数・真偽・文字・色) に付けたときは、置かずに
+/// (刻みの無いスライダーのまま) 1 度だけ標準エラーへ知らせる。
+@attached(accessor, names: named(init), named(get), named(set))
+@attached(peer, names: prefixed(_), arbitrary)
+public macro Param(_ range: ClosedRange<Double>, step: Double, name: String? = nil) =
     #externalMacro(module: "MokumeMacros", type: "ParamMacro")
 
 /// 走らせたまま動かせる値として、動ける幅を添えて宣言する。

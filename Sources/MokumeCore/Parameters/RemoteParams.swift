@@ -130,6 +130,7 @@ final class RemoteParam: DeclaredParam {
     @ObservationIgnored let name: String
     @ObservationIgnored let range: ParamRange?
     @ObservationIgnored let choices: [String]?
+    @ObservationIgnored let step: Double?
     @ObservationIgnored private let post: (String, ParamValue) -> Void
 
     init(declaration: ParamDeclaration, post: @escaping (String, ParamValue) -> Void) {
@@ -137,11 +138,12 @@ final class RemoteParam: DeclaredParam {
         self.name = declaration.name
         self.range = declaration.range
         self.choices = declaration.choices
+        self.step = declaration.step
         self.post = post
     }
 
     var declaration: ParamDeclaration {
-        ParamDeclaration(name: name, value: value, range: range, choices: choices)
+        ParamDeclaration(name: name, value: value, range: range, choices: choices, step: step)
     }
 
     /// つまみを動かされた。

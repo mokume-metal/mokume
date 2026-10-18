@@ -89,7 +89,12 @@
             "items": {
               "type": "string"
             },
-            "description": "The choices that are allowed. The legal values are on the surface, so a writer never has to try them all."
+            "description": "The choices that are allowed. The legal values are on the surface, so a writer never has to try them all. A Swift enum that holds strings and lists its cases (declared with @Param directly) reports its cases here, in the order they are declared, under the type string."
+          },
+          "step": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "The step the window's slider moves by, for a float, vec2 or vec3 declaration that was given one. If absent, no step was declared and the slider moves freely (an int slider always moves by 1, whatever is declared). **It only shapes how the window's slider moves**: a value written from outside, restored from a save or assigned in code is not rounded to it, and clamped keeps meaning 'brought into the declared range'."
           }
         }
       }

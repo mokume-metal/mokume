@@ -9,16 +9,16 @@
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 enum KnobKind: Equatable {
-    /// 実数のスライダー。
-    case slider(ParamRange)
+    /// 実数のスライダー。`step` を書いていれば、その刻みで動く ([#2438](https://github.com/mokume-metal/mokume/issues/2438))。
+    case slider(ParamRange, step: Double? = nil)
     /// 整数のスライダー。刻みは 1。
     case steppedSlider(ParamRange)
     /// 真偽のトグル。
     case toggle
     /// 色の選択。
     case color
-    /// 成分ごとのスライダー。組の成分の数だけ並ぶ。
-    case components(count: Int, range: ParamRange)
+    /// 成分ごとのスライダー。組の成分の数だけ並ぶ。`step` は成分のスライダーそれぞれの刻み。
+    case components(count: Int, range: ParamRange, step: Double? = nil)
     /// 候補から選ぶ。
     case choice([String])
     /// つまみを出さない。値だけを、触れない見た目で出す。
@@ -45,6 +45,10 @@ enum KnobKind: Equatable {
 extension KnobKind {
     /// 宣言からつまみを決める。
     ///
+    /// **刻み (``ParamDeclaration/step``) は実数のスライダーと組の成分のスライダーにだけ渡す。**
+    /// 整数のスライダーは 1 刻みのまま、候補のつまみは enum でも文字でも同じ (``choice(_:)``)
+    /// ([#2438](https://github.com/mokume-metal/mokume/issues/2438))。
+    ///
     /// **範囲を書かなかった数値には、つまみを出さない** ([ADR-0030] 決定 8)。値から
     /// 範囲を推す形は採らない — 推した範囲を毎フレーム測り直すと引いている最中に範囲
     /// そのものが動いてつまみが逃げ、1 度だけ決めて固定すると「なぜこの端なのか」を
@@ -55,7 +59,7 @@ extension KnobKind {
         switch declaration.value {
         case .float:
             guard let range = declaration.range else { return .none(.rangeNotDeclared) }
-            return .slider(range)
+            return .slider(range, step: declaration.step)
         case .int:
             guard let range = declaration.range else { return .none(.rangeNotDeclared) }
             return .steppedSlider(range)
@@ -65,10 +69,10 @@ extension KnobKind {
             return .color
         case .vector2:
             guard let range = declaration.range else { return .none(.rangeNotDeclared) }
-            return .components(count: 2, range: range)
+            return .components(count: 2, range: range, step: declaration.step)
         case .vector3:
             guard let range = declaration.range else { return .none(.rangeNotDeclared) }
-            return .components(count: 3, range: range)
+            return .components(count: 3, range: range, step: declaration.step)
         case .string:
             // 候補を書いていない文字は、窓からは触らせない。自由に打てる欄を出すと
             // 「作者が想定していない文字が入った状態」を窓が作れてしまい、その状態を

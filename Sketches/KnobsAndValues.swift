@@ -100,18 +100,24 @@ final class KnobsAndValues: Sketch {
 
     /// 輪郭の太さ。`Float` も `Double` と同じく実数のスライダーになり、面では
     /// どちらも `float` を名乗る。**`name:` を書いたので、面から指す名前は
-    /// `weight` になる** (プロパティの名前は使われない)。
-    @Param(0...8, name: "weight") var outlineWeight: Float = 2
+    /// `weight` になる** (プロパティの名前は使われない)。`step:` を書いたので、窓のスライダーは
+    /// 0.5 ずつ動く — 刻みは窓の動き方だけで、外から書いた 0.7 は 0.7 のまま入る。
+    @Param(0...8, step: 0.5, name: "weight") var outlineWeight: Float = 2
 
     /// 塗るか、輪郭だけか。
     @Param var filled: Bool = true
 
-    /// 何を並べるか。**候補を書いたので、窓では候補から選ぶ形になる** —
-    /// 外から書くときも、候補の外は理由つきで断られる。
+    /// 何を並べるか。**Swift の enum をそのまま宣言したので、窓では case から選ぶ形になる** —
+    /// 外から書くときも、case に無い生の値は理由つきで断られる。`place(size:)` の `switch` は
+    /// 網羅されるので、綴り間違いは組む時点で止まる。
     ///
     /// 既定を `circle` にしていないのは、円は回しても同じに見えるからである。
     /// 既定の姿で ``spin`` が効かないと、そのつまみは壊れているように見える。
-    @Param(choices: ["circle", "square", "triangle"]) var shape: String = "square"
+    @Param var shape: Figure = .square
+
+    /// 並べる形。**型の側に `ParamRepresentable` を書かない** — 文字を生の値に持つ
+    /// `CaseIterable` の enum なら、面には `string` と候補 (case の宣言順) で出る。
+    enum Figure: String, CaseIterable { case circle, square, triangle }
 
     /// 色。作業空間の色をそのまま宣言できる。
     @Param var tint: LinearRGBA = color(250, 158, 61)
@@ -248,11 +254,11 @@ final class KnobsAndValues: Sketch {
     /// 選ばれた形を 1 つ置く。原点は中心。
     private func place(size extent: Float) {
         switch shape {
-        case "square": square(0, 0, extent)
-        case "triangle":
+        case .square: square(0, 0, extent)
+        case .triangle:
             let half = extent / 2
             triangle(0, -half, half, half, -half, half)
-        default: circle(0, 0, extent)
+        case .circle: circle(0, 0, extent)
         }
     }
 }
