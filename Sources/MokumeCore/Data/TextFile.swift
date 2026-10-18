@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// 文字のファイルを読み書きする。文字列の行 (``SketchPart/loadStrings(_:)``)・表
 /// (``SketchPart/loadTable(_:header:)``)・JSON (``SketchPart/loadJSONObject(_:)``)・XML
@@ -36,15 +37,10 @@ nonisolated enum TextFile {
     /// 開けなかった事情を、人が読む短い句にする。OS が名乗った事情 (`Is a directory`・
     /// `Permission denied`) があればそれを、無ければ失敗そのものの説明を返す。
     ///
-    /// **OS の事情は、失敗の番号から C の文面で引く** (``AssetOpening/text(errno:)``)。画像などの
-    /// 資材の読み手が開けないことを名乗る文面と、同じ引き方にそろえる (#2358)。
+    /// **OS の事情は、失敗の番号から C の文面で引く** (``Diagnostics/posixReason(_:)``)。書く側・
+    /// 画像などの資材の読み手と、同じ引き方にそろえる (#2358・#2839)。
     private static func openingReason(of error: any Error) -> String {
-        let failure = error as NSError
-        guard let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError,
-            underlying.domain == NSPOSIXErrorDomain,
-            let text = AssetOpening.text(errno: Int32(underlying.code))
-        else { return failure.localizedDescription }
-        return text
+        Diagnostics.failureText(error)
     }
 
     /// 受け取ったバイト列を UTF-8 の文字として解く。先頭の BOM は落とす。
@@ -101,12 +97,21 @@ nonisolated enum TextFile {
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(text.utf8).write(to: url, options: .atomic)
         } catch {
-            throw .unwritable(path: path, reason: Self.reason(of: error))
+            throw .unwritable(path: path, reason: Self.writingReason(of: error, at: url))
         }
     }
 
-    /// 書けなかった事情を、人が読む 1 文にする。
-    private static func reason(of error: any Error) -> String {
+    /// 書けなかった事情を、人が読む短い句にする。
+    ///
+    /// **OS の事情は、読む側と同じく失敗の番号から C の文面で引く** (``Diagnostics/posixReason(_:)``・
+    /// #2839)。Foundation の説明は言語の設定に左右されうる。POSIX の事情を持たない失敗だけ、
+    /// 今までどおり下の失敗 (無ければ失敗そのもの) の説明を返す。
+    ///
+    /// **行き先がディレクトリなら、`Is a directory` と名乗る** (``Diagnostics/writingPosixReason(_:at:)``)。
+    /// 置き換えて書く (`.atomic`) と下の失敗が ENOENT になるためで、読む側 (``read(_:path:)`` の
+    /// `unopenable`) と同じ語にそろえる。見分けるのは書くのに失敗したときだけである。
+    private static func writingReason(of error: any Error, at url: URL) -> String {
+        if let reason = Diagnostics.writingPosixReason(error, at: url) { return reason }
         let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
         return underlying?.localizedDescription ?? (error as NSError).localizedDescription
     }

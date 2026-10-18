@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// URL の向こうの本文を受け取る。JSON (``SketchPart/loadJSONObject(_:)``) と XML
 /// (``SketchPart/loadXML(_:)``) が、名前が `http://` か `https://` で始まるときに使う。
@@ -138,14 +139,47 @@ nonisolated enum WebFile {
     private static func accept(_ data: Data, _ response: URLResponse, path: String) throws(DataFailure) -> Data {
         guard let http = response as? HTTPURLResponse else { return data }
         guard (200..<300).contains(http.statusCode) else {
-            let phrase = HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            throw .unreachable(url: path, reason: "the server answered \(http.statusCode) (\(phrase))")
+            throw .unreachable(
+                url: path, reason: "the server answered \(http.statusCode) (\(statusPhrase(http.statusCode)))")
         }
         return data
     }
 
+    /// 状態の番号の句 (RFC 9110 などの reason phrase)。表に無い番号は、百の位の分類で名乗る。
+    ///
+    /// **言語の設定に左右されない句にする** (#2839)。`HTTPURLResponse.localizedString(forStatusCode:)`
+    /// は地域化されうるが、道具が話す言葉は英語で、設定で切り替えない (ADR-0038 決定 1・2)。
+    static func statusPhrase(_ code: Int) -> String {
+        if let phrase = statusPhrases[code] { return phrase }
+        switch code {
+        case 100..<200: return "informational"
+        case 300..<400: return "redirect"
+        case 400..<500: return "client error"
+        case 500..<600: return "server error"
+        default: return "unknown status"
+        }
+    }
+
+    /// 2xx 以外で返りうる、RFC 9110 (429 は RFC 6585) の句。
+    private static let statusPhrases: [Int: String] = [
+        300: "Multiple Choices", 301: "Moved Permanently", 302: "Found", 303: "See Other",
+        304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
+        400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden",
+        404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable",
+        407: "Proxy Authentication Required", 408: "Request Timeout", 409: "Conflict", 410: "Gone",
+        411: "Length Required", 412: "Precondition Failed", 413: "Content Too Large",
+        414: "URI Too Long", 415: "Unsupported Media Type", 416: "Range Not Satisfiable",
+        417: "Expectation Failed", 421: "Misdirected Request", 422: "Unprocessable Content",
+        426: "Upgrade Required", 429: "Too Many Requests",
+        500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway",
+        503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported",
+    ]
+
     /// 受け取れなかった事情を、人が読む 1 文にする。
+    ///
+    /// **下に POSIX の事情があれば、その番号の C の文面** (``Diagnostics/posixReason(_:)``・#2839)。
+    /// 受け口の失敗 (繋がらない・名前が引けない、など) は今までどおり失敗の説明を返す。
     private static func reason(of error: any Error) -> String {
-        (error as NSError).localizedDescription
+        Diagnostics.failureText(error)
     }
 }
