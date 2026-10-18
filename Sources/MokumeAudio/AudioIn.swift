@@ -114,7 +114,9 @@ public final class AudioIn: Inlet {
 
     public func open() throws {
         openedAt = now()
-        source.start(into: input, at: Double(owner?.time ?? 0))
+        // **起点は作者の時計の秒** — 時刻を指定した観測の枚の `draw()` で作ったものが、観測の秒を起点として
+        // 残さない (#2357)。読む位置 (``supply()``) は見せる時刻で決める
+        source.start(into: input, at: Double(owner?.authorTime ?? 0))
     }
 
     public func supply() {

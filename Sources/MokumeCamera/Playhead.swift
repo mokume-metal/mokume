@@ -128,6 +128,19 @@ nonisolated struct Playhead: Equatable {
         return position
     }
 
+    /// 状態を進めずに、フレームの時刻 `time` (秒) に映す位置を返す。**覗くだけで、積まない。**
+    ///
+    /// 時刻を指定した観測の枚が、指定の秒に当たるコマを映すのに使う。再生位置・起点・再生中かの
+    /// 状態は ``advance(to:)`` が作者の時計の秒で進めたもののままで、観測の秒を受けない
+    /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。呼ぶのは ``advance(to:)`` の後
+    /// (その枚の起点が決まった後) で、再生中でなければいまの位置である。
+    func position(at time: Double) -> Double {
+        guard isPlaying, let anchor else { return position }
+        let raw = anchor.position + (time - anchor.time)
+        if isLooping { return wrapped(raw) }
+        return raw >= duration ? duration : max(0, raw)
+    }
+
     /// 長さで折り返した位置。**継ぎ目の手前 ``tolerance`` までは頭とみなす** — 単精度の丸めで
     /// ちょうど長さに乗るはずの時刻がわずかに割っても、終わりのコマを 1 枚余計に映さない。
     private func wrapped(_ raw: Double) -> Double {

@@ -132,7 +132,13 @@ public final class Movie: Inlet {
     // MARK: - Inlet
 
     public func supply() {
-        let position = playhead.advance(to: Double(owner?.time ?? 0))
+        // **状態は作者の時計の秒で進め、映すコマは観測の秒で決める** (#2357)。時刻を指定した観測の枚の
+        // 指定秒を再生位置・起点として積むと、観測の後に動画が終わりで止まったまま・頭に貼り付く。
+        // 観測でない枚では二つの秒は同じで、映す位置は進めた位置そのものである
+        let shown = owner?.time ?? 0
+        let author = owner?.authorTime ?? shown
+        let advanced = playhead.advance(to: Double(author))
+        let position = shown == author ? advanced : playhead.position(at: Double(shown))
         do {
             if let picture = try reader.picture(at: position) { input.send(picture) }
             if input.state == .disconnected { input.setState(.running) }

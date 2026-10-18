@@ -146,4 +146,49 @@ struct PlayheadTests {
         head.play()
         #expect(advance(&head, [5, 6, 2]) == [0, 1, 0])
     }
+
+    // MARK: - 状態を進めずに覗く (#2357)
+
+    @Test("覗く位置は、状態を進めずに、起点から指定の時刻のぶんだけ先を返す")
+    func positionAtPeeksWithoutAdvancing() {
+        var head = Playhead(duration: 3)
+        head.play()
+        _ = head.advance(to: 1)  // 起点 (時刻 1 で位置 0)
+        let before = head
+        // 長さを越える時刻でも終わりのコマ。状態 (再生中・起点) は変わらない
+        #expect(head.position(at: 5) == 3)
+        #expect(head.position(at: 1.5) == 0.5)
+        #expect(head.position(at: 0) == 0, "起点より前の時刻は頭")
+        #expect(head == before, "覗いただけで状態が動いた")
+        #expect(head.isPlaying)
+        #expect(head.advance(to: 1.5) == 0.5, "覗いた後も、進めれば作者の時刻のぶんだけ進む")
+    }
+
+    @Test("覗く位置は、ループなら折り返し、止めていればいまの位置")
+    func positionAtFollowsLoopingAndPause() {
+        var looping = Playhead(duration: 3)
+        looping.loop()
+        _ = looping.advance(to: 0)
+        #expect(looping.position(at: 4) == 1)
+        var paused = Playhead(duration: 3)
+        paused.play()
+        _ = paused.advance(to: 0)
+        _ = paused.advance(to: 1)
+        paused.pause()
+        #expect(paused.position(at: 9) == 1)
+    }
+
+    /// 観測でない枚では、覗いた位置と進めた位置は同じ (映す位置を二通りに数えない)。
+    @Test("同じ時刻なら、覗く位置は進めた位置と一致する")
+    func positionAtAgreesWithAdvance() {
+        for looping in [false, true] {
+            var head = Playhead(duration: 2.5)
+            looping ? head.loop() : head.play()
+            for frame in 1...120 {
+                let t = time(frame, fps: 30)
+                let advanced = head.advance(to: t)
+                #expect(head.position(at: t) == advanced, "\(looping ? "loop" : "play") \(frame) 枚目")
+            }
+        }
+    }
 }

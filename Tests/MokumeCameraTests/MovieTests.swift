@@ -345,4 +345,101 @@ struct MovieTests {
         #expect(notices.first?.contains("jump()") == true)
         runtime.closePlugins()
     }
+
+    // MARK: - 時刻を指定した観測の枚 (#2357)
+
+    /// 動画を流しながら、`before` 枚の後の 1 枚を `time` 秒の観測にし、その後 `after` 枚回す。
+    /// 返す行は、観測の枚が `before` 番目 (0 始まり)。`during` は `draw()` の最後に呼ぶ。
+    private func recordAcrossAnObservation(
+        _ url: URL, before: Int, at time: Double, after: Int,
+        prepare: @escaping (Movie) -> Void = { $0.play() },
+        during: @escaping (MovieSketch, Movie) -> Void = { _, _ in }
+    ) throws -> [MovieFrame] {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-movie-observe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: facet) }
+        var movie: Movie?
+        var received: [MovieFrame] = []
+        MovieSketch.frameRate = 30
+        MovieSketch.onSetup = { sketch in
+            let made = try sketch.createVideo(url.path)
+            prepare(made)
+            movie = made
+        }
+        MovieSketch.onDraw = { sketch in
+            guard let movie else { return }
+            received.append(
+                MovieFrame(
+                    frame: sketch.frameCount, time: movie.time, isNewFrame: movie.isNewFrame,
+                    pixels: Self.pixels(of: movie.image)))
+            during(sketch, movie)
+        }
+        let runtime = try SketchRuntime(
+            sketch: MovieSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+        for _ in 0..<before { try runtime.advance() }
+        try AtomicFile.write(
+            Data(#"{"id":"o","time":\#(time)}"#.utf8), to: facet.appendingPathComponent("request.json"))
+        try runtime.advance()
+        for _ in 0..<after { try runtime.advance() }
+        runtime.closePlugins()
+        return received
+    }
+
+    /// 観測の秒が動画の長さを越えると、再生位置が観測の枚で終わりに達して止まり、観測の後も止まった
+    /// ままだった。撮る 1 枚は指定の秒に当たるコマ (終わりのコマ) を映し、状態は作者の時計に沿って進む。
+    @Test("流している動画は、長さを越える秒の観測の後も、作者の時計に沿って流れ続ける")
+    func aPlayingMovieKeepsPlayingAfterAnObservationPastItsEnd() async throws {
+        let url = try await TestMovie.write(frames: 90, pixel: TestMovie.noise)  // 3 秒
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+
+        let rows = try recordAcrossAnObservation(url, before: 15, at: 5, after: 5)
+        #expect(rows.count == 21)
+        // 観測の枚 (16 枚目): 位置は作者の時計の 15/30 秒、映すコマは 5 秒に当たる終わりのコマ
+        let observed = rows[15]
+        #expect(abs(observed.time - 0.5) < 1e-4, "観測の枚の位置が観測の秒に進んだ: \(observed.time)")
+        #expect(observed.pixels == expected[expected.count - 1], "5 秒に当たる終わりのコマが映っていない")
+        // 観測の後は、作者の時計の 1 枚ぶんずつ進む (終わりで止まったままにならない)
+        for index in 16..<21 {
+            let seconds = Float(index) / 30
+            #expect(abs(rows[index].time - seconds) < 1e-4, "\(index + 1) 枚目の位置: \(rows[index].time)")
+        }
+        // 観測の前は普通に進んでいる
+        #expect(abs(rows[14].time - Float(14.0 / 30)) < 1e-4)
+    }
+
+    /// 観測の直前の枚で `play()` した動画は、起点が観測の秒になり、作者の時計が観測の秒に届くまで
+    /// 負の位置で頭のコマに貼り付いていた。
+    @Test("観測の直前に play() した動画は、観測の後に頭に貼り付かず作者の時計に沿って進む")
+    func aMovieStartedJustBeforeAnObservationDoesNotStickToTheFirstFrame() async throws {
+        let url = try await TestMovie.write(frames: 90, pixel: TestMovie.noise)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let rows = try recordAcrossAnObservation(
+            url, before: 3, at: 5, after: 3, prepare: { _ in },
+            during: { sketch, movie in if sketch.frameCount == 3 { movie.play() } })
+        #expect(rows.count == 7)
+        // play() は次の枚 (4 枚目 = 観測の枚) から効く: 起点は作者の時計の 3/30 秒、位置 0
+        #expect(abs(rows[3].time - 0) < 1e-4)
+        // 5 枚目以降は起点から 1 枚ぶんずつ進む。起点が観測の秒だと、負の位置で 0 のまま
+        for index in 4..<7 {
+            let expected = Float(index - 3) / 30
+            #expect(abs(rows[index].time - expected) < 1e-4, "\(index + 1) 枚目の位置: \(rows[index].time)")
+        }
+    }
+
+    /// 陰性対照: 観測でない枚は、これまでどおり作者の時計の秒で位置を進め、その位置を映す。
+    @Test("観測のない枚は、流す位置も映すコマも従来どおり")
+    func offObservationThePlayheadFollowsTheClock() async throws {
+        let url = try await TestMovie.write(frames: 30, pixel: TestMovie.noise)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+        let rows = try record(url, frames: 10, prepare: { $0.play() })
+        for row in rows {
+            #expect(row.pixels == expected[row.frame - 1])
+            #expect(abs(row.time - Float(row.frame - 1) / 30) < 1e-4)
+        }
+    }
 }

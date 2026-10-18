@@ -146,6 +146,48 @@ struct AudioInTests {
         #expect(Set(received.map(\.level)).count > 1)
     }
 
+    /// 観測の枚の `draw()` で作った入り口の起点が、観測の秒 (5 秒) になって残っていた。起点は作者の時計の秒
+    /// (観測の枚の作者の時計 = 3/60 秒) で、次の枚が読む窓は、その起点から 1 枚ぶん進んだところで終わる
+    /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
+    @Test("観測の枚の draw() で作った標本列の入り口は、作者の時計の秒を起点にする")
+    func anInputMadeOnAnObservedFrameStartsOnTheAuthorsClock() throws {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: facet) }
+        var audio: AudioIn?
+        var levels: [Float] = []
+        var times: [Float] = []
+        AudioSketch.onSetup = { _ in }
+        AudioSketch.onDraw = { sketch in
+            // 4 枚目 (時刻 5 の観測の枚) で作る
+            if sketch.frameCount == 4 { audio = try? sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
+            if let audio {
+                levels.append(audio.level)
+                times.append(sketch.time)
+            }
+        }
+        let runtime = try SketchRuntime(
+            sketch: AudioSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+        for _ in 0..<3 { try runtime.advance() }
+        try AtomicFile.write(
+            Data(#"{"id":"o","time":5}"#.utf8), to: facet.appendingPathComponent("request.json"))
+        try runtime.advance()
+        try runtime.advance()
+        runtime.closePlugins()
+
+        // 観測の枚の draw() が見る時刻は観測の秒で、次の枚は作者の時計へ戻っている
+        #expect(times == [5, Float(4.0 / 60)])
+        // 次の枚が読む窓は、起点 (作者の時計の 3/60 秒) から 1/60 秒のところで終わる
+        let expected = AudioAnalysis.analyze(
+            AudioAnalysis.window(
+                of: chord, sampleRate: 48_000,
+                endingAt: Double(Float(4.0 / 60)) - Double(Float(3.0 / 60))))
+        #expect(expected.level > 0, "窓が空なら、起点の違いを見分けられない")
+        #expect(levels.last == expected.level, "起点が観測の秒のままだと窓が空になる: \(levels)")
+    }
+
     @Test("音声ファイルを固定の時計で 2 度回すと、同じフレームが同じ値を受け取る")
     func sameFileSameValues() throws {
         let url = try writeWAV(chord, sampleRate: 48_000)

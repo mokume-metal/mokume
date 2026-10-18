@@ -198,6 +198,11 @@ final class FrameTiming {
     ///
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
     private var seconds: Double = 0
+    /// いまの枚の、作者の時計の上の時刻 (単精度)。**観測の指定秒が描き直す枚でも作者の時計の値**で、
+    /// 観測の枚を除けば ``time`` と同じ値である。``draw()`` の外 (入力のコールバック) と、本体が
+    /// 持つ状態 (動画の再生位置・録った音の起点) が読む — 観測の秒を状態として積まないために
+    /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
+    var authorTime: Float { Float(seconds) }
     /// 作者が止めた秒 (``pauseTime()``)。止めていなければ `nil`。
     private var heldAt: Double?
     /// 次の枚で飛ぶ先の秒 (``jumpTime(_:)``)。1 枚で落ちる。
