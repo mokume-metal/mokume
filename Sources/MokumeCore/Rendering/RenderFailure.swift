@@ -199,6 +199,16 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 同期の口を呼んでもこの場合になる ([#1322](https://github.com/mokume-metal/mokume/issues/1322)
     /// と同じ事情)。
     case notRunning(call: String)
+
+    /// 道具 (`mokume render`) が渡した書き出しの頼み (環境変数 `MOKUME_RENDER`) を、子が読めない、
+    /// または書き出せない組だった。`value` は渡された値そのまま ([#2481])。
+    ///
+    /// **窓へ倒さず、起動を断る。** 倒れた子は窓を開いて 0 で終わり、書き出しを頼んだ人は何も書かれて
+    /// いないのに「書けた」と読まされた。形が違うのは、道具と依存の版がずれたときと、手で値を置いた
+    /// ときである。値が無い子はこの case に来ない (いつもの窓)。
+    ///
+    /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
+    case unreadableRenderRequest(value: String)
 }
 
 extension RenderFailure: CustomStringConvertible {
@@ -375,6 +385,15 @@ extension RenderFailure: CustomStringConvertible {
             """
         case .notRunning(let call):
             OutsideRun.notRunningNotice(call)
+        case .unreadableRenderRequest(let value):
+            """
+            The sketch was asked to render, but it cannot read or write what it was asked: \(value)
+            \(StartupReads.render.key) comes from `mokume render` as <fps>:<frames>:<where to write> — a whole \
+            frame rate and frame count above 0, and a .mov (at most \(RenderRequest.movieFrameRateLimit) \
+            frames per second) or a numbered series (out/frame-####.png). If the tool and the \
+            sketch were built from different versions of mokume, build the sketch again; if the \
+            variable was set by hand, unset it to run with a window.
+            """
         }
     }
 

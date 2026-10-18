@@ -315,11 +315,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、窓を
     /// 開かずに決めた枚数を書き出す。その経路の時刻はフレーム番号から導く。
+    ///
+    /// **頼みの合図が在って読めなければ、窓へ倒さず投げる** (``RenderFailure/unreadableRenderRequest(value:)``・
+    /// [#2481](https://github.com/mokume-metal/mokume/issues/2481))。
     public convenience init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
         // **窓の持ち主の合図を、ここで読んで環境から消す** (``SharedFrameSurface/launchOwner``)。
         // スケッチが `setup()` で子を起こしても、合図はもう継がれない
         _ = SharedFrameSurface.launchOwner
-        try self.init(sketch: sketch, gpu: gpu, render: RenderRequest.startup())
+        try self.init(sketch: sketch, gpu: gpu, render: try RenderRequest.startup())
     }
 
     /// 書き出しの頼みを渡せる入口。**検査から渡す** — 本番は起動の瞬間に環境から読む
