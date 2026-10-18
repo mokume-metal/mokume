@@ -35,7 +35,13 @@ import MokumeDiagnostics
 /// | ``loop()`` | 終わりから頭へ戻って鳴らし続ける |
 /// | ``pause()`` | 止めて、位置を覚える。次の ``play()`` / ``loop()`` はそこから |
 /// | ``stop()`` | 止めて頭へ戻す |
+/// | ``jump(_:)`` | その秒の位置へ飛ぶ。止まっている間は位置だけを動かす |
+/// | ``position`` | いま鳴らしている位置 (秒) |
+/// | ``duration`` | 長さ (秒) |
 /// | ``amp(_:)`` | 音量 (0〜1) |
+///
+/// 位置・長さ・飛ぶ口の名前は Processing Sound の `position()`・`duration()`・`jump()` に倣った。
+/// 動画 (`Movie`) では同じ量を `time` と呼ぶ — あちらの手本の Processing Video が `time()` と呼ぶため。
 ///
 /// 鳴っている最中に ``play()`` か ``loop()`` を呼ぶと、頭から鳴らし直す (キーを押すたびに鳴らす
 /// 効果音の形)。止めて続きから鳴らすなら ``pause()`` と ``play()`` を組む。どの口も投げない
@@ -81,6 +87,8 @@ public final class SoundFile: Inlet {
     private let warn: (String) -> Void
 
     private var playhead: Playhead
+    /// 鳴っている間に頼まれた飛び先 (標本)。次のフレームの ``supply()`` で、そこから区切りを始め直す。
+    private var pendingJump: Int?
     private var volume: Float = 1
     private var levels = AudioLevels.silence
     /// 位置を進める時計。開くまで `nil`。
@@ -110,6 +118,7 @@ public final class SoundFile: Inlet {
         case noOutput
         case volumeOutOfRange
         case volumeNotANumber
+        case jumpNotANumber
     }
 
     init(
@@ -175,13 +184,85 @@ public final class SoundFile: Inlet {
     public func pause() {
         guard playhead.isPlaying else { return }
         playhead.pause(after: played())
+        // 同じフレームで先に飛ぶよう頼まれていれば、止めた位置はその飛び先にする
+        if let target = pendingJump {
+            pendingJump = nil
+            playhead.jump(to: target)
+        }
         halt()
     }
 
     /// 止めて、頭へ戻す。次の ``play()`` か ``loop()`` は頭から鳴らす。
     public func stop() {
+        pendingJump = nil
         playhead.stop()
         halt()
+    }
+
+    /// `seconds` 秒の位置へ飛ぶ。**呼んだ直後から ``position`` は飛び先を返す。**
+    ///
+    /// <!-- example: 文脈 var song: SoundFile? -->
+    /// ```swift
+    /// func keyPressed() {
+    ///     if key == "2" { song?.jump(62) }  // サビから確かめる
+    /// }
+    /// ```
+    ///
+    /// 鳴っている間なら、次のフレームでその位置から鳴り、解析の値もその位置の音になる。そのフレームの
+    /// 窓は、飛び先で終わるファイルの窓である (飛ぶ前からそこまで鳴っていたのと同じ)。止まっている間
+    /// (``pause()`` の後・``stop()`` の後・鳴り終わった後) は位置だけを動かし、鳴らさない。次の
+    /// ``play()`` か ``loop()`` がそこから鳴らす。
+    ///
+    /// 0 より前は頭、``duration`` より後は終わりへ寄せる。数でない値・無限の値は位置を変えず、
+    /// そのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)。どれも `Movie` の `jump(_:)` と同じ。
+    ///
+    /// 同じフレームで後から ``play()`` か ``loop()`` を呼ぶと、鳴っている最中なら頭から鳴らし直す
+    /// (後から呼んだ口が勝つ)。``stop()`` は頭へ戻す。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func jump(_ seconds: Float) {
+        guard seconds.isFinite else {
+            notice(
+                .jumpNotANumber,
+                "jump() got a value that is not a number, or an infinite one, so \"\(name)\" stays "
+                    + "at \(position) seconds")
+            return
+        }
+        // 寄せてから整数にする (大きな秒のまま整数へ直すと溢れる)。いちばん近い標本へ丸める — 切り捨てると、
+        // 単精度で 5.1 をわずかに割る `jump(5.1)` が 1 標本手前になり、`position` が 5.1 に戻らない
+        let reach = min(max(Double(seconds) * Double(sampleRate), 0), Double(samples.count))
+        let target = Int(reach.rounded())
+        if playhead.isPlaying {
+            pendingJump = target
+        } else {
+            playhead.jump(to: target)
+        }
+    }
+
+    /// いま鳴らしている位置 (秒)。0 から ``duration`` まで。``jump(_:)`` を呼んだ後なら、その飛び先。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile? -->
+    /// ```swift
+    /// func draw() {
+    ///     guard let song else { return }
+    ///     let t = song.position
+    ///     if t < 62 { background(40, 60, 160) } else { background(200, 40, 60) }
+    ///     fill(255)
+    ///     rect(0, height - 8, width * t / song.duration, 8)
+    /// }
+    /// ```
+    ///
+    /// 位置を進めるのは音の時計で、``SketchPart/time`` ではない。書き出し (固定の時計) では、鳴らし
+    /// 始めてから進んだフレームの数で決まるので、同じフレームはいつも同じ位置で描かれる。値はその
+    /// フレームの始まりのもの (``isPlaying`` と同じ)。止まっている間は止めた位置、鳴り終わった後は 0。
+    public var position: Float { seconds(pendingJump ?? samplePosition) }
+
+    /// 長さ (秒)。標本の数 ÷ ``sampleRate``。
+    public var duration: Float { seconds(samples.count) }
+
+    /// 標本の位置を秒にする。
+    private func seconds(_ sample: Int) -> Float {
+        Float(Double(sample) / Double(sampleRate))
     }
 
     /// 音量を決める。0 で無音、1 で読み込んだままの大きさ。既定は 1。
@@ -256,6 +337,13 @@ public final class SoundFile: Inlet {
     public func supply() {
         if let owner { frame = Self.frameIndex(of: owner) }
         resumeIfStopped()
+        // 前のフレームで飛ぶよう頼まれていれば、このフレームを飛び先から始まる区切りの頭にする
+        // (``position`` がちょうど飛び先になり、窓は飛び先で終わる)
+        if let target = pendingJump {
+            pendingJump = nil
+            playhead.jump(to: target)
+            beginSegment()
+        }
         guard playhead.isPlaying else {
             levels = .silence
             return
@@ -272,10 +360,11 @@ public final class SoundFile: Inlet {
         levels = AudioAnalysis.analyze(volume == 1 ? window : vDSP.multiply(volume, window))
     }
 
-    /// いまの再生位置 (標本)。検査が読む。
-    var position: Int { playhead.position(after: lastPlayed) }
+    /// いまの再生位置 (標本)。飛び先を待っている間も、まだ動いていない位置を返す。検査が読む。
+    var samplePosition: Int { playhead.position(after: lastPlayed) }
 
     public func close() {
+        pendingJump = nil
         if case .speaker(let player) = pace { player.leave() }
         pace = nil
         playhead.stop()
@@ -320,6 +409,8 @@ public final class SoundFile: Inlet {
 
     /// 鳴らし始める。鳴っている最中なら頭から鳴らし直す (``Playhead/play(looping:)``)。
     private func start(looping: Bool) {
+        // 飛び先を待つのは鳴っている間だけで、鳴っている最中の play() / loop() は頭から鳴らし直す
+        pendingJump = nil
         playhead.play(looping: looping)
         beginSegment()
     }
