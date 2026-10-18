@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
@@ -204,5 +205,88 @@ struct AtomicFileTests {
         ] {
             #expect(AtomicFile.writer(ofTemporary: name, for: url) == nil, "\(name)")
         }
+    }
+
+    // ---------------------------------------------------------- 書く先がディレクトリ (#2859)
+
+    /// 中身のあるディレクトリ `<facet>/full.json/inner.txt` を作って返す。
+    private func makeFullDirectory() throws -> (directory: URL, inner: URL) {
+        let directory = try makeFacet().appendingPathComponent("full.json", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let inner = directory.appendingPathComponent("inner.txt")
+        try "keep me".write(to: inner, atomically: true, encoding: .utf8)
+        return (directory, inner)
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        var flag: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &flag) && flag.boolValue
+    }
+
+    /// 書く先がディレクトリだと、失敗せずに中身ごと消してファイルに置き換えていた
+    /// (`replaceItemAt` は行き先の種類を見ない)。
+    @Test("書く先が中身のあるディレクトリなら、置き換えずに失敗し、中身は残る")
+    func refusesToReplaceADirectoryWithContents() throws {
+        let (directory, inner) = try makeFullDirectory()
+        #expect(throws: (any Error).self) {
+            try AtomicFile.write(Data("x".utf8), to: directory)
+        }
+        #expect(isDirectory(directory), "ディレクトリが消えた")
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me", "中身が消えた")
+        #expect(try temporaries(in: directory.deletingLastPathComponent()).isEmpty, "一時ファイルが残った")
+    }
+
+    @Test("書く先が空のディレクトリでも、置き換えずに失敗する")
+    func refusesToReplaceAnEmptyDirectory() throws {
+        let directory = try makeFacet().appendingPathComponent("empty.json", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        #expect(throws: (any Error).self) {
+            try AtomicFile.writeJSON(sample, to: directory)
+        }
+        #expect(isDirectory(directory))
+    }
+
+    /// 理由は POSIX の文面 (`Is a directory`) で、呼び手の既存の警告の経路 (`Diagnostics.reason`) に乗る。
+    @Test("失敗の理由は Is a directory で、publishJSON は偽を返して 1 度だけ名乗る")
+    func namesTheDirectoryInTheUsualWarningPath() throws {
+        let (directory, inner) = try makeFullDirectory()
+        var thrown: (any Error)?
+        do {
+            try AtomicFile.write(Data("x".utf8), to: directory)
+        } catch {
+            thrown = error
+        }
+        let reason = try Diagnostics.reason(#require(thrown))
+        #expect(reason.contains("Is a directory"), "理由が違う: \(reason)")
+
+        #expect(!AtomicFile.publishJSON(sample, to: directory, "見本"))
+        let warning = try #require(AtomicFile.warning(about: directory))
+        #expect(warning.contains("Is a directory"), "警告が理由を言っていない: \(warning)")
+        #expect(warning.contains(directory.path))
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
+    }
+
+    /// ディレクトリを指す symlink も、指す先のディレクトリを壊さない。**変更前から** `replaceItemAt` は
+    /// symlink へは別の理由で失敗していて (実測)、これは退行を防ぐ札である — 辿った先がディレクトリな
+    /// ら、どの経路でも置かない向きに倒してある。
+    @Test("ディレクトリを指す symlink へも置かず、指す先のディレクトリは残る")
+    func leavesTheTargetOfASymlinkToADirectory() throws {
+        let (directory, inner) = try makeFullDirectory()
+        let link = directory.deletingLastPathComponent().appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: directory)
+        #expect(throws: (any Error).self) {
+            try AtomicFile.write(Data("x".utf8), to: link)
+        }
+        #expect(isDirectory(directory), "指す先のディレクトリが消えた")
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
+    }
+
+    @Test("書く先がファイルか無いときは、従来どおり原子的に置き換える")
+    func stillReplacesFilesAndCreatesMissingOnes() throws {
+        let url = try makeFacet().appendingPathComponent("new.json")
+        try AtomicFile.write(Data("1".utf8), to: url)
+        try AtomicFile.write(Data("2".utf8), to: url)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "2")
+        #expect(try temporaries(in: url.deletingLastPathComponent()).isEmpty)
     }
 }

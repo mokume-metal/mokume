@@ -83,6 +83,9 @@ package enum AtomicFile {
     static func write(to url: URL, using body: (URL) throws -> Void) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // **書く先がディレクトリなら置かない** (本体を走らせる前に断る)。`replaceItemAt` は行き先の種類を
+        // 見ず、ディレクトリを中身ごと消してファイルに置き換える (#2859)
+        try refuseDirectory(url)
         sweepAbandonedTemporaries(of: url)
         sequence += 1
         let temporary = temporaryURL(for: url, writer: getpid(), sequence: sequence)
@@ -90,12 +93,30 @@ package enum AtomicFile {
             try body(temporary)
             // 置換は 1 回の syscall で済ませる。先に消してから rename すると、
             // その隙間に読み手が「ファイルが無い」状態を見る
+            // 本体を走らせている間に置かれたものも見る。見てから置き換えるまでの窓は縮めるだけで、
+            // ゼロにはならない (``refuseDirectory(_:)``)
+            try refuseDirectory(url)
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
         } catch {
             // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない
             try? FileManager.default.removeItem(at: temporary)
             throw error
         }
+    }
+
+    /// 書く先がディレクトリなら、`EISDIR` (`Is a directory`) で断る。
+    ///
+    /// **symlink は辿って見る (`stat`)。** 辿った先がディレクトリなら、置かない向きに倒す。宛先の無い
+    /// symlink は辿れない (`stat` が失敗する) ので断らず、そのあとの置き方に任せる (従来どおり)。
+    ///
+    /// **窓が残る。** 見てから `replaceItemAt` までは別の syscall なので、その間に別の主体が同じ
+    /// 場所へディレクトリを置けば、いままでどおり置き換わる。`rename(2)` を直に呼べば窓は閉じるが、
+    /// `replaceItemAt` が置き換えのときに引き継ぐ属性を手放すことになる (ファイル・無い場合の
+    /// 振る舞いを変えない)。窓を狭める直前の検査にとどめた。
+    private static func refuseDirectory(_ url: URL) throws {
+        var status = stat()
+        guard stat(url.path, &status) == 0, status.st_mode & S_IFMT == S_IFDIR else { return }
+        throw POSIXError(.EISDIR)
     }
 
     /// 一時ファイルの場所。**置き場所の隣に作る** (冒頭の `rename(2)` の理由)。
