@@ -170,12 +170,15 @@ nonisolated enum Triangulation {
         outer: [Int], holes: [[Int]], points: [SIMD2<Float>], slack: Float = 0
     ) -> [Int] {
         var ring = outer
-        // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい
-        let ordered = holes
-            .filter { $0.count >= 3 }
-            .sorted {
-                (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
-            }
+        // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい。ただし、畳んだ
+        // 周に触れる穴があれば、それを先に畳む (``touchingFirst(_:outer:points:)``・[#2647])
+        let ordered = touchingFirst(
+            holes
+                .filter { $0.count >= 3 }
+                .sorted {
+                    (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
+                },
+            outer: outer, points: points)
 
         // 畳んだ周の点の位置。穴の点が重なるかを引く
         var placed = Set(outer.map { points[$0] })
@@ -207,6 +210,60 @@ nonisolated enum Triangulation {
             for index in hole { placed.insert(points[index]) }
         }
         return ring
+    }
+
+    /// 穴を畳む順を、**畳んだ周に頂点で触れる穴を先にする**形へ並べ替える ([#2647])。
+    ///
+    /// `holes` は右にある穴から順に並んでいる。そのまま畳むと、触れ合う穴の鎖 (A が B に触れ、B が
+    /// C に触れる) で、A から橋で架けた C を先に畳み、後から畳む B が A と C の両方に触れることが
+    /// ある。入口の点で長さ 0 の橋を架けて対にできるのは 1 点だけなので、もう 1 点は対にならず、
+    /// 畳んだ周が自分の角と重なる。耳切りはそこで耳を取り違え、穴の中まで塗る。
+    ///
+    /// 触れる穴は、触れる点ごとに長さ 0 の橋で順に対にできる。そこで、畳み終えた穴 (と外周) に
+    /// 触れる穴があれば、その中でいちばん右の穴を次に畳み、無ければ残りのうちいちばん右の穴を
+    /// 畳む。触れる穴が無い形は、並びが変わらない。
+    ///
+    /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
+    private static func touchingFirst(
+        _ holes: [[Int]], outer: [Int], points: [SIMD2<Float>]
+    ) -> [[Int]] {
+        // 位置ごとの、その位置に頂点を持つ穴 (右から数えた順位)。外周は -1
+        var owners: [SIMD2<Float>: [Int]] = [:]
+        for index in outer { owners[points[index], default: []].append(-1) }
+        for (rank, hole) in holes.enumerated() {
+            for index in hole where owners[points[index]]?.last != rank {
+                owners[points[index], default: []].append(rank)
+            }
+        }
+        guard owners.values.contains(where: { $0.count >= 2 }) else { return holes }
+
+        var placed = Array(repeating: false, count: holes.count)
+        var ready = Set<Int>()
+        // 外周に触れる穴から始める
+        for index in outer {
+            for rank in owners[points[index]] ?? [] where rank >= 0 { ready.insert(rank) }
+        }
+        var order: [[Int]] = []
+        order.reserveCapacity(holes.count)
+        var next = 0
+        while order.count < holes.count {
+            var pick: Int
+            if let rank = ready.min() {
+                pick = rank
+            } else {
+                while placed[next] { next += 1 }
+                pick = next
+            }
+            placed[pick] = true
+            ready.remove(pick)
+            order.append(holes[pick])
+            for index in holes[pick] {
+                for rank in owners[points[index]] ?? [] where rank >= 0 && !placed[rank] {
+                    ready.insert(rank)
+                }
+            }
+        }
+        return order
     }
 
     /// 穴の点を、橋の入口として試す順に並べる。
@@ -744,12 +801,9 @@ extension Triangulation {
         /// (ここでは止まることだけを約束している)。凸でない角は索引 (``ConcaveCorners``) から、
         /// 三角形に掛かりうる所だけを引く。
         ///
-        /// **角と同じ位置にある点は、その辺が耳の中へ入るときだけ数える。** 周が同じ点を 2 度通る
-        /// 形では、その点が三角形の角に重なる。位置が重なるだけで数えると耳が永久に見つからない。
-        /// 位置を比べるのは中と判定された点だけでよい (角に重なる点は必ず中と判定される) ので、
-        /// 比べる手間は大半の点で掛からない ([#2647])。
-        ///
-        /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
+        /// **角と同じ位置にある点は数えない。** 周が同じ点を 2 度通る形では、その点が三角形の
+        /// 角に重なる。数えると耳が永久に見つからない。位置を比べるのは中と判定された点だけで
+        /// よい (角に重なる点は必ず中と判定される) ので、比べる手間は大半の点で掛からない。
         func isEar(_ a: Int, _ b: Int, _ c: Int, comparisons: inout Int) -> Bool {
             let triangle = EarTriangle(
                 indices: (vertex[a], vertex[b], vertex[c]),
@@ -758,8 +812,7 @@ extension Triangulation {
                 return false
             }
             return !concave.anyBlocks(
-                triangle, vertex: vertex, previous: previous, next: next, points: points,
-                comparisons: &comparisons)
+                triangle, vertex: vertex, points: points, comparisons: &comparisons)
         }
     }
 
@@ -781,19 +834,9 @@ extension Triangulation {
         }
 
         /// その点が、三角形を耳でなくするか。比べた回数を `comparisons` へ積む。
-        ///
-        /// **三角形の角と同じ位置にある角は、その辺が耳の中へ入るときだけ塞ぐ** ([#2647])。
-        /// 周が同じ点を 2 度通る (穴が別の穴に触れる点) と、別の通り道の角が耳の角に重なる。
-        /// 数えると耳が永久に見つからないので、位置が重なるだけでは塞がない。ただし重なった角の
-        /// 辺 (前と後の点への向き) が耳の角の内側へ入るなら、その耳は形の中に入り込んでいる —
-        /// 通すと 2 つの穴の間の塗る所を 1 枚の三角形が跨いで、形の外を塗る。
-        ///
-        /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
         func isBlocked(
-            by node: Int, vertex: [Int], previous: [Int], next: [Int], points: [SIMD2<Float>],
-            comparisons: inout Int
+            by index: Int, points: [SIMD2<Float>], comparisons: inout Int
         ) -> Bool {
-            let index = vertex[node]
             if index == indices.0 || index == indices.1 || index == indices.2 { return false }
             let point = points[index]
             comparisons += 1
@@ -802,20 +845,7 @@ extension Triangulation {
                 ? Triangulation.isInside(point, a, b, c, margins: margins)
                 : Triangulation.isInside(point, a, b, c)
             guard inside else { return false }
-            guard point == a || point == b || point == c else { return true }
-            let before = points[vertex[previous[node]]] - point
-            let after = points[vertex[next[node]]] - point
-            return entersCorner(at: point, toward: before) || entersCorner(at: point, toward: after)
-        }
-
-        /// 角 `point` から `direction` へ出る線が、耳の三角形の内側へ入るか (辺に沿うのは入らない)。
-        private func entersCorner(at point: SIMD2<Float>, toward direction: SIMD2<Float>) -> Bool {
-            guard direction != .zero else { return false }
-            // 三角形は反時計回り (`a`→`b`→`c`) で、内側は各辺の左
-            func left(_ edge: SIMD2<Float>) -> Bool { Triangulation.cross(edge, direction) > 0 }
-            if point == a { return left(b - a) && left(a - c) }
-            if point == b { return left(b - a) && left(c - b) }
-            return left(c - b) && left(a - c)
+            return point != a && point != b && point != c
         }
 
         /// 箱 (`minX, minY, maxX, maxY`) の中の点が、三角形の中と判定されうるか。
@@ -1021,25 +1051,22 @@ extension Triangulation {
 
         /// 三角形を耳でなくする角があるか。比べた回数を `comparisons` へ積む。
         func anyBlocks<Margin: EarMargin>(
-            _ triangle: EarTriangle<Margin>, vertex: [Int], previous: [Int], next: [Int],
-            points: [SIMD2<Float>], comparisons: inout Int
+            _ triangle: EarTriangle<Margin>, vertex: [Int], points: [SIMD2<Float>],
+            comparisons: inout Int
         ) -> Bool {
             for node in loose
-            where triangle.isBlocked(
-                by: node, vertex: vertex, previous: previous, next: next, points: points,
-                comparisons: &comparisons)
-            {
+            where triangle.isBlocked(by: vertex[node], points: points, comparisons: &comparisons) {
                 return true
             }
             guard !items.isEmpty else { return false }
             return anyBlocks(
-                triangle, level: levelStart.count - 2, box: 0, vertex: vertex, previous: previous,
-                next: next, points: points, comparisons: &comparisons)
+                triangle, level: levelStart.count - 2, box: 0, vertex: vertex, points: points,
+                comparisons: &comparisons)
         }
 
         private func anyBlocks<Margin: EarMargin>(
-            _ triangle: EarTriangle<Margin>, level: Int, box: Int, vertex: [Int], previous: [Int],
-            next: [Int], points: [SIMD2<Float>], comparisons: inout Int
+            _ triangle: EarTriangle<Margin>, level: Int, box: Int, vertex: [Int], points: [SIMD2<Float>],
+            comparisons: inout Int
         ) -> Bool {
             let flat = levelStart[level] + box
             guard alive[flat] > 0, triangle.mayContainPoints(in: boxes[flat]) else { return false }
@@ -1047,8 +1074,7 @@ extension Triangulation {
             if level == 0 {
                 for index in first..<min(first + Self.fanOut, items.count) where itemAlive[index] {
                     if triangle.isBlocked(
-                        by: items[index], vertex: vertex, previous: previous, next: next,
-                        points: points, comparisons: &comparisons)
+                        by: vertex[items[index]], points: points, comparisons: &comparisons)
                     {
                         return true
                     }
@@ -1058,8 +1084,8 @@ extension Triangulation {
             let childCount = levelStart[level] - levelStart[level - 1]
             for child in first..<min(first + Self.fanOut, childCount)
             where anyBlocks(
-                triangle, level: level - 1, box: child, vertex: vertex, previous: previous,
-                next: next, points: points, comparisons: &comparisons)
+                triangle, level: level - 1, box: child, vertex: vertex, points: points,
+                comparisons: &comparisons)
             {
                 return true
             }
