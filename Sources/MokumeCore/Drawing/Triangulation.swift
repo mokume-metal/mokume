@@ -55,7 +55,7 @@ import simd
 nonisolated enum Triangulation {
     /// 単純な多角形を三角形へ分ける。返すのは点の番号の 3 つ組。
     ///
-    /// **自己交差した周は、ここへ来る前に分ける** (``splitForNonzero(rings:points:)``・
+    /// **自己交差した周は、ここへ来る前に分ける** (``splitForNonzero(rings:points:evenOdd:)``・
     /// [#1538])。頂点を並べた形の塗りは、周が交わるとそこで回り数が 0 でない所を囲む周へ
     /// 組み直してから、ここへ通す。
     ///
@@ -74,7 +74,7 @@ nonisolated enum Triangulation {
     /// `pointScansInLastFrame`)。凸な形では 0 になる。
     ///
     /// `slack` は耳を塞ぐ点を数える許容 (距離)。**既定の 0 から変えるのは、交わった周を
-    /// 組み直した周だけである** (``splitForNonzero(rings:points:)``・[#1538])。組み直した周は、
+    /// 組み直した周だけである** (``splitForNonzero(rings:points:evenOdd:)``・[#1538])。組み直した周は、
     /// 元の 1 本の辺の上に交点を幾つも並べる。数の上ではその辺の上に載る凹んだ角が、丸めで
     /// 辺のわずかに外へ出ると、その辺を 1 辺に持つ三角形を耳と取り違え、形の外まで塗る。
     /// 渡された形そのものには許容を持たせない (下の ``isInside(_:_:_:_:)`` の注記)。

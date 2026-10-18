@@ -113,12 +113,17 @@ nonisolated extension Triangulation {
     ///     星形か見る・交わりを探す辺・穴の置き場所を見る・組み直すときの半直線で束と比べる、
     ///     のそれぞれを数える。**組み直す手間は辺の数に比例しない**ので、ここに積まないと
     ///     二乗が戻っても数が動かない。
+    ///   - evenOdd: 塗る所を、回り数が 0 でない所でなく、**奇数の所**にする (SVG の
+    ///     `fill-rule="evenodd"`・[#2880])。回り数の偶奇は周の向きに依らないので、自分と交わる
+    ///     1 本の周 (五芒星の中央は回り数 2 で抜ける) も、向きの違う周どうしも、同じ規則で
+    ///     塗れる。既定は 0 でない所。
     ///
+    /// [#2880]: https://github.com/mokume-metal/mokume/issues/2880
     /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
     /// [#1211]: https://github.com/mokume-metal/mokume/issues/1211
     /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
     static func splitForNonzero(
-        rings: [[Int]], points: [SIMD2<Float>], comparisons: inout Int
+        rings: [[Int]], points: [SIMD2<Float>], comparisons: inout Int, evenOdd: Bool = false
     ) -> Split? {
         if rings.count == 1 {
             comparisons += rings[0].count
@@ -132,13 +137,17 @@ nonisolated extension Triangulation {
         else {
             return nil
         }
-        return edges.nonzeroSplit(crossings: survey.crossings, comparisons: &comparisons)
+        return edges.nonzeroSplit(
+            crossings: survey.crossings, comparisons: &comparisons, evenOdd: evenOdd)
     }
 
-    /// ``splitForNonzero(rings:points:comparisons:)`` の、回数を数えない形。
-    static func splitForNonzero(rings: [[Int]], points: [SIMD2<Float>]) -> Split? {
+    /// ``splitForNonzero(rings:points:comparisons:evenOdd:)`` の、回数を数えない形。
+    static func splitForNonzero(
+        rings: [[Int]], points: [SIMD2<Float>], evenOdd: Bool = false
+    ) -> Split? {
         var comparisons = 0
-        return splitForNonzero(rings: rings, points: points, comparisons: &comparisons)
+        return splitForNonzero(
+            rings: rings, points: points, comparisons: &comparisons, evenOdd: evenOdd)
     }
 
     /// 周が、点の重心から見て 1 周だけ回る星形か。**そうなら周は自分と交わらない。**
@@ -529,7 +538,9 @@ nonisolated extension Triangulation {
         }
 
         /// 交わった周から、回り数が 0 でない所を囲む周を組む。組めなければ `nil`。
-        func nonzeroSplit(crossings found: [Found], comparisons: inout Int) -> Split? {
+        func nonzeroSplit(
+            crossings found: [Found], comparisons: inout Int, evenOdd: Bool = false
+        ) -> Split? {
             // 並びを手元に写す (``survey()`` と同じ理由)
             let tree = tree
             let points = points
@@ -699,22 +710,27 @@ nonisolated extension Triangulation {
             guard let right = windingsBySide(of: bundles, nodes: nodes, comparisons: &comparisons)
             else { return nil }
 
-            //    片側だけが 0 の束を、塗る側が左になる向きで残す
+            //    塗る面と塗らない面の境の束を、塗る側が左になる向きで残す。塗る面は、回り数が
+            //    0 でない面 (`evenOdd` なら奇数の面)。回り数の偶奇は辺の向きに依らないので、
+            //    奇数の面は、周の向きを揃え直さなくても SVG の `evenodd` と同じになる
+            func isPainted(_ turns: Int) -> Bool { evenOdd ? turns % 2 != 0 : turns != 0 }
             var kept: [(from: Int, to: Int)] = []
             var balance: [Int: Int] = [:]
             for (index, bundle) in bundles.enumerated() {
-                let rightTurns = right[index]
-                let leftTurns = rightTurns + bundle.net
+                let rightPainted = isPainted(right[index])
+                let leftPainted = isPainted(right[index] + bundle.net)
                 var edge: (from: Int, to: Int)?
-                if leftTurns != 0, rightTurns == 0 { edge = (bundle.low, bundle.high) }
-                if leftTurns == 0, rightTurns != 0 { edge = (bundle.high, bundle.low) }
+                if leftPainted, !rightPainted { edge = (bundle.low, bundle.high) }
+                if !leftPainted, rightPainted { edge = (bundle.high, bundle.low) }
                 guard let edge else { continue }
                 kept.append(edge)
                 balance[edge.from, default: 0] += 1
                 balance[edge.to, default: 0] -= 1
             }
             // 境の辺は、どの点でも入る数と出る数が等しい。崩れていれば数え違えている
-            guard !kept.isEmpty, balance.values.allSatisfy({ $0 == 0 }) else { return nil }
+            guard balance.values.allSatisfy({ $0 == 0 }) else { return nil }
+            // 偶奇では、同じ周を重ねるなど、塗る面がまったく無い形がありうる (何も塗らない)
+            if kept.isEmpty { return evenOdd ? Split(crossings: [], regions: []) : nil }
 
             // 4. 残した辺を周へ繋ぐ
             guard let loops = Self.link(kept, nodes: nodes) else { return nil }

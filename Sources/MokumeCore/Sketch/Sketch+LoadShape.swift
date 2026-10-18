@@ -240,7 +240,6 @@ extension SketchPart {
     /// SVG と見え方が違う所:
     ///
     /// - 群に掛けた `opacity` は、子の色ひとつずつに掛ける。子どうしが重なった所は SVG より濃く出る
-    /// - `fill-rule="evenodd"` は、交わらない輪郭どうしなら SVG と同じに塗る。交わる輪郭は回り数で塗る
     /// - 尖った角が切られる長さは ``StrokeJoin/miter`` のもので、`stroke-miterlimit` は読まない
     ///
     /// ## 読めないときは投げる

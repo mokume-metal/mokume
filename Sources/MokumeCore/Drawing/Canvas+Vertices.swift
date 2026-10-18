@@ -246,6 +246,15 @@ extension Canvas {
     }
 
     public func endShape(_ end: ShapeEnd = .open) {
+        endShape(end, evenOdd: false)
+    }
+
+    /// 形を終え、塗りの規則を選ぶ。`evenOdd` なら、回り数が奇数の所だけを塗る
+    /// (SVG の `fill-rule="evenodd"`・[#2880])。**公開の口には出さない** — SVG を読み込む
+    /// 側 (`Canvas.recordPath`) だけが選ぶ。
+    ///
+    /// [#2880]: https://github.com/mokume-metal/mokume/issues/2880
+    func endShape(_ end: ShapeEnd, evenOdd: Bool) {
         defer { discardOpenShape() }
         // 区間の外では描かない。区間の中で開いた形を外で閉じても、形ごと捨てる ([#1672])。
         // 始まりの無い形の注意より先に見る — 外で開こうとした形は、開く口がもう断っている
@@ -255,7 +264,7 @@ extension Canvas {
         // 始まりの無い形の終わり — beginShape() の書き忘れか、二重呼び (#1520)
         guard isBuildingShape else { return warnShapeNotBegunOnce() }
         closeOpenHole()  // 閉じ忘れた穴も畳む
-        drawBuiltShape(closed: end == .close)
+        drawBuiltShape(closed: end == .close, evenOdd: evenOdd)
     }
 
     /// 組み立て中の形を、描かずに捨てる。**注意は言わない。**
@@ -398,7 +407,7 @@ extension Canvas {
     }
 
     /// 並べ終えた頂点を描く。
-    private func drawBuiltShape(closed: Bool) {
+    private func drawBuiltShape(closed: Bool, evenOdd: Bool = false) {
         var points = shapePoints
         for hole in shapeHoles { points += hole }
         guard !points.isEmpty else { return }
@@ -420,7 +429,7 @@ extension Canvas {
         triangleRanges.reserveCapacity(primitives.count)
         for primitive in primitives {
             let start = allTriangles.count
-            fillTriangles(of: primitive, points: &points, into: &allTriangles)
+            fillTriangles(of: primitive, evenOdd: evenOdd, points: &points, into: &allTriangles)
             triangleRanges.append(start..<allTriangles.count)
         }
         let placed = shapeHasDepth ? placedVertices(points, triangles: allTriangles) : []
@@ -590,7 +599,7 @@ extension Canvas {
     ///
     /// [#915]: https://github.com/mokume-metal/mokume/issues/915
     private func fillTriangles(
-        of primitive: Primitive, points: inout [BuildingVertex],
+        of primitive: Primitive, evenOdd: Bool = false, points: inout [BuildingVertex],
         into triangles: inout [(Int, Int, Int)]
     ) {
         guard primitive.fills, style.hasFill, primitive.ring.count >= 3 else { return }
@@ -621,7 +630,8 @@ extension Canvas {
             for index in ring { flattened.append(basis.flatten(points[index].position)) }
             let local = Array(flattened.indices)
             if let split = Triangulation.splitForNonzero(
-                rings: [local], points: flattened, comparisons: &pointScansThisFrame)
+                rings: [local], points: flattened, comparisons: &pointScansThisFrame,
+                evenOdd: evenOdd)
             {
                 fillSplit(split, flat: flattened, global: Array(ring), points: &points, into: &triangles)
                 return
@@ -639,7 +649,7 @@ extension Canvas {
         pointScansThisFrame += points.count
         if let split = Triangulation.splitForNonzero(
             rings: [Array(primitive.ring)] + primitive.holes, points: all,
-            comparisons: &pointScansThisFrame)
+            comparisons: &pointScansThisFrame, evenOdd: evenOdd)
         {
             fillSplit(split, flat: all, global: nil, points: &points, into: &triangles)
             return
@@ -852,7 +862,7 @@ extension Canvas {
     /// 三角形へ分けるための、平らな座標の取り方。
     ///
     /// **点番号で引ける並びを作らない。** 要る点だけを落とせるように、落とし方のほうを
-    /// 持ち歩く (``Canvas/fillTriangles(of:points:into:)``)。
+    /// 持ち歩く (``Canvas/fillTriangles(of:evenOdd:points:into:)``)。
     private struct FlatBasis {
         /// `nil` なら平面 — xy をそのまま使う。
         ///
