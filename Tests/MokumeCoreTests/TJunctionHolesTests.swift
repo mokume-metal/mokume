@@ -52,6 +52,22 @@ struct TJunctionHolesTests {
         #expect(!scene.isPaintedWrong)
     }
 
+    /// 三角形の穴の頂点が、長方形の穴の辺の途中に載る T 字 (#2647 の反証役の例)。穴 1 の頂点 (260,60) が、
+    /// 穴 2 の左の辺 (x = 260・y 20..80) の途中に載る。直す前は面積の誤差 35,200。
+    @Test("三角形の穴の頂点が長方形の穴の辺に載る T 字も、外周から引いた面積どおりに塗れる (#2655)")
+    func aTriangleVertexOnARectangleEdge() {
+        let outer: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(320, 0), SIMD2(320, 320), SIMD2(0, 320)]
+        let holes: [[SIMD2<Float>]] = [
+            [SIMD2(260, 60), SIMD2(240, 20), SIMD2(200, 20)],
+            [SIMD2(260, 20), SIMD2(300, 20), SIMD2(300, 80), SIMD2(260, 80)],
+            [SIMD2(220, 60), SIMD2(240, 60), SIMD2(240, 80), SIMD2(220, 80)],
+        ]
+        let probe = CoordinateMagnitudeHolesTests.Probe(
+            "三角形と長方形の T 字", TouchingHoleScene(index: 0, outer: outer, holes: holes))
+        let result = CoordinateMagnitudeHolesTests.judge(probe, CoordinateMagnitudeHolesTests.identity)
+        #expect(!CoordinateMagnitudeHolesTests.isWrong(result), "\(result)")
+    }
+
     /// 穴の頂点が**外周の辺**の途中に載る形 (T 字) に、離れた穴がもう 1 つ加わる形。以前は外周の辺に
     /// 載る形を組み直さず、右の辺 (x = 200) に載る向きで、畳んだ周の辺の途中の点が耳を塞いで塗りが
     /// 大きく欠けた (面積の誤差 16,050)。外周と穴の位置を 90 度ずつ回して、4 つの辺の全部で見る。
