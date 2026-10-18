@@ -146,7 +146,7 @@ SPDX-License-Identifier: MIT
 - **fork の PR を弾く条件式が、専用機のジョブに付いている** — `github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository`
 - **fork の PR のワークフローは、外部の人なら毎回承認を要する** (リポジトリの設定 `approval_policy: all_external_contributors`)。fork の PR はワークフロー自体を書き換えて `runs-on` に専用機を指定できる。上の条件式はこちらのワークフローの中にしか効かないので、その経路を止めるのはこの設定である。この関門は fork に限らず、コラボレータでない bot (`github-merge-queue[bot]` など) が起こした `pull_request` の run にも掛かる ([#1951](https://github.com/mokume-metal/mokume/issues/1951) で実測)。bot が起こすイベントで走らせたいワークフローは、ベース側の定義で走る `pull_request_target` で受け、PR の中身を checkout しない
 - **専用機に秘密を置かない。** runner はリポジトリ単位で 1 度だけ登録する常駐のもので、残る秘密は runner 自身の資格情報 (その 1 台としてジョブを受け取る権限) だけである。ジョブごとに登録し直す形 (`--ephemeral`) は、登録の発行に App の秘密鍵を専用機へ置くことになるので採らない。ジョブは secrets を持たず、`permissions: contents: read` で走る
-- **専用機はネットワークで隔離し、ジョブの間でビルドの成果物を持ち越さない** (ジョブ開始時に作業ディレクトリを消す)
+- **専用機は LAN から切り離し、ジョブの間でビルドの成果物を持ち越さない** (ジョブ開始時に作業ディレクトリを消す)。**ネットワークで隔離するのは LAN の側だけで、外向きの通信は開けてある。** 専用機の job から外へ HTTPS が通る ([#2009](https://github.com/mokume-metal/mokume/issues/2009) で `api.github.com` などへの到達を実測) のは想定どおりで、この前提の外れではない。下の mokume-syphon の検査も、外の GitHub から clone と Release の資産を引く (下の改訂 (2026-10-18))
 - **`issues: write` を持つのは GitHub ホストの後続ジョブだけで、専用機のジョブは `contents: read`・秘密なしのまま** (D の起票)。後続ジョブは専用機のジョブの結論と記録の artifact を読むだけで、Issue を立てる手続きは既存の `scripts/report-check-failure.sh` が持つ (`ruleset-drift.yml` と同じ形)
 
 文脈の「釣り合わない」の評価も変わった。当時は、決定 3 の軽い機構 (台帳のハッシュ照合) で退行を捕まえられるので、実機を差し出す得は小さいと見た。その後、**軽い機構が手元でしか走らないことの代償**が測られた。
@@ -157,7 +157,7 @@ SPDX-License-Identifier: MIT
 
 #### 定期の検査 (D) の範囲・頻度・歯止め (2026-10-03・[#1983](https://github.com/mokume-metal/mokume/issues/1983))
 
-**塞ぐ実害**: [#1086](https://github.com/mokume-metal/mokume/issues/1086) は GPU を要する release の検査 (`ShapeTests` の速さ) の赤が、誰にも見られないまま 9 日間 main に残った。`ci.yml` の `test-release` (当時。2026-10-14 の改訂で `release.yml` の `release-check` へ移した) は GitHub ホストで走るので GPU の Suite を飛ばし、見ているのは手元で `make test-release` を打つ人だけである。[#1736](https://github.com/mokume-metal/mokume/issues/1736) も、最適化を掛けたときだけ GPU の絵が変わる同じ類の赤で、性能の計測のついでにたまたま見つかった。
+**塞ぐ実害**: [#1086](https://github.com/mokume-metal/mokume/issues/1086) は GPU を要する release の検査 (`ShapeTests` の速さ) の赤が、誰にも見られないまま 9 日間 main に残った。`ci.yml` の `test-release` (当時。下の「release の赤は merge の前ではなく、版を出す前と定期で止める」で `release.yml` の `release-check` へ移した) は GitHub ホストで走るので GPU の Suite を飛ばし、見ているのは手元で `make test-release` を打つ人だけである。[#1736](https://github.com/mokume-metal/mokume/issues/1736) も、最適化を掛けたときだけ GPU の絵が変わる同じ類の赤で、性能の計測のついでにたまたま見つかった。
 
 **走らせるもの** (専用機は専用なので、夜間に限る理由が無い。広く、頻繁に使う):
 
@@ -169,26 +169,20 @@ SPDX-License-Identifier: MIT
 
 **混雑への歯止め**: 専用機は 1 台で、必須の `render` (queue の期限は 60 分) と定期の run が取り合う。そこで 1 本の長いジョブにせず、debug と release の 2 ジョブに分け、release は debug の終了後に、下の門番を通してから queue へ入れる。各ジョブは `timeout-minutes: 30`。初回の run で所要と、直後の `render` の runner 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。
 
-**赤を誰が読むか**: GitHub ホストの後続ジョブが `scripts/report-check-failure.sh` で起票する。**赤に数えるのは、専用機の job が落ちた (`failure`) 回と切れた (`cancelled`) 回である** — `timeout-minutes` で切れた job は cancelled で終わり、Actions に灰色で出るだけなので、落ちた回よりさらに見えない。切れる経路 (timeout・人の cancel・run をまたぐ重なりでの concurrency の置き換え) は見分けず、起票の本文がそのどれかと名乗る (代償: 人が定期の run を止めると 1 本立つが、止めた人はそれを知っているので閉じれば済む・下の改訂 (2026-10-10))。却下した案: `stall-watch` が名乗る (赤は Actions に出るだけで、#1086 も publication の赤 (#1295) も「Actions の赤を誰も見ない」形で起きた。夜間の赤は「止まって見える」状態を作らないので、`stall-watch` が読まれる機会も無い) / GitHub の通知メールに任せる (宛先が cron を最後に触った人で決まり、エージェントに届かない)。
+**赤を誰が読むか**: GitHub ホストの後続ジョブが `scripts/report-check-failure.sh` で起票する。**赤に数えるのは、専用機の job が落ちた (`failure`) 回と切れた (`cancelled`) 回である** — `timeout-minutes` で切れた job は cancelled で終わり、Actions に灰色で出るだけなので、落ちた回よりさらに見えない。切れる経路 (timeout・人の cancel・run をまたぐ重なりでの concurrency の置き換え) は見分けず、起票の本文がそのどれかと名乗る (代償: 人が定期の run を止めると 1 本立つが、止めた人はそれを知っているので閉じれば済む・下の「切れた (cancelled) 回も赤に数えて起票する」)。却下した案: `stall-watch` が名乗る (赤は Actions に出るだけで、#1086 も publication の赤 (#1295) も「Actions の赤を誰も見ない」形で起きた。夜間の赤は「止まって見える」状態を作らないので、`stall-watch` が読まれる機会も無い) / GitHub の通知メールに任せる (宛先が cron を最後に触った人で決まり、エージェントに届かない)。
 
 **却下した頻度と範囲**: 週に 1 度は #1086 の 9 日間に近い放置を許す。main が動いた日だけ走らせるのは、今の main がほぼ毎日動くので判定の部品を足す理由が弱い。release を台帳ごと全部走らせるのは #1736 が決着するまで毎晩赤になる (決着した後に、台帳ごとへ戻した)。先に #1736 を切り分けるのは、いつ決着するか見えず、それまで #1086 の類が無防備のまま残る。当初の案は「毎日 1 回 (05:13 JST)・release だけ」で、「専用機は専用なので夜間に限らず広く使ってよい」という判断で、頻度と debug を含む範囲に広げた。
 
-#### 改訂 (2026-10-10) — 切れた (cancelled) 回も赤に数えて起票する
-
-**当初は、起票を落ちた (`failure`) 回に限っていた** (`scheduled-report` の `if:` が `needs.*.result == 'failure'` だけを見た)。cancelled を外す理由は書かれていなかった。2026-10-08 までの定期の run 14 回のうち 7 回は release が 30 分の timeout で cancelled になり、debug が緑だった 6 回は何も起票されずに黙って抜けた ([#2084](https://github.com/mokume-metal/mokume/issues/2084))。起票された残る 1 回 ([#2211](https://github.com/mokume-metal/mokume/issues/2211)・debug が別の理由で落ちた) も、release の節は「記録が無い」とだけ名乗り、「ビルドかジョブの開始で落ちている」と案内した。実際には検査が約 26 分走ってから切れていた。上の理由 (赤は Actions に出るだけでは誰にも読まれない) は動いていないので、赤に数える範囲だけを広げる。
+#### 切れた (cancelled) 回も赤に数えて起票する
 
 **起票の本文は、job ごとの結論を名乗る** (`scripts/report-scheduled-render.sh`)。記録が無い理由の候補が、落ちた回 (ビルドかジョブの開始で落ちたか、検査のプロセスが記録を残さずに消えた) と切れた回 (走っている途中か、始まる前に止められた) で違うためである。本文は test-log の有無など、材料から分かることだけを名乗り、原因を 1 つに決めつけない。定期の job が cancelled で終わる経路は 3 つある。job の timeout、人の cancel、run をまたぐ重なりである。重なりは、前の回の job が concurrency の group に残っている間に次の回の job が来ると、待っていた job を GitHub が置き換えて cancel する形で起きる (下の「定期の検査 (D) は退かせない」の、run をまたいで重なる場合)。`queue-sweep` は定期の検査を退かせない。
-
-**代償**: release が慢性的に timeout する間は、固定タイトルの Issue が開いたままになり、その間に起きた別の赤 (検査が落ちた回) は重複抑止で起票されず、`scheduled-report` の run のログに残るだけになる。開いている Issue の本文は、立てた回の job ごとの結論を名乗るので、timeout だけで立った Issue かどうかは読めば分かる。この状態が解けるのは、release の所要を [#1983](https://github.com/mokume-metal/mokume/issues/1983) / [#2074](https://github.com/mokume-metal/mokume/issues/2074) が直した後である。**この代償は、下の改訂 (2026-10-14) で、開いた Issue への追記に置き換えた。**
 
 退けた案:
 
 - **timeout だけを起票し、ほかの cancel と見分ける** — 起票の job が job の annotation (`exceeded the maximum execution time`) を読むには `checks: read` が要り、`issues: write` だけだった権限が広がる。見分けて救える実害も無い (上の 14 回の cancelled 7 回は、どれも timeout だった)。timeout でない cancel の起票が実害になったときに改めて決める
 - **cancelled は起票せず、起票しないことをここに書く** — 上の「赤を誰が読むか」で却下した形 (赤は Actions に出るだけ) に戻る。切れた job は落ちた job より見えにくいので、却下した案よりさらに見えない
 
-#### 改訂 (2026-10-14) — 固定タイトルの Issue が開いていれば、黙らずにそこへ追記する
-
-**上の改訂 (2026-10-10) の代償は、release の timeout が直るまでの一時的なものとしていた。** 実際には、timeout ではない理由でも同じ形になった。#2251 (定期の赤の自動起票・着手中) が開いている間、専用機の定期の赤 2 回 (10-12) が重複抑止で起票されず、`scheduled-report` の run のログに 1 行残るだけだった ([#2658](https://github.com/mokume-metal/mokume/issues/2658))。着手中の Issue は、直す PR が merge されるまで開いている。その間に起きた別の赤 (release でだけ出る赤を含む) は、上の「赤を誰が読むか」で却下した形 (赤は Actions に出るだけ) に戻っていた。
+#### 固定タイトルの Issue が開いていれば、黙らずにそこへ追記する
 
 **`scripts/report-check-failure.sh` は、同じタイトルの Issue が開いていれば、二重には立てず、その Issue へコメントで追記する。** 追記には新規起票と同じ本文 (job ごとの結論・落ちた検査・run の URL) を載せる。後から出た赤は前の赤と別物でありうるからである。追記に失敗したら、起票のジョブは赤になる。共通部品の変更なので、定期の検査以外の呼び手 (ルールセットのドリフト・外に置いた証跡の死活・専用機の前検査) にも効く。
 
@@ -196,14 +190,12 @@ SPDX-License-Identifier: MIT
 
 退けた案:
 
-- **開いている Issue を閉じて済ませる** — いまの 1 件は解けるが、次に着手中の Issue が開いたままになれば同じ形が再び起きる
+- **開いている Issue を閉じて済ませる** — その時点で開いている 1 件は解けるが、次に着手中の Issue が開いたままになれば同じ形が再び起きる
 - **専用機の定期の検査だけ追記する** — 他の呼び手も同じ重複抑止を通り、同じ形で黙る。呼び手ごとに選ばせる口を足すほどの違いが無い
 
-#### 改訂 (2026-10-14) — release の赤は merge の前ではなく、版を出す前と定期で止める
+#### release の赤は merge の前ではなく、版を出す前と定期で止める
 
-**当初は、ホストの release の検査 (`make test-release`・GPU なし・下限 OS の `macos-26`) を merge queue の必須にしていた** (`ci.yml` の `test-release`・`ci-gate` の `needs`)。GPU を要する release は上の定期 (D) が見て、GPU を要さない release は merge の前に止める分担だった。この検査は group ごとに約 12 分のホストの macOS を使い、queue の律速の 63% を占めていた ([#2610](https://github.com/mokume-metal/mokume/issues/2610) の判断 2)。
-
-**ホストの release の検査は `release.yml` の `release-check` に移し、版にする SHA そのものを検査して、緑のときだけタグを打つ** ([#2662](https://github.com/mokume-metal/mokume/issues/2662))。出すものが無い日も走るので、ホストの日次の検査を兼ねる。落ちた・切れた回は、`release-check-report` が `scripts/report-check-failure.sh` で起票する (開いていれば追記する)。権限の分け方は上の D と同じで、検査を走らせるジョブは `issues: write` を持たない。GPU を要する release は、これまでどおり専用機の定期 (`scheduled-release`) が見て、版の関門にはしない。GPU の停止という環境の故障で版が止まり、6 時間おきの SHA も版の SHA と一致しないためである。
+**ホストの release の検査 (`make test-release`・GPU なし・下限 OS の `macos-26`) は merge queue の必須にせず、`release.yml` の `release-check` で、版にする SHA そのものを検査して、緑のときだけタグを打つ** ([#2662](https://github.com/mokume-metal/mokume/issues/2662))。出すものが無い日も走るので、ホストの日次の検査を兼ねる。落ちた・切れた回は、`release-check-report` が `scripts/report-check-failure.sh` で起票する (開いていれば追記する)。権限の分け方は上の D と同じで、検査を走らせるジョブは `issues: write` を持たない。GPU を要する release は、これまでどおり専用機の定期 (`scheduled-release`) が見て、版の関門にはしない。GPU の停止という環境の故障で版が止まり、6 時間おきの SHA も版の SHA と一致しないためである。
 
 あわせて、**GPU の待ちが期限を越えた回は、報告が「環境で成り立たなかった」と先に名乗る** (`scripts/read-test-record.py --failure-messages`)。期限を越えるとプロセスの関所が閉じ、以後の GPU の検査はすべて `gpuNotResponding` で落ちる。2026-10-13 09:20Z の定期の release では 2,108 件がそうなり、要約の先頭 80 件が巻き込みで埋まって、引き金の期限切れも release 固有の赤も載らなかった。関所の分は件数と 1 例に畳み、本物の赤を先に並べ、その周期の保証が欠けていることを言う。
 
@@ -229,13 +221,13 @@ SPDX-License-Identifier: MIT
 
 **門番が判断するのは、専用機へ積む前の 1 回だけである。** merge queue が空いている間に門番を通って専用機の queue に入った job は、後から group ができても引き下がらない。2026-10-04 には 08:38 と 08:50 に積まれた `render-pr` 2 本が、08:53 に積まれた先頭の `render` より先に拾われた。先頭は 37 分待ち、queue の期限の 22 分前に人の手の cancel で解けた ([#2064](https://github.com/mokume-metal/mokume/issues/2064))。そこで、group ができる瞬間と PR が外れる瞬間に走る `queue-sweep` (GitHub ホスト・`actions: write` を既に持つ) が、**専用機でまだ拾われていない `render-pr` の run を cancel する** (判断は `scripts/queue-sweep.sh`)。既に走っている `render-pr` は止めない。cancel するのは `render.yml` の今の group の run が残っているときだけで (門番が見送りに使うのと同じ範囲)、待たせる相手が居なければ触らない。`queue-sweep` の `actions: write` が cancel する相手は、捨てられた group の run から、生きている PR の `render-pr` の run へ広がった。失う情報は、上の「見送る」で既に受け入れたものと同じである。ただし見送りと違い、cancel された PR の run には理由が残らない (`cancelled` とだけ出る)。理由は、その時刻の `queue-sweep` の run の出力に出る。
 
-**見直すのは、group ができた瞬間と外れた瞬間だけである。** その後に門番を通らずに専用機へ積まれた `render-pr` は、次の契機まで残る。門番が API を読めずに通した回や、人が job 単位で rerun した回である。「先頭の `render` が待つ間、専用機の queue に他の job を置かない」を常に守るには、拾われる直前に専用機の job の中で判定し直すしかない。だがそれには専用機の job に token を渡すか、token なしで外の API を引く必要があり、上の「専用機のジョブは権限も秘密も持たない」とネットワークの隔離にぶつかる (#2064 の案 A)。そこで、取り合いの大半を占める「queue が空いている間に積まれた分」を、GitHub ホストの側で group ができる瞬間に退かせるところで止めた。
+**見直すのは、group ができた瞬間と外れた瞬間だけである。** その後に門番を通らずに専用機へ積まれた `render-pr` は、次の契機まで残る。門番が API を読めずに通した回や、人が job 単位で rerun した回である。「先頭の `render` が待つ間、専用機の queue に他の job を置かない」を常に守るには、拾われる直前に専用機の job の中で判定し直すしかない。だがそれには専用機の job に token を渡すか、token なしで外の API を引く必要がある (#2064 の案 A)。token を渡すのは、上の「専用機のジョブは権限も秘密も持たない」にぶつかる。token なしでも公開リポジトリの run は読めるが、API の回数の制限 (送り元の IP ごとに 1 時間 60 回) を専用機の job すべてで分け合うことになり、使い切った回は判定できない。外向きの通信は開けてあるので、ネットワークの側は妨げない (上の前提・下の改訂 (2026-10-18))。そこで、取り合いの大半を占める「queue が空いている間に積まれた分」を、GitHub ホストの側で group ができる瞬間に退かせるところで止めた。
 
 **定期の検査 (D) は退かせない。** 1 つの run の中では `needs` の鎖で 1 本ずつ積まれ (debug → 門番 → release)、どれも `wait` の門番の後ろにいるので、先頭の `render` と並ぶ定期の job は 1 本までである (`scripts/tests/render_workflow_test.py` が形を固定する)。`wait` は 60 分で通すので、queue が 60 分以上埋まり続ける間は、group がある最中にも 1 本積まれうる。それでも 1 本までである。run をまたいで重なるのは、専用機が 6 時間 (cron の間隔) 以上止まって前の回が queue に残ったときだけである。退かせると、その回の debug・release・起票がまとめて消え、赤が見えるまでの最大が約 6 時間から約 12 時間に延びる。2026-10-04 に先頭を待たせた分の多くは、既に走っていた release (30 分で切れた) で、queued の job を外す手では減らない。release の所要と頻度は [#1983](https://github.com/mokume-metal/mokume/issues/1983) の測り直しで選び直す。
 
 門番は `actions: read` だけを持ち、GitHub ホストで走る。**専用機のジョブは権限も秘密も持たないまま**で、上の前提は動かない。門番が赤でも専用機のジョブは走らせる。`render` が skipped になると、skipped は必須チェックを満たしてしまうので、順番が乱れるほうを軽く取る。門番で待っている間に run を cancel すると `render` は cancelled で終わり、必須を満たさない (skipped にはならない・[#2063](https://github.com/mokume-metal/mokume/issues/2063) の実測)。
 
-#### 追補 (2026-10-14) — 外のリポジトリから専用機に届くのは、render-pr が組む mokume-syphon の main だけ
+#### 外のリポジトリから専用機に届くのは、render-pr が組む mokume-syphon の main だけ
 
 **塞ぐ実害**: [mokume-syphon#26](https://github.com/mokume-metal/mokume-syphon/issues/26) では、本体の振る舞いの変化 (出口へ渡す絵が 1 フレーム遅れた) で mokume-syphon の GPU の検査が 4 件落ちた。気付いたのは mokume-syphon の追随の PR で、本体は壊した版をもう出していた。mokume-syphon の GPU の検査は GitHub ホストでは Suite ごと飛ぶので、専用機の外では誰も見ない。
 
@@ -257,6 +249,16 @@ SPDX-License-Identifier: MIT
 **動かさないもの**: 決定 1 (新しい絵の正しさは人間と AI の目が判定する) と、PR に証跡を要求すること。機械が描けるようになっても、新しい絵の判定は移らない。決定 4・5 (仕様から導く自己判定テスト・観測値を一次証拠にする作法) もそのままである。専用機が変えるのは、決定 3 の台帳を含む描画の検査が**どこで走るか**だけである。
 
 実装は [#878](https://github.com/mokume-metal/mokume/issues/878) (専用機の描画ジョブ) と [#879](https://github.com/mokume-metal/mokume/issues/879) (手元の実行を運ぶ機構を消す) が持ち、定期の検査 (D) は [#1983](https://github.com/mokume-metal/mokume/issues/1983) が持ち、#180 はその親として残す。
+
+#### 改訂 (2026-10-18) — 「ネットワークで隔離」は LAN の側だけで、外向きの通信は開けてある
+
+**当初、前提の行は「専用機はネットワークで隔離し」とだけ書き、何を隔離するかを書いていなかった。** そのうえ上の門番の段は、拾われる直前に専用機の job の中で判定し直す案 (#2064 の案 A) を退ける理由に、「token なしで外の API を引く」ことが「ネットワークの隔離にぶつかる」を挙げていた。外向きの通信が閉じていると読める書き方である。
+
+実際に隔離しているのは LAN の側だけで、外向きは開けてある。[#2009](https://github.com/mokume-metal/mokume/issues/2009) で専用機の job から `api.github.com`・`formulae.brew.sh`・`example.com` へ HTTPS が通り (どれも 200)、メンテナはそれを想定どおりと答えた。上の mokume-syphon の段も、専用機の job が毎回外の GitHub から匿名で clone し、Release の資産を引く形で、外向きの通信に依っている。前提の行だけを読むと #2009 の到達が隔離の破れに見え、案 A の理由と mokume-syphon の段は同じ決定の中で食い違っていた ([#2248](https://github.com/mokume-metal/mokume/issues/2248))。
+
+**前提の行に隔離の範囲を書き、案 A を退ける理由から「ネットワークの隔離」を外した。** 案 A は退けたままである。結論は、token を渡せないこと (権限も秘密も持たない) と、token なしの API の回数の制限で支えられる。決定の意味は変えていない — 専用機に届くコードの線 (段階 A・B・D) と、ジョブが権限も秘密も持たないことは、外向きの通信を閉じることに依っていない。
+
+**代償**: 専用機の job が走らせるコードは外へ出られる。持ち出されうるものを小さく保つのは、届くコードを write 権限を持つ人のものに限ることと、専用機に秘密を置かないこと (上の前提) である。外向きを絞るなら、mokume-syphon の検査の取り方 (clone と Release の資産) も一緒に変わる。
 
 ## 影響
 
