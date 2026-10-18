@@ -394,4 +394,88 @@ struct RemoteParamsTests {
             _ = previous
         }
     }
+
+    // ---------------------------------------------------------- 読めない宣言 (#2856)
+
+    /// 応答を、JSON の文字列のまま置く。**知らない `type` は `ParamDeclaration` からは書けない**
+    /// (新しい版のライブラリが名乗るもの) ので、手で書く。
+    private func publishRaw(
+        params: String, revision: Int = 1, at facet: URL
+    ) throws {
+        let json = #"{"schemaVersion":2,"revision":\#(revision),"params":\#(params),"rejected":[],"clamped":[],"discarded":[]}"#
+        try AtomicFile.write(
+            Data(json.utf8), to: WorkDirectory.reportURL(under: facet))
+    }
+
+    private static let threeWithAnUnknownType =
+        #"[{"name":"a","type":"float","value":1.5},"#
+        + #"{"name":"b","type":"quantum","value":1},"#
+        + #"{"name":"c","type":"int","value":3}]"#
+
+    /// 宣言 1 件が読めないだけで、応答全体を黙って捨てていた: 子が新しい版のライブラリで
+    /// 知らない `type` を名乗ると、つまみが 1 つも並ばなかった。
+    @Test("宣言が 1 件読めなくても、読めた宣言のつまみは並び、飛ばしたことを 1 度名乗る")
+    func skipsOnlyTheUnreadableDeclaration() throws {
+        try withFacet { facet in
+            try publishRaw(params: Self.threeWithAnUnknownType, at: facet)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["a", "c"])
+            #expect(params.boxes.map(\.value) == [.float(1.5), .int(3)])
+            #expect(said.count == 1, "飛ばしたことを 1 度だけ名乗る: \(said)")
+            #expect(said.first?.contains("\"b\"") == true, "読めた名前で名指す: \(said)")
+            #expect(said.first?.contains("quantum") == true, "読めなかった理由を言う: \(said)")
+        }
+    }
+
+    /// 応答は値が動くたびに書き直され、飛ばした宣言は読み直しのたびに同じ姿で居続ける。
+    /// **読み直すたびに名乗ると、つまみを掴んでいる間ずっと標準エラーが流れる。**
+    @Test("読み直しても、同じ宣言を飛ばしたことは繰り返さない。値の追従は続く")
+    func saysTheSkipOnceAcrossRereads() throws {
+        try withFacet { facet in
+            try publishRaw(params: Self.threeWithAnUnknownType, at: facet)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            #expect(params.refresh())
+
+            let moved =
+                #"[{"name":"a","type":"float","value":9},"#
+                + #"{"name":"b","type":"quantum","value":1},"#
+                + #"{"name":"c","type":"int","value":4}]"#
+            try publishRaw(params: moved, revision: 2, at: facet)
+            try stamp(WorkDirectory.reportURL(under: facet), Date().addingTimeInterval(5))
+            #expect(!params.refresh(), "顔ぶれは同じ")
+            #expect(params.boxes.map(\.value) == [.float(9), .int(4)], "値は飛ばした宣言の分だけずれずに追う")
+            #expect(said.count == 1, "繰り返している: \(said)")
+        }
+    }
+
+    /// 名前が読めない 1 件 (オブジェクトでない・`name` が文字列でない) も、その 1 件だけ飛ばす。
+    @Test("名前の読めない宣言も、その 1 件だけ飛ばす")
+    func skipsANamelessDeclaration() throws {
+        try withFacet { facet in
+            try publishRaw(
+                params: #"[{"name":"a","type":"float","value":1},42,{"name":"c","type":"int","value":3}]"#,
+                at: facet)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["a", "c"])
+            #expect(said.count == 1)
+        }
+    }
+
+    /// 外枠が読めない応答は、いままでどおり確定させずに黙って次を待つ (飛ばす単位は宣言 1 件)。
+    @Test("params が配列でない応答は、従来どおりつまみを並べない")
+    func anUnreadableEnvelopeIsStillLeftAlone() throws {
+        try withFacet { facet in
+            try publishRaw(params: #"{"name":"a"}"#, at: facet)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            #expect(!params.refresh())
+            #expect(params.boxes.isEmpty)
+            #expect(said.isEmpty)
+        }
+    }
 }
