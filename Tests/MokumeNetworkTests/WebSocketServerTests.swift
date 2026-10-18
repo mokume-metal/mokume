@@ -8,7 +8,7 @@ import Testing
 @testable import MokumeNetwork
 
 /// 繋いでくる相手を待つ入り口・WebSocket (#2018)。GPU は要らない。通信は 127.0.0.1 だけで行い、
-/// ポートは OS が選ぶ (0 を頼む)。相手はブラウザの代わりに ``WebSocketClient`` が務める。
+/// ポートは OS が選ぶ (0 を頼む)。相手はブラウザの代わりに ``BrowserSocket`` が務める。
 ///
 /// 入り口を走っているスケッチに足さず、フレームの代わりに ``TextPort/supply()`` を自分で呼ぶ。
 @Suite("WebSocket の入り口", .serialized)
@@ -31,7 +31,7 @@ struct WebSocketServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let peer = WebSocketClient(port: port, path: "/remote")  // どのパスでも同じ受け口に届く
+        let peer = BrowserSocket(port: port, path: "/remote")  // どのパスでも同じ受け口に届く
         defer { peer.close() }
         #expect(await clients(server, reach: 1))
 
@@ -49,7 +49,7 @@ struct WebSocketServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let peer = WebSocketClient(port: port)
+        let peer = BrowserSocket(port: port)
         defer { peer.close() }
         #expect(await clients(server, reach: 1))
 
@@ -67,9 +67,9 @@ struct WebSocketServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let first = WebSocketClient(port: port)
+        let first = BrowserSocket(port: port)
         defer { first.close() }
-        let second = WebSocketClient(port: port)
+        let second = BrowserSocket(port: port)
         defer { second.close() }
         #expect(await clients(server, reach: 2))
 
@@ -86,7 +86,7 @@ struct WebSocketServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let peer = WebSocketClient(port: port)
+        let peer = BrowserSocket(port: port)
         defer { peer.close() }
         #expect(await clients(server, reach: 1))
 
@@ -102,7 +102,7 @@ struct WebSocketServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let peer = WebSocketClient(port: port)
+        let peer = BrowserSocket(port: port)
         #expect(await clients(server, reach: 1))
         peer.close()
         #expect(await clients(server, reach: 0))
@@ -112,7 +112,7 @@ struct WebSocketServerTests {
         server.send("b")
         #expect(told.count(containing: "No client is connected to the WebSocket server on port 0") == 1)
 
-        let next = WebSocketClient(port: port)
+        let next = BrowserSocket(port: port)
         defer { next.close() }
         #expect(await clients(server, reach: 1))
         server.send("c")
@@ -123,7 +123,7 @@ struct WebSocketServerTests {
     func stopEndsEverything() async throws {
         let told = Told()
         let (server, port) = try await listening(told: told)
-        let peer = WebSocketClient(port: port)
+        let peer = BrowserSocket(port: port)
         defer { peer.close() }
         #expect(await clients(server, reach: 1))
 
@@ -178,7 +178,7 @@ struct WebSocketServerTests {
         let told = Told()
         let (live, port) = try await listening(told: told)
         defer { live.close() }
-        let peer = WebSocketClient(port: port)
+        let peer = BrowserSocket(port: port)
         defer { peer.close() }
         #expect(await clients(live, reach: 1))
         for text in textScript { peer.send(text) }
@@ -219,7 +219,7 @@ struct WebSocketServerTests {
 
         holder.release()
         #expect(await until { server.state == .running })
-        let peer = WebSocketClient(port: port)
+        let peer = BrowserSocket(port: port)
         defer { peer.close() }
         peer.send("back")
         #expect(await collect(server, count: 1) == ["back"])
