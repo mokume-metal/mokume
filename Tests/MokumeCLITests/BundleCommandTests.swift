@@ -329,7 +329,8 @@ struct BundleCommandTests {
             ( sleep 0.5
               { printf '%s\\n' "$app"
                 if [ -e '\(quotedBuild)' ]
-                then echo present; else echo held; fi; } > '\(record.path)' ) >/dev/null 2>&1 &
+                then echo present; else echo held; fi; } > '\(record.path).part'
+              mv '\(record.path).part' '\(record.path)' ) >/dev/null 2>&1 &
             if [ "$waits" = yes ]; then wait; fi
             """.write(to: open, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: open.path)
@@ -348,8 +349,11 @@ struct BundleCommandTests {
         let result = try RunCommand.capture(process, capturing: true, errors: .inherit)
 
         #expect(result.status == 0, "確かめ方の行が通らない: \(line)")
-        // `-W` が無いと、行は偽物のアプリが書き残すより先に戻る。遅れて書くのを待つ
-        Thread.sleep(forTimeInterval: 1.0)
+        // `-W` が無いと、行は偽物のアプリが書き残すより先に戻る。遅れて書くのを、期限つきで待つ
+        let deadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: record.path), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         // アプリが資材を読む時点でスケッチの .build は退避されていて、開いたのは束ねた .app
         #expect(
             try String(contentsOf: record, encoding: .utf8) == "\(app.path)\nheld\n",
