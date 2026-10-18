@@ -259,7 +259,11 @@ struct AtomicFileTests {
         let reason = try Diagnostics.reason(#require(thrown))
         #expect(reason.contains("Is a directory"), "理由が違う: \(reason)")
 
-        #expect(!AtomicFile.publishJSON(sample, to: directory, "見本"))
+        // 言った警告が、並んで走る検査の溜め場 (観測の応答が読む) に混ざらないよう、自分の溜め場へ差す
+        let landed = Diagnostics.$digest.withValue(WarningDigest()) {
+            AtomicFile.publishJSON(sample, to: directory, "見本")
+        }
+        #expect(!landed)
         let warning = try #require(AtomicFile.warning(about: directory))
         #expect(warning.contains("Is a directory"), "警告が理由を言っていない: \(warning)")
         #expect(warning.contains(directory.path))
@@ -288,5 +292,83 @@ struct AtomicFileTests {
         try AtomicFile.write(Data("2".utf8), to: url)
         #expect(try String(contentsOf: url, encoding: .utf8) == "2")
         #expect(try temporaries(in: url.deletingLastPathComponent()).isEmpty)
+    }
+
+    /// 本体を走らせている間に置かれたディレクトリも断る (本体の後の 2 回目の検め)。1 回目だけだと、
+    /// 見てから本体が終わるまでの長い間 (画像の書き出しなど) に置かれたものを置き換えてしまう。
+    @Test("本体を走らせている間にディレクトリが置かれても、置き換えずに失敗し、中身は残る")
+    func refusesADirectoryThatAppearsWhileTheBodyRuns() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("late.json")
+        var inner: URL?
+        #expect(throws: (any Error).self) {
+            try AtomicFile.write(to: url) { temporary in
+                try Data("new".utf8).write(to: temporary)
+                // 本体の最中に、別の主体が同じ場所へ中身のあるディレクトリを置く
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                let file = url.appendingPathComponent("inner.txt")
+                try "keep me".write(to: file, atomically: true, encoding: .utf8)
+                inner = file
+            }
+        }
+        #expect(isDirectory(url), "ディレクトリが消えた")
+        #expect(try String(contentsOf: #require(inner), encoding: .utf8) == "keep me")
+        #expect(try temporaries(in: facet).isEmpty, "一時ファイルが残った")
+    }
+
+    // ---------------------------------------------------------- 消す口も、ディレクトリは消さない (#2859)
+
+    @Test("remove は、ディレクトリを中身ごと消さずに残し、ファイルは消す")
+    func removeLeavesDirectoriesAlone() throws {
+        let (directory, inner) = try makeFullDirectory()
+        #expect(!AtomicFile.remove(directory), "ディレクトリを消した扱いにしている")
+        #expect(isDirectory(directory))
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
+
+        let file = directory.deletingLastPathComponent().appendingPathComponent("plain.json")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        #expect(AtomicFile.remove(file))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        // 無いものを消すのは、これまでどおり何もしない
+        #expect(AtomicFile.remove(file))
+    }
+
+    @Test("remove は、ディレクトリを指す symlink を外すだけで、指す先は残す")
+    func removeUnlinksASymlinkWithoutFollowingIt() throws {
+        let (directory, inner) = try makeFullDirectory()
+        let link = directory.deletingLastPathComponent().appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: directory)
+        #expect(AtomicFile.remove(link))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil)
+        #expect(isDirectory(directory))
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
+    }
+
+    // ---------------------------------------------------------- 動画の書き出し先がディレクトリ (#2859)
+
+    /// 書き出し先は利用者が指定するパス。`MovieFile.init` は「同じ名前が残っていると開けない」ので
+    /// 無条件に消していたが、ディレクトリを指すと中身ごと消えた。符号化器が無い機械でも確かめられるよう、
+    /// 断りは符号化器の問い合わせより前にある。
+    @Test("動画の書き出し先がディレクトリなら、消さずに Is a directory で失敗する")
+    func movieFileRefusesADirectoryDestination() throws {
+        let (directory, inner) = try makeFullDirectory()
+        let failure = #expect(throws: MovieWriteFailure.self) {
+            _ = try MovieFile(path: directory.path, width: 32, height: 18, frameRate: 30)
+        }
+        #expect(failure == .writeFailed(path: directory.path, reason: "Is a directory"))
+        #expect(isDirectory(directory))
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
+    }
+
+    /// 文字の書き出しは、置き換えて書く (`.atomic`) と下の失敗が ENOENT になるが、`Is a directory` と名乗る。
+    @Test("TextFile.write は、書く先がディレクトリなら Is a directory と名乗り、中身は残る")
+    func textFileNamesADirectoryDestination() throws {
+        let (directory, inner) = try makeFullDirectory()
+        let failure = #expect(throws: DataFailure.self) {
+            try TextFile.write("x", to: directory.path)
+        }
+        #expect(failure == .unwritable(path: directory.path, reason: "Is a directory"))
+        #expect(isDirectory(directory))
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
     }
 }

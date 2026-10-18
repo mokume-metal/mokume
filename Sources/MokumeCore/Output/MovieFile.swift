@@ -234,6 +234,12 @@ nonisolated final class MovieFile {
     }
 
     init(path: String, width: Int, height: Int, frameRate: Int) throws(MovieWriteFailure) {
+        // **書き出し先がディレクトリなら、消さずに断る。** 下の「同じ名前が残っていると開けない」の
+        // `removeItem` はディレクトリを中身ごと消す。出力先は利用者が指定するパスなので、取り違えて
+        // ディレクトリを指すと、そのディレクトリが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859))
+        if AtomicFile.isDirectory(URL(fileURLWithPath: path), following: false) {
+            throw .writeFailed(path: path, reason: Diagnostics.posixReason(EISDIR))
+        }
         guard let supported = Self.supportedProperties(width: width, height: height) else {
             throw .encoderUnavailable
         }
