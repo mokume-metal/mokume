@@ -278,4 +278,19 @@ extension SketchPart {
         }
         return runtime.attach(inlet)
     }
+
+    /// 入り口を、走っている実行から外す (止める口 `stop()`)。外から呼ばれたら、利用者が呼んでいない `detach()` ではなく
+    /// `call` の名前で 1 度だけ警告し、何もしない ([#2793])。
+    ///
+    /// 外で断ること自体は ``detach(_:)-(Inlet)`` と同じ約束で、変わるのは名乗りだけである。`call` は呼ぶ側の
+    /// `#function` (`stop()`)。警告は「何もしなかった」と言う (``OutsideRun/Use/act``) ので、呼んだ場所が `Task` の中でも、
+    /// スケッチが終わった後 (終わりの処理が既に閉じている) でも事実である。
+    ///
+    /// [#2793]: https://github.com/mokume-metal/mokume/issues/2793
+    package func detach(_ inlet: any Inlet, calledAs call: String) {
+        guard let runtime = runningSketch else {
+            return OutsideRun.log.warn(call, .act)
+        }
+        runtime.detach(inlet)
+    }
 }

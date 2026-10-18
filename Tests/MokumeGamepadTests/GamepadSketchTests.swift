@@ -71,7 +71,7 @@ struct GamepadSketchTests {
         var states: [SourceState] = []
         GamepadSketch.onSetup = { _ in }
         GamepadSketch.onDraw = { sketch in
-            let pads = GamepadRoster.roster(for: sketch).gamepads(for: sketch, from: hub)
+            let pads = GamepadRoster.roster(for: sketch).gamepads(for: sketch, from: hub, calledAs: "gamepads()")
             lists.append(pads.map(ObjectIdentifier.init))
             states.append(contentsOf: pads.map(\.state))
             // 2 フレーム目の後に抜く。3 フレーム目からは同じ物が切断を名乗る

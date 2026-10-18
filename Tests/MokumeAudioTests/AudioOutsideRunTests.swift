@@ -138,6 +138,23 @@ struct AudioOutsideRunTests {
         }
     }
 
+    @Test("外で AudioIn の stop() を呼ぶと、呼んでいない detach() ではなく stop() を名乗り、1 度だけ警告する (#2793)")
+    func stopNamesItselfOutsideTheRun() {
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) {
+            let sketch = Bare()
+            let audio = sketch.createAudioIn()
+            audio.stop()
+            audio.stop()
+            let said = log.messages.filter { $0.hasPrefix("stop()") }
+            #expect(said.count == 1, "2 度呼んでも 1 行")
+            #expect(said.first?.hasPrefix("stop() only works inside setup()") == true)
+            #expect(said.first?.contains("so it did nothing") == true)
+            #expect(log.message(for: "detach") == nil)
+            #expect(!log.messages.contains { $0.contains("detach()") })
+        }
+    }
+
     @Test("notRunning の文面は口の名前と呼べる場所を名乗り、面の話をしない")
     func noticeNamesTheCallAndWhereItWorks() {
         let text = AudioFailure.notRunning(call: "loadSound(_:)").description
