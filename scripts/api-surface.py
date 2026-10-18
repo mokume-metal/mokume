@@ -633,6 +633,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "perspective": SCENE,
     "ortho": SCENE,
     "orbitControl": (SCENE, "Sketch にだけある口。中で視点 (camera) を書く"),
+    "debugMode": (SCENE, "表に無い。目印の格子と軸を毎フレーム書く (ADR-0021 決定 4・#2462)。Sketch にだけある口"),
+    "noDebugMode": (SCENE, "debugMode と同じ理由"),
     "ambientLight": SCENE,
     "directionalLight": SCENE,
     "pointLight": SCENE,

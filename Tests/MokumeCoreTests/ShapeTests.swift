@@ -1526,6 +1526,9 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
         "exposure() and toneMapping() do nothing inside createShape { }. They set the brightness "
             + "of the whole surface, which a shape cannot hold, so call them before or after "
             + "building the shape",
+    .debug:
+        "debugMode() and noDebugMode() do nothing inside createShape { }. A shape cannot "
+            + "hold the debug grid and axes, so call them before or after building the shape",
 ]
 
 /// 組み立ての中で呼ぶ、画素の口。

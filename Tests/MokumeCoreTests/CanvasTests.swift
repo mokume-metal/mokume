@@ -1683,6 +1683,7 @@ struct CanvasTests {
             ("frameCasters", end, all, { c, _ in c.frameCasters.chainValid = false }),
             // シーンの記述
             ("cameraStorage", end, all, { c, _ in c.perspective() }),
+            ("drawsDebugGuides", both, all, { c, _ in c.debugMode() }),
             ("transform", both, all, { c, _ in c.translate(5, 5) }),
             ("transformStack", head, all, { c, _ in c.pushMatrix() }),
             ("styleStack", head, all, { c, _ in c.pushStyle() }),

@@ -611,4 +611,76 @@ extension SketchPart {
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
         canvas.line(x1, y1, x2, y2)
     }
+
+    /// 立体の空間に線を引く。**視点と奥行きを通る。**
+    ///
+    /// 4 つの数の ``line(_:_:_:_:)`` は平面の図形で、視点をどう動かしても面の座標へそのまま
+    /// 描かれる。6 つの数で書くと、2 つの点は奥行きを持つ点になり、``camera(_:_:_:_:_:_:_:_:_:)``
+    /// や ``orbitControl(_:_:_:)`` の視点から見た位置に引かれる。立体の陰に入れば隠れる。
+    /// **引数の数で、視点を通るかが変わる** — 奥行きを 0 にしても、6 つの数で書けば視点を通る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     // 斜め上から見下ろす
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(4)
+    ///     // 手前から奥へ伸びる線
+    ///     line(120, 150, 100, 120, 150, -200)
+    ///     line(280, 150, 100, 280, 150, -200)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 手前から奥へ伸びる 2 本の橙色の線が、奥へ行くほど寄って細くなる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 色・太さ・端の形は 2 次元の線と同じく ``stroke(_:)``・``strokeWeight(_:)``・
+    /// ``strokeCap(_:)`` が決める。太さは画面の画素で測るので、遠くても細り過ぎない。
+    /// 描き方は `beginShape(.lines)` に 2 つの点を ``vertex(_:_:_:)`` で並べたのと同じである。
+    // shot: 後で撮る
+    public func line(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
+        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible
+    ) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
+        canvas.line(x1, y1, z1, x2, y2, z2)
+    }
+
+    /// 立体の空間に点を打つ。**視点と奥行きを通る。**
+    ///
+    /// 2 つの数の ``point(_:_:)`` は平面の図形で、視点を通らない。3 つの数で書くと、奥行きを
+    /// 持つ点として視点から見た位置に打たれる (``line(_:_:_:_:_:_:)`` と同じ約束)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     stroke(217, 230, 255)
+    ///     strokeWeight(10)
+    ///     // 同じ横の位置に、奥行きだけ変えて 5 つ
+    ///     for index in 0..<5 {
+    ///         point(200, 150, 100 - Float(index) * 70)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い点が 5 つ、手前から奥へ縦に並び、奥ほど上に寄っている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 大きさは ``strokeWeight(_:)`` の太さ (画面の画素)、色は ``stroke(_:)`` の色。描き方は
+    /// `beginShape(.points)` に ``vertex(_:_:_:)`` を 1 つ置いたのと同じである。
+    // shot: 後で撮る
+    public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.point(x, y, z)
+    }
 }

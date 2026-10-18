@@ -56,6 +56,10 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .compute:
         "Compute is a preamble to drawing, so ask for it from draw(). This was called "
             + "outside a frame, so it belongs to no frame, and was ignored",
+    .debug:
+        "The debug grid and axes are drawn again every frame, so call this from draw() "
+            + "on every frame, not once at the start. This was called outside a frame, so it "
+            + "belongs to no frame, and was ignored",
     .placing:
         "Shapes, images and backgrounds are placed in setup(), draw() or an input "
             + "callback, or between beginDraw() and endDraw() on a drawing target. This was "
@@ -90,7 +94,7 @@ struct OutsideFrameNoticeTests {
     ///
     /// **第 2 文の動詞は、種類が受け持つどの口でも真でなければならない。** 同じ鍵を、光なら
     /// `noLights()`、視点なら `perspective()`・`ortho()`、スタイルなら `popStyle()`、粒なら
-    /// `force()`・`particles()` も使う。そこで 11 種とも同じ「呼ばれた」の 1 文にそろえた。
+    /// `force()`・`particles()` も使う。そこで 12 種とも同じ「呼ばれた」の 1 文にそろえた。
     ///
     /// 置くことと画素を書くことの 2 文 ([#1672]) は、置ける場面として `setup()` を挙げるので除く。
     ///
@@ -100,7 +104,7 @@ struct OutsideFrameNoticeTests {
     @Test("シーンの記述の文は、断った場面を setup と決め打ちせず、どの口でも真の 1 文でフレームの外と言う")
     func sceneNoticesDoNotNameSetupAsTheScene() {
         let scene = Canvas.OutsideFrame.allCases.filter { $0 != .placing && $0 != .pixelWrite }
-        #expect(scene.count == 11, "シーンの記述の種類が変わった — この検査の範囲を見直す")
+        #expect(scene.count == 12, "シーンの記述の種類が変わった — この検査の範囲を見直す")
         for subject in scene {
             #expect(!subject.notice.contains("setup"), "\(subject) の文が setup を名乗る: \(subject.notice)")
             #expect(

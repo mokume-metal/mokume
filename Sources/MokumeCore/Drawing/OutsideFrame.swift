@@ -13,7 +13,7 @@ extension Canvas {
     /// **鍵は種類ごとに分けたままにしてある** — 光の注意が視点の注意を黙らせないことを
     /// `WarnOnceTests` が契約として見ている。ここが畳むのは文面だけである。
     ///
-    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 11 種) の第 2 文は、断った場面を名乗らず、
+    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 12 種) の第 2 文は、断った場面を名乗らず、
     /// どの口でも同じ 1 文で「フレームの外で呼ばれた」とだけ言う** ([#2723])。
     ///
     /// - **場面**: 断るのは `setup()` の中だけではない。止まっている間 (`noLoop()`) の入力の
@@ -44,6 +44,10 @@ extension Canvas {
         case material
         case particles
         case compute
+        /// 目印の格子と軸を書いた (`debugMode()` / `noDebugMode()`・[#2462])。
+        ///
+        /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
+        case debug
         /// 図形・絵・背景を置いた ([#1672])。**シーンの記述ではない** — 置いたものは、持ち越しを
         /// 約束する区間 (本体の `setup()` と止まっている間のコールバック・描き場所の
         /// `beginDraw()`〜`endDraw()`) ならフレームの外でも置ける。断るのはその外だけなので、
@@ -72,6 +76,7 @@ extension Canvas {
             case .material: .materialOutsideFrame
             case .particles: .particlesOutsideFrame
             case .compute: .computeOutsideFrame
+            case .debug: .debugOutsideFrame
             case .placing: .placingOutsideFrame
             case .pixelWrite: .pixelWriteOutsideFrame
             }
@@ -122,6 +127,12 @@ extension Canvas {
             case .compute:
                 "Compute is a preamble to drawing, so ask for it from draw(). This was called "
                     + "outside a frame, so it belongs to no frame, and was ignored"
+            // 手本 (p5.js) は始めに 1 度書く形なので、写した人が理由を読めるよう「1 度ではなく毎フレーム」
+            // と言う。断った場面は名乗らない (#2723)
+            case .debug:
+                "The debug grid and axes are drawn again every frame, so call this from draw() "
+                    + "on every frame, not once at the start. This was called outside a frame, so it "
+                    + "belongs to no frame, and was ignored"
             case .placing:
                 "Shapes, images and backgrounds are placed in setup(), draw() or an input "
                     + "callback, or between beginDraw() and endDraw() on a drawing target. This was "
