@@ -53,17 +53,19 @@ struct FormInstance {
     static let fillsFlag: UInt32 = 1
     /// 輪郭を持つ。
     static let strokesFlag: UInt32 = 2
-    /// 描く画素で 1 画素より細い塗りか、1 画素より細い (潰れた) 輪郭の帯の穴を含みうる。
+    /// 描く画素で 1 画素より細い塗りか、1 画素より細い (潰れた) 輪郭の帯の穴か、近似の距離場では
+    /// 輪郭の位置がずれすぎる楕円を含みうる。
     /// **列だけが持つ旗で、置き場所には入れない** (``mayHaveThinFill(unitsPerDrawnPixel:)``・
-    /// ``mayHaveThinHole(unitsPerDrawnPixel:)``)。
+    /// ``mayHaveThinHole(unitsPerDrawnPixel:)``・``mayNeedExactRing(unitsPerDrawnPixel:)``)。
     ///
     /// 塗り・輪郭の旗と違って、変わっても列を切らない。含む図形が 1 つでもある列は、
     /// 断片の枝を残した組で描く ([#1477])。名前は細い塗りの旗として入ったときのままで、
-    /// 帯の細い穴の枝 ([#2186]) も同じ旗に乗る — 枝は図形ごとの判定でさらに分かれるので、
-    /// 片方しか含まない列も絵は変わらない。
+    /// 帯の細い穴の枝 ([#2186]) と、楕円の輪郭を真の距離で解く枝 ([#2742]) も同じ旗に乗る — 枝は
+    /// 図形ごとの判定でさらに分かれるので、片方しか含まない列も絵は変わらない。
     ///
     /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
     /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
     static let thinFillsFlag: UInt32 = 4
 
     /// 判定を保守側へ倒す幅 (相対)。
@@ -137,10 +139,16 @@ struct FormInstance {
     /// 列の旗 (``thinFillsFlag``) を立てるか: 塗りが細い (``mayHaveThinFill(unitsPerDrawnPixel:)``) か、
     /// 輪郭の帯の穴が細い・潰れている (``mayHaveThinHole(unitsPerDrawnPixel:)``) ことがありうるか。
     ///
-    /// **2 つの判定を 1 度の行列式と行ノルムで解く。** 答えは 2 つの論理和と同じ。図形を置くたびに
-    /// 走る費用は、release で判定だけが図形 1 つあたり 5.8 ns から 13.4 ns、寸法違いの円 20 万個を
-    /// 置く本体が 1 つあたり 51.7 ns から 56.8 ns になった (帯の穴の判定を足す前と比べて・#2186)。
-    /// 2 つを順に呼んでも同じ速さだったが、置く口を 1 つにするためにまとめてある。
+    /// 輪郭の楕円 (扇) が近似の距離場では位置がずれすぎるか (``mayNeedExactRing(unitsPerDrawnPixel:)``・
+    /// #2742) も、同じ口で解く。答えは **3 つの論理和と同じ**。
+    ///
+    /// **1 度の行列式と行ノルムで解く。** 図形を置くたびに走る費用は、release で判定だけが図形 1 つ
+    /// あたり 5.8 ns から 13.4 ns、寸法違いの円 20 万個を置く本体が 1 つあたり 51.7 ns から 56.8 ns
+    /// になった (帯の穴の判定を足す前と比べて・#2186)。3 つ目の判定 (#2742) は、release で図形 1 つ
+    /// あたり、円が 4.7 ns から 5.6 ns、矩形が 3.3 ns から 4.0 ns、非円の楕円 (長さ 100〜200・厚み 0.6 倍・
+    /// 太さ 2) が 4.2 ns から 16.6 ns になる (20 万個ずつ・9 回の中央値)。非円の楕円は見積もりの割り算と
+    /// 特異値の上下の端の比べを解くぶん増える。特異値の端を平方根を使わずに 2 乗で比べて、決まらないときだけ
+    /// 特異値を解く形にして、19.8 ns から縮めた。
     func mayHaveThinPart(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
         guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue else { return false }
         let fills = meta.w & Self.fillsFlag != 0
@@ -163,8 +171,72 @@ struct FormInstance {
             let span = 2 * half * (1 + 2.0 / 256)
             return span.x * span.x * squared < rowX * reach || span.y * span.y * squared < rowY * reach
         }
-        return (fills && thin(half)) || (strokes && thin(hole))
+        if (fills && thin(half)) || (strokes && thin(hole)) { return true }
+        // 近似の距離場では輪郭の位置がずれすぎる楕円 (``mayNeedExactRing(unitsPerDrawnPixel:)``)
+        return strokes && meta.x == Kind.ellipse.rawValue && size.x != size.y
+            && Self.exactRingIsNeeded(
+                radii: half, halfWeight: size.z, rowNormsSquared: rowX + rowY,
+                determinant: determinant, unitsPerDrawnPixel: unitsPerDrawnPixel)
     }
+
+    /// 楕円の輪郭の内縁・外縁を、近似の距離場ではなく**真の距離**で解く枝に入りうるか ([#2742])。
+    ///
+    /// 断片の `mokume_needsExactRing` (`Shapes.metal`) と同じ式で、理由もそちらにある。円は距離場が
+    /// 真の距離なので「含まない」。立て損なうと近似の距離場の外れた帯が出るので、**迷ったら「含む」と
+    /// 答える** (``thinFillSlack`` だけ見積もりを広げる)。
+    ///
+    /// - Parameter unitsPerDrawnPixel: 描く画素 1 つが描画先の座標でいくらか
+    ///   (``mayHaveThinFill(unitsPerDrawnPixel:)`` と同じ)。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    func mayNeedExactRing(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        guard meta.w & Self.strokesFlag != 0, meta.x == Kind.ellipse.rawValue, size.x != size.y
+        else { return false }
+        let determinant = linear.x * linear.w - linear.y * linear.z
+        let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
+        let rowY = simd_length_squared(SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel)
+        return Self.exactRingIsNeeded(
+            radii: SIMD2(size.x, size.y), halfWeight: size.z, rowNormsSquared: rowX + rowY,
+            determinant: determinant, unitsPerDrawnPixel: unitsPerDrawnPixel)
+    }
+
+    /// ``mayNeedExactRing(unitsPerDrawnPixel:)`` の式。
+    ///
+    /// 断片は「見積もり · σmax(D) > 許容 · |det D|」(D: 描く画素 → 形自身の座標) で比べる。D は
+    /// 変換の逆行列に描く画素の大きさを掛けたもので、`D = M / det` と書ける (M は `linear` の余因子に
+    /// 描く画素の大きさを掛けた行列で、`rowNormsSquared` はその行の長さの 2 乗和)。`|det M| =
+    /// ux · uy · |det|` なので、`det` は両辺で消えて「見積もり · σmax(M) > 許容 · ux · uy」になる。
+    private static func exactRingIsNeeded(
+        radii: SIMD2<Float>, halfWeight: Float, rowNormsSquared: Float, determinant: Float,
+        unitsPerDrawnPixel: SIMD2<Float>
+    ) -> Bool {
+        let error = Self.exactRingError(radii: radii, halfWeight: halfWeight)
+        let area = unitsPerDrawnPixel.x * unitsPerDrawnPixel.y
+        let slack = 1 + 4 * thinFillSlack
+        // 大きい特異値 σ は √(F² / 2) ≤ σ ≤ √F² (F² は全成分の 2 乗和) に収まるので、平方根を使わずに
+        // 2 乗どうしで比べて、どちらの端でも決まるときは答える。決まらない間だけ特異値を解く
+        let lhs = error * error * slack * slack
+        let rhs = exactRingTolerance * exactRingTolerance * area * area
+        if lhs * 0.5 * rowNormsSquared > rhs { return true }
+        if lhs * rowNormsSquared <= rhs { return false }
+        let detM = abs(determinant) * area
+        // 大きい特異値: √((F² + √(F⁴ − 4·det²)) / 2)
+        let largest = (0.5 * (rowNormsSquared
+            + (max(rowNormsSquared * rowNormsSquared - 4 * detM * detM, 0)).squareRoot())).squareRoot()
+        return error * largest * slack > exactRingTolerance * area
+    }
+
+    /// 近似の距離場が楕円の輪郭の内縁・外縁に落とす位置のずれの見積もり (形自身の座標)。断片の
+    /// `mokume_needsExactRing` と同じ式で、係数の根拠もそちらにある。
+    static func exactRingError(radii: SIMD2<Float>, halfWeight: Float) -> Float {
+        let longRadius = max(radii.x, radii.y)
+        let shortRadius = max(min(radii.x, radii.y), 1e-30)
+        return 0.35 * halfWeight * halfWeight * (longRadius - shortRadius) / (shortRadius * shortRadius)
+    }
+
+    /// 楕円の輪郭の内縁・外縁の位置のずれを許す大きさ (描く画素に対する比)。断片の
+    /// `kFormExactTolerance` と同じ値。
+    private static let exactRingTolerance: Float = 1.0 / 200
 
     /// 楕円の輪郭の帯の穴の、短い向きの半幅と長い向きの端までの長さ (`radii` と同じ並び)。
     /// 断片の `mokume_ellipseHole` (`Shapes.metal`) と同じ式で、理由もそちらにある。
