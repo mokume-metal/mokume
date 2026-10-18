@@ -131,7 +131,8 @@ enum RunCommand {
                 place: .inPackage(.unreadableManifest), product: nil)
         }
 
-        let root = BuildDirectory.root(environment: environment, home: home)
+        let root = try BuildDirectory.root(
+            environment: environment, home: home, currentDirectory: invocation.currentDirectory)
         let toolchain = Toolchain.describe(in: directory)
         var pin = DependencyVersion.pin(forPackageAt: directory)
         var shareability = BuildDirectory.shareability(
@@ -837,9 +838,14 @@ enum RunCommand {
         of process: Process, error: any Error, executableMissing: CommandFailure
     ) -> CommandFailure {
         let tool = toolName(of: process)
-        // 起こす場所が決まっていなければ、子は走らせた場所で動く。それが読めなければ名乗る場所が無い
+        // 起こす場所が決まっていなければ、子は走らせた場所で動く。それが読めなければ、使えない場所
+        // として名乗る。**この枝は今の呼び元からは辿れない** (`launch`・`capture`・見張りの起動は
+        // どれも `currentDirectoryURL` を据える) が、据え忘れた口が足されたときに、作業ディレクトリが
+        // 消えた回を「在らない場所」と誤って言わないための受け皿である
         guard let place = process.currentDirectoryURL ?? GivenPath.currentDirectory else {
-            return .currentDirectoryUnreadable(given: ".")
+            return .placeUnusable(
+                tool: tool, place: "(the directory this was run from)",
+                presence: .unreachable(reason: "the directory this was run from cannot be read"))
         }
         let presence = GivenPath.Presence.of(place)
         guard presence == .directory else {

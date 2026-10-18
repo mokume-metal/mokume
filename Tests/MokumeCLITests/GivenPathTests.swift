@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -209,5 +210,138 @@ struct GivenPathTests {
             environment: environment, currentDirectory: nil)
         #expect(!absolute.contains("Cannot read the directory this was run from"))
         #expect(absolute.contains("nothing is there"))
+    }
+
+    // -------------------------------------------------------------- 環境変数の基準 (#2497 の反証)
+
+    private static let workKey = StartupReads.workDirectory.key
+    private static let buildKey = BuildDirectory.environmentKey
+
+    /// 環境変数が与える基準も、引数の場所と同じ約束を負う: 読めない作業ディレクトリでは、
+    /// 相対の綴りを相対のまま返さずに断る。絶対パスは通る。
+    @Test("MOKUME_WORK_DIR が相対で作業ディレクトリが読めなければ断り、絶対か未設定なら通る")
+    func theWorkDirectoryVariableIsRefusedWhenRelative() throws {
+        let relative = [Self.workKey: "facets"]
+        #expect(
+            failure { () throws(CommandFailure) in
+                _ = try GivenPath.workDirectory(environment: relative, from: nil)
+            } == .currentDirectoryUnreadable(given: "facets", variable: Self.workKey))
+        #expect(try GivenPath.workDirectory(environment: [Self.workKey: "/abs/facets"], from: nil)?.path == "/abs/facets")
+        #expect(try GivenPath.workDirectory(environment: [:], from: nil) == nil)
+        // 読める作業ディレクトリなら、そこから絶対にする
+        let base = URL(fileURLWithPath: "/work/plain", isDirectory: true)
+        let resolved = try GivenPath.workDirectory(environment: relative, from: base)
+        #expect(resolved?.path == "/work/plain/facets")
+        #expect(resolved?.baseURL == nil)
+    }
+
+    @Test("MOKUME_BUILD_DIR が相対で作業ディレクトリが読めなければ断り、絶対なら通る")
+    func theBuildDirectoryVariableIsRefusedWhenRelative() throws {
+        let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)
+        #expect(
+            failure { () throws(CommandFailure) in
+                _ = try BuildDirectory.root(
+                    environment: [Self.buildKey: "store"], home: home, currentDirectory: nil)
+            } == .currentDirectoryUnreadable(given: "store", variable: Self.buildKey))
+        #expect(
+            try BuildDirectory.root(
+                environment: [Self.buildKey: "/tmp/store"], home: home, currentDirectory: nil
+            ).path == "/tmp/store")
+        // 未設定は home の既定で、作業ディレクトリに依らない
+        #expect(
+            try BuildDirectory.root(environment: [:], home: home, currentDirectory: nil).path
+                == "/Users/example/Library/Caches/mokume/build")
+        #expect(
+            try BuildDirectory.root(
+                environment: [Self.buildKey: "store"], home: home,
+                currentDirectory: URL(fileURLWithPath: "/work", isDirectory: true)
+            ).path == "/work/store")
+    }
+
+    /// run / watch / render は `Invocation.parse` で、絶対パスの場所を渡していても、相対の
+    /// `MOKUME_WORK_DIR` が読めない作業ディレクトリに当たるなら、ビルドの前に止まる。
+    @Test("run / watch / render は、相対の MOKUME_WORK_DIR を読めない作業ディレクトリで断る")
+    func theRunningVerbsRefuseARelativeWorkDirectoryVariable() {
+        func parse(_ environment: [String: String]) -> CommandFailure? {
+            failure { () throws(CommandFailure) in
+                _ = try Invocation.parse([Self.absolute], from: nil, environment: environment)
+            }
+        }
+        #expect(
+            parse([Self.workKey: "facets"])
+                == .currentDirectoryUnreadable(given: "facets", variable: Self.workKey))
+        #expect(parse([Self.workKey: "/abs/facets"]) == nil)
+        #expect(parse([:]) == nil)
+    }
+
+    @Test("mcp は、相対の MOKUME_WORK_DIR・MOKUME_BUILD_DIR を読めない作業ディレクトリで断る")
+    func mcpRefusesRelativeVariables() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-given-path-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func directories(_ environment: [String: String]) -> CommandFailure? {
+            failure { () throws(CommandFailure) in
+                _ = try MCPCommand.directories(
+                    arguments: [root.path], environment: environment, currentDirectory: nil)
+            }
+        }
+        #expect(
+            directories([Self.workKey: "facets"])
+                == .currentDirectoryUnreadable(given: "facets", variable: Self.workKey))
+        #expect(
+            directories([Self.buildKey: "store"])
+                == .currentDirectoryUnreadable(given: "store", variable: Self.buildKey))
+        #expect(directories([Self.workKey: "/abs/facets", Self.buildKey: "/abs/store"]) == nil)
+    }
+
+    @Test("断る文面は、環境変数の名前を言い、そこへ絶対パスを書けと言う")
+    func theRefusalNamesTheVariable() {
+        let message = CommandFailure.currentDirectoryUnreadable(
+            given: "facets", variable: Self.workKey
+        ).message
+        #expect(message.contains(Self.workKey))
+        #expect(message.contains("facets"))
+        #expect(message.contains("absolute path in \(Self.workKey)"))
+    }
+
+    /// doctor は止まらず、相対の環境変数を「与えられていないもの」として診て、そう名乗る。
+    @Test("doctor は、相対の環境変数が読めない作業ディレクトリに当たっても止まらず名乗る")
+    func doctorAnnouncesUnreadableVariables() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-given-path-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = DoctorCommand.text(
+            for: [root.path], workDirectory: nil,
+            environment: [Self.workKey: "facets", Self.buildKey: "store"], currentDirectory: nil)
+        #expect(text.contains("\(Self.workKey) is the relative path facets"))
+        #expect(text.contains("\(Self.buildKey) is the relative path store"))
+        // 場所は絶対パスで渡されているので、診る (場所の名乗りは出ない)
+        #expect(!text.contains("no place was looked at"))
+        #expect(text.contains("Place: \(root.path)"))
+        // 解けない根の共有の置き場は読まない
+        #expect(text.contains("Shared store: \(DoctorCommand.unknown)"))
+    }
+
+    /// 空の場所 (`doctor ""`) × 読めない作業ディレクトリ: 「走らせた場所を診た」と「何も診ていない」が
+    /// 並んで矛盾していた。診る場所が無いので、空だったことを言ったうえで、何も診ていないと言う。
+    @Test("doctor の空の場所は、作業ディレクトリが読めなければ、診たとは言わず空だったことと読めないことを言う")
+    func doctorEmptyPlaceWithAnUnreadableWorkingDirectory() {
+        let environment = [
+            BuildDirectory.environmentKey: FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-doctor-store-\(UUID().uuidString)").path
+        ]
+        let text = DoctorCommand.text(
+            for: [""], workDirectory: nil, environment: environment, currentDirectory: nil)
+        #expect(text.hasPrefix("An empty directory was given, which names no place. Cannot read"))
+        #expect(text.contains("no place was looked at"))
+        #expect(!text.contains("This looked where you ran it instead"), "診たと言っている")
+        // 読める作業ディレクトリなら、従来どおり走らせた場所を診たと名乗る
+        let readable = DoctorCommand.text(
+            for: [""], workDirectory: nil, environment: environment,
+            currentDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true))
+        #expect(readable.contains("This looked where you ran it instead"))
+        #expect(!readable.contains("no place was looked at"))
     }
 }

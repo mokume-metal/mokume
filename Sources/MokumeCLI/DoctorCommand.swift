@@ -210,7 +210,7 @@ enum DoctorCommand {
     ///     (作業ディレクトリが消えた)。止まらずに、先頭でそう名乗る
     ///     ([#2497](https://github.com/mokume-metal/mokume/issues/2497))。
     static func text(
-        for arguments: [String], workDirectory: URL? = WorkDirectory.given,
+        for arguments: [String], workDirectory givenWorkDirectory: URL? = WorkDirectory.given,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
         currentDirectory: URL? = GivenPath.currentDirectory
@@ -253,17 +253,35 @@ enum DoctorCommand {
             unreadable = invocation.place ?? "."
             placeSeen = .unreachable(reason: "the directory this was run from cannot be read")
         }
+        // **環境変数の相対の綴りも、同じ約束を負う** (#2497)。読めない作業ディレクトリに当たる値は、
+        // 相対のまま使わず、先頭で名乗って与えられていないものとして診る
+        var unreadableVariables: [(name: String, spelling: String)] = []
+        var workDirectory = givenWorkDirectory
+        if case .unreadable(let spelling) = WorkDirectory.resolution(
+            environment: environment, currentDirectory: currentDirectory)
+        {
+            unreadableVariables.append((StartupReads.workDirectory.key, spelling))
+            workDirectory = nil
+        }
+        if (try? BuildDirectory.root(
+            environment: environment, home: home, currentDirectory: currentDirectory)) == nil,
+            let spelling = environment[BuildDirectory.environmentKey]
+        {
+            unreadableVariables.append((BuildDirectory.environmentKey, spelling))
+        }
         let base = Invocation.facetBase(under: directory, workDirectory: workDirectory)
         return report(
             environment: probeEnvironment(in: directory, presence: placeSeen),
             state: probeState(
                 in: directory, facetBase: base, environment: environment, home: home,
-                presence: placeSeen),
+                presence: placeSeen, currentDirectory: currentDirectory),
             base: base,
             given: workDirectory != nil,
             ignored: ignored,
-            emptyPlaceLookedAt: emptyPlace ? directory : nil,
-            unresolvedPlace: unreadable)
+            // 空の場所は走らせた場所を診る代わりに名乗るが、その走らせた場所が読めない回は診ていない
+            emptyPlaceLookedAt: emptyPlace && unreadable == nil ? directory : nil,
+            emptyPlaceGiven: emptyPlace,
+            unresolvedPlace: unreadable, unreadableVariables: unreadableVariables)
     }
 
     // MARK: - 文
@@ -271,16 +289,29 @@ enum DoctorCommand {
     /// 3 段に並べる。**上 2 段が切り分けの本体**で、3 段目は既にある一覧をそのまま出す。
     static func report(
         environment: Environment, state: State, base: URL, given: Bool, ignored: [String] = [],
-        emptyPlaceLookedAt: URL? = nil, unresolvedPlace: String? = nil
+        emptyPlaceLookedAt: URL? = nil, emptyPlaceGiven: Bool = false,
+        unresolvedPlace: String? = nil,
+        unreadableVariables: [(name: String, spelling: String)] = []
     ) -> String {
         var lines: [String] = []
         if let spelling = unresolvedPlace {
-            // 投げずに言う (下の `ignored` と同じ理由)。**診たものを「渡された場所」と読ませない**
+            // 投げずに言う (下の `ignored` と同じ理由)。**診たものを「渡された場所」と読ませない**。
+            // 空の場所が渡されていたら、それも言う (走らせた場所を診る代わりにも、診る場所が無い)
             lines += [
-                "Cannot read the directory this was run from (it may have been deleted),"
+                (emptyPlaceGiven ? "An empty directory was given, which names no place. " : "")
+                    + "Cannot read the directory this was run from (it may have been deleted),"
                     + " so \(CommandFailure.unresolvedPhrase(spelling))"
                     + " could not be resolved and no place was looked at.",
                 "Give an absolute path to look at one.",
+                "",
+            ]
+        }
+        for variable in unreadableVariables {
+            // **相対のまま使わず、与えられていないものとして診る** (#2497)
+            lines += [
+                "\(variable.name) is the relative path \(GivenPath.shellWord(display: variable.spelling)),"
+                    + " which cannot be resolved because the directory this was run from cannot be read."
+                    + " It was left out; give an absolute path to use it.",
                 "",
             ]
         }
@@ -617,13 +648,17 @@ enum DoctorCommand {
         in directory: URL, facetBase: URL,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
-        presence: GivenPath.Presence? = nil
+        presence: GivenPath.Presence? = nil,
+        currentDirectory: URL? = GivenPath.currentDirectory
     ) -> State {
-        let root = BuildDirectory.root(environment: environment, home: home)
+        // 根が解けない (読めない作業ディレクトリに当たる相対の `MOKUME_BUILD_DIR`) 回は、共有の置き場を
+        // 読まない。先頭の名乗りが言う (#2497)
+        let root = try? BuildDirectory.root(
+            environment: environment, home: home, currentDirectory: currentDirectory)
         guard presence == nil || presence == .directory else {
             return State(
                 place: directory, hasPackage: false, buildDirectory: nil,
-                sharedStore: sharedStore(at: root),
+                sharedStore: root.map { sharedStore(at: $0) },
                 // 区画の基準が解けていない綴りのままなら、読まない (環境変数が与えた基準は絶対パス)
                 lastBuild: facetBase.path.hasPrefix("/") ? lastBuild(under: facetBase) : nil,
                 dependency: nil, tool: ToolVersion.release(), presence: presence ?? .missing)
@@ -634,10 +669,11 @@ enum DoctorCommand {
             // **記録から決める。** 置き場は版ごとの共有へ移りうるが、共有の置き場が
             // 在ることはこのスケッチがそこを使っている証拠にはならない — 先客に譲って
             // パッケージ直下へ落ちた側にそれを名乗ると、この口が嘘をつく
-            buildDirectory: BuildDirectory.settled(
-                for: directory, root: root,
-                pin: DependencyVersion.pin(forPackageAt: directory)),
-            sharedStore: sharedStore(at: root),
+            buildDirectory: root.flatMap {
+                BuildDirectory.settled(
+                    for: directory, root: $0, pin: DependencyVersion.pin(forPackageAt: directory))
+            },
+            sharedStore: root.map { sharedStore(at: $0) },
             lastBuild: lastBuild(under: facetBase),
             dependency: DependencyVersion.resolved(forPackageAt: directory),
             tool: ToolVersion.release(),

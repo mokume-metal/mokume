@@ -136,9 +136,10 @@ nonisolated struct Invocation: Equatable {
     /// (`Task.detached`) へ渡すのに要るのは格納された値のほうで、解く手続きではない。
     @MainActor
     static func parse(
-        _ arguments: [String], from currentDirectory: URL? = GivenPath.currentDirectory
+        _ arguments: [String], from currentDirectory: URL? = GivenPath.currentDirectory,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws(CommandFailure) -> Invocation {
-        try parse(arguments, adding: [], from: currentDirectory).invocation
+        try parse(arguments, adding: [], from: currentDirectory, environment: environment).invocation
     }
 
     /// 口が自分の選択肢を足して解く。**走らせる部分 (場所・構成・置き場) の解き方は共有する。**
@@ -155,7 +156,8 @@ nonisolated struct Invocation: Equatable {
     @MainActor
     static func parse(
         _ arguments: [String], adding extra: [Arguments.Option],
-        from currentDirectory: URL? = GivenPath.currentDirectory
+        from currentDirectory: URL? = GivenPath.currentDirectory,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws(CommandFailure) -> (invocation: Invocation, values: [String: String]) {
         let parsed = try Arguments.parse(
             arguments, options: options + extra, positionalIsPlace: true,
@@ -176,6 +178,9 @@ nonisolated struct Invocation: Equatable {
         // `dump-package` の後で初めて知らせることになる (#2497)
         _ = try invocation.directory
         _ = try invocation.scratchDirectory
+        // 区画の基準 (`MOKUME_WORK_DIR`) も同じ約束を負う。相対の綴りが読めない作業ディレクトリに
+        // 当たる回は、引数の場所と同じ失敗で止める (#2497)
+        _ = try GivenPath.workDirectory(environment: environment, from: currentDirectory)
         return (invocation, parsed.values)
     }
 }

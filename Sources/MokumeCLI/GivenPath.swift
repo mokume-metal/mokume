@@ -39,8 +39,7 @@ nonisolated enum GivenPath {
     ///
     /// - Parameter path: 作業ディレクトリの文字列を読む手続き。空は読めなかったことを表す。
     static func currentDirectory(reading path: () -> String) -> URL? {
-        let text = path()
-        return text.isEmpty ? nil : URL(fileURLWithPath: text, isDirectory: true)
+        WorkDirectory.currentDirectory(reading: path)
     }
 
     private static func readCurrentDirectoryPath() -> String {
@@ -73,6 +72,27 @@ nonisolated enum GivenPath {
         guard let base else { throw .currentDirectoryUnreadable(given: given) }
         return URL(fileURLWithPath: expanded, isDirectory: isDirectory, relativeTo: base)
             .standardizedFileURL
+    }
+
+    /// 環境変数 `MOKUME_WORK_DIR` が与えた区画の基準。**道具の入口が読む形。**
+    ///
+    /// 相対の綴りは走らせた場所から絶対にする。**走らせた場所が読めない回は、相対のまま返さず**
+    /// 引数の場所と同じ ``CommandFailure/currentDirectoryUnreadable(given:variable:)`` で止まる
+    /// (#2497)。解き方の実装は ``WorkDirectory`` が持つ — 畳まない (ADR-0008 決定 6) が、
+    /// 「読めない作業ディレクトリでは断る」約束は引数の口と同じである。
+    ///
+    /// - Returns: 与えられていなければ `nil`。
+    static func workDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        from base: URL? = currentDirectory
+    ) throws(CommandFailure) -> URL? {
+        switch WorkDirectory.resolution(environment: environment, currentDirectory: base) {
+        case .unset: return nil
+        case .place(let url): return url
+        case .unreadable(let spelling):
+            throw .currentDirectoryUnreadable(
+                given: spelling, variable: StartupReads.workDirectory.key)
+        }
     }
 
     /// 解けなかった綴りを、**場所としては解かずに**そのまま URL に包む。
