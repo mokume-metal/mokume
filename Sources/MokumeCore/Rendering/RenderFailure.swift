@@ -391,8 +391,8 @@ extension RenderFailure: CustomStringConvertible {
             \(StartupReads.render.key) comes from `mokume render` as <fps>:<frames>:<where to write> — a whole \
             frame rate and frame count above 0, and a .mov (at most \(RenderRequest.movieFrameRateLimit) \
             frames per second) or a numbered series (out/frame-####.png). If the tool and the \
-            sketch were built from different versions of mokume, build the sketch again; if the \
-            variable was set by hand, unset it to run with a window.
+            sketch use different versions of mokume, bring them to the same one (`mokume doctor` \
+            shows both); if the variable was set by hand, unset it to run with a window.
             """
         }
     }

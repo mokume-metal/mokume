@@ -353,8 +353,7 @@ nonisolated enum CommandFailure: Error, Equatable {
         case .renderOutputShort(let destination, let expected, let shortfall):
             """
             Rendering did not complete: \(Self.describe(shortfall, expected: expected, destination: destination))
-            The sketch itself ended without an error. A sketch built with another version of \
-            mokume than this tool does not read the request and writes nothing — build it again
+            \(Self.advice(for: shortfall))
             """
         case .noExecutable(let path):
             """
@@ -404,8 +403,31 @@ nonisolated enum CommandFailure: Error, Equatable {
             "nothing was written to \(destination) by this run (\(expected) frames were asked for)"
         case .unreadable:
             "\(destination) is there but cannot be read as a movie (\(expected) frames were asked for)"
+        case .frames(let found) where found > expected:
+            "\(destination) holds \(found) frames, but \(expected) were asked for"
         case .frames(let found):
             "only \(found) of \(expected) frames are in \(destination)"
+        case .leadingFrames(let found):
+            "only the first \(found) of \(expected) frames are in \(destination) "
+                + "(frame number \(found), counting from 0, was not written by this run)"
+        }
+    }
+
+    /// 足りなかった回の次の一手。**何も書かれていない回だけ、版のずれを疑わせる** — 頼みを読まない版の
+    /// スケッチは何も書かずに 0 で終わる。一部だけ書かれた回や多すぎる回は、その説明に当たらない。
+    private static func advice(for shortfall: RenderRequest.Shortfall) -> String {
+        switch shortfall {
+        case .notWritten, .frames(found: 0), .leadingFrames(found: 0):
+            """
+            The sketch itself ended without an error. A sketch that uses another version of mokume \
+            than this tool does not read the request and writes nothing — run `mokume doctor` to \
+            compare the two, and bring them to the same version
+            """
+        case .unreadable, .frames, .leadingFrames:
+            """
+            The sketch itself ended without an error and did not say why. Check what is at that \
+            place (another program may be writing there), and run the command again
+            """
         }
     }
 }

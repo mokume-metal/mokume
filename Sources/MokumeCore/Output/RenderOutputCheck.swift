@@ -12,8 +12,11 @@ extension RenderRequest {
         case notWritten
         /// ファイルは在るが、動画として読めない。
         case unreadable
-        /// 書かれたのは頼んだ枚数に足りない (`found` 枚)。
+        /// 動画の枚数が、頼んだ枚数と違う (`found` 枚)。足りないことも多すぎることもある。
         case frames(found: Int)
+        /// 連番が、先頭から `found` 枚で途切れている (`found` 番目 (0 始まり) の名前のファイルが
+        /// この回に書かれていない)。**途切れた所で数えるのをやめる**ので、後ろに書かれた枚は数えない。
+        case leadingFrames(found: Int)
     }
 
     /// 子が 0 で終わった後に、**書き出し先に頼んだものが揃っているかを確かめる** ([#2481])。
@@ -42,11 +45,10 @@ extension RenderRequest {
             return found == frameCount ? nil : .frames(found: found)
         }
         guard var sequence = FrameSequence(pattern: destination) else { return .notWritten }
+        // **欠けた所で打ち切る。** 何も書かれていない回に、枚数ぶん (最大 `Int32.max`) 調べ続けない
         var found = 0
-        for _ in 0..<frameCount where Self.isWritten(sequence.next(), since: start) {
-            found += 1
-        }
-        return found == frameCount ? nil : .frames(found: found)
+        while found < frameCount, Self.isWritten(sequence.next(), since: start) { found += 1 }
+        return found == frameCount ? nil : .leadingFrames(found: found)
     }
 
     /// この回に書かれた、中身のあるファイルか。
@@ -64,7 +66,10 @@ extension RenderRequest {
 }
 
 extension MovieFile {
-    /// 動画の映像の標本の数。読めなければ `nil`。
+    /// 標本を数える待ちの期限 (秒)。復号しないので、普通は一瞬で済む。
+    nonisolated static let readLimitSeconds = 60.0
+
+    /// 動画の映像の標本の数。読めなければ (期限を越えたときも) `nil`。
     ///
     /// 復号しない (`outputSettings: nil`)。数えるだけなので、長い動画でも読みを待つのは入れ物の
     /// 索引くらいである。AVFoundation のトラックの読み込みは非同期の口しか無いので、別の仕事で
@@ -76,6 +81,7 @@ extension MovieFile {
         }
         let box = Box()
         let finished = DispatchSemaphore(value: 0)
+        // 数える仕事に期限を付ける。越えたら読めないものとして返す (仕事は残るが、道具は進む)
         let asset = AVURLAsset(url: URL(fileURLWithPath: path))
         Task.detached {
             defer { finished.signal() }
@@ -93,7 +99,7 @@ extension MovieFile {
             guard reader.status == .completed else { return }
             box.count = count
         }
-        finished.wait()
+        guard finished.wait(timeout: .now() + readLimitSeconds) == .success else { return nil }
         return box.count
     }
 }

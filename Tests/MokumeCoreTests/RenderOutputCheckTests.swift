@@ -133,15 +133,15 @@ struct RenderOutputCheckTests {
         }
     }
 
-    @Test("連番に足りない枚があれば、揃った枚数を言う")
-    func aSeriesWithAGapNamesHowManyAreThere() throws {
+    @Test("連番が途中で途切れていれば、途切れるまでの枚数を言う")
+    func aSeriesWithAGapNamesWhereItStops() throws {
         try withDirectory("mokume-check-seq-gap") { directory in
             let start = Date()
-            // 2 枚目 (f-001) が無い。無い枚だけが欠け、在る枚は数える
+            // 2 枚目 (f-001) が無い。そこで数えるのをやめるので、後ろの f-002 は数えない
             try writeFrames(["f-000.png", "f-002.png"], in: directory)
             let destination = directory.appendingPathComponent("f-###.png").path
             let shortfall = try request(destination, frames: 3).inspectOutput(since: start)
-            #expect(shortfall == .frames(found: 2))
+            #expect(shortfall == .leadingFrames(found: 1))
         }
     }
 
@@ -150,7 +150,21 @@ struct RenderOutputCheckTests {
         try withDirectory("mokume-check-seq-none") { directory in
             let destination = directory.appendingPathComponent("f-###.png").path
             let shortfall = try request(destination, frames: 3).inspectOutput(since: Date())
-            #expect(shortfall == .frames(found: 0))
+            #expect(shortfall == .leadingFrames(found: 0))
+        }
+    }
+
+    /// **欠けた所で打ち切る。** 何も書かれていない回に、頼んだ枚数ぶん (最大 `Int32.max`) 調べ続けない。
+    /// 打ち切らない実装は、この枚数のファイルを 1 つずつ調べて戻らない。
+    @Test("何も書かれていなければ、最初の 1 枚で打ち切って戻る")
+    func anEmptyPlaceIsCheckedOnce() throws {
+        try withDirectory("mokume-check-seq-huge") { directory in
+            let destination = directory.appendingPathComponent("f-#.png").path
+            let started = Date()
+            let shortfall = try request(destination, frames: 5_000_000).inspectOutput(
+                since: Date())
+            #expect(shortfall == .leadingFrames(found: 0))
+            #expect(Date().timeIntervalSince(started) < 2, "欠けていても調べ続けている")
         }
     }
 
@@ -158,13 +172,17 @@ struct RenderOutputCheckTests {
     func staleOrEmptyFramesAreNotCounted() throws {
         try withDirectory("mokume-check-seq-stale") { directory in
             try writeFrames(["f-000.png", "f-001.png"], in: directory)
-            try makeStale(directory.appendingPathComponent("f-000.png").path)
+            try makeStale(directory.appendingPathComponent("f-001.png").path)
             // 空のファイルは、絵が入っていない
             try Data().write(to: directory.appendingPathComponent("f-002.png"))
             let start = Date().addingTimeInterval(-10)
             let destination = directory.appendingPathComponent("f-###.png").path
             let shortfall = try request(destination, frames: 3).inspectOutput(since: start)
-            #expect(shortfall == .frames(found: 1))
+            #expect(shortfall == .leadingFrames(found: 1))
+            // 前の回の残りが先頭に在れば、先頭で止まる
+            try makeStale(directory.appendingPathComponent("f-000.png").path)
+            let stale = try request(destination, frames: 3).inspectOutput(since: start)
+            #expect(stale == .leadingFrames(found: 0))
         }
     }
 }

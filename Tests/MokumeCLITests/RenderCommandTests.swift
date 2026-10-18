@@ -406,6 +406,10 @@ struct RenderCommandTests {
         #expect(failure.exitCode != 0)
         #expect(failure.message.contains(movie))
         #expect(failure.message.contains("nothing was written"))
+        // 何も書かれていない回は、版のずれを疑わせて doctor へ案内する。作り直しは勧めない
+        // (render は走らせる前に必ず作り直す)
+        #expect(failure.message.contains("mokume doctor"))
+        #expect(!failure.message.contains("build it again"))
         // 道具は「書けた」と名乗る行を出さない — 名乗る側 (`run`) は `render` が戻った後でだけ出す
         #expect(!failure.message.contains("Wrote"))
     }
@@ -431,10 +435,48 @@ struct RenderCommandTests {
         #expect(
             thrown
                 == .renderOutputShort(
-                    destination: destination, expected: 4, shortfall: .frames(found: 2)))
+                    destination: destination, expected: 4, shortfall: .leadingFrames(found: 2)))
         let failure = try #require(thrown)
         #expect(failure.exitCode != 0)
-        #expect(failure.message.contains("only 2 of 4 frames"))
+        #expect(failure.message.contains("only the first 2 of 4 frames"))
+        // 一部は書かれているので、版のずれの説明は当たらない
+        #expect(!failure.message.contains("mokume doctor"))
+    }
+
+    /// **多すぎるのも頼みと違う。** 「N 枚中 M 枚 (M > N)」と言わず、多すぎると名乗る。
+    @Test("頼んだより多い動画は、多すぎると名乗り、何も書かれていない回の説明を付けない")
+    func tooManyFramesAreNamedAsTooMany() {
+        let failure = CommandFailure.renderOutputShort(
+            destination: "/tmp/take.mov", expected: 3, shortfall: .frames(found: 4))
+        #expect(failure.exitCode != 0)
+        #expect(failure.message.contains("holds 4 frames, but 3 were asked for"))
+        #expect(!failure.message.contains("only 4 of 3"))
+        #expect(!failure.message.contains("writes nothing"))
+        // 足りない動画は「N 枚中 M 枚」のまま
+        let short = CommandFailure.renderOutputShort(
+            destination: "/tmp/take.mov", expected: 3, shortfall: .frames(found: 2))
+        #expect(short.message.contains("only 2 of 3 frames"))
+    }
+
+    /// **シェルに残った値を子へ継がせない** (`viewportOwner` と同じ・#2481)。渡さない起動 (`run`・`watch`)
+    /// へ読めない値が継がれると、子が毎回起動を断る。読める値が継がれると、窓を開かずに書き出す。
+    @Test("書き出しの頼みを渡さない起動では、親の環境に残った合図を子へ継がせない")
+    func aLeftoverRequestIsNotInherited() throws {
+        let key = StartupReads.render.key
+        for left in ["", "not a request", "24:48:/tmp/left.mov"] {
+            #expect(
+                RunCommand.childEnvironment([key: left])[key] == nil,
+                "親に残った \(left.debugDescription) が継がれている")
+            #expect(
+                RunCommand.childEnvironment(
+                    [key: left], reportingRate: "debug", confirmingCloseFor: "mokume run")[key]
+                    == nil)
+        }
+        // 渡すときは、親の環境の値ではなく渡した頼みになる
+        let request = try #require(
+            RenderRequest(frameRate: 30, frameCount: 90, destination: "/tmp/a.mov"))
+        let carried = RunCommand.childEnvironment([key: "stale"], rendering: request)
+        #expect(carried[key] == request.environmentValue)
     }
 
     @Test("頼んだ枚数がこの回に書かれていれば、何も投げない")
@@ -474,7 +516,7 @@ struct RenderCommandTests {
             RenderRequest(frameRate: 30, frameCount: 3, destination: destination))
         #expect(
             throws: CommandFailure.renderOutputShort(
-                destination: destination, expected: 3, shortfall: .frames(found: 0))
+                destination: destination, expected: 3, shortfall: .leadingFrames(found: 0))
         ) {
             try RenderCommand.render(child.executable, in: child.directory, request: request)
         }

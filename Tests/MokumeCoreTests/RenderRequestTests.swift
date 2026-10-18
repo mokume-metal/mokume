@@ -115,6 +115,9 @@ struct RenderRequestTests {
         #expect(text.contains(value))
         #expect(text.contains(StartupReads.render.key))
         #expect(text.contains("<fps>:<frames>:<where to write>"))
+        // 版のずれが原因のとき、打つ手になる案内 (doctor) を出す。作り直しは勧めない
+        #expect(text.contains("mokume doctor"))
+        #expect(!text.contains("build the sketch again"))
         #expect(text.hasSuffix("\n"))
     }
 
