@@ -117,15 +117,19 @@ enum BundleCommand {
 
     // MARK: - 引数
 
+    /// 選択肢の宣言。``Command/valueOptions`` が `doctor` に同じ宣言を渡す。
+    static var options: [Arguments.Option] {
+        [
+            Arguments.Option(["--out"], takesPlace: true) {
+                "\($0) needs a directory\n\n" + Command.usage()
+            }
+        ]
+    }
+
     /// 引数を解く。骨格は ``Arguments`` が持ち、ここは宣言だけを書く。
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Options {
         let parsed = try Arguments.parse(
-            arguments,
-            options: [
-                Arguments.Option(["--out"], takesPlace: true) {
-                    "\($0) needs a directory\n\n" + Command.usage()
-                }
-            ],
+            arguments, options: options,
             positionalIsPlace: true,
             surplus: .reject { "Only one directory: \($0)" })
         return Options(
