@@ -1972,6 +1972,7 @@ struct CanvasTests {
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
             "shapeRecordingRunStart": "一番外の組み立てが入口で控えた列の位置 (#1855)。recordingShape と対で入口と出口が戻す。閉包なので境目をまたがない",
             "frameEndAwaitingShape": "組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を出口まで待たせる印 (#1855)。一番外の出口が閉じて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
+            "dropAwaitingShape": "本体のフレームが始まる所で捨てることになった組み立て中の自分のフレームを、出口まで待たせる印 (#2509)。一番外の出口が捨てて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
             "placementsFoundOutsideRegions": count,
             "isRuntimeSurface": "ランタイムの本体の面かの印。ランタイムが作ったときに 1 度だけ立て、境目では動かない (#2780)",

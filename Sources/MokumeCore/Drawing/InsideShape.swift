@@ -39,21 +39,18 @@ extension Canvas {
         /// [#1855] で、揺らぎの設定の書き換え (列ごとに写す)・置いた描き場所の描き換え (組み立ての
         /// 入口より前の列だけを写しへ差し替える)・組み立ての中で自分のフレームを閉じること (`endDraw()`。
         /// 出口まで待たせる・``frameEnd``) は来なくなった。[#2201] で、組み立ての中で自分のフレームを始める
-        /// こと (`beginDraw()`・`draw { }`。断る・``frameStart``) も来なくなった。残る経路は 2 つ:
+        /// こと (`beginDraw()`・`draw { }`。断る・``frameStart``) も来なくなった。[#2509] で、描き場所の
+        /// 組み立ての中で本体のフレームが始まること (スケッチの `canvas.beginDraw()` / `canvas.draw { }`、
+        /// `Canvas` を直に回す使い方) も来なくなった — 本体のフレームの始まりは、組み立て中の描き場所の
+        /// 開いたままのフレームをその場では捨てず (#1834 の捨てる規則を組み立ての出口まで延ばした)、組み立ての
+        /// 出口で捨てる (`Canvas.dropAwaitingShape`)。形は組み立てたぶんを持ち、捨てるのは出口の後である。
+        /// 残る経路は 1 つ:
         ///
         /// - 同じフレームで置いた描き場所の描き換えのうち、置いた側がもう 1 枚の写しを持てなかったもの
         ///   (写しの上限 ``Canvas/placedPictureCopyLimit`` に達したか、写しを用意できなかった)。置いた時点の
         ///   絵を守るほうを取って描き切るので、それまでに組み立てたぶんはフレームに描かれる
-        /// - 描き場所の組み立ての中で、本体の次のフレームが始まること。本体のフレームの始まりが、組み立て
-        ///   中の描き場所の開いたままのフレームを閉じ忘れとして捨てる (#1834) ので、組み立てたぶんは描かれず
-        ///   に消える。組み立てているのは描き場所で、フレームを始めるのは本体である — 本体が「どこかの描き
-        ///   場所が組み立て中か」を見て断るのは守りを別の面へ広げることになるので、#2201 では安全網に残した。
-        ///   **スケッチからも届く**: `Sketch.canvas` は公開で、スケッチは本体の `canvas.beginDraw()` /
-        ///   `canvas.draw { }` を呼べる (例: `setup()` で `canvas.beginDraw(); layer.beginDraw()` の後、
-        ///   `layer.createShape { layer.circle(0, 0, 20); canvas.beginDraw() }` は空の形を返す)。`Canvas` を
-        ///   直に作って回す使い方 (``Canvas/init(target:gpu:)``) でも届く。扱いは [#2509] で決める
         ///
-        /// どちらも描き切り (捨てる) そのものは断れない (#1684)。
+        /// 描き切り (捨てる) そのものは断れない (#1684)。
         ///
         /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
         /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
@@ -166,11 +163,10 @@ extension Canvas {
                     + "there has not been drawn yet. There, get() returns transparent, set() and "
                     + "loadPixels() do nothing, and pixels is not read again"
             case .drawnOut:
-                "createShape { }: the frame was drawn out or dropped while the shape was being built "
-                    + "(a drawing target placed earlier was changed when this canvas could not keep "
-                    + "one more copy of it, or the main canvas began its next frame while this canvas "
-                    + "still had a frame open), so what was built up to then was drawn into the frame "
-                    + "or dropped, and the shape is empty. Do those before or after building the shape"
+                "createShape { }: the frame was drawn out while the shape was being built (a "
+                    + "drawing target placed earlier was changed when this canvas could not keep one "
+                    + "more copy of it), so what was built up to then was drawn into the frame, and "
+                    + "the shape is empty. Do that before or after building the shape"
             case .frameEnd:
                 "createShape { }: the frame of the canvas being built on was closed inside the shape "
                     + "by endDraw(), so it stays open until the shape is finished and closes there; "

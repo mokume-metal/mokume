@@ -348,13 +348,13 @@ extension Canvas {
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case pixelsInsideShape
         /// 形の組み立ての途中で溜め場が描き切られるか捨てられ、記録したものを失って空の形を返した
-        /// ([#1588])。来るのは、写しを持てなかった置いた描き場所の描き換えと、組み立て中の描き場所が
-        /// 開いたままのフレームを本体の次のフレームの頭が捨てること ([#1855]・[#2201] の後に残った経路)。
-        /// 種類と文面は ``InsideShape`` が持つ。
+        /// ([#1588])。来るのは、写しを持てなかった置いた描き場所の描き換え ([#1855]・[#2201]・[#2509] の
+        /// 後に残った経路)。種類と文面は ``InsideShape`` が持つ。
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
         /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+        /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
         case shapeDrawnOutWhileBuilding
         /// 組み立ての中で、組み立ての前に開いた自分のフレームを `endDraw()` で閉じようとした ([#1855])。
         /// フレームは閉じずに一番外の組み立ての出口まで待たせる。種類と文面は ``InsideShape`` が持つ。
