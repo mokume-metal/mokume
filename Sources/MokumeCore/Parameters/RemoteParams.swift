@@ -49,10 +49,12 @@ final class RemoteParams {
     /// 応えを待つ間に置いた、最後のもの以外の自分の要求。**つまみを引いている間は要求が続く**ので、
     /// 前の要求への echo で引いている途中の値へ戻さない。決着したら空にする。
     private var earlierIds: Set<String> = []
-    /// 待ち始めた要求を置く直前に、区画の応答が echo していた識別子。**これを echo する応答は、
-    /// 自分の要求より前に書かれたもの**である。区画でまだ何も応えていなければ `nil`。
-    private var idBeforeWaiting: String?
-    /// 最後に取り込んだ応答の識別子。置く直前に応答を読み直せないときに、待ち始めの識別子に使う。
+    /// 待つ間に要求を置くたび、置く直前に区画の応答が echo していた識別子 (区画でまだ何も応えて
+    /// いなければ `nil` も入る)。**これを echo する応答は、そのときの要求より前に書かれたもの**で、
+    /// 最後の要求を含まない姿である。待ちの最初の要求の分だけを控えると、2 つ目以降の要求を置く前に
+    /// 別の書き手へ応えた応答を「自分の後」と読み、つまみが 1 度跳ぶ (#2795 の反証)。決着したら空にする。
+    private var idsBeforeRequests: Set<String?> = []
+    /// 最後に取り込んだ応答の識別子。置く直前に応答を読み直せないときに、その代わりに使う。
     private var lastSeenId: String?
 
     init(directory: URL) {
@@ -76,6 +78,7 @@ final class RemoteParams {
         if settled {
             pendingId = nil
             earlierIds = []
+            idsBeforeRequests = []
         }
 
         let incoming = report.params.map(Self.face(of:))
@@ -101,7 +104,7 @@ final class RemoteParams {
     /// 運んでいるので、そのまま採るとつまみが戻る。届いたかは応答が echo する識別子で見る:
     ///
     /// - 最後に置いた自分の要求 → 届いた
-    /// - 前に置いた自分の要求・待ち始める前からあった識別子 → まだ (自分の要求より前の姿)
+    /// - 前に置いた自分の要求・待つ間に要求を置く直前からあった識別子 → まだ (最後の要求より前の姿)
     /// - **それ以外** → 自分の要求を置いた後に、別の書き手の要求へ応えた応答である。応答は 1 枚で
     ///   直近の識別子しか持たないので、自分の要求は当たった後で上書きされたか、読まれる前に
     ///   置き換えられて消えたかのどちらかで、**どちらでも自分の echo はもう来ない**。待ち続けると、
@@ -110,7 +113,7 @@ final class RemoteParams {
     ///   で決まった子の値を採る
     ///
     /// 世代の切り替えで 2 世代が重なる間は、次の世代の最初の応答が、作った時点の記録の識別子
-    /// (前の世代が応えたもの) を載せる。待ち始める前の識別子がそれと同じなら待ち続けるが、
+    /// (前の世代が応えたもの) を載せる。要求を置く前の識別子にそれがあれば待ち続けるが、
     /// 前の世代がその後に別の要求へ応えていれば「別の書き手」と読み、次の世代が自分の要求に
     /// 応え直すまで 1 度戻りうる。重なりが持つ代償の範囲である
     /// ([#1433](https://github.com/mokume-metal/mokume/issues/1433))。
@@ -119,7 +122,7 @@ final class RemoteParams {
     private func settles(_ echoed: String?) -> Bool {
         guard let pendingId else { return true }
         if echoed == pendingId { return true }
-        if echoed == idBeforeWaiting { return false }
+        if idsBeforeRequests.contains(echoed) { return false }
         if let echoed, earlierIds.contains(echoed) { return false }
         return true
     }
@@ -155,9 +158,9 @@ final class RemoteParams {
     private func send(name: String, value: ParamValue) {
         let id = UUID().uuidString
         let request = Request(id: id, values: [Request.Entry(name: name, value: value)])
-        // 待ち始めるときだけ、置く前の識別子を控える (``echoedNow()``)。待っている間に続けて
-        // 置いた要求は、前の自分の要求として控える
-        let before = pendingId == nil ? echoedNow() : idBeforeWaiting
+        // **置くたびに**、置く前の識別子を控える (``echoedNow()``)。待っている間に続けて置いた
+        // 要求は、前の自分の要求としても控える
+        let before = echoedNow()
         // 置けなければこの 1 回を捨てる (次に動かせばまた書く)。**捨てたことは
         // 口が 1 度だけ名乗る** — つまみを掴んでいる間は入力のたびにここへ来るので、
         // 毎回言うと標準エラーが流れる (#989)
@@ -165,7 +168,7 @@ final class RemoteParams {
             request, to: WorkDirectory.requestURL(under: directory), "the knob request")
         else { return }
         if let earlier = pendingId { earlierIds.insert(earlier) }
-        idBeforeWaiting = before
+        idsBeforeRequests.insert(before)
         pendingId = id
     }
 

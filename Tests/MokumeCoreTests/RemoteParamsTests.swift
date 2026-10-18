@@ -338,6 +338,34 @@ struct RemoteParamsTests {
         }
     }
 
+    /// 待っている間に続けて置いた 2 つ目の要求でも、置く前から区画にあった応答 (別の書き手の A) は
+    /// 「自分の後」と読まない。待ち始めの 1 回だけ読み直していると、A で 80 へ跳んでから H2 の応えで
+    /// 50 へ戻る (#2795 の反証)。
+    @Test("待っている間に置いた 2 つ目の要求より前に書かれた別の書き手の応答でも、つまみは戻らない")
+    func doesNotFlickerOnAnotherWritersReplyBeforeALaterRequest() throws {
+        try withFacet { facet in
+            let sketch = Shared()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+            let radius = try box("radius", of: params)
+
+            _ = radius.write(.float(40))  // H1
+            #expect(surface.drain() != nil)  // H1 に応える
+            try placeForeign("A", "radius", #""type":"float","value":80"#, at: facet)
+            #expect(surface.drain() != nil)  // A に応える (プレビューはまだ読んでいない)
+            _ = radius.write(.float(50))  // H2 (A の応答の後に置く)
+            params.refresh()
+            #expect(radius.value == .float(50), "H2 より前の A の応答で跳んだ")
+
+            #expect(surface.drain() != nil)  // H2 に応える
+            params.refresh()
+            #expect(radius.value == .float(50))
+            #expect(sketch.radius == 50)
+        }
+    }
+
     /// 次の世代の最初の応答は、作った時点の記録の識別子 (前の世代が最後に応えた X) を載せる。
     /// それは自分の要求より前の応答なので、待ち続け、次の世代が H に応えた応答で合う。
     @Test("世代の切り替えでも、自分の要求の後に一時的に戻らず、次の世代の応えで合う")
