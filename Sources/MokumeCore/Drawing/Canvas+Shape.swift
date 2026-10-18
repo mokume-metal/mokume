@@ -97,6 +97,8 @@ extension Canvas {
         restoreOpenShape(savedShape)
         recordingShape = savedRecording
         shapeRecordingRunStart = savedRecordingRunStart
+        // 断った `beginDraw()` の数は、一番外の出口で下ろす (#2834)
+        if !savedRecording { refusedBeginDrawsInsideShape = 0 }
         restore(savedStacks)
         closeBatch()
         // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`) を、一番外の出口で閉じる**

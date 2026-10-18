@@ -69,8 +69,13 @@ extension Canvas {
         case frameEnd
         /// 組み立ての中で、組み立てている面のフレームを始めようとした ([#2201])。`beginDraw()` と
         /// `draw { }` の 2 つが鍵を共有する。**フレームは始めない** — `beginDraw()` は何もせず、`draw { }` は
-        /// 閉包をいまの続き (組み立ての中) として走らせる。組み立ての中の `endDraw()` も、閉じるフレームが
-        /// 無ければ同じ鍵で断る (始めなかった `beginDraw()` と対で呼ばれる)。
+        /// 閉包をいまの続き (組み立ての中) として走らせる。**始めなかった `beginDraw()` と対の `endDraw()` も
+        /// 何もしない** ([#2834]) — 組み立ての前に開いたフレームを閉じも、出口まで待たせもしない。断りを言うのは
+        /// `beginDraw()` の側で、対の `endDraw()` は言わない。開いているフレームへの重ね呼び (`alreadyDrawing`) の
+        /// 対の `endDraw()` も同じである。**対は後入れ先出しで取る**: 始めなかった `beginDraw()` の後の `endDraw()`
+        /// が、作者が外のフレームを閉じるつもりでもその対になる。外のフレームは、対の無い `endDraw()` で閉じる。対の `beginDraw()` が無い `endDraw()` は、
+        /// フレームの外なら `notDrawing` を言い (この鍵は使わない)、組み立ての前に開いた
+        /// フレームを閉じるものなら ``frameEnd`` として出口まで待たせる。
         ///
         /// 断るのは、その呼び出しがフレームを始めることになるときである: フレームの外に居る・閉じ忘れたまま
         /// 境目を越えた (持ち主の面では `beginDraw()` で開いたフレームがいつもこれに当たる)・組み立ての中で
@@ -83,6 +88,7 @@ extension Canvas {
         /// のは今までどおりである (``recordingShape`` は面ごと)。
         ///
         /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+        /// [#2834]: https://github.com/mokume-metal/mokume/issues/2834
         case frameStart
         /// 視点・投影を書いた。
         case camera
@@ -174,8 +180,8 @@ extension Canvas {
             case .frameStart:
                 "createShape { }: a frame of the canvas being built on was started inside the shape "
                     + "(by beginDraw() or draw { }). Starting it would drop what was built, so it was "
-                    + "not started: beginDraw() does nothing there, nor does an endDraw() with no frame "
-                    + "to close, and draw { } runs its block as part of the shape. Start the frame "
+                    + "not started: beginDraw() does nothing there, nor does the endDraw() that pairs "
+                    + "with it, and draw { } runs its block as part of the shape. Start the frame "
                     + "before or after building the shape"
             case .camera:
                 "The camera and projection do nothing inside createShape { }. A shape cannot hold "
