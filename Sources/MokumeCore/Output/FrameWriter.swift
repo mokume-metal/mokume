@@ -101,7 +101,7 @@ final class FrameWriter {
         pressure.take()
         requested += 1
 
-        let url = URL(fileURLWithPath: path)
+        let url = Self.url(for: path)
         let release = pressure.release
         let lastOutcome = slot ?? lastOutcome
         let path = path
@@ -114,8 +114,7 @@ final class FrameWriter {
             // **結果は枠を返す前に置く。** 背圧で待っていた側は、返ってきた時点で
             // 少なくとも 1 つの結果が置かれていると当てにできる
             do {
-                try FileManager.default.createDirectory(
-                    at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Self.createParentDirectory(of: url)
             } catch {
                 // 置き場を作れない事情は OS の文面で名乗る (#2839)。`"\(error)"` は NSError の
                 // 中身をそのまま並べ、言語の設定に左右されうる説明も混ざる
@@ -131,6 +130,17 @@ final class FrameWriter {
             }
             release()
         }
+    }
+
+    /// 行き先の綴りが指す場所。**絵を 1 枚ファイルにする口 (スケッチの `save(_:)` と ``Image/save(_:)``)
+    /// は、どれもここで行き先を探す** — 相対の綴りは走らせた場所から数える。
+    nonisolated static func url(for path: String) -> URL { URL(fileURLWithPath: path) }
+
+    /// 行き先の途中のディレクトリを、無ければ作る。撮る先を先に用意させると、名前を組み立てた側と
+    /// 作る側が二重になる。
+    nonisolated static func createParentDirectory(of url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     }
 
     /// 同じファイルを指す綴りを 1 つに揃えた、行き先の名前 ([#1627])。

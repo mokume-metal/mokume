@@ -74,7 +74,7 @@ extension Sketch {
             // 置ける大きさを探しに行く (#2683 の反証 1)
             switch error {
             case .notRunning(let call): throw .notRunning(call: call)
-            case .notFound, .unopenable, .undecodable, .unplaceable:
+            case .notFound, .unopenable, .undecodable, .unplaceable, .unwritable:
                 throw .unplaceable(width: reader.width, height: reader.height)
             }
         }

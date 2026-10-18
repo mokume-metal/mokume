@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
 import MokumeDiagnostics
 import simd
@@ -196,6 +197,102 @@ import simd
             OutputStage.decode(picture, into: &cpuPixels)
         }
         needsUpload = true
+    }
+
+    /// 絵を写して、新しい `Image` にする。Processing の `PImage.copy()` に当たる。
+    ///
+    /// 写しは元と**画素も面も共有しない**。写した後で片方を ``set(_:_:_:)``・``fill(_:)``・
+    /// ``write(_:)`` で書き換えても、もう片方は変わらない。画素は作業空間の値のまま写す
+    /// (8 bit を経由しない・[ADR-0011])。
+    ///
+    /// **毎フレーム書き換わる絵を取っておくのに使う。** カメラの `image` は毎フレーム同じ 1 枚に
+    /// 上書きされるので、`image` をそのまま配列へ入れると、全部が次のフレームでいまの絵になる。
+    /// 撮った時点の絵は `copy()` で取る。
+    ///
+    /// ```swift
+    /// var camera: Capture?
+    /// var shots: [Image] = []
+    ///
+    /// func setup() { camera = try? createCapture() }
+    ///
+    /// func draw() {
+    ///     background(0)
+    ///     if let camera { image(camera.image, 0, 0, width, height) }
+    ///     for (i, s) in shots.suffix(4).enumerated() {
+    ///         image(s, Float(i) * 160, height - 90, 160, 90)
+    ///     }
+    /// }
+    ///
+    /// func keyPressed() {
+    ///     // 撮った時点の絵を取って、ファイルにも残す
+    ///     if let shot = camera?.image.copy() {
+    ///         shots.append(shot)
+    ///         try? shot.save("out/shot-\(shots.count).png")
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - Returns: 大きさも画素も同じ、新しい `Image`。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    // shot: 撮れない 例はカメラの映像を要し、写しが元と独立なことは書き換えた後の画素で見る (絵では見えない)
+    public func copy() -> Image {
+        materializePixels()
+        do {
+            return try Image(width: width, height: height, pixels: cpuPixels, gpu: gpu)
+        } catch {
+            // 同じ大きさの面が既にあるので、作れないのは置き場が尽きたときだけである
+            preconditionFailure("copy(): the GPU could not hold another \(width)x\(height) image: \(error)")
+        }
+    }
+
+    /// 絵を PNG ファイルにして書く。Processing の `PImage.save()` に当たる。**書き終えてから返る。**
+    ///
+    /// ```swift
+    /// func setup() {
+    ///     guard let swatch = try? createImage(64, 64) else { return }
+    ///     swatch.fill(.linear(red: 1, green: 0.4, blue: 0.1))
+    ///     try? swatch.save("out/swatch.png")
+    /// }
+    /// ```
+    ///
+    /// 行き先の探し方は、スケッチの ``SketchPart/save(_:)`` と同じである — 相対の名前は走らせた場所から
+    /// 数え、途中のディレクトリは無ければ作る。形式は PNG で、色空間は作業空間と同じ Display P3、
+    /// **透けた画素は透けたまま残る** ([ADR-0011])。出力の変換も ``SketchPart/save(_:)`` と同じ出力段を通る
+    /// ので、表示できる範囲を超えた明るさは端へ寄り、色は 8 bit へ丸まる。
+    ///
+    /// ## スケッチの `save(_:)` との違い
+    ///
+    /// スケッチの ``SketchPart/save(_:)`` はフレームの外で書くので予約するだけで、呼んだ時点では
+    /// 失敗が分からない。**この口は呼んだその場で書く**ので、書けなければその場で投げる。
+    ///
+    /// - Parameter path: 書き出す先。
+    /// - Throws: 書けなかったとき ``ImageFailure/unwritable(path:reason:)``。行き先と事情が載る。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func save(_ path: String) throws(ImageFailure) {
+        let components = pixels.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
+        let picture = OutputStage.encode(PixelBuffer(width: width, height: height, components: components))
+        let url = FrameWriter.url(for: path)
+        do {
+            try FrameWriter.createParentDirectory(of: url)
+            try PNGFile.write(picture, to: url)
+        } catch let failure as ImageWriteFailure {
+            throw .unwritable(path: path, reason: Self.reason(of: failure))
+        } catch {
+            // 置き場を作れない事情は OS の文面で名乗る (#2839 の 1 か所)
+            throw .unwritable(path: path, reason: Diagnostics.reason(error))
+        }
+    }
+
+    private static func reason(of failure: ImageWriteFailure) -> String {
+        switch failure {
+        case .malformedImage(let width, let height, let byteCount):
+            "the picture is malformed (\(width)x\(height), \(byteCount) bytes)"
+        case .destinationUnavailable: "the destination could not be opened"
+        case .writeFailed: "the file could not be written"
+        }
     }
 
     /// 全体を 1 色で埋める。色は ``set(_:_:_:)`` と同じく、検めずに面へ移す。
