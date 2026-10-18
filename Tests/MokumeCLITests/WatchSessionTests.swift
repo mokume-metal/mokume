@@ -491,6 +491,54 @@ struct WatchSessionTests {
         #expect(recorder.stampsGivenToChildren == ["aaa", "bbb"])
     }
 
+    /// **最初の 1 回の失敗を「前の版のまま」と言わない** ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
+    /// 前の版はまだ 1 度も起きていないので、端末は走っている版が無いことと次の一手を名乗る。
+    @Test("最初の作り直しが通らなかったら、前の版のまま待つとは名乗らない")
+    func theFirstFailureDoesNotClaimAPreviousVersion() async throws {
+        let recorder = Recorder()
+        recorder.buildStatus = 1
+        recorder.buildOutput = "error: cannot find 'circl' in scope"
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        session.overlapsGenerations = true
+
+        let report = await session.start()
+        #expect(!report.ok)
+        #expect(!session.keepsPreviousRunning)
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(!lines.contains(WatchCommand.holdingLine), "\(lines)")
+        #expect(lines.last == WatchCommand.nothingRunningLine, "\(lines)")
+    }
+
+    /// **前の版が走っている失敗は、これまでどおり前の版のまま待つと名乗る** (#2875 の裏)。
+    @Test("前の版が走っているときの失敗は、前の版のまま待つと名乗る")
+    func aLaterFailureHoldsTheRunningVersion() async throws {
+        let recorder = Recorder()
+        let previous = Process()
+        previous.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        previous.arguments = ["30"]
+        // **待つ側が期限を持つ。** 残ったら殺す
+        defer { if previous.isRunning { kill(previous.processIdentifier, SIGKILL) } }
+        var hooks = recorder.hooks()
+        hooks.launch = { _, _, _, _ throws(CommandFailure) in
+            do { try previous.run() } catch { throw .cannotLaunch(tool: "sleep", place: "", reason: "\(error)") }
+            return previous
+        }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 1)
+        session.overlapsGenerations = true
+        #expect(await session.start().launched)
+
+        recorder.stamp = "bbb"
+        recorder.buildStatus = 1
+        recorder.buildOutput = "error: cannot find 'circl' in scope"
+        let report = try #require(await session.tick())
+        #expect(!report.ok)
+        #expect(session.keepsPreviousRunning)
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines.last == WatchCommand.holdingLine, "\(lines)")
+        await session.end()
+    }
+
     @Test("作り直しに失敗したら、差し替えない")
     func keepsTheRunningVersionWhenTheBuildFails() async throws {
         let recorder = Recorder()

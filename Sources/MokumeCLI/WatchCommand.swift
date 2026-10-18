@@ -97,6 +97,8 @@ enum WatchCommand {
         session.willRebuild = { initial in
             let line = initial ? startingLine : rebuildingLine
             say(line)
+            // **作り直しが始まったら、前の子の 1 枚目を待たない。** 遅れて来た合図がこの行を畳む
+            viewer?.firstFrame.settle()
             viewer?.preview.report(line, spinning: true)
         }
         // **長く待つ間を無言にしない。** 終えるときは撮っていた動画を閉じ終えるまで待つので
@@ -365,6 +367,13 @@ enum WatchCommand {
             Task { @MainActor in await retire(after: session) }
         }
         let viewer = Viewer(window: window, preview: preview)
+        // **どちらの窓が先に出しても畳む。** 2 つの窓は独立に 1 枚目を出すので合図は 2 度来るが、
+        // 畳むのは待っている間の 1 度だけである (``FirstFrameWait/shown()``)
+        let shown = { [weak preview, firstFrame = viewer.firstFrame] in
+            if firstFrame.shown() { preview?.report(nil, spinning: false) }
+        }
+        window.onGenerationShown = shown
+        preview.onGenerationShown = shown
         // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
         // (窓の中身を繋ぐ順序と同じ理由)
         askBeforeClosing(viewer)
@@ -485,6 +494,7 @@ enum WatchCommand {
             await retire(after: session)
             let line = departedLine(departure)
             say(line)
+            viewer?.firstFrame.settle()
             viewer?.preview.report(line, spinning: false)
         }
         if let outcome = await session.tick() {
@@ -540,7 +550,7 @@ enum WatchCommand {
                         // 終えたかは抜ける側 (``finish(_:)``) が名乗る — ここでも言うと、
                         // 始めなかった・止めた作り直しを「Build failed」と言うことになる
                         guard !session.stopRequested else { return }
-                        report(outcome, on: viewer)
+                        report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
                         return
                     }
                     if await step(session, viewer: viewer) { return }
@@ -659,14 +669,25 @@ enum WatchCommand {
     }
 
     private static func report(
-        _ outcome: BuildReport, holdingPrevious: Bool = false, on viewer: Viewer?
+        _ outcome: BuildReport, holdingPrevious: Bool, on viewer: Viewer?
     ) {
-        // **既定は「前の版は走っていない」。** 最初の 1 回 (``WatchSession/start()``) には前の版が
-        // 居ないので、口はそこで渡さない
         for line in reportLines(outcome, holdingPrevious: holdingPrevious) { say(line) }
+        guard let viewer else { return }
+        // **起こせた回は、新しい子の 1 枚目が出るまで畳まない** ([#2875])。子の起動と
+        // `setup()` の間は長いことがあり (初回はとくに)、ここで畳むと作品の窓もプレビューも
+        // 何も言わない時間ができる。畳むのは窓が 1 枚目を出した合図 (``Viewer/firstFrame``)
+        //
+        // [#2875]: https://github.com/mokume-metal/mokume/issues/2875
+        if outcome.ok && outcome.launched {
+            viewer.firstFrame.wait()
+            viewer.preview.report(startingSketchLine, spinning: true)
+            return
+        }
+        viewer.firstFrame.settle()
         // **回っている印は止める。** 作り直しは終わっているので、回り続ける印は
         // 「まだ待たされている」と読める
-        viewer?.preview.report(notice(for: outcome), spinning: false)
+        viewer.preview.report(
+            notice(for: outcome, holdingPrevious: holdingPrevious), spinning: false)
     }
 
     /// 1 回の作り直しの結果として端末に出す行。
@@ -682,13 +703,15 @@ enum WatchCommand {
     ///
     /// - Parameter holdingPrevious: 前の版が走り続けているか (``WatchSession/keepsPreviousRunning``)。
     ///   起こせなかった回に、そうであるときだけ ``holdingLine`` を名乗る — 窓のある見張りは前の
-    ///   世代を残してから起こし、窓の無い見張りは起こす前に止める。
+    ///   世代を残してから起こし、窓の無い見張りは起こす前に止める。**通らなかった回も同じ口で
+    ///   分ける** ([#2875](https://github.com/mokume-metal/mokume/issues/2875)) — 最初の 1 回と、
+    ///   子が自分で消えた後の回には前の版が居ないので、``holdingLine`` は偽になる。
     static func reportLines(_ outcome: BuildReport, holdingPrevious: Bool) -> [String] {
         var lines = [outcome.summary]
         guard !outcome.output.isEmpty else { return lines }
         if !outcome.ok {
             lines.append(outcome.output)
-            lines.append(holdingLine)
+            lines.append(holdingPrevious ? holdingLine : nothingRunningLine)
         } else if let reason = outcome.notStartedReason {
             lines.append(reason)
             if holdingPrevious { lines.append(holdingLine) }
@@ -698,6 +721,9 @@ enum WatchCommand {
 
     /// 作り直しが通らなかったとき、走り続けているものを名乗る行。
     static let holdingLine = "still running the version from before, and waiting"
+    /// 作り直しが通らなかったとき、走っている版が無いことを名乗る行 (#2875)。**次の一手まで
+    /// 言う** — 何も走っていないとだけ言うと、もう一度起こし直す必要があると読める。
+    static let nothingRunningLine = "nothing is running yet — fix it and save to rebuild"
 
     /// 窓を閉じようとした人に問う言葉。
     ///
@@ -762,12 +788,16 @@ enum WatchCommand {
     /// プレビューへ重ねる 1 行。**端末に出ている言葉だけで組む** — プレビューは端末の
     /// 代わりではないので、ここだけで名乗る事実を作らない。
     ///
-    /// - Returns: 通って起こせたら `nil` (畳む)。通らなかったら**出したままにする行** — 消すと
+    /// - Parameter holdingPrevious: 前の版が走り続けているか (``reportLines(_:holdingPrevious:)``
+    ///   と同じ口)。
+    /// - Returns: 通って起こせたら `nil` (``startingSketchLine`` は出し手の ``report`` が置く)。通らなかったら**出したままにする行** — 消すと
     ///   「保存したのに絵が変わらない」が「変えた結果が同じだった」と見分けられない。
     ///   **通って起こせなかった回も同じ理由で出す** — 畳むと、窓の側では「保存した → 絵が
     ///   止まっている → 何も出ない」になる ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。
-    static func notice(for outcome: BuildReport) -> String? {
-        guard outcome.ok else { return "The build failed — " + holdingLine }
+    static func notice(for outcome: BuildReport, holdingPrevious: Bool) -> String? {
+        guard outcome.ok else {
+            return "The build failed — " + (holdingPrevious ? holdingLine : nothingRunningLine)
+        }
         return outcome.notStartedNotice
     }
 
@@ -783,6 +813,8 @@ enum WatchCommand {
         let window: SharedFrameWindow
         /// 制作を助ける窓。状態と印とつまみが載る。
         let preview: SharedFramePreview
+        /// 起こした子の 1 枚目を待っているか (#2875)。
+        let firstFrame = FirstFrameWait()
 
         func close() {
             window.close()
@@ -793,6 +825,12 @@ enum WatchCommand {
     /// 最初の 1 回を始めるときの行。**いちばん長く待つのはここ**である (冷えた状態では
     /// 依存の解決から走る)。
     static let startingLine = "Building… (the first one takes a while)"
+
+    /// 作り直しが通って子を起こし、その 1 枚目を待つ間にプレビューへ出す行 (#2875)。
+    ///
+    /// **端末の要約 (`Rebuilt: …`) と同じ事実だけを言う。** 起こしたことは要約の頭が名乗って
+    /// おり、ここが足すのは「絵はまだ出ていない」ことで、それは作品の窓を見れば分かる。
+    static let startingSketchLine = "Rebuilt — starting the sketch…"
 
     /// 変化を見つけて作り直すときの行。
     static let rebuildingLine = "Change spotted — rebuilding…"
@@ -819,5 +857,26 @@ enum WatchCommand {
         guard isTerminal else { return text }
         return text.split(separator: "\n", omittingEmptySubsequences: false)
             .map { "\r\u{1B}[2K" + $0 }.joined(separator: "\n")
+    }
+}
+
+/// 起こした子の 1 枚目を待っているか ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
+///
+/// **待ちを下ろすのは、待ちを置いた後の 1 枚目だけである。** 窓は世代ごとに 1 枚目の合図を出すが、
+/// 作り直しが始まった後に前の子の合図が遅れて来ることがある。そのまま畳むと、作り直しの行が消える。
+@MainActor
+final class FirstFrameWait {
+    private(set) var waiting = false
+
+    /// 子を起こした。1 枚目が出るまで、起こしている行を残す。
+    func wait() { waiting = true }
+
+    /// 別の行が上書きした (作り直しが始まった・結果を名乗った・子が消えた)。もう待たない。
+    func settle() { waiting = false }
+
+    /// 窓が 1 枚目を出した。**待っていたときだけ `true`** を返し、待ちを下ろす。
+    func shown() -> Bool {
+        defer { waiting = false }
+        return waiting
     }
 }

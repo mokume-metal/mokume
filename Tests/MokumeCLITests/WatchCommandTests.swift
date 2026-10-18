@@ -238,15 +238,40 @@ struct WatchCommandTests {
     /// 完了条件 5)、ここだけで名乗る事実を作らない。
     @Test("作り直しが通ったら、重ねる行は畳む")
     func clearsTheNoticeOnSuccess() {
-        #expect(WatchCommand.notice(for: report(ok: true)) == nil)
+        #expect(WatchCommand.notice(for: report(ok: true), holdingPrevious: true) == nil)
     }
 
     /// **消すと見分けが付かなくなる。** 保存して印が消え、絵が変わらなければ、作り直しに
     /// 失敗したのか、変えた結果が同じだったのかが読めない。
     @Test("作り直しが通らなかったら、重ねる行は出したままにする")
     func keepsTheNoticeOnFailure() throws {
-        let line = try #require(WatchCommand.notice(for: report(ok: false)))
+        let line = try #require(WatchCommand.notice(for: report(ok: false), holdingPrevious: true))
         #expect(line.contains(WatchCommand.holdingLine))
+    }
+
+    /// **前の版が居ない失敗を「前の版のまま」と言わない** ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
+    /// 最初の 1 回と、子が自分で消えた後の回がこれに当たる。
+    @Test("前の版が走っていない失敗は、走っている版が無いことを重ねる")
+    func namesThatNothingRunsWhenThereIsNoPrevious() throws {
+        let line = try #require(WatchCommand.notice(for: report(ok: false), holdingPrevious: false))
+        #expect(!line.contains(WatchCommand.holdingLine), "\(line)")
+        #expect(line.contains(WatchCommand.nothingRunningLine), "\(line)")
+    }
+
+    /// **1 枚目の待ちは、待ちを置いた後の 1 度だけ畳む** (#2875)。2 つの窓が独立に合図を出すので
+    /// 2 度目では畳まない。作り直しが始まった後に遅れて来た合図でも畳まない — 畳むと、
+    /// 作り直しの行が消える。
+    @Test("1 枚目の待ちは、待っている間の最初の合図でだけ畳む")
+    func theFirstFrameWaitClosesOnceAndOnlyWhileWaiting() {
+        let wait = FirstFrameWait()
+        #expect(!wait.shown(), "待つ前の合図で畳んだ")
+        wait.wait()
+        #expect(wait.shown())
+        #expect(!wait.shown(), "もう片方の窓の合図でもう一度畳んだ")
+
+        wait.wait()
+        wait.settle()
+        #expect(!wait.shown(), "作り直しが始まった後の遅れた合図で畳んだ")
     }
 
     /// 作り直しは通ったが子を起こせなかった回 (`ok: true, launched: false`) を、成功と同じに
@@ -256,10 +281,11 @@ struct WatchCommandTests {
     func namesTheReasonWhenTheBuildPassedButNothingStarted() throws {
         let line = try #require(
             WatchCommand.notice(
-                for: notStarted(reason: "Cannot start sketch: permission denied\nsecond line")))
+                for: notStarted(reason: "Cannot start sketch: permission denied\nsecond line"),
+                holdingPrevious: false))
         #expect(line == "Rebuilt, but could not start it: Cannot start sketch: permission denied")
         // 起こせた回は畳む (従来どおり)
-        #expect(WatchCommand.notice(for: report(ok: true, launched: true)) == nil)
+        #expect(WatchCommand.notice(for: report(ok: true, launched: true), holdingPrevious: true) == nil)
     }
 
     /// **「could not start」を重ねず、長くても要点 (末尾の原因) が切れない。** 印は 1 行の小さな字で、
@@ -268,7 +294,7 @@ struct WatchCommandTests {
     @Test("実際の起こせなかった理由は、前置きを重ねず、短くしても原因が残る")
     func aRealReasonIsNotRepeatedAndKeepsItsCause() throws {
         let reason = try Self.exampleReason()
-        let line = try #require(WatchCommand.notice(for: notStarted(reason: reason)))
+        let line = try #require(WatchCommand.notice(for: notStarted(reason: reason), holdingPrevious: false))
         #expect(line.lowercased().components(separatedBy: "could not start").count == 2, "言葉が重なっている: \(line)")
         #expect(line.hasPrefix("Rebuilt, but could not start hello"))
         #expect(line.count <= BuildReport.noticeLimit)
@@ -288,14 +314,16 @@ struct WatchCommandTests {
     /// 理由を渡さなくても、型が理由を持たせる。**理由なしの記録は作れない。**
     @Test("理由を渡さなかった起こせなかった回も、理由つきで出る")
     func aReportWithoutAReasonCannotBeBuilt() throws {
-        let line = try #require(WatchCommand.notice(for: notStarted(reason: "")))
+        let line = try #require(WatchCommand.notice(for: notStarted(reason: ""), holdingPrevious: false))
         #expect(line.hasSuffix("no reason was given"))
     }
 
     /// 終われと言われて起こさなかった回を「起こせなかった」と言わない (#2521 の規律)。
     @Test("終われと言われて起こさなかった回は、起こせなかったと言わない")
     func doesNotCallAnEndingWatchAFailureToStart() throws {
-        let line = try #require(WatchCommand.notice(for: notStarted(reason: WatchSession.stopRequestedNotice)))
+        let line = try #require(
+            WatchCommand.notice(
+                for: notStarted(reason: WatchSession.stopRequestedNotice), holdingPrevious: false))
         #expect(line == WatchSession.stopRequestedNotice)
         #expect(!line.contains("could not"))
     }
