@@ -908,6 +908,132 @@ struct PixelGridTests {
             measured.worst < 0.01, "\(mode)・\(shape): 継ぎ目で下地が漏れる: 最悪 \(measured.worst) \(measured.where)")
     }
 
+    /// 穴の端 (長軸の端から離れた尖りの先) の近くの画素で、帯の被覆が真の幾何の面積 (画素を 16x16 の
+    /// 標本で数える) からどれだけ外れるか (最悪)。**穴を含む画素の部分被覆**を見る — `seamLeaks` は
+    /// 帯に丸ごと入る画素と丸ごと外の画素しか見ない。
+    private func tipCoverageError(_ shape: SeamShape) throws -> (worst: Double, at: String) {
+        let halfWeight = Double(shape.weight) / 2
+        let hole = shape.half.x > shape.half.y
+            ? sqrt(shape.half.x * shape.half.x - shape.half.y * shape.half.y)
+                * sqrt(max(0, 1 - (halfWeight / shape.half.y) * (halfWeight / shape.half.y)))
+            : 0
+        var worst = 0.0
+        var at = ""
+        for placement in Self.seamPlacements {
+            let origin = SIMD2<Double>(Double(80 + placement.x), Double(80 + placement.y))
+            let angle = Double(placement.z)
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(shape.weight)
+                canvas.translate(Float(origin.x), Float(origin.y))
+                canvas.rotate(Float(angle))
+                shape.draw(on: canvas)
+            }
+            let pixels = try canvas.target.readPixels()
+            let (c, s) = (cos(angle), sin(angle))
+            func local(_ point: SIMD2<Double>) -> SIMD2<Double> {
+                let d = point - origin
+                return SIMD2(c * d.x + s * d.y, -s * d.x + c * d.y)
+            }
+            let shift = local(origin + 0.5)
+            for y in 10..<150 {
+                for x in 10..<150 {
+                    let center = local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift
+                    // 穴の端の近く (長軸の向きに端から 4 画素以内・短軸の向きに帯の内)
+                    guard abs(abs(center.x) - hole) <= 6, abs(center.y) <= halfWeight + 1 else { continue }
+                    var covered = 0
+                    for j in 0..<16 {
+                        for k in 0..<16 {
+                            let point = SIMD2(Double(x) + (Double(k) + 0.5) / 16, Double(y) + (Double(j) + 0.5) / 16)
+                            if abs(Self.ellipseDistance(local(point) - shift, shape.half)) <= halfWeight { covered += 1 }
+                        }
+                    }
+                    let truth = Double(covered) / 256
+                    let error = abs(Double(pixels[x, y].red) - truth)
+                    if error > worst {
+                        worst = error
+                        at = "(\(x), \(y)) を \(placement) で 画素 \(pixels[x, y].red) 真の面積 \(truth)"
+                    }
+                }
+            }
+        }
+        return (worst, at)
+    }
+
+    /// 穴の尖りの先の画素でも、帯の部分被覆が真の幾何の面積から 7% の内に収まる ([#2742])。
+    ///
+    /// `seamLeaks` は帯に丸ごと入る画素と丸ごと外の画素だけを 1% で見る。穴を含む画素の部分被覆は、
+    /// 縁 1 本の値も両縁を見る積 (長方形で数える) も穴を過大に数え、尖りの先で帯が 0.15〜0.22 薄く出た
+    /// (`ellipse(0, 0, 40, 10)`・太さ 6)。穴の端に近い画素は穴の面積を標本で数え直す
+    /// (`mokume_ellipseHoleSampled`・8×8 の標本なので 1 標本 = 1.6% の粗さが残る)。直した後の最悪は 6.6% (`ellipse(0, 0, 100, 6)`・太さ 5)。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    @Test(
+        "穴の尖りの先の画素の部分被覆が、真の面積から 7% の内に収まる",
+        arguments: [
+            SeamShape(name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: 4),
+            SeamShape(name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: 5),
+            SeamShape(name: "ellipse(0, 0, 40, 10)", isEllipse: true, half: SIMD2(20, 5), weight: 6),
+            SeamShape(name: "ellipse(0, 0, 30, 6)", isEllipse: true, half: SIMD2(15, 3), weight: 4),
+            SeamShape(name: "ellipse(0, 0, 84, 26)", isEllipse: true, half: SIMD2(42, 13), weight: 14),
+        ])
+    func ellipseHoleTipKeepsItsPartialCoverage(_ shape: SeamShape) throws {
+        let measured = try tipCoverageError(shape)
+        #expect(measured.worst < 0.07, "\(shape): 尖りの先の部分被覆が外れる: 最悪 \(measured.worst) \(measured.at)")
+    }
+
+    /// ほぼ円の楕円に太い輪郭を付けても、長軸の上の帯は真の距離のとおりに出る ([#2742])。
+    ///
+    /// 真の距離の解き方 (`mokume_ellipseExactField`) は、短半径 / 長半径が 1 に近いと `m` が小さく、
+    /// 内の点の根が出発点 (`zy`) よりずっと右にあって 16 回で収まらなかった (`a = 100, b = 99.9, h = 37.8`
+    /// の長軸の上の行で距離が 9.8 外れた)。長軸を通る 3 行の画素の値を、真の距離から出した帯の被覆
+    /// (縁 1 本ずつを 1 画素幅で渡す・`max(0, 外縁の被覆 − 内縁の被覆)`) と比べる。真の距離の枝に入る形
+    /// (`mayNeedExactRing`) を選ぶ。
+    ///
+    /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
+    @Test(
+        "ほぼ円の楕円の太い輪郭は、長軸の上の帯が真の距離のとおりに出る",
+        arguments: [0.99, 0.995, 0.999])
+    func nearCircleEllipseKeepsTheBandOnItsLongAxis(_ ratio: Double) throws {
+        let radii = SIMD2(100.0, 100.0 * ratio)
+        let halfWeight = 0.378 * radii.y
+        let form = FormInstance(
+            kind: .ellipse, linear: SIMD4(1, 0, 0, 1), offset: .zero, half: SIMD2(Float(radii.x), Float(radii.y)),
+            halfWeight: Float(halfWeight), fill: .zero, stroke: SIMD4(1, 1, 1, 1), fills: false, strokes: true,
+            cap: .round, join: .miter)
+        #expect(form.mayNeedExactRing(unitsPerDrawnPixel: SIMD2(1, 1)), "ratio \(ratio): 真の距離の枝に入らない形は検査にならない")
+        let size = 320
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(Float(2 * halfWeight))
+            canvas.ellipse(160, 160, Float(2 * radii.x), Float(2 * radii.y))
+        }
+        let pixels = try canvas.target.readPixels()
+        func ramp(_ distance: Double) -> Double { min(1, max(0, 0.5 - distance)) }
+        var worst = 0.0
+        var at = ""
+        for y in 159...161 {
+            for x in 40...280 {
+                // 整数の座標の楕円の帯は、画面で半画素寄る (中心の画素の角が原点)
+                let q = SIMD2(Double(x) - 160, Double(y) - 160)
+                let d = PixelGridTests.ellipseDistance(q, radii)
+                let expected = max(0, ramp(d - halfWeight) - ramp(d + halfWeight))
+                let error = abs(Double(pixels[x, y].red) - expected)
+                if error > worst {
+                    worst = error
+                    at = "(\(x), \(y)) 画素 \(pixels[x, y].red) 期待 \(expected)"
+                }
+            }
+        }
+        #expect(worst < 0.02, "ratio \(ratio): 長軸の上の帯が真の距離から外れる: 最悪 \(worst) \(at)")
+    }
+
     /// 帯の穴が 1 画素より細い `rect` の輪郭は、帯の面積ぶんの光を出す ([#2186])。
     ///
     /// 細い穴が画素の中に収まると、縁 1 本の距離場は穴を `0.5 + 穴の半幅` と数え、実際の穴
