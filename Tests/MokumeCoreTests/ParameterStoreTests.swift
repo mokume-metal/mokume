@@ -159,11 +159,37 @@ struct ParameterStoreTests {
         // 在るのに読めない (置き場がディレクトリ)
         let unreadable = try makeFile()
         try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
-        ParamStore(
+        let restoration = ParamStore(
             registry: ParamRegistry(of: Knobbed()), at: unreadable, warn: { warnings.append($0) }
         ).restore()
         #expect(warnings.count == 2, "在るのに読めない保存を黙って捨てた")
         #expect(warnings.last?.contains("NSCocoaErrorDomain") == true)
+        // 捨てたことは最初の応答にも、名前の無い 1 件で載る (#2806 の反証)
+        #expect(restoration.discarded == [.init(name: "", reason: .typeMismatch)])
+    }
+
+    /// 在るのにファイルとして読めない保存も、外枠が読めない保存と同じく最初の応答に載る。
+    /// 無い (初めての起動) ときだけ黙る (ADR-0030 決定 6「捨てたことを応答と診断に出す」)。
+    @Test("在るのにファイルとして読めない保存は、名前の無い typeMismatch を最初の応答に載せる")
+    func anUnreadableFileIsOneNamelessDiscardInTheFirstReport() throws {
+        let url = try makeFile()
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let facet = url.deletingLastPathComponent().appendingPathComponent("params", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let sketch = Knobbed()
+        let registry = ParamRegistry(of: sketch)
+        let restoration = ParamStore(registry: registry, at: url, warn: { _ in }).restore()
+        ParamSurface(directory: facet, registry: registry).start(after: restoration)
+
+        let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
+        let report = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let discarded = (report["discarded"] as? [[String: Any]] ?? []).map { $0.compactMapValues { $0 as? String } }
+        #expect(discarded == [["name": "", "reason": "typeMismatch"]])
+        #expect(sketch.radius == 80)
+
+        // 無いときは何も載せない
+        let missing = try makeFile()
+        #expect(ParamStore(registry: ParamRegistry(of: Knobbed()), at: missing, warn: { _ in }).restore().isEmpty)
     }
 
     // MARK: - 往復
@@ -619,6 +645,30 @@ struct ParameterStoreTests {
                 ["name": "ghost", "reason": "unknownName"],
             ])
         #expect(sketch.count == 6)
+        // 宣言に無い名前は、中身が読めたかに依らず「宣言が変わった」側で言う (#2806 の反証)
+        let line = try #require(warnings.first)
+        #expect(warnings.count == 1)
+        #expect(line.contains("Threw away 1 of the saved values: ghost (no longer declared)"), "\(line)")
+        #expect(line.contains("Could not read 1 of the saved values: (a value without a readable name)"), "\(line)")
+    }
+
+    /// 同じ名前が 2 件ある保存は、**書いた順に当たり、後のほうが残る**。並べ替えの安定性に預けない
+    /// (要求の側の #858 と同じ鍵・#2806 の反証)。`discarded` の並びも書いた順で決まる。
+    @Test("同じ名前が 2 件ある保存は、書いた順に当たって後が残り、discarded の並びも書いた順", arguments: [false, true])
+    func duplicateNamesApplyInWrittenOrder(reversed: Bool) throws {
+        let radii = [#"{"name":"radius","type":"float","value":40}"#, #"{"name":"radius","type":"float","value":60}"#]
+        let counts = [#"{"name":"count","type":"matrix","value":1}"#, #"{"name":"count","type":"float","value":1e400}"#]
+        let order = reversed ? [1, 0] : [0, 1]
+        let entries = order.map { radii[$0] } + order.map { counts[$0] }
+        let sketch = Knobbed()
+        var warnings: [String] = []
+        let (restoration, _) = try restoreThroughTheFirstReport(
+            #"{"schemaVersion":1,"values":[\#(entries.joined(separator: ","))]}"#,
+            into: sketch, warnings: &warnings)
+
+        #expect(sketch.radius == (reversed ? 40 : 60), "後に書いたほうが残らない")
+        let reasons: [ParamReport.Rejection.Reason] = [.typeMismatch, .notFinite]
+        #expect(restoration.discarded == order.map { .init(name: "count", reason: reasons[$0]) })
     }
 
     @Test("宣言と合わない値と読めない値が混ざっても 1 行で言い、宣言の変化は合わなかったほうにだけ帰す")

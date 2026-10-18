@@ -92,31 +92,33 @@ final class ParamStore: DeclarationWatcher {
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return Restoration()
         } catch {
-            // ファイルとして読めない (置き場がディレクトリ・権限が無い) のは、中身を見る前の失敗で、
-            // 捨てた値の名指しにならない。標準エラーの 1 行だけにする
-            sayUnreadable(error)
-            return Restoration()
+            // 在るのにファイルとして読めない (置き場がディレクトリ・権限が無い) 保存も、戻せずに捨てた
+            // ことに変わりはないので、外枠が読めない保存と同じく最初の応答に載せる (下)
+            return Self.unreadableSave(sayingWhy: error, at: url, warn)
         }
         let entries: [ParamRequest.Entry]
         do {
             entries = try JSONDecoder().decode(SavedReading.self, from: data).values
         } catch {
-            // **外枠が読めない保存も、捨てたことを最初の応答に載せる** (#2806)。名指しする相手が無いので、
-            // 要求の外枠が読めないとき (#2550) と同じく名前の読めない 1 件にする
-            sayUnreadable(error)
-            return Restoration(discarded: [.init(name: "", reason: .typeMismatch)])
+            return Self.unreadableSave(sayingWhy: error, at: url, warn)
         }
 
         var result = Restoration()
         // 捨てたものは 2 つに分けて控える。言い方が違う (``notice(for:unreadable:)``)
         var mismatched: [ParamReport.Rejection] = []
         var unreadable: [ParamReport.Rejection] = []
-        // 当てる順は名前順。保存の並びに結果が依ると、同じ保存から違う姿が出る
-        for entry in entries.sorted(by: { $0.name < $1.name }) {
-            // **読めなかった 1 件は、その 1 件だけ捨てて名指しし、残りは戻す** (#2806)
+        // 当てる順は名前順で、同じ名前は書いた順 (要求と同じ鍵・#858)。保存の並びや並べ替えの
+        // 安定性に結果が依ると、同じ保存から違う姿が出る
+        for entry in ParamRequest.inApplicationOrder(entries) {
+            // **読めなかった 1 件は、その 1 件だけ捨てて名指しし、残りは戻す** (#2806)。宣言に無い
+            // 名前は、中身が読めたかに依らず宣言が変わった側で言う (名前が先)
             if let refusal = entry.refusal(declaredIn: registry) {
                 result.discarded.append(refusal)
-                unreadable.append(refusal)
+                if refusal.reason == .unknownName {
+                    mismatched.append(refusal)
+                } else {
+                    unreadable.append(refusal)
+                }
                 continue
             }
             guard case .value(let value) = entry.reading else { continue }
@@ -140,11 +142,19 @@ final class ParamStore: DeclarationWatcher {
         return result
     }
 
-    /// 保存そのものが読めなかったことを言う。値は 1 つも戻さない。
-    private func sayUnreadable(_ error: any Error) {
+    /// 保存そのものが読めなかった。値は 1 つも戻さず、標準エラーへ 1 行言う。
+    ///
+    /// **捨てたことは最初の応答にも載せる** ([#2806](https://github.com/mokume-metal/mokume/issues/2806)・
+    /// ADR-0030 決定 6)。ファイルとして読めない (置き場がディレクトリ・権限が無い) ときも、外枠が
+    /// 読めない (JSON でない・`values` が配列でない) ときも、名指しする相手が無いので、要求の外枠が
+    /// 読めないとき (#2550) と同じく名前の読めない 1 件にする。
+    private static func unreadableSave(
+        sayingWhy error: any Error, at url: URL, _ warn: (String) -> Void
+    ) -> Restoration {
         warn(
             "Could not read the saved values (\(url.path)): \(Diagnostics.reason(error)). "
                 + "Starting from the defaults")
+        return Restoration(discarded: [.init(name: "", reason: .typeMismatch)])
     }
 
     /// 捨てたことを名指しで言う。
@@ -164,9 +174,11 @@ final class ParamStore: DeclarationWatcher {
     /// 捨てたものを人へ伝える 1 行。捨てていなければ `nil`。
     ///
     /// - Parameters:
-    ///   - discarded: 読めたが宣言と合わなかったもの。**宣言が変わったせい**と言う
-    ///   - unreadable: 保存の中で読めなかったもの (知らない型・形の違う値・収まらない数・名前の
-    ///     無い 1 件)。宣言とは関わりが無いので、**宣言が変わったとは言わない** (#2806)
+    ///   - discarded: 宣言と合わなかったもの。**宣言が変わったせい**と言う。宣言に無い名前
+    ///     (`unknownName`) は、中身が読めたかに依らずここに入る (名前が先)
+    ///   - unreadable: 宣言のある名前で、中身が読めなかったもの (知らない型・形の違う値・収まらない
+    ///     数) と名前の無い 1 件。理由は `typeMismatch` か `notFinite` だけが来る。宣言とは関わりが
+    ///     無いので、**宣言が変わったとは言わない** (#2806)
     static func notice(
         for discarded: [ParamReport.Rejection], unreadable: [ParamReport.Rejection] = []
     ) -> String? {
@@ -202,14 +214,11 @@ final class ParamStore: DeclarationWatcher {
         }
     }
 
-    /// 読めなかった 1 件の理由。`unknownName` は名前が先の規則で、中身が読めなくても名前が宣言に無い。
+    /// 読めなかった 1 件の理由。読めなかった 1 件の断り (``ParamRequest/Entry/refusal(declaredIn:)``) が
+    /// 宣言のある名前に付けるのは、`Double` に読めない数の `notFinite` と、それ以外の `typeMismatch`
+    /// だけである (宣言に無い名前の `unknownName` は ``reason(for:)`` の側で言う)。
     private static func unreadableReason(for reason: ParamReport.Rejection.Reason) -> String {
-        switch reason {
-        case .unknownName: "no longer declared"
-        case .typeMismatch: "not written as a value of the type it names"
-        case .notInChoices: "outside the choices that are allowed"
-        case .notFinite: "a number too large to read"
-        }
+        reason == .notFinite ? "a number too large to read" : "not written as a value of the type it names"
     }
 
     // MARK: - 書く
@@ -313,7 +322,9 @@ extension ParamStore {
     struct Restoration: Equatable {
         /// 範囲へ収めて戻したもの。
         var clamped: [ParamReport.Clamp] = []
-        /// 宣言と合わなくて捨てたもの。
+        /// 戻せずに捨てたもの。**宣言と合わなかったものと、読めなかったものの両方が入る** —
+        /// 読めなかった 1 件 (知らない型・形の違う値・収まらない数・名前の無い 1 件) と、保存そのものが
+        /// 読めなかったときの名前の空の 1 件 (``unreadableSave(sayingWhy:at:_:)``) も含む (#2806)。
         var discarded: [ParamReport.Rejection] = []
 
         var isEmpty: Bool { clamped.isEmpty && discarded.isEmpty }

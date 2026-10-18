@@ -130,15 +130,21 @@ struct ParamRequest: ExchangeRequest {
     /// 決まる。破れても両方の書き込みは成功しているので、応答には何も出ない (#858)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    var valuesInApplicationOrder: [Entry] {
-        values.indices.sorted(by: appliesBefore).map { values[$0] }
+    var valuesInApplicationOrder: [Entry] { Self.inApplicationOrder(values) }
+
+    /// 1 件ずつの並びを当てる順に並べる。**保存の復元 (``ParamStore/restore()``) も同じ鍵で当てる**
+    /// ので、同じ名前が 2 件ある保存でも、どちらが残るかが並べ替えの実装で決まらない (#2806)。
+    static func inApplicationOrder(_ values: [Entry]) -> [Entry] {
+        values.indices.sorted { appliesBefore($0, $1, in: values) }.map { values[$0] }
     }
 
     /// `values` の `i` 件目を `j` 件目より先に当てるか。
     ///
     /// **書いた位置を第 2 の鍵にする** ので、異なる 2 件は必ずどちらかが先になる。
     /// 引き分けが無ければ、並べ替えが安定かどうかは結果に出ない。
-    func appliesBefore(_ i: Int, _ j: Int) -> Bool {
+    func appliesBefore(_ i: Int, _ j: Int) -> Bool { Self.appliesBefore(i, j, in: values) }
+
+    private static func appliesBefore(_ i: Int, _ j: Int, in values: [Entry]) -> Bool {
         (values[i].name, i) < (values[j].name, j)
     }
 }
