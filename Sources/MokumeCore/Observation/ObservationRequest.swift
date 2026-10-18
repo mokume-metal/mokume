@@ -149,12 +149,39 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         case id, scale, count, every, time
     }
 
+    /// 数を 1 つ読む。**型に収まらない数は、鍵と理由を名乗る誤りにして投げる** (#2805)。
+    ///
+    /// 整数に収まらない数 (`2.5`・`1e19`・桁の多い整数) や `Double` に読めない数 (`1e400`) を、
+    /// Foundation は鍵ごとの読みの中では `DecodingError` でない内部の誤りで断る。そのまま外へ出ると
+    /// 場所の空の「JSON でない」になり、構文の誤りと取り違えられ、どの鍵かも分からない。型の違う値
+    /// (`"0.5"`) は読みの中で既に場所つきの `DecodingError` なので、そのまま通す
+    /// (`ParamRequest.Entry` が数の桁あふれを読み分けるのと同じ手掛かり)。
+    ///
+    /// 理由に**数の字面を写さない** — 桁が多いほど応答の 1 行が伸びてしまう。
+    private nonisolated static func number<Number: Decodable>(
+        _ type: Number.Type, in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> Number? {
+        do {
+            return try container.decodeIfPresent(type, forKey: key)
+        } catch let error as DecodingError {
+            throw error
+        } catch {
+            let expected = type == Int.self ? "an integer that fits in Int" : "a number that fits in Double"
+            throw DecodingError.typeMismatch(
+                type,
+                DecodingError.Context(
+                    codingPath: [key],
+                    debugDescription: "The value is not \(expected)",
+                    underlyingError: error))
+        }
+    }
+
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
-        self.scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1
-        self.count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 1
-        self.every = try container.decodeIfPresent(Int.self, forKey: .every) ?? 1
+        self.scale = try Self.number(Double.self, in: container, forKey: .scale) ?? 1
+        self.count = try Self.number(Int.self, in: container, forKey: .count) ?? 1
+        self.every = try Self.number(Int.self, in: container, forKey: .every) ?? 1
         // 型が違っても「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
         self.time = container.contains(.time)
             ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil

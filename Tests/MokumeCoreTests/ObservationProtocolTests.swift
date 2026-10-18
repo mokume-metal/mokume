@@ -326,8 +326,13 @@ struct ObservationProtocolTests {
         arguments: [
             (#"{"id":"x1","scale":"0.5"}"#, "scale"),
             (#"{"id":"x1","scale":true}"#, "scale"),
-            // 整数に読めない数。Foundation の理由は "The given data was not valid JSON." で、鍵を名乗らない
-            (#"{"id":"x1","count":2.5}"#, nil),
+            // 型に収まらない数。Foundation が外へ出す誤りは場所が空で "The given data was not valid JSON."
+            // と言う (JSON でない、は嘘) ので、読む鍵ごとに受けて鍵と理由を言い直す (#2805)
+            (#"{"id":"x1","count":2.5}"#, "count"),
+            (#"{"id":"x1","count":1e19}"#, "count"),
+            (#"{"id":"x1","every":-1e400}"#, "every"),
+            (#"{"id":"x1","scale":1e400}"#, "scale"),
+            (#"{"id":"x1","count":123456789012345678901234567890}"#, "count"),
         ] as [(String, String?)])
     func answersARequestThatCannotBeDecoded(_ request: String, _ key: String?) throws {
         let facet = try makeFacet()
@@ -342,6 +347,8 @@ struct ObservationProtocolTests {
         #expect(Self.request(pending) == nil, "解けないのに、撮る要求として渡した")
         guard case .unreadable(let id, let reason) = pending else { return }
         if let key { #expect(reason.contains(key), "\(reason)") }
+        // 構文の誤りではないのに「JSON でない」と言わない (スキーマは JSON でないものには応えないと書く)
+        #expect(!reason.contains("not valid JSON"), "\(reason)")
         observer.refuse(id: id, reason: reason) { id, warnings in
             report(id: id, image: nil, warnings: warnings)
         }
@@ -359,6 +366,30 @@ struct ObservationProtocolTests {
         // 応えた要求は二度拾わない
         try write(request: request, to: facet)
         #expect(observer.pendingRequest() == nil)
+    }
+
+    /// 型に収まらない数の理由は、**数の字面を写さない** (#2805)。桁が多いほど理由の 1 行が伸びると、
+    /// 書き手の置いた長さがそのまま応答へ返る。
+    @Test("桁の多すぎる整数の理由は、字面の長さに比例して伸びない")
+    func doesNotEchoTheDigitsOfANumberThatDoesNotFit() throws {
+        func reason(ofDigits count: Int) throws -> String {
+            let facet = try makeFacet()
+            let observer = FrameObserver(directory: facet)
+            try write(
+                request: #"{"id":"x1","count":"# + String(repeating: "9", count: count) + "}",
+                to: facet)
+            let pending = try #require(observer.pendingRequest())
+            guard case .unreadable(_, let reason) = pending else {
+                Issue.record("解けないはずの要求が解けた")
+                return ""
+            }
+            return reason
+        }
+        let few = try reason(ofDigits: 30)
+        let many = try reason(ofDigits: 5000)
+        #expect(many == few, "字面の長さで理由が変わる: \(many.count) 文字")
+        #expect(many.count < 200, "\(many.count) 文字")
+        #expect(!many.contains("9999"), "数の字面を写した")
     }
 
     /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
