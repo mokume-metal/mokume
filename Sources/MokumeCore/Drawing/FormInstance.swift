@@ -139,10 +139,16 @@ struct FormInstance {
     /// 列の旗 (``thinFillsFlag``) を立てるか: 塗りが細い (``mayHaveThinFill(unitsPerDrawnPixel:)``) か、
     /// 輪郭の帯の穴が細い・潰れている (``mayHaveThinHole(unitsPerDrawnPixel:)``) ことがありうるか。
     ///
-    /// **2 つの判定を 1 度の行列式と行ノルムで解く。** 答えは 2 つの論理和と同じ。図形を置くたびに
-    /// 走る費用は、release で判定だけが図形 1 つあたり 5.8 ns から 13.4 ns、寸法違いの円 20 万個を
-    /// 置く本体が 1 つあたり 51.7 ns から 56.8 ns になった (帯の穴の判定を足す前と比べて・#2186)。
-    /// 2 つを順に呼んでも同じ速さだったが、置く口を 1 つにするためにまとめてある。
+    /// 輪郭の楕円 (扇) が近似の距離場では位置がずれすぎるか (``mayNeedExactRing(unitsPerDrawnPixel:)``・
+    /// #2742) も、同じ口で解く。答えは **3 つの論理和と同じ**。
+    ///
+    /// **1 度の行列式と行ノルムで解く。** 図形を置くたびに走る費用は、release で判定だけが図形 1 つ
+    /// あたり 5.8 ns から 13.4 ns、寸法違いの円 20 万個を置く本体が 1 つあたり 51.7 ns から 56.8 ns
+    /// になった (帯の穴の判定を足す前と比べて・#2186)。3 つ目の判定 (#2742) は、release で図形 1 つ
+    /// あたり、円が 4.7 ns から 5.6 ns、矩形が 3.3 ns から 4.0 ns、非円の楕円 (長さ 100〜200・厚み 0.6 倍・
+    /// 太さ 2) が 4.2 ns から 16.6 ns になる (20 万個ずつ・9 回の中央値)。非円の楕円は見積もりの割り算と
+    /// 特異値の上下の端の比べを解くぶん増える。特異値の端を平方根を使わずに 2 乗で比べて、決まらないときだけ
+    /// 特異値を解く形にして、19.8 ns から縮めた。
     func mayHaveThinPart(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
         let isArc = meta.x == Kind.arc.rawValue
         guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || isArc else { return false }
@@ -232,11 +238,17 @@ struct FormInstance {
     ) -> Bool {
         let error = Self.exactRingError(radii: radii, halfWeight: halfWeight)
         let area = unitsPerDrawnPixel.x * unitsPerDrawnPixel.y
+        let slack = 1 + 4 * thinFillSlack
+        // 大きい特異値 σ は √(F² / 2) ≤ σ ≤ √F² (F² は全成分の 2 乗和) に収まるので、平方根を使わずに
+        // 2 乗どうしで比べて、どちらの端でも決まるときは答える。決まらない間だけ特異値を解く
+        let lhs = error * error * slack * slack
+        let rhs = exactRingTolerance * exactRingTolerance * area * area
+        if lhs * 0.5 * rowNormsSquared > rhs { return true }
+        if lhs * rowNormsSquared <= rhs { return false }
         let detM = abs(determinant) * area
-        // 大きい特異値: √((F² + √(F⁴ − 4·det²)) / 2)。F² は全成分の 2 乗和
+        // 大きい特異値: √((F² + √(F⁴ − 4·det²)) / 2)
         let largest = (0.5 * (rowNormsSquared
             + (max(rowNormsSquared * rowNormsSquared - 4 * detM * detM, 0)).squareRoot())).squareRoot()
-        let slack = 1 + 4 * thinFillSlack
         return error * largest * slack > exactRingTolerance * area
     }
 

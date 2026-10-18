@@ -1265,9 +1265,9 @@ static inline float2 mokume_ellipseSlope(float2 p, float2 radii, FormField field
 /// 最も近い点は軸の外の 1 つ (上側) になる。距離は 2 つで同じ。
 ///
 /// **反復は、1 回の動きが `u` の 1e-4 に収まったら止め、多くても 16 回。** 縁の近くの点は 4 回
-/// (中央値)・8 回 (99%) ほどで収まる。長半径 / 短半径が 1000 までの楕円で、縁から太さの半分 + 1.5 画素の
-/// 内の点を 1/16 刻みで走査し、32 bit で真の距離 (64 bit の二分法) との差が 1.0e-4 以内に収まった
-/// (固定 10 回では 1.0 がずれる点が出た)。
+/// (中央値)・8 回 (99%) ほどで収まる。短半径 / 長半径が 0.001〜0.99999 の楕円で、縁から太さの半分 + 1.5
+/// 画素の内の点を走査し (ほぼ円の楕円は太さの半分が短半径の 0.4 倍までの太い輪郭も)、32 bit で真の
+/// 距離 (64 bit の二分法) との差が 2.3e-5 以内に収まった (固定 10 回では 1.0 がずれる点が出た)。
 ///
 /// 返す勾配は、いちばん近い縁の点での外向きの法線 (長さ 1)。
 static inline FormField mokume_ellipseExactField(float2 p, float2 radii) {
@@ -1279,10 +1279,17 @@ static inline FormField mokume_ellipseExactField(float2 p, float2 radii) {
     float zx = folded.x / a;
     float zy = max(folded.y / b, 1e-12);
     // 長半径 / 短半径の 2 乗から 1 を引いたもの (桁落ちを避けて積で出す)
-    float m = (a - b) * (a + b) / (b * b);
+    // 比が約 1.8e19 を越えると 32 bit であふれて NaN になるので、1e30 で押さえる (その比の楕円は
+    // 線分とみなせ、根は `u ≈ zy` の近くに出る)
+    float m = min((a - b) * (a + b) / (b * b), 1e30);
     float n0 = (1.0 + m) * zx;
     bool inside = zx * zx + zy * zy <= 1.0;
-    float u = inside ? zy : 1.0;
+    // 根より左の点から始める。`g` は `u < zy` でも `u + m < n0` でも正 (どちらかの項が 1 を越える)
+    // ので、`zy` と `n0 − m` のどちらも根の左にある。内の点は `zy` だけだと、ほぼ円の楕円
+    // (`m` が小さい) の長軸の近くで根が `zy` よりずっと右にあり、ニュートン法が 16 回で収まらず
+    // 大きく外れた (`a = 100, b = 99.9, h = 37.8` の `y = 0` で誤差 9.8)。`n0 − m` は根の近くから始める。
+    // 外の点は縁の上の点の根 `u = 1` が左側にあたる
+    float u = max(inside ? zy : 1.0, max(zy, n0 - m));
     for (int i = 0; i < 16; i++) {
         float ua = n0 / (u + m);
         float ub = zy / u;
@@ -1396,6 +1403,36 @@ static inline float mokume_sectorHoleCoverage(
             if (mokume_sectorField(at, radii, start, sweep, exact).distance + halfWeight < 0.0) {
                 inside++;
             }
+        }
+    }
+    return float(inside) / float(n * n);
+}
+
+/// 楕円の輪郭の帯の穴 (内縁の内) が画素に占める面積を、画素の中の 8×8 の標本で数える
+/// ([#2742](https://github.com/mokume-metal/mokume/issues/2742))。標本は真の距離
+/// (`mokume_ellipseExactField`) が内縁の内に入るかで決める。
+///
+/// 太さの半分が長い軸の端の曲率半径を越える楕円の穴は、端が尖る。縁 1 本の距離場は尖りの先の画素で
+/// 穴の片方の縁しか見ず、両縁を見る積 (`mokume_thinEllipseHoleCoverage`) は穴を長方形で数えて過大に
+/// なる。そこで、穴の端に近い画素 (尖りの先だけ) の面積を、標本で数え直す。穴から画素の半対角より
+/// 離れた画素は標本を取らずに 0 と 1 を返す。費用は尖りの先の画素だけが払う。標本は 8×8 (16×16 では
+/// 部分被覆の外れが 2.3% まで縮むが、細長い楕円 200 個の GPU 時間が 3.5 倍になった。8×8 は 2.0 倍で、
+/// 外れは最悪 6.6%)。
+static inline float mokume_ellipseHoleSampled(
+    float2 q, float2 radii, float halfWeight, float4 inverseRows)
+{
+    float reach = 0.5 * length(float2(
+        abs(inverseRows.x) + abs(inverseRows.y), abs(inverseRows.z) + abs(inverseRows.w)));
+    float margin = mokume_ellipseExactField(q, radii).distance + halfWeight;
+    if (margin > reach) { return 0.0; }
+    if (margin < -reach) { return 1.0; }
+    const int n = 8;
+    int inside = 0;
+    for (int j = 0; j < n; j++) {
+        for (int i = 0; i < n; i++) {
+            float2 offset = (float2(i, j) + 0.5) / float(n) - 0.5;
+            float2 at = q + float2(dot(inverseRows.xy, offset), dot(inverseRows.zw, offset));
+            if (mokume_ellipseExactField(at, radii).distance + halfWeight < 0.0) { inside++; }
         }
     }
     return float(inside) / float(n * n);
@@ -1517,6 +1554,8 @@ static inline FormPaint mokume_formPaint(
     // 帯の穴の被覆の上限。穴の端が尖る楕円 (`mokume_ellipseExactField` で数える、太さの半分が長い軸の
     // 端の曲率半径を越える楕円) の内縁は、縁 1 本では端の先を数えすぎる (#2742)。1 のときは何もしない
     float holeCap = 1.0;
+    // 上の上限が効く画素 (穴の尖りの先) の穴の面積を、標本で数え直すか (#2742)
+    bool sampleCuspHole = false;
     if (kind == kFormRect) {
         float2 extent = form.size.xy;
         // 角の半径 (#2757)。0 なら従来の箱と同じ式を通る
@@ -1656,6 +1695,10 @@ static inline FormPaint mokume_formPaint(
                         ? mokume_thinEllipseHoleCoverage(
                             q, form.size.xy, halfWeight, hole, unitsPerPixel)
                         : 0.0;
+                    // 穴の端から長軸の向きに 6 画素以内の画素 (尖りの先) だけ、標本で数え直す
+                    bool alongX = form.size.x >= form.size.y;
+                    sampleCuspHole = (alongX ? abs(q.x) - hole.x : abs(q.y) - hole.y)
+                        > -6.0 * (alongX ? unitsPerPixel.x : unitsPerPixel.y);
                 }
             }
         }
@@ -1744,8 +1787,13 @@ static inline FormPaint mokume_formPaint(
     }
     if (kFormHasStroke) {
         float outerCoverage = mokume_formCoverage(outer, in.inverseRows);
-        float innerCoverage = isThinHole
-            ? thinHoleCoverage : min(mokume_formCoverage(inner, in.inverseRows), holeCap);
+        float innerEdge = mokume_formCoverage(inner, in.inverseRows);
+        float innerCoverage = isThinHole ? thinHoleCoverage : min(innerEdge, holeCap);
+        // 尖りの先では縁 1 本の値も上限の積 (長方形で数える) も穴を過大に数える (`ellipse(0, 0, 40, 10)`・
+        // 太さ 6 で部分被覆が最大 0.22 外れた)。穴の端に近い画素だけ、穴の面積を標本で数える
+        if (sampleCuspHole) {
+            innerCoverage = mokume_ellipseHoleSampled(q, form.size.xy, halfWeight, in.inverseRows);
+        }
         // **帯の被覆は、外縁の被覆 − 内縁の被覆。** 縁は画素の幅では平行とみなせるので、
         // 帯 = (外縁の内) − (内縁の内) で、画素の中の面積も引き算になる。2 つを掛け合わせる
         // 式 (外縁の内 × 内縁の外) は 2 つが画素の中で無関係に散らばっているとみなすので、
