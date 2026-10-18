@@ -149,39 +149,50 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         case id, scale, count, every, time
     }
 
-    /// 数を 1 つ読む。**型に収まらない数は、鍵と理由を名乗る誤りにして投げる** (#2805)。
+    /// 整数の鍵を読む。**範囲を越えた大きな数は、符号の側の端へ寄せる** (#2805)。
     ///
-    /// 整数に収まらない数 (`2.5`・`1e19`・桁の多い整数) や `Double` に読めない数 (`1e400`) を、
-    /// Foundation は鍵ごとの読みの中では `DecodingError` でない内部の誤りで断る。そのまま外へ出ると
-    /// 場所の空の「JSON でない」になり、構文の誤りと取り違えられ、どの鍵かも分からない。型の違う値
-    /// (`"0.5"`) は読みの中で既に場所つきの `DecodingError` なので、そのまま通す
-    /// (`ParamRequest.Entry` が数の桁あふれを読み分けるのと同じ手掛かり)。
-    ///
-    /// 理由に**数の字面を写さない** — 桁が多いほど応答の 1 行が伸びてしまう。
-    private nonisolated static func number<Number: Decodable>(
-        _ type: Number.Type, in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
-    ) throws -> Number? {
-        do {
-            return try container.decodeIfPresent(type, forKey: key)
-        } catch let error as DecodingError {
-            throw error
-        } catch {
-            let expected = type == Int.self ? "an integer that fits in Int" : "a number that fits in Double"
+    /// `1e19` も 30 桁の整数も `Int.max` も「上限より大きい」ことに変わりはなく、読み終えた後の
+    /// ``clamped()`` が範囲へ丸めて警告で名乗る (スキーマの約束。MCP の窓口 `Tools.seriesArgument` が
+    /// 同じ値を同じ端へ寄せるのと揃える)。読めない要求にして鍵と理由を名乗るのは、`2.5` のような
+    /// **整数でない数**だけである。理由に数の字面は写さない — 桁が多いほど応答の 1 行が伸びてしまう。
+    private nonisolated static func integer(
+        in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> Int? {
+        switch try container.decodeWireNumber(Int.self, forKey: key) {
+        case .absent: return nil
+        case .value(let value): return value
+        case .overflow(let negative): return negative ? Int.min : Int.max
+        case .notWhole:
             throw DecodingError.typeMismatch(
-                type,
+                Int.self,
                 DecodingError.Context(
-                    codingPath: [key],
-                    debugDescription: "The value is not \(expected)",
-                    underlyingError: error))
+                    codingPath: [key], debugDescription: "The value is not a whole number"))
+        }
+    }
+
+    /// 縮小率の鍵を読む。`Double` に収まらない大きな数 (`1e400`) は、符号の側の無限大として読み、
+    /// 丸める段が実寸に倒して名乗る。
+    private nonisolated static func scale(
+        in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> Double? {
+        switch try container.decodeWireNumber(Double.self, forKey: key) {
+        case .absent: return nil
+        case .value(let value): return value
+        case .overflow(let negative): return negative ? -.infinity : .infinity
+        case .notWhole:
+            throw DecodingError.typeMismatch(
+                Double.self,
+                DecodingError.Context(
+                    codingPath: [key], debugDescription: "The value is not a number that fits in Double"))
         }
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
-        self.scale = try Self.number(Double.self, in: container, forKey: .scale) ?? 1
-        self.count = try Self.number(Int.self, in: container, forKey: .count) ?? 1
-        self.every = try Self.number(Int.self, in: container, forKey: .every) ?? 1
+        self.scale = try Self.scale(in: container, forKey: .scale) ?? 1
+        self.count = try Self.integer(in: container, forKey: .count) ?? 1
+        self.every = try Self.integer(in: container, forKey: .every) ?? 1
         // 型が違っても「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
         self.time = container.contains(.time)
             ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil

@@ -96,10 +96,9 @@ struct ParamRequest: ExchangeRequest {
             case .float, .vec2, .vec3, .color:
                 // **ここで読む数が読めない理由は、桁あふれだけ** (`1e400`)。`JSONDecoder` は数を
                 // 読む瞬間に断り (文書の走査は通るので、この 1 件だけが断られる)、入れ子の読みの
-                // 中では `DecodingError` に包まれる前の内部の誤りが漏れ出る。こちらが投げる誤りは、
-                // 型の不一致・欠け・成分の数の違いのどれも `DecodingError` なので、それ以外が
-                // 出たら数の桁あふれと読む (`ParameterUnreadableEntryTests` が固定する)
-                return error is DecodingError ? .typeMismatch : .notFinite
+                // 中では `DecodingError` に包まれる前の内部の誤りが漏れ出る。読み分けは観測の要求と
+                // 共有の手掛かり (``DecodingError/isNumberOverflow(_:)``) (`ParameterUnreadableEntryTests` が固定する)
+                return DecodingError.isNumberOverflow(error) ? .notFinite : .typeMismatch
             case .int, .bool, .string, nil:
                 return .typeMismatch
             }

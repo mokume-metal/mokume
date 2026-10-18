@@ -326,13 +326,11 @@ struct ObservationProtocolTests {
         arguments: [
             (#"{"id":"x1","scale":"0.5"}"#, "scale"),
             (#"{"id":"x1","scale":true}"#, "scale"),
-            // 型に収まらない数。Foundation が外へ出す誤りは場所が空で "The given data was not valid JSON."
-            // と言う (JSON でない、は嘘) ので、読む鍵ごとに受けて鍵と理由を言い直す (#2805)
+            // 整数でない数。Foundation が外へ出す誤りは場所が空で "The given data was not valid JSON."
+            // と言う (JSON でない、は嘘) ので、読む鍵ごとに受けて鍵と理由を言い直す (#2805)。
+            // 桁あふれの大きな数 (`1e19` など) は読めない要求にせず、範囲の丸めで撮る (下の検査)
             (#"{"id":"x1","count":2.5}"#, "count"),
-            (#"{"id":"x1","count":1e19}"#, "count"),
-            (#"{"id":"x1","every":-1e400}"#, "every"),
-            (#"{"id":"x1","scale":1e400}"#, "scale"),
-            (#"{"id":"x1","count":123456789012345678901234567890}"#, "count"),
+            (#"{"id":"x1","every":0.5}"#, "every"),
         ] as [(String, String?)])
     func answersARequestThatCannotBeDecoded(_ request: String, _ key: String?) throws {
         let facet = try makeFacet()
@@ -368,28 +366,79 @@ struct ObservationProtocolTests {
         #expect(observer.pendingRequest() == nil)
     }
 
-    /// 型に収まらない数の理由は、**数の字面を写さない** (#2805)。桁が多いほど理由の 1 行が伸びると、
-    /// 書き手の置いた長さがそのまま応答へ返る。
-    @Test("桁の多すぎる整数の理由は、字面の長さに比例して伸びない")
+    /// **型に収まる整数・数の範囲を越えた大きな数は、読めない要求にしない** (#2805)。スキーマの integer / number は
+    /// 桁に上限が無く、`1e19` は正しい型で範囲の外の値である。符号の側の端へ寄せ、範囲の丸め (枚数・間隔) と
+    /// 実寸 (縮小率) で撮って `warnings` で名乗る — MCP の窓口が同じ値を寄せるのと揃う (`Tools.seriesArgument`)。
+    @Test(
+        "範囲を越えた大きな数は、符号の側の端へ寄せて丸め、warnings で名乗って撮る",
+        arguments: [
+            (#"{"id":"x1","count":1e19}"#, "the ceiling is 120"),
+            (#"{"id":"x1","count":123456789012345678901234567890}"#, "the ceiling is 120"),
+            (#"{"id":"x1","count":-123456789012345678901234567890}"#, "the floor is 1"),
+            (#"{"id":"x1","every":-1e400}"#, "the floor is 1"),
+            (#"{"id":"x1","every":1e400}"#, "the ceiling is 60"),
+            (#"{"id":"x1","scale":1e400}"#, "the ceiling is 1.0"),
+            (#"{"id":"x1","scale":-1e400}"#, "full size was used"),
+        ] as [(String, String)])
+    func clampsABigNumberToTheEndOfItsSign(_ request: String, _ expected: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: request, to: facet)
+        let read = try #require(Self.request(observer.pendingRequest()), "読めない要求にした")
+        #expect(read.id == "x1")
+        let warnings = read.clamped().warnings
+        #expect(warnings.count == 1, "\(warnings)")
+        #expect(warnings.first?.contains(expected) == true, "\(warnings)")
+        #expect(read.timeWarning == nil)
+    }
+
+    @Test("1e19 の枚数は、Int の上限と同じに丸める")
+    func readsABigCountAsTheTopOfInt() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"x1","count":1e19}"#, to: facet)
+        let read = try #require(Self.request(observer.pendingRequest()))
+        #expect(read.count == Int.max)
+        let expected = ObservationRequest(id: "x1", count: Int.max).clamped()
+        #expect(read.clamped().count == expected.count)
+        #expect(read.clamped().warnings == expected.warnings)
+    }
+
+    /// 名乗りは**数の字面を写さない** (#2805)。桁が多いほど応答の 1 行が伸びると、書き手の置いた長さが
+    /// そのまま返る。
+    @Test("桁の多すぎる整数でも、名乗りは字面の長さに比例して伸びない")
     func doesNotEchoTheDigitsOfANumberThatDoesNotFit() throws {
-        func reason(ofDigits count: Int) throws -> String {
+        func warnings(ofDigits count: Int, key: String) throws -> [String] {
             let facet = try makeFacet()
             let observer = FrameObserver(directory: facet)
             try write(
-                request: #"{"id":"x1","count":"# + String(repeating: "9", count: count) + "}",
+                request: "{\"id\":\"x1\",\"\(key)\":" + String(repeating: "9", count: count) + "}",
                 to: facet)
-            let pending = try #require(observer.pendingRequest())
-            guard case .unreadable(_, let reason) = pending else {
+            return try #require(Self.request(observer.pendingRequest())).clamped().warnings
+        }
+        let few = try warnings(ofDigits: 30, key: "count")
+        let many = try warnings(ofDigits: 5000, key: "count")
+        #expect(many == few, "字面の長さで名乗りが変わる")
+        #expect(many.joined().count < 200)
+        #expect(!many.joined().contains("9999"), "数の字面を写した")
+    }
+
+    /// 整数でない数の理由も、字面を写さない。
+    @Test("整数でない数の理由は、桁の多さで伸びない")
+    func doesNotEchoTheDigitsOfAFraction() throws {
+        func reason(_ fraction: String) throws -> String {
+            let facet = try makeFacet()
+            let observer = FrameObserver(directory: facet)
+            try write(request: "{\"id\":\"x1\",\"count\":\(fraction)}", to: facet)
+            guard case .unreadable(_, let reason) = try #require(observer.pendingRequest()) else {
                 Issue.record("解けないはずの要求が解けた")
                 return ""
             }
             return reason
         }
-        let few = try reason(ofDigits: 30)
-        let many = try reason(ofDigits: 5000)
-        #expect(many == few, "字面の長さで理由が変わる: \(many.count) 文字")
-        #expect(many.count < 200, "\(many.count) 文字")
-        #expect(!many.contains("9999"), "数の字面を写した")
+        let long = try reason("0." + String(repeating: "7", count: 5000))
+        #expect(long.count < 200, "\(long.count) 文字")
+        #expect(!long.contains("7777"), "数の字面を写した")
     }
 
     /// **`id` が読めない要求は、echo する相手が無いので応えない** (欠け・文字列でない・途中で切れた
