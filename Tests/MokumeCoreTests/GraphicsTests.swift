@@ -1440,11 +1440,11 @@ struct GraphicsTests {
         #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
     }
 
-    @Test("描き場所の面では、13 種のどれを断っても、その種類の主語で直し先を案内する")
+    @Test("描き場所の面では、14 種のどれを断っても、その種類の主語で直し先を案内する")
     func everyKindOnALayerGuidesToBeginDraw() throws {
         let canvas = try makeCanvas()
         let layer = try canvas.createGraphics(16, 16)
-        #expect(Canvas.OutsideFrame.allCases.count == 13, "種類が変わった — この検査の範囲を見直す")
+        #expect(Canvas.OutsideFrame.allCases.count == 14, "種類が変わった — この検査の範囲を見直す")
         try canvas.draw {
             canvas.background(black)
             for subject in Canvas.OutsideFrame.allCases {

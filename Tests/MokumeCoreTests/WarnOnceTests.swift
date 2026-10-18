@@ -103,6 +103,7 @@ struct OutsideFrameNoticeTests {
             .material: "Materials are written again every frame",
             .particles: "Particles are handled where you draw",
             .compute: "Compute is a preamble to drawing",
+            .debug: "The debug grid and axes are drawn again every frame",
             .placing: "Shapes, images and backgrounds are placed inside a frame",
             .pixelWrite: "Pixels are written inside a frame",
         ]

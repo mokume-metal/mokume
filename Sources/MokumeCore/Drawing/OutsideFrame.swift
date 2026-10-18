@@ -27,7 +27,7 @@ extension Canvas {
     ///   偽になるので、どの口でも真の「呼ばれた」にそろえる
     ///
     /// 場面を名乗る文面は、#2723 が文面を直すだけと決めたので別の Issue ([#2780]) に分けた。そこで
-    /// 描き場所の面だけ、13 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
+    /// 描き場所の面だけ、14 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
     /// (``drawingTargetNotice``)。本体の面は上の文のまま — 場面を言い分けない。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
@@ -63,7 +63,7 @@ extension Canvas {
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWrite
 
-        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 13 種で共通の
+        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 14 種で共通の
         /// 型にする** ([#2780])。自分でフレームを開く面とは、描き場所 (`createGraphics`) と、直に使う
         /// ``Canvas`` (`init(target:gpu:)`) である — ランタイムが持ち越しの区間を約束する本体の面
         /// (``Canvas/isRuntimeSurface``) ではない。
@@ -89,13 +89,14 @@ extension Canvas {
             case .material: subject = "Materials are written again every frame"
             case .particles: subject = "Particles are handled where you draw"
             case .compute: subject = "Compute is a preamble to drawing"
+            case .debug: subject = "The debug grid and axes are drawn again every frame"
             case .placing: subject = "Shapes, images and backgrounds are placed inside a frame"
             case .pixelWrite: subject = "Pixels are written inside a frame"
             }
             return subject + ". " + Self.drawingTargetTail
         }
 
-        /// ``drawingTargetNotice`` の、13 種で共通の直し先の案内。
+        /// ``drawingTargetNotice`` の、14 種で共通の直し先の案内。
         static let drawingTargetTail =
             "On a surface you open yourself, call this between beginDraw() and endDraw(), or "
             + "inside its draw { }. This was called outside them, so it belongs to no frame, and "
