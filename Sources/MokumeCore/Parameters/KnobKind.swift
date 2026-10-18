@@ -29,6 +29,10 @@ enum KnobKind: Equatable {
     enum Reason: Equatable {
         /// 数値だが範囲を書いていない。
         case rangeNotDeclared
+        /// 数値で範囲を書いたが、端が非有限なので面に出していない (`0...Double.infinity`・
+        /// [#2475](https://github.com/mokume-metal/mokume/issues/2475))。作者は範囲を書いているので、
+        /// 「範囲を書けばつまみが出る」とは言わない。
+        case rangeNotFinite
         /// 文字だが候補を書いていない。
         case choicesNotDeclared
 
@@ -36,6 +40,7 @@ enum KnobKind: Equatable {
         var note: String {
             switch self {
             case .rangeNotDeclared: "declare a range and a knob appears"
+            case .rangeNotFinite: "the range has an end that is not a finite number; give both ends and a knob appears"
             case .choicesNotDeclared: "declare the choices and a knob appears"
             }
         }
@@ -58,20 +63,20 @@ extension KnobKind {
     static func forDeclaration(_ declaration: ParamDeclaration) -> KnobKind {
         switch declaration.value {
         case .float:
-            guard let range = declaration.range else { return .none(.rangeNotDeclared) }
+            guard let range = declaration.range else { return .none(missingRange(declaration)) }
             return .slider(range, step: declaration.step)
         case .int:
-            guard let range = declaration.range else { return .none(.rangeNotDeclared) }
+            guard let range = declaration.range else { return .none(missingRange(declaration)) }
             return .steppedSlider(range)
         case .bool:
             return .toggle
         case .color:
             return .color
         case .vector2:
-            guard let range = declaration.range else { return .none(.rangeNotDeclared) }
+            guard let range = declaration.range else { return .none(missingRange(declaration)) }
             return .components(count: 2, range: range, step: declaration.step)
         case .vector3:
-            guard let range = declaration.range else { return .none(.rangeNotDeclared) }
+            guard let range = declaration.range else { return .none(missingRange(declaration)) }
             return .components(count: 3, range: range, step: declaration.step)
         case .string:
             // 候補を書いていない文字は、窓からは触らせない。自由に打てる欄を出すと
@@ -82,5 +87,10 @@ extension KnobKind {
             }
             return .choice(choices)
         }
+    }
+
+    /// 数値のつまみを出さない理由。範囲を書いたが端が非有限で面に出していないのか、書いていないのか。
+    private static func missingRange(_ declaration: ParamDeclaration) -> Reason {
+        declaration.unshownRange == nil ? .rangeNotDeclared : .rangeNotFinite
     }
 }

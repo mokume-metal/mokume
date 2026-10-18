@@ -174,8 +174,8 @@ struct ParameterDeclaredNonFiniteTests {
 
     // MARK: - 範囲の端 (#2475)
 
-    @Test("上端が無限の範囲は書かなかったものとして扱い、応答は置けて min / max を持たない")
-    func anInfiniteUpperBoundIsTreatedAsNoRange() throws {
+    @Test("上端が無限の範囲は面に出さず、応答は置けて min / max を持たない")
+    func anInfiniteUpperBoundIsNotShown() throws {
         let facet = try makeDirectory()
         let sketch = InfRange()
         ParamSurface(directory: facet, sketch: sketch).start()
@@ -188,16 +188,35 @@ struct ParameterDeclaredNonFiniteTests {
         #expect(entry("count", in: reply, under: "params")?["value"] as? Int == 3)
     }
 
-    @Test("同じ宣言にスライダーは出ず、外からの書き込みは範囲へ収めない")
-    func anInfiniteUpperBoundGetsNoKnobAndNoClamp() throws {
+    /// メンテナの決定 (2026-10-18): 面に出せないのは JSON とスライダーの都合で、作者が書いた有限の端は
+    /// 外からの書き込みに今までどおり効かせる。
+    @Test("同じ宣言にスライダーは出ず、外からの書き込みは書かれた有限の端へ収める")
+    func anInfiniteUpperBoundGetsNoKnobButStillClamps() throws {
         let sketch = InfRange()
         let declaration = try #require(sketch.params.first { $0.name == "r" })
         #expect(declaration.range == nil)
-        #expect(KnobKind.forDeclaration(declaration) == .none(.rangeNotDeclared))
+        #expect(KnobKind.forDeclaration(declaration) == .none(.rangeNotFinite))
 
         let r = try box("r", of: sketch, as: Double.self)
-        #expect(r.write(.float(-5)) == .applied, "書かなかった範囲の下端 0 へ収めた")
-        #expect(sketch.r == -5)
+        #expect(r.write(.float(-5)) == .clamped(requested: .float(-5), applied: .float(0)))
+        #expect(sketch.r == 0)
+        #expect(r.write(.float(1e300)) == .applied, "無限の側では収めない")
+        #expect(sketch.r == 1e300)
+    }
+
+    /// 作者は範囲を書いているので、「範囲を書けばつまみが出る」と言うと誤る。範囲を書いていない数値とは
+    /// 言い分ける。
+    @Test("窓は、端が非有限で出さないことを、範囲を書いていない数値とは別の注記で添える")
+    func theWindowSaysWhyThereIsNoKnob() throws {
+        let note = KnobKind.Reason.rangeNotFinite.note
+        #expect(note != KnobKind.Reason.rangeNotDeclared.note)
+        #expect(note.contains("not a finite number"))
+        let plain = ParamBox<Double>(name: "p", value: 1)
+        #expect(KnobKind.forDeclaration(plain.declaration) == .none(.rangeNotDeclared))
+        // 応答から読み直した宣言は、端が非有限だったことを知らない (応答に書かない)
+        let reread = try JSONDecoder().decode(
+            ParamDeclaration.self, from: JSONEncoder().encode(try box("r", of: InfRange(), as: Double.self).declaration))
+        #expect(reread.range == nil)
     }
 
     /// NaN の端はここに並べない。`Double.nan...1` は `ClosedRange` の precondition で落ち、
@@ -205,35 +224,65 @@ struct ParameterDeclaredNonFiniteTests {
     /// 持てない (応答の読み取りも `lower <= upper` を見るので組まない)。置き場が見るのは
     /// `isFinite` で、NaN も偽になる。
     @Test(
-        "下端・両端が非有限の範囲も、書かなかった範囲として扱う",
+        "下端・両端が非有限の範囲も面に出さない。収めるのは有限の端があるときだけ",
         arguments: [
-            0...Double.infinity,
-            -Double.infinity...0,
-            -Double.infinity...Double.infinity,
+            (0...Double.infinity, -5.0, 0.0),
+            (-Double.infinity...0, 5.0, 0.0),
+            (-Double.infinity...Double.infinity, 5.0, 5.0),
         ])
-    func everyNonFiniteBoundIsDropped(_ bounds: ClosedRange<Double>) throws {
+    func everyNonFiniteBoundIsNotShown(_ bounds: ClosedRange<Double>, written: Double, settled: Double) throws {
         let box = ParamBox<Double>(name: "r", value: 1, range: ParamRange(bounds))
-        #expect(box.range == nil)
         #expect(box.declaration.range == nil)
+        #expect(KnobKind.forDeclaration(box.declaration) == .none(.rangeNotFinite))
         let line = try #require(box.warnings.message(for: .rangeNotFinite), "畳んだのに黙っていた")
         #expect(line.contains("\"r\""))
         #expect(!line.contains("\n"))
         let data = try JSONEncoder().encode(box.declaration)
-        let written = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(written["min"] == nil && written["max"] == nil)
+        let wire = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(wire["min"] == nil && wire["max"] == nil)
+
+        _ = box.write(.float(written))
+        #expect(box.value == settled)
+        let hasFiniteEnd = bounds.lowerBound.isFinite || bounds.upperBound.isFinite
+        #expect(box.range == (hasFiniteEnd ? ParamRange(bounds) : nil))
+        #expect(
+            line.contains(hasFiniteEnd ? "still brought to the finite end" : "not clamped"),
+            "収めるかどうかを事実と違って言った: \(line)")
     }
 
     @Test("Float の組に書いた範囲も同じ。整数で書いた範囲は変わらない")
     func tuplesFoldAndIntegerRangesStay() throws {
         let sketch = InfRangeTyped()
         let pair = try box("pair", of: sketch, as: SIMD2<Float>.self)
-        #expect(pair.range == nil)
-        #expect(KnobKind.forDeclaration(pair.declaration) == .none(.rangeNotDeclared))
+        #expect(pair.declaration.range == nil)
+        #expect(KnobKind.forDeclaration(pair.declaration) == .none(.rangeNotFinite))
         #expect(pair.warnings.hasWarned(.rangeNotFinite))
+        #expect(pair.write(.vector2(SIMD2(3, -4))) == .clamped(requested: .vector2(SIMD2(3, -4)), applied: .vector2(SIMD2(0, -4))))
 
         let big = try box("big", of: sketch, as: Int.self)
         #expect(big.range == ParamRange(0...Int.max))
         #expect(!big.warnings.hasWarned(.rangeNotFinite))
+    }
+
+    /// 範囲が意味を持たない型には、つまみも収めも元から無い。起きないことを言わない。
+    @Test("真偽・文字・色に書いた非有限の範囲は、応答から外したことだけを言う")
+    func aRangeOnATypeWithoutKnobRangeSaysOnlyWhatHappens() throws {
+        let flag = ParamBox<Bool>(name: "flag", value: true, range: ParamRange(0...Double.infinity))
+        let text = ParamBox<String>(name: "text", value: "a", range: ParamRange(-Double.infinity...0))
+        let ink = ParamBox<LinearRGBA>(
+            name: "ink", value: LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 1),
+            range: ParamRange(-Double.infinity...Double.infinity))
+        let lines: [String?] = [
+            flag.warnings.message(for: .rangeNotFinite), text.warnings.message(for: .rangeNotFinite),
+            ink.warnings.message(for: .rangeNotFinite),
+        ]
+        for line in lines {
+            let said = try #require(line)
+            #expect(said.contains("leaves out min and max"))
+            #expect(!said.contains("knob appears"), "出るはずの無いつまみを言った: \(said)")
+            #expect(!said.contains("clamped") && !said.contains("brought to"), "起きない収めを言った: \(said)")
+        }
+        #expect(flag.declaration.range == nil)
     }
 
     @Test("範囲を畳んだことを、名前と書かれた範囲を含めて 1 度名乗る。有限の範囲では言わない")
@@ -250,5 +299,42 @@ struct ParameterDeclaredNonFiniteTests {
             name: "h", value: 1, range: ParamRange(-Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude))
         #expect(huge.range != nil, "有限の端を畳んだ")
         #expect(!huge.warnings.hasWarned(.rangeNotFinite))
+    }
+
+    // MARK: - 型の零を作れない型 (#2858)
+
+    /// 零を断る自作の型。
+    struct NoZero: ParamRepresentable, Equatable {
+        let length: Double
+        var paramValue: ParamValue { .float(length) }
+        init(_ length: Double) { self.length = length }
+        init?(paramValue: ParamValue) {
+            guard case .float(let value) = paramValue, value != 0 else { return nil }
+            length = value
+        }
+    }
+
+    /// 零を読むと非有限を返す自作の型。
+    struct NaNZero: ParamRepresentable {
+        let length: Double
+        var paramValue: ParamValue { .float(length) }
+        init(_ length: Double) { self.length = length }
+        init?(paramValue: ParamValue) {
+            guard case .float(let value) = paramValue else { return nil }
+            length = value == 0 ? .nan : value
+        }
+    }
+
+    @Test("型が有限の零をくれなければ畳めず、書かれた値のまま置いて、畳めなかったと言う")
+    func aTypeWithoutAFiniteZeroIsSaidToBeUnfolded() throws {
+        let refusing = ParamBox<NoZero>(name: "a", value: NoZero(.nan))
+        #expect(refusing.value.length.isNaN)
+        let nanZero = ParamBox<NaNZero>(name: "b", value: NaNZero(.infinity))
+        #expect(nanZero.value.length == .infinity, "読み戻した零の NaN を載せた")
+        for box in [refusing.warnings.message(for: .bornNotFinite), nanZero.warnings.message(for: .bornNotFinite)] {
+            let line = try #require(box, "畳めなかったのに黙っていた")
+            #expect(line.contains("gave no finite zero"))
+            #expect(!line.contains("starts at"), "畳めていないのに畳んだと言った: \(line)")
+        }
     }
 }

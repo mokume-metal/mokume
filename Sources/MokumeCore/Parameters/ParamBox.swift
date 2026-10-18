@@ -39,9 +39,13 @@ import Observation
 /// 成り立たないから、**初期化の 1 点で別の形に畳み、置き場ごとに 1 度だけ名乗る** ([ADR-0030] 決定 3):
 ///
 /// - **値が非有限なら、型の零を載せる** (`0`・`SIMD2(0, 0)`・4 成分とも 0 の色)。作者が書いた値では
-///   なくなるが、非有限は保存も応答も書けないので、書いた値のまま残す道が無い
-/// - **範囲の端が非有限なら、範囲を書かなかったものとして扱う** (`0...Double.infinity`)。つまみは
-///   出ず ([ADR-0030] 決定 8)、外からの書き込みは範囲へ収めず、応答は `min` / `max` を書かない
+///   なくなるが、非有限は保存も応答も書けないので、書いた値のまま残す道が無い。零は宣言した範囲の
+///   外にもなりうる (範囲は値の不変条件ではない)。自分で書いた ``ParamRepresentable`` が有限の零を
+///   くれないときは畳めず、書かれた値のまま置いて「畳めなかった」と名乗る
+///   ([#2858](https://github.com/mokume-metal/mokume/issues/2858) で扱いを決める)
+/// - **範囲の端が非有限なら、その範囲を面に出さない** (`0...Double.infinity`)。つまみは出ず
+///   ([ADR-0030] 決定 8)、応答は `min` / `max` を書かない。外からの書き込みは、有限の端があれば
+///   今までどおりそこへ収める (`-5` → `0`)。両端とも非有限なら収める相手が無い
 ///
 /// ## 値の型は 2 通りの `init` で受ける ([#2438])
 ///
@@ -115,7 +119,7 @@ public final class ParamBox<Value> {
         case step
         /// 生まれのときの値が非有限で、型の零を載せた。
         case bornNotFinite
-        /// 範囲の端が非有限で、範囲を書かなかったものとして扱った。
+        /// 範囲の端が非有限で、面に出さなかった。
         case rangeNotFinite
     }
 
@@ -127,9 +131,13 @@ public final class ParamBox<Value> {
 
     /// 面から指すときの名前。
     public let name: String
-    /// つまみが動ける幅。**検めた後の値** — 端が非有限の範囲は書かなかったものとして `nil` になる
-    /// ([#2475](https://github.com/mokume-metal/mokume/issues/2475))。
+    /// 外からの書き込みを収める幅。**検めた後の値** — 片方の端だけが非有限の範囲 (`0...Double.infinity`)
+    /// はそのまま持って有限の端へ収め、両端とも非有限なら収める相手が無いので `nil` になる。端が非有限の
+    /// 範囲は、どちらでも面 (応答の `min` / `max`・窓のつまみ) には出さない (``declaration``・
+    /// [#2475](https://github.com/mokume-metal/mokume/issues/2475))。
     public let range: ParamRange?
+    /// 書かれたが、端が非有限なので面に出さない範囲。窓がつまみを出さない理由を言い分けるのに渡す。
+    private let unshownRange: ParamRange?
     /// 許した候補。
     public let choices: [String]?
     /// スライダーの刻み。**検めた後の値** (``ParamStep``)。書かれていない・置かなかったなら `nil`。
@@ -148,16 +156,18 @@ public final class ParamBox<Value> {
     ) {
         self.name = name
         // **生まれのときの宣言を検める 1 点** (型の説明の「生まれのときの宣言」)。宣言の初期値も
-        // `init` の中の代入もここへ入る。値が非有限なら型の零を、範囲の端が非有限なら範囲なしを置く
+        // `init` の中の代入もここへ入る。値が非有限なら型の零を、範囲の端が非有限なら面に出さない
         let offered = toParam(value)
         let valueIsFinite = offered.hasOnlyFiniteNumbers
-        // 零を読み戻せない型 (自分で書いた ``ParamRepresentable`` が零を断る) は、書かれた値のまま置く。
-        // 型から作れる値が他に無い
-        let born = valueIsFinite ? value : (fromParam(offered.zero) ?? value)
+        // 零を読み戻せない型・読み戻した零が非有限の型 (自分で書いた ``ParamRepresentable``) は、
+        // 畳めないので書かれた値のまま置き、そう名乗る。型から作れる値が他に無い (#2858)
+        let zero = valueIsFinite ? nil : fromParam(offered.zero).flatMap { toParam($0).hasOnlyFiniteNumbers ? $0 : nil }
+        let born = zero ?? value
         self.storedValue = born
         self.valueKeyPath = \ParamBox<Value>.value
         let rangeIsFinite = range?.hasFiniteBounds ?? true
-        self.range = rangeIsFinite ? range : nil
+        self.range = rangeIsFinite || range?.hasAFiniteBound == true ? range : nil
+        self.unshownRange = rangeIsFinite ? nil : range
         self.choices = choices
         self.toParam = toParam
         self.fromParam = fromParam
@@ -172,16 +182,36 @@ public final class ParamBox<Value> {
         if !valueIsFinite {
             warnings.warnOnce(
                 .bornNotFinite,
-                "The knob \"\(name)\" was declared with \(value), which is not a finite number, so it "
-                    + "starts at \(born) (said once for this knob)")
+                zero == nil
+                    ? "The knob \"\(name)\" was declared with \(value), which is not a finite number, and its type "
+                        + "gave no finite zero to start at instead, so it stays at \(value): the values cannot be "
+                        + "saved and the knob reply cannot be placed while it does (said once for this knob)"
+                    : "The knob \"\(name)\" was declared with \(value), which is not a finite number, so it "
+                        + "starts at \(born) (said once for this knob)")
         }
-        if !rangeIsFinite, let range {
+        if let unshownRange {
             warnings.warnOnce(
                 .rangeNotFinite,
-                "The knob \"\(name)\" was declared with the range \(range.lowerBound)...\(range.upperBound), "
-                    + "whose ends are not both finite numbers, so it is treated as having no range: no knob "
-                    + "appears in the window and writes from outside are not clamped (said once for this knob)")
+                Self.unshownRangeNotice(name: name, range: unshownRange, value: offered))
         }
+    }
+
+    /// 端が非有限の範囲を面に出さなかったことを言う 1 行。**型に応じて、起きることだけを言う** —
+    /// 範囲が意味を持たない型 (真偽・文字・色) には、つまみも収めも元から無い。
+    private static func unshownRangeNotice(name: String, range: ParamRange, value: ParamValue) -> String {
+        let written =
+            "The knob \"\(name)\" was declared with the range \(range.lowerBound)...\(range.upperBound), "
+            + "whose ends are not both finite numbers, so the reply leaves out min and max"
+        let consequence: String
+        switch value {
+        case .float, .int, .vector2, .vector3:
+            consequence = range.hasAFiniteBound
+                ? " and no knob appears in the window; writes from outside are still brought to the finite end"
+                : " and no knob appears in the window; writes from outside are not clamped"
+        case .bool, .string, .color:
+            consequence = ""
+        }
+        return written + consequence + " (said once for this knob)"
     }
 
     /// 面に出る型 (``ParamRepresentable``) の値の置き場。
@@ -239,8 +269,11 @@ extension ParamBox: nonisolated Observable {}
 extension ParamBox: DeclaredParam {
     /// 面から見えるいまの姿。
     public var declaration: ParamDeclaration {
+        // 端が非有限の範囲は面に出さない (収めには使う)。窓がつまみを出さない理由を言い分けられる
+        // よう、書かれた範囲は別に渡す
         ParamDeclaration(
-            name: name, value: toParam(value), range: range, choices: choices, step: step)
+            name: name, value: toParam(value), range: unshownRange == nil ? range : nil,
+            choices: choices, step: step, unshownRange: unshownRange)
     }
 
     /// 面から来た値を書き込む。
