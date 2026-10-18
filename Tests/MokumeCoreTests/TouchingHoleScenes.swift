@@ -181,6 +181,107 @@ nonisolated enum TouchingHoleScenes {
         }
     }
 
+    /// 格子 0..20 (10 おき) に、三角形・長方形・L 字の穴をばらまいた場面。**辺が重なる・頂点が辺の
+    /// 途中に載る・外周に触れるなど、内側が重ならなければどんな触れ方もしてよい**。固定の種から決まる。
+    ///
+    /// 穴どうしの触れ方の組み合わせを広く当てて、塗りが誤る形を探すための生成器 ([#2647]・[#2655])。
+    ///
+    /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
+    /// [#2655]: https://github.com/mokume-metal/mokume/issues/2655
+    static func mixedLattice(count: Int, seed: UInt64 = 2655) -> [TouchingHoleScene] {
+        var state: UInt64 = seed
+        func next(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((state >> 33) % UInt64(bound))
+        }
+        let outer: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(200, 0), SIMD2(200, 200), SIMD2(0, 200)]
+        func point(_ x: Int, _ y: Int) -> SIMD2<Float> { SIMD2(Float(x * 10), Float(y * 10)) }
+        func shape() -> [SIMD2<Float>]? {
+            let x = next(20)
+            let y = next(20)
+            switch next(3) {
+            case 0:
+                // 長方形
+                let w = 1 + next(4)
+                let h = 1 + next(4)
+                guard x + w <= 20, y + h <= 20 else { return nil }
+                return [point(x, y), point(x + w, y), point(x + w, y + h), point(x, y + h)]
+            case 1:
+                // 三角形 (4 マスの範囲の格子点 3 つ)
+                var points: [SIMD2<Float>] = []
+                for _ in 0..<3 {
+                    let px = x + next(5) - 2
+                    let py = y + next(5) - 2
+                    guard px >= 0, px <= 20, py >= 0, py <= 20 else { return nil }
+                    points.append(point(px, py))
+                }
+                guard abs(Triangulation.signedArea(points)) > 0 else { return nil }
+                return points
+            default:
+                // L 字 (長方形から角の長方形を引いた 6 角形)
+                let w = 2 + next(3)
+                let h = 2 + next(3)
+                let cw = 1 + next(w - 1)
+                let ch = 1 + next(h - 1)
+                guard x + w <= 20, y + h <= 20 else { return nil }
+                return [
+                    point(x, y), point(x + w, y), point(x + w, y + h - ch), point(x + w - cw, y + h - ch),
+                    point(x + w - cw, y + h), point(x, y + h),
+                ]
+            }
+        }
+        return (0..<count).map { index in
+            var polygons: [[SIMD2<Float>]] = []
+            let wanted = 2 + next(7)
+            var attempts = 0
+            while polygons.count < wanted, attempts < 300 {
+                attempts += 1
+                guard let polygon = shape(), !polygons.contains(where: { overlapsInterior($0, polygon) }) else {
+                    continue
+                }
+                polygons.append(polygon)
+            }
+            return TouchingHoleScene(index: index, outer: outer, holes: polygons)
+        }
+    }
+
+    /// 2 つの多角形の内側が (面積を持って) 重なるか。辺を共有する・触れるだけなら重ならない。
+    ///
+    /// 辺が真に交わる、頂点が相手の内側にある、辺の中点のすぐ内側 (その辺の内側へ少しずらした点)
+    /// が相手の内側にある、のどれか。同じ向きに辺を共有して重なる形は、3 つ目で見つかる。
+    static func overlapsInterior(_ p: [SIMD2<Float>], _ q: [SIMD2<Float>]) -> Bool {
+        for i in p.indices {
+            for j in q.indices {
+                let a = p[i]
+                let b = p[(i + 1) % p.count]
+                let c = q[j]
+                let d = q[(j + 1) % q.count]
+                let o1 = cross(a, b, c)
+                let o2 = cross(a, b, d)
+                let o3 = cross(c, d, a)
+                let o4 = cross(c, d, b)
+                if o1 * o2 < 0, o3 * o4 < 0 { return true }
+            }
+        }
+        return innerProbes(of: p, strictlyIn: q) || innerProbes(of: q, strictlyIn: p)
+    }
+
+    /// `polygon` の頂点と、辺の内側へ少しずらした中点が、`other` の内側 (周の上を含まない) にあるか。
+    private static func innerProbes(of polygon: [SIMD2<Float>], strictlyIn other: [SIMD2<Float>]) -> Bool {
+        let turn: Float = Triangulation.signedArea(polygon) > 0 ? 1 : -1
+        for index in polygon.indices {
+            let a = polygon[index]
+            let b = polygon[(index + 1) % polygon.count]
+            if contains(a, other), !lies(a, on: other) { return true }
+            let edge = b - a
+            // 面積が正の周は、辺の左が内側
+            let normal = SIMD2<Float>(-edge.y, edge.x) / simd_length(edge) * turn
+            let probe = (a + b) / 2 + normal * 0.01
+            if contains(probe, other), !lies(probe, on: other) { return true }
+        }
+        return false
+    }
+
     // MARK: - 幾何
 
     private static func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) -> Float {

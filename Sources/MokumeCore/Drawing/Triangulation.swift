@@ -170,12 +170,15 @@ nonisolated enum Triangulation {
         outer: [Int], holes: [[Int]], points: [SIMD2<Float>], slack: Float = 0
     ) -> [Int] {
         var ring = outer
-        // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい
-        let ordered = holes
-            .filter { $0.count >= 3 }
-            .sorted {
-                (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
-            }
+        // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい。ただし、畳んだ
+        // 周に触れる穴があれば、それを先に畳む (``touchingFirst(_:outer:points:)``・[#2647])
+        let ordered = touchingFirst(
+            holes
+                .filter { $0.count >= 3 }
+                .sorted {
+                    (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
+                },
+            outer: outer, points: points)
 
         // 畳んだ周の点の位置。穴の点が重なるかを引く
         var placed = Set(outer.map { points[$0] })
@@ -207,6 +210,60 @@ nonisolated enum Triangulation {
             for index in hole { placed.insert(points[index]) }
         }
         return ring
+    }
+
+    /// 穴を畳む順を、**畳んだ周に頂点で触れる穴を先にする**形へ並べ替える ([#2647])。
+    ///
+    /// `holes` は右にある穴から順に並んでいる。そのまま畳むと、触れ合う穴の鎖 (A が B に触れ、B が
+    /// C に触れる) で、A から橋で架けた C を先に畳み、後から畳む B が A と C の両方に触れることが
+    /// ある。入口の点で長さ 0 の橋を架けて対にできるのは 1 点だけなので、もう 1 点は対にならず、
+    /// 畳んだ周が自分の角と重なる。耳切りはそこで耳を取り違え、穴の中まで塗る。
+    ///
+    /// 触れる穴は、触れる点ごとに長さ 0 の橋で順に対にできる。そこで、畳み終えた穴 (と外周) に
+    /// 触れる穴があれば、その中でいちばん右の穴を次に畳み、無ければ残りのうちいちばん右の穴を
+    /// 畳む。触れる穴が無い形は、並びが変わらない。
+    ///
+    /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
+    private static func touchingFirst(
+        _ holes: [[Int]], outer: [Int], points: [SIMD2<Float>]
+    ) -> [[Int]] {
+        // 位置ごとの、その位置に頂点を持つ穴 (右から数えた順位)。外周は -1
+        var owners: [SIMD2<Float>: [Int]] = [:]
+        for index in outer { owners[points[index], default: []].append(-1) }
+        for (rank, hole) in holes.enumerated() {
+            for index in hole where owners[points[index]]?.last != rank {
+                owners[points[index], default: []].append(rank)
+            }
+        }
+        guard owners.values.contains(where: { $0.count >= 2 }) else { return holes }
+
+        var placed = Array(repeating: false, count: holes.count)
+        var ready = Set<Int>()
+        // 外周に触れる穴から始める
+        for index in outer {
+            for rank in owners[points[index]] ?? [] where rank >= 0 { ready.insert(rank) }
+        }
+        var order: [[Int]] = []
+        order.reserveCapacity(holes.count)
+        var next = 0
+        while order.count < holes.count {
+            var pick: Int
+            if let rank = ready.min() {
+                pick = rank
+            } else {
+                while placed[next] { next += 1 }
+                pick = next
+            }
+            placed[pick] = true
+            ready.remove(pick)
+            order.append(holes[pick])
+            for index in holes[pick] {
+                for rank in owners[points[index]] ?? [] where rank >= 0 && !placed[rank] {
+                    ready.insert(rank)
+                }
+            }
+        }
+        return order
     }
 
     /// 穴の点を、橋の入口として試す順に並べる。
