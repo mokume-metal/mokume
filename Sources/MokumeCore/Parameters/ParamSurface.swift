@@ -88,6 +88,22 @@ struct ParamRequest: ExchangeRequest {
             }
         }
 
+        /// 読めなかった 1 件の断り。読めた 1 件は `nil`。
+        ///
+        /// **名前が先** — 名前が読めて宣言に無いなら、読めなかった中身によらず `unknownName`
+        /// (上の「理由を決める順」)。要求に応える ``ParamSurface`` と保存を戻す ``ParamStore`` が
+        /// 同じ規則で名指すように、ここ 1 つに置く ([#2806](https://github.com/mokume-metal/mokume/issues/2806))。
+        func refusal(declaredIn registry: ParamRegistry) -> ParamReport.Rejection? {
+            switch reading {
+            case .value:
+                nil
+            case .unreadable(let reason):
+                .init(name: name, reason: registry.declares(name) ? reason : .unknownName)
+            case .nameless:
+                .init(name: "", reason: .typeMismatch)
+            }
+        }
+
         /// 読めなかった理由。
         private static func reason(unreadableBecauseOf error: any Error, typeName: ParamTypeName?)
             -> ParamReport.Rejection.Reason
@@ -114,15 +130,21 @@ struct ParamRequest: ExchangeRequest {
     /// 決まる。破れても両方の書き込みは成功しているので、応答には何も出ない (#858)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    var valuesInApplicationOrder: [Entry] {
-        values.indices.sorted(by: appliesBefore).map { values[$0] }
+    var valuesInApplicationOrder: [Entry] { Self.inApplicationOrder(values) }
+
+    /// 1 件ずつの並びを当てる順に並べる。**保存の復元 (``ParamStore/restore()``) も同じ鍵で当てる**
+    /// ので、同じ名前が 2 件ある保存でも、どちらが残るかが並べ替えの実装で決まらない (#2806)。
+    static func inApplicationOrder(_ values: [Entry]) -> [Entry] {
+        values.indices.sorted { appliesBefore($0, $1, in: values) }.map { values[$0] }
     }
 
     /// `values` の `i` 件目を `j` 件目より先に当てるか。
     ///
     /// **書いた位置を第 2 の鍵にする** ので、異なる 2 件は必ずどちらかが先になる。
     /// 引き分けが無ければ、並べ替えが安定かどうかは結果に出ない。
-    func appliesBefore(_ i: Int, _ j: Int) -> Bool {
+    func appliesBefore(_ i: Int, _ j: Int) -> Bool { Self.appliesBefore(i, j, in: values) }
+
+    private static func appliesBefore(_ i: Int, _ j: Int, in values: [Entry]) -> Bool {
         (values[i].name, i) < (values[j].name, j)
     }
 }
@@ -338,20 +360,13 @@ final class ParamSurface: DeclarationWatcher {
         var rejected: [ParamReport.Rejection] = []
         var clamped: [ParamReport.Clamp] = []
         for entry in request.valuesInApplicationOrder {
-            // **読めなかった 1 件は、その 1 件だけ理由つきで載せ、残りは当てる** (#2496)
-            let value: ParamValue
-            switch entry.reading {
-            case .value(let read):
-                value = read
-            case .unreadable(let reason):
-                // **名前が先** — 綴りを間違えた書き手には、中身の誤りより先にそれを伝える
-                rejected.append(
-                    .init(name: entry.name, reason: registry.declares(entry.name) ? reason : .unknownName))
-                continue
-            case .nameless:
-                rejected.append(.init(name: "", reason: .typeMismatch))
+            // **読めなかった 1 件は、その 1 件だけ理由つきで載せ、残りは当てる** (#2496)。
+            // 名前が先 — 綴りを間違えた書き手には、中身の誤りより先にそれを伝える
+            if let refusal = entry.refusal(declaredIn: registry) {
+                rejected.append(refusal)
                 continue
             }
+            guard case .value(let value) = entry.reading else { continue }
             guard let outcome = registry.write(value, to: entry.name) else {
                 rejected.append(.init(name: entry.name, reason: .unknownName))
                 continue
