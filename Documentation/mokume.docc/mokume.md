@@ -827,6 +827,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Param(name:)``
 - ``Param(_:name:)-4a6pu``
 - ``Param(_:name:)-4ddav``
+- ``Param(_:step:name:)``
 - ``Param(choices:name:)``
 - ``ParamValue``
 - ``ParamRange``

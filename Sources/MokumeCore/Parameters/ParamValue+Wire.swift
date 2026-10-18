@@ -125,7 +125,7 @@ extension ParamValue: Codable {
 
 extension ParamDeclaration: Codable {
     private enum CodingKeys: String, CodingKey {
-        case name, type, value, min, max, choices
+        case name, type, value, min, max, choices, step
     }
 
     /// 宣言 1 つぶん。**値と一緒に、動ける幅と許した候補も出す** — 読み手が別の面を
@@ -150,6 +150,9 @@ extension ParamDeclaration: Codable {
         if let choices {
             try container.encode(choices, forKey: .choices)
         }
+        if let step {
+            try container.encode(step, forKey: .step)
+        }
     }
 
     /// 宣言 1 つぶんを読む。
@@ -170,8 +173,12 @@ extension ParamDeclaration: Codable {
         // 幅が無いものとして扱う (誤った端で動きを縛るより、縛らないほうが害が小さい)
         var range: ParamRange?
         if let lower, let upper, lower <= upper { range = ParamRange(lower...upper) }
+        // **刻みも書く側の検めを通った値だけが来る** (``ParamStep``) が、読む側は書き手を信じ切らない:
+        // 0 以下・非有限の刻みはスライダーを組めないので、無いものとして読む
+        let step = try container.decodeIfPresent(Double.self, forKey: .step)
+            .flatMap { ParamStep.check($0, for: value).step }
         self.init(
             name: name, value: value, range: range,
-            choices: try container.decodeIfPresent([String].self, forKey: .choices))
+            choices: try container.decodeIfPresent([String].self, forKey: .choices), step: step)
     }
 }

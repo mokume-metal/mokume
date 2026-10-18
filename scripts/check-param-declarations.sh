@@ -100,3 +100,30 @@ check "let に付けると、var に直すよう名指しして止まる" fail "
 final class Tunables: Sketch {
     @Param(0...200) let radius: Double = 80
 }'
+
+# enum を宣言できること (#2438)。型の側に ParamRepresentable を書かない。刻みは実数の範囲に付く
+check "String を生の値に持つ CaseIterable の enum は、型に何も書かずに宣言でき、刻みも書ける" pass "" 'import mokume
+
+enum Palette: String, CaseIterable { case ember, tide, moss }
+
+final class Tunables: Sketch {
+    @Param var palette: Palette = .ember
+    @Param(0...1, step: 0.05) var density: Double = 0.4
+    @Param(name: "drift") var offset: Palette = .tide
+}'
+
+check "CaseIterable でない enum は、候補を作れないので止まる" fail "conform to 'CaseIterable'" 'import mokume
+
+enum Palette: String { case ember, tide }
+
+final class Tunables: Sketch {
+    @Param var palette: Palette = .ember
+}'
+
+check "生の値が String でない enum は、面に出せないので止まる" fail "be equivalent" 'import mokume
+
+enum Level: Int, CaseIterable { case low, high }
+
+final class Tunables: Sketch {
+    @Param var level: Level = .low
+}'
