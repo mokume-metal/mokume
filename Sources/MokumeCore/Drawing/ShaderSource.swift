@@ -39,9 +39,54 @@ enum ShaderSource {
         return (url, body, url.deletingPathExtension().lastPathComponent)
     }
 
+    /// `values:`・`surfaces:` の名前が、断片の中で `values.<名前>`・`surfaces.<名前>` と書ける名前か
+    /// ([#2783])。
+    ///
+    /// 受けるのは、文字か `_` で始まり、文字・数字・`_` が続く空でない名前。**ASCII の外の文字も
+    /// 受ける** — Metal は `波` を識別子として通すので、ASCII に絞ると今組める名前を断る。判定は
+    /// C++ の識別子と同じ Unicode の XID_Start / XID_Continue で引く。
+    ///
+    /// 予約語 (`float` など) は表を持たずに検めない。Metal が `mokume/Values` を名乗る誤りで返す。
+    ///
+    /// [#2783]: https://github.com/mokume-metal/mokume/issues/2783
+    static func isUsableName(_ name: String) -> Bool {
+        guard let first = name.unicodeScalars.first, first == "_" || first.properties.isXIDStart else {
+            return false
+        }
+        return name.unicodeScalars.dropFirst().allSatisfy { $0.properties.isXIDContinue }
+    }
+
+    /// `values:`・`surfaces:` の名前を、組み立ての前に検める ([#2783])。書けない名前は、渡した口
+    /// (`values:` か `surfaces:`) と名前を名指しして断る。
+    ///
+    /// **組み立てに任せない。** 名前は宣言 (`declaration(of:)`) へそのまま書かれるので、
+    /// `tint color` は本体の前置きの名 (`mokume/Values:2:15: error: …`) で出て、直す先が Swift の
+    /// 引数だと分からない。空の名前と `;` を含む名前はそもそも誤りにならず、宣言の欄と詰める値
+    /// (``pack(_:)``) がずれたまま組み上がって、断片が別の値を読む。
+    ///
+    /// 断り方は計算の名前の検め (`Canvas.isUsableComputationName`) と同じ `.notCompilable` で、公開の
+    /// 列挙は増やさない。値を受ける 6 つの口 (塗り・効果・計算の、文字列とファイル) が通す。
+    ///
+    /// [#2783]: https://github.com/mokume-metal/mokume/issues/2783
+    static func checkNames(
+        values: [String: ShaderValue], surfaces: [String: ShaderSurface] = [:], path: String
+    ) throws(ShaderFailure) {
+        let unusable =
+            values.keys.filter { !isUsableName($0) }.sorted().map { ("values:", "values", $0) }
+            + surfaces.keys.filter { !isUsableName($0) }.sorted().map { ("surfaces:", "surfaces", $0) }
+        guard !unusable.isEmpty else { return }
+        let lines = unusable.map { argument, prefix, name in
+            "The name \(name.debugDescription) in \(argument) cannot be read in the fragment as "
+                + "\(prefix).<name>. A name has to start with a letter or an underscore and hold only "
+                + "letters, digits and underscores, so rename it where you pass \(argument)"
+        }
+        throw .notCompilable(path: path, reason: lines.joined(separator: "\n"))
+    }
+
     /// 値の名前と、その形。
     ///
-    /// 名前は**断片の中でそのまま書ける識別子**になる。並べる順は名前順に固定する
+    /// 名前は**断片の中でそのまま書ける識別子**になる (``checkNames(values:surfaces:path:)`` が
+    /// 組み立ての前に検める)。並べる順は名前順に固定する
     /// (辞書の順序に依らせると、同じ断片が実行のたびに別の原稿になる)。
     static func declaration(of values: [String: ShaderValue]) -> String {
         // 4 成分のものを先に並べる。16 バイト境界に揃うものを先に置けば、

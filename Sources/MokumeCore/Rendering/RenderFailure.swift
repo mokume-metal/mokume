@@ -165,6 +165,12 @@ public enum RenderFailure: Error, Equatable, Sendable {
     case shaderSourceMissing(name: String)
 
     /// シェーダを組み立てられない。
+    ///
+    /// 理由はコンパイラの言葉のままだが、**入口を書き違えた断片では、期待する入口の形を
+    /// `<断片の名前>: error: …` の 1 行で先頭に足す** ([#2782](https://github.com/mokume-metal/mokume/issues/2782))。
+    /// リンクの段の `Undefined symbol(s)` は書いた断片のどこも指さないので、そのままでは説明の
+    /// 「理由が指す所を、書いた断片の中で直せ」が成り立たない。計算の入口の関数が無いときも、この
+    /// case で言う (組んだライブラリを見て断る。Metal に任せるとプロセスごと落ちる)。
     case shaderCompilationFailed(name: String, reason: String)
 
     /// シェーダを組み立てる口を作れない。

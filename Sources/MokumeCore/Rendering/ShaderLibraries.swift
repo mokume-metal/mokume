@@ -126,7 +126,9 @@ final class ShaderLibraries {
         let source = ShaderSource.assemble(
             prelude: try prelude(named: "Common"), values: values, surfaces: surfaces,
             body: .init(name: bodyName ?? name, text: body))
-        return job(source, name: name)
+        return job(
+            source, name: name,
+            entry: (.paint(surfaces: !surfaces.isEmpty), fragment: bodyName ?? name))
     }
 
     /// 計算の断片を、共通部分を前置きしてから組み立てる。
@@ -167,7 +169,7 @@ final class ShaderLibraries {
         let source = ShaderSource.assemble(
             prelude: try prelude(named: "Effect"), values: values,
             body: .init(name: bodyName ?? name, text: body))
-        return job(source, name: name)
+        return job(source, name: name, entry: (.effect, fragment: bodyName ?? name))
     }
 
     /// 原文を組む。
@@ -185,11 +187,14 @@ final class ShaderLibraries {
     /// - Parameters:
     ///   - name: 数えるときの名前。
     ///   - reported: 組めなかったときに名乗る名前。省けば `name`。
+    ///   - entry: 前置きが呼ぶ入口と、断片が名乗る名前。組めなかった理由を入口の形で言い直すのに
+    ///     使う (``ShaderEntryPoint``)。入口を前置きが呼ばない原文 (同梱の断片・計算) は持たない。
     private func job(
-        _ source: String, name: String, reportedAs reported: String? = nil
+        _ source: String, name: String, reportedAs reported: String? = nil,
+        entry: (point: ShaderEntryPoint, fragment: String)? = nil
     ) -> LibraryJob {
         librariesBuilt[name, default: 0] += 1
-        return LibraryJob(device: device, source: source, reportedName: reported ?? name)
+        return LibraryJob(device: device, source: source, reportedName: reported ?? name, entry: entry)
     }
 
     /// 原文を組む仕事 1 つ。**その場で組むことも、裏で組むこともできる** ([#2365])。
@@ -202,6 +207,7 @@ final class ShaderLibraries {
         let device: any MTLDevice
         let source: String
         let reportedName: String
+        let entry: (point: ShaderEntryPoint, fragment: String)?
 
         /// その場で組む。
         func runNow() throws(RenderFailure) -> any MTLLibrary {
@@ -221,8 +227,12 @@ final class ShaderLibraries {
             }
         }
 
+        /// 組めなかった理由。**入口を書き違えた断片なら、期待する入口の形を先頭に足す** (#2782)。
         private func failure(_ error: any Error) -> RenderFailure {
-            .shaderCompilationFailed(name: reportedName, reason: error.localizedDescription)
+            let reason = error.localizedDescription
+            return .shaderCompilationFailed(
+                name: reportedName,
+                reason: entry.map { $0.point.restating(reason, in: $0.fragment) } ?? reason)
         }
     }
 

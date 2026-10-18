@@ -81,7 +81,8 @@ import MokumeDiagnostics
             label: "computation", valuesHint: "the values you pass when making it")
 
         self.state = try pipeline.makeState(
-            library: library, functionName: name, label: "mokume.computation.\(name)")
+            library: library, functionName: name, label: "mokume.computation.\(name)",
+            fragment: box.bodyName)
         box.watch { [weak self] in self?.reload() }
     }
 
@@ -109,7 +110,8 @@ import MokumeDiagnostics
             prepare: { (body: String) throws(RenderFailure) -> BuildJob<any MTLComputePipelineState> in
                 let library = try gpu.shaders.computeLibraryJob(
                     named: name, body: body, bodyName: box.bodyName, values: values)
-                let state = pipeline.stateJob(functionName: name, label: "mokume.computation.\(name)")
+                let state = pipeline.stateJob(
+                    functionName: name, label: "mokume.computation.\(name)", fragment: box.bodyName)
                 return BuildJob(
                     now: { () throws(RenderFailure) in try state.makeNow(library: library.runNow()) },
                     later: { () async throws(RenderFailure) in

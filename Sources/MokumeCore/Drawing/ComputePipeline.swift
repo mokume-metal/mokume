@@ -45,18 +45,24 @@ final class ComputePipeline {
     }
 
     /// 利用者の断片から計算のパイプラインを組む。
+    ///
+    /// - Parameter fragment: 入口の関数が無いときに断片が名乗る名前
+    ///   (``ShaderSource/bodyName(_:url:)``)。省けば `functionName`。
     func makeState(
-        library: any MTLLibrary, functionName: String, label: String
+        library: any MTLLibrary, functionName: String, label: String, fragment: String? = nil
     ) throws(RenderFailure) -> any MTLComputePipelineState {
-        try stateJob(functionName: functionName, label: label).makeNow(library: library)
+        try stateJob(functionName: functionName, label: label, fragment: fragment)
+            .makeNow(library: library)
     }
 
     /// ``makeState(library:functionName:label:)`` を、ライブラリが出来る前に用意する。裏で組む
     /// 経路 (``ShaderBox``・[#2365]) が使う。
     ///
     /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
-    func stateJob(functionName: String, label: String) -> StateJob {
-        StateJob(compiler: compiler, functionName: functionName, label: label)
+    func stateJob(functionName: String, label: String, fragment: String? = nil) -> StateJob {
+        StateJob(
+            compiler: compiler, functionName: functionName, label: label,
+            fragment: fragment ?? functionName)
     }
 
     /// 1 本の組み方。main で決めた値だけを持つので、裏の糸でも組める
@@ -65,6 +71,22 @@ final class ComputePipeline {
         let compiler: any MTL4Compiler
         let functionName: String
         let label: String
+        /// 入口の関数が無いときに、断片が名乗る名前。
+        let fragment: String
+
+        /// **入口の関数がライブラリに無ければ、パイプラインを作る前に断る** (#2782)。
+        ///
+        /// 無い名前のままパイプラインを作ると、Metal は投げずに assert でプロセスごと落とす
+        /// (`computeFunction must not be nil`)。作るときも保存して差し替えるときも、利用者が
+        /// `kernel void` の名前を書き違えただけで作品が止まる。`kernel` でない関数 (修飾の無い関数や
+        /// `[[visible]]`) も入口にならないので同じく断る。理由は書いた断片の側で直す言葉で言う
+        /// (``ShaderEntryPoint/missingKernel(named:in:)``)。
+        private func checkEntryPoint(in library: any MTLLibrary) throws(RenderFailure) {
+            guard library.makeFunction(name: functionName)?.functionType != .kernel else { return }
+            throw .shaderCompilationFailed(
+                name: functionName,
+                reason: ShaderEntryPoint.missingKernel(named: functionName, in: fragment))
+        }
 
         private func descriptor(library: any MTLLibrary) -> MTL4ComputePipelineDescriptor {
             let function = MTL4LibraryFunctionDescriptor()
@@ -79,6 +101,7 @@ final class ComputePipeline {
 
         /// その場で組む。
         func makeNow(library: any MTLLibrary) throws(RenderFailure) -> any MTLComputePipelineState {
+            try checkEntryPoint(in: library)
             do {
                 return try compiler.makeComputePipelineState(descriptor: descriptor(library: library))
             } catch {
@@ -88,6 +111,7 @@ final class ComputePipeline {
 
         /// 裏で組む。組んでいる間、呼んだ側の糸を塞がない。
         func make(library: any MTLLibrary) async throws(RenderFailure) -> any MTLComputePipelineState {
+            try checkEntryPoint(in: library)
             do {
                 return try await compiler.makeComputePipelineState(descriptor: descriptor(library: library))
             } catch {
