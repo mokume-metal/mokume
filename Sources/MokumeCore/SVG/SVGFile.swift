@@ -64,6 +64,7 @@ nonisolated enum SVGFile {
     /// 近似の名乗りの種類 (``Drawing/approximated`` の ``Skip/what``)。
     static let groupOpacityNote = "opacity on a group whose shapes overlap"
     static let fillAndStrokeOpacityNote = "opacity on a shape with both fill and stroke"
+    static let strokeSubpathsOpacityNote = "translucent stroke on a path whose subpaths overlap"
 
     /// 描かずに捨てたものの 1 種類。
     struct Skip: Sendable, Equatable {
@@ -227,9 +228,12 @@ nonisolated enum SVGFile {
         private(set) var skips: [Skip] = []
         private var index: [String: Int] = [:]
 
-        mutating func note(_ what: String, line: Int) {
+        /// - Parameter earliest: 立てると、後から数えたものがより前の行なら、最初の行をそちらへ直す
+        ///   (入れ子の群は内側が先に閉じるので、数えた順と行の順が食い違う)。
+        mutating func note(_ what: String, line: Int, earliest: Bool = false) {
             if let at = index[what] {
                 skips[at].count += 1
+                if earliest, line < skips[at].line { skips[at].line = line }
             } else {
                 index[what] = skips.count
                 skips.append(Skip(what: what, count: 1, line: line))
@@ -350,7 +354,54 @@ nonisolated enum SVGFile {
     struct OpacityGroup {
         var line: Int
         var boxes: [Box] = []
-        var named = false
+    }
+
+    /// 外接矩形のうち、面積のある重なりが 1 組でもあるかを、**最初に見つかった時点で打ち切って**調べる。
+    ///
+    /// 全部を総当たりにすると子の数の 2 乗になり、`loadShape` は呼んだスレッドを止める。**長さのばらつきが
+    /// 少ない軸で並べて掃く** (sweep and prune): 並べた順に、その軸で届いている矩形 (``active``) とだけ
+    /// 比べる。ロゴの子のように散らばった矩形なら、届いているのはわずかで、ほぼ線形で済む。
+    /// 軸は、矩形の長さの和を全体の幅で割った値が小さいほう (同じ軸で重なりやすくないほう) を選ぶ —
+    /// 縦に積んだ行を横の軸で掃くと、全部が同時に届いて 2 乗になる。
+    ///
+    /// - Returns: `found` は重なりがあったか。`comparisons` は矩形どうしを比べた回数 (検査が読む)。
+    static func firstOverlap(in boxes: [Box]) -> (found: Bool, comparisons: Int) {
+        guard boxes.count > 1 else { return (false, 0) }
+        func spread(_ axis: Int) -> Float {
+            var low = Float.infinity
+            var high = -Float.infinity
+            var total: Float = 0
+            for box in boxes {
+                low = min(low, box.low[axis])
+                high = max(high, box.high[axis])
+                total += box.high[axis] - box.low[axis]
+            }
+            let range = high - low
+            return range > 0 ? total / range : Float.infinity
+        }
+        let axis = spread(0) <= spread(1) ? 0 : 1
+        let other = 1 - axis
+        let order = boxes.indices.sorted { boxes[$0].low[axis] < boxes[$1].low[axis] }
+        var active: [Int] = []
+        var comparisons = 0
+        for index in order {
+            let box = boxes[index]
+            var kept = 0
+            for position in active.indices {
+                let candidate = active[position]
+                comparisons += 1
+                // この軸で届かなくなった矩形は、以降のどの矩形とも重ならない (並べた順に低い端が上がる)
+                if boxes[candidate].high[axis] <= box.low[axis] { continue }
+                if boxes[candidate].low[other] < box.high[other], box.low[other] < boxes[candidate].high[other] {
+                    return (true, comparisons)
+                }
+                active[kept] = candidate
+                kept += 1
+            }
+            active.removeSubrange(kept...)
+            active.append(index)
+        }
+        return (false, comparisons)
     }
 
     /// 並びを前から辿り、描くものと捨てたものを集める。
@@ -377,7 +428,10 @@ nonisolated enum SVGFile {
         mutating func visit(_ event: Event) {
             switch event {
             case .end:
-                _ = stack.popLast()
+                // 半透明の群は、閉じるときに、集めた子の矩形に重なりがあるかを 1 度だけ調べる
+                if let index = stack.popLast()?.group, SVGFile.firstOverlap(in: groups[index].boxes).found {
+                    approximations.note(SVGFile.groupOpacityNote, line: groups[index].line, earliest: true)
+                }
             case .start(let rawName, let attributes, let line):
                 start(rawName, attributes, line)
             }
@@ -917,7 +971,7 @@ nonisolated enum SVGFile {
             if context.strokeIsReference { tally.note("stroke=\"url(…)\"", line: line) }
             if stroke != nil, context.isDashed { tally.note("stroke-dasharray", line: line) }
             if fill == nil && stroke == nil { return }
-            noteOpacityApproximations(outline, context, hasFill: fill != nil, hasStroke: stroke != nil, line: line)
+            noteOpacityApproximations(outline, context, fill: fill, stroke: stroke, line: line)
             items.append(
                 Item(
                     outline: outline, fill: fill, fillRule: context.fillRule, stroke: stroke,
@@ -928,28 +982,34 @@ nonisolated enum SVGFile {
     /// 描くもの 1 つについて、`opacity` を子の色ごとに掛ける近似が SVG と違う絵になるかを見て、
     /// なるなら名乗りに数える (#2884)。
     ///
-    /// 違う絵になるのは 2 つの場合である。**開いている半透明の群の中で、描くものどうしの外接矩形が
-    /// 重なる**とき (群ごとに 1 度だけ数える)。**塗りと線を両方持つものが、祖先まで含めて半透明**の
-    /// とき (線の内側の半分が塗りに重なる)。外接矩形で見るので、実際の形は重ならないのに名乗ることが
-    /// ある (名乗り過ぎる側に倒す)。
+    /// 違う絵になるのは 3 つの場合である。
+    ///
+    /// - **開いている半透明の群の中で、描くものどうしの外接矩形が重なる**。ここでは矩形を群に渡すだけで、
+    ///   重なりは群が閉じるときに調べる (群ごとに 1 度だけ数える)
+    /// - **塗りと線を両方持つものが、祖先まで含めて半透明**。線の内側の半分が塗りに重なる
+    /// - **半透明の線で、部分パスが 2 本以上あり、その線どうしが重なる**。部分パスの線は 1 本ずつ別の形で
+    ///   引くので、重なった所に不透明度が 2 回掛かる (SVG は 1 つの線の形として 1 度だけ掛ける)。`opacity` を
+    ///   直に書いた線だけの要素と、`stroke-opacity` だけの要素もここに入る
+    ///
+    /// 外接矩形で見るので、形が実際には重ならないのに名乗ることがある (名乗り過ぎる側に倒す)。
     private mutating func noteOpacityApproximations(
-        _ outline: Outline, _ context: Context, hasFill: Bool, hasStroke: Bool, line: Int
+        _ outline: Outline, _ context: Context, fill: Color?, stroke: Color?, line: Int
     ) {
-        if hasFill, hasStroke, context.opacity < 1 {
+        if fill != nil, stroke != nil, context.opacity < 1 {
             approximations.note(SVGFile.fillAndStrokeOpacityNote, line: line)
+        }
+        // 線の太さの半分で広げるだけでは、尖った角 (最大 √2 × 太さの半分) と、四角い端の隅が足りない
+        let reach = stroke == nil ? 0 : context.strokeWidth / 2 * context.transform.largestScale * Float(2).squareRoot()
+        if let stroke, stroke.alpha < 1, case .path(let subpaths) = outline, subpaths.count > 1 {
+            let boxes = subpaths.map { Self.box(of: .path([$0]), context.transform).expanded(by: reach) }
+            if SVGFile.firstOverlap(in: boxes).found {
+                approximations.note(SVGFile.strokeSubpathsOpacityNote, line: line)
+            }
         }
         let open = stack.compactMap(\.group)
         guard !open.isEmpty else { return }
-        var box = Self.box(of: outline, context.transform)
-        if hasStroke { box = box.expanded(by: context.strokeWidth / 2 * context.transform.largestScale) }
-        for index in open {
-            if !groups[index].named, groups[index].boxes.contains(where: { $0.overlaps(box) }) {
-                groups[index].named = true
-                approximations.note(SVGFile.groupOpacityNote, line: groups[index].line)
-            }
-            // 名乗った群は、これ以上比べない
-            if !groups[index].named { groups[index].boxes.append(box) }
-        }
+        let box = Self.box(of: outline, context.transform).expanded(by: reach)
+        for index in open { groups[index].boxes.append(box) }
     }
 
     /// 輪郭の外接矩形 (形の座標)。曲線は制御点を含めた矩形にする (曲線は制御点の外へ出ない)。

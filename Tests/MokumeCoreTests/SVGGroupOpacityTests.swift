@@ -22,6 +22,7 @@ struct SVGGroupOpacityTests {
 
     private static let groupOverlap = "opacity on a group whose shapes overlap"
     private static let fillAndStroke = "opacity on a shape with both fill and stroke"
+    private static let strokeSubpaths = "translucent stroke on a path whose subpaths overlap"
 
     // MARK: - 群
 
@@ -228,5 +229,136 @@ struct SVGGroupOpacityTests {
 
         let clean = try document(##"<circle cx="40" cy="50" r="25" fill="#f00"/>"##)
         #expect(Canvas.svgApproximatedNotice(clean, path: "logo.svg") == nil)
+    }
+
+    // MARK: - 線だけの要素の部分パス (反証 1)
+
+    @Test("半透明の線で、部分パスの線どうしが重なると名乗る (opacity を直に書いても、stroke-opacity だけでも)")
+    func translucentStrokeWithOverlappingSubpaths() throws {
+        let cross = ##"d="M10 50 L90 50 M50 10 L50 90""##
+        for attributes in [
+            ##"stroke="#f00" stroke-width="6" opacity="0.5""##,
+            ##"stroke="#f00" stroke-width="6" stroke-opacity="0.5""##,
+            ##"stroke="rgba(255,0,0,0.5)" stroke-width="6""##,
+        ] {
+            let drawing = try document("<path \(cross) fill=\"none\" \(attributes)/>")
+            #expect(names(drawing) == [Self.strokeSubpaths], "\(attributes)")
+            #expect(drawing.approximated.first?.line == 2)
+        }
+    }
+
+    @Test("部分パスが重ならない・線が不透明・部分パスが 1 本なら名乗らない")
+    func strokeSubpathsNotOverlapping() throws {
+        for body in [
+            ##"<path d="M10 10 L30 10 M70 90 L90 90" fill="none" stroke="#f00" stroke-width="2" opacity="0.5"/>"##,
+            ##"<path d="M10 50 L90 50 M50 10 L50 90" fill="none" stroke="#f00" stroke-width="6"/>"##,
+            ##"<path d="M10 50 L90 50 L90 90" fill="none" stroke="#f00" stroke-width="6" opacity="0.5"/>"##,
+        ] {
+            #expect(try document(body).approximated.isEmpty, "\(body)")
+        }
+    }
+
+    // MARK: - 線の広がり (反証 4)
+
+    @Test("尖った角と四角い端の伸びを含めて広げる (太さの半分だけでは届かない所も名乗る)")
+    func strokeReachIncludesCornersAndCaps() throws {
+        // 太さ 20 の線の矩形 (x 10…30)。角は √2 × 10 ≈ 14.1 まで尖りうるので、44 までは届きうる。
+        // 太さの半分 (10) だけなら 40 までで、x = 42 の矩形には届かない
+        let drawing = try document(
+            """
+            <g opacity="0.5">
+            <rect x="10" y="10" width="20" height="20" fill="none" stroke="#f00" stroke-width="20"/>
+            <rect x="42" y="10" width="10" height="10" fill="#00f"/>
+            </g>
+            """)
+        #expect(names(drawing).contains(Self.groupOverlap))
+    }
+
+    // MARK: - 半透明の容器の種類 (反証 6)
+
+    @Test("根の svg・a・switch が半透明でも、重なる子を名乗る")
+    func everyContainerKindRegistersItsOpacity() throws {
+        let circles =
+            ##"<circle cx="40" cy="50" r="25" fill="#f00"/><circle cx="60" cy="50" r="25" fill="#00f"/>"##
+        let root = try SVGFile.parse(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" opacity=\"0.5\">\n\(circles)\n</svg>",
+            path: "root.svg")
+        #expect(names(root) == [Self.groupOverlap], "根の svg")
+        #expect(root.approximated.first?.line == 1)
+
+        let nestedSvg = try document("<svg opacity=\"0.5\">\(circles)</svg>")
+        #expect(names(nestedSvg) == [Self.groupOverlap], "入れ子の svg")
+
+        let anchor = try document("<a opacity=\"0.5\">\(circles)</a>")
+        #expect(names(anchor) == [Self.groupOverlap], "a")
+
+        let chosen = try document("<switch opacity=\"0.5\"><g>\(circles)</g></switch>")
+        #expect(names(chosen) == [Self.groupOverlap], "switch")
+    }
+
+    @Test("入れ子の半透明の群が両方重なるなら、最初の行は外側の群")
+    func nestedTranslucentGroupsKeepTheEarliestLine() throws {
+        let drawing = try document(
+            """
+            <g opacity="0.5">
+            <g opacity="0.5">
+            <circle cx="40" cy="50" r="25" fill="#f00"/>
+            <circle cx="60" cy="50" r="25" fill="#00f"/>
+            </g>
+            </g>
+            """)
+        #expect(names(drawing) == [Self.groupOverlap])
+        #expect(drawing.approximated.first?.count == 2)
+        #expect(drawing.approximated.first?.line == 2, "外側の群の行")
+    }
+
+    // MARK: - 重ならない多数の子 (反証 3)
+
+    private func box(_ x: Float, _ y: Float, _ width: Float = 1, _ height: Float = 1) -> SVGFile.Box {
+        SVGFile.Box(low: SIMD2(x, y), high: SIMD2(x + width, y + height))
+    }
+
+    @Test("重ならない多数の矩形は、2 乗にならない回数で比べ終える (横一列・縦一列・格子)")
+    func disjointBoxesAreNotComparedAllPairs() {
+        let count = 20_000
+        let row = (0..<count).map { box(Float($0) * 2, 0) }
+        let column = (0..<count).map { box(0, Float($0) * 2) }
+        let grid = (0..<count).map { box(Float($0 % 200) * 2, Float($0 / 200) * 2) }
+        for (name, boxes) in [("row", row), ("column", column), ("grid", grid)] {
+            let result = SVGFile.firstOverlap(in: boxes)
+            #expect(result.found == false, "\(name)")
+            // 総当たりなら約 2 億回。掃いて届く矩形とだけ比べれば、数百万回で済む
+            #expect(result.comparisons < count * 500, "\(name): \(result.comparisons) 回")
+        }
+        #expect(SVGFile.firstOverlap(in: row).comparisons < count * 4, "横一列はほぼ線形")
+        #expect(SVGFile.firstOverlap(in: column).comparisons < count * 4, "縦一列も軸を選んでほぼ線形")
+    }
+
+    @Test("重なりが 1 組でもあれば見つけ、見つけたら打ち切る")
+    func findsTheOverlapAndStops() {
+        var boxes = (0..<10_000).map { box(Float($0) * 2, 0) }
+        boxes.append(box(2.5, 0, 1, 1))  // 2 番目の矩形 (x 2…3) と重なる
+        let result = SVGFile.firstOverlap(in: boxes)
+        #expect(result.found)
+        #expect(result.comparisons < 100, "最初に見つかった所で止まる: \(result.comparisons) 回")
+        // 辺が接するだけなら重ならない
+        #expect(SVGFile.firstOverlap(in: [box(0, 0, 1, 1), box(1, 0, 1, 1)]).found == false)
+        #expect(SVGFile.firstOverlap(in: []).found == false)
+    }
+
+    @Test("子が多く重ならない半透明の群も、読み込みが 2 乗にならずに終わる")
+    func manyDisjointChildrenParseQuickly() throws {
+        var body = "<g opacity=\"0.5\">\n"
+        for index in 0..<20_000 {
+            body += "<rect x=\"\(index % 200 * 4)\" y=\"\(index / 200 * 4)\" width=\"2\" height=\"2\" fill=\"#f00\"/>\n"
+        }
+        body += "</g>"
+        let clock = ContinuousClock()
+        var drawing = SVGFile.Drawing(items: [], skipped: [])
+        let elapsed = try clock.measure { drawing = try document(body) }
+        #expect(drawing.items.count == 20_000)
+        #expect(drawing.approximated.isEmpty)
+        // 総当たりなら 2 億回の比較で数十秒。余裕を見て 20 秒を超えたら 2 乗に戻っている
+        #expect(elapsed < .seconds(20), "\(elapsed)")
     }
 }
