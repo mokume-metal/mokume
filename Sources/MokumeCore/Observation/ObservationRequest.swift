@@ -216,31 +216,59 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     }
 
     /// 名乗る名前の数と、1 つあたりの長さの上限。書き手が置いた長さのまま応答へ返さない。
-    private static let namedKeyLimit = 5
-    private static let namedKeyLength = 32
+    private nonisolated static let namedKeyLimit = 5
+    private nonisolated static let namedKeyLength = 32
+
+    /// 名乗る名前を、上限で切って並べる。
+    private nonisolated static func named(_ keys: [String]) -> String {
+        let shown = keys.prefix(namedKeyLimit).map { key in
+            key.count > namedKeyLength ? "\(key.prefix(namedKeyLength))…" : key
+        }
+        let rest = keys.count - shown.count
+        return shown.joined(separator: ", ") + (rest > 0 ? " and \(rest) more" : "")
+    }
 
     /// 読まなかった鍵を名乗る警告。なければ `nil`。
     var unknownKeysWarning: String? {
         guard !unknownKeys.isEmpty else { return nil }
-        let shown = unknownKeys.prefix(Self.namedKeyLimit).map { key in
-            key.count > Self.namedKeyLength ? "\(key.prefix(Self.namedKeyLength))…" : key
-        }
-        let rest = unknownKeys.count - shown.count
-        let names = shown.joined(separator: ", ") + (rest > 0 ? " and \(rest) more" : "")
         let known = CodingKeys.allCases.map(\.rawValue).joined(separator: ", ")
-        return "Not read, so the request was taken without them: \(names) (the keys read are \(known))"
+        return "Not read, so the request was taken without them: \(Self.named(unknownKeys)) (the keys read are \(known))"
+    }
+
+    /// 読めなかった理由に、知らない鍵の名乗りを添える。**読めない要求の応答にも名乗る** (#2392) —
+    /// 型の誤りを直した次の応答で初めて `sacle` が出る、という 2 度手間にしない。場所と元の説明は保つ。
+    private nonisolated static func annotated(_ error: DecodingError, naming keys: [String]) -> DecodingError {
+        guard !keys.isEmpty else { return error }
+        func context(_ context: DecodingError.Context) -> DecodingError.Context {
+            .init(
+                codingPath: context.codingPath,
+                debugDescription: "\(context.debugDescription); keys not read: \(named(keys))",
+                underlyingError: context.underlyingError)
+        }
+        switch error {
+        case .typeMismatch(let type, let inner): return .typeMismatch(type, context(inner))
+        case .valueNotFound(let type, let inner): return .valueNotFound(type, context(inner))
+        case .keyNotFound(let key, let inner): return .keyNotFound(key, context(inner))
+        case .dataCorrupted(let inner): return .dataCorrupted(context(inner))
+        @unknown default: return error
+        }
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(String.self, forKey: .id)
-        self.scale = try Self.scale(in: container, forKey: .scale) ?? 1
-        self.count = try Self.integer(in: container, forKey: .count) ?? 1
-        self.every = try Self.integer(in: container, forKey: .every) ?? 1
-        // **`null` は省略と同じ「時刻なし」** (#2392。窓口 #2393 と揃う)。型が違う値は、
+        let unknownKeys = try Self.unknownKeys(in: decoder)
+        do {
+            self.id = try container.decode(String.self, forKey: .id)
+            self.scale = try Self.scale(in: container, forKey: .scale) ?? 1
+            self.count = try Self.integer(in: container, forKey: .count) ?? 1
+            self.every = try Self.integer(in: container, forKey: .every) ?? 1
+        } catch let error as DecodingError {
+            throw Self.annotated(error, naming: unknownKeys)
+        }
+        // **`null` は省略と同じ「時刻なし」** (#2392)。窓口の側は #2393 で揃える。型が違う値は、
         // 「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
         let timeIsGiven = try container.contains(.time) && !container.decodeNil(forKey: .time)
         self.time = timeIsGiven ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
-        self.unknownKeys = try Self.unknownKeys(in: decoder)
+        self.unknownKeys = unknownKeys
     }
 }

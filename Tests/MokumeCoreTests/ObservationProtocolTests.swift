@@ -113,6 +113,27 @@ struct ObservationProtocolTests {
         #expect(request.clamped().warnings.contains { $0.contains("sacle") })
     }
 
+    /// **読めない要求の応答にも、知らない鍵を名乗る** (#2392)。`sacle` の綴りの誤りに加えて別の鍵の型も
+    /// 誤っているとき、直したのに次の応答で初めて `sacle` が出る、という 2 度手間にしない。
+    @Test(
+        "読めない要求の理由にも、知らない鍵を名乗る",
+        arguments: [
+            (#"{"id":"u","sacle":0.5,"count":2.5}"#, "count"),
+            (#"{"id":"u","sacle":0.5,"scale":"0.5"}"#, "scale"),
+            (#"{"id":"u","sacle":0.5,"every":true}"#, "every"),
+        ] as [(String, String)])
+    func namesAnUnknownKeyInAnUnreadableRequestToo(_ request: String, _ key: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: request, to: facet)
+        guard case .unreadable(_, let reason) = try #require(observer.pendingRequest()) else {
+            Issue.record("読めないはずの要求が読めた")
+            return
+        }
+        #expect(reason.contains(key), "\(reason)")
+        #expect(reason.contains("sacle"), "知らない鍵が名乗られない: \(reason)")
+    }
+
     @Test("知らない鍵が無ければ、警告は足さない")
     func namesNothingWhenEveryKeyIsKnown() throws {
         let facet = try makeFacet()
@@ -411,8 +432,8 @@ struct ObservationProtocolTests {
         #expect(observer.pendingRequest() == nil)
     }
 
-    /// **省略できる欄の `null` は、省略と同じに読む** (#2392)。MCP の窓口が省略可の欄の `null` を省略と
-    /// 読む (#2393) のに、区画を直接書く側の読み方を揃える。`time: null` は「時刻なし」で、断らない。
+    /// **省略できる欄の `null` は、省略と同じに読む** (#2392)。`time: null` は「時刻なし」で、断らない。
+    /// MCP の窓口はいまの `time`・`count`・`every` の `null` を断る。窓口の側は #2393 で揃える。
     @Test(
         "省略できる欄の null は、書かなかった要求と同じに撮る",
         arguments: ["scale", "count", "every", "time"])
