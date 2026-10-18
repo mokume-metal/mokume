@@ -129,6 +129,33 @@ struct ObservationTimeTests {
         #expect(scene.draws == 0)
     }
 
+    /// 知らない鍵は要求を失敗させず、**撮ったうえで**応答の `warnings` で名乗る (#2392)。
+    @Test("知らない鍵があっても等倍で撮り、warnings で名乗る")
+    func namesAnUnknownKeyAndStillTakesTheShot() throws {
+        let path = try facet(), scene = Scene()
+        let runtime = try runtime(scene, path)
+        try request(#"{"id":"x3","sacle":0.5}"#, to: path)
+        try runtime.advance()
+        let response = try report(path)
+        #expect(response["id"] as? String == "x3")
+        #expect(response["image"] != nil, "撮らずに断った")
+        let warnings = response["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains("sacle") }, "\(warnings)")
+    }
+
+    @Test("断る応答にも、知らない鍵の名乗りが載る")
+    func namesAnUnknownKeyInARefusal() throws {
+        let path = try facet(), scene = Scene()
+        let runtime = try runtime(scene, path)
+        try request(#"{"id":"bad","time":-1,"sacle":0.5}"#, to: path)
+        try runtime.advance()
+        let response = try report(path)
+        #expect(response["image"] == nil)
+        let warnings = response["warnings"] as? [String] ?? []
+        #expect(warnings.count == 2, "\(warnings)")
+        #expect(warnings.contains { $0.contains("sacle") }, "\(warnings)")
+    }
+
     @Test("外部停止と録画中は描き直さず理由を返す", arguments: [false, true])
     func refusesWhileUnavailable(recording: Bool) throws {
         let path = try facet(), scene = Scene()

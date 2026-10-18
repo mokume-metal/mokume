@@ -85,12 +85,57 @@ struct ObservationProtocolTests {
         #expect(Self.request(second)?.scale == 0.5)
     }
 
-    @Test("知らない鍵は無視する")
-    func ignoresUnknownKeys() throws {
+    /// **知らない鍵があっても、要求は失敗させず撮る** (ADR-0018 決定 3。新しい書き手が足したキーを
+    /// 古いスケッチが断らない)。ただし**黙って捨てない** — `scale` の綴りの誤りが、警告なしの等倍に
+    /// なる (#2392)。応答の `warnings` に知らない名前を載せる。
+    @Test("知らない鍵は無視して撮り、警告で名乗る")
+    func ignoresUnknownKeysAndNamesThem() throws {
         let facet = try makeFacet()
         let observer = FrameObserver(directory: facet)
         try write(request: #"{"id":"a1","somethingNew":42}"#, to: facet)
-        #expect(observer.pendingRequest()?.id == "a1")
+        let pending = observer.pendingRequest()
+        #expect(pending?.id == "a1")
+        let request = try #require(Self.request(pending), "知らない鍵で要求が解けなくなった")
+        #expect(request.unknownKeys == ["somethingNew"])
+        let warnings = request.clamped().warnings
+        #expect(warnings.count == 1, "\(warnings)")
+        #expect(warnings.first?.contains("somethingNew") == true, "\(warnings)")
+    }
+
+    @Test("綴りを誤った鍵は、等倍で撮ったうえで名乗る")
+    func namesAMisspelledKey() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"x3","sacle":0.5}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request.id == "x3")
+        #expect(request.scale == 1, "知らない鍵 sacle を scale として読んだ")
+        #expect(request.clamped().warnings.contains { $0.contains("sacle") })
+    }
+
+    @Test("知らない鍵が無ければ、警告は足さない")
+    func namesNothingWhenEveryKeyIsKnown() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"k1","scale":0.5,"count":2,"every":3}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request.unknownKeys.isEmpty)
+        #expect(request.clamped().warnings.isEmpty)
+    }
+
+    /// 名乗る名前は書き手が置いた長さのままには写さない (数の字面を写さないのと同じ)。
+    @Test("知らない鍵が多くても長くても、名乗りは伸び続けない")
+    func boundsTheNamingOfUnknownKeys() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        let many = (0..<50).map { "\"extra\($0)\":1" }.joined(separator: ",")
+        let long = String(repeating: "k", count: 5000)
+        try write(request: "{\"id\":\"b1\",\"\(long)\":1,\(many)}", to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        let warnings = request.clamped().warnings
+        #expect(warnings.count == 1, "\(warnings)")
+        #expect((warnings.first?.count ?? 0) < 400, "\(warnings.first?.count ?? 0) 文字")
+        #expect(warnings.first?.contains("extra0") == true, "\(warnings)")
     }
 
     @Test("壊れた要求で走っているスケッチを止めない")

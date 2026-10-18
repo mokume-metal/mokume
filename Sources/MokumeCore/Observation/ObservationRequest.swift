@@ -5,8 +5,9 @@ import Foundation
 
 /// 外から置かれる観測の要求。
 ///
-/// 形の正典は `Schemas/observe-request.schema.json`。**知らない鍵は無視する**
-/// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。
+/// 形の正典は `Schemas/observe-request.schema.json`。**知らない鍵は読まず、要求は失敗させない**
+/// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。ただし黙って捨てず、
+/// 応答の `warnings` で名乗る (``unknownKeysWarning``・[#2392])。
 ///
 /// **省略できる欄 (`scale`・`count`・`every`・`time`) の `null` は、省略と同じに読む** ([#2392])。
 /// `time: null` は「時刻なし」で、断らない。型の違う値 (`"5"`・`true`) は省略として通さない。
@@ -70,6 +71,8 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 指定した秒で1枚描き直す。省略時は直近の絵を読むだけ。
     /// `deltaTime` は0、番号は1進む。画面と `draw()` の副作用は残り、巻き戻しではない。
     public let time: Double?
+    /// 要求にあった、この版が読まない鍵 (名前順)。
+    package let unknownKeys: [String]
 
     /// JSON の数として読めても、時刻として使えない要求は応答で断る。
     var timeWarning: String? {
@@ -89,6 +92,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         self.count = count
         self.every = every
         self.time = time
+        self.unknownKeys = []
     }
 
     /// 範囲の端で丸めた縮小率・枚数・間隔、そして丸めたことを伝えることわり。
@@ -110,6 +114,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// [#2045]: https://github.com/mokume-metal/mokume/issues/2045
     package func clamped() -> (scale: Double, count: Int, every: Int, warnings: [String]) {
         var warnings: [String] = []
+        if let unknownKeysWarning { warnings.append(unknownKeysWarning) }
         let scale = Self.clampScale(self.scale)
         if let reason = scale.reason {
             warnings.append("The scale went from \(self.scale) to \(scale.value) (\(reason))")
@@ -149,7 +154,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         return (value, nil)
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case id, scale, count, every, time
     }
 
@@ -180,6 +185,41 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         }
     }
 
+    /// 要求にあった、読まない鍵 (名前順)。
+    ///
+    /// **断らず、読まないだけにする** ([ADR-0018] 決定 3「知らないキーは無視する」。新しい書き手が足した
+    /// キーを古いスケッチが断らない)。ただし黙って捨てない — `sacle` のような綴りの誤りが、警告なしの
+    /// 等倍になる ([#2392])。名乗りは ``unknownKeysWarning`` が応答の `warnings` に載せる。
+    private nonisolated static func unknownKeys(in decoder: any Decoder) throws -> [String] {
+        let all = try decoder.container(keyedBy: AnyKey.self)
+        return all.allKeys.map(\.stringValue)
+            .filter { CodingKeys(rawValue: $0) == nil }
+            .sorted()
+    }
+
+    private struct AnyKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    /// 名乗る名前の数と、1 つあたりの長さの上限。書き手が置いた長さのまま応答へ返さない。
+    private static let namedKeyLimit = 5
+    private static let namedKeyLength = 32
+
+    /// 読まなかった鍵を名乗る警告。なければ `nil`。
+    var unknownKeysWarning: String? {
+        guard !unknownKeys.isEmpty else { return nil }
+        let shown = unknownKeys.prefix(Self.namedKeyLimit).map { key in
+            key.count > Self.namedKeyLength ? "\(key.prefix(Self.namedKeyLength))…" : key
+        }
+        let rest = unknownKeys.count - shown.count
+        let names = shown.joined(separator: ", ") + (rest > 0 ? " and \(rest) more" : "")
+        let known = CodingKeys.allCases.map(\.rawValue).joined(separator: ", ")
+        return "Not read, so the request was taken without them: \(names) (the keys read are \(known))"
+    }
+
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
@@ -190,5 +230,6 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         // 「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
         let timeIsGiven = try container.contains(.time) && !container.decodeNil(forKey: .time)
         self.time = timeIsGiven ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
+        self.unknownKeys = try Self.unknownKeys(in: decoder)
     }
 }
