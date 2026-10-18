@@ -101,8 +101,8 @@ struct RenderCommandTests {
                 "../probe", "--scratch-path", "sp", "--fps", "10", "--seconds", "0.1", "--out",
                 "o.mov",
             ], currentDirectory: plain)
-        #expect(options.invocation.directory.path == "/work/probe")
-        #expect(options.invocation.scratchDirectory?.path == "/work/plain/sp")
+        #expect(try options.invocation.directory.path == "/work/probe")
+        #expect(try options.invocation.scratchDirectory?.path == "/work/plain/sp")
         #expect(options.request.destination == "/work/plain/o.mov")
     }
 

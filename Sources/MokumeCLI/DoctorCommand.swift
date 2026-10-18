@@ -206,12 +206,14 @@ enum DoctorCommand {
     ///   - environment: 環境。**検査から渡せる形にしてある** — 既定のままだと打った人の
     ///     手元の共有の置き場を覗くことになり、結果が機械によって変わる。
     ///   - home: ホームディレクトリ。同上。
-    ///   - currentDirectory: 相対の場所を解く基準 (走らせた場所)。同上。
+    ///   - currentDirectory: 相対の場所を解く基準 (走らせた場所)。同上。**`nil` は読めない回**
+    ///     (作業ディレクトリが消えた)。止まらずに、先頭でそう名乗る
+    ///     ([#2497](https://github.com/mokume-metal/mokume/issues/2497))。
     static func text(
-        for arguments: [String], workDirectory: URL? = WorkDirectory.given,
+        for arguments: [String], workDirectory givenWorkDirectory: URL? = WorkDirectory.given,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
-        currentDirectory: URL = GivenPath.currentDirectory
+        currentDirectory: URL? = GivenPath.currentDirectory
     ) -> String {
         // 引数を解く骨格も、走らせる口と同じ 1 本を通る (#814)。**切り分けの口だけは
         // 止まらない** — 知らない引数で使い方を出して終わると、いちばん要るときに読めない。
@@ -234,15 +236,52 @@ enum DoctorCommand {
         let emptyPlace = parsed.positional?.isEmpty == true
         let invocation = Invocation(
             place: emptyPlace ? nil : parsed.positional, currentDirectory: currentDirectory)
-        let directory = invocation.directory
-        let base = invocation.facetBase(workDirectory: workDirectory)
+        // **走らせた場所が読めず、相対の場所 (または省略) を解けない回も、止まらずに名乗る。**
+        // 場所は解けなかった綴りのまま持ち、**場所そのものは読まない** (辿り着けない側で名乗る)。
+        // 解けていない相対の綴りを `stat` すると、消えた作業ディレクトリが読めてしまうことがあり
+        // (実測: macOS は `.` を読めた)、そこへ `swift` を起こしに行って落ちる。先頭でその理由を
+        // 言い、場所に依らない環境の節は読めるようにする
+        let directory: URL
+        let unreadable: String?
+        let placeSeen: GivenPath.Presence?
+        do {
+            directory = try invocation.directory
+            unreadable = nil
+            placeSeen = nil
+        } catch {
+            directory = GivenPath.unresolved(invocation.place ?? ".")
+            unreadable = invocation.place ?? "."
+            placeSeen = .unreachable(reason: "the directory this was run from cannot be read")
+        }
+        // **環境変数の相対の綴りも、同じ約束を負う** (#2497)。読めない作業ディレクトリに当たる値は、
+        // 相対のまま使わず、先頭で名乗って与えられていないものとして診る
+        var unreadableVariables: [(name: String, spelling: String)] = []
+        var workDirectory = givenWorkDirectory
+        if case .unreadable(let spelling) = WorkDirectory.resolution(
+            environment: environment, currentDirectory: currentDirectory)
+        {
+            unreadableVariables.append((StartupReads.workDirectory.key, spelling))
+            workDirectory = nil
+        }
+        if (try? BuildDirectory.root(
+            environment: environment, home: home, currentDirectory: currentDirectory)) == nil,
+            let spelling = environment[BuildDirectory.environmentKey]
+        {
+            unreadableVariables.append((BuildDirectory.environmentKey, spelling))
+        }
+        let base = Invocation.facetBase(under: directory, workDirectory: workDirectory)
         return report(
-            environment: probeEnvironment(in: directory),
-            state: probeState(in: directory, facetBase: base, environment: environment, home: home),
+            environment: probeEnvironment(in: directory, presence: placeSeen),
+            state: probeState(
+                in: directory, facetBase: base, environment: environment, home: home,
+                presence: placeSeen, currentDirectory: currentDirectory),
             base: base,
             given: workDirectory != nil,
             ignored: ignored,
-            emptyPlaceLookedAt: emptyPlace ? directory : nil)
+            // 空の場所は走らせた場所を診る代わりに名乗るが、その走らせた場所が読めない回は診ていない
+            emptyPlaceLookedAt: emptyPlace && unreadable == nil ? directory : nil,
+            emptyPlaceGiven: emptyPlace,
+            unresolvedPlace: unreadable, unreadableVariables: unreadableVariables)
     }
 
     // MARK: - 文
@@ -250,9 +289,32 @@ enum DoctorCommand {
     /// 3 段に並べる。**上 2 段が切り分けの本体**で、3 段目は既にある一覧をそのまま出す。
     static func report(
         environment: Environment, state: State, base: URL, given: Bool, ignored: [String] = [],
-        emptyPlaceLookedAt: URL? = nil
+        emptyPlaceLookedAt: URL? = nil, emptyPlaceGiven: Bool = false,
+        unresolvedPlace: String? = nil,
+        unreadableVariables: [(name: String, spelling: String)] = []
     ) -> String {
         var lines: [String] = []
+        if let spelling = unresolvedPlace {
+            // 投げずに言う (下の `ignored` と同じ理由)。**診たものを「渡された場所」と読ませない**。
+            // 空の場所が渡されていたら、それも言う (走らせた場所を診る代わりにも、診る場所が無い)
+            lines += [
+                (emptyPlaceGiven ? "An empty directory was given, which names no place. " : "")
+                    + "Cannot read the directory this was run from (it may have been deleted),"
+                    + " so \(CommandFailure.unresolvedPhrase(spelling))"
+                    + " could not be resolved and no place was looked at.",
+                "Give an absolute path to look at one.",
+                "",
+            ]
+        }
+        for variable in unreadableVariables {
+            // **相対のまま使わず、与えられていないものとして診る** (#2497)
+            lines += [
+                "\(variable.name) is the relative path \(GivenPath.shellWord(display: variable.spelling)),"
+                    + " which cannot be resolved because the directory this was run from cannot be read."
+                    + " It was left out; give an absolute path to use it.",
+                "",
+            ]
+        }
         if let place = emptyPlaceLookedAt {
             // 投げずに言う (上の `ignored` と同じ理由)。**どこを診たかも言う** — 渡された場所を
             // 診たと読ませない
@@ -271,6 +333,9 @@ enum DoctorCommand {
         lines += ["", "What is here", ""]
         lines += stateLines(state).map { "  \($0)" }
         // 見出しは足さない。一覧は自分の名乗りを持っているので、重ねると 2 度言うことになる
+        // 場所が解けていないとき、区画の基準を環境変数が与えていなければ、基準は解けていない
+        // 綴りになる。そこを「在る / 無い」と読むと嘘になるので載せない
+        guard unresolvedPlace == nil || given else { return lines.joined(separator: "\n") }
         lines.append("")
         lines.append(
             StartupReadsReport.document(base: base, given: given, package: state.place))
@@ -535,9 +600,14 @@ enum DoctorCommand {
     /// **見ている場所がディレクトリでなければ、道具立てを聞かない** (#2314)。`swift` は
     /// そこで起こすので起きず、聞けば「起こせなかった」としか言えない — 入っている `swift`
     /// を疑わせる誤った断定になる (規律 3)。
-    static func probeEnvironment(in directory: URL) -> Environment {
+    ///
+    /// - Parameter presence: 場所の在り方。**渡されなければ読む。** 場所が解けていない回
+    ///   (走らせた場所が読めない・#2497) は、読まずにここで渡す。
+    static func probeEnvironment(
+        in directory: URL, presence: GivenPath.Presence? = nil
+    ) -> Environment {
         let version = ProcessInfo.processInfo.operatingSystemVersion
-        let askable = GivenPath.Presence.of(directory) == .directory
+        let askable = (presence ?? GivenPath.Presence.of(directory)) == .directory
         var toolchain: String?
         var unanswered: String?
         if askable {
@@ -572,26 +642,42 @@ enum DoctorCommand {
     /// - Parameter facetBase: 区画の基準。**スケッチの場所とは別の軸** — `watch` は
     ///   `MOKUME_WORK_DIR` を基準に記録を置くので、こちらを分けないと基準を与えた環境で
     ///   常に「まだ無い」と読むことになる (#730)。
+    /// - Parameter presence: 場所の在り方。**渡されなければ読む。** 渡されて `.directory` でなければ、
+    ///   場所の中身は読まない (走らせた場所が読めず、場所が解けていない回・#2497)。
     static func probeState(
         in directory: URL, facetBase: URL,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        presence: GivenPath.Presence? = nil,
+        currentDirectory: URL? = GivenPath.currentDirectory
     ) -> State {
-        let root = BuildDirectory.root(environment: environment, home: home)
+        // 根が解けない (読めない作業ディレクトリに当たる相対の `MOKUME_BUILD_DIR`) 回は、共有の置き場を
+        // 読まない。先頭の名乗りが言う (#2497)
+        let root = try? BuildDirectory.root(
+            environment: environment, home: home, currentDirectory: currentDirectory)
+        guard presence == nil || presence == .directory else {
+            return State(
+                place: directory, hasPackage: false, buildDirectory: nil,
+                sharedStore: root.map { sharedStore(at: $0) },
+                // 区画の基準が解けていない綴りのままなら、読まない (環境変数が与えた基準は絶対パス)
+                lastBuild: facetBase.path.hasPrefix("/") ? lastBuild(under: facetBase) : nil,
+                dependency: nil, tool: ToolVersion.release(), presence: presence ?? .missing)
+        }
         return State(
             place: directory,
             hasPackage: exists(directory.appendingPathComponent("Package.swift")),
             // **記録から決める。** 置き場は版ごとの共有へ移りうるが、共有の置き場が
             // 在ることはこのスケッチがそこを使っている証拠にはならない — 先客に譲って
             // パッケージ直下へ落ちた側にそれを名乗ると、この口が嘘をつく
-            buildDirectory: BuildDirectory.settled(
-                for: directory, root: root,
-                pin: DependencyVersion.pin(forPackageAt: directory)),
-            sharedStore: sharedStore(at: root),
+            buildDirectory: root.flatMap {
+                BuildDirectory.settled(
+                    for: directory, root: $0, pin: DependencyVersion.pin(forPackageAt: directory))
+            },
+            sharedStore: root.map { sharedStore(at: $0) },
             lastBuild: lastBuild(under: facetBase),
             dependency: DependencyVersion.resolved(forPackageAt: directory),
             tool: ToolVersion.release(),
-            presence: GivenPath.Presence.of(directory))
+            presence: presence ?? GivenPath.Presence.of(directory))
     }
 
     /// 共有の置き場を読む。**何も作らず、何も消さない** (根が無ければ 0 通りと名乗る)。

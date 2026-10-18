@@ -46,7 +46,7 @@ enum WatchCommand {
         watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) }
     ) throws(CommandFailure) {
         let invocation = try Invocation.parse(arguments)
-        let directory = invocation.directory
+        let directory = try invocation.directory
         guard FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("Package.swift").path)
         else {
@@ -76,7 +76,7 @@ enum WatchCommand {
         // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)。**計算は 1 つ** (#791)
         let session = WatchSession(
-            directory: directory, context: context, facetBase: invocation.facetBase(),
+            directory: directory, context: context, facetBase: try invocation.facetBase(),
             reportsRate: true, hooks: .live(resolver: resolver, running: running))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }

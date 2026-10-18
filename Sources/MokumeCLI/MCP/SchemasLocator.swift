@@ -67,9 +67,15 @@ enum SchemasLocator {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     ) -> URL? {
+        // 置き場の根が解けないのは、作業ディレクトリが読めない回の相対の値だけ。窓口を立てる前に
+        // 断っている (``MCPCommand/directories(arguments:environment:currentDirectory:)``) ので、
+        // ここへ来るのは検査から直に呼ばれたときだけ
+        guard let root = try? BuildDirectory.root(environment: environment, home: home) else {
+            return nil
+        }
         let directories = BuildDirectory.plausibleDirectories(
             for: workDirectory,
-            root: BuildDirectory.root(environment: environment, home: home),
+            root: root,
             pin: DependencyVersion.pin(forPackageAt: workDirectory))
         for directory in directories {
             let url = directory.appendingPathComponent("workspace-state.json")

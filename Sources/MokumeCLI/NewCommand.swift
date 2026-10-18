@@ -19,14 +19,14 @@ enum NewCommand {
         /// 作るスケッチの場所。`--path` を走らせた場所から解き、名前を足す (#2323)。
         ///
         /// - Parameter base: 走らせた場所。検査から渡せる形にしてある。
-        func root(from base: URL = GivenPath.currentDirectory) -> URL {
-            GivenPath.resolve(path, from: base).appendingPathComponent(name, isDirectory: true)
+        func root(from base: URL? = GivenPath.currentDirectory) throws(CommandFailure) -> URL {
+            try GivenPath.resolve(path, from: base).appendingPathComponent(name, isDirectory: true)
         }
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let options = try parse(arguments)
-        let root = options.root()
+        let root = try options.root()
         guard !FileManager.default.fileExists(atPath: root.path) else {
             throw .directoryExists(path: root.path)
         }
@@ -86,7 +86,7 @@ enum NewCommand {
     /// 作るファイルと中身。
     ///
     /// - Parameter base: 走らせた場所。`--local` の名前を作る場所から解くのに要る。
-    static func files(for options: Options, base: URL = GivenPath.currentDirectory)
+    static func files(for options: Options, base: URL? = GivenPath.currentDirectory)
         throws(CommandFailure) -> [(String, String)]
     {
         let target = options.name
@@ -104,7 +104,7 @@ enum NewCommand {
                     from: "\(Templates.libraryMinimumVersion)")
                 """
             }
-        let identity = packageIdentity(local: options.local, sketch: options.root(from: base))
+        let identity = packageIdentity(local: options.local, sketch: try options.root(from: base))
         // **作るパッケージの名前と、依存の名前が同じだと組めない** — 作るディレクトリの名前が
         // identity になるので、同じ名前で終わる場所を指すと、自分自身に依存する形になる (#2310)
         if options.name.lowercased() == identity {

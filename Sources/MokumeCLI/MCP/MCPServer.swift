@@ -122,23 +122,27 @@ enum MCPCommand {
     static func directories(
         arguments: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        currentDirectory: URL = URL(
-            fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        currentDirectory: URL? = GivenPath.currentDirectory
     ) throws(CommandFailure) -> (package: URL, facets: URL) {
         let parsed = try Arguments.parse(
             arguments, positionalIsPlace: true, surplus: .reject { "Only one directory: \($0)" })
-        let package = parsed.positional.map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? currentDirectory
+        // **場所は受け取った時点で 1 度だけ絶対パスにする** (``GivenPath``・#2497)。相対の
+        // `URL` のまま持ち回ると、在るかの判定も道具たちも、その時点の作業ディレクトリから
+        // 渡された基準を無視して解く。省略は走らせた場所
+        let package = try GivenPath.resolve(parsed.positional ?? ".", from: currentDirectory)
         // 在るかの判定は 1 本を通す (`ObjCBool` の受け渡しを写さない・#988)
         guard WorkDirectory.directoryExists(at: package) else {
             throw .directoryNotFound(path: package.path)
         }
-        // 区画の基準を決める計算は、走らせる口と同じ 1 つを通る (#791)
-        return (
-            package,
-            Invocation.facetBase(
-                under: package, workDirectory: WorkDirectory.given(environment: environment))
-        )
+        // 区画の基準を決める計算は、走らせる口と同じ 1 つを通る (#791)。環境変数の相対の綴りも、
+        // 走らせた場所が読めない回は引数の場所と同じ失敗で止める (#2497)
+        let workDirectory = try GivenPath.workDirectory(
+            environment: environment, from: currentDirectory)
+        // 共有の置き場の根も同じ約束を負う (道具が呼ばれた後では止められないので、立てる前に確かめる)
+        _ = try BuildDirectory.root(
+            environment: environment, home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+            currentDirectory: currentDirectory)
+        return (package, Invocation.facetBase(under: package, workDirectory: workDirectory))
     }
 
     /// - Parameter serving: 窓口を回す手続き。**検査から差し替える** — 既定は標準入力が

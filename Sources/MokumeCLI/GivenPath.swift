@@ -26,9 +26,25 @@ import mokume
 ///
 /// **main actor には置かない。** 見張りの作り直しの糸からも辿られる (``Invocation`` と同じ)。
 nonisolated enum GivenPath {
-    /// 走らせた場所。
-    static var currentDirectory: URL {
-        URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    /// 走らせた場所。**読めない回 (作業ディレクトリが消えた) は `nil`。**
+    ///
+    /// 作業ディレクトリを消したプロセスでは、`FileManager.currentDirectoryPath` が空文字列を
+    /// 返し (実測・#2497)、そこから作った URL は基準を持たない `./` になる。そのまま基準に
+    /// すると、相対パスは相対のまま解け、「絶対パスにする」という約束が黙って破れる。
+    /// だから読めない回は `nil` にし、基準を要する解き方 (``resolve(_:from:isDirectory:)``) が
+    /// 型の上で断る。
+    static var currentDirectory: URL? { currentDirectory(reading: readCurrentDirectoryPath) }
+
+    /// 走らせた場所の読み取り。**読み取りは検査から差し替えられる形にしてある** — 作業
+    /// ディレクトリを本当に消すと、並んで走る他の検査の足場が消える。
+    ///
+    /// - Parameter path: 作業ディレクトリの文字列を読む手続き。空は読めなかったことを表す。
+    static func currentDirectory(reading path: () -> String) -> URL? {
+        WorkDirectory.currentDirectory(reading: path)
+    }
+
+    private static func readCurrentDirectoryPath() -> String {
+        FileManager.default.currentDirectoryPath
     }
 
     /// 打たれたパスを、`base` から解いた絶対パスの URL にする。
@@ -37,17 +53,56 @@ nonisolated enum GivenPath {
     /// 返す URL は**基準の URL を持たず、`.`・`..` を含まない** — 相対の URL を `Process` へ
     /// 渡すと先頭の `..` が落ちる (上の説明)。
     ///
+    /// **基準が読めない (`nil`) 回は、絶対パスだけが通る。** 相対パスは解く先が無いので
+    /// ``CommandFailure/currentDirectoryUnreadable(given:)`` で止まる — 黙って相対のまま
+    /// 返さない (#2497)。省略した場所 (`.`) も相対として止まる。
+    ///
     /// **空文字列は `base` そのものに解ける** (Foundation の解き方)。場所を名指していないので、
     /// 打たれた値としては口が断る (``Arguments/emptyPlace(_:)``・#2485) — ここは受け取った後の
     /// 計算で、断る場所ではない。
     ///
     /// - Parameter base: 相対パスを解く基準。既定は走らせた場所で、**検査から渡せる形にしてある。**
-    static func resolve(_ given: String, from base: URL = currentDirectory, isDirectory: Bool = true)
-        -> URL
-    {
+    static func resolve(
+        _ given: String, from base: URL? = currentDirectory, isDirectory: Bool = true
+    ) throws(CommandFailure) -> URL {
         let expanded = NSString(string: given).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            // 絶対パスは基準に触れない。基準が読めなくても通る
+            return URL(fileURLWithPath: expanded, isDirectory: isDirectory).standardizedFileURL
+        }
+        guard let base else { throw .currentDirectoryUnreadable(given: given) }
         return URL(fileURLWithPath: expanded, isDirectory: isDirectory, relativeTo: base)
             .standardizedFileURL
+    }
+
+    /// 環境変数 `MOKUME_WORK_DIR` が与えた区画の基準。**道具の入口が読む形。**
+    ///
+    /// 相対の綴りは走らせた場所から絶対にする。**走らせた場所が読めない回は、相対のまま返さず**
+    /// 引数の場所と同じ ``CommandFailure/currentDirectoryUnreadable(given:variable:)`` で止まる
+    /// (#2497)。解き方の実装は ``WorkDirectory`` が持つ — 畳まない (ADR-0008 決定 6) が、
+    /// 「読めない作業ディレクトリでは断る」約束は引数の口と同じである。
+    ///
+    /// - Returns: 与えられていなければ `nil`。
+    static func workDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        from base: URL? = currentDirectory
+    ) throws(CommandFailure) -> URL? {
+        switch WorkDirectory.resolution(environment: environment, currentDirectory: base) {
+        case .unset: return nil
+        case .place(let url): return url
+        case .unreadable(let spelling):
+            throw .currentDirectoryUnreadable(
+                given: spelling, variable: StartupReads.workDirectory.key)
+        }
+    }
+
+    /// 解けなかった綴りを、**場所としては解かずに**そのまま URL に包む。
+    ///
+    /// 走らせた場所が読めない回に、止まらずに名乗る口 (`doctor`) が「どの綴りを診ようとして
+    /// 解けなかったか」を、診る場所として持ち回るために要る。相対のままなので、**ここから
+    /// 先で絶対パスとして使わない** (在るかを聞けば、作業ディレクトリが無いので「無い」と読める)。
+    static func unresolved(_ given: String) -> URL {
+        URL(fileURLWithPath: given, isDirectory: true)
     }
 
     /// 解いた場所の在り方。

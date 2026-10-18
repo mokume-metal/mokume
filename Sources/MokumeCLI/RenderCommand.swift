@@ -53,7 +53,7 @@ enum RenderCommand {
     static func run(_ arguments: [String]) throws(CommandFailure) {
         // **ビルドの前に解く。** 引数の誤りを、数分のビルドの後で知らせない
         let options = try parse(arguments)
-        let directory = options.invocation.directory
+        let directory = try options.invocation.directory
         let package = directory.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: package.path) else {
             throw .packageNotFound(path: directory.path)
@@ -114,7 +114,7 @@ enum RenderCommand {
     ///   `--scratch-path` も同じ基準で解く (#2320 — `--scratch-path` だけがスケッチの場所から
     ///   解かれ、隣に並ぶ `--out` と基準が割れていた)。
     static func parse(
-        _ arguments: [String], currentDirectory: URL = GivenPath.currentDirectory
+        _ arguments: [String], currentDirectory: URL? = GivenPath.currentDirectory
     ) throws(CommandFailure) -> Options {
         let (invocation, values) = try Invocation.parse(
             arguments, adding: options, from: currentDirectory)
@@ -133,7 +133,7 @@ enum RenderCommand {
         }
         let frameRate = try parseFrameRate(rateText)
         let frameCount = try parseFrameCount(seconds: secondsText, frameRate: frameRate)
-        let destination = GivenPath.resolve(out, from: currentDirectory, isDirectory: false).path
+        let destination = try GivenPath.resolve(out, from: currentDirectory, isDirectory: false).path
         // **形は打った綴りでも見る** (#2313)。絶対パスにすると末尾の `/` と `.`・`..` が消え、
         // 最後の部品が変わる — `take#1/` (フォルダ) が `…/take#1` になり、`take#1` の `#` を
         // 番号にして連番として通ってしまう。書く API は `take#1/` を断るので、道具だけが通すと
