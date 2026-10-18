@@ -69,9 +69,10 @@ extension Sketch {
     ///
     /// - Parameter file: 音声ファイルの名前。macOS が読める形式 (WAV・AIFF・CAF・MP3・
     ///   AAC/M4A・FLAC など)。
-    /// - Throws: 見つからない・音声として読めない・標本が 1 つも無いとき。`setup()`・`draw()`・入力の
-    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、ファイルを読む前に
-    ///   ``AudioFailure/notRunning(call:)`` (プロセスは落ちない)。
+    /// - Throws: 見つからない・見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る
+    ///   ``AudioFailure/unopenable(path:location:reason:)``)・音声として読めない・標本が 1 つも無いとき。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
+    ///   ファイルを読む前に ``AudioFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createAudioIn(file: String) throws(AudioFailure) -> AudioIn {

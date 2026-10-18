@@ -156,7 +156,9 @@ extension SketchPart {
     /// 毎回新しいということは、**読んだ絵を塗り替えても次の読み込みには影響しない**
     /// ということでもある。走らせたままファイルを差し替えれば、次の読み込みからそちらが出る。
     ///
-    /// - Throws: 見つからないとき・画像として読めないとき・GPU 側へ置けないときに ``ImageFailure``。
+    /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
+    ///   場所が載る ``ImageFailure/unopenable(path:location:reason:)``)・画像として読めないとき・GPU 側へ
+    ///   置けないときに ``ImageFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///

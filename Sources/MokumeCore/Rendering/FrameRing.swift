@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
+import MokumeDiagnostics
 
 // `@MainActor` を明示する理由は ``RenderDevice`` の冒頭と同じ (release のテストビルドで
 // 暗黙の既定隔離が見失われる・#761)。
@@ -70,8 +71,11 @@ import Metal
     /// 書き始める直前に 1 度だけ呼ぶ。既に終わっていれば何もせずに返るので、呼ぶ側は
     /// 「待つかもしれない」ことだけを知っていればよい。
     func advance() throws(RenderFailure) {
+        // 待てずに投げたら、進めた先のスロットへはまだ書けない (#2258)
+        isWritable = false
         slot = (slot + 1) % readers.count
         try gpu.waitForSubmission(readers[slot])
+        isWritable = true
     }
 
     /// 直前の投入を、**いまのスロットを読む投入**として覚える。投入の直後に呼ぶ。
@@ -80,5 +84,67 @@ import Metal
     /// その番号まで待てば「このスロットの置き場を読む者はもういない」ことになる。
     func noteSubmission() {
         readers[slot] = gpu.submissionCount
+        isWritable = false
     }
+
+    // MARK: - 書いてよいかの印 (#2258)
+
+    /// いまのスロットの置き場へ、CPU が書いてよいか。
+    ///
+    /// **立つのは 2 通り** — 環を進めて待ったとき (``advance()``) と、投入済みの全部を待ったとき
+    /// (``noteSettled()``)。後者は読み戻しの経路 (`Canvas.runPendingComputations`) で、描き切りを
+    /// 通らないので環の待ちが効かず、全部を待ってから書く。**落ちるのは、そのスロットを読む投入を
+    /// 覚えたとき** (``noteSubmission()``) で、次に待つまで書けない。
+    ///
+    /// 書き込み口 (``GrowableBuffer/buffer(holding:)``) が書く前にここを見る
+    /// (``checkWritable(_:)``)。規約 (「書くのは待った後だけ」) を doc だけで守っていた頃は、書き込み口が
+    /// 増えるたびに同じ見落としが起きえた (#934 と同じ根)。
+    ///
+    /// **最初は立っている。** まだどの投入もこの環の置き場を読んでいない。
+    private(set) var isWritable = true
+
+    /// 印が無いまま書こうとしたときに止まるか。**既定は mokume の検査の中かどうか**
+    /// (``SelfTest/isRunning``・#1682)。止まらないとき (利用者の作品の中) は、1 度だけ注意して書く。
+    /// 書かずに捨てると絵が欠けるので、書くのはやめない。印を確かめる検査は、下ろして数を見る。
+    var stopsOnUnguardedWrite = SelfTest.isRunning
+
+    /// 印が無いまま書こうとした回数 (作ってから通算)。印を確かめる検査が読む。
+    private(set) var unguardedWrites = 0
+
+    /// 印が無いまま書こうとしたことを、もう言ったか。言うのは環ごとに 1 度だけ。
+    private var warnedUnguardedWrite = false
+
+    /// 投入済みの全部を待った後に呼ぶ。**待てたときだけ呼ぶ** — 期限切れは GPU がこの置き場を
+    /// 使い終えた証拠ではない (#934・`RenderDevice.settleBeforeWriting(orWarn:)`)。
+    func noteSettled() {
+        isWritable = true
+    }
+
+    /// 書く前に印を見る。印が無ければ、検査の中では止まり、外では 1 度だけ注意して戻る (書くのは
+    /// 呼ぶ側が続ける)。
+    ///
+    /// **止まるのは `preconditionFailure` で** — release で組んだ検査 (`make test-release`・定期の
+    /// release の検査) でも止まる。止まるかを決めるのは ``stopsOnUnguardedWrite`` だけである。
+    ///
+    /// - Parameter label: 書こうとした置き場の名前。止まるときの文面に入れる。
+    func checkWritable(_ label: String) {
+        guard !isWritable else { return }
+        unguardedWrites += 1
+        if !warnedUnguardedWrite {
+            warnedUnguardedWrite = true
+            Diagnostics.warn(Self.unguardedWriteNotice)
+        }
+        if stopsOnUnguardedWrite {
+            preconditionFailure(
+                "\(label) was about to be written after a submission that reads it, without advancing "
+                    + "the frame ring or settling first (#2258)")
+        }
+    }
+
+    /// 印が無いまま書こうとしたときの注意。**利用者のコードの誤りではなく mokume の不具合**なので、
+    /// 報告を頼む (置き漏れの注意 `Canvas.placementLeakNotice` と同じ書き方)。
+    static let unguardedWriteNotice =
+        "mokume wrote to memory the GPU may still be reading, without waiting for it first, so this "
+        + "frame may come out garbled. This is most likely a fault inside mokume — please report it "
+        + "with this message at https://github.com/mokume-metal/mokume/issues (#2258)"
 }

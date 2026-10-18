@@ -46,6 +46,16 @@ final class RemoteParams {
     private let report: WatchedFile<Report>
     /// 最後に書いた要求の識別子。応答がこれを echo するまでは、自分の値を信じる。
     private var pendingId: String?
+    /// 応えを待つ間に置いた、最後のもの以外の自分の要求。**つまみを引いている間は要求が続く**ので、
+    /// 前の要求への echo で引いている途中の値へ戻さない。決着したら空にする。
+    private var earlierIds: Set<String> = []
+    /// 待つ間に要求を置くたび、置く直前に区画の応答が echo していた識別子 (区画でまだ何も応えて
+    /// いなければ `nil` も入る)。**これを echo する応答は、そのときの要求より前に書かれたもの**で、
+    /// 最後の要求を含まない姿である。待ちの最初の要求の分だけを控えると、2 つ目以降の要求を置く前に
+    /// 別の書き手へ応えた応答を「自分の後」と読み、つまみが 1 度跳ぶ (#2795 の反証)。決着したら空にする。
+    private var idsBeforeRequests: Set<String?> = []
+    /// 最後に取り込んだ応答の識別子。置く直前に応答を読み直せないときに、その代わりに使う。
+    private var lastSeenId: String?
 
     init(directory: URL) {
         self.directory = directory
@@ -63,10 +73,13 @@ final class RemoteParams {
 
     /// 応答を取り込む。
     private func adopt(_ report: Report) -> Bool {
-        // **自分の書いたぶんが子に届くまでは、こちらの値を信じる。** 届く前の応答は
-        // 動かす前の値を運んでいるので、そのまま採るとつまみが戻る
-        let settled = pendingId == nil || report.id == pendingId
-        if settled { pendingId = nil }
+        lastSeenId = report.id
+        let settled = settles(report.id)
+        if settled {
+            pendingId = nil
+            earlierIds = []
+            idsBeforeRequests = []
+        }
 
         let incoming = report.params.map(Self.face(of:))
         guard incoming != signature else {
@@ -85,6 +98,53 @@ final class RemoteParams {
         return true
     }
 
+    /// この応答で、子の値を採ってよいか。
+    ///
+    /// **自分の書いたぶんが子に届くまでは、こちらの値を信じる。** 届く前の応答は動かす前の値を
+    /// 運んでいるので、そのまま採るとつまみが戻る。届いたかは応答が echo する識別子で見る:
+    ///
+    /// - 最後に置いた自分の要求 → 届いた
+    /// - 前に置いた自分の要求・待つ間に要求を置く直前からあった識別子 → まだ (最後の要求より前の姿)
+    /// - **それ以外** → 自分の要求を置いた後に、別の書き手の要求へ応えた応答である。応答は 1 枚で
+    ///   直近の識別子しか持たないので、自分の要求は当たった後で上書きされたか、読まれる前に
+    ///   置き換えられて消えたかのどちらかで、**どちらでも自分の echo はもう来ない**。待ち続けると、
+    ///   宣言の顔ぶれが変わるまで全部のつまみが子に追い付かない
+    ///   ([#2795](https://github.com/mokume-metal/mokume/issues/2795))。後勝ち ([ADR-0030] 決定 2)
+    ///   で決まった子の値を採る
+    ///
+    /// 世代の切り替えで 2 世代が重なる間は、次の世代の最初の応答が、作った時点の記録の識別子
+    /// (前の世代が応えたもの) を載せる。要求を置く前の識別子にそれがあれば待ち続けるが、
+    /// 前の世代がその後に別の要求へ応えていれば「別の書き手」と読み、次の世代が自分の要求に
+    /// 応え直すまで 1 度戻りうる。重なりが持つ代償の範囲である
+    /// ([#1433](https://github.com/mokume-metal/mokume/issues/1433))。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    private func settles(_ echoed: String?) -> Bool {
+        guard let pendingId else { return true }
+        if echoed == pendingId { return true }
+        if idsBeforeRequests.contains(echoed) { return false }
+        if let echoed, earlierIds.contains(echoed) { return false }
+        return true
+    }
+
+    /// 区画の応答が、いま echo している識別子。読めなければ最後に取り込んだもの。
+    ///
+    /// **要求を置く直前に読み直す。** 最後に取り込んだ応答はフレーム 1 つぶん古いことがあり、
+    /// その間に別の書き手へ応えた応答 (自分の要求より前に書かれたもの) を「自分の要求の後」と
+    /// 取り違えると、つまみが 1 度戻る。置いた後に読むと、置いた直後に別の書き手へ応えた応答を
+    /// 「前からあった」と掴み、その応答で決着できずに止まるので、置く前に読む。
+    private func echoedNow() -> String? {
+        guard let data = try? Data(contentsOf: WorkDirectory.reportURL(under: directory)),
+            let echo = try? JSONDecoder().decode(Echo.self, from: data)
+        else { return lastSeenId }
+        return echo.id
+    }
+
+    /// 応答のうち、置く直前に読み直すところ。
+    private struct Echo: Decodable {
+        let id: String?
+    }
+
     /// 宣言の顔。**値は入れない** — 値が変わるたびに組み直しては、触っている手から
     /// つまみが消える。
     private static func face(of declaration: ParamDeclaration) -> String {
@@ -98,12 +158,17 @@ final class RemoteParams {
     private func send(name: String, value: ParamValue) {
         let id = UUID().uuidString
         let request = Request(id: id, values: [Request.Entry(name: name, value: value)])
+        // **置くたびに**、置く前の識別子を控える (``echoedNow()``)。待っている間に続けて置いた
+        // 要求は、前の自分の要求としても控える
+        let before = echoedNow()
         // 置けなければこの 1 回を捨てる (次に動かせばまた書く)。**捨てたことは
         // 口が 1 度だけ名乗る** — つまみを掴んでいる間は入力のたびにここへ来るので、
         // 毎回言うと標準エラーが流れる (#989)
         guard AtomicFile.publishJSON(
             request, to: WorkDirectory.requestURL(under: directory), "the knob request")
         else { return }
+        if let earlier = pendingId { earlierIds.insert(earlier) }
+        idsBeforeRequests.insert(before)
         pendingId = id
     }
 

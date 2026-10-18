@@ -3,6 +3,7 @@
 
 import AVFAudio
 import Foundation
+import MokumeCore
 
 /// 音声ファイルを読む。AVFAudio でファイルを読むのはここだけである
 /// ([ADR-0042] 決定 6 の「薄い層に閉じる」)。
@@ -23,7 +24,16 @@ nonisolated enum AudioFile {
 
     /// `url` を、ファイルの処理の形式 (チャンネルごとに分かれた 32 bit 浮動小数) のまま読む。
     /// 鳴らすときはこちらを使う — チャンネルを平均すると左右が消える。
+    ///
+    /// **開けないものを「壊れている・形式が違う」と名乗らない** ([#2358])。AVFAudio はディレクトリや
+    /// 読む権利の無いファイルを、形式の誤りと同じく断る。読む前に開けるかを確かめ
+    /// (``AssetOpening``)、開けなければ ``AudioFailure/unopenable(path:location:reason:)`` を投げる。
+    ///
+    /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func load(_ url: URL, path: String) throws(AudioFailure) -> AVAudioPCMBuffer {
+        if let refusal = AssetOpening.refusal(at: url) {
+            throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
+        }
         guard let file = try? AVAudioFile(forReading: url) else { throw .unreadable(path: path) }
         // 器は長さ 0 では作れないので、空のファイルは器を作る前に見分ける
         guard file.length > 0, file.processingFormat.channelCount > 0 else { throw .empty }

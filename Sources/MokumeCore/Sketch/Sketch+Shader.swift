@@ -45,6 +45,11 @@ extension SketchPart {
     /// 断片ごと組み直しになるので、**名前は読み込むときに決め、値だけを後から変える**
     /// (``Shader/set(_:_:)-(_,ShaderValue)``)。
     ///
+    /// 名前は文字か `_` で始まり、文字・数字・`_` が続くもの (`tint`・`_k1`・`波`) に限る。
+    /// 空白や記号を含む名前 (`"tint color"`) や空の名前、Metal の予約語や型と同じ名前 (`half`) は、
+    /// 読み込みの時点で名指しで断られる (``ShaderFailure/notCompilable(path:reason:)``)。`surfaces` の
+    /// 名前も同じ。
+    ///
     /// 渡せるのは **float 換算で 64 個まで** (色は 4 個ぶん・2 つ組は 2 個ぶん) — 値は列
     /// ごとに 1 区画へ載せるので、上限は動かせない。超えた宣言は読み込みの時点で断られる。
     ///
@@ -98,7 +103,9 @@ extension SketchPart {
     /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。平面と立体の両方が
     /// 組み上がってはじめて差し替わるので、片方だけ古い断片が効くことはない。
     ///
-    /// - Throws: 見つからないとき・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
+    /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
+    ///   場所が載る ``ShaderFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めないとき
+    ///   (``ShaderFailure/unreadable(path:)``)・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeShader(_:name:values:surfaces:)

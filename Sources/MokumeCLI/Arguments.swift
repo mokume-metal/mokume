@@ -31,13 +31,18 @@ enum Arguments {
         let missingValue: (String) -> String
         /// 値が場所か。**場所なら、空の値を断る** (``emptyPlace(_:)``)。
         let takesPlace: Bool
+        /// 値の取り得る範囲 (`nil` なら何でも)。**``Surplus/ignore`` のときだけ見る** — 範囲外の
+        /// 語は値に取らず、元の位置のまま読む (`doctor -c /path/to/sketch` の場所を値に食わない)。
+        /// 値を使う口は取った後に自分の言い方で断るので、そちらは変えない。
+        let accepts: ((String) -> Bool)?
 
         init(
-            _ flags: [String], takesPlace: Bool = false,
+            _ flags: [String], takesPlace: Bool = false, accepts: ((String) -> Bool)? = nil,
             missingValue: @escaping (String) -> String
         ) {
             self.flags = flags
             self.takesPlace = takesPlace
+            self.accepts = accepts
             self.missingValue = missingValue
         }
 
@@ -52,6 +57,15 @@ enum Arguments {
         /// - Parameter extraPositional: 位置引数が 2 つ目に来たときの言い方。
         case reject(extraPositional: (String) -> String)
         /// 脇へ置いて解き続ける。`doctor` だけがこちらを選ぶ。
+        ///
+        /// **宣言した選択肢は値を取り、使われない前提で脇へ置く** (#2484)。値を取る選択肢を
+        /// 宣言するのは、値が位置引数 (場所) に化けないようにするためで、使うためではない —
+        /// `doctor -c release` の `release` を場所として診ない。値は ``Parsed/values`` に載り、
+        /// 表示用には ``Parsed/setAside`` に載る。値が欠けていても (`doctor -c`) 止まらない。
+        ///
+        /// **`-` 始まりの語と、範囲外の語 (``Option/accepts``) は値に取らない** — 走らせる口と
+        /// 同じ。`doctor -c --scratch-path out` の `out` や `doctor -c /path/to/sketch` の場所が
+        /// 値に食われない。取らなかった選択肢は、値が無かったと名乗る。
         case ignore
     }
 
@@ -65,8 +79,13 @@ enum Arguments {
         var positional: String?
         /// 選択肢の値。鍵は ``Option/key``。
         var values: [String: String] = [:]
-        /// 脇へ置いたもの。``Surplus/ignore`` のときだけ増える。**打たれた順に並ぶ。**
+        /// 脇へ置いた、宣言に載っていないもの。``Surplus/ignore`` のときだけ増える。
+        /// **打たれた順に並ぶ。**
         var ignored: [String] = []
+        /// 使われずに脇へ置かれたもの全部の、打ったとおりの表示。``Surplus/ignore`` のときだけ
+        /// 増える。**打たれた順に並び、宣言した選択肢は綴りと値を 1 つにして載る** (`-c release`)。
+        /// 値はシェルの 1 語として読める形にする (空は `''`、空白入りは引用符つき・#2484)。
+        var setAside: [String] = []
     }
 
     /// 空の場所を断る言い方。`flag` は選択肢の綴り (位置引数なら `nil`)。
@@ -86,6 +105,22 @@ enum Arguments {
                 + " (is a variable you passed unset?)")
     }
 
+    /// `--x=値` の綴りで、`=` の前が宣言済みの綴りなら、空白で区切るよう案内する文。
+    ///
+    /// **受け付ける形は増やさない** ([#2484](https://github.com/mokume-metal/mokume/issues/2484))。
+    /// `Unknown option` と言うと、`run -c release` が通る人には綴りの何が違うのか分からない。
+    /// 宣言されていない綴り (`--nope=1`) は、これまでどおり知らない選択肢である。
+    private static func separatedSpelling(of argument: String, in options: [Option]) -> String? {
+        guard let equals = argument.firstIndex(of: "=") else { return nil }
+        let flag = String(argument[..<equals])
+        guard options.contains(where: { $0.flags.contains(flag) }) else { return nil }
+        let value = String(argument[argument.index(after: equals)...])
+        // 値は貼って動く 1 語にする (#2320 の規律)。空白入りの `'my take.mov'` を裸で書くと、
+        // 案内どおりに打って別の誤りになる
+        return "\(argument) is not accepted: separate the value from \(flag) with a space,"
+            + " as in \(flag) \(value.isEmpty ? "<value>" : GivenPath.shellWord(display: value))"
+    }
+
     /// 解く。
     ///
     /// - Parameter positionalIsPlace: 位置引数が場所か。**場所なら、空を断る**
@@ -100,6 +135,21 @@ enum Arguments {
             let argument = arguments[index]
             if let option = options.first(where: { $0.flags.contains(argument) }) {
                 index += 1
+                if case .ignore = surplus {
+                    // 使われない選択肢。値は取るが、止まらない (切り分けの口は止まらない)
+                    if index < arguments.count, !arguments[index].hasPrefix("-"),
+                        option.accepts?(arguments[index]) ?? true
+                    {
+                        parsed.values[option.key] = arguments[index]
+                        parsed.setAside.append(
+                            "\(argument) \(GivenPath.shellWord(display: arguments[index]))")
+                        index += 1
+                    } else {
+                        // 次の語は値でない。取らずに、そのまま読み直す
+                        parsed.setAside.append("\(argument) (no value)")
+                    }
+                    continue
+                }
                 guard index < arguments.count else { throw .usage(option.missingValue(argument)) }
                 if option.takesPlace, arguments[index].isEmpty { throw emptyPlace(argument) }
                 parsed.values[option.key] = arguments[index]
@@ -107,8 +157,14 @@ enum Arguments {
                 // **知らない選択肢を黙って位置引数にしない。** `-c` が場所として解釈された
                 // 結果が「スケッチが見つからない: …/-c」で、何を直せばよいか分からない (#680)
                 switch surplus {
-                case .reject: throw .usage("Unknown option: \(argument)\n\n" + Command.usage())
-                case .ignore: parsed.ignored.append(argument)
+                case .reject:
+                    if let spelling = separatedSpelling(of: argument, in: options) {
+                        throw .usage(spelling + "\n\n" + Command.usage())
+                    }
+                    throw .usage("Unknown option: \(argument)\n\n" + Command.usage())
+                case .ignore:
+                    parsed.ignored.append(argument)
+                    parsed.setAside.append(GivenPath.shellWord(display: argument))
                 }
             } else if parsed.positional == nil {
                 if positionalIsPlace, argument.isEmpty { throw emptyPlace(nil) }
@@ -116,7 +172,9 @@ enum Arguments {
             } else {
                 switch surplus {
                 case .reject(let extraPositional): throw .usage(extraPositional(argument))
-                case .ignore: parsed.ignored.append(argument)
+                case .ignore:
+                    parsed.ignored.append(argument)
+                    parsed.setAside.append(GivenPath.shellWord(display: argument))
                 }
             }
             index += 1

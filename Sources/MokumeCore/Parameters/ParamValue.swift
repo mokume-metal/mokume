@@ -64,6 +64,25 @@ public enum ParamValue: Equatable, Sendable {
         case .vector3(let vector): vector.x.isFinite && vector.y.isFinite && vector.z.isFinite
         }
     }
+
+    /// 同じ型の零 (`0`・`SIMD2(0, 0)`・4 成分とも 0 の色・`false`・空の文字)。
+    ///
+    /// **生まれのときの値が非有限だったときに、代わりに載せる値である** ([#2394])。前の値が無いので
+    /// 値が変わる入口のように「保つ」ことができず、型だけから決まる値へ畳む。非有限になりうるのは
+    /// 実数・組・色だけで、ほかの型の零は網羅のために置いている。
+    ///
+    /// [#2394]: https://github.com/mokume-metal/mokume/issues/2394
+    var zero: ParamValue {
+        switch self {
+        case .float: .float(0)
+        case .int: .int(0)
+        case .bool: .bool(false)
+        case .string: .string("")
+        case .color: .color(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+        case .vector2: .vector2(.zero)
+        case .vector3: .vector3(.zero)
+        }
+    }
 }
 
 /// 面に出せる値。

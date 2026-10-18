@@ -56,14 +56,20 @@ enum NewCommand {
         """
     }
 
+    /// 選択肢の宣言。``Command/valueOptions`` が `doctor` に同じ宣言を渡す。
+    static var options: [Arguments.Option] {
+        [
+            Arguments.Option(["--path"], takesPlace: true) { "\($0) needs a directory after it" },
+            Arguments.Option(["--local"], takesPlace: true) {
+                "\($0) needs the library's path after it"
+            },
+        ]
+    }
+
     /// 引数を解く。骨格は ``Arguments`` が持ち、ここは宣言だけを書く。
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Options {
         let parsed = try Arguments.parse(
-            arguments,
-            options: [
-                Arguments.Option(["--path"], takesPlace: true) { "\($0) needs a directory after it" },
-                Arguments.Option(["--local"], takesPlace: true) { "\($0) needs the library's path after it" },
-            ],
+            arguments, options: options,
             surplus: .reject { "Only one name: \($0)" })
         guard let name = parsed.positional else { throw .nameMissing }
         guard isValid(name: name) else { throw .invalidName(name) }
