@@ -513,6 +513,7 @@ public final class SketchRuntime {
         let store = ParamStore.makeIfNeeded(for: registry)
         self.paramStore = store
         self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
+        canvas.isRuntimeSurface = true
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -551,6 +552,7 @@ public final class SketchRuntime {
         self.paramRegistry = ParamRegistry(of: sketch)
         self.params = params
         self.paramStore = paramStore
+        canvas.isRuntimeSurface = true
     }
 
     // MARK: - 進める
