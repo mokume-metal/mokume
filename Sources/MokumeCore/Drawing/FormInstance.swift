@@ -149,6 +149,9 @@ struct FormInstance {
     /// 太さ 2) が 4.2 ns から 16.6 ns になる (20 万個ずつ・9 回の中央値)。非円の楕円は見積もりの割り算と
     /// 特異値の上下の端の比べを解くぶん増える。特異値の端を平方根を使わずに 2 乗で比べて、決まらないときだけ
     /// 特異値を解く形にして、19.8 ns から縮めた。
+    ///
+    /// 扇 (#2747) は、以前は常に偽で費用が無視できたが、中心の角の判定 (``mayNeedApexSampling()``) が三角関数を
+    /// 解くので、図形 1 つあたり、円の扇 21.7 ns・楕円の扇 30.6 ns になった (release・20 万個ずつ・9 回の中央値)。
     func mayHaveThinPart(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
         let isArc = meta.x == Kind.arc.rawValue
         guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || isArc else { return false }
@@ -173,6 +176,7 @@ struct FormInstance {
             return span.x * span.x * squared < rowX * reach || span.y * span.y * squared < rowY * reach
         }
         if (fills && thin(half)) || (strokes && thin(hole)) { return true }
+        if isArc, mayNeedApexSampling() { return true }
         // 近似の距離場では輪郭の位置がずれすぎる楕円 (``mayNeedExactRing(unitsPerDrawnPixel:)``)
         return strokes && (meta.x == Kind.ellipse.rawValue || isArc) && size.x != size.y
             && Self.exactRingIsNeeded(
@@ -189,10 +193,42 @@ struct FormInstance {
         case Kind.ellipse.rawValue:
             return Self.ellipseHole(radii: half, halfWeight: size.z)
         case Kind.arc.rawValue:
-            return SIMD2(repeating: Self.sectorDepthBound(radii: half, sweep: offset.w) - size.z)
+            // 内接円の半径の下限から太さの半分を引いた半径を、画素の ``sectorHoleReach`` 個分で測る
+            // (`mokume_thinHole` は半幅が画素の半分より小さいかを見るので、2 · ``sectorHoleReach`` で割る)
+            return SIMD2(repeating: (Self.sectorDepthLower(radii: half, sweep: offset.w) - size.z)
+                / (2 * Self.sectorHoleReach))
         default:
             return half - size.z
         }
+    }
+
+    /// 扇の穴の半径が、描く画素のいくつ分より小さければ「細い」か。断片の `kFormSectorHoleReach`。
+    static let sectorHoleReach: Float = 3
+
+    /// 扇の中で、輪郭から最も深い所の深さの下限 (形自身の座標)。断片の `mokume_sectorDepthLower` と同じ式。
+    static func sectorDepthLower(radii: SIMD2<Float>, sweep: Float) -> Float {
+        let halfSine = sin(0.5 * min(sweep, Float.pi))
+        return min(radii.x, radii.y) * halfSine / (1 + halfSine)
+    }
+
+    /// 扇の中心の角が作る穴の尖りが、尖っているか (掃引が π 未満で角の半分の正弦が 0.5 未満)。断片の
+    /// `mokume_sectorApex` と同じ式で、理由もそちらにある。
+    static func sectorApexIsSharp(radii: SIMD2<Float>, start: Float, sweep: Float) -> Bool {
+        guard sweep < Float.pi else { return false }
+        let direction1 = simd_normalize(radii * SIMD2(cos(start), sin(start)))
+        let direction2 = simd_normalize(radii * SIMD2(cos(start + sweep), sin(start + sweep)))
+        let bisector = simd_normalize(direction1 + direction2)
+        let sineHalf = abs(direction1.x * bisector.y - direction1.y * bisector.x)
+        return sineHalf < 0.5
+    }
+
+    /// 穴は細くなくても、中心の角が尖った扇か ([#2747])。尖りの先の画素を標本で数える枝に入る。輪郭の無い
+    /// 扇と、扇でない形は「含まない」。
+    ///
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+    func mayNeedApexSampling() -> Bool {
+        guard meta.w & Self.strokesFlag != 0, meta.x == Kind.arc.rawValue else { return false }
+        return Self.sectorApexIsSharp(radii: SIMD2(size.x, size.y), start: offset.z, sweep: offset.w)
     }
 
     /// 扇の中で、輪郭から最も深い所の深さ (扇に内接する円の半径) の上限 (形自身の座標)。断片の
