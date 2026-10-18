@@ -25,15 +25,24 @@ enum ShaderSource {
     /// 3 者が同じ 7 行を持っていたので畳んだ — 候補の探し方が割れると、「読めない」が
     /// 断片の種類によって別の理由で出るようになる。
     ///
+    /// **見つかったが開けないものを「見つからない」と名乗らない** ([#2358])。ディレクトリや読む
+    /// 権利の無いファイルは、資源の宣言を確かめよという助言ではなく
+    /// ``ShaderFailure/unopenable(path:location:reason:)`` で、解けた場所と OS の事情を名乗る。
+    ///
     /// [#895]: https://github.com/mokume-metal/mokume/issues/895
+    /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func read(at path: String) throws(ShaderFailure) -> (
         url: URL, body: String, name: String
     ) {
         let candidates = ImageFile.candidates(for: path)
-        guard
-            let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
-            let body = try? String(contentsOf: url, encoding: .utf8)
+        guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })
         else {
+            throw .notFound(path: path, searched: candidates.map(\.path))
+        }
+        if let refusal = AssetOpening.refusal(at: url) {
+            throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
+        }
+        guard let body = try? String(contentsOf: url, encoding: .utf8) else {
             throw .notFound(path: path, searched: candidates.map(\.path))
         }
         return (url, body, url.deletingPathExtension().lastPathComponent)

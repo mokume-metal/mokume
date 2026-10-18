@@ -16,7 +16,13 @@
 public enum ModelFailure: Error, Equatable, Sendable {
     /// その名前の資材が見つからない。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、その形式として読めない。OBJ なら文字 (UTF-8) として読めない、STL なら
+    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
+    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
+    /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
+    /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
+    /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+    case unopenable(path: String, location: String, reason: String)
+    /// 開けたが、その形式として読めない。OBJ なら文字 (UTF-8) として読めない、STL なら
     /// 文字の STL としてもバイナリの STL としても読めない (壊れている・途中で切れた文字の STL・空)。
     /// 途中で切れたバイナリの STL は投げず、揃っている面だけを読む (揃った面が無ければ空のモデル)。
     /// 見出しが `solid` で始まり `facet normal` を含むバイナリの STL は、一時の置き場に写しを書けないときも、
@@ -50,6 +56,8 @@ extension ModelFailure: CustomStringConvertible {
                 Without that declaration the build still passes quietly, and the file just cannot \
                 be read at run time
                 """
+        case .unopenable(let path, let location, let reason):
+            return AssetOpening.notice(path: path, location: location, reason: reason)
         case .unreadable(let path):
             // **形式ごとに言い分ける。** バイナリの STL に「文字として読めない」と言うと、
             // 読み手を取り違えたように読める

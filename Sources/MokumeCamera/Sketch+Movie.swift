@@ -44,7 +44,9 @@ extension Sketch {
     ///
     /// - Parameter file: 動画ファイルの名前。macOS が再生できる形式 (QuickTime の `.mov`・
     ///   MPEG-4 の `.mp4` / `.m4v` で、H.264・HEVC・ProRes など)。
-    /// - Throws: 見つからない・動画として読めない・映像が入っていない・絵として置けないとき
+    /// - Throws: 見つからない・見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る
+    ///   ``MovieFailure/unopenable(path:location:reason:)``)・動画として読めない・映像が入っていない・
+    ///   絵として置けないとき
     ///   (``MovieFailure``)。`setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・
     ///   `Task` の中) で呼ぶと、ファイルを開く前に ``MovieFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
@@ -70,7 +72,7 @@ extension Sketch {
             // 置ける大きさを探しに行く (#2683 の反証 1)
             switch error {
             case .notRunning(let call): throw .notRunning(call: call)
-            case .notFound, .undecodable, .unplaceable:
+            case .notFound, .unopenable, .undecodable, .unplaceable:
                 throw .unplaceable(width: reader.width, height: reader.height)
             }
         }

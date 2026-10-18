@@ -180,7 +180,9 @@ extension SketchPart {
     /// - Note: 読めても面が 1 つも無いことがある (``Model/isEmpty``)。そのときは
     ///   投げずに、置いたときに警告する — 「読めなかった」と「読めたが見えない」は
     ///   別の話なので、区別できるようにしてある。
-    /// - Throws: 見つからないとき・読めないとき・対応していない形式のときに ``ModelFailure``。
+    /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
+    ///   場所が載る ``ModelFailure/unopenable(path:location:reason:)``)・読めないとき・対応していない
+    ///   形式のときに ``ModelFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=422c10b2

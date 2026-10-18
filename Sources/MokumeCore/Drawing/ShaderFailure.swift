@@ -5,6 +5,12 @@
 public enum ShaderFailure: Error, Equatable, Sendable {
     /// 断片が見つからない。探した場所を添える。
     case notFound(path: String, searched: [String])
+    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
+    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
+    /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
+    /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
+    /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+    case unopenable(path: String, location: String, reason: String)
     /// 断片を組み立てられない。理由はコンパイラの言葉のまま。
     ///
     /// **理由の行と桁は、書いた断片の中で数える** ([#2457](https://github.com/mokume-metal/mokume/issues/2457))。
@@ -43,6 +49,8 @@ extension ShaderFailure: CustomStringConvertible {
                 Without that declaration the build still passes quietly, and the file just cannot \
                 be read at run time
                 """
+        case .unopenable(let path, let location, let reason):
+            return AssetOpening.notice(path: path, location: location, reason: reason)
         case .notCompilable(let path, let reason):
             return "Cannot build the fragment at \"\(path)\":\n\(reason)"
         case .tooManyValues(let path, let count, let capacity):

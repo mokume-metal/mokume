@@ -97,6 +97,13 @@ nonisolated enum ModelFile {
     }
 
     /// 名前から探して読む。**拡張子で読み手を選ぶ** (``Format``)。
+    ///
+    /// **開けないものを「壊れている」と名乗らない** ([#2358])。読み手に渡す前に開けるかを確かめ
+    /// (``AssetOpening``)、ディレクトリや読む権利の無いファイルは
+    /// ``ModelFailure/unopenable(path:location:reason:)`` で断る。形式の判定は名前だけで決まるので、
+    /// その後に置く。
+    ///
+    /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func load(_ path: String) throws(ModelFailure) -> Parsed {
         let searched = ImageFile.candidates(for: path)
         guard let url = searched.first(where: { FileManager.default.fileExists(atPath: $0.path) })
@@ -105,6 +112,9 @@ nonisolated enum ModelFile {
         }
         guard let format = Format(extensionName: url.pathExtension) else {
             throw .unsupported(path: path, extensionName: url.pathExtension.lowercased())
+        }
+        if let refusal = AssetOpening.refusal(at: url) {
+            throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
         }
         switch format {
         case .obj:

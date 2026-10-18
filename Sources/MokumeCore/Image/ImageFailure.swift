@@ -12,7 +12,13 @@
 public enum ImageFailure: Error, Equatable, Sendable {
     /// その名前の資材が見つからない。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、画像として読めない。
+    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
+    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
+    /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
+    /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
+    /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+    case unopenable(path: String, location: String, reason: String)
+    /// 開けたが、画像として読めない。
     case undecodable(path: String)
     /// GPU 側へ置けない — 読めたが置き場が足りない、あるいは辺が 1 を割るか面の上限より大きい。
     ///
@@ -48,6 +54,8 @@ extension ImageFailure: CustomStringConvertible {
                 Without that declaration the build still passes quietly, and the file just cannot \
                 be read at run time
                 """
+        case .unopenable(let path, let location, let reason):
+            return AssetOpening.notice(path: path, location: location, reason: reason)
         case .undecodable(let path):
             return "\"\(path)\" cannot be read as an image. Check that the format is one mokume handles"
         case .unplaceable(let width, let height):

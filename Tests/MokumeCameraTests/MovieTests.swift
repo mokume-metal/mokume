@@ -247,6 +247,40 @@ struct MovieTests {
         runtime.closePlugins()
     }
 
+    @Test("ディレクトリと読む権利の無いファイルは、unopenable で開けない事情を名乗る (#2358)")
+    func unopenableNamesWhy() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-unopenable-\(UUID().uuidString)")
+        let directory = folder.appendingPathComponent("clip.mov")
+        let locked = folder.appendingPathComponent("locked.mov")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("this is not a movie".utf8).write(to: locked)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        // root で走ると権利を外しても読める。読めてしまうと、検査が見たいものを見ていない
+        try #require(!FileManager.default.isReadableFile(atPath: locked.path), "読む権利を外せていない")
+
+        var failures: [MovieFailure] = []
+        let runtime = try run(frames: 1, setup: { sketch in
+            for file in [directory.path, locked.path] {
+                do throws(MovieFailure) { _ = try sketch.createVideo(file) } catch { failures.append(error) }
+            }
+        })
+        runtime.closePlugins()
+        #expect(
+            failures == [
+                .unopenable(path: directory.path, location: directory.path, reason: String(cString: strerror(EISDIR))),
+                .unopenable(path: locked.path, location: locked.path, reason: String(cString: strerror(EACCES))),
+            ])
+        for failure in failures {
+            #expect(!failure.description.contains("damaged"), "\(failure)")
+            #expect(!failure.description.contains("format"), "\(failure)")
+        }
+    }
+
     @Test("途中が壊れた動画は投げずに 1 度だけ知らせ、最後のコマを残して disconnected を名乗る")
     func damagedMiddleIsNoticedNotThrown() async throws {
         let url = try await TestMovie.write(frames: 60, width: 64, height: 48, pixel: TestMovie.noise)
