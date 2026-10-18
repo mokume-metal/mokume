@@ -1835,6 +1835,41 @@ struct SVGFileTests {
         #expect(area(rings[2]) > 0, "外にある正方形まで裏返っている")
     }
 
+    /// 原点から遠い座標 (地図の SVG など) でも、同じ向きで書いた小さな穴の向きを読み違えない ([#2725])。
+    /// 絶対座標で面積を足すと、1e5 離れた 40×20 の穴は丸めで向きの符号が反転し、裏返されずに
+    /// 塗りで埋まる。
+    ///
+    /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
+    @Test("evenodd の向きの組み直しは、原点から 1e5 離れても小さな穴を裏返す (#2725)", arguments: [0, 100_000], [false, true])
+    func evenOddAlternatesFarFromOrigin(_ offset: Int, mirrored: Bool) {
+        func p(_ x: Int, _ y: Int) -> String { "\(x + offset) \(y + offset)" }
+        // 外周と同じ向きの小さな穴を、位置と大きさを変えて幾つか。丸めの出方は位置で変わる
+        let holes = [(180, 260, 40, 20), (10, 10, 12, 8), (95, 200, 30, 30), (250, 40, 7, 25)]
+        // x と y を入れ替えると、同じ形が逆の向きになる
+        func ring(_ x: Int, _ y: Int, _ w: Int, _ h: Int) -> String {
+            let corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+            return "M" + corners.map { mirrored ? p($0.1, $0.0) : p($0.0, $0.1) }.joined(separator: " L") + " Z"
+        }
+        let data = SVGFile.parsePath(
+            ring(0, 0, 320, 320) + " " + holes.map { ring($0.0, $0.1, $0.2, $0.3) }.joined(separator: " "))
+        let rings = SVGFile.alternatingWinding(data.subpaths)
+        func area(_ subpath: SVGFile.Subpath) -> Double {
+            let polygon = subpath.roughPolygon.map { SIMD2<Double>($0) }
+            var sum = 0.0
+            for index in polygon.indices {
+                let a = polygon[index] - polygon[0]
+                let b = polygon[(index + 1) % polygon.count] - polygon[0]
+                sum += a.x * b.y - a.y * b.x
+            }
+            return sum
+        }
+        // 外周は正の向きに揃う (外周の面積の符号は向きで決まる)
+        #expect(area(rings[0]) > 0)
+        for index in holes.indices {
+            #expect(area(rings[index + 1]) < 0, "穴 \(index) が外側と逆向きになっていない")
+        }
+    }
+
     // MARK: - 曲線の刻み
 
     @Test("曲線の刻みの数は、曲がり具合と置く倍率で増え、まっすぐな曲線は 1 本")

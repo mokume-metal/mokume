@@ -1010,14 +1010,13 @@ nonisolated enum SVGFile {
     }
 
     /// 多角形の符号つき面積 (向きを見るため)。
+    ///
+    /// 最初の点からの差で足す。絶対座標のまま足すと、原点から遠い (地図の座標など) 小さな
+    /// 穴で、`Float` の丸めが面積を越えて向きの符号が反転する (``Triangulation/signedArea(_:)``・[#2725])。
+    ///
+    /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
     private static func signedArea(_ polygon: [SIMD2<Float>]) -> Float {
-        var sum: Float = 0
-        for index in polygon.indices {
-            let here = polygon[index]
-            let next = polygon[(index + 1) % polygon.count]
-            sum += here.x * next.y - next.x * here.y
-        }
-        return sum / 2
+        Triangulation.signedArea(polygon)
     }
 
     /// 点が多角形の内側にあるか (偶奇の数え方)。
