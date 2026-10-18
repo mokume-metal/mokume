@@ -389,6 +389,98 @@ struct InstancingTests {
         #expect(differingPixels(result.together, result.oneByOne) == 0, "立体の混ざった形の絵が 1 つずつと違う")
     }
 
+    /// 立体だけの形を重ねる置き場所へまとめて置いても、1 つずつ置いた絵と 1 ビットも違わない ([#2495])。
+    /// 立体の奥行きの検めは `lessEqual` で、**半透明でも常に書き込む**ので、半透明の所と同じ奥行きの所は
+    /// 描いた順が絵に出る。区間ごとに置き場所を一巡して積むと、後の区間が前の置き場所に先に重なって
+    /// 1 つずつ置いたときの「置き場所の順」と入れ替わる。
+    ///
+    /// [#2495]: https://github.com/mokume-metal/mokume/issues/2495
+    @Test(
+        "半透明の立体が奥行きを書く形も、混ぜ方の違う立体の区間を重なる置き場所へまとめて置いて、1 つずつ置いた絵と同じ",
+        arguments: [[-60, 60], [60, -60]] as [[Float]])
+    func translucentSolidRegionsKeepThePlacementOrder(depths: [Float]) throws {
+        // 反例 (a)。手前の青の球が先に奥行きを書くと、奥の赤の球は手前の球の輪郭の内側で消える。
+        // 1 つずつ置けば、置き場所の順に透けて重なる
+        let placements = depths.map { Placement(x: 100, y: 100, z: $0) }
+        let result = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
+                    canvas.sphere(14)
+                    canvas.blendMode(.add)
+                    canvas.translate(0, 0, 20)
+                    canvas.fill(LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
+                    canvas.sphere(10)
+                }
+            },
+            at: placements
+        ) { shape in
+            #expect(shape.drawCallCount == 2, "前提: 混ぜ方の違う 2 つの立体の区間になっていない")
+        }
+        let gap = differingPixels(result.together, result.oneByOne)
+        #expect(gap == 0, "まとめて置いた絵が 1 つずつと \(gap) 画素違う")
+    }
+
+    @Test("同じ奥行きで重なる、立体の 3 引数の頂点で組んだ形も、まとめて置いた絵が 1 つずつ置いた絵と同じ")
+    func sameDepthSolidRegionsKeepThePlacementOrder() throws {
+        // 反例 (b)。#2305 の再現の矩形と三角形を、`vertex(x, y, 0)` (3 引数は z が 0 でも立体になる) の
+        // 形へ置き換えたもの。立体どうしでも同じ奥行きは後勝ちなので、区間の順に積むと (130, 125) が
+        // 赤+青になる。1 つずつ置けば最後に塗る側の赤
+        let placements = [Placement(x: 120, y: 100), Placement(x: 100, y: 100)]
+        let result = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(255, 0, 0)
+                    canvas.beginShape()
+                    canvas.vertex(0, 0, 0)
+                    canvas.vertex(40, 0, 0)
+                    canvas.vertex(40, 40, 0)
+                    canvas.vertex(0, 40, 0)
+                    canvas.endShape(.close)
+                    canvas.blendMode(.add)
+                    canvas.fill(0, 0, 255)
+                    canvas.beginShape()
+                    canvas.vertex(0, 0, 0)
+                    canvas.vertex(40, 0, 0)
+                    canvas.vertex(0, 40, 0)
+                    canvas.endShape(.close)
+                }
+            },
+            at: placements
+        ) { shape in
+            #expect(shape.drawCallCount == 2, "前提: 混ぜ方の違う 2 つの立体の区間になっていない")
+        }
+        let gap = differingPixels(result.together, result.oneByOne)
+        #expect(gap == 0, "まとめて置いた絵が 1 つずつと \(gap) 画素違う")
+        let pixel = result.together[130, 125]
+        #expect(pixel.red > 0.5 && pixel.blue < 0.1, "後に置いた側の赤が上に出ていない (\(pixel))")
+    }
+
+    @Test("同じ奥行きで重なる不透明の立体の区間も、まとめて置いた絵が 1 つずつ置いた絵と同じ")
+    func opaqueSameDepthSolidRegionsKeepThePlacementOrder() throws {
+        // 不透明でも、同じ奥行きは後勝ち。同じ位置・同じ大きさの箱を、混ぜ方だけ変えて 2 区間にする
+        let placements = [Placement(x: 120, y: 100), Placement(x: 100, y: 100)]
+        let result = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(255, 0, 0)
+                    canvas.box(40, 40, 10)
+                    canvas.blendMode(.add)
+                    canvas.fill(0, 0, 255)
+                    canvas.box(40, 40, 10)
+                }
+            },
+            at: placements
+        ) { shape in
+            #expect(shape.drawCallCount == 2, "前提: 混ぜ方の違う 2 つの立体の区間になっていない")
+        }
+        let gap = differingPixels(result.together, result.oneByOne)
+        #expect(gap == 0, "まとめて置いた絵が 1 つずつと \(gap) 画素違う")
+    }
+
     @Test("区間が複数の平面・距離関数の形は、置き場所ごとに区間の数だけ描く (1 つずつ置いたときと同じ回数)")
     func flatRegionsDrawOncePerRegionAndPlacement() throws {
         // **速さの代償を数で名乗る** (#2305 の決定 B)。前後を置き場所の順に守るため、区間が 2 つ以上で
@@ -401,8 +493,8 @@ struct InstancingTests {
         #expect(differingPixels(result.together, result.oneByOne) == 0)
     }
 
-    @Test("区間が 1 つの平面の形と、立体だけの形は、まとめて置いても描く回数が増えない")
-    func singleRegionAndSolidOnlyShapesStayCollapsed() throws {
+    @Test("区間が 1 つの形はまとめて置いても描く回数が増えず、立体だけで区間が複数の形は置き場所ごとに区間の数だけ描く")
+    func singleRegionShapesStayCollapsedAndSolidRegionsDrawPerPlacement() throws {
         let placements = [Placement(x: 120, y: 100), Placement(x: 100, y: 100), Placement(x: 80, y: 90)]
         // 区間が 1 つ (三角形 2 つ・同じ塗り)。置き場所が重なっても前後は置き場所の順のまま
         let flat = try togetherAndOneByOne(
@@ -422,9 +514,26 @@ struct InstancingTests {
         #expect(flat.togetherCalls == 1, "区間が 1 つの平面の形をまとめて置いて、1 回で描いていない")
         #expect(differingPixels(flat.together, flat.oneByOne) == 0)
 
-        // 立体だけで区間が 2 つ (混ぜ方の変わり目)。区間ごとに置き場所の並び全体を 1 度で積む今の速さの
-        // まま。重なる所は奥行きが違い、奥で描かれる側が奥行きの検めで落ちるので、絵も 1 つずつと同じに
-        // なる (同じ奥行きの所・奥の半透明の所が先に奥行きを書かれて隠れる形は、区間の順に重なる — #2495)
+        // 区間が 1 つの立体は、これまでどおり置き場所の並び全体を 1 度で積む (重なる所の前後を入れ替える
+        // 相手が無い)
+        let single = try togetherAndOneByOne(
+            { canvas in
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(0, 255, 0)
+                    canvas.box(20)
+                }
+            },
+            at: placements
+        ) { shape in
+            #expect(shape.drawCallCount == 1, "前提: 箱が 1 つの区間になっていない")
+        }
+        #expect(single.togetherCalls == 1, "区間が 1 つの立体の形をまとめて置いて、1 回で描いていない")
+        #expect(differingPixels(single.together, single.oneByOne) == 0)
+
+        // 立体だけで区間が 2 つ (混ぜ方の変わり目)。重なる置き場所の前後を、1 つずつ置いたときと同じ
+        // 置き場所の順に保つので、平面・距離関数の形と同じく置き場所ごとに区間を一巡して積む (#2495)。
+        // 描く回数は区間数 × 置き場所数で、1 つずつ置いたときと同じになる
         let solids = try togetherAndOneByOne(
             { canvas in
                 canvas.createShape {
@@ -440,7 +549,8 @@ struct InstancingTests {
         ) { shape in
             #expect(shape.drawCallCount == 2, "前提: 箱と球が混ぜ方の違う 2 つの区間になっていない")
         }
-        #expect(solids.togetherCalls == 2, "立体だけの形をまとめて置いて、区間ごとに 1 回で描いていない")
+        #expect(solids.togetherCalls == 2 * placements.count, "区間数 × 置き場所数で描いていない")
+        #expect(solids.togetherCalls == solids.oneByOneCalls, "1 つずつ置いたときと描く回数が違う")
         #expect(differingPixels(solids.together, solids.oneByOne) == 0, "立体だけの形の絵が 1 つずつと違う")
     }
 }
