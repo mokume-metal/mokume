@@ -284,6 +284,7 @@ struct SceneOutsideFrameTests {
         #expect(canvas.shadowBiasValue == ShadowMap.defaultBias, "\(name) で影のずらしが効いている")
         #expect(canvas.style.castsShadow && canvas.style.receivesShadow, "\(name) で影の落とし方が効いている")
         #expect(canvas.pendingComputations.isEmpty, "\(name) で計算が残っている")
+        #expect(!canvas.drawsDebugGuides, "\(name) で目印の格子と軸が効いている")
     }
 
     // MARK: - Sketch にだけある口
@@ -303,6 +304,9 @@ struct SceneOutsideFrameTests {
     private var sketchMouths: [(name: String, says: Canvas.OutsideFrame, write: (any Sketch) -> Void)] {
         [
             ("orbitControl", .camera, { $0.orbitControl() }),
+            // 目印の格子と軸 (#2462)。`Canvas` の公開面には置いていない
+            ("debugMode", .debug, { $0.debugMode() }),
+            ("noDebugMode", .debug, { $0.noDebugMode() }),
             (
                 "emit", .particles,
                 { sketch in

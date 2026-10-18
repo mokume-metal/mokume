@@ -101,6 +101,8 @@ enum ShapeExit {
         let refused: [(String, ((Canvas, Fixture) -> Void)?)] = [
             // シーンの記述 (#1529)。閉じる側が既定へ戻すものは汚す手順を持つ
             ("cameraStorage", { c, _ in c.perspective() }),
+            // 目印の格子と軸を描く印 (#2462)
+            ("drawsDebugGuides", { c, _ in c.debugMode() }),
             ("activeLights", { c, _ in c.ambientLight(white) }),
             ("activeSurroundings", { c, _ in c.surroundings(.sky) }),
             ("shadowsEnabled", { c, _ in c.shadows(true) }),

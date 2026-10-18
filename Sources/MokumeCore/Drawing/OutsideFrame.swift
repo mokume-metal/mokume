@@ -13,7 +13,7 @@ extension Canvas {
     /// **鍵は種類ごとに分けたままにしてある** — 光の注意が視点の注意を黙らせないことを
     /// `WarnOnceTests` が契約として見ている。ここが畳むのは文面だけである。
     ///
-    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 11 種) の第 2 文は、断った場面を名乗らず、
+    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 12 種) の第 2 文は、断った場面を名乗らず、
     /// どの口でも同じ 1 文で「フレームの外で呼ばれた」とだけ言う** ([#2723])。
     ///
     /// - **場面**: 断るのは `setup()` の中だけではない。止まっている間 (`noLoop()`) の入力の
@@ -27,7 +27,7 @@ extension Canvas {
     ///   偽になるので、どの口でも真の「呼ばれた」にそろえる
     ///
     /// 場面を名乗る文面は、#2723 が文面を直すだけと決めたので別の Issue ([#2780]) に分けた。そこで
-    /// 描き場所の面だけ、13 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
+    /// 描き場所の面だけ、14 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
     /// (``drawingTargetNotice``)。本体の面は上の文のまま — 場面を言い分けない。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
@@ -45,6 +45,10 @@ extension Canvas {
         case material
         case particles
         case compute
+        /// 目印の格子と軸を書いた (`debugMode()` / `noDebugMode()`・[#2462])。
+        ///
+        /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
+        case debug
         /// 図形・絵・背景を置いた ([#1672])。**シーンの記述ではない** — 置いたものは、持ち越しを
         /// 約束する区間 (本体の `setup()` と止まっている間のコールバック・描き場所の
         /// `beginDraw()`〜`endDraw()`) ならフレームの外でも置ける。断るのはその外だけなので、
@@ -59,7 +63,7 @@ extension Canvas {
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWrite
 
-        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 13 種で共通の
+        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 14 種で共通の
         /// 型にする** ([#2780])。自分でフレームを開く面とは、描き場所 (`createGraphics`) と、直に使う
         /// ``Canvas`` (`init(target:gpu:)`) である — ランタイムが持ち越しの区間を約束する本体の面
         /// (``Canvas/isRuntimeSurface``) ではない。
@@ -85,13 +89,14 @@ extension Canvas {
             case .material: subject = "Materials are written again every frame"
             case .particles: subject = "Particles are handled where you draw"
             case .compute: subject = "Compute is a preamble to drawing"
+            case .debug: subject = "The debug grid and axes are drawn again every frame"
             case .placing: subject = "Shapes, images and backgrounds are placed inside a frame"
             case .pixelWrite: subject = "Pixels are written inside a frame"
             }
             return subject + ". " + Self.drawingTargetTail
         }
 
-        /// ``drawingTargetNotice`` の、13 種で共通の直し先の案内。
+        /// ``drawingTargetNotice`` の、14 種で共通の直し先の案内。
         static let drawingTargetTail =
             "On a surface you open yourself, call this between beginDraw() and endDraw(), or "
             + "inside its draw { }. This was called outside them, so it belongs to no frame, and "
@@ -111,6 +116,7 @@ extension Canvas {
             case .material: .materialOutsideFrame
             case .particles: .particlesOutsideFrame
             case .compute: .computeOutsideFrame
+            case .debug: .debugOutsideFrame
             case .placing: .placingOutsideFrame
             case .pixelWrite: .pixelWriteOutsideFrame
             }
@@ -161,6 +167,12 @@ extension Canvas {
             case .compute:
                 "Compute is a preamble to drawing, so ask for it from draw(). This was called "
                     + "outside a frame, so it belongs to no frame, and was ignored"
+            // 手本 (p5.js) は始めに 1 度書く形なので、写した人が理由を読めるよう「1 度ではなく毎フレーム」
+            // と言う。断った場面は名乗らない (#2723)
+            case .debug:
+                "The debug grid and axes are drawn again every frame, so call this from draw() "
+                    + "on every frame, not once at the start. This was called outside a frame, so it "
+                    + "belongs to no frame, and was ignored"
             case .placing:
                 "Shapes, images and backgrounds are placed in setup(), draw() or an input "
                     + "callback, or between beginDraw() and endDraw() on a drawing target. This was "

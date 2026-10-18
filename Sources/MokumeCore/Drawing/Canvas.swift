@@ -994,6 +994,16 @@ public final class Canvas {
     /// 変わったときに古い既定が残らないようにするため。
     var cameraStorage: Camera?
 
+    /// このフレームの終わりに、目印の格子と軸を描くか (``drawDebugGuides()``)。**フレームを越えない**
+    /// ([ADR-0021] 決定 4)。書くのは `debugMode()` / `noDebugMode()` で、頭と終わりで下ろす。
+    ///
+    /// その場で描かずに印で持つのは、同じフレームで後に書いた `noDebugMode()` が打ち消せる
+    /// ようにするため ([#2462])。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
+    var drawsDebugGuides = false
+
     /// いまフレームの中か (``draw(_:)`` の閉包の中か、``beginDraw()``〜``endDraw()`` の間)。
     ///
     /// シーンの記述 (光・視点) は、フレームの外で書かれてもどのフレームにも属さない。
@@ -2915,6 +2925,7 @@ public final class Canvas {
         activeLights.removeAll(keepingCapacity: true)
         activeSurroundings = nil
         lightStorage.removeAll(keepingCapacity: true)
+        drawsDebugGuides = false
         passesThisFrame = 0
 
         isDrawing = true
@@ -3112,6 +3123,9 @@ public final class Canvas {
         // 溜めたものも書いた画素もフレームを越えない。`defer` は投げても走るので、どの経路を
         // 通ってもここでフレームの外に落ちる (``leaveFrame()``)
         defer { leaveFrame() }
+        // 目印の格子と軸は、そのフレームに書いたものを置き終えてから、最後の視点で描く (#2462)。
+        // 置くのはフレームの中なので、フレームの外へ落とす前に描く
+        drawDebugGuides()
         isDrawing = false
         framesDrawn += 1
         if timebase.owner === self { timebase.mainFramesDrawn += 1 }
@@ -3171,6 +3185,7 @@ public final class Canvas {
         depthIsHeld = false
         beginDrawFrame = nil
         cameraStorage = nil
+        drawsDebugGuides = false
         transform = .identity
         style.clip = nil
         activeLights.removeAll(keepingCapacity: true)

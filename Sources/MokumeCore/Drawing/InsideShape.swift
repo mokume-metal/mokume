@@ -110,6 +110,10 @@ extension Canvas {
         ///
         /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
         case brightness
+        /// 目印の格子と軸を書いた (`debugMode()` / `noDebugMode()`・[#2462])。
+        ///
+        /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
+        case debug
 
         /// フレームの外で書いたときに言う種類。**フレームに属するものだけが持つ** — 露出と明るさの
         /// 丸め方はフレームの外でも効き、塗り直しと画素の口はフレームの外での扱いを口が自分で持つ。
@@ -124,6 +128,7 @@ extension Canvas {
             case .material: .material
             case .particles: .particles
             case .compute: .compute
+            case .debug: .debug
             case .background, .pixels, .drawnOut, .frameEnd, .frameStart, .brightness: nil
             }
         }
@@ -146,6 +151,7 @@ extension Canvas {
             case .particles: .particlesInsideShape
             case .compute: .computeInsideShape
             case .brightness: .brightnessInsideShape
+            case .debug: .debugInsideShape
             }
         }
 
@@ -206,6 +212,9 @@ extension Canvas {
                 "exposure() and toneMapping() do nothing inside createShape { }. They set the "
                     + "brightness of the whole surface, which a shape cannot hold, so call them "
                     + "before or after building the shape"
+            case .debug:
+                "debugMode() and noDebugMode() do nothing inside createShape { }. A shape cannot "
+                    + "hold the debug grid and axes, so call them before or after building the shape"
             }
         }
     }
