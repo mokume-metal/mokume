@@ -368,6 +368,43 @@ struct ObservationProtocolTests {
         #expect(observer.pendingRequest() == nil)
     }
 
+    /// **省略できる欄の `null` は、省略と同じに読む** (#2392)。MCP の窓口が省略可の欄の `null` を省略と
+    /// 読む (#2393) のに、区画を直接書く側の読み方を揃える。`time: null` は「時刻なし」で、断らない。
+    @Test(
+        "省略できる欄の null は、書かなかった要求と同じに撮る",
+        arguments: ["scale", "count", "every", "time"])
+    func readsANullAsOmitted(_ key: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"n1","\#(key)":null}"#, to: facet)
+
+        let request = try #require(Self.request(observer.pendingRequest()), "null で解けなかった")
+        #expect(request == ObservationRequest(id: "n1"))
+        #expect(request.time == nil)
+        #expect(request.timeWarning == nil)
+        #expect(request.clamped().warnings.isEmpty)
+    }
+
+    @Test("すべての欄が null でも、書かなかった要求と同じに撮る")
+    func readsEveryNullAtOnce() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"n2","scale":null,"count":null,"every":null,"time":null}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request == ObservationRequest(id: "n2"))
+        #expect(request.timeWarning == nil)
+    }
+
+    /// `null` を受けても、**型の違う `time` は今までどおり断る** (「時刻なし」として成功させない)。
+    @Test("time の型の違う値は、null を受けても断る", arguments: [#""5""#, "true", "[]", "1e400"])
+    func stillRefusesATimeOfTheWrongType(_ value: String) throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"t2","time":\#(value)}"#, to: facet)
+        let request = try #require(Self.request(observer.pendingRequest()))
+        #expect(request.timeWarning != nil, "time: \(value) を時刻なしとして通した")
+    }
+
     /// 型に収まらない数の理由は、**数の字面を写さない** (#2805)。桁が多いほど理由の 1 行が伸びると、
     /// 書き手の置いた長さがそのまま応答へ返る。
     @Test("桁の多すぎる整数の理由は、字面の長さに比例して伸びない")

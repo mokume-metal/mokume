@@ -113,7 +113,7 @@ struct ObservationTimeTests {
     }
 
     @Test("無効な時刻や複数撮影を、通常の成功へ落とさない", arguments: [
-        #""time":-1"#, #""time":1e39"#, #""time":null"#, #""time":"three""#,
+        #""time":-1"#, #""time":1e39"#, #""time":"three""#,
         #""time":true"#, #""time":3,"count":2"#, #""time":3,"every":2"#,
     ])
     func refusesInvalidFields(_ fields: String) throws {

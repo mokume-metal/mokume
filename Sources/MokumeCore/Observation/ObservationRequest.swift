@@ -8,6 +8,9 @@ import Foundation
 /// 形の正典は `Schemas/observe-request.schema.json`。**知らない鍵は無視する**
 /// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。
 ///
+/// **省略できる欄 (`scale`・`count`・`every`・`time`) の `null` は、省略と同じに読む** ([#2392])。
+/// `time: null` は「時刻なし」で、断らない。型の違う値 (`"5"`・`true`) は省略として通さない。
+///
 /// ## 同じ時刻で比較する
 ///
 /// `time: 3` を指定すると、3秒目を1枚描き直して撮る。色を編集して保存した後も、
@@ -34,6 +37,7 @@ import Foundation
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [#1285]: https://github.com/mokume-metal/mokume/issues/1285
+/// [#2392]: https://github.com/mokume-metal/mokume/issues/2392
 public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 撮れる枚数の上限。60fps で 2 秒ぶん。
     ///
@@ -182,8 +186,9 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         self.scale = try Self.number(Double.self, in: container, forKey: .scale) ?? 1
         self.count = try Self.number(Int.self, in: container, forKey: .count) ?? 1
         self.every = try Self.number(Int.self, in: container, forKey: .every) ?? 1
-        // 型が違っても「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
-        self.time = container.contains(.time)
-            ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
+        // **`null` は省略と同じ「時刻なし」** (#2392。窓口 #2393 と揃う)。型が違う値は、
+        // 「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
+        let timeIsGiven = try container.contains(.time) && !container.decodeNil(forKey: .time)
+        self.time = timeIsGiven ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
     }
 }
