@@ -61,15 +61,17 @@ extension Canvas {
     /// 引かれてしまう。
     private func recordPath(_ subpaths: [SVGFile.Subpath], _ item: SVGFile.Item) {
         let scale = item.transform.largestScale
+        // `evenodd` は、回り数が奇数の所だけを塗る規則で塗る。自分と交わる 1 本の周 (一筆書きの
+        // 五芒星) も、同じ規則で中央が抜ける ([#2880])
+        let evenOdd = item.fillRule == .evenOdd
         guard subpaths.count > 1 else {
             beginShape()
             trace(subpaths[0], scale: scale)
-            endShape(subpaths[0].isClosed ? .close : .open)
+            endShape(subpaths[0].isClosed ? .close : .open, evenOdd: evenOdd)
             return
         }
         if item.fill != nil {
-            let rings =
-                item.fillRule == .evenOdd ? SVGFile.alternatingWinding(subpaths) : subpaths
+            let rings = evenOdd ? SVGFile.alternatingWinding(subpaths) : subpaths
             noStroke()
             beginShape()
             trace(rings[0], scale: scale)
@@ -78,7 +80,7 @@ extension Canvas {
                 trace(ring, scale: scale)
                 endContour()
             }
-            endShape(.close)
+            endShape(.close, evenOdd: evenOdd)
         }
         if let color = item.stroke {
             noFill()

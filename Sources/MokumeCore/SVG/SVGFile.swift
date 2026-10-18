@@ -993,9 +993,14 @@ nonisolated enum SVGFile {
     /// 線をそろえ直す。
     ///
     /// **入れ子の深さが偶数の線は正の向き、奇数の線は負の向きにする。** 交わらない線どうしなら、
-    /// ある点を囲む線の数が奇数のときだけ回り数が 0 でなくなる — `evenodd` と同じ塗りになる。
-    /// **交わる線どうしでは再現しない** (回り数で塗った絵になる)。深さは、線の始点を囲む他の線の
+    /// ある点を囲む線の数が奇数のときだけ回り数が 0 でなくなる。深さは、線の始点を囲む他の線の
     /// 数で数える。
+    ///
+    /// **交わる線どうしは、ここでは再現しない。** 交わる所は、塗る側が回り数が奇数の所だけを
+    /// 塗る規則で受ける (`Canvas.endShape(_:evenOdd:)`・[#2880])。向きを揃えるのは、交わらない
+    /// 線どうしで耳切りが穴を抜く経路へ、そのまま通すためである。
+    ///
+    /// [#2880]: https://github.com/mokume-metal/mokume/issues/2880
     static func alternatingWinding(_ subpaths: [Subpath]) -> [Subpath] {
         let polygons = subpaths.map(\.roughPolygon)
         return subpaths.indices.map { index in
