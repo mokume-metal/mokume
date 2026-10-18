@@ -223,6 +223,9 @@ struct FrameConverterTests {
         for converter in [FrameConverter(width: 3, height: 2), FrameConverter(width: 3, height: 2, alpha: .opaque)] {
             let picture = try converter.convert(source)
             for x in 0..<3 { #expect(rgba(picture, x, 0)[3] == 255, "x=\(x)") }
+            // 元の不透明度を読まないので、半透明・透明だった画素の色も暗くならない
+            #expect(near(rgba(picture, 1, 0), [240, 150, 70, 255]))
+            #expect(near(rgba(picture, 0, 0), [0, 0, 0, 255]))
         }
     }
 

@@ -76,6 +76,19 @@ nonisolated final class FrameConverter {
         let colorSpace: String?
     }
 
+    /// 乗算を戻した元を置く器。**毎枚確保しない** (4K で 33 MB)。大きさが変わったときだけ取り直す。
+    private var straightened: (pointer: UnsafeMutableRawPointer, capacity: Int)?
+
+    private func scratch(byteCount: Int) -> UnsafeMutableRawPointer {
+        if let straightened, straightened.capacity >= byteCount { return straightened.pointer }
+        straightened?.pointer.deallocate()
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: 16)
+        straightened = (pointer, byteCount)
+        return pointer
+    }
+
+    deinit { straightened?.pointer.deallocate() }
+
     init(width: Int, height: Int, alpha: Alpha = .opaque) {
         self.width = width
         self.height = height
@@ -96,15 +109,11 @@ nonisolated final class FrameConverter {
         // **乗算済みを名乗る元 (アルファ付きの HEVC) は、乗算を戻してから変換する。** 色の変換は
         // 曲線を掛けるので、乗算したまま掛けると半透明の色が狂う。vImage は元の乗算の有無を
         // 読まない (名乗りの無い BGRA と同じく、乗算していないものとして扱う)
-        var straightened: UnsafeMutableRawPointer?
-        defer { straightened?.deallocate() }
         if alpha == .straight, sourceCount == 1, Self.declaresPremultipliedAlpha(buffer) {
             let rowBytes = Int(sources[0].width) * 4
-            let made = UnsafeMutableRawPointer.allocate(
-                byteCount: rowBytes * Int(sources[0].height), alignment: 16)
-            straightened = made
             var target = vImage_Buffer(
-                data: made, height: sources[0].height, width: sources[0].width, rowBytes: rowBytes)
+                data: scratch(byteCount: rowBytes * Int(sources[0].height)),
+                height: sources[0].height, width: sources[0].width, rowBytes: rowBytes)
             let unpremultiplied = vImageUnpremultiplyData_RGBA8888(
                 &sources[0], &target, vImage_Flags(kvImageNoFlags))
             guard unpremultiplied == kvImageNoError else { throw .conversion(unpremultiplied) }
@@ -171,6 +180,9 @@ nonisolated final class FrameConverter {
         if vImageCVImageFormat_GetChromaSiting(reading) == nil {
             vImageCVImageFormat_SetChromaSiting(format, kCVImageBufferChromaLocation_Center)
         }
+        // **`.opaque` は元の不透明度を読ませない。** 不透明度を持たない行き先へ変換すると、
+        // vImage は透けた画素を黒へ平坦化する (半透明の色が暗くなる)。「不透明」の合図で抑える
+        if alpha == .opaque { vImageCVImageFormat_SetAlphaHint(format, 1) }
         let colorSpace = vImageCVImageFormat_GetColorSpace(reading)?.takeUnretainedValue()
         let key = Key(pixelFormat: pixelFormat, colorSpace: colorSpace?.name as String?)
         if let cached, cached.key == key { return (cached.converter, cached.sourceCount) }
