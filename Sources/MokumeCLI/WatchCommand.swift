@@ -360,20 +360,24 @@ enum WatchCommand {
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
         // 合図は窓の側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
+        let viewer = Viewer(window: window, preview: preview)
+        let firstFrame = viewer.firstFrame
         window.onGenerationPromoted = { [weak session] in
+            firstFrame.promoted(.window)
             Task { @MainActor in await retire(after: session) }
         }
         preview.onGenerationPromoted = { [weak session] in
+            firstFrame.promoted(.preview)
             Task { @MainActor in await retire(after: session) }
         }
-        let viewer = Viewer(window: window, preview: preview)
         // **どちらの窓が先に出しても畳む。** 2 つの窓は独立に 1 枚目を出すので合図は 2 度来るが、
-        // 畳むのは待っている間の 1 度だけである (``FirstFrameWait/shown()``)
-        let shown = { [weak preview, firstFrame = viewer.firstFrame] in
-            if firstFrame.shown() { preview?.report(nil, spinning: false) }
+        // 畳むのは待っている間の 1 度だけである (``FirstFrameWait/shown(_:)``)
+        window.onGenerationShown = { [weak preview] in
+            if firstFrame.shown(.window) { preview?.report(nil, spinning: false) }
         }
-        window.onGenerationShown = shown
-        preview.onGenerationShown = shown
+        preview.onGenerationShown = { [weak preview] in
+            if firstFrame.shown(.preview) { preview?.report(nil, spinning: false) }
+        }
         // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
         // (窓の中身を繋ぐ順序と同じ理由)
         askBeforeClosing(viewer)
@@ -498,6 +502,10 @@ enum WatchCommand {
             viewer?.preview.report(line, spinning: false)
         }
         if let outcome = await session.tick() {
+            // **終われと言われた後に戻ってきた結果は名乗らない** (最初の 1 回と同じ規律)。どう
+            // 終えたかは ``finish(_:)`` が名乗る — ここで名乗ると、止めた作り直しを「直して保存
+            // し直せ」と案内することになる (#2875 の反証)
+            guard !session.stopRequested else { return true }
             report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
             // 通るので、保存のたびにも起こりうる (#732)
@@ -862,21 +870,41 @@ enum WatchCommand {
 
 /// 起こした子の 1 枚目を待っているか ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
 ///
-/// **待ちを下ろすのは、待ちを置いた後の 1 枚目だけである。** 窓は世代ごとに 1 枚目の合図を出すが、
-/// 作り直しが始まった後に前の子の合図が遅れて来ることがある。そのまま畳むと、作り直しの行が消える。
+/// **畳むのは、待ちを置いた後にその窓が乗り換えた世代の 1 枚目だけである。** 窓の 1 枚目の合図は
+/// 世代の印を持たない (目録も同じ)。最初の世代は絵が来る前に採用されるので、`setup()` の最中に
+/// 保存すると、前の子が遅れて出した 1 枚目の合図が、新しい子を待っている間に来る。待ちを置いた後の
+/// 乗り換えを窓ごとに見ていれば、それは新しい子の世代である — 子を起こしてから待ちを置くまでの
+/// 間に中断点は無く、新しい子の目録がそれより先に採用されることはない。
+///
+/// 作り直しが始まった後に前の子の合図が遅れて来ても畳まない。畳むと、作り直しの行が消える。
 @MainActor
 final class FirstFrameWait {
+    /// 合図を出す窓。2 つの窓は独立に世代を乗り換える。
+    enum Pane: Hashable { case window, preview }
+
     private(set) var waiting = false
+    /// 待ちを置いた後に世代を乗り換えた窓。
+    private var promoted: Set<Pane> = []
 
     /// 子を起こした。1 枚目が出るまで、起こしている行を残す。
-    func wait() { waiting = true }
+    func wait() {
+        waiting = true
+        promoted = []
+    }
 
     /// 別の行が上書きした (作り直しが始まった・結果を名乗った・子が消えた)。もう待たない。
     func settle() { waiting = false }
 
-    /// 窓が 1 枚目を出した。**待っていたときだけ `true`** を返し、待ちを下ろす。
-    func shown() -> Bool {
-        defer { waiting = false }
-        return waiting
+    /// 窓が出す世代を乗り換えた。
+    func promoted(_ pane: Pane) {
+        if waiting { promoted.insert(pane) }
+    }
+
+    /// 窓が 1 枚目を出した。**待ちを置いた後にその窓が乗り換えた世代のときだけ `true`** を返し、
+    /// 待ちを下ろす。
+    func shown(_ pane: Pane) -> Bool {
+        guard waiting, promoted.contains(pane) else { return false }
+        waiting = false
+        return true
     }
 }

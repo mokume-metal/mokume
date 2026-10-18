@@ -264,14 +264,32 @@ struct WatchCommandTests {
     @Test("1 枚目の待ちは、待っている間の最初の合図でだけ畳む")
     func theFirstFrameWaitClosesOnceAndOnlyWhileWaiting() {
         let wait = FirstFrameWait()
-        #expect(!wait.shown(), "待つ前の合図で畳んだ")
+        #expect(!wait.shown(.window), "待つ前の合図で畳んだ")
         wait.wait()
-        #expect(wait.shown())
-        #expect(!wait.shown(), "もう片方の窓の合図でもう一度畳んだ")
+        wait.promoted(.window)
+        wait.promoted(.preview)
+        #expect(wait.shown(.window))
+        #expect(!wait.shown(.preview), "もう片方の窓の合図でもう一度畳んだ")
 
         wait.wait()
+        wait.promoted(.window)
         wait.settle()
-        #expect(!wait.shown(), "作り直しが始まった後の遅れた合図で畳んだ")
+        #expect(!wait.shown(.window), "作り直しが始まった後の遅れた合図で畳んだ")
+    }
+
+    /// **前の子の 1 枚目で、新しい子の待ちを畳まない** (#2875 の反証)。最初の世代は絵が来る前に
+    /// 採用されるので、`setup()` の最中に保存すると、前の子の 1 枚目の合図が新しい子を待つ間に来る。
+    /// 畳むのは、待ちを置いた後にその窓が乗り換えた世代の 1 枚目だけである。
+    @Test("待ちを置いた後に乗り換えていない窓の 1 枚目では畳まない")
+    func aLateFirstFrameOfThePreviousChildDoesNotClose() {
+        let wait = FirstFrameWait()
+        wait.wait()
+        #expect(!wait.shown(.window), "前の子の 1 枚目で畳んだ")
+        #expect(!wait.shown(.preview), "前の子の 1 枚目で畳んだ")
+        // 新しい子へ乗り換えたのは作品の窓だけ。プレビューはまだ前の子を出している
+        wait.promoted(.window)
+        #expect(!wait.shown(.preview), "乗り換えていない窓の合図で畳んだ")
+        #expect(wait.shown(.window))
     }
 
     /// 作り直しは通ったが子を起こせなかった回 (`ok: true, launched: false`) を、成功と同じに
