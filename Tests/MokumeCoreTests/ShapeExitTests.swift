@@ -323,6 +323,7 @@ extension ShapeExit {
             "isHandingOverOutletFrames": recording, "outletJudgedThrough": recording,
             "outletHeldDrop": recording, "outletFramesDropped": recording,
             "outletsClosing": recording, "closingOutcomesGiveUpAt": recording,
+            "lastFrameFailedToDraw": recording,
             "exposedValues": observation, "measuredValues": observation,
             "orbit": "視点を操る道具の状態。フレームを越える。`orbit = …` の setter は組み立ての中でも断られず、出口でも戻らない。形には焼き付かない — 視点を書くのは `camera` で、`camera` は組み立ての中では断られる (`orbitControl()` は視点を書く前に断る・#1670)",
             "orbitAdvancedAt": "orbit と同じ (道具を最後に進めたフレーム)。`orbitControl()` が書く",
