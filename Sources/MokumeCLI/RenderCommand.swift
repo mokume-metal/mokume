@@ -64,8 +64,26 @@ enum RenderCommand {
         let context = try RunCommand.context(in: directory, invocation: options.invocation)
         if let notice = context.place.notice { print(notice) }
         let executable = try RunCommand.buildAndResolve(in: directory, context: context)
-        try launch(executable, in: directory, request: options.request)
+        try render(executable, in: directory, request: options.request)
         print(report(options.request))
+    }
+
+    /// 走らせて、書き出し先に頼んだものが揃ったことまで確かめる。**``report(_:)`` はこの後でだけ出す。**
+    ///
+    /// 子の終了コードは「子が自分を終えた」としか言わない。頼みを読まずに窓を開いて 0 で終わる古い版の
+    /// 子 (道具と依存の版のずれ) は、何も書かずに 0 で終わる。書き出し先を事後に見て、足りなければ
+    /// 名乗って 0 以外で終わる ([#2481](https://github.com/mokume-metal/mokume/issues/2481))。
+    static func render(_ executable: URL, in directory: URL, request: RenderRequest) throws(
+        CommandFailure
+    ) {
+        // 子を起こす前の時刻。前の回が同じ行き先に残したファイルを、この回のものと取り違えない
+        let start = Date()
+        try launch(executable, in: directory, request: request)
+        if let shortfall = request.inspectOutput(since: start) {
+            throw .renderOutputShort(
+                destination: request.destination, expected: request.frameCount,
+                shortfall: shortfall)
+        }
     }
 
     /// 走らせて、書き終えるまで待つ。
@@ -76,6 +94,7 @@ enum RenderCommand {
     /// それまでの枚が入った開けるファイルが残り、道具は子が閉じ終えるのを待ってから終わる。
     ///
     /// 子が 0 以外で終わったら、揃わなかったと名乗る。理由は子が既に名乗っている。
+    /// 0 で終わった後の書き出し先の確かめは、呼び出し側 (``render(_:in:request:)``) が持つ。
     static func launch(_ executable: URL, in directory: URL, request: RenderRequest) throws(
         CommandFailure
     ) {

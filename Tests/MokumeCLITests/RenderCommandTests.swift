@@ -370,6 +370,131 @@ struct RenderCommandTests {
         #expect(!failure.message.contains("exited with code"))
     }
 
+    // MARK: - 書き出し先の確かめ ([#2481])
+
+    /// 与えた本文のシェルスクリプトを走らせる子。作業ディレクトリは一時ディレクトリ。
+    ///
+    /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
+    private func makeScriptChild(_ body: String) throws -> (executable: URL, directory: URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-render-out-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("sketch")
+        try "#!/bin/sh\n\(body)\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return (executable, directory)
+    }
+
+    /// **頼みを読まずに 0 で終わる古い子** (道具と依存の版のずれ)。何も書かない。
+    /// 終了コードは 0 なので、`launch` は通る。書き出し先を見て断るのが `render`。
+    @Test("頼みを読まずに 0 で終わった子は、書き出し先に何も無いと名乗って 0 以外で終わる")
+    func aChildThatIgnoresTheRequestIsCaught() throws {
+        let child = try makeScriptChild("exit 0")
+        defer { try? FileManager.default.removeItem(at: child.directory) }
+        let movie = child.directory.appendingPathComponent("take.mov").path
+        let request = try #require(RenderRequest(frameRate: 24, frameCount: 48, destination: movie))
+        // 子の終わり方だけを見る口は通る — 確かめがここに無いことの確認でもある
+        try RenderCommand.launch(child.executable, in: child.directory, request: request)
+
+        let thrown = #expect(throws: CommandFailure.self) {
+            try RenderCommand.render(child.executable, in: child.directory, request: request)
+        }
+        #expect(
+            thrown == .renderOutputShort(destination: movie, expected: 48, shortfall: .notWritten))
+        let failure = try #require(thrown)
+        #expect(failure.exitCode != 0)
+        #expect(failure.message.contains(movie))
+        #expect(failure.message.contains("nothing was written"))
+        // 道具は「書けた」と名乗る行を出さない — 名乗る側 (`run`) は `render` が戻った後でだけ出す
+        #expect(!failure.message.contains("Wrote"))
+    }
+
+    /// 連番は「N 枚中 M 枚」を名乗る。
+    @Test("連番が足りなければ、頼んだ枚数と揃った枚数を名乗って 0 以外で終わる")
+    func aSeriesThatFallsShortNamesTheCounts() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-render-series-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // 4 枚頼まれて 2 枚だけ書き、0 で終わる子
+        let child = try makeScriptChild(
+            "printf x > '\(directory.path)/f-0.png'; printf x > '\(directory.path)/f-1.png'")
+        defer { try? FileManager.default.removeItem(at: child.directory) }
+        let destination = directory.appendingPathComponent("f-#.png").path
+        let request = try #require(
+            RenderRequest(frameRate: 30, frameCount: 4, destination: destination))
+
+        let thrown = #expect(throws: CommandFailure.self) {
+            try RenderCommand.render(child.executable, in: child.directory, request: request)
+        }
+        #expect(
+            thrown
+                == .renderOutputShort(
+                    destination: destination, expected: 4, shortfall: .frames(found: 2)))
+        let failure = try #require(thrown)
+        #expect(failure.exitCode != 0)
+        #expect(failure.message.contains("only 2 of 4 frames"))
+    }
+
+    @Test("頼んだ枚数がこの回に書かれていれば、何も投げない")
+    func aChildThatWroteEverythingPasses() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-render-done-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let writes = (0..<3).map { "printf x > '\(directory.path)/f-\($0).png'" }
+        let child = try makeScriptChild(writes.joined(separator: "; "))
+        defer { try? FileManager.default.removeItem(at: child.directory) }
+        let request = try #require(
+            RenderRequest(
+                frameRate: 30, frameCount: 3,
+                destination: directory.appendingPathComponent("f-#.png").path))
+        try RenderCommand.render(child.executable, in: child.directory, request: request)
+    }
+
+    /// **前の回の残りで通さない。** 同じ行き先へ撮り直す回に、古い子が何も書かずに終わっても、
+    /// 前の回の連番が揃って見えてはならない。
+    @Test("前の回の連番が残っているだけなら、この回は書けていないと名乗る")
+    func leftoversFromAnEarlierRunDoNotPass() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-render-left-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for number in 0..<3 {
+            let file = directory.appendingPathComponent("f-\(number).png")
+            try Data("x".utf8).write(to: file)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: file.path)
+        }
+        let child = try makeScriptChild("exit 0")
+        defer { try? FileManager.default.removeItem(at: child.directory) }
+        let destination = directory.appendingPathComponent("f-#.png").path
+        let request = try #require(
+            RenderRequest(frameRate: 30, frameCount: 3, destination: destination))
+        #expect(
+            throws: CommandFailure.renderOutputShort(
+                destination: destination, expected: 3, shortfall: .frames(found: 0))
+        ) {
+            try RenderCommand.render(child.executable, in: child.directory, request: request)
+        }
+    }
+
+    /// 子が 0 以外で終わった回は、書き出し先を見る前に子の失敗として断る (子が理由を名乗っている)。
+    @Test("子が 0 以外で終わった回は、これまでどおり書き出しが揃わなかったと名乗る")
+    func aFailingChildIsStillIncomplete() throws {
+        let child = try makeScriptChild("exit 1")
+        defer { try? FileManager.default.removeItem(at: child.directory) }
+        let request = try #require(
+            RenderRequest(frameRate: 24, frameCount: 48, destination: "/tmp/mokume-never.mov"))
+        #expect(
+            throws: CommandFailure.renderIncomplete(
+                destination: "/tmp/mokume-never.mov", ending: .exited(1))
+        ) {
+            try RenderCommand.render(child.executable, in: child.directory, request: request)
+        }
+    }
+
     // MARK: - 途中で止める (完了条件 7)
 
     /// **端末の Control + C は子へ届かない** — `Process` は子を別のプロセスグループに置くので、

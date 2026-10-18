@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 道具が返す失敗。
 ///
@@ -58,6 +59,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     ///
     /// **終わり方を持つ。** 子が合図で落ちた回を「exited with code N」と名乗らない (#2315)。
     case renderIncomplete(destination: String, ending: ChildEnding)
+    /// 子は 0 で終わったが、書き出し先に頼んだものが揃っていなかった (`render`・
+    /// [#2481](https://github.com/mokume-metal/mokume/issues/2481))。
+    ///
+    /// **``renderIncomplete(destination:ending:)`` と分ける。** あちらは子が自分で失敗を名乗った回で、
+    /// こちらは子が何も言わずに終わったので、道具が書き出し先を見て気付いた。頼みを読まずに終わる
+    /// 古い版の子 (道具と依存の版のずれ) がこちらに来る。
+    case renderOutputShort(
+        destination: String, expected: Int, shortfall: RenderRequest.Shortfall)
     case noExecutable(path: String)
     /// 起こそうとした実行ファイルが、起こす時点で無かった。
     ///
@@ -341,6 +350,12 @@ nonisolated enum CommandFailure: Error, Equatable {
             Rendering did not complete: \(destination) is missing frames or was not written.
             The sketch said why above — it \(ending.phrase)
             """
+        case .renderOutputShort(let destination, let expected, let shortfall):
+            """
+            Rendering did not complete: \(Self.describe(shortfall, expected: expected, destination: destination))
+            The sketch itself ended without an error. A sketch built with another version of \
+            mokume than this tool does not read the request and writes nothing — build it again
+            """
         case .noExecutable(let path):
             """
             Cannot find anything to run: \(path)
@@ -377,6 +392,20 @@ nonisolated enum CommandFailure: Error, Equatable {
             The toolchain did not answer (exit code \(status)): \(command)
             It said why on standard error; run that command in the sketch's directory to see it again
             """
+        }
+    }
+
+    /// ``renderOutputShort(destination:expected:shortfall:)`` の、何が足りなかったかの 1 行。
+    private static func describe(
+        _ shortfall: RenderRequest.Shortfall, expected: Int, destination: String
+    ) -> String {
+        switch shortfall {
+        case .notWritten:
+            "nothing was written to \(destination) by this run (\(expected) frames were asked for)"
+        case .unreadable:
+            "\(destination) is there but cannot be read as a movie (\(expected) frames were asked for)"
+        case .frames(let found):
+            "only \(found) of \(expected) frames are in \(destination)"
         }
     }
 }
