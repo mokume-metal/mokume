@@ -127,6 +127,24 @@ nonisolated enum GivenPath {
     /// 場所はそのままでは通らない (`'\''` の形も fish では別の意味になる)。案内は sh 系に
     /// 貼られる前提で組んでいる。
     static func shellWord(_ url: URL) -> String {
-        "'" + url.path.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+        shellWord(quoting: url.path)
+    }
+
+    /// 文字列を、必ず単引用で包んだ 1 語にする。規則は ``shellWord(_:)``。
+    static func shellWord(quoting text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+    }
+
+    /// 打たれた語を読み手に見せる形。**シェルの 1 語として読める。**
+    ///
+    /// 空は `''`、空白や記号を含むものは引用符で包む。包まずに済む語 (`-c`・`release`・
+    /// `/tmp/a`) はそのまま — 裸で出すと、`-c ""` が `-c ` に見え、空白入りの値の境目が
+    /// 読めない ([#2484](https://github.com/mokume-metal/mokume/issues/2484))。
+    static func shellWord(display text: String) -> String {
+        let safe = text.unicodeScalars.allSatisfy {
+            ($0.isASCII && ($0.properties.isAlphabetic || ("0"..."9").contains(Character($0))))
+                || "_-+=:,./@%".unicodeScalars.contains($0)
+        }
+        return !text.isEmpty && safe ? text : shellWord(quoting: text)
     }
 }
