@@ -25,9 +25,20 @@ package nonisolated enum FileNameLength {
     /// (U+212B のオングストローム記号は分解されない) ので、Foundation がファイルシステムへ渡す形
     /// そのもの (`fileSystemRepresentation`) から数える (#2501)。
     ///
-    /// `/` と NUL を断った後に呼ぶ (NUL があると C の文字列がそこで切れ、短く数える)。
-    package static func of(_ name: String) -> Int {
-        String(cString: (name as NSString).fileSystemRepresentation).utf16.count
+    /// **NUL を含む名前と空の名前は数えられず、`nil` を返す。** どちらもファイル名にできない (書けない名前)。
+    /// `fileSystemRepresentation` は NUL を含む文字列にも空の文字列にも Objective-C の例外を投げ、
+    /// プロセスごと落ちるので、呼ぶ前に見る (#2774 の反証)。`/` は数える (呼ぶ側が部品に分けてから呼ぶ)。
+    package static func of(_ name: String) -> Int? {
+        guard !name.isEmpty, !name.unicodeScalars.contains("\0") else { return nil }
+        return String(cString: (name as NSString).fileSystemRepresentation).utf16.count
+    }
+
+    /// パスの、最後の部品より前の部品 (ディレクトリの名前)。空の部品 (`//`・先頭の `/`) は落とす。
+    package static func directoryComponents(of path: String) -> [String] {
+        let name = lastComponent(of: path)
+        let scalars = path.unicodeScalars
+        let head = scalars.prefix(scalars.count - name.unicodeScalars.count)
+        return head.split(separator: "/", omittingEmptySubsequences: true).map { String($0) }
     }
 
     /// パスの最後の部品 (ファイル名)。**最後の `/` より後ろ**で、`/` を Unicode scalar で探す
@@ -45,10 +56,12 @@ package nonisolated enum FileNameLength {
 package nonisolated struct LongFileName: Equatable, Sendable {
     /// 越えたファイル名 (パスではなく最後の部品)。
     package let name: String
-    /// ``FileNameLength/of(_:)`` で数えた長さ。
-    package let length: Int
+    /// ``FileNameLength/of(_:)`` で数えた長さ。NUL を含み数えられない名前は `nil`。
+    package let length: Int?
     /// 書ける長さの上限。
     package let limit: Int
     /// 連番で、番号が伸びた後の名前を見たときの、その枚の通し番号 (0 始まり)。1 枚ものと `.mov` は `nil`。
     package let index: Int?
+    /// ファイルの名前ではなく、作るディレクトリの部品の名前か。
+    package let isDirectory: Bool
 }

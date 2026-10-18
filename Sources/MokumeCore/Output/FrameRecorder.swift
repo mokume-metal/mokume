@@ -415,8 +415,10 @@ final class FrameRecorder: Outlet {
 
     /// 行き先のファイル名が、作れない長さか。作れれば `nil` ([#2774])。
     ///
-    /// 見るのはファイル名 (最後の `/` より後ろ) の長さだけである。長さ以外の理由 (非文字・結合文字の
-    /// 連続)・APFS 以外の置き場・パスの長さは見ない ([#2773])。**線は「いま書けない名前」のちょうど手前**で、
+    /// 見るのは部品ごとの長さである: 作るディレクトリの部品は ``FileNameLength/limit``、ファイル名
+    /// (最後の `/` より後ろ) は静止画 ``imageNameLimit``・動画 ``FileNameLength/limit``。NUL を含む
+    /// 部品は書けない名前として断る。長さ以外の理由 (非文字・結合文字の連続)・APFS 以外の置き場・
+    /// パス全体の長さは見ない ([#2773])。**線は「いま書けない名前」のちょうど手前**で、
     /// 書けていた名前は 1 つも断らない。
     ///
     /// 連番は番号が桁に収まらなくなると桁が伸びるので、後ろの枚ほど長い。`frameCount` が分かるとき
@@ -442,19 +444,40 @@ final class FrameRecorder: Outlet {
         tooLong(path, limit: imageNameLimit)
     }
 
+    /// 作る前に検める: 先に作るディレクトリの部品 (上限は ``FileNameLength/limit``)、次にファイル名
+    /// (`limit`)。**部品 1 つが越えても、ファイルシステムは同じ `File name too long` で断る**
+    /// (`createDirectory` が書く段で落ちる)。NUL を含む部品は数えられず、書けない名前として断る。
+    /// パス全体の長さは見ない (#2773)。
+    ///
+    /// - Parameter path: ファイル名の部分は、呼ぶ側が連番の番号を入れた後のもの。
     private nonisolated static func tooLong(_ path: String, limit: Int, index: Int? = nil)
         -> LongFileName?
     {
+        for directory in FileNameLength.directoryComponents(of: path) {
+            let length = FileNameLength.of(directory)
+            if length == nil || length! > FileNameLength.limit {
+                return LongFileName(
+                    name: directory, length: length, limit: FileNameLength.limit, index: nil,
+                    isDirectory: true)
+            }
+        }
         let name = FileNameLength.lastComponent(of: path)
         let length = FileNameLength.of(name)
-        return length > limit ? LongFileName(name: name, length: length, limit: limit, index: index) : nil
+        guard length == nil || length! > limit else { return nil }
+        return LongFileName(
+            name: name, length: length, limit: limit, index: index, isDirectory: false)
     }
 
     /// 作れない長さの名前を断るときの理由 (1 文)。
     nonisolated static func tooLongReason(_ long: LongFileName) -> String {
+        let shown = long.name.replacingOccurrences(of: "\0", with: "\\0")
+        let kind = long.isDirectory ? "directory name" : "file name"
+        guard let length = long.length else {
+            return "the \(kind) is empty or contains a NUL character, which a name cannot be: \"\(shown)\""
+        }
         let place = long.index.map { " of frame number \($0) in the series" } ?? ""
-        return "the file name\(place) is \(long.length) long, and at most \(long.limit) can be written "
-            + "(counted as the file system counts it): \(long.name)"
+        return "the \(kind)\(place) is \(length) long, and at most \(long.limit) can be written "
+            + "(counted as the file system counts it): \(shown)"
     }
 
     /// `.mov` に書ける fps の上限。**時刻の刻み (``MovieFile/timescale``) そのものである** ([#2307])。

@@ -105,6 +105,20 @@ struct RenderCommandTests {
             mentioningAll: ["--out", "frame number 119", "248", "247"])
     }
 
+    /// 作るディレクトリの部品 1 つが 255 を越えると、`createDirectory` が子の中で落ちる。ビルドの前に止める。
+    @Test("作るディレクトリの部品が長すぎる --out も、ビルドの前に止まる")
+    func aTooLongDirectoryStopsBeforeTheBuild() throws {
+        let fits = String(repeating: "d", count: 255)
+        _ = try parse(["--fps", "10", "--seconds", "0.5", "--out", "\(fits)/f-####.png"])
+        let over = String(repeating: "d", count: 256)
+        expectUsage(
+            ["--fps", "10", "--seconds", "0.5", "--out", "\(over)/f-####.png"],
+            mentioningAll: ["--out", "directory name", "256", "255"])
+        expectUsage(
+            ["--fps", "10", "--seconds", "1", "--out", "a/\(over)/take.mov"],
+            mentioningAll: ["--out", "directory name", "256"])
+    }
+
     @Test("動画のファイル名は 255 まで通り、256 から止まる")
     func aMovieNameIsCheckedAgainstTheFileSystemLimit() throws {
         _ = try parse(["--fps", "10", "--seconds", "1", "--out", outName(255, ending: ".mov")])

@@ -76,7 +76,7 @@ enum NewCommand {
         guard isValid(name: name) else { throw .invalidName(name) }
         // **長さも、何かを作る前に断る** (#2774)。`isValid` が通した名前には `/` も NUL も無いので、
         // そのまま数えられる
-        let length = FileNameLength.of(name)
+        let length = FileNameLength.of(name) ?? 0
         guard length <= maximumNameLength else { throw .nameTooLong(name: name, length: length) }
         if let reason = unusableReason(name: name) { throw .unusableName(name: name, reason: reason) }
         return Options(

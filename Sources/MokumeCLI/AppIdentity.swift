@@ -115,7 +115,8 @@ nonisolated struct AppIdentity: Equatable {
         }
         // **長さも同じ段で断る** (#2501)。紙の名前が上限を越える名前は、ビルドと署名の後で紙が
         // 書けずに止まり、署名済みの `.app` を残していた。数え方は ``FileNameLength/of(_:)``
-        let length = FileNameLength.of(name)
+        // NUL は上で断ってあるので数えられる
+        let length = FileNameLength.of(name) ?? 0
         guard length <= maximumNameLength else {
             throw .identityNameTooLong(path: path, name: name, length: length)
         }

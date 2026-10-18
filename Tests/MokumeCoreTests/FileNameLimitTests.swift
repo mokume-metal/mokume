@@ -47,11 +47,75 @@ struct FileNameLimitTests {
         #expect(over.count - "/tmp/".count < 247)
     }
 
-    @Test("見るのはファイル名だけで、置き場のディレクトリの長さは見ない")
-    func onlyTheFileNameIsCounted() {
-        let directory = "/tmp/" + String(repeating: "d", count: 300) + "/"
-        #expect(FrameRecorder.nameTooLong(directory + "frame-###.png") == nil)
-        #expect(FrameRecorder.shotNameTooLong(directory + "shot.png") == nil)
+    /// 作るディレクトリの部品 1 つが 255 を越えると、`createDirectory` が書く段で落ちる。ファイル名と同じ数え方で、
+    /// 部品ごとに 255 を当てる。パス全体の長さは見ない (#2773)。
+    @Test("作るディレクトリの部品も、1 つにつき 255 までを作れる名前とする")
+    func eachDirectoryComponentIsCounted() {
+        let fits = "/tmp/" + String(repeating: "d", count: 255) + "/"
+        let over = "/tmp/" + String(repeating: "d", count: 256) + "/"
+        #expect(FrameRecorder.nameTooLong(fits + "frame-###.png") == nil)
+        #expect(FrameRecorder.shotNameTooLong(fits + "shot.png") == nil)
+        for long in [
+            FrameRecorder.nameTooLong(over + "frame-###.png"),
+            FrameRecorder.nameTooLong(over + "take.mov", frameCount: 3),
+            FrameRecorder.shotNameTooLong(over + "shot.png"),
+        ] {
+            #expect(long?.isDirectory == true)
+            #expect(long?.length == 256)
+            #expect(long?.limit == 255)
+        }
+        // 部品が短ければ、パス全体が長くても通る (パス全体の長さは見ない)
+        let deep = "/tmp/" + (0..<40).map { _ in String(repeating: "d", count: 100) }.joined(separator: "/") + "/"
+        #expect(FrameRecorder.nameTooLong(deep + "frame-###.png") == nil)
+        // 分解で 2 と数える字は、ディレクトリでも数え方どおり
+        let kana = "/tmp/" + String(repeating: "が", count: 128) + "/"
+        #expect(FrameRecorder.shotNameTooLong(kana + "a.png")?.length == 256)
+    }
+
+    /// `fileSystemRepresentation` は NUL を含む文字列に Objective-C の例外を投げ、プロセスごと落ちる。
+    /// NUL は数えられない名前として、書けない名前の扱いにする (#2774 の反証)。
+    @Test("NUL を含む名前は、落ちずに書けない名前として断る")
+    func aNameWithNULIsRefusedWithoutCrashing() {
+        #expect(FileNameLength.of("a\0b") == nil)
+        // 空の名前も `fileSystemRepresentation` が例外を投げるので、数えられない名前
+        #expect(FileNameLength.of("") == nil)
+        #expect(FrameRecorder.shotNameTooLong("/tmp/out/")?.length == nil)
+        #expect(FrameRecorder.shotNameTooLong("") != nil)
+        let file = "/tmp/out/a\0b.png"
+        let long = FrameRecorder.shotNameTooLong(file)
+        #expect(long != nil)
+        #expect(long?.length == nil)
+        #expect(FrameRecorder.tooLongReason(long!).contains("NUL"))
+        #expect(FrameRecorder.tooLongReason(long!).contains("a\\0b.png"))
+        #expect(FrameRecorder.nameTooLong("/tmp/out/f-\0-###.png", frameCount: 3) != nil)
+        #expect(FrameRecorder.nameTooLong("/tmp/out/m\0.mov") != nil)
+        // ディレクトリの部品の NUL も
+        let directory = FrameRecorder.shotNameTooLong("/tmp/o\0ut/shot.png")
+        #expect(directory?.isDirectory == true)
+        #expect(directory?.length == nil)
+
+        let recorder = FrameRecorder(frameRate: 30)
+        recorder.save(file, at: 1)
+        #expect(!recorder.hasUnwrittenShots(upTo: Int.max))
+        #expect(recorder.hasFailedToWrite)
+        recorder.beginRecord("/tmp/out/f-\0-###.png", at: 1)
+        #expect(!recorder.isRecording)
+        #expect((recorder.warnings.message(for: .fileNameTooLong) ?? "").contains("NUL"))
+    }
+
+    @Test("beginRecord と save は、作るディレクトリの部品が長すぎても始めない")
+    func recordersRefuseATooLongDirectory() {
+        let over = "/tmp/" + String(repeating: "d", count: 256) + "/"
+        let recorder = FrameRecorder(frameRate: 30)
+        recorder.beginRecord(over + "f-###.png", at: 1)
+        #expect(!recorder.isRecording)
+        let message = recorder.warnings.message(for: .fileNameTooLong) ?? ""
+        #expect(message.contains("directory name"))
+        #expect(message.contains("256"))
+        #expect(message.contains("255"))
+        recorder.save(over + "shot.png", at: 1)
+        #expect(!recorder.hasUnwrittenShots(upTo: Int.max))
+        #expect(recorder.hasFailedToWrite)
     }
 
     // MARK: - 連番は伸びた後で見る
