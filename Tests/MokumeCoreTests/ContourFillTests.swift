@@ -272,4 +272,29 @@ struct ContourFillTests {
         #expect(result.spilled == 0)
         #expect(result.painted == 140 * 140 - 300 - 600 - 200 - 100)
     }
+
+    /// 穴が別の穴の辺の途中に T 字に触れ、離れた穴がもう 1 つ加わる形 ([#2655])。畳んだ周が辺の上の
+    /// 点で耳を塞がれて耳切りが途中で止まり、塗りが大きく欠けた。三角形の面積は `TJunctionHolesTests`
+    /// が CPU だけで数えるので、ここは画素に出ることを 1 場面で確かめる。座標は #2655 の入力の半分
+    /// (穴は外周と逆回りに直してある)。
+    ///
+    /// [#2655]: https://github.com/mokume-metal/mokume/issues/2655
+    @Test("穴が T 字に触れる 2 つに、離れた穴が加わっても、穴だけが抜ける (#2655)")
+    func aTJunctionWithAThirdHoleIsPunched() throws {
+        let first: [SIMD2<Float>] = [SIMD2(55, 45), SIMD2(45, 50), SIMD2(55, 35)]
+        let second: [SIMD2<Float>] = [SIMD2(45, 60), SIMD2(45, 45), SIMD2(40, 55)]
+        let third: [SIMD2<Float>] = [SIMD2(40, 70), SIMD2(30, 70), SIMD2(20, 50)]
+        // 外周 `square` は画面で時計回り。穴は反時計回りに揃える
+        func counterClockwise(_ ring: [SIMD2<Float>]) -> [SIMD2<Float>] {
+            let area = (0..<ring.count).reduce(Float(0)) { total, index in
+                let a = ring[index]
+                let b = ring[(index + 1) % ring.count]
+                return total + a.x * b.y - b.x * a.y
+            }
+            return area > 0 ? ring.reversed() : ring
+        }
+        let result = try tally([square] + [first, second, third].map(counterClockwise))
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+    }
 }

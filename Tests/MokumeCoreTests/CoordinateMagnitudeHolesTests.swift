@@ -183,12 +183,13 @@ struct CoordinateMagnitudeHolesTests {
     /// 写す前に正しかった場面。
     nonisolated static let rightBeforeMapping = probes.filter { !isWrong(judge($0, identity)) }
 
-    /// 写す前に誤るのは、`AlignedHolesTests.tJunctionScenesDoNotRegress` と同じ 1 場面だけ。比べる相手の
-    /// 集合がこの判定 (相対誤差・`Double` の標本) でも変わらないことの確かめである。
-    @Test("写す前に誤るのは、T 字を含む 78 だけ")
+    /// 写す前に誤る場面は無い (T 字を含む 78 は #2655 で直った)。比べる相手の集合が、この判定
+    /// (相対誤差・`Double` の標本) と `AlignedHolesTests.tJunctionScenesDoNotRegress` で食い違わない
+    /// ことの確かめである。
+    @Test("写す前に誤る場面は無い")
     func wrongBeforeMapping() {
         let wrong = Self.probes.filter { Self.isWrong(Self.judge($0, Self.identity)) }.map(\.name)
-        #expect(wrong == ["T 字を含む 78"])
+        #expect(wrong == [])
     }
 
     /// 2 のべきでない拡大と、原点から 1e4 までの平行移動。

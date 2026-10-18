@@ -68,6 +68,8 @@ nonisolated extension Triangulation {
     /// - **周が同じ点を 2 度通る** (別々に通る 2 つの頂点が同じ位置にある。別の周の頂点との
     ///   重なりも含む)。交わらずに触れて戻るだけでも組み直す。耳切りは触れ合う 2 つの葉が
     ///   同じ向きに回ると形の外まで塗る ([#1211] の形は通っていたが、#1886 の形は通らない)
+    /// - **穴の頂点が、別の穴の辺の途中に載る** (穴どうしが T 字に触れる・[#2655])。同じ周の
+    ///   中の T 字 (T の字・#1148) と、穴の頂点が外周の辺に載る形は、耳切りが扱うので数えない
     /// - **穴が外周と同じ向きに回る**
     /// - **穴が外周の中にない** (外周の外に置いた周・外周を包む周)
     /// - **穴が別の穴の中にある** (穴の中に置いた周)
@@ -117,6 +119,7 @@ nonisolated extension Triangulation {
     /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
     /// [#1211]: https://github.com/mokume-metal/mokume/issues/1211
     /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
+    /// [#2655]: https://github.com/mokume-metal/mokume/issues/2655
     static func splitForNonzero(
         rings: [[Int]], points: [SIMD2<Float>], comparisons: inout Int
     ) -> Split? {
@@ -423,7 +426,7 @@ nonisolated extension Triangulation {
                 contacts[point, default: []].append(visit)
             }
             for (point, visits) in contacts where visits.count >= 2 {
-                if revisits(visits) || passesThrough(point, visits) {
+                if revisits(visits) || passesThrough(point, visits) || landsOnAnotherRing(visits) {
                     return Survey(pairs: pairs, crossings: [], isTangled: true)
                 }
             }
@@ -444,6 +447,35 @@ nonisolated extension Triangulation {
                 if case .corner = visit { corners += 1 }
             }
             return corners >= 2
+        }
+
+        /// 穴の頂点が、別の穴の辺の途中に載るか (穴が別の穴に T 字に触れる・[#2655])。
+        ///
+        /// 同じ周の中で辺の途中に頂点が載る形 (T の字・[#1148]) と、穴の頂点が外周の辺に載る形は、
+        /// 耳切りと `mergeHoles` が正しく扱うので数えない。しかし穴どうしが T 字に触れると、
+        /// `mergeHoles` が畳んだ周に辺の途中の点が残り、耳が辺の上の点で塞がれて耳切りが途中で
+        /// 止まる。辺を頂点で割る組み直しに送れば、頂点どうしが重なる形 (#1886) になる。
+        ///
+        /// 最初の周を外周、残りを穴とみる (``splitForNonzero(rings:points:comparisons:evenOdd:)``)。
+        ///
+        /// [#2655]: https://github.com/mokume-metal/mokume/issues/2655
+        /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
+        private func landsOnAnotherRing(_ visits: [Visit]) -> Bool {
+            func hole(of edge: Int) -> Int? {
+                guard let index = rings.firstIndex(where: { $0.contains(edge) }), index > 0 else {
+                    return nil
+                }
+                return index
+            }
+            for visit in visits {
+                guard case .through(let edge) = visit, let host = hole(of: edge) else { continue }
+                for other in visits {
+                    if case .corner(let corner) = other, let guest = hole(of: corner), guest != host {
+                        return true
+                    }
+                }
+            }
+            return false
         }
 
         /// 一直線に並ぶ 3 点で、`point` が `a` と `b` の間 (両端を除く) にあるか。
