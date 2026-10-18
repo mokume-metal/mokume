@@ -52,13 +52,40 @@ struct TJunctionHolesTests {
         #expect(!scene.isPaintedWrong)
     }
 
-    /// 穴の頂点が外周の辺の途中に載る形 (T 字) は、これまでどおり組み直さず、塗れる
-    /// (`NonzeroSplitTests` が組み直さないことを見る)。
-    @Test("穴の頂点が外周の辺の途中に載っても、外周から引いた面積どおりに塗れる (#2655)")
-    func aHoleVertexOnTheOuterEdgeIsPainted() {
-        let hole: [SIMD2<Float>] = [SIMD2(100, 0), SIMD2(80, 30), SIMD2(120, 30)]
-        let far: [SIMD2<Float>] = [SIMD2(40, 120), SIMD2(60, 120), SIMD2(50, 150)]
-        let scene = TouchingHoleScene(index: 0, outer: Self.outer, holes: [hole, far])
-        #expect(!scene.isPaintedWrong)
+    /// 穴の頂点が**外周の辺**の途中に載る形 (T 字) に、離れた穴がもう 1 つ加わる形。以前は外周の辺に
+    /// 載る形を組み直さず、右の辺 (x = 200) に載る向きで、畳んだ周の辺の途中の点が耳を塞いで塗りが
+    /// 大きく欠けた (面積の誤差 16,050)。外周と穴の位置を 90 度ずつ回して、4 つの辺の全部で見る。
+    ///
+    /// 穴 A の頂点 (200,110) が外周の右の辺に載り、穴 B は離れている。
+    @Test("穴の頂点が外周のどの辺に載っても、離れた穴が加わって、外周から引いた面積どおりに塗れる (#2655)", arguments: 0..<4)
+    func aHoleOnTheOuterEdgeWithAnotherHole(_ quarterTurns: Int) {
+        func turned(_ point: SIMD2<Float>) -> SIMD2<Float> {
+            var p = point
+            for _ in 0..<quarterTurns { p = SIMD2(200 - p.y, p.x) }
+            return p
+        }
+        let a: [SIMD2<Float>] = [SIMD2(180, 110), SIMD2(160, 100), SIMD2(200, 110)]
+        let b: [SIMD2<Float>] = [SIMD2(100, 170), SIMD2(140, 170), SIMD2(110, 130)]
+        let scene = TouchingHoleScene(
+            index: 0, outer: Self.outer, holes: [a, b].map { $0.map(turned) })
+        let result = scene.measure()
+        #expect(result.areaError < 0.5, "面積の誤差 \(result.areaError)")
+        #expect(result.mismatches == 0, "標本点の食い違い \(result.mismatches)")
+    }
+
+    /// 三角形・長方形・L 字を格子 0..20 に混ぜた場面 (`TouchingHoleScenes.mixedLattice`・内側が重ならなければ
+    /// どんな触れ方もしてよい) のうち、直す前に誤った場面 (種・場面の番号)。種 1・2・3・2655 の各 5,000
+    /// 場面のうち、穴の頂点が外周の辺に載る形がこの 10 場面だった。
+    nonisolated static let formerlyWrong: [(seed: UInt64, index: Int)] = [
+        (1, 2118), (1, 3187), (2, 1630), (3, 2701), (3, 3129), (3, 4711), (2655, 1395), (2655, 2862),
+        (2655, 3200), (2655, 4572),
+    ]
+
+    @Test("直す前に誤った格子の混在場面が、面積どおりに塗れる (#2655)")
+    func formerlyWrongMixedScenes() {
+        for (seed, index) in Self.formerlyWrong {
+            let scene = TouchingHoleScenes.mixedLattice(count: index + 1, seed: seed)[index]
+            #expect(!scene.isPaintedWrong, "種 \(seed) 場面 \(index): \(scene.measure())")
+        }
     }
 }

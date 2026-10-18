@@ -280,12 +280,19 @@ struct NonzeroSplitTests {
         #expect(result.mismatched == 0, "\(result)")
     }
 
-    // MARK: - 外周の辺に触れる穴 (反証の指摘 5)
+    // MARK: - 外周の辺に触れる穴 (反証の指摘 5・#2655)
 
+    /// 穴の頂点が外周の辺の途中に載る形 (T 字) は組み直す ([#2655])。以前は「触れるだけなので組み直さない」と
+    /// 決めていたが、離れた穴がもう 1 つ加わると、畳んだ周に辺の途中の点が残って耳切りが途中で止まり、
+    /// 塗りが大きく欠けた (`TJunctionHolesTests.aHoleOnTheOuterEdgeWithAnotherHole`)。外周を辺の途中の
+    /// 点で割って頂点どうしが重なる形にすれば、`mergeHoles` と耳切りが正しく扱う。組み直しても、
+    /// 塗りは同じ (欠けず重ならない)。
+    ///
+    /// [#2655]: https://github.com/mokume-metal/mokume/issues/2655
     @Test(
-        "外周の辺に点が載るだけの穴は組み直さない",
+        "外周の辺に点が載るだけの穴も組み直し、塗りが欠けず重ならない",
         arguments: ["最初の点が右の辺に載る", "最初の点が左の辺に載る", "最初の点が上の辺に載る", "2 つ目の点が右の辺に載る"])
-    func holesTouchingTheOuterRingAreLeftAlone(_ name: String) {
+    func holesTouchingTheOuterRingAreSplit(_ name: String) {
         let outer: [SIMD2<Float>] = [SIMD2(10, 10), SIMD2(150, 10), SIMD2(150, 150), SIMD2(10, 150)]
         let hole: [SIMD2<Float>]
         switch name {
@@ -296,7 +303,7 @@ struct NonzeroSplitTests {
         }
         #expect(Triangulation.signedArea(hole) * Triangulation.signedArea(outer) < 0)
         let (split, triangles) = triangles([outer, hole])
-        #expect(split == nil)
+        #expect(split != nil)
         let result = coverage([outer, hole], triangles)
         #expect(result.mismatched == 0, "\(result)")
     }
