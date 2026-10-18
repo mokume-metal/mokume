@@ -102,10 +102,11 @@ let package = Package(
             dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork", "MokumeGamepad"],
             swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
-        // 生成物はコミットしない (ADR-0001 原則 8)
+        // 生成物はコミットしない (ADR-0001 原則 8)。OS の事情の文面は本体と同じ関数で引くので
+        // MokumeDiagnostics を直に使う (アンブレラは再輸出しない・#2839)
         .executableTarget(
             name: "MokumeCLI",
-            dependencies: ["mokume"],
+            dependencies: ["mokume", "MokumeDiagnostics"],
             resources: [.copy("Templates")],
             swiftSettings: .mokume),
         // 開発時に測るための道具。product には含めない (利用者へ配るものではない)
