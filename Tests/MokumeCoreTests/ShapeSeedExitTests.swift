@@ -382,31 +382,21 @@ struct ShapeSeedExitTests {
     /// 組み立ての途中で面が描き切られると形は空になり、出口は途中で抜ける (#1588)。その経路でも
     /// 控えは戻る。戻らないと、積んだ段が残って後の組み立てが入れ子に見える。
     ///
-    /// 抜け道に入れるのは、置いた側の写しが上限に達した後の描き換えである。組み立ての中の自分の
-    /// `endDraw()` は #1855 から出口まで待たせるので、もう抜け道に入らない。
+    /// **溜め場を捨てる道は、製品の経路にはもう無い。** 置いた側の写しが上限に達した後の描き換えも、組み立ての
+    /// 区間を残して組み立ての前の列だけを描き切る (#2850)。出口の安全網は mokume の不具合に備えて残してあるので、
+    /// ここでは組み立ての途中で溜め場を捨てて (``Canvas/discardPending(keepingCasters:)``)、その不具合を模す。
     @Test("組み立ての途中で面が描き切られて形が空になっても、列は書く直前へ戻る")
     func theLineIsBackWhenTheBuildIsDrawnOut() throws {
         var next: Float = -1
         var later: Float = -1
         var shape = Shape.empty
         try run(.draw) { probe in
-            guard let layer = probe.layer else { return }
             probe.randomSeed(1)
-            // 本体へ描き場所を置いて描き換えるのを上限の回数だけ繰り返し、置いた時点の絵の写しを使い切る
-            for _ in 0..<Canvas.placedPictureCopyLimit {
-                probe.image(layer, 0, 0)
-                layer.beginDraw()
-                layer.rect(0, 0, 4, 4)
-                layer.endDraw()
-            }
-            probe.image(layer, 0, 0)
             shape = probe.createShape {
                 probe.randomSeed(42)
                 probe.rect(0, 0, 4, 4)
-                // 写せないので、置いた側 (組み立ての途中の本体) を描き切らせる
-                layer.beginDraw()
-                layer.rect(0, 0, 4, 4)
-                layer.endDraw()
+                // 不具合を模す: 組み立ての途中で、溜め場ごと捨てる
+                probe.canvas.discardPending(keepingCasters: true)
             }
             next = probe.random()
             // 続けて組み立てても、前の組み立ての控えを引きずらない

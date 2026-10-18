@@ -46,6 +46,13 @@ enum ShapeExit {
     /// **「戻す」は上から順に汚す。** 揺らぎの設定はどこで書き換えても組み立ての途中の面を描き切ら
     /// ない (#1855) が、先頭に置いたままにする。塗り・線は、外す口 (`noFill()` / `noStroke()`) より
     /// 先に色を書く (色を書く口は外した印を戻す)。読む面は、輪郭を外してから貼る絵で置いて替える。
+    /// 溜め場の並び。組み立てが入口で長さを控え、出口でそこから後ろを形として抜く。**組み立ての途中で置いた側を
+    /// 描き切る逃げ道は、ここの全部を預けて引き戻す** (``Canvas/ShapeMark``・``Canvas/HeldBuild``・#2850)。
+    static let poolStorageNames = [
+        "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
+        "recordedStrokeRanges", "recordedFillRanges", "recordedSolidStrokes", "recordedGPUStrokes",
+    ]
+
     static var table: [(name: String, exit: ShapeExit)] {
         let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
         let restored: [(String, (Canvas, Fixture) -> Void)] = [
@@ -83,8 +90,8 @@ enum ShapeExit {
         ]
         let detached = [
             "transformStack", "styleStack", "recordingShape",
-            // 一番外の組み立てが控える列の位置 (#1855 の案 E)。recordingShape と対で戻す
-            "shapeRecordingRunStart",
+            // 組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす
+            "shapeMarks",
             // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
             // (#1855 の案 G)。一番外の出口が閉じて下ろす
             "frameEndAwaitingShape",
@@ -96,12 +103,10 @@ enum ShapeExit {
             // 組み立て中の形 (#1607)。``CanvasTests/shapeState`` と同じ群
             "isBuildingShape", "shapeKind", "currentNormal", "shapePoints", "shapeHasDepth",
             "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
-            // 溜め場。記録したぶんを形として抜き、組み立て前の長さへ戻す
-            "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
-            "recordedStrokeRanges", "recordedFillRanges", "recordedSolidStrokes", "recordedGPUStrokes",
+            // 溜め場 (``poolStorageNames``)。記録したぶんを形として抜き、組み立て前の長さへ戻す
             // 平面の頂点ごとの被覆の区間 (#1637)。溜め場の頂点と対で切り詰める
             "coverageSpans",
-        ]
+        ] + Self.poolStorageNames
         let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
         let refused: [(String, ((Canvas, Fixture) -> Void)?)] = [
             // シーンの記述 (#1529)。閉じる側が既定へ戻すものは汚す手順を持つ
@@ -132,7 +137,7 @@ enum ShapeExit {
         let cache = "控え。中身は入力で決まり、組み立てとは関わらない"
         let count = "計数。数で確かめる検査が読む"
         let testing = "検査の差し込み・上限。製品の経路では既定のまま"
-        let flush = "描き切りの印。組み立ての中で描き切るのは、置いた側の写しが上限に達した後の描き換えと、組み立ての中で自分のフレームを開き直すことだけで、出口の安全網 (空の形と注意) が扱う (#1855)"
+        let flush = "描き切りの印。組み立ての中で描き切るのは、置いた側の写しが上限に達した後の描き換えだけで、組み立ての前の列だけを描き切り、組み立てた区間は残す (#2850)。溜め場を捨てた場合は出口の安全網 (空の形と注意) が扱う (#1855)"
         let frame = "フレームの内外と境目の印。境目の関数だけが書く"
         let transient = "呼び出しの中でだけ立ち、抜ける前に戻る一時の値"
         let unused = "記録の間は使わない (組み込みの立体は置き場所ごとに頂点へ焼き、平面は畳まない)"
@@ -226,7 +231,7 @@ enum ShapeExit {
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
             "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
-            "failEarlySubmissionForTesting": testing,
+            "failEarlySubmissionForTesting": testing, "failPlacedPictureCopyForTesting": testing,
         ]
         return restored.map { ($0.0, .restore($0.1)) }
             + detached.map { ($0, .detach) }
@@ -364,6 +369,20 @@ final class RuntimeBlank: Sketch {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct ShapeExitTests {
+    /// 溜め場の並びを足したら、印 (``Canvas/ShapeMark``) と預かる入れ物 (``Canvas/HeldBuild``) にも足す (#2850)。
+    /// 足し忘れると、逃げ道に入った組み立てが、その並びだけ元の位置のまま (引き戻されずに) 形を抜く。
+    @Test("溜め場の並びの表は、組み立ての印と預かる入れ物の欄と同じ名前の集まりである")
+    func shapeMarkAndHeldBuildCoverTheStorageLists() throws {
+        let names = Set(ShapeExit.poolStorageNames)
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+        let mark = Set(Mirror(reflecting: Canvas.ShapeMark(of: canvas)).children.compactMap(\.label))
+        #expect(mark.subtracting(["discards"]) == names, "ShapeMark の欄が溜め場の並びの表と違う")
+        let held = Set(
+            Mirror(reflecting: Canvas.HeldBuild(taking: canvas, after: Canvas.ShapeMark(of: canvas)))
+                .children.compactMap(\.label))
+        #expect(held.subtracting(["origin", "coverageBefore"]) == names, "HeldBuild の欄が溜め場の並びの表と違う")
+    }
+
     private func makeCanvas(width: Int = 16, height: Int = 16) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
