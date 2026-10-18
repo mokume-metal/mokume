@@ -18,8 +18,11 @@ enum JSONRPC {
 
         /// 応答を返すべき呼び出しか。返り値を待たない通知には `id` が無い。
         ///
-        /// `"id": null` は通知ではない (`NSNull` が入る)。JSON-RPC 2.0 §4 は `id` に
-        /// Null を許しており、答えはその `null` で返る。
+        /// **`"id": null` はここまで届かない。** MCP 2024-11-05 の basic は request の ID に
+        /// null を禁じ、`null` の `id` の答えは読めない行を断る誤り (`id: null`) と繋ぎ手から
+        /// 見分けが付かないので、``JSONRPC/parse(_:)`` が -32600 で断る
+        /// ([#2353](https://github.com/mokume-metal/mokume/issues/2353)・#2317 の A3 を変えた)。
+        /// ここへ届く `id` は、無い (通知) か、String か Number である。
         var expectsResponse: Bool { id != nil }
     }
 
@@ -52,6 +55,13 @@ enum JSONRPC {
     /// **応答の形の行は断らずに読み飛ばす** (`Line.response`)。`method` が無いことだけで
     /// 断ると、応答にまで誤りを返してしまう。`method` も `result` も `error` も無い行
     /// (`{"id":3}`) は応答ではないので、形の誤りとして断る
+    ///
+    /// **呼び出しの封筒も検める** ([#2353](https://github.com/mokume-metal/mokume/issues/2353)・
+    /// JSON-RPC 2.0 §4・§5.1)。`jsonrpc` は `"2.0"`、`id` は String か Number (要求では
+    /// Null も不可 — MCP 2024-11-05 の basic)、`params` はオブジェクト (省くのは可) でなければ、
+    /// 通知かどうかを見ずに -32600 で断る。答えの `id` は読める `id` (String・Number) があれば
+    /// それ、無ければ `null` — 型の違う `id` をそのまま載せると、繋ぎ手が型で検めたときに
+    /// 答えを誤りとして受け取る。通知 (`id` が無い行) に黙るのは、封筒が正しいときだけである
     static func parse(_ line: String) -> Line {
         // **`Double` に収まらない数は、符号によらず読めない行として断る** (#2476)。
         // `JSONSerialization` は正の側 (`1e400`) は投げるが、負の側 (`-1e400`) は投げずに
@@ -82,16 +92,44 @@ enum JSONRPC {
         if fields["method"] == nil, fields["result"] != nil || fields["error"] != nil {
             return .response
         }
-        guard let method = fields["method"] as? String else {
-            return .refused(
+        let readableID = readableID(fields["id"])
+        func refuse(_ message: String) -> Line {
+            .refused(
                 reply: failure(
-                    id: fields["id"], code: invalidRequest,
-                    message: "invalid request: method must be a string"))
+                    id: readableID, code: invalidRequest, message: "invalid request: " + message))
         }
-        return .call(
-            Call(
-                id: fields["id"], method: method,
-                params: fields["params"] as? [String: Any] ?? [:]))
+        guard let method = fields["method"] as? String else {
+            return refuse("method must be a string")
+        }
+        guard fields["jsonrpc"] as? String == "2.0" else {
+            return refuse(#"jsonrpc must be "2.0""#)
+        }
+        switch fields["id"] {
+        case nil: break
+        case is NSNull: return refuse("id must not be null in a request (omit it for a notification)")
+        default:
+            guard readableID != nil else { return refuse("id must be a string or a number") }
+        }
+        // 省くのは可 (`params` の無い要求)。`null` や配列は、黙って空に倒さず断る
+        var params: [String: Any] = [:]
+        if let given = fields["params"] {
+            guard let object = given as? [String: Any] else {
+                return refuse("params must be an object")
+            }
+            params = object
+        }
+        return .call(Call(id: fields["id"], method: method, params: params))
+    }
+
+    /// 答えに載せてよい `id` (String か Number)。読めなければ `nil` で、答えの `id` は `null`。
+    ///
+    /// 真偽は数ではない — `JSONSerialization` は `true` も `NSNumber` で渡すので、型で外す。
+    private static func readableID(_ value: Any?) -> Any? {
+        switch value {
+        case let text as String: text
+        case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID(): number
+        default: nil
+        }
     }
 
     /// 読んだ木の数が、残らず有限か。

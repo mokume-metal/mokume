@@ -133,20 +133,99 @@ struct MCPServerTests {
                 atPath: directory.appendingPathComponent(".mokume/observe/request.json").path))
     }
 
-    @Test("id のある呼び出しには、id の形 (数・文字列・null) によらず同じ id で答える")
+    @Test("id のある呼び出しには、id の形 (数・文字列) によらず同じ id で答える")
     func answersWithTheCallersID() throws {
         let (server, recorder) = makeServer(
             directory: try makeDirectory(),
             input: [
                 #"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#,
                 #"{"jsonrpc":"2.0","id":"seven","method":"tools/list"}"#,
-                #"{"jsonrpc":"2.0","id":null,"method":"tools/list"}"#,
             ])
         server.serve()
 
         let answers = try recorder.written.map(decode)
-        #expect(answers.map(idOf) == ["7", "\"seven\"", "null"])
+        #expect(answers.map(idOf) == ["7", "\"seven\""])
         #expect(answers.allSatisfy { $0["result"] != nil && $0["error"] == nil })
+    }
+
+    /// **`"id": null` の要求は断る** ([#2353](https://github.com/mokume-metal/mokume/issues/2353))。
+    /// #2317 の A3 は「`null` の `id` にも答える」と決めていたが、MCP 2024-11-05 の basic は
+    /// request の ID に null を禁じ、`id: null` の答えは読めない行を断る誤り (`id: null`) と
+    /// 繋ぎ手から見分けが付かない。道具も走らせない。
+    @Test("id が null の要求は、道具を走らせずに -32600 で断る")
+    func refusesARequestWhoseIDIsNull() throws {
+        let directory = try makeDirectory()
+        let (server, recorder) = makeServer(
+            directory: directory,
+            input: [
+                #"{"jsonrpc":"2.0","id":null,"method":"tools/list"}"#,
+                #"{"jsonrpc":"2.0","id":null,"method":"tools/call","params":{"name":"observe","arguments":{}}}"#,
+            ])
+        server.serve()
+
+        let answers = try recorder.written.map(decode)
+        #expect(answers.map(idOf) == ["null", "null"])
+        #expect(answers.map(errorCode) == [-32600, -32600])
+        #expect(answers.allSatisfy { $0["result"] == nil })
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path))
+    }
+
+    // ------------------------------------- 呼び出しの形の検め (#2353・JSON-RPC 2.0 §4・§5.1)
+
+    /// 行ごとの前後。`reply` は断りの 1 行を JSON に読んだもの。
+    private func refusal(_ line: String) -> (id: String, code: Int?, message: String?)? {
+        guard case .refused(let reply) = JSONRPC.parse(line),
+            let object = try? JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any]
+        else { return nil }
+        let error = object["error"] as? [String: Any]
+        return (idOf(object), error?["code"] as? Int, error?["message"] as? String)
+    }
+
+    @Test(
+        "呼び出しの形の行は、符号 -32600 で断り、読める id があればそれで答える",
+        arguments: [
+            // (行, 答えの id)
+            (#"{"id":1,"method":"tools/list"}"#, "1"),
+            (#"{"jsonrpc":"1.0","id":2,"method":"tools/list"}"#, "2"),
+            (#"{"jsonrpc":2,"id":"two","method":"tools/list"}"#, "\"two\""),
+            (#"{"jsonrpc":"2.0","id":{"a":1},"method":"tools/list"}"#, "null"),
+            (#"{"jsonrpc":"2.0","id":[1],"method":"tools/list"}"#, "null"),
+            (#"{"jsonrpc":"2.0","id":true,"method":"tools/list"}"#, "null"),
+            (#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":[1]}"#, "3"),
+            (#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":"x"}"#, "3"),
+            (#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":null}"#, "3"),
+            (#"{"jsonrpc":"2.0","id":null,"method":"tools/list"}"#, "null"),
+            // 通知の形 (`id` 無し) も、形が違えば通知かどうかを見ずに断る
+            (#"{"method":"notifications/initialized"}"#, "null"),
+            (#"{"jsonrpc":"1.0","method":"notifications/initialized"}"#, "null"),
+            (#"{"jsonrpc":"2.0","method":"notifications/initialized","params":[]}"#, "null"),
+            // `method` が文字列でない行の断りも、型の違う `id` をそのまま載せない
+            (#"{"jsonrpc":"2.0","id":{"a":1},"method":5}"#, "null"),
+        ])
+    func refusesALineWhoseEnvelopeIsWrong(line: String, id: String) throws {
+        let refused = try #require(refusal(line), "断っていない: \(line)")
+        #expect(refused.code == -32600, "\(line)")
+        #expect(refused.id == id, "\(line)")
+        #expect(refused.message?.hasPrefix("invalid request: ") == true, "\(line)")
+    }
+
+    @Test(
+        "形の正しい呼び出しと通知は、いままでどおり呼び出しとして読む",
+        arguments: [
+            #"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","id":"seven","method":"tools/list"}"#,
+            #"{"jsonrpc":"2.0","id":1.5,"method":"tools/list"}"#,
+            // `params` を省いたもの・空のオブジェクト
+            #"{"jsonrpc":"2.0","id":8,"method":"ping"}"#,
+            #"{"jsonrpc":"2.0","id":9,"method":"initialize","params":{}}"#,
+            // 通知
+            #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        ])
+    func readsAWellFormedCall(line: String) {
+        guard case .call = JSONRPC.parse(line) else {
+            Issue.record("呼び出しとして読めていない: \(line)")
+            return
+        }
     }
 
     @Test("呼び出しの形でない行には、読める id で -32600 を返し、空行は読み飛ばす")
