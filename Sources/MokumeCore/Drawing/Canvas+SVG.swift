@@ -21,6 +21,7 @@ extension Canvas {
     /// 切り抜き・材質・影はフレームのもので形に焼き付かないので触らない。
     func shape(of drawing: SVGFile.Drawing, readFrom path: String) -> Shape {
         noteSkipped(drawing, path: path)
+        noteApproximated(drawing, path: path)
         return createShape {
             currentStyle = Style().keepingFrameFields(of: currentStyle)
             resetShader()
@@ -141,6 +142,28 @@ extension Canvas {
     private func noteSkipped(_ drawing: SVGFile.Drawing, path: String) {
         guard !drawing.skipped.isEmpty || drawing.items.isEmpty else { return }
         warnOnce(.svgSkipped(path: path), Self.svgSkippedNotice(drawing, path: path))
+    }
+
+    /// 近似で描いたものがあれば、そのファイルにつき 1 度知らせる (#2884)。
+    private func noteApproximated(_ drawing: SVGFile.Drawing, path: String) {
+        guard let notice = Self.svgApproximatedNotice(drawing, path: path) else { return }
+        warnOnce(.svgApproximated(path: path), notice)
+    }
+
+    /// 近似で描いたものの知らせ。**何を・何回・最初はどの行か**を並べる。近似が無ければ `nil`。
+    ///
+    /// 描く絵は変えない。SVG は群や要素の `opacity` を、中身をひとまとめに描いてから 1 度だけ掛けるが、
+    /// mokume は子の色ごとに掛けるので、重なった所が濃く出る。
+    static func svgApproximatedNotice(_ drawing: SVGFile.Drawing, path: String) -> String? {
+        guard !drawing.approximated.isEmpty else { return nil }
+        let listing = drawing.approximated.prefix(20).map { note in
+            note.count == 1
+                ? "\(note.what) (line \(note.line))"
+                : "\(note.what) (\(note.count) times, first at line \(note.line))"
+        }.joined(separator: ", ")
+        return "\"\(path)\": drew opacity as an approximation. SVG draws a group or element once and "
+            + "then applies its opacity to the whole, but mokume applies it to each colour, so where "
+            + "shapes overlap the result is more opaque than in SVG. Affected: \(listing)"
     }
 
     /// 捨てたものの知らせ。**何を・何回・最初はどの行か**を並べる (20 種類まで)。
