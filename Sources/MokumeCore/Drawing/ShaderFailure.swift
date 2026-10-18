@@ -21,8 +21,19 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     /// 桁は UTF-8 のバイトで数える (`波` は 3 桁ぶん)。文字列から作った断片は `name:` の名前
     /// (`shader:2:12`)、ファイルから読んだ断片はファイル名 (`waves.metal:2:12`) を名乗る。本体が前に
     /// 足す宣言を指す知らせ (断片が前置きの定義を定義し直したときの「前の定義」など) は、本体の名前
-    /// (`mokume/Kinds.metal:29:15`) で出る。`mokume/Values`・`mokume/Surfaces` を名乗る誤りは、
-    /// 渡した `values:`・`surfaces:` の名前から作った宣言の誤りで、Swift の側でその名前を直す。
+    /// (`mokume/Kinds.metal:29:15`) で出る。
+    ///
+    /// **入口を書き違えた断片は、期待する入口の形を先に言う** ([#2782](https://github.com/mokume-metal/mokume/issues/2782))。
+    /// `paint`・`effect` の名前や引数が合わないとき、Metal の `Undefined symbol(s)` の前に
+    /// `shader: error: the fragment does not define its entry point float4 paint(Fragment in, Values values)…`
+    /// の 1 行が出る。計算は `name:` (ファイルならファイル名) の `kernel` 関数が無いことを言う。
+    ///
+    /// **`values:`・`surfaces:` に断片の中で書けない名前を渡すと、組み立ての前にこの case で断る**
+    /// ([#2783](https://github.com/mokume-metal/mokume/issues/2783))。理由は渡した口と名前を名指しする。
+    /// 受けるのは文字か `_` で始まり、文字・数字・`_` が続く名前 (ASCII の外の文字も受ける)。字の並びは
+    /// 通っても Metal で使えない名前 (予約語・組み込みの型の `half`・前置きのマクロの `MOKUME_SURFACES`
+    /// など) は、組み立ての誤りの前に `shader: error: the name "half" in values: cannot be used in Metal…`
+    /// の 1 行で名指しする。どちらも Swift の側でその名前を直す。
     case notCompilable(path: String, reason: String)
     /// 渡す値が列 1 つぶんの区画に収まらない。float 換算の数と上限を添える。
     case tooManyValues(path: String, count: Int, capacity: Int)
