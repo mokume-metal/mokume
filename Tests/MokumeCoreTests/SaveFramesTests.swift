@@ -1184,9 +1184,14 @@ struct SaveFramesTests {
                 if sketch.frameCount == 3 { sketch.canvas.gpu.dropsNextSubmissionForTesting = Self.victim }
                 let level = Self.level(atFrame: sketch.frameCount)
                 sketch.background(.display(red: level, green: level, blue: level))
+                // 撮る係を付けたままにして、持ち越しの名乗りを読めるようにする
+                if sketch.frameCount == 1 { sketch.beginRecord(directory.appendingPathComponent("f-##.png").path) }
                 if sketch.frameCount == 3 { sketch.save(url.path) }
             }
-            for _ in 0..<5 { try runtime.advance() }
+            // 絵は 1 フレーム遅れて届く。4 枚目の絵が届くまで進める
+            for _ in 0..<6 { try runtime.advance() }
+            let carried = try #require(carriedNotice(runtime, for: url), "持ち越したことを名乗っていない")
+            #expect(carried == FrameRecorder.carriedShotNotice(path: url.path, asked: 3, picture: 4), "\(carried)")
             runtime.closePlugins()
 
             let written = try readBack(url)[0, 0].red
@@ -1231,6 +1236,8 @@ struct SaveFramesTests {
             let runtime = try makeRuntime { sketch in
                 let level = Self.level(atFrame: sketch.frameCount)
                 sketch.background(.display(red: level, green: level, blue: level))
+                // 撮る係を付けたままにして、持ち越しの名乗りを読めるようにする
+                if sketch.frameCount == 1 { sketch.beginRecord(directory.appendingPathComponent("f-##.png").path) }
                 if sketch.frameCount == 3 {
                     sketch.save(url.path)
                     // 描き切りだけを転ばせる (draw() は最後まで走る)
@@ -1239,7 +1246,8 @@ struct SaveFramesTests {
                     sketch.canvas.failureForTesting = nil
                 }
             }
-            for frame in 1...5 {
+            // 絵は 1 フレーム遅れて届く。4 枚目の絵が届くまで進める
+            for frame in 1...6 {
                 if frame == 3 {
                     #expect(throws: RenderFailure.self) { try runtime.advance() }
                 } else {
@@ -1251,11 +1259,123 @@ struct SaveFramesTests {
                         "転んだフレームのうちにファイルができた")
                 }
             }
+            // 4 枚目の絵で書いたとき、行き先と番号を名指しして名乗る (駆動源を問わない・#2769)
+            let said = try #require(carriedNotice(runtime, for: url), "持ち越したことを名乗っていない")
+            #expect(said == FrameRecorder.carriedShotNotice(path: url.path, asked: 3, picture: 4), "\(said)")
             runtime.closePlugins()
 
             let written = try readBack(url)[0, 0].red
             let fourth = UInt8((Self.level(atFrame: 4) * 255).rounded())
             #expect(abs(Int(written) - Int(fourth)) <= 1, "4 枚目の絵で書いていない: \(written) (期待 \(fourth))")
+        }
+    }
+
+    /// 持ち越した `save()` の名乗り ([#2769])。撮る係が付いている間に読む。
+    ///
+    /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
+    private func carriedNotice(_ runtime: SketchRuntime, for url: URL) -> String? {
+        runtime.recorderWarnings?.message(
+            for: .carriedShot(destination: FrameWriter.destination(of: url.path)))
+    }
+
+    /// 止まっているスケッチ (`noLoop()`) は、そのフレームを描き終えた時点で `save()` を書く (#1300)。
+    /// **描画が転んだフレームでは、その時点で書かない** — 描き終えていない絵を、転ぶ前の絵のまま
+    /// その番号で書くことになる (#2769)。次に描けたフレームの絵で書く。
+    final class StoppedSavingSketch: Sketch {
+        nonisolated(unsafe) static var body: (StoppedSavingSketch) -> Void = { _ in }
+
+        var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
+        func setup() { noLoop() }
+        func draw() { Self.body(self) }
+        /// 止まっている間の入力で、次の 1 枚を描かせる
+        func mousePressed() { redraw() }
+    }
+
+    private func makeStoppedSketchFailingAtFrameOne(saving url: URL) throws -> (
+        StoppedSavingSketch, SketchRuntime
+    ) {
+        StoppedSavingSketch.body = { sketch in
+            let level = Self.level(atFrame: sketch.frameCount)
+            sketch.background(.display(red: level, green: level, blue: level))
+            if sketch.frameCount == 1 {
+                sketch.save(url.path)
+                sketch.canvas.failureForTesting = .encoderUnavailable
+            } else {
+                sketch.canvas.failureForTesting = nil
+            }
+        }
+        let sketch = StoppedSavingSketch()
+        return (sketch, try SketchRuntime(sketch: sketch, gpu: try RenderDevice()))
+    }
+
+    @Test("止まっているスケッチで save() を頼んだフレームの描画が転んだら、転んだ絵では書かず、次に描けた絵で書く")
+    func aSaveInAFailedFrameOfAStoppedSketchWaitsForTheNextDrawnFrame() throws {
+        try withTemporaryDirectory("mokume-save-failed-stopped") { directory in
+            let url = directory.appendingPathComponent("shot.png")
+            let (sketch, runtime) = try makeStoppedSketchFailingAtFrameOne(saving: url)
+            #expect(throws: RenderFailure.self) { try runtime.advance() }
+            #expect(
+                !FileManager.default.fileExists(atPath: url.path),
+                "描画が転んだフレームのうちに、止まっているスケッチが転ぶ前の絵で書いた")
+
+            // 次に描けたフレーム (2 枚目) の絵で書く
+            runtime.input.enqueue(.mouseDown(x: 4, y: 4, button: .left))
+            try runtime.advance()
+            let said = try #require(carriedNotice(runtime, for: url), "持ち越したことを名乗っていない")
+            #expect(said == FrameRecorder.carriedShotNotice(path: url.path, asked: 1, picture: 2), "\(said)")
+            runtime.closePlugins()
+            let written = try readBack(url)[0, 0].red
+            let second = UInt8((Self.level(atFrame: 2) * 255).rounded())
+            #expect(abs(Int(written) - Int(second)) <= 1, "2 枚目の絵で書いていない: \(written) (期待 \(second))")
+        }
+    }
+
+    /// 閉じるとき (`closePlugins()`) は、止まっているスケッチの `save()` にとって最後の機会で、予約が
+    /// 残っていれば絵を組み直して書く (#1300)。**描画が転んだままなら、そこでも転ぶ前の絵では書かない。**
+    @Test("止まっているスケッチが描画の転んだまま閉じるときも、転ぶ前の絵では書かない")
+    func closingAFailedStoppedSketchDoesNotWriteTheStalePicture() throws {
+        try withTemporaryDirectory("mokume-save-failed-stopped-close") { directory in
+            let url = directory.appendingPathComponent("shot.png")
+            let (_, runtime) = try makeStoppedSketchFailingAtFrameOne(saving: url)
+            #expect(throws: RenderFailure.self) { try runtime.advance() }
+            runtime.closePlugins()
+            #expect(
+                !FileManager.default.fileExists(atPath: url.path),
+                "閉じるときに、描画が転んだままのフレームの絵を、転ぶ前の絵のまま書いた")
+        }
+    }
+
+    /// 描けたフレームの `save()` と、`setup()` で頼んだ `save()` は、持ち越しではない。名乗らない。
+    @Test("描けたフレームの save() と setup() で頼んだ save() は、持ち越したと名乗らない")
+    func savesInDrawnFramesAreNotNamedAsCarried() throws {
+        try withTemporaryDirectory("mokume-save-not-carried") { directory in
+            let inFrame = directory.appendingPathComponent("in-frame.png")
+            let inSetup = directory.appendingPathComponent("in-setup.png")
+            SetupSavingSketch.setupPath = inSetup.path
+            SetupSavingSketch.framePath = inFrame.path
+            // 撮る係を付けたままにして、控えを読めるようにする
+            SetupSavingSketch.recordPattern = directory.appendingPathComponent("f-##.png").path
+            let runtime = try SketchRuntime(sketch: SetupSavingSketch(), gpu: try RenderDevice())
+            for _ in 0..<4 { try runtime.advance() }
+            #expect(carriedNotice(runtime, for: inFrame) == nil, "描けたフレームの save() を持ち越したと名乗った")
+            #expect(carriedNotice(runtime, for: inSetup) == nil, "setup() の save() を持ち越したと名乗った")
+            runtime.closePlugins()
+            #expect(FileManager.default.fileExists(atPath: inFrame.path))
+            #expect(FileManager.default.fileExists(atPath: inSetup.path))
+        }
+    }
+
+    final class SetupSavingSketch: Sketch {
+        nonisolated(unsafe) static var setupPath = ""
+        nonisolated(unsafe) static var framePath = ""
+        nonisolated(unsafe) static var recordPattern = ""
+
+        var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
+        func setup() { save(Self.setupPath) }
+        func draw() {
+            background(.display(red: 0.2, green: 0.2, blue: 0.2))
+            if frameCount == 1 { beginRecord(Self.recordPattern) }
+            if frameCount == 2 { save(Self.framePath) }
         }
     }
 
@@ -1286,24 +1406,18 @@ struct SaveFramesTests {
     }
 }
 
-/// 描けなかったときの警告の文面 ([#2769])。GPU は要らない。
-///
-/// 描けなかったフレームも GPU が打ち切ったフレームも出口へ配られず、そこで頼んだ `save()` は
-/// 次に描けた絵で書く。打ち切りの警告 (`droppedOutletFrame`) はそう言うので、描けなかった側の
-/// 警告も同じことを言う。**頼みの有無によらず常に言い添える** — 警告は転び始めの 1 度きりで、
-/// その後の周期の途中で頼まれた `save()` を、頼みを見て出し分けると言いそびれる。
+/// 持ち越した `save()` の名乗りの文面 ([#2769])。GPU は要らない。
 ///
 /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
-@Suite("描けなかったフレームの警告")
-struct FrameFailureNoticeTests {
-    @Test("描けなかった理由に加え、save() は次に描けた絵で書くことを言う")
-    func theNoticeSaysWhatBecomesOfASave() {
-        let notice = SketchApplication.frameFailureNotice(headline: "the GPU is unavailable")
-        #expect(notice.hasPrefix("Could not draw the frame: the GPU is unavailable"), "\(notice)")
-        #expect(notice.contains("trying again on the next refresh"), "\(notice)")
-        #expect(notice.contains("save()"), "save() がどうなるかを言っていない: \(notice)")
-        #expect(notice.contains("next frame that is drawn"), "\(notice)")
-        #expect(!notice.contains("\n"), "警告が 1 行に収まっていない")
+@Suite("持ち越した save() の名乗り")
+struct CarriedShotNoticeTests {
+    @Test("行き先と、頼んだフレーム・書いたフレームの番号を名指しする")
+    func theNoticeNamesTheDestinationAndBothFrames() {
+        let notice = FrameRecorder.carriedShotNotice(path: "out/f3.png", asked: 3, picture: 5)
+        #expect(notice.contains("save(\"out/f3.png\")"), "\(notice)")
+        #expect(notice.contains("frame 3"), "\(notice)")
+        #expect(notice.contains("frame 5"), "\(notice)")
+        #expect(!notice.contains("\n"), "1 行に収まっていない")
     }
 }
 

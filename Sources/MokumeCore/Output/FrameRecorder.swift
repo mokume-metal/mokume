@@ -35,9 +35,12 @@ final class FrameRecorder: Outlet {
     /// 打ち切ったフレームは、ランタイムが配らない (ADR-0024 決定 10・#2743)。予約はその番号以下の絵が
     /// 届くまで残るので、次に届いたフレームの絵で書く。毎フレーム違う名前へ頼むと、打ち切られた
     /// フレームとその次の 2 つの名前に同じ絵が入りうる。
+    /// 持ち越したときは、行き先と頼んだフレーム・書いたフレームを名指しして言う
+    /// (``noteCarriedShot(_:writtenWith:)``・[#2769])。
     ///
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
+    /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
     private var oneShots: [(frame: Int, path: String)] = []
     /// 撮っている連番。撮っていなければ `nil`。
     private var sequence: FrameSequence?
@@ -154,6 +157,13 @@ final class FrameRecorder: Outlet {
         case unnamedImageFailures
         /// 絵を貰えないまま終わった `save()` の予約が残っていた。
         case unwrittenShots
+        /// 頼んだフレームの絵が届かず、次に届いた絵で書いた `save()`。**行き先ごとに 1 度言う**
+        /// (``noteCarriedShot(_:writtenWith:)``・[#2769])。
+        ///
+        /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
+        case carriedShot(destination: String)
+        /// 上限 (``carriedShotLimit``) を越えて名乗らなかった持ち越しが、何枚あったか。
+        case unnamedCarriedShots
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -187,6 +197,7 @@ final class FrameRecorder: Outlet {
     /// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
     private func forgetWarnings() {
         reportUnnamedImageFailures()
+        reportUnnamedCarriedShots()
         warnings = WarningLog<Warning>()
     }
 
@@ -206,6 +217,63 @@ final class FrameRecorder: Outlet {
             .unnamedImageFailures,
             "\(count) more image\(count == 1 ? "" : "s") could not be written "
                 + "(only the first \(Self.imageFailureLimit) destinations that failed are named)")
+    }
+
+    // MARK: - 持ち越した save() の名乗り ([#2769])
+
+    /// 1 つの控えの間に、持ち越した `save()` を行き先ごとに名乗る数の上限。越えた分は数えて 1 行にまとめる。
+    static let carriedShotLimit = 5
+
+    /// 上限を越えて名乗らなかった持ち越しの枚数。控えと一緒に空に戻る。
+    private var unnamedCarriedShots = 0
+
+    /// 頼んだフレームの絵が届かず、次に届いた絵で書いた `save()` を、行き先と番号を名指しして名乗る。
+    ///
+    /// **持ち越しを確かに知っているのはここだけである** — 届いた絵のフレーム (`picture`) が頼まれた
+    /// フレームより後なら、頼んだフレームの絵は届かなかった。描画が転んだ・GPU が打ち切った・出口へ渡す
+    /// 絵を組めなかった・止まっている間の書き戻しが転んだ、のどれでも、原因を問わずここで言える。書く絵は
+    /// 変えない (次に描けた絵で書く・案 A)。
+    ///
+    /// 毎フレーム違う名前で頼む形で行が毎回出ないよう、行き先ごと 1 度、控え 1 つにつき
+    /// ``carriedShotLimit`` までにする (``noteImageFailure(_:)`` と同じ作法)。
+    ///
+    /// [#2769]: https://github.com/mokume-metal/mokume/issues/2769
+    private func noteCarriedShot(_ shot: (frame: Int, path: String), writtenWith picture: Int) {
+        let warning = Warning.carriedShot(destination: FrameWriter.destination(of: shot.path))
+        guard !warnings.hasWarned(warning) else { return }
+        guard carriedShotsNamed < Self.carriedShotLimit else {
+            unnamedCarriedShots += 1
+            return
+        }
+        carriedShotsNamed += 1
+        warnOnce(
+            warning, Self.carriedShotNotice(path: shot.path, asked: max(shot.frame, 1), picture: picture))
+    }
+
+    /// 名乗った持ち越しの行き先の数。控えと一緒に空に戻る。
+    private var carriedShotsNamed = 0
+
+    /// 持ち越した `save()` の 1 行。
+    static func carriedShotNotice(path: String, asked: Int, picture: Int) -> String {
+        "save(\"\(path)\") was asked for in frame \(asked), but that frame's picture never reached the "
+            + "outlet (it could not be drawn, or the GPU dropped it), so the picture of frame "
+            + "\(picture), the next one that did, was written instead"
+    }
+
+    private func reportUnnamedCarriedShots() {
+        carriedShotsNamed = 0
+        guard unnamedCarriedShots > 0 else { return }
+        let count = unnamedCarriedShots
+        unnamedCarriedShots = 0
+        warnOnce(
+            .unnamedCarriedShots,
+            "\(count) more save() call\(count == 1 ? "" : "s") wrote the next frame's picture instead of "
+                + "the frame asked for (only the first \(Self.carriedShotLimit) destinations are named)")
+    }
+
+    /// その行き先の持ち越しで名乗った文面。まだ名乗っていなければ `nil`。**検査が読む。**
+    func carriedShotMessage(for path: String) -> String? {
+        warnings.message(for: .carriedShot(destination: FrameWriter.destination(of: path)))
     }
 
     /// その行き先の書き損じで名乗った文面。まだ名乗っていなければ `nil`。**検査が読む。**
@@ -485,6 +553,8 @@ final class FrameRecorder: Outlet {
         // ここで全部書くと `save()` が前のフレームの絵を書くことになる (#927・#2743)。届かなかった
         // フレーム (描けなかった・GPU が打ち切った) で頼まれたものは、ここで次の絵で書く
         for shot in oneShots where shot.frame <= frame.frame {
+            // `setup()` で頼んだもの (番号 0) の宛先は、最初に描くフレーム (1)
+            if max(shot.frame, 1) < frame.frame { noteCarriedShot(shot, writtenWith: frame.frame) }
             writeShot(image, to: shot.path)
         }
         oneShots.removeAll { $0.frame <= frame.frame }
