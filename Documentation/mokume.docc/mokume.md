@@ -618,6 +618,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 - ``SketchPart/loadStrings(_:)``
 - ``SketchPart/requestStrings(_:)``
+- ``SketchPart/saveStrings(_:_:)``
 - ``SketchPart/loadTable(_:header:)``
 - ``SketchPart/requestTable(_:header:)``
 - ``SketchPart/saveTable(_:_:)``

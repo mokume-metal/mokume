@@ -835,6 +835,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "cursor": (ASSEMBLY, "noCursor と同じ理由 (頼みを取り下げる)"),
     "save": (ASSEMBLY, "フレームの絵を外へ書き出す"),
     "saveTable": (ASSEMBLY, "表を外へ書き出す。絵にもフレームの状態にも触れない"),
+    "saveStrings": (ASSEMBLY, "文字列を外へ書き出す。絵にもフレームの状態にも触れない"),
     "beginRecord": (ASSEMBLY, "save と同じ理由"),
     "attach": (ASSEMBLY, "走っているスケッチの差込口の並びを組み替える (plugins の実行中版)"),
     "detach": (ASSEMBLY, "attach と同じ理由"),

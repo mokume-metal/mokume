@@ -251,6 +251,102 @@ struct DataLoadingTests {
         #expect(TableValues.warnings.message(for: .rowOutOfRange(call: "setFloat"))?.contains("numbered 0 to 1") == true)
     }
 
+    // MARK: - 表を作る・文字列を書く (#2468)
+
+    @Test("作った表に行を足して書くと、見出しと行が書かれ、見出しありで読み直すと同じ表に戻る")
+    func createdTableRoundTrips() throws {
+        defer { cleanUp() }
+        let sketch = Bare()
+        var table = Table(columns: ["x", "y"])
+        #expect(table.rowCount == 0)
+        #expect(table.columnTitles == ["x", "y"])
+        table.addRow([10, 20])
+        table.addRow([30, 40])
+        let out = folder.appendingPathComponent("out/a.csv").path
+        try sketch.saveTable(table, out)
+        // 数は setFloat と同じ綴り (`10` は `"10.0"`)
+        #expect(try String(contentsOfFile: out, encoding: .utf8) == "x,y\n10.0,20.0\n30.0,40.0\n")
+        let reread = try sketch.loadTable(out, header: true)
+        #expect(reread == table)
+        #expect(reread.rows[1].getFloat("y") == 40)
+    }
+
+    @Test("足した行の文字のセルは setString で書け、setFloat と同じ綴りで数を持つ")
+    func addedRowsTakeStringsAfterward() {
+        var table = Table(columns: ["frame", "label"])
+        table.addRow([1.5, 0])
+        table.setString(0, "label", "start")
+        var expected = Table(columns: ["frame", "label"])
+        expected.addRow([0, 0])
+        expected.setFloat(0, "frame", 1.5)
+        expected.setString(0, "label", "start")
+        #expect(table == expected)
+        #expect(table.rows[0].getString("frame") == String(Float(1.5)))
+    }
+
+    @Test("列の数と合わない addRow は行を足さず、落ちずに知らせる")
+    func addRowWithTheWrongWidthIsIgnored() {
+        var table = Table(columns: ["x", "y"])
+        table.addRow([1, 2, 3])
+        table.addRow([1])
+        #expect(table.rowCount == 0)
+        let message = TableValues.warnings.message(for: .rowWidth(call: "addRow"))
+        #expect(message?.contains("the table has 2 columns") == true)
+        #expect(message?.contains("No row was added") == true)
+        table.addRow([1, 2])
+        #expect(table.rowCount == 1)
+    }
+
+    @Test("saveStrings は UTF-8 (BOM なし)・LF で 1 行ずつ書き、loadStrings で読み直すと同じ並びに戻る")
+    func saveStringsRoundTrips() throws {
+        defer { cleanUp() }
+        let sketch = Bare()
+        let out = folder.appendingPathComponent("out/a.txt").path
+        try sketch.saveStrings(["a", "b"], out)
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: out))
+        #expect(Array(bytes) == Array("a\nb\n".utf8))
+        #expect(try sketch.loadStrings(out) == ["a", "b"])
+
+        // 空の要素・最後の空の要素・空の並びも戻る
+        for strings in [["", "x", ""], ["a", ""], [""], []] as [[String]] {
+            try sketch.saveStrings(strings, out)
+            #expect(try sketch.loadStrings(out) == strings, "\(strings)")
+        }
+    }
+
+    @Test("改行を含む要素と、頭が U+FEFF の最初の要素は、中身を変えずに書いて知らせる")
+    func saveStringsWarnsAboutLossyElements() throws {
+        defer { cleanUp() }
+        let sketch = Bare()
+        let out = folder.appendingPathComponent("b.txt").path
+        try sketch.saveStrings(["a\nb"], out)
+        #expect(try String(contentsOfFile: out, encoding: .utf8) == "a\nb\n")
+        #expect(try sketch.loadStrings(out) == ["a", "b"])
+        #expect(StringLines.warnings.message(for: .lineBreak)?.contains("more than one line") == true)
+
+        try sketch.saveStrings(["x", "c\rd"], out)
+        #expect(try sketch.loadStrings(out) == ["x", "c", "d"])
+
+        try sketch.saveStrings(["\u{FEFF}head", "tail"], out)
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: out))
+        #expect(Array(bytes) == Array("\u{FEFF}head\ntail\n".utf8), "中身は変えずに書く")
+        #expect(try sketch.loadStrings(out) == ["head", "tail"])
+        #expect(StringLines.warnings.message(for: .byteOrderMark)?.contains("U+FEFF") == true)
+    }
+
+    @Test("saveStrings も、書けない場所へは unwritable で投げる")
+    func saveStringsToAnUnwritablePlaceThrows() throws {
+        defer { cleanUp() }
+        let blocker = try file("blocker", "x")
+        let out = blocker + "/a.txt"
+        let failure = #expect(throws: DataFailure.self) { try Bare().saveStrings(["a"], out) }
+        guard case .unwritable(let path, _) = failure else {
+            Issue.record("unwritable で投げていない: \(String(describing: failure))")
+            return
+        }
+        #expect(path == out)
+    }
+
     @Test("書けない場所へは unwritable で投げる")
     func unwritablePlaceThrows() throws {
         defer { cleanUp() }
