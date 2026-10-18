@@ -40,6 +40,15 @@ public struct ParamRange: Equatable, Sendable {
         lhs.lowerBound == rhs.lowerBound && lhs.upperBound == rhs.upperBound
     }
 
+    /// 両端が有限か。**偽の範囲は、面 (応答の `min` / `max`・窓のつまみ) には出さない** — 応答の
+    /// `min` / `max` は JSON に書けず、窓のスライダーは有限の幅を持たない
+    /// ([#2475](https://github.com/mokume-metal/mokume/issues/2475))。整数で書いた範囲は常に真。
+    var hasFiniteBounds: Bool { lowerBound.isFinite && upperBound.isFinite }
+
+    /// 収める相手になる端が 1 つでもあるか。**半開きの範囲 (`0...Double.infinity`) は、面に出さなくても
+    /// 外からの書き込みを有限の端へ収める** (`-5` → `0`)。両端とも非有限なら収める相手が無い (#2475)。
+    var hasAFiniteBound: Bool { lowerBound.isFinite || upperBound.isFinite }
+
     /// 範囲へ収めた値を返す。
     public func clamped(_ value: Double) -> Double {
         min(max(value, lowerBound), upperBound)
@@ -106,16 +115,28 @@ public struct ParamDeclaration: Equatable, Sendable {
     ///
     /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
     public let step: Double?
+    /// 書かれたが、端が非有限なので面に出さない範囲 (``range`` は `nil`)。**窓が、つまみを出さない理由を
+    /// 言い分けるためだけに持つ** — 作者は範囲を書いているので、「範囲を書けばつまみが出る」と言うと
+    /// 誤る ([#2475](https://github.com/mokume-metal/mokume/issues/2475))。応答には書かない (読み直すと `nil`)。
+    let unshownRange: ParamRange?
 
     public init(
         name: String, value: ParamValue, range: ParamRange? = nil, choices: [String]? = nil,
         step: Double? = nil
+    ) {
+        self.init(name: name, value: value, range: range, choices: choices, step: step, unshownRange: nil)
+    }
+
+    init(
+        name: String, value: ParamValue, range: ParamRange?, choices: [String]?, step: Double?,
+        unshownRange: ParamRange?
     ) {
         self.name = name
         self.value = value
         self.range = range
         self.choices = choices
         self.step = step
+        self.unshownRange = unshownRange
     }
 
     /// 形式の中で名乗る型の名前。
