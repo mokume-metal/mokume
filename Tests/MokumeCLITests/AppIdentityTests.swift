@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -185,20 +186,20 @@ struct AppIdentityTests {
                 name: given.name, identifier: "org.example.bund", version: "0.1.0"),
             path: "/demo/mokume-app.json")
         #expect(identity.name == given.name)
-        #expect(AppIdentity.fileNameLength(of: given.name) == given.units)
+        #expect(FileNameLength.of(given.name) == given.units)
     }
 
     /// 数え方は、Foundation がファイルシステムへ渡す形に従う。**完全な NFD とは違う** —
     /// `Å` (U+212B) は NFD では A + 上の輪の 2 だが、ファイル名では分解されずに 1 で載る。
     @Test("長さは、ファイルシステムへ渡る形の UTF-16 の単位で数える")
     func theLengthIsCountedAsTheFileSystemReceivesIt() {
-        #expect(AppIdentity.fileNameLength(of: "Grain") == 5)
-        #expect(AppIdentity.fileNameLength(of: "木目") == 2)
-        #expect(AppIdentity.fileNameLength(of: "😀") == 2)
-        #expect(AppIdentity.fileNameLength(of: "\u{304C}") == 2)  // が → か + 濁点
-        #expect(AppIdentity.fileNameLength(of: "\u{E9}") == 2)  // é → e + 鋭アクセント
-        #expect(AppIdentity.fileNameLength(of: "\u{D55C}") == 3)  // 한 → 字母 3 つ
-        #expect(AppIdentity.fileNameLength(of: "\u{212B}") == 1)  // Å (オングストローム) は分解されない
+        #expect(FileNameLength.of("Grain") == 5)
+        #expect(FileNameLength.of("木目") == 2)
+        #expect(FileNameLength.of("😀") == 2)
+        #expect(FileNameLength.of("\u{304C}") == 2)  // が → か + 濁点
+        #expect(FileNameLength.of("\u{E9}") == 2)  // é → e + 鋭アクセント
+        #expect(FileNameLength.of("\u{D55C}") == 3)  // 한 → 字母 3 つ
+        #expect(FileNameLength.of("\u{212B}") == 1)  // Å (オングストローム) は分解されない
     }
 
     @Test("名乗りが、包みが読む一覧になる")

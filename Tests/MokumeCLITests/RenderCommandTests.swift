@@ -71,6 +71,62 @@ struct RenderCommandTests {
             sourceLocation: sourceLocation)
     }
 
+    // MARK: - ファイル名の長さ ([#2774])
+
+    /// `--out` のファイル名の長さを、ビルドの前に断る。FS には書かず `parse` を直に呼ぶ。
+    /// 線は静止画 247・動画 255 (APFS の実測)。
+    ///
+    /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
+    private func outName(_ length: Int, ending suffix: String) -> String {
+        "out/" + String(repeating: "a", count: length - suffix.utf16.count) + suffix
+    }
+
+    @Test("連番のファイル名が作れない長さなら、長さと使える長さを名乗ってビルドの前に止まる")
+    func aTooLongSeriesNameStopsBeforeTheBuild() throws {
+        // 線ちょうど (247) は通る — 成功していた名前を失わない
+        _ = try parse(["--fps", "10", "--seconds", "0.5", "--out", outName(247, ending: "-####.png")])
+        // 248 は止まる。長さ・上限・名前が文面に載る
+        let out = outName(248, ending: "-####.png")
+        expectUsage(
+            ["--fps", "10", "--seconds", "0.5", "--out", out],
+            mentioningAll: ["--out", "248", "247", String(repeating: "a", count: 239) + "-0004.png"])
+    }
+
+    /// 0 枚目は 247 で書けるが、番号が桁に伸びる枚から 248 になる。`--fps × --seconds` から最後の枚が
+    /// 分かるので、始める前に見つける。
+    @Test("番号が桁に収まらず伸びた後の名前も、ビルドの前に見る")
+    func aSeriesThatGrowsPastTheLineStopsBeforeTheBuild() throws {
+        let out = outName(247, ending: "-##.png")
+        // 96 枚 (番号 95 まで) は 2 桁に収まる
+        _ = try parse(["--fps", "60", "--seconds", "1.6", "--out", out])
+        // 120 枚は番号 100 から 3 桁になり、最後の枚 (番号 119) の名前が 248
+        expectUsage(
+            ["--fps", "60", "--seconds", "2", "--out", out],
+            mentioningAll: ["--out", "frame number 119", "248", "247"])
+    }
+
+    /// 作るディレクトリの部品 1 つが 255 を越えると、`createDirectory` が子の中で落ちる。ビルドの前に止める。
+    @Test("作るディレクトリの部品が長すぎる --out も、ビルドの前に止まる")
+    func aTooLongDirectoryStopsBeforeTheBuild() throws {
+        let fits = String(repeating: "d", count: 255)
+        _ = try parse(["--fps", "10", "--seconds", "0.5", "--out", "\(fits)/f-####.png"])
+        let over = String(repeating: "d", count: 256)
+        expectUsage(
+            ["--fps", "10", "--seconds", "0.5", "--out", "\(over)/f-####.png"],
+            mentioningAll: ["--out", "directory name", "256", "255"])
+        expectUsage(
+            ["--fps", "10", "--seconds", "1", "--out", "a/\(over)/take.mov"],
+            mentioningAll: ["--out", "directory name", "256"])
+    }
+
+    @Test("動画のファイル名は 255 まで通り、256 から止まる")
+    func aMovieNameIsCheckedAgainstTheFileSystemLimit() throws {
+        _ = try parse(["--fps", "10", "--seconds", "1", "--out", outName(255, ending: ".mov")])
+        expectUsage(
+            ["--fps", "10", "--seconds", "1", "--out", outName(256, ending: ".mov")],
+            mentioningAll: ["--out", "256", "255"])
+    }
+
     // MARK: - 解ける形 (完了条件 1・2)
 
     @Test("場所・構成・置き場と、fps・秒数・行き先を受け、枚数は fps × 秒数になる")

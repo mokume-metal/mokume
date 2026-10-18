@@ -177,6 +177,11 @@ enum RenderCommand {
                 "\(outFlags[0]) takes a movie ending in .mov, or a numbered series with a run of #"
                     + " in the file name where the number goes (out/frame-####.png): \(out)")
         }
+        // **ファイル名の長さも、ビルドの前に見る** (#2774)。子の中で落ちると、ビルドの後に、長さが理由
+        // だと言われずに分かる。連番は番号が桁に収まらずに伸びた後の、最後の枚の名前で見る
+        if let long = RenderRequest.nameTooLong(destination: destination, frameCount: frameCount) {
+            throw .usage("\(outFlags[0]): \(RenderRequest.tooLongReason(long))")
+        }
         return Options(invocation: invocation, request: request)
     }
 
