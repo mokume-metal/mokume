@@ -12,21 +12,21 @@ struct BuildDirectoryTests {
     // MARK: - 根
 
     @Test("根は、環境が与えなければホームの下のキャッシュ")
-    func theRootDefaultsToTheCacheUnderHome() {
+    func theRootDefaultsToTheCacheUnderHome() throws {
         let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)
-        let root = BuildDirectory.root(environment: [:], home: home)
+        let root = try BuildDirectory.root(environment: [:], home: home)
         #expect(root.path == "/Users/example/Library/Caches/mokume/build")
     }
 
     @Test("環境が与えた根は、~ も相対も絶対にして使う")
-    func theGivenRootIsExpanded() {
+    func theGivenRootIsExpanded() throws {
         let home = URL(fileURLWithPath: "/Users/example", isDirectory: true)
-        let given = BuildDirectory.root(
+        let given = try BuildDirectory.root(
             environment: [BuildDirectory.environmentKey: "/tmp/store"], home: home)
         #expect(given.path == "/tmp/store")
         // **空白だけは「書かれていない」として扱う。** 空の環境変数で共有が黙って
         // ルートへ落ちるのを避ける
-        let blank = BuildDirectory.root(
+        let blank = try BuildDirectory.root(
             environment: [BuildDirectory.environmentKey: "  "], home: home)
         #expect(blank.path == "/Users/example/Library/Caches/mokume/build")
     }

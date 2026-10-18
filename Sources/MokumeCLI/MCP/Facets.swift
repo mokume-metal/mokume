@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import mokume
 
 /// 区画への読み書き。
@@ -107,7 +108,7 @@ struct Facets {
         } catch let failure as CommandFailure {
             throw failure
         } catch {
-            throw CommandFailure.facetUnwritable(path: requestURL.path, reason: "\(error)")
+            throw CommandFailure.facetUnwritable(path: requestURL.path, reason: Diagnostics.reason(error))
         }
         let reportURL = WorkDirectory.reportURL(under: facet)
 

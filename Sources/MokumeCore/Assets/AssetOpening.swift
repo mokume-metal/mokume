@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// 名前が解けた場所を、資材として開けるかを確かめる ([#2358])。
 ///
@@ -28,36 +29,19 @@ package nonisolated enum AssetOpening {
     ///
     /// **中身は読まない。** 開いて (`open(2)`)、開けたものがディレクトリかだけを見る
     /// (ディレクトリは開けても読めない)。名前付きのパイプで書き手を待たないよう、待たずに開く。
+    /// 事情の文面は ``Diagnostics/posixReason(_:)`` で引く。
     package static func refusal(at url: URL) -> Refusal? {
         let location = url.standardizedFileURL.path
         let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else {
-            return Refusal(location: location, reason: reason(errno: errno))
+            return Refusal(location: location, reason: Diagnostics.posixReason(errno))
         }
         defer { close(descriptor) }
         var status = stat()
         if fstat(descriptor, &status) == 0, status.st_mode & S_IFMT == S_IFDIR {
-            return Refusal(location: location, reason: reason(errno: EISDIR))
+            return Refusal(location: location, reason: Diagnostics.posixReason(EISDIR))
         }
         return nil
-    }
-
-    /// POSIX の失敗の番号を、人が読む短い句にする。引けなければ `error <番号>`。
-    ///
-    /// **C の文面 (`strerror_r`) で引く。** Foundation の説明は言語の設定に左右されうるが、道具が
-    /// 話す言葉は英語で、設定で切り替えない ([ADR-0038] 決定 1・2)。`strerror` ではなく
-    /// `strerror_r` なのは、待たない口が別の thread で読むため。
-    ///
-    /// [ADR-0038]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0038-language-of-the-tool.md
-    package static func reason(errno code: Int32) -> String {
-        text(errno: code) ?? "error \(code)"
-    }
-
-    /// POSIX の失敗の番号の C の文面。引けなければ `nil`。
-    package static func text(errno code: Int32) -> String? {
-        var text = [CChar](repeating: 0, count: 256)
-        guard strerror_r(code, &text, text.count) == 0 else { return nil }
-        return text.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
     }
 
     /// 開けなかったことの説明。資材の失敗の型の `unopenable` が、どれもこの文面で名乗る。

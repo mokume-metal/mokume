@@ -49,6 +49,12 @@ extension Canvas {
         /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの
         /// 名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
         case svgSkipped(path: String)
+        /// 読んだ SVG の `opacity` を、子ごとに掛ける近似で描いていて、重なった所が SVG より濃く出る
+        /// (#2884)。**ファイルの名前ごとに 1 度**。捨てたもの (``svgSkipped(path:)``) とは別の知らせ —
+        /// 描いてはいる。層の `opacity` を本体が持てば ([#2878]) 消える。
+        ///
+        /// [#2878]: https://github.com/mokume-metal/mokume/issues/2878
+        case svgApproximated(path: String)
         /// 置けない置き場所が混ざっていた。
         case badPlacement
         /// 立体の寸法が受け取れない値だった。
@@ -348,13 +354,15 @@ extension Canvas {
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case pixelsInsideShape
         /// 形の組み立ての途中で溜め場が描き切られるか捨てられ、記録したものを失って空の形を返した
-        /// ([#1588])。来るのは、写しを持てなかった置いた描き場所の描き換え ([#1855]・[#2201]・[#2509] の
-        /// 後に残った経路)。種類と文面は ``InsideShape`` が持つ。
+        /// ([#1588])。**mokume の不具合のときだけ出る** — 写しを持てなかった置いた描き場所の描き換えも、
+        /// 組み立てた区間を残して置いた側の組み立ての前の列だけを描き切る ([#1855]・[#2201]・[#2509]・
+        /// [#2850])。種類と文面は ``InsideShape`` が持つ。
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
         /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
         /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
+        /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
         case shapeDrawnOutWhileBuilding
         /// 組み立ての中で、組み立ての前に開いた自分のフレームを `endDraw()` で閉じようとした ([#1855])。
         /// フレームは閉じずに一番外の組み立ての出口まで待たせる。種類と文面は ``InsideShape`` が持つ。

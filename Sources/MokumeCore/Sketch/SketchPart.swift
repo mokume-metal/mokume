@@ -46,7 +46,7 @@
 ///
 /// - つまみ (`@Param`) は、スケッチの型に直に置いたものだけが出る。部品の中に書いても組めるが、
 ///   つまみには出ない
-/// - 音・カメラ・通信の口 (``Sketch/createSinOsc()``・``Sketch/createCapture(_:_:device:)``・
+/// - 音・カメラ・通信の口 (``Sketch/createSinOsc()``・``Sketch/createCapture(_:_:device:mirrored:)``・
 ///   ``Sketch/createOSC(listen:send:)`` など) と ``Sketch/params`` は、スケッチの中でだけ使える
 /// - 待つ読み込み (``requestImage(_:)`` など) の結果を `Task` の中で書き戻す先は、スケッチの
 ///   プロパティにする。値の型 (struct) の自分自身へは、`Task` の中から書き戻せない

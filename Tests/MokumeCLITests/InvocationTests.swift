@@ -57,9 +57,9 @@ struct InvocationTests {
             ("probe", "/work/plain/probe"), ("./probe", "/work/plain/probe"),
             ("probe/../other", "/work/plain/other"), ("/elsewhere/sketch", "/elsewhere/sketch"),
         ])
-    func thePlaceIsResolvedFromWhereItWasTyped(place: String, expected: String) {
+    func thePlaceIsResolvedFromWhereItWasTyped(place: String, expected: String) throws {
         let typedFrom = URL(fileURLWithPath: "/work/plain", isDirectory: true)
-        let directory = Invocation(place: place, currentDirectory: typedFrom).directory
+        let directory = try Invocation(place: place, currentDirectory: typedFrom).directory
         #expect(directory.baseURL == nil, "相対の URL のまま: \(directory)")
         #expect(!directory.pathComponents.contains(".."))
         #expect(directory.path == expected)
@@ -68,7 +68,7 @@ struct InvocationTests {
     /// 既定の基準 (このプロセスの作業ディレクトリ) でも同じ。完了条件 2 の例そのもの。
     @Test("基準を渡さなければ、このプロセスの作業ディレクトリから解く")
     func theDefaultBaseIsTheWorkingDirectory() throws {
-        let directory = Invocation(place: "../x").directory
+        let directory = try Invocation(place: "../x").directory
         #expect(directory.baseURL == nil)
         #expect(!directory.pathComponents.contains(".."))
         let parent = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
@@ -78,7 +78,7 @@ struct InvocationTests {
                 == parent.appendingPathComponent("x").standardizedFileURL.path)
         // 場所を渡さなければ、走らせた場所そのもの
         #expect(
-            Invocation().directory.standardizedFileURL.path
+            try Invocation().directory.standardizedFileURL.path
                 == URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
                 .standardizedFileURL.path)
     }
@@ -92,9 +92,9 @@ struct InvocationTests {
         let typedFrom = URL(fileURLWithPath: "/work", isDirectory: true)
         let invocation = try Invocation.parse(
             ["probe", "--scratch-path", "sp"], from: typedFrom)
-        #expect(invocation.directory.path == "/work/probe")
-        #expect(invocation.scratchDirectory?.path == "/work/sp")
-        #expect(invocation.scratchDirectory?.baseURL == nil)
+        #expect(try invocation.directory.path == "/work/probe")
+        #expect(try invocation.scratchDirectory?.path == "/work/sp")
+        #expect(try invocation.scratchDirectory?.baseURL == nil)
         // `..` で始まっても、絶対パスでも同じ規則
         #expect(
             try Invocation.parse(["../probe", "--scratch-path", "../sp"], from: typedFrom)
@@ -231,16 +231,16 @@ struct InvocationTests {
     /// 規則は `WorkDirectory` が持つので、ここが見るのは「解かれた結果に道具の既定値を
     /// 当てる」ところだけである。
     @Test("環境変数が基準を与えていれば、それが区画の基準になる")
-    func theWorkDirectoryDecidesTheFacetBase() {
+    func theWorkDirectoryDecidesTheFacetBase() throws {
         let sketch = URL(fileURLWithPath: "/sketch", isDirectory: true)
         let elsewhere = "/elsewhere"
         let given = WorkDirectory.given(environment: [StartupReads.workDirectory.key: elsewhere])
         let invocation = Invocation(place: sketch.path)
 
         #expect(given?.path == elsewhere)
-        #expect(invocation.facetBase(workDirectory: given).path == elsewhere)
+        #expect(try invocation.facetBase(workDirectory: given).path == elsewhere)
         // 与えられていなければスケッチの場所 (いままでどおり)
-        #expect(invocation.facetBase(workDirectory: nil).path == sketch.path)
+        #expect(try invocation.facetBase(workDirectory: nil).path == sketch.path)
         #expect(Invocation.facetBase(under: sketch, workDirectory: nil).path == sketch.path)
     }
 
@@ -263,23 +263,23 @@ struct InvocationTests {
 
         // 見張りが置く先 (WatchCommand が窓を出せたときに作る区画)
         let session = WatchSession(
-            directory: sketch, context: testContext(), facetBase: invocation.facetBase(workDirectory: given))
+            directory: sketch, context: testContext(), facetBase: try invocation.facetBase(workDirectory: given))
         let placed = WatchCommand.viewportFacet(for: session)
         #expect(placed.path.hasPrefix(work.path), "見張りはスケッチの場所ではなく基準の下へ置く")
         // 子は与えられた基準の下の区画を見る (`WorkDirectory.facet` と同じ規則)
         #expect(placed == WorkDirectory.facet(StartupReads.viewport.key, under: work))
         // 基準が与えられていなければ、スケッチの場所 (いままでどおり)
         #expect(
-            WatchCommand.viewportFacet(under: invocation.facetBase(workDirectory: nil))
+            WatchCommand.viewportFacet(under: try invocation.facetBase(workDirectory: nil))
                 == WorkDirectory.facet(StartupReads.viewport.key, under: sketch))
 
         // **run も同じ場所を見て名乗る** — 古いライブラリのスケッチは区画が在ると窓を開かず、
         // 自分では何も言わない (#2028)。名乗りが基準を取り違えると、黙って窓が出ない (#791)
         try FileManager.default.createDirectory(at: placed, withIntermediateDirectories: true)
-        let notice = RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: given)
+        let notice = try RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: given)
         #expect(notice?.contains(placed.path) == true, "見張りが置いた区画を run が見つけられていない")
         #expect(notice?.contains("older mokume") == true, "版のずれを疑わせる手掛かりが無い")
-        #expect(RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: nil) == nil)
+        #expect(try RunCommand.sharedSurfaceNotice(for: invocation, workDirectory: nil) == nil)
     }
 
     static func directory() throws -> URL {

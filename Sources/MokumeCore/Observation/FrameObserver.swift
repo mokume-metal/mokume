@@ -102,15 +102,14 @@ final class FrameObserver {
     @discardableResult
     func clearProducts() -> [URL] {
         var removed: [URL] = []
-        AtomicFile.remove(reportURL)
-        removed.append(reportURL)
+        // ディレクトリは消さずに残すので、消した並びには入れない (``AtomicFile/remove(_:)``)
+        if AtomicFile.remove(reportURL) { removed.append(reportURL) }
         let names =
             (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         for name in names.sorted() where name.hasPrefix(Self.imagePrefix) && name.hasSuffix(".png")
         {
             let url = directory.appendingPathComponent(name)
-            AtomicFile.remove(url)
-            removed.append(url)
+            if AtomicFile.remove(url) { removed.append(url) }
         }
         return removed
     }

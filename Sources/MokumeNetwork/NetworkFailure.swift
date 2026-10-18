@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import MokumeCore
 
-/// ``TCPServer``・``WebSocketServer``・``UDPPort`` を作れなかったこと。
+/// ``TCPServer``・``WebSocketServer``・``TCPClient``・``WebSocketClient``・``UDPPort`` を作れなかったこと。
 ///
 /// **作るときに投げ、フレームの間は投げない** ([ADR-0020] 決定 5)。投げるのは渡した値が
 /// そもそも使えないときと、走っている実行へ足せない所から呼んだとき (``notRunning(call:)``) だけで、
@@ -14,7 +15,8 @@ import MokumeCore
 public nonisolated enum NetworkFailure: Error, Equatable, Sendable {
     /// ポートの番号が 1〜65535 に入っていない。
     case invalidPort(Int)
-    /// 送り先のホストが空。
+    /// 送り先・繋ぎ先のホストが空 (``Sketch/createWebSocketClient(_:)`` では、`ws://` か `wss://` の
+    /// URL として読めない綴り)。
     case invalidHost(String)
     /// 走っている実行へ足せない所 (`setup()`・`draw()`・入力のコールバックの外 — 初期化子の中・
     /// 後片付けの後・`Task` の中) で作る口を呼んだ。`call` は呼んだ口の名前 (`"createTCPServer(_:)"` など)。
@@ -60,6 +62,19 @@ nonisolated enum Endpoint {
     /// 使えないホストの名乗り。
     static func unusableHost(_ host: String) -> String {
         "The host \"\(host)\" is not usable. Pass a name or an address to send to "
-            + "(\"127.0.0.1\" for this machine, for example)"
+            + "(\"127.0.0.1\" for this machine, for example). For a WebSocket client it has to be "
+            + "a ws:// or wss:// URL (\"ws://127.0.0.1:8025\", for example)"
+    }
+
+    /// WebSocket のクライアントが繋ぐ URL。`ws://` か `wss://` で、ホストが在る綴りだけ。
+    ///
+    /// ポートが書かれていて 1〜65535 に入っていなければ、``NetworkFailure/invalidPort(_:)`` を返す側が使えるように
+    /// 別に返す。
+    static func webSocketURL(_ text: String) -> (url: URL, secure: Bool, port: Int?)? {
+        guard let components = URLComponents(string: text.trimmingCharacters(in: .whitespaces)),
+            let scheme = components.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
+            let host = components.host, !host.isEmpty, let url = components.url
+        else { return nil }
+        return (url, scheme == "wss", components.port)
     }
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 束ねた作品の名乗り — 表示名・識別子・版と、カメラ・マイクの許可を求めるときの文言。
 ///
@@ -113,8 +114,9 @@ nonisolated struct AppIdentity: Equatable {
             throw .identityNameUnusable(path: path, name: name)
         }
         // **長さも同じ段で断る** (#2501)。紙の名前が上限を越える名前は、ビルドと署名の後で紙が
-        // 書けずに止まり、署名済みの `.app` を残していた。数え方は ``fileNameLength(of:)``
-        let length = fileNameLength(of: name)
+        // 書けずに止まり、署名済みの `.app` を残していた。数え方は ``FileNameLength/of(_:)``
+        // NUL は上で断ってあるので数えられる
+        let length = FileNameLength.of(name) ?? 0
         guard length <= maximumNameLength else {
             throw .identityNameTooLong(path: path, name: name, length: length)
         }
@@ -123,11 +125,11 @@ nonisolated struct AppIdentity: Equatable {
             cameraUsage: written(wire.cameraUsage), microphoneUsage: written(wire.microphoneUsage))
     }
 
-    /// ファイル名の長さの上限 (``fileNameLength(of:)`` の数え方で)。APFS は 255 まで作れて、256 で
-    /// `File name too long` になる ([#2501](https://github.com/mokume-metal/mokume/issues/2501) の実測)。
-    static let fileNameLimit = 255
+    /// ファイル名の長さの上限 (``FileNameLength/of(_:)`` の数え方で)。数え方と上限は
+    /// ``FileNameLength`` が持つ ([#2774](https://github.com/mokume-metal/mokume/issues/2774))。
+    static let fileNameLimit = FileNameLength.limit
 
-    /// `name` の長さの上限 (``fileNameLength(of:)`` の数え方で)。
+    /// `name` の長さの上限 (``FileNameLength/of(_:)`` の数え方で)。
     ///
     /// 名前から作るファイル名は包み (`<name>.app`) と開き方の紙
     /// (``BundleCommand/noteFileName(for:)``) で、長いのは紙のほう — `How to open ` と `.txt` で 16 を
@@ -139,21 +141,6 @@ nonisolated struct AppIdentity: Equatable {
     /// **これは `--out` が APFS のときの話である。** exFAT・FAT32 のように名前を分解しない形で
     /// 数える置き場では、成功していた名前 (`が` × 120 など) を断ることがある (#2773)。
     static let maximumNameLength = 239
-
-    /// `name` をファイル名にしたときの長さ。
-    ///
-    /// **バイトでも、渡された文字列の UTF-16 の単位でもない。** Foundation は名前を分解した形
-    /// (HFS+ の分解) でファイルシステムへ渡し、APFS はそれを UTF-16 の単位で数える。`é` と濁点の
-    /// 付いた仮名と絵文字は 2、記号が 2 つ付く字 (`ệ`) は 3、ハングルの音節は 2〜3、国旗は 4、
-    /// ZWJ でつないだ家族の絵文字は 11 になる — 渡された形で数えると、`.app` は
-    /// 作れて紙で落ちる名前 (濁点の付いた仮名 120 字) を通してしまう。完全な NFD とも違う
-    /// (U+212B のオングストローム記号は分解されない) ので、Foundation がファイルシステムへ渡す形
-    /// そのもの (`fileSystemRepresentation`) から数える (#2501)。
-    ///
-    /// `/` と NUL を断った後に呼ぶ (NUL があると C の文字列がそこで切れる)。
-    static func fileNameLength(of name: String) -> Int {
-        String(cString: (name as NSString).fileSystemRepresentation).utf16.count
-    }
 
     /// 名乗れる中身があるなら、前後を落とした文字列。無ければ `nil`。
     private static func written(_ value: String?) -> String? {

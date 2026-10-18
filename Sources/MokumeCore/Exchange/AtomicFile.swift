@@ -83,6 +83,9 @@ package enum AtomicFile {
     static func write(to url: URL, using body: (URL) throws -> Void) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // **書く先がディレクトリなら置かない** (本体を走らせる前に断る)。`replaceItemAt` は行き先の種類を
+        // 見ず、ディレクトリを中身ごと消してファイルに置き換える (#2859)
+        try refuseDirectory(url)
         sweepAbandonedTemporaries(of: url)
         sequence += 1
         let temporary = temporaryURL(for: url, writer: getpid(), sequence: sequence)
@@ -90,12 +93,44 @@ package enum AtomicFile {
             try body(temporary)
             // 置換は 1 回の syscall で済ませる。先に消してから rename すると、
             // その隙間に読み手が「ファイルが無い」状態を見る
+            // 本体を走らせている間に置かれたものも見る。見てから置き換えるまでの窓は縮めるだけで、
+            // ゼロにはならない (``refuseDirectory(_:)``)
+            try refuseDirectory(url)
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
         } catch {
             // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない
             try? FileManager.default.removeItem(at: temporary)
             throw error
         }
+    }
+
+    /// 書く先がディレクトリなら、`EISDIR` (`Is a directory`) で断る。
+    ///
+    /// **symlink は辿って見る (`stat`)。** 辿った先がディレクトリなら、置かない向きに倒す。宛先の無い
+    /// symlink は辿れない (`stat` が失敗する) ので断らず、そのあとの置き方に任せる (従来どおり)。
+    ///
+    /// **窓が残る。** 見てから `replaceItemAt` までは別の syscall なので、その間に別の主体が同じ
+    /// 場所へディレクトリを置けば、いままでどおり置き換わる。`rename(2)` を直に呼べば窓は閉じる
+    /// (ファイルからディレクトリへの `rename` は `EISDIR` で原子的に失敗する) が、**既存のファイルへ
+    /// 置くときの属性が変わる**: 実測では `replaceItemAt` は既存のファイルの権限 (0640)・拡張属性・
+    /// 作成日時を新しい中身へ引き継ぎ、`rename(2)` はそのどれも引き継がず、権限は一時ファイルの
+    /// 既定 (0644) になり、拡張属性は消える。ファイル・無い場合の振る舞いを変えない (#2859 の完了条件 4)
+    /// ので、窓を狭める直前の検査にとどめた。
+    private static func refuseDirectory(_ url: URL) throws {
+        guard isDirectory(url, following: true) else { return }
+        throw POSIXError(.EISDIR)
+    }
+
+    /// その場所がディレクトリか。**消す・置き換える前に、中身ごと失う相手でないかを見るのに使う**
+    /// (``write(to:using:)``・``remove(_:)``・`MovieFile`)。
+    ///
+    /// - Parameter following: symlink を辿るか (`stat`)。辿らなければ symlink 自身を見る (`lstat`) —
+    ///   消す側は symlink を外すだけで指す先は壊さないので辿らず、置き換える側 (`replaceItemAt`) は
+    ///   辿った先を見る。
+    nonisolated static func isDirectory(_ url: URL, following: Bool) -> Bool {
+        var status = stat()
+        let found = following ? stat(url.path, &status) : lstat(url.path, &status)
+        return found == 0 && status.st_mode & S_IFMT == S_IFDIR
     }
 
     /// 一時ファイルの場所。**置き場所の隣に作る** (冒頭の `rename(2)` の理由)。
@@ -147,8 +182,19 @@ package enum AtomicFile {
     }
 
     /// 消す。無ければ何もしない。
-    static func remove(_ url: URL) {
+    ///
+    /// **ディレクトリは消さずに残す** (symlink は外すだけで、指す先は壊さない)。`removeItem` は
+    /// ディレクトリを中身ごと消すので、置き場の名前をたまたまディレクトリが使っていると、利用者の
+    /// ものが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859))。
+    /// **名乗らない** — 消せなかったことはその後の書き込みが同じ場所で `Is a directory` と
+    /// 1 度名乗る (``publishJSON(_:to:_:)``)。ここで言うと、掃除のたびに同じ場所を言い直す。
+    ///
+    /// - Returns: 消した (または無かった) なら `true`。ディレクトリなので残したなら `false`。
+    @discardableResult
+    static func remove(_ url: URL) -> Bool {
+        guard !isDirectory(url, following: false) else { return false }
         try? FileManager.default.removeItem(at: url)
+        return true
     }
 
     /// JSON を組んで原子的に置く。**判断が呼び手にあるときだけこちら。**
