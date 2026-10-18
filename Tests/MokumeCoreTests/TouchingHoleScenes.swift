@@ -26,14 +26,22 @@ nonisolated struct TouchingHoleScene: Sendable {
         holes.reduce(abs(Triangulation.signedArea(outer))) { $0 - abs(Triangulation.signedArea($1)) }
     }
 
-    /// 本番の道で三角形へ分けた結果の、面積の誤差と、標本点の被覆の食い違いの数。
-    ///
-    /// 食い違いは、回り数が 0 でない点が三角形に覆われていない、回り数が 0 の点が覆われている、
-    /// 1 点が 2 枚以上に覆われている、のどれか。標本は格子の 24×24 で、辺の上に載らないよう
-    /// 半端にずらしてある。
-    func measure() -> (areaError: Float, mismatches: Int) {
+    /// 外周と逆回りに揃えた穴。
+    var orientedHoles: [[SIMD2<Float>]] {
         let turn = Triangulation.signedArea(outer)
-        let rings = holes.map { Triangulation.signedArea($0) * turn > 0 ? Array($0.reversed()) : $0 }
+        return holes.map { Triangulation.signedArea($0) * turn > 0 ? Array($0.reversed()) : $0 }
+    }
+
+    /// 本番の道 (`splitForNonzero` → `mergeHoles` → 耳切り) で分けた三角形。
+    func triangles() -> [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)] {
+        Self.triangles(outer: outer, rings: orientedHoles)
+    }
+
+    /// 外周と、外周と逆回りに揃えた穴を、本番の道で三角形へ分ける。回りは揃え直さない
+    /// (揃えるのは呼ぶ側 — 座標の大きい場面では `Float` の面積で回りを読み違えうるため)。
+    static func triangles(
+        outer: [SIMD2<Float>], rings: [[SIMD2<Float>]]
+    ) -> [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)] {
         let points = outer + rings.flatMap { $0 }
         var holeIndices: [[Int]] = []
         var next = outer.count
@@ -66,6 +74,17 @@ nonisolated struct TouchingHoleScene: Sendable {
                 triangles.append((merged[t.0], merged[t.1], merged[t.2]))
             }
         }
+        return triangles
+    }
+
+    /// 本番の道で三角形へ分けた結果の、面積の誤差と、標本点の被覆の食い違いの数。
+    ///
+    /// 食い違いは、回り数が 0 でない点が三角形に覆われていない、回り数が 0 の点が覆われている、
+    /// 1 点が 2 枚以上に覆われている、のどれか。標本は格子の 24×24 で、辺の上に載らないよう
+    /// 半端にずらしてある。
+    func measure() -> (areaError: Float, mismatches: Int) {
+        let rings = orientedHoles
+        let triangles = triangles()
         var painted: Float = 0
         for t in triangles { painted += abs(Triangulation.cross(t.1 - t.0, t.2 - t.0)) / 2 }
         var expected = abs(Triangulation.signedArea(outer))
