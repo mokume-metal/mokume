@@ -81,6 +81,52 @@ public struct Orbit: Equatable, Sendable {
             minimumDistance: distance / 10, maximumDistance: distance * 10)
     }
 
+    /// 読み込んだモデルが、全体を収めて見える視点から始める操作。
+    ///
+    /// 見ている先は**モデルの囲みの箱の中心** (``Model/center``)、距離は**囲みの球** (半径は
+    /// 囲みの箱の対角の半分) が既定の画角 (縦 π/3) にちょうど収まる長さにする。角は 0 (真正面から)
+    /// で、寄り・引きの限界は ``fitting(width:height:)`` と同じく距離の 1/10 と 10 倍。
+    ///
+    /// ```swift
+    /// var bunny: Model?
+    ///
+    /// func setup() {
+    ///     bunny = try? loadModel("assets/bunny.obj")
+    ///     if let bunny { orbit = .fitting(bunny) }   // 起動直後から全体が見える
+    /// }
+    ///
+    /// func draw() {
+    ///     background(20)
+    ///     orbitControl()                              // 引きずって回し、右ドラッグで覗き込む
+    ///     lights()
+    ///     if let bunny { model(bunny) }
+    /// }
+    /// ```
+    ///
+    /// 既定の整え方で読んだモデルは中心が原点に来るので、見ている先も原点になる (``fitting(width:height:)``
+    /// の面の中央ではない)。`model(_:)` を `translate()` で動かして置くときは、``center`` を同じだけ
+    /// ずらす。
+    ///
+    /// - Important: **横長と正方形の面で収まる。縦長の面では左右が切れうる。** 収める画角は既定の
+    ///   投影の縦の画角で、横の画角は面の縦横比で決まる。ここは面の大きさを受け取らないので、縦長の
+    ///   面で横が縦より狭くなる分は見ていない。縦長の面で全体を見たいときは、``distance`` を伸ばす。
+    ///
+    /// - Note: 大きさの無いモデル (面が 1 つも無い・1 点だけ) は収める大きさが無いので、距離 1 の
+    ///   視点を返す (限界は ``init(center:distance:yaw:pitch:inertia:minimumDistance:maximumDistance:)``
+    ///   の既定)。見ている先が数でない・無限なら原点へ倒す。
+    public static func fitting(_ model: Model) -> Orbit {
+        let center = model.center
+        let usableCenter = center.x.isFinite && center.y.isFinite && center.z.isFinite
+        let radius = length(model.size) / 2
+        let distance = radius / RuntimeMath.sin(Camera.defaultFieldOfView / 2)
+        guard usableCenter, distance.isFinite, distance > 0 else {
+            return Orbit(center: usableCenter ? center : .zero, distance: 1)
+        }
+        return Orbit(
+            center: center, distance: distance,
+            minimumDistance: distance / 10, maximumDistance: distance * 10)
+    }
+
     // MARK: - 視点
 
     /// 見る位置 (世界の座標)。
@@ -156,6 +202,32 @@ public struct Orbit: Equatable, Sendable {
         }
         clampToLimits()
         return held
+    }
+
+    /// 引きずった量だけ、見ている先を画面の面に沿って動かす (平行移動・[#2461])。
+    ///
+    /// **掴む向きに動かす** — 右へ引けば見ている先は画面の左の向きへ動き、被写体は指に付いて右へ
+    /// 動く (p5.js・three.js と同じで、回す向き (掴んで回す) とも揃う)。量は、`camera` から見た
+    /// **見ている先の奥行きで 1 画素が覆う長さ** (``Camera/worldPerPixel(at:width:height:)``) なので、
+    /// 見ている先の奥行きにある点は指にぴったり付いて動く。感度は掛けない。
+    ///
+    /// 動かした先が有限にならない (量が溢れた・届いた量が数でない) なら動かさず、偽を返す ([#2643] と
+    /// 同じく、状態を常に有限に保つ)。知らせるのは呼ぶ側。
+    ///
+    /// - Parameter camera: いまの視点。道具の見る位置・見ている先・上方向と、そのときの投影を組んだもの。
+    ///
+    /// [#2461]: https://github.com/mokume-metal/mokume/issues/2461
+    /// [#2643]: https://github.com/mokume-metal/mokume/issues/2643
+    @discardableResult
+    mutating func pan(
+        dragX: Float, dragY: Float, through camera: Camera, width: Float, height: Float
+    ) -> Bool {
+        guard dragX != 0 || dragY != 0 else { return true }
+        let step = camera.worldPerPixel(at: center, width: width, height: height)
+        let moved = center - camera.right * (dragX * step.x) - camera.down * (dragY * step.y)
+        guard moved.x.isFinite, moved.y.isFinite, moved.z.isFinite else { return false }
+        center = moved
+        return true
     }
 
     /// ``advance(dragX:dragY:scroll:isDragging:sensitivity:)`` が進めなかった軸。

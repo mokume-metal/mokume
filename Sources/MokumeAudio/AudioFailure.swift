@@ -13,7 +13,13 @@ import MokumeCore
 public enum AudioFailure: Error, Equatable, Sendable {
     /// その名前のファイルが見つからない。`searched` は探した場所を、探した順に並べたもの。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、音声として読めない (壊れている・対応していない形式)。
+    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
+    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
+    /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
+    /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
+    /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+    case unopenable(path: String, location: String, reason: String)
+    /// 開けたが、音声として読めない (壊れている・対応していない形式)。
     case unreadable(path: String)
     /// 標本が 1 つも無い。
     case empty
@@ -37,6 +43,8 @@ extension AudioFailure: CustomStringConvertible {
         switch self {
         case .notFound(let path, let searched):
             AssetFailure.notFound(path: path, searched: searched).description
+        case .unopenable(let path, let location, let reason):
+            AssetOpening.notice(path: path, location: location, reason: reason)
         case .unreadable(let path):
             "\"\(path)\" cannot be read as audio. Check whether it is damaged, and that the format "
                 + "is one macOS plays (WAV, AIFF, CAF, MP3, AAC/M4A, FLAC)"

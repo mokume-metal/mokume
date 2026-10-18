@@ -106,6 +106,8 @@ enum ShapeExit {
         let refused: [(String, ((Canvas, Fixture) -> Void)?)] = [
             // シーンの記述 (#1529)。閉じる側が既定へ戻すものは汚す手順を持つ
             ("cameraStorage", { c, _ in c.perspective() }),
+            // 目印の格子と軸を描く印 (#2462)
+            ("drawsDebugGuides", { c, _ in c.debugMode() }),
             ("activeLights", { c, _ in c.ambientLight(white) }),
             ("activeSurroundings", { c, _ in c.surroundings(.sky) }),
             ("shadowsEnabled", { c, _ in c.shadows(true) }),
@@ -165,6 +167,7 @@ enum ShapeExit {
             "framesDrawn": frame, "isDrawing": frame, "beginDrawFrame": frame,
             "droppedAtTheMainFrame": frame,
             "carriesOver": "持ち越しの区間の印。ランタイムがコールバックの出入口で対で書く (#1672)",
+            "isRuntimeSurface": "ランタイムの本体の面かの印。作ったときに 1 度だけ立て、形の組み立ての出入口では動かない (#2780)",
             "carriedOverAmount": "持ち越しの区間で置いた量の印。フレームの頭の検めが読む (#1672)",
             "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
@@ -328,6 +331,7 @@ extension ShapeExit {
             "isHandingOverOutletFrames": recording, "outletJudgedThrough": recording,
             "outletHeldDrop": recording, "outletFramesDropped": recording,
             "outletsClosing": recording, "closingOutcomesGiveUpAt": recording,
+            "lastFrameFailedToDraw": recording,
             "exposedValues": observation, "measuredValues": observation,
             "orbit": "視点を操る道具の状態。フレームを越える。`orbit = …` の setter は組み立ての中でも断られず、出口でも戻らない。形には焼き付かない — 視点を書くのは `camera` で、`camera` は組み立ての中では断られる (`orbitControl()` は視点を書く前に断る・#1670)",
             "orbitAdvancedAt": "orbit と同じ (道具を最後に進めたフレーム)。`orbitControl()` が書く",

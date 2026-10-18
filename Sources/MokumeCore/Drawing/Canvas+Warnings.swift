@@ -140,6 +140,10 @@ extension Canvas {
         case styleOutsideFrame
         /// フレームの外で切り抜きを書いた。
         case clipOutsideFrame
+        /// フレームの外で目印の格子と軸 (`debugMode()` / `noDebugMode()`) を書いた ([#2462])。
+        ///
+        /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
+        case debugOutsideFrame
         /// 成り立たない視点・投影が渡された。**入口が 3 つある 1 つの事情** — 視点の口・
         /// 投影の口・`setCamera()` が持ち込む投影 ([#1495])。
         ///
@@ -377,6 +381,7 @@ extension Canvas {
         case particlesInsideShape
         case computeInsideShape
         case brightnessInsideShape
+        case debugInsideShape
     }
 
     /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1698])。

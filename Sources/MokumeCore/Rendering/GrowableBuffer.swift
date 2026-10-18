@@ -80,9 +80,24 @@ import Metal
     /// **1 フレームの中では、いちばん大きい要求を先に出す。** 番地を束ねたあとに
     /// 取り直すと、束ねた先が死んだ置き場を指す (効果の段が `reservePasses` で
     /// 先に数え切っているのはこのため)。
+    ///
+    /// ## 書いてよい時刻を、ここで検める ([#2258])
+    ///
+    /// 返す置き場へ書いてよいのは、呼ぶ側が環を進めて待った後か、投入済みの全部を待った後だけ
+    /// である。**3 つの書き込み口 (ここ・``write(_:holding:)``・``writableBytes(holding:)``) は
+    /// どれもここを通る**ので、環の印 (``FrameRing/isWritable``) をここで見る。印が無ければ、
+    /// mokume の検査の中では止まり、外では 1 度だけ注意して返す (``FrameRing/checkWritable(_:)``)。
+    ///
+    /// **取り直した直後は見ない。** 新しい置き場はまだどの投入にも読まれていないので、印が無くても
+    /// 書いてよい。効果のパイプラインは作るときに置き場を取るが、作るのは頼まれたときで、前の
+    /// 投入でスロットの印が落ちた後のこともある。
+    ///
+    /// [#2258]: https://github.com/mokume-metal/mokume/issues/2258
     func buffer(holding count: Int) throws(RenderFailure) -> any MTLBuffer {
         if buffers.isEmpty || count > capacity {
             try grow(to: count)
+        } else {
+            ring.checkWritable(label)
         }
         return buffers[ring.slot]
     }
@@ -110,7 +125,8 @@ import Metal
     ///
     /// 写す中身が並びの形をしていないもの (数の並びの汚れ区間・画像の画素) を、持ち主が
     /// 自分で詰めるための口である ([#749])。書いてよい時刻の規律は ``write(_:holding:)`` と
-    /// 同じで、呼ぶ側が環を進めて待った後か、投入済みの全部を待った後に限る。
+    /// 同じで、呼ぶ側が環を進めて待った後か、投入済みの全部を待った後に限る (``buffer(holding:)``
+    /// が検める)。
     ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     func writableBytes(holding count: Int) throws(RenderFailure)

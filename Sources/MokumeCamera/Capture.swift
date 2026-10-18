@@ -79,8 +79,9 @@ public final class Capture: Inlet {
     /// 止める。カメラを閉じ、以後 ``image`` は変わらない。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
+    /// 外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと何もせず、`Capture.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
-        owner?.detach(self)
+        owner?.detach(self, calledAs: "Capture.stop()")
     }
 
     // MARK: - Inlet

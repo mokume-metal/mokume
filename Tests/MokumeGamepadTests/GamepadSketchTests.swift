@@ -62,6 +62,22 @@ struct GamepadSketchTests {
         #expect(try record() == first)
     }
 
+    @Test("外で足せなかった createGamepad(inputs:) は番号を進めず、後の setup() のパッドが recorded #1 になる")
+    func outsideCallDoesNotSpendTheNumber() throws {
+        let sketch = GamepadSketch()
+        var id: String?
+        OutsideRun.$current.withValue(OutsideRun()) {
+            // init() の中に当たる外。足せないので、パッドは番号を使わない
+            _ = sketch.createGamepad(inputs: [nil])
+            _ = sketch.createGamepad(inputs: [nil])
+        }
+        GamepadSketch.onSetup = { id = $0.createGamepad(inputs: [nil]).id }
+        GamepadSketch.onDraw = { _ in }
+        let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+        try runtime.advance()
+        #expect(id == "recorded #1")
+    }
+
     @Test("一覧は毎フレーム呼んでも同じ物を返し、走っているスケッチに 1 度だけ足す")
     func listReturnsTheSamePads() throws {
         let hub = GamepadHub(watches: false)
@@ -71,7 +87,7 @@ struct GamepadSketchTests {
         var states: [SourceState] = []
         GamepadSketch.onSetup = { _ in }
         GamepadSketch.onDraw = { sketch in
-            let pads = GamepadRoster.roster(for: sketch).gamepads(for: sketch, from: hub)
+            let pads = GamepadRoster.roster(for: sketch).gamepads(for: sketch, from: hub, calledAs: "gamepads()")
             lists.append(pads.map(ObjectIdentifier.init))
             states.append(contentsOf: pads.map(\.state))
             // 2 フレーム目の後に抜く。3 フレーム目からは同じ物が切断を名乗る

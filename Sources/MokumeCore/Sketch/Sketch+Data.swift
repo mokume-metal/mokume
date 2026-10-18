@@ -80,6 +80,34 @@ extension SketchPart {
         }
     }
 
+    /// 文字列を 1 行ずつ、文字のファイルにする。書き終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var notes: [String] = [] -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     notes.append("\(frameCount): \(mouseX), \(mouseY)")
+    ///     try? saveStrings(notes, "out/notes.txt")
+    /// }
+    /// ```
+    ///
+    /// 文字は UTF-8 (BOM なし)、行の終わりは LF で、最後の行にも LF を付ける。書いたファイルを
+    /// ``loadStrings(_:)`` で読み直すと、同じ並びに戻る。
+    ///
+    /// **改行を含む要素は、読み直すと行が分かれる** (`["a\nb"]` は `["a", "b"]` に戻る)。最初の要素の
+    /// 頭の U+FEFF (BOM と同じ文字) は、読み直すと ``loadStrings(_:)`` が BOM として落とす。どちらも
+    /// 中身を変えずに書き、そのことを 1 度だけ知らせる。
+    ///
+    /// 引数は書く値が先で、置き場が後 (``saveTable(_:_:)`` と同じ順)。Processing の
+    /// `saveStrings(filename, data)` とは逆で、p5.js の `saveStrings(list, filename)` と同じ。置き場・
+    /// 途中のディレクトリ・書きかけを残さないことは ``saveTable(_:_:)`` と同じ。
+    ///
+    /// - Throws: 書けなかったときに ``DataFailure/unwritable(path:reason:)``。
+    // shot: 撮れない 結果が絵ではなくファイルになる
+    public func saveStrings(_ strings: [String], _ path: String) throws(DataFailure) {
+        try TextFile.write(StringLines.format(strings), to: path)
+        StringLines.warnIfLossy(strings, path: path)
+    }
+
     // MARK: - 表
 
     /// CSV のファイルを読み、表にする。読み終わるまで返らない。

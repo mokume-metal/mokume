@@ -31,6 +31,14 @@ struct SketchPartSurfaceTests {
             y += random(-1, 1) * deltaTime
         }
 
+        /// 正規分布・配列から選ぶ・並べ替えも部品の中から引ける (#2419)。`random(palette)` と
+        /// `random(10)` が並んで組めることも、ここで見る (配列の口が数の口と曖昧にならない)。
+        func scatter() -> (Float, Float, String?, [Int]) {
+            let palette = ["red", "yellow", "blue"]
+            let spread = randomGaussian() + randomGaussian(10, 2)
+            return (spread, random(10), random(palette), shuffle([1, 2, 3]))
+        }
+
         /// 書けるプロパティも、部品の中から書ける (書く先は走っているスケッチ)。
         func turn() {
             orbit.pitch = 0.3

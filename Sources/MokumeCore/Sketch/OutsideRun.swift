@@ -36,13 +36,15 @@
 final class OutsideRun {
     /// 外から呼ばれたとき、どう倒したか。
     enum Use {
-        /// 描く・状態を書く口。何もしなかった。
+        /// 描く・状態を書く口。何もしなかった。入力の止める口 (`AudioIn.stop()` など)
+        /// ``SketchPart/detach(_:calledAs:)``) も使う。
         case act
         /// 読み取りの口。代わりに `value` (人が読む綴り: `0`・`.wallClock` など) を返した。
         case read(returning: String)
         /// 値を作って返す口のうち、投げない口。代わりに `value` (人が読む綴り: `an empty shape` など) を返した。
-        /// ``SketchPart/createShape(_:)`` と、音と通信の投げない作る口 (合成音の `createSinOsc()` など・
-        /// `createAudioIn(device:)`・記録を流す `messages:` の 4 口。``SketchPart/attach(_:calledAs:returning:)``) が使う。
+        /// ``SketchPart/createShape(_:)`` と、音・通信・シリアル・ゲームパッドの投げない作る口 (合成音の `createSinOsc()` など・
+        /// `createAudioIn(device:)`・記録を流す `messages:` の 4 口と `createSerial(lines:)`・`gamepads()`・
+        /// `createGamepad(inputs:)`。``SketchPart/attach(_:calledAs:returning:)``) が使う。
         case make(returning: String)
         /// 資源を作る口 (``SketchPart/loadImage(_:)`` など)。`notRunning(call:)` を投げた。
         ///
@@ -51,8 +53,8 @@ final class OutsideRun {
         ///
         /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
         case thrown
-        /// 走っている実行へ足して使うものを作る口 (音・通信の `loadSound(_:)`・`createTCPServer(_:)` など)。
-        /// `notRunning(call:)` を投げた。文面は ``notAttachedNotice(_:)`` で、面の話をしない ([#2740])。
+        /// 走っている実行へ足して使うものを作る口 (音・通信・シリアルの `loadSound(_:)`・`createTCPServer(_:)`・
+        /// `createSerial(_:baudRate:)` など)。`notRunning(call:)` を投げた。文面は ``notAttachedNotice(_:)`` で、面の話をしない ([#2740])。
         ///
         /// [#2740]: https://github.com/mokume-metal/mokume/issues/2740
         case thrownUnattached
@@ -185,8 +187,8 @@ final class OutsideRun {
         }
     }
 
-    /// 走っている実行へ足して使うものを作る口 (音・通信) を外から呼んだときの文面 (`AudioFailure`・
-    /// `NetworkFailure`・`OSCFailure` の `notRunning(call:)` と、その前に 1 度言う警告) ([#2740])。
+    /// 走っている実行へ足して使うものを作る口 (音・通信・シリアル) を外から呼んだときの文面 (`AudioFailure`・
+    /// `NetworkFailure`・`OSCFailure`・`SerialFailure` の `notRunning(call:)` と、その前に 1 度言う警告) ([#2740])。
     ///
     /// 返すもの (音・ポート) は、走っている実行へ足されて毎フレーム回され、終わるときに閉じられる。足せない所で
     /// 作ると、音は鳴らず、ポートは受けない (送るだけなら届くが、終わっても閉じられない)。理由は面ではないので、

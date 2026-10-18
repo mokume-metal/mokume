@@ -86,39 +86,75 @@ final class ParamStore: DeclarationWatcher {
         defer { watchDeclarations() }
         // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
         // 既定値に戻る」は理由が出ないと追えない。**黙るのは無いときだけ** (初めての起動)
-        let saved: Saved
+        let data: Data
         do {
-            saved = try JSONDecoder().decode(Saved.self, from: Data(contentsOf: url))
+            data = try Data(contentsOf: url)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return Restoration()
         } catch {
-            warn(
-                "Could not read the saved values (\(url.path)): \(Diagnostics.reason(error)). "
-                    + "Starting from the defaults")
-            return Restoration()
+            // 在るのにファイルとして読めない (置き場がディレクトリ・権限が無い) 保存も、戻せずに捨てた
+            // ことに変わりはないので、外枠が読めない保存と同じく最初の応答に載せる (下)
+            return Self.unreadableSave(sayingWhy: error, at: url, warn)
+        }
+        let entries: [ParamRequest.Entry]
+        do {
+            entries = try JSONDecoder().decode(SavedReading.self, from: data).values
+        } catch {
+            return Self.unreadableSave(sayingWhy: error, at: url, warn)
         }
 
         var result = Restoration()
-        // 当てる順は名前順。保存の並びに結果が依ると、同じ保存から違う姿が出る
-        for entry in saved.values.sorted(by: { $0.name < $1.name }) {
-            switch registry.write(entry.value, to: entry.name) {
-            case nil:
-                result.discarded.append(.init(name: entry.name, reason: .unknownName))
-            case .typeMismatch:
-                result.discarded.append(.init(name: entry.name, reason: .typeMismatch))
-            case .notInChoices:
-                result.discarded.append(.init(name: entry.name, reason: .notInChoices))
-            case .notFinite:
-                result.discarded.append(.init(name: entry.name, reason: .notFinite))
+        // 捨てたものは 2 つに分けて控える。言い方が違う (``notice(for:unreadable:)``)
+        var mismatched: [ParamReport.Rejection] = []
+        var unreadable: [ParamReport.Rejection] = []
+        // 当てる順は名前順で、同じ名前は書いた順 (要求と同じ鍵・#858)。保存の並びや並べ替えの
+        // 安定性に結果が依ると、同じ保存から違う姿が出る
+        for entry in ParamRequest.inApplicationOrder(entries) {
+            // **読めなかった 1 件は、その 1 件だけ捨てて名指しし、残りは戻す** (#2806)。宣言に無い
+            // 名前は、中身が読めたかに依らず宣言が変わった側で言う (名前が先)
+            if let refusal = entry.refusal(declaredIn: registry) {
+                result.discarded.append(refusal)
+                if refusal.reason == .unknownName {
+                    mismatched.append(refusal)
+                } else {
+                    unreadable.append(refusal)
+                }
+                continue
+            }
+            guard case .value(let value) = entry.reading else { continue }
+            let reason: ParamReport.Rejection.Reason
+            switch registry.write(value, to: entry.name) {
+            case nil: reason = .unknownName
+            case .typeMismatch: reason = .typeMismatch
+            case .notInChoices: reason = .notInChoices
+            case .notFinite: reason = .notFinite
             case .applied:
-                break
+                continue
             case .clamped(let requested, let applied):
                 result.clamped.append(
                     .init(name: entry.name, requested: requested, value: applied))
+                continue
             }
+            result.discarded.append(.init(name: entry.name, reason: reason))
+            mismatched.append(.init(name: entry.name, reason: reason))
         }
-        announce(result)
+        announce(mismatched: mismatched, unreadable: unreadable)
         return result
+    }
+
+    /// 保存そのものが読めなかった。値は 1 つも戻さず、標準エラーへ 1 行言う。
+    ///
+    /// **捨てたことは最初の応答にも載せる** ([#2806](https://github.com/mokume-metal/mokume/issues/2806)・
+    /// ADR-0030 決定 6)。ファイルとして読めない (置き場がディレクトリ・権限が無い) ときも、外枠が
+    /// 読めない (JSON でない・`values` が配列でない) ときも、名指しする相手が無いので、要求の外枠が
+    /// 読めないとき (#2550) と同じく名前の読めない 1 件にする。
+    private static func unreadableSave(
+        sayingWhy error: any Error, at url: URL, _ warn: (String) -> Void
+    ) -> Restoration {
+        warn(
+            "Could not read the saved values (\(url.path)): \(Diagnostics.reason(error)). "
+                + "Starting from the defaults")
+        return Restoration(discarded: [.init(name: "", reason: .typeMismatch)])
     }
 
     /// 捨てたことを名指しで言う。
@@ -126,26 +162,47 @@ final class ParamStore: DeclarationWatcher {
     /// **捨てたことを黙らない** ([ADR-0030] 決定 6)。宣言を変えたあとで値が既定に戻る
     /// のは正しい振る舞いだが、理由が出ないと「なぜか既定値に戻る」としか見えない。
     ///
-    /// 文言の組み立ては純関数 (``notice(for:)``) に置く。標準エラーへ実際に出た行は
+    /// 文言の組み立ては純関数 (``notice(for:unreadable:)``) に置く。標準エラーへ実際に出た行は
     /// 検査から読めないので、**読めるのは組み立てのほうだけ**である。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    private func announce(_ restoration: Restoration) {
-        guard let notice = Self.notice(for: restoration.discarded) else { return }
+    private func announce(mismatched: [ParamReport.Rejection], unreadable: [ParamReport.Rejection]) {
+        guard let notice = Self.notice(for: mismatched, unreadable: unreadable) else { return }
         warn(notice)
     }
 
     /// 捨てたものを人へ伝える 1 行。捨てていなければ `nil`。
-    static func notice(for discarded: [ParamReport.Rejection]) -> String? {
-        guard !discarded.isEmpty else { return nil }
-        let listed = discarded
-            .map { "\($0.name) (\(reason(for: $0.reason)))" }
-            .joined(separator: " / ")
-        // 非有限で捨てたものも宣言が変わったせい: 保存はこのライブラリが書くので有限の数しか
-        // 入っておらず、読み替えて無限になるのは、宣言の型が変わったとき (`Double` で宣言していた
-        // 値を `Float` へ変えた、など。どちらも `float` を名乗るので型の違いにならない)
-        return "Threw away \(discarded.count) of the saved values: \(listed). "
-            + "The declarations have changed, so these stay at their defaults"
+    ///
+    /// - Parameters:
+    ///   - discarded: 宣言と合わなかったもの。**宣言が変わったせい**と言う。宣言に無い名前
+    ///     (`unknownName`) は、中身が読めたかに依らずここに入る (名前が先)
+    ///   - unreadable: 宣言のある名前で、中身が読めなかったもの (知らない型・形の違う値・収まらない
+    ///     数) と名前の無い 1 件。理由は `typeMismatch` か `notFinite` だけが来る。宣言とは関わりが
+    ///     無いので、**宣言が変わったとは言わない** (#2806)
+    static func notice(
+        for discarded: [ParamReport.Rejection], unreadable: [ParamReport.Rejection] = []
+    ) -> String? {
+        var parts: [String] = []
+        if !discarded.isEmpty {
+            let listed = discarded
+                .map { "\($0.name) (\(reason(for: $0.reason)))" }
+                .joined(separator: " / ")
+            // 非有限で捨てたものも宣言が変わったせい: 保存はこのライブラリが書くので有限の数しか
+            // 入っておらず、読み替えて無限になるのは、宣言の型が変わったとき (`Double` で宣言していた
+            // 値を `Float` へ変えた、など。どちらも `float` を名乗るので型の違いにならない)
+            parts.append(
+                "Threw away \(discarded.count) of the saved values: \(listed). "
+                    + "The declarations have changed, so these stay at their defaults")
+        }
+        if !unreadable.isEmpty {
+            let listed = unreadable
+                .map { "\($0.name.isEmpty ? "(a value without a readable name)" : $0.name) (\(unreadableReason(for: $0.reason)))" }
+                .joined(separator: " / ")
+            parts.append(
+                "Could not read \(unreadable.count) of the saved values: \(listed). "
+                    + "These stay at their defaults")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 
     private static func reason(for reason: ParamReport.Rejection.Reason) -> String {
@@ -155,6 +212,13 @@ final class ParamStore: DeclarationWatcher {
         case .notInChoices: "outside the choices that are allowed"
         case .notFinite: "not a finite number once read as the declared type"
         }
+    }
+
+    /// 読めなかった 1 件の理由。読めなかった 1 件の断り (``ParamRequest/Entry/refusal(declaredIn:)``) が
+    /// 宣言のある名前に付けるのは、`Double` に読めない数の `notFinite` と、それ以外の `typeMismatch`
+    /// だけである (宣言に無い名前の `unknownName` は ``reason(for:)`` の側で言う)。
+    private static func unreadableReason(for reason: ParamReport.Rejection.Reason) -> String {
+        reason == .notFinite ? "a number too large to read" : "not written as a value of the type it names"
     }
 
     // MARK: - 書く
@@ -258,7 +322,9 @@ extension ParamStore {
     struct Restoration: Equatable {
         /// 範囲へ収めて戻したもの。
         var clamped: [ParamReport.Clamp] = []
-        /// 宣言と合わなくて捨てたもの。
+        /// 戻せずに捨てたもの。**宣言と合わなかったものと、読めなかったものの両方が入る** —
+        /// 読めなかった 1 件 (知らない型・形の違う値・収まらない数・名前の無い 1 件) と、保存そのものが
+        /// 読めなかったときの名前の空の 1 件 (``unreadableSave(sayingWhy:at:_:)``) も含む (#2806)。
         var discarded: [ParamReport.Rejection] = []
 
         var isEmpty: Bool { clamped.isEmpty && discarded.isEmpty }
@@ -277,5 +343,19 @@ extension ParamStore {
 
         /// 1 件ぶん。**面が読み書きするものと同じ形** (``NamedParamValue``)。
         typealias Entry = NamedParamValue
+    }
+
+    /// 保存を**読む**ときの形。書く形 (``Saved``) と同じ JSON を、1 件ずつ緩く読む。
+    ///
+    /// 素の ``NamedParamValue`` で読むと、知らない `type`・`1e400`・整数でない `int` のどれか
+    /// 1 件で `JSONDecoder` が配列ごと・保存ごと断り、**読めた値まで全部捨てて**、最初の応答の
+    /// `discarded` にも何も載らなかった ([#2806](https://github.com/mokume-metal/mokume/issues/2806))。
+    /// 要求の 1 件ずつの読み (``ParamRequest/Entry``・#2496) をそのまま使い、読めなかった 1 件だけを
+    /// 同じ理由で名指す ([ADR-0030] 決定 6「捨てたことを応答と診断に出す」)。`schemaVersion` は
+    /// 読まない (版で読み分けるものが無い)。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    struct SavedReading: Decodable {
+        let values: [ParamRequest.Entry]
     }
 }

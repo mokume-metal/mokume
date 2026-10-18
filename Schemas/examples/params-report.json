@@ -11,6 +11,14 @@
       "max": 200
     },
     {
+      "name": "density",
+      "type": "float",
+      "value": 0.4,
+      "min": 0,
+      "max": 1,
+      "step": 0.05
+    },
+    {
       "name": "count",
       "type": "int",
       "value": 6,

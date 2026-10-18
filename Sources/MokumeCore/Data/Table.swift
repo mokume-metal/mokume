@@ -42,6 +42,27 @@ public struct Table: Equatable, Sendable {
         cells = parsed.rows
     }
 
+    /// 見出しだけを持つ、行の無い表を作る。行は ``addRow(_:)`` で足す。Processing の `new Table()` と
+    /// `addColumn()` をまとめた形。
+    ///
+    /// <!-- example: 文脈 var log = Table(columns: ["frame", "x", "y"]) -->
+    /// ```swift
+    /// func mouseDragged(deltaX: Float, deltaY: Float) {
+    ///     log.addRow([Float(frameCount), mouseX, mouseY])
+    /// }
+    ///
+    /// func keyPressed() {
+    ///     if key == "s" { try? saveTable(log, "out/strokes.csv") }
+    /// }
+    /// ```
+    ///
+    /// ``SketchPart/saveTable(_:_:)`` で書くと最初の行が見出しになり、
+    /// ``SketchPart/loadTable(_:header:)`` を `header: true` で読み直すと同じ表に戻る。
+    public init(columns: [String]) {
+        titles = columns
+        cells = []
+    }
+
     /// 行の数。見出しの行は数えない。
     public var rowCount: Int { cells.count }
 
@@ -74,6 +95,26 @@ public struct Table: Equatable, Sendable {
     public mutating func addColumn(_ title: String) {
         titles = (titles ?? Array(repeating: "", count: columnCount)) + [title]
         for row in cells.indices { cells[row].append("") }
+    }
+
+    /// 下端に行を 1 つ足す。`values` は左の列から並べた数で、**列の数と同じだけ渡す。**
+    ///
+    /// 数は ``setFloat(_:_:_:)-(_,String,_)`` と同じ綴りで文字にして持つ (`10` は `"10.0"`)。文字の
+    /// セルは、足した行へ ``setString(_:_:_:)-(_,String,_)`` で書く (行の番号は足す前の ``rowCount``)。
+    ///
+    /// **列の数と合わない並びは足さず、初回だけ理由を知らせる。** 無い列に書かない
+    /// ``setFloat(_:_:_:)-(_,String,_)`` と同じく投げない ([ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public mutating func addRow(_ values: [Float]) {
+        guard values.count == columnCount else {
+            TableValues.warnOnce(
+                .rowWidth(call: "addRow"),
+                "addRow(): got \(values.count) value\(values.count == 1 ? "" : "s"), but "
+                    + "\(TableValues.extent(columnCount, "column")). No row was added")
+            return
+        }
+        cells.append(values.map { String($0) })
     }
 
     /// セルに数を書く。`row` は 0 から数えた行の番号、`column` は列の名前。
@@ -224,6 +265,8 @@ enum TableValues {
         case columnOutOfRange
         /// 書く口に渡した行が表の外。**口ごとに数える。**
         case rowOutOfRange(call: String)
+        /// 足す行の値の数が、列の数と合わない。**口ごとに数える。**
+        case rowWidth(call: String)
         /// 数として読めないセルがあった。**列ごとに数える** — 欠けた値の多い列が、
         /// 他の列の注意を黙らせない。
         case notANumber(column: String)

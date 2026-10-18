@@ -202,4 +202,196 @@ struct RemoteParamsTests {
             #expect(params.boxes.isEmpty)
         }
     }
+
+    // MARK: - 別の書き手と同じ区画を使う (#2795)
+
+    /// 1 つの区画に、走っている側の面 (``ParamSurface``) と道具のつまみ (``RemoteParams``) を並べる。
+    /// 書き手が 2 人 (人のプレビューと外の書き手) いる場面を、実物の応答の書き方で通す。
+    final class Shared: Sketch {
+        @Param(0...100) var radius: Double = 12
+        @Param(0...10) var count: Int = 3
+    }
+
+    /// 外の書き手 (AI など) の要求を置く。
+    private func placeForeign(_ id: String, _ name: String, _ wire: String, at facet: URL) throws {
+        try #"{"id":"\#(id)","values":[{"name":"\#(name)",\#(wire)}]}"#.write(
+            to: facet.appendingPathComponent("request.json"), atomically: true, encoding: .utf8)
+    }
+
+    private func box(_ name: String, of params: RemoteParams) throws -> RemoteParam {
+        try #require(params.boxes.first { $0.name == name })
+    }
+
+    /// 本文の具体例そのまま: 自分の要求 H に応えた応答を読む前に、別の書き手の要求 A に応えた
+    /// 応答で置き換わる。H の echo はもう来ないので、A の応答で子の値へ合わせる。
+    @Test("自分の応答を読む前に別の書き手の応答が届いても、子の値へ追い付く")
+    func catchesUpWhenAnotherWritersReplyArrivesFirst() throws {
+        try withFacet { facet in
+            let sketch = Shared()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+
+            _ = try box("radius", of: params).write(.float(40))  // H
+            #expect(surface.drain() != nil)  // H に応える
+            try placeForeign("A", "radius", #""type":"float","value":80"#, at: facet)
+            #expect(surface.drain() != nil)  // A に応える (H の応答は上書きされる)
+            #expect(sketch.radius == 80)
+
+            params.refresh()
+            #expect(try box("radius", of: params).value == .float(80))
+        }
+    }
+
+    /// H が読まれる前に A が要求を置き換えた。H は応えられずに消え、echo は来ない。
+    @Test("自分の要求が読まれる前に別の書き手が置き換えても、子の値へ追い付く")
+    func catchesUpWhenAnotherWriterReplacesTheRequest() throws {
+        try withFacet { facet in
+            let sketch = Shared()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+
+            _ = try box("radius", of: params).write(.float(40))  // H
+            try placeForeign("A", "radius", #""type":"float","value":80"#, at: facet)
+            #expect(surface.drain() != nil)  // A にだけ応える
+            #expect(sketch.radius == 80)
+
+            params.refresh()
+            #expect(try box("radius", of: params).value == .float(80))
+        }
+    }
+
+    /// 1 件の未決着が、別の名前のつまみの追従まで止め続けない。
+    @Test(
+        "別の書き手が別の名前だけを変えても、どのつまみも子の値へ合う",
+        arguments: [true, false])
+    func catchesUpOnEveryKnobWhenAnotherWriterTouchesAnotherName(myRequestWasAnswered: Bool) throws {
+        try withFacet { facet in
+            let sketch = Shared()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+
+            _ = try box("radius", of: params).write(.float(40))  // H
+            if myRequestWasAnswered { surface.drain() }
+            try placeForeign("A", "count", #""type":"int","value":5"#, at: facet)
+            #expect(surface.drain() != nil)
+
+            params.refresh()
+            // H に応えていれば 40、置き換えで消えていれば子の 12 — どちらでも子の値
+            #expect(try box("radius", of: params).value == .float(sketch.radius))
+            #expect(sketch.radius == (myRequestWasAnswered ? 40 : 12))
+            #expect(try box("count", of: params).value == .int(5))
+        }
+    }
+
+    /// つまみを引いている間は要求が続く。前の自分の要求に応えた応答は、引いている途中の値へ戻さない。
+    @Test("引いている途中に自分の前の要求の応答が届いても、つまみは戻らない")
+    func doesNotSnapBackToAnEarlierRequestOfItsOwn() throws {
+        try withFacet { facet in
+            let sketch = Shared()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+            let radius = try box("radius", of: params)
+
+            _ = radius.write(.float(40))  // H1
+            #expect(surface.drain() != nil)  // H1 に応える
+            _ = radius.write(.float(50))  // H2 (H1 の応答はまだ読んでいない)
+            params.refresh()
+            #expect(radius.value == .float(50), "前の自分の要求の応答で戻った")
+
+            #expect(surface.drain() != nil)  // H2 に応える
+            params.refresh()
+            #expect(radius.value == .float(50))
+            #expect(sketch.radius == 50)
+        }
+    }
+
+    /// 別の書き手の要求に応えた応答が、**自分の要求より前に**書かれていた (読み手はまだ読んでいない)。
+    /// それは自分の要求を含まない姿なので、読んでも戻らない。置く直前に応答を読み直していないと、
+    /// 最後に読んだ応答 (1 フレーム古い) と比べて「自分の要求の後」と取り違える。
+    @Test("自分の要求より前に書かれた別の書き手の応答では、まだ読んでいなくても戻らない")
+    func doesNotSnapBackOnAnotherWritersEarlierReply() throws {
+        try withFacet { facet in
+            let sketch = Shared()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+
+            try placeForeign("A", "radius", #""type":"float","value":80"#, at: facet)
+            #expect(surface.drain() != nil)  // A に応える (プレビューはまだ読んでいない)
+            _ = try box("radius", of: params).write(.float(40))  // H
+            params.refresh()
+            #expect(try box("radius", of: params).value == .float(40), "自分の要求より前の応答で戻った")
+
+            #expect(surface.drain() != nil)  // H に応える
+            params.refresh()
+            #expect(try box("radius", of: params).value == .float(40))
+            #expect(sketch.radius == 40)
+        }
+    }
+
+    /// 待っている間に続けて置いた 2 つ目の要求でも、置く前から区画にあった応答 (別の書き手の A) は
+    /// 「自分の後」と読まない。待ち始めの 1 回だけ読み直していると、A で 80 へ跳んでから H2 の応えで
+    /// 50 へ戻る (#2795 の反証)。
+    @Test("待っている間に置いた 2 つ目の要求より前に書かれた別の書き手の応答でも、つまみは戻らない")
+    func doesNotFlickerOnAnotherWritersReplyBeforeALaterRequest() throws {
+        try withFacet { facet in
+            let sketch = Shared()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+            let radius = try box("radius", of: params)
+
+            _ = radius.write(.float(40))  // H1
+            #expect(surface.drain() != nil)  // H1 に応える
+            try placeForeign("A", "radius", #""type":"float","value":80"#, at: facet)
+            #expect(surface.drain() != nil)  // A に応える (プレビューはまだ読んでいない)
+            _ = radius.write(.float(50))  // H2 (A の応答の後に置く)
+            params.refresh()
+            #expect(radius.value == .float(50), "H2 より前の A の応答で跳んだ")
+
+            #expect(surface.drain() != nil)  // H2 に応える
+            params.refresh()
+            #expect(radius.value == .float(50))
+            #expect(sketch.radius == 50)
+        }
+    }
+
+    /// 次の世代の最初の応答は、作った時点の記録の識別子 (前の世代が最後に応えた X) を載せる。
+    /// それは自分の要求より前の応答なので、待ち続け、次の世代が H に応えた応答で合う。
+    @Test("世代の切り替えでも、自分の要求の後に一時的に戻らず、次の世代の応えで合う")
+    func waitsThroughAGenerationSwitch() throws {
+        try withFacet { facet in
+            // 前の世代が外の要求 X に応え、その応答が区画に残る
+            let previous = ParamSurface(directory: facet, sketch: Shared())
+            previous.start()
+            try placeForeign("X", "count", #""type":"int","value":4"#, at: facet)
+            #expect(previous.drain()?.id == "X")
+            let params = RemoteParams(directory: facet)
+            #expect(params.refresh())
+
+            // 次の世代を作る (作った時点の記録は X)
+            let sketch = Shared()
+            let next = ParamSurface(directory: facet, sketch: sketch)
+            _ = try box("radius", of: params).write(.float(40))  // H
+            next.start()  // 応答の id は X
+            params.refresh()
+            #expect(try box("radius", of: params).value == .float(40), "次の世代の最初の応答で戻った")
+
+            #expect(next.drain() != nil)  // H に応える
+            #expect(sketch.radius == 40)
+            params.refresh()
+            #expect(try box("radius", of: params).value == .float(40))
+            _ = previous
+        }
+    }
 }

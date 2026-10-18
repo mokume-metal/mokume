@@ -311,4 +311,38 @@ extension Canvas {
         draw(Outline(points: [SIMD2(x, y)], isClosed: false, fills: false))
     }
 
+    // 立体の空間に線を引く。視点と奥行きを通る。
+    public func line(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
+        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible
+    ) {
+        let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
+        placeSolidVertices(.lines, [SIMD3(x1, y1, z1), SIMD3(x2, y2, z2)])
+    }
+
+    // 立体の空間に点を打つ。視点と奥行きを通る。
+    public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        placeSolidVertices(.points, [SIMD3(x, y, z)])
+    }
+
+    /// 奥行きを持つ頂点を並べた形を 1 つ置く。**`beginShape(kind)`・`vertex(x, y, z)`・`endShape()`
+    /// と同じ道を通る** — 3 次元の `line`・`point` に別の描き方を持たせない ([ADR-0021] 決定 5)。
+    ///
+    /// 組み立て中の形 (`beginShape()` を開いたまま) があれば、退かせて置き、戻す
+    /// (``takeOpenShape()``・``restoreOpenShape(_:)``)。2 次元の `line`・`point` が開いた形に
+    /// 触らないのと揃える。退かせずに開くと、`beginShape()` が開いた形を描かずに捨てる。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    func placeSolidVertices(_ kind: VertexKind, _ points: [SIMD3<Float>]) {
+        // 置けない区間なら、開く前に 1 度だけ断る。開く口に断らせると、続く `vertex()` が
+        // 「開いていない形への頂点」の注意まで言う
+        guard canPlace else { return warnOutsideFrame(.placing) }
+        let open = takeOpenShape()
+        defer { restoreOpenShape(open) }
+        beginShape(kind)
+        for point in points { vertex(point.x, point.y, point.z) }
+        endShape()
+    }
+
 }

@@ -81,11 +81,20 @@ final class MovieReader {
 
     /// 開いて、最初のコマまで読む。
     ///
+    /// **開けないものを「壊れている・形式が違う」と名乗らない** ([#2358])。AVFoundation はディレクトリや
+    /// 読む権利の無いファイルを、形式の誤りと同じく断る。読む前に開けるかを確かめ
+    /// (``AssetOpening``)、開けなければ ``MovieFailure/unopenable(path:location:reason:)`` を投げる。
+    ///
     /// - Parameters:
     ///   - url: 動画ファイルの場所。
     ///   - path: 失敗の説明に載せる名前。
+    ///
+    /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     init(url: URL, path: String) throws(MovieFailure) {
         self.path = path
+        if let refusal = AssetOpening.refusal(at: url) {
+            throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
+        }
         let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         let (track, range) = try Self.inspect(asset, path: path)
         let duration = range.duration.seconds

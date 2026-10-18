@@ -5,8 +5,12 @@ import Foundation
 
 /// 外から置かれる観測の要求。
 ///
-/// 形の正典は `Schemas/observe-request.schema.json`。**知らない鍵は無視する**
-/// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。
+/// 形の正典は `Schemas/observe-request.schema.json`。**知らない鍵は読まず、要求は失敗させない**
+/// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。ただし黙って捨てず、
+/// 応答の `warnings` で名乗る (``unknownKeysWarning``・[#2392])。
+///
+/// **省略できる欄 (`scale`・`count`・`every`・`time`) の `null` は、省略と同じに読む** ([#2392])。
+/// `time: null` は「時刻なし」で、断らない。型の違う値 (`"5"`・`true`) は省略として通さない。
 ///
 /// ## 同じ時刻で比較する
 ///
@@ -34,6 +38,7 @@ import Foundation
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [#1285]: https://github.com/mokume-metal/mokume/issues/1285
+/// [#2392]: https://github.com/mokume-metal/mokume/issues/2392
 public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 撮れる枚数の上限。60fps で 2 秒ぶん。
     ///
@@ -66,6 +71,8 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 指定した秒で1枚描き直す。省略時は直近の絵を読むだけ。
     /// `deltaTime` は0、番号は1進む。画面と `draw()` の副作用は残り、巻き戻しではない。
     public let time: Double?
+    /// 要求にあった、この版が読まない鍵 (名前順)。
+    package let unknownKeys: [String]
 
     /// JSON の数として読めても、時刻として使えない要求は応答で断る。
     var timeWarning: String? {
@@ -85,6 +92,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         self.count = count
         self.every = every
         self.time = time
+        self.unknownKeys = []
     }
 
     /// 範囲の端で丸めた縮小率・枚数・間隔、そして丸めたことを伝えることわり。
@@ -106,6 +114,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// [#2045]: https://github.com/mokume-metal/mokume/issues/2045
     package func clamped() -> (scale: Double, count: Int, every: Int, warnings: [String]) {
         var warnings: [String] = []
+        if let unknownKeysWarning { warnings.append(unknownKeysWarning) }
         let scale = Self.clampScale(self.scale)
         if let reason = scale.reason {
             warnings.append("The scale went from \(self.scale) to \(scale.value) (\(reason))")
@@ -145,18 +154,121 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         return (value, nil)
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case id, scale, count, every, time
+    }
+
+    /// 整数の鍵を読む。**範囲を越えた大きな数は、符号の側の端へ寄せる** (#2805)。
+    ///
+    /// `1e19` も 30 桁の整数も `Int.max` も「上限より大きい」ことに変わりはなく、読み終えた後の
+    /// ``clamped()`` が範囲へ丸めて警告で名乗る (スキーマの約束。MCP の窓口 `Tools.seriesArgument` が
+    /// 同じ値を同じ端へ寄せるのと揃える)。読めない要求にして鍵と理由を名乗るのは、`2.5` のような
+    /// **整数でない数**だけである。理由に数の字面は写さない — 桁が多いほど応答の 1 行が伸びてしまう。
+    private nonisolated static func integer(
+        in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> Int? {
+        switch try container.decodeWireNumber(Int.self, forKey: key) {
+        case .absent: return nil
+        case .value(let value): return value
+        case .overflow(let negative): return negative ? Int.min : Int.max
+        case .notWhole:
+            throw DecodingError.typeMismatch(
+                Int.self,
+                DecodingError.Context(
+                    codingPath: [key], debugDescription: "The value is not a whole number"))
+        }
+    }
+
+    /// 縮小率の鍵を読む。`Double` に収まらない大きな数 (`1e400`) は、符号の側の無限大として読み、
+    /// 丸める段が実寸に倒して名乗る。
+    private nonisolated static func scale(
+        in container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> Double? {
+        switch try container.decodeWireNumber(Double.self, forKey: key) {
+        case .absent: return nil
+        case .value(let value): return value
+        case .overflow(let negative): return negative ? -.infinity : .infinity
+        case .notWhole:
+            throw DecodingError.typeMismatch(
+                Double.self,
+                DecodingError.Context(
+                    codingPath: [key], debugDescription: "The value is not a number that fits in Double"))
+        }
+    }
+
+    /// 要求にあった、読まない鍵 (名前順)。
+    ///
+    /// **断らず、読まないだけにする** ([ADR-0018] 決定 3「知らないキーは無視する」。新しい書き手が足した
+    /// キーを古いスケッチが断らない)。ただし黙って捨てない — `sacle` のような綴りの誤りが、警告なしの
+    /// 等倍になる ([#2392])。名乗りは ``unknownKeysWarning`` が応答の `warnings` に載せる。
+    private nonisolated static func unknownKeys(in decoder: any Decoder) throws -> [String] {
+        let all = try decoder.container(keyedBy: AnyKey.self)
+        return all.allKeys.map(\.stringValue)
+            .filter { CodingKeys(rawValue: $0) == nil }
+            .sorted()
+    }
+
+    private struct AnyKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    /// 名乗る名前の数と、1 つあたりの長さの上限。書き手が置いた長さのまま応答へ返さない。
+    private nonisolated static let namedKeyLimit = 5
+    private nonisolated static let namedKeyLength = 32
+
+    /// 名乗る名前を、上限で切って並べる。
+    private nonisolated static func named(_ keys: [String]) -> String {
+        let shown = keys.prefix(namedKeyLimit).map { key in
+            key.count > namedKeyLength ? "\(key.prefix(namedKeyLength))…" : key
+        }
+        let rest = keys.count - shown.count
+        return shown.joined(separator: ", ") + (rest > 0 ? " and \(rest) more" : "")
+    }
+
+    /// 読まなかった鍵を名乗る警告。なければ `nil`。
+    var unknownKeysWarning: String? {
+        guard !unknownKeys.isEmpty else { return nil }
+        let known = CodingKeys.allCases.map(\.rawValue).joined(separator: ", ")
+        return "Not read, so the request was taken without them: \(Self.named(unknownKeys)) (the keys read are \(known))"
+    }
+
+    /// 読めなかった理由に、知らない鍵の名乗りを添える。**読めない要求の応答にも名乗る** (#2392) —
+    /// 型の誤りを直した次の応答で初めて `sacle` が出る、という 2 度手間にしない。場所と元の説明は保つ。
+    private nonisolated static func annotated(_ error: DecodingError, naming keys: [String]) -> DecodingError {
+        guard !keys.isEmpty else { return error }
+        func context(_ context: DecodingError.Context) -> DecodingError.Context {
+            .init(
+                codingPath: context.codingPath,
+                debugDescription: "\(context.debugDescription); keys not read: \(named(keys))",
+                underlyingError: context.underlyingError)
+        }
+        switch error {
+        case .typeMismatch(let type, let inner): return .typeMismatch(type, context(inner))
+        case .valueNotFound(let type, let inner): return .valueNotFound(type, context(inner))
+        case .keyNotFound(let key, let inner): return .keyNotFound(key, context(inner))
+        case .dataCorrupted(let inner): return .dataCorrupted(context(inner))
+        @unknown default: return error
+        }
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(String.self, forKey: .id)
-        self.scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1
-        self.count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 1
-        self.every = try container.decodeIfPresent(Int.self, forKey: .every) ?? 1
-        // 型が違っても「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
-        self.time = container.contains(.time)
-            ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
+        let unknownKeys = try Self.unknownKeys(in: decoder)
+        do {
+            self.id = try container.decode(String.self, forKey: .id)
+            self.scale = try Self.scale(in: container, forKey: .scale) ?? 1
+            self.count = try Self.integer(in: container, forKey: .count) ?? 1
+            self.every = try Self.integer(in: container, forKey: .every) ?? 1
+        } catch let error as DecodingError {
+            throw Self.annotated(error, naming: unknownKeys)
+        }
+        // **`null` は省略と同じ「時刻なし」** (#2392)。窓口の側は #2393 で揃える。型が違う値は、
+        // 「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
+        let timeIsGiven = try container.contains(.time) && !container.decodeNil(forKey: .time)
+        self.time = timeIsGiven ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
+        self.unknownKeys = unknownKeys
     }
 }

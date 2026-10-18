@@ -82,9 +82,13 @@ extension Sketch {
     /// - Parameters:
     ///   - port: 使うポート (``serialPorts()`` から選ぶ)。
     ///   - baudRate: 1 秒に送るビットの数。相手が `Serial.begin` に渡した値と同じにする。
-    /// - Throws: ボーレートが 1 より小さいとき。
+    /// - Throws: ボーレートが 1 より小さいとき (``SerialFailure/invalidBaudRate(_:)``)。`setup()`・`draw()`・
+    ///   入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼んだときは、ポートを開く前に
+    ///   ``SerialFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createSerial(_ port: SerialPort, baudRate: Int) throws(SerialFailure) -> Serial {
         guard baudRate >= 1 else { throw .invalidBaudRate(baudRate) }
+        // ポートを開く前に断る。足すのはその後の `attach` で、同じ所から続けて呼ぶので足せる
+        try requireAttachable(SerialFailure.self, calledAs: #function)
         let serial = Serial(
             name: "serial: \(port.id)",
             source: SerialSource(path: port.id, baudRate: baudRate, warn: { Diagnostics.warn($0) }),
@@ -121,13 +125,16 @@ extension Sketch {
     ///
     /// ``Serial/state`` は ``SourceState/running`` のままで、抜かれることはない。
     ///
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、走っている
+    /// スケッチに足されず何も届かない ``Serial`` を返し、この口の名前で 1 度だけ警告する。
+    ///
     /// - Parameter lines: フレームごとに届く行。何も届かないフレームは空の並びにする。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createSerial(lines: [[String]]) -> Serial {
         let serial = Serial(
             name: "serial (recorded)", source: RecordedSource(batches: lines), owner: self)
-        attach(serial)
+        attach(serial, calledAs: #function, returning: "a serial port that never receives anything")
         return serial
     }
 }

@@ -1683,6 +1683,7 @@ struct CanvasTests {
             ("frameCasters", end, all, { c, _ in c.frameCasters.chainValid = false }),
             // シーンの記述
             ("cameraStorage", end, all, { c, _ in c.perspective() }),
+            ("drawsDebugGuides", both, all, { c, _ in c.debugMode() }),
             ("transform", both, all, { c, _ in c.translate(5, 5) }),
             ("transformStack", head, all, { c, _ in c.pushMatrix() }),
             ("styleStack", head, all, { c, _ in c.pushStyle() }),
@@ -1975,6 +1976,7 @@ struct CanvasTests {
             "dropAwaitingShape": "本体のフレームが始まる所で捨てることになった組み立て中の自分のフレームを、出口まで待たせる印 (#2509)。一番外の出口が捨てて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
             "placementsFoundOutsideRegions": count,
+            "isRuntimeSurface": "ランタイムの本体の面かの印。ランタイムが作ったときに 1 度だけ立て、境目では動かない (#2780)",
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
             "sweepPolicy": testing, "sharesUnitShapes": testing,

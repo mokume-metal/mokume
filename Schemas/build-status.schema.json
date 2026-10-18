@@ -32,7 +32,7 @@
     },
     "ok": {
       "type": "boolean",
-      "description": "Whether the build succeeded. Even when false, the version from before keeps running."
+      "description": "Whether the build succeeded. When false, the version from before keeps running if one was running; on the first build, or after the running sketch exited on its own, nothing is running."
     },
     "status": {
       "type": "integer",
