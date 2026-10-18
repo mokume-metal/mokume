@@ -550,11 +550,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 ### カメラを使う
 
-- ``Sketch/createCapture(_:_:device:)``
-- ``Sketch/createCapture(frames:)``
+- ``Sketch/createCapture(_:_:device:mirrored:)``
+- ``Sketch/createCapture(frames:mirrored:)``
 - ``Sketch/captureDevices()``
 - ``Capture``
 - ``CaptureDevice``
+- ``CaptureFormat``
 
 ### 動画を流す
 

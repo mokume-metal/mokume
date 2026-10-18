@@ -125,6 +125,80 @@ struct CaptureTests {
         runtime.closePlugins()
     }
 
+    // MARK: - 鏡像 (#2453)
+
+    /// 左半分が赤、右半分が青の 4x4。
+    private func halves() -> DisplayImage {
+        var bytes: [UInt8] = []
+        for _ in 0..<4 {
+            for x in 0..<4 { bytes += x < 2 ? [255, 0, 0, 255] : [0, 0, 255, 255] }
+        }
+        return DisplayImage(width: 4, height: 4, bytes: bytes)
+    }
+
+    @Test("mirrored: true で、左半分が赤の絵が右半分に赤く読める (左右が入れ替わる)")
+    func mirroredSwapsLeftAndRight() throws {
+        var camera: Capture?
+        var reds: [Float] = []
+        let runtime = try run(
+            frames: 1,
+            setup: { camera = try $0.createCapture(frames: [halves()], mirrored: true) },
+            draw: { _ in
+                guard let camera else { return }
+                reds = (0..<4).map { camera.image.get($0, 1).red }
+            })
+        // 左の 2 列が青 (赤成分 0)、右の 2 列が赤 (赤成分 1)
+        #expect(reds == [0, 0, 1, 1])
+        runtime.closePlugins()
+    }
+
+    @Test("既定 (mirrored: false) は左右を入れ替えない。1 列ごとに違う値で、完全な左右反転であること")
+    func notMirroredByDefaultAndMirroringIsAnExactReflection() throws {
+        // 1 列ごとに赤の強さが違う絵: 左から 0・85・170・255
+        var bytes: [UInt8] = []
+        for _ in 0..<2 {
+            for x in 0..<4 { bytes += [UInt8(x * 85), UInt8(10 + x), 0, 255] }
+        }
+        let ramp = DisplayImage(width: 4, height: 2, bytes: bytes)
+        func readRed(mirrored: Bool?) throws -> [Float] {
+            var camera: Capture?
+            var reds: [Float] = []
+            let runtime = try run(
+                frames: 1,
+                setup: {
+                    camera =
+                        if let mirrored { try $0.createCapture(frames: [ramp], mirrored: mirrored) }
+                        else { try $0.createCapture(frames: [ramp]) }
+                },
+                draw: { _ in reds = (0..<4).map { camera?.image.get($0, 0).red ?? -1 } })
+            runtime.closePlugins()
+            return reds
+        }
+        let plain = try readRed(mirrored: nil)
+        #expect(try readRed(mirrored: false) == plain)
+        #expect(plain == plain.sorted(), "左から右へ強くなる")
+        #expect(plain[0] < plain[3])
+        #expect(try readRed(mirrored: true) == plain.reversed())
+    }
+
+    @Test("鏡像でも、同じ列を回せば同じフレームに同じ絵が出る (決定性)")
+    func mirroredFramesAreDeterministic() throws {
+        func record() throws -> [Float] {
+            var camera: Capture?
+            var seen: [Float] = []
+            let runtime = try run(
+                frames: 4,
+                setup: { camera = try $0.createCapture(frames: [halves(), solid(0, 255, 0)], mirrored: true) },
+                draw: { _ in seen.append(camera?.image.get(3, 0).red ?? -1) })
+            runtime.closePlugins()
+            return seen
+        }
+        let first = try record()
+        // 鏡像で右端が赤になる絵と、赤を含まない絵が交互に出る
+        #expect(first == [1, 0, 1, 0])
+        #expect(try record() == first)
+    }
+
     // MARK: - 来ないときの知らせ
 
     /// 時計と知らせを差し替えた入り口を、`setup()` で足す。
