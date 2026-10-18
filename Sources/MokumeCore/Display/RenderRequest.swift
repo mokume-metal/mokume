@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
-import MokumeDiagnostics
 
 /// 決めた枚数を、決めた速さの時刻で書き出す頼み (`mokume render`・[#1282])。
 ///
@@ -91,19 +90,22 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     ///
     /// **環境を読むのはここだけ** — 一覧 ([StartupReads]) がこのファイルを名指ししている。
     ///
-    /// 読めない値は黙って捨てない。窓の経路へ倒すので、書き出したつもりの人には窓が出る
-    /// ことで分かるが、なぜ窓が出たかはここで言わないと分からない。
+    /// **合図が在って読めない値は、窓へ倒さず断る** ([#2481])。`mokume render` を打った人に窓は
+    /// 役に立たない — 窓を開いて 0 で終わると、道具は書き出せたと読み、何も書かれていないのに
+    /// 頼んだ枚数を名乗っていた。投げた失敗は組み立ての失敗と同じ道を通り、``Sketch/main()`` が
+    /// 窓を開かずに理由を標準エラーへ出して 0 以外で終わる。道具はそれを子の失敗として断る
+    /// (`renderIncomplete`)。
+    ///
+    /// 読めないのは、形が違う値と、書き出せない組 (fps の上限を越える `.mov` など) である。
+    /// 道具と依存の版がずれたとき、手で値を置いたときに起きる。
+    ///
+    /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
     static func startup(
         environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> RenderRequest? {
+    ) throws(RenderFailure) -> RenderRequest? {
         guard let value = environment[StartupReads.render.key] else { return nil }
         guard let request = RenderRequest(environmentValue: value) else {
-            Diagnostics.warn(
-                "\(StartupReads.render.key) is set but cannot be read, or asks for something that "
-                    + "cannot be written (\(value)) — running as usual, with a window. Its form is "
-                    + "<fps>:<frames>:<where to write>, and a .mov takes at most \(movieFrameRateLimit) "
-                    + "frames per second")
-            return nil
+            throw .unreadableRenderRequest(value: value)
         }
         return request
     }

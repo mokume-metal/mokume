@@ -679,7 +679,8 @@ enum RunCommand {
     ///   名乗り**。見張り (`watch`) は渡さない — 子は窓を持たず、確認は道具の側が出す
     ///   ([ADR-0032] 決定 1)。
     /// - Parameter rendering: 窓を開かずに書き出させるなら、その頼み (`render` だけが渡す)。
-    ///   値の形は読み手と同じ型 (`RenderRequest`) が組むので、ここでは綴らない。
+    ///   値の形は読み手と同じ型 (`RenderRequest`) が組むので、ここでは綴らない。**渡さなければ、
+    ///   親の環境に在っても落とす** (``viewportOwner`` と同じ・#2481)。
     /// - Parameter viewportOwner: 子の窓を道具が持つなら、**自分の名乗り** (`watch` だけが
     ///   渡す)。子は区画 `viewport` も在れば窓を開かずに共有面へ差し出し、標準入力の管を
     ///   読む ([ADR-0032] 決定 1・4)。
@@ -708,7 +709,10 @@ enum RunCommand {
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
         if let tool { environment[StartupReads.closeConfirmation.key] = tool }
-        if let request { environment[StartupReads.render.key] = request.environmentValue }
+        // **渡さなければ、親の環境に在っても落とす** (`viewportOwner` と同じ)。書き出しの頼みは起こした
+        // 道具にしか決められない。シェルに残った読めない値は `run`・`watch` の子を毎回落とし、読める値は
+        // 窓を開かずに書き出させる (#2481)
+        environment[StartupReads.render.key] = request?.environmentValue
         environment[StartupReads.viewportOwner.key] = viewportOwner
         return environment
     }
