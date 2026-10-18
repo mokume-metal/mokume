@@ -65,9 +65,14 @@ nonisolated struct FrameSequence {
         suffix = String(scalars[end...])
     }
 
+    /// `index` 枚目 (0 始まり) の行き先。**番号が桁に収まらなければ桁が伸びる**ので、後ろの枚ほど長い。
+    func name(at index: Int) -> String {
+        prefix + String(format: "%0\(digits)d", index) + suffix
+    }
+
     /// 次の 1 枚の行き先を返し、番号を 1 つ進める。
     mutating func next() -> String {
         defer { index += 1 }
-        return prefix + String(format: "%0\(digits)d", index) + suffix
+        return name(at: index)
     }
 }

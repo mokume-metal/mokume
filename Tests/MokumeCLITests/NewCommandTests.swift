@@ -353,4 +353,57 @@ struct NewCommandTests {
             !package.contains("upToNextMinor"),
             "上限を切ると Templates.libraryMinimumVersion の鮮度が効いてしまう")
     }
+
+    // MARK: - 名前の長さ ([#2774])
+
+    /// 組み立てが名前から作るファイル名 (資材の包み `<名前>_<名前>.bundle.xcent.der` など。名前が 2 回入る)
+    /// が上限を越える名前は、`Created` と言ったのに `swift build` が組めない。作る前に断る。
+    /// 線は、ひな形と同じ形のパッケージでの実測 (118 は組め、119 は Swift Build で組めない)。
+    ///
+    /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
+    @Test("組めない長さの名前は、長さと使える長さを名乗って parse の段で断る")
+    func aNameTooLongToBuildIsRefused() throws {
+        #expect(NewCommand.maximumNameLength == 118)
+        // 線ちょうどは通る — 成功していた名前を失わない
+        let atTheLine = String(repeating: "a", count: 118)
+        #expect(try NewCommand.parse([atTheLine]).name == atTheLine)
+        let over = String(repeating: "a", count: 119)
+        #expect(throws: CommandFailure.nameTooLong(name: over, length: 119)) {
+            try NewCommand.parse([over])
+        }
+        // ファイルを作り始めて止まる 250 字以上も同じ段で止まる
+        let long = String(repeating: "a", count: 130)
+        #expect(throws: CommandFailure.nameTooLong(name: long, length: 130)) {
+            try NewCommand.parse([long])
+        }
+        let message = CommandFailure.nameTooLong(name: over, length: 119).message
+        #expect(message.contains("119"))
+        #expect(message.contains("118"))
+        #expect(message.contains(over))
+    }
+
+    /// **数え方は分解した後の UTF-16 の単位。** `が` は 2 と数えるので、59 字が線ちょうど。
+    @Test("分解で 2 と数える字は、数え方どおりに線を越える")
+    func aDecomposedCharacterCountsTwice() throws {
+        let fits = String(repeating: "が", count: 59)
+        #expect(try NewCommand.parse([fits]).name == fits)
+        let over = String(repeating: "が", count: 60)
+        #expect(throws: CommandFailure.nameTooLong(name: over, length: 120)) {
+            try NewCommand.parse([over])
+        }
+    }
+
+    @Test("長すぎる名前は、何も作らずに止まる")
+    func aTooLongNameCreatesNothing() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-new-long-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let name = String(repeating: "a", count: 130)
+        #expect(throws: CommandFailure.nameTooLong(name: name, length: 130)) {
+            try NewCommand.run([name, "--path", workspace.path])
+        }
+        let left = try FileManager.default.contentsOfDirectory(atPath: workspace.path)
+        #expect(left.isEmpty, "半端なスケッチが残っている: \(left)")
+    }
 }

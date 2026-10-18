@@ -74,6 +74,23 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
         FrameRecorder.accepts(destination, frameRate: frameRate)
     }
 
+    /// 行き先のファイル名が、作れない長さか。作れれば `nil` ([#2774])。規則は撮る係のもの
+    /// (``FrameRecorder/nameTooLong(_:frameCount:)``) で、**連番は最後の枚の名前** (番号が桁に
+    /// 収まらずに伸びた後) で見る。
+    ///
+    /// 道具は子を起こす前 (ビルドの前) にこれで断る。子の中で落ちると、ビルドの後に、長さが理由だと
+    /// 言われずに分かる。
+    ///
+    /// [#2774]: https://github.com/mokume-metal/mokume/issues/2774
+    package static func nameTooLong(destination: String, frameCount: Int) -> LongFileName? {
+        FrameRecorder.nameTooLong(destination, frameCount: frameCount)
+    }
+
+    /// ``nameTooLong(destination:frameCount:)`` の理由 (1 文)。
+    package static func tooLongReason(_ long: LongFileName) -> String {
+        FrameRecorder.tooLongReason(long)
+    }
+
     /// 環境変数に載せる値。
     package var environmentValue: String { "\(frameRate):\(frameCount):\(destination)" }
 

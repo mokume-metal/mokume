@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -262,7 +263,7 @@ struct BundleCommandTests {
             name: String(repeating: "a", count: AppIdentity.maximumNameLength),
             identifier: "org.example.bund", version: "0.1.0")
         #expect(
-            AppIdentity.fileNameLength(of: BundleCommand.noteFileName(for: identity))
+            FileNameLength.of(BundleCommand.noteFileName(for: identity))
                 == AppIdentity.fileNameLimit)
     }
 

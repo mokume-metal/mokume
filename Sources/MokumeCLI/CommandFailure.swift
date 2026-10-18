@@ -20,6 +20,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// こちらは名前が mokume や Swift の名前と衝突していて、直し方は別の名前を選ぶこと
     /// ([#2310](https://github.com/mokume-metal/mokume/issues/2310))。
     case unusableName(name: String, reason: String)
+    /// 文字は使えるが、組めないほど長い名前。`length` は ``FileNameLength/of(_:)`` で数えた長さ。
+    ///
+    /// **作る前に断る** ([#2774](https://github.com/mokume-metal/mokume/issues/2774))。名前は作るパッケージの
+    /// ターゲット名で、組み立てが `<名前>_const_extract_protocols.json` のように名前に足したファイルを
+    /// 作る。越えると `swift build` が `File name too long` になり、`Created` と言ったものが組めない。
+    /// ``invalidName(_:)`` (文字の種類) とも ``unusableName(name:reason:)`` (名前の衝突) とも直し方は同じ
+    /// (別の名前を選ぶ) だが、理由が数で言えるので分ける。
+    case nameTooLong(name: String, length: Int)
     case directoryExists(path: String)
     case cannotCreate(path: String, reason: String)
     case templatesMissing
@@ -132,7 +140,7 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// `..` と組むと `--out` の外の `.app` を消していた。
     case identityNameUnusable(path: String, name: String)
     /// 名乗りの `name` が、ファイル名にするには長すぎる。`length` は
-    /// ``AppIdentity/fileNameLength(of:)`` で数えた長さ。
+    /// ``FileNameLength/of(_:)`` で数えた長さ。
     ///
     /// **組み立ての前に断る** ([#2501](https://github.com/mokume-metal/mokume/issues/2501))。
     /// `name` は包み (`<name>.app`) と開き方の紙のファイル名にもなり、長いほうの紙が上限を越えると、
@@ -182,6 +190,13 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
             \(name.isEmpty ? "The name is empty" : "That name has characters a sketch cannot use: \(name)")
             Use letters, digits, hyphens and underscores, and start with a letter
+            """
+        case .nameTooLong(let name, let length):
+            """
+            That name is too long for the sketch to build: \(length) (\(name))
+            The build writes files named after it, so it can be at most \(NewCommand.maximumNameLength) \
+            counted as the file system counts it (an accented letter or a kana with a voiced mark \
+            counts as 2). Pick a shorter name
             """
         case .unusableName(let name, let reason):
             """
