@@ -12,7 +12,13 @@ import MokumeCore
 public enum MovieFailure: Error, Equatable, Sendable {
     /// その名前のファイルが見つからない。`searched` は探した場所を、探した順に並べたもの。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、動画として読めない (壊れている・対応していない形式・最初のコマが読めない)。
+    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
+    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
+    /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
+    /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
+    /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+    case unopenable(path: String, location: String, reason: String)
+    /// 開けたが、動画として読めない (壊れている・対応していない形式・最初のコマが読めない)。
     case unreadable(path: String)
     /// 読めたが、映像が入っていない (音声だけのファイルなど)。
     case noVideo(path: String)
@@ -35,6 +41,8 @@ extension MovieFailure: CustomStringConvertible {
         switch self {
         case .notFound(let path, let searched):
             AssetFailure.notFound(path: path, searched: searched).description
+        case .unopenable(let path, let location, let reason):
+            AssetOpening.notice(path: path, location: location, reason: reason)
         case .unreadable(let path):
             "\"\(path)\" cannot be read as a video. Check whether it is damaged, and that the "
                 + "format is one macOS plays (QuickTime .mov or MPEG-4 .mp4 / .m4v, with H.264, "

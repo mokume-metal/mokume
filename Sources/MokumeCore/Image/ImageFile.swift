@@ -96,8 +96,18 @@ nonisolated enum ImageFile {
     /// 色空間ではべき乗で、もっと手前から溢れる)。元から無限の成分と見分けがつかないので、
     /// そのまま通す。
     ///
+    /// ## 開けないファイル
+    ///
+    /// **開けないものを「画像として読めない」と名乗らない** ([#2358])。ImageIO はディレクトリや読む
+    /// 権利の無いファイルを、形式の誤りと同じく黙って断る。中身に触れる前に開けるかを確かめ
+    /// (``AssetOpening``)、開けなければ ``ImageFailure/unopenable(path:location:reason:)`` を投げる。
+    ///
     /// [#1873]: https://github.com/mokume-metal/mokume/issues/1873
+    /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func decode(at url: URL, name: String) throws(ImageFailure) -> Decoded {
+        if let refusal = AssetOpening.refusal(at: url) {
+            throw .unopenable(path: name, location: refusal.location, reason: refusal.reason)
+        }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else {

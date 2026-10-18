@@ -94,10 +94,13 @@ struct UnopenableFileTests {
         /// 渡しても同じである。
         static let name = "data.csv"
 
-        /// 開けないものを置き、その場所を返す。外した権利は ``cleanUp()`` が戻す。
-        func place(_ obstacle: Obstacle) throws -> String {
+        /// 開けないものを `name` の名前で置き、その場所を返す。外した権利は ``cleanUp()`` が戻す。
+        ///
+        /// 名前を選べるのは、文字のファイル以外の資材の読み手 (``UnopenableAssetTests``) も同じ
+        /// 置き方で回すため。読み手は拡張子で選ぶので、渡す名前の拡張子が要る。
+        func place(_ obstacle: Obstacle, as name: String = Self.name) throws -> String {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let url = folder.appendingPathComponent(Self.name)
+            let url = folder.appendingPathComponent(name)
             switch obstacle {
             case .directory:
                 try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
@@ -132,10 +135,9 @@ struct UnopenableFileTests {
 
         /// 外した読む権利を戻してから、置き場を消す。
         func cleanUp() {
-            let placed = folder.appendingPathComponent(Self.name).path
-            if FileManager.default.fileExists(atPath: placed),
-                !FileManager.default.isReadableFile(atPath: placed)
-            {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+            for placed in names.map({ folder.appendingPathComponent($0).path })
+            where !FileManager.default.isReadableFile(atPath: placed) {
                 try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: placed)
             }
             try? FileManager.default.removeItem(at: folder)

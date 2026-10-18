@@ -225,7 +225,9 @@ extension SketchPart {
     /// (`assets/step.metal` なら `kernel void step(...)`) と、在処があるので保存を拾って組み直される
     /// こと (``makeComputation(_:name:values:)`` の「保存したら差し替わる」) である。
     ///
-    /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
+    ///   場所が載る ``ShaderFailure/unopenable(path:location:reason:)``)・UTF-8 の文字として読めないとき
+    ///   (``ShaderFailure/unreadable(path:)``)・組み立てられないときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 参照 makeComputation(_:name:values:)

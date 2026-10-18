@@ -64,10 +64,8 @@ extension DataFailure: CustomStringConvertible {
         switch self {
         case .notFound(let path, let searched):
             AssetFailure.notFound(path: path, searched: searched).description
-        case .unopenable(let path, let location, let reason) where location == path:
-            "\"\(path)\" was found but cannot be opened: \(reason)"
         case .unopenable(let path, let location, let reason):
-            "\"\(path)\" was found at \"\(location)\" but cannot be opened: \(reason)"
+            AssetOpening.notice(path: path, location: location, reason: reason)
         case .unreadable(let path):
             "\"\(path)\" cannot be read as UTF-8 text. Check that the file is saved as UTF-8"
         case .malformed(let path, let line, let reason):

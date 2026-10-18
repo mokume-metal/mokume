@@ -48,6 +48,39 @@ func writeBytes(_ bytes: [UInt8], extension suffix: String) throws -> URL {
     return url
 }
 
+/// 名前が在るものに解けるのに開けないもの — ディレクトリと、読む権利の無いファイル — を置く
+/// ([#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+struct UnopenablePlaces {
+    let folder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mokume-unopenable-\(UUID().uuidString)")
+
+    /// `name` という名前のディレクトリと、同じ名前に `locked-` を冠した読む権利の無いファイルを置き、
+    /// 場所と、開こうとして OS が返す番号の C の文面を返す。外した権利は ``cleanUp()`` が戻す。
+    func place(_ name: String) throws -> [(path: String, reason: String)] {
+        let directory = folder.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let locked = folder.appendingPathComponent("locked-\(name)")
+        try Data("not audio".utf8).write(to: locked)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        // root で走ると権利を外しても読める。読めてしまうと、検査が見たいものを見ていない
+        try #require(!FileManager.default.isReadableFile(atPath: locked.path), "読む権利を外せていない")
+        return [
+            (directory.path, String(cString: strerror(EISDIR))),
+            (locked.path, String(cString: strerror(EACCES))),
+        ]
+    }
+
+    /// 外した読む権利を戻してから、置き場を消す。
+    func cleanUp() {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        for placed in names.map({ folder.appendingPathComponent($0).path })
+        where !FileManager.default.isReadableFile(atPath: placed) {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: placed)
+        }
+        try? FileManager.default.removeItem(at: folder)
+    }
+}
+
 /// 音声ファイルの再生 (#1979)。走っているスケッチの中で回すので GPU を要する。
 ///
 /// 書き出しの経路 (固定の時計) は鳴らさずに回る。鳴らす経路は、manual rendering (offline) の
@@ -360,5 +393,24 @@ struct SoundFileTests {
         ])
         #expect(failures.last == .empty)
         runtime.closePlugins()
+    }
+
+    @Test("ディレクトリと読む権利の無いファイルは、unopenable で開けない事情を名乗る (形式・破損の助言を出さない)")
+    func unopenableNamesWhy() throws {
+        let places = UnopenablePlaces()
+        defer { places.cleanUp() }
+        let placed = try places.place("kick.wav")
+        var failures: [AudioFailure] = []
+        let runtime = try run(frames: 1, setup: { sketch in
+            for (path, _) in placed {
+                do throws(AudioFailure) { _ = try sketch.loadSound(path) } catch { failures.append(error) }
+            }
+        })
+        runtime.closePlugins()
+        #expect(failures == placed.map { .unopenable(path: $0.path, location: $0.path, reason: $0.reason) })
+        for failure in failures {
+            #expect(!failure.description.contains("damaged"), "\(failure)")
+            #expect(!failure.description.contains("format"), "\(failure)")
+        }
     }
 }
