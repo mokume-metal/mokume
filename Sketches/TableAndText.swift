@@ -52,6 +52,9 @@ final class TableAndText: Sketch {
         // 普通のスケッチなら `saveTable(read, "out/temperatures-with-mean.csv")` と書く。
         // 参照スケッチは検査からも走るので、リポジトリを汚さない一時ディレクトリへ書く
         try? saveTable(read, Self.written)
+        // 文字列の行も同じく書き出せる (普通のスケッチなら `saveStrings(caption, "out/caption.txt")`)。
+        // 絵には出さない
+        try? saveStrings(caption, Self.writtenCaption)
         table = read
 
         // 書き出したものを、待たない口で読み直す。待つのは Task の仕事で、届くまでは
@@ -123,4 +126,8 @@ final class TableAndText: Sketch {
     /// 平均の列を足した表を書き出す先。
     private static let written = FileManager.default.temporaryDirectory
         .appendingPathComponent("mokume-reference-temperatures-with-mean.csv").path
+
+    /// 説明の文を書き出す先。
+    private static let writtenCaption = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mokume-reference-temperatures-caption.txt").path
 }

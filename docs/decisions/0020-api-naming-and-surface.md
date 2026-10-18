@@ -128,6 +128,21 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 > 破れたとき: 手本の総称を取った兄弟だけが方式を名乗らない形になり、並んだ口のどれが何の方式かを、名前ではなく説明文で覚えることになる。
 
+#### 追補 (2026-10-18) — 引数の順が割れているときは、同じ層の兄弟の順に揃える
+
+**手本どうしで引数の順が割れている口は、同じ層ですでに並んでいる兄弟の口の順に揃え、選んだ側と理由をここに残す。** 上の「手本が割れているとき」の段が物差しにする「広く使われている単位」は、値の体系の話で、引数の順には効かない。順を決めるのは、並べて書いたときに取り違えないことである。
+
+最初の適用は文字列を書く `saveStrings` ([#2468](https://github.com/mokume-metal/mokume/issues/2468)) で、手本は Processing が `saveStrings(filename, data)`、p5.js が `saveStrings(list, filename)` と割れていた。
+
+- mokume の同じ層には `saveTable(table, path)` があり、書く値が先・置き場が後である。表を書く口は Processing (`saveTable(table, filename)`) と p5.js (`saveTable(table, filename)`) で割れていない
+- そこで `saveStrings(strings, path)` の順を採った (p5.js と同じ)。書く口を並べたとき、値と置き場の順が口ごとに入れ替わらない
+- **代償:** Processing から写した `saveStrings("out.txt", lines)` はそのままでは書けない。ただし文字列と文字列の並びが入れ替わるので型で止まり、黙ってずれはしない。説明文で Processing の順と逆であることを名乗る
+
+退けた案:
+
+- **Processing の順 (filename, data) を採る。** 同じ層の `saveTable` と順が逆になり、2 つを並べて書くと片方を取り違える。Processing 自身も `saveTable` と `saveStrings` で順が割れていて、写す価値のある一貫した手本になっていない
+- **両方の順を受ける。** 同じことをする口が 2 つになり、正本が割れる (決定 4 の向きに反する)
+
 ### 2. オンオフは 1 系統で表す
 
 - 手本があれば手本の綴り (`noFill()` の形)
