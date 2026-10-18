@@ -76,24 +76,54 @@ struct OutsideFrameNoticeTests {
         }
     }
 
-    /// 描き場所の面の 1 文 ([#2780])。**13 種に共通**で、直す場所 (`beginDraw()` と `endDraw()` の
-    /// 間) を言い、本体の場面 (`draw()`・`setup()`・入力のコールバック) は言わない。本体の文
-    /// (上の ``outsideFrameNotices``) とは別に写して突き合わせる。
+    /// 自分でフレームを開く面 (描き場所・直に使う `Canvas`) の文 ([#2780])。**直し先の案内は 13 種で
+    /// 共通の型、先頭の主語だけ種類ごと**で、本体の文 (上の ``outsideFrameNotices``) とは別に写して
+    /// 突き合わせる。`only works` とは言わない — この面でも `draw { }` がフレームを開く。
     ///
     /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
-    @Test("描き場所の面の文は、beginDraw() と endDraw() の間を案内する 1 文")
-    func drawingTargetNoticeKeepsItsWording() {
-        #expect(
-            Canvas.OutsideFrame.drawingTargetNotice
-                == "On a drawing target this only works between beginDraw() and endDraw(), so call it "
-                + "there. This was called outside them, so it belongs to no frame, and was ignored")
-        let notice = Canvas.OutsideFrame.drawingTargetNotice
-        for scene in ["setup()", "draw()", "input callback"] {
-            #expect(!notice.contains(scene), "描き場所の文が本体の場面 \(scene) を名乗る")
-        }
-        // 本体の文のどれとも違う (面で選ばれていることを見分けられる)
+    @Test("自分でフレームを開く面の文は、種類ごとの主語に共通の直し先の案内が続く")
+    func drawingTargetNoticesKeepTheirWording() {
+        let tail =
+            "On a surface you open yourself, call this between beginDraw() and endDraw(), or "
+            + "inside its draw { }. This was called outside them, so it belongs to no frame, and "
+            + "was ignored"
+        let subjects: [Canvas.OutsideFrame: String] = [
+            .camera: "The camera and projection are placed again every frame",
+            .transform: "Transforms are written again every frame",
+            .style: "Pushing and popping style only works inside a frame",
+            .clip: "The clip is written again every frame",
+            .effects: "Effects are written again every frame",
+            .light: "Lights are placed again every frame",
+            .surroundings: "The surroundings are placed again every frame",
+            .shadow: "Shadows are written again every frame",
+            .material: "Materials are written again every frame",
+            .particles: "Particles are handled where you draw",
+            .compute: "Compute is a preamble to drawing",
+            .placing: "Shapes, images and backgrounds are placed inside a frame",
+            .pixelWrite: "Pixels are written inside a frame",
+        ]
         for subject in Canvas.OutsideFrame.allCases {
-            #expect(subject.notice != notice, "\(subject) の本体の文が描き場所の文と同じ")
+            guard let head = subjects[subject] else {
+                Issue.record("\(subject) の主語が検査に無い")
+                continue
+            }
+            #expect(subject.drawingTargetNotice == head + ". " + tail, "\(subject)")
+        }
+    }
+
+    @Test("自分でフレームを開く面の文は、直し先を案内し、本体の場面を名乗らず、種類で見分けられる")
+    func drawingTargetNoticesGuideToTheRightPlace() {
+        let notices = Canvas.OutsideFrame.allCases.map(\.drawingTargetNotice)
+        #expect(Set(notices).count == Canvas.OutsideFrame.allCases.count, "主語が同じ文がある")
+        for subject in Canvas.OutsideFrame.allCases {
+            let notice = subject.drawingTargetNotice
+            #expect(notice.contains("beginDraw()") && notice.contains("endDraw()"), "\(subject): \(notice)")
+            #expect(notice.contains("draw { }"), "\(subject): \(notice)")
+            #expect(!notice.contains("only works between"), "\(subject) が狭く言い切る: \(notice)")
+            for scene in ["from draw()", "in draw()", "setup()", "input callback"] {
+                #expect(!notice.contains(scene), "\(subject) が本体の場面 \(scene) を名乗る: \(notice)")
+            }
+            #expect(notice != subject.notice, "\(subject) の本体の文と同じ")
         }
     }
 
@@ -218,8 +248,12 @@ struct WarningLogTests {
 struct CanvasWarningTests {
     /// 畳む前に `Diagnostics.warn` へ渡していた文面。**原文は `outsideFrameNotices`
     /// が 7 つまとめて持つ** ので、ここでは引くだけにする (写しを 2 つ持たない)。
-    private let lightOutsideFrame = outsideFrameNotices[.light]!
-    private let cameraOutsideFrame = outsideFrameNotices[.camera]!
+    /// 検査の面は `CanvasFixture` の直に使う `Canvas` で、本体の面ではないので、自分でフレームを開く面の文を
+    /// 言う ([#2780])。字面は `OutsideFrameNoticeTests` が固定している。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
+    private let lightOutsideFrame = Canvas.OutsideFrame.light.drawingTargetNotice
+    private let cameraOutsideFrame = Canvas.OutsideFrame.camera.drawingTargetNotice
     /// 同じく `Canvas+Material.swift` の文面。**呼んだ関数の名前が入る。**
     private let badShininess =
         "shininess(): got a value that is not a number, or an infinite one, or one outside "
@@ -271,7 +305,7 @@ struct CanvasWarningTests {
 
     // MARK: - 効果 (#1605)
 
-    private let effectsOutsideFrame = outsideFrameNotices[.effects]!
+    private let effectsOutsideFrame = Canvas.OutsideFrame.effects.drawingTargetNotice
 
     /// 明るい四角のある絵。反転が掛かれば全画素が変わる。
     private func paint(_ canvas: Canvas) {
@@ -718,16 +752,19 @@ struct ShapeNotBegunWarningTests {
     }
 }
 
-/// 開いたまま境目を越えた形を捨てたときの原文 ([#1591])。捨てる場面は、`draw()`・`setup()`・
-/// 入力のコールバック・`createShape()` の本体・描き場所の `beginDraw()`〜`endDraw()` をすべて
-/// 挙げる ([#2780])。
+/// 開いたまま境目を越えた形を捨てたときの原文 ([#1591])。形を開いた場面をすべて挙げ
+/// (`setup()`・`draw()`・入力のコールバック・`createShape()` の本体・描き場所の `beginDraw()`〜
+/// `endDraw()`)、捨てる境目は実際のもの — フレームか本体が閉じたとき、または次のフレームが
+/// 始まったとき — で言う。`endDraw()` を呼んだことは前提にしない ([#2780])。捨てる経路ごとの検査は
+/// `ShapeNotEndedWarningTests`。
 ///
 /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
 /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
 private let shapeNotEndedNotice =
-    "beginShape(): a shape was left open past the end of the draw(), setup(), input callback or "
-    + "createShape() body that began it, or past the endDraw() of the beginDraw() that began it, so "
-    + "it was dropped without being drawn. End each shape with endShape() in the same place"
+    "beginShape(): a shape begun in setup(), draw(), an input callback, a createShape() body or "
+    + "between beginDraw() and endDraw() was still open when the frame or body ended, or when the "
+    + "next frame started, so it was dropped without being drawn. End each shape with endShape() "
+    + "in the same place that began it"
 
 /// 開いたまま境目を越えた形の注意 ([#1591])。GPU を要する。
 ///
@@ -772,11 +809,25 @@ struct ShapeNotEndedWarningTests {
         #expect(!canvas.warnings.hasWarned(.shapeNotBegun), "対の始まりの注意を言った")
     }
 
-    /// 描き場所の `beginDraw()` で開いた形も、`endDraw()` を越えると捨てる ([#2780])。文は、その
-    /// 場面を名乗る (本体の `draw()` だけを挙げると、描き場所で開いた人に直す場所が分からない)。
+    /// 形を捨てる経路ごとに、同じ 1 文を言う ([#2780])。文は形を開いた場面を挙げ、捨てる境目は
+    /// 「フレームか本体が閉じたとき、または次のフレームが始まったとき」と言う — `endDraw()` を呼んだとは
+    /// 限らず (閉じ忘れた描き場所は本体の頭で捨てる)、`setup()` で開いた形はその本体の終わりでは
+    /// 捨てないため。
     ///
     /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
-    @Test("描き場所で開いたまま endDraw() を越えた形も、同じ注意で、beginDraw() を名乗る")
+    @Test("形の組み立て (createShape) の本体で開いたまま抜けても、同じ文で言う")
+    func warnsWhenAShapeIsLeftOpenInsideCreateShape() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            _ = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+            }
+        }
+        #expect(canvas.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
+    }
+
+    @Test("描き場所で開いたまま endDraw() を越えても、同じ文で言う")
     func warnsWhenAShapeCrossesTheEndOfADrawingTarget() throws {
         let canvas = try makeCanvas()
         let layer = try canvas.createGraphics(16, 16)
@@ -785,7 +836,23 @@ struct ShapeNotEndedWarningTests {
         layer.vertex(0, 0)
         layer.endDraw()
         #expect(layer.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
-        #expect(shapeNotEndedNotice.contains("endDraw() of the beginDraw()"))
+        #expect(layer.shapePoints.isEmpty, "形が捨てられていない")
+    }
+
+    /// `endDraw()` を呼ばずに本体の次のフレームの頭で捨てられた描き場所 (閉じ忘れ) も、形を捨てて
+    /// 同じ文で言う。このとき `endDraw()` は呼ばれていない。
+    @Test("描き場所を閉じ忘れて本体の次のフレームが始まったときも、同じ文で言う")
+    func warnsWhenAForgottenDrawingTargetIsDroppedAtTheNextMainFrame() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+        try canvas.draw {
+            layer.beginDraw()
+            layer.beginShape()
+            layer.vertex(0, 0)
+        }
+        try #require(!layer.warnings.hasWarned(.shapeNotEnded), "本体の次のフレームの前に言った")
+        try canvas.draw {}
+        #expect(layer.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
         #expect(layer.shapePoints.isEmpty, "形が捨てられていない")
     }
 

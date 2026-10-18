@@ -160,6 +160,7 @@ enum ShapeExit {
             "framesDrawn": frame, "isDrawing": frame, "beginDrawFrame": frame,
             "droppedAtTheMainFrame": frame,
             "carriesOver": "持ち越しの区間の印。ランタイムがコールバックの出入口で対で書く (#1672)",
+            "isRuntimeSurface": "ランタイムの本体の面かの印。作ったときに 1 度だけ立て、形の組み立ての出入口では動かない (#2780)",
             "carriedOverAmount": "持ち越しの区間で置いた量の印。フレームの頭の検めが読む (#1672)",
             "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,

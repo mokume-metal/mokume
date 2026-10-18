@@ -1399,18 +1399,19 @@ struct GraphicsTests {
         #expect(color.blue < 0.01)
     }
 
-    // MARK: - フレームの外で断った注意は、描き場所では beginDraw() を案内する (#2780)
+    // MARK: - フレームの外で断った注意は、自分でフレームを開く面では直し先を案内する (#2780)
 
-    /// 描き場所の面が `draw()` の中にいても、その面が断る場面は `beginDraw()`〜`endDraw()` の外である。
+    /// 描き場所の面が `draw()` の中に居ても、その面が断る場面は `beginDraw()`〜`endDraw()` の外である。
     /// 本体向けの「call this from draw()」を言うと、すでに `draw()` の中にいる利用者に直す場所を
     /// 取り違えさせる。
-    private func expectNamesBeginDraw(_ message: String?, _ context: String) {
+    private func expectGuidesToBeginDraw(_ message: String?, _ context: String) {
         guard let message else {
             Issue.record("\(context): 注意が出ていない")
             return
         }
         #expect(message.contains("beginDraw()"), "\(context): beginDraw() を挙げない: \(message)")
         #expect(message.contains("endDraw()"), "\(context): endDraw() を挙げない: \(message)")
+        #expect(message.contains("draw { }"), "\(context): draw { } を挙げない: \(message)")
         #expect(!message.contains("from draw()"), "\(context): from draw() を言う: \(message)")
         #expect(!message.contains("in draw()"), "\(context): in draw() を言う: \(message)")
         #expect(
@@ -1418,21 +1419,29 @@ struct GraphicsTests {
             "\(context): 本体の場面を言う: \(message)")
     }
 
-    @Test("draw() の中で beginDraw() を書かずに描き場所を変換すると、注意が beginDraw() を案内する")
-    func aTransformOnALayerOutsideBeginDrawNamesBeginDraw() throws {
+    @Test("draw() の中で beginDraw() を書かずに描き場所を変換すると、注意が直し先を案内し、光の注意と見分けられる")
+    func aTransformOnALayerOutsideBeginDrawGuidesToBeginDraw() throws {
         let canvas = try makeCanvas()
         let layer = try canvas.createGraphics(16, 16)
         try canvas.draw {
             canvas.background(black)
             layer.translate(10, 0)
+            layer.lights()
         }
-        expectNamesBeginDraw(layer.warnings.message(for: .transformOutsideFrame), "layer.translate")
+        let transform = layer.warnings.message(for: .transformOutsideFrame)
+        let light = layer.warnings.message(for: .lightOutsideFrame)
+        expectGuidesToBeginDraw(transform, "layer.translate")
+        expectGuidesToBeginDraw(light, "layer.lights")
+        // 主語が違う (どの口を呼んだか分かる)
+        #expect(transform != light, "translate と lights の注意が区別できない")
+        #expect(transform?.hasPrefix("Transforms") == true, "\(transform ?? "")")
+        #expect(light?.hasPrefix("Lights") == true, "\(light ?? "")")
         // 本体の面は断っていないので、何も言わない
         #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
     }
 
-    @Test("描き場所の面では、13 種のどれを断っても beginDraw() を案内する")
-    func everyKindOnALayerNamesBeginDraw() throws {
+    @Test("描き場所の面では、13 種のどれを断っても、その種類の主語で直し先を案内する")
+    func everyKindOnALayerGuidesToBeginDraw() throws {
         let canvas = try makeCanvas()
         let layer = try canvas.createGraphics(16, 16)
         #expect(Canvas.OutsideFrame.allCases.count == 13, "種類が変わった — この検査の範囲を見直す")
@@ -1443,21 +1452,25 @@ struct GraphicsTests {
             }
         }
         for subject in Canvas.OutsideFrame.allCases {
-            expectNamesBeginDraw(layer.warnings.message(for: subject.warning), "\(subject)")
+            let said = layer.warnings.message(for: subject.warning)
+            expectGuidesToBeginDraw(said, "\(subject)")
+            #expect(said == subject.drawingTargetNotice, "\(subject)")
         }
     }
 
+    /// 本体の面 (ランタイムが面を作る) の文は変わらない。`CanvasFixture` は直に使う `Canvas` で本体の面
+    /// ではないので、ランタイムの面を使う。
     @Test("本体の面の注意は変わらず、本体の言い方のまま")
-    func everyKindOnTheMainCanvasKeepsItsOwnWording() throws {
-        let canvas = try makeCanvas()
-        try canvas.draw {
-            canvas.background(black)
-            for subject in Canvas.OutsideFrame.allCases {
-                canvas.warnOutsideFrame(subject)
-            }
+    func everyKindOnTheRuntimeSurfaceKeepsItsOwnWording() throws {
+        let runtime = try SketchRuntime(
+            sketch: SceneOutsideFrameTests.CallsInSetup(), gpu: try RenderDevice())
+        try #require(runtime.canvas.isRuntimeSurface)
+        for subject in Canvas.OutsideFrame.allCases {
+            runtime.canvas.warnOutsideFrame(subject)
         }
         for subject in Canvas.OutsideFrame.allCases {
-            #expect(canvas.warnings.message(for: subject.warning) == subject.notice, "\(subject)")
+            #expect(
+                runtime.canvas.warnings.message(for: subject.warning) == subject.notice, "\(subject)")
         }
     }
 

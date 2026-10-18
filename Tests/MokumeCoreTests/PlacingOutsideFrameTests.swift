@@ -189,16 +189,13 @@ enum PlacingSurface: CaseIterable, CustomTestStringConvertible {
         }
     }
 
-    /// この面が断ったときに言う文。**描き場所の面は 13 種共通の 1 文**で `beginDraw()` と `endDraw()` を
-    /// 案内し、直に使う `Canvas` は本体向けの文のまま ([#2780])。
+    /// この面が断ったときに言う文。**どちらの面も自分でフレームを開く**ので (ランタイムの面ではない・
+    /// ``Canvas/isRuntimeSurface``)、`beginDraw()`〜`endDraw()` か `draw { }` を案内する種類ごとの文を言う。
+    /// 本体の面の「placed in setup(), draw() or an input callback」は、直に使う `Canvas` では `setup()` も
+    /// 入力のコールバックも無いので偽になる ([#2780])。
     ///
     /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
-    func notice(_ subject: Canvas.OutsideFrame) -> String {
-        switch self {
-        case .graphics: Canvas.OutsideFrame.drawingTargetNotice
-        case .direct: subject.notice
-        }
-    }
+    func notice(_ subject: Canvas.OutsideFrame) -> String { subject.drawingTargetNotice }
 }
 
 /// 持ち越しの区間の外で置いたもの・書いた画素を断る ([#1672])。GPU を要する。
