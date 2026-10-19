@@ -117,6 +117,29 @@ struct ScreenCornerTests {
             #expect(squares.isEmpty)
         }
 
+        /// 刻みの点だけの群は、端の形 (`.square` は何も置かない) にも折れ目の形にも従わず、円板で埋める。
+        /// 点 0・1 は画面で潰れた辺で 1 つの群になり (形は小さい番号の 0)、点 2 は群が 1 点だけ。
+        @Test("刻みの点だけの群は、端の規則に従わず円板で埋める")
+        func groupsOfCurveStepsOnlyAreDiscs() throws {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+            var discs: [Int] = []
+            var squares: [Int] = []
+            try canvas.draw {
+                canvas.strokeCap(.square)
+                canvas.strokeJoin(.miter)
+                canvas.strokeNet(
+                    count: 3, edges: [(0, 1), (1, 2)], curveSteps: [true, true, true],
+                    toward: { a, b in
+                        if Set([a, b]) == [0, 1] { return nil }
+                        return a < b ? SIMD2(1, 0) : SIMD2(-1, 0)
+                    },
+                    endSquare: { index, _ in squares.append(index) }, band: { _, _ in },
+                    disc: { discs.append($0) }, square: { squares.append($0) }, corner: { _, _, _ in })
+            }
+            #expect(discs.sorted() == [0, 2], "円板 \(discs)")
+            #expect(squares.isEmpty)
+        }
+
         /// 網の骨は、群の形をいちばん手前の点 (奥行きが等しければ小さい番号) に置く。
         @Test("群の形はいちばん手前の点に置く")
         func groupsPlaceAtTheNearestPoint() throws {

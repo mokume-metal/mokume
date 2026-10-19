@@ -176,7 +176,7 @@ extension Canvas {
         let p2 = curveGuides[count - 2]
         let p3 = curveGuides[count - 1]
         // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)
-        let last = (holePoints ?? shapePoints).last.map { SIMD2($0.position.x, $0.position.y) }
+        let last = lastShapePoint
         if count == 4, last != p1 { appendShapePoint(p1, isCurveStep: false) }
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
@@ -1119,7 +1119,9 @@ extension Canvas {
     ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     private var lastShapePoint: SIMD2<Float>? {
-        (holePoints ?? shapePoints).last.map { SIMD2($0.position.x, $0.position.y) }
+        // `Optional.map` に閉包を渡さない (#2376・点を置くたびに実行時の隔離の検査が入る)
+        guard let last = (holePoints ?? shapePoints).last else { return nil }
+        return SIMD2(last.position.x, last.position.y)
     }
 
     /// 通過点の曲線の並び (``curveGuides``) を切る。**`curveVertex` 以外で点を置く呼び出し

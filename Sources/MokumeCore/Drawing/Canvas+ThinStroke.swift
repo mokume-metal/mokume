@@ -399,11 +399,21 @@ extension Canvas {
         /// 角を埋める。`join` が `nil` なら丸める角 (円板と三角形)。
         func addJoin(_ index: Int, previous: Int, next: Int, join: StrokeJoin?) {
             let (beforeBand, afterBand) = bands(at: index)
-            let hBefore = beforeBand.map { thin.bandHalf[$0] } ?? 0.5
-            let hAfter = afterBand.map { thin.bandHalf[$0] } ?? 0.5
-            let coverage = min(
-                beforeBand.map { thin.bandCoverage[$0] } ?? 1,
-                afterBand.map { thin.bandCoverage[$0] } ?? 1)
+            // **`Optional.map` に閉包を渡さない** (#2376)。main actor の閉包は、呼ぶたびに実行時の隔離の検査が入る。
+            // 帯が無い側 (開いた周の端) は、太さの半分 0.5・覆い 1
+            var hBefore: Float = 0.5
+            var coverageBefore: Float = 1
+            if let band = beforeBand {
+                hBefore = thin.bandHalf[band]
+                coverageBefore = thin.bandCoverage[band]
+            }
+            var hAfter: Float = 0.5
+            var coverageAfter: Float = 1
+            if let band = afterBand {
+                hAfter = thin.bandHalf[band]
+                coverageAfter = thin.bandCoverage[band]
+            }
+            let coverage = min(coverageBefore, coverageAfter)
             let center = points[index]
             let small = min(hBefore, hAfter)
             func disc() {
@@ -472,9 +482,9 @@ extension Canvas {
             disc: { index in
                 if isEnd(index) { return addCap(index, round: true) }
                 let (before, after) = bands(at: index)
-                addJoin(
-                    index, previous: before ?? index, next: after.map { ($0 + 1) % count } ?? index,
-                    join: nil)
+                var next = index
+                if let after { next = (after + 1) % count }
+                addJoin(index, previous: before ?? index, next: next, join: nil)
             },
             square: { index in
                 // 開いた周の端の四角い端 (点 1 つの周は上で済んでいる)
