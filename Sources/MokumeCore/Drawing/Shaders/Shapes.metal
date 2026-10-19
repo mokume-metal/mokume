@@ -1380,19 +1380,24 @@ static inline FormField mokume_segmentField(float2 p, float2 end) {
 ///
 /// 半平面 2 枚と楕円の `max` では組まない — 掃引が π を越えると半直線の**延長**に
 /// 幻の縁が出る (半平面の距離は直線への距離であって半直線への距離ではない)。
-/// 2 本の半径は原点から弧の端までの**線分**として距離を取り、楕円の縁は扇の角度の
-/// 内側にいるときだけ数える。角の外側は真の距離になるので半径 hw で丸く出る。
+/// 2 本の半径は原点から弧の端までの**線分**として距離を取り、楕円の縁は**楕円への最近点が弧の
+/// 角の範囲にあるときだけ**数える (扇の内外では決めない・下の本体と [#2914])。角の外側は
+/// 真の距離になるので半径 hw で丸く出る。
 ///
 /// `exact` は、楕円の弧の距離場を近似 (`mokume_ellipseField`) ではなく真の距離
 /// (`mokume_ellipseExactField`) で出すか。近似の距離場がずれすぎる細長い楕円の扇の輪郭だけ真で、
 /// 塗りは近似のまま ([#2747](https://github.com/mokume-metal/mokume/issues/2747))。
+///
+/// [#2914]: https://github.com/mokume-metal/mokume/issues/2914
 static inline FormField mokume_sectorField(
     float2 p, float2 radii, float start, float sweep, bool exact)
 {
     float end = start + sweep;
     // 弧の両端。2 本の辺も内外の判定もこの 2 点から作る
-    float2 end1 = radii * float2(cos(start), sin(start));
-    float2 end2 = radii * float2(cos(end), sin(end));
+    float2 direction1 = float2(cos(start), sin(start));
+    float2 direction2 = float2(cos(end), sin(end));
+    float2 end1 = radii * direction1;
+    float2 end2 = radii * direction2;
     // 中心から弧の端へ向かう半直線を含む半平面。内側 (扇の中) で負になる向きに取る。
     // **符号しか使わない** (距離は下の線分と楕円で画素のまま測る) ので、法線の長さは
     // 揃えない。符号は (x/rx, y/ry) の空間で単位円の扇を切る半平面と同じ — 掃引 t の
@@ -1407,7 +1412,23 @@ static inline FormField mokume_sectorField(
     FormField edge2 = mokume_segmentField(p, end2);
     FormField nearest = edge1.distance < edge2.distance ? edge1 : edge2;
     FormField ellipse = exact ? mokume_ellipseExactField(p, radii) : mokume_ellipseField(p, radii);
-    if (inWedge && abs(ellipse.distance) < nearest.distance) {
+    // **弧を候補に入れるのは、楕円への最近点が弧の角の範囲にあるときである。扇の内外 (`inWedge`) では
+    // 決めない** ([#2914](https://github.com/mokume-metal/mokume/issues/2914))。楕円では最近点の向き
+    // (法線) が中心から見た向きとずれるので、扇の内でも最近点が弧の外にあり (範囲の外の弧まで距離を
+    // 測って、帯が外へ滲む)、扇の外でも最近点が弧の内にある (弧が最も近いのに線分への距離を返して、
+    // 帯が欠ける)。最近点の媒介変数 t は、`p` から縁の足 `p − 距離 · 勾配` (勾配は最近点での外向きの
+    // 法線) を引いて半径で割った向き `(cos t, sin t)` で測る。**近似の距離場 (`exact` でない枝) も
+    // 同じ式で測る**: 近似の勾配は中心から見た向き (`p / 半径²`) で、`inWedge` と同じ向きになるので、
+    // 勾配だけで測ると、扇の内外の判定と同じずれが残る (輪郭の帯の縁は縁から太さの半分離れていて、
+    // 弧の端の近くで足の向きがずれる)。近似の距離は縁の近くで 1 次の精度があるので、足は 1 画素の内で
+    // 2 次の誤差で、距離の値そのものは近似のまま。範囲の外の最近点は、弧の端 (2 本の辺の端) が受け持つ
+    float2 onArc = (p - ellipse.distance * ellipse.gradient) / radii;
+    float arcSide1 = dot(onArc, float2(direction1.y, -direction1.x));
+    float arcSide2 = dot(onArc, float2(-direction2.y, direction2.x));
+    bool nearestOnArc = sweep <= M_PI_F
+        ? (arcSide1 <= 0.0 && arcSide2 <= 0.0)
+        : (arcSide1 <= 0.0 || arcSide2 <= 0.0);
+    if (nearestOnArc && abs(ellipse.distance) < nearest.distance) {
         nearest = mokume_field(abs(ellipse.distance), ellipse.gradient);
     }
     bool inside = inWedge && ellipse.distance < 0.0;
