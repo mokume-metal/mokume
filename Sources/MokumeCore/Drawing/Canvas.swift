@@ -4235,6 +4235,26 @@ public final class Canvas {
         encoder.setViewport(viewport(pinnedFar: false))
         var pinnedFar = false
 
+        // **前の列と同じ設定は設定し直さない** ([#2364])。引数表は使い回しなので、記録は
+        // この呼び出しの頭で空にする (``EncodedStateMemory``)
+        var memory = EncodedStateMemory()
+        func use(_ state: any MTLRenderPipelineState) {
+            if memory.changes(pipeline: ObjectIdentifier(state)) { encoder.setRenderPipelineState(state) }
+        }
+        func use(depth state: (any MTLDepthStencilState)?) {
+            if memory.changes(depth: state.map { ObjectIdentifier($0) }) { encoder.setDepthStencilState(state) }
+        }
+        func bind(_ address: UInt64, _ index: Int) {
+            if memory.changes(address: address, index: index) {
+                argumentTable.setAddress(address, index: index)
+            }
+        }
+        func bind(_ texture: HeldTexture, _ index: Int) {
+            if memory.changes(texture: ObjectIdentifier(texture.texture), index: index) {
+                argumentTable.setTexture(texture.gpuResourceID, index: index)
+            }
+        }
+
         for (index, batch) in batches.enumerated() {
             let run = batch.run
             if batch.replacesSurface != pinnedFar {
@@ -4245,98 +4265,109 @@ public final class Canvas {
             // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
             switch batch.source {
             case .flat:
-                encoder.setRenderPipelineState(
-                    (run.paint.shader?.states ?? pipeline.states).drawing(batch))
-                encoder.setDepthStencilState(pipeline.flatDepthState)
-                argumentTable.setAddress(
-                    geometry.flatVertices.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-                argumentTable.setAddress(
-                    geometry.coverages.gpuAddress, index: ShapePipeline.coverageBufferIndex)
+                use((run.paint.shader?.states ?? pipeline.states).drawing(batch))
+                use(depth: pipeline.flatDepthState)
+                bind(geometry.flatVertices.gpuAddress, ShapePipeline.vertexBufferIndex)
+                bind(geometry.coverages.gpuAddress, ShapePipeline.coverageBufferIndex)
                 // **口は立体と共用する。** 同じ列で平面と立体の両方を描くことは
                 // 無いので、置き場所の口を 2 つ持つ理由が無い
-                argumentTable.setAddress(
+                bind(
                     geometry.flatInstances.gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
-                    index: ShapePipeline.instanceBufferIndex)
+                    ShapePipeline.instanceBufferIndex)
             case .form:
                 // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                 // 平面と同じ (常に通し・書かない)
-                encoder.setRenderPipelineState(
-                    pipeline.formStates(for: batch.formFlags).state(for: run.mode))
-                encoder.setDepthStencilState(pipeline.flatDepthState)
-                argumentTable.setAddress(
+                use(pipeline.formStates(for: batch.formFlags).state(for: run.mode))
+                use(depth: pipeline.flatDepthState)
+                bind(
                     geometry.formInstances.gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
-                    index: ShapePipeline.instanceBufferIndex)
+                    ShapePipeline.instanceBufferIndex)
             case .solid:
                 // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
-                encoder.setRenderPipelineState(
+                use(
                     (batch.strokeGeometry != nil
                         ? pipeline.solidStrokeStates
                         : batch.usesUnitShape
                             ? (run.paint.shader?.unitShapeStates ?? pipeline.unitShapeStates)
                             : (run.paint.shader?.solidStates ?? pipeline.solidStates))
                         .drawing(batch))
-                encoder.setDepthStencilState(
-                    batch.replacesSurface ? pipeline.replaceDepthState : pipeline.solidDepthState)
+                use(
+                    depth: batch.replacesSurface
+                        ? pipeline.replaceDepthState : pipeline.solidDepthState)
                 // 引数を GPU が書く列 (粒) は、列の頭までを番地へ足す (``Batch/vertexBaseShift``)
-                argumentTable.setAddress(
+                bind(
                     (batch.ownVertices ?? geometry.solidVertices).gpuAddress
                         + batch.vertexBaseShift,
-                    index: ShapePipeline.vertexBufferIndex)
+                    ShapePipeline.vertexBufferIndex)
                 // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
                 // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
-                argumentTable.setAddress(
+                bind(
                     (batch.instances?.storage ?? geometry.solidInstances).gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
-                    index: ShapePipeline.instanceBufferIndex)
+                    ShapePipeline.instanceBufferIndex)
             }
             // **どちら回りを表とするかを列ごとに明示する。** 断片は表裏を見て形から
             // 求めた向きを裏返すので、ここが黙っていると「表」の意味が土台の既定に
             // 委ねられる。表の巻き方は鏡映と裏返す投影で裏返るので、列が持っている
             // (`Batch.frontFacing`)。裏を向いた面を描くかも列が決めている (`Batch.cullMode`)
-            encoder.setFrontFacing(batch.frontFacing)
-            encoder.setCullMode(batch.cullMode)
-            argumentTable.setAddress(
+            if memory.changes(frontFacing: batch.frontFacing) {
+                encoder.setFrontFacing(batch.frontFacing)
+            }
+            if memory.changes(cullMode: batch.cullMode) { encoder.setCullMode(batch.cullMode) }
+            bind(
                 perBatch.matrices.gpuAddress + UInt64(index * Self.valuesStride),
-                index: ShapePipeline.projectionBufferIndex)
-            argumentTable.setAddress(
-                perBatch.values.gpuAddress + UInt64(index * Self.valuesStride),
-                index: ShapePipeline.valuesBufferIndex)
-            argumentTable.setAddress(
-                perBatch.lighting.gpuAddress + UInt64(index * Self.valuesStride),
-                index: ShapePipeline.lightingBufferIndex)
-            argumentTable.setAddress(
-                perBatch.materials.gpuAddress + UInt64(index * Self.valuesStride),
-                index: ShapePipeline.materialBufferIndex)
-            argumentTable.setAddress(
-                perBatch.surroundings.gpuAddress + UInt64(index * Self.valuesStride),
-                index: ShapePipeline.surroundingsBufferIndex)
-            encoder.setScissorRect(scissor(batch.clip))
-            argumentTable.setAddress(
+                ShapePipeline.projectionBufferIndex)
+            if memory.changes(clip: batch.clip) { encoder.setScissorRect(scissor(batch.clip)) }
+            bind(
                 blendModeBuffer.gpuAddress
                     + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
-                index: ShapePipeline.blendModeBufferIndex)
-            // **字の焼き場を読む列かを渡す。** 置き換える列はこれを見て、字形の外の余白を
-            // 捨てる (#1557)。読まない断片にも束ねておく (口を空けたまま走らせない)
-            argumentTable.setAddress(
-                glyphPageBuffer.gpuAddress
-                    + UInt64((run.texture.isGlyphPage ? 1 : 0) * Self.blendModeStride),
-                index: ShapePipeline.glyphPageBufferIndex)
-            // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
-            // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
-            argumentTable.setAddress(
-                (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
-                index: ShapePipeline.numbersBufferIndex)
-            argumentTable.setTexture(
-                run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
-            // 利用者が宣言した面。**口は毎回すべて束ねる** — 渡していない口には
-            // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
-            // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)
-            for slot in 0..<ShapePipeline.surfaceCapacity {
-                let surface = slot < run.paint.surfaces.count ? run.paint.surfaces[slot] : run.texture
-                argumentTable.setTexture(
-                    surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
+                ShapePipeline.blendModeBufferIndex)
+            // **基本図形の頂点も断片も、読むのは `FlatFrame`・混ぜ方・置き場所だけである**
+            // (`formVertexMain`・`mokume_formFragment*`)。値・光・材質・周囲・字の焼き場・数の並び・
+            // 面は読まないので、束ねない ([#2364])。引数表の中身は前の列のままだが、読まない
+            // 口は何が入っていても走りに効かない
+            if batch.source != .form {
+                bind(
+                    perBatch.values.gpuAddress + UInt64(index * Self.valuesStride),
+                    ShapePipeline.valuesBufferIndex)
+                bind(
+                    perBatch.lighting.gpuAddress + UInt64(index * Self.valuesStride),
+                    ShapePipeline.lightingBufferIndex)
+                bind(
+                    perBatch.materials.gpuAddress + UInt64(index * Self.valuesStride),
+                    ShapePipeline.materialBufferIndex)
+                bind(
+                    perBatch.surroundings.gpuAddress + UInt64(index * Self.valuesStride),
+                    ShapePipeline.surroundingsBufferIndex)
+                // **字の焼き場を読む列かを渡す。** 置き換える列はこれを見て、字形の外の余白を
+                // 捨てる (#1557)。読まない断片にも束ねておく (口を空けたまま走らせない)。
+                // 字の焼き場かは面で決まるので、面を束ね直すときだけ求める
+                if memory.changes(
+                    texture: ObjectIdentifier(run.texture.texture),
+                    index: ShapePipeline.textureIndex)
+                {
+                    argumentTable.setTexture(
+                        run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
+                    bind(
+                        glyphPageBuffer.gpuAddress
+                            + UInt64((run.texture.isGlyphPage ? 1 : 0) * Self.blendModeStride),
+                        ShapePipeline.glyphPageBufferIndex)
+                }
+                // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
+                // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
+                bind(
+                    (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
+                    ShapePipeline.numbersBufferIndex)
+                // 利用者が宣言した面。**口は毎回すべて束ねる** — 渡していない口には
+                // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
+                // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)
+                for slot in 0..<ShapePipeline.surfaceCapacity {
+                    let surface =
+                        slot < run.paint.surfaces.count ? run.paint.surfaces[slot] : run.texture
+                    bind(surface, ShapePipeline.surfaceTextureIndex + slot)
+                }
             }
             encoder.setArgumentTable(argumentTable, stages: [.vertex, .fragment])
             if let arguments = batch.indirectArguments?.storage {
@@ -4359,6 +4390,8 @@ public final class Canvas {
                     batch, indices: geometry.solidIndices,
                     sweeps: prepared.sweeps.draws(forBatch: index), sweepBuffer: prepared.sweeps.buffer,
                     on: encoder)
+                // 置き場所ごとに捨て方を書き換えるので、次の列は設定し直す
+                memory.forgetCullMode()
             } else {
                 encodeSolidDraw(
                     run, instances: 0..<batch.instanceCount, indices: geometry.solidIndices,
@@ -4587,21 +4620,59 @@ public final class Canvas {
     private func uploadPerBatch(
         shadow bakedShadow: BakedShadow?, drawingInFrame: Bool
     ) throws(RenderFailure) -> BatchBuffers {
-        // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入り、揺らしだけは
-        // 描き切りの時点で足す — 止まっている間に閉じた列も、描くのがどの描き切りかで揺らしが決まる
+        // 置き場は書く前に全部取る。**列の走査は 1 本**で、`Batch` を写すのは列ごとに 1 回で済む
+        // ([#2364])。列が閉じた時点の値がそのまま入り、揺らしだけは描き切りの時点で足す — 止まって
+        // いる間に閉じた列も、描くのがどの描き切りかで揺らしが決まる (``jitter(drawingInFrame:)``)
         let matrices = try matrixStorage.buffer(holding: batches.count)
+        let lighting = try lightingStorage.buffer(holding: batches.count)
+        let materials = try materialStorage.buffer(holding: batches.count)
+        let surroundings = try surroundingsStorage.buffer(holding: batches.count)
+        let values = try valuesStorage.buffer(holding: batches.count)
         let unitsPerDrawnPixel = self.unitsPerDrawnPixel
         let readsCoverage: UInt32 = coverageSpans.isEmpty ? 0 : 1
+        let solidStrokeShift = Self.solidStrokeShift(width: width, height: height)
         for (index, batch) in batches.enumerated() {
+            let offset = index * Self.valuesStride
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
             var frame = FlatFrame(
                 projection: jittered(batch.matrix, drawingInFrame: drawingInFrame),
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
-                strokeShift: Self.solidStrokeShift(width: width, height: height),
+                strokeShift: solidStrokeShift,
                 unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage)
-            matrices.contents().advanced(by: index * Self.valuesStride)
+            matrices.contents().advanced(by: offset)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
+
+            // **基本図形の頂点も断片も、読むのは `FlatFrame` だけである** (`formVertexMain`・
+            // `mokume_formFragment*`)。ほかの欄は書かない — 読まない口は束ねもしない
+            // (``encodeBatches(into:prepared:)``)。区画は列の番号で決まるので、飛ばしても
+            // 後ろの列の位置は動かない
+            if batch.source == .form { continue }
+
+            // 列ごとの光の区間と揺らぎ。**揺らぎの種と細かさもここで列ごとに届く** — **断片が種を
+            // 受け取る**ので、利用者が値として配線しなくても、置いた時点の CPU の `noise()` と
+            // 同じ模様が出る (#366・#1503・#1855)
+            var packedLighting = Lighting(
+                offset: UInt32(batch.lightRange.lowerBound),
+                count: UInt32(batch.lightRange.count),
+                viewer: batch.viewer,
+                view: batch.view,
+                noiseSeed: batch.noise.seed,
+                noiseOctaves: UInt32(batch.noise.octaves),
+                noiseFalloff: batch.noise.falloff)
+            lighting.contents().advanced(by: offset)
+                .copyMemory(from: &packedLighting, byteCount: MemoryLayout<Lighting>.stride)
+
+            // 列ごとの材質と周囲。**列が閉じた時点のもの**がそのまま入る
+            var packedMaterial = batch.material.packed
+            materials.contents().advanced(by: offset)
+                .copyMemory(from: &packedMaterial, byteCount: MemoryLayout<PackedMaterial>.stride)
+            var packedSurroundings = batch.surroundings
+            surroundings.contents().advanced(by: offset)
+                .copyMemory(
+                    from: &packedSurroundings, byteCount: MemoryLayout<PackedSurroundings>.stride)
+
+            writeValues(of: batch, into: values.contents().advanced(by: offset))
         }
 
         // 時刻と面の大きさは、フレームの中で変わらない。**大きさは出す画素**で、断片が
@@ -4609,7 +4680,7 @@ public final class Canvas {
         // 位置がここと食い違うと面からはみ出す
         let uniformsBuffer = try uniformsStorage.buffer(holding: 1)
         // 影の行列と設定も**フレームに 1 つ**で、列ごとには変わらない。揺らぎの種と細かさは
-        // ここではなく列ごとの値に置く (下の `Lighting`・#1855)
+        // ここではなく列ごとの値に置く (上の `Lighting`・#1855)
         var uniforms = Uniforms(
             time: time,
             resolution: SIMD2(width, height),
@@ -4635,40 +4706,6 @@ public final class Canvas {
         argumentTable.setAddress(
             uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
 
-        // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている。揺らぎの種と細かさも
-        // ここで列ごとに届く — **断片が種を受け取る**ので、利用者が値として配線しなくても、置いた
-        // 時点の CPU の `noise()` と同じ模様が出る (#366・#1503・#1855)
-        let lighting = try lightingStorage.buffer(holding: batches.count)
-        for (index, batch) in batches.enumerated() {
-            var packed = Lighting(
-                offset: UInt32(batch.lightRange.lowerBound),
-                count: UInt32(batch.lightRange.count),
-                viewer: batch.viewer,
-                view: batch.view,
-                noiseSeed: batch.noise.seed,
-                noiseOctaves: UInt32(batch.noise.octaves),
-                noiseFalloff: batch.noise.falloff)
-            lighting.contents().advanced(by: index * Self.valuesStride)
-                .copyMemory(from: &packed, byteCount: MemoryLayout<Lighting>.stride)
-        }
-
-        // 列ごとの材質。**列が閉じた時点のもの**がそのまま入る
-        let materials = try materialStorage.buffer(holding: batches.count)
-        for (index, batch) in batches.enumerated() {
-            var packed = batch.material.packed
-            materials.contents().advanced(by: index * Self.valuesStride)
-                .copyMemory(from: &packed, byteCount: MemoryLayout<PackedMaterial>.stride)
-        }
-
-        // 列ごとの周囲。**列が閉じた時点のもの**がそのまま入る
-        let surroundings = try surroundingsStorage.buffer(holding: batches.count)
-        for (index, batch) in batches.enumerated() {
-            var packed = batch.surroundings
-            surroundings.contents().advanced(by: index * Self.valuesStride)
-                .copyMemory(from: &packed, byteCount: MemoryLayout<PackedSurroundings>.stride)
-        }
-
-        let values = try uploadBatchValues()
         return BatchBuffers(
             matrices: matrices, lighting: lighting, materials: materials,
             surroundings: surroundings, values: values)
