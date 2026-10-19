@@ -286,7 +286,8 @@ import MokumeDiagnostics
     /// - 前に ``RenderDevice/settle()`` が成功した後に、新しい投入が無い (``RenderDevice/isSettledThroughLatest``)。
     ///   投入は 1 本の道が ``RenderDevice/submissionCount`` を進めるので、見落とさない
     /// - 打ち切られた読み戻しの照会 (``RenderDevice/revokeDroppedDeliveries()``) を通した後でも、写しが
-    ///   最新である (CPU が書いたままか、いまの投入まで映してある)
+    ///   最新である (CPU が書いたままか、この面への最後の書き込み以後に映してある。別の面への投入では
+    ///   崩れない・``mirrorIsCurrent(_:)``・#2786)
     /// - 写しが同じである (窓は写しごとに不変)
     ///
     /// どれかが崩れていれば、今までどおりの遅い道 (待つ・映し直す・警告する) を通る。
@@ -295,15 +296,18 @@ import MokumeDiagnostics
     var pixels: Pixels {
         if let window = readableWindow, gpu.isSettledThroughLatest {
             gpu.revokeDroppedDeliveries()
-            if let mirror = pixelMirror, window.mirror === mirror,
-                mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount
-            {
+            if let mirror = pixelMirror, window.mirror === mirror, mirrorIsCurrent(mirror) {
                 return window
             }
         }
         gpu.settleQuietly(orWarn: "Could not wait for the GPU before reading pixels")
         do {
             let mirror = try mirrorForReading()
+            // **写しが同じなら、窓も同じでよい** (窓は写しごとに不変)。別の面への投入で高速路の
+            // 「新しい投入が無い」が崩れた回でも、窓の作り直しを払わない ([#2786])
+            //
+            // [#2786]: https://github.com/mokume-metal/mokume/issues/2786
+            if let window = readableWindow, window.mirror === mirror { return window }
             let window = Pixels(
                 base: mirror.storage.contents(), width: width, height: height,
                 bytesPerRow: mirror.bytesPerRow, mirror: mirror)
@@ -326,10 +330,34 @@ import MokumeDiagnostics
         return mirror
     }
 
+    /// 写しが、この面のいまの中身を映しているか。**読み戻しを積み直す要否も、前に返した窓を
+    /// 使い回してよいかも、この 1 つの式で決める** (``mirrorForReading()``・``pixels``)。
+    ///
+    /// 見るのは**この面への書き込み**である — ``lastWriteSubmission`` 以後に映していれば、その後に
+    /// 同じ ``RenderDevice`` へ積まれた別の面への投入 (描画・計算・アップロード) があっても、この面の
+    /// 中身は変わっていない。かつては土台の投入の通し番号 (`gpu.submissionCount`) と比べていたので、
+    /// 別の面が動くたびに静止した面の写しが無効になり、全面を読み戻し直していた ([#2786])。
+    ///
+    /// - CPU が書いたまま戻していない写しは CPU の側が最新なので、映し直さない。
+    /// - 映した番号 (``PixelMirror/syncedThrough``) が 0 の写しは、まだ映していない、捨てた書き込みを載せて
+    ///   いる、打ち切られた読み戻しの中身を載せているかもしれない — 無効である。
+    /// - 描き切りの末尾に読み戻しを積む投入は、面を書く投入でもある。同じ番号で映してあるので、
+    ///   等号を許す。
+    ///
+    /// **打ち切られた書き込みも ``lastWriteSubmission`` を進める** (投入が名乗る・``noteWritten(by:)``)
+    /// ので、写しは無効のままになる。内容の有効性は番号で、打ち切りの記録は ``heldDrop`` が持つ — 混ぜない。
+    ///
+    /// [#2786]: https://github.com/mokume-metal/mokume/issues/2786
+    private func mirrorIsCurrent(_ mirror: PixelMirror) -> Bool {
+        mirror.hasPendingWrites
+            || (mirror.syncedThrough > 0 && mirror.syncedThrough >= lastWriteSubmission)
+    }
+
     /// いまの絵を映した写し。**呼ぶ前に ``RenderDevice/settle()`` が済んでいること。**
     ///
     /// CPU が書いたまま戻していない写しは CPU の側が最新なので、映し直さない。それ以外で、
-    /// 最後に映した投入より新しい投入があれば、読み戻しを 1 本積んで終わるまで待つ。
+    /// この面への最後の書き込みより前にしか映していなければ (``mirrorIsCurrent(_:)``)、読み戻しを
+    /// 1 本積んで終わるまで待つ。
     ///
     /// **「映した」の印は結末を見ずに付ける。** 結末が届くのは後なので、ここでは待たない。読み戻しが
     /// 打ち切られていたと分かったら、投げる読む口の判定 (``judgeDroppedWork()``) が印を下ろす
@@ -340,9 +368,7 @@ import MokumeDiagnostics
         // 打ち切られた読み戻しの「映した」を、映し直すかを見る前に下ろす (#2199)
         gpu.revokeDroppedDeliveries()
         let mirror = try mirrorHolding()
-        if mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount {
-            return mirror
-        }
+        if mirrorIsCurrent(mirror) { return mirror }
         let submission = try gpu.withCommands { commands throws(RenderFailure) in
             try encodePixelReadback(into: commands)
             return gpu.commit(commands)
