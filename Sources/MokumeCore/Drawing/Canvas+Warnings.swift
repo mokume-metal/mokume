@@ -304,6 +304,14 @@ extension Canvas {
 
         /// 無い書体を指定された。
         case missingFont
+        /// ``Canvas/textFont(_:)`` で確かめた名前の書体が、書体を作る時には引けなかった ([#2772])。実行中に
+        /// 書体を外したときに起きる。CoreText は別の書体を黙って返すので、返った書体の名前を添えて知らせる。
+        ///
+        /// **``missingFont`` と鍵を分ける。** 共有すると、`textFont()` に無い名前を渡した知らせが、先に
+        /// 出ているだけで書体を外された知らせを黙らせる (逆も同じ)。
+        ///
+        /// [#2772]: https://github.com/mokume-metal/mokume/issues/2772
+        case unavailableFont
         /// ``Canvas/textStyle(_:)`` の太さ・傾きの面を、書体が持っていなかった ([#2444])。
         ///
         /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444

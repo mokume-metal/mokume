@@ -129,7 +129,10 @@ final class WatchSession {
                     // 上の管を読むのは、これと区画 `viewport` が揃ったときだけである。区画は
                     // 窓を出せたときだけ置くので、出せなかった回の子は自分の窓を開く (#2028)
                     process.environment = RunCommand.childEnvironment(
-                        stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName)
+                        stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName,
+                        // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
+                        // 走らせたまま差し替わらない
+                        assetOrigin: (try? resolver.current())?.context.assets.url?.path)
                     do {
                         try process.run()
                     } catch {

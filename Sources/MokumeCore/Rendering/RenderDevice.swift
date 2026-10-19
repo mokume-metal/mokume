@@ -179,6 +179,30 @@ import MokumeDiagnostics
     /// ([#728](https://github.com/mokume-metal/mokume/issues/728))。
     let shaders: ShaderLibraries
 
+    /// 組み込みの図形のパイプライン。出力形式ごとに 1 つ、最初に頼まれたときに組む ([#2785])。
+    ///
+    /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
+    private var shapePipelines: [MTLPixelFormat: ShapePipeline] = [:]
+
+    /// 組み込みの図形を描くパイプライン。**この GPU の上で出力形式ごとに 1 度だけ組み、面が分け合う**
+    /// ([#2785])。
+    ///
+    /// 面を作るたびに組み直していたものは、組み込みのライブラリ 2 本とパイプライン 33 本で、面の寸法にも
+    /// 内容にも依らない。最初の面が払う生成はそのまま残る — 遅らせて描画中の停止へ移さない。
+    /// **組めたものだけを控える**ので、失敗したときは次の面がもう 1 度試す。
+    ///
+    /// 抱えるのはこの GPU が生きている間だけで、GPU を畳めば一緒に畳まれる。パイプラインは
+    /// この GPU を抱え返さないので、環にならない。分け合う範囲は GPU 1 つ
+    /// (``ShaderLibraries`` の型の説明と同じ理由)。
+    ///
+    /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
+    func shapePipeline(pixelFormat: MTLPixelFormat) throws(RenderFailure) -> ShapePipeline {
+        if let made = shapePipelines[pixelFormat] { return made }
+        let pipeline = try ShapePipeline(gpu: self, pixelFormat: pixelFormat)
+        shapePipelines[pixelFormat] = pipeline
+        return pipeline
+    }
+
     /// 利用者の断片 (``Shader``・``EffectShader``・``Computation``) の保存を、裏で組むか ([#2365])。
     ///
     /// **立てるのは窓・共有面の経路だけ** (``SketchApplication`` が、時計と出口を決める同じ所で

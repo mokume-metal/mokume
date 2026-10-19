@@ -76,8 +76,12 @@ extension Canvas {
         let top = min(max(0, box.y), height)
         let right = min(max(left, box.x + box.width), width)
         let bottom = min(max(top, box.y + box.height), height)
+        let clip = ClipRect(left: left, top: top, right: right, bottom: bottom)
+        // **正規化まで済ませた後で、効く切り抜きが変わるときだけ閉じる** (#2789)。列が持つのは閉じた
+        // 時点の切り抜きなので、ビット列まで同じなら閉じても閉じなくても列の中身は同じになる
+        if let current = style.clip, current.isBitwiseEqual(to: clip) { return }
         closeBatch()
-        style.clip = ClipRect(left: left, top: top, right: right, bottom: bottom)
+        style.clip = clip
     }
 
     public func noClip() {
