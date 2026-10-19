@@ -105,7 +105,13 @@ extension Canvas {
         func cap(at index: Int, awayFrom neighbor: Int?) {
             // 端の向きも、同じ位置の点を飛ばした隣から取る (出っ張らせる端の正方形・#1535)。
             // 全部の点が重なるときは、これまでどおり隣の点を渡す
-            let away = neighbor.map { distinct(from: index, step: $0 > index ? 1 : -1) ?? $0 }
+            // **`Optional.map` に閉包を渡さない** (#2376)。main actor の閉包は、呼ぶたびに実行時の隔離の検査が入る
+            let away: Int?
+            if let neighbor {
+                away = distinct(from: index, step: neighbor > index ? 1 : -1) ?? neighbor
+            } else {
+                away = nil
+            }
             strokeCapShape(
                 at: index, awayFrom: away, disc: disc, square: square, endSquare: endSquare)
         }
@@ -229,21 +235,35 @@ extension Canvas {
         var arms: [(origin: Int, far: Int)] = []
         var towards: [SIMD2<Float>] = []
         var origins: [Int] = []
+        // 群の点 (形を置く点が先頭)。点ごとに配列を作らず、使い回す (#2376)
+        var group: [Int] = []
         for groupRoot in 0..<count where starts[groupRoot + 1] > starts[groupRoot] && root(groupRoot) == groupRoot {
             // 群の外へ出る辺が腕。群の代表、続けて残りの点を番号の順に、その中は辺の順に並べる
             // (GPU の骨の `solidStrokeCornerShape` と同じ並べ方)
             arms.removeAll(keepingCapacity: true)
             towards.removeAll(keepingCapacity: true)
             origins.removeAll(keepingCapacity: true)
-            let members = members[groupRoot] ?? [groupRoot]
-            // **形は群のいちばん手前の点に置く** (奥行きが等しければ小さい番号)。奥の点に置くと、
-            // 透視で群の点の間にある不透明な面に隠れる
-            var center = members[0]
-            for member in members.dropFirst() where depth(member) < depth(center) { center = member }
-            let group = [center] + members.filter { $0 != center }
+            // 群の点を `group` に並べる。形を置く点が先頭で、残りは番号の順
+            group.removeAll(keepingCapacity: true)
+            var center = groupRoot
+            if let list = members[groupRoot] {
+                // **形は群のいちばん手前の点に置く** (奥行きが等しければ小さい番号)。奥の点に置くと、
+                // 透視で群の点の間にある不透明な面に隠れる
+                center = list[0]
+                for member in list.dropFirst() where depth(member) < depth(center) { center = member }
+                group.append(center)
+                for member in list where member != center { group.append(member) }
+            } else {
+                group.append(groupRoot)
+            }
             // 曲線の刻みの継ぎ目は角ではない。折れ目の形によらず円板で埋める (#1409)。群の点が
             // **すべて**刻みの点のときだけで、端の点や利用者の角が重なれば、そちらの規則に従う
-            if group.allSatisfy({ $0 < curveSteps.count && curveSteps[$0] }) {
+            var onlyCurveSteps = true
+            for point in group where !(point < curveSteps.count && curveSteps[point]) {
+                onlyCurveSteps = false
+                break
+            }
+            if onlyCurveSteps {
                 disc(center)
                 continue
             }
@@ -251,7 +271,11 @@ extension Canvas {
             for origin in group {
                 if starts[origin + 1] - starts[origin] == 1 { isEnd = true }
                 // 世界で同じ位置の点は同じ点として数える。群の中で最初に出てくる同じ位置の点の番号
-                let same = group.first { samePoint($0, origin) } ?? origin
+                var same = origin
+                for candidate in group where samePoint(candidate, origin) {
+                    same = candidate
+                    break
+                }
                 for link in links[starts[origin]..<starts[origin + 1]] where root(link.far) != groupRoot {
                     guard let direction = directions[link.edge] else { continue }
                     arms.append((origin, link.far))
