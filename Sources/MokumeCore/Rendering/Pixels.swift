@@ -22,8 +22,8 @@ public struct Pixels {
     let base: UnsafeMutableRawPointer
     /// 1 行あたりのバイト数。
     let bytesPerRow: Int
-    /// 書いたことを知らせる先。**書く口はすべてここへ旗を立てる** — 立て忘れると、
-    /// 書いた画素が描画先へ戻らない。
+    /// 書いたことを知らせる先。**書く口はすべてここへ知らせる** (``PixelMirror/noteCPUWrite()``) —
+    /// 知らせ忘れると、書いた画素が描画先へ戻らず、止まっている間は窓にも出口にも出ない。
     let mirror: PixelMirror?
     /// 書いてよいかを尋ねる先。**書く口はすべて、書く前にここを通る** ([#1672])。
     ///
@@ -90,7 +90,7 @@ public struct Pixels {
         nonmutating set {
             guard admitsWrite?() ?? true, contains(x, y) else { return }
             address(x, y).pointee = HalfSurface.texel(newValue)
-            mirror?.hasPendingWrites = true
+            mirror?.noteCPUWrite()
         }
     }
 
@@ -103,7 +103,7 @@ public struct Pixels {
                 .assumingMemoryBound(to: SIMD4<Float16>.self)
             for x in 0..<width { row[x] = texel }
         }
-        if count > 0 { mirror?.hasPendingWrites = true }
+        if count > 0 { mirror?.noteCPUWrite() }
     }
 
     private func contains(_ x: Int, _ y: Int) -> Bool {

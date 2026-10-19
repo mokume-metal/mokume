@@ -199,6 +199,24 @@ import MokumeDiagnostics
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private(set) var lastWriteSubmission: UInt64 = 0
 
+    /// この面の絵が変わったことの印 — 窓と出口へ出し直すかを決める番号 ([#2367])。
+    ///
+    /// **増える一方で、絵が変わるたびに増える。** 2 つの足し合わせである:
+    ///
+    /// - GPU への書き込み: ``lastWriteSubmission`` (投入が面を名乗るたびに進む。写しの有効性を
+    ///   決める番号と同じ・#2786)
+    /// - CPU の画素の書き込み: ``PixelMirror/cpuWriteCount`` (``Pixels`` へ書くたびに進む)。書いた画素は
+    ///   次に GPU がこの面へ触るまで戻らないので、面に着く前の書き込みを数える
+    ///
+    /// 止まっている間のスケッチが、この番号が前に出したときと同じなら、窓の present も共有面の写しも
+    /// 飛ばす (``SketchApplication``)。**番号を上げる場所はこの 2 つの口だけである** — 面を変える口を
+    /// 足したら、どちらかを通す。
+    ///
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
+    var contentRevision: UInt64 {
+        lastWriteSubmission &+ (pixelMirror?.cpuWriteCount ?? 0)
+    }
+
     /// 面を塗って始めた投入の番号。打ち切られていれば、この面へ書いた投入の打ち切りとして数える
     /// (塗る口は面の持ち主を知らないので、打ち切りの記録に面が添えられない)。
     private var clearSubmission: UInt64 = 0
@@ -744,6 +762,20 @@ import MokumeDiagnostics
     let bytesPerRow: Int
     /// CPU が書いたまま、まだテクスチャへ戻していないか。
     var hasPendingWrites = false
+    /// CPU が写しへ書いた回数 (作ってから通算)。``RenderTarget/contentRevision`` の一部。
+    ///
+    /// 書き込み待ちの旗とは別に数える: 旗は戻すと下りるが、この数は下りない。窓へ出す側は「前に出した
+    /// ときから書かれたか」を見るので、書き込み待ちが戻された後でも、書いた事実が残らなければならない。
+    private(set) var cpuWriteCount: UInt64 = 0
+
+    /// CPU が写しへ書いた。**書く口 (``Pixels``) はすべてここを通る** — 旗を直に立てると数えそびれ、
+    /// 止まっている間に書いた画素が窓にも出口にも出ない ([#2367])。
+    ///
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
+    func noteCPUWrite() {
+        hasPendingWrites = true
+        cpuWriteCount &+= 1
+    }
     /// この番号までの投入の結果を映している。0 は面を映していない — まだ 1 度も映していないか、
     /// 捨てた書き込みを載せている (``RenderTarget/discardPixelWrites()``) か、打ち切られた読み戻しの
     /// 中身を載せているかもしれない (``RenderTarget/judgeDroppedWork()``・#1932)。

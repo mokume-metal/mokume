@@ -1872,6 +1872,7 @@ struct CanvasTests {
         return [
             "storage": construction, "gpu": construction, "bytesPerRow": construction,
             "syncedThrough": "写しが映した投入の番号。読む口が進め、捨てる口と、打ち切りを見つけた投げる読む口 (#1932) が 0 に戻す。映した絵の印で、フレームに属さない",
+            "cpuWriteCount": "CPU が写しへ書いた回数 (作ってから通算)。止まっている間に窓と出口へ出し直すかを決める内容の変更番号の一部で、増える一方。フレームに属さない (#2367)",
             "writtenBackBy": "CPU が書いた画素を最後に書き戻した投入の番号。書き戻しが打ち切られたときに書き込み待ちを立て直すための印で、捨てる口が 0 に戻す。フレームに属さない (#1932)",
         ]
     }

@@ -275,6 +275,30 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 続けて描けなかった数。**始まりと終わりだけ**言うために持つ。
     private var frameFailures = FrameFailureLog()
 
+    /// 前に出した絵の鍵。**止まっている間に、同じ絵を出し直さない**ために持つ ([#2367])。
+    ///
+    /// 出していなければ・出せなかったときや、出し直す理由を見つけたときは `nil` に戻す。
+    ///
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
+    private var lastShown: ShownFrame?
+
+    /// 出した絵が同じかを決める鍵。**絵が変わる理由はすべてここに載せる** — 載せ忘れた理由は、止まって
+    /// いる間に変わっても窓にも出口にも出ない。
+    ///
+    /// - `target`・`revision`: 描画先とその内容 (``RenderTarget/contentRevision``。GPU への書き込みと
+    ///   CPU の画素の書き込み)
+    /// - `brightness`: 出力段の明るさ (`exposure()`・`toneMapping()`)。止まっている間に変えても絵が変わる
+    /// - `drawable`: 窓の面の大きさ。変わったら出し直す (共有面は `nil`)
+    /// - `pointerLock`・`cursorHidden`: 共有面に絵と一緒に載る要求。窓へは渡す経路が別なので `false`
+    struct ShownFrame: Equatable {
+        let target: ObjectIdentifier
+        let revision: UInt64
+        let brightness: Brightness
+        let drawable: CGSize?
+        let pointerLock: Bool
+        let cursorHidden: Bool
+    }
+
     /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
     /// 数えるのは**進めたフレーム**で、画面へ出した回数ではない。窓が見えていない間も
@@ -304,8 +328,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 最小化だけを特別扱いしないのは、どれも「画面へ出しても誰も見ない」という
     /// 同じ状態だからである。
     private var isWindowVisible: Bool {
-        window?.occlusionState.contains(.visible) ?? false
+        windowVisibilityForTesting ?? window?.occlusionState.contains(.visible) ?? false
     }
+
+    /// 窓が見えているかの答えを**検査から決める**。製品の経路では常に `nil`。
+    ///
+    /// 検査のプロセスは前面のアプリケーションではないので、窓を出しても見えていることにならず
+    /// (`occlusionState` が更新されない)、見えている間の出し方 (止まっている間に出し直さない・#2367)
+    /// を確かめられない。
+    var windowVisibilityForTesting: Bool?
 
     /// スケッチを画面に出す用意をする。
     ///
@@ -943,28 +974,69 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         case .shared(let shared):
             // **速さも一緒に渡す。** 数えているのはこちらで、読むのは道具である
             // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない。**名乗るのは
-            // 前に焼いた 1 枚**で、いま焼く絵は次のリフレッシュで出る (#748)。止めている間も
-            // ここは毎リフレッシュ通るので、控えが出ないまま残ることはない。捕まえの要求も
+            // 前に焼いた 1 枚**で、いま焼く絵は次のリフレッシュで出る (#748)。走っている間は毎リフレッシュ
+            // ここを通るので、控えが出ないまま残ることはない。捕まえの要求も
             // 同じ面に載せて渡す — 捕まえるのは道具の窓である (#1144)。矢印を隠す要求も同じ (#2439)
-            try shared.write(
-                runtime.target, using: presenter, numbers: runtime.frameNumbers,
-                pointerLock: runtime.pointerLockRequested,
+            //
+            // **止まっている間は、絵が変わらなければ焼かない** (#2367)。最後に変わった後の 1 回を焼いたら、
+            // 以後は控えを名乗らせるだけにする (走っていないので次の書き込みは来ない)。変わる理由には、
+            // 捕まえ・矢印の要求も入る — 飛ばすと、止めたスケッチがカーソルを捕まえる・放すのが道具に届かない
+            let shown = shownFrame(
+                drawable: nil, pointerLock: runtime.pointerLockRequested,
                 cursorHidden: runtime.cursorHidingRequested)
+            if runtime.isHeldStill, shown == lastShown {
+                let droppedBefore = shared.droppedBurns
+                try shared.publishPending()
+                // 打ち切られた焼きは名乗らずに捨てる。次の書き込みが来ない間は、焼き直さないと
+                // 道具は前の絵を出し続ける (走っている間は次の書き込みが自然に直す・#2735)
+                if shared.droppedBurns != droppedBefore { lastShown = nil }
+                return
+            }
+            lastShown = nil
+            if try shared.write(
+                runtime.target, using: presenter, numbers: runtime.frameNumbers,
+                pointerLock: shown.pointerLock, cursorHidden: shown.cursorHidden)
+            {
+                lastShown = shown
+            }
         case .window(let window, let surface, let hasPresented):
             guard let layer = surface.metalLayer,
                 FramePresenter.shouldPresent(
                     windowIsVisible: isWindowVisible, hasPresented: hasPresented)
-            else { return }
+            else {
+                // 見えていない間は出さない。見えるようになったら、同じ絵でも 1 回出し直す (#2367)
+                lastShown = nil
+                return
+            }
+            // **止まっている間は、絵が変わらなければ出し直さない** (#2367)。窓の面の大きさ・明るさの
+            // 設定も鍵に入る。GPU が前の present を打ち切っていたら、次の書き込みは来ないので出し直す
+            let shown = shownFrame(
+                drawable: layer.drawableSize, pointerLock: false, cursorHidden: false)
+            if hasPresented, runtime.isHeldStill, shown == lastShown {
+                if gpu.undelivered(presenter.lastSubmission) != true { return }
+                lastShown = nil
+            }
             // **書き戻すのは 1 度だけ。** 素直に毎回組み直すと、出すたびに窓と面の
             // retain/release が乗る (秒 60 回)。`shouldPresent` は一度 true になれば
             // 戻らないので、立てるのも 1 度でよい
-            if try presenter.present(runtime.target, to: layer), !hasPresented {
-                outlet = .window(window, surface, hasPresented: true)
+            if try presenter.present(runtime.target, to: layer) {
+                lastShown = shown
+                if !hasPresented { outlet = .window(window, surface, hasPresented: true) }
             }
         // 書き出す経路の出口は撮る係だけで、絵はランタイムが配っている
         case .pendingWindow, .render:
             return
         }
+    }
+
+    /// いま出そうとしている絵の鍵 (``ShownFrame``)。**絵そのものは読まない** — 描画先の番号と明るさの
+    /// 設定を読むだけで、追い付きの済んだ後 (``presentFrame()``) に呼ぶ。
+    private func shownFrame(drawable: CGSize?, pointerLock: Bool, cursorHidden: Bool) -> ShownFrame {
+        let target = runtime.target
+        return ShownFrame(
+            target: ObjectIdentifier(target), revision: target.contentRevision,
+            brightness: target.brightness, drawable: drawable, pointerLock: pointerLock,
+            cursorHidden: cursorHidden)
     }
 
     /// 描けなかったことを 1 度だけ言う。

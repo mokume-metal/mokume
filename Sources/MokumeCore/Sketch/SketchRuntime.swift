@@ -52,6 +52,13 @@ public final class SketchRuntime {
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
     private(set) var isLooping = true
+    /// 止まっているか — 作者が `noLoop()` で止めた、または外から ``pause()`` されている。
+    ///
+    /// 窓と出口は、止まっている間に絵が変わっていなければ出し直さない (``SketchApplication``・
+    /// [#2367](https://github.com/mokume-metal/mokume/issues/2367))。**走っている間は変わっていなくても
+    /// 出す** — 道具が読む速さ・時刻は枚数が上がったときだけ更新されるので、何も描かない回まで飛ばすと
+    /// 走っているのに止まって見える。
+    var isHeldStill: Bool { !isLooping || isPaused }
     /// 止まっている間に 1 枚だけ描き直すよう頼まれているか (``redraw()``)。
     private var redrawRequested = false
     /// 指定時刻の1枚の最中は連続録画を始めない。通常の時刻へ戻るので順序を保証できない。
