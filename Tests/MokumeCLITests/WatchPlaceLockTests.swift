@@ -66,12 +66,15 @@ struct WatchPlaceLockTests {
             _ = try WatchPlaceLock.claim(under: base)
             Issue.record("先客が居るのに取れた")
         } catch {
-            guard case .alreadyWatching(let place) = error else {
+            guard case .alreadyWatching(let place, let pid) = error else {
                 Issue.record("別の失敗になった: \(error)")
                 return
             }
             #expect(place == WorkDirectory.root(under: base).path)
             #expect(error.message.contains(place))
+            // 診断のために、先客の pid が錠ファイルに書かれていて、断る文面が名乗る
+            #expect(pid == getpid(), "先客の pid を名乗っていない: \(String(describing: pid))")
+            #expect(error.message.contains("pid \(getpid())"))
             #expect(error.message.contains(StartupReads.workDirectory.key), "分ける手段を言っていない")
             #expect(error.exitCode != 0)
         }
@@ -131,14 +134,30 @@ struct WatchPlaceLockTests {
         let output = Pipe()
         holder.standardOutput = output
         try holder.run()
-        // **待つ側が期限を持つ。** 残ったら殺す
+        // **待つ側が期限を持つ。** 越えたら殺す (読みは別の走りで、`.timeLimit` は使わない)
         defer { if holder.isRunning { kill(holder.processIdentifier, SIGKILL) } }
-        let line = output.fileHandleForReading.availableData
+        let got = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var line = Data()
+        DispatchQueue.global().async {
+            line = output.fileHandleForReading.availableData
+            got.signal()
+        }
+        guard got.wait(timeout: .now() + 10) == .success else {
+            kill(holder.processIdentifier, SIGKILL)
+            Issue.record("前任の模擬が錠を取ったと名乗らないまま期限を越えた")
+            return
+        }
         try #require(String(data: line, encoding: .utf8) == "held\n", "前任が錠を取れていない")
 
         // 生きている間は断る
-        #expect(throws: CommandFailure.alreadyWatching(place: WorkDirectory.root(under: base).path)) {
+        do {
             _ = try WatchPlaceLock.claim(under: base)
+            Issue.record("生きている前任が居るのに取れた")
+        } catch {
+            guard case .alreadyWatching = error else {
+                Issue.record("別の失敗になった: \(error)")
+                return
+            }
         }
         // 後始末を通らずに消える
         kill(holder.processIdentifier, SIGKILL)
@@ -170,8 +189,15 @@ struct WatchPlaceLockTests {
         let before = rootEntries(of: root)
 
         var reachedTheLoop = false
-        #expect(throws: CommandFailure.alreadyWatching(place: WorkDirectory.root(under: root).path)) {
+        do {
             try WatchCommand.run([root.path], watching: { _, _ in reachedTheLoop = true })
+            Issue.record("先客が居るのに見張り始めた")
+        } catch {
+            guard case .alreadyWatching(let place, _) = error else {
+                Issue.record("別の失敗になった: \(error)")
+                return
+            }
+            #expect(place.hasSuffix("/.mokume"))
         }
 
         #expect(!reachedTheLoop, "断ったのに巡回へ入った")
@@ -203,15 +229,106 @@ struct WatchPlaceLockTests {
             "死んだ前任の目録を引き継いだ")
     }
 
-    @Test("見張りが終われば、次の見張りが同じ場所で始められる")
-    func theNextWatchStartsOnceTheFirstHasEnded() throws {
+    /// **錠は巡回の間ずっと持ち、終われば手放す。** `claim` の戻りを持ち続けなければ (Swift は最後に使った
+    /// ところで手放す)、巡回の間に別の見張りが入れてしまう。
+    @Test("錠は巡回の間は持たれ、見張りが終われば手放されて次の見張りが始められる")
+    func theLockIsHeldWhileWatchingAndFreeOnceItEnds() throws {
         let root = try makeSketch()
+        // 取った錠の持ち主を、検査の終わりまで生かす。手放すのが持ち主の消滅 (`deinit`) だけでなく、
+        // 見張りの終わりの `release()` であることを見る
+        var heldLocks: [WatchPlaceLock] = []
+        defer { heldLocks.removeAll() }
         for round in 1...2 {
             let kept = SignalState.current()
             defer { kept.restore() }
+            var refusedInside = false
             var reachedTheLoop = false
-            try WatchCommand.run([root.path], watching: { _, _ in reachedTheLoop = true })
+            try WatchCommand.run([root.path], watching: { _, _ in
+                reachedTheLoop = true
+                // 巡回の中で別の見張りが同じ場所に入ろうとする
+                do {
+                    _ = try WatchPlaceLock.claim(under: root)
+                } catch {
+                    if let failure = error as? CommandFailure, case .alreadyWatching = failure {
+                        refusedInside = true
+                    }
+                }
+            }, claiming: { (base: URL) throws(CommandFailure) -> WatchPlaceLock in
+                let lock = try WatchPlaceLock.claim(under: base)
+                heldLocks.append(lock)
+                return lock
+            })
+            #expect(heldLocks.count == round)
             #expect(reachedTheLoop, "\(round) 回目が断られた (錠を手放していない)")
+            #expect(refusedInside, "\(round) 回目の巡回の間、錠を持っていない")
         }
+    }
+
+    /// 宣言の不備で始まらない回は、場所を作らない (錠は宣言の検査より後に取る)。
+    @Test("宣言の不備で始まらない回は、場所 (.mokume) を作らない")
+    func aWatchThatCannotStartLeavesNoPlace() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let root = try makeSketch()
+        let assets = root.appendingPathComponent("Sources/demo/assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        try Data("画像のつもり".utf8).write(to: assets.appendingPathComponent("picture.png"))
+
+        #expect(throws: CommandFailure.resourcesNotDeclared(directory: "Sources/demo/assets")) {
+            try WatchCommand.run([root.path], watching: { _, _ in })
+        }
+        #expect(
+            !FileManager.default.fileExists(atPath: WorkDirectory.root(under: root).path),
+            "始まらなかった回が場所を作った")
+    }
+
+    /// **掛けた直後に場所を消されても、並ばない。** 掛けたのは消えたファイルの錠で、同じパスに別の見張りが
+    /// 作ったファイルの錠とは別物である。開いたファイルとパスが指すファイルが違えば、取り直す。
+    @Test("錠を掛けた直後に場所を消され、別の見張りが取り直したら、断る")
+    func aRaceThatReplacesTheLockFileIsNotMistakenForHolding() throws {
+        let base = try makeSketch()
+        var other: OtherWatch?
+        defer { other?.leave() }
+        do {
+            _ = try WatchPlaceLock.claim(
+                under: base,
+                afterLocking: {
+                    guard other == nil else { return }
+                    // 錠ファイルごと場所を消し、別の見張りが同じパスに作り直して錠を持つ
+                    try? FileManager.default.removeItem(at: WorkDirectory.root(under: base))
+                    other = try? OtherWatch(holding: base)
+                })
+            Issue.record("消えたファイルの錠で、別の見張りと並んだ")
+        } catch {
+            guard case .alreadyWatching = error else {
+                Issue.record("別の失敗になった: \(error)")
+                return
+            }
+        }
+        #expect(other != nil)
+    }
+
+    @Test("錠を掛けた直後にファイルだけ消されたら、取り直して取れる")
+    func aVanishedLockFileIsTakenAgain() throws {
+        let base = try makeSketch()
+        var first = true
+        let lock = try WatchPlaceLock.claim(
+            under: base,
+            afterLocking: {
+                guard first else { return }
+                first = false
+                try? FileManager.default.removeItem(at: WatchPlaceLock.lockURL(under: base))
+            })
+        // 取り直した錠は、いまのパスが指すファイルのものである: 別の見張りは断られる
+        do {
+            _ = try WatchPlaceLock.claim(under: base)
+            Issue.record("取り直した錠が効いていない")
+        } catch {
+            guard case .alreadyWatching = error else {
+                Issue.record("別の失敗になった: \(error)")
+                return
+            }
+        }
+        lock.release()
     }
 }
