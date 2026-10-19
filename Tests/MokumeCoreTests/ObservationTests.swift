@@ -12,7 +12,8 @@ import Testing
     "スケッチを外から観測する",
     .enabled(
         if: RenderDevice.isAvailable,
-        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする"),
+    .ownWarningDigest
 )
 struct ObservationTests {
     /// 左上に白い四角を置く。地は黒。
