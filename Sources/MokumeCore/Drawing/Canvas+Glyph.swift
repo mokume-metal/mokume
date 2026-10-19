@@ -115,6 +115,15 @@ extension Canvas {
         return "\"\(Character(scalar))\" (U+\(String(repeating: "0", count: max(0, 4 - hex.count)) + hex))"
     }
 
+    /// 焼き分けの鍵。**焼くときと、測る側が描いた画素を焼き場に預けるとき (#2560) で同じ鍵を使う。**
+    func glyphKey(for resolved: ResolvedGlyph) -> GlyphAtlas.Key {
+        // 鍵に変換の拡大は入れない。`scale` で伸ばした字は焼いた画素の拡大になり、その
+        // 代償は `Sketch` の `textSize` の説明が名乗っている (#2033)
+        GlyphAtlas.Key(
+            fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
+            glyph: resolved.glyph)
+    }
+
     /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる — 上限の面なら、同じ
     /// 大きさの新しい頁へ焼き直す ([#1342])。
     ///
@@ -143,11 +152,7 @@ extension Canvas {
     /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
     /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
-        // 鍵に変換の拡大は入れない。`scale` で伸ばした字は焼いた画素の拡大になり、その
-        // 代償は `Sketch` の `textSize` の説明が名乗っている (#2033)
-        let key = GlyphAtlas.Key(
-            fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
-            glyph: resolved.glyph)
+        let key = glyphKey(for: resolved)
         while true {
             switch atlas.entry(for: key, font: resolved.font) {
             case .found(let entry): return entry

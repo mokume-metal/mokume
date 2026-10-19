@@ -187,6 +187,74 @@ import simd
         case tooLarge
     }
 
+    /// 測る側が CPU で描いた字形の画素。焼くときに同じ升目なら、描き直さずに使う ([#2560])。
+    struct Rendered {
+        var width: Int
+        var height: Int
+        /// 書き始めの位置 (升目の左下から)。
+        var penX: Int
+        var penY: Int
+        var pixels: [SIMD4<Float16>]
+    }
+
+    /// 預かっている画素 (``keepRendered(_:for:)``)。
+    private var kept: [Key: Rendered] = [:]
+    private var keptBytes = 0
+    /// 預かる画素の上限 (バイト)。96 MiB は、3000 の絵文字の升目 (72 MB) が入る大きさ。
+    ///
+    /// **預かったまま焼かれない画素を溜めない** — `textBounds` だけを呼ぶスケッチは、`text()` が
+    /// 引き取らない画素を毎フレーム預ける。超えるときは預かっている分を捨て、1 つで上限を超える
+    /// 大きさは預けない (描き直しになるだけで、墨は変わらない)。
+    var keptLimitBytes = 96 << 20
+    /// 預かっている字形の数。**検査が読む。**
+    var keptCount: Int { kept.count }
+
+    /// CPU で字形を描いた回数。焼くときと、測る側 (``Typeface/drawnInk(of:_:keeping:as:)``) が
+    /// 描くときの、どちらも数える。**検査が読む** — 同じ字形を同じ大きさで測って焼いても、描くのは
+    /// 1 回であること ([#2560])。
+    private(set) var cpuRenders = 0
+
+    /// 字形を CPU で描く。**焼き場も測る側も、描くときはここを通す** (数えるため)。
+    func renderOnCPU(
+        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int
+    ) -> [SIMD4<Float16>]? {
+        cpuRenders += 1
+        return Self.render(
+            glyph: glyph, font: font, width: width, height: height, penX: penX, penY: penY)
+    }
+
+    /// 測る側が描いた画素を預かる。同じ鍵の字形を焼くとき、同じ升目なら描き直さずに使う。
+    ///
+    /// **描き方は焼き場と同じ** (``render(glyph:font:width:height:penX:penY:)``) なので、預けた画素から
+    /// 焼いた字形は、描き直して焼いたものと 1 ビットも変わらない。
+    ///
+    /// [#2560]: https://github.com/mokume-metal/mokume/issues/2560
+    func keepRendered(_ rendered: Rendered, for key: Key) {
+        let bytes = rendered.pixels.count * Self.bytesPerPixel
+        guard bytes <= keptLimitBytes else { return }
+        if let old = kept.removeValue(forKey: key) {
+            keptBytes -= old.pixels.count * Self.bytesPerPixel
+        }
+        if keptBytes + bytes > keptLimitBytes {
+            kept.removeAll()
+            keptBytes = 0
+        }
+        kept[key] = rendered
+        keptBytes += bytes
+    }
+
+    /// 預かった画素を、同じ升目なら引き取る。違う升目のものは使わず捨てる。
+    private func takeRendered(
+        for key: Key, width: Int, height: Int, penX: Int, penY: Int
+    ) -> [SIMD4<Float16>]? {
+        guard let rendered = kept.removeValue(forKey: key) else { return nil }
+        keptBytes -= rendered.pixels.count * Self.bytesPerPixel
+        guard rendered.width == width, rendered.height == height, rendered.penX == penX,
+            rendered.penY == penY
+        else { return nil }
+        return rendered.pixels
+    }
+
     /// 言った注意の控え。**検査が読む。**
     private(set) var warnings = WarningLog<Warning>()
 
@@ -405,10 +473,13 @@ import simd
         guard width <= size, height <= size else { return .full }
 
         guard let origin = reserve(width: width, height: height) else { return .full }
+        // 測る側が同じ升目に描いて預けていれば、描き直さずに使う (#2560)
         guard
-            let pixels = Self.render(
-                glyph: glyph, font: font, width: width, height: height, penX: -left,
-                penY: -bottom)
+            let pixels = takeRendered(
+                for: key, width: width, height: height, penX: -left, penY: -bottom)
+                ?? renderOnCPU(
+                    glyph: glyph, font: font, width: width, height: height, penX: -left,
+                    penY: -bottom)
         else { return .unbakeable }
 
         // 前のフレームがまだこの面を読んでいるかもしれない。書く直前に待つ。

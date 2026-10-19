@@ -390,12 +390,22 @@ final class Typeface {
     /// 入らない大きさの字は、描かずに外接矩形を墨とする — 墨を含む、送り幅の升目ぶん広い枠に
     /// なる。描く道具を作れなかったときも `nil` を返すが、控えないので次に呼べば描き直す。
     ///
+    /// **描いた画素は焼き場に預ける** (`atlas`・`key`・[#2560])。控え (`drawnInks`) は書体ごと、書体は
+    /// 大きさごとなので、`textSize()` を毎フレーム動かすと控えは外れ、測るたびに描き直す。その大きさの
+    /// 字を `text()` が焼くときは、同じ升目に同じ描き方で描くので、預けた画素をそのまま使えば CPU で
+    /// 描くのは 1 回で済む (``GlyphAtlas/keepRendered(_:for:)``)。
+    ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
-    func drawnInk(of scalar: Unicode.Scalar, _ resolved: ResolvedGlyph) -> CGRect? {
+    /// [#2560]: https://github.com/mokume-metal/mokume/issues/2560
+    func drawnInk(
+        of scalar: Unicode.Scalar, _ resolved: ResolvedGlyph, keeping atlas: GlyphAtlas,
+        as key: GlyphAtlas.Key
+    ) -> CGRect? {
         if let cached = drawnInks[scalar] { return cached }
-        switch Self.draw(resolved) {
-        case .ink(let ink):
+        switch Self.draw(resolved, on: atlas) {
+        case .ink(let ink, let rendered):
             drawnInks[scalar] = ink
+            if let rendered { atlas.keepRendered(rendered, for: key) }
             return ink
         case .failed:
             return nil
@@ -403,16 +413,17 @@ final class Typeface {
     }
 
     /// 描いて測った結果。描けなかったこと (`failed`) と、描いて墨が無かったこと (`ink(nil)`) を分ける。
+    /// 描いたときは、その画素も一緒に返す (焼き場へ預ける)。
     private enum Drawing {
-        case ink(CGRect?)
+        case ink(CGRect?, GlyphAtlas.Rendered?)
         case failed
     }
 
-    private static func draw(_ resolved: ResolvedGlyph) -> Drawing {
+    private static func draw(_ resolved: ResolvedGlyph, on atlas: GlyphAtlas) -> Drawing {
         var glyph = resolved.glyph
         let bounds = CTFontGetBoundingRectsForGlyphs(resolved.font, .horizontal, &glyph, nil, 1)
         guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
-        else { return .ink(nil) }
+        else { return .ink(nil, nil) }
         // 焼き場 (`GlyphAtlas.bake`) と同じく、外接矩形を整数へ広げて余白を足した升目に描く
         let pad = CGFloat(GlyphAtlas.padding)
         let leftEdge = bounds.minX.rounded(.down) - pad
@@ -427,9 +438,9 @@ final class Typeface {
                 side: GlyphAtlas.maximumSize),
             let left = Int(exactly: leftEdge), let bottom = Int(exactly: bottomEdge),
             let right = Int(exactly: rightEdge), let top = Int(exactly: topEdge)
-        else { return .ink(bounds) }
+        else { return .ink(bounds, nil) }
         guard
-            let pixels = GlyphAtlas.render(
+            let pixels = atlas.renderOnCPU(
                 glyph: glyph, font: resolved.font, width: right - left, height: top - bottom,
                 penX: -left, penY: -bottom)
         else { return .failed }
@@ -443,12 +454,15 @@ final class Typeface {
             minRow = min(minRow, row)
             maxRow = max(maxRow, row)
         }
-        guard minColumn <= maxColumn else { return .ink(nil) }
+        let rendered = GlyphAtlas.Rendered(
+            width: width, height: top - bottom, penX: -left, penY: -bottom, pixels: pixels)
+        guard minColumn <= maxColumn else { return .ink(nil, rendered) }
         // 並びの先頭は絵の上端。行 r は、字形の座標で top - r - 1 から top - r までを覆う
         return .ink(
             CGRect(
                 x: left + minColumn, y: top - maxRow - 1, width: maxColumn - minColumn + 1,
-                height: maxRow - minRow + 1))
+                height: maxRow - minRow + 1),
+            rendered)
     }
 
     /// 書体の中での字形の番号。持っていなければ 0。
