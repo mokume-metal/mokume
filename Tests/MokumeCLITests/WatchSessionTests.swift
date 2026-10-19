@@ -1822,32 +1822,74 @@ struct FrameRateHandoffTests {
                 == "/a/Sources/wa/assets")
     }
 
-    /// 置き場の元は、走らせる実行ファイルの target のものを選ぶ。決まらなければ渡さない。
-    @Test("置き場の元は product と同名の target を先に取り、決まらなければ渡さない")
-    func theAssetOriginFollowsTheProduct() throws {
+    /// **束に写される置き場だけを、宣言から決める** (#2517)。ディレクトリの並びから推し量らない。
+    @Test("置き場の元は、product の target が .copy(\"assets\") を宣言したものだけから決める")
+    func theAssetOriginComesFromTheDeclaration() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        func make(_ target: String) throws {
+        func make(_ path: String) throws {
             try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("Sources/\(target)/assets", isDirectory: true),
+                at: root.appendingPathComponent(path, isDirectory: true),
                 withIntermediateDirectories: true)
         }
-        func origin(_ product: String) -> String? {
-            ResourceDeclaration.origin(ofProduct: product, in: root)?.path
+        func package(_ targets: String, products: String = #"{"name":"wa","type":{"executable":null},"targets":["wa"]}"#)
+            throws -> SwiftPM.Package
+        {
+            try #require(
+                SwiftPM.package(
+                    inDumpOf: """
+                        {"name":"wa","products":[\(products)],"targets":[\(targets)],
+                         "platforms":[],"dependencies":[]}
+                        """))
         }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        #expect(origin("wa") == nil, "置き場が無い")
-        try make("wa")
-        #expect(origin("wa")?.hasSuffix("/Sources/wa/assets") == true)
-        #expect(origin("renamed")?.hasSuffix("/Sources/wa/assets") == true, "ちょうど 1 つならそれ")
-        try make("other")
-        #expect(origin("wa")?.hasSuffix("/Sources/wa/assets") == true, "同名が先")
-        #expect(origin("renamed") == nil, "複数あって決まらないときは推し量らない")
+        func origin(_ package: SwiftPM.Package, product: String? = "wa") -> SwiftPM.AssetsOrigin {
+            package.assetsOrigin(forProduct: product, in: root, directoryName: "assets")
+        }
+        let copy = #""resources":[{"path":"assets","rule":{"copy":{}}}]"#
+        try make("Sources/wa/assets")
+
+        // 宣言した置き場だけ。`Sources/wa/assets` はここ
+        guard case .source(let found) = origin(try package(#"{"name":"wa",\#(copy)}"#)) else {
+            Issue.record("束に写される置き場を決められなかった")
+            return
+        }
+        #expect(found.path.hasSuffix("/Sources/wa/assets"))
+        // 宣言が無い・`.process`・別のファイルだけの `.copy` は、束に写されない — 渡さない
+        for resources in [
+            "", #""resources":[{"path":"assets","rule":{"process":{}}}]"#,
+            #""resources":[{"path":"assets/img.png","rule":{"copy":{}}}]"#,
+        ] {
+            let target = resources.isEmpty ? #"{"name":"wa"}"# : #"{"name":"wa",\#(resources)}"#
+            #expect(origin(try package(target)) == .notCopied, "\(resources) で渡している")
+        }
+        // 宣言が読めない・product が見つからない — 決められない
+        #expect(origin(try package(#"{"name":"wa",\#(copy)}"#), product: nil) == .undecided)
+        #expect(origin(try package(#"{"name":"wa",\#(copy)}"#), product: "other") == .undecided)
+
+        // `path:` を指定した target
+        try make("custom/place/assets")
+        let moved = try package(#"{"name":"wa","path":"custom/place",\#(copy)}"#)
+        guard case .source(let custom) = origin(moved) else {
+            Issue.record("path: の target を決められなかった")
+            return
+        }
+        #expect(custom.path.hasSuffix("/custom/place/assets"))
+
+        // product を作らない target の置き場は、束に入らない (別の target が置き場を持っていても取らない)
+        try make("Sources/other/assets")
+        let unrelated = try package(
+            #"{"name":"wa"},{"name":"other",\#(copy)}"#)
+        #expect(origin(unrelated) == .notCopied)
+        // 同じ product の target が 2 つ置き場を持てば、決められない (推し量らない)
+        let both = try package(
+            #"{"name":"wa",\#(copy)},{"name":"other",\#(copy)}"#,
+            products: #"{"name":"wa","type":{"executable":null},"targets":["wa","other"]}"#)
+        #expect(origin(both) == .undecided)
     }
 
-    /// 本物の起こす口が、見張りの子へ置き場の元を渡す。
-    @Test("本物の起こす口は、子へ資材の置き場の元を渡す")
+    /// 本物の起こす口が、見張りの子へ置き場の元を渡す。導き手が決めた置き場を渡し、決められなければ渡さない。
+    @Test("本物の起こす口は、導き手が決めた資材の置き場の元を子へ渡す")
     func theLiveLaunchPassesTheAssetOrigin() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
@@ -1863,11 +1905,44 @@ struct FrameRateHandoffTests {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
 
-        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
-        let child = try hooks.launch(executable, directory, nil, nil)
-        child.waitUntilExit()
-        let given = try String(contentsOf: seen, encoding: .utf8)
-        #expect(given.hasSuffix("/Sources/sketch/assets"), "\(given)")
-        #expect(given.hasPrefix("/"))
+        for (decided, expected) in [
+            (SwiftPM.AssetsOrigin.source(assets), assets.path),
+            (SwiftPM.AssetsOrigin.notCopied, ""), (SwiftPM.AssetsOrigin.undecided, ""),
+        ] {
+            let resolver = BuildResolver(directory: directory) { _ in
+                BuildResolution(
+                    context: BuildContext(
+                        configuration: nil, place: .inPackage(.localDependency), product: "sketch",
+                        assets: decided),
+                    binPath: directory)
+            }
+            let hooks = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild())
+            let child = try hooks.launch(executable, directory, nil, nil)
+            child.waitUntilExit()
+            #expect(try String(contentsOf: seen, encoding: .utf8) == expected, "\(decided)")
+        }
+    }
+
+    /// 決められなかったときだけ、置き場に断片が在れば名乗る。
+    @Test("置き場の元を決められなかったときだけ、断片が在れば保存しても差し替わらないと名乗る")
+    func anUndecidedOriginIsNamedOnlyWhenFragmentsExist() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let assets = root.appendingPathComponent("Sources/wa/assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func context(_ assets: SwiftPM.AssetsOrigin) -> BuildContext {
+            BuildContext(
+                configuration: nil, place: .inPackage(.localDependency), product: "wa", assets: assets)
+        }
+        // 断片が無ければ言うことが無い
+        #expect(WatchCommand.assetsNotice(context: context(.undecided), in: root) == nil)
+        try "float4 paint() {}".write(
+            to: assets.appendingPathComponent("a.metal"), atomically: true, encoding: .utf8)
+        let notice = try #require(WatchCommand.assetsNotice(context: context(.undecided), in: root))
+        #expect(notice.contains(assets.path))
+        // 決められた・束に写されない構成は言わない
+        #expect(WatchCommand.assetsNotice(context: context(.source(assets)), in: root) == nil)
+        #expect(WatchCommand.assetsNotice(context: context(.notCopied), in: root) == nil)
     }
 }

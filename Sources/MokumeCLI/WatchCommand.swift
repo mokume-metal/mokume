@@ -80,6 +80,9 @@ enum WatchCommand {
             reportsRate: true, hooks: .live(resolver: resolver, running: running))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
+        // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても
+        // 走らせたまま差し替わらない
+        if let notice = assetsNotice(context: context, in: directory) { say(notice) }
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
         // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
         say("Tool: \(ToolVersion.describe())")
@@ -141,6 +144,35 @@ enum WatchCommand {
         refuseThrottling()
         watching(session, viewer)
         teardown(session, viewer, created: prepared)
+    }
+
+    /// 置き場の断片を元から読ませる先を決められなかったときに名乗る 1 行 ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。
+    ///
+    /// 決められた (束に写される置き場が 1 つ) か、束に写されない構成 (資材の宣言の検査が見る) なら
+    /// 言わない。**宣言が読めない・置き場が複数あって決まらない**ときだけ、置き場に断片が在れば、保存しても
+    /// 走らせたまま差し替わらないことを言う。断片が無ければ言うことが無い。
+    static func assetsNotice(context: BuildContext, in directory: URL) -> String? {
+        guard context.assets == .undecided else { return nil }
+        let sources = directory.appendingPathComponent("Sources", isDirectory: true)
+        guard
+            let targets = try? FileManager.default.contentsOfDirectory(
+                atPath: sources.path)
+        else { return nil }
+        for target in targets.sorted() {
+            let assets = sources.appendingPathComponent(target, isDirectory: true)
+                .appendingPathComponent(ResourceDeclaration.directoryName, isDirectory: true)
+            guard
+                let walker = FileManager.default.enumerator(
+                    at: assets, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            else { continue }
+            for case let url as URL in walker where url.pathExtension.lowercased() == "metal" {
+                return "Could not tell which directory of assets goes into the running sketch "
+                    + "(is Package.swift readable, and does one target copy it?), so saving a shader "
+                    + "fragment under \(assets.path) will not swap it in while it runs — "
+                    + "save a .swift file to rebuild"
+            }
+        }
+        return nil
     }
 
     /// 窓口が使う区画を、子を起こす前に置く。**窓も GPU も要さない。**

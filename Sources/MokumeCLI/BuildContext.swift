@@ -33,6 +33,10 @@ nonisolated struct BuildContext: Equatable {
     let place: BuildDirectory.Place
     /// 走らせる実行ファイル (宣言された executable product) の名前。**読めなければ `nil`。**
     let product: String?
+    /// 走らせる実行ファイルの束に写される資材の置き場の元。見張りが子へ渡す
+    /// ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。**宣言から決める** — 既定は
+    /// 「写されない」で、宣言が読めない回は ``SwiftPM/AssetsOrigin/undecided``。
+    var assets: SwiftPM.AssetsOrigin = .notCopied
 
     /// 道具立てへ渡す引数。
     ///
