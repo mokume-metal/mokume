@@ -342,6 +342,70 @@ struct SoundFileTests {
         #expect(muted[2].isPlaying && muted[2].level == 0)
     }
 
+    // MARK: - 解析は読まれたときだけ (#2379)
+
+    @Test("値を読まない再生は解析されず、読む再生は 1 フレームに何度読んでも 1 回だけ解析される")
+    func onlyTheValuesThatAreReadGetAnalyzed() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let frames = 5
+        var unread: SoundFile?
+        var read: SoundFile?
+        let analyzerBefore = AudioAnalyzer.shared.analyses
+        let runtime = try run(
+            frames: frames,
+            setup: { sketch in
+                let first = try sketch.loadSound(url.path)
+                first.play()
+                let second = try sketch.loadSound(url.path)
+                second.play()
+                unread = first
+                read = second
+            },
+            draw: { _ in
+                guard let read else { return }
+                _ = read.level
+                _ = read.spectrum
+                _ = read.rms
+            })
+        runtime.closePlugins()
+
+        #expect(unread?.analyses == 0)
+        #expect(read?.analyses == frames)
+        #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames, "解析は共有の解析器を通る")
+    }
+
+    /// **音量はフレームの頭の値で窓に掛かる。** 読む前に `amp()` で変えても、そのフレームの値は
+    /// 変える前の音量のもので、変えた音量は次のフレームから効く (毎フレーム解析していたときと同じ)。
+    @Test("読む前に音量を変えても、そのフレームの値はフレームの頭の音量のもので、次のフレームから効く")
+    func aVolumeChangedBeforeTheReadTakesEffectNextFrame() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        func heardRMS(changingVolumeAt frame: Int?) throws -> [Float] {
+            var sound: SoundFile?
+            var seen: [Float] = []
+            let runtime = try run(
+                frames: 4,
+                setup: { sketch in
+                    let loaded = try sketch.loadSound(url.path)
+                    loaded.play()
+                    sound = loaded
+                },
+                draw: { sketch in
+                    guard let sound else { return }
+                    if sketch.frameCount == frame { sound.amp(0.5) }
+                    seen.append(sound.rms)
+                })
+            runtime.closePlugins()
+            return seen
+        }
+        let steady = try heardRMS(changingVolumeAt: nil)
+        let changed = try heardRMS(changingVolumeAt: 3)
+        #expect(steady.count == 4 && changed.count == 4)
+        #expect(changed[2] == steady[2], "変えたフレームの値は、変える前の音量のまま")
+        #expect(abs(changed[3] - steady[3] * 0.5) < 1e-6, "次のフレームから半分になる")
+    }
+
     @Test("閉じると止まって無音になる")
     func closeSilences() throws {
         let url = try writeWAV(chord, sampleRate: 48_000)

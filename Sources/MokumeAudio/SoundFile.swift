@@ -90,7 +90,11 @@ public final class SoundFile: Inlet {
     /// 鳴っている間に頼まれた飛び先 (標本)。次のフレームの ``supply()`` で、そこから区切りを始め直す。
     private var pendingJump: Int?
     private var volume: Float = 1
-    private var levels = AudioLevels.silence
+    /// フレームの頭の窓と、読まれたときに解いた値 (``DeferredLevels``)。
+    private var deferred = DeferredLevels()
+    private var levels: AudioLevels { deferred.levels() }
+    /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
+    var analyses: Int { deferred.analyses }
     /// 位置を進める時計。開くまで `nil`。
     private var pace: Pace?
     /// 最後に見たフレームが、時計の上で何フレーム目に並ぶか (最初のフレームが 0)。操作はこの
@@ -345,7 +349,7 @@ public final class SoundFile: Inlet {
             beginSegment()
         }
         guard playhead.isPlaying else {
-            levels = .silence
+            deferred.silence()
             return
         }
         let played = played()
@@ -353,11 +357,12 @@ public final class SoundFile: Inlet {
         // 鳴り終わったフレームからは無音 (``isPlaying`` が `false` の間、値は鳴っていない音のもの)
         if playhead.settle(after: played) {
             halt()
-            levels = .silence
+            deferred.silence()
             return
         }
         let window = playhead.window(of: samples, after: played)
-        levels = AudioAnalysis.analyze(volume == 1 ? window : vDSP.multiply(volume, window))
+        // **窓は音量を掛けた形でフレームの頭に決め、解析は読まれたときまで遅らせる** (#2379)
+        deferred.hold(volume == 1 ? window : vDSP.multiply(volume, window))
     }
 
     /// いまの再生位置 (標本)。飛び先を待っている間も、まだ動いていない位置を返す。検査が読む。
@@ -368,7 +373,7 @@ public final class SoundFile: Inlet {
         if case .speaker(let player) = pace { player.leave() }
         pace = nil
         playhead.stop()
-        levels = .silence
+        deferred.silence()
     }
 
     // MARK: - 時計

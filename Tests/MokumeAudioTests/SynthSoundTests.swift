@@ -496,4 +496,79 @@ struct SynthSoundTests {
         #expect(last.rms == rebuilt.rms)
         #expect(last.spectrumLevels == rebuilt.spectrumLevels)
     }
+
+    // MARK: - 解析は読まれたときだけ (#2379)
+
+    /// **値を読まない音は解析されず、読む音は 1 フレームに 1 回だけ解析される。** 鳴らした音は止めた後も
+    /// 毎フレーム窓を切るが、解くのは読まれたときだけである ([#2379])。解析は共有の解析器
+    /// (``AudioAnalyzer``) を通る。
+    ///
+    /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
+    @Test("値を読まない音は解析されず、読む音は 1 フレームに何度読んでも 1 回だけ解析される")
+    func onlyTheValuesThatAreReadGetAnalyzed() throws {
+        let frames = 6
+        var unread: SynthSound?
+        var read: SynthSound?
+        let analyzerBefore = AudioAnalyzer.shared.analyses
+        let runtime = try run(
+            frames: frames,
+            setup: { sketch in
+                let stage = SynthStage.stage(for: sketch, flow: nil)
+                let first = SinOsc(stage: stage)
+                first.play(1000, 0.4)
+                let second = SinOsc(stage: stage)
+                second.play(500, 0.4)
+                unread = first
+                read = second
+            },
+            draw: { _ in
+                guard let read else { return }
+                _ = read.level
+                _ = read.spectrum
+                _ = read.rms
+            })
+        runtime.closePlugins()
+
+        #expect(unread?.analyses == 0)
+        #expect(read?.analyses == frames)
+        #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames, "解析は共有の解析器を通る")
+    }
+
+    /// **遅らせた解析は、フレームの頭の窓を解く。** 読む前に音だけが先へ進んでも (実時間の再生では
+    /// 音の側が先へ進む)、値は毎フレーム解析していたときと同じで、進んだ分の標本は拾わない。
+    @Test("読む前に音が先へ進んでも、値はフレームの頭の窓のものでビット一致する")
+    func aLateReadStillSolvesTheWindowFromTheStartOfTheFrame() throws {
+        let frames = 6
+        var sound: SynthSound?
+        var stage: SynthStage?
+        var heard: [Sounded] = []
+        let runtime = try run(
+            frames: frames,
+            setup: { sketch in
+                let made = SynthStage.stage(for: sketch, flow: nil)
+                let osc = SinOsc(stage: made)
+                osc.play(1000, 0.4)
+                sound = osc
+                stage = made
+            },
+            draw: { sketch in
+                guard let sound, let stage else { return }
+                // フレームの頭の後、読む前に、音だけが 1700 標本先へ進む (最後のフレームだけ。
+                // 以後に進める位置は、この検査が終わるので影響しない)
+                if sketch.frameCount == frames { stage.rack.advance(frames: 1_700) }
+                heard.append(Sounded(sound))
+            })
+        runtime.closePlugins()
+
+        #expect(heard.count == frames)
+        for (index, frame) in heard.enumerated() {
+            let levels = try expected(frame: index) { rack in
+                try addSource(rack, .wave(.sine), [.frequency: 1000, .amplitude: 0.4])
+            }
+            #expect(frame.rms == levels.rms, "frame \(index + 1)")
+            #expect(frame.level == levels.level, "frame \(index + 1)")
+            #expect(frame.spectrum == levels.spectrum, "frame \(index + 1)")
+            #expect(frame.spectrumLevels == levels.spectrumLevels, "frame \(index + 1)")
+        }
+    }
 }

@@ -60,17 +60,34 @@ nonisolated enum AudioAnalysis {
     private static let hannSum = vDSP.sum(hann)
 
     /// 窓 1 つを解析する。長さが ``windowSize`` に足りなければ、前を 0 で埋める。
+    ///
+    /// **呼ぶたびに変換の setup を作る** (11〜12 µs。解析 1 回の 4 分の 3)。純粋な参照の形で、
+    /// 検査が「製品の経路の値」と突き合わせる相手でもある。繰り返し解析する側 (``AudioIn``・
+    /// ``SoundFile``・``SynthSound``) は ``AudioAnalyzer`` を通る ([#2379])。
+    ///
+    /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
     static func analyze(_ window: [Float]) -> AudioLevels {
+        analyze(window, using: makeTransform())
+    }
+
+    /// 窓の長さの前向きの変換を作る。作るのに時間が掛かるので、繰り返す側は 1 度作って使い回す
+    /// (``AudioAnalyzer``)。作れなければ `nil` で、帯域は 0 のまま返る。
+    static func makeTransform() -> vDSP.DiscreteFourierTransform<Float>? {
+        try? vDSP.DiscreteFourierTransform(
+            count: windowSize, direction: .forward, transformType: .complexComplex,
+            ofType: Float.self)
+    }
+
+    /// 作ってある変換で窓 1 つを解析する。**``analyze(_:)`` と同じ式**で、変換の作り手だけが違う。
+    static func analyze(
+        _ window: [Float], using transform: vDSP.DiscreteFourierTransform<Float>?
+    ) -> AudioLevels {
         let samples = padded(window)
         let rms = vDSP.rootMeanSquare(samples)
         let decibels = decibels(rms)
 
         var spectrum = Array(repeating: Float(0), count: bandCount)
-        // 変換は `Sendable` でないので共有せず、呼ぶたびに作る (フレームに 1 度で、数十マイクロ秒)
-        if let transform = try? vDSP.DiscreteFourierTransform(
-            count: windowSize, direction: .forward, transformType: .complexComplex,
-            ofType: Float.self)
-        {
+        if let transform {
             let real = vDSP.multiply(samples, hann)
             let imaginary = [Float](repeating: 0, count: windowSize)
             let output = transform.transform(real: real, imaginary: imaginary)
@@ -116,5 +133,62 @@ nonisolated enum AudioAnalysis {
         if window.count == windowSize { return window }
         if window.count > windowSize { return Array(window.suffix(windowSize)) }
         return Array(repeating: 0, count: windowSize - window.count) + window
+    }
+}
+
+/// 製品の経路の解析器。**変換の setup を 1 つ持ち、使い回す** ([#2379])。
+///
+/// 変換は `Sendable` でないので、呼ぶ側と同じ main actor に置く。解析する側 (``AudioIn``・
+/// ``SoundFile``・``SynthSound``) はどれも main actor の上で解析するので、共有しても競合は無い。
+/// 以前は「フレームに 1 度で、数十マイクロ秒」を前提に呼ぶたびに作っていたが、合成音が音ごとに
+/// 解析するようになって前提が崩れた (最大 64 個で 1 フレームに 64 回)。
+///
+/// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
+final class AudioAnalyzer {
+    static let shared = AudioAnalyzer()
+
+    private let transform = AudioAnalysis.makeTransform()
+    /// 解析した回数。**検査が読む** — 製品の経路がここを通ることと、読まれない値は解析しないことを
+    /// 数で見る。
+    private(set) var analyses = 0
+
+    func analyze(_ window: [Float]) -> AudioLevels {
+        analyses += 1
+        return AudioAnalysis.analyze(window, using: transform)
+    }
+}
+
+/// フレームの頭で切り出した窓と、読まれたときにそれを解いた値。
+///
+/// **窓はフレームの頭で決める。解析だけを読まれたときまで遅らせる** ([#2379])。読んだ値は、遅らせても
+/// 毎フレーム解析したときと同じ (ビット一致) — 遅らせた分に進んだ標本は拾わない。同じフレームで
+/// 何度読んでも解析は 1 回で、読まれなかったフレームの窓は次の窓に置き換わって解かれない。
+///
+/// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
+struct DeferredLevels {
+    /// まだ解いていない、フレームの頭の窓。
+    private var window: [Float]?
+    /// 解いた値、または無音。
+    private var solved = AudioLevels.silence
+    /// 解いた回数。検査が読む。
+    private(set) var analyses = 0
+
+    /// このフレームの窓を置く。前の窓が解かれていなくても捨てる。
+    mutating func hold(_ window: [Float]) { self.window = window }
+
+    /// 無音にする。
+    mutating func silence() {
+        window = nil
+        solved = .silence
+    }
+
+    /// 読まれた値。窓が残っていればここで 1 回だけ解く。
+    mutating func levels() -> AudioLevels {
+        if let held = window {
+            solved = AudioAnalyzer.shared.analyze(held)
+            analyses += 1
+            window = nil
+        }
+        return solved
     }
 }
