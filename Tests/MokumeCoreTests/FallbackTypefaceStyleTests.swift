@@ -106,4 +106,118 @@ struct FallbackTypefaceStyleTests {
         _ = Self.typeface(.normal, into: reports).advance(of: "Mokume あ😀")
         #expect(reports.items.isEmpty, "\(reports.items.map { "\($0.scalar) \($0.postScript)" })")
     }
+
+    // MARK: - 頼んだ面の引き直し (#2770)
+    //
+    // CoreText は代わりの書体を、頼んだ面を持てなかった (劣化した) base に合わせて選ぶ。引いた書体が頼んだ
+    // 面を持つなら、その面で引き直す。引き直しの判断は `Typeface.restyledFallback` の純粋な関数に切り出して
+    // あり、字形の有無を問う閉包を差し替えて検査する。
+
+    /// 太字の面を持たない欧文の書体を指定して、混ぜた日本語を引く。(書体・太さ・字・引き直した面)
+    nonisolated static var restyledFaces: [(name: String, style: TextStyle, scalar: Unicode.Scalar, face: String)] {
+        [
+            ("Apple-Chancery", .bold, "あ", "HiraMinProN-W6"),
+            ("AndaleMono", .bold, "あ", "HiraginoSans-W6"),
+            ("Apple-Chancery", .boldItalic, "あ", "HiraMinProN-W6"),  // 太斜体は太字だけの面 (#2562 の順)
+            ("Helvetica", .bold, "あ", "HiraginoSans-W6"),  // 変わらない側: 元から太字
+        ]
+    }
+
+    @Test(
+        "太字の面を持たない書体の和文は、代わりの書体の太字の面で引く",
+        arguments: restyledFaces)
+    func aFallbackIsRestyledToTheRequestedFace(
+        _ item: (name: String, style: TextStyle, scalar: Unicode.Scalar, face: String)
+    ) throws {
+        try #require(
+            CTFontCopyPostScriptName(Self.font(item.name)) as String == item.name,
+            "前提: この環境に \(item.name) がある")
+        try #require(
+            CTFontCopyPostScriptName(Self.font(item.face)) as String == item.face,
+            "前提: この環境に \(item.face) がある")
+        let reports = Reports()
+        let face = Typeface(request: TypefaceRequest(name: item.name, size: 32, style: item.style)) {
+            _, scalar, fallback in
+            reports.items.append((scalar, CTFontCopyPostScriptName(fallback) as String))
+        }
+        let resolved = try #require(face.glyph(for: item.scalar))
+        #expect(resolved.fontKey == item.face, "\(item.name) の \(item.style) に混ぜた「\(item.scalar)」")
+        #expect(CTFontGetSymbolicTraits(resolved.font).contains(.traitBold))
+        // 引き直し前の答えは、頼んだ面より細い (でなければ、この検査は引き直しを見ていない)
+        if item.name != "Helvetica" {
+            let before = CTFontCreateForString(
+                face.base, String(item.scalar) as CFString, CFRangeMake(0, 1))
+            try #require(
+                !CTFontGetSymbolicTraits(before).contains(.traitBold),
+                "前提: 劣化した base から引くと、太字でない面になる")
+        }
+    }
+
+    @Test("太斜体は斜体を欠くので、太字だけの面で描いたことを 1 度知らせる")
+    func aBoldItalicRestyleStillReportsTheMissingItalic() throws {
+        let chancery = Self.font("Apple-Chancery")
+        try #require(CTFontCopyPostScriptName(chancery) as String == "Apple-Chancery", "前提: Apple Chancery がある")
+        let reports = Reports()
+        let face = Typeface(request: TypefaceRequest(name: "Apple-Chancery", size: 32, style: .boldItalic)) {
+            _, scalar, fallback in
+            reports.items.append((scalar, CTFontCopyPostScriptName(fallback) as String))
+        }
+        _ = face.glyph(for: "あ")
+        _ = face.advance(of: "ああ")
+        #expect(reports.items.map(\.postScript) == ["HiraMinProN-W6"], "\(reports.items)")
+    }
+
+    @Test("変わらない側: 斜体は面が無いので元のまま・絵文字は色の書体・何も頼まなければ引き直さない")
+    func restylingLeavesTheOtherCasesAlone() throws {
+        func resolve(_ name: String, _ style: TextStyle, _ scalar: Unicode.Scalar) throws -> String {
+            try #require(CTFontCopyPostScriptName(Self.font(name)) as String == name, "前提: \(name) がある")
+            let face = Typeface(request: TypefaceRequest(name: name, size: 32, style: style)) { _, _, _ in }
+            return try #require(face.glyph(for: scalar)).fontKey
+        }
+        #expect(try resolve("Helvetica", .italic, "あ") == "HiraginoSans-W3")
+        #expect(try resolve("Apple-Chancery", .bold, "😀") == "AppleColorEmoji")
+        let normal = try resolve("Apple-Chancery", .normal, "あ")
+        #expect(normal.hasSuffix("-W3"), "何も頼まない「あ」は面を引き直さない: \(normal)")
+    }
+
+    /// 合成の材料: 引き直しの判断を、CoreText の答えではなく差し替えた閉包で見る。
+    private static func restyle(
+        from name: String, requested: CTFontSymbolicTraits, copyReturns: String?, glyph: CGGlyph
+    ) -> (font: CTFont, glyph: CGGlyph) {
+        let from = font(name)
+        return Typeface.restyledFallback(
+            from, glyph: 7, requested: requested,
+            copy: { _ in copyReturns.map(font) }, glyphIndex: { _ in glyph })
+    }
+
+    @Test("引き直した面が字形を持たなければ、写す前の面のまま描き、字を落とさない")
+    func aRestyledFaceWithoutTheGlyphKeepsTheOriginal() throws {
+        for name in ["HiraginoSans-W3", "HiraginoSans-W6"] {
+            try #require(CTFontCopyPostScriptName(Self.font(name)) as String == name, "前提: \(name) がある")
+        }
+        let none = Self.restyle(from: "HiraginoSans-W3", requested: .traitBold, copyReturns: "HiraginoSans-W6", glyph: 0)
+        #expect(CTFontCopyPostScriptName(none.font) as String == "HiraginoSans-W3")
+        #expect(none.glyph == 7)
+        let found = Self.restyle(from: "HiraginoSans-W3", requested: .traitBold, copyReturns: "HiraginoSans-W6", glyph: 9)
+        #expect(CTFontCopyPostScriptName(found.font) as String == "HiraginoSans-W6")
+        #expect(found.glyph == 9)
+    }
+
+    @Test("頼んだ性質に近づかない面・面が引けない書体・既に頼んだ面を持つ代わりは、引き直さない")
+    func aRestyleThatGainsNothingKeepsTheOriginal() throws {
+        // 面が引けない (nil)
+        let unavailable = Self.restyle(from: "HiraginoSans-W3", requested: .traitBold, copyReturns: nil, glyph: 9)
+        #expect(CTFontCopyPostScriptName(unavailable.font) as String == "HiraginoSans-W3")
+        // 返った面が、頼んだ性質を持たない別の面
+        let sideways = Self.restyle(
+            from: "HiraginoSans-W3", requested: .traitBold, copyReturns: "HiraMinProN-W3", glyph: 9)
+        #expect(CTFontCopyPostScriptName(sideways.font) as String == "HiraginoSans-W3")
+        // 代わりが既に頼んだ面を持つ: 閉包は呼ばれない
+        var asked = false
+        let already = Typeface.restyledFallback(
+            Self.font("HiraginoSans-W6"), glyph: 7, requested: .traitBold,
+            copy: { _ in asked = true; return nil }, glyphIndex: { _ in asked = true; return 9 })
+        #expect(!asked)
+        #expect(already.glyph == 7)
+    }
 }
