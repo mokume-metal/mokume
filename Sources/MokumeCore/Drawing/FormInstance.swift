@@ -207,7 +207,7 @@ struct FormInstance {
 
     /// 扇の中で、輪郭から最も深い所の深さの下限 (形自身の座標)。断片の `mokume_sectorDepthLower` と同じ式。
     static func sectorDepthLower(radii: SIMD2<Float>, sweep: Float) -> Float {
-        let halfSine = sin(0.5 * min(sweep, Float.pi))
+        let halfSine = RuntimeMath.sin(0.5 * min(sweep, Float.pi))
         return min(radii.x, radii.y) * halfSine / (1 + halfSine)
     }
 
@@ -215,8 +215,8 @@ struct FormInstance {
     /// `mokume_sectorApex` と同じ式で、理由もそちらにある。
     static func sectorApexIsSharp(radii: SIMD2<Float>, start: Float, sweep: Float) -> Bool {
         guard sweep < Float.pi else { return false }
-        let direction1 = simd_normalize(radii * SIMD2(cos(start), sin(start)))
-        let direction2 = simd_normalize(radii * SIMD2(cos(start + sweep), sin(start + sweep)))
+        let direction1 = simd_normalize(radii * SIMD2(RuntimeMath.cos(start), RuntimeMath.sin(start)))
+        let direction2 = simd_normalize(radii * SIMD2(RuntimeMath.cos(start + sweep), RuntimeMath.sin(start + sweep)))
         let bisector = simd_normalize(direction1 + direction2)
         let sineHalf = abs(direction1.x * bisector.y - direction1.y * bisector.x)
         return sineHalf < 0.5
@@ -236,7 +236,7 @@ struct FormInstance {
     static func sectorDepthBound(radii: SIMD2<Float>, sweep: Float) -> Float {
         let longRadius = max(radii.x, radii.y)
         let shortRadius = min(radii.x, radii.y)
-        let halfSine = sin(0.5 * min(sweep, Float.pi))
+        let halfSine = RuntimeMath.sin(0.5 * min(sweep, Float.pi))
         return min(shortRadius, longRadius * halfSine / (1 + halfSine))
     }
 
