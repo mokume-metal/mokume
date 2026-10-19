@@ -381,6 +381,25 @@ final class SharedFrameSurface {
         owner != nil && WorkDirectory.directoryExists(at: directory)
     }
 
+    /// 共有面へ差し出せずに自分の窓へ倒れたことを、道具へ知らせる ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
+    ///
+    /// **道具が前の世代を残したままにしないために要る。** 見張りが前の世代を畳むのは、道具の窓が
+    /// 新しい世代の目録を採った合図が来たときだけ (``SharedFrameStage``)。倒れた子は目録を置かない
+    /// ので合図は来ず、前の世代 (道具の窓に映る) と倒れた子 (自分の窓) が次の保存まで並走する。
+    /// 道具が知る手段は、子が区画へ自分の pid の目印を置くこと (``WorkDirectory/fellBackURL(forProcess:under:)``)
+    /// で、新しい通信路は作らない ([ADR-0032] 決定 3)。
+    ///
+    /// **置けなければ黙って諦める。** 区画そのものを書けない倒れ方では知らせようが無く、倒れたことは
+    /// 呼び手が既に名乗っている。置いた目印は、見た道具が消す。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static func declareFallback(
+        at directory: URL, pid: Int32 = ProcessInfo.processInfo.processIdentifier
+    ) {
+        let url = WorkDirectory.fellBackURL(forProcess: pid, under: directory)
+        _ = FileManager.default.createFile(atPath: url.path, contents: Data())
+    }
+
     /// 区画が在るのに、窓を持つ道具に起こされていないときに名乗る 1 行。**それ以外は `nil`。**
     ///
     /// **黙って窓を開くと、区画を置いた側と食い違って見える。** 区画が在る場所で走らせた人は、

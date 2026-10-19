@@ -81,6 +81,20 @@ nonisolated public enum WorkDirectory {
         facet.appendingPathComponent(".claim")
     }
 
+    /// 区画 `viewport` の中の、**共有面へ差し出せずに自分の窓へ倒れた**ことを道具へ知らせる目印
+    /// ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
+    ///
+    /// 倒れた子が自分の pid で置き、見張りは乗り換えを待っている子の pid の目印を見る。**中身は
+    /// 空で、在ることが知らせである** (JSON ではないので `Schemas/` に仕様は無い)。pid を名前に
+    /// 持つので、前の世代の目印を新しい世代のものと取り違えず、時計も要らない。点で始めるのは
+    /// ``claimURL(under:)`` と同じ理由 (読み手が区画を覗いたときに目録と並んで目に入らない)。
+    ///
+    /// **綴りはここ 1 箇所。** 置く側 (子) と見る側 (見張り) が別のプロセスで、片方だけ動かすと
+    /// 知らせは永久に届かない (``requestURL(under:)`` と同じ理由)。
+    package static func fellBackURL(forProcess pid: Int32, under facet: URL) -> URL {
+        facet.appendingPathComponent(".fell-back.\(pid)")
+    }
+
     /// その場所がディレクトリとして在るか。
     ///
     /// **ファイルが在るだけでは真にしない。** 区画は必ずディレクトリなので、同じ名前の

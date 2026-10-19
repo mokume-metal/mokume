@@ -472,11 +472,31 @@ enum WatchCommand {
     /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。新しい絵が
     /// 出るまでの記録もこの合図で足される (#930)。
     static func retire(after session: WatchSession?) async {
-        guard let outcome = await session?.generationPromoted() else { return }
+        announce(await session?.generationPromoted())
+    }
+
+    /// 前の世代を畳んだ結果のうち、人が知るべきもの (期限に掛かった) だけを名乗る。
+    private static func announce(_ outcome: WatchSession.StopOutcome?) {
         switch outcome {
         case .killed: say(killedLine)
         case .abandoned(let pid): say(abandonedLine(pid: pid))
         default: break
+        }
+    }
+
+    /// 作り直した子が共有面を作れず自分の窓を開いたとき、見張りが名乗る行 (#2350)。
+    ///
+    /// **子が名乗る理由** (`Could not place …` / `Could not make …`) は端末に既に出ているので、
+    /// ここは見張りの側で起きたこと — 絵と入力が子の窓へ移り、前の世代を畳んだこと — を言う。
+    /// 前の世代が居なかった回 (最初の子) は畳んでいないので、言わない。
+    static func fellBackLine(previous: WatchSession.FallbackPrevious) -> String {
+        let head = "could not hand its frames to this window, so it opened its own"
+        switch previous {
+        case .none: return "The sketch " + head
+        case .stopped: return "The new version " + head + " — the previous version is stopped"
+        case .left:
+            return "The new version " + head
+                + " — the previous version could not be stopped and keeps running"
         }
     }
 
@@ -515,8 +535,11 @@ enum WatchCommand {
     @discardableResult
     static func step(
         _ session: WatchSession, viewer: Viewer? = nil,
-        stopped: () -> Bool = { watchStopRequested != 0 }
+        stopped: () -> Bool = { watchStopRequested != 0 },
+        preview: ((String?, Bool) -> Void)? = nil
     ) async -> Bool {
+        // プレビューへ出す口。**検査は窓を作らずに、出した行を見られる**ように差し替える
+        let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
         if stopped() {
             session.noteStopRequested()
             return false
@@ -531,7 +554,16 @@ enum WatchCommand {
             let line = departedLine(departure)
             say(line)
             viewer?.firstFrame.settle()
-            viewer?.preview.report(line, spinning: false)
+            showInPreview(line, false)
+        }
+        // **倒れた子は、乗り換えの合図が来ないので、ここで見つける** (#2350)。作り直した子が共有面を
+        // 作れず自分の窓を開いた回は、前の世代が道具の窓に映ったまま並走する
+        if let fallen = await session.retireAfterFallback() {
+            announce(fallen.outcome)
+            let line = fellBackLine(previous: fallen.previous)
+            say(line)
+            viewer?.firstFrame.settle()
+            showInPreview(line, false)
         }
         if let outcome = await session.tick() {
             // **終われと言われた後に戻ってきた結果は名乗らない** (最初の 1 回と同じ規律)。どう

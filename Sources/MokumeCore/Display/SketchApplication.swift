@@ -500,7 +500,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
         guard SharedFrameSurface.isEnabled(at: directory, owner: owner) else { return }
         runtime.relayToolInput(from: StandardInputEvents(descriptor: toolInput))
-        guard let shared = attachSharedSurface(at: directory, owner: owner) else { return }
+        guard let shared = attachSharedSurface(at: directory, owner: owner) else {
+            // **倒れたことを道具へ知らせる** (#2350)。道具は目録を置いた子が窓を乗り換えた合図で
+            // 前の世代を畳むので、目録を置かない子では前の世代が残る
+            SharedFrameSurface.declareFallback(at: directory)
+            return
+        }
         outlet = .shared(shared)
         // **全画面の頼みに応えられないことを、黙らない** (#2020)。作品の窓は道具が持つので
         // ([ADR-0032] 決定 1)、こちらからは全画面にできない。描く大きさはディスプレイから

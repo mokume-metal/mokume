@@ -1122,6 +1122,176 @@ struct WatchSessionTests {
         #expect(arriving.isRunning, "まだ映っていない世代へ送っている")
     }
 
+    // MARK: - 倒れた子 (#2350)
+
+    /// 子が置く目印 (`.fell-back.<pid>`)。置き方は子の側 (`SharedFrameSurface.declareFallback`) と同じ綴り。
+    private func placeFellBackMarker(of child: Process, for session: WatchSession) throws -> URL {
+        let facet = WatchCommand.viewportFacet(under: session.facetBase)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let marker = WorkDirectory.fellBackURL(forProcess: child.processIdentifier, under: facet)
+        try Data().write(to: marker)
+        return marker
+    }
+
+    /// **作り直した子が共有面を作れず自分の窓へ倒れた回は、乗り換えの合図が来ない。** 前の世代
+    /// (道具の窓に映る) を畳まないと、2 つの子が次の保存まで走り続け、入力は前の世代へ行く。
+    @Test("倒れた子の知らせが来たら、乗り換えの合図を待たずに前の世代を止め、入力の宛先は新しい子になる")
+    func aChildThatFellBackRetiresTheOutgoingOne() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        #expect(session.outgoing === leaving)
+        // 知らせが来ていないあいだは何も変わらない
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(leaving.isRunning)
+        #expect(session.outgoing === leaving)
+
+        let marker = try placeFellBackMarker(of: arriving, for: session)
+        let result = try #require(await session.retireAfterFallback())
+        #expect(result.previous == .stopped)
+        #expect(result.outcome != nil, "前の世代を止めた結果を返していない")
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "前の世代が退役していない")
+        #expect(session.outgoing == nil)
+        #expect(!FileManager.default.fileExists(atPath: marker.path), "見た目印を消していない")
+        // 同じ知らせで、もう 1 度は働かない
+        #expect(await session.retireAfterFallback() == nil)
+
+        // 宛先は倒れた子 (新しい世代)。子は 1 行読んだら終わる
+        session.send("touch\n")
+        waitUntilGone(arriving)
+        #expect(!arriving.isRunning, "入力が倒れた子へ届いていない")
+    }
+
+    /// **乗り換えを待っている世代の目印だけを読む。** 前の世代や、乗り換えた後の世代の目印で、
+    /// 画面に出ている世代を畳まない。
+    @Test("倒れた子の知らせは、乗り換えを待っている世代のものしか読まない")
+    func onlyTheWaitingGenerationsMarkerCounts() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+
+        // 前の世代の目印は、新しい世代のものと取り違えない
+        _ = try placeFellBackMarker(of: leaving, for: session)
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(leaving.isRunning)
+        #expect(session.outgoing === leaving)
+
+        // 乗り換えた後に置かれた目印は読まない (画面に出ている世代を畳まない)
+        await session.generationPromoted()
+        waitUntilGone(leaving)
+        let late = try placeFellBackMarker(of: arriving, for: session)
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(FileManager.default.fileExists(atPath: late.path))
+        #expect(arriving.isRunning)
+    }
+
+    /// **掃いていない目印は、後の子が同じ pid を巡り当てると、倒れたと読まれる。** 新しい子を起こす前に
+    /// 古い目印を掃く。退役のときも掃くが、乗り換えを待っている世代の目印はまだ見ていないので残す。
+    @Test("古い倒れた目印は、新しい子を起こす前と退役のときに掃かれ、待っている世代の目印は残る")
+    func staleFellBackMarkersAreSwept() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let facet = WatchCommand.viewportFacet(under: session.facetBase)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        func marker(_ pid: Int32) -> URL { WorkDirectory.fellBackURL(forProcess: pid, under: facet) }
+        func place(_ pid: Int32) throws { try Data().write(to: marker(pid)) }
+        func exists(_ pid: Int32) -> Bool { FileManager.default.fileExists(atPath: marker(pid).path) }
+
+        // 見る前に残った目印 (もう居ない世代のもの)。次の子を起こす前に掃かれる
+        try place(999_001)
+        await session.start()
+        ready.waitForLast()
+        #expect(!exists(999_001), "子を起こす前に古い目印を掃いていない")
+
+        let first = try #require(session.child)
+        // 見ないまま次の保存が来た世代の目印 (退役は乗り換えを待っている世代の目印を残すので、
+        // 起こす前の掃除が要る)
+        try place(first.processIdentifier)
+        await session.tick()
+        ready.waitForLast()
+        #expect(!exists(first.processIdentifier), "2 回目の起こしの前に古い目印を掃いていない")
+        let arriving = try #require(session.child)
+        #expect(session.outgoing === first)
+
+        // 退役: 乗り換えを待っている世代の目印は残り、ほかの古い目印は掃かれる
+        try place(arriving.processIdentifier)
+        try place(999_003)
+        // 乗り換えの合図で畳む (乗り換えると、待っている世代は居なくなる)
+        await session.retireOutgoing()
+        #expect(!exists(999_003), "退役のときに古い目印を掃いていない")
+        #expect(exists(arriving.processIdentifier), "乗り換えを待っている世代の目印まで掃いた")
+    }
+
+    /// **口の配線**: 巡回の 1 拍 (`step`) が倒れた子を見つけて前の世代を畳み、端末とプレビューへ名乗る。
+    @Test("巡回の 1 拍は、倒れた子の知らせで前の世代を畳み、プレビューへ名乗る")
+    func theLoopStepRetiresAndNamesAFallenChild() async throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        _ = try placeFellBackMarker(of: arriving, for: session)
+
+        var lines: [(String?, Bool)] = []
+        await WatchCommand.step(session, stopped: { false }, preview: { lines.append(($0, $1)) })
+
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "巡回が倒れた子を見つけて前の世代を畳んでいない")
+        let named = WatchCommand.fellBackLine(previous: .stopped)
+        #expect(lines.contains { $0.0 == named && $0.1 == false }, "プレビューへ名乗っていない: \(lines)")
+    }
+
+    /// 畳めずに置いていくときは、止めたと言い切らない。
+    @Test("前の世代を畳めなかったときの行は、止めたと言わずに走り続けると言う")
+    func theFallbackLineDoesNotClaimAStopThatDidNotHappen() {
+        let stopped = WatchCommand.fellBackLine(previous: .stopped)
+        let left = WatchCommand.fellBackLine(previous: .left)
+        let none = WatchCommand.fellBackLine(previous: .none)
+        #expect(stopped.contains("previous version is stopped"))
+        #expect(!left.contains("is stopped"), "畳めていないのに止めたと言っている")
+        #expect(left.contains("keeps running"))
+        #expect(!none.contains("previous"), "前の世代が居ないのに前の世代を言っている")
+    }
+
+    /// 重ねない見張り (窓が出せなかった実行) には乗り換えを待つ世代が居ないので、目印があっても何もしない。
+    @Test("重ねない見張りは、倒れた子の知らせを読まない")
+    func withoutOverlapAMarkerChangesNothing() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; read line", ready: ready), stopTimeout: 0.5)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let child = try #require(session.child)
+
+        _ = try placeFellBackMarker(of: child, for: session)
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(child.isRunning)
+    }
+
     /// 期限を越えたら子を落とす係。
     ///
     /// **`Process` は `Sendable` ではない**が、期限を数えるのは別の走りでなければならない
