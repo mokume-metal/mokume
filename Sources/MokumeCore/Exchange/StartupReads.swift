@@ -169,6 +169,24 @@ nonisolated public enum StartupReads {
     /// ``viewportOwner`` の綴り。``viewport`` の説明からも名指すので、1 つに置く。
     private static let viewportOwnerKey = "MOKUME_VIEWPORT_OWNER"
 
+    /// 資材の置き場の元 — 見張りの下で、置き場の断片を元のファイルから読ませる。
+    ///
+    /// 見張りの子は作業ディレクトリがスケッチの根なので、断片を探すとビルドが束へ写した写しに解け、
+    /// 置き場の元を保存しても走らせたまま差し替わらない ([#2517])。**元の在処は見張りにしか分からない**
+    /// ので子へ渡す。値は `Sources/<target>/assets` の絶対パスで、渡すのは `watch` だけ
+    /// (``viewportOwner`` と同じく、渡さなければ親の環境に在っても落とす)。**受け取った子は読んだ時点で自分の
+    /// 環境から消す** — 合図はその子 1 つのもので、スケッチがさらに起こすプロセスへは継がせない。断片の口だけが
+    /// 読み、画像など他の資材の在処は変えない。束にも写されている断片だけが対象である。
+    ///
+    /// [#2517]: https://github.com/mokume-metal/mokume/issues/2517
+    public static let assetOrigin = Entry(
+        name: "Asset origin", origin: .environment, key: "MOKUME_ASSET_ORIGIN", decidedBy: .tool,
+        note: "Where the asset directory of the sketch's sources is, so a saved shader fragment "
+            + "under it is read from there and swapped in while the sketch runs, instead of from "
+            + "the copy the build made. The value is that directory's absolute path, and the tool "
+            + "passes it only for watch, and the sketch takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Drawing/ShaderOrigin.swift")
+
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
         name: "Frame rate notice", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
@@ -209,6 +227,6 @@ nonisolated public enum StartupReads {
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        observe, input, params, viewport,
+        assetOrigin, observe, input, params, viewport,
     ]
 }

@@ -23,6 +23,23 @@ import Foundation
 ///
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 nonisolated enum SwiftPM {
+    /// 見張りの子の置き場の元 (``ShaderOrigin``)。
+    enum AssetsOrigin: Equatable {
+        /// 走らせる実行ファイルの束には、置き場がそのまま写されない (宣言が無い・`.process`・`.copy` が
+        /// 別のファイルだけ)。**子へは何も渡さず、今までどおり**資材の宣言の検査が見る。
+        case notCopied
+        /// 束にそのまま写される置き場の元。
+        case source(URL)
+        /// 宣言が読めない・置き場が複数あって決まらない。**推し量らずに渡さない。**
+        case undecided
+
+        /// 子へ渡す在処。
+        var url: URL? {
+            if case .source(let url) = self { return url }
+            return nil
+        }
+    }
+
     // MARK: - swift package dump-package
 
     /// `swift package dump-package` が出すパッケージの宣言。
@@ -75,6 +92,73 @@ nonisolated enum SwiftPM {
             targets.filter { !$0.resources.isEmpty }.map { "\(name)_\($0.name).bundle" }
         }
 
+        /// 走らせる実行ファイルの束に**そのまま写される**資材の置き場 (`Sources/<target>/assets`)
+        /// ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。
+        ///
+        /// 見張りが子へ渡し、置き場の断片を束の写しではなく元から読ませる (``ShaderOrigin``)。決めるのは
+        /// 宣言である — product を作る target のうち、`.copy("assets")` を宣言したもの。**どの target の置き場が
+        /// 束に入るかを、ディレクトリの並びから推し量らない** (束に入っていない別の target の断片を黙って
+        /// 読まない)。
+        ///
+        /// - Parameters:
+        ///   - product: 走らせる実行ファイルの名前。宣言が読めなければ `nil`。
+        ///   - root: パッケージの場所。
+        ///   - directoryName: 置き場の名前 (``ResourceDeclaration/directoryName``)。
+        func assetsOrigin(
+            forProduct product: String?, in root: URL, directoryName: String
+        ) -> AssetsOrigin {
+            guard let product, let declared = products.first(where: { $0.name == product })
+            else { return .undecided }
+            var found: [URL] = []
+            for name in declared.targets {
+                guard let target = targets.first(where: { $0.name == name }),
+                    target.resources.contains(where: {
+                        $0.isCopy && Self.normalized($0.path) == directoryName
+                    })
+                else { continue }
+                // 置き場の場所が決まらない target があれば、決められない (推し量らない)
+                guard let place = sourceDirectory(of: target, in: root) else { return .undecided }
+                let assets = place.appendingPathComponent(directoryName, isDirectory: true)
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: assets.path, isDirectory: &isDirectory),
+                    isDirectory.boolValue
+                {
+                    found.append(assets)
+                }
+            }
+            switch found.count {
+            case 0: return .notCopied
+            case 1: return .source(found[0])
+            default: return .undecided
+            }
+        }
+
+        /// 資材の相対パスの綴りを揃える (`./assets/`・`assets/` → `assets`)。
+        private static func normalized(_ path: String?) -> String? {
+            guard let path else { return nil }
+            var parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+            while parts.first == "." { parts.removeFirst() }
+            return parts.joined(separator: "/")
+        }
+
+        /// target のソースの置き場。**`path:` があればそれ、無ければ道具立ての既定の置き場。**
+        /// 在るものが無ければ `nil`。
+        private func sourceDirectory(of target: Target, in root: URL) -> URL? {
+            let candidates =
+                target.path.map { [$0] }
+                ?? ["Sources", "Source", "src", "srcs"].map { "\($0)/\(target.name)" }
+            for relative in candidates {
+                let url = root.appendingPathComponent(relative, isDirectory: true)
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                    isDirectory.boolValue
+                {
+                    return url
+                }
+            }
+            return nil
+        }
+
         /// パスで指した依存を 1 つでも持つか。
         ///
         /// **持つなら、ビルドの置き場を他のパッケージと共有できない。** 共有の置き場は
@@ -113,6 +197,17 @@ nonisolated enum SwiftPM {
     struct Product: Decodable, Equatable {
         let name: String
         let type: Kind
+        /// product を作る target の名前。**鍵が無ければ空** (宣言していないことになる)。
+        let targets: [String]
+
+        private enum CodingKeys: String, CodingKey { case name, type, targets }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            type = try container.decode(Kind.self, forKey: .type)
+            targets = try container.decodeIfPresent([String].self, forKey: .targets) ?? []
+        }
 
         /// product の種別。
         struct Kind: Decodable, Equatable {
@@ -134,16 +229,40 @@ nonisolated enum SwiftPM {
     /// 宣言された target。
     struct Target: Decodable, Equatable {
         let name: String
-        /// 宣言された資材。**中身は読まない** — 在るかどうかだけで足りる。
+        /// 宣言された置き場 (`path:`)。**指定が無ければ `nil`** — 道具立てが既定の場所から探す。
+        let path: String?
+        /// 宣言された資材。
         let resources: [Resource]
 
-        struct Resource: Decodable, Equatable {}
+        /// 宣言された資材 1 件。
+        struct Resource: Decodable, Equatable {
+            /// target の置き場からの相対パス。
+            let path: String?
+            /// そのまま写す (`.copy`) 宣言か。**鍵が在るかどうかで決まる** — 道具立ては規則を
+            /// `{"copy": {}}` / `{"process": {…}}` の形で書き分ける (``Product/Kind/isExecutable`` と同じ)。
+            /// `.process` は種類ごとに変換して入れるので、元のファイルの写しが束に入るとは限らない。
+            let isCopy: Bool
 
-        private enum CodingKeys: String, CodingKey { case name, resources }
+            private enum CodingKeys: String, CodingKey { case path, rule }
+            private enum RuleKeys: String, CodingKey { case copy }
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                path = try container.decodeIfPresent(String.self, forKey: .path)
+                if let rule = try? container.nestedContainer(keyedBy: RuleKeys.self, forKey: .rule) {
+                    isCopy = rule.contains(.copy)
+                } else {
+                    isCopy = false
+                }
+            }
+        }
+
+        private enum CodingKeys: String, CodingKey { case name, path, resources }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             name = try container.decode(String.self, forKey: .name)
+            path = try container.decodeIfPresent(String.self, forKey: .path)
             resources = try container.decodeIfPresent([Resource].self, forKey: .resources) ?? []
         }
     }
