@@ -32,8 +32,14 @@ public final class InputState {
     /// 溜める上限。描画が停滞しても際限なく伸びないようにする。
     static let queueLimit = 4096
 
-    /// まだ流し込んでいない出来事。
+    /// まだ流し込んでいない出来事。**先頭は ``pendingHead`` 番目** — それより手前は、溢れて当てた
+    /// 出来事の抜け殻である ([#2383])。
+    ///
+    /// [#2383]: https://github.com/mokume-metal/mokume/issues/2383
     private var pending: [InputEvent] = []
+    /// ``pending`` の先頭の添字。**溢れるたびに先頭を詰め直さず、添字を進めるだけにする。**
+    /// 1 件ごとの詰め直しは上限ぶんの写しを毎回払い、溢れ続ける間は件数 × 上限で効く。
+    private var pendingHead = 0
     /// 溜めきれずに捨てた数。
     private(set) var droppedEvents = 0
 
@@ -130,9 +136,17 @@ public final class InputState {
     /// [#935]: https://github.com/mokume-metal/mokume/issues/935
     /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
     public func enqueue(_ event: InputEvent) {
-        if pending.count >= Self.queueLimit {
-            apply(pending.removeFirst())
+        if pending.count - pendingHead >= Self.queueLimit {
+            apply(pending[pendingHead])
+            pendingHead += 1
             droppedEvents += 1
+            // 抜け殻が上限ぶん溜まったら 1 回で詰める。1 件ごとに詰めると溢れ続ける間 O(上限) を
+            // 毎回払うが、これなら上限件に 1 回の O(上限) なので 1 件あたりは一定で、置き場も
+            // 上限の 2 倍までしか伸びない
+            if pendingHead >= Self.queueLimit {
+                pending.removeSubrange(0..<pendingHead)
+                pendingHead = 0
+            }
         }
         pending.append(event)
     }
@@ -160,8 +174,9 @@ public final class InputState {
         dragY = 0
         movedX = 0
         movedY = 0
-        let events = pending
+        let events = pending[pendingHead...]
         pending.removeAll(keepingCapacity: true)
+        pendingHead = 0
         for event in events {
             // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
             let before = Before(
