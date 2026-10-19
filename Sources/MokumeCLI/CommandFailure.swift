@@ -179,6 +179,13 @@ nonisolated enum CommandFailure: Error, Equatable {
     case bundledResourceMissing(name: String, path: String)
     /// 区画へ要求を置けなかった。
     case facetUnwritable(path: String, reason: String)
+    /// 同じ場所 (`.mokume/`) を、別の見張りが既に見張っている ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
+    ///
+    /// **2 本目は断って終わる。** 見張りは場所の区画を自分 1 本のものとして作り直し・畳むので、2 本が
+    /// 並ぶと 1 本目の窓が 2 本目の子を映し、止めると 1 本目の次の世代が自分の窓を開く。
+    ///
+    /// `pid` は先客の見張りの pid (錠ファイルに書かれたもの)。**診断のためだけで、断る判定は錠だけである** — 読めなければ `nil`。
+    case alreadyWatching(place: String, pid: Int32?)
     /// 署名に失敗した。
     case codesignFailed(status: Int32)
 
@@ -370,6 +377,12 @@ nonisolated enum CommandFailure: Error, Equatable {
             Check that the directory can be written to and that the disk has room.
             MOKUME_WORK_DIR moves it (pass the same value to the runner and to the
             interface, or the two look in different places)
+            """
+        case .alreadyWatching(let place, let pid):
+            """
+            Another \(Command.name) watch\(pid.map { " (pid \($0))" } ?? "") is already watching \(place)
+            Stop it first, or give this one its own place: set \(StartupReads.workDirectory.key) to a different
+            directory (pass the same value to the interface that talks to it)
             """
         case .codesignFailed(let status):
             """

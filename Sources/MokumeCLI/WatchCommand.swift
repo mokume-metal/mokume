@@ -41,9 +41,12 @@ enum WatchCommand {
 
     /// - Parameter watching: 巡回のしかた。**検査から差し替える** — 既定は合図が来るまで
     ///   回り続けるので、始める前に止まることを確かめる検査がここで固まらないようにする。
+    /// - Parameter claiming: 場所の錠を取る口。**検査から差し替える** — 取った錠の持ち主を検査が生かして
+    ///   おけば、手放す (`release()`) 呼び出しの効果を、持ち主が消えたこと (`deinit`) と見分けて見られる。
     static func run(
         _ arguments: [String],
-        watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) }
+        watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) },
+        claiming: (URL) throws(CommandFailure) -> WatchPlaceLock = { try WatchPlaceLock.claim(under: $0) }
     ) throws(CommandFailure) {
         let invocation = try Invocation.parse(arguments)
         let directory = try invocation.directory
@@ -73,10 +76,19 @@ enum WatchCommand {
             in: directory, invocation: invocation, running: running)
         let context = try resolver.current().context
 
-        // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
-        // パッケージの場所へ置くと観測とだけ場所が割れる (#331)。**計算は 1 つ** (#791)
+        // **場所を 1 本のものとして取る。区画に触れる前に** ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
+        // 見張りは場所の区画を自分 1 本のものとして作り直し・畳むので、同じ場所に 2 本目が居ると
+        // 1 本目の窓が 2 本目の子を映し、止めると 1 本目の次の世代が自分の窓を開く。先客が居ればここで
+        // 断って終わる — 区画も、子の起動も、何も始めない。錠は終わりまで持つ (後始末の後に手放す)。
+        // **宣言の検査より後に置く** — 宣言の不備で始まらない回に `.mokume` を作らない。区画の基準は
+        // 環境変数が決める (走らせるスケッチは親の環境を引き継ぐので、記録をパッケージの場所へ置くと
+        // 観測とだけ場所が割れる・#331)。**計算は 1 つ** (#791)
+        let facetBase = try invocation.facetBase()
+        let place = try claiming(facetBase)
+        defer { place.release() }
+
         let session = WatchSession(
-            directory: directory, context: context, facetBase: try invocation.facetBase(),
+            directory: directory, context: context, facetBase: facetBase,
             reportsRate: true, hooks: .live(resolver: resolver, running: running))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
@@ -223,7 +235,7 @@ enum WatchCommand {
         finishBlocking(session)
         viewer?.close()
         // **置いていかない。** 区画は面の番号を置く場所で、置いた見張りが居なくなれば
-        // 指す先も無い。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
+        // 指す先も無い (同じ場所に別の見張りは居ない — ``WatchPlaceLock`` が断っている・#2093)。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
         // 窓の持ち主から起こされていない」と名乗らせることになる (#2028)
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
         for facet in created { try? FileManager.default.removeItem(at: facet) }
@@ -363,6 +375,10 @@ enum WatchCommand {
         NSApplication.shared.setActivationPolicy(.regular)
         let facet = viewportFacet(for: session)
         // **前の見張りが残したものを引き継がない。** 置かれている番号は死んだ面を指す
+        //
+        // **居るのは死んだ前任だけだと、錠で確かめてある** (#2093)。同じ場所を見張る生きた先客が居れば、
+        // ``run(_:watching:)`` が ``WatchPlaceLock`` で断っていて、ここへは来ない。後始末を通らずに消えた
+        // 前任 (`SIGKILL`) の錠はカーネルが外しているので、残った区画は作り直してよい
         try? FileManager.default.removeItem(at: facet)
         // つまみの区画は `prepareFacets(under:)` が既に置いている (#464)。走らせている子は
         // 区画が在るときだけ宣言を差し出すので ([ADR-0030] 決定 2)、無いとプレビューに
