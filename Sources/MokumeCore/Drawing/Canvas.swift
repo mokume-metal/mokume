@@ -1329,6 +1329,15 @@ public final class Canvas {
     ///
     /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
     var pixelLoadFailed = false
+    /// 窓 (``pixels``) へ渡す、書いてよいかの問い合わせ。**面ごとに 1 つ作って使い回す。**
+    ///
+    /// 窓を取るたびに閉包を確保すると、`pixels[x, y]` を 1 画素ごとに書く書き方で確保が画素の数だけ
+    /// 走る ([#2369])。閉包は面を弱く持つだけで状態を抱えない — 答えは呼ばれた時点の
+    /// ``admitsPixelWrite()`` が決める (取った時点ではなく書く時点で見る・[#1672])。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#2369]: https://github.com/mokume-metal/mokume/issues/2369
+    var pixelWriteGateMade: (() -> Bool)?
 
     // MARK: 文字
 
@@ -3802,15 +3811,21 @@ public final class Canvas {
     ///
     /// [#893]: https://github.com/mokume-metal/mokume/issues/893
     private var hasPendingGeometry: Bool {
-        !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
-            || openSolid?.strokeGeometry != nil || openSolid?.fillGeometry != nil
-            || batchesOwnVertices
+        // 空の溜め場を安く答える。画素を 1 つ読み書きするたびに通る (``pixels``・#2369) ので、
+        // 何も溜めていない普通の形で、開いた列の中身を覗く前に打ち切る
+        guard vertices.isEmpty, solidVertices.isEmpty, formInstances.isEmpty else { return true }
+        // 開いた列は大きな値で、束縛すると丸ごと写す。印だけ見て、無ければ中身に触れない
+        if case .some = openSolid, openSolid?.strokeGeometry != nil || openSolid?.fillGeometry != nil {
+            return true
+        }
+        return batchesOwnVertices
     }
 
     /// 溜めた列のどれかが、自分の頂点の置き場 (立体の線の骨・モデルの塗り) を持つか。
     /// 持つ列だけのフレームでは溜め場が空のままなので、ここで拾う。閉包を標準ライブラリへ
     /// 渡さずに回す — 渡すと列ごとに隔離の実行時検査を払う (#1779)。
     private var batchesOwnVertices: Bool {
+        guard !batches.isEmpty else { return false }
         for batch in batches where batch.ownVertices != nil { return true }
         return false
     }

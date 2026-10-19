@@ -100,6 +100,10 @@ import MokumeDiagnostics
     /// 読まない描画先はここで 1 バイトも払わない。
     private(set) var pixelMirror: PixelMirror?
 
+    /// 前に ``pixels`` が返した窓。写しごとに不変 (置き場の先頭・大きさ・行の間隔) なので取っておき、
+    /// 有効なら作り直さずに返す (``pixels``・#2369)。窓は写しを抱えるだけで、中身の新しさは持たない。
+    private var readableWindow: Pixels?
+
     /// CPU が写しへ書いたまま、まだテクスチャへ戻していないか。
     var hasPendingPixelWrites: Bool { pixelMirror?.hasPendingWrites ?? false }
 
@@ -272,13 +276,39 @@ import MokumeDiagnostics
     /// 読むと透明、書いても何も起きない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    ///
+    /// ## 同じ答えを 1 画素ごとに取り直さない ([#2369])
+    ///
+    /// 画素を 1 つ読み書きするたびにこの口を通る書き方 (`pixels[x, y]`) では、待ちと写しの確かめを
+    /// 毎回やり直すと、費用の大半がそこに行く。前に返した窓がまだ有効なら、**待たずに同じ窓を返す**。
+    /// 有効とは、次の 3 つがそろうこと:
+    ///
+    /// - 前に ``RenderDevice/settle()`` が成功した後に、新しい投入が無い (``RenderDevice/isSettledThroughLatest``)。
+    ///   投入は 1 本の道が ``RenderDevice/submissionCount`` を進めるので、見落とさない
+    /// - 打ち切られた読み戻しの照会 (``RenderDevice/revokeDroppedDeliveries()``) を通した後でも、写しが
+    ///   最新である (CPU が書いたままか、いまの投入まで映してある)
+    /// - 写しが同じである (窓は写しごとに不変)
+    ///
+    /// どれかが崩れていれば、今までどおりの遅い道 (待つ・映し直す・警告する) を通る。
+    ///
+    /// [#2369]: https://github.com/mokume-metal/mokume/issues/2369
     var pixels: Pixels {
+        if let window = readableWindow, gpu.isSettledThroughLatest {
+            gpu.revokeDroppedDeliveries()
+            if let mirror = pixelMirror, window.mirror === mirror,
+                mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount
+            {
+                return window
+            }
+        }
         gpu.settleQuietly(orWarn: "Could not wait for the GPU before reading pixels")
         do {
             let mirror = try mirrorForReading()
-            return Pixels(
+            let window = Pixels(
                 base: mirror.storage.contents(), width: width, height: height,
                 bytesPerRow: mirror.bytesPerRow, mirror: mirror)
+            readableWindow = window
+            return window
         } catch {
             Diagnostics.warn("Could not make a copy of the pixels: \(error.headline)")
             return .unavailable
