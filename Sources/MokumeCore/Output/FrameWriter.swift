@@ -254,7 +254,8 @@ nonisolated final class WriteLanes: Sendable {
         // **錠の外で呼ぶ。** 畳んだ頼みの後始末 (枠を返す) は錠と無関係である
         superseded?.drop()
         guard let start else { return }
-        Task.detached(priority: .utility) { [self] in
+        // **優先度は待つ側 (main) に揃える** (#2372・``MovieWriter`` と同じ理由)
+        Task.detached(priority: .userInitiated) { [self] in
             var next: Job? = start
             while let job = next {
                 job.work()

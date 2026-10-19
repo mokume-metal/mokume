@@ -472,6 +472,38 @@ struct OutputEncodeTests {
         #expect(result.mismatches == 0, "\(result.report)")
     }
 
+    /// **行の間隔が幅ちょうどの置き場 (1 回で写す) と、詰め物が付く置き場 (行ごとに写す) の
+    /// 両方で、読み戻した絵が一致する** ([#2372])。写し方を分けたので、分かれ目のどちら側も
+    /// 別の経路 (`encodeOnCPU`) と画素で突き合わせる。
+    ///
+    /// [#2372]: https://github.com/mokume-metal/mokume/issues/2372
+    @Test("読み戻しは、行の間隔が幅ちょうどでも詰め物が付いても同じ絵になる", arguments: [(7, true), (64, false)])
+    func readMatchesWhetherOrNotRowsArePadded(width: Int, padded: Bool) throws {
+        let height = 5
+        let canvas = try makeCanvas(width: width, height: height)
+        // **画素ごとに違う色を置く。** 一様な色では、行や列の取り違えが一致のまま通る
+        try canvas.draw {
+            for y in 0..<height {
+                for x in 0..<width {
+                    canvas.set(
+                        x, y,
+                        LinearRGBA(
+                            premultipliedRed: Float(x) / Float(width),
+                            green: Float(y) / Float(height), blue: Float((x + y) % 3) / 2,
+                            alpha: 1))
+                }
+            }
+        }
+        let image = try canvas.output.encodeToImage()
+        let widthInBytes = image.width * OutputPass.bytesPerPixel
+        try #require(
+            (image.bytesPerRow > widthInBytes) == padded,
+            "この機械では幅 \(width) の行の詰め物の有無が想定と違い、この検査の前提が立たない")
+
+        let result = compare(image.read(), try canvas.output.encodeOnCPU())
+        #expect(result.mismatches == 0, "\(result.report)")
+    }
+
     @Test(
         "明るさを写す設定を変えても一致する",
         arguments: [
