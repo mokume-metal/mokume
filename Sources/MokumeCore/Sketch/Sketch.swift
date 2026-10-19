@@ -625,7 +625,13 @@ extension SketchPart {
     /// 本体の上に載る部品 (動画・録った音) が、再生位置や起点という**状態**を進めるのに読む。
     /// ``time`` を読むと、観測の枚の指定秒が状態として残る ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
     package var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
-    /// 前のフレームからの経過 (秒)。
+    /// 前のフレームからの経過 (**秒**)。
+    ///
+    /// **p5.js の `deltaTime` はミリ秒で、単位が 1000 倍違う。** p5.js から写した係数は 1000 倍して
+    /// 使う — `x += 0.2 * deltaTime` (1 ミリ秒に 0.2 画素) は `x += 200 * deltaTime` (1 秒に 200 画素)
+    /// と書く。直さずに写すと、1000 倍遅くなってほとんど動かない。秒で渡すのは Unity・Godot・LÖVE・
+    /// raylib といったゲームの手本に揃えたためで、``time`` とも同じ単位である
+    /// ([ADR-0020](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md) 決定 1)。
     ///
     /// **フレームの時計** (書き出しと、``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``
     /// にした窓) では、**常にちょうど 1 / fps 秒**である。重いフレームの後でも変わらない。
