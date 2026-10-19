@@ -113,13 +113,25 @@ struct FallbackTypefaceStyleTests {
     // 面を持つなら、その面で引き直す。引き直しの判断は `Typeface.restyledFallback` の純粋な関数に切り出して
     // あり、字形の有無を問う閉包を差し替えて検査する。
 
-    /// 太字の面を持たない欧文の書体を指定して、混ぜた日本語を引く。(書体・太さ・字・引き直した面)
-    nonisolated static var restyledFaces: [(name: String, style: TextStyle, scalar: Unicode.Scalar, face: String)] {
+    // **代わりの書体の家族は、機械の言語の設定で変わる。** 「あ」の代わりは、手元ではヒラギノ (明朝・角ゴシック)、
+    // CI 機では中文の宋体 (STSongti-SC) だった。だから検査は書体の名前ではなく**性質**で見る: 太さ・傾きを
+    // 頼まずに引いた代わりの面 (その機械の家族) を基準にし、頼んだ側がその家族の太字の面に替わること。
+
+    private static func traits(_ font: CTFont) -> CTFontSymbolicTraits { CTFontGetSymbolicTraits(font) }
+    private static func family(_ font: CTFont) -> String { CTFontCopyFamilyName(font) as String }
+
+    /// 何も頼まずに引いた、その機械の代わりの面。
+    private static func plainFallback(_ name: String, _ scalar: Unicode.Scalar) throws -> ResolvedGlyph {
+        let plain = Typeface(request: TypefaceRequest(name: name, size: 32, style: .normal)) { _, _, _ in }
+        return try #require(plain.glyph(for: scalar), "前提: \(name) に混ぜた「\(scalar)」を引ける")
+    }
+
+    /// 太字の面を持たない欧文の書体を指定して、混ぜた日本語を引く。(書体・太さ・字)
+    nonisolated static var restyledFaces: [(name: String, style: TextStyle, scalar: Unicode.Scalar)] {
         [
-            ("Apple-Chancery", .bold, "あ", "HiraMinProN-W6"),
-            ("AndaleMono", .bold, "あ", "HiraginoSans-W6"),
-            ("Apple-Chancery", .boldItalic, "あ", "HiraMinProN-W6"),  // 太斜体は太字だけの面 (#2562 の順)
-            ("Helvetica", .bold, "あ", "HiraginoSans-W6"),  // 変わらない側: 元から太字
+            ("Apple-Chancery", .bold, "あ"),
+            ("AndaleMono", .bold, "あ"),
+            ("Apple-Chancery", .boldItalic, "あ"),  // 太斜体は太字だけの面 (#2562 の順)
         ]
     }
 
@@ -127,57 +139,74 @@ struct FallbackTypefaceStyleTests {
         "太字の面を持たない書体の和文は、代わりの書体の太字の面で引く",
         arguments: restyledFaces)
     func aFallbackIsRestyledToTheRequestedFace(
-        _ item: (name: String, style: TextStyle, scalar: Unicode.Scalar, face: String)
+        _ item: (name: String, style: TextStyle, scalar: Unicode.Scalar)
     ) throws {
         try #require(
             CTFontCopyPostScriptName(Self.font(item.name)) as String == item.name,
             "前提: この環境に \(item.name) がある")
+        let normal = try Self.plainFallback(item.name, item.scalar)
         try #require(
-            CTFontCopyPostScriptName(Self.font(item.face)) as String == item.face,
-            "前提: この環境に \(item.face) がある")
+            !Self.traits(normal.font).contains(.traitBold), "前提: 何も頼まない代わりの面は太字でない")
+        let bold = CTFontCreateCopyWithSymbolicTraits(normal.font, 32, nil, .traitBold, .traitBold)
+        try #require(
+            bold.map { Self.traits($0).contains(.traitBold) } == true,
+            "前提: 代わりの書体 (\(normal.fontKey)) に太字の面がある")
+
         let reports = Reports()
         let face = Typeface(request: TypefaceRequest(name: item.name, size: 32, style: item.style)) {
             _, scalar, fallback in
             reports.items.append((scalar, CTFontCopyPostScriptName(fallback) as String))
         }
         let resolved = try #require(face.glyph(for: item.scalar))
-        #expect(resolved.fontKey == item.face, "\(item.name) の \(item.style) に混ぜた「\(item.scalar)」")
-        #expect(CTFontGetSymbolicTraits(resolved.font).contains(.traitBold))
+        #expect(resolved.glyph != 0)
+        #expect(Self.traits(resolved.font).contains(.traitBold), "\(item.name) の \(item.style): \(resolved.fontKey)")
+        #expect(resolved.fontKey != normal.fontKey, "細い面 (\(normal.fontKey)) のまま")
+        #expect(
+            Self.family(resolved.font) == Self.family(normal.font) || resolved.fontKey.hasPrefix("."),
+            "別の家族へ替わった: \(normal.fontKey) → \(resolved.fontKey)")
+        // 太斜体は斜体を欠く面で描くので、その面を名乗って 1 度だけ知らせる。太字は欠かないので知らせない
+        _ = face.advance(of: "\(item.scalar)\(item.scalar)")
+        if item.style == .boldItalic {
+            #expect(!Self.traits(resolved.font).contains(.traitItalic))
+            #expect(reports.items.map(\.postScript) == [resolved.fontKey], "\(reports.items)")
+        } else {
+            #expect(reports.items.isEmpty, "\(reports.items)")
+        }
         // 引き直し前の答えは、頼んだ面より細い (でなければ、この検査は引き直しを見ていない)
-        if item.name != "Helvetica" {
-            let before = CTFontCreateForString(
-                face.base, String(item.scalar) as CFString, CFRangeMake(0, 1))
-            try #require(
-                !CTFontGetSymbolicTraits(before).contains(.traitBold),
-                "前提: 劣化した base から引くと、太字でない面になる")
-        }
+        let before = CTFontCreateForString(face.base, String(item.scalar) as CFString, CFRangeMake(0, 1))
+        try #require(
+            !Self.traits(before).contains(.traitBold), "前提: 劣化した base から引くと、太字でない面になる")
     }
 
-    @Test("太斜体は斜体を欠くので、太字だけの面で描いたことを 1 度知らせる")
-    func aBoldItalicRestyleStillReportsTheMissingItalic() throws {
-        let chancery = Self.font("Apple-Chancery")
-        try #require(CTFontCopyPostScriptName(chancery) as String == "Apple-Chancery", "前提: Apple Chancery がある")
-        let reports = Reports()
-        let face = Typeface(request: TypefaceRequest(name: "Apple-Chancery", size: 32, style: .boldItalic)) {
-            _, scalar, fallback in
-            reports.items.append((scalar, CTFontCopyPostScriptName(fallback) as String))
-        }
-        _ = face.glyph(for: "あ")
-        _ = face.advance(of: "ああ")
-        #expect(reports.items.map(\.postScript) == ["HiraMinProN-W6"], "\(reports.items)")
-    }
-
-    @Test("変わらない側: 斜体は面が無いので元のまま・絵文字は色の書体・何も頼まなければ引き直さない")
+    @Test("変わらない側: 元から太字の代わり・斜体の面が無い代わり・絵文字・何も頼まない字は引き直さない")
     func restylingLeavesTheOtherCasesAlone() throws {
-        func resolve(_ name: String, _ style: TextStyle, _ scalar: Unicode.Scalar) throws -> String {
+        func resolve(_ name: String, _ style: TextStyle, _ scalar: Unicode.Scalar) throws -> (Typeface, ResolvedGlyph) {
             try #require(CTFontCopyPostScriptName(Self.font(name)) as String == name, "前提: \(name) がある")
             let face = Typeface(request: TypefaceRequest(name: name, size: 32, style: style)) { _, _, _ in }
-            return try #require(face.glyph(for: scalar)).fontKey
+            return (face, try #require(face.glyph(for: scalar)))
         }
-        #expect(try resolve("Helvetica", .italic, "あ") == "HiraginoSans-W3")
-        #expect(try resolve("Apple-Chancery", .bold, "😀") == "AppleColorEmoji")
-        let normal = try resolve("Apple-Chancery", .normal, "あ")
-        #expect(normal.hasSuffix("-W3"), "何も頼まない「あ」は面を引き直さない: \(normal)")
+        func before(_ face: Typeface, _ scalar: Unicode.Scalar) -> CTFont {
+            CTFontCreateForString(face.base, String(scalar) as CFString, CFRangeMake(0, 1))
+        }
+        // 太字の面を持つ書体は、CoreText が最初から太字の代わりを選ぶ (引き直さなくても太字)
+        let (_, helveticaBold) = try resolve("Helvetica", .bold, "あ")
+        #expect(Self.traits(helveticaBold.font).contains(.traitBold))
+        // 代わりの書体に斜体の面が無ければ、引き直しても替わらない (合成もしない)
+        let (italicFace, italic) = try resolve("Helvetica", .italic, "あ")
+        let italicBefore = before(italicFace, "あ")
+        let italicCopy = CTFontCreateCopyWithSymbolicTraits(italicBefore, 32, nil, .traitItalic, .traitItalic)
+        try #require(
+            italicCopy.map { !Self.traits($0).contains(.traitItalic) } ?? true,
+            "前提: 代わりの書体 (\(CTFontCopyPostScriptName(italicBefore) as String)) に斜体の面が無い")
+        #expect(italic.fontKey == CTFontCopyPostScriptName(italicBefore) as String)
+        // 色の書体の字は、太字を頼んでも絵文字のまま
+        let (_, emoji) = try resolve("Apple-Chancery", .bold, "😀")
+        #expect(Self.traits(emoji.font).contains(.traitColorGlyphs), "\(emoji.fontKey)")
+        // 何も頼まなければ、引いた代わりの面をそのまま使う
+        let (plainFace, plain) = try resolve("Apple-Chancery", .normal, "あ")
+        #expect(
+            plain.fontKey == CTFontCopyPostScriptName(before(plainFace, "あ")) as String,
+            "何も頼まない「あ」は面を引き直さない: \(plain.fontKey)")
     }
 
     /// 合成の材料: 引き直しの判断を、CoreText の答えではなく差し替えた閉包で見る。
