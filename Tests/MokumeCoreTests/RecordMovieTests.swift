@@ -228,10 +228,18 @@ struct MovieWriterTests {
             _ = try writeAndSettle(writer, image(160), frame: 3, time: -1)
 
             // **転ぶ前に受け付けられた枚は数えない** — 直後の枚は、符号化器が転ぶ前に受け付け
-            // られることがある (実測)。転んだ後に書けたことになる枚は無い
+            // られることがある (実測)。転んだ後に書けたことになる枚は無い。
+            //
+            // **上限は枚数ではなく時間の期限で持つ** (#2771)。符号化器の失敗は非同期で、時刻が
+            // 戻る 1 枚を受けてから writer が止まるまでに何枚書けるかは負荷で揺れる。揃えたい
+            // のは「3 枚の理由」なので、転び始めるまでの枚数と合わせて枚数で区切ると、混んだ
+            // 機械で足りなくなる。期限は 1 枚の決着と同じ 10 秒で、兄弟の
+            // `endRecordLeavesNothingBehind…` と同じ形 (#1825)。間を空けて塞いで待つのも同じ
+            // 理由で、止まる前に書いた枚を積み上げないため
             var frame = 3
             var reasons: [String] = []
-            while reasons.count < 3, frame < 8 {
+            let deadline = DispatchTime.now() + 10
+            while reasons.count < 3, DispatchTime.now() < deadline {
                 frame += 1
                 let outcome = try writeAndSettle(
                     writer, image(200), frame: frame, time: Double(frame - 1) / 60)
@@ -239,9 +247,14 @@ struct MovieWriterTests {
                     reasons.append(reason)
                 } else {
                     #expect(reasons.isEmpty, "\(frame) 枚目: 転んだ後に書けたことになった")
+                    // 塞いで待つ。`await` で譲ると、並んで走る他の検査が前提を作る途中に割り込む
+                    usleep(2_000)
                 }
             }
-            try #require(reasons.count == 3, "5 枚書き足しても、3 枚転ばない — この入り方が効いていない")
+            try #require(
+                reasons.count == 3,
+                "10 秒書き足し続けても 3 枚転ばない (\(frame - 3) 枚書き足し・転んだのは \(reasons.count) 枚) — この入り方が効いていない"
+            )
             for reason in reasons {
                 #expect(reason.contains("writeFailed"), "\(reason)")
                 #expect(!reason.contains("bufferUnavailable"), "符号化器の理由を落とした: \(reason)")
