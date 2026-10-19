@@ -200,8 +200,19 @@ static inline float4 mokume_enlarge(Pixel in, float2 offset) {
     return sum;
 }
 
+/// この組み込みの効果の種別。**パイプラインを組むときに 1 種別へ特化する** (#2371)。
+///
+/// 特化すると、下の `kind == …` の枝が組むときに畳まれ、その種別の枝だけが残る。13 種を 1 本に
+/// 詰めたままだと、レジスタの割り当てが最も重い枝 (`mokume_enlarge`) で決まり、反転や周辺減光の
+/// ような軽い段まで占有率が落ちる。`kEffectKindAny` を渡すと特化せず、従来どおり段ごとの設定
+/// `control[0].x` から読む全種入りの 1 本になる (検査が特化と画素を突き合わせるためにある)。
+/// **この関数定数は必ず渡す** — 渡さずに組むと Metal がパイプラインの作成を断る。番号を大きく取る
+/// のは、`Common.metal` の `kShapeLitValue` と同じく、利用者の関数定数と重ならないため。
+constant uint kEffectKindAny = 0xFFFFFFFF;
+constant uint kEffectKindValue [[function_constant(65001)]];
+
 float4 effect(Pixel in, Values values) {
-    uint kind = uint(in.control[0].x);
+    uint kind = kEffectKindValue != kEffectKindAny ? kEffectKindValue : uint(in.control[0].x);
     float p0 = in.control[0].y;
     float p1 = in.control[0].z;
     float p2 = in.control[0].w;

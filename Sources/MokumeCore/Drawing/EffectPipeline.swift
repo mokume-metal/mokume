@@ -53,8 +53,22 @@ final class EffectPipeline {
     private let compiler: any MTL4Compiler
     private let pixelFormat: MTLPixelFormat
 
-    /// 組み込みの効果を通すパイプライン。
-    let builtin: any MTLRenderPipelineState
+    /// 組み込みの効果を通すパイプライン。**種別ごとに特化した 1 本を、初めて使うときに組む**
+    /// ([#2371])。13 種を 1 本に詰めると、レジスタの割り当てが最も重い枝で決まり、軽い段まで
+    /// 占有率が落ちる。代償は、種別を初めて使うフレームで 1 本ぶん (冷えた状態で約 50 ms・
+    /// [#2365]) 止まること — [#1795] で受けた交換である。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    /// [#2365]: https://github.com/mokume-metal/mokume/issues/2365
+    /// [#2371]: https://github.com/mokume-metal/mokume/issues/2371
+    private var builtinStates: [BuiltinEffectKind: any MTLRenderPipelineState] = [:]
+    /// 全種入りの 1 本 (``generalBuiltinState()``)。検査が頼んだときだけ組む。
+    private var generalBuiltin: (any MTLRenderPipelineState)?
+    /// 偽にすると、特化せず全種入りの 1 本で走る。**検査が画素を突き合わせるためにある**で、
+    /// 本番の経路は触らない。
+    var specializesBuiltinEffects = true
+    /// 種別ごとのパイプラインを組んだ回数。**使った種別の数で止まる**ことを検査が見る。
+    private(set) var builtinStatesBuilt = 0
     /// 組み込みの原文を組んだもの。変わった画素だけを重ねるパイプライン
     /// (``keepChangedState()``) を、頼まれたときにここから組む。
     private let builtinLibrary: any MTLLibrary
@@ -157,11 +171,6 @@ final class EffectPipeline {
             named: "builtin", body: try gpu.shaders.bundledShaderSource(named: "Builtin"),
             bodyName: ShaderLibraries.bundledName("Builtin"))
         self.builtinLibrary = library
-        self.builtin = try StateJob(
-            compiler: compiler, pixelFormat: pixelFormat, label: "mokume.effect.builtin",
-            vertexFunctionName: Self.vertexFunctionName,
-            fragmentFunctionName: Self.fragmentFunctionName
-        ).makeNow(library: library)
 
         passBuffer = try passStorage.buffer(holding: 8)
         tablePool = ArgumentTablePool(
@@ -184,6 +193,38 @@ final class EffectPipeline {
         StateJob(
             compiler: compiler, pixelFormat: pixelFormat, label: label,
             vertexFunctionName: Self.vertexFunctionName, fragmentFunctionName: fragment)
+    }
+
+    /// その種別に特化した、組み込みの効果を通すパイプライン。無ければ組む ([#2371])。
+    ///
+    /// [#2371]: https://github.com/mokume-metal/mokume/issues/2371
+    func builtinState(for kind: BuiltinEffectKind) throws(RenderFailure) -> any MTLRenderPipelineState {
+        guard specializesBuiltinEffects else { return try generalBuiltinState() }
+        if let state = builtinStates[kind] { return state }
+        let made = try StateJob(
+            compiler: compiler, pixelFormat: pixelFormat,
+            label: "mokume.effect.builtin.\(kind.metalName)",
+            vertexFunctionName: Self.vertexFunctionName,
+            fragmentFunctionName: Self.fragmentFunctionName,
+            specializedKind: kind.rawValue
+        ).makeNow(library: builtinLibrary)
+        builtinStates[kind] = made
+        builtinStatesBuilt += 1
+        return made
+    }
+
+    /// 種別に特化しない、全種入りの 1 本。**検査だけが通る** — 特化したパイプラインと同じ画素を
+    /// 出すことを、種別ごとに突き合わせる (``specializesBuiltinEffects``)。
+    private func generalBuiltinState() throws(RenderFailure) -> any MTLRenderPipelineState {
+        if let generalBuiltin { return generalBuiltin }
+        let made = try StateJob(
+            compiler: compiler, pixelFormat: pixelFormat, label: "mokume.effect.builtin.general",
+            vertexFunctionName: Self.vertexFunctionName,
+            fragmentFunctionName: Self.fragmentFunctionName,
+            specializedKind: StateJob.anyKind
+        ).makeNow(library: builtinLibrary)
+        generalBuiltin = made
+        return made
     }
 
     /// 変わった画素だけを重ねるパイプライン。無ければ組む ([#1524])。
@@ -212,6 +253,14 @@ final class EffectPipeline {
         let label: String
         let vertexFunctionName: String
         let fragmentFunctionName: String
+        /// 組み込みの効果の種別 (``BuiltinEffectKind``)。立てると断片をその種別へ特化する
+        /// (`Builtin.metal` の `kEffectKindValue`)。利用者の効果は立てない。
+        var specializedKind: UInt32?
+
+        /// `kEffectKindValue` の関数定数の番号 (`Builtin.metal`)。
+        static let kindConstantIndex = 65001
+        /// 特化しない印 (`kEffectKindAny`)。全種入りの 1 本を組むときに渡す。
+        static let anyKind: UInt32 = 0xFFFF_FFFF
 
         private func descriptor(library: any MTLLibrary) -> MTL4RenderPipelineDescriptor {
             let vertexFunction = MTL4LibraryFunctionDescriptor()
@@ -225,7 +274,17 @@ final class EffectPipeline {
             let descriptor = MTL4RenderPipelineDescriptor()
             descriptor.label = label
             descriptor.vertexFunctionDescriptor = vertexFunction
-            descriptor.fragmentFunctionDescriptor = fragmentFunction
+            if let specializedKind {
+                let constants = MTLFunctionConstantValues()
+                var kind = specializedKind
+                constants.setConstantValue(&kind, type: .uint, index: Self.kindConstantIndex)
+                let specialized = MTL4SpecializedFunctionDescriptor()
+                specialized.functionDescriptor = fragmentFunction
+                specialized.constantValues = constants
+                descriptor.fragmentFunctionDescriptor = specialized
+            } else {
+                descriptor.fragmentFunctionDescriptor = fragmentFunction
+            }
             let attachment = descriptor.colorAttachments[0]!
             attachment.pixelFormat = pixelFormat
             // **混ぜない。** 段は入りの絵を丸ごと受け取って出りの絵を丸ごと書くので、
