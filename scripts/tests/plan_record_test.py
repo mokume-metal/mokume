@@ -678,7 +678,8 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assert_ready_without_an_adr(err)
         self.assertSays(err, "Issue 本文の完了条件を現行のコードと突き合わせ")
         self.assertSays(err, "「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書いてください")
-        self.assertSays(err, "ずれていれば Issue 本文のほうを先に更新します")
+        self.assertSays(err, "事実のずれ (満たされた条件・動いた行や綴り・数え直した数) は Issue 本文のほうを先に直します")
+        self.assertSays(err, "条件を緩める・絞る・差し替えるなら、本文は直さず根拠を Issue にコメントして人の判断を待ちます")
         self.assertSays(err, "プランを直してもう一度 ExitPlanMode を通してください")
 
     def test_the_bug_scope_refusal_says_what_to_write_and_the_command_to_bundle(self):
