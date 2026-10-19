@@ -17,6 +17,11 @@ import simd
 // GPU は潰れた辺の先を 1 段だけ引き、2 段以上続きうる網 (同じ直線に載る 2 辺を持つ網) は骨を
 // 作らずに CPU へ戻す (`SolidStrokeGeometry`)。
 //
+// 対応しない手順が 1 つある。**腕が 0 本の群 (向きの無い点・``ScreenCorner/square``) は GPU が
+// 扱わない。** 骨を作れる網には次数 1 の点が無く、群に数える腕が 1 本も無い配置は GPU には現れない
+// ので、頂点関数 (`solidStrokeCornerShape`) はその群に何も置かない (#2823)。CPU の分岐は CPU の骨の
+// 網で使われうるので残す。
+//
 // [#1644]: https://github.com/mokume-metal/mokume/issues/1644
 // [#1889]: https://github.com/mokume-metal/mokume/issues/1889
 // [#1893]: https://github.com/mokume-metal/mokume/issues/1893

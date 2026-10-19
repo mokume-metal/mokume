@@ -273,18 +273,6 @@ bool solidStrokeToward(float3 a, float3 b, constant SolidStrokePlacement &s, thr
     return true;
 }
 
-/// 画面の軸に沿った正方形の、6 頂点の並びの隅 (0…3) の向き。画面の画素で測った正方形を世界へ直す
-/// (CPU は `StrokeCamera.screenRight` と `down` で張る)。
-float3 solidStrokeSquareCorner(uint corner, constant SolidStrokePlacement &s) {
-    float3 screenRight = s.right.xyz * s.forward.w;
-    switch (corner) {
-        case 0: return -screenRight - s.down.xyz;
-        case 1: return screenRight - s.down.xyz;
-        case 2: return screenRight + s.down.xyz;
-        default: return -screenRight + s.down.xyz;
-    }
-}
-
 /// 円板の周の点の向き (画面の横と縦の成分)。CPU の円板の下限の分割数 (16) の周の点
 /// (`Canvas.solidDiscFloorUnits`。`cos` / `sin` で求める) をそのまま書き写したもの (0 番は横そのもの)。
 /// 検査 (`SolidGPUStrokeTests.discUnitsMatchTheCPU`) が CPU の値とビットで突き合わせる。CPU は円板を
@@ -404,7 +392,8 @@ float solidStrokeDepth(float3 p, constant SolidStrokePlacement &s) {
 
 /// 網の点に置く形 (CPU の `Canvas.screenCorner` と同じ手順)。
 struct SolidStrokeCorner {
-    /// 0 何も置かない・1 円板・2 画面の軸の正方形・3 出っ張らせる端・4 折れ目
+    /// 0 何も置かない・1 円板・3 出っ張らせる端・4 折れ目。2 は欠番 (向きの無い点の、画面の軸に
+    /// 沿った正方形だった。骨を作れる網では腕の無い群が現れず、届かないので消した・#2823)
     uint kind;
     float3 center;
     float3 origin1;
@@ -417,9 +406,13 @@ struct SolidStrokeCorner {
 ///
 /// 画面で潰れた辺で結ばれた点 (1 段まで) を群とし、群のいちばん手前の点 (奥行きが等しければ記録の
 /// 位置が小さい点) だけが置く (CPU の `strokeNet` と同じ選び方)。
-/// 群に集まる腕の画面での向きの数で、0 なら向きの無い点 (正方形)・1 なら端 (`strokeCap`)・
+/// 群に集まる腕の画面での向きの数で、0 なら何も置かない・1 なら端 (`strokeCap`)・
 /// 2 なら 2 本の折れ目・3 以上なら角度の順で 180° を越える間を挟む 2 本の折れ目 (無ければ何も
-/// 置かない)。`roundEnd` は端の円板を置く容量を持つか。持たない点では、端の円板の代わりに
+/// 置かない)。**0 本の群 (CPU の `Canvas.screenCorner` の向きの無い点) は、骨を作れる網では現れない。**
+/// 現れうるのは、次数 1 の点 (辺が相手の 1 本だけ) と、潰れの判定と向きの判定が食い違う配置だけで、
+/// 前者は `SolidStrokeGeometry` が網ごと骨を作らず、後者は `solidStrokeEdgeCollapsed` が両端で
+/// 同じ式に揃えてあるので作れない (#2823)。
+/// `roundEnd` は端の円板を置く容量を持つか。持たない点では、端の円板の代わりに
 /// 2 本の腕の折り返しの形を置く。容量は画面で 1 本になりうる点 (同じ平面に載る 4 点・
 /// `Canvas.mayMeetAsOneBand`) にあり、画面で値が等しいほど揃った腕はその中に入る。
 SolidStrokeCorner solidStrokeCornerShape(
@@ -494,7 +487,7 @@ SolidStrokeCorner solidStrokeCornerShape(
     uint b = secondKept;
     uint cap = uint(s.right.w);  // 0 丸・1 切る・2 出っ張らせる (`SolidStrokePlacement.capCode`)
     if (kept == 0) {
-        result.kind = 2;
+        // 腕の無い群は何も置かない (骨を作れる網には現れない・#2823)
         return result;
     } else if (kept == 1) {
         if (cap == 1) return result;
@@ -594,10 +587,7 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
         float3 center = placed.center;
         float radius = halfWeight * solidStrokePixel(center, s);
         world = center;
-        if (placed.kind == 2 && firstHalf) {
-            // 向きの無い点 (画面の 1 点に潰れた形の全体)。画面の軸に沿った正方形
-            world = center + solidStrokeSquareCorner(corner, s) * radius;
-        } else if (placed.kind == 3 && firstHalf) {
+        if (placed.kind == 3 && firstHalf) {
             // 出っ張らせる端。CPU の `appendSolidSquare(at:awayFrom:shape:half:camera:)` と同じ 2 軸
             float3 right;
             if (solidStrokeAcross(placed.far1, center, s, right)) {
