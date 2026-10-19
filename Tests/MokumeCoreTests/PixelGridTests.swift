@@ -1170,7 +1170,9 @@ struct PixelGridTests {
     ///
     /// [#2914]: https://github.com/mokume-metal/mokume/issues/2914
     nonisolated static let ellipticArcNearestPointShapes: [(shape: SeamShape, canvasSize: Int)] = ([
-        // 本文の形
+        // Issue の症状の形そのもの: `arc(0, 0, 80, 20, 0.3, 2.9)` (掃引 2.6)・太さ 22
+        (40, 10, 0.3, 2.6, 22),
+        // 掃引 2.9 (`arc(0, 0, 80, 20, 0.3, 3.2)`)
         (40, 10, 0.3, 2.9, 22),
         // 太い輪郭 (穴が潰れる)・掃引が π 以下と越える・開始角を回す
         (40, 10, 3.8, 1.5, 22),
@@ -1198,6 +1200,100 @@ struct PixelGridTests {
         #expect(
             measured.worstExcess < 0.01,
             "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
+    }
+
+    /// 近似の距離場 (`exact` でない枝) の扇でも、輪郭の帯の縁の被覆が真の幾何から外れない ([#2914])。
+    ///
+    /// 近似の距離場の勾配は中心から見た向き (`p / 半径²`) で、扇の内外 (`inWedge`) と同じ向きになる。
+    /// 弧を候補に入れるかを勾配だけで決めると、真の距離の枝に当てた直しが近似の枝には効かず、輪郭の帯の
+    /// 縁 (弧から太さの半分離れた所) が弧の端の近くで 0.1 画素ほどずれる。既定の太さ 1 の扇は、半径比
+    /// 2:1 でも近似の枝で描かれる (`mokume_needsExactRing` は近似の距離値のずれしか見ない)。`seamLeaks` は
+    /// 帯に丸ごと入る画素しか見ず、太さ 1 では 1 つも無いので、帯の縁の画素の被覆を、真の距離から出した
+    /// 期待値と比べる。
+    ///
+    /// [#2914]: https://github.com/mokume-metal/mokume/issues/2914
+    private func arcBandEdgeError(_ shape: SeamShape) throws -> (worst: Double, at: String) {
+        let halfWeight = Double(shape.weight) / 2
+        let boundary = try #require(shape.boundaryDistance())
+        var worst = 0.0
+        var at = ""
+        // 弧の候補が取り違えられる所は弧の端の近くの細い帯なので、置き方を 24 通り (半画素の位置と回転を
+        // ずらして) 振る。見るのは弧の端から 8 画素以内の画素だけ
+        let arc = try #require(shape.arc)
+        let arcEnds: [SIMD2<Double>] = [arc.x, arc.x + arc.y].map { (t: Double) -> SIMD2<Double> in
+            SIMD2<Double>(shape.half.x * cos(t), shape.half.y * sin(t))
+        }
+        let placements: [SIMD3<Float>] = (0..<24).map { (i: Int) -> SIMD3<Float> in
+            let x = (Double(i) * 0.618034).truncatingRemainder(dividingBy: 1) - 0.5
+            let y = (Double(i) * 0.414214).truncatingRemainder(dividingBy: 1) - 0.5
+            return SIMD3<Float>(Float(x), Float(y), Float(Double(i) * 0.263))
+        }
+        for placement in placements {
+            let origin = SIMD2<Double>(Double(80 + placement.x), Double(80 + placement.y))
+            let angle = Double(placement.z)
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(shape.weight)
+                canvas.translate(Float(origin.x), Float(origin.y))
+                canvas.rotate(Float(angle))
+                shape.draw(on: canvas)
+            }
+            let pixels = try canvas.target.readPixels()
+            let (c, s) = (cos(angle), sin(angle))
+            func local(_ point: SIMD2<Double>) -> SIMD2<Double> {
+                let d = point - origin
+                return SIMD2(c * d.x + s * d.y, -s * d.x + c * d.y)
+            }
+            let shift = local(origin + 0.5)
+            for y in 10..<150 {
+                for x in 10..<150 {
+                    let center = local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift
+                    // 帯の縁から 1 画素の内だけ見る。期待する被覆は、真の距離 (64 bit) を縁の渡し (1 画素の
+                    // 線形の傾き) に通した値 — 描く側の被覆の式 (`ramp(外縁) − ramp(内縁)`) と同じ形で、
+                    // 距離の値と弧の候補の取り違えだけを見る (画素の真の面積とは、斜めの縁の渡しの粗さ
+                    // だけ違うので、面積では比べない)
+                    guard arcEnds.contains(where: { simd_distance($0, center) <= 8 }) else { continue }
+                    let distance = boundary(center)
+                    guard abs(distance - halfWeight) <= 1 else { continue }
+                    // 中心の角 (2 本の半径が交わる先) は、描く側が画素の中を標本で数える (`mokume_sectorApex`) ので、
+                    // 縁の渡しの式の期待値では測れない。この検査が見るのは弧の候補の取り違えなので外す
+                    guard simd_length(center) > 4 else { continue }
+                    func ramp(_ value: Double) -> Double { min(1, max(0, 0.5 - value)) }
+                    let truth = max(0, ramp(distance - halfWeight) - ramp(distance + halfWeight))
+                    let error = abs(Double(pixels[x, y].red) - truth)
+                    if error > worst {
+                        worst = error
+                        at = "(\(x), \(y)) を \(placement) で 画素 \(pixels[x, y].red) 期待 \(truth)"
+                    }
+                }
+            }
+        }
+        return (worst, at)
+    }
+
+    nonisolated static let approximateArcEdgeShapes: [SeamShape] = ([
+        // 半径比 2:1・太さ 1 (既定の太さ)。弧の端の近くで、近似の枝の勾配だけでは弧の候補がずれる
+        (50, 25, 5.4, 0.8, 1),
+        (50, 25, 0.8, 3.4, 1),
+        (25, 12.5, 5.4, 1.6, 1),
+        (25, 12.5, 0.8, 3.4, 1),
+        // 円の扇 (勾配が中心から見た向きと一致する)。この検査の物差しが円で外れないことの対照
+        (30, 30, 5.4, 0.8, 1),
+    ] as [(Double, Double, Double, Double, Double)]).map { (a, b, start, sweep, weight) in
+        SeamShape(
+            name: "arc(0, 0, \(Float(2 * a)), \(Float(2 * b)), \(Float(start)), \(Float(start + sweep)))",
+            isEllipse: true, half: SIMD2(a, b), weight: Float(weight), arc: SIMD2(start, sweep))
+    }
+
+    @Test(
+        "近似の距離場の楕円の扇でも、輪郭の帯の縁の被覆が真の距離の期待値から 5% の内に収まる",
+        arguments: PixelGridTests.approximateArcEdgeShapes)
+    func approximateArcBandEdgeFollowsTheTrueGeometry(_ shape: SeamShape) throws {
+        let measured = try arcBandEdgeError(shape)
+        #expect(measured.worst < 0.05, "\(shape): 帯の縁の被覆が外れる: 最悪 \(measured.worst) \(measured.at)")
     }
 
     /// 穴の端 (長軸の端から離れた尖りの先) の近くの画素で、帯の被覆が真の幾何の面積 (画素を 16x16 の

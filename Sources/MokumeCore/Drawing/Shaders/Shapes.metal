@@ -1416,10 +1416,13 @@ static inline FormField mokume_sectorField(
     // 決めない** ([#2914](https://github.com/mokume-metal/mokume/issues/2914))。楕円では最近点の向き
     // (法線) が中心から見た向きとずれるので、扇の内でも最近点が弧の外にあり (範囲の外の弧まで距離を
     // 測って、帯が外へ滲む)、扇の外でも最近点が弧の内にある (弧が最も近いのに線分への距離を返して、
-    // 帯が欠ける)。`ellipse.gradient` は最近点での外向きの法線で、半径を掛けると最近点の媒介変数 t の
-    // `(cos t, sin t)` の向きになる。範囲の外の最近点は、弧の端 (2 本の辺の端) が受け持つ。円と、
-    // 近似の距離場 (法線を中心から見た向きで近似する) は、`inWedge` と同じ向きで決まる
-    float2 onArc = ellipse.gradient * radii;
+    // 帯が欠ける)。最近点の媒介変数 t は、`p` から縁の足 `p − 距離 · 勾配` (勾配は最近点での外向きの
+    // 法線) を引いて半径で割った向き `(cos t, sin t)` で測る。**近似の距離場 (`exact` でない枝) も
+    // 同じ式で測る**: 近似の勾配は中心から見た向き (`p / 半径²`) で、`inWedge` と同じ向きになるので、
+    // 勾配だけで測ると、扇の内外の判定と同じずれが残る (輪郭の帯の縁は縁から太さの半分離れていて、
+    // 弧の端の近くで足の向きがずれる)。近似の距離は縁の近くで 1 次の精度があるので、足は 1 画素の内で
+    // 2 次の誤差で、距離の値そのものは近似のまま。範囲の外の最近点は、弧の端 (2 本の辺の端) が受け持つ
+    float2 onArc = (p - ellipse.distance * ellipse.gradient) / radii;
     float arcSide1 = dot(onArc, float2(direction1.y, -direction1.x));
     float arcSide2 = dot(onArc, float2(-direction2.y, direction2.x));
     bool nearestOnArc = sweep <= M_PI_F
