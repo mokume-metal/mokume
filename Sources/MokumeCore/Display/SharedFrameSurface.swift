@@ -274,6 +274,11 @@ final class SharedFrameSurface {
     private var heldCursor = 0
     /// 読み手が掴んでいるかもしれない面に当たって、焼きを見送った回数 (作ってから通算)。**検査から読む。**
     private(set) var burnsDeferred = 0
+    /// GPU が打ち切った焼きを、名乗らずに捨てた回数 (作ってから通算)。
+    ///
+    /// 呼び手 (``SketchApplication``) が、止まっている間に同じ絵を焼き直さない代わりに、捨てた焼きを
+    /// 見つけて焼き直すために読む ([#2367](https://github.com/mokume-metal/mokume/issues/2367))。
+    private(set) var droppedBurns = 0
     /// 書き込みの通し番号。**1 から数える。** 焼いた面が名乗る枚数はこれで決まる。
     private var writes = 0
     /// 最後に名乗った面の枚数 (その面を焼いた書き込みの通し番号)。**1 から数える** — 0 は「まだ
@@ -516,22 +521,28 @@ final class SharedFrameSurface {
     /// 描いた絵を次の面へ焼き、**前に焼いた 1 枚を差し出す。**
     ///
     /// 焼く投入は待たない。いま焼いた絵が名乗るのは次の書き込みのときである ([#748])。
-    /// 走っているスケッチは止めている間も毎リフレッシュここを通るので、控えた 1 枚は
-    /// 次のリフレッシュで出る。焼きの結末がまだ届いていなければもう 1 回遅れ、GPU が打ち切って
-    /// いれば名乗らずに次に焼いた面が出る ([#2735]・``publishPending()``)。
+    /// 走っているスケッチは毎リフレッシュここを通るので、控えた 1 枚は次のリフレッシュで出る。
+    /// **止まっている間は絵が変わらない限りここを通らない** ([#2367]) — 最後に変わった後の 1 回を焼いたら、
+    /// 呼び手は以後 ``publishPending()`` だけを呼んで控えを名乗らせる。焼きの結末がまだ届いていなければもう
+    /// 1 回遅れ、GPU が打ち切っていれば名乗らずに捨てる (``droppedBurns``)。次に焼いた面が出る
+    /// ([#2735]・``publishPending()``)。
     ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    /// - Returns: 焼いたら `true`。読み手が掴んでいるかもしれない面に当たって見送ったら `false` —
+    ///   呼び手は、この絵を出したことにせず、次のリフレッシュでもう一度試す。
     /// - Parameters:
     ///   - numbers: この絵を描いたときの速さ。絵と一緒に控え、絵と一緒に載せる。
     ///   - pointerLock: この絵を描いたときに、スケッチがカーソルを捕まえるよう頼んでいたか
     ///     (``pointerLockAttribute``)。速さと同じく絵と一緒に載せる。
     ///   - cursorHidden: この絵を描いたときに、スケッチが矢印のカーソルを隠すよう頼んでいたか
     ///     (``cursorHiddenAttribute``)。捕まえの要求と同じく絵と一緒に載せる。
+    @discardableResult
     func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
         pointerLock: Bool = false, cursorHidden: Bool = false
-    ) throws(RenderFailure) {
+    ) throws(RenderFailure) -> Bool {
         try publishPending()
         writes += 1
         // 読み手が掴んでいるかもしれない面を記す: いまの最新と、直前 2 回の書き込みのときの最新
@@ -543,7 +554,7 @@ final class SharedFrameSurface {
         let index = nextSlot
         guard !heldSlots.contains(index), !pending.contains(where: { $0.slot == index }) else {
             burnsDeferred += 1
-            return
+            return false
         }
         let submission = try presenter.draw(source, into: slots[index].texture)
         pending.append(
@@ -551,6 +562,7 @@ final class SharedFrameSurface {
                 slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
                 cursorHidden: cursorHidden, number: writes))
         nextSlot = (index + 1) % slots.count
+        return true
     }
 
     /// 控えている面を、焼いた順に名乗らせる。控えが無ければ何もしない。
@@ -581,6 +593,7 @@ final class SharedFrameSurface {
             case false?:
                 name(burn)
             case true?:
+                droppedBurns += 1
                 continue
             case nil:
                 // 後に焼いた面が無ければ、次の書き込みまで遅らせる。あれば見送る
