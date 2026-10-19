@@ -166,7 +166,10 @@ struct ObservationTimeTests {
     func ignoresWarningsSaidByAnotherTask() async throws {
         let path = try facet(), scene = Scene()
         let runtime = try runtime(scene, path)
-        // 別の検査のように、この検査のタスクローカル値を持たないタスクから言う
+        // 別の検査のように、この検査のタスクローカル値を持たないタスクから言う。**言った行は共有の
+        // 溜め場 (上限 20 行) に残る**ので、検査の終わりに自分の行だけ取り除く。残すと、溜め場を差して
+        // いない後の検査がそれを拾う
+        defer { Self.discardNoise() }
         await Task.detached {
             for number in 0..<5 { Diagnostics.warn("said by another test \(number)") }
         }.value
@@ -175,6 +178,18 @@ struct ObservationTimeTests {
         let warnings = try report(path)["warnings"] as? [String] ?? []
         #expect(warnings.count == 2, "\(warnings)")
         #expect(!warnings.contains { $0.hasPrefix("said by another test") }, "\(warnings)")
+        // 掃除した後の共有の溜め場に、この検査の行が残っていない
+        #expect(!Self.discardNoise().contains { $0.hasPrefix("said by another test") })
+    }
+
+    /// 共有の溜め場から、``ignoresWarningsSaidByAnotherTask()`` の行だけを取り除く。ほかの行は、取り出した
+    /// 順のまま戻す。残った行を返す。
+    @discardableResult
+    private static func discardNoise() -> [String] {
+        let taken = Diagnostics.sharedDigest.takeUnreported()
+        let kept = taken.filter { !$0.hasPrefix("said by another test") }
+        for line in kept { Diagnostics.sharedDigest.record(line) }
+        return kept
     }
 
     @Test("この検査が言った警告は、プロセスの溜め場には入らず、並んで走る別の検査へ漏れない")
