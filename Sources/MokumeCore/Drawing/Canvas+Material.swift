@@ -69,8 +69,12 @@ extension Canvas {
     /// 呼ぶ口は値を検める前に同じ断りを言う (``refuseMaterialColor(_:)``) ので、ここで言うことは無い守りである。
     private func apply(_ change: (inout Material) -> Void) {
         guard admits(.material) else { return }
-        closeBatch()
-        change(&style.material)
+        var changed = style.material
+        change(&changed)
+        // **材質が変わるときだけ閉じる** (#2789)。列は閉じた時点の材質を持つので、ビット列まで
+        // 同じ材質を当て直しても列は変わらない
+        if !style.material.isBitwiseEqual(to: changed) { closeBatch() }
+        style.material = changed
     }
 
     /// 材質へ渡された色から、足し引きに使う 3 成分を取り出す。
