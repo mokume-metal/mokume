@@ -708,28 +708,65 @@ final class SharedFrameSurface {
 
     /// いま読むべき面の番号と、その面が名乗っている枚数。読み手の側の規則。
     ///
-    /// **書き手と同じ規則をここに置く。** 読む側 (道具) は別のプロセスなので、規則が
-    /// 2 か所に分かれると片方だけ直したときに静かに食い違う。
+    /// **その場で面を引き直す。** 続けて読む読み手 (``SharedFrameStage``) は ``Lookup`` を
+    /// 持ち続けて引き直しを省く — 同じ規則をそちらが持つので、ここは 1 回かぎりの口である。
     ///
     /// - Returns: 掴むべき面の番号と枚数。まだ 1 枚も書かれていなければ `nil`。
     static func newest(among ids: [UInt32]) -> (id: UInt32, frame: Int)? {
-        var best: (id: UInt32, frame: Int)?
-        for id in ids {
-            guard let surface = IOSurfaceLookup(id) else { continue }
-            let value = IOSurfaceCopyValue(surface, frameAttribute as CFString) as? NSNumber
-            let frame = value?.intValue ?? 0
-            // **まだ 1 枚も書かれていない面は掴まない。** 属性が無ければ 0 が返るので、
-            // 起動した直後に読みに来た読み手は「まだ無い」を受け取る
-            guard frame > 0 else { continue }
-            // **新しいかどうかは、既に選んだものとだけ比べる。** 「無ければ 0」と畳むと
-            // 上の判定が二重になり、片方を壊しても検査が赤くならない
-            guard let chosen = best else {
-                best = (id, frame)
-                continue
-            }
-            if frame > chosen.frame { best = (id, frame) }
+        Lookup(ids: ids).newest()
+    }
+
+    /// 番号の組を引いた面を**持ち続ける**読み手。
+    ///
+    /// 毎リフレッシュ `IOSurfaceLookup` を面の数だけ出していた ([#2368])。面は参照計数で、
+    /// 載せた属性 (枚数・速さ・要求) は握っている参照からも読めるので、引くのは番号の組が
+    /// 変わるまで 1 回ずつでよい。**引けなかった番号は持たず、次の機会に引き直す** — 置いた側が
+    /// まだ作っていないだけかもしれない。
+    ///
+    /// **握ったままでも面は生き続ける** (書き手が畳んでも参照計数が残る)。この読み手が
+    /// 手放されれば参照も手放される。
+    ///
+    /// [#2368]: https://github.com/mokume-metal/mokume/issues/2368
+    @MainActor
+    final class Lookup {
+        let ids: [UInt32]
+        private var held: [UInt32: IOSurfaceRef] = [:]
+        /// `IOSurfaceLookup` を呼んだ回数。**検査が読む** — 番号の組が変わらない間は増えないこと。
+        private(set) var lookups = 0
+
+        init(ids: [UInt32]) {
+            self.ids = ids
         }
-        return best
+
+        /// 番号の面。持っていなければ 1 度引く。引けなければ `nil` (持たない)。
+        func surface(_ id: UInt32) -> IOSurfaceRef? {
+            if let surface = held[id] { return surface }
+            lookups += 1
+            guard let surface = IOSurfaceLookup(id) else { return nil }
+            held[id] = surface
+            return surface
+        }
+
+        /// いま読むべき面の番号と、その面が名乗っている枚数。規則は ``SharedFrameSurface/newest(among:)``。
+        func newest() -> (id: UInt32, frame: Int)? {
+            var best: (id: UInt32, frame: Int)?
+            for id in ids {
+                guard let surface = surface(id) else { continue }
+                let value = IOSurfaceCopyValue(surface, frameAttribute as CFString) as? NSNumber
+                let frame = value?.intValue ?? 0
+                // **まだ 1 枚も書かれていない面は掴まない。** 属性が無ければ 0 が返るので、
+                // 起動した直後に読みに来た読み手は「まだ無い」を受け取る
+                guard frame > 0 else { continue }
+                // **新しいかどうかは、既に選んだものとだけ比べる。** 「無ければ 0」と畳むと
+                // 上の判定が二重になり、片方を壊しても検査が赤くならない
+                guard let chosen = best else {
+                    best = (id, frame)
+                    continue
+                }
+                if frame > chosen.frame { best = (id, frame) }
+            }
+            return best
+        }
     }
 
     /// 面が名乗っている速さ。読み手の側の規則。
@@ -741,8 +778,13 @@ final class SharedFrameSurface {
     ///   載っていないことがある** — 起動直後と止めている間は測れていないので、書き手が
     ///   鍵ごと省く。
     static func numbers(of id: UInt32) -> FrameNumbers? {
-        guard let surface = IOSurfaceLookup(id),
-            let count = number(TempoAttribute.frameCount, on: surface)?.intValue,
+        guard let surface = IOSurfaceLookup(id) else { return nil }
+        return numbers(on: surface)
+    }
+
+    /// 引いた面が名乗っている速さ。載っていなければ `nil`。
+    static func numbers(on surface: IOSurfaceRef) -> FrameNumbers? {
+        guard let count = number(TempoAttribute.frameCount, on: surface)?.intValue,
             let time = number(TempoAttribute.time, on: surface)?.doubleValue
         else { return nil }
         return FrameNumbers(

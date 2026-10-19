@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Testing
 
 @testable import MokumeCore
@@ -125,5 +126,59 @@ struct ScreenDisplayLinkTests {
         #expect(link.owner == nil)
         // 進める先が無くても落ちない (予備の刻みはタイマーから来るので、ここを通りうる)
         link.advanceFromFallbackIfStalled(at: 1_000)
+    }
+
+    // MARK: - 見張りの形 (#2368)
+
+    /// 窓も画面も使わない — 画面が無い駆動源 (`attach(to: nil)`) は予備だけが回る。
+    /// 時計で測るので、境界は大きく取る。
+    private func runMainLoop(for seconds: Double, every tick: Double? = nil, _ body: (@MainActor @Sendable () -> Void)? = nil) {
+        var ticker: Timer?
+        if let tick, let body {
+            let timer = Timer(timeInterval: tick, repeats: true) { _ in
+                MainActor.assumeIsolated { body() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            ticker = timer
+        }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
+        ticker?.invalidate()
+    }
+
+    /// **健全な間、予備のタイマーは起きない。** 目標フレーム間隔で回して空振りさせていた頃は、
+    /// 表示のリフレッシュの倍の起床だった (tolerance を持たせても減らなかった・#2368)。
+    @Test("表示のリフレッシュが来ている間は、予備のタイマーが 1 回も起きない")
+    func theWatchdogDoesNotWakeWhileTheDisplayLinkIsAlive() {
+        let (link, counter) = makeLink()
+        link.attach(to: nil)
+        defer { link.invalidate() }
+        runMainLoop(for: 0.6, every: interval) { link.advanceFromDisplayLink() }
+        #expect(counter.advances >= 20, "リフレッシュの代わりが回っていない (\(counter.advances))")
+        #expect(link.fallbackFires == 0, "健全なのに予備のタイマーが \(link.fallbackFires) 回起きた")
+    }
+
+    /// 途切れたら、閾値の後に起きて、以後は目標フレーム間隔で進める。
+    @Test("表示のリフレッシュが途切れたら、閾値の後に起きて目標フレーム間隔で進める")
+    func theWatchdogTakesOverAfterTheThresholdAndKeepsTheRate() {
+        let (link, counter) = makeLink()
+        link.attach(to: nil)
+        defer { link.invalidate() }
+        // 途切れる前の健全な区間
+        runMainLoop(for: 0.2, every: interval) { link.advanceFromDisplayLink() }
+        let before = counter.advances
+        #expect(link.fallbackFires == 0)
+
+        // 途切れた。閾値 (約 67 ms) を越えたら引き受け、60 fps に近い速さで進める。
+        // 時計の揺れがあるので、理論値 (約 27) の半分を下限にする
+        runMainLoop(for: 0.6)
+        let taken = counter.advances - before
+        #expect(taken >= 13, "途切れた後に予備が間隔ぶん進めていない (\(taken))")
+        #expect(taken <= 40, "予備が速すぎる (\(taken))")
+
+        // 戻ったら下りる
+        let driven = counter.advances
+        runMainLoop(for: 0.3, every: interval) { link.advanceFromDisplayLink() }
+        let returned = counter.advances - driven
+        #expect(returned <= 25, "表示のリフレッシュが戻ったのに予備も進めている (\(returned))")
     }
 }

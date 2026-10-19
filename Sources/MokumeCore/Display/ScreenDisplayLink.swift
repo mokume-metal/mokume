@@ -188,34 +188,65 @@ final class ScreenDisplayLink: NSObject {
 
     /// 予備の駆動源を回し始める。**張り直しでは前のものを畳んでから。**
     ///
-    /// **表示のリフレッシュが生きている間は空振りするだけ**なので、目標フレーム間隔で
-    /// 細かく回してよい。止まっている間はこの間隔がそのままフレームレートになる。
+    /// **見張りの形である。** 表示のリフレッシュが生きている間は、リフレッシュが来るたびに
+    /// 次の発火を「いま + 止まりの閾値」へ送るので、予備のタイマーは**健全な間は 1 回も
+    /// 起きない** (``advanceFromDisplayLink(at:)``)。目標フレーム間隔で回し続けて空振りさせる
+    /// 形では、tolerance を持たせても起床がリフレッシュの倍 (60 fps で 120 回/秒) のまま
+    /// 減らなかった ([#2368])。リフレッシュが途切れたときにだけ、閾値の後で最初に起き、
+    /// 以後は目標フレーム間隔で進める — 止まっている間はこの間隔がそのままフレームレートに
+    /// なるので、粗くしない ([ADR-0012] 決定 5)。
     ///
     /// `.common` へ載せるのは、メニューを開いている間も回すためである — 名乗りの
     /// メニューを開いたまま画面が消えることは普通に起きる。
     ///
     /// **繋いだ時点を起点にする。** 0 のままだと、表示のリフレッシュが始まる前の
     /// 1 回目で必ず予備が引き受けることになる。
+    ///
+    /// [#2368]: https://github.com/mokume-metal/mokume/issues/2368
+    /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
     private func startFallback() {
         fallbackTimer?.invalidate()
         lastAdvancedAt = CACurrentMediaTime()
         isDrivenByFallback = false
         let timer = Timer(
-            timeInterval: FrameDriver.fallbackInterval(frameRate: fallbackFrameRate), repeats: true
+            fire: Date(timeIntervalSinceNow: fallbackStallThreshold),
+            interval: FrameDriver.fallbackInterval(frameRate: fallbackFrameRate), repeats: true
         ) { [weak self] timer in
             // **持ち主ごと消えていたら、自分を畳む。** 実行ループがこの仕掛けを持つので、
             // 畳まないと誰も進めないまま回り続ける (`deinit` からは止められない・下記)
             guard let self else { return timer.invalidate() }
-            MainActor.assumeIsolated { self.advanceFromFallbackIfStalled() }
+            MainActor.assumeIsolated { self.fallbackFired() }
         }
         RunLoop.main.add(timer, forMode: .common)
         fallbackTimer = timer
+    }
+
+    private var fallbackStallThreshold: Double {
+        FrameDriver.stallThreshold(frameRate: fallbackFrameRate)
+    }
+
+    /// 予備のタイマーが起きた回数。**検査が読む** — 健全な間は増えないこと (見張りの形)。
+    private(set) var fallbackFires = 0
+
+    /// 予備のタイマーが起きた。
+    ///
+    /// **引き受けなかったときは、見張りに戻る。** 起きたのに止まっていなかった (主の実行ループが
+    /// 塞がっていた直後など) なら、次は「最後に進めた時刻 + 閾値」まで眠る。
+    private func fallbackFired() {
+        fallbackFires += 1
+        advanceFromFallbackIfStalled()
+        guard !isDrivenByFallback else { return }
+        let remaining = lastAdvancedAt + fallbackStallThreshold - CACurrentMediaTime()
+        let floor = FrameDriver.fallbackInterval(frameRate: fallbackFrameRate)
+        fallbackTimer?.fireDate = Date(timeIntervalSinceNow: max(remaining, floor))
     }
 
     /// 表示のリフレッシュが来た。**検査からは時刻を渡して呼ぶ。**
     func advanceFromDisplayLink(at now: Double = CACurrentMediaTime()) {
         // **表示のリフレッシュが生きている。** 予備が引き受けていたなら、ここで下りる
         isDrivenByFallback = false
+        // **見張りを送る。** 次に起きるのは、このリフレッシュから閾値だけ経ったとき
+        fallbackTimer?.fireDate = Date(timeIntervalSinceNow: fallbackStallThreshold)
         advance(at: now)
     }
 
@@ -224,7 +255,7 @@ final class ScreenDisplayLink: NSObject {
         guard
             FrameDriver.shouldAdvanceFromFallback(
                 now: now, lastAdvancedAt: lastAdvancedAt,
-                stallThreshold: FrameDriver.stallThreshold(frameRate: fallbackFrameRate),
+                stallThreshold: fallbackStallThreshold,
                 isAlreadyDriving: isDrivenByFallback)
         else { return }
         isDrivenByFallback = true

@@ -86,6 +86,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// いま見ている差し出し元。
     private struct Source {
         let ids: [UInt32]
+        /// 面を引いたまま持ち続ける読み手。**番号の組が変わる (= 別の世代) までは引き直さない**
+        /// ([#2368](https://github.com/mokume-metal/mokume/issues/2368))。
+        let lookup: SharedFrameSurface.Lookup
         let width: Int
         let height: Int
         /// 番号ごとのテクスチャ。引けなかった面は入らない。
@@ -125,6 +128,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     /// まだ出していない世代を控えているか。**検査から見る。**
     var hasIncoming: Bool { incoming != nil }
+
+    /// 面を引いた (`IOSurfaceLookup`) 回数。出している世代と控えている世代の合計。**検査から
+    /// 見る** — 番号の組が変わらない間は、リフレッシュを重ねても増えないこと
+    /// ([#2368](https://github.com/mokume-metal/mokume/issues/2368))。
+    var surfaceLookups: Int {
+        retiredLookups + (source?.lookup.lookups ?? 0) + (incoming?.lookup.lookups ?? 0)
+    }
+    /// 手放した世代が引いた回数。``surfaceLookups`` を世代の入れ替わりをまたいで数えるため。
+    private var retiredLookups = 0
 
     /// 問いの出し方。**検査から差し替える** — 既定は窓へシートを下ろすので、そのままでは
     /// 「押した後どうなるか」を検められない (`WatchSession.Hooks` と同じ流儀)。
@@ -360,10 +372,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             self.view?.followPointerLock(requested: pointerLockRequested)
             self.view?.followCursorHiding(requested: cursorHiddenRequested)
         }
-        guard let source, let newest = SharedFrameSurface.newest(among: source.ids) else { return }
+        guard let source, let newest = source.lookup.newest() else { return }
         // **面に載ったもの (速さ・捕まえの要求) は、窓の有無と関係なく読む。** 絵を出す先が
         // 無くても、走っている側が名乗ったことは変わらない
-        readNumbers(from: newest)
+        readNumbers(from: newest, in: source.lookup)
         guard let view, let layer = view.metalLayer,
             newest.frame != lastFrame, let frame = source.frames[newest.id]
         else { return }
@@ -396,13 +408,17 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **新しい枚数のときだけ引く。** 同じ絵に対して引き直しても数字は変わらないので、
     /// 毎リフレッシュ読むぶんだけ無駄になる。
-    private func readNumbers(from newest: (id: UInt32, frame: Int)) {
+    private func readNumbers(
+        from newest: (id: UInt32, frame: Int), in lookup: SharedFrameSurface.Lookup
+    ) {
         guard newest.frame != lastSeenFrame else { return }
         lastSeenFrame = newest.frame
+        // `newest` を返した面は握っているので、引き直さない (#2368)
+        guard let surface = lookup.surface(newest.id) else { return }
         // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む
-        pointerLockRequested = SharedFrameSurface.pointerLockRequested(of: newest.id)
-        cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(of: newest.id)
-        guard let numbers = SharedFrameSurface.numbers(of: newest.id) else { return }
+        pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
+        cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+        guard let numbers = SharedFrameSurface.numbers(on: surface) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
     }
 
@@ -424,6 +440,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // **控えていた世代は捨てる。** 重ねるのは 2 つまでで、まだ 1 枚も出していない
         // 世代を積み上げても、出る絵は増えない
         if let waiting = incoming {
+            retiredLookups += waiting.lookup.lookups
             try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
             incoming = nil
         }
@@ -438,7 +455,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             return
         }
         incoming = Source(
-            ids: manifest.ids, width: manifest.width, height: manifest.height, frames: frames,
+            ids: manifest.ids, lookup: SharedFrameSurface.Lookup(ids: manifest.ids),
+            width: manifest.width, height: manifest.height, frames: frames,
             windowScale: manifest.windowScale)
     }
 
@@ -452,9 +470,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 最初の 1 回がそれに当たる。
     private func promoteIfReady() {
         guard let waiting = incoming else { return }
-        if source != nil, SharedFrameSurface.newest(among: waiting.ids) == nil { return }
+        if source != nil, waiting.lookup.newest() == nil { return }
         // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる
         if let previous = source {
+            retiredLookups += previous.lookup.lookups
             try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
         }
         source = waiting
