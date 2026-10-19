@@ -126,11 +126,16 @@ enum MovieWriteFailure: Error, Equatable {
 ///   入り方でも戻ったが、26 では測っていない。戻らなければ待ちが永久に回り、枠が返らずに
 ///   上限のところで main actor が塞がる。`status` で抜ければ、どちらでも同じに終わる
 ///
+/// **確かめた後に転ぶ枚も同じである** ([#2944])。`.writing` と確かめてから器の池を取るまでの間に writer が
+/// 転ぶと、池は `nil` になり器も借りられない。取れなかった後にもう一度状態を読み、`.writing` でなければ
+/// `bufferUnavailable` ではなく writer の理由で書き損じにする。
+///
 /// `.writing` のまま用意が永久に戻らない場合は覆わない。測られた例が無い ([#979] の測定では
 /// 待ちに入るのはたいてい 0〜2 回) ので、実害が出てから足す ([ADR-0008])。
 ///
 /// [#979]: https://github.com/mokume-metal/mokume/issues/979
 /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
+/// [#2944]: https://github.com/mokume-metal/mokume/issues/2944
 /// [#1628]: https://github.com/mokume-metal/mokume/issues/1628
 /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
@@ -157,6 +162,66 @@ nonisolated final class MovieFile {
     /// 最初の 1 枚を受け取ったか。**区間の始まりは最初のフレームの時刻**で、
     /// 0 ではない — 途中から撮り始めた動画の頭に、何も無い時間を作らないため。
     private var hasStarted = false
+
+    /// ``append(_:at:)`` が writer の状態・画素の器の池・失敗の理由を読む所への差込口。**検査だけが使う**
+    /// ([#2944])。
+    ///
+    /// 確かめた直後に writer が転ぶ形は、本物の writer では決まった所に作れない (転ぶのは符号化器の
+    /// 側で、いつ起きるかは負荷しだい)。だから**読む所だけ**を差し替えられるようにして、「状態を読んだ
+    /// 後、池を取る前に転ぶ」を決定的に作る。空のままなら本物の writer と adaptor を読む。
+    ///
+    /// [#2944]: https://github.com/mokume-metal/mokume/issues/2944
+    struct Reads {
+        /// `writer.status` の代わり。
+        var status: (() -> AVAssetWriter.Status)?
+        /// `adaptor.pixelBufferPool` の代わり。
+        var pool: (() -> CVPixelBufferPool?)?
+        /// 池から器を 1 つ借りる手の代わり (`nil` は借りられなかった)。
+        var borrow: ((CVPixelBufferPool) -> CVPixelBuffer?)?
+        /// writer の言った失敗の理由の代わり。
+        var reason: (() -> String)?
+    }
+
+    /// 検査が差し込む読み方。空なら本物を読む。
+    var reads = Reads()
+
+    private var writerStatus: AVAssetWriter.Status { reads.status?() ?? writer.status }
+
+    private var pixelBufferPool: CVPixelBufferPool? {
+        if let pool = reads.pool { return pool() }
+        return adaptor.pixelBufferPool
+    }
+
+    /// writer の言った失敗の理由。言わなければ `unknown`。
+    private var failureReason: String {
+        reads.reason?() ?? writer.error.map(Diagnostics.failureText) ?? "unknown"
+    }
+
+    /// 池から器を 1 つ借りる。借りられなければ `nil`。
+    private func borrowBuffer(from pool: CVPixelBufferPool) -> CVPixelBuffer? {
+        if let borrow = reads.borrow { return borrow(pool) }
+        var borrowed: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &borrowed) == kCVReturnSuccess else {
+            return nil
+        }
+        return borrowed
+    }
+
+    /// 器を取れなかったときの失敗。**writer が `.writing` でなければ、器のせいではなく writer の理由で
+    /// 書き損じにする** ([#2944])。
+    ///
+    /// 状態を確かめてから池を取るまでの間に writer が転ぶと、池は `nil` になり、器も借りられない。
+    /// 取れなかった後にもう一度状態を読めば、その枚も符号化器の理由を名乗る ([#1299])。転んでいない
+    /// (`.writing` のまま) のに取れないときは、これまでどおり ``MovieWriteFailure/bufferUnavailable``。
+    ///
+    /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
+    /// [#2944]: https://github.com/mokume-metal/mokume/issues/2944
+    private func bufferFailure() -> MovieWriteFailure {
+        guard writerStatus == .writing else {
+            return .writeFailed(path: path, reason: failureReason)
+        }
+        return .bufferUnavailable
+    }
 
     /// 絵の大きさ。**開いた後は変えられない**ので、受け取った絵と食い違えば断る。
     let width: Int
@@ -311,23 +376,22 @@ nonisolated final class MovieFile {
         }
         // 読み直して待つ。合図で待つ形を採らない理由は型の冒頭にある (#979)。
         // **止まった writer は待たない** — 理由も型の冒頭にある (#1299)
-        while writer.status == .writing, !input.isReadyForMoreMediaData {
+        while writerStatus == .writing, !input.isReadyForMoreMediaData {
             try? await Task.sleep(for: .milliseconds(1))
         }
-        guard writer.status == .writing else {
-            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
+        guard writerStatus == .writing else {
+            throw .writeFailed(path: path, reason: failureReason)
         }
-        guard let pool = adaptor.pixelBufferPool else { throw .bufferUnavailable }
+        // **池を取れない・器を借りられないときは、取れなかった後に状態を読み直す。** 確かめてから取るまでの
+        // 間に writer が転ぶと、取れないのは器のせいではない (``bufferFailure()``・#2944)
+        guard let pool = pixelBufferPool else { throw bufferFailure() }
         // **器は借りて返す。** フレームごとに確保すると、長く撮ったときにだけ重くなる
         // ([ADR-0023] 決定 5)
-        var borrowed: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &borrowed) == kCVReturnSuccess,
-            let buffer = borrowed
-        else { throw .bufferUnavailable }
+        guard let buffer = borrowBuffer(from: pool) else { throw bufferFailure() }
 
         fill(buffer, with: image)
         guard adaptor.append(buffer, withPresentationTime: stamp) else {
-            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
+            throw .writeFailed(path: path, reason: failureReason)
         }
     }
 
@@ -345,7 +409,7 @@ nonisolated final class MovieFile {
         writer.endSession(atSourceTime: Self.stamp(time + frameDuration))
         await writer.finishWriting()
         guard writer.status == .completed else {
-            throw .writeFailed(path: path, reason: writer.error.map(Diagnostics.failureText) ?? "unknown")
+            throw .writeFailed(path: path, reason: failureReason)
         }
     }
 
