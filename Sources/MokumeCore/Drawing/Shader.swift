@@ -121,8 +121,9 @@ public final class Shader {
     /// 組み上がるので、後から名前を増やすと組み直しになる。増やすかどうかは
     /// 読み込むときに決める。
     public func set(_ name: String, _ value: ShaderValue) {
-        paintWillChange()
-        box.assign(name, value)
+        // **断る入力と同じ値の書き直しでは、列を閉じない** (#2789)。値が変わると分かってから、旧値を
+        // 持つ列を閉じる。比べるのはビット列で、+0 と -0・NaN の違いは別の値として扱う
+        box.assign(name, value) { paintWillChange() }
     }
 
     /// 渡す面を差し替える。

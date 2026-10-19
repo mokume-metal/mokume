@@ -1,67 +1,100 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import Darwin
 import Synchronization
 
-/// 音の標本を溜める環。書き手 1 つ (音の realtime スレッド) と読み手 1 つ (フレーム) の間に置く。
+/// 音の標本を、書き手 1 つ (realtime) と読み手 1 つ (フレーム) の間で渡す。
 ///
-/// **書き手は錠を取らず、確保もしない** ([ADR-0042] 決定 7)。realtime スレッドで錠を待つと
-/// 音が途切れ、確保は時間の上限が無い。置き場は作るときに 1 度だけ確保し、書き手は標本を
-/// 置いてから「書いた総数」を `Atomic` で公開する。読み手はその数を読んでから、手前の窓を写す。
+/// 事前に確保した 3 面を、書き手・読み手・交換場所で 1 つずつ所有する (#2916)。
+/// 書き手は完成した面を交換場所へ公開し、そこにあった面を次に使う。読み手も交換してから
+/// 写すので、写している面は書き手へ戻らない。読み手が何秒止まっても、書き手は残りの
+/// 2 面で進める。容量や読み取り時間を安全性の根拠にしない。
 ///
-/// 読み手が写している間に書き手が 1 周して同じ場所を上書きすると、写した窓が混ざる。容量を
-/// 窓の 32 倍にしてあるので、それには写す間に 0.7 秒ぶん (48 kHz で) 書かれる必要があり、
-/// フレームの中では起きない。
-///
-/// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+/// 書き手は前の公開面から、再利用する面に足りない履歴だけを写す (最大 capacity 個)。
+/// 前の公開面も、その書き手が次に取り戻すまでは不変で、読み手は書かない。
+/// write は確保・ロック待ち・再試行をしない (ADR-0042 決定 7)。
 nonisolated final class SampleRing: @unchecked Sendable {
-    // `@unchecked Sendable`: 置き場は書き手だけが書き、読み手は ``written`` を読んだ後に、
-    // そこより手前だけを読む (上の説明)。
-
+    // @unchecked Sendable: back / published は書き手だけ、front は読み手だけが触る。
+    // 面への書き込みは back だけ。middle.exchange の release が公開/読み終わりを、
+    // acquire が受領/再利用を順序付ける。破棄は双方の利用が終わってからである。
     let capacity: Int
-    private let storage: UnsafeMutablePointer<Float>
+    private let windows: [Window]
+    private var back = 0
+    private var front = 1
+    private var published = 2
+    private let middle = Atomic<Int>(2)
     private let written = Atomic<Int>(0)
-    private let stamp = Atomic<UInt64>(0)
+    private static let unread = 4
+
+    /// 読み手へ渡す写し。標本と時刻は必ず同じ公開面から取る。
+    struct Snapshot: Sendable {
+        let samples: [Float]
+        let total: Int
+        let hostTime: UInt64
+    }
+
+    private final class Window {
+        let storage: UnsafeMutablePointer<Float>
+        var total = 0
+        var hostTime: UInt64 = 0
+
+        init(capacity: Int) {
+            storage = .allocate(capacity: capacity)
+            storage.initialize(repeating: 0, count: capacity)
+        }
+
+        deinit { storage.deallocate() }
+    }
 
     init(capacity: Int) {
+        precondition(capacity > 0)
         self.capacity = capacity
-        storage = .allocate(capacity: capacity)
-        storage.initialize(repeating: 0, count: capacity)
+        windows = (0..<3).map { _ in Window(capacity: capacity) }
     }
 
-    deinit {
-        storage.deallocate()
-    }
-
-    // MARK: - 書き手 (realtime スレッド)
-
-    /// `count` 個の標本を置く。`sample(i)` が i 番目を返す。**錠も確保も無い。**
-    ///
-    /// - Parameter hostTime: 置いた標本の最後が届いた host time。
+    /// count 個を置いて公開する。sample は書き手の上で 1 個につき 1 回呼ぶ。
     func write(count: Int, hostTime: UInt64, _ sample: (Int) -> Float) {
-        let start = written.load(ordering: .relaxed)
-        for offset in 0..<count {
-            storage[(start + offset) % capacity] = sample(offset)
+        precondition(count >= 0)
+        let previous = windows[published]
+        let next = windows[back]
+        let start = previous.total
+        let end = start + count
+        // 新しい書き込みで消える履歴は写さない。再利用する面が既に持つ履歴も写さない。
+        let missing = max(next.total, end - capacity)
+        if missing < start {
+            for index in missing..<start {
+                next.storage[index % capacity] = previous.storage[index % capacity]
+            }
         }
-        stamp.store(hostTime, ordering: .relaxed)
-        written.store(start + count, ordering: .releasing)
+        for offset in 0..<count {
+            next.storage[(start + offset) % capacity] = sample(offset)
+        }
+        next.total = end
+        next.hostTime = hostTime
+        published = back
+        back = middle.exchange(back | Self.unread, ordering: .acquiringAndReleasing) & ~Self.unread
+        written.store(end, ordering: .releasing)
     }
 
-    // MARK: - 読み手 (フレーム)
-
-    /// これまでに書かれた標本の総数。新しい標本が届いたかを見るのに使う。
+    /// 更新の有無だけを安く調べる。標本と組にする総数は snapshot から読む。
     var total: Int { written.load(ordering: .acquiring) }
 
-    /// 最後に書かれた標本が届いた host time。
-    var lastHostTime: UInt64 { stamp.load(ordering: .relaxed) }
+    /// 最新の count 個。まだ書かれていない分を前の 0 で埋め、古い順に写す。
+    func latest(_ count: Int) -> [Float] { snapshot(count).samples }
 
-    /// 最新の `count` 個を、古い順に写す。まだ書かれていない分は前を 0 で埋める。
-    func latest(_ count: Int) -> [Float] {
-        let end = total
-        return (0..<count).map { offset in
-            let index = end - count + offset
-            return index < 0 ? 0 : storage[index % capacity]
+    /// 標本・総数・hostTime を一緒に写す。読み手は 1 つだけで、再入しない。
+    /// afterAcquiring は、検査が面を受け取った直後で読み手を止めるための口 (#2916)。
+    func snapshot(_ count: Int, afterAcquiring: () -> Void = {}) -> Snapshot {
+        precondition((0...capacity).contains(count))
+        if middle.load(ordering: .acquiring) & Self.unread != 0 {
+            front = middle.exchange(front, ordering: .acquiringAndReleasing) & ~Self.unread
         }
+        let window = windows[front]
+        afterAcquiring()
+        let samples = (0..<count).map { offset in
+            let index = window.total - count + offset
+            return index < 0 ? 0 : window.storage[index % capacity]
+        }
+        return Snapshot(samples: samples, total: window.total, hostTime: window.hostTime)
     }
 }

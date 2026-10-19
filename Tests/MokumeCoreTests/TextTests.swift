@@ -664,6 +664,47 @@ struct TextTests {
         #expect(message.contains("\"HiraginoSans-W6\" (bold, upright)"), "\(message)")
     }
 
+    /// 指定した書体に太字が無くても、混ぜた日本語は代わりの書体の太字の面で引ける (#2770)。指定した書体
+    /// の警告は今までどおり 1 度鳴り、代わりの書体の警告は (太字で描けたので) 鳴らない。
+    @Test("太字の無い書体に混ぜた日本語が太字で描けたなら、指定した書体の警告だけが出る")
+    func aRestyledFallbackIsNotWarned() throws {
+        try #require(
+            CTFontCopyPostScriptName(CTFontCreateWithName("Apple Chancery" as CFString, 12, nil)) as String
+                == "Apple-Chancery",
+            "前提: この環境に Apple Chancery がある")
+        let canvas = try makeCanvas()
+        canvas.textFont("Apple Chancery")
+        canvas.textStyle(.bold)
+        _ = canvas.textWidth("aあ")
+        #expect(canvas.warnings.hasWarned(.missingTypefaceStyle))
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle)
+        #expect(message == nil, "「あ」は太字で描けたのに鳴った: \(message ?? "")")
+    }
+
+    /// 太斜体は Apple Chancery が斜体を欠くので、太字だけの面で描いて 1 度知らせ、文面がその面を名乗る (#2770)。
+    @Test("太字の無い書体の太斜体に混ぜた日本語は、引き直した太字の面を名乗って警告する")
+    func aRestyledBoldItalicFallbackNamesTheBoldFace() throws {
+        try #require(
+            CTFontCopyPostScriptName(CTFontCreateWithName("Apple Chancery" as CFString, 12, nil)) as String
+                == "Apple-Chancery",
+            "前提: この環境に Apple Chancery がある")
+        let canvas = try makeCanvas()
+        canvas.textFont("Apple Chancery")
+        canvas.textStyle(.boldItalic)
+        _ = canvas.textWidth("あ")
+        let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
+        // 代わりの家族は機械の言語の設定で変わる (手元はヒラギノ明朝・CI 機は宋体)。名乗る面は、CoreText が
+        // 劣化した base から選んだ代わりの、太字の面のもの
+        let plain = CTFontCreateForString(canvas.typeface.base, "あ" as CFString, CFRangeMake(0, 1))
+        let bold = try #require(
+            CTFontCreateCopyWithSymbolicTraits(plain, 32, nil, .traitBold, .traitBold),
+            "前提: 代わりの書体に太字の面がある")
+        try #require(
+            CTFontGetSymbolicTraits(bold).contains(.traitBold), "前提: 太字の面が引ける")
+        #expect(
+            message.contains("\"\(CTFontCopyPostScriptName(bold) as String)\" (bold, upright)"), "\(message)")
+    }
+
     @Test("指定した書体の面の警告と、代わりの書体の面の警告は、どちらが先でも互いを黙らせない")
     func theTwoStyleWarningsAreIndependent() throws {
         try Self.requireHiraginoFallback()

@@ -78,9 +78,11 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
     /// 新しい標本が届いていれば、最新の窓を入れる。届いた時刻は環の最後の標本の host time。
     func pump(into input: ExternalInput<[Float]>, at time: Double) {
         let total = ring.total
-        guard total != lastTotal else { return }
-        lastTotal = total
-        input.send(ring.latest(AudioAnalysis.windowSize), hostTime: ring.lastHostTime)
+        // 公開直後は通知の総数が遅れることがある。既に受け取った窓を送り直さない。
+        guard total > lastTotal else { return }
+        let snapshot = ring.snapshot(AudioAnalysis.windowSize)
+        lastTotal = snapshot.total
+        input.send(snapshot.samples, hostTime: snapshot.hostTime)
     }
 
     func stop() {

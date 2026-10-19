@@ -11,7 +11,8 @@ extension Canvas {
     // 影を落とすかどうか。
     public func shadows(_ enabled: Bool) {
         guard admits(.shadow) else { return }
-        closeBatch()
+        // 同じ値の書き直しでは閉じない (#2789)。影の設定は列ではなくフレームに 1 つで、描き切るときに読む
+        if enabled != shadowsEnabled { closeBatch() }
         shadowsEnabled = enabled
         if enabled { shadowsEverEnabled = true }
     }
@@ -21,7 +22,7 @@ extension Canvas {
         let size = size.asFloat
         guard admits(.shadow) else { return }
         guard size.isFinite, size > 0 else { return warnBadShadow("shadowRange") }
-        closeBatch()
+        if !(shadowRangeValue?.isBitwiseEqual(to: size) ?? false) { closeBatch() }
         shadowRangeValue = size
     }
 
@@ -29,7 +30,7 @@ extension Canvas {
     public func shadowDetail(_ size: Int) {
         guard admits(.shadow) else { return }
         guard ShadowMap.detailRange.contains(size) else { return warnBadShadow("shadowDetail") }
-        closeBatch()
+        if size != shadowDetailValue { closeBatch() }
         shadowDetailValue = size
     }
 
@@ -38,21 +39,21 @@ extension Canvas {
         let amount = amount.asFloat
         guard admits(.shadow) else { return }
         guard amount.isFinite, amount >= 0 else { return warnBadShadow("shadowBias") }
-        closeBatch()
+        if !shadowBiasValue.isBitwiseEqual(to: amount) { closeBatch() }
         shadowBiasValue = amount
     }
 
     // これから置く形が、影を落とす側か。
     public func castShadow(_ enabled: Bool) {
         guard admits(.shadow) else { return }
-        closeBatch()
+        if enabled != style.castsShadow { closeBatch() }
         style.castsShadow = enabled
     }
 
     // これから置く形が、影を受ける側か。
     public func receiveShadow(_ enabled: Bool) {
         guard admits(.shadow) else { return }
-        closeBatch()
+        if enabled != style.receivesShadow { closeBatch() }
         style.receivesShadow = enabled
     }
 

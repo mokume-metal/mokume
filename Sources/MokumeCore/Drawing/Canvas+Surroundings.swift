@@ -10,6 +10,9 @@ extension Canvas {
     public func surroundings(_ surroundings: Surroundings) {
         guard admits(.surroundings) else { return }
         guard surroundings.isUsable else { return warnBadSurroundings() }
+        // 置いてある周囲とビット列まで同じなら閉じない (#2789)。列は閉じた時点の周囲を持つ。
+        // 何も置いていない状態からは、同じに見える周囲でも置くので閉じる
+        if let current = activeSurroundings, current.isBitwiseEqual(to: surroundings) { return }
         closeBatch()
         activeSurroundings = surroundings
     }
