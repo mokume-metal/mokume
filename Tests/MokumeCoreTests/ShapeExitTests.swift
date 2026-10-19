@@ -213,6 +213,7 @@ enum ShapeExit {
             "computations": "この面が作った計算 (弱く持つ)。観測へ失敗を載せる",
             "warnings": "言った注意の控え。組み立ての中で言った注意も残す",
             "passesThisFrame": flush, "depthIsHeld": flush, "pixelLoadFailed": flush,
+            "pixelWriteGateMade": "窓へ渡す問い合わせ。面を弱く持つだけで状態を抱えない (#2369)",
             "carriesPictureBeforeEffects": flush, "targetChangedSinceUpscale": flush,
             "placingCatchUpDeferred": flush,
             "lightStorage": "光の置き場。記録の中で閉じた立体の列もいまの光を写すが、列ごと形へ抜くので読まれず、フレームの頭で空になる",

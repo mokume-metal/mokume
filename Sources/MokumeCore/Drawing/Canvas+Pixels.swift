@@ -48,11 +48,24 @@ extension Canvas {
     /// 書く時点で断る (`admitsPixelWrite()`)。組み立ての途中の面に置かれた描き場所でも、読み込みが
     /// 要るなら同じにする (`isPlacedInAShapeInProgress`)。
     ///
+    /// **1 画素ごとに通っても安い。** 状態は呼ばれた時点で直に読み (控えない)、待ちと写しの確かめは
+    /// 前の答えが有効なら省く (``RenderTarget/pixels``・[#2369])。
+    ///
     /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#2369]: https://github.com/mokume-metal/mokume/issues/2369
     public var pixels: Pixels {
-        if !refusesInsideShape(drawingOut: needsPixelLoad) { loadPixelsIfNeeded() }
-        return target.pixels.asking { [weak self] in self?.admitsPixelWrite() ?? false }
+        let loading = needsPixelLoad
+        if !refusesInsideShape(drawingOut: loading), loading { loadPixels() }
+        return target.pixels.asking(pixelWriteGate)
+    }
+
+    /// 窓に渡す問い合わせ。面ごとに 1 つ (``pixelWriteGateMade``)。
+    private var pixelWriteGate: () -> Bool {
+        if let gate = pixelWriteGateMade { return gate }
+        let gate: () -> Bool = { [weak self] in self?.admitsPixelWrite() ?? false }
+        pixelWriteGateMade = gate
+        return gate
     }
 
     /// 1 画素の色。範囲の外は透明を返す。形の組み立ての中でも透明を返す (``loadPixels()``)。
@@ -62,8 +75,9 @@ extension Canvas {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     public func get(_ x: Int, _ y: Int) -> LinearRGBA {
-        guard !refusesInsideShape(drawingOut: needsPixelLoad) else { return .transparent }
-        loadPixelsIfNeeded()
+        let loading = needsPixelLoad
+        guard !refusesInsideShape(drawingOut: loading) else { return .transparent }
+        if loading { loadPixels() }
         return target.pixels[x, y]
     }
 
@@ -100,14 +114,15 @@ extension Canvas {
         }
         // 形の組み立ての中では書かない。書く前に読むので、通すと描き切る (``loadPixels()``・#1588)。
         // 区間の外なら上の注意を先に言う (塗り直しと同じ順)
-        guard !refusesInsideShape(drawingOut: needsPixelLoad) else { return false }
+        let loading = needsPixelLoad
+        guard !refusesInsideShape(drawingOut: loading) else { return false }
         // **書く前に、このフレームの絵を写しへ読んでおく。** 窓 (``pixels``) は取っておけるので、
         // 前のフレームで取った窓にこのフレームで書くと、写しは前のフレームの絵 (効果を通した
         // 後) のまま書き込み待ちになる。するとこのフレームの最初の描き切りが、効果を通す前の
         // 絵を戻した後に写し全体を書き戻し、効果が 2 回掛かる (#1655 と同じ形・#1672 の反証 1)。
         // 読めば最初の描き切りは書く前に済み、写しもいまの絵になる。取り直さない窓でも、GPU が
         // 写しへ読み戻している途中に書かない (`pixels` が待つ)
-        if needsPixelLoad { _ = pixels }
+        if loading { _ = pixels }
         return true
     }
 

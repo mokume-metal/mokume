@@ -305,6 +305,21 @@ import MokumeDiagnostics
     private(set) var settleCalls = 0
     /// 診断: ``settle()`` が実際に止まった回数 (頼まれた時点で GPU が終わっていなかった)。
     private(set) var blockingWaits = 0
+    /// 直近に ``settle()`` が成功した時点の ``submissionCount``。**その番号までの投入は全部終わっている**
+    /// と確かめた印である。
+    ///
+    /// ``submissionCount`` と同じなら、その後に新しい投入が無いので、``settle()`` を呼んでも何も待たず
+    /// 何も変わらない。画素を 1 つ読み書きするたびに ``settle()`` を頼む口が、同じ答えを 1 画素ごとに
+    /// 取り直さないために読む (``isSettledThroughLatest``・#2369)。**投入は ``commit(_:retaining:writing:)``
+    /// の 1 本の道だけが ``submissionCount`` を進める**ので、新しい投入を見落とすことはない。印が古い
+    /// 側へ外れても遅い道 (``settle()``) に戻るだけで、誤って省くことは無い。
+    private(set) var settledThroughSubmission: UInt64 = 0
+    /// 投入済みの全部が終わっていると、新しい投入に遭わずに確かめ済みか。真なら ``settle()`` は待たない。
+    ///
+    /// 検査の差し込み (``failSettleForTesting``) があるうちは偽である — 差し込みの失敗を省かない。
+    var isSettledThroughLatest: Bool {
+        settledThroughSubmission == submissionCount && failSettleForTesting == nil
+    }
     /// 診断: 名指しの待ち (``waitForSubmission(_:)``) が実際に止まった回数。
     ///
     /// ``blockingWaits`` と分けてある。**あちらは「投入済みの全部」を待った回数**で、
@@ -1107,16 +1122,22 @@ import MokumeDiagnostics
         settleCalls += 1
         defer { releaseFinished(through: completion.signaledValue) }
         if let failSettleForTesting { throw failSettleForTesting }
-        guard submissionCount > 0, completion.signaledValue < submissionCount else { return }
+        guard submissionCount > 0, completion.signaledValue < submissionCount else {
+            settledThroughSubmission = submissionCount
+            return
+        }
 
         blockingWaits += 1
-        guard signalReached(submissionCount, while: .finishing) else {
+        // **待った番号を控える。** 待っている間に投入が増えても、印は待った番号までしか進めない
+        let waitedFor = submissionCount
+        guard signalReached(waitedFor, while: .finishing) else {
             // **黙って捨てない。** 詰まったことが分からないと、症状 (絵が止まる・
             // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for the GPU to finish, with no answer")
             throw Self.waitFailure(faults: commandFaults)
         }
+        settledThroughSubmission = waitedFor
     }
 
     /// 番号 `submission` の投入が終わるまで待つ。
