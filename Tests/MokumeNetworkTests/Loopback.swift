@@ -73,24 +73,69 @@ func clients(_ server: TextPort, reach count: Int) async -> Bool {
     }
 }
 
+/// 検査の側の相手の繋ぎの状態。**1 つの値で読む** — 「まだ繋がっていない」と「名乗った」を別々に
+/// 読むと、間に書き換えが入って食い違う。
+nonisolated enum PeerState: Equatable, Sendable {
+    /// 繋ぎに行っている途中 (まだ何も名乗っていない)。
+    case connecting
+    /// 繋がった。
+    case ready
+    /// 繋ぎが成り立たないと名乗った (`waiting`・`failed` と、その理由)。
+    case trouble(String)
+
+    var text: String {
+        switch self {
+        case .connecting: "繋ぎの途中"
+        case .ready: "繋がった"
+        case .trouble(let reason): reason
+        }
+    }
+}
+
 /// 受け口へ繋ぎに行く、検査の側の相手 (``StreamClient``・``BrowserSocket``)。
 nonisolated protocol LoopbackPeer: AnyObject, Sendable {
-    /// 繋がったか。
-    var isReady: Bool { get }
-    /// 繋ぎが成り立たないと名乗った理由 (`waiting`・`failed`)。繋がれば nil に戻る。
-    var trouble: String? { get }
+    /// 繋ぎの状態。
+    var state: PeerState { get }
     /// 繋ぎを切る。
     func close()
 }
 
-/// 受け口へ繋ぎに行く相手の束。**全員が繋がるまで待ち、繋ぎが成り立たないと名乗った相手だけを
-/// 新しい相手に替える** (#2940)。
+extension LoopbackPeer {
+    /// 繋がったか。
+    var isReady: Bool { state == .ready }
+}
+
+nonisolated extension NWConnection.State {
+    /// 検査の側の相手の状態への読み替え。繋がった後の `waiting`・`failed` は、繋がったまま読む
+    /// (切れた相手は、受け口の数が示す)。
+    fileprivate func peerState(after current: PeerState) -> PeerState {
+        switch self {
+        case .ready: return .ready
+        case .waiting(let error): return current == .ready ? current : .trouble("waiting (\(error))")
+        case .failed(let error): return current == .ready ? current : .trouble("failed (\(error))")
+        default: return current
+        }
+    }
+}
+
+/// 受け口へ繋ぎに行く相手の束。**全員が繋がるまで待ち、繋がらない相手を、猶予を置いて新しい相手に
+/// 替える** (#2940)。
 ///
-/// 全段が並走する負荷の下では、相手の繋ぎが `waiting` のまま回復しないことがある (経路を待つ状態で、
-/// 待っても動かない)。受け口が受け入れなかったのではなく、繋ぎに行く前の話だが、検査から見れば相手が
-/// 繋がらず、後の期待も連鎖して外れる。製品の ``ClientSource`` が `waiting` を張り直しの対象にしている
-/// のと同じ事情である。同じ繋ぎの回復は待たず、**名乗った相手だけ**を替える — 名乗らずに繋ぎの途中に
-/// ある相手を替えると、受け口に余分な繋ぎが積まれて数が合わなくなる (#2910 の補助と同じ)。
+/// 全段が並走する CI で、受け口へ繋ぎに行く検査の側の相手が 10〜20 秒たっても繋がらず、後の期待が
+/// 連鎖して外れたことが 2 回あった (同じ suite の直後の検査は普通に繋がっていた)。**止まった繋ぎが
+/// `waiting` なのか `preparing` のままなのか、なぜ止まったのかは、確かめていない** (CI のログには相手の
+/// 状態が残っていなかった)。UDP の送り元が `Address already in use` で `waiting` のまま回復しなかった
+/// #2910 と同じ形の見込みで、製品の ``ClientSource`` も `waiting` を自分で閉じて張り直している。
+///
+/// 替え方は、状態を問わない。**繋がっていない相手は、猶予 (`within` を替える回数 + 1 で割った間) が
+/// 過ぎたら、古い相手を閉じてから新しい相手に替える** (1 人あたり `replacements` 回まで)。猶予を置くのは、
+/// 状態が数秒続くだけで回復する場合にも、替えずに待つ余地を残すため。受け口の数との照合は厳密
+/// (`==`) だが、古い相手を閉じてから替えるので、数は戻る。UDP の台帳 (読む前の繋ぎは黙りで閉じない —
+/// #2937) とは違い、受け口が古い相手の繋ぎを持ち続けない。全員が繋がり、かつ受け口の数が人数に
+/// 一致するまで抜けない (閉じた古い相手が受け口の数に一瞬残る隙間で、先へ進まないため)。
+///
+/// 待ちの上限が 10 秒なのは、以前の `clients(_, reach:)` の 5 秒に、替える分の猶予 (3 回 × 約 2.5 秒) を
+/// 載せるため。5 秒のままでは、1 回替えて新しい相手の繋ぎを待つ時間が残らない。
 ///
 /// 相手は ``subscript(_:)`` で読む。**``reach(on:replacements:within:)`` の後に読む** — 替えると
 /// 同じ番号の相手が別のものになる。
@@ -110,24 +155,28 @@ final class PeerGroup<Peer: LoopbackPeer> {
     /// 束の全員を切る。替えた後の相手も、替えて閉じた相手の分も、これで足りる。
     func closeAll() { for peer in peers { peer.close() } }
 
-    /// 受け口が束の人数を数えるまで (か期限まで) 待つ。
+    /// 受け口が束の人数を数え、全員が繋がるまで (か期限まで) 待つ。
     ///
-    /// 数えない理由を 1 つで名乗って止まる (`#require`)。名乗らずに数えられない相手は替えず、期限まで
-    /// 待つ。替えるのは 1 人につき `replacements` 回まで。
+    /// 数えない理由を 1 つで名乗って止まる (`#require`): 受け口の状態・数・替えた回数と、相手ごとの
+    /// 状態 (名乗った理由を含む)。受け口側の原因か相手側の原因かは、これで読み分ける。
     func reach(on server: TextPort, replacements: Int = 3, within seconds: TimeInterval = 10)
         async throws
     {
         let expected = peers.count
+        let patience = seconds / Double(replacements + 1)
         var attempts = [Int](repeating: 1, count: expected)
+        var since = [Date](repeating: Date(), count: expected)
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             server.supply()
-            if server.connected == expected { return }
+            if server.connected == expected, peers.allSatisfy(\.isReady) { return }
+            let now = Date()
             for index in peers.indices
-            where !peers[index].isReady && peers[index].trouble != nil
-                && attempts[index] <= replacements
+            where !peers[index].isReady && attempts[index] <= replacements
+                && now.timeIntervalSince(since[index]) >= patience
             {
                 attempts[index] += 1
+                since[index] = now
                 replaced += 1
                 peers[index].close()
                 peers[index] = make()
@@ -135,15 +184,64 @@ final class PeerGroup<Peer: LoopbackPeer> {
             try await Task.sleep(for: .milliseconds(10))
         }
         server.supply()
+        let ready = peers.allSatisfy(\.isReady)
         try #require(
-            server.connected == expected,
-            "\(expected) 人のうち、受け口が数えたのは \(server.connected) 人 (替えたのは \(replaced) 回)。相手の様子: \(peers.map(Self.describe))"
+            server.connected == expected && ready,
+            "\(expected) 人のうち、受け口が数えたのは \(server.connected) 人 (受け口の状態: \(server.state)・替えたのは \(replaced) 回・期限 \(seconds) 秒)。相手の様子: \(peers.enumerated().map { "#\($0.offset) \($0.element.state.text)" })"
         )
     }
+}
 
-    private static func describe(_ peer: Peer) -> String {
-        peer.isReady ? "繋がった" : (peer.trouble ?? "繋ぎの途中")
+/// 1 つの送り元から datagram の列を送り、`count` 通が届くまで (か期限まで) 集めて、読まれた文字列を返す。
+///
+/// **送った datagram が全部読まれる前提を置かない** (#2910・#2940)。送り元の繋ぎが `Address already
+/// in use` で `waiting` のまま回復しないと、送った列は 1 通も出ない。**送れないと名乗り、まだ 1 通も
+/// 読まれていない送り元は、猶予 (`within` を替える回数 + 1 で割った間) の後に、新しい送り元に替えて列を
+/// 最初から送り直す**。1 通でも読まれた後は替えない — 列の途中から送り直すと、順や数が崩れる。名乗らずに
+/// 読まれない送り元も替えない (読みが遅れているだけのことがあり、足すと台帳が目安から下がらなくなる —
+/// #2937)。替えた古い送り元は閉じ、その遅れた名乗りは数えない。
+///
+/// 送り元は `senders` の末尾へ足す。呼ぶ側が検査の終わりに閉じる。名乗りは送り元の側の話なので、
+/// 受け口の知らせ (`told`) には流さない。
+func sendAndCollect(
+    _ datagrams: [[UInt8]], expecting count: Int, to port: TextPort,
+    senders: inout [any DatagramSending], replacements: Int = 3, within seconds: TimeInterval = 10,
+    makeSender: (_ warn: @escaping @Sendable (String) -> Void) -> any DatagramSending
+) async throws -> [String] {
+    let stuck = Mutex(false)
+    let current = Mutex(1)
+    var attempt = 1
+    let patience = seconds / Double(replacements + 1)
+    func open() -> any DatagramSending {
+        let mine = attempt
+        let sender = makeSender { _ in
+            guard current.withLock({ $0 }) == mine else { return }
+            stuck.withLock { $0 = true }
+        }
+        for datagram in datagrams { sender.send(datagram) }
+        return sender
     }
+    senders.append(open())
+    let index = senders.count - 1
+    var received: [String] = []
+    var since = Date()
+    let deadline = Date().addingTimeInterval(seconds)
+    while received.count < count, Date() < deadline {
+        port.supply()
+        received += port.messages
+        if received.isEmpty, attempt <= replacements, stuck.withLock({ $0 }),
+            Date().timeIntervalSince(since) >= patience
+        {
+            attempt += 1
+            current.withLock { $0 = attempt }
+            stuck.withLock { $0 = false }
+            since = Date()
+            senders[index].stop()
+            senders[index] = open()
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    return received
 }
 
 /// 127.0.0.1 のポートへ、素の BSD socket から datagram を送る相手 (他のアプリの代わり)。
@@ -197,32 +295,21 @@ nonisolated final class StreamClient: LoopbackPeer, @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.mokume.test.client")
     private let connection: NWConnection
     private let bytes = Mutex<[UInt8]>([])
-    private let ready = Mutex(false)
-    private let waiting = Mutex<String?>(nil)
+    private let link = Mutex(PeerState.connecting)
     private let ended = Mutex(false)
 
     init(port: Int) {
         connection = NWConnection(
             host: "127.0.0.1", port: NWEndpoint.Port(rawValue: UInt16(port)) ?? .any, using: .tcp)
         connection.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            switch state {
-            case .ready:
-                ready.withLock { $0 = true }
-                waiting.withLock { $0 = nil }
-            case .waiting(let error): waiting.withLock { $0 = "waiting (\(error))" }
-            case .failed(let error): waiting.withLock { $0 = "failed (\(error))" }
-            default: break
-            }
+            self?.link.withLock { $0 = state.peerState(after: $0) }
         }
         connection.start(queue: queue)
         receive()
     }
 
-    /// 繋がったか。
-    var isReady: Bool { ready.withLock { $0 } }
-    /// 繋ぎが成り立たないと名乗った理由 (``LoopbackPeer``)。
-    var trouble: String? { waiting.withLock { $0 } }
+    /// 繋ぎの状態 (``LoopbackPeer``)。
+    var state: PeerState { link.withLock { $0 } }
     /// 届いたバイト列を文字列にしたもの。
     var received: String { String(decoding: bytes.withLock { $0 }, as: UTF8.self) }
     /// 向こうが閉じたか。
@@ -262,8 +349,7 @@ nonisolated final class BrowserSocket: LoopbackPeer, @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.mokume.test.websocket")
     private let connection: NWConnection
     private let texts = Mutex<[String]>([])
-    private let ready = Mutex(false)
-    private let waiting = Mutex<String?>(nil)
+    private let link = Mutex(PeerState.connecting)
     private let ended = Mutex(false)
 
     init(port: Int, path: String = "/") {
@@ -273,24 +359,14 @@ nonisolated final class BrowserSocket: LoopbackPeer, @unchecked Sendable {
         connection = NWConnection(
             to: .url(URL(string: "ws://127.0.0.1:\(port)\(path)")!), using: parameters)
         connection.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            switch state {
-            case .ready:
-                ready.withLock { $0 = true }
-                waiting.withLock { $0 = nil }
-            case .waiting(let error): waiting.withLock { $0 = "waiting (\(error))" }
-            case .failed(let error): waiting.withLock { $0 = "failed (\(error))" }
-            default: break
-            }
+            self?.link.withLock { $0 = state.peerState(after: $0) }
         }
         connection.start(queue: queue)
         receive()
     }
 
-    /// 繋がったか。
-    var isReady: Bool { ready.withLock { $0 } }
-    /// 繋ぎが成り立たないと名乗った理由 (``LoopbackPeer``)。
-    var trouble: String? { waiting.withLock { $0 } }
+    /// 繋ぎの状態 (``LoopbackPeer``)。
+    var state: PeerState { link.withLock { $0 } }
     /// 届いた text。届いた順。
     var received: [String] { texts.withLock { $0 } }
     /// 向こうが閉じたか。

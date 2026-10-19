@@ -35,14 +35,15 @@ struct UDPPortTests {
         let told = Told()
         let (udp, port) = try await listening(told: told)
         defer { udp.close() }
-        let peer = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        defer { peer.stop() }
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
 
-        // nc で打った行・CRLF で終わる行・前後の空白・改行 2 つ (落とすのは 1 つだけ)
-        for text in ["0.25\n", "hit\r\n", "  spaced  ", "two\n\n"] {
-            peer.send(Array(text.utf8))
-        }
-        let received = await collect(udp, count: 4)
+        // nc で打った行・CRLF で終わる行・前後の空白・改行 2 つ (落とすのは 1 つだけ)。
+        // 送り元が送れないと名乗ったら、まだ 1 通も読まれていない限り新しい送り元で送り直す (#2940)
+        let texts = ["0.25\n", "hit\r\n", "  spaced  ", "two\n\n"]
+        let received = try await sendAndCollect(
+            texts.map { Array($0.utf8) }, expecting: 4, to: udp, senders: &senders
+        ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
         #expect(received == ["0.25", "hit", "  spaced  ", "two\n"])
         #expect(udp.lastArrival != nil)
         #expect(udp.report == SourceReport(name: "udp :0", state: .running, lastArrival: udp.lastArrival))
@@ -58,13 +59,16 @@ struct UDPPortTests {
         let told = Told()
         let (udp, port) = try await listening(told: told)
         defer { udp.close() }
-        let peer = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        defer { peer.stop() }
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
 
-        peer.send(Array("before".utf8))
-        peer.send([0x68, 0xFF, 0xFE, 0x0A])  // 'h' と、UTF-8 に現れないバイト
-        peer.send(Array("after".utf8))
-        let received = await collect(udp, count: 2)
+        let received = try await sendAndCollect(
+            [
+                Array("before".utf8),
+                [0x68, 0xFF, 0xFE, 0x0A],  // 'h' と、UTF-8 に現れないバイト
+                Array("after".utf8),
+            ], expecting: 2, to: udp, senders: &senders
+        ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
         #expect(received == ["before", "after"])
         #expect(udp.input.unreadable == 1)
     }
@@ -350,10 +354,12 @@ struct UDPPortTests {
         let told = Told()
         let (live, port) = try await listening(told: told)
         defer { live.close() }
-        let peer = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        defer { peer.stop() }
-        for text in textScript { peer.send(Array("\(text)\n".utf8)) }
-        let received = await collect(live, count: textScript.count)
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let received = try await sendAndCollect(
+            textScript.map { Array("\($0)\n".utf8) }, expecting: textScript.count, to: live,
+            senders: &senders
+        ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
 
         let injected = UDPPort(
             port: nil, name: "udp (recorded)",
@@ -410,10 +416,94 @@ struct UDPPortTests {
 
         holder.release()
         #expect(await until { udp.state == .running })
-        let peer = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        defer { peer.stop() }
-        peer.send(Array("back".utf8))
-        #expect(await collect(udp, count: 1) == ["back"])
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let received = try await sendAndCollect(
+            [Array("back".utf8)], expecting: 1, to: udp, senders: &senders
+        ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
+        #expect(received == ["back"])
+    }
+
+    // MARK: - 送り元の補助 (#2940)
+
+    @Test("列の送りは、送れないと名乗り、まだ 1 通も読まれていない送り元を、猶予の後に替えて列を最初から送り直す")
+    func sendAndCollectReplacesAStuckSender() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let raw = try RawDatagramSocket()
+        defer { raw.release() }
+
+        var made = 0
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let received = try await sendAndCollect(
+            [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
+            within: 2
+        ) { warn in
+            made += 1
+            // 最初の送り元は、送れないと名乗って何も出さない
+            return ScriptedSender(
+                raw: made == 1 ? nil : raw, port: port, complaint: made == 1 ? warn : nil)
+        }
+        #expect(received == ["a", "b"])
+        #expect(made == 2)
+    }
+
+    @Test("列の送りは、1 通でも読まれた後は名乗っても替えず、名乗らずに読まれない送り元も替えない")
+    func sendAndCollectDoesNotReplaceAfterAReadOrWithoutAComplaint() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let raw = try RawDatagramSocket()
+        defer { raw.release() }
+
+        // 名乗るが、出してもいる (読まれた後なので替えない。替えると列が重なる)
+        var made = 0
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let received = try await sendAndCollect(
+            [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
+            within: 4
+        ) { warn in
+            made += 1
+            return ScriptedSender(raw: raw, port: port, complaint: warn)
+        }
+        #expect(received == ["a", "b"])
+        #expect(made == 1)
+
+        // 名乗らずに何も出さない送り元は替えず、期限で読まれた分 (0 通) を返す
+        var silent = 0
+        var more: [any DatagramSending] = []
+        defer { for sender in more { sender.stop() } }
+        let none = try await sendAndCollect(
+            [Array("c".utf8)], expecting: 1, to: udp, senders: &more, within: 0.4
+        ) { _ in
+            silent += 1
+            return ScriptedSender(raw: nil, port: port, complaint: nil)
+        }
+        #expect(none.isEmpty)
+        #expect(silent == 1)
+    }
+
+    @Test("列の送りは、替える回数に上限を持ち、越えたら読まれた分(0 通)を返す")
+    func sendAndCollectStopsReplacingAtTheLimit() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+
+        var made = 0
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let received = try await sendAndCollect(
+            [Array("a".utf8)], expecting: 1, to: udp, senders: &senders, replacements: 2,
+            within: 0.6
+        ) { warn in
+            made += 1
+            return ScriptedSender(raw: nil, port: port, complaint: warn)
+        }
+        #expect(received.isEmpty)
+        #expect(made == 3)
     }
 
     // MARK: - 作る口
