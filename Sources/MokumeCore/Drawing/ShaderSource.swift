@@ -32,11 +32,11 @@ enum ShaderSource {
     /// [#2517]: https://github.com/mokume-metal/mokume/issues/2517
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func read(
-        at path: String, origin: URL? = ShaderOrigin.startup()
+        at path: String, origin: URL? = ShaderOrigin.startup(),
+        candidates find: (String) -> [URL] = { ImageFile.candidates(for: $0) }
     ) throws(ShaderFailure) -> (url: URL, body: String, name: String) {
         // 見張りの下では、置き場の断片は束の写しではなく元のファイルへ解く (#2517)
-        let candidates = ShaderOrigin.inserting(
-            origin: origin, for: path, into: ImageFile.candidates(for: path))
+        let candidates = ShaderOrigin.inserting(origin: origin, for: path, into: find(path))
         guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })
         else {
             throw .notFound(path: path, searched: candidates.map(\.path))

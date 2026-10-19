@@ -132,8 +132,7 @@ final class WatchSession {
                         stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName,
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
                         // 走らせたまま差し替わらない
-                        assetOrigin: ResourceDeclaration.origin(
-                            ofProduct: executable.lastPathComponent, in: directory)?.path)
+                        assetOrigin: (try? resolver.current())?.context.assets.url?.path)
                     do {
                         try process.run()
                     } catch {
