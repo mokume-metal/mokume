@@ -157,8 +157,11 @@ extension SampleRingTests {
                 }
             }
         }
-        // 待つ側が期限を持つ。仕事自体も固定回数で、失敗しても回り続けない。
-        guard workers.wait(timeout: .now() + 15) == .success else { return false }
+        // GCD の仕事は wait の期限切れだけでは止まらない。越えたら検査 helper 自体を
+        // 終了し、両 worker も止める。通常の表明失敗として次の検査へ持ち越さない。
+        guard workers.wait(timeout: .now() + 15) == .success else {
+            fatalError("SampleRing concurrent test exceeded its 15-second deadline")
+        }
         return !invalid.load(ordering: .relaxed)
     }
 }
