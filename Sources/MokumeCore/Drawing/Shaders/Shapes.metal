@@ -775,6 +775,11 @@ struct FormFragmentIn {
     /// インスタンスごとに決まる。0: 縁 1 本の距離場で数える・1: 両縁を見る積 (扇は画素の中の標本) で数える・
     /// 2: 穴は細くないが中心の角が尖った扇で、尖りの先の画素だけ標本で数える (`mokume_sectorApex`)
     uint thinHole [[flat]];
+    /// 扇の始まりと終わりの角の向き。xy が `(cos 始まり, sin 始まり)`、zw が `(cos 終わり, sin 終わり)`。
+    /// 扇のインスタンスごとに一定なので、頂点関数が 1 度だけ求めて渡す (`mokume_sectorDirections`・
+    /// [#2384](https://github.com/mokume-metal/mokume/issues/2384))。断片で求めると、塗りと輪郭の
+    /// 距離場と穴の標本 (最大 65 回) のたびに三角関数 4 回を画素ごとに解く。扇でない形では 0
+    float4 sectorDirections [[flat]];
     uint instance [[flat]];
 };
 
@@ -965,6 +970,16 @@ static inline float mokume_sectorDepthLower(float2 radii, float sweep) {
 /// 測ると、穴の半径 1.0 の欠けは 12.5%・2.5 は 7% で、1.5・2・3・4 は出なかった (4 通りの置き方)。
 constant float kFormSectorHoleReach = 3.0;
 
+/// 扇の始まりと終わりの角の向き (`float4`): xy が `(cos 始まり, sin 始まり)`、zw が
+/// `(cos 終わり, sin 終わり)` ([#2384](https://github.com/mokume-metal/mokume/issues/2384))。
+/// 終わりの角は `始まり + 掃引` を 1 度足してから求める (距離場が以前に断片で求めていた式のまま)。
+/// **インスタンスごとに一定の値なので、頂点関数が 1 度だけ求めて `[[flat]]` で渡し、距離場は
+/// 画素ごとに三角関数を解かない。**
+static inline float4 mokume_sectorDirections(float start, float sweep) {
+    float end = start + sweep;
+    return float4(cos(start), sin(start), cos(end), sin(end));
+}
+
 /// 扇の中心の角が作る穴の尖り (`float4`): xy は尖りの位置 (形自身の座標)、z は角の半分の正弦、w は
 /// 尖った角か (掃引が π 未満で、角の半分の正弦が 0.5 未満・角が 60° 未満)。
 ///
@@ -973,9 +988,11 @@ constant float kFormSectorHoleReach = 3.0;
 /// 余りは `0.5 − t · sin(θ/2)` で、θ が小さいほど遠くまで残る (`arc(0, 0, 400, 400, …, 0.1)`・太さ 10 で、
 /// 穴は太い (半径 4.5) のに尖りの先の画素が 52% 欠けた)。角は 2 本の半径の向きで決まる (楕円の扇は
 /// 媒介変数の角ではなく、弧の端の位置ベクトルの向き)。
-static inline float4 mokume_sectorApex(float2 radii, float start, float sweep, float halfWeight) {
-    float2 direction1 = normalize(radii * float2(cos(start), sin(start)));
-    float2 direction2 = normalize(radii * float2(cos(start + sweep), sin(start + sweep)));
+static inline float4 mokume_sectorApex(
+    float2 radii, float4 directions, float sweep, float halfWeight)
+{
+    float2 direction1 = normalize(radii * directions.xy);
+    float2 direction2 = normalize(radii * directions.zw);
     float2 bisector = normalize(direction1 + direction2);
     float sineHalf = abs(direction1.x * bisector.y - direction1.y * bisector.x);
     float2 tip = bisector * (halfWeight / max(sineHalf, 1e-6));
@@ -1079,9 +1096,14 @@ vertex FormFragmentIn formVertexMain(
         ((form.meta.x == kFormRect || form.meta.x == kFormEllipse || form.meta.x == kFormArc)
             && mokume_thinHole(hole, drawnUnits))
         ? 1u : 0u;
+    // 扇の始まりと終わりの角の向きは、インスタンスごとに一定。ここで 1 度だけ求めて断片へ渡す
+    // (断片の距離場・穴の標本・尖りの判定は、画素ごとに三角関数を解かない・#2384)
+    out.sectorDirections = form.meta.x == kFormArc
+        ? mokume_sectorDirections(form.offset.z, form.offset.w)
+        : float4(0.0);
     // 穴が細くない扇でも、中心の角が尖っていれば、尖りの先の画素を標本で数える (2)
     if (out.thinHole == 0u && form.meta.x == kFormArc
-        && mokume_sectorApex(form.size.xy, form.offset.z, form.offset.w, halfWeight).w > 0.0)
+        && mokume_sectorApex(form.size.xy, out.sectorDirections, form.offset.w, halfWeight).w > 0.0)
     {
         out.thinHole = 2u;
     }
@@ -1384,18 +1406,20 @@ static inline FormField mokume_segmentField(float2 p, float2 end) {
 /// 角の範囲にあるときだけ**数える (扇の内外では決めない・下の本体と [#2914])。角の外側は
 /// 真の距離になるので半径 hw で丸く出る。
 ///
+/// `directions` は始まりと終わりの角の向き `(cos, sin)` 2 組 (`mokume_sectorDirections`)。
+///
 /// `exact` は、楕円の弧の距離場を近似 (`mokume_ellipseField`) ではなく真の距離
 /// (`mokume_ellipseExactField`) で出すか。近似の距離場がずれすぎる細長い楕円の扇の輪郭だけ真で、
 /// 塗りは近似のまま ([#2747](https://github.com/mokume-metal/mokume/issues/2747))。
 ///
 /// [#2914]: https://github.com/mokume-metal/mokume/issues/2914
 static inline FormField mokume_sectorField(
-    float2 p, float2 radii, float start, float sweep, bool exact)
+    float2 p, float2 radii, float4 directions, float sweep, bool exact)
 {
-    float end = start + sweep;
-    // 弧の両端。2 本の辺も内外の判定もこの 2 点から作る
-    float2 direction1 = float2(cos(start), sin(start));
-    float2 direction2 = float2(cos(end), sin(end));
+    // 弧の両端。2 本の辺も内外の判定もこの 2 点から作る。向きは頂点関数が 1 度だけ求めて渡す
+    // (`directions`・`mokume_sectorDirections`。画素ごとに三角関数を解かない・#2384)
+    float2 direction1 = directions.xy;
+    float2 direction2 = directions.zw;
     float2 end1 = radii * direction1;
     float2 end2 = radii * direction2;
     // 中心から弧の端へ向かう半直線を含む半平面。内側 (扇の中) で負になる向きに取る。
@@ -1480,7 +1504,7 @@ static inline float mokume_ellipseHoleSampled(
 /// 標本は 8×8 (楕円の尖りの先と同じ・1 標本 = 1.6%。16×16 は 1 標本が表示の 1 段になるが、GPU 時間がかさむ。楕円の尖りの先では全体で 3.5 倍になった)。穴に掛かる画素は細い穴の周りのごく一部で、費用は
 /// 穴が細いか潰れた扇を含む列だけが払う (`kFormHasThinFill`)。
 static inline float mokume_sectorHoleCoverage(
-    float2 q, float2 radii, float start, float sweep, float halfWeight, float depthBound,
+    float2 q, float2 radii, float4 directions, float sweep, float halfWeight, float depthBound,
     float4 inverseRows, bool exact)
 {
     if (depthBound <= halfWeight) { return 0.0; }
@@ -1488,7 +1512,7 @@ static inline float mokume_sectorHoleCoverage(
     // これより離れていれば画素全体が穴の外 (内) にある
     float reach = 0.5 * length(float2(
         abs(inverseRows.x) + abs(inverseRows.y), abs(inverseRows.z) + abs(inverseRows.w)));
-    float margin = mokume_sectorField(q, radii, start, sweep, exact).distance + halfWeight;
+    float margin = mokume_sectorField(q, radii, directions, sweep, exact).distance + halfWeight;
     if (margin > reach) { return 0.0; }
     if (margin < -reach) { return 1.0; }
     const int n = 8;
@@ -1497,7 +1521,7 @@ static inline float mokume_sectorHoleCoverage(
         for (int i = 0; i < n; i++) {
             float2 offset = (float2(i, j) + 0.5) / float(n) - 0.5;
             float2 at = q + float2(dot(inverseRows.xy, offset), dot(inverseRows.zw, offset));
-            if (mokume_sectorField(at, radii, start, sweep, exact).distance + halfWeight < 0.0) {
+            if (mokume_sectorField(at, radii, directions, sweep, exact).distance + halfWeight < 0.0) {
                 inside++;
             }
         }
@@ -1772,13 +1796,13 @@ static inline FormPaint mokume_formPaint(
     } else if (kind == kFormArc) {
         // 扇形は 1 次の近似でずらせない (`mokume_shifted` の説明)。塗りと輪郭で式を別々に解く
         if (kFormHasFill) {
-            fill = mokume_sectorField(p, form.size.xy, form.offset.z, form.offset.w, false);
+            fill = mokume_sectorField(p, form.size.xy, in.sectorDirections, form.offset.w, false);
         }
         if (kFormHasStroke) {
             // 近似の距離場がずれすぎる細長い楕円の扇は、輪郭の楕円の弧を真の距離で解く
             // (`mokume_needsExactRing`・#2747)。列に含む形があるときだけ枝を残す (`kFormHasThinFill`)
             FormField ring = mokume_sectorField(
-                q, form.size.xy, form.offset.z, form.offset.w, kFormHasThinFill && in.ringFromFill == 3);
+                q, form.size.xy, in.sectorDirections, form.offset.w, kFormHasThinFill && in.ringFromFill == 3);
             outer = mokume_grown(ring, halfWeight);
             inner = mokume_grown(ring, -halfWeight);
             // **帯の穴が潰れているか 1 画素より細い扇は、穴の面積を標本で数える**
@@ -1789,14 +1813,14 @@ static inline FormPaint mokume_formPaint(
                 bool sampled = in.thinHole == 1u;
                 if (!sampled) {
                     // 尖りの先 (尖りまでの距離 t で縁 1 本の被覆の余りが 0.5 − t · sin(θ/2) になる範囲) だけ
-                    float4 apex = mokume_sectorApex(form.size.xy, form.offset.z, form.offset.w, halfWeight);
+                    float4 apex = mokume_sectorApex(form.size.xy, in.sectorDirections, form.offset.w, halfWeight);
                     sampled = length(q - apex.xy)
                         < (2.0 / apex.z + 2.0) * max(unitsPerPixel.x, unitsPerPixel.y);
                 }
                 if (sampled) {
                     isThinHole = true;
                     thinHoleCoverage = mokume_sectorHoleCoverage(
-                        q, form.size.xy, form.offset.z, form.offset.w, halfWeight,
+                        q, form.size.xy, in.sectorDirections, form.offset.w, halfWeight,
                         mokume_sectorDepthBound(form.size.xy, form.offset.w), in.inverseRows,
                         in.ringFromFill == 3);
                 }
