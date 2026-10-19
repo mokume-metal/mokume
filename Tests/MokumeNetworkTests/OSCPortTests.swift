@@ -566,11 +566,29 @@ struct OSCPortTests {
         #expect(attempts == [1, 2])
     }
 
+    /// 黙りの検査の場面。送る送り元の数と、最初の `/late` が既存の繋ぎで渡される形にするか。
+    struct SweepScenario: CustomTestStringConvertible, Sendable {
+        /// 最初に送る送り元の数。目安 (64) を超えるか、受け入れが目安に届かない数。
+        var sending: Int
+        /// 最初の `/late` を、最初の送り元と同じ source のソケットから出す。受け口はその datagram を
+        /// 既存の繋ぎで渡し、受け入れは起きない (#2225 の揺れを決定的に作る)。
+        var reusesASource = false
+
+        var testDescription: String {
+            "送り元 \(sending) 本" + (reusesASource ? "・最初の /late は既存の繋ぎで渡される" : "")
+        }
+    }
+
     @Test(
         "多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる",
-        arguments: [DatagramListener.connectionLimit + 6, DatagramListener.connectionLimit - 10]
+        arguments: [
+            SweepScenario(sending: DatagramListener.connectionLimit + 6),
+            SweepScenario(sending: DatagramListener.connectionLimit - 10),
+            SweepScenario(sending: DatagramListener.connectionLimit + 6, reusesASource: true),
+        ]
     )
-    func manySendersAreAllHeardThenSwept(sending count: Int) async throws {
+    func manySendersAreAllHeardThenSwept(_ scenario: SweepScenario) async throws {
+        let count = scenario.sending
         let told = Told()
         // 黙りは手で進める時計で測る。本物の時計だと、受け入れが遅い機械 (負荷のある CI) では
         // 70 本を受け入れる途中で最初の送り元が `idleAfter` 秒黙ったことになって閉じられ、
@@ -586,10 +604,16 @@ struct OSCPortTests {
         // 時計は止めたままなので、受け入れにどれだけ掛かっても黙った送り元は居ない
         var burst: [any DatagramSending] = []
         defer { for sender in burst { sender.stop() } }
+        // 既存の繋ぎで渡される形では、0 番の送り元だけ source が固定のソケットで送る
+        let reused = try RawDatagramSocket()
+        defer { reused.release() }
         let heard = try await sendNumberedBurst(
             count: count, through: osc, senders: &burst, told: told
-        ) { _, _, warn in
-            DatagramSender(host: "127.0.0.1", port: port, warn: warn)
+        ) { index, _, warn in
+            if scenario.reusesASource, index == 0 {
+                return ScriptedSender(raw: reused, port: port, complaint: nil)
+            }
+            return DatagramSender(host: "127.0.0.1", port: port, warn: warn)
         }
         #expect(heard == Set(0..<count))
         // 受け入れた送り元を 1 本も外していない — 黙りでも (時計が止まっていて誰も黙っていない)、
@@ -607,31 +631,44 @@ struct OSCPortTests {
         // (`SenderLedger.admit`)。受け入れた数が目安に届かなかった回 (上の注の揺れ) では、次の受け入れが
         // 起きても何も閉じない。主題を見る前に、その前提を 2 つ満たす。
         //
-        // 1 つ目: 台帳が目安に届くまで足す。時計は止めたままなので、足す間は何も閉じない
+        // 1 つ目: 台帳が目安に届くまで足す。時計は止めたままなので、足す間は何も閉じない。
+        // 足す送り元も**全部読まれる**ことを前提にする: 読まれていない繋ぎは `admit` が閉じないので、
+        // 台帳の数が主題の数え方とずれる。回ごとに宛名を変え、期限切れの後に遅れて届いた datagram が
+        // 次の回の番号に数えられないようにする
         var fillers: [any DatagramSending] = []
         defer { for sender in fillers { sender.stop() } }
         let fillDeadline = Date().addingTimeInterval(15)
+        var fillRounds = 0
+        var unheardFillers = 0
         while source.connectionCount < DatagramListener.connectionLimit, Date() < fillDeadline {
-            _ = try await sendNumberedBurst(
-                count: DatagramListener.connectionLimit - source.connectionCount, address: "/fill",
-                through: osc, senders: &fillers, told: told, within: 5
+            fillRounds += 1
+            let need = DatagramListener.connectionLimit - source.connectionCount
+            let filled = try await sendNumberedBurst(
+                count: need, address: "/fill\(fillRounds)", through: osc, senders: &fillers,
+                told: told, within: 5
             ) { _, _, warn in
                 DatagramSender(host: "127.0.0.1", port: port, warn: warn)
             }
+            unheardFillers += need - filled.count
         }
         let full = source.connectionCount
         try #require(
             full >= DatagramListener.connectionLimit,
             "台帳が目安 (\(DatagramListener.connectionLimit)) に届かない (\(full)) — 黙った送り元を閉じる前提が無い")
+        try #require(
+            unheardFillers == 0,
+            "足した送り元のうち \(unheardFillers) 本が読まれていない — 読む前の繋ぎは閉じないので、閉じる数を数えられない")
         let closedBefore = source.tally.closedIdle
         #expect(closedBefore == 0)
 
-        // ちょうど `idleAfter` 秒黙った後に新しい送り元が来たら、黙っていた送り元を閉じてから
-        // 受ける (閉じるのは `idleAfter` 秒「以上」黙った送り元)
-        clock.advance(by: idleAfter)
-        // 2 つ目: その送り元が**新しい受け入れを起こす**。この送り元も出ないことがあり、出ても受け口が
+        // 2 つ目: `/late` が**新しい受け入れを起こす**。この送り元も出ないことがあり、出ても受け口が
         // 既存の繋ぎで渡して繋ぎを作らないことがある (#2225)。受け入れが起きなかった回は何も閉じて
-        // いないので、替えた送り元でやり直せる (回数と期限を持つ)
+        // いないので、替えた送り元でやり直せる (回数と期限を持つ)。
+        //
+        // **やり直す前に、時計をもう `idleAfter` 秒進める。** 既存の繋ぎで渡された datagram は、その
+        // 繋ぎを「いま読んだ」ことにする (`receive` が時計で印を付ける) ので、その繋ぎは黙っていない。
+        // 進め直せば、またちょうど `idleAfter` 秒黙った繋ぎになり、閉じる数を台帳の数で数えられる。
+        // 回ごとに宛名を変え、前の回の遅れて届いた datagram を数えない
         var lateSenders: [any DatagramSending] = []
         defer { for sender in lateSenders { sender.stop() } }
         let lateDeadline = Date().addingTimeInterval(15)
@@ -640,12 +677,20 @@ struct OSCPortTests {
         var attempts = 0
         while attempts < 5, Date() < lateDeadline {
             attempts += 1
+            // ちょうど `idleAfter` 秒黙った後に新しい送り元が来たら、黙っていた送り元を閉じてから
+            // 受ける (閉じるのは `idleAfter` 秒「以上」黙った送り元)
+            clock.advance(by: idleAfter)
             acceptedBefore = source.tally.accepted
+            let attempt = attempts
             // この送り元も出ないことがある。同じ補助で、送れないと名乗ったら替えて待つ
             lateHeard = try await sendNumberedBurst(
-                count: 1, address: "/late", through: osc, senders: &lateSenders, told: told, within: 5
+                count: 1, address: "/late\(attempt)", through: osc, senders: &lateSenders,
+                told: told, within: 5
             ) { _, _, warn in
-                DatagramSender(host: "127.0.0.1", port: port, warn: warn)
+                if scenario.reusesASource, attempt == 1 {
+                    return ScriptedSender(raw: reused, port: port, complaint: nil)
+                }
+                return DatagramSender(host: "127.0.0.1", port: port, warn: warn)
             }
             if source.tally.accepted > acceptedBefore { break }
             #expect(source.connectionCount == full, "受け入れが起きていないのに台帳が動いた")
@@ -654,6 +699,9 @@ struct OSCPortTests {
         try #require(
             acceptedByLate > 0,
             "/late が新しい受け入れを起こさなかった (\(attempts) 回) — 既存の繋ぎで渡された。黙った送り元を閉じる契機が来ない")
+        if scenario.reusesASource {
+            #expect(attempts >= 2, "前提: 最初の /late は既存の繋ぎで渡され、受け入れを起こさない")
+        }
         #expect(lateHeard == [0])
         // 主題: 黙っていた送り元は全部閉じ、受け入れた新しい送り元だけが残る
         #expect(source.tally.closedIdle == closedBefore + full)
@@ -694,16 +742,33 @@ struct OSCPortTests {
         // `idleAfter` より長く黙ってから、新しい送り元を 1 本ずつ足す。待つほど黙りは長くなる
         // だけなので、遅い機械でも閉じる側へしか進まない。読めなかった送り元や、別の送り元の繋ぎで
         // 渡された分で台帳が目安に届いていなくても、足すうちに届く
+        //
+        // **閉じなかった回が、主題の赤か前提の欠けかを見分ける。** 閉じるのは、台帳の数が目安に届いて
+        // いるときの次の受け入れだけ (`SenderLedger.admit`)。届いた後に新しい受け入れが起きたのに
+        // 閉じなければ主題の赤で、届かなかった・届いた後に受け入れが起きなかった回は前提の欠けである
         var late: [DatagramSender] = []
         defer { for sender in late { sender.stop() } }
+        var acceptedWhenFull: Int?
         for index in 0..<DatagramListener.connectionLimit
         where source.tally.closedIdle == closedWhileCollecting {
             try await Task.sleep(for: .milliseconds(index == 0 ? 100 : 10))
+            if acceptedWhenFull == nil, source.connectionCount >= DatagramListener.connectionLimit {
+                acceptedWhenFull = source.tally.accepted
+            }
             let sender = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
             late.append(sender)
             sender.send(try Wire.encoded(OSCMessage("/late", index)))
         }
-        #expect(await until { source.tally.closedIdle > closedWhileCollecting })
+        let swept = await until { source.tally.closedIdle > closedWhileCollecting }
+        if !swept {
+            let atLimit = try #require(
+                acceptedWhenFull,
+                "台帳が目安 (\(DatagramListener.connectionLimit)) に届かなかった (\(source.connectionCount)) — 黙った送り元を閉じる前提が無い")
+            try #require(
+                source.tally.accepted > atLimit,
+                "台帳が目安に届いた後、新しい受け入れが起きなかった — 閉じる契機が来ていない")
+        }
+        #expect(swept)
         #expect(source.connectionCount < DatagramListener.connectionLimit)
     }
 
