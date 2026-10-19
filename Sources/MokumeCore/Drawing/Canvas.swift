@@ -94,7 +94,15 @@ public final class Canvas {
     /// 1 つが対応の正しい粒度である)。効果の段の置き場も同じ環に載る (同じ投入が読む)。
     let frameRing: FrameRing
 
+    /// 組み込みのパイプライン。**GPU が持つものを分け合う** (``RenderDevice/shapePipeline(pixelFormat:)``・
+    /// [#2785])。面ごとに変わるものは持たない。
+    ///
+    /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
     let pipeline: ShapePipeline
+
+    /// 描くたびに番地を書き換える引数のテーブル。**面ごとに 1 つ**で、分け合わない
+    /// (``ShapePipeline`` の型の説明)。
+    let argumentTable: any MTL4ArgumentTable
 
     /// 描画先の座標へ落とす行列。整数の座標を画素の角へ落とす。
     let projection: simd_float4x4
@@ -2093,7 +2101,8 @@ public final class Canvas {
 
         self.width = Float(output.width)
         self.height = Float(output.height)
-        self.pipeline = try ShapePipeline(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        self.pipeline = try gpu.shapePipeline(pixelFormat: RenderTarget.pixelFormat)
+        self.argumentTable = try ShapePipeline.makeArgumentTable(gpu: gpu)
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
         self.projection = Self.makeProjection(width: self.width, height: self.height)
 
@@ -4239,13 +4248,13 @@ public final class Canvas {
                 encoder.setRenderPipelineState(
                     (run.paint.shader?.states ?? pipeline.states).drawing(batch))
                 encoder.setDepthStencilState(pipeline.flatDepthState)
-                pipeline.argumentTable.setAddress(
+                argumentTable.setAddress(
                     geometry.flatVertices.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-                pipeline.argumentTable.setAddress(
+                argumentTable.setAddress(
                     geometry.coverages.gpuAddress, index: ShapePipeline.coverageBufferIndex)
                 // **口は立体と共用する。** 同じ列で平面と立体の両方を描くことは
                 // 無いので、置き場所の口を 2 つ持つ理由が無い
-                pipeline.argumentTable.setAddress(
+                argumentTable.setAddress(
                     geometry.flatInstances.gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
                     index: ShapePipeline.instanceBufferIndex)
@@ -4255,7 +4264,7 @@ public final class Canvas {
                 encoder.setRenderPipelineState(
                     pipeline.formStates(for: batch.formFlags).state(for: run.mode))
                 encoder.setDepthStencilState(pipeline.flatDepthState)
-                pipeline.argumentTable.setAddress(
+                argumentTable.setAddress(
                     geometry.formInstances.gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
                     index: ShapePipeline.instanceBufferIndex)
@@ -4271,13 +4280,13 @@ public final class Canvas {
                 encoder.setDepthStencilState(
                     batch.replacesSurface ? pipeline.replaceDepthState : pipeline.solidDepthState)
                 // 引数を GPU が書く列 (粒) は、列の頭までを番地へ足す (``Batch/vertexBaseShift``)
-                pipeline.argumentTable.setAddress(
+                argumentTable.setAddress(
                     (batch.ownVertices ?? geometry.solidVertices).gpuAddress
                         + batch.vertexBaseShift,
                     index: ShapePipeline.vertexBufferIndex)
                 // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
                 // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
-                pipeline.argumentTable.setAddress(
+                argumentTable.setAddress(
                     (batch.instances?.storage ?? geometry.solidInstances).gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                     index: ShapePipeline.instanceBufferIndex)
@@ -4288,48 +4297,48 @@ public final class Canvas {
             // (`Batch.frontFacing`)。裏を向いた面を描くかも列が決めている (`Batch.cullMode`)
             encoder.setFrontFacing(batch.frontFacing)
             encoder.setCullMode(batch.cullMode)
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 perBatch.matrices.gpuAddress + UInt64(index * Self.valuesStride),
                 index: ShapePipeline.projectionBufferIndex)
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 perBatch.values.gpuAddress + UInt64(index * Self.valuesStride),
                 index: ShapePipeline.valuesBufferIndex)
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 perBatch.lighting.gpuAddress + UInt64(index * Self.valuesStride),
                 index: ShapePipeline.lightingBufferIndex)
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 perBatch.materials.gpuAddress + UInt64(index * Self.valuesStride),
                 index: ShapePipeline.materialBufferIndex)
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 perBatch.surroundings.gpuAddress + UInt64(index * Self.valuesStride),
                 index: ShapePipeline.surroundingsBufferIndex)
             encoder.setScissorRect(scissor(batch.clip))
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 blendModeBuffer.gpuAddress
                     + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
                 index: ShapePipeline.blendModeBufferIndex)
             // **字の焼き場を読む列かを渡す。** 置き換える列はこれを見て、字形の外の余白を
             // 捨てる (#1557)。読まない断片にも束ねておく (口を空けたまま走らせない)
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 glyphPageBuffer.gpuAddress
                     + UInt64((run.texture.isGlyphPage ? 1 : 0) * Self.blendModeStride),
                 index: ShapePipeline.glyphPageBufferIndex)
             // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
             // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
-            pipeline.argumentTable.setAddress(
+            argumentTable.setAddress(
                 (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
                 index: ShapePipeline.numbersBufferIndex)
-            pipeline.argumentTable.setTexture(
+            argumentTable.setTexture(
                 run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
             // 利用者が宣言した面。**口は毎回すべて束ねる** — 渡していない口には
             // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
             // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)
             for slot in 0..<ShapePipeline.surfaceCapacity {
                 let surface = slot < run.paint.surfaces.count ? run.paint.surfaces[slot] : run.texture
-                pipeline.argumentTable.setTexture(
+                argumentTable.setTexture(
                     surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
             }
-            encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
+            encoder.setArgumentTable(argumentTable, stages: [.vertex, .fragment])
             if let arguments = batch.indirectArguments?.storage {
                 // **個数は GPU が書いた引数から読む。** 計算の段の末尾の仕掛け
                 // (`encodeComputeBarrier`) が頂点段の前で待つので、引数の読み出しは
@@ -4543,7 +4552,7 @@ public final class Canvas {
         // 光の置き場。列は自分の区間を指す
         let lightsBuffer = try lightStorageBuffer.write(
             lightStorage, holding: max(lightStorage.count, 1))
-        pipeline.argumentTable.setAddress(
+        argumentTable.setAddress(
             lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
         return GeometryBuffers(
             flatVertices: buffer, coverages: coverageBuffer, formInstances: formBuffer,
@@ -4621,9 +4630,9 @@ public final class Canvas {
         } else {
             shadowTexture = try unbakedShadowTextureHolding()
         }
-        pipeline.argumentTable.setTexture(
+        argumentTable.setTexture(
             shadowTexture.gpuResourceID, index: ShapePipeline.shadowTextureIndex)
-        pipeline.argumentTable.setAddress(
+        argumentTable.setAddress(
             uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
 
         // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている。揺らぎの種と細かさも
@@ -5069,13 +5078,13 @@ public final class Canvas {
             MTLViewport(
                 originX: 0, originY: 0, width: Double(map.detail), height: Double(map.detail),
                 znear: 0, zfar: 1))
-        pipeline.argumentTable.setAddress(
+        argumentTable.setAddress(
             solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-        pipeline.argumentTable.setAddress(
+        argumentTable.setAddress(
             matrixBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
         // **束ねるのは頂点段だけ。** 焼くパイプラインは断片を持たない (奥行きの面へは
         // 前後判定が書く) ので、断片段に渡すものが無い
-        encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
+        encoder.setArgumentTable(argumentTable, stages: [.vertex])
         for (batchIndex, batch) in batches.enumerated() where batch.castsShadow {
             encodeCaster(
                 batch,
@@ -5134,11 +5143,11 @@ public final class Canvas {
         // そこから列の頭までを足す (``Batch/vertexBaseShift``)。その列は溜め場の頂点を添字なしで読む
         // 列に限られ (``Batch/addressesVertexHead``)、持ち越した列は詰め直すときに頭が 0 へ置き直される
         // ので、足すのは 0 で、区画の頭がそのまま束ねる番地になる
-        pipeline.argumentTable.setAddress(
+        argumentTable.setAddress(
             (batch.ownVertices?.gpuAddress ?? source.vertices) + batch.vertexBaseShift,
             index: ShapePipeline.vertexBufferIndex)
-        pipeline.argumentTable.setAddress(source.values, index: ShapePipeline.valuesBufferIndex)
-        pipeline.argumentTable.setAddress(
+        argumentTable.setAddress(source.values, index: ShapePipeline.valuesBufferIndex)
+        argumentTable.setAddress(
             (batch.instances?.storage.gpuAddress ?? source.instances)
                 + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
             index: ShapePipeline.instanceBufferIndex)
@@ -5156,7 +5165,7 @@ public final class Canvas {
         // [#1474]: https://github.com/mokume-metal/mokume/issues/1474
         encoder.setFrontFacing(ShadowMap.frontFacing(isMirrored: batch.isMirrored))
         encoder.setCullMode(batch.cullMode)
-        encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
+        encoder.setArgumentTable(argumentTable, stages: [.vertex])
         if let arguments = batch.indirectArguments?.storage {
             // 粒は影の側でも GPU が書いた個数で描く (本描画と同じ)
             encoder.drawPrimitives(
