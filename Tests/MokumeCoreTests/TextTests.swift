@@ -777,7 +777,16 @@ struct TextTests {
         canvas.textStyle(.boldItalic)
         _ = canvas.textWidth("あ")
         let message = canvas.warnings.message(for: .missingFallbackTypefaceStyle) ?? ""
-        #expect(message.contains("\"HiraMinProN-W6\" (bold, upright)"), "\(message)")
+        // 代わりの家族は機械の言語の設定で変わる (手元はヒラギノ明朝・CI 機は宋体)。名乗る面は、CoreText が
+        // 劣化した base から選んだ代わりの、太字の面のもの
+        let plain = CTFontCreateForString(canvas.typeface.base, "あ" as CFString, CFRangeMake(0, 1))
+        let bold = try #require(
+            CTFontCreateCopyWithSymbolicTraits(plain, 32, nil, .traitBold, .traitBold),
+            "前提: 代わりの書体に太字の面がある")
+        try #require(
+            CTFontGetSymbolicTraits(bold).contains(.traitBold), "前提: 太字の面が引ける")
+        #expect(
+            message.contains("\"\(CTFontCopyPostScriptName(bold) as String)\" (bold, upright)"), "\(message)")
     }
 
     @Test("指定した書体の面の警告と、代わりの書体の面の警告は、どちらが先でも互いを黙らせない")
