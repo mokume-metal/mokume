@@ -425,6 +425,90 @@ struct TextTests {
         #expect(!canvas.warnings.hasWarned(.missingFont), "\(name) を無いと断った")
     }
 
+    // MARK: - 書体を作る時の名前の確かめ (#2772)
+    //
+    // `textFont()` が確かめた名前でも、書体を作る時にはもう引けないことがある (実行中に書体を外す)。
+    // その状況は手元で再現できないので、`style.fontName` に引けない名前を直に入れて代わりにする。
+
+    @Test("書体を作る時に名前が引けなければ、返った書体の名前を添えて 1 度だけ知らせ、指定も絵も変えない")
+    func anUnavailableNameIsWarnedOnceWhenTheTypefaceIsBuilt() throws {
+        let name = "NoSuchTypeface-2772"
+        try #require(
+            Self.postScriptName(resolving: name) == "Helvetica",
+            "前提: この環境の CoreText は \(name) を別の書体 (Helvetica) へ倒す")
+        let canvas = try makeCanvas()
+        canvas.style.fontName = name
+        try canvas.draw { canvas.text("a", 10, 20) }
+        let message = try #require(canvas.warnings.message(for: .unavailableFont))
+        #expect(message.contains("\"\(name)\""), "\(message)")
+        #expect(message.contains("\"Helvetica\" is used instead"), "\(message)")
+        // 指定は変えず、字は CoreText が返した書体で描く
+        #expect(canvas.style.fontName == name)
+        #expect(CTFontCopyPostScriptName(canvas.typeface.base) as String == "Helvetica")
+        // 大きさを変えて作り直しても、言い直さない (最初の文面のまま)
+        canvas.textSize(31)
+        _ = canvas.textWidth("a")
+        #expect(canvas.warnings.message(for: .unavailableFont) == message)
+        // `textFont()` で断られた名前の知らせとは別の鍵
+        #expect(!canvas.warnings.hasWarned(.missingFont))
+    }
+
+    /// 代わりに描く書体が `.` で始まる内部名のとき (既定の書体)、渡し直せないその名前は名乗らない。
+    @Test("書体を作る時の知らせは、代わりに描く書体の内部名を名乗らない")
+    func theUnavailableNameWarningDoesNotNameAnInternalFace() throws {
+        let system = try #require(CTFontCreateUIFontForLanguage(.system, 32, nil))
+        try #require(
+            (CTFontCopyPostScriptName(system) as String).hasPrefix("."), "前提: 既定の書体は内部名を持つ")
+        let message = Canvas.unavailableFontMessage(name: "Futura", used: system)
+        #expect(message.contains("\"Futura\""), "\(message)")
+        #expect(message.contains("so a system typeface is used instead"), "\(message)")
+        #expect(!message.contains("\"."), "内部名を名乗った: \(message)")
+        let named = Canvas.unavailableFontMessage(
+            name: "Futura", used: CTFontCreateWithName("Helvetica" as CFString, 12, nil))
+        #expect(named.contains("so \"Helvetica\" is used instead"), "\(named)")
+    }
+
+    @Test("無い名前を textFont() に渡した知らせと、書体を作る時の知らせは、どちらが先でも互いを黙らせない")
+    func theTwoMissingNameWarningsAreIndependent() throws {
+        let vanished = "NoSuchTypeface-2772"
+        // textFont() の知らせが先
+        let refusedFirst = try makeCanvas()
+        refusedFirst.textFont("Typo")
+        #expect(refusedFirst.warnings.hasWarned(.missingFont))
+        #expect(!refusedFirst.warnings.hasWarned(.unavailableFont))
+        refusedFirst.style.fontName = vanished
+        _ = refusedFirst.textWidth("a")
+        #expect(refusedFirst.warnings.hasWarned(.unavailableFont), "textFont() の知らせが、後の知らせを黙らせた")
+        // 書体を作る時の知らせが先
+        let vanishedFirst = try makeCanvas()
+        vanishedFirst.style.fontName = vanished
+        _ = vanishedFirst.textWidth("a")
+        #expect(vanishedFirst.warnings.hasWarned(.unavailableFont))
+        vanishedFirst.textFont("Typo")
+        #expect(vanishedFirst.warnings.hasWarned(.missingFont), "書体を作る時の知らせが、textFont() の知らせを黙らせた")
+    }
+
+    /// 引ける名前では鳴らない。フルネーム・日本語の名前・表で解いた名前 (#2563) は、`textFont()` が
+    /// 解いた PostScript 名で書体を作るので、大きさと太さを変えて作り直しても鳴らない。
+    @Test(
+        "引ける名前 (フルネーム・日本語の名前・表で解いた名前・既定の書体) では、作り直しても知らせない",
+        arguments: [
+            "Helvetica", "ヒラギノ角ゴシック W3", "Helvetica Neue Bold", "Verdana Negrita", "",
+        ])
+    func anAvailableNameIsNeverWarnedWhenRebuilt(_ name: String) throws {
+        let canvas = try makeCanvas()
+        if name.isEmpty { canvas.noTextFont() } else { canvas.textFont(name) }
+        for style: TextStyle in [.normal, .bold, .italic, .boldItalic] {
+            canvas.textStyle(style)
+            for size: Float in [12, 20, 33] {
+                canvas.textSize(size)
+                _ = canvas.textWidth("aあ")
+            }
+        }
+        #expect(!canvas.warnings.hasWarned(.unavailableFont), "「\(name)」で鳴った")
+        #expect(!canvas.warnings.hasWarned(.missingFont), "「\(name)」を無いと断った")
+    }
+
     /// その書体が、その太さ・傾きの面を持っているか。被検査の `Typeface` を通さない。
     ///
     /// **写しが返っても、面があるとは限らない。** `CTFontCreateCopyWithSymbolicTraits` は、
