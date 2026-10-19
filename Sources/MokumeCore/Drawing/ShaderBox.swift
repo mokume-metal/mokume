@@ -92,13 +92,16 @@ final class ShaderBox {
         watcher = FileWatcher(url: url, onChange: onChange)
     }
 
-    /// 宣言と照らして値を書き換える。書き換えたら `true`。
+    /// 宣言と照らして値を書き換える。受け付けたら `true`。
     ///
     /// **宣言していない名前は受け付けない** — 断片は組み立てるときに値の宣言ごと
     /// 組み上がるので、後から名前を増やすと組み直しになる。増やすかどうかは
     /// 断片を読み込む (作る) ときに決める。
+    ///
+    /// - Parameter willChange: 値が**ビット列まで違う**と分かった後、書き換える直前に呼ぶ (#2789)。
+    ///   断った入力と、同じ値の書き直しでは呼ばない。持ち主が、旧値を持つ列を閉じるために使う。
     @discardableResult
-    func assign(_ name: String, _ value: ShaderValue) -> Bool {
+    func assign(_ name: String, _ value: ShaderValue, willChange: () -> Void = {}) -> Bool {
         guard let existing = values[name] else {
             Diagnostics.warn(
                 "\(label): \"\(name)\" was never declared, so it cannot be passed. "
@@ -112,6 +115,8 @@ final class ShaderBox {
                     + "(\(value.metalType) where \(existing.metalType) was declared)")
             return false
         }
+        guard !existing.isBitwiseEqual(to: value) else { return true }
+        willChange()
         values[name] = value
         return true
     }
