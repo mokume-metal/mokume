@@ -12,7 +12,9 @@ import Testing
 /// 区画の層 (`FrameObserver.refuse`) は `ObservationProtocolTests` が GPU なしで見る。ここが見るのは
 /// **つなぎ** — 走らせている側が `.unreadable` を拾って応えること。つなぎで落とすと、応答が書かれない
 /// だけでなく、要求を応えた記録にしないので毎フレーム読み直したまま空回りする。
-@Suite("走らせている側が、読めない観測の要求に応える", .enabled(if: RenderDevice.isAvailable, "対応する GPU が必要"))
+@Suite(
+    "走らせている側が、読めない観測の要求に応える",
+    .enabled(if: RenderDevice.isAvailable, "対応する GPU が必要"), .ownWarningDigest)
 struct ObservationUnreadableRequestTests {
     final class Scene: Sketch {
         init() {}

@@ -86,8 +86,7 @@ extension Canvas {
         guard admits(.camera) else { return }
         guard camera.isUsable else { return warnBadCamera(name) }
         guard Self.isUsable(camera.projection) else { return warnBadCameraProjection(name) }
-        closeBatch()
-        cameraStorage = camera
+        closeAndStore(camera)
     }
 
     /// 投影だけを差し替える。**視点の位置は動かさない** — どこから見るかと、どう写すかは
@@ -97,7 +96,15 @@ extension Canvas {
         guard Self.isUsable(projection) else { return warnBadProjection(projection) }
         var camera = currentCamera
         camera.projection = projection
-        closeBatch()
+        closeAndStore(camera)
+    }
+
+    /// 効いている視点を差し替える。**閉じるのは、いま効いている視点とビット列まで違うときだけ**
+    /// (#2789)。列が持つ視点は閉じた時点の ``currentCamera`` なので、同じ視点を当て直しても列は
+    /// 変わらない。控えは同じときも書く — 既定の視点を当てた後に面の大きさが変わっても、
+    /// 当てた値のまま残る従来の振る舞いを保つ。
+    private func closeAndStore(_ camera: Camera) {
+        if !currentCamera.isBitwiseEqual(to: camera) { closeBatch() }
         cameraStorage = camera
     }
 

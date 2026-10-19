@@ -12,6 +12,19 @@ import simd
 ///
 /// 頂点を組み立てる側は組み込みのものしかない — 利用者が差し替えるのは塗りだけなので、
 /// **利用者の断片から作るパイプラインも、頂点側は同じものを使う。**
+///
+/// ## 持ち主は ``RenderDevice`` で、面は分け合う ([#2785])
+///
+/// ここが抱えるのは**組み上がったら変わらないもの**だけ — ライブラリ・組み立て器・
+/// パイプライン 33 本・奥行きの扱い。組み込みの原文からできる値で、面にも利用者の断片にも
+/// 依らない。なので ``RenderDevice/shapePipeline(pixelFormat:)`` が GPU ごと・出力形式ごとに
+/// 1 つ組み、面は何枚作っても同じものを使う。面を作るたびに組み直すと、描き場所を動的に
+/// 作る場面が、寸法にも内容にも依らない費用を払い続ける。
+///
+/// **面ごとに変わるもの (引数のテーブル) はここに置かない。** 束ねる番地は描くたびに書き換わる
+/// ので、分け合うと面どうしで束ねが漏れる。面が自分の分を作る (``makeArgumentTable(gpu:)``)。
+///
+/// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
 final class ShapePipeline {
     /// 同じ絵を描く、**混ぜ方ごとに分かれたパイプラインの組**。
     ///
@@ -209,8 +222,6 @@ final class ShapePipeline {
     /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
     let replaceDepthState: (any MTLDepthStencilState)?
 
-    let argumentTable: any MTL4ArgumentTable
-
     private let vertexLibrary: any MTLLibrary
     /// 単位の形の頂点関数だけを持つライブラリ。**Shapes とは別に組む** — 同じライブラリへ足すと、
     /// 既存の頂点関数の組み上がり方が変わりうる (`UnitShape.metal` の冒頭)。
@@ -290,13 +301,16 @@ final class ShapePipeline {
         replacing.depthCompareFunction = .always
         replacing.isDepthWriteEnabled = true
         self.replaceDepthState = gpu.device.makeDepthStencilState(descriptor: replacing)
+    }
 
+    /// 面が自分で持つ引数のテーブル。**面ごとに 1 つ作る** — 共有しない理由は型の説明を参照。
+    static func makeArgumentTable(gpu: RenderDevice) throws(RenderFailure) -> any MTL4ArgumentTable {
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
-        tableDescriptor.maxBufferBindCount = Self.bufferBindCount
-        tableDescriptor.maxTextureBindCount = Self.textureBindCount
+        tableDescriptor.maxBufferBindCount = bufferBindCount
+        tableDescriptor.maxTextureBindCount = textureBindCount
         do {
-            argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
+            return try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {
             throw .argumentTableUnavailable(reason: error.localizedDescription)
         }

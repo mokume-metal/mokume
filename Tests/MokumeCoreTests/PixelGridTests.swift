@@ -510,18 +510,34 @@ struct PixelGridTests {
         /// rect は半幅・半高、楕円は 2 つの半径 (形自身の座標)
         let half: SIMD2<Double>
         let weight: Float
+        /// 扇 (`arc`) の開始角と掃引 (媒介変数の角・#2747)。nil なら扇ではない。扇は `isEllipse` も真にする
+        /// (半径は `half`)。輪郭だけの帯を数える (塗りの内外は数えない)
+        var arc: SIMD2<Double>?
         var testDescription: String { "\(name)・太さ \(weight)" }
 
         @MainActor func draw(on canvas: Canvas) {
             let size = SIMD2<Float>(Float(half.x * 2), Float(half.y * 2))
-            if isEllipse {
+            if let arc {
+                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y))
+            } else if isEllipse {
                 canvas.ellipse(0, 0, size.x, size.y)
             } else {
                 canvas.rect(-size.x / 2, -size.y / 2, size.x, size.y)
             }
         }
 
+        /// 輪郭 (扇なら周の 2 本の半径と弧、楕円なら周) までの距離 (符号なし)。`rect` は持たない。
+        func boundaryDistance() -> ((SIMD2<Double>) -> Double)? {
+            if let arc {
+                return PixelGridTests.makeArcBoundaryDistance(radii: half, start: arc.x, sweep: arc.y)
+            }
+            guard isEllipse else { return nil }
+            let radii = half
+            return { abs(PixelGridTests.ellipseDistance($0, radii)) }
+        }
+
         func inFill(_ p: SIMD2<Double>) -> Bool {
+            if let arc { return PixelGridTests.sectorContains(p, radii: half, start: arc.x, sweep: arc.y) }
             if isEllipse {
                 let q = p / half
                 return simd_dot(q, q) <= 1
@@ -537,6 +553,72 @@ struct PixelGridTests {
             guard abs(q.x) <= half.x + halfWeight, abs(q.y) <= half.y + halfWeight else { return false }
             let hole = half - halfWeight
             return hole.x <= 0 || hole.y <= 0 || abs(q.x) >= hole.x || abs(q.y) >= hole.y
+        }
+    }
+
+    /// 点 `p` が楕円の扇 (中心を含む) の内か。**扇の内外は、中心から弧の端へ向かう 2 本の半直線で
+    /// 決める** (角は媒介変数の角・`mokume_sectorField` の説明)。
+    nonisolated static func sectorContains(
+        _ p: SIMD2<Double>, radii: SIMD2<Double>, start: Double, sweep: Double
+    ) -> Bool {
+        let q = p / radii
+        guard simd_dot(q, q) <= 1 else { return false }
+        let end = start + sweep
+        let end1 = radii * SIMD2(cos(start), sin(start))
+        let end2 = radii * SIMD2(cos(end), sin(end))
+        let side1 = simd_dot(p, SIMD2(end1.y, -end1.x))
+        let side2 = simd_dot(p, SIMD2(-end2.y, end2.x))
+        return sweep <= .pi ? (side1 <= 0 && side2 <= 0) : (side1 <= 0 || side2 <= 0)
+    }
+
+    /// 扇の周 (中心から弧の両端への 2 本の線分と弧) までの距離 (符号なし) を返す関数を作る (#2747)。
+    /// 円の扇は閉じた式で、楕円の扇は媒介変数の点列で最も近い点を探し、その前後で三分探索して詰める。
+    /// 楕円の距離場の近似 (`mokume_ellipseField`) とは独立に、帯の内外を決めるために使う。
+    nonisolated static func makeArcBoundaryDistance(
+        radii: SIMD2<Double>, start: Double, sweep: Double
+    ) -> (SIMD2<Double>) -> Double {
+        let end = start + sweep
+        let end1 = radii * SIMD2(cos(start), sin(start))
+        let end2 = radii * SIMD2(cos(end), sin(end))
+        func segment(_ p: SIMD2<Double>, _ end: SIMD2<Double>) -> Double {
+            let along = max(0, min(1, simd_dot(p, end) / max(simd_dot(end, end), 1e-12)))
+            return simd_length(p - end * along)
+        }
+        if radii.x == radii.y {
+            let radius = radii.x
+            return { p in
+                let around = (atan2(p.y, p.x) - start).truncatingRemainder(dividingBy: 2 * .pi)
+                let angle = around < 0 ? around + 2 * .pi : around
+                let arc = angle <= sweep
+                    ? abs(simd_length(p) - radius)
+                    : min(simd_distance(p, end1), simd_distance(p, end2))
+                return min(arc, segment(p, end1), segment(p, end2))
+            }
+        }
+        let count = 512
+        let points = (0...count).map { index -> SIMD2<Double> in
+            let t = start + sweep * Double(index) / Double(count)
+            return radii * SIMD2(cos(t), sin(t))
+        }
+        return { p in
+            var nearest = 0
+            var best = Double.infinity
+            for (index, point) in points.enumerated() {
+                let d = simd_distance_squared(p, point)
+                if d < best {
+                    best = d
+                    nearest = index
+                }
+            }
+            func distance(_ t: Double) -> Double { simd_distance(p, radii * SIMD2(cos(t), sin(t))) }
+            var low = start + sweep * Double(max(0, nearest - 1)) / Double(count)
+            var high = start + sweep * Double(min(count, nearest + 1)) / Double(count)
+            for _ in 0..<30 {
+                let a = low + (high - low) / 3
+                let b = high - (high - low) / 3
+                if distance(a) < distance(b) { high = b } else { low = a }
+            }
+            return min(distance((low + high) / 2), segment(p, end1), segment(p, end2))
         }
     }
 
@@ -642,6 +724,7 @@ struct PixelGridTests {
                 : max(0, groundLevel - value) / (groundLevel - high)
         }
         let halfWeight = Double(shape.weight) / 2
+        let boundary = shape.boundaryDistance()
         for placement in Self.seamPlacements {
             let origin = SIMD2<Double>(Double(center.x + placement.x), Double(center.y + placement.y))
             let angle = Double(placement.z)
@@ -667,42 +750,55 @@ struct PixelGridTests {
             let shift = local(origin + 0.5)
             func covered(_ point: SIMD2<Double>) -> Bool {
                 let p = local(point)
-                return (fills && shape.inFill(p)) || shape.inBand(p - shift)
+                let q = p - shift
+                let inBand = boundary.map { $0(q) <= halfWeight } ?? shape.inBand(q)
+                return (fills && shape.inFill(p)) || inBand
             }
             let reach = max(shape.half.x, shape.half.y) + halfWeight + 2
             let lowest = max(0, Int(min(origin.x, origin.y) - reach))
             let highest = min(canvasSize, Int(max(origin.x, origin.y) + reach) + 1)
             for y in lowest..<highest {
                 for x in lowest..<highest {
+                    // 画素の中心から帯の縁までの距離が 0.9 画素より離れていれば、1/8 画素広げた四角
+                    // (中心から 0.9 画素の内に収まる) は丸ごと帯の中か外で、標本を見なくてよい
+                    let centerDistance = boundary.map {
+                        $0(local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift)
+                    }
                     var inside = true
-                    for j in 0..<9 where inside {
-                        for k in 0..<9 {
-                            let point = SIMD2(
-                                Double(x) - 0.125 + Double(k) * 1.25 / 8, Double(y) - 0.125 + Double(j) * 1.25 / 8)
-                            if !covered(point) { inside = false; break }
+                    var decided = false
+                    if let centerDistance, !fills {
+                        if centerDistance <= halfWeight - 0.9 {
+                            decided = true
+                        } else if centerDistance > halfWeight + 0.9 {
+                            inside = false
+                            decided = true
                         }
                     }
-                    // 9x9 の標本の間をすり抜ける細い穴の端を、4 辺を 201 点ずつ見て拾う。帯が
-                    // 画素ごと確かに覆う (楕円の帯の中心からの真の距離が太さの半分 − 0.9 以内。
-                    // 1/8 画素広げた画素は中心から 0.9 画素の内に収まる) なら見なくてよい
-                    if inside, !(shape.isEllipse
-                        && abs(Self.ellipseDistance(local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift, shape.half))
-                            <= halfWeight - 0.9)
-                    {
-                        edges: for t in 0...200 {
-                            let u = -0.125 + Double(t) * 1.25 / 200
-                            for point in [
-                                SIMD2(Double(x) + u, Double(y) - 0.125), SIMD2(Double(x) + u, Double(y) + 1.125),
-                                SIMD2(Double(x) - 0.125, Double(y) + u), SIMD2(Double(x) + 1.125, Double(y) + u),
-                            ] where !covered(point) {
-                                inside = false
-                                break edges
+                    if !decided {
+                        for j in 0..<9 where inside {
+                            for k in 0..<9 {
+                                let point = SIMD2(
+                                    Double(x) - 0.125 + Double(k) * 1.25 / 8,
+                                    Double(y) - 0.125 + Double(j) * 1.25 / 8)
+                                if !covered(point) { inside = false; break }
+                            }
+                        }
+                        // 9x9 の標本の間をすり抜ける細い穴の端を、4 辺を 201 点ずつ見て拾う
+                        if inside {
+                            edges: for t in 0...200 {
+                                let u = -0.125 + Double(t) * 1.25 / 200
+                                for point in [
+                                    SIMD2(Double(x) + u, Double(y) - 0.125), SIMD2(Double(x) + u, Double(y) + 1.125),
+                                    SIMD2(Double(x) - 0.125, Double(y) + u), SIMD2(Double(x) + 1.125, Double(y) + u),
+                                ] where !covered(point) {
+                                    inside = false
+                                    break edges
+                                }
                             }
                         }
                     }
-                    if !inside, shape.isEllipse, !fills {
-                        let center = local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift
-                        let away = abs(abs(Self.ellipseDistance(center, shape.half)) - halfWeight)
+                    if !inside, let centerDistance, !fills {
+                        let away = abs(centerDistance - halfWeight)
                         if away > 0.9 {
                             let extra = excess(Double(pixels.components[(y * canvasSize + x) * 4]))
                             if extra > worstExcess {
@@ -906,6 +1002,161 @@ struct PixelGridTests {
         #expect(measured.counted > 0, "\(mode)・\(shape): 丸ごと覆われる画素が無い")
         #expect(
             measured.worst < 0.01, "\(mode)・\(shape): 継ぎ目で下地が漏れる: 最悪 \(measured.worst) \(measured.where)")
+    }
+
+    // MARK: - 扇の帯の穴が潰れている・細いとき (#2747)
+
+    /// 帯の穴が潰れた扇。面の大きさも持つ。
+    nonisolated static let collapsedArcShapes: [(shape: SeamShape, canvasSize: Int)] = [
+        // 本文の 2 つ。1 つめは #2742 と同じ根 (楕円の近似の距離場) も踏む — 扇の外縁は太さの半分 10
+        // だけ離れた所で、近似の距離場は短半径 3 の端を大きく外す
+        (SeamShape(
+            name: "arc(0, 0, 100, 6, −π/2, π/2)", isEllipse: true, half: SIMD2(50, 3), weight: 20,
+            arc: SIMD2(-.pi / 2, .pi)), 160),
+        (SeamShape(
+            name: "arc(0, 0, 20, 20, 0, π)", isEllipse: true, half: SIMD2(10, 10), weight: 10.4,
+            arc: SIMD2(0, .pi)), 48),
+        // 掃引が π より小さい・大きい扇。内接円の半径 (`半径 · sin(掃引 / 2) / (1 + sin(掃引 / 2))`・
+        // π 以上は半径の半分) より少し太い
+        (SeamShape(
+            name: "arc(0, 0, 40, 40, 0, π/2)", isEllipse: true, half: SIMD2(20, 20), weight: 17,
+            arc: SIMD2(0, .pi / 2)), 80),
+        (SeamShape(
+            name: "arc(0, 0, 40, 40, 0, 1.5π)", isEllipse: true, half: SIMD2(20, 20), weight: 20.4,
+            arc: SIMD2(0, 1.5 * .pi)), 80),
+        // 楕円の扇。内接円の半径は短半径以下
+        (SeamShape(
+            name: "arc(0, 0, 80, 20, 0, π)", isEllipse: true, half: SIMD2(40, 10), weight: 22,
+            arc: SIMD2(0, .pi)), 112),
+    ]
+
+    /// 扇の帯の穴が潰れていても、輪郭だけの帯は欠けず、帯の外へ滲まない ([#2747])。
+    ///
+    /// 扇の内縁は、帯の穴が潰れていても縁 1 本の式 (`ring − 太さの半分`) のままだった。穴が潰れている
+    /// (扇の内接円の半径が太さの半分以下) と、内縁は「どこにも無い」はずなのに、被覆が縁の渡し (1 画素)
+    /// の内に残って帯が欠ける (`arc(0, 0, 20, 20, 0, π)`・太さ 10.4 で 18.8%)。細長い楕円の扇は、
+    /// 近似の距離場が長軸の上で先端までの距離を返すので、内縁が長軸に沿って帯を丸ごと抜く (#2186 の
+    /// `ellipse(80, 80, 100, 6)` と同じ形)。
+    ///
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+    @Test(
+        "扇の帯の穴が潰れても、輪郭だけの帯は欠けず滲まない",
+        arguments: PixelGridTests.collapsedArcShapes.indices)
+    func collapsedArcHoleLeavesNoGapInTheBand(_ index: Int) throws {
+        let (shape, size) = Self.collapsedArcShapes[index]
+        let center = SIMD2<Float>(Float(size) / 2, Float(size) / 2)
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: size, center: center)
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.total / Double(max(measured.counted, 1)) < 0.001,
+            "\(shape): 帯が欠ける: 平均 \(measured.total / Double(max(measured.counted, 1)))")
+        #expect(
+            measured.worstExcess < 0.01,
+            "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
+    }
+
+    /// 帯の穴が潰れてはいないが 1 画素より細い扇 (円の扇。内接円の半径が式で出る)。
+    nonisolated static let thinArcHoleShapes: [(shape: SeamShape, canvasSize: Int)] = [
+        // 半円の内接円の半径は 10。太さの半分 9.6・9.75 は穴の半径 0.4・0.25 (穴の幅が 1 画素に届かない)
+        (SeamShape(
+            name: "arc(0, 0, 40, 40, 0, π)", isEllipse: true, half: SIMD2(20, 20), weight: 19.2,
+            arc: SIMD2(0, .pi)), 64),
+        (SeamShape(
+            name: "arc(0, 0, 40, 40, 0, π)", isEllipse: true, half: SIMD2(20, 20), weight: 19.5,
+            arc: SIMD2(0, .pi)), 64),
+        // 四半円の内接円の半径は 20 · sin(π/4) / (1 + sin(π/4)) = 8.28
+        (SeamShape(
+            name: "arc(0, 0, 40, 40, 0, π/2)", isEllipse: true, half: SIMD2(20, 20), weight: 16,
+            arc: SIMD2(0, .pi / 2)), 64),
+        (SeamShape(
+            name: "arc(0, 0, 40, 40, 0, 1.5π)", isEllipse: true, half: SIMD2(20, 20), weight: 19.5,
+            arc: SIMD2(0, 1.5 * .pi)), 64),
+    ]
+
+    /// 帯の穴が 1 画素より細い扇も、輪郭だけの帯を欠かさず、帯の外へ滲まない ([#2747])。
+    ///
+    /// 縁 1 本の距離場は細い穴の向こう側の縁を見られず、穴の面積より大きく数える (#2186 の `rect` と
+    /// 楕円と同じ口)。扇は、穴の半径の上限 (`内接円の半径 − 太さの半分`) から両縁を見る上限
+    /// (`2 · 穴の半径 / 画素あたりの距離`) を出して、内縁の被覆を抑える。
+    ///
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+    @Test(
+        "帯の穴が 1 画素より細い扇も、輪郭だけの帯は欠けず滲まない",
+        arguments: PixelGridTests.thinArcHoleShapes.indices)
+    func thinArcHoleLeavesNoGapInTheBand(_ index: Int) throws {
+        let (shape, size) = Self.thinArcHoleShapes[index]
+        let center = SIMD2<Float>(Float(size) / 2, Float(size) / 2)
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: size, center: center)
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.worstExcess < 0.01,
+            "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
+    }
+
+    /// 楕円の扇で、穴の大きさが内接円の半径の上限と実際の間にある形 ([#2747])。
+    ///
+    /// 細い穴の判定が内接円の半径の**上限**だけだと、楕円の扇は上限が実際の 1.7〜2 倍に緩く、本当は細い
+    /// 穴を太いと外す (`arc(0, 0, 100, 60, 0, π)`・太さ 30.1 で帯が最悪 45% 欠けた)。内接円の半径の下限
+    /// (`短半径 · 円の扇の比`) からも測り、穴が細いかもしれない扇は標本で数える。
+    ///
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+    nonisolated static let ellipticArcHoleShapes: [(shape: SeamShape, canvasSize: Int)] =
+        [27.0, 29, 30, 30.1, 31, 32, 34].map { weight in
+            (SeamShape(
+                name: "arc(0, 0, 100, 60, 0, π)", isEllipse: true, half: SIMD2(50, 30), weight: Float(weight),
+                arc: SIMD2(0, .pi)), 160)
+        }
+
+    @Test(
+        "楕円の扇の穴が内接円の半径の上限と下限の間にあっても、輪郭だけの帯は欠けず滲まない",
+        arguments: PixelGridTests.ellipticArcHoleShapes.indices)
+    func ellipticArcHoleBetweenItsBoundsLeavesNoGap(_ index: Int) throws {
+        let (shape, size) = Self.ellipticArcHoleShapes[index]
+        let center = SIMD2<Float>(Float(size) / 2, Float(size) / 2)
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: size, center: center)
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.worstExcess < 0.01,
+            "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
+    }
+
+    /// 掃引の狭い扇。中心の側の穴の角が尖る ([#2747])。
+    ///
+    /// 扇の中心の角 (掃引 θ) は、内側へ太さの半分だけ縮めても同じ角度の尖りになる。縁 1 本の距離場は、
+    /// 尖りの先で距離が小さいまま長く残り、尖りから離れた画素まで被覆が残る (`arc(0, 0, 400, 400, …, 0.1)`・
+    /// 太さ 10 で、穴は太い (半径 4.5) のに尖りの先の画素が 52% 欠けた)。尖りの先の画素は標本で数える。
+    ///
+    /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
+    nonisolated static let narrowArcShapes: [(shape: SeamShape, canvasSize: Int)] = [
+        (SeamShape(
+            name: "arc(0, 0, 400, 400, 0.3, 0.4)", isEllipse: true, half: SIMD2(200, 200), weight: 10,
+            arc: SIMD2(0.3, 0.1)), 460),
+        (SeamShape(
+            name: "arc(0, 0, 120, 120, 0.3, 0.4)", isEllipse: true, half: SIMD2(60, 60), weight: 3,
+            arc: SIMD2(0.3, 0.1)), 160),
+        (SeamShape(
+            name: "arc(0, 0, 120, 120, 0.3, 0.6)", isEllipse: true, half: SIMD2(60, 60), weight: 8,
+            arc: SIMD2(0.3, 0.3)), 160),
+        (SeamShape(
+            name: "arc(0, 0, 120, 120, 0.3, 0.9)", isEllipse: true, half: SIMD2(60, 60), weight: 12,
+            arc: SIMD2(0.3, 0.6)), 160),
+    ]
+
+    @Test(
+        "掃引の狭い扇の、尖った穴の端の近くでも、輪郭だけの帯は欠けず滲まない",
+        arguments: PixelGridTests.narrowArcShapes.indices)
+    func narrowArcHoleTipLeavesNoGapInTheBand(_ index: Int) throws {
+        let (shape, size) = Self.narrowArcShapes[index]
+        let center = SIMD2<Float>(Float(size) / 2, Float(size) / 2)
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: size, center: center)
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.worstExcess < 0.01,
+            "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
     }
 
     /// 穴の端 (長軸の端から離れた尖りの先) の近くの画素で、帯の被覆が真の幾何の面積 (画素を 16x16 の
