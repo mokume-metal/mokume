@@ -617,7 +617,8 @@ extension Canvas {
         forEachGlyph(in: string, x.asFloat, y.asFloat) { scalar, resolved, path, pen, baseline in
             let measured =
                 Typeface.measuresByDrawing(resolved, path: path)
-                ? face.drawnInk(of: scalar, resolved) : path?.boundingBoxOfPath
+                ? face.drawnInk(of: scalar, resolved, keeping: atlas, as: glyphKey(for: resolved))
+                : path?.boundingBoxOfPath
             guard let glyph = measured else { return }
             // 道筋を持つが面積の無い字 (点 1 つだけの道筋) は墨に数えない
             guard !glyph.isNull, glyph.width > 0 || glyph.height > 0 else { return }
