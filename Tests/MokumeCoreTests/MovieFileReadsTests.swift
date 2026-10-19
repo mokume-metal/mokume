@@ -167,6 +167,60 @@ nonisolated struct MovieFileReadsTests {
         }
     }
 
+    /// writer へ渡した回数を数える箱。
+    private final class Handed: Sendable {
+        private let count = Mutex(0)
+        var value: Int { count.withLock { $0 } }
+        func note() { count.withLock { $0 += 1 } }
+    }
+
+    @Test("器の番地を取れなければ、その枚は writer へ渡さず、bufferUnavailable で書き損じになる")
+    func anUnaddressableBufferIsNotHandedToTheWriter() async throws {
+        try await withMovieFile { file, _ in
+            let handed = Handed()
+            file.readsForTesting.baseAddress = { _ in nil }
+            file.readsForTesting.appendBuffer = { _, _ in
+                handed.note()
+                return true
+            }
+            #expect(await failure(of: file) == .bufferUnavailable)
+            #expect(handed.value == 0, "番地の無い器を writer へ渡した")
+        }
+    }
+
+    @Test("器の番地を取る瞬間に writer が転んでいれば、writer の理由で書き損じになり、writer へ渡さない")
+    func anUnaddressableBufferOnAFailedWriterCarriesTheWritersReason() async throws {
+        try await withMovieFile { file, path in
+            let wire = Tripwire()
+            let handed = Handed()
+            file.readsForTesting.status = { wire.status }
+            file.readsForTesting.error = { Self.reason }
+            file.readsForTesting.baseAddress = { _ in
+                wire.trip()
+                return nil
+            }
+            file.readsForTesting.appendBuffer = { _, _ in
+                handed.note()
+                return true
+            }
+            #expect(await failure(of: file) == .writeFailed(path: path, reason: Self.reason))
+            #expect(handed.value == 0)
+        }
+    }
+
+    @Test("番地が取れる器は、1 回だけ writer へ渡す")
+    func anAddressableBufferIsHandedOnce() async throws {
+        try await withMovieFile { file, _ in
+            let handed = Handed()
+            file.readsForTesting.appendBuffer = { _, _ in
+                handed.note()
+                return true
+            }
+            #expect(await failure(of: file) == nil)
+            #expect(handed.value == 1)
+        }
+    }
+
     @Test("差し込まなければ本物を読み、健やかな writer へは書き足せる")
     func withoutReadsTheRealWriterTakesTheFrame() async throws {
         try await withMovieFile { file, _ in

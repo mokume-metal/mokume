@@ -184,6 +184,10 @@ nonisolated final class MovieFile {
         var borrow: ((CVPixelBufferPool) -> CVPixelBuffer?)?
         /// `writer.error` の代わり。言った失敗の理由 (`nil` は何も言っていない)。
         var error: (() -> String?)?
+        /// 器の先頭の番地を取る手の代わり (`nil` は取れなかった)。取る間は器をロックしている。
+        var baseAddress: ((CVPixelBuffer) -> UnsafeMutableRawPointer?)?
+        /// 器を writer へ渡す手の代わり (`false` は writer が断った)。検査が、渡さなかったことを数える。
+        var appendBuffer: ((CVPixelBuffer, CMTime) -> Bool)?
     }
 
     /// 検査が差し込む読み方。空なら本物を読む。
@@ -218,6 +222,8 @@ nonisolated final class MovieFile {
     /// 器を取れなかったときの失敗。**writer が転んでいれば、器のせいではなく writer の理由で書き損じに
     /// する** ([#2944])。
     ///
+    /// 器の先頭の番地を取れなかった枚 (``fill(_:with:)``・[#2974]) も同じ口を通る。
+    ///
     /// 状態を確かめてから池を取るまでの間に writer が転ぶと、池は `nil` になり、器も借りられない。
     /// 取れなかった後にもう一度読めば、その枚も符号化器の理由を名乗る ([#1299])。**転んだと読むのは、
     /// `.writing` でなくなったとき、または writer が失敗の理由 (`error`) を言ったとき**である。状態の
@@ -227,6 +233,7 @@ nonisolated final class MovieFile {
     ///
     /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
     /// [#2944]: https://github.com/mokume-metal/mokume/issues/2944
+    /// [#2974]: https://github.com/mokume-metal/mokume/issues/2974
     private func bufferFailure() -> MovieWriteFailure {
         guard writerStatus == .writing, writerError == nil else {
             return .writeFailed(path: path, reason: failureReason)
@@ -406,8 +413,12 @@ nonisolated final class MovieFile {
         // ([ADR-0023] 決定 5)
         guard let buffer = borrowBuffer(from: pool) else { throw bufferFailure() }
 
-        fill(buffer, with: image)
-        guard adaptor.append(buffer, withPresentationTime: stamp) else {
+        // **番地を取れなければ、中身の無い器を書いた枚として渡さない** (#2974)。前に池へ返した器の
+        // 残りか初期化されていない画素が、録画に入る。取れなかった枚は書き損じとして名乗る
+        guard fill(buffer, with: image) else { throw bufferFailure() }
+        let handed = readsForTesting.appendBuffer?(buffer, stamp)
+            ?? adaptor.append(buffer, withPresentationTime: stamp)
+        guard handed else {
             throw .writeFailed(path: path, reason: failureReason)
         }
     }
@@ -459,16 +470,25 @@ nonisolated final class MovieFile {
     ///
     /// **アルファは乗算しない。** 乗算すると透けた部分の色が失われ、書き出した動きと
     /// 静止画で半透明の見え方が変わる ([ADR-0023] 決定 4 の表)。
-    private func fill(_ buffer: CVPixelBuffer, with image: DisplayImage) {
+    ///
+    /// 器の先頭の番地を取れなければ何も写さず `false` を返す。呼ぶ側は、その枚を書き損じにする。
+    private func fill(_ buffer: CVPixelBuffer, with image: DisplayImage) -> Bool {
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
+        let address: UnsafeMutableRawPointer?
+        if let seam = readsForTesting.baseAddress {
+            address = seam(buffer)
+        } else {
+            address = CVPixelBufferGetBaseAddress(buffer)
+        }
+        guard let base = address else { return false }
         let destination = base.assumingMemoryBound(to: UInt8.self)
         let stride = CVPixelBufferGetBytesPerRow(buffer)
         image.bytes.withUnsafeBufferPointer { source in
             Self.writeBGRA(
                 from: source, width: width, height: height, into: destination, stride: stride)
         }
+        return true
     }
 
     /// 詰め物の無い RGBA の行を、行幅 `stride` の BGRA へ並べ替えて写す。
