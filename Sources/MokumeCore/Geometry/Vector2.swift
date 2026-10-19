@@ -194,7 +194,15 @@ public nonisolated struct Vector2: Sendable, Hashable {
     ///   }
     /// }
     // shot: 1 snippet=26b58a86
-    public var length: Float { (simd * simd).sum().squareRoot() }
+    public var length: Float {
+        let squared = (simd * simd).sum()
+        // 成分は有限なのに 2 乗の和だけが溢れたときに限って、大きさで割って測り直す (#2885)。
+        // 普通の値は従来どおりの式を通るので、結果のビットは変わらない
+        guard squared == .infinity, simd.x.isFinite, simd.y.isFinite else {
+            return squared.squareRoot()
+        }
+        return Vector2.scaledLength(of: simd)
+    }
 }
 
 // MARK: - 配列リテラル
@@ -464,6 +472,10 @@ nonisolated extension Vector2 {
     public func normalized() -> Vector2 {
         let magnitude = length
         guard magnitude > 0 else { return self }
+        // 長さそのものが Float に収まらないだけの有限な値は、向きだけを大きさで割って求める (#2885)
+        if magnitude == .infinity, simd.x.isFinite, simd.y.isFinite {
+            return Vector2(Vector2.scaledDirection(of: simd))
+        }
         return Vector2(simd / magnitude)
     }
 
@@ -506,6 +518,52 @@ nonisolated extension Vector2 {
         guard limit > 0 else { return Vector2(0, 0) }
         let magnitude = length
         guard magnitude > limit else { return self }
-        return Vector2(simd * limit / magnitude)
+        let limited = simd * limit / magnitude
+        // 成分が有限なのに、`simd * limit` が溢れたか長さが Float に収まらないために結果が有限でなく
+        // なる (または 0 に潰れる) のは、結果ではなく中間の都合。向きに上限を掛け直す (#2885)。
+        // どちらでもない値は上の式のまま通るので、結果のビットは変わらない
+        let componentsAreFinite = simd.x.isFinite && simd.y.isFinite
+        let limitedIsFinite = limited.x.isFinite && limited.y.isFinite
+        if componentsAreFinite && (magnitude == .infinity || !limitedIsFinite) {
+            return Vector2(Vector2.scaledDirection(of: simd) * limit)
+        }
+        return Vector2(limited)
+    }
+}
+
+// MARK: - 中間の 2 乗が溢れる・潰れる値の逃げ道
+
+nonisolated extension Vector2 {
+    /// 2 乗を作らずに測った長さ。大きい成分で割ってから 2 乗するので、成分が有限なら溢れも潰れもしない。
+    ///
+    /// 長さが 0 に潰れる小さな値も正しく測るので、`length` の代わりには使わない (`length` は
+    /// 0 に潰れるほど小さい値で 0 を返す約束 — `normalized()` がそれを前提に変えずに返す)。
+    /// 円の判定のように、小さい半径どうしを比べる所で使う。成分が有限でなければ `length` と同じ。
+    static func scaledLength(of value: SIMD2<Float>) -> Float {
+        guard value.x.isFinite, value.y.isFinite else { return (value * value).sum().squareRoot() }
+        let peak = max(abs(value.x), abs(value.y))
+        guard peak > 0 else { return 0 }
+        let unit = value / peak
+        return peak * (unit * unit).sum().squareRoot()
+    }
+
+    /// 長さ 1 の向きを、2 乗を作らずに求める。成分が有限で、少なくとも 1 つは 0 でないこと。
+    static func scaledDirection(of value: SIMD2<Float>) -> SIMD2<Float> {
+        let peak = max(abs(value.x), abs(value.y))
+        let unit = value / peak
+        return unit / (unit * unit).sum().squareRoot()
+    }
+
+    /// 中心の差 `gap` の長さが `reach` 以下か。円・矩形と円・円と点の判定が共通で使う。
+    ///
+    /// 普通の大きさでは `gap` と `reach` の 2 乗を比べる。`reach` の 2 乗が溢れるか潰れる
+    /// (大きさが約 1.8e19 以上、または約 1e-19 未満) ときは、2 乗が `infinity <= infinity`・
+    /// `0 <= 0` で必ず真になるので、長さそのものを比べる (#2885)。
+    static func isWithin(gap: SIMD2<Float>, reach: Float) -> Bool {
+        let reachSquared = reach * reach
+        if reachSquared >= Float.leastNormalMagnitude && reachSquared < .infinity {
+            return (gap * gap).sum() <= reachSquared
+        }
+        return scaledLength(of: gap) <= reach
     }
 }

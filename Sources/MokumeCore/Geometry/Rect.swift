@@ -395,7 +395,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
         let nearest = SIMD2(
             min(max(circle.center.x, left), right), min(max(circle.center.y, top), bottom))
         let gap = circle.center.simd - nearest
-        return (gap * gap).sum() <= circle.radius * circle.radius
+        return Vector2.isWithin(gap: gap, reach: circle.radius)
     }
 
     /// 点を含むか。**辺の上の点も含むと数える。**

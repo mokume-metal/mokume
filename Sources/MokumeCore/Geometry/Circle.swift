@@ -296,8 +296,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     public func intersects(_ other: Circle) -> Bool {
         guard radius > 0, other.radius > 0 else { return false }
         let gap = other.center.simd - center.simd
-        let reach = radius + other.radius
-        return (gap * gap).sum() <= reach * reach
+        return Vector2.isWithin(gap: gap, reach: radius + other.radius)
     }
 
     /// 矩形と重なるか。**縁が接するだけでも重なると数える。**
@@ -357,7 +356,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     public func contains(_ point: Vector2) -> Bool {
         guard radius > 0 else { return false }
         let gap = point.simd - center.simd
-        return (gap * gap).sum() <= radius * radius
+        return Vector2.isWithin(gap: gap, reach: radius)
     }
 
     /// 走っているスケッチへ描く。
