@@ -53,6 +53,16 @@ enum WatchCommand {
             throw .packageNotFound(path: directory.path)
         }
 
+        // **場所を 1 本のものとして取る。何かに触れる前に、いちばん先に** ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
+        // 見張りは場所の区画を自分 1 本のものとして作り直し・畳むので、同じ場所に 2 本目が居ると
+        // 1 本目の窓が 2 本目の子を映し、止めると 1 本目の次の世代が自分の窓を開く。先客が居れば
+        // ここで断って終わる — 区画も、作り直しも、子の起動も、何も始めない。錠は終わりまで持つ
+        // (後始末の後に手放す)。区画の基準は環境変数が決める (走らせるスケッチは親の環境を
+        // 引き継ぐので、記録をパッケージの場所へ置くと観測とだけ場所が割れる・#331)。**計算は 1 つ** (#791)
+        let facetBase = try invocation.facetBase()
+        let place = try WatchPlaceLock.claim(under: facetBase)
+        defer { place.release() }
+
         // **見張り始める前に見る。** 宣言の抜けはビルドを通ってしまうので、後では
         // 「作り直しは通ったのに絵が出ない」形になる。`run` と同じ関数を同じ位置で呼ぶ
         //
@@ -73,10 +83,8 @@ enum WatchCommand {
             in: directory, invocation: invocation, running: running)
         let context = try resolver.current().context
 
-        // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
-        // パッケージの場所へ置くと観測とだけ場所が割れる (#331)。**計算は 1 つ** (#791)
         let session = WatchSession(
-            directory: directory, context: context, facetBase: try invocation.facetBase(),
+            directory: directory, context: context, facetBase: facetBase,
             reportsRate: true, hooks: .live(resolver: resolver, running: running))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
@@ -191,7 +199,7 @@ enum WatchCommand {
         finishBlocking(session)
         viewer?.close()
         // **置いていかない。** 区画は面の番号を置く場所で、置いた見張りが居なくなれば
-        // 指す先も無い。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
+        // 指す先も無い (同じ場所に別の見張りは居ない — ``WatchPlaceLock`` が断っている・#2093)。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
         // 窓の持ち主から起こされていない」と名乗らせることになる (#2028)
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
         for facet in created { try? FileManager.default.removeItem(at: facet) }
@@ -331,6 +339,10 @@ enum WatchCommand {
         NSApplication.shared.setActivationPolicy(.regular)
         let facet = viewportFacet(for: session)
         // **前の見張りが残したものを引き継がない。** 置かれている番号は死んだ面を指す
+        //
+        // **居るのは死んだ前任だけだと、錠で確かめてある** (#2093)。同じ場所を見張る生きた先客が居れば、
+        // ``run(_:watching:)`` が ``WatchPlaceLock`` で断っていて、ここへは来ない。後始末を通らずに消えた
+        // 前任 (`SIGKILL`) の錠はカーネルが外しているので、残った区画は作り直してよい
         try? FileManager.default.removeItem(at: facet)
         // つまみの区画は `prepareFacets(under:)` が既に置いている (#464)。走らせている子は
         // 区画が在るときだけ宣言を差し出すので ([ADR-0030] 決定 2)、無いとプレビューに
