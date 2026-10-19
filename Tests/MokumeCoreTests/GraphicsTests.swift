@@ -632,6 +632,45 @@ struct GraphicsTests {
         #expect(color.alpha > 0.99)
     }
 
+    // MARK: - 作る費用 (#2374)
+
+    /// 作りたての面は `RenderTarget.init` が透明な黒に塗ってある (#766)。`createGraphics` が
+    /// もう一度塗ると、投入が 1 本余計に増え、全完了の待ちが 1 回乗る。
+    ///
+    /// **待ちの回数を GPU の混み具合に頼らず数える。** `settleCalls` は待ちを頼まれた回数で、
+    /// GPU が終わっていても増える (時間で測ると、空いた GPU では差が出ない)。
+    @Test("描き場所を作っても、面を塗り直さず、全完了の待ちも頼まない", arguments: [1, 8])
+    func creatingAGraphicsDoesNotRepaintOrWait(count: Int) throws {
+        let canvas = try makeCanvas()
+        let gpu = canvas.gpu
+        // 温める。最初の 1 枚は共有の資源を作るので、数の対象から外す
+        _ = try canvas.createGraphics(16, 16)
+        try gpu.settle()
+
+        let (settles, waits, submitted) = (gpu.settleCalls, gpu.blockingWaits, gpu.submissionCount)
+        for _ in 0..<count { _ = try canvas.createGraphics(16, 16) }
+
+        #expect(gpu.settleCalls == settles, "作る口が全完了の待ちを頼んでいる")
+        #expect(gpu.blockingWaits == waits, "作る口が GPU の全完了を待っている")
+        // 1 枚につき、`RenderTarget.init` の塗りの 1 本だけ
+        #expect(
+            gpu.submissionCount - submitted == UInt64(count),
+            "1 枚あたりの投入が 1 本ではない: \(gpu.submissionCount - submitted) 本 / \(count) 枚")
+    }
+
+    /// 塗り直しを外した後も、作りたての面の中身は決まっている。**確保したままの GPU 専用の面は
+    /// 中身が未定義**なので、`RenderTarget.init` の塗りが唯一の保証になる。
+    @Test("作った直後の描き場所は、何も描かずに読んだ画素が全部透明な黒", arguments: [(1, 1), (16, 8), (64, 64)])
+    func aFreshGraphicsReadsTransparentBlack(size: (Int, Int)) throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(size.0, size.1)
+
+        let pixels = try layer.output.readPixels()
+        for y in 0..<size.1 {
+            for x in 0..<size.0 { #expect(pixels[x, y] == .transparent, "(\(x), \(y))") }
+        }
+    }
+
     // MARK: - 時刻と刻みは作った面と同じ (#1467)
 
     /// 時刻で脈打つ色。赤は `0.5 + 0.5·sin(πt)` で、0 秒で 0.5、0.5 秒 (30 fps の 16 枚目)
