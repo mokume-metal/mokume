@@ -433,6 +433,111 @@ struct ShapeValueTests {
         #expect(!Circle(x: 0, y: 0, radius: -1e-30).intersects(far))
     }
 
+    // MARK: - 2 の冪倍しても答えが変わらない (#2885 の反証)
+
+    private func scaled(_ value: Vector2, by exponent: Int) -> Vector2 {
+        Vector2(scalbn(value.x, exponent), scalbn(value.y, exponent))
+    }
+
+    /// 従来の式 (2 乗を作って比べる) の答え。普通の大きさで、2 の冪倍しても変わらない基準にする。
+    private func legacyWithin(_ gap: SIMD2<Float>, _ reach: Float) -> Bool {
+        (gap * gap).sum() <= reach * reach
+    }
+
+    @Test("円の判定は、接する・わずかに離れる・わずかに届くのどれも、2 の冪倍しても答えが変わらない")
+    func circleHitTestKeepsItsAnswerUnderPowerOfTwoScaling() {
+        let triples: [(Float, Float, Float)] = [(3, 4, 5), (5, 12, 13), (8, 15, 17), (7, 24, 25), (20, 21, 29)]
+        var checked = 0
+        for (a, b, c) in triples {
+            for multiple in 1...100 {
+                let m = Float(multiple)
+                for reach in [(c * m).nextDown, c * m, (c * m).nextUp] {
+                    let expected = legacyWithin(SIMD2(a * m, b * m), reach)
+                    for exponent in stride(from: -100, through: 100, by: 7) {
+                        let gap = SIMD2(scalbn(a * m, exponent), scalbn(b * m, exponent))
+                        let scaledReach = scalbn(reach, exponent)
+                        #expect(
+                            Vector2.isWithin(gap: gap, reach: scaledReach) == expected,
+                            "\(a * m) \(b * m) reach \(reach) × 2^\(exponent)")
+                        checked += 1
+                    }
+                }
+            }
+        }
+        #expect(checked > 20_000)
+    }
+
+    @Test("反証の例: gap=(45, 108)·2^64 と reach=117·2^64 は接している")
+    func theFalsifiersTouchingExample() {
+        let scale: Float = 0x1p64
+        #expect(Circle(x: 0, y: 0, radius: 117 * scale).contains(Vector2(45 * scale, 108 * scale)))
+        #expect(!Circle(x: 0, y: 0, radius: (117 * scale).nextDown).contains(Vector2(45 * scale, 108 * scale)))
+        let other = Circle(x: 45 * scale, y: 108 * scale, radius: 58.5 * scale)
+        #expect(Circle(x: 0, y: 0, radius: 58.5 * scale).intersects(other))
+        #expect(other.intersects(Circle(x: 0, y: 0, radius: 58.5 * scale)))
+        // 小さい側
+        let small: Float = 0x1p-64
+        #expect(Circle(x: 0, y: 0, radius: 117 * small).contains(Vector2(45 * small, 108 * small)))
+        #expect(!Circle(x: 0, y: 0, radius: (117 * small).nextDown).contains(Vector2(45 * small, 108 * small)))
+    }
+
+    @Test("length・normalized()・limited(to:) は、2 乗の切り替わりの前後でも 2 の冪倍の答えになる")
+    func vectorKeepsItsAnswerUnderPowerOfTwoScaling() {
+        let bases: [Vector2] = [Vector2(3, 4), Vector2(1, 1), Vector2(0.3, -0.7), Vector2(-5, 0), Vector2(0, 9)]
+        for base in bases {
+            let length = base.length
+            let direction = base.normalized()
+            // 2 乗が非正規数になる側 (-70 付近) から、溢れる側 (+120 付近) まで、切り替わりをまたいで歩く
+            for exponent in -70...120 {
+                let moved = scaled(base, by: exponent)
+                #expect(moved.length == scalbn(length, exponent), "length \(base) × 2^\(exponent)")
+                #expect(moved.normalized() == direction, "normalized \(base) × 2^\(exponent)")
+                // 上限を半分にすると、長さが上限になる (丸めの 4 ulp 以内・向きは変わらない)
+                let limit = scalbn(length, exponent) / 2
+                let limited = moved.limited(to: limit)
+                let expected = scaled(Vector2(base.simd * 0.5), by: exponent)
+                #expect(close(limited, expected, tolerance: 4e-7), "limited \(base) × 2^\(exponent)")
+            }
+        }
+    }
+
+    @Test("軸に沿った値の長さは、2 乗が溢れる・潰れる境目の前後でちょうどその成分になる")
+    func axisAlignedLengthAcrossTheEdges() {
+        for exponent in [50, 63, 64, 100, 120, -50, -64, -70, -72] {
+            let edge = scalbn(Float(1), exponent)
+            for value in [edge.nextDown, edge, edge.nextUp] {
+                #expect(Vector2(value, 0).length == value, "(\(value), 0)")
+                #expect(Vector2(0, -value).length == value)
+                #expect(Vector2(value, 0).normalized() == Vector2(1, 0))
+            }
+        }
+    }
+
+    @Test("成分が約 1e-19 未満の値も、normalized() は長さ 1 になる (2 乗が潰れて 0 でない間)")
+    func normalizedOfSmallComponents() {
+        for component: Float in [1e-19, 1e-20, 1e-21, 1e-22, 3e-23] {
+            let direction = Vector2(component, component).normalized()
+            #expect(abs(direction.x - 0.70710678) < 1e-6 && abs(direction.y - 0.70710678) < 1e-6, "\(component)")
+        }
+        // 2 乗が 0 に潰れて length が 0 になる値は、#2722 の約束のまま変えずに返す
+        for component: Float in [1e-23, 1e-30, 1e-38] {
+            let tiny = Vector2(component, component)
+            #expect(tiny.length == 0, "\(component)")
+            #expect(tiny.normalized() == tiny, "\(component)")
+        }
+    }
+
+    @Test("小さい値でも limited(to:) は上限を守る (length が 0 に潰れる値も)")
+    func limitedOfSmallComponents() {
+        let limited = Vector2(3e-30, 4e-30).limited(to: 1e-30)
+        #expect(close(limited, Vector2(0.6e-30, 0.8e-30), tolerance: 1e-6), "\(limited)")
+        // 上限以下なら変えずに返す
+        #expect(Vector2(3e-30, 4e-30).limited(to: 1e-29) == Vector2(3e-30, 4e-30))
+        #expect(Vector2(0, 0).limited(to: 1e-30) == Vector2(0, 0))
+        // 2 乗が非正規数になる値
+        #expect(close(Vector2(3e-20, 4e-20).limited(to: 1e-20), Vector2(0.6e-20, 0.8e-20), tolerance: 1e-6))
+    }
+
     /// 通信の完了ハンドラのような main actor の外の文脈。**ここが組めることが検査である**
     /// (`Vector2` が既定の隔離のままなら、この関数の中の呼び出しはコンパイルエラーになる)。
     nonisolated static func steerOutsideTheMainActor() -> Vector2 {

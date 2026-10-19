@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
+
 /// 平面の点や向き・速さを表す、2 つの数の組。Processing の `PVector` に当たる。
 ///
 /// 位置と速さを 1 つの値で持ち歩き、足し引きできる。数は `Float`・`Double`・`Int` の
@@ -196,11 +198,14 @@ public nonisolated struct Vector2: Sendable, Hashable {
     // shot: 1 snippet=26b58a86
     public var length: Float {
         let squared = (simd * simd).sum()
-        // 成分は有限なのに 2 乗の和だけが溢れたときに限って、大きさで割って測り直す (#2885)。
-        // 普通の値は従来どおりの式を通るので、結果のビットは変わらない
-        guard squared == .infinity, simd.x.isFinite, simd.y.isFinite else {
+        // 2 乗の和が収まる範囲では従来の式のまま通るので、結果のビットは変わらない (#2885)
+        if squared >= Vector2.safeSquaredLow && squared < Vector2.safeSquaredHigh {
             return squared.squareRoot()
         }
+        // 2 乗の和が 0 に潰れる小さい値は 0 のまま返す (#2722 の約束。`normalized()` が前提にする)。
+        // 数でない値・無限の値も従来のまま
+        guard squared != 0, simd.x.isFinite, simd.y.isFinite else { return squared.squareRoot() }
+        // 2 乗の和が溢れる・非正規数になる値は、2 の冪で寄せて測り直す
         return Vector2.scaledLength(of: simd)
     }
 }
@@ -516,15 +521,22 @@ nonisolated extension Vector2 {
     public func limited(to maximum: some ScalarConvertible) -> Vector2 {
         let limit = maximum.asFloat
         guard limit > 0 else { return Vector2(0, 0) }
-        let magnitude = length
+        // `length` は 2 乗の和が 0 に潰れる小さい値で 0 を返す。上限との比較は潰れない長さで行う
+        // (そうしないと、上限より長いのに越えていないことになる・#2885)
+        var magnitude = length
+        if magnitude == 0 { magnitude = Vector2.scaledLength(of: simd) }
         guard magnitude > limit else { return self }
         let limited = simd * limit / magnitude
-        // 成分が有限なのに、`simd * limit` が溢れたか長さが Float に収まらないために結果が有限でなく
-        // なる (または 0 に潰れる) のは、結果ではなく中間の都合。向きに上限を掛け直す (#2885)。
-        // どちらでもない値は上の式のまま通るので、結果のビットは変わらない
+        // 成分が有限なのに、長さが Float に収まらない・`simd * limit` が溢れる・潰れる (0 や非正規数に
+        // なる) ときは、結果ではなく中間の都合。向きに上限を掛け直す (#2885)。
+        // どれでもない値は上の式のまま通るので、結果のビットは変わらない
+        let product = simd * limit
+        func holds(_ result: Float, _ component: Float) -> Bool {
+            component == 0 ? result == 0 : abs(result) >= Float.leastNormalMagnitude && result.isFinite
+        }
         let componentsAreFinite = simd.x.isFinite && simd.y.isFinite
-        let limitedIsFinite = limited.x.isFinite && limited.y.isFinite
-        if componentsAreFinite && (magnitude == .infinity || !limitedIsFinite) {
+        let intermediateHolds = holds(product.x, simd.x) && holds(product.y, simd.y)
+        if componentsAreFinite && (magnitude == .infinity || !intermediateHolds) {
             return Vector2(Vector2.scaledDirection(of: simd) * limit)
         }
         return Vector2(limited)
@@ -534,36 +546,58 @@ nonisolated extension Vector2 {
 // MARK: - 中間の 2 乗が溢れる・潰れる値の逃げ道
 
 nonisolated extension Vector2 {
-    /// 2 乗を作らずに測った長さ。大きい成分で割ってから 2 乗するので、成分が有限なら溢れも潰れもしない。
+    /// 2 乗の和を従来の式で開いてよい範囲 (`2^-100` 以上 `2^100` 未満)。範囲の外は 2 の冪で寄せる。
     ///
-    /// 長さが 0 に潰れる小さな値も正しく測るので、`length` の代わりには使わない (`length` は
-    /// 0 に潰れるほど小さい値で 0 を返す約束 — `normalized()` がそれを前提に変えずに返す)。
-    /// 円の判定のように、小さい半径どうしを比べる所で使う。成分が有限でなければ `length` と同じ。
+    /// 寄せる計算は 2 の冪を掛けるだけで丸めを足さないので、範囲の中でも外でも、同じ値の 2 の冪倍は
+    /// 同じ結果の 2 の冪倍になる (範囲の境目をまたいでも、接するかどうかが変わらない)。
+    static let safeSquaredLow: Float = 0x1p-100
+    static let safeSquaredHigh: Float = 0x1p100
+
+    /// `value` の成分のうち大きいほうの指数。成分は有限で、少なくとも 1 つは 0 でないこと。
+    private static func peakExponent(_ value: SIMD2<Float>) -> Int {
+        Int(max(abs(value.x), abs(value.y)).exponent)
+    }
+
+    /// 2 乗を作らずに測った長さ。大きいほうの成分の指数の分だけ 2 の冪で寄せてから 2 乗するので、
+    /// 成分が有限なら溢れも潰れもしない。寄せるのも戻すのも丸めを足さない。
+    ///
+    /// 長さが 0 に潰れる小さな値も測るので、`length` の代わりには使わない (`length` は 2 乗の和が
+    /// 0 に潰れる値で 0 を返す約束 — `normalized()` がそれを前提に変えずに返す)。成分が有限でなければ
+    /// `length` と同じ。
     static func scaledLength(of value: SIMD2<Float>) -> Float {
         guard value.x.isFinite, value.y.isFinite else { return (value * value).sum().squareRoot() }
-        let peak = max(abs(value.x), abs(value.y))
-        guard peak > 0 else { return 0 }
-        let unit = value / peak
-        return peak * (unit * unit).sum().squareRoot()
+        guard value != .zero else { return 0 }
+        let exponent = peakExponent(value)
+        let unit = SIMD2(scalbn(value.x, -exponent), scalbn(value.y, -exponent))
+        return scalbn((unit * unit).sum().squareRoot(), exponent)
     }
 
     /// 長さ 1 の向きを、2 乗を作らずに求める。成分が有限で、少なくとも 1 つは 0 でないこと。
     static func scaledDirection(of value: SIMD2<Float>) -> SIMD2<Float> {
-        let peak = max(abs(value.x), abs(value.y))
-        let unit = value / peak
+        let exponent = peakExponent(value)
+        let unit = SIMD2(scalbn(value.x, -exponent), scalbn(value.y, -exponent))
         return unit / (unit * unit).sum().squareRoot()
     }
 
     /// 中心の差 `gap` の長さが `reach` 以下か。円・矩形と円・円と点の判定が共通で使う。
     ///
-    /// 普通の大きさでは `gap` と `reach` の 2 乗を比べる。`reach` の 2 乗が溢れるか潰れる
-    /// (大きさが約 1.8e19 以上、または約 1e-19 未満) ときは、2 乗が `infinity <= infinity`・
-    /// `0 <= 0` で必ず真になるので、長さそのものを比べる (#2885)。
+    /// `reach` の 2 乗が `2^-64` 以上 `2^64` 未満なら `gap` と `reach` の 2 乗を比べる。外では 2 乗が
+    /// 溢れて `infinity <= infinity`、潰れて `0 <= 0` になり必ず真になるので、`gap` と `reach` を同じ
+    /// 2 の冪で寄せてから、同じ式で比べる (#2885)。寄せるのは丸めを足さないので、普通の大きさで
+    /// 厳密に接する配置は、2 の冪倍しても接する。`reach` は 0 より大きいこと。
     static func isWithin(gap: SIMD2<Float>, reach: Float) -> Bool {
         let reachSquared = reach * reach
-        if reachSquared >= Float.leastNormalMagnitude && reachSquared < .infinity {
+        if reachSquared >= 0x1p-64 && reachSquared < 0x1p64 {
             return (gap * gap).sum() <= reachSquared
         }
-        return scaledLength(of: gap) <= reach
+        guard !reach.isNaN else { return false }
+        // 届く距離が無限なら、数であれば届く
+        guard reach.isFinite else { return !gap.x.isNaN && !gap.y.isNaN }
+        // 差が無限か数でないなら、有限の距離には届かない
+        guard gap.x.isFinite, gap.y.isFinite else { return false }
+        let exponent = Int(max(abs(gap.x), abs(gap.y), reach).exponent)
+        let near = SIMD2(scalbn(gap.x, -exponent), scalbn(gap.y, -exponent))
+        let range = scalbn(reach, -exponent)
+        return (near * near).sum() <= range * range
     }
 }
