@@ -76,9 +76,20 @@ final class StandardInputEvents {
     }
 
     /// 溜まっているぶんを引き取って、合流点へ流す。
+    ///
+    /// **読み位置を添字で進め、取り出した行のぶんを詰め直すのは最後に 1 回だけ** ([#2383])。
+    /// 行を取るたびに残りを写すと、まとめて届いたとき (録りを閉じている間や外からの
+    /// `pause()` の間に溜まった後) に行数の 2 乗で効く。
+    ///
+    /// [#2383]: https://github.com/mokume-metal/mokume/issues/2383
     func drain(into state: InputState) {
         readAvailable()
-        while let line = takeLine() {
+        var start = pending.startIndex
+        // **改行が来るまでは取り出さない** — 半分だけ届いた行を解こうとすると、その 1 件が
+        // 消えるうえに次の行の頭を食う。残りは次の刻みに回る
+        while let newline = pending[start...].firstIndex(of: UInt8(ascii: "\n")) {
+            let line = Data(pending[start..<newline])
+            start = pending.index(after: newline)
             guard let event = Self.event(from: line) else {
                 ignored += 1
                 continue
@@ -86,6 +97,7 @@ final class StandardInputEvents {
             state.enqueue(event)
             accepted += 1
         }
+        if start > pending.startIndex { pending.removeSubrange(pending.startIndex..<start) }
     }
 
     /// 道具が管を畳んでいたら 1 度だけ `true` を返す。**読んだら下ろす** (`StopSignals.takeRequest()`
@@ -129,15 +141,6 @@ final class StandardInputEvents {
             if count == 0 { isClosed = true }
             return
         }
-    }
-
-    /// 溜まっているぶんから 1 行取り出す。**改行が来るまでは取り出さない** — 半分だけ
-    /// 届いた行を解こうとすると、その 1 件が消えるうえに次の行の頭を食う。
-    private func takeLine() -> Data? {
-        guard let index = pending.firstIndex(of: UInt8(ascii: "\n")) else { return nil }
-        let line = Data(pending[pending.startIndex..<index])
-        pending = Data(pending[pending.index(after: index)...])
-        return line
     }
 
     /// 1 行を出来事にする。**知らない種別も、壊れた行も、その 1 件だけ捨てる**

@@ -55,6 +55,44 @@ struct StandardInputEventsTests {
         }
     }
 
+    /// **まとめて届いた行が、順序も件数も欠けずに通る** ([#2383])。読み位置を添字で進める形に
+    /// したので、読み取りの切れ目が行の途中に来る場合 (残りを次の刻みへ回す) と、壊れた行が
+    /// まとまりの途中に混ざる場合を、1 つの流れで見る。
+    ///
+    /// [#2383]: https://github.com/mokume-metal/mokume/issues/2383
+    @Test("まとめて届いた行は、切れ目が行の途中に来ても順序と件数が変わらない")
+    func keepsOrderAndCountWhenManyLinesArriveInPieces() throws {
+        try withPipe { reader, writer in
+            let state = InputState()
+            let count = 2_500
+            var stream = ""
+            var broken = 0
+            for index in 0..<count {
+                // 500 件ごとに、解けない行を混ぜる
+                if index % 500 == 250 {
+                    stream += "{壊れている\n"
+                    broken += 1
+                }
+                stream += InputEvent.scrolled(dx: Float(index + 1), dy: 0).wireLine
+            }
+            // 行の長さと噛み合わない 997 バイトで切り、そのたびに引き取る
+            let bytes = Array(stream.utf8)
+            var offset = 0
+            while offset < bytes.count {
+                let end = min(offset + 997, bytes.count)
+                try writer.write(contentsOf: Data(bytes[offset..<end]))
+                reader.drain(into: state)
+                offset = end
+            }
+            var delivered: [InputCallback] = []
+            state.beginFrame { delivered.append($0) }
+
+            #expect(reader.accepted == count)
+            #expect(reader.ignored == broken)
+            #expect(delivered == (0..<count).map { .mouseWheel(deltaX: Float($0 + 1), deltaY: 0) })
+        }
+    }
+
     /// **捨てるのはその 1 件だけ。** 送り手が新しい種別を足しても、古い受け手に当たった
     /// ときに落ちるのはその 1 行で、走っているスケッチは止まらない (ADR-0018 決定 3)。
     @Test("解けない行は、その 1 件だけ捨てて残りを通す")

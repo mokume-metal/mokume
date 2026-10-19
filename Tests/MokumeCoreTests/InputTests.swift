@@ -135,6 +135,41 @@ struct InputStateTests {
         #expect(state.x == Float(InputState.queueLimit + 499))
     }
 
+    /// **溢れても、残るのは新しい側の上限ぶんで、順序は届いた順のまま** ([#2383])。溢れたぶんは
+    /// 先頭を詰め直さず読み位置を進めて捨てるので、詰め直しの境目 (上限の件数ごと) をまたぐ
+    /// 溢れと、フレームをまたいだ次の溢れも、同じ結果になることを見る。
+    ///
+    /// [#2383]: https://github.com/mokume-metal/mokume/issues/2383
+    @Test("上限を何度もまたいで溢れても、残るのは最後の上限ぶんで順序が変わらない")
+    func overflowKeepsTheNewestInOrderAcrossFrames() {
+        let limit = InputState.queueLimit
+        let state = InputState()
+        func delivered() -> [InputCallback] {
+            var seen: [InputCallback] = []
+            state.beginFrame { seen.append($0) }
+            return seen
+        }
+        func scrolls(_ range: Range<Int>) -> [InputCallback] {
+            range.map { .mouseWheel(deltaX: Float($0), deltaY: 0) }
+        }
+
+        // 上限の 2 倍を越えて溢れる (詰め直しの境目を 2 回またぐ)
+        let first = 2 * limit + 137
+        for index in 0..<first { state.enqueue(.scrolled(dx: Float(index), dy: 0)) }
+        #expect(state.droppedEvents == first - limit)
+        #expect(delivered() == scrolls((first - limit)..<first))
+
+        // 流し込んだ後は空から数え直す。溢れ方も同じ
+        for index in 0..<(limit + 5) { state.enqueue(.scrolled(dx: Float(index), dy: 0)) }
+        #expect(state.droppedEvents == first - limit + 5)
+        #expect(delivered() == scrolls(5..<(limit + 5)))
+
+        // 溢れていない流しは、溢れの履歴に左右されない
+        for index in 0..<3 { state.enqueue(.scrolled(dx: Float(index), dy: 0)) }
+        #expect(state.droppedEvents == first - limit + 5)
+        #expect(delivered() == scrolls(0..<3))
+    }
+
     /// 完了条件「送った解放が失われない」([#935](https://github.com/mokume-metal/mokume/issues/935))。
     ///
     /// **落とすのは呼び出しであって状態ではない。** 解放をそのまま捨てていた頃は、
