@@ -1,0 +1,76 @@
+# 使い捨て (merge しない)。#2771 の完了条件 5: 変更前と変更後の
+# framesWrittenToAFailedEncoderCarryItsReason を、専用機で負荷の下に繰り返す。
+# 負荷 = 全コアの CPU 負荷 (yes) + 同じプロセスで並列に走る GPU・符号化器の suite。
+name: stress-2771
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/stress-2771.yml]
+permissions:
+  contents: read
+jobs:
+  stress:
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - run: bash scripts/runner-preflight.sh
+      - name: 負荷の下で反復 (変更後 → 変更前)
+        run: |
+          set -u
+          ROUNDS=20
+          TARGET=framesWrittenToAFailedEncoderCarryItsReason
+          FILTER="${TARGET}|RecordingFailureTests|RecordMovieTests|GraphicsTests"
+          mkdir -p .build/stress
+          out=.build/stress/summary.txt
+          : > "$out"
+          verdict() {
+            python3 - "$1" "$TARGET" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          path, target = sys.argv[1], sys.argv[2]
+          try:
+              root = ET.parse(path).getroot()
+          except Exception as e:
+              print(f"no-record ({e.__class__.__name__})"); sys.exit()
+          for case in root.iter("testcase"):
+              if target in case.get("name", ""):
+                  f = case.find("failure")
+                  if f is None:
+                      print(f"passed {case.get('time')}s")
+                  else:
+                      msg = (f.get("message") or f.text or "").replace("\n", " ")[:300]
+                      print(f"FAILED {case.get('time')}s: {msg}")
+                  sys.exit()
+          print("not-run")
+          PY
+          }
+          round() {
+            label=$1
+            swift build --build-tests 2>&1 | tail -3
+            pids=""
+            for _ in $(seq "$(sysctl -n hw.ncpu)"); do yes > /dev/null & pids="$pids $!"; done
+            for i in $(seq "$ROUNDS"); do
+              rec=".build/stress/${label}-${i}.xml"
+              swift test --skip-build --filter "$FILTER" --xunit-output "$rec" > ".build/stress/${label}-${i}.log" 2>&1
+              echo "$label $i $(verdict "${rec%.xml}-swift-testing.xml") load=$(sysctl -n vm.loadavg)" | tee -a "$out"
+            done
+            kill $pids 2>/dev/null; wait 2>/dev/null
+          }
+          round after
+          git show HEAD^1:Tests/MokumeCoreTests/RecordMovieTests.swift > Tests/MokumeCoreTests/RecordMovieTests.swift
+          git diff --stat
+          round before
+          echo "## 集計" | tee -a "$out"
+          for label in after before; do
+            echo "$label: passed $(grep -c "^$label .* passed" "$out") / FAILED $(grep -c "^$label .* FAILED" "$out") / other $(grep "^$label " "$out" | grep -v -c -E 'passed|FAILED')" | tee -a "$out"
+          done
+          cat "$out" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: stress-2771
+          path: .build/stress/
+          include-hidden-files: true
+          retention-days: 14
