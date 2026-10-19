@@ -55,7 +55,12 @@ nonisolated final class ScriptedPeer: LoopbackPeer {
     var isClosed: Bool { closed.withLock { $0 } }
 
     func close() {
-        guard closed.withLock({ defer { $0 = true }; return !$0 }) else { return }
+        let firstClose = closed.withLock { flag -> Bool in
+            let wasOpen = !flag
+            flag = true
+            return wasOpen
+        }
+        guard firstClose else { return }
         if state == .ready { room.leave() }
     }
 }
