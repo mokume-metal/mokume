@@ -1715,4 +1715,64 @@ struct FrameRateHandoffTests {
         #expect(WatchSession.viewportOwnerName.hasSuffix(" watch"))
     }
 
+    /// **置き場の元は、渡したときだけ載り、親の環境からは継がない** (#2517)。
+    @Test("資材の置き場の元は渡したときだけ載り、親の環境からは継がない")
+    func theAssetOriginLandsOnlyWhenGiven() {
+        let key = StartupReads.assetOrigin.key
+        #expect(RunCommand.childEnvironment([:])[key] == nil)
+        #expect(
+            RunCommand.childEnvironment([key: "/a/Sources/wa/assets"])[key] == nil, "親の合図を継いだ")
+        #expect(
+            RunCommand.childEnvironment([:], assetOrigin: "/a/Sources/wa/assets")[key]
+                == "/a/Sources/wa/assets")
+    }
+
+    /// 置き場の元は、走らせる実行ファイルの target のものを選ぶ。決まらなければ渡さない。
+    @Test("置き場の元は product と同名の target を先に取り、決まらなければ渡さない")
+    func theAssetOriginFollowsTheProduct() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func make(_ target: String) throws {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent("Sources/\(target)/assets", isDirectory: true),
+                withIntermediateDirectories: true)
+        }
+        func origin(_ product: String) -> String? {
+            ResourceDeclaration.origin(ofProduct: product, in: root)?.path
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        #expect(origin("wa") == nil, "置き場が無い")
+        try make("wa")
+        #expect(origin("wa")?.hasSuffix("/Sources/wa/assets") == true)
+        #expect(origin("renamed")?.hasSuffix("/Sources/wa/assets") == true, "ちょうど 1 つならそれ")
+        try make("other")
+        #expect(origin("wa")?.hasSuffix("/Sources/wa/assets") == true, "同名が先")
+        #expect(origin("renamed") == nil, "複数あって決まらないときは推し量らない")
+    }
+
+    /// 本物の起こす口が、見張りの子へ置き場の元を渡す。
+    @Test("本物の起こす口は、子へ資材の置き場の元を渡す")
+    func theLiveLaunchPassesTheAssetOrigin() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let assets = directory.appendingPathComponent("Sources/sketch/assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seen = directory.appendingPathComponent("seen")
+        let executable = directory.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            printf '%s' "$\(StartupReads.assetOrigin.key)" > '\(seen.path)'
+            """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
+        let child = try hooks.launch(executable, directory, nil, nil)
+        child.waitUntilExit()
+        let given = try String(contentsOf: seen, encoding: .utf8)
+        #expect(given.hasSuffix("/Sources/sketch/assets"), "\(given)")
+        #expect(given.hasPrefix("/"))
+    }
 }

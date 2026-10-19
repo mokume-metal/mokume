@@ -19,7 +19,8 @@ import Foundation
 enum ShaderSource {
     /// 断片をファイルから読む。**塗り・効果・計算で 1 つ** ([#895])。
     ///
-    /// 探す場所は貼る絵と同じ並び (``ImageFile/candidates(for:)``)。名前は拡張子を
+    /// 探す場所は貼る絵と同じ並び (``ImageFile/candidates(for:)``)。**ただし見張りの下では、置き場の
+    /// 断片だけ束の写しより先に置き場の元を探す** (``ShaderOrigin``・[#2517])。名前は拡張子を
     /// 落としたファイル名で、計算ではこれが**断片の中の入口の関数の名前**にもなる。
     ///
     /// 3 者が同じ 7 行を持っていたので畳んだ — 候補の探し方が割れると、「読めない」が
@@ -28,11 +29,14 @@ enum ShaderSource {
     /// **見つかったものを「見つからない」と名乗らない** ([#2358])。中身は ``body(at:path:)`` が読む。
     ///
     /// [#895]: https://github.com/mokume-metal/mokume/issues/895
+    /// [#2517]: https://github.com/mokume-metal/mokume/issues/2517
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
-    static func read(at path: String) throws(ShaderFailure) -> (
-        url: URL, body: String, name: String
-    ) {
-        let candidates = ImageFile.candidates(for: path)
+    static func read(
+        at path: String, origin: URL? = ShaderOrigin.startup()
+    ) throws(ShaderFailure) -> (url: URL, body: String, name: String) {
+        // 見張りの下では、置き場の断片は束の写しではなく元のファイルへ解く (#2517)
+        let candidates = ShaderOrigin.inserting(
+            origin: origin, for: path, into: ImageFile.candidates(for: path))
         guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })
         else {
             throw .notFound(path: path, searched: candidates.map(\.path))

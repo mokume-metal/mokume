@@ -578,7 +578,7 @@ enum RunCommand {
     /// ([#2522](https://github.com/mokume-metal/mokume/issues/2522))。**作り直しを通らない呼び元を足す
     /// ときは、この名乗りが成り立つかを確かめる** — 成り立たなければ呼び元が名乗りを選べる形にする。
     ///
-    /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:viewportOwner:)``)。
+    /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:viewportOwner:assetOrigin:)``)。
     ///   **何を載せるかは口が決める** — `run` は速さの名乗りと × の確認を、`render` は書き出しの
     ///   頼みを載せる。待ち方と合図の運び方は口によらず同じなので、ここは 1 本にする。
     /// - Parameter signals: 道具が受けて子へ渡す合図。既定は ``stopSignals(sigint:)`` で、
@@ -689,6 +689,10 @@ enum RunCommand {
     ///   決められないので、見張りの子が起こした孫や、見張りの子の環境から打った `run` へ
     ///   継がせると、区画が在るだけで居合わせた実行が窓と管を奪う形に戻る
     ///   ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
+    /// - Parameter assetOrigin: 資材の置き場の元 (`Sources/<target>/assets`) の絶対パス (`watch` だけが
+    ///   渡す)。子は置き場の断片を束の写しではなくここから読み、保存で走らせたまま差し替える
+    ///   ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。**渡さなければ、親の環境に
+    ///   在っても落とす** (``viewportOwner`` と同じ)。
     ///
     /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
     /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
@@ -700,7 +704,8 @@ enum RunCommand {
     static func childEnvironment(
         _ base: [String: String] = ProcessInfo.processInfo.environment,
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
-        rendering request: RenderRequest? = nil, viewportOwner: String? = nil
+        rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
+        assetOrigin: String? = nil
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -714,6 +719,9 @@ enum RunCommand {
         // 窓を開かずに書き出させる (#2481)
         environment[StartupReads.render.key] = request?.environmentValue
         environment[StartupReads.viewportOwner.key] = viewportOwner
+        // **これも渡さなければ落とす。** 置き場の元は見張りが自分の足元から決める値で、見張りの子が
+        // 起こす `run` などへ継がせると、別のスケッチの断片をこの置き場から読みかねない (#2517)
+        environment[StartupReads.assetOrigin.key] = assetOrigin
         return environment
     }
 
