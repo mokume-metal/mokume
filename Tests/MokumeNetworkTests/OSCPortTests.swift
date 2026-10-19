@@ -175,6 +175,61 @@ struct OSCPortTests {
         return received
     }
 
+    /// 番号を載せた OSC (`/from <番号>`) を `count` 個の送り元から 1 通ずつ送り、番号が全部読まれるまで
+    /// (か期限まで) 集めて、読まれた番号を返す。
+    ///
+    /// **送った datagram が全部読まれる前提を置かない** (#2910)。全段が並走する負荷の下では、送り手の
+    /// 繋ぎが作れず (`Address already in use` で `waiting` のまま) 出ない datagram があり、待っても
+    /// 回復しない。受け口が落とすのではなく送る前の話だが、検査から見れば読まれない番号である。だから
+    /// **送れないと名乗った送り元の番号が、まだ読まれていなければ、新しい送り元に替えて**送り直す
+    /// (同じ送り元の繋ぎは待ったまま動かないことがある)。替えた古い送り元は閉じる。
+    ///
+    /// **名乗らない送り元は替えない。** 出ていても、受け口の読みが遅れているだけのことがあり、新しい
+    /// 送り元を足すと、読む前の繋ぎが台帳に残って (読む前の繋ぎは黙りで閉じない — ``SenderLedger``)
+    /// 数が目安から下がらなくなる。名乗らずに読まれない番号は、期限 (`seconds`) まで待って、読まれた
+    /// 分だけを返す。替えるのは 1 つの番号につき `replacements` 回まで。
+    ///
+    /// 送り元は番号の順に `senders` の末尾へ足す。呼ぶ側が検査の終わりに閉じる。
+    ///
+    /// - Parameter makeSender: 番号と、何度目の送り元か (1 から) と、送れないときの知らせの行き先を受けて、
+    ///   送り元を作る。知らせは `told` にも流す。
+    private func sendNumberedBurst(
+        count: Int, through osc: OSCPort, senders: inout [DatagramSender], told: Told,
+        replacements: Int = 3, within seconds: TimeInterval = 10,
+        makeSender: (_ index: Int, _ attempt: Int, _ warn: @escaping @Sendable (String) -> Void) -> DatagramSender
+    ) async throws -> Set<Int> {
+        let first = senders.count
+        let stuck = Mutex<Set<Int>>([])
+        var attempts = [Int](repeating: 1, count: count)
+        func sender(_ index: Int) -> DatagramSender {
+            makeSender(index, attempts[index]) { line in
+                told.append(line)
+                stuck.withLock { _ = $0.insert(index) }
+            }
+        }
+        for index in 0..<count {
+            let opened = sender(index)
+            senders.append(opened)
+            opened.send(try Wire.encoded(OSCMessage("/from", index)))
+        }
+        var heard = Set<Int>()
+        let deadline = Date().addingTimeInterval(seconds)
+        while heard.count < count, Date() < deadline {
+            osc.supply()
+            heard.formUnion(osc.messages.compactMap { $0.int(0) })
+            let blocked = stuck.withLock { names in defer { names = [] }; return names }
+            for index in blocked.sorted() where !heard.contains(index) && attempts[index] <= replacements {
+                senders[first + index].stop()
+                attempts[index] += 1
+                let opened = sender(index)
+                senders[first + index] = opened
+                opened.send(try Wire.encoded(OSCMessage("/from", index)))
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return heard
+    }
+
     /// 127.0.0.1 で、OS が選んだポート (0 を頼む) で受け、送り先も同じポートにした入り口。開いて、
     /// 受け始めてから、実際に開いたポートと一緒に返す。
     ///
@@ -399,6 +454,56 @@ struct OSCPortTests {
         #expect(osc.input.unreadable == 1)
     }
 
+    @Test("番号つきの送りは、送れないと名乗った番号だけを新しい送り元に替えて全部を読む")
+    func numberedBurstReplacesSendersThatCannotSend() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        // 受け手のいない口。最初の送り元が奇数の番号をここへ送ると、受け口には届かない
+        let sink = try PortHolder(port: 0)
+        defer { sink.release() }
+
+        let count = 10
+        var attempts: [Int: Int] = [:]
+        var senders: [DatagramSender] = []
+        defer { for sender in senders { sender.stop() } }
+        let heard = try await sendNumberedBurst(
+            count: count, through: osc, senders: &senders, told: told
+        ) { index, attempt, warn in
+            attempts[index] = attempt
+            // 送り手の繋ぎが作れずに出ない形: 送れないと名乗り、送った先には届かない
+            let lost = index % 2 == 1 && attempt == 1
+            if lost { warn("Could not send to 127.0.0.1:\(port) (Address already in use)") }
+            return DatagramSender(host: "127.0.0.1", port: lost ? sink.port : port, warn: warn)
+        }
+        #expect(heard == Set(0..<count))
+        // 替えたのは名乗った奇数の番号だけで、1 回で足りた
+        #expect(attempts == Dictionary(uniqueKeysWithValues: (0..<count).map { ($0, $0 % 2 == 1 ? 2 : 1) }))
+        #expect(senders.count == count)
+        #expect(told.count(containing: "Address already in use") == count / 2)
+    }
+
+    @Test("番号つきの送りは、名乗らずに読まれない番号の送り元を替えず、期限で読まれた分を返す")
+    func numberedBurstDoesNotReplaceSilentSenders() async throws {
+        let told = Told()
+        let (osc, _) = try await listening(told: told)
+        defer { osc.close() }
+        let sink = try PortHolder(port: 0)
+        defer { sink.release() }
+
+        var senders: [DatagramSender] = []
+        defer { for sender in senders { sender.stop() } }
+        var made = 0
+        let heard = try await sendNumberedBurst(
+            count: 3, through: osc, senders: &senders, told: told, within: 0.5
+        ) { _, _, warn in
+            made += 1
+            return DatagramSender(host: "127.0.0.1", port: sink.port, warn: warn)
+        }
+        #expect(heard.isEmpty)
+        #expect(made == 3)
+    }
+
     @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
     func manySendersAreAllHeardThenSwept() async throws {
         let told = Told()
@@ -415,20 +520,20 @@ struct OSCPortTests {
         // 目安の数を超えても、黙っていない送り元は閉じない — 閉じると読む前の datagram を捨てる。
         // 時計は止めたままなので、受け入れにどれだけ掛かっても黙った送り元は居ない
         let count = DatagramListener.connectionLimit + 6
-        let burst = (0..<count).map { _ in
-            DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        }
+        var burst: [DatagramSender] = []
         defer { for sender in burst { sender.stop() } }
-        for (index, sender) in burst.enumerated() {
-            sender.send(try Wire.encoded(OSCMessage("/from", index)))
+        let heard = try await sendNumberedBurst(
+            count: count, through: osc, senders: &burst, told: told
+        ) { _, _, warn in
+            DatagramSender(host: "127.0.0.1", port: port, warn: warn)
         }
-        let received = await collect(osc, count: count)
-        #expect(Set(received.compactMap { $0.int(0) }) == Set(0..<count))
+        #expect(heard == Set(0..<count))
         // 受け入れた送り元を 1 本も外していない — 黙りでも (時計が止まっていて誰も黙っていない)、
         // 失敗でも。受け入れた数と持っている数が等しいことで、数え方の外で閉じる経路も捕まえる。
         // 受け入れた数が送り元の数 (70) に届くことは求めない: 負荷の下では Network.framework の
         // 受け口が、ある送り元の datagram を別の送り元の繋ぎで渡し、その送り元の繋ぎを作らない
-        // ことがある (#2225 で実測。datagram は落ちない)。閉じたのではないので、ここでは数えない
+        // ことがある (#2225 で実測。受け口では datagram は落ちない)。閉じたのではないので、ここでは
+        // 数えない。datagram が読まれないのは送り手側で出なかったときで、番号を送り直して補う (#2910)
         let tally = source.tally
         #expect(tally.closedIdle == 0)
         #expect(tally.ended == 0)
@@ -458,15 +563,16 @@ struct OSCPortTests {
         defer { osc.close() }
         let source = try #require(osc.source as? NetworkOSCSource)
 
-        // 目安の数だけの送り元から送り、全部を読ませる
-        let burst = (0..<DatagramListener.connectionLimit).map { _ in
-            DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        }
+        // 目安の数だけの送り元から送り、全部を読ませる。出なかった datagram は送り直す (#2910) —
+        // 全部が読まれてから黙りを測るので、読まれた送り元の数が目安に届いている
+        var burst: [DatagramSender] = []
         defer { for sender in burst { sender.stop() } }
-        for (index, sender) in burst.enumerated() {
-            sender.send(try Wire.encoded(OSCMessage("/from", index)))
+        let heard = try await sendNumberedBurst(
+            count: DatagramListener.connectionLimit, through: osc, senders: &burst, told: told
+        ) { _, _, warn in
+            DatagramSender(host: "127.0.0.1", port: port, warn: warn)
         }
-        #expect(await collect(osc, count: burst.count).count == burst.count)
+        #expect(heard.count == DatagramListener.connectionLimit)
 
         // `idleAfter` より長く黙ってから、新しい送り元を 1 本ずつ足す。待つほど黙りは長くなる
         // だけなので、遅い機械でも閉じる側へしか進まない。送り元の取り違えで数が目安に
