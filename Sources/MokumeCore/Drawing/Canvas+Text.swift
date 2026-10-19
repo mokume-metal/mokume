@@ -481,16 +481,119 @@ extension Canvas {
     ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
+        outlineContours(string, x.asFloat, y.asFloat)
+    }
+
+    /// 文字列の輪郭を、点の間隔を揃えて取り出す。意味の説明は `Sketch` が正本 ([ADR-0020] 決定 4)。
+    ///
+    /// **点の間隔は画素で渡す。** 周ごとに、折れ目の点を結んだ閉じた折れ線を、周の長さを
+    /// 均等に割る点へ取り直す ([#2447])。割る数は周の長さ ÷ `spacing` を切り上げた数で、
+    /// 周が潰れないよう 3 点を下限にするので、隣り合う点の距離は `spacing` 以下になる。
+    /// 周の並び・``TextContour/isHole``・描くときと同じ送りは、間隔を揃えても変わらない。
+    ///
+    /// **`spacing` が 0 以下・数でない値・無限のときは、1 度だけ知らせて折れ目の点を返す**
+    /// (`spacing` を省いたときと同じ)。読み取りの口なので投げない ([ADR-0020] 決定 5)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#2447]: https://github.com/mokume-metal/mokume/issues/2447
+    public func textOutline(
+        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible,
+        spacing: some ScalarConvertible
+    ) -> [TextContour] {
+        let spacing = spacing.asFloat
+        guard spacing.isFinite, spacing > 0 else {
+            warnOnce(
+                .invalidTextOutlineSpacing,
+                "textOutline(): spacing takes a number above 0, but \(spacing) was passed, "
+                    + "so the corner points of the outline were returned")
+            return outlineContours(string, x.asFloat, y.asFloat)
+        }
+        return outlineContours(string, x.asFloat, y.asFloat, spacing: spacing)
+    }
+
+    /// ``textOutline(_:_:_:)`` と ``textOutline(_:_:_:spacing:)`` の本体。`spacing` が `nil` なら折れ目の点のまま。
+    ///
+    /// 呼ぶ側が、`spacing` を有限の正の数にしてから渡す。
+    private func outlineContours(
+        _ string: String, _ x: Float, _ y: Float, spacing: Float? = nil
+    ) -> [TextContour] {
         var contours: [TextContour] = []
-        forEachGlyph(in: string, x.asFloat, y.asFloat) { _, resolved, path, pen, baseline in
+        var tooFine = false
+        forEachGlyph(in: string, x, y) { _, resolved, path, pen, baseline in
             // 道筋を持たない字 (空白・ビットマップの字形) と、道筋が描く絵の形ではない字には周が無い
             guard let path, !Typeface.measuresByDrawing(resolved, path: path) else { return }
             // 字ごとに、外側の周を先に、穴を後ろに並べる
-            let rings = Self.rings(of: path, originX: pen, baseline: baseline)
+            var rings = Self.rings(of: path, originX: pen, baseline: baseline)
+            if let spacing {
+                rings = rings.map { ring in
+                    let (points, capped) = Self.resample(ring.points, spacing: spacing)
+                    tooFine = tooFine || capped
+                    return TextContour(points: points, isHole: ring.isHole)
+                }
+            }
             contours += rings.filter { !$0.isHole }
             contours += rings.filter(\.isHole)
         }
+        if tooFine {
+            warnOnce(
+                .invalidTextOutlineSpacing,
+                "textOutline(): spacing \(spacing ?? 0) is so small that a contour would need more than "
+                    + "\(Self.mostPointsPerContour) points, so the spacing was widened to keep to that")
+        }
         return contours
+    }
+
+    /// 1 つの周に取る点の数の上限。`spacing` が周の長さに比べて極端に小さいときに、点が際限なく増えて
+    /// メモリを使い切らないための締め ([#1587] と同じ向き: 読み取りの口は落ちない)。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    nonisolated static let mostPointsPerContour = 65_536
+
+    /// 閉じた折れ線を、周の長さを均等に割る点へ取り直す。
+    ///
+    /// 始点は元の周の最初の点で、最後の点から最初の点へ戻る辺も周に数える。割る数は
+    /// 周の長さ ÷ `spacing` を切り上げた数で、3 を下限、``mostPointsPerContour`` を上限にする。
+    /// 長さは `Double` で積む (座標どうしの差の 2 乗が `Float` で溢れる大きさでも、有限なら測れる)。
+    /// 返す 2 つ目の値は、上限に当たって間隔が `spacing` より広がったか。
+    ///
+    /// **周の長さが 0 か有限でないとき (点が 1 か所に潰れている・無限の座標を含む) は、取り直せないので
+    /// 元の点のまま返す。**
+    nonisolated static func resample(_ points: [SIMD2<Float>], spacing: Float) -> (points: [SIMD2<Float>], capped: Bool) {
+        let count = points.count
+        guard count >= 2 else { return (points, false) }
+        let doubles = points.map { SIMD2<Double>($0) }
+        var lengths: [Double] = []
+        lengths.reserveCapacity(count)
+        var total = 0.0
+        for index in 0..<count {
+            let length = simd_length(doubles[(index + 1) % count] - doubles[index])
+            lengths.append(length)
+            total += length
+        }
+        guard total.isFinite, total > 0 else { return (points, false) }
+
+        let wanted = (total / Double(spacing)).rounded(.up)
+        let capped = wanted > Double(mostPointsPerContour)
+        let samples = Int(min(Double(mostPointsPerContour), max(3, wanted)))
+        let step = total / Double(samples)
+
+        var result: [SIMD2<Float>] = []
+        result.reserveCapacity(samples)
+        var edge = 0
+        var edgeStart = 0.0
+        for sample in 0..<samples {
+            let target = Double(sample) * step
+            // 目標の長さを含む辺まで進める。最後の辺で止まるので、丸めの誤差で配列を越えない
+            while edge < count - 1, edgeStart + lengths[edge] < target {
+                edgeStart += lengths[edge]
+                edge += 1
+            }
+            let along = lengths[edge] > 0 ? min(1, max(0, (target - edgeStart) / lengths[edge])) : 0
+            let from = doubles[edge]
+            let to = doubles[(edge + 1) % count]
+            result.append(SIMD2<Float>(from + (to - from) * along))
+        }
+        return (result, capped)
     }
 
     /// 文字列の墨が載る範囲。意味の説明は `Sketch` が正本 ([ADR-0020] 決定 4)。
