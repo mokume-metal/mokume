@@ -40,11 +40,7 @@ extension Canvas {
         // `textFont()` が確かめた名前でも、書体を作る時にはもう引けないことがある (実行中に書体を外した)。
         // CoreText は別の書体を黙って返すので、ここでも確かめる。確かめるのは作る時だけ ([#2772])
         if let name = request.name, !Typeface.exists(name: name) {
-            warnOnce(
-                .unavailableFont,
-                "textFont(): the typeface \"\(name)\" could not be found when it was loaded, so "
-                    + "\"\(CTFontCopyPostScriptName(face.base) as String)\" is used instead. "
-                    + "The typeface may have been removed from this environment while the sketch was running")
+            warnOnce(.unavailableFont, Self.unavailableFontMessage(name: name, used: face.base))
         }
         // 面が無ければ引けた面で描く。黙ると、効かない指定を効いたように見せる (#2444)
         if face.lacksRequestedStyle {
@@ -57,6 +53,17 @@ extension Canvas {
                     + "is used")
         }
         return face
+    }
+
+    /// 書体を作る時に名前が引けなかったことの文面 ([#2772])。**代わりに描く書体は、`.` で始まる内部名を
+    /// 名乗らない** (``passableName(_:)``)。``textFont(_:)`` が受け付けない名前で、名乗っても渡し直せない。
+    ///
+    /// [#2772]: https://github.com/mokume-metal/mokume/issues/2772
+    static func unavailableFontMessage(name: String, used: CTFont) -> String {
+        let source = passableName(used).map { "\"\($0)\"" } ?? "a system typeface"
+        return "textFont(): the typeface \"\(name)\" could not be found when it was loaded, so "
+            + "\(source) is used instead. "
+            + "The typeface may have been removed from this environment while the sketch was running"
     }
 
     /// 書体の面の太さと傾きを、警告の文面の言い方 (`bold, upright` など) で言う。

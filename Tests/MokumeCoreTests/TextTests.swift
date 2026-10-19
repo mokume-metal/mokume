@@ -453,6 +453,21 @@ struct TextTests {
         #expect(!canvas.warnings.hasWarned(.missingFont))
     }
 
+    /// 代わりに描く書体が `.` で始まる内部名のとき (既定の書体)、渡し直せないその名前は名乗らない。
+    @Test("書体を作る時の知らせは、代わりに描く書体の内部名を名乗らない")
+    func theUnavailableNameWarningDoesNotNameAnInternalFace() throws {
+        let system = try #require(CTFontCreateUIFontForLanguage(.system, 32, nil))
+        try #require(
+            (CTFontCopyPostScriptName(system) as String).hasPrefix("."), "前提: 既定の書体は内部名を持つ")
+        let message = Canvas.unavailableFontMessage(name: "Futura", used: system)
+        #expect(message.contains("\"Futura\""), "\(message)")
+        #expect(message.contains("so a system typeface is used instead"), "\(message)")
+        #expect(!message.contains("\"."), "内部名を名乗った: \(message)")
+        let named = Canvas.unavailableFontMessage(
+            name: "Futura", used: CTFontCreateWithName("Helvetica" as CFString, 12, nil))
+        #expect(named.contains("so \"Helvetica\" is used instead"), "\(named)")
+    }
+
     @Test("無い名前を textFont() に渡した知らせと、書体を作る時の知らせは、どちらが先でも互いを黙らせない")
     func theTwoMissingNameWarningsAreIndependent() throws {
         let vanished = "NoSuchTypeface-2772"
