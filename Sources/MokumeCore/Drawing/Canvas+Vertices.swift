@@ -655,7 +655,8 @@ extension Canvas {
             return
         }
         let merged = Triangulation.mergeHoles(
-            outer: Array(primitive.ring), holes: primitive.holes, points: all)
+            outer: Array(primitive.ring), holes: primitive.holes, points: all,
+            comparisons: &pointScansThisFrame)
         pointScansThisFrame += merged.count
         var flattened: [SIMD2<Float>] = []
         flattened.reserveCapacity(merged.count)
@@ -751,7 +752,8 @@ extension Canvas {
                 region.holes.isEmpty
                 ? region.outer
                 : Triangulation.mergeHoles(
-                    outer: region.outer, holes: region.holes, points: all, slack: split.slack)
+                    outer: region.outer, holes: region.holes, points: all,
+                    comparisons: &pointScansThisFrame, slack: split.slack)
             pointScansThisFrame += merged.count
             var flattened: [SIMD2<Float>] = []
             flattened.reserveCapacity(merged.count)

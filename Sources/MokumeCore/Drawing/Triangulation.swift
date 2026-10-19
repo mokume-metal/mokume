@@ -169,6 +169,29 @@ nonisolated enum Triangulation {
     static func mergeHoles(
         outer: [Int], holes: [[Int]], points: [SIMD2<Float>], slack: Float = 0
     ) -> [Int] {
+        var comparisons = 0
+        return mergeHoles(
+            outer: outer, holes: holes, points: points, comparisons: &comparisons, slack: slack)
+    }
+
+    /// ``mergeHoles(outer:holes:points:slack:)`` で、橋の相手の候補と遮りの辺を調べた回数を
+    /// `comparisons` へ積む。
+    ///
+    /// 回数は**費用が二乗を越えて増えていないことを数で確かめる**ためにある (``Canvas`` の
+    /// `pointScansInLastFrame`・``triangulate(_:comparisons:slack:)`` と同じ)。数えるのは、橋の相手を
+    /// 探すために周の点と距離を比べた数と、橋を遮るかを調べた辺の数である。
+    ///
+    /// **橋の相手は、近い順に候補を並べて、橋を架けられる最初の点を選ぶ** ([#2370])。周を順に回り、
+    /// 「いまの最良より近い」点のたびに 3 つの判定を掛ける数え方と、選ぶ点は同じである — 選ばれるのは
+    /// 判定を通った点のうち、距離が最小で、同じ距離なら周の添字が小さいもの。判定を掛ける回数だけが、
+    /// 最良を更新した数から、橋を架けられる点が見つかるまでに断られた数に減る。遮りを引く辺は
+    /// 箱の木で絞る (``BridgeObstacles``)。
+    ///
+    /// [#2370]: https://github.com/mokume-metal/mokume/issues/2370
+    static func mergeHoles(
+        outer: [Int], holes: [[Int]], points: [SIMD2<Float>], comparisons: inout Int,
+        slack: Float = 0
+    ) -> [Int] {
         var ring = outer
         // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい。ただし、畳んだ
         // 周に触れる穴があれば、それを先に畳む (``touchingFirst(_:outer:points:)``・[#2647])
@@ -180,33 +203,45 @@ nonisolated enum Triangulation {
                 },
             outer: outer, points: points)
 
+        // 橋を遮りうる辺。外周と全ての穴の辺と、架けた橋
+        var obstacles = BridgeObstacles(outer: outer, holes: ordered, points: points)
+        // 橋の相手の候補 (距離と周の添字)。穴ごとに使い回す
+        var candidates: [(distance: Float, index: Int)] = []
         // 畳んだ周の点の位置。穴の点が重なるかを引く
         var placed = Set(outer.map { points[$0] })
         for (order, hole) in ordered.enumerated() {
             // この穴と、まだ畳んでいない穴。先に畳んだ穴は `ring` に入っている
             let unmerged = ordered[order...]
             let holeTurn = signedArea(hole.map { points[$0] })
+            // 畳んだ周の向き。入口を替えても周は同じなので、穴ごとに 1 度だけ出す
+            let ringTurn = signedArea(indexed: ring, points: points)
             var connection: (entry: Int, target: Int)?
             for entryIndex in entryOrder(of: hole, touching: placed, points: points) {
                 if let target = bridgeTarget(
-                    ring: ring, holes: unmerged, points: points, from: points[hole[entryIndex]],
+                    ring: ring, turn: ringTurn, holes: unmerged, points: points,
+                    from: points[hole[entryIndex]],
                     leaving: neighbors(of: entryIndex, in: hole, points: points),
-                    holeTurn: holeTurn, slack: slack)
+                    holeTurn: holeTurn, slack: slack, obstacles: &obstacles,
+                    candidates: &candidates, comparisons: &comparisons)
                 {
                     connection = (entryIndex, target)
                     break
                 }
             }
             // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
-            guard let (entryIndex, bridgeIndex) = connection else { continue }
-            // 外周を橋の点で開き、穴を 1 周ぶん通してから戻る
-            var merged = Array(ring[0...bridgeIndex])
-            for step in 0...hole.count {
-                merged.append(hole[(entryIndex + step) % hole.count])
+            guard let (entryIndex, bridgeIndex) = connection else {
+                obstacles.retire(hole: order)
+                continue
             }
-            merged.append(ring[bridgeIndex])
-            merged.append(contentsOf: ring[(bridgeIndex + 1)...])
-            ring = merged
+            obstacles.addBridge(from: points[ring[bridgeIndex]], to: points[hole[entryIndex]])
+            // 外周を橋の点で開き、穴を 1 周ぶん通してから戻る
+            var inserted: [Int] = []
+            inserted.reserveCapacity(hole.count + 2)
+            for step in 0...hole.count {
+                inserted.append(hole[(entryIndex + step) % hole.count])
+            }
+            inserted.append(ring[bridgeIndex])
+            ring.insert(contentsOf: inserted, at: bridgeIndex + 1)
             for index in hole { placed.insert(points[index]) }
         }
         return ring
@@ -306,6 +341,18 @@ nonisolated enum Triangulation {
         return sum / 2
     }
 
+    /// 点の番号で並べた周の符号付きの面積。``signedArea(_:)`` と同じ演算の順で足すので、同じ点列なら
+    /// ビットまで同じ値になる (点を写した配列を作らずに済む)。
+    static func signedArea(indexed ring: [Int], points: [SIMD2<Float>]) -> Float {
+        guard let first = ring.first else { return 0 }
+        let origin = points[first]
+        var sum: Float = 0
+        for index in ring.indices {
+            sum += cross(points[ring[index]] - origin, points[ring[(index + 1) % ring.count]] - origin)
+        }
+        return sum / 2
+    }
+
     static func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
         a.x * b.y - a.y * b.x
     }
@@ -361,38 +408,98 @@ nonisolated enum Triangulation {
     ///   へ架けると、跨ぐ辺が無いまま穴の中を通る
     ///
     /// - Parameters:
-    ///   - holes: 跨いではならない穴。いま畳んでいる穴と、まだ畳んでいない穴。
+    ///   - holes: 橋のすぐそばの点を数える穴 (`slack` があるときだけ引く)。いま畳んでいる穴と、まだ畳んでいない穴。
     ///   - leaving: 入口の点の、穴の上での前と後の点。
     ///   - holeTurn: 穴の符号付きの面積 (向きだけを見る)。
     ///
     /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
     private static func bridgeTarget(
-        ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from entry: SIMD2<Float>,
-        leaving: (SIMD2<Float>, SIMD2<Float>), holeTurn: Float, slack: Float = 0
+        ring: [Int], turn: Float, holes: ArraySlice<[Int]>, points: [SIMD2<Float>],
+        from entry: SIMD2<Float>, leaving: (SIMD2<Float>, SIMD2<Float>), holeTurn: Float,
+        slack: Float = 0, obstacles: inout BridgeObstacles,
+        candidates: inout [(distance: Float, index: Int)], comparisons: inout Int
     ) -> Int? {
-        let turn = signedArea(ring.map { points[$0] })
-        var best: (index: Int, distance: Float)?
-        for index in ring.indices {
+        // 橋を架けられるか。3 つの判定は、安い順に掛ける
+        func accepts(_ index: Int, _ obstacles: inout BridgeObstacles, _ comparisons: inout Int) -> Bool {
             let candidate = points[ring[index]]
-            let delta = candidate - entry
-            let distance = delta.x * delta.x + delta.y * delta.y
-            if let current = best, current.distance <= distance { continue }
-            guard
+            return
                 arrivesInside(
-                    ring: ring, at: index, turn: turn, points: points, from: entry, leaving: leaving),
-                !entersHole(toward: delta, at: entry, leaving: leaving, turn: holeTurn),
-                !obstructed(
-                    ring: ring, holes: holes, points: points, from: entry, to: candidate),
-                slack == 0
+                    ring: ring, at: index, turn: turn, points: points, from: entry, leaving: leaving)
+                && !entersHole(toward: candidate - entry, at: entry, leaving: leaving, turn: holeTurn)
+                && !obstacles.obstructs(from: entry, to: candidate, comparisons: &comparisons)
+                && (slack == 0
                     || !passesNearAPoint(
                         ring: ring, holes: holes, points: points, from: entry, to: candidate,
-                        slack: slack)
-            else {
-                continue
-            }
-            best = (index, distance)
+                        slack: slack))
         }
-        return best?.index
+
+        candidates.removeAll(keepingCapacity: true)
+        var nearest = -1
+        var hasUnorderedDistance = false
+        for index in ring.indices {
+            let delta = points[ring[index]] - entry
+            let distance = delta.x * delta.x + delta.y * delta.y
+            if distance.isNaN { hasUnorderedDistance = true }
+            candidates.append((distance, index))
+            if nearest < 0 || distance < candidates[nearest].distance { nearest = index }
+        }
+        comparisons += ring.count
+
+        if hasUnorderedDistance {
+            // 距離が数でない点があると、近い順が決まらない。周を順に回して「いまの最良より
+            // 近くない」点を飛ばす従来の数え方で選ぶ
+            var best: (index: Int, distance: Float)?
+            for (distance, index) in candidates {
+                if let current = best, current.distance <= distance { continue }
+                if accepts(index, &obstacles, &comparisons) { best = (index, distance) }
+            }
+            return best?.index
+        }
+
+        // いちばん近い点がそのまま通ることが多いので、並べるのは断られてから
+        guard !candidates.isEmpty else { return nil }
+        if accepts(nearest, &obstacles, &comparisons) { return nearest }
+        candidates.swapAt(nearest, candidates.count - 1)
+        candidates.removeLast()
+        Self.heapify(&candidates)
+        while !candidates.isEmpty {
+            let index = Self.popNearest(&candidates)
+            if accepts(index, &obstacles, &comparisons) { return index }
+        }
+        return nil
+    }
+
+    /// 距離の小さい順 (同じなら添字の小さい順) に取り出せる山にする。
+    private static func heapify(_ heap: inout [(distance: Float, index: Int)]) {
+        var start = heap.count / 2 - 1
+        while start >= 0 {
+            siftDown(&heap, from: start)
+            start -= 1
+        }
+    }
+
+    private static func popNearest(_ heap: inout [(distance: Float, index: Int)]) -> Int {
+        let top = heap[0].index
+        heap.swapAt(0, heap.count - 1)
+        heap.removeLast()
+        if !heap.isEmpty { siftDown(&heap, from: 0) }
+        return top
+    }
+
+    private static func siftDown(_ heap: inout [(distance: Float, index: Int)], from start: Int) {
+        func before(_ a: (distance: Float, index: Int), _ b: (distance: Float, index: Int)) -> Bool {
+            a.distance != b.distance ? a.distance < b.distance : a.index < b.index
+        }
+        var parent = start
+        while true {
+            let left = 2 * parent + 1
+            guard left < heap.count else { return }
+            let right = left + 1
+            let child = right < heap.count && before(heap[right], heap[left]) ? right : left
+            guard before(heap[child], heap[parent]) else { return }
+            heap.swapAt(parent, child)
+            parent = child
+        }
     }
 
     /// `from` から周の `index` 番目の点へ架けた線が、その角の内側 (両端の辺を含む) から入るか。
@@ -488,49 +595,9 @@ nonisolated enum Triangulation {
         return false
     }
 
-    /// 架けた線が、外周 (先に畳んだ穴を含む) か穴のどれかの辺に**遮られる**か。
-    ///
-    /// 橋と辺は、橋の両端でだけ触れてよい。橋の途中で触れるものは、**跨ぐ辺だけでなく、
-    /// 辺の端点が橋の途中に載るものも**遮る ([#2508])。穴を縦や横に揃えて並べると、別の穴の
-    /// 辺が橋と同じ直線に載る。端点が橋に載る辺を跨ぎに数えないと、橋は穴の角を串刺しにして
-    /// 架かり、畳んだ周が自分の上に折り返して耳切りが三角形を取りこぼす。
-    ///
-    /// 遮らないのは、橋が 1 本の辺に丸ごと収まる場合である。辺に沿って、その端点や触れた点へ
-    /// 架けるのは、穴が触れた点で周を正しく連結する幅のない橋で、これまでも正しく塗れていた
-    /// ([#1886])。収まらずに途中まで重なる辺は、端点が橋の途中に載るので遮られる。
-    ///
-    /// 橋の両端と同じ位置にある点は、辺の端点でも橋の途中とは数えない。位置で比べるのは、
-    /// 最後の点が最初の点と重なる周 (曲線で閉じる字の o) や、畳んだ周の継ぎ目で、同じ位置の
-    /// 点が幾つも現れるためである。
-    ///
-    /// [#1886]: https://github.com/mokume-metal/mokume/issues/1886
-    /// [#2508]: https://github.com/mokume-metal/mokume/issues/2508
-    private static func obstructed(
-        ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from: SIMD2<Float>,
-        to: SIMD2<Float>
-    ) -> Bool {
-        let span = to - from
-        let length = dot(span, span)
-        // 長さ 0 の橋 (穴の入口が外周の点に重なる) は、何にも触れない
-        guard length > 0 else { return false }
-        func blocks(_ first: Int, _ second: Int) -> Bool {
-            bridgeIsBlocked(
-                by: points[first], points[second], from: from, to: to, span: span, length: length)
-        }
-        for index in ring.indices where blocks(ring[index], ring[(index + 1) % ring.count]) {
-            return true
-        }
-        for hole in holes {
-            for index in hole.indices where blocks(hole[index], hole[(index + 1) % hole.count]) {
-                return true
-            }
-        }
-        return false
-    }
-
     /// 辺 `a`–`b` が、橋 (`from` から `to` への線分・`span` は `to - from`) を遮るか。
     /// 外積と内積が 0 かの比べは、許容を持たない。
-    private static func bridgeIsBlocked(
+    static func bridgeIsBlocked(
         by a: SIMD2<Float>, _ b: SIMD2<Float>, from: SIMD2<Float>, to: SIMD2<Float>,
         span: SIMD2<Float>, length: Float
     ) -> Bool {
