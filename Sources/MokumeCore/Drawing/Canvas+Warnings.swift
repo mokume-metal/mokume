@@ -331,6 +331,11 @@ extension Canvas {
         ///
         /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
         case unusableTextMeasure
+        /// ``Canvas/textOutline(_:_:_:spacing:)`` の `spacing` が、0 以下・数でない値・無限だった。
+        /// または、小さすぎて 1 つの周の点が上限 (``Canvas/mostPointsPerContour``) を越えた ([#2447])。
+        ///
+        /// [#2447]: https://github.com/mokume-metal/mokume/issues/2447
+        case invalidTextOutlineSpacing
         /// ``Canvas/textSize(_:)`` に負の値が渡され、0 に丸めた ([#1698])。
         ///
         /// **``unusableTextMeasure`` とも ``negativeTextLeading`` とも鍵を分ける。** 共有すると、

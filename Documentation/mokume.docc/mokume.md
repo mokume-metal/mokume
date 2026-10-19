@@ -321,7 +321,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 | `size(w, h)`・`frameRate(n)`・`fullScreen()` | ``Sketch/settings`` | 呼ばずに `settings` で返す (`SketchSettings(width: w, height: h, frameRate: n)`・``SketchSettings/fullScreen(_:)``) |
 | `PVector`・`p5.Vector` と `mag()` | ``Vector2`` と ``Vector2/length`` | `Vector2(x, y)` で作り、長さは `v.length` で読む |
 | `colorMode(HSB)` | ``color(hue:saturation:brightness:alpha:)`` | 色の体系を切り替えず、色相・彩度・明度で作る色にだけラベルを付ける |
-| p5 `textToContours` | ``SketchPart/textOutline(_:_:_:)`` | 返る点は曲線をほどいた折れ目の点で、間隔は揃っていない |
+| p5 `textToContours`・`textToPoints` | ``SketchPart/textOutline(_:_:_:)`` | 返る点は曲線をほどいた折れ目の点で、間隔は揃っていない。等間隔の点は ``SketchPart/textOutline(_:_:_:spacing:)`` の `spacing:` に画素で渡す (`sampleFactor` は書体の単位に対する比なので、画素へ直す) |
 | p5 `spotLight(…, angle, concentration)` | ``SketchPart/spotLight(_:_:_:_:_:_:_:angle:)`` | 角度に `angle:` を付ける。`concentration` は渡さない |
 
 #### 手本に有って mokume に無いもの
@@ -528,6 +528,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/textAscent()``
 - ``SketchPart/textDescent()``
 - ``SketchPart/textOutline(_:_:_:)``
+- ``SketchPart/textOutline(_:_:_:spacing:)``
 - ``SketchPart/textBounds(_:_:_:)``
 - ``TextStyle``
 - ``TextWrap``

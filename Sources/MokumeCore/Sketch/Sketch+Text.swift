@@ -674,6 +674,10 @@ extension SketchPart {
     /// `textSize(320)` で取り出すと、`textSize(16)` で取り出したとき (`scale(20, 20)` の
     /// 下でも同じ) の 5 倍あまりの点になる。
     ///
+    /// **点の間隔は揃っていない。** 直線の辺には端の 1 点しかなく、`I` の縦画は角の点だけになる。
+    /// 点を等間隔に取りたい (粒を字の形に並べる) ときは、``textOutline(_:_:_:spacing:)`` に
+    /// 間隔を画素で渡す。
+    ///
     /// 位置に数でない値・無限を渡すと空を返す。
     ///
     /// **周の分かれ方は書体の持ち方どおりで、書体と字によって変わる。** 既定の書体は
@@ -689,6 +693,54 @@ extension SketchPart {
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
         return Self.liveCanvas(.read(returning: "[]"))?.textOutline(string, x, y) ?? []
+    }
+
+    /// 文字列の輪郭を、点の間隔を揃えて取り出す。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 217, 89)
+    ///     textSize(88)
+    ///     for contour in textOutline("mokume", 24, 170, spacing: 7) {
+    ///         for point in contour.points { circle(point.x, point.y, 4) }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 黄色い粒が、mokume の字の縁に等しい間隔で並んでいる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``textOutline(_:_:_:)`` の点は曲線の折れ目で、**直線の辺には端の 1 点しかない** — `I` や `T` の
+    /// 縦画は角にしか点が無く、粒を並べると縦画だけ抜ける。`spacing` を渡すと、周ごとに周の長さを
+    /// 均等に割る点へ取り直すので、直線の辺の途中にも点が並ぶ。粒を字の形に並べる定番は、これで書ける。
+    ///
+    /// **`spacing` は画素で渡す。** 隣り合う点の距離は `spacing` 以下で、周の長さを均等に割った値
+    /// (最後の点から最初の点へ戻る間も同じ) になる。周が短くて `spacing` で割り切れなくても、
+    /// 周ごとに少なくとも 3 点を返し、周は潰れない。取り直した点は折れ目の点を結んだ線の上にあり、
+    /// 角は丸まらない代わりに、点が角にちょうど乗るとは限らない。
+    ///
+    /// **周の並び・``TextContour/isHole``・描くときと同じ送りは、``textOutline(_:_:_:)`` と同じ。**
+    /// 点の数だけが変わる。同じ入力からはいつも同じ点が返る。
+    ///
+    /// p5.js の `textToPoints` / `textToContours` の `sampleFactor` は書体の単位に対する比で、字の
+    /// 大きさで間隔が変わる。mokume の `spacing` は画素なので、``textSize(_:)`` を変えても間隔は
+    /// 変わらない。`sampleFactor` から写すときは、字の大きさにあわせて画素へ直す。
+    ///
+    /// `spacing` が 0 以下・数でない値・無限のときは、1 度だけ知らせて、`spacing` を省いたとき
+    /// (``textOutline(_:_:_:)``) と同じ折れ目の点を返す。極端に小さい `spacing` は、1 つの周の
+    /// 点を 65536 までに抑える。
+    // shot: 後で撮る
+    public func textOutline(
+        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible,
+        spacing: some ScalarConvertible
+    ) -> [TextContour] {
+        let (x, y, spacing) = (x.asFloat, y.asFloat, spacing.asFloat)
+        return Self.liveCanvas(.read(returning: "[]"))?.textOutline(string, x, y, spacing: spacing) ?? []
     }
 
     /// 文字列を描いたときに、墨が載る範囲を返す。
