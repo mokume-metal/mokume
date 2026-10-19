@@ -108,7 +108,11 @@ final class MovieWriter {
         let release = pressure.release
         let closed = self.closed
         let outcome = lastOutcome
-        Task.detached(priority: .utility) {
+        // **優先度は待つ側 (main) に揃える** (#2372)。main は `Backpressure.take()` で semaphore を
+        // 待つが、semaphore は優先度を寄付しない。`.utility` だと CPU が混んだ機械で符号化だけが
+        // 後回しにされ、main がその遅れを待つ形になる (ProRes のソフトの符号化器の内部のスレッドは
+        // 呼んだ側の QoS を継ぐ)
+        Task.detached(priority: .userInitiated) {
             // **ファイルは最初の 1 枚が来てから開く。** 絵の大きさは受け取るまで
             // 分からず、開いた後は変えられない
             var file: MovieFile?

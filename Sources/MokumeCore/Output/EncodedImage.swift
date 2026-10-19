@@ -94,7 +94,8 @@ import Metal
     /// バイト列として読み戻す。
     ///
     /// **画素ごとの計算は 1 つも無い。** 出力段は既に GPU が通しているので、ここで
-    /// するのは行の詰め直しだけである (行の間隔が幅ぶんより広いことがある)。
+    /// するのは行の詰め直しだけである (行の間隔が幅ぶんより広いことがある)。幅ちょうどなら
+    /// 詰め直す行が無く、1 回で写す。
     ///
     /// **中身を組んだ投入が終わるのを、読む直前に待つ** ([#927])。待つのは名指しした
     /// 1 本だけで、既に終わっていれば何もせずに進む。毎フレーム呼ばれうるので投げない
@@ -104,16 +105,25 @@ import Metal
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func read() -> DisplayImage {
         waitBeforeReading()
-        var bytes = [UInt8](repeating: 0, count: width * height * OutputPass.bytesPerPixel)
-        let source = storage.contents()
         let widthInBytes = width * OutputPass.bytesPerPixel
-        bytes.withUnsafeMutableBytes { destination in
-            let base = destination.baseAddress!
-            for row in 0..<height {
-                base.advanced(by: row * widthInBytes)
-                    .copyMemory(
-                        from: source.advanced(by: row * bytesPerRow), byteCount: widthInBytes)
+        let source = storage.contents()
+        // **0 埋めの確保を挟まない** (#2372)。全部を写し終えるので、前の中身は誰も読まない
+        let bytes = [UInt8](unsafeUninitializedCapacity: widthInBytes * height) { buffer, initialized in
+            if let base = buffer.baseAddress {
+                if bytesPerRow == widthInBytes {
+                    // 行の間隔が幅ちょうどなら、置き場は隙間の無い 1 枚の連なり。1 回で写す
+                    base.update(
+                        from: source.assumingMemoryBound(to: UInt8.self),
+                        count: widthInBytes * height)
+                } else {
+                    for row in 0..<height {
+                        (base + row * widthInBytes).update(
+                            from: (source + row * bytesPerRow).assumingMemoryBound(to: UInt8.self),
+                            count: widthInBytes)
+                    }
+                }
             }
+            initialized = widthInBytes * height
         }
         return DisplayImage(width: width, height: height, bytes: bytes)
     }
