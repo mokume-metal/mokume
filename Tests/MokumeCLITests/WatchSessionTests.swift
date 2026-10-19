@@ -1155,7 +1155,7 @@ struct WatchSessionTests {
 
         let marker = try placeFellBackMarker(of: arriving, for: session)
         let result = try #require(await session.retireAfterFallback())
-        #expect(result.replaced)
+        #expect(result.previous == .stopped)
         #expect(result.outcome != nil, "前の世代を止めた結果を返していない")
         waitUntilGone(leaving)
         #expect(!leaving.isRunning, "前の世代が退役していない")
@@ -1198,6 +1198,81 @@ struct WatchSessionTests {
         #expect(await session.retireAfterFallback() == nil)
         #expect(FileManager.default.fileExists(atPath: late.path))
         #expect(arriving.isRunning)
+    }
+
+    /// **掃いていない目印は、後の子が同じ pid を巡り当てると、倒れたと読まれる。** 新しい子を起こす前に
+    /// 古い目印を掃く。退役のときも掃くが、乗り換えを待っている世代の目印はまだ見ていないので残す。
+    @Test("古い倒れた目印は、新しい子を起こす前と退役のときに掃かれ、待っている世代の目印は残る")
+    func staleFellBackMarkersAreSwept() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let facet = WatchCommand.viewportFacet(under: session.facetBase)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        func marker(_ pid: Int32) -> URL { WorkDirectory.fellBackURL(forProcess: pid, under: facet) }
+        func place(_ pid: Int32) throws { try Data().write(to: marker(pid)) }
+        func exists(_ pid: Int32) -> Bool { FileManager.default.fileExists(atPath: marker(pid).path) }
+
+        // 見る前に残った目印 (もう居ない世代のもの)。次の子を起こす前に掃かれる
+        try place(999_001)
+        await session.start()
+        ready.waitForLast()
+        #expect(!exists(999_001), "子を起こす前に古い目印を掃いていない")
+
+        let first = try #require(session.child)
+        // 見ないまま次の保存が来た世代の目印 (退役は乗り換えを待っている世代の目印を残すので、
+        // 起こす前の掃除が要る)
+        try place(first.processIdentifier)
+        await session.tick()
+        ready.waitForLast()
+        #expect(!exists(first.processIdentifier), "2 回目の起こしの前に古い目印を掃いていない")
+        let arriving = try #require(session.child)
+        #expect(session.outgoing === first)
+
+        // 退役: 乗り換えを待っている世代の目印は残り、ほかの古い目印は掃かれる
+        try place(arriving.processIdentifier)
+        try place(999_003)
+        // 乗り換えの合図で畳む (乗り換えると、待っている世代は居なくなる)
+        await session.retireOutgoing()
+        #expect(!exists(999_003), "退役のときに古い目印を掃いていない")
+        #expect(exists(arriving.processIdentifier), "乗り換えを待っている世代の目印まで掃いた")
+    }
+
+    /// **口の配線**: 巡回の 1 拍 (`step`) が倒れた子を見つけて前の世代を畳み、端末とプレビューへ名乗る。
+    @Test("巡回の 1 拍は、倒れた子の知らせで前の世代を畳み、プレビューへ名乗る")
+    func theLoopStepRetiresAndNamesAFallenChild() async throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        _ = try placeFellBackMarker(of: arriving, for: session)
+
+        var lines: [(String?, Bool)] = []
+        await WatchCommand.step(session, stopped: { false }, preview: { lines.append(($0, $1)) })
+
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "巡回が倒れた子を見つけて前の世代を畳んでいない")
+        let named = WatchCommand.fellBackLine(previous: .stopped)
+        #expect(lines.contains { $0.0 == named && $0.1 == false }, "プレビューへ名乗っていない: \(lines)")
+    }
+
+    /// 畳めずに置いていくときは、止めたと言い切らない。
+    @Test("前の世代を畳めなかったときの行は、止めたと言わずに走り続けると言う")
+    func theFallbackLineDoesNotClaimAStopThatDidNotHappen() {
+        let stopped = WatchCommand.fellBackLine(previous: .stopped)
+        let left = WatchCommand.fellBackLine(previous: .left)
+        let none = WatchCommand.fellBackLine(previous: .none)
+        #expect(stopped.contains("previous version is stopped"))
+        #expect(!left.contains("is stopped"), "畳めていないのに止めたと言っている")
+        #expect(left.contains("keeps running"))
+        #expect(!none.contains("previous"), "前の世代が居ないのに前の世代を言っている")
     }
 
     /// 重ねない見張り (窓が出せなかった実行) には乗り換えを待つ世代が居ないので、目印があっても何もしない。

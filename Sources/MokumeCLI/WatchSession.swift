@@ -687,6 +687,8 @@ final class WatchSession {
         }
         // 止めている最中の他の口があれば、それが済むまで待つ (戻った後は、畳むはずの世代が居ない)
         await settle()
+        // 退役のたびに古い目印を掃く (#2350)。**乗り換えを待っている世代の目印は残す** — まだ見ていない
+        sweepFellBackMarkers(keeping: awaitingPromotion ? child?.processIdentifier : nil)
         return outcome
     }
 
@@ -1030,6 +1032,8 @@ final class WatchSession {
         // **起こせなかった理由は記録の本文の頭へ載せる** (#2521)。作り直しの出力はその後に
         // 続ける — 建っていない回 (``unbuiltNotice(_:)``) と同じ形で、読み手は頭の行で
         // 何が起きたかを読める
+        // **新しい子を起こす前に、古い目印を掃く** (#2350)。後の子が同じ pid を巡り当てても、倒れたと読まれない
+        sweepFellBackMarkers(keeping: nil)
         var launchFailure: CommandFailure?
         do throws(CommandFailure) {
             child = try hooks.launch(
@@ -1121,18 +1125,55 @@ final class WatchSession {
     ///
     /// - Returns: 知らされていなければ `nil`。知らされたなら、前の世代を畳んだかと、その結果
     ///   (**名乗るのは口の側**・``retireOutgoing()``)。
-    func retireAfterFallback() async -> (replaced: Bool, outcome: StopOutcome?)? {
+    func retireAfterFallback() async -> (previous: FallbackPrevious, outcome: StopOutcome?)? {
         guard awaitingPromotion, let waiting = child else { return nil }
-        let marker = WorkDirectory.fellBackURL(
-            forProcess: waiting.processIdentifier,
-            under: WatchCommand.viewportFacet(under: facetBase))
+        let facet = WatchCommand.viewportFacet(under: facetBase)
+        let marker = WorkDirectory.fellBackURL(forProcess: waiting.processIdentifier, under: facet)
         guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
         try? FileManager.default.removeItem(at: marker)
         awaitingPromotion = false
         // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
         firstFrameSince = nil
-        let replaced = outgoing != nil
-        return (replaced, await retireOutgoing())
+        let hadOutgoing = outgoing != nil
+        let outcome = await retireOutgoing()
+        // **畳んだ結果で言う。** 畳めずに置いていく (`abandoned`) ときに、止めたとは言えない
+        let previous: FallbackPrevious =
+            switch (hadOutgoing, outcome) {
+            case (false, _): .none
+            case (true, .abandoned?): .left
+            case (true, _): .stopped
+            }
+        return (previous, outcome)
+    }
+
+    /// 倒れた子が出たとき、前の世代がどうなったか (``retireAfterFallback()``)。
+    enum FallbackPrevious: Equatable {
+        /// 前の世代は居なかった (最初の子)。
+        case none
+        /// 前の世代を畳んだ。
+        case stopped
+        /// 前の世代を畳めず、置いていく (``StopOutcome/abandoned(pid:)``)。
+        case left
+    }
+
+    /// 区画 `viewport` の中の、倒れた知らせの目印を掃く ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
+    ///
+    /// **古い目印を残さない。** 目印は子の pid が名前で、見た目印は ``retireAfterFallback()`` が消す。
+    /// 見ずに残った目印 (道具の知らない世代・見る前に消えた子) があると、あとで同じ pid を巡り当てた
+    /// 健全な子が、倒れたと読まれて前の世代を畳まれる。**新しい子を起こす前**と**退役のとき**に掃く。
+    ///
+    /// - Parameter keeping: 掃かない pid。乗り換えを待っている世代の目印は、まだ見ていないので残す。
+    private func sweepFellBackMarkers(keeping pid: Int32?) {
+        let facet = WatchCommand.viewportFacet(under: facetBase)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: facet.path) else {
+            return
+        }
+        let kept = pid.map { WorkDirectory.fellBackURL(forProcess: $0, under: facet).lastPathComponent }
+        let prefix = WorkDirectory.fellBackURL(forProcess: 0, under: facet).lastPathComponent
+            .dropLast()  // `.fell-back.`
+        for name in names where name.hasPrefix(prefix) && name != kept {
+            try? FileManager.default.removeItem(at: facet.appendingPathComponent(name))
+        }
     }
 
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由。
