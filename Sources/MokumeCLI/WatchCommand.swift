@@ -88,6 +88,9 @@ enum WatchCommand {
             reportsRate: true, hooks: .live(resolver: resolver, running: running))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
+        // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても
+        // 走らせたまま差し替わらない
+        if let notice = assetsNotice(context: context, in: directory) { say(notice) }
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
         // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
         say("Tool: \(ToolVersion.describe())")
@@ -149,6 +152,35 @@ enum WatchCommand {
         refuseThrottling()
         watching(session, viewer)
         teardown(session, viewer, created: prepared)
+    }
+
+    /// 置き場の断片を元から読ませる先を決められなかったときに名乗る 1 行 ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。
+    ///
+    /// 決められた (束に写される置き場が 1 つ) か、束に写されない構成 (資材の宣言の検査が見る) なら
+    /// 言わない。**宣言が読めない・置き場が複数あって決まらない**ときだけ、置き場に断片が在れば、保存しても
+    /// 走らせたまま差し替わらないことを言う。断片が無ければ言うことが無い。
+    static func assetsNotice(context: BuildContext, in directory: URL) -> String? {
+        guard context.assets == .undecided else { return nil }
+        let sources = directory.appendingPathComponent("Sources", isDirectory: true)
+        guard
+            let targets = try? FileManager.default.contentsOfDirectory(
+                atPath: sources.path)
+        else { return nil }
+        for target in targets.sorted() {
+            let assets = sources.appendingPathComponent(target, isDirectory: true)
+                .appendingPathComponent(ResourceDeclaration.directoryName, isDirectory: true)
+            guard
+                let walker = FileManager.default.enumerator(
+                    at: assets, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            else { continue }
+            for case let url as URL in walker where url.pathExtension.lowercased() == "metal" {
+                return "Could not tell which directory of assets goes into the running sketch "
+                    + "(is Package.swift readable, and does one target copy it?), so saving a shader "
+                    + "fragment under \(assets.path) will not swap it in while it runs — "
+                    + "save a .swift file to rebuild"
+            }
+        }
+        return nil
     }
 
     /// 窓口が使う区画を、子を起こす前に置く。**窓も GPU も要さない。**
@@ -469,11 +501,15 @@ enum WatchCommand {
     /// **子が名乗る理由** (`Could not place …` / `Could not make …`) は端末に既に出ているので、
     /// ここは見張りの側で起きたこと — 絵と入力が子の窓へ移り、前の世代を畳んだこと — を言う。
     /// 前の世代が居なかった回 (最初の子) は畳んでいないので、言わない。
-    static func fellBackLine(replacing: Bool) -> String {
-        replacing
-            ? "The new version could not hand its frames to this window, so it opened its own — "
-                + "the previous version is stopped"
-            : "The sketch could not hand its frames to this window, so it opened its own"
+    static func fellBackLine(previous: WatchSession.FallbackPrevious) -> String {
+        let head = "could not hand its frames to this window, so it opened its own"
+        switch previous {
+        case .none: return "The sketch " + head
+        case .stopped: return "The new version " + head + " — the previous version is stopped"
+        case .left:
+            return "The new version " + head
+                + " — the previous version could not be stopped and keeps running"
+        }
     }
 
     /// 終わりの合図の受け口を置く。
@@ -511,8 +547,11 @@ enum WatchCommand {
     @discardableResult
     static func step(
         _ session: WatchSession, viewer: Viewer? = nil,
-        stopped: () -> Bool = { watchStopRequested != 0 }
+        stopped: () -> Bool = { watchStopRequested != 0 },
+        preview: ((String?, Bool) -> Void)? = nil
     ) async -> Bool {
+        // プレビューへ出す口。**検査は窓を作らずに、出した行を見られる**ように差し替える
+        let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
         if stopped() {
             session.noteStopRequested()
             return false
@@ -527,16 +566,16 @@ enum WatchCommand {
             let line = departedLine(departure)
             say(line)
             viewer?.firstFrame.settle()
-            viewer?.preview.report(line, spinning: false)
+            showInPreview(line, false)
         }
         // **倒れた子は、乗り換えの合図が来ないので、ここで見つける** (#2350)。作り直した子が共有面を
         // 作れず自分の窓を開いた回は、前の世代が道具の窓に映ったまま並走する
         if let fallen = await session.retireAfterFallback() {
             announce(fallen.outcome)
-            let line = fellBackLine(replacing: fallen.replaced)
+            let line = fellBackLine(previous: fallen.previous)
             say(line)
             viewer?.firstFrame.settle()
-            viewer?.preview.report(line, spinning: false)
+            showInPreview(line, false)
         }
         if let outcome = await session.tick() {
             // **終われと言われた後に戻ってきた結果は名乗らない** (最初の 1 回と同じ規律)。どう

@@ -322,6 +322,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **窓の持ち主の合図を、ここで読んで環境から消す** (``SharedFrameSurface/launchOwner``)。
         // スケッチが `setup()` で子を起こしても、合図はもう継がれない
         _ = SharedFrameSurface.launchOwner
+        // **置き場の元の合図も同じ** (#2517)。孫へ継がせない
+        _ = ShaderOrigin.startup()
         try self.init(sketch: sketch, gpu: gpu, render: try RenderRequest.startup())
     }
 

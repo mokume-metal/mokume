@@ -1155,7 +1155,7 @@ struct WatchSessionTests {
 
         let marker = try placeFellBackMarker(of: arriving, for: session)
         let result = try #require(await session.retireAfterFallback())
-        #expect(result.replaced)
+        #expect(result.previous == .stopped)
         #expect(result.outcome != nil, "前の世代を止めた結果を返していない")
         waitUntilGone(leaving)
         #expect(!leaving.isRunning, "前の世代が退役していない")
@@ -1198,6 +1198,81 @@ struct WatchSessionTests {
         #expect(await session.retireAfterFallback() == nil)
         #expect(FileManager.default.fileExists(atPath: late.path))
         #expect(arriving.isRunning)
+    }
+
+    /// **掃いていない目印は、後の子が同じ pid を巡り当てると、倒れたと読まれる。** 新しい子を起こす前に
+    /// 古い目印を掃く。退役のときも掃くが、乗り換えを待っている世代の目印はまだ見ていないので残す。
+    @Test("古い倒れた目印は、新しい子を起こす前と退役のときに掃かれ、待っている世代の目印は残る")
+    func staleFellBackMarkersAreSwept() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let facet = WatchCommand.viewportFacet(under: session.facetBase)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        func marker(_ pid: Int32) -> URL { WorkDirectory.fellBackURL(forProcess: pid, under: facet) }
+        func place(_ pid: Int32) throws { try Data().write(to: marker(pid)) }
+        func exists(_ pid: Int32) -> Bool { FileManager.default.fileExists(atPath: marker(pid).path) }
+
+        // 見る前に残った目印 (もう居ない世代のもの)。次の子を起こす前に掃かれる
+        try place(999_001)
+        await session.start()
+        ready.waitForLast()
+        #expect(!exists(999_001), "子を起こす前に古い目印を掃いていない")
+
+        let first = try #require(session.child)
+        // 見ないまま次の保存が来た世代の目印 (退役は乗り換えを待っている世代の目印を残すので、
+        // 起こす前の掃除が要る)
+        try place(first.processIdentifier)
+        await session.tick()
+        ready.waitForLast()
+        #expect(!exists(first.processIdentifier), "2 回目の起こしの前に古い目印を掃いていない")
+        let arriving = try #require(session.child)
+        #expect(session.outgoing === first)
+
+        // 退役: 乗り換えを待っている世代の目印は残り、ほかの古い目印は掃かれる
+        try place(arriving.processIdentifier)
+        try place(999_003)
+        // 乗り換えの合図で畳む (乗り換えると、待っている世代は居なくなる)
+        await session.retireOutgoing()
+        #expect(!exists(999_003), "退役のときに古い目印を掃いていない")
+        #expect(exists(arriving.processIdentifier), "乗り換えを待っている世代の目印まで掃いた")
+    }
+
+    /// **口の配線**: 巡回の 1 拍 (`step`) が倒れた子を見つけて前の世代を畳み、端末とプレビューへ名乗る。
+    @Test("巡回の 1 拍は、倒れた子の知らせで前の世代を畳み、プレビューへ名乗る")
+    func theLoopStepRetiresAndNamesAFallenChild() async throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        _ = try placeFellBackMarker(of: arriving, for: session)
+
+        var lines: [(String?, Bool)] = []
+        await WatchCommand.step(session, stopped: { false }, preview: { lines.append(($0, $1)) })
+
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "巡回が倒れた子を見つけて前の世代を畳んでいない")
+        let named = WatchCommand.fellBackLine(previous: .stopped)
+        #expect(lines.contains { $0.0 == named && $0.1 == false }, "プレビューへ名乗っていない: \(lines)")
+    }
+
+    /// 畳めずに置いていくときは、止めたと言い切らない。
+    @Test("前の世代を畳めなかったときの行は、止めたと言わずに走り続けると言う")
+    func theFallbackLineDoesNotClaimAStopThatDidNotHappen() {
+        let stopped = WatchCommand.fellBackLine(previous: .stopped)
+        let left = WatchCommand.fellBackLine(previous: .left)
+        let none = WatchCommand.fellBackLine(previous: .none)
+        #expect(stopped.contains("previous version is stopped"))
+        #expect(!left.contains("is stopped"), "畳めていないのに止めたと言っている")
+        #expect(left.contains("keeps running"))
+        #expect(!none.contains("previous"), "前の世代が居ないのに前の世代を言っている")
     }
 
     /// 重ねない見張り (窓が出せなかった実行) には乗り換えを待つ世代が居ないので、目印があっても何もしない。
@@ -1822,32 +1897,74 @@ struct FrameRateHandoffTests {
                 == "/a/Sources/wa/assets")
     }
 
-    /// 置き場の元は、走らせる実行ファイルの target のものを選ぶ。決まらなければ渡さない。
-    @Test("置き場の元は product と同名の target を先に取り、決まらなければ渡さない")
-    func theAssetOriginFollowsTheProduct() throws {
+    /// **束に写される置き場だけを、宣言から決める** (#2517)。ディレクトリの並びから推し量らない。
+    @Test("置き場の元は、product の target が .copy(\"assets\") を宣言したものだけから決める")
+    func theAssetOriginComesFromTheDeclaration() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        func make(_ target: String) throws {
+        func make(_ path: String) throws {
             try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("Sources/\(target)/assets", isDirectory: true),
+                at: root.appendingPathComponent(path, isDirectory: true),
                 withIntermediateDirectories: true)
         }
-        func origin(_ product: String) -> String? {
-            ResourceDeclaration.origin(ofProduct: product, in: root)?.path
+        func package(_ targets: String, products: String = #"{"name":"wa","type":{"executable":null},"targets":["wa"]}"#)
+            throws -> SwiftPM.Package
+        {
+            try #require(
+                SwiftPM.package(
+                    inDumpOf: """
+                        {"name":"wa","products":[\(products)],"targets":[\(targets)],
+                         "platforms":[],"dependencies":[]}
+                        """))
         }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        #expect(origin("wa") == nil, "置き場が無い")
-        try make("wa")
-        #expect(origin("wa")?.hasSuffix("/Sources/wa/assets") == true)
-        #expect(origin("renamed")?.hasSuffix("/Sources/wa/assets") == true, "ちょうど 1 つならそれ")
-        try make("other")
-        #expect(origin("wa")?.hasSuffix("/Sources/wa/assets") == true, "同名が先")
-        #expect(origin("renamed") == nil, "複数あって決まらないときは推し量らない")
+        func origin(_ package: SwiftPM.Package, product: String? = "wa") -> SwiftPM.AssetsOrigin {
+            package.assetsOrigin(forProduct: product, in: root, directoryName: "assets")
+        }
+        let copy = #""resources":[{"path":"assets","rule":{"copy":{}}}]"#
+        try make("Sources/wa/assets")
+
+        // 宣言した置き場だけ。`Sources/wa/assets` はここ
+        guard case .source(let found) = origin(try package(#"{"name":"wa",\#(copy)}"#)) else {
+            Issue.record("束に写される置き場を決められなかった")
+            return
+        }
+        #expect(found.path.hasSuffix("/Sources/wa/assets"))
+        // 宣言が無い・`.process`・別のファイルだけの `.copy` は、束に写されない — 渡さない
+        for resources in [
+            "", #""resources":[{"path":"assets","rule":{"process":{}}}]"#,
+            #""resources":[{"path":"assets/img.png","rule":{"copy":{}}}]"#,
+        ] {
+            let target = resources.isEmpty ? #"{"name":"wa"}"# : #"{"name":"wa",\#(resources)}"#
+            #expect(origin(try package(target)) == .notCopied, "\(resources) で渡している")
+        }
+        // 宣言が読めない・product が見つからない — 決められない
+        #expect(origin(try package(#"{"name":"wa",\#(copy)}"#), product: nil) == .undecided)
+        #expect(origin(try package(#"{"name":"wa",\#(copy)}"#), product: "other") == .undecided)
+
+        // `path:` を指定した target
+        try make("custom/place/assets")
+        let moved = try package(#"{"name":"wa","path":"custom/place",\#(copy)}"#)
+        guard case .source(let custom) = origin(moved) else {
+            Issue.record("path: の target を決められなかった")
+            return
+        }
+        #expect(custom.path.hasSuffix("/custom/place/assets"))
+
+        // product を作らない target の置き場は、束に入らない (別の target が置き場を持っていても取らない)
+        try make("Sources/other/assets")
+        let unrelated = try package(
+            #"{"name":"wa"},{"name":"other",\#(copy)}"#)
+        #expect(origin(unrelated) == .notCopied)
+        // 同じ product の target が 2 つ置き場を持てば、決められない (推し量らない)
+        let both = try package(
+            #"{"name":"wa",\#(copy)},{"name":"other",\#(copy)}"#,
+            products: #"{"name":"wa","type":{"executable":null},"targets":["wa","other"]}"#)
+        #expect(origin(both) == .undecided)
     }
 
-    /// 本物の起こす口が、見張りの子へ置き場の元を渡す。
-    @Test("本物の起こす口は、子へ資材の置き場の元を渡す")
+    /// 本物の起こす口が、見張りの子へ置き場の元を渡す。導き手が決めた置き場を渡し、決められなければ渡さない。
+    @Test("本物の起こす口は、導き手が決めた資材の置き場の元を子へ渡す")
     func theLiveLaunchPassesTheAssetOrigin() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
@@ -1863,11 +1980,44 @@ struct FrameRateHandoffTests {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
 
-        let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
-        let child = try hooks.launch(executable, directory, nil, nil)
-        child.waitUntilExit()
-        let given = try String(contentsOf: seen, encoding: .utf8)
-        #expect(given.hasSuffix("/Sources/sketch/assets"), "\(given)")
-        #expect(given.hasPrefix("/"))
+        for (decided, expected) in [
+            (SwiftPM.AssetsOrigin.source(assets), assets.path),
+            (SwiftPM.AssetsOrigin.notCopied, ""), (SwiftPM.AssetsOrigin.undecided, ""),
+        ] {
+            let resolver = BuildResolver(directory: directory) { _ in
+                BuildResolution(
+                    context: BuildContext(
+                        configuration: nil, place: .inPackage(.localDependency), product: "sketch",
+                        assets: decided),
+                    binPath: directory)
+            }
+            let hooks = WatchSession.Hooks.live(resolver: resolver, running: RunningBuild())
+            let child = try hooks.launch(executable, directory, nil, nil)
+            child.waitUntilExit()
+            #expect(try String(contentsOf: seen, encoding: .utf8) == expected, "\(decided)")
+        }
+    }
+
+    /// 決められなかったときだけ、置き場に断片が在れば名乗る。
+    @Test("置き場の元を決められなかったときだけ、断片が在れば保存しても差し替わらないと名乗る")
+    func anUndecidedOriginIsNamedOnlyWhenFragmentsExist() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let assets = root.appendingPathComponent("Sources/wa/assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func context(_ assets: SwiftPM.AssetsOrigin) -> BuildContext {
+            BuildContext(
+                configuration: nil, place: .inPackage(.localDependency), product: "wa", assets: assets)
+        }
+        // 断片が無ければ言うことが無い
+        #expect(WatchCommand.assetsNotice(context: context(.undecided), in: root) == nil)
+        try "float4 paint() {}".write(
+            to: assets.appendingPathComponent("a.metal"), atomically: true, encoding: .utf8)
+        let notice = try #require(WatchCommand.assetsNotice(context: context(.undecided), in: root))
+        #expect(notice.contains(assets.path))
+        // 決められた・束に写されない構成は言わない
+        #expect(WatchCommand.assetsNotice(context: context(.source(assets)), in: root) == nil)
+        #expect(WatchCommand.assetsNotice(context: context(.notCopied), in: root) == nil)
     }
 }

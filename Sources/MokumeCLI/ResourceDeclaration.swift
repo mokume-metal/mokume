@@ -48,34 +48,6 @@ nonisolated enum ResourceDeclaration {
         return found
     }
 
-    /// 走らせる実行ファイルの、資材の置き場の元 (`Sources/<target>/assets`)。**無ければ `nil`。**
-    ///
-    /// 見張りが子へ渡して、置き場の断片を束の写しではなく元から読ませる
-    /// ([#2517](https://github.com/mokume-metal/mokume/issues/2517)・``ShaderOrigin``)。
-    ///
-    /// **決まらないときは渡さない。** product と同じ名前の target の置き場を先に取り、無ければ
-    /// 置き場がちょうど 1 つのときだけそれを取る。複数あって決まらないときに推し量ると、束に入って
-    /// いない別の target の断片を黙って読む — 渡さなければ、いままでどおり束の写しを読む。
-    static func origin(ofProduct product: String, in root: URL) -> URL? {
-        let sources = root.appendingPathComponent("Sources", isDirectory: true)
-        func assets(of target: String) -> URL? {
-            let directory = sources.appendingPathComponent(target, isDirectory: true)
-                .appendingPathComponent(directoryName, isDirectory: true)
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-                isDirectory.boolValue
-            else { return nil }
-            return directory
-        }
-        if let named = assets(of: product) { return named }
-        guard
-            let targets = try? FileManager.default.contentsOfDirectory(
-                atPath: sources.path)
-        else { return nil }
-        let found = targets.sorted().compactMap(assets(of:))
-        return found.count == 1 ? found[0] : nil
-    }
-
     /// 置き場に中身があるか (隠しファイルは数えない)。
     private static func hasContents(_ directory: URL) -> Bool {
         guard

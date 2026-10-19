@@ -114,13 +114,18 @@ enum RunCommand {
     ) throws(CommandFailure) -> BuildContext {
         let declared = try dumpPackage(in: directory)
         let product = declared?.executableProductName
+        // **束に写される置き場は宣言から決める** (#2517)。読めなければ決められない
+        let assets =
+            declared?.assetsOrigin(
+                forProduct: product, in: directory, directoryName: ResourceDeclaration.directoryName)
+            ?? .undecided
 
         // **明示されたら理由を確かめない。** 選んだのは人である。解く基準は走らせた場所で、
         // 解くのは ``Invocation`` の 1 か所 (#2323)
         if let given = try invocation.scratchDirectory {
             return BuildContext(
                 configuration: invocation.configuration,
-                place: .outside(given, given: true), product: product)
+                place: .outside(given, given: true), product: product, assets: assets)
         }
 
         // **宣言が読めないことを、断る理由にしない。** 壊した状態から直していく途中は
@@ -129,7 +134,7 @@ enum RunCommand {
         guard let declared else {
             return BuildContext(
                 configuration: invocation.configuration,
-                place: .inPackage(.unreadableManifest), product: nil)
+                place: .inPackage(.unreadableManifest), product: nil, assets: assets)
         }
 
         let root = try BuildDirectory.root(
@@ -160,7 +165,7 @@ enum RunCommand {
             }
         }
         return BuildContext(
-            configuration: invocation.configuration, place: place, product: product)
+            configuration: invocation.configuration, place: place, product: product, assets: assets)
     }
 
     /// 依存を解決させて `Package.resolved` を書かせる。**失敗しても投げない** —
