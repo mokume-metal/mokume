@@ -1159,6 +1159,47 @@ struct PixelGridTests {
             "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
     }
 
+    /// 楕円の扇で、弧の最近点が扇の内外の判定と食い違う形 ([#2914])。
+    ///
+    /// 扇の内外は中心から弧の端への 2 本の半直線で決める (媒介変数の空間・#1448) が、輪郭の弧への距離は
+    /// 楕円の法線で測る。楕円では法線の向きが中心から見た向きとずれるので、**扇の内でも、楕円全体への
+    /// 最近点が弧の角の範囲の外にあり** (範囲の外の弧まで距離を測って帯が外へ滲む: `arc(0, 0, 80, 20, 0.3, 2.9)`・
+    /// 太さ 22 で最大 67%)、**扇の外でも、最近点が範囲の内にある** (弧が最も近いのに線分への距離を返して帯が
+    /// 欠ける)。円は一致するので起きない。穴が潰れた太い輪郭と、穴の細い輪郭の両方を掃く
+    /// (縦横比 4:1・10:1・3:1 の楕円 × 開始角 × 掃引)。
+    ///
+    /// [#2914]: https://github.com/mokume-metal/mokume/issues/2914
+    nonisolated static let ellipticArcNearestPointShapes: [(shape: SeamShape, canvasSize: Int)] = ([
+        // 本文の形
+        (40, 10, 0.3, 2.9, 22),
+        // 太い輪郭 (穴が潰れる)・掃引が π 以下と越える・開始角を回す
+        (40, 10, 3.8, 1.5, 22),
+        (40, 10, 5.2, 3.14, 22),
+        (50, 5, 3.8, 1.5, 11),
+        (50, 5, 1.2, 4.2, 11),
+        // 穴が残る細めの輪郭: 扇の外で帯が欠ける向き
+        (40, 10, 0.0, 0.6, 8),
+        (60, 20, 3.8, 1.5, 16),
+    ] as [(Double, Double, Double, Double, Double)]).map { (a, b, start, sweep, weight) in
+        (SeamShape(
+            name: "arc(0, 0, \(Int(2 * a)), \(Int(2 * b)), \(Float(start)), \(Float(start + sweep)))", isEllipse: true,
+            half: SIMD2(a, b), weight: Float(weight), arc: SIMD2(start, sweep)), 160)
+    }
+
+    @Test(
+        "楕円の扇の弧の最近点が扇の内外の判定と食い違っても、輪郭だけの帯は欠けず滲まない",
+        arguments: PixelGridTests.ellipticArcNearestPointShapes.indices)
+    func ellipticArcNearestPointLeavesNoGapOrBleed(_ index: Int) throws {
+        let (shape, size) = Self.ellipticArcNearestPointShapes[index]
+        let center = SIMD2<Float>(Float(size) / 2, Float(size) / 2)
+        let measured = try seamLeaks(shape, .blend, fills: false, canvasSize: size, center: center)
+        #expect(measured.counted > 0, "\(shape): 帯に丸ごと入る画素が無い")
+        #expect(measured.worst < 0.01, "\(shape): 帯が欠ける: 最悪 \(measured.worst) \(measured.where)")
+        #expect(
+            measured.worstExcess < 0.01,
+            "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
+    }
+
     /// 穴の端 (長軸の端から離れた尖りの先) の近くの画素で、帯の被覆が真の幾何の面積 (画素を 16x16 の
     /// 標本で数える) からどれだけ外れるか (最悪)。**穴を含む画素の部分被覆**を見る — `seamLeaks` は
     /// 帯に丸ごと入る画素と丸ごと外の画素しか見ない。
