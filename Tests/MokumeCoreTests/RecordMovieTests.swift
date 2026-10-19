@@ -228,20 +228,18 @@ struct MovieWriterTests {
             _ = try writeAndSettle(writer, image(160), frame: 3, time: -1)
 
             // **転ぶ前に受け付けられた枚は数えない** — 直後の枚は、符号化器が転ぶ前に受け付け
-            // られることがある (実測)。転んだ後に書けたことになる枚は無い
-            var frame = 3
-            var reasons: [String] = []
-            while reasons.count < 3, frame < 8 {
-                frame += 1
-                let outcome = try writeAndSettle(
-                    writer, image(200), frame: frame, time: Double(frame - 1) / 60)
-                if let reason = outcome.failure {
-                    reasons.append(reason)
-                } else {
-                    #expect(reasons.isEmpty, "\(frame) 枚目: 転んだ後に書けたことになった")
-                }
-            }
-            try #require(reasons.count == 3, "5 枚書き足しても、3 枚転ばない — この入り方が効いていない")
+            // られることがある (実測)。転んだ後に書けたことになる枚は無い。上限が枚数でなく時間
+            // である理由は ``writeUntilFailed(_:_:after:reasons:within:)`` にある (#2771)
+            let written = try writeUntilFailed(writer, image(200), after: 3, reasons: 3)
+            // 1 つで止める。後の「3 枚転ばない」は、ここで抜けた結果の連鎖である
+            try #require(
+                written.succeededAfterFailure == nil,
+                "\(written.succeededAfterFailure ?? 0) 枚目: 転んだ後に書けたことになった")
+            try #require(
+                written.reasons.count == 3,
+                "\(written.elapsedText) 秒書き足し続けても 3 枚転ばない (\(written.lastFrame - 3) 枚書き足し・転んだのは \(written.reasons.count) 枚) — この入り方が効いていない"
+            )
+            let reasons = written.reasons
             for reason in reasons {
                 #expect(reason.contains("writeFailed"), "\(reason)")
                 #expect(!reason.contains("bufferUnavailable"), "符号化器の理由を落とした: \(reason)")
@@ -530,28 +528,13 @@ struct RecordingFailureTests {
             _ = try writeAndSettle(movie, image(80), frame: 1, time: 0)
             _ = try writeAndSettle(movie, image(120), frame: 2, time: 1.0 / 60)
             _ = try writeAndSettle(movie, image(160), frame: 3, time: -1)
-            // **転んだと分かってから書き足す。** 符号化器の失敗は非同期で、時刻が戻る 1 枚を
-            // 受けてから writer が止まるまでの間は、後の枚も受け付けられる。何枚目で転ぶかは
-            // その間に何枚書けたかで決まり、負荷で揺れる (#1825: 3 枚の上限では、混んだ
-            // 機械で足りなかった)。**だから枚数ではなく時間で待つ** — 書き損じが決着するまで
-            // 1 枚ずつ間を空けて書き足し、上限は 1 枚の決着と同じ 10 秒の期限で持つ。間を
-            // 空けるのは、止まる前に書いた枚を積み上げないためである (空けると直後の枚で転び、
-            // 空けないと 6〜8 枚目までずれる。#1813 の測定)
-            var frame = 3
-            var failed = false
-            let deadline = DispatchTime.now() + 10
-            while !failed, DispatchTime.now() < deadline {
-                frame += 1
-                let outcome = try writeAndSettle(
-                    movie, image(200), frame: frame, time: Double(frame - 1) / 60)
-                failed = outcome.failure != nil
-                // 塞いで待つ (`writeAndSettle` と同じ)。`await` で譲ると、並んで走る他の検査が
-                // 前提を作る途中に割り込む
-                if !failed { usleep(2_000) }
-            }
+            // **転んだと分かってから書き足す。** 理由は ``writeUntilFailed(_:_:after:reasons:within:)``
+            let written = try writeUntilFailed(movie, image(200), after: 3, reasons: 1)
             try #require(
-                failed,
-                "10 秒書き足し続けても符号化器が転ばない (\(frame - 3) 枚) — この入り方が効いていない")
+                written.reasons.count == 1,
+                "\(written.elapsedText) 秒書き足し続けても符号化器が転ばない (\(written.lastFrame - 3) 枚) — この入り方が効いていない"
+            )
+            var frame = written.lastFrame
 
             // 転んだ符号化器へもう 1 枚。**この決着は待たない** — 待つのは endRecord() の期限である
             frame += 1
@@ -1254,6 +1237,63 @@ private func writeAndSettle(
         },
         "\(frame) 枚目が 10 秒待っても決着しない")
     return try #require(outcome)
+}
+
+/// ``writeUntilFailed(_:_:after:reasons:within:)`` の結果。
+private struct FailedWrites {
+    /// 転んだ枚の理由。転んだ順。
+    var reasons: [String] = []
+    /// 最後に書いた枚の番号。
+    var lastFrame: Int
+    /// 転んだ後に書けたことになった最初の枚の番号。無ければ `nil`。
+    var succeededAfterFailure: Int?
+    /// 書き足し始めてから実際に経過した秒数。**最後の 1 枚の決着待ちを含む** ので、期限より延びうる。
+    var elapsed: Double
+
+    var elapsedText: String { String(format: "%.1f", elapsed) }
+}
+
+/// 時刻が戻る 1 枚の後、符号化器が転んで `reasons` 枚が書き損じになるまで、1 枚ずつ書き足す。
+///
+/// 符号化器の失敗は非同期で、時刻が戻る 1 枚を受けてから writer が止まるまでの間は、後の枚も
+/// 受け付けられる。何枚目で転ぶか・何枚が転ぶまでに書けるかは負荷で揺れる (#1825: 3 枚の上限、
+/// #2771: 5 枚の上限は、混んだ機械で足りなかった)。**だから上限は枚数ではなく時間** — 1 枚の
+/// 決着と同じ 10 秒の期限で持ち、待つ側が期限を越えたら殺す (`.timeLimit` は使わない)。1 枚ごとに
+/// 2 ms 空けるのは、止まる前に書いた枚を積み上げないためである (空けると直後の枚で転び、空けないと
+/// 6〜8 枚目までずれる。#1813 の測定)。塞いで待つ (`await` で譲ると、並んで走る他の検査が前提を
+/// 作る途中に割り込む)。
+///
+/// **転んだ後に書けたことになる枚が出たら、そこで抜ける** — 期限まで同じ退行を出し続けない。
+/// 見つけた枚は ``FailedWrites/succeededAfterFailure`` に残るので、呼ぶ側が名乗る。
+///
+/// - Parameters:
+///   - picture: 書き足す絵。
+///   - lastFrame: すでに書いた最後の枚の番号。次はその次から書く。
+///   - wanted: 揃えたい理由の数。1 なら、1 枚転べば抜ける。
+@MainActor
+private func writeUntilFailed(
+    _ writer: MovieWriter, _ picture: DisplayImage, after lastFrame: Int, reasons wanted: Int,
+    within seconds: Double = 10
+) throws -> FailedWrites {
+    var result = FailedWrites(lastFrame: lastFrame, elapsed: 0)
+    let start = DispatchTime.now()
+    let deadline = start + seconds
+    while result.reasons.count < wanted, DispatchTime.now() < deadline {
+        result.lastFrame += 1
+        let frame = result.lastFrame
+        let outcome = try writeAndSettle(
+            writer, picture, frame: frame, time: Double(frame - 1) / 60)
+        if let reason = outcome.failure {
+            result.reasons.append(reason)
+        } else if !result.reasons.isEmpty {
+            result.succeededAfterFailure = frame
+            break
+        } else {
+            usleep(2_000)
+        }
+    }
+    result.elapsed = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1e9
+    return result
 }
 
 /// 動画が閉じ終えているか。**末尾のメタデータ (`moov`) が書かれているかで見る。**
