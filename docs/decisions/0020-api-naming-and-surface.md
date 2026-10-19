@@ -176,6 +176,25 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 描画を投げるようにすると `draw()` の中が `try` で埋まり、上の層の存在意義である手軽さが失われる。逆に資源の生成は「失敗したら別の道を選ぶ」判断が要るので、黙って既定へ倒してはいけない。読み取りが落ちないのは、走っていない時点 (初期化子の中・後片付けの後) から呼ばれうるためである。
 
+#### 追補 (2026-10-19) — 公開の Failure 型に case を足すのは、0.x の間は破壊的変更として出す
+
+資源の生成が投げる Failure 型 (`RenderFailure`・`AssetFailure`・`DataFailure` など) に、後から case を足すときの扱いを決める ([#2249](https://github.com/mokume-metal/mokume/issues/2249))。
+
+**0.x の間は、公開の Failure 型に case を足すことを破壊的変更として扱う。** PR タイトルに `!` を付け、`changelog.d/` に `.breaking.md` を置いて出す。型は enum のままにし、`@nonexhaustive` も付けない。利用者の網羅 `switch` は、case を足した版でコンパイルが通らなくなる。これは、新しい case にコンパイラが気付かせてくれる利点と引き換えに受ける代償である。0.x は形が動くことを織り込んだ区間で (`scripts/release.py` の bump の説明)、約束には反しない。
+
+- 対象は、`public enum …Failure` と `public nonisolated enum …Failure` で宣言した型である。2026-10-19 に `git grep -E 'public (nonisolated )?enum [A-Za-z]*Failure' -- Sources` で数えて 12 個: `AssetFailure`・`AudioFailure`・`DataFailure`・`ImageFailure`・`ImageWriteFailure`・`ModelFailure`・`MovieFailure`・`NetworkFailure`・`OSCFailure`・`RenderFailure`・`SerialFailure`・`ShaderFailure`。数は型が増えるたびに変わるので、引くときは同じコマンドで数え直す。
+- 例: `AudioFailure` に新しい case を足す PR は、タイトルに `!` を付け、`.breaking.md` を置く。
+
+**再開の条件:** 次のどちらかが起きたら、下の A・B・C から選び直す。
+
+- 1.0 の準備に入るとき
+- 外の利用者から、網羅 `switch` が壊れたという報告があったとき
+
+退けた案:
+
+- **A: `@nonexhaustive` (SE-0487) を付ける。** 付ける版で 1 回壊れるだけで、以後の追加は非破壊になり、パターンマッチも関連値も保てる。ただし、新しい case が来たことにコンパイラが気付かせてくれなくなる (`@unknown default` の警告は出る)。実装は Swift 6.2.3 からで、Swift 6.2.0〜6.2.2 の利用者が読めるかは確かめていない。読めなければ下限を上げる (ADR-0009 の改訂) ことになる。0.x の間は壊れることを織り込んでいるので、いま払う理由が無い
+- **B: enum に見える struct にする。** どのツールチェーンでも非破壊で足せる。ただし `catch .timedOut(let s)` のような関連値のパターンマッチを失い、移行そのものが大きな破壊になる。言語に A がある今は、利点が薄い
+
 ### 6. 面に出てよいのは、自前の型と Swift 標準ライブラリだけ
 
 公開シンボルの署名 (引数・戻り値・プロパティの型) に現れてよいのは、**このパッケージが定義する型**と **Swift 標準ライブラリの型**に限る。Foundation・AppKit・Metal など外部フレームワークの型を面に出すのは例外で、**シンボルごとに理由を書く**。
