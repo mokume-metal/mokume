@@ -22,7 +22,8 @@ import Testing
 @Suite(
     "投げる読む口と GPU の打ち切り",
     .serialized,
-    .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"))
+    .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"),
+    .ownWarningDigest)
 struct DroppedWorkReadersTests {
     /// #1812 の run 36463335392 で実際に届いた理由。
     static let victim =
