@@ -441,7 +441,8 @@ public final class SketchRuntime {
     var authorTime: Float { timing.authorTime }
     /// ``Sketch/draw()`` と入り口の供給が、観測の秒を読んでいる間だけ立つ。``time`` を参照。
     private var showsObservedTime = false
-    /// 前のフレームからの経過 (秒)。
+    /// 前のフレームからの経過 (**秒**)。p5.js の `deltaTime` はミリ秒なので、写すときは係数を 1000 倍する
+    /// (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`)。意味の説明は ``SketchPart/deltaTime`` が正本。
     public var deltaTime: Float { timing.deltaTime }
     /// 時刻の出どころ。意味の説明は ``SketchPart/clock`` が正本。
     var clock: Clock { timing.clock }
