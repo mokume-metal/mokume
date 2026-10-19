@@ -83,7 +83,7 @@ struct Tools {
                         "time": [
                             "type": "number", "minimum": 0,
                             "maximum": Double(Float.greatestFiniteMagnitude),
-                            "description": "Draw and capture one frame at these seconds, rounded to Float. Requires count=1 and every=1. Update the sketch dependency if its reply lacks appliedTime.",
+                            "description": "Draw and capture one frame at these seconds, rounded to Float. Requires count=1 and every=1. Only draw() reads this time; input callbacks, a playing video and a recorded sound follow the author's clock. Update the sketch dependency if its reply lacks appliedTime.",
                         ],
                         "scale": [
                             "type": "number",

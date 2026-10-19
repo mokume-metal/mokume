@@ -18,6 +18,12 @@ import Foundation
 /// 新しいidで同じ秒を指定すれば同じ構図で比べられる。秒はFloatに丸める。
 /// **画面とdrawの副作用は残る。** deltaTimeは0、frameCountは1進み、次は元の時計へ戻る。
 /// 状態の巻き戻しではなく、時刻と他の入力から絵が決まる作品向けである。
+///
+/// **ただし観測の秒を受けるのは `draw()` の中の `time` だけである。** 本体が持つ状態
+/// (動画の再生位置・録った音の起点) と、同じ枚で配る入力のコールバックの `time` は作者の時計の秒で、
+/// 観測の秒を状態として積まない。コールバックの `jumpTime(time + 0.25)` が作者の時計を観測の秒へ
+/// 飛ばさず、流している動画が観測の後も作者の時計に沿って流れる
+/// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。映すコマ・読む窓は観測の秒で決まる。
 /// noLoopは停止を保つ。外部pause、録画中、count/everyが1以外なら理由を返す。
 /// 指定フレーム内でのbeginRecordも断る。通常観測はtimeを省く。
 /// 応答にappliedTimeがあり、目録と同じ秒かを必ず確認する。旧版はtimeを無視することがある。
@@ -70,6 +76,8 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     public let every: Int
     /// 指定した秒で1枚描き直す。省略時は直近の絵を読むだけ。
     /// `deltaTime` は0、番号は1進む。画面と `draw()` の副作用は残り、巻き戻しではない。
+    /// 観測の秒を読むのは `draw()` の中の `time` だけで、動画の再生位置・録った音の起点・入力の
+    /// コールバックの `time` は作者の時計の秒のままである。
     public let time: Double?
     /// 要求にあった、この版が読まない鍵 (名前順)。
     package let unknownKeys: [String]

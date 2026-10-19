@@ -95,7 +95,18 @@ public final class Movie: Inlet {
     /// 長さ (秒)。
     public var duration: Float { Float(reader.duration) }
     /// いまの位置 (秒)。0 から ``duration`` まで。``jump(_:)`` を頼んだ後なら、その飛び先。
-    public var time: Float { Float(playhead.reported) }
+    ///
+    /// **時刻を指定した観測の枚の `draw()` の中では、映しているコマの位置**を返す — そこで読む
+    /// ``SketchPart/time`` が観測の秒なのと揃う。再生の状態は作者の時計に沿って進んでいて、
+    /// 観測の後の枚はそこから続く ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
+    public var time: Float {
+        let shown = owner?.time ?? 0
+        // 観測の枚の `draw()` の中だけ、見せる時刻と作者の時計の秒が違う。飛ぶよう頼んだ後は飛び先
+        guard let owner, shown != owner.authorTime, playhead.reported == playhead.position else {
+            return Float(playhead.reported)
+        }
+        return Float(playhead.position(at: Double(shown)))
+    }
 
     /// 1 度だけ流す。終わりのコマで止まる。
     ///
@@ -132,7 +143,13 @@ public final class Movie: Inlet {
     // MARK: - Inlet
 
     public func supply() {
-        let position = playhead.advance(to: Double(owner?.time ?? 0))
+        // **状態は作者の時計の秒で進め、映すコマは観測の秒で決める** (#2357)。時刻を指定した観測の枚の
+        // 指定秒を再生位置・起点として積むと、観測の後に動画が終わりで止まったまま・頭に貼り付く。
+        // 観測でない枚では二つの秒は同じで、映す位置は進めた位置そのものである
+        let shown = owner?.time ?? 0
+        let author = owner?.authorTime ?? shown
+        let advanced = playhead.advance(to: Double(author))
+        let position = shown == author ? advanced : playhead.position(at: Double(shown))
         do {
             if let picture = try reader.picture(at: position) { input.send(picture) }
             if input.state == .disconnected { input.setState(.running) }

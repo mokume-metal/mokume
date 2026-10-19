@@ -89,6 +89,32 @@ struct InletObservationTests {
         runtime.closePlugins()
     }
 
+    /// 値を取り出したフレームの時刻は、観測の後も残る状態 (`lastArrival`) なので、時刻を指定した観測の枚で
+    /// 取り出しても、観測の秒を積まない。応答の `lastTime` に観測の秒が出ていた (#2357)。
+    @Test("時刻を指定した観測の枚で取り出しても、最後に届いた時刻は作者の時計の秒")
+    func lastArrivalTimeIsTheAuthorsSecondOnAnObservedFrame() throws {
+        let reporting = Reporting()
+        Observed.declared = [Both(reporting: reporting)]
+        let facet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: Observed(), gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
+            observer: FrameObserver(directory: facet))
+        reporting.input.setState(.running)
+        for _ in 0..<3 { try runtime.advance() }
+        // 4 枚目 = 時刻 5 の観測の枚 (作者の時計では 3/60 秒) で値を取り出す
+        reporting.input.send(1)
+        try AtomicFile.write(
+            Data(#"{"id":"t","time":5}"#.utf8), to: facet.appendingPathComponent("request.json"))
+        try runtime.advance()
+        let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
+        let report = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let input = try #require((report["inputs"] as? [[String: Any]])?.first)
+        #expect(input["lastFrame"] as? Int == 4)
+        #expect(input["lastTime"] as? Double == Double(Float(3.0 / 60)), "観測の秒が残った: \(String(describing: input["lastTime"]))")
+        #expect(reporting.input.lastArrival?.time == Float(3.0 / 60))
+        runtime.closePlugins()
+    }
+
     @Test("名乗る入り口が無ければ、鍵ごと載らない")
     func noReportingInletsNoKey() throws {
         Observed.declared = []

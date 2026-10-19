@@ -47,6 +47,10 @@ nonisolated struct Playhead: Equatable {
     private var pendingJump: Double?
     /// 最後に進めたフレームの時刻。
     private var lastTime: Double?
+    /// 最後の ``advance(to:)`` が数えた起点 (再生中だったフレームだけ)。**終わりに達したフレームでも
+    /// 残る** — ``position(at:)`` が、そのフレームを別の時刻で覗くのに要る (#2357)。再生を変える
+    /// 操作 (``play()``・``loop()``・``pause()``・``jump(to:)``) が空にする。
+    private var projection: Anchor?
 
     init(duration: Double) {
         self.duration = duration
@@ -76,6 +80,7 @@ nonisolated struct Playhead: Equatable {
     }
 
     private mutating func start() {
+        projection = nil
         guard !isPlaying else { return }
         if hasEnded { position = 0 }
         isPlaying = true
@@ -86,6 +91,7 @@ nonisolated struct Playhead: Equatable {
     mutating func pause() {
         isPlaying = false
         anchor = nil
+        projection = nil
     }
 
     /// 次のフレームで `seconds` 秒の位置を映す。範囲の外は 0 か長さへ寄せる。
@@ -95,12 +101,14 @@ nonisolated struct Playhead: Equatable {
         guard seconds.isFinite else { return false }
         pendingJump = min(max(seconds, 0), duration)
         anchor = nil
+        projection = nil
         return true
     }
 
     /// フレームの時刻 `time` (秒) まで進め、映す位置を返す。
     mutating func advance(to time: Double) -> Double {
         lastTime = time
+        projection = nil
         if let target = pendingJump {
             position = target
             pendingJump = nil
@@ -110,9 +118,11 @@ nonisolated struct Playhead: Equatable {
         guard let anchor else {
             // 始めたフレーム。位置は動かさず、ここから数える
             anchor = Anchor(time: time, position: position)
+            projection = anchor
             if isLooping { position = wrapped(position) }
             return position
         }
+        projection = anchor
         let raw = anchor.position + (time - anchor.time)
         if isLooping {
             position = wrapped(raw)
@@ -126,6 +136,22 @@ nonisolated struct Playhead: Equatable {
             position = max(0, raw)
         }
         return position
+    }
+
+    /// 状態を進めずに、フレームの時刻 `time` (秒) に映す位置を返す。**覗くだけで、積まない。**
+    ///
+    /// 時刻を指定した観測の枚が、指定の秒に当たるコマを映すのに使う。再生位置・起点・再生中かの
+    /// 状態は ``advance(to:)`` が作者の時計の秒で進めたもののままで、観測の秒を受けない
+    /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。呼ぶのは ``advance(to:)`` の後
+    /// (その枚の起点が決まった後) で、再生中でなければいまの位置である。
+    ///
+    /// **このフレームで終わりに達していても、起点から数え直す。** 観測の秒が終わりより手前なら、手前の
+    /// コマを映す (終わりに達したのは作者の時計の秒で、観測の秒ではない)。
+    func position(at time: Double) -> Double {
+        guard let projection else { return position }
+        let raw = projection.position + (time - projection.time)
+        if isLooping { return wrapped(raw) }
+        return raw >= duration ? duration : max(0, raw)
     }
 
     /// 長さで折り返した位置。**継ぎ目の手前 ``tolerance`` までは頭とみなす** — 単精度の丸めで

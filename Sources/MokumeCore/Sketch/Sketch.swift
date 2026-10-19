@@ -295,7 +295,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// | 何もしない | 毎フレーム | +1 | 進む | 1/fps | 届く |
     /// | ``SketchPart/pauseTime()`` の間 | 呼ばれる | +1 | 止まる | 0 | 届く |
     /// | ``SketchPart/jumpTime(_:)`` の枚 | 呼ばれる | +1 | 指定の秒へ跳ぶ | 0 | 届く |
-    /// | 時刻を指定した観測の 1 枚 | 呼ばれる | +1 | その枚だけ指定の秒 | 0 | 届く |
+    /// | 時刻を指定した観測の 1 枚 | 呼ばれる | +1 | その枚だけ指定の秒 (``Sketch/draw()`` の中では。入力のコールバックは作者の時計の秒) | 0 | 届く |
     /// | ``SketchPart/noLoop()`` の間 | 呼ばれない | 止まる | 止まる | — | コールバックは呼ばれる |
     /// | ``SketchPart/redraw()`` | 1 回 | +1 | 1/fps 進む | 1/fps | 届く |
     /// | 外からの停止 (`watch`・MCP) | 呼ばれない | 止まる | 止まる | 再開した枚は 1/fps | 溜まる |
@@ -609,12 +609,22 @@ extension SketchPart {
     ///
     /// 作品の側から止める・飛ぶこともできる (``pauseTime()`` / ``jumpTime(_:)``)。
     ///
+    /// **時刻を指定した観測の枚では、観測の秒を読むのは ``Sketch/draw()`` の中だけである。** 入力の
+    /// コールバックが読むのは作者の時計の秒で、`keyPressed()` の `jumpTime(time + 0.25)` が作者の時計を
+    /// 観測の秒へ飛ばさない。動画の再生位置と録った音の起点も、作者の時計の秒で進む。
+    ///
     /// ```swift
     /// circle(sin(time) * 200 + width / 2, height / 2, 40)
     /// ```
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
+    /// 作者の時計の上の、いまのフレームの時刻 (秒)。**時刻を指定した観測の枚でも作者の時計の値**で、
+    /// 観測でない枚では ``time`` と同じ値。
+    ///
+    /// 本体の上に載る部品 (動画・録った音) が、再生位置や起点という**状態**を進めるのに読む。
+    /// ``time`` を読むと、観測の枚の指定秒が状態として残る ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
+    package var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
     /// 前のフレームからの経過 (秒)。
     ///
     /// **フレームの時計** (書き出しと、``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``

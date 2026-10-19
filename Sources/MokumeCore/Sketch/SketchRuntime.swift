@@ -429,7 +429,18 @@ public final class SketchRuntime {
     /// これまでに描いたフレームの数。
     public var frameCount: Int { timing.frameCount }
     /// いまのフレームの時刻 (秒)。
-    public var time: Float { timing.time }
+    ///
+    /// **時刻を指定した観測の枚では、観測の秒を読むのは ``Sketch/draw()`` (と、その直前の入り口の供給)
+    /// の間だけである。** それ以外 — 入力のコールバック・`setup()`・止まっている間 — は作者の時計の秒を
+    /// 読む。観測の秒がここから漏れると、コールバックで `jumpTime(time + 0.25)` したとき、作者の時計が
+    /// 観測の秒へ飛ぶ ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。観測でない枚では
+    /// どちらも同じ値である。
+    public var time: Float { showsObservedTime ? timing.time : timing.authorTime }
+    /// 作者の時計の上の、いまのフレームの時刻 (秒)。**観測の指定秒が描き直す枚でも作者の時計の値。**
+    /// 本体が持つ状態 (動画の再生位置・録った音の起点) はこちらで進める。
+    var authorTime: Float { timing.authorTime }
+    /// ``Sketch/draw()`` と入り口の供給が、観測の秒を読んでいる間だけ立つ。``time`` を参照。
+    private var showsObservedTime = false
     /// 前のフレームからの経過 (秒)。
     public var deltaTime: Float { timing.deltaTime }
     /// 時刻の出どころ。意味の説明は ``SketchPart/clock`` が正本。
@@ -884,6 +895,10 @@ public final class SketchRuntime {
         try canvas.draw {
             withActiveRuntime {
                 if !deliveredInput { input.beginFrame { deliver($0) } }
+                // **観測の秒を読ませるのは、ここから `draw()` の終わりまで。** 上の入力のコールバックは
+                // 作者の時計の秒を読む (``time``・#2357)
+                showsObservedTime = true
+                defer { showsObservedTime = false }
                 // **押した・離した (`keyboard.justPressed`) は、描いたフレームの終わりで消す。**
                 // 止めている間に配った分は、ここを通るまで残る (`InputState.endFrame()`)
                 defer { input.endFrame() }

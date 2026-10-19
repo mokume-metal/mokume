@@ -219,4 +219,63 @@ struct ObservationTimeTests {
         #expect(try Data(contentsOf: saved) == Data(contentsOf: path.appendingPathComponent("frame-000.png")))
     }
 
+    // MARK: - 観測の秒は draw() の外に残らない (#2357)
+
+    /// `TimeAndScrub` の形: 矢印キーで `jumpTime(time + 0.25)` する作品。
+    final class Scrubs: Sketch {
+        init() {}
+        let settings = SketchSettings(width: 32, height: 24)
+        var callbackTimes: [Float] = []
+        var drawTimes: [Float] = []
+        func draw() {
+            drawTimes.append(time)
+            background(0)
+        }
+        func keyPressed() {
+            callbackTimes.append(time)
+            jumpTime(time + 0.25)
+        }
+    }
+
+    private static let arrowRight = InputEvent.keyDown(
+        code: .arrowRight, characters: "\u{F703}", isRepeat: false)
+
+    /// 観測の枚に当たった矢印キーの `jumpTime(time + 0.25)` が、作者の時計を観測の秒 (5.25) へ飛ばしていた。
+    @Test("観測の枚に当たった入力のコールバックは作者の時計の秒を読み、観測の後に時計が飛ばない")
+    func callbacksReadTheAuthorsClockOnAnObservedFrame() throws {
+        let path = try facet(), scene = Scrubs()
+        let runtime = try SketchRuntime(
+            sketch: scene, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
+            observer: FrameObserver(directory: path))
+        for _ in 0..<3 { try runtime.advance() }  // 作者の時計は 3 枚目 = 2/60 秒
+        // 矢印キーを、時刻 5 の観測の枚に当てる (4 枚目 = 作者の時計では 3/60 秒)
+        runtime.input.enqueue(Self.arrowRight)
+        try request(#"{"id":"o","time":5}"#, to: path)
+        try runtime.advance()
+
+        let author = Float(3.0 / 60)
+        #expect(scene.drawTimes.last == 5, "同じ枚の draw() は観測の秒を読む")
+        #expect(scene.callbackTimes == [author], "コールバックが観測の秒を読んだ: \(scene.callbackTimes)")
+        // draw() の外では作者の時計の秒 (観測の秒が残らない)
+        #expect(runtime.time == author)
+
+        try runtime.advance()
+        #expect(scene.drawTimes.last == author + 0.25, "観測の後の時計は 当てる前の秒 + 0.25 に飛ぶ: \(scene.drawTimes)")
+    }
+
+    /// 陰性対照: 観測でない枚の入力のコールバックは、これまでどおり `draw()` と同じ秒を読む。
+    @Test("観測でない枚では、コールバックも draw() も同じ秒を読む")
+    func callbacksAndDrawAgreeOffObservation() throws {
+        let path = try facet(), scene = Scrubs()
+        let runtime = try SketchRuntime(
+            sketch: scene, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
+            observer: FrameObserver(directory: path))
+        for _ in 0..<3 { try runtime.advance() }
+        runtime.input.enqueue(Self.arrowRight)
+        try runtime.advance()
+        #expect(scene.callbackTimes == [Float(3.0 / 60)])
+        #expect(scene.drawTimes.last == Float(3.0 / 60))
+        try runtime.advance()
+        #expect(scene.drawTimes.last == Float(3.0 / 60) + 0.25)
+    }
 }
