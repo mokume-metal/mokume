@@ -122,7 +122,7 @@ public final class AudioIn: Inlet {
     public func supply() {
         source.pump(into: input, at: Double(owner?.time ?? 0))
         if let window = input.take() {
-            levels = AudioAnalysis.analyze(window)
+            levels = AudioAnalyzer.shared.analyze(window)
             isNewFrame = true
         } else {
             isNewFrame = false

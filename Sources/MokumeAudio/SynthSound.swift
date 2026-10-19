@@ -35,7 +35,9 @@ import MokumeDiagnostics
 ///
 /// ## 解析するのは、その音の出口
 ///
-/// 各フレームでは、その音の出口で終わる 1024 標本の窓を ``AudioIn`` と同じ解析に通す。
+/// 各フレームでは、その音の出口で終わる 1024 標本の窓を ``AudioIn`` と同じ解析に通す。窓を切るのは
+/// フレームの頭で、**解析は値が読まれたときまで遅らせる** — 値を読まない音の解析は走らず、読んでも
+/// 結果は毎フレーム解析したのと同じである。
 /// オシレータとノイズなら音量と包絡を掛けた後 (定位を掛ける前)、エフェクトなら処理した後の
 /// 音である。鳴っていない間は無音 (``level`` が 0) になる。
 ///
@@ -63,7 +65,11 @@ public class SynthSound {
     /// 鳴らし始めた (エフェクトなら入力を繋いだ) か。解析はここから始める。
     var isActive = false
 
-    private var levels = AudioLevels.silence
+    /// フレームの頭の窓と、読まれたときに解いた値 (``DeferredLevels``)。
+    private var deferred = DeferredLevels()
+    private var levels: AudioLevels { deferred.levels() }
+    /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
+    var analyses: Int { deferred.analyses }
     private var noticed: Set<String> = []
 
     init(stage: SynthStage, node: RackNode?, name: String) {
@@ -97,18 +103,23 @@ public class SynthSound {
 
     // MARK: - ステージとの受け渡し
 
-    /// フレームごとに、最新の窓を解析する。
+    /// フレームごとに、最新の窓を切り出す。**解析は値が読まれたときまで遅らせる** ([#2379])。
+    ///
+    /// 窓はここ (フレームの頭) で決める。読まれたときに引き直すと、フレームの途中で進んだ標本を
+    /// 拾って値が変わる。
+    ///
+    /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
     func refresh() {
         guard isActive, let node else {
-            levels = .silence
+            deferred.silence()
             return
         }
-        levels = AudioAnalysis.analyze(node.meter.latest(AudioAnalysis.windowSize))
+        deferred.hold(node.meter.latest(AudioAnalysis.windowSize))
     }
 
     /// スケッチが終わった。以後の値は無音。
     func silence() {
-        levels = .silence
+        deferred.silence()
     }
 
     // MARK: - 音の側へ渡す

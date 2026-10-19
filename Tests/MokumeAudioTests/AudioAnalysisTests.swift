@@ -102,4 +102,56 @@ struct AudioAnalysisTests {
         // 499.6 標本ぶん: 500 標本目はまだ届いていない
         #expect(AudioAnalysis.window(of: samples, sampleRate: 1000, endingAt: 0.4996).last == 499)
     }
+
+    // MARK: - 遅らせた解析と、使い回す変換 (#2379)
+
+    /// **使い回す変換で解いた値が、毎回作る変換で解いた値とビット一致する** ([#2379])。製品の経路は
+    /// ``AudioAnalyzer`` の 1 つの setup を使い回すので、同じ窓を何度も、別の窓を挟んでも、
+    /// 毎回作る参照の形 (``AudioAnalysis/analyze(_:)``) と同じ値でなければならない。
+    ///
+    /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
+    @Test("使い回す変換の解析は、毎回作る変換の解析と、窓を替えて繰り返してもビット一致する")
+    func sharedTransformMatchesTheFreshOne() {
+        let windows = [sine(band: 32), sine(band: 7, amplitude: 0.3), sine(band: 100, amplitude: 0.8)]
+        for _ in 0..<3 {
+            for window in windows {
+                #expect(AudioAnalyzer.shared.analyze(window) == AudioAnalysis.analyze(window))
+            }
+        }
+    }
+
+    /// **解析は読まれたときだけ、1 回だけ。窓は置いたときのもの** (``DeferredLevels``)。
+    @Test("遅らせた解析は、読まれたときに 1 回だけ、最後に置かれた窓を解く")
+    func deferredLevelsSolveOnceOnReadFromTheLatestWindow() {
+        var deferred = DeferredLevels()
+        let first = sine(band: 12)
+        let second = sine(band: 40, amplitude: 0.5)
+
+        // 読まれる前は何も解かない。窓を置き換えても同じ
+        deferred.hold(first)
+        deferred.hold(second)
+        #expect(deferred.analyses == 0)
+
+        // 読むと最後の窓を解き、同じ窓を何度読んでも解析は 1 回
+        let solved = deferred.levels()
+        #expect(solved == AudioAnalysis.analyze(second))
+        #expect(deferred.levels() == solved)
+        #expect(deferred.analyses == 1)
+
+        // 次の窓を置いて、読まれなければ解かない
+        deferred.hold(first)
+        #expect(deferred.analyses == 1)
+        #expect(deferred.levels() == AudioAnalysis.analyze(first))
+        #expect(deferred.analyses == 2)
+    }
+
+    @Test("無音にすると、置かれていた窓を解かずに捨て、無音を返す")
+    func silencingDropsTheHeldWindow() {
+        var deferred = DeferredLevels()
+        #expect(deferred.levels() == .silence)
+        deferred.hold(sine(band: 12))
+        deferred.silence()
+        #expect(deferred.levels() == .silence)
+        #expect(deferred.analyses == 0)
+    }
 }
