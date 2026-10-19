@@ -18,6 +18,53 @@ nonisolated final class RecordingBroadcaster: Broadcasting, Sendable {
     func broadcast(_ text: String) { store.withLock { $0.append(text) } }
 }
 
+/// 作り物の受け口の繋ぎの台帳 (#2940)。通信の揺れを入れずに、束の補助が相手をどう扱うかを確かめる。
+/// 繋がった相手の数だけを持つ。
+nonisolated final class ScriptedRoom: Broadcasting, Sendable {
+    private let count = Mutex(0)
+    var clientCount: Int { count.withLock { $0 } }
+    func broadcast(_ text: String) {}
+    func join() { count.withLock { $0 += 1 } }
+    func leave() { count.withLock { $0 -= 1 } }
+
+    /// この台帳を数える入り口。
+    @MainActor
+    func server() throws -> TCPServer {
+        let server = TCPServer(
+            port: nil, name: "tcp (scripted)", source: RecordedSource<String>(batches: []),
+            clients: self, owner: nil, warn: { _ in })
+        try server.open()
+        return server
+    }
+}
+
+/// 作り物の相手 (#2940)。**本物の繋ぎは使わない** — 本物は負荷で名乗ることがあり、替えた回数が揺れる。
+///
+/// `script` の状態で作られる。繋がる (`.ready`) 相手は、作られたとき台帳に加わり、閉じられたとき外れる。
+nonisolated final class ScriptedPeer: LoopbackPeer {
+    let state: PeerState
+    private let room: ScriptedRoom
+    private let closed = Mutex(false)
+
+    init(_ state: PeerState, in room: ScriptedRoom) {
+        self.state = state
+        self.room = room
+        if state == .ready { room.join() }
+    }
+
+    var isClosed: Bool { closed.withLock { $0 } }
+
+    func close() {
+        let firstClose = closed.withLock { flag -> Bool in
+            let wasOpen = !flag
+            flag = true
+            return wasOpen
+        }
+        guard firstClose else { return }
+        if state == .ready { room.leave() }
+    }
+}
+
 /// 繋いでくる相手を待つ入り口・TCP (#2018)。GPU は要らない。通信は 127.0.0.1 だけで行い、
 /// ポートは OS が選ぶ (0 を頼む)。相手は `nc` の代わりに ``StreamClient`` が務める。
 ///
@@ -41,9 +88,10 @@ struct TCPServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let peer = StreamClient(port: port)
-        defer { peer.close() }
-        #expect(await clients(server, reach: 1))
+        let peers = PeerGroup { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server)
+        let peer = peers[0]
 
         peer.send("0.25\nhit\r\n\n")
         peer.send("0.")
@@ -60,11 +108,10 @@ struct TCPServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let first = StreamClient(port: port)
-        defer { first.close() }
-        let second = StreamClient(port: port)
-        defer { second.close() }
-        #expect(await clients(server, reach: 2))
+        let peers = PeerGroup(2) { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server)
+        let (first, second) = (peers[0], peers[1])
 
         first.send("0.5")
         first.finish()
@@ -82,9 +129,10 @@ struct TCPServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let peer = StreamClient(port: port)
-        defer { peer.close() }
-        #expect(await clients(server, reach: 1))
+        let peers = PeerGroup { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server)
+        let peer = peers[0]
 
         peer.send("before\n")
         peer.send([0x68, 0xFF, 0x0A])  // 'h' と、UTF-8 に現れないバイト
@@ -102,11 +150,10 @@ struct TCPServerTests {
         let told = Told()
         let (server, port) = try await listening(told: told)
         defer { server.close() }
-        let first = StreamClient(port: port)
-        defer { first.close() }
-        let second = StreamClient(port: port)
-        defer { second.close() }
-        #expect(await clients(server, reach: 2))
+        let peers = PeerGroup(2) { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server)
+        let (first, second) = (peers[0], peers[1])
 
         server.write("hit\n")
         server.write("size 0.5")
@@ -124,8 +171,10 @@ struct TCPServerTests {
         #expect(told.count(containing: "No client is connected to the TCP server on port 0") == 1)
         #expect(told.count(containing: "\"a\"") == 1)
 
-        let peer = StreamClient(port: port)
-        #expect(await clients(server, reach: 1))
+        let peers = PeerGroup { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server)
+        let peer = peers[0]
         server.write("c")
         #expect(await until { peer.received == "c" })
         peer.close()
@@ -141,9 +190,10 @@ struct TCPServerTests {
     func stopEndsEverything() async throws {
         let told = Told()
         let (server, port) = try await listening(told: told)
-        let peer = StreamClient(port: port)
-        defer { peer.close() }
-        #expect(await clients(server, reach: 1))
+        let peers = PeerGroup { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server)
+        let peer = peers[0]
 
         server.close()
         #expect(server.state == .stopped)
@@ -189,9 +239,10 @@ struct TCPServerTests {
         let told = Told()
         let (live, port) = try await listening(told: told)
         defer { live.close() }
-        let peer = StreamClient(port: port)
-        defer { peer.close() }
-        #expect(await clients(live, reach: 1))
+        let peers = PeerGroup { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: live)
+        let peer = peers[0]
         peer.send(textScript.map { $0 + "\n" }.joined())
         let received = await collect(live, count: textScript.count)
 
@@ -233,10 +284,113 @@ struct TCPServerTests {
 
         holder.release()
         #expect(await until { server.state == .running })
-        let peer = StreamClient(port: port)
-        defer { peer.close() }
+        let peers = PeerGroup { StreamClient(port: port) }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server)
+        let peer = peers[0]
         peer.send("back\n")
         #expect(await collect(server, count: 1) == ["back"])
+    }
+
+    // MARK: - 相手の束 (#2940)
+
+    /// 期待した `#require` の失敗 (受け口が数えない) だけを既知として受ける。補助の別の失敗は吸わない。
+    private nonisolated static func isNotReached(_ issue: Issue) -> Bool {
+        issue.comments.contains { $0.rawValue.contains("受け口が数えたのは") }
+    }
+
+    @Test("束は、繋がっていない相手を猶予の後に新しい相手に替え、繋がった相手は替えず、全員が繋がるのを待つ")
+    func peerGroupReplacesPeersThatAreNotConnected() async throws {
+        let room = ScriptedRoom()
+        let server = try room.server()
+        defer { server.close() }
+
+        var made: [ScriptedPeer] = []
+        let peers = PeerGroup(3) {
+            // 全体で 2 つ目に作る相手 (2 人目の最初) は、繋ぎが成り立たないと名乗って繋がらない。
+            // 3 つ目に作る相手 (3 人目) は、何も名乗らずに繋ぎの途中のまま止まる
+            let state: PeerState =
+                switch made.count {
+                case 1: .trouble("waiting (scripted)")
+                case 2: .connecting
+                default: .ready
+                }
+            let peer = ScriptedPeer(state, in: room)
+            made.append(peer)
+            return peer
+        }
+        defer { peers.closeAll() }
+        try await peers.reach(on: server, within: 2)
+
+        #expect(server.connected == 3)
+        // 替えたのは繋がっていなかった 2 人 (名乗った相手と、名乗らない相手) で、古い相手は閉じられた。
+        // 繋がった 1 人目は替えない。3 人 + 替え 2 回で 5 つ作った
+        #expect(peers.replaced == 2)
+        #expect(made.count == 5)
+        #expect(made.map(\.isClosed) == [false, true, true, false, false])
+    }
+
+    @Test("束は、猶予の前には替えない")
+    func peerGroupWaitsForTheGraceBeforeReplacing() async throws {
+        let room = ScriptedRoom()
+        let server = try room.server()
+        defer { server.close() }
+
+        var made = 0
+        let peers = PeerGroup {
+            made += 1
+            return ScriptedPeer(made == 1 ? .trouble("waiting (scripted)") : .ready, in: room)
+        }
+        defer { peers.closeAll() }
+        let start = Date()
+        // 替える回数 3・期限 2 秒なので、猶予は 0.5 秒
+        try await peers.reach(on: server, replacements: 3, within: 2)
+        #expect(Date().timeIntervalSince(start) >= 0.5)
+        #expect(made == 2)
+    }
+
+    @Test("束は、替える回数に上限を持ち、越えたら受け口の数・相手の様子を名乗って期限で止まる")
+    func peerGroupStopsReplacingAtTheLimit() async throws {
+        let room = ScriptedRoom()
+        let server = try room.server()
+        defer { server.close() }
+
+        var made = 0
+        let peers = PeerGroup {
+            made += 1
+            return ScriptedPeer(.trouble("waiting (scripted)"), in: room)
+        }
+        defer { peers.closeAll() }
+        try await withKnownIssue {
+            try await peers.reach(on: server, replacements: 2, within: 0.6)
+        } matching: {
+            Self.isNotReached($0)
+        }
+        #expect(peers.replaced == 2)
+        #expect(made == 3)
+    }
+
+    @Test("束の失敗の文面は、受け口の状態・数・替えた回数と、相手ごとの状態を名乗る")
+    func peerGroupFailureNamesTheServerAndEveryPeer() async throws {
+        let room = ScriptedRoom()
+        let server = try room.server()
+        defer { server.close() }
+
+        let peers = PeerGroup(2) {
+            ScriptedPeer(.trouble("waiting (scripted)"), in: room)
+        }
+        defer { peers.closeAll() }
+        let said = Mutex("")
+        try await withKnownIssue {
+            try await peers.reach(on: server, replacements: 0, within: 0.2)
+        } matching: { issue in
+            said.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
+            return Self.isNotReached(issue)
+        }
+        let text = said.withLock { $0 }
+        #expect(text.contains("2 人のうち、受け口が数えたのは 0 人"))
+        #expect(text.contains("受け口の状態: ") && text.contains("running"))
+        #expect(text.contains("#0 waiting (scripted)") && text.contains("#1 waiting (scripted)"))
     }
 
     // MARK: - 作る口
