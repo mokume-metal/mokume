@@ -183,7 +183,7 @@ struct FallbackTypefaceStyleTests {
     /// 合成の材料: 引き直しの判断を、CoreText の答えではなく差し替えた閉包で見る。
     private static func restyle(
         from name: String, requested: CTFontSymbolicTraits, copyReturns: String?, glyph: CGGlyph
-    ) -> (font: CTFont, glyph: CGGlyph) {
+    ) -> (font: CTFont, glyph: CGGlyph, lacksStyle: Bool) {
         let from = font(name)
         return Typeface.restyledFallback(
             from, glyph: 7, requested: requested,
@@ -198,9 +198,11 @@ struct FallbackTypefaceStyleTests {
         let none = Self.restyle(from: "HiraginoSans-W3", requested: .traitBold, copyReturns: "HiraginoSans-W6", glyph: 0)
         #expect(CTFontCopyPostScriptName(none.font) as String == "HiraginoSans-W3")
         #expect(none.glyph == 7)
+        #expect(none.lacksStyle, "太字を欠いたままなので、知らせる側に欠くと伝える")
         let found = Self.restyle(from: "HiraginoSans-W3", requested: .traitBold, copyReturns: "HiraginoSans-W6", glyph: 9)
         #expect(CTFontCopyPostScriptName(found.font) as String == "HiraginoSans-W6")
         #expect(found.glyph == 9)
+        #expect(!found.lacksStyle, "太字で描けたので、欠くと伝えない")
     }
 
     @Test("頼んだ性質に近づかない面・面が引けない書体・既に頼んだ面を持つ代わりは、引き直さない")

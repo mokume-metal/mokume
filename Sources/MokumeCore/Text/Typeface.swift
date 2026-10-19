@@ -281,6 +281,8 @@ final class Typeface {
         var font = base
         var glyph = Self.glyphIndex(of: scalar, in: font)
         let fellBack = glyph == 0
+        // 代わりの書体の面が頼んだ性質を欠くか。判定は ``restyledFallback`` が 1 度だけ行い、控える時に使う
+        var fallbackLacksStyle = false
         if fellBack {
             // この書体が覆えない文字。環境が持つ別の書体から引く
             let text = String(scalar) as CFString
@@ -290,7 +292,7 @@ final class Typeface {
                 // CoreText は、太字を持てなかった (劣化した) base に合わせて代わりを選ぶ。引いた書体が
                 // 頼んだ面を持つなら、その面で引き直す ([#2770])
                 let picked = font
-                (font, glyph) = Self.restyledFallback(
+                (font, glyph, fallbackLacksStyle) = Self.restyledFallback(
                     picked, glyph: glyph, requested: Self.traits(of: request.style),
                     copy: { CTFontCreateCopyWithSymbolicTraits(picked, CTFontGetSize(picked), nil, $0, $0) },
                     glyphIndex: { Self.glyphIndex(of: scalar, in: $0) })
@@ -306,17 +308,13 @@ final class Typeface {
             font: font, glyph: glyph, advance: Float(advance.width),
             fontKey: (CTFontCopyPostScriptName(font) as String?) ?? "")
         resolved[scalar] = entry
-        if fellBack,
-            Self.lacksStyle(fallback: font, glyph: glyph, requested: Self.traits(of: request.style))
-        {
-            onFallbackLackingStyle(self, scalar, font)
-        }
+        if fallbackLacksStyle { onFallbackLackingStyle(self, scalar, font) }
         return entry
     }
 
-    /// 代わりの書体から引いた字の面が頼んだ太さ・傾きを欠くとき、**その書体の同じ家族から頼んだ面を
-    /// 引き直す** ([#2770])。引き直した面が字形を持てばその面と字形の番号を、持たなければ写す前の
-    /// 面を返す。欠いていなければ (``lacksStyle(fallback:glyph:requested:)``) 何もしない。
+    /// 代わりの書体から引いた字の面が頼んだ太さ・傾きを欠くとき、**その書体から頼んだ面を引き直す**
+    /// ([#2770])。引き直した面が字形を持てばその面と字形の番号を、持たなければ写す前の面を返す。
+    /// 欠いていなければ (``lacksStyle(fallback:glyph:requested:)``) 何もしない。
     ///
     /// **CoreText は、代わりの書体を、頼んだ面ではなく ``base`` から選ぶ。** 指定した書体が太字を
     /// 持たなければ ``base`` は太字でない面へ倒れており (``makeFont(_:)``)、代わりの書体もその細さに
@@ -324,25 +322,36 @@ final class Typeface {
     /// あるのに W3 で描かれる。指定した書体の面を選ぶ [#2562] の考え (``styledFace(of:traits:copy:)``)
     /// を、代わりの書体にも同じ順で当てる。**合成はしない** — 引ける面が無ければ写す前の面のまま。
     ///
+    /// **引き直した面は、同じ家族の公開の面とは限らない。** 面は `copy` が返した書体で、CoreText が
+    /// 内部の面を返すこともある (Times New Roman の太字は、家族名 `.Times Fallback` の `.TimesFB-Bold`)。
+    /// 家族をまたいで探し直すことはしない — 代わりの書体が太字を持たない家族 (ハングルの
+    /// AppleMyungjo など) は、引き直しても細いまま残る。
+    ///
     /// 引き直した面は、頼んだ性質を**写す前の面より多く**持つときだけ採る。別の面へ入れ替わるだけで
     /// 何も頼みに近づかない引き直し (斜体の面が無くて太さの違う面が返る、など) は採らない。
     /// 面の引き方 (`copy`) と字形の引き方 (`glyphIndex`) を CoreText から切り離してあるので、
     /// 字形が無いときの振る舞いを、どの機械でも同じ答えを返す材料で検査できる。
+    ///
+    /// 返す `lacksStyle` は、**返した面**が頼んだ性質を欠くか。呼ぶ側が知らせるかの判断に使う。
+    /// 判定 (墨を見るので道筋を作る) は、欠かない面なら 1 度、引き直さなければ 1 度、
+    /// 引き直したときだけ新しい面に 1 度かかる。
     ///
     /// [#2770]: https://github.com/mokume-metal/mokume/issues/2770
     /// [#2562]: https://github.com/mokume-metal/mokume/issues/2562
     static func restyledFallback(
         _ font: CTFont, glyph: CGGlyph, requested: CTFontSymbolicTraits,
         copy: (CTFontSymbolicTraits) -> CTFont?, glyphIndex: (CTFont) -> CGGlyph
-    ) -> (font: CTFont, glyph: CGGlyph) {
-        guard lacksStyle(fallback: font, glyph: glyph, requested: requested) else { return (font, glyph) }
+    ) -> (font: CTFont, glyph: CGGlyph, lacksStyle: Bool) {
+        guard lacksStyle(fallback: font, glyph: glyph, requested: requested) else {
+            return (font, glyph, false)
+        }
         let face = styledFace(of: font, traits: requested, copy: copy).font
         let gained = CTFontGetSymbolicTraits(face).intersection(requested)
         let had = CTFontGetSymbolicTraits(font).intersection(requested)
-        guard gained.rawValue & ~had.rawValue != 0 else { return (font, glyph) }
+        guard gained.rawValue & ~had.rawValue != 0 else { return (font, glyph, true) }
         let faceGlyph = glyphIndex(face)
-        guard faceGlyph != 0 else { return (font, glyph) }
-        return (face, faceGlyph)
+        guard faceGlyph != 0 else { return (font, glyph, true) }
+        return (face, faceGlyph, lacksStyle(fallback: face, glyph: faceGlyph, requested: requested))
     }
 
     /// 描いて測った墨の範囲の控え。`nil` を控えるのは、描いた結果「墨が無い」と分かった字
