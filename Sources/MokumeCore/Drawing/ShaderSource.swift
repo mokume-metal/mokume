@@ -111,9 +111,7 @@ enum ShaderSource {
 
     /// 値の宣言の行。1 行目が `struct Values {` で、名前の行は ``pack(_:)`` と同じ並び。
     static func declarationLines(of values: [String: ShaderValue]) -> [DeclarationLine] {
-        // 4 成分のものを先に並べる。16 バイト境界に揃うものを先に置けば、
-        // 詰め物の入り方が Swift 側の並べ方と一致する
-        let sorted = values.sorted { ($0.value.componentCount, $0.key) > ($1.value.componentCount, $1.key) }
+        let sorted = packingOrder(of: values)
         // 空の構造体は大きさが処理系任せになるので、必ず 1 つは入れておく
         let fields: [DeclarationLine] =
             sorted.isEmpty
@@ -132,9 +130,34 @@ enum ShaderSource {
         declarationLines(of: values).map(\.text).joined(separator: "\n") + "\n"
     }
 
+    /// 値を詰める並び (= 宣言する並び)。**宣言と詰め方が別々に動かないよう、ここで 1 か所に決める。**
+    ///
+    /// 4 成分のものを先に、同じ成分の数なら名前の降順。16 バイト境界に揃うものを先に置けば、
+    /// 詰め物の入り方が Swift 側の並べ方と一致する。
+    private static func packingOrder(
+        of values: [String: ShaderValue]
+    ) -> [(key: String, value: ShaderValue)] {
+        values.sorted { ($0.value.componentCount, $0.key) > ($1.value.componentCount, $1.key) }
+    }
+
+    /// 値の名前ごとの、詰めた並びの中での先頭の位置 (``pack(_:)`` と同じ並び)。
+    ///
+    /// 宣言は組み立てるときに固定され、後から名前も形も変わらない (``ShaderBox/assign(_:_:willChange:)``)
+    /// ので、持ち主は 1 度引いた表で、変えた値だけを詰め直せる (#2790)。
+    static func packedOffsets(of values: [String: ShaderValue]) -> [String: Int] {
+        var offsets: [String: Int] = [:]
+        offsets.reserveCapacity(values.count)
+        var next = 0
+        for (key, value) in packingOrder(of: values) {
+            offsets[key] = next
+            next += value.componentCount
+        }
+        return offsets
+    }
+
     /// 値を、宣言した並びのとおりに詰める。
     static func pack(_ values: [String: ShaderValue]) -> [Float] {
-        let sorted = values.sorted { ($0.value.componentCount, $0.key) > ($1.value.componentCount, $1.key) }
+        let sorted = packingOrder(of: values)
         guard !sorted.isEmpty else { return [0, 0, 0, 0] }
         var packed: [Float] = []
         for (_, value) in sorted { packed.append(contentsOf: value.components) }
@@ -367,6 +390,22 @@ public enum ShaderValue: Equatable, Sendable {
         case .number: 1
         case .pair: 2
         case .color: 4
+        }
+    }
+
+    /// 成分を、詰めた並び (``ShaderSource/pack(_:)``) の `offset` から書き込む。**配列を作らない。**
+    func store(into buffer: UnsafeMutableBufferPointer<Float>, at offset: Int) {
+        switch self {
+        case .number(let value):
+            buffer[offset] = value
+        case .pair(let x, let y):
+            buffer[offset] = x
+            buffer[offset + 1] = y
+        case .color(let color):
+            buffer[offset] = color.red
+            buffer[offset + 1] = color.green
+            buffer[offset + 2] = color.blue
+            buffer[offset + 3] = color.alpha
         }
     }
 
