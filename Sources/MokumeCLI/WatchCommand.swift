@@ -440,12 +440,28 @@ enum WatchCommand {
     /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。新しい絵が
     /// 出るまでの記録もこの合図で足される (#930)。
     static func retire(after session: WatchSession?) async {
-        guard let outcome = await session?.generationPromoted() else { return }
+        announce(await session?.generationPromoted())
+    }
+
+    /// 前の世代を畳んだ結果のうち、人が知るべきもの (期限に掛かった) だけを名乗る。
+    private static func announce(_ outcome: WatchSession.StopOutcome?) {
         switch outcome {
         case .killed: say(killedLine)
         case .abandoned(let pid): say(abandonedLine(pid: pid))
         default: break
         }
+    }
+
+    /// 作り直した子が共有面を作れず自分の窓を開いたとき、見張りが名乗る行 (#2350)。
+    ///
+    /// **子が名乗る理由** (`Could not place …` / `Could not make …`) は端末に既に出ているので、
+    /// ここは見張りの側で起きたこと — 絵と入力が子の窓へ移り、前の世代を畳んだこと — を言う。
+    /// 前の世代が居なかった回 (最初の子) は畳んでいないので、言わない。
+    static func fellBackLine(replacing: Bool) -> String {
+        replacing
+            ? "The new version could not hand its frames to this window, so it opened its own — "
+                + "the previous version is stopped"
+            : "The sketch could not hand its frames to this window, so it opened its own"
     }
 
     /// 終わりの合図の受け口を置く。
@@ -497,6 +513,15 @@ enum WatchCommand {
             // 合図はもう来ないので、ここで畳む (#1142)
             await retire(after: session)
             let line = departedLine(departure)
+            say(line)
+            viewer?.firstFrame.settle()
+            viewer?.preview.report(line, spinning: false)
+        }
+        // **倒れた子は、乗り換えの合図が来ないので、ここで見つける** (#2350)。作り直した子が共有面を
+        // 作れず自分の窓を開いた回は、前の世代が道具の窓に映ったまま並走する
+        if let fallen = await session.retireAfterFallback() {
+            announce(fallen.outcome)
+            let line = fellBackLine(replacing: fallen.replaced)
             say(line)
             viewer?.firstFrame.settle()
             viewer?.preview.report(line, spinning: false)

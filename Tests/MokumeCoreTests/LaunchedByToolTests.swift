@@ -331,6 +331,75 @@ struct LaunchedByToolTests {
         #expect(application.driverDeparted(), "窓へ倒れた見張りの子が、道具の去ったことに気付かない")
     }
 
+    /// **倒れたことを、見張りへ知らせる** ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
+    /// 見張りが前の世代を畳むのは、新しい世代の目録を採った合図が来たときだけで、目録を置かない子には
+    /// 合図が来ない。区画の中に自分の pid の目印を置けば、見張りは乗り換えを待たずに前の世代を畳める。
+    /// 目録の場所をディレクトリに塞いで倒す (区画そのものは書ける)。
+    @Test("共有面を用意できずに窓へ倒れた子は、区画に自分の pid の目印を置く")
+    func aChildThatFallsBackDeclaresItToTheTool() throws {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-viewport-blocked-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: facet.appendingPathComponent(SharedFrameSurface.manifestName, isDirectory: true),
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let pipe = Pipe()
+        let application = try makeApplication()
+        defer { application.willTerminate() }
+        application.toolInput = pipe.fileHandleForReading.fileDescriptor
+        var said: [String] = []
+        application.announce = { said.append($0) }
+
+        application.resolveOutlet(at: facet, owner: "mokume watch")
+
+        #expect(application.endsAfterLastWindowClosed, "目録を置けないのに共有面の経路になった")
+        #expect(said.contains { $0.contains("opening a window and carrying on") }, "\(said)")
+        let marker = WorkDirectory.fellBackURL(
+            forProcess: ProcessInfo.processInfo.processIdentifier, under: facet)
+        #expect(FileManager.default.fileExists(atPath: marker.path), "倒れたことを道具へ知らせていない")
+    }
+
+    /// 倒れなかった子は目印を置かない。置くと、見張りが画面に出ている世代を畳む。
+    @Test("共有面へ差し出せた子は、倒れた目印を置かない")
+    func aChildThatHandsFramesOverLeavesNoMarker() throws {
+        try withProductionFacet(manifest: Self.watchedManifest) { facet in
+            let pipe = Pipe()
+            let application = try makeApplication()
+            defer { application.willTerminate() }
+            application.toolInput = pipe.fileHandleForReading.fileDescriptor
+
+            application.resolveOutlet(owner: "mokume watch")
+
+            let marker = WorkDirectory.fellBackURL(
+                forProcess: ProcessInfo.processInfo.processIdentifier, under: facet)
+            #expect(!FileManager.default.fileExists(atPath: marker.path), "倒れていないのに知らせた")
+        }
+    }
+
+    /// 区画そのものを書けない倒れ方では、知らせようが無い。置けなくても落ちず、窓へ倒れる。
+    @Test("区画を書けずに倒れた子は、目印を置けなくても落ちずに窓を開く")
+    func aChildThatCannotWriteTheFacetStillFallsBack() throws {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-viewport-locked-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: facet.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)
+            try? FileManager.default.removeItem(at: facet)
+        }
+        let pipe = Pipe()
+        let application = try makeApplication()
+        defer { application.willTerminate() }
+        application.toolInput = pipe.fileHandleForReading.fileDescriptor
+
+        application.resolveOutlet(at: facet, owner: "mokume watch")
+
+        #expect(application.endsAfterLastWindowClosed)
+        let marker = WorkDirectory.fellBackURL(
+            forProcess: ProcessInfo.processInfo.processIdentifier, under: facet)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
     // MARK: - 合図を子孫へ継がせない
 
     /// **合図はこのプロセスを起こした道具のもので、このプロセスが起こす子のものではない。**

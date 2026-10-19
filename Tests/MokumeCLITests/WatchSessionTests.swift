@@ -1122,6 +1122,101 @@ struct WatchSessionTests {
         #expect(arriving.isRunning, "まだ映っていない世代へ送っている")
     }
 
+    // MARK: - 倒れた子 (#2350)
+
+    /// 子が置く目印 (`.fell-back.<pid>`)。置き方は子の側 (`SharedFrameSurface.declareFallback`) と同じ綴り。
+    private func placeFellBackMarker(of child: Process, for session: WatchSession) throws -> URL {
+        let facet = WatchCommand.viewportFacet(under: session.facetBase)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let marker = WorkDirectory.fellBackURL(forProcess: child.processIdentifier, under: facet)
+        try Data().write(to: marker)
+        return marker
+    }
+
+    /// **作り直した子が共有面を作れず自分の窓へ倒れた回は、乗り換えの合図が来ない。** 前の世代
+    /// (道具の窓に映る) を畳まないと、2 つの子が次の保存まで走り続け、入力は前の世代へ行く。
+    @Test("倒れた子の知らせが来たら、乗り換えの合図を待たずに前の世代を止め、入力の宛先は新しい子になる")
+    func aChildThatFellBackRetiresTheOutgoingOne() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        #expect(session.outgoing === leaving)
+        // 知らせが来ていないあいだは何も変わらない
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(leaving.isRunning)
+        #expect(session.outgoing === leaving)
+
+        let marker = try placeFellBackMarker(of: arriving, for: session)
+        let result = try #require(await session.retireAfterFallback())
+        #expect(result.replaced)
+        #expect(result.outcome != nil, "前の世代を止めた結果を返していない")
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "前の世代が退役していない")
+        #expect(session.outgoing == nil)
+        #expect(!FileManager.default.fileExists(atPath: marker.path), "見た目印を消していない")
+        // 同じ知らせで、もう 1 度は働かない
+        #expect(await session.retireAfterFallback() == nil)
+
+        // 宛先は倒れた子 (新しい世代)。子は 1 行読んだら終わる
+        session.send("touch\n")
+        waitUntilGone(arriving)
+        #expect(!arriving.isRunning, "入力が倒れた子へ届いていない")
+    }
+
+    /// **乗り換えを待っている世代の目印だけを読む。** 前の世代や、乗り換えた後の世代の目印で、
+    /// 画面に出ている世代を畳まない。
+    @Test("倒れた子の知らせは、乗り換えを待っている世代のものしか読まない")
+    func onlyTheWaitingGenerationsMarkerCounts() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+
+        // 前の世代の目印は、新しい世代のものと取り違えない
+        _ = try placeFellBackMarker(of: leaving, for: session)
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(leaving.isRunning)
+        #expect(session.outgoing === leaving)
+
+        // 乗り換えた後に置かれた目印は読まない (画面に出ている世代を畳まない)
+        await session.generationPromoted()
+        waitUntilGone(leaving)
+        let late = try placeFellBackMarker(of: arriving, for: session)
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(FileManager.default.fileExists(atPath: late.path))
+        #expect(arriving.isRunning)
+    }
+
+    /// 重ねない見張り (窓が出せなかった実行) には乗り換えを待つ世代が居ないので、目印があっても何もしない。
+    @Test("重ねない見張りは、倒れた子の知らせを読まない")
+    func withoutOverlapAMarkerChangesNothing() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; read line", ready: ready), stopTimeout: 0.5)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let child = try #require(session.child)
+
+        _ = try placeFellBackMarker(of: child, for: session)
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(child.isRunning)
+    }
+
     /// 期限を越えたら子を落とす係。
     ///
     /// **`Process` は `Sendable` ではない**が、期限を数えるのは別の走りでなければならない

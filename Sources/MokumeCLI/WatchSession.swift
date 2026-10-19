@@ -1103,6 +1103,39 @@ final class WatchSession {
         return await retireOutgoing()
     }
 
+    /// 起こした子が共有面を作れず自分の窓へ倒れたと知らされていたら、**乗り換えの合図を待たずに**
+    /// 前の世代を退役させる ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
+    ///
+    /// 前の世代を畳むのは、道具の窓が新しい世代の目録を採った合図 (``generationPromoted()``) だけ
+    /// だった。倒れた子は目録を置かないので合図が来ず、前の世代 (道具の窓に映る) と倒れた子 (自分の
+    /// 窓) が次の保存か見張りの終わりまで並走し、道具の窓が拾った出来事は前の世代へ送られ続けた。
+    /// 倒れた子は「乗り換えた」とみなす — 保存した版を走らせるのが見張りの目的で、重ねるのは 1 世代
+    /// だけという規律 (``outgoing``) とも合う。代償は、道具の窓には絵が出ず (最後の絵が残る)、絵と
+    /// 入力は子の窓に移ること。
+    ///
+    /// **知らせは子が区画へ置く目印である** (``WorkDirectory/fellBackURL(forProcess:under:)``)。**乗り換え
+    /// を待っている世代の pid のものだけを見る** — 前の世代や、死んだ世代の目印を新しい世代のものと
+    /// 取り違えない。見た目印は消す。
+    ///
+    /// ``generationPromoted()`` とは別の口である。あちらは「新しい絵が出た」ことを記録へ足し
+    /// (``hasSeenPromotion``)、こちらは絵が道具の窓に出ていないので、足さない。
+    ///
+    /// - Returns: 知らされていなければ `nil`。知らされたなら、前の世代を畳んだかと、その結果
+    ///   (**名乗るのは口の側**・``retireOutgoing()``)。
+    func retireAfterFallback() async -> (replaced: Bool, outcome: StopOutcome?)? {
+        guard awaitingPromotion, let waiting = child else { return nil }
+        let marker = WorkDirectory.fellBackURL(
+            forProcess: waiting.processIdentifier,
+            under: WatchCommand.viewportFacet(under: facetBase))
+        guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
+        try? FileManager.default.removeItem(at: marker)
+        awaitingPromotion = false
+        // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
+        firstFrameSince = nil
+        let replaced = outgoing != nil
+        return (replaced, await retireOutgoing())
+    }
+
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由。
     ///
     /// **起こせなかった回と言葉を分ける** (#2521)。どちらも `ok: true, launched: false` で、
