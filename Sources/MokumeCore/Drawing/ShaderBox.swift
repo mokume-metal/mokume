@@ -43,6 +43,15 @@ final class ShaderBox {
     var bodyName: String { ShaderSource.bodyName(name, url: url) }
     /// いま効いている値。
     private(set) var values: [String: ShaderValue]
+    /// いまの値を、断片へ渡す並びに詰めたもの。**値が変わったときだけ書き換える** (#2790)。
+    ///
+    /// 読むたびに並べて詰め直すと、宣言が増えるほど、列を閉じるたびに払う費用が増える。列・頼みごとが
+    /// 抱えるのはこの配列の写し (値型) で、書き換えるときに誰かが抱えていれば Swift の
+    /// copy-on-write が分けるので、**積んだ後に値を変えても前の仕事は変わらない**。控えるのは 1 つだけで、
+    /// 版ごとの控えは作らない。
+    private(set) var packedValues: [Float]
+    /// 名前ごとの、``packedValues`` の中の先頭の位置。宣言は組み立てるときに固定されるので 1 度引く。
+    private let packedOffsets: [String: Int]
     /// いまのファイルの中身で差し替えられていなければ、その理由。**いま効いている中身と
     /// ファイルが揃えば下りる** (公開の説明は持ち主の `failure`)。
     private(set) var failure: String?
@@ -78,6 +87,8 @@ final class ShaderBox {
         self.name = name
         self.url = url
         self.values = values
+        self.packedValues = ShaderSource.pack(values)
+        self.packedOffsets = ShaderSource.packedOffsets(of: values)
         self.compiledBody = body
         self.label = label
         self.valuesHint = valuesHint
@@ -118,11 +129,12 @@ final class ShaderBox {
         guard !existing.isBitwiseEqual(to: value) else { return true }
         willChange()
         values[name] = value
+        // **詰めた写しも同じ所で書き換える。** 忘れると、列が閉じても次の列が古い値を拾う
+        if let offset = packedOffsets[name] {
+            packedValues.withUnsafeMutableBufferPointer { value.store(into: $0, at: offset) }
+        }
         return true
     }
-
-    /// いまの値を、断片へ渡す並びに詰めたもの。
-    var packedValues: [Float] { ShaderSource.pack(values) }
 
     /// 断片を読み直して、`rebuild` に組ませる。**その場で組む。**
     ///
