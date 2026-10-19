@@ -49,7 +49,7 @@ extension Canvas {
     /// 要るなら同じにする (`isPlacedInAShapeInProgress`)。
     ///
     /// **1 画素ごとに通っても安い。** 状態は呼ばれた時点で直に読み (控えない)、待ちと写しの確かめは
-    /// 前の答えが有効なら省く (``RenderTarget/pixels``・[#2369])。
+    /// 前の答えが有効なら省く (`RenderTarget.pixels`・[#2369])。
     ///
     /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
