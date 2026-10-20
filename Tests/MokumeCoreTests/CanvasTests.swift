@@ -1918,6 +1918,7 @@ struct CanvasTests {
             "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
             "gradientShaderStorage": "勾配で塗る断片 (#2433)。初めて勾配で塗るときに組み、面と同じだけ生きる。作り直さないために持つ",
             "gradientShaderFailed": "勾配の断片を組めなかった印 (#2433)。組めない面では組み直さない",
+            "paintsWithGradient": "いまの断片が勾配の断片かの写し (#2433)。`currentShader` を替えるたびに導き直す (出口の戻しも通る)",
             "lastShadowBakeKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
             "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さと分割数の 1 件だけで、点は 1024 個が上限 (#1785・#1645)。中身は太さと分割数で決まり、フレームに属さない",
             "ringSplitMemo": "周の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",

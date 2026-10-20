@@ -145,7 +145,11 @@ struct Affine2: Sendable, Equatable {
 /// **勾配は `fill(_:)` を呼んだときの座標系で読む。** 呼んだときの変換 (``matrix``) を覚え、描く面の
 /// 座標から勾配の位置を出す式 (``mapping``) を作る。形に焼き付けるとき (保持した形・
 /// ``Canvas/createShape(_:)``) は、置く変換の逆を ``mapping`` へ掛け直す (``rebased(by:)``)。
-struct ResolvedGradient: Sendable, Equatable {
+///
+/// **参照型にしてある** — スタイルは積み降ろしのたびに丸ごと写されるので、勾配を持たない (`nil` の)
+/// ときに写す費用が増えないようにする (勾配を値で持つと、スタイルが 130 バイトほど大きくなり、
+/// `pushStyle()` と `fill(_:)` を毎回呼ぶ円 4000 個が release で 29% 遅くなった)。
+final class ResolvedGradient: Sendable, Equatable {
     /// 勾配の区切りの数の上限。値の区画 (``Canvas/valueSlotCapacity``) に収まる数で、
     /// ``GradientShader`` の宣言が持つ。
     static let stopCapacity = GradientShader.stopCapacity
@@ -226,6 +230,12 @@ struct ResolvedGradient: Sendable, Equatable {
             ResolvedGradient(source: source, matrix: matrix, stops: used, row0: rows.0, row1: rows.1),
             truncated ? .tooManyStops : nil
         )
+    }
+
+    static func == (lhs: ResolvedGradient, rhs: ResolvedGradient) -> Bool {
+        lhs === rhs
+            || (lhs.source == rhs.source && lhs.matrix == rhs.matrix && lhs.stops == rhs.stops
+                && lhs.row0 == rhs.row0 && lhs.row1 == rhs.row1)
     }
 
     private init(

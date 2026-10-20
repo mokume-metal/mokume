@@ -18,12 +18,6 @@ extension Canvas {
     /// 戻して掛ける (置き場所の色 `Placement.fill` が勾配に掛かる)。
     static let gradientMarker = LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: -1)
 
-    /// いま勾配の断片が塗りを持っているか。**不変条件:** `true` なら ``Style/gradient`` がある。
-    var paintsWithGradient: Bool {
-        guard let shader = gradientShaderStorage else { return false }
-        return currentShader === shader
-    }
-
     /// 塗りの頂点が持つ色。勾配で塗るときは印の色、そうでなければ塗りの色。
     ///
     /// **畳む雛形の頂点は印を付けない** (``buildingFlatTemplate``)。雛形の頂点の色は白で、色は置き場所
@@ -49,6 +43,8 @@ extension Canvas {
     /// 勾配を差し替える。**勾配で塗っている列は、変える前に閉じる** — 置いた図形が後の勾配で描かれない
     /// ように (列の値は閉じる時点の勾配が持つ・``livePaint``)。
     func setGradient(_ gradient: ResolvedGradient?) {
+        // 勾配に関わらない (どちらも無い) ときは、何もしない。色を塗り直すたびに通る
+        guard style.gradient != nil || gradient != nil else { return }
         guard style.gradient != gradient else { return }
         if paintsWithGradient { closeBatch() }
         style.gradient = gradient
@@ -60,6 +56,8 @@ extension Canvas {
     /// 勾配で塗るのは、塗りを持ち (`noFill()` でない)、勾配があり、利用者の断片が無いときだけである。
     /// 勾配が要らなくなれば断片を外し、輪郭は基本図形の列へ戻る。
     func syncGradientShader() {
+        // 勾配に関わらない (勾配も断片も無い) ときは、何もしない
+        guard paintsWithGradient || style.gradient != nil else { return }
         let wanted = style.hasFill && style.gradient != nil
         if wanted {
             // 利用者の断片が効いていれば、そちらが勝つ。勾配は覚えておくだけ

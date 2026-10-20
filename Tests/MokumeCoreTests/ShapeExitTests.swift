@@ -168,6 +168,7 @@ enum ShapeExit {
             "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
             "gradientShaderStorage": "勾配で塗る断片 (#2433)。初めて勾配で塗るときに組み、面と同じだけ生きる。作り直さないために持つ",
             "gradientShaderFailed": "勾配の断片を組めなかった印 (#2433)。組めない面では組み直さない",
+            "paintsWithGradient": "いまの断片が勾配の断片かの写し (#2433)。`currentShader` を替えるたびに導き直す (出口の戻しも通る)",
             "lastShadowBakeKey": cache, "discOffsets": cache,
             "ringSplitMemo": "分割数の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#1645)",
             "discSplitMemo": "ringSplitMemo と同じ",

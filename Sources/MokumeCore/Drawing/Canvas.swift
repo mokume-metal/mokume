@@ -1381,8 +1381,15 @@ public final class Canvas {
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader? {
         // 当てた断片が替われば、その面を置いた記録は取り直す (``paintSurfacesNoted``)
-        didSet { paintSurfacesNoted = nil }
+        didSet {
+            paintSurfacesNoted = nil
+            // 勾配の断片か。**置くたびに読む口が多い**ので、断片の比べ合いは替えたときの 1 度に済ませる
+            paintsWithGradient = gradientShaderStorage.map { $0 === currentShader } ?? false
+        }
     }
+    /// いま勾配の断片が塗りを持っているか (``Canvas/currentShader`` が勾配の断片か)。
+    /// **不変条件:** `true` なら ``Style/gradient`` がある。
+    private(set) var paintsWithGradient = false
     /// 勾配で塗る断片 (``GradientShader``)。**初めて勾配で塗るときに組む。** 勾配を持つ間は
     /// ``currentShader`` がこれになる (``syncGradientShader()``)。
     var gradientShaderStorage: Shader?
@@ -2035,8 +2042,10 @@ public final class Canvas {
             if paintsWithGradient, style.gradient != newValue.gradient || !newValue.hasFill {
                 closeBatch()
             }
+            // 勾配に関わるのは、前後のどちらかが勾配を持つか、勾配の断片が塗りを持つときだけ
+            let touchesGradient = paintsWithGradient || style.gradient != nil || newValue.gradient != nil
             style = newValue
-            syncGradientShader()
+            if touchesGradient { syncGradientShader() }
         }
     }
 
