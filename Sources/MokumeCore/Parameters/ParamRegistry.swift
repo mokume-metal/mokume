@@ -42,7 +42,16 @@ struct ParamRegistry {
     var isEmpty: Bool { boxes.isEmpty }
 
     /// いまの姿。**並びは宣言した順** (基底の側から)。
-    var declarations: [ParamDeclaration] { boxes.map(\.box.declaration) }
+    ///
+    /// **値が非有限の宣言は含めない** ([#2858](https://github.com/mokume-metal/mokume/issues/2858))。
+    /// 生まれのときに零へ畳めなかった自作の ``ParamRepresentable`` は非有限の値のまま置かれ
+    /// (``ParamBox`` の説明)、載せると `JSONEncoder` が拒んで、保存 (`params.json`) も応答
+    /// (`report.json`) も**他の値を含めて**書けなくなる。外すのは保存・応答・見張りが宣言の姿を
+    /// 読むこの 1 点だけで、出口ごとには落とさない (ADR-0030 決定 3)。値は宣言を作る (読む) ときに
+    /// 見るので、見張りは値の変化を拾い続け、**値が有限になれば次の保存と応答に戻る**。
+    var declarations: [ParamDeclaration] {
+        boxes.map(\.box.declaration).filter { $0.value.hasOnlyFiniteNumbers }
+    }
 
     /// つまみへ渡す箱。**並びは宣言した順。**
     ///
