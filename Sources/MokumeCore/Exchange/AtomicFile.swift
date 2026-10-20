@@ -81,27 +81,51 @@ package enum AtomicFile {
     /// URL にしか書けない道具 (画像の書き出しなど) を、同じ規約に乗せるための入口。
     /// ``write(_:to:)`` もここを通るので、一時ファイルの名前と後始末は 1 か所で決まる。
     static func write(to url: URL, using body: (URL) throws -> Void) throws {
+        try reserve(url).place(using: body)
+    }
+
+    /// 置く場所と一時ファイルの名前を決めた、これから置く 1 回。**隔離の外へ渡せる。**
+    ///
+    /// 準備 (ディレクトリを作る・断る・落とされた書き手の片付け・連番) は静的な状態に触るので main actor で
+    /// 済ませ、**中身を作って置き換える段 (``place(using:)``) だけを隔離の外で走らせられる**。置き方
+    /// (一時ファイルへ書いて 1 回の置き換え) は同期の ``write(to:using:)`` と同じ 1 つで、裏で
+    /// 走らせても読み手から見えるのは前の中身か新しい中身だけである ([#2381])。
+    ///
+    /// [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+    nonisolated struct Placement: Sendable {
+        let url: URL
+        let temporary: URL
+
+        /// 書き手にファイルを作らせて、出来上がりを原子的に置く。**呼んだ場所で走る** (隔離の外でよい)。
+        func place(using body: (URL) throws -> Void) throws {
+            do {
+                try body(temporary)
+                // 置換は 1 回の syscall で済ませる。先に消してから rename すると、
+                // その隙間に読み手が「ファイルが無い」状態を見る
+                // 本体を走らせている間に置かれたものも見る。見てから置き換えるまでの窓は縮めるだけで、
+                // ゼロにはならない (``AtomicFile/refuseDirectory(_:)``)
+                try AtomicFile.refuseDirectory(url)
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+            } catch {
+                // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない
+                try? FileManager.default.removeItem(at: temporary)
+                throw error
+            }
+        }
+    }
+
+    /// 置く準備をする。途中のディレクトリを作り、書く先がディレクトリなら断り、一時ファイルの名前を決める。
+    ///
+    /// **書く先がディレクトリなら置かない** (本体を走らせる前に断る)。`replaceItemAt` は行き先の種類を
+    /// 見ず、ディレクトリを中身ごと消してファイルに置き換える (#2859)
+    static func reserve(_ url: URL) throws -> Placement {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        // **書く先がディレクトリなら置かない** (本体を走らせる前に断る)。`replaceItemAt` は行き先の種類を
-        // 見ず、ディレクトリを中身ごと消してファイルに置き換える (#2859)
         try refuseDirectory(url)
         sweepAbandonedTemporaries(of: url)
         sequence += 1
-        let temporary = temporaryURL(for: url, writer: getpid(), sequence: sequence)
-        do {
-            try body(temporary)
-            // 置換は 1 回の syscall で済ませる。先に消してから rename すると、
-            // その隙間に読み手が「ファイルが無い」状態を見る
-            // 本体を走らせている間に置かれたものも見る。見てから置き換えるまでの窓は縮めるだけで、
-            // ゼロにはならない (``refuseDirectory(_:)``)
-            try refuseDirectory(url)
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
-        } catch {
-            // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない
-            try? FileManager.default.removeItem(at: temporary)
-            throw error
-        }
+        return Placement(
+            url: url, temporary: temporaryURL(for: url, writer: getpid(), sequence: sequence))
     }
 
     /// 書く先がディレクトリなら、`EISDIR` (`Is a directory`) で断る。
@@ -116,7 +140,7 @@ package enum AtomicFile {
     /// 作成日時を新しい中身へ引き継ぎ、`rename(2)` はそのどれも引き継がず、権限は一時ファイルの
     /// 既定 (0644) になり、拡張属性は消える。ファイル・無い場合の振る舞いを変えない (#2859 の完了条件 4)
     /// ので、窓を狭める直前の検査にとどめた。
-    private static func refuseDirectory(_ url: URL) throws {
+    nonisolated fileprivate static func refuseDirectory(_ url: URL) throws {
         guard isDirectory(url, following: true) else { return }
         throw POSIXError(.EISDIR)
     }
