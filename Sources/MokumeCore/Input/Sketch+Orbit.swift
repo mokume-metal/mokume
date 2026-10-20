@@ -133,7 +133,7 @@ extension SketchPart {
     ///
     /// ```swift
     /// func setup() {
-    ///     orbit.center = SIMD3(width / 2, height / 2, -200)
+    ///     orbit.center = Vector3(width / 2, height / 2, -200)
     ///     orbit.inertia = 0.92          // 離すと流れる
     /// }
     /// ```
@@ -146,7 +146,7 @@ extension SketchPart {
     public var orbit: Orbit {
         get {
             guard let runtime = Self.liveRuntime(.read(returning: "an orbit at the origin with no distance")) else {
-                return Orbit(center: .zero, distance: 0)
+                return Orbit(center: Vector3(0, 0, 0), distance: 0)
             }
             return runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         }

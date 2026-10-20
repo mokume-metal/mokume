@@ -27,7 +27,7 @@ final class GamepadAndPlayers: Sketch {
     private static let unplugged = 36..<100
 
     private var players: [Gamepad] = []
-    private var pos: [SIMD2<Float>] = [[300, 300], [900, 300]]
+    private var pos: [Vector2] = [[300, 300], [900, 300]]
 
     func setup() {
         players = [createGamepad(inputs: Self.left()), createGamepad(inputs: Self.right())]

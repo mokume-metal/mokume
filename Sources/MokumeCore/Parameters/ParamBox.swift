@@ -38,7 +38,7 @@ import Observation
 /// init accessor を通って置き場の初期化へ入り、setter は走らない。前の値が無いので「保つ」が
 /// 成り立たないから、**初期化の 1 点で別の形に畳み、置き場ごとに 1 度だけ名乗る** ([ADR-0030] 決定 3):
 ///
-/// - **値が非有限なら、型の零を載せる** (`0`・`SIMD2(0, 0)`・4 成分とも 0 の色)。作者が書いた値では
+/// - **値が非有限なら、型の零を載せる** (`0`・`Vector2(0, 0)`・4 成分とも 0 の色)。作者が書いた値では
 ///   なくなるが、非有限は保存も応答も書けないので、書いた値のまま残す道が無い。零は宣言した範囲の
 ///   外にもなりうる (範囲は値の不変条件ではない)。自分で書いた ``ParamRepresentable`` が有限の零を
 ///   くれないときは畳めず、書かれた値のまま置いて「畳めなかった」と名乗る
@@ -322,10 +322,10 @@ extension ParamBox: DeclaredParam {
             // 整数は `Int` のまま収める (`Double` を通すと 2^53 を超える整数が丸まる・#2478)
             settled = .int(range.clamped(number))
         case .vector2(let vector):
-            settled = .vector2(SIMD2(range.clamped(vector.x), range.clamped(vector.y)))
+            settled = .vector2(Vector2(range.clamped(vector.x), range.clamped(vector.y)))
         case .vector3(let vector):
             settled = .vector3(
-                SIMD3(range.clamped(vector.x), range.clamped(vector.y), range.clamped(vector.z)))
+                Vector3(range.clamped(vector.x), range.clamped(vector.y), range.clamped(vector.z)))
         case .bool, .string, .color:
             return (incoming, .applied)
         }

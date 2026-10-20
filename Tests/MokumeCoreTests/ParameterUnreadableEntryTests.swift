@@ -24,7 +24,7 @@ struct ParameterUnreadableEntryTests {
     final class Pair: Sketch {
         @Param var gain: Float = 0.5
         @Param var count: Int = 3
-        @Param var pair: SIMD2<Float> = SIMD2(1, 2)
+        @Param var pair: Vector2 = Vector2(1, 2)
         @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
     }
 
@@ -126,7 +126,7 @@ struct ParameterUnreadableEntryTests {
 
         #expect(sketch.count == 8, "読めた値は、読めない 1 件の前後どちらにあっても当たる")
         #expect(sketch.gain == 0.5)
-        #expect(sketch.pair == SIMD2(1, 2))
+        #expect(sketch.pair == Vector2(1, 2))
         #expect(
             report.rejected.contains(.init(name: name, reason: .typeMismatch)),
             "読めなかった 1 件が理由つきで載る: \(report.rejected)")
@@ -162,7 +162,7 @@ struct ParameterUnreadableEntryTests {
 
         #expect(sketch.count == 8)
         #expect(sketch.gain == 0.75)
-        #expect(sketch.pair == SIMD2(3, 4))
+        #expect(sketch.pair == Vector2(3, 4))
         #expect(report.rejected.isEmpty)
         #expect(report.clamped.isEmpty)
     }

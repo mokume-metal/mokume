@@ -36,8 +36,8 @@ struct KnobKindTests {
     func numbersWithoutRangeGetNoKnob() {
         #expect(kind(.float(1)) == .none(.rangeNotDeclared))
         #expect(kind(.int(1)) == .none(.rangeNotDeclared))
-        #expect(kind(.vector2(SIMD2(1, 2))) == .none(.rangeNotDeclared))
-        #expect(kind(.vector3(SIMD3(1, 2, 3))) == .none(.rangeNotDeclared))
+        #expect(kind(.vector2(Vector2(1, 2))) == .none(.rangeNotDeclared))
+        #expect(kind(.vector3(Vector3(1, 2, 3))) == .none(.rangeNotDeclared))
     }
 
     @Test("真偽はトグル、色は色の選択")
@@ -49,8 +49,8 @@ struct KnobKindTests {
     @Test("組は成分ごとのスライダー")
     func vectorsBecomeComponentSliders() {
         let range = ParamRange(-1...1)
-        #expect(kind(.vector2(SIMD2(0, 0)), range: range) == .components(count: 2, range: range))
-        #expect(kind(.vector3(SIMD3(0, 0, 0)), range: range) == .components(count: 3, range: range))
+        #expect(kind(.vector2(Vector2(0, 0)), range: range) == .components(count: 2, range: range))
+        #expect(kind(.vector3(Vector3(0, 0, 0)), range: range) == .components(count: 3, range: range))
     }
 
     @Test("文字は候補から選ぶ。候補が無ければつまみを出さない")
@@ -107,7 +107,7 @@ struct KnobTextTests {
 
     @Test("組は成分を並べる")
     func vectorsShowComponents() {
-        #expect(KnobText.value(of: .vector2(SIMD2(1, 2))) == "1.00, 2.00")
+        #expect(KnobText.value(of: .vector2(Vector2(1, 2))) == "1.00, 2.00")
     }
 }
 

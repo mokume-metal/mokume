@@ -154,10 +154,10 @@ struct SolidStrokePlacement {
         forward = SIMD4(camera.forward, pixelAspect)
         switch camera.projection {
         case .perspective(let fov, _, let near, _):
-            eye = SIMD4(camera.eye, 1)
+            eye = SIMD4(camera.eye.simd, 1)
             parameters = SIMD4(weight, 2 * RuntimeMath.tan(fov / 2), near, height)
         case .orthographic(_, _, let bottom, let top, _, _):
-            eye = SIMD4(camera.eye, 0)
+            eye = SIMD4(camera.eye.simd, 0)
             parameters = SIMD4(weight, abs(bottom - top), 0, height)
         }
         self.color = SIMD4(color.red, color.green, color.blue, color.alpha)

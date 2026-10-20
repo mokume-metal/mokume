@@ -32,8 +32,8 @@ struct ParameterNonFiniteTests {
     final class Typed: Sketch {
         @Param var number: Double = 2
         @Param var single: Float = 10
-        @Param var pair: SIMD2<Float> = SIMD2(1, 2)
-        @Param var triple: SIMD3<Float> = SIMD3(1, 2, 3)
+        @Param var pair: Vector2 = Vector2(1, 2)
+        @Param var triple: Vector3 = Vector3(1, 2, 3)
         @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
         @Param var count: Int = 3
     }
@@ -121,18 +121,18 @@ struct ParameterNonFiniteTests {
     func aSingleBadComponentRefusesTheWholeValue() {
         let sketch = Typed()
 
-        sketch.pair = SIMD2(5, .nan)
-        #expect(sketch.pair == SIMD2(1, 2))
-        sketch.pair = SIMD2(-.infinity, 5)
-        #expect(sketch.pair == SIMD2(1, 2))
+        sketch.pair = Vector2(5, Float.nan)
+        #expect(sketch.pair == Vector2(1, 2))
+        sketch.pair = Vector2(-Float.infinity, 5)
+        #expect(sketch.pair == Vector2(1, 2))
 
         // 3 つの成分のどれでも (真ん中の y でも)
-        sketch.triple = SIMD3(5, 6, .infinity)
-        #expect(sketch.triple == SIMD3(1, 2, 3))
-        sketch.triple = SIMD3(5, .nan, 7)
-        #expect(sketch.triple == SIMD3(1, 2, 3))
-        sketch.triple = SIMD3(.nan, 6, 7)
-        #expect(sketch.triple == SIMD3(1, 2, 3))
+        sketch.triple = Vector3(5, 6, Float.infinity)
+        #expect(sketch.triple == Vector3(1, 2, 3))
+        sketch.triple = Vector3(5, Float.nan, 7)
+        #expect(sketch.triple == Vector3(1, 2, 3))
+        sketch.triple = Vector3(Float.nan, 6, 7)
+        #expect(sketch.triple == Vector3(1, 2, 3))
 
         // 4 つの成分のどれでも (最後の不透明度でも)
         for bad in [
@@ -298,8 +298,8 @@ struct ParameterNonFiniteTests {
 
         #expect(report.rejected == [.init(name: name, reason: .notFinite)])
         #expect(sketch.count == 7, "同じ要求の他の値は入る")
-        #expect(sketch.pair == SIMD2(1, 2))
-        #expect(sketch.triple == SIMD3(1, 2, 3))
+        #expect(sketch.pair == Vector2(1, 2))
+        #expect(sketch.triple == Vector3(1, 2, 3))
         #expect(sketch.tint == LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
         // 応答は置かれ、要求の識別子を echo する
         let reply = try jsonObject(at: facet.appendingPathComponent("report.json"))
@@ -318,7 +318,7 @@ struct ParameterNonFiniteTests {
             from: surface, in: facet)
 
         #expect(report.rejected.isEmpty)
-        #expect(sketch.pair == SIMD2(.greatestFiniteMagnitude, -.greatestFiniteMagnitude))
+        #expect(sketch.pair == Vector2(Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude))
         #expect(sketch.tint.red == .greatestFiniteMagnitude)
     }
 
@@ -335,7 +335,7 @@ struct ParameterNonFiniteTests {
 
         #expect(restoration.discarded == [.init(name: "pair", reason: .notFinite)])
         #expect(sketch.count == 7, "保存の他の値は戻る")
-        #expect(sketch.pair == SIMD2(1, 2))
+        #expect(sketch.pair == Vector2(1, 2))
         #expect(warnings.count == 1 && warnings[0].contains("pair"), "読めない保存として丸ごと捨てた: \(warnings)")
     }
 
@@ -429,8 +429,8 @@ struct ParameterNonFiniteTests {
     func aTupleIsNamedWithItsValue() throws {
         let sketch = Typed()
         let registry = ParamRegistry(of: sketch)
-        let pair = try #require(registry.knobs.first { $0.declaration.name == "pair" } as? ParamBox<SIMD2<Float>>)
-        sketch.pair = SIMD2(5, .nan)
+        let pair = try #require(registry.knobs.first { $0.declaration.name == "pair" } as? ParamBox<Vector2>)
+        sketch.pair = Vector2(5, Float.nan)
         let line = try #require(pair.warnings.message(for: .notFinite))
         #expect(line.contains("pair"))
         #expect(line.contains("nan"))
@@ -525,13 +525,13 @@ struct ParameterNonFiniteTests {
 
     @Test("面から来た組と色も、成分の 1 つが非有限なら値ごと拒む")
     func writeRefusesATupleWithABadComponent() {
-        let pair = ParamBox<SIMD2<Float>>(name: "p", value: SIMD2(1, 2), range: ParamRange(0...10))
-        #expect(pair.write(.vector2(SIMD2(3, .nan))) == .notFinite)
-        #expect(pair.value == SIMD2(1, 2))
+        let pair = ParamBox<Vector2>(name: "p", value: Vector2(1, 2), range: ParamRange(0...10))
+        #expect(pair.write(.vector2(Vector2(3, Float.nan))) == .notFinite)
+        #expect(pair.value == Vector2(1, 2))
 
-        let triple = ParamBox<SIMD3<Float>>(name: "t", value: SIMD3(1, 2, 3))
-        #expect(triple.write(.vector3(SIMD3(3, 4, .infinity))) == .notFinite)
-        #expect(triple.value == SIMD3(1, 2, 3))
+        let triple = ParamBox<Vector3>(name: "t", value: Vector3(1, 2, 3))
+        #expect(triple.write(.vector3(Vector3(3, 4, Float.infinity))) == .notFinite)
+        #expect(triple.value == Vector3(1, 2, 3))
 
         let ink = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
         let tint = ParamBox<LinearRGBA>(name: "c", value: ink)

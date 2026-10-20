@@ -200,10 +200,10 @@ extension Canvas {
         let right = left + width
         let bottom = top + height
 
-        let topLeft = transform.apply(x: left, y: top)
-        let topRight = transform.apply(x: right, y: top)
-        let bottomRight = transform.apply(x: right, y: bottom)
-        let bottomLeft = transform.apply(x: left, y: bottom)
+        let topLeft = transform.placed(x: left, y: top)
+        let topRight = transform.placed(x: right, y: top)
+        let bottomRight = transform.placed(x: right, y: bottom)
+        let bottomLeft = transform.placed(x: left, y: bottom)
 
         // **6 頂点を 1 度の書き込みで積む** ([#1783])。1 頂点ずつ面の並びへ足すと、足す
         // たびに排他の確かめ (`swift_beginAccess`) が走り、字 1 つで 12 回になっていた

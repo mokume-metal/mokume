@@ -1066,9 +1066,9 @@ extension Canvas {
             } else {
                 let (a, b, c) = triangle
                 appendTriangle(
-                    transform.apply(x: points[a].position.x, y: points[a].position.y),
-                    transform.apply(x: points[b].position.x, y: points[b].position.y),
-                    transform.apply(x: points[c].position.x, y: points[c].position.y),
+                    transform.placed(x: points[a].position.x, y: points[a].position.y),
+                    transform.placed(x: points[b].position.x, y: points[b].position.y),
+                    transform.placed(x: points[c].position.x, y: points[c].position.y),
                     colors: (points[a].fill, points[b].fill, points[c].fill),
                     uvs: readsUV ? (uv(a)!, uv(b)!, uv(c)!) : nil)
             }

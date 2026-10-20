@@ -471,8 +471,8 @@ struct SelfCrossingFillTests {
         var checked = 0
         for character in characters {
             for contour in probe.textOutline(String(character), 0, 0)
-            where Self.crossesItself(contour.points) {
-                let ring = centered([contour.points])
+            where Self.crossesItself(contour.outline) {
+                let ring = centered([contour.outline])
                 let result = try tally(ring)
                 checked += 1
                 #expect(
@@ -488,7 +488,7 @@ struct SelfCrossingFillTests {
     func glyphPartsInOneShapeFollowNonzero(_ character: String) throws {
         let probe = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
         probe.textSize(120)
-        let rings = centered(probe.textOutline(character, 0, 0).map(\.points))
+        let rings = centered(probe.textOutline(character, 0, 0).map(\.outline))
         try #require(rings.count >= 2)
         let result = try tally(rings)
         #expect(result.mismatched == 0, "はみ出し \(result.spilled)・塗り漏れ \(result.missing)")

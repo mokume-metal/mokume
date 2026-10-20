@@ -157,12 +157,12 @@ struct TriangulationTests {
         let rings = Canvas.rings(of: path, originX: 123.37, baseline: 456.71)
         let outers = rings.filter { !$0.isHole }
         guard outers.count == 1 else { return }
-        let holes = rings.filter(\.isHole).map(\.points)
+        let holes = rings.filter(\.isHole).map(\.outline)
 
-        let merged = mergeHoles(outer: outers[0].points, holes: holes)
+        let merged = mergeHoles(outer: outers[0].outline, holes: holes)
         let triangles = Triangulation.triangulate(merged)
         let expected =
-            abs(Triangulation.signedArea(outers[0].points))
+            abs(Triangulation.signedArea(outers[0].outline))
             - holes.reduce(0) { $0 + abs(Triangulation.signedArea($1)) }
         #expect(abs(area(of: triangles, points: merged) - expected) <= expected * 0.005)
     }

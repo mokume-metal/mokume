@@ -61,9 +61,9 @@ public struct Model: Equatable, Sendable {
     /// 面は描いて足さない。
     public let skippedLines: Int
     /// 囲みの箱の大きさ。整えたあとの値。
-    public let size: SIMD3<Float>
+    public let size: Vector3
     /// 囲みの箱の中心。整えていれば原点。
-    public let center: SIMD3<Float>
+    public let center: Vector3
 
     /// 置ける形。
     let mesh: SolidMesh
@@ -94,8 +94,8 @@ public struct Model: Equatable, Sendable {
         self.name = name
         self.mesh = mesh
         self.skippedLines = skippedLines
-        self.size = size
-        self.center = center
+        self.size = Vector3(size)
+        self.center = Vector3(center)
         self.identity = Self.nextIdentity()
     }
 }

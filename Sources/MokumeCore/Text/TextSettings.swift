@@ -96,15 +96,22 @@ public nonisolated struct TextFlow: Equatable, Sendable {
 /// 文字の輪郭を成す、閉じた周ひとつ。
 public nonisolated struct TextContour: Equatable, Sendable {
     /// 周を回る点。**最後の点から最初の点へ戻る**ものとして扱う。
-    public let points: [SIMD2<Float>]
+    public var points: [Vector2] { outline.map { Vector2($0) } }
+    /// 点の SIMD の値。**内部の計算 (間引き・並べ直し) はこちらを通る** — 公開の型で持つと、周ごとに
+    /// 全部を包み直すことになる (#2617)。
+    let outline: [SIMD2<Float>]
     /// 内側 (穴) か。`o` の中が該当する。
     ///
     /// 穴として返るかは**書体による** — 既定の書体の `A` は重なった外周として返り、
     /// 三角はこれの立った周にならない (``SketchPart/textOutline(_:_:_:)``)。
     public let isHole: Bool
 
-    public init(points: [SIMD2<Float>], isHole: Bool) {
-        self.points = points
+    public init(points: [Vector2], isHole: Bool) {
+        self.init(outline: points.map(\.simd), isHole: isHole)
+    }
+
+    init(outline: [SIMD2<Float>], isHole: Bool) {
+        self.outline = outline
         self.isHole = isHole
     }
 }

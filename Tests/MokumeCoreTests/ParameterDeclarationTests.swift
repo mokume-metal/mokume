@@ -33,7 +33,7 @@ struct ParameterDeclarationTests {
         @Param var spinning: Bool = true
         @Param(choices: ["circle", "square"]) var shape: String = "circle"
         @Param(name: "ink") var color: LinearRGBA = .display(red: 1, green: 0, blue: 0)
-        @Param var offset: SIMD2<Float> = .init(1, 2)
+        @Param var offset: Vector2 = .init(1, 2)
     }
 
     @Test("宣言した順に、名前・型・範囲・候補が引ける")

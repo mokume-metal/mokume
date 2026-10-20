@@ -75,7 +75,7 @@ final class ShapesFromSVG: Sketch {
                     Placement(
                         x: 900 + column * 170, y: 130 + row * 170,
                         scale: 1.2 + 0.3 * Float(index % 3),
-                        rotation: SIMD3(0, 0, time * (0.4 + 0.2 * Float(index)) + Float(index)),
+                        rotation: Vector3(0, 0, time * (0.4 + 0.2 * Float(index)) + Float(index)),
                         fill: Self.tints[index]))
             }
             shape(mark, at: places)

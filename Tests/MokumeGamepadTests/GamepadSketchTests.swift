@@ -48,7 +48,7 @@ struct GamepadSketchTests {
             GamepadSketch.onSetup = { pad = $0.createGamepad(inputs: inputs) }
             GamepadSketch.onDraw = { _ in
                 guard let pad else { return }
-                seen.append("\(pad.leftStick) \(pad.isPressed(.a)) \(pad.state)")
+                seen.append("\(pad.leftStick.simd) \(pad.isPressed(.a)) \(pad.state)")
             }
             try run(frames: 4)
             return seen

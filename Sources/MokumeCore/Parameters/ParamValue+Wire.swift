@@ -111,14 +111,14 @@ extension ParamValue: Codable {
                 throw DecodingError.dataCorruptedError(
                     forKey: .value, in: container, debugDescription: "vec2 is written with 2 components")
             }
-            self = .vector2(SIMD2(Float(components[0]), Float(components[1])))
+            self = .vector2(Vector2(Float(components[0]), Float(components[1])))
         case .vec3:
             let components = try container.decode([Double].self, forKey: .value)
             guard components.count == 3 else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .value, in: container, debugDescription: "vec3 is written with 3 components")
             }
-            self = .vector3(SIMD3(Float(components[0]), Float(components[1]), Float(components[2])))
+            self = .vector3(Vector3(Float(components[0]), Float(components[1]), Float(components[2])))
         }
     }
 }

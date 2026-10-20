@@ -16,7 +16,7 @@ import simd
 public struct Orbit: Equatable, Sendable {
 
     /// 見ている先 (世界の座標)。
-    public var center: SIMD3<Float>
+    public var center: Vector3
     /// 見ている先からの距離。
     public var distance: Float
     /// 水平角 (ラジアン)。0 で真正面から。
@@ -35,7 +35,7 @@ public struct Orbit: Equatable, Sendable {
     var pitchSpeed: Float = 0
 
     public init(
-        center: SIMD3<Float>, distance: Float, yaw: Float = 0, pitch: Float = 0,
+        center: Vector3, distance: Float, yaw: Float = 0, pitch: Float = 0,
         inertia: Float = 0, minimumDistance: Float = 1, maximumDistance: Float = .infinity
     ) {
         self.center = center
@@ -77,7 +77,7 @@ public struct Orbit: Equatable, Sendable {
         let (width, height) = (width.asFloat, height.asFloat)
         let distance = Camera.fittingDistance(height: height)
         return Orbit(
-            center: SIMD3(width / 2, height / 2, 0), distance: distance,
+            center: Vector3(SIMD3(width / 2, height / 2, 0)), distance: distance,
             minimumDistance: distance / 10, maximumDistance: distance * 10)
     }
 
@@ -117,10 +117,10 @@ public struct Orbit: Equatable, Sendable {
     public static func fitting(_ model: Model) -> Orbit {
         let center = model.center
         let usableCenter = center.x.isFinite && center.y.isFinite && center.z.isFinite
-        let radius = length(model.size) / 2
+        let radius = length(model.size.simd) / 2
         let distance = radius / RuntimeMath.sin(Camera.defaultFieldOfView / 2)
         guard usableCenter, distance.isFinite, distance > 0 else {
-            return Orbit(center: usableCenter ? center : .zero, distance: 1)
+            return Orbit(center: usableCenter ? center : Vector3(0, 0, 0), distance: 1)
         }
         return Orbit(
             center: center, distance: distance,
@@ -130,15 +130,15 @@ public struct Orbit: Equatable, Sendable {
     // MARK: - 視点
 
     /// 見る位置 (世界の座標)。
-    public var eye: SIMD3<Float> {
+    public var eye: Vector3 {
         // 縦軸は下向きなので、見下ろす (正の仰角) と見る位置は -y へ上がる
         let offset = SIMD3<Float>(
             RuntimeMath.sin(yaw) * RuntimeMath.cos(pitch), -RuntimeMath.sin(pitch), RuntimeMath.cos(yaw) * RuntimeMath.cos(pitch))
-        return center + offset * distance
+        return center + Vector3(offset * distance)
     }
 
     /// どちらを上とするか。仰角を限界で止めてあるので、視線と重ならない。
-    public var up: SIMD3<Float> { SIMD3(0, 1, 0) }
+    public var up: Vector3 { Vector3(SIMD3(0, 1, 0)) }
 
     // MARK: - 進める
 
@@ -223,10 +223,10 @@ public struct Orbit: Equatable, Sendable {
         dragX: Float, dragY: Float, through camera: Camera, width: Float, height: Float
     ) -> Bool {
         guard dragX != 0 || dragY != 0 else { return true }
-        let step = camera.worldPerPixel(at: center, width: width, height: height)
-        let moved = center - camera.right * (dragX * step.x) - camera.down * (dragY * step.y)
+        let step = camera.worldPerPixel(at: center.simd, width: width, height: height)
+        let moved = center.simd - camera.right * (dragX * step.x) - camera.down * (dragY * step.y)
         guard moved.x.isFinite, moved.y.isFinite, moved.z.isFinite else { return false }
-        center = moved
+        center = Vector3(moved)
         return true
     }
 
@@ -278,7 +278,7 @@ public struct Orbit: Equatable, Sendable {
     ///   中央 (``fitting(width:height:)`` の見ている先) を渡す。
     /// - Returns: 既定へ倒した値があったか。書く口 (``SketchPart/orbit``) が警告する。
     @discardableResult
-    mutating func clampToLimits(fallbackCenter: SIMD3<Float> = .zero) -> Bool {
+    mutating func clampToLimits(fallbackCenter: Vector3 = Vector3(0, 0, 0)) -> Bool {
         var fellBack = false
         if !(center.x.isFinite && center.y.isFinite && center.z.isFinite) {
             center = fallbackCenter

@@ -1214,7 +1214,7 @@ struct StrokeCamera {
     private let near: Float
 
     init(_ camera: Camera, width: Float, height: Float) {
-        eye = camera.eye
+        eye = camera.eye.simd
         forward = camera.forward
         right = camera.right
         down = camera.down

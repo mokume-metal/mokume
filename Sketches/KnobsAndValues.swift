@@ -123,12 +123,12 @@ final class KnobsAndValues: Sketch {
     @Param var tint: LinearRGBA = color(250, 158, 61)
 
     /// 並び全体のずれ。組は成分ごとのスライダーになる。
-    @Param(-1...1) var drift: SIMD2<Float> = SIMD2(0, 0)
+    @Param(-1...1) var drift: Vector2 = Vector2(0, 0)
 
     /// 下地の色 (赤・緑・青、0–255 の目盛り)。**3 つ組なら 3 本のスライダーが並び、
     /// 範囲は成分ごとに効く。** 色として宣言すれば色の選択になる (``tint``) — こちらは
     /// 成分を 1 本ずつ引きたい値を組のまま持つ形である。
-    @Param(0...80) var backdrop: SIMD3<Float> = SIMD3(18, 20, 28)
+    @Param(0...80) var backdrop: Vector3 = Vector3(18, 20, 28)
 
     /// 右の列の見出し。**候補を書いていない文字なので、窓からは書き換えられない** —
     /// 自由に打てる欄は出さず、値だけを出す。外からは何でも書ける。

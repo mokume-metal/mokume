@@ -50,14 +50,25 @@ public struct Transform: Equatable, Sendable {
     }
 
     /// 点をこの変換で移す (奥行き 0 の面の上の点として)。
-    public func apply(x: some ScalarConvertible, y: some ScalarConvertible) -> SIMD2<Float> {
+    public func apply(x: some ScalarConvertible, y: some ScalarConvertible) -> Vector2 {
+        Vector2(placed(x: x, y: y))
+    }
+
+    /// 奥行きを持つ点をこの変換で移す。
+    public func apply(x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible) -> Vector3 {
+        Vector3(placed(x: x, y: y, z: z))
+    }
+
+    /// ``apply(x:y:)`` の SIMD の値。**内部の計算はこちらを通る** — 公開の型 (``Vector2``) で受け渡して
+    /// も、中身は同じ SIMD で、値は 1 ビットも変わらない (#2617)。
+    func placed(x: some ScalarConvertible, y: some ScalarConvertible) -> SIMD2<Float> {
         let (x, y) = (x.asFloat, y.asFloat)
         let moved = matrix * SIMD4<Float>(x, y, 0, 1)
         return SIMD2<Float>(moved.x, moved.y)
     }
 
-    /// 奥行きを持つ点をこの変換で移す。
-    public func apply(x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible) -> SIMD3<Float> {
+    /// ``apply(x:y:z:)`` の SIMD の値。
+    func placed(x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible) -> SIMD3<Float> {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         let moved = matrix * SIMD4<Float>(x, y, z, 1)
         return SIMD3<Float>(moved.x, moved.y, moved.z)

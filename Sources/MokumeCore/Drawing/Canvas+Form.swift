@@ -149,7 +149,7 @@ extension Canvas {
         let y = c0 * (-axis.y) + c1 * axis.x
         let instance = FormInstance(
             kind: kind, linear: SIMD4(x.x, x.y, y.x, y.y),
-            offset: transform.apply(x: center.x, y: center.y), half: half, arc: arc,
+            offset: transform.placed(x: center.x, y: center.y), half: half, arc: arc,
             halfWeight: style.strokeWeight / 2, cornerRadius: cornerRadius,
             fill: style.fill.components, stroke: style.stroke.components,
             fills: drawsFill, strokes: drawsStroke,

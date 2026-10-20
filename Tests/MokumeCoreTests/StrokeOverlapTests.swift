@@ -680,7 +680,7 @@ struct StrokeOverlapTests {
             { Self.opaqueShape($0, weight: 16, Self.closedSquare) },
             at: [
                 Placement(
-                    x: 30, y: 10, scale: 0.8, rotation: SIMD3(0, 0, 0.4), fill: Self.veil)
+                    x: 30, y: 10, scale: 0.8, rotation: Vector3(0, 0, 0.4), fill: Self.veil)
             ])
         #expect(painted(pixels) > 0)
         #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
@@ -1005,7 +1005,7 @@ struct StrokeOverlapTests {
         let tinted = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 1)
         for placement in [
             Placement(), Placement(fill: tinted),
-            Placement(x: 12, y: 8, scale: 0.9, rotation: SIMD3(0, 0, 0.3)),
+            Placement(x: 12, y: 8, scale: 0.9, rotation: Vector3(0, 0, 0.3)),
         ] {
             let pixels = try drawn(canvas, shape, at: [placement])
             #expect(painted(pixels) > 0)

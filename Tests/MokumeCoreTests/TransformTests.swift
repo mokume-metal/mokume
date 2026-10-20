@@ -113,7 +113,7 @@ struct CircleSegmentTests {
         for point in [SIMD3<Float>(5000, 0, 0), SIMD3(-2500, 1200, 300)] {
             let moved = transform.apply(x: point.x, y: point.y, z: point.z)
             let back = inverse.apply(x: moved.x, y: moved.y, z: moved.z)
-            #expect(simd_length(back - point) <= simd_length(point) * 1e-4, "戻らない: \(back)")
+            #expect(simd_length(back.simd - point) <= simd_length(point) * 1e-4, "戻らない: \(back)")
         }
     }
 
