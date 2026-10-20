@@ -29,7 +29,7 @@ struct TransformTests {
     func positiveAngleTurnsClockwiseOnScreen() {
         // 縦軸が下向きなので、右向きのベクトルを 90 度回すと「下」を向く
         var t = Transform.identity
-        t.rotate(by: .pi / 2)
+        t.rotate(by: Float.pi / 2)
         let moved = t.apply(x: 1, y: 0)
         #expect(abs(moved.x) < 1e-6)
         #expect(abs(moved.y - 1) < 1e-6)
@@ -49,14 +49,14 @@ struct TransformTests {
         // 移動 → 回転 は「移動した先を中心に回る」
         var moveThenTurn = Transform.identity
         moveThenTurn.translate(x: 100, y: 0)
-        moveThenTurn.rotate(by: .pi / 2)
+        moveThenTurn.rotate(by: Float.pi / 2)
         let a = moveThenTurn.apply(x: 10, y: 0)
         #expect(abs(a.x - 100) < 1e-4)
         #expect(abs(a.y - 10) < 1e-4)
 
         // 回転 → 移動 は「原点で回してから移動する」— 結果が違う
         var turnThenMove = Transform.identity
-        turnThenMove.rotate(by: .pi / 2)
+        turnThenMove.rotate(by: Float.pi / 2)
         turnThenMove.translate(x: 100, y: 0)
         let b = turnThenMove.apply(x: 10, y: 0)
         #expect(abs(b.x) < 1e-4)
@@ -77,9 +77,9 @@ struct CircleSegmentTests {
     func invertingATransformReturnsThePoint() throws {
         var transform = Transform.identity
         transform.translate(x: 37, y: -12)
-        transform.rotate(by: .pi / 3)
+        transform.rotate(by: Float.pi / 3)
         transform.scale(x: 2.5, y: 0.4)
-        transform.shearX(by: .pi / 6)
+        transform.shearX(by: Float.pi / 6)
 
         let inverse = try #require(transform.inverted)
         for point in [SIMD2<Float>(0, 0), SIMD2(100, 40), SIMD2(-25, 90)] {
@@ -148,10 +148,10 @@ struct CircleSegmentTests {
     func theOrderOfCompositionMatters() {
         var moveThenTurn = Transform.identity
         moveThenTurn.translate(x: 50, y: 0)
-        moveThenTurn.rotate(by: .pi / 2)
+        moveThenTurn.rotate(by: Float.pi / 2)
 
         var turnThenMove = Transform.identity
-        turnThenMove.rotate(by: .pi / 2)
+        turnThenMove.rotate(by: Float.pi / 2)
         turnThenMove.translate(x: 50, y: 0)
 
         // 移してから回すと、移した先が原点になる

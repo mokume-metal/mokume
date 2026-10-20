@@ -228,8 +228,8 @@ struct RotatedThinStrokeFormulaTests {
         #expect(Canvas.smallestSingularValue(of: drawn { $0.scale(x: 0, y: 0) }) == 0)
         #expect(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: 0, y: 2) }) == 0)
         // 数でない変換は、補わない側 (1 未満と比べて偽)
-        #expect(!(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: .nan, y: 2) }) < 1))
-        #expect(!(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: .infinity, y: 2) }) < 1))
+        #expect(!(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: Float.nan, y: 2) }) < 1))
+        #expect(!(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: Float.infinity, y: 2) }) < 1))
     }
 
     /// 立体の線の太さは出す画素で書かれ、描く画素では細かさの比 (幅 / 刻む幅) で割る。比は単精度で

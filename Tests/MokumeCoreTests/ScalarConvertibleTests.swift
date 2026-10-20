@@ -72,6 +72,74 @@ struct ScalarConvertibleTests {
         #expect(identity.apply(x: asInt, y: 0).x == 3)
     }
 
+    /// **`Transform` のメソッドも、変数をそのまま受ける** ([#2525])。`apply` だけが総称で、積む口 (`translate`・
+    /// `rotate(by:)` など) が `Float` 固定だった割れを閉じた。`let d = 2.0` を `translate(x: d, y: d)` へ
+    /// 渡せ、`Float` で渡したときと同じ行列になる。
+    ///
+    /// 総称の口に値を渡すので、受け口を `Float` に戻すと、ここがコンパイルできず赤くなる
+    /// (`some ScalarConvertible` を `Float` の引数へは渡せない)。
+    ///
+    /// [#2525]: https://github.com/mokume-metal/mokume/issues/2525
+    private func stacked<Value: ScalarConvertible>(_ value: Value) -> Transform {
+        var t = Transform.identity
+        t.translate(x: value, y: value)
+        t.translate(x: value, y: value, z: value)
+        t.rotate(by: value)
+        t.rotateX(by: value)
+        t.rotateY(by: value)
+        t.rotateZ(by: value)
+        t.scale(x: value, y: value)
+        t.scale(x: value, y: value, z: value)
+        t.shearX(by: value)
+        t.shearY(by: value)
+        return t
+    }
+
+    @Test("Transform のメソッドは、Float・Double・Int の変数を受けて同じ行列を組む")
+    func transformMethodsTakeEveryStoredWidth() {
+        let asFloat: Float = 0.5
+        let asDouble: Double = 0.5
+        let reference = stacked(asFloat)
+        // 積んでいなければ、同じになっても何も見ていない
+        #expect(reference != Transform.identity)
+        #expect(stacked(asDouble) == reference)
+        // `Int` は小数を持てないので、`Float` の同じ値と比べる
+        let asInt: Int = 2
+        #expect(stacked(asInt) == stacked(Float(2)))
+        #expect(stacked(asInt) != reference)
+    }
+
+    @Test("Double の変数で組んだ Transform が、Float で組んだときと同じ点を移す")
+    func doubleVariablesBuildTheSameTransformAsFloat() {
+        let d = 2.0
+        var t = Transform.identity
+        t.translate(x: d, y: d)
+        t.rotate(by: d)
+        var reference = Transform.identity
+        reference.translate(x: Float(2), y: Float(2))
+        reference.rotate(by: Float(2))
+        #expect(t == reference)
+        #expect(t.apply(x: 1, y: 0) == reference.apply(x: 1, y: 0))
+        // 動いていなければ、同じになっても何も見ていない
+        #expect(t.apply(x: 1, y: 0) != Transform.identity.apply(x: 1, y: 0))
+    }
+
+    /// 境界: `Float` で表せない端数を持つ `Double` は、受け口で `Float` へ丸まる。**`Float(0.1)` で渡したのと
+    /// 同じ行列**で、`Double` のまま持ち越して別の値になることはない (ADR-0035 決定 1: 中は `Float`)。
+    @Test("Float で表せない端数の Double は、Float へ丸めて渡したときと同じ行列になる")
+    func doubleFractionRoundsLikeFloat() {
+        let fine: Double = 0.1
+        // 丸めていなければ、同じになっても何も見ていない
+        #expect(Double(Float(fine)) != fine)
+        var fromDouble = Transform.identity
+        fromDouble.translate(x: fine, y: fine)
+        fromDouble.rotate(by: fine)
+        var fromFloat = Transform.identity
+        fromFloat.translate(x: Float(0.1), y: Float(0.1))
+        fromFloat.rotate(by: Float(0.1))
+        #expect(fromDouble == fromFloat)
+    }
+
     /// **トップレベルの色と数の口も、変数をそのまま受ける** ([#2255])。Sketch の口と同じく
     /// `Float`・`Double`・`Int` のどれで持っていても通り、`Float` で渡したときと同じ値を返す
     /// (返り値は `Float` のまま — ADR-0035 決定 3)。
@@ -168,6 +236,61 @@ struct ScalarConvertibleSketchPortTests {
         let doubled: Float = degrees(2 * PI)
         #expect(doubled == 360)
         #expect(Transform.identity.apply(x: HALF_PI, y: 0).x == Float.pi / 2)
+    }
+
+    // MARK: - jumpTime
+
+    /// 3 枚目の `draw()` で `jump` を呼び、次の枚の `time` を控える作品。
+    final class Jumps: Sketch {
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
+        var jump: ((Jumps) -> Void)?
+        private(set) var times: [Float] = []
+        private var drawn = 0
+        func draw() {
+            times.append(time)
+            drawn += 1
+            if drawn == 3 { jump?(self) }
+            background(0)
+        }
+    }
+
+    private func landed(after jump: @escaping (Jumps) -> Void) throws -> Float {
+        let sketch = Jumps()
+        sketch.jump = jump
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 })
+        defer { runtime.closePlugins() }
+        for _ in 0..<4 { try runtime.advance() }
+        return try #require(sketch.times.last)
+    }
+
+    /// **`jumpTime(_:)` も、変数をそのまま受ける** ([#2525])。`let s = 1.5; jumpTime(s)` (`s` は `Double`) が
+    /// 組み上がり、`Float` で渡したときと同じ秒へ飛ぶ。受け口を `Float` に戻すと、ここがコンパイルできず赤くなる。
+    ///
+    /// [#2525]: https://github.com/mokume-metal/mokume/issues/2525
+    @Test("jumpTime は、Float・Double・Int の変数を受けて同じ秒へ飛ぶ")
+    func jumpTimeTakesEveryStoredWidth() throws {
+        let asFloat: Float = 1.5
+        let asDouble: Double = 1.5
+        let asInt: Int = 2
+        let reference = try landed { $0.jumpTime(asFloat) }
+        // 飛んでいなければ、同じになっても何も見ていない (飛ばないなら 4 枚目は 3 / 60 秒)
+        #expect(reference == 1.5)
+        #expect(try landed { $0.jumpTime(asDouble) } == reference)
+        #expect(try landed { $0.jumpTime(asInt) } == 2)
+    }
+
+    /// 数でない値を断って飛ばない約束は、`Double` で渡しても変わらない。負の秒は受ける。
+    @Test("Double で渡した数でない秒には飛ばず、負の秒には飛ぶ")
+    func jumpTimeStillRefusesWhatItCannotTake() throws {
+        let notANumber: Double = .nan
+        let infinite: Double = .infinity
+        let steady = Float(3.0 / 60)
+        #expect(try landed { $0.jumpTime(notANumber) } == steady)
+        #expect(try landed { $0.jumpTime(infinite) } == steady)
+        let negative: Int = -1
+        #expect(try landed { $0.jumpTime(negative) } == -1)
     }
 
     // MARK: - Canvas.exposure
