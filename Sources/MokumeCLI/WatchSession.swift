@@ -1131,6 +1131,51 @@ final class WatchSession {
         let marker = WorkDirectory.fellBackURL(forProcess: waiting.processIdentifier, under: facet)
         guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
         try? FileManager.default.removeItem(at: marker)
+        return await retireAsPromoted()
+    }
+
+    /// 起こした子の絵を道具の窓が受け取れないと知らされていたら、**乗り換えの合図を待たずに**
+    /// 前の世代を退役させる ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+    ///
+    /// 知らされる形は、目録が読めない・目録は読めたが番号の面を引けない (``UndeliverableGeneration``)
+    /// の 2 つで、どちらも道具の側で決まる失敗である。同じ目録を読み直しても変わらない (目録の書き手は
+    /// 原子的に置く) ので、時計は要らない。**1 枚も焼かない形はここへ来ない** — `setup()` が長いのと
+    /// 固まったのとは時計なしに見分けられず、前の世代を畳むと絵が凍る (ADR-0032 決定 3)。
+    /// 倒れた子 (``retireAfterFallback()``) と同じく、**乗り換えたとみなす**。代償は、道具の窓には
+    /// 最後の絵が残り、窓の入力は絵の出ない新しい子へ届くこと。
+    ///
+    /// **乗り換えを待っている、生きている世代のぶんだけ受ける。** 知らせは世代の印を持たないので、
+    /// 待っていない回 (前の世代・次の世代・重ねない見張り) は何もしない。子が既に居ない回は
+    /// 「子の離脱」の口 (``departed()``) が畳む — ここでも名乗ると二重になる。窓ごとに知らせが来るので
+    /// (作品の窓とプレビューは独立に目録を読む)、2 度目は待ちが下りていて何もしない。
+    ///
+    /// - Returns: 受けなかったなら `nil`。受けたなら、前の世代を畳んだかと、その結果
+    ///   (**名乗るのは口の側**・``retireOutgoing()``)。
+    func retireAfterUndeliverable(
+        waiting: Process?
+    ) async -> (previous: FallbackPrevious, outcome: StopOutcome?)? {
+        // **知らせを受けた時点の世代と、いまの世代が同じときだけ。** 知らせは世代の印を持たず、`Task` で
+        // 遅れて捌かれる — 作り直しの続きが先に走ると、前の世代 (C) の知らせが次の世代 (D) に当たる
+        // (``waitingGeneration``)。**止めている最中・終えている最中も受けない** (``departed()`` と同じ関所):
+        // 見張りを終える間に名乗ったり畳んだりすると、止める順序を横から割る
+        guard let waiting, waiting === child, awaitingPromotion, waiting.isRunning,
+            !stopRequested, waiting !== stoppingChild, !isBringingDown(waiting)
+        else { return nil }
+        return await retireAsPromoted()
+    }
+
+    /// 乗り換えを待っている、最後に起こした世代。待っていなければ `nil`。
+    ///
+    /// **窓の知らせを受けた時点で、同期に控える** — 捌くのは `Task` で遅れるので、その間に世代が
+    /// 入れ替わっても、知らせが出た世代を ``retireAfterUndeliverable(waiting:)`` が見分けられる。
+    var waitingGeneration: Process? { awaitingPromotion ? child : nil }
+
+    /// 乗り換えを待つ世代を、窓へ乗り換えたものとみなして、前の世代を畳む。
+    ///
+    /// ``retireAfterFallback()`` と ``retireAfterUndeliverable()`` の共通の尾。
+    /// ``generationPromoted()`` とは違い、**新しい絵は出ていない**ので記録へは足さない
+    /// (``hasSeenPromotion`` も立てない)。
+    private func retireAsPromoted() async -> (previous: FallbackPrevious, outcome: StopOutcome?) {
         awaitingPromotion = false
         // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
         firstFrameSince = nil

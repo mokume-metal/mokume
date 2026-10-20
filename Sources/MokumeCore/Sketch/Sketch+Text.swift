@@ -180,9 +180,52 @@ extension SketchPart {
     // shot: 1 snippet=38a1d815
     public func textFont(_ name: String) { Self.liveCanvas()?.textFont(name) }
 
+    /// ファイルから読んだ書体 (``Font``) で描く。``loadFont(_:)`` が返した値を渡す。
+    ///
+    /// 読んだ書体で描くので、作品に書体を同梱でき、配った先の Mac に同じ書体が入っているかに絵が
+    /// 依らない。``textWidth(_:)``・``textBounds(_:_:_:)``・``textOutline(_:_:_:)`` も同じ書体で測る。
+    /// ``noTextFont()`` で既定の書体へ戻り、``textFont(_:)-(String)`` で名前の書体へ替わる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var display: Font? -->
+    ///     ```swift
+    ///     func setup() {
+    ///         display = try? loadFont("/System/Library/Fonts/SFNS.ttf")
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(18, 20, 28)
+    ///         noStroke()
+    ///         fill(242, 242, 242)
+    ///         if let display { textFont(display) }
+    ///         textSize(72)
+    ///         var x: Float = 24
+    ///         for (index, letter) in "mokume".enumerated() {
+    ///             textWeight(500 + 400 * sin(Float(index) * 0.9))
+    ///             text(String(letter), x, 160)
+    ///             x += textWidth(String(letter))
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 読み込んだ書体の mokume が横に並び、字ごとに太さが違う -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **字の太さは書体が持つ面で決まる。** 可変書体 (上の `SFNS.ttf`) は ``textWeight(_:)`` の太さを
+    /// そのまま描き、持たない書体は最も近い太さの面で描く。太字・斜体の面を持たない書体に
+    /// ``textStyle(_:)`` を頼むと、引けた面で描いて警告を 1 度出す。
+    ///
+    /// - Note: 書体は**フレームを越える**。一度書けば、書き換えるまで残る。
+    // shot: 後で撮る
+    public func textFont(_ font: Font) { Self.liveCanvas()?.textFont(font) }
+
     /// 書体の指定をやめ、この環境の既定の書体へ戻す。
     ///
-    /// 下の絵の **1 行目と 3 行目は同じ書体**である — 間で ``textFont(_:)`` を挟んでも、
+    /// 下の絵の **1 行目と 3 行目は同じ書体**である — 間で ``textFont(_:)-(String)`` を挟んでも、
     /// 戻せば元に帰る。
     ///
     /// @Row {
@@ -264,6 +307,55 @@ extension SketchPart {
     /// - Note: 字の太さと傾きは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=dad4af7f
     public func textStyle(_ style: TextStyle) { Self.liveCanvas()?.textStyle(style) }
+
+    /// これから描く文字の太さ。**100 (細い) から 900 (太い) まで**で、400 が標準、700 が ``TextStyle/bold``。
+    /// 整数や `Double` の変数もそのまま渡せる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(18, 20, 28)
+    ///     noStroke()
+    ///     fill(242, 242, 242)
+    ///     textSize(44)
+    ///     textWeight(200)
+    ///     text("Mokume", 24, 80)
+    ///     textWeight(400)
+    ///     text("Mokume", 24, 150)
+    ///     textWeight(900)
+    ///     text("Mokume", 24, 220)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ語が 3 行。上は細く、真ん中は標準、下は太い -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **可変書体は、太さをそのまま描く。** 既定の書体 (システムの書体) と、``loadFont(_:)`` で読んだ
+    /// 可変書体は、`300` と `800` で字の幅も形も違う。40 画素の `M` の送り幅は、既定の書体で
+    /// `textWeight(300)` なら約 32.9、`textWeight(800)` なら約 35.2 になる。
+    ///
+    /// **可変でない書体は、最も近い太さの面で描く。** `Helvetica` なら軽い面 (300)・標準 (400)・太字 (700) の
+    /// 3 つのうち近いものが選ばれ、`textWeight(900)` は太字になる。頼んだ太さから 100 を超えて離れた面しか
+    /// 無いとき (面が 1 つしかない書体に 700 を頼んだ場合など) は、使った面を名乗って警告を 1 度出す。
+    ///
+    /// **端は丸める。** 受け取った値は整数に丸め、100 未満は 100、900 超は 900 にして、1 度だけ知らせる。
+    /// 数でない値・無限は 1 度だけ知らせて、前の太さのままにする。`500.2` と `500.4` は同じ太さ (500) で、
+    /// `500` と `501` は別の太さである。
+    ///
+    /// **``textStyle(_:)`` とは、後から呼んだほうが勝つ。** `textStyle(.bold)` の後の `textWeight(300)` は
+    /// 300 で描き、`textWeight(300)` の後の `textStyle(.bold)` は太字で描く。`textStyle(.italic)` の後の
+    /// `textWeight(300)` は、傾きを残して 300 で描く。
+    ///
+    /// - Note: 太さごとに字を画素へ焼くので、**毎フレーム太さを動かすと、字ごとに太さの数だけ焼き直す**。
+    ///   大きさ (``textSize(_:)``) を毎フレーム動かすのと同じ代償で、焼き場の頁が埋まれば頁を替えて焼き
+    ///   直すので、字は欠けない。滑らかさの要らない動きなら、整数の太さが 10 や 20 の刻みになるよう
+    ///   丸めてから渡すと、焼き直しが減る。
+    ///
+    /// - Note: 字の太さは**フレームを越える**。一度書けば、書き換えるまで残る。
+    // shot: 後で撮る
+    public func textWeight(_ weight: some ScalarConvertible) { Self.liveCanvas()?.textWeight(weight) }
 
     /// 文字列を、指定した位置のどちら側へ置くか。既定は**左から右へ・基準線**。
     ///
@@ -685,7 +777,7 @@ extension SketchPart {
     /// 三角の穴は ``TextContour/isHole`` の立った周として現れない (重ねて塗れば絵は
     /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
     /// 1 つの形として扱いたい (三角形へ畳む・穴だけ別の色にする) なら、
-    /// ``textFont(_:)`` で書体を指定する — `Helvetica` などでは `A` が外周 1 つと
+    /// ``textFont(_:)-(String)`` で書体を指定する — `Helvetica` などでは `A` が外周 1 つと
     /// 穴 1 つになる。
     ///
     /// 色で描かれる字 (絵文字) は輪郭を持たない絵なので、周を返さない (送りは進める)。

@@ -63,16 +63,39 @@ struct FramePresenterTests {
         #expect(pixels[30, 32].red == 1, "右端まで広がっていない")
     }
 
-    @Test("面の大きさが変わっても、絵の解像度は変わらない")
+    /// 左半分が白・右半分が黒の絵を、いくつかの大きさの面へ収める。**絵そのものは面の大きさに
+    /// 左右されず**、どの面でも、絵が占める範囲の左 4 分の 1 は白、右 4 分の 1 は黒に出る。
+    /// 描いた側の大きさも変わらない。
+    @Test("面の大きさが変わっても、絵の中身は変わらず、描いた側も作り直されない")
     func contentResolutionIsIndependentOfTheSurface() throws {
         let gpu = try RenderDevice()
-        let source = try RenderTarget(gpu: gpu, width: 32, height: 16)
-        try source.fill(with: .linear(red: 1, green: 1, blue: 1))
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 32, height: 16)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.rect(0, 0, 16, 16)
+        }
+        let source = canvas.target
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
 
-        for size in [(64, 64), (256, 32), (17, 200)] {
-            let destination = try RenderTarget(gpu: gpu, width: size.0, height: size.1)
+        // 面の大きさと、そこに絵が占める範囲 (左端・幅)。2:1 の絵は、縦に合わせて収まる
+        let cases: [(size: (Int, Int), left: Int, width: Int)] = [
+            ((64, 32), 0, 64),
+            ((256, 128), 0, 256),
+            ((256, 32), 96, 64),
+            ((34, 400), 0, 34),
+        ]
+        for item in cases {
+            let destination = try RenderTarget(gpu: gpu, width: item.size.0, height: item.size.1)
             try presenter.draw(source, into: destination.texture)
+            let pixels = try destination.readPixels()
+            // 絵の高さの真ん中の行で、左 4 分の 1 と右 4 分の 1 の位置を読む
+            let row = item.size.1 / 2
+            let whiteColumn = item.left + item.width / 4
+            let blackColumn = item.left + item.width * 3 / 4
+            #expect(pixels[whiteColumn, row].red == 1, "\(item.size) で左半分が白で出ていない")
+            #expect(pixels[blackColumn, row].red == 0, "\(item.size) で右半分が黒で出ていない")
             // 描いた側は一度も作り直されない
             #expect(source.width == 32)
             #expect(source.height == 16)

@@ -50,10 +50,13 @@ final class SynthStage: Inlet {
     private let injectedFlow: SoundFlow?
     private let now: () -> TimeInterval
     private let warn: (String) -> Void
-    private var pace: Pace?
-    private var frame = 0
-    /// 解析を更新する音。**弱く持つ** — 音そのものはラックの節として終わりまで残るので、使う側が
-    /// 手放した音の解析は要らない (手放した音は鳴り続ける)。
+    /// **検査が差し込む** (``init(owner:flow:now:warn:)``)。持ち主のいないステージは、検査が時計を決める。
+    var pace: Pace?
+    /// 持ち主が数えているフレーム。持ち主がいるときは `supply()` が読み直す。
+    var frame = 0
+    /// 解析を更新する音。**弱く持つ** — 使う側が手放した音の解析は要らない。手放した音源の節は、
+    /// 鳴り終えるまでラックに残り、鳴り終えてから置き場が戻る (``SynthRack`` の「置き場は、手放して
+    /// 鳴り終えた音源のぶんだけ戻る」)。
     private var sounds: [WeakSound] = []
     private var noticed: Set<Notice> = []
     /// 閉じた (スケッチが終わった)。以後の操作は捨てる。
@@ -61,10 +64,12 @@ final class SynthStage: Inlet {
 
     private struct WeakSound {
         weak var sound: SynthSound?
+        /// 音源なら、その節の置き場の番号。手放されたとき、ラックへ伝える (エフェクトは返さない)。
+        let source: Int?
     }
 
     /// ラックの標本を進める時計。
-    private enum Pace {
+    enum Pace {
         /// フレームの数え方 (固定の時計)。鳴らさない。`origin` は始めたフレーム。
         case frames(perSecond: Int, origin: Int)
         /// 実時間。出力が開けないとき。`base` は始めたときにラックが作っていた標本の数。
@@ -79,8 +84,10 @@ final class SynthStage: Inlet {
         case capacity
     }
 
-    private init(
-        owner: any Sketch, flow: SoundFlow?, now: @escaping () -> TimeInterval,
+    /// - Parameter owner: 持ち主のスケッチ。**検査だけが `nil` で作る** (スケッチを走らせずに、`pace` と
+    ///   `frame` を自分で決めて回す — GPU が要らない)。
+    init(
+        owner: (any Sketch)?, flow: SoundFlow?, now: @escaping () -> TimeInterval,
         warn: @escaping (String) -> Void
     ) {
         self.owner = owner
@@ -121,7 +128,8 @@ final class SynthStage: Inlet {
 
     /// 音を数に入れる。フレームごとに解析の値を更新する。
     func register(_ sound: SynthSound) {
-        sounds.append(WeakSound(sound: sound))
+        let source = sound.node.flatMap { $0.isSource ? $0.id : nil }
+        sounds.append(WeakSound(sound: sound, source: source))
     }
 
     /// 知らせを診断へ出す。同じ種類を 1 度だけ言うのは呼ぶ側の仕事。
@@ -134,9 +142,10 @@ final class SynthStage: Inlet {
         notice(
             .capacity,
             "No more synthesized sounds can be created: a sketch holds at most "
-                + "\(SynthRack.capacity) oscillators, noises and effects together, and they "
-                + "stay until the sketch ends. Create them once in setup() and reuse them "
-                + "instead of creating new ones in draw()")
+                + "\(SynthRack.capacity) oscillators, noises and effects alive together. "
+                + "An oscillator or noise you no longer hold stops counting once it has finished "
+                + "sounding; effects stay until the sketch ends. Create them once in setup() "
+                + "and reuse them instead of creating new ones in draw()")
     }
 
     // MARK: - Inlet
@@ -170,8 +179,20 @@ final class SynthStage: Inlet {
         case nil:
             break
         }
-        sounds.removeAll { $0.sound == nil }
+        reapReleasedSources()
         for entry in sounds { entry.sound?.refresh() }
+    }
+
+    /// 手放された音をやめる。音源なら、ラックへ手放したことを伝える (鳴り終えたら置き場が戻る)。
+    ///
+    /// ラックが返した置き場は、先に受け取る。伝えられなければ (操作の列が満杯) 次のフレームへ持ち越す。
+    private func reapReleasedSources() {
+        rack.collectFreed()
+        sounds.removeAll { entry in
+            guard entry.sound == nil else { return false }
+            guard let source = entry.source else { return true }
+            return rack.release(source)
+        }
     }
 
     func close() {

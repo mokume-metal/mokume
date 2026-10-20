@@ -278,7 +278,8 @@ final class ParamStore: DeclarationWatcher {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
         // 書けなければ型と理由を名乗る (#2263)。非有限の数が 1 つ載っているだけで全部が
-        // 書けなくなるので、どの値かも言う
+        // 書けなくなるので、どの値かも言う。非有限の宣言は ``ParamRegistry/declarations`` が外す
+        // (#2858) ので、ここへは通常届かない。届いたときに黙らないための守りとして残す
         let data: Data
         do {
             data = try encoder.encode(saved)
@@ -308,7 +309,7 @@ final class ParamStore: DeclarationWatcher {
     }
 
     /// 符号化が拒んだ値の名前。拒まれた場所が値の並びの中でなければ `nil`。
-    private static func offender(of error: any Error, in saved: Saved) -> String? {
+    static func offender(of error: any Error, in saved: Saved) -> String? {
         guard case EncodingError.invalidValue(_, let context) = error,
             let index = context.codingPath.lazy.compactMap(\.intValue).first,
             saved.values.indices.contains(index)

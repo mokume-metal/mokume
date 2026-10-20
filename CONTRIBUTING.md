@@ -40,11 +40,14 @@ fork から出してよい。**リポジトリへの書き込み権限が要る�
 ```bash
 git clone https://github.com/mokume-metal/mokume.git
 cd mokume
+make cli-examples                          # 作例の束 (mokume examples / new --from が読む。説明文から作る生成物)
 swift build -c release --product mokume-cli
 export PATH="$PWD/.build/release:$PATH"   # この shell の間だけ
 ```
 
-できるのは `mokume-cli` — 配布物の `mokume` と同じ道具で、名前だけが違う (道具は起動された名前で名乗るので、印字される行はそのまま打てる)。ひな形の入った `mokume_MokumeCLI.bundle` は隣に作られるので、**実行ファイルだけを別の場所へ移さない**。
+作例の束 (`Sources/MokumeCLI/Examples/`) は `make cli-examples` が説明文から作る生成物で、コミットしない。打たずに組んだ道具は、`mokume-cli examples` が束が無いと名乗る (それ以外は使える)。配布物を束ねる `make cli-dist` は先に自分で作る。
+
+できるのは `mokume-cli` — 配布物の `mokume` と同じ道具で、名前だけが違う (道具は起動された名前で名乗るので、印字される行はそのまま打てる)。ひな形と作例の束の入った `mokume_MokumeCLI.bundle` は隣に作られるので、**実行ファイルだけを別の場所へ移さない**。
 
 スケッチにも手元のライブラリを引かせるなら、`--local` でこのリポジトリの場所を渡す:
 

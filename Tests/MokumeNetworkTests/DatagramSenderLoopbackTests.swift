@@ -154,7 +154,7 @@ struct DatagramSenderLoopbackTests {
             warn: heard.append)
         try receiver.open()
         defer { receiver.close() }
-        #expect(await until { receiver.state == .running })
+        try await requireState(told: heard, tracing: source) { receiver.state }
 
         // 開いた直後に、拒否の残りが 1 つだけ送信の失敗として返ることはある。続けて送れば届き、
         // 届き始めたら取りこぼさない

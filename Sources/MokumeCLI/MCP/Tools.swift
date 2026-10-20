@@ -399,14 +399,21 @@ struct Tools {
         extraWait: TimeInterval = 0
     ) -> Exchange {
         let existed = facets.hasFacet(facet)
+        // 撮り直してよいのは、副作用を残さない観測だけ。`time` 付きは 1 フレームを描き直す (#2857)
+        let repeatable = entry == StartupReads.observe && request["time"] == nil
         do {
-            guard
-                let report = try facets.exchange(
-                    facet: facet, request: request, id: id, extraWait: extraWait)
-            else {
-                return .refused(facets.notRunning(entry, existed: existed))
+            switch try facets.exchange(facet: facet, request: request, id: id, extraWait: extraWait) {
+            case .answered(let report):
+                return .answered(report)
+            case .contested:
+                return .refused(facets.contested(entry, repeatable: repeatable))
+            case .timedOut(let replaced):
+                // 期限の時点で別の書き手が要求を置き換えていたら、走っていないとは言わず、取り合いとして答える
+                return .refused(
+                    replaced
+                        ? facets.replacedAtDeadline(entry, repeatable: repeatable)
+                        : facets.notRunning(entry, existed: existed))
             }
-            return .answered(report)
         } catch {
             // **置けなかった回も、場所の手を添える** (#2487)。窓口は在る場所なら受けるので、
             // `/` や読み取り専用の場所でも立つ。区画の基準がそこに落ちていれば、書き込めるか・

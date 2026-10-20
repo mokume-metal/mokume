@@ -1263,6 +1263,179 @@ struct WatchSessionTests {
         #expect(lines.contains { $0.0 == named && $0.1 == false }, "プレビューへ名乗っていない: \(lines)")
     }
 
+    // MARK: - 道具の窓が受け取れない世代 (#2928)
+
+    /// **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る。
+    /// 前の世代を残したまま、プレビューの「起こしている」が終わらない・端末は黙る、になっていた。
+    @Test(
+        "道具の窓が絵を受け取れないと知らされたら、前の世代を畳み、入力は新しい子へ行き、プレビューと端末へ 1 度名乗る",
+        arguments: [UndeliverableGeneration.unreadableManifest, .unreadableFile, .noSurface, .unusableSurface])
+    func anUndeliverableGenerationRetiresTheOutgoingOne(cause: UndeliverableGeneration) async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        #expect(session.outgoing === leaving)
+
+        var lines: [(String?, Bool)] = []
+        // 知らせを受けた時点で待っている世代を控える (窓の口と同じ)
+        let waiting = session.waitingGeneration
+        #expect(waiting === arriving)
+        // 窓ごとに知らせが来る (作品の窓とプレビュー)。畳むのも名乗るのも 1 度
+        for _ in 0..<2 {
+            await WatchCommand.retireUndeliverable(
+                cause, session: session, waiting: waiting, preview: { lines.append(($0, $1)) })
+        }
+
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "前の世代が退役していない")
+        #expect(session.outgoing == nil)
+        #expect(lines.count == 1, "2 度名乗っている: \(lines)")
+        let named = WatchCommand.undeliverableLine(previous: .stopped, cause: cause, inTerminal: false)
+        #expect(lines.first?.0 == named && lines.first?.1 == false, "回る印を止めて名乗っていない: \(lines)")
+        // プレビューには、版の形に関わる失敗なら候補を言う (権限・置き場の失敗に版の案内は付けない)
+        #expect(named.contains("mokume doctor") == (cause == .unreadableManifest || cause == .noSurface), "\(named)")
+
+        session.send("touch\n")
+        waitUntilGone(arriving)
+        #expect(!arriving.isRunning, "入力が新しい子へ届いていない")
+    }
+
+    /// **乗り換えを待っている、生きている世代のときだけ動く。** 乗り換えた後・子が居ない・重ねない見張りの
+    /// 知らせで、画面に出ている世代を畳まない。
+    @Test("受け取れない知らせは、乗り換えを待っていない世代・既に居ない子には何もしない")
+    func anUndeliverableNoticeOnlyCountsForTheWaitingLiveGeneration() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+
+        // 乗り換えた後の知らせは、画面に出ている世代を畳まない
+        await session.generationPromoted()
+        waitUntilGone(leaving)
+        #expect(session.waitingGeneration == nil)
+        #expect(await session.retireAfterUndeliverable(waiting: arriving) == nil)
+        #expect(arriving.isRunning)
+
+        // 乗り換えを待っていても、子が既に居ないときは「子の離脱」の口に任せる (二重に名乗らない)
+        await session.tick()
+        ready.waitForLast()
+        let departing = try #require(session.child)
+        let previous = try #require(session.outgoing)
+        departing.terminate()
+        waitUntilGone(departing)
+        #expect(await session.retireAfterUndeliverable(waiting: departing) == nil)
+        #expect(previous.isRunning, "居ない子の知らせで前の世代を畳んでいる")
+        #expect(session.outgoing === previous)
+    }
+
+    /// 乗り換えを待たない見張り (窓が出せなかった実行) では、知らせの口が無いので何もしない。
+    @Test("重ねない見張りは、受け取れない知らせを読まない")
+    func withoutOverlapAnUndeliverableNoticeChangesNothing() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; read line", ready: ready), stopTimeout: 0.5)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let child = try #require(session.child)
+        #expect(session.waitingGeneration == nil, "重ねない見張りは乗り換えを待たない")
+        #expect(await session.retireAfterUndeliverable(waiting: child) == nil)
+        #expect(child.isRunning)
+    }
+
+    /// **知らせは世代の印を持たず、`Task` で遅れて捌かれる。** 作り直しの続きが先に走ると、前の世代 (C) の
+    /// 知らせが次の世代 (D) に当たり、まだ受け取れるかも分からない D の前の世代 (C) を畳んでしまう。受けた
+    /// 時点で控えた世代と、いま待っている世代が違えば何もしない。
+    @Test("受け取れない知らせは、知らせが出た後に世代が替わっていれば、次の世代には当たらない")
+    func aStaleUndeliverableNoticeDoesNotHitTheNextGeneration() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        await session.tick()
+        ready.waitForLast()
+        let older = try #require(session.child)
+        // 知らせを受けた (C が待っていた) 後、捌かれる前に作り直しの続きが走る
+        let waiting = session.waitingGeneration
+        #expect(waiting === older)
+        await session.tick()
+        ready.waitForLast()
+        let newer = try #require(session.child)
+        #expect(newer !== older)
+        #expect(session.outgoing === older)
+
+        var lines: [(String?, Bool)] = []
+        await WatchCommand.retireUndeliverable(
+            .noSurface, session: session, waiting: waiting, preview: { lines.append(($0, $1)) })
+        #expect(lines.isEmpty, "前の世代の知らせで名乗っている: \(lines)")
+        #expect(older.isRunning, "前の世代の知らせで、次の世代の前の世代を畳んでいる")
+        #expect(session.outgoing === older)
+        #expect(session.waitingGeneration === newer, "次の世代の待ちを下ろしている")
+    }
+
+    /// 見張りを終えている最中 (終わりを頼まれた後) に知らせが来ても、名乗らず畳まない。止める順序を横から割らない。
+    @Test("終わりを頼まれた後の受け取れない知らせは、名乗らず畳まない")
+    func anUndeliverableNoticeAfterAStopRequestChangesNothing() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        let waiting = session.waitingGeneration
+
+        session.noteStopRequested()
+        var lines: [(String?, Bool)] = []
+        await WatchCommand.retireUndeliverable(
+            .noSurface, session: session, waiting: waiting, preview: { lines.append(($0, $1)) })
+        #expect(lines.isEmpty, "終える最中に名乗っている: \(lines)")
+        #expect(leaving.isRunning && session.outgoing === leaving, "終える最中に前の世代を畳んでいる")
+        #expect(arriving.isRunning)
+    }
+
+    /// 同じ候補を端末に 2 度言わない。目録が読めない形では、台が理由と候補を名乗り済み (#2889) なので、
+    /// 端末の行はそれを指して繰り返さない。面を引けない形では台は何も言っていないので、行が候補を言う。
+    @Test("端末の行は、台が候補を名乗った形ではそれを繰り返さない")
+    func theTerminalLineDoesNotRepeatTheCandidateTheStageSaid() {
+        let unreadable = WatchCommand.undeliverableLine(
+            previous: .stopped, cause: .unreadableManifest, inTerminal: true)
+        let noSurface = WatchCommand.undeliverableLine(
+            previous: .stopped, cause: .noSurface, inTerminal: true)
+        // 面は引けたが絵にできない形 (道具の GPU の事情) は、版の案内を付けない
+        let unusable = WatchCommand.undeliverableLine(
+            previous: .stopped, cause: .unusableSurface, inTerminal: true)
+        #expect(!unusable.contains("mokume doctor") && unusable.contains("found"), "\(unusable)")
+        let preview = WatchCommand.undeliverableLine(
+            previous: .stopped, cause: .unreadableManifest, inTerminal: false)
+        let file = WatchCommand.undeliverableLine(
+            previous: .stopped, cause: .unreadableFile, inTerminal: false)
+        #expect(!file.contains("mokume doctor"), "版の形と無関係な失敗に版の案内を付けている: \(file)")
+        #expect(!unreadable.contains("mokume doctor"), "\(unreadable)")
+        #expect(noSurface.contains("mokume doctor"), "\(noSurface)")
+        #expect(preview.contains("mokume doctor"), "\(preview)")
+        // 畳めずに置いていくときは、止めたと言わない。最初の子は前の世代を言わない
+        let left = WatchCommand.undeliverableLine(previous: .left, cause: .noSurface, inTerminal: true)
+        let none = WatchCommand.undeliverableLine(previous: .none, cause: .noSurface, inTerminal: true)
+        #expect(!left.contains("is stopped") && left.contains("keeps running"), "\(left)")
+        #expect(!none.contains("previous"), "\(none)")
+    }
+
     /// 畳めずに置いていくときは、止めたと言い切らない。
     @Test("前の世代を畳めなかったときの行は、止めたと言わずに走り続けると言う")
     func theFallbackLineDoesNotClaimAStopThatDidNotHappen() {

@@ -29,7 +29,8 @@ extension Canvas {
     /// いま指定されている書体。同じ指定なら作り直さない。
     var typeface: Typeface {
         let request = TypefaceRequest(
-            name: style.fontName, size: style.textSize, style: style.textStyle)
+            name: style.fontName, file: style.fontFile, size: style.textSize,
+            style: style.textStyle, weight: style.textWeight)
         if let found = typefaces[request] { return found }
         // 代わりの書体から引いた字の面も同じく知らせる (#2561)。書体は面の控えに入るので、面を
         // 強く掴むと巡って離れない
@@ -41,6 +42,15 @@ extension Canvas {
         // CoreText は別の書体を黙って返すので、ここでも確かめる。確かめるのは作る時だけ ([#2772])
         if let name = request.name, !Typeface.exists(name: name) {
             warnOnce(.unavailableFont, Self.unavailableFontMessage(name: name, used: face.base))
+        }
+        // 近い太さの面が無ければ、使った面を名乗る (#2445)。頼んだ太さに応えられない指定を、効いたように見せない
+        if face.lacksRequestedWeight, let wanted = request.weight, let used = face.usedWeight {
+            warnOnce(
+                .missingTypefaceWeight,
+                "textWeight(): the typeface family \"\(CTFontCopyFamilyName(face.base) as String)\" "
+                    + "has no face near \(wanted), so \"\(CTFontCopyPostScriptName(face.base) as String)\" "
+                    + "(weight \(used)) is used. A variable typeface can draw any weight from 100 to 900; "
+                    + "others use the nearest of the weights they have")
         }
         // 面が無ければ引けた面で描く。黙ると、効かない指定を効いたように見せる (#2444)
         if face.lacksRequestedStyle {
@@ -121,7 +131,7 @@ extension Canvas {
         // 代償は `Sketch` の `textSize` の説明が名乗っている (#2033)
         GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
-            glyph: resolved.glyph)
+            glyph: resolved.glyph, weight: style.textWeight ?? 0)
     }
 
     /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる — 上限の面なら、同じ

@@ -370,6 +370,65 @@ struct SynthSoundTests {
         #expect(messages.contains { $0.contains("this Reverb") })
     }
 
+    /// `draw()` の中で毎フレーム `hit(440)` (作って包絡をかけて手放す) を 600 フレーム回す。
+    ///
+    /// 作った音の節を検査が掴んでおき、次のフレームで、その節の出口の写しに立ち上がりが出ているかを読む
+    /// (掴むのは節であって音ではない — 音を掴むと手放せない)。
+    private func discardEveryFrame(frames: Int = 600) throws -> (
+        made: Int, onsets: [Float], notices: [String], peakOccupied: Int
+    ) {
+        var notices: [String] = []
+        var made = 0
+        var onsets: [Float] = []
+        var peakOccupied = 0
+        var env: Env?
+        var stage: SynthStage?
+        var previous: RackNode?
+        let runtime = try run(
+            frames: frames,
+            setup: { sketch in
+                stage = SynthStage.stage(for: sketch, warn: { notices.append($0) })
+                env = sketch.createEnv()
+            },
+            draw: { sketch in
+                // 前のフレームで作った音は、このフレームの頭に 1 フレームぶん進んでいる
+                if let previous {
+                    onsets.append(previous.meter.latest(Self.perFrame).map { abs($0) }.max() ?? 0)
+                }
+                let node = hit(sketch, env)
+                if node != nil { made += 1 }
+                previous = node
+                peakOccupied = max(peakOccupied, stage?.rack.occupiedCount ?? 0)
+            })
+        runtime.closePlugins()
+        return (made, onsets, notices, peakOccupied)
+    }
+
+    /// 毎フレーム作って捨てる音。`osc` はこの関数が返ると手放される。節を返す。
+    private func hit(_ sketch: SynthSketch, _ env: Env?) -> RackNode? {
+        let osc = sketch.createTriOsc()
+        osc.freq(440)
+        env?.play(osc, 0.005, 0.05, 0.6, 0.3)
+        return osc.node
+    }
+
+    @Test("draw() の中で毎フレーム作って捨てる音は、600 フレーム続けても毎回鳴り、容量の知らせは出ない (#2763)")
+    func discardingInDrawNeverRunsOut() throws {
+        let first = try discardEveryFrame()
+        #expect(first.made == 600, "作れなかった音がある")
+        #expect(first.notices.isEmpty, "知らせ: \(first.notices)")
+        // 作った次のフレームごとに、立ち上がりがラックの出口に出ている (変更前は 65 個目から出ない)
+        #expect(first.onsets.count == 599)
+        #expect(first.onsets.allSatisfy { $0 > 0.01 }, "立ち上がりが出なかったフレームがある")
+        // 同時に生きているのは 0.355 秒 × 60 ≈ 22 個と、返す番号を受け取るまでの数フレームぶん
+        #expect(first.peakOccupied < 40, "同時に埋まった数: \(first.peakOccupied)")
+
+        // 2 回回すと一致する (ADR-0025 の水準 2)
+        let second = try discardEveryFrame()
+        #expect(second.onsets == first.onsets)
+        #expect(second.peakOccupied == first.peakOccupied)
+    }
+
     @Test("作れる数の上限を越えると、1 度だけ知らせ、何も鳴らさない音を返す")
     func capacityIsReportedOnce() throws {
         var messages: [String] = []

@@ -33,6 +33,14 @@ nonisolated enum CommandFailure: Error, Equatable {
     case cannotCreate(path: String, reason: String)
     case templatesMissing
     case templateUnreadable(name: String)
+    /// 同梱した作例の束が無い (#2436)。束を作らない手元の組み立てか、実行ファイルだけを入れた配置。
+    case examplesMissing
+    /// 束が読めない。`spelling` は読もうとした例。
+    case exampleUnreadable(spelling: String)
+    /// `--from` に渡された名前が、同梱した例に無い。
+    case exampleUnknown(spelling: String)
+    /// `--from` に渡された名前が、1 本に決まらない。`candidates` は名乗った例の全部。
+    case exampleAmbiguous(spelling: String, candidates: [Examples.Entry])
     case packageNotFound(path: String)
     /// 渡された場所 (または作業ディレクトリ) が、ディレクトリとして在らない。
     ///
@@ -263,6 +271,22 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
         case .templateUnreadable(let name):
             "Cannot read the template: \(name)"
+        case .examplesMissing:
+            """
+            Cannot find the bundled examples.
+            A release carries them inside mokume_MokumeCLI.bundle, next to the executable, so check
+            that the install put both pieces in place. A build from a clone has them only after
+            `make cli-examples`, run before the build
+            """
+        case .exampleUnreadable(let spelling):
+            "Cannot read the bundled example: \(spelling)"
+        case .exampleUnknown(let spelling):
+            """
+            No example is called \(GivenPath.shellWord(display: spelling))
+            \(Command.name) examples lists them
+            """
+        case .exampleAmbiguous(let spelling, let candidates):
+            Examples.ambiguousText(spelling: spelling, candidates: candidates)
         case .packageNotFound(let path):
             """
             Cannot find a sketch here: \(path)

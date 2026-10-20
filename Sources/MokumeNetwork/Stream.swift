@@ -255,7 +255,7 @@ private nonisolated final class Client: @unchecked Sendable {
 ///
 /// ポートが使用中・拒まれた・失敗したときは ``ListenerStatus`` が状態に写し、それぞれ 1 度だけ
 /// 知らせる。
-nonisolated final class StreamSource: MessageSource, Broadcasting, @unchecked Sendable {
+nonisolated final class StreamSource: MessageSource, Broadcasting, EventTracing, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態は ``listener`` だけで、main actor (start / stop / 書く・
     // 数える) でだけ触る。受け口の手続きが触るのは ``status`` (錠を持つ) と列 (それ自身が錠を持つ) だけ。
 
@@ -282,6 +282,9 @@ nonisolated final class StreamSource: MessageSource, Broadcasting, @unchecked Se
 
     /// 実際に開いたポート。0 を頼んだときに、OS が選んだ番号を知るために使う。
     var boundPort: Int? { status.boundPort }
+
+    /// 受け口の移り変わりの跡 (``EventTracing``)。
+    var trace: EventTrace { status.trace }
 
     var clientCount: Int { listener?.clientCount ?? 0 }
 

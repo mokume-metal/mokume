@@ -26,8 +26,10 @@ enum ParamOutcome: Equatable {
 
 /// 宣言された値の索引。
 ///
-/// **起動時に 1 度だけ作る。** 宣言はプロセスの間は変わらないので、フレームごとに
-/// 数え直す理由が無い。名前は ``Param(_:name:)`` の展開がコンパイル時に決めたもので、
+/// **起動時に 1 度だけ作る。** 宣言の名前・型・範囲はプロセスの間は変わらないので、
+/// フレームごとに数え直す理由が無い。**面に出る顔ぶれ** (``declarations``) は、零へ畳めなかった
+/// 宣言が非有限の間だけ外れていて、値が有限になると**同じプロセスの中で 1 度だけ**増える
+/// ([#2858](https://github.com/mokume-metal/mokume/issues/2858))。名前は ``Param(_:name:)`` の展開がコンパイル時に決めたもので、
 /// ここが作り直すことはない ([ADR-0030] 決定 5)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
@@ -42,7 +44,16 @@ struct ParamRegistry {
     var isEmpty: Bool { boxes.isEmpty }
 
     /// いまの姿。**並びは宣言した順** (基底の側から)。
-    var declarations: [ParamDeclaration] { boxes.map(\.box.declaration) }
+    ///
+    /// **値が非有限の宣言は含めない** ([#2858](https://github.com/mokume-metal/mokume/issues/2858))。
+    /// 生まれのときに零へ畳めなかった自作の ``ParamRepresentable`` は非有限の値のまま置かれ
+    /// (``ParamBox`` の説明)、載せると `JSONEncoder` が拒んで、保存 (`params.json`) も応答
+    /// (`report.json`) も**他の値を含めて**書けなくなる。外すのは保存・応答・見張りが宣言の姿を
+    /// 読むこの 1 点だけで、出口ごとには落とさない (ADR-0030 決定 3)。値は宣言を作る (読む) ときに
+    /// 見るので、見張りは値の変化を拾い続け、**値が有限になれば次の保存と応答に戻る**。
+    var declarations: [ParamDeclaration] {
+        boxes.map(\.box.declaration).filter { $0.value.hasOnlyFiniteNumbers }
+    }
 
     /// つまみへ渡す箱。**並びは宣言した順。**
     ///

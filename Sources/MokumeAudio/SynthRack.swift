@@ -19,6 +19,9 @@ nonisolated struct SynthCommand {
         case trigger
         /// エフェクトの入力を置き換える。`bits` に入力の節の番号の集合。
         case inputs
+        /// 作者が音源を手放した (使う側の参照が無くなった)。音の側は、その音源が鳴り終えたら節を外して
+        /// 置き場を返す。**この後その節へ操作は来ない。**
+        case release
     }
 
     var op: Op
@@ -38,8 +41,24 @@ nonisolated struct SynthCommand {
 ///
 /// 主スレッドからの操作 (値を変える・鳴らす・繋ぐ) は、事前に確保した列 (書き手 1・読み手 1) で
 /// 渡す。音の側は呼ばれるたびに、列に溜まった操作をその順に適用してから標本を作る。錠は
-/// 取らず、標本を作る間は確保しない ([ADR-0042] 決定 7)。節の置き場も作るときに 1 度だけ確保し、
-/// 節は置いたらラックの終わりまで残る。**節を作れる数は ``capacity`` までで、手放しても戻らない。**
+/// 取らず、標本を作る間は確保しない ([ADR-0042] 決定 7)。節の置き場も作るときに 1 度だけ確保する。
+///
+/// ## 置き場は、手放して鳴り終えた音源のぶんだけ戻る
+///
+/// **同時に生きている節は ``capacity`` までで、エフェクトは置いたらラックの終わりまで残る。**
+/// 音源 (オシレータ・ノイズ) は、作者が手放し (``release(_:)``)、かつ鳴り終えた (止めて消えた・包絡が
+/// 終わった — ``RackNode/isFinished``) ときに、置き場が戻る。鳴っている音は切らない。
+///
+/// 戻す道筋は、音の側が確保も解放もしない形にしてある。
+/// - 音の側は、手放された音源が鳴り終えたと見たら、その節を自分の表と描く順から外し、**事前に確保した
+///   列**で番号を主スレッドへ返す (節の型を手放すのは主スレッドだけ — 置き場の `Unmanaged` が最後の参照)
+/// - 主スレッドは、番号を受け取ってから (``collectFreed()``。節を足す前にも呼ぶ) 置き場を空け、
+///   その番号を使う次の節へ、前の節の繋がりを持ち越さない
+/// - 次の節が置き場を使うとき (``SynthCommand/Op/activate``)、音の側は、他のエフェクトの入力の集合から
+///   その番号を落とし、その番号の入力の集合を空にする。主スレッドが番号を受け取る前に載せた入力の操作が
+///   古い集合を持っていても、新しい節はそれを引き継がない。出口の写し (`SampleRing`) は節ごとに作る
+///
+/// 音源が返った後も、エフェクトは動き続ける (入力が無音になるだけ。尾は切れない)。
 ///
 /// ## 繋がりと描く順
 ///
@@ -54,7 +73,8 @@ nonisolated final class SynthRack: @unchecked Sendable {
     // 載せる順) と列の書き手の側だけで、音の側が読むのは列から取り出した後に限る。
     // 残りの状態は音の側 (呼んだスレッド) だけが触る。
 
-    /// 節の数の上限。繋がりを 64 ビットの集合で持つ。
+    /// 同時に生きている節の数の上限。繋がりを 64 ビットの集合で持つ。手放して鳴り終えた音源の節は
+    /// 数から外れる (エフェクトはラックの終わりまで数える)。
     static let capacity = 64
     /// 1 度に作る標本の数の上限。これより長い区切りは分けて作る。
     static let chunk = 512
@@ -67,7 +87,11 @@ nonisolated final class SynthRack: @unchecked Sendable {
 
     // MARK: 主スレッド側
 
-    private var reserved = 0
+    /// 置き場が埋まっている番号の集合。音の側が返した番号を受け取る (``collectFreed()``) まで、
+    /// 手放された音源の番号も埋まったまま。
+    private var occupied: UInt64 = 0
+    /// これまでに作った節の数。ノイズの種に使う通し番号 (返った置き場の再利用に依らない)。
+    private var created = 0
     /// 主スレッドが見ている繋がり (輪を作らないかを確かめるのに使う)。
     private var wiring = [UInt64](repeating: 0, count: SynthRack.capacity)
     private let slots: UnsafeMutablePointer<Unmanaged<RackNode>?>
@@ -78,10 +102,24 @@ nonisolated final class SynthRack: @unchecked Sendable {
     private let head = Atomic<Int>(0)
     private let tail = Atomic<Int>(0)
 
+    // MARK: 返す番号の列 (音の側が書き手・主スレッドが読み手)
+
+    /// 手放されて鳴り終えた音源の番号。**同じ番号は、主スレッドが受け取って置き場を使い直すまで
+    /// 2 度載らない**ので、置き場の数 (``capacity``) で溢れない。
+    private let freed: UnsafeMutablePointer<UInt8>
+    private let freedTail = Atomic<Int>(0)
+    /// 主スレッドが読み終えた位置 (主スレッドだけが触る)。
+    private var freedHead = 0
+
     // MARK: 音の側
 
     private var nodes = [RackNode?](repeating: nil, count: SynthRack.capacity)
     private var inputs = [UInt64](repeating: 0, count: SynthRack.capacity)
+    /// 入力が繋がれたエフェクトの集合 (止められていないもの)。**入力の集合が空でも、繋がれたエフェクトは
+    /// 動き続ける** — 入力の音源が返った後も尾を出し、入力が無音のときと同じになる。
+    private var armed: UInt64 = 0
+    /// 手放された音源の集合。鳴り終えたら返す。
+    private var released: UInt64 = 0
     private var plan: ContiguousArray<Step> = []
     private var silent: ContiguousArray<RackNode> = []
     private var order: [Int] = []
@@ -107,6 +145,8 @@ nonisolated final class SynthRack: @unchecked Sendable {
         queue = .allocate(capacity: Self.queueCapacity)
         queue.initialize(
             repeating: SynthCommand(op: .stop, node: 0), count: Self.queueCapacity)
+        freed = .allocate(capacity: Self.capacity)
+        freed.initialize(repeating: 0, count: Self.capacity)
         buffers = .allocate(capacity: Self.capacity * Self.chunk)
         buffers.initialize(repeating: 0, count: Self.capacity * Self.chunk)
         gathered = .allocate(capacity: Self.chunk)
@@ -122,6 +162,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
         for index in 0..<Self.capacity { slots[index]?.release() }
         slots.deallocate()
         queue.deallocate()
+        freed.deallocate()
         buffers.deallocate()
         gathered.deallocate()
         zeros.deallocate()
@@ -129,43 +170,85 @@ nonisolated final class SynthRack: @unchecked Sendable {
 
     // MARK: - 主スレッド: 節を足す
 
-    /// 音源の節を足す。置き場が埋まっていれば `nil`。
+    /// 音源の節を足す。置き場が埋まっていれば `nil` (返った置き場は、足す前に受け取る)。
     func addSource(_ kind: SourceNode.Kind) -> RackNode? {
-        add { SourceNode(id: $0, sampleRate: sampleRate, meter: Self.makeMeter(), kind: kind) }
+        add { id, serial in
+            SourceNode(
+                id: id, serial: serial, sampleRate: sampleRate, meter: Self.makeMeter(), kind: kind)
+        }
     }
 
     /// 濾波器の節を足す。
     func addFilter(_ shape: FilterShape) -> RackNode? {
-        add { FilterNode(id: $0, sampleRate: sampleRate, meter: Self.makeMeter(), shape: shape) }
+        add { id, _ in FilterNode(id: id, sampleRate: sampleRate, meter: Self.makeMeter(), shape: shape) }
     }
 
     /// リバーブの節を足す。
     func addReverb() -> RackNode? {
-        add { ReverbNode(id: $0, sampleRate: sampleRate, meter: Self.makeMeter()) }
+        add { id, _ in ReverbNode(id: id, sampleRate: sampleRate, meter: Self.makeMeter()) }
     }
 
     /// ディレイの節を足す。
     func addDelay() -> RackNode? {
-        add { DelayNode(id: $0, sampleRate: sampleRate, meter: Self.makeMeter()) }
+        add { id, _ in DelayNode(id: id, sampleRate: sampleRate, meter: Self.makeMeter()) }
     }
 
     private static func makeMeter() -> SampleRing {
         SampleRing(capacity: meterCapacity)
     }
 
-    private func add(_ make: (Int) -> RackNode) -> RackNode? {
-        guard reserved < Self.capacity else { return nil }
-        let node = make(reserved)
+    /// `make` は、置き場の番号と、作った順の通し番号を受けて節を作る。
+    private func add(_ make: (_ id: Int, _ serial: Int) -> RackNode) -> RackNode? {
+        collectFreed()
+        guard occupied != .max else { return nil }
+        // 空いている最小の番号。何も返らない間は、作った順の番号になる
+        let id = (~occupied).trailingZeroBitCount
+        let node = make(id, created)
         // 置き場へ書いてから列へ載せる。音の側は、列を読んだ後でだけ置き場を読む
-        slots[reserved] = Unmanaged.passRetained(node)
-        guard post(SynthCommand(op: .activate, node: UInt8(reserved))) else {
-            slots[reserved]?.release()
-            slots[reserved] = nil
+        slots[id] = Unmanaged.passRetained(node)
+        guard post(SynthCommand(op: .activate, node: UInt8(id))) else {
+            slots[id]?.release()
+            slots[id] = nil
             return nil
         }
-        reserved += 1
+        occupied |= 1 << UInt64(id)
+        created += 1
         return node
     }
+
+    /// 音源 `id` を手放した (使う側の参照が無くなった) と音の側へ伝える。入れられれば `true`、
+    /// 列が埋まっていれば `false` (呼び直す)。
+    ///
+    /// **鳴っている音は切らない。** 音の側が、鳴り終えたと見てから置き場を返す。この後その節へ操作を
+    /// 渡してはならない。
+    @discardableResult
+    func release(_ id: Int) -> Bool {
+        post(SynthCommand(op: .release, node: UInt8(id)))
+    }
+
+    /// 音の側が返した番号を受け取って、置き場を空ける。**主スレッドから呼ぶ。** 節を足すときにも呼ぶ。
+    ///
+    /// 節の型を手放すのはここ (主スレッド) だけで、音の側は番号を載せた後、その節に触らない。
+    func collectFreed() {
+        let end = freedTail.load(ordering: .acquiring)
+        guard freedHead != end else { return }
+        var position = freedHead
+        while position != end {
+            let id = Int(freed[position & (Self.capacity - 1)])
+            position += 1
+            slots[id]?.release()
+            slots[id] = nil
+            occupied &= ~(1 << UInt64(id))
+            // 繋がりの写しも空ける。残すと、置き場を使う次の節が前の節の繋がりを持つ
+            wiring[id] = 0
+            let cleared: UInt64 = ~(1 << UInt64(id))
+            for effect in 0..<Self.capacity { wiring[effect] &= cleared }
+        }
+        freedHead = end
+    }
+
+    /// 置き場が埋まっている節の数 (返す番号を受け取るまで、手放された音源も数える)。検査が読む。
+    var occupiedCount: Int { occupied.nonzeroBitCount }
 
     // MARK: - 主スレッド: 操作を渡す
 
@@ -234,6 +317,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
             done += count
         }
         rendered += frames
+        returnFinished()
     }
 
     /// 出口へは出さず、`frames` 標本ぶん進める。出口の標本の写し (解析が読む) だけが更新される。
@@ -246,6 +330,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
             done += count
         }
         rendered += frames
+        returnFinished()
     }
 
     private func renderChunk(
@@ -289,6 +374,13 @@ nonisolated final class SynthRack: @unchecked Sendable {
             let id = Int(command.node)
             switch command.op {
             case .activate:
+                // 置き場を使い直す節は、前の節の繋がりを持たない。他のエフェクトの入力から落とし、
+                // 自分の入力も空にする (主スレッドが番号を受け取る前に載せた古い集合を、ここで断つ)
+                let bit: UInt64 = 1 << UInt64(id)
+                for effect in 0..<Self.capacity { inputs[effect] &= ~bit }
+                inputs[id] = 0
+                armed &= ~bit
+                released &= ~bit
                 nodes[id] = slots[id]?.takeUnretainedValue()
                 rebuild = true
             case .set:
@@ -300,13 +392,51 @@ nonisolated final class SynthRack: @unchecked Sendable {
             case .trigger:
                 nodes[id]?.trigger()
             case .inputs:
-                if inputs[id] == 0, command.bits != 0 { nodes[id]?.reset() }
+                let bit: UInt64 = 1 << UInt64(id)
+                // 入力が無い (まだ繋がれていない・止められた) 状態から入力が入ったとき、前の状態を捨てる
+                if armed & bit == 0, command.bits != 0 { nodes[id]?.reset() }
                 inputs[id] = command.bits
+                if command.bits != 0 { armed |= bit } else { armed &= ~bit }
                 rebuild = true
+            case .release:
+                if nodes[id] != nil { released |= 1 << UInt64(id) }
             }
         }
         head.store(position, ordering: .releasing)
         if rebuild { rebuildPlan() }
+    }
+
+    /// 手放された音源のうち鳴り終えたものを、表と描く順から外し、番号を主スレッドへ返す。
+    /// 確保も解放もしない (節の型を手放すのは番号を受け取った主スレッドだけ)。
+    private func returnFinished() {
+        var pending = released
+        guard pending != 0 else { return }
+        var finished: UInt64 = 0
+        while pending != 0 {
+            let id = pending.trailingZeroBitCount
+            pending &= pending - 1
+            if let node = nodes[id], node.isFinished { finished |= 1 << UInt64(id) }
+        }
+        guard finished != 0 else { return }
+        var each = finished
+        while each != 0 {
+            let id = each.trailingZeroBitCount
+            each &= each - 1
+            nodes[id] = nil
+            inputs[id] = 0
+            armed &= ~(1 << UInt64(id))
+        }
+        released &= ~finished
+        // 描く順から外してから番号を渡す — 渡した後、音の側はその節に触らない
+        rebuildPlan()
+        var end = freedTail.load(ordering: .relaxed)
+        each = finished
+        while each != 0 {
+            freed[end & (Self.capacity - 1)] = UInt8(each.trailingZeroBitCount)
+            end += 1
+            each &= each - 1
+        }
+        freedTail.store(end, ordering: .releasing)
     }
 
     /// 繋がりから、描く順と、出口へ直に出る節を決め直す。確保しない (置き場は事前に取ってある)。
@@ -327,6 +457,11 @@ nonisolated final class SynthRack: @unchecked Sendable {
                 indegree[id] = 0
             } else {
                 indegree[id] = (inputs[id] & active).nonzeroBitCount
+                // 繋がれたまま入力の音源が全部返ったエフェクトは、入力が無音のときと同じに動き続ける
+                if indegree[id] == 0, armed & (1 << UInt64(id)) != 0 {
+                    order.append(id)
+                    ordered |= 1 << UInt64(id)
+                }
             }
         }
         var cursor = 0
