@@ -12,6 +12,14 @@ import mokume
 /// **時計は偽物を差し込む。** 本物の時計で巨大な待ちを試すと、応答が来ないかぎり検査が
 /// 戻らない。偽の時計は `sleep` のたびに進み、決めた回数に達したら応答を置く — 上限で諦める
 /// 実装なら応答が置かれる前に `nil` で戻り、諦めない実装は置かれた応答を拾って戻る。
+extension Facets.Exchange {
+    /// 応えが返っていれば、その応答。この suite は待ちの上限を見るので、返らなかった 2 通りは区別しない。
+    fileprivate var answer: [String: Any]? {
+        if case .answered(let report) = self { return report }
+        return nil
+    }
+}
+
 @Suite("窓口の待ちの上限")
 struct FacetsWaitTests {
     /// `sleep` が呼ばれるたびに 1 刻み進む時計。`answerAt` 回目に応答を置く。
@@ -62,7 +70,7 @@ struct FacetsWaitTests {
 
             let report = try facets.exchange(
                 facet: facet, request: ["id": "x"], id: "x", extraWait: huge,
-                sleep: { _ in clock.sleep() }, now: { clock.now })
+                sleep: { _ in clock.sleep() }, now: { clock.now }).answer
 
             #expect(report == nil, "上限を越えて待った (待ち \(huge) 秒)")
             #expect(clock.ticks == 24, "1 日 (24 刻み) で諦めていない: \(clock.ticks) 刻み")
@@ -98,7 +106,7 @@ struct FacetsWaitTests {
 
         let report = try facets.exchange(
             facet: facet, request: ["id": "x"], id: "x",
-            sleep: { _ in clock.sleep() }, now: { clock.now })
+            sleep: { _ in clock.sleep() }, now: { clock.now }).answer
 
         #expect(report?["id"] as? String == "x")
         #expect(clock.ticks == 3)
@@ -114,7 +122,7 @@ struct FacetsWaitTests {
 
         let report = try facets.exchange(
             facet: facet, request: ["id": "x"], id: "x",
-            sleep: { _ in clock.sleep() }, now: { clock.now })
+            sleep: { _ in clock.sleep() }, now: { clock.now }).answer
 
         #expect(report == nil)
         #expect(clock.ticks == 5, "上限の 5 秒 (5 刻み) だけ待っていない: \(clock.ticks) 刻み")
