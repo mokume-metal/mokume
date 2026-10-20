@@ -16,12 +16,20 @@ extension Canvas {
     public func fill(_ color: LinearRGBA) {
         // 数でない成分・無限の成分は、塗りを変えずに断る。数の形と同じ鍵で言う (#1706)
         guard color.isFinite else { return warnNotANumberColor(.fill) }
+        // 勾配で塗っていれば、色に替わる前に列を閉じる (``setGradient(_:)``)
+        setGradient(nil)
         style.fill = color
         style.hasFill = true
+        syncGradientShader()
     }
 
     /// 図形の内側を塗らない。
-    public func noFill() { style.hasFill = false }
+    public func noFill() {
+        // 勾配で塗っている列は、塗らない設定に替わる前に閉じる。勾配は覚えておく
+        if paintsWithGradient { closeBatch() }
+        style.hasFill = false
+        syncGradientShader()
+    }
 
     public func stroke(_ color: LinearRGBA) {
         guard color.isFinite else { return warnNotANumberColor(.stroke) }
@@ -274,8 +282,9 @@ extension Canvas {
 
     /// いま生きている状態 (``shader(_:)`` / ``numbers(_:)``) から作る塗り。
     private var livePaint: Shape.Paint {
+        // 勾配の断片は、値をいまの勾配から出す (``gradientValues``)
         Shape.Paint(
-            shader: currentShader, values: currentShader?.packedValues ?? [],
+            shader: currentShader, values: gradientValues ?? currentShader?.packedValues ?? [],
             surfaces: snapshotSurfaces(), numbers: currentNumbers)
     }
 

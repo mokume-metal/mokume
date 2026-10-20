@@ -482,7 +482,8 @@ extension Canvas {
     /// (``clampedUV(_:)``)。広げた帯にも絵の全体が載り、帯の中ほどの画素は元の帯と同じ所を読む。
     func fillThin(_ pieces: [ThinFillPiece], outline: Outline) {
         let uvOf = style.picture == nil ? nil : Self.boxUV(of: outline.points)
-        let colors = (style.fill, style.fill, style.fill)
+        let fillColor = fillVertexColor
+        let colors = (fillColor, fillColor, fillColor)
         for piece in pieces {
             let start = vertices.count
             let (a, b, c, d) = piece.corners

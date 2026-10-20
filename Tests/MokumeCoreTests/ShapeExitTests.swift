@@ -83,6 +83,8 @@ enum ShapeExit {
             ("style.imageMode", { c, _ in c.imageMode(.center) }),
             ("style.tint", { c, _ in c.tint(red) }),
             ("style.picture", { c, f in c.texture(f.sheet) }),
+            // 勾配は塗りと同じ描き方。形に焼き付く (`currentShader` の戻しと、`currentStyle` の戻しが揃える)
+            ("style.gradient", { c, _ in c.fill(.linearGradient([(red, Float(0)), (.linear(red: 0, green: 0, blue: 1), Float(1))], from: [0, 0], to: [10, 0])) }),
             // 貼る絵で輪郭なしの 1 つを置くと、読む面が替わる (輪郭は焼き場の面へ戻す)
             ("style.hasStroke", { c, _ in c.noStroke() }),
             ("currentTexture", { c, _ in c.rect(0, 0, 3, 3) }),
@@ -164,6 +166,8 @@ enum ShapeExit {
             "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
             "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
+            "gradientShaderStorage": "勾配で塗る断片 (#2433)。初めて勾配で塗るときに組み、面と同じだけ生きる。作り直さないために持つ",
+            "gradientShaderFailed": "勾配の断片を組めなかった印 (#2433)。組めない面では組み直さない",
             "lastShadowBakeKey": cache, "discOffsets": cache,
             "ringSplitMemo": "分割数の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#1645)",
             "discSplitMemo": "ringSplitMemo と同じ",

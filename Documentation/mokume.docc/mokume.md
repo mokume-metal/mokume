@@ -380,7 +380,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/background(_:)-9jeha``
 - ``SketchPart/background(_:_:)``
 - ``SketchPart/background(_:_:_:_:)``
-- ``SketchPart/fill(_:)``
+- ``SketchPart/fill(_:)-(LinearRGBA)``
+- ``SketchPart/fill(_:)-(Gradient)``
 - ``SketchPart/fill(_:_:)-(ScalarConvertible,_)``
 - ``SketchPart/fill(_:_:)-(LinearRGBA,_)``
 - ``SketchPart/fill(_:_:_:_:)``
@@ -398,6 +399,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/exposure(_:)``
 - ``SketchPart/toneMapping(_:)``
 - ``LinearRGBA``
+- ``Gradient``
 - ``BlendMode``
 - ``ToneMapping``
 

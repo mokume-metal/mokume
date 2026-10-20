@@ -1155,7 +1155,7 @@ extension Canvas {
         }
         if hasDepth { shapeHasDepth = true }
         let vertex = BuildingVertex(
-            position: position, normal: currentNormal, uv: uv, fill: style.fill,
+            position: position, normal: currentNormal, uv: uv, fill: fillVertexColor,
             isCurveStep: isCurveStep)
         if holePoints != nil {
             holePoints?.append(vertex)

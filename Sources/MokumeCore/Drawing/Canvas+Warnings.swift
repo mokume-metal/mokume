@@ -44,6 +44,13 @@ extension Canvas {
         /// 自分で出す光に、数でない値・無限の値が渡された。
         case notANumberEmissive
 
+        /// 勾配 (``Gradient``) を受けられなかった。区切りが無い・数でない値・点がつぶれている (#2433)。
+        case badGradient
+        /// 勾配の区切りが多すぎて、位置の小さい順に上限までを使った (#2433)。
+        case tooManyGradientStops
+        /// 勾配の断片を組めなかった (#2433)。
+        case gradientUnavailable
+
         /// 面の無いモデルを置いた。
         case emptyModel
         /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの

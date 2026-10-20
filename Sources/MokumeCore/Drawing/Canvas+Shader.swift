@@ -97,6 +97,8 @@ extension Canvas {
         guard currentShader != nil else { return }
         closeBatch()
         currentShader = nil
+        // 勾配を持っていれば、勾配の断片へ戻る (勾配は `fill(_:)` に色を渡して外す)
+        syncGradientShader()
     }
 
     /// 組み立てに失敗している断片の理由。観測に載せる。
