@@ -697,12 +697,6 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var shadowsEnabled = false
-    /// この面で影を 1 度でも有効にしたか。**フレームを越える** — 区切りで落とす側を写すか
-    /// (``keepCasters(into:)``) を決める印で、影を使わないスケッチの区切りに写しを払わせない
-    /// ([#1656])。
-    ///
-    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
-    var shadowsEverEnabled = false
     /// 焼き付ける範囲の一辺。`nil` なら面から導く。**フレームを越えない** (同 決定 4)。
     var shadowRangeValue: Float?
     /// 焼き付け先の一辺の画素数。**フレームを越えない** (同 決定 4)。
@@ -798,34 +792,6 @@ public final class Canvas {
         }
         noiseSettings = next
     }
-    /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
-    ///
-    /// 読めるのは検査が焼いた奥行きを直に確かめるため ([#1474] — どちらの面を焼いたかは、
-    /// 既定の縁の余裕の下では絵にほとんど出ない)。
-    ///
-    /// [#1474]: https://github.com/mokume-metal/mokume/issues/1474
-    private(set) var shadowMap: ShadowMap?
-    /// 焼き付け先を作った回数 (作ってから通算)。
-    ///
-    /// **作り直していないかを数える値。** 毎フレーム宣言してよい形にした以上、
-    /// 宣言のたびに確保していないことは絵では分からない。
-    private(set) var shadowMapsBuilt = 0
-    /// 焼き上がりを待つ仕掛けを積んだ回数 (作ってから通算)。
-    ///
-    /// **仕掛けが入っていることを数える値。** 抜けていても絵は普段どおり出て、
-    /// GPU が混んだときだけ稀に前のフレームが混ざる ([#341]) ので、
-    /// 抜けたことに絵で気付く道が無い。積む 1 行と同じ場所で数え、
-    /// **その行を消したら数も減る**ようにしてある。
-    ///
-    /// [#341]: https://github.com/mokume-metal/mokume/issues/341
-    private(set) var shadowBarriersEncoded = 0
-    /// 影を実際に焼いた回数 (作ってから通算)。
-    private(set) var shadowBakesEncoded = 0
-    /// 前のフレームで焼いた面をそのまま読んだ回数 (作ってから通算)。
-    ///
-    /// **焼き直していないことを数える値。** 焼き直しても絵は同じなので、省略が
-    /// 効いているかは絵では分からない。
-    private(set) var shadowBakesReused = 0
     /// 溜めた計算。描く前に流し、フレームの終わりに空になる。
     var pendingComputations: [ComputeDispatch] = []
     /// この面が作った計算。観測へ失敗を載せるために持つ。**弱く持つ** (``Canvas/shaders``)。
@@ -991,10 +957,98 @@ public final class Canvas {
     /// 送ると、今まで送れていた絵が置き場を取れずに描き切りごと落ちる。そういう品にだけ
     /// 今までの形 (待ってから書く) を残す。検査が差し替える。
     var uploadByteLimit = 64 << 20
-    /// 影の行列を置く領域。
-    private let shadowMatrixStorage: GrowableBuffer
-    /// 焼いていないフレームに影の口へ束ねる 1 画素の奥行きの面。
-    private var unbakedShadowTexture: (any MTLTexture)?
+    /// 影の焼き付けが持ち越す格納 (#2257)。**フレームに属さない** — 焼いた面・その面が何を持つかの記帳・
+    /// 資源・数えは、境目で戻さず面と同じだけ生きる。フレームに属する宣言 (`shadowsEnabled`・
+    /// `shadowRangeValue`・`shadowDetailValue`・`shadowBiasValue`) は ``Canvas`` に残る (`style` と同じく
+    /// 描く状態の側)。寿命で 2 つに切ってあるので、格納の台帳 (`CanvasTests.everyStoredPropertyIsClassified`)
+    /// は `shadowBake` を「持ち越す」に 1 行で載せ、中は `everyTargetStoredPropertyIsClassified` が `target` と同じ降り方で見る。
+    ///
+    /// 検査が読む値 (焼き付け先・数え 6 本・`shadowsEverEnabled`) は、同じ名前の読み口を ``Canvas`` に残して
+    /// ある (``shadowMap`` ほか)。数えた値の名前は検査と doc コメントが広く名指しする。
+    private struct ShadowBake {
+        /// 焼き付け先。**同じ細かさなら作り直さない** (``Canvas`` の影の宣言・[ADR-0021] 決定 4)。
+        ///
+        /// 読めるのは検査が焼いた奥行きを直に確かめるため ([#1474] — どちらの面を焼いたかは、
+        /// 既定の縁の余裕の下では絵にほとんど出ない)。
+        ///
+        /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+        /// [#1474]: https://github.com/mokume-metal/mokume/issues/1474
+        var map: ShadowMap?
+        /// 焼き付け先を作った回数 (作ってから通算)。
+        ///
+        /// **作り直していないかを数える値。** 毎フレーム宣言してよい形にした以上、
+        /// 宣言のたびに確保していないことは絵では分からない。
+        var mapsBuilt = 0
+        /// 焼き上がりを待つ仕掛けを積んだ回数 (作ってから通算)。
+        ///
+        /// **仕掛けが入っていることを数える値。** 抜けていても絵は普段どおり出て、
+        /// GPU が混んだときだけ稀に前のフレームが混ざる ([#341]) ので、
+        /// 抜けたことに絵で気付く道が無い。積む 1 行と同じ場所で数え、
+        /// **その行を消したら数も減る**ようにしてある。
+        ///
+        /// [#341]: https://github.com/mokume-metal/mokume/issues/341
+        var barriersEncoded = 0
+        /// 影を実際に焼いた回数 (作ってから通算)。
+        var bakesEncoded = 0
+        /// 前のフレームで焼いた面をそのまま読んだ回数 (作ってから通算)。
+        ///
+        /// **焼き直していないことを数える値。** 焼き直しても絵は同じなので、省略が
+        /// 効いているかは絵では分からない。
+        var bakesReused = 0
+        /// 面を消さずに、この回の列だけを足して焼いた回数 (作ってから通算)。**検査が読む。**
+        var bakesAdded = 0
+        /// 同じフレームで前に焼いた面を読む描画を待つ仕掛けを、焼き付けの頭に積んだ回数 (作ってから
+        /// 通算)。**区切らないフレームでは増えないことを検査が見る。**
+        var rebakeBarriersEncoded = 0
+        /// この面で影を 1 度でも有効にしたか。**フレームを越える** — 区切りで落とす側を写すか
+        /// (``Canvas/keepCasters(into:)``) を決める印で、影を使わないスケッチの区切りに写しを払わせない
+        /// ([#1656])。
+        ///
+        /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        var everEnabled = false
+        /// 影の行列を置く領域。
+        let matrixStorage: GrowableBuffer
+        /// 焼いていないフレームに影の口へ束ねる 1 画素の奥行きの面。
+        var unbakedTexture: (any MTLTexture)?
+        /// 影の面がいま持つ落とす列の並びの指紋と、焼いたときの行列と細かさ ([#1656])。焼いたか使い
+        /// 回した描き切りの投入の後で覚える。次の焼き付けは、持ち越した列の並びがこれと同じなら、
+        /// この回の列だけを足して焼く。
+        ///
+        /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        var holds: (chain: UInt64, matrix: simd_float4x4, detail: Int)?
+        /// 前のフレームで焼いた入力の指紋。焼かなかったフレームでは触らない — 焼いた面は
+        /// 誰にも書き換えられないので、影を切って戻したフレームも同じ指紋ならそのまま読める。
+        var lastKey: UInt64?
+        /// 影の面がいま拠っている焼き付けの投入の範囲 ([#2199])。全部から焼いた投入 (`bakedSince`) から、
+        /// その上に足して焼いた最後の投入 (`bakedThrough`) まで。0 は焼いていない。
+        ///
+        /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
+        var bakedSince: UInt64 = 0
+        var bakedThrough: UInt64 = 0
+
+        init(matrixStorage: GrowableBuffer) { self.matrixStorage = matrixStorage }
+    }
+    private var shadowBake: ShadowBake
+
+    /// この面で影を 1 度でも有効にしたか (``ShadowBake/everEnabled``)。
+    var shadowsEverEnabled: Bool {
+        get { shadowBake.everEnabled }
+        set { shadowBake.everEnabled = newValue }
+    }
+    /// 焼き付け先 (``ShadowBake/map``)。
+    var shadowMap: ShadowMap? { shadowBake.map }
+    /// 焼き付け先を作った回数。
+    var shadowMapsBuilt: Int { shadowBake.mapsBuilt }
+    /// 焼き上がりを待つ仕掛けを積んだ回数。
+    var shadowBarriersEncoded: Int { shadowBake.barriersEncoded }
+    /// 影を実際に焼いた回数。
+    var shadowBakesEncoded: Int { shadowBake.bakesEncoded }
+    /// 前のフレームで焼いた面をそのまま読んだ回数。
+    var shadowBakesReused: Int { shadowBake.bakesReused }
+    /// 面を消さずに、この回の列だけを足して焼いた回数。
+    var shadowBakesAdded: Int { shadowBake.bakesAdded }
+    /// 同じフレームで前に焼いた面を読む描画を待つ仕掛けを、焼き付けの頭に積んだ回数。
+    var shadowRebakeBarriersEncoded: Int { shadowBake.rebakeBarriersEncoded }
 
     /// いま効いている視点。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
@@ -1987,9 +2041,17 @@ public final class Canvas {
         var ellipseMode = ShapeMode.center
         var blendMode = BlendMode.blend
         var clip: ClipRect?
-        var fontName: String?
+        /// 選んだ書体。`nil` は既定の書体。**名前とファイルは同時に持てない** — 後から選んだほうが勝つので、
+        /// 1 つの値で持つ ([#2445])。読み書きは ``fontName``・``fontFile`` から。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        var fontSelection: FontSelection?
         var textSize: Float = 12
-        var textStyle = TextStyle.normal
+        /// 頼んだ太さと傾き。**太字と太さは同時に持てない** — ``textStyle(_:)`` と ``textWeight(_:)`` は
+        /// 後から書いたほうが勝つので、1 つの値で持つ ([#2445])。読み書きは ``textStyle``・``textWeight`` から。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        var textFace = TextFace.style(.normal)
         var horizontalTextAlign = HorizontalTextAlign.left
         var verticalTextAlign = VerticalTextAlign.baseline
         /// 行送りの指定。`nil` は自動 (大きさから決める)。
@@ -2017,6 +2079,52 @@ public final class Canvas {
         var castsShadow = true
         /// これから置く形が影を受けるか。
         var receivesShadow = true
+
+        /// 名前で選んだ書体。ファイルを選んでいれば `nil`。書くと名前の選びになり、`nil` を書くと既定へ戻る。
+        var fontName: String? {
+            get {
+                if case .named(let name) = fontSelection { name } else { nil }
+            }
+            set { fontSelection = newValue.map(FontSelection.named) }
+        }
+
+        /// ファイルから読んだ書体。名前で選んでいれば `nil`。
+        var fontFile: Font? {
+            if case .file(let font) = fontSelection { font } else { nil }
+        }
+
+        /// 太字・斜体。**太さを頼んでいれば、太字の分を落とした形** (傾きだけ) — 太さを頼んだ面と太字の面を、
+        /// 別々の鍵で作らないため (``Typeface`` が太さを持つ)。書くと太字・斜体の頼みになり、太さは外れる。
+        var textStyle: TextStyle {
+            get {
+                switch textFace {
+                case .style(let style): style
+                case .weight(_, let italic): italic ? .italic : .normal
+                }
+            }
+            set { textFace = .style(newValue) }
+        }
+
+        /// 頼んだ太さ (100〜900 の整数)。頼んでいなければ `nil`。
+        var textWeight: Int? {
+            if case .weight(let weight, _) = textFace { weight } else { nil }
+        }
+    }
+
+    /// 書体の選び方 (``Style/fontSelection``)。
+    enum FontSelection {
+        /// この環境の書体を、確かめた名前で。
+        case named(String)
+        /// ファイルから読んだ書体。
+        case file(Font)
+    }
+
+    /// 太さと傾きの頼み方 (``Style/textFace``)。
+    enum TextFace: Equatable {
+        /// 太字・斜体の面を頼んだ。
+        case style(TextStyle)
+        /// 太さの数を頼んだ。傾きは、太さの前に頼んだ斜体を残す。
+        case weight(Int, italic: Bool)
     }
 
     /// いまの設定の一式を、丸ごと写し取る / 戻す口。
@@ -2130,8 +2238,8 @@ public final class Canvas {
         // 環には載る** — 毎フレーム CPU が書き換えるという性質が同じだからである
         self.uniformsStorage = storage(
             stride: Self.valuesStride, minimum: 1, label: "uniforms")
-        self.shadowMatrixStorage = storage(
-            stride: Self.valuesStride, minimum: 1, label: "shadowMatrix")
+        self.shadowBake = ShadowBake(
+            matrixStorage: storage(stride: Self.valuesStride, minimum: 1, label: "shadowMatrix"))
 
         self.width = Float(output.width)
         self.height = Float(output.height)
@@ -2186,7 +2294,7 @@ public final class Canvas {
     isolated deinit {
         gpu.retire(blendModeBuffer)
         gpu.retire(glyphPageBuffer)
-        if let unbakedShadowTexture { gpu.retire(unbakedShadowTexture) }
+        if let texture = shadowBake.unbakedTexture { gpu.retire(texture) }
     }
 
     /// 出す先の大きさと細かさから、描く先の大きさを決める。
@@ -4157,8 +4265,8 @@ public final class Canvas {
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
         // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
         if let shadow = assembled.shadow {
-            lastShadowBakeKey = shadow.key
-            shadowMapHolds = shadow.holds.map {
+            shadowBake.lastKey = shadow.key
+            shadowBake.holds = shadow.holds.map {
                 (chain: $0, matrix: shadow.matrix, detail: shadow.map.detail)
             }
             // **焼いた投入が打ち切られたら、焼いた面は書かれていない** ([#2199])。面がどの投入に拠るかを
@@ -4166,8 +4274,8 @@ public final class Canvas {
             //
             // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
             if shadow.solidUploads != nil {
-                if !shadow.added { shadowBakedSince = assembled.submission }
-                shadowBakedThrough = assembled.submission
+                if !shadow.added { shadowBake.bakedSince = assembled.submission }
+                shadowBake.bakedThrough = assembled.submission
                 gpu.awaitSettlement(of: assembled.submission, by: self)
             }
         }
@@ -5098,8 +5206,8 @@ public final class Canvas {
         // [#2199]: https://github.com/mokume-metal/mokume/issues/2199
         let detail = shadowDetailValue
         let (key, holds) = shadowBakeKey(matrix: matrix, detail: detail, casting: casting)
-        if let key, key == lastShadowBakeKey, let shadowMap, shadowMap.detail == detail {
-            shadowBakesReused += 1
+        if let key, key == shadowBake.lastKey, let shadowMap, shadowMap.detail == detail {
+            shadowBake.bakesReused += 1
             return BakedShadow(
                 map: shadowMap, matrix: matrix, key: key, holds: holds, solidUploads: nil, added: false)
         }
@@ -5109,7 +5217,7 @@ public final class Canvas {
         //
         // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
         let adding: Bool
-        if let held = shadowMapHolds, frameCasters.chainValid, !frameCasters.isEmpty,
+        if let held = shadowBake.holds, frameCasters.chainValid, !frameCasters.isEmpty,
             held.chain == frameCasters.chain.finish(), held.matrix == matrix,
             held.detail == detail, let shadowMap, shadowMap.detail == detail
         {
@@ -5124,7 +5232,7 @@ public final class Canvas {
         let solidIndexBuffer = solid.indices
         let instanceBuffer = solid.instances
         let batchValues = try uploadBatchValues()
-        let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
+        let matrixBuffer = try shadowBake.matrixStorage.buffer(holding: 1)
         // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い。
         // 描く画素の大きさは基本図形しか読まず、基本図形は影へ焼かないので 1 を置く
         var value = FlatFrame(
@@ -5147,7 +5255,7 @@ public final class Canvas {
         if passesThisFrame > 0 {
             encoder.barrier(
                 afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
-            shadowRebakeBarriersEncoded += 1
+            shadowBake.rebakeBarriersEncoded += 1
         }
         encoder.setRenderPipelineState(pipeline.shadowState)
         encoder.setDepthStencilState(pipeline.solidDepthState)
@@ -5188,8 +5296,8 @@ public final class Canvas {
         }
         encodeShadowBarrier(on: encoder)
         encoder.endEncoding()
-        shadowBakesEncoded += 1
-        if adding { shadowBakesAdded += 1 }
+        shadowBake.bakesEncoded += 1
+        if adding { shadowBake.bakesAdded += 1 }
         return BakedShadow(
             map: map, matrix: matrix, key: key, holds: holds, solidUploads: solid, added: adding)
     }
@@ -5259,11 +5367,11 @@ public final class Canvas {
     private struct BakedShadow {
         let map: ShadowMap
         let matrix: simd_float4x4
-        /// 焼き付けの入力の指紋。**投入した後で `lastShadowBakeKey` へ覚える。**
+        /// 焼き付けの入力の指紋。**投入した後で `shadowBake.lastKey` へ覚える。**
         /// 指紋を取れない入力 (粒) では `nil` で、覚えると次のフレームが使い回さない
         let key: UInt64?
         /// 面が持つ落とす列 (持ち越した列とこの回の列) の指紋の並び。**投入した後で
-        /// `shadowMapHolds` へ覚える** — 次の区切りで、この回の列だけを足して焼けるかを見る。
+        /// `shadowBake.holds` へ覚える** — 次の区切りで、この回の列だけを足して焼けるかを見る。
         let holds: UInt64?
         /// 焼くために写した立体の置き場。**使い回したフレームでは `nil`** (写していない)。
         let solidUploads: SolidUploads?
@@ -5355,42 +5463,19 @@ public final class Canvas {
         return hasher.finish()
     }
 
-    /// 影の面がいま持つ落とす列の並びの指紋と、焼いたときの行列と細かさ ([#1656])。焼いたか使い
-    /// 回した描き切りの投入の後で覚える。次の焼き付けは、持ち越した列の並びがこれと同じなら、
-    /// この回の列だけを足して焼く。
-    ///
-    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
-    private var shadowMapHolds: (chain: UInt64, matrix: simd_float4x4, detail: Int)?
-
-    /// 面を消さずに、この回の列だけを足して焼いた回数 (作ってから通算)。**検査が読む。**
-    private(set) var shadowBakesAdded = 0
-    /// 同じフレームで前に焼いた面を読む描画を待つ仕掛けを、焼き付けの頭に積んだ回数 (作ってから
-    /// 通算)。**区切らないフレームでは増えないことを検査が見る。**
-    private(set) var shadowRebakeBarriersEncoded = 0
-
-    /// 前のフレームで焼いた入力の指紋。焼かなかったフレームでは触らない — 焼いた面は
-    /// 誰にも書き換えられないので、影を切って戻したフレームも同じ指紋ならそのまま読める。
-    private var lastShadowBakeKey: UInt64?
-
-    /// 影の面がいま拠っている焼き付けの投入の範囲 ([#2199])。全部から焼いた投入 (`since`) から、その上に
-    /// 足して焼いた最後の投入 (`through`) まで。0 は焼いていない。
-    ///
-    /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    private var shadowBakedSince: UInt64 = 0
-    private var shadowBakedThrough: UInt64 = 0
-
     /// 焼いた投入 `submission` が打ち切られた。**影の面がまだその投入に拠っていれば** (後で全部から焼き
-    /// 直していなければ)、面が何を持つかの記帳 (``lastShadowBakeKey``・``shadowMapHolds``) を忘れる
+    /// 直していなければ)、面が何を持つかの記帳 (`shadowBake.lastKey`・`shadowBake.holds`) を忘れる
     /// ([#2199])。次の焼き付けは使い回さず、足さず、全部から焼く。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     func shadowBakeDropped(_ submission: UInt64) {
-        guard shadowBakedSince > 0, shadowBakedSince <= submission, submission <= shadowBakedThrough
+        let baked = shadowBake
+        guard baked.bakedSince > 0, baked.bakedSince <= submission, submission <= baked.bakedThrough
         else { return }
-        lastShadowBakeKey = nil
-        shadowMapHolds = nil
-        shadowBakedSince = 0
-        shadowBakedThrough = 0
+        shadowBake.lastKey = nil
+        shadowBake.holds = nil
+        shadowBake.bakedSince = 0
+        shadowBake.bakedThrough = 0
     }
 
     /// 焼き上がりを待つ仕掛けを積む。**焼いた面を画面のパスが読む前に置く。**
@@ -5409,7 +5494,7 @@ public final class Canvas {
     private func encodeShadowBarrier(on encoder: any MTL4RenderCommandEncoder) {
         encoder.barrier(
             afterStages: .fragment, beforeQueueStages: .fragment, visibilityOptions: .device)
-        shadowBarriersEncoded += 1
+        shadowBake.barriersEncoded += 1
     }
 
     /// 焼き付け先。**同じ細かさなら作り直さない** ([ADR-0021] 決定 4)。
@@ -5418,8 +5503,8 @@ public final class Canvas {
     private func shadowMapHolding(_ detail: Int) throws(RenderFailure) -> ShadowMap {
         if let shadowMap, shadowMap.detail == detail { return shadowMap }
         let map = try ShadowMap(gpu: gpu, detail: detail)
-        shadowMap = map
-        shadowMapsBuilt += 1
+        shadowBake.map = map
+        shadowBake.mapsBuilt += 1
         return map
     }
 
@@ -5429,10 +5514,10 @@ public final class Canvas {
     /// 読まないので中身は問わないが、口の型に合う面を束ねておかないと、触らなくても
     /// 型の不一致として検証層が止める
     private func unbakedShadowTextureHolding() throws(RenderFailure) -> any MTLTexture {
-        if let unbakedShadowTexture { return unbakedShadowTexture }
+        if let texture = shadowBake.unbakedTexture { return texture }
         let texture = try gpu.makeTexture(descriptor: ShadowMap.descriptor(side: 1))
         texture.label = "mokume.shadow.unbaked"
-        unbakedShadowTexture = texture
+        shadowBake.unbakedTexture = texture
         return texture
     }
 

@@ -107,7 +107,9 @@ let package = Package(
         .executableTarget(
             name: "MokumeCLI",
             dependencies: ["mokume", "MokumeDiagnostics"],
-            resources: [.copy("Templates")],
+            // Examples は `mokume examples` / `new --from` が読む作例の束 (#2436)。説明文から
+            // scripts/bundle-examples.py が作る生成物で、コミットしない (README の 1 枚だけを置く)
+            resources: [.copy("Templates"), .copy("Examples")],
             swiftSettings: .mokume),
         // 開発時に測るための道具。product には含めない (利用者へ配るものではない)
         // 参照スケッチ。2D の面が実際に成立していることを、使って示す。

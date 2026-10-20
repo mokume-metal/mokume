@@ -24,7 +24,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from observe_lib import answered, place  # noqa: E402
+from observe_lib import Contested, answered, place  # noqa: E402
 
 
 def main(argv: list[str]) -> int:
@@ -33,23 +33,42 @@ def main(argv: list[str]) -> int:
     observe, inbox = root / "observe", root / "input"
 
     missed: dict[str, list[int]] = {"観測": [], "入力": []}
+    # 別の書き手と取り合った回 (#2857)。**応えなかった回とは分ける** — 走っていないのではなく、
+    # 別の書き手が同じ区画を使っている。この検査は書き手が 1 人の前提なので、あれば赤にする
+    contested: dict[str, list[int]] = {"観測": [], "入力": []}
     # フレームが進み続けているか。**応答が返るだけでは足りない** — 止まったランタイムでも
     # 観測には応えられる (ADR-0018) ので、番号が動いていることまで見て絵の生死を分ける
     frames: list[int] = []
     for index in range(1, rounds + 1):
         identifier = f"r{index}"
-        place(observe, {"id": identifier})
-        place(inbox, {"id": identifier, "events": [{"type": "mouseMoved", "x": 1, "y": 2}]})
+        before_observe = place(observe, {"id": identifier})
+        before_input = place(
+            inbox, {"id": identifier, "events": [{"type": "mouseMoved", "x": 1, "y": 2}]}
+        )
 
-        report = answered(observe, identifier, deadline)
-        if report is None:
-            missed["観測"].append(index)
-        else:
-            frames.append(report.get("frame", 0))
-        if answered(inbox, identifier, deadline) is None:
-            missed["入力"].append(index)
+        try:
+            report = answered(observe, identifier, deadline, before=before_observe)
+            if report is None:
+                missed["観測"].append(index)
+            else:
+                frames.append(report.get("frame", 0))
+        except Contested:
+            contested["観測"].append(index)
+        try:
+            if answered(inbox, identifier, deadline, before=before_input) is None:
+                missed["入力"].append(index)
+        except Contested:
+            contested["入力"].append(index)
 
     failed = False
+    for name, indexes in contested.items():
+        if indexes:
+            failed = True
+            shown = ", ".join(str(i) for i in indexes[:10])
+            print(
+                f"{name}: 別の書き手と区画を取り合った回 {shown}{' …' if len(indexes) > 10 else ''}"
+                " (走っていないのではない。当たったかは分からない)"
+            )
     for name, indexes in missed.items():
         if indexes:
             failed = True

@@ -748,11 +748,12 @@ struct PixelGridTests {
                 return SIMD2(c * d.x + s * d.y, -s * d.x + c * d.y)
             }
             let shift = local(origin + 0.5)
+            // 塗りに入る点では帯の距離を解かない (楕円の真の距離は点ごとに二分法を回す・#3010)
             func covered(_ point: SIMD2<Double>) -> Bool {
                 let p = local(point)
+                if fills && shape.inFill(p) { return true }
                 let q = p - shift
-                let inBand = boundary.map { $0(q) <= halfWeight } ?? shape.inBand(q)
-                return (fills && shape.inFill(p)) || inBand
+                return boundary.map { $0(q) <= halfWeight } ?? shape.inBand(q)
             }
             let reach = max(shape.half.x, shape.half.y) + halfWeight + 2
             let lowest = max(0, Int(min(origin.x, origin.y) - reach))
@@ -760,16 +761,18 @@ struct PixelGridTests {
             for y in lowest..<highest {
                 for x in lowest..<highest {
                     // 画素の中心から帯の縁までの距離が 0.9 画素より離れていれば、1/8 画素広げた四角
-                    // (中心から 0.9 画素の内に収まる) は丸ごと帯の中か外で、標本を見なくてよい
+                    // (中心から 0.9 画素の内に収まる) は丸ごと帯の中か外で、標本を見なくてよい。
+                    // 丸ごと帯の中なら塗りの有無によらず覆われる。帯の外は塗りが覆いうるので、塗りの
+                    // 無い形だけで決める (#3010)
                     let centerDistance = boundary.map {
                         $0(local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift)
                     }
                     var inside = true
                     var decided = false
-                    if let centerDistance, !fills {
+                    if let centerDistance {
                         if centerDistance <= halfWeight - 0.9 {
                             decided = true
-                        } else if centerDistance > halfWeight + 0.9 {
+                        } else if !fills, centerDistance > halfWeight + 0.9 {
                             inside = false
                             decided = true
                         }

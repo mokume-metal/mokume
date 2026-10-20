@@ -418,6 +418,44 @@ struct SketchFrameClockTests {
                 == BlockingLoads.notice("loadImage(_:)", instead: "requestImage(_:)"))
     }
 
+    /// 書体の読み込み (#2445)。待たない口 (`requestFont`) はまだ無いので、案内は `setup()` で読むことだけ。
+    @Test("draw() の中の loadFont は口の名前で 1 度だけ知らせ、setup() の中では知らせない")
+    func loadFontInDrawIsNoticed() throws {
+        let path = "/System/Library/Fonts/Helvetica.ttc"
+
+        let inSetup = Probe()
+        inSetup.onSetup = { _ = try? $0.loadFont(path) }
+        let quiet = try SketchRuntime(sketch: inSetup, gpu: RenderDevice())
+        for _ in 0..<3 { try quiet.advance() }
+        #expect(quiet.blockingLoads.message(for: "loadFont(_:)") == nil)
+
+        var loaded = 0
+        let inDraw = Probe()
+        inDraw.onDraw = { probe in
+            if (try? probe.loadFont(path)) != nil { loaded += 1 }
+        }
+        let noisy = try SketchRuntime(sketch: inDraw, gpu: RenderDevice())
+        for _ in 0..<3 { try noisy.advance() }
+        #expect(loaded == 3, "知らせても読み込みは止めない")
+        let message = try #require(noisy.blockingLoads.message(for: "loadFont(_:)"))
+        #expect(message == BlockingLoads.notice("loadFont(_:)", instead: nil))
+        #expect(message.hasPrefix("loadFont(_:) was called inside draw()."), "\(message)")
+        #expect(!message.contains("requestFont"), "まだ無い口を案内した: \(message)")
+    }
+
+    /// 書体の読み込みは走っている面を使わないので、走っていなくても読め、走っていない口の警告も出ない。
+    @Test("走っていない所でも loadFont は読め、走っていない口の警告を出さない")
+    func loadFontWorksOutsideARun() throws {
+        let log = OutsideRun()
+        let probe = Probe()
+        var font: Font?
+        OutsideRun.$current.withValue(log) {
+            font = try? probe.loadFont("/System/Library/Fonts/Helvetica.ttc")
+        }
+        #expect(font != nil)
+        #expect(log.messages.isEmpty, "\(log.messages)")
+    }
+
     /// **1 回の呼び出しで言うのは 1 行だけ** — `draw()` の中は走っているので、走っていない口の警告
     /// (`OutsideRun`・#2683) は出ず、同期の読み込みの警告だけが出る。外 (`init` など) から呼ぶと、
     /// 走っていない口の警告だけが出て、同期の読み込みの警告は出ない。

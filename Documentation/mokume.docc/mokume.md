@@ -75,6 +75,8 @@ circle(200, 150, 20 + pow(2, level))
 
 [mokume の入口](../../) — 入れ方と最初の 1 本はこちら。
 
+**ここに並ぶ口の例を開いて始めるなら**、道具に `mokume examples` で一覧を出させ、`mokume new <名前> --from <例>` で 1 本のスケッチにできる。例の名前は、このページの見出しと同じ綴りである (`triangle` など)。
+
 **この面に出ている説明は、すべてソースの `///` から組み立てられている。** 説明を直したいときは実装の隣を直す。機械が一度に読むための一覧が要るときは、版ごとの Release に載る公開 API の一覧を使う — こちらは人が読むための面で、同じ説明の別の配り方になっている。
 
 ### 状態の寿命
@@ -520,9 +522,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/text(_:_:_:)``
 - ``SketchPart/text(_:_:_:_:_:)``
 - ``SketchPart/textSize(_:)``
-- ``SketchPart/textFont(_:)``
+- ``SketchPart/textFont(_:)-(String)``
+- ``SketchPart/textFont(_:)-(Font)``
 - ``SketchPart/noTextFont()``
 - ``SketchPart/textStyle(_:)``
+- ``SketchPart/textWeight(_:)``
 - ``SketchPart/textAlign(_:_:)``
 - ``SketchPart/textLeading(_:)``
 - ``SketchPart/textWrap(_:)``
@@ -532,6 +536,9 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/textOutline(_:_:_:)``
 - ``SketchPart/textOutline(_:_:_:spacing:)``
 - ``SketchPart/textBounds(_:_:_:)``
+- ``SketchPart/loadFont(_:)``
+- ``Font``
+- ``FontFailure``
 - ``TextStyle``
 - ``TextWrap``
 - ``TextFlow``

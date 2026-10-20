@@ -323,6 +323,21 @@ extension Canvas {
         ///
         /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
         case missingTypefaceStyle
+        /// ``Canvas/textWeight(_:)`` の太さに、書体が近い面を持っていなかった ([#2445])。持つ面のうち最も近い
+        /// ものを使ったが、頼んだ太さから大きく離れている。
+        ///
+        /// **``missingTypefaceStyle`` と鍵を分ける** — 太字の面の知らせが、太さの知らせを黙らせない。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        case missingTypefaceWeight
+        /// ``Canvas/textWeight(_:)`` に、100〜900 の外の値が渡され、範囲の端へ丸めた ([#2445])。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        case badTextWeight
+        /// ``Canvas/textWeight(_:)`` に、数でない値・無限が渡された。太さは前のまま ([#2445])。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        case notANumberTextWeight
         /// 指定した書体が覆えず別の書体から引いた字の面が、``Canvas/textStyle(_:)`` の太さ・傾きを
         /// 持っていなかった ([#2561])。色の字形を持つ書体から引いた字と、墨を持たない字は数えない
         /// (``Typeface/lacksStyle(fallback:glyph:requested:)``)。
