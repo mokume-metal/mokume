@@ -334,7 +334,7 @@ extension ShapeExit {
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
             "seamsClosed": seam, "outletJoinedAt": seam,
             "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,
-            "pendingOutletFrames": recording, "warnedEncodeFailed": recording, "capture": recording,
+            "pendingOutletFrames": recording, "warnedEncodeFailed": recording, "capture": recording, "settling": observation,
             "frameDrawnAfter": recording, "readyOutletFrames": recording,
             "isHandingOverOutletFrames": recording, "outletJudgedThrough": recording,
             "outletHeldDrop": recording, "outletFramesDropped": recording,
