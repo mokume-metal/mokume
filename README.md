@@ -76,6 +76,8 @@ final class MySketch: Sketch {
 
 `fill(77, 191, 242)` に変えて保存すると、ウィンドウを開き直さずに円が水色になります。ビルドに失敗したときは直前の絵が動き続け、エラーがターミナルに表示されます。
 
+例を開いて始めるなら、`mokume examples` で一覧を出し、`mokume new my-shape --from triangle` のように API の名前で 1 本を選びます (括弧を含む名前はシェルでは引用符で包みます)。
+
 使える API は [API リファレンス](https://mokume.org/documentation/mokume/) に、実行結果の絵つきでまとまっています。Processing や p5.js から来たなら、先に [Swift で 3 つだけ違うこと](https://mokume.org/documentation/mokume/#Swift-で-3-つだけ違うこと)を読むと、最初の赤いエラーで迷いません。
 
 ## コマンド
@@ -83,9 +85,10 @@ final class MySketch: Sketch {
 | コマンド | |
 | --- | --- |
 | `mokume new <name>` | スケッチを作成 |
+| `mokume examples` | 同梱した作例の一覧 (`mokume new <name> --from <例>` で開く) |
 | `mokume run` | ビルドして実行 |
 | `mokume watch` | 実行し、保存のたびに再ビルドして差し替え |
-| `mokume render` | ウィンドウを開かずに動画・連番画像へ書き出し |
+| `mokume render` | ウィンドウを開かずに動画・連番画像・GIF・MP4 へ書き出し |
 | `mokume bundle` | 配布用の `.app` を作成 |
 | `mokume doctor` | 環境とスケッチの状態を表示 |
 | `mokume mcp` | AI エージェント向けの MCP サーバを起動 |
@@ -98,7 +101,15 @@ final class MySketch: Sketch {
 mokume render --fps 60 --seconds 4 --out motion.mov
 ```
 
-`time` は 1 フレームごとに `1 / fps` 秒ずつ進むので、描画の重さに左右されず、同じ引数からは同じ動きが得られます。`--out` には `.mov` (ProRes 4444) か、`out/frame-####.png` のような連番を指定します。
+`time` は 1 フレームごとに `1 / fps` 秒ずつ進むので、描画の重さに左右されず、同じ引数からは同じ動きが得られます。`--out` には `.mov` (ProRes 4444) か、`out/frame-####.png` のような連番を指定します。この 2 つは元にする形で、同じ引数から同じ画素が得られます。
+
+貼ったり送ったりする形には `.gif` と `.mp4` (H.264) を指定できます。外の変換ツールは要りません。
+
+```bash
+mokume render --fps 25 --seconds 4 --out loop.gif   # 100 枚。4 秒で 1 周する作品なら継ぎ目なしのループ
+```
+
+この 2 つは配る形で、**同じ引数から書いても画素が一致するとは約束しません** (元にするなら `.mov` か連番)。書き終わりにもそう表示します。GIF は 256 色で、色は sRGB に直して書き、透けた画素は不透明か透明かの 2 通りにします (アルファ 128 以上が不透明)。遅延は 1/100 秒の整数倍なので、`--fps` は 100 を割り切る値 (50・25・20 など) だけを受け付け、`--fps 60` はビルドの前にエラーになります。MP4 は透けを書かず、色は sRGB に直して書きます。
 
 <details>
 <summary>詳しい挙動</summary>

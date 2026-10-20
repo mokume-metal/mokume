@@ -37,7 +37,13 @@ extension RenderRequest {
     ///
     /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
     package nonisolated func inspectOutput(since start: Date) -> Shortfall? {
-        if FrameRecorder.isMovie(destination) {
+        // **配る形 (GIF) は、動画ではなく画像の並びとして数える** ([#2440])。MP4 は動画として数える
+        if FrameRecorder.distribution(of: destination) == .gif {
+            guard Self.isWritten(destination, since: start) else { return .notWritten }
+            guard let found = GIFFile.frameCount(atPath: destination) else { return .unreadable }
+            return found == frameCount ? nil : .frames(found: found)
+        }
+        if FrameRecorder.isMovie(destination) || FrameRecorder.distribution(of: destination) == .mp4 {
             guard Self.isWritten(destination, since: start) else { return .notWritten }
             guard let found = MovieFile.videoSampleCount(atPath: destination) else {
                 return .unreadable

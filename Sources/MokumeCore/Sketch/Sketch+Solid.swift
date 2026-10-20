@@ -135,6 +135,14 @@ extension SketchPart {
     ///   - radius: 半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 上下は半周なので、その半分で割る。
     ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///
+    /// - Note: **`detail` は手本とは違う形である。** p5.js の `sphere(radius, detailX, detailY)` は
+    ///   経度と緯度を別々の位置引数で渡し、Processing は状態の `sphereDetail()` で決める。こちらは
+    ///   形をまたいで同じ意味の 1 本 (一周をいくつに割るか) にそろえた。同じ値を渡して形ごとに違う
+    ///   細かさになるのを避けるためで、手本の `detailX` / `detailY` に当たる別々の指定は無い
+    ///   ([ADR-0020] 決定 1)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     // shot: 1 snippet=51775b2d
     // shot: 2 snippet=3c04508e
     public func sphere(_ radius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail) {
@@ -199,6 +207,8 @@ extension SketchPart {
     ///   - z: 奥行きの半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 球と同じく、上下は半周なのでその半分で割る。
     ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///
+    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=b469d265
     // shot: 2 snippet=44cb3b83
     public func ellipsoid(
@@ -292,6 +302,8 @@ extension SketchPart {
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
     ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///
+    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=3382160f
     // shot: 2 snippet=14bac537
     public func cylinder(
@@ -329,6 +341,8 @@ extension SketchPart {
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
     ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///
+    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=c6e05232
     public func cone(
         _ radius: some ScalarConvertible, _ height: some ScalarConvertible,
@@ -389,6 +403,8 @@ extension SketchPart {
     ///   - tubeRadius: 管の半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 輪の一周も管の一周も同じ数で割る。
     ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
+    ///
+    /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=7978e71b
     // shot: 2 snippet=21763f89
     public func torus(

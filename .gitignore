@@ -28,3 +28,9 @@ shots/
 # 描画 PR が merge できなくなったことがある (#724。当時の手元の実行の報告は #879 で畳んだ)。綴りは雛形 (mokume new が
 # 置く gitignore.template) に合わせる
 .mokume/
+
+# 道具に同梱する作例の束。説明文から scripts/bundle-examples.py が作る生成物 (make cli-examples・
+# make cli-dist)。置き場を実在させる README の 1 枚だけは `git add -f` で追跡している。置き場ごと
+# 無視するのは、reuse lint が否定パターンを通した無視 (`!README.md`) を拾わず、束の 1 本ずつを
+# 帰属不明と読むため
+Sources/MokumeCLI/Examples/

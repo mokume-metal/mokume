@@ -18,11 +18,14 @@ extension Canvas {
             warnMissingFontOnce(name)
             return
         }
-        style.fontName = resolved
+        style.fontSelection = .named(resolved)
     }
 
+    /// ファイルから読んだ書体 (``Font``) を使う。
+    public func textFont(_ font: Font) { style.fontSelection = .file(font) }
+
     /// 既定の書体へ戻す。
-    public func noTextFont() { style.fontName = nil }
+    public func noTextFont() { style.fontSelection = nil }
 
     /// これから描く文字の大きさ (画素)。
     public func textSize(_ size: some ScalarConvertible) {
@@ -31,7 +34,33 @@ extension Canvas {
     }
 
     /// これから描く文字の太さと傾き。
+    ///
+    /// **太さ (``textWeight(_:)``) とは後から書いたほうが勝つ。** 太さを頼んでいても、これを書くと
+    /// 太さの指定は外れる。
     public func textStyle(_ style: TextStyle) { self.style.textStyle = style }
+
+    /// これから描く文字の太さ (100〜900)。
+    ///
+    /// 整数に丸め、100 未満・900 超は端へ丸めて 1 度知らせる。数でない値は 1 度知らせて、前の太さのまま。
+    public func textWeight(_ weight: some ScalarConvertible) {
+        let value = weight.asFloat
+        guard value.isFinite else {
+            warnOnce(
+                .notANumberTextWeight,
+                "textWeight(): got \(value), which is not a number a weight can be, so the weight was left as it was")
+            return
+        }
+        let (rounded, wasOutside) = TypefaceWeight.clamped(value)
+        if wasOutside {
+            warnRounded(
+                .badTextWeight, "textWeight", "the weight",
+                takes: "\(TypefaceWeight.range.lowerBound) to \(TypefaceWeight.range.upperBound)",
+                passed: value, used: rounded)
+        }
+        // 傾きは、太さの前に頼んだ斜体を残す
+        let italic = style.textStyle == .italic || style.textStyle == .boldItalic
+        style.textFace = .weight(rounded, italic: italic)
+    }
 
     /// 文字列を、指定した位置のどちら側へ置くか。
     public func textAlign(
@@ -471,7 +500,7 @@ extension Canvas {
     /// `A` や `B` のような字を重なった部品で持つので、`A` は重なった外周がいくつも返り、
     /// 三角の穴は ``TextContour/isHole`` の立った周として現れない (重ねて塗れば絵は
     /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
-    /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
+    /// 1 つの形として扱いたいなら、``textFont(_:)-(String)`` で書体を指定する — `Helvetica`
     /// などでは `A` が外周 1 つと穴 1 つになる。
     ///
     /// **色やビットマップの字形を持つ書体の字 (絵文字) は周を返さない** (送りは進める)。描かれるのは

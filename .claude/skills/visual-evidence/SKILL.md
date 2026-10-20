@@ -71,29 +71,36 @@ swift run mokume-cli mcp <スケッチの場所>    # エージェントの窓�
 
 ```bash
 python3 - <スケッチの場所>/.mokume/observe frames 70 0.5 <<'CAPTURE'
-import json, pathlib, shutil, sys, time
+import json, pathlib, shutil, sys, time, uuid
 
 sys.path.insert(0, "scripts")
-from observe_lib import answered, place          # 置き方と待ち方の正典はこれ 1 つ
+from observe_lib import Contested, answered, place   # 置き方と待ち方の正典はこれ 1 つ
 
 facet, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 rounds, scale = int(sys.argv[3]), float(sys.argv[4])
 out.mkdir(parents=True, exist_ok=True)
 previous, timing = None, []
+# 識別子は走らせるたびに変える。区画が残っている間は同じ識別子を処理し直さない (Schemas/ の observe-request)
+run = uuid.uuid4().hex[:8]
 
 for index in range(1, rounds + 1):
-    identifier = f"f{index:04d}"
-    place(facet, {"id": identifier, "scale": scale})
+    identifier = f"{run}-{index:04d}"
+    before = place(facet, {"id": identifier, "scale": scale})
 
-    name, taken = f"f.{index:04d}.png", None
-    report = answered(facet, identifier, 1.5)     # 壁時計ではなく識別子の一致で完了を知る
+    name, taken, filled = f"f.{index:04d}.png", None, False
+    try:
+        report = answered(facet, identifier, 1.5, before=before)  # 壁時計ではなく識別子の一致で完了を知る
+    except Contested as contest:                  # 別の書き手が同じ区画を使っている。撮り続けない
+        sys.exit(f"{index} 枚目で止めた: {contest}")
     if report and report.get("image"):
         taken = shutil.copy(facet / report["image"], out / name)
 
-    if taken is None and previous:                # 返らなかったら直前の絵を置く
+    if taken is None and previous:                # 返らなかったら直前の絵を置く。置いたことは名乗る
         shutil.copy(previous, out / name)
+        filled = True
+        print(f"{index} 枚目は応答が無く、直前の絵を置いた", file=sys.stderr)
     previous = taken or previous
-    timing.append({"file": name, "at": time.time()})  # 何時に採れたか = その絵が出ていた長さ
+    timing.append({"file": name, "at": time.time(), "filled": filled})  # 何時に採れたか = その絵が出ていた長さ
 
 (out / "timing.json").write_text(json.dumps(timing))
 CAPTURE
@@ -103,7 +110,11 @@ CAPTURE
   `observe-request` / `observe-report` ([#817](https://github.com/mokume-metal/mokume/issues/817))。
   絵のファイル名も応答の `image` に従い、決め打ちしない
 - **応答が返らなかった回は直前の絵で埋め、詰めない。** 「面が黙った」こと自体が見せたい事象のことがある
-  ([#310](https://github.com/mokume-metal/mokume/pull/310#issuecomment-5452377415))
+  ([#310](https://github.com/mokume-metal/mokume/pull/310#issuecomment-5452377415))。**埋めたことは名乗り**
+  (標準エラーと `timing.json` の `filled`)、黙って直前の絵を本物として並べない
+- **別の書き手が同じ区画を使っていたら、撮り続けない** (`Contested`)。区画は要求も応答も 1 枚で、書き手を
+  調停しない。自分の識別子の応答はもう来ず、走っていないのではない — 走らせ直すのではなく、他の書き手が
+  居なくなってから撮り直す
 
 ### 撮り終えたら止める
 

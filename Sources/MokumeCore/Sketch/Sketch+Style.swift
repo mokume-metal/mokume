@@ -828,7 +828,7 @@ extension SketchPart {
     /// - 座標の読み方: ``rectMode(_:)`` / ``ellipseMode(_:)`` / ``imageMode(_:)``
     /// - 切り抜き (``clip(_:_:_:_:)``)
     /// - 混ぜ方 (``blendMode(_:)``)
-    /// - 文字: ``textFont(_:)`` / ``textSize(_:)`` / ``textStyle(_:)`` / `textAlign` / ``textLeading(_:)`` / ``textWrap(_:)``
+    /// - 文字: ``textFont(_:)-(String)`` (ファイルから読んだ書体は ``textFont(_:)-(Font)``) / ``textSize(_:)`` / ``textStyle(_:)`` / ``textWeight(_:)`` / `textAlign` / ``textLeading(_:)`` / ``textWrap(_:)``
     /// - 画像に掛ける色 (`tint`) と、塗りに貼る絵 (`texture`)
     /// - 材質 (``shininess(_:)`` / ``metalness(_:)`` / `ambient` / `emissive`) と、影を落とす / 受ける設定
     ///   (``castShadow(_:)`` / ``receiveShadow(_:)``)

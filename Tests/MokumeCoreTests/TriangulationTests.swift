@@ -13,6 +13,13 @@ import simd
 /// 分けた三角形の面積の合計が元の形の面積と一致することは、どの分け方でも成り立つ。
 @Suite("三角形化")
 struct TriangulationTests {
+    /// 外周を 1 つだけ持つ字。Helvetica の英数字のうち、外周を 2 つ持つ `i` と `j` (点と軸) を除く。
+    /// **除くものは名指しで書く** — 条件で絞ると、絞り込みの誤りで字が黙って抜ける。外周が 1 つで
+    /// あることは、検査の中で `#require` する。
+    nonisolated static let singleOuterCharacters: [String] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        .filter { $0 != "i" && $0 != "j" }.map(String.init)
+
     private func area(of triangles: [(Int, Int, Int)], points: [SIMD2<Float>]) -> Float {
         triangles.reduce(0) { total, triangle in
             let a = points[triangle.0]
@@ -68,8 +75,16 @@ struct TriangulationTests {
             SIMD2(0, 0), SIMD2(10, 10), SIMD2(10, 0), SIMD2(0, 10),
         ]
         let triangles = Triangulation.triangulate(bowtie)
-        // 正しい分け方は存在しないが、返ってくること自体が要件
-        #expect(triangles.count >= 0)
+        // 正しい分け方は存在しないが、返ってくること自体が要件。**返ったものは三角形として
+        // 成り立っている**: 点の番号が範囲の中で、1 枚の 3 つの番号が互いに違い、枚数が点の数 - 2
+        // (4 点の多角形を切って得られる上限) を越えない。落ちずに返っても、存在しない点を指す番号や
+        // 同じ点の 3 度書きを返すなら、描く側が壊れる
+        #expect(triangles.count <= bowtie.count - 2, "枚数 \(triangles.count)")
+        for triangle in triangles {
+            let indices = [triangle.0, triangle.1, triangle.2]
+            #expect(indices.allSatisfy { bowtie.indices.contains($0) }, "範囲外の番号 \(indices)")
+            #expect(Set(indices).count == 3, "同じ点を 2 度使う三角形 \(indices)")
+        }
     }
 
     @Test("点が足りなければ何も返さない", arguments: [0, 1, 2])
@@ -145,7 +160,7 @@ struct TriangulationTests {
     /// どの外周に属するかを決める手間が、ここで見たいもの (三角形化) と関係しない。
     @Test(
         "字の輪郭を塗ると、面積が外周から穴を引いたものに一致する",
-        arguments: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".map(String.init)
+        arguments: singleOuterCharacters
     )
     func glyphOutlinesKeepTheirArea(_ character: String) throws {
         let font = CTFontCreateWithName("Helvetica" as CFString, 72, nil)
@@ -156,7 +171,8 @@ struct TriangulationTests {
         // 描くときと同じく、送りと基準線でずらした座標で見る
         let rings = Canvas.rings(of: path, originX: 123.37, baseline: 456.71)
         let outers = rings.filter { !$0.isHole }
-        guard outers.count == 1 else { return }
+        // 外周が 2 つ以上の字は引数に入れていない (`singleOuterCharacters`)。入っていれば止まる
+        try #require(outers.count == 1, "\(character) の外周が \(outers.count) 個ある")
         let holes = rings.filter(\.isHole).map(\.outline)
 
         let merged = mergeHoles(outer: outers[0].outline, holes: holes)

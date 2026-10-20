@@ -30,7 +30,7 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from observe_lib import answered, place  # noqa: E402
+from observe_lib import Contested, answered, place  # noqa: E402
 
 # 応答を見に行く間隔。**要求を置き続ける側は短くする** — 1 往復ごとの空きを詰めるほど
 # 観測が続いている状態に近づく (measure-frame-rate が測りたいのはその状態である)
@@ -52,13 +52,18 @@ def pressure(observe: pathlib.Path, limit: float) -> int:
     while time.monotonic() < deadline:
         index += 1
         identifier = f"m{index}"
-        place(observe, {"id": identifier, "scale": 0.5})
-        answered(
-            observe,
-            identifier,
-            PRESSURE_DEADLINE_SECONDS,
-            poll=PRESSURE_POLL_SECONDS,
-        )
+        before = place(observe, {"id": identifier, "scale": 0.5})
+        try:
+            answered(
+                observe,
+                identifier,
+                PRESSURE_DEADLINE_SECONDS,
+                poll=PRESSURE_POLL_SECONDS,
+                before=before,
+            )
+        except Contested:
+            # 圧をかける側は応えを数えない。別の書き手と取り合っても、次の識別子へ進む (#2857)
+            pass
     return 0
 
 

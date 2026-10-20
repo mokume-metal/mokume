@@ -95,9 +95,25 @@ final class MovieWriter {
     }
     private var stage = Stage.recording
 
-    /// - Parameter from: 録りを頼まれたフレーム。1 枚も届かなかったときの、落ちた数の幅の
-    ///   始まりになる (``RecordedSpan``)。
-    init(path: String, frameRate: Int, limit: Int = MovieWriter.defaultLimit, from: Int = 1) {
+    /// 書くファイルの形。**元にする形 (ProRes 4444 の `.mov`) と、配る形 (H.264 の MP4・GIF)** ([#2440])。
+    ///
+    /// 配る形は `mokume render --out` だけが頼む。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
+    nonisolated enum Format: Sendable, Equatable {
+        case proRes4444
+        case h264
+        case gif
+    }
+
+    /// - Parameters:
+    ///   - from: 録りを頼まれたフレーム。1 枚も届かなかったときの、落ちた数の幅の
+    ///     始まりになる (``RecordedSpan``)。
+    ///   - format: 書くファイルの形。
+    init(
+        path: String, frameRate: Int, limit: Int = MovieWriter.defaultLimit, from: Int = 1,
+        format: Format = .proRes4444
+    ) {
         self.path = path
         pressure = Backpressure(limit: limit)
         span = RecordedSpan(from: from)
@@ -115,17 +131,22 @@ final class MovieWriter {
         Task.detached(priority: .userInitiated) {
             // **ファイルは最初の 1 枚が来てから開く。** 絵の大きさは受け取るまで
             // 分からず、開いた後は変えられない
-            var file: MovieFile?
+            var file: (any MovieOutput)?
             var lastTime = 0.0
             for await job in stream {
                 do {
-                    let opened: MovieFile
+                    let opened: any MovieOutput
                     if let file {
                         opened = file
                     } else {
-                        opened = try MovieFile(
-                            path: path, width: job.image.width, height: job.image.height,
-                            frameRate: frameRate)
+                        switch format {
+                        case .proRes4444, .h264:
+                            opened = try MovieFile(
+                                path: path, width: job.image.width, height: job.image.height,
+                                frameRate: frameRate, format: format == .h264 ? .h264 : .proRes4444)
+                        case .gif:
+                            opened = try GIFFile(path: path, frameRate: frameRate)
+                        }
                         file = opened
                     }
                     try await opened.append(job.image, at: job.time)

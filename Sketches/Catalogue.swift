@@ -42,6 +42,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "color-and-scale") { ColorAndScale() },
     ReferenceSketch(name: "type-and-imagery") { TypeAndImagery() },
     ReferenceSketch(name: "type-and-measure") { TypeAndMeasure() },
+    ReferenceSketch(name: "type-and-weight") { TypeAndWeight() },
     ReferenceSketch(name: "textured-surfaces") { TexturedSurfaces() },
     ReferenceSketch(name: "pixels-and-paint") { PixelsAndPaint() },
     ReferenceSketch(name: "noise-and-seed") { NoiseAndSeed() },

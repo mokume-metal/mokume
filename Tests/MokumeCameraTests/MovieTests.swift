@@ -309,6 +309,40 @@ struct MovieTests {
         }
     }
 
+    /// 親のフォルダに入れず在るかを確かめられない動画は、見つからないとは言わず、`unopenable` で入れない場所を
+    /// 名乗る ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。`createVideo` の `assetURL` の写し。
+    @Test("入れない親の下の動画は、unopenable で入れない場所を名乗り、見つからないとは言わない")
+    func unreachableParentIsNamedNotMissing() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-movie-unreachable-\(UUID().uuidString)")
+        let assets = folder.appendingPathComponent("assets")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: assets.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        try Data("this is not a movie".utf8).write(to: assets.appendingPathComponent("clip.mov"))
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: assets.path)
+        // root で走ると権利を外しても入れる。入れてしまうと、検査が見たいものを見ていない
+        try #require(
+            access(assets.appendingPathComponent("probe").path, F_OK) != 0 && errno == EACCES,
+            "入れない親を作れていない")
+
+        let name = assets.appendingPathComponent("clip.mov").path
+        var failures: [MovieFailure] = []
+        let runtime = try run(frames: 1, setup: { sketch in
+            do throws(MovieFailure) { _ = try sketch.createVideo(name) } catch { failures.append(error) }
+        })
+        runtime.closePlugins()
+        let reason = AssetOpening.unreachableReason(String(cString: strerror(EACCES)))
+        #expect(failures == [.unopenable(path: name, location: name, reason: reason)])
+        for failure in failures {
+            for phrase in ["was found", "Cannot find", "resources"] {
+                #expect(!failure.description.contains(phrase), "\(failure)")
+            }
+        }
+    }
+
     @Test("途中が壊れた動画は投げずに 1 度だけ知らせ、最後のコマを残して disconnected を名乗る")
     func damagedMiddleIsNoticedNotThrown() async throws {
         let url = try await TestMovie.write(frames: 60, width: 64, height: 48, pixel: TestMovie.noise)

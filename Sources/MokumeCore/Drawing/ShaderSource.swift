@@ -33,13 +33,22 @@ enum ShaderSource {
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func read(
         at path: String, origin: URL? = ShaderOrigin.startup(),
-        candidates find: (String) -> [URL] = { ImageFile.candidates(for: $0) }
+        candidates find: ((String) -> [URL])? = nil
     ) throws(ShaderFailure) -> (url: URL, body: String, name: String) {
         // 見張りの下では、置き場の断片は束の写しではなく元のファイルへ解く (#2517)
-        let candidates = ShaderOrigin.inserting(origin: origin, for: path, into: find(path))
-        guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })
-        else {
-            throw .notFound(path: path, searched: candidates.map(\.path))
+        // **既定は他の口と同じ探し方** (包みを数えられなかった置き場も受ける・#2838)。検査は並びを差し替える
+        let search = find.map { AssetLookup.Search(places: $0(path)) } ?? ImageFile.search(for: path)
+        let candidates = ShaderOrigin.inserting(origin: origin, for: path, into: search.places)
+        let url: URL
+        do {
+            url = try AssetLookup.locate(candidates, unlistable: search.unlistable, path: path)
+        } catch {
+            switch error {
+            case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+            case .unreachable(let path, let location, let reason):
+                throw .unopenable(
+                    path: path, location: location, reason: AssetOpening.unreachableReason(reason))
+            }
         }
         return (url, try body(at: url, path: path), url.deletingPathExtension().lastPathComponent)
     }
