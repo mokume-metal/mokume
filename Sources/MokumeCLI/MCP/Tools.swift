@@ -400,13 +400,19 @@ struct Tools {
     ) -> Exchange {
         let existed = facets.hasFacet(facet)
         do {
-            guard
-                let report = try facets.exchange(
-                    facet: facet, request: request, id: id, extraWait: extraWait)
-            else {
-                return .refused(facets.notRunning(entry, existed: existed))
+            switch try facets.exchange(facet: facet, request: request, id: id, extraWait: extraWait) {
+            case .answered(let report):
+                return .answered(report)
+            case .contested:
+                return .refused(facets.contested(entry))
+            case .timedOut(let replaced):
+                let answer = facets.notRunning(entry, existed: existed)
+                // 期限の時点で別の書き手が要求を置き換えていたら、応えなかった理由の前にそれを言う
+                return .refused(
+                    replaced
+                        ? "Another writer replaced this request in the facet before the time ran out.\n\n" + answer
+                        : answer)
             }
-            return .answered(report)
         } catch {
             // **置けなかった回も、場所の手を添える** (#2487)。窓口は在る場所なら受けるので、
             // `/` や読み取り専用の場所でも立つ。区画の基準がそこに落ちていれば、書き込めるか・

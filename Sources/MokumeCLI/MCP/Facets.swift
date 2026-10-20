@@ -73,9 +73,32 @@ struct Facets {
     // 作り直しの記録の在処も、書く側と同じ綴りから出す (#730)
     var buildStatus: URL { BuildReport.statusURL(under: directory) }
 
+    /// 要求を置いて待った結果。
+    ///
+    /// 区画は応答も要求も 1 枚しか持たないので、**別の書き手が居ると、自分の識別子は応答に二度と現れ
+    /// ない**ことがある。「応えなかった」と「取り合った」は打つ手が違う (起動し直しても、取り合いは
+    /// 直らない) ので、分けて持つ ([#2857](https://github.com/mokume-metal/mokume/issues/2857))。
+    enum Exchange {
+        /// 自分の識別子の応答が返った。
+        case answered([String: Any])
+        /// 期限まで応答が返らなかった。`replaced` は、**期限の時点で `request.json` が自分の要求でなく
+        /// なっていた**か (別の書き手が置き換えた。応えなかった理由は同じ形で添える)。
+        case timedOut(replaced: Bool)
+        /// 別の書き手が `request.json` を置き換え、その要求への応答が書かれた。面は要求を 1 枚ずつ拾い、
+        /// 応え終えるまで次を拾わないので、**自分の識別子の応答はもう来ない**。当たった後に上書きされた
+        /// のか、読まれる前に置き換えられたのかは、応答だけからは分からない。
+        case contested
+    }
+
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
     ///
-    /// - Returns: 応答。誰も応えなければ `nil`。
+    /// 待つ間は**応答に加えて `request.json` の識別子も見る**。自分の識別子の応答なら返す。
+    /// `request.json` が別の識別子になり、応答がその識別子を echo したら、取り合いとして返す。
+    /// 時計では見切らない (「自分の echo が N ms 来なければ取り合い」は、壁時計で完了を判断しない
+    /// ADR-0018 決定 3 に反する)。`request.json` が読めない回 (原子的に置かない別の書き手) は判定を
+    /// 飛ばして待ち続ける。
+    ///
+    /// - Returns: ``Exchange``。
     /// - Parameter extraWait: 応答が返るまでにフレームが何枚も進む要求 (続けて撮る観測
     ///   など) で、``waitLimit`` に**足す**ぶん。上書きではなく加算にしてある —
     ///   上書きにすると、検査が短く設定した上限を呼ぶ側が知らずに戻してしまう。
@@ -90,7 +113,7 @@ struct Facets {
         facet: URL, request: [String: Any], id: String, extraWait: TimeInterval = 0,
         sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         now: () -> DispatchTime = { DispatchTime.now() }
-    ) throws(CommandFailure) -> [String: Any]? {
+    ) throws(CommandFailure) -> Exchange {
         let waitLimit = self.waitLimit + max(0, extraWait)
         let requestURL = WorkDirectory.requestURL(under: facet)
         do {
@@ -114,12 +137,22 @@ struct Facets {
 
         let deadline = now() + Self.boundedWait(waitLimit)
         while now() < deadline {
-            if let report = read(reportURL), report["id"] as? String == id {
-                return report
+            if let report = read(reportURL) {
+                if report["id"] as? String == id { return .answered(report) }
+                if let other = otherRequestID(requestURL, than: id), report["id"] as? String == other {
+                    return .contested
+                }
             }
             sleep(Self.pollInterval)
         }
-        return nil
+        return .timedOut(replaced: otherRequestID(requestURL, than: id) != nil)
+    }
+
+    /// `request.json` が**別の書き手の要求**に置き換わっていれば、その識別子。自分の要求のまま・
+    /// 読めない・識別子が文字列でないときは `nil` (判定を飛ばす)。
+    private func otherRequestID(_ requestURL: URL, than id: String) -> String? {
+        guard let other = read(requestURL)?["id"] as? String, other != id else { return nil }
+        return other
     }
 
     /// JSON を読む。無い・壊れているときは `nil`。
@@ -143,6 +176,31 @@ struct Facets {
     /// 側では「起動し直せ」と言われた先で「まだ立ち上がっていない」と言われる (#380 の形)。
     func hasFacet(_ facet: URL) -> Bool {
         WorkDirectory.directoryExists(at: facet)
+    }
+
+    /// 別の書き手と区画を取り合ったときの答え。
+    ///
+    /// **応えなかったとは言わない** — スケッチは別の書き手の要求に応えている。起動し直しも勧めない
+    /// (取り合いは起動し直しでは直らない)。自分の要求が当たったかは分からないと言い、次の手を添える。
+    /// 入力は当たっているかもしれないので、送り直す前に状態を確かめさせる。観測は撮り直してよい。
+    func contested(_ entry: StartupReads.Entry) -> String {
+        let next =
+            entry == StartupReads.input
+            ? "Call `observe` to see where things stand before sending the events again — they may already have taken effect."
+            : "Taking the picture again is safe: call `observe` again."
+        let outcome =
+            entry == StartupReads.input
+            ? "what became of the events is not known"
+            : "what became of the picture is not known"
+        return """
+            Another writer placed a request in this facet while this one was waiting, so \(outcome).
+
+            The facet keeps one request and one report. This request was either applied and then
+            overwritten by the other writer's, or replaced before the sketch read it — from here the
+            two cannot be told apart. The sketch itself is running and answering.
+
+            \(next)
+            """
     }
 
     /// 走っているスケッチが応えないときの答え。**その場で直せるところまで書く。**
