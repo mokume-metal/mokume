@@ -479,6 +479,60 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 面の保持 (#2368)
+
+    /// **面を引くのは、番号の組が変わったときだけである。** 毎リフレッシュ面の数だけ
+    /// `IOSurfaceLookup` を出していた ([#2368])。握ったままでも、書き手が載せ替える枚数と
+    /// 要求は読めること (読めなくなると、絵が止まるか要求が古いままになる) を一緒に見る。
+    ///
+    /// [#2368]: https://github.com/mokume-metal/mokume/issues/2368
+    @Test("番号の組が変わらない間は、リフレッシュを重ねても面を引き直さない")
+    func doesNotLookTheSurfacesUpAgainWhileTheIdsStay() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let first = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("lookups"))
+            defer { stage.close() }
+
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            let afterAdopting = stage.surfaceLookups
+            #expect(afterAdopting > 0, "数える口が数えていない")
+
+            // 書き手が枚数と要求を載せ替え続けても、握った面から読める
+            for frame in 2...12 {
+                try draw(first, frame: frame, gpu: gpu, pointerLock: frame == 12)
+                stage.displayLinkFired()
+            }
+            #expect(stage.pointerLockRequested, "握った面から、載せ替えた要求を読めていない")
+            #expect(stage.surfaceLookups == afterAdopting, "番号の組が同じなのに面を引き直している")
+
+            // 入れ替わった (別の番号の組) ら、新しい面を引く
+            let second = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            stage.displayLinkFired()
+            #expect(stage.surfaceLookups > afterAdopting, "新しい世代の面を引いていない")
+            _ = second
+        }
+    }
+
+    /// 引けなかった番号は持たない — 置いた側がまだ作っていないだけかもしれないので、次の機会に引き直す。
+    @Test("引けなかった番号は持たず、引けた面は引き直さない")
+    func retriesAnIdThatCouldNotBeLooked() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let shared = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let missing = UInt32.max
+            let lookup = SharedFrameSurface.Lookup(ids: [missing] + shared.ids)
+            let newest = try #require(lookup.newest())
+            #expect(shared.ids.contains(newest.id))
+            let afterFirst = lookup.lookups
+            #expect(lookup.newest()?.id == newest.id)
+            // 引けた面は引き直さず、引けなかった 1 つだけを引き直す
+            #expect(lookup.lookups == afterFirst + 1)
+            #expect(lookup.surface(missing) == nil)
+        }
+    }
+
     // MARK: - 捕まえの要求 (#1144)
 
     /// 捕まえるのは道具の窓で、要求は子が面の属性に載せる。**保存で子が入れ替わったら、新しい
