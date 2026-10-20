@@ -55,12 +55,16 @@ nonisolated enum ImageFile {
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     static func locate(_ path: String) throws(ImageFailure) -> URL {
-        let searched = candidates(for: path)
-        guard let url = searched.first(where: { FileManager.default.fileExists(atPath: $0.path) })
-        else {
-            throw .notFound(path: path, searched: searched.map(\.path))
+        do {
+            return try AssetLookup.locate(candidates(for: path), path: path)
+        } catch {
+            switch error {
+            case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+            case .unreachable(let path, let location, let reason):
+                throw .unopenable(
+                    path: path, location: location, reason: AssetOpening.unreachableReason(reason))
+            }
         }
-        return url
     }
 
     /// ファイルの更新時刻。読めなければ nil。
