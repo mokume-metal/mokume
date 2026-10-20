@@ -41,8 +41,9 @@ import Observation
 /// - **値が非有限なら、型の零を載せる** (`0`・`Vector2(0, 0)`・4 成分とも 0 の色)。作者が書いた値では
 ///   なくなるが、非有限は保存も応答も書けないので、書いた値のまま残す道が無い。零は宣言した範囲の
 ///   外にもなりうる (範囲は値の不変条件ではない)。自分で書いた ``ParamRepresentable`` が有限の零を
-///   くれないときは畳めず、書かれた値のまま置いて「畳めなかった」と名乗る
-///   ([#2858](https://github.com/mokume-metal/mokume/issues/2858) で扱いを決める)
+///   くれないときは畳めず、書かれた値のまま置いて「畳めなかった」と名乗る。**その宣言だけを保存と応答
+///   から外し** (``ParamRegistry/declarations`` の 1 点)、他の値は書ける。値が有限になれば戻る
+///   ([#2858](https://github.com/mokume-metal/mokume/issues/2858))
 /// - **範囲の端が非有限なら、その範囲を面に出さない** (`0...Double.infinity`)。つまみは出ず
 ///   ([ADR-0030] 決定 8)、応答は `min` / `max` を書かない。外からの書き込みは、有限の端があれば
 ///   今までどおりそこへ収める (`-5` → `0`)。両端とも非有限なら収める相手が無い
@@ -160,7 +161,8 @@ public final class ParamBox<Value> {
         let offered = toParam(value)
         let valueIsFinite = offered.hasOnlyFiniteNumbers
         // 零を読み戻せない型・読み戻した零が非有限の型 (自分で書いた ``ParamRepresentable``) は、
-        // 畳めないので書かれた値のまま置き、そう名乗る。型から作れる値が他に無い (#2858)
+        // 畳めないので書かれた値のまま置き、そう名乗る。型から作れる値が他に無い。保存と応答からは
+        // ``ParamRegistry/declarations`` が外す (#2858)
         let zero = valueIsFinite ? nil : fromParam(offered.zero).flatMap { toParam($0).hasOnlyFiniteNumbers ? $0 : nil }
         let born = zero ?? value
         self.storedValue = born
@@ -184,8 +186,8 @@ public final class ParamBox<Value> {
                 .bornNotFinite,
                 zero == nil
                     ? "The knob \"\(name)\" was declared with \(value), which is not a finite number, and its type "
-                        + "gave no finite zero to start at instead, so it stays at \(value): the values cannot be "
-                        + "saved and the knob reply cannot be placed while it does (said once for this knob)"
+                        + "gave no finite zero to start at instead, so it stays at \(value) and is left out of the "
+                        + "saved values and the knob reply until it holds a finite number (said once for this knob)"
                     : "The knob \"\(name)\" was declared with \(value), which is not a finite number, so it "
                         + "starts at \(born) (said once for this knob)")
         }

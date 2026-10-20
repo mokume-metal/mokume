@@ -7,6 +7,7 @@ import Network
 import Synchronization
 import Testing
 
+@testable import MokumeCore
 @testable import MokumeNetwork
 
 // 同じ機械の中で送って受ける検査が共有する道具。通信は 127.0.0.1 だけで行う。
@@ -59,9 +60,74 @@ struct TextOutcome: Equatable {
 /// 送る文字列の台本。大きさを動かし、当たりを数える。
 let textScript = ["0.25", "hit", "0.75", "fade", "hit"]
 
-/// 受け始めるまで待って、実際に開いたポートを返す。
-func boundPort(of server: TextPort, source: StreamSource) async throws -> Int {
-    #expect(await until { server.state == .running })
+/// 期限まで `condition` が満ちるのを待ち、満ちなければ `what` と `detail` を名乗って 1 つで止まる
+/// (`#require`・#2945)。
+///
+/// 期限で偽を言うだけだと、赤の文面から何も読み分けられない。**期限は延ばさず、待ちの中で口を閉じて
+/// 開き直さない** — 原因が分かっていないので、救うと次の 1 回で読み分ける材料が消える。
+/// 止まると、後ろの期待 (相手側の様子など) は見られない。相手側の手がかりが減る代わりに、後の期待へ
+/// 連鎖しない。
+func requireWait(
+    _ what: String, within seconds: TimeInterval = 5, detail: () -> String,
+    until condition: () -> Bool
+) async throws {
+    let met = await until(seconds) { condition() }
+    try #require(met, "\(what) (\(detail())・期限 \(seconds) 秒)")
+}
+
+/// 口の中の移り変わりの跡を、名乗りに載せる文にする。跡を読めない出どころなら空。
+private func traceText(_ tracing: AnyObject?) -> String {
+    guard let trace = (tracing as? any EventTracing)?.trace else { return "" }
+    return "・移り変わり \(trace.count) 回・最後: \(trace.last ?? "なし")"
+}
+
+/// 口 (受け口・繋ぎに行く側) の状態が `wanted` になるのを、期限まで待つ。
+///
+/// 期限までに `wanted` にならなければ、次を名乗って 1 つで止まる (`#require`・#2945)。
+/// - **状態** (``SourceState``)
+/// - **口の中の移り変わりの数と最後のもの** (`tracing`。``EventTrace``)。知らせは同じ種類を受けられるまで
+///   1 度しか言わないので、`told` の行だけでは「使用中が続いている」「開き直しが止まった」「手放す前の 1 行が
+///   残っているだけ」を分けられない。**数が増え続けるなら開き直しが続いていて、増えないなら止まっている。**
+///   ただし、開き直しの試みそのもの (受け口を作り直したか) は見えない — 見えるのは受けた移り変わりだけ
+/// - **`told` に書かれた全行。他の口 (相手側・送り手) の行も混ざる**ので、行の頭のラベルで見分ける
+///
+/// - Parameters:
+///   - told: 口の `warn:` に渡したもの。
+///   - tracing: 口の出どころ (`port.source`)。``EventTracing`` でなければ移り変わりは載せない。
+func requireState(
+    _ wanted: SourceState = .running, what: String = "受け口", told: Told,
+    within seconds: TimeInterval = 5, tracing: AnyObject? = nil, state: () -> SourceState
+) async throws {
+    try await requireWait(
+        "\(what)が \(wanted.rawValue) にならなかった", within: seconds,
+        detail: {
+            let trace = traceText(tracing)
+            return "状態: \(state().rawValue)\(trace)・同じ told の全行: \(told.lines)"
+        },
+        until: { state() == wanted })
+}
+
+/// 口が `text` を含む知らせを `count` 回言うのを、期限まで待つ (`exactly` なら丁度、でなければ以上)。
+/// 言わなければ、状態と移り変わりと `told` の全行を名乗って止まる (``requireState`` と同じ)。
+func requireTold(
+    containing text: String, count: Int = 1, exactly: Bool = true, told: Told,
+    within seconds: TimeInterval = 5, tracing: AnyObject? = nil, state: () -> SourceState
+) async throws {
+    try await requireWait(
+        "「\(text)」を含む知らせが \(exactly ? "" : "少なくとも ")\(count) 回出なかった", within: seconds,
+        detail: {
+            let trace = traceText(tracing)
+            return "状態: \(state().rawValue)\(trace)・同じ told の全行: \(told.lines)"
+        },
+        until: {
+            let seen = told.count(containing: text)
+            return exactly ? seen == count : seen >= count
+        })
+}
+
+/// 受け始めるまで待って、実際に開いたポートを返す。`told` は受け口の `warn:` に渡したもの。
+func boundPort(of server: TextPort, source: StreamSource, told: Told) async throws -> Int {
+    try await requireState(told: told, tracing: source) { server.state }
     return try #require(source.boundPort)
 }
 
