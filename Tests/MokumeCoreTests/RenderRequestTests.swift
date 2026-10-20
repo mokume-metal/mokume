@@ -34,7 +34,7 @@ struct RenderRequestTests {
     /// **行き先の規則は撮る係のもの。** `.mov` か、番号の入る場所 (`#`) を持つ連番だけ。
     @Test(
         "撮る係が受けない行き先では組まない",
-        arguments: ["/tmp/still.png", "/tmp/motion", "/tmp/motion.mp4", ""])
+        arguments: ["/tmp/still.png", "/tmp/motion", "/tmp/motion.webm", ""])
     func unrecordableDestinationsAreRefused(destination: String) {
         #expect(RenderRequest(frameRate: 30, frameCount: 10, destination: destination) == nil)
     }

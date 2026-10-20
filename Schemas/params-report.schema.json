@@ -39,7 +39,7 @@
     "revision": {
       "type": "integer",
       "minimum": 1,
-      "description": "A number that advances whenever the contents change. **It advances on launch alone**, because a new process can change the declarations themselves: how many knobs there are, their ranges, their choices. **A relaunch counts on from the number the previous launch left in the facet**, and starts again from 1 only when there is no number there to count on from. While two launches overlap during a swap, the numbers are not guaranteed to rise. A reader tells whether its own copy is stale by this."
+      "description": "A number that advances whenever the contents change. **It advances on launch alone**, because a new process can change the declarations themselves: how many knobs there are, their ranges, their choices. A declaration that is left out while its value is not a finite number (see params) comes back, and the number advances, when its value becomes finite. **A relaunch counts on from the number the previous launch left in the facet**, and starts again from 1 only when there is no number there to count on from. While two launches overlap during a swap, the numbers are not guaranteed to rise. A reader tells whether its own copy is stale by this."
     },
     "id": {
       "type": "string",
@@ -47,7 +47,7 @@
     },
     "params": {
       "type": "array",
-      "description": "The declared values. **The order is the order they were written in**, from the base upward, and that order is part of what the surface says.",
+      "description": "The declared values. **The order is the order they were written in**, from the base upward, and that order is part of what the surface says. **A declaration whose value is not a finite number is left out** (JSON cannot carry it, and one such value would stop the whole report from being written): a custom type whose zero cannot be read back can start that way. It is not listed until its value becomes finite, and then it appears, so the set of names can grow once within the same process; writes to its name are still accepted meanwhile.",
       "items": {
         "type": "object",
         "required": [

@@ -316,4 +316,35 @@ struct ContourFillTests {
         #expect(result.missing == 0)
         #expect(result.spilled == 0)
     }
+
+    /// 2 つの穴が 2 点で触れ合って囲んだ島 ([#2656])。島は「穴と穴の間」で、外周と穴の間と同じに塗られる。
+    /// 三角形の面積は `IslandHolesTests` が CPU だけで数えるので、ここは画素に出ることを 1 場面で確かめる。
+    ///
+    /// 穴 A (矢じり) の下の 2 つの角 (60,100)・(140,100) が、穴 B の辺 (40,100)–(160,100) の途中に載る
+    /// (T 字)。島は (60,100)(100,80)(140,100)。どちらの穴も外周と逆回り。
+    ///
+    /// [#2656]: https://github.com/mokume-metal/mokume/issues/2656
+    @Test("穴が 2 点で触れ合って囲んだ島は、塗られ、穴の内側だけが抜ける (#2656)")
+    func anIslandBetweenTouchingHolesIsPainted() throws {
+        let side = 200
+        let outer: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(200, 0), SIMD2(200, 200), SIMD2(0, 200)]
+        let rings = [outer] + IslandHolesTests.tJunctions
+        let result = try tally(rings, side: side)
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: side, height: side)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            placeFlat(canvas, rings)
+        }
+        let pixels = try canvas.target.readPixels()
+        func isPainted(_ x: Int, _ y: Int) -> Bool { pixels.components[(y * side + x) * 4] > 0.5 }
+        #expect(isPainted(100, 95), "島の内側")
+        #expect(!isPainted(100, 70), "穴 A の内側")
+        #expect(!isPainted(100, 120), "穴 B の内側")
+        #expect(isPainted(100, 30), "穴の外")
+    }
 }

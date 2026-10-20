@@ -45,7 +45,9 @@ final class SketchSurface: NSView {
     /// **走っているスケッチの窓では変わらない**が、道具が出す窓では**差し替わる** —
     /// 見張りが起こし直した子が別の解像度を名乗ることがあるためである
     /// ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1)。
-    private var canvasWidth: Double
+    ///
+    /// 検査から読む (入力の写しがどの寸法に依っているか)。
+    private(set) var canvasWidth: Double
     private var canvasHeight: Double
 
     /// 拾った出来事を、合流点のほかにもう 1 か所へ渡す口。

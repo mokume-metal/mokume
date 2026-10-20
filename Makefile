@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math api-list reference example-shots example-shots-check cli-dist cli-examples reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -529,7 +529,7 @@ REFERENCE_OMIT := \
 	StartupReads WorkDirectory SourceStamp RuntimeLoad BundledShaders \
 	InputState InputEvent \
 	ObservationRequest ObservationReport ExposedValue FrameStats \
-	ParamBox
+	ParamBox UndeliverableGeneration
 
 reference: build ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
 	rm -rf "$(REFERENCE_GRAPHS)" "$(or $(OUT),$(REFERENCE_OUT))"
@@ -574,7 +574,15 @@ reference: build ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公�
 CLI_STAGE := .build/dist/stage
 CLI_ASSET := .build/dist/mokume-macos-arm64.tar.gz
 
-cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
+# 道具に同梱する作例の束 (#2436)。**説明文 (`///`) の中の例から作る生成物** で、コミットしない。
+# `mokume examples` と `mokume new --from` が読む。束は道具の資源 (`mokume_MokumeCLI.bundle`) に
+# 入るので、**組む前に作る** — 配布物 (cli-dist) は先にこれを呼ぶ。手元の `swift build` で試すときは
+# これを打ってから組む (束が無い組み立ては、束が無いと名乗る)。選ぶ規則と形は
+# scripts/bundle-examples.py の冒頭。組めることは MokumeCLITests が、全部の例を `--from` で作って見る
+cli-examples: ## 道具に同梱する作例の束を作る (Sources/MokumeCLI/Examples)
+	python3 scripts/bundle-examples.py
+
+cli-dist: cli-examples ## 道具の配布物を束ねる (OUT=path で置き場を指定)
 	swift build -c release --product mokume-cli
 	rm -rf "$(CLI_STAGE)"
 	mkdir -p "$(CLI_STAGE)" "$(dir $(CLI_ASSET))"
@@ -593,6 +601,8 @@ cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
 		printf '%s\n' "$$listed" | grep -q "^$$bundle/" || { \
 			echo "束ねたはずの $$bundle が資産に入っていない: $$asset" >&2; exit 1; }; \
 	done; \
+	printf '%s\n' "$$listed" | grep -q "^mokume_MokumeCLI.bundle/.*Examples/index.tsv$$" || { \
+		echo "作例の束 (Examples/index.tsv) が資産に入っていない: $$asset" >&2; exit 1; }; \
 	echo "束ねた: $$asset"; \
 	echo "入れた束: $$(echo $$bundles | tr '\n' ' ')"
 

@@ -153,6 +153,54 @@ class PlaceAndAnswerTest(unittest.TestCase):
         (self.observe / "report.json").write_text("{壊れた")
         self.assertIsNone(observe_lib.answered(self.observe, "a", 0.05))
 
+    def test_place_returns_what_the_report_echoed_before(self):
+        """置く直前の応答の識別子を返す。取り合いの見分けに使う (#2857)。"""
+        self.assertIsNone(observe_lib.place(self.observe, {"id": "a"}))
+        (self.observe / "report.json").write_text(json.dumps({"id": "old"}))
+        self.assertEqual(observe_lib.place(self.observe, {"id": "b"}), "old")
+
+    def test_a_later_request_by_another_writer_is_contested(self):
+        """**別の書き手の応答 b1 の後に b2 が置かれても見逃さない** (#2857)。
+
+        自分には report=b1・request=b2 しか見えない。応答の識別子と request.json の識別子が
+        一致しなくても、置く直前の応答でも自分の応答でもない応答が見え、request.json が自分の
+        要求でなければ取り合い。`None` (応えなかった) と取り違えない。
+        """
+        (self.observe / "report.json").write_text(json.dumps({"id": "before"}))
+        before = observe_lib.place(self.observe, {"id": "mine"})
+        observe_lib.place(self.observe, {"id": "b2"})
+        (self.observe / "report.json").write_text(json.dumps({"id": "b1"}))
+        with self.assertRaises(observe_lib.Contested):
+            observe_lib.answered(self.observe, "mine", 5, before=before)
+
+    def test_an_answer_to_someone_else_while_my_request_stands_is_not_a_contest(self):
+        """request.json がまだ自分の要求なら、別の識別子の応答が見えても待つ。"""
+        before = observe_lib.place(self.observe, {"id": "mine"})
+        (self.observe / "report.json").write_text(json.dumps({"id": "b1"}))
+        self.assertIsNone(observe_lib.answered(self.observe, "mine", 0.05, before=before))
+
+    def test_the_echo_from_before_is_not_a_contest(self):
+        (self.observe / "report.json").write_text(json.dumps({"id": "before"}))
+        before = observe_lib.place(self.observe, {"id": "mine"})
+        observe_lib.place(self.observe, {"id": "b2"})
+        self.assertIsNone(observe_lib.answered(self.observe, "mine", 0.05, before=before))
+
+    def test_a_broken_request_is_not_mine(self):
+        """壊れた・識別子の無い request.json は自分の要求ではない。応答が別の識別子ならば取り合い。"""
+        for broken in ("{壊れた", json.dumps({"events": []})):
+            with self.subTest(broken=broken):
+                before = observe_lib.place(self.observe, {"id": "mine"})
+                (self.observe / "request.json").write_text(broken)
+                (self.observe / "report.json").write_text(json.dumps({"id": "theirs"}))
+                with self.assertRaises(observe_lib.Contested):
+                    observe_lib.answered(self.observe, "mine", 5, before=before)
+                (self.observe / "report.json").unlink()
+
+    def test_my_own_answer_wins_even_if_the_request_was_replaced(self):
+        (self.observe / "report.json").write_text(json.dumps({"id": "mine", "frame": 1}))
+        observe_lib.place(self.observe, {"id": "b2"})
+        self.assertEqual(observe_lib.answered(self.observe, "mine", 1, before=None)["frame"], 1)
+
     def test_the_deadline_is_honoured(self):
         """固まりうる待ちには待つ側が期限を持たせる (AGENTS.md)。"""
         started = time.monotonic()

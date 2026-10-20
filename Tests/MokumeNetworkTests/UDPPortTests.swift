@@ -24,7 +24,7 @@ struct UDPPortTests {
             port: port, name: "udp :\(port)", source: source, outbound: outbound, owner: nil,
             warn: told.append)
         try udp.open()
-        #expect(await until { udp.state == .running })
+        try await requireState(told: told, tracing: source) { udp.state }
         return (udp, try #require(source.boundPort))
     }
 
@@ -125,15 +125,19 @@ struct UDPPortTests {
     func closedListenerDropsItsSenders() async throws {
         let received = Mutex<[String]>([])
         let bound = Mutex<Int?>(nil)
+        let events = Mutex<[String]>([])
         let listener = DatagramListener(
             port: 0, host: "127.0.0.1", retryAfter: 0.05,
             received: { bytes, _ in received.withLock { $0.append(String(decoding: bytes, as: UTF8.self)) } },
             changed: { event in
+                events.withLock { $0.append("\(event)") }
                 if case .ready(let port) = event { bound.withLock { $0 = port } }
             })
         listener.start()
         defer { listener.stop() }
-        #expect(await until { bound.withLock { $0 } != nil })
+        try await requireWait(
+            "受け口が ready にならなかった", detail: { "受けた移り変わり: \(events.withLock { $0 })" },
+            until: { bound.withLock { $0 } != nil })
         let port = try #require(bound.withLock { $0 })
         let peer = try RawDatagramSocket()
         defer { peer.release() }
@@ -185,15 +189,19 @@ struct UDPPortTests {
         // 変わっても緑のままになる。この検査はその前提だけを見張る (#2325)
         let lengths = Mutex<[Int]>([])
         let bound = Mutex<Int?>(nil)
+        let events = Mutex<[String]>([])
         let listener = DatagramListener(
             port: 0, host: "127.0.0.1", retryAfter: 0.05,
             received: { bytes, _ in lengths.withLock { $0.append(bytes.count) } },
             changed: { event in
+                events.withLock { $0.append("\(event)") }
                 if case .ready(let port) = event { bound.withLock { $0 = port } }
             })
         listener.start()
         defer { listener.stop() }
-        #expect(await until { bound.withLock { $0 } != nil })
+        try await requireWait(
+            "受け口が ready にならなかった", detail: { "受けた移り変わり: \(events.withLock { $0 })" },
+            until: { bound.withLock { $0 } != nil })
         let port = try #require(bound.withLock { $0 })
         let peer = try RawDatagramSocket()
         defer { peer.release() }
@@ -407,7 +415,7 @@ struct UDPPortTests {
         try udp.open()
         defer { udp.close() }
 
-        #expect(await until { told.count(containing: "UDP cannot listen on port \(port) because another app is using it") == 1 })
+        try await requireTold(containing: "UDP cannot listen on port \(port) because another app is using it", told: told, tracing: source) { udp.state }
         #expect(udp.state == .unavailable)
         // 開き直しを何度か重ねても、知らせは増えない
         try await Task.sleep(for: .milliseconds(300))
@@ -415,7 +423,7 @@ struct UDPPortTests {
         #expect(udp.state == .unavailable)
 
         holder.release()
-        #expect(await until { udp.state == .running })
+        try await requireState(told: told, tracing: source) { udp.state }
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
         let received = try await sendAndCollect(

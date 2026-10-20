@@ -59,7 +59,27 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     ///
     /// [#2313]: https://github.com/mokume-metal/mokume/issues/2313
     package static func accepts(destination: String) -> Bool {
-        FrameRecorder.accepts(destination)
+        FrameRecorder.acceptsForRender(destination)
+    }
+
+    /// 行き先が配る形 (GIF・MP4) か ([#2440])。配る形は、同じ引数から書いても画素が一致するとは約束しない。
+    /// 道具が書き終わりの 1 行で名乗る。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
+    package static func isDistribution(destination: String) -> Bool {
+        FrameRecorder.distribution(of: destination) != nil
+    }
+
+    /// 行き先が GIF か。道具が、GIF の fps の規則を断る文面を選ぶのに使う ([#2440])。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
+    package static func isGIF(destination: String) -> Bool {
+        FrameRecorder.distribution(of: destination) == .gif
+    }
+
+    /// GIF が受けない fps を断る理由 (1 文)。**使える近い fps を名指す。**
+    package static func gifRateReason(frameRate: Int) -> String {
+        FrameRecorder.distributionRateReason(.gif, frameRate: frameRate)
     }
 
     /// `.mov` に書ける fps の上限。規則は撮る係のもの (``FrameRecorder/movieFrameRateLimit``・[#2307])。
@@ -70,7 +90,7 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     /// 行き先の綴りと fps の組を、書き出せる組として受けるか。規則は撮る係のもの
     /// (``FrameRecorder/accepts(_:frameRate:)``) で、組むときもこれで見る。
     package static func accepts(destination: String, frameRate: Int) -> Bool {
-        FrameRecorder.accepts(destination, frameRate: frameRate)
+        FrameRecorder.acceptsForRender(destination, frameRate: frameRate)
     }
 
     /// 行き先のファイル名が、作れない長さか。作れれば `nil` ([#2774])。規則は撮る係のもの
