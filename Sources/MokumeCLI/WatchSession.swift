@@ -1151,10 +1151,24 @@ final class WatchSession {
     ///
     /// - Returns: 受けなかったなら `nil`。受けたなら、前の世代を畳んだかと、その結果
     ///   (**名乗るのは口の側**・``retireOutgoing()``)。
-    func retireAfterUndeliverable() async -> (previous: FallbackPrevious, outcome: StopOutcome?)? {
-        guard awaitingPromotion, child?.isRunning == true else { return nil }
+    func retireAfterUndeliverable(
+        waiting: Process?
+    ) async -> (previous: FallbackPrevious, outcome: StopOutcome?)? {
+        // **知らせを受けた時点の世代と、いまの世代が同じときだけ。** 知らせは世代の印を持たず、`Task` で
+        // 遅れて捌かれる — 作り直しの続きが先に走ると、前の世代 (C) の知らせが次の世代 (D) に当たる
+        // (``waitingGeneration``)。**止めている最中・終えている最中も受けない** (``departed()`` と同じ関所):
+        // 見張りを終える間に名乗ったり畳んだりすると、止める順序を横から割る
+        guard let waiting, waiting === child, awaitingPromotion, waiting.isRunning,
+            !stopRequested, waiting !== stoppingChild, !isBringingDown(waiting)
+        else { return nil }
         return await retireAsPromoted()
     }
+
+    /// 乗り換えを待っている、最後に起こした世代。待っていなければ `nil`。
+    ///
+    /// **窓の知らせを受けた時点で、同期に控える** — 捌くのは `Task` で遅れるので、その間に世代が
+    /// 入れ替わっても、知らせが出た世代を ``retireAfterUndeliverable(waiting:)`` が見分けられる。
+    var waitingGeneration: Process? { awaitingPromotion ? child : nil }
 
     /// 乗り換えを待つ世代を、窓へ乗り換えたものとみなして、前の世代を畳む。
     ///

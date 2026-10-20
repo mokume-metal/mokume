@@ -524,6 +524,41 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **前の世代を畳んでも、台は前の世代の頼みと寸法を持ち続けない** ([#2928])。見張りが新しい世代へ乗り
+    /// 換えたとみなして前の世代を畳むと、前の世代はもう絵を書かないので、カーソルの頼みを読み直す契機が
+    /// 来ず、窓は捕まえたまま・隠したままになる。入力を受けるのは新しい子なので、読めた目録の寸法へ
+    /// 入力の写しを追随させる。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test("受け取れない世代を知らせるとき、前の世代のカーソルの頼みを下ろし、読めた目録の寸法へ入力の写しを追随させる")
+    func undeliverableReleasesTheOldRequestsAndFollowsTheSize() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let requesting = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(requesting, frame: 1, gpu: gpu, pointerLock: true, cursorHidden: true)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("release"))
+            defer { stage.close() }
+            stage.open()
+            stage.warn = { _ in }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested && stage.cursorHiddenRequested, "検査の前提: 前の世代が頼んでいる")
+            let surface = try #require(stage.host as? SketchSurface)
+            #expect(surface.canvasWidth == 32)
+
+            // 面を引けない目録 (読める。寸法は 64x48)
+            try Data(#"{"schemaVersion":1,"ids":[4000000000],"width":64,"height":48}"#.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            stage.displayLinkFired()
+            #expect(told == [.noSurface])
+            #expect(!stage.pointerLockRequested && !stage.cursorHiddenRequested, "前の世代の頼みが残っている")
+            #expect(surface.canvasWidth == 64, "入力の写しが前の世代の寸法のまま")
+        }
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が
