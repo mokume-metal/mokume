@@ -346,7 +346,7 @@ final class FrameRecorder: Outlet {
     ///   (``recordingFrom``)。
     ///
     /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
-    func beginRecord(_ pattern: String, at frame: Int) {
+    func beginRecord(_ pattern: String, at frame: Int, rendering frameCount: Int? = nil) {
         guard !isRecording else {
             warnOnce(.alreadyRecording, "beginRecord(): already recording. Carrying on with the current one")
             return
@@ -358,6 +358,23 @@ final class FrameRecorder: Outlet {
             warnOnce(
                 .fileNameTooLong,
                 "beginRecord(\"\(pattern)\"): \(Self.tooLongReason(long)). Not starting")
+            return
+        }
+        // **配る形 (GIF・MP4) は `mokume render` だけが頼む** ([#2440])。決めた枚数を書く入口 (`frameCount`)
+        // だけが頼める。作品の `beginRecord(_:)` は、今までどおり `.mov` と連番だけを受ける
+        if frameCount != nil, let distribution = Self.distribution(of: pattern) {
+            guard Self.acceptsForRender(pattern, frameRate: frameRate) else {
+                warnOnce(
+                    .movieFrameRateTooHigh,
+                    "beginRecord(\"\(pattern)\"): \(Self.distributionRateReason(distribution, frameRate: frameRate)). "
+                        + "Not starting")
+                return
+            }
+            movie = MovieWriter(
+                path: pattern, frameRate: frameRate, from: frame,
+                format: distribution == .gif ? .gif : .h264)
+            recordingFrom = frame
+            forgetWarnings()
             return
         }
         if Self.isMovie(pattern) {
@@ -393,6 +410,60 @@ final class FrameRecorder: Outlet {
     /// 行き先の綴りが動画か (``beginRecord(_:at:)`` の規則)。
     nonisolated static func isMovie(_ pattern: String) -> Bool {
         pattern.lowercased().hasSuffix(".mov")
+    }
+
+    /// 配る形 (GIF・MP4)。元にする形 (ProRes 4444 の `.mov`・PNG 連番) と違い、**同じ引数から書いても画素が
+    /// 一致するとは約束しない** ([ADR-0025] 決定 3 の改訂・[#2440])。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    nonisolated enum Distribution: Equatable, Sendable {
+        case gif
+        case mp4
+    }
+
+    /// 行き先の綴りが配る形か。**拡張子が `.gif` か `.mp4` で、番号の場所 (`#` の並び) を持たないもの。**
+    ///
+    /// 番号の場所を持つ綴り (`loop-####.gif`) は、今までどおり連番である。
+    nonisolated static func distribution(of pattern: String) -> Distribution? {
+        guard FrameSequence(pattern: pattern) == nil else { return nil }
+        let lowered = pattern.lowercased()
+        if lowered.hasSuffix(".gif") { return .gif }
+        if lowered.hasSuffix(".mp4") { return .mp4 }
+        return nil
+    }
+
+    /// `mokume render --out` が受ける綴りか。**``accepts(_:)`` に、配る形を足したもの。**
+    nonisolated static func acceptsForRender(_ pattern: String) -> Bool {
+        accepts(pattern) || distribution(of: pattern) != nil
+    }
+
+    /// `mokume render --out` が受ける綴りと fps の組か。**``accepts(_:frameRate:)`` に、配る形の規則を足したもの。**
+    ///
+    /// - GIF: 1 枚の遅延が 1/100 秒の整数倍になる fps だけ (``GIFFile/delay(frameRate:)``)
+    /// - MP4: `.mov` と同じ刻みの上限 (``movieFrameRateLimit``)
+    nonisolated static func acceptsForRender(_ pattern: String, frameRate: Int) -> Bool {
+        switch distribution(of: pattern) {
+        case .gif?: GIFFile.delay(frameRate: frameRate) != nil
+        case .mp4?: frameRate <= movieFrameRateLimit
+        case nil: accepts(pattern, frameRate: frameRate)
+        }
+    }
+
+    /// 配る形が、その fps を受けない理由 (1 文)。
+    nonisolated static func distributionRateReason(_ distribution: Distribution, frameRate: Int) -> String {
+        switch distribution {
+        case .gif:
+            let near = GIFFile.nearestFrameRates(to: frameRate)
+            let usable = [near.below, near.above].compactMap { $0 }.map(String.init)
+                .joined(separator: " or ")
+            return "recording at \(frameRate) frames per second, but a GIF counts each frame's time in "
+                + "1/100 of a second, and 1/\(frameRate) of a second is not a whole number of them "
+                + "(the delay would be rounded). Use an fps that divides 100, such as \(usable)"
+        case .mp4:
+            return "recording at \(frameRate) frames per second, but an MP4 takes at most "
+                + "\(movieFrameRateLimit) frames per second"
+        }
     }
 
     /// 行き先の綴りを、連番か動画として受けるか。**規則は ``beginRecord(_:at:)`` と同じ 1 つ。**
@@ -435,7 +506,8 @@ final class FrameRecorder: Outlet {
             return tooLong(
                 sequence.name(at: last), limit: imageNameLimit, index: frameCount == nil ? nil : last)
         }
-        return tooLong(pattern, limit: isMovie(pattern) ? FileNameLength.limit : imageNameLimit)
+        let isMP4 = distribution(of: pattern) == .mp4
+        return tooLong(pattern, limit: isMovie(pattern) || isMP4 ? FileNameLength.limit : imageNameLimit)
     }
 
     /// `save()` の行き先のファイル名が、作れない長さか。**`save()` は綴りのままのファイル名で PNG を書く**

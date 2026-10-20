@@ -106,9 +106,14 @@ enum Command {
                     """
                     Build the sketch and write its motion at a fixed frame rate, with no window.
                     The time the sketch sees steps by 1/fps per frame, so the same arguments give
-                    the same motion. --out takes a .mov, or a numbered series with a run of # in
-                    the file name for the number (out/frame-####.png). Ends by itself after
-                    fps × seconds frames
+                    the same motion. --out takes a .mov (ProRes 4444) or a numbered series with a
+                    run of # in the file name for the number (out/frame-####.png) — the forms to
+                    keep, which give the same pixels from the same arguments — or a .mp4 (H.264)
+                    or .gif to share, which do not promise that. A .gif holds 256 colours, shows
+                    colour as sRGB, and writes each pixel opaque or transparent (alpha 128 or
+                    more is opaque), and its frame time is a whole number of 1/100 seconds, so
+                    --fps must divide 100 (50, 25, 20 …); a .mp4 writes colour as sRGB with no
+                    transparency. Ends by itself after fps × seconds frames
                     """
                 )
             case .mcp:

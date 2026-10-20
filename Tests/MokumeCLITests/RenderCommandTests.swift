@@ -127,6 +127,72 @@ struct RenderCommandTests {
             mentioningAll: ["--out", "256", "255"])
     }
 
+    // MARK: - 配る形 (GIF・MP4・#2440)
+
+    @Test("--out は .gif と .mp4 を受け、枚数と刻みは --fps と --seconds のとおりになる")
+    func distributionFormsAreAccepted() throws {
+        let gif = try parse(["--fps", "25", "--seconds", "4", "--out", "loop.gif"])
+        #expect(gif.request.frameCount == 100 && gif.request.frameRate == 25)
+        #expect(gif.request.destination == "/tmp/typed-here/loop.gif")
+        let mp4 = try parse(["--fps", "60", "--seconds", "4", "--out", "loop.mp4"])
+        #expect(mp4.request.frameCount == 240 && mp4.request.frameRate == 60)
+        // 番号の場所を持つ綴りは、今までどおり連番
+        _ = try parse(["--fps", "10", "--seconds", "1", "--out", "out/f-####.gif"])
+    }
+
+    /// **GIF は 1/100 秒の整数倍にならない刻みを、書く前に断る。** 黙って遅延を丸めず、枚を間引かない。
+    /// 文面は使える近い fps を名指す。断りを外すと赤になる。
+    @Test("GIF で 1/100 秒の整数倍にならない fps は、使える近い fps を名指して止まる")
+    func aGIFRateThatIsNotAWholeHundredthStops() {
+        expectUsage(
+            ["--fps", "60", "--seconds", "4", "--out", "loop.gif"],
+            mentioningAll: ["--fps", "60", ".gif", "1/100", "50", "100"])
+        expectUsage(
+            ["--fps", "30", "--seconds", "4", "--out", "loop.gif"],
+            mentioningAll: ["--fps", "30", ".gif", "25", "50"])
+        // 割り切れる fps は通る (境目: 100 と 1)
+        for fps in ["100", "50", "25", "20", "1"] {
+            #expect(throws: Never.self, "fps \(fps)") {
+                _ = try parse(["--fps", fps, "--seconds", "2", "--out", "loop.gif"])
+            }
+        }
+        // MP4 は 60 fps を受ける (GIF の規則は MP4 に掛からない)
+        #expect(throws: Never.self) {
+            _ = try parse(["--fps", "60", "--seconds", "4", "--out", "loop.mp4"])
+        }
+    }
+
+    @Test("MP4 の刻みの上限は、.mp4 と名乗って止まる")
+    func anMP4RateAboveTheTimescaleNamesMP4() {
+        expectUsage(
+            ["--fps", "90001", "--seconds", "1", "--out", "loop.mp4"],
+            mentioningAll: ["--fps", "90000", ".mp4"])
+    }
+
+    @Test("--out の綴りの誤りは、.gif と .mp4 も受けると名乗る")
+    func aBadOutNamesTheFormsItTakes() {
+        expectUsage(
+            ["--fps", "10", "--seconds", "1", "--out", "loop.webm"],
+            mentioningAll: ["--out", ".gif", ".mp4", ".mov"])
+    }
+
+    /// 書き終わりの 1 行: 配る形は、元にする形ではないことを名乗る。元にする形は名乗らない。
+    @Test("配る形を書き終えると、画素の一致を約束しないことを名乗り、.mov と連番は名乗らない")
+    func theReportNamesWhatADistributionFormDoesNotPromise() throws {
+        for out in ["loop.gif", "loop.mp4"] {
+            let request = try parse(["--fps", "25", "--seconds", "4", "--out", out]).request
+            let report = RenderCommand.report(request)
+            #expect(report.contains("Wrote 100 frames at 25 fps"), "\(report)")
+            #expect(report.contains(RenderCommand.distributionNotice), "\(report)")
+            #expect(report.contains("not promised to give the same pixels"), "\(report)")
+            #expect(report.contains(".mov"), "元にする形を案内していない: \(report)")
+        }
+        for out in ["loop.mov", "out/f-####.png"] {
+            let request = try parse(["--fps", "25", "--seconds", "4", "--out", out]).request
+            #expect(!RenderCommand.report(request).contains("not promised"), "\(out)")
+        }
+    }
+
     // MARK: - 解ける形 (完了条件 1・2)
 
     @Test("場所・構成・置き場と、fps・秒数・行き先を受け、枚数は fps × 秒数になる")
@@ -241,7 +307,7 @@ struct RenderCommandTests {
     }
 
     /// 形の規則は撮る係のもの。`.mov` か、番号の入る場所 (`#`) を持つ連番。
-    @Test("行き先が動画でも連番でもなければ止まる", arguments: ["/a.png", "/a", "/a.mp4"])
+    @Test("行き先が動画でも連番でもなければ止まる", arguments: ["/a.png", "/a", "/a.webm"])
     func anUnrecordableOutIsRefused(out: String) {
         expectOutRefused(out)
     }
