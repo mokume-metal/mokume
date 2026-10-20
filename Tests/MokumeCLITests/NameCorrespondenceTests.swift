@@ -80,7 +80,8 @@ struct NameCorrespondenceTests {
         #expect(lines.dropFirst().first == "")
         #expect(lines.last == "Tool: \(ToolVersion.describe())")
         // 口の行は 2 字下げ、説明は 6 字下げ (畳む前と同じ)
-        #expect(usage.contains("\n  new <name> [--path <directory>] [--local <library path>]\n"))
+        #expect(usage.contains(
+                "\n  new <name> [--from <example>] [--path <directory>] [--local <library path>]\n"))
         #expect(
             usage.contains(
                 "\n      -c takes debug or release (defaults to whatever the toolchain uses).\n"))

@@ -49,7 +49,7 @@ enum Command {
     /// ``dispatch(_:)`` の網羅 `switch` と ``usageEntry`` の両方が**コンパイラに
     /// 問われる** — 案内に並べないなら、並べないと書くことになる。
     enum Verb: String, CaseIterable {
-        case new, run, watch, render, mcp, bundle, doctor, help, version
+        case new, examples, run, watch, render, mcp, bundle, doctor, help, version
 
         /// 慣習の綴り。名前とは別に受けるだけで、案内には並べない。
         var aliases: [String] {
@@ -74,11 +74,20 @@ enum Command {
             switch self {
             case .new:
                 (
-                    "new <name> [--path <directory>] [--local <library path>]",
+                    "new <name> [--from <example>] [--path <directory>] [--local <library path>]",
                     """
-                    Create a sketch package. Pass --local to point at this repository (for development).
+                    Create a sketch package. Pass --from to start from one of the examples (see examples)
+                    instead of the spinning circle. Pass --local to point at this repository (for development).
                     --local goes into the new Package.swift as is, so a relative one starts from the
                     new sketch, not from where you run this
+                    """
+                )
+            case .examples:
+                (
+                    "examples",
+                    """
+                    List the examples that ship with the tool, by the names the reference uses.
+                    Open one as a new sketch with new <name> --from <example>
                     """
                 )
             case .run:
@@ -160,6 +169,8 @@ enum Command {
         switch verb {
         case .new:
             try NewCommand.run(rest)
+        case .examples:
+            try ExamplesCommand.run(rest)
         case .run:
             try RunCommand.run(rest)
         case .watch:
