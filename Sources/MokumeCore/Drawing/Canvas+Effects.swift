@@ -396,6 +396,14 @@ extension Canvas {
             throw .argumentTableUnavailable(reason: "failed for testing")
         }
         let table = try pipeline.table(at: index)
+        // 組み込みの効果は種別に特化したパイプラインで走る (``EffectPipeline/builtinState(for:)``)。
+        // 組むのは投げうる仕事なので、口を開く前に済ませる
+        let state: any MTLRenderPipelineState
+        if let shader = pass.shader {
+            state = shader.state
+        } else {
+            state = try pipeline.builtinState(for: pass.builtinKind)
+        }
         let address = pipeline.passBuffer.gpuAddress + UInt64(base)
         table.setAddress(
             address + UInt64(EffectPipeline.valuesOffset),
@@ -423,7 +431,7 @@ extension Canvas {
             afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
         effectBarriersEncoded += 1
 
-        encoder.setRenderPipelineState(pass.shader?.state ?? pipeline.builtin)
+        encoder.setRenderPipelineState(state)
         // **窓は書き込む先の大きさで測る。** 段は入りと出りで大きさが違いうる
         // (拡大がそれ) ので、面の大きさを 1 つに決め打つと出りが埋まらない
         encoder.setViewport(

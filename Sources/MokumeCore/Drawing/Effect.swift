@@ -276,6 +276,15 @@ struct EffectPass {
     var control: (SIMD4<Float>, SIMD4<Float>)
     /// 利用者の効果。`nil` なら組み込み。
     var shader: EffectShader?
+
+    /// 組み込みの効果の種別。設定の先頭 (``control``) に入っている番号を読む。
+    /// 利用者の効果でも `copy` を名乗るが、そちらは自分のパイプラインで走る。
+    var builtinKind: BuiltinEffectKind {
+        guard let kind = BuiltinEffectKind(rawValue: UInt32(control.0.x)) else {
+            preconditionFailure("an effect pass names a kind that does not exist: \(control.0.x)")
+        }
+        return kind
+    }
 }
 
 /// 組み込みの効果の種別番号。
@@ -296,7 +305,7 @@ struct EffectPass {
 /// [#755]: https://github.com/mokume-metal/mokume/issues/755
 /// [#802]: https://github.com/mokume-metal/mokume/issues/802
 /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-enum BuiltinEffectKind: UInt32, CaseIterable {
+enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
     /// そのまま写す。時間方向の拡大が出した絵を控えるときに通る (利用者の効果も、組み込みの
     /// 設定が要らないのでこの番号を名乗る)。かつては最後の段が入りの絵を読む並びの写し戻しにも
     /// 使っていたが、入りの絵を控えから読むようにして要らなくなった (#1469)。
