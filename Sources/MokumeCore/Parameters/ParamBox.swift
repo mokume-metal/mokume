@@ -20,8 +20,12 @@ import Observation
 /// 未満)。作るのを初期化の 1 度にし、以後は同じものを渡す。
 ///
 /// key path は構造で等しさを判定するので、観測の登録と通知は macro の展開と一致する。
-/// setter は `Value` が `Equatable` を要求しないので、展開と同じく常に通知する
-/// (`shouldNotifyObservers` が常に真になる形)。
+/// **値が同じ再代入は通知しない** ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
+/// `Value` は `Equatable` を要求しないので、等しさは**面に出る表現** (`ParamValue`) で見る — 展開が
+/// `Equatable` な値にだけやる `shouldNotifyObservers` と同じ形である。通知しないだけで、値は置く
+/// (面に出ない部分を持つ自作の型の値や `-0.0` を落とさない)。通知は窓の更新・応答の書き直し
+/// (`mokume watch` の下では毎フレーム)・保存の印のすべてを起こすので、`size = min(size, 100)` の
+/// ように値を保つ書き方は、これらを毎フレーム起こしていた。
 ///
 /// ## 非有限の数は載せない ([#2271])
 ///
@@ -71,6 +75,9 @@ public final class ParamBox<Value> {
     /// 1 度だけ標準エラーへ名乗る。置かなかったときは変化の通知も出さない (値が動いていない)。
     /// 有限の値は範囲の外でも素通しする ([ADR-0030] 決定 3)。
     ///
+    /// **面に出る表現が今と同じ値を書いたときも、変化の通知は出さない** (値は置く)。窓の更新・応答の
+    /// 書き直し・保存を起こさない ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
+    ///
     /// この関所が塞ぐのは、値が**変わる**入口 (setter・`_modify`・``write(_:)``) である。
     /// 置き場が**生まれる**ときの値 (宣言の初期値・`init` の中の代入) は前の値が無いので、非有限なら
     /// 型の零を載せて 1 度名乗る ([#2394](https://github.com/mokume-metal/mokume/issues/2394))。
@@ -83,8 +90,14 @@ public final class ParamBox<Value> {
         }
         set {
             // 置かないときは変化の通知も出さない (値は動いていない)
-            guard toParam(newValue).hasOnlyFiniteNumbers else {
+            let offered = toParam(newValue)
+            guard offered.hasOnlyFiniteNumbers else {
                 refuse(newValue, keeping: storedValue)
+                return
+            }
+            // 面に出る姿が同じなら通知しない。値は置く (面に出ない部分・零の符号を落とさない)
+            guard offered != toParam(storedValue) else {
+                storedValue = newValue
                 return
             }
             observation.withMutation(of: self, keyPath: valueKeyPath) {
@@ -99,9 +112,14 @@ public final class ParamBox<Value> {
             // 形ではなくなるが、値は小さく、通知の順 (willSet → 置く → didSet) は同じである
             var working = storedValue
             yield &working
-            if toParam(working).hasOnlyFiniteNumbers {
-                observation.withMutation(of: self, keyPath: valueKeyPath) {
+            let offered = toParam(working)
+            if offered.hasOnlyFiniteNumbers {
+                if offered == toParam(storedValue) {
                     storedValue = working
+                } else {
+                    observation.withMutation(of: self, keyPath: valueKeyPath) {
+                        storedValue = working
+                    }
                 }
             } else {
                 refuse(working, keeping: storedValue)
