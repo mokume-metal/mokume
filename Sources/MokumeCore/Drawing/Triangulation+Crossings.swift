@@ -348,13 +348,12 @@ nonisolated extension Triangulation {
             case through(Int)
         }
 
-        /// 触れているとみなす距離。**組み直し (``nonzeroSplit(crossings:comparisons:evenOdd:)``) が点を束ねる
-        /// 許容と同じ値** — 形の大きさ × 2^-16 と、座標の大きさ × 2^-20 の大きいほう (``Triangulation/TouchScale``)。
+        /// 組み直し (``nonzeroSplit(crossings:comparisons:evenOdd:)``) が点を束ねる許容 — 形の大きさ × 2^-16 と、
+        /// 座標の大きさ × 2^-20 の大きいほう (``Triangulation/TouchScale``・#1538 の許容)。
         ///
-        /// 触れ方を組み直しへ送る判定 (``survey()``) と、組み直しの側が、同じ距離で「触れている」と
-        /// 数える。判定が座標の厳密な一致で、組み直しだけが許容を持つと、回した・傾けた・計算で求めた
-        /// 座標で丸めに外れた触れ方が「触れていない」と判定されて、組み直しへ送られない
-        /// ([#2997])。辺が 1 本も無い・値が有限でないときは `nil`。
+        /// **組み直しの道に入った形にだけ効く。** 触れ方を組み直しへ送る判定 (``survey()``) は、この値ではなく
+        /// 組ごとの丸めの幅で見る ([#2997])。形全体の大きさから出したこの値で送ると、触れも交わりもしない
+        /// 細部まで組み直しへ送られて束ねられる。辺が 1 本も無い・値が有限でないときは `nil`。
         ///
         /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
         var touchTolerance: Float? {
@@ -368,10 +367,19 @@ nonisolated extension Triangulation {
 
         /// 真の交わりと、頂点を通って向こう側へ抜ける所を探す。
         ///
-        /// 触れているかは、``touchTolerance`` の中にあるかで見る。**辺を共有する隣り合う辺の頂点は、
+        /// 触れているかは、組ごとの丸めの幅 (``Triangulation/rounding(of:)``) の中にあるかで見る。**辺を共有する隣り合う辺の頂点は、
         /// 厳密に同じ点のときだけ触れていると数える** (短い辺で、隣の頂点を触れた点と取り違えない)。
         func survey() -> Survey {
-            let touching = touchTolerance ?? 0
+            // 触れているとみなす距離は、**組ごとに、関わる点の座標の大きさから出す丸めの幅**
+            // (``Triangulation/rounding(of:)``)。形全体の大きさから出すと、遠い頂点が 1 つあるだけ・外周が
+            // 大きいだけで許容が広がり、触れも交わりもしない細部が組み直しへ送られて束ねられる ([#2997])。
+            // 囲みを広げる幅と、位置をまとめる升目だけは、全体の座標の大きさから出した上限を使う
+            var scale = TouchScale()
+            for edge in from.indices where tree.isPlaced(edge) {
+                scale.include(points[from[edge]])
+                scale.include(points[to[edge]])
+            }
+            let touching = scale.roundingTolerance ?? 0
             // **並びを手元に写してから回す。** `self` 越しに引くと、組ごとに並びの参照を
             // 数え直す手間が入り、C の字の 1024 点で探す手間が 4 割増えた
             let tree = tree
@@ -380,12 +388,13 @@ nonisolated extension Triangulation {
             let to = to
             var found: [Found] = []
             // 触れる所は稀なので、並びに積んでから位置ごとにまとめる
-            var touches: [(SIMD2<Float>, Visit)] = []
+            var touches: [(point: SIMD2<Float>, visit: Visit, tolerance: Float)] = []
             var pending: [(level: Int, box: Int)] = []
             var pairs = 0
             for first in from.indices where tree.isPlaced(first) {
                 let a = points[from[first]]
                 let b = points[to[first]]
+                let sizeOfFirst = max(abs(a).max(), abs(b).max())
                 // 触れているとみなす距離だけ広げる。囲みが離れていても、許容の中なら触れうる
                 let reach = tree.box(of: first) + SIMD4(-touching, -touching, touching, touching)
                 // 数えるのは比べた辺の数で、組の数ではない。組や末端の箱ごとに数えると、
@@ -436,25 +445,29 @@ nonisolated extension Triangulation {
                         guard found.isEmpty else { continue }
                         // 隣り合う辺 (頂点の番号を共有する) の頂点は、厳密に同じ点のときだけ触れる
                         let adjacent = to[first] == from[second] || to[second] == from[first]
-                        let meets = adjacent ? a == c : simd_distance(a, c) <= touching
+                        let sizeOfSecond = max(abs(c).max(), abs(d).max())
+                        let nearVertices = Triangulation.rounding(of: max(abs(a).max(), abs(c).max()))
+                        let meets = adjacent ? a == c : simd_distance(a, c) <= nearVertices
                         if meets {
-                            touches.append((a, .corner(first)))
-                            touches.append((a, .corner(second)))
+                            touches.append((a, .corner(first), nearVertices))
+                            touches.append((a, .corner(second), nearVertices))
                         }
-                        if Self.distance(c, a, b) <= touching, simd_distance(c, a) > touching,
-                            simd_distance(c, b) > touching, Self.isStrictlyBetween(c, a, b)
+                        let nearFirst = Triangulation.rounding(of: max(sizeOfFirst, abs(c).max()))
+                        if Self.distance(c, a, b) <= nearFirst, simd_distance(c, a) > nearFirst,
+                            simd_distance(c, b) > nearFirst, Self.isStrictlyBetween(c, a, b)
                         {
-                            touches.append((c, .through(first)))
-                            touches.append((c, .corner(second)))
+                            touches.append((c, .through(first), nearFirst))
+                            touches.append((c, .corner(second), nearFirst))
                         }
                         let span = tree.box(of: second)
-                        guard simd_distance(a, c) > touching, simd_distance(a, d) > touching,
-                            a.x >= span.x - touching, a.x <= span.z + touching,
-                            a.y >= span.y - touching, a.y <= span.w + touching
+                        let nearSecond = Triangulation.rounding(of: max(sizeOfSecond, abs(a).max()))
+                        guard simd_distance(a, c) > nearSecond, simd_distance(a, d) > nearSecond,
+                            a.x >= span.x - nearSecond, a.x <= span.z + nearSecond,
+                            a.y >= span.y - nearSecond, a.y <= span.w + nearSecond
                         else { continue }
-                        if Self.distance(a, c, d) <= touching, Self.isStrictlyBetween(a, c, d) {
-                            touches.append((a, .through(second)))
-                            touches.append((a, .corner(first)))
+                        if Self.distance(a, c, d) <= nearSecond, Self.isStrictlyBetween(a, c, d) {
+                            touches.append((a, .through(second), nearSecond))
+                            touches.append((a, .corner(first), nearSecond))
                         }
                     }
                 }
@@ -523,7 +536,8 @@ nonisolated extension Triangulation {
         ///
         /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
         private static func contacts(
-            of touches: [(SIMD2<Float>, Visit)], within distance: Float, scanned: inout Int
+            of touches: [(point: SIMD2<Float>, visit: Visit, tolerance: Float)], within distance: Float,
+            scanned: inout Int
         ) -> [(SIMD2<Float>, [Visit])] {
             guard !touches.isEmpty else { return [] }
             var parent = Array(touches.indices)
@@ -545,7 +559,7 @@ nonisolated extension Triangulation {
             var head: [Int: Int] = [:]
             var after = [Int](repeating: -1, count: touches.count)
             for index in touches.indices {
-                let point = touches[index].0
+                let point = touches[index].point
                 if let earlier = spots[point] {
                     join(index, earlier)
                     continue
@@ -559,7 +573,11 @@ nonisolated extension Triangulation {
                         var other = head[Self.cell(column + dx, row + dy)] ?? -1
                         while other >= 0 {
                             scanned += 1
-                            if simd_distance(touches[other].0, point) <= distance { join(index, other) }
+                            if simd_distance(touches[other].point, point)
+                                <= max(touches[other].tolerance, touches[index].tolerance)
+                            {
+                                join(index, other)
+                            }
                             other = after[other]
                         }
                     }
@@ -573,11 +591,11 @@ nonisolated extension Triangulation {
             for index in touches.indices {
                 let key = root(index)
                 if groups[key] == nil { order.append(key) }
-                if groups[key]?.contains(touches[index].1) != true {
-                    groups[key, default: []].append(touches[index].1)
+                if groups[key]?.contains(touches[index].visit) != true {
+                    groups[key, default: []].append(touches[index].visit)
                 }
             }
-            return order.map { (touches[$0].0, groups[$0] ?? []) }
+            return order.map { (touches[$0].point, groups[$0] ?? []) }
         }
 
         /// 一直線に並ぶ 3 点で、`point` が `a` と `b` の間 (両端を除く) にあるか。
@@ -674,7 +692,7 @@ nonisolated extension Triangulation {
             let base = points.count
 
             // 許容。形の大きさと、座標の大きさ (その位置での浮動小数の刻み) の大きいほうに
-            // 比例させる。触れ方を送る判定 (``survey()``) と同じ値 (``touchTolerance``)
+            // 比例させる (``touchTolerance``)
             guard let tolerance = touchTolerance else { return nil }
 
             // 1. 交点を作る。端が相手の辺の許容の中にある組は、載る点として 2. で扱う

@@ -226,19 +226,8 @@ struct RotatedTouchingHolesTests {
         #expect(abs(painted - expected) < 1, "塗り \(painted) (期待 \(expected))")
     }
 
-    @Test("許容の半分だけ外周から離れた細い穴が 700 個並んでも、組み直しで塗りが止まらない (#2997)")
-    func aCombOfNearlyTouchingHolesIsNotCutShort() {
-        let (rings, height) = Self.comb(count: 700, gapFactor: 0.5)
-        let (painted, expected) = Self.painted(rings)
-        // 許容より細い隙間は、組み直しの道で閉じる (点が束ねられる)。閉じる面積は隙間 × 高さ以下。
-        // 組み直しの耳切りが止まると、塗りは何万も抜ける
-        let closed = 0.5 * height * 0x1p-16 * height
-        #expect(painted <= expected + 1, "塗り \(painted) (期待 \(expected))")
-        #expect(painted >= expected - closed - 1, "塗り \(painted) (期待 \(expected)・閉じうる面積 \(closed))")
-    }
-
-    @Test("許容の半分だけ離れて縦に並ぶひし形 1500 個は、組み直しで塗りが止まらない (#2997)")
-    func aColumnOfNearlyTouchingDiamondsIsNotCutShort() {
+    @Test("角が離れて縦に並ぶひし形 1500 個は、触れていないので隙間は閉じず、面積どおりに塗られる (#2997)")
+    func aColumnOfNearlyTouchingDiamondsIsPaintedWhole() {
         let count = 1500
         let height = Float(count) * 4 + 4
         let gap = 0.5 * height * 0x1p-16
@@ -251,10 +240,80 @@ struct RotatedTouchingHolesTests {
                 SIMD2(50, y + gap / 2), SIMD2(52, y + 2), SIMD2(50, y + 4 - gap / 2), SIMD2(48, y + 2),
             ])
         }
-        let (painted, expected) = Self.painted(rings)
-        // 角どうしの隙間 (許容の半分) が閉じるので、少し多く抜ける。止まると 4/5 が抜ける
-        #expect(painted <= expected + 1, "塗り \(painted) (期待 \(expected))")
-        #expect(painted >= expected - 0.001 * expected, "塗り \(painted) (期待 \(expected))")
+        let (painted, expected) = Self.paintedInDouble(outer: rings[0], holes: Array(rings.dropFirst()))
+        #expect(abs(painted - expected) < 1, "塗り \(painted) (期待 \(expected))")
+    }
+
+    // MARK: - 回さない座標の形を、これまでどおりに塗る
+
+    /// 外周と穴を、Double の面積で測る。外周が大きい (1e5) 形は、Float の面積の和では誤差が穴の面積を越える。
+    nonisolated static func paintedInDouble(
+        outer: [SIMD2<Float>], holes: [[SIMD2<Float>]]
+    ) -> (painted: Double, expected: Double) {
+        func area(_ ring: [SIMD2<Float>]) -> Double {
+            var sum = 0.0
+            for index in ring.indices {
+                let a = ring[index]
+                let b = ring[(index + 1) % ring.count]
+                sum += Double(a.x) * Double(b.y) - Double(b.x) * Double(a.y)
+            }
+            return abs(sum) / 2
+        }
+        let scene = TouchingHoleScene(index: 0, outer: outer, holes: holes)
+        var painted = 0.0
+        for t in scene.triangles() {
+            let ax = Double(t.1.x) - Double(t.0.x)
+            let ay = Double(t.1.y) - Double(t.0.y)
+            let bx = Double(t.2.x) - Double(t.0.x)
+            let by = Double(t.2.y) - Double(t.0.y)
+            painted += abs(ax * by - ay * bx) / 2
+        }
+        return (painted, holes.reduce(area(outer)) { $0 - area($1) })
+    }
+
+    /// 触れも交わりもしない細部は、**形の大きさや座標の大きさに引きずられて組み直しへ送られない**。
+    /// 触れているかの判定は、回した座標の丸めのずれだけを拾う幅で見る。形全体の大きさから出した幅で見ると、
+    /// 遠い頂点が 1 つあるだけ・外周が大きいだけで幅が広がり、隙間や壁が束ねられて塗られる・抜ける。
+    @Test("遠い頂点が 1 つある櫛の周は、歯の隙間が閉じず、面積どおりに塗られる (#2997)", arguments: [0.5 as Float, 1, 2, 4])
+    func aFarVertexDoesNotWidenTheTouchDistance(_ gap: Float) {
+        var ring: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(100_000, 50), SIMD2(200, 20)]
+        var x: Float = 200
+        while x - 2 - gap > 0 {
+            ring += [SIMD2(x, 100), SIMD2(x - 2, 100), SIMD2(x - 2, 20), SIMD2(x - 2 - gap, 20)]
+            x -= 2 + gap
+        }
+        ring += [SIMD2(x, 100), SIMD2(0, 100)]
+        let (painted, expected) = Self.paintedInDouble(outer: ring, holes: [])
+        #expect(abs(painted - expected) < 0.5, "隙間 \(gap): 塗り \(painted) (期待 \(expected))")
+    }
+
+    @Test("一辺 1e5 の外周に、壁の厚さ 1 や 0.5 で穴が並んでも、壁は抜けず、面積どおりに塗られる (#2997)", arguments: [0.5 as Float, 1, 2])
+    func aBigOuterRingDoesNotWidenTheTouchDistance(_ wall: Float) {
+        let outer: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(100_000, 0), SIMD2(100_000, 100_000), SIMD2(0, 100_000)]
+        let holes: [[SIMD2<Float>]] = (0..<10).map { k in
+            let x = 10 + Float(k) * (5 + wall)
+            return [SIMD2(x, 10), SIMD2(x + 5, 10), SIMD2(x + 5, 15), SIMD2(x, 15)]
+        }
+        let (painted, expected) = Self.paintedInDouble(outer: outer, holes: holes)
+        #expect(abs(painted - expected) < 1, "壁 \(wall): 塗り \(painted) (期待 \(expected))")
+    }
+
+    @Test("座標が大きい所にある小さな形の細い針は、座標の大きさでは消えず、面積どおりに塗られる (#2997)",
+        arguments: [(0.025 as Float, 30_000 as Float), (0.02, 100_000), (0.01, 10_000)])
+    func aSmallShapeFarFromTheOriginKeepsItsNeedles(_ width: Float, _ offset: Float) {
+        // 土台 (2 × 1) の上に、幅 width・高さ 1 の針を 5 本立てる。座標は offset だけずれている
+        let origin = SIMD2<Float>(repeating: offset)
+        var ring: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(2, 0), SIMD2(2, 1)].map { $0 + origin }
+        let step: Float = 2 / 6
+        for j in (1...5).reversed() {
+            let x = Float(j) * step
+            ring += [
+                SIMD2(x + width, 1), SIMD2(x + width, 2), SIMD2(x, 2), SIMD2(x, 1),
+            ].map { $0 + origin }
+        }
+        ring.append(SIMD2<Float>(0, 1) + origin)
+        let (painted, expected) = Self.paintedInDouble(outer: ring, holes: [])
+        #expect(abs(painted - expected) < 0.005, "幅 \(width)・座標 \(offset): 塗り \(painted) (期待 \(expected))")
     }
 
     // MARK: - 触れた点をまとめる手間

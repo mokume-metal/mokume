@@ -36,16 +36,17 @@ nonisolated extension Triangulation {
         private var bridges: [(from: SIMD2<Float>, to: SIMD2<Float>, box: SIMD4<Float>)] = []
         private var found: [Int] = []
         private var pending: [(level: Int, box: Int)] = []
-        /// 橋の線のそばを「線の上」と数える距離 (``Triangulation/bridgeIsBlocked(by:_:from:to:span:length:tolerance:)``)
-        private let tolerance: Float
+        /// 橋の線のそばを「線の上」と数える幅の、座標の大きさに対する比 (``Triangulation/bridgeRoundingScale``。
+        /// ``Triangulation/bridgeIsBlocked(by:_:from:to:span:length:roundingScale:)``)。0 なら厳密な比べ
+        private let roundingScale: Float
 
         /// - Parameters:
         ///   - outer: 外周をなす点の番号。
         ///   - holes: 畳む順に並べた穴 (点の番号)。持ち主の `rank` は、この並びの何番目か。
-        ///   - tolerance: 橋の線のそばを「線の上」と数える距離 (``Triangulation/TouchScale``)。0 なら厳密な比べ。
-        init(outer: [Int], holes: [[Int]], points: [SIMD2<Float>], tolerance: Float = 0) {
+        ///   - roundingScale: 橋の線のそばを「線の上」と数える幅の、座標の大きさに対する比。0 なら厳密な比べ。
+        init(outer: [Int], holes: [[Int]], points: [SIMD2<Float>], roundingScale: Float = 0) {
             self.points = points
-            self.tolerance = tolerance
+            self.roundingScale = roundingScale
             var from: [Int] = []
             var to: [Int] = []
             var owner: [Int] = []
@@ -105,7 +106,7 @@ nonisolated extension Triangulation {
             let box = Self.box(from, to)
             let margin =
                 1e-5 * (max(max(abs(from.x), abs(from.y)), max(abs(to.x), abs(to.y)))
-                    + max(abs(span.x), abs(span.y))) + tolerance
+                    + max(abs(span.x), abs(span.y)))
             let reach = box + SIMD4(-margin, -margin, margin, margin)
 
             tree.edges(overlapping: reach, into: &found, pending: &pending)
@@ -113,7 +114,7 @@ nonisolated extension Triangulation {
             for edge in found where alive[owner[edge]] {
                 if Triangulation.bridgeIsBlocked(
                     by: points[self.from[edge]], points[self.to[edge]], from: from, to: to,
-                    span: span, length: length, tolerance: tolerance)
+                    span: span, length: length, roundingScale: roundingScale)
                 {
                     return true
                 }
@@ -123,7 +124,7 @@ nonisolated extension Triangulation {
                 comparisons += 1
                 if Triangulation.bridgeIsBlocked(
                     by: bridge.from, bridge.to, from: from, to: to, span: span, length: length,
-                    tolerance: tolerance)
+                    roundingScale: roundingScale)
                 {
                     return true
                 }

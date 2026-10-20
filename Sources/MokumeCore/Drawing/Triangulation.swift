@@ -86,8 +86,17 @@ nonisolated enum Triangulation {
     static func triangulate(
         _ points: [SIMD2<Float>], comparisons: inout Int, slack: Float = 0
     ) -> [(Int, Int, Int)] {
-        guard points.count >= 3 else { return [] }
-        if points.count == 3 { return [(0, 1, 2)] }
+        triangulateChecked(points, comparisons: &comparisons, slack: slack).triangles
+    }
+
+    /// ``triangulate(_:comparisons:slack:)`` に、**耳を切り終えられたか**を添えて返す。切り直しても
+    /// 終えられなかったときは `false` (返す三角形は最初の結果)。橋の遮りを丸めの幅で見直すかの
+    /// 判断に使う (``foldHoles(outer:holes:points:comparisons:)``)。
+    static func triangulateChecked(
+        _ points: [SIMD2<Float>], comparisons: inout Int, slack: Float = 0
+    ) -> (triangles: [(Int, Int, Int)], isComplete: Bool) {
+        guard points.count >= 3 else { return ([], true) }
+        if points.count == 3 { return ([(0, 1, 2)], true) }
 
         // 回る向きを揃える。以降の凸判定はこの向きを前提にする
         var order = Array(points.indices)
@@ -103,35 +112,50 @@ nonisolated enum Triangulation {
             slack > 0
             ? cut(order: order, points: points, comparisons: &comparisons, margin: Tolerant(slack: slack))
             : cut(order: order, points: points, comparisons: &comparisons, margin: Exact())
-        if first.isComplete { return first.triangles }
+        if first.isComplete { return (first.triangles, true) }
         var retried = 0
         let retry: Cut
         if slack > 0 {
             retry = cut(order: order, points: points, comparisons: &retried, margin: Exact())
         } else {
-            guard let retrySlack = Self.mergeTolerance(of: points) else { return first.triangles }
+            guard let retrySlack = Self.mergeTolerance(of: points) else { return (first.triangles, false) }
             retry = cut(
                 order: order, points: points, comparisons: &retried, margin: Tolerant(slack: retrySlack))
         }
         comparisons += retried
-        return retry.isComplete ? retry.triangles : first.triangles
+        return retry.isComplete ? (retry.triangles, true) : (first.triangles, false)
     }
 
-    /// 形の点を集めて、**点を束ねる許容と、触れているとみなす距離**を 1 つの式で出す。形の大きさ ×
-    /// 2^-16 と、座標の大きさ × 2^-20 (その位置での `Float` の刻み) の大きいほう。
+    /// 座標の丸めで生じるずれの、座標の大きさに対する比 (2^-23・`Float` の刻みの 1〜2 個ぶん)。
     ///
-    /// 次の 3 か所が、同じ値を使う ([#2997])。1 か所ずれると、触れていると数える所と束ねる所が食い違い、
-    /// 丸めに外れた触れ方が「触れていない」と判定されて組み直しへ送られない。
-    ///
-    /// - 触れ方を組み直しへ送る判定と、組み直しが点を束ねる許容
-    ///   (``splitForNonzero(rings:points:comparisons:evenOdd:)``・`Split.slack`)
-    /// - 耳切りの切り直し (``triangulate(_:comparisons:slack:)``)
-    ///
-    /// 橋の遮りだけは、座標の丸めの大きさ (`roundingTolerance`・座標の大きさ × 2^-20) で見る。橋の線の
-    /// そばを通る点をすべて「線の上」と数えると、細い穴が並ぶ形で、橋を架けられる点がなくなる
-    /// (``mergeHoles(outer:holes:points:comparisons:slack:)``)。
+    /// 回した・傾けた・計算で求めた座標は、厳密には一致するはずの点が、丸めでこの幅だけずれる
+    /// ([#2997])。**触れ方を組み直しへ送る判定は、このずれだけを拾う** — 形の大きさから出した幅
+    /// (``TouchScale/tolerance``) で見ると、遠い頂点が 1 つあるだけ・外周が大きいだけで幅が広がり、
+    /// 触れも交わりもしない細部 (隙間・針・壁) が組み直しへ送られて束ねられる。座標の刻みの 1〜2 個
+    /// ぶんより狭い隙間や針は、座標が表せる限界で、触れていると区別できない。
     ///
     /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
+    static let roundingScale: Float = 0x1p-23
+
+    /// 橋の遮りを丸めの幅で見直すときの比 (2^-21)。回した座標では、橋の線から頂点がずれる幅が
+    /// 触れ方の判定より大きいので (橋の線の向きの丸めが重なる)、広めに取る。厳密に畳んで切り終えられな
+    /// かった形だけが使う (``foldHoles(outer:holes:points:comparisons:)``)。
+    static let bridgeRoundingScale: Float = 0x1p-21
+
+    /// 関わる点の座標の大きさ `magnitude` (原点からの距離の最大) から出す、丸めのずれの上限 (距離)。
+    @inline(__always)
+    static func rounding(of magnitude: Float) -> Float { magnitude * roundingScale }
+
+    /// 形の点を集めて、**点を束ねる許容**を出す。形の大きさ × 2^-16 と、座標の大きさ × 2^-20
+    /// (その位置での `Float` の刻み) の大きいほう (#1538 の許容)。
+    ///
+    /// 次の 2 か所が、同じ値を使う。組み直しの道に入った形にだけ効き、触れていない形を組み直しへ
+    /// 送らない。
+    ///
+    /// - 組み直しが点を束ねる許容 (``splitForNonzero(rings:points:comparisons:evenOdd:)``・`Split.slack`)
+    /// - 耳切りの切り直し (``triangulate(_:comparisons:slack:)``)
+    ///
+    /// 全体の座標の大きさから、丸めのずれの上限 (`roundingTolerance`) も出す。
     nonisolated struct TouchScale {
         private var low = SIMD2<Float>(repeating: .infinity)
         private var high = SIMD2<Float>(repeating: -.infinity)
@@ -152,9 +176,10 @@ nonisolated enum Triangulation {
             return value > 0 && value.isFinite ? value : nil
         }
 
-        /// 座標の丸めの大きさ (距離)。回した・傾けた座標で、厳密には一直線の点が線からずれる幅。
+        /// 全体の座標の大きさから出した、丸めのずれの上限 (距離)。組ごとの幅 (``Triangulation/rounding(of:)``)
+        /// の上限で、囲みを広げる幅や位置をまとめる升目の大きさに使う。
         var roundingTolerance: Float? {
-            let value = magnitude * 0x1p-20
+            let value = Triangulation.rounding(of: magnitude)
             return value > 0 && value.isFinite ? value : nil
         }
     }
@@ -255,18 +280,21 @@ nonisolated enum Triangulation {
     /// と同じ理由・[#1538])。組み直した周は元の 1 本の辺の上に点を幾つも並べ、橋がその辺に
     /// 沿って架かると、丸めで跨がないと出たまま途中の点を通り抜ける。
     ///
-    /// **`slack` が 0 (渡された形そのもの) のときは、橋の遮りを座標の丸めの幅 (`TouchScale.roundingTolerance`)
-    /// まで「線の上」と数える** ([#2997])。回した・傾けた座標では、橋がちょうど通るはずの頂点が丸めで
-    /// 線のどちらかの側へ出て、橋が頂点を通り抜けて耳切りが止まる。幅は丸めに限る — 形の大きさ × 2^-16
-    /// まで広げると、細い穴が並ぶ形で橋を架けられる点がなくなる。
+    /// `bridgeRoundingScale` が 0 でなければ (`slack` が 0 の渡された形そのものだけ)、橋の遮りを座標の
+    /// 丸めの幅まで「線の上」と数える ([#2997])。回した・傾けた座標では、橋がちょうど通るはずの頂点が
+    /// 丸めで線のどちらかの側へ出て、橋が頂点を通り抜けて耳切りが止まる。既定の 0 は厳密な比べで、
+    /// 回さない座標の形はこれまでと同じ橋を選ぶ。丸めの幅で見直すのは、厳密に畳んで切り終えられなかった
+    /// 形だけである (``foldHoles(outer:holes:points:comparisons:)``)。
     ///
     /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
     static func mergeHoles(
-        outer: [Int], holes: [[Int]], points: [SIMD2<Float>], slack: Float = 0
+        outer: [Int], holes: [[Int]], points: [SIMD2<Float>], slack: Float = 0,
+        bridgeRoundingScale: Float = 0
     ) -> [Int] {
         var comparisons = 0
         return mergeHoles(
-            outer: outer, holes: holes, points: points, comparisons: &comparisons, slack: slack)
+            outer: outer, holes: holes, points: points, comparisons: &comparisons, slack: slack,
+            bridgeRoundingScale: bridgeRoundingScale)
     }
 
     /// ``mergeHoles(outer:holes:points:slack:)`` で、橋の相手の候補と遮りの辺を調べた回数を
@@ -285,7 +313,7 @@ nonisolated enum Triangulation {
     /// [#2370]: https://github.com/mokume-metal/mokume/issues/2370
     static func mergeHoles(
         outer: [Int], holes: [[Int]], points: [SIMD2<Float>], comparisons: inout Int,
-        slack: Float = 0
+        slack: Float = 0, bridgeRoundingScale: Float = 0
     ) -> [Int] {
         var ring = outer
         // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい。ただし、畳んだ
@@ -299,17 +327,12 @@ nonisolated enum Triangulation {
             outer: outer, points: points)
 
         // 橋を遮りうる辺。外周と全ての穴の辺と、架けた橋
-        // 橋の遮りは、橋の線のそばの点を丸めの幅まで「線の上」と数える ([#2997])。厳密に一直線の点が、
-        // 回した座標では丸めで線のどちらかの側へ出て、跨ぐのか触れるだけなのかが決まらず、橋が頂点を
-        // 通り抜ける。組み直した周は点を束ねてあり、橋のそばの点は `slack` で見るので、厳密なまま
-        var scale = TouchScale()
-        if slack == 0 {
-            for ring in [outer] + ordered where ring.count >= 3 {
-                for index in ring { scale.include(points[index]) }
-            }
-        }
+        // 橋の遮りは、`bridgeRoundingScale` が 0 でなければ、橋の線のそばの点を丸めの幅まで「線の上」と
+        // 数える ([#2997])。幅は橋と辺の点の座標の大きさから、橋ごとに出す (``bridgeIsBlocked(by:_:from:to:span:length:roundingScale:)``)。
+        // 組み直した周は点を束ねてあり、橋のそばの点は `slack` で見るので、厳密なまま
         var obstacles = BridgeObstacles(
-            outer: outer, holes: ordered, points: points, tolerance: scale.roundingTolerance ?? 0)
+            outer: outer, holes: ordered, points: points,
+            roundingScale: slack == 0 ? bridgeRoundingScale : 0)
         // 橋の相手の候補 (距離と周の添字)。穴ごとに使い回す
         var candidates: [(distance: Float, index: Int)] = []
         // 畳んだ周の点の位置。穴の点が重なるかを引く
@@ -350,6 +373,34 @@ nonisolated enum Triangulation {
             for index in hole { placed.insert(points[index]) }
         }
         return ring
+    }
+
+    /// 穴を畳んで三角形に分ける (渡された形そのもの・組み直さない形)。返す三角形の番号は、畳んだ周
+    /// (`ring`) の何番目か。
+    ///
+    /// **まず橋の遮りを厳密に見て畳む。耳切りが切り終えられなかったときだけ、橋の遮りを丸めの幅で
+    /// 見て畳み直す** ([#2997])。回した・傾けた座標では、橋が頂点をちょうど通る形で、厳密な遮りの判定が
+    /// 橋を通してしまい、耳切りが止まる。丸めの幅で見ると、その橋を断って別の点へ架けられる。一方、
+    /// 回さない座標の形は厳密に畳んで切り終えられるので、これまでと同じ橋・同じ三角形になる (丸めの幅の
+    /// 中をたまたま通る橋を、勝手に断らない)。畳み直しても終えられなければ、最初の結果を返す。
+    ///
+    /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
+    static func foldHoles(
+        outer: [Int], holes: [[Int]], points: [SIMD2<Float>], comparisons: inout Int
+    ) -> (ring: [Int], triangles: [(Int, Int, Int)]) {
+        func attempt(_ scale: Float) -> (ring: [Int], triangles: [(Int, Int, Int)], isComplete: Bool) {
+            let ring = mergeHoles(
+                outer: outer, holes: holes, points: points, comparisons: &comparisons,
+                bridgeRoundingScale: scale)
+            comparisons += ring.count
+            let flat = ring.map { points[$0] }
+            let result = triangulateChecked(flat, comparisons: &comparisons)
+            return (ring, result.triangles, result.isComplete)
+        }
+        let exact = attempt(0)
+        if exact.isComplete { return (exact.ring, exact.triangles) }
+        let rounded = attempt(bridgeRoundingScale)
+        return rounded.isComplete ? (rounded.ring, rounded.triangles) : (exact.ring, exact.triangles)
     }
 
     /// 穴を畳む順を、**畳んだ周に頂点で触れる穴を先にする**形へ並べ替える ([#2647])。
@@ -702,18 +753,20 @@ nonisolated enum Triangulation {
 
     /// 辺 `a`–`b` が、橋 (`from` から `to` への線分・`span` は `to - from`) を遮るか。
     ///
-    /// 「線の上」かは、橋の線 (と辺の線) から `tolerance` の中にあるかで見る。**厳密に 0 で見ると、回した・
-    /// 傾けた座標で橋が頂点のすぐそばを通るとき、丸めで頂点が線のどちらかの側に出て、辺が橋を跨ぐのか
-    /// 触れるだけなのかが決まらず、橋が頂点を通り抜けて耳切りが止まる** ([#2997])。`tolerance` が 0 なら
-    /// 厳密な比べで、以前と同じである。橋の両端の `tolerance` の中の点は、橋の途中とは数えない (橋の端に
-    /// 重なる点を、辺の端点が載る串刺しと取り違えない)。
+    /// 「線の上」かは、橋の線 (と辺の線) から丸めの幅 (4 点の座標の大きさ × `roundingScale`)
+    /// の中にあるかで見る。**厳密に 0 で見ると、回した・傾けた座標で橋が頂点のすぐそばを通るとき、丸めで
+    /// 頂点が線のどちらかの側に出て、辺が橋を跨ぐのか触れるだけなのかが決まらず、橋が頂点を通り抜けて
+    /// 耳切りが止まる** ([#2997])。`roundingScale` が 0 なら厳密な比べで、以前と同じである。橋の両端の
+    /// 幅の中の点は、橋の途中とは数えない (橋の端に重なる点を、辺の端点が載る串刺しと取り違えない)。
     ///
     /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
     static func bridgeIsBlocked(
         by a: SIMD2<Float>, _ b: SIMD2<Float>, from: SIMD2<Float>, to: SIMD2<Float>,
-        span: SIMD2<Float>, length: Float, tolerance: Float = 0
+        span: SIMD2<Float>, length: Float, roundingScale: Float = 0
     ) -> Bool {
-        // `cross(span, p - from)` は、橋の線から点までの距離 × 橋の長さ。内積も同じ尺度
+        // 幅 (距離)。`cross(span, p - from)` は、橋の線から点までの距離 × 橋の長さ。内積も同じ尺度
+        let size = max(max(abs(a).max(), abs(b).max()), max(abs(from).max(), abs(to).max()))
+        let tolerance = size * roundingScale
         let reach = tolerance * length.squareRoot()
         let sideA = cross(span, a - from)
         let sideB = cross(span, b - from)
