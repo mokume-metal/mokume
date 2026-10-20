@@ -541,14 +541,21 @@ enum WatchCommand {
         case .left:
             line += " — the previous version could not be stopped and keeps running"
         }
-        if inTerminal, cause == .unreadableManifest {
+        // 台が理由を端末へ名乗り済みの形 (読めない目録) では、端末の行は理由を繰り返さずそちらを指す
+        if inTerminal, cause != .noSurface {
             return line + " (the reason is above)"
         }
-        let reason =
-            cause == .unreadableManifest
-            ? "its manifest could not be read" : "none of the surfaces it names could be looked up"
-        return line + ": \(reason). The sketch may depend on a different version of mokume than "
-            + "this tool — try `mokume doctor <sketch directory>`"
+        switch cause {
+        case .unreadableManifest:
+            return line + ": its manifest could not be read. The sketch may depend on a different "
+                + "version of mokume than this tool — try `mokume doctor <sketch directory>`"
+        case .unreadableFile:
+            // 版の形とは関係が無い (権限・置き場) ので、版の案内は付けない
+            return line + ": its manifest file could not be read (see the terminal for the reason)"
+        case .noSurface:
+            return line + ": none of the surfaces it names could be looked up. The sketch may depend "
+                + "on a different version of mokume than this tool — try `mokume doctor <sketch directory>`"
+        }
     }
 
     /// 前の世代を畳んだ結果のうち、人が知るべきもの (期限に掛かった) だけを名乗る。

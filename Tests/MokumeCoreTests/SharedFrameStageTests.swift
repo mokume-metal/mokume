@@ -398,6 +398,9 @@ struct SharedFrameStageTests {
     /// なので、書きかけを掴み損ねると**直る契機が来ない** — 症状は「プレビューが真っ白の
     /// まま何も出ない」だけで、起こし直すまで直らない
     /// ([#1048](https://github.com/mokume-metal/mokume/issues/1048))。
+    ///
+    /// **mokume の書き手 (`AtomicFile`) は原子的に置くので、書きかけは実際には見えない。** ここは、原子的に
+    /// 置かない書き手に備えた性質を、書きかけを作って固定している (``WatchedFile`` の説明)。
     @Test("書きかけの目録を掴んでも、その改訂を読み飛ばさない")
     func rereadsAManifestItCouldNotDecode() throws {
         try withFacet { facet in
@@ -454,6 +457,7 @@ struct SharedFrameStageTests {
             #expect(message.contains(url.path), "どのファイルか: \(message)")
             #expect(message.contains("99"), "読めなかった理由: \(message)")
             #expect(message.contains("mokume doctor"), "候補: \(message)")
+            #expect(message.contains("by each window"), "台ごとに名乗ることを偽らない: \(message)")
             _ = surface
         }
     }
@@ -489,6 +493,33 @@ struct SharedFrameStageTests {
             for _ in 0..<3 { stage.displayLinkFired() }
             #expect(told == [cause], "\(told)")
             #expect(stage.hasSource, "差し出し元は変わらず、直前の絵を出したまま")
+            _ = surface
+        }
+    }
+
+    /// 目録がファイルとして読めない (置き場がディレクトリ) 形も、道具の窓だけが知る。版の形とは関係が無いので、
+    /// 受け取る側が版の案内を付けないよう、別の種類で知らせる ([#2928])。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test("ファイルとして読めない目録は、版の形と別の種類で知らせる")
+    func anUnreadableManifestFileIsAnnouncedApart() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("unreadable-file"))
+            defer { stage.close() }
+            var said: [String] = []
+            stage.warn = { said.append($0) }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(told == [.unreadableFile], "\(told)")
+            #expect(said.count == 1 && !(said.first ?? "").contains("mokume doctor"), "\(said)")
             _ = surface
         }
     }

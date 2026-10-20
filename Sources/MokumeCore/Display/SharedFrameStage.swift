@@ -190,7 +190,14 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private var shownCurrentGeneration = false
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
     /// 確定させずに次の機会へ回る (``WatchedFile``)。
-    private let manifest: WatchedFile<SharedFrameSurface.Manifest>
+    ///
+    /// **読めない改訂は、台が名乗る** ([#2889]): 作ったときに渡す口で、台の `warn` へ流す。`lazy` なのは、
+    /// 口が台自身を指すため (初期化の後でないと自分を取れない)。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    private lazy var manifest = WatchedFile<SharedFrameSurface.Manifest>(
+        url: facet.appendingPathComponent(SharedFrameSurface.manifestName)
+    ) { [weak self] failure in self?.noteUnreadableManifest(failure) }
     /// 道具の端末への名乗り。**検査から差し替える** — 既定は標準エラー。
     var warn: (String) -> Void = Diagnostics.warn
     /// 最後に画面へ出した枚数。**同じ絵を二度出さない**ための目印。
@@ -257,13 +264,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         self.gpu = gpu
         self.facet = facet
         self.look = look
-        self.manifest = WatchedFile(
-            url: facet.appendingPathComponent(SharedFrameSurface.manifestName))
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         super.init()
         screenLink.owner = self
         windowRelay.stage = self
-        manifest.onUnreadable = { [weak self] reason in self?.noteUnreadableManifest(reason) }
     }
 
     /// **畳み忘れても、手放した時点で畳む。** 仕掛けを止めない限り、走り続ける
@@ -555,15 +559,21 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 「目録が読めない回」を知る口はここだけである。
     ///
     /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
-    private func noteUnreadableManifest(_ reason: String) {
+    private func noteUnreadableManifest(_ failure: UnreadableRevision.Failure) {
+        // **作品の窓とプレビューは、それぞれ台を持ち、同じ目録を別々に読む**ので、同じ改訂は台ごとに
+        // 1 度ずつ (高々 2 行) 名乗る。文面もそう言う (「1 度」と言い切ると、2 行出て偽になる)
         warn(
             UnreadableRevision.notice(
-                of: "The shared-frame manifest", at: manifest.url, reason: reason))
+                of: "The shared-frame manifest", at: manifest.url, failure: failure,
+                saidBy: "each window"))
         // 読めない目録は乗り換えの合図も起こさないので、前の世代が残る ([#2928])。**名乗りは上で済んで
-        // いる** — 受け取る側は同じ候補を端末へ 2 度言わない (``UndeliverableGeneration/unreadableManifest``)
+        // いる** — 受け取る側は同じ候補を端末へ 2 度言わない (``UndeliverableGeneration``)
         //
         // [#2928]: https://github.com/mokume-metal/mokume/issues/2928
-        onGenerationUndeliverable?(.unreadableManifest)
+        switch failure {
+        case .cannotDecode: onGenerationUndeliverable?(.unreadableManifest)
+        case .cannotRead: onGenerationUndeliverable?(.unreadableFile)
+        }
     }
 
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
@@ -649,6 +659,8 @@ extension SharedFrameStage: SettlementObserver {
 public enum UndeliverableGeneration: Sendable, Equatable {
     /// 目録が読めない (版が違う・形が違う)。**台は理由と候補を端末へ名乗り済み** (#2889)。
     case unreadableManifest
+    /// 目録がファイルとして読めない (権限・置き場がディレクトリ)。**台は理由を端末へ名乗り済み。** 版の形とは関係が無い。
+    case unreadableFile
     /// 目録は読めたが、番号の面を 1 枚も引けない。**台は何も言っていない。**
     case noSurface
 }

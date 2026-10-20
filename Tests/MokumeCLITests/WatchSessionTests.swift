@@ -1269,7 +1269,7 @@ struct WatchSessionTests {
     /// 前の世代を残したまま、プレビューの「起こしている」が終わらない・端末は黙る、になっていた。
     @Test(
         "道具の窓が絵を受け取れないと知らされたら、前の世代を畳み、入力は新しい子へ行き、プレビューと端末へ 1 度名乗る",
-        arguments: [UndeliverableGeneration.unreadableManifest, .noSurface])
+        arguments: [UndeliverableGeneration.unreadableManifest, .unreadableFile, .noSurface])
     func anUndeliverableGenerationRetiresTheOutgoingOne(cause: UndeliverableGeneration) async throws {
         let ready = Ready()
         let session = try overlapping(ready: ready)
@@ -1295,7 +1295,8 @@ struct WatchSessionTests {
         #expect(lines.count == 1, "2 度名乗っている: \(lines)")
         let named = WatchCommand.undeliverableLine(previous: .stopped, cause: cause, inTerminal: false)
         #expect(lines.first?.0 == named && lines.first?.1 == false, "回る印を止めて名乗っていない: \(lines)")
-        #expect(named.contains("mokume doctor"), "プレビューには候補を言う: \(named)")
+        // プレビューには、版の形に関わる失敗なら候補を言う (権限・置き場の失敗に版の案内は付けない)
+        #expect(named.contains("mokume doctor") == (cause != .unreadableFile), "\(named)")
 
         session.send("touch\n")
         waitUntilGone(arriving)
@@ -1359,6 +1360,9 @@ struct WatchSessionTests {
             previous: .stopped, cause: .noSurface, inTerminal: true)
         let preview = WatchCommand.undeliverableLine(
             previous: .stopped, cause: .unreadableManifest, inTerminal: false)
+        let file = WatchCommand.undeliverableLine(
+            previous: .stopped, cause: .unreadableFile, inTerminal: false)
+        #expect(!file.contains("mokume doctor"), "版の形と無関係な失敗に版の案内を付けている: \(file)")
         #expect(!unreadable.contains("mokume doctor"), "\(unreadable)")
         #expect(noSurface.contains("mokume doctor"), "\(noSurface)")
         #expect(preview.contains("mokume doctor"), "\(preview)")
