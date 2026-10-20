@@ -911,13 +911,23 @@ struct GraphicsTests {
         SIMD3(-12.58, 45.33, -78.42),
     ]
 
-    /// 断片が返すのは、CPU で引いた値との**差そのもの** (``NoiseParityTests`` と同じ形)。
+    /// 断片が返すのは、CPU で引いた値との**差そのもの** (赤・``NoiseParityTests`` と同じ形) と、
+    /// **描いたしるし** (緑は常に 1)。
+    ///
+    /// 差だけを返すと、何も描かれなくても (下地の黒のまま) 差は 0 に見えて合格する。しるしが 1 でなければ、
+    /// 断片が描かれていない (``gap(of:)`` が `#require` で止める)。
     private static let noiseComparison = """
         float4 paint(Fragment in, Values values) {
             float mine = mokume_noise(in, float3(values.place, values.depth));
-            return float4(abs(mine - values.expected), 0.0, 0.0, 1.0);
+            return float4(abs(mine - values.expected), 1.0, 0.0, 1.0);
         }
         """
+
+    /// 比較の断片が描いた画素から、差 (赤) を読む。**描かれていなければ (緑が 1 でなければ) 止まる。**
+    private func gap(of pixel: LinearRGBA) throws -> Float {
+        try #require(pixel.green > 0.99, "比較の断片が描かれていない (画素 \(pixel))")
+        return pixel.red
+    }
 
     /// 断片が返す揺らぎの傾きの大きさ (符号は落とす)。
     private static let noiseSlope = """
@@ -977,7 +987,7 @@ struct GraphicsTests {
             shader.set("place", .pair(place.x, place.y))
             shader.set("depth", .number(place.z))
             shader.set("expected", .number(expected(place)))
-            return try paintAndRead(surface, with: shader, graphics: graphics).red
+            return try gap(of: paintAndRead(surface, with: shader, graphics: graphics))
         }
     }
 
@@ -1164,7 +1174,7 @@ struct GraphicsTests {
             }
             read = canvas
         }
-        let gap = read.get(4, 4).red
+        let gap = try gap(of: read.get(4, 4))
         #expect(gap < NoiseParityTests.tolerance, "\(change.testDescription): \(gap) ずれている")
     }
 
@@ -1293,10 +1303,10 @@ struct GraphicsTests {
         #expect(!shape.isEmpty)
         #expect(canvas.noiseSettings == decided, "出口で外の設定へ戻っていない")
         for (name, surface) in [("本体に先に置いたもの", canvas), ("描き場所に先に置いたもの", layer)] {
-            let gap = surface.get(4, 4).red
+            let gap = try gap(of: surface.get(4, 4))
             #expect(gap < NoiseParityTests.tolerance, "\(name)が外の種で引かれていない (\(gap) ずれている)")
         }
-        let gap = other.get(4, 4).red
+        let gap = try gap(of: other.get(4, 4))
         #expect(gap < NoiseParityTests.tolerance, "組み立ての中で別の面に置いたものが中の種で引かれていない (\(gap))")
     }
 
@@ -1306,7 +1316,7 @@ struct GraphicsTests {
         float4 paint(Fragment in, Values values) {
             float mine = mokume_noise(in, float3(values.place, values.depth));
             float expected = in.place.x < 0.5 ? values.left : values.right;
-            return float4(abs(mine - expected), 0.0, 0.0, 1.0);
+            return float4(abs(mine - expected), 1.0, 0.0, 1.0);
         }
         """
 
@@ -1350,8 +1360,8 @@ struct GraphicsTests {
             layer.endDraw()
         }
         #expect(passes == 0, "書き換えで描き切った")
-        let left = layer.get(2, 4).red
-        let right = layer.get(6, 4).red
+        let left = try gap(of: layer.get(2, 4))
+        let right = try gap(of: layer.get(6, 4))
         #expect(left < NoiseParityTests.tolerance, "書き換える前に置いた矩形が前の設定で引かれていない (\(left))")
         #expect(right < NoiseParityTests.tolerance, "書き換えた後に置いた矩形が後の設定で引かれていない (\(right))")
     }
@@ -1384,7 +1394,7 @@ struct GraphicsTests {
         canvas.resetShader()
         canvas.carriesOver = false
         try canvas.draw {}
-        let gap = canvas.get(4, 4).red
+        let gap = try gap(of: canvas.get(4, 4))
         #expect(gap < NoiseParityTests.tolerance, "持ち越しの区間で置いたものが置いた時点の設定で引かれていない (\(gap))")
     }
 

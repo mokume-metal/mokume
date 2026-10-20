@@ -220,12 +220,17 @@ struct NameCorrespondenceTests {
         defer { try? FileManager.default.removeItem(at: place) }
 
         let tools = Tools(facets: Facets(directory: place, waitLimit: 0.2), makeID: { "fixed" })
+        // 知らない道具への応えの文面を、先に読む。**その文面が実際に出ること**を見てから、
+        // 一覧の道具がその文面を返さないことを見る (文面を写したまま古びると、否定が何も見ない)
+        let unknown = tools.call("なにか", arguments: [:])
+        #expect(unknown.isError)
+        let notKnown = "There is no such tool"
+        try #require(unknown.text.contains(notKnown), "知らない道具への応えの文面が変わった: \(unknown.text)")
         for name in Tools.ToolName.allCases.map(\.rawValue) {
             let outcome = tools.call(name, arguments: [:])
             // 走っていないので失敗して構わない。**知らない道具だとは言わないこと**を見る
-            #expect(!outcome.text.contains("知らない道具です"), "\(name) に応えていない")
+            #expect(!outcome.text.contains(notKnown), "\(name) に応えていない")
             #expect(!outcome.text.isEmpty, "\(name) が何も言わない")
         }
-        #expect(tools.call("なにか", arguments: [:]).isError)
     }
 }
