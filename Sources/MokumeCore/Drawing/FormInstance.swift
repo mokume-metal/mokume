@@ -99,7 +99,9 @@ struct FormInstance {
 
     /// 半幅 `half` (形自身の座標) の向きのどちらかが、描く画素で 1 画素より細いか。断片の境目
     /// (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つ`) を、``thinFillSlack`` だけ「細い」側へ広げて解く。
-    private func isThin(half: SIMD2<Float>, unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+    private func isThin(
+        half: SIMD2<Float>, unitsPerDrawnPixel: SIMD2<Float>, axes: ThinAxes = .both
+    ) -> Bool {
         // 断片が読む行ノルム (描く画素 1 つが形自身の座標でいくらか) は、逆行列の行に
         // 描く画素の大きさを掛けたものの長さ。逆行列は余因子 / 行列式なので、両辺に
         // 行列式の 2 乗を掛けて、割り算と平方根を使わずに 2 乗どうしで比べる
@@ -109,9 +111,12 @@ struct FormInstance {
         let span = 2 * half * (1 + 2.0 / 256)
         let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
         let squared = determinant * determinant
-        return span.x * span.x * squared < simd_length_squared(rowX) * reach
-            || span.y * span.y * squared < simd_length_squared(rowY) * reach
+        let thinX = axes == .both && span.x * span.x * squared < simd_length_squared(rowX) * reach
+        return thinX || span.y * span.y * squared < simd_length_squared(rowY) * reach
     }
+
+    /// ``isThin(half:unitsPerDrawnPixel:axes:)`` が見る向き。線の枝は太さの向き (y) だけを見る。
+    private enum ThinAxes { case both, y }
 
     /// この形の輪郭の帯の穴 (内縁の内) が、**描く画素で 1 画素より細いか潰れている**ことがありうるか
     /// ([#2186])。
@@ -153,6 +158,13 @@ struct FormInstance {
     /// 扇 (#2747) は、以前は常に偽で費用が無視できたが、中心の角の判定 (``mayNeedApexSampling()``) が三角関数を
     /// 解くので、図形 1 つあたり、円の扇 21.7 ns・楕円の扇 30.6 ns になった (release・20 万個ずつ・9 回の中央値)。
     func mayHaveThinPart(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        // 線と点 (#2226): 太さが描く画素で 1 画素より細いか。断片の線の枝の境目
+        // (`2 × 太さの半分 × (1 + 2/256) < 描く画素 1 つの太さの向きの長さ`) と同じ式で、
+        // 太さの向き (形自身の y) だけを見る
+        if meta.x == Kind.line.rawValue {
+            guard meta.w & Self.strokesFlag != 0 else { return false }
+            return isThin(half: SIMD2(0, size.z), unitsPerDrawnPixel: unitsPerDrawnPixel, axes: .y)
+        }
         let isArc = meta.x == Kind.arc.rawValue
         guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || isArc else { return false }
         // 扇の塗りは細い枝を持たない
