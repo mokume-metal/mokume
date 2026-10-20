@@ -71,11 +71,26 @@ struct SharedFrameStageTests {
     @Test("プレビューは、作品の窓を作らなくても開いて畳める")
     func previewStandsAlone() throws {
         try withFacet { facet in
-            let preview = try SharedFramePreview(
-                gpu: RenderDevice(), facet: facet, title: "単体")
+            let title = "単体-\(UUID().uuidString)"
+            func previewWindow() -> NSWindow? { NSApplication.shared.windows.first { $0.title == title } }
+            #expect(previewWindow() == nil, "開く前に窓がある")
+
+            let preview = try SharedFramePreview(gpu: RenderDevice(), facet: facet, title: title)
             preview.open()
+            // 作品の窓 (`SharedFrameStage`) を作っていないのに、プレビューの窓だけが出ている
+            let window = try #require(previewWindow(), "開いたのに窓が出ていない")
+            #expect(window.isVisible)
+
+            // 重ねる 1 行は、その窓の上に出る
             preview.report("作っている…", spinning: true)
+            let notice = try #require(
+                window.contentView?.subviews.compactMap { $0 as? NoticeOverlay }.first,
+                "重ねる面が窓の上に無い")
+            #expect(notice.line == "作っている…")
+            #expect(notice.isSpinning)
+
             preview.close()
+            #expect(!window.isVisible, "畳んだのに窓が残っている")
         }
     }
 

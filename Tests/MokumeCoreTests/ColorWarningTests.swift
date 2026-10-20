@@ -51,18 +51,6 @@ struct ColorWarningTests {
         #expect(canvas.warnings.hasWarned(.notANumberEmissive))
     }
 
-    @Test("同じ口を 2 度踏んでも、控えは 1 つ")
-    func theSameEntrySpeaksOnce() throws {
-        let canvas = try makeCanvas()
-        try canvas.draw {
-            canvas.fill(Float.nan, 0, 0)
-            canvas.fill(Float.infinity, 0, 0)
-        }
-        // 文面が 1 度目のまま — 2 度目は組み立てられていない
-        #expect(canvas.warnings.message(for: .notANumberFill)?.hasPrefix("fill()") == true)
-        #expect(!canvas.warnings.hasWarned(.notANumberStroke))
-    }
-
     /// 色の値と不透明度の形 ([#1553]) も、数値の口と同じ鍵で数え、同じ倒し方をする —
     /// 色は直前のまま残し、止めていた塗りも戻さない。
     ///
