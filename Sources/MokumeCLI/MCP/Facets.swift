@@ -84,19 +84,23 @@ struct Facets {
         /// 期限まで応答が返らなかった。`replaced` は、**期限の時点で `request.json` が自分の要求でなく
         /// なっていた**か (別の書き手が置き換えた。応えなかった理由は同じ形で添える)。
         case timedOut(replaced: Bool)
-        /// 別の書き手が `request.json` を置き換え、その要求への応答が書かれた。面は要求を 1 枚ずつ拾い、
-        /// 応え終えるまで次を拾わないので、**自分の識別子の応答はもう来ない**。当たった後に上書きされた
-        /// のか、読まれる前に置き換えられたのかは、応答だけからは分からない。
+        /// 別の書き手が `request.json` を置き換え、自分の要求を置く前には無かった応答が書かれた。面は
+        /// 要求を 1 枚ずつ拾い、応え終えるまで次を拾わないので、**自分の識別子の応答はもう来ない**。
+        /// 当たった後に上書きされたのか、読まれる前に置き換えられたのかは、応答だけからは分からない。
         case contested
     }
 
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
     ///
-    /// 待つ間は**応答に加えて `request.json` の識別子も見る**。自分の識別子の応答なら返す。
-    /// `request.json` が別の識別子になり、応答がその識別子を echo したら、取り合いとして返す。
-    /// 時計では見切らない (「自分の echo が N ms 来なければ取り合い」は、壁時計で完了を判断しない
-    /// ADR-0018 決定 3 に反する)。`request.json` が読めない回 (原子的に置かない別の書き手) は判定を
-    /// 飛ばして待ち続ける。
+    /// 待つ間は**応答に加えて `request.json` も見る**。自分の識別子の応答なら返す。`request.json` が
+    /// 自分の要求でなくなっていて (別の識別子・識別子が無い・壊れた中身)、応答が**自分の要求を置く
+    /// 直前の応答でも自分の応答でもない**ものを echo したら、取り合いとして返す。つまみ側
+    /// (``RemoteParams``) の「置く直前の echo と自分の要求以外を echo したら決着」と同じ規則で、
+    /// **別の書き手の要求が続けて置かれても** (b1 の後にすぐ b2 が置かれて、自分には `report=b1`・
+    /// `request=b2` しか見えなくても) 見逃さない。`request.json` が自分の要求のままの間は決着にしない
+    /// — 別の書き手へ応えている途中の応答は、その後に自分の要求へも応えうる。時計では見切らない
+    /// (「自分の echo が N ms 来なければ取り合い」は、壁時計で完了を判断しない ADR-0018 決定 3 に反する)。
+    /// `request.json` が無い・読めない回は判定を飛ばして待ち続ける。
     ///
     /// - Returns: ``Exchange``。
     /// - Parameter extraWait: 応答が返るまでにフレームが何枚も進む要求 (続けて撮る観測
@@ -116,6 +120,10 @@ struct Facets {
     ) throws(CommandFailure) -> Exchange {
         let waitLimit = self.waitLimit + max(0, extraWait)
         let requestURL = WorkDirectory.requestURL(under: facet)
+        let reportURL = WorkDirectory.reportURL(under: facet)
+        // **置く直前に echo されていた識別子。** 置いた後に別の識別子の応答が現れたら、自分の要求を
+        // 置いた後に面が別の要求へ応えたと読める (取り合いの判定・``Exchange/contested``)
+        let echoedBefore = read(reportURL)?["id"] as? String
         do {
             try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
             // 鍵の並びは ``AtomicFile/writeJSON(_:to:)`` と揃える。ここは辞書を直に
@@ -133,26 +141,28 @@ struct Facets {
         } catch {
             throw CommandFailure.facetUnwritable(path: requestURL.path, reason: Diagnostics.reason(error))
         }
-        let reportURL = WorkDirectory.reportURL(under: facet)
 
         let deadline = now() + Self.boundedWait(waitLimit)
         while now() < deadline {
             if let report = read(reportURL) {
-                if report["id"] as? String == id { return .answered(report) }
-                if let other = otherRequestID(requestURL, than: id), report["id"] as? String == other {
+                let echoed = report["id"] as? String
+                if echoed == id { return .answered(report) }
+                if let echoed, echoed != echoedBefore, requestIsNotMine(requestURL, id) == true {
                     return .contested
                 }
             }
             sleep(Self.pollInterval)
         }
-        return .timedOut(replaced: otherRequestID(requestURL, than: id) != nil)
+        return .timedOut(replaced: requestIsNotMine(requestURL, id) == true)
     }
 
-    /// `request.json` が**別の書き手の要求**に置き換わっていれば、その識別子。自分の要求のまま・
-    /// 読めない・識別子が文字列でないときは `nil` (判定を飛ばす)。
-    private func otherRequestID(_ requestURL: URL, than id: String) -> String? {
-        guard let other = read(requestURL)?["id"] as? String, other != id else { return nil }
-        return other
+    /// `request.json` が自分の要求でなくなっているか。**中身が自分の識別子でなければ、別の識別子でも、
+    /// 識別子が無くても、JSON として壊れていても `true`** (別の書き手が置き換えた)。自分の要求のままなら
+    /// `false`。ファイルが無い・読めないときは `nil` (判定を飛ばす)。
+    private func requestIsNotMine(_ requestURL: URL, _ id: String) -> Bool? {
+        guard let data = try? Data(contentsOf: requestURL) else { return nil }
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return object?["id"] as? String != id
     }
 
     /// JSON を読む。無い・壊れているときは `nil`。
@@ -183,24 +193,53 @@ struct Facets {
     /// **応えなかったとは言わない** — スケッチは別の書き手の要求に応えている。起動し直しも勧めない
     /// (取り合いは起動し直しでは直らない)。自分の要求が当たったかは分からないと言い、次の手を添える。
     /// 入力は当たっているかもしれないので、送り直す前に状態を確かめさせる。観測は撮り直してよい。
-    func contested(_ entry: StartupReads.Entry) -> String {
-        let next =
-            entry == StartupReads.input
-            ? "Call `observe` to see where things stand before sending the events again — they may already have taken effect."
-            : "Taking the picture again is safe: call `observe` again."
-        let outcome =
-            entry == StartupReads.input
-            ? "what became of the events is not known"
-            : "what became of the picture is not known"
-        return """
-            Another writer placed a request in this facet while this one was waiting, so \(outcome).
+    func contested(_ entry: StartupReads.Entry, repeatable: Bool) -> String {
+        """
+        Another writer placed a request in this facet while this one was waiting, so \(Self.outcome(entry)).
 
-            The facet keeps one request and one report. This request was either applied and then
-            overwritten by the other writer's, or replaced before the sketch read it — from here the
-            two cannot be told apart. The sketch itself is running and answering.
+        The facet keeps one request and one report. This request was either applied and then
+        overwritten by the other writer's, or replaced before the sketch read it — from here the
+        two cannot be told apart. The sketch itself is running and answering.
 
-            \(next)
-            """
+        \(Self.nextMove(entry, repeatable: repeatable))
+        """
+    }
+
+    /// 期限まで待っても応答が返らず、その間に別の書き手が要求を置き換えていたときの答え。
+    ///
+    /// **走っていないとは言わない** — 置き換えた要求が長い列の観測なら、スケッチは走って撮っている。
+    /// 自分の要求が当たったかは分からないと言い、次の手を添える (``contested(_:repeatable:)`` と同じ
+    /// 趣旨)。応えなかった理由 (``notRunning(_:existed:)``) の案内は付けない — 取り合いの後に
+    /// 起動し直しを勧めても直らない。次に呼んで、誰も置き換えていないのに応えなければ、そのとき
+    /// 応えなかった理由を言う。
+    func replacedAtDeadline(_ entry: StartupReads.Entry, repeatable: Bool) -> String {
+        """
+        Another writer replaced this request in the facet before the time ran out, so \(Self.outcome(entry)).
+
+        No answer to this request, or to the one that replaced it, showed in the report within the time.
+        The sketch may be busy with the other writer's request (a long series, for one), or it may not
+        be running — from here the two cannot be told apart.
+
+        \(Self.nextMove(entry, repeatable: repeatable))
+        """
+    }
+
+    private static func outcome(_ entry: StartupReads.Entry) -> String {
+        entry == StartupReads.input
+            ? "what became of the events is not known" : "what became of the picture is not known"
+    }
+
+    /// 次の手。**入力は当たっているかもしれないので、送り直す前に状態を確かめさせる。** 観測は撮り直して
+    /// よいが、`time` 付きの観測は 1 フレームを描き直して副作用を残すので、入力と同じに確かめさせる。
+    private static func nextMove(_ entry: StartupReads.Entry, repeatable: Bool) -> String {
+        if entry == StartupReads.input {
+            return "Call `observe` to see where things stand before sending the events again — they may already have taken effect."
+        }
+        return repeatable
+            ? "Taking the picture again is safe: call `observe` again."
+            : "A shot with time redraws one frame and keeps what the sketch's draw left behind, and "
+                + "that frame may already have been drawn. Call `observe` without time to see where "
+                + "things stand before asking for it again."
     }
 
     /// 走っているスケッチが応えないときの答え。**その場で直せるところまで書く。**

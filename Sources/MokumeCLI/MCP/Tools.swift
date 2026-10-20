@@ -399,19 +399,20 @@ struct Tools {
         extraWait: TimeInterval = 0
     ) -> Exchange {
         let existed = facets.hasFacet(facet)
+        // 撮り直してよいのは、副作用を残さない観測だけ。`time` 付きは 1 フレームを描き直す (#2857)
+        let repeatable = entry == StartupReads.observe && request["time"] == nil
         do {
             switch try facets.exchange(facet: facet, request: request, id: id, extraWait: extraWait) {
             case .answered(let report):
                 return .answered(report)
             case .contested:
-                return .refused(facets.contested(entry))
+                return .refused(facets.contested(entry, repeatable: repeatable))
             case .timedOut(let replaced):
-                let answer = facets.notRunning(entry, existed: existed)
-                // 期限の時点で別の書き手が要求を置き換えていたら、応えなかった理由の前にそれを言う
+                // 期限の時点で別の書き手が要求を置き換えていたら、走っていないとは言わず、取り合いとして答える
                 return .refused(
                     replaced
-                        ? "Another writer replaced this request in the facet before the time ran out.\n\n" + answer
-                        : answer)
+                        ? facets.replacedAtDeadline(entry, repeatable: repeatable)
+                        : facets.notRunning(entry, existed: existed))
             }
         } catch {
             // **置けなかった回も、場所の手を添える** (#2487)。窓口は在る場所なら受けるので、

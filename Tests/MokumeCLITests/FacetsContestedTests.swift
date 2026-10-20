@@ -138,23 +138,95 @@ struct FacetsContestedTests {
         #expect(!replaced)
     }
 
-    /// 崩れたとき: 読めない request.json (原子的に置かない書き手) は判定を飛ばす。
-    @Test("request.json が読めなければ判定を飛ばして待ち続ける")
-    func anUnreadableRequestSkipsTheJudgement() throws {
-        let (facets, directory) = makeFacets(waitLimit: 4)
+    /// b1 の後にすぐ b2 が置かれて、自分には `report=b1`・`request=b2` しか見えない。**直前の応答と
+    /// 自分の応答のどちらでもない応答が見え、request.json が自分のものでなければ、取り合い**
+    /// (応答の識別子と request.json の識別子が一致しなくてよい)。
+    @Test("別の書き手の応答 b1 の後に b2 が置かれても、見逃さず取り合いとして返す")
+    func aLaterRequestByTheOtherWriterIsNotMissed() throws {
+        let (facets, directory) = makeFacets()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let facet = facets.observeFacet
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        put(#"{"id":"before"}"#, at: reportURL(facet))
+        let clock = FakeClock()
+        clock.actions[1] = {
+            put(#"{"id":"b2"}"#, at: requestURL(facet))
+            put(#"{"id":"b1"}"#, at: reportURL(facet))
+        }
+        guard case .contested = try exchange(facets, facet: facet, clock: clock) else {
+            Issue.record("b1 → b2 の並びを見逃した")
+            return
+        }
+        #expect(clock.ticks == 1)
+    }
+
+    /// 置く直前の応答が見えているだけでは、何も起きていない。
+    @Test("置く直前の応答が見えているだけなら、request.json が置き換わっていても待ち続ける")
+    func theEchoFromBeforeIsNotAContest() throws {
+        let (facets, directory) = makeFacets(waitLimit: 3)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let facet = facets.observeFacet
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        put(#"{"id":"before"}"#, at: reportURL(facet))
+        let clock = FakeClock()
+        clock.actions[1] = { put(#"{"id":"b2"}"#, at: requestURL(facet)) }
+        guard case .timedOut(let replaced) = try exchange(facets, facet: facet, clock: clock) else {
+            Issue.record("直前の応答だけで見切った")
+            return
+        }
+        #expect(replaced)
+        #expect(clock.ticks == 3)
+    }
+
+    /// 崩れた中身 (原子的に置かない書き手) の request.json は、自分の要求ではない。応答が別の識別子を
+    /// echo すれば取り合い、echo しなければ期限で「置き換わっていた」と返る。
+    @Test("壊れた request.json は自分の要求ではない: 別の応答が現れれば取り合い、現れなければ置き換わっていたと返る")
+    func aBrokenRequestIsNotMine() throws {
+        do {
+            let (facets, directory) = makeFacets(waitLimit: 4)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let facet = facets.observeFacet
+            let clock = FakeClock()
+            clock.actions[1] = {
+                put("{not json", at: requestURL(facet))
+                put(#"{"id":"theirs"}"#, at: reportURL(facet))
+            }
+            guard case .contested = try exchange(facets, facet: facet, clock: clock) else {
+                Issue.record("壊れた要求で上書きされたのに、取り合いとして返らなかった")
+                return
+            }
+        }
+        for broken in ["{not json", #"{"events":[]}"#] {
+            let (facets, directory) = makeFacets(waitLimit: 4)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let facet = facets.observeFacet
+            let clock = FakeClock()
+            clock.actions[1] = { put(broken, at: requestURL(facet)) }
+            guard case .timedOut(let replaced) = try exchange(facets, facet: facet, clock: clock) else {
+                Issue.record("期限で諦めなかった (\(broken))")
+                return
+            }
+            #expect(replaced, "識別子の無い・壊れた要求への置き換えを、置き換えと数えない (\(broken))")
+            #expect(clock.ticks == 4)
+        }
+    }
+
+    /// request.json が無い・読めない回は判定を飛ばす (応答がどうでも決着にしない)。
+    @Test("request.json が無ければ判定を飛ばして待ち続ける")
+    func aMissingRequestSkipsTheJudgement() throws {
+        let (facets, directory) = makeFacets(waitLimit: 3)
         defer { try? FileManager.default.removeItem(at: directory) }
         let facet = facets.observeFacet
         let clock = FakeClock()
         clock.actions[1] = {
-            put("{not json", at: requestURL(facet))
+            try? FileManager.default.removeItem(at: requestURL(facet))
             put(#"{"id":"theirs"}"#, at: reportURL(facet))
         }
         guard case .timedOut(let replaced) = try exchange(facets, facet: facet, clock: clock) else {
-            Issue.record("読めない要求で見切った")
+            Issue.record("要求が無いのに見切った")
             return
         }
         #expect(!replaced)
-        #expect(clock.ticks == 4)
     }
 
     // MARK: - 窓口の答え (Tools)
@@ -209,18 +281,36 @@ struct FacetsContestedTests {
         let facets = Facets(directory: directory, waitLimit: 0.4)
         let place = facets.inputFacet
         let tools = Tools(facets: facets, makeID: { "mine" })
+        // 置く前から、前の書き手への応答が残っている
+        put(#"{"id":"older"}"#, at: reportURL(place))
         let finished = DispatchSemaphore(value: 0)
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
-            // 要求は置き換わったが、応答はまだその要求を echo していない
+            // 要求は置き換わったが、応答は前のまま動かない
             put(#"{"id":"theirs","events":[]}"#, at: requestURL(place))
-            put(#"{"id":"older"}"#, at: reportURL(place))
             finished.signal()
         }
         let outcome = tools.call("input", arguments: ["events": [["type": "key"]]])
         _ = finished.wait(timeout: .now() + 5)
         #expect(outcome.isError)
         #expect(outcome.text.hasPrefix("Another writer replaced this request"))
-        #expect(outcome.text.contains("The running sketch did not answer"))
+        // 置き換えられたと分かっているのに、走っていないとは言わず、起動し直しへ送らない
+        #expect(!outcome.text.contains("did not answer"), "走っていないと偽った: \(outcome.text)")
+        #expect(!outcome.text.contains("Restart"), "直らない起動し直しへ送った: \(outcome.text)")
+        #expect(!outcome.text.contains("watch"), "起動し直しを勧めた: \(outcome.text)")
+        #expect(outcome.text.contains("observe"), "次の手を言わない: \(outcome.text)")
+        #expect(outcome.text.contains("may be busy"), "長い列の観測の最中でありうると言わない: \(outcome.text)")
+    }
+
+    /// `time` 付きの観測は 1 フレームを描き直して副作用を残す。撮り直してよいとは言わない。
+    @Test("time 付きの観測は、撮り直してよいと言わず、確かめてからと言う")
+    func aTimedObservationIsNotSaidToBeSafeToRepeat() throws {
+        let result = try contendedCall(
+            tool: "observe", arguments: ["time": 1.5], facet: { $0.observeFacet })
+        #expect(result.outcome.isError)
+        let text = result.outcome.text
+        #expect(text.contains("Another writer"), "取り合ったと言わない: \(text)")
+        #expect(!text.contains("is safe"), "撮り直してよいと言った: \(text)")
+        #expect(text.contains("without time"), "確かめてからと言わない: \(text)")
     }
 
     @Test("観測: 同じく取り合ったことを言い、撮り直してよいと添える")
