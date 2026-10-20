@@ -232,11 +232,6 @@ def summary_of(entry: str) -> str:
     return summary.rstrip()
 
 
-def indented(text: str) -> list[str]:
-    """項目の中身の列 (2 桁) まで下げた行。空行は空行のまま (桁を足すと末尾に空白が残る)。"""
-    return [f"  {line}" if line.strip() else "" for line in text.split("\n")]
-
-
 def inline_html(markdown: str) -> str:
     """要約の 1 文を、`<summary>` の中に置ける HTML へ直す (#2871)。
 
@@ -258,30 +253,30 @@ def inline_html(markdown: str) -> str:
     return re.sub(r"\0(\d+)\0", lambda match: codes[int(match.group(1))], text)
 
 
-def as_list_item(entry: str) -> str:
-    """断片の本文を箇条書きの 1 項目にする。
+def as_entry(entry: str) -> str:
+    """断片の本文を、節に並べる 1 項目にする。
 
     **要約の 1 文を `<summary>` に置き、押すと続きの本文が開く** (#2766・#2871)。
     要約は全文の先頭からの切り出しなので、開いた中身は要約の後から始めれば
     要約と合わせて全文になる (同じ文を 2 度読ませない)。本文が要約の 1 文で
-    尽きるなら畳むものが無いので、今までどおりの 1 項目になる。
+    尽きるなら畳むものが無いので、全文をそのまま段落にする。
 
-    **継続行を項目の中身の列 (2 桁) まで下げる。** 下げないと、空行のあとの段落が
-    項目の外へ出てそこでリストが終わり、続く項目は別のリストとして始まる — 移行手順が
-    それが属する破壊的変更から切り離されて描かれていた (#446)。`<summary>` の後と
-    `</details>` の前の空行も要る — GitHub は空行で区切らないと、HTML の塊の中の Markdown を描かない。
+    **箇条書きには入れない** (#3011)。畳みの ▸ がそれだけで行頭の印になり、箇条書きの
+    • と二重に並んでいた。箇条書きの外なので中身を下げる必要も無い — 下げていたのは、
+    空行のあとの段落が項目の外へ出てリストが切れるのを防ぐためだった (#446)。
+    `<summary>` の後と `</details>` の前の空行は要る — GitHub は空行で区切らないと、
+    HTML の塊の中の Markdown を描かない。項目同士の空行は `notes` が入れる。
     """
     whole = entry.strip()
     summary = summary_of(entry)
     if summary == whole:
-        first, *rest = whole.split("\n")
-        return "\n".join([f"- {first}", *(indented("\n".join(rest)) if rest else [])])
+        return whole
     return "\n".join([
-        f"- <details><summary>{inline_html(summary)}</summary>",
+        f"<details><summary>{inline_html(summary)}</summary>",
         "",
-        *indented(whole[len(summary):].lstrip()),
+        whole[len(summary):].lstrip(),
         "",
-        "  </details>",
+        "</details>",
     ])
 
 
@@ -425,6 +420,12 @@ def picture_references(notes: str) -> list[PictureReference]:
     return found
 
 
+def entries_of(entries: list[str]) -> str:
+    """節の項目を空行で区切って並べる。箇条書きではないので、区切らないと `</details>` の
+    後の段落が HTML の塊に呑まれ、Markdown として描かれない (#3011)。"""
+    return "\n\n".join(as_entry(entry) for entry in entries)
+
+
 def notes(fragments: list[Path], picture_section: str = "") -> str:
     """Release の本文を組む。picture_section は pictures() の出力で、末尾に置く。"""
     grouped: dict[str, list[str]] = {}
@@ -437,13 +438,13 @@ def notes(fragments: list[Path], picture_section: str = "") -> str:
         if entries := grouped.get(name):
             lines.append(f"## {heading}")
             lines.append("")
-            lines.extend(as_list_item(entry) for entry in entries)
+            lines.append(entries_of(entries))
             lines.append("")
     # 知らない分類も落とさない。落とすと「書いたのにノートに出ない」が黙って起きる
     for name in sorted(set(grouped) - known):
         lines.append(f"## {name}")
         lines.append("")
-        lines.extend(as_list_item(entry) for entry in grouped[name])
+        lines.append(entries_of(grouped[name]))
         lines.append("")
     if picture_section:
         lines.append(picture_section)
