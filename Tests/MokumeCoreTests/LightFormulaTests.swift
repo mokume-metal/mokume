@@ -394,7 +394,7 @@ struct LightFormulaTests {
 
     /// 既定の視点の、見る位置。
     private static var eye: SIMD3<Double> {
-        SIMD3(Camera.fitting(width: Float(side), height: Float(side)).eye)
+        SIMD3(Camera.fitting(width: Float(side), height: Float(side)).eye.simd)
     }
 
     /// 面 z = 0 で折り返した光源と視点を結ぶ線が、面を横切る点。

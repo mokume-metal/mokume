@@ -307,6 +307,95 @@ class ApiSurfaceTests(unittest.TestCase):
         symbols = [symbol("shape(_:)", owner="Sketch", takes=("Mesh", "s:6Mokume4MeshV"))]
         self.assertEqual(api.check_foreign_vocabulary(symbols, {"s:6Mokume4MeshV"}), [])
 
+    # ---- Float で連続量を受ける口 (ADR-0035 の改訂 2026-10-20 / #2525)
+
+    def test_Sketch_の口が連続量を_Float_で受けると見つける(self):
+        symbols = [symbol("jump(_:)", owner="SketchPart", parameters=["Float"])]
+        problems = api.check_float_ports(symbols, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("SketchPart.jump(_:)", problems[0])
+        self.assertIn("ScalarConvertible", problems[0])
+
+    def test_Canvas_と_Transform_とトップレベルの口も見る(self):
+        for owner in ("Canvas", "Transform", "LinearRGBA", None):
+            with self.subTest(owner):
+                symbols = [symbol("move(by:)", owner=owner, parameters=["Float"])]
+                self.assertEqual(len(api.check_float_ports(symbols, set())), 1)
+
+    def test_総称で受けている口は通す(self):
+        symbols = [symbol("jump(_:)", owner="SketchPart", parameters=["some ScalarConvertible"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_Float_を含む複合の型も見つける(self):
+        for written in ("Float?", "[Float]", "SIMD2<Float>", "Float..."):
+            with self.subTest(written):
+                symbols = [symbol("move(_:)", owner="SketchPart", parameters=[written])]
+                self.assertEqual(len(api.check_float_ports(symbols, set())), 1)
+
+    def test_名前に_Float_を含むだけの型は見つけない(self):
+        symbols = [symbol("move(_:)", owner="SketchPart", parameters=["FloatingPoint", "Floating"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_ClosedRange_Float_は据え置く(self):
+        # 決定 5 (2026-10-05 の改訂)。`emit` の speed・life・size
+        symbols = [symbol("emit(_:)", owner="SketchPart", parameters=["ClosedRange<Float>"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_public_init_は決定_5_で通す(self):
+        symbols = [symbol("init(pixelDensity:)", owner="Canvas", kind="swift.init", parameters=["Float"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_利用者が実装する口の引数は通す(self):
+        # mouseMoved(deltaX:deltaY:) のようにプロトコルの要件とその既定の実装。引数は mokume が渡す
+        hook = symbol(
+            "mouseMoved(deltaX:deltaY:)", owner="Sketch", precise="s:hook",
+            parameters=["Float", "Float"])
+        self.assertEqual(api.check_float_ports([hook], {"s:hook"}), [])
+        self.assertEqual(len(api.check_float_ports([hook], set())), 2)
+
+    def test_データや設定の型は射程の外(self):
+        for owner in ("Table", "Numbers", "TextBounds", "Orbit", "Placement", "SketchSettings"):
+            with self.subTest(owner):
+                symbols = [symbol("set(_:)", owner=owner, parameters=["Float"])]
+                self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_音とカメラなど_MokumeCore_の外が足した口は射程の外(self):
+        # MokumeAudio が SketchPart へ足した口。Sketch の面でも、別ターゲットの面である
+        added = symbol("play(volume:)", owner="SketchPart", parameters=["Float"])
+        added[api.MODULE_KEY] = "MokumeAudio"
+        self.assertEqual(api.check_float_ports([added], set()), [])
+        added[api.MODULE_KEY] = "MokumeCore"
+        self.assertEqual(len(api.check_float_ports([added], set())), 1)
+
+    def test_例外表に載っている口は通す(self):
+        # 表に載る「口 → 理由」の組は実在するものを使う。表ごと消えたらこちらが赤くなる
+        self.assertIn("LinearRGBA.display(red:green:blue:alpha:)", api.FLOAT_ALLOWLIST)
+        symbols = [
+            symbol(
+                "display(red:green:blue:alpha:)", owner="LinearRGBA",
+                parameters=["Float", "Float", "Float", "Float"])
+        ]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_Float_の例外の理由が空なら表として成立しない(self):
+        for name, reason in api.FLOAT_ALLOWLIST.items():
+            with self.subTest(name):
+                self.assertTrue(reason.strip(), f"{name} に理由が書かれていない")
+
+    def test_読み込みは宣言したモジュールを足す(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory)
+            (graphs / "MokumeCore.symbols.json").write_text(
+                json.dumps({"symbols": [symbol("a(_:)", owner="Sketch", precise="s:a")]}),
+                encoding="utf-8")
+            (graphs / "MokumeAudio@MokumeCore.symbols.json").write_text(
+                json.dumps({"symbols": [symbol("b(_:)", owner="Sketch", precise="s:b")]}),
+                encoding="utf-8")
+            found = {api.title(entry): entry[api.MODULE_KEY]
+                     for module in ("MokumeCore", "MokumeAudio")
+                     for entry in api.load_symbols(graphs, module)}
+            self.assertEqual(found, {"a(_:)": "MokumeCore", "b(_:)": "MokumeAudio"})
+
     def test_USR_からモジュール名を取る(self):
         self.assertEqual(api.module_of("s:10Foundation3URLV"), "Foundation")
         self.assertEqual(api.module_of("s:6Mokume4MeshV"), "Mokume")

@@ -164,7 +164,7 @@ struct SameStateKeepsBatchTests {
                 by: { $0.camera(70, 10, 90, 32, 32, 0, 0, 1, 0) },
                 prepare: { $0.camera(70, 10, 90, 32, 32, 0, 0, 1, 0) }, on: canvas) == 0)
         let camera = Camera(
-            eye: SIMD3(1, 2, 90), center: SIMD3(0, 0, 0), up: SIMD3(0, 1, 0),
+            eye: Vector3(1, 2, 90), center: Vector3(0, 0, 0), up: Vector3(0, 1, 0),
             projection: .perspective(fieldOfView: 1, aspect: 1, near: 1, far: 500))
         #expect(
             try batchesClosed(by: { $0.setCamera(camera) }, prepare: { $0.setCamera(camera) }, on: canvas) == 0)
@@ -177,7 +177,7 @@ struct SameStateKeepsBatchTests {
     func cameraComparesBits() throws {
         let canvas = try makeCanvas()
         var camera = Camera(
-            eye: SIMD3(0, 2, 90), center: SIMD3(0, 0, 0), up: SIMD3(0, 1, 0),
+            eye: Vector3(0, 2, 90), center: Vector3(0, 0, 0), up: Vector3(0, 1, 0),
             projection: .perspective(fieldOfView: 1, aspect: 1, near: 1, far: 500))
         let positive = camera
         camera.eye.x = -0.0
@@ -190,7 +190,7 @@ struct SameStateKeepsBatchTests {
     func refusedCameraDoesNotClose() throws {
         let canvas = try makeCanvas()
         let bad = Camera(
-            eye: SIMD3(0, 0, 0), center: SIMD3(0, 0, 0), up: SIMD3(0, 1, 0),
+            eye: Vector3(0, 0, 0), center: Vector3(0, 0, 0), up: Vector3(0, 1, 0),
             projection: .perspective(fieldOfView: 1, aspect: 1, near: 1, far: 500))
         #expect(try batchesClosed(by: { $0.setCamera(bad) }, on: canvas) == 0)
         canvas.camera(1, 2, 3, 0, 0, 0, 0, 1, 0)  // フレームの外 — 書かれない
@@ -330,7 +330,7 @@ struct SameStateKeepsBatchTests {
         #expect(
             Mirror(
                 reflecting: Camera(
-                    eye: .zero, center: .zero, up: .zero,
+                    eye: Vector3(0, 0, 0), center: Vector3(0, 0, 0), up: Vector3(0, 0, 0),
                     projection: .perspective(fieldOfView: 1, aspect: 1, near: 1, far: 2))
             ).children.count == 4)
         #expect(Mirror(reflecting: LinearRGBA.linear(red: 0, green: 0, blue: 0)).children.count == 4)

@@ -180,7 +180,7 @@ struct ScreenCoordinateTests {
                         canvas.screenZ(point.x, point.y, point.z))
                     let back = canvas.spacePosition(
                         screenX: told.x, screenY: told.y, depth: told.z)
-                    #expect(length(back - point) < 0.05, comment)
+                    #expect(length(back.simd - point) < 0.05, comment)
                 }
                 canvas.pop()
             }
@@ -218,7 +218,7 @@ struct ScreenCoordinateTests {
                 back = canvas.spacePosition(
                     screenX: canvas.screenX(point.x, point.y, point.z),
                     screenY: canvas.screenY(point.x, point.y, point.z),
-                    depth: canvas.screenZ(point.x, point.y, point.z))
+                    depth: canvas.screenZ(point.x, point.y, point.z)).simd
                 canvas.pop()
             }
             return back
@@ -252,7 +252,7 @@ struct ScreenCoordinateTests {
             canvas.translate(128, 128, 0)
             // 変換の中では、同じ面の位置が変換の原点 (0, 0, 0) として返る
             let back = canvas.spacePosition(screenX: told.x, screenY: told.y, depth: told.z)
-            #expect(length(back) < 0.05)
+            #expect(length(back.simd) < 0.05)
             canvas.pop()
         }
     }
@@ -264,7 +264,7 @@ struct ScreenCoordinateTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.scale(0, 0)
-            #expect(canvas.spacePosition(screenX: 10, screenY: 20, depth: 0.5) == .zero)
+            #expect(canvas.spacePosition(screenX: 10, screenY: 20, depth: 0.5) == Vector3(0, 0, 0))
         }
     }
 
@@ -275,7 +275,7 @@ struct ScreenCoordinateTests {
             #expect(canvas.screenX(Float.nan, 0, 0) == 0)
             #expect(canvas.screenY(0, Float.infinity, 0) == 0)
             #expect(canvas.screenZ(0, 0, Float.nan) == 0)
-            #expect(canvas.spacePosition(screenX: Float.nan, screenY: 0, depth: 0) == .zero)
+            #expect(canvas.spacePosition(screenX: Float.nan, screenY: 0, depth: 0) == Vector3(0, 0, 0))
         }
     }
 
@@ -309,6 +309,6 @@ struct ScreenCoordinateWithoutRuntimeTests {
         #expect(sketch.screenX(10, 20, 30) == 0)
         #expect(sketch.screenY(10, 20, 30) == 0)
         #expect(sketch.screenZ(10, 20, 30) == 0)
-        #expect(sketch.spacePosition(screenX: 10, screenY: 20, depth: 0.5) == .zero)
+        #expect(sketch.spacePosition(screenX: 10, screenY: 20, depth: 0.5) == Vector3(0, 0, 0))
     }
 }

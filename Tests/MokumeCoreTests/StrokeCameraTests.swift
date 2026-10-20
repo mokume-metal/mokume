@@ -28,13 +28,13 @@ struct StrokeCameraTests {
 
     private static func cameras() -> [Camera] {
         var perspective = Camera.fitting(width: 800, height: 600)
-        perspective.eye = SIMD3(120, -80, 700)
-        perspective.center = SIMD3(10, 20, -30)
+        perspective.eye = Vector3(120, -80, 700)
+        perspective.center = Vector3(10, 20, -30)
         var orthographic = perspective
         orthographic.projection = Camera.Projection.orthographic(
             left: -400, right: 400, bottom: 300, top: -300, near: 1, far: 5000)
         var tilted = Camera.fitting(width: 1920, height: 1080)
-        tilted.up = SIMD3(0.3, 1, 0.1)
+        tilted.up = Vector3(0.3, 1, 0.1)
         return [perspective, orthographic, tilted]
     }
 
@@ -46,7 +46,7 @@ struct StrokeCameraTests {
         for camera in Self.cameras() {
             for (width, height) in Self.sizes {
                 let stroke = StrokeCamera(camera, width: width, height: height)
-                #expect(stroke.eye == camera.eye)
+                #expect(stroke.eye == camera.eye.simd)
                 #expect(stroke.forward == camera.forward)
                 #expect(stroke.screenRight == camera.right * stroke.pixelAspect)
                 #expect(stroke.down == camera.down)
@@ -144,8 +144,8 @@ struct StrokeCameraTests {
         let width: Float = 200
         let height: Float = 160
         var skewed = Camera.fitting(width: width, height: height)
-        skewed.eye = SIMD3(130, 60, 260)
-        skewed.center = SIMD3(90, 90, 10)
+        skewed.eye = Vector3(130, 60, 260)
+        skewed.center = Vector3(90, 90, 10)
         let projections: [Camera.Projection] = [
             .perspective(fieldOfView: 1.0, aspect: 0.5, near: 10, far: 2000),
             .perspective(fieldOfView: 1.0, aspect: 3, near: 10, far: 2000),

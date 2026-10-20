@@ -39,8 +39,8 @@ struct ParameterDeclaredNonFiniteTests {
     final class BornBad: Sketch {
         @Param var number: Double = -.infinity
         @Param var single: Float = .infinity
-        @Param var pair: SIMD2<Float> = SIMD2(1, .nan)
-        @Param var triple: SIMD3<Float> = SIMD3(1, 2, .infinity)
+        @Param var pair: Vector2 = Vector2(1, Float.nan)
+        @Param var triple: Vector3 = Vector3(1, 2, Float.infinity)
         @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: .nan)
     }
 
@@ -52,7 +52,7 @@ struct ParameterDeclaredNonFiniteTests {
 
     /// 端が非有限の範囲を、`Float` の組と整数の値に書いた形。
     final class InfRangeTyped: Sketch {
-        @Param(-Double.infinity...0) var pair: SIMD2<Float> = SIMD2(-1, -2)
+        @Param(-Double.infinity...0) var pair: Vector2 = Vector2(-1, -2)
         @Param(0...Int.max) var big: Int = 3
     }
 
@@ -122,8 +122,8 @@ struct ParameterDeclaredNonFiniteTests {
         let sketch = BornBad()
         #expect(sketch.number == 0)
         #expect(sketch.single == 0)
-        #expect(sketch.pair == SIMD2(0, 0))
-        #expect(sketch.triple == SIMD3(0, 0, 0))
+        #expect(sketch.pair == Vector2(0, 0))
+        #expect(sketch.triple == Vector3(0, 0, 0))
         #expect(sketch.tint == LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
         #expect(sketch.params.allSatisfy { $0.value.hasOnlyFiniteNumbers })
     }
@@ -142,7 +142,7 @@ struct ParameterDeclaredNonFiniteTests {
         #expect(radius.warnings.message(for: .bornNotFinite) == line)
         #expect(radius.warnings.hasWarned(.notFinite))
 
-        let pair = try box("pair", of: BornBad(), as: SIMD2<Float>.self)
+        let pair = try box("pair", of: BornBad(), as: Vector2.self)
         #expect(try #require(pair.warnings.message(for: .bornNotFinite)).contains("pair"))
     }
 
@@ -253,11 +253,11 @@ struct ParameterDeclaredNonFiniteTests {
     @Test("Float の組に書いた範囲も同じ。整数で書いた範囲は変わらない")
     func tuplesFoldAndIntegerRangesStay() throws {
         let sketch = InfRangeTyped()
-        let pair = try box("pair", of: sketch, as: SIMD2<Float>.self)
+        let pair = try box("pair", of: sketch, as: Vector2.self)
         #expect(pair.declaration.range == nil)
         #expect(KnobKind.forDeclaration(pair.declaration) == .none(.rangeNotFinite))
         #expect(pair.warnings.hasWarned(.rangeNotFinite))
-        #expect(pair.write(.vector2(SIMD2(3, -4))) == .clamped(requested: .vector2(SIMD2(3, -4)), applied: .vector2(SIMD2(0, -4))))
+        #expect(pair.write(.vector2(Vector2(3, -4))) == .clamped(requested: .vector2(Vector2(3, -4)), applied: .vector2(Vector2(0, -4))))
 
         let big = try box("big", of: sketch, as: Int.self)
         #expect(big.range == ParamRange(0...Int.max))

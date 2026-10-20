@@ -482,7 +482,7 @@ extension SketchPart {
     /// 掴む・置くはたいてい「掴んだ物と同じ奥行き」なので、その物の
     /// ``screenZ(_:_:_:)`` を取って渡す:
     ///
-    /// <!-- example: 文脈 var held = SIMD3<Float>(0, 0, 0) -->
+    /// <!-- example: 文脈 var held = Vector3(0, 0, 0) -->
     /// ```swift
     /// // 掴んだ物を、画面に沿って引きずる
     /// let depth = screenZ(held.x, held.y, held.z)
@@ -493,9 +493,9 @@ extension SketchPart {
     /// 平行投影でも透視投影でも同じように使える (式の違いは視点の側が持つ)。
     // shot: 1 snippet=e8bfd5e4
     // shot: 2 snippet=7cd7de68
-    public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> SIMD3<Float> {
+    public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> Vector3 {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
         return Self.liveCanvas(.read(returning: "(0, 0, 0)"))?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
-            ?? .zero
+            ?? Vector3(0, 0, 0)
     }
 }

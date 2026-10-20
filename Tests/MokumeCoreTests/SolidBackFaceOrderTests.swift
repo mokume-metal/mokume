@@ -333,7 +333,7 @@ struct SolidBackFaceOrderTests {
                 ball,
                 at: [
                     Placement(
-                        x: 80, y: 80, rotation: SIMD3(0, turned ? Float.pi : 0, 0),
+                        x: 80, y: 80, rotation: Vector3(0, turned ? Float.pi : 0, 0),
                         fill: LinearRGBA(premultipliedRed: veil, green: veil, blue: veil, alpha: veil))
                 ])
         }

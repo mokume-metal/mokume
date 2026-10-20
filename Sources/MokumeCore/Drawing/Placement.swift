@@ -25,7 +25,7 @@ public struct Placement: Equatable, Sendable {
     /// 大きさの倍率。
     public var scale: Float
     /// 各軸まわりの回転 (ラジアン)。**横 → 縦 → 奥行き**の順に掛かる。
-    public var rotation: SIMD3<Float>
+    public var rotation: Vector3
     /// この置き場所の塗り。`nil` なら何も掛からず、記録した色のまま出る。
     ///
     /// 半透明の色を渡すと、不透明の線で記録した形の線も、直に半透明の線で描いたときと同じ
@@ -43,7 +43,7 @@ public struct Placement: Equatable, Sendable {
 
     public init(
         x: Float = 0, y: Float = 0, z: Float = 0, scale: Float = 1,
-        rotation: SIMD3<Float> = .zero, fill: LinearRGBA? = nil
+        rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
     ) {
         self.x = x
         self.y = y

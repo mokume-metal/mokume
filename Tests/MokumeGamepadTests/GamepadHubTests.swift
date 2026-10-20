@@ -68,7 +68,7 @@ struct GamepadHubTests {
         pad.supply()
         #expect(pad.state == .disconnected)
         #expect(!pad.isPressed(.a))
-        #expect(pad.leftStick == .zero)
+        #expect(pad.leftStick == Vector2(0, 0))
         #expect(!hub.slots.isConnected(id))
 
         // 同じ機種の機材を挿し直す (仮の機材は毎回別の物なので、本物の挿し直しと同じく別の機材として届く)

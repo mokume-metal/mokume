@@ -324,7 +324,7 @@ struct SolidSweepRenderTests {
             }
             canvas.shape(
                 box,
-                at: [Placement(x: 80, y: 80, rotation: SIMD3(0.4, 0, 0.3), fill: self.veil(1, 1, 1))])
+                at: [Placement(x: 80, y: 80, rotation: Vector3(0.4, 0, 0.3), fill: self.veil(1, 1, 1))])
         }
         #expect(result.draws == 1, "畳んで描いていない")
         for point in disc(radius: 6) {

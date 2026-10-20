@@ -173,12 +173,12 @@ struct TriangulationTests {
         let outers = rings.filter { !$0.isHole }
         // 外周が 2 つ以上の字は引数に入れていない (`singleOuterCharacters`)。入っていれば止まる
         try #require(outers.count == 1, "\(character) の外周が \(outers.count) 個ある")
-        let holes = rings.filter(\.isHole).map(\.points)
+        let holes = rings.filter(\.isHole).map(\.outline)
 
-        let merged = mergeHoles(outer: outers[0].points, holes: holes)
+        let merged = mergeHoles(outer: outers[0].outline, holes: holes)
         let triangles = Triangulation.triangulate(merged)
         let expected =
-            abs(Triangulation.signedArea(outers[0].points))
+            abs(Triangulation.signedArea(outers[0].outline))
             - holes.reduce(0) { $0 + abs(Triangulation.signedArea($1)) }
         #expect(abs(area(of: triangles, points: merged) - expected) <= expected * 0.005)
     }

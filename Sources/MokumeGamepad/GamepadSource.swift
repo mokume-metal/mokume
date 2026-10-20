@@ -112,7 +112,7 @@ final class RecordedGamepadSource: GamepadSource {
             return
         }
         inbox.setState(.running)
-        inbox.stick.send(input.leftStick)
+        inbox.stick.send(input.leftStick.simd)
         // 並べる順を名前で固定する。集合の順は回ごとに変わりうる
         for button in held.subtracting(input.pressed).sorted(by: Self.byName) {
             inbox.changes.send(.released(button))

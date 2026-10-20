@@ -1139,8 +1139,8 @@ struct ScaledSegmentFormulaTests {
 
     @Test("数でない・無限の変換は 1 に倒す")
     func splitScaleIgnoresNonFiniteMatrices() {
-        #expect(Canvas.splitScale(of: matrix { $0.scale(x: .nan, y: 2) }) == 1)
-        #expect(Canvas.splitScale(of: matrix { $0.scale(x: .infinity, y: 2) }) == 1)
+        #expect(Canvas.splitScale(of: matrix { $0.scale(x: Float.nan, y: 2) }) == 1)
+        #expect(Canvas.splitScale(of: matrix { $0.scale(x: Float.infinity, y: 2) }) == 1)
     }
 
     @Test("拡大しない分割数は、拡大率 1 の式と 1 ビットも違わない")
