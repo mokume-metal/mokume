@@ -136,7 +136,10 @@ final class RemoteParams {
             }
             return false
         }
-        // 顔ぶれが変わった = 別の宣言を持つスケッチが走っている。**組み直す**
+        // 顔ぶれが変わった。**組み直す**。起きるのは別の宣言を持つスケッチが走り始めたときと、同じ
+        // プロセスの中で、零へ畳めず外されていた宣言の値が有限になって応答に戻ったとき (#2858) の 2 つ。
+        // 後者は外された宣言 1 つにつき 1 度だけである — 生まれた後に非有限が載る口 (setter・
+        // `_modify`・`write(_:)`) は拒むので、戻った宣言がまた外れることは無い
         signature = incoming
         boxes = declarations.map { declaration in
             RemoteParam(declaration: declaration) { [weak self] name, value in

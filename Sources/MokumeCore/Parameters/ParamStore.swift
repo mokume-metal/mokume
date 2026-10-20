@@ -309,7 +309,7 @@ final class ParamStore: DeclarationWatcher {
     }
 
     /// 符号化が拒んだ値の名前。拒まれた場所が値の並びの中でなければ `nil`。
-    private static func offender(of error: any Error, in saved: Saved) -> String? {
+    static func offender(of error: any Error, in saved: Saved) -> String? {
         guard case EncodingError.invalidValue(_, let context) = error,
             let index = context.codingPath.lazy.compactMap(\.intValue).first,
             saved.values.indices.contains(index)

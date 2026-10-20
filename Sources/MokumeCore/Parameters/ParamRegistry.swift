@@ -26,8 +26,10 @@ enum ParamOutcome: Equatable {
 
 /// 宣言された値の索引。
 ///
-/// **起動時に 1 度だけ作る。** 宣言はプロセスの間は変わらないので、フレームごとに
-/// 数え直す理由が無い。名前は ``Param(_:name:)`` の展開がコンパイル時に決めたもので、
+/// **起動時に 1 度だけ作る。** 宣言の名前・型・範囲はプロセスの間は変わらないので、
+/// フレームごとに数え直す理由が無い。**面に出る顔ぶれ** (``declarations``) は、零へ畳めなかった
+/// 宣言が非有限の間だけ外れていて、値が有限になると**同じプロセスの中で 1 度だけ**増える
+/// ([#2858](https://github.com/mokume-metal/mokume/issues/2858))。名前は ``Param(_:name:)`` の展開がコンパイル時に決めたもので、
 /// ここが作り直すことはない ([ADR-0030] 決定 5)。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md

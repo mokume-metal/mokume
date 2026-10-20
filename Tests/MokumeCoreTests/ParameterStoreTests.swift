@@ -98,6 +98,27 @@ struct ParameterStoreTests {
         #expect(try names() == ["count", "radius"])
     }
 
+    /// 符号化の守りが、拒まれた値の名前を引けること (#2263)。非有限の宣言は
+    /// ``ParamRegistry/declarations`` が外す (#2858) ので、保存の経路ではこの枝へ届かない。
+    /// 絞っていない並び (``ParamStore/Saved``) を直に符号化して、守りの関数を確かめる。
+    @Test("符号化が非有限の値を拒んだとき、守りは拒まれた値の名前を引ける")
+    func theEncodingGuardNamesTheRefusedValue() throws {
+        let saved = ParamStore.Saved(values: [
+            .init(name: "count", value: .int(3)), .init(name: "radius", value: .float(.nan)),
+        ])
+        let error = try #require(
+            { () -> (any Error)? in
+                do { _ = try JSONEncoder().encode(saved) } catch { return error }
+                return nil
+            }(), "非有限の値を符号化できてしまった")
+        #expect(ParamStore.offender(of: error, in: saved) == "radius")
+
+        // 並びの外で拒まれた (名前の引けない) エラーは名指さない
+        let elsewhere = EncodingError.invalidValue(
+            0, .init(codingPath: [], debugDescription: "not in the values"))
+        #expect(ParamStore.offender(of: elsewhere, in: saved) == nil)
+    }
+
     /// 面からの要求は当てるたびに書くので、書けない値が残ると入力ごとに同じ行が流れる。
     @Test("書けない理由が変わらなければ、書けるまで繰り返し言わない")
     func theSameWriteFailureIsSaidOnce() throws {
