@@ -136,6 +136,9 @@ extension Sketch {
         } catch {
             switch error {
             case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+            case .unreachable(let path, let location, let reason):
+                throw .unopenable(
+                    path: path, location: location, reason: AssetOpening.unreachableReason(reason))
             }
         }
     }

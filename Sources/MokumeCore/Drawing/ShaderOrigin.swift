@@ -86,11 +86,12 @@ nonisolated enum ShaderOrigin {
     ///   のときだけ解く。比べるときは大文字小文字を区別しない (束の写しの解き方と揃える — APFS の既定)。
     ///   絶対パス・置き場の外を指す名前 (`..` を含む)・置き場の名前でない先頭は今までの候補のまま。
     /// - Parameter candidates: ``ImageFile/candidates(for:)`` の並び。先頭は作業ディレクトリ。
-    /// - Parameter exists: ファイルが在るか。**差すのは、作業ディレクトリより後ろの候補 (束の写し) の
+    /// - Parameter exists: ファイルが在るか。**既定は他の口と同じ判定** (``AssetLookup/presence(of:)``・#2838)。
+    ///   確かめられない候補は在るとは数えない (探す口がそこで止めて名乗る)。**差すのは、作業ディレクトリより後ろの候補 (束の写し) の
     ///   どれかが在るときだけ** — 束に入っていない断片を、見張りだけが元から読んで隠さない。
     static func inserting(
         origin: URL?, for path: String, into candidates: [URL],
-        exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+        exists: (URL) -> Bool = { AssetLookup.presence(of: $0) == .present }
     ) -> [URL] {
         guard let origin, !candidates.isEmpty, !path.hasPrefix("/") else { return candidates }
         let parts = path.split(separator: "/", omittingEmptySubsequences: true)
