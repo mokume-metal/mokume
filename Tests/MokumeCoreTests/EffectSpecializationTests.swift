@@ -90,16 +90,17 @@ struct EffectSpecializationTests {
         for _ in 0..<3 {
             try canvas.draw {
                 scene(on: canvas)
-                // 反転 2 回 + 周辺減光 = 種別は 2
+                // 反転 2 回 + 周辺減光は隣り合うので 1 段にまとまる (``Effect/fusingPixelStages(_:)``)。
+                // 種別は「まとめた段」の 1 つ
                 canvas.effects([.invert(), .vignette(amount: 0.5), .invert(amount: 0.5)])
             }
         }
-        #expect(pipeline.builtinStatesBuilt == 2)
+        #expect(pipeline.builtinStatesBuilt == 1)
         try canvas.draw {
             scene(on: canvas)
             canvas.effects([.blur(radius: 4)])  // 横・縦で種別は 2 つ増える
         }
-        #expect(pipeline.builtinStatesBuilt == 4)
+        #expect(pipeline.builtinStatesBuilt == 3)
     }
 
     @Test("利用者の効果は、組み込みの特化したパイプラインを組まない")

@@ -157,6 +157,51 @@ public enum Effect {
         return EffectPipeline.maxReductionLevel
     }
 
+    /// 隣り合う画素ごとの組み込みの効果を、1 段にまとめる ([#2371])。
+    ///
+    /// まとめられるのは、近所を読まず入りの画素だけで決まる 4 つ (反転・単色化・周辺減光・色調整)
+    /// が**隣り合っているとき**。別々の段にすると、段の間で `.rgba16Float` へ丸めて絵を書き戻し、読み直す。
+    /// まとめると丸めが無くなり (精度は上がる向き)、全画面の三角形・encoder・待ちも段の数ぶん減る。
+    /// 1 段だけの並びはそのまま (1 ビットも変わらない)。まとめる段は ``fusedStageLimit`` まで。
+    ///
+    /// [#2371]: https://github.com/mokume-metal/mokume/issues/2371
+    static func fusingPixelStages(_ passes: [EffectPass]) -> [EffectPass] {
+        var result: [EffectPass] = []
+        var run: [EffectPass] = []
+        func flush() {
+            switch run.count {
+            case 0: break
+            case 1: result.append(run[0])
+            default:
+                var program: [SIMD4<Float>] = []
+                for pass in run {
+                    program.append(pass.control.0)
+                    // p3 は画素ごとの 4 つのどれも使わない (色調整は p0…p2)
+                }
+                result.append(
+                    EffectPass(
+                        control: (SIMD4(BuiltinEffectKind.fused.value, Float(run.count), 0, 0), .zero),
+                        program: program))
+            }
+            run.removeAll(keepingCapacity: true)
+        }
+        for pass in passes {
+            if pass.isPixelStage {
+                run.append(pass)
+                if run.count == fusedStageLimit { flush() }
+            } else {
+                flush()
+                result.append(pass)
+            }
+        }
+        flush()
+        return result
+    }
+
+    /// 1 段にまとめる段の数の上限。設定の枠 (``EffectPipeline/controlSize``) のうち、頭の 2 つ
+    /// (種類と段の数・`control.1`) を引いた残り。
+    static let fusedStageLimit = EffectPipeline.controlSize / MemoryLayout<SIMD4<Float>>.stride - 2
+
     /// 組み込みの効果に渡す設定を詰める。**並びの正本はここ**で、読む側は
     /// `Shaders/Effects/Builtin.metal` にある。
     private static func control(
@@ -274,8 +319,20 @@ struct EffectPass {
     var paired: Slot?
     var output: Slot = .next
     var control: (SIMD4<Float>, SIMD4<Float>)
+    /// 設定の続き。**まとめた段 (``BuiltinEffectKind/fused``) だけが使う** — 段ごとの
+    /// (種類, p0, p1, p2) を、まとめる順に並べる。
+    var program: [SIMD4<Float>] = []
     /// 利用者の効果。`nil` なら組み込み。
     var shader: EffectShader?
+
+    /// 近所を読まず、入りの画素だけで決まる組み込みの段か (まとめられる段・``Effect/fusingPixelStages(_:)``)。
+    var isPixelStage: Bool {
+        guard shader == nil, input == .current, paired == nil, output == .next else { return false }
+        switch builtinKind {
+        case .invert, .monochrome, .vignette, .adjust: return true
+        default: return false
+        }
+    }
 
     /// 組み込みの効果の種別。設定の先頭 (``control``) に入っている番号を読む。
     /// 利用者の効果でも `copy` を名乗るが、そちらは自分のパイプラインで走る。
@@ -327,6 +384,12 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
     case accumulate = 12
     /// 縮める / 広げる。大きなぼかしが縮めた絵の上で回るための段 ([#755])。
     case resize = 13
+    /// 隣り合う画素ごとの効果 (反転・単色化・周辺減光・色調整) を 1 段にまとめたもの ([#2371])。
+    /// 設定の頭が (種類, 段の数)、続く `float4` が段ごとの (種類, p0, p1, p2)。利用者の並びには
+    /// 現れず、``Canvas`` が段を組む前にまとめる。
+    ///
+    /// [#2371]: https://github.com/mokume-metal/mokume/issues/2371
+    case fused = 14
 
     /// 断片へ渡す形。設定の枠が `Float` なので、そこへ入る形で名乗る。
     var value: Float { Float(rawValue) }
@@ -347,6 +410,7 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
         case .enlarge: "kEffectEnlarge"
         case .accumulate: "kEffectAccumulate"
         case .resize: "kEffectResize"
+        case .fused: "kEffectFused"
         }
     }
 }

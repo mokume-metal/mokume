@@ -37,17 +37,23 @@ final class EffectPipeline {
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     static let keepChangedFunctionName = "mokume_keepChanged"
 
-    /// 1 段ぶんの置き場の間隔 (バイト)。設定 32 / 面 32 / 値の順に詰める。
+    /// 1 段ぶんの置き場の間隔 (バイト)。設定 128 / 面 32 / 値の順に詰める。
+    ///
+    /// 設定の枠は、まとめた段 (``BuiltinEffectKind/fused``) が段ごとの `float4` を並べるために
+    /// 広い ([#2371])。間隔は 256 の倍数に保つ (定数の置き場の境)。
     ///
     /// 面は 2 つの `float4` で、段の面の大きさと秒数・出す大きさを持つ (断片が位置と大きさを
     /// 出す画素で受け取るため・#1639)。
-    static let passStride = 256
+    ///
+    /// [#2371]: https://github.com/mokume-metal/mokume/issues/2371
+    static let passStride = 512
     static let controlOffset = 0
-    static let frameOffset = 32
+    static let controlSize = 128
+    static let frameOffset = 128
     static let frameSize = 32
-    static let valuesOffset = 64
-    /// 1 つの効果が渡せる値の数。
-    static let valueSlotCapacity = (passStride - valuesOffset) / MemoryLayout<Float>.stride
+    static let valuesOffset = 192
+    /// 1 つの効果が渡せる値の数。**利用者に見える上限**なので、間隔を広げても変えない。
+    static let valueSlotCapacity = 48
 
     private let gpu: RenderDevice
     private let compiler: any MTL4Compiler
@@ -67,6 +73,10 @@ final class EffectPipeline {
     /// 偽にすると、特化せず全種入りの 1 本で走る。**検査が画素を突き合わせるためにある**で、
     /// 本番の経路は触らない。
     var specializesBuiltinEffects = true
+    /// 偽にすると、隣り合う画素ごとの効果をまとめず、段ごとに別のパスで描く
+    /// (``Effect/fusingPixelStages(_:)``)。**検査と計測が前後を突き合わせるためにある**で、
+    /// 本番の経路は触らない。
+    var fusesPixelStages = true
     /// 種別ごとのパイプラインを組んだ回数。**使った種別の数で止まる**ことを検査が見る。
     private(set) var builtinStatesBuilt = 0
     /// 組み込みの原文を組んだもの。変わった画素だけを重ねるパイプライン

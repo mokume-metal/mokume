@@ -86,8 +86,8 @@ struct KindLayoutTests {
     /// 上の検査は**並びが同じ長さである限り**値を見るが、片方だけに 1 つ足すと
     /// 末尾の印の位置がずれるので、そこでも落ちる。この検査は「いくつあるか」を
     /// 人が読める形で残しておくためのもの。
-    @Test("種別の総数が、区画の印を含めて 53 のまま")
+    @Test("種別の総数が、区画の印を含めて 54 のまま")
     func keepsTheNumberOfKinds() {
-        #expect(Self.expected.count == 53)
+        #expect(Self.expected.count == 54)
     }
 }

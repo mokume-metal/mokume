@@ -200,6 +200,63 @@ static inline float4 mokume_enlarge(Pixel in, float2 offset) {
     return sum;
 }
 
+/// 反転。**乗算済みなので、色はアルファから引く** — 透明なところは透明のまま。
+/// 画素ごとの効果 (反転・単色化・周辺減光・色調整) は、1 つの段としても、まとめた段
+/// (`kEffectFused`) の中でも、同じ下の 4 つを通る — 式を 2 か所に持たない。
+static inline float4 mokume_invert(float4 color, float amount) {
+    if (amount <= 0.0) { return color; }
+    return float4(mix(color.rgb, color.a - color.rgb, amount), color.a);
+}
+
+/// 単色化。
+static inline float4 mokume_monochrome(float4 color, float amount) {
+    if (amount <= 0.0) { return color; }
+    float grey = mokume_luminance(color.rgb);
+    return float4(mix(color.rgb, float3(grey), amount), color.a);
+}
+
+/// 周辺減光。**色だけを落とし、アルファは動かさない**
+static inline float4 mokume_vignette(float2 place, float4 color, float amount) {
+    if (amount <= 0.0) { return color; }
+    float2 fromCentre = (place - 0.5) * 2.0;
+    float falloff = 1.0 - amount * smoothstep(0.4, 1.45, length(fromCentre));
+    return float4(color.rgb * falloff, color.a);
+}
+
+/// 色調整。明るさ・対比・彩度。**どれも 0 で無効**
+static inline float4 mokume_adjust(float4 color, float brightness, float contrast, float saturation) {
+    if (brightness == 0.0 && contrast == 0.0 && saturation == 0.0) { return color; }
+    float alpha = color.a;
+    // **不透明度 0 の画素はそのまま通す。** 乗算を戻せないので調整の掛けようが無く、色を
+    // 持っていれば (透明な地へ加算した光) それを運ぶ — 周辺減光・単色化・反転と同じく、
+    // 畳むのは出力段だけである (ADR-0011 決定 1・#1817)。入りが範囲の内なら、この画素は
+    // 透明な黒で、前と同じ値になる
+    if (alpha <= 0.0) { return color; }
+    // 掛け戻してから調整する。乗算済みのまま対比を掛けると、半透明のところだけ
+    // 効き方が変わる
+    float3 straight = color.rgb / alpha;
+    // 下へ押し出した値は 0 で止める。**入りに元からある負の値 (`.subtract` で引いた暗さ) は
+    // 切らず、その値で止める** — 作業空間は範囲の外の値を捨てない (ADR-0011 決定 1・#1817)。
+    // **止める所は段ごとに、その段の入りから決める** (`min(入り, 0)`)。元の入りから 1 度だけ
+    // 決めると、明るさで 0 以上へ持ち上げた値を対比が押し下げたとき、元の入りが負だったか
+    // どうかだけで答えが割れる。入りが範囲の内なら止める所はどの段も 0 で、前と同じ値になる
+    straight = max(straight + brightness, min(straight, 0.0));
+    straight = max((straight - 0.5) * (1.0 + contrast) + 0.5, min(straight, 0.0));
+    straight = max(
+        mix(float3(mokume_luminance(straight)), straight, 1.0 + saturation), min(straight, 0.0));
+    return float4(straight * alpha, alpha);
+}
+
+/// まとめた段の中の 1 段。種類は反転・単色化・周辺減光・色調整のどれか (Swift 側が保証する)。
+static inline float4 mokume_pixelStage(
+    uint kind, float2 place, float4 color, float p0, float p1, float p2)
+{
+    if (kind == kEffectInvert) { return mokume_invert(color, p0); }
+    if (kind == kEffectMonochrome) { return mokume_monochrome(color, p0); }
+    if (kind == kEffectVignette) { return mokume_vignette(place, color, p0); }
+    return mokume_adjust(color, p0, p1, p2);
+}
+
 /// この組み込みの効果の種別。**パイプラインを組むときに 1 種別へ特化する** (#2371)。
 ///
 /// 特化すると、下の `kind == …` の枝が組むときに畳まれ、その種別の枝だけが残る。13 種を 1 本に
@@ -230,26 +287,10 @@ float4 effect(Pixel in, Values values) {
         return mokume_blurAlong(in, step, p0);
     }
 
-    // 反転。**乗算済みなので、色はアルファから引く** — 透明なところは透明のまま
-    if (kind == kEffectInvert) {
-        if (p0 <= 0.0) { return in.color; }
-        return float4(mix(in.color.rgb, in.color.a - in.color.rgb, p0), in.color.a);
-    }
-
-    // 単色化
-    if (kind == kEffectMonochrome) {
-        if (p0 <= 0.0) { return in.color; }
-        float grey = mokume_luminance(in.color.rgb);
-        return float4(mix(in.color.rgb, float3(grey), p0), in.color.a);
-    }
-
-    // 周辺減光。**色だけを落とし、アルファは動かさない**
-    if (kind == kEffectVignette) {
-        if (p0 <= 0.0) { return in.color; }
-        float2 fromCentre = (in.place - 0.5) * 2.0;
-        float falloff = 1.0 - p0 * smoothstep(0.4, 1.45, length(fromCentre));
-        return float4(in.color.rgb * falloff, in.color.a);
-    }
+    // 反転・単色化・周辺減光 (画素ごとの効果。下の `mokume_invert` ほか)
+    if (kind == kEffectInvert) { return mokume_invert(in.color, p0); }
+    if (kind == kEffectMonochrome) { return mokume_monochrome(in.color, p0); }
+    if (kind == kEffectVignette) { return mokume_vignette(in.place, in.color, p0); }
 
     // 色ずれ。赤と青を反対向きへずらす。ずれ幅は中心からの隔たりに比例し、縁で `amount` ×
     // **その軸の長さ**の 2% になる (横は幅、縦は高さ。短辺ではない — 正規化した座標でずらす)
@@ -272,28 +313,19 @@ float4 effect(Pixel in, Values values) {
         return float4(mokume_withinReach(mixed, alpha, reach), alpha);
     }
 
-    // 色調整。明るさ・対比・彩度。**どれも 0 で無効**
-    if (kind == kEffectAdjust) {
-        if (p0 == 0.0 && p1 == 0.0 && p2 == 0.0) { return in.color; }
-        float alpha = in.color.a;
-        // **不透明度 0 の画素はそのまま通す。** 乗算を戻せないので調整の掛けようが無く、色を
-        // 持っていれば (透明な地へ加算した光) それを運ぶ — 周辺減光・単色化・反転と同じく、
-        // 畳むのは出力段だけである (ADR-0011 決定 1・#1817)。入りが範囲の内なら、この画素は
-        // 透明な黒で、前と同じ値になる
-        if (alpha <= 0.0) { return in.color; }
-        // 掛け戻してから調整する。乗算済みのまま対比を掛けると、半透明のところだけ
-        // 効き方が変わる
-        float3 straight = in.color.rgb / alpha;
-        // 下へ押し出した値は 0 で止める。**入りに元からある負の値 (`.subtract` で引いた暗さ) は
-        // 切らず、その値で止める** — 作業空間は範囲の外の値を捨てない (ADR-0011 決定 1・#1817)。
-        // **止める所は段ごとに、その段の入りから決める** (`min(入り, 0)`)。元の入りから 1 度だけ
-        // 決めると、明るさで 0 以上へ持ち上げた値を対比が押し下げたとき、元の入りが負だったか
-        // どうかだけで答えが割れる。入りが範囲の内なら止める所はどの段も 0 で、前と同じ値になる
-        straight = max(straight + p0, min(straight, 0.0));
-        straight = max((straight - 0.5) * (1.0 + p1) + 0.5, min(straight, 0.0));
-        straight = max(
-            mix(float3(mokume_luminance(straight)), straight, 1.0 + p2), min(straight, 0.0));
-        return float4(straight * alpha, alpha);
+    // 色調整。明るさ・対比・彩度 (`mokume_adjust`)
+    if (kind == kEffectAdjust) { return mokume_adjust(in.color, p0, p1, p2); }
+
+    // 隣り合う画素ごとの効果を、1 段にまとめたもの (#2371)。設定の頭が段の数、続く `float4` が
+    // 段ごとの (種類, p0, p1, p2)。**段ごとに別のパスで描いたときと同じ式を同じ順に掛ける**ので、
+    // 違いは段の間の `.rgba16Float` への丸めが無いことだけである
+    if (kind == kEffectFused) {
+        float4 color = in.color;
+        for (uint stage = 0; stage < uint(p0); stage++) {
+            float4 step = in.control[2 + stage];
+            color = mokume_pixelStage(uint(step.x), in.place, color, step.y, step.z, step.w);
+        }
+        return color;
     }
 
     // にじみ: 明るいところだけを取り出しながら縮める (p0 しきい値・p1 縮め幅)。

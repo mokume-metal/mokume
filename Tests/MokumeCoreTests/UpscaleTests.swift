@@ -401,11 +401,12 @@ struct UpscaleTests {
 
         try canvas.draw {
             quadrant(on: canvas)
-            canvas.effects([.invert(), .vignette(amount: 0.8)])
+            canvas.effects([.fringe(amount: 0.5), .vignette(amount: 0.8)])
         }
         let affected = fingerprint(try canvas.output.encodeForDisplay().bytes)
         #expect(plain != affected)
-        // 効果 2 つ (2 枠: 反転・周辺減光。最後の段が描く先へ直接書くので写し戻しは無い)
+        // 効果 2 つ (2 枠: 色ずれ・周辺減光。最後の段が描く先へ直接書くので写し戻しは無い。
+        // 反転と周辺減光のように隣り合う画素ごとの効果は 1 段にまとまるので使わない)
         // + 拡大の 1 枠
         #expect(canvas.stagePassesUsed == 3)
         #expect(canvas.output.width == Self.width)

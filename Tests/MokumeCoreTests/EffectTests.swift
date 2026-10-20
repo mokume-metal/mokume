@@ -141,8 +141,8 @@ struct EffectTests {
     @Test("段の数は、並びから決まる — 書き戻しの段は付かない")
     func derivesThePassCountFromTheList() throws {
         let canvas = try makeCanvas()
-        // 2 段の並び。最後の段 (単色化) が入りの絵へ書く
-        _ = try picture([.invert(), .monochrome()], on: canvas)
+        // 2 段の並び。最後の段 (単色化) が入りの絵へ書く。色ずれは近所を読むので、反転とはまとまらない
+        _ = try picture([.fringe(amount: 0.3), .monochrome()], on: canvas)
         #expect(canvas.effectPassesEncoded == 2)
 
         canvas.effectPassesEncoded = 0
@@ -367,11 +367,11 @@ struct EffectTests {
         canvas.failEffectPassForTesting = 1
         try canvas.draw {
             scene(on: canvas)
-            canvas.effects([.invert(), .monochrome()])
+            canvas.effects([.fringe(amount: 0.5), .monochrome()])
         }
         canvas.failEffectPassForTesting = nil
 
-        // 途中の絵 (反転だけ効いた絵) ではなく、効果をかける前の絵が出ている
+        // 途中の絵 (色ずれだけ効いた絵) ではなく、効果をかける前の絵が出ている
         #expect(fingerprint(try canvas.target.encodeForDisplay().bytes) == plain)
         #expect(canvas.warnings.hasWarned(.effectFailed))
     }

@@ -141,9 +141,14 @@ extension Canvas {
         // **半径は出す画素で書かれている** ([#1545])。段は描く細かさの絵の上で回るので、
         // 展開する前に描く画素へ換算する (縮め幅もこの半径で決まる)
         let scale = effectRadiusScale
-        let passes = pendingEffects.flatMap { $0.passes(drawnPerOutput: scale) }
-        guard !passes.isEmpty else { return false }
+        // **隣り合う画素ごとの効果は 1 段にまとめる** ([#2371])。段の間の丸めと、全画面の三角形・
+        // encoder・待ちが、まとめた数ぶん減る
+        //
+        // [#2371]: https://github.com/mokume-metal/mokume/issues/2371
+        let declared = pendingEffects.flatMap { $0.passes(drawnPerOutput: scale) }
+        guard !declared.isEmpty else { return false }
         let pipeline = try effectPipeline()
+        let passes = pipeline.fusesPixelStages ? Effect.fusingPixelStages(declared) : declared
         // **このフレームで使う枠を、1 枠も書かないうちに数え切る。** 取り直すと領域が
         // 入れ替わるので、既に束ねた番地の指す先を生かしておくことに頼ることになる。
         // 数え切っておけば、そもそも途中で取り直さない (拡大のぶんを足す — 上限で
@@ -374,9 +379,13 @@ extension Canvas {
         // [#1184]: https://github.com/mokume-metal/mokume/issues/1184
         let base = index * EffectPipeline.passStride
         let block = pipeline.passBuffer.contents().advanced(by: base)
-        var control = [pass.control.0, pass.control.1]
+        var control = [pass.control.0, pass.control.1] + pass.program
+        precondition(
+            control.count * MemoryLayout<SIMD4<Float>>.stride <= EffectPipeline.controlSize,
+            "an effect pass does not fit the control block")
         block.advanced(by: EffectPipeline.controlOffset)
-            .copyMemory(from: &control, byteCount: 32)
+            .copyMemory(
+                from: &control, byteCount: control.count * MemoryLayout<SIMD4<Float>>.stride)
         // 段の面の大きさと、出す大きさ。断片は位置と大きさを出す画素で受け取る (#1639) ので、
         // ラスタの位置 (段の面の画素) に掛ける比をこの 2 つから作る。段の面は縮めた脇の面の
         // こともあるので、``unitsPerDrawnPixel`` ではなく段ごとの大きさで割る
