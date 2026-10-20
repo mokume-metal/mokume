@@ -51,9 +51,10 @@ struct ContourFillTests {
     ///   - rings: 最初が外周、残りが穴。画面の座標で渡す。
     ///   - draw: 周の置き方。既定は平面の `vertex(x, y)` で並べる。
     private func tally(
-        _ rings: [[SIMD2<Float>]],
+        _ rings: [[SIMD2<Float>]], side: Int? = nil,
         drawing draw: ((Canvas, [[SIMD2<Float>]]) -> Void)? = nil
     ) throws -> Tally {
+        let size = side ?? self.size
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
         try canvas.draw {
             canvas.background(black)
@@ -294,6 +295,24 @@ struct ContourFillTests {
             return area > 0 ? ring.reversed() : ring
         }
         let result = try tally([square] + [first, second, third].map(counterClockwise))
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+    }
+
+    /// 回した座標の、島を囲む穴 ([#2997])。#2656 の場面 (a) (外周と、T 字で触れ合って島を囲む 2 つの穴) を
+    /// 43.3° 回すと、丸めで T 字が厳密には載らず、触れ方を組み直しへ送る判定が外れて、畳む道で島の塗りが
+    /// 裏返った (塗りが 44,800 になり、期待の 36,800 を越えた)。CPU の検査 (`RotatedTouchingHolesTests`) の
+    /// 写しが Canvas の道と同じ結果になることを、画素で 1 場面だけ確かめる。
+    ///
+    /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
+    @Test("回した座標で T 字に触れ合って島を囲む穴も、穴だけが抜ける (#2997)")
+    func aRotatedIslandIsPunched() throws {
+        let rings = (
+            [RotatedTouchingHolesTests.outer] + [
+                RotatedTouchingHolesTests.arrowhead, RotatedTouchingHolesTests.beamT,
+            ]
+        ).map { RotatedTouchingHolesTests.rotated($0, by: 43.3) }
+        let result = try tally(rings, side: 200)
         #expect(result.missing == 0)
         #expect(result.spilled == 0)
     }

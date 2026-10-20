@@ -348,8 +348,38 @@ nonisolated extension Triangulation {
             case through(Int)
         }
 
+        /// 触れているとみなす距離。**組み直し (``nonzeroSplit(crossings:comparisons:evenOdd:)``) が点を束ねる
+        /// 許容と同じ値** — 形の大きさ × 2^-16 と、座標の大きさ × 2^-20 の大きいほう。
+        ///
+        /// 触れ方を組み直しへ送る判定 (``survey()``) と、組み直しの側が、同じ距離で「触れている」と
+        /// 数える。判定が座標の厳密な一致で、組み直しだけが許容を持つと、回した・傾けた・計算で求めた
+        /// 座標で丸めに外れた触れ方が「触れていない」と判定されて、組み直しへ送られない
+        /// ([#2997])。辺が 1 本も無い・値が有限でないときは `nil`。
+        ///
+        /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
+        var touchTolerance: Float? {
+            var low = SIMD2<Float>(repeating: .infinity)
+            var high = SIMD2<Float>(repeating: -.infinity)
+            var magnitude: Float = 0
+            for edge in from.indices where tree.isPlaced(edge) {
+                for point in [points[from[edge]], points[to[edge]]] {
+                    low = simd_min(low, point)
+                    high = simd_max(high, point)
+                    magnitude = max(magnitude, abs(point).max())
+                }
+            }
+            guard low.x <= high.x else { return nil }
+            let tolerance = max(max(high.x - low.x, high.y - low.y) * 0x1p-16, magnitude * 0x1p-20)
+            guard tolerance > 0, tolerance.isFinite else { return nil }
+            return tolerance
+        }
+
         /// 真の交わりと、頂点を通って向こう側へ抜ける所を探す。
+        ///
+        /// 触れているかは、``touchTolerance`` の中にあるかで見る。**辺を共有する隣り合う辺の頂点は、
+        /// 厳密に同じ点のときだけ触れていると数える** (短い辺で、隣の頂点を触れた点と取り違えない)。
         func survey() -> Survey {
+            let touching = touchTolerance ?? 0
             // **並びを手元に写してから回す。** `self` 越しに引くと、組ごとに並びの参照を
             // 数え直す手間が入り、C の字の 1024 点で探す手間が 4 割増えた
             let tree = tree
@@ -364,7 +394,8 @@ nonisolated extension Triangulation {
             for first in from.indices where tree.isPlaced(first) {
                 let a = points[from[first]]
                 let b = points[to[first]]
-                let reach = tree.box(of: first)
+                // 触れているとみなす距離だけ広げる。囲みが離れていても、許容の中なら触れうる
+                let reach = tree.box(of: first) + SIMD4(-touching, -touching, touching, touching)
                 // 数えるのは比べた辺の数で、組の数ではない。組や末端の箱ごとに数えると、
                 // C の字の 4096 点で探す手間が 1 割増えた
                 pairs += 1
@@ -411,18 +442,25 @@ nonisolated extension Triangulation {
                         // 頂点はどれも、その点から出る辺の始点 (`a` か `c`) として 1 度ずつ
                         // 現れるので、始点どうしと、始点が相手の辺の途中に載る所だけを見る
                         guard found.isEmpty else { continue }
-                        if a == c {
+                        // 隣り合う辺 (頂点の番号を共有する) の頂点は、厳密に同じ点のときだけ触れる
+                        let adjacent = to[first] == from[second] || to[second] == from[first]
+                        let meets = adjacent ? a == c : simd_distance(a, c) <= touching
+                        if meets {
                             touches.append((a, .corner(first)))
                             touches.append((a, .corner(second)))
                         }
-                        if c1 == 0, c != b, c != a, Self.isStrictlyBetween(c, a, b) {
+                        if Self.distance(c, a, b) <= touching, simd_distance(c, a) > touching,
+                            simd_distance(c, b) > touching, Self.isStrictlyBetween(c, a, b)
+                        {
                             touches.append((c, .through(first)))
                             touches.append((c, .corner(second)))
                         }
                         let span = tree.box(of: second)
-                        guard a != c, a != d, a.x >= span.x, a.x <= span.z, a.y >= span.y, a.y <= span.w
+                        guard simd_distance(a, c) > touching, simd_distance(a, d) > touching,
+                            a.x >= span.x - touching, a.x <= span.z + touching,
+                            a.y >= span.y - touching, a.y <= span.w + touching
                         else { continue }
-                        if Triangulation.cross(d - c, a - c) == 0, Self.isStrictlyBetween(a, c, d) {
+                        if Self.distance(a, c, d) <= touching, Self.isStrictlyBetween(a, c, d) {
                             touches.append((a, .through(second)))
                             touches.append((a, .corner(first)))
                         }
@@ -430,11 +468,7 @@ nonisolated extension Triangulation {
                 }
             }
             if !found.isEmpty { return Survey(pairs: pairs, crossings: found, isTangled: true) }
-            var contacts: [SIMD2<Float>: [Visit]] = [:]
-            for (point, visit) in touches where contacts[point]?.contains(visit) != true {
-                contacts[point, default: []].append(visit)
-            }
-            for (point, visits) in contacts where visits.count >= 2 {
+            for (point, visits) in Self.contacts(of: touches, within: touching) where visits.count >= 2 {
                 if revisits(visits) || passesThrough(point, visits) || landsOnAnotherRing(visits) {
                     return Survey(pairs: pairs, crossings: [], isTangled: true)
                 }
@@ -478,6 +512,45 @@ nonisolated extension Triangulation {
                 }
             }
             return false
+        }
+
+        /// 触れた位置ごとの通り道。`distance` の中にある位置は 1 つにまとめる (`0` なら厳密に同じ位置だけ)。
+        ///
+        /// まとめた位置は、番号のいちばん小さい触れの位置で代表させる。
+        private static func contacts(
+            of touches: [(SIMD2<Float>, Visit)], within distance: Float
+        ) -> [(SIMD2<Float>, [Visit])] {
+            guard !touches.isEmpty else { return [] }
+            // x の順に並べて、x が許容の中の点だけを比べる
+            let order = touches.indices.sorted { touches[$0].0.x < touches[$1].0.x }
+            var parent = Array(touches.indices)
+            func root(_ index: Int) -> Int {
+                var index = index
+                while parent[index] != index {
+                    parent[index] = parent[parent[index]]
+                    index = parent[index]
+                }
+                return index
+            }
+            for (rank, index) in order.enumerated() {
+                for other in order[(rank + 1)...] {
+                    guard touches[other].0.x - touches[index].0.x <= distance else { break }
+                    if simd_distance(touches[index].0, touches[other].0) <= distance {
+                        let (x, y) = (root(index), root(other))
+                        if x != y { parent[max(x, y)] = min(x, y) }
+                    }
+                }
+            }
+            var groups: [Int: [Visit]] = [:]
+            var order2: [Int] = []
+            for index in touches.indices {
+                let key = root(index)
+                if groups[key] == nil { order2.append(key) }
+                if groups[key]?.contains(touches[index].1) != true {
+                    groups[key, default: []].append(touches[index].1)
+                }
+            }
+            return order2.map { (touches[$0].0, groups[$0] ?? []) }
         }
 
         /// 一直線に並ぶ 3 点で、`point` が `a` と `b` の間 (両端を除く) にあるか。
@@ -574,20 +647,8 @@ nonisolated extension Triangulation {
             let base = points.count
 
             // 許容。形の大きさと、座標の大きさ (その位置での浮動小数の刻み) の大きいほうに
-            // 比例させる
-            var low = SIMD2<Float>(repeating: .infinity)
-            var high = SIMD2<Float>(repeating: -.infinity)
-            var magnitude: Float = 0
-            for edge in from.indices where tree.isPlaced(edge) {
-                for point in [points[from[edge]], points[to[edge]]] {
-                    low = simd_min(low, point)
-                    high = simd_max(high, point)
-                    magnitude = max(magnitude, abs(point).max())
-                }
-            }
-            guard low.x <= high.x else { return nil }
-            let tolerance = max(max(high.x - low.x, high.y - low.y) * 0x1p-16, magnitude * 0x1p-20)
-            guard tolerance > 0, tolerance.isFinite else { return nil }
+            // 比例させる。触れ方を送る判定 (``survey()``) と同じ値 (``touchTolerance``)
+            guard let tolerance = touchTolerance else { return nil }
 
             // 1. 交点を作る。端が相手の辺の許容の中にある組は、載る点として 2. で扱う
             var nodes = points

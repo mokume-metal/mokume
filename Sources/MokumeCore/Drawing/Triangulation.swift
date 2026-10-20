@@ -87,16 +87,49 @@ nonisolated enum Triangulation {
         // 回る向きを揃える。以降の凸判定はこの向きを前提にする
         var order = Array(points.indices)
         if signedArea(points) < 0 { order.reverse() }
-        return slack > 0
-            ? cut(order: order, points: points, comparisons: &comparisons, margin: Tolerant(slack: slack))
-            : cut(order: order, points: points, comparisons: &comparisons, margin: Exact())
+        if slack > 0 {
+            return cut(
+                order: order, points: points, comparisons: &comparisons, margin: Tolerant(slack: slack)
+            ).triangles
+        }
+        let exact = cut(order: order, points: points, comparisons: &comparisons, margin: Exact())
+        if exact.isComplete { return exact.triangles }
+        // **切り終えられなかった形は、許容を持って切り直す** ([#2997])。渡された形そのものには許容を
+        // 持たせないが (``isInside(_:_:_:)`` の注記)、回した・傾けた座標では、耳の辺の上に載るはずの
+        // 点が丸めでわずかに外へ出て、その辺を持つ三角形を耳と取り違える。取り違えた耳は周を自分に
+        // 重ね、最後に裏返った三角形が残る (または耳が見つからず止まる)。厳密な座標では起きないので、
+        // 通常の形は 1 回で済み、払うのは切り終えられなかった形だけである。**許容は組み直しの側と同じ値**
+        // (``fallbackSlack(_:)``)。切り直しても終えられなければ、最初の結果を返す (これまでと同じ)。
+        guard let retrySlack = fallbackSlack(points) else { return exact.triangles }
+        var retried = 0
+        let retry = cut(
+            order: order, points: points, comparisons: &retried, margin: Tolerant(slack: retrySlack))
+        comparisons += retried
+        return retry.isComplete ? retry.triangles : exact.triangles
+    }
+
+    /// 切り直すときの許容 (距離)。**組み直しが点を束ねる許容と同じ式** — 形の大きさ × 2^-16 と、座標の
+    /// 大きさ × 2^-20 の大きいほう (``splitForNonzero(rings:points:comparisons:evenOdd:)``)。
+    /// 数でない・無限の座標があれば `nil`。
+    private static func fallbackSlack(_ points: [SIMD2<Float>]) -> Float? {
+        var low = SIMD2<Float>(repeating: .infinity)
+        var high = SIMD2<Float>(repeating: -.infinity)
+        var magnitude: Float = 0
+        for point in points {
+            low = simd_min(low, point)
+            high = simd_max(high, point)
+            magnitude = max(magnitude, abs(point).max())
+        }
+        guard low.x <= high.x else { return nil }
+        let slack = max(max(high.x - low.x, high.y - low.y) * 0x1p-16, magnitude * 0x1p-20)
+        return slack > 0 && slack.isFinite ? slack : nil
     }
 
     /// 耳を切っていく本体。耳を塞ぐ点の数え方 (`margin`) で特殊化する — 許容を持たない
     /// ふつうの形の耳切りに、許容の分岐も値も持ち込まない。
     private static func cut<Margin: EarMargin>(
         order: [Int], points: [SIMD2<Float>], comparisons: inout Int, margin: Margin
-    ) -> [(Int, Int, Int)] {
+    ) -> Cut {
         var ring = EarRing(order: order, points: points, margin: margin)
         ring.dropFlatCorners(from: 0, untilClean: ring.count)
 
@@ -125,12 +158,26 @@ nonisolated enum Triangulation {
             lapStart = ear
         }
 
+        var isComplete = ring.count <= 3
         if ring.count == 3 {
             let last = ring.entry
-            triangles.append(
-                (ring.vertex[ring.previous[last]], ring.vertex[last], ring.vertex[ring.next[last]]))
+            let tip = (ring.vertex[ring.previous[last]], ring.vertex[last], ring.vertex[ring.next[last]])
+            triangles.append(tip)
+            // 最後に残った 3 点が裏返っているのは、途中で耳を取り違えた跡 (面積 0 に近いものは、
+            // 一直線に潰れた残りで、そのまま返してよい)
+            let a = points[tip.0]
+            let b = points[tip.1]
+            let c = points[tip.2]
+            let scale = simd_length(b - a) + simd_length(c - b) + simd_length(a - c)
+            isComplete = cross(b - a, c - b) >= -0x1p-16 * scale * scale
         }
-        return triangles
+        return Cut(triangles: triangles, isComplete: isComplete)
+    }
+
+    /// 耳切りの結果。`isComplete` は、耳を切り尽くして、最後に裏返っていない 3 点が残ったか。
+    private struct Cut {
+        var triangles: [(Int, Int, Int)]
+        var isComplete: Bool
     }
 
     /// 穴を持つ形を、**穴のない 1 つの周**へ畳む。
