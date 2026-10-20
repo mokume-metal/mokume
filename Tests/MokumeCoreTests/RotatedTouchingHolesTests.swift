@@ -260,10 +260,11 @@ struct RotatedTouchingHolesTests {
     // MARK: - 触れた点をまとめる手間
 
     /// 触れた点をまとめる所が、x の揃った触れ方で二乗にならない。縦の辺に頂点が載る三角の穴を 4 倍に
-    /// 増やして、手間が 8 倍を越えないこと (線形なら 4 倍・二乗なら 16 倍に近づく)。
+    /// 増やして、点を舐めた数 (`comparisons`) が 8 倍を越えないこと (線形なら 4 倍・二乗なら 16 倍に近づく)。
+    /// 経過時間は見ない。
     @Test("縦の辺に触れる穴が 4 倍に増えても、触れた点をまとめる手間は二乗にならない (#2997)")
     func contactsAreGroupedInLinearTime() {
-        func best(_ count: Int) -> Double {
+        func scans(_ count: Int) -> Int {
             let height = Float(count) * 4
             var rings: [[SIMD2<Float>]] = [
                 [SIMD2(0, 0), SIMD2(100, 0), SIMD2(100, height), SIMD2(0, height)]
@@ -278,23 +279,15 @@ struct RotatedTouchingHolesTests {
                 defer { next += ring.count }
                 return Array(next..<(next + ring.count))
             }
-            var fastest = Double.infinity
-            for _ in 0..<5 {
-                var comparisons = 0
-                let start = ContinuousClock.now
-                let split = Triangulation.splitForNonzero(
-                    rings: indices, points: points, comparisons: &comparisons)
-                let elapsed = ContinuousClock.now - start
-                #expect(split != nil)
-                fastest = min(
-                    fastest,
-                    Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) * 1e-18)
-            }
-            return fastest
+            var comparisons = 0
+            let split = Triangulation.splitForNonzero(
+                rings: indices, points: points, comparisons: &comparisons)
+            #expect(split != nil)
+            return comparisons
         }
-        let small = best(2000)
-        let large = best(8000)
-        #expect(large < small * 8, "2000 個 \(small) 秒・8000 個 \(large) 秒")
+        let small = scans(2000)
+        let large = scans(8000)
+        #expect(large < small * 8, "2000 個 \(small) 回・8000 個 \(large) 回")
     }
 
     // MARK: - 傾いた平面

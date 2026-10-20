@@ -460,7 +460,11 @@ nonisolated extension Triangulation {
                 }
             }
             if !found.isEmpty { return Survey(pairs: pairs, crossings: found, isTangled: true) }
-            for (point, visits) in Self.contacts(of: touches, within: touching) where visits.count >= 2 {
+            // 触れた点をまとめるときに比べた点の数も、比べた数に積む (二乗に戻っても数が動くように)
+            var scanned = 0
+            let contacts = Self.contacts(of: touches, within: touching, scanned: &scanned)
+            pairs += scanned
+            for (point, visits) in contacts where visits.count >= 2 {
                 if revisits(visits) || passesThrough(point, visits) || landsOnAnotherRing(visits) {
                     return Survey(pairs: pairs, crossings: [], isTangled: true)
                 }
@@ -514,10 +518,12 @@ nonisolated extension Triangulation {
         /// の点を束ねる所と同じ形)。x で並べて x が許容の中の点だけを比べる作りは、x が揃った触れ方
         /// (縦の辺に載る頂点が縦に並ぶ形) で全部の組を比べて二乗になる ([#2997])。同じ位置の触れは先に
         /// 束ね、升目には違う位置の先頭だけを入れるので、1 点に幾つも触れる形でも升目の中は膨らまない。
+        /// 比べた点の数は `scanned` に積む (``splitForNonzero(rings:points:comparisons:evenOdd:)`` の
+        /// `comparisons` に載る)。
         ///
         /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
         private static func contacts(
-            of touches: [(SIMD2<Float>, Visit)], within distance: Float
+            of touches: [(SIMD2<Float>, Visit)], within distance: Float, scanned: inout Int
         ) -> [(SIMD2<Float>, [Visit])] {
             guard !touches.isEmpty else { return [] }
             var parent = Array(touches.indices)
@@ -552,6 +558,7 @@ nonisolated extension Triangulation {
                     for dy in -1...1 {
                         var other = head[Self.cell(column + dx, row + dy)] ?? -1
                         while other >= 0 {
+                            scanned += 1
                             if simd_distance(touches[other].0, point) <= distance { join(index, other) }
                             other = after[other]
                         }
