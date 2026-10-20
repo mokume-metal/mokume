@@ -35,7 +35,8 @@ final class RemoteParams {
     /// **宣言は 1 件ずつ緩く読む** (``Reading``)。配列ごと厳しく読むと、1 件が読めないだけで応答
     /// 全体が `WatchedFile` に捨てられ、つまみが 1 つも並ばない — 子が新しい版のライブラリで
     /// 知らない `type` を名乗ったときに起きる ([#2856](https://github.com/mokume-metal/mokume/issues/2856))。
-    /// 外枠 (`params` が配列でない・JSON でない) が読めない応答は、いままでどおり全体を断る。
+    /// 外枠 (`params` が配列でない・JSON でない) が読めない応答は、全体を断り、改訂ごとに 1 度名乗る
+    /// ([#2889](https://github.com/mokume-metal/mokume/issues/2889))。
     ///
     /// **外枠も、使わないものと型の外れた付随を理由に捨てない。** `revision` は取り込みに使わないので
     /// 読まない (型がずれても応答ごと捨てられていた)。`id` は自分の要求の echo かを見るのに使うが、
@@ -100,13 +101,18 @@ final class RemoteParams {
     /// 宣言は、新しく飛ばしたものとして言い直す。
     private var skipped: Set<String> = []
 
-    /// 読めない宣言を飛ばしたことの名乗り。**検査から差し替える** — 既定は標準エラー。
+    /// 読めない宣言を飛ばしたこと・読めない応答のことの名乗り。**検査から差し替える** — 既定は標準エラー。
     private let warn: (String) -> Void
 
     init(directory: URL, warn: @escaping (String) -> Void = Diagnostics.warn) {
         self.directory = directory
         self.warn = warn
-        self.report = WatchedFile(url: WorkDirectory.reportURL(under: directory))
+        let reportURL = WorkDirectory.reportURL(under: directory)
+        // **外枠が読めない応答も名乗る** ([#2889](https://github.com/mokume-metal/mokume/issues/2889))。
+        // つまみが 1 つも並ばない理由が残る
+        self.report = WatchedFile(url: reportURL) { reason in
+            warn(UnreadableRevision.notice(of: "The knob report", at: reportURL, reason: reason))
+        }
     }
 
     /// 応答が変わっていれば読み直す。

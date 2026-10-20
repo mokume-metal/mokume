@@ -182,6 +182,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
     /// 確定させずに次の機会へ回る (``WatchedFile``)。
     private let manifest: WatchedFile<SharedFrameSurface.Manifest>
+    /// 道具の端末への名乗り。**検査から差し替える** — 既定は標準エラー。
+    var warn: (String) -> Void = Diagnostics.warn
     /// 最後に画面へ出した枚数。**同じ絵を二度出さない**ための目印。
     ///
     /// **差し出しを投入した直後に記し、結末は後で見る** ([#2735])。投入を GPU が打ち切ったら、
@@ -252,6 +254,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         super.init()
         screenLink.owner = self
         windowRelay.stage = self
+        manifest.onUnreadable = { [weak self] reason in self?.noteUnreadableManifest(reason) }
     }
 
     /// **畳み忘れても、手放した時点で畳む。** 仕掛けを止めない限り、走り続ける
@@ -531,6 +534,19 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     }
 
     // MARK: - 言うこと
+
+    /// 読めない目録を掴んだことを、改訂ごとに 1 度言う ([#2889])。
+    ///
+    /// **差し出し元は変えない** — 読めない目録からは乗り換え先が分からないので、直前の絵を出したままにする
+    /// (ADR-0032 決定 6)。名乗りの文面は ``UnreadableRevision`` で、つまみの応答と揃える。
+    /// 「目録が読めない回」を知る口はここだけである。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    private func noteUnreadableManifest(_ reason: String) {
+        warn(
+            UnreadableRevision.notice(
+                of: "The shared-frame manifest", at: manifest.url, reason: reason))
+    }
 
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
     private func noteFailure(_ failure: RenderFailure) {

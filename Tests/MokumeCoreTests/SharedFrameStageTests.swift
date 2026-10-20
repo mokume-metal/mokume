@@ -424,6 +424,40 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **読めない目録は、黙って捨てず、改訂ごとに台ごと 1 度名乗る** ([#2889])。版が違えば読まない
+    /// 目録 (`schemaVersion` が違う) を置かれると、台は古い絵のまま理由を言わずに続いていた。
+    /// 差し出し元は変えず、直前の絵を出したまま (ADR-0032 決定 6)。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    @Test("読めない目録は、読み直しても 1 度だけ名乗り、差し出し元は変えない")
+    func anUnreadableManifestIsSaidOnce() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("unreadable"))
+            defer { stage.close() }
+            var said: [String] = []
+            stage.warn = { said.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            #expect(said.isEmpty, "読めた目録で名乗っている: \(said)")
+
+            // 版の違う目録に置き換わった (更新時刻は動く)
+            try Data(#"{"schemaVersion":99,"ids":[1],"width":10,"height":10}"#.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(stage.hasSource, "差し出し元は変わらず、直前の絵を出したまま")
+            let message = try #require(said.first)
+            #expect(said.count == 1, "読み直すたびに繰り返している: \(said)")
+            #expect(message.contains(url.path), "どのファイルか: \(message)")
+            #expect(message.contains("99"), "読めなかった理由: \(message)")
+            #expect(message.contains("mokume doctor"), "候補: \(message)")
+            _ = surface
+        }
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が

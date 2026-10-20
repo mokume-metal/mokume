@@ -466,18 +466,69 @@ struct RemoteParamsTests {
         }
     }
 
-    /// **外枠は今どおり (黙って捨てる) で、この PR の範囲の外**: `params` が配列でない・JSON でない応答は、
-    /// `WatchedFile` が確定させず次を待つ。飛ばす単位は宣言 1 件で、外枠が壊れた応答を名乗る仕組みは
-    /// 別の約束 (`WatchedFile` は他の読み手も使う) なので、ここでは振る舞いを変えないことだけを固定する。
-    @Test("(範囲外) params が配列でない応答は、従来どおり黙ってつまみを並べない")
-    func anUnreadableEnvelopeIsStillDroppedSilently() throws {
+    /// **外枠が読めない応答は、つまみを並べないまま、改訂ごとに 1 度だけ名乗る** ([#2889])。
+    /// 黙って捨てると、つまみが 1 つも並ばない理由がどこにも残らない (ADR-0018 決定 6)。
+    /// 文面は (i) どのファイルか (ii) 読めなかった理由 (iii) 候補 (版のずれ・`mokume doctor`) を言い、
+    /// 版のずれを断定しない。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    @Test("params が配列でない応答は、つまみを並べず、読み直しても 1 度だけ名乗る")
+    func anUnreadableEnvelopeIsSaidOnce() throws {
         try withFacet { facet in
             try publishRaw(params: #"{"name":"a"}"#, at: facet)
             var said: [String] = []
             let params = RemoteParams(directory: facet, warn: { said.append($0) })
-            #expect(!params.refresh())
+            for _ in 0..<3 { #expect(!params.refresh()) }
             #expect(params.boxes.isEmpty)
-            #expect(said.isEmpty)
+            let message = try #require(said.first)
+            #expect(said.count == 1, "読み直すたびに繰り返している: \(said)")
+            #expect(message.contains(WorkDirectory.reportURL(under: facet).path), "どのファイルか: \(message)")
+            #expect(message.contains("params"), "読めなかった理由: \(message)")
+            #expect(message.contains("mokume doctor"), "候補: \(message)")
+            #expect(message.contains("may"), "版のずれを断定していない: \(message)")
+        }
+    }
+
+    /// **名乗っても確定させない** (#987・#1048)。更新時刻が動かないまま読める中身へ差し替わっても
+    /// 取り込み、取り込んだ後は何も言わない。
+    @Test("名乗った後、更新時刻が動かないまま読める応答に変わっても取り込む")
+    func anUnreadableEnvelopeIsStillReadAgain() throws {
+        try withFacet { facet in
+            let url = WorkDirectory.reportURL(under: facet)
+            let moment = Date(timeIntervalSince1970: 1_000_000)
+            try publishRaw(params: #"{"name":"a"}"#, at: facet)
+            try stamp(url, moment)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            #expect(!params.refresh())
+            #expect(said.count == 1)
+
+            try publishRaw(params: #"[{"name":"a","type":"float","value":1}]"#, at: facet)
+            try stamp(url, moment)
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["a"])
+            #expect(said.count == 1, "読めた改訂で名乗っている: \(said)")
+        }
+    }
+
+    /// **名乗るのは改訂ごと。** 別の読めない応答に置き直されたら (更新時刻が動く)、もう 1 度。
+    @Test("別の読めない応答に置き直されたら、もう 1 度だけ名乗る")
+    func aNewUnreadableRevisionIsSaidAgain() throws {
+        try withFacet { facet in
+            let url = WorkDirectory.reportURL(under: facet)
+            try publishRaw(params: #"{"name":"a"}"#, at: facet)
+            try stamp(url, Date(timeIntervalSince1970: 1_000_000))
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            params.refresh()
+            params.refresh()
+            #expect(said.count == 1)
+
+            try publishRaw(params: #"{"name":"b"}"#, at: facet)
+            try stamp(url, Date(timeIntervalSince1970: 1_000_001))
+            params.refresh()
+            params.refresh()
+            #expect(said.count == 2, "\(said)")
         }
     }
 

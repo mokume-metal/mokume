@@ -96,4 +96,41 @@ struct WatchedFileTests {
             #expect(file.changed() == nil)
         }
     }
+
+    /// **確定させないことと、黙ることは別である** ([#2889](https://github.com/mokume-metal/mokume/issues/2889))。
+    /// 同じ改訂は読み直すたびには名乗らず、改訂 (更新時刻) が動いたら新しいものとして 1 度名乗る。
+    @Test("解けなかった改訂は、読み直しても 1 度だけ知らせ、次の改訂ではまた知らせる")
+    func reportsAnUnreadableRevisionOncePerRevision() throws {
+        try withFile { url in
+            let moment = Date(timeIntervalSince1970: 1000)
+            try place(#"{"revi"#, at: url, moment)
+            var reasons: [String] = []
+            let file = WatchedFile<Payload>(url: url) { reasons.append($0) }
+            for _ in 0..<3 { #expect(file.changed() == nil) }
+            #expect(reasons.count == 1, "\(reasons)")
+            #expect(!(reasons.first ?? "").isEmpty, "理由が空")
+
+            try place(#"{"revisi"#, at: url, moment.addingTimeInterval(1))
+            for _ in 0..<3 { #expect(file.changed() == nil) }
+            #expect(reasons.count == 2, "\(reasons)")
+        }
+    }
+
+    /// 知らせた後も確定させない。読めた改訂では知らせない。
+    @Test("知らせた後に同じ改訂が読めるようになれば取り込み、それ以降は知らせない")
+    func staysQuietOnceItReads() throws {
+        try withFile { url in
+            let moment = Date(timeIntervalSince1970: 1000)
+            try place(#"{"revi"#, at: url, moment)
+            var reasons: [String] = []
+            let file = WatchedFile<Payload>(url: url) { reasons.append($0) }
+            #expect(file.changed() == nil)
+            #expect(reasons.count == 1)
+
+            try place(#"{"revision":7}"#, at: url, moment)
+            #expect(file.changed() == Payload(revision: 7))
+            #expect(file.changed() == nil)
+            #expect(reasons.count == 1)
+        }
+    }
 }
