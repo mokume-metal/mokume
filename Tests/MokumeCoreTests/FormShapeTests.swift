@@ -1398,9 +1398,13 @@ struct FormShapeTests {
         var scale: (x: Float, y: Float) = (1, 1)
         /// 細い向きが形の x か (`false` なら y)。帯 1 本の閉じた式が、どちらの軸の帯でも通るように。
         var thinAlongX = false
+        /// 細い向きの幅。
+        var width: Float = 0.3
+        /// 中心 (描く画素の座標)。
+        var center: (x: Float, y: Float) = (31.3, 32.6)
 
         var testDescription: String {
-            "\(angle) rad・倍率 \(scale)・細い向き \(thinAlongX ? "x" : "y")"
+            "\(angle) rad・倍率 \(scale)・細い向き \(thinAlongX ? "x" : "y")・幅 \(width)・中心 \(center)"
         }
 
         static let all: [Tilt] = [
@@ -1408,40 +1412,17 @@ struct FormShapeTests {
             Tilt(angle: Float.pi / 6, thinAlongX: true), Tilt(angle: Float.pi / 4, thinAlongX: true),
             Tilt(angle: Float.pi / 6, scale: (1.7, 0.6)),
             Tilt(angle: Float.pi / 4, scale: (0.5, 1.5), thinAlongX: true),
+            // 軸に沿うとみなす境 (行の小さい成分が大きい成分の 1e-5) の両側
+            Tilt(angle: 0.000009), Tilt(angle: 0.000011), Tilt(angle: 0.000011, thinAlongX: true),
+            Tilt(angle: 0.0003),
+            // 桁落ちが最も出た置き方 (幅 0.9 の帯が画素の境目に乗る)。直す前は 1.2/255 外れた
+            Tilt(angle: 0.000011, width: 0.9, center: (31.5, 32.5)),
         ]
     }
 
-    /// **回した細い `rect` の塗りは、画素ごとに、画素の軸に沿った正方形との重なりの面積で出る**
-    /// ([#2226])。
-    ///
-    /// 和が合うだけでは、形が鏡に映っても、画素の位置がずれて数えられても通る。ここでは画素 1 つ
-    /// ずつを、回した長方形を画素の四角で切って出した面積 (Sutherland–Hodgman) と比べる。45° と、
-    /// 画素の格子と周期の合わない 30°・−60°、回した後に縦横で違う倍率を掛けた変換を見る。細い向きが
-    /// x のものも y のものも置く。長さは 12 と短くして、端の画素も入れる。直す前は、画素を形の向きに
-    /// 回した正方形で数えていたので、画素ごとに 0.03〜0.07 外れた。
-    ///
-    /// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
-    @Test("回した細い rect の塗りは、画素ごとに画素の四角との重なりの面積で出る", arguments: Tilt.all)
-    func tiltedThinRectanglesMatchPixelOverlap(_ tilt: Tilt) throws {
-        let (cx, cy, length, width): (Float, Float, Float, Float) = (31.3, 32.6, 12, 0.3)
-        let (w, h) = tilt.thinAlongX ? (width, length) : (length, width)
-        let pixels = try coverage(width: 64, height: 64) { canvas in
-            canvas.noStroke()
-            canvas.fill(white)
-            canvas.translate(cx, cy)
-            canvas.rotate(tilt.angle)
-            canvas.scale(tilt.scale.x, tilt.scale.y)
-            canvas.rect(-w / 2, -h / 2, w, h)
-        }
-        // 長方形の 4 つの頂点 (描く画素の座標)。形の座標を倍率で伸ばしてから、`rotate(θ)` の行列
-        // [[c, −s], [s, c]] で回し、中心へ置く
-        let (c, s) = (Double(cos(tilt.angle)), Double(sin(tilt.angle)))
-        let corners: [(Double, Double)] = [(-1, -1), (1, -1), (1, 1), (-1, 1)].map { sx, sy in
-            let lx = sx * Double(w) / 2 * Double(tilt.scale.x)
-            let ly = sy * Double(h) / 2 * Double(tilt.scale.y)
-            return (Double(cx) + c * lx - s * ly, Double(cy) + s * lx + c * ly)
-        }
-        /// 凸多角形を、`a·x + b·y + k ≥ 0` の側だけに切る。
+    /// 凸多角形 `polygon` を、画素 (x, y) の四角 [x, x+1] × [y, y+1] で切った面積 (Sutherland–Hodgman)。
+    private static func overlapArea(_ polygon: [(Double, Double)], x: Int, y: Int) -> Double {
+        /// `a·x + b·y + k ≥ 0` の側だけに切る。
         func clip(_ polygon: [(Double, Double)], _ a: Double, _ b: Double, _ k: Double) -> [(Double, Double)] {
             var kept: [(Double, Double)] = []
             for (index, current) in polygon.enumerated() {
@@ -1455,26 +1436,145 @@ struct FormShapeTests {
             }
             return kept
         }
+        var cut = polygon
+        cut = clip(cut, 1, 0, -Double(x))
+        cut = clip(cut, -1, 0, Double(x + 1))
+        cut = clip(cut, 0, 1, -Double(y))
+        cut = clip(cut, 0, -1, Double(y + 1))
+        var area = 0.0
+        for (index, a) in cut.enumerated() {
+            let b = cut[(index + 1) % cut.count]
+            area += a.0 * b.1 - a.1 * b.0
+        }
+        return abs(area) / 2
+    }
+
+    /// 中心 (cx, cy) へ置いた半幅 (hx, hy) の長方形の 4 つの頂点 (描く画素の座標)。形の座標を倍率で
+    /// 伸ばしてから、`rotate(θ)` の行列 [[c, −s], [s, c]] で回し、中心へ置く。
+    private static func rotatedCorners(
+        center: (Float, Float), half: (Float, Float), angle: Float, scale: (x: Float, y: Float) = (1, 1)
+    ) -> [(Double, Double)] {
+        let (c, s) = (Double(cos(angle)), Double(sin(angle)))
+        return [(-1, -1), (1, -1), (1, 1), (-1, 1)].map { sx, sy in
+            let lx = sx * Double(half.0) * Double(scale.x)
+            let ly = sy * Double(half.1) * Double(scale.y)
+            return (Double(center.0) + c * lx - s * ly, Double(center.1) + s * lx + c * ly)
+        }
+    }
+
+    /// **回した細い `rect` の塗りは、画素ごとに、画素の軸に沿った正方形との重なりの面積で出る**
+    /// ([#2226])。
+    ///
+    /// 和が合うだけでは、形が鏡に映っても、画素の位置がずれて数えられても通る。ここでは画素 1 つ
+    /// ずつを、回した長方形を画素の四角で切って出した面積と比べる。45° と、画素の格子と周期の合わない
+    /// 30°・−60°、回した後に縦横で違う倍率を掛けた変換を見る。細い向きが x のものも y のものも置く。
+    /// 長さは 12 と短くして、端の画素も入れる。直す前は、画素を形の向きに回した正方形で数えていたので、
+    /// 画素ごとに 0.03〜0.07 外れた。
+    ///
+    /// **軸に沿うとみなす境の両側の、ごくわずかな傾き (0.000009 rad と 0.000011 rad・長辺と短辺の比が
+    /// 1e-5 前後) も見る。** 帯 1 本の閉じた式は、短辺が長辺の 1e-5 ほどになると、4 項の 2 乗の和の
+    /// 桁落ちで画素ごとに 1.2/255 以上外れた (幅 0.9 の帯が画素の境目に乗る置き方)。ずれは 0.002
+    /// (0.5/255) 以下に収める。
+    ///
+    /// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
+    @Test("回した細い rect の塗りは、画素ごとに画素の四角との重なりの面積で出る", arguments: Tilt.all)
+    func tiltedThinRectanglesMatchPixelOverlap(_ tilt: Tilt) throws {
+        let (cx, cy, length, width): (Float, Float, Float, Float) = (tilt.center.x, tilt.center.y, 12, tilt.width)
+        let (w, h) = tilt.thinAlongX ? (width, length) : (length, width)
+        let pixels = try coverage(width: 64, height: 64) { canvas in
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.translate(cx, cy)
+            canvas.rotate(tilt.angle)
+            canvas.scale(tilt.scale.x, tilt.scale.y)
+            canvas.rect(-w / 2, -h / 2, w, h)
+        }
+        let corners = Self.rotatedCorners(
+            center: (cx, cy), half: (w / 2, h / 2), angle: tilt.angle, scale: tilt.scale)
         var worst = 0.0
         var worstAt = (0, 0)
         for y in 0..<64 {
             for x in 0..<64 {
-                var polygon = corners
-                polygon = clip(polygon, 1, 0, -Double(x))
-                polygon = clip(polygon, -1, 0, Double(x + 1))
-                polygon = clip(polygon, 0, 1, -Double(y))
-                polygon = clip(polygon, 0, -1, Double(y + 1))
-                var area = 0.0
-                for (index, a) in polygon.enumerated() {
-                    let b = polygon[(index + 1) % polygon.count]
-                    area += a.0 * b.1 - a.1 * b.0
-                }
-                let expected = abs(area) / 2
+                let expected = Self.overlapArea(corners, x: x, y: y)
                 let drawn = Double(pixels.components[(y * 64 + x) * 4])
                 if abs(drawn - expected) > worst { (worst, worstAt) = (abs(drawn - expected), (x, y)) }
             }
         }
-        #expect(worst <= 0.01, "\(tilt.testDescription) の画素ごとの最大のずれ: \(worst) (画素 \(worstAt))")
+        #expect(worst <= 0.002, "\(tilt.testDescription) の画素ごとの最大のずれ: \(worst) (画素 \(worstAt))")
+    }
+
+    /// **回した `rect` の輪郭で、帯の穴が 1 画素より細く残っても、穴の面積は画素ごとに正しい**
+    /// ([#2226])。
+    ///
+    /// 輪郭の太さが形の大きさに近いと、帯の穴 (内縁の内) が 1 画素より細く残る (`mokume_thinHole`)。
+    /// 穴の被覆も、形の軸の長さの積では 45° で置く位置により穴の面積が振れた (穴の半幅 0.5 の
+    /// 45° の `rect` で、穴の窓の光の量が 0.945〜0.980 倍)。穴の周りは帯が覆うので、穴の中心の
+    /// 画素の被覆は 1 − 穴との重なりの面積になる。穴の四角を画素の四角で切った面積と画素ごとに比べる。
+    /// 穴の半幅は 0.4 と 0.2 (半幅 0.5 の 45° の穴は、幅が画素の対角より狭いのに 1 画素と数えて細い枝に
+    /// 入らず、縁 1 本の式に残る。#2991)。
+    ///
+    /// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
+    @Test(
+        "回した rect の輪郭の細い穴は、画素ごとに穴と画素の四角との重なりの面積で出る",
+        arguments: [Float.pi / 4, Float.pi / 6], [Float(19.2), 19.6])
+    func tiltedThinHolesMatchPixelOverlap(_ angle: Float, _ weight: Float) throws {
+        let center: (Float, Float) = (31.3, 32.6)
+        let pixels = try coverage(width: 64, height: 64) { canvas in
+            canvas.strokeWeight(weight)
+            canvas.translate(center.0, center.1)
+            canvas.rotate(angle)
+            canvas.rect(-10, -10, 20, 20)
+        }
+        let holeHalf = 10 - weight / 2
+        // 輪郭は画面で半画素 (右下へ) 寄せて置く約束 (ADR-0039 決定 2)
+        let hole = Self.rotatedCorners(
+            center: (center.0 + 0.5, center.1 + 0.5), half: (holeHalf, holeHalf), angle: angle)
+        var worst = 0.0
+        var worstAt = (0, 0)
+        var holeArea = 0.0
+        for y in 26..<40 {
+            for x in 25..<38 {
+                let overlap = Self.overlapArea(hole, x: x, y: y)
+                holeArea += overlap
+                let drawn = Double(pixels.components[(y * 64 + x) * 4])
+                if abs(drawn - (1 - overlap)) > worst { (worst, worstAt) = (abs(drawn - (1 - overlap)), (x, y)) }
+            }
+        }
+        #expect(holeArea > 0.1, "穴が窓に入っていない (面積 \(holeArea))")
+        #expect(worst <= 0.01, "\(angle) rad・太さ \(weight) の穴の画素ごとの最大のずれ: \(worst) (画素 \(worstAt))")
+    }
+
+    /// 回した円の輪郭の細い穴 (半径 0.4) の面積は、置く位置によらず、回さない円と同じ (#2226)。
+    ///
+    /// 楕円の穴は外接する四角で数える (細い塗りの円と同じ数え方・`mokume_thinEllipseHoleCoverage`) ので、
+    /// 厳密な円との重なりとは比べず、**回さない同じ円の穴の面積との差**を見る。形の軸の長さの積では、
+    /// 45° の円の穴 (半径 0.4) の面積が置く位置で回さない円の 0.93〜1.01 倍に振れた (直した後は 0.97〜0.99)。
+    /// 窓の光の量で測った半径 0.5 の穴は 0.986〜1.052 倍で、穴が消える位置もあった。
+    @Test("回した円の輪郭の細い穴は、置く位置によらず回さない円と同じ面積で出る")
+    func tiltedThinCircleHolesKeepTheirArea() throws {
+        func holeArea(angle: Float, offset: Float) throws -> Double {
+            let pixels = try coverage(width: 64, height: 64) { canvas in
+                canvas.strokeWeight(19.2)
+                canvas.translate(31.0, 32.0 + offset)
+                canvas.rotate(angle)
+                canvas.ellipse(0, 0, 20, 20)
+            }
+            var area = 0.0
+            for y in 27..<39 {
+                for x in 25..<37 { area += 1 - Double(pixels.components[(y * 64 + x) * 4]) }
+            }
+            return area
+        }
+        // 回さない円は 4 画素の角に置く (offset 0) と、画素の中心に置く (offset 0.5) の平均
+        let reference = try (holeArea(angle: 0, offset: 0) + holeArea(angle: 0, offset: 0.5)) / 2
+        #expect(reference > 0.5, "穴が窓に入っていない (面積 \(reference))")
+        for step in 0..<8 {
+            let offset = Float(step) * 0.25
+            let tilted = try holeArea(angle: Float.pi / 4, offset: offset)
+            #expect(
+                abs(tilted - reference) <= 0.05 * reference,
+                "45° の円の穴・ずらし \(offset): \(tilted) (回さない円は \(reference))")
+        }
     }
 
     /// **1 画素より小さい円は、置く位置によらず外接する正方形の面積ぶんで出る。**
@@ -2166,6 +2266,46 @@ struct FormShapeTests {
         let halfDensity = SIMD2<Float>(2, 2)
         #expect(!form(2, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 2")
         #expect(form(1.9, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 1.9")
+    }
+
+    /// **細い線と点の判定は、太さを描く画素で測り、境目の近くは「含む」側に倒す** ([#2226])。
+    ///
+    /// 「含む」と答えた図形の列だけが、断片に細い線の枝 (回した線の被覆が画素の四角を切る計算を持つ) を
+    /// 残した組で描かれる (`kFormHasThinFill`)。境目は断片と同じ 256/258 画素。太い線まで「含む」と答える
+    /// と輪郭の多い絵が費用を払い、細い線を「含まない」と答えると縁 1 本の式に戻って絵が変わる。
+    /// 長さ (形自身の x) は見ない — 点 (長さ 0) も、長い線も、太さだけで答える。
+    ///
+    /// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
+    @Test("細い線と点の判定は、太さを描く画素で測り、境目の近くは含む側に倒す")
+    func thinLineJudgementLeansToIncluding() {
+        func line(
+            _ weight: Float, length: Float = 40, linear: SIMD4<Float> = SIMD4(1, 0, 0, 1),
+            strokes: Bool = true
+        ) -> FormInstance {
+            FormInstance(
+                kind: .line, linear: linear, offset: SIMD2(10, 10), half: SIMD2(length / 2, 0),
+                halfWeight: weight / 2, fill: SIMD4(1, 1, 1, 1), stroke: SIMD4(1, 1, 1, 1),
+                fills: false, strokes: strokes, cap: .round, join: .miter)
+        }
+        let one = SIMD2<Float>(1, 1)
+        #expect(line(0.5).mayHaveThinPart(unitsPerDrawnPixel: one), "太さ 0.5 の線")
+        #expect(line(0.5, length: 0).mayHaveThinPart(unitsPerDrawnPixel: one), "太さ 0.5 の点")
+        #expect(line(0.99).mayHaveThinPart(unitsPerDrawnPixel: one), "太さ 0.99 の線")
+        #expect(!line(1).mayHaveThinPart(unitsPerDrawnPixel: one), "太さ 1 の線")
+        #expect(!line(1, length: 0).mayHaveThinPart(unitsPerDrawnPixel: one), "太さ 1 の点")
+        #expect(!line(4, length: 400).mayHaveThinPart(unitsPerDrawnPixel: one), "太さ 4 の長い線")
+        let justOutside = Float(256) / 258 * 1.0005
+        #expect(line(justOutside).mayHaveThinPart(unitsPerDrawnPixel: one), "境目の 0.05% 外の線")
+        // 回しても画面の太さで答える (線の向きは `linear` が持つ)
+        let rotated = SIMD4<Float>(cos(0.5), sin(0.5), -sin(0.5), cos(0.5))
+        #expect(line(0.5, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 0.5")
+        #expect(!line(2, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 2")
+        // 細かさ 0.5 では描く画素で答える: 太さ 2 は描く画素で 1
+        let halfDensity = SIMD2<Float>(2, 2)
+        #expect(!line(2).mayHaveThinPart(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の太さ 2")
+        #expect(line(1.9).mayHaveThinPart(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の太さ 1.9")
+        // 輪郭を持たない線は枝を持たない
+        #expect(!line(0.5, strokes: false).mayHaveThinPart(unitsPerDrawnPixel: one), "輪郭の無い線")
     }
 
     /// **輪郭の帯の細い穴の判定は、穴の大きさを描く画素で測り、潰れた穴は必ず「含む」と答える**

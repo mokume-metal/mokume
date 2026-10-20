@@ -728,6 +728,9 @@ constant bool kFormHasStroke [[function_constant(1)]];
 /// (塗り + 輪郭・太さ 7) の GPU 時間が 1 割増えた (#2186)。旗の名前は細い塗りの旗として入った
 /// ときのままである (CPU 側の `FormInstance.thinFillsFlag`)。
 ///
+/// **細い線と点の枝も同じ旗に乗る** ([#2226])。回した細い線の被覆は画素の四角を切る計算 (多角形の
+/// 切り取り・`mokume_boxCoverage`) を持ち、細い線を含まない列まで払うと、輪郭の多い絵の費用になる。
+///
 /// 決めるのは CPU で、置いた時点の変換と大きさから保守側に倒して判定する
 /// (`FormInstance.mayHaveThinFill`・`mayHaveThinHole`)。立っていても、細くない形は枝の中の判定で
 /// 今までどおりの式を通るので、絵は変わらない。**立てるべき列で立て損なうと、細い塗りや帯の細い
@@ -736,6 +739,7 @@ constant bool kFormHasStroke [[function_constant(1)]];
 ///
 /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
 /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
+/// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
 constant bool kFormHasThinFill [[function_constant(2)]];
 
 /// 縁を滑らかにする余白 (描く画素)。被覆が 0 になるのは縁から 0.5 画素なので、微分の
@@ -1184,24 +1188,29 @@ static inline bool mokume_rowsAlignToPixels(float4 rows) {
 /// 画素 [−0.5, 0.5]² の中で、`c + g · d` が `[−h, h]` に入る面積 (帯 1 本・閉じた式)。
 /// `g` は、形のその軸の座標が描く画素の `d` でどう動くか (`inverseRows` の 1 行)。
 ///
-/// `g · d` は、幅 |g.x| と |g.y| の一様分布の和で、密度は台形になる。その累積 (台形の累積分布) を
-/// `(t + s)₊² − (t + k)₊² − (t − k)₊² + (t − s)₊²` を 2 · 長辺 · 短辺 で割った形で書き、帯の両縁で
-/// 引く (`s` は幅の和の半分・`k` は差の半分)。短辺が 0 なら一様分布で、累積は 1 次式になる。
+/// `g · d` は、幅 |g.x| と |g.y| の一様分布の和で、密度は台形になる。その累積分布 F を、帯の両縁
+/// (`h − c` と `−h − c`) で引く。長辺 `hi`・短辺 `lo`・`s = (hi + lo) / 2`・`k = (hi − lo) / 2` として、
+/// 分布は 0 について対称なので、`u = |t|` の下側の裾 `G(u) = F(−u)` を取り (`F(t) = t ≤ 0 ? G : 1 − G`)、
+/// `u ≥ k` なら `(s − u)² / (2 · lo · hi)`、`u < k` なら `0.5 − u / hi` と書く。**4 項の 2 乗の和を
+/// 引く書き方は、短辺が長辺の 1e-5 ほどになる (ほぼ軸に沿う) と桁が落ちる** — `hi²` の大きさの項の
+/// 差を `lo · hi` で割るので、32 bit の丸めが `hi / lo` 倍に増え、画素ごとに 0.01 外れた。裾の形は
+/// `s − u ≤ lo` の小さい値だけを 2 乗するので、割っても丸めは大きくならない。短辺が 0 に近い
+/// (長辺の 1e-5 以下) ときは一様分布で、累積は 1 次式になる。
 static inline float mokume_stripCoverage(float c, float h, float2 g) {
     float hi = max(abs(g.x), abs(g.y));
     float lo = min(abs(g.x), abs(g.y));
     float s = 0.5 * (hi + lo);
     float k = 0.5 * (hi - lo);
     float2 t = clamp(float2(h - c, -h - c), -s, s);
+    float2 f;
     if (lo <= 1e-5 * hi) {
-        float2 f = 0.5 + t / max(hi, 1e-30);
-        return f.x - f.y;
+        f = 0.5 + t / max(hi, 1e-30);
+    } else {
+        float2 u = abs(t);
+        float2 ramp = s - u;
+        float2 tail = select(0.5 - u / hi, ramp * ramp / (2.0 * lo * hi), u >= k);
+        f = select(1.0 - tail, tail, t <= 0.0);
     }
-    float2 ramp = max(t + s, 0.0);
-    float2 rampEnd = max(t - s, 0.0);
-    float2 nearEdge = max(t + k, 0.0);
-    float2 farEdge = max(t - k, 0.0);
-    float2 f = (ramp * ramp - nearEdge * nearEdge - farEdge * farEdge + rampEnd * rampEnd) / (2.0 * lo * hi);
     return f.x - f.y;
 }
 
@@ -1320,7 +1329,8 @@ static inline float mokume_thinEllipseCoverage(
 /// (`p` は輪郭の位置での座標)、`hole` は `mokume_ellipseHole` の返り値。
 ///
 /// 1 画素より細い楕円の塗り (`mokume_thinEllipseCoverage`) と同じ箱フィルタで、短い向きと
-/// 長い向きの重なりの長さを掛け合わせる。長い向きは穴の端 (`hole`) までの帯、短い向きの半幅は
+/// 長い向きの重なりの長さを取る (回していれば `mokume_boxCoverage` で画素の四角との面積にする・#2226)。
+/// 長い向きは穴の端 (`hole`) までの帯、短い向きの半幅は
 /// **画素の中で中心にいちばん近い長い軸の上の点 x での穴の半幅** `D(x) − 太さの半分` を取る。
 /// `D(x)` は長い軸の上の点から縁までの真の距離で、縮閉線の尖りの内 (`x · 長半径 < 長半径² −
 /// 短半径²`) では `短半径 · √(1 − x² / (長半径² − 短半径²))`、外では先端までの `長半径 − x` である。
@@ -1331,7 +1341,7 @@ static inline float mokume_thinEllipseCoverage(
 ///
 /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
 static inline float mokume_thinEllipseHoleCoverage(
-    float2 p, float2 radii, float halfWeight, float2 hole, float2 unitsPerPixel)
+    float2 p, float2 radii, float halfWeight, float2 hole, float2 unitsPerPixel, float4 rows)
 {
     // 短い向きを x に揃える
     bool shortIsX = radii.x <= radii.y;
@@ -1346,8 +1356,10 @@ static inline float mokume_thinEllipseHoleCoverage(
         ? r.x * sqrt(max(1.0 - nearest * nearest / max(spread, 1e-30), 0.0))
         : r.y - nearest;
     float halfWidth = max(depth - halfWeight, 0.0);
-    return mokume_spanCoverage(at.x / u.x, halfWidth / u.x)
-        * mokume_spanCoverage(at.y / u.y, max(h.y, 0.0) / u.y);
+    // 回していれば、画素の軸に沿った正方形との重なりの面積で数える (`mokume_boxCoverage`・#2226)
+    return mokume_boxCoverage(
+        p, shortIsX ? float2(halfWidth, max(h.y, 0.0)) : float2(max(h.y, 0.0), halfWidth),
+        unitsPerPixel, rows);
 }
 
 /// `a` と `b` の共通部分 (どちらの外側にも出ない形) の距離場。
@@ -1812,8 +1824,7 @@ static inline FormPaint mokume_formPaint(
             if (kFormHasThinFill && in.thinHole != 0) {
                 isThinHole = true;
                 thinHoleCoverage =
-                    mokume_spanCoverage(q.x / unitsPerPixel.x, max(hole.x, 0.0) / unitsPerPixel.x)
-                    * mokume_spanCoverage(q.y / unitsPerPixel.y, max(hole.y, 0.0) / unitsPerPixel.y);
+                    mokume_boxCoverage(q, max(hole, 0.0), unitsPerPixel, in.inverseRows);
             } else {
                 // 内縁は、丸めた周を太さの半分だけ縮めた形。角の半径は `r − 太さの半分` で、
                 // 太さの半分が半径以上なら直角になる (`max` が 0 に締める)。半径 0 は従来の箱
@@ -1871,7 +1882,8 @@ static inline FormPaint mokume_formPaint(
                 float2 hole = mokume_ellipseHole(form.size.xy, halfWeight);
                 isThinHole = true;
                 thinHoleCoverage = all(hole > 0.0)
-                    ? mokume_thinEllipseHoleCoverage(q, form.size.xy, halfWeight, hole, unitsPerPixel)
+                    ? mokume_thinEllipseHoleCoverage(
+                        q, form.size.xy, halfWeight, hole, unitsPerPixel, in.inverseRows)
                     : 0.0;
             } else {
                 inner = mokume_grown(ring, -halfWeight);
@@ -1888,7 +1900,7 @@ static inline FormPaint mokume_formPaint(
                     float2 hole = mokume_ellipseHole(form.size.xy, halfWeight);
                     holeCap = all(hole > 0.0)
                         ? mokume_thinEllipseHoleCoverage(
-                            q, form.size.xy, halfWeight, hole, unitsPerPixel)
+                            q, form.size.xy, halfWeight, hole, unitsPerPixel, in.inverseRows)
                         : 0.0;
                     // 穴の端から長軸の向きに 6 画素以内の画素 (尖りの先) だけ、標本で数え直す
                     bool alongX = form.size.x >= form.size.y;
@@ -1935,7 +1947,7 @@ static inline FormPaint mokume_formPaint(
         float halfLength = form.size.x;
         // 描く画素 1 つが形自身の座標でいくらか (`unitsPerPixel`) は、x が長さの向き、
         // y が太さの向きになる
-        if (2.0 * halfWeight * (1.0 + 2.0 * kFormSnap) < unitsPerPixel.y) {
+        if (kFormHasThinFill && 2.0 * halfWeight * (1.0 + 2.0 * kFormSnap) < unitsPerPixel.y) {
             // **画面で 1 画素より細い線と点は、両縁を見る 1 次元の被覆の積で数える。**
             // 距離場は縁 1 本しか持たないので、帯の両縁が同じ画素に入ると、向こう側の縁の
             // 欠けを引けない — 線は画素の中心に乗る約束 (ADR-0039 決定 2) なので、整数の
