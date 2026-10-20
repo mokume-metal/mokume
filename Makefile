@@ -529,7 +529,7 @@ REFERENCE_OMIT := \
 	StartupReads WorkDirectory SourceStamp RuntimeLoad BundledShaders \
 	InputState InputEvent \
 	ObservationRequest ObservationReport ExposedValue FrameStats \
-	ParamBox
+	ParamBox UndeliverableGeneration
 
 reference: build ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
 	rm -rf "$(REFERENCE_GRAPHS)" "$(or $(OUT),$(REFERENCE_OUT))"

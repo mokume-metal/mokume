@@ -169,6 +169,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **知らせるだけで、止めるのはここではない。** 古い子を止めるのは道具 (`WatchCommand`)
     /// の仕事で、この台は絵の出口しか知らない。
     var onGenerationPromoted: (() -> Void)?
+    /// 控えた世代の絵を、この台が受け取れないことの知らせ ([#2928])。
+    ///
+    /// **乗り換えの知らせが来ない形のうち、道具だけが知る 2 つ** (``UndeliverableGeneration``)。
+    /// 子は自分の目録が読まれないことも、面が引けないことも知らないので、子からの申告は届かない。
+    /// **知らせるだけで、前の世代を畳むのはここではない** (``onGenerationPromoted`` と同じ分担)。
+    /// どの世代の知らせかは目録が印を持たないので、受け取る側が「乗り換えを待っている世代」だけを見る。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    var onGenerationUndeliverable: ((UndeliverableGeneration) -> Void)?
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ ([#2875])。
     ///
     /// **入れ替わりの知らせとは別に持つ。** 最初の世代は絵が来る前に採用されるので
@@ -454,7 +463,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             frames[id] = frame
         }
         guard !frames.isEmpty else {
-            // 引けなかった = 置いた側が既に居ない。**直前の絵はそのまま残す** (決定 6)
+            // **直前の絵はそのまま残す** (決定 6)。引けなかったのは、置いた側が既に居ない (子の側で
+            // 決まる — 道具の側の「子の離脱」が畳む) か、子は生きているのに引けない (面が全域でない
+            // など・道具の側だけが知る) かのどちらかで、後者は知らせないと乗り換えの合図が来ない
+            // ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。どちらかは受け取る側が決める
+            onGenerationUndeliverable?(.noSurface)
             return
         }
         incoming = Source(
@@ -546,6 +559,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         warn(
             UnreadableRevision.notice(
                 of: "The shared-frame manifest", at: manifest.url, reason: reason))
+        // 読めない目録は乗り換えの合図も起こさないので、前の世代が残る ([#2928])。**名乗りは上で済んで
+        // いる** — 受け取る側は同じ候補を端末へ 2 度言わない (``UndeliverableGeneration/unreadableManifest``)
+        //
+        // [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+        onGenerationUndeliverable?(.unreadableManifest)
     }
 
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
@@ -621,4 +639,16 @@ extension SharedFrameStage: SettlementObserver {
         else { return }
         lastFrame = 0
     }
+}
+
+/// 道具の窓が新しい世代の絵を受け取れないと、道具だけが知る形 ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+///
+/// 乗り換えの合図が来ないので、知らせないと前の世代が残り、プレビューの「起こしている」が終わらない。
+/// **1 枚も焼かない形は含めない** — `setup()` が長いのと固まったのとは時計なしに見分けられず、
+/// 時計で見切らない (ADR-0032 決定 3)。
+public enum UndeliverableGeneration: Sendable, Equatable {
+    /// 目録が読めない (版が違う・形が違う)。**台は理由と候補を端末へ名乗り済み** (#2889)。
+    case unreadableManifest
+    /// 目録は読めたが、番号の面を 1 枚も引けない。**台は何も言っていない。**
+    case noSurface
 }

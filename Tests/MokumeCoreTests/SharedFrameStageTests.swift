@@ -458,6 +458,41 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **乗り換えの合図が来ない 2 つの形は、道具の窓だけが知る** ([#2928])。目録が読めない・目録は読めたが
+    /// 番号の面を引けない — どちらも子は知らないので、台が知らせないと前の世代が残る。
+    /// 読み直しても繰り返さず、差し出し元は変えない (直前の絵を出したまま)。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test(
+        "受け取れない目録・引けない面は、台が 1 度だけ知らせ、差し出し元は変えない",
+        arguments: [
+            (#"{"schemaVersion":99,"ids":[1],"width":10,"height":10}"#, UndeliverableGeneration.unreadableManifest),
+            (#"{"schemaVersion":1,"ids":[4000000000],"width":10,"height":10}"#, UndeliverableGeneration.noSurface),
+        ])
+    func anUndeliverableGenerationIsAnnouncedOnce(manifest: String, cause: UndeliverableGeneration) throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("undeliverable"))
+            defer { stage.close() }
+            stage.warn = { _ in }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            #expect(told.isEmpty, "読めた目録で知らせている: \(told)")
+
+            try Data(manifest.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(told == [cause], "\(told)")
+            #expect(stage.hasSource, "差し出し元は変わらず、直前の絵を出したまま")
+            _ = surface
+        }
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が
