@@ -398,6 +398,9 @@ struct SharedFrameStageTests {
     /// なので、書きかけを掴み損ねると**直る契機が来ない** — 症状は「プレビューが真っ白の
     /// まま何も出ない」だけで、起こし直すまで直らない
     /// ([#1048](https://github.com/mokume-metal/mokume/issues/1048))。
+    ///
+    /// **mokume の書き手 (`AtomicFile`) は原子的に置くので、書きかけは実際には見えない。** ここは、原子的に
+    /// 置かない書き手に備えた性質を、書きかけを作って固定している (``WatchedFile`` の説明)。
     @Test("書きかけの目録を掴んでも、その改訂を読み飛ばさない")
     func rereadsAManifestItCouldNotDecode() throws {
         try withFacet { facet in
@@ -454,6 +457,7 @@ struct SharedFrameStageTests {
             #expect(message.contains(url.path), "どのファイルか: \(message)")
             #expect(message.contains("99"), "読めなかった理由: \(message)")
             #expect(message.contains("mokume doctor"), "候補: \(message)")
+            #expect(message.contains("by each window"), "台ごとに名乗ることを偽らない: \(message)")
             _ = surface
         }
     }

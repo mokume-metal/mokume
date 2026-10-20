@@ -36,7 +36,7 @@ struct WatchedFileTests {
     @Test("まだ無いファイルからは、何も返らない")
     func staysQuietWithoutTheFile() throws {
         try withFile { url in
-            let file = WatchedFile<Payload>(url: url)
+            let file = WatchedFile<Payload>(url: url) { _ in }
             #expect(file.changed() == nil)
         }
     }
@@ -45,7 +45,7 @@ struct WatchedFileTests {
     func readsWhatIsThere() throws {
         try withFile { url in
             try place(#"{"revision":1}"#, at: url, Date(timeIntervalSince1970: 1000))
-            let file = WatchedFile<Payload>(url: url)
+            let file = WatchedFile<Payload>(url: url) { _ in }
             #expect(file.changed() == Payload(revision: 1))
         }
     }
@@ -56,7 +56,7 @@ struct WatchedFileTests {
         try withFile { url in
             let moment = Date(timeIntervalSince1970: 1000)
             try place(#"{"revision":1}"#, at: url, moment)
-            let file = WatchedFile<Payload>(url: url)
+            let file = WatchedFile<Payload>(url: url) { _ in }
             #expect(file.changed() != nil)
             #expect(file.changed() == nil)
 
@@ -72,7 +72,7 @@ struct WatchedFileTests {
         try withFile { url in
             let moment = Date(timeIntervalSince1970: 1000)
             try place(#"{"revi"#, at: url, moment)
-            let file = WatchedFile<Payload>(url: url)
+            let file = WatchedFile<Payload>(url: url) { _ in }
             #expect(file.changed() == nil)
 
             // 書き手が置き終わった。**更新時刻は動かさない**
@@ -88,7 +88,7 @@ struct WatchedFileTests {
         try withFile { url in
             let moment = Date(timeIntervalSince1970: 1000)
             try place(#"{"revi"#, at: url, moment)
-            let file = WatchedFile<Payload>(url: url)
+            let file = WatchedFile<Payload>(url: url) { _ in }
             #expect(file.changed() == nil)
 
             try place(#"{"revision":7}"#, at: url, moment)
@@ -105,7 +105,7 @@ struct WatchedFileTests {
             let moment = Date(timeIntervalSince1970: 1000)
             try place(#"{"revi"#, at: url, moment)
             var reasons: [String] = []
-            let file = WatchedFile<Payload>(url: url) { reasons.append($0) }
+            let file = WatchedFile<Payload>(url: url) { reasons.append($0.reason) }
             for _ in 0..<3 { #expect(file.changed() == nil) }
             #expect(reasons.count == 1, "\(reasons)")
             #expect(!(reasons.first ?? "").isEmpty, "理由が空")
@@ -123,7 +123,7 @@ struct WatchedFileTests {
             let moment = Date(timeIntervalSince1970: 1000)
             try place(#"{"revi"#, at: url, moment)
             var reasons: [String] = []
-            let file = WatchedFile<Payload>(url: url) { reasons.append($0) }
+            let file = WatchedFile<Payload>(url: url) { reasons.append($0.reason) }
             #expect(file.changed() == nil)
             #expect(reasons.count == 1)
 
@@ -131,6 +131,60 @@ struct WatchedFileTests {
             #expect(file.changed() == Payload(revision: 7))
             #expect(file.changed() == nil)
             #expect(reasons.count == 1)
+        }
+    }
+
+    /// **読めなかった理由で案内が分かれる。** ファイルとして読めない (置き場がディレクトリ) のは理由だけを言い、
+    /// 版の案内を付けない。解けないときだけ版のずれを候補に挙げる。
+    @Test("ファイルとして読めない改訂は読めない失敗として、解けない改訂は解けない失敗として知らせる")
+    func tellsApartAnUnreadableFileFromAnUndecodableOne() throws {
+        try withFile { url in
+            var failures: [UnreadableRevision.Failure] = []
+            let file = WatchedFile<Payload>(url: url) { failures.append($0) }
+
+            // 置き場がディレクトリ: 在るがファイルとして読めない
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            #expect(file.changed() == nil)
+            #expect(file.changed() == nil)
+            guard case .cannotRead? = failures.first, failures.count == 1 else {
+                Issue.record("読めない失敗が 1 度だけ届いていない: \(failures)")
+                return
+            }
+            let said = UnreadableRevision.notice(of: "The thing", at: url, failure: failures[0])
+            #expect(!said.contains("mokume doctor"), "権限や置き場の事情に版の案内を付けている: \(said)")
+            #expect(said.contains(url.path))
+
+            try FileManager.default.removeItem(at: url)
+            try place(#"{"revi"#, at: url, Date(timeIntervalSince1970: 2000))
+            #expect(file.changed() == nil)
+            guard case .cannotDecode? = failures.last, failures.count == 2 else {
+                Issue.record("解けない失敗が届いていない: \(failures)")
+                return
+            }
+            let hinted = UnreadableRevision.notice(of: "The thing", at: url, failure: failures[1])
+            #expect(hinted.contains("mokume doctor") && hinted.contains("may depend"), "\(hinted)")
+            #expect(hinted.contains("said once for this revision)"))
+            let shared = UnreadableRevision.notice(
+                of: "The thing", at: url, failure: failures[1], saidBy: "each window")
+            #expect(shared.contains("by each window"), "\(shared)")
+        }
+    }
+
+    /// 時刻を見た後に消えた (ぶら下がった symlink は `lstat` が通り、読むと無い) ファイルは、黙る。
+    /// 消えたことは次の改訂が知らせる。確定もさせない。
+    @Test("時刻を見た後に消えていたファイルは、知らせずに確定もさせない")
+    func staysQuietWhenTheFileVanishedAfterTheStamp() throws {
+        try withFile { url in
+            var told = 0
+            let file = WatchedFile<Payload>(url: url) { _ in told += 1 }
+            try FileManager.default.createSymbolicLink(
+                atPath: url.path, withDestinationPath: url.path + ".gone")
+            #expect(file.changed() == nil)
+            #expect(told == 0, "消えていたファイルを名乗っている")
+
+            try FileManager.default.removeItem(at: url)
+            try place(#"{"revision":3}"#, at: url, Date(timeIntervalSince1970: 3000))
+            #expect(file.changed() == Payload(revision: 3))
         }
     }
 }

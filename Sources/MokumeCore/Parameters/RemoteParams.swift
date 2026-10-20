@@ -110,8 +110,8 @@ final class RemoteParams {
         let reportURL = WorkDirectory.reportURL(under: directory)
         // **外枠が読めない応答も名乗る** ([#2889](https://github.com/mokume-metal/mokume/issues/2889))。
         // つまみが 1 つも並ばない理由が残る
-        self.report = WatchedFile(url: reportURL) { reason in
-            warn(UnreadableRevision.notice(of: "The knob report", at: reportURL, reason: reason))
+        self.report = WatchedFile(url: reportURL) { failure in
+            warn(UnreadableRevision.notice(of: "The knob report", at: reportURL, failure: failure))
         }
     }
 

@@ -161,6 +161,10 @@ struct RemoteParamsTests {
     /// **読む前に「読んだ」と記録しない。** 書きかけを 1 回掴んだだけでその改訂が永久に
     /// 読み飛ばされると、症状は「つまみが古い値のまま止まる」だけになり、次の書き込みが
     /// 来るまで直らない ([#987](https://github.com/mokume-metal/mokume/issues/987))。
+    ///
+    /// **mokume の書き手 (`AtomicFile`) は原子的に置くので、書きかけは実際には見えない。** ここは、原子的に
+    /// 置かない書き手 (手で置いたファイル・ほかの道具) に備えた性質を、書きかけを作って固定している
+    /// (``WatchedFile`` の説明)。
     @Test("書きかけを掴んでも、その改訂を読み飛ばさない")
     func rereadsARevisionItCouldNotDecode() throws {
         try withFacet { facet in
@@ -486,6 +490,25 @@ struct RemoteParamsTests {
             #expect(message.contains("params"), "読めなかった理由: \(message)")
             #expect(message.contains("mokume doctor"), "候補: \(message)")
             #expect(message.contains("may"), "版のずれを断定していない: \(message)")
+        }
+    }
+
+    /// **ファイルとして読めない応答 (置き場がディレクトリ・権限) は、理由だけを名乗り、版の案内を付けない。**
+    /// 版の形とは関係が無い失敗に、版のずれと `mokume doctor` を案内すると的外れになる ([#2889])。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    @Test("ファイルとして読めない応答は、版の案内を付けずに 1 度だけ名乗る")
+    func anUnreadableFileIsSaidWithoutAVersionHint() throws {
+        try withFacet { facet in
+            try FileManager.default.createDirectory(
+                at: WorkDirectory.reportURL(under: facet), withIntermediateDirectories: true)
+            var said: [String] = []
+            let params = RemoteParams(directory: facet, warn: { said.append($0) })
+            for _ in 0..<3 { #expect(!params.refresh()) }
+            #expect(said.count == 1, "\(said)")
+            let message = said.first ?? ""
+            #expect(message.contains(WorkDirectory.reportURL(under: facet).path), "\(message)")
+            #expect(!message.contains("mokume doctor"), "\(message)")
         }
     }
 
