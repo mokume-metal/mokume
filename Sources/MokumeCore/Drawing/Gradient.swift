@@ -5,15 +5,16 @@ import simd
 
 /// 塗りに渡す勾配。``SketchPart/fill(_:)-(Gradient)`` が受ける。
 ///
-/// 値は ``linearGradient(_:from:to:)`` と ``radialGradient(_:center:radius:)`` で作る。区切りは
+/// 値は `linearGradient(_:from:to:)` と `radialGradient(_:center:radius:)` で作る。区切りは
 /// `(色, 位置)` の並びで、位置 0 が勾配の始まり (線形は `from`・放射は中心)、位置 1 が終わり
-/// (線形は `to`・放射は `radius` だけ離れた所) になる。
+/// (線形は `to`・放射は `radius` だけ離れた所) になる。区切りは `(色, 位置)` をそのまま並べて渡す。
+/// 並びを組み立ててから渡すときは、`[(LinearRGBA, Float)]` を受ける形もある。
 ///
 /// **勾配が受け持つのは塗りだけである。** 線 (`stroke`) の勾配・円錐の勾配は無い。値型
 /// (``Circle``・``Rect``) と ``Placement`` の `fill` は色のままで、勾配を使うなら描く状態に置く。
 ///
 /// ```swift
-/// fill(.linearGradient([(color(40, 30, 90), 0), (color(250, 140, 80), 1)], from: [0, 0], to: [0, height]))
+/// fill(.linearGradient((color(40, 30, 90), 0), (color(250, 140, 80), 1), from: [0, 0], to: [0, height]))
 /// rect(0, 0, width, height)
 /// ```
 public nonisolated struct Gradient: Sendable, Equatable {
@@ -38,7 +39,7 @@ public nonisolated struct Gradient: Sendable, Equatable {
     /// ```swift
     /// background(15, 18, 23)
     /// noStroke()
-    /// fill(.linearGradient([(color(40, 30, 90), 0), (color(250, 140, 80), 1)], from: [0, 0], to: [0, height]))
+    /// fill(.linearGradient((color(40, 30, 90), 0), (color(250, 140, 80), 1), from: [0, 0], to: [0, height]))
     /// rect(0, 0, width, height)
     /// ```
     ///
@@ -59,6 +60,27 @@ public nonisolated struct Gradient: Sendable, Equatable {
     /// 白の真ん中は ``red(_:)`` で約 187.5 と読める。符号化した値で混ぜる Canvas 2D の勾配
     /// (p5 の `drawingContext` で使う定番) より、中間の色が明るい。
     public static func linearGradient(
+        _ stops: (LinearRGBA, Float)..., from start: Vector2, to end: Vector2
+    ) -> Gradient {
+        linearGradient(stops, from: start, to: end)
+    }
+
+    /// 2 点を結ぶ向きに色が変わる勾配 (区切りを配列で渡す)。
+    ///
+    /// 区切りを組み立ててから渡すとき (ループで作った配色など) の形で、規則は区切りを並べる形と
+    /// 同じ。**配列を括弧の中へ直に書く `fill(.linearGradient([(色, 0), (色, 1)], …))` は、
+    /// Swift 6.3 までは「`Int` を `Float` へ変えられない」と断られる。** 書き並べるときは配列に
+    /// せず、`(色, 位置)` をそのまま並べる。
+    ///
+    /// ```swift
+    /// let sky: [(LinearRGBA, Float)] = (0..<5).map { step in
+    ///     let amount = Float(step) / 4
+    ///     return (lerpColor(color(40, 30, 90), color(250, 140, 80), amount), amount)
+    /// }
+    /// fill(.linearGradient(sky, from: [0, 0], to: [0, height]))
+    /// rect(0, 0, width, height)
+    /// ```
+    public static func linearGradient(
         _ stops: [(LinearRGBA, Float)], from start: Vector2, to end: Vector2
     ) -> Gradient {
         Gradient(
@@ -74,12 +96,28 @@ public nonisolated struct Gradient: Sendable, Equatable {
     /// ```swift
     /// background(15, 18, 23)
     /// noStroke()
-    /// fill(.radialGradient([(color(255, 240, 200), 0), (color(255, 160, 80, 0), 1)], center: [200, 150], radius: 140))
+    /// fill(.radialGradient((color(255, 240, 200), 0), (color(255, 160, 80, 0), 1), center: [200, 150], radius: 140))
     /// circle(200, 150, 280)
     /// ```
     ///
-    /// 座標・区切りの規則・混ぜる空間は ``linearGradient(_:from:to:)`` と同じ。`radius` が 0 以下・
+    /// 座標・区切りの規則・混ぜる空間は `linearGradient(_:from:to:)` と同じ。`radius` が 0 以下・
     /// 数でない値・無限のときは、勾配を受けず (塗りは前のまま)、1 度だけ知らせる。
+    public static func radialGradient(
+        _ stops: (LinearRGBA, Float)..., center: Vector2, radius: some ScalarConvertible
+    ) -> Gradient {
+        radialGradient(stops, center: center, radius: radius)
+    }
+
+    /// 中心から外へ広がる勾配 (区切りを配列で渡す)。
+    ///
+    /// 区切りを組み立ててから渡すときの形で、規則は区切りを並べる形と同じ。配列を括弧の中へ直に
+    /// 書くと Swift 6.3 までは断られる理由は、線形の勾配 (`linearGradient(_:from:to:)`) の注記を見る。
+    ///
+    /// ```swift
+    /// let glow: [(LinearRGBA, Float)] = [(color(255, 240, 200), 0), (color(255, 160, 80, 0), 1)]
+    /// fill(.radialGradient(glow, center: [200, 150], radius: 140))
+    /// circle(200, 150, 280)
+    /// ```
     public static func radialGradient(
         _ stops: [(LinearRGBA, Float)], center: Vector2, radius: some ScalarConvertible
     ) -> Gradient {

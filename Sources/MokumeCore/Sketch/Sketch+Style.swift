@@ -121,7 +121,7 @@ extension SketchPart {
 
     /// これから描く図形の塗りを、勾配にする。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
-    /// 勾配は ``Gradient/linearGradient(_:from:to:)`` と ``Gradient/radialGradient(_:center:radius:)`` で作る。
+    /// 勾配は `Gradient.linearGradient(_:from:to:)` と `Gradient.radialGradient(_:center:radius:)` で作る。
     /// 区切りは `(色, 位置)` の並びで、位置 0 が勾配の始まり、1 が終わり。円も矩形も字も、同じ勾配で
     /// 塗れる。夕焼けの空を線形の勾配で、沈む太陽の光を放射の勾配で塗る。
     ///
@@ -130,10 +130,10 @@ extension SketchPart {
     ///     ```swift
     ///     background(15, 18, 23)
     ///     noStroke()
-    ///     fill(.linearGradient([(color(40, 30, 90), 0), (color(250, 140, 80), 1)], from: [0, 0], to: [0, height]))
+    ///     fill(.linearGradient((color(40, 30, 90), 0), (color(250, 140, 80), 1), from: [0, 0], to: [0, height]))
     ///     rect(0, 0, width, height)
     ///     let sunY = 210 + sin(time * 0.2) * 40
-    ///     fill(.radialGradient([(color(255, 240, 200), 0), (color(255, 160, 80, 0), 1)], center: [200, sunY], radius: 100))
+    ///     fill(.radialGradient((color(255, 240, 200), 0), (color(255, 160, 80, 0), 1), center: [200, sunY], radius: 100))
     ///     circle(200, sunY, 200)
     ///     ```
     ///   }
@@ -163,7 +163,7 @@ extension SketchPart {
     /// 1 画素より細い形の濃さは置く位置によって揺れる。
     ///
     /// 勾配を受けられなければ (区切りが無い・数でない値・点がつぶれている)、塗りは直前のまま残り、初回だけ
-    /// 理由を知らせる。混ぜる空間と区切りの規則は ``Gradient/linearGradient(_:from:to:)`` にある。
+    /// 理由を知らせる。混ぜる空間と区切りの規則は `Gradient.linearGradient(_:from:to:)` にある。
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 後で撮る

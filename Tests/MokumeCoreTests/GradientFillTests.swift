@@ -53,7 +53,7 @@ struct GradientFillTests {
     func linearGradientMixesLinearLight() throws {
         let canvas = try makeCanvas()
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
         }
         #expect(abs(pixels[0, 5].red - position(of: 0)) < 0.01)
@@ -75,7 +75,7 @@ struct GradientFillTests {
     func threeStopsBendAtTheStop() throws {
         let canvas = try makeCanvas()
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(black, 0), (white, 0.5), (black, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 0.5), (black, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
         }
         for x in [0, 10, 25, 49, 50, 75, 90, 99] {
@@ -91,7 +91,7 @@ struct GradientFillTests {
         let canvas = try makeCanvas()
         // 並びを逆に書き、位置は 0.25…0.75 だけに置く
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(white, 0.75), (black, 0.25)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((white, 0.75), (black, 0.25), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
         }
         #expect(pixels[5, 5].red < 0.002, "0.25 より手前は最初の色 (黒)")
@@ -99,7 +99,7 @@ struct GradientFillTests {
         #expect(abs(pixels[50, 5].red - 0.51) < 0.02, "中ほどは混ざる: \(pixels[50, 5].red)")
         // 同じ位置の 2 つは書いた順に並び、その位置で色が切り替わる
         let stepped = try self.pixels(canvas) { c in
-            c.fill(.linearGradient([(black, 0.5), (white, 0.5)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0.5), (white, 0.5), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
         }
         #expect(stepped[40, 5].red < 0.002)
@@ -111,7 +111,7 @@ struct GradientFillTests {
     func radialGradientRunsFromCenterToEdge() throws {
         let canvas = try makeCanvas(width: 100, height: 100)
         let pixels = try pixels(canvas) { c in
-            c.fill(.radialGradient([(red, 0), (blue, 1)], center: [50, 50], radius: 40))
+            c.fill(.radialGradient((red, 0), (blue, 1), center: [50, 50], radius: 40))
             c.circle(50, 50, 80)
         }
         let center = pixels[50, 50]
@@ -125,12 +125,42 @@ struct GradientFillTests {
         #expect(pixels[2, 2].red == 0 && pixels[2, 2].blue == 0)
     }
 
+    /// 区切りを配列で組み立てて渡す形は、`(色, 位置)` を並べる形と同じ勾配になる。並べる形は
+    /// Swift 6.3 でも整数の位置を受けて組める (配列を括弧の中へ直に書く形は 6.3 が断る)。
+    @Test("区切りを配列で渡す形は、並べて渡す形と同じ勾配になる")
+    func arrayFormMatchesTheListedForm() throws {
+        let stops: [(LinearRGBA, Float)] = [(black, 0), (white, 0.25), (red, 1)]
+        let listed = try pixels(try makeCanvas()) { c in
+            c.fill(.linearGradient((black, 0), (white, 0.25), (red, 1), from: [0, 0], to: [100, 0]))
+            c.rect(0, 0, 100, 10)
+        }
+        let array = try pixels(try makeCanvas()) { c in
+            c.fill(.linearGradient(stops, from: [0, 0], to: [100, 0]))
+            c.rect(0, 0, 100, 10)
+        }
+        for x in [0, 10, 25, 60, 99] {
+            #expect(listed[x, 5] == array[x, 5], "x = \(x): \(listed[x, 5]) と \(array[x, 5])")
+        }
+        #expect(listed[10, 5] != listed[60, 5], "勾配が掛かっている")
+        let radialListed = try pixels(try makeCanvas(width: 100, height: 100)) { c in
+            c.fill(.radialGradient((red, 0), (blue, 1), center: [50, 50], radius: 40))
+            c.circle(50, 50, 80)
+        }
+        let radialArray = try pixels(try makeCanvas(width: 100, height: 100)) { c in
+            c.fill(.radialGradient([(red, 0), (blue, 1)] as [(LinearRGBA, Float)], center: [50, 50], radius: 40))
+            c.circle(50, 50, 80)
+        }
+        for x in [50, 60, 70, 88] {
+            #expect(radialListed[x, 50] == radialArray[x, 50], "x = \(x)")
+        }
+    }
+
     /// 完了条件 3: 字も同じ勾配で塗れる。左の字と右の字は、勾配の色が違う。
     @Test("字にも勾配が効き、勾配の座標で色が変わる")
     func textTakesTheGradient() throws {
         let canvas = try makeCanvas(width: 200, height: 60)
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(red, 0), (blue, 1)], from: [0, 0], to: [200, 0]))
+            c.fill(.linearGradient((red, 0), (blue, 1), from: [0, 0], to: [200, 0]))
             c.textSize(48)
             c.text("MMMM", 8, 48)
         }
@@ -155,7 +185,7 @@ struct GradientFillTests {
     func textOutlineContoursTakeTheGradient() throws {
         let canvas = try makeCanvas(width: 200, height: 60)
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(red, 0), (blue, 1)], from: [0, 0], to: [200, 0]))
+            c.fill(.linearGradient((red, 0), (blue, 1), from: [0, 0], to: [200, 0]))
             c.textSize(48)
             for contour in c.textOutline("MMMM", 8, 48) where !contour.isHole {
                 c.beginShape()
@@ -180,7 +210,7 @@ struct GradientFillTests {
         let pixels = try pixels(canvas) { c in
             c.fill(red)
             c.pushStyle()
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 5)
             c.popStyle()
             c.rect(0, 10, 100, 5)
@@ -191,7 +221,7 @@ struct GradientFillTests {
         // 勾配を持ったまま積み、その中で色に替えて戻すと、勾配へ戻る
         let canvas2 = try makeCanvas()
         let pixels2 = try self.pixels(canvas2) { c in
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.pushStyle()
             c.fill(blue)
             c.rect(0, 0, 100, 5)
@@ -209,7 +239,7 @@ struct GradientFillTests {
         let pixels = try pixels(canvas) { c in
             // 形自身の座標で、横に黒から白へ変わる帯 (幅 60・高さ 20)
             let strip = c.createShape {
-                c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [60, 0]))
+                c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [60, 0]))
                 c.rect(0, 0, 60, 20)
             }
             // 左は回さずに置く。右は 90° 回して置くので、勾配は縦に変わる
@@ -232,7 +262,7 @@ struct GradientFillTests {
             // 外で平行移動してから勾配を決める。形の組み立ての中は変換が単位から始まるので、
             // 勾配の座標 (0…50) は形自身の座標 (0…50) として読む
             c.translate(50, 0)
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [50, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [50, 0]))
             let strip = c.createShape { c.rect(0, 0, 50, 10) }
             c.resetMatrix()
             c.shape(strip)
@@ -246,7 +276,7 @@ struct GradientFillTests {
     func foldedShapesTakeTheGradient() throws {
         let canvas = try makeCanvas(width: 100, height: 20)
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             // 同じ大きさの矩形を 3 つ。2 つ目から畳まれる
             c.rect(0, 0, 30, 10)
             c.rect(35, 0, 30, 10)
@@ -263,7 +293,7 @@ struct GradientFillTests {
         let canvas = try makeCanvas(width: 100, height: 20)
         let pixels = try pixels(canvas) { c in
             let strip = c.createShape {
-                c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+                c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
                 c.rect(0, 0, 100, 10)
             }
             c.fill(blue)
@@ -279,7 +309,7 @@ struct GradientFillTests {
         let canvas = try makeCanvas()
         let flat = try canvas.makeShader("float4 paint(Fragment in, Values values) { return float4(0, 0, 1, 1); }")
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.shader(flat)
             c.rect(0, 0, 100, 5)
             c.resetShader()
@@ -292,7 +322,7 @@ struct GradientFillTests {
         let flat2 = try canvas2.makeShader("float4 paint(Fragment in, Values values) { return float4(0, 0, 1, 1); }")
         let pixels2 = try self.pixels(canvas2) { c in
             c.shader(flat2)
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 5)
         }
         #expect(pixels2[50, 2] == blue.sameLinear, "後から渡しても断片が勝つ: \(pixels2[50, 2])")
@@ -303,7 +333,7 @@ struct GradientFillTests {
     func strokeKeepsItsColour() throws {
         let canvas = try makeCanvas(width: 100, height: 100)
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.stroke(red)
             c.strokeWeight(6)
             c.rect(20, 20, 60, 60)
@@ -343,7 +373,7 @@ struct GradientFillTests {
             sketch: Scene { s in
                 s.fill(
                     .linearGradient(
-                        [(LinearRGBA.linear(red: 0, green: 0, blue: 0), 0), (LinearRGBA.linear(red: 1, green: 1, blue: 1), 1)],
+                        (LinearRGBA.linear(red: 0, green: 0, blue: 0), 0), (LinearRGBA.linear(red: 1, green: 1, blue: 1), 1),
                         from: [0, 0], to: [160, 0]))
                 Rect(left: 0, top: 0, width: 160, height: 20).draw()
                 var colored = Rect(left: 0, top: 30, width: 160, height: 20)
@@ -370,7 +400,7 @@ struct GradientFillTests {
         let canvas = try makeCanvas(width: 100, height: 20)
         let pixels = try pixels(canvas) { c in
             let strip = c.createShape {
-                c.fill(.linearGradient([(white, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+                c.fill(.linearGradient((white, 0), (white, 1), from: [0, 0], to: [100, 0]))
                 c.rect(0, 0, 100, 10)
             }
             c.shape(strip, at: [Placement(fill: red)])
@@ -386,13 +416,14 @@ struct GradientFillTests {
         let pixels = try pixels(canvas) { c in
             c.fill(red)
             // 区切りが無い・2 点が同じ・半径が 0・数でない位置
-            c.fill(.linearGradient([], from: [0, 0], to: [100, 0]))
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [5, 5], to: [5, 5]))
-            c.fill(.radialGradient([(black, 0), (white, 1)], center: [5, 5], radius: 0))
-            c.fill(.linearGradient([(black, .nan), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient(from: [0, 0], to: [100, 0]))
+            c.fill(Gradient.linearGradient([], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [5, 5], to: [5, 5]))
+            c.fill(.radialGradient((black, 0), (white, 1), center: [5, 5], radius: 0))
+            c.fill(.linearGradient((black, .nan), (white, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 5)
             // 区切りが 1 つなら、その色の単色
-            c.fill(.linearGradient([(blue, 0.5)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((blue, 0.5), from: [0, 0], to: [100, 0]))
             c.rect(0, 10, 100, 5)
         }
         #expect(pixels[50, 2] == red.sameLinear, "前のまま: \(pixels[50, 2])")
@@ -421,11 +452,11 @@ struct GradientFillTests {
             // 平行移動の後で呼ぶと、勾配の座標にも掛かる (0…50 が画面の 50…100 になる)
             c.pushMatrix()
             c.translate(50, 0)
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [50, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [50, 0]))
             c.rect(0, 0, 50, 10)
             c.popMatrix()
             // 呼んだ後で平行移動しても、勾配は動かない (画面の 0…100)
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.translate(50, 0)
             c.rect(0, 20, 50, 10)
         }
@@ -440,10 +471,10 @@ struct GradientFillTests {
     func noFillKeepsTheGradient() throws {
         let canvas = try makeCanvas()
         let pixels = try pixels(canvas) { c in
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.noFill()
             c.rect(0, 0, 100, 5)
-            c.fill(.linearGradient([(black, 0), (white, 1)], from: [0, 0], to: [100, 0]))
+            c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 10, 100, 5)
         }
         #expect(pixels[90, 2].red == 0, "塗らない")
