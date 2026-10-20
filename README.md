@@ -76,6 +76,8 @@ final class MySketch: Sketch {
 
 `fill(77, 191, 242)` に変えて保存すると、ウィンドウを開き直さずに円が水色になります。ビルドに失敗したときは直前の絵が動き続け、エラーがターミナルに表示されます。
 
+例を開いて始めるなら、`mokume examples` で一覧を出し、`mokume new my-shape --from triangle` のように API の名前で 1 本を選びます (括弧を含む名前はシェルでは引用符で包みます)。
+
 使える API は [API リファレンス](https://mokume.org/documentation/mokume/) に、実行結果の絵つきでまとまっています。Processing や p5.js から来たなら、先に [Swift で 3 つだけ違うこと](https://mokume.org/documentation/mokume/#Swift-で-3-つだけ違うこと)を読むと、最初の赤いエラーで迷いません。
 
 ## コマンド
@@ -83,6 +85,7 @@ final class MySketch: Sketch {
 | コマンド | |
 | --- | --- |
 | `mokume new <name>` | スケッチを作成 |
+| `mokume examples` | 同梱した作例の一覧 (`mokume new <name> --from <例>` で開く) |
 | `mokume run` | ビルドして実行 |
 | `mokume watch` | 実行し、保存のたびに再ビルドして差し替え |
 | `mokume render` | ウィンドウを開かずに動画・連番画像へ書き出し |
