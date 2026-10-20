@@ -10,6 +10,11 @@ extension Sketch {
     /// 窓・外からの書き込み・保存は、いずれもこの一覧が指す 1 つの値を読み書きする
     /// ([ADR-0013] 決定 3)。
     ///
+    /// **作者向けの一覧なので、値が非有限の宣言も含めて全部返す。** 保存 (`params.json`) と
+    /// つまみの応答 (`report.json`) は、零へ畳めなかった自作の ``ParamRepresentable`` が非有限の値の
+    /// まま置かれているとき、その宣言だけを外して書く (値が有限になれば戻る・
+    /// [#2858](https://github.com/mokume-metal/mokume/issues/2858))。この一覧は外さない。
+    ///
     /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
     public var params: [ParamDeclaration] { ParamCatalog.collect(from: self) }
 }
