@@ -4,6 +4,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import MokumeDiagnostics
 import simd
 
 /// 画像のファイルを、作業空間の画素へ落とす。
@@ -56,7 +57,7 @@ nonisolated enum ImageFile {
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     static func locate(_ path: String) throws(ImageFailure) -> URL {
         do {
-            return try AssetLookup.locate(candidates(for: path), path: path)
+            return try AssetLookup.locate(search(for: path), path: path)
         } catch {
             switch error {
             case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
@@ -224,7 +225,19 @@ nonisolated enum ImageFile {
     ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     static func candidates(for path: String) -> [URL] {
-        candidates(
+        search(for: path).places
+    }
+
+    /// 探す場所と、**包みを数えられなかった置き場** ([#2838])。
+    ///
+    /// 包みの置き場を数えられない (読む権利が無い) と、そこに在る包みの候補が丸ごと落ちる。落ちたまま
+    /// 「見つからない」と言うと、本当は包みの中に在るかもしれないものを無いと言う。数えられなかった置き場を
+    /// 返し、探す側が、どこにも無かったときに「在るかを確かめられない」と名乗れるようにする
+    /// (``AssetLookup/locate(_:unlistable:path:)``)。
+    ///
+    /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
+    static func search(for path: String) -> AssetLookup.Search {
+        search(
             for: path, workingDirectory: FileManager.default.currentDirectoryPath,
             neighbourhood: Bundle.main.bundleURL, resources: Bundle.main.resourceURL)
     }
@@ -236,18 +249,33 @@ nonisolated enum ImageFile {
     static func candidates(
         for path: String, workingDirectory: String, neighbourhood: URL, resources: URL?
     ) -> [URL] {
-        if path.hasPrefix("/") { return [URL(fileURLWithPath: path)] }
+        search(
+            for: path, workingDirectory: workingDirectory, neighbourhood: neighbourhood,
+            resources: resources
+        ).places
+    }
+
+    /// ``candidates(for:workingDirectory:neighbourhood:resources:)`` と、数えられなかった置き場。
+    static func search(
+        for path: String, workingDirectory: String, neighbourhood: URL, resources: URL?
+    ) -> AssetLookup.Search {
+        if path.hasPrefix("/") { return AssetLookup.Search(places: [URL(fileURLWithPath: path)]) }
 
         var urls: [URL] = []
+        var unlistable: [AssetLookup.Unlistable] = []
         urls.append(URL(fileURLWithPath: workingDirectory).appendingPathComponent(path))
         if let resources {
             urls.append(resources.appendingPathComponent(path))
         }
         for root in [neighbourhood, resources].compactMap({ $0 }) {
-            urls.append(contentsOf: bundled(path, in: root))
+            let listed = bundled(path, in: root)
+            urls.append(contentsOf: listed.urls)
+            if let reason = listed.failure {
+                unlistable.append(AssetLookup.Unlistable(root: root, reason: reason))
+            }
         }
         urls.append(neighbourhood.appendingPathComponent(path))
-        return urls
+        return AssetLookup.Search(places: urls, unlistable: unlistable)
     }
 
     /// 置き場に並んだ包みの中を、探す場所として広げる。
@@ -262,10 +290,21 @@ nonisolated enum ImageFile {
     ///
     /// [#1330]: https://github.com/mokume-metal/mokume/issues/1330
     /// [#1255]: https://github.com/mokume-metal/mokume/issues/1255
-    private static func bundled(_ path: String, in root: URL) -> [URL] {
-        let listing =
-            ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
-            .map { root.appendingPathComponent($0) }
+    ///
+    /// **数えられない置き場は、黙って空にしない** ([#2838])。置き場が無い (`ENOENT`・ディレクトリでない) のは
+    /// 包みが無いだけだが、それ以外 (読む権利が無いなど) は、包みが在るかを確かめられない。
+    ///
+    /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
+    private static func bundled(_ path: String, in root: URL) -> (urls: [URL], failure: String?) {
+        let names: [String]
+        do {
+            names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        } catch {
+            let code = Diagnostics.posixCode(in: error)
+            let absent = code == ENOENT || code == ENOTDIR || (error as? CocoaError)?.code == .fileReadNoSuchFile
+            return ([], absent ? nil : Diagnostics.failureText(error))
+        }
+        let listing = names.map { root.appendingPathComponent($0) }
         var urls: [URL] = []
         for bundle in listing.sorted(by: { $0.path < $1.path })
         where bundle.pathExtension == "bundle" {
@@ -273,6 +312,6 @@ nonisolated enum ImageFile {
             urls.append(
                 bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path))
         }
-        return urls
+        return (urls, nil)
     }
 }

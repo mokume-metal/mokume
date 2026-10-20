@@ -7,6 +7,8 @@ SPDX-License-Identifier: MIT
 
 公開の `AssetFailure` に `unreachable(path:location:reason:)` を足しました。`assetURL(_:)` が投げます。`location` には確かめられなかった場所、`reason` には OS が名乗った事情 (`Permission denied`・symlink が巡る・宛先の無い symlink) が入ります。文面は `"assets/notes.txt" cannot be reached at "/Users/me/sketch/assets/notes.txt": cannot tell whether it exists (Permission denied)` の形で、「見つかった」とは言いません。`loadTable`・`loadStrings` などの文字のファイルを読む口と、画像・モデル・断片・音・動画を読む口は、それぞれの型の `unopenable(path:location:reason:)` で名乗ります (形は変えず、`reason` が `cannot tell whether it exists (…)` で始まります)。本当に無いときは、今までどおり `notFound` と探した場所の一覧です。
 
-**入れない候補に当たったら、後ろの候補に本物があっても採りません。** 入れない場所は在るかもしれない場所で、黙って飛ばすと原因に辿り着けないためです。宛先の無い symlink も、無いものとは数えず、辿り着けないものとして名乗ります (以前は無いものとして次の候補へ進んでいました)。
+**入れない候補に当たったら、後ろの候補に本物があっても採りません。** 入れない場所は在るかもしれない場所で、黙って飛ばすと原因に辿り着けないためです。宛先の無い symlink も、無いものとは数えず、辿り着けないものとして名乗ります (以前は無いものとして次の候補へ進んでいました)。途中の段にあるもの (`assets` が外したドライブへの symlink など) も同じです。包みの置き場を数えられない (読む権利が無い) ときも、どこにも無かったときに「見つからない」とは言わず、数えられなかった置き場を名乗ります。作業ディレクトリは候補の先頭なので、そこに入れないと、後ろの束の資源に本物があっても採らずに名乗ります。
 
 移行: `AssetFailure` を `switch` で網羅しているコードは、枝が足りないとコンパイル時に指摘されます。`case .unreachable(let path, let location, let reason):` の枝を足してください。直す先を示すなら、渡した名前 (`path`) ではなく確かめられなかった場所 (`location`) を使います。`notFound` の枝で「資源の宣言を確かめよ」と案内していたなら、入れない場所の権利を直すという案内は新しい枝へ移します。失敗をまとめて扱っている (`catch` で受けて `description` を出す、`try?` で受ける、など) なら、コードの変更は要りません。
+
+**コンパイラが気付かないずれ**: 画像・モデル・断片・文字のファイル・音・動画を読む口は、以前 `notFound` を投げていた状況 (入れない親の下) で、`unopenable` を投げるようになります。`catch ImageFailure.notFound { 既定の絵を使う }` のように `notFound` だけを受けて既定へ落としている書き方は、入れない場合に既定へ落ちず、上へ抜けます。入れない場合も既定へ落としたいなら `unopenable` も受けてください (`catch ImageFailure.notFound, ImageFailure.unopenable { … }`)。`unopenable` の `reason` が `cannot tell whether it exists (` で始まるかで、在るかを確かめられない場合を見分けられます。

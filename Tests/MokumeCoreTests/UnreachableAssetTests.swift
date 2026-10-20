@@ -149,6 +149,94 @@ struct UnreachableAssetTests {
         #expect(reason.contains("symbolic link"), "\(reason)")
     }
 
+    /// 途中の段にある宛先の無い symlink (`assets` が外したドライブへの symlink など) は、最後の段の `stat` も
+    /// `lstat` も `ENOENT` になる。そのまま「無い」と数えると、置いたはずのファイルを探させる助言が出る。
+    @Test("途中の段の宛先の無い symlink は、無いと言わず、辿り着けないと言う")
+    func aDanglingSymlinkInTheMiddleIsNotAbsent() throws {
+        let scratch = Scratch()
+        defer { scratch.cleanUp() }
+        try FileManager.default.createDirectory(at: scratch.folder, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: scratch.assets.path, withDestinationPath: "/nonexistent-volume-\(UUID().uuidString)")
+        let candidate = scratch.assets.appendingPathComponent("data.csv")
+        guard case .unreachable(let reason) = AssetLookup.presence(of: candidate) else {
+            Issue.record("途中の宛先の無い symlink を辿り着けないと読んでいない")
+            return
+        }
+        #expect(reason.contains("symbolic link") && reason.contains(scratch.assets.path), "\(reason)")
+        do {
+            _ = try Bare().assetURL(candidate.path)
+            Issue.record("解けてしまった")
+        } catch {
+            guard case .unreachable(_, let location, _) = error else {
+                Issue.record("unreachable で断っていない: \(error)")
+                return
+            }
+            #expect(location == candidate.standardizedFileURL.path)
+            Self.expectNoMisleadingAdvice(error.description)
+        }
+    }
+
+    /// 包みの置き場を数えられない (読む権利が無い) と、そこに在る包みの候補が丸ごと落ちる。落ちたまま
+    /// 「見つからない」と言わない — どこにも無かったときに、数えられなかった置き場を名乗る。
+    @Test("包みの置き場を数えられないとき、どこにも無ければ名乗り、先に在れば採る")
+    func anUnlistableBundleRootIsNamedWhenNothingIsFound() throws {
+        let scratch = Scratch()
+        defer { scratch.cleanUp() }
+        let neighbourhood = scratch.folder.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: neighbourhood, withIntermediateDirectories: true)
+        let work = scratch.folder.appendingPathComponent("work")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        // 入れるが数えられない (x だけ)
+        try FileManager.default.setAttributes([.posixPermissions: 0o311], ofItemAtPath: neighbourhood.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: neighbourhood.path) }
+        try #require(
+            (try? FileManager.default.contentsOfDirectory(atPath: neighbourhood.path)) == nil,
+            "数えられない置き場を作れていない")
+
+        let search = ImageFile.search(
+            for: "data.csv", workingDirectory: work.path, neighbourhood: neighbourhood, resources: nil)
+        #expect(search.unlistable.map(\.root) == [neighbourhood])
+        #expect(search.unlistable.first?.reason == Self.denied)
+        // どこにも無い: 包みの中に在るかもしれないので、無いとは言わない
+        do {
+            _ = try AssetLookup.locate(search, path: "data.csv")
+            Issue.record("解けてしまった")
+        } catch {
+            guard case .unreachable(_, let location, let reason) = error else {
+                Issue.record("unreachable で断っていない: \(error)")
+                return
+            }
+            #expect(location == neighbourhood.standardizedFileURL.path)
+            #expect(reason.contains(Self.denied), "\(reason)")
+        }
+        // 先に在るものは採る
+        let real = work.appendingPathComponent("data.csv")
+        try Data("a".utf8).write(to: real)
+        #expect(try AssetLookup.locate(search, path: "data.csv") == real)
+    }
+
+    @Test("包みの置き場が無い (ENOENT) のは、数えられなかったとは言わない")
+    func aMissingBundleRootIsNotUnlistable() {
+        let search = ImageFile.search(
+            for: "data.csv", workingDirectory: "/nonexistent-work",
+            neighbourhood: URL(fileURLWithPath: "/nonexistent-bin-\(UUID().uuidString)"), resources: nil)
+        #expect(search.unlistable.isEmpty)
+    }
+
+    /// 断片の置き場の元を差す判定も、他の口と同じ判定 (`AssetLookup`) を使う。確かめられない束の写しは在るとは数えない。
+    @Test("置き場の元を差す判定は、確かめられない候補を在るとは数えない")
+    func theOriginInsertionUsesTheSameJudgement() throws {
+        let scratch = Scratch()
+        defer { scratch.cleanUp() }
+        try scratch.lock(placing: "paint.metal")
+        let copy = scratch.assets.appendingPathComponent("paint.metal")
+        let origin = scratch.folder.appendingPathComponent("origin/assets")
+        let before = [scratch.folder.appendingPathComponent("work/assets/paint.metal"), copy]
+        let arranged = ShaderOrigin.inserting(origin: origin, for: "assets/paint.metal", into: before)
+        #expect(arranged == before, "確かめられない写しを在ると数えて、置き場の元を差している")
+    }
+
     // MARK: - 口 (絶対の名前で、候補は 1 つ)
 
     @Test("assetURL は、入れない場所と OS の事情を名乗り、資源の宣言の助言を出さない", arguments: [true, false])

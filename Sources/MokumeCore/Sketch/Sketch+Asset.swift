@@ -37,6 +37,6 @@ extension SketchPart {
     /// - Throws: どこにも無いとき (説明には探した場所が載る)、または候補の場所に入れないとき。
     // shot: 撮れない 返すのはファイルの場所で、解く先の資材ファイルがこのリポジトリの例には無い
     public func assetURL(_ path: String) throws(AssetFailure) -> URL {
-        try AssetLookup.locate(ImageFile.candidates(for: path), path: path)
+        try AssetLookup.locate(ImageFile.search(for: path), path: path)
     }
 }

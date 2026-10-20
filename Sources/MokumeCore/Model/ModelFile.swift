@@ -107,7 +107,7 @@ nonisolated enum ModelFile {
     static func load(_ path: String) throws(ModelFailure) -> Parsed {
         let url: URL
         do {
-            url = try AssetLookup.locate(ImageFile.candidates(for: path), path: path)
+            url = try AssetLookup.locate(ImageFile.search(for: path), path: path)
         } catch {
             switch error {
             case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
