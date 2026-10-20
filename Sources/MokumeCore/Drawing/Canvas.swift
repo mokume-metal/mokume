@@ -3976,6 +3976,9 @@ public final class Canvas {
         gpu.revokeDroppedDeliveries()
         gpu.holdRevocations()
         defer { gpu.releaseRevocations() }
+        // 描き切りの区間 (Instruments・#2378)
+        let flushInterval = FrameSignposts.beginFlush()
+        defer { FrameSignposts.endFlush(flushInterval) }
         // **自分の絵が変わる直前がここ。** 自分を溜めている面にいまの絵を写させると、
         // その面には「置いた時点の絵」が残る (#1656)。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため

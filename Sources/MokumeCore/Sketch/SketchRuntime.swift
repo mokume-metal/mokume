@@ -915,6 +915,9 @@ public final class SketchRuntime {
                 // 入力のコールバック (上の配り) では言わない (``BlockingLoads``)
                 blockingLoads.isDrawing = true
                 defer { blockingLoads.isDrawing = false }
+                // 作者の `draw()` の区間 (Instruments・#2378)
+                let drawInterval = FrameSignposts.beginDraw()
+                defer { FrameSignposts.endDraw(drawInterval) }
                 sketch.draw()
             }
         }
@@ -1501,6 +1504,8 @@ public final class SketchRuntime {
         // 速さは**いつでも**数える。窓は観測が無くても数字を出すためで、ここを
         // 観測に紐づけると窓が自分で測り直すことになる (源が 2 つに割れる)
         tempo.record(now: now())
+        // GPU 時間を数えるフレームの区切り (#2378)。投入を待たず、番号を 1 つ控えるだけ
+        target.gpu.markFrameStart()
         guard observer != nil else { return }
         exposedValues.removeAll(keepingCapacity: true)
         // **測った値はここで差し戻す。** 差し出した値はフレームごとに消えるが、測った値は

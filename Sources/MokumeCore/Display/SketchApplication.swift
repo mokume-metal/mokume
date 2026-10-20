@@ -952,6 +952,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private func advanceAndPresent() {
         do {
             try runtime.advance()
+            // 差し出しの区間 (Instruments・#2378)。窓と共有面の両方がここを通る
+            let presentInterval = FrameSignposts.beginPresent()
+            defer { FrameSignposts.endPresent(presentInterval) }
             try presentFrame()
         } catch {
             // 1 フレーム描けなかったことでアプリケーションごと落とさない。
