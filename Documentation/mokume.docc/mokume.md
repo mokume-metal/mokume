@@ -518,9 +518,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/text(_:_:_:)``
 - ``SketchPart/text(_:_:_:_:_:)``
 - ``SketchPart/textSize(_:)``
-- ``SketchPart/textFont(_:)``
+- ``SketchPart/textFont(_:)-(String)``
+- ``SketchPart/textFont(_:)-(Font)``
 - ``SketchPart/noTextFont()``
 - ``SketchPart/textStyle(_:)``
+- ``SketchPart/textWeight(_:)``
 - ``SketchPart/textAlign(_:_:)``
 - ``SketchPart/textLeading(_:)``
 - ``SketchPart/textWrap(_:)``
@@ -530,6 +532,9 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/textOutline(_:_:_:)``
 - ``SketchPart/textOutline(_:_:_:spacing:)``
 - ``SketchPart/textBounds(_:_:_:)``
+- ``SketchPart/loadFont(_:)``
+- ``Font``
+- ``FontFailure``
 - ``TextStyle``
 - ``TextWrap``
 - ``TextFlow``

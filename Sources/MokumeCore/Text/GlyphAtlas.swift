@@ -153,6 +153,13 @@ import simd
         var size: Float
         var style: TextStyle
         var glyph: UInt16
+        /// 頼んだ太さ (100〜900 の整数)。0 は頼んでいない ([#2445])。**整数に丸めた値が入る** —
+        /// 500.2 と 500.4 は同じ字形を使い、500 と 501 は別に焼く。毎フレーム太さを動かすと焼き直しが
+        /// 続く代償は、`size` を動かすのと同じ形である (上限の頁を替えて焼き直す・[#1342])。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+        var weight: Int = 0
     }
 
     /// いま字形を焼いている頁。**広げると差し替わる。**
