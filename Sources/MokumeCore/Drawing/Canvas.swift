@@ -960,7 +960,7 @@ public final class Canvas {
     /// 影の焼き付けが持ち越す格納 (#2257)。**フレームに属さない** — 焼いた面・その面が何を持つかの記帳・
     /// 資源・数えは、境目で戻さず面と同じだけ生きる。フレームに属する宣言 (`shadowsEnabled`・
     /// `shadowRangeValue`・`shadowDetailValue`・`shadowBiasValue`) は ``Canvas`` に残る (`style` と同じく
-    /// 描く状態の側)。寿命で 2 つに切ってあるので、格納の台帳 (`CanvasTests.everyStoredPropertyIsClassified`)
+    /// 描く状態の側)。寿命で 2 つに切ってあるので、格納の台帳 (`CanvasTests.FrameState.everyStoredPropertyIsClassified`)
     /// は `shadowBake` を「持ち越す」に 1 行で載せ、中は `everyTargetStoredPropertyIsClassified` が `target` と同じ降り方で見る。
     ///
     /// 検査が読む値 (焼き付け先・数え 6 本・`shadowsEverEnabled`) は、同じ名前の読み口を ``Canvas`` に残して
@@ -2746,7 +2746,7 @@ public final class Canvas {
         // **このフレームの数も越えない** ([#1671])。描き切れたときは flush が「直前のフレーム」の
         // 値へ移してから 0 に戻しているが、描き切れなかったフレーム (#342) と閉じ忘れて捨てた
         // フレーム (#1622) では移さないまま残り、次のフレームの数に足されていた。境目の検査
-        // (`CanvasTests.frameStateResetsAtEveryBoundary`) が見つけた戻し落とし
+        // (`CanvasTests.FrameState.frameStateResetsAtEveryBoundary`) が見つけた戻し落とし
         //
         // [#1671]: https://github.com/mokume-metal/mokume/issues/1671
         outlinesAssembledThisFrame = 0
@@ -3046,7 +3046,7 @@ public final class Canvas {
     /// 分かれると、描き場所でだけ成り立たない性質が生まれる。
     ///
     /// **ここと ``abandonFrame()`` が戻す状態は、境目の検査が 1 つずつ見る**
-    /// (`CanvasTests.frameStateResetsAtEveryBoundary`)。`Canvas` の格納を 1 つ足したら、
+    /// (`CanvasTests.FrameState.frameStateResetsAtEveryBoundary`)。`Canvas` の格納を 1 つ足したら、
     /// フレームに属するか持ち越すかをその検査の表に書く — どちらにも無ければ赤になる
     /// ([#1671])。戻し落としは、これまで 1 件ずつ見つかっていた (#925・#1472・#1504・#1591)。
     ///

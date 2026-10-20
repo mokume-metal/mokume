@@ -11,7 +11,7 @@ import Testing
 /// たびに 1 つずつ足されてきた (#836 の断片と数の並び・#1172 の積み履歴・#1607 の組み立て中の
 /// 形)。一覧の外にあった状態は、描き方なら外へ漏れ (#1646 の曲線の細かさ)、形に焼き付かない
 /// ものなら黙って消えるかフレームに効いていた (#1529 の切り抜き・光)。フレームの境目で同じ形を
-/// 塞いだ ``CanvasTests/everyStoredPropertyIsClassified()`` (#1671) と同じく、**`Canvas` の格納と
+/// 塞いだ ``CanvasTests/FrameState/everyStoredPropertyIsClassified()`` (#1671) と同じく、**`Canvas` の格納と
 /// `Style` のフィールドを 1 つ残らずここで分ける。** 格納を 1 つ足したら、ここで止まる。
 ///
 /// [#1684]: https://github.com/mokume-metal/mokume/issues/1684
@@ -104,7 +104,7 @@ enum ShapeExit {
             // 本体のフレームが始まる所で捨てることになったフレームを出口まで待たせる印 (#2509)。
             // 一番外の出口が捨てて下ろす
             "dropAwaitingShape",
-            // 組み立て中の形 (#1607)。``CanvasTests/shapeState`` と同じ群
+            // 組み立て中の形 (#1607)。``CanvasTests/FrameState/shapeState`` と同じ群
             "isBuildingShape", "shapeKind", "currentNormal", "shapePoints", "shapeHasDepth",
             "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
             // 溜め場 (``poolStorageNames``)。記録したぶんを形として抜き、組み立て前の長さへ戻す
@@ -270,7 +270,7 @@ enum ShapeExit {
         names { if case .refuse = $0 { true } else { false } }
     }
 
-    /// 渡した名前の綴り。**同じ面の上で比べる** (``CanvasTests`` の綴りと同じ)。
+    /// 渡した名前の綴り。**同じ面の上で比べる** (``CanvasTests/FrameState`` の綴りと同じ)。
     static func fingerprint(of canvas: Canvas, _ names: Set<String>) -> [String: String] {
         var prints: [String: String] = [:]
         for child in Mirror(reflecting: canvas).children {

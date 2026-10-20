@@ -269,7 +269,7 @@ struct SceneOutsideFrameTests {
 
     /// 無視したこと =**シーンの記述がどれも既定のまま**であること。口ごとに見る先を選ばず
     /// 全部を見るので、別の種類の状態へ漏れて効いた場合も拾う。積んだ履歴は外から読めない
-    /// ので、ここでは見ない (`CanvasTests.transformsOutsideAFrameLeaveThePictureAlone`)。
+    /// ので、ここでは見ない (`CanvasTests.StackAndFrame.transformsOutsideAFrameLeaveThePictureAlone`)。
     private func expectUntouched(_ canvas: Canvas, after name: String) {
         #expect(canvas.transform == .identity, "\(name) で変換が効いている")
         #expect(canvas.cameraStorage == nil, "\(name) で視点が効いている")
