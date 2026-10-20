@@ -71,11 +71,26 @@ struct SharedFrameStageTests {
     @Test("プレビューは、作品の窓を作らなくても開いて畳める")
     func previewStandsAlone() throws {
         try withFacet { facet in
-            let preview = try SharedFramePreview(
-                gpu: RenderDevice(), facet: facet, title: "単体")
+            let title = "単体-\(UUID().uuidString)"
+            func previewWindow() -> NSWindow? { NSApplication.shared.windows.first { $0.title == title } }
+            #expect(previewWindow() == nil, "開く前に窓がある")
+
+            let preview = try SharedFramePreview(gpu: RenderDevice(), facet: facet, title: title)
             preview.open()
+            // 作品の窓 (`SharedFrameStage`) を作っていないのに、プレビューの窓だけが出ている
+            let window = try #require(previewWindow(), "開いたのに窓が出ていない")
+            #expect(window.isVisible)
+
+            // 重ねる 1 行は、その窓の上に出る
             preview.report("作っている…", spinning: true)
+            let notice = try #require(
+                window.contentView?.subviews.compactMap { $0 as? NoticeOverlay }.first,
+                "重ねる面が窓の上に無い")
+            #expect(notice.line == "作っている…")
+            #expect(notice.isSpinning)
+
             preview.close()
+            #expect(!window.isVisible, "畳んだのに窓が残っている")
         }
     }
 
@@ -398,6 +413,9 @@ struct SharedFrameStageTests {
     /// なので、書きかけを掴み損ねると**直る契機が来ない** — 症状は「プレビューが真っ白の
     /// まま何も出ない」だけで、起こし直すまで直らない
     /// ([#1048](https://github.com/mokume-metal/mokume/issues/1048))。
+    ///
+    /// **mokume の書き手 (`AtomicFile`) は原子的に置くので、書きかけは実際には見えない。** ここは、原子的に
+    /// 置かない書き手に備えた性質を、書きかけを作って固定している (``WatchedFile`` の説明)。
     @Test("書きかけの目録を掴んでも、その改訂を読み飛ばさない")
     func rereadsAManifestItCouldNotDecode() throws {
         try withFacet { facet in
@@ -421,6 +439,138 @@ struct SharedFrameStageTests {
                 [.modificationDate: moment], ofItemAtPath: url.path)
             stage.displayLinkFired()
             #expect(stage.hasSource)
+        }
+    }
+
+    /// **読めない目録は、黙って捨てず、改訂ごとに台ごと 1 度名乗る** ([#2889])。版が違えば読まない
+    /// 目録 (`schemaVersion` が違う) を置かれると、台は古い絵のまま理由を言わずに続いていた。
+    /// 差し出し元は変えず、直前の絵を出したまま (ADR-0032 決定 6)。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    @Test("読めない目録は、読み直しても 1 度だけ名乗り、差し出し元は変えない")
+    func anUnreadableManifestIsSaidOnce() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("unreadable"))
+            defer { stage.close() }
+            var said: [String] = []
+            stage.warn = { said.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            #expect(said.isEmpty, "読めた目録で名乗っている: \(said)")
+
+            // 版の違う目録に置き換わった (更新時刻は動く)
+            try Data(#"{"schemaVersion":99,"ids":[1],"width":10,"height":10}"#.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(stage.hasSource, "差し出し元は変わらず、直前の絵を出したまま")
+            let message = try #require(said.first)
+            #expect(said.count == 1, "読み直すたびに繰り返している: \(said)")
+            #expect(message.contains(url.path), "どのファイルか: \(message)")
+            #expect(message.contains("99"), "読めなかった理由: \(message)")
+            #expect(message.contains("mokume doctor"), "候補: \(message)")
+            #expect(message.contains("by each window"), "台ごとに名乗ることを偽らない: \(message)")
+            _ = surface
+        }
+    }
+
+    /// **乗り換えの合図が来ない 2 つの形は、道具の窓だけが知る** ([#2928])。目録が読めない・目録は読めたが
+    /// 番号の面を引けない — どちらも子は知らないので、台が知らせないと前の世代が残る。
+    /// 読み直しても繰り返さず、差し出し元は変えない (直前の絵を出したまま)。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test(
+        "受け取れない目録・引けない面は、台が 1 度だけ知らせ、差し出し元は変えない",
+        arguments: [
+            (#"{"schemaVersion":99,"ids":[1],"width":10,"height":10}"#, UndeliverableGeneration.unreadableManifest),
+            (#"{"schemaVersion":1,"ids":[4000000000],"width":10,"height":10}"#, UndeliverableGeneration.noSurface),
+        ])
+    func anUndeliverableGenerationIsAnnouncedOnce(manifest: String, cause: UndeliverableGeneration) throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("undeliverable"))
+            defer { stage.close() }
+            stage.warn = { _ in }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            #expect(told.isEmpty, "読めた目録で知らせている: \(told)")
+
+            try Data(manifest.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(told == [cause], "\(told)")
+            #expect(stage.hasSource, "差し出し元は変わらず、直前の絵を出したまま")
+            _ = surface
+        }
+    }
+
+    /// 目録がファイルとして読めない (置き場がディレクトリ) 形も、道具の窓だけが知る。版の形とは関係が無いので、
+    /// 受け取る側が版の案内を付けないよう、別の種類で知らせる ([#2928])。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test("ファイルとして読めない目録は、版の形と別の種類で知らせる")
+    func anUnreadableManifestFileIsAnnouncedApart() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("unreadable-file"))
+            defer { stage.close() }
+            var said: [String] = []
+            stage.warn = { said.append($0) }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(told == [.unreadableFile], "\(told)")
+            #expect(said.count == 1 && !(said.first ?? "").contains("mokume doctor"), "\(said)")
+            _ = surface
+        }
+    }
+
+    /// **前の世代を畳んでも、台は前の世代の頼みと寸法を持ち続けない** ([#2928])。見張りが新しい世代へ乗り
+    /// 換えたとみなして前の世代を畳むと、前の世代はもう絵を書かないので、カーソルの頼みを読み直す契機が
+    /// 来ず、窓は捕まえたまま・隠したままになる。入力を受けるのは新しい子なので、読めた目録の寸法へ
+    /// 入力の写しを追随させる。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test("受け取れない世代を知らせるとき、前の世代のカーソルの頼みを下ろし、読めた目録の寸法へ入力の写しを追随させる")
+    func undeliverableReleasesTheOldRequestsAndFollowsTheSize() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let requesting = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(requesting, frame: 1, gpu: gpu, pointerLock: true, cursorHidden: true)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("release"))
+            defer { stage.close() }
+            stage.open()
+            stage.warn = { _ in }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested && stage.cursorHiddenRequested, "検査の前提: 前の世代が頼んでいる")
+            let surface = try #require(stage.host as? SketchSurface)
+            #expect(surface.canvasWidth == 32)
+
+            // 面を引けない目録 (読める。寸法は 64x48)
+            try Data(#"{"schemaVersion":1,"ids":[4000000000],"width":64,"height":48}"#.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            stage.displayLinkFired()
+            #expect(told == [.noSurface])
+            #expect(!stage.pointerLockRequested && !stage.cursorHiddenRequested, "前の世代の頼みが残っている")
+            #expect(surface.canvasWidth == 64, "入力の写しが前の世代の寸法のまま")
         }
     }
 

@@ -142,7 +142,22 @@ enum MovieWriteFailure: Error, Equatable {
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
-nonisolated final class MovieFile {
+nonisolated final class MovieFile: MovieOutput {
+    /// 書く動画の形。**元にする形 (ProRes 4444) と、配る形 (H.264 の MP4) の 2 つだけ** ([#2440])。
+    ///
+    /// ProRes 4444 の `.mov` が元である ([ADR-0025] 決定 3 — 水準 3 を名乗れる唯一の形)。H.264 の MP4 は
+    /// **配る形**で、同じ引数から書いても画素が一致するとは約束しない。再生環境が広く軽いが、符号化は
+    /// 損失があり、透けは書かず (H.264 に無い)、色は sRGB へ写してから書く (``DistributionColor``)。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    enum Format: Equatable {
+        /// ProRes 4444 の `.mov`。元にする形。
+        case proRes4444
+        /// H.264 の MP4。配る形。
+        case h264
+    }
+
     /// 時刻の刻み。24 / 25 / 30 / 50 / 60 のどれで割っても整数になる値を選ぶ —
     /// 端数が出ると、フレームの時刻が刻みへ丸められるたびに少しずつずれる。
     ///
@@ -155,6 +170,7 @@ nonisolated final class MovieFile {
     static let timescale: CMTimeScale = 90_000
 
     private let path: String
+    private let format: Format
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
@@ -316,17 +332,54 @@ nonisolated final class MovieFile {
         ]
     }
 
-    init(path: String, width: Int, height: Int, frameRate: Int) throws(MovieWriteFailure) {
+    /// 配る形 (H.264 の MP4) の出力設定 ([#2440])。
+    ///
+    /// **色は sRGB で名乗る** (書く前に ``DistributionColor`` が写す)。BT.709 の原色・sRGB の伝達関数・
+    /// BT.709 の行列で、配る相手の再生環境が最も広く読める組。ビットレートは 1 画素あたり約 0.25 ビット
+    /// (下限 2 Mbps) — 生成する絵は輪郭が硬く、既定の低い値だと縁が崩れる。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
+    static func h264Settings(width: Int, height: Int, frameRate: Int) -> [String: Any] {
+        let bitsPerSecond = max(2_000_000, Int(Double(width * height * max(1, frameRate)) * 0.25))
+        return [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_IEC_sRGB,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: bitsPerSecond,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                AVVideoExpectedSourceFrameRateKey: frameRate,
+            ],
+        ]
+    }
+
+    init(
+        path: String, width: Int, height: Int, frameRate: Int, format: Format = .proRes4444
+    ) throws(MovieWriteFailure) {
         // **書き出し先がディレクトリなら、消さずに断る。** 下の「同じ名前が残っていると開けない」の
         // `removeItem` はディレクトリを中身ごと消す。出力先は利用者が指定するパスなので、取り違えて
         // ディレクトリを指すと、そのディレクトリが黙って消える ([#2859](https://github.com/mokume-metal/mokume/issues/2859))
         if AtomicFile.isDirectory(URL(fileURLWithPath: path), following: false) {
             throw .writeFailed(path: path, reason: Diagnostics.posixReason(EISDIR))
         }
-        guard let supported = Self.supportedProperties(width: width, height: height) else {
-            throw .encoderUnavailable
+        // H.264 の MP4 は専用回路を含む OS の符号化器に任せる (ProRes 4444 の問い合わせは要らない)
+        let supported: [String: Any]
+        switch format {
+        case .proRes4444:
+            guard let properties = Self.supportedProperties(width: width, height: height) else {
+                throw .encoderUnavailable
+            }
+            supported = properties
+        case .h264:
+            supported = [:]
         }
         self.path = path
+        self.format = format
         self.width = width
         self.height = height
         // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
@@ -338,7 +391,8 @@ nonisolated final class MovieFile {
         // 同じ名前が残っていると開けない。撮り直しは上書きになるのが自然である
         try? FileManager.default.removeItem(at: url)
 
-        guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mov) else {
+        guard let writer = try? AVAssetWriter(outputURL: url, fileType: format == .h264 ? .mp4 : .mov)
+        else {
             throw .destinationUnavailable(path: path)
         }
         // **容れ物の刻みも揃える** (#2307)。既定の 600 のままだと、動画の長さが 600 分の 1 秒へ
@@ -349,18 +403,23 @@ nonisolated final class MovieFile {
         // **乗算していないアルファをそのまま渡す** ([ADR-0011] 決定 4 の境界)。
         // 指定しないと乗算済みとして扱われ、透けた部分の色が黒へ寄る
         var compression: [String: Any] = [:]
-        let alphaMode = kVTCompressionPropertyKey_AlphaChannelMode as String
-        if supported[alphaMode] != nil {
-            compression[alphaMode] = kVTAlphaChannelMode_StraightAlpha as String
-        } else {
-            Diagnostics.warn(
-                "This machine's encoder does not take unpremultiplied alpha. "
-                    + "Anything transparent will be composited onto black")
+        let settings: [String: Any]
+        switch format {
+        case .proRes4444:
+            let alphaMode = kVTCompressionPropertyKey_AlphaChannelMode as String
+            if supported[alphaMode] != nil {
+                compression[alphaMode] = kVTAlphaChannelMode_StraightAlpha as String
+            } else {
+                Diagnostics.warn(
+                    "This machine's encoder does not take unpremultiplied alpha. "
+                        + "Anything transparent will be composited onto black")
+            }
+            settings = Self.outputSettings(width: width, height: height, compression: compression)
+        case .h264:
+            settings = Self.h264Settings(width: width, height: height, frameRate: frameRate)
         }
 
-        input = AVAssetWriterInput(
-            mediaType: .video,
-            outputSettings: Self.outputSettings(width: width, height: height, compression: compression))
+        input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         // 実時間に追いつく必要は無い。詰まったら待たせるほうが、落とすより正しい
         input.expectsMediaDataInRealTime = false
         // **トラックの刻みを渡す** (#2307)。渡さないと各枚の時刻が 600 分の 1 秒へ丸まる
@@ -415,7 +474,10 @@ nonisolated final class MovieFile {
 
         // **番地を取れなければ、中身の無い器を書いた枚として渡さない** (#2974)。前に池へ返した器の
         // 残りか初期化されていない画素が、録画に入る。取れなかった枚は書き損じとして名乗る
-        guard fill(buffer, with: image) else { throw bufferFailure() }
+        //
+        // 配る形は、色を sRGB へ写してから書く (透けは書かない・``DistributionColor``)
+        let drawn = format == .h264 ? DistributionColor.srgb(image, alpha: .drop) : image
+        guard fill(buffer, with: drawn) else { throw bufferFailure() }
         let handed = readsForTesting.appendBuffer?(buffer, stamp)
             ?? adaptor.append(buffer, withPresentationTime: stamp)
         guard handed else {

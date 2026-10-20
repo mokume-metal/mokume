@@ -180,6 +180,15 @@ extension SketchPart {
     /// - Note: 読めても面が 1 つも無いことがある (``Model/isEmpty``)。そのときは
     ///   投げずに、置いたときに警告する — 「読めなかった」と「読めたが見えない」は
     ///   別の話なので、区別できるようにしてある。
+    ///
+    /// - Note: **`normalize` の既定が手本と逆である。** p5.js の `loadModel(path, normalize)` は
+    ///   整えないのが既定 (`false`) で、こちらは整えるのが既定 (`true`) になる。座標が画素のこの面では、
+    ///   整えないと 2 単位ほどのモデルがほぼ点になり、失敗ではないので原因に辿り着けないためである。
+    ///   p5.js のコードを写して大きさがずれたら、`normalize: false` を渡す。ラベルが付くのは、p5.js の
+    ///   側が版で割れていて (1.x は 2 番目、2.x は 3 番目の位置引数か `options`)、どちらの位置にも
+    ///   写せないからである ([ADR-0020] 決定 1)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
     ///   場所が載る ``ModelFailure/unopenable(path:location:reason:)``)・読めないとき・対応していない
     ///   形式のときに ``ModelFailure``。
@@ -217,6 +226,9 @@ extension SketchPart {
     ///
     /// > Note: 届いたモデルの整え方と見え方は ``loadModel(_:normalize:)`` と同じなので、絵は
     /// > そちらを見ること。届くフレームは実行ごとに違うので、この口だけの絵は撮っていない。
+    ///
+    /// - Note: **`normalize` の既定は手本 (p5.js の `loadModel`) と逆で、整えるのが既定である。**
+    ///   理由と直し方は ``loadModel(_:normalize:)`` の 2 つ目の Note。
     ///
     /// - Throws: ``loadModel(_:normalize:)`` と同じ (``ModelFailure``)。
     ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと

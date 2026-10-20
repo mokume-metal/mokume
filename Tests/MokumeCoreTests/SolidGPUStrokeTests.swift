@@ -119,6 +119,52 @@ struct SolidGPUStrokeTests {
         }
         #expect(different == 0, "GPU と CPU で異なる画素: \(different)")
     }
+
+    /// 頂点関数が向きを控える腕は 8 本までで (`kSolidStrokeCachedArms`)、越えた腕は引くたびに骨の
+    /// 点から引き直す (#2973)。腕が 9 本以上集まる点は、組み込みの網では球の極と円錐の頂点くらいにしか
+    /// 無い。球の極は腕が全周に並んで角の形が他の腕の帯に隠れ、`matchesCPU` の絵には引き直しの誤りが
+    /// 出ない。
+    ///
+    /// ここでは、軸を画面に沿わせて横から見た円錐 (分割 18) に太い線を引く。頂点に 18 本の腕が集まり、
+    /// 底の輪へ扇に開く (画面で 180° を越える隙間が反対側に空く) ので、頂点の角の形は**扇の両端の 2 本**で
+    /// 決まる。両端の腕の 1 本は 9 本目以降 (引き直す側) にあり、**引き直した腕を数え損なうと、角の形が
+    /// 内側の腕で決まって頂点の尖りが変わる**。引き直しの経路を `return false` に壊す・控えの最後の
+    /// 値を返すに壊すと、この検査が赤になる (どちらも他の突き合わせは緑のまま・PR に書いた)。
+    /// 絵に出るのは頂点の尖りの十数画素なので、太さは 40 と太くしてある。
+    @Test("腕が控えの 8 本を越える頂点の角も、従来の CPU 経路と同じ絵になる", arguments: [false, true])
+    func manyArmsMatchCPU(orthographic: Bool) throws {
+        var images: [DisplayImage] = []
+        for gpu in [false, true] {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 200)
+            let passThrough = try Self.passThrough(canvas)
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                if !gpu { canvas.shader(passThrough) }
+                if orthographic { canvas.ortho() }
+                canvas.noFill()
+                canvas.stroke(.linear(red: 1, green: 1, blue: 1))
+                canvas.strokeWeight(40)
+                canvas.translate(100, 100, 0)
+                canvas.cone(60, 60, detail: 18)
+                canvas.closeBatch()
+                // GPU の側は線を GPU で広げ、CPU の側 (利用者の断片つき) は広げない
+                let strokes = canvas.batches.compactMap(\.strokeGeometry)
+                #expect(strokes.count == (gpu ? 1 : 0))
+            }
+            images.append(try canvas.target.encodeForDisplay())
+        }
+        var different = 0
+        var lit = 0
+        for y in 0..<200 {
+            for x in 0..<200 {
+                if images[0][x, y] != images[1][x, y] { different += 1 }
+                if images[1][x, y] != images[1][0, 0] { lit += 1 }
+            }
+        }
+        #expect(lit > 500, "線が描かれていない (描かれた画素 \(lit))")
+        #expect(different == 0, "GPU と CPU で異なる画素: \(different)")
+    }
+
     @Test("線だけ・半透明の塗り・平面の挿入と途中の読み出しを並べ替えない")
     func orderAndFlush() throws {
         var pictures: [[UInt8]] = []

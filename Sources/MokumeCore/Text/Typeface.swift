@@ -7,12 +7,27 @@ import MokumeDiagnostics
 
 /// どの書体を、どの大きさ・太さで使うかの指定。
 struct TypefaceRequest: Hashable, Sendable {
-    /// 書体の名前。`nil` はこの環境の既定の書体。
+    /// 書体の名前。`nil` はこの環境の既定の書体。``file`` があれば使わない。
     var name: String?
+    /// ファイルから読んだ書体 ([#2445])。あれば ``name`` より先に使う。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    var file: Font?
     /// 大きさ (画素)。
     var size: Float
-    /// 太さと傾き。
+    /// 太さと傾き。**``weight`` を頼んだなら太字を含まない** (呼ぶ側 (`Canvas`) が落とす)。太さを
+    /// 頼んだ面と太字の面を、同じ面に別々の鍵で作らないため。
     var style: TextStyle
+    /// 頼んだ太さ (100〜900 の整数)。`nil` は頼んでいない (``style`` の太字か否かで決まる)。
+    var weight: Int?
+
+    init(name: String?, file: Font? = nil, size: Float, style: TextStyle, weight: Int? = nil) {
+        self.name = name
+        self.file = file
+        self.size = size
+        self.style = style
+        self.weight = weight
+    }
 }
 
 /// 1 文字ぶんの引き当て結果。
@@ -84,6 +99,19 @@ final class Typeface {
     /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
     let lacksRequestedStyle: Bool
 
+    /// 頼んだ太さに対して、実際に使った面の太さ (CSS の数)。太さを頼んでいなければ `nil` ([#2445])。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    let usedWeight: Int?
+
+    /// 頼んだ太さから、使った太さが大きく離れたか。持つ面に近い太さが無かった ([#2445])。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    var lacksRequestedWeight: Bool {
+        guard let wanted = request.weight, let used = usedWeight else { return false }
+        return abs(used - wanted) > TypefaceWeight.noticeableGap
+    }
+
     /// 代わりの書体から引いた字の面が、頼んだ太さ・傾きを欠くときに呼ぶ口 ([#2561])。渡すのは
     /// この書体・その字・字を引いた書体で、知らせるのは書体を作らせた側 (`Canvas`) である。
     ///
@@ -98,7 +126,8 @@ final class Typeface {
         onFallbackLackingStyle: @escaping (Typeface, Unicode.Scalar, CTFont) -> Void
     ) {
         self.request = request
-        (self.base, self.lacksRequestedStyle) = Self.makeFont(request)
+        let made = Self.makeFont(request)
+        (self.base, self.lacksRequestedStyle, self.usedWeight) = (made.font, made.lacksStyle, made.usedWeight)
         self.ascent = Float(CTFontGetAscent(base))
         self.descent = Float(CTFontGetDescent(base))
         self.onFallbackLackingStyle = onFallbackLackingStyle
@@ -148,9 +177,24 @@ final class Typeface {
         return !path.isEmpty
     }
 
+    /// 書体を作った結果。
+    struct MadeFont {
+        var font: CTFont
+        /// 頼んだ太字・斜体の面が無く、引けた面で描くか。
+        var lacksStyle: Bool
+        /// 太さを頼んだとき、使った面の太さ (CSS の数)。頼んでいなければ `nil`。
+        var usedWeight: Int?
+    }
+
     /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、引けた面と「無かった」を返す。
-    private static func makeFont(_ request: TypefaceRequest) -> (font: CTFont, lacksStyle: Bool) {
+    ///
+    /// **太さ (``TypefaceRequest/weight``) を頼んだなら、太字の面の代わりにその太さを使う。** 傾きの面は
+    /// 先に選び、その面を頼んだ太さへ寄せる (``TypefaceWeight/weighted(_:weight:)``)。
+    private static func makeFont(_ request: TypefaceRequest) -> MadeFont {
         let size = CGFloat(request.size)
+        if let file = request.file {
+            return makeFileFont(file, size: size, request: request)
+        }
         let base: CTFont
         if let name = request.name {
             base = CTFontCreateWithName(name as CFString, size, nil)
@@ -161,10 +205,74 @@ final class Typeface {
         }
 
         let traits = traits(of: request.style)
-        guard !traits.isEmpty else { return (base, false) }
-        return styledFace(of: base, traits: traits) {
-            CTFontCreateCopyWithSymbolicTraits(base, size, nil, $0, $0)
+        let (styled, lacksStyle): (CTFont, Bool)
+        if traits.isEmpty {
+            (styled, lacksStyle) = (base, false)
+        } else {
+            (styled, lacksStyle) = styledFace(of: base, traits: traits) {
+                CTFontCreateCopyWithSymbolicTraits(base, size, nil, $0, $0)
+            }
         }
+        guard let weight = request.weight else { return MadeFont(font: styled, lacksStyle: lacksStyle, usedWeight: nil) }
+        let weighted = TypefaceWeight.weighted(styled, weight: weight)
+        return MadeFont(font: weighted.font, lacksStyle: lacksStyle, usedWeight: weighted.used)
+    }
+
+    /// ファイルから読んだ書体の面を作る ([#2445])。
+    ///
+    /// **ファイルの書体は登録しないので、CoreText は兄弟の面を引けない** (`CTFontCreateCopyWithSymbolicTraits`
+    /// は、登録された家族の中を探す)。面は、ファイルが持つ面から自分で選ぶ。
+    ///
+    /// - **可変書体** (面は 1 つ): 軸を既定値へ置いた面が既定の面で、太さは `wght` 軸で動かす。太字は 700。
+    ///   斜体の面は持てない (傾きは別のファイル)。
+    /// - **それ以外**: 頼んだ太さ (太字は 700・何も頼まなければ 400) に最も近い面を、傾きが合う面から選ぶ
+    ///   (``TypefaceWeight/nearest(among:weight:italic:)``)。
+    ///
+    /// 太字・斜体の面が無ければ引けた面で描き、「無かった」を返す (`textStyle()` の警告になる)。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    private static func makeFileFont(_ file: Font, size: CGFloat, request: TypefaceRequest) -> MadeFont {
+        let style = request.style
+        let wantsBold = style == .bold || style == .boldItalic
+        let wantsItalic = style == .italic || style == .boldItalic
+        let target = request.weight ?? (wantsBold ? TypefaceWeight.bold : TypefaceWeight.regular)
+
+        if file.isVariable, let face = file.faces.first {
+            let probe = CTFontCreateWithFontDescriptor(face.descriptor, size, nil)
+            let axes = TypefaceWeight.axes(of: probe)
+            // 全軸を既定値へ置く。ファイルが返す記述子は名前つきのインスタンスの 1 つで、既定とは限らない
+            var values = Dictionary(uniqueKeysWithValues: axes.map { ($0.identifier, $0.initial) })
+            var used: Int?
+            if request.weight != nil || wantsBold,
+                let axis = axes.first(where: { $0.identifier == TypefaceWeight.axisIdentifier })
+            {
+                let value = min(max(Double(target), axis.minimum), axis.maximum)
+                values[TypefaceWeight.axisIdentifier] = value
+                used = Int(value.rounded())
+            }
+            let font = TypefaceWeight.copy(of: probe, size: size, axes: values)
+            // 軸の無い書体 (幅だけの軸など) は太字にできない。傾きは持てない
+            let lacksBold = request.weight == nil && wantsBold && used == nil
+            return MadeFont(
+                font: font, lacksStyle: lacksBold || (wantsItalic && !face.trait.italic),
+                usedWeight: request.weight == nil ? nil : (used ?? Int(face.trait.weight.rounded())))
+        }
+
+        let traits = file.faces.map(\.trait)
+        guard let index = TypefaceWeight.nearest(among: traits, weight: target, italic: wantsItalic) else {
+            // 面が 1 つも無いファイルは読み込みが断っているので、ここへは来ない
+            return MadeFont(
+                font: CTFontCreateUIFontForLanguage(.system, size, nil)
+                    ?? CTFontCreateWithName("Helvetica" as CFString, size, nil),
+                lacksStyle: false, usedWeight: nil)
+        }
+        let chosen = traits[index]
+        let font = CTFontCreateWithFontDescriptor(file.faces[index].descriptor, size, nil)
+        let lacksBold = request.weight == nil && wantsBold && chosen.weight < 600
+        let lacksItalic = wantsItalic && !chosen.italic
+        return MadeFont(
+            font: font, lacksStyle: lacksBold || lacksItalic,
+            usedWeight: request.weight == nil ? nil : Int(chosen.weight.rounded()))
     }
 
     /// 頼んだ太さ・傾きの面を選ぶ。`copy` は、その性質の面を頼んだときの CoreText の答え。
@@ -304,9 +412,12 @@ final class Typeface {
         var advance = CGSize.zero
         CTFontGetAdvancesForGlyphs(font, .horizontal, &index, &advance, 1)
 
+        // ファイルから読んだ書体の字は、同じ PostScript 名のインストール済みの書体と焼き場で混ざらない
+        // よう、ファイルの同一性を鍵に含める。代わりの書体 (``fellBack``) はこの環境の書体で、名前だけ ([#2445])
+        var fontKey = (CTFontCopyPostScriptName(font) as String?) ?? ""
+        if !fellBack, let file = request.file { fontKey += "#" + file.identity }
         let entry = ResolvedGlyph(
-            font: font, glyph: glyph, advance: Float(advance.width),
-            fontKey: (CTFontCopyPostScriptName(font) as String?) ?? "")
+            font: font, glyph: glyph, advance: Float(advance.width), fontKey: fontKey)
         resolved[scalar] = entry
         if fallbackLacksStyle { onFallbackLackingStyle(self, scalar, font) }
         return entry

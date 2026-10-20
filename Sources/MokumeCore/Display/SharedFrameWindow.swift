@@ -84,6 +84,15 @@ public final class SharedFrameWindow {
         set { stage.onGenerationPromoted = newValue }
     }
 
+    /// この台が、控えた世代の絵を受け取れないことの知らせ ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+    ///
+    /// **乗り換えの知らせが来ない形のうち、道具だけが知るもの** (``UndeliverableGeneration``) である。
+    /// 受け取る側は、乗り換えを待っている世代のぶんだけ、前の世代を畳める。
+    public var onGenerationUndeliverable: ((UndeliverableGeneration) -> Void)? {
+        get { stage.onGenerationUndeliverable }
+        set { stage.onGenerationUndeliverable = newValue }
+    }
+
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。
     ///
     /// **入れ替わりの知らせより遅いことがある。** 最初の世代は絵が来る前に採用されるので、

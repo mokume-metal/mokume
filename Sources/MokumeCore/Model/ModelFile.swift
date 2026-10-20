@@ -105,10 +105,16 @@ nonisolated enum ModelFile {
     ///
     /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
     static func load(_ path: String) throws(ModelFailure) -> Parsed {
-        let searched = ImageFile.candidates(for: path)
-        guard let url = searched.first(where: { FileManager.default.fileExists(atPath: $0.path) })
-        else {
-            throw .notFound(path: path, searched: searched.map(\.path))
+        let url: URL
+        do {
+            url = try AssetLookup.locate(ImageFile.search(for: path), path: path)
+        } catch {
+            switch error {
+            case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+            case .unreachable(let path, let location, let reason):
+                throw .unopenable(
+                    path: path, location: location, reason: AssetOpening.unreachableReason(reason))
+            }
         }
         guard let format = Format(extensionName: url.pathExtension) else {
             throw .unsupported(path: path, extensionName: url.pathExtension.lowercased())

@@ -45,7 +45,7 @@ enum RenderCommand {
             },
             Arguments.Option(secondsFlags) { "\($0) needs a length after it (in seconds)" },
             Arguments.Option(outFlags, takesPlace: true) {
-                "\($0) needs somewhere to write after it (a .mov, or out/frame-####.png)"
+                "\($0) needs somewhere to write after it (a .mov, .mp4 or .gif, or out/frame-####.png)"
             },
         ]
     }
@@ -117,9 +117,23 @@ enum RenderCommand {
     }
 
     /// 書き終えたときの 1 行。**どこへ何枚書いたか**を名乗る。
+    ///
+    /// **配る形 (GIF・MP4) は、元にする形ではないことも名乗る** ([#2440])。同じ引数から書いても画素が
+    /// 一致するとは約束しない (減色や符号化の器は OS のもので、版で変わりうる)。元にするなら `.mov` か
+    /// PNG 連番。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
     static func report(_ request: RenderRequest) -> String {
-        "Wrote \(request.frameCount) frames at \(request.frameRate) fps to \(request.destination)"
+        let wrote =
+            "Wrote \(request.frameCount) frames at \(request.frameRate) fps to \(request.destination)"
+        guard RenderRequest.isDistribution(destination: request.destination) else { return wrote }
+        return wrote + "\n" + distributionNotice
     }
+
+    /// 配る形を書き終えたときの 1 行 ([#2440])。
+    static let distributionNotice =
+        "This is a form for sharing, not for keeping: writing it again from the same arguments is not "
+        + "promised to give the same pixels (to keep the motion, write a .mov or a numbered series)"
 
     // MARK: - 引数
 
@@ -160,12 +174,23 @@ enum RenderCommand {
         //
         // **`.mov` へは刻みより速く書けない** (#2307)。形が通る行き先でだけ見て、形の誤りは
         // 下の `--out` の文面で名乗る
-        if RenderRequest.accepts(destination: out),
+        //
+        // **GIF は 1/100 秒の整数倍にならない刻みを断る** ([#2440])。黙って遅延を丸めず、枚を間引かない。
+        // 使える近い fps を名指す
+        if RenderRequest.isGIF(destination: out), RenderRequest.accepts(destination: out),
             !RenderRequest.accepts(destination: out, frameRate: frameRate)
         {
             throw .usage(
+                "\(frameRateFlags[0]) \(rateText) cannot be written to a .gif: "
+                    + RenderRequest.gifRateReason(frameRate: frameRate))
+        }
+        if RenderRequest.accepts(destination: out),
+            !RenderRequest.accepts(destination: out, frameRate: frameRate)
+        {
+            let kind = out.lowercased().hasSuffix(".mp4") ? ".mp4" : ".mov"
+            throw .usage(
                 "\(frameRateFlags[0]) takes at most \(RenderRequest.movieFrameRateLimit) frames per"
-                    + " second when writing a .mov (its time is counted in"
+                    + " second when writing a \(kind) (its time is counted in"
                     + " 1/\(RenderRequest.movieFrameRateLimit) of a second, which cannot hold a"
                     + " shorter frame, so frames would be lost): \(rateText)")
         }
@@ -174,8 +199,8 @@ enum RenderCommand {
                 frameRate: frameRate, frameCount: frameCount, destination: destination)
         else {
             throw .usage(
-                "\(outFlags[0]) takes a movie ending in .mov, or a numbered series with a run of #"
-                    + " in the file name where the number goes (out/frame-####.png): \(out)")
+                "\(outFlags[0]) takes a movie ending in .mov, .mp4 or .gif, or a numbered series with a"
+                    + " run of # in the file name where the number goes (out/frame-####.png): \(out)")
         }
         // **ファイル名の長さも、ビルドの前に見る** (#2774)。子の中で落ちると、ビルドの後に、長さが理由
         // だと言われずに分かる。連番は番号が桁に収まらずに伸びた後の、最後の枚の名前で見る

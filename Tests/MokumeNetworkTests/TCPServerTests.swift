@@ -78,7 +78,7 @@ struct TCPServerTests {
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
-        return (server, try await boundPort(of: server, source: source))
+        return (server, try await boundPort(of: server, source: source, told: told))
     }
 
     // MARK: - 受ける
@@ -275,7 +275,7 @@ struct TCPServerTests {
         try server.open()
         defer { server.close() }
 
-        #expect(await until { told.count(containing: "TCP cannot listen on port \(port) because another app is using it") == 1 })
+        try await requireTold(containing: "TCP cannot listen on port \(port) because another app is using it", told: told, tracing: source) { server.state }
         #expect(server.state == .unavailable)
         // 開き直しを何度か重ねても、知らせは増えない
         try await Task.sleep(for: .milliseconds(300))
@@ -283,13 +283,62 @@ struct TCPServerTests {
         #expect(server.state == .unavailable)
 
         holder.release()
-        #expect(await until { server.state == .running })
+        try await requireState(told: told, tracing: source) { server.state }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
         try await peers.reach(on: server)
         let peer = peers[0]
         peer.send("back\n")
         #expect(await collect(server, count: 1) == ["back"])
+    }
+
+    @Test("受け口が期限までに running にならなければ、状態と受け口の知らせの全行を名乗って 1 つで止まる (#2945)")
+    func requireStateNamesTheStateAndWhatWasTold() async throws {
+        let told = Told()
+        // 番号を握ったまま手放さないので、受け口は開けない
+        let holder = try PortHolder(port: 0, stream: true)
+        defer { holder.release() }
+        let port = holder.port
+        let source = StreamSource(kind: .tcp, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
+        let server = TCPServer(
+            port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
+            warn: told.append)
+        try server.open()
+        defer { server.close() }
+        // 使用中と知らせるまでは普通に待つ。名乗りは、その後の短い期限で通して確かめる
+        try await requireTold(containing: "another app is using it", count: 1, exactly: false, told: told, tracing: source) { server.state }
+
+        let said = Mutex("")
+        try await withKnownIssue {
+            try await requireState(told: told, within: 0.2, tracing: source) { server.state }
+        } matching: { issue in
+            said.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
+            return issue.comments.contains { $0.rawValue.contains("受け口が running にならなかった") }
+        }
+        let text = said.withLock { $0 }
+        #expect(text.contains("状態: unavailable"), "名乗り: \(text)")
+        #expect(text.contains("TCP cannot listen on port \(port) because another app is using it"), "名乗り: \(text)")
+        #expect(text.contains("期限 0.2 秒"), "名乗り: \(text)")
+        // 口の中の移り変わり: 使用中を受けた回数 (開き直しのたびに増える) と、最後のもの
+        #expect(text.contains("移り変わり ") && text.contains("最後: portInUse"), "名乗り: \(text)")
+        #expect(text.contains("同じ told の全行"), "名乗り: \(text)")
+
+        // 知らせは 1 度でも、使用中のあいだは開き直すたびに移り変わりの数が増える (止まれば増えない)
+        #expect(await until { source.trace.count >= 3 })
+
+        // 知らせを待つ側も、言われなかったら状態と移り変わりと told の全行を名乗って止まる
+        let toldSaid = Mutex("")
+        try await withKnownIssue {
+            try await requireTold(
+                containing: "never said", told: told, within: 0.1, tracing: source
+            ) { server.state }
+        } matching: { issue in
+            toldSaid.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
+            return issue.comments.contains { $0.rawValue.contains("「never said」を含む知らせが 1 回出なかった") }
+        }
+        let toldText = toldSaid.withLock { $0 }
+        #expect(toldText.contains("状態: unavailable") && toldText.contains("最後: portInUse"), "名乗り: \(toldText)")
+        #expect(toldText.contains("another app is using it"), "名乗り: \(toldText)")
     }
 
     // MARK: - 相手の束 (#2940)

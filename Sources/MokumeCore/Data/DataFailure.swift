@@ -19,8 +19,8 @@
 /// **ファイルを読めなかった事情は、どこで止まったかで分ける** — 直す所がそれぞれ違うため。
 ///
 /// - 名前が在るファイルに解けない (``notFound(path:searched:)``): 置き場を直す
-/// - 解けたが開けない (``unopenable(path:location:reason:)``): ディレクトリだったなら置き場を、
-///   読む権利が無いなら権利を直す
+/// - 解けたが開けない・入れずに在るかを確かめられない (``unopenable(path:location:reason:)``): ディレクトリ
+///   だったなら置き場を、読む権利が無い (親のフォルダに入る権利が無いことも含む) なら権利を直す
 /// - 開けたが、中身が UTF-8 の文字でない (``unreadable(path:)``): UTF-8 で保存し直す
 /// - 文字だが、形が壊れている (``malformed(path:line:reason:)``): 中身を直す
 ///
@@ -37,6 +37,10 @@ public enum DataFailure: Error, Equatable, Sendable {
     ///
     /// 相対の名前は複数の場所を探して解く (``SketchPart/assetURL(_:)``) ので、渡した名前 (`path`)
     /// だけでは、どこにあるものを直せばよいかが分からない。説明には解けた場所が載る。
+    ///
+    /// **親のフォルダに入れず、在るかを確かめられない場合も、この case で運ぶ** — `location` は確かめられ
+    /// なかった場所で、`reason` は `cannot tell whether it exists (Permission denied)` の形になる。説明は
+    /// 「見つかった」と言わず、資源の宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
     case unopenable(path: String, location: String, reason: String)
     /// 中身 (開けたファイル・URL から受け取った本文) を、UTF-8 の文字として読めない。
     case unreadable(path: String)
