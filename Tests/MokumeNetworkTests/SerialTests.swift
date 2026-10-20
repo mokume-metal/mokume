@@ -166,7 +166,7 @@ struct SerialTests {
         let terminal = try PseudoTerminal()
         let serial = try serial(path: terminal.path, told: told)
         defer { serial.close() }
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
 
         terminal.send("0\r\n512\r\n")
         terminal.send("10")
@@ -186,7 +186,7 @@ struct SerialTests {
         let terminal = try PseudoTerminal()
         let serial = try serial(path: terminal.path, told: told)
         defer { serial.close() }
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
 
         terminal.send("before\n")
         terminal.send([0x68, 0xFF, 0x0A])  // 'h' と、UTF-8 に現れないバイト
@@ -204,7 +204,7 @@ struct SerialTests {
             name: "serial: knob", state: .unavailable, capacity: 4, warn: told.append, now: { 100 })
         let serial = try serial(path: terminal.path, told: told, input: queue)
         defer { serial.close() }
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
 
         terminal.send((1...6).map { "\($0)\r\n" }.joined())
         #expect(await until { queue.overflowed == 2 })
@@ -221,7 +221,7 @@ struct SerialTests {
         let terminal = try PseudoTerminal()
         let live = try serial(path: terminal.path, told: told)
         defer { live.close() }
-        #expect(await until { live.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { live.state }
         for value in knob { terminal.send("\(value)\r\n") }
         let received = await collect(live, count: knob.count)
 
@@ -248,14 +248,14 @@ struct SerialTests {
         try link.plug(into: first.path)
         let serial = try serial(path: link.path, told: told)
         defer { serial.close() }
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
         first.send("1\r\n")
         #expect(await collect(serial, count: 1) == ["1"])
 
         // 抜く。経路が消えてから、相手が閉じる (USB を抜いたときと同じ順)
         link.unplug()
         first.hangUp()
-        #expect(await until { serial.state == .disconnected })
+        try await requireState(.disconnected, what: "シリアルの口", told: told) { serial.state }
         // 開き直して開けなくても、抜かれたことを名乗り続ける (繋がっていない、には戻らない)
         #expect(await until { told.count(containing: "is not connected") == 1 })
         #expect(serial.state == .disconnected)
@@ -263,7 +263,7 @@ struct SerialTests {
         // 挿し直す
         let second = try PseudoTerminal()
         try link.plug(into: second.path)
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
         second.send("2\r\n")
         #expect(await collect(serial, count: 1) == ["2"])
         #expect(told.count(containing: "is not connected") == 1)
@@ -275,11 +275,11 @@ struct SerialTests {
         let device = try PipeDevice()
         let serial = try serial(path: "/dev/cu.pipe", told: told, opener: device.opener)
         defer { serial.close() }
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
 
         device.send("1023\r\n10")
         device.closeWriter()
-        #expect(await until { serial.state == .disconnected })
+        try await requireState(.disconnected, what: "シリアルの口", told: told) { serial.state }
         #expect(await collect(serial, count: 1) == ["1023"])
         #expect(await until { serial.input.unreadable == 1 })
         serial.supply()
@@ -300,7 +300,7 @@ struct SerialTests {
 
         let terminal = try PseudoTerminal()
         try link.plug(into: terminal.path)
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
         terminal.send("512\n")
         #expect(await collect(serial, count: 1) == ["512"])
 
@@ -329,7 +329,7 @@ struct SerialTests {
         #expect(told.count(containing: "is in use by another app") == 1)
 
         held.withLock { $0 = false }
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
         terminal.send("7\n")
         #expect(await collect(serial, count: 1) == ["7"])
     }
@@ -362,7 +362,7 @@ struct SerialTests {
             return SerialDevice.open(path, baudRate: baudRate)
         }
         let serial = try serial(path: terminal.path, told: told, opener: opener)
-        #expect(await until { serial.state == .running })
+        try await requireState(.running, what: "シリアルの口", told: told) { serial.state }
         terminal.send("1\n")
         #expect(await collect(serial, count: 1) == ["1"])
 
