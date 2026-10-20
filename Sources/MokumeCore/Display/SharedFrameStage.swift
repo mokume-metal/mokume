@@ -181,7 +181,16 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private var shownCurrentGeneration = false
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
     /// 確定させずに次の機会へ回る (``WatchedFile``)。
-    private let manifest: WatchedFile<SharedFrameSurface.Manifest>
+    ///
+    /// **読めない改訂は、台が名乗る** ([#2889]): 作ったときに渡す口で、台の `warn` へ流す。`lazy` なのは、
+    /// 口が台自身を指すため (初期化の後でないと自分を取れない)。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    private lazy var manifest = WatchedFile<SharedFrameSurface.Manifest>(
+        url: facet.appendingPathComponent(SharedFrameSurface.manifestName)
+    ) { [weak self] failure in self?.noteUnreadableManifest(failure) }
+    /// 道具の端末への名乗り。**検査から差し替える** — 既定は標準エラー。
+    var warn: (String) -> Void = Diagnostics.warn
     /// 最後に画面へ出した枚数。**同じ絵を二度出さない**ための目印。
     ///
     /// **差し出しを投入した直後に記し、結末は後で見る** ([#2735])。投入を GPU が打ち切ったら、
@@ -246,8 +255,6 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         self.gpu = gpu
         self.facet = facet
         self.look = look
-        self.manifest = WatchedFile(
-            url: facet.appendingPathComponent(SharedFrameSurface.manifestName))
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         super.init()
         screenLink.owner = self
@@ -531,6 +538,22 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     }
 
     // MARK: - 言うこと
+
+    /// 読めない目録を掴んだことを、改訂ごとに 1 度言う ([#2889])。
+    ///
+    /// **差し出し元は変えない** — 読めない目録からは乗り換え先が分からないので、直前の絵を出したままにする
+    /// (ADR-0032 決定 6)。名乗りの文面は ``UnreadableRevision`` で、つまみの応答と揃える。
+    /// 「目録が読めない回」を知る口はここだけである。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    private func noteUnreadableManifest(_ failure: UnreadableRevision.Failure) {
+        // **作品の窓とプレビューは、それぞれ台を持ち、同じ目録を別々に読む**ので、同じ改訂は台ごとに
+        // 1 度ずつ (高々 2 行) 名乗る。文面もそう言う (「1 度」と言い切ると、2 行出て偽になる)
+        warn(
+            UnreadableRevision.notice(
+                of: "The shared-frame manifest", at: manifest.url, failure: failure,
+                saidBy: "each window"))
+    }
 
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
     private func noteFailure(_ failure: RenderFailure) {
