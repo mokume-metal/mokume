@@ -118,6 +118,17 @@ struct RotatedTouchingHolesTests {
             Failing(
                 name: "触れ合わないが頂点が一直線に並ぶ 2 つの穴 (make(.vertexToVertex) 168)",
                 outer: vertex[168].outer, holes: vertex[168].holes, degrees: [1]),
+            // 触れ合わない穴でも、橋が回した座標の頂点をちょうど通る形。厳密に 0 で見る遮りの判定は、
+            // 橋が頂点を通り抜けて耳切りを止めた (畳む道・反証役が測った角度)
+            Failing(
+                name: "橋が頂点を通る (make(.vertexToVertex) 95)", outer: vertex[95].outer,
+                holes: vertex[95].holes, degrees: [286.0, 356.5, 359.5]),
+            Failing(
+                name: "橋が頂点を通る (make(.vertexToVertex) 207)", outer: vertex[207].outer,
+                holes: vertex[207].holes, degrees: [214.26, 232.29465]),
+            Failing(
+                name: "橋が頂点を通る (make(.vertexToVertex) 214)", outer: vertex[214].outer,
+                holes: vertex[214].holes, degrees: [65.300735]),
         ]
     }()
 
@@ -164,6 +175,126 @@ struct RotatedTouchingHolesTests {
             }
         }
         #expect(bad.isEmpty, "誤る角度 \(bad.count) 個 \(bad.prefix(6))")
+    }
+
+    /// 触れ合わない穴を回して、橋が頂点をちょうど通る角度を拾う。**0.1° 刻みの 3600 角度**で、誤る角度が
+    /// (95 番は 14 個・207 番は 18 個) あった。
+    @Test(
+        "橋が頂点を通りうる場面を 0.1° 刻みで回しても、どの角度でも面積どおりに塗られる (#2997)",
+        arguments: [95, 207, 214])
+    func sweepOfScenesWhereABridgeMeetsAVertex(_ index: Int) {
+        let scene = TouchingHoleScenes.make(.vertexToVertex, count: 400)[index]
+        var bad: [String] = []
+        for step in 0..<3600 {
+            let degrees = Float(step) / 10
+            if let message = Self.problem(
+                outer: scene.outer, holes: scene.holes, by: degrees, sampled: false)
+            {
+                bad.append(message)
+            }
+        }
+        #expect(bad.isEmpty, "場面 \(index): 誤る角度 \(bad.count) 個 \(bad.prefix(6))")
+    }
+
+    // MARK: - 許容の中まで近い穴・ちょうど触れる穴の並び
+
+    /// 外周の左の辺に頂点が載る (または許容の半分だけ離れる) 細い三角の穴を `count` 個、縦に並べる。
+    /// 外周の高さが穴の数に比例するので、許容 (形の大きさ × 2^-16) も穴の数に比例して広がる。
+    nonisolated static func comb(count: Int, gapFactor: Float) -> (rings: [[SIMD2<Float>]], height: Float) {
+        let step: Float = 5
+        let height = step * Float(count) + 2
+        let gap = gapFactor * height * 0x1p-16
+        var rings: [[SIMD2<Float>]] = [[SIMD2(0, 0), SIMD2(100, 0), SIMD2(100, height), SIMD2(0, height)]]
+        for i in 0..<count {
+            let y = Float(i) * step + 1
+            rings.append([SIMD2(gap, y + 1.5), SIMD2(30, y), SIMD2(30, y + 3)])
+        }
+        return (rings, height)
+    }
+
+    nonisolated static func painted(_ rings: [[SIMD2<Float>]]) -> (painted: Float, expected: Float) {
+        let scene = TouchingHoleScene(index: 0, outer: rings[0], holes: Array(rings.dropFirst()))
+        var painted: Float = 0
+        for t in scene.triangles() { painted += abs(Triangulation.cross(t.1 - t.0, t.2 - t.0) / 2) }
+        return (painted, scene.expectedArea)
+    }
+
+    @Test("外周の辺にちょうど触れる細い穴が 700 個並んでも、穴を引いた面積どおりに塗られる (#2997)")
+    func aCombOfTouchingHolesIsPaintedWhole() {
+        let (rings, _) = Self.comb(count: 700, gapFactor: 0)
+        let (painted, expected) = Self.painted(rings)
+        #expect(abs(painted - expected) < 1, "塗り \(painted) (期待 \(expected))")
+    }
+
+    @Test("許容の半分だけ外周から離れた細い穴が 700 個並んでも、組み直しで塗りが止まらない (#2997)")
+    func aCombOfNearlyTouchingHolesIsNotCutShort() {
+        let (rings, height) = Self.comb(count: 700, gapFactor: 0.5)
+        let (painted, expected) = Self.painted(rings)
+        // 許容より細い隙間は、組み直しの道で閉じる (点が束ねられる)。閉じる面積は隙間 × 高さ以下。
+        // 組み直しの耳切りが止まると、塗りは何万も抜ける
+        let closed = 0.5 * height * 0x1p-16 * height
+        #expect(painted <= expected + 1, "塗り \(painted) (期待 \(expected))")
+        #expect(painted >= expected - closed - 1, "塗り \(painted) (期待 \(expected)・閉じうる面積 \(closed))")
+    }
+
+    @Test("許容の半分だけ離れて縦に並ぶひし形 1500 個は、組み直しで塗りが止まらない (#2997)")
+    func aColumnOfNearlyTouchingDiamondsIsNotCutShort() {
+        let count = 1500
+        let height = Float(count) * 4 + 4
+        let gap = 0.5 * height * 0x1p-16
+        var rings: [[SIMD2<Float>]] = [
+            [SIMD2(0, 0), SIMD2(100, 0), SIMD2(100, height), SIMD2(0, height)]
+        ]
+        for i in 0..<count {
+            let y = Float(i) * 4 + 2
+            rings.append([
+                SIMD2(50, y + gap / 2), SIMD2(52, y + 2), SIMD2(50, y + 4 - gap / 2), SIMD2(48, y + 2),
+            ])
+        }
+        let (painted, expected) = Self.painted(rings)
+        // 角どうしの隙間 (許容の半分) が閉じるので、少し多く抜ける。止まると 4/5 が抜ける
+        #expect(painted <= expected + 1, "塗り \(painted) (期待 \(expected))")
+        #expect(painted >= expected - 0.001 * expected, "塗り \(painted) (期待 \(expected))")
+    }
+
+    // MARK: - 触れた点をまとめる手間
+
+    /// 触れた点をまとめる所が、x の揃った触れ方で二乗にならない。縦の辺に頂点が載る三角の穴を 4 倍に
+    /// 増やして、手間が 8 倍を越えないこと (線形なら 4 倍・二乗なら 16 倍に近づく)。
+    @Test("縦の辺に触れる穴が 4 倍に増えても、触れた点をまとめる手間は二乗にならない (#2997)")
+    func contactsAreGroupedInLinearTime() {
+        func best(_ count: Int) -> Double {
+            let height = Float(count) * 4
+            var rings: [[SIMD2<Float>]] = [
+                [SIMD2(0, 0), SIMD2(100, 0), SIMD2(100, height), SIMD2(0, height)]
+            ]
+            for i in 0..<count {
+                let y = Float(i) * 4 + 2
+                rings.append([SIMD2(0, y), SIMD2(2, y + 1), SIMD2(2, y - 1)])
+            }
+            let points = rings.flatMap { $0 }
+            var next = 0
+            let indices = rings.map { ring -> [Int] in
+                defer { next += ring.count }
+                return Array(next..<(next + ring.count))
+            }
+            var fastest = Double.infinity
+            for _ in 0..<5 {
+                var comparisons = 0
+                let start = ContinuousClock.now
+                let split = Triangulation.splitForNonzero(
+                    rings: indices, points: points, comparisons: &comparisons)
+                let elapsed = ContinuousClock.now - start
+                #expect(split != nil)
+                fastest = min(
+                    fastest,
+                    Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) * 1e-18)
+            }
+            return fastest
+        }
+        let small = best(2000)
+        let large = best(8000)
+        #expect(large < small * 8, "2000 個 \(small) 秒・8000 個 \(large) 秒")
     }
 
     // MARK: - 傾いた平面

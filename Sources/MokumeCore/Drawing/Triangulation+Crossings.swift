@@ -349,7 +349,7 @@ nonisolated extension Triangulation {
         }
 
         /// 触れているとみなす距離。**組み直し (``nonzeroSplit(crossings:comparisons:evenOdd:)``) が点を束ねる
-        /// 許容と同じ値** — 形の大きさ × 2^-16 と、座標の大きさ × 2^-20 の大きいほう。
+        /// 許容と同じ値** — 形の大きさ × 2^-16 と、座標の大きさ × 2^-20 の大きいほう (``Triangulation/TouchScale``)。
         ///
         /// 触れ方を組み直しへ送る判定 (``survey()``) と、組み直しの側が、同じ距離で「触れている」と
         /// 数える。判定が座標の厳密な一致で、組み直しだけが許容を持つと、回した・傾けた・計算で求めた
@@ -358,20 +358,12 @@ nonisolated extension Triangulation {
         ///
         /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
         var touchTolerance: Float? {
-            var low = SIMD2<Float>(repeating: .infinity)
-            var high = SIMD2<Float>(repeating: -.infinity)
-            var magnitude: Float = 0
+            var scale = TouchScale()
             for edge in from.indices where tree.isPlaced(edge) {
-                for point in [points[from[edge]], points[to[edge]]] {
-                    low = simd_min(low, point)
-                    high = simd_max(high, point)
-                    magnitude = max(magnitude, abs(point).max())
-                }
+                scale.include(points[from[edge]])
+                scale.include(points[to[edge]])
             }
-            guard low.x <= high.x else { return nil }
-            let tolerance = max(max(high.x - low.x, high.y - low.y) * 0x1p-16, magnitude * 0x1p-20)
-            guard tolerance > 0, tolerance.isFinite else { return nil }
-            return tolerance
+            return scale.tolerance
         }
 
         /// 真の交わりと、頂点を通って向こう側へ抜ける所を探す。
@@ -517,12 +509,17 @@ nonisolated extension Triangulation {
         /// 触れた位置ごとの通り道。`distance` の中にある位置は 1 つにまとめる (`0` なら厳密に同じ位置だけ)。
         ///
         /// まとめた位置は、番号のいちばん小さい触れの位置で代表させる。
+        ///
+        /// **許容の幅の升目に入れ、隣り合う升目の点どうしだけを比べる** (``nonzeroSplit(crossings:comparisons:evenOdd:)``
+        /// の点を束ねる所と同じ形)。x で並べて x が許容の中の点だけを比べる作りは、x が揃った触れ方
+        /// (縦の辺に載る頂点が縦に並ぶ形) で全部の組を比べて二乗になる ([#2997])。同じ位置の触れは先に
+        /// 束ね、升目には違う位置の先頭だけを入れるので、1 点に幾つも触れる形でも升目の中は膨らまない。
+        ///
+        /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
         private static func contacts(
             of touches: [(SIMD2<Float>, Visit)], within distance: Float
         ) -> [(SIMD2<Float>, [Visit])] {
             guard !touches.isEmpty else { return [] }
-            // x の順に並べて、x が許容の中の点だけを比べる
-            let order = touches.indices.sorted { touches[$0].0.x < touches[$1].0.x }
             var parent = Array(touches.indices)
             func root(_ index: Int) -> Int {
                 var index = index
@@ -532,25 +529,48 @@ nonisolated extension Triangulation {
                 }
                 return index
             }
-            for (rank, index) in order.enumerated() {
-                for other in order[(rank + 1)...] {
-                    guard touches[other].0.x - touches[index].0.x <= distance else { break }
-                    if simd_distance(touches[index].0, touches[other].0) <= distance {
-                        let (x, y) = (root(index), root(other))
-                        if x != y { parent[max(x, y)] = min(x, y) }
+            func join(_ a: Int, _ b: Int) {
+                let (x, y) = (root(a), root(b))
+                if x != y { parent[max(x, y)] = min(x, y) }
+            }
+            let usesCells = distance > 0 && distance.isFinite
+            var spots: [SIMD2<Float>: Int] = [:]
+            spots.reserveCapacity(touches.count)
+            var head: [Int: Int] = [:]
+            var after = [Int](repeating: -1, count: touches.count)
+            for index in touches.indices {
+                let point = touches[index].0
+                if let earlier = spots[point] {
+                    join(index, earlier)
+                    continue
+                }
+                spots[point] = index
+                guard usesCells, point.x.isFinite, point.y.isFinite else { continue }
+                let column = Int((point.x / distance).rounded(.down))
+                let row = Int((point.y / distance).rounded(.down))
+                for dx in -1...1 {
+                    for dy in -1...1 {
+                        var other = head[Self.cell(column + dx, row + dy)] ?? -1
+                        while other >= 0 {
+                            if simd_distance(touches[other].0, point) <= distance { join(index, other) }
+                            other = after[other]
+                        }
                     }
                 }
+                let key = Self.cell(column, row)
+                after[index] = head[key] ?? -1
+                head[key] = index
             }
             var groups: [Int: [Visit]] = [:]
-            var order2: [Int] = []
+            var order: [Int] = []
             for index in touches.indices {
                 let key = root(index)
-                if groups[key] == nil { order2.append(key) }
+                if groups[key] == nil { order.append(key) }
                 if groups[key]?.contains(touches[index].1) != true {
                     groups[key, default: []].append(touches[index].1)
                 }
             }
-            return order2.map { (touches[$0].0, groups[$0] ?? []) }
+            return order.map { (touches[$0].0, groups[$0] ?? []) }
         }
 
         /// 一直線に並ぶ 3 点で、`point` が `a` と `b` の間 (両端を除く) にあるか。
