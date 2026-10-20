@@ -128,7 +128,7 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 > 破れたとき: 手本の総称を取った兄弟だけが方式を名乗らない形になり、並んだ口のどれが何の方式かを、名前ではなく説明文で覚えることになる。
 
-#### 追補 (2026-10-18) — 引数の順が割れているときは、同じ層の兄弟の順に揃える
+#### 引数の順が割れているときは、同じ層の兄弟の順に揃える
 
 **手本どうしで引数の順が割れている口は、同じ層ですでに並んでいる兄弟の口の順に揃え、選んだ側と理由をここに残す。** 上の「手本が割れているとき」の段が物差しにする「広く使われている単位」は、値の体系の話で、引数の順には効かない。順を決めるのは、並べて書いたときに取り違えないことである。
 
@@ -142,6 +142,31 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 - **Processing の順 (filename, data) を採る。** 同じ層の `saveTable` と順が逆になり、2 つを並べて書くと片方を取り違える。Processing 自身も `saveTable` と `saveStrings` で順が割れていて、写す価値のある一貫した手本になっていない
 - **両方の順を受ける。** 同じことをする口が 2 つになり、正本が割れる (決定 4 の向きに反する)
+
+#### 改訂 (2026-10-20) — 手本とずれた口を、行ごとに「変える / 残す」と決めた ([#1556](https://github.com/mokume-metal/mokume/issues/1556))
+
+決定 1 より前に入った口と、その後に入ったが理由が書かれていない口に、手本と名前・引数の形がずれたものが残っていた。上の 2026-10-14 の改訂 (規則 1〜3) で名前の規則が決まったので、規則に照らして、**行ごとに答えと理由をここに残す**。表の手本の綴りは、p5.js の版 (1.x / 2.x) と Processing を分けて書く。
+
+**決定 1 の「引数の順序」は、引数のラベルを含む。** 手本が位置引数で書いている所へラベルを付けると、写したコードがそのまま通らなくなるので、ラベルは射程に入る。ただし、手本の位置引数が版や形で割れていて写せないとき、または並びが分かりにくいとき (規則 2b) は、ラベルを付けて理由を書く。
+
+| 口 | 手本の綴り | mokume の綴り | 答え | 理由 |
+| --- | --- | --- | --- | --- |
+| `isKeyDown(_:)` | p5.js 1.x・2.x の `keyIsDown(code)`。Processing に同義は無い (変数 `keyPressed`) | 当時は `isKeyDown(_:)` | **移した** (`keyboard.isPressed(_:)`・[#2599](https://github.com/mokume-metal/mokume/issues/2599) で済み) | 押下を問う語を `isPressed`・`justPressed`・`justReleased` の 3 語に揃えた ([ADR-0034](0034-input-surface-units.md) 決定 7)。`keyIsDown` へ改名してから移すと 2 度壊れる |
+| `isMousePressed` | p5.js 1.x・2.x の変数 `mouseIsPressed`。Processing の変数 `mousePressed` | `isMousePressed` (`Sketch+Input.swift`) | **改名せず、マウスの語を入れるときに `mouse.` へ移す** (#2599 が先送りした。いまは残っている) | **手本が割れている**。Processing の綴りは、同じ名前の関数 `mousePressed()` と並べて置けず (Swift が invalid redeclaration にする) 採れない。p5.js の `mouseIsPressed` は採れるが、`keyboard.isPressed` と同じ 3 語へ移すので、いまの綴りを 1 度だけ別の綴りへ改名することはしない。選んだ側はどちらでもなく、移す先の `mouse.` である |
+| `textOutline(_:_:_:)` | p5.js 2.x の `font.textToContours`。1.x には無い (1.x の `textToPoints` は周に分けない)。Processing に同義は無い | `textOutline` | **残す** (規則 2a) | 手本は書体のメソッドで、点の取り方が違う。p5.js は書体の単位に対する比 (`sampleFactor`) で取り、mokume の既定は折れ目の点で、等間隔は画素の `spacing:` で取る ([#2447](https://github.com/mokume-metal/mokume/issues/2447))。同じ名前にすると、写したコードが黙って違う点を返す |
+| `makeShader` (Sketch 層) | p5.js 1.x・2.x の `createShader(vert, frag)` | `makeShader` | **変える** → `createShader` (規則 1)。`Canvas.makeShader` は Swift の慣行のまま残す | 同義の手本があり、手本の名前が既定。改名は別の PR で出す ([#1556](https://github.com/mokume-metal/mokume/issues/1556) の PR-B)。引数の形は違う (Metal の 1 本のソースと関数名 / GLSL の頂点と断片の 2 本) ので、写したコードが通ることは約束しない |
+| `makeEffect` | p5.js 1.x・2.x の `createFilterShader(frag)`。2.x の `buildFilterShader` | `makeEffect` | **残す** | 手本は `filter(shader)` で呼んだ時点に 1 回かける口で、mokume は `effects([...])` の並びに入れて毎フレームかける。使い方が違うので同義と言えず、語彙 (filter) も違う |
+| `makeComputation`・`makeNumbers`・`makeParticles` | 手本が無い (p5.js にも Processing にも GPU の計算の口は無い) | `make…` | **残す** | 手本が無いものは Swift の慣行に従い、factory は `make` で始める (決定 1)。`create*` は手本の綴りで、同じ層に並ぶのは「手本の有無」で説明できる |
+| `beginRecord(_:)` | Processing の `beginRecord(renderer, filename)` (PDF・SVG の記録)。連番は Processing の `saveFrame` と p5.js 1.x・2.x の `saveFrames` | `beginRecord(_:)` | **残す**。説明文で手本と違うと名乗る | **同じ名前で意味が違う。** 手本はベクタの記録で引数が 2 つ、mokume は動画か連番の画素で引数が 1 つ。手本の呼び出しはコンパイルで止まり、黙ってずれはしない。始まりと終わりの対を持つ手本は `beginRecord` だけで、ファイル名の `#` を番号にする綴りも同じ。`saveFrames` は長さで止まる形で終わりの口が無く、`saveFrame` は毎フレーム呼ぶので、動画と終わりの口を持つ形に当たらない |
+| `loadModel(_:normalize:)`・`requestModel(_:normalize:)` | p5.js 1.x は `loadModel(path, normalize, …)` (2 番目)、2.x は `loadModel(path, [fileType], [normalize], …)` か `options.normalize` (3 番目か options)。どちらも既定 `false`。Processing に同名は無い (`loadShape` が OBJ を読む) | `normalize: Bool = true` | **ラベルも既定も残す**。説明文で既定が逆だと名乗る | **手本が割れている。** 位置が版で割れ、どちらの位置にも写せないので、ラベルを付ける (規則 2b)。既定は、座標が画素のこの面では 2 単位ほどのモデルがほぼ点になり、失敗ではないので原因に辿り着けないため `true` にした ([#336](https://github.com/mokume-metal/mokume/issues/336))。手本に寄せて `false` にすると、その害が戻る。**代償:** p5.js から写した作品は大きさがずれうる (作品側で `normalize: false` を渡している実例がある) |
+| `spotLight` の `angle:` | p5.js 1.x・2.x は `spotLight(v1, v2, v3, x, y, z, rx, ry, rz, [angle], [concentration])`。Processing は `angle`・`concentration` が必須の位置引数 | `angle:` (ラベル) | **ラベルを残す** (規則 2b) | 手本は位置引数が 11 個並び、`angle` がどれか分かりにくい。ラベルの違いは説明文で名乗る。**既定の角 (mokume は π/6、p5.js は π/3) と `concentration` が無いこと**は名前ではなく値と機能の話なので、ここでは決めない |
+| `ambient`・`emissive` | Processing は `ambient()`・`emissive()`。p5.js 1.x・2.x は `ambientMaterial()`・`emissiveMaterial()` | `ambient`・`emissive` | **残す** (Processing の側) | **手本が割れている。** Processing の組 (`ambient`・`emissive`・`shininess`・`specular`) は接尾辞が無く 1 つの規則で説明できる。p5.js の組は `ambientMaterial` と `shininess`・`metalness` が混ざる。mokume は `shininess`・`metalness` と並べるので、Processing の綴りを採った ([#320](https://github.com/mokume-metal/mokume/pull/320)) |
+| 立体の `detail:` (`sphere`・`ellipsoid`・`cylinder`・`cone`・`torus`) | p5.js 1.x・2.x は `sphere(radius, detailX, detailY)` のように形ごとに意味の違う位置引数 2 本。Processing は状態の `sphereDetail()` | `detail: Int` (1 本) | **残す**。説明文で手本と違うと名乗る | **手本が割れていて、形ごとに意味が違う。** 「一周をいくつに割るか」の 1 本に揃えた。形ごとに意味が違うと、同じ値を渡して違う細かさになる ([#289](https://github.com/mokume-metal/mokume/issues/289))。`detailX`・`detailY` に当たる別々の指定は、名前の話を越えて機能を足すので、作例が来てから決める |
+| `spacePosition(screenX:screenY:depth:)` | p5.js 2.x の `screenToWorld(x, y, [z])`。1.x と Processing には無い | `spacePosition` | **残す** (規則 2b) | 手本は 2.x だけで、`z` を説明文は「カメラからの距離」と書くが、実際は 0〜1 の面の値である (p5.js の `getWorldToScreenMatrix` が射影後の奥行きを 0.5 倍して 0.5 を足す)。この値は mokume の `depth` と同じ意味 (0 が手前の面・1 が奥の面で、式の形も同じ。p5.js のソースを読んで確かめた。走らせてはいない) なので、名前を揃えても値の体系の罠 ([ADR-0034](0034-input-surface-units.md)) にはならない。それでも、順方向を Processing の綴り `screenX`・`screenY`・`screenZ` で採っているので、その逆として `depth:` を名乗るほうが対が読める。手本が持つ `z` を省いた形 (いまの変換の `z = 0` の面へ戻す) は無い |
+
+**手本に同じ口が無いので、この表の外に置いたもの:** キーの押下の変数 (`keyIsPressed`・Processing の変数 `keyPressed`) は、名前の食い違いではなく口が無いだけで、要るなら `Feature` になる。変数 `keyPressed` を採れない理由は `isMousePressed` と同じである。`deltaTime` と `mouseButton` は値の体系の話で、別の Issue ([#1555](https://github.com/mokume-metal/mokume/issues/1555)) にある。
+
+**説明文の名乗り:** 「残す」と決めた行のうち、手本と名前・引数・既定が違うものは、説明文が「手本とは違う」と名乗る (上の「手本に倣う射程」の 2 点目)。`beginRecord(_:)`・`loadModel(_:normalize:)` / `requestModel(_:normalize:)`・立体の `detail:` の 5 つがこの改訂で名乗った。
 
 ### 2. オンオフは 1 系統で表す
 

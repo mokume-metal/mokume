@@ -204,6 +204,16 @@ extension SketchPart {
     ///
     /// - Parameter pattern: 行き先。`.mov` なら動画、ファイル名に `#` を並べれば連番。
     ///
+    /// - Note: **名前は手本と同じでも、意味は手本と違う。** Processing の
+    ///   `beginRecord(renderer, filename)` は、描く命令を PDF や SVG のレンダラへ写して**ベクタで
+    ///   記録する**口で、引数が 2 つある。こちらは**絵 (画素) を 1 フレームずつ**動画か連番の画像に
+    ///   書き、引数は行き先の 1 つだけである。手本の 2 つの引数を渡す呼び出しは、コンパイルで止まる
+    ///   (黙って別の意味にはならない)。始まりと終わり (``endRecord()``) の対で、ファイル名の `#` を
+    ///   番号に置き換える綴りは手本と同じである。連番だけなら Processing の `saveFrame` を毎フレーム
+    ///   呼ぶ形に当たるが、動画へ書く口と終わりの口が要るので、手本の中では同じ形の `beginRecord` の
+    ///   名前を採った ([ADR-0020] 決定 1)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     // shot: 1 snippet=5f85730d
     public func beginRecord(_ pattern: String) {
