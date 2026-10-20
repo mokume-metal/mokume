@@ -2023,9 +2023,17 @@ public final class Canvas {
         var ellipseMode = ShapeMode.center
         var blendMode = BlendMode.blend
         var clip: ClipRect?
-        var fontName: String?
+        /// 選んだ書体。`nil` は既定の書体。**名前とファイルは同時に持てない** — 後から選んだほうが勝つので、
+        /// 1 つの値で持つ ([#2445])。読み書きは ``fontName``・``fontFile`` から。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        var fontSelection: FontSelection?
         var textSize: Float = 12
-        var textStyle = TextStyle.normal
+        /// 頼んだ太さと傾き。**太字と太さは同時に持てない** — ``textStyle(_:)`` と ``textWeight(_:)`` は
+        /// 後から書いたほうが勝つので、1 つの値で持つ ([#2445])。読み書きは ``textStyle``・``textWeight`` から。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        var textFace = TextFace.style(.normal)
         var horizontalTextAlign = HorizontalTextAlign.left
         var verticalTextAlign = VerticalTextAlign.baseline
         /// 行送りの指定。`nil` は自動 (大きさから決める)。
@@ -2053,6 +2061,52 @@ public final class Canvas {
         var castsShadow = true
         /// これから置く形が影を受けるか。
         var receivesShadow = true
+
+        /// 名前で選んだ書体。ファイルを選んでいれば `nil`。書くと名前の選びになり、`nil` を書くと既定へ戻る。
+        var fontName: String? {
+            get {
+                if case .named(let name) = fontSelection { name } else { nil }
+            }
+            set { fontSelection = newValue.map(FontSelection.named) }
+        }
+
+        /// ファイルから読んだ書体。名前で選んでいれば `nil`。
+        var fontFile: Font? {
+            if case .file(let font) = fontSelection { font } else { nil }
+        }
+
+        /// 太字・斜体。**太さを頼んでいれば、太字の分を落とした形** (傾きだけ) — 太さを頼んだ面と太字の面を、
+        /// 別々の鍵で作らないため (``Typeface`` が太さを持つ)。書くと太字・斜体の頼みになり、太さは外れる。
+        var textStyle: TextStyle {
+            get {
+                switch textFace {
+                case .style(let style): style
+                case .weight(_, let italic): italic ? .italic : .normal
+                }
+            }
+            set { textFace = .style(newValue) }
+        }
+
+        /// 頼んだ太さ (100〜900 の整数)。頼んでいなければ `nil`。
+        var textWeight: Int? {
+            if case .weight(let weight, _) = textFace { weight } else { nil }
+        }
+    }
+
+    /// 書体の選び方 (``Style/fontSelection``)。
+    enum FontSelection {
+        /// この環境の書体を、確かめた名前で。
+        case named(String)
+        /// ファイルから読んだ書体。
+        case file(Font)
+    }
+
+    /// 太さと傾きの頼み方 (``Style/textFace``)。
+    enum TextFace: Equatable {
+        /// 太字・斜体の面を頼んだ。
+        case style(TextStyle)
+        /// 太さの数を頼んだ。傾きは、太さの前に頼んだ斜体を残す。
+        case weight(Int, italic: Bool)
     }
 
     /// いまの設定の一式を、丸ごと写し取る / 戻す口。

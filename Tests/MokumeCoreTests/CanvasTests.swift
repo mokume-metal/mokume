@@ -2005,7 +2005,7 @@ struct CanvasTests {
     /// ``Canvas/Style`` のうち、越えるフィールド。どれも描き方である (ADR-0021 決定 4)。
     private let carriedStyle: Set<String> = [
         "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "hasFill", "hasStroke",
-        "rectMode", "ellipseMode", "blendMode", "fontName", "textSize", "textStyle",
+        "rectMode", "ellipseMode", "blendMode", "fontSelection", "textSize", "textFace",
         "horizontalTextAlign", "verticalTextAlign", "textLeading", "textWrap", "imageMode",
         "tint", "picture",
     ]

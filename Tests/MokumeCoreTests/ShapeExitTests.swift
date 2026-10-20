@@ -73,9 +73,13 @@ enum ShapeExit {
             ("style.rectMode", { c, _ in c.rectMode(.center) }),
             ("style.ellipseMode", { c, _ in c.ellipseMode(.corner) }),
             ("style.blendMode", { c, _ in c.blendMode(.add) }),
-            ("style.fontName", { c, _ in c.textFont("Helvetica") }),
+            // 名前かファイルかは 1 つの値 (#2445)。ファイルで汚す
+            ("style.fontSelection", { c, _ in
+                if let font = try? Font.load("/System/Library/Fonts/Helvetica.ttc") { c.textFont(font) }
+            }),
             ("style.textSize", { c, _ in c.textSize(30) }),
-            ("style.textStyle", { c, _ in c.textStyle(.bold) }),
+            // 太字か太さかは 1 つの値 (#2445)。太さで汚す
+            ("style.textFace", { c, _ in c.textWeight(300) }),
             ("style.horizontalTextAlign", { c, _ in c.textAlign(.right, .top) }),
             ("style.verticalTextAlign", { c, _ in c.textAlign(.right, .top) }),
             ("style.textLeading", { c, _ in c.textLeading(40) }),
