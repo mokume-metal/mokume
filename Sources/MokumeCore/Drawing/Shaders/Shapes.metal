@@ -1169,11 +1169,117 @@ static inline float mokume_spanCoverage(float center, float halfWidth) {
     return max(0.0, min(0.5, center + halfWidth) - max(-0.5, center - halfWidth));
 }
 
+/// 形の軸が、描く画素の軸に沿っているか (逆行列の各行が、片方の軸だけを向く)。
+///
+/// 回していない形・90° の倍数に回した形・縦横で違う倍率の形がそうである。**行の小さいほうの
+/// 成分が、大きいほうの 1e-5 倍以下なら沿っているとみなす** — 90° の回転は `cos` の丸め (4e-8)
+/// で 0 にならないので、ちょうど 0 とは比べられない。1e-5 の傾きは、長さ 424 画素の線の端で
+/// 0.004 画素しか動かず、絵に見えない。
+static inline bool mokume_rowsAlignToPixels(float4 rows) {
+    float2 a = abs(rows.xy);
+    float2 b = abs(rows.zw);
+    return min(a.x, a.y) <= 1e-5 * max(a.x, a.y) && min(b.x, b.y) <= 1e-5 * max(b.x, b.y);
+}
+
+/// 画素 [−0.5, 0.5]² の中で、`c + g · d` が `[−h, h]` に入る面積 (帯 1 本・閉じた式)。
+/// `g` は、形のその軸の座標が描く画素の `d` でどう動くか (`inverseRows` の 1 行)。
+///
+/// `g · d` は、幅 |g.x| と |g.y| の一様分布の和で、密度は台形になる。その累積 (台形の累積分布) を
+/// `(t + s)₊² − (t + k)₊² − (t − k)₊² + (t − s)₊²` を 2 · 長辺 · 短辺 で割った形で書き、帯の両縁で
+/// 引く (`s` は幅の和の半分・`k` は差の半分)。短辺が 0 なら一様分布で、累積は 1 次式になる。
+static inline float mokume_stripCoverage(float c, float h, float2 g) {
+    float hi = max(abs(g.x), abs(g.y));
+    float lo = min(abs(g.x), abs(g.y));
+    float s = 0.5 * (hi + lo);
+    float k = 0.5 * (hi - lo);
+    float2 t = clamp(float2(h - c, -h - c), -s, s);
+    if (lo <= 1e-5 * hi) {
+        float2 f = 0.5 + t / max(hi, 1e-30);
+        return f.x - f.y;
+    }
+    float2 ramp = max(t + s, 0.0);
+    float2 rampEnd = max(t - s, 0.0);
+    float2 nearEdge = max(t + k, 0.0);
+    float2 farEdge = max(t - k, 0.0);
+    float2 f = (ramp * ramp - nearEdge * nearEdge - farEdge * farEdge + rampEnd * rampEnd) / (2.0 * lo * hi);
+    return f.x - f.y;
+}
+
+/// 凸多角形 `poly[0..<n]` を、`k + g · d ≥ 0` の側だけに切る (Sutherland–Hodgman)。
+static inline void mokume_clipPolygon(thread float2 *poly, thread uint &n, float k, float2 g) {
+    float2 kept[10];
+    uint m = 0;
+    for (uint i = 0; i < n; i++) {
+        float2 current = poly[i];
+        float2 next = poly[i + 1 == n ? 0 : i + 1];
+        float fc = k + dot(g, current);
+        float fn = k + dot(g, next);
+        bool inside = fc >= 0.0;
+        if (inside) { kept[m++] = current; }
+        if (inside != (fn >= 0.0)) {
+            kept[m++] = mix(current, next, fc / (fc - fn));
+        }
+    }
+    for (uint i = 0; i < m; i++) { poly[i] = kept[i]; }
+    n = m;
+}
+
+/// 形自身の軸に沿った箱 (中心 `at`・半幅 `extent`・どれも形自身の座標) と、**描く画素の軸に沿った
+/// 正方形** (描く画素 1 つ) の重なりの面積 ([#2226])。1 画素より細い線・点・塗りの被覆が使う。
+///
+/// 形の向きの 2 軸で `mokume_spanCoverage` を取って掛ける式は、画素を形の向きに回した正方形で
+/// 数えることになる。画素の格子は軸に沿った正方形が隙間なく並ぶので、数えた画素の和が形の面積に
+/// 一致するのは、画素の軸に沿った正方形で重なりを取るときだけである — 45° の細い線では、置く位置
+/// だけで光の量が 0.7〜1.4 倍に振れた。ここでは重なりの面積をそのまま出すので、画素の和は、
+/// 向きにも置く位置にも、剪断と縦横で違う倍率にもよらず、箱の面積に一致する。
+///
+/// - **形の軸が画素の軸に沿うとき** (`mokume_rowsAlignToPixels`) は、軸ごとの重なりの長さの積が
+///   厳密なので、従来と同じ演算でそれを返す。軸に沿った形の絵は 1 ビットも動かない
+/// - 画素が箱の片側の帯に丸ごと入るか、帯が画素を切らないなら、帯 1 本の閉じた式で出す
+///   (`mokume_stripCoverage`)。長い線の中ほどはこれで済み、頂点を切る計算は線の端と短い形だけが払う
+/// - 2 軸の帯が両方とも画素を切るときは、画素の四角を箱の縁で切って面積を出す
+///
+/// `unitsPerPixel` は逆行列の行ノルム (`rows` から出したもの)。
+///
+/// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
+static inline float mokume_boxCoverage(float2 at, float2 extent, float2 unitsPerPixel, float4 rows) {
+    if (mokume_rowsAlignToPixels(rows)) {
+        return mokume_spanCoverage(at.x / unitsPerPixel.x, extent.x / unitsPerPixel.x)
+            * mokume_spanCoverage(at.y / unitsPerPixel.y, extent.y / unitsPerPixel.y);
+    }
+    // 画素の四角が、形の各軸の座標で動く幅の半分
+    float2 reach = 0.5 * float2(abs(rows.x) + abs(rows.y), abs(rows.z) + abs(rows.w));
+    // どちらかの軸で箱の外なら 0
+    if (any(at - reach >= extent) || any(at + reach <= -extent)) { return 0.0; }
+    // 画素の四角が、軸ごとの帯に丸ごと入るか (入れば、その軸は何も切らない)
+    bool cutsX = at.x - reach.x < -extent.x || at.x + reach.x > extent.x;
+    bool cutsY = at.y - reach.y < -extent.y || at.y + reach.y > extent.y;
+    if (!cutsX && !cutsY) { return 1.0; }
+    if (!cutsY) { return mokume_stripCoverage(at.x, extent.x, rows.xy); }
+    if (!cutsX) { return mokume_stripCoverage(at.y, extent.y, rows.zw); }
+    float2 poly[10] = {
+        float2(-0.5, -0.5), float2(0.5, -0.5), float2(0.5, 0.5), float2(-0.5, 0.5)
+    };
+    uint n = 4;
+    // 軸ごとに、帯の両縁 (画素を切る縁だけ)。`c + g · d ≤ h` は `(h − c) − g · d ≥ 0`
+    if (at.x + reach.x > extent.x) { mokume_clipPolygon(poly, n, extent.x - at.x, -rows.xy); }
+    if (at.x - reach.x < -extent.x) { mokume_clipPolygon(poly, n, extent.x + at.x, rows.xy); }
+    if (at.y + reach.y > extent.y) { mokume_clipPolygon(poly, n, extent.y - at.y, -rows.zw); }
+    if (at.y - reach.y < -extent.y) { mokume_clipPolygon(poly, n, extent.y + at.y, rows.zw); }
+    float area = 0.0;
+    for (uint i = 0; i < n; i++) {
+        float2 a = poly[i];
+        float2 b = poly[i + 1 == n ? 0 : i + 1];
+        area += a.x * b.y - a.y * b.x;
+    }
+    return 0.5 * abs(area);
+}
+
 /// 1 画素より細い楕円の塗りの被覆 ([#1477])。`p` と `radii` は形自身の座標、
 /// `unitsPerPixel` は描く画素 1 つが形自身の座標でいくらか。
 ///
-/// 描く画素で細い向きは両縁を見る `mokume_spanCoverage` で、長い向きも両端を見て数え、
-/// 掛け合わせる (`rect` の細い塗りと同じ箱フィルタ)。細い向きの半幅は、**画素の中で楕円の
+/// 描く画素で細い向きも長い向きも両縁を見て数え、`rect` の細い塗りと同じ箱フィルタ
+/// (`mokume_boxCoverage`) で画素と重ねる。細い向きの半幅は、**画素の中で楕円の
 /// 中心にいちばん近い位置**での半幅を取る:
 ///
 /// - 長い向きも 1 画素より短い小さい円・楕円は、画素に中心の高さが入るので半幅は半径
@@ -1189,18 +1295,25 @@ static inline float mokume_spanCoverage(float center, float halfWidth) {
 /// 負の数の平方根を避けるため。
 ///
 /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
-static inline float mokume_thinEllipseCoverage(float2 p, float2 radii, float2 unitsPerPixel) {
+static inline float mokume_thinEllipseCoverage(
+    float2 p, float2 radii, float2 unitsPerPixel, float4 rows)
+{
     // 描く画素で細い向きを x に揃える (radii.x / u.x ≤ radii.y / u.y を割らずに比べる)
     bool thinIsX = radii.x * unitsPerPixel.y <= radii.y * unitsPerPixel.x;
     float2 at = thinIsX ? p : p.yx;
     float2 r = thinIsX ? radii : radii.yx;
     float2 u = thinIsX ? unitsPerPixel : unitsPerPixel.yx;
+    // 画素が長い向きの座標で広がる幅の半分は、回していても行ノルムの半分で取る。四角の角まで
+    // 届く幅 (行の絶対値の和の半分) で取ると、いちばん広い所を取る上振れが 45° で増える
+    // (長さ 20・太さ 0.5 の楕円で、軸に沿った同じ楕円の +4.7% が +6.7% になった。#2226)
+    float reach = 0.5 * u.y;
     // 画素の中で、長い向きに楕円の中心へいちばん近い位置
-    float nearest = clamp(0.0, at.y - 0.5 * u.y, at.y + 0.5 * u.y);
+    float nearest = clamp(0.0, at.y - reach, at.y + reach);
     float t = min(abs(nearest) / max(r.y, 1e-30), 1.0);
     float halfWidth = r.x * sqrt(max(1.0 - t * t, 0.0));
-    return mokume_spanCoverage(at.x / u.x, halfWidth / u.x)
-        * mokume_spanCoverage(at.y / u.y, r.y / u.y);
+    // 回していれば、画素の軸に沿った正方形との重なりの面積で数える (`mokume_boxCoverage`)
+    return mokume_boxCoverage(
+        p, thinIsX ? float2(halfWidth, r.y) : float2(r.y, halfWidth), unitsPerPixel, rows);
 }
 
 /// 1 画素より細い楕円の輪郭の帯の穴の被覆 ([#2186])。`p`・`radii` は形自身の座標
@@ -1652,10 +1765,12 @@ static inline FormPaint mokume_formPaint(
                 // 中心に置くと 11.0、画素の境目に置くと 1.86 と、置く位置で 6 倍揺れていた。
                 // 塗りは寄せない (ADR-0039 決定 2) ので `q` ではなく `p` で数える。
                 //
-                // 数え方も境目も、1 画素より細い線の枝と同じにする。細い向きと長い向きの
-                // それぞれで画素と帯が重なる長さを取って掛け合わせる (箱フィルタ) ので、濃さは
-                // 置く位置によらず面積に比例する。回した形も行ノルムで画素へ直すので同じ濃さで
-                // 出る (剪断と縦横比の違う拡大では近似)。
+                // 数え方も境目も、1 画素より細い線の枝と同じにする。画素と箱の重なりを取る
+                // (箱フィルタ) ので、濃さは置く位置によらず面積に比例する。形の軸が画素の軸に
+                // 沿うときは、細い向きと長い向きで重なる長さを取って掛け合わせる。**沿わない
+                // (回した・剪断した) ときは、画素の軸に沿った正方形を箱の縁で切って面積を出す**
+                // (`mokume_boxCoverage`・#2226)。形の軸で長さの積を取ると、画素を形の向きに
+                // 回した正方形で数えることになり、45° で置く位置により 0.7〜1.4 倍に振れた。
                 //
                 // **1/256 の遊び (`mokume_formCoverage`) は掛けない。** 両縁に掛けると細い帯
                 // ほど効きが大きくなる (幅 0.05 の帯が画素の境目をまたぐと 15% 足りなくなる)。
@@ -1666,9 +1781,7 @@ static inline FormPaint mokume_formPaint(
                 //
                 // **細い塗りを含まない列では、枝ごと原稿から外す** (`kFormHasThinFill`)
                 isThinFill = true;
-                thinFillCoverage =
-                    mokume_spanCoverage(p.x / unitsPerPixel.x, extent.x / unitsPerPixel.x)
-                    * mokume_spanCoverage(p.y / unitsPerPixel.y, extent.y / unitsPerPixel.y);
+                thinFillCoverage = mokume_boxCoverage(p, extent, unitsPerPixel, in.inverseRows);
             }
         }
         if (kFormHasStroke) {
@@ -1729,7 +1842,8 @@ static inline FormPaint mokume_formPaint(
             if (kFormHasThinFill
                 && any(2.0 * form.size.xy * (1.0 + 2.0 * kFormSnap) < unitsPerPixel)) {
                 isThinFill = true;
-                thinFillCoverage = mokume_thinEllipseCoverage(p, form.size.xy, unitsPerPixel);
+                thinFillCoverage = mokume_thinEllipseCoverage(
+                    p, form.size.xy, unitsPerPixel, in.inverseRows);
             }
         }
         if (kFormHasStroke) {
@@ -1828,11 +1942,13 @@ static inline FormPaint mokume_formPaint(
             // 座標では帯の中心が画素の中心に来て、太さ 0.1 の線がその 1 画素を 0.55 で
             // 塗っていた (半端な座標の 5.9 倍・#1451)。
             //
-            // 太さの向きと長さの向きのそれぞれで画素と帯が重なる長さを取り、掛け合わせる
-            // (箱フィルタ)。濃さは置く位置によらず太さに比例し、点は面積 (太さの 2 乗) に
-            // 比例する。丸い端はここでは出っ張る端と同じ四角に数える — 違いは画素 1 つの
-            // 中に収まり、太さ 1 の丸い点 (下の枝で和 1.0〜1.17) とも続く。回した線も
-            // 行ノルムで画素へ直すので同じ濃さで出る (剪断と縦横比の違う拡大では近似)。
+            // 画素と帯の重なりを取る (箱フィルタ)。濃さは置く位置によらず太さに比例し、点は
+            // 面積 (太さの 2 乗) に比例する。丸い端はここでは出っ張る端と同じ四角に数える —
+            // 違いは画素 1 つの中に収まり、太さ 1 の丸い点 (下の枝で和 1.0〜1.17) とも続く。
+            // 線の軸が画素の軸に沿うときは、太さの向きと長さの向きで重なる長さを取って掛け
+            // 合わせる。**回した線は、画素の軸に沿った正方形を帯の縁で切って面積を出す**
+            // (`mokume_boxCoverage`・#2226。長さの積では 45° の線が置く位置により 0.82〜1.12
+            // 倍に振れた)。
             //
             // **1/256 の遊び (`mokume_formCoverage`) は掛けない。** 遊びは縁が画素の境目に
             // 乗るときの揺れを消すためのもので、両縁に掛けると細い帯ほど効きが大きくなる
@@ -1846,9 +1962,8 @@ static inline FormPaint mokume_formPaint(
             // 通らないので、絵は 1 ビットも変わらない
             float reach = halfLength + (form.meta.y == kFormCapSquare ? 0.0 : halfWeight);
             isThinLine = true;
-            thinLineCoverage =
-                mokume_spanCoverage(q.y / unitsPerPixel.y, halfWeight / unitsPerPixel.y)
-                * mokume_spanCoverage(q.x / unitsPerPixel.x, reach / unitsPerPixel.x);
+            thinLineCoverage = mokume_boxCoverage(
+                q, float2(reach, halfWeight), unitsPerPixel, in.inverseRows);
         } else if (form.meta.y == kFormCapRound) {
             // カプセル: 線分からの距離 − 太さの半分
             float2 away = float2(q.x < 0.0 ? min(q.x + halfLength, 0.0) : max(q.x - halfLength, 0.0), q.y);

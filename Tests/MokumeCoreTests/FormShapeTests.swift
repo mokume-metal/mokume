@@ -1390,6 +1390,93 @@ struct FormShapeTests {
         }
     }
 
+    /// 回した細い `rect` の画素ごとの検査 (`tiltedThinRectanglesMatchPixelOverlap`) の置き方。
+    nonisolated struct Tilt: Sendable, CustomTestStringConvertible {
+        /// `rotate` の角 (rad)。
+        var angle: Float
+        /// 回した後に掛ける倍率 (縦横で違う拡大で、軸と画素の向きが回転だけではずれる)。
+        var scale: (x: Float, y: Float) = (1, 1)
+        /// 細い向きが形の x か (`false` なら y)。帯 1 本の閉じた式が、どちらの軸の帯でも通るように。
+        var thinAlongX = false
+
+        var testDescription: String {
+            "\(angle) rad・倍率 \(scale)・細い向き \(thinAlongX ? "x" : "y")"
+        }
+
+        static let all: [Tilt] = [
+            Tilt(angle: Float.pi / 6), Tilt(angle: Float.pi / 4), Tilt(angle: -Float.pi / 3),
+            Tilt(angle: Float.pi / 6, thinAlongX: true), Tilt(angle: Float.pi / 4, thinAlongX: true),
+            Tilt(angle: Float.pi / 6, scale: (1.7, 0.6)),
+            Tilt(angle: Float.pi / 4, scale: (0.5, 1.5), thinAlongX: true),
+        ]
+    }
+
+    /// **回した細い `rect` の塗りは、画素ごとに、画素の軸に沿った正方形との重なりの面積で出る**
+    /// ([#2226])。
+    ///
+    /// 和が合うだけでは、形が鏡に映っても、画素の位置がずれて数えられても通る。ここでは画素 1 つ
+    /// ずつを、回した長方形を画素の四角で切って出した面積 (Sutherland–Hodgman) と比べる。45° と、
+    /// 画素の格子と周期の合わない 30°・−60°、回した後に縦横で違う倍率を掛けた変換を見る。細い向きが
+    /// x のものも y のものも置く。長さは 12 と短くして、端の画素も入れる。直す前は、画素を形の向きに
+    /// 回した正方形で数えていたので、画素ごとに 0.03〜0.07 外れた。
+    ///
+    /// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
+    @Test("回した細い rect の塗りは、画素ごとに画素の四角との重なりの面積で出る", arguments: Tilt.all)
+    func tiltedThinRectanglesMatchPixelOverlap(_ tilt: Tilt) throws {
+        let (cx, cy, length, width): (Float, Float, Float, Float) = (31.3, 32.6, 12, 0.3)
+        let (w, h) = tilt.thinAlongX ? (width, length) : (length, width)
+        let pixels = try coverage(width: 64, height: 64) { canvas in
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.translate(cx, cy)
+            canvas.rotate(tilt.angle)
+            canvas.scale(tilt.scale.x, tilt.scale.y)
+            canvas.rect(-w / 2, -h / 2, w, h)
+        }
+        // 長方形の 4 つの頂点 (描く画素の座標)。形の座標を倍率で伸ばしてから、`rotate(θ)` の行列
+        // [[c, −s], [s, c]] で回し、中心へ置く
+        let (c, s) = (Double(cos(tilt.angle)), Double(sin(tilt.angle)))
+        let corners: [(Double, Double)] = [(-1, -1), (1, -1), (1, 1), (-1, 1)].map { sx, sy in
+            let lx = sx * Double(w) / 2 * Double(tilt.scale.x)
+            let ly = sy * Double(h) / 2 * Double(tilt.scale.y)
+            return (Double(cx) + c * lx - s * ly, Double(cy) + s * lx + c * ly)
+        }
+        /// 凸多角形を、`a·x + b·y + k ≥ 0` の側だけに切る。
+        func clip(_ polygon: [(Double, Double)], _ a: Double, _ b: Double, _ k: Double) -> [(Double, Double)] {
+            var kept: [(Double, Double)] = []
+            for (index, current) in polygon.enumerated() {
+                let next = polygon[(index + 1) % polygon.count]
+                let (fc, fn) = (a * current.0 + b * current.1 + k, a * next.0 + b * next.1 + k)
+                if fc >= 0 { kept.append(current) }
+                if (fc >= 0) != (fn >= 0) {
+                    let t = fc / (fc - fn)
+                    kept.append((current.0 + t * (next.0 - current.0), current.1 + t * (next.1 - current.1)))
+                }
+            }
+            return kept
+        }
+        var worst = 0.0
+        var worstAt = (0, 0)
+        for y in 0..<64 {
+            for x in 0..<64 {
+                var polygon = corners
+                polygon = clip(polygon, 1, 0, -Double(x))
+                polygon = clip(polygon, -1, 0, Double(x + 1))
+                polygon = clip(polygon, 0, 1, -Double(y))
+                polygon = clip(polygon, 0, -1, Double(y + 1))
+                var area = 0.0
+                for (index, a) in polygon.enumerated() {
+                    let b = polygon[(index + 1) % polygon.count]
+                    area += a.0 * b.1 - a.1 * b.0
+                }
+                let expected = abs(area) / 2
+                let drawn = Double(pixels.components[(y * 64 + x) * 4])
+                if abs(drawn - expected) > worst { (worst, worstAt) = (abs(drawn - expected), (x, y)) }
+            }
+        }
+        #expect(worst <= 0.01, "\(tilt.testDescription) の画素ごとの最大のずれ: \(worst) (画素 \(worstAt))")
+    }
+
     /// **1 画素より小さい円は、置く位置によらず外接する正方形の面積ぶんで出る。**
     ///
     /// 直径 d の円は d² に比例させる — 同じ位置に置いた太さ d の丸い点 (1 画素より細い点は
