@@ -287,7 +287,7 @@ struct OSCPortTests {
         let osc = try loopback(
             port: 0, told: told, outbound: aimed, idleAfter: idleAfter, now: now)
         do {
-            try await requireRunning(told: told) { osc.state }
+            try await requireState(told: told, tracing: osc.source) { osc.state }
         } catch {
             osc.close()
             throw error
@@ -784,7 +784,7 @@ struct OSCPortTests {
         let osc = try loopback(port: port, told: told)
         defer { osc.close() }
 
-        #expect(await until { told.count(containing: "another app is using it") == 1 })
+        try await requireTold(containing: "another app is using it", told: told, tracing: osc.source) { osc.state }
         #expect(osc.state == .unavailable)
         // 開き直しを何度か重ねても、知らせは増えない
         try await Task.sleep(for: .milliseconds(300))
@@ -792,7 +792,7 @@ struct OSCPortTests {
         #expect(osc.state == .unavailable)
 
         holder.release()
-        try await requireRunning(told: told) { osc.state }
+        try await requireState(told: told, tracing: osc.source) { osc.state }
         osc.send("/back", 1)
         #expect(await collect(osc, count: 1) == [OSCMessage("/back", 1)])
     }
