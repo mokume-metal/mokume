@@ -456,6 +456,71 @@ import MokumeDiagnostics
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     private let completionNotices = CoalescedNotices()
 
+    /// 投入ごとの GPU の始めと終わりの時刻の記録 ([#2378])。ハンドラが書き、main actor が読む。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    private let gpuTimes = GPUTimeLog()
+
+    /// フレームごとの最初の投入の番号。``markFrameStart()`` が積む。**直近の ``rememberedFrames`` 個まで。**
+    private var frameFirstSubmissions: [UInt64] = []
+    /// ``markFrameStart()`` を呼んだ回数。``GPUFrameTime/frame`` の数え方の元。
+    private var framesMarked = 0
+
+    /// 覚えておくフレームの区切りの数。フレームの幅を問うのは直近の数フレームだけなので小さい。
+    static let rememberedFrames = 64
+
+    /// 新しいフレームが始まる。**ここから先に投入するものが、そのフレームの投入である** ([#2378])。
+    ///
+    /// 区切りは番号を 1 つ控えるだけで、GPU も結末も待たない。投入の結末が届く前に呼ばれてよい。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    func markFrameStart() {
+        frameFirstSubmissions.append(submissionCount + 1)
+        framesMarked += 1
+        if frameFirstSubmissions.count > Self.rememberedFrames {
+            frameFirstSubmissions.removeFirst(frameFirstSubmissions.count - Self.rememberedFrames)
+        }
+    }
+
+    /// 1 フレームの GPU 時間 (投入の幅)。
+    struct GPUFrameTime: Equatable {
+        /// ``markFrameStart()`` を呼んだ順の番号 (最初のフレームが 1)。
+        let frame: Int
+        /// そのフレームの投入の `min(start)`〜`max(end)`。
+        let span: GPUTimeLog.Span
+
+        /// 幅 (ミリ秒)。**投入の幅であって、GPU の稼働時間でも使用率でもない**
+        /// (投入と投入の隙間を含む・``GPUTimeLog``)。
+        var milliseconds: Double { span.width * 1000 }
+    }
+
+    /// 結末が揃っている完了フレームの GPU 時間を、古いほうから並べたもの ([#2378])。
+    /// **問い合わせるだけで待たない。** 直近 ``rememberedFrames`` 個のフレームのうち、揃っているものだけ。
+    ///
+    /// 「完了フレーム」は、次のフレームが始まった (``markFrameStart()``) フレームである — 進行中の
+    /// フレームには、まだ投入が増えうる。**値は 1〜2 フレーム遅れて揃う** (結末は投入より後に届く)
+    /// ので、直近のフレームは含まれないことがある。投入の無かったフレーム (止めている間など)・結末が
+    /// 揃っていないフレームは飛ばす。内部の数で、公開せず、観測の報告にも出さない (#2534)。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    var completedGPUFrameTimes: [GPUFrameTime] {
+        let marks = frameFirstSubmissions
+        guard marks.count >= 2 else { return [] }
+        var times: [GPUFrameTime] = []
+        for index in 0..<(marks.count - 1) {
+            guard let span = gpuTimes.span(of: marks[index]..<marks[index + 1]) else { continue }
+            // 控えの先頭が何番目のフレームかは、積んだ回数と控えの数から出る
+            times.append(GPUFrameTime(frame: framesMarked - marks.count + index + 1, span: span))
+        }
+        return times
+    }
+
+    /// 結末が揃っている最も新しい完了フレームの GPU 時間 ([#2378])。**待たない。**
+    /// ``completedGPUFrameTimes`` の最後。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    var lastGPUFrameTime: GPUFrameTime? { completedGPUFrameTimes.last }
+
     /// 診断: 届いた完了の知らせの数 (投入の結末を受け取るハンドラが呼ばれた数)。
     var arrivedNoticeCount: Int { completionNotices.arrived }
 
@@ -517,7 +582,12 @@ import MokumeDiagnostics
     ) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
-            @Sendable [commandFaults, completionNotices, weak self] (feedback: any MTL4CommitFeedback) in
+            @Sendable [commandFaults, completionNotices, gpuTimes, weak self] (feedback: any MTL4CommitFeedback) in
+            // **GPU の時刻を記す** (#2378)。1 行で、待たず、main actor へも渡さない。結末の検査用の
+            // 差し込みとは独立に、届いたものを必ず記す
+            gpuTimes.note(
+                submission, start: feedback.gpuStartTime, end: feedback.gpuEndTime,
+                failed: feedback.error != nil)
             // **結末を記してから知らせを積む** (#2199)。知らせは main actor で記帳の取り消しを照会する
             // (`releaseOnNotice`) ので、先に積むと、記す前に走って結末を「まだ」と読み、取り消しが次の照会
             // まで遅れる。頭で照会しない口 (止まっている間の追い付き・出す先を読む口) は、知らせの照会に頼る。
