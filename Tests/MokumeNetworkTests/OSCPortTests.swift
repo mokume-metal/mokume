@@ -286,22 +286,24 @@ struct OSCPortTests {
         let aimed = AimedSender(warn: told.append)
         let osc = try loopback(
             port: 0, told: told, outbound: aimed, idleAfter: idleAfter, now: now)
-        let running = await until { osc.state == .running }
-        guard running else {
+        do {
+            try await requireRunning(told: told) { osc.state }
+        } catch {
             osc.close()
-            throw ListeningFailure(state: osc.state)
+            throw error
         }
         guard let port = (osc.source as? NetworkOSCSource)?.boundPort else {
             osc.close()
-            throw ListeningFailure(state: osc.state)
+            throw MissingPort(state: osc.state, told: told.lines)
         }
         aimed.aim(at: port)
         return (osc, port)
     }
 
-    /// 受け始められなかった。`state` はそのときの状態。
-    private struct ListeningFailure: Error {
+    /// `running` になったのに、開いたポートの番号を読めなかった。
+    private struct MissingPort: Error {
         let state: SourceState
+        let told: [String]
     }
 
     /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す (受け始めるのは待たない)。
@@ -790,7 +792,7 @@ struct OSCPortTests {
         #expect(osc.state == .unavailable)
 
         holder.release()
-        #expect(await until { osc.state == .running })
+        try await requireRunning(told: told) { osc.state }
         osc.send("/back", 1)
         #expect(await collect(osc, count: 1) == [OSCMessage("/back", 1)])
     }

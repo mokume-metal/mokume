@@ -7,6 +7,7 @@ import Network
 import Synchronization
 import Testing
 
+@testable import MokumeCore
 @testable import MokumeNetwork
 
 // 同じ機械の中で送って受ける検査が共有する道具。通信は 127.0.0.1 だけで行う。
@@ -59,9 +60,27 @@ struct TextOutcome: Equatable {
 /// 送る文字列の台本。大きさを動かし、当たりを数える。
 let textScript = ["0.25", "hit", "0.75", "fade", "hit"]
 
-/// 受け始めるまで待って、実際に開いたポートを返す。
-func boundPort(of server: TextPort, source: StreamSource) async throws -> Int {
-    #expect(await until { server.state == .running })
+/// 受け口が受け始める (`running` になる) のを、期限まで待つ。
+///
+/// **期限までに `running` にならなければ、受け口の状態と、その受け口が出した知らせの全行を名乗って、1 つで
+/// 止まる** (`#require`・#2945)。期限で偽を言うだけだと、受け口が一度も知らせを出していないのか、失敗の理由を
+/// 名乗って開き直し続けているのか、使用中のままなのかが、赤の文面から読み分けられない。
+///
+/// **期限は延ばさず、待ちの中で受け口を閉じて開き直さない** — 原因が分かっていないので、救うと次の 1 回で
+/// 読み分ける材料が消える。`told` は、受け口の `warn:` に渡したもの。
+func requireRunning(
+    told: Told, within seconds: TimeInterval = 5, state: () -> SourceState
+) async throws {
+    let running = await until(seconds) { state() == .running }
+    let current = state()
+    try #require(
+        running,
+        "受け口が running にならなかった (状態: \(current.rawValue)・知らせ: \(told.lines)・期限 \(seconds) 秒)")
+}
+
+/// 受け始めるまで待って、実際に開いたポートを返す。`told` は受け口の `warn:` に渡したもの。
+func boundPort(of server: TextPort, source: StreamSource, told: Told) async throws -> Int {
+    try await requireRunning(told: told) { server.state }
     return try #require(source.boundPort)
 }
 

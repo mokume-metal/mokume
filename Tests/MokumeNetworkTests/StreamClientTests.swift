@@ -30,7 +30,7 @@ struct StreamClientTests {
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
-        return (server, try await boundPort(of: server, source: source))
+        return (server, try await boundPort(of: server, source: source, told: told))
     }
 
     private func webSocketServer(told: Told, port: Int = 0) async throws -> (server: WebSocketServer, port: Int) {
@@ -40,7 +40,7 @@ struct StreamClientTests {
             port: port, name: "websocket :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
-        return (server, try await boundPort(of: server, source: source))
+        return (server, try await boundPort(of: server, source: source, told: told))
     }
 
     private func tcpClient(port: Int, told: Told) -> TCPClient {

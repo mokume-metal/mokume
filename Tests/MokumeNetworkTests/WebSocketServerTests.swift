@@ -21,7 +21,7 @@ struct WebSocketServerTests {
             port: port, name: "websocket :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
-        return (server, try await boundPort(of: server, source: source))
+        return (server, try await boundPort(of: server, source: source, told: told))
     }
 
     // MARK: - 受ける
@@ -225,7 +225,7 @@ struct WebSocketServerTests {
         #expect(told.count(containing: "another app is using it") == 1)
 
         holder.release()
-        #expect(await until { server.state == .running })
+        try await requireRunning(told: told) { server.state }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
         try await peers.reach(on: server)

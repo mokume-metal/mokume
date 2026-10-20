@@ -78,7 +78,7 @@ struct TCPServerTests {
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
-        return (server, try await boundPort(of: server, source: source))
+        return (server, try await boundPort(of: server, source: source, told: told))
     }
 
     // MARK: - 受ける
@@ -283,13 +283,42 @@ struct TCPServerTests {
         #expect(server.state == .unavailable)
 
         holder.release()
-        #expect(await until { server.state == .running })
+        try await requireRunning(told: told) { server.state }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
         try await peers.reach(on: server)
         let peer = peers[0]
         peer.send("back\n")
         #expect(await collect(server, count: 1) == ["back"])
+    }
+
+    @Test("受け口が期限までに running にならなければ、状態と受け口の知らせの全行を名乗って 1 つで止まる (#2945)")
+    func requireRunningNamesTheStateAndWhatWasTold() async throws {
+        let told = Told()
+        // 番号を握ったまま手放さないので、受け口は開けない
+        let holder = try PortHolder(port: 0, stream: true)
+        defer { holder.release() }
+        let port = holder.port
+        let source = StreamSource(kind: .tcp, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
+        let server = TCPServer(
+            port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
+            warn: told.append)
+        try server.open()
+        defer { server.close() }
+        // 使用中と知らせるまでは普通に待つ。名乗りは、その後の短い期限で通して確かめる
+        #expect(await until { told.count(containing: "another app is using it") >= 1 })
+
+        let said = Mutex("")
+        try await withKnownIssue {
+            try await requireRunning(told: told, within: 0.2) { server.state }
+        } matching: { issue in
+            said.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
+            return issue.comments.contains { $0.rawValue.contains("受け口が running にならなかった") }
+        }
+        let text = said.withLock { $0 }
+        #expect(text.contains("状態: unavailable"), "名乗り: \(text)")
+        #expect(text.contains("TCP cannot listen on port \(port) because another app is using it"), "名乗り: \(text)")
+        #expect(text.contains("期限 0.2 秒"), "名乗り: \(text)")
     }
 
     // MARK: - 相手の束 (#2940)

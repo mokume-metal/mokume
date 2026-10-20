@@ -24,7 +24,7 @@ struct UDPPortTests {
             port: port, name: "udp :\(port)", source: source, outbound: outbound, owner: nil,
             warn: told.append)
         try udp.open()
-        #expect(await until { udp.state == .running })
+        try await requireRunning(told: told) { udp.state }
         return (udp, try #require(source.boundPort))
     }
 
@@ -415,7 +415,7 @@ struct UDPPortTests {
         #expect(udp.state == .unavailable)
 
         holder.release()
-        #expect(await until { udp.state == .running })
+        try await requireRunning(told: told) { udp.state }
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
         let received = try await sendAndCollect(
