@@ -1901,18 +1901,16 @@ struct CanvasTests {
             "solidIndexStorage": resource, "solidInstanceStorage": resource,
             "solidSweepStorage": resource,
             "lightStorageBuffer": resource, "lightingStorage": resource, "materialStorage": resource,
-            "surroundingsStorage": resource, "shadowMatrixStorage": resource,
+            "surroundingsStorage": resource,
             "blendModeBuffer": resource, "glyphPageBuffer": resource, "uniformsStorage": resource,
             "valuesStorage": resource, "matrixStorage": resource, "computeValuesStorage": resource,
             "uploadStorage": resource, "effectPipelineStorage": resource,
             "imageInputPass": resource, "imageInputUnavailable": "GPU入力の準備失敗を持ち越し、毎フレーム繰り返さない (#1753)",
-            "computePipelineStorage": resource, "unbakedShadowTexture": resource,
+            "computePipelineStorage": resource,
             "emptyNumbers": resource, "blankPicture": resource,
-            "shadowMap": "焼き付け先。同じ細かさなら作り直さない (ADR-0021 決定 4)。宣言は shadowDetailValue が戻る",
             "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
             "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
-            "lastShadowBakeKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
             "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さと分割数の 1 件だけで、点は 1024 個が上限 (#1785・#1645)。中身は太さと分割数で決まり、フレームに属さない",
             "ringSplitMemo": "周の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",
             "discSplitMemo": "円板の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",
@@ -1920,8 +1918,6 @@ struct CanvasTests {
             "retainedSerial": "保持した形を置くたびの通し番号",
             "pendingDiscards": "溜め場を捨てた通し番号。形の組み立てが入口と出口で比べる (#1588)",
             "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
-            "shadowMapsBuilt": count,
-            "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
             "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
@@ -1950,17 +1946,13 @@ struct CanvasTests {
             "placingCatchUpDeferred": "置く口の追い付きを見送っているか。描く先が変わる描き切りと、追い付けたときに下ろす (#2042)",
             "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手へ置いた時点の絵を写させて空にする (#1656)。捨てるだけでは絵が変わらないので残す",
             "casterSegmentsFree": "途中の描き切りで控えた落とす列の区画の空き。読んだ投入が終わってから使い回す (#1656)",
-            "shadowMapHolds": "影の面がいま持つ落とす列の並びの指紋。焼いた面は誰にも書き換えられないので、lastShadowBakeKey と同じく越える (#1656)",
-            "shadowBakesAdded": count, "shadowRebakeBarriersEncoded": count,
-            "shadowBakedSince": "影の面が拠る焼き付けの投入の範囲の始まり。焼いた投入が打ち切られたら指紋を忘れるために、shadowMapHolds と同じく越える (#2199)",
-            "shadowBakedThrough": "shadowBakedSince と同じ範囲の終わり (#2199)",
             "upscaledBy": "最後に拡大を積んだ投入の番号。打ち切られたら targetChangedSinceUpscale を立て直すために越える (#2199)",
             "carriedBy": "効果を通す前の絵を控えへ写した最後の投入の番号。打ち切られたら carriesPictureBeforeEffects を下ろすために越える (#2199)",
             "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
             "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "placedPictureCopyLimitReached": count,
-            "shadowsEverEnabled": "影を 1 度でも有効にしたか。区切りで落とす側を写すかを決める印で、フレームを越える (#1656)",
+            "shadowBake": "影の焼き付けが持ち越す格納 (#2257)。焼いた面・記帳・資源・数えは面と同じだけ生きる。宣言 4 本 (shadowsEnabled ほか) は frameState に残る。中の分け方は everyTargetStoredPropertyIsClassified (shadowBake の層) が見る",
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "pixelWriteGateMade": "窓へ渡す書いてよいかの問い合わせ。面を弱く持つだけで状態を抱えず、答えは呼ばれた時点で決まる。面ごとに使い回す (#2369)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
@@ -2018,6 +2010,24 @@ struct CanvasTests {
         "tint", "picture",
     ]
 
+    /// 影の焼き付けの持ち越す格納 (``Canvas``の `shadowBake`・#2257) の、中の分け方と理由。
+    /// 中の格納は全部が持ち越す (フレームに属する宣言 4 本は `Canvas` に残る)。
+    private var carriedShadowBakeState: [String: String] {
+        let resource = "資源 (置き場・面)。作り直さないために持つ"
+        let count = "計数 (作ってから通算)。数で確かめる検査が読む"
+        return [
+            "map": "焼き付け先。同じ細かさなら作り直さない (ADR-0021 決定 4)。宣言は shadowDetailValue が戻る",
+            "mapsBuilt": count, "barriersEncoded": count, "bakesEncoded": count, "bakesReused": count,
+            "bakesAdded": count, "rebakeBarriersEncoded": count,
+            "everEnabled": "影を 1 度でも有効にしたか。区切りで落とす側を写すかを決める印で、フレームを越える (#1656)",
+            "matrixStorage": resource, "unbakedTexture": resource,
+            "holds": "影の面がいま持つ落とす列の並びの指紋。焼いた面は誰にも書き換えられないので、lastKey と同じく越える (#1656)",
+            "lastKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
+            "bakedSince": "影の面が拠る焼き付けの投入の範囲の始まり。焼いた投入が打ち切られたら指紋を忘れるために、holds と同じく越える (#2199)",
+            "bakedThrough": "bakedSince と同じ範囲の終わり (#2199)",
+        ]
+    }
+
     @Test("Canvas の格納は、フレームに属するか持ち越すかのどちらかに載っている")
     func everyStoredPropertyIsClassified() throws {
         // 境目で戻す状態は、境目の関数ごとに手で並べてあり、並べ落とした状態が越えていた
@@ -2054,7 +2064,7 @@ struct CanvasTests {
         }
     }
 
-    @Test("描く先と画素の写しの格納も、フレームに属するか持ち越すかのどちらかに載っている (#1678)")
+    @Test("描く先・画素の写し・影の焼き付けの格納も、フレームに属するか持ち越すかのどちらかに載っている (#1678)")
     func everyTargetStoredPropertyIsClassified() throws {
         // 描く先は `Canvas` の表で「面と同じだけ生きる」に分けてあり、表も綴りもその中へ降りて
         // いなかった。写しの書き込み待ち (フレームに属する) が、描かずに捨てたフレームを黙って
@@ -2064,12 +2074,17 @@ struct CanvasTests {
         let canvas = try makeCanvas()
         _ = canvas.target.pixels  // 写しを作らせる
         let mirror = try #require(canvas.target.pixelMirror)
+        // 影の焼き付けの格納は `private` なので、`Mirror` で名前を指して降りる
+        let shadowBake = try #require(
+            Mirror(reflecting: canvas).children.first { $0.label == "shadowBake" }?.value)
         let frame = Set(frameState.map(\.name))
         let layers: [(path: String, labels: [String], carried: [String: String], descended: Set<String>)] = [
             ("target", Mirror(reflecting: canvas.target).children.compactMap(\.label),
              carriedTargetState, ["pixelMirror"]),
             ("target.pixelMirror", Mirror(reflecting: mirror).children.compactMap(\.label),
              carriedMirrorState, []),
+            ("shadowBake", Mirror(reflecting: shadowBake).children.compactMap(\.label),
+             carriedShadowBakeState, []),
         ]
         for layer in layers {
             let framed = Set(
