@@ -654,15 +654,11 @@ extension Canvas {
             fillSplit(split, flat: all, global: nil, points: &points, into: &triangles)
             return
         }
-        let merged = Triangulation.mergeHoles(
+        let folded = Triangulation.foldHoles(
             outer: Array(primitive.ring), holes: primitive.holes, points: all,
             comparisons: &pointScansThisFrame)
-        pointScansThisFrame += merged.count
-        var flattened: [SIMD2<Float>] = []
-        flattened.reserveCapacity(merged.count)
-        for index in merged { flattened.append(basis.flatten(points[index].position)) }
-        for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
-            triangles.append((merged[a], merged[b], merged[c]))
+        for (a, b, c) in folded.triangles {
+            triangles.append((folded.ring[a], folded.ring[b], folded.ring[c]))
         }
     }
 
