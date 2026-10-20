@@ -477,6 +477,103 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **乗り換えの合図が来ない 2 つの形は、道具の窓だけが知る** ([#2928])。目録が読めない・目録は読めたが
+    /// 番号の面を引けない — どちらも子は知らないので、台が知らせないと前の世代が残る。
+    /// 読み直しても繰り返さず、差し出し元は変えない (直前の絵を出したまま)。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test(
+        "受け取れない目録・引けない面は、台が 1 度だけ知らせ、差し出し元は変えない",
+        arguments: [
+            (#"{"schemaVersion":99,"ids":[1],"width":10,"height":10}"#, UndeliverableGeneration.unreadableManifest),
+            (#"{"schemaVersion":1,"ids":[4000000000],"width":10,"height":10}"#, UndeliverableGeneration.noSurface),
+        ])
+    func anUndeliverableGenerationIsAnnouncedOnce(manifest: String, cause: UndeliverableGeneration) throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("undeliverable"))
+            defer { stage.close() }
+            stage.warn = { _ in }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            #expect(told.isEmpty, "読めた目録で知らせている: \(told)")
+
+            try Data(manifest.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(told == [cause], "\(told)")
+            #expect(stage.hasSource, "差し出し元は変わらず、直前の絵を出したまま")
+            _ = surface
+        }
+    }
+
+    /// 目録がファイルとして読めない (置き場がディレクトリ) 形も、道具の窓だけが知る。版の形とは関係が無いので、
+    /// 受け取る側が版の案内を付けないよう、別の種類で知らせる ([#2928])。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test("ファイルとして読めない目録は、版の形と別の種類で知らせる")
+    func anUnreadableManifestFileIsAnnouncedApart() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("unreadable-file"))
+            defer { stage.close() }
+            var said: [String] = []
+            stage.warn = { said.append($0) }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(told == [.unreadableFile], "\(told)")
+            #expect(said.count == 1 && !(said.first ?? "").contains("mokume doctor"), "\(said)")
+            _ = surface
+        }
+    }
+
+    /// **前の世代を畳んでも、台は前の世代の頼みと寸法を持ち続けない** ([#2928])。見張りが新しい世代へ乗り
+    /// 換えたとみなして前の世代を畳むと、前の世代はもう絵を書かないので、カーソルの頼みを読み直す契機が
+    /// 来ず、窓は捕まえたまま・隠したままになる。入力を受けるのは新しい子なので、読めた目録の寸法へ
+    /// 入力の写しを追随させる。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    @Test("受け取れない世代を知らせるとき、前の世代のカーソルの頼みを下ろし、読めた目録の寸法へ入力の写しを追随させる")
+    func undeliverableReleasesTheOldRequestsAndFollowsTheSize() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let requesting = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(requesting, frame: 1, gpu: gpu, pointerLock: true, cursorHidden: true)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("release"))
+            defer { stage.close() }
+            stage.open()
+            stage.warn = { _ in }
+            var told: [UndeliverableGeneration] = []
+            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested && stage.cursorHiddenRequested, "検査の前提: 前の世代が頼んでいる")
+            let surface = try #require(stage.host as? SketchSurface)
+            #expect(surface.canvasWidth == 32)
+
+            // 面を引けない目録 (読める。寸法は 64x48)
+            try Data(#"{"schemaVersion":1,"ids":[4000000000],"width":64,"height":48}"#.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            stage.displayLinkFired()
+            #expect(told == [.noSurface])
+            #expect(!stage.pointerLockRequested && !stage.cursorHiddenRequested, "前の世代の頼みが残っている")
+            #expect(surface.canvasWidth == 64, "入力の写しが前の世代の寸法のまま")
+        }
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が

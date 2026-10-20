@@ -418,6 +418,24 @@ enum WatchCommand {
             firstFrame.promoted(.preview)
             Task { @MainActor in await retire(after: session) }
         }
+        // **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る
+        // ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。名乗って、乗り換えたとみなす。
+        // 窓ごとに来るので、畳むのは 1 度である (``WatchSession/retireAfterUndeliverable()``)
+        //
+        // **知らせを受けた時点で、待っている世代を同期に控える。** 捌くのは `Task` で遅れ、知らせは世代の
+        // 印を持たないので、作り直しの続きが先に走ると前の世代の知らせが次の世代に当たる
+        window.onGenerationUndeliverable = { [weak session] cause in
+            let waiting = session?.waitingGeneration
+            Task { @MainActor in
+                await retireUndeliverable(cause, session: session, waiting: waiting, viewer: viewer)
+            }
+        }
+        preview.onGenerationUndeliverable = { [weak session] cause in
+            let waiting = session?.waitingGeneration
+            Task { @MainActor in
+                await retireUndeliverable(cause, session: session, waiting: waiting, viewer: viewer)
+            }
+        }
         // **どちらの窓が先に出しても畳む。** 2 つの窓は独立に 1 枚目を出すので合図は 2 度来るが、
         // 畳むのは待っている間の 1 度だけである (``FirstFrameWait/shown(_:)``)
         window.onGenerationShown = { [weak preview] in
@@ -489,6 +507,69 @@ enum WatchCommand {
     /// 出るまでの記録もこの合図で足される (#930)。
     static func retire(after session: WatchSession?) async {
         announce(await session?.generationPromoted())
+    }
+
+    /// 道具の窓が新しい世代の絵を受け取れないと知らされたとき、前の世代を畳み、端末とプレビューへ名乗る
+    /// ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+    ///
+    /// **乗り換えを待っている、生きている世代のときだけ動く** (``WatchSession/retireAfterUndeliverable()``)。
+    /// 窓ごとに呼ばれるので、2 度目以降は何もしない。名乗るのも 1 度である。
+    ///
+    /// - Parameter waiting: 知らせを受けた時点で乗り換えを待っていた世代 (``WatchSession/waitingGeneration``)。
+    /// - Parameter preview: プレビューへ出す口。検査から差し替える (``step(_:viewer:stopped:preview:)`` と同じ)。
+    static func retireUndeliverable(
+        _ cause: UndeliverableGeneration, session: WatchSession?, waiting: Process?,
+        viewer: Viewer? = nil, preview: ((String?, Bool) -> Void)? = nil
+    ) async {
+        guard let session,
+            let undelivered = await session.retireAfterUndeliverable(waiting: waiting)
+        else { return }
+        let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
+        announce(undelivered.outcome)
+        say(undeliverableLine(previous: undelivered.previous, cause: cause, inTerminal: true))
+        viewer?.firstFrame.settle()
+        showInPreview(
+            undeliverableLine(previous: undelivered.previous, cause: cause, inTerminal: false), false)
+    }
+
+    /// 道具の窓が新しい世代の絵を受け取れないとき、見張りが名乗る行 (#2928)。
+    ///
+    /// **理由の候補は、版のずれの可能性を断定せずに挙げる** (ADR-0018 決定 6)。目録が読めない形では、
+    /// 台が理由と同じ候補を端末へ名乗り済み (#2889) なので、**端末の行は候補を繰り返さず**そちらを指す。
+    /// プレビューには端末が見えないので、どちらの形でも候補を言う。
+    static func undeliverableLine(
+        previous: WatchSession.FallbackPrevious, cause: UndeliverableGeneration, inTerminal: Bool
+    ) -> String {
+        var line =
+            (previous == .none ? "The sketch" : "The new version")
+            + " is running, but this window could not receive its frames"
+        switch previous {
+        case .none: break
+        case .stopped:
+            line += " — the previous version is stopped, so its last picture stays here "
+                + "and input goes to the new version"
+        case .left:
+            line += " — the previous version could not be stopped and keeps running"
+        }
+        // 台が理由を端末へ名乗り済みの形 (読めない目録) では、端末の行は理由を繰り返さずそちらを指す
+        if inTerminal, cause != .noSurface, cause != .unusableSurface {
+            return line + " (the reason is above)"
+        }
+        switch cause {
+        case .unreadableManifest:
+            return line + ": its manifest could not be read. The sketch may depend on a different "
+                + "version of mokume than this tool — try `mokume doctor <sketch directory>`"
+        case .unreadableFile:
+            // 版の形とは関係が無い (権限・置き場) ので、版の案内は付けない
+            return line + ": its manifest file could not be read (see the terminal for the reason)"
+        case .noSurface:
+            return line + ": none of the surfaces it names could be looked up. The sketch may depend "
+                + "on a different version of mokume than this tool — try `mokume doctor <sketch directory>`"
+        case .unusableSurface:
+            // 面は引けたので、版の形とは関係が無い (道具の GPU の事情)
+            return line + ": the surfaces it names were found, but this tool's GPU could not turn "
+                + "them into pictures"
+        }
     }
 
     /// 前の世代を畳んだ結果のうち、人が知るべきもの (期限に掛かった) だけを名乗る。
