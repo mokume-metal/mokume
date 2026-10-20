@@ -49,7 +49,12 @@ import simd
     /// - 同じ直線に載る 2 本の辺が集まる点を持つ網。視線をその直線に沿わせると、潰れた辺が 2 本
     ///   続いて 3 点が画面で重なる。頂点関数は潰れた辺の先を 1 段しか引かないので、CPU の骨
     ///   (`strokeNet` は群を何段でもまとめる) へ戻す。組み込みの立体の稜線には無い
-    init?(net: SolidEdges, gpu: RenderDevice) throws(RenderFailure) {
+    ///
+    /// - Parameter byteLimit: 骨の置き場の大きさの上限 (バイト)。**超えるなら作らずに `nil`** — 読み込んだ
+    ///   モデルのように網が大きく、控えの予算を食い合う相手 (``Canvas/modelStrokeGeometries``・#2907)
+    ///   が渡す。大きさは片と点の記録の数から先に決まるので、超えるなら配列を作る前に戻る。`nil` なら
+    ///   上限を持たない (組み込みの立体の稜線は小さい)
+    init?(net: SolidEdges, gpu: RenderDevice, byteLimit: Int? = nil) throws(RenderFailure) {
         let shared = SolidStrokeNet(points: net.points, edges: net.edges)
         let points = net.points.indices
         guard !net.edges.isEmpty, points.allSatisfy({ shared.degree(of: $0) != 1 }),
@@ -66,6 +71,10 @@ import simd
             records[index] = cursor
             cursor += 1 + shared.degree(of: index)
         }
+        // 骨の置き場の大きさ。配列を作る前に、上限を超えるなら戻る
+        let wordCount = cursor - pieceCount * 3
+        let totalBytes = pieceCount * MemoryLayout<Piece>.stride + wordCount * MemoryLayout<SIMD4<Float>>.stride
+        if let byteLimit, totalBytes > byteLimit { return nil }
         var pieces: [Piece] = []
         pieces.reserveCapacity(pieceCount)
         for (a, b) in net.edges {
@@ -85,7 +94,7 @@ import simd
             }
         }
         var words: [SIMD4<Float>] = []
-        words.reserveCapacity(cursor - pieceCount * 3)
+        words.reserveCapacity(wordCount)
         for index in corners {
             words.append(SIMD4(net.points[index], Float(shared.degree(of: index))))
             for neighbor in shared.neighbors(of: index) {
@@ -190,8 +199,14 @@ extension Canvas {
     /// いまのスタイルが、組み込みの形の線を GPU で広げてよいものか。**記録の間かどうかは見ない**
     /// — その場で描くとき (``placeGPUStroke(of:mesh:)``) と、保持した形に覚えるとき
     /// (`rememberGPUStroke`) の 2 か所が同じ条件を読む。
+    ///
+    /// **読み込んだモデルも通す** (#2907)。ただし保持した形の線 (`rememberGPUStroke`) は組み込みの形だけを
+    /// 覚える — 置くときに形を作り直す口 (`SolidShape.make()`) を、モデルは持たない。
     func gpuStrokeStyleAllows(_ source: SolidSource) -> Bool {
-        guard case .mesh = source else { return false }
+        switch source {
+        case .mesh, .model: break
+        case .freeform, .retained: return false
+        }
         return currentShader == nil && style.stroke.alpha == 1 && style.strokeJoin == .miter
             && style.blendMode == .blend && style.picture == nil
     }
@@ -239,6 +254,7 @@ extension Canvas {
     private func sharedGPUStrokeGeometry(
         of source: SolidSource, mesh: () -> SolidMesh
     ) -> (SolidStrokeGeometry, SIMD3<Float>)? {
+        if case .model = source { return modelStrokeGeometry(of: source, mesh: mesh) }
         let key: SolidSource
         let geometryScale: SIMD3<Float>
         if let (unit, scale) = unitEdgeScaling(of: source) {
@@ -261,6 +277,34 @@ extension Canvas {
             guard let made = try SolidStrokeGeometry(net: net, gpu: gpu) else { return nil }
             solidStrokeGeometry.insert(made, for: key)
             return (made, geometryScale)
+        } catch {
+            // 控えを確保できなければ従来の組み立てへ戻す。描画自体の失敗は従来側が伝える。
+            return nil
+        }
+    }
+
+    /// 読み込んだモデルの稜線の骨 (#2907)。控えは組み込みの立体とは別 (``modelStrokeGeometries``)。
+    ///
+    /// **作れなければ `nil`** — 呼ぶ側は CPU の帯へ戻り、同じ絵を保つ。戻る網は 3 つで、開いた端を持つ・
+    /// 同じ直線に載る 2 辺が集まる (どちらも ``SolidStrokeGeometry/init(net:gpu:byteLimit:)``)、骨が
+    /// 控えの予算の半分を超える (追い出し合って毎フレーム作り直すのを避ける・塗りの置き場
+    /// ``modelFills`` と同じ)。**作れなかったことも控える**ので、次のフレームからは網を調べ直さない。
+    /// 置き場を確保できなかったときだけは控えない (一時の失敗かもしれない)。
+    private func modelStrokeGeometry(
+        of source: SolidSource, mesh: () -> SolidMesh
+    ) -> (SolidStrokeGeometry, SIMD3<Float>)? {
+        let unscaled = SIMD3<Float>(repeating: 1)
+        switch modelStrokeGeometries[source] {
+        case .bone(let cached): return (cached, unscaled)
+        case .refused: return nil
+        case nil: break
+        }
+        let net = solidEdges(of: source, mesh: mesh)
+        do {
+            let made = try SolidStrokeGeometry(
+                net: net, gpu: gpu, byteLimit: modelStrokeGeometries.budget / 2)
+            modelStrokeGeometries.insert(made.map { .bone($0) } ?? .refused, for: source)
+            return made.map { ($0, unscaled) }
         } catch {
             // 控えを確保できなければ従来の組み立てへ戻す。描画自体の失敗は従来側が伝える。
             return nil
@@ -297,5 +341,21 @@ extension Canvas {
     /// と置き場所 (``openGPUStroke``) の 2 か所が同じものを読む。
     private func gpuStrokeThin(_ weight: Float) -> ThinStroke? {
         ThinStroke(drawnWeight: drawnSolidWeight(weight), isPoint: false)
+    }
+}
+
+/// 読み込んだモデルの骨の控えの値 (``Canvas/modelStrokeGeometries``)。**骨が作れなかったことも持つ**
+/// ので、作れない網が毎フレーム骨を作りかけない。
+enum ModelStrokeBone {
+    case bone(SolidStrokeGeometry)
+    /// 骨を作らない網。開いた端・同じ直線に載る 2 辺・予算の半分を超える大きさ。CPU の帯へ戻る
+    case refused
+
+    /// 控えでの重さ。作れなかった記録は件数が溜まらない程度の固定値。
+    @MainActor var weight: Int {
+        switch self {
+        case .bone(let geometry): geometry.buffer.length + 256
+        case .refused: 64
+        }
     }
 }
