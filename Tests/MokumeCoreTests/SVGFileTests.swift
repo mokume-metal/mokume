@@ -559,6 +559,27 @@ struct SVGFileTests {
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
     }
 
+    /// 値を名乗る口はみな、`SVGFile.valueNote` / `attributeNote` を通り、値の前後の空白を落とす ([#3022])。
+    ///
+    /// [#3022]: https://github.com/mokume-metal/mokume/issues/3022
+    @Test(
+        "<svg> の transform・transform-origin・読めない transform・viewBox の名乗りも、値の前後の空白を落とす (#3022)",
+        arguments: [
+            // (本体, 根の属性, 載るはずの名乗り)
+            (#"<svg transform=" rotate(45) " width="10" height="10"><rect width="1" height="1"/></svg>"#, "", [#"<svg transform="rotate(45)">"#]),
+            (#"<rect width="1" height="1"/>"#, #"transform=" scale(2) ""#, [#"<svg transform="scale(2)">"#]),
+            (#"<rect width="10" height="10" transform="rotate(90)" transform-origin=" 5 5 "/>"#, "", [#"<rect transform-origin="5 5">"#]),
+            (#"<rect width="10" height="10" transform="rotate(90)" transform-box="  fill-box&#10;"/>"#, "", [#"<rect transform-box="fill-box">"#]),
+            (#"<rect width="10" height="10" transform=" abc "/>"#, "", [#"transform "abc""#]),
+            (#"<rect width="1" height="1"/>"#, #"viewBox=" 1 2 ""#, [#"viewBox "1 2""#]),
+            (#"<rect width="1" height="1"/>"#, #"preserveAspectRatio=" bogus ""#, [#"preserveAspectRatio "bogus""#]),
+        ])
+    func valueNotesTrimWhitespace(_ sample: (String, String, [String])) throws {
+        let drawing = try document(
+            sample.0, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" \(sample.1)>")
+        #expect(drawing.skipped.map(\.what) == sample.2, "\(sample): \(drawing.skipped)")
+    }
+
     @Test("名乗りの空白を落としても、前後に空白のある長さは読める。根の大きさの書式は変わらない (#3022 の陰性対照)")
     func trimmedNoteKeepsTheReading() throws {
         let padded = try document(#"<rect x=" 1 " y=" 2 " width=" 10 " height=" 10 "/>"#)
