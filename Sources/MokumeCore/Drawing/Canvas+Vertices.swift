@@ -283,7 +283,7 @@ extension Canvas {
     func discardOpenShape() {
         isBuildingShape = false
         // 読むのは組み立ての間だけ (`beginShape()` が書き直す) だが、既定へ戻しておく。
-        // 境目の検査 (`CanvasTests.frameStateResetsAtEveryBoundary`) が、組み立ての状態を
+        // 境目の検査 (`CanvasTests.FrameState.frameStateResetsAtEveryBoundary`) が、組み立ての状態を
         // 1 つの群として既定に戻ったかで見る
         shapeKind = .polygon
         shapePoints.removeAll(keepingCapacity: true)
@@ -300,7 +300,7 @@ extension Canvas {
     ///
     /// **並びは ``discardOpenShape()`` と同じである。** 組み立ての状態を足したら 3 か所
     /// (ここ・``takeOpenShape()``・``restoreOpenShape(_:)``) と `discardOpenShape()` に足す。
-    /// 落とすと、`CanvasTests.createShapeKeepsTheOuterOpenShape` が既定のままのものを名乗って赤になる。
+    /// 落とすと、`CanvasTests.FrameState.createShapeKeepsTheOuterOpenShape` が既定のままのものを名乗って赤になる。
     ///
     /// [#1607]: https://github.com/mokume-metal/mokume/issues/1607
     struct OpenShape {

@@ -1282,7 +1282,7 @@ extension Canvas.Style {
     /// 落とし方と受け方) は `current` のもの**にした値 ([#1684])。
     ///
     /// 形の組み立ての出口 (``Canvas/Manner``) が使う。どのフィールドがフレームに属するかは
-    /// ADR-0021 決定 4 の表で、検査の表 (`CanvasTests` の `frameStyle`・`ShapeExitTests` の
+    /// ADR-0021 決定 4 の表で、検査の表 (`CanvasTests.FrameState` の `frameStyle`・`ShapeExitTests` の
     /// 「断る」) が同じ 4 つを持つ。`Style` にフィールドを足すと、`ShapeExitTests` がどちらかに
     /// 分けるまで赤になり、「断る」に分けたものがここで書き戻されると赤になる。
     ///
