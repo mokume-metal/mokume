@@ -73,12 +73,14 @@ extension Canvas {
         return gate
     }
 
-    /// 1 画素の色。範囲の外は透明を返す。形の組み立ての中でも透明を返す (``loadPixels()``)。
+    /// 1 画素の色。範囲の外では透明を返す。形の組み立ての中でも透明を返すが、**それは自分の面が組み立ての
+    /// 途中のときだけ**である (``loadPixels()``・組み立ての途中の本体に置かれた描き場所は読める・[#2203])。
     ///
     /// 返す値は線形・アルファ乗算済みの ``LinearRGBA`` である ([ADR-0011] 決定 4)。0–255 の
     /// 乗算していない数で読むときは ``red(_:)`` ほかを通す。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
     public func get(_ x: Int, _ y: Int) -> LinearRGBA {
         let loading = needsPixelLoad
         guard !refusesInsideShape() else { return .transparent }
