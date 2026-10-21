@@ -428,6 +428,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/strokeWeight(_:)``
 - ``SketchPart/strokeCap(_:)``
 - ``SketchPart/strokeJoin(_:)``
+- ``SketchPart/strokeDash(_:_:)``
+- ``SketchPart/noStrokeDash()``
 - ``StrokeCap``
 - ``StrokeJoin``
 

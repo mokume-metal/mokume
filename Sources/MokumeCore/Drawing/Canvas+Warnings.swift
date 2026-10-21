@@ -182,6 +182,15 @@ extension Canvas {
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
         case badStrokeWeight
+        /// ``strokeDash(_:_:)`` に負の値・数でない値・無限・両方 0 が渡され、破線を置かずに実線へ
+        /// 戻した ([#2835])。
+        ///
+        /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
+        case badStrokeDash
+        /// 破線が線の長さに対して細かすぎ、刻む数が上限を越えるので、その線を実線で引いた ([#2835])。
+        ///
+        /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
+        case strokeDashTooFine
         /// ``rect(_:_:_:_:_:)`` の角の半径に負の値・数でない値が渡され、0 に丸めた ([#2757])。
         /// 角を丸めない 4 引数と同じ絵になる。
         ///
