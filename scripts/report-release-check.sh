@@ -95,4 +95,5 @@ bash "$here/report-check-failure.sh" \
   --title "$TITLE" \
   --log "$log" \
   --body-file "$body" \
+  --key-file "$body" \
   --source '.github/workflows/release.yml の release-check-report が自動起票した (#2662)'
