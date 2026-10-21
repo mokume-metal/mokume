@@ -186,7 +186,7 @@ struct DocumentLoadingTests {
         let key = "flag-\(UUID().uuidString)"
         let object = try Bare().loadJSONObject(try file("b.json", #"{"\#(key)": true, "one": 1, "zero": 0}"#))
         #expect(object.members[key] == .bool(true))
-        #expect(object.members["one"] == .number(1))
+        #expect(object.members["one"] == .integer(1), "整数の綴りは桁を落とさない整数で持つ。真偽の true とは分ける")
         #expect(object.getFloat("zero") == 0)
         #expect(object.getFloat(key).isNaN)
         #expect(DocumentValues.warnings.message(for: .notANumber(key: key))?.contains("is true") == true)
