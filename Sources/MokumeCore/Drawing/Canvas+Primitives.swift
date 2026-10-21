@@ -291,6 +291,24 @@ extension Canvas {
         segmentCrossing(p[0], p[1], p[2], p[3]) != nil || segmentCrossing(p[1], p[2], p[3], p[0]) != nil
     }
 
+    // 3 次の曲線を 1 本引く。`beginShape()`・`vertex()`・`bezierVertex()`・`endShape()` と同じ道を通る。
+    public func bezier(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
+    ) {
+        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
+        // 区間の外では `beginShape()` が断るのと同じ注意を、先に言って何もしない
+        guard canPlace else { return warnOutsideFrame(.placing) }
+        // 組み立て中の形があっても、それは触らない。`beginShape()` で開き直すと外の形を
+        // 捨ててしまうので、形の組み立て (`createShape`) と同じく取り出して、描いた後に戻す
+        let outer = takeOpenShape()
+        beginShape()
+        vertex(x1, y1)
+        bezierVertex(x2, y2, x3, y3, x4, y4)
+        endShape()
+        restoreOpenShape(outer)
+    }
+
     // 線。塗りは持たない。
     public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
