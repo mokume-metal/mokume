@@ -147,19 +147,24 @@ struct Tools {
     static let definitions: [[String: Any]] = ToolName.allCases.map(\.definition)
 
     /// 道具を呼ぶ。
-    func call(_ name: String, arguments: [String: Any]) -> (text: String, isError: Bool) {
+    ///
+    /// - Parameter cancellation: 立てられたら、区画を待つ道具は待ちを切って戻る
+    ///   ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。戻った答えは窓口が書かない。
+    func call(
+        _ name: String, arguments: [String: Any], cancellation: Cancellation? = nil
+    ) -> (text: String, isError: Bool) {
         guard let tool = ToolName(rawValue: name) else {
             return ("There is no such tool: \(name)", true)
         }
         switch tool {
-        case .observe: return observe(arguments)
+        case .observe: return observe(arguments, cancellation: cancellation)
         case .buildStatus: return buildStatus()
-        case .input: return sendInput(arguments)
+        case .input: return sendInput(arguments, cancellation: cancellation)
         case .reference: return reference(arguments)
         }
     }
 
-    private func observe(_ arguments: [String: Any]) -> (String, Bool) {
+    private func observe(_ arguments: [String: Any], cancellation: Cancellation?) -> (String, Bool) {
         let id = makeID()
         var request: [String: Any] = ["id": id]
         // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
@@ -212,7 +217,7 @@ struct Tools {
         let report: [String: Any]
         switch roundTrip(
             facet: facets.observeFacet, entry: StartupReads.observe, request: request, id: id,
-            extraWait: Self.extraWait(count: count, every: every))
+            extraWait: Self.extraWait(count: count, every: every), cancellation: cancellation)
         {
         case .refused(let text): return (text, true)
         case .answered(let answer): report = answer
@@ -362,14 +367,14 @@ struct Tools {
         return (pretty(status), false)
     }
 
-    private func sendInput(_ arguments: [String: Any]) -> (String, Bool) {
+    private func sendInput(_ arguments: [String: Any], cancellation: Cancellation?) -> (String, Bool) {
         guard let events = arguments["events"] as? [[String: Any]] else {
             return ("events needs an array of events", true)
         }
         let id = makeID()
         switch roundTrip(
             facet: facets.inputFacet, entry: StartupReads.input,
-            request: ["id": id, "events": events], id: id)
+            request: ["id": id, "events": events], id: id, cancellation: cancellation)
         {
         case .refused(let text): return (text, true)
         case .answered(let report): return (pretty(report), false)
@@ -396,15 +401,21 @@ struct Tools {
     /// 変わるので、控える場所を間違えると読み手を直らない道へ送る。
     private func roundTrip(
         facet: URL, entry: StartupReads.Entry, request: [String: Any], id: String,
-        extraWait: TimeInterval = 0
+        extraWait: TimeInterval = 0, cancellation: Cancellation? = nil
     ) -> Exchange {
         let existed = facets.hasFacet(facet)
         // 撮り直してよいのは、副作用を残さない観測だけ。`time` 付きは 1 フレームを描き直す (#2857)
         let repeatable = entry == StartupReads.observe && request["time"] == nil
         do {
-            switch try facets.exchange(facet: facet, request: request, id: id, extraWait: extraWait) {
+            switch try facets.exchange(
+                facet: facet, request: request, id: id, extraWait: extraWait,
+                isCancelled: { cancellation?.isCancelled == true })
+            {
             case .answered(let report):
                 return .answered(report)
+            case .cancelled:
+                // 窓口は取り消された要求に答えを書かない。この文は呼ぶ側にだけ届く
+                return .refused("The call was cancelled")
             case .contested:
                 return .refused(facets.contested(entry, repeatable: repeatable))
             case .timedOut(let replaced):

@@ -9,7 +9,10 @@ import Foundation
 /// 繋がりは切らない** — 1 行の壊れで窓口ごと落ちると、繋いでいる側からは原因が分からない。
 /// 黙って落とすのもいけない。`id` を読める行に黙ると、繋いでいる側は来ない答えを待ち
 /// 続ける (JSON-RPC 2.0 §5・#2317)。
-enum JSONRPC {
+///
+/// **`nonisolated`** — 読み取りの手 (`Inbox.feed`) が main actor の外で行を解くので、解き手は
+/// main actor 既定の外に置く ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
+nonisolated enum JSONRPC {
     /// 呼び出しの `id`。**String か Number だけ** (JSON-RPC 2.0 §4。要求では Null も不可)。
     ///
     /// 型で持つので、答えに載る `id` が「無いか String か Number」であることを、読む側が
@@ -26,6 +29,14 @@ enum JSONRPC {
                 self = .number(number)
             } else {
                 return nil
+            }
+        }
+
+        /// 同じ `id` を引く鍵。文字列の `"1"` と数の `1` は別の `id` (JSON-RPC 2.0 §4)。
+        var key: String {
+            switch self {
+            case .string(let text): "s:" + text
+            case .number(let number): "n:" + number.stringValue
             }
         }
 

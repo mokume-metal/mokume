@@ -88,6 +88,9 @@ struct Facets {
         /// 要求を 1 枚ずつ拾い、応え終えるまで次を拾わないので、**自分の識別子の応答はもう来ない**。
         /// 当たった後に上書きされたのか、読まれる前に置き換えられたのかは、応答だけからは分からない。
         case contested
+        /// 待っている間に取り消された ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
+        /// 置いた要求は区画に残る。
+        case cancelled
     }
 
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
@@ -106,6 +109,7 @@ struct Facets {
     /// - Parameter extraWait: 応答が返るまでにフレームが何枚も進む要求 (続けて撮る観測
     ///   など) で、``waitLimit`` に**足す**ぶん。上書きではなく加算にしてある —
     ///   上書きにすると、検査が短く設定した上限を呼ぶ側が知らずに戻してしまう。
+    /// - Parameter isCancelled: 巡回のたびに見る。立っていれば待ちを切って ``Exchange/cancelled`` で返す。
     /// - Parameter now: 期限を測る時計。**眠っている間は進まない `DispatchTime` で測る** —
     ///   壁時計 (`Date`) だと、待っている最中に機械が眠ると起きた瞬間に期限を越えて、
     ///   スケッチの応答を待たずに「誰も応えない」を返す ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
@@ -115,6 +119,7 @@ struct Facets {
     ///   よいかを書く」と宣言しているのに、窓口の 2 箇所だけがその規律の外だった。
     func exchange(
         facet: URL, request: [String: Any], id: String, extraWait: TimeInterval = 0,
+        isCancelled: () -> Bool = { false },
         sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         now: () -> DispatchTime = { DispatchTime.now() }
     ) throws(CommandFailure) -> Exchange {
@@ -144,6 +149,7 @@ struct Facets {
 
         let deadline = now() + Self.boundedWait(waitLimit)
         while now() < deadline {
+            if isCancelled() { return .cancelled }
             if let report = read(reportURL) {
                 let echoed = report["id"] as? String
                 if echoed == id { return .answered(report) }
