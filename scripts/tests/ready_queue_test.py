@@ -1018,15 +1018,60 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[1659][0], "ready")
         self.assertEqual(seen[1700][0], "ready")
 
-    def test_bot_reopened_parent_without_open_children_stays_ready(self):
-        """子がすべて閉じていれば、bot が開き直していても待つものが無い (境界)。"""
+    def test_bot_reopened_parent_whose_children_all_closed_is_done_not_ready(self):
+        """最後の子が閉じても、bot が開き直した親は ready に戻らない — 閉じてよいと名乗って busy。
+
+        親を閉じる仕組みは無いので、ready に戻すと済んだ仕事が時刻を遅らせて再び出る
+        (#1734 は #1744 が閉じた瞬間に ready に出る)
+        """
         done, _ = self.run_queue(
-            [issue(2378, labels=["verify: triaged"], type_="Design")],
+            [issue(2378, labels=["verify: triaged"], type_="Design", title="済んだ親")],
             selves={
                 2378: {"children": [member(2534, "CLOSED")], "reopened": reopen("github-actions")}
             },
         )
-        self.assertEqual(self.lines_by_number(done.stdout)[2378][0], "ready")
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[2378][0], "busy", "子がすべて閉じたので済んだ仕事を ready に出している")
+        self.assertIn("子がすべて閉じた", seen[2378][1])
+        self.assertIn("閉じてよい", seen[2378][1])
+        self.assertIn("ready 0 /", done.stderr)
+
+    def test_parent_without_children_or_reopened_by_a_human_stays_ready_when_nothing_is_open(self):
+        """子を持たない親・人が開き直した親は、open の子が無くても自分の仕事を持つ (ready のまま)。"""
+        done, _ = self.run_queue(
+            [
+                issue(500, labels=["verify: triaged"], type_="Design", title="子の無い親"),
+                issue(501, labels=["verify: triaged"], type_="Design", title="人が開き直した親"),
+            ],
+            selves={
+                # bot に開き直されたが子を 1 件も持たない (開き直す理由が子ではない)
+                500: {"children": [], "reopened": reopen("github-actions")},
+                501: {
+                    "children": [member(510, "CLOSED")],
+                    "reopened": reopen("someone", kind="User"),
+                },
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[500][0], "ready")
+        self.assertEqual(seen[501][0], "ready")
+
+    def test_bot_reopened_parent_whose_children_all_closed_is_not_stock_or_decide(self):
+        done, _ = self.run_queue(
+            [
+                issue(400, type_="Task", body=SIGNATURE, title="閉じて開き直された"),
+                issue(300, type_="Design", title="決めて閉じた"),
+                issue(310, labels=["verify: triaged"], type_="Bug", title="子"),
+            ],
+            parents={310: parent(300, type_="Design")},
+            selves={
+                400: {"children": [member(410, "CLOSED")], "reopened": reopen("github-actions")},
+                300: {"children": [member(310, "CLOSED")], "reopened": reopen("github-actions")},
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertNotIn(400, seen, "子がすべて閉じた親を stock に出している")
+        self.assertNotIn(300, seen, "子がすべて閉じた親を decide に出している")
 
     def test_other_bot_reopen_is_not_the_parent_guard(self):
         """書き手として知られていない bot (GitHub App 経由のエージェント) の開き直しは人の側。"""
@@ -1192,6 +1237,7 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertIn("親を読めなかった", done.stderr)
         # 開き直された親も、読めなければ ready に戻る。黙ると済んだ仕事が出ている理由が分からない (#3036)
         self.assertIn("開き直された親", done.stderr)
+        self.assertIn("ready と stock に出し", done.stderr, "stock にも戻ることを名乗っていない")
 
 
 if __name__ == "__main__":

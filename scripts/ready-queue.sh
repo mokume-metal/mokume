@@ -43,8 +43,8 @@
 #   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている・
 #            家族のどれかがそうである)。または ready の候補のうち、開いた根の子 (親が open な
 #            Bug か、親が open で印の付いた Design の Bug の子。根を直す側で閉じる)、または
-#            本体を閉じた後に parent-guard (bot) が開き直し、open の子を残している親 (自分の
-#            仕事を持たず、残りは子が持つ — 「子 #N を待つ」。stock・decide にも出さない)
+#            本体を閉じた後に parent-guard (bot) が開き直した、子を持つ親 (自分の仕事を持たず、
+#            残りは子が持つ — 「子 #N を待つ」。子がすべて閉じたら「閉じてよい」。stock・decide にも出さない)
 #   decide   **人が決める行** — 無印の Design で、open な Bug の子を持つもの。子の多い順
 #
 # ## 根と判断 (#1661)
@@ -63,10 +63,12 @@
 # **開き直された親は、自分の仕事を持たない** (#3036)。本体の仕事を終えて閉じた親が open の子を
 # 残していると、parent-guard が開き直す (閉じる = 全作業の完了という木の不変条件 — ADR-0002・#23)。
 # 親には印が残るので、そのままでは済んだ仕事が ready に出る。**見るのは「最後の開き直しの手」と
-# 「open の子」の 2 つだけ** — 手が bot (scripts/bot-hand.sh) で open の子が残る親を、**自分の仕事を
-# 持たない親**とする。人が仕事を足すために開き直した親・開き直されたことの無い親 (段を持つ Design・
-# Bug の根) は、子を持っていても自分の仕事を持つ。「open の子を持つ親は ready に出さない」と一律には
-# しない。
+# 「子の有無」の 2 つだけ** — 手が bot (scripts/bot-hand.sh) で、子を 1 件以上持つ親を、**自分の仕事を
+# 持たない親**とする。open の子が残る間は「子 #N を待つ」、**最後の子が閉じた後も ready には戻さない**
+# (親を閉じる仕組みは無いので、戻すと済んだ仕事が時刻を遅らせて再び出る — #1734 は #1744 が閉じた
+# 瞬間に出る)。busy に「子がすべて閉じた — 閉じてよい」と名乗り、閉じるのは人に任せる。人が仕事を足す
+# ために開き直した親・開き直されたことの無い親 (段を持つ Design・Bug の根)・子を持たない親は、自分の
+# 仕事を持つ。「open の子を持つ親は ready に出さない」と一律にはしない。
 #
 # **この判定は 1 つで、4 つの口が使う。** 口ごとに別の式を持つと、1 つだけ直して他が残る:
 #
@@ -88,7 +90,7 @@
 #
 # 親 (番号・state・型・印) は GraphQL 1 回で、open な Bug・ready の候補・stock の候補 (と、open な
 # Bug があるときの未トリアージの Design) の分だけ読む。
-# **読めなかったら ready は従来どおり (開き直された親も) 出し、decide は出さず、そう名乗る。** decide は終了コードに
+# **読めなかったら ready と stock は従来どおり (開き直された親も) 出し、decide は出さず、そう名乗る。** decide は終了コードに
 # 数えない — 打てる仕事ではなく、人が決める仕事である。
 #
 # busy を出すのは、**ready から外れた理由を見せるため**である。ready だけ出すと「なぜ
@@ -459,7 +461,8 @@ fi
 #                                                      (空にすると欄がずれる)。親の印は
 #                                                      verify: triaged があれば triaged、無ければ -
 #                                                      で、Design の根を見分けるのに使う (#2228)
-#   self <番号> <手> <最小の open の子> <open の子の数>  番号ごとに必ず 1 行。手は、最後の開き直しが
+#   self <番号> <手> <最小の open の子> <open の子の数> <子の総数>
+#                                                      番号ごとに必ず 1 行。手は、最後の開き直しが
 #                                                      bot の手 (scripts/bot-hand.sh) なら bot、
 #                                                      それ以外 (人・無い・分からない) は -。
 #                                                      子が無い・最初のページに open の子が載らない
@@ -492,7 +495,8 @@ read_parents() { # $1=番号 (空白区切り)
         | ((.value.subIssuesSummary.total // 0) - (.value.subIssuesSummary.completed // 0)) as $open
         | (.value.timelineItems.nodes // [] | last) as $reopened
         | (if ($reopened != null) and ($reopened | bot_hand) then "bot" else "-" end) as $by
-        | "self \(.key | ltrimstr("i")) \($by) \($page[0] // "-") \($open)"'
+        | (.value.subIssuesSummary.total // 0) as $total
+        | "self \(.key | ltrimstr("i")) \($by) \($page[0] // "-") \($open) \($total)"'
 }
 
 # 引くのは open な Bug・ready の候補・stock の候補と、(open な Bug があるときの) 未トリアージの
@@ -511,16 +515,17 @@ if [ -n "$asked" ]; then
   # 黙ると「根で直す子が ready に出ている」ことに誰も気付かない
   parents=$(read_parents "$asked") || {
     parents=''
-    echo "親を読めなかった — 根で直す子も、閉じた後に開き直された親も ready に出し、decide は出していない" >&2
+    echo "親を読めなかった — 根で直す子も、閉じた後に開き直された親も ready と stock に出し、decide は出していない" >&2
   }
 fi
 
-# **自分の仕事を持たない親** — 本体の仕事を終えて閉じた後に parent-guard (bot) が開き直し、open の
-# 子を残している親 (#3036)。残りの仕事は子が持つので、ready にも stock にも decide にも出さず、
+# **自分の仕事を持たない親** — 本体の仕事を終えて閉じた後に parent-guard (bot) が開き直した、子を
+# 持つ親 (#3036)。残りの仕事は子が持ち (子がすべて閉じていれば、閉じるだけ)、ready にも stock にも
+# decide にも出さず、
 # 子を根に数えることもしない (子は自分で ready / busy に判定される)。**この 1 つの判定を 4 つの
 # 口が使う** — ready の候補・根・stock・decide。口ごとに別の式を持つと、1 つだけ直して他が
 # 残る (反証が 3 つの口で実走して見つけた)。「<番号> <最小の open の子> <open の子の数>」の並び
-waiting=$(awk '$1 == "self" && $3 == "bot" && $5 > 0 { print $2, $4, $5 }' <<<"$parents")
+waiting=$(awk '$1 == "self" && $3 == "bot" && $6 > 0 { print $2, $4, $5 }' <<<"$parents")
 is_waiting() { # $1=番号
   awk -v n="$1" '$1 == n { found = 1 } END { exit !found }' <<<"$waiting"
 }
@@ -544,7 +549,10 @@ while read -r n type title; do
     busy+="$n busy 根 #$root で直す ($title)"$'\n'
   elif is_waiting "$n"; then
     read -r _ child open <<<"$(awk -v n="$n" '$1 == n { print; exit }' <<<"$waiting")"
-    if [ "$child" != "-" ]; then
+    if [ "$open" -eq 0 ]; then
+      # 最後の子が閉じた。親を閉じる仕組みは無いので、ready に戻すと済んだ仕事が出る
+      who="子がすべて閉じた — 閉じてよい"
+    elif [ "$child" != "-" ]; then
       who="子 #$child を待つ"
     else
       who="open の子 $open 件を待つ"
