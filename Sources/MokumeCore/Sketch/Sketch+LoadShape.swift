@@ -207,7 +207,10 @@ extension SketchPart {
     /// ## 読むもの
     ///
     /// - 形: `path` (`d` の命令すべて — 相対の座標・省略した書き方・弧を含む)・`rect`
-    ///   (角丸を含む)・`circle`・`ellipse`・`line`・`polyline`・`polygon`
+    ///   (角丸を含む)・`circle`・`ellipse`・`line`・`polyline`・`polygon`。形の寸法の負の値は SVG 2
+    ///   では無効で、`rect` の `width` / `height` と `circle` の `r` が負なら何も描かず、`rect` の
+    ///   `rx` / `ry` と `ellipse` の `rx` / `ry` が負なら書いていないものとして読む (もう片方があればその値になる)。
+    ///   どれも、捨てたものとして知らせる
     /// - 入れ物: `g`・`a`・入れ子の `svg`・`switch` (拡張を求めない最初の子)。`transform`
     ///   (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)・`viewBox`・
     ///   `preserveAspectRatio` が効く
@@ -241,6 +244,8 @@ extension SketchPart {
     ///
     /// - 群に掛けた `opacity` は、子の色ひとつずつに掛ける。子どうしが重なった所は SVG より濃く出る
     /// - 尖った角が切られる長さは ``StrokeJoin/miter`` のもので、`stroke-miterlimit` は読まない
+    /// - 根と入れ子の `<svg>` の `width` / `height` を CSS で負の値に書くと、何も描かず知らせる。
+    ///   ブラウザは CSS の負の宣言を無効として捨て、属性か `auto` の大きさで描く
     ///
     /// ## 読めないときは投げる
     ///
