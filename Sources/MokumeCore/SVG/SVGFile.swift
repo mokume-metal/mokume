@@ -227,6 +227,19 @@ nonisolated enum SVGFile {
 
     // MARK: - 辿る
 
+    /// 名乗りの文字を組む 2 つの形。**値は前後の空白を落として出す** (#3022)。値を名乗る口はここを通り、
+    /// 書式と空白の扱いを口ごとに決めない。束ね方 (``Tally/note(_:line:earliest:)``) は文字どおりに比べる。
+    ///
+    /// - `<要素 名前="値">`: 要素の属性の値 (`<rect width="-5">`)
+    /// - `名前 "値"`: 性質・属性の名前と値 (`viewBox "1 2"`・`fill "bogus"`)
+    static func attributeNote(of element: String, _ name: String, _ value: String) -> String {
+        "<\(element) \(name)=\"\(value.trimmingCharacters(in: .whitespacesAndNewlines))\">"
+    }
+
+    static func valueNote(_ name: String, _ value: String) -> String {
+        "\(name) \"\(value.trimmingCharacters(in: .whitespacesAndNewlines))\""
+    }
+
     /// 描かずに捨てたものを数える。
     struct Tally {
         private(set) var skips: [Skip] = []
@@ -425,8 +438,8 @@ nonisolated enum SVGFile {
         mutating func read(styleSheet text: String, line: Int) {
             let sheet = SVGFile.parseStyleSheet(text)
             rules += sheet.rules
-            for selector in sheet.unread { tally.note("CSS rule \"\(selector)\"", line: line) }
-            for written in sheet.unreadDeclarations { tally.note("CSS declaration \"\(written)\"", line: line) }
+            for selector in sheet.unread { tally.note(SVGFile.valueNote("CSS rule", selector), line: line) }
+            for written in sheet.unreadDeclarations { tally.note(SVGFile.valueNote("CSS declaration", written), line: line) }
         }
 
         mutating func visit(_ event: Event) {
@@ -497,7 +510,9 @@ nonisolated enum SVGFile {
                         of: attributes, sizes: sizes, in: context, isRoot: stack.isEmpty, line: line)
                 else { return push(.inert) }
                 // `<svg>` の `transform` (SVG 2) は読まない。名乗るだけで、変換は掛けない (#2627)
-                if let text = attributes["transform"] { tally.note("<svg transform=\"\(text)\">", line: line) }
+                if let text = attributes["transform"] {
+                    tally.note(SVGFile.attributeNote(of: "svg", "transform", text), line: line)
+                }
                 context.transform = context.transform * viewport.transform
                 context.viewport = viewport.size
                 pushContainer(.render, context)
@@ -565,7 +580,7 @@ nonisolated enum SVGFile {
             if let style = attributes["style"] {
                 let parsed = SVGFile.parseDeclarations(style)
                 for declaration in parsed.declarations { collect(declaration, from: .styleAttribute) }
-                unreadable += parsed.unreadable.map { "CSS declaration \"\($0)\"" }
+                unreadable += parsed.unreadable.map { SVGFile.valueNote("CSS declaration", $0) }
             }
 
             // 読まない性質のうち、名乗らないと形の大きさ・位置が黙って変わるもの (#2627)。値は問わず、描き方は
@@ -579,7 +594,7 @@ nonisolated enum SVGFile {
             }
             if readsTransform {
                 for key in SVGFile.transformCompanions {
-                    if let text = attributes[key] { unreadable.append("<\(name) \(key)=\"\(text)\">") }
+                    if let text = attributes[key] { unreadable.append(SVGFile.attributeNote(of: name, key, text)) }
                 }
             }
 
@@ -603,7 +618,7 @@ nonisolated enum SVGFile {
                 guard SVGFile.properties.contains(property) else { continue }
                 let reading = read(property, value, in: inherited)
                 if case .unreadable = reading {
-                    unreadable.append("\(property) \"\(value)\"")
+                    unreadable.append(SVGFile.valueNote(property, value))
                     continue
                 }
                 for longhand in property == "marker" ? SVGFile.markerLonghands : [property] {
@@ -753,7 +768,7 @@ nonisolated enum SVGFile {
         private mutating func ownTransform(_ attributes: [String: String], line: Int) -> Affine {
             guard let text = attributes["transform"] else { return .identity }
             guard let transform = SVGFile.parseTransform(text) else {
-                tally.note("transform \"\(text)\"", line: line)
+                tally.note(SVGFile.valueNote("transform", text), line: line)
                 return .identity
             }
             return transform
@@ -788,16 +803,16 @@ nonisolated enum SVGFile {
             namesNegative: Bool = false, line: Int
         ) -> Written {
             guard let text else { return .absent }
-            if allowsAuto,
-                ["auto", "initial", "unset"].contains(text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
-            {
+            // 名乗りは、値の前後の空白を落とした文字で出す (根の `svg` の大きさ・`preserveAspectRatio` と揃える) (#3022)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if allowsAuto, ["auto", "initial", "unset"].contains(trimmed.lowercased()) {
                 return .automatic
             }
             guard let value = SVGFile.parseLength(text, reference: reference) else {
-                tally.note("<\(element) \(key)=\"\(text)\">", line: line)
+                tally.note(SVGFile.attributeNote(of: element, key, text), line: line)
                 return .unreadable
             }
-            if namesNegative, value < 0 { tally.note("<\(element) \(key)=\"\(text)\">", line: line) }
+            if namesNegative, value < 0 { tally.note(SVGFile.attributeNote(of: element, key, text), line: line) }
             return .value(value)
         }
 
@@ -815,7 +830,7 @@ nonisolated enum SVGFile {
                 {
                     box = numbers
                 } else {
-                    tally.note("viewBox \"\(text)\"", line: line)
+                    tally.note(SVGFile.valueNote("viewBox", text), line: line)
                 }
             }
             // 読めない値は、書いていないもの (`xMidYMid meet`) として写し、名乗る (#2649)
@@ -824,8 +839,7 @@ nonisolated enum SVGFile {
                 if let read = SVGFile.parseAspectRatio(text) {
                     aspect = read
                 } else {
-                    tally.note(
-                        "preserveAspectRatio \"\(text.trimmingCharacters(in: .whitespacesAndNewlines))\"", line: line)
+                    tally.note(SVGFile.valueNote("preserveAspectRatio", text), line: line)
                 }
             }
             // 根の幅と高さの割合は、viewBox (無ければ 100) に対して読む。入れ子は親の座標の決まりに対して
@@ -1145,10 +1159,11 @@ nonisolated enum SVGFile {
     }
 
     /// `preserveAspectRatio` の値を読む。文法は `[defer] <align> [meet | slice]` で、`<align>` は `none` か
-    /// `x{Min,Mid,Max}Y{Min,Mid,Max}`。大文字と小文字は区別しない。**読めなければ `nil`** (未知の語・余分な語・
-    /// `defer` だけ・空) — 呼ぶ側が名乗り、書いていないものとして読む (#2649)。
+    /// `x{Min,Mid,Max}Y{Min,Mid,Max}`。**大文字と小文字は区別する** (SVG の属性の値で、CSS の性質の値
+    /// とは違う。`XMINYMID` は読めない値) (#2729)。**読めなければ `nil`** (未知の語・余分な語・
+    /// `defer` だけ・空・綴りの大文字小文字が違う語) — 呼ぶ側が名乗り、書いていないものとして読む (#2649)。
     static func parseAspectRatio(_ text: String) -> AspectRatio? {
-        var words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        var words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         if words.first == "defer" { words.removeFirst() }
         guard let first = words.first, words.count <= 2 else { return nil }
         let slices: Bool
@@ -1160,14 +1175,14 @@ nonisolated enum SVGFile {
         if first == "none" { return AspectRatio(align: nil, slices: slices) }
         func edge(_ word: Substring) -> AspectRatio.Edge? {
             switch word {
-            case "min": .min
-            case "mid": .mid
-            case "max": .max
+            case "Min": .min
+            case "Mid": .mid
+            case "Max": .max
             default: nil
             }
         }
-        // `xMidYMax` は 8 文字で、`x` + 3 文字 + `y` + 3 文字
-        guard first.count == 8, first.hasPrefix("x"), first.dropFirst(4).hasPrefix("y"),
+        // `xMidYMax` は 8 文字で、`x` + 3 文字 + `Y` + 3 文字
+        guard first.count == 8, first.hasPrefix("x"), first.dropFirst(4).hasPrefix("Y"),
             let x = edge(first.dropFirst().prefix(3)), let y = edge(first.dropFirst(5))
         else { return nil }
         return AspectRatio(align: (x, y), slices: slices)
