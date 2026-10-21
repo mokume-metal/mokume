@@ -143,6 +143,57 @@ final class Typeface {
         }
     }
 
+    /// 代わりの書体の**家族に、頼んだ太さ・傾きの面が無いか** ([#2924])。
+    ///
+    /// 面の引き方は、同じ家族の中で頼んだ面を引き直す (``styledFace(of:traits:copy:)``) のと同じ —
+    /// 家族が頼んだ面を持たなければ、`CTFontCreateCopyWithSymbolicTraits` は `nil` か、頼んだ性質を
+    /// 欠く面を返す (ハングルの AppleMyungjo の太字・タイ文字の Ayuthaya の太字)。**家族が面を持つのに、
+    /// その面が字形だけを持たないときは、欠かない** — 知らせが「家族に面が無い」と言い間違えない。
+    ///
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
+    static func familyLacksFace(of font: CTFont, requested: CTFontSymbolicTraits) -> Bool {
+        guard !requested.isEmpty else { return false }
+        let face = CTFontCreateCopyWithSymbolicTraits(font, CTFontGetSize(font), nil, requested, requested)
+        return face.map { !CTFontGetSymbolicTraits($0).contains(requested) } ?? true
+    }
+
+    /// その字を頼んだ面で持つ書体の例 (`textFont()` に渡せる名前) を、環境から引く ([#2924])。**固定の
+    /// 表は持たない。** 頼んだ面の書体を引く元にして ``CTFontCreateForString`` を引き、返った書体が
+    /// **字形と頼んだ面の両方を持つときだけ**名乗る。持たなければ `nil` (例を挙げない)。
+    ///
+    /// 引く元は、まずシステムの UI 書体の頼んだ面。**macOS 27 では、システムの UI 書体から引いた
+    /// 代わりは内部名 (`.AppleSDGothicNeoI-Bold`・`.ThonburiUI-Bold`) の書体で、`textFont()` が断る名前
+    /// なので挙げられない** (名前から引き直しても別の書体が返る)。そこで、内部名の答えは採らず、
+    /// 公開の書体 `Helvetica` の頼んだ面を引く元にして引き直す — 両方とも固定の例の表ではなく、
+    /// CoreText がその字に選んだ書体を見る。
+    ///
+    /// 描く書体は変えない — 知らせの文面で、作者が `textFont()` へ渡せる名前を挙げるためだけに引く。
+    /// `.` で始まる内部名や、環境が名前から引けない名前は挙げない (渡し直せない)。
+    ///
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
+    static func exampleTypeface(for scalar: Unicode.Scalar, requested: CTFontSymbolicTraits, size: CGFloat)
+        -> String?
+    {
+        guard !requested.isEmpty else { return nil }
+        let origins = [
+            CTFontCreateUIFontForLanguage(.system, size, nil),
+            CTFontCreateWithName("Helvetica" as CFString, size, nil),
+        ]
+        let text = String(scalar) as CFString
+        for origin in origins.compactMap({ $0 }) {
+            let base =
+                CTFontCreateCopyWithSymbolicTraits(origin, size, nil, requested, requested) ?? origin
+            let found = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+            let name = CTFontCopyPostScriptName(found) as String
+            if CTFontGetSymbolicTraits(found).contains(requested), glyphIndex(of: scalar, in: found) != 0,
+                !name.hasPrefix("."), exists(name: name)
+            {
+                return name
+            }
+        }
+        return nil
+    }
+
     /// 代わりの書体 (``glyph(for:)`` が、この書体が覆えない字を引いた別の書体) から引いた字が、
     /// 頼んだ太さ・傾きを欠く面で描かれるか ([#2561])。何も頼んでいなければ欠かない。
     ///
@@ -435,8 +486,12 @@ final class Typeface {
     ///
     /// **引き直した面は、同じ家族の公開の面とは限らない。** 面は `copy` が返した書体で、CoreText が
     /// 内部の面を返すこともある (Times New Roman の太字は、家族名 `.Times Fallback` の `.TimesFB-Bold`)。
-    /// 家族をまたいで探し直すことはしない — 代わりの書体が太字を持たない家族 (ハングルの
-    /// AppleMyungjo など) は、引き直しても細いまま残る。
+    /// **家族をまたいで探し直すことはしない** — 代わりの書体が太字を持たない家族 (ハングルの
+    /// AppleMyungjo・タイ文字の Ayuthaya など) は、引き直しても細いまま残る。理由は 2 つある。
+    /// CoreText の候補の列 (`CTFontCopyDefaultCascadeList`) に、その字を太字で持つ別の家族が入っていない
+    /// (Apple Chancery・Zapfino の「한」は列の中で AppleMyungjo だけが字形を持つ)。列の外から代役を
+    /// 決めると、指定した書体から離れる ([#2924])。細いままの字は、知らせ (``onFallbackLackingStyle``) が
+    /// 「代わりの書体の家族に面が無い」ことと、その字を頼んだ面で持つ書体の例を名乗る。
     ///
     /// 引き直した面は、頼んだ性質を**写す前の面より多く**持つときだけ採る。別の面へ入れ替わるだけで
     /// 何も頼みに近づかない引き直し (斜体の面が無くて太さの違う面が返る、など) は採らない。
@@ -449,6 +504,7 @@ final class Typeface {
     ///
     /// [#2770]: https://github.com/mokume-metal/mokume/issues/2770
     /// [#2562]: https://github.com/mokume-metal/mokume/issues/2562
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
     static func restyledFallback(
         _ font: CTFont, glyph: CGGlyph, requested: CTFontSymbolicTraits,
         copy: (CTFontSymbolicTraits) -> CTFont?, glyphIndex: (CTFont) -> CGGlyph
