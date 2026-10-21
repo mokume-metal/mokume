@@ -158,6 +158,7 @@ enum PixelWriteCall: CaseIterable, CustomTestStringConvertible {
     case set
     case subscriptSet
     case fill
+    case update
 
     var testDescription: String { "\(self)" }
 
@@ -168,6 +169,7 @@ enum PixelWriteCall: CaseIterable, CustomTestStringConvertible {
         case .set: canvas.set(2, 2, Self.color)
         case .subscriptSet: canvas.pixels[2, 2] = Self.color
         case .fill: canvas.pixels.fill(Self.color)
+        case .update: canvas.pixels.update { _, _, _ in Self.color }
         }
     }
 }

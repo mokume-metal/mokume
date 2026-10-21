@@ -53,6 +53,10 @@ extension Canvas {
 
         /// 面の無いモデルを置いた。
         case emptyModel
+        /// 読んだモデルに、壊れて読み飛ばした行 (読めない頂点・面・仕様に無い語) や面があった (#2565)。
+        /// **ファイルの名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
+        /// 意図して読まない行 (`mtllib`・`usemtl` など) では言わない。
+        case modelSkipped(path: String)
         /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの
         /// 名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
         case svgSkipped(path: String)
@@ -182,6 +186,15 @@ extension Canvas {
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
         case badStrokeWeight
+        /// ``strokeDash(_:_:)`` に負の値・数でない値・無限・両方 0 が渡され、破線を置かずに実線へ
+        /// 戻した ([#2835])。
+        ///
+        /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
+        case badStrokeDash
+        /// 破線が線の長さに対して細かすぎ、刻む数が上限を越えるので、その線を実線で引いた ([#2835])。
+        ///
+        /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
+        case strokeDashTooFine
         /// ``rect(_:_:_:_:_:)`` の角の半径に負の値・数でない値が渡され、0 に丸めた ([#2757])。
         /// 角を丸めない 4 引数と同じ絵になる。
         ///

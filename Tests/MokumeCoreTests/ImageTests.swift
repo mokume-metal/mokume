@@ -586,13 +586,13 @@ struct ImageTests {
 
         let canvas = try makeCanvas()
         let image = try canvas.loadImage(url.path)
-        let before = image.pixels
+        let before = image.workingPixels
         for y in 0..<image.height {
             for x in 0..<image.width {
                 image.set(x, y, image.get(x, y))
             }
         }
-        #expect(image.pixels == before)
+        #expect(image.workingPixels == before)
     }
 
     @Test("範囲の外は、読めば透明・書いても何も起きない")
@@ -601,10 +601,10 @@ struct ImageTests {
         let image = try canvas.createImage(2, 2)
         #expect(image.get(-1, 0).alpha == 0)
         #expect(image.get(0, 5).alpha == 0)
-        let before = image.pixels
+        let before = image.workingPixels
         image.set(-1, 0, white)
         image.set(9, 9, white)
-        #expect(image.pixels == before)
+        #expect(image.workingPixels == before)
     }
 
     // MARK: - まとめて書き込む
@@ -704,9 +704,9 @@ struct ImageTests {
         let canvas = try makeCanvas()
         let image = try canvas.createImage(2, 2)
         image.fill(white)
-        let before = image.pixels
+        let before = image.workingPixels
         image.write(makePicture([(0, 0, 0, 255)], width: 1, height: 1))
-        #expect(image.pixels == before)
+        #expect(image.workingPixels == before)
         #expect(image.width == 2)
         #expect(image.height == 2)
     }

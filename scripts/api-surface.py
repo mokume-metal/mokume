@@ -540,6 +540,7 @@ FLOAT_ALLOWLIST = {
     "SketchPart.expose(_:_:)": "Float・Double・Int・String の口が並ぶ組で、変数はどの型で持っていても対応する口へ入る (ADR-0030)。1 本の総称に畳むと String の口との並びが崩れる",
     "LinearRGBA.display(red:green:blue:alpha:)": "0–1 の目盛りの口で、0–255 の数を `n / 255` で直して渡す書き方が自然に出る。広げると整数リテラルの割り算が黙って 0 (黒・透明) になる — このリポジトリの中だけで 7 行と ADR-0033 の例 (ADR-0035 決定 2 の改訂 2026-10-20 で据え置き)",
     "LinearRGBA.linear(red:green:blue:)": "display(red:green:blue:alpha:) と同じ理由で据え置く",
+    "(トップレベル).paletteLerp(_:_:)": "区切りの位置は配列の要素 `[(LinearRGBA, Float)]` の中にあり、protocol では覆えない。勾配 (`Gradient.linearGradient(_:from:to:)`) の区切りと同じ形に揃える (#2424・#2433)。割合 `amount` は `some ScalarConvertible` で受けている",
 }
 
 
@@ -607,6 +608,7 @@ UNSHOWN = {
     "audioInputDevices": "captureDevices と同じ理由",
     "loadSound": "音声ファイルはリポジトリに置けず (check-no-binaries)、参照スケッチの読む資材が無い。鳴らさずに解析する形は createAudioIn(samples:) が示す。再生と解析はテストが見る",
     "clock": "時刻の出どころを名乗る口で、--render では片方 (frameIndex) しか絵に出ない (usesFrameHistory と同じ)。正しさはテストが見る",
+    "authorTime": "入り口・部品が状態を進めるのに読む秒で、観測の枚でないと time と同じ値になり、--render の絵では time と違いが出ない。観測の枚での違いはテストが見る (#2900)",
     "displays": "captureDevices と同じ理由 (繋がっているディスプレイに依る。全画面の作例は SketchSettings.fullScreen の説明文が持つ・#2020)",
     "gamepads": "繋がっているパッドに依り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。同じ動きは gamepad-and-players が createGamepad(inputs:) の記録した入力で示す (#1965)",
     "createTCPClient": "繋ぎ先のサーバが要り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。記録した列を流す形 (messages:) と手元の TCPServer との往復はテストが回す (#2470)",
@@ -617,6 +619,10 @@ UNSHOWN = {
     "loadEffect": "loadShader と同じ理由",
     "usesFrameHistory": "--render の「同じ番号のフレームは同じ絵」を崩す",
     "main": "入口は Sketches/main.swift が持つ",
+    "loadJSONArray": "最上位が配列の JSON を読む口で、読む先が要る。絵にする作例 (地震の GeoJSON) を参照スケッチの 1 枚に足すと台帳の絵が動くので、読み方と知らせはテストが見る (#2466)",
+    "requestJSONArray": "loadJSONArray と同じ理由 (待たない版は書き出しの絵では受け取る番が回らない)",
+    "parseJSONObject": "通信で届いた文字を読む口で、届く文字を参照スケッチが持たない。読み方はテストが見る (#2466)",
+    "parseJSONArray": "parseJSONObject と同じ理由",
 }
 
 
@@ -685,6 +691,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "strokeWeight": DRAWING_STYLE,
     "strokeCap": DRAWING_STYLE,
     "strokeJoin": DRAWING_STYLE,
+    "strokeDash": DRAWING_STYLE,
+    "noStrokeDash": DRAWING_STYLE,
     "blendMode": DRAWING_STYLE,
     "rectMode": DRAWING_STYLE,
     "ellipseMode": DRAWING_STYLE,
@@ -789,6 +797,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "beginContour": FIGURE,
     "endContour": FIGURE,
     "vertex": FIGURE,
+    "bezier": FIGURE,
     "bezierVertex": FIGURE,
     "quadraticVertex": FIGURE,
     "curveVertex": FIGURE,
@@ -801,6 +810,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "pixelHeight": READING,
     "frameCount": READING,
     "time": READING,
+    "authorTime": (READING, "time を観測の枚でも作者の時計の秒で返す。入り口・部品が状態を進めるのに読む (ADR-0045 決定 9)"),
     "deltaTime": READING,
     "clock": (READING, "時刻の出どころを値で返す。外の時間で動くもの (音声ファイルの再生) を作る側が読む"),
     "mouseX": READING,
@@ -886,6 +896,10 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "requestJSONObject": (RESOURCE, "loadJSONObject と同じ理由"),
     "loadXML": (RESOURCE, "loadJSONObject と同じ理由"),
     "requestXML": (RESOURCE, "loadJSONObject と同じ理由"),
+    "loadJSONArray": (RESOURCE, "loadJSONObject と同じ理由"),
+    "requestJSONArray": (RESOURCE, "loadJSONObject と同じ理由"),
+    "parseJSONObject": (READING, "文字から値を作って返す。ファイルにも描き場所にも触れない"),
+    "parseJSONArray": (READING, "parseJSONObject と同じ理由"),
     "loadShape": RESOURCE,
     "requestShape": RESOURCE,
     "loadShader": RESOURCE,

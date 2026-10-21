@@ -69,4 +69,5 @@ bash "$here/report-check-failure.sh" \
   --title "$TITLE" \
   --log "$log" \
   --body-file "$body" \
+  --key-file "$log" \
   --source '.github/workflows/render.yml の render-environment-report が自動起票した (#2588)'

@@ -2051,6 +2051,9 @@ public final class Canvas {
         var strokeWeight: Float = 1
         var strokeCap = StrokeCap.round
         var strokeJoin = StrokeJoin.miter
+        /// 線の破線 (#2835)。`nil` なら実線。**描き方なのでフレームを越える** (ADR-0021 決定 4) —
+        /// 太さ・端・折れ目と同じ族である。
+        var strokeDash: StrokeDash?
         var hasFill = true
         var hasStroke = true
         var rectMode = ShapeMode.corner

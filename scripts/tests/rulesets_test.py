@@ -17,6 +17,7 @@ gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワ�
 実行は make ci-check (CI もこれを呼ぶ)。
 """
 
+import importlib.util
 import json
 import os
 import shutil
@@ -720,6 +721,181 @@ class ApplyFreshnessTest(TreeFixture):
         self.assertEqual(code, 0, out)
         self.assertNotIn("注意", out)
         self.assertEqual(self.live_entries(), 6)
+
+
+DEGRADED = REPO / ".github" / "rulesets-degraded"
+
+# 定義の正規化 (rulesets_lib.canon) を、縮退の定義の突き合わせにも使う
+_spec = importlib.util.spec_from_file_location("rulesets_lib", LIB)
+LIBMOD = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(LIBMOD)
+
+
+def contexts(body):
+    """必須チェックの名前の並び。"""
+    for rule in body["rules"]:
+        if rule["type"] == "required_status_checks":
+            return [c["context"] for c in rule["parameters"]["required_status_checks"]]
+    return []
+
+
+def without_render(body):
+    """`render` だけを必須チェックから外した写し。縮退の定義はこれと一致していなければならない。"""
+    out = json.loads(json.dumps(body))
+    for rule in out["rules"]:
+        if rule["type"] == "required_status_checks":
+            checks = rule["parameters"]["required_status_checks"]
+            rule["parameters"]["required_status_checks"] = [
+                c for c in checks if c["context"] != "render"
+            ]
+    return out
+
+
+class DegradedDefinitionTest(unittest.TestCase):
+    """縮退の定義 (専用機が止まったときに必須チェックから render を外す・#2252)。
+
+    縮退の定義は `.github/rulesets-degraded/` にあり、**いつもの適用では送られない**。縮退を
+    発動したときに、`render` 以外の保護まで同時に変わってはならない — だから main-protection
+    との差が必須チェックの `render` の 1 つだけであることを固定する。main-protection に必須チェック
+    や規則を足して、縮退の定義へ足し忘れると赤になる。
+    """
+
+    def load(self, path):
+        return json.loads(Path(path).read_text())
+
+    def test_縮退の定義との差は必須チェックの_render_だけ(self):
+        main = self.load(DEFS / "main-protection.json")
+        degraded = self.load(DEGRADED / "main-protection.json")
+        self.assertIn("render", contexts(main), "main-protection が render を必須にしていない")
+        self.assertNotIn("render", contexts(degraded))
+        self.assertEqual(
+            LIBMOD.canon(without_render(main)),
+            LIBMOD.canon(degraded),
+            "縮退の定義と main-protection の差が render だけではない (足し忘れ)",
+        )
+
+    def test_足し忘れの形は差になって見える(self):
+        # 上の検査が空振りしないことの確認: main-protection にだけ必須チェックを足した形は、
+        # render を外しただけでは縮退の定義と一致しない
+        main = self.load(DEFS / "main-protection.json")
+        degraded = self.load(DEGRADED / "main-protection.json")
+        for rule in main["rules"]:
+            if rule["type"] == "required_status_checks":
+                rule["parameters"]["required_status_checks"].append({"context": "new-check"})
+        self.assertNotEqual(LIBMOD.canon(without_render(main)), LIBMOD.canon(degraded))
+
+    def test_縮退の定義は形の検査を通る(self):
+        r = run(["python3", str(LIB), "shape", str(DEGRADED)])
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_縮退の定義は_bypass_actors_を空のまま持つ(self):
+        # 縮退でも bypass_actors を足さない (ADR-0003 決定 1)
+        self.assertEqual(self.load(DEGRADED / "main-protection.json")["bypass_actors"], [])
+
+    def test_縮退の定義は既定の適用が送る場所に無い(self):
+        # 既定の適用は DEFS を丸ごと送る。縮退の定義がそこにあると、いつもの適用で render が外れる
+        self.assertFalse((DEFS / "main-protection-degraded.json").exists())
+        self.assertNotEqual(DEGRADED.resolve(), DEFS.resolve())
+        self.assertFalse(any(DEGRADED.resolve() == p.resolve() for p in DEFS.glob("*")))
+
+
+class DegradedApplyTest(ScriptFixture):
+    """縮退と復帰の口 (`apply-rulesets.sh --degraded / --restore`・#2252)。
+
+    **本物の保護は書き換えない** — gh は偽物で、実設定は一時のディレクトリである。
+    """
+
+    def apply(self, *flags):
+        return run(["/bin/bash", str(APPLY), *flags], env=self.env)
+
+    def live_main(self):
+        for f in self.live.glob("*.json"):
+            body = json.loads(f.read_text())
+            if body["name"] == "main-protection":
+                return body
+        raise AssertionError("main-protection が実設定に無い")
+
+    def changed_lines(self, out):
+        """差分の本文 (ヘッダを除く + と - の行)。"""
+        return [
+            line
+            for line in out.splitlines()
+            if line and line[0] in "+-" and not line.startswith(("+++", "---"))
+        ]
+
+    def test_縮退の_dry_run_は書き換えず差分は_render_だけ(self):
+        r = self.apply("--degraded")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("PUT", self.calls())
+        self.assertIn("render", r.stdout + r.stderr)
+        changed = self.changed_lines(r.stdout + r.stderr)
+        # 差は render の 1 つ (JSON の整形で 3 行): 要素の閉じと開きと名前
+        self.assertEqual(len(changed), 3, changed)
+        self.assertTrue(any('"context": "render"' in line for line in changed), changed)
+        self.assertIn("--degraded --apply", r.stdout)
+
+    def test_縮退の適用は_main_protection_だけを書き換える(self):
+        r = self.apply("--degraded", "--apply")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.calls().count("PUT"), 1, self.calls())
+        self.assertNotIn("POST", self.calls())
+        self.assertNotIn("render", contexts(self.live_main()))
+        self.assertEqual(
+            LIBMOD.canon(self.live_main()),
+            LIBMOD.canon(json.loads((DEGRADED / "main-protection.json").read_text())),
+        )
+        # 送っていないルールセットは、定義に無いと言われない
+        self.assertNotIn("定義に無い", r.stdout + r.stderr)
+
+    def test_復帰の_dry_run_も差分は_render_だけで書き換えない(self):
+        self.apply("--degraded", "--apply")
+        before = self.calls().count("PUT")
+        r = self.apply("--restore")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.calls().count("PUT"), before)
+        changed = self.changed_lines(r.stdout + r.stderr)
+        self.assertEqual(len(changed), 3, changed)
+        self.assertTrue(any('"context": "render"' in line for line in changed), changed)
+
+    def test_復帰の適用で_render_が必須に戻り照合まで通る(self):
+        self.apply("--degraded", "--apply")
+        r = self.apply("--restore", "--apply")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("render", contexts(self.live_main()))
+        self.assertEqual(
+            LIBMOD.canon(self.live_main()),
+            LIBMOD.canon(json.loads((DEFS / "main-protection.json").read_text())),
+        )
+        self.assertEqual(self.calls().count("PUT"), 2, self.calls())
+
+    def test_既定の適用は縮退の定義を送らない(self):
+        # 既定の振る舞いは変わらない: DEFS を丸ごと送り、render を必須のままにする
+        body = self.live_main()
+        body["enforcement"] = "disabled"
+        for f in self.live.glob("*.json"):
+            if json.loads(f.read_text())["name"] == "main-protection":
+                f.write_text(json.dumps(body))
+        r = self.apply("--apply")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("render", contexts(self.live_main()))
+
+    def test_すでに縮退していれば縮退の適用は何もしない(self):
+        self.apply("--degraded", "--apply")
+        before = self.calls().count("PUT")
+        r = self.apply("--degraded", "--apply")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.calls().count("PUT"), before)
+        self.assertIn("適用するものは無い", r.stdout)
+
+    def test_縮退と復帰は同時に付けられない(self):
+        r = self.apply("--degraded", "--restore")
+        self.assertEqual(r.returncode, 64)
+        self.assertEqual(self.calls(), "")
+
+    def test_知らない引数は使い方の誤り(self):
+        r = self.apply("--degrade")
+        self.assertEqual(r.returncode, 64)
+        self.assertIn("使い方", r.stderr)
 
 
 if __name__ == "__main__":

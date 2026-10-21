@@ -443,6 +443,38 @@ struct SketchFrameClockTests {
         #expect(!message.contains("requestFont"), "まだ無い口を案内した: \(message)")
     }
 
+    /// 最上位が配列の JSON を読む口 (#2466)。待たない口 `requestJSONArray` を案内する。文字から読む口
+    /// (`parseJSONObject`・`parseJSONArray`) はファイルを読まないので、`draw()` の中でも知らせない。
+    @Test("draw() の中の loadJSONArray は口の名前で 1 度だけ requestJSONArray を案内し、setup() の中と parse は知らせない")
+    func loadJSONArrayInDrawIsNoticed() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-frame-clock-\(UUID().uuidString).json")
+        try Data("[1, 2, 3]".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let inSetup = Probe()
+        inSetup.onSetup = { _ = try? $0.loadJSONArray(url.path) }
+        let quiet = try SketchRuntime(sketch: inSetup, gpu: RenderDevice())
+        for _ in 0..<3 { try quiet.advance() }
+        #expect(quiet.blockingLoads.message(for: "loadJSONArray(_:)") == nil)
+
+        var loaded = 0
+        let inDraw = Probe()
+        inDraw.onDraw = { probe in
+            if (try? probe.loadJSONArray(url.path)) != nil { loaded += 1 }
+            _ = try? probe.parseJSONObject("{}")
+            _ = try? probe.parseJSONArray("[]")
+        }
+        let noisy = try SketchRuntime(sketch: inDraw, gpu: RenderDevice())
+        for _ in 0..<3 { try noisy.advance() }
+        #expect(loaded == 3, "知らせても読み込みは止めない")
+        let message = try #require(noisy.blockingLoads.message(for: "loadJSONArray(_:)"))
+        #expect(message == BlockingLoads.notice("loadJSONArray(_:)", instead: "requestJSONArray(_:)"))
+        #expect(message.contains("requestJSONArray(_:)"), "\(message)")
+        #expect(noisy.blockingLoads.message(for: "parseJSONObject(_:)") == nil)
+        #expect(noisy.blockingLoads.message(for: "parseJSONArray(_:)") == nil)
+    }
+
     /// 書体の読み込みは走っている面を使わないので、走っていなくても読め、走っていない口の警告も出ない。
     @Test("走っていない所でも loadFont は読め、走っていない口の警告を出さない")
     func loadFontWorksOutsideARun() throws {

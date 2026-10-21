@@ -264,8 +264,40 @@ final class ShaderBox {
             let reason = "\(error)"
             guard failure != reason else { return }
             failure = reason
-            report("could not rebuild the fragment: \(error.headline)")
+            report(Self.rebuildWarning(for: error))
         }
+    }
+
+    /// 差し替えに失敗したときの、端末の警告の 1 行 (`could not rebuild the fragment: …`)。
+    ///
+    /// **組み立ての誤りなら、理由の中の最初の `error:` の行を ` — ` で足す** ([#2784])。1 行目の
+    /// ``RenderFailure/headline`` は `Cannot build the shader: waves` で止まり、直す行 (`waves.metal:2:12`)
+    /// は観測の ``failure`` にしか載らなかった。端末を見ながら保存を繰り返す場面で、観測を引かずに直す
+    /// 行が分かる。足すのは**警告の側だけ**で、``RenderFailure/description`` と ``failure`` は変えない
+    /// (変えると `makeShader` が投げる理由の中で同じ行が 2 度出る)。
+    ///
+    /// - 前に並ぶ警告の行 (`mokume/Common.metal:330:22: warning: …`) は飛ばし、最初の `error:` の行を
+    ///   拾う。入口を書き違えた断片は、理由の先頭に足した言い直しの行 ([#2782]・`<断片の名前>: error: …`)
+    ///   が最初の `error:` の行になり、Metal の `Undefined symbol(s)` ではなくそれが載る
+    /// - 理由に `error:` の行が無い失敗 (組み立てでない失敗) は、今までどおり ``RenderFailure/headline``
+    ///   だけ。警告は 1 行のまま ([#600])
+    ///
+    /// [#600]: https://github.com/mokume-metal/mokume/issues/600
+    /// [#2782]: https://github.com/mokume-metal/mokume/issues/2782
+    /// [#2784]: https://github.com/mokume-metal/mokume/issues/2784
+    static func rebuildWarning(for error: RenderFailure) -> String {
+        let warning = "could not rebuild the fragment: \(error.headline)"
+        guard case .shaderCompilationFailed(_, let reason) = error,
+            let line = firstErrorLine(in: reason)
+        else { return warning }
+        return "\(warning) — \(line)"
+    }
+
+    /// 理由の中の最初の `error:` の行 (`waves.metal:2:12: error: …`)。無ければ `nil`。
+    private static func firstErrorLine(in reason: String) -> String? {
+        reason.split(whereSeparator: \.isNewline)
+            .first { $0.contains(": error: ") || $0.contains(": fatal error: ") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// 失敗を 1 行知らせる。

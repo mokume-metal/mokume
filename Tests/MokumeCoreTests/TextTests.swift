@@ -639,7 +639,9 @@ struct TextTests {
         #expect(message.contains("\"あ\" (U+3042)"), "\(message)")
         #expect(message.contains("\"Helvetica-Oblique\", the face drawn for .italic"), "\(message)")
         #expect(message.contains("\"HiraginoSans-W3\" (regular weight, upright)"), "\(message)")
-        #expect(!message.contains("family"), "\(message)")
+        // 家族 (HiraginoSans-W3 の家族) に斜体の面が無いことは、頼んだ面を欠く文に続けて名乗る (#2924)。
+        // 面を欠くと言う文 (`the face drawn for .italic`) は家族に無いとは言わない
+        #expect(message.contains("The family of \"HiraginoSans-W3\" has no .italic face"), "\(message)")
         // 次のフレームで別の字が代わりの書体へ落ちても、2 度目は言わない (最初の文面のまま)
         try canvas.draw { canvas.text("もくめ", 20, 50) }
         #expect(canvas.warnings.message(for: .missingFallbackTypefaceStyle) == message)

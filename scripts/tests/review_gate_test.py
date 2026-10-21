@@ -152,8 +152,14 @@ def verification_section(numbers):
     return f"\n\n## 確認方法\n\n{rows}\n"
 
 
+# 反証の「起票した」に理由の語を求め始める日時 (review-gate.sh の REFUTE_REASON_FROM)。
+# 既定の PR はこれより後に出たものとして扱う。前に出た PR は問わない (#2302)
+AFTER_REFUTE_REASON = "2026-12-01T00:00:00Z"
+BEFORE_REFUTE_REASON = "2026-10-21T11:04:40Z"
+
+
 def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), files=(),
-            refs=None, verified=None):
+            refs=None, verified=None, created_at=AFTER_REFUTE_REASON):
     """偽の gh pr view 応答。
 
     body と closes は**別々に**渡す。ゲートは closing keyword を body から読まないので、
@@ -176,6 +182,7 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), files=(),
             # AGENTS.md の増分 (#1668) を比べる相手を引くのに使う
             "baseRefName": BASE_REF,
             "headRefOid": HEAD_OID,
+            "createdAt": created_at,
         }
     )
 
@@ -623,6 +630,93 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("反証の節を確認 (#12)", proc.stdout)
+
+    # --- 4'. 応えが「起票した」の行は、理由の語を持つ (#2302) ---------------------
+
+    def refute_with_answers(self, *answers):
+        rows = "".join(f"| {i} | 兄弟 | 指摘 {i} | Sources/Foo.swift:{i} | {a} |\n" for i, a in enumerate(answers, 1))
+        return refute_section("| # | 種類 | 指摘 | 根拠 | 応え |\n| --- | --- | --- | --- | --- |\n" + rows)
+
+    def run_refute(self, *answers, created_at=AFTER_REFUTE_REASON, section=None):
+        return self.run_gate(
+            pr_json(body="Closes #12" + (section or self.refute_with_answers(*answers)), created_at=created_at),
+            issue_json(TRIAGED, issue_type="Bug"),
+        )
+
+    def test_filing_with_a_reason_word_passes(self):
+        """正常系: 2 語のどちらかを括弧に持つ「起票した」は通る。他の応えも通る。"""
+        proc = self.run_refute(
+            "起票した #2345 (約束の選択)",
+            "起票した #2346 (根が違う)",
+            "起票した shinyaoguri/claude-plugins#209 (根が違う)",
+            "起票した #2347（約束の選択）",
+            "直した (abc1234)",
+            "当たらない: Foo.swift:9 が守る",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("「起票した」の理由の語を確認", proc.stdout)
+
+    def test_filing_without_a_reason_word_is_blocked(self):
+        """語が無い「起票した」は差し戻す。#1823・#1830・#1873・#1913・#1942 の形 (理由を書かずに回す)。"""
+        proc = self.run_refute("直した", "起票した #2345")
+        self.assert_blocked(proc, "理由の語が無い「起票した」の行がある")
+        self.assertIn("起票した #2345", proc.stderr)
+        self.assertIn("約束の選択", proc.stderr)
+        self.assertIn("根が違う", proc.stderr)
+        self.assertIn(".claude/skills/bug-refute/SKILL.md", proc.stderr)
+        # 語の無い行だけを挙げる (語のある行・他の応えは載せない)
+        self.assertNotIn("| 1 |", proc.stderr)
+
+    def test_other_reasons_are_not_accepted(self):
+        """2 語以外 (範囲が大きい・未実測・差分の外) は理由に認めない。括弧に入れても通らない。"""
+        for reason in ("範囲が大きい", "未実測", "差分の外", "約束", "根"):
+            with self.subTest(reason=reason):
+                proc = self.run_refute(f"起票した #2345 ({reason})")
+                self.assert_blocked(proc, "理由の語が無い「起票した」の行がある")
+
+    def test_the_reason_word_must_be_in_the_answer_column(self):
+        """語が応えの欄の外 (指摘の欄) にあっても通らない。応えは最後の空でない欄で読む。"""
+        section = refute_section(
+            "| 指摘 | 根拠 | 応え |\n| --- | --- | --- |\n"
+            "| 約束の選択が要る (根が違う) | Foo.swift:1 | 起票した #2345 |\n"
+        )
+        proc = self.run_refute(section=section)
+        self.assert_blocked(proc, "理由の語が無い「起票した」の行がある")
+
+    def test_filing_samples_inside_code_blocks_and_comments_are_not_rows(self):
+        """コードブロックと HTML コメントの中の見本は、表の行と読まない (body_section と同じ規則)。"""
+        section = refute_section(
+            "```\n| 見本 | Foo.swift:1 | 起票した #1 |\n```\n\n"
+            "<!--\n| 見本 | Foo.swift:2 | 起票した #2 |\n-->\n\n"
+            "| 指摘 | 根拠 | 応え |\n| --- | --- | --- |\n| 口 | Foo.swift:3 | 起票した #3 (根が違う) |\n"
+        )
+        proc = self.run_refute(section=section)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_reason_word_hidden_in_an_inline_comment_does_not_count(self):
+        """行の中の HTML コメントに隠した語は、GitHub が描かない。書き手に見えない語で通さない。"""
+        proc = self.run_refute("起票した #2345 <!-- (根が違う) -->")
+        self.assert_blocked(proc, "理由の語が無い「起票した」の行がある")
+
+    def test_a_pr_older_than_the_rule_is_not_asked_for_a_reason(self):
+        """この版より前に出た PR は、語を持たない形で書かれている。新しい検めを後から当てない。"""
+        proc = self.run_refute("起票した #2345", created_at=BEFORE_REFUTE_REASON)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("「起票した」の理由の語を確認", proc.stdout)
+
+    def test_a_missing_created_at_is_asked_for_a_reason(self):
+        """作成日時を読めないときは、問わずに通さない (外れる向きに倒さない)。"""
+        data = json.loads(pr_json(body="Closes #12" + self.refute_with_answers("起票した #2345")))
+        del data["createdAt"]
+        proc = self.run_gate(json.dumps(data), issue_json(TRIAGED, issue_type="Bug"))
+        self.assert_blocked(proc, "理由の語が無い「起票した」の行がある")
+
+    def test_a_non_bug_pr_is_not_asked_for_a_reason(self):
+        proc = self.run_gate(
+            pr_json(body="Closes #12" + self.refute_with_answers("起票した #2345")),
+            issue_json(TRIAGED, issue_type="Task"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_bug_without_a_refute_section_is_blocked(self):
         """反証役を起こし忘れた形。

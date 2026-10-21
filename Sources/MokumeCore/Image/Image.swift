@@ -36,7 +36,9 @@ import simd
     public let height: Int
 
     /// 作業空間の画素 (線形・アルファ乗算済み)。行は上から下へ。
-    var pixels: [SIMD4<Float16>] {
+    ///
+    /// 公開の ``pixels`` (画素の面) とは別で、こちらは値の並びを写して返す内部の口である。
+    var workingPixels: [SIMD4<Float16>] {
         materializePixels()
         return cpuPixels
     }
@@ -272,7 +274,7 @@ import simd
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     // shot: 撮れない 結果が絵ではなくファイルになる
     public func save(_ path: String) throws(ImageFailure) {
-        let components = pixels.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
+        let components = workingPixels.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
         let picture = OutputStage.encode(PixelBuffer(width: width, height: height, components: components))
         let url = FrameWriter.url(for: path)
         do {
@@ -307,6 +309,64 @@ import simd
         } else {
             for index in cpuPixels.indices { cpuPixels[index] = texel }
         }
+        needsUpload = true
+    }
+
+    /// この絵の画素を読み書きする面。``Canvas/pixels`` と同じ ``Pixels`` を返す。
+    ///
+    /// **面は `Image` が持つ画素そのものへの窓** — 1 画素ずつ書く ``Pixels/subscript(_:_:)``・
+    /// 全体を埋める ``Pixels/fill(_:)``・全画素を 1 つの関数で書き換える ``Pixels/update(_:)`` が、
+    /// ``get(_:_:)``・``set(_:_:_:)``・``fill(_:)`` と同じ値を、同じ向き (左上が原点) で読み書きする。
+    /// 書き換えは描くときに自動で送られる (送り直しの口は無い)。Processing の `loadPixels()` /
+    /// `updatePixels()` と 2 重ループに当たる。
+    ///
+    /// ```swift
+    /// var camera: Capture?
+    ///
+    /// func setup() { camera = try? createCapture() }
+    ///
+    /// func draw() {
+    ///     guard let camera else { return }
+    ///     camera.image.pixels.update { _, _, c in
+    ///         let level = (brightness(c) / 25).rounded(.down) * 25   // 0, 25, 50, 75, 100
+    ///         return color(level * 2.55)
+    ///     }
+    ///     image(camera.image, 0, 0, width, height)
+    /// }
+    /// ```
+    ///
+    /// **`Image` は参照型なので、書き換えは同じ 1 枚を変える。** カメラの ``Capture/image`` のように
+    /// 次のフレームで上書きされる絵に書いても、書いた分は次のフレームで消える。取っておくなら先に
+    /// ``copy()`` で写す。**絵ごとに効果を掛けて新しい絵を返す口 (`filtered(_:)`) とは違い、この口は
+    /// 自分を変える** — ``set(_:_:_:)``・``fill(_:)``・``Pixels/update(_:)`` が揃って、同じ絵を書き換える。
+    public var pixels: Pixels { Pixels(image: self) }
+
+    /// 全画素を、位置と元の色から決めた色で書き換える (``Pixels/update(_:)`` の `Image` 側)。
+    ///
+    /// **走査の間は、絵の画素を触らせない。** 閉包が同じ絵を読んでも (`get`)、書き換え中の並びと
+    /// 衝突して落ちることがないよう、元の画素を保ったまま別の並びへ書き、最後に差し替える。
+    /// 閉包の中で同じ絵を読むと、呼ぶ前の値が読める。
+    func transformPixels(_ transform: (_ x: Int, _ y: Int, _ color: LinearRGBA) -> LinearRGBA) {
+        guard width > 0, height > 0 else { return }
+        materializePixels()
+        let source = cpuPixels
+        var result = source
+        let columns = width
+        result.withUnsafeMutableBufferPointer { out in
+            source.withUnsafeBufferPointer { input in
+                for y in 0..<height {
+                    let row = y * columns
+                    for x in 0..<columns {
+                        let texel = input[row + x]
+                        let color = LinearRGBA(
+                            premultipliedRed: Float(texel.x), green: Float(texel.y),
+                            blue: Float(texel.z), alpha: Float(texel.w))
+                        out[row + x] = HalfSurface.texel(transform(x, y, color))
+                    }
+                }
+            }
+        }
+        cpuPixels = result
         needsUpload = true
     }
 
