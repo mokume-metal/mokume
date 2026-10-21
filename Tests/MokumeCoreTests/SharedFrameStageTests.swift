@@ -598,10 +598,57 @@ struct SharedFrameStageTests {
             #expect(stage.hasSource, "最後の絵を消した")
             #expect(surface.canvasWidth == 32, "入力の写しの寸法を変えた")
 
-            // 手放したのが生きている世代でも、次の枚数で頼みは読み直されて戻る
+            // **手放した世代は、同じ面の次の枚数でも頼みを戻さない** (止めるまでに書いた 1 枚・止まらない子が
+            // 書き続ける枚)。頼みの写しを空にするだけでは、次の 1 枚で戻る
+            for frame in 2...4 {
+                try draw(requesting, frame: frame, gpu: gpu, pointerLock: true, cursorHidden: true)
+                stage.displayLinkFired()
+                #expect(
+                    !stage.pointerLockRequested && !stage.cursorHiddenRequested,
+                    "手放した世代の \(frame) 枚目で頼みが戻った")
+            }
+            #expect(stage.hasSource, "最後の絵を消した")
+
+            // 新しい世代へ乗り換えれば、その世代の頼みには従う (手放したのは前の世代だけ)
+            let next = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(next, frame: 1, gpu: gpu, pointerLock: true, cursorHidden: true)
+            stage.displayLinkFired()
+            #expect(
+                stage.pointerLockRequested && stage.cursorHiddenRequested,
+                "乗り換えた新しい世代の頼みに従わない")
+        }
+    }
+
+    /// **受け取れない知らせの経路も同じ形** ([#2928] の経路・[#2983])。生きた前の世代の次の 1 枚で頼みが
+    /// 戻らない。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("受け取れない世代を知らせた後も、前の世代の次の枚数で頼みは戻らない")
+    func undeliverableKeepsTheOldRequestsReleasedAcrossItsNextFrames() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let requesting = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(requesting, frame: 1, gpu: gpu, pointerLock: true, cursorHidden: true)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("release-twice"))
+            defer { stage.close() }
+            stage.open()
+            stage.warn = { _ in }
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested, "検査の前提: 前の世代が頼んでいる")
+
+            try Data(#"{"schemaVersion":1,"ids":[4000000000],"width":64,"height":48}"#.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+            stage.displayLinkFired()
+            #expect(!stage.pointerLockRequested && !stage.cursorHiddenRequested)
+
             try draw(requesting, frame: 2, gpu: gpu, pointerLock: true, cursorHidden: true)
             stage.displayLinkFired()
-            #expect(stage.pointerLockRequested && stage.cursorHiddenRequested, "生きている世代の頼みに従わない")
+            #expect(
+                !stage.pointerLockRequested && !stage.cursorHiddenRequested,
+                "生きた前の世代の次の 1 枚で頼みが戻った")
         }
     }
 

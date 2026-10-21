@@ -431,9 +431,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         lastSeenFrame = newest.frame
         // `newest` を返した面は握っているので、引き直さない (#2368)
         guard let surface = lookup.surface(newest.id) else { return }
-        // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む
-        pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
-        cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+        // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む。**手放した世代の面からは
+        // 読まない** — 畳まれる世代の最後の数枚で頼みが戻る (#2983)
+        if relinquishedSourceIDs == nil || relinquishedSourceIDs != source?.ids {
+            pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
+            cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+        }
         guard let numbers = SharedFrameSurface.numbers(on: surface) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
     }
@@ -566,23 +569,36 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **新しい世代の絵を受け取れないと知ったとき**に呼ぶ。見張りがその世代へ乗り換えたとみなして
     /// 前の世代を畳むと、前の世代はもう絵を書かないので、頼みを読み直す契機 (``readNumbers(from:in:)``
     /// は新しい枚数のときだけ読む) が来ず、窓はカーソルを捕まえたまま・隠したままになる。
-    /// 畳まれなかった (前の世代が生きて書き続ける) ときは、次の枚数で読み直されて戻る。
+    ///
+    /// **写しを空にするだけでは足りない** ([#2983])。止めるまでに前の世代が書く 1 枚 (止まらない子は
+    /// 数秒書き続ける) で、同じ面から頼みを読み直して戻る。だから**手放した世代の面を覚え**
+    /// (``relinquishedSourceIDs``)、その面からは次に乗り換えるまで頼みを読まない。
     ///
     /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
     private func releaseInheritedRequests() {
         pointerLockRequested = false
         cursorHiddenRequested = false
+        relinquishedSourceIDs = source?.ids
     }
 
-    /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みだけを下ろす。**
+    /// 頼みを手放した世代の面の番号。**その世代が出している間は、頼みを読まない。**
+    /// 乗り換えれば番号が替わるので、新しい世代の頼みには従う。
+    private var relinquishedSourceIDs: [UInt32]?
+
+    /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを
+    /// 次の乗り換えまで読まない。**
     ///
     /// 受け取れない知らせ (``releaseInheritedRequests()``) の経路は台が自分で気付いたが、次の 3 つは
     /// 台を通らない: 作り直した子が窓へ倒れた回・子が消えた回・乗り換えの合図が来ないまま次の保存が来て
     /// 映っている世代を畳んだ回。どれも畳まれた世代はもう絵を書かず、頼みを読み直す契機
     /// (``readNumbers(from:in:)`` は新しい枚数のときだけ読む) が来ないので、窓がカーソルを捕まえたまま・
     /// 隠したままになる。**最後の絵と入力の写しの寸法は残す** (ADR-0032 決定 6)。寸法を変える材料
-    /// (新しい子の目録) が、この口には無い。生きて書き続ける世代へ誤って当たっても、次の枚数で読み直されて
-    /// 戻る。
+    /// (新しい子の目録) が、この口には無い。
+    ///
+    /// **生きて書き続ける世代へ誤って当たると、その世代は次の乗り換えまで頼めない** — 捕まえは押し直す
+    /// まで戻らない (``SketchSurface/followPointerLock(requested:)``)。呼ぶのは、見張りが畳む・居なくなったと
+    /// 決めた世代についてだけである。
     ///
     /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
     func relinquishSource() {

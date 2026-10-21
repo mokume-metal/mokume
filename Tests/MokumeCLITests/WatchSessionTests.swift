@@ -1336,6 +1336,46 @@ struct WatchSessionTests {
         #expect(told == 1, "合図の来ない次の保存で台へ伝えていない")
     }
 
+    /// **台へ伝えるのは、前の世代を止めた後である** ([#2983])。止める前に伝えると、止まるまでに書く 1 枚で
+    /// 台が頼みを読み直す。倒れた子と、合図の来ないまま次の保存の 2 つの口で、伝えた時点で前の世代が
+    /// もう動いていないことを見る。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("倒れた子の口は、前の世代を止めた後に台へ伝える")
+    func aFallenChildTellsTheDisplayAfterStoppingThePreviousGeneration() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        var runningWhenTold: [Bool] = []
+        session.relinquishesDisplay = { runningWhenTold.append(leaving.isRunning) }
+        _ = try placeFellBackMarker(of: arriving, for: session)
+        #expect(await session.retireAfterFallback() != nil)
+        #expect(runningWhenTold == [false], "前の世代を止める前に台へ伝えた: \(runningWhenTold)")
+    }
+
+    @Test("合図の来ないまま次の保存の口は、映っていた世代を止めた後に台へ伝える")
+    func theNextSwapTellsTheDisplayAfterStoppingTheDisplayedGeneration() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        var runningWhenTold: [Bool] = []
+        session.relinquishesDisplay = { runningWhenTold.append(shown.isRunning) }
+        await session.tick()
+        ready.waitForLast()
+        #expect(runningWhenTold == [false], "映っていた世代を止める前に台へ伝えた: \(runningWhenTold)")
+    }
+
     // MARK: - 道具の窓が受け取れない世代 (#2928)
 
     /// **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る。
