@@ -330,7 +330,7 @@ extension Canvas {
         let columns = transform.matrix.columns
         return FlatInstance(
             linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
-            offset: transform.apply(x: anchor.x, y: anchor.y),
+            offset: transform.placed(x: anchor.x, y: anchor.y),
             fill: fillVertexColor, stroke: style.stroke)
     }
 
@@ -383,14 +383,14 @@ extension Canvas {
                 var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
                 if let uvOf { uvs = (uvOf(a), uvOf(b), uvOf(c)) }
                 appendTriangle(
-                    transform.apply(x: a.x, y: a.y), transform.apply(x: b.x, y: b.y),
-                    transform.apply(x: c.x, y: c.y),
+                    transform.placed(x: a.x, y: a.y), transform.placed(x: b.x, y: b.y),
+                    transform.placed(x: c.x, y: c.y),
                     colors: (fillColor, fillColor, fillColor), uvs: uvs)
             }
             return
         }
         let pivot = outline.fanCenter ?? points[0]
-        let center = transform.apply(x: pivot.x, y: pivot.y)
+        let center = transform.placed(x: pivot.x, y: pivot.y)
         // 中心を持つ図形は全周を扇に分け、持たない図形は最初の点から分ける
         let ring = outline.fanCenter == nil ? Array(points.dropFirst()) : points
         guard ring.count >= 2 else { return }
@@ -406,16 +406,16 @@ extension Canvas {
             appendTriangle(a, b, c, colors: (fillColor, fillColor, fillColor), uvs: uvs)
         }
 
-        var previous = transform.apply(x: ring[0].x, y: ring[0].y)
+        var previous = transform.placed(x: ring[0].x, y: ring[0].y)
         var previousSource = ring[0]
         for point in ring.dropFirst() {
-            let current = transform.apply(x: point.x, y: point.y)
+            let current = transform.placed(x: point.x, y: point.y)
             place(center, previous, previousSource, current, point)
             previous = current
             previousSource = point
         }
         if outline.fanCenter != nil, outline.isClosed {
-            let first = transform.apply(x: ring[0].x, y: ring[0].y)
+            let first = transform.placed(x: ring[0].x, y: ring[0].y)
             place(center, previous, previousSource, first, ring[0])
         }
     }

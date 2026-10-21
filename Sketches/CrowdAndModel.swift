@@ -111,7 +111,7 @@ final class CrowdAndModel: Sketch {
                     y: height / 2 + 95 + lift,
                     z: sin(around) * radius,
                     scale: 1,
-                    rotation: SIMD3(0, around, 0),
+                    rotation: Vector3(0, around, 0),
                     fill: .display(
                         red: 0.4 + Float(index % 7) * 0.08, green: 0.55, blue: 0.9)))
         }

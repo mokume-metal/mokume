@@ -555,9 +555,9 @@ extension Canvas {
             var rings = Self.rings(of: path, originX: pen, baseline: baseline)
             if let spacing {
                 rings = rings.map { ring in
-                    let (points, capped) = Self.resample(ring.points, spacing: spacing)
+                    let (points, capped) = Self.resample(ring.outline, spacing: spacing)
                     tooFine = tooFine || capped
-                    return TextContour(points: points, isHole: ring.isHole)
+                    return TextContour(outline: points, isHole: ring.isHole)
                 }
             }
             contours += rings.filter { !$0.isHole }
@@ -743,7 +743,7 @@ extension Canvas {
         }
         close()
 
-        return rings.map { TextContour(points: $0, isHole: signedArea(of: $0) < 0) }
+        return rings.map { TextContour(outline: $0, isHole: signedArea(of: $0) < 0) }
     }
 
     /// 曲線を直線の並びへ割る。**細かさは曲線の大きさから決める** — 字形の曲線は

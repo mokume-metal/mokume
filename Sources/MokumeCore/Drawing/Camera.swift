@@ -36,16 +36,16 @@ public struct Camera: Equatable, Sendable {
     }
 
     /// 見る位置 (世界の座標)。
-    public var eye: SIMD3<Float>
+    public var eye: Vector3
     /// 見ている先 (世界の座標)。
-    public var center: SIMD3<Float>
+    public var center: Vector3
     /// どちらを上とするか。
-    public var up: SIMD3<Float>
+    public var up: Vector3
     /// どう写すか。
     public var projection: Projection
 
     public init(
-        eye: SIMD3<Float>, center: SIMD3<Float>, up: SIMD3<Float>, projection: Projection
+        eye: Vector3, center: Vector3, up: Vector3, projection: Projection
     ) {
         self.eye = eye
         self.center = center
@@ -73,9 +73,9 @@ public struct Camera: Equatable, Sendable {
     static func fitting(width: Float, height: Float) -> Camera {
         let distance = fittingDistance(height: height)
         return Camera(
-            eye: SIMD3(width / 2, height / 2, distance),
-            center: SIMD3(width / 2, height / 2, 0),
-            up: SIMD3(0, 1, 0),
+            eye: Vector3(SIMD3(width / 2, height / 2, distance)),
+            center: Vector3(SIMD3(width / 2, height / 2, 0)),
+            up: Vector3(SIMD3(0, 1, 0)),
             projection: defaultPerspective(width: width, height: height))
     }
 
@@ -104,14 +104,14 @@ public struct Camera: Equatable, Sendable {
 
     /// 視線が進む向き。**奥行きの正の側が手前** ([ADR-0021] 決定 1)。
     var forward: SIMD3<Float> {
-        let toward = center - eye
+        let toward = center.simd - eye.simd
         return length_squared(toward) > 0 ? normalize(toward) : SIMD3(0, 0, -1)
     }
 
     /// 画面の横方向 (世界の向き)。
     var right: SIMD3<Float> {
         let back = -forward
-        let side = cross(up, back)
+        let side = cross(up.simd, back)
         if length_squared(side) > 0 { return normalize(side) }
         // 上方向と視線が重なっていると横が決まらない。視線と重ならない軸へ倒す
         let axis: SIMD3<Float> = abs(back.x) < 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
@@ -128,7 +128,7 @@ public struct Camera: Equatable, Sendable {
     /// 艶だけが透視のように歪む。
     var viewer: SIMD4<Float> {
         switch projection {
-        case .perspective: SIMD4(eye, 1)
+        case .perspective: SIMD4(eye.simd, 1)
         case .orthographic: SIMD4(-forward, 0)
         }
     }
@@ -151,7 +151,7 @@ public struct Camera: Equatable, Sendable {
         let y: Float
         switch projection {
         case let .perspective(fieldOfView, _, near, _):
-            let depth = max(dot(position - eye, forward), near)
+            let depth = max(dot(position - eye.simd, forward), near)
             y = 2 * RuntimeMath.tan(fieldOfView / 2) * depth / height
         case let .orthographic(_, _, bottom, top, _, _):
             // 距離によらず同じ大きさで写るので、奥行きを見ない
@@ -201,14 +201,14 @@ public struct Camera: Equatable, Sendable {
         let halfHeight: Float
         switch projection {
         case let .perspective(fieldOfView, aspect, _, _):
-            center = eye + forward * distance
+            center = eye.simd + forward * distance
             halfHeight = distance * RuntimeMath.tan(fieldOfView / 2)
             halfWidth = halfHeight * aspect
         case let .orthographic(left, rightEdge, bottom, top, _, _):
             // 縦は下向き (bottom のほうが大きい数)。中心がずれた投影でも合うように、
             // 範囲の真ん中を取る
             center =
-                eye + forward * distance + right * ((left + rightEdge) / 2)
+                eye.simd + forward * distance + right * ((left + rightEdge) / 2)
                 + down * ((bottom + top) / 2)
             halfWidth = abs(rightEdge - left) / 2
             halfHeight = abs(bottom - top) / 2
@@ -266,7 +266,7 @@ public struct Camera: Equatable, Sendable {
             SIMD4(side.x, above.x, back.x, 0),
             SIMD4(side.y, above.y, back.y, 0),
             SIMD4(side.z, above.z, back.z, 0),
-            SIMD4(-dot(side, eye), -dot(above, eye), -dot(back, eye), 1))
+            SIMD4(-dot(side, eye.simd), -dot(above, eye.simd), -dot(back, eye.simd), 1))
     }
 
     /// この投影が画面の縦横を裏返すか。**裏返すなら、画面での巻き方も裏返る**
@@ -343,7 +343,7 @@ public struct Camera: Equatable, Sendable {
         guard Self.isDrawable(eye.x, eye.y, eye.z, center.x, center.y, center.z),
             Self.isDrawable(up.x, up.y, up.z)
         else { return false }
-        guard length_squared(center - eye) > 0, length_squared(up) > 0 else { return false }
-        return length_squared(cross(up, eye - center)) > 0
+        guard length_squared(center.simd - eye.simd) > 0, length_squared(up.simd) > 0 else { return false }
+        return length_squared(cross(up.simd, eye.simd - center.simd)) > 0
     }
 }

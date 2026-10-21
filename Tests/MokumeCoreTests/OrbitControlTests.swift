@@ -246,9 +246,9 @@ struct OrbitControlTests {
     @Test("走っていなければ、読んでも空が返り、書いても落ちない")
     func readingOutsideARuntimeIsSafe() {
         let sketch = Subject()
-        #expect(sketch.orbit == Orbit(center: .zero, distance: 0))
+        #expect(sketch.orbit == Orbit(center: Vector3(0, 0, 0), distance: 0))
         sketch.orbit = Orbit.fitting(width: 64, height: 64)
-        #expect(sketch.orbit == Orbit(center: .zero, distance: 0))
+        #expect(sketch.orbit == Orbit(center: Vector3(0, 0, 0), distance: 0))
     }
 
     // MARK: - 投影を書き換えない
@@ -314,10 +314,10 @@ struct OrbitControlTests {
             ("minimumDistance = .nan", { $0.minimumDistance = .nan }, { $0.minimumDistance == 1 }),
             ("inertia = .nan", { $0.inertia = .nan }, { $0.inertia == 0 }),
             // 見ている先は、道具の始まりと同じ面の中央へ倒す
-            ("center = (.nan, 0, 0)", { $0.center = SIMD3(.nan, 0, 0) }, { $0.center == SIMD3(32, 24, 0) }),
+            ("center = (.nan, 0, 0)", { $0.center = Vector3(Float.nan, 0, 0) }, { $0.center == Vector3(32, 24, 0) }),
             (
                 "Orbit.fitting(width: .nan, height: 48)", { $0 = Orbit.fitting(width: Float.nan, height: 48) },
-                { $0.center == SIMD3(32, 24, 0) }
+                { $0.center == Vector3(32, 24, 0) }
             ),
         ]
         for (name, write, fellBack) in cases {

@@ -367,7 +367,7 @@ struct PolylineJoinTests {
             let scale = Float(size) / 2 / tan(Camera.defaultFieldOfView / 2)
             for local in [SIMD2<Float>(-40, -40), SIMD2(40, -40), SIMD2(40, 40), SIMD2(-40, 40)] {
                 let world = matrix * SIMD4(local.x, local.y, 0, 1)
-                let offset = SIMD3(world.x, world.y, world.z) - camera.eye
+                let offset = SIMD3(world.x, world.y, world.z) - camera.eye.simd
                 let depth = simd_dot(offset, camera.forward)
                 corners.append(
                     SIMD2(Float(size) / 2, Float(size) / 2)
@@ -494,7 +494,7 @@ struct PolylineJoinTests {
         probe.textFont("Helvetica")
         probe.textSize(120)
         let contours = probe.textOutline("o", 30, 120)
-        let glyph = try #require(contours.first { $0.points.count > 3 }?.points)
+        let glyph = try #require(contours.first { $0.points.count > 3 }?.outline)
         try #require(glyph.first == glyph.last)
         // 周の始まりは字の上端 (接線が横) にあり、軸に沿った正方形でも帯に収まってしまう。
         // 45° 回して、始まりの接線を斜めにする
@@ -753,7 +753,7 @@ struct PolylineJoinTests {
     private func projected(_ local: SIMD3<Float>, _ canvas: Canvas) -> SIMD2<Float> {
         let camera = canvas.currentCamera
         let world = canvas.transform.matrix * SIMD4(local, 1)
-        let offset = SIMD3(world.x, world.y, world.z) - camera.eye
+        let offset = SIMD3(world.x, world.y, world.z) - camera.eye.simd
         let scale = Float(size) / 2 / tan(Camera.defaultFieldOfView / 2)
         let depth = simd_dot(offset, camera.forward)
         return SIMD2(Float(size) / 2, Float(size) / 2)

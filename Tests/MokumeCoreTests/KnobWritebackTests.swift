@@ -25,8 +25,8 @@ struct KnobWritebackTests {
     final class Knobbed: Sketch {
         @Param var visible: Bool = false
         @Param(0...10) var count: Int = 3
-        @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0.25, -0.5)
-        @Param(-1...1) var triple: SIMD3<Float> = SIMD3(0.125, 0.25, 0.375)
+        @Param(-1...1) var pair: Vector2 = Vector2(0.25, -0.5)
+        @Param(-1...1) var triple: Vector3 = Vector3(0.125, 0.25, 0.375)
         @Param var tint: LinearRGBA = .linear(red: 0, green: 0, blue: 0)
     }
 
@@ -73,10 +73,10 @@ struct KnobWritebackTests {
     func aComponentMovesOnlyItself() throws {
         let sketch = Knobbed()
         KnobBinding.component(try knob(sketch, "pair"), at: 0).wrappedValue = 0.75
-        #expect(sketch.pair == SIMD2(0.75, -0.5))
+        #expect(sketch.pair == Vector2(0.75, -0.5))
 
         KnobBinding.component(try knob(sketch, "triple"), at: 2).wrappedValue = -0.625
-        #expect(sketch.triple == SIMD3(0.125, 0.25, -0.625))
+        #expect(sketch.triple == Vector3(0.125, 0.25, -0.625))
     }
 
     /// **窓が組を丸ごと持つと、外から 1 成分だけ書き換えられたときに古い成分で上書き
@@ -91,7 +91,7 @@ struct KnobWritebackTests {
         sketch.triple.x = -0.75
         middle.wrappedValue = 0.5
 
-        #expect(sketch.triple == SIMD3(-0.75, 0.5, 0.375))
+        #expect(sketch.triple == Vector3(-0.75, 0.5, 0.375))
         #expect(middle.wrappedValue == 0.5)
     }
 

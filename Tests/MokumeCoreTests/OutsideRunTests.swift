@@ -122,7 +122,7 @@ struct OutsideRunTests {
         OutsideRun.$current.withValue(log) {
             let part = Painter()
             _ = part.orbit
-            part.orbit = Orbit(center: .zero, distance: 100)
+            part.orbit = Orbit(center: Vector3(0, 0, 0), distance: 100)
             #expect(log.messageForRead(of: "orbit")?.contains("was returned instead") == true)
             #expect(log.message(for: "orbit")?.contains("so it did nothing") == true)
         }

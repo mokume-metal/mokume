@@ -244,7 +244,7 @@ struct GradientFillTests {
             }
             // 左は回さずに置く。右は 90° 回して置くので、勾配は縦に変わる
             c.shape(strip, at: [Placement(x: 5, y: 5)])
-            c.shape(strip, at: [Placement(x: 90, y: 20, rotation: SIMD3(0, 0, Float.pi / 2))])
+            c.shape(strip, at: [Placement(x: 90, y: 20, rotation: Vector3(0, 0, Float.pi / 2))])
         }
         // 回さない帯: 左から右へ明るくなる (x = 5…65・y = 5…25)
         #expect(pixels[10, 15].red < pixels[60, 15].red - 0.5, "回さない帯: \(pixels[10, 15].red) → \(pixels[60, 15].red)")

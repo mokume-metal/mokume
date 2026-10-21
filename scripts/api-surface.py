@@ -48,6 +48,9 @@ ENTRY_TYPES = {ENTRY_TYPE, "SketchPart"}
 # 転送先の層。ここは常に Swift の慣行が正
 LOWER_TYPE = "Canvas"
 
+# `load_symbols` が各宣言へ足す、宣言したモジュールの名前の鍵
+MODULE_KEY = "_module"
+
 KIND_ORDER = [
     "swift.protocol",
     "swift.class",
@@ -89,6 +92,9 @@ def load_symbols(graphs: pathlib.Path, module: str) -> list[dict]:
                 continue
             if "::SYNTHESIZED::" in symbol["identifier"]["precise"]:
                 continue
+            # どのモジュールが足した宣言かを持たせる (`MokumeAudio@MokumeCore` は MokumeAudio が
+            # MokumeCore の型へ足した口)。Float 固定の口の検査は MokumeCore だけを見る
+            symbol[MODULE_KEY] = module
             symbols.append(symbol)
     # プロトコルの要件と既定の実装は同じ名前で 2 度出る。一覧では 1 つに畳む。
     # **引数の型まで見て畳む** — 名前だけで畳むと、同名で引数型の違う宣言が 1 本に
@@ -501,6 +507,83 @@ def check_foreign_vocabulary(
                 "外の語彙は版ごとに配る一覧を通して利用者とエージェントに届く "
                 "(ADR-0020 決定 6)。自前の型で表すか、"
                 "scripts/api-surface.py の FOREIGN_ALLOWLIST に理由つきで載せる"
+            )
+    return problems
+
+
+# 連続量を `Float` で受ける口を見張る対象 (ADR-0035 決定 2 の改訂 2026-10-20 / #2525)。
+#
+# 見るのは「利用者が変数を渡す」口で、次の持ち主の MokumeCore の宣言である — Sketch の面・Canvas・
+# `Transform`・`LinearRGBA` と、どの型にも属さないトップレベルの口。**これより外の型は見ない**:
+# `Table`・`Numbers`・`TextBounds`・`Orbit`・`Placement`・`Force`・`SketchSettings` などは、
+# データや設定の値を作る口で、描く口と同じ約束 (「変数を渡すときは型を気にしなくてよい」) の射程に
+# 入れていない (ADR-0035 決定 5・#2644 が仕分けた)。音とカメラ (MokumeAudio・MokumeCamera) も別ターゲットの
+# 別の面で、射程の外と決めた (同改訂)。
+FLOAT_PORT_OWNERS = {"", "Canvas", "Transform", "LinearRGBA"} | ENTRY_TYPES
+FLOAT_PORT_MODULE = "MokumeCore"
+FLOAT_TYPE = re.compile(r"\bFloat\b")
+CLOSED_RANGE_OF_FLOAT = re.compile(r"^ClosedRange<Float>\??$")
+
+# `Float` で受けてよい口と、その理由。作法は FOREIGN_ALLOWLIST と同じ — **対象と理由を組で書く**。
+# ここへ 1 行足すたびに判断が入るのが狙いで、書けるのは「`some ScalarConvertible` では書けない・
+# 書いてはならない理由」に限る。キーは `持ち主.名前(ラベル)` (トップレベルは `(トップレベル).名前(ラベル)`)。
+#
+# 次の 3 つは表を使わず、ここで通す (どれも ADR-0035 の決定が名指ししているので、口ごとの理由を
+# 持たない):
+#   - **数え上げ** (決定 2) は `Int` で受ける口で、そもそも `Float` を取らない
+#   - **`ClosedRange<Float>`** (決定 5・2026-10-05 の改訂) — protocol では覆えない
+#   - **public init** (決定 5) — 同じく覆えない。enum の case ペイロードも決定 5 だが、持ち主が
+#     見る対象に入っていない
+#   - **利用者が実装する口** (プロトコルの要件とその既定の実装。`mouseMoved(deltaX:deltaY:)` など)。
+#     引数は mokume が渡す値で、利用者が渡す口ではない
+FLOAT_ALLOWLIST = {
+    "SketchPart.expose(_:_:)": "Float・Double・Int・String の口が並ぶ組で、変数はどの型で持っていても対応する口へ入る (ADR-0030)。1 本の総称に畳むと String の口との並びが崩れる",
+    "LinearRGBA.display(red:green:blue:alpha:)": "0–1 の目盛りの口で、0–255 の数を `n / 255` で直して渡す書き方が自然に出る。広げると整数リテラルの割り算が黙って 0 (黒・透明) になる — このリポジトリの中だけで 7 行と ADR-0033 の例 (ADR-0035 決定 2 の改訂 2026-10-20 で据え置き)",
+    "LinearRGBA.linear(red:green:blue:)": "display(red:green:blue:alpha:) と同じ理由で据え置く",
+}
+
+
+def float_parameters(symbol: dict) -> list[tuple[str, str]]:
+    """引数のうち、型の綴りに `Float` を含むものの (名前, 型の綴り)。"""
+    found = []
+    for parameter in (symbol.get("functionSignature") or {}).get("parameters", []):
+        spelling = "".join(
+            fragment.get("spelling", "") for fragment in parameter.get("declarationFragments", []))
+        written = spelling.split(":", 1)[-1].strip()
+        if FLOAT_TYPE.search(written):
+            found.append((parameter.get("name") or "_", written))
+    return found
+
+
+def check_float_ports(symbols: list[dict], requirements: set[str]) -> list[str]:
+    """連続量を `Float` で受ける引数は、`some ScalarConvertible` に広げてあること (ADR-0035 決定 1・2)。
+
+    塞ぐ実害は、広げたはずの約束 (「変数を渡すときは型を気にしなくてよい」) が、足された口で
+    黙って破れること。#2255 (11 の口) と #2524 (#2526 が取りこぼした 3 の口) は、どちらも反証役が
+    後から見つけた。検査が無いと、足した本人にも見えない — 組み立ては通り、`Double` の変数を
+    渡した利用者だけが赤くなる。
+    """
+    problems = []
+    for symbol in symbols:
+        if symbol.get(MODULE_KEY, FLOAT_PORT_MODULE) != FLOAT_PORT_MODULE:
+            continue
+        if owner(symbol) not in FLOAT_PORT_OWNERS:
+            continue
+        if symbol["kind"]["identifier"] == "swift.init":
+            continue
+        if symbol["identifier"]["precise"] in requirements:
+            continue
+        name = f"{owner(symbol) or '(トップレベル)'}.{title(symbol)}"
+        if name in FLOAT_ALLOWLIST:
+            continue
+        for label, written in float_parameters(symbol):
+            if CLOSED_RANGE_OF_FLOAT.match(written):
+                continue
+            problems.append(
+                f"{name}: 引数 {label} が {written} で連続量を受けている。変数を渡すときに "
+                "Float(…) と書かせる口になる (ADR-0035 決定 1・2)。`some ScalarConvertible` で受けて "
+                "`.asFloat` で Float に直す。Float でなければならない理由があるなら、"
+                "scripts/api-surface.py の FLOAT_ALLOWLIST に理由つきで載せる"
             )
     return problems
 
@@ -1039,15 +1122,14 @@ def main() -> int:
         return 0
 
     owned = load_owned_identifiers(arguments.graphs)
+    requirements = set().union(*(load_requirements(arguments.graphs, module) for module in modules))
     problems = (
         check_onoff(symbols)
-        + check_forwarding(
-            symbols,
-            set().union(*(load_requirements(arguments.graphs, module) for module in modules)),
-        )
+        + check_forwarding(symbols, requirements)
         + check_doc_canon(symbols)
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
+        + check_float_ports(symbols, requirements)
         + check_sketch_coverage(symbols, read_sketches(SKETCHES))
         + check_settings_form(symbols, SKETCHES)
         + check_port_kinds(symbols, SCENE_TEST.read_text(encoding="utf-8"))

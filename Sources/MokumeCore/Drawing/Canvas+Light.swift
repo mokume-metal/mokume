@@ -25,7 +25,7 @@ extension Canvas {
     public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(
-            Light(kind: .point, color: color, position: transform.apply(x: x, y: y, z: z)),
+            Light(kind: .point, color: color, position: transform.placed(x: x, y: y, z: z)),
             color: color, entry: .pointLight)
     }
 
@@ -52,7 +52,7 @@ extension Canvas {
         addLight(
             Light(
                 kind: .spot, color: color,
-                position: transform.apply(x: x, y: y, z: z),
+                position: transform.placed(x: x, y: y, z: z),
                 direction: transformedDirection(directionX, directionY, directionZ),
                 coneCosine: RuntimeMath.cos(used)),
             color: color, entry: .spotLight)

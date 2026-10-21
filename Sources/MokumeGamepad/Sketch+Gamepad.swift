@@ -21,7 +21,7 @@ extension Sketch {
     ///
     /// ```swift
     /// final class TwoPlayers: Sketch {
-    ///     var pos: [SIMD2<Float>] = [[300, 300], [900, 300]]
+    ///     var pos: [Vector2] = [[300, 300], [900, 300]]
     ///     func draw() {
     ///         background(0)
     ///         for (i, pad) in gamepads().prefix(2).enumerated() {

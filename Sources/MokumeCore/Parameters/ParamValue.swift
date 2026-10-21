@@ -14,8 +14,8 @@ public enum ParamValue: Equatable, Sendable {
     case bool(Bool)
     case string(String)
     case color(LinearRGBA)
-    case vector2(SIMD2<Float>)
-    case vector3(SIMD3<Float>)
+    case vector2(Vector2)
+    case vector3(Vector3)
 
     /// 形式の中で名乗る型の名前。
     public var typeName: String { paramType.rawValue }
@@ -65,7 +65,7 @@ public enum ParamValue: Equatable, Sendable {
         }
     }
 
-    /// 同じ型の零 (`0`・`SIMD2(0, 0)`・4 成分とも 0 の色・`false`・空の文字)。
+    /// 同じ型の零 (`0`・`Vector2(0, 0)`・4 成分とも 0 の色・`false`・空の文字)。
     ///
     /// **生まれのときの値が非有限だったときに、代わりに載せる値である** ([#2394])。前の値が無いので
     /// 値が変わる入口のように「保つ」ことができず、型だけから決まる値へ畳む。非有限になりうるのは
@@ -79,8 +79,8 @@ public enum ParamValue: Equatable, Sendable {
         case .bool: .bool(false)
         case .string: .string("")
         case .color: .color(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
-        case .vector2: .vector2(.zero)
-        case .vector3: .vector3(.zero)
+        case .vector2: .vector2(Vector2(0, 0))
+        case .vector3: .vector3(Vector3(0, 0, 0))
         }
     }
 }
@@ -153,7 +153,7 @@ extension LinearRGBA: ParamRepresentable {
     }
 }
 
-extension SIMD2<Float>: ParamRepresentable {
+extension Vector2: ParamRepresentable {
     public var paramValue: ParamValue { .vector2(self) }
     public init?(paramValue: ParamValue) {
         guard case .vector2(let value) = paramValue else { return nil }
@@ -161,7 +161,7 @@ extension SIMD2<Float>: ParamRepresentable {
     }
 }
 
-extension SIMD3<Float>: ParamRepresentable {
+extension Vector3: ParamRepresentable {
     public var paramValue: ParamValue { .vector3(self) }
     public init?(paramValue: ParamValue) {
         guard case .vector3(let value) = paramValue else { return nil }

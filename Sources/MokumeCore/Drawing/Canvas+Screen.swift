@@ -20,12 +20,12 @@ extension Canvas {
     /// 点が、いまの変換でどこへ移るか (横)。
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        return transform.apply(x: x, y: y).x
+        return transform.placed(x: x, y: y).x
     }
 
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        return transform.apply(x: x, y: y).y
+        return transform.placed(x: x, y: y).y
     }
 
     // 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
@@ -47,11 +47,11 @@ extension Canvas {
     // MARK: - 画面 → 空間
 
     // 面の位置が、いまの視点で空間のどこを指すか。
-    public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> SIMD3<Float> {
+    public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> Vector3 {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
         // 潰れた変換 (どこかの軸を 0 倍したもの。判定は `Transform.isCollapsed`) には
         // 打ち消しが無い = 戻し先が決まらない。倍率が小さいだけなら打ち消しはある (#1541)
-        guard let undo = transform.inverted else { return .zero }
+        guard let undo = transform.inverted else { return Vector3(0, 0, 0) }
         let inside =
             Self.makeProjection(width: width, height: height)
             * SIMD4<Float>(screenX, screenY, depth, 1)
@@ -59,8 +59,8 @@ extension Canvas {
         // 結果を変えないが、先に割ると視点の逆行列だけで閉じたように読めてしまう
         let point = undo.matrix * (viewProjection.inverse * inside)
         let position = SIMD3(point.x, point.y, point.z) / point.w
-        guard Camera.isDrawable(position.x, position.y, position.z) else { return .zero }
-        return position
+        guard Camera.isDrawable(position.x, position.y, position.z) else { return Vector3(0, 0, 0) }
+        return Vector3(position)
     }
 
     // MARK: - 中身

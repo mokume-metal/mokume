@@ -85,7 +85,7 @@ extension Canvas {
         return ShadowMap.matrix(
             direction: SIMD3(
                 caster.directionAndCone.x, caster.directionAndCone.y, caster.directionAndCone.z),
-            center: currentCamera.center,
+            center: currentCamera.center.simd,
             range: effectiveShadowRange)
     }
 

@@ -12,7 +12,7 @@ import MokumeCore
 ///
 /// ```swift
 /// final class TwoPlayers: Sketch {
-///     var pos: [SIMD2<Float>] = [[300, 300], [900, 300]]
+///     var pos: [Vector2] = [[300, 300], [900, 300]]
 ///     func draw() {
 ///         background(0)
 ///         for (i, pad) in gamepads().prefix(2).enumerated() {
@@ -59,7 +59,7 @@ public final class Gamepad: Inlet {
     ///
     /// **縦軸は下向き**で、手前に倒すと正になる (``SketchPart/mouseY`` と同じ約束)。だから
     /// `pos += pad.leftStick * 8` で、倒した向きへ画面の上の点が動く。
-    public private(set) var leftStick: SIMD2<Float> = .zero
+    public private(set) var leftStick: Vector2 = Vector2(0, 0)
 
     let inbox: GamepadInbox
     private let source: any GamepadSource
@@ -97,7 +97,7 @@ public final class Gamepad: Inlet {
 
     public func supply() {
         source.pump(into: inbox)
-        if let tilt = inbox.stick.take() { leftStick = tilt }
+        if let tilt = inbox.stick.take() { leftStick = Vector2(tilt) }
         for change in inbox.changes.take() {
             switch change {
             case .pressed(let button): pressed.insert(button)
@@ -111,7 +111,7 @@ public final class Gamepad: Inlet {
         isClosed = true
         source.stop()
         inbox.setState(.stopped)
-        leftStick = .zero
+        leftStick = Vector2(0, 0)
         pressed.removeAll()
     }
 

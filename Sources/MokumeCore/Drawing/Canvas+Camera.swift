@@ -29,9 +29,9 @@ extension Canvas {
     ) {
         let (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) = (eyeX.asFloat, eyeY.asFloat, eyeZ.asFloat, centerX.asFloat, centerY.asFloat, centerZ.asFloat, upX.asFloat, upY.asFloat, upZ.asFloat)
         var camera = currentCamera
-        camera.eye = SIMD3(eyeX, eyeY, eyeZ)
-        camera.center = SIMD3(centerX, centerY, centerZ)
-        camera.up = SIMD3(upX, upY, upZ)
+        camera.eye = Vector3(SIMD3(eyeX, eyeY, eyeZ))
+        camera.center = Vector3(SIMD3(centerX, centerY, centerZ))
+        camera.up = Vector3(SIMD3(upX, upY, upZ))
         apply(camera, name: "camera")
     }
 

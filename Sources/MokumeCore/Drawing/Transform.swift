@@ -25,6 +25,10 @@ import simd
 /// applyMatrix(step)
 /// ```
 ///
+/// 積む口は `Float`・`Double`・`Int` の変数をそのまま受ける (`let d = 2.0` を `translate(x: d, y: d)` へ
+/// 渡せる)。`.pi` のように型を決めない書き方は渡す先が型を決められないので、`Float.pi` と綴る
+/// ([ADR-0035] 決定 6)。
+///
 /// ## 平面と立体で同じものを使う
 ///
 /// 行列は 4x4 で、**平面の図形も立体も同じ状態を通る** ([ADR-0020] 決定 3)。平面の
@@ -37,6 +41,7 @@ import simd
 /// が定める。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+/// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 public struct Transform: Equatable, Sendable {
     /// 同次座標の 4x4 行列。4 行目は変換を重ねる限り常に (0, 0, 0, 1)。
@@ -50,14 +55,25 @@ public struct Transform: Equatable, Sendable {
     }
 
     /// 点をこの変換で移す (奥行き 0 の面の上の点として)。
-    public func apply(x: some ScalarConvertible, y: some ScalarConvertible) -> SIMD2<Float> {
+    public func apply(x: some ScalarConvertible, y: some ScalarConvertible) -> Vector2 {
+        Vector2(placed(x: x, y: y))
+    }
+
+    /// 奥行きを持つ点をこの変換で移す。
+    public func apply(x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible) -> Vector3 {
+        Vector3(placed(x: x, y: y, z: z))
+    }
+
+    /// ``apply(x:y:)`` の SIMD の値。**内部の計算はこちらを通る** — 公開の型 (``Vector2``) で受け渡して
+    /// も、中身は同じ SIMD で、値は 1 ビットも変わらない (#2617)。
+    func placed(x: some ScalarConvertible, y: some ScalarConvertible) -> SIMD2<Float> {
         let (x, y) = (x.asFloat, y.asFloat)
         let moved = matrix * SIMD4<Float>(x, y, 0, 1)
         return SIMD2<Float>(moved.x, moved.y)
     }
 
-    /// 奥行きを持つ点をこの変換で移す。
-    public func apply(x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible) -> SIMD3<Float> {
+    /// ``apply(x:y:z:)`` の SIMD の値。
+    func placed(x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible) -> SIMD3<Float> {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         let moved = matrix * SIMD4<Float>(x, y, z, 1)
         return SIMD3<Float>(moved.x, moved.y, moved.z)
@@ -79,57 +95,65 @@ public struct Transform: Equatable, Sendable {
     }
 
     // MARK: - 積み重ね
+    //
+    // 受け口は `some ScalarConvertible` で、描く口と同じく `Float`・`Double`・`Int` の変数をそのまま
+    // 渡せる (ADR-0035 決定 2 の改訂 2026-10-20 / #2525)。中は `Float` で、部品 (`translation` など)
+    // には `.asFloat` を通して渡す。
 
     /// 平行移動を後から重ねる。
-    public mutating func translate(x: Float, y: Float) {
-        translate(x: x, y: y, z: 0)
+    public mutating func translate(x: some ScalarConvertible, y: some ScalarConvertible) {
+        matrix = matrix * Self.translation(x: x.asFloat, y: y.asFloat, z: 0)
     }
 
     /// 奥行きを含む平行移動を後から重ねる。
-    public mutating func translate(x: Float, y: Float, z: Float) {
-        matrix = matrix * Self.translation(x: x, y: y, z: z)
+    public mutating func translate(
+        x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible
+    ) {
+        matrix = matrix * Self.translation(x: x.asFloat, y: y.asFloat, z: z.asFloat)
     }
 
     /// 回転を後から重ねる (奥行きの軸まわり)。
     ///
     /// 縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
-    public mutating func rotate(by radians: Float) {
-        matrix = matrix * Self.rotationZ(radians)
+    public mutating func rotate(by radians: some ScalarConvertible) {
+        matrix = matrix * Self.rotationZ(radians.asFloat)
     }
 
     /// 横軸まわりの回転を後から重ねる。
-    public mutating func rotateX(by radians: Float) {
-        matrix = matrix * Self.rotationX(radians)
+    public mutating func rotateX(by radians: some ScalarConvertible) {
+        matrix = matrix * Self.rotationX(radians.asFloat)
     }
 
     /// 縦軸まわりの回転を後から重ねる。
-    public mutating func rotateY(by radians: Float) {
-        matrix = matrix * Self.rotationY(radians)
+    public mutating func rotateY(by radians: some ScalarConvertible) {
+        matrix = matrix * Self.rotationY(radians.asFloat)
     }
 
     /// 奥行きの軸まわりの回転を後から重ねる (``rotate(by:)`` と同じ)。
-    public mutating func rotateZ(by radians: Float) {
+    public mutating func rotateZ(by radians: some ScalarConvertible) {
         rotate(by: radians)
     }
 
     /// 拡大縮小を後から重ねる。
-    public mutating func scale(x: Float, y: Float) {
-        scale(x: x, y: y, z: 1)
+    public mutating func scale(x: some ScalarConvertible, y: some ScalarConvertible) {
+        matrix = matrix * Self.scaling(x: x.asFloat, y: y.asFloat, z: 1)
     }
 
     /// 奥行きを含む拡大縮小を後から重ねる。
-    public mutating func scale(x: Float, y: Float, z: Float) {
-        matrix = matrix * Self.scaling(x: x, y: y, z: z)
+    public mutating func scale(
+        x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible
+    ) {
+        matrix = matrix * Self.scaling(x: x.asFloat, y: y.asFloat, z: z.asFloat)
     }
 
     /// 斜めに歪める (横方向) を後から重ねる。
-    public mutating func shearX(by radians: Float) {
-        matrix = matrix * Self.shearing(x: RuntimeMath.tan(radians), y: 0)
+    public mutating func shearX(by radians: some ScalarConvertible) {
+        matrix = matrix * Self.shearing(x: RuntimeMath.tan(radians.asFloat), y: 0)
     }
 
     /// 斜めに歪める (縦方向) を後から重ねる。
-    public mutating func shearY(by radians: Float) {
-        matrix = matrix * Self.shearing(x: 0, y: RuntimeMath.tan(radians))
+    public mutating func shearY(by radians: some ScalarConvertible) {
+        matrix = matrix * Self.shearing(x: 0, y: RuntimeMath.tan(radians.asFloat))
     }
 
     /// 与えた変換を後から重ねる。

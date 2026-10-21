@@ -42,7 +42,7 @@ struct ModelLoadingTests {
         let measured = highest - lowest
         // 200 × 120 でも 120 × 200 でも、短いほうの半分 = 60
         #expect(abs(simd_reduce_max(measured) - 60) < 1e-3)
-        #expect(abs(simd_reduce_max(model.size) - 60) < 1e-3)
+        #expect(abs(simd_reduce_max(model.size.simd) - 60) < 1e-3)
     }
 
     @Test("整えずに読むと、ファイルの大きさのまま")
@@ -50,7 +50,7 @@ struct ModelLoadingTests {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
         let model = try canvas.loadModel(ModelFixture.pyramid, normalize: false)
         // 元の四角錐は幅 2・高さ 1.6・奥行き 2
-        #expect(simd_length(model.size - SIMD3(2, 1.6, 2)) < 1e-3)
+        #expect(simd_length(model.size.simd - SIMD3(2, 1.6, 2)) < 1e-3)
     }
 
     /// 既知のモデルと、その中身から数えた値。**どちらも注釈の行 (`#`) は数えない。**

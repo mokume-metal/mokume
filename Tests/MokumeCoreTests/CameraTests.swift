@@ -236,7 +236,7 @@ struct CameraTests {
     func whetherAProjectionFlipsTheScreen() {
         func flips(_ projection: Camera.Projection) -> Bool {
             Camera(
-                eye: SIMD3(0, 0, 100), center: .zero, up: SIMD3(0, 1, 0), projection: projection
+                eye: Vector3(0, 0, 100), center: Vector3(0, 0, 0), up: Vector3(0, 1, 0), projection: projection
             ).flipsScreen
         }
         #expect(!flips(Camera.defaultPerspective(width: 64, height: 64)))
@@ -369,7 +369,7 @@ struct CameraTests {
             canvas.ortho()
             canvas.camera(70, 10, 90, 32, 32, 0, 0, 1, 0)
             #expect(canvas.currentCamera.projection == Camera.defaultOrthographic(width: 64, height: 64))
-            #expect(canvas.currentCamera.eye == SIMD3<Float>(70, 10, 90))
+            #expect(canvas.currentCamera.eye == Vector3(70, 10, 90))
         }
     }
 
@@ -516,7 +516,7 @@ struct CameraTests {
             let before = canvas.currentCamera
             // 視点も変えた値を渡す。視点だけが当たって投影が残る半端な当たり方も見分けるため
             var camera = before
-            camera.eye = SIMD3(10, 50, 120)
+            camera.eye = Vector3(10, 50, 120)
             camera.projection = refused.projection
             canvas.setCamera(camera)
             #expect(canvas.currentCamera == before)
@@ -578,7 +578,7 @@ struct CameraTests {
             // 受けたか断ったかが currentCamera に出ない
             canvas.perspective(1, 2, 5, 600)
             var camera = canvas.currentCamera
-            camera.eye = SIMD3(10, 50, 120)
+            camera.eye = Vector3(10, 50, 120)
             camera.projection = taken.projection(width: 64, height: 64)
             canvas.setCamera(camera)
             #expect(canvas.currentCamera == camera)
