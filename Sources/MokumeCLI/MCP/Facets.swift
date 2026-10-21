@@ -88,6 +88,10 @@ struct Facets {
         /// 要求を 1 枚ずつ拾い、応え終えるまで次を拾わないので、**自分の識別子の応答はもう来ない**。
         /// 当たった後に上書きされたのか、読まれる前に置き換えられたのかは、応答だけからは分からない。
         case contested
+        /// 取り消された ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
+        /// `placed` は、要求を区画へ置いた後か。**置いた後なら要求は区画に残り**、スケッチはそれに
+        /// 応え続けうる (取り消しはスケッチへは届かない・#3030)。置く前なら何も置いていない。
+        case cancelled(placed: Bool)
     }
 
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
@@ -106,6 +110,7 @@ struct Facets {
     /// - Parameter extraWait: 応答が返るまでにフレームが何枚も進む要求 (続けて撮る観測
     ///   など) で、``waitLimit`` に**足す**ぶん。上書きではなく加算にしてある —
     ///   上書きにすると、検査が短く設定した上限を呼ぶ側が知らずに戻してしまう。
+    /// - Parameter isCancelled: 巡回のたびに見る。立っていれば待ちを切って ``Exchange/cancelled`` で返す。
     /// - Parameter now: 期限を測る時計。**眠っている間は進まない `DispatchTime` で測る** —
     ///   壁時計 (`Date`) だと、待っている最中に機械が眠ると起きた瞬間に期限を越えて、
     ///   スケッチの応答を待たずに「誰も応えない」を返す ([#1940](https://github.com/mokume-metal/mokume/issues/1940))。
@@ -115,6 +120,7 @@ struct Facets {
     ///   よいかを書く」と宣言しているのに、窓口の 2 箇所だけがその規律の外だった。
     func exchange(
         facet: URL, request: [String: Any], id: String, extraWait: TimeInterval = 0,
+        isCancelled: () -> Bool = { false },
         sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         now: () -> DispatchTime = { DispatchTime.now() }
     ) throws(CommandFailure) -> Exchange {
@@ -124,6 +130,9 @@ struct Facets {
         // **置く直前に echo されていた識別子。** 置いた後に別の識別子の応答が現れたら、自分の要求を
         // 置いた後に面が別の要求へ応えたと読める (取り合いの判定・``Exchange/contested``)
         let echoedBefore = read(reportURL)?["id"] as? String
+        // **置く前にも見る。** 取り消しが読み取りの手で先に立っていたら、要求を置かずに戻る
+        // (置いてから見るだけだと、取り消された入力が区画へ届いてしまう)
+        if isCancelled() { return .cancelled(placed: false) }
         do {
             try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
             // 鍵の並びは ``AtomicFile/writeJSON(_:to:)`` と揃える。ここは辞書を直に
@@ -144,6 +153,7 @@ struct Facets {
 
         let deadline = now() + Self.boundedWait(waitLimit)
         while now() < deadline {
+            if isCancelled() { return .cancelled(placed: true) }
             if let report = read(reportURL) {
                 let echoed = report["id"] as? String
                 if echoed == id { return .answered(report) }
@@ -316,6 +326,24 @@ struct Facets {
     /// 1 つ目の可能性。区画の基準がスケッチでない場所に落ちていれば (`outside`)、その場所の話と
     /// して言う — `watch` は自分のスケッチの場所で走るので、そこを起動し直しても窓口の区画は
     /// 見ない。この場所を見るのは、ここから起こした (組み上げた実行ファイルの) スケッチだけである。
+    /// 前に取り消した要求を、スケッチがまだ撮っているときの答え。
+    ///
+    /// **取り消しは窓口の待ちを切るだけで、スケッチへは届かない** (#3030)。続けて撮る観測 (最長で
+    /// 約 4 分) は撮り終えるまで区画を塞ぎ、その間に置いた次の要求は拾われない。置いた要求は
+    /// 自分のまま残るので、取り合いとも見えず、「応えない」と案内すると、起動し直しを勧めて
+    /// 撮っている最中のスケッチを止めさせる。
+    func stillTaking(_ entry: StartupReads.Entry, cancelledID: String) -> String {
+        """
+        The sketch did not answer yet, but it is most likely still working on a request this interface \
+        cancelled earlier (id \(cancelledID)). Cancelling stopped this interface from waiting; it did not \
+        reach the sketch, which keeps taking the shots it was asked for (a long series can take minutes) \
+        and takes the next request in \(entry.name) only after that.
+
+        This request was placed and is waiting behind it. Nothing needs restarting: try again once the \
+        earlier one is done. If the sketch was stopped in the meantime, start it again.
+        """
+    }
+
     private func firstPossibility(
         _ entry: StartupReads.Entry, existed: Bool, outside: InterfacePlace?
     ) -> String {
