@@ -160,6 +160,29 @@ struct CountdownTests {
         #expect(abs(decoded.remaining(at: timing.elapsed) - 0.5) < 1e-6)
     }
 
+    /// 説明の「同じ実行の中だけ」の根拠 ([#2886](https://github.com/mokume-metal/mokume/issues/2886))。書かれる位置は
+    /// 元の実行の積み上げ上のもので、起動し直した実行 (積み上げが 0 から) へ持ち越すと、残りが長さを超える。
+    @Test("別の実行へ持ち越すと残りが長さを超える。長さと残りを自分で持って作り直せば、残りから再開して次は長さに戻る")
+    func aRestoredValueOnlyKeepsItsRemainderInTheSameRun() throws {
+        var countdown = Countdown(seconds: 10)
+        countdown.restart(at: 100)
+        #expect(countdown.remaining(at: 108) == 2)
+        let saved = (length: Float(10), remaining: countdown.remaining(at: 108))
+
+        // 起動し直した実行 (積み上げが 0 から): そのまま読み戻した値は 110 秒 (長さを超える)
+        let decoded = try JSONDecoder().decode(Countdown.self, from: JSONEncoder().encode(countdown))
+        #expect(decoded.remaining(at: 0) == 110)
+
+        // 説明の書き方: 残りで数え始め、終わったら長さで作り直す
+        var resumed = Countdown(seconds: saved.remaining)
+        resumed.restart(at: 0)
+        #expect(resumed.remaining(at: 0) == 2)
+        #expect(resumed.isFinished(at: 2))
+        resumed = Countdown(seconds: saved.length)
+        resumed.restart(at: 2)
+        #expect(resumed.remaining(at: 2) == 10)
+    }
+
     // MARK: - 境界
 
     @Test("0 秒は最初から終わっている。数でない値・負の値は 0 秒として受け取る")

@@ -23,6 +23,7 @@ import Testing
 /// | `camera(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)` | 9 |
 /// | `spotLight(color, x, y, z, directionX, directionY, directionZ, angle:)` | 8 |
 /// | `quad(x1, y1, x2, y2, x3, y3, x4, y4)` | 8 |
+/// | `bezier(x1, y1, x2, y2, x3, y3, x4, y4)` | 8 |
 /// | `arc(a, b, c, d, start, stop)` | 6 |
 /// | `bezierVertex(cx1, cy1, cx2, cy2, x, y)` | 6 |
 ///
@@ -60,7 +61,7 @@ struct SketchRelayParityTests {
 
     /// 突き合わせる中継の口。並びは引数の多い順。
     enum Relay: CaseIterable, CustomTestStringConvertible {
-        case numericSpotLight, image, camera, spotLight, quad, arc, bezierVertex
+        case numericSpotLight, image, camera, spotLight, quad, bezier, arc, bezierVertex
 
         var testDescription: String {
             switch self {
@@ -69,6 +70,7 @@ struct SketchRelayParityTests {
             case .camera: "camera (9 引数)"
             case .spotLight: "spotLight (LinearRGBA・8 引数)"
             case .quad: "quad (8 引数)"
+            case .bezier: "bezier (8 引数)"
             case .arc: "arc (6 引数)"
             case .bezierVertex: "bezierVertex (6 引数)"
             }
@@ -156,6 +158,17 @@ struct SketchRelayParityTests {
                 around: { _, call in call() },
                 throughSketch: { $0.quad($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7]) },
                 direct: { $0.quad($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7]) })
+        case .bezier:
+            // 開いた曲線を塗る。8 つの数はどれも違う値で、始点・制御点・終点のどれが動いても
+            // 塗る範囲が変わる
+            return RelayScene(
+                arguments: [
+                    ("x1", 6), ("y1", 40), ("x2", 14), ("y2", 5),
+                    ("x3", 52), ("y3", 12), ("x4", 59), ("y4", 44),
+                ],
+                around: { _, call in call() },
+                throughSketch: { $0.bezier($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7]) },
+                direct: { $0.bezier($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7]) })
         case .arc:
             // 幅と高さを違え、始まりと終わりも違える。入れ替えると終わりが始まりより小さくなり、
             // 何も描かれない絵になる

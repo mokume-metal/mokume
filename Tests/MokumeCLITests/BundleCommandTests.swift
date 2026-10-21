@@ -945,6 +945,87 @@ struct BundleCommandTests {
         #expect(throws: (any Error).self) { try BundleCommand.parse(["a", "b"]) }
     }
 
+    /// 仕上げの順序 (資材の検め → 紙 → 署名) は `finish` が 1 か所で持つ (#2773)。ビルドも
+    /// `codesign` も起こさず、署名の段を差し替えて、**署名の時点で何ができているか**を見る。
+    @Test("紙が署名の前に書かれている — 署名の段に着いたとき、紙は既にある")
+    func theNoteIsWrittenBeforeSigning() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+        let note = app.deletingLastPathComponent()
+            .appendingPathComponent(BundleCommand.noteFileName(for: identity))
+        var noteExistedWhenSigning: Bool?
+
+        let written = try BundleCommand.finish(app, identity: identity, bundles: []) {
+            _ throws(CommandFailure) in
+            noteExistedWhenSigning = FileManager.default.fileExists(atPath: note.path)
+        }
+
+        #expect(noteExistedWhenSigning == true, "署名の段に着いたとき、紙がまだ書かれていない")
+        #expect(written.path == note.path)
+    }
+
+    @Test("紙が書けなければ、署名の段に進まずに止まる (署名済みの .app を残さない)")
+    func anUnwritableNoteStopsBeforeSigning() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+        // 紙の行き先に同じ名前のディレクトリを置く (置き換えて書けない)
+        try FileManager.default.createDirectory(
+            at: app.deletingLastPathComponent()
+                .appendingPathComponent(BundleCommand.noteFileName(for: identity)),
+            withIntermediateDirectories: false)
+        var signed = false
+
+        #expect(throws: CommandFailure.self) {
+            try BundleCommand.finish(app, identity: identity, bundles: []) {
+                _ throws(CommandFailure) in signed = true
+            }
+        }
+        #expect(!signed, "紙が書けないのに署名の段に進んだ")
+    }
+
+    @Test("資材の欠けは、紙も署名も出さずに止まる")
+    func aMissingBundleStopsBeforeTheNoteAndSigning() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+        var signed = false
+
+        #expect(throws: CommandFailure.self) {
+            try BundleCommand.finish(app, identity: identity, bundles: ["demo_other.bundle"]) {
+                _ throws(CommandFailure) in signed = true
+            }
+        }
+        #expect(!signed)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: app.deletingLastPathComponent()
+                    .appendingPathComponent(BundleCommand.noteFileName(for: identity)).path),
+            "資材が欠けているのに紙が書かれた")
+    }
+
+    /// README と `maximumNameLength` の説明は、名前の検めでは止まらず組み立ての後で落ちうる形を
+    /// 限界として書く (#2773)。書く 3 つの形を名指しする。
+    @Test("README と上限の説明が、検めでは止まらず組み立ての後で落ちうる形を書く")
+    func theLimitsBeyondTheNameCheckAreDocumented() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // MokumeCLITests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // リポジトリ直下
+        let readme = try String(
+            contentsOf: root.appendingPathComponent("README.md"), encoding: .utf8)
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Sources/MokumeCLI/AppIdentity.swift"),
+            encoding: .utf8)
+        for (label, text) in [("README", readme), ("AppIdentity.swift", source)] {
+            for phrase in ["exFAT", "1024"] {
+                #expect(text.contains(phrase), "\(label) が「\(phrase)」の限界を書いていない")
+            }
+        }
+        #expect(readme.contains("組み立ての後"), "README が組み立ての後で落ちうることを書いていない")
+    }
+
     /// 書けなかった事情は、言語の設定に左右されない OS の文面で名乗る (#2839)。置き換えて書く紙は、
     /// 行き先がディレクトリだと下の失敗が ENOENT になるが、`Is a directory` と名乗る。
     @Test("書けなかった事情は OS の文面で名乗り、ディレクトリへ置き換えて書く失敗は Is a directory")

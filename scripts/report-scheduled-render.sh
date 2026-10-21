@@ -157,4 +157,5 @@ bash "$here/report-check-failure.sh" \
   --title "$TITLE" \
   --log "$log" \
   --body-file "$body" \
+  --key-file "$body" \
   --source '.github/workflows/render.yml の scheduled-report が自動起票した (#1983)'

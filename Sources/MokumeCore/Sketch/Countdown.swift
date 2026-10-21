@@ -50,8 +50,34 @@ import Synchronization
 /// 読まない。走っている途中から数えるなら ``restart()`` を呼ぶ — `draw()` の途中で
 /// `Countdown(seconds: 1)` と作り直すと、既に 1 秒以上走っていればその場で終わっている。
 ///
-/// 値なので、`Codable` でセーブスロットに残せる。残るのは長さと数え始めた位置で、位置は
-/// その実行のスケッチの時間で測ったものである。
+/// ## 残り時間を保てるのは、同じ実行の中だけ
+///
+/// 値なので `Codable` で書き出して読み戻せるが、**残り時間を保ったまま読み戻せるのは、同じ実行の中
+/// (同じスケッチの時間の上) だけ**である。書かれるのは長さと数え始めた位置で、位置は**その実行の**
+/// スケッチの時間 (``SketchPart/deltaTime`` の積み上げ) で測ったものだからである。起動し直した実行は
+/// 積み上げが 0 から始まるので、別の実行へ持ち越した値は残りが合わない — 10 秒の `Countdown` を
+/// 積み上げが 100 秒の位置で `restart()` して書き出し、起動し直した実行で読み戻すと、最初の枚の
+/// ``remaining`` は 110 秒になる (長さを超える)。
+///
+/// 別の実行へ残したいときは、**長さと残りを自分の値として持つ**。復元したら残りで
+/// `Countdown(seconds:)` を作って ``restart()`` し、それが終わったら長さで作り直して、以後は
+/// それを ``restart()`` する:
+///
+/// <!-- example: 文脈 var respawn = Countdown(seconds: 10); var resumed = Countdown(seconds: 2) -->
+/// ```swift
+/// // 残すもの: 長さと残りを自分の値で (例: 10 秒の Countdown の残り 2 秒)
+/// let saved = (length: Float(10), remaining: respawn.remaining)
+///
+/// // 起動し直した実行で復元する: 残りで数え始める
+/// resumed = Countdown(seconds: saved.remaining)
+/// resumed.restart()
+///
+/// // 終わったら、長さで作り直す。以後はこれを restart() して 10 秒を繰り返す
+/// if resumed.isFinished {
+///     resumed = Countdown(seconds: saved.length)
+///     resumed.restart()
+/// }
+/// ```
 ///
 /// 手本に同じ型は無い。名前は Foundation の `Timer` との衝突を避けて採った ([ADR-0020] 決定 1)。
 ///
