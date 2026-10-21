@@ -98,7 +98,9 @@ struct UDPPortTests {
         received += await collect(udp, count: 2)
         #expect(received == ["a", "", "b", "c"])
         #expect(udp.input.unreadable == 0)
-        #expect(told.lines.isEmpty)
+        // 空で流れが閉じたことだけを、1 度言う (#2363)。ほかは何も言わない
+        #expect(told.lines.count == 1)
+        #expect(told.lines.first?.contains("empty datagram") == true)
     }
 
     @Test("受けの完了の扱い: 中身は台帳に依らず渡し、中身の無いものは台帳に居る繋ぎでだけ空として渡し、終わりを名乗れば閉じる")
@@ -126,9 +128,11 @@ struct UDPPortTests {
         let received = Mutex<[String]>([])
         let bound = Mutex<Int?>(nil)
         let events = Mutex<[String]>([])
+        let emptyClosed = Mutex<[String]>([])
         let listener = DatagramListener(
             port: 0, host: "127.0.0.1", retryAfter: 0.05,
             received: { bytes, _ in received.withLock { $0.append(String(decoding: bytes, as: UTF8.self)) } },
+            closedByEmpty: { sender in emptyClosed.withLock { $0.append(sender) } },
             changed: { event in
                 events.withLock { $0.append("\(event)") }
                 if case .ready(let port) = event { bound.withLock { $0 = port } }
@@ -159,6 +163,97 @@ struct UDPPortTests {
         // 外した繋ぎは閉じたので、b は新しい送り元として受け直している。外した数は ended に入れない
         #expect(listener.tally.accepted == 2)
         #expect(listener.tally.ended == 0)
+        // こちらが閉じた繋ぎなので、空の直後の落ちを名乗らない (#2363)
+        #expect(emptyClosed.withLock { $0 }.isEmpty)
+    }
+
+    /// 1 つの送り元から、流れができてから空を送って閉じ、閉じてから次を送る、の 1 周。空が閉じるのを
+    /// `tally.ended` で待つ (閉じる前に次を送ると、次が落ちうる)。
+    private func cycle(
+        _ index: Int, from peer: RawDatagramSocket, to port: Int, through udp: UDPPort,
+        source: DatagramSource<String>, endedBefore: Int
+    ) async throws -> [String] {
+        #expect(peer.send(Array("x\(index)".utf8), to: port) == 2)
+        var received = await collect(udp, count: 1)
+        #expect(peer.send([], to: port) == 0)
+        received += await collect(udp, count: 1)
+        try await requireWait(
+            "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
+            until: { source.tally.ended >= endedBefore + 1 })
+        return received
+    }
+
+    @Test("空で流れが閉じたら、落ちたかもしれないことを受け口と送り元つきで、送り元ごとに 1 度だけ診断に出す (#2363)")
+    func emptyClosedFlowIsToldOncePerSender() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let source = try #require(udp.source as? DatagramSource<String>)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        let other = try RawDatagramSocket()
+        defer { other.release() }
+
+        // 1 つの送り元から、空で流れが閉じるのを 3 度。空は messages に入り、診断は 1 度だけ
+        for index in 0..<3 {
+            let received = try await cycle(
+                index, from: peer, to: port, through: udp, source: source, endedBefore: index)
+            #expect(received == ["x\(index)", ""])
+        }
+        try await requireTold(
+            containing: "empty datagram", told: told, tracing: source) { udp.state }
+        #expect(told.lines.count == 1)
+        let first = try #require(told.lines.first)
+        #expect(first.hasPrefix("udp :\(port): an empty datagram from 127.0.0.1:\(peer.port) closed its flow"))
+        #expect(first.contains("may have been dropped"))
+
+        // 別の送り元は、その送り元について 1 度。もとの送り元はもう言わない
+        _ = try await cycle(0, from: other, to: port, through: udp, source: source, endedBefore: 3)
+        try await requireTold(
+            containing: "empty datagram", count: 2, told: told, tracing: source) { udp.state }
+        #expect(told.lines.count == 2)
+        #expect(told.lines.last?.contains("127.0.0.1:\(other.port)") == true)
+        _ = try await cycle(9, from: peer, to: port, through: udp, source: source, endedBefore: 4)
+        #expect(told.lines.count == 2)
+        #expect(udp.input.unreadable == 0)
+    }
+
+    @Test("空を渡して流れを閉じる扱いだけが名乗る。終わりを名乗らない空・こちらが閉じた繋ぎ・失敗は名乗らない (#2363)")
+    func onlyTheEmptyThatClosesTheFlowAnnounces() {
+        typealias Listener = DatagramListener
+        func announces(_ content: Data?, final: Bool, failed: Bool = false, held: Bool = true) -> Bool {
+            Listener.completion(content: content, isFinal: final, failed: failed, held: held).closesFlowOnEmpty
+        }
+        #expect(announces(nil, final: true))
+        #expect(!announces(nil, final: false))  // 流れの最初に届き、流れが閉じない空
+        #expect(!announces(nil, final: true, held: false))  // 黙りで閉じた・受け口が失敗した繋ぎ
+        #expect(!announces(nil, final: false, held: false))
+        #expect(!announces(nil, final: true, failed: true))  // 空を含まない流れの終わり
+        #expect(!announces(Data([7]), final: true))  // 中身のある datagram は、終わりを名乗っても続ける
+        #expect(!announces(Data([7]), final: false))
+    }
+
+    @Test("名乗った送り元の覚えは、同じ送り元に 2 度言わず、上限を超えたら先に覚えた送り元から忘れる (#2363)")
+    func toldSendersAreRememberedUpToTheLimit() {
+        var memory = EmptyClosedSenders(limit: 3)
+        func insert(_ sender: String) -> Bool { memory.insert(sender) }
+        #expect(insert("a"))
+        #expect(!insert("a"))
+        #expect(insert("b"))
+        #expect(insert("c"))
+        #expect(memory.count == 3)
+        // 4 つ目で、先に覚えた a を忘れる。b・c は覚えたまま
+        #expect(insert("d"))
+        #expect(memory.count == 3)
+        #expect(!insert("b"))
+        #expect(!insert("c"))
+        #expect(insert("a"), "忘れた送り元がまた閉じたら、もう 1 度言う")
+        #expect(memory.count == 3)
+        // 本番の上限も有限である
+        #expect(DatagramListener.emptyClosedLimit == 256)
+        var many = EmptyClosedSenders(limit: DatagramListener.emptyClosedLimit)
+        for index in 0..<10_000 { _ = many.insert("s\(index)") }
+        #expect(many.count == DatagramListener.emptyClosedLimit)
     }
 
     @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
@@ -255,7 +350,9 @@ struct UDPPortTests {
         sender.send("y")
         received += await collect(receiver, count: 1)
         #expect(received == ["x", "", "y"])
-        #expect(told.lines.isEmpty)
+        // 受け手の流れが閉じたことだけを、1 度言う (#2363)。送り手は何も言わない
+        #expect(told.lines.count == 1)
+        #expect(told.lines.first?.contains("empty datagram") == true)
     }
 
     @Test("UTF-8 で 9216 バイト以上の文字列は送り手に渡さず、大きさと上限を 1 度だけ知らせる")
