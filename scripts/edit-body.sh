@@ -220,6 +220,11 @@ if [ "$KIND" = issue ]; then
   fi
 fi
 
+# 本文に個人情報・秘密情報らしきものがあれば、止めずに名乗る (#3075)
+# shellcheck source=scripts/secret-scan.sh
+. "$here/secret-scan.sh"
+secret_notice "$(cat "$BODY_FILE")"
+
 if $DRY_RUN; then
   echo "gh $KIND edit $NUMBER -R $REPO --body-file $BODY_FILE"
   exit 0
