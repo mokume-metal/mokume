@@ -801,6 +801,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "pixelHeight": READING,
     "frameCount": READING,
     "time": READING,
+    "phase": (READING, "時計の秒から周期の位相を取って返す。time を巡らせた値で、値を返すだけ"),
     "deltaTime": READING,
     "clock": (READING, "時刻の出どころを値で返す。外の時間で動くもの (音声ファイルの再生) を作る側が読む"),
     "mouseX": READING,

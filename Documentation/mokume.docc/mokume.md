@@ -354,6 +354,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/canvas``
 - ``SketchPart/frameCount``
 - ``SketchPart/time``
+- ``SketchPart/phase(period:)``
 - ``SketchPart/deltaTime``
 - ``SketchPart/clock``
 - ``Clock``

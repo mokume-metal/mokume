@@ -46,6 +46,7 @@ enum NumberValues {
             case sq
             case fract
             case mod
+            case phase
         }
     }
 

@@ -136,4 +136,67 @@ extension SketchPart {
         }
         runtime.jumpTime(seconds.asFloat)
     }
+
+    /// いまの ``time`` を `period` 秒で 1 巡する位相 (0 以上 1 未満) にして返す。`period` は `Float`・
+    /// `Double`・`Int` の変数をそのまま渡せる。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     background(10)
+    ///     let p = phase(period: 4)  // 4 秒で 0 から 1 へ巡る
+    ///     circle(width / 2, height / 2, 200 + 80 * sin(p * 2 * Float.pi))
+    /// }
+    /// ```
+    ///
+    /// **何日走らせても、位相の刻みは粗くならない。** ``time`` は `Float` なので、数日走らせると
+    /// 刻みが 60 fps の 1 フレームより粗くなる (``time`` を参照)。この口は時計の中の `Double` の秒から
+    /// 余りを取ってから `Float` にするので、刻みは周期の長さで決まる — 4 秒周期なら、1 か月後も
+    /// 1 µs より細かい。周期のある動きは `sin(time * 2 * Float.pi / 4)` ではなく、こちらで書く。
+    ///
+    /// **負の秒も巡る。** ``jumpTime(_:)`` で 0 より前へ飛んだ後も 0 以上 1 未満で、4 秒周期で
+    /// `jumpTime(-1)` の直後は 0.75 である。返す値は 1 にならない (1 に丸まるほど周期の終わりに近い値は
+    /// 0 を返す)。
+    ///
+    /// 読む秒は ``time`` と同じ — 書き出し (`mokume render`) と ``SketchSettings/clock`` を
+    /// ``SketchSettings/ClockMode/frames`` にした窓では、フレームの時計の秒から同じ式で巡る。
+    /// `mokume render --seconds 4` で書き出すと、4 秒周期の枚は位相 0 から 1 の手前までを覆い、継ぎ目の
+    /// ないループになる。時刻を指定した観測の枚では、``Sketch/draw()`` の中だけ観測の秒から巡る
+    /// (``time`` と同じ)。
+    ///
+    /// **`period` が 0 以下・数でない値・無限のときは 0 を返す。** 周期が定まらず、毎フレーム呼ばれる口が
+    /// 数でない値を返すと**絵が黙って消える**ためで ([ADR-0020] 決定 5)、注意は 1 度だけ言う。
+    /// ``Sketch/setup()``・``Sketch/draw()``・入力のコールバックの外 (`init` や `Task` の中) から読んだときも、
+    /// ``time`` と同じく 0 を返し、そのことを 1 度だけ知らせる。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    // shot: 撮れない 時計から周期の位相を読んで返す口で、撮影は 0 秒の 1 枚だけなので巡りが絵に出ない (位相は 0 のまま)
+    public func phase(period: some ScalarConvertible) -> Float {
+        guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
+        return periodPhase(ofSeconds: runtime.timeSeconds, period: period.asFloat)
+    }
+}
+
+/// `seconds` を `period` 秒で巻き戻した位置を、0 以上 1 未満で返す (``SketchPart/phase(period:)``)。
+///
+/// 余りは `Double` のまま取り、割った比だけを `Float` にする。**負の秒は 0 以上へ畳む** — 切り捨ての
+/// 剰余は負に負を返すので、周期を足して戻す。足した結果が周期ちょうどに丸まる値と、比が `Float` で
+/// 1 に丸まる値は、1 周ぶんずれて読まれないよう 0 を返す。周期が 0 以下・非有限なら 0 を返し、
+/// 1 度だけ知らせる。
+func periodPhase(ofSeconds seconds: Double, period: Float) -> Float {
+    guard period.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.phase),
+            "phase(): got a period that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    guard period > 0 else {
+        NumberValues.warnOnce(
+            .emptyRange(.phase), "phase(): the period is zero or negative, so 0 was returned")
+        return 0
+    }
+    let length = Double(period)
+    var remainder = seconds.truncatingRemainder(dividingBy: length)
+    if remainder < 0 { remainder += length }
+    let phase = Float(remainder / length)
+    return phase < 1 ? phase : 0
 }
