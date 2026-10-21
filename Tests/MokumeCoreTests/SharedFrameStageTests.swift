@@ -803,6 +803,47 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **手放した覚えは、乗り換えで消える** ([#2983] の反証)。面の番号は再利用されうるので、後の世代が同じ番号の
+    /// 並びを得ても、生きた世代の頼みを読まないままにしない。子の番号も同じで、別の世代へ乗り換えたら捨てる。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("手放した覚えは乗り換えで消える (面の番号・子の番号の使い回しで、生きた世代の頼みを読まないままにしない)")
+    func theRelinquishedMemoryEndsAtThePromotion() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            // 番号を名乗らない世代 (古いライブラリ) を手放す
+            let legacy = try publish(in: facet, gpu: gpu, pid: nil, frames: 1, pointerLock: true)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("memory-ends"))
+            defer { stage.close() }
+            stage.open()
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested)
+            stage.relinquishSource(pids: [999])
+            #expect(!stage.pointerLockRequested)
+
+            // 同じ面の番号の並びを持つ、生きた世代へ乗り換える (目録を置き直し、新しい枚を書く)
+            try place(
+                manifest: #"{"schemaVersion":1,"ids":\#(legacy.ids),"width":32,"height":32}"#,
+                in: facet)
+            try draw(legacy, frame: 2, gpu: gpu, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(!stage.hasIncoming, "検査の前提: 乗り換えた")
+            #expect(stage.pointerLockRequested, "面の番号の使い回しで、生きた世代の頼みを読まない")
+
+            // 子の番号: 100 を手放し、別の番号 300 へ乗り換えた後に、また 100 を名乗る世代が来ても読む
+            let first = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            stage.relinquishSource(pids: [100])
+            let other = try publish(in: facet, gpu: gpu, pid: 300, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested)
+            let reused = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested, "子の番号の使い回しで、生きた世代の頼みを読まない")
+            _ = (first, other, reused)
+        }
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が

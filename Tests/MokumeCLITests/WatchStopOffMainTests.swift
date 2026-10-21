@@ -200,6 +200,41 @@ struct WatchStopOffMainTests {
         #expect(told == 0, "映っている新しい子の頼みを手放させた")
     }
 
+    /// **前の世代を止める待ちの間に、台が次の世代へ乗り換えることがある** ([#2983] の反証)。台の乗り換えは表示の
+    /// 拍で同期に起き、見張りが待ちを下ろすのは合図の `Task` が走ってからである。判定を待つ前にだけ決めて
+    /// 待った後に伝えると、生きて映っている新しい世代の頼みを下ろす。番号を名乗らない世代では、番号で
+    /// 外せないので、待った後にもう 1 度、まだ乗り換えを待っているかを見る。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("前の世代を止めている間に台が乗り換えたら、映っている世代を手放させない")
+    func aPromotionDuringTheStopDoesNotRelinquishTheNewDisplayedGeneration() async throws {
+        let (stubborn, _) = try makeStubborn()
+        defer { stubborn.killAll() }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: stubborn.hooks(),
+            stopTimeout: Self.stopTimeout)
+        session.overlapsGenerations = true
+        var told = 0
+        session.relinquishesDisplay = { _ in told += 1 }
+        await session.start()
+        stubborn.waitUntilReady()
+        let first = try #require(session.child)
+        await session.tick()
+        stubborn.waitUntilReady()
+        #expect(session.outgoing === first)
+
+        // 合図が来ないまま次の保存: 映っている世代 (first) を止め始める
+        let swapping = Task { await session.tick() }
+        try await waitUntil { stubborn.received(0) }
+        // 止めている間に、台が待っていた世代へ乗り換えた合図 (番号を名乗らない世代)
+        let promoting = Task { await session.generationPromoted() }
+        kill(first.processIdentifier, SIGKILL)
+        _ = await swapping.value
+        _ = await promoting.value
+        stubborn.waitUntilReady()
+        #expect(told == 0, "止めている間に台が乗り換えたのに、映っている世代を手放させた")
+    }
+
     /// **合図は窓ごとに来て、2 度呼ばれる。** 止めている最中に 2 度目が来ても、同じ子を
     /// 重ねて止めない — 名乗りも 1 度である。
     @Test("退役の合図が重なっても、同じ子を 1 度しか止めない")

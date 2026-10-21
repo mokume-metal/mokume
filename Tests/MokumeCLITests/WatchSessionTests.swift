@@ -1521,6 +1521,55 @@ struct WatchSessionTests {
         }
     }
 
+    /// **映っている前の世代 (`outgoing`) が自分で終わる・落ちる回も、台へ伝える** ([#2983] の反証)。
+    /// `departed()` は `child` だけを見るので、乗り換えを待つ間に映っている前の世代が消えても、台は
+    /// 消えた世代の頼みを持ち続ける。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("映っている前の世代が自分で終わったら、台へその番号で伝え、1 度だけ伝える")
+    func anOutgoingGenerationThatEndsTellsTheDisplay() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        #expect(session.outgoing === leaving)
+        var told: [[Int32]] = []
+        session.relinquishesDisplay = { told.append($0) }
+
+        session.relinquishIfOutgoingDeparted()
+        #expect(told.isEmpty, "生きている前の世代で伝えた")
+        // 前の世代が自分で終わる (子は 1 行読んだら終わる。入力は映っている前の世代へ届く)
+        session.send("touch\n")
+        waitUntilGone(leaving)
+        session.relinquishIfOutgoingDeparted()
+        #expect(told == [[leaving.processIdentifier]], "\(told)")
+        session.relinquishIfOutgoingDeparted()
+        #expect(told.count == 1, "同じ世代を 2 度伝えた")
+    }
+
+    /// 受け取れない知らせで前の世代を畳むときも、畳んだ世代を台へ伝える (台が畳んだ世代を映しているかもしれない)。
+    /// 乗り換えを待っている世代は、これから書くので含めない。
+    @Test("受け取れない知らせで前の世代を畳むとき、畳んだ世代だけを台へ伝える")
+    func anUndeliverableNoticeTellsTheDisplayWhichGenerationWasRetired() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        var told: [[Int32]] = []
+        session.relinquishesDisplay = { told.append($0) }
+        #expect(await session.retireAfterUndeliverable(waiting: arriving) != nil)
+        #expect(told == [[leaving.processIdentifier]], "\(told)")
+    }
+
     // MARK: - 道具の窓が受け取れない世代 (#2928)
 
     /// **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る。

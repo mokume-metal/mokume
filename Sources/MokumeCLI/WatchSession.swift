@@ -561,6 +561,23 @@ final class WatchSession {
         }
     }
 
+    /// 映っている前の世代 (``outgoing``) が自分で終わった・落ちたとき、台へその番号で伝える
+    /// ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    ///
+    /// ``departed()`` は ``child`` だけを見る。乗り換えを待つ間に映っている前の世代が消えても、台は消えた
+    /// 世代の頼みを持ち続ける。**1 世代につき 1 度だけ伝える。** 止めている最中の世代 (道具が畳む回) は
+    /// 畳む側の口が伝えるので、ここでは見ない。
+    func relinquishIfOutgoingDeparted() {
+        guard let gone = outgoing, !gone.isRunning, gone !== stoppingChild, !isBringingDown(gone),
+            gone !== relinquishedOutgoing
+        else { return }
+        relinquishedOutgoing = gone
+        relinquishesDisplay([gone.processIdentifier])
+    }
+
+    /// 消えたことを台へ伝え済みの前の世代。
+    private var relinquishedOutgoing: Process?
+
     /// 走らせているものを終わらせる。
     ///
     /// **期限を持つ。** 頼んで止まらなければ強制的に落とす — 子は人が書いたスケッチなので、
@@ -1050,7 +1067,10 @@ final class WatchSession {
             await retireOutgoing()
             // **映っていた世代を、乗り換えの合図が来ないまま畳んだ回** — 台は畳まれた世代の頼みを持ち続け、
             // 読み直す契機も来ない (#2983)
-            if displayedGenerationRetired { relinquishesDisplay(retiredPIDs) }
+            // **待った後にもう 1 度、乗り換えを待っているかを見る。** 止めている間に台が次の世代へ乗り換えて
+            // (合図が走って待ちが下りて) いれば、映っているのは生きている新しい世代である。番号を名乗る世代は
+            // 台が番号で外すが、名乗らない世代 (古いライブラリ) は、ここで外さないと手放させてしまう
+            if displayedGenerationRetired && awaitingPromotion { relinquishesDisplay(retiredPIDs) }
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
@@ -1174,10 +1194,8 @@ final class WatchSession {
         try? FileManager.default.removeItem(at: marker)
         // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)。
         // **前の世代を止めた後に伝える** — 止める前に伝えると、止まるまでに書く 1 枚で台が読み直す
-        let letGo = [waiting.processIdentifier] + generationPIDs(of: outgoing)
-        let result = await retireAsPromoted()
-        relinquishesDisplay(letGo)
-        return result
+        // 倒れた子 (自分の窓を開く) は目録を置かないので、台が採ることは無い。手放す世代に含めてよい
+        return await retireAsPromoted(letGo: [waiting.processIdentifier])
     }
 
     /// 起こした子の絵を道具の窓が受け取れないと知らされていたら、**乗り換えの合図を待たずに**
@@ -1225,12 +1243,19 @@ final class WatchSession {
     /// ``retireAfterFallback()`` と ``retireAfterUndeliverable()`` の共通の尾。
     /// ``generationPromoted()`` とは違い、**新しい絵は出ていない**ので記録へは足さない
     /// (``hasSeenPromotion`` も立てない)。
-    private func retireAsPromoted() async -> (previous: FallbackPrevious, outcome: StopOutcome?) {
+    private func retireAsPromoted(letGo extraLetGo: [Int32] = []) async -> (
+        previous: FallbackPrevious, outcome: StopOutcome?
+    ) {
         awaitingPromotion = false
         // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
         firstFrameSince = nil
         let hadOutgoing = outgoing != nil
+        let retiredPIDs = generationPIDs(of: outgoing)
         let outcome = await retireOutgoing()
+        // **畳んだ前の世代を台へ伝える。** 台が畳んだ世代を映しているかもしれない (台は乗り換えを待たせた
+        // 世代より先に、前の世代の次の世代へ乗り換えうる)。乗り換えを待っている世代は、これから書くので
+        // 含めない (#2983)
+        if hadOutgoing || !extraLetGo.isEmpty { relinquishesDisplay(extraLetGo + retiredPIDs) }
         // **畳んだ結果で言う。** 畳めずに置いていく (`abandoned`) ときに、止めたとは言えない
         let previous: FallbackPrevious =
             switch (hadOutgoing, outcome) {

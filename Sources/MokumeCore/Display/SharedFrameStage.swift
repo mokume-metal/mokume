@@ -519,8 +519,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
         source = waiting
         incoming = nil
-        // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)
+        // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)。面の番号の覚えは
+        // 乗り換えで必ず捨てる (使い回しで、後の生きた世代の頼みを読まないままにしない)
         if let pid = waiting.pid, relinquishedPIDs.contains(pid) {} else { relinquishedPIDs.removeAll() }
+        relinquishedLegacyIDs = nil
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
         followRequestedSize(of: waiting)
@@ -583,19 +585,24 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **写しを空にするだけでは足りない** ([#2983])。止めるまでに前の世代が書く 1 枚 (止まらない子は
     /// 数秒書き続ける) で、同じ面から頼みを読み直して戻る。だから**手放した世代の面を覚え**
-    /// (``relinquishedSourceIDs``)、その面からは次に乗り換えるまで頼みを読まない。
+    /// (``relinquishedPIDs``・``relinquishedLegacyIDs``)、その世代からは次に乗り換えるまで頼みを読まない。
     ///
     /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
     /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
     private func releaseInheritedRequests() {
         pointerLockRequested = false
         cursorHiddenRequested = false
-        relinquishedSourceIDs = source?.ids
+        // **番号を名乗る世代は子の番号で、名乗らない世代 (古いライブラリ) は面の番号で覚える**
+        if let pid = source?.pid {
+            relinquishedPIDs.insert(pid)
+        } else {
+            relinquishedLegacyIDs = source?.ids
+        }
     }
 
-    /// 頼みを手放した世代の面の番号。**その世代が出している間は、頼みを読まない。**
-    /// 乗り換えれば番号が替わるので、新しい世代の頼みには従う。
-    private var relinquishedSourceIDs: [UInt32]?
+    /// 番号を名乗らない世代 (古いライブラリ) の、頼みを手放した面の番号。**その世代が出している間は、頼みを
+    /// 読まない。** 面の番号は再利用されうるので、**乗り換えで捨てる** (``promoteIfReady()``)。
+    private var relinquishedLegacyIDs: [UInt32]?
     /// 見張りが手放した世代の子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
     /// **まだ採っていない目録も、この番号を名乗れば生まれたときから手放した扱いにする** — 離脱の知らせが
     /// 台の拍より先に来ると、台は死んだ子 (1 枚書いてすぐ死んだ) へ乗り換えてその頼みを読む。別の番号の
@@ -605,8 +612,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// この世代の頼みを読まないか。
     private func isReleased(_ generation: Source?) -> Bool {
         guard let generation else { return false }
-        if relinquishedSourceIDs == generation.ids { return true }
-        return generation.pid.map { relinquishedPIDs.contains($0) } ?? false
+        if let pid = generation.pid { return relinquishedPIDs.contains(pid) }
+        return relinquishedLegacyIDs == generation.ids
     }
 
     /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを
