@@ -3870,32 +3870,6 @@ public final class Canvas {
         placedPictureEpoch &+= 1
     }
 
-    /// 画素の口がいま描き切ると、形を組み立てている途中の面を描き切らせうるか ([#1588])。
-    ///
-    /// 途中の描き切りは冒頭で、自分を置いた面に置いた時点の絵を写させる (``settlePlacersBeforeChange()``)。
-    /// 置いた面が組み立ての途中でも、組み立ての入口より前の列を写しへ差し替えるだけで描き切らせない
-    /// が (#1855 の案 E)、**写しの上限に達していれば組み立ての前の列を描き切らせる** (``keepPicture(placedFrom:)``・
-    /// 組み立てている区間は残す・#2850。以前は組み立てた区間ごと描き切って空になった)。画素の口は、自分の面だけでなく置かれた描き場所でも同じ守りに
-    /// 入る — 同じフレームで `image(layer)` と置いてから、組み立ての中で `layer.get()` と読むと、本体の
-    /// 組み立てが描き切られていた。**断る範囲は #1588 のまま**で、写しで済む場合も断る (緩めるかは
-    /// 別に決める)。
-    ///
-    /// **見るのは自分を直に置いた面だけ** (#1656)。組み立ての途中でない面は写しを取って描き切られ
-    /// ないので、その先へは連ならない。写しの上限・写しの失敗で描き切った面がさらに組み立ての途中の
-    /// 面に置かれている形はここでは見ない — その面の描き切りが、組み立ての前の列だけを描き切らせる
-    /// (#2850)。細かさを下げた面の途中の描き切りは出す先を変えないので、置いた面を描き切らせない。
-    ///
-    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
-    var isPlacedInAShapeInProgress: Bool {
-        guard upscaleStage == nil else { return false }
-        for entry in placers {
-            guard let canvas = entry.canvas, canvas.placedGraphics.contains(placementKey)
-            else { continue }
-            if canvas.recordingShape { return true }
-        }
-        return false
-    }
-
     /// 直前のフレームで描画を呼んだ回数。
     ///
     /// **畳めているかを数えるための値。** 絵が同じでも畳まれていなければ保持は目的を
