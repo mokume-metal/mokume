@@ -78,8 +78,9 @@ public final class SharedFramePreview {
     ///
     /// **入れ替わるのは、新しい世代が最初のフレームを焼いたときである** — 目録に現れた
     /// 瞬間ではない ([#1142](https://github.com/mokume-metal/mokume/issues/1142))。受け取る側は
-    /// これを合図に、前の世代を走らせていた子を止められる。
-    public var onGenerationPromoted: (() -> Void)? {
+    /// これを合図に、前の世代を走らせていた子を止められる。**引数は乗り換えた世代の子の番号**
+    /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))で、番号を名乗らない子 (古いライブラリ) なら `nil`。
+    public var onGenerationPromoted: ((Int32?) -> Void)? {
         get { stage.onGenerationPromoted }
         set { stage.onGenerationPromoted = newValue }
     }
@@ -87,8 +88,9 @@ public final class SharedFramePreview {
     /// この台が、控えた世代の絵を受け取れないことの知らせ ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
     ///
     /// **乗り換えの知らせが来ない形のうち、道具だけが知るもの** (``UndeliverableGeneration``) である。
-    /// 受け取る側は、乗り換えを待っている世代のぶんだけ、前の世代を畳める。
-    public var onGenerationUndeliverable: ((UndeliverableGeneration) -> Void)? {
+    /// 受け取る側は、乗り換えを待っている世代のぶんだけ、前の世代を畳める。**2 つ目の引数は、読めた目録が
+    /// 名乗った子の番号**で、読めない目録・番号を名乗らない子なら `nil` (#2982)。
+    public var onGenerationUndeliverable: ((UndeliverableGeneration, Int32?) -> Void)? {
         get { stage.onGenerationUndeliverable }
         set { stage.onGenerationUndeliverable = newValue }
     }

@@ -1263,6 +1263,96 @@ struct WatchSessionTests {
         #expect(lines.contains { $0.0 == named && $0.1 == false }, "プレビューへ名乗っていない: \(lines)")
     }
 
+    // MARK: - 合図が名乗る子の番号で照合する (#2982)
+
+    /// 保存を 2 度続けた回の並びを作る。B が映り、C を起こし、合図が来ないまま 2 度目の保存で B を畳み、
+    /// C を前の世代へ回して D を待つ。
+    private func twoSavesInARow(_ session: WatchSession, ready: Ready) async throws -> (
+        mapped: Process, previous: Process, waiting: Process
+    ) {
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let second = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let third = try #require(session.child)
+        waitUntilGone(shown)
+        #expect(!shown.isRunning, "検査の前提: 映っていた世代が畳まれている")
+        #expect(session.outgoing === second)
+        #expect(session.waitingGeneration === third)
+        return (shown, second, third)
+    }
+
+    /// **前の世代 (C) の乗り換えの合図は、待っている次の世代 (D) のものではない。** 番号を見ずに待ちを下ろして
+    /// C を畳むと、D が倒れても見張りはもう待っていないので何もせず、道具の窓には畳まれた C の絵が凍る。
+    @Test("待っていない世代の乗り換えの合図は受けず、続けて D が倒れたら前の世代を畳める")
+    func aPromotionOfTheOutgoingGenerationDoesNotEndTheWait() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let generations = try await twoSavesInARow(session, ready: ready)
+
+        // C (前の世代) が 1 枚焼いて乗り換えた合図。番号は C のもの
+        let stopped = await session.generationPromoted(pid: generations.previous.processIdentifier)
+        #expect(stopped == nil)
+        #expect(generations.previous.isRunning, "待っていない世代の合図で、映っている世代を畳んだ")
+        #expect(session.outgoing === generations.previous)
+        #expect(session.waitingGeneration === generations.waiting, "待ちが下りた")
+
+        // 続けて D が倒れる。待ちが残っているので、倒れた子の口が前の世代を畳める
+        _ = try placeFellBackMarker(of: generations.waiting, for: session)
+        #expect(await session.retireAfterFallback() != nil, "D の倒れを受けられない")
+        waitUntilGone(generations.previous)
+        #expect(!generations.previous.isRunning)
+    }
+
+    @Test("待っている世代の番号の合図は受けて前の世代を畳み、番号の無い合図は今までどおり受ける")
+    func aPromotionOfTheWaitingGenerationRetiresTheOutgoingOne() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let generations = try await twoSavesInARow(session, ready: ready)
+
+        await session.generationPromoted(pid: generations.waiting.processIdentifier)
+        waitUntilGone(generations.previous)
+        #expect(!generations.previous.isRunning, "待っている世代の合図で前の世代を畳んでいない")
+        #expect(session.waitingGeneration == nil)
+
+        // 番号を名乗らない子 (古いライブラリ) の合図は、今までの推定どおり待っている世代のものと読む
+        let readyLegacy = Ready()
+        let other = try overlapping(ready: readyLegacy)
+        defer { other.stopBlocking() }
+        let again = try await twoSavesInARow(other, ready: readyLegacy)
+        await other.generationPromoted(pid: nil)
+        waitUntilGone(again.previous)
+        #expect(!again.previous.isRunning, "番号の無い合図を受けていない")
+    }
+
+    @Test("受け取れない知らせは、読めた目録の番号が待っている世代でなければ受けない")
+    func anUndeliverableNoticeFromAnotherGenerationIsNotTaken() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let generations = try await twoSavesInARow(session, ready: ready)
+
+        // 前の世代 (C) の目録の知らせ
+        #expect(
+            await session.retireAfterUndeliverable(
+                waiting: generations.waiting, pid: generations.previous.processIdentifier) == nil)
+        #expect(generations.previous.isRunning)
+        #expect(session.waitingGeneration === generations.waiting)
+
+        // 待っている世代 (D) の目録の知らせは受ける
+        let taken = await session.retireAfterUndeliverable(
+            waiting: generations.waiting, pid: generations.waiting.processIdentifier)
+        #expect(taken != nil)
+        waitUntilGone(generations.previous)
+        #expect(!generations.previous.isRunning)
+    }
+
     // MARK: - 台へ世代を手放したと伝える口 (#2983)
 
     /// **台は、畳まれた世代・居なくなった世代のカーソルの頼みを、読み直す契機が来ないまま持ち続ける**

@@ -1022,7 +1022,9 @@ final class WatchSession {
 
         let relaunchStarted = hooks.now()
         // **どの世代の合図か区別できる回だけ測る。** 前の世代がまだ乗り換わらずに生きて
-        // いると、次の合図はそちらのものかもしれない — 目録は世代の印を持たない
+        // いると、次の合図はそちらのものかもしれない。新しいライブラリの子は目録が子の番号を名乗り、
+        // 合図は待っている世代のものだけを受ける (``generationPromoted(pid:)``・#2982) が、番号を
+        // 名乗らない古いライブラリの子は印が無いので、ここでは区別できる回だけを測る
         let measuresFirstFrame =
             overlapsGenerations && hasSeenPromotion
             && !(awaitingPromotion && child?.isRunning == true)
@@ -1109,7 +1111,15 @@ final class WatchSession {
     ///
     /// - Returns: 退役待ちを止めた結果。**名乗るのは口の側**である (``retireOutgoing()``)。
     @discardableResult
-    func generationPromoted() async -> StopOutcome? {
+    func generationPromoted(pid: Int32? = nil) async -> StopOutcome? {
+        // **合図が名乗った子が、待っている世代でなければ受けない** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+        // 保存を続けた回、前の世代 (C) が 1 枚焼いて乗り換えた合図は、待っている次の世代 (D) のものでは
+        // ない。待ちを下ろして C を畳むと、D が倒れても受け取れなくても、見張りはもう待っていないので
+        // 何もせず、道具の窓には畳まれた C の絵が凍る。映る世代が変わっただけなので、待ちも前の世代も
+        // そのままにする。番号を名乗らない合図 (古いライブラリの子) は今までの推定
+        if let pid, awaitingPromotion, let waiting = child, pid != waiting.processIdentifier {
+            return nil
+        }
         // **時刻は退役より先に取る。** 退役は期限つきで子の終わりを待つので、後に取ると
         // 止める待ちが絵の出た時刻に乗る
         let now = hooks.now()
@@ -1167,10 +1177,11 @@ final class WatchSession {
     /// 「子の離脱」の口 (``departed()``) が畳む — ここでも名乗ると二重になる。窓ごとに知らせが来るので
     /// (作品の窓とプレビューは独立に目録を読む)、2 度目は待ちが下りていて何もしない。
     ///
+    /// - Parameter pid: 知らせが読めた目録の子の番号。**あれば、待っている世代でなければ受けない** (#2982)。
     /// - Returns: 受けなかったなら `nil`。受けたなら、前の世代を畳んだかと、その結果
     ///   (**名乗るのは口の側**・``retireOutgoing()``)。
     func retireAfterUndeliverable(
-        waiting: Process?
+        waiting: Process?, pid: Int32? = nil
     ) async -> (previous: FallbackPrevious, outcome: StopOutcome?)? {
         // **知らせを受けた時点の世代と、いまの世代が同じときだけ。** 知らせは世代の印を持たず、`Task` で
         // 遅れて捌かれる — 作り直しの続きが先に走ると、前の世代 (C) の知らせが次の世代 (D) に当たる
@@ -1179,6 +1190,9 @@ final class WatchSession {
         guard let waiting, waiting === child, awaitingPromotion, waiting.isRunning,
             !stopRequested, waiting !== stoppingChild, !isBringingDown(waiting)
         else { return nil }
+        // **目録が名乗った子が、待っている世代でなければ受けない** (#2982)。読めない目録・番号を名乗らない
+        // 子 (古いライブラリ) は `nil` で、上の「知らせを受けた時点の世代」の照合だけに頼る
+        if let pid, pid != waiting.processIdentifier { return nil }
         return await retireAsPromoted()
     }
 

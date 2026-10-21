@@ -95,6 +95,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         let frames: [UInt32: Frame]
         /// 窓を開く倍率。**名乗らない子 (古いライブラリ) なら `nil`** で、窓の大きさに触らない。
         let windowScale: Float?
+        /// 目録を置いた子の番号。**名乗らない子 (古いライブラリ) なら `nil`** (#2982)。
+        let pid: Int32?
     }
 
     private let gpu: RenderDevice
@@ -168,16 +170,23 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **知らせるだけで、止めるのはここではない。** 古い子を止めるのは道具 (`WatchCommand`)
     /// の仕事で、この台は絵の出口しか知らない。
-    var onGenerationPromoted: (() -> Void)?
+    ///
+    /// **引数は、乗り換えた世代の目録が名乗った子の番号** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 名乗らない子 (古いライブラリ) は `nil`。受け取る側は、番号があれば待っている世代のものかを照合する。
+    var onGenerationPromoted: ((Int32?) -> Void)?
     /// 控えた世代の絵を、この台が受け取れないことの知らせ ([#2928])。
     ///
     /// **乗り換えの知らせが来ない形のうち、道具だけが知る 2 つ** (``UndeliverableGeneration``)。
     /// 子は自分の目録が読まれないことも、面が引けないことも知らないので、子からの申告は届かない。
     /// **知らせるだけで、前の世代を畳むのはここではない** (``onGenerationPromoted`` と同じ分担)。
-    /// どの世代の知らせかは目録が印を持たないので、受け取る側が「乗り換えを待っている世代」だけを見る。
+    /// どの世代の知らせかは、目録が番号を名乗れば照合できる (下の引数)。名乗らなければ、受け取る側が
+    /// 「乗り換えを待っている世代」だけを見る。
     ///
     /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
-    var onGenerationUndeliverable: ((UndeliverableGeneration) -> Void)?
+    ///
+    /// **2 つ目の引数は、読めた目録が名乗った子の番号** (#2982)。読めない目録の知らせ・番号を名乗らない
+    /// 子の目録では `nil`。
+    var onGenerationUndeliverable: ((UndeliverableGeneration, Int32?) -> Void)?
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ ([#2875])。
     ///
     /// **入れ替わりの知らせとは別に持つ。** 最初の世代は絵が来る前に採用されるので
@@ -480,13 +489,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             // 頼みは下ろす (``releaseInheritedRequests()``)
             view?.setCanvasSize((manifest.width, manifest.height))
             releaseInheritedRequests()
-            onGenerationUndeliverable?(anyLookedUp ? .unusableSurface : .noSurface)
+            onGenerationUndeliverable?(anyLookedUp ? .unusableSurface : .noSurface, manifest.pid)
             return
         }
         incoming = Source(
             ids: manifest.ids, lookup: SharedFrameSurface.Lookup(ids: manifest.ids),
             width: manifest.width, height: manifest.height, frames: frames,
-            windowScale: manifest.windowScale)
+            windowScale: manifest.windowScale, pid: manifest.pid)
     }
 
     /// 控えている世代が絵を出せるなら、そちらへ乗り換える。
@@ -519,7 +528,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         lastFrame = 0
         lastSeenFrame = 0
         shownCurrentGeneration = false
-        onGenerationPromoted?()
+        onGenerationPromoted?(waiting.pid)
     }
 
     /// 出す世代が頼む窓の大きさに合わせる (``Look/followsRequestedSize``)。プレビューなら、
@@ -611,8 +620,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // [#2928]: https://github.com/mokume-metal/mokume/issues/2928
         releaseInheritedRequests()
         switch failure {
-        case .cannotDecode: onGenerationUndeliverable?(.unreadableManifest)
-        case .cannotRead: onGenerationUndeliverable?(.unreadableFile)
+        case .cannotDecode: onGenerationUndeliverable?(.unreadableManifest, nil)
+        case .cannotRead: onGenerationUndeliverable?(.unreadableFile, nil)
         }
     }
 

@@ -497,7 +497,7 @@ struct SharedFrameStageTests {
             defer { stage.close() }
             stage.warn = { _ in }
             var told: [UndeliverableGeneration] = []
-            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.onGenerationUndeliverable = { cause, _ in told.append(cause) }
             stage.displayLinkFired()
             #expect(stage.hasSource)
             #expect(told.isEmpty, "読めた目録で知らせている: \(told)")
@@ -527,7 +527,7 @@ struct SharedFrameStageTests {
             var said: [String] = []
             stage.warn = { said.append($0) }
             var told: [UndeliverableGeneration] = []
-            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.onGenerationUndeliverable = { cause, _ in told.append(cause) }
             stage.displayLinkFired()
 
             try FileManager.default.removeItem(at: url)
@@ -557,7 +557,7 @@ struct SharedFrameStageTests {
             stage.open()
             stage.warn = { _ in }
             var told: [UndeliverableGeneration] = []
-            stage.onGenerationUndeliverable = { told.append($0) }
+            stage.onGenerationUndeliverable = { cause, _ in told.append(cause) }
             stage.displayLinkFired()
             #expect(stage.pointerLockRequested && stage.cursorHiddenRequested, "検査の前提: 前の世代が頼んでいる")
             let surface = try #require(stage.host as? SketchSurface)
@@ -605,6 +605,71 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 合図が名乗る子の番号 (#2982)
+
+    /// 目録を置き直す (書き手の番号を選ぶ)。`ids` は実在の面のもの。
+    private func place(manifest json: String, in facet: URL) throws {
+        let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+        try Data(json.utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+    }
+
+    /// **乗り換えの合図は、乗り換えた世代の目録が名乗った子の番号を添える** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 番号を名乗らない子 (古いライブラリ) は `nil`。
+    @Test("乗り換えの合図に、目録が名乗った子の番号が添う。名乗らない目録は nil")
+    func promotionCarriesTheWriterPid() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let first = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-promoted"))
+            defer { stage.close() }
+            var told: [Int32?] = []
+            stage.onGenerationPromoted = { told.append($0) }
+            stage.displayLinkFired()
+            // 子が自分の番号を目録へ置く (`publishManifest()`)
+            #expect(told == [ProcessInfo.processInfo.processIdentifier], "\(told)")
+
+            // 番号を書かない子へ入れ替わる
+            let silent = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+            try place(
+                manifest: #"{"schemaVersion":1,"ids":\#(silent.ids),"width":32,"height":32}"#, in: facet)
+            try draw(silent, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(told.count == 2 && told[1] == nil, "\(told)")
+            _ = first
+        }
+    }
+
+    @Test("受け取れない知らせに、読めた目録の子の番号が添い、読めない目録・名乗らない目録では nil")
+    func undeliverableCarriesTheWriterPid() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let shown = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-undeliverable"))
+            defer { stage.close() }
+            stage.open()
+            stage.warn = { _ in }
+            var told: [(UndeliverableGeneration, Int32?)] = []
+            stage.onGenerationUndeliverable = { told.append(($0, $1)) }
+            stage.displayLinkFired()
+
+            try place(
+                manifest: #"{"schemaVersion":1,"ids":[4000000000],"width":10,"height":10,"pid":4242}"#,
+                in: facet)
+            stage.displayLinkFired()
+            try place(
+                manifest: #"{"schemaVersion":1,"ids":[4000000001],"width":10,"height":10}"#, in: facet)
+            stage.displayLinkFired()
+            try place(manifest: #"{"schemaVersion":99,"ids":[1],"width":10,"height":10,"pid":7}"#, in: facet)
+            stage.displayLinkFired()
+
+            #expect(told.map(\.0) == [.noSurface, .noSurface, .unreadableManifest])
+            #expect(told.map(\.1) == [4242, nil, nil], "\(told.map(\.1))")
+            _ = shown
+        }
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が
@@ -620,7 +685,7 @@ struct SharedFrameStageTests {
             let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("overlap"))
             defer { stage.close() }
             var promotions = 0
-            stage.onGenerationPromoted = { promotions += 1 }
+            stage.onGenerationPromoted = { _ in promotions += 1 }
 
             stage.displayLinkFired()
             #expect(stage.hasSource, "最初の世代を出していない")
