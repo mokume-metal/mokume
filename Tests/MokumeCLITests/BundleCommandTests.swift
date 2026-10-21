@@ -348,6 +348,210 @@ struct BundleCommandTests {
         #expect(try readInfoPlist(of: app)[AppIdentity.bundledMarkKey] as? Bool == true)
     }
 
+    // MARK: - 退ける手順と、確かめる形 (#2500 の反証)
+
+    /// 他人の `.app` の形。`Contents/Info.plist` に mokume の印を入れた「自分の出力に見える」実体を、
+    /// `directory` の下の `named` に作る。
+    @discardableResult
+    private func makeMarkedApp(named: String = "Real.app", in directory: URL) throws -> URL {
+        let app = directory.appendingPathComponent(named, isDirectory: true)
+        let contents = app.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: [AppIdentity.bundledMarkKey: true, "CFBundleIdentifier": "x.y"],
+            format: .xml, options: 0)
+        try data.write(to: contents.appendingPathComponent("Info.plist"))
+        try "mine".write(
+            to: app.appendingPathComponent("keep.txt"), atomically: true, encoding: .utf8)
+        return app
+    }
+
+    /// 前の出力を消す途中で止まっても、`<name>.app` の場所に半端なものを残さない。消せないものを
+    /// 中に置いて「消す途中で止まる」を作る (`removeItem` が中で失敗する)。
+    @Test("前の出力を消し切れなくても、Grain.app は新しい出力だけになり、消し損ねは一時の名前に残る")
+    func aFailedRemovalLeavesNoHalfAppAtTheName() throws {
+        let root = try makeWorkspace()
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        let locked = app.appendingPathComponent("Contents/Resources/locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try "old".write(
+            to: locked.appendingPathComponent("old.txt"), atomically: true, encoding: .utf8)
+        chmod(locked.path, 0o555)  // 中の old.txt を消せない
+        defer {
+            // 退けた先 (一時の名前) の中も戻してから片付ける
+            if let entries = try? FileManager.default.contentsOfDirectory(atPath: out.path) {
+                for entry in entries {
+                    chmod(
+                        out.appendingPathComponent(entry)
+                            .appendingPathComponent("Contents/Resources/locked").path, 0o755)
+                }
+            }
+            chmod(locked.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let rebuilt = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+
+        #expect(rebuilt.path == app.path)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: rebuilt.appendingPathComponent("Contents/Resources/locked").path),
+            "前の出力の消し残りが Grain.app に残った")
+        #expect(try readInfoPlist(of: rebuilt)[AppIdentity.bundledMarkKey] as? Bool == true)
+        let names = try FileManager.default.contentsOfDirectory(atPath: out.path)
+        let remnants = names.filter { BundleCommand.isRetiredRemnant($0, name: "Grain") }
+        #expect(remnants.count == 1, "消し損ねが一時の名前に残っていない: \(names)")
+    }
+
+    @Test("消し損ねた一時の名前は、次の回に、その形のものだけ消える")
+    func onlyRemnantsOfTheRetiringShapeAreRemoved() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let uuid = UUID().uuidString
+        let mine = ".Grain.app.removing-\(uuid)"
+        // 消してはいけないもの: UUID でない・別の作品の名前・ふつうの隠しファイル
+        let others = [
+            ".Grain.app.removing-notauuid", ".Other.app.removing-\(uuid)", ".Grain.app",
+            "Grain.app.removing-\(uuid)",
+        ]
+        for name in [mine] + others {
+            let directory = out.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try "x".write(
+                to: directory.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+        }
+
+        _ = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+
+        #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent(mine).path))
+        for name in others {
+            #expect(
+                FileManager.default.fileExists(atPath: out.appendingPathComponent(name).path),
+                "\(name) が消えた")
+        }
+    }
+
+    @Test("rename で退けられなければ、黙らずに投げ、Grain.app は元のまま")
+    func aFailedRetireIsNotSilent() throws {
+        let root = try makeWorkspace()
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        let added = app.appendingPathComponent("added.txt")
+        try "x".write(to: added, atomically: true, encoding: .utf8)
+        chmod(out.path, 0o555)  // --out の中で名前を変えられない
+        defer {
+            chmod(out.path, 0o755)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        do {
+            _ = try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+            Issue.record("投げなかった")
+        } catch {
+            guard case .cannotCreate(let path, _) = error else {
+                Issue.record("cannotCreate で投げていない: \(error)")
+                return
+            }
+            #expect(path == app.path, "Grain.app を名指ししていない: \(path)")
+        }
+        #expect(FileManager.default.fileExists(atPath: added.path), "Grain.app が変わった")
+    }
+
+    @Test("生きたシンボリックリンクの Grain.app は、先が mokume の出力でも外さずに断る")
+    func aLiveSymlinkIsNotFollowedAndNotRemoved() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let target = try makeMarkedApp(in: root)
+        let link = out.appendingPathComponent("Grain.app")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        expectRefusal(at: link) {
+            _ = try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+        #expect(
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == target.path,
+            "リンクが外れた")
+        #expect(
+            FileManager.default.fileExists(atPath: target.appendingPathComponent("keep.txt").path))
+    }
+
+    @Test("壊れたシンボリックリンクの Grain.app も、消さずに断る")
+    func aDanglingSymlinkIsRefused() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let link = out.appendingPathComponent("Grain.app")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path, withDestinationPath: root.appendingPathComponent("no-such").path)
+
+        expectRefusal(at: link) {
+            _ = try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil)
+    }
+
+    /// 形が外れるもの (`Contents` や `Info.plist` がリンク・大きすぎる・普通のファイルでない) は、読まずに断る。
+    @Test(
+        "Contents や Info.plist の形が外れる Grain.app は、読まずに消さずに断る",
+        arguments: ["contentsLink", "plistLink", "plistHuge", "plistDirectory"])
+    func anAppOfTheWrongShapeIsRefused(shape: String) throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let other = try makeMarkedApp(named: "Other.app", in: root)  // 印のある本物の中身
+        let app = out.appendingPathComponent("Grain.app", isDirectory: true)
+        let contents = app.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        let keep = app.appendingPathComponent("keep.txt")
+        try "keep".write(to: keep, atomically: true, encoding: .utf8)
+        let realContents = other.appendingPathComponent("Contents")
+        switch shape {
+        case "contentsLink":
+            try FileManager.default.createSymbolicLink(at: contents, withDestinationURL: realContents)
+        case "plistLink":
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                at: contents.appendingPathComponent("Info.plist"),
+                withDestinationURL: realContents.appendingPathComponent("Info.plist"))
+        case "plistHuge":
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            // 印は入っているが、上限を越える大きさ
+            var data = try PropertyListSerialization.data(
+                fromPropertyList: [AppIdentity.bundledMarkKey: true], format: .xml, options: 0)
+            data.append(Data(repeating: 0x20, count: BundleCommand.infoPlistReadLimit + 1))
+            try data.write(to: contents.appendingPathComponent("Info.plist"))
+        default:
+            try FileManager.default.createDirectory(
+                at: contents.appendingPathComponent("Info.plist", isDirectory: true),
+                withIntermediateDirectories: true)
+        }
+
+        expectRefusal(at: app) {
+            _ = try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+        #expect(FileManager.default.fileExists(atPath: keep.path), "\(shape) で keep.txt が消えた")
+    }
+
     @Test("Info.plist が書く一覧に、mokume の印の鍵がある")
     func theInfoPlistCarriesTheMark() {
         let plist = grain.infoPlist(executable: "grain", minimumSystemVersion: "26.0")

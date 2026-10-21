@@ -186,7 +186,7 @@ enum BundleCommand {
         let programs = contents.appendingPathComponent("MacOS", isDirectory: true)
         let resources = contents.appendingPathComponent("Resources", isDirectory: true)
 
-        try? FileManager.default.removeItem(at: app)
+        try retire(app, in: out, name: identity.name)
         try create(programs)
         try create(resources)
 
@@ -240,10 +240,8 @@ enum BundleCommand {
                 reason: "It would not sit directly inside \(out.path), so nothing was removed"
                     + " or written. The name must not contain \"/\"")
         }
-        // 何も無い (壊れたシンボリックリンクは在るものとして数える — 消えるのはそのリンク自身)
-        guard (try? FileManager.default.attributesOfItem(atPath: app.path)) != nil else {
-            return app
-        }
+        // 何も無ければ消すものも無い。**シンボリックリンクは在るものとして数える** (壊れたものも)
+        guard kind(of: app) != nil else { return app }
         guard isOwnOutput(app, identity: identity) else {
             throw .cannotCreate(
                 path: app.path,
@@ -253,23 +251,80 @@ enum BundleCommand {
         return app
     }
 
+    /// `Info.plist` を読んでよい大きさの上限 (バイト)。他人の `.app` の中を、確かめるために読むので、
+    /// 読む前に大きさで断る (普通の `Info.plist` は数 KB)。
+    static let infoPlistReadLimit = 1_048_576
+
     /// 既にある `<name>.app` が、前の版の自分の出力と確かめられるか。
     ///
-    /// **`Info.plist` を読んで、2 つのどちらかを見る** (#2500)。1 つ目は mokume だけが書く印
+    /// **まず形を見る。** `<name>.app`・`Contents` は実体のディレクトリ、`Contents/Info.plist` は普通の
+    /// ファイルで ``infoPlistReadLimit`` 以下であること。**シンボリックリンクは、生きていても壊れていても
+    /// 確かめられない側に倒す** — リンクの先の `Info.plist` を読んで「自分のもの」と判定すると、利用者が
+    /// 張った別の場所の `.app` へのリンクを外してしまう (#2500)。形が外れるものは読まずに断る。
+    ///
+    /// **形が合えば `Info.plist` を読んで、2 つのどちらかを見る。** 1 つ目は mokume だけが書く印
     /// (``AppIdentity/bundledMarkKey``) で、識別子を変えた作り直しもこれで通る。2 つ目は
     /// この変更より前に束ねたもの (印が無い) のための、`CFBundleIdentifier` が今の名乗りと同じこと。
-    /// どちらでもなければ — ディレクトリでないもの・`Info.plist` が無い・読めないものも — 消さない。
+    /// どちらでもなければ消さない。
     ///
     /// **印が示すのは「mokume の出力」までである。** 別の作品が同じ `--out` に同じ名前で束ねた
     /// `.app` も作り直しの対象になる (名前の衝突として受け入れる)。
     static func isOwnOutput(_ app: URL, identity: AppIdentity) -> Bool {
-        let info = app.appendingPathComponent("Contents/Info.plist")
-        guard let data = try? Data(contentsOf: info),
+        let contents = app.appendingPathComponent("Contents", isDirectory: true)
+        let info = contents.appendingPathComponent("Info.plist")
+        guard kind(of: app) == .typeDirectory, kind(of: contents) == .typeDirectory,
+            kind(of: info) == .typeRegular,
+            let attributes = try? FileManager.default.attributesOfItem(atPath: info.path),
+            let size = (attributes[.size] as? NSNumber)?.intValue, size <= infoPlistReadLimit,
+            let data = try? Data(contentsOf: info),
             let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
                 as? [String: Any]
         else { return false }
         if plist[AppIdentity.bundledMarkKey] as? Bool == true { return true }
         return plist["CFBundleIdentifier"] as? String == identity.identifier
+    }
+
+    /// `url` 自身の種類。**リンクは辿らない** (`lstat`)。無ければ `nil`。
+    private static func kind(of url: URL) -> FileAttributeType? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return attributes?[.type] as? FileAttributeType
+    }
+
+    // MARK: - 前の出力を退ける
+
+    /// 前の出力を消す一時の名前の形 (`.<name>.app.removing-<UUID>`)。名前の前後を固定する。
+    private static func retiringPrefix(_ name: String) -> String { ".\(name).app.removing-" }
+
+    /// 消し損ねた一時の名前か。**消してよいのは、この名前のこの形のものだけ** (`<UUID>` が UUID として
+    /// 読めるもの)。ほかの `.` から始まるものや、ほかの作品の一時の名前には触れない。
+    static func isRetiredRemnant(_ fileName: String, name: String) -> Bool {
+        let prefix = retiringPrefix(name)
+        guard fileName.hasPrefix(prefix) else { return false }
+        return UUID(uuidString: String(fileName.dropFirst(prefix.count))) != nil
+    }
+
+    /// 前の `<name>.app` を退ける。**`<name>.app` の場所に半端なものを残さない** (#2500)。
+    ///
+    /// 直接消すと、途中で止まった (Ctrl-C・kill・消せないものがある) とき `Info.plist` だけが先に
+    /// 消えて他が残ることがあり、次の回に自分の出力と確かめられず断られる。だから `--out` の中の
+    /// 一時の名前へ**先に rename し** (同じ場所での rename は 1 手で、半端が出ない)、それから消す。
+    /// rename に失敗したら黙らずに投げる (`<name>.app` は元のまま)。一時の名前の中身を消し損ねても、
+    /// 新しい `<name>.app` は作れるので投げず、残ったものは次の回に ``isRetiredRemnant(_:name:)`` の形
+    /// のものだけ先に消す。
+    private static func retire(_ app: URL, in out: URL, name: String) throws(CommandFailure) {
+        let listing = (try? FileManager.default.contentsOfDirectory(atPath: out.path)) ?? []
+        for entry in listing where isRetiredRemnant(entry, name: name) {
+            try? FileManager.default.removeItem(at: out.appendingPathComponent(entry))
+        }
+        guard kind(of: app) != nil else { return }
+        let retiring = out.appendingPathComponent(
+            "\(retiringPrefix(name))\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.moveItem(at: app, to: retiring)
+        } catch {
+            throw .cannotCreate(path: app.path, reason: Diagnostics.failureText(error))
+        }
+        try? FileManager.default.removeItem(at: retiring)
     }
 
     /// 実行ファイルの隣に並んだ資材の包み。
