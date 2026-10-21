@@ -632,13 +632,27 @@ def check_sketch_coverage(
     見るのは基底名 (引数部を落とした名前) の字面で、列挙の case までは見ない。コメントは
     落としてから照合するが、**文字列の中に書いた名前は「呼ばれた」に数える** — 取り
     こぼすのは名前を文字列にだけ書いたときで、そこまでは追わない。
+
+    **関数のメンバ (引数部を持つもの) は、呼び出しの形 (`phase(`・末尾の閉包 `createShape {`) で書かれたときだけ数える**
+    (#3026)。名前の字面だけで見ると、同じ綴りの局所変数 (`let phase = …`) で通ってしまい、
+    どのスケッチも呼ばない `phase(period:)` が検査を抜けた。性質 (`time`・`width` のように
+    括弧を持たないもの) は呼び出しの形では書かれないので、字面で数える。同じ基底名に性質も
+    あるときも字面で数える (どちらの形でも書かれうる)。
     """
     code = re.sub(r"/\*.*?\*/", "", sources, flags=re.DOTALL)
     code = re.sub(r"//[^\n]*", "", code)
-    bases = {title(s).split("(")[0] for s in symbols if layer(s) == ENTRY_TYPE}
+    # 基底名 → 関数のメンバだけか (引数部を持たない宣言が 1 つでもあれば False)
+    bases: dict[str, bool] = {}
+    for member in symbols:
+        if layer(member) != ENTRY_TYPE:
+            continue
+        base = title(member).split("(")[0]
+        bases[base] = bases.get(base, True) and "(" in title(member)
     problems = []
-    for base in sorted(bases - unshown.keys()):
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])", code):
+    for base in sorted(bases.keys() - unshown.keys()):
+        # 呼び出しの形は `name(` と、末尾の閉包 (`createShape { … }`)
+        called = r"\s*[({]" if bases[base] else ""
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_]){called}", code):
             continue
         problems.append(
             f"{ENTRY_TYPE}.{base} が参照スケッチ (Sketches/) から呼ばれていない。"

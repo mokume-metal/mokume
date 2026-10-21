@@ -521,6 +521,44 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
         symbols = [symbol("encodeForDisplay()", owner="RenderTarget")]
         self.assertEqual(api.check_sketch_coverage(symbols, "", {}), [])
 
+    def test_関数のメンバは_局所変数の同じ綴りでは呼んだことにしない(self):
+        """`phase(period:)` は誰も呼ばないのに、`let phase = …` の局所変数で通っていた (#3026)。"""
+        symbols = [symbol("phase(period:)", owner="Sketch")]
+        for source in ["let phase = Float(index) / Float(count)", "var phase: Float = 0", "phase += 1"]:
+            with self.subTest(source=source):
+                problems = api.check_sketch_coverage(symbols, source, {})
+                self.assertEqual(len(problems), 1)
+                self.assertIn("Sketch.phase", problems[0])
+
+    def test_関数のメンバは_呼び出しの形で書かれたときに呼んだことにする(self):
+        symbols = [symbol("phase(period:)", owner="Sketch")]
+        for source in ["phase(period: 4)", "let x = phase(period: 4)", "let phase = 1\nlet y = phase(period: 2)"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
+
+    def test_末尾の閉包で呼ぶ関数のメンバは_呼んだことにする(self):
+        symbols = [symbol("createShape(_:)", owner="Sketch")]
+        for source in ["let s = createShape { box(11) }", "createShape{ box(11) }"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
+
+    def test_呼び出しの形でも_名前の一部だけでは呼んだことにしない(self):
+        symbols = [symbol("phase(period:)", owner="Sketch")]
+        for source in ["rephase(period: 4)", "_phase(period: 4)", "phased(period: 4)"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+
+    def test_性質のメンバは_いままでどおり字面で数える(self):
+        """括弧を持たない口 (`time`・`width`) は、呼び出しの形では書かれない。"""
+        symbols = [symbol("time", owner="Sketch", kind="swift.property")]
+        self.assertEqual(api.check_sketch_coverage(symbols, "let t = time", {}), [])
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "", {})), 1)
+
+    def test_同じ基底名に性質もあれば_字面で数える(self):
+        symbols = [symbol("count", owner="Sketch", kind="swift.property", precise="a"),
+                   symbol("count(of:)", owner="Sketch", precise="b")]
+        self.assertEqual(api.check_sketch_coverage(symbols, "let n = count", {}), [])
+
     def test_いまの参照スケッチを読める(self):
         # 置き場を取り違えると全部が「呼ばれていない」になる。読めていることだけを見る
         self.assertIn("catalogue", api.read_sketches(api.SKETCHES))
