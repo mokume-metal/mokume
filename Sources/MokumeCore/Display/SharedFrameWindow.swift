@@ -102,8 +102,13 @@ public final class SharedFrameWindow {
     /// 受け取れない世代の知らせ (``onGenerationUndeliverable``) は台が自分で気付くが、倒れた子・子の離脱・
     /// 合図の来ないまま次の保存が来た回は台を通らないので、道具が伝える。**畳む・居なくなったと決めた世代に
     /// ついてだけ呼ぶ** — 生きて書き続ける世代へ当たると、その世代は次の乗り換えまでカーソルを頼めない。
-    public func relinquishGeneration() {
-        stage.relinquishSource()
+    ///
+    /// - Parameter pids: 手放す世代の子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    ///   映っている世代の目録が名乗る番号と照合し、手放す世代でなければ当てない。まだ採っていない目録も、
+    ///   手放した番号のものは生まれたときから手放した扱いにする。番号を名乗らない世代 (古いライブラリ) は
+    ///   照合できないので手放す。
+    public func relinquishGeneration(pids: [Int32]) {
+        stage.relinquishSource(pids: pids)
     }
 
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。

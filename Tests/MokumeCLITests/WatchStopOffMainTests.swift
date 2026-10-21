@@ -177,7 +177,7 @@ struct WatchStopOffMainTests {
             stopTimeout: Self.stopTimeout)
         session.overlapsGenerations = true
         var told = 0
-        session.relinquishesDisplay = { told += 1 }
+        session.relinquishesDisplay = { _ in told += 1 }
         await session.start()
         stubborn.waitUntilReady()
         let first = try #require(session.child)

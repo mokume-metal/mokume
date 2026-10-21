@@ -406,9 +406,9 @@ enum WatchCommand {
         session.overlapsGenerations = true
         // **畳んだ・居なくなった世代の頼みを、両方の台で下ろす** (#2983)。台の知らせを通らない 3 つの口
         // (倒れた子・子の離脱・合図の来ないまま次の保存) から ``WatchSession`` が呼ぶ
-        session.relinquishesDisplay = { [weak window, weak preview] in
-            window?.relinquishGeneration()
-            preview?.relinquishGeneration()
+        session.relinquishesDisplay = { [weak window, weak preview] pids in
+            window?.relinquishGeneration(pids: pids)
+            preview?.relinquishGeneration(pids: pids)
         }
         // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
         //

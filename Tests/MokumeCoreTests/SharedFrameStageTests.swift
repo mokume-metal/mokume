@@ -593,7 +593,7 @@ struct SharedFrameStageTests {
             let surface = try #require(stage.host as? SketchSurface)
             #expect(surface.canvasWidth == 32)
 
-            stage.relinquishSource()
+            stage.relinquishSource(pids: [ProcessInfo.processInfo.processIdentifier])
             #expect(!stage.pointerLockRequested && !stage.cursorHiddenRequested, "手放した世代の頼みが残っている")
             #expect(stage.hasSource, "最後の絵を消した")
             #expect(surface.canvasWidth == 32, "入力の写しの寸法を変えた")
@@ -610,7 +610,8 @@ struct SharedFrameStageTests {
             #expect(stage.hasSource, "最後の絵を消した")
 
             // 新しい世代へ乗り換えれば、その世代の頼みには従う (手放したのは前の世代だけ)
-            let next = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            // (別の子の番号で。同じ番号の目録は、手放した世代のものとして扱われる)
+            let next = try publish(in: facet, gpu: gpu, pid: 300, frames: 0, pointerLock: false)
             try draw(next, frame: 1, gpu: gpu, pointerLock: true, cursorHidden: true)
             stage.displayLinkFired()
             #expect(
@@ -714,6 +715,91 @@ struct SharedFrameStageTests {
             #expect(told.map(\.0) == [.noSurface, .noSurface, .unreadableManifest])
             #expect(told.map(\.1) == [4242, nil, nil], "\(told.map(\.1))")
             _ = shown
+        }
+    }
+
+    // MARK: - 手放す世代を番号で指す (#2982・#2983)
+
+    /// 面を作り、目録を (番号つきで) 置く。`pid` が `nil` なら番号を書かない子 (古いライブラリ) の目録。
+    private func publish(
+        in facet: URL, gpu: RenderDevice, pid: Int32?, frames: Int, pointerLock: Bool
+    ) throws -> SharedFrameSurface {
+        let surface = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+        let pidField = pid.map { #","pid":\#($0)"# } ?? ""
+        try place(
+            manifest: #"{"schemaVersion":1,"ids":\#(surface.ids),"width":32,"height":32\#(pidField)}"#,
+            in: facet)
+        for frame in 0..<frames {
+            try draw(surface, frame: frame + 1, gpu: gpu, pointerLock: pointerLock)
+        }
+        return surface
+    }
+
+    /// **乗り換えを待つ子が 1 枚書いてすぐ死に、離脱の知らせが台の拍より先に来ても、台は死んだ子の頼みを読まない**
+    /// ([#2983] の反証 6)。伝えた時点では台はまだ死んだ子の目録を採っていないので、番号で指して、採った目録も
+    /// 生まれたときから手放した扱いにする。生きた別の世代の頼みには従う。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("手放した番号の世代の目録は、後から採っても頼みを読まない。別の番号の世代の頼みには従う")
+    func aRelinquishedPidIsBornReleased() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let shown = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: true)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-born-released"))
+            defer { stage.close() }
+            stage.open()
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested, "検査の前提: 映っている世代が頼んでいる")
+
+            // 離脱の知らせが先に来る: 死んだ子 (200) と畳まれる前の世代 (100) を手放す。台はまだ 200 の目録を採っていない
+            stage.relinquishSource(pids: [200, 100])
+            #expect(!stage.pointerLockRequested)
+
+            // 200 が 1 枚書いて死んでいた。台はそこへ乗り換えるが、頼みは読まない
+            let dead = try publish(in: facet, gpu: gpu, pid: 200, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(!stage.hasIncoming, "検査の前提: 死んだ子へ乗り換えた")
+            #expect(!stage.pointerLockRequested, "死んだ子の頼みを読んだ")
+            try draw(dead, frame: 2, gpu: gpu, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(!stage.pointerLockRequested)
+
+            // 別の番号の生きた世代へ乗り換えれば、その頼みには従う
+            let alive = try publish(in: facet, gpu: gpu, pid: 300, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested, "生きた別の世代の頼みに従わない")
+            _ = (shown, alive)
+        }
+    }
+
+    /// 映っている世代が名乗る番号が手放す世代でなければ、頼みを下ろさず読み続ける (映っている生きた世代に
+    /// 誤って当てない)。番号を名乗らない世代 (古いライブラリ) は、番号で照合できないので今までどおり下ろす。
+    @Test("手放す番号に映っている世代が無ければ頼みを下ろさず、番号を名乗らない世代は下ろす")
+    func relinquishingMatchesTheDisplayedGenerationByPid() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let live = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: true)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-match"))
+            defer { stage.close() }
+            stage.open()
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested)
+
+            stage.relinquishSource(pids: [999])
+            #expect(stage.pointerLockRequested, "映っている生きた世代の頼みを手放させた")
+            try draw(live, frame: 2, gpu: gpu, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested)
+
+            // 番号を名乗らない世代へ乗り換える
+            let legacy = try publish(in: facet, gpu: gpu, pid: nil, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested)
+            stage.relinquishSource(pids: [999])
+            #expect(!stage.pointerLockRequested, "番号を名乗らない世代を下ろさない")
+            try draw(legacy, frame: 2, gpu: gpu, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(!stage.pointerLockRequested)
         }
     }
 

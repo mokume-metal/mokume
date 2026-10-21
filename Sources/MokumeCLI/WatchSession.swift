@@ -284,7 +284,17 @@ final class WatchSession {
     /// ここから伝える — 倒れた子 (``retireAfterFallback()``)・子の離脱 (``departed()``)・乗り換えの合図が来ない
     /// まま次の保存が来て映っている世代を畳んだ回 (``rebuild``)。窓を出せた見張りだけが繋ぐ
     /// (``WatchCommand``)。**頼みを下ろすだけで、最後の絵も入力の宛先も変えない。**
-    var relinquishesDisplay: () -> Void = {}
+    ///
+    /// **引数は、手放す世代の子の番号である** (#2982)。台は、いま映している世代の目録が名乗る番号と照合し、
+    /// 手放す世代でなければ当てない (映っている生きた世代の頼みを手放させない)。まだ採っていない目録も、
+    /// 手放した番号のものは生まれたときから手放した扱いにする (離脱の知らせが台の拍より先に来ても、死んだ子へ
+    /// 乗り換えて頼みを読まない)。
+    var relinquishesDisplay: ([Int32]) -> Void = { _ in }
+
+    /// 世代の子の番号。居なければ空。
+    private func generationPIDs(of process: Process?) -> [Int32] {
+        process.map { [$0.processIdentifier] } ?? []
+    }
 
     /// 新しい絵が出るまでを測っている、差し替えを始めた時刻。**測らない回は `nil`。**
     ///
@@ -542,8 +552,9 @@ final class WatchSession {
         else { return nil }
         hasNamedDeparture = true
         // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
-        // 頼みを持ち続ける (#2983)
-        relinquishesDisplay()
+        // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
+        // 生まれたときから手放した扱いにする (#2982)。畳まれる前の世代の番号も添える
+        relinquishesDisplay([gone.processIdentifier] + generationPIDs(of: outgoing))
         switch ChildEnding(of: gone) {
         case .exited(let status): return Departure(status: status, wasSignalled: false)
         case .signalled(let signal): return Departure(status: signal, wasSignalled: true)
@@ -1035,10 +1046,11 @@ final class WatchSession {
             // `outgoing` が残るが、台は既に新しい子へ映している — そこで伝えると、生きて映っている世代の
             // 頼みを手放させる (#2983)
             let displayedGenerationRetired = outgoing != nil && awaitingPromotion
+            let retiredPIDs = generationPIDs(of: outgoing)
             await retireOutgoing()
             // **映っていた世代を、乗り換えの合図が来ないまま畳んだ回** — 台は畳まれた世代の頼みを持ち続け、
             // 読み直す契機も来ない (#2983)
-            if displayedGenerationRetired { relinquishesDisplay() }
+            if displayedGenerationRetired { relinquishesDisplay(retiredPIDs) }
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
@@ -1162,8 +1174,9 @@ final class WatchSession {
         try? FileManager.default.removeItem(at: marker)
         // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)。
         // **前の世代を止めた後に伝える** — 止める前に伝えると、止まるまでに書く 1 枚で台が読み直す
+        let letGo = [waiting.processIdentifier] + generationPIDs(of: outgoing)
         let result = await retireAsPromoted()
-        relinquishesDisplay()
+        relinquishesDisplay(letGo)
         return result
     }
 

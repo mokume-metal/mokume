@@ -442,7 +442,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         guard let surface = lookup.surface(newest.id) else { return }
         // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む。**手放した世代の面からは
         // 読まない** — 畳まれる世代の最後の数枚で頼みが戻る (#2983)
-        if relinquishedSourceIDs == nil || relinquishedSourceIDs != source?.ids {
+        if !isReleased(source) {
             pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
             cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
         }
@@ -519,6 +519,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
         source = waiting
         incoming = nil
+        // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)
+        if let pid = waiting.pid, relinquishedPIDs.contains(pid) {} else { relinquishedPIDs.removeAll() }
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
         followRequestedSize(of: waiting)
@@ -594,6 +596,18 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 頼みを手放した世代の面の番号。**その世代が出している間は、頼みを読まない。**
     /// 乗り換えれば番号が替わるので、新しい世代の頼みには従う。
     private var relinquishedSourceIDs: [UInt32]?
+    /// 見張りが手放した世代の子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// **まだ採っていない目録も、この番号を名乗れば生まれたときから手放した扱いにする** — 離脱の知らせが
+    /// 台の拍より先に来ると、台は死んだ子 (1 枚書いてすぐ死んだ) へ乗り換えてその頼みを読む。別の番号の
+    /// 世代へ乗り換えたら捨てる (番号の使い回しで、無関係な世代を手放したことにしない)。
+    private var relinquishedPIDs: Set<Int32> = []
+
+    /// この世代の頼みを読まないか。
+    private func isReleased(_ generation: Source?) -> Bool {
+        guard let generation else { return false }
+        if relinquishedSourceIDs == generation.ids { return true }
+        return generation.pid.map { relinquishedPIDs.contains($0) } ?? false
+    }
 
     /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを
     /// 次の乗り換えまで読まない。**
@@ -610,8 +624,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 決めた世代についてだけである。
     ///
     /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
-    func relinquishSource() {
-        releaseInheritedRequests()
+    ///
+    /// **`pids` は手放す世代の子の番号** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 映している世代の目録が番号を名乗れば、手放す世代のときだけ下ろす — 映っている生きた世代に誤って
+    /// 当てない。番号を名乗らない世代 (古いライブラリ) は照合できないので下ろす。まだ採っていない目録も、
+    /// 手放した番号のものは生まれたときから手放した扱いにする。
+    func relinquishSource(pids: [Int32]) {
+        relinquishedPIDs.formUnion(pids)
+        let matches = source?.pid.map { pids.contains($0) } ?? true
+        if matches { releaseInheritedRequests() }
     }
 
     // MARK: - 言うこと

@@ -1365,7 +1365,7 @@ struct WatchSessionTests {
         let session = try overlapping(ready: ready)
         defer { session.stopBlocking() }
         var told = 0
-        session.relinquishesDisplay = { told += 1 }
+        session.relinquishesDisplay = { _ in told += 1 }
         await session.start()
         ready.waitForLast()
         await session.tick()
@@ -1390,7 +1390,7 @@ struct WatchSessionTests {
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; exit 7", ready: ready))
         var told = 0
-        session.relinquishesDisplay = { told += 1 }
+        session.relinquishesDisplay = { _ in told += 1 }
         await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
@@ -1408,7 +1408,7 @@ struct WatchSessionTests {
         let session = try overlapping(ready: ready)
         defer { session.stopBlocking() }
         var told = 0
-        session.relinquishesDisplay = { told += 1 }
+        session.relinquishesDisplay = { _ in told += 1 }
         await session.start()
         ready.waitForLast()
         let shown = try #require(session.child)
@@ -1443,7 +1443,7 @@ struct WatchSessionTests {
         ready.waitForLast()
         let arriving = try #require(session.child)
         var runningWhenTold: [Bool] = []
-        session.relinquishesDisplay = { runningWhenTold.append(leaving.isRunning) }
+        session.relinquishesDisplay = { _ in runningWhenTold.append(leaving.isRunning) }
         _ = try placeFellBackMarker(of: arriving, for: session)
         #expect(await session.retireAfterFallback() != nil)
         #expect(runningWhenTold == [false], "前の世代を止める前に台へ伝えた: \(runningWhenTold)")
@@ -1460,10 +1460,65 @@ struct WatchSessionTests {
         await session.tick()
         ready.waitForLast()
         var runningWhenTold: [Bool] = []
-        session.relinquishesDisplay = { runningWhenTold.append(shown.isRunning) }
+        session.relinquishesDisplay = { _ in runningWhenTold.append(shown.isRunning) }
         await session.tick()
         ready.waitForLast()
         #expect(runningWhenTold == [false], "映っていた世代を止める前に台へ伝えた: \(runningWhenTold)")
+    }
+
+    /// **手放す世代は番号で指す** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。台が、映っている
+    /// 生きた世代に当てず、まだ採っていない死んだ子の目録も手放した扱いにするために。
+    @Test("台へ伝える番号は、倒れた子・離脱・次の保存の 3 つの口で、手放す世代のものである")
+    func theDisplayIsToldWhichGenerationsAreLetGo() async throws {
+        // 倒れた子: 倒れた子と、畳む前の世代
+        do {
+            let ready = Ready()
+            let session = try overlapping(ready: ready)
+            defer { session.stopBlocking() }
+            await session.start()
+            ready.waitForLast()
+            let leaving = try #require(session.child)
+            await session.tick()
+            ready.waitForLast()
+            let arriving = try #require(session.child)
+            var told: [[Int32]] = []
+            session.relinquishesDisplay = { told.append($0) }
+            _ = try placeFellBackMarker(of: arriving, for: session)
+            #expect(await session.retireAfterFallback() != nil)
+            #expect(
+                told == [[arriving.processIdentifier, leaving.processIdentifier]], "倒れた子: \(told)")
+        }
+        // 次の保存: 畳んだ映っていた世代
+        do {
+            let ready = Ready()
+            let session = try overlapping(ready: ready)
+            defer { session.stopBlocking() }
+            await session.start()
+            ready.waitForLast()
+            let shown = try #require(session.child)
+            await session.tick()
+            ready.waitForLast()
+            var told: [[Int32]] = []
+            session.relinquishesDisplay = { told.append($0) }
+            await session.tick()
+            ready.waitForLast()
+            #expect(told == [[shown.processIdentifier]], "次の保存: \(told)")
+        }
+        // 離脱: 消えた子と、畳む前の世代
+        do {
+            let ready = Ready()
+            let session = WatchSession(
+                directory: try makeDirectory(), context: testContext(),
+                hooks: hooks(running: "echo ready; exit 7", ready: ready))
+            var told: [[Int32]] = []
+            session.relinquishesDisplay = { told.append($0) }
+            await session.start()
+            let child = try #require(session.child)
+            ready.waitForLast()
+            waitUntilGone(child)
+            #expect(session.departed() != nil)
+            #expect(told == [[child.processIdentifier]], "離脱: \(told)")
+        }
     }
 
     // MARK: - 道具の窓が受け取れない世代 (#2928)
