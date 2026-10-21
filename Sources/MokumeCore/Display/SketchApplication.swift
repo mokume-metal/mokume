@@ -389,7 +389,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         gpu.rebuildsShadersInBackground = render == nil
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
-            displays: displays, onScreen: render == nil)
+            displays: displays, onScreen: render == nil, opensFacets: render == nil)
         self.clock = runtime.clock
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }

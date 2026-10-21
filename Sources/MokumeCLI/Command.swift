@@ -104,7 +104,15 @@ enum Command {
             case .watch:
                 (
                     "watch [<directory>] [-c <configuration>] [--scratch-path <directory>]",
-                    "Rebuild the sketch and swap it in whenever you save"
+                    """
+                    Rebuild the sketch and swap it in whenever you save.
+                    What it watches: Package.swift, every .swift under Sources/, and the regular files
+                    under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
+                    fragment is not rebuilt: it swaps in while the sketch keeps running.
+                    A change anywhere else does not rebuild — resources Package.swift declares outside
+                    assets/ (.process("Resources"), .copy("data.json"), a changed path:), Package.resolved,
+                    a dependency given by path (--local). Stop watch and start it again after those
+                    """
                 )
             case .render:
                 (

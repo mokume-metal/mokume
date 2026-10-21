@@ -69,8 +69,18 @@ base="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main"
 BODY
 } > "$body"
 
+# 同じ落ち方の鍵。出力の頭にある全体の本数・版数 (「外部資産の指し先: N 本」など) と、ホストごとの
+# 内訳の分母は、日次の版や新しい絵で動く。**入れると同じ指し先が切れたままでも毎回「違う」になる**ので、
+# 引けなかった指し先と出所の節 (指し先・理由・出所) だけを取る。節が取れなかったとき (出力の形が
+# 変わった) は出力の全体にする — 毎回違うほうに倒れ、黙らない
+key=$(mktemp)
+trap 'rm -f "$body" "$key"' EXIT
+awk '/^引けなかった指し先と出所:/ { on = 1; next } on && /^$/ { exit } on { print }' "$LOG" > "$key"
+[ -s "$key" ] || cp "$LOG" "$key"
+
 bash "$(dirname "${BASH_SOURCE[0]}")/report-check-failure.sh" \
   --title "$TITLE" \
   --log "$LOG" \
   --body-file "$body" \
+  --key-file "$key" \
   --source '.github/workflows/publication.yml が自動起票した (#1295)'

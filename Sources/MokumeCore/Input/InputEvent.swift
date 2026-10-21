@@ -57,9 +57,13 @@ struct RawInputEvent: Decodable {
     let characters: String?
     let isRepeat: Bool?
 
-    private enum CodingKeys: String, CodingKey {
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case type, x, y, button, dx, dy, code, characters, isRepeat
     }
+
+    /// 読む鍵 (宣言順)。スキーマ (`input-request.schema.json`) の出来事の `properties` と同じ集合で、
+    /// 知らない鍵の名乗りが並べる。一致は検査が見る ([#2843](https://github.com/mokume-metal/mokume/issues/2843))。
+    static var readKeys: [String] { UnknownKeys.readKeys(CodingKeys.self) }
 
     /// 線の番号を釦にする。**番号を型へ絞る関所は、ここと窓 (`SketchSurface`) の 2 つだけ。**
     ///

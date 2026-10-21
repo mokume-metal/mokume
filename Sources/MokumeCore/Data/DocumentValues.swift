@@ -17,12 +17,31 @@ enum DocumentValues {
         case notANumber(key: String)
         /// JSON のキーの値が、オブジェクトでない。
         case notAnObject(key: String)
+        /// JSON のキーの値が、文字でない。
+        case notAString(key: String)
+        /// JSON のキーの値が、整数の値として読めない (整数でない数・`Int` に収まらない数・数でない値)。
+        case notAnInteger(key: String)
+        /// JSON のキーの値が、真偽でない。
+        case notABoolean(key: String)
+        /// JSON のキーの値が、配列でない。
+        case notAnArray(key: String)
+        /// JSON の配列から、範囲の外の番号か種類の違う要素を取り出した。**番号ごとではなく、口の
+        /// 名前と事情の組ごと**に 1 度だけ言う (番号で数えると、配列の大きさだけ控えが増える)。
+        case arrayElement(call: String, problem: ArrayProblem)
         /// XML の要素に、その名前の属性が無い。
         case noAttribute(element: String, name: String)
         /// XML の属性の値が、数として読めない。
         case attributeNotANumber(element: String, name: String)
         /// XML の要素に子があるのに、その名前の子が 1 つも無い。
         case noChild(element: String, name: String)
+    }
+
+    /// 配列の要素の取り出しで起きる事情。
+    enum ArrayProblem: Hashable {
+        /// 番号が、配列の範囲の外。
+        case outOfRange
+        /// 要素の種類が、読もうとした種類と違う。
+        case wrongKind
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。

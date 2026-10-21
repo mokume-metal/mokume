@@ -138,6 +138,18 @@ nonisolated final class ListenerStatus: Sendable {
         }
     }
 
+    /// 空の datagram で送り元の流れが閉じたことを、診断に 1 行出す (#2363)。同じ送り元に 2 度言わないのは、
+    /// 呼ぶ側 (``DatagramListener``) が覚えている。
+    ///
+    /// 何が落ちたかは分からない (空の直後に同じ送り元から届いたものを、Network.framework は黙って捨てうる)
+    /// ので、「落ちたかもしれない」と言う。名乗る受け口の名は、作る口が付ける名 (`udp :6000`・`osc :9000`) と同じ綴り。
+    func tellEmptyClosed(from sender: String) {
+        warn(
+            "\(label.lowercased()) :\(boundPort ?? port): an empty datagram from \(sender) closed "
+                + "its flow, so datagrams that arrived from the same sender right after it (within "
+                + "about 1 ms) may have been dropped. Said once per sender")
+    }
+
     private func tellOnce(_ key: String, _ message: String) {
         let first = told.withLock { $0.insert(key).inserted }
         if first { warn(message) }
@@ -212,6 +224,9 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, EventT
                 let decoded = decode(bytes)
                 for message in decoded.messages { queue.send(message, hostTime: hostTime) }
                 queue.discardUnreadable(decoded.unreadable)
+            },
+            closedByEmpty: { [status] sender in
+                status.tellEmptyClosed(from: sender)
             },
             changed: { [status] event in
                 status.apply(event, to: queue)
