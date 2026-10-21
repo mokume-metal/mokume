@@ -126,7 +126,7 @@ public class TextPort: Inlet {
     /// 止める。ポートを閉じ、以後 ``messages`` は空のままで、送っても何も出ない。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
-    /// 外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと何もせず、`TCPServer.stop()` のように型を付けた名前で 1 度だけ警告する。
+    /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`TCPServer.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
         owner?.detach(self, calledAs: "\(type(of: self)).stop()")
     }

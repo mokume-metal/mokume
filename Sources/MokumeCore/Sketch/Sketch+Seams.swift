@@ -152,6 +152,11 @@ extension SketchPart {
     /// 居なければ何もしない。``Inlet/supply()`` の中から頼んだときは、その巡回が終わって
     /// から外す。
     ///
+    /// **走っている実行の中で起こした `Task` の続きからも外せる** (`Task.detached` からも)。足した実行を
+    /// 差込口が控えているので、実行が走っている間は、呼んだ場所によらず外れる。`setup()`・`draw()`・
+    /// 入力のコールバックの外でも効くのは、**足した実行が走っている間だけ**である。足していない入り口と、
+    /// スケッチが終わった後 (終わりの処理が既に閉じている) は何もせず、そのことを診断に出す。
+    ///
     /// 下の例は、呼ばれた回数を数える入り口を `setup()` で足し、30 フレーム目の `draw()` で
     /// 外している。上の灰色の棒はフレームの数、下の棒は入り口が数えた回数で、閉じた入り口は
     /// 色を変える。
@@ -191,7 +196,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=4e5e0378
     public func detach(_ inlet: any Inlet) {
-        guard let runtime = runningSketch else {
+        guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
             return OutsideRun.log.warn(.detach)
         }
         runtime.detach(inlet)
@@ -245,7 +250,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=751061ce
     public func detach(_ outlet: any Outlet) {
-        guard let runtime = runningSketch else {
+        guard let runtime = SeamHomes.runtime(of: outlet) ?? runningSketch else {
             return OutsideRun.log.warn(.detach)
         }
         runtime.detach(outlet)
@@ -302,7 +307,8 @@ extension SketchPart {
     /// 入り口を、走っている実行から外す (止める口 `stop()`)。外から呼ばれたら、利用者が呼んでいない `detach()` ではなく
     /// `call` の名前で 1 度だけ警告し、何もしない ([#2793])。
     ///
-    /// 外で断ること自体は ``detach(_:)-(Inlet)`` と同じ約束で、変わるのは名乗りだけである。`call` は型を付けた口の名前
+    /// 走っている実行が足した入り口なら、`Task` の中からでも外れる (``detach(_:)-(Inlet)`` と同じ)。外で断るのは、足していない入り口と
+    /// 後片付けの後だけで、変わるのは名乗りだけである。`call` は型を付けた口の名前
     /// (`AudioIn.stop()` など)。型を付けるのは、``OutsideRun`` が口の名前ごとに 1 度だけ言うので、`Task` の中で
     /// `mic.stop(); camera.stop()` と続けて呼んだとき、先に言った型が後の型を黙らせないためである
     /// (`Countdown.restart()` と同じ)。警告は「何もしなかった」と言う (``OutsideRun/Use/act``) ので、呼んだ場所が `Task` の中でも、
@@ -310,7 +316,7 @@ extension SketchPart {
     ///
     /// [#2793]: https://github.com/mokume-metal/mokume/issues/2793
     package func detach(_ inlet: any Inlet, calledAs call: String) {
-        guard let runtime = runningSketch else {
+        guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
             return OutsideRun.log.warn(call, .act)
         }
         runtime.detach(inlet)
