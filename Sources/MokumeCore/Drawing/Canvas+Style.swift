@@ -576,6 +576,26 @@ extension Canvas {
     /// 線の折れ目の形。
     public func strokeJoin(_ join: StrokeJoin) { style.strokeJoin = join }
 
+    public func strokeDash(_ length: some ScalarConvertible, _ gap: some ScalarConvertible) {
+        let (length, gap) = (length.asFloat, gap.asFloat)
+        // 負の値・数でない値・無限・両方 0 は、破線を置かず実線へ戻して 1 度知らせる (#2835)。
+        // `>=` は NaN も弾く。足して溢れる周期も、刻めないので同じに扱う
+        guard length >= 0, gap >= 0, length.isFinite, gap.isFinite, (length + gap).isFinite,
+            length + gap > 0
+        else {
+            warnOnce(
+                .badStrokeDash,
+                "strokeDash(): the length and the gap take finite values of 0 or more (not both "
+                    + "0), but \(length) and \(gap) were passed, so the line was drawn solid")
+            style.strokeDash = nil
+            return
+        }
+        // 間隔が 0 なら途切れない。実線と同じ指定なので、刻まない
+        style.strokeDash = gap == 0 ? nil : StrokeDash(length: length, gap: gap)
+    }
+
+    public func noStrokeDash() { style.strokeDash = nil }
+
     /// 矩形に渡す座標の読み方。
     public func rectMode(_ mode: ShapeMode) { style.rectMode = mode }
 

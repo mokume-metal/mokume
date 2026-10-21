@@ -686,6 +686,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "strokeWeight": DRAWING_STYLE,
     "strokeCap": DRAWING_STYLE,
     "strokeJoin": DRAWING_STYLE,
+    "strokeDash": DRAWING_STYLE,
+    "noStrokeDash": DRAWING_STYLE,
     "blendMode": DRAWING_STYLE,
     "rectMode": DRAWING_STYLE,
     "ellipseMode": DRAWING_STYLE,
