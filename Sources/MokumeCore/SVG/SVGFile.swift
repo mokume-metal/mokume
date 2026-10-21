@@ -1145,10 +1145,11 @@ nonisolated enum SVGFile {
     }
 
     /// `preserveAspectRatio` の値を読む。文法は `[defer] <align> [meet | slice]` で、`<align>` は `none` か
-    /// `x{Min,Mid,Max}Y{Min,Mid,Max}`。大文字と小文字は区別しない。**読めなければ `nil`** (未知の語・余分な語・
-    /// `defer` だけ・空) — 呼ぶ側が名乗り、書いていないものとして読む (#2649)。
+    /// `x{Min,Mid,Max}Y{Min,Mid,Max}`。**大文字と小文字は区別する** (SVG の属性の値で、CSS の性質の値
+    /// とは違う。`XMINYMID` は読めない値) (#2729)。**読めなければ `nil`** (未知の語・余分な語・
+    /// `defer` だけ・空・綴りの大文字小文字が違う語) — 呼ぶ側が名乗り、書いていないものとして読む (#2649)。
     static func parseAspectRatio(_ text: String) -> AspectRatio? {
-        var words = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        var words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         if words.first == "defer" { words.removeFirst() }
         guard let first = words.first, words.count <= 2 else { return nil }
         let slices: Bool
@@ -1160,14 +1161,14 @@ nonisolated enum SVGFile {
         if first == "none" { return AspectRatio(align: nil, slices: slices) }
         func edge(_ word: Substring) -> AspectRatio.Edge? {
             switch word {
-            case "min": .min
-            case "mid": .mid
-            case "max": .max
+            case "Min": .min
+            case "Mid": .mid
+            case "Max": .max
             default: nil
             }
         }
-        // `xMidYMax` は 8 文字で、`x` + 3 文字 + `y` + 3 文字
-        guard first.count == 8, first.hasPrefix("x"), first.dropFirst(4).hasPrefix("y"),
+        // `xMidYMax` は 8 文字で、`x` + 3 文字 + `Y` + 3 文字
+        guard first.count == 8, first.hasPrefix("x"), first.dropFirst(4).hasPrefix("Y"),
             let x = edge(first.dropFirst().prefix(3)), let y = edge(first.dropFirst(5))
         else { return nil }
         return AspectRatio(align: (x, y), slices: slices)

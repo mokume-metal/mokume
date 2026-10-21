@@ -213,7 +213,8 @@ extension SketchPart {
     ///   どれも、捨てたものとして知らせる
     /// - 入れ物: `g`・`a`・入れ子の `svg`・`switch` (拡張を求めない最初の子)。`transform`
     ///   (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)・`viewBox`・
-    ///   `preserveAspectRatio` が効く
+    ///   `preserveAspectRatio` が効く (`preserveAspectRatio` の値は SVG のとおり大文字小文字を区別し、
+    ///   `XMINYMID` のような綴りは読めない値として知らせ、書いていないとき (`xMidYMid meet`) と同じに写す)
     /// - 塗りと線: 色 (`#rgb` / `#rrggbb` と不透明度つきの形・`rgb()` / `rgba()`・名前の色・
     ///   `currentColor`)・`fill-opacity` / `stroke-opacity` / `opacity`・`stroke-width`・
     ///   `stroke-linecap`・`stroke-linejoin`・`fill-rule`

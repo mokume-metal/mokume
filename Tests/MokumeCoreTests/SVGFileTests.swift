@@ -1277,6 +1277,15 @@ struct SVGFileTests {
             ("xMidYMin2", #"preserveAspectRatio "xMidYMin2""#),
             ("defer", #"preserveAspectRatio "defer""#),
             ("", #"preserveAspectRatio """#),
+            // 綴りの大文字小文字は SVG の属性の値として区別する (#2729)
+            ("XMINYMID meet", #"preserveAspectRatio "XMINYMID meet""#),
+            ("xminymid", #"preserveAspectRatio "xminymid""#),
+            ("XMidYMid", #"preserveAspectRatio "XMidYMid""#),
+            ("xmidymid", #"preserveAspectRatio "xmidymid""#),
+            ("xMidYMid MEET", #"preserveAspectRatio "xMidYMid MEET""#),
+            ("xMinYMin Slice", #"preserveAspectRatio "xMinYMin Slice""#),
+            ("DEFER xMidYMid", #"preserveAspectRatio "DEFER xMidYMid""#),
+            ("None", #"preserveAspectRatio "None""#),
         ])
     func unreadableAspectRatioIsNamedAndCentred(_ sample: (String, String)) throws {
         let (drawing, corners) = try aspectCorners(sample.0)
@@ -1297,7 +1306,6 @@ struct SVGFileTests {
             ("xMinYMin slice", [SIMD2(0, 0), SIMD2(100, 100)]),
             ("xMidYMid slice", [SIMD2(0, -25), SIMD2(100, 75)]),
             ("xMaxYMax", [SIMD2(50, 0), SIMD2(100, 50)]),
-            ("XMINYMID meet", [SIMD2(0, 0), SIMD2(50, 50)]),
             ("defer xMaxYMin meet", [SIMD2(50, 0), SIMD2(100, 50)]),
         ])
     func readableAspectRatioIsUnchanged(_ sample: (String, [SIMD2<Float>])) throws {
@@ -1306,13 +1314,33 @@ struct SVGFileTests {
         #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
     }
 
-    @Test("入れ子の svg の preserveAspectRatio の読めない値も、中央寄せで写して名乗る (#2649)")
-    func unreadableNestedAspectRatioIsNamed() throws {
+    @Test(
+        "入れ子の svg の preserveAspectRatio の読めない値も、中央寄せで写して名乗る。大文字の綴りも同じ (#2649・#2729)",
+        arguments: ["foo", "XMINYMID meet"])
+    func unreadableNestedAspectRatioIsNamed(_ written: String) throws {
         let drawing = try document(
-            #"<svg viewBox="0 0 10 10" width="100" height="50" preserveAspectRatio="foo"><rect width="1" height="1"/></svg>"#,
+            #"<svg viewBox="0 0 10 10" width="100" height="50" preserveAspectRatio="\#(written)"><rect width="1" height="1"/></svg>"#,
             root: #"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">"#)
         #expect(drawing.items[0].transform.apply(.zero) == SIMD2(25, 0))
-        #expect(drawing.skipped.map(\.what) == [#"preserveAspectRatio "foo""#], "\(drawing.skipped)")
+        #expect(drawing.skipped.map(\.what) == [#"preserveAspectRatio "\#(written)""#], "\(drawing.skipped)")
+    }
+
+    /// 大文字小文字を区別するのは `preserveAspectRatio` の値だけ ([#2729])。CSS の文法で読む値 (CSS の性質の値・
+    /// 単位・`transform` の関数名) は、今までどおり区別せず読み、名乗らない。
+    ///
+    /// [#2729]: https://github.com/mokume-metal/mokume/issues/2729
+    @Test(
+        "CSS の性質の値・単位・transform の関数名の大文字は今までどおり読み、名乗らない (#2729 の陰性対照)",
+        arguments: [
+            #"<rect width="10" height="10" fill="RED" stroke="BLACK" stroke-linecap="ROUND"/>"#,
+            #"<rect width="10" height="10" style="FILL: Red; STROKE-LINEJOIN: BEVEL"/>"#,
+            #"<rect width="10PX" height="10Px"/>"#,
+            #"<rect width="10" height="10" transform="TRANSLATE(5)"/>"#,
+        ])
+    func uppercaseCSSValuesAreStillRead(_ body: String) throws {
+        let drawing = try document(body)
+        #expect(drawing.skipped.isEmpty, "\(body): \(drawing.skipped)")
+        #expect(drawing.items.count == 1)
     }
 
     /// `stroke-dasharray` の読めない値と負の値は SVG では宣言ごと無効で、破線にならない。「破線あり」に倒して
