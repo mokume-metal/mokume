@@ -537,7 +537,7 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
                 self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
 
     def test_末尾の閉包で呼ぶ関数のメンバは_呼んだことにする(self):
-        symbols = [symbol("createShape(_:)", owner="Sketch")]
+        symbols = [symbol("createShape(_:)", owner="Sketch", parameters=["() -> Void"])]
         for source in ["let s = createShape { box(11) }", "createShape{ box(11) }"]:
             with self.subTest(source=source):
                 self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
@@ -558,6 +558,70 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
         symbols = [symbol("count", owner="Sketch", kind="swift.property", precise="a"),
                    symbol("count(of:)", owner="Sketch", precise="b")]
         self.assertEqual(api.check_sketch_coverage(symbols, "let n = count", {}), [])
+
+    # ---- 反証の指摘 (#3026) ----
+
+    def test_受け手つきの別の型の呼び出しは_数えない(self):
+        """`canvas.requestModel(` は `Canvas` の口で、`Sketch.requestModel` の呼び出しではない。"""
+        symbols = [symbol("requestModel(_:)", owner="Sketch")]
+        for source in ["Task { try await canvas.requestModel(path) }", "surface.requestModel(path)",
+                       "a.b.requestModel(path)", "(canvas).requestModel(path)"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+        for source in ["requestModel(path)", "self.requestModel(path)", "let m = try await requestModel(path)",
+                       "sketch.requestModel(path)", "{ $0.requestModel(path) }"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
+
+    def test_末尾の閉包の波括弧は_最後の引数が閉包の口だけが受ける(self):
+        closure = [symbol("withScope(_:)", owner="Sketch", parameters=["() -> Void"])]
+        self.assertEqual(api.check_sketch_coverage(closure, "withScope { box(1) }", {}), [])
+        plain = [symbol("phase(period:)", owner="Sketch", parameters=["Float"])]
+        for source in ["if phase {", "switch phase {", "while phase {", "for i in 0..<phase {",
+                       "guard phase else { return }", "let x = phase { 1 }"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(plain, source, {})), 1)
+        self.assertEqual(api.check_sketch_coverage(plain, "phase(period: 4)", {}), [])
+
+    def test_宣言_文字列_列挙子は_呼び出しに数えない(self):
+        symbols = [symbol("phase(period:)", owner="Sketch", parameters=["Float"])]
+        for source in ["func phase(period: Float) -> Float { 0 }", 'let name = "phase(period:)"',
+                       "let d = Direction.phase(period: 2)", "case .phase(let p): break",
+                       "// phase(period: 4)\nlet note = \"\"\"\nphase(period: 4)\n\"\"\""]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+        # 文字列補間の中はコード
+        self.assertEqual(api.check_sketch_coverage(symbols, 'let s = "\\(phase(period: 2))"', {}), [])
+
+    def test_作者が書くコールバックは_宣言で数える(self):
+        """`draw()` は作者が `func draw()` と書く口で、スケッチは呼ばない。プロトコルの要件か既定の実装。"""
+        symbols = [symbol("draw()", owner="Sketch")]
+        requirements = {"s:Sketchdraw()"}
+        self.assertEqual(api.check_sketch_coverage(symbols, "override func draw() {}", {}, requirements), [])
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "let d = draw()", {}, requirements)), 1)
+        # 性質の要件 (`var settings: …`) と初期化子 (`init(`) も、宣言で数える
+        props = [symbol("settings", owner="Sketch", kind="swift.property"), symbol("init()", owner="Sketch")]
+        required = {"s:Sketchsettings", "s:Sketchinit()"}
+        self.assertEqual(api.check_sketch_coverage(
+            props, "var settings: SketchSettings { .init() }\nrequired init() { super.init() }", {}, required), [])
+        self.assertEqual(len(api.check_sketch_coverage(props, "let s = settings\nsuper.init()", {}, required)), 2)
+        # 要件でない関数は、宣言だけでは数えない (呼ばれていない)
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "func draw() {}", {})), 1)
+
+    def test_関数を値として渡す形は_数えない(self):
+        """代償: `values.map(phase)` は呼び出しの形ではない。示したいなら `phase(period: …)` と呼ぶ。"""
+        symbols = [symbol("phase(period:)", owner="Sketch", parameters=["Float"])]
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "values.map(phase)", {})), 1)
+
+    def test_性質は_宣言の左辺とラベルと受け手つきでは数えない(self):
+        symbols = [symbol("time", owner="Sketch", kind="swift.property")]
+        for source in ["let time = 1", "var time: Float = 0", "for time in 0..<3 {}", "case time",
+                       "draw(time: 3)", "(time: 1)", "canvas.time", "other.time * 2"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+        for source in ["let x = time * 2", "self.time", "sin(time)", 'let s = "\\(time)"', "a ? time : b"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
 
     def test_いまの参照スケッチを読める(self):
         # 置き場を取り違えると全部が「呼ばれていない」になる。読めていることだけを見る
