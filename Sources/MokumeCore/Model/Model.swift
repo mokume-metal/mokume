@@ -39,6 +39,11 @@ public struct Model: Equatable, Sendable {
     /// 読めない角として同じに数える。向き (`vn`) の行も 3 つの数までで、4 つ目以降があれば
     /// 読めない行として数える (`v` の 4 つ目と `vt` の 3 つ目は仕様にある欄なので読み捨てる)。
     ///
+    /// **この数は、意図して読まない行 (`mtllib`・`usemtl`・`o`・`g`・`s`) も含む。** 壊れたもの (読めない
+    /// `v`・`vn`・`vt`・`f` の行・OBJ の仕様に無い語の行・STL の読み飛ばした面) は、数えるだけでなく、
+    /// 読み込んだときにファイルにつき 1 度、何を・何回・最初の行で診断に出す (SVG の読み込みと同じ形。
+    /// 意図して読まない行だけなら出ない)。この数の意味と値は、知らせの有無に依らない。
+    ///
     /// STL は、座標が数でない面のほか、Model I/O が返した形のうち面にならなかった要素 (位置を
     /// 持たない mesh・submesh を持たない mesh・三角形でない submesh を 1 つずつ、3 つに満たない
     /// 余りの番号を submesh ごとに 1 つ) も数える。後者は実ファイルの STL では起きず、
@@ -60,6 +65,9 @@ public struct Model: Equatable, Sendable {
     /// 指すなら 3)。`vt`・`vn` の読めない行を指す角は、その角に書いていないのと同じに読み、
     /// 面は描いて足さない。
     public let skippedLines: Int
+    /// 読み飛ばしたもののうち、**壊れたもの**の種類ごとの数 (#2565)。読み込んだときの知らせの材料
+    /// (``Canvas/loadModel(_:normalize:)``)。
+    let malformed: [ModelFile.Malformed]
     /// 囲みの箱の大きさ。整えたあとの値。
     public let size: Vector3
     /// 囲みの箱の中心。整えていれば原点。
@@ -88,12 +96,13 @@ public struct Model: Equatable, Sendable {
     /// **番号は受け取らない** — 作るたびに ``nextIdentity()`` から取る。外から番号を渡せると、
     /// 「別々に読んだモデルは違う番号を持つ」を呼ぶ側が守る約束になってしまう (#1846)。
     nonisolated private init(
-        name: String, mesh: SolidMesh, skippedLines: Int, size: SIMD3<Float>,
-        center: SIMD3<Float>
+        name: String, mesh: SolidMesh, skippedLines: Int, malformed: [ModelFile.Malformed],
+        size: SIMD3<Float>, center: SIMD3<Float>
     ) {
         self.name = name
         self.mesh = mesh
         self.skippedLines = skippedLines
+        self.malformed = malformed
         self.size = Vector3(size)
         self.center = Vector3(center)
         self.identity = Self.nextIdentity()
@@ -237,6 +246,6 @@ extension Model {
         }
         return Model(
             name: name, mesh: SolidMesh(points: points), skippedLines: parsed.skippedLines,
-            size: size, center: center)
+            malformed: parsed.malformed, size: size, center: center)
     }
 }
