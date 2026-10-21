@@ -15,8 +15,8 @@
 # 着手印があるときは、その
 # 家族を読む `gh api graphql` が 1 回加わる (下の「落ちて見えるか」)。最近動いた着手印か
 # 家族があるときは、その手が人か bot かを読む `gh api graphql` が 1 回ずつ (最大 2 回) 加わる
-# (下の「bot の追記は数えない」)。open な Bug か ready の
-# 候補があるときは、その親を読む `gh api graphql` が 1 回加わる (下の「根と判断」)。scripts/stall-watch.sh と
+# (下の「bot の追記は数えない」)。open な Bug・ready の候補・stock の候補があるときは、その親と
+# 自分の子・開き直しの手を読む `gh api graphql` が 1 回加わる (下の「根と判断」)。scripts/stall-watch.sh と
 # 同じ性質で、**手元でいつ打っても安全である**。打つ側 (stall-act.sh に当たるもの) はこのリポジトリには来ない — 打つのは
 # 外に居るディスパッチャの仕事で、こちらが実行まで持つと「様子を見るために打ったら着手が
 # 始まった」が起きる。
@@ -43,8 +43,8 @@
 #   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている・
 #            家族のどれかがそうである)。または ready の候補のうち、開いた根の子 (親が open な
 #            Bug か、親が open で印の付いた Design の Bug の子。根を直す側で閉じる)、または
-#            本体を閉じた後に parent-guard (bot) が開き直し、open の子を残している親 (残りは
-#            子が持つ — 「子 #N を待つ」)
+#            本体を閉じた後に parent-guard (bot) が開き直し、open の子を残している親 (自分の
+#            仕事を持たず、残りは子が持つ — 「子 #N を待つ」。stock・decide にも出さない)
 #   decide   **人が決める行** — 無印の Design で、open な Bug の子を持つもの。子の多い順
 #
 # ## 根と判断 (#1661)
@@ -60,13 +60,24 @@
 #   Bug の子を持つ          根本の直し方が人の判断を待っている (決定 3 — 約束を決める・変える
 #   無印の Design           ときだけ人を待つ)。人の目に入らないと、子の Bug が症状のまま直される
 #
-# **開き直された親は、子を待つ** (#3036)。本体の仕事を終えて閉じた親が open の子を残していると、
-# parent-guard が開き直す (閉じる = 全作業の完了という木の不変条件 — ADR-0002・#23)。親には印が
-# 残るので、そのままでは済んだ仕事が ready に出る。**見るのは「最後の開き直しの手」と「open の子」の
-# 2 つだけ** — 手が bot (scripts/bot-hand.sh) で open の子が残るときだけ busy に回す。人が仕事を
-# 足すために開き直した親・開き直されたことの無い親 (段を持つ Design・Bug の根) は、子を持って
-# いても自分の仕事を持つので ready のまま。「open の子を持つ親は ready に出さない」と一律には
-# しない。開き直しの手は子の候補自身の timeline から、親の問い合わせと同じ 1 回で読む
+# **開き直された親は、自分の仕事を持たない** (#3036)。本体の仕事を終えて閉じた親が open の子を
+# 残していると、parent-guard が開き直す (閉じる = 全作業の完了という木の不変条件 — ADR-0002・#23)。
+# 親には印が残るので、そのままでは済んだ仕事が ready に出る。**見るのは「最後の開き直しの手」と
+# 「open の子」の 2 つだけ** — 手が bot (scripts/bot-hand.sh) で open の子が残る親を、**自分の仕事を
+# 持たない親**とする。人が仕事を足すために開き直した親・開き直されたことの無い親 (段を持つ Design・
+# Bug の根) は、子を持っていても自分の仕事を持つ。「open の子を持つ親は ready に出さない」と一律には
+# しない。
+#
+# **この判定は 1 つで、4 つの口が使う。** 口ごとに別の式を持つと、1 つだけ直して他が残る:
+#
+#   ready の候補   自分の仕事を持たなければ ready に出さず、busy「子 #N を待つ」(番号が名乗れなければ
+#                  「open の子 N 件を待つ」) へ回す
+#   根             自分の仕事を持たない親は、子の根に数えない。数えると、親は子を待ち、子は親で直す側に
+#                  回って、残りの仕事がどこにも出なくなる。子は自分で ready / busy に判定される
+#   stock          エージェントが起票した無印の親が閉じられて開き直されても出さない
+#   decide         人が決めて閉じた無印の Design が、open な Bug の子のために開き直されても出さない
+#
+# 開き直しの手と子は、候補自身の timeline と subIssues から、親の問い合わせと同じ 1 回で読む
 #
 # **Design の根で子を止めるのは、印が付いてから**である。無印のうちは decide に出て人を待ち、
 # 子の症状の直しは止めない (決定 3「Design を待つ間も、症状を塞ぐ直しは止めない」)。印が付くと
@@ -75,8 +86,9 @@
 # 根の症状ではないので止めない。止めると #1663・#1744 (印の付いた Design の子の Task) まで
 # ready から消える。
 #
-# 親 (番号・state・型・印) は GraphQL 1 回で、open な Bug と ready の候補の分だけ読む。
-# **読めなかったら ready は従来どおり出し、decide は出さず、そう名乗る。** decide は終了コードに
+# 親 (番号・state・型・印) は GraphQL 1 回で、open な Bug・ready の候補・stock の候補 (と、open な
+# Bug があるときの未トリアージの Design) の分だけ読む。
+# **読めなかったら ready は従来どおり (開き直された親も) 出し、decide は出さず、そう名乗る。** decide は終了コードに
 # 数えない — 打てる仕事ではなく、人が決める仕事である。
 #
 # busy を出すのは、**ready から外れた理由を見せるため**である。ready だけ出すと「なぜ
@@ -248,9 +260,9 @@ ready='' stock='' dropped='' busy='' decide='' ready_count=0 decide_count=0
 candidates=''
 # updatedAt だけが新しい着手印。「<番号> <updatedAt> <タイトル>」の並びで、人の手を読んでから分ける
 recent=''
-# ready の候補 (「<番号> <タイトル>」) と、未トリアージの Design
-# (「<番号> <タイトル>」)。どちらも親を読んでから分ける (#1661)
-ready_rows='' designs=''
+# ready の候補 (「<番号> <型> <タイトル>」)・stock の候補 (同じ形)・未トリアージの Design
+# (「<番号> <タイトル>」)。どれも親を読んでから分ける (#1661・#3036)
+ready_rows='' stock_rows='' designs=''
 
 while IFS= read -r row; do
   n=$(jq -r '.number' <<<"$row")
@@ -288,7 +300,7 @@ while IFS= read -r row; do
   # 未トリアージ。**B-1 の対象になるのは、完了条件を書ける見込みがあるものだけ**である
   case " $STOCK_TYPES " in *" $type "*) ;; *) continue ;; esac
   case $(jq -r '.body // ""' <<<"$row") in
-    *"$AGENT_MARK"*) stock+="$n stock [$type] エージェントの起票が無印のまま ($title)"$'\n' ;;
+    *"$AGENT_MARK"*) stock_rows+="$n $type $title"$'\n' ;;
   esac
 done < <(jq -c '.[]' <<<"$issues_json")
 
@@ -450,17 +462,24 @@ fi
 #   self <番号> <手> <最小の open の子> <open の子の数>  番号ごとに必ず 1 行。手は、最後の開き直しが
 #                                                      bot の手 (scripts/bot-hand.sh) なら bot、
 #                                                      それ以外 (人・無い・分からない) は -。
-#                                                      子が無ければ - と 0
+#                                                      子が無い・最初のページに open の子が載らない
+#                                                      ときの子の番号は -
 #
 # self の行は「閉じた後に parent-guard が開き直した親」を見分けるのに使う。親の行と同じ応答に
 # 載せるので、呼び出しは増えない。**子は open のものだけ数え、手は最後の 1 回だけ読む** —
-# 閉じた・開いたの回数や時刻の近さでは推測しない
+# 閉じた・開いたの回数や時刻の近さでは推測しない。
+#
+# **open の子の数は subIssuesSummary (total - completed) から取る** — subIssues は 100 件までの
+# 1 ページで、open の子が 101 件目以降にあると読み落として ready へ倒れる (parent-guard.sh が
+# #793 で --paginate にしたのと同じ穴)。completed は、閉じた子を理由 (completed / not planned) に
+# 関わらず数える (2026-10-21 に #2371 で確かめた: total 2・completed 1 で、閉じた 1 件は NOT_PLANNED)。
+# 番号を名乗るのは最初のページに載った open の子だけで、載らなければ件数で名乗る
 read_parents() { # $1=番号 (空白区切り)
   local owner=${REPO%%/*} name=${REPO#*/} q='' n
   for n in $1; do
     q+="i$n: issue(number: $n) { parent { number state issueType { name }"
     q+=" labels(first: 100) { nodes { name } } }"
-    q+=" subIssues(first: 100) { nodes { number state } }"
+    q+=" subIssuesSummary { total completed } subIssues(first: 100) { nodes { number state } }"
     q+=" timelineItems(itemTypes: [REOPENED_EVENT], last: 1) { nodes { ... on ReopenedEvent {"
     q+=" actor { __typename login } } } } } "
   done
@@ -469,16 +488,22 @@ read_parents() { # $1=番号 (空白区切り)
       | ((.value.parent // empty) as $p
          | (if any($p.labels.nodes[]?; .name == "'"$TRIAGED"'") then "triaged" else "-" end) as $mark
          | "\(.key | ltrimstr("i")) \($p.number) \($p.state) \($p.issueType.name // "-") \($mark)"),
-        ([.value.subIssues.nodes[]? | select(.state == "OPEN") | .number] | sort) as $open
+        ([.value.subIssues.nodes[]? | select(.state == "OPEN") | .number] | sort) as $page
+        | ((.value.subIssuesSummary.total // 0) - (.value.subIssuesSummary.completed // 0)) as $open
         | (.value.timelineItems.nodes // [] | last) as $reopened
         | (if ($reopened != null) and ($reopened | bot_hand) then "bot" else "-" end) as $by
-        | "self \(.key | ltrimstr("i")) \($by) \($open[0] // "-") \($open | length)"'
+        | "self \(.key | ltrimstr("i")) \($by) \($page[0] // "-") \($open)"'
 }
 
-# 引くのは open な Bug と ready の候補だけ。**どちらも無ければ引かない** — 平常時の呼び出しを
-# 増やさないため (家族と同じ作法)
+# 引くのは open な Bug・ready の候補・stock の候補と、(open な Bug があるときの) 未トリアージの
+# Design。**どれも無ければ引かない** — 平常時の呼び出しを増やさないため (家族と同じ作法)。
+# Design は decide に出るのが open な Bug の子を持つものだけなので、Bug が無ければ引かない。
+# stock と Design を引くのは、開き直された親の判定 (下の `waiting`) をそこへも届けるため (#3036)
 open_bugs=$(jq -r '.[] | select(.issueType.name == "Bug") | .number' <<<"$issues_json")
-asked=$(printf '%s\n%s\n' "$(awk '{ print $1 }' <<<"$ready_rows")" "$open_bugs" |
+design_rows=''
+[ -z "$open_bugs" ] || design_rows="$designs"
+asked=$(printf '%s\n%s\n%s\n%s\n' "$(awk '{ print $1 }' <<<"$ready_rows")" "$open_bugs" \
+  "$(awk '{ print $1 }' <<<"$stock_rows")" "$(awk '{ print $1 }' <<<"$design_rows")" |
   awk 'NF && !seen[$1]++ { printf "%s ", $1 }')
 parents=''
 if [ -n "$asked" ]; then
@@ -486,9 +511,19 @@ if [ -n "$asked" ]; then
   # 黙ると「根で直す子が ready に出ている」ことに誰も気付かない
   parents=$(read_parents "$asked") || {
     parents=''
-    echo "親を読めなかった — 根で直す子も ready に出し、decide は出していない" >&2
+    echo "親を読めなかった — 根で直す子も、閉じた後に開き直された親も ready に出し、decide は出していない" >&2
   }
 fi
+
+# **自分の仕事を持たない親** — 本体の仕事を終えて閉じた後に parent-guard (bot) が開き直し、open の
+# 子を残している親 (#3036)。残りの仕事は子が持つので、ready にも stock にも decide にも出さず、
+# 子を根に数えることもしない (子は自分で ready / busy に判定される)。**この 1 つの判定を 4 つの
+# 口が使う** — ready の候補・根・stock・decide。口ごとに別の式を持つと、1 つだけ直して他が
+# 残る (反証が 3 つの口で実走して見つけた)。「<番号> <最小の open の子> <open の子の数>」の並び
+waiting=$(awk '$1 == "self" && $3 == "bot" && $5 > 0 { print $2, $4, $5 }' <<<"$parents")
+is_waiting() { # $1=番号
+  awk -v n="$1" '$1 == n { found = 1 } END { exit !found }' <<<"$waiting"
+}
 
 # (a) 根が開いていれば、子は根を直す側で閉じる (ADR-0040 決定 2)。子を ready に出すと
 # 症状の 1 か所だけが直され、同じ根の兄弟が残る — #1659 が数えた「深いが狭い」直しの形である。
@@ -500,23 +535,33 @@ fi
 #                                   (決定 3)。Bug でない子は根の症状ではない
 while read -r n type title; do
   [ -n "$n" ] || continue
-  # 閉じた後に parent-guard が開き直し、open の子を残している (#3036)。最後の開き直しが bot の
-  # 手のときだけ読む — 人が仕事を足すために開き直した親と、開き直されたことの無い親は、
-  # 子を持っていても自分の仕事を持つ (Bug の根・段を持つ Design) ので ready のまま
-  waits=$(awk -v n="$n" '$1 == "self" && $2 == n && $3 == "bot" && $5 > 0 { print $4; exit }' <<<"$parents")
-  root=$(awk -v n="$n" -v type="$type" '
-    $1 == n && $3 == "OPEN" && ($4 == "Bug" || ($4 == "Design" && $5 == "triaged" && type == "Bug")) {
+  root=$(awk -v n="$n" -v type="$type" -v waiting="$(awk '{ printf " %s ", $1 }' <<<"$waiting")" '
+    $1 == n && $3 == "OPEN" && index(waiting, " " $2 " ") == 0 &&
+      ($4 == "Bug" || ($4 == "Design" && $5 == "triaged" && type == "Bug")) {
       print $2; exit
     }' <<<"$parents")
   if [ -n "$root" ]; then
     busy+="$n busy 根 #$root で直す ($title)"$'\n'
-  elif [ -n "$waits" ]; then
-    busy+="$n busy 子 #$waits を待つ (閉じた後に parent-guard が開き直した ・$title)"$'\n'
+  elif is_waiting "$n"; then
+    read -r _ child open <<<"$(awk -v n="$n" '$1 == n { print; exit }' <<<"$waiting")"
+    if [ "$child" != "-" ]; then
+      who="子 #$child を待つ"
+    else
+      who="open の子 $open 件を待つ"
+    fi
+    busy+="$n busy $who (閉じた後に parent-guard が開き直した ・$title)"$'\n'
   else
     ready+="$n ready [$type] $title"$'\n'
     ready_count=$((ready_count + 1))
   fi
 done <<<"$ready_rows"
+
+# stock は、開き直された親を除いて出す (#3036)。エージェントが起票した無印の親が閉じられて
+# parent-guard に開き直されても、残りは子が持つ
+while read -r n type title; do
+  [ -n "$n" ] || continue
+  is_waiting "$n" || stock+="$n stock [$type] エージェントの起票が無印のまま ($title)"$'\n'
+done <<<"$stock_rows"
 
 # (b) open な Bug の子を持つ未トリアージの Design は、**根本が人の判断を待っている**ことを
 # 表す (ADR-0040 決定 3 — 約束を決める・変えるときだけ人を待つ)。子の多い順に並べるのは、
@@ -535,6 +580,8 @@ while read -r count n title; do
 done < <(
   while read -r n title; do
     [ -n "$n" ] || continue
+    # 開き直された Design は、人が決めて閉じた後である。判断を待っていない (#3036)
+    ! is_waiting "$n" || continue
     count=$(awk -v n="$n" '$1 == n { print $2; exit }' <<<"$children")
     [ -z "$count" ] || printf '%s %s %s\n' "$count" "$n" "$title"
   done <<<"$designs" | sort -k1,1nr -k2,2n
