@@ -30,6 +30,10 @@ import Foundation
 /// 字・画像・`use`・グラデーションやパターンの塗り (`url(#…)`)・切り抜き・マスク・
 /// フィルタ・矢じり・破線・アニメーション、読めない値と CSS の規則は描かない。**黙って
 /// 捨てず**、何を何個・最初に出た行を ``Drawing/skipped`` に残す ([ADR-0020] 決定 5)。
+/// 読まない性質のうち、名乗らないと形の大きさ・位置が黙って変わるものも名乗る (#2627): CSS で書いた
+/// 幾何の性質 (`rect` の `width` など。その要素で効くものだけ)・CSS の変換 (`transform`・`translate`・
+/// `rotate`・`scale`)・変換の基準 (`transform-origin`・`transform-box`)・`<svg>` の `transform`。描き方は変えない。
+/// 描き方だけを変える性質 (`paint-order` など) は名乗らない。
 /// 描かないことが書き手の意図であるもの (`display="none"`・`defs` の中の定義・`title` /
 /// `desc` / `metadata`・他の名前空間の要素) は数えない。
 ///
@@ -476,7 +480,9 @@ nonisolated enum SVGFile {
             }
 
             if SVGFile.silentElements.contains(name) { return push(.inert) }
-            guard let (resolved, lost, sizes) = resolve(parent.context, attributes: attributes, name: name, line: line)
+            guard
+                let (resolved, lost, sizes) = resolve(
+                    parent.context, attributes: attributes, name: name, isRoot: stack.isEmpty, line: line)
             else { return push(.inert) }
             var context = resolved
             if SVGFile.reportedElements.contains(name) {
@@ -490,6 +496,8 @@ nonisolated enum SVGFile {
                     let viewport = viewport(
                         of: attributes, sizes: sizes, in: context, isRoot: stack.isEmpty, line: line)
                 else { return push(.inert) }
+                // `<svg>` の `transform` (SVG 2) は読まない。名乗るだけで、変換は掛けない (#2627)
+                if let text = attributes["transform"] { tally.note("<svg transform=\"\(text)\">", line: line) }
                 context.transform = context.transform * viewport.transform
                 context.viewport = viewport.size
                 pushContainer(.render, context)
@@ -527,7 +535,7 @@ nonisolated enum SVGFile {
         /// 順位の低いほうから並べた文字を `sizes` に返す (SVG 2 では CSS の性質でもあるので、CSS で書いた
         /// 根の大きさも効く)。どれを採るかは `viewport` が、読めるかどうかを見て決める。
         private mutating func resolve(
-            _ inherited: Context, attributes: [String: String], name: String, line: Int
+            _ inherited: Context, attributes: [String: String], name: String, isRoot: Bool, line: Int
         ) -> (Context, lost: [String], sizes: [String: [String]])? {
             var candidates: [(rank: Rank, declaration: Declaration)] = []
             func collect(_ declaration: Declaration, from origin: Rank.Origin, specificity: Int = 0) {
@@ -560,12 +568,34 @@ nonisolated enum SVGFile {
                 unreadable += parsed.unreadable.map { "CSS declaration \"\($0)\"" }
             }
 
+            // 読まない性質のうち、名乗らないと形の大きさ・位置が黙って変わるもの (#2627)。値は問わず、描き方は
+            // 変えない (属性の値で描く)。要素ごとに 1 度だけ名乗る
+            let readsTransform =
+                SVGFile.transformedElements.contains(name)
+                && attributes["transform"].flatMap(SVGFile.parseTransform) != nil
+            var namedProperties: Set<String> = []
+            func nameUnread(_ property: String) {
+                if namedProperties.insert(property).inserted { unreadable.append("CSS property \"\(property)\"") }
+            }
+            if readsTransform {
+                for key in SVGFile.transformCompanions {
+                    if let text = attributes[key] { unreadable.append("<\(name) \(key)=\"\(text)\">") }
+                }
+            }
+
             // 順位の低いほうから見て、性質ごとに読めた宣言で上書きしていく。最後に残るのが勝った宣言
             var winners: [String: Reading] = [:]
             var sizes: [String: [String]] = [:]
-            for (_, declaration) in candidates.sorted(by: { $0.rank < $1.rank }) {
+            for (rank, declaration) in candidates.sorted(by: { $0.rank < $1.rank }) {
                 let property = declaration.name
                 let value = declaration.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if rank.origin != .attribute,
+                    SVGFile.unreadGeometry(of: name, isRoot: isRoot).contains(property)
+                        || SVGFile.unreadTransforms.contains(property)
+                        || (readsTransform && SVGFile.transformCompanions.contains(property))
+                {
+                    nameUnread(property)
+                }
                 if SVGFile.sizeProperties.contains(property) {
                     if value.lowercased() != "inherit" { sizes[property, default: []].append(value) }
                     continue
@@ -808,7 +838,7 @@ nonisolated enum SVGFile {
             // 順位の高い宣言から見て、**読めた宣言 (`auto` を含む) で止める**。読めない宣言は CSS では無効で
             // 捨てられ、下の宣言が残るので、名乗って次へ進む。全部が読めなければ書いていないのと同じ
             // **負の値は別**: CSS では無効な宣言だが、ここでは読めた値として採り (描かない結果は変えていない)、
-            // 名乗りは「捨てた」ではなく「この値で根を描かない」の意味。CSS との仕様差は #2648 に置いてある
+            // 名乗りは「捨てた」ではなく「この値で根を描かない」の意味。CSS との仕様差は `loadShape(_:)` の説明の「SVG と見え方が違う所」に書いてある (#2648)
             func size(_ key: String, _ against: Float) -> Float? {
                 for text in (sizes[key] ?? []).reversed() {
                     switch written(
@@ -866,10 +896,14 @@ nonisolated enum SVGFile {
         ) -> Outline? {
             var unreadable = false
             // 書いていない・`auto` は `nil` (名乗らない)。読めない値も `nil` だが、名乗り、この要素は描かない
-            func optional(_ key: String, _ reference: Float, allowsAuto: Bool = false) -> Float? {
+            // `namesNegative` は、負の値が SVG 2 で無効な口 (幅・高さ・半径) に立てる。値はそのまま返し、描かないか
+            // 書いていないものとして読むかは呼び側が決める (#2648)。位置 (`x`・`cx` …) の負は正当な値
+            func optional(
+                _ key: String, _ reference: Float, allowsAuto: Bool = false, namesNegative: Bool = false
+            ) -> Float? {
                 switch written(
                     attributes[key], element: name, key: key, reference: reference, allowsAuto: allowsAuto,
-                    line: line)
+                    namesNegative: namesNegative, line: line)
                 {
                 case .value(let length): return length
                 case .unreadable:
@@ -878,7 +912,9 @@ nonisolated enum SVGFile {
                 case .absent, .automatic: return nil
                 }
             }
-            func length(_ key: String, _ reference: Float) -> Float { optional(key, reference) ?? 0 }
+            func length(_ key: String, _ reference: Float, namesNegative: Bool = false) -> Float {
+                optional(key, reference, namesNegative: namesNegative) ?? 0
+            }
             let width = context.viewport.x
             let height = context.viewport.y
             let outline: Outline?
@@ -893,17 +929,19 @@ nonisolated enum SVGFile {
                 let x = length("x", width)
                 let y = length("y", height)
                 // `auto` は SVG 2 では 0 (描かない) で、名乗らない (`rx` と同じ)
-                let w = optional("width", width, allowsAuto: true) ?? 0
-                let h = optional("height", height, allowsAuto: true) ?? 0
+                let w = optional("width", width, allowsAuto: true, namesNegative: true) ?? 0
+                let h = optional("height", height, allowsAuto: true, namesNegative: true) ?? 0
                 guard !unreadable, w > 0, h > 0 else { return nil }
                 // 片方だけ書いた角の半径は、もう片方にも使う。負の値は書いていないものとして読む
                 // 書いていない・`auto` は名乗らず、読めない値は名乗って書いていないものとして読む (#2556)
                 // 読めない値は、ここでは `unreadable` を立てず (角が丸まらないだけ)、名乗って書いていないものとする
                 let rawX = written(
-                    attributes["rx"], element: name, key: "rx", reference: width, allowsAuto: true, line: line
+                    attributes["rx"], element: name, key: "rx", reference: width, allowsAuto: true,
+                    namesNegative: true, line: line
                 ).length.flatMap { $0 >= 0 ? $0 : nil }
                 let rawY = written(
-                    attributes["ry"], element: name, key: "ry", reference: height, allowsAuto: true, line: line
+                    attributes["ry"], element: name, key: "ry", reference: height, allowsAuto: true,
+                    namesNegative: true, line: line
                 ).length.flatMap { $0 >= 0 ? $0 : nil }
                 let rx = min(rawX ?? rawY ?? 0, w / 2)
                 let ry = min(rawY ?? rawX ?? 0, h / 2)
@@ -914,15 +952,20 @@ nonisolated enum SVGFile {
             case "circle":
                 let cx = length("cx", width)
                 let cy = length("cy", height)
-                let r = length("r", context.diagonal)
+                let r = length("r", context.diagonal, namesNegative: true)
                 guard !unreadable, r > 0 else { return nil }
                 outline = .ellipse(centerX: cx, centerY: cy, radiusX: r, radiusY: r)
             case "ellipse":
                 let cx = length("cx", width)
                 let cy = length("cy", height)
-                // 片方が書いていないか `auto` なら、もう片方を使う (SVG 2)。両方がそうなら 0 で描かない
-                let writtenRx = optional("rx", width, allowsAuto: true)
-                let writtenRy = optional("ry", height, allowsAuto: true)
+                // 片方が書いていないか `auto` なら、もう片方を使う (SVG 2)。両方がそうなら 0 で描かない。
+                // 負の値は無効な値で、書いていないのと同じに読んで名乗る (#2648)
+                let writtenRx = optional("rx", width, allowsAuto: true, namesNegative: true).flatMap {
+                    $0 >= 0 ? $0 : nil
+                }
+                let writtenRy = optional("ry", height, allowsAuto: true, namesNegative: true).flatMap {
+                    $0 >= 0 ? $0 : nil
+                }
                 let rx = writtenRx ?? writtenRy ?? 0
                 let ry = writtenRy ?? writtenRx ?? 0
                 guard !unreadable, rx > 0, ry > 0 else { return nil }
@@ -1047,6 +1090,30 @@ nonisolated enum SVGFile {
         "display", "clip-path", "mask", "filter", "marker", "marker-start", "marker-mid",
         "marker-end", "mix-blend-mode",
     ]
+
+    /// 要素の `transform` 属性を読んで掛ける要素 (`svg` は読まない)。
+    private static let transformedElements: Set<String> = [
+        "g", "a", "switch", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+    ]
+
+    /// 読まない CSS の変換の性質 (どの要素でも)。`translate`・`rotate`・`scale` は CSS Transforms 2 の個別の変換。
+    private static let unreadTransforms: Set<String> = ["transform", "translate", "rotate", "scale"]
+
+    /// `transform` 属性を掛ける要素で、その変換の基準を変える性質。属性でも CSS でも読まない。
+    private static let transformCompanions: [String] = ["transform-origin", "transform-box"]
+
+    /// SVG 2 で CSS の性質でもあるが、属性からしか読まない幾何の性質 (その要素で効くものに限る)。
+    /// 入れ子の `svg` の `width` / `height` は読むのでここには無く、根の `svg` の `x` / `y` は効かない。
+    private static func unreadGeometry(of element: String, isRoot: Bool) -> Set<String> {
+        switch element {
+        case "rect": ["x", "y", "width", "height", "rx", "ry"]
+        case "circle": ["cx", "cy", "r"]
+        case "ellipse": ["cx", "cy", "rx", "ry"]
+        case "path": ["d"]
+        case "svg": isRoot ? [] : ["x", "y"]
+        default: []
+        }
+    }
 
     /// `svg` だけが、属性にも CSS にも書ける大きさの名前 (SVG 2 では CSS の性質でもある)。
     private static let sizeProperties: Set<String> = ["width", "height"]

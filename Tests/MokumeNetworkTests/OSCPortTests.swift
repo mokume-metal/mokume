@@ -425,6 +425,113 @@ struct OSCPortTests {
         #expect(osc.state == .running)
     }
 
+    // MARK: - 最新の 1 つ (#2469)
+
+    /// 注入した列を流す入り口。走っているスケッチへは足さず、`supply()` を自分で呼ぶ。
+    private func replay(
+        _ batches: [[OSCMessage]], told: Told = Told()
+    ) throws -> OSCPort {
+        let osc = OSCPort(
+            port: nil, name: "osc (recorded)", source: RecordedSource<OSCMessage>(batches: batches),
+            outbound: nil, owner: nil, warn: told.append)
+        try osc.open()
+        return osc
+    }
+
+    @Test("latest は、フレームの頭で宛名ごとの最後に届いた 1 つに更新され、何も届かないフレームは前のまま")
+    func latestFollowsTheFramesAndKeepsTheLastValue() throws {
+        let batches = [
+            [OSCMessage("/1/fader1", Float(0.2)), OSCMessage("/1/fader1", Float(0.7))],
+            [],
+            [OSCMessage("/1/fader2", 1)],
+        ]
+        let osc = try replay(batches)
+        #expect(osc.latest("/1/fader1") == nil, "取り出す前は何も無い")
+
+        osc.supply()
+        // 同じフレームで後に届いたもの。落とさない列は今までどおり両方を持つ
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+        #expect(osc.latest("/1/fader2") == nil)
+        #expect(osc.messages == batches[0])
+
+        osc.supply()
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+        #expect(osc.latest("/1/fader2") == nil)
+        #expect(osc.messages.isEmpty)
+
+        osc.supply()
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+        #expect(osc.latest("/1/fader2")?.float(0) == 1)
+
+        // 終わりまで行けば始まりへ戻り、新しい値が前の値を置き換える
+        osc.supply()
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+    }
+
+    @Test("latest は宛名を文字どおりに引き、ワイルドカードも、前方一致も、一致しない宛名も nil")
+    func latestDoesNotMatchWildcards() throws {
+        let osc = try replay([[OSCMessage("/1/fader1", Float(0.5)), OSCMessage("/hit", 1)]])
+        osc.supply()
+        for address in ["/1/*", "/*", "/1/fader", "/1/fader1/", "/1/fader?", "/1/fader[1]", "", "/HIT"] {
+            #expect(osc.latest(address) == nil, "\(address)")
+        }
+        #expect(osc.latest("/hit") == OSCMessage("/hit", 1))
+    }
+
+    @Test("同じ列からは、何度回しても同じフレームで同じ latest になる")
+    func latestIsDeterministicForTheSameBatches() throws {
+        let batches = [
+            [OSCMessage("/a", Float(0.1))], [OSCMessage("/a", Float(0.9)), OSCMessage("/b", 2)], [],
+        ]
+        func run() throws -> [[String: Float?]] {
+            let osc = try replay(batches)
+            return (0..<5).map { _ in
+                osc.supply()
+                return ["/a": osc.latest("/a")?.float(0), "/b": osc.latest("/b")?.float(0)]
+            }
+        }
+        let first = try run()
+        #expect(first == (try run()))
+        #expect(first[0]["/a"] == 0.1)
+        #expect(first[1]["/a"] == 0.9)
+    }
+
+    @Test("stop() の後は latest も空になる")
+    func latestIsEmptyAfterStop() throws {
+        let osc = try replay([[OSCMessage("/a", 1)]])
+        osc.supply()
+        #expect(osc.latest("/a") != nil)
+        osc.close()
+        #expect(osc.latest("/a") == nil)
+        osc.supply()
+        #expect(osc.latest("/a") == nil)
+    }
+
+    @Test("覚える宛名は 4096 まで。超えた新しい宛名は覚えずに 1 度だけ知らせ、覚えた宛名は更新し、messages は落とさない")
+    func latestRemembersAtMostTheAddressLimit() throws {
+        let limit = OSCPort.latestAddressLimit
+        let told = Told()
+        let fill = (0..<limit).map { OSCMessage("/n/\($0)", $0) }
+        let beyond = [OSCMessage("/extra/1", 1), OSCMessage("/extra/2", 2)]
+        let update = [OSCMessage("/n/0", -1)]
+        let osc = try replay([fill, beyond, update, beyond], told: told)
+        osc.supply()
+        #expect(osc.latest("/n/\(limit - 1)")?.int(0) == limit - 1)
+        #expect(told.lines.isEmpty)
+
+        osc.supply()
+        #expect(osc.messages == beyond, "messages は落とさない")
+        #expect(osc.latest("/extra/1") == nil)
+        #expect(osc.latest("/extra/2") == nil)
+        #expect(told.count(containing: "remembers the latest message of \(limit) addresses") == 1)
+        #expect(told.lines.first?.contains("/extra/1") == true)
+
+        osc.supply()
+        #expect(osc.latest("/n/0")?.int(0) == -1, "覚えた宛名は上限に達しても更新する")
+        osc.supply()
+        #expect(told.lines.count == 1, "続けて届いても 2 度は言わない")
+    }
+
     // MARK: - 読めないものは打ち切る
 
     @Test("読めない部分を含むパケットは、そこから後ろを捨てて数える。前と次のパケットは届く")
@@ -498,6 +605,33 @@ struct OSCPortTests {
         received += await collect(osc, count: 5)
         #expect(received == Array(repeating: message, count: 6))
         #expect(osc.input.unreadable == 1)
+    }
+
+    @Test("OSC でも、空で流れが閉じたら受け口と送り元つきで 1 度だけ診断に出し、空を読めないとして数えるのは今までどおり (#2363)")
+    func emptyClosedFlowIsToldOnceForOSC() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let source = try #require(osc.source as? NetworkOSCSource)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        let packet = try Wire.encoded(OSCMessage("/m", arguments: []))
+
+        for index in 0..<3 {
+            #expect(peer.send(packet, to: port) == packet.count)
+            #expect(await collect(osc, count: 1) == [OSCMessage("/m", arguments: [])])
+            #expect(peer.send([], to: port) == 0)
+            try await requireWait(
+                "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
+                until: { source.tally.ended >= index + 1 })
+        }
+        // 空を読めないとして数えるのは今までどおり (その診断 `osc :<port>: … could not be read …` は列が
+        // 次に読まれたときに、1 秒に 1 度までにまとめて出る)。送り元ごとの診断はそれとは別に、1 度だけ
+        osc.supply()
+        #expect(osc.input.unreadable == 3)
+        #expect(told.count(containing: "empty datagram") == 1)
+        let line = try #require(told.lines.first { $0.contains("empty datagram") })
+        #expect(line.hasPrefix("osc :\(port): an empty datagram from 127.0.0.1:\(peer.port) closed its flow"))
     }
 
     @Test("番号つきの送りは、送れないと名乗った番号だけを新しい送り元に替えて全部を読む")
@@ -819,6 +953,56 @@ struct OSCPortTests {
                 try sketch.createOSC(listen: 1, send: ("127.0.0.1", 65535))
             }
         }
+    }
+
+    @Test("createOSC(send:) は送り先の値を検め、走っていない所では呼んだ口の名前で notRunning を投げる (#2469)")
+    func sendOnlyCreationRefusesUnusableValues() {
+        let sketch = IdleSketch()
+        #expect(throws: OSCFailure.invalidPort(0)) { try sketch.createOSC(send: ("127.0.0.1", 0)) }
+        #expect(throws: OSCFailure.invalidPort(65536)) { try sketch.createOSC(send: ("127.0.0.1", 65536)) }
+        #expect(throws: OSCFailure.invalidHost(" ")) { try sketch.createOSC(send: (" ", 7000)) }
+        // 値の検めを通った後、ポートも開かずに断る。両端の 1 と 65535 は使える
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(send:)")) {
+                try sketch.createOSC(send: ("127.0.0.1", 65535))
+            }
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(send:)")) {
+                try sketch.createOSC(send: ("localhost", 1))
+            }
+        }
+    }
+
+    @Test("送るだけの入り口は、受けるポートを開かず、何も受けず、観測の inputs に行を出さず、送ったものは宛先で受けられる (#2469)")
+    func sendOnlyPortSendsWithoutListening() async throws {
+        let told = Told()
+        let receiver = try await listening(told: told)
+        defer { receiver.osc.close() }
+
+        // `createOSC(send:)` が組むのと同じ部品 (何も受けない出どころ・共通の送り手)
+        let sender = OSCPort(
+            port: nil, name: "osc (send only)", source: SendOnlySource(),
+            outbound: DatagramSender(host: "127.0.0.1", port: receiver.port, warn: told.append),
+            owner: nil, warn: told.append)
+        try sender.open()
+        #expect(sender.port == nil)
+        #expect(sender.state == .running)
+        #expect(sender.report == nil, "受け口ではないので、inputs に載らない")
+
+        sender.send("/size", Float(0.25))
+        sender.send("/hit", 1)
+        let received = await collect(receiver.osc, count: 2)
+        #expect(received == [OSCMessage("/size", Float(0.25)), OSCMessage("/hit", 1)])
+
+        sender.supply()
+        #expect(sender.messages.isEmpty)
+        #expect(sender.latest("/size") == nil)
+        #expect(sender.lastArrival == nil)
+        #expect(told.lines.isEmpty)
+
+        sender.close()
+        #expect(sender.state == .stopped)
+        sender.send("/late", 1)
+        #expect(told.count(containing: "is stopped") == 1)
     }
 
     // MARK: - 送れないとき

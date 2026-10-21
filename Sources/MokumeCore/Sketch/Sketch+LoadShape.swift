@@ -207,7 +207,10 @@ extension SketchPart {
     /// ## 読むもの
     ///
     /// - 形: `path` (`d` の命令すべて — 相対の座標・省略した書き方・弧を含む)・`rect`
-    ///   (角丸を含む)・`circle`・`ellipse`・`line`・`polyline`・`polygon`
+    ///   (角丸を含む)・`circle`・`ellipse`・`line`・`polyline`・`polygon`。形の寸法の負の値は SVG 2
+    ///   では無効で、`rect` の `width` / `height` と `circle` の `r` が負なら何も描かず、`rect` の
+    ///   `rx` / `ry` と `ellipse` の `rx` / `ry` が負なら書いていないものとして読む (もう片方があればその値になる)。
+    ///   どれも、捨てたものとして知らせる
     /// - 入れ物: `g`・`a`・入れ子の `svg`・`switch` (拡張を求めない最初の子)。`transform`
     ///   (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)・`viewBox`・
     ///   `preserveAspectRatio` が効く
@@ -228,6 +231,14 @@ extension SketchPart {
     /// いるだけで、ロゴ全体が読めなくなることはない。塗りが `url(#a) red` のように代わりの色を
     /// 持っていれば、その色で塗る。
     ///
+    /// **読まない性質のうち、形の大きさ・位置が黙って変わるものも知らせる。** CSS (`style` 属性・`<style>`) で
+    /// 書いた幾何の性質 (`rect` の `width` / `height` / `x` / `y` / `rx` / `ry`・`circle` の `cx` / `cy` / `r`・
+    /// `ellipse` の `cx` / `cy` / `rx` / `ry`・`path` の `d`・入れ子の `<svg>` の `x` / `y`) は、属性の値で描き、
+    /// `CSS property "width"` の形で知らせる。CSS の変換 (`transform`・`translate`・`rotate`・`scale`) は掛けずに
+    /// 知らせ、`transform` 属性を掛ける要素の `transform-origin` / `transform-box` (属性でも CSS でも) と、
+    /// `<svg>` の `transform` 属性も知らせる (変換は掛けない)。描き方だけを変える性質 (`paint-order` など) は
+    /// 知らせない。
+    ///
     /// 描くものが 1 つも無いファイルは空の形 (``Shape/isEmpty``) になり、同じく知らせる。
     ///
     /// **近似で描いたことも知らせる。** 群や、塗りと線を両方持つ要素の `opacity` は、SVG ならひとまとめに
@@ -241,6 +252,8 @@ extension SketchPart {
     ///
     /// - 群に掛けた `opacity` は、子の色ひとつずつに掛ける。子どうしが重なった所は SVG より濃く出る
     /// - 尖った角が切られる長さは ``StrokeJoin/miter`` のもので、`stroke-miterlimit` は読まない
+    /// - 根と入れ子の `<svg>` の `width` / `height` を CSS で負の値に書くと、何も描かず知らせる。
+    ///   ブラウザは CSS の負の宣言を無効として捨て、属性か `auto` の大きさで描く
     ///
     /// ## 読めないときは投げる
     ///

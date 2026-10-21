@@ -61,12 +61,18 @@ public nonisolated struct OSCMessage: Sendable, Equatable {
         }
     }
 
-    /// `index` 番目の引数を整数として読む。整数 (`i`・`h`) だけを読み、小数は丸めずに `nil`。
+    /// `index` 番目の引数を整数として読む。整数 (`i`・`h`) と、**整数の値の小数** (`f`・`d` の `1.0`) を読む。
+    ///
+    /// TouchOSC のボタンや TouchDesigner の OSC Out CHOP は、整数のつもりの値も既定で小数 (`1.0`) で送るので、
+    /// 同じ値なら読む。**丸めて別の値を返すことはしない** — `0.5`・NaN・無限・`Int` に収まらない値
+    /// (`1e30`) は `nil` で、真偽 (`T`・`F`) も `nil`。
     public func int(_ index: Int) -> Int? {
         guard arguments.indices.contains(index) else { return nil }
         switch arguments[index] {
         case .int(let value): return Int(value)
         case .int64(let value): return Int(value)
+        case .float(let value): return Int(exactly: value)
+        case .double(let value): return Int(exactly: value)
         default: return nil
         }
     }

@@ -497,15 +497,20 @@ public final class SketchRuntime {
     ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**窓・共有面の経路だけが立てる。**
     ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
     ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
+    ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
+    ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
+    ///     保存された値の復元は区画と別の口なので、偽でも戻る。
     ///
     /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
+    /// [#1619]: https://github.com/mokume-metal/mokume/issues/1619
     init(
         sketch: any Sketch,
         gpu: RenderDevice,
         clock: Clock?,
         now: @escaping () -> Double,
         displays: () -> [Display] = { Display.connected },
-        onScreen: Bool = false
+        onScreen: Bool = false,
+        opensFacets: Bool = true
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
@@ -529,8 +534,13 @@ public final class SketchRuntime {
         self.isOnScreen = onScreen || clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
-        self.observer = FrameObserver.makeIfEnabled()
-        self.inbox = InputInbox.makeIfEnabled()
+        // **観測・入力・つまみの区画は、書き出しの子には開かない** (`opensFacets`・#1619)。書き出しは
+        // 外から届くものを水準 2 (同じ引数から同じ動き) を壊すものとして断る (ADR-0032「書き出す起こし方」)。
+        // 区画を開くと、見張りの世代交代の瞬間に要求を取り合い (入力・つまみの値が絵に混ざる)、
+        // 見張りの目録 (`params/report.json`) も起動しただけで書き換える。**保存された値は区画と別の口
+        // (`ParamStore`) なので、下で戻る**
+        self.observer = opensFacets ? FrameObserver.makeIfEnabled() : nil
+        self.inbox = opensFacets ? InputInbox.makeIfEnabled() : nil
         // **管はここで開かない。** 開いてよいかは出口で決まり、出口を決めるのは窓を持つ
         // 側である (``relayToolInput(from:)``・#2024)
         self.relayed = nil
@@ -539,7 +549,7 @@ public final class SketchRuntime {
         self.paramRegistry = registry
         let store = ParamStore.makeIfNeeded(for: registry)
         self.paramStore = store
-        self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
+        self.params = opensFacets ? ParamSurface.makeIfEnabled(for: registry, store: store) : nil
         canvas.isRuntimeSurface = true
     }
 

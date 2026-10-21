@@ -453,6 +453,18 @@ extension Canvas {
     /// [#1829]: https://github.com/mokume-metal/mokume/issues/1829
     /// [#1920]: https://github.com/mokume-metal/mokume/issues/1920
     func strokeOutline(_ outline: Outline, discSegments: Int? = nil) {
+        // 破線なら、輪郭を片に刻んで 1 つずつ引く ([#2835])。**開いた輪郭だけ** — 閉じた輪郭は
+        // まだ実線で引く
+        if let dash = style.strokeDash, !outline.isClosed,
+            let pieces = dashedPieces(of: outline, by: dash)
+        {
+            return strokeDashedPieces(pieces, discSegments: discSegments)
+        }
+        strokeSolidOutline(outline, discSegments: discSegments)
+    }
+
+    /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
+    func strokeSolidOutline(_ outline: Outline, discSegments: Int? = nil) {
         guard let matrix = thinStrokeMatrix,
             let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }

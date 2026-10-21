@@ -34,6 +34,7 @@ extension CanvasTests {
             style.strokeWeight = 3
             style.strokeCap = .square
             style.strokeJoin = .bevel
+            style.strokeDash = StrokeDash(length: 4, gap: 2)
             style.hasFill = false
             style.hasStroke = false
             style.rectMode = .center
@@ -625,7 +626,7 @@ extension CanvasTests {
 
         /// ``Canvas/Style`` のうち、越えるフィールド。どれも描き方である (ADR-0021 決定 4)。
         private let carriedStyle: Set<String> = [
-            "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "hasFill", "hasStroke",
+            "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "strokeDash", "hasFill", "hasStroke",
             "rectMode", "ellipseMode", "blendMode", "fontSelection", "textSize", "textFace",
             "horizontalTextAlign", "verticalTextAlign", "textLeading", "textWrap", "imageMode",
             "tint", "picture", "gradient",
