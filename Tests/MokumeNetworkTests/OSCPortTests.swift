@@ -607,6 +607,33 @@ struct OSCPortTests {
         #expect(osc.input.unreadable == 1)
     }
 
+    @Test("OSC でも、空で流れが閉じたら受け口と送り元つきで 1 度だけ診断に出し、空を読めないとして数えるのは今までどおり (#2363)")
+    func emptyClosedFlowIsToldOnceForOSC() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let source = try #require(osc.source as? NetworkOSCSource)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        let packet = try Wire.encoded(OSCMessage("/m", arguments: []))
+
+        for index in 0..<3 {
+            #expect(peer.send(packet, to: port) == packet.count)
+            #expect(await collect(osc, count: 1) == [OSCMessage("/m", arguments: [])])
+            #expect(peer.send([], to: port) == 0)
+            try await requireWait(
+                "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
+                until: { source.tally.ended >= index + 1 })
+        }
+        // 空を読めないとして数えるのは今までどおり (その診断 `osc :<port>: … could not be read …` は列が
+        // 次に読まれたときに、1 秒に 1 度までにまとめて出る)。送り元ごとの診断はそれとは別に、1 度だけ
+        osc.supply()
+        #expect(osc.input.unreadable == 3)
+        #expect(told.count(containing: "empty datagram") == 1)
+        let line = try #require(told.lines.first { $0.contains("empty datagram") })
+        #expect(line.hasPrefix("osc :\(port): an empty datagram from 127.0.0.1:\(peer.port) closed its flow"))
+    }
+
     @Test("番号つきの送りは、送れないと名乗った番号だけを新しい送り元に替えて全部を読む")
     func numberedBurstReplacesSendersThatCannotSend() async throws {
         let told = Told()

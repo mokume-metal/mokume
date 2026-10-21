@@ -100,24 +100,26 @@ nonisolated public enum StartupReads {
     public static let observe = Entry(
         name: "Observation facet", origin: .facet, key: "observe", decidedBy: .user,
         note: "Present at launch turns observation on. Creating it while the sketch runs "
-            + "has no effect",
+            + "has no effect. A sketch that render starts does not open it",
         readSite: "Sources/MokumeCore/Observation/FrameObserver.swift")
 
     /// 入力の区画。
     public static let input = Entry(
         name: "Input facet", origin: .facet, key: "input", decidedBy: .user,
         note: "Present at launch lets input reach the sketch. Creating it while the sketch "
-            + "runs has no effect",
+            + "runs has no effect. A sketch that render starts does not open it, so input "
+            + "never mixes into what it writes",
         readSite: "Sources/MokumeCore/Input/InputInbox.swift")
 
     /// つまみの区画。
     public static let params = Entry(
         name: "Knob facet", origin: .facet, key: "params", decidedBy: .user,
         note: "Present at launch lets declared values be read and written from outside. "
-            + "Creating it while the sketch runs has no effect. Only the run that holds the "
-            + "facet writes the catalogue (report.json). A run started by hand where watch "
-            + "is running (swift run, run) is outside the promise: while the watcher's "
-            + "generations swap, it may take over the requests of any of the three facets",
+            + "Creating it while the sketch runs has no effect. A sketch that render starts "
+            + "does not open it (saved values are still restored, as they do not go through it). "
+            + "Only the run that holds the facet writes the catalogue (report.json). A run started "
+            + "by hand where watch is running (swift run, run) is outside the promise: while the "
+            + "watcher's generations swap, it may take over the requests of any of the three facets",
         readSite: "Sources/MokumeCore/Parameters/ParamSurface.swift")
 
     /// 絵を渡す面の区画。
@@ -219,12 +221,18 @@ nonisolated public enum StartupReads {
     /// 描いたら自分で終わる。時刻はフレーム番号から導く ([ADR-0032] 決定 1 の表の `render`
     /// の行)。値の形は読み手 (`RenderRequest`) が持ち、道具も同じ型で組む。
     ///
+    /// **利用者の区画 (`observe` / `input` / `params`) も、在っても開かない** ([#1619])。外から届く
+    /// 入力とつまみの値が書き出しに混ざると、同じ引数から同じ動きが出ない (水準 2)。保存された値は
+    /// 区画と別の口なので、これまでどおり戻る。
+    ///
+    /// [#1619]: https://github.com/mokume-metal/mokume/issues/1619
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     public static let render = Entry(
         name: "Render", origin: .environment, key: "MOKUME_RENDER", decidedBy: .tool,
         note: "Writes a fixed number of frames at a fixed frame rate and then ends, with no "
             + "window. The value is the frame rate, the frame count and where to write, and "
-            + "the tool passes it only for render",
+            + "the tool passes it only for render. It does not open the observation, input "
+            + "or knob facets even when they are present",
         readSite: "Sources/MokumeCore/Display/RenderRequest.swift")
 
     /// 全部。**案内も検査もここを読む。**

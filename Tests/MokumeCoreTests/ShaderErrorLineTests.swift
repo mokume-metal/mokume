@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
@@ -207,9 +208,16 @@ struct ShaderErrorLineTests {
 
         let body = Self.brokenBody(for: route)
         try body.write(to: url, atomically: true, encoding: .utf8)
-        let failure = try #require(reload())
-        #expect(failure.contains("probe.metal:\(try Self.location(of: "foo", in: body)): error"), "\(failure)")
+        let digest = WarningDigest()
+        let failure = try #require(Diagnostics.$digest.withValue(digest) { reload() })
+        let location = try Self.location(of: "foo", in: body)
+        #expect(failure.contains("probe.metal:\(location): error"), "\(failure)")
         #expect(!failure.contains("program_source"), "\(failure)")
+        // 端末の警告 (#2784): 理由の 1 行目の後ろに、書いた行と桁が改行なしで載る
+        let warning = try #require(digest.takeUnreported().first, "警告が出なかった")
+        #expect(warning.contains(" — probe.metal:\(location): error: "), "\(warning)")
+        #expect(!warning.contains("\n"), "\(warning)")
+        #expect(!warning.contains("warning:"), "\(warning)")
     }
 
     // MARK: - 入口の書き違え (#2782)
@@ -319,9 +327,15 @@ struct ShaderErrorLineTests {
             reload = { computation.reload(); return computation.failure }
         }
         try Self.misnamedEntryBody(for: route).write(to: url, atomically: true, encoding: .utf8)
-        let failure = try #require(reload())
+        let digest = WarningDigest()
+        let failure = try #require(Diagnostics.$digest.withValue(digest) { reload() })
         #expect(failure.contains("probe.metal: error: "), "\(failure)")
         #expect(failure.contains(Self.expectedEntry(for: route)), "\(failure)")
+        // 端末の警告 (#2784・#2782): 載るのは Metal の `Undefined symbol(s)` ではなく、言い直しの行
+        let warning = try #require(digest.takeUnreported().first, "警告が出なかった")
+        #expect(warning.contains(" — probe.metal: error: the fragment does not define its entry point "), "\(warning)")
+        #expect(!warning.contains("Undefined symbol"), "\(warning)")
+        #expect(!warning.contains("\n"), "\(warning)")
     }
 
     @Test("入口が正しい断片は、今までどおり組める", arguments: Route.allCases)
