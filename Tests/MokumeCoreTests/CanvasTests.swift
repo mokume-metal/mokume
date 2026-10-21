@@ -1914,7 +1914,7 @@ struct CanvasTests {
             "emptyNumbers": resource, "blankPicture": resource,
             "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
-            "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
+            "typefaces": cache, "solidStrokeGeometry": cache, "modelStrokeGeometries": cache, "modelFills": cache,
             "gradientShaderStorage": "勾配で塗る断片 (#2433)。初めて勾配で塗るときに組み、面と同じだけ生きる。作り直さないために持つ",
             "gradientShaderFailed": "勾配の断片を組めなかった印 (#2433)。組めない面では組み直さない",
             "paintsWithGradient": "いまの断片が勾配の断片かの写し (#2433)。`currentShader` を替えるたびに導き直す (出口の戻しも通る)",

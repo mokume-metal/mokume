@@ -390,6 +390,14 @@ public final class SketchRuntime {
     private var measuredValues: [String: ExposedValue] = [:]
     /// 続けて撮っている最中の列。撮り終えるまで次の要求を拾わない。
     private var capture: FrameCapture?
+    /// 撮り終えて、**書き込みの決着を待っている目録** ([#2381])。全部の書き込みが決着してから書く。
+    ///
+    /// 撮り終えた時点に組んでおく (フレーム・時刻・負荷はその時点のもの)。決着を待つ間に進んだフレームの
+    /// 数字を載せない。決着するまで次の要求は拾わない — 次の撮影の `clearProducts()` が、前の撮影の
+    /// 書き込みが走っている最中に絵を消すと、古い絵と新しい目録が組になる。
+    ///
+    /// [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+    private var settling: ObservationReport?
     /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
     /// ``SketchPresence/grace`` 秒ぶん進み続けてからである。
     private lazy var presence = SketchPresence(source: self)
@@ -681,6 +689,9 @@ public final class SketchRuntime {
         }
         guard settleWithoutAnotherFrame(outcomes) else { return false }
         closingOutcomesGiveUpAt = nil
+        // 撮り終えた観測の書き込みが決着していなければ、決着させて目録を書く ([#2381])。**終わる前に
+        // 目録を書かないと、読み手は絵が揃ったのに目録が来ないまま待つ**
+        if let observer, !settleObservation(patience, through: observer) { return false }
         // **撮る係はここでは閉じない。** 並びに居れば同じ `close()` が塞いで待つので、
         // 下で選んだ待ち方で閉じる
         for entry in outlets where entry.seam !== recorder { entry.seam.close() }
@@ -746,7 +757,7 @@ public final class SketchRuntime {
         // 駆動源の側で止めないのは、3 本のどれを止め忘れても同じ穴になるためである
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
-        let observation = capture == nil ? takeObservationRequest() : nil
+        let observation = capture == nil && settling == nil ? takeObservationRequest() : nil
         // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
         // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
         // このフレームの中なので、ここで立てれば覆える
@@ -1826,6 +1837,13 @@ public final class SketchRuntime {
         request: ObservationRequest?, drawFailure: RenderFailure? = nil, appliedTime: Float? = nil
     ) {
         guard let observer else { return }
+        // **書き込みの決着を待っている間は、決着を見るだけ** ([#2381])。塞がずに見に来て、フレームは進める
+        //
+        // [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+        if settling != nil {
+            settleObservation(.peek, through: observer)
+            return
+        }
         if capture != nil {
             continueCapture(through: observer, drawFailure: drawFailure)
             return
@@ -1877,7 +1895,7 @@ public final class SketchRuntime {
             // 途中で描けなくなったら、そこまでの絵は目録に残したまま打ち切る。
             // 絵が揃っていないことは「宣言した数と合わない」で読み手に伝わる
             capture = nil
-            finish(
+            finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
                 warnings: pending.warnings + ["Drawing this frame failed: \(drawFailure)"])
             return
@@ -1899,19 +1917,24 @@ public final class SketchRuntime {
             // まだ配っていない前のフレームの絵は上書きしない (#2743)
             let image = try target.encodeToImageAndRead(
                 scaledBy: pending.scale, avoiding: outletStorageToAvoid())
-            let name = try observer.writeFrame(image, at: pending.frames.count)
+            // **PNG の符号化とファイルの置き換えは、フレームの外で行う** ([#2381])。ここで払うのは読み戻しと
+            // 統計 (64x64 だけ拾う) で、置けたかどうかは撮り終えた後に見る (``settleObservation(_:through:)``)
+            //
+            // [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+            let stats = FrameStats.summarize(image)
+            let name = observer.enqueueFrame(image, at: pending.frames.count)
             pending.frames.append(
                 ObservationReport.CapturedFrame(
                     image: name,
                     frame: timing.frameCount,
                     time: Double(timing.time),
-                    stats: FrameStats.summarize(image),
+                    stats: stats,
                     values: exposedValues.isEmpty ? nil : exposedValues))
         } catch {
             // 採れなくても黙らない。読み手が「まだか / 失敗か / 死んだか」を
             // 区別できるようにするため (ADR-0018 決定 3)
             capture = nil
-            finish(
+            finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
                 warnings: pending.warnings + ["Could not take the image: \(error)"])
             return
@@ -1921,7 +1944,7 @@ public final class SketchRuntime {
             capture = nil
             // 描けてはいるが直っていないもの (組み立てに失敗した断片など) は、
             // 目録の警告として出す。**絵が出ているぶん、これが無いと気付けない**
-            finish(
+            finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: true,
                 warnings: pending.warnings + canvas.shaderFailures
                     + Self.repetitionWarnings(pending.frames), appliedTime: pending.appliedTime)
@@ -1929,6 +1952,50 @@ public final class SketchRuntime {
         }
         pending.wait = pending.every - 1
         capture = pending
+    }
+
+    /// 撮り終えた列の目録を、**頼んだ書き込みが全部決着してから**書く ([#2381])。
+    ///
+    /// 目録は撮り終えた時点で組む。書き込みを頼んでいなければ (描けなかった・1 枚も撮れなかった)
+    /// その場で書く。頼んでいれば、決着するまで ``settling`` に置き、``settleObservation(_:through:)``
+    /// が書く。
+    ///
+    /// [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+    private func finishCapture(
+        id: String, through observer: FrameObserver,
+        frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String],
+        appliedTime: Float? = nil
+    ) {
+        let snapshot = report(
+            id: id, frames: frames, complete: complete, warnings: warnings, appliedTime: appliedTime)
+        guard observer.hasPendingWrites else {
+            observer.finish(snapshot)
+            return
+        }
+        settling = snapshot
+        // 裏で続けない観測は、撮り終えたフレームのうちに決着まで待つ (``FrameObserver/writesInBackground``)
+        if !observer.writesInBackground { settleObservation(.block, through: observer) }
+    }
+
+    /// 決着を待っている目録があれば、書き込みの決着を見て、決着していれば書く。
+    ///
+    /// **全枚が置けたなら、組んでおいた目録をそのまま書く。** 置けなかった枚があれば、その枚の手前で
+    /// 目録を終え (``ObservationReport/truncated(after:because:)``)、理由を警告で返す — 今と同じく
+    /// `complete` の鍵が無く、絵が揃っていないことが読み手に伝わる (ADR-0018 決定 3)。
+    ///
+    /// - Returns: 決着したか (待っているものが無い・書いた)。``Patience/peek`` なら、まだなら `false`。
+    @discardableResult
+    private func settleObservation(_ patience: Patience, through observer: FrameObserver) -> Bool {
+        guard let snapshot = settling else { return true }
+        guard let settlement = observer.settleWrites(patience) else { return false }
+        settling = nil
+        switch settlement {
+        case .written:
+            observer.finish(snapshot)
+        case .failed(let index, let reason):
+            observer.finish(snapshot.truncated(after: index, because: reason))
+        }
+        return true
     }
 
     /// 目録を書いて、この要求を終える。

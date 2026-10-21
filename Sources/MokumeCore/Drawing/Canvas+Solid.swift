@@ -806,9 +806,9 @@ extension Canvas {
     /// 作らない — 置かれずに捨てられる形のために GPU の置き場を確保しない。骨が作れない
     /// 稜線 (開いた端) は、置くときに CPU の帯へ戻る。
     private func rememberGPUStroke(of source: SolidSource, from start: Int) {
-        guard recordingShape, gpuStrokeStyleAllows(source), solidVertices.count > start else {
-            return
-        }
+        guard recordingShape, case .mesh = source, gpuStrokeStyleAllows(source),
+            solidVertices.count > start
+        else { return }
         recordedGPUStrokes.append(
             RetainedGPUStroke(
                 source: source, matrix: transform.matrix, weight: style.strokeWeight,

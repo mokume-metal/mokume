@@ -648,6 +648,22 @@ public final class Canvas {
     /// 同じ稜線の GPU 上の骨。列も所有し、控えの追い出しと描画の寿命を分ける。
     var solidStrokeGeometry = BoundedCache<SolidSource, SolidStrokeGeometry>(
         budget: Canvas.solidCacheBudget, weight: { $0.buffer.length + 256 })
+    /// 読み込んだモデルの稜線の GPU 上の骨 (#2907)。**組み込みの立体の骨 (``solidStrokeGeometry``) とは
+    /// 別の控えで、予算も別に持つ。** モデルの骨は網の大きさに比例し (10 万三角形の波打つ格子で十数 MiB)、
+    /// 組み込みの立体の予算 (``solidCacheBudget``・16 MiB) には 1 つも入らない。共有すると、予算を広げる
+    /// か、モデルを常に CPU の帯へ戻すかしかなく、前者は小さな立体の骨まで巻き込んで追い出し合う。
+    ///
+    /// **作れなかったことも覚える** (``ModelStrokeBone/refused``)。開いた端を持つ・同じ直線に載る 2 辺が
+    /// 集まる・予算の半分を超える網は骨を作れず CPU の帯へ戻るが、毎フレーム骨を作りかけて諦めると
+    /// 戻った先より遅くなる。重さは小さい固定値で、作れたものの追い出しを妨げない。
+    ///
+    /// 列も所有し、控えの追い出しと描画の寿命を分ける。検査は予算を 0 にして、持たない経路 (以前の
+    /// 経路) を物差しにする。
+    var modelStrokeGeometries = BoundedCache<SolidSource, ModelStrokeBone>(
+        budget: Canvas.modelStrokeBudget, weight: \.weight)
+    /// ``modelStrokeGeometries`` の予算 (バイト)。塗りの置き場 (``modelFillBudget``) と同じ大きさで、CPU 側の
+    /// モデルの控え (``modelCache``) に収まるモデルの骨を持てる。1 つで予算の半分を超える骨は作らない。
+    static let modelStrokeBudget = 128 << 20
     /// 読み込んだモデルの塗りの頂点の、GPU 上の置き場 (#1749)。列も所有し、控えの追い出しと
     /// 描画の寿命を分ける (線の骨 ``solidStrokeGeometry`` と同じ作法)。
     ///

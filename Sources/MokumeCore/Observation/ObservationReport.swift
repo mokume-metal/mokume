@@ -115,4 +115,17 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         self.frames = frames
         self.appliedTime = appliedTime
     }
+
+    /// 書き込みが `count` 枚目で転んだと分かった後の姿。**目録はその枚の手前で終える** (絵は揃っていない・
+    /// `complete` の鍵を落とす)。理由は警告に足す ([#2381](https://github.com/mokume-metal/mokume/issues/2381))。
+    ///
+    /// 目録の中身 (フレーム・時刻・負荷・入力) は撮った時点のまま。**撮り終えた時点に組んでおき、書き込みの
+    /// 決着の後にここで直す** — 決着を待つ間に進んだフレームの数字を載せない。
+    func truncated(after count: Int, because reason: String) -> ObservationReport {
+        ObservationReport(
+            id: id, image: nil, frame: frame, time: time, size: size,
+            warnings: warnings + ["Could not take the image: \(reason)"], stats: nil, load: load,
+            values: values, inputs: inputs, stamp: stamp, frames: Array(frames.prefix(count)),
+            appliedTime: nil)
+    }
 }
