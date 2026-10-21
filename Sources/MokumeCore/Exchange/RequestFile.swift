@@ -218,6 +218,14 @@ final class RequestFile<Request: ExchangeRequest> {
         }
     }
 
+    /// この区画に応える権利を、いま持っているか。**持っていなければ取りに行く** (``pending()`` と同じ)。
+    ///
+    /// 要求を拾わずに**応答だけを書く側**が使う。権利を見ずに書くと、居合わせた別の実行が
+    /// 見張りの応答を書き換える ([#2227](https://github.com/mokume-metal/mokume/issues/2227))。
+    func canAnswer() -> Bool {
+        takeOverIfFree()
+    }
+
     /// 権利を持っているか。**いま引き継いだなら、選んだとおりに応答を読み直す。**
     private func takeOverIfFree() -> Bool {
         if holdsClaim { return true }

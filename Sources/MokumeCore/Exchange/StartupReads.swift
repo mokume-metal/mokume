@@ -114,7 +114,10 @@ nonisolated public enum StartupReads {
     public static let params = Entry(
         name: "Knob facet", origin: .facet, key: "params", decidedBy: .user,
         note: "Present at launch lets declared values be read and written from outside. "
-            + "Creating it while the sketch runs has no effect",
+            + "Creating it while the sketch runs has no effect. Only the run that holds the "
+            + "facet writes the catalogue (report.json). A run started by hand where watch "
+            + "is running (swift run, run) is outside the promise: while the watcher's "
+            + "generations swap, it may take over the requests of any of the three facets",
         readSite: "Sources/MokumeCore/Parameters/ParamSurface.swift")
 
     /// 絵を渡す面の区画。
