@@ -23,7 +23,10 @@ import mokume
 /// ``SerialWriter`` の 1 か所で、2 つの手の書き込みが 1 行の中で混ざらない。
 ///
 /// **取り消しが切れるのは区画を待つ道具 (`observe`・`input`) の待ち。** 置いた要求は区画に残り、
-/// スケッチが後から応えうる (次の要求が置き換える)。公開 API の取得のように区画を待たない道具は、
+/// スケッチが後から応えうる (次の要求が置き換える)。**続けて撮る観測を取り消すと、スケッチは撮り終える
+/// まで区画を塞ぐ** (取り消しはスケッチへ届かない・#3030)。窓口はそれを覚え (``AbandonedRequests``)、
+/// 次の呼び出しがその間に時間切れになったら「応えない」ではなく、前に取り消した要求をまだ撮っていると
+/// 案内する。公開 API の取得のように区画を待たない道具は、
 /// 走り終えるまで切れない — その間も `ping` には答える。
 struct MCPServer {
     /// 名乗る版。手続きの版であって、この道具の版ではない。
@@ -46,6 +49,7 @@ struct MCPServer {
             if item.cancellation?.isCancelled != true {
                 answer(item, writer: writer)
             }
+            // 答えを書いた後に外す。**同じ印のときだけ** (``Inbox/retire(_:)``)
             inbox.retire(item)
         }
     }
@@ -83,7 +87,7 @@ struct MCPServer {
         case "ping":
             // 空の結果で速やかに答える (MCP 2024-11-05 の Ping・#2318)。窓口は挨拶の
             // 前後で状態を変えないので、挨拶の前でも同じ答えになる
-            return JSONRPC.response(id: call.id, result: [:])
+            return JSONRPC.pingResponse(id: call.id)
         case "initialize":
             return JSONRPC.response(
                 id: call.id,

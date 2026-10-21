@@ -75,7 +75,7 @@ nonisolated final class Inbox: @unchecked Sendable {
             }
             if let id = call.id {
                 if call.method == "ping" {
-                    writer.send(JSONRPC.response(id: id, result: [:]))
+                    writer.send(JSONRPC.pingResponse(id: id))
                     continue
                 }
                 let token = Cancellation()
@@ -119,8 +119,35 @@ nonisolated final class Inbox: @unchecked Sendable {
     }
 
     /// 答え終えた (または読み飛ばした) 要求を表から外す。以後その `id` の取り消しは何もしない。
+    ///
+    /// **表の印がこの要求のものであるときだけ外す。** 答えを書いてから外すまでの隙に、同じ `id` の
+    /// 新しい要求が読まれて表を上書きしていることがある。鍵だけで消すと、新しい要求の取り消しが
+    /// 登録ごと消える。
     func retire(_ item: Item) {
-        guard let key = item.key else { return }
-        condition.withLock { registry[key] = nil }
+        guard let key = item.key, let token = item.cancellation else { return }
+        condition.withLock {
+            if registry[key] === token { registry[key] = nil }
+        }
     }
+}
+
+/// 取り消して、区画に置いたままにした要求。区画ごとに最後の 1 件だけを覚える。
+///
+/// 取り消しは窓口の待ちを切るだけで、スケッチには届かない ([#3030](https://github.com/mokume-metal/mokume/issues/3030))。
+/// 続けて撮る観測は撮り終えるまで区画を塞ぐので、その間に置いた次の要求が時間切れになったとき、
+/// 「応えない」と取り違えずに、前に取り消した要求をまだ撮っていると案内するための記憶である。
+/// **道具を走らせる手だけが触る** (読み取りの手は触らない) ので、鍵は持たない。
+final class AbandonedRequests {
+    private var ids: [String: String] = [:]
+
+    init() {}
+
+    /// 区画に置いたまま待ちを切った。
+    func abandon(facet: URL, id: String) { ids[facet.path] = id }
+
+    /// 区画のどれかの要求に答えが返った。塞いでいたものは終わっている。
+    func clear(facet: URL) { ids[facet.path] = nil }
+
+    /// その区画で、取り消したまま塞いでいるかもしれない要求の識別子。
+    func id(for facet: URL) -> String? { ids[facet.path] }
 }

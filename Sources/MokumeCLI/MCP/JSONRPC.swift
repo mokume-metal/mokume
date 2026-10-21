@@ -202,6 +202,12 @@ nonisolated enum JSONRPC {
             ?? failure(id: id, code: internalError, message: "could not turn the reply into JSON")
     }
 
+    /// `ping` への答え (空の結果)。**答え方はここ 1 つ** — 読み取りの手 (`Inbox.feed`・道具が走っている
+    /// 間の即答) と `MCPServer.respond(to:)` の枝が、別々に組むと食い違う (#2355)。
+    static func pingResponse(id: ID?) -> String {
+        response(id: id, result: [:])
+    }
+
     /// 失敗を返す 1 行。**この 1 行は必ず返る。**
     static func failure(id: ID?, code: Int, message: String) -> String {
         line([

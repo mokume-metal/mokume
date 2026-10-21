@@ -26,6 +26,8 @@ struct Tools {
     var apiList: APIListLocator
     /// 識別子の作り手。検査から固定できるようにする。
     var makeID: () -> String = { UUID().uuidString.prefix(8).lowercased() }
+    /// 取り消して区画に置いたままにした要求 (``AbandonedRequests``)。道具を走らせる手だけが触る。
+    let abandoned = AbandonedRequests()
 
     /// 既定では 2 つの軸は重なる (区画の基準がパッケージの場所と同じ)。
     init(
@@ -412,13 +414,25 @@ struct Tools {
                 isCancelled: { cancellation?.isCancelled == true })
             {
             case .answered(let report):
+                abandoned.clear(facet: facet)
                 return .answered(report)
-            case .cancelled:
+            case .cancelled(let placed):
+                // **置いた後に切った要求は、スケッチが撮り終えるまで区画を塞ぎうる** (#3030)。覚えて
+                // おき、次の呼び出しが時間切れになったときに「応えない」と取り違えない
+                if placed { abandoned.abandon(facet: facet, id: id) }
                 // 窓口は取り消された要求に答えを書かない。この文は呼ぶ側にだけ届く
                 return .refused("The call was cancelled")
             case .contested:
                 return .refused(facets.contested(entry, repeatable: repeatable))
             case .timedOut(let replaced):
+                // 前に取り消した要求の応答がまだ出ていなければ、スケッチはそれを撮っている
+                if !replaced, let earlier = abandoned.id(for: facet) {
+                    if facets.read(WorkDirectory.reportURL(under: facet))?["id"] as? String == earlier {
+                        abandoned.clear(facet: facet)  // 撮り終えている。いまの無応答は別の理由
+                    } else {
+                        return .refused(facets.stillTaking(entry, cancelledID: earlier))
+                    }
+                }
                 // 期限の時点で別の書き手が要求を置き換えていたら、走っていないとは言わず、取り合いとして答える
                 return .refused(
                     replaced

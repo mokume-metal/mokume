@@ -146,6 +146,101 @@ struct MCPServeLoopTests {
         #expect(written.allSatisfy { $0.contains("tools") })
     }
 
+    /// 識別子を順に返す作り手 (取り消した要求と次の要求を見分ける)。
+    nonisolated final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var names: [String]
+        init(_ names: [String]) { self.names = names }
+        func next() -> String { lock.withLock { names.isEmpty ? "extra" : names.removeFirst() } }
+    }
+
+    /// 要求が区画に置かれたら取り消す手 (置かれる前に取り消すと、置かずに戻ってしまう)。
+    private func cancelOncePlaced(_ token: Cancellation, in facets: Facets) {
+        let request = WorkDirectory.requestURL(under: facets.observeFacet)
+        DispatchQueue.global().async {
+            let deadline = Date().addingTimeInterval(10)
+            while !FileManager.default.fileExists(atPath: request.path), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            token.cancel()
+        }
+    }
+
+    /// **取り消しはスケッチへ届かない** (#3030) ので、続けて撮る観測は撮り終えるまで区画を塞ぐ。
+    /// その間に置いた次の要求の時間切れを、「応えない」と取り違えない。
+    @Test("取り消した観測の次の呼び出しが時間切れになったら、前の要求をまだ撮っていると案内する")
+    func explainsTheSketchIsStillOnTheCancelledRequest() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-serve-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let facets = Facets(directory: directory, waitLimit: 0.3)
+        let ids = Counter(["first", "second", "third"])
+        let tools = Tools(facets: facets, makeID: { ids.next() })
+
+        let token = Cancellation()
+        cancelOncePlaced(token, in: facets)
+        let cancelled = tools.call("observe", arguments: [:], cancellation: token)
+        #expect(cancelled.text == "The call was cancelled")
+
+        // スケッチはまだ first を撮っていて、second は拾われない
+        let blocked = tools.call("observe", arguments: [:])
+        #expect(blocked.isError)
+        #expect(blocked.text.contains("cancelled earlier (id first)"), "\(blocked.text)")
+        #expect(!blocked.text.contains("possibilities"), "起動し直しを勧める案内になっている")
+
+        // first の応答が出ていれば、塞いでいたものは終わっている。いまの無応答は別の理由
+        try Data(#"{"id":"first"}"#.utf8).write(to: WorkDirectory.reportURL(under: facets.observeFacet))
+        let afterwards = tools.call("observe", arguments: [:])
+        #expect(afterwards.text.contains("possibilities"), "\(afterwards.text)")
+        #expect(!afterwards.text.contains("cancelled earlier"), "\(afterwards.text)")
+    }
+
+    /// 置く前に取り消されていたら、置かない。取り消された入力が区画へ届くと、スケッチはそれを
+    /// 実行してしまう。
+    @Test("取り消しが先に立っていた呼び出しは、要求を区画に置かずに戻る")
+    func aCancelledCallPlacesNothing() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-serve-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let facets = Facets(directory: directory, waitLimit: 5)
+        let tools = Tools(facets: facets, makeID: { "fixed" })
+        let token = Cancellation()
+        token.cancel()
+
+        let event = #"{"events":[{"type":"keyDown","code":1}]}"#
+        let input = tools.call("input", arguments: try JSONSerialization.jsonObject(with: Data(event.utf8)) as? [String: Any] ?? [:], cancellation: token)
+        let observe = tools.call("observe", arguments: [:], cancellation: token)
+        #expect(input.text == "The call was cancelled")
+        #expect(observe.text == "The call was cancelled")
+        #expect(!FileManager.default.fileExists(atPath: WorkDirectory.requestURL(under: facets.inputFacet).path))
+        #expect(!FileManager.default.fileExists(atPath: WorkDirectory.requestURL(under: facets.observeFacet).path))
+        // 置いていないので、塞いでいる要求も覚えない
+        #expect(tools.abandoned.id(for: facets.inputFacet) == nil)
+        #expect(tools.abandoned.id(for: facets.observeFacet) == nil)
+    }
+
+    /// 答えを書いてから表を外すまでの隙に、同じ id の新しい要求が読まれて表を上書きする。
+    /// 鍵だけで外すと、その新しい要求の取り消しが登録ごと消える。
+    @Test("同じ id の新しい要求の取り消しは、前の要求を外しても残る")
+    func retiringAnOldRequestKeepsTheNewOneWithTheSameId() throws {
+        let inbox = Inbox()
+        let writer = SerialWriter { _ in }
+        let twice = Script([.line(list(1)), .line(list(1))])
+        inbox.feed(readLine: { twice.next() }, writer: writer)
+        let old = try #require(inbox.next())
+        let new = try #require(inbox.next())
+        #expect(old.cancellation !== new.cancellation)
+
+        inbox.retire(old)  // 前の要求の答えを書いた後
+        // 同じ id の取り消しは、いま登録されている新しい要求に届く
+        let cancelling = Script([.line(cancel("1"))])
+        inbox.feed(readLine: { cancelling.next() }, writer: writer)
+        #expect(new.cancellation?.isCancelled == true)
+        #expect(old.cancellation?.isCancelled == false)
+    }
+
     @Test("文字列の id と数の id は、別の id として引く")
     func stringAndNumberIdsAreDistinct() {
         #expect(JSONRPC.ID.string("1").key != JSONRPC.ID.number(1).key)
