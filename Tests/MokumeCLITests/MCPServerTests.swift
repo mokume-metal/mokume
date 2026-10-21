@@ -90,7 +90,7 @@ struct MCPServerTests {
         let server = MCPServer(
             tools: Tools(facets: Facets(directory: package, waitLimit: 0.2), makeID: { "fixed" }),
             readLine: { recorder.next() },
-            write: { recorder.written.append($0) })
+            write: { recorder.record($0) })
         try beforeServing()
         server.serve()
         let result = try decode(try #require(recorder.written.first))["result"] as? [String: Any]
