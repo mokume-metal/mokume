@@ -211,6 +211,10 @@ extension SketchPart {
     /// ``requestImage(_:)`` と同じで、届くまでの ``Sketch/draw()`` はモデルが無いまま呼ばれ、
     /// 置くのは `draw()` の中である。
     ///
+    /// **呼んだ `Task` を取り消しても、読み込みは止まらず、読み終えて返る。** スケッチが終わった
+    /// 後に届いても落ちず、モデルはそのまま返る (``requestImage(_:)`` と同じ)。取消の扱いは
+    /// [#2760] と合わせて決めるので、いまの振る舞いであって約束ではない。
+    ///
     /// <!-- example: 文脈 var head: Model? -->
     /// ```swift
     /// func setup() {
@@ -233,6 +237,8 @@ extension SketchPart {
     /// - Throws: ``loadModel(_:normalize:)`` と同じ (``ModelFailure``)。
     ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadModel(_:normalize:)
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model

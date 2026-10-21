@@ -74,6 +74,14 @@ extension SketchPart {
     /// 読み方と失敗は ``loadStrings(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
     /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 文字列が無いまま呼ばれる。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestStrings(_ path: String) async throws(DataFailure) -> [String] {
         try await requestParsed(path) { text throws(DataFailure) in TextFile.lines(of: text) }
@@ -191,6 +199,14 @@ extension SketchPart {
     /// 読み方と失敗は ``loadTable(_:header:)`` と同じ。呼び方と届く前の扱いは
     /// ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。**
     /// 大きな表を読んでもフレームが詰まらない。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ表を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestTable(_ path: String, header: Bool = false) async throws(DataFailure) -> Table {
         Table(
@@ -330,6 +346,14 @@ extension SketchPart {
     /// 読み方と失敗は ``loadJSONObject(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
     /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 値が無いまま呼ばれる。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ値を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestJSONObject(_ path: String) async throws(DataFailure) -> JSONObject {
         JSONObject(
@@ -396,6 +420,14 @@ extension SketchPart {
     /// 読み方と失敗は ``loadJSONArray(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
     /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 値が無いまま呼ばれる。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ値を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestJSONArray(_ path: String) async throws(DataFailure) -> JSONArray {
         JSONArray(
@@ -528,6 +560,14 @@ extension SketchPart {
     ///
     /// 読み方と失敗は ``loadXML(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)`` と
     /// 同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。**
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestXML(_ path: String) async throws(DataFailure) -> XML {
         XML(
