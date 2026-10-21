@@ -95,4 +95,5 @@ bash "$(dirname "${BASH_SOURCE[0]}")/report-check-failure.sh" \
   --title "$TITLE" \
   --log "$LOG" \
   --body-file "$body" \
+  --key-file "$LOG" \
   --source '.github/workflows/ruleset-drift.yml が自動起票した (#99)'
