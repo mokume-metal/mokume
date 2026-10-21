@@ -1326,9 +1326,12 @@ public final class SketchRuntime {
                 } failure: {
                     $0.failure
                 }
+                // **渡し終えた絵は、巡回の後に当てる外しより前に落とす。** 巡回の最中に頼まれた
+                // ``detachNow(_:)-(any Outlet)`` は、まだ誰にも渡していない絵だけを外す出口へ渡すので、
+                // 渡し終えた絵が残っていると同じ絵を 2 度渡す (#2246)。渡している最中に決着した絵
+                // (出口の中から呼び直された分) は残り、次の巡回で渡す
+                self.readyOutletFrames.removeFirst(count)
             }
-            // 渡している最中に決着した絵 (出口の中から呼び直された分) は、次の巡回で渡す
-            readyOutletFrames.removeFirst(count)
         }
     }
 
@@ -1412,9 +1415,40 @@ public final class SketchRuntime {
         guard outlet !== recorder,
             let index = outlets.firstIndex(where: { $0.seam === outlet })
         else { return }
+        // **外す直前に描き終えた絵を、先に渡す。** 描けた絵を落とさない (ADR-0024 決定 10・撮る係の
+        // ``endRecord()`` と同じ向き)。渡すのは外す出口にだけで、ほかの出口は今までどおり次の巡回で受け取る
+        if outlets[index].health.isAttached { handOverPendingFrames(to: outlet) }
+        // 渡している最中に出口が自分で外れていれば、閉じるのは 1 度だけ
+        guard let index = outlets.firstIndex(where: { $0.seam === outlet }) else { return }
         outlets.remove(at: index)
         outletJoinedAt[ObjectIdentifier(outlet)] = nil
         outlet.close()
+    }
+
+    /// 描き終えて、まだ誰にも渡していない絵を、`outlet` にだけ渡す ([#2246])。外す出口が、外す直前に
+    /// 描き終えた最後の絵を受け取ってから閉じるためである。
+    ///
+    /// **配り方は ``deliverPendingToOutlets(_:)`` と同じ。** 控えを古い順に決着させ (投入を名指しで待つ・
+    /// 打ち切られた絵は配らない・待つのは結末だけ。止め際と同じ ``OutcomePatience/wait``)、足される前に
+    /// 描いた絵は渡さない (``outletJoinedAt``)。決着させた絵は ``readyOutletFrames`` に残るので、外さない出口は
+    /// 今までどおり次の巡回で同じ絵を受け取る (欠けも二重も無い)。
+    ///
+    /// **渡している間の足し・外しは、終わってから当てる** (``whileVisitingSeams(_:)``)。この出口の `receive` が
+    /// 別の差込口を足したり外したりしても、並びを巡回の最中に書き換えない。
+    ///
+    /// [#2246]: https://github.com/mokume-metal/mokume/issues/2246
+    private func handOverPendingFrames(to outlet: any Outlet) {
+        settlePendingOutletFrames(.wait)
+        let joinedAt = outletJoinedAt[ObjectIdentifier(outlet)]
+        let frames = readyOutletFrames
+        guard !frames.isEmpty else { return }
+        whileVisitingSeams {
+            for pending in frames {
+                // 足される前に描いた絵は渡さない
+                if let joinedAt, pending.frame < joinedAt { continue }
+                outlet.receive(OutputFrame(image: pending.image, frame: pending.frame, time: pending.time))
+            }
+        }
     }
 
     /// 足してよいか。**閉じた後は断る** — 足したものを閉じる者がもう居ない。
