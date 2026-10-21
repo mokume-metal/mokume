@@ -553,7 +553,7 @@ extension Canvas {
         func put(_ point: SIMD2<Float>) {
             built.append(
                 ShapeVertex(
-                    position: placing.apply(x: point.x, y: point.y), uv: recipe.uv,
+                    position: placing.placed(x: point.x, y: point.y), uv: recipe.uv,
                     color: recipe.color))
         }
         /// 凸多角形を、最初の点からの扇に割る
@@ -866,7 +866,7 @@ extension Canvas {
     ///
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     private func strokePoint(x: Float, y: Float) -> SIMD2<Float> {
-        let placed = transform.apply(x: x, y: y)
+        let placed = transform.placed(x: x, y: y)
         return buildingFlatTemplate || recordingShape ? placed : placed + 0.5
     }
 

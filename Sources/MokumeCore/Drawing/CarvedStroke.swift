@@ -38,7 +38,7 @@ struct CarveRecipe {
         let mapsBack = self.inverse != nil
         func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
             let moved = (mapsBack ? inverse * point : point) + offset
-            return transform.apply(x: moved.x, y: moved.y)
+            return transform.placed(x: moved.x, y: moved.y)
         }
         func emit(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) {
             out.append(ShapeVertex(position: a, uv: uv, color: color))

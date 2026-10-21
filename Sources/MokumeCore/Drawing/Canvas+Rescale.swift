@@ -265,7 +265,7 @@ extension Canvas {
         let points = outline.points
         guard points.count >= 3 else { return [] }
         let pivot = outline.fanCenter ?? points[0]
-        let center = recipe.transform.apply(x: pivot.x, y: pivot.y)
+        let center = recipe.transform.placed(x: pivot.x, y: pivot.y)
         // 中心を持つ図形は全周を扇に分け、持たない図形は最初の点から分ける
         let ring = outline.fanCenter == nil ? Array(points.dropFirst()) : points
         guard ring.count >= 2 else { return [] }
@@ -284,16 +284,16 @@ extension Canvas {
             vertices.append(ShapeVertex(position: c, uv: uvs.2, color: recipe.color))
         }
 
-        var previous = recipe.transform.apply(x: ring[0].x, y: ring[0].y)
+        var previous = recipe.transform.placed(x: ring[0].x, y: ring[0].y)
         var previousSource = ring[0]
         for point in ring.dropFirst() {
-            let current = recipe.transform.apply(x: point.x, y: point.y)
+            let current = recipe.transform.placed(x: point.x, y: point.y)
             emit(center, previous, previousSource, current, point)
             previous = current
             previousSource = point
         }
         if outline.fanCenter != nil, outline.isClosed {
-            let first = recipe.transform.apply(x: ring[0].x, y: ring[0].y)
+            let first = recipe.transform.placed(x: ring[0].x, y: ring[0].y)
             emit(center, previous, previousSource, first, ring[0])
         }
         return vertices

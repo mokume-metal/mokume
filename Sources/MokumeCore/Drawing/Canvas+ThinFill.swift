@@ -486,10 +486,10 @@ extension Canvas {
         for piece in pieces {
             let start = vertices.count
             let (a, b, c, d) = piece.corners
-            let placedA = transform.apply(x: a.x, y: a.y)
-            let placedB = transform.apply(x: b.x, y: b.y)
-            let placedC = transform.apply(x: c.x, y: c.y)
-            let placedD = transform.apply(x: d.x, y: d.y)
+            let placedA = transform.placed(x: a.x, y: a.y)
+            let placedB = transform.placed(x: b.x, y: b.y)
+            let placedC = transform.placed(x: c.x, y: c.y)
+            let placedD = transform.placed(x: d.x, y: d.y)
             var first: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
             var second: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
             if let uvOf {
@@ -574,7 +574,7 @@ extension Canvas {
                 if let uvOf { uv = clampedUV(uvOf(corner)) }
                 vertices.append(
                     ShapeVertex(
-                        position: recipe.transform.apply(x: corner.x, y: corner.y), uv: uv,
+                        position: recipe.transform.placed(x: corner.x, y: corner.y), uv: uv,
                         color: recipe.color))
             }
             CoverageSpan.note(piece.coverage, in: start..<vertices.count, to: &spans)

@@ -67,10 +67,10 @@ nonisolated struct TouchingHoleScene: Sendable {
                 }
             }
         } else {
-            let merged = Triangulation.mergeHoles(
-                outer: Array(outer.indices), holes: holeIndices, points: points
-            ).map { points[$0] }
-            for t in Triangulation.triangulate(merged) {
+            let folded = Triangulation.foldHoles(
+                outer: Array(outer.indices), holes: holeIndices, points: points, comparisons: &comparisons)
+            let merged = folded.ring.map { points[$0] }
+            for t in folded.triangles {
                 triangles.append((merged[t.0], merged[t.1], merged[t.2]))
             }
         }

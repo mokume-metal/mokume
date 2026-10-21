@@ -23,7 +23,7 @@ struct GamepadTests {
     private func frames(_ pad: Gamepad, _ count: Int) -> [(tilt: SIMD2<Float>, a: Bool, b: Bool, state: SourceState)] {
         (0..<count).map { _ in
             pad.supply()
-            return (pad.leftStick, pad.isPressed(.a), pad.isPressed(.b), pad.state)
+            return (pad.leftStick.simd, pad.isPressed(.a), pad.isPressed(.b), pad.state)
         }
     }
 
@@ -117,7 +117,7 @@ struct GamepadTests {
         pad.supply()
         #expect(pad.state == .stopped)
         #expect(!pad.isPressed(.a))
-        #expect(pad.leftStick == .zero)
+        #expect(pad.leftStick == Vector2(0, 0))
         #expect(pad.report?.state == .stopped)
     }
 

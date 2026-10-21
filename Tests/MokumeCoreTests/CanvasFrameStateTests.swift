@@ -524,7 +524,7 @@ extension CanvasTests {
                 "emptyNumbers": resource, "blankPicture": resource,
                 "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
                 "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
-                "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
+                "typefaces": cache, "solidStrokeGeometry": cache, "modelStrokeGeometries": cache, "modelFills": cache,
                 "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さと分割数の 1 件だけで、点は 1024 個が上限 (#1785・#1645)。中身は太さと分割数で決まり、フレームに属さない",
                 "ringSplitMemo": "周の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",
                 "discSplitMemo": "円板の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",

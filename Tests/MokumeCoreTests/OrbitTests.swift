@@ -302,7 +302,7 @@ struct OrbitTests {
 
     @Test("引ける限界が無いときに溢れた寄りは、進めない")
     func overflowingZoomWithoutAFarLimitHolds() {
-        var orbit = Orbit(center: .zero, distance: 100)
+        var orbit = Orbit(center: Vector3(0, 0, 0), distance: 100)
         let held = orbit.advance(
             dragX: 0, dragY: 0, scroll: -200, isDragging: false, sensitivity: SIMD3(1, 1, 10))
         #expect(held == Orbit.HeldAxes(zoom: true))
@@ -348,19 +348,19 @@ struct OrbitTests {
     @Test("見ている先が数でない・無限なら、渡した先へ倒し、既定へ倒したと分かる")
     func brokenCenterFallsBack() {
         var orbit = fitting()
-        orbit.center = SIMD3(.nan, 0, 0)
-        let fellBack = orbit.clampToLimits(fallbackCenter: SIMD3(1, 2, 3))
+        orbit.center = Vector3(Float.nan, 0, 0)
+        let fellBack = orbit.clampToLimits(fallbackCenter: Vector3(1, 2, 3))
         #expect(fellBack)
-        #expect(orbit.center == SIMD3(1, 2, 3))
+        #expect(orbit.center == Vector3(1, 2, 3))
         #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
     }
 
     @Test("面の大きさが数でない・無限の fitting も、収めれば視点として成り立つ")
     func fittingWithBrokenSizeFallsBack() {
         var orbit = Orbit.fitting(width: Float.nan, height: Float.infinity)
-        let fellBack = orbit.clampToLimits(fallbackCenter: SIMD3(32, 24, 0))
+        let fellBack = orbit.clampToLimits(fallbackCenter: Vector3(32, 24, 0))
         #expect(fellBack)
-        #expect(orbit.center == SIMD3(32, 24, 0))
+        #expect(orbit.center == Vector3(32, 24, 0))
         #expect(orbit.distance.isFinite)
         #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
     }

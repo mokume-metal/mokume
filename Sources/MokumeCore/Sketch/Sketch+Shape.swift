@@ -270,7 +270,7 @@ extension SketchPart {
     ///     places.append(
     ///         Placement(
     ///             x: random(width), y: random(height),
-    ///             rotation: SIMD3(0, random(2 * Float.pi), 0)))
+    ///             rotation: Vector3(0, random(2 * Float.pi), 0)))
     /// }
     /// shape(grain, at: places)
     /// ```
@@ -315,8 +315,8 @@ extension SketchPart {
     ///         var tinted: [Placement] = []
     ///         for i in 0..<5 {
     ///             let (x, size, turn) = (50 + Float(i) * 75, 0.8 + Float(i) * 0.2, Float(i) * 0.5)
-    ///             plain.append(Placement(x: x, y: 50, scale: size, rotation: SIMD3(0, 0, turn)))
-    ///             tinted.append(Placement(x: x, y: 250, scale: size, rotation: SIMD3(0, 0, turn), fill: colors[i]))
+    ///             plain.append(Placement(x: x, y: 50, scale: size, rotation: Vector3(0, 0, turn)))
+    ///             tinted.append(Placement(x: x, y: 250, scale: size, rotation: Vector3(0, 0, turn), fill: colors[i]))
     ///         }
     ///         shape(leaf, at: plain)          // 上の段: まとめて
     ///         shape(leaf, at: tinted)         // 下の段: 塗りも渡す
@@ -339,6 +339,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=276142f3
+    // shot: 後で撮る
     public func shape(_ shape: Shape, at placements: [Placement]) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.shape(shape, at: placements)

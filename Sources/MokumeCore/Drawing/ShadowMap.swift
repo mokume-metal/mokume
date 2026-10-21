@@ -126,7 +126,7 @@ import simd
             abs(travel.y) > 0.99 ? SIMD3(0, 0, 1) : SIMD3(0, -1, 0)
         let half = range / 2
         let camera = Camera(
-            eye: eye, center: center, up: up,
+            eye: Vector3(eye), center: Vector3(center), up: Vector3(up),
             // 縦は画面と同じ下向きの約束 (bottom のほうが大きい数)
             projection: .orthographic(
                 left: -half, right: half, bottom: half, top: -half,

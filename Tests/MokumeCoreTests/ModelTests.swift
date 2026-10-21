@@ -669,7 +669,7 @@ struct ModelTests {
         #expect(abs(max(measured.x, max(measured.y, measured.z)) - 60) < 0.001)
         #expect(abs((highest.x + lowest.x) / 2) < 0.001, "中心が原点に来ていない")
         #expect(abs((highest.y + lowest.y) / 2) < 0.001)
-        #expect(model.center == .zero)
+        #expect(model.center == Vector3(0, 0, 0))
         #expect(abs(model.size.x - measured.x) < 0.001, "報告した大きさが頂点と食い違う")
         // **軸の比が変わらない。** 元は 2 x 1.6 x 2 なので、縮めても同じ比のまま
         #expect(abs(measured.x / measured.y - 2 / 1.6) < 0.001)
@@ -788,7 +788,7 @@ struct ModelTests {
                 // 整えたのと逆の手順 (縦を戻し、縮めたぶん広げ、中心を戻す)
                 let back =
                     SIMD3(point.position.x, -point.position.y, point.position.z) / scale
-                    + raw.center
+                    + raw.center.simd
                 let first = index / 3 * 3
                 let same = raw.mesh.points[first..<(first + 3)].first {
                     distance($0.position, back) < 1e-4

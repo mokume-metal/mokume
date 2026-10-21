@@ -20,11 +20,16 @@ extension Float {
     func isBitwiseEqual(to other: Float) -> Bool { bitPattern == other.bitPattern }
 }
 
-extension SIMD3<Float> {
+extension SIMD3 where Scalar == Float {
     @inline(__always)
     func isBitwiseEqual(to other: SIMD3<Float>) -> Bool {
         x.isBitwiseEqual(to: other.x) && y.isBitwiseEqual(to: other.y) && z.isBitwiseEqual(to: other.z)
     }
+}
+
+extension Vector3 {
+    @inline(__always)
+    func isBitwiseEqual(to other: Vector3) -> Bool { simd.isBitwiseEqual(to: other.simd) }
 }
 
 extension LinearRGBA {

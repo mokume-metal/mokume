@@ -654,15 +654,11 @@ extension Canvas {
             fillSplit(split, flat: all, global: nil, points: &points, into: &triangles)
             return
         }
-        let merged = Triangulation.mergeHoles(
+        let folded = Triangulation.foldHoles(
             outer: Array(primitive.ring), holes: primitive.holes, points: all,
             comparisons: &pointScansThisFrame)
-        pointScansThisFrame += merged.count
-        var flattened: [SIMD2<Float>] = []
-        flattened.reserveCapacity(merged.count)
-        for index in merged { flattened.append(basis.flatten(points[index].position)) }
-        for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
-            triangles.append((merged[a], merged[b], merged[c]))
+        for (a, b, c) in folded.triangles {
+            triangles.append((folded.ring[a], folded.ring[b], folded.ring[c]))
         }
     }
 
@@ -1066,9 +1062,9 @@ extension Canvas {
             } else {
                 let (a, b, c) = triangle
                 appendTriangle(
-                    transform.apply(x: points[a].position.x, y: points[a].position.y),
-                    transform.apply(x: points[b].position.x, y: points[b].position.y),
-                    transform.apply(x: points[c].position.x, y: points[c].position.y),
+                    transform.placed(x: points[a].position.x, y: points[a].position.y),
+                    transform.placed(x: points[b].position.x, y: points[b].position.y),
+                    transform.placed(x: points[c].position.x, y: points[c].position.y),
                     colors: (points[a].fill, points[b].fill, points[c].fill),
                     uvs: readsUV ? (uv(a)!, uv(b)!, uv(c)!) : nil)
             }

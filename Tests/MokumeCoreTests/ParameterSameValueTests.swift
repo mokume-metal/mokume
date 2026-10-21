@@ -86,9 +86,9 @@ struct ParameterSameValueTests {
 
     @Test("組・色・文字・真偽・整数も、成分が同じなら知らせない")
     func everyTypeComparesByWhatItShows() {
-        let pair = ParamBox<SIMD2<Float>>(name: "p", value: SIMD2(1, 2))
-        #expect(!notifies(pair) { pair.value = SIMD2(1, 2) })
-        #expect(notifies(pair) { pair.value = SIMD2(1, 3) })
+        let pair = ParamBox<Vector2>(name: "p", value: Vector2(1, 2))
+        #expect(!notifies(pair) { pair.value = Vector2(1, 2) })
+        #expect(notifies(pair) { pair.value = Vector2(1, 3) })
         let text = ParamBox<String>(name: "t", value: "a")
         #expect(!notifies(text) { text.value = "a" })
         #expect(notifies(text) { text.value = "b" })

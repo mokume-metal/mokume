@@ -332,16 +332,16 @@ struct ParameterStoreTests {
     @Test("範囲が縮んだ組は、成分ごとに収めたうえで収めたことを返す")
     func narrowedRangesClampVectorsAndSaySo() async throws {
         final class Wide: Sketch {
-            @Param(-4...4) var pair: SIMD2<Float> = SIMD2(0, 0)
+            @Param(-4...4) var pair: Vector2 = Vector2(0, 0)
         }
         final class Narrow: Sketch {
-            @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
+            @Param(-1...1) var pair: Vector2 = Vector2(0, 0)
         }
         let url = try makeFile()
         let wide = Wide()
         let saving = store(for: wide, at: url)
         saving.restore()
-        wide.pair = SIMD2(3, -0.5)
+        wide.pair = Vector2(3, -0.5)
         await settle(saving)
 
         let narrow = Narrow()
@@ -349,9 +349,9 @@ struct ParameterStoreTests {
         #expect(restoration.discarded.isEmpty)
         #expect(
             restoration.clamped == [
-                .init(name: "pair", requested: .vector2(SIMD2(3, -0.5)), value: .vector2(SIMD2(1, -0.5)))
+                .init(name: "pair", requested: .vector2(Vector2(3, -0.5)), value: .vector2(Vector2(1, -0.5)))
             ])
-        #expect(narrow.pair == SIMD2(1, -0.5))
+        #expect(narrow.pair == Vector2(1, -0.5))
     }
 
     @Test("読めない保存は捨てて、既定値で始まる")
@@ -481,8 +481,8 @@ struct ParameterStoreTests {
             @Param var flag: Bool = false
             @Param(choices: ["a", "b"]) var word: String = "a"
             @Param var tint: LinearRGBA = .linear(red: 0.1, green: 0.2, blue: 0.3)
-            @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
-            @Param(-1...1) var triple: SIMD3<Float> = SIMD3(0, 0, 0)
+            @Param(-1...1) var pair: Vector2 = Vector2(0, 0)
+            @Param(-1...1) var triple: Vector3 = Vector3(0, 0, 0)
         }
         let url = try makeFile()
         let before = Every()
@@ -493,8 +493,8 @@ struct ParameterStoreTests {
         before.flag = true
         before.word = "b"
         before.tint = .linear(red: 0.4, green: 0.5, blue: 0.6)
-        before.pair = SIMD2(0.25, -0.5)
-        before.triple = SIMD3(0.1, 0.2, 0.3)
+        before.pair = Vector2(0.25, -0.5)
+        before.triple = Vector3(0.1, 0.2, 0.3)
         await settle(saving)
 
         let after = Every()
@@ -504,8 +504,8 @@ struct ParameterStoreTests {
         #expect(after.flag == true)
         #expect(after.word == "b")
         #expect(after.tint == .linear(red: 0.4, green: 0.5, blue: 0.6))
-        #expect(after.pair == SIMD2(0.25, -0.5))
-        #expect(after.triple == SIMD3(0.1, 0.2, 0.3))
+        #expect(after.pair == Vector2(0.25, -0.5))
+        #expect(after.triple == Vector3(0.1, 0.2, 0.3))
     }
 
     /// 保存は区画ではない。**保存したことで、外からの操作が有効にならない。**
@@ -630,8 +630,8 @@ struct ParameterStoreTests {
     /// 宣言は組と色を持つ (#2805 の反証で見つかった、成分や整数の読み違いの経路)。
     final class Shaped: Sketch {
         @Param(0...10) var count: Int = 3
-        @Param var pair: SIMD2<Float> = SIMD2(1, 2)
-        @Param var triple: SIMD3<Float> = SIMD3(1, 2, 3)
+        @Param var pair: Vector2 = Vector2(1, 2)
+        @Param var triple: Vector3 = Vector3(1, 2, 3)
         @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
         @Param var spinning: Bool = true
     }
@@ -654,7 +654,7 @@ struct ParameterStoreTests {
 
         #expect(discarded == [["name": name, "reason": reason]])
         #expect(sketch.spinning == false, "同じ保存の読めた値まで捨てた")
-        #expect(sketch.count == 3 && sketch.pair == SIMD2(1, 2) && sketch.triple == SIMD3(1, 2, 3))
+        #expect(sketch.count == 3 && sketch.pair == Vector2(1, 2) && sketch.triple == Vector3(1, 2, 3))
         let line = try #require(warnings.first)
         #expect(warnings.count == 1)
         #expect(!line.contains("not valid JSON"), "数の読み違いを JSON でないと言った: \(line)")

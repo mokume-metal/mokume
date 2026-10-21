@@ -186,8 +186,8 @@ struct ParameterExchangeTests {
     /// 組の範囲は**成分ごとに、宣言した 1 つの範囲へ独立に**収める。窓の成分スライダーが
     /// 同じ 1 つの範囲で縛っているので、外から書ける幅をそれと揃える ([#859](https://github.com/mokume-metal/mokume/issues/859))。
     final class Paired: Sketch {
-        @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
-        @Param(-1...1) var triple: SIMD3<Float> = SIMD3(0, 0, 0)
+        @Param(-1...1) var pair: Vector2 = Vector2(0, 0)
+        @Param(-1...1) var triple: Vector3 = Vector3(0, 0, 0)
     }
 
     @Test("組は範囲の外を成分ごとに収めて入れ、収めたことを丸ごと面に出す")
@@ -206,9 +206,9 @@ struct ParameterExchangeTests {
             to: facet)
         surface.drain()
 
-        #expect(sketch.pair == SIMD2(1, -1))
+        #expect(sketch.pair == Vector2(1, -1))
         // 範囲の内側だった成分は触らない
-        #expect(sketch.triple == SIMD3(0.5, 1, -0.25))
+        #expect(sketch.triple == Vector3(0.5, 1, -0.25))
         let clamped = try report(from: facet)["clamped"] as? [[String: Any]] ?? []
         #expect(clamped.map { $0["name"] as? String } == ["pair", "triple"])
         #expect(clamped.first?["requested"] as? [Double] == [5, -5])
@@ -228,7 +228,7 @@ struct ParameterExchangeTests {
             to: facet)
         surface.drain()
 
-        #expect(sketch.pair == SIMD2(1, -1))
+        #expect(sketch.pair == Vector2(1, -1))
         let clamped = try report(from: facet)["clamped"] as? [[String: Any]]
         #expect(clamped?.isEmpty == true)
     }
