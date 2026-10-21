@@ -141,6 +141,8 @@ extension SketchPart {
     /// 抜けても戻らない。本体から作った描き場所 (``createGraphics(_:_:)``) は置き場を本体と共有するので、
     /// `pg.noiseSeed(_:)` は本体の種を書き、スケッチの口と同じく戻る。
     ///
+    /// <!-- example: 文脈 var c: Canvas! -->
+    /// <!-- example: 文脈 var pg: Canvas! -->
     /// ```swift
     /// noiseSeed(1)
     /// c.noiseSeed(1)                // c は直に作った面
