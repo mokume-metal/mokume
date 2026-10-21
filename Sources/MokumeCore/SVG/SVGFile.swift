@@ -788,16 +788,16 @@ nonisolated enum SVGFile {
             namesNegative: Bool = false, line: Int
         ) -> Written {
             guard let text else { return .absent }
-            if allowsAuto,
-                ["auto", "initial", "unset"].contains(text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
-            {
+            // 名乗りは、値の前後の空白を落とした文字で出す (根の `svg` の大きさ・`preserveAspectRatio` と揃える) (#3022)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if allowsAuto, ["auto", "initial", "unset"].contains(trimmed.lowercased()) {
                 return .automatic
             }
             guard let value = SVGFile.parseLength(text, reference: reference) else {
-                tally.note("<\(element) \(key)=\"\(text)\">", line: line)
+                tally.note("<\(element) \(key)=\"\(trimmed)\">", line: line)
                 return .unreadable
             }
-            if namesNegative, value < 0 { tally.note("<\(element) \(key)=\"\(text)\">", line: line) }
+            if namesNegative, value < 0 { tally.note("<\(element) \(key)=\"\(trimmed)\">", line: line) }
             return .value(value)
         }
 

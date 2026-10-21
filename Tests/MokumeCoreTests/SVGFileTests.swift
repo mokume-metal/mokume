@@ -539,6 +539,36 @@ struct SVGFileTests {
         #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
     }
 
+    /// 形の属性の長さの名乗りは、値の前後の空白を落とした文字で出す ([#3022])。根の `<svg>` の大きさ・
+    /// `preserveAspectRatio` の名乗りと書式が揃う。読みは前後の空白を許すので、描き方は変わらない。
+    ///
+    /// [#3022]: https://github.com/mokume-metal/mokume/issues/3022
+    @Test(
+        "形の属性の長さの名乗りは、値の前後の空白を落とす (#3022)",
+        arguments: [
+            // (要素, 載るはずの名乗り)
+            (#"<rect width=" -5 " height="5"/>"#, [#"<rect width="-5">"#]),
+            (#"<rect width=" x " height="5"/>"#, [#"<rect width="x">"#]),
+            (#"<circle r="  -2&#10;"/>"#, [#"<circle r="-2">"#]),
+            (#"<rect width="5" height="5" rx=" abc "/>"#, [#"<rect rx="abc">"#]),
+            (#"<ellipse rx=" -5 " ry="5"/>"#, [#"<ellipse rx="-5">"#]),
+            (#"<line x1=" abc " y1="0" x2="5" y2="5"/>"#, [#"<line x1="abc">"#]),
+        ])
+    func shapeLengthNoteTrimsWhitespace(_ sample: (String, [String])) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+    }
+
+    @Test("名乗りの空白を落としても、前後に空白のある長さは読める。根の大きさの書式は変わらない (#3022 の陰性対照)")
+    func trimmedNoteKeepsTheReading() throws {
+        let padded = try document(#"<rect x=" 1 " y=" 2 " width=" 10 " height=" 10 "/>"#)
+        #expect(padded.skipped.isEmpty, "\(padded.skipped)")
+        #expect(padded.items[0].outline == .rect(x: 1, y: 2, width: 10, height: 10))
+        let root = try document(
+            #"<rect width="1" height="1"/>"#, root: #"<svg xmlns="http://www.w3.org/2000/svg" width=" -5 " height="10">"#)
+        #expect(root.skipped.map(\.what) == [#"<svg width="-5">"#], "\(root.skipped)")
+    }
+
     /// `ellipse` の負の `rx` / `ry` は SVG 2 では無効な値で、書いていない (`auto`) のと同じに読み、もう片方を
     /// 使う ([#2648])。`rect` の `rx` / `ry` と同じ読み方で、どちらも名乗る。
     ///
