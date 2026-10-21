@@ -150,6 +150,98 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    共有なので、計測の PR も同時に複数立てず、上の確認で空いてから始める。ジョブが 20〜40 分
    待たされることがあるので、結果を待つ側には期限を付ける。結果は
    `gh run download <run-id> -n <artifact 名>` で取る。
+
+   **計測の job は、専用機に載る前に GitHub ホストの門番を通し、1 job を 30 分以内に割る**
+   (#2303)。上の確認は始める前しか守らない。始めた後に queue へ入った PR の `render` は、
+   計測が専用機を占める間、step を 1 つも始めないまま待ち、queue の check の期限 (60 分) で
+   `checks_timed_out` に弾かれる (#2270 の計測が約 3 時間占め、#2299・#2300 が弾かれた)。
+   弾かれると auto-merge も外れる。門番 `scripts/render-turn.sh wait` は、merge_group の run が
+   終わっていなければ終わるまで (最大 60 分) 専用機に job を積ませない。走り出した job は途中で
+   譲れないので、**長い計測は `timeout-minutes: 30` 以下の job に割り、job ごとに門番を前に置いて
+   `needs` で繋ぐ**。そうすれば、計測の途中で queue に入った PR の `render` は、走っている 1 job
+   (30 分以内) の後に専用機へ載り、期限の内に終わる。形は render.yml の `scheduled-release-turn` →
+   `scheduled-release` と同じで、新しい門番は作らない。門番が待つのは merge_group の run だけなので、
+   `render-pr`・`scheduled-*` との取り合いは、上の確認と「1 本ずつ」で避ける。
+
+   ```yaml
+   name: measure-<N>
+   on:
+     pull_request:
+
+   # push し直したら古い実行を捨てる (手順 2)
+   concurrency:
+     group: measure-<N>-${{ github.ref }}
+     cancel-in-progress: true
+
+   jobs:
+     # 門番 → 計測の job を 1 組にして、組を needs で繋ぐ (後ろに、さらに足してよい)
+     turn-a:
+       if: github.event.pull_request.head.repo.full_name == github.repository
+       runs-on: ubuntu-latest
+       timeout-minutes: 65 # render-turn.sh の待ちの上限 (60 分) より外に置く
+       permissions:
+         contents: read # checkout
+         actions: read # merge queue の render の run を読む
+       steps:
+         - uses: actions/checkout@v7
+         - env:
+             GH_TOKEN: ${{ github.token }}
+           run: bash scripts/render-turn.sh wait
+
+     measure-a:
+       needs: turn-a
+       runs-on: [self-hosted, mokume-render]
+       timeout-minutes: 30 # 割る長さの上限。これを越える計測は、次の組へ割る
+       steps:
+         - uses: actions/checkout@v7
+         - run: bash scripts/runner-preflight.sh
+         - run: |
+             mkdir -p out
+             swift test --filter "Suite/test" 2>&1 | tee out/measure-a.txt
+         - uses: actions/upload-artifact@v7
+           if: always()
+           with:
+             name: measure-<N>-a
+             path: out/
+             if-no-files-found: ignore
+
+     # 2 組目。前の計測が終わってから、また門番を通る (間で queue の render に譲る)
+     turn-b:
+       needs: measure-a
+       runs-on: ubuntu-latest
+       timeout-minutes: 65
+       permissions:
+         contents: read
+         actions: read
+       steps:
+         - uses: actions/checkout@v7
+         - env:
+             GH_TOKEN: ${{ github.token }}
+           run: bash scripts/render-turn.sh wait
+
+     measure-b:
+       needs: turn-b
+       runs-on: [self-hosted, mokume-render]
+       timeout-minutes: 30
+       steps:
+         - uses: actions/checkout@v7
+         - run: bash scripts/runner-preflight.sh
+         - run: |
+             mkdir -p out
+             swift test --filter "Suite/other" 2>&1 | tee out/measure-b.txt
+         - uses: actions/upload-artifact@v7
+           if: always()
+           with:
+             name: measure-<N>-b
+             path: out/
+             if-no-files-found: ignore
+   ```
+
+   前の組が落ちると、`needs` で後ろの組は走らない (続けたいなら、後ろの門番に
+   `if: ${{ !cancelled() }}` を置く)。雛形は書いたら `actionlint` に通す (`.github/workflows/` に
+   置いて `bash scripts/check-workflows.sh` を打つ。使い捨ての PR の中だけで、main へは入れない)。
+   計測の置き場 (Issue か本体の PR) には、run の記録で「門番 → 計測の job」の順と、門番の要約
+   (待った相手と時間・待たずに通した) を載せる。
 4. **base の切り替えは `gh api -X PATCH` で行う。** 条件式の検証では、空コミットだけの Draft
    (重要パスに触れない) を作り、main と同じ SHA の一時ブランチへ base を向け、main へ戻す。
    `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。base の切り替えも本文・
