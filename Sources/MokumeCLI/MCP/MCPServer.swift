@@ -89,16 +89,22 @@ struct MCPServer {
             // 前後で状態を変えないので、挨拶の前でも同じ答えになる
             return JSONRPC.pingResponse(id: call.id)
         case "initialize":
-            return JSONRPC.response(
-                id: call.id,
-                result: [
-                    "protocolVersion": Self.protocolVersion,
-                    "capabilities": ["tools": [:] as [String: Any]],
-                    // **繋いだ側が古い窓口を判別できる唯一の手掛かり。** 接続は
-                    // 張ったまま保たれるので、道具を更新しても繋がっている窓口は
-                    // 古いままである (#634)
-                    "serverInfo": ["name": "mokume", "version": ToolVersion.describe()],
-                ])
+            var result: [String: Any] = [
+                "protocolVersion": Self.protocolVersion,
+                "capabilities": ["tools": [:] as [String: Any]],
+                // **繋いだ側が古い窓口を判別できる唯一の手掛かり。** 接続は
+                // 張ったまま保たれるので、道具を更新しても繋がっている窓口は
+                // 古いままである (#634)
+                "serverInfo": ["name": "mokume", "version": ToolVersion.describe()],
+            ]
+            // **立てた場所とそこがスケッチかは、`serverInfo` ではなく `instructions` で名乗る**
+            // (#2797)。`instructions` は 2024-11-05 の `InitializeResult` にある欄で、繋いだ側が
+            // システムプロンプトへ足してよい。標準エラーや通知はクライアント次第で届かない。
+            // 事実は起動の時点で 1 度決めた ``InterfacePlace`` から取り、後から追わない
+            if let place = tools.facets.place {
+                result["instructions"] = place.instructions
+            }
+            return JSONRPC.response(id: call.id, result: result)
         case "tools/list":
             return JSONRPC.response(id: call.id, result: ["tools": Tools.definitions])
         case "tools/call":

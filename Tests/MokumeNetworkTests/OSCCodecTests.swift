@@ -208,6 +208,26 @@ struct OSCCodecTests {
         #expect(message.float(-1) == nil)
     }
 
+    @Test("int(_:) は整数の値の小数を読み、0.5・NaN・無限・Int に収まらない値・真偽は丸めずに nil (#2469)")
+    func intReadsWholeNumberedFloatsAndNeverRounds() {
+        // 変更前、小数の 1.0 は nil だった (TouchOSC のボタン・TouchDesigner の OSC Out CHOP の既定は小数)
+        #expect(OSCMessage("/hit", Float(1)).int(0) == 1)
+        #expect(OSCMessage("/hit", Double(2)).int(0) == 2)
+        #expect(OSCMessage("/hit", OSCValue.double(-3)).int(0) == -3)
+        #expect(OSCMessage("/hit", Float(-0.0)).int(0) == 0)
+        #expect(OSCMessage("/hit", Double(1 << 40)).int(0) == 1 << 40)
+        for value: OSCValue in [
+            .float(0.5), .double(0.5), .double(1.0000001), .float(.nan), .double(.nan), .float(.infinity),
+            .double(-.infinity), .double(1e30), .float(1e30), .double(9.3e18),
+            .bool(true), .bool(false), .null, .impulse, .string("1"), .blob([1]),
+        ] {
+            #expect(OSCMessage("/hit", arguments: [value]).int(0) == nil, "\(value)")
+        }
+        // 読めない値でも落ちない。ほかの引数の読みも変わらない
+        #expect(OSCMessage("/hit", 7, Float(1)).int(0) == 7)
+        #expect(OSCMessage("/hit", OSCValue.int64(1 << 40)).int(0) == 1 << 40)
+    }
+
     // MARK: - 送れないもの
 
     @Test("宛名が / で始まらない・文字列が 0 を含むメッセージは送れない")

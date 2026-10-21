@@ -19,7 +19,7 @@ import Testing
 @MainActor
 @Suite("走っている実行の外から呼んだ通信の作る口")
 struct NetworkOutsideRunTests {
-    @Test("投げる 7 口は、ポートを開く前・繋ぐ前に呼んだ口の名前で notRunning を投げ、口ごとに 1 度だけ警告する")
+    @Test("投げる 8 口は、ポートを開く前・繋ぐ前に呼んだ口の名前で notRunning を投げ、口ごとに 1 度だけ警告する")
     func throwingMakersThrowNotRunning() throws {
         let log = OutsideRun()
         try OutsideRun.$current.withValue(log) {
@@ -43,6 +43,9 @@ struct NetworkOutsideRunTests {
                 #expect(throws: OSCFailure.notRunning(call: "createOSC(listen:send:)")) {
                     try sketch.createOSC(listen: 9000, send: ("127.0.0.1", 7000))
                 }
+                #expect(throws: OSCFailure.notRunning(call: "createOSC(send:)")) {
+                    try sketch.createOSC(send: ("127.0.0.1", 7000))
+                }
                 // ポートを開く前に断る (#2837)。足されなければ開かず、state も unavailable のまま変わらない
                 #expect(throws: SerialFailure.notRunning(call: "createSerial(_:baudRate:)")) {
                     try sketch.createSerial(SerialPort(id: "/dev/cu.usbmodem14101", name: "Arduino Uno"), baudRate: 9600)
@@ -51,7 +54,7 @@ struct NetworkOutsideRunTests {
             let calls = [
                 "createTCPServer(_:)", "createWebSocketServer(_:)", "createTCPClient(_:_:)",
                 "createWebSocketClient(_:)", "createUDP(listen:send:)",
-                "createOSC(listen:send:)", "createSerial(_:baudRate:)",
+                "createOSC(listen:send:)", "createOSC(send:)", "createSerial(_:baudRate:)",
             ]
             #expect(log.messages.count == calls.count, "口ごとに 1 行")
             for call in calls {

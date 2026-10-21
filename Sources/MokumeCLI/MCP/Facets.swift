@@ -470,4 +470,15 @@ struct InterfacePlace: Equatable {
 
     /// 答えの後に添える段落。
     var note: String { "\(Self.notASketchHeading). \(restartMove)" }
+
+    /// `initialize` の応えの `instructions` に載せる文 ([#2797](https://github.com/mokume-metal/mokume/issues/2797))。
+    ///
+    /// **繋いだ側へ、最初の `observe` が答えるのを待たずに場所を名乗る。** スケッチの場所で立って
+    /// いれば場所を言う 1 行だけ (繋いだ全セッションのシステムプロンプトに入りうるので、足さない)。
+    /// スケッチでなければ、答えと同じ ``note`` (見出しと手) を続ける — 文の正典は ``restartMove``
+    /// の 1 つで、ここでは写さない。
+    var instructions: String {
+        let serving = "This interface serves \(directory.path)"
+        return isSketch ? "\(serving), a sketch's directory." : "\(serving). \(note)"
+    }
 }
