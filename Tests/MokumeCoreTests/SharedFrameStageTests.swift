@@ -574,6 +574,37 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **見張りが映している世代を手放したら、台はその世代の頼みを下ろす** ([#2983])。倒れた子・子の離脱・
+    /// 合図の来ないまま次の保存が来た回は台の知らせを通らず、畳まれた世代は絵を書かないので、読み直す
+    /// 契機が来ない。最後の絵と入力の写しの寸法は残す。生きて書き続ける世代の頼みは、次の枚数で戻る。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("映している世代を手放したと伝えられたら、カーソルの頼みを下ろし、絵と入力の写しの寸法は残す")
+    func relinquishingTheSourceReleasesTheRequestsAndKeepsThePictureAndSize() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let requesting = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            try draw(requesting, frame: 1, gpu: gpu, pointerLock: true, cursorHidden: true)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("relinquish"))
+            defer { stage.close() }
+            stage.open()
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested && stage.cursorHiddenRequested, "検査の前提: 世代が頼んでいる")
+            let surface = try #require(stage.host as? SketchSurface)
+            #expect(surface.canvasWidth == 32)
+
+            stage.relinquishSource()
+            #expect(!stage.pointerLockRequested && !stage.cursorHiddenRequested, "手放した世代の頼みが残っている")
+            #expect(stage.hasSource, "最後の絵を消した")
+            #expect(surface.canvasWidth == 32, "入力の写しの寸法を変えた")
+
+            // 手放したのが生きている世代でも、次の枚数で頼みは読み直されて戻る
+            try draw(requesting, frame: 2, gpu: gpu, pointerLock: true, cursorHidden: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested && stage.cursorHiddenRequested, "生きている世代の頼みに従わない")
+        }
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が

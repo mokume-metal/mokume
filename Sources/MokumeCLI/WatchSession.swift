@@ -277,6 +277,15 @@ final class WatchSession {
     /// 誰も知らせてくれない — そこでは今までどおり、止めてから起こす。
     var overlapsGenerations = false
 
+    /// 道具の窓へ、「いま映している世代を手放した」と伝える口 ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    ///
+    /// 台は、畳まれた世代・もう居ない世代のカーソルの頼み (捕まえる・隠す) を、読み直す契機が来ないまま
+    /// 持ち続ける。受け取れない世代の知らせ (#2928) は台が自分で気付くが、次の 3 つは台を通らないので、
+    /// ここから伝える — 倒れた子 (``retireAfterFallback()``)・子の離脱 (``departed()``)・乗り換えの合図が来ない
+    /// まま次の保存が来て映っている世代を畳んだ回 (``rebuild``)。窓を出せた見張りだけが繋ぐ
+    /// (``WatchCommand``)。**頼みを下ろすだけで、最後の絵も入力の宛先も変えない。**
+    var relinquishesDisplay: () -> Void = {}
+
     /// 新しい絵が出るまでを測っている、差し替えを始めた時刻。**測らない回は `nil`。**
     ///
     /// 置くのは ``finish(_:)`` の中だけで、どの記録を書いても置き直す — 起こした後に
@@ -532,6 +541,9 @@ final class WatchSession {
             !isBringingDown(gone)
         else { return nil }
         hasNamedDeparture = true
+        // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
+        // 頼みを持ち続ける (#2983)
+        relinquishesDisplay()
         switch ChildEnding(of: gone) {
         case .exited(let status): return Departure(status: status, wasSignalled: false)
         case .signalled(let signal): return Departure(status: signal, wasSignalled: true)
@@ -1017,7 +1029,11 @@ final class WatchSession {
         if overlapsGenerations {
             // **止めるのは、新しい世代が画面に出てからである** (#1142)。合図が来ないまま
             // 次の保存が来た回は、ここで必ず止める — 重ねるのは 1 世代だけである
+            let displayedGenerationRetired = outgoing != nil
             await retireOutgoing()
+            // **映っていた世代を、乗り換えの合図が来ないまま畳んだ回** — 台は畳まれた世代の頼みを持ち続け、
+            // 読み直す契機も来ない (#2983)
+            if displayedGenerationRetired { relinquishesDisplay() }
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
@@ -1131,6 +1147,8 @@ final class WatchSession {
         let marker = WorkDirectory.fellBackURL(forProcess: waiting.processIdentifier, under: facet)
         guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
         try? FileManager.default.removeItem(at: marker)
+        // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)
+        relinquishesDisplay()
         return await retireAsPromoted()
     }
 

@@ -574,6 +574,21 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         cursorHiddenRequested = false
     }
 
+    /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みだけを下ろす。**
+    ///
+    /// 受け取れない知らせ (``releaseInheritedRequests()``) の経路は台が自分で気付いたが、次の 3 つは
+    /// 台を通らない: 作り直した子が窓へ倒れた回・子が消えた回・乗り換えの合図が来ないまま次の保存が来て
+    /// 映っている世代を畳んだ回。どれも畳まれた世代はもう絵を書かず、頼みを読み直す契機
+    /// (``readNumbers(from:in:)`` は新しい枚数のときだけ読む) が来ないので、窓がカーソルを捕まえたまま・
+    /// 隠したままになる。**最後の絵と入力の写しの寸法は残す** (ADR-0032 決定 6)。寸法を変える材料
+    /// (新しい子の目録) が、この口には無い。生きて書き続ける世代へ誤って当たっても、次の枚数で読み直されて
+    /// 戻る。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    func relinquishSource() {
+        releaseInheritedRequests()
+    }
+
     // MARK: - 言うこと
 
     /// 読めない目録を掴んだことを、改訂ごとに 1 度言う ([#2889])。

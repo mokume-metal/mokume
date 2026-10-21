@@ -404,6 +404,12 @@ enum WatchCommand {
         // **窓が出せたときだけ世代を重ねる。** 前の世代を畳む合図はこの窓から来るので、
         // 出せなかった実行で重ねると、止める者の居ない子が残る (#1142)
         session.overlapsGenerations = true
+        // **畳んだ・居なくなった世代の頼みを、両方の台で下ろす** (#2983)。台の知らせを通らない 3 つの口
+        // (倒れた子・子の離脱・合図の来ないまま次の保存) から ``WatchSession`` が呼ぶ
+        session.relinquishesDisplay = { [weak window, weak preview] in
+            window?.relinquishGeneration()
+            preview?.relinquishGeneration()
+        }
         // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。

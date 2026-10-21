@@ -1263,6 +1263,79 @@ struct WatchSessionTests {
         #expect(lines.contains { $0.0 == named && $0.1 == false }, "プレビューへ名乗っていない: \(lines)")
     }
 
+    // MARK: - 台へ世代を手放したと伝える口 (#2983)
+
+    /// **台は、畳まれた世代・居なくなった世代のカーソルの頼みを、読み直す契機が来ないまま持ち続ける**
+    /// ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。台の知らせを通らない 3 つの口
+    /// (倒れた子・子の離脱・合図の来ないまま次の保存) から、台へ手放したと伝える。
+
+    @Test("倒れた子の知らせで前の世代を畳むとき、台へ世代を手放したと伝える")
+    func aFallenChildTellsTheDisplayToRelinquish() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        var told = 0
+        session.relinquishesDisplay = { told += 1 }
+        await session.start()
+        ready.waitForLast()
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+
+        // 知らせが来ていないあいだは伝えない
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(told == 0)
+        _ = try placeFellBackMarker(of: arriving, for: session)
+        #expect(await session.retireAfterFallback() != nil)
+        #expect(told == 1, "倒れた子で台へ伝えていない")
+        // 同じ知らせで、もう 1 度は伝えない
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(told == 1)
+    }
+
+    @Test("子が消えたと名乗るとき、台へ世代を手放したと伝え、同じ消え方では 1 度だけ")
+    func aDepartedChildTellsTheDisplayToRelinquish() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; exit 7", ready: ready))
+        var told = 0
+        session.relinquishesDisplay = { told += 1 }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        #expect(session.departed() != nil)
+        #expect(told == 1, "子の離脱で台へ伝えていない")
+        #expect(session.departed() == nil)
+        #expect(told == 1, "同じ消え方で 2 度伝えた")
+    }
+
+    @Test("乗り換えの合図が来ないまま次の保存が来て、映っている世代を畳むとき、台へ手放したと伝える")
+    func retiringTheDisplayedGenerationAtTheNextSwapTellsTheDisplay() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        var told = 0
+        session.relinquishesDisplay = { told += 1 }
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        // 1 回目の保存: 映っている世代は前の世代になる。畳むものが無いので伝えない
+        await session.tick()
+        ready.waitForLast()
+        #expect(session.outgoing === shown)
+        #expect(told == 0, "畳む世代が無いのに伝えた")
+
+        // 合図が来ないまま 2 回目の保存: 映っている世代を畳む
+        await session.tick()
+        ready.waitForLast()
+        waitUntilGone(shown)
+        #expect(!shown.isRunning)
+        #expect(told == 1, "合図の来ない次の保存で台へ伝えていない")
+    }
+
     // MARK: - 道具の窓が受け取れない世代 (#2928)
 
     /// **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る。

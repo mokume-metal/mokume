@@ -93,6 +93,16 @@ public final class SharedFramePreview {
         set { stage.onGenerationUndeliverable = newValue }
     }
 
+    /// 見張りが、いま映している世代を手放したと伝える ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    ///
+    /// 畳んだ世代のカーソルの頼み (捕まえる・隠す) を下ろす。**最後の絵と入力の写しの寸法は残す。**
+    /// 受け取れない世代の知らせ (``onGenerationUndeliverable``) は台が自分で気付くが、倒れた子・子の離脱・
+    /// 合図の来ないまま次の保存が来た回は台を通らないので、道具が伝える。生きて書き続ける世代の頼みは、
+    /// 次の枚数で読み直される。
+    public func relinquishGeneration() {
+        stage.relinquishSource()
+    }
+
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。
     ///
     /// **入れ替わりの知らせより遅いことがある。** 最初の世代は絵が来る前に採用されるので、
