@@ -78,6 +78,65 @@ struct MCPServerTests {
         #expect(info?["version"] as? String != "0")
     }
 
+    /// `initialize` を 1 回送った応えの `result` と、窓口が書いた行の数。
+    private func initialize(
+        package: URL, beforeServing: () throws -> Void = {}
+    ) throws -> (result: [String: Any], lines: Int) {
+        let recorder = Recorder(lines: [#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#])
+        let server = MCPServer(
+            tools: Tools(facets: Facets(directory: package, waitLimit: 0.2), makeID: { "fixed" }),
+            readLine: { recorder.next() },
+            write: { recorder.written.append($0) })
+        try beforeServing()
+        server.serve()
+        let result = try decode(try #require(recorder.written.first))["result"] as? [String: Any]
+        return (try #require(result), recorder.written.count)
+    }
+
+    @Test("スケッチでない場所で立てた窓口は、挨拶の `instructions` で場所と起こし直す手を名乗る")
+    func introducesItselfOutsideASketch() throws {
+        let place = try makePlace(sketch: false)
+        defer { try? FileManager.default.removeItem(at: place) }
+        let (result, lines) = try initialize(package: place)
+
+        let text = try #require(result["instructions"] as? String, "\(result)")
+        #expect(text.contains(place.path), "\(text)")
+        #expect(text.contains(InterfacePlace.notASketchHeading), "\(text)")
+        #expect(text.contains("\(Command.name) mcp <sketch directory>"), "\(text)")
+        // 応えは 1 行だけ。標準出力に伝言以外を書かない
+        #expect(lines == 1)
+    }
+
+    @Test("スケッチの場所で立てた窓口は、挨拶の `instructions` で場所だけを名乗る")
+    func introducesItselfInsideASketch() throws {
+        let place = try makeSketch()
+        defer { try? FileManager.default.removeItem(at: place) }
+        let (result, _) = try initialize(package: place)
+
+        let text = try #require(result["instructions"] as? String, "\(result)")
+        #expect(text.contains(place.path), "\(text)")
+        // 場所を言う 1 行だけ。繋いだ全セッションのシステムプロンプトに入りうる
+        #expect(!text.contains(InterfacePlace.notASketchHeading), "\(text)")
+        #expect(!text.contains("\(Command.name) mcp <sketch directory>"), "\(text)")
+        #expect(!text.contains("\n"), "\(text)")
+        // 挨拶のほかの欄は広げない
+        #expect(Set(result.keys) == ["protocolVersion", "capabilities", "serverInfo", "instructions"])
+        #expect(Set((result["serverInfo"] as? [String: Any] ?? [:]).keys) == ["name", "version"])
+    }
+
+    /// **名乗る事実は組んだ時点の ``InterfacePlace`` で、後から追わない** (#2797・#2487)。
+    @Test("窓口を立てた後に `Package.swift` が置かれても、名乗りは立てた時点のまま")
+    func introductionDoesNotFollowLaterChanges() throws {
+        let place = try makePlace(sketch: false)
+        defer { try? FileManager.default.removeItem(at: place) }
+        let (result, _) = try initialize(package: place) {
+            try "// 後から置いた\n".write(
+                to: place.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        }
+        let text = try #require(result["instructions"] as? String, "\(result)")
+        #expect(text.contains(InterfacePlace.notASketchHeading), "\(text)")
+    }
+
     @Test("道具立ての一覧を返す")
     func listsTheTools() throws {
         let (server, recorder) = makeServer(
