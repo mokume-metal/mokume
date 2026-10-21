@@ -177,6 +177,202 @@ struct BundleCommandTests {
         #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("AC").path))
     }
 
+    // MARK: - 消すのは前の版の自分の .app だけ (#2500)
+
+    /// `--out` の直下に、mokume が作ったのではない `Grain.app` (中に `keep.txt`) を置く。
+    private func placeForeignApp(
+        named name: String = "Grain", in out: URL, asFile: Bool = false
+    ) throws -> URL {
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let app = out.appendingPathComponent("\(name).app", isDirectory: !asFile)
+        if asFile {
+            try "keep".write(to: app, atomically: true, encoding: .utf8)
+            return app
+        }
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        let keep = app.appendingPathComponent("keep.txt")
+        try "keep".write(to: keep, atomically: true, encoding: .utf8)
+        return keep
+    }
+
+    /// 印の鍵を持たない `Info.plist` を `<app>/Contents/` へ書く (この変更より前の出力の形)。
+    private func writeUnmarkedInfoPlist(identifier: String, into app: URL) throws {
+        let contents = app.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: ["CFBundleIdentifier": identifier], format: .xml, options: 0)
+        try data.write(to: contents.appendingPathComponent("Info.plist"))
+    }
+
+    private let grain = AppIdentity(name: "Grain", identifier: "org.example.grain", version: "0.1.0")
+
+    /// 消さずに投げた失敗が `cannotCreate` で、場所を名指しし、手で消すことを言っていること。
+    private func expectRefusal(
+        at app: URL, _ body: () throws -> Void,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        do {
+            try body()
+            Issue.record("投げなかった", sourceLocation: sourceLocation)
+        } catch {
+            guard let failure = error as? CommandFailure, case .cannotCreate(let path, let reason) = failure
+            else {
+                Issue.record("cannotCreate で投げていない: \(error)", sourceLocation: sourceLocation)
+                return
+            }
+            #expect(path == app.path, sourceLocation: sourceLocation)
+            #expect(reason.contains("confirmed"), "\(reason)", sourceLocation: sourceLocation)
+            #expect(reason.contains("by hand"), "\(reason)", sourceLocation: sourceLocation)
+        }
+    }
+
+    @Test("mokume の出力と確かめられない Grain.app は、何も消さずに投げる")
+    func aForeignAppIsNotRemoved() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let keep = try placeForeignApp(in: out)
+        let app = out.appendingPathComponent("Grain.app")
+
+        expectRefusal(at: app) {
+            _ = try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+        #expect(FileManager.default.fileExists(atPath: keep.path), "keep.txt が消えた")
+    }
+
+    @Test("別の誰かの識別子を持つ Grain.app も、印が無ければ消さずに投げる")
+    func anAppWithAnotherIdentifierIsNotRemoved() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let keep = try placeForeignApp(in: out)
+        let app = out.appendingPathComponent("Grain.app")
+        try writeUnmarkedInfoPlist(identifier: "com.someone.grain", into: app)
+
+        expectRefusal(at: app) {
+            _ = try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+        #expect(FileManager.default.fileExists(atPath: keep.path), "keep.txt が消えた")
+    }
+
+    @Test("Grain.app がファイルでも、消さずに投げる")
+    func aFileNamedLikeTheAppIsNotRemoved() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let file = try placeForeignApp(in: out, asFile: true)
+
+        expectRefusal(at: file) {
+            _ = try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+        #expect(try String(contentsOf: file, encoding: .utf8) == "keep")
+    }
+
+    /// 止まるのはビルドの前でなければならない。中身の無い `Package.swift` なので、ビルドへ進んで
+    /// いれば `dump-package` で別の失敗 (`toolchainFailed`) になる。
+    @Test("run は、作り直せない Grain.app をビルドの前に断る")
+    func bundlingStopsBeforeBuildingOverAForeignApp() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// 中身の無い宣言\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try #"{"name": "Grain", "identifier": "org.example.grain", "version": "0.1.0"}"#
+            .write(
+                to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
+                encoding: .utf8)
+        let out = root.appendingPathComponent(BundleCommand.defaultOutputDirectory, isDirectory: true)
+        let keep = try placeForeignApp(in: out)
+
+        expectRefusal(at: out.appendingPathComponent("Grain.app")) {
+            try BundleCommand.run([root.path])
+        }
+        #expect(FileManager.default.fileExists(atPath: keep.path), "keep.txt が消えた")
+    }
+
+    @Test("印のある Grain.app は、足したファイルを消して作り直される")
+    func aMarkedAppIsRebuilt() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        let added = app.appendingPathComponent("added.txt")
+        try "x".write(to: added, atomically: true, encoding: .utf8)
+
+        _ = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        #expect(!FileManager.default.fileExists(atPath: added.path))
+    }
+
+    /// 印は識別子に依らない (案 P)。識別子だけ変えた作り直しも通る。
+    @Test("識別子だけ変えても、印のある Grain.app は作り直される")
+    func aMarkedAppIsRebuiltWithAnotherIdentifier() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let app = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        let added = app.appendingPathComponent("added.txt")
+        try "x".write(to: added, atomically: true, encoding: .utf8)
+
+        let renamed = AppIdentity(name: "Grain", identifier: "org.example.other", version: "0.2.0")
+        _ = try BundleCommand.assemble(
+            executable: executable, identity: renamed, minimumSystemVersion: "26.0", into: out)
+        #expect(!FileManager.default.fileExists(atPath: added.path))
+        #expect(
+            try readInfoPlist(of: app)["CFBundleIdentifier"] as? String == "org.example.other")
+    }
+
+    /// この変更より前の出力 (印の鍵が無い) は、識別子が今の名乗りと同じなら前の版とみなす (案 R)。
+    @Test("印が無くても、識別子が同じ Grain.app は作り直される")
+    func anUnmarkedAppWithTheSameIdentifierIsRebuilt() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let keep = try placeForeignApp(in: out)
+        let app = out.appendingPathComponent("Grain.app")
+        try writeUnmarkedInfoPlist(identifier: grain.identifier, into: app)
+
+        _ = try BundleCommand.assemble(
+            executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        #expect(!FileManager.default.fileExists(atPath: keep.path), "前の出力が残った")
+        #expect(try readInfoPlist(of: app)[AppIdentity.bundledMarkKey] as? Bool == true)
+    }
+
+    @Test("Info.plist が書く一覧に、mokume の印の鍵がある")
+    func theInfoPlistCarriesTheMark() {
+        let plist = grain.infoPlist(executable: "grain", minimumSystemVersion: "26.0")
+        #expect(plist[AppIdentity.bundledMarkKey] as? Bool == true)
+    }
+
+    /// 組み立ての途中で止まって残った `.app` が、手で消すまで先へ進めない形にならない。
+    @Test("組み立ての途中で止まって残った .app は、次の回に作り直せる")
+    func aHalfBuiltAppCanBeRebuilt() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeBuildOutput(in: root)
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let missing = root.appendingPathComponent("bin/no-such-executable")
+
+        #expect(throws: CommandFailure.self) {
+            try BundleCommand.assemble(
+                executable: missing, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+        #expect(throws: Never.self) {
+            try BundleCommand.assemble(
+                executable: executable, identity: grain, minimumSystemVersion: "26.0", into: out)
+        }
+    }
+
     /// 裏側。**ファイル名にできる名前は、いままでどおり `--out` の直下に包みと紙ができる。**
     @Test("/ の無い名前は、--out の直下に包みと開き方の紙ができる", arguments: ["Bund", "My Sketch", "木目"])
     func aPlainNameLandsDirectlyInTheOutput(name: String) throws {

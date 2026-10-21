@@ -87,6 +87,9 @@ enum BundleCommand {
         let identity = try AppIdentity.read(in: directory)
         // **許可の文言も、ビルドの前に見る。** 使うのに無いと、止まるのは配った先になる
         try DeviceUse.check(in: directory, identity: identity)
+        // **作り直す先が自分の出力でなければ、ビルドの前に止まる** (#2500)。消せないと分かるのは
+        // 数分のビルドの後ではなく、いまでよい
+        _ = try replaceableApp(for: identity, in: out)
 
         // **宣言は 1 度だけ読む。** 走らせるものを決めるのにも、下限の版と資材の包みを
         // 知るのにも要る — 別々に引くと `dump-package` を 2 回起こすことになる
@@ -172,27 +175,13 @@ enum BundleCommand {
     /// **作り直しは消してから。** 前の版の資材が残ると、消したはずのものが配られる —
     /// しかも手元では動くので気付けない。
     ///
-    /// **消してよいのは、`--out` の直下にある `<name>.app` だけである** (そこに在るものを前の版の
-    /// 自分の出力とみなす。中身が自分のものかまでは確かめない)。名前から作った場所がそこを
-    /// 外れていたら、何も消さずに投げる。名前の `/` は名乗りを読む段
-    /// (``AppIdentity/make(from:path:)``) が断るが、ここはそれに頼らない — 名乗りを通らずに
-    /// 組んだ `AppIdentity` でも `--out` の外を消さない。`..` を含む名前で `--out` の外にある
-    /// `.app` を中身ごと消していた ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    /// **消してよいのは、`--out` の直下にある、前の版の自分の `.app` だけである** (#2309・#2500)。
+    /// 場所は ``replaceableApp(for:in:)`` が、中身は ``isOwnOutput(_:identity:)`` が確かめ、
+    /// どちらかが外れたら何も消さずに投げる。
     static func assemble(
         executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL
     ) throws(CommandFailure) -> URL {
-        let fileName = "\(identity.name).app"
-        let app = out.appendingPathComponent(fileName, isDirectory: true)
-        // 最後の部品が名前そのもので (`a/../b` は `b.app` に畳まれるので外れる)、親が `--out`
-        guard app.lastPathComponent == fileName,
-            app.deletingLastPathComponent().standardizedFileURL.path
-                == out.standardizedFileURL.path
-        else {
-            throw .cannotCreate(
-                path: app.path,
-                reason: "It would not sit directly inside \(out.path), so nothing was removed"
-                    + " or written. The name must not contain \"/\"")
-        }
+        let app = try replaceableApp(for: identity, in: out)
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
         let programs = contents.appendingPathComponent("MacOS", isDirectory: true)
         let resources = contents.appendingPathComponent("Resources", isDirectory: true)
@@ -201,11 +190,9 @@ enum BundleCommand {
         try create(programs)
         try create(resources)
 
-        try copy(executable, to: programs.appendingPathComponent(executable.lastPathComponent))
-        for bundle in resourceBundles(besides: executable) {
-            try copy(bundle, to: resources.appendingPathComponent(bundle.lastPathComponent))
-        }
-
+        // **`Info.plist` を先に書く。** 印 (``AppIdentity/bundledMarkKey``) が入っているので、組み立ての
+        // 途中で止まって残った `.app` も、次の回に自分の出力と確かめられて作り直せる (後に書くと、
+        // 途中の `.app` は印を持たず、手で消すまで先へ進めない)
         let plist = identity.infoPlist(
             executable: executable.lastPathComponent,
             minimumSystemVersion: minimumSystemVersion)
@@ -223,7 +210,66 @@ enum BundleCommand {
                 path: contents.appendingPathComponent("Info.plist").path,
                 reason: Diagnostics.failureText(error))
         }
+
+        try copy(executable, to: programs.appendingPathComponent(executable.lastPathComponent))
+        for bundle in resourceBundles(besides: executable) {
+            try copy(bundle, to: resources.appendingPathComponent(bundle.lastPathComponent))
+        }
         return app
+    }
+
+    /// 作る `<name>.app` の場所。**消してよいと確かめられたときだけ返し、そうでなければ何も消さずに
+    /// 投げる** (``assemble(executable:identity:minimumSystemVersion:into:)`` とビルドの前の `run`
+    /// が同じ判定を使う)。
+    ///
+    /// 確かめることは 2 つ。**場所**: 最後の部品が名前そのもので (`a/../b` は `b.app` に畳まれる
+    /// ので外れる)、親が `--out` であること。名前の `/` は名乗りを読む段
+    /// (``AppIdentity/make(from:path:)``) が断るが、ここはそれに頼らない — 名乗りを通らずに組んだ
+    /// `AppIdentity` でも `--out` の外を消さない ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    /// **中身**: そこに既に在るものが、mokume の出力と確かめられること
+    /// (``isOwnOutput(_:identity:)``)。何も無ければ消すものも無い。
+    static func replaceableApp(for identity: AppIdentity, in out: URL) throws(CommandFailure) -> URL {
+        let fileName = "\(identity.name).app"
+        let app = out.appendingPathComponent(fileName, isDirectory: true)
+        guard app.lastPathComponent == fileName,
+            app.deletingLastPathComponent().standardizedFileURL.path
+                == out.standardizedFileURL.path
+        else {
+            throw .cannotCreate(
+                path: app.path,
+                reason: "It would not sit directly inside \(out.path), so nothing was removed"
+                    + " or written. The name must not contain \"/\"")
+        }
+        // 何も無い (壊れたシンボリックリンクは在るものとして数える — 消えるのはそのリンク自身)
+        guard (try? FileManager.default.attributesOfItem(atPath: app.path)) != nil else {
+            return app
+        }
+        guard isOwnOutput(app, identity: identity) else {
+            throw .cannotCreate(
+                path: app.path,
+                reason: "It could not be confirmed as something mokume bundled, so nothing was"
+                    + " removed or written. If you do not need it, remove it by hand and run this again")
+        }
+        return app
+    }
+
+    /// 既にある `<name>.app` が、前の版の自分の出力と確かめられるか。
+    ///
+    /// **`Info.plist` を読んで、2 つのどちらかを見る** (#2500)。1 つ目は mokume だけが書く印
+    /// (``AppIdentity/bundledMarkKey``) で、識別子を変えた作り直しもこれで通る。2 つ目は
+    /// この変更より前に束ねたもの (印が無い) のための、`CFBundleIdentifier` が今の名乗りと同じこと。
+    /// どちらでもなければ — ディレクトリでないもの・`Info.plist` が無い・読めないものも — 消さない。
+    ///
+    /// **印が示すのは「mokume の出力」までである。** 別の作品が同じ `--out` に同じ名前で束ねた
+    /// `.app` も作り直しの対象になる (名前の衝突として受け入れる)。
+    static func isOwnOutput(_ app: URL, identity: AppIdentity) -> Bool {
+        let info = app.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: info),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                as? [String: Any]
+        else { return false }
+        if plist[AppIdentity.bundledMarkKey] as? Bool == true { return true }
+        return plist["CFBundleIdentifier"] as? String == identity.identifier
     }
 
     /// 実行ファイルの隣に並んだ資材の包み。
