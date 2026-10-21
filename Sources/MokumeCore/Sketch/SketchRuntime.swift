@@ -704,6 +704,7 @@ public final class SketchRuntime {
         params?.flushIfChanged()
         outlets.removeAll()
         inlets.removeAll()
+        SeamHomes.forgetAll(in: self)
         outletJoinedAt.removeAll()
         seamsClosed = true
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
@@ -1388,6 +1389,7 @@ public final class SketchRuntime {
         }
         guard Self.open(inlet, opening: inlet.open) else { return false }
         inlets.append((inlet, SeamHealth()))
+        SeamHomes.record(inlet, in: self)
         return true
     }
 
@@ -1400,6 +1402,7 @@ public final class SketchRuntime {
         }
         guard Self.open(outlet, opening: outlet.open) else { return false }
         outlets.append((outlet, SeamHealth()))
+        SeamHomes.record(outlet, in: self)
         outletJoinedAt[ObjectIdentifier(outlet)] = timing.frameCount
         return true
     }
@@ -1407,6 +1410,7 @@ public final class SketchRuntime {
     private func detachNow(_ inlet: any Inlet) {
         guard let index = inlets.firstIndex(where: { $0.seam === inlet }) else { return }
         inlets.remove(at: index)
+        SeamHomes.forget(inlet)
         inlet.close()
     }
 
@@ -1421,6 +1425,7 @@ public final class SketchRuntime {
         // 渡している最中に出口が自分で外れていれば、閉じるのは 1 度だけ
         guard let index = outlets.firstIndex(where: { $0.seam === outlet }) else { return }
         outlets.remove(at: index)
+        SeamHomes.forget(outlet)
         outletJoinedAt[ObjectIdentifier(outlet)] = nil
         outlet.close()
     }
