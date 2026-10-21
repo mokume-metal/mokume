@@ -15,10 +15,12 @@ import Testing
 /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
 struct StrokeDashGeometryTests {
     private func pieces(
-        _ points: [SIMD2<Float>], _ length: Float, _ gap: Float, steps: [Bool] = []
+        _ points: [SIMD2<Float>], _ length: Float, _ gap: Float, steps: [Bool] = [],
+        closed: Bool = false
     ) throws -> [Canvas.DashPiece] {
         let result = Canvas.dashPieces(
-            of: points, curveSteps: steps, by: StrokeDash(length: length, gap: gap))
+            of: points, curveSteps: steps, isClosed: closed,
+            by: StrokeDash(length: length, gap: gap))
         guard case .pieces(let pieces) = result else {
             Issue.record("刻めなかった: \(result)")
             return []
@@ -100,6 +102,87 @@ struct StrokeDashGeometryTests {
     func zeroLengthEdgesAreSkipped() throws {
         let result = try pieces([SIMD2(0, 0), SIMD2(0, 0), SIMD2(30, 0)], 10, 10)
         #expect(result.map(\.points) == [[SIMD2(0, 0), SIMD2(10, 0)], [SIMD2(20, 0), SIMD2(30, 0)]])
+    }
+
+    @Test("破線が頂点ちょうどで終わっても、同じ点を 2 度積まない")
+    func aDashEndingExactlyOnAVertexKeepsItOnce() throws {
+        let result = try pieces([SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 20)], 10, 10)
+        #expect(result.map(\.points) == [[SIMD2(0, 0), SIMD2(10, 0)], [SIMD2(10, 10), SIMD2(10, 20)]])
+    }
+
+    // MARK: - 閉じた輪郭
+
+    private let square: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(0, 10)]
+
+    @Test("閉じた輪郭は、最後の点から最初の点へ戻る辺も刻む")
+    func aClosedOutlineIncludesTheClosingEdge() throws {
+        // 周は 40。長さ 5・間隔 5 なら、10 おきに 4 つの片 (0・10・20・30 から 5)
+        let result = try pieces(square, 5, 5, closed: true)
+        #expect(
+            result.map(\.points) == [
+                [SIMD2(0, 0), SIMD2(5, 0)], [SIMD2(10, 0), SIMD2(10, 5)],
+                [SIMD2(10, 10), SIMD2(5, 10)], [SIMD2(0, 10), SIMD2(0, 5)],
+            ])
+        #expect(result.allSatisfy { !$0.isClosed })
+    }
+
+    @Test("閉じた輪郭で、最後の破線が始点まで届いて続くなら、最初の破線へ繋いで 1 つの片にする")
+    func theLastDashJoinsTheFirstAcrossTheStart() throws {
+        // 周 40・長さ 30・間隔 5: 0…30 が破線、30…35 が間隔、35…40 は破線のまま始点へ届く
+        let result = try pieces(square, 30, 5, closed: true)
+        try #require(result.count == 1)
+        #expect(
+            result[0].points == [SIMD2(0, 5), SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(0, 10)])
+    }
+
+    @Test("繋いだ片の中では、始点は折れ目として残り、曲線の刻みの印も続く")
+    func theJoinedPieceKeepsTheStartAsAVertex() throws {
+        let result = try pieces(square, 30, 5, steps: [true, false, false, false], closed: true)
+        try #require(result.count == 1)
+        #expect(result[0].curveSteps == [false, true, false, false, false])
+    }
+
+    @Test("閉じた輪郭で、破線が一周を途切れずに覆うなら、閉じた 1 つの片になる")
+    func aDashLongerThanThePerimeterIsOneClosedPiece() throws {
+        let result = try pieces(square, 100, 5, closed: true)
+        try #require(result.count == 1)
+        #expect(result[0].isClosed)
+        #expect(result[0].points == square)
+    }
+
+    @Test("最後が間隔で終わる輪郭は、最初の破線を繋がず、片は割れたまま")
+    func aDashEndingExactlyAtTheStartIsNotJoined() throws {
+        // 周 40・長さ 10・間隔 10: 30…40 は間隔で、20…30 の破線が最後
+        let result = try pieces(square, 10, 10, closed: true)
+        try #require(result.count == 2)
+        #expect(result[0].points == [SIMD2(0, 0), SIMD2(10, 0)])
+    }
+
+    @Test("閉じた輪郭を、破線がちょうど周の長さで覆うなら、閉じた片にする")
+    func aDashExactlyAsLongAsThePerimeterIsClosed() throws {
+        let result = try pieces(square, 40, 5, closed: true)
+        try #require(result.count == 1)
+        #expect(result[0].isClosed)
+    }
+
+    @Test("閉じた輪郭の点線 (長さ 0) は、周に沿って間隔ごとに点が並ぶ")
+    func aClosedOutlineMakesDots() throws {
+        let result = try pieces(square, 0, 10, closed: true)
+        #expect(
+            result.map(\.points) == [
+                [SIMD2(0, 0), SIMD2(0, 0)], [SIMD2(10, 0), SIMD2(10, 0)],
+                [SIMD2(10, 10), SIMD2(10, 10)], [SIMD2(0, 10), SIMD2(0, 10)],
+            ])
+    }
+
+    @Test("閉じた輪郭を刻む数の上限は、戻る辺も含めた周の長さで数える")
+    func theClosingEdgeCountsTowardTheLimit() {
+        let limit = Float(Canvas.maxDashPieces)
+        let dash = StrokeDash(length: 1, gap: 1)
+        // 開いた線としては上限内 (長さ limit * 2) でも、閉じて戻る辺を足すと越える
+        let line: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(limit * 2, 0)]
+        #expect(Canvas.dashPieces(of: line, isClosed: false, by: dash) != .tooMany)
+        #expect(Canvas.dashPieces(of: line, isClosed: true, by: dash) == .tooMany)
     }
 
     @Test("数でない座標・無限の長さ・点が 2 つに満たない線は、刻めないと返す")
@@ -521,5 +604,218 @@ struct StrokeDashTests {
         expectInk(image, 5, 50)
         expectBare(image, 15, 50)
         expectInk(image, 25, 50)
+    }
+
+    // MARK: - 閉じた輪郭 (#2835 の PR2)
+
+    /// 輪郭の図形。**距離関数の経路 (矩形・楕円・扇形) と、三角形の経路 (三角形・四角形・頂点列) の
+    /// 両方を並べる。** 塗りは置かず、輪郭だけを破線で引く。
+    enum Figure: String, CaseIterable, CustomTestStringConvertible {
+        case rect, roundedRect, circle, ellipse, arc, triangle, quad, shape, shapeWithHole
+        var testDescription: String { rawValue }
+
+        func draw(_ canvas: Canvas) {
+            switch self {
+            case .rect: canvas.rect(20, 20, 60, 40)
+            case .roundedRect: canvas.rect(20, 20, 60, 40, 12)
+            case .circle: canvas.circle(50, 40, 60)
+            case .ellipse: canvas.ellipse(50, 40, 80, 50)
+            case .arc: canvas.arc(50, 50, 70, 70, 0.3, 4.4)
+            case .triangle: canvas.triangle(20, 20, 80, 30, 40, 70)
+            case .quad: canvas.quad(20, 20, 80, 25, 70, 70, 25, 60)
+            case .shape:
+                canvas.beginShape()
+                canvas.vertex(20, 20)
+                canvas.vertex(80, 20)
+                canvas.vertex(80, 60)
+                canvas.vertex(50, 75)
+                canvas.vertex(20, 60)
+                canvas.endShape(.close)
+            case .shapeWithHole:
+                canvas.beginShape()
+                canvas.vertex(10, 10)
+                canvas.vertex(90, 10)
+                canvas.vertex(90, 70)
+                canvas.vertex(10, 70)
+                canvas.beginContour()
+                canvas.vertex(30, 30)
+                canvas.vertex(30, 50)
+                canvas.vertex(70, 50)
+                canvas.vertex(70, 30)
+                canvas.endContour()
+                canvas.endShape(.close)
+            }
+        }
+    }
+
+    /// 塗られた画素 (赤が半分を越える) の数。
+    private func inkedCount(_ image: DisplayImage) -> Int {
+        var count = 0
+        for index in stride(from: 0, to: image.bytes.count, by: 4) where image.bytes[index] > 0x80 {
+            count += 1
+        }
+        return count
+    }
+
+    @Test("どの図形の輪郭も、長さ 10・間隔 10 の破線なら、塗られる画素は実線のおよそ半分", arguments: Figure.allCases, Route.allCases)
+    func everyOutlineIsDashed(_ figure: Figure, _ route: Route) throws {
+        func inked(dashed: Bool) throws -> Int {
+            let (image, canvas) = try picture(route) { canvas in
+                canvas.strokeWeight(2)
+                canvas.strokeCap(.square)
+                if dashed { canvas.strokeDash(10, 10) }
+                figure.draw(canvas)
+            }
+            #expect(!canvas.warnings.hasWarned(.strokeDashTooFine))
+            return inkedCount(image)
+        }
+        let solid = try inked(dashed: false)
+        let dashed = try inked(dashed: true)
+        // 距離関数の線は縁がぼけるぶん、実線の塗られる画素が多く数えられる。下限は余裕を持たせる
+        #expect(dashed > solid * 25 / 100, "破線が出ていない (\(dashed) / \(solid))")
+        #expect(dashed < solid * 65 / 100, "破線が刻まれていない (\(dashed) / \(solid))")
+    }
+
+    @Test("矩形の辺は、周に沿って模様が続き、角をまたぐ破線は角の形で繋がる", arguments: Route.allCases)
+    func aRectOutlineFollowsThePerimeter(_ route: Route) throws {
+        // rect(20, 20, 60, 40): 周 200。長さ 10・間隔 10 なら、上の辺は d = 0…10・20…30…、右の辺は
+        // d = 60 から (60…70 が破線)、下の辺は右から左へ d = 100 から、左の辺は下から上へ d = 160 から
+        let (image, _) = try picture(route) { canvas in
+            canvas.strokeWeight(2)
+            canvas.strokeCap(.square)
+            canvas.strokeDash(10, 10)
+            canvas.rect(20, 20, 60, 40)
+        }
+        expectInk(image, 25, 20, "上の辺 d = 5")
+        expectBare(image, 35, 20, "上の辺 d = 15")
+        expectInk(image, 80, 25, "右の辺 d = 65")
+        expectBare(image, 80, 35, "右の辺 d = 75")
+        expectInk(image, 75, 60, "下の辺 d = 105")
+        expectBare(image, 65, 60, "下の辺 d = 115")
+        expectInk(image, 20, 55, "左の辺 d = 165")
+        expectBare(image, 20, 45, "左の辺 d = 175")
+    }
+
+    @Test("始点をまたぐ破線は、角で割れずに実線のときと同じ形で繋がる", arguments: [StrokeJoin.miter, .bevel, .round], Route.allCases)
+    func aDashCrossingTheStartJoinsAtTheCorner(_ join: StrokeJoin, _ route: Route) throws {
+        func corner(_ length: Float) throws -> DisplayImage {
+            try picture(route) { canvas in
+                canvas.strokeWeight(8)
+                canvas.strokeCap(.square)
+                canvas.strokeJoin(join)
+                canvas.strokeDash(length, 10)
+                canvas.rect(20, 20, 60, 40)
+            }.image
+        }
+        // 周 200・長さ 110・間隔 10: 120…200 の破線が、始点を越えて 0…110 へ続く。比べる相手は、
+        // 周を途切れず覆う破線 (閉じた 1 つの片)。どちらも破線の片として同じ経路で引くので、
+        // 角のまわりが同じ画素になれば、始点で割れずに繋がっている
+        let solid = try corner(1000)
+        let dashed = try corner(110)
+        for y in 8...32 {
+            for x in 8...32 {
+                #expect(dashed[x, y] == solid[x, y], "(\(x), \(y)) \(join)")
+            }
+        }
+    }
+
+    @Test("破線の輪郭の内側の塗りは、輪郭を引かない図形と同じに残る", arguments: Route.allCases)
+    func theFillStaysUnderADashedOutline(_ route: Route) throws {
+        func filled(_ body: (Canvas) -> Void) throws -> DisplayImage {
+            try picture(route) { canvas in
+                canvas.fill(.linear(red: 0, green: 0, blue: 1))
+                body(canvas)
+            }.image
+        }
+        let noStroke = try filled { canvas in
+            canvas.noStroke()
+            canvas.rect(20, 20, 60, 40)
+        }
+        let dashed = try filled { canvas in
+            canvas.strokeWeight(2)
+            canvas.strokeCap(.square)
+            canvas.strokeDash(10, 10)
+            canvas.stroke(.linear(red: 1, green: 0, blue: 0))
+            canvas.rect(20, 20, 60, 40)
+        }
+        // 中ほどは塗りのまま。輪郭の間隔 (上の辺 d = 15) のすぐ内側も塗りで、線の赤は出ない
+        #expect(dashed[50, 40] == noStroke[50, 40])
+        #expect(dashed[35, 24].blue > 200, "間隔の内側の塗りが欠けている")
+        #expect(dashed[35, 24].red < 60)
+    }
+
+    @Test("破線の輪郭を畳まない: 破線の矩形を重ねた後、実線へ戻した同じ矩形は実線で出る", arguments: Route.allCases)
+    func aDashedOutlineIsNotFoldedIntoASolidOne(_ route: Route) throws {
+        let (image, _) = try picture(route) { canvas in
+            canvas.strokeWeight(2)
+            canvas.strokeCap(.square)
+            canvas.strokeDash(10, 10)
+            canvas.rect(10, 10, 30, 20)
+            canvas.rect(10, 40, 30, 20)
+            canvas.noStrokeDash()
+            canvas.rect(10, 70, 30, 20)
+            canvas.rect(60, 70, 30, 20)
+        }
+        expectBare(image, 25, 10, "破線の上の辺の間隔 (d = 15)")
+        expectBare(image, 25, 40)
+        expectInk(image, 25, 70, "実線へ戻した矩形の上の辺")
+        expectInk(image, 75, 70)
+    }
+
+    @Test("長さ 0 の破線は、閉じた輪郭でも丸い端なら点線になる", arguments: Route.allCases)
+    func aClosedOutlineMakesDots(_ route: Route) throws {
+        let (image, _) = try picture(route) { canvas in
+            canvas.strokeWeight(4)
+            canvas.strokeCap(.round)
+            canvas.strokeDash(0, 20)
+            canvas.rect(20, 20, 60, 40)
+        }
+        expectInk(image, 20, 20, "始点の点")
+        expectInk(image, 40, 20, "d = 20 の点")
+        expectBare(image, 30, 20, "点の間")
+    }
+
+    @Test("保持した形の閉じた輪郭にも、組み立ての間の破線が焼き付く", arguments: Route.allCases)
+    func retainedClosedOutlinesBakeTheDash(_ route: Route) throws {
+        let (image, canvas) = try picture(route) { canvas in
+            canvas.strokeWeight(2)
+            canvas.strokeCap(.square)
+            let held = canvas.createShape {
+                canvas.strokeDash(10, 10)
+                canvas.rect(20, 20, 60, 40)
+            }
+            canvas.shape(held)
+        }
+        expectInk(image, 25, 20)
+        expectBare(image, 35, 20, "形に破線が焼き付いていない")
+        #expect(canvas.style.strokeDash == nil)
+    }
+
+    @Test("輪郭を引かない設定では、破線にしても何も変わらず、名乗りもしない", arguments: Route.allCases)
+    func noStrokeIgnoresTheDash(_ route: Route) throws {
+        let (plain, _) = try picture(route) { canvas in
+            canvas.fill(white)
+            canvas.noStroke()
+            canvas.rect(20, 20, 60, 40)
+        }
+        let (dashed, canvas) = try picture(route) { canvas in
+            canvas.fill(white)
+            canvas.strokeDash(10, 10)
+            canvas.noStroke()
+            canvas.rect(20, 20, 60, 40)
+        }
+        #expect(dashed == plain)
+        #expect(canvas.warnings.message(for: .strokeDashTooFine) == nil)
+    }
+
+    @Test("閉じた輪郭の刻みが上限を越えるなら、その図形を実線で引いて 1 度名乗る", arguments: Route.allCases)
+    func aTooFineClosedOutlineDrawsSolid(_ route: Route) throws {
+        let (image, canvas) = try picture(route) { canvas in
+            canvas.strokeWeight(2)
+            canvas.strokeDash(1, 1)
+            canvas.rect(-10_000, 20, 20_000, 40)  // 周は 6 万。刻めば 3 万片
+        }
+        expectInk(image, 25, 20, "実線で引いていない")
+        #expect(canvas.warnings.hasWarned(.strokeDashTooFine))
     }
 }
