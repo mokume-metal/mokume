@@ -40,7 +40,10 @@ nonisolated enum DecimalText {
     }
 
     /// 綴りが `[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?` に丸ごと合うか。
-    private static func isDecimal(_ bytes: String.UTF8View) -> Bool {
+    ///
+    /// **文字の STL の通読** (``ModelFile/decimalSpelling(_:count:)``) は、速さのために同じ文法を手で写している。
+    /// 検査が、この照合と突き合わせる (`STLModelTests`)。
+    static func isDecimal<Bytes: Collection>(_ bytes: Bytes) -> Bool where Bytes.Element == UInt8 {
         var index = bytes.startIndex
         func skip(_ accepted: (UInt8) -> Bool) -> Int {
             var count = 0

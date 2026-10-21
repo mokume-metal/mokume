@@ -19,8 +19,11 @@ import simd
 ///   (向きと 3 点の 48 バイトがあれば 1 面と数え、後ろの属性の 2 バイトは問わない。最初の面だけは、下の
 ///   128〜132 バイトの癖で 49 バイトから)。文字の STL は、面の途中で切れていれば断り、面の境 (`endfacet` の後) で
 ///   切れていれば `endsolid` が無くても揃った面を読む
-/// - **数として読めない座標は、文字の STL では黙って 0 になる** (`nan`・`a` など)。バイナリの
-///   NaN・無限はそのまま返る
+/// - **数として読めない座標は、文字の STL では黙って 0 や別の数になる** (`nan`・`a` は 0、`0x10` は 16 など)。バイナリの
+///   NaN・無限はそのまま返る。**どちらも読み手に渡す前に mokume の側で見分け、座標が読めない面は読み飛ばして数える**
+///   ([#2567]): 通読が `vertex` の行の欄を見て、ちょうど 3 つの有限な 10 進の数 (``DecimalText``) でない面を、返った
+///   三角形から落とす (``droppingUnreadableFacets(of:scan:)``)。`facet normal` の欄が読めない面は残し、向きは書いて
+///   いないのと同じ (形から求めた両面) にする。読み手は文字の STL の面をファイルの順に返す (`STLModelTests` が固定)
 /// - **文字の STL は、`facet normal` (間の空白 1 つ) の綴りが添字 127 までに始まらないと、面を 1 つも読めない**
 ///   ([#2645])。綴りの位置だけを見て、名前の中の綴りでもよい。名前が 121 文字以上 (字下げ 2 の `facet normal` が
 ///   添字 130)・最初の面の字下げが長い・前に空白の行や空行を挟んだ・面の行の区切りがタブや空白 2 つ、のどれでも
@@ -128,8 +131,9 @@ import simd
 /// `facet normal` の見出しのバイナリを文字として読むこと) は読み手の挙動で、`STLModelTests` が固定している。読み手が
 /// 変わったら、そこが赤くなって、この節の直し時を知らせる。
 ///
-/// **残る境目**: 文字の STL では、座標が足りない `vertex` の行や数でない座標を、読み手が 0 として読む (上の
-/// 読み手の癖)。頂点の数と面の数の確かめでは見えない。
+/// **残る境目**: 文字の STL の `vertex` の行の数や、座標の綴りは、頂点の数と面の数の確かめでは見えない。座標の綴りは
+/// 通読が見て、読めない面を読み飛ばして数える ([#2567])。ただし通読が持つ 1 行の上限 (64 KiB) を超える `vertex` の
+/// 行は、欄を集めきれないので読めない面として扱う。
 ///
 /// ## 挙動が変わるもの (これまで読めた・空になったものが、読めないとして返る)
 ///
@@ -155,6 +159,7 @@ import simd
 ///   見出しが `solid` で始まり `facet normal` を含むバイナリは、面の無い形ではなく書かれた面を読む (#2746)
 ///
 /// [#1966]: https://github.com/mokume-metal/mokume/issues/1966
+/// [#2567]: https://github.com/mokume-metal/mokume/issues/2567
 /// [#2335]: https://github.com/mokume-metal/mokume/issues/2335
 /// [#2336]: https://github.com/mokume-metal/mokume/issues/2336
 /// [#2347]: https://github.com/mokume-metal/mokume/issues/2347
@@ -286,7 +291,67 @@ nonisolated extension ModelFile {
         // **返ってきた三角形を、文字に書かれた面の数と照らす。** 読み手は、読めない文字 (CR だけの
         // 改行など) を面の無い形で返す。数が合わなければ読めなかったのと同じである
         guard let read, agrees(read, facets: scan.facets) else { throw .unreadable(path: path) }
-        return read.parsed
+        return droppingUnreadableFacets(of: read.parsed, scan: text)
+    }
+
+    /// 読み手が返した形から、**座標が読めない面を落として ``Parsed/skippedLines`` に面ごとに 1 数え**、向きが読めない面は
+    /// 向きを形から求め直す ([#2567])。バイナリの座標が数でない面・OBJ の読めない行と同じ「読み飛ばして数える」に揃える。
+    ///
+    /// 読み手は、座標の綴りが 16 進・NUL の後ろ・数でない文字でも、数や 0 として面を返す。通読 (``scanText(head:rest:chunk:)``)
+    /// が `vertex` の行の欄を見て、ちょうど 3 つの有限な 10 進の数でない面を ``TextScan/unreadableFacets`` に控える。
+    /// **返った三角形はファイルの面の順** (読み手が順に返すことは `STLModelTests` が固定する) なので、通し番号で落とせる。
+    /// 読み手が自分で落とした面 (``TextScan/readerSkippedFacets``) は返った三角形に居ないので、番号を数えるときに飛ばし、
+    /// 数は読み手の数のまま足さない。**対応が取れないとき** (読み手が落とした数が控えと合わない) は、読み手の結果をそのまま
+    /// 返す。
+    ///
+    /// ``agrees(_:facets:)`` の照合は、落とす前の結果に掛ける (落としても「三角形の数 + 読み飛ばした面 = 面の数」のまま)。
+    ///
+    /// [#2567]: https://github.com/mokume-metal/mokume/issues/2567
+    static func droppingUnreadableFacets(of parsed: Parsed, scan: TextScan) -> Parsed {
+        guard !scan.unreadableFacets.isEmpty || !scan.unwrittenNormals.isEmpty else { return parsed }
+        let readerSkipped = Set(scan.readerSkippedFacets)
+        guard parsed.skippedLines == readerSkipped.count, parsed.positions.count % 3 == 0 else {
+            return parsed
+        }
+        let unreadable = Set(scan.unreadableFacets)
+        let unwritten = Set(scan.unwrittenNormals)
+        var kept = parsed
+        kept.positions = []
+        kept.normals = []
+        kept.uvs = []
+        kept.derivedNormals = []
+        kept.positions.reserveCapacity(parsed.positions.count)
+        kept.normals.reserveCapacity(parsed.normals.count)
+        kept.uvs.reserveCapacity(parsed.uvs.count)
+        kept.derivedNormals.reserveCapacity(parsed.derivedNormals.count)
+        var dropped = 0
+        var row = 0
+        for facet in 0..<scan.shape.facets where !readerSkipped.contains(facet) {
+            let start = row * 3
+            row += 1
+            if unreadable.contains(facet) {
+                dropped += 1
+                continue
+            }
+            let corners = start..<(start + 3)
+            kept.positions += parsed.positions[corners]
+            kept.uvs += parsed.uvs[corners]
+            if unwritten.contains(facet) {
+                // 向きを書いていない面と同じに、巻き方から求めた向きにして両面にする (``trianglesCounting(of:)`` と同じ式)
+                let wound = cross(
+                    parsed.positions[start + 1] - parsed.positions[start],
+                    parsed.positions[start + 2] - parsed.positions[start])
+                let derived = length_squared(wound) > 0 ? normalize(wound) : SIMD3(0, 0, 1)
+                kept.normals += [derived, derived, derived]
+                kept.derivedNormals += [true, true, true]
+            } else {
+                kept.normals += parsed.normals[corners]
+                kept.derivedNormals += parsed.derivedNormals[corners]
+            }
+        }
+        kept.skippedLines += dropped
+        kept.malformed = stlMalformed(kept.skippedLines)
+        return kept
     }
 
     /// バイナリと見分けた頭のうち、**文字の STL とも決めきれない**ものか (#2493 の反証)。
@@ -414,6 +479,20 @@ nonisolated extension ModelFile {
         /// (1 バイト以上) がある。CRLF の空行もこれに当たる。面と面の間や `endsolid` の前後の空白の行は数えない
         /// (読み手は正しく読む)。
         var hasBlankLineInFacet = false
+        /// **座標が読めない面**の通し番号 (0 から数える。ファイルの順)。`vertex` の行の欄が、ちょうど 3 つの有限な 10 進の
+        /// 数 (``DecimalText``) でない面 ([#2567])。読み手は 16 進・NUL の後ろ・数でない綴りを数や 0 として置くので、
+        /// 渡した後に落として ``Parsed/skippedLines`` に数える (``droppingUnreadableFacets(of:scan:)``)。読めない面が
+        /// 無ければ空。
+        ///
+        /// [#2567]: https://github.com/mokume-metal/mokume/issues/2567
+        var unreadableFacets: [Int] = []
+        /// ``unreadableFacets`` のうち、**読み手が自分で落とす面** — 座標の綴りが 10 進で、`Float` に収まらない (`1e39`)
+        /// ので、読み手が無限の座標として返し、``trianglesCounting(of:)`` が読み飛ばして数える。返った三角形には
+        /// 居ないので、番号の対応を数えるのに要る。
+        var readerSkippedFacets: [Int] = []
+        /// **向きが読めない面**の通し番号 (座標は読める)。`facet normal` の後ろの欄が、ちょうど 3 つの有限な 10 進の数
+        /// でない面 ([#2567])。面は残し、向きは書いていないのと同じ (形から求めた両面) にする。
+        var unwrittenNormals: [Int] = []
 
         /// 読み手に、書き直した写し (``ModelFile/writeRewritten(from:head:rest:to:)``) を渡すか。
         ///
@@ -508,6 +587,105 @@ nonisolated extension ModelFile {
         return reader.finish()
     }
 
+    /// 行 (`line`・**最後に 1 バイトの NUL を足してある**) の語のうち、頭の `words` 個を除いた残りが、ちょうど `count` 個の
+    /// 有限な 10 進の数 (``DecimalText``) か ([#2567])。語は空白・タブ・VT・FF・CR で割る。`overflows` は、綴りは 10 進だが
+    /// `Float` に収まらない欄があったか (読み手が無限の座標にして落とす)。
+    ///
+    /// 40 万面の STL で 160 万行あるので、`String` を作らず、綴りの照合と「有限か」の見積もりを 1 度の走査で済ませる
+    /// (``decimalSpelling(_:count:)``)。有限と言い切れない綴り (指数が大きい) だけ、`strtof` で値を見る — 照合を
+    /// 通った綴りだけを渡すので、16 進や `nan`・`inf` は読まれない。
+    ///
+    /// [#2567]: https://github.com/mokume-metal/mokume/issues/2567
+    static func readsDecimalFields(
+        _ line: UnsafeBufferPointer<UInt8>, skipping words: Int, expecting count: Int
+    ) -> (reads: Bool, overflows: Bool) {
+        let end = line.count - 1  // 最後の NUL を除く
+        guard end > 0, let base = line.baseAddress else { return (false, false) }
+        var index = 0
+        var word = 0
+        var numbers = 0
+        var reads = true
+        var overflows = false
+        while true {
+            while index < end, isSeparator(base[index]) { index += 1 }
+            guard index < end else { break }
+            if word < words {
+                while index < end, !isSeparator(base[index]) { index += 1 }
+                word += 1
+                continue
+            }
+            numbers += 1
+            let start = index
+            let spelling = scanDecimal(base, from: &index, end: end)
+            guard spelling.valid else {
+                reads = false
+                continue
+            }
+            if !spelling.surelyFinite {
+                let value = (base + start).withMemoryRebound(to: CChar.self, capacity: index - start + 1) {
+                    strtof($0, nil)
+                }
+                if !value.isFinite {
+                    reads = false
+                    overflows = true
+                }
+            }
+        }
+        return (reads && numbers == count, overflows)
+    }
+
+    /// `index` から 1 つの語を読み、綴りが ``DecimalText`` の 10 進の綴り (`[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?`)
+    /// か返す。**語の終わり (次の区切りか `end`) まで `index` を進める** — 綴りに合わなくても同じ。合えば、`Float` に収まる
+    /// ことが綴りだけで言えるかも返す: 指数が負か、(桁の数 + 指数) が 37 以下 (値が 1e37 に満たない) なら言える。
+    /// それ以外は `strtof` で見る。照合は ``DecimalText/isDecimal(_:)`` と同じで、検査が突き合わせている。
+    static func scanDecimal(
+        _ bytes: UnsafePointer<UInt8>, from index: inout Int, end: Int
+    ) -> (valid: Bool, surelyFinite: Bool) {
+        @inline(__always) func isDigit(_ byte: UInt8) -> Bool { byte &- 0x30 < 10 }
+        var i = index
+        defer { index = i }
+        // 綴りに合わないとき、語の終わりまで進めて返す
+        func reject() -> (valid: Bool, surelyFinite: Bool) {
+            while i < end, !isSeparator(bytes[i]) { i += 1 }
+            return (false, false)
+        }
+        if i < end, bytes[i] == 0x2B || bytes[i] == 0x2D { i += 1 }
+        var digits = 0
+        while i < end, isDigit(bytes[i]) {
+            i += 1
+            digits += 1
+        }
+        if i < end, bytes[i] == 0x2E {
+            i += 1
+            while i < end, isDigit(bytes[i]) {
+                i += 1
+                digits += 1
+            }
+        }
+        guard digits > 0 else { return reject() }
+        var exponent = 0
+        var negative = false
+        if i < end, bytes[i] | 0x20 == 0x65 {
+            i += 1
+            if i < end, bytes[i] == 0x2B || bytes[i] == 0x2D {
+                negative = bytes[i] == 0x2D
+                i += 1
+            }
+            var exponentDigits = 0
+            while i < end, isDigit(bytes[i]) {
+                exponent = min(exponent * 10 + Int(bytes[i] &- 0x30), 100_000)
+                i += 1
+                exponentDigits += 1
+            }
+            guard exponentDigits > 0 else { return reject() }
+        }
+        guard i == end || isSeparator(bytes[i]) else { return reject() }
+        return (true, negative || digits + exponent <= 37)
+    }
+
+    /// 欄を割る字 (空白・タブ・VT・FF・CR)。
+    private static func isSeparator(_ byte: UInt8) -> Bool { isBlankOrCR(byte) }
+
     /// 字下げに使う空白 (空白・タブ・VT・FF)。読み手は VT・FF も空白として読む。
     private static func isBlank(_ byte: UInt8) -> Bool {
         byte == 0x20 || byte == 0x09 || byte == 0x0B || byte == 0x0C
@@ -547,6 +725,17 @@ nonisolated extension ModelFile {
         private static let facetWord = Array("facet".utf8)
 
         private var text = TextScan()
+        /// 欄まで読む行 (`vertex`・`facet`) の長さの上限。超えた行は、欄が読めない行として扱う。
+        private static let fieldLineLimit = 1 << 16
+
+        /// いまの行を、欄を読むために頭から集めているか。`vertex` の行 (`outer` の中) と、面の始まりの `facet` の行だけ。
+        private var collecting = false
+        private var lineBuffer: [UInt8] = []
+        private var overlong = false
+        /// いまの面の、座標が読めない・読み手が落とす・向きが読めない、の印。`endfacet` で通し番号に写して下ろす。
+        private var faceUnreadable = false
+        private var faceReaderSkips = false
+        private var normalUnreadable = false
         private var vertices = 0
         private var inFacet = false
         private var inLoop = false
@@ -570,12 +759,15 @@ nonisolated extension ModelFile {
                 var index = 0
                 while index < bytes.count {
                     if case .skip = phase {
-                        // 次の LF まで、まとめて飛ばす
+                        // 次の LF まで、まとめて飛ばす。欄まで読む行は、飛ばす間も写しておく
                         guard let hit = memchr(base + index, 0x0A, bytes.count - index) else {
+                            if collecting { append(UnsafeBufferPointer(start: (base + index).assumingMemoryBound(to: UInt8.self), count: bytes.count - index)) }
                             index = bytes.count
                             break
                         }
-                        index = base.distance(to: UnsafeRawPointer(hit))
+                        let stop = base.distance(to: UnsafeRawPointer(hit))
+                        if collecting { append(UnsafeBufferPointer(start: (base + index).assumingMemoryBound(to: UInt8.self), count: stop - index)) }
+                        index = stop
                     }
                     let byte = bytes[index]
                     let at = position + index
@@ -593,6 +785,7 @@ nonisolated extension ModelFile {
 
         /// 行の中の、LF でない 1 バイトを見る。
         private mutating func accept(_ byte: UInt8, at: Int) {
+            if collecting { append(byte) }
             switch phase {
             case .indent:
                 guard !ModelFile.isBlankOrCR(byte) else { return }
@@ -600,6 +793,10 @@ nonisolated extension ModelFile {
                 word.append(byte)
             case .word:
                 word.append(byte)
+                if !collecting, readsFields() {
+                    collecting = true
+                    lineBuffer = word
+                }
                 if word.count == 6, !inFacet, !inLoop, !sawFacetLine, word.starts(with: Self.facetWord),
                     ModelFile.isBlankOrCR(byte)
                 {
@@ -623,6 +820,40 @@ nonisolated extension ModelFile {
             }
         }
 
+        /// 語がここまで来て、この行の欄まで読むべきか (#2567)。面の中の `vertex` の行と、面の始まりの `facet` の行。
+        /// 語の後ろが空白と分かる長さ (`vertex ` は 7、`facet ` は 6) に来たときに決める。
+        private func readsFields() -> Bool {
+            switch word.count {
+            case 6:
+                return !inFacet && !inLoop && word.starts(with: Self.facetWord)
+                    && ModelFile.isBlankOrCR(word[5])
+            case 7:
+                return inLoop && word.starts(with: Self.vertexWord) && ModelFile.isBlankOrCR(word[6])
+            default:
+                return false
+            }
+        }
+
+        private mutating func append(_ byte: UInt8) {
+            if lineBuffer.count < Self.fieldLineLimit { lineBuffer.append(byte) } else { overlong = true }
+        }
+
+        private mutating func append(_ bytes: UnsafeBufferPointer<UInt8>) {
+            let room = Self.fieldLineLimit - lineBuffer.count
+            if bytes.count > room { overlong = true }
+            if room > 0 { lineBuffer.append(contentsOf: bytes.prefix(room)) }
+        }
+
+        /// 欄まで集めた行の結果。座標 (`vertex` の後ろ) か向き (`facet normal` の後ろ) が、ちょうど 3 つの有限な 10 進の
+        /// 数か。`overflows` は、綴りは 10 進だが `Float` に収まらない欄があったか (読み手が無限の座標にして落とす)。
+        private mutating func fields(skipping words: Int) -> (reads: Bool, overflows: Bool) {
+            guard !overlong else { return (false, false) }
+            lineBuffer.append(0)  // 行は 1 度しか読まず、読んだら捨てる
+            return lineBuffer.withUnsafeBufferPointer {
+                ModelFile.readsDecimalFields($0, skipping: words, expecting: 3)
+            }
+        }
+
         /// 行の頭の語が `spelled` か (後ろが空白・CR か、行の終わり)。
         private func starts(with spelled: [UInt8]) -> Bool {
             guard word.starts(with: spelled) else { return false }
@@ -636,6 +867,9 @@ nonisolated extension ModelFile {
                 lineHasBytes = false
                 word.removeAll(keepingCapacity: true)
                 normalEnd = nil
+                collecting = false
+                overlong = false
+                lineBuffer.removeAll(keepingCapacity: true)
             }
             guard lineHasBytes else { return }  // 空の行
             guard !word.isEmpty else {
@@ -646,9 +880,25 @@ nonisolated extension ModelFile {
             let isVertex = starts(with: Self.vertexWord)
             let isEndfacet = starts(with: Self.endfacetWord)
             // 数え方はこれまでどおり、どこにあっても数える
-            if isVertex { vertices += 1 }
+            if isVertex {
+                vertices += 1
+                // 欄まで集めた行 (面の中の `vertex`) の座標を見る (#2567)
+                if collecting {
+                    let read = fields(skipping: 1)
+                    if !read.reads { faceUnreadable = true }
+                    if read.overflows { faceReaderSkips = true }
+                }
+            }
             if isEndfacet {
                 if vertices != 3 { text.shape.isWellFormed = false }
+                let index = text.shape.facets
+                if faceUnreadable {
+                    text.unreadableFacets.append(index)
+                    if faceReaderSkips { text.readerSkippedFacets.append(index) }
+                } else if normalUnreadable {
+                    text.unwrittenNormals.append(index)
+                }
+                (faceUnreadable, faceReaderSkips, normalUnreadable) = (false, false, false)
                 text.shape.facets += 1
                 vertices = 0
             }
@@ -671,6 +921,8 @@ nonisolated extension ModelFile {
                 }
             } else if starts(with: Self.facetWord) {
                 inFacet = true
+                // 面の始まりの行の向き (`facet normal` の後ろ)。読めなければ、面は残して向きを求め直す (#2567)
+                if collecting { normalUnreadable = !fields(skipping: 2).reads }
                 if !sawFacetLine {
                     sawFacetLine = true
                     text.firstFacetNormalEnd = normalEnd
