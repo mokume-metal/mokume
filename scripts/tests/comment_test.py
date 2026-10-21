@@ -794,6 +794,19 @@ class SignatureTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout, proc.stderr
 
+    def test_personal_info_in_body_is_announced_but_not_blocked(self):
+        """#3075: メール・絶対パスは行番号だけ名乗る。止めず、中身は再掲しない。"""
+        _, err = self.dry_run("連絡は so@example.com まで\n場所は /Users/so/x")
+        self.assertIn("メールアドレス", err)
+        self.assertIn("行 1", err)
+        self.assertIn("畳めなかった絶対パス", err)
+        self.assertNotIn("so@example.com", err)
+        self.assertNotIn("/Users/so/x", err)
+
+    def test_clean_body_is_not_announced(self):
+        _, err = self.dry_run("ふつうの本文")
+        self.assertNotIn("らしきもの", err)
+
     def test_claude_code_detected(self):
         out, _ = self.dry_run(CLAUDECODE="1")
         self.assertIn("Assisted by [Claude Code](https://claude.com/claude-code)", out)
