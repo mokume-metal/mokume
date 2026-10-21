@@ -42,7 +42,9 @@
 #            家族 (親・兄弟・子) にも同じ証拠が無い
 #   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている・
 #            家族のどれかがそうである)。または ready の候補のうち、開いた根の子 (親が open な
-#            Bug か、親が open で印の付いた Design の Bug の子。根を直す側で閉じる)
+#            Bug か、親が open で印の付いた Design の Bug の子。根を直す側で閉じる)、または
+#            本体を閉じた後に parent-guard (bot) が開き直し、open の子を残している親 (残りは
+#            子が持つ — 「子 #N を待つ」)
 #   decide   **人が決める行** — 無印の Design で、open な Bug の子を持つもの。子の多い順
 #
 # ## 根と判断 (#1661)
@@ -57,6 +59,14 @@
 #                           Design (子が Bug のときだけ — #2228)
 #   Bug の子を持つ          根本の直し方が人の判断を待っている (決定 3 — 約束を決める・変える
 #   無印の Design           ときだけ人を待つ)。人の目に入らないと、子の Bug が症状のまま直される
+#
+# **開き直された親は、子を待つ** (#3036)。本体の仕事を終えて閉じた親が open の子を残していると、
+# parent-guard が開き直す (閉じる = 全作業の完了という木の不変条件 — ADR-0002・#23)。親には印が
+# 残るので、そのままでは済んだ仕事が ready に出る。**見るのは「最後の開き直しの手」と「open の子」の
+# 2 つだけ** — 手が bot (scripts/bot-hand.sh) で open の子が残るときだけ busy に回す。人が仕事を
+# 足すために開き直した親・開き直されたことの無い親 (段を持つ Design・Bug の根) は、子を持って
+# いても自分の仕事を持つので ready のまま。「open の子を持つ親は ready に出さない」と一律には
+# しない。開き直しの手は子の候補自身の timeline から、親の問い合わせと同じ 1 回で読む
 #
 # **Design の根で子を止めるのは、印が付いてから**である。無印のうちは decide に出て人を待ち、
 # 子の症状の直しは止めない (決定 3「Design を待つ間も、症状を塞ぐ直しは止めない」)。印が付くと
@@ -431,20 +441,38 @@ fi
 
 # --- 根と判断 (#1661) ---------------------------------------------------------
 
-# 番号ごとの親を 1 回で読む。「<番号> <親> <親の state> <親の型> <親の印>」を 1 行 1 件で出す
-# (親の無いものは出さない。型の無い親は - にする — 空にすると欄がずれる)。親の印は
-# verify: triaged があれば triaged、無ければ - で、Design の根を見分けるのに使う (#2228)
+# 番号ごとの親と、番号自身の子・開き直しの手を 1 回で読む (#3036)。1 行 1 件で 2 種類を出す:
+#
+#   <番号> <親> <親の state> <親の型> <親の印>        親があるときだけ。型の無い親は - にする
+#                                                      (空にすると欄がずれる)。親の印は
+#                                                      verify: triaged があれば triaged、無ければ -
+#                                                      で、Design の根を見分けるのに使う (#2228)
+#   self <番号> <手> <最小の open の子> <open の子の数>  番号ごとに必ず 1 行。手は、最後の開き直しが
+#                                                      bot の手 (scripts/bot-hand.sh) なら bot、
+#                                                      それ以外 (人・無い・分からない) は -。
+#                                                      子が無ければ - と 0
+#
+# self の行は「閉じた後に parent-guard が開き直した親」を見分けるのに使う。親の行と同じ応答に
+# 載せるので、呼び出しは増えない。**子は open のものだけ数え、手は最後の 1 回だけ読む** —
+# 閉じた・開いたの回数や時刻の近さでは推測しない
 read_parents() { # $1=番号 (空白区切り)
   local owner=${REPO%%/*} name=${REPO#*/} q='' n
   for n in $1; do
     q+="i$n: issue(number: $n) { parent { number state issueType { name }"
-    q+=" labels(first: 100) { nodes { name } } } } "
+    q+=" labels(first: 100) { nodes { name } } }"
+    q+=" subIssues(first: 100) { nodes { number state } }"
+    q+=" timelineItems(itemTypes: [REOPENED_EVENT], last: 1) { nodes { ... on ReopenedEvent {"
+    q+=" actor { __typename login } } } } } "
   done
   gh api graphql -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } }" \
-    --jq '.data.repository | to_entries[]
-      | (.value.parent // empty) as $p
-      | (if any($p.labels.nodes[]?; .name == "'"$TRIAGED"'") then "triaged" else "-" end) as $mark
-      | "\(.key | ltrimstr("i")) \($p.number) \($p.state) \($p.issueType.name // "-") \($mark)"'
+    --jq "$BOT_HAND_JQ"'.data.repository | to_entries[]
+      | ((.value.parent // empty) as $p
+         | (if any($p.labels.nodes[]?; .name == "'"$TRIAGED"'") then "triaged" else "-" end) as $mark
+         | "\(.key | ltrimstr("i")) \($p.number) \($p.state) \($p.issueType.name // "-") \($mark)"),
+        ([.value.subIssues.nodes[]? | select(.state == "OPEN") | .number] | sort) as $open
+        | (.value.timelineItems.nodes // [] | last) as $reopened
+        | (if ($reopened != null) and ($reopened | bot_hand) then "bot" else "-" end) as $by
+        | "self \(.key | ltrimstr("i")) \($by) \($open[0] // "-") \($open | length)"'
 }
 
 # 引くのは open な Bug と ready の候補だけ。**どちらも無ければ引かない** — 平常時の呼び出しを
@@ -472,12 +500,18 @@ fi
 #                                   (決定 3)。Bug でない子は根の症状ではない
 while read -r n type title; do
   [ -n "$n" ] || continue
+  # 閉じた後に parent-guard が開き直し、open の子を残している (#3036)。最後の開き直しが bot の
+  # 手のときだけ読む — 人が仕事を足すために開き直した親と、開き直されたことの無い親は、
+  # 子を持っていても自分の仕事を持つ (Bug の根・段を持つ Design) ので ready のまま
+  waits=$(awk -v n="$n" '$1 == "self" && $2 == n && $3 == "bot" && $5 > 0 { print $4; exit }' <<<"$parents")
   root=$(awk -v n="$n" -v type="$type" '
     $1 == n && $3 == "OPEN" && ($4 == "Bug" || ($4 == "Design" && $5 == "triaged" && type == "Bug")) {
       print $2; exit
     }' <<<"$parents")
   if [ -n "$root" ]; then
     busy+="$n busy 根 #$root で直す ($title)"$'\n'
+  elif [ -n "$waits" ]; then
+    busy+="$n busy 子 #$waits を待つ (閉じた後に parent-guard が開き直した ・$title)"$'\n'
   else
     ready+="$n ready [$type] $title"$'\n'
     ready_count=$((ready_count + 1))

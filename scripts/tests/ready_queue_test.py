@@ -118,12 +118,16 @@ if [ "$1" = "api" ]; then
         # 親の印 (labels) は、問い合わせが欄を求めたときだけ返す — 本物も求めない欄は返さない。
         # いつも返すと、問い合わせから欄が落ちても検査は緑のまま、本番では印が常に「無い」と
         # 読まれて Design の根が黙って効かなくなる (#2228)
-        if [[ "$*" != *"labels("* ]]; then
-          jq 'walk(if type == "object" then del(.labels) else . end)' "$FIX/parents.json" \\
-            > "$FIX/parents-asked.json"
-        else
-          cp "$FIX/parents.json" "$FIX/parents-asked.json"
-        fi
+        # 候補自身の子と最後の開き直しの手 (#3036) も同じ作法 — 欄を求めなければ返さない
+        cp "$FIX/parents.json" "$FIX/parents-asked.json"
+        for field in 'labels(' 'subIssues(' 'timelineItems('; do
+          if [[ "$*" != *"$field"* ]]; then
+            jq --arg f "${field%(}" '
+              walk(if type == "object" then del(.[$f]) else . end)' "$FIX/parents-asked.json" \\
+              > "$FIX/parents-tmp.json"
+            mv "$FIX/parents-tmp.json" "$FIX/parents-asked.json"
+          fi
+        done
         emit "$FIX/parents-asked.json"; exit 0
       fi
       # 着手印の家族 (#1391)。FAIL_FAMILY で読み取りを失敗させる
@@ -210,9 +214,23 @@ def parent(number, state="OPEN", type_="Bug", labels=()):
     }
 
 
-def parents_response(parents):
-    """{番号: parent(...) か None} から応答を組む。載っていない番号は親を持たない"""
-    return {"data": {"repository": {f"i{n}": {"parent": p} for n, p in parents.items()}}}
+def reopen(login, kind="Bot"):
+    """最後の開き直し 1 件。GraphQL の timelineItems(itemTypes: [REOPENED_EVENT]) と同じ形"""
+    return {"actor": {"__typename": kind, "login": login}}
+
+
+def parents_response(parents, selves=None):
+    """{番号: parent(...) か None} から応答を組む。載っていない番号は親を持たない。
+
+    selves は {番号: {"children": [member(...)], "reopened": reopen(...) か None}}。番号自身の
+    子と最後の開き直しの手で、親と同じ 1 回の応答に載る (#3036)
+    """
+    repo = {f"i{n}": {"parent": p} for n, p in parents.items()}
+    for n, me in (selves or {}).items():
+        entry = repo.setdefault(f"i{n}", {"parent": None})
+        entry["subIssues"] = {"nodes": list(me.get("children", []))}
+        entry["timelineItems"] = {"nodes": [me["reopened"]] if me.get("reopened") else []}
+    return {"data": {"repository": repo}}
 
 
 def ago(minutes):
@@ -258,7 +276,15 @@ def hands_response(hands):
 
 class ReadyQueueTest(unittest.TestCase):
     def run_queue(
-        self, issues, prs=(), worktrees="", families=None, parents=None, hands=None, **extra_env
+        self,
+        issues,
+        prs=(),
+        worktrees="",
+        families=None,
+        parents=None,
+        hands=None,
+        selves=None,
+        **extra_env,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -272,7 +298,7 @@ class ReadyQueueTest(unittest.TestCase):
                     json.dumps(family_response(families)), encoding="utf-8"
                 )
             (fix / "parents.json").write_text(
-                json.dumps(parents_response(parents or {})), encoding="utf-8"
+                json.dumps(parents_response(parents or {}, selves)), encoding="utf-8"
             )
             (fix / "hands.json").write_text(
                 json.dumps(hands_response(hands or {})), encoding="utf-8"
@@ -769,10 +795,14 @@ class ReadyQueueTest(unittest.TestCase):
             prs=[closing_pr(90, closes=[2])],
         )
         self.assertEqual(done.returncode, 0, done.stderr)
-        # 見るのは家族の問い合わせ (subIssues) だけ。**graphql の呼び出しそのものは 0 に
-        # ならない** — #1 は ready の候補なので、その親を読む GraphQL が 1 回走る
+        # 見るのは家族の問い合わせだけ (親を読む問い合わせにも subIssues が載る — #3036 — ので、
+        # 型を読むか (issueType) で見分ける)。**graphql の呼び出しそのものは 0 にならない** —
+        # #1 は ready の候補なので、その親を読む GraphQL が 1 回走る
         # (#1661 の「根と判断」。そちらを引かない条件は test_parents_are_not_read_without_bugs_or_candidates)
-        self.assertNotIn("subIssues", log, "候補が無いのに家族を読んでいる")
+        family_queries = [
+            line for line in log.splitlines() if line.startswith("api graphql") and "issueType" not in line
+        ]
+        self.assertEqual(family_queries, [], "候補が無いのに家族を読んでいる")
 
     # 9. 根と判断 (#1661)
     def test_child_of_an_open_bug_goes_to_its_root(self):
@@ -926,6 +956,86 @@ class ReadyQueueTest(unittest.TestCase):
         )
         self.assertIn("300 decide", done.stdout)
         self.assertEqual(done.returncode, 1, "decide しか無いのに打てる仕事があると言った")
+
+    # 9'. 閉じた後に parent-guard が開き直した親 (#3036)
+    def test_parent_reopened_by_the_bot_waits_for_its_child(self):
+        """閉じた後に bot (parent-guard) が開き直し、open の子を残す印付きの親は ready に出ない。
+
+        自分の仕事は終えていて、残りは子が持つ。子の番号を名乗って busy へ回す
+        """
+        done, _ = self.run_queue(
+            [issue(2371, labels=["verify: triaged"], type_="Design", title="済んだ親")],
+            selves={
+                2371: {
+                    "children": [member(2976), member(2977, "CLOSED")],
+                    "reopened": reopen("github-actions"),
+                }
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[2371][0], "busy", "済んだ親を着手できるものとして出している")
+        self.assertEqual(
+            seen[2371][1], "子 #2976 を待つ (閉じた後に parent-guard が開き直した ・済んだ親)"
+        )
+        self.assertIn("ready 0 /", done.stderr)
+        self.assertEqual(done.returncode, 1)
+
+    def test_parent_reopened_by_a_human_stays_ready(self):
+        """人が仕事を足すために開き直した親は、open の子があっても ready のまま。"""
+        done, _ = self.run_queue(
+            [issue(2371, labels=["verify: triaged"], type_="Design")],
+            selves={
+                2371: {"children": [member(2976)], "reopened": reopen("someone", kind="User")}
+            },
+        )
+        self.assertEqual(self.lines_by_number(done.stdout)[2371][0], "ready")
+
+    def test_parent_never_reopened_stays_ready(self):
+        """開き直されたことの無い、open の子を持つ印付きの親 (段を持つ Design・Bug の根) は ready。"""
+        done, _ = self.run_queue(
+            [
+                issue(1659, labels=["verify: triaged"], type_="Design", title="段を持つ"),
+                issue(1700, labels=["verify: triaged"], type_="Bug", title="根"),
+            ],
+            selves={
+                1659: {"children": [member(1744)]},
+                1700: {"children": [member(1701), member(1702)]},
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1659][0], "ready")
+        self.assertEqual(seen[1700][0], "ready")
+
+    def test_bot_reopened_parent_without_open_children_stays_ready(self):
+        """子がすべて閉じていれば、bot が開き直していても待つものが無い (境界)。"""
+        done, _ = self.run_queue(
+            [issue(2378, labels=["verify: triaged"], type_="Design")],
+            selves={
+                2378: {"children": [member(2534, "CLOSED")], "reopened": reopen("github-actions")}
+            },
+        )
+        self.assertEqual(self.lines_by_number(done.stdout)[2378][0], "ready")
+
+    def test_other_bot_reopen_is_not_the_parent_guard(self):
+        """書き手として知られていない bot (GitHub App 経由のエージェント) の開き直しは人の側。"""
+        done, _ = self.run_queue(
+            [issue(2371, labels=["verify: triaged"], type_="Design")],
+            selves={
+                2371: {"children": [member(2976)], "reopened": reopen("some-agent", kind="Bot")}
+            },
+        )
+        self.assertEqual(self.lines_by_number(done.stdout)[2371][0], "ready")
+
+    def test_candidate_without_a_parent_is_still_judged_in_one_call(self):
+        """親を持たない候補 (parent が null) も自分の行で判定し、問い合わせは 1 回のまま。"""
+        done, log = self.run_queue(
+            [issue(2371, labels=["verify: triaged"], type_="Design")],
+            parents={2371: None},
+            selves={2371: {"children": [member(2976)], "reopened": reopen("github-actions")}},
+        )
+        self.assertEqual(self.lines_by_number(done.stdout)[2371][0], "busy")
+        graphql = [line for line in log.splitlines() if line.startswith("api graphql")]
+        self.assertEqual(len(graphql), 1, "開き直しの判定のために問い合わせを増やしている")
 
     def test_parents_are_not_read_without_bugs_or_candidates(self):
         done, log = self.run_queue(
