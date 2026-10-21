@@ -60,6 +60,8 @@ extension Canvas {
         // [#1684]: https://github.com/mokume-metal/mokume/issues/1684
         let savedManner = Manner(of: self)
         transform = .identity
+        // 外で決めた勾配は、形自身の座標で読み直す (``rebaseGradientForShapeAssembly()``)
+        rebaseGradientForShapeAssembly()
         // 切り抜きは外さない — 記録した区間は切り抜きを持たない (``Shape/Run``) ので、記録の中で
         // 効いていても形には入らない。外して出口で戻すと、組み立ての中でフレームが閉じたときに
         // 閉じたフレームの切り抜きを書き戻す (``Manner`` は形に焼き付かないものを戻さない・#1684)
@@ -670,12 +672,16 @@ extension Canvas {
     private func place(
         _ run: Shape.Run, of shape: Shape, at placement: Placement, carved candidates: [StrokeRange]
     ) {
+        let matrix = transform.matrix * placement.transform.matrix
+        // **勾配で塗った区間は、置く変換のぶん勾配の式を直して塗る** (#2433)。頂点は置き場所で動くので、
+        // 勾配も形と一緒に動く。置き場所ごとに式が違うので、塗りは置き場所ごとに替わる (列が割れる)。
+        // 開く前に替える — 替えると列を閉じる
+        if run.paint.shader != nil { usePaint(paint(run.paint, placedBy: matrix)) }
         // **まとめて写してから、その場で移す。** 1 頂点ずつ足すと、置くたびに
         // 溜め場の伸長判定を通ることになる — 保持の速さはここで決まる
         let base = vertices.count
         beginFlat()
         let runRange = run.start..<(run.start + run.count)
-        let matrix = transform.matrix * placement.transform.matrix
         let tint = placement.fill
         // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、半透明の分が空になる。
         // 置いた後に細くなる輪郭は、色によらず組み直した頂点で差し替える (#1637)

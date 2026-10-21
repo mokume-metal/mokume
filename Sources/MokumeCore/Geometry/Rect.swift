@@ -129,7 +129,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     /// }
     // shot: 1 snippet=9d853510
     public var height: Float
-    /// この矩形の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)`` に従う。
+    /// この矩形の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)-(LinearRGBA)`` に従う。
     ///
     /// 値が持つ塗りは、``SketchPart/noFill()`` の中でもその色で塗る。描いた後の塗りの状態は
     /// 呼ぶ前と同じである ([ADR-0045] 決定 6)。``Shape`` の色が形の中に焼き付くのと同じ規則で、
@@ -430,7 +430,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
 
     /// 走っているスケッチへ描く。
     ///
-    /// 値の ``fill`` があればその色で、無ければ今の ``SketchPart/fill(_:)`` で塗り、輪郭は今の
+    /// 値の ``fill`` があればその色で、無ければ今の ``SketchPart/fill(_:)-(LinearRGBA)`` で塗り、輪郭は今の
     /// ``SketchPart/stroke(_:)`` に従う。``SketchPart/rectMode(_:)`` が何であっても、値の左上の
     /// 角と大きさのとおりに描く (警告もしない)。描いた後の塗りと描き方の状態は呼ぶ前と同じである。
     ///
