@@ -66,7 +66,7 @@ struct Tools {
         var description: String {
             switch self {
             case .observe:
-                "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew. With time, redraw exactly one frame at those seconds (deltaTime=0). This changes the shown picture and retains draw side effects; it is not a rewind. noLoop stays stopped. External pause and recording refuse it."
+                "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew. With time, redraw exactly one frame at those seconds (deltaTime=0). This changes the shown picture and retains draw side effects; it is not a rewind. noLoop stays stopped. External pause and recording refuse it. A null for an optional field (time / scale / count / every) reads the same as leaving it out; a name this tool does not list is refused, and so is a value of the wrong type."
             case .buildStatus:
                 "Return the result of the most recent build (whether it passed, whether the sketch was started, the exit code, the output, a breakdown of how long it took, and the source stamp). A build that passed but did not start the sketch (ok true, launched false) leaves the drawing frozen; notStartedReason says why. Read this when you want to know why the drawing did not change."
             case .input:
@@ -76,7 +76,20 @@ struct Tools {
             }
         }
 
+        /// 引数の形。**余りの名前は断る** (`additionalProperties: false`・#2486)。
         var inputSchema: [String: Any] {
+            var schema = properties
+            schema["additionalProperties"] = false
+            return schema
+        }
+
+        /// 受ける名前 (`inputSchema` の `properties` のキー)。**受ける名前の正典はここ 1 つ**で、
+        /// `Tools.call` が余りを断るときも、この一覧を見る。
+        var acceptedArguments: [String] {
+            ((properties["properties"] as? [String: Any]) ?? [:]).keys.sorted()
+        }
+
+        private var properties: [String: Any] {
             switch self {
             case .observe:
                 [
@@ -158,6 +171,11 @@ struct Tools {
         guard let tool = ToolName(rawValue: name) else {
             return ("There is no such tool: \(name)", true)
         }
+        // **余りの名前は、値によらず (`null` でも) 道具を走らせずに断る** (#2486)。黙って捨てると、
+        // `scal` の綴り違いが既定で撮る頼みに化け、撮る側の警告にも載らない。範囲は `arguments` の
+        // 直下だけで、`input` の各出来事の中の欄は区画の読み手が扱う
+        let unknown = arguments.keys.filter { !tool.acceptedArguments.contains($0) }.sorted()
+        if !unknown.isEmpty { return (Self.unknownArgumentsText(unknown, tool: tool), true) }
         switch tool {
         case .observe: return observe(arguments, cancellation: cancellation)
         case .buildStatus: return buildStatus()
@@ -166,7 +184,28 @@ struct Tools {
         }
     }
 
-    private func observe(_ arguments: [String: Any], cancellation: Cancellation?) -> (String, Bool) {
+    /// 余りの引数を断る文。知らない名前と、受ける名前を言う。
+    static func unknownArgumentsText(_ unknown: [String], tool: ToolName) -> String {
+        let accepted = tool.acceptedArguments
+        let names = unknown.joined(separator: ", ")
+        let lead = unknown.count == 1 ? "Unknown argument: \(names)." : "Unknown arguments: \(names)."
+        return accepted.isEmpty
+            ? "\(lead) \(tool.rawValue) takes no arguments."
+            : "\(lead) \(tool.rawValue) accepts \(accepted.joined(separator: ", "))."
+    }
+
+    /// 値が `null` の欄を「渡していない」ことにする (#2393)。
+    ///
+    /// **省略可能な欄の `null` は、型の誤りではなく省略と同じに読む。** LLM は省略できる欄に
+    /// `null` を入れることがあり、断ると呼び出しが失敗する。型の違う値 (`"3"`・`true`) は断る
+    /// ままである (#2408)。必須の欄 (`events`) の `null` は省略ではないので、`input` では使わず、
+    /// 従来どおり `events needs an array of events` と断る。
+    static func droppingNulls(_ arguments: [String: Any]) -> [String: Any] {
+        arguments.filter { !($0.value is NSNull) }
+    }
+
+    private func observe(_ given: [String: Any], cancellation: Cancellation?) -> (String, Bool) {
+        let arguments = Self.droppingNulls(given)
         let id = makeID()
         var request: [String: Any] = ["id": id]
         // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
@@ -177,9 +216,9 @@ struct Tools {
         // 同じキーを 2 度書いた行の後ろの値のように木から落ちた数は見ないが、落ちた数は
         // ここへも届かない。`Tools` を直に呼ぶ口 (検査・将来の呼び元) のためにも判定は持つ。
         // 範囲では切らない — 範囲の外は撮る側が
-        // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は従来どおり省略と同じに
-        // 読む (方針は #2393 で決める)
-        if let raw = arguments["scale"], !(raw is NSNull) {
+        // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は入口で落としてあり、
+        // 省略と同じに読む (#2393)
+        if let raw = arguments["scale"] {
             guard let scale = JSONRPC.number(raw), scale.doubleValue.isFinite else {
                 return ("scale must be a finite number", true)
             }
@@ -450,12 +489,12 @@ struct Tools {
         }
     }
 
-    private func reference(_ arguments: [String: Any]) -> (String, Bool) {
+    private func reference(_ given: [String: Any]) -> (String, Bool) {
+        let arguments = Self.droppingNulls(given)
         let name = arguments["name"] as? String
         // **文字列でない名前は断る。** 「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として
-        // 返り、頼み方を誤ったことに気付けない (#2319)。`null` は従来どおり省略と同じに読む
-        // (方針は #2393 で決める)
-        if let raw = arguments["name"], !(raw is NSNull), name == nil {
+        // 返り、頼み方を誤ったことに気付けない (#2319)。`null` は入口で落としてあり、省略と同じに読む (#2393)
+        if arguments["name"] != nil, name == nil {
             return ("name must be a string (a document's name). Omit it to get the list.", true)
         }
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
