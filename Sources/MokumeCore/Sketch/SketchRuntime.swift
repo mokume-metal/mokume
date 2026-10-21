@@ -375,6 +375,9 @@ public final class SketchRuntime {
     /// 揺らぎ (``Canvas/noiseSeed(_:)``) と違って断片へは届かない。断片には列が無く
     /// (画素どうしが独立している)、**値の一致がそもそも定義できない**ためである。
     var randomness = Randomness()
+    /// 乱数の列が**置き換えられた回数**。``randomSource`` で取り出した写しが、この列の続きか (印が同じ)、
+    /// 自分で作ったもの・古い写し (印が違う) かを見分ける。値には効かない。
+    var randomLine: UInt64 = 0
     /// 形の組み立ての中で書いた乱数の種と揺らぎの設定の控え。出口で ``randomness`` と、本体の面の
     /// 揺らぎの設定を戻す (`SketchRuntime+ShapeSeed.swift`・
     /// [#1936](https://github.com/mokume-metal/mokume/issues/1936)・[#2041](https://github.com/mokume-metal/mokume/issues/2041))。
