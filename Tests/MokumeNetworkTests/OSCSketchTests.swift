@@ -112,4 +112,50 @@ struct OSCSketchTests {
         #expect(result.frames.dropFirst(2).allSatisfy { $0.isEmpty })
         #expect(result.osc?.state == .stopped)
     }
+
+    /// **`createOSC(send:)` は、受けるポートを開かずに、`createOSC(listen:send:)` と同じ送り手で送る** (#2469)。
+    /// 受け手は検査が別に開く (番号は OS が選ぶ)。送るだけの口は `port` が `nil` で、観測の `inputs` に出ず、
+    /// 作ったスケッチが終わると閉じられて `stopped` になる (足されていなければ誰も閉じない)。
+    @Test("setup() で呼んだ createOSC(send:) は、受けるポートを開かず送れて、観測の inputs に行を出さない (#2469)")
+    func sendOnlyMakerSendsToAnotherPort() async throws {
+        let told = Told()
+        let source = NetworkOSCSource(port: 0, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
+        let receiver = OSCPort(
+            port: 0, name: "osc :0", source: source, outbound: nil, owner: nil, warn: told.append)
+        try receiver.open()
+        defer { receiver.close() }
+        try await requireState(told: told, tracing: source) { receiver.state }
+        let target = try #require(source.boundPort)
+
+        var sender: OSCPort?
+        var failure: String?
+        let runtime = try OutsideRun.$current.withValue(OutsideRun()) {
+            OSCSketch.onSetup = { sketch in
+                do { sender = try sketch.createOSC(send: ("127.0.0.1", target)) } catch { failure = "\(error)" }
+            }
+            OSCSketch.onDraw = { _ in sender?.send("/hit", 1) }
+            defer { OSCSketch.onSetup = { _ in }; OSCSketch.onDraw = { _ in } }
+            let runtime = try SketchRuntime(sketch: OSCSketch(), gpu: try RenderDevice())
+            try runtime.advance()
+            return runtime
+        }
+        #expect(failure == nil)
+        let port = try #require(sender)
+        #expect(port.port == nil)
+        #expect(port.report == nil)
+        #expect(port.state == .running)
+
+        var received: [OSCMessage] = []
+        _ = await until {
+            receiver.supply()
+            received += receiver.messages
+            return !received.isEmpty
+        }
+        #expect(received.first == OSCMessage("/hit", 1))
+        #expect(port.messages.isEmpty)
+        #expect(port.latest("/hit") == nil)
+
+        runtime.closePlugins()
+        #expect(port.state == .stopped)
+    }
 }

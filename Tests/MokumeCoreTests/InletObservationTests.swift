@@ -115,6 +115,51 @@ struct InletObservationTests {
         runtime.closePlugins()
     }
 
+    /// 供給の間に `time` と `authorTime` を控える入り口。外のパッケージの入り口が公開の口だけで書く形である
+    /// ([#2900](https://github.com/mokume-metal/mokume/issues/2900))。
+    final class Sampling: Inlet {
+        nonisolated(unsafe) weak var owner: Observed?
+        var samples: [(time: Float, authorTime: Float)] = []
+        func supply() {
+            guard let owner else { return }
+            samples.append((owner.time, owner.authorTime))
+        }
+    }
+
+    struct Sampled: Plugin {
+        let sampling: Sampling
+        func register(into registry: PluginRegistry) { registry.add(inlet: sampling) }
+    }
+
+    /// 時刻を指定した観測の枚の供給の間、`time` は観測の秒 (`draw()` と同じ) で、`authorTime` は作者の時計の秒。
+    /// 観測の後の普通の枚は、両方が作者の時計に沿って続く。
+    @Test("供給の間の time は観測の秒、authorTime は作者の時計の秒で、観測の後は両方が作者の時計に続く")
+    func supplyReadsBothSecondsOnAnObservedFrame() throws {
+        let sampling = Sampling()
+        Observed.declared = [Sampled(sampling: sampling)]
+        let sketch = Observed()
+        sampling.owner = sketch
+        let facet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
+            observer: FrameObserver(directory: facet))
+        for _ in 0..<3 { try runtime.advance() }
+        #expect(sampling.samples.last?.time == Float(2.0 / 60))
+        #expect(sampling.samples.last?.authorTime == Float(2.0 / 60))
+
+        // 4 枚目 = 時刻 5 の観測の枚 (作者の時計では 3/60 秒)
+        try AtomicFile.write(
+            Data(#"{"id":"s","time":5}"#.utf8), to: facet.appendingPathComponent("request.json"))
+        try runtime.advance()
+        #expect(sampling.samples.last?.time == 5)
+        #expect(sampling.samples.last?.authorTime == Float(3.0 / 60))
+
+        try runtime.advance()
+        #expect(sampling.samples.last?.time == Float(4.0 / 60))
+        #expect(sampling.samples.last?.authorTime == Float(4.0 / 60))
+        runtime.closePlugins()
+    }
+
     @Test("名乗る入り口が無ければ、鍵ごと載らない")
     func noReportingInletsNoKey() throws {
         Observed.declared = []
