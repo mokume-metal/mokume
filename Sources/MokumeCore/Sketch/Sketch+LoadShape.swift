@@ -231,6 +231,14 @@ extension SketchPart {
     /// いるだけで、ロゴ全体が読めなくなることはない。塗りが `url(#a) red` のように代わりの色を
     /// 持っていれば、その色で塗る。
     ///
+    /// **読まない性質のうち、形の大きさ・位置が黙って変わるものも知らせる。** CSS (`style` 属性・`<style>`) で
+    /// 書いた幾何の性質 (`rect` の `width` / `height` / `x` / `y` / `rx` / `ry`・`circle` の `cx` / `cy` / `r`・
+    /// `ellipse` の `cx` / `cy` / `rx` / `ry`・`path` の `d`・入れ子の `<svg>` の `x` / `y`) は、属性の値で描き、
+    /// `CSS property "width"` の形で知らせる。CSS の変換 (`transform`・`translate`・`rotate`・`scale`) は掛けずに
+    /// 知らせ、`transform` 属性を掛ける要素の `transform-origin` / `transform-box` (属性でも CSS でも) と、
+    /// `<svg>` の `transform` 属性も知らせる (変換は掛けない)。描き方だけを変える性質 (`paint-order` など) は
+    /// 知らせない。
+    ///
     /// 描くものが 1 つも無いファイルは空の形 (``Shape/isEmpty``) になり、同じく知らせる。
     ///
     /// **近似で描いたことも知らせる。** 群や、塗りと線を両方持つ要素の `opacity` は、SVG ならひとまとめに

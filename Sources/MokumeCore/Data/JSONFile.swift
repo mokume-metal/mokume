@@ -5,12 +5,14 @@ import Foundation
 
 /// JSON の値。読み解いた中身を、Foundation の型 (`NSNumber` や `NSNull`) を持たずに運ぶ。
 ///
-/// **数は `Double` で持ち、有限である** (収まらない数は ``JSONFile`` が読まずに断る)。
-/// 取り出す口が ``JSONObject/getFloat(_:)`` だけなので、それで足りる。整数を桁を落とさずに
-/// 取り出す口が要ったら、ここに整数の case を足す (内部の形で、面には出ない)。
+/// **数は 2 通りで持つ。** 整数の綴り (`2`・`-7`) で `Int` に収まるものは `integer` で、桁を
+/// 落とさずに持つ (``JSONObject/getInt(_:)`` が丸めずに返すため)。それ以外 (`2.0`・`1e3`・`Int` に
+/// 収まらない整数) は `number` で `Double`、有限である (収まらない数は ``JSONFile`` が読まずに
+/// 断る)。内部の形で、面には出ない。
 nonisolated enum JSONValue: Equatable, Sendable {
     case null
     case bool(Bool)
+    case integer(Int)
     case number(Double)
     case string(String)
     case array([JSONValue])
@@ -21,6 +23,7 @@ nonisolated enum JSONValue: Equatable, Sendable {
         switch self {
         case .null: "null"
         case .bool(let value): value ? "true" : "false"
+        case .integer(let value): String(value)
         case .number(let value): String(value)
         case .string(let value): "\"\(value)\""
         case .array: "an array"
@@ -45,7 +48,9 @@ nonisolated enum JSONValue: Equatable, Sendable {
 /// 閉じない括弧・不正な文字・空の文字・深すぎる入れ子・`Double` に収まらない数は
 /// ``DataFailure/malformed(path:line:reason:)`` で、**壊れていた箇所の行**を添えて投げる。
 /// 壊れた箇所が複数あれば、文字の中で最初のものを名乗る。最上位がオブジェクトでない文字を
-/// ``SketchPart/loadJSONObject(_:)`` で読んだときも同じ case で、最上位の値が始まる行を添える。
+/// ``SketchPart/loadJSONObject(_:)`` で、配列でない文字を ``SketchPart/loadJSONArray(_:)`` で読んだときも
+/// 同じ case で、最上位の値が始まる行を添える。理由は、最上位が配列 (オブジェクト) だったときに、
+/// 読む口の名前を案内する。
 ///
 /// 隔離の外で走れる形にしてあるのは、待たない読み込みが読み解きを別の仕事として回すため
 /// ([ADR-0010] 決定 6)。
@@ -54,15 +59,41 @@ nonisolated enum JSONValue: Equatable, Sendable {
 nonisolated enum JSONFile {
     /// JSON の文字を読み解き、最上位のオブジェクトの中身を返す。
     ///
-    /// - Parameter path: 失敗を名乗るための名前。
-    static func parseObject(_ text: String, path: String) throws(DataFailure) -> [String: JSONValue] {
+    /// - Parameters:
+    ///   - path: 失敗を名乗るための名前。
+    ///   - instead: 最上位が配列だったときに案内する、配列を読む口 (`loadJSONArray(_:)`)。
+    static func parseObject(
+        _ text: String, path: String, instead: String
+    ) throws(DataFailure) -> [String: JSONValue] {
         let value = try parse(text, path: path)
         guard case .object(let members) = value else {
+            let hint: String
+            if case .array = value { hint = ". Read it with \(instead)" } else { hint = "" }
             throw .malformed(
                 path: path, line: firstValueLine(of: text),
-                reason: "the top level is \(value.spoken), not an object ({…})")
+                reason: "the top level is \(value.spoken), not an object ({…})\(hint)")
         }
         return members
+    }
+
+    /// JSON の文字を読み解き、最上位の配列の中身を返す。
+    ///
+    /// - Parameters:
+    ///   - path: 失敗を名乗るための名前。
+    ///   - instead: 最上位がオブジェクトだったときに案内する、オブジェクトを読む口
+    ///     (`loadJSONObject(_:)`)。
+    static func parseArray(
+        _ text: String, path: String, instead: String
+    ) throws(DataFailure) -> [JSONValue] {
+        let value = try parse(text, path: path)
+        guard case .array(let items) = value else {
+            let hint: String
+            if case .object = value { hint = ". Read it with \(instead)" } else { hint = "" }
+            throw .malformed(
+                path: path, line: firstValueLine(of: text),
+                reason: "the top level is \(value.spoken), not an array ([…])\(hint)")
+        }
+        return items
     }
 
     /// JSON の文字を値へ読み解く。最上位はどの値でもよい。
@@ -125,6 +156,11 @@ nonisolated enum JSONFile {
             return .string(string)
         case let number as NSNumber:
             if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
+            // 整数の綴りは `q` (符号つき 64 bit) で届く。`Int` を越える整数は `Q` か Double で届くので
+            // 下の `.number` に落ちる
+            if !CFNumberIsFloatType(number), String(cString: number.objCType) == "q" {
+                return .integer(number.intValue)
+            }
             if !number.doubleValue.isFinite { nonFinite = true }
             return .number(number.doubleValue)
         default:

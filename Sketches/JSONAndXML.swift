@@ -8,8 +8,9 @@ import mokume
 /// ([#2070] の作例 1・2)。
 ///
 /// 左の 3 枚は、街ごとの天気の API の URL を `loadJSONObject` で読んだもの。応答の入れ子
-/// (`main.temp`) から気温を取り出し、寒いほど青く、暑いほど橙に塗る。**3 枚目の URL は
-/// 届かない** — 灰色に塗り、左下の隅に理由 (投げられた `DataFailure` の 1 文) を出す。
+/// (`main.temp`) から気温を、`name` から街の名前を (`getString`) 取り出し、寒いほど青く、暑いほど
+/// 橙に塗る。**3 枚目の URL は届かない** — 灰色に塗り、左下の隅に理由 (投げられた `DataFailure` の
+/// 1 文) を出す。街の名前は読めないので、こちらで添えた名前を出す。
 ///
 /// 右の星座は、`data/constellation.xml` を `loadXML` で読んだもの。`star` の子を書かれた
 /// 順に取り出し、属性 (`x`・`y`・`size`) を数で読んで、星と星を結ぶ線を描く。
@@ -32,6 +33,8 @@ final class JSONAndXML: Sketch {
         ("どこにも無い街", "https://weather.example/atlantis"),
     ]
 
+    /// 街ごとに読んだ名前 (応答の `name`)。読めなかった街は `cities` の名前のまま。
+    private var names: [String] = []
     /// 街ごとに読んだ気温。読めなかった街は `nil` で、`reasons` に理由がある。
     private var temps: [Float?] = []
     private var reasons: [String] = []
@@ -54,9 +57,11 @@ final class JSONAndXML: Sketch {
         for city in Self.cities {
             do {
                 let weather = try loadJSONObject(city.url)
+                names.append(weather.getString("name"))
                 temps.append(weather.getJSONObject("main").getFloat("temp"))
                 reasons.append("")
             } catch {
+                names.append(city.label)
                 temps.append(nil)
                 reasons.append("\(error)")
             }
@@ -84,7 +89,7 @@ final class JSONAndXML: Sketch {
         text("星座の XML をファイルから読む (loadXML)", Self.skyLeft, 44)
 
         for (i, city) in Self.cities.enumerated() where i < temps.count {
-            drawStrip(city.label, city.url, temps[i], reasons[i], top: Self.stripTops[i])
+            drawStrip(names[i], city.url, temps[i], reasons[i], top: Self.stripTops[i])
         }
         drawSky()
 

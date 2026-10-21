@@ -3,6 +3,82 @@
 
 // 直接呼べる描画のうち、曲線の制御点。
 extension SketchPart {
+    /// 3 次の曲線を 1 本引く。
+    ///
+    /// **始点・制御点 2 つ・終点を、この順に渡す** (`x1, y1, x2, y2, x3, y3, x4, y4`)。制御点
+    /// (2 つ目と 3 つ目) は通らず、曲線を引っぱる位置になる。1 本で済ませたいときの口で、
+    /// ``beginShape(_:)`` と ``vertex(_:_:)`` と ``bezierVertex(_:_:_:_:_:_:)`` と ``endShape(_:)``
+    /// を順に呼んだのと**同じ絵**になる — 線の太さ・色・端の形、``curveDetail(_:)`` の刻みも同じである。
+    /// 曲線を繋げたり、ほかの点と混ぜて 1 つの形にしたいときは、``bezierVertex(_:_:_:_:_:_:)`` を使う。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
+    ///     strokeWeight(1)
+    ///     line(60, 250, 100, 40)
+    ///     line(340, 220, 200, 90)
+    ///     noStroke()
+    ///     fill(89, 97, 115)
+    ///     circle(100, 40, 12)
+    ///     circle(200, 90, 12)
+    ///     noFill()
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(4)
+    ///     bezier(60, 250, 100, 40, 200, 90, 340, 220)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の曲線が左下から右下へ弧を描き、灰色の細い線が 2 つの制御点へ伸びている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **曲線の上の点と、そこでの向きは ``bezierPoint(_:_:_:_:_:)`` と
+    /// ``bezierTangent(_:_:_:_:_:)`` が返す。** 同じ 4 点を渡して、`x` と `y` を別々に読む。
+    /// 曲線に沿って物を動かすときは、式を自分で展開せずにこの 2 つを使う。下の例は、
+    /// 紙飛行機が始点から終点までの割合 `t` が 0.6 の所で、進む向きへ頭を向けている (`t` は 0 で始点、1 で終点で、曲線の長さの割合ではない)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(18, 20, 26)
+    ///     noFill()
+    ///     stroke(120)
+    ///     bezier(60, 420, 260, 60, 640, 600, 900, 160)
+    ///     let t: Float = 0.6
+    ///     let x = bezierPoint(60, 260, 640, 900, t)
+    ///     let y = bezierPoint(420, 60, 600, 160, t)
+    ///     let angle = atan2(bezierTangent(420, 60, 600, 160, t), bezierTangent(60, 260, 640, 900, t))
+    ///     push()
+    ///     translate(x, y)
+    ///     rotate(angle)
+    ///     noStroke()
+    ///     fill(255)
+    ///     triangle(14, 0, -10, -8, -10, 8)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の細い曲線が左下から右上へ S 字に伸び、その上に白い小さな三角形が曲線の向きへ頭を向けて乗っている -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 塗りの色が有効なら、手本と同じく、始点と終点を結ばない開いた形のまま塗る。曲線だけを
+    /// 引きたいときは ``noFill()`` を呼ぶ。``beginShape(_:)`` と ``endShape(_:)`` の間で呼んでも、
+    /// 組み立て中の形には点を足さず、その形と別の 1 本として引く。
+    // shot: 後で撮る
+    public func bezier(
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
+    ) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
+        canvas.bezier(x1, y1, x2, y2, x3, y3, x4, y4)
+    }
+
     /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     ///
     /// **2 つの制御点は通らない** — 曲線を引っぱる位置である。下の例では灰色の丸が

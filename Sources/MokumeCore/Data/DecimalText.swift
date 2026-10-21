@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// 値を数として取り出す口 (``JSONObject/getFloat(_:)``・``XML/getFloat(_:)``・
+/// 値を数として取り出す口 (``JSONObject/getFloat(_:)``・``JSONObject/getInt(_:)``・``XML/getFloat(_:)``・
 /// ``TableRow/getFloat(_:)-(String)``) が共有する、文字を数にする読み方 (#2330)。OBJ の読み手
 /// (``ModelFile/parse(_:)``) も頂点の数をこれで読む (#2514)。
 ///
@@ -29,6 +29,15 @@ nonisolated enum DecimalText {
         spelled(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// 文字を `Double` の数にする。綴りの決まりは ``float(_:)`` と同じ (前後の空白を落とし、10 進の綴り
+    /// だけを数とする)。整数の値かを確かめる口 (``JSONObject/getInt(_:)``) が、`Float` の桁に丸めずに
+    /// 判断するために使う。
+    static func double(_ text: String) -> Double? {
+        let string = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isDecimal(string.utf8) else { return nil }
+        return Double(string)
+    }
+
     /// 前後の空白を落とさずに、文字が丸ごと 10 進の綴りのときだけ数にする。
     ///
     /// 数と単位が隣り合う書式 (SVG / CSS の `10px`・`50%`) が使う。そこでは数と単位のあいだに
@@ -40,7 +49,10 @@ nonisolated enum DecimalText {
     }
 
     /// 綴りが `[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?` に丸ごと合うか。
-    private static func isDecimal(_ bytes: String.UTF8View) -> Bool {
+    ///
+    /// **文字の STL の通読** (``ModelFile/decimalSpelling(_:count:)``) は、速さのために同じ文法を手で写している。
+    /// 検査が、この照合と突き合わせる (`STLModelTests`)。
+    static func isDecimal<Bytes: Collection>(_ bytes: Bytes) -> Bool where Bytes.Element == UInt8 {
         var index = bytes.startIndex
         func skip(_ accepted: (UInt8) -> Bool) -> Int {
             var count = 0

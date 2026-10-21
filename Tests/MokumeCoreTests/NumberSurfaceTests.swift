@@ -957,6 +957,26 @@ struct NumberValueWarningTests {
         #expect(NumberValues.warnings.message(for: .emptyRange(.mod))?.hasPrefix("mod()") == true)
     }
 
+    /// 曲線の点と傾きも、口ごとに鍵を持つ ([#2430])。`bezierPoint` は始点を、`bezierTangent` は 0 を
+    /// 返して、数でない値を絵へ通さない。
+    ///
+    /// [#2430]: https://github.com/mokume-metal/mokume/issues/2430
+    @Test("bezierPoint・bezierTangent の注意は、口ごとに数えられる")
+    func theBezierVocabularyCountsItsOwnWarnings() {
+        #expect(bezierPoint(7, 1, 2, 3, Float.nan) == 7)
+        #expect(bezierPoint(Float.nan, 1, 2, 3, 0.5) == 0)
+        #expect(bezierTangent(0, 1, Float.infinity, 3, 0.5) == 0)
+        let entries: [(entry: NumberValues.Warning.Entry, name: String)] = [
+            (.bezierPoint, "bezierPoint()"), (.bezierTangent, "bezierTangent()"),
+        ]
+        for (entry, name) in entries {
+            #expect(NumberValues.warnings.hasWarned(.notANumber(entry)), "\(name)")
+            #expect(
+                NumberValues.warnings.message(for: .notANumber(entry))?.hasPrefix(name) == true,
+                "\(name): \(NumberValues.warnings.message(for: .notANumber(entry)) ?? "(鳴っていない)")")
+        }
+    }
+
     /// 同じ口を続けて呼んでも、注意は 1 度だけ (鳴った後は控えの文面が変わらない)。
     @Test("同じ事情の注意は 1 度だけ言う")
     func aWarningIsSaidOnce() {
