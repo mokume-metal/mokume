@@ -1031,7 +1031,10 @@ final class WatchSession {
         if overlapsGenerations {
             // **止めるのは、新しい世代が画面に出てからである** (#1142)。合図が来ないまま
             // 次の保存が来た回は、ここで必ず止める — 重ねるのは 1 世代だけである
-            let displayedGenerationRetired = outgoing != nil
+            // **映っている世代が、まだ乗り換えを待っている回だけ。** 乗り換えの合図の後は、止め終えるまで
+            // `outgoing` が残るが、台は既に新しい子へ映している — そこで伝えると、生きて映っている世代の
+            // 頼みを手放させる (#2983)
+            let displayedGenerationRetired = outgoing != nil && awaitingPromotion
             await retireOutgoing()
             // **映っていた世代を、乗り換えの合図が来ないまま畳んだ回** — 台は畳まれた世代の頼みを持ち続け、
             // 読み直す契機も来ない (#2983)
@@ -1157,9 +1160,11 @@ final class WatchSession {
         let marker = WorkDirectory.fellBackURL(forProcess: waiting.processIdentifier, under: facet)
         guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
         try? FileManager.default.removeItem(at: marker)
-        // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)
+        // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)。
+        // **前の世代を止めた後に伝える** — 止める前に伝えると、止まるまでに書く 1 枚で台が読み直す
+        let result = await retireAsPromoted()
         relinquishesDisplay()
-        return await retireAsPromoted()
+        return result
     }
 
     /// 起こした子の絵を道具の窓が受け取れないと知らされていたら、**乗り換えの合図を待たずに**
