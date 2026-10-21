@@ -167,7 +167,7 @@ enum ShapeExit {
             "emptyNumbers": resource, "blankPicture": resource,
             "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
-            "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
+            "typefaces": cache, "solidStrokeGeometry": cache, "modelStrokeGeometries": cache, "modelFills": cache,
             "discOffsets": cache,
             "ringSplitMemo": "分割数の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#1645)",
             "discSplitMemo": "ringSplitMemo と同じ",
