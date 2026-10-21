@@ -111,11 +111,36 @@ enum BundleCommand {
             executable: executable, identity: identity,
             minimumSystemVersion: declared?.minimumMacOSVersion ?? defaultMinimumSystemVersion,
             into: out)
-        try check(app, contains: declared?.declaredResourceBundles ?? [])
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
-        try sign(app, as: signature, entitlements: identity.entitlements)
-        let note = try writeOpeningNote(for: identity, beside: app)
+        let note = try finish(
+            app, identity: identity, bundles: declared?.declaredResourceBundles ?? []
+        ) { app throws(CommandFailure) in
+            try sign(app, as: signature, entitlements: identity.entitlements)
+        }
         print(report(for: app, package: directory, note: note, signedAs: signature))
+    }
+
+    /// 組み上がった包みの仕上げ。**手順の順序をここ 1 か所で持つ** — 資材の検め → 開き方の紙 → 署名。
+    ///
+    /// **紙は署名の前に書く** ([#2773](https://github.com/mokume-metal/mokume/issues/2773))。
+    /// 紙は `.app` の隣にあって署名の対象ではないので、先に書いても代償は無い。逆にすると、
+    /// 紙が書けない理由 (行き先が同じ名前のディレクトリ・書けない置き場など) で止まる回に、
+    /// 署名済みの (`codesign --verify` が通る) `.app` が残る。先に書けば、そうした回は署名の段に
+    /// 進む前に同じ失敗で終わる。組み立て途中の `.app` を消す約束は、資材の欠けで止まる回と同じく
+    /// ここでも作らない。
+    ///
+    /// - Parameters:
+    ///   - bundles: 宣言された資材の包み。
+    ///   - signing: 署名の段。**検査が、ビルドも `codesign` も起こさずに順序を見るために外から渡せる形にしてある。**
+    /// - Returns: 書いた紙の場所。
+    static func finish(
+        _ app: URL, identity: AppIdentity, bundles: [String],
+        signing: (URL) throws(CommandFailure) -> Void
+    ) throws(CommandFailure) -> URL {
+        try check(app, contains: bundles)
+        let note = try writeOpeningNote(for: identity, beside: app)
+        try signing(app)
+        return note
     }
 
     // MARK: - 引数
