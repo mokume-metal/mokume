@@ -617,9 +617,10 @@ extension SketchPart {
     /// 刻みは周期の長さで決まる。周期の無い使い方 (`noise(time)`) は、長い展示なら日に 1 度は
     /// 起こし直す。
     ///
-    /// **時刻を指定した観測の枚では、観測の秒を読むのは ``Sketch/draw()`` の中だけである。** 入力の
-    /// コールバックが読むのは作者の時計の秒で、`keyPressed()` の `jumpTime(time + 0.25)` が作者の時計を
-    /// 観測の秒へ飛ばさない。動画の再生位置と録った音の起点も、作者の時計の秒で進む。
+    /// **時刻を指定した観測の枚では、観測の秒を読むのは ``Sketch/draw()`` と、その直前の入り口の供給
+    /// (``Inlet/supply()``) の間だけである。** 入力のコールバックが読むのは作者の時計の秒で、
+    /// `keyPressed()` の `jumpTime(time + 0.25)` が作者の時計を観測の秒へ飛ばさない。動画の再生位置と
+    /// 録った音の起点も、作者の時計の秒で進む。入り口や部品が状態を進めるなら、``authorTime`` を読む。
     ///
     /// ```swift
     /// circle(sin(time) * 200 + width / 2, height / 2, 40)
@@ -627,12 +628,40 @@ extension SketchPart {
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
-    /// 作者の時計の上の、いまのフレームの時刻 (秒)。**時刻を指定した観測の枚でも作者の時計の値**で、
-    /// 観測でない枚では ``time`` と同じ値。
+    /// 作者の時計の上の、いまのフレームの時刻 (秒)。入り口・部品が、再生位置や起点といった**状態**を
+    /// 進めるための秒である。**描く値には ``time`` を使う。**
     ///
-    /// 本体の上に載る部品 (動画・録った音) が、再生位置や起点という**状態**を進めるのに読む。
-    /// ``time`` を読むと、観測の枚の指定秒が状態として残る ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
-    package var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
+    /// **時刻を指定した観測の枚でも作者の時計の値**で、観測でない枚では ``time`` と同じ値である。
+    /// ``time`` は、観測の枚の ``Sketch/draw()`` と、その直前の入り口の供給 (``Inlet/supply()``) の間だけ
+    /// 観測の指定秒になるので、状態の進みに使うと、観測が済んだ後も指定秒が状態に残る
+    /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。``jumpTime(_:)`` と ``pauseTime()`` には
+    /// ``time`` と同じく従う。
+    ///
+    /// 動画のような入り口は、状態を ``authorTime`` で進め、映すコマだけを ``time`` で決める。観測で撮った
+    /// 1 枚は指定の秒の絵になり、観測の後の枚は作者の時計に沿って続く。最後に値を受け取った時刻のような
+    /// 状態も、こちらで積む (``ExternalInput`` と ``ExternalQueue`` は、受け取った時刻をこの秒で積む)。
+    /// **描く値に使うと、観測で撮った 1 枚が指定の秒の絵にならない。**
+    ///
+    /// 走っていないとき (`init` の中・終わった後) に読むと 0 を返し、1 度だけ知らせる (``time`` と同じ)。
+    ///
+    /// ```swift
+    /// final class Playhead: Inlet {
+    ///     weak var owner: (any Sketch)?
+    ///     private var position: Float = 0
+    ///
+    ///     func supply() {
+    ///         guard let owner else { return }
+    ///         position = owner.authorTime  // 状態は作者の時計で進める
+    ///         let shown = owner.time       // 映すものは time (観測の枚では観測の秒) から決める
+    ///         // …shown のコマを映す
+    ///         _ = shown
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ADR-0045 決定 9 の 2026-10-18 と 2026-10-20 の改訂が正典である
+    /// ([ADR-0045](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0045-game-direction.md))。
+    public var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
     /// 前のフレームからの経過 (**秒**)。
     ///
     /// **p5.js の `deltaTime` はミリ秒で、単位が 1000 倍違う。** p5.js から写した係数は 1000 倍して

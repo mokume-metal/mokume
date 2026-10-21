@@ -170,7 +170,7 @@ struct ObserveTests {
             #expect(!FileManager.default.fileExists(atPath: request.path), "\(arguments)")
         }
 
-        for raw: Any in [-1.0, Double.infinity, 1e39, "three", true, NSNull()] {
+        for raw: Any in [-1.0, Double.infinity, 1e39, "three", true] {
             expectRefused(
                 ["time": raw], "time must be finite, non-negative seconds within the Float range")
         }

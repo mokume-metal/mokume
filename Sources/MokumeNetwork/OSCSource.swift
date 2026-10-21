@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeCore
 
 /// UDP のポートで受ける OSC の出どころ。届いた datagram をその場で読み、メッセージにして列へ入れる。
 ///
@@ -28,4 +29,16 @@ extension DatagramSource where Message == OSCMessage {
             },
             warn: warn)
     }
+}
+
+/// 何も受けない出どころ。送るだけの入り口 (``Sketch/createOSC(send:)``) が持つ。**ポートを開かない。**
+///
+/// 受けるものが無いので来ない理由も無く、動いている間は `running` を名乗る。送れないことは
+/// (受けるほうの様子ではないので) 状態には出さず、送り手が診断で言う。
+final class SendOnlySource: MessageSource {
+    typealias Message = OSCMessage
+
+    func start(into queue: ExternalQueue<OSCMessage>) { queue.setState(.running) }
+    func pump(into queue: ExternalQueue<OSCMessage>) {}
+    func stop() {}
 }

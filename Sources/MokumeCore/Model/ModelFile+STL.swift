@@ -1136,8 +1136,17 @@ nonisolated extension ModelFile {
         let parsed = Parsed(
             positions: positions, normals: normals,
             uvs: [SIMD2<Float>?](repeating: nil, count: positions.count),
-            derivedNormals: derivedNormals, skippedLines: skipped)
+            derivedNormals: derivedNormals, skippedLines: skipped,
+            malformed: stlMalformed(skipped))
         return (parsed, skipped - nonFinite)
+    }
+
+    /// STL の読み飛ばしの知らせの材料 (#2565)。**STL に意図して読まないものは無い** ので、数えたものは全部壊れたもの
+    /// (座標が数でない面・写せなかった要素)。数が 0 なら空。行を持たない形式なので、行は持たない。
+    static func stlMalformed(_ skipped: Int) -> [Malformed] {
+        skipped > 0
+            ? [Malformed(what: "a face or element that could not be read", count: skipped, line: nil)]
+            : []
     }
 
     /// 頂点の属性を 1 つ読む。

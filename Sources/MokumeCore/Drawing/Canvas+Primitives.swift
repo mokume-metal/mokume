@@ -295,6 +295,9 @@ extension Canvas {
     public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
         if formAllowed(fills: false) {
+            if let dash = style.strokeDash {
+                return appendDashedLineForms(SIMD2(x1, y1), SIMD2(x2, y2), by: dash)
+            }
             return appendLineForm(SIMD2(x1, y1), SIMD2(x2, y2))
         }
         draw(
