@@ -240,6 +240,13 @@ extension SketchPart {
     /// `<svg>` の `transform` 属性も知らせる (変換は掛けない)。描き方だけを変える性質 (`paint-order` など) は
     /// 知らせない。
     ///
+    /// CSS の全体キーワード (`inherit`・`initial`・`unset`・`revert`・`revert-layer`) は、勝てば、属性・`style` 属性・
+    /// `<style>` のどこに書いても CSS のとおり効く。`initial` は性質の初めの値 (`fill` なら黒)、`unset` は受け継ぐ
+    /// 性質なら親の値・そうでなければ初めの値で、`revert`・`revert-layer` は `unset` と同じに読む (SVG には UA の
+    /// 値も層も無い)。`marker-start` などは、SVG では受け継ぐ性質だが、描けない効果として要素ごとに数えるので受け
+    /// 継がない側に置く。形の長さの属性では、`auto` を取る口 (`width`・`rx` など) は `auto`、取らない口
+    /// (`x`・`cx`・`r` など) は 0 と読む。
+    ///
     /// 描くものが 1 つも無いファイルは空の形 (``Shape/isEmpty``) になり、同じく知らせる。
     ///
     /// **近似で描いたことも知らせる。** 群や、塗りと線を両方持つ要素の `opacity` は、SVG ならひとまとめに
