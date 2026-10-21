@@ -451,6 +451,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/point(_:_:)``
 - ``SketchPart/line(_:_:_:_:)``
+- ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
 
 ### 座標の読み方
 
@@ -480,6 +481,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/curveVertex(_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
+- ``bezierPoint(_:_:_:_:_:)``
+- ``bezierTangent(_:_:_:_:_:)``
 - ``SketchPart/beginContour()``
 - ``SketchPart/endContour()``
 - ``SketchPart/endShape(_:)``

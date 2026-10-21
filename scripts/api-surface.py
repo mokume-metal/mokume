@@ -792,6 +792,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "beginContour": FIGURE,
     "endContour": FIGURE,
     "vertex": FIGURE,
+    "bezier": FIGURE,
     "bezierVertex": FIGURE,
     "quadraticVertex": FIGURE,
     "curveVertex": FIGURE,

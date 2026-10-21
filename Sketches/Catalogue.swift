@@ -39,6 +39,7 @@ nonisolated let stillFrame = 45
 nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "shapes-and-style") { ShapesAndStyle() },
     ReferenceSketch(name: "curves-and-vertices") { CurvesAndVertices() },
+    ReferenceSketch(name: "curve-and-flight") { CurveAndFlight() },
     ReferenceSketch(name: "color-and-scale") { ColorAndScale() },
     ReferenceSketch(name: "type-and-imagery") { TypeAndImagery() },
     ReferenceSketch(name: "type-and-measure") { TypeAndMeasure() },
