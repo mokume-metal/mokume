@@ -132,17 +132,18 @@ struct FallbackFamilyNoticeTests {
         }
 
         /// 例を挙げるのは、返った書体が字形と頼んだ面の両方を持つときだけ。ヒラギノ角ゴシックの斜体は
-        /// 無いので、システムの UI 書体の斜体から引いても頼んだ面は返らない。
+        /// 無いので、`Helvetica` の斜体から引いても頼んだ面は返らない。
         @Test("例が頼んだ面を持たなければ、例を挙げない")
         func noExampleWhenNothingHasTheFace() throws {
             let picked = FallbackFamilyNoticeTests.fallback(of: "あ", in: "Helvetica-Oblique")
             try #require(FallbackFamilyNoticeTests.psName(picked) == "HiraginoSans-W3", "前提: 斜体に無い「あ」をヒラギノ角ゴシックから引く")
-            let system = try #require(CTFontCreateUIFontForLanguage(.system, 32, nil))
+            let origin = FallbackFamilyNoticeTests.font("Helvetica")
             let styled =
-                CTFontCreateCopyWithSymbolicTraits(system, 32, nil, .traitItalic, .traitItalic) ?? system
+                CTFontCreateCopyWithSymbolicTraits(origin, 32, nil, .traitItalic, .traitItalic) ?? origin
             let found = CTFontCreateForString(styled, "あ" as CFString, CFRangeMake(0, 1))
             try #require(
-                !FallbackFamilyNoticeTests.traits(found).contains(.traitItalic), "前提: システムの UI 書体の斜体から「あ」を引いても斜体の面は返らない")
+                !FallbackFamilyNoticeTests.traits(found).contains(.traitItalic),
+                "前提: Helvetica の斜体から「あ」を引いても斜体の面は返らない")
 
             let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
             canvas.textFont("Helvetica")

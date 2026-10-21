@@ -158,14 +158,14 @@ final class Typeface {
     }
 
     /// その字を頼んだ面で持つ書体の例 (`textFont()` に渡せる名前) を、環境から引く ([#2924])。**固定の
-    /// 表は持たない。** 頼んだ面の書体を引く元にして ``CTFontCreateForString`` を引き、返った書体が
-    /// **字形と頼んだ面の両方を持つときだけ**名乗る。持たなければ `nil` (例を挙げない)。
+    /// 表は持たない。** 公開の書体 `Helvetica` の頼んだ面を引く元にして ``CTFontCreateForString`` を引き、
+    /// 返った書体が**字形と頼んだ面の両方を持つときだけ**名乗る。持たなければ `nil` (例を挙げない)。
     ///
-    /// 引く元は、まずシステムの UI 書体の頼んだ面。**macOS 27 では、システムの UI 書体から引いた
-    /// 代わりは内部名 (`.AppleSDGothicNeoI-Bold`・`.ThonburiUI-Bold`) の書体で、`textFont()` が断る名前
-    /// なので挙げられない** (名前から引き直しても別の書体が返る)。そこで、内部名の答えは採らず、
-    /// 公開の書体 `Helvetica` の頼んだ面を引く元にして引き直す — 両方とも固定の例の表ではなく、
-    /// CoreText がその字に選んだ書体を見る。
+    /// **引く元を `Helvetica` にする理由:** システムの UI 書体を引く元にすると、返る代わりは内部名
+    /// (`.AppleSDGothicNeoI-Bold`・`.ThonburiUI-Bold`。macOS 27 で実測) の書体で、`textFont()` が断る名前なので
+    /// 挙げられない (名前から引き直すと別の書体が返る)。`Helvetica` からは、公開の名前
+    /// (`AppleSDGothicNeo-Bold`・`Thonburi-Bold`) の書体が返る。例は CoreText がその字に選んだ書体で、
+    /// 例の表ではない。
     ///
     /// 描く書体は変えない — 知らせの文面で、作者が `textFont()` へ渡せる名前を挙げるためだけに引く。
     /// `.` で始まる内部名や、環境が名前から引けない名前は挙げない (渡し直せない)。
@@ -175,23 +175,15 @@ final class Typeface {
         -> String?
     {
         guard !requested.isEmpty else { return nil }
-        let origins = [
-            CTFontCreateUIFontForLanguage(.system, size, nil),
-            CTFontCreateWithName("Helvetica" as CFString, size, nil),
-        ]
+        let origin = CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        let base = CTFontCreateCopyWithSymbolicTraits(origin, size, nil, requested, requested) ?? origin
         let text = String(scalar) as CFString
-        for origin in origins.compactMap({ $0 }) {
-            let base =
-                CTFontCreateCopyWithSymbolicTraits(origin, size, nil, requested, requested) ?? origin
-            let found = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
-            let name = CTFontCopyPostScriptName(found) as String
-            if CTFontGetSymbolicTraits(found).contains(requested), glyphIndex(of: scalar, in: found) != 0,
-                !name.hasPrefix("."), exists(name: name)
-            {
-                return name
-            }
-        }
-        return nil
+        let found = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        let name = CTFontCopyPostScriptName(found) as String
+        guard CTFontGetSymbolicTraits(found).contains(requested), glyphIndex(of: scalar, in: found) != 0,
+            !name.hasPrefix("."), exists(name: name)
+        else { return nil }
+        return name
     }
 
     /// 代わりの書体 (``glyph(for:)`` が、この書体が覆えない字を引いた別の書体) から引いた字が、
