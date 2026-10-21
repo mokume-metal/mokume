@@ -354,6 +354,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/canvas``
 - ``SketchPart/frameCount``
 - ``SketchPart/time``
+- ``SketchPart/authorTime``
 - ``SketchPart/deltaTime``
 - ``SketchPart/clock``
 - ``Clock``
@@ -632,6 +633,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### OSC で他の道具とやりとりする
 
 - ``Sketch/createOSC(listen:send:)``
+- ``Sketch/createOSC(send:)``
 - ``Sketch/createOSC(messages:)``
 - ``OSCPort``
 - ``OSCMessage``

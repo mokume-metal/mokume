@@ -119,8 +119,9 @@ struct NameCorrespondenceTests {
             let fromSchema = try #require(declared[name] as? [String: Any], "\(name)")
             let fromWindow = try #require(announced[name] as? [String: Any], "\(name)")
             // **型も突き合わせる。** 面の仕様が型を広げても、窓口の `inputSchema` との差が見えなくなる
-            // のを防ぐ。`null` の差だけは既知の差 — 面の仕様は省略できる欄の `null` を受けると書き、
-            // 窓口がそれを省略と読むようにするのは #2393 で揃える。`null` 以外の型の差は赤にする
+            // のを防ぐ。`null` の差だけは許す — 面の仕様は省略できる欄の `null` を受けると書き、
+            // 窓口はそれを省略と読む (#2393) が、`inputSchema` には `null` を型として書かない。
+            // `null` 以外の型の差は赤にする
             let schemaTypes = types(fromSchema["type"])
             #expect(
                 schemaTypes.subtracting(["null"]) == types(fromWindow["type"]).subtracting(["null"]),

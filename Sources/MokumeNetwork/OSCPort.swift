@@ -5,7 +5,8 @@ import Foundation
 import MokumeCore
 import MokumeDiagnostics
 
-/// OSC を受けて送る入り口。``Sketch/createOSC(listen:send:)`` が作り、走っているスケッチへ足す。
+/// OSC を受けて送る入り口。``Sketch/createOSC(listen:send:)`` (送るだけなら ``Sketch/createOSC(send:)``) が作り、
+/// 走っているスケッチへ足す。
 ///
 /// 毎フレーム呼ぶ口は無い。`draw()` の前に、前のフレームの後に届いたメッセージが**全部**、
 /// 届いた順に ``messages`` へ入っている ([ADR-0024] 決定 6)。最新の 1 つだけではないので、
@@ -46,6 +47,22 @@ import MokumeDiagnostics
 /// を受けるとその送り元の流れを閉じることがあり、そのとき空の直後 (1 ミリ秒ほどの間) に同じ送り元
 /// から届いたものは届かない。**この落ちだけは受け口から見えないので、数えず診断にも出ない。**
 ///
+/// ## 連続値は最新の 1 つで読む
+///
+/// フェーダーやセンサーのような**連続値**は、列を回して自分の変数に預けなくても、``latest(_:)`` で宛名から
+/// 最新のメッセージを引ける。列 (``messages``) は出来事を落とさず読む入れ物、``latest(_:)`` は宛名ごとの
+/// 「最新の 1 つ」の入れ物で、同じ受け口が両方を見せる ([ADR-0028] 決定 2)。
+///
+/// <!-- example: 文脈 var osc: OSCPort? -->
+/// ```swift
+/// func draw() {
+///     for i in 1...8 {
+///         let v = osc?.latest("/1/fader\(i)")?.float(0) ?? 0
+///         rect(Float(i) * 100, height - v * height, 80, v * height)
+///     }
+/// }
+/// ```
+///
 /// ## 来ないことには理由がある
 ///
 /// 届かないとき、``state`` がその理由を名乗る。観測の応答の `inputs` にも同じものが載る
@@ -81,10 +98,16 @@ import MokumeDiagnostics
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public final class OSCPort: Inlet {
-    /// 受けているポート。記録した列を流しているなら `nil`。
+    /// 受けているポート。記録した列を流している・送るだけ (``Sketch/createOSC(send:)``) なら `nil`。
     public let port: Int?
     /// このフレームの前に届いたメッセージ。届いた順。何も届いていなければ空。
     public private(set) var messages: [OSCMessage] = []
+
+    /// 宛名ごとの、最後に届いたメッセージ。``supply()`` で更新する。
+    private var latestByAddress: [String: OSCMessage] = [:]
+    /// 覚えておく宛名の数の上限。外から届く宛名は選べないので、`/note/123456` のように宛名に数を含める
+    /// 送り手が居ても、格納が伸び続けない。上限は ``ExternalQueue`` の 1 フレームの上限に揃える。
+    static let latestAddressLimit = 4096
 
     let input: ExternalQueue<OSCMessage>
     let source: any MessageSource<OSCMessage>
@@ -108,7 +131,34 @@ public final class OSCPort: Inlet {
         input = ExternalQueue(name: name, state: .unavailable)
     }
 
-    /// 出どころの状態。
+    /// 宛名 `address` の、最後に届いたメッセージ。まだ 1 つも届いていなければ `nil`。
+    ///
+    /// **連続値 (フェーダー・つまみ・センサー) を読む口である。** ``messages`` が出来事を落とさず渡す列
+    /// なのに対し、こちらは宛名ごとの「最新の 1 つ」で、MIDI の `controlChange(_:)` と同じ入れ物
+    /// ([ADR-0028] 決定 2)。番号で引く MIDI と、宛名で引くこの口は引き方が違うので、名前は揃えない。
+    ///
+    /// <!-- example: 文脈 var osc: OSCPort? -->
+    /// ```swift
+    /// let fader = osc?.latest("/1/fader1")?.float(0) ?? 0
+    /// ```
+    ///
+    /// - **フレームの頭で更新される。** ``supply()`` が ``messages`` を作るときに、同じ宛名のうち最後に
+    ///   届いたものへ置き換える。1 フレームに何度届いても最後の 1 つで、何も届かないフレームは前の
+    ///   ままである。同じ列を流せば、何度回しても同じ (記録した列 (``Sketch/createOSC(messages:)``) も同じで、
+    ///   ``messages`` を記録すれば足りる)
+    /// - **宛名は文字どおりに引く。** `/1/*` のようなワイルドカードは受けず、一致する宛名が無ければ `nil`
+    /// - 覚えるのは 4096 宛名まで。超えて届いた新しい宛名は覚えず、1 度だけ診断に出す。覚えた宛名は更新し続け、
+    ///   ``messages`` は落とさない
+    /// - ``stop()`` の後は、``messages`` と同じく空 (`nil`)
+    ///
+    /// - Parameter address: 宛名 (`/1/fader1`)。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+    public func latest(_ address: String) -> OSCMessage? {
+        latestByAddress[address]
+    }
+
+    /// 出どころの状態。送るだけの口 (``Sketch/createOSC(send:)``) は受けないので、動いている間は `running`。
     public var state: SourceState { input.state }
     /// 最後にメッセージが届いたフレーム。まだ 1 つも届いていなければ `nil`。
     public var lastArrival: Arrival? { input.lastArrival }
@@ -153,6 +203,20 @@ public final class OSCPort: Inlet {
     public func supply() {
         source.pump(into: input)
         messages = input.take()
+        for message in messages {
+            guard
+                latestByAddress[message.address] != nil
+                    || latestByAddress.count < Self.latestAddressLimit
+            else {
+                tellOnce(
+                    "latestFull",
+                    "This OSC port remembers the latest message of \(Self.latestAddressLimit) addresses "
+                        + "only, so latest(_:) does not know \(message.address) and the addresses "
+                        + "that first arrive after it. messages still carries every message")
+                continue
+            }
+            latestByAddress[message.address] = message
+        }
     }
 
     public func close() {
@@ -161,9 +225,11 @@ public final class OSCPort: Inlet {
         outbound?.stop()
         input.setState(.stopped)
         messages = []
+        latestByAddress = [:]
     }
 
-    public var report: SourceReport? { input.report }
+    /// 送るだけの口は受け口ではないので、観測の応答の `inputs` に行を出さない。
+    public var report: SourceReport? { source is SendOnlySource ? nil : input.report }
 
     // MARK: - 送る
 
