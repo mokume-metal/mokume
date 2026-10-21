@@ -277,8 +277,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release.outputs.version }}
+      # 版と SHA は tarball の中の 1 行ファイルに載る (#2887)。tarball を展開した場所が、
+      # Homebrew の置き場に頼らず自分の版を名乗れる
       - name: 束ねる
-        run: make cli-dist OUT="$RUNNER_TEMP/mokume-macos-arm64.tar.gz"
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          make cli-dist OUT="$RUNNER_TEMP/mokume-macos-arm64.tar.gz" \
+            RELEASE_VERSION="$VERSION" RELEASE_SHA="$(git rev-parse HEAD)"
       - name: Release へ付ける
         env:
           GH_TOKEN: ${{ github.token }}
