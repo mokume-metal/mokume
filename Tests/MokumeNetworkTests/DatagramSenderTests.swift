@@ -151,6 +151,34 @@ struct DatagramSenderTests {
         #expect(told.lines.count == 2)
     }
 
+    /// 受け手が居ない間の最後の送信が誤り無く終わり、受け手が開くまでが `confirmAfter` を超えると、
+    /// 送れたと読んで戻る。そこへ拒否の残りが返ると 2 行目を名乗る (#3045)。**設計どおりの結果** —
+    /// 時計を手で進めて、実時間の揺れ無しに固定する。本物の繋ぎで送り続ける検査
+    /// (``DatagramSenderLoopbackTests``) は、開いた直後の増えを高々 1 行まで許す。
+    @Test("居ない間の最後の送信が誤り無く終わり、開くまでが confirmAfter を超えると、残りの拒否で 2 行目を名乗る")
+    func aLeftoverRefusalAfterTheReceiverOpensIsToldAgain() {
+        let told = Told()
+        let clock = ManualClock(0)
+        let sender = clocked(told, clock, confirmAfter: 0.1)
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        complete(sender, refused, on: connection)
+        #expect(told.lines.count == 1)
+
+        // 受け手が居ない間の最後の送信 (0 秒に誤り無く終わる)。そこから 0.3 秒後に受け手が開き、
+        // 次の送信は誤り無く終わる (間が confirmAfter 以上なので、戻る)
+        let next = unstartedConnection()
+        sender.onQueue { sender.attach(next) }
+        complete(sender, nil, on: next, issuedAt: 0)
+        clock.advance(by: 0.3)
+        complete(sender, nil, on: next, issuedAt: clock.provider())
+        #expect(told.lines.count == 1)
+
+        // 拒否の残りが返る
+        complete(sender, refused, on: next)
+        #expect(told.lines.count == 2)
+    }
+
     @Test("間は送信を出した時刻で測る。完了が遅れて返っただけでは満たさない")
     func theGapIsMeasuredFromWhenTheSendWasIssued() {
         let told = Told()

@@ -144,7 +144,10 @@ struct DatagramSenderLoopbackTests {
         }
         #expect(refusals(told) == 1, "診断: \(told.lines)")
 
-        // 受け手が開く
+        // 受け手が開く。**開く前の数を控える** (#3045)。居ない間の最後の送信が誤り無く終わり、開くまでが
+        // `confirmAfter` を超えると、送れたと読んで戻る。そこへ拒否の残りが返ると、2 行目を名乗る —
+        // 約束の外ではない。CI で 1 度、開く前の数を決め打ちした検査がここで赤になった
+        let before = refusals(told)
         nobody.release()
         let heard = Told()
         let source = DatagramSource<String>.text(
@@ -175,20 +178,24 @@ struct DatagramSenderLoopbackTests {
         }
         received += await collect(receiver, count: 3)
         #expect(received.suffix(3) == ["after 0", "after 1", "after 2"], "届いた: \(received)")
-        #expect(refusals(told) == 1, "診断: \(told.lines)")
+        // 開いてから届くまでに増えてよいのは、拒否の残りの 1 行まで。届き続けているのに増え続けない
+        #expect(refusals(told) <= before + 1, "診断: \(told.lines)")
 
-        // 間を空けて送れ続けたので、送れたと読んで戻っている。受け手が閉じたら、また 1 行
+        // 間を空けて送れ続けたので、送れたと読んで戻っている。受け手が閉じたら、また 1 行。
+        // **数えるのは閉じる直前の数からの増え** — 残りの拒否を名乗っていても、約束は「戻った後に
+        // 閉じれば、また 1 行だけ名乗る」のまま
         try await Task.sleep(for: .milliseconds(300))
         sender.send(Array("settled".utf8))
         try await Task.sleep(for: .milliseconds(100))
+        let beforeClosing = refusals(told)
         receiver.close()
         #expect(await until { receiver.state == .stopped })
         for index in 0..<10 {
             sender.send(Array("gone \(index)".utf8))
             try await Task.sleep(for: .milliseconds(60))
         }
-        #expect(await until { refusals(told) >= 2 })
+        #expect(await until { refusals(told) >= beforeClosing + 1 })
         try await Task.sleep(for: .milliseconds(300))
-        #expect(refusals(told) == 2, "診断: \(told.lines)")
+        #expect(refusals(told) == beforeClosing + 1, "診断: \(told.lines)")
     }
 }
