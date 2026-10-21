@@ -32,6 +32,8 @@ extension Canvas {
         /// 点ごとに、曲線の刻みの継ぎ目か (``Outline/curveSteps``)。元の折れ線に刻みの印が
         /// あるときだけ点と同じ数を持ち、無ければ空。
         var curveSteps: [Bool]
+        /// 周を一周して始点へ戻る 1 つの片 (閉じた輪郭で、破線が途切れずに一周したとき)。
+        var isClosed = false
     }
 
     /// 折れ線を破線の片へ刻んだ結果。
@@ -47,6 +49,10 @@ extension Canvas {
     /// 折れ線を、破線の長さと間隔で片に刻む。**模様は最初の点から数え、折れ目をまたいで続く**
     /// (長さの途中で曲がれば、その角を含む 1 つの片になる)。
     ///
+    /// **閉じた輪郭 (`isClosed`) は、最後の点から最初の点へ戻る辺も数え、一周して始点へ戻る。** 最後の
+    /// 破線が始点で途中のまま届いたら、最初の破線へ繋いで 1 つの片にする (始点を境に破線が割れない・
+    /// 折れ目の形で繋がる)。破線が途切れずに一周したら、閉じた 1 つの片 (``DashPiece/isClosed``) にする。
+    ///
     /// 切り口は片の端になり、端の形 (`strokeCap`) が付く。折れ目の形 (`strokeJoin`) が付くのは、
     /// 片の中に残った元の点だけである。長さが 0 の破線は、切り口で 2 点が重なる片 (点) になる。
     ///
@@ -57,11 +63,15 @@ extension Canvas {
     /// - Parameters:
     ///   - points: 折れ線の点 (変換を掛ける前の座標)
     ///   - curveSteps: 点ごとの刻みの印。空なら印なし
+    ///   - isClosed: 最後の点から最初の点へ戻る辺も刻むか
     ///   - dash: 破線の長さと間隔
     static func dashPieces(
-        of points: [SIMD2<Float>], curveSteps: [Bool] = [], by dash: StrokeDash
+        of corners: [SIMD2<Float>], curveSteps: [Bool] = [], isClosed: Bool = false,
+        by dash: StrokeDash
     ) -> DashResult {
-        guard points.count >= 2, dash.length >= 0, dash.gap > 0 else { return .unsplittable }
+        guard corners.count >= 2, dash.length >= 0, dash.gap > 0 else { return .unsplittable }
+        // 閉じた輪郭は、始点をもう 1 度末尾に置いた開いた道として刻む
+        let points = isClosed ? corners + [corners[0]] : corners
         var total: Float = 0
         for index in 1..<points.count {
             let length = simd_length(points[index] - points[index - 1])
@@ -74,8 +84,8 @@ extension Canvas {
         guard period.isFinite, period > 0 else { return .unsplittable }
         guard total / period <= Float(maxDashPieces) else { return .tooMany }
 
-        let hasSteps = curveSteps.count == points.count
-        func step(_ index: Int) -> Bool { hasSteps ? curveSteps[index] : false }
+        let hasSteps = curveSteps.count == corners.count
+        func step(_ index: Int) -> Bool { hasSteps ? curveSteps[index % corners.count] : false }
 
         var pieces: [DashPiece] = []
         var isOn = true
@@ -102,8 +112,9 @@ extension Canvas {
                 position += left
                 let cut = from + unit * min(position, length)
                 if isOn {
-                    // 長さ 0 の破線は、切り口の重なる 2 点の片 (点) になる
-                    if current.points.last == cut {
+                    // 長さ 0 の破線は、切り口の重なる 2 点の片 (点) になる。**長さのある破線が頂点ちょうどで
+                    // 終わるときは、同じ点を 2 度積まない**
+                    if dash.length == 0 {
                         current.points.append(cut)
                         if hasSteps { current.curveSteps.append(false) }
                     } else {
@@ -123,15 +134,37 @@ extension Canvas {
         }
         // 最後が破線の途中なら、そこまでを 1 つの片にする。点が 1 つだけなら、破線が始まった
         // ところで線が終わっているので、片にしない
-        if isOn, current.points.count >= 2 { pieces.append(current) }
+        if isOn, current.points.count >= 2 {
+            if isClosed, pieces.isEmpty {
+                // 途切れずに一周した。始点をもう 1 度置いた末尾を落とし、閉じた片にする
+                var loop = current
+                loop.points.removeLast()
+                if hasSteps { loop.curveSteps.removeLast() }
+                loop.isClosed = true
+                return .pieces([loop])
+            }
+            if isClosed, left > 0 {
+                // 最後の破線が始点まで届いたまま続く。最初の破線へ繋ぐ (繋ぎ目は元の点 `corners[0]`)。
+                // 破線がちょうど始点で終わる (`left == 0`) ときは、続きが無いので繋がない
+                var joined = current
+                joined.points += pieces[0].points.dropFirst()
+                if hasSteps { joined.curveSteps += pieces[0].curveSteps.dropFirst() }
+                pieces.removeFirst()
+                pieces.append(joined)
+            } else {
+                pieces.append(current)
+            }
+        }
         return .pieces(pieces)
     }
 
-    /// 開いた輪郭を破線の片に刻む。刻めなければ `nil` で、呼び手は実線で引く。
+    /// 輪郭を破線の片に刻む。刻めなければ `nil` で、呼び手は実線で引く。
     ///
     /// 刻む数が上限を越えるときは、実線で引くことを 1 度知らせる。
     func dashedPieces(of outline: Outline, by dash: StrokeDash) -> [DashPiece]? {
-        switch Self.dashPieces(of: outline.points, curveSteps: outline.curveSteps, by: dash) {
+        let result = Self.dashPieces(
+            of: outline.points, curveSteps: outline.curveSteps, isClosed: outline.isClosed, by: dash)
+        switch result {
         case .pieces(let pieces): return pieces
         case .tooMany:
             warnDashTooFine()
@@ -156,7 +189,7 @@ extension Canvas {
             let points = piece.points.count == 1 ? [piece.points[0], piece.points[0]] : piece.points
             let steps = piece.curveSteps.count == points.count ? piece.curveSteps : []
             strokeSolidOutline(
-                Outline(points: points, isClosed: false, fills: false, curveSteps: steps),
+                Outline(points: points, isClosed: piece.isClosed, fills: false, curveSteps: steps),
                 discSegments: discSegments)
         }
     }
@@ -178,5 +211,39 @@ extension Canvas {
         case .unsplittable:
             appendLineForm(a, b)
         }
+    }
+
+    /// いまの設定が引く輪郭が破線なら、その破線。**輪郭を引かない設定 (線を止めた・太さ 0) は `nil`。**
+    var dashedStroke: StrokeDash? {
+        style.hasStroke && style.strokeWeight > 0 ? style.strokeDash : nil
+    }
+
+    /// 楕円・弧の周 (一周は楕円)。破線の片に刻む元で、点は画面に出る半径で刻む
+    /// (``segmentCount(forRadius:scale:)``)。置き場所の中心ぶんずらしてある。
+    func ringOutlineForDash(
+        radiusX: Float, radiusY: Float, start: Float, sweep: Float, at center: SIMD2<Float>
+    ) -> Outline {
+        let segments = Self.segmentCount(
+            forRadius: max(radiusX, radiusY), scale: Self.splitScale(of: transform.matrix))
+        return Self.ringOutline(
+            Outline.Ring(
+                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, segments: segments)
+        ).moved(by: center)
+    }
+
+    /// 距離関数で描ける基本図形 (矩形・楕円・扇形) を、破線の輪郭で置く。**塗りは距離関数のまま置き、
+    /// 輪郭だけを破線の片で引く** — 塗りの縁の出方は、輪郭を引かない図形と同じである。
+    ///
+    /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
+    func appendDashedForm(
+        _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
+        arc: SIMD2<Float> = .zero, cornerRadius: Float = 0, outline: Outline
+    ) {
+        guard canPlace else { return warnOutsideFrame(.placing) }
+        appendForm(
+            kind, center: center, half: half, arc: arc, fills: true, cornerRadius: cornerRadius,
+            strokes: false)
+        outlinesAssembledThisFrame += 1
+        strokeOutline(outline)
     }
 }

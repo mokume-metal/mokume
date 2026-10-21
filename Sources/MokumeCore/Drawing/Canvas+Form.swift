@@ -129,16 +129,18 @@ extension Canvas {
     ///   - cornerRadius: 矩形の角の半径 (形自身の座標。半幅・半高の小さいほう以下に締めてある・
     ///     #2757)。矩形以外と、角を丸めない矩形は 0。
     ///   - cap: 端の形。渡さなければいまの設定。点は孤立した端として `square` を `project` に読み替える。
+    ///   - strokes: 輪郭を引くか。偽なら、いまの設定が輪郭を引くときも塗りだけを置く。破線の図形が、
+    ///     塗りをここで置き、輪郭は破線の片で引くのに使う (``strokeDashedFormOutline(_:)``・#2835)。
     func appendForm(
         _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
         axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero,
-        fills: Bool, cap: StrokeCap? = nil, cornerRadius: Float = 0
+        fills: Bool, cap: StrokeCap? = nil, cornerRadius: Float = 0, strokes: Bool = true
     ) {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         // **色は `Optional` にしない。** 持つかどうかは旗で渡す (``FormInstance/init``)
         let drawsFill = fills && style.hasFill
-        let drawsStroke = style.hasStroke && style.strokeWeight > 0
+        let drawsStroke = strokes && style.hasStroke && style.strokeWeight > 0
         guard drawsFill || drawsStroke else { return }
 
         // いまの変換の 2x2 に、形自身の横軸の向きを掛ける (線以外は単位)

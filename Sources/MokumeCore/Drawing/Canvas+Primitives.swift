@@ -48,6 +48,24 @@ extension Canvas {
         let radius = min(cornerRadius, w / 2, h / 2)
         // 距離関数で描ける間は頂点を組み立てない (`Canvas+Form.swift`)
         if formAllowed(fills: true) {
+            // 破線の輪郭は、塗りだけを距離関数で置き、輪郭は破線の片で引く (#2835)
+            if dashedStroke != nil {
+                let outline =
+                    radius > 0
+                    ? Self.roundedRectOutline(
+                        width: w, height: h, radius: radius,
+                        segments: Self.segmentCount(
+                            forRadius: radius, scale: Self.splitScale(of: transform.matrix))
+                    ).moved(by: SIMD2(box.x, box.y))
+                    : Outline(
+                        points: [
+                            SIMD2(box.x, box.y), SIMD2(box.x + w, box.y), SIMD2(box.x + w, box.y + h),
+                            SIMD2(box.x, box.y + h),
+                        ], isClosed: true)
+                return appendDashedForm(
+                    .rect, center: SIMD2(box.x + w / 2, box.y + h / 2), half: SIMD2(w / 2, h / 2),
+                    cornerRadius: radius, outline: outline)
+            }
             return appendForm(
                 .rect, center: SIMD2(box.x + w / 2, box.y + h / 2), half: SIMD2(w / 2, h / 2),
                 fills: true, cornerRadius: radius)
@@ -134,6 +152,12 @@ extension Canvas {
         guard radiusX > 0, radiusY > 0 else { return }
         let center = SIMD2(box.x + radiusX, box.y + radiusY)
         if formAllowed(fills: true) {
+            if dashedStroke != nil {
+                return appendDashedForm(
+                    .ellipse, center: center, half: SIMD2(radiusX, radiusY),
+                    outline: ringOutlineForDash(
+                        radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi, at: center))
+            }
             return appendForm(.ellipse, center: center, half: SIMD2(radiusX, radiusY), fills: true)
         }
         // 周は**形自身の座標**で作り、中心を置き場所として渡す。**周を作るのは畳めない
@@ -168,6 +192,17 @@ extension Canvas {
         let isFullTurn = sweep >= 2 * .pi
         let center = SIMD2(box.x + radiusX, box.y + radiusY)
         if formAllowed(fills: true) {
+            if dashedStroke != nil {
+                return isFullTurn
+                    ? appendDashedForm(
+                        .ellipse, center: center, half: SIMD2(radiusX, radiusY),
+                        outline: ringOutlineForDash(
+                            radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi, at: center))
+                    : appendDashedForm(
+                        .arc, center: center, half: SIMD2(radiusX, radiusY), arc: SIMD2(start, sweep),
+                        outline: ringOutlineForDash(
+                            radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, at: center))
+            }
             return isFullTurn
                 ? appendForm(.ellipse, center: center, half: SIMD2(radiusX, radiusY), fills: true)
                 : appendForm(
