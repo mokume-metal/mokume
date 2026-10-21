@@ -723,9 +723,14 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 - ``SketchPart/loadJSONObject(_:)``
 - ``SketchPart/requestJSONObject(_:)``
+- ``SketchPart/parseJSONObject(_:)``
+- ``SketchPart/loadJSONArray(_:)``
+- ``SketchPart/requestJSONArray(_:)``
+- ``SketchPart/parseJSONArray(_:)``
 - ``SketchPart/loadXML(_:)``
 - ``SketchPart/requestXML(_:)``
 - ``JSONObject``
+- ``JSONArray``
 - ``XML``
 
 ### 立体を置く
