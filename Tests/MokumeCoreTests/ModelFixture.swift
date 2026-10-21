@@ -199,6 +199,28 @@ enum ModelFixture {
         return data
     }
 
+    /// 四角錐の頂点と面 (向きは書かない)。材質などの行は含まない。`extra` は面の後ろに足す行。
+    /// **行番号を数えられるよう、頭の注釈や空行を置かない** — `v` が 1〜5 行目、`f` が 6〜10 行目で、
+    /// `extra` の最初の行は 11 行目になる。
+    static func barePyramid(extra: [String] = []) -> String {
+        let lines = [
+            "v -1.0 0.0 -1.0", "v 1.0 0.0 -1.0", "v 1.0 0.0 1.0", "v -1.0 0.0 1.0", "v 0.0 1.6 0.0",
+            "f 1 2 5", "f 2 3 5", "f 3 4 5", "f 4 1 5", "f 4 3 2 1",
+        ]
+        return (lines + extra).joined(separator: "\n") + "\n"
+    }
+
+    /// 検体を、呼ぶたびに違う名前で書き出す (同じ名前で書き換えると、控えの有無や別の検査と取り違える)。
+    static func writtenUniquely(_ contents: Data, extension fileExtension: String) -> String {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-fixtures", isDirectory: true)
+            .appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? contents.write(to: url)
+        return url.path
+    }
+
     /// 検体を決まった場所へ 1 度だけ書き出す。
     private static func written(_ text: String, as name: String) -> String {
         let url = FileManager.default.temporaryDirectory
