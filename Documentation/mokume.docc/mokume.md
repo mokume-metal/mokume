@@ -106,6 +106,11 @@ circle(200, 150, 20 + pow(2, level))
 
 `mokume watch` で `.swift` を保存すると、スケッチは新しいプロセスで作り直される。
 資材の置き場 (`Sources/<名前>/assets/`) のファイルを足したり保存したりしたときも、ビルドが資材を写し直すので同じく作り直す。
+
+見張るのは次の3つで、これが約束である。`Package.swift`、`Sources/` の下の `.swift` (隠しファイルと包みの中を除く)、`Sources/<名前>/assets/` の下の普通のファイル (隠しファイル・`.metal`・シンボリックリンクを除く)。
+
+**範囲の外を変えても作り直さない。** `Package.swift` で `assets/` 以外に宣言した資材 (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)、置き場の中のシンボリックリンク、`Package.resolved`、パスで指した依存 (`--local` の mokume のチェックアウト) である。たとえば `resources: [.process("Resources")]` を宣言した作品で `Sources/<名前>/Resources/data.json` を保存しても、作り直しは起きない。外を変えたときは `mokume watch` を起こし直す。範囲を `Package.swift` の宣言から導く形は、宣言を変えた作品が出てから決める。
+
 **フレームを越える状態も、この作り直しでは最初から始まる。** 本体が引き継ぐのは次の2種類である。
 
 | 残るもの | 引き継ぎ方 |

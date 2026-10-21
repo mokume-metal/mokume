@@ -95,6 +95,8 @@ final class MySketch: Sketch {
 
 オプションの一覧は `mokume help` で確認できます。
 
+`mokume watch` が見張るのは、`Package.swift`・`Sources/` の下の `.swift`・`Sources/<名前>/assets/` の下の普通のファイルです (隠しファイルとシンボリックリンクは数えません)。`.metal` の断片は作り直さず、走らせたまま差し替わります。**範囲の外を変えても作り直しません** — `Package.swift` で `assets/` 以外に宣言した資材 (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)・`Package.resolved`・パスで指した依存 (`--local` の mokume のチェックアウト) です。変えたときは `mokume watch` を起こし直してください。
+
 ### 動画に書き出す
 
 ```bash
