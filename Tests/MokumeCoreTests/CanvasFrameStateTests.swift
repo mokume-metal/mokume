@@ -50,6 +50,10 @@ extension CanvasTests {
             style.imageMode = .center
             style.tint = .linear(red: 0.7, green: 0.8, blue: 0.9)
             style.picture = .drawn(canvas.target)
+        style.gradient = ResolvedGradient.resolve(
+            .linearGradient([(.linear(red: 1, green: 0, blue: 0), 0), (.linear(red: 0, green: 0, blue: 1), 1)], from: [0, 0], to: [10, 0]),
+            under: .identity
+        ).gradient
             style.material.shininess = 8
             style.castsShadow = false
             style.receivesShadow = false
@@ -525,6 +529,9 @@ extension CanvasTests {
                 "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
                 "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
                 "typefaces": cache, "solidStrokeGeometry": cache, "modelStrokeGeometries": cache, "modelFills": cache,
+            "gradientShaderStorage": "勾配で塗る断片 (#2433)。初めて勾配で塗るときに組み、面と同じだけ生きる。作り直さないために持つ",
+            "gradientShaderFailed": "勾配の断片を組めなかった印 (#2433)。組めない面では組み直さない",
+            "paintsWithGradient": "いまの断片が勾配の断片かの写し (#2433)。`currentShader` を替えるたびに導き直す (出口の戻しも通る)",
                 "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さと分割数の 1 件だけで、点は 1024 個が上限 (#1785・#1645)。中身は太さと分割数で決まり、フレームに属さない",
                 "ringSplitMemo": "周の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",
                 "discSplitMemo": "円板の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",
@@ -621,7 +628,7 @@ extension CanvasTests {
             "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "hasFill", "hasStroke",
             "rectMode", "ellipseMode", "blendMode", "fontSelection", "textSize", "textFace",
             "horizontalTextAlign", "verticalTextAlign", "textLeading", "textWrap", "imageMode",
-            "tint", "picture",
+            "tint", "picture", "gradient",
         ]
 
         /// 影の焼き付けの持ち越す格納 (``Canvas``の `shadowBake`・#2257) の、中の分け方と理由。

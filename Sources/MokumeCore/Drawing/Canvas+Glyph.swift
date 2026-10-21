@@ -24,7 +24,7 @@ extension Canvas {
     }
 
     /// 文字を塗る色。塗りを止めていれば `nil`。
-    var textFillColor: LinearRGBA? { style.hasFill ? style.fill : nil }
+    var textFillColor: LinearRGBA? { style.hasFill ? fillVertexColor : nil }
 
     /// いま指定されている書体。同じ指定なら作り直さない。
     var typeface: Typeface {

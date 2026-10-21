@@ -331,7 +331,7 @@ extension Canvas {
         return FlatInstance(
             linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
             offset: transform.placed(x: anchor.x, y: anchor.y),
-            fill: style.fill, stroke: style.stroke)
+            fill: fillVertexColor, stroke: style.stroke)
     }
 
     /// 周の内側を塗る。
@@ -368,13 +368,14 @@ extension Canvas {
             RingFillRange(
                 start..<vertices.count,
                 recipe: RingFillRecipe(
-                    outline: outline, color: style.fill, hasPicture: style.picture != nil,
+                    outline: outline, color: fillVertexColor, hasPicture: style.picture != nil,
                     transform: transform, uv: whiteUV)))
     }
 
     private func fillInteriorTriangles(_ outline: Outline) {
         let points = outline.points
         guard points.count >= 3 else { return }
+        let fillColor = fillVertexColor
         if let triangles = outline.fillTriangles {
             let uvOf = style.picture == nil ? nil : Self.boxUV(of: points)
             for (a, b, c) in triangles {
@@ -384,7 +385,7 @@ extension Canvas {
                 appendTriangle(
                     transform.placed(x: a.x, y: a.y), transform.placed(x: b.x, y: b.y),
                     transform.placed(x: c.x, y: c.y),
-                    colors: (style.fill, style.fill, style.fill), uvs: uvs)
+                    colors: (fillColor, fillColor, fillColor), uvs: uvs)
             }
             return
         }
@@ -402,7 +403,7 @@ extension Canvas {
         {
             var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
             if let uvOf { uvs = (uvOf(pivot), uvOf(bSource), uvOf(cSource)) }
-            appendTriangle(a, b, c, colors: (style.fill, style.fill, style.fill), uvs: uvs)
+            appendTriangle(a, b, c, colors: (fillColor, fillColor, fillColor), uvs: uvs)
         }
 
         var previous = transform.placed(x: ring[0].x, y: ring[0].y)

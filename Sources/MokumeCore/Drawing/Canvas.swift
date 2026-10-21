@@ -1451,8 +1451,20 @@ public final class Canvas {
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader? {
         // 当てた断片が替われば、その面を置いた記録は取り直す (``paintSurfacesNoted``)
-        didSet { paintSurfacesNoted = nil }
+        didSet {
+            paintSurfacesNoted = nil
+            // 勾配の断片か。**置くたびに読む口が多い**ので、断片の比べ合いは替えたときの 1 度に済ませる
+            paintsWithGradient = gradientShaderStorage.map { $0 === currentShader } ?? false
+        }
     }
+    /// いま勾配の断片が塗りを持っているか (``Canvas/currentShader`` が勾配の断片か)。
+    /// **不変条件:** `true` なら ``Style/gradient`` がある。
+    private(set) var paintsWithGradient = false
+    /// 勾配で塗る断片 (``GradientShader``)。**初めて勾配で塗るときに組む。** 勾配を持つ間は
+    /// ``currentShader`` がこれになる (``syncGradientShader()``)。
+    var gradientShaderStorage: Shader?
+    /// 勾配の断片を組めなかったか。組めなかった面では、勾配を受けず、組み直さない。
+    var gradientShaderFailed = false
     /// いまの断片 (``currentShader``) の描き場所の面を、置いた記録に載せ終えたか。載せた時点の
     /// ``placedGraphicsDrops`` を持つ。`nil` なら載せていない。
     ///
@@ -2029,6 +2041,12 @@ public final class Canvas {
     /// [#780]: https://github.com/mokume-metal/mokume/issues/780
     struct Style {
         var fill = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        /// 塗りの勾配 (#2433)。`nil` なら塗りは ``fill`` の色。**`fill(_:)` で色を渡すと外れる。**
+        ///
+        /// 勾配で塗る列は、面が持つ勾配の断片 (``Canvas/gradientShaderStorage``) で描く。勾配は
+        /// `fill(_:)` を呼んだときの変換を覚えているので、変換の積み降ろしとは別に、スタイルと一緒に
+        /// 積み降ろす。
+        var gradient: ResolvedGradient?
         var stroke = LinearRGBA.linear(red: 1, green: 1, blue: 1)
         var strokeWeight: Float = 1
         var strokeCap = StrokeCap.round
@@ -2144,7 +2162,14 @@ public final class Canvas {
             {
                 closeBatch()
             }
+            // 勾配で塗る列は、勾配か塗りの有無が変わる前に閉じる (``setGradient(_:)``)
+            if paintsWithGradient, style.gradient != newValue.gradient || !newValue.hasFill {
+                closeBatch()
+            }
+            // 勾配に関わるのは、前後のどちらかが勾配を持つか、勾配の断片が塗りを持つときだけ
+            let touchesGradient = paintsWithGradient || style.gradient != nil || newValue.gradient != nil
             style = newValue
+            if touchesGradient { syncGradientShader() }
         }
     }
 

@@ -13,7 +13,7 @@
 /// }
 /// ```
 ///
-/// 描く・入力を読むといった語彙 (``SketchPart/fill(_:)``・``SketchPart/circle(_:_:_:)``・
+/// 描く・入力を読むといった語彙 (``SketchPart/fill(_:)-(LinearRGBA)``・``SketchPart/circle(_:_:_:)``・
 /// ``SketchPart/mouseX`` など) は、スケッチが継ぐ ``SketchPart`` に置いてある。自分で書いた型も
 /// `: SketchPart` と名乗れば、その中から同じ語彙を使える。
 ///
