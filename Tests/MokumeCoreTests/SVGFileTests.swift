@@ -498,7 +498,7 @@ struct SVGFileTests {
         #expect(readable.skipped.isEmpty, "\(readable.skipped)")
     }
 
-    @Test("rect の rx・ry の読めない値は名乗り、書いていないものとして読む。auto・書いていない・負の値は名乗らない (#2556)")
+    @Test("rect の rx・ry の読めない値は名乗り、書いていないものとして読む。auto・書いていない値は名乗らない (#2556)")
     func unreadableCornerRadiusIsNamed() throws {
         let bad = try document(#"<rect width="10" height="10" rx="abc"/>"#)
         #expect(bad.skipped.map(\.what) == [#"<rect rx="abc">"#], "\(bad.skipped)")
@@ -511,10 +511,89 @@ struct SVGFileTests {
             Issue.record("角が丸まっていない: \(half.items[0].outline)")
             return
         }
-        for radii in [#"rx="auto""#, #"rx="auto" ry=" Auto ""#, "", #"rx="-3""#, #"ry="2""#] {
+        for radii in [#"rx="auto""#, #"rx="auto" ry=" Auto ""#, "", #"ry="2""#] {
             let clean = try document(#"<rect width="10" height="10" \#(radii)/>"#)
             #expect(clean.skipped.isEmpty, "\(radii): \(clean.skipped)")
         }
+    }
+
+    /// 形の寸法 (`rect` の `width` / `height`・`circle` の `r`) の負の値は SVG 2 で無効で、描かない結果は
+    /// 変えず、根の寸法 ([#2625]) と同じ形で名乗る ([#2648])。
+    ///
+    /// [#2625]: https://github.com/mokume-metal/mokume/issues/2625
+    /// [#2648]: https://github.com/mokume-metal/mokume/issues/2648
+    @Test(
+        "rect の width・height・circle の r が負なら、描かないまま skipped に載る (#2648)",
+        arguments: [
+            // (要素, 載るはずの名乗り)
+            (#"<rect width="-5" height="5"/>"#, [#"<rect width="-5">"#]),
+            (#"<rect width="5" height="-5"/>"#, [#"<rect height="-5">"#]),
+            (#"<rect width="-5" height="-6"/>"#, [#"<rect width="-5">"#, #"<rect height="-6">"#]),
+            // 単位つき・小数
+            (#"<rect width="-0.5in" height="5"/>"#, [#"<rect width="-0.5in">"#]),
+            (#"<circle r="-2"/>"#, [#"<circle r="-2">"#]),
+        ])
+    func negativeShapeSizeIsNamed(_ sample: (String, [String])) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
+    }
+
+    /// `ellipse` の負の `rx` / `ry` は SVG 2 では無効な値で、書いていない (`auto`) のと同じに読み、もう片方を
+    /// 使う ([#2648])。`rect` の `rx` / `ry` と同じ読み方で、どちらも名乗る。
+    ///
+    /// [#2648]: https://github.com/mokume-metal/mokume/issues/2648
+    @Test("ellipse の負の rx・ry は、書いていないものとして読んで名乗る (#2648)")
+    func negativeEllipseRadiusReadsAsAbsent() throws {
+        let one = try document(#"<ellipse cx="10" cy="10" rx="-5" ry="5"/>"#)
+        #expect(one.items.map(\.outline) == [.ellipse(centerX: 10, centerY: 10, radiusX: 5, radiusY: 5)])
+        #expect(one.skipped.map(\.what) == [#"<ellipse rx="-5">"#], "\(one.skipped)")
+        let other = try document(#"<ellipse cx="10" cy="10" rx="4" ry="-5"/>"#)
+        #expect(other.items.map(\.outline) == [.ellipse(centerX: 10, centerY: 10, radiusX: 4, radiusY: 4)])
+        #expect(other.skipped.map(\.what) == [#"<ellipse ry="-5">"#], "\(other.skipped)")
+        // 片方だけ書いて負なら、もう片方も無いので描かない
+        let alone = try document(#"<ellipse rx="-5"/>"#)
+        #expect(alone.items.isEmpty)
+        #expect(alone.skipped.map(\.what) == [#"<ellipse rx="-5">"#], "\(alone.skipped)")
+        // 両方が負なら描かず、2 つ名乗る
+        let both = try document(#"<ellipse rx="-5" ry="-6"/>"#)
+        #expect(both.items.isEmpty)
+        #expect(both.skipped.map(\.what) == [#"<ellipse rx="-5">"#, #"<ellipse ry="-6">"#], "\(both.skipped)")
+    }
+
+    @Test("rect の rx・ry の負は、書いていないものとして読んで名乗る (#2648。#2628 の「名乗らない」を見直した)")
+    func negativeCornerRadiusIsNamed() throws {
+        let one = try document(#"<rect width="10" height="10" rx="-3"/>"#)
+        #expect(one.skipped.map(\.what) == [#"<rect rx="-3">"#], "\(one.skipped)")
+        #expect(one.items[0].outline == .rect(x: 0, y: 0, width: 10, height: 10))
+        // 負の rx は書いていないものなので、読めた ry がもう片方にも使われる
+        let other = try document(#"<rect width="10" height="10" rx="-3" ry="2"/>"#)
+        #expect(other.skipped.map(\.what) == [#"<rect rx="-3">"#], "\(other.skipped)")
+        guard case .path = other.items[0].outline else {
+            Issue.record("角が丸まっていない: \(other.items[0].outline)")
+            return
+        }
+    }
+
+    @Test(
+        "0・-0・位置の負・正の値・auto・書いていない値は、名乗らない (#2648 の陰性対照)",
+        arguments: [
+            #"<rect width="0" height="5"/>"#,
+            #"<rect width="-0" height="5"/>"#,
+            #"<rect x="-3" y="-3" width="5" height="5"/>"#,
+            #"<rect width="auto" height="5"/>"#,
+            #"<circle cx="-3" cy="-3" r="2"/>"#,
+            #"<circle r="0"/>"#,
+            #"<circle r="-0"/>"#,
+            #"<circle/>"#,
+            #"<ellipse cx="-3" cy="-3" rx="2" ry="3"/>"#,
+            #"<ellipse rx="0" ry="0"/>"#,
+            #"<ellipse rx="auto" ry="3"/>"#,
+            #"<line x1="-3" y1="-3" x2="5" y2="5"/>"#,
+        ])
+    func zeroAndNegativePositionsAreNotNamed(_ element: String) throws {
+        let drawing = try document(element)
+        #expect(drawing.skipped.isEmpty, "\(element): \(drawing.skipped)")
     }
 
     /// SVG 2 では `width` / `height` は CSS の性質でもあるので、根の大きさを `style` 属性や `<style>` で
@@ -676,7 +755,7 @@ struct SVGFileTests {
             #"<rect width="1" height="1"/>"#, root: "<svg xmlns=\"http://www.w3.org/2000/svg\" \(sample.0)>")
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
         // 描かないのは変えない。名乗りは「負の値を捨てた」ではなく「この値で根を描かない」の意味で、
-        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は #2648 に置いてある
+        // CSS では負の宣言は無効で下の宣言が残る、という仕様差は `loadShape(_:)` の説明に書いてある (#2648)
         #expect(drawing.items.isEmpty, "\(sample.0): \(drawing.items)")
     }
 
