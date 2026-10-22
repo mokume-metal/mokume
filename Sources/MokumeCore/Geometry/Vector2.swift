@@ -474,8 +474,10 @@ nonisolated extension Vector2 {
     public func normalized() -> Vector2 {
         let magnitude = length
         guard magnitude > 0 else { return self }
-        // 長さそのものが Float に収まらないだけの有限な値は、向きだけを大きさで割って求める (#2885)
-        if magnitude == .infinity, simd.x.isFinite, simd.y.isFinite {
+        // 長さそのものが Float に収まらない (∞) か、非正規数に丸められる (約 1.2e-38 未満) だけの有限な値は、
+        // 向きだけを寄せた成分から求める (#2885・#2935)。非正規数の長さは 1.4e-45 の刻みに丸められる
+        // ので、それで割ると長さ 1 にならない (`Vector2(1.4e-45, 1.4e-45)` は 1.41 になる)
+        if magnitude == .infinity || magnitude < Float.leastNormalMagnitude, simd.x.isFinite, simd.y.isFinite {
             return Vector2(Vector2.scaledDirection(of: simd))
         }
         return Vector2(simd / magnitude)

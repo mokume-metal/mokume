@@ -593,6 +593,49 @@ struct ShapeValueTests {
         }
     }
 
+    /// 長さが非正規数 (約 1.2e-38 未満) に丸められる値。**斜めの値で見る** — 軸に沿った `(0, -t)` は、
+    /// 長さが成分とちょうど等しいので、丸められた長さで割っても偶然 (0, -1) になる。
+    ///
+    /// 長さ 1 の許容は 1e-6。結果の成分は 1 以下の正規数で、`scaledDirection` は 2 の冪で寄せて
+    /// 2 乗の和・平方根・割り算を 1 回ずつ丸めるだけなので、誤差は 1 の ulp (1.2e-7) の数倍に収まる。
+    /// 直す前は長さ 1.414 (`(t, t)`)・0.901 (`(2t, 3t)`)・0.990 (`(1e-44, 1e-44)`) まで外れた。
+    @Test("長さが非正規数になる斜めの値も、normalized() は長さ 1 になる (#2935)")
+    func normalizedOfSubnormalLengthIsOne() {
+        let t = Float.leastNonzeroMagnitude
+        let inputs: [Vector2] = [
+            Vector2(t, t), Vector2(2 * t, 3 * t), Vector2(-3 * t, 4 * t), Vector2(1e-44, 1e-44),
+            Vector2(1e-42, 1e-42), Vector2(3e-40, -4e-40), Vector2(1e-38, 1e-38), Vector2(1e-39, 0),
+            Vector2(0, -t),
+        ]
+        for input in inputs {
+            let direction = input.normalized()
+            let length = (direction.x * direction.x + direction.y * direction.y).squareRoot()
+            #expect(abs(length - 1) < 1e-6, "\(input) → \(direction) (長さ \(length))")
+            // 向きは変わらない (外積が 0 に近い。`Double` で掛けるので非正規数の積も丸めない)
+            let cross = Double(direction.x) * Double(input.y) - Double(direction.y) * Double(input.x)
+            #expect(abs(cross) <= 1e-6 * (Double(abs(input.x)) + Double(abs(input.y))), "\(input) の向き")
+        }
+    }
+
+    /// 上限を守る。上限も結果の成分も非正規数の刻み (1.4e-45) に丸められるので、長さは上限から刻み
+    /// 2 つ分以内に収まる (成分 2 つの丸めがそれぞれ刻みの半分)。
+    @Test("長さが非正規数になる値でも、limited(to:) は上限の長さに縮める (#2935)")
+    func limitedOfSubnormalLength() {
+        let t = Float.leastNonzeroMagnitude
+        for (input, limit) in [
+            (Vector2(1e-42, 1e-42), Float(5e-43)), (Vector2(3e-40, -4e-40), 1e-40),
+            (Vector2(1e-44, 1e-44), 4e-45), (Vector2(2 * t, 3 * t), 2 * t),
+        ] {
+            let limited = input.limited(to: limit)
+            // 2 乗が潰れるので `Double` で測る
+            let length = Float((Double(limited.x) * Double(limited.x) + Double(limited.y) * Double(limited.y)).squareRoot())
+            #expect(abs(length - limit) <= 2 * t, "\(input).limited(to: \(limit)) → \(limited) (長さ \(length))")
+            #expect(limited.x.sign == input.x.sign && limited.y.sign == input.y.sign, "\(input) の向き")
+        }
+        // 上限以下なら変えずに返す
+        #expect(Vector2(1e-42, 1e-42).limited(to: 1e-41) == Vector2(1e-42, 1e-42))
+    }
+
     @Test("小さい値でも limited(to:) は上限を守る (2 乗の和が 0 に潰れる値も)")
     func limitedOfSmallComponents() {
         let limited = Vector2(3e-30, 4e-30).limited(to: 1e-30)
