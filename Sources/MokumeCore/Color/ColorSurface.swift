@@ -191,7 +191,7 @@ public func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertibl
 /// ```
 ///
 /// ``SketchPart/fill(_:_:)-(LinearRGBA,_)`` の色の値と不透明度の形と同じ式で、描く状態ではなく**色の値**を作る。
-/// ``Placement/init(x:y:z:scale:rotation:fill:)`` の `fill` や
+/// ``Placement/fill`` や
 /// ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` の `color`、``lerpColor(_:_:_:)`` の
 /// 両端のように、色の値を受ける口へ薄めた色を渡したいときに使う。色の成分 (乗算済み) を手で縮める
 /// 必要は無い。
