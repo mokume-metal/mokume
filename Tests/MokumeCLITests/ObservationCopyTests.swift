@@ -243,6 +243,46 @@ struct ObservationCopyTests {
         #expect(!FileManager.default.fileExists(atPath: place.copies.root.appendingPathComponent("escape.png").path))
     }
 
+    // MARK: - 目録を書かない版 (#408 より前)
+
+    /// その版は応答を消さずに絵を先に上書きする (v0.1.0 の `respond`)。**応答が自分の識別子のままでも
+    /// 他人の絵でありうる**ので、写した後の確かめは何も言えない。写さず、確かめられないことを名乗る。
+    @Test("目録の無い版は、写さず、区画の場所と確かめられないことを名乗る")
+    func aReplyWithoutACatalogueIsNotCopiedAndSaysSo() throws {
+        let place = makePlace()
+        defer { try? FileManager.default.removeItem(at: place.directory) }
+        put("X", at: place.facet.appendingPathComponent("frame.png"))
+        put(#"{"id":"H","schemaVersion":1,"frame":1,"time":0.5,"image":"frame.png","warnings":[]}"#, at: place.report)
+        let outcome = place.tools.call("observe", arguments: [:])
+        #expect(!outcome.isError)
+        let path = try #require(imagePath(outcome.text))
+        #expect(path == place.facet.appendingPathComponent("frame.png").path)
+        #expect(outcome.text.contains("until the next request"), "次の要求までと言わない: \(outcome.text)")
+        #expect(outcome.text.contains("cannot be checked"), "確かめられないと言わない: \(outcome.text)")
+        #expect(outcome.text.contains("has no catalogue (frames)"))
+        #expect(!FileManager.default.fileExists(atPath: place.copies.root.path), "確かめられないものを写した")
+    }
+
+    // MARK: - 本文の JSON
+
+    @Test("本文の JSON の絵の名前も、返す場所の絶対の綴りになっている")
+    func theJSONNamesTheReturnedPlace() throws {
+        let place = makePlace()
+        defer { try? FileManager.default.removeItem(at: place.directory) }
+        stage(place, pictures: [("a.png", "1"), ("b.png", "2")])
+        let outcome = place.tools.call("observe", arguments: ["count": 2])
+        let directory = place.copies.root.appendingPathComponent("H").path
+        let json = try #require(outcome.text.range(of: "{"))
+        let body = try #require(
+            JSONSerialization.jsonObject(with: Data(outcome.text[json.lowerBound...].utf8)) as? [String: Any])
+        #expect(body["image"] as? String == "\(directory)/b.png")
+        let frames = try #require(body["frames"] as? [[String: Any]])
+        #expect(frames.compactMap { $0["image"] as? String } == ["\(directory)/a.png", "\(directory)/b.png"])
+        for case let path as String in frames.map({ $0["image"] as Any }) {
+            #expect(FileManager.default.fileExists(atPath: path))
+        }
+    }
+
     // MARK: - 4: 写しは溜め続けない
 
     @Test("直近の観測の分だけ残し、古い写しは次の写しで消える。読むまでは消えない")
@@ -296,5 +336,63 @@ struct ObservationCopyTests {
         #expect(first.root != second.root)
         #expect(first.root.path.hasPrefix(FileManager.default.temporaryDirectory.path))
         #expect(!first.root.path.contains("/.mokume/"))
+    }
+
+    // MARK: - 信号で終わった窓口の置き場
+
+    @Test("持ち主のプロセスが居ない古い置き場は、次の窓口が掃く。生きている持ち主と自分のは残す")
+    func staleRootsOfDeadOwnersAreSwept() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-sweep-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let prefix = ObservationCopies.prefix
+        let dead = directory.appendingPathComponent("\(prefix)4000001-aaaa")
+        let alive = directory.appendingPathComponent("\(prefix)4000002-bbbb")
+        let mine = directory.appendingPathComponent("\(prefix)\(getpid())-cccc")
+        let others = [
+            directory.appendingPathComponent("mokume-observe-4000001-aaaa"),
+            directory.appendingPathComponent("\(prefix)notapid-dddd"),
+        ]
+        for url in [dead, alive, mine] + others {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        ObservationCopies.sweepStale(in: directory, isAlive: { $0 != 4_000_001 })
+        #expect(!FileManager.default.fileExists(atPath: dead.path), "持ち主が居ない置き場が残った")
+        for url in [alive, mine] + others {
+            #expect(FileManager.default.fileExists(atPath: url.path), "消してはいけない: \(url.lastPathComponent)")
+        }
+        // 既定の判定でも、自分の pid は生きている
+        ObservationCopies.sweepStale(in: directory)
+        #expect(FileManager.default.fileExists(atPath: mine.path))
+    }
+
+    @Test("既定の置き場の名前は持ち主の pid を持つ")
+    func theDefaultRootNamesItsOwner() {
+        let root = ObservationCopies().root
+        #expect(root.lastPathComponent.hasPrefix("\(ObservationCopies.prefix)\(getpid())-"))
+    }
+
+    // MARK: - 枚数の上限
+
+    @Test("残す絵の枚数の合計が上限を越えたら、古い観測から消す。最新の 1 件は越えても残す")
+    func picturesAreBoundedByTheirTotalCount() throws {
+        let place = makePlace(keep: 10)
+        defer { try? FileManager.default.removeItem(at: place.directory) }
+        let copies = ObservationCopies(root: place.copies.root, keep: 10, maxPictures: 5)
+        func observe(_ id: String, _ count: Int) throws {
+            var tools = place.tools
+            tools.copies = copies
+            tools.makeID = { id }
+            let names = (1...count).map { "\(id)-\($0).png" }
+            stage(place, id: id, pictures: names.map { ($0, "x") })
+            _ = tools.call("observe", arguments: ["count": count])
+        }
+        try observe("one", 2)
+        try observe("two", 2)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: place.copies.root.path).sorted() == ["one", "two"])
+        try observe("three", 2)  // 合計 6 枚 > 5: 最も古い 1 件を消す
+        #expect(try FileManager.default.contentsOfDirectory(atPath: place.copies.root.path).sorted() == ["three", "two"])
+        try observe("big", 8)  // 1 件で 8 枚 > 5: 古いものはすべて消え、最新の 1 件だけ残る
+        #expect(try FileManager.default.contentsOfDirectory(atPath: place.copies.root.path) == ["big"])
     }
 }
