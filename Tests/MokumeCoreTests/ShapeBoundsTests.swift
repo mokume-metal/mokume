@@ -307,9 +307,9 @@ struct ShapeBoundsTests {
             """
         let drawing = try SVGFile.parse(source, path: "mark.svg")
         let shape = canvas.shape(of: drawing, readFrom: "mark.svg")
-        // 3 次ベジェを刻んだ周の点の外接なので、真の外接 (4〜60) と数 1e-3 のうちで合う
-        expectBox(shape.bounds, 4, 4, 56, 56, tolerance: 0.05)
+        // 3 次ベジェを刻んだ周の点の外接なので、真の外接 (4〜60) と 1e-3 のうちで合う (周の点に曲線の端 4・60 が入る)
+        expectBox(shape.bounds, 4, 4, 56, 56, tolerance: 1e-3)
         let center = try #require(shape.bounds).center
-        #expect(abs(center.x - 32) < 0.05 && abs(center.y - 32) < 0.05, "中心が viewBox の中心から離れている: \(center)")
+        #expect(abs(center.x - 32) < 1e-3 && abs(center.y - 32) < 1e-3, "中心が viewBox の中心から離れている: \(center)")
     }
 }
