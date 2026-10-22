@@ -82,7 +82,6 @@ extension Sketch {
             }
         }
         let movie = Movie(image: image, reader: reader, name: "video: \(file)", owner: self)
-        attach(movie)
-        return movie
+        return attachedAfterSurface(movie)
     }
 }

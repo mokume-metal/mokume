@@ -279,6 +279,55 @@ extension SketchPart {
         }
     }
 
+    /// **確かめて、作って、足すまでを 1 回で行う** (投げる作る口・[#2794])。足せなければ、作る前に ``requireAttachable(_:calledAs:)`` と
+    /// 同じく `call` の名前で 1 度だけ警告して `notRunning(call:)` を投げる。足せる所なら `make` で入り口を作り、足して返す。
+    ///
+    /// **作る口は、公開の ``attach(_:)-(Inlet)`` を素で呼ばず、これを通る。** 素の `attach` は足せなかったとき
+    /// (`false`) を返すだけで、呼ぶ側が捨てると黙って生きていない入り口を返す。確かめるのと足すのが 2 回の呼びに
+    /// 分かれると、新しい口が古い形を写す (#2297・#2295)。写しは `scripts/check-attach-result.py` が `ci-static` で赤くする。
+    ///
+    /// 足した結果の `false` (入り口を開けなかった・拒まれた) は、ここで 1 か所だけ捨てる。入り口は自分の `state` で
+    /// 言う (ポートが使用中なら `unavailable` など) ので、作る口は作ったものをそのまま返す。
+    ///
+    /// - Parameters:
+    ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
+    ///   - call: エラーと警告に載せる口の名前。呼ぶ側の `#function` が入る。
+    ///   - make: 入り口を作る。ファイルを読む・ポートを開く仕事は、確かめた後のここに置く。
+    ///
+    /// [#2794]: https://github.com/mokume-metal/mokume/issues/2794
+    package func attached<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () throws(Failure) -> Part
+    ) throws(Failure) -> Part {
+        try requireAttachable(failure, calledAs: call)
+        let part = try make()
+        // 同じ所から続けて呼ぶので足せる。`false` は入り口の状態が言う
+        _ = attach(part)
+        return part
+    }
+
+    /// ``attached(_:calledAs:making:)`` の、作るのが投げない口。足せない所で投げるのは確かめだけ。
+    package func attached<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () -> Part
+    ) throws(Failure) -> Part {
+        try requireAttachable(failure, calledAs: call)
+        let part = make()
+        _ = attach(part)
+        return part
+    }
+
+    /// 資源 (面) を取れた所から、作った入り口を続けて足す (投げる作る口・[#2794])。
+    ///
+    /// 作る前に面を確かめる口 (`createImage(_:_:calledAs:)` を通る ``Capture``・``Movie``) の道具。**確かめは作る側が
+    /// 済ませているので、ここでは足すだけ**である。確かめを足すと、外で呼んだときの警告が資源を作る口の名乗り
+    /// (``SketchPart/requireSurface(_:calledAs:)`` の `thrown`) から変わる。足した結果の `false` を捨てるのは、
+    /// ``attached(_:calledAs:making:)`` と同じ理由で、ここだけ。
+    ///
+    /// [#2794]: https://github.com/mokume-metal/mokume/issues/2794
+    package func attachedAfterSurface<Part: Inlet>(_ part: Part) -> Part {
+        _ = attach(part)
+        return part
+    }
+
     /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げない作る口)。足せなければ、`call` の名前で
     /// 1 度だけ警告して `false` を返す。`value` は、代わりに返すものの人が読む綴り。
     ///
