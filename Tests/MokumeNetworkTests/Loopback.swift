@@ -305,14 +305,16 @@ func readWithin<Value: Sendable>(
 
 /// 受け口の様子。**ある 1 つの時点の写し** — 名乗りは、送り手の様子と同じ時点で撮る。
 nonisolated struct ReceiverView: Sendable {
-    var state: SourceState
+    /// 受け口の状態。``SourceState`` を持たない受け口 (``DatagramListener`` を直に使う検査) は `nil`。
+    var state: SourceState?
     /// 受け口の移り変わりの跡。読めない出どころなら `nil`。
     var trace: EventTrace?
     /// 送り元の出入りの数と持つ数。受け口の待ち行列が期限までに答えなかったら `nil`。
     var tally: SenderTally?
     var connections: Int?
     /// 受け口の知らせ (`told`)。送り手の名乗り (`Could not send to …`) は送り手の行なので除く。
-    var told: [String]
+    /// 知らせを持たない受け口 (``DatagramListener`` を直に使う検査) は `nil`。
+    var told: [String]?
     /// 待ち行列を待った期限 (秒)。
     var patience: TimeInterval
     /// 受け口を読めない出どころ (``DatagramSource`` でない) だった。
@@ -321,8 +323,9 @@ nonisolated struct ReceiverView: Sendable {
     var accepted: Int? { tally?.accepted }
 
     var text: String {
-        if unreadable { return "\(state.rawValue)・出どころを読めない" }
-        var parts = [state.rawValue]
+        let stateText = state?.rawValue ?? "状態は読めない"
+        if unreadable { return "\(stateText)・出どころを読めない" }
+        var parts = [stateText]
         if let trace { parts.append("移り変わり \(trace.count) 回・最後: \(trace.last ?? "なし")") }
         if let tally, let connections {
             parts.append(
@@ -331,23 +334,27 @@ nonisolated struct ReceiverView: Sendable {
             parts.append(
                 "受け口の待ち行列が \(String(format: "%.1f", patience)) 秒答えなかった (受け入れ・持つ数は読めない)")
         }
-        parts.append(
-            told.isEmpty
-                ? "受け口の知らせは 0 行" : "受け口の知らせ \(told.count) 行 \(told.prefix(5).map { String($0.prefix(140)) })")
+        if let told {
+            parts.append(
+                told.isEmpty
+                    ? "受け口の知らせは 0 行" : "受け口の知らせ \(told.count) 行 \(told.prefix(5).map { String($0.prefix(140)) })")
+        } else {
+            parts.append("受け口の知らせは持たない")
+        }
         return parts.joined(separator: "・")
     }
 }
 
 /// 受け口の様子を撮る。**待ち行列の上の読み (`read`) は期限つき** (``readWithin(_:_:)``)。
 func receiverView(
-    _ state: SourceState, tracing: AnyObject?, told: Told, within seconds: TimeInterval = 3,
-    read: @escaping @Sendable () -> (SenderTally, Int)
+    _ state: SourceState?, tracing: AnyObject?, told: Told?, within seconds: TimeInterval = 3,
+    trace: EventTrace? = nil, read: @escaping @Sendable () -> (SenderTally, Int)
 ) async -> ReceiverView {
     let answered = await readWithin(seconds, read)
     return ReceiverView(
-        state: state, trace: (tracing as? any EventTracing)?.trace, tally: answered?.0,
+        state: state, trace: trace ?? (tracing as? any EventTracing)?.trace, tally: answered?.0,
         connections: answered?.1,
-        told: told.lines.filter { !$0.hasPrefix("Could not send to") }, patience: seconds)
+        told: told?.lines.filter { !$0.hasPrefix("Could not send to") }, patience: seconds)
 }
 
 /// 受け口 (``DatagramSource``) の様子を撮る。
@@ -418,6 +425,32 @@ func landing(of udp: TextPort, port: Int, told: Told) -> Landing {
         })
 }
 
+/// 受け口 (``DatagramListener``) を直に使う検査の読み口 (#3105)。素の socket の 1 通は `probe` の 5 文字を `port` へ
+/// 送る。
+///
+/// ``SourceState`` と受け口の知らせは持たないので、名乗りは「状態は読めない」「受け口の知らせは持たない」と言う。
+/// 移り変わりは、検査が集めた `events` の数と最後のもの。
+///
+/// - Parameters:
+///   - events: 検査が受けた移り変わりの列 (`"\(event)"`)。
+///   - probeArrived: 素の socket の 1 通 (`probe`) が、検査の読み取り口に届いたか。
+func landing(
+    of listener: DatagramListener, port: Int, events: @escaping @Sendable () -> [String],
+    probeArrived: @escaping @Sendable () -> Bool
+) -> Landing {
+    Landing(
+        receiver: {
+            let seen = events()
+            return await receiverView(
+                nil, tracing: nil, told: nil, within: 3,
+                trace: EventTrace(count: seen.count, last: seen.last)
+            ) { (listener.tally, listener.connectionCount) }
+        },
+        probe: {
+            await probeWithRawSocket(port: port, packet: Array("probe".utf8), arrived: probeArrived)
+        })
+}
+
 /// 送り手の様子を数える記録 (#3001)。送り元の補助 (``sendAndCollect(_:expecting:to:senders:replacements:within:label:log:makeSender:)``・
 /// `OSCPortTests` の `sendNumberedBurst`・``collect(_:count:within:label:log:)``) が、前提の段で見たことを足す。
 ///
@@ -461,6 +494,14 @@ nonisolated final class SendLog: Sendable {
     }
     private let state = Mutex(State())
 
+    /// 送り手が素の socket (``RawDatagramSocket``) である記録か。素の socket は `sendto` で必ず出て、名乗りも
+    /// 替えもない。名乗りが 0 行なのを「黙っている」と読ませず、替えた回数も言わない (#3105)。
+    let rawSocket: Bool
+
+    /// - Parameter rawSocket: 送り手が素の socket か。素の socket から送る検査は、``collectOrName(_:count:within:landing:_:)``・
+    ///   ``requireRawArrival(_:within:landing:until:)`` が、この記録を作って名乗る。
+    init(rawSocket: Bool = false) { self.rawSocket = rawSocket }
+
     /// 送り元の名乗り (`Could not send to …`) を 1 行足す。替えた後の古い送り元の遅れた名乗りも数える。
     func complain(_ line: String, label: String, index: Int) {
         state.withLock { $0.complaints[Slot(label: label, index: index), default: []].append(line) }
@@ -498,6 +539,14 @@ nonisolated final class SendLog: Sendable {
         }
     }
 
+    /// 通の数を数えない待ち (条件が満ちるのを待つだけの段) の、待った秒数と期限を足す。
+    func recordWait(waited: TimeInterval, limit: TimeInterval) {
+        state.withLock {
+            $0.waited += waited
+            $0.limit += limit
+        }
+    }
+
     /// 待った秒数と期限。呼びを重ねたときは、どちらも合計。
     var waitText: String {
         state.withLock {
@@ -530,10 +579,16 @@ nonisolated final class SendLog: Sendable {
                 } else if group.heard < group.expected {
                     line += "・読めなかった \(group.expected - group.heard) 通 (どの通かは分からない)"
                 }
-                line += "・替えた \(group.replacements) 回・替えた後に読めた \(group.heardAfterReplacement) 本"
+                if !rawSocket {
+                    line += "・替えた \(group.replacements) 回・替えた後に読めた \(group.heardAfterReplacement) 本"
+                }
                 parts.append(line)
             }
-            parts.append("(替えた後に読めた数は、古い送り元から遅れて届いた分も含み、出どころは区別できない)")
+            if rawSocket {
+                parts.append("素の socket から直に送った (送り手は名乗らず、替えもしない)")
+            } else {
+                parts.append("(替えた後に読めた数は、古い送り元から遅れて届いた分も含み、出どころは区別できない)")
+            }
 
             // 送り元の跡: 読めなかった側と読めた側で、同じ様子の送り元を数える
             var missed: [String: Int] = [:]
@@ -556,7 +611,8 @@ nonisolated final class SendLog: Sendable {
 
             let total = state.complaints.values.reduce(0) { $0 + $1.count }
             if total == 0 {
-                parts.append("名乗りは 0 行 (黙っている)")
+                // 素の socket は名乗りを持たない。0 行を「黙っている」と読ませない
+                if !rawSocket { parts.append("名乗りは 0 行 (黙っている)") }
             } else {
                 let owners = Dictionary(grouping: state.complaints.keys, by: \.label)
                     .sorted { $0.key < $1.key }
@@ -626,6 +682,48 @@ func requireSent(
         ok,
         "\(what()) (\(log.waitText))。送り手: \(senders)。受け口 (1 通の前): \(before.text)。素の socket の 1 通: \(probeText)。受け口 (1 通の後): \(after.text)。注: この 1 通は、送り元が一度に来た後の静かなときに送る。一度に来たときだけ受け口で落ちる形は、この 1 通では分からない。受け入れの数の差には、遅れて届いた別の送り元の分も入る"
     )
+}
+
+/// 素の socket (``RawDatagramSocket``) から送った通が `count` 通読まれる前提を求め、読めた通を返す。
+/// **読まれなければ、受け口側の様子と素の 1 通の前後の受け入れの差を名乗って 1 つで止まる** (#3105)。
+///
+/// 素の socket は `sendto` で必ず出る (Network.framework の繋ぎを通らない) ので、「送り手で出なかった」は無く、
+/// 読まれない回は受け口側の話である。名乗りの中身は ``requireSent(_:_:log:landing:)`` で、送り手の欄は
+/// 「様子を読めない送り元」(素の socket は ``SendTrace`` を持たない) と言う。期限は延ばさず、受け口を
+/// 開き直さず、救わない。
+///
+/// - Parameters:
+///   - note: 名乗りの末尾に足す 1 文 (どの段か)。
+func collectOrName(
+    _ port: TextPort, count: Int, within seconds: TimeInterval = 5, landing: Landing, _ note: String = ""
+) async throws -> [String] {
+    let label = "素の socket"
+    let log = SendLog(rawSocket: true)
+    log.watch(label) { nil }
+    let received = await collect(port, count: count, within: seconds, label: label, log: log)
+    try await requireSent(
+        received.count >= count, "素の socket から送った \(count) 通のうち読めたのは \(received.count) 通\(note)", log: log,
+        landing: landing)
+    return received
+}
+
+/// 素の socket から送った結果の `condition` が満ちるのを、期限まで待つ。**満ちなければ、受け口側の様子と素の
+/// 1 通の前後の受け入れの差を名乗って 1 つで止まる** (#3105)。``collectOrName(_:count:within:landing:_:)`` が
+/// 使えない段 (受け口を ``TextPort`` で包まず、読んだ結果を検査が自分で持つ) の道具。
+///
+/// - Parameter what: 満たされなかったことの 1 文。**素の 1 通を送る前に評価する** (読めたものを載せられる)。
+func requireRawArrival(
+    _ what: @autoclosure () -> String, within seconds: TimeInterval = 5, landing: Landing,
+    until condition: () -> Bool
+) async throws {
+    let log = SendLog(rawSocket: true)
+    log.watch("素の socket") { nil }
+    let started = Date()
+    let met = await until(seconds) { condition() }
+    log.recordWait(waited: Date().timeIntervalSince(started), limit: seconds)
+    // 素の 1 通を送る前に評価する (送った 1 通が「読めたもの」に混ざらない)
+    let named = met ? "" : what()
+    try await requireSent(met, named, log: log, landing: landing)
 }
 
 /// 1 つの送り元から datagram の列を送り、`count` 通が届くまで (か期限まで) 集めて、読まれた文字列を返す。

@@ -120,6 +120,38 @@ struct LoopbackNamingTests {
         }
     }
 
+    @Test("素の socket から送る記録は、名乗りの 0 行を黙っていると読ませず、替えた回数を言わず、様子を読めない送り元と名乗り、待っただけの段も秒数を名乗る")
+    func requireSentNamesARawSocketSender() async throws {
+        let log = SendLog(rawSocket: true)
+        log.watch("素の socket") { nil }
+        log.record(
+            label: "素の socket", expected: 3, heard: 1, missing: nil, replacements: 0,
+            heardAfterReplacement: 0, waited: 1, limit: 5)
+        let text = try await said {
+            try await requireSent(
+                false, "読めなかった", log: log, landing: scripted(before: 5, after: 6, probe: true))
+        }
+        #expect(text.contains("素の socket: 読めたのは 1/3・読めなかった 2 通 (どの通かは分からない)"), "\(text)")
+        #expect(text.contains("送り元の様子 {様子を読めない送り元}×1"), "\(text)")
+        #expect(text.contains("素の socket から直に送った"), "\(text)")
+        #expect(!text.contains("黙っている") && !text.contains("替えた"), "\(text)")
+        #expect(text.contains("待った 1.0 秒/期限 5.0 秒"), "\(text)")
+
+        // 通の数を数えない待ちは、待った秒数と期限だけを足す (数え方の欄は出ない)
+        let waiting = SendLog(rawSocket: true)
+        waiting.recordWait(waited: 0.5, limit: 2)
+        waiting.recordWait(waited: 0.3, limit: 3)
+        #expect(waiting.waitText == "待った 0.8 秒/期限 5.0 秒", "\(waiting.waitText)")
+        #expect(!waiting.senderText.contains("読めたのは"), "\(waiting.senderText)")
+
+        // 素の socket でない記録は、従来どおり黙っていると名乗る
+        let silent = try await said {
+            try await requireSent(
+                false, "読めなかった", log: SendLog(), landing: scripted(before: 5, after: 6, probe: true))
+        }
+        #expect(silent.contains("名乗りは 0 行 (黙っている)"), "\(silent)")
+    }
+
     @Test("名乗りは、送り手の様子と受け口の様子を同じ時点で撮ってから 1 通を送り、その後にもう 1 度受け口を撮る。満たされたときは何もしない")
     func requireSentTakesSnapshotsAroundTheProbe() async throws {
         let calls = Calls()

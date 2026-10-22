@@ -209,18 +209,19 @@ struct OSCPortTests {
     ///
     /// `log` を渡せば、読めた数と待った秒数を数える (読まれなかった回の名乗りの材料 — #3001)。
     private func collect(
-        _ osc: OSCPort, count: Int, label: String = "送り", log: SendLog? = nil
+        _ osc: OSCPort, count: Int, within seconds: TimeInterval = 5, label: String = "送り",
+        log: SendLog? = nil
     ) async -> [OSCMessage] {
         var received: [OSCMessage] = []
         let started = Date()
-        _ = await until {
+        _ = await until(seconds) {
             osc.supply()
             received += osc.messages
             return received.count >= count
         }
         log?.record(
             label: label, expected: count, heard: min(received.count, count), missing: nil, replacements: 0,
-            heardAfterReplacement: 0, waited: Date().timeIntervalSince(started), limit: 5)
+            heardAfterReplacement: 0, waited: Date().timeIntervalSince(started), limit: seconds)
         return received
     }
 
@@ -313,6 +314,23 @@ struct OSCPortTests {
     ) async throws {
         try await requireSent(
             ok, what(), log: log, landing: landing(of: osc, port: port, told: told))
+    }
+
+    /// 素の socket から送った通が `count` 通読まれるのを待つ。読まれなければ、受け口の様子と素の 1 通の前後の
+    /// 受け入れの差を名乗って 1 つで止まる (#3105)。名乗りは ``requireSent(_:_:log:landing:)``・
+    /// 素の socket の記録は ``collectOrName(_:count:within:landing:_:)`` と同じ。
+    private func heard(
+        _ osc: OSCPort, count: Int, within seconds: TimeInterval = 5, port: Int, told: Told,
+        _ note: String = ""
+    ) async throws -> [OSCMessage] {
+        let label = "素の socket"
+        let log = SendLog(rawSocket: true)
+        log.watch(label) { nil }
+        let received = await collect(osc, count: count, within: seconds, label: label, log: log)
+        try await requireHeard(
+            received.count >= count, "素の socket から送った \(count) 通のうち読めたのは \(received.count) 通\(note)",
+            log: log, osc: osc, port: port, told: told)
+        return received
     }
 
     /// 127.0.0.1 で、OS が選んだポート (0 を頼む) で受け、送り先も同じポートにした入り口。開いて、
@@ -629,7 +647,7 @@ struct OSCPortTests {
         for packet in [blob, bundle, try Wire.encoded(next)] {
             #expect(peer.send(packet, to: port) == packet.count)
         }
-        let received = await collect(osc, count: 1)
+        let received = try await heard(osc, count: 1, port: port, told: told, "(/next)")
         #expect(received == [next])
         #expect(osc.input.unreadable == 2)
         #expect(told.lines.isEmpty)
@@ -649,7 +667,7 @@ struct OSCPortTests {
         let message = OSCMessage("/m", arguments: [])
         let packet = try Wire.encoded(message)
         #expect(peer.send(packet, to: port) == packet.count)
-        var received = await collect(osc, count: 1)
+        var received = try await heard(osc, count: 1, port: port, told: told, "(/m)")
         #expect(peer.send([], to: port) == 0)
         #expect(await until { osc.input.unreadable == 1 })
 
@@ -658,7 +676,7 @@ struct OSCPortTests {
         for _ in 0..<5 {
             #expect(peer.send(packet, to: port) == packet.count)
         }
-        received += await collect(osc, count: 5)
+        received += try await heard(osc, count: 5, port: port, told: told, "(空の後の /m 5 通)")
         #expect(received == Array(repeating: message, count: 6))
         #expect(osc.input.unreadable == 1)
     }
@@ -675,7 +693,8 @@ struct OSCPortTests {
 
         for index in 0..<3 {
             #expect(peer.send(packet, to: port) == packet.count)
-            #expect(await collect(osc, count: 1) == [OSCMessage("/m", arguments: [])])
+            let received = try await heard(osc, count: 1, port: port, told: told, "(\(index) 周目の /m)")
+            #expect(received == [OSCMessage("/m", arguments: [])])
             #expect(peer.send([], to: port) == 0)
             try await requireWait(
                 "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
@@ -812,6 +831,37 @@ struct OSCPortTests {
         #expect(text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
         #expect(text.contains("受け口の知らせは 0 行"), "名乗り: \(text)")
         #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1"), "名乗り: \(text)")
+    }
+
+    @Test("素の socket から送った通が読まれなければ、受け口の様子と素の 1 通の前後の受け入れの差を名乗り、送り手の欄は様子を読めない送り元と言って 1 つで止まる (#3105)")
+    func rawSocketShortReadNamesTheReceiver() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        let packet = try Wire.encoded(OSCMessage("/m", arguments: []))
+
+        // 1 通だけ送って 2 通を期待する (2 通目は来ない)
+        #expect(peer.send(packet, to: port) == packet.count)
+        let text = try await said {
+            _ = try await heard(osc, count: 2, within: 0.5, port: port, told: told, "(2 通目は送っていない)")
+        }
+        #expect(text.contains("素の socket から送った 2 通のうち読めたのは 1 通(2 通目は送っていない)"), "名乗り: \(text)")
+        #expect(text.contains("期限 0.5 秒"), "名乗り: \(text)")
+        #expect(text.contains("受け口 (1 通の前): running") && text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
+        #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1 (新しい送り元を受けられた)"), "名乗り: \(text)")
+        // 送り手の欄: 素の socket は名乗りも替えも持たない。黙っているとは言わない
+        #expect(text.contains("送り元の様子 {様子を読めない送り元}×1"), "名乗り: \(text)")
+        #expect(!text.contains("黙っている") && !text.contains("替えた"), "名乗り: \(text)")
+
+        // 受け口が受けない形 (閉じた受け口) は、素の 1 通も読まれず、受け口側と読み分けられる
+        osc.close()
+        let closed = try await said {
+            _ = try await heard(osc, count: 1, within: 0.3, port: port, told: told)
+        }
+        #expect(closed.contains("受け口 (1 通の前): stopped"), "名乗り: \(closed)")
+        #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
     }
 
     /// 黙りの検査の場面。送る送り元の数と、最初の `/late` が既存の繋ぎで渡される形にするか。
