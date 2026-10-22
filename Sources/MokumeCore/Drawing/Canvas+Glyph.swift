@@ -179,7 +179,7 @@ extension Canvas {
         let spread = max(sum * sum - 4 * determinant * determinant, 0).squareRoot()
         let stretch = ((sum + spread) / 2).squareRoot()
         guard stretch.isFinite, stretch > 1 else { return 0 }
-        let step = Int((log2(stretch) * Float(GlyphAtlas.stepsPerOctave)).rounded())
+        let step = Int((RuntimeMath.log2(stretch) * Float(GlyphAtlas.stepsPerOctave)).rounded())
         return min(step, glyphStepLimit)
     }
 
@@ -188,7 +188,7 @@ extension Canvas {
     private var glyphStepLimit: Int {
         let size = style.textSize
         guard size > 0, size < Self.largestBakedEm else { return 0 }
-        return Int((log2(Self.largestBakedEm / size) * Float(GlyphAtlas.stepsPerOctave)).rounded(.down))
+        return Int((RuntimeMath.log2(Self.largestBakedEm / size) * Float(GlyphAtlas.stepsPerOctave)).rounded(.down))
     }
 
     private static let largestBakedEm: Float = 2048

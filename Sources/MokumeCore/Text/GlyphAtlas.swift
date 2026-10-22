@@ -189,7 +189,7 @@ import simd
 
     /// 段 `step` で焼くときの、`size` に対する倍率。段 0 は厳密に 1。
     static func ratio(ofStep step: Int) -> Float {
-        step == 0 ? 1 : exp2(Float(step) / Float(stepsPerOctave))
+        step == 0 ? 1 : RuntimeMath.pow(2, Float(step) / Float(stepsPerOctave))
     }
 
     /// 1 フレームに、新しく焼いてよい拡大した字形 (段が 0 より上) の数の上限 ([#2446])。越えた分は、
