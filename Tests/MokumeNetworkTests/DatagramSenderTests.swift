@@ -163,6 +163,64 @@ struct DatagramSenderTests {
         #expect(told.lines.count == 2)
     }
 
+    /// 受け手が居ない間の最後の送信が誤り無く終わり、受け手が開くまでが `confirmAfter` を超えると、
+    /// 送れたと読んで戻る。そこへ拒否の残りが返ると 2 行目を名乗る (#3045)。**設計どおりの結果** —
+    /// 拒否は次の送信の失敗として返るので、間を空けて出した送信が誤り無く終わっても、その前の送信の
+    /// 拒否が遅れて返ることまでは見分けられない。時計を手で進めて、実時間の揺れ無しに固定する。
+    /// 本物の繋ぎで送り続ける検査 (``DatagramSenderLoopbackTests``) は、この形に入らないよう、
+    /// 受け手が開くまでの時計を止めておく (実時間で測ると、負荷の下でここへ入って数が揺れた)。
+    @Test("居ない間の最後の送信が誤り無く終わり、開くまでが confirmAfter を超えると、残りの拒否で 2 行目を名乗る")
+    func aLeftoverRefusalAfterTheReceiverOpensIsToldAgain() {
+        let told = Told()
+        let clock = ManualClock(0)
+        let sender = clocked(told, clock, confirmAfter: 0.1)
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        complete(sender, refused, on: connection)
+        #expect(told.lines.count == 1)
+
+        // 受け手が居ない間の最後の送信 (0 秒に誤り無く終わる)。そこから 0.3 秒後に受け手が開き、
+        // 次の送信は誤り無く終わる (間が confirmAfter 以上なので、戻る)
+        let next = unstartedConnection()
+        sender.onQueue { sender.attach(next) }
+        complete(sender, nil, on: next, issuedAt: 0)
+        clock.advance(by: 0.3)
+        complete(sender, nil, on: next, issuedAt: clock.provider())
+        #expect(told.lines.count == 1)
+
+        // 拒否の残りが返る
+        complete(sender, refused, on: next)
+        #expect(told.lines.count == 2)
+    }
+
+    @Test("受け手が開くまでに confirmAfter が経たなければ、残りの拒否は名乗らない。経ってから戻れば、次の拒否をまた名乗る")
+    func aLeftoverRefusalBeforeConfirmAfterIsNotToldAgain() {
+        let told = Told()
+        let clock = ManualClock(0)
+        let sender = clocked(told, clock, confirmAfter: 0.1)
+        let connection = unstartedConnection()
+        sender.onQueue { sender.attach(connection) }
+        complete(sender, refused, on: connection)
+
+        // 同じ形だが、開くまでの時計が止まっている (経ったのは 0.05 秒)。戻らないので、残りの拒否は増えない
+        let next = unstartedConnection()
+        sender.onQueue { sender.attach(next) }
+        complete(sender, nil, on: next, issuedAt: 0)
+        clock.advance(by: 0.05)
+        complete(sender, nil, on: next, issuedAt: clock.provider())
+        complete(sender, refused, on: next)
+        #expect(told.lines.count == 1)
+
+        // 新しい繋ぎで、最初の完了から confirmAfter を空けた送信が 2 つ続けて終われば戻り、次の拒否は名乗る
+        let settled = unstartedConnection()
+        sender.onQueue { sender.attach(settled) }
+        complete(sender, nil, on: settled, issuedAt: clock.provider())
+        clock.advance(by: 0.2)
+        complete(sender, nil, on: settled, issuedAt: clock.provider())
+        complete(sender, refused, on: settled)
+        #expect(told.lines.count == 2)
+    }
+
     @Test("間は送信を出した時刻で測る。完了が遅れて返っただけでは満たさない")
     func theGapIsMeasuredFromWhenTheSendWasIssued() {
         let told = Told()
