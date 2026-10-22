@@ -196,7 +196,11 @@ is_help_request() { # $1=コマンド
 # 2 乗かかり、480KB の二重引用の本文で 16 秒を越えた (フックの timeout は 10 秒で、越えると
 # 判定が出ない)。入力は 1 度に配列へ割り、普通の文字の並びはまとめて写す。語は 1 つ 4096
 # バイトまでしか持たない — 長い本文の中身は判定に要らない。断片は語の配列として持ち、
-# 出すときに半分ずつ繋ぐ。
+# 出すときに半分ずつ繋ぐ。**入力全体 (src) に substr を使わない** — macOS の awk (20200816)
+# の substr は、切り出す長さによらず呼ぶたびに src の長さに比例してかかるので、語ごと・行ごとに
+# 呼ぶと長さの 2 乗になる (#3115)。切り出しは文字の配列 C から rng で繋ぐ。読む時間の検査は
+# scripts/tests/guard_lib_test.py の LengthTest (長さが 4 倍で CPU 時間が 6 倍未満・素の awk の
+# 読みの 10 倍未満)。
 #
 # awk は **LC_ALL=C でバイト単位に読ませる**。字句の区切りはすべて ASCII で、macOS の awk は
 # UTF-8 の既定のまま日本語の本文を 1 文字ずつ切ると `towc: multibyte conversion failure` で
@@ -208,7 +212,16 @@ gh_invocations() { # $1=コマンド
     LC_ALL=C awk -v q="'" '
       function addw(s) { if (length(cw[depth]) < WCAP) cw[depth] = cw[depth] s }
       function mask(s) { gsub(/[ \t\n]/, M, s); return s }
-      function run(i, j,   len) { len = j - i; if (len > WCAP) len = WCAP; return substr(src, i, len) }
+      # C[a..b-1] を繋ぐ。**src への substr は使わない**: macOS の awk (20200816) の substr は、
+      # 切り出す長さによらず呼ぶたびに src 全体の長さに比例してかかる。語ごと・行ごとに呼ぶと
+      # 全体が長さの 2 乗になり、500KB で 1 秒が 100 秒に化ける (#3115 の反証)。文字の配列から、
+      # 半分ずつ繋げば O(長さ log 長さ)。
+      function rng(a, b,   m, s, k) {
+        if (b - a <= 16) { s = ""; for (k = a; k < b; k++) s = s C[k]; return s }
+        m = int((a + b) / 2)
+        return rng(a, m) rng(m, b)
+      }
+      function run(i, j,   len) { len = j - i; if (len > WCAP) len = WCAP; return rng(i, i + len) }
       # 入れ子は、宛先を変えた印 (DC・DR) を親から継ぐ。閉じれば捨てるので外へは効かない。
       # 枠も 1 つ積む (中で開いた複合コマンドの枠は、入れ子を閉じるときに閉じる)
       function push(t) {
@@ -331,13 +344,18 @@ gh_invocations() { # $1=コマンド
         return j - 1
       }
       # 改行 (位置 i) の後ろの本文を、覚えた区切り語の順に落とす。戻り値は最後の改行の位置
-      function bodies(i,   k, a, e, t) {
+      function bodies(i,   k, a, e, b, f, t) {
         for (k = 1; k <= nh; k++) {
           while (i < n) {
             a = i + 1; e = a
             while (e <= n && C[e] != "\n") e++
-            t = substr(src, a, e - a); sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+            # 行の前後の空白 [ \t] を除いた範囲 [b, f) だけが区切り語の長さなら切り出す
+            # (長い行を毎回切り出さない・src に substr しない)
+            b = a; while (b < e && (C[b] == " " || C[b] == "\t")) b++
+            f = e; while (f > b && (C[f - 1] == " " || C[f - 1] == "\t")) f--
             i = e
+            if (f - b != length(HD[k])) continue
+            t = rng(b, f)
             if (t == HD[k]) break
           }
         }
