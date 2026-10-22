@@ -1,0 +1,22 @@
+# 使い捨て (merge しない)。#3010 の完了条件 2: 専用機に前の job から残った
+# CPU を食うプロセス (#2959 の yes を疑う) があるかを読むだけ。何も殺さない。
+name: runner-ps-3010
+on:
+  pull_request:
+    types: [opened]
+    paths: [.github/workflows/runner-ps-3010.yml]
+permissions:
+  contents: read
+jobs:
+  ps:
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 5
+    steps:
+      - name: 負荷とプロセスを読む
+        run: |
+          uptime
+          sysctl -n vm.loadavg hw.ncpu
+          echo "## CPU の上位"
+          ps -Ao pid,ppid,user,pcpu,etime,lstart,comm -r | head -25 | sed "s#$HOME#~#g; s#/[^ ]*/##"
+          echo "## yes"
+          ps -Ao pid,ppid,user,pcpu,etime,lstart,comm | awk 'NR==1 || $NF ~ /(^|\/)yes$/' | sed "s#$HOME#~#g"
