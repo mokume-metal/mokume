@@ -230,6 +230,7 @@ import fcntl
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -574,11 +575,19 @@ def _read_expiry():
     置き場そのものを使えないとき (枠も取れない環境) は、無いものとして扱う。"""
     path = _expiry_path()
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        return None
+        status = os.lstat(path)
     except OSError:
-        return (path, None) if os.path.lexists(path) else None
+        # 無い。置き場そのものを使えないとき (枠も取れない環境) も、無いものとして扱う
+        return None
+    # **リンクは辿らない。** Swift の関所 (`ExpiryRecord.exists`・lstat) と前検査 (`-L`) は、壊れたリンクも
+    # 生きたリンクも「在る」と数える。辿ると、壊れたリンクを「無い」と読んで子を起こし、関所が止める記録を
+    # この包みが素通しする。普通のファイルでないものは、読めない記録として止める
+    if not stat.S_ISREG(status.st_mode):
+        return path, None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return path, None
     try:
         data = json.loads(text)
     except ValueError:
@@ -618,20 +627,45 @@ def _refuse_for_expiry(found, subject, origin=None):
     return EXIT_GPU_STUCK
 
 
+def _fullsync(descriptor):
+    """ディスクまで落とす (macOS の `fsync` はドライブのキャッシュに留まりうるので `F_FULLFSYNC` を試す)。"""
+    try:
+        fcntl.fcntl(descriptor, fcntl.F_FULLFSYNC)
+    except (AttributeError, OSError):
+        os.fsync(descriptor)
+
+
 def _complete_expiry(origin):
     """自分の子が書いた期限切れの記録に、起動元と包みのコマンドを足す。子は親プロセスの連鎖を引けない
     ので、ここで足す。足せなくても (包みごと殺された・書けない) 記録は残り、起動元は `take` の行から引ける。
     **何が起きても例外を外へ出さない。**"""
     try:
         path = _expiry_path()
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return  # リンクは辿らない (自分の子が書いたのは普通のファイル)
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or data.get("gpu_slot_pid") != os.getpid() or "lineage" in data:
             return
         data.update(origin)
         # 置き換えは同じ置き場の中で (別のファイルシステムをまたがない)
         temporary = path.with_name(f".{path.name}.{os.getpid()}")
-        temporary.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(temporary, path)
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            try:
+                os.write(descriptor, (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8"))
+                _fullsync(descriptor)
+            finally:
+                os.close(descriptor)
+            # **置き換えの直前に、記録がまだ在るかを確かめる。** 読んでから置き換えるまでの間に人が消した
+            # (GPU が答えると確かめて消した) 記録を、起動元つきで書き戻すと、消したはずの記録が戻る
+            if not os.path.lexists(path):
+                return
+            os.replace(temporary, path)
+        finally:
+            try:
+                os.unlink(temporary)  # 置き換えた後は無い。置き換えなかったときの下書きを残さない
+            except OSError:
+                pass
     except Exception:
         pass
 

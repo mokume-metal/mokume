@@ -300,11 +300,44 @@ class ReadFailureMessagesTest(unittest.TestCase):
         """畳む目印は Swift の文面の写しなので、本物から外れたら黙って畳まなくなる。"""
         swift = (REPO / "Sources" / "MokumeCore" / "Rendering" / "RenderFailure.swift").read_text(encoding="utf-8")
         reader = READER.read_text(encoding="utf-8")
-        marker = 'GATE_CLOSED = "A wait for the GPU went past its limit earlier in this process"'
+        marker = 'GATE_CLOSED_OWN = "A wait for the GPU went past its limit earlier in this process"'
         self.assertIn(marker, reader)
         self.assertIn("A wait for the GPU went past its limit earlier in this process", swift)
+        # gpu-slot の記録で止まった別の回の断り (#2235)。畳む目印は 2 つ目の句
+        record_marker = 'GATE_CLOSED_RECORD = "A wait for the GPU went past its limit in another run under gpu-slot.py"'
+        self.assertIn(record_marker, reader)
+        self.assertIn("A wait for the GPU went past its limit \\(origin)", swift)
+        self.assertIn('"in another run under gpu-slot.py (record: \\(record))"', swift)
         self.assertIn("(the first was ", GATE_CLOSED_MESSAGE)
         self.assertIn("first = closure.map { \" (\\($0.summary))\" }", swift)
+
+    def test_folds_the_record_refusals_and_names_the_record(self):
+        """gpu-slot の記録で止まった断り (別の回・自分の回) も、関所が閉じた後として畳み、記録が残ることを言う (#2235)。"""
+        other = (
+            "A wait for the GPU went past its limit in another run under gpu-slot.py (record: /slots/wait-expired.json),"
+            " so no new drawing foundation is set up.\nA person checks that the GPU answers, and then deletes that record;"
+            " starting this process again does not remove it."
+        )
+        own = (
+            "A wait for the GPU went past its limit earlier in this process (the first was while waiting for the GPU to"
+            " finish, past 5.0 seconds, at 2026-10-22T09:00:00+0900), and gpu-slot.py's record (/slots/wait-expired.json)"
+            " stops later runs too, so no new drawing foundation is set up."
+        )
+        out = self.read(
+            _record(
+                _failed("MokumeCoreTests.CanvasTests", "a()", other),
+                _failed("MokumeCoreTests.CanvasTests", "b()", own),
+                FAILED_CASE,
+            )
+        )
+        self.assertIn("環境で成り立たなかった回", out)
+        self.assertIn("落ちた 3 件のうち 2 件", out)
+        self.assertIn("gpu-slot の期限切れの記録が残っている", out)
+        self.assertIn("人が GPU の答えを確かめて記録を消すまで", out)
+        # 自分の印だけの回 (記録を持たない) には、記録の一文を足さない
+        plain = self.read(_record(_failed("MokumeCoreTests.CanvasTests", "a()", GATE_CLOSED_MESSAGE), FAILED_CASE))
+        self.assertIn("環境で成り立たなかった回", plain)
+        self.assertNotIn("gpu-slot の期限切れの記録が残っている", plain)
 
     def test_names_green_missing_and_unreadable(self):
         # 無い記録を先に見る (read は同じ置き場へ書くので、後に回すと前の記録が残る)

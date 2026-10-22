@@ -19,6 +19,7 @@ Swift も GPU も要らない。子には、合図のファイルを待つだけ
 """
 
 import fcntl
+import importlib.util
 import json
 import os
 import select
@@ -29,6 +30,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "gpu-slot.py"
@@ -746,6 +748,63 @@ class ExpiryRecordTest(SlotHarness):
         # 枠は返っている (記録を消せば、次はすぐ走る)
         self.record.unlink()
         self.assertEqual(self._run_wrapper(self.SEES, slots="1").returncode, 0)
+
+    def test_a_symlink_record_stops_the_run_whether_it_is_broken_or_alive(self):
+        """リンクは辿らず、在るものとして数える。Swift の関所 (lstat) と前検査 (`-L`) と同じ読み方 (#2235)。
+
+        辿ると、壊れたリンクを「無い」と読んで子を起こし、関所が止める記録をこの包みが素通しする。"""
+        self.slots.mkdir(parents=True)
+        elsewhere = self.root / "elsewhere.json"
+        for name, target in (("broken", self.root / "no-such-file.json"), ("alive", elsewhere)):
+            with self.subTest(link=name):
+                elsewhere.write_text(json.dumps({"event": "wait-expired", "pid": 1}), encoding="utf-8")
+                self.record.symlink_to(target)
+                result = self._run_wrapper(self.SEES)
+                self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+                self._never_ran(result)
+                self.assertIn("読めない", result.stderr)  # 辿らないので、中身は読めない記録として止める
+                self.assertIn(str(self.record), result.stderr)
+                self.record.unlink()
+                self.assertTrue(elsewhere.exists(), "リンクの先まで消した")
+
+    def _gpu_slot_module(self):
+        spec = importlib.util.spec_from_file_location("gpu_slot_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_completing_the_record_does_not_bring_back_one_removed_meanwhile(self):
+        """起動元を足す間 (読んでから置き換えるまで) に、人が記録を消したら、書き戻さない (#2235)。"""
+        module = self._gpu_slot_module()
+        self.slots.mkdir(parents=True)
+        mine = {"event": "wait-expired", "gpu_slot_pid": os.getpid(), "wait": "w", "limit": "5 seconds"}
+        origin = {"lineage": [{"pid": 1}], "agent": {}}
+
+        def person_removes_it(descriptor):
+            self.record.unlink()  # 読んだ後、置き換える前に、人が消す
+
+        with mock.patch.dict(os.environ, {"MOKUME_GPU_SLOT_DIR": str(self.slots)}):
+            self.record.write_text(json.dumps(mine), encoding="utf-8")
+            with mock.patch.object(module, "_fullsync", side_effect=person_removes_it):
+                module._complete_expiry(origin)
+            self.assertFalse(self.record.exists(), "消した記録を書き戻した")
+            self.assertEqual([p.name for p in self.slots.iterdir()], [], "下書きが残った")
+
+            # 消されなければ、起動元が足される (対照)
+            self.record.write_text(json.dumps(mine), encoding="utf-8")
+            module._complete_expiry(origin)
+            self.assertEqual(json.loads(self.record.read_text(encoding="utf-8"))["lineage"], [{"pid": 1}])
+
+    def test_completing_the_record_does_not_follow_a_link(self):
+        module = self._gpu_slot_module()
+        self.slots.mkdir(parents=True)
+        elsewhere = self.root / "elsewhere.json"
+        elsewhere.write_text(json.dumps({"gpu_slot_pid": os.getpid()}), encoding="utf-8")
+        self.record.symlink_to(elsewhere)
+        with mock.patch.dict(os.environ, {"MOKUME_GPU_SLOT_DIR": str(self.slots)}):
+            module._complete_expiry({"lineage": [], "agent": {}})
+        self.assertNotIn("lineage", json.loads(elsewhere.read_text(encoding="utf-8")))
+        self.assertTrue(self.record.is_symlink())
 
     def test_a_record_stops_the_run_without_waiting_for_a_slot(self):
         """記録があれば、枠が空くのを待たずに止まる (枠を取る前に見る)。"""
