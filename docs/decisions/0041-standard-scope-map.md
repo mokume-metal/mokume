@@ -105,6 +105,7 @@ mokume が使えるのは OS のフレームワークで、第三者の依存も
 | | 動画の読み込みと再生 | 4 環境が本体に持つ。AVFoundation で書ける。カメラと同じ「外から来た画素を `Image` にする」道を使う |
 | | シリアル | Processing・openFrameworks・TouchDesigner が本体に持つ。termios と IOKit で書けて、OS の許可も要らない |
 | | ゲームパッド | 本体に持つのは Unity・TouchDesigner の 2 つで、基準 1 は弱い。補うのは、展示やインタラクティブな作品で手軽な入力機器として使われることと、GameController だけで小さく書けること |
+| | ベクター書き出し (SVG の 1 枚から。2026-10-23 に「標準だが設計が重い」から移した。PDF・DXF は作例が来たときに別の `Feature` で足す) | 基準 1: 最低ライン (Processing の本体の `pdf`・`svg`・`dxf`。openFrameworks は cairo)。ペンプロッタ・印刷の文化では定番。DXF (2026-10-04 追加) は線を CAD やレーザーカッターへ渡す形式で、同じ描き先の問題なので同じ Design で扱った。基準 2: SVG は文字列、PDF は Core Graphics、DXF は文字列で書け、第三者のコードを要らない。基準 3: 本体が置く図形の値 (変換を当てた後・三角形に割る前) を置く口で控えて書く。座標は絵の画素のまま、色は sRGB へ写す。基準 4: 書いた文字列を機材も GPU も使わずに読んで、幾何を突き合わせられる。基準 5: 描いた図形を書くところまでで、プロッタの制御・CAD の編集・G コードの生成はしない。形は [ADR-0023](0023-frame-stages-and-outputs.md) の改訂 (2026-10-23) と [ADR-0021](0021-solid-space-and-frame-assembly.md) 決定 3 の追補 (2026-10-23) |
 | | 3D モデルの形式 | Unity・TouchDesigner は本体で多くの形式を読み、openFrameworks は公式の addon (Assimp) で読む。mokume はいま OBJ だけ。Model I/O で USD・STL・PLY を読める。glb (glTF のバイナリ。2026-10-14 追加) は、骨とクリップを含めて本体の JSON の読み込みの延長で読む ([ADR-0045](0045-game-direction.md) 決定 2) |
 | | 文字列・CSV の読み書き | 5 環境すべてが本体に持つ。Foundation で書ける |
 | | JSON・XML の読み込みと、URL からの読み込み (2026-10-04 追加) | 基準 1: 最低ライン (Processing の本体の `loadJSONObject`・`loadXML`。どちらも URL を受ける)。基準 2: Foundation (`JSONSerialization`・`XMLParser`・`URLSession`) で書ける。基準 3: 読んだ値は本体の値として返し、面に Foundation の型を出さない ([ADR-0020](0020-api-naming-and-surface.md) 決定 6)。基準 4: ファイルは手元の標本で、URL は応答を差し替えて検査できる。基準 5: 当たらない |
@@ -112,8 +113,7 @@ mokume が使えるのは OS のフレームワークで、第三者の依存も
 | | 全画面と、出すディスプレイの選択 (2026-10-04 追加) | 基準 1: 最低ライン (Processing の本体の `fullScreen(display)`)。基準 2: AppKit (`NSScreen`) で書ける。基準 3: 描く側はこれまでのフレームのまま変わらない。基準 4: ディスプレイの一覧を差し替えて、選んだ結果を検査できる。基準 5: 複数台にまたがる 1 枚の表示と、重なりのぼかしはしない (マッピングの仕事) |
 | | ファイルの受け渡し (窓へのドロップ・選ばせるダイアログ。2026-10-21 追加) | 基準 1: 最低ライン (Processing の本体の `selectInput`。同じ口の `selectOutput`・`selectFolder` もここに当たる)。ドロップは openFrameworks (`dragEvent`)・Cinder (`fileDrop`)・OPENRNDR (`window.drop`)・nannou (`dropped_file`) が窓の出来事として持ち、p5.js は `drop`、Processing は第三者のライブラリである。基準 2: AppKit (`NSOpenPanel` と、ドラッグを受ける `NSDraggingDestination`) で書ける。基準 3: ドロップはフレームに属し、`Codable` な入力の出来事に乗る。受けたパスは絶対パスなので、`loadImage`・`createVideo`・`loadSound`・`loadTable` がそのまま読める。基準 4: ドロップは入力の注入の道 (`Schemas/input-request.schema.json`) で、窓も機材も無しに検査できる。選ばせるダイアログは、`NSOpenPanel` の結果を差し替える注入の道を決めてから入れる。基準 5: 当たらない。**macOS の窓 (自前の窓と道具の窓) だけと名乗る。** iOS・`SketchView` のホストからの受け方と、セキュリティスコープ付きの URL は [#2604](https://github.com/mokume-metal/mokume/issues/2604)・[#2605](https://github.com/mokume-metal/mokume/issues/2605) で決める。実装の `Feature` は、ドロップを先に、選ばせるダイアログを後の 2 本に分ける |
 | | ゲーム (`MokumeGame`。2026-10-14 追加): シーン管理・アーケード物理・タイルマップ (Tiled 形式)・セーブスロット・カメラの追従・簡易 GUI (仮置き) | 基準 1 は弱い。Processing・p5.js・openFrameworks は本体にも公式にも持たず、物理を本体に持つのは Unity・TouchDesigner だけである。補うのは、想定する利用者 (授業やゲームジャムでゲームまで作りたい学生) と、ゲームも書ける方向 ([ADR-0045](0045-game-direction.md)) である。別のパッケージにせず、本体の別ターゲットをアンブレラが再公開する形にして、入口が `import mokume` の 1 つ・1 リポジトリ 1 版のまま使えるようにした (ADR-0045 決定 4)。基準 2: 自前の Swift と Foundation で書ける。アーケード物理は速度・重力・矩形や円のめり込みの解消・接地の判定までにする (Phaser の Arcade Physics に当たる)。基準 3: 本体の値型 (図形・`Vector2`) とフレームの時刻の上に載り、描画は本体の口を通る。基準 4: 純粋な計算なので、機材も GPU も無しに検査できる。物理も決定論を保つ。基準 5: エディタ・シーンの木の GUI は持たない (下の「入れない」のノードエディタの行)。剛体物理はこの行に入れない (外のパッケージの行) |
-| **mokume の仕事 (標準だが設計が重い)** (領域ごとの Design で決める) | ベクター書き出し (PDF・SVG・DXF) | Processing・openFrameworks が本体に持ち、ペンプロッタ・印刷の文化では定番。Metal で描く道とは別の描き先が要る。DXF (2026-10-04 追加) は Processing の本体の `dxf` で、最低ラインに入る。線を CAD やレーザーカッターへ渡す形式で、同じ描き先の問題なので同じ Design で扱う |
-| | Vision (手・顔・体・人物の切り抜き) | OS のフレームワークで書け、カメラと組むと強い。[ADR-0014](0014-machine-learning-role.md) の地図の上で決める |
+| **mokume の仕事 (標準だが設計が重い)** (領域ごとの Design で決める) | Vision (手・顔・体・人物の切り抜き) | OS のフレームワークで書け、カメラと組むと強い。[ADR-0014](0014-machine-learning-role.md) の地図の上で決める |
 | | 書き出しに音声を載せる | 音を入れた後の統合の仕事 |
 | **mokume の仕事 (外のパッケージ)** | 深度カメラ・Kinect・Leap | 第三者の SDK を要する (基準 2) |
 | | 剛体物理 (2026-10-14 に「入れない」から移した) | 積み重ね・関節・回転する衝突は、第三者のコード (2D は Box2D・3D は Jolt) を要する (基準 2)。作例が求めたときに外のリポジトリで包む。第三者のコードを本体で保守しない理由は、決定 7 の Syphon と同じである |
@@ -150,6 +150,17 @@ mokume が使えるのは OS のフレームワークで、第三者の依存も
 代償: 入力の出来事の種類が 1 つ増えるので、スキーマの版が変わる。自前の窓と道具の窓の 2 か所に同じ受けを書く。窓を持たない子からダイアログを誰が出すかの設計が要る (`selectInput` の Feature が決める。決定論は注入の道があれば保てる)。
 
 この改訂の PR で、改訂の見出しが上限 (5 つ) に達していた本 ADR の経緯を [history/0041.md](history/0041.md) へ移した ([docs/decisions/AGENTS.md](AGENTS.md) の手順)。
+
+#### 改訂 (2026-10-23) — ベクター書き出しの行を、標準へ移す
+
+「標準だが設計が重い」に置いていたベクター書き出し (PDF・SVG・DXF) を、領域ごとの Design ([#1967](https://github.com/mokume-metal/mokume/issues/1967)) で形が決まったので、標準 (mokume の仕事) へ移した。形は [ADR-0023](0023-frame-stages-and-outputs.md) の改訂 (2026-10-23) と [ADR-0021](0021-solid-space-and-frame-assembly.md) 決定 3 の追補 (2026-10-23) にある。基準を当てた結果は表の理由の欄に書いた。同じ PR で、`AGENTS.md` の「してはならないこと」の要約も直した (決定 4)。
+
+- **範囲は SVG の 1 枚から。** PDF・DXF・連番のベクターは、作例が来たときに別の `Feature` で足す (決定 3・[ADR-0043](0043-features-start-from-examples.md))。行を分けない
+- **基準 3 の「本体の型に合流する」は、置く口で控えた図形の値で満たす。** 組み立てに割る前の列が 1 本残っているわけではない (ADR-0021 の追補が確かめた)
+
+退けた案: PDF・SVG・DXF を 3 行に分ける (描き先の問題が同じで、控える図形も 1 つ)。「標準だが設計が重い」のまま置く (置き場・一致・口が決まって、重さの理由が無くなった)。
+
+代償: 置く口が増えるたびに控えを足す保守が要る (ADR-0023 の改訂に、黙って欠けないための検査を書いた)。使われなければ決定 5 で削る候補になる。
 
 ### 3. 地図の標準に載った領域は、作品の実需を待たずに入れる。口の形は作例と作品で詰める
 
