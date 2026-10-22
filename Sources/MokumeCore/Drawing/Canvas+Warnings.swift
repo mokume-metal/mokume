@@ -129,6 +129,20 @@ extension Canvas {
         ///
         /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
         case badEffect
+        /// 効果の `amount` が 0…1 の外で、端へ締めた ([#1842])。効果と量ごとに鍵を分ける —
+        /// 別の効果の注意を黙らせない。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedBloomAmount
+        case roundedInvertAmount
+        case roundedMonochromeAmount
+        case roundedVignetteAmount
+        case roundedFringeAmount
+        /// 効果の `radius` が ``Effect/maxRadius`` を越え、そこへ締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedBlurRadius
+        case roundedBloomRadius
         /// フレームの外で効果を決めた ([#1605])。
         ///
         /// [#1605]: https://github.com/mokume-metal/mokume/issues/1605

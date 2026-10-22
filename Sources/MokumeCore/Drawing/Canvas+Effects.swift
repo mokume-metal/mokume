@@ -18,10 +18,11 @@ extension Canvas {
     /// このフレームにかける効果の並びを決める。
     ///
     /// **受け口で検める** ([#1544])。数でない値・無限を持つ効果はその 1 つだけを外して
-    /// 初回だけ言い、並びの他の効果は掛ける。範囲を決めている数は端へ締める
-    /// (`Effect.accepted`)。
+    /// 初回だけ言い、並びの他の効果は掛ける。範囲を決めている数は端へ締め、**締めたときも 1 度だけ
+    /// 言う** ([#1842]。`Effect.accepted`)。
     ///
     /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
     public func effects(_ effects: [Effect]) {
         // **効果はフレームを越えない** (ADR-0021 決定 4)。フレームの頭で捨てるので、外で
         // 決めた並びはどのフレームにも属さない。黙って捨てると「書いたのに効かない」だけが
@@ -37,6 +38,12 @@ extension Canvas {
                     "effects(): the \(effect.name) effect held a value that is not a number, or an "
                         + "infinite one, so it was not applied")
                 return nil
+            }
+            // 締めたときは、書いた値と違う値が効くことを 1 度だけ言う (#1842)。外した効果は締めない
+            for rounding in effect.roundings {
+                warnRounded(
+                    rounding.warning, "effects", rounding.quantity, takes: rounding.range,
+                    passed: rounding.passed, used: rounding.used)
             }
             return accepted
         }

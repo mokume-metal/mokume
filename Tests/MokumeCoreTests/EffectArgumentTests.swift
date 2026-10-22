@@ -216,18 +216,73 @@ struct EffectArgumentTests {
         #expect(message?.hasPrefix("effects(): the invert effect") == true, "\(message ?? "")")
     }
 
-    @Test("範囲の中の値と、締めるだけの値では言わない")
-    func staysSilentForValuesItCanTake() throws {
+    @Test("範囲の中の値と、締めない量では言わない")
+    func staysSilentForValuesInRange() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
             Self.scene(on: canvas)
             canvas.effects([
-                .blur(radius: 4), .bloom(amount: 0.5), .invert(amount: 2), .vignette(amount: -1),
-                .blur(radius: 1e30), .adjust(brightness: 5),
+                .blur(radius: 4), .bloom(amount: 0.5), .invert(amount: 1), .vignette(amount: 0),
+                .monochrome(amount: 0.25), .fringe(amount: 0.5),
+                // 締めない量: 負の半径 (断片が「0 以下なら何もしない」で扱う)・`threshold`・`adjust`
+                .blur(radius: -3), .bloom(amount: 0.5, threshold: 5), .adjust(brightness: 5, contrast: -2),
+                .blur(radius: Effect.maxRadius),
             ])
         }
         #expect(!canvas.warnings.hasWarned(.badEffect))
         #expect(!canvas.warnings.hasWarned(.effectFailed))
+        for key in Self.roundingKeys {
+            #expect(!canvas.warnings.hasWarned(key), "\(key)")
+        }
+    }
+
+    /// 効果と量ごとの鍵。
+    private static let roundingKeys: [Canvas.Warning] = [
+        .roundedBlurRadius, .roundedBloomAmount, .roundedBloomRadius, .roundedInvertAmount,
+        .roundedMonochromeAmount, .roundedVignetteAmount, .roundedFringeAmount,
+    ]
+
+    /// #1544 は「締めるときは言わない」(#1478 の不透明度と同じ) だった。#1842 (案 A) で改め、締めたら言う。
+    /// 絵は変わらない (締める先は直す前と同じ)。
+    @Test("説明どおりに範囲へ締めたときも、効果・量・範囲・渡した値・使った値を 1 度だけ言う")
+    func warnsOnceWhenItClamps() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            Self.scene(on: canvas)
+            canvas.effects([
+                .invert(amount: 3), .vignette(amount: -1), .monochrome(amount: 2), .fringe(amount: 4),
+                .bloom(amount: 7, threshold: 0.2, radius: 1e9), .blur(radius: 1e9),
+            ])
+            // 2 度目は言わない。別の値でも文面は最初のまま
+            canvas.effects([.invert(amount: 100)])
+        }
+        let expected: [(Canvas.Warning, String)] = [
+            (.roundedInvertAmount, "effects(): the invert amount takes 0 to 1, but 3.0 was passed, so 1 was used"),
+            (.roundedVignetteAmount, "effects(): the vignette amount takes 0 to 1, but -1.0 was passed, so 0 was used"),
+            (.roundedMonochromeAmount, "effects(): the monochrome amount takes 0 to 1, but 2.0 was passed, so 1 was used"),
+            (.roundedFringeAmount, "effects(): the fringe amount takes 0 to 1, but 4.0 was passed, so 1 was used"),
+            (.roundedBloomAmount, "effects(): the bloom amount takes 0 to 1, but 7.0 was passed, so 1 was used"),
+            (.roundedBloomRadius, "effects(): the bloom radius takes up to 131072, but 1e+09 was passed, so 131072 was used"),
+            (.roundedBlurRadius, "effects(): the blur radius takes up to 131072, but 1e+09 was passed, so 131072 was used"),
+        ]
+        for (key, message) in expected {
+            #expect(canvas.warnings.message(for: key) == message, "\(key)")
+        }
+        // 数でない値の注意とは鍵が別で、締めただけでは鳴らない
+        #expect(!canvas.warnings.hasWarned(.badEffect))
+    }
+
+    @Test("数でない値を持つ効果は外すだけで、締めた注意は言わない")
+    func aDroppedEffectIsNotReportedAsClamped() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            Self.scene(on: canvas)
+            canvas.effects([.bloom(amount: 7, threshold: .nan), .blur(radius: .infinity)])
+        }
+        #expect(canvas.warnings.hasWarned(.badEffect))
+        for key in Self.roundingKeys {
+            #expect(!canvas.warnings.hasWarned(key), "\(key)")
+        }
     }
 
     // MARK: - 範囲の外の amount (完了条件 4)
