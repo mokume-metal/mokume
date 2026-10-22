@@ -23,6 +23,12 @@ import Synchronization
 /// 前の区切りが同じ速さで消えながら、新しい区切りが立ち上がる (つなぎ目でぷつっと鳴らない)。
 /// 1 度だけ鳴らして**ファイルの終わりに着いた**ときは、ファイルが終わるので、そこで止まる。
 ///
+/// **消えていく区切りは、自分の音量が 0 になるまで、後から来た操作で捨てない。** 同じ描き出しの前に
+/// 始め直しが 2 つ載っても (1 フレームに `play()` が 2 回・前のフレームの `jump(_:)` と同じフレームの
+/// `play()`)、始め直した直後に止めても、新しい区切りがファイルの終わりに着いても、鳴っていた区切りは
+/// 消えきるまで鳴る。消えていく区切りは同時に ``maximumFadingSegments`` 個まで持ち (確保しない)、
+/// 溢れたときだけ、音量がいちばん小さい (ほとんど聞こえない) ものを捨てる。
+///
 /// ## 標本化率の変換
 ///
 /// ラックの標本化率は、実機の出力でも書き出し (`mokume render`) でも 48000 Hz である (機材に出さない
@@ -55,6 +61,10 @@ import Synchronization
 ///
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 nonisolated final class FileNode: RackNode {
+    /// 同時に持つ、消えていく区切りの数の上限。音量が約 5 ミリ秒の時定数で 1e-6 まで下がるのに約 70 ミリ秒
+    /// かかり、その間に始め直しが 8 回起きるのは、1 フレームに 1 回の始め直しでも超えにくい数。
+    static let maximumFadingSegments = 8
+
     /// 世代の幅 (ビット)。`bits` と原子値の両方に使う。
     private static let generationBits: UInt64 = 23
     /// 位置・鳴った標本の数の幅 (ビット)。2^40 標本は 48 kHz で約 266 日。
@@ -65,8 +75,9 @@ nonisolated final class FileNode: RackNode {
 
     /// ファイルの標本 (チャンネルを平均したモノラル)。
     private let samples: [Float]
-    /// ラックの 1 標本で進む、ファイルの標本の数 (ファイルの率 ÷ ラックの率)。
-    private let ratio: Double
+    /// ファイルの標本化率と、ラックの標本化率 (Hz)。位置は `count × fileRate ÷ sampleRate` と、掛けてから
+    /// 割って導く。
+    private let fileRate: Double
     /// ラックより高い率のファイルを読む低域通過の係数。ラックの率以下なら `nil` (三次補間で読む)。
     private let lowPass: DownsamplingKernel?
 
@@ -74,8 +85,11 @@ nonisolated final class FileNode: RackNode {
     private var amplitudeNow: Float
     private let smoothing: Float
 
-    /// 区切りが続いているか (止める途中の消えていく間も続いている)。
+    /// いまの区切りが続いているか (止める途中の消えていく間も続いている)。消えていく前の区切り
+    /// (``fading``) は含まない。
     private var playing = false
+    /// いまの区切りが、1 度だけ鳴らしてファイルの終わりに着いたか (``publish(_:)`` が終わりまでの数を返す)。
+    private var reachedEnd = false
     private var looping = false
     /// 区切りの始まりの位置 (ファイルの標本)。
     private var start = 0
@@ -85,17 +99,21 @@ nonisolated final class FileNode: RackNode {
     /// 立ち上がり・消え方 (0〜1)。``SourceNode`` の `gate` と同じ。
     private var gate: Float = 0
     private var gateTarget: Float = 0
-    /// 区切りを始め直したとき、消えていく前の区切り。
-    private var fading: Segment?
-    private var fadingGain: Float = 0
+    /// 区切りを始め直したとき、消えていく前の区切り (先頭から `fadingCount` 個)。確保しないよう、上限の
+    /// 個数ぶんを作っておく。
+    private var fading = [Fading](
+        repeating: Fading(start: 0, count: 0, looping: false, gain: 0),
+        count: FileNode.maximumFadingSegments)
+    private var fadingCount = 0
     /// 世代 (上位) と、区切りの中で鳴った標本の数 (下位・ファイルの標本)。
     private let progress = Atomic<UInt64>(0)
 
-    /// 区切りの位置を導くのに要るもの。
-    private struct Segment {
+    /// 消えていく区切り。位置を導くのに要るものと、いまの音量。
+    private struct Fading {
         var start: Int
         var count: Int
         var looping: Bool
+        var gain: Float
     }
 
     init(
@@ -103,7 +121,7 @@ nonisolated final class FileNode: RackNode {
         amplitude: Float
     ) {
         self.samples = samples
-        ratio = fileRate / sampleRate
+        self.fileRate = fileRate
         lowPass = fileRate > sampleRate ? DownsamplingKernel(ratio: fileRate / sampleRate) : nil
         self.amplitude = amplitude
         amplitudeNow = amplitude
@@ -138,32 +156,42 @@ nonisolated final class FileNode: RackNode {
 
     override var isSource: Bool { true }
 
-    override var isIdle: Bool { !playing }
+    override var isIdle: Bool { !playing && fadingCount == 0 }
 
-    /// 止まって消えきったか。手放された節は、これが `true` になってから置き場が戻る。
-    override var isFinished: Bool { !playing }
+    /// 止まって消えきったか (消えていく前の区切りも含む)。手放された節は、これが `true` になってから
+    /// 置き場が戻る。
+    override var isFinished: Bool { !playing && fadingCount == 0 }
 
     override func apply(_ param: SynthParam, _ value: Float) {
         if param == .amplitude { amplitude = value }
     }
 
     override func begin(_ bits: UInt64) {
-        if playing && gate > 0 {
-            // 鳴っている最中の始め直しは、前の区切りを消しながら新しい区切りを立ち上げる
-            fading = Segment(start: start, count: count, looping: looping)
-            fadingGain = gate
-        } else {
-            fading = nil
-            fadingGain = 0
-        }
+        // 鳴っている区切りは、消えながら残す。まだ音量が立ち上がっていない区切り (同じ描き出しの前に
+        // 始め直しが 2 つ載ったときの 1 つ目) は音が出ていないので、残すものが無い。**消えていく前の区切りは
+        // ここでは捨てない** — 自分の音量が 0 になるまで鳴らす
+        if playing, gate > 0 { pushFading(Fading(start: start, count: count, looping: looping, gain: gate)) }
         start = min(Int(bits & Self.countMask), samples.count)
         looping = bits & Self.loopingBit != 0
         generation = Int((bits >> (Self.countBits + 1)) & Self.generationMask)
         count = 0
+        reachedEnd = false
         gate = 0
         gateTarget = 1
         playing = true
         publish(0)
+    }
+
+    /// 消えていく区切りを足す。溢れたら、音量がいちばん小さいもの (足すものを含む) を捨てる。
+    private func pushFading(_ segment: Fading) {
+        if fadingCount < fading.count {
+            fading[fadingCount] = segment
+            fadingCount += 1
+            return
+        }
+        var quietest = 0
+        for index in 1..<fadingCount where fading[index].gain < fading[quietest].gain { quietest = index }
+        if fading[quietest].gain < segment.gain { fading[quietest] = segment }
     }
 
     override func halt() {
@@ -180,55 +208,75 @@ nonisolated final class FileNode: RackNode {
     override func render(
         frames: Int, input: UnsafePointer<Float>, output: UnsafeMutablePointer<Float>
     ) {
-        guard playing, !samples.isEmpty else {
+        guard playing || fadingCount > 0, !samples.isEmpty else {
             output.update(repeating: 0, count: frames)
             return
         }
         let length = samples.count
         var made = 0
-        var ended = false
         samples.withUnsafeBufferPointer { source in
             while made < frames {
-                let position = Double(start) + Double(count) * ratio
-                if !looping, position >= Double(length) {
-                    // ファイルの終わり。ファイルが終わるので、消えるのを待たずに止まる
-                    ended = true
-                    playing = false
-                    gate = 0
-                    gateTarget = 0
-                    fading = nil
-                    break
-                }
-                gate = approach(gate, gateTarget)
-                if gateTarget == 0, gate == 0 {
-                    // 止める途中の消え方が終わった
-                    playing = false
-                    fading = nil
-                    break
-                }
-                amplitudeNow = approach(amplitudeNow, amplitude)
-                var value = read(source, at: position, looping: looping) * gate
-                if var previous = fading {
-                    let before = Double(previous.start) + Double(previous.count) * ratio
-                    if previous.looping || before < Double(length) {
-                        value += read(source, at: before, looping: previous.looping) * fadingGain
-                        previous.count += 1
-                        fading = previous
-                        fadingGain = approach(fadingGain, 0)
-                        if fadingGain == 0 { fading = nil }
+                var value: Float = 0
+                if playing {
+                    let position = Double(start) + Double(count) * fileRate / sampleRate
+                    if !looping, position >= Double(length) {
+                        // ファイルの終わり。ファイルが終わるので、いまの区切りは消えるのを待たずに止まる
+                        // (消えていく前の区切りは、自分の音量が 0 になるまで続ける)
+                        reachedEnd = true
+                        playing = false
+                        gate = 0
+                        gateTarget = 0
                     } else {
-                        fading = nil
+                        gate = approach(gate, gateTarget)
+                        if gateTarget == 0, gate == 0 {
+                            // 止める途中の消え方が終わった
+                            playing = false
+                        } else {
+                            value = read(source, at: position, looping: looping) * gate
+                            count += 1
+                        }
                     }
                 }
+                var index = 0
+                while index < fadingCount {
+                    var previous = fading[index]
+                    let before = Double(previous.start) + Double(previous.count) * fileRate / sampleRate
+                    guard previous.looping || before < Double(length) else {
+                        removeFading(at: index)
+                        continue
+                    }
+                    // 音量は読む前に 1 標本ぶん追う (``gate`` と同じ順)。そうすると、消える重みと立ち上がる
+                    // 重みの和が、つなぎ目の 1 標本目から 1 を超えない
+                    previous.gain = approach(previous.gain, 0)
+                    if previous.gain == 0 {
+                        removeFading(at: index)
+                        continue
+                    }
+                    value += read(source, at: before, looping: previous.looping) * previous.gain
+                    previous.count += 1
+                    fading[index] = previous
+                    index += 1
+                }
+                guard playing || fadingCount > 0 || value != 0 else { break }
+                amplitudeNow = approach(amplitudeNow, amplitude)
                 output[made] = value * amplitudeNow
                 made += 1
-                count += 1
             }
         }
         if made < frames { (output + made).update(repeating: 0, count: frames - made) }
         // 1 度だけで終わりに着いたら、鳴った数は終わりまでの数にする (主スレッドが終わりと読めるように)
-        let reached = Int((Double(count) * ratio).rounded(.down))
-        publish(ended ? length - start : reached)
+        let reached = Int((Double(count) * fileRate / sampleRate).rounded(.down))
+        publish(reachedEnd ? length - start : reached)
+    }
+
+    /// `index` 番目の消えていく区切りを外す (残りの順は保つ)。
+    private func removeFading(at index: Int) {
+        var next = index + 1
+        while next < fadingCount {
+            fading[next - 1] = fading[next]
+            next += 1
+        }
+        fadingCount -= 1
     }
 
     private func publish(_ played: Int) {

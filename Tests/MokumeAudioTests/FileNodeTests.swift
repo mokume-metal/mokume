@@ -207,6 +207,125 @@ struct FileNodeTests {
         #expect(abs(after[5999] - 0.5 * Self.center) < 1e-5)
     }
 
+    /// 区間ごとに値が違う標本 (1・0.5・0.25 を 6000 標本ずつ。始まる位置 0・6000・12000 で区別する)。
+    private static let steps: [Float] =
+        Array(repeating: 1, count: 6000) + Array(repeating: 0.5, count: 6000)
+        + Array(repeating: 0.25, count: 30_000)
+
+    @Test("始め直しが同じ描き出しの前に 2 つ載っても、鳴っていた区切りは音量のまま消えていく")
+    func twoRestartsBeforeOneRender() throws {
+        let rack = makeRack()
+        let node = try addFile(rack, Self.steps)
+        begin(rack, node, start: 0, generation: 1)
+        let before = render(rack, 4000).left
+        #expect(abs(before[3999] - Self.center) < 1e-5)
+        // 1 フレームに play() が 2 回 (または、前のフレームの jump と同じフレームの play())
+        begin(rack, node, start: 6000, generation: 2)
+        begin(rack, node, start: 12000, generation: 3)
+        let after = render(rack, 6000).left
+        // 鳴っていた区切り (1) から離れない。**捨てると 0 から立ち上げ直す**
+        #expect(after[0] > 0.95 * Self.center, "つなぎ目の最初の標本 \(after[0])")
+        #expect(zip(after, after.dropFirst()).allSatisfy { $1 <= $0 + 1e-5 }, "単調に下がる")
+        #expect(abs(after[5999] - 0.25 * Self.center) < 1e-5)
+        #expect(node.played(generation: 3) == 6000)
+    }
+
+    @Test("消えていく区切りが 2 つ重なっても、どちらも自分の音量が 0 になるまで残る")
+    func severalFadingSegmentsOverlap() throws {
+        let rack = makeRack()
+        let node = try addFile(rack, Self.steps)
+        begin(rack, node, start: 0, generation: 1)
+        _ = render(rack, 4000)
+        begin(rack, node, start: 6000, generation: 2)
+        let middle = render(rack, 120).left
+        begin(rack, node, start: 12000, generation: 3)
+        let after = render(rack, 6000).left
+        // 1 を出していた区切りは消えながら残っている (0.5 の区切りだけなら、最初の標本は 0.5 以下)
+        let last = middle[119]
+        #expect(last > 0.7 * Self.center, "2 つ目のつなぎ目の前 \(last)")
+        #expect(abs(after[0] - last) < 0.02, "2 つ目のつなぎ目で跳ねない: \(last) → \(after[0])")
+        // 3 つが重なっている間は、0.25 の区切りの音量が上がる分だけ、どの標本も 0.25 を下回らない
+        #expect(after.allSatisfy { $0 >= 0.25 * Self.center - 1e-5 })
+        #expect(abs(after[5999] - 0.25 * Self.center) < 1e-5)
+    }
+
+    @Test("始め直しの直後に止めても、鳴っていた区切りは約 5 ミリ秒で消えきるまで鳴る")
+    func stoppingRightAfterARestart() throws {
+        let rack = makeRack()
+        let node = try addFile(rack, Self.steps)
+        begin(rack, node, start: 0, generation: 1)
+        _ = render(rack, 4000)
+        // 同じ描き出しの前に、始め直して止める
+        begin(rack, node, start: 6000, generation: 2)
+        rack.post(SynthCommand(op: .stop, node: UInt8(node.id)))
+        let after = render(rack, 6000).left
+        // 止めたときの消え方 (240 標本目で 1/e) と同じ。**捨てると最初の標本から 0**
+        #expect(after[0] > 0.95 * Self.center, "止めた直後の標本 \(after[0])")
+        let falling = after[239] / Self.center
+        #expect(abs(falling - 0.368) < 0.03, "240 標本目の消え方 \(falling)")
+        #expect(after[5000...].allSatisfy { $0 == 0 })
+        #expect(node.isIdle && node.isFinished)
+    }
+
+    @Test("新しい区切りがファイルの終わりに着いても、消えていく前の区切りは切れない")
+    func reachingTheEndKeepsTheFadingSegment() throws {
+        let rack = makeRack()
+        let node = try addFile(rack, Array(repeating: 1, count: 20_000))
+        begin(rack, node, start: 0, generation: 1)
+        _ = render(rack, 4000)
+        // 終わりの 50 標本手前から 1 度だけ鳴らす区切り (すぐ終わりに着く)
+        begin(rack, node, start: 19_950, generation: 2)
+        let after = render(rack, 5000).left
+        // 新しい区切りは 50 標本で終わる。前の区切りは、その後も 240 標本で 1/e に消えていく
+        let falling = after[289] / Self.center
+        #expect(abs(falling - 0.368) < 0.1, "終わりに着いた後の消え方 \(falling) (50 + 240 標本目)")
+        #expect(after[100] > 0.5 * Self.center)
+        #expect(after[4500...].allSatisfy { $0 == 0 })
+        #expect(node.played(generation: 2) == 50)
+        #expect(node.isIdle && node.isFinished)
+    }
+
+    @Test("消えていく区切りは 8 つまで。溢れたら、いちばん小さいものを捨てるので、音は跳ねない")
+    func fadingSegmentsAreBounded() throws {
+        let rack = makeRack()
+        let node = try addFile(rack, Array(repeating: 1, count: 48_000))
+        begin(rack, node, generation: 1)
+        var heard = render(rack, 4000).left
+        // 立ち上がり終える前に 20 回始め直す (消えていく区切りが 8 を超える)
+        for generation in 2...21 {
+            begin(rack, node, start: 0, generation: generation)
+            heard += render(rack, 400).left
+        }
+        heard += render(rack, 6000).left
+        #expect(heard.allSatisfy { $0.isFinite && $0 <= Self.center * 1.0001 })
+        #expect(abs(heard[heard.count - 1] - Self.center) < 1e-5)
+        // 捨てるのは、消えかけてほとんど聞こえないものだけ (跳ねない)
+        let jump = zip(heard, heard.dropFirst()).map { abs($1 - $0) }.max() ?? 1
+        #expect(jump < 0.005, "隣の標本との差の最大 \(jump)")
+    }
+
+    @Test("鳴った数は整数の計算 (描いた数 × ファイルの率 ÷ ラックの率の切り捨て) と、どの標本でも同じ")
+    func playedIsExactInIntegers() throws {
+        for fileRate in [44_100.0, 22_050.0, 32_000.0, 96_000.0] {
+            let rack = makeRack()
+            let node = try addFile(rack, Array(repeating: 0.1, count: Int(fileRate) * 2), fileRate: fileRate)
+            begin(rack, node)
+            var made = 0
+            for step in [1, 1, 2, 3, 5, 7, 11, 479, 480, 481, 1000, 4096, 9000] {
+                _ = render(rack, step)
+                made += step
+                let expected = made * Int(fileRate) / 48_000
+                #expect(node.played(generation: 1) == expected, "\(fileRate) Hz で \(made) 標本")
+            }
+            // 1 標本ずつ数えても同じ (掛けてから割る計算なので、割り切れる所で 1 標本低くならない)
+            for _ in 0..<3000 {
+                _ = render(rack, 1)
+                made += 1
+                #expect(node.played(generation: 1) == made * Int(fileRate) / 48_000)
+            }
+        }
+    }
+
     @Test("止めている最中に始め直すと、鳴り続けて立ち上がり直す")
     func startingDuringTheFadeOut() throws {
         let rack = makeRack()
