@@ -780,13 +780,16 @@ import MokumeDiagnostics
     ///
     /// **発行口は解放せず、関所へ返す** ([#2054])。待ちを済ませてから手放しても、発行口を解放した
     /// 直後に同じプロセスの別の土台へ投入した仕事が、GPU の hang や page fault で打ち切られた。
-    /// 関所は、後から何本かが手放されるまで解放を遅らせる (``CommandQueueGate/retire(_:)``)。
+    /// 関所は、後から何本かが手放されるまで解放を遅らせる (``CommandQueueGate/retire(_:pastDeadline:)``)。
     /// 返す前に常駐の集合を発行口から外す。付けたままだと、遅らせている間、この土台の資源まで
     /// 生き延びる。**待ちが期限を越えたときは外さない** — 実行中のコマンドが踏んでいる集合を外すと、
-    /// その結果が未定義になる (``releaseResidency(of:)`` と同じ)。
+    /// その結果が未定義になる (``releaseResidency(of:)`` と同じ)。**期限を越えて手放した発行口は、
+    /// 環にも入れない** — 後から別の土台が手放されても押し出されず、プロセスの終わりまで関所が持つ
+    /// ([#2235])。実行中の仕事を載せたまま集合ごと解放しないためである。
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     /// [#2054]: https://github.com/mokume-metal/mokume/issues/2054
+    /// [#2235]: https://github.com/mokume-metal/mokume/issues/2235
     isolated deinit {
         var finished = isIdle
         if !finished {
@@ -800,7 +803,8 @@ import MokumeDiagnostics
             queue.removeResidencySet(residencySet)
             queue.removeResidencySet(drawableResidency)
         }
-        queueGate.retire(queue)
+        // 期限切れの枝は、環に入れずプロセスの終わりまで持たせる (#2235)
+        queueGate.retire(queue, pastDeadline: !finished)
     }
 
     // MARK: - リソース

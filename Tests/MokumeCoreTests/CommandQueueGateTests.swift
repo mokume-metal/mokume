@@ -52,6 +52,38 @@ struct CommandQueueGateTests {
         // 検査の条件 (`isAvailable`) を評価し直しても、使い捨ての発行口を作らない
         #expect(!RenderDevice.isAvailable(on: device, through: gate))
         #expect(gate.queuesMade == 1, "使える環境かを問うだけで発行口を作った (計 \(gate.queuesMade) 本)")
+
+        // 期限を越えて手放した発行口は、環ではなく、押し出されない置き場で持つ (#2235)
+        #expect(gate.heldQueueCount == 1, "期限切れで手放した発行口を、押し出されない置き場で持っていない")
+        #expect(gate.retiredQueueCount == 0, "期限切れで手放した発行口が、押し出される環に入っている")
+    }
+
+    /// 期限切れで手放した発行口は、後から環の上限より多くが手放されても解放されない (#2235)。
+    /// 実行中の仕事を載せたまま集合ごと解放すると、「実行中のものが終わる前に土台を畳まない」の約束を、
+    /// 期限切れの枝だけが破る。
+    @Test("期限切れで手放した発行口は、後から上限より多くが手放されても、関所が持ち続ける")
+    func aQueueRetiredPastTheDeadlineOutlivesTheRing() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
+        let gate = CommandQueueGate()
+        weak var expired: AnyObject?
+        weak var ordinary: AnyObject?
+        do {
+            let queue = try gate.makeQueue(on: device)
+            expired = queue as AnyObject
+            gate.retire(queue, pastDeadline: true)
+        }
+        do {
+            let queue = try gate.makeQueue(on: device)
+            ordinary = queue as AnyObject
+            gate.retire(queue)
+        }
+        for _ in 0..<(CommandQueueGate.retiredQueueLimit + 1) {
+            gate.retire(try gate.makeQueue(on: device))
+        }
+        #expect(gate.retiredQueueCount == CommandQueueGate.retiredQueueLimit)
+        #expect(gate.heldQueueCount == 1)
+        #expect(ordinary == nil, "環に入れた発行口が、上限を越えても解放されない (対照が成り立たない)")
+        #expect(expired != nil, "期限切れで手放した発行口が、環から押し出されて解放された")
     }
 
     /// 発行口を解放した直後に、同じプロセスの別の土台へ投入した仕事が打ち切られる (#2054)。
@@ -112,6 +144,60 @@ struct CommandQueueGateWordingTests {
         #expect(!gate.close(after: .takingDown, limit: .seconds(5), at: Self.first + 60))
         #expect(gate.closure == .init(wait: .finishing, limit: .seconds(5), date: Self.first))
         #expect(gate.isClosed)
+    }
+
+    @Test("最初に印を立てたときだけ、書き先があれば期限切れの記録を 1 つ書く")
+    func theFirstClosureWritesOneRecord() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("wait-expired.json")
+        let gate = CommandQueueGate(expiryRecord: ExpiryRecord(path: path, wrapper: 4321))
+        #expect(!FileManager.default.fileExists(atPath: path.path), "印を立てる前に書いている")
+
+        #expect(gate.close(after: .finishing, limit: .seconds(5), at: Self.first))
+        let data = try Data(contentsOf: path)
+        let record = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(record["event"] as? String == "wait-expired")
+        #expect(record["wait"] as? String == CommandQueueGate.Wait.finishing.phrase)
+        #expect(record["limit"] as? String == "\(Duration.seconds(5))")
+        #expect(record["gpu_slot_pid"] as? Int == 4321)
+        #expect(record["pid"] as? Int == Int(ProcessInfo.processInfo.processIdentifier))
+        #expect(record["cwd"] as? String == FileManager.default.currentDirectoryPath)
+        #expect(record["time"] as? String == ExpiryRecord.timestamp(Self.first))
+        #expect(record["command"] is [String])
+
+        // 2 回目の期限切れは、記録を書き換えない (最初の 1 件を残す)
+        #expect(!gate.close(after: .takingDown, limit: .seconds(5), at: Self.first + 60))
+        #expect(try Data(contentsOf: path) == data)
+    }
+
+    @Test("既にある記録は上書きしない・書き先が使えなくても投げない・書き先が無ければ何も書かない")
+    func theRecordIsNeverOverwrittenAndNeverThrows() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("wait-expired.json")
+        try Data("older".utf8).write(to: path)
+        let record = ExpiryRecord(path: path, wrapper: nil)
+        #expect(!record.write(after: .allocator, limit: .seconds(5)))
+        #expect(try String(contentsOf: path, encoding: .utf8) == "older", "既にある記録を上書きした")
+
+        // 置き場が無くても、投げずに書かない
+        let missing = ExpiryRecord(path: directory.appendingPathComponent("absent/wait-expired.json"), wrapper: nil)
+        #expect(!missing.write(after: .allocator, limit: .seconds(5)))
+
+        // 環境変数が無い (`gpu-slot.py` の外) か空なら、記録を持たない = 何も書かない
+        #expect(ExpiryRecord.fromEnvironment([:]) == nil)
+        #expect(ExpiryRecord.fromEnvironment([ExpiryRecord.variable: ""]) == nil)
+        let given = ExpiryRecord.fromEnvironment([
+            ExpiryRecord.variable: path.path, ExpiryRecord.wrapperVariable: "77",
+        ])
+        #expect(given == ExpiryRecord(path: path, wrapper: 77))
+        // 書き先を持たない関所 (検査が自前で作るもの) は、印を立てても何も書かない
+        let plain = CommandQueueGate()
+        #expect(plain.close(after: .finishing, limit: .seconds(5), at: Self.first))
+        #expect(try String(contentsOf: path, encoding: .utf8) == "older")
     }
 
     @Test("断りの 1 行目が、最初に期限を越えた待ちの種類・期限・時刻を名乗る")
