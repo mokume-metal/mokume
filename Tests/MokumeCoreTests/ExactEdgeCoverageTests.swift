@@ -30,6 +30,11 @@ import simd
 ///   (行の絶対値の和) で、法線が回る曲線の縁 (円・楕円・扇・丸い点) は向きによらない行ノルムで測る。
 ///   回した円の光の量が 0° のときと同じで、45° の細い楕円は境目の手前・外のそれぞれで光の量が続く
 ///   (境目そのものの跳びは既知の限界で、main より大きくならないことだけを見る)
+/// - **角丸の `rect`・丸い端の線・点も回して同じ**: 回した角丸の `rect` (実質が円) の光の量が 0° と同じ・
+///   回した丸い端の線 (破線の短い片を含む) の光の量が面積に一致する・点は回転によらず常に線形の渡し
+///   (1e-4 rad 回しても画素の値が動かない)・丸い端の線の端も同じ
+/// - **曲がった部分の面積は、その領域だけ**: 丸い折れ目・削ぎ・角丸の `rect` の辺と、尖った角 (帯の穴の角)
+///   は、折れ目や角丸を付けない同じ `rect` と同じ画素の値のまま
 /// - **曲がった部分は軸に沿う `rect` でも面積**: 角丸の角・`strokeJoin(.round)` の外縁・`.bevel` の削ぎは
 ///   画素ごとに厳密な面積と一致し、既定の丸い端・`point()` は線形の渡しのまま (従来と 1 ビットも違わない)
 ///
@@ -260,6 +265,207 @@ struct ExactEdgeCoverageTests {
         #expect(broken.isEmpty, "太さ \(pair.0) と \(pair.1)・上限 \(pair.2): \(broken.joined(separator: " / "))")
     }
 
+    /// **回した角丸の `rect` の光の量は、回さない角丸の `rect` と同じ** (置き方 600 通りの総和・1 ± 0.015)。
+    /// 実質が円 (`rect(-0.6, -0.6, 1.2, 1.2, 0.6)`) の `rect` を回すと、境目を直線の和で測っていた版では
+    /// 四角の細い枝へ入り、光が真の面積の +27% になった (角の半径 0.3 でも +5.6%)。角丸は曲線なので境目は円と同じ行ノルム。
+    @Test(
+        "角丸の rect の塗りは、45° に回しても光の量が変わらない (置き方 600 通りの総和・実質が円の rect を含む)",
+        arguments: [(Float(1.2), Float(0.6)), (1.2, 0.3), (1.4, 0.7), (1.0, 0.5), (2.0, 1.0)])
+    func rotatedRoundedRectKeepsItsLight(_ pair: (Float, Float)) throws {
+        func rounded(_ canvas: Canvas) {
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.rect(-pair.0 / 2, -pair.0 / 2, pair.0, pair.0, pair.1)
+        }
+        let plain = try Self.gridLight(angle: 0, rounded)
+        let rotated = try Self.gridLight(angle: Float.pi / 4, rounded)
+        #expect(
+            abs(rotated / plain - 1) <= 0.015,
+            "幅 \(pair.0)・角の半径 \(pair.1): 回した光 \(rotated)・回さない光 \(plain)・比 \(rotated / plain)")
+    }
+
+    @Test(
+        "角丸の rect の輪郭 (帯の穴の内縁に丸い角が残る) は、45° に回しても光の量が変わらない",
+        arguments: [(Float(2.2), Float(1.1), Float(1.0)), (3.0, 1.5, 1.2), (2.4, 1.2, 0.8)])
+    func rotatedRoundedRectOutlineKeepsItsLight(_ triple: (Float, Float, Float)) throws {
+        func ring(_ canvas: Canvas) {
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(triple.2)
+            canvas.rect(-triple.0 / 2, -triple.0 / 2, triple.0, triple.0, triple.1)
+        }
+        let plain = try Self.gridLight(angle: 0, ring)
+        let rotated = try Self.gridLight(angle: Float.pi / 4, ring)
+        #expect(
+            abs(rotated / plain - 1) <= 0.015,
+            "幅 \(triple.0)・角の半径 \(triple.1)・太さ \(triple.2): 回した光 \(rotated)・回さない光 \(plain)・比 \(rotated / plain)")
+    }
+
+    /// **回した丸い端の線 (既定の線) の光の量は面積に一致する。** 太さ 1〜1.41 の斜めの線は法線向きの幅で細い枝に入り、
+    /// 細い枝が丸い端を四角に数えると、端 1 つにつき約 0.107 · w² 多く出る (太さ 1・長さ 1 の破線の片で約 +12%)。
+    /// 細い枝は丸い端をカプセルとして数える。長さ 1 の線 (面積 `w + π w² / 4`) と、片の長さ 1 の破線を 45°・30° で、
+    /// 16 通りの置き方で比べる。太さ 1.4 以上の丸い端の円弧は、縁 1 本の式が円を数えすぎる (直径 1.4 の円で 17%・
+    /// 線形の渡しでも面積でも同じ。円の既知の誤差で、main も同じ) ので見ない。
+    @Test(
+        "回した丸い端の短い線は、細い枝との境目の両側の太さでも、16 通りの置き方で面積の 1 ± 0.03",
+        arguments: [Float(0.5), 0.99, 1, 1.2], [0, 1])
+    func rotatedRoundCapSegmentKeepsItsLight(_ weight: Float, _ angleIndex: Int) throws {
+        let angle = Self.angles[angleIndex]
+        let expected = Double(weight + Float.pi * weight * weight / 4)
+        var broken: [String] = []
+        for offset in Self.offsets {
+            let pixels = try Self.light { canvas in
+                canvas.stroke(255)
+                canvas.strokeWeight(weight)
+                canvas.strokeCap(.round)
+                canvas.translate(64, 64 + offset)
+                canvas.rotate(angle.radians)
+                canvas.line(-0.5, 0, 0.5, 0)
+            }
+            let ratio = Self.total(pixels) / expected
+            if abs(ratio - 1) > 0.03 { broken.append("ずらし \(offset): \(ratio)") }
+        }
+        #expect(broken.isEmpty, "\(angle.name)・太さ \(weight): \(broken.joined(separator: " / "))")
+    }
+
+    @Test(
+        "回した破線 (既定の丸い端の短い片の並び) の光の量は、片の面積の和に 1 ± 0.03 で一致する",
+        arguments: [Float(0.5), 1, 1.2], [0, 1])
+    func rotatedDashedLineKeepsItsLight(_ weight: Float, _ angleIndex: Int) throws {
+        let angle = Self.angles[angleIndex]
+        // 長さ 40 の線を、片 1・間隔 4 で刻むと 8 片 (どの片も長さ 1・端の形の食い込みは無い)
+        let expected = Double(8 * (weight + Float.pi * weight * weight / 4))
+        var broken: [String] = []
+        for offset in Self.offsets {
+            let pixels = try Self.light { canvas in
+                canvas.stroke(255)
+                canvas.strokeWeight(weight)
+                canvas.strokeDash(1, 4)
+                canvas.translate(64, 64 + offset)
+                canvas.rotate(angle.radians)
+                canvas.line(-20, 0, 20, 0)
+            }
+            let ratio = Self.total(pixels) / expected
+            if abs(ratio - 1) > 0.03 { broken.append("ずらし \(offset): \(ratio)") }
+        }
+        #expect(broken.isEmpty, "\(angle.name)・太さ \(weight): \(broken.joined(separator: " / "))")
+    }
+
+    /// **`point()` と丸い端は、回転によらず線形の渡しのまま** (決定の例外)。変換が画素の軸に沿うかで線形と面積が
+    /// 切り替わると、1e-4 rad 回しただけで画素の値が最大 0.04 飛ぶ。点は常に線形で、丸い端の線は辺だけ面積・端は
+    /// 線形なので、ほんの少し回した絵は、回さない絵と画素ごとに 0.003 以内で一致する。
+    @Test(
+        "point() と丸い端の線の端は、1e-4 rad 回しても画素の値が動かない (回転によらず線形の渡し)",
+        arguments: [Float(1e-4), 1e-3])
+    func pointAndRoundCapStayLinearUnderSmallRotation(_ turn: Float) throws {
+        func picture(_ angle: Float) throws -> PixelBuffer {
+            try Self.light { canvas in
+                canvas.stroke(255)
+                canvas.strokeCap(.round)
+                canvas.strokeWeight(6.3)
+                canvas.push()
+                canvas.translate(30.3, 30.6)
+                canvas.rotate(angle)
+                canvas.point(0, 0)
+                canvas.pop()
+                canvas.strokeWeight(2.5)
+                canvas.push()
+                canvas.translate(90.4, 30.2)
+                canvas.rotate(angle)
+                canvas.point(0, 0)
+                canvas.pop()
+                canvas.strokeWeight(7.3)
+                canvas.push()
+                canvas.translate(64.2, 90.7)
+                canvas.rotate(angle)
+                canvas.line(-1, 0, 1, 0)
+                canvas.pop()
+            }
+        }
+        let base = try picture(0)
+        let turned = try picture(turn)
+        var worst: Float = 0
+        var at = ""
+        for y in 0..<base.height {
+            for x in 0..<base.width {
+                let diff = abs(base[x, y].red - turned[x, y].red)
+                if diff > worst {
+                    worst = diff
+                    at = "(\(x), \(y)): \(base[x, y].red) → \(turned[x, y].red)"
+                }
+            }
+        }
+        #expect(worst <= 0.003, "回転 \(turn) rad で最大 \(worst) 動いた — \(at)")
+    }
+
+    /// **曲がった部分の面積は、その領域の画素だけ。** `strokeJoin(.round)`・`.bevel` の輪郭と角丸の塗りは、辺と、尖った
+    /// 角 (帯の穴の角) の画素を、折れ目や角丸を付けない同じ `rect` と同じ値のまま (線形の渡し) にする。図形 1 つに
+    /// 1 つの切り替えでは、穴の尖った角まで面積に変わる。外縁の角の領域 (外縁の角の外 ± 3 画素) は比べない。
+    @Test("丸い折れ目・削ぎ・角丸は、辺と尖った角の画素を、付けない rect と同じ値のままにする")
+    func curvedPartsLeaveStraightsAndSharpCornersAlone() throws {
+        let box = (x: Float(20.3), y: Float(20.4), width: Float(44), height: Float(30))
+        let center = SIMD2(box.x + box.width / 2 + 0.5, box.y + box.height / 2 + 0.5)
+        let half = SIMD2(box.width / 2, box.height / 2)
+        func outline(_ join: StrokeJoin) throws -> PixelBuffer {
+            try Self.light { canvas in
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(12)
+                canvas.strokeJoin(join)
+                canvas.rect(box.x, box.y, box.width, box.height)
+            }
+        }
+        let miter = try outline(.miter)
+        var moved: [String] = []
+        for join in [StrokeJoin.round, .bevel] {
+            let other = try outline(join)
+            for y in 0..<miter.height {
+                for x in 0..<miter.width {
+                    let d = simd_abs(SIMD2(Float(x) + 0.5, Float(y) + 0.5) - center)
+                    // 外縁の角の領域は、折れ目の形で値が違ってよい
+                    if d.x > half.x - 3 && d.y > half.y - 3 { continue }
+                    if abs(miter[x, y].red - other[x, y].red) > 1e-5 {
+                        moved.append("\(join) (\(x), \(y)): \(miter[x, y].red) → \(other[x, y].red)")
+                    }
+                }
+            }
+        }
+        #expect(moved.isEmpty, "折れ目の領域の外で動いた画素 \(moved.count) 個: \(moved.prefix(4))")
+
+        // 角丸の塗りと輪郭: 角の円弧の領域の外は、角を丸めない rect と同じ。角の半径 12・太さ 6 (内縁も丸い角を持つ)
+        func rounded(_ radius: Float, stroke: Bool) throws -> PixelBuffer {
+            try Self.light { canvas in
+                if stroke {
+                    canvas.noFill()
+                    canvas.stroke(255)
+                    canvas.strokeWeight(6)
+                } else {
+                    canvas.noStroke()
+                    canvas.fill(255)
+                }
+                canvas.rect(box.x, box.y, box.width, box.height, radius)
+            }
+        }
+        for stroke in [false, true] {
+            let sharp = try rounded(0, stroke: stroke)
+            let round = try rounded(12, stroke: stroke)
+            let shift: Float = stroke ? 0.5 : 0
+            let centre = SIMD2(box.x + box.width / 2 + shift, box.y + box.height / 2 + shift)
+            var displaced: [String] = []
+            for y in 0..<sharp.height {
+                for x in 0..<sharp.width {
+                    let d = simd_abs(SIMD2(Float(x) + 0.5, Float(y) + 0.5) - centre)
+                    // 角の領域 (縮めた箱の角の外 ± 帯の幅) は比べない
+                    if d.x > half.x - 12 - 4 && d.y > half.y - 12 - 4 { continue }
+                    if abs(sharp[x, y].red - round[x, y].red) > 1e-5 {
+                        displaced.append("(\(x), \(y)): \(sharp[x, y].red) → \(round[x, y].red)")
+                    }
+                }
+            }
+            #expect(displaced.isEmpty, "角丸 (輪郭 \(stroke)): 角の領域の外で動いた画素 \(displaced.count) 個: \(displaced.prefix(4))")
+        }
+    }
+
     // MARK: - 縁の画素ごと
 
     /// 画素 (x, y) の面積を、`samples` × `samples` の標本で数える。画素の 4 角と中心が同じ側なら標本を取らない。
@@ -339,7 +545,7 @@ struct ExactEdgeCoverageTests {
 
     /// 軸に沿った `rect` の、曲がった部分 (角丸の角・`strokeJoin(.round)` の外縁・`.bevel` の削ぎ) の画素を、
     /// 厳密な面積と比べる。**軸に沿う `rect` の直線の縁は線形の渡しのままだが、曲がった部分は斜めの縁を
-    /// 持つので面積で数える** — 旗が立ち、`keepsLinearEdge` が偽になる。`skipping` の近く (形の角・頂点) は
+    /// 持つので面積で数える** — 旗が立ち、曲がった部分の領域で被覆が面積になる。`skipping` の近く (形の角・頂点) は
     /// 見ない (角の外の距離場は縁 1 本ではなく角までの距離で、面積の約束の外・ADR-0039 決定 1)。
     /// `shift` は、輪郭が画面で寄る量 (0.5 画素・ADR-0039 決定 2)。
     private static func worstEdgeError(
@@ -597,7 +803,7 @@ struct ExactEdgeCoverageTests {
 
     /// **円と同じ列に並んだ軸に沿う `rect`・線も、列の外で描いたのと 1 ビットも違わない** (旗が立った組で
     /// 描かれても)。列の旗は列ごとに 1 つで、円 (常に斜めの縁を含む) が 1 つ入ると、同じ列の軸に沿う
-    /// 形も面積の枝を残した組で描かれる。軸に沿う直線の縁だけが従来の式のまま (`keepsLinearEdge`) なので、
+    /// 形も面積の枝を残した組で描かれる。軸に沿う直線の縁だけが従来の式のまま (縁の分類の被覆の数え方 `linear`) なので、
     /// 旗が立たない列でしか見ていない上の検査では、この取り違えを見逃す。
     @Test("円と同じ列に並んだ軸に沿う rect・線は、列の外で描いたのと 1 ビットも違わない")
     func axisAlignedShapesInAFlaggedColumnDoNotMove() throws {
