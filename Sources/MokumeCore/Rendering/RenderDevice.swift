@@ -131,6 +131,11 @@ import MokumeDiagnostics
     /// 止まった発行口を溜める側に数える ([#2052])。土台の初期化子も、同じ時点から
     /// ``RenderFailure/gpuNotResponding`` で断る。
     ///
+    /// **別のプロセスの期限切れの記録 (`scripts/gpu-slot.py` の下・#2235) だけがあるときは、`true` を返す**
+    /// (発行口は作らない)。`false` にすると、`.enabled(if: RenderDevice.isAvailable, …)` の GPU の suite が
+    /// 「GPU が無い実行環境」として全部飛び、`swift test` が緑で終わる。名乗って止まるのは、土台の初期化子が
+    /// ``RenderFailure/gpuNotResponding`` で断って suite が赤になる形である。
+    ///
     /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor-and-toolchain.md
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     public nonisolated static var isAvailable: Bool {
@@ -140,6 +145,11 @@ import MokumeDiagnostics
     /// ``isAvailable`` の中身。発行口の関所を差し替えられる形で、検査はここを呼ぶ。
     nonisolated static func isAvailable(on device: (any MTLDevice)?, through gate: CommandQueueGate) -> Bool {
         guard let device else { return false }
+        // **記録だけがあるときは、装置が在ると答える** (発行口は作らない・#2235)。`.enabled(if: isAvailable)` の
+        // GPU の suite が、記録のせいで「GPU が無い実行環境」として全部飛ぶと、`swift test` が 0 で終わって緑に
+        // なる。止まるのは名乗って赤にする形でなければならない — 土台を作る所 (`makeQueue`) が
+        // ``RenderFailure/gpuNotResponding`` で断るので、suite は走って赤になる。自分の印は、今までどおり偽
+        if gate.onlyAnotherRunsRecord { return true }
         return (try? gate.makeQueue(on: device)) != nil
     }
 
@@ -780,13 +790,16 @@ import MokumeDiagnostics
     ///
     /// **発行口は解放せず、関所へ返す** ([#2054])。待ちを済ませてから手放しても、発行口を解放した
     /// 直後に同じプロセスの別の土台へ投入した仕事が、GPU の hang や page fault で打ち切られた。
-    /// 関所は、後から何本かが手放されるまで解放を遅らせる (``CommandQueueGate/retire(_:)``)。
+    /// 関所は、後から何本かが手放されるまで解放を遅らせる (``CommandQueueGate/retire(_:pastDeadline:)``)。
     /// 返す前に常駐の集合を発行口から外す。付けたままだと、遅らせている間、この土台の資源まで
     /// 生き延びる。**待ちが期限を越えたときは外さない** — 実行中のコマンドが踏んでいる集合を外すと、
-    /// その結果が未定義になる (``releaseResidency(of:)`` と同じ)。
+    /// その結果が未定義になる (``releaseResidency(of:)`` と同じ)。**期限を越えて手放した発行口は、
+    /// 環にも入れない** — 後から別の土台が手放されても押し出されず、プロセスの終わりまで関所が持つ
+    /// ([#2235])。実行中の仕事を載せたまま集合ごと解放しないためである。
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     /// [#2054]: https://github.com/mokume-metal/mokume/issues/2054
+    /// [#2235]: https://github.com/mokume-metal/mokume/issues/2235
     isolated deinit {
         var finished = isIdle
         if !finished {
@@ -800,7 +813,8 @@ import MokumeDiagnostics
             queue.removeResidencySet(residencySet)
             queue.removeResidencySet(drawableResidency)
         }
-        queueGate.retire(queue)
+        // 期限切れの枝は、環に入れずプロセスの終わりまで持たせる (#2235)
+        queueGate.retire(queue, pastDeadline: !finished)
     }
 
     // MARK: - リソース
@@ -1132,18 +1146,32 @@ import MokumeDiagnostics
     private func signalReached(_ value: UInt64, while wait: CommandQueueGate.Wait) -> Bool {
         let milliseconds = UInt64((signalWaitLimit / .milliseconds(1)).rounded(.up))
         guard !completion.wait(untilSignaledValue: value, timeoutMS: milliseconds) else { return true }
-        if queueGate.close(after: wait, limit: signalWaitLimit), unansweredSubmissionsForTesting == 0 {
-            Diagnostics.warn(Self.closingNotice(after: wait, limit: signalWaitLimit))
+        // 検査の差し込み (答えの来ない投入) の期限切れは、知らせと同じく記録も書かない (#2235)
+        if queueGate.close(
+            after: wait, limit: signalWaitLimit, writesRecord: unansweredSubmissionsForTesting == 0),
+            unansweredSubmissionsForTesting == 0
+        {
+            Diagnostics.warn(
+                Self.closingNotice(
+                    after: wait, limit: signalWaitLimit,
+                    record: queueGate.expiryRecordExists ? queueGate.expiryRecordPath?.path : nil))
         }
         return false
     }
 
     /// 関所に印を立てた時に出す 1 行。**どちらの場合もありうると名乗り、起こし直すよう促す**
     /// (上の ``signalReached(_:while:)``)。
-    static func closingNotice(after wait: CommandQueueGate.Wait, limit: Duration) -> String {
-        "Waiting for the GPU went past \(limit) while \(wait.phrase). That can be one frame drawing too much or a GPU"
+    ///
+    /// - Parameter record: `scripts/gpu-slot.py` の下で記録を書いたなら、その置き場。**記録は起こし直しでは
+    ///   消えず、人が GPU の答えを確かめて消すまで、以後の検査・計測が止まる**と言い、起こし直せとは言わない (#2235)。
+    static func closingNotice(after wait: CommandQueueGate.Wait, limit: Duration, record: String? = nil) -> String {
+        let head =
+            "Waiting for the GPU went past \(limit) while \(wait.phrase). That can be one frame drawing too much or a GPU"
             + " that stopped answering, and the two look the same from here, so from now on this process sets up no"
-            + " new drawing foundation — start it again to set one up"
+            + " new drawing foundation"
+        guard let record else { return head + " — start it again to set one up" }
+        return head + ", and tests and measurements started by gpu-slot.py stop too until a person checks that the GPU"
+            + " answers and deletes the record (\(record)) — starting this process again does not remove it"
     }
 
     /// 指定した置き場から投入したコマンドが終わるまで待つ。

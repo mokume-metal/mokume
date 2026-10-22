@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import MokumeDiagnostics
 import Synchronization
 
 /// コマンドの発行口 (`MTL4CommandQueue`) を作る関所。**GPU が一度答えなくなったプロセスでは、もう作らない**
@@ -52,7 +53,7 @@ import Synchronization
 /// ## 手放した発行口の解放を遅らせる ([#2054])
 ///
 /// **土台が手放した発行口は、すぐには解放しない。** 後から ``retiredQueueLimit`` 本が手放される
-/// まで、関所が持っておく (``retire(_:)``)。
+/// まで、関所が持っておく (``retire(_:pastDeadline:)``)。
 ///
 /// 発行口を解放した直後 (50〜200ms) に、同じプロセスが別の土台へ投入した仕事が、GPU の hang
 /// (`kIOGPUCommandBufferCallbackErrorHang`) か page fault で打ち切られる。土台が待ちを済ませてから
@@ -83,11 +84,31 @@ import Synchronization
 /// 生かさない。**待ちが期限を越えて手放されたものだけは、集合を付けたまま持つ** — 実行中のコマンドが
 /// 踏む集合は外せないからである。そのプロセスでは以後、新しい土台を作らない (上の「何をするか」)。
 ///
+/// **期限切れで手放したものは、環に入れず、プロセスの終わりまで持つ** ([#2235])。環に入れると、
+/// 後から ``retiredQueueLimit`` 本が手放されたときに押し出され、実行中の仕事を載せたまま集合ごと
+/// 解放される。それは `RenderDevice` の「実行中のものが終わる前に土台を畳まない」の約束を、期限切れの
+/// 枝だけが破る形になる。印が立った後は新しい土台を作らないので、持つ本数は増え続けない (印の前から
+/// 在った土台のうち、期限を越えて手放されたものだけ)。
+///
+/// ## プロセスの外の記録 ([#2235])
+///
+/// 印はプロセスの中にしか無いので、`scripts/gpu-slot.py` の下で走っているときは、最初に印を立てた
+/// ときに ``ExpiryRecord`` を 1 つ書く。`gpu-slot.py` は、記録があれば次の検査・計測を起こさない。
+/// **書くのは ``process`` だけ**で、検査が自前で作る関所は書かない (検査の差し込みの期限切れで、機械の
+/// 検査が止まってはならない)。検査の差し込み (答えの来ない投入) が ``process`` を通っても、
+/// 知らせを黙らせるのと同じ条件で書かない (``close(after:limit:at:writesRecord:)``)。
+///
+/// **記録は読みもする。** `gpu-slot.py` が記録を読むのは起こすときだけなので、包んだ実行の中で後から
+/// 起きるプロセス (exit test の子・`mokume watch` の世代) と、既に走っている別の枠の検査は、起こすときの
+/// 検めを通らない。``process`` は、発行口を作る前に記録の有無を見て (`stat` 1 回)、あれば印が立って
+/// いるのと同じに扱う (``isClosed``)。記録を持たない関所は何も読まない。
+///
 /// Metal 側の糸からは触らないが、``RenderDevice/isAvailable`` が隔離の外から呼ぶので、錠で
 /// 守る (``CoalescedNotices`` と同じ作法)。
 ///
 /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
 /// [#2054]: https://github.com/mokume-metal/mokume/issues/2054
+/// [#2235]: https://github.com/mokume-metal/mokume/issues/2235
 nonisolated final class CommandQueueGate: Sendable {
     /// 期限を越えた待ちの種類。GPU の待ちは 4 つで、どれも `RenderDevice` の `signalReached(_:while:)` を通る。
     enum Wait: Sendable, Equatable {
@@ -131,6 +152,8 @@ nonisolated final class CommandQueueGate: Sendable {
         var queuesMade = 0
         /// 手放されて、解放を待っている発行口 (古い順)
         var retired: [any MTL4CommandQueue] = []
+        /// 待ちが期限を越えて手放された発行口。**押し出さず、プロセスの終わりまで持つ** (#2235)
+        var held: [any MTL4CommandQueue] = []
     }
 
     /// 手放された発行口を、解放せずに持っておく本数。計測 (#2054) では 8 本で打ち切りが消えた。
@@ -139,8 +162,27 @@ nonisolated final class CommandQueueGate: Sendable {
 
     private let state = Mutex(State())
 
+    /// 最初に印を立てたときに書く、プロセスの外の記録 (#2235)。持たなければ書かない。
+    private let expiryRecord: ExpiryRecord?
+
+    /// - Parameter expiryRecord: 最初に印を立てたときに書く記録。**既定は持たない** — 検査が自前で作る
+    ///   関所は書かない。
+    init(expiryRecord: ExpiryRecord? = nil) {
+        self.expiryRecord = expiryRecord
+    }
+
     /// プロセスで 1 つの関所。製品の経路と、自前の関所を渡さない検査はここを通る。
-    static let process = CommandQueueGate()
+    /// **`gpu-slot.py` の下で走っていれば、期限切れの記録を書き、読みもする** (``ExpiryRecord``)。
+    static let process = forProcess()
+
+    /// プロセスの関所の作り方。**環境から記録をつなぐ配線は、ここ 1 箇所にある** — 外すと `gpu-slot.py` の
+    /// 下でも記録を書かず読まない関所になる (検査が `process` と環境を突き合わせて見る)。
+    ///
+    /// - Parameter environment: 検査が差す環境。`nil` なら、このプロセスの環境を読む (読み場所は
+    ///   ``ExpiryRecord/fromEnvironment(_:)`` の 1 箇所)。
+    static func forProcess(environment: [String: String]? = nil) -> CommandQueueGate {
+        CommandQueueGate(expiryRecord: .fromEnvironment(environment))
+    }
 
     /// 発行口を作る。**印が立っていれば作らずに断る。**
     ///
@@ -157,16 +199,57 @@ nonisolated final class CommandQueueGate: Sendable {
 
     /// 合図の待ちが期限を越えた。**印を立てる。** 今回立てたなら `true` を返す (既に立っていれば
     /// `false`)。呼ぶ側は、`true` のときだけ人へ伝える。控えるのは最初の 1 回だけである。
-    func close(after wait: Wait, limit: Duration, at date: Date = Date()) -> Bool {
-        state.withLock { state in
+    ///
+    /// - Parameter writesRecord: 最初の印のとき、記録 (``ExpiryRecord``) を書くか。**検査の差し込み
+    ///   (答えの来ない投入) の期限切れでは `false` を渡す** — 知らせを黙らせているのと同じ条件で、
+    ///   本物の置き場へ書いて機械の検査を止めない (#2235)。書けなかったときは、1 度だけ名乗る。
+    func close(
+        after wait: Wait, limit: Duration, at date: Date = Date(), writesRecord: Bool = true
+    ) -> Bool {
+        let first = state.withLock { state in
             guard state.closure == nil else { return false }
             state.closure = Closure(wait: wait, limit: limit, date: date)
             return true
         }
+        // 書くのは錠の外で、最初の 1 回だけ (#2235)。書けなくても投げず、1 度名乗る
+        if first, writesRecord, let record = expiryRecord {
+            if case .failed(let reason, let createdFile) = record.write(after: wait, limit: limit, at: date) {
+                Diagnostics.warn(
+                    Self.recordFailureNotice(at: record.path, reason: reason, createdFile: createdFile))
+            }
+        }
+        return first
     }
 
-    /// 印が立っているか。
-    var isClosed: Bool { closure != nil }
+    /// 記録を書けなかったときに 1 度出す 1 行。**実際に合わせて 2 通りを言い分ける。**
+    ///
+    /// - 記録のファイルを作れなかった: 記録が無いので、次の検査・計測は止まらない。
+    /// - 作った後に書き損ねた (`createdFile`): 空か途中までのファイルが残り、`gpu-slot.py` は読めない記録として
+    ///   止める。人が GPU の答えを確かめて消すまで止まる。
+    static func recordFailureNotice(at path: URL, reason: String, createdFile: Bool = false) -> String {
+        if createdFile {
+            return "Could not finish writing the record of the GPU wait that went past its limit (\(path.path): \(reason)),"
+                + " so an unreadable one is left there. gpu-slot.py stops the next test or measurement on it until a person"
+                + " checks that the GPU answers and deletes it"
+        }
+        return "Could not write the record of the GPU wait that went past its limit (\(path.path): \(reason)), so the next"
+            + " test or measurement started by gpu-slot.py will not be stopped by it — check that the GPU answers"
+            + " before starting one"
+    }
+
+    /// 印が立っているか。**記録を持つ関所では、記録が在ることも印と同じに数える** (別のプロセスが期限を
+    /// 越えた — 上の「プロセスの外の記録」)。`stat` 1 回で、記録を持たない関所は何も読まない。
+    var isClosed: Bool { closure != nil || expiryRecordExists }
+
+    /// 記録を持つ関所で、記録が在るか。
+    var expiryRecordExists: Bool { expiryRecord?.exists ?? false }
+
+    /// **別のプロセス (または前の回) の記録だけがあって、このプロセスは印を立てていない**か。
+    /// ``RenderDevice/isAvailable`` が、装置の有無と記録の有無を分けるために読む。
+    var onlyAnotherRunsRecord: Bool { closure == nil && expiryRecordExists }
+
+    /// 記録の置き場。持たなければ `nil`。
+    var expiryRecordPath: URL? { expiryRecord?.path }
 
     /// 最初に印を立てた待ち。立っていなければ `nil`。
     var closure: Closure? { state.withLock { $0.closure } }
@@ -176,7 +259,15 @@ nonisolated final class CommandQueueGate: Sendable {
     ///
     /// 渡す前に、常駐の集合を発行口から外しておくこと。付けたままだと、集合が抱える前の土台の資源まで
     /// 生き延びる。
-    func retire(_ queue: sending any MTL4CommandQueue) {
+    ///
+    /// - Parameter pastDeadline: **待ちが期限を越えて手放したものなら `true`。** 環に入れず、押し出されない
+    ///   場所へ入れ、プロセスの終わりまで持つ (#2235。上の「手放した発行口の解放を遅らせる」)。
+    ///   この場合は集合を外さずに渡す。
+    func retire(_ queue: sending any MTL4CommandQueue, pastDeadline: Bool = false) {
+        guard !pastDeadline else {
+            state.withLock { $0.held.append(queue) }
+            return
+        }
         // 解放は錠の外で起こす (溢れた 1 本を外へ持ち出してから捨てる)
         let released: (any MTL4CommandQueue)? = state.withLock { state in
             state.retired.append(queue)
@@ -188,6 +279,9 @@ nonisolated final class CommandQueueGate: Sendable {
 
     /// 診断: 手放されて、解放を待っている発行口の数。
     var retiredQueueCount: Int { state.withLock { $0.retired.count } }
+
+    /// 診断: 待ちが期限を越えて手放され、プロセスの終わりまで持つ発行口の数 (#2235)。
+    var heldQueueCount: Int { state.withLock { $0.held.count } }
 
     /// 診断: この関所を通って作った発行口の数。
     ///
