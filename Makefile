@@ -489,9 +489,9 @@ runtime-math: ## 本体の超越関数が RuntimeMath を通さずに直に呼�
 # 作る口は、確かめて足すまでを 1 回で行う `package` の道具 (`Sketch+Seams.swift` の `attached` など) を通る。
 #
 # **段 1 を採っている** (ADR-0008 決定 5) — 木の字句だけを読む、runtime-math と同じ形
-# (「既存の責務を広げる」)。対象は Sources/MokumeAudio・MokumeCamera・MokumeNetwork・MokumeGamepad で、
-# 組み上げは要らない
-attach-result: ## 作る口が attach の返す false を捨てる素の呼び出しをしていないかを検査する
+# (「既存の責務を広げる」)。対象は Sources/ の Swift すべてで (置き場の名前の一覧を持たない)、受け手の綴りを読まず
+# `calledAs:` を持たない `attach` の呼び出し・参照を赤にする。組み上げは要らない
+attach-result: ## 道具を通さない attach の呼び出し・参照 (返す false を捨てる素の口) が無いかを検査する
 	python3 scripts/check-attach-result.py
 
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
