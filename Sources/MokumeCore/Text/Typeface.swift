@@ -517,6 +517,10 @@ final class Typeface {
     /// (空白など)。**描く道具を作れずに描けなかった字は控えず、次に引き直す** (焼き場が
     /// `.unbakeable` を控えないのと同じ)。
     private var drawnInks: [Unicode.Scalar: CGRect?] = [:]
+    /// 組版した字形の墨の控え (``ink(of:keeping:as:)``)。
+    var shapedInks: [ShapedInkKey: CGRect?] = [:]
+    /// 組版した 1 行の控え (``shape(_:)``)。
+    var shaped: [String: ShapedLine] = [:]
 
     /// その字形を、**道筋ではなく描いて測るか** ([#2308])。
     ///
@@ -573,12 +577,12 @@ final class Typeface {
 
     /// 描いて測った結果。描けなかったこと (`failed`) と、描いて墨が無かったこと (`ink(nil)`) を分ける。
     /// 描いたときは、その画素も一緒に返す (焼き場へ預ける)。
-    private enum Drawing {
+    enum Drawing {
         case ink(CGRect?, GlyphAtlas.Rendered?)
         case failed
     }
 
-    private static func draw(_ resolved: ResolvedGlyph, on atlas: GlyphAtlas) -> Drawing {
+    static func draw(_ resolved: ResolvedGlyph, on atlas: GlyphAtlas) -> Drawing {
         var glyph = resolved.glyph
         let bounds = CTFontGetBoundingRectsForGlyphs(resolved.font, .horizontal, &glyph, nil, 1)
         guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite

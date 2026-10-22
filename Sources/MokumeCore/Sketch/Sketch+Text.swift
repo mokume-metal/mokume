@@ -891,4 +891,118 @@ extension SketchPart {
         let (x, y) = (x.asFloat, y.asFloat)
         return Self.liveCanvas(.read(returning: "nil"))?.textBounds(string, x, y)
     }
+
+    // MARK: - 組版した文字列
+
+    /// 文字列を**組版して**描く。複数のスカラでできた絵文字や結合文字が、1 つの字として出る。
+    ///
+    /// ``text(_:_:_:)`` は Unicode のスカラ 1 つずつ並べるので、肌色の修飾子を付けた `👍🏽`・国旗の `🇯🇵`・
+    /// ZWJ で繋いだ `👨‍👩‍👧`・異体字セレクタを付けた `❤️`・囲みを付けた `1️⃣` が部品に分かれ、`e` と結合文字
+    /// `\u{0301}` (アクセント) が別々の位置に出る。この口は、文字列を 1 行ずつ CoreText に組ませて
+    /// (Core Text の `CTLine` に当たる)、できた字形の列を描く。5 つの絵文字はそれぞれ 1 字で出て、
+    /// `e\u{0301}` は 1 つの位置に重なって `é` に見える。ラテンの字はカーニングが掛かり、`AV` のように
+    /// 詰めて並ぶ。
+    ///
+    /// **幅の加法性を持たない。** ``textWidth(_:)`` は部分の幅を足すと全体の幅と一致するが、組版した幅
+    /// (``shapedTextWidth(_:)``) は一致しない — 詰めや合字が部分の境で起こるからである。字ごとに位置を
+    /// 決めたいとき (字を 1 つずつ動かす・ずらす) は、``text(_:_:_:)`` を使う。
+    ///
+    /// 縦横の整列 (``textAlign(_:_:)``)・書体・大きさ・太さ・行送り・塗りは、``text(_:_:_:)`` と同じに効く。
+    /// 整列は組版した行の幅で決まり、描く位置と ``shapedTextBounds(_:_:_:)`` の墨の範囲も同じ組版の結果から出る。
+    ///
+    /// **保証の外:** 右から左へ書く文字 (アラビア語・ヘブライ語) の並べ替えと文脈による字形の変化は
+    /// 保証しない。矩形への流し込み (``text(_:_:_:_:_:)``) と輪郭 (``textOutline(_:_:_:)``) は組版しない —
+    /// どちらもスカラ 1 つずつのまま。書体が覆えない字は CoreText が行の中で別の書体を選ぶが、その書体の
+    /// 太さ・傾きを頼んだ面へ引き直したり、面が無いことを知らせたりはしない。
+    ///
+    /// 同じ文字列は組版の結果を控えるので、毎フレーム同じ文字列を描いても組版は 1 度である。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(255)
+    ///     noStroke()
+    ///     fill(23, 26, 31)
+    ///     textSize(40)
+    ///     shapedText("👍🏽 🇯🇵 👨‍👩‍👧 ❤️ 1️⃣", 20, 70)
+    ///     text("👍🏽 🇯🇵 👨‍👩‍👧 ❤️ 1️⃣", 20, 150)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白地に、上の行は 5 つの絵文字が 1 字ずつ、下の行は同じ文字列が部品に分かれて並んでいる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func shapedText(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.shapedText(string, x, y)
+    }
+
+    /// 文字列を組版したときの送り幅 (画素)。
+    ///
+    /// ``shapedText(_:_:_:)`` が描く文字列の幅で、カーニングや合字を含む。**部分の幅を足しても全体の幅に
+    /// 一致しない** (``textWidth(_:)`` は一致する)。改行を含む文字列では、いちばん長い行の幅を返す。
+    /// 大きさ 0 では 0 を返す。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(255)
+    ///     noStroke()
+    ///     fill(23, 26, 31)
+    ///     textSize(60)
+    ///     shapedText("AVATAR", 20, 90)
+    ///     // 上の線は組版した幅、下の線はスカラ 1 つずつ並べた幅 (詰まったぶんだけ長い)
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(3)
+    ///     line(20, 110, 20 + shapedTextWidth("AVATAR"), 110)
+    ///     line(20, 125, 20 + textWidth("AVATAR"), 125)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白地に黒い AVATAR が詰めて並び、下に橙の線が 2 本ある。上の線は語と同じ長さ、下の線はそれより少し長い -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func shapedTextWidth(_ string: String) -> Float {
+        Self.liveCanvas(.read(returning: "0"))?.shapedTextWidth(string) ?? 0
+    }
+
+    /// 文字列を組版して描いたときに、墨が載る範囲を返す。
+    ///
+    /// 同じ引数で ``shapedText(_:_:_:)`` を描いたときの墨を囲む。意味は ``textBounds(_:_:_:)`` と同じ
+    /// (枠は左上が `x`・`y`、送り幅とは違う、墨が無ければ `nil`) で、墨は組版した字形から測る —
+    /// 色の字形 (絵文字) も、描いた絵の墨を囲む。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(255)
+    ///     noStroke()
+    ///     fill(23, 26, 31)
+    ///     textSize(60)
+    ///     shapedText("1️⃣ AV é", 20, 90)
+    ///     if let bounds = shapedTextBounds("1️⃣ AV é", 20, 90) {
+    ///         noFill()
+    ///         stroke(242, 115, 64)
+    ///         strokeWeight(2)
+    ///         rect(bounds.x, bounds.y, bounds.width, bounds.height)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白地に黒い 1️⃣ AV é の墨を、橙の細い枠がぴったり囲んでいる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func shapedTextBounds(
+        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible
+    ) -> TextBounds? {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return Self.liveCanvas(.read(returning: "nil"))?.shapedTextBounds(string, x, y)
+    }
 }

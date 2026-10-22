@@ -185,7 +185,7 @@ extension Canvas {
     /// 中へ置く計算で、基準線ではなく上端から決まる。
     ///
     /// [#895]: https://github.com/mokume-metal/mokume/issues/895
-    private func firstBaseline(at y: Float, face: Typeface, lines: Int) -> Float {
+    func firstBaseline(at y: Float, face: Typeface, lines: Int) -> Float {
         // 最初の行の基準線から、最後の行の基準線までの距離。1 行なら掛けずに 0 — 行送りが
         // 何であれ、1 行の塊に広がりは無い
         let span = lines > 1 ? Float(lines - 1) * resolvedTextLeading : 0
