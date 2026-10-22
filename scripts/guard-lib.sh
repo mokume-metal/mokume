@@ -198,7 +198,8 @@ is_help_request() { # $1=コマンド
 # バイトまでしか持たない — 長い本文の中身は判定に要らない。断片は語の配列として持ち、
 # 出すときに半分ずつ繋ぐ。**入力全体 (src) に substr を使わない** — macOS の awk (20200816)
 # の substr は、切り出す長さによらず呼ぶたびに src の長さに比例してかかるので、語ごと・行ごとに
-# 呼ぶと長さの 2 乗になる (#3115)。切り出しは文字の配列 C から rng で繋ぐ。読む時間の検査は
+# 呼ぶと長さの 2 乗になる (#3115)。切り出しは文字の配列 C から rng で繋ぐ。断片の先頭の前置も
+# 文字列から削らず、語の配列 X の位置を進めて読み、区切り語は 1 文字ずつ積んで hjoin で繋ぐ。読む時間の検査は
 # scripts/tests/guard_lib_test.py の LengthTest (長さが 4 倍で CPU 時間が 6 倍未満・素の awk の
 # 読みの 10 倍未満)。
 #
@@ -279,41 +280,63 @@ gh_invocations() { # $1=コマンド
       }
       # 文の先頭の予約語と、枠を開け閉めする語を読み、残りを返す。builtin / command の後ろも
       # 文として読む (反証 #1)。command -v / -V は引くだけで実行しない
-      function structure(f,   w, o) {
-        while ((w = word1(f)) != "") {
-          if (w == "{") { openf("grp"); f = rest1(f); continue }
-          if (w == "if") { openf("cmp", 0); f = rest1(f); continue }
-          if (w ~ /^(while|until)$/) { openf("cmp", 1); f = rest1(f); continue }
-          if (w ~ /^(for|select)$/) { openf("cmp", 1); loopvar(word1(rest1(f))); return "" }
-          if (w ~ /^(then|do|else|elif|!|coproc|builtin)$/) { f = rest1(f); continue }
-          if (w == "}") { closef("grp"); f = rest1(f); continue }
-          if (w ~ /^(fi|done)$/) { closef("cmp"); f = rest1(f); continue }
-          if (w == "time") { f = rest1(f); if (word1(f) == "-p") f = rest1(f); continue }
-          if (w == "function") { f = rest1(rest1(f)); continue }
+      function structure(p,   w, o) {
+        while (p <= FH) {
+          w = X[p]
+          if (w == "{") { openf("grp"); p = nxt(p); continue }
+          if (w == "if") { openf("cmp", 0); p = nxt(p); continue }
+          if (w ~ /^(while|until)$/) { openf("cmp", 1); p = nxt(p); continue }
+          if (w ~ /^(for|select)$/) { openf("cmp", 1); loopvar(wordat(nxt(p))); return FH + 1 }
+          if (w ~ /^(then|do|else|elif|!|coproc|builtin)$/) { p = nxt(p); continue }
+          if (w == "}") { closef("grp"); p = nxt(p); continue }
+          if (w ~ /^(fi|done)$/) { closef("cmp"); p = nxt(p); continue }
+          if (w == "time") { p = nxt(p); if (wordat(p) == "-p") p = nxt(p); continue }
+          if (w == "function") { p = nxt(nxt(p)); continue }
           if (w == "command") {
-            o = rest1(f)
-            while (word1(o) ~ /^-/) { if (word1(o) ~ /[vV]/) return f; o = rest1(o) }
-            f = o; continue
+            o = nxt(p)
+            while (wordat(o) ~ /^-/) { if (wordat(o) ~ /[vV]/) return p; o = nxt(o) }
+            p = o; continue
           }
           break
         }
-        return f
+        return p
       }
       function endword() { if (cw[depth] != "") { nw[depth]++; W[depth, nw[depth]] = cw[depth]; cw[depth] = "" } }
-      function joinw(d, lo, hi,   mid) {
-        if (lo == hi) return W[d, lo]
-        mid = int((lo + hi) / 2)
-        return joinw(d, lo, mid) " " joinw(d, mid + 1, hi)
+      # --- 断片は、語の配列 X[1..FH] と位置 p で読む (#3115) ---
+      #
+      # 断片を 1 つの文字列にして、先頭の語を word1 / rest1 (substr) で 1 語ずつ削ると、前置が
+      # 多いとき (A=1 A=1 … gh …) は rest1 が断片全体を毎回写すので長さの 2 乗になる。語の位置を
+      # 進めるだけにして、文字列に戻すのは gh の呼び出しとして出す 1 回だけにする。
+      # 語どうしの間は空白 1 つ。空の要素は、env -S の値が持ち込む連続した空白 (読み飛ばす)
+      function wordat(p) { return (p <= FH) ? X[p] : "" }
+      function nxt(p) { p++; while (p <= FH && X[p] == "") p++; return p }
+      # env -S の値を、位置 p の前に積み直して、新しい先頭の位置を返す (旧: f = v " " f)
+      function pushf(p, v,   m, T, k) {
+        if (p > FH + 1) p = FH + 1
+        m = split(v, T, "[ ]")
+        if (p > FH) T[++m] = ""
+        p -= m
+        for (k = 1; k <= m; k++) X[p + k - 1] = T[k]
+        while (p <= FH && X[p] == "") p++
+        return p
       }
+      # X[lo..hi] を半分ずつ繋ぐ (lo は env -S で 0 以下にもなるので、中点は lo からの差で取る)
+      function joinx(lo, hi,   mid) {
+        if (lo == hi) return X[lo]
+        mid = lo + int((hi - lo) / 2)
+        return joinx(lo, mid) " " joinx(mid + 1, hi)
+      }
+      # 位置 q から後ろ。各要素の前に空白 1 つ (空の要素は空白だけ)
+      function tailstr(q) { return (q > FH) ? "" : " " joinx(q, FH) }
       # 断片 (単純コマンド 1 つ) を読む
-      function flush(   f, k) {
+      function flush(   k, p) {
         endword()
         if (nw[depth] == 0) return
-        f = joinw(depth, 1, nw[depth])
-        for (k = 1; k <= nw[depth]; k++) delete W[depth, k]
+        FH = nw[depth]
+        for (k = 1; k <= FH; k++) { X[k] = W[depth, k]; delete W[depth, k] }
         nw[depth] = 0
-        f = structure(f)
-        if (f != "") emit(f)
+        p = structure(1)
+        if (p <= FH) emit(p)
       }
       # $( … ) / バッククォートを閉じ、置換を 1 つの語として親へ返す
       function popsub() {
@@ -323,23 +346,30 @@ gh_invocations() { # $1=コマンド
       }
       function backtick() { if (ftype[depth] == "bt") popsub(); else push("bt") }
       # << の後ろの区切り語を読んで覚える。戻り値は区切り語の最後の位置
-      function heredoc(i,   j, d, ch) {
+      # 区切り語は 1 文字ずつ HC に積み、最後に半分ずつ繋ぐ (継ぎ足すと長さの 2 乗・#3115)
+      function hjoin(lo, hi,   mid) {
+        if (lo == hi) return HC[lo]
+        mid = lo + int((hi - lo) / 2)
+        return hjoin(lo, mid) hjoin(mid + 1, hi)
+      }
+      function heredoc(i,   j, d, ch, nd) {
         j = i + 2
         if (C[j] == "-") j++
         while (C[j] == " " || C[j] == "\t") j++
-        d = ""
+        nd = 0
         while (j <= n) {
           ch = C[j]
-          if (ch == q) { j++; while (j <= n && C[j] != q) { d = d C[j]; j++ }; j++; continue }
+          if (ch == q) { j++; while (j <= n && C[j] != q) { HC[++nd] = C[j]; j++ }; j++; continue }
           if (ch == "\"") {
             j++
-            while (j <= n && C[j] != "\"") { if (C[j] == "\\") j++; d = d C[j]; j++ }
+            while (j <= n && C[j] != "\"") { if (C[j] == "\\") j++; HC[++nd] = C[j]; j++ }
             j++; continue
           }
-          if (ch == "\\") { d = d C[j + 1]; j += 2; continue }
+          if (ch == "\\") { HC[++nd] = C[j + 1]; j += 2; continue }
           if (ch ~ /[ \t\n;&|()<>]/) break
-          d = d ch; j++
+          HC[++nd] = ch; j++
         }
+        d = (nd > 0) ? hjoin(1, nd) : ""
         if (d != "") { nh++; HD[nh] = d }
         return j - 1
       }
@@ -362,8 +392,6 @@ gh_invocations() { # $1=コマンド
         nh = 0
         return (i > n) ? n : i
       }
-      function word1(s) { return match(s, /^[^ ]+/) ? substr(s, 1, RLENGTH) : "" }
-      function rest1(s) { s = substr(s, length(word1(s)) + 1); sub(/^ +/, "", s); return s }
       function unquote(w) { gsub(QRE, "", w); gsub(M, " ", w); return w }
       # 文として代入・export・unset した名前が、gh の宛先に効くなら印を立てる (#1823)。
       # git の変数は、git がリポジトリを探し remote を読むのに効くものだけ (GITV・反証 #2 と
@@ -373,21 +401,21 @@ gh_invocations() { # $1=コマンド
         if (name ~ GITV) markc()
       }
       # 前置を落とし、先頭が gh なら 4 列の行を出す。gh でなければ、宛先を変える文を覚える
-      function emit(f,   w, name, val, plus, bare, o, t, L, v, repo, chd, na, k, a, r) {
+      function emit(p,   w, name, val, plus, bare, o, t, L, v, repo, chd, na, k, a, r) {
         repo = "="; chd = 0; na = 0
         while (1) {
-          w = word1(f)
+          w = wordat(p)
           if (w == "") break
           if (w ~ /^(!|\{|do|then|else|elif|if|while|until|time|coproc)$/) {
-            f = rest1(f)
-            if (w == "time" && word1(f) == "-p") f = rest1(f)
+            p = nxt(p)
+            if (w == "time" && wordat(p) == "-p") p = nxt(p)
             continue
           }
-          if (w == "function") { f = rest1(rest1(f)); continue }
+          if (w == "function") { p = nxt(nxt(p)); continue }
           if (w ~ /^[0-9]*(<<<|<>|>>|>\||&>>|&>|<&|>&|<|>)/) {
             bare = (w ~ /^[0-9]*(<<<|<>|>>|>\||&>>|&>|<&|>&|<|>)$/)
-            f = rest1(f)
-            if (bare) f = rest1(f)
+            p = nxt(p)
+            if (bare) p = nxt(p)
             continue
           }
           if (w ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) {
@@ -397,16 +425,16 @@ gh_invocations() { # $1=コマンド
             na++; AN[na] = name
             if (name == "GH_REPO") repo = plus ? "?" : "+" val
             if (name ~ GITV) chd = 1
-            f = rest1(f)
+            p = nxt(p)
             continue
           }
           if (unquote(w) ~ /^(.*\/)?env$/) {
-            f = rest1(f)
+            p = nxt(p)
             while (1) {
-              o = word1(f)
-              if (o == "--") { f = rest1(f); break }
+              o = wordat(p)
+              if (o == "--") { p = nxt(p); break }
               if (o !~ /^-/) break
-              f = rest1(f)
+              p = nxt(p)
               if (o == "-" || o == "--ignore-environment") { repo = "-"; continue }
               if (o ~ /^--(unset|chdir|split-string)/) {
                 L = (o ~ /^--unset/) ? "u" : (o ~ /^--chdir/) ? "C" : "S"
@@ -424,12 +452,12 @@ gh_invocations() { # $1=コマンド
                 L = substr(t, 1, 1); v = substr(t, 2)
                 if (L !~ /^[uCPS]$/) continue
               }
-              if (v == "") { v = word1(f); f = rest1(f) }
+              if (v == "") { v = wordat(p); p = nxt(p) }
               if (L == "u" && unquote(v) == "GH_REPO") repo = "-"
               if (L == "C") chd = 1
               if (L == "S") {
                 gsub(M, " ", v); sub("^" QCH, "", v); sub(QCH "$", "", v)
-                f = v " " f; sub(/^ +/, "", f)
+                p = pushf(p, v)
               }
             }
             na = 0
@@ -437,15 +465,15 @@ gh_invocations() { # $1=コマンド
           }
           break
         }
-        if (f == "") {
+        if (p > FH) {
           for (k = 1; k <= na; k++) destvar(AN[k])
           return
         }
-        w = word1(f)
+        w = X[p]
         if (unquote(w) ~ /^(.*\/)?gh$/) {
           if (DC[depth]) chd = 1
           if (DR[depth] && repo == "=") repo = "?"
-          row(repo, chd, (depth > 0) ? "sub" : "top", "gh" substr(f, length(w) + 1))
+          row(repo, chd, (depth > 0) ? "sub" : "top", "gh" tailstr(p + 1))
           return
         }
         # 宛先を変える文は、入れ子の中でも覚える (その入れ子の中の gh に効く・#1823)。
@@ -454,9 +482,9 @@ gh_invocations() { # $1=コマンド
         w = unquote(w)
         if (w ~ /^(cd|chdir|pushd|popd)$/) markc()
         if (w ~ /^(export|unset|declare|typeset|readonly|local|read|printf|mapfile|readarray|getopts|let|wait)$/) {
-          r = rest1(f)
-          while ((a = word1(r)) != "") {
-            r = rest1(r)
+          r = nxt(p)
+          while (r <= FH) {
+            a = X[r]; r = nxt(r)
             if (a ~ /^-/) continue
             name = unquote(a); sub(/[=[].*/, "", name); destvar(name)
           }
