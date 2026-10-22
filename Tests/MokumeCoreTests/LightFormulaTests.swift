@@ -29,7 +29,7 @@ import simd
 /// 読むのは描画先の値そのもの (`RenderTarget.pixelFormat` = `.rgba16Float`) で、sRGB の
 /// エンコードも 8 bit の書き出しも通らない。間にある量子化は **Float16 へ書く 1 段だけ**である。
 ///
-/// 色と光は ``LinearRGBA/linear(red:green:blue:)`` (作業空間の値そのもの) で、成分を 2 進の
+/// 色と光は ``Color/linear(red:green:blue:)`` (作業空間の値そのもの) で、成分を 2 進の
 /// 短い小数に取る。式が足し算と掛け算だけになる場面 — 底上げの光・正面から差す光・裏から
 /// 差す光・自発光・周りへの返し・金属らしさ・影の芯 — では厳密な値が Float16 で表せるので、
 /// **許す幅を置かずに完全一致で比べる**。前提 (期待値が Float16 で表せる) は照合の前に検査
@@ -690,7 +690,7 @@ struct LightFormulaTests {
         var components: [Double] { [red, green, blue] }
 
         /// 作業空間の値そのものとして渡す色。
-        @MainActor var linear: LinearRGBA {
+        @MainActor var linear: Color {
             .linear(red: Float(red), green: Float(green), blue: Float(blue))
         }
 

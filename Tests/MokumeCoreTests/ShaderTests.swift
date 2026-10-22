@@ -184,7 +184,7 @@ struct ShaderTests {
     ///
     /// `ShaderSource.pack` は成分の数 → 名前の降順で並べるので、`c00` は**区画の末尾 4 つ** —
     /// 次の区画と隣り合う位置に載る。潰れたかどうかはここを見れば分かる。
-    private static func fullSlotValues(last: LinearRGBA) -> [String: ShaderValue] {
+    private static func fullSlotValues(last: Color) -> [String: ShaderValue] {
         var values: [String: ShaderValue] = ["c00": .color(last)]
         for index in 1..<16 {
             values["c\(index)"] = .color(.linear(red: 0, green: 0, blue: 0))
@@ -460,7 +460,7 @@ struct ShaderTests {
     }
 
     /// 描き場所を 1 色で塗る。
-    private func paint(_ graphics: Canvas, _ color: LinearRGBA) {
+    private func paint(_ graphics: Canvas, _ color: Color) {
         graphics.beginDraw()
         graphics.background(color)
         graphics.endDraw()
@@ -481,7 +481,7 @@ struct ShaderTests {
         """
 
     /// 赤・緑・青のどれが最も強く出ているか。描き場所の色は面の形式で丸まるので、名前で比べる。
-    private static func hue(_ pixel: LinearRGBA) -> String {
+    private static func hue(_ pixel: Color) -> String {
         guard max(pixel.premultipliedRed, pixel.premultipliedGreen, pixel.premultipliedBlue) > 0.5 else { return "黒" }
         if pixel.premultipliedRed >= pixel.premultipliedGreen && pixel.premultipliedRed >= pixel.premultipliedBlue { return "赤" }
         return pixel.premultipliedGreen >= pixel.premultipliedBlue ? "緑" : "青"

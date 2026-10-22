@@ -162,7 +162,7 @@ enum PixelWriteCall: CaseIterable, CustomTestStringConvertible {
 
     var testDescription: String { "\(self)" }
 
-    static let color = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    static let color = Color.linear(red: 1, green: 0, blue: 0)
 
     func call(on canvas: Canvas) {
         switch self {
@@ -504,7 +504,7 @@ struct PlacingOutsideFrameTests {
     /// 描き切りが写し全体を書き戻し、効果が 2 回掛かる (#1655 と同じ形)。
     @Test("前のフレームで取った窓に書いても、効果は 1 回だけ掛かる")
     func aWindowKeptFromAnEarlierFrameWritesOnTheCurrentPicture() throws {
-        func secondFrame(writes: Bool) throws -> LinearRGBA {
+        func secondFrame(writes: Bool) throws -> Color {
             let canvas = try PlacingSurface.graphics.make(gpu: try RenderDevice())
             canvas.beginDraw()
             canvas.background(.linear(red: 0, green: 0, blue: 0))

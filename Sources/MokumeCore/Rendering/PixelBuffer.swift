@@ -32,11 +32,11 @@ public struct PixelBuffer: Equatable, Sendable {
     /// どの口で読んでも答えは変わらない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public subscript(x: Int, y: Int) -> LinearRGBA {
+    public subscript(x: Int, y: Int) -> Color {
         // 置き場の位置を求める掛け算より先に見る。大きな位置では掛け算のほうが溢れて落ちる
         guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
         let base = (y * width + x) * 4
-        return LinearRGBA(
+        return Color(
             premultipliedRed: Float(components[base]),
             green: Float(components[base + 1]),
             blue: Float(components[base + 2]),

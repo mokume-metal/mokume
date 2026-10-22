@@ -315,7 +315,7 @@ struct DensityInvarianceTests {
                 let outer = canvas.createShape {
                     canvas.shape(
                         inner,
-                        at: [Placement(fill: LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))])
+                        at: [Placement(fill: Color(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))])
                 }
                 canvas.translate(20, y)
                 canvas.shape(outer)
@@ -884,7 +884,7 @@ struct DensityInvarianceTests {
             isEllipse: false, center: SIMD2(10, 20), half: SIMD2(8, 0.25))
         let recipe = RingFillRecipe(
             outline: Canvas.Outline(points: [], isClosed: true, namedFill: named),
-            color: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1), hasPicture: true,
+            color: Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1), hasPicture: true,
             transform: .identity, uv: SIMD2(0, 0))
         let pieces = try #require(Canvas.thinFillPieces(named, by: matrix_identity_float2x2))
         let built = Canvas.thinFillVertices(pieces, recipe: recipe)

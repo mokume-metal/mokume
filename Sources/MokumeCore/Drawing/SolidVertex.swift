@@ -67,7 +67,7 @@ struct SolidVertex {
     init(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
-        uv: SIMD2<Float>, isStroke: Bool = false, strokeCoverage: Float = 1, color: LinearRGBA
+        uv: SIMD2<Float>, isStroke: Bool = false, strokeCoverage: Float = 1, color: Color
     ) {
         self.position = position
         self.shapePosition = shapePosition ?? position

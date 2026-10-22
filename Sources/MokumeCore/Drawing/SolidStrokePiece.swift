@@ -99,7 +99,7 @@ struct RetainedGPUStroke {
     /// 記録した線の端の形。画面で重なる点の腕を 1 本と数えた角 (端) が読む (#1893)。
     var cap: StrokeCap
     /// 記録した線の色 (乗算済み)。置き場所の色は置くときに掛かる。
-    var color: LinearRGBA
+    var color: Color
     /// 記録した時点の焼き場の白い区画。区間が記録した頁を束ねるので、いまの位置ではなくこれを読む。
     var uv: SIMD2<Float>
     /// 焼いた線の頂点の区間 (``Shape/solidVertices`` の番号)。

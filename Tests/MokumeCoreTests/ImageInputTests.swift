@@ -79,8 +79,8 @@ import Testing
         let canvas = try canvas(on: gpu)
         let image = try canvas.createImage(side, side)
         image.write(picture())
-        let red = LinearRGBA(premultipliedRed: 1, green: -0.25, blue: 0, alpha: 0.5)
-        let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+        let red = Color(premultipliedRed: 1, green: -0.25, blue: 0, alpha: 0.5)
+        let blue = Color.linear(red: 0, green: 0, blue: 1)
         image.set(3, 4, red)
         image.set(3, 4, blue)
         #expect(image.inputPatches.count == 1)
@@ -267,7 +267,7 @@ import Testing
         let gpu = try RenderDevice()
         let canvas = try canvas(on: gpu)
         let image = try canvas.createImage(size, size)
-        let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        let white = Color.linear(red: 1, green: 1, blue: 1)
         try canvas.draw {
             canvas.image(image, 0, 0, 16, 32)
             canvas.image(image, 16, 0, 16, 32)
@@ -350,7 +350,7 @@ import Testing
         let canvas = try canvas(on: gpu)
         let image = try canvas.createImage(side, side)
         image.write(picture())
-        let value = LinearRGBA(
+        let value = Color(
             premultipliedRed: .infinity, green: -.infinity, blue: -0.0, alpha: .nan)
         image.set(0, 0, value)
         let expected = try #require(image.inputPatches[0])

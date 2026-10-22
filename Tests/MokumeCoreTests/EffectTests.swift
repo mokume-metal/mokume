@@ -297,9 +297,9 @@ struct EffectTests {
     /// 半透明の四角だけを置いた絵。**下地は透明。**
     private func translucent(on canvas: Canvas, _ effects: [Effect]) throws {
         try canvas.draw {
-            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.background(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
             canvas.noStroke()
-            canvas.fill(LinearRGBA(straightRed: 1, green: 0.8, blue: 0.2, alpha: 0.5))
+            canvas.fill(Color(straightRed: 1, green: 0.8, blue: 0.2, alpha: 0.5))
             canvas.rect(8, 8, 16, 16)
             canvas.effects(effects)
         }
@@ -307,7 +307,7 @@ struct EffectTests {
 
     /// 乗算を戻した色。**「暗くなっていないか」はこちらで見る** — 乗算済みのままだと、
     /// 透け具合の違いと色の違いが区別できない。
-    private func straight(_ color: LinearRGBA) -> (r: Float, g: Float, b: Float) {
+    private func straight(_ color: Color) -> (r: Float, g: Float, b: Float) {
         guard color.alpha > 0 else { return (0, 0, 0) }
         return (color.premultipliedRed / color.alpha, color.premultipliedGreen / color.alpha, color.premultipliedBlue / color.alpha)
     }
@@ -532,7 +532,7 @@ struct EffectTests {
         }
 
         /// 出口 (出す先) の隅 (3, 3)。**出口は効果を通した絵を受け取る。**
-        func corner() throws -> LinearRGBA { try canvas.output.readPixels()[3, 3] }
+        func corner() throws -> Color { try canvas.output.readPixels()[3, 3] }
     }
 
     /// 再現手順の下地 (`background(235)`)。
@@ -553,8 +553,8 @@ struct EffectTests {
     func effectsDoNotBakeIntoTheNextFrame(surface: CarrySurface) throws {
         let trailing = try surface.make()
         let repainting = try surface.make()
-        var trail: [LinearRGBA] = []
-        var repainted: [LinearRGBA] = []
+        var trail: [Color] = []
+        var repainted: [Color] = []
         for index in 0..<12 {
             try trailing.frame { canvas in
                 if index == 0 { Self.paper(canvas) }
@@ -615,7 +615,7 @@ struct EffectTests {
             }
         }
 
-        func read(from canvas: Canvas) -> LinearRGBA {
+        func read(from canvas: Canvas) -> Color {
             switch self {
             case .get: canvas.get(3, 3)
             case .pixels: canvas.pixels[3, 3]
@@ -636,7 +636,7 @@ struct EffectTests {
         surface: CarrySurface, reader: NextFrameReader
     ) throws {
         let fixture = try surface.make()
-        var before = LinearRGBA.transparent
+        var before = Color.transparent
         try fixture.frame { canvas in
             Self.paper(canvas)
             before = reader.read(from: canvas)
@@ -644,7 +644,7 @@ struct EffectTests {
         }
         #expect(try fixture.corner() != before, "1 枚目の出口に効果が効いていない")
 
-        var next = LinearRGBA.transparent
+        var next = Color.transparent
         try fixture.frame { canvas in
             next = reader.read(from: canvas)
         }

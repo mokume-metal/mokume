@@ -149,13 +149,13 @@ struct UnitShapeTests {
     private static func shapes(_ c: Canvas, _ kind: Kind, _ scene: Scene) {
         let translucent = scene == .translucent
         let alpha: Float = translucent ? 0.45 : 1
-        c.fill(LinearRGBA(premultipliedRed: 0.7 * alpha, green: 0.35 * alpha, blue: 0.15 * alpha, alpha: alpha))
+        c.fill(Color(premultipliedRed: 0.7 * alpha, green: 0.35 * alpha, blue: 0.15 * alpha, alpha: alpha))
         switch scene {
         case .stroke:
             c.stroke(.linear(red: 0.1, green: 0.65, blue: 0.8))
             c.strokeWeight(0.7)
         case .translucentStroke:
-            c.stroke(LinearRGBA(premultipliedRed: 0.05, green: 0.33, blue: 0.4, alpha: 0.5))
+            c.stroke(Color(premultipliedRed: 0.05, green: 0.33, blue: 0.4, alpha: 0.5))
             c.strokeWeight(1.3)
         default:
             break
@@ -341,7 +341,7 @@ struct UnitShapeTests {
     }
 
     /// 単位の形の列と寸法ごとの形の列を交互に置き、それぞれの中心の色を返す。
-    private static func alternatingSpheres(on c: Canvas, painted shader: Shader) throws -> [LinearRGBA] {
+    private static func alternatingSpheres(on c: Canvas, painted shader: Shader) throws -> [Color] {
         try c.draw {
             c.background(.linear(red: 0, green: 0, blue: 0))
             c.noStroke()
@@ -367,8 +367,8 @@ struct UnitShapeTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("paint.metal")
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-        let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+        let red = Color.linear(red: 1, green: 0, blue: 0)
+        let green = Color.linear(red: 0, green: 1, blue: 0)
 
         try Self.paintBody("1.0, 0.0, 0.0").write(to: url, atomically: true, encoding: .utf8)
         let shader = try c.loadShader(url.path)

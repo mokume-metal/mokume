@@ -54,7 +54,7 @@ enum ShapeExit {
     ]
 
     static var table: [(name: String, exit: ShapeExit)] {
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        let red = Color.linear(red: 1, green: 0, blue: 0)
         let restored: [(String, (Canvas, Fixture) -> Void)] = [
             ("noiseStore", { c, _ in
                 c.noiseSeed(7)
@@ -114,7 +114,7 @@ enum ShapeExit {
             // 平面の頂点ごとの被覆の区間 (#1637)。溜め場の頂点と対で切り詰める
             "coverageSpans",
         ] + Self.poolStorageNames
-        let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        let white = Color.linear(red: 1, green: 1, blue: 1)
         let refused: [(String, ((Canvas, Fixture) -> Void)?)] = [
             // シーンの記述 (#1529)。閉じる側が既定へ戻すものは汚す手順を持つ
             ("cameraStorage", { c, _ in c.perspective() }),

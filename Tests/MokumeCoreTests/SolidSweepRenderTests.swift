@@ -120,8 +120,8 @@ struct SolidSweepRenderTests {
     }
 
     /// 半透明 (α 0.5) の置き場所の色。
-    private func veil(_ red: Float, _ green: Float, _ blue: Float) -> LinearRGBA {
-        LinearRGBA(
+    private func veil(_ red: Float, _ green: Float, _ blue: Float) -> Color {
+        Color(
             premultipliedRed: red * 0.5, green: green * 0.5, blue: blue * 0.5, alpha: 0.5)
     }
 
@@ -141,7 +141,7 @@ struct SolidSweepRenderTests {
         var dice = Dice(state: seed)
         var placements: [Placement] = []
         for _ in 0..<count {
-            let tint: LinearRGBA? = tinted ? veil(dice.next(), dice.next(), dice.next()) : nil
+            let tint: Color? = tinted ? veil(dice.next(), dice.next(), dice.next()) : nil
             placements.append(
                 Placement(
                     x: 40 + dice.next() * 80, y: 40 + dice.next() * 80, z: -50 + dice.next() * 100,
@@ -206,7 +206,7 @@ struct SolidSweepRenderTests {
             canvas.shape(ball, at: scattered(60, seed: 4, sortedBackToFront: true, tinted: false))
         case .textured:
             let picture = try canvas.createImage(4, 4)
-            picture.fill(LinearRGBA(premultipliedRed: 0.5, green: 0.4, blue: 0.3, alpha: 0.5))
+            picture.fill(Color(premultipliedRed: 0.5, green: 0.4, blue: 0.3, alpha: 0.5))
             let ball = canvas.createShape {
                 canvas.noStroke()
                 canvas.fill(255)

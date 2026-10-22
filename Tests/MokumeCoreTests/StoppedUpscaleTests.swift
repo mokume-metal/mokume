@@ -27,7 +27,7 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct StoppedUpscaleTests {
-    private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private static let red = Color.linear(red: 1, green: 0, blue: 0)
 
     /// 出す大きさ 160×160 の面。細かさ 1 なら描く先と出す先は同じ 1 枚である。
     private static func makeCanvas(density: Float, upscale: Upscale = .spatial) throws -> Canvas {
@@ -140,7 +140,7 @@ struct StoppedUpscaleTests {
         let canvas = try Self.makeCanvas(density: density)
         let layer = try canvas.createGraphics(40, 40)
         layer.beginDraw()
-        layer.background(LinearRGBA.linear(red: 0, green: 1, blue: 0))
+        layer.background(Color.linear(red: 0, green: 1, blue: 0))
         layer.endDraw()
         try Self.firstFrame(canvas, effects: effects)
         let before = try Self.shown(canvas)[80, 80]
@@ -339,7 +339,7 @@ struct StoppedUpscaleTests {
             try canvas.draw {
                 canvas.background(255)
                 canvas.noStroke()
-                canvas.fill(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+                canvas.fill(Color.linear(red: 0, green: 0, blue: 0))
                 canvas.rect(40, 50, 60, 40)
             }
         }
@@ -379,7 +379,7 @@ struct StoppedUpscaleTests {
     private static func darkPlane(on canvas: Canvas) -> Shape {
         canvas.createShape {
             canvas.noStroke()
-            canvas.fill(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+            canvas.fill(Color.linear(red: 0, green: 0, blue: 0))
             canvas.plane(60, 30)
         }
     }
@@ -390,7 +390,7 @@ struct StoppedUpscaleTests {
         _ path: JitteredPath, on canvas: Canvas, plane: Shape, x: Float, y: Float
     ) {
         canvas.noStroke()
-        canvas.fill(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+        canvas.fill(Color.linear(red: 0, green: 0, blue: 0))
         switch path {
         case .form: canvas.rect(x, y, 60, 30)
         case .flat: canvas.triangle(x, y, x + 60, y, x, y + 30)
@@ -426,7 +426,7 @@ struct StoppedUpscaleTests {
     func temporalRectDrawnWhileStoppedLinesUp(frames: Int) throws {
         func edges(placedWhileStopped: Bool) throws -> (left: Double, top: Double) {
             let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
-            let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+            let black = Color.linear(red: 0, green: 0, blue: 0)
             for _ in 0..<frames {
                 try canvas.draw {
                     canvas.background(255)

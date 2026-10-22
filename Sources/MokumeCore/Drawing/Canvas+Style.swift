@@ -13,7 +13,7 @@ import simd
 
 extension Canvas {
 
-    public func fill(_ color: LinearRGBA) {
+    public func fill(_ color: Color) {
         // 数でない成分・無限の成分は、塗りを変えずに断る。数の形と同じ鍵で言う (#1706)
         guard color.isFinite else { return warnNotANumberColor(.fill) }
         // 勾配で塗っていれば、色に替わる前に列を閉じる (``setGradient(_:)``)
@@ -31,7 +31,7 @@ extension Canvas {
         syncGradientShader()
     }
 
-    public func stroke(_ color: LinearRGBA) {
+    public func stroke(_ color: Color) {
         guard color.isFinite else { return warnNotANumberColor(.stroke) }
         style.stroke = color
         style.hasStroke = true

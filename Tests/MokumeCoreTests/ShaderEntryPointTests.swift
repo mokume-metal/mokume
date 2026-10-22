@@ -154,7 +154,7 @@ struct ShaderDeclaredNameTests {
     /// 値の宣言の行は、4 成分のものが先で、同じ成分の数なら名前の降順 (``ShaderSource/pack(_:)`` と同じ)。
     /// `c` (色) が 2 行目、`half` が 3 行目、`a` が 4 行目。
     private static let values: [String: ShaderValue] = [
-        "a": 1, "half": 2, "c": .color(LinearRGBA(straightRed: 1, green: 1, blue: 1)),
+        "a": 1, "half": 2, "c": .color(Color(straightRed: 1, green: 1, blue: 1)),
     ]
 
     @Test("誤りが値の宣言の行を指したら、その行の名前を values: の名前として名指す")

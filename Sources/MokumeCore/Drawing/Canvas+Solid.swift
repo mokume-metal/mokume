@@ -513,7 +513,7 @@ extension Canvas {
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
         uv: SIMD2<Float>? = nil, isStroke: Bool = false, strokeCoverage: Float = 1,
-        color: LinearRGBA
+        color: Color
     ) {
         // **面の切り替えが先。** 切り替えは列を閉じるので、開いてから切り替えると
         // 開いたばかりの列が閉じられ、この頂点がどの列にも属さなくなる
@@ -540,7 +540,7 @@ extension Canvas {
     func appendSharedSolidVertex(
         slot: Int, position: SIMD3<Float>, shapePosition: SIMD3<Float>,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>, isDerived: Bool,
-        uv: SIMD2<Float>?, color: LinearRGBA
+        uv: SIMD2<Float>?, color: Color
     ) {
         if uv != nil { useWrittenUVTexture() } else { useGlyphTexture() }
         openIndexedFreeformSolid()

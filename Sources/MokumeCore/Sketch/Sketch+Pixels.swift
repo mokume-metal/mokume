@@ -20,7 +20,7 @@ extension SketchPart {
     ///     for y in 0..<pixelHeight {
     ///         for x in 0..<(pixelWidth / 2) {
     ///             let color = pixels[x, y]
-    ///             pixels[x, y] = LinearRGBA(
+    ///             pixels[x, y] = Color(
     ///                 premultipliedRed: color.premultipliedGreen, green: color.premultipliedBlue,
     ///                 blue: color.premultipliedRed, alpha: color.alpha)
     ///         }
@@ -95,7 +95,7 @@ extension SketchPart {
     ///
     /// ## 読む値と書く値は同じ表現
     ///
-    /// どちらも ``LinearRGBA`` — 線形・アルファ乗算済みの作業空間の値である。
+    /// どちらも ``Color`` — 線形・アルファ乗算済みの作業空間の値である。
     /// 変換が挟まらないので `pixels[x, y] = pixels[x, y]` は絵を変えない。
     /// 半透明の画素でも同じで、読んで書き戻すだけで色が沈むことはない。
     ///
@@ -178,7 +178,7 @@ extension SketchPart {
     /// (``SketchSettings/pixelDensity``) を下げているときは ``width`` / ``height``
     /// より小さい。**読み書きするのは拡大より手前の絵**なので、ここで書いた値も
     /// 拡大を通ってから出て行く。
-    // shot: 1 snippet=39398d9e
+    // shot: 1 snippet=aecec1bb
     // shot: 2 snippet=ab94a2c3
     // shot: 3 snippet=f1c90989
     public var pixels: Pixels {
@@ -266,8 +266,8 @@ extension SketchPart {
 
     /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。
     ///
-    /// **返す値は線形・アルファ乗算済みの ``LinearRGBA`` である** ([ADR-0011] 決定 4)。塗りの色
-    /// (``fill(_:)-(LinearRGBA)``) や ``set(_:_:_:)`` が受けるのも同じ表現なので、読んだ値を
+    /// **返す値は線形・アルファ乗算済みの ``Color`` である** ([ADR-0011] 決定 4)。塗りの色
+    /// (``fill(_:)-(Color)``) や ``set(_:_:_:)`` が受けるのも同じ表現なので、読んだ値を
     /// そのまま渡せば、半透明の画素でも同じ色が出る。0–255 の乗算していない数として読むときは
     /// ``red(_:)`` / ``green(_:)`` / ``blue(_:)`` / ``alpha(_:)`` を通す。
     ///
@@ -296,7 +296,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=6fc06851
-    public func get(_ x: Int, _ y: Int) -> LinearRGBA {
+    public func get(_ x: Int, _ y: Int) -> Color {
         Self.liveCanvas(.read(returning: ".transparent"))?.get(x, y) ?? .transparent
     }
 
@@ -328,5 +328,5 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=e62332bb
-    public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { Self.liveCanvas()?.set(x, y, color) }
+    public func set(_ x: Int, _ y: Int, _ color: Color) { Self.liveCanvas()?.set(x, y, color) }
 }

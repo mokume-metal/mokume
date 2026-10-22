@@ -30,9 +30,9 @@ import simd
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct TextureTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -53,7 +53,7 @@ struct TextureTests {
         let half = size / 2
         for y in 0..<size {
             for x in 0..<size {
-                let color: LinearRGBA =
+                let color: Color =
                     switch (x < half, y < half) {
                     case (true, true): .linear(red: 1, green: 0, blue: 0)
                     case (false, true): .linear(red: 0, green: 1, blue: 0)

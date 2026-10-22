@@ -7,7 +7,7 @@ import Testing
 
 /// 入口の sRGB → 線形が、整数の入力を表で引いても**値を変えないこと** ([#2377])。
 ///
-/// ``LinearRGBA/display(red:green:blue:alpha:)`` は、成分が `Float(k) / 255` (k は 0…255) と
+/// ``Color/display(red:green:blue:alpha:)`` は、成分が `Float(k) / 255` (k は 0…255) と
 /// ビット単位で等しいときだけ ``OutputStage/decodeLinear`` で引く。速くするための経路なので、
 /// 返す値は引かなかったときとビットまで同じでなければならない。比べるのはすべて**ビット**
 /// である — `==` は `-0` と `0` を同じとするが、`-0` は表を通さない約束で、その差は
@@ -21,15 +21,15 @@ import Testing
 /// [#2377]: https://github.com/mokume-metal/mokume/issues/2377
 @Suite("入口の変換の表引き")
 struct ColorDecodeTableTests {
-    /// 変更前の ``LinearRGBA/display(red:green:blue:alpha:)``。常に `decode` を通す。
+    /// 変更前の ``Color/display(red:green:blue:alpha:)``。常に `decode` を通す。
     private func reference(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 1)
-        -> LinearRGBA
+        -> Color
     {
         let working = ColorPrimaries.working(
             fromSRGB: SIMD3(
                 TransferFunction.decode(red), TransferFunction.decode(green),
                 TransferFunction.decode(blue)))
-        return LinearRGBA(
+        return Color(
             straightRed: working.x, green: working.y, blue: working.z, alpha: alpha)
     }
 
@@ -38,7 +38,7 @@ struct ColorDecodeTableTests {
         (one.isNaN && other.isNaN) || one.bitPattern == other.bitPattern
     }
 
-    private func sameBits(_ one: LinearRGBA, _ other: LinearRGBA) -> Bool {
+    private func sameBits(_ one: Color, _ other: Color) -> Bool {
         sameBits(one.premultipliedRed, other.premultipliedRed) && sameBits(one.premultipliedGreen, other.premultipliedGreen)
             && sameBits(one.premultipliedBlue, other.premultipliedBlue) && sameBits(one.alpha, other.alpha)
     }
@@ -46,7 +46,7 @@ struct ColorDecodeTableTests {
     /// 食い違った入力を書き出して返す。空なら全部が一致している。
     private func mismatches(_ inputs: [(Float, Float, Float, Float)]) -> [String] {
         inputs.compactMap { (red, green, blue, alpha) in
-            let got = LinearRGBA.display(red: red, green: green, blue: blue, alpha: alpha)
+            let got = Color.display(red: red, green: green, blue: blue, alpha: alpha)
             let want = reference(red, green, blue, alpha)
             return sameBits(got, want)
                 ? nil : "display(\(red), \(green), \(blue), \(alpha)) = \(got) / 参照 \(want)"
@@ -114,9 +114,9 @@ struct ColorDecodeTableTests {
         let wrong = mismatches(inputs)
         #expect(wrong.isEmpty, "\(wrong)")
         // 参照が -0 を残している (この検査が -0 と 0 を区別できている) ことの確認
-        let negative = LinearRGBA.display(red: -0.0, green: -0.0, blue: -0.0)
+        let negative = Color.display(red: -0.0, green: -0.0, blue: -0.0)
         #expect(negative.premultipliedRed.bitPattern == (-0.0 as Float).bitPattern)
-        let positive = LinearRGBA.display(red: 0, green: 0, blue: 0)
+        let positive = Color.display(red: 0, green: 0, blue: 0)
         #expect(positive.premultipliedRed.bitPattern == (0.0 as Float).bitPattern)
     }
 

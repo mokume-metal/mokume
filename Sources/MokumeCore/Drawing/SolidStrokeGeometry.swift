@@ -154,7 +154,7 @@ struct SolidStrokePlacement {
 
     init(
         matrix: simd_float4x4, camera: Camera, width: Float, height: Float, weight: Float, cap: StrokeCap,
-        color: LinearRGBA, uv: SIMD2<Float>, geometryScale: SIMD3<Float>, coverage: Float = 1
+        color: Color, uv: SIMD2<Float>, geometryScale: SIMD3<Float>, coverage: Float = 1
     ) {
         self.matrix = matrix
         let pixelAspect = camera.pixelAspect(width: width, height: height)
@@ -318,7 +318,7 @@ extension Canvas {
     /// 保持した形なら記録したもの)。
     func openGPUStroke(
         of source: SolidSource, geometry: SolidStrokeGeometry, matrix: simd_float4x4,
-        weight: Float, cap: StrokeCap, color: LinearRGBA, uv: SIMD2<Float>, geometryScale: SIMD3<Float>
+        weight: Float, cap: StrokeCap, color: Color, uv: SIMD2<Float>, geometryScale: SIMD3<Float>
     ) {
         beginSolids()
         closeBatch()

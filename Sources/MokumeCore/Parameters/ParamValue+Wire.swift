@@ -102,7 +102,7 @@ extension ParamValue: Codable {
         case .color:
             let color = try container.decode(WideWireColor.self, forKey: .value)
             self = .color(
-                LinearRGBA(
+                Color(
                     premultipliedRed: Float(color.red), green: Float(color.green),
                     blue: Float(color.blue), alpha: Float(color.alpha)))
         case .vec2:

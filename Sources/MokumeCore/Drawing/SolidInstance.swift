@@ -43,7 +43,7 @@ struct SolidInstance {
     /// 1 本で通る**ので、色のために経路が 2 本に割れない。
     var color: SIMD4<Float>
 
-    init(matrix: simd_float4x4, normalMatrix: simd_float3x3, color: LinearRGBA) {
+    init(matrix: simd_float4x4, normalMatrix: simd_float3x3, color: Color) {
         self.matrix = matrix
         normal0 = SIMD4(normalMatrix.columns.0, 0)
         normal1 = SIMD4(normalMatrix.columns.1, 0)
@@ -97,5 +97,5 @@ struct SolidInstance {
     static let identity = SolidInstance(
         matrix: matrix_identity_float4x4,
         normalMatrix: matrix_identity_float3x3,
-        color: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
+        color: Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
 }

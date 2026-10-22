@@ -16,7 +16,7 @@ import CoreGraphics
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
 enum SRGBReference {
     /// sRGB のエンコード値 (0…1) を、作業空間の線形の値へ移す。
-    static func working(red: Double, green: Double, blue: Double) -> LinearRGBA {
+    static func working(red: Double, green: Double, blue: Double) -> Color {
         let moved = convert(red, green, blue, to: CGColorSpace.extendedLinearDisplayP3)
         return .linear(red: Float(moved[0]), green: Float(moved[1]), blue: Float(moved[2]))
     }

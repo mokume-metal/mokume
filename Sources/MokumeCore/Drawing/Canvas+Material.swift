@@ -28,7 +28,7 @@ extension Canvas {
     }
 
     // 周りの光をどれだけ返すか。
-    public func ambient(_ color: LinearRGBA) {
+    public func ambient(_ color: Color) {
         // 数でない成分・無限の成分は数の形と同じ鍵で断り、負の成分は範囲の外として断る (#1706)。
         // 不透明度は材質に持ち込まないので見ない
         guard color.hasFiniteRGB else { return refuseMaterialColor(.ambient) }
@@ -40,7 +40,7 @@ extension Canvas {
     }
 
     // 自ら出す光。
-    public func emissive(_ color: LinearRGBA) {
+    public func emissive(_ color: Color) {
         guard color.hasFiniteRGB else { return refuseMaterialColor(.emissive) }
         guard admits(.material) else { return }
         guard let components = Self.materialComponents(color) else {
@@ -81,8 +81,8 @@ extension Canvas {
     ///
     /// 光と同じくアルファは持ち込まない (乗算済みの成分をそのまま使う)。負の成分は
     /// 光を吸う値になり、式のどこにも意味を持たないので受け取らない。
-    private static func materialComponents(_ color: LinearRGBA) -> SIMD3<Float>? {
-        // **有限かは成分ごとに先に見る** (``LinearRGBA/hasFiniteRGB``)。SIMD の min は数でない
+    private static func materialComponents(_ color: Color) -> SIMD3<Float>? {
+        // **有限かは成分ごとに先に見る** (``Color/hasFiniteRGB``)。SIMD の min は数でない
         // 成分を飛ばすので、有限と分かった後でだけまとめて見てよい
         guard color.hasFiniteRGB else { return nil }
         let components = SIMD3(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue)

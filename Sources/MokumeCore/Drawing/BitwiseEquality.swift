@@ -32,9 +32,9 @@ extension Vector3 {
     func isBitwiseEqual(to other: Vector3) -> Bool { simd.isBitwiseEqual(to: other.simd) }
 }
 
-extension LinearRGBA {
+extension Color {
     @inline(__always)
-    func isBitwiseEqual(to other: LinearRGBA) -> Bool {
+    func isBitwiseEqual(to other: Color) -> Bool {
         premultipliedRed.isBitwiseEqual(to: other.premultipliedRed)
             && premultipliedGreen.isBitwiseEqual(to: other.premultipliedGreen)
             && premultipliedBlue.isBitwiseEqual(to: other.premultipliedBlue) && alpha.isBitwiseEqual(to: other.alpha)

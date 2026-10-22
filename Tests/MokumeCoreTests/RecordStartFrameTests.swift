@@ -45,7 +45,7 @@ struct RecordStartFrameTests {
         var settings: SketchSettings { SketchSettings(width: 64, height: 48, frameRate: 60) }
         var plugins: [any Plugin] { declared }
         func draw() {
-            // 灰色は書いた数と書き出したバイトが一致する (``LinearRGBA/display(red:green:blue:alpha:)``)
+            // 灰色は書いた数と書き出したバイトが一致する (``Color/display(red:green:blue:alpha:)``)
             let level = Float(frameCount * RecordStartFrameTests.step) / 255
             background(.display(red: level, green: level, blue: level))
             if frameCount == 1, !stillPath.isEmpty { save(stillPath) }

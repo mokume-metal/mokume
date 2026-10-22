@@ -500,9 +500,9 @@ struct MidFrameCutTests {
 
     // MARK: - 描き切りの外で出す先を書く口 (#1942)
 
-    private static let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private static let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
-    private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private static let black = Color.linear(red: 0, green: 0, blue: 0)
+    private static let blue = Color.linear(red: 0, green: 0, blue: 1)
+    private static let red = Color.linear(red: 1, green: 0, blue: 0)
 
     /// 置いた時点の絵 (青) が出ているか。
     private static func isBlue(_ point: (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8)) -> Bool {

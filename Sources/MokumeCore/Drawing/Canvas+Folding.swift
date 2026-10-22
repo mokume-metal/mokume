@@ -325,7 +325,7 @@ extension Canvas {
     }
 
     /// 掛けても値の変わらない色。雛形の頂点はこれで積む。
-    private static let unchangedTint = LinearRGBA(
+    private static let unchangedTint = Color(
         premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
 
     /// いまの変換と塗りから、置き場所を 1 つ作る。

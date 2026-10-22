@@ -154,7 +154,7 @@ class ApiSurfaceTests(unittest.TestCase):
     def test_下の層が二重斜線でも見つける(self):
         """`/` を 1 本削るだけで検査から消えられてはいけない (#315)。"""
         with tempfile.TemporaryDirectory() as directory:
-            path, line = written(directory, "// 塗りの色。\npublic func fill(_ color: LinearRGBA) {}\n")
+            path, line = written(directory, "// 塗りの色。\npublic func fill(_ color: Color) {}\n")
             symbols = [
                 symbol("fill(_:)", owner="Sketch", doc="塗りの色。"),
                 symbol("fill(_:)", owner="Canvas", location=(path, line)),
@@ -168,7 +168,7 @@ class ApiSurfaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path, line = written(
                 directory,
-                "// 溜めている列を閉じる。\n/// 転送。\npublic func fill(_ color: LinearRGBA) {}\n")
+                "// 溜めている列を閉じる。\n/// 転送。\npublic func fill(_ color: Color) {}\n")
             twin = symbol("fill(_:)", owner="Canvas", doc="転送。", location=(path, line))
             # `///` の上にある `//` まで拾うと、覚え書きが説明文として二重に数えられる
             self.assertEqual(api.slash_doc(twin), "")
@@ -180,9 +180,9 @@ class ApiSurfaceTests(unittest.TestCase):
         """同名の宣言を 1 本に潰すと、どれと比べたかが行き当たりばったりになる (#315)。"""
         symbols = [
             symbol("background(_:)", owner="Sketch", doc="面全体を塗り直す。",
-                   parameters=["LinearRGBA"], precise="a"),
+                   parameters=["Color"], precise="a"),
             symbol("background(_:)", owner="Canvas", doc="面全体を塗り直す。",
-                   parameters=["LinearRGBA"], precise="b"),
+                   parameters=["Color"], precise="b"),
             symbol("background(_:)", owner="Canvas", parameters=["Surroundings"], precise="c"),
         ]
         problems = api.check_doc_canon(symbols)
@@ -317,7 +317,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("ScalarConvertible", problems[0])
 
     def test_Canvas_と_Transform_とトップレベルの口も見る(self):
-        for owner in ("Canvas", "Transform", "LinearRGBA", None):
+        for owner in ("Canvas", "Transform", "Color", None):
             with self.subTest(owner):
                 symbols = [symbol("move(by:)", owner=owner, parameters=["Float"])]
                 self.assertEqual(len(api.check_float_ports(symbols, set())), 1)
@@ -369,10 +369,10 @@ class ApiSurfaceTests(unittest.TestCase):
 
     def test_例外表に載っている口は通す(self):
         # 表に載る「口 → 理由」の組は実在するものを使う。表ごと消えたらこちらが赤くなる
-        self.assertIn("LinearRGBA.display(red:green:blue:alpha:)", api.FLOAT_ALLOWLIST)
+        self.assertIn("Color.display(red:green:blue:alpha:)", api.FLOAT_ALLOWLIST)
         symbols = [
             symbol(
-                "display(red:green:blue:alpha:)", owner="LinearRGBA",
+                "display(red:green:blue:alpha:)", owner="Color",
                 parameters=["Float", "Float", "Float", "Float"])
         ]
         self.assertEqual(api.check_float_ports(symbols, set()), [])
@@ -424,7 +424,7 @@ class ApiSurfaceTests(unittest.TestCase):
             takes=("Float", "s:Sf"), parameters=["Float"])
         color = symbol(
             "ambientLight(_:)", owner="Sketch", precise="b",
-            takes=("LinearRGBA", "s:10MokumeCore10LinearRGBAV"), parameters=["LinearRGBA"])
+            takes=("Color", "s:10MokumeCore5ColorV"), parameters=["Color"])
         self.assertEqual(
             api.render([protocol_, gray, color], "v1.2.3"),
             api.render([protocol_, color, gray], "v1.2.3"),
@@ -463,7 +463,7 @@ class ApiSurfaceTests(unittest.TestCase):
             document = {
                 "symbols": [
                     symbol("background(_:)", owner="Canvas",
-                           parameters=["LinearRGBA"], precise="a"),
+                           parameters=["Color"], precise="a"),
                     symbol("background(_:)", owner="Canvas",
                            parameters=["Surroundings"], precise="b"),
                 ]
@@ -704,7 +704,7 @@ class 公開の口の種類(unittest.TestCase):
                 self.assertEqual(api.check_port_kinds(symbols, source, kinds), [])
 
     def test_多重定義の数だけ呼び出しを求める(self):
-        symbols = [symbol("ambient(_:)", owner="Canvas", precise="a", parameters=["LinearRGBA"]),
+        symbols = [symbol("ambient(_:)", owner="Canvas", precise="a", parameters=["Color"]),
                    symbol("ambient(_:)", owner="Canvas", precise="b", parameters=["Float"]),
                    symbol("ambient(_:_:_:)", owner="Canvas", precise="c"),
                    symbol("ambient(_:)", owner="Sketch", precise="d")]

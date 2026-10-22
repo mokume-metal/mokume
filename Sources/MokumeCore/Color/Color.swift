@@ -25,12 +25,12 @@
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 /// [#2600]: https://github.com/mokume-metal/mokume/issues/2600
-public struct LinearRGBA: Sendable {
+public struct Color: Sendable {
     /// 赤成分 (線形・アルファ乗算済み)。**読むだけで、書き換えられない。**
     ///
     /// 成分はアルファを掛けた値なので、`alpha` だけを書き換えると乗算済みの約束が壊れる
     /// (半透明にしたつもりが下地を越えて光る)。値を変えるには作り直す —
-    /// 不透明度を**掛けて**薄めるなら ``color(_:_:)-(LinearRGBA,_)`` (置き換えない)、**置き換える**なら
+    /// 不透明度を**掛けて**薄めるなら ``color(_:_:)-(Color,_)`` (置き換えない)、**置き換える**なら
     /// 乗算していない値を ``red(_:)`` などで読んで ``color(_:_:_:_:)`` で作り直す、成分から作るなら
     /// ``init(premultipliedRed:green:blue:alpha:)`` ([ADR-0011] 決定 4)。
     ///
@@ -104,10 +104,10 @@ public struct LinearRGBA: Sendable {
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     public static func display(
         red: Float, green: Float, blue: Float, alpha: Float = 1
-    ) -> LinearRGBA {
+    ) -> Color {
         let working = ColorPrimaries.working(
             fromSRGB: SIMD3(decodeComponent(red), decodeComponent(green), decodeComponent(blue)))
-        return LinearRGBA(
+        return Color(
             straightRed: working.x, green: working.y, blue: working.z, alpha: alpha)
     }
 
@@ -158,8 +158,8 @@ public struct LinearRGBA: Sendable {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    nonisolated public static func linear(red: Float, green: Float, blue: Float) -> LinearRGBA {
-        LinearRGBA(premultipliedRed: red, green: green, blue: blue, alpha: 1)
+    nonisolated public static func linear(red: Float, green: Float, blue: Float) -> Color {
+        Color(premultipliedRed: red, green: green, blue: blue, alpha: 1)
     }
 
     /// 4 成分 (赤・緑・青・不透明度) がどれも有限か。
@@ -183,7 +183,7 @@ public struct LinearRGBA: Sendable {
     }
 
     /// 完全に透明な色。
-    public static let transparent = LinearRGBA(
+    public static let transparent = Color(
         premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
 
     /// 4 成分を GPU へ渡す並びのまま (乗算済み・線形)。
@@ -193,9 +193,9 @@ public struct LinearRGBA: Sendable {
 // 比べる・符号化する適合だけを隔離の外に置く (上の型の説明)。格納している 4 成分を
 // そのまま比べ・書く。**符号化のキーは `red`・`green`・`blue`・`alpha` のまま据え置く** — 格納の名前を
 // 改めても、保存した値 (`Rect`・`Circle` の `fill`・つまみの JSON) の形は変わらない (#2756)
-nonisolated extension LinearRGBA: Equatable, Hashable {}
+nonisolated extension Color: Equatable, Hashable {}
 
-nonisolated extension LinearRGBA: Codable {
+nonisolated extension Color: Codable {
     private enum CodingKeys: String, CodingKey {
         case premultipliedRed = "red"
         case premultipliedGreen = "green"

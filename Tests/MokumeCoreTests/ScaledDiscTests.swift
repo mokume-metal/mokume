@@ -527,7 +527,7 @@ struct ScaledDiscTests {
     @Test("半透明の色を掛けて拡大して置いた保持した折れ線は、同じ色で直に描いた絵と同じになる")
     func translucentRetainedRoundCapMatchesDirect() throws {
         let alpha: Float = 128 / 255
-        let tint = LinearRGBA(
+        let tint = Color(
             premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
         let placed = try renderRed { canvas in
             canvas.strokeWeight(1)

@@ -19,7 +19,7 @@ struct BuildingVertex {
     /// 形の囲みの箱から求める。
     var uv: SIMD2<Float>?
     /// 置いた時点の塗り。
-    var fill: LinearRGBA
+    var fill: Color
     /// 曲線が作った刻みの点か。**利用者が置いた点 (`vertex`・曲線の終点・通過点) ではない**
     /// ので、輪郭は継ぎ目に折れ目の形を置かない (``Canvas/strokeRing(count:isClosed:curveSteps:samePlace:endSquare:band:disc:square:corner:)``)。
     var isCurveStep = false
@@ -401,7 +401,7 @@ extension Canvas {
         var normal: SIMD3<Float>
         /// 向きを形から求めたか。**求めた向きだけ両面として扱う** (``SolidVertex/normal``)。
         var isDerived: Bool
-        var color: LinearRGBA
+        var color: Color
         /// 変換を掛ける**前**の面の向き。利用者の断片へ渡す (``SolidVertex/shapeNormal``)。
         var shapeNormal: SIMD3<Float>
     }
@@ -782,7 +782,7 @@ extension Canvas {
     ) -> BuildingVertex {
         func mix(_ x: SIMD3<Float>, _ y: SIMD3<Float>, _ w: Float) -> SIMD3<Float> { x + w * (y - x) }
         func mix(_ x: SIMD2<Float>, _ y: SIMD2<Float>, _ w: Float) -> SIMD2<Float> { x + w * (y - x) }
-        func mix(_ x: LinearRGBA, _ y: LinearRGBA, _ w: Float) -> SIMD4<Float> {
+        func mix(_ x: Color, _ y: Color, _ w: Float) -> SIMD4<Float> {
             let from = SIMD4(x.premultipliedRed, x.premultipliedGreen, x.premultipliedBlue, x.alpha)
             return from + w * (SIMD4(y.premultipliedRed, y.premultipliedGreen, y.premultipliedBlue, y.alpha) - from)
         }
@@ -816,7 +816,7 @@ extension Canvas {
             position: (mix(a.position, b.position, t) + mix(c.position, d.position, u)) * 0.5,
             normal: average(normalOnFirst, normalOnSecond),
             uv: average(uvOnFirst, uvOnSecond),
-            fill: LinearRGBA(
+            fill: Color(
                 premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w),
             // 利用者が置いた点ではない。輪郭は元の周から引くので、この点を通らない
             isCurveStep: true)

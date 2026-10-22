@@ -266,7 +266,7 @@ struct SolidBackFaceOrderTests {
         // 起票時: (80, 86) が 0.500 / 0.750、違う画素 1940
         let pair = try orientationPair { canvas, turned in
             let picture = try canvas.createImage(4, 4)
-            picture.fill(LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
+            picture.fill(Color(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
             canvas.fill(255)
             canvas.texture(picture)
             Form.sphere.place(on: canvas, turned: turned)
@@ -334,7 +334,7 @@ struct SolidBackFaceOrderTests {
                 at: [
                     Placement(
                         x: 80, y: 80, rotation: Vector3(0, turned ? Float.pi : 0, 0),
-                        fill: LinearRGBA(premultipliedRed: veil, green: veil, blue: veil, alpha: veil))
+                        fill: Color(premultipliedRed: veil, green: veil, blue: veil, alpha: veil))
                 ])
         }
         #expect(differingPixels(pair.plain, pair.turned) == 0)
@@ -617,7 +617,7 @@ struct SolidBackFaceOrderTests {
             canvas.fill(255)
             canvas.sphere(15)
         }
-        let veil = LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5)
+        let veil = Color(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5)
         try canvas.draw {
             canvas.shape(
                 ball,

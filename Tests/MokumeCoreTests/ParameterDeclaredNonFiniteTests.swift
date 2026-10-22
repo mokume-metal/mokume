@@ -41,7 +41,7 @@ struct ParameterDeclaredNonFiniteTests {
         @Param var single: Float = .infinity
         @Param var pair: Vector2 = Vector2(1, Float.nan)
         @Param var triple: Vector3 = Vector3(1, 2, Float.infinity)
-        @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: .nan)
+        @Param var tint: Color = Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: .nan)
     }
 
     /// #2475 の本文の再現: 範囲の上端が無限。
@@ -124,7 +124,7 @@ struct ParameterDeclaredNonFiniteTests {
         #expect(sketch.single == 0)
         #expect(sketch.pair == Vector2(0, 0))
         #expect(sketch.triple == Vector3(0, 0, 0))
-        #expect(sketch.tint == LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+        #expect(sketch.tint == Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
         #expect(sketch.params.allSatisfy { $0.value.hasOnlyFiniteNumbers })
     }
 
@@ -269,8 +269,8 @@ struct ParameterDeclaredNonFiniteTests {
     func aRangeOnATypeWithoutKnobRangeSaysOnlyWhatHappens() throws {
         let flag = ParamBox<Bool>(name: "flag", value: true, range: ParamRange(0...Double.infinity))
         let text = ParamBox<String>(name: "text", value: "a", range: ParamRange(-Double.infinity...0))
-        let ink = ParamBox<LinearRGBA>(
-            name: "ink", value: LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 1),
+        let ink = ParamBox<Color>(
+            name: "ink", value: Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 1),
             range: ParamRange(-Double.infinity...Double.infinity))
         let lines: [String?] = [
             flag.warnings.message(for: .rangeNotFinite), text.warnings.message(for: .rangeNotFinite),

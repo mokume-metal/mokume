@@ -39,7 +39,7 @@ extension Canvas {
         fill(color)
     }
 
-    public func fill(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func fill(_ color: Color, _ alpha: some ScalarConvertible) {
         guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
             return warnNotANumberColor(.fill)
         }
@@ -63,7 +63,7 @@ extension Canvas {
         stroke(color)
     }
 
-    public func stroke(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func stroke(_ color: Color, _ alpha: some ScalarConvertible) {
         guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
             return warnNotANumberColor(.stroke)
         }

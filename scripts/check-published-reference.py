@@ -78,14 +78,14 @@ CURATED_ROW = re.compile(r"^\s*-\s*``([^`\n]+)``\s*$", re.MULTILINE)
 # 畳めば公開の索引の経路と一致する
 PATH_SYMBOL = re.compile(r"[A-Za-z_][A-Za-z0-9_/(:)-]*")
 
-# 引数の型で区別した形 (`Foo/fill(_:_:)-(LinearRGBA,_)`)。公開の経路はこの形ではなく
+# 引数の型で区別した形 (`Foo/fill(_:_:)-(Color,_)`)。公開の経路はこの形ではなく
 # ハッシュの形 (`fill(_:_:)-108zr`) で出るので、経路と文字列では突き合わせられない。
-# **索引の各ノードの題 (`func fill(LinearRGBA, some ScalarConvertible)`) が引数の型を持つ**
+# **索引の各ノードの題 (`func fill(Color, some ScalarConvertible)`) が引数の型を持つ**
 # ので、基底 (`Foo/fill(_:_:)`) の下の頁のうち、題の引数の並びが行と合うものを引く (#2672)
 TYPED_SYMBOL = re.compile(r"([A-Za-z_][A-Za-z0-9_/(:)]*\))-\((.*)\)")
 
-# 引数 1 つの綴りのうち、目次の型の形が書かないもの。題は `with: LinearRGBA`・
-# `some ScalarConvertible` と書き、目次は `LinearRGBA`・`ScalarConvertible` と書く
+# 引数 1 つの綴りのうち、目次の型の形が書かないもの。題は `with: Color`・
+# `some ScalarConvertible` と書き、目次は `Color`・`ScalarConvertible` と書く
 PARAMETER_LABEL = re.compile(r"^\s*(?:[A-Za-z_]\w*\s+)?[A-Za-z_]\w*\s*:(?!:)")
 PARAMETER_NOISE = re.compile(
     r"@\w+(?:\([^)]*\))?|\b(?:some|any|inout|borrowing|consuming|sending|__owned|__shared)\b|\s+"
@@ -130,7 +130,7 @@ def normalize_parameter(text: str) -> str:
 
 
 def title_parameters(title: str | None, name: str) -> list[str] | None:
-    """索引の題 (`func fill<T>(with: LinearRGBA) throws -> T`) から引数の型の並びを読む。
+    """索引の題 (`func fill<T>(with: Color) throws -> T`) から引数の型の並びを読む。
 
     名前の後の総称の節を飛ばし、最初の括弧の対の中身を取る。返り値や投げる節は見ない。
     読めなければ None。

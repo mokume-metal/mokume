@@ -27,8 +27,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct GlyphAtlasRebakeTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     /// 検査で使う書体。**版が変わりにくいものを選ぶ** (``TextTests`` と同じ理由)。
     private let fontName = "Helvetica"

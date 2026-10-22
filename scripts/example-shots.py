@@ -69,7 +69,7 @@
 - **参照 <口>** — 同じ例で足りる overload が、別の overload の絵を指す
   (`fill(_ gray:)` が `fill(_:_:_:_:)` を指す)。`<口>` は参照の面の見出しと同じ
   `fill(_:_:_:_:)` の綴りで、同名の口が複数ある (`fill(_:_:)` は 2 本ある) ときは、
-  許容一覧と同じ `fill(_:_:) (LinearRGBA, some ScalarConvertible)` で指す。
+  許容一覧と同じ `fill(_:_:) (Color, some ScalarConvertible)` で指す。
   **参照先が無い・複数ある・絵を持たない (別の宣言だけを持つ) と赤**
 - 絵を持つ口に、撮れない宣言や参照は付けない (どちらかが古い)。宣言は 1 つだけ。
   知らない `// shot:` の宣言 (綴りの誤り) も赤にする — 黙って普通のコメントになると、
@@ -912,7 +912,7 @@ def check(shots: list[Shot]) -> list[str]:
 def resolve_reference(member: Member, target: str, members: list[Member]) -> str | None:
     """`// shot: 参照 <口>` の行き先を引く。引けなければ理由を返す (引けたら None)。
 
-    `<口>` は名前 (`fill(_:_:_:_:)`) か、型まで添えた口の綴り (`fill(_:_:) (LinearRGBA, …)`)。
+    `<口>` は名前 (`fill(_:_:_:_:)`) か、型まで添えた口の綴り (`fill(_:_:) (Color, …)`)。
     **行き先は絵を持つ口 1 本に決まらなければならない** — 無い・複数ある・絵が無いは、
     どれも「同じ絵で足りる」の裏が取れていない。
     """

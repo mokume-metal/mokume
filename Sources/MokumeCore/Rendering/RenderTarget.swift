@@ -571,7 +571,7 @@ import MokumeDiagnostics
     ///
     /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     func makeRenderPass(
-        clearColor: LinearRGBA?, continuingDepth: Bool = false, keepingDepth: Bool = false
+        clearColor: Color?, continuingDepth: Bool = false, keepingDepth: Bool = false
     ) -> MTL4RenderPassDescriptor {
         assertPlacersSettledBeforeWriting()
         let pass = MTL4RenderPassDescriptor()
@@ -625,7 +625,7 @@ import MokumeDiagnostics
     /// 描き場所が置かれていても、置いた側に塗った後の絵は出ない。
     ///
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
-    public func fill(with color: LinearRGBA) throws(RenderFailure) {
+    public func fill(with color: Color) throws(RenderFailure) {
         // 描画先の絵が変わる前に、置いた側へ写させる (`Canvas.settlePlacersBeforeChange()`)。置いた側が
         // 居なければ (`createGraphics` が作った直後など) 何もしない。コマンドを開く前に通す
         drawer?.settlePlacersBeforeChange()

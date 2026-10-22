@@ -111,17 +111,17 @@ import simd
 
     /// 1 画素の色。範囲の外は透明を返す (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
     ///
-    /// 返す値は線形・アルファ乗算済みの ``LinearRGBA`` である ([ADR-0011] 決定 4)。
+    /// 返す値は線形・アルファ乗算済みの ``Color`` である ([ADR-0011] 決定 4)。
     /// ``set(_:_:_:)`` が受けるのも同じ表現なので、`set(x, y, get(x, y))` は絵を変えない。
     /// 0–255 の乗算していない数で読むときは ``red(_:)`` ほかを通す。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func get(_ x: Int, _ y: Int) -> LinearRGBA {
+    public func get(_ x: Int, _ y: Int) -> Color {
         guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
         materializePixels()
         let texel = cpuPixels[y * width + x]
-        return LinearRGBA(
+        return Color(
             premultipliedRed: Float(texel.x), green: Float(texel.y), blue: Float(texel.z),
             alpha: Float(texel.w))
     }
@@ -130,7 +130,7 @@ import simd
     ///
     /// 色は検めずに面へ移す。数でない成分・無限の成分もそのまま書き (図形を描く経路が面へ
     /// 移すときと同じ)、有限の成分は面が表せる ±65504 で止まる (``fill(_:)`` も同じ)。
-    public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
+    public func set(_ x: Int, _ y: Int, _ color: Color) {
         guard x >= 0, y >= 0, x < width, y < height else { return }
         let index = y * width + x
         let texel = HalfSurface.texel(color)
@@ -298,7 +298,7 @@ import simd
     }
 
     /// 全体を 1 色で埋める。色は ``set(_:_:_:)`` と同じく、検めずに面へ移す。
-    public func fill(_ color: LinearRGBA) {
+    public func fill(_ color: Color) {
         let texel = HalfSurface.texel(color)
         if displayInput != nil {
             // 捨てる入力は復号しない。
@@ -346,7 +346,7 @@ import simd
     /// **走査の間は、絵の画素を触らせない。** 閉包が同じ絵を読んでも (`get`)、書き換え中の並びと
     /// 衝突して落ちることがないよう、元の画素を保ったまま別の並びへ書き、最後に差し替える。
     /// 閉包の中で同じ絵を読むと、呼ぶ前の値が読める。
-    func transformPixels(_ transform: (_ x: Int, _ y: Int, _ color: LinearRGBA) -> LinearRGBA) {
+    func transformPixels(_ transform: (_ x: Int, _ y: Int, _ color: Color) -> Color) {
         guard width > 0, height > 0 else { return }
         materializePixels()
         let source = cpuPixels
@@ -358,7 +358,7 @@ import simd
                     let row = y * columns
                     for x in 0..<columns {
                         let texel = input[row + x]
-                        let color = LinearRGBA(
+                        let color = Color(
                             premultipliedRed: Float(texel.x), green: Float(texel.y),
                             blue: Float(texel.z), alpha: Float(texel.w))
                         out[row + x] = HalfSurface.texel(transform(x, y, color))

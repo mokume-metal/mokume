@@ -5,7 +5,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// 色の値 (`LinearRGBA`) をそのまま受ける口が、数でない値・無限の成分を断る ([#1706])。
+/// 色の値 (`Color`) をそのまま受ける口が、数でない値・無限の成分を断る ([#1706])。
 ///
 /// **同じ口の数の形と同じ倒し方をする** ([ADR-0020] 決定 5)。状態 (塗り・線・色合い・下地・光・
 /// 素材・置き場所) は渡す前のまま残し、数の形と同じ鍵・同じ文面で 1 度だけ言う。
@@ -77,10 +77,10 @@ struct ColorValueGuardTests {
             "\(["赤", "緑", "青", "不透明度"][lane]) が \(value)"
         }
 
-        @MainActor var color: LinearRGBA {
+        @MainActor var color: Color {
             var lanes: [Float] = [0.2, 0.4, 0.6, 1]
             lanes[lane] = value
-            return LinearRGBA(
+            return Color(
                 premultipliedRed: lanes[0], green: lanes[1], blue: lanes[2], alpha: lanes[3])
         }
 
@@ -103,15 +103,15 @@ struct ColorValueGuardTests {
     }
 
     /// 前もって置いておく有限の色。
-    private let previous = LinearRGBA.linear(red: 0.1, green: 0.3, blue: 0.5)
+    private let previous = Color.linear(red: 0.1, green: 0.3, blue: 0.5)
     /// 有限のまま受け取られるはずの色。
-    private let accepted = LinearRGBA.linear(red: 0.7, green: 0.2, blue: 0.9)
+    private let accepted = Color.linear(red: 0.7, green: 0.2, blue: 0.9)
 
     /// 色 `color` を口 `port` へ渡し、口が持つ状態を読む。
     ///
     /// 状態は、渡す前に `previous` を置いた後の値と比べられる形で返す。下地と置き場所は面の
     /// 画素で読む (下地は描き切りまで溜め場にしか居ないため)。
-    private func pass(_ color: LinearRGBA, to port: Port, on canvas: Canvas) throws -> [Float] {
+    private func pass(_ color: Color, to port: Port, on canvas: Canvas) throws -> [Float] {
         var state: [Float] = []
         let tile = canvas.createShape {
             canvas.noStroke()
@@ -298,7 +298,7 @@ struct ColorValueGuardTests {
     @Test("区間の外では、数の形も色の値の形も、色より先に区間の外を断る", arguments: Ordered.allCases)
     func refusesOutsideTheFrameBeforeTheColour(_ ordered: Ordered) throws {
         let nan = Float.nan
-        let broken = LinearRGBA(premultipliedRed: nan, green: 0, blue: 0, alpha: 1)
+        let broken = Color(premultipliedRed: nan, green: 0, blue: 0, alpha: 1)
         for numeric in [true, false] {
             let canvas = try makeCanvas()
             let form = numeric ? "数の形" : "色の値の形"
@@ -357,7 +357,7 @@ struct ColorValueGuardTests {
         arguments: [Float(4e18), .greatestFiniteMagnitude])
     func acceptsHugeFiniteValues(_ huge: Float) throws {
         let canvas = try makeCanvas()
-        var fills: [LinearRGBA] = []
+        var fills: [Color] = []
         var lights: [SIMD4<Float>] = []
         try canvas.draw {
             canvas.fill(huge, huge, huge)
@@ -399,7 +399,7 @@ struct ColorValueGuardTests {
             try canvas.draw { canvas.shape(tile, at: [placement]) }
             return try #require(canvas.warnings.message(for: .badPlacement))
         }
-        let broken = LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1)
+        let broken = Color(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1)
         let fill = try message(Placement(x: 8, y: 8, fill: broken))
         #expect(fill.contains("fill"), "\(fill)")
         #expect(!fill.contains("position"), "\(fill)")
@@ -417,7 +417,7 @@ struct ColorValueGuardTests {
         #expect(!canvas.warnings.hasWarned(port.key), "\(port.rawValue): 有限の色で注意が出た")
     }
 
-    private func components(_ color: LinearRGBA) -> [Float] {
+    private func components(_ color: Color) -> [Float] {
         [color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha]
     }
 

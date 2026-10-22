@@ -20,10 +20,10 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct ForgottenLayerFrameTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let green = Color.linear(red: 0, green: 1, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     /// 本体のフレームの頭で捨てたときの注意。
     static let droppedAtMainFrameNotice =
@@ -105,7 +105,7 @@ struct ForgottenLayerFrameTests {
 
     /// 本体の (3, 3)・(9, 9)・(1, 1)。閉じ忘れたフレームで書いた画素・溜めた白い四角・置いた赤い
     /// 描き場所の位置である。
-    private func probes(_ canvas: Canvas) throws -> [LinearRGBA] {
+    private func probes(_ canvas: Canvas) throws -> [Color] {
         let image = try canvas.target.readPixels()
         return [image[3, 3], image[9, 9], image[1, 1]]
     }
@@ -151,7 +151,7 @@ struct ForgottenLayerFrameTests {
         // 3 枚目: 描き場所を開き直す前に、口に触れる
         var droppedAtHead = false
         var framesAtHead = 0
-        var seen: [LinearRGBA] = []
+        var seen: [Color] = []
         var read: [Float] = []
         let cursor = s.dust.cursor
         let forces = s.dust.pendingForceCount
@@ -350,7 +350,7 @@ struct ForgottenLayerFrameTests {
         // 今までどおり溜めた図形を描き切って読む
         let s = try makeScene()
         let (main, layer) = (s.main, s.layer)
-        var seen = LinearRGBA.transparent
+        var seen = Color.transparent
         var droppedBeforeReading = true
         try main.draw {
             layer.beginDraw()
@@ -436,7 +436,7 @@ struct ForgottenLayerFrameTests {
     final class OpenedAheadCloser: Sketch {
         let opensInSetup: Bool
         var layer: Canvas?
-        var closedPicture: LinearRGBA?
+        var closedPicture: Color?
         private var open = false
 
         init(opensInSetup: Bool) { self.opensInSetup = opensInSetup }
@@ -497,10 +497,10 @@ struct ForgottenLayerFrameTests {
     final class StoppedReader: Sketch {
         let forgets: Bool
         var layer: Canvas?
-        var setupPicture: LinearRGBA?
-        var seen: [LinearRGBA] = []
+        var setupPicture: Color?
+        var seen: [Color] = []
         var droppedBeforeReading = false
-        var openedInCallback: LinearRGBA?
+        var openedInCallback: Color?
         var placedAfterReading = -1
 
         init(forgets: Bool) { self.forgets = forgets }
@@ -581,7 +581,7 @@ struct ForgottenLayerFrameTests {
         // 同じように捨てる。捨てないと、読む口が捨てるはずの中身を描き切り、置いた図形が溜まり続ける
         let sketch = StoppedReader(forgets: true)
         try runStopped(sketch, keys: ["g"])
-        let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+        let black = Color.linear(red: 0, green: 0, blue: 0)
         #expect(sketch.setupPicture == black, "setup() の中の対が描かれていない")
         #expect(sketch.droppedBeforeReading, "止まっている間のコールバックに入る前に捨てていない")
         #expect(sketch.seen == [black, black], "止まっている間に、捨てるはずの中身を読めた")
@@ -598,7 +598,7 @@ struct ForgottenLayerFrameTests {
         // 区間の入口でも本体の区切りを越えていない
         let sketch = StoppedReader(forgets: false)
         try runStopped(sketch, keys: ["o", "g"])
-        let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+        let black = Color.linear(red: 0, green: 0, blue: 0)
         #expect(sketch.setupPicture == black)
         #expect(sketch.seen == [black, black])
         #expect(sketch.openedInCallback == .linear(red: 1, green: 1, blue: 1), "コールバックの中で開いた対で描けない")

@@ -29,7 +29,7 @@ final class ShapesFromSVG: Sketch {
     private var wave: Shape?
 
     /// 印に掛ける色。
-    private static let tints: [LinearRGBA] = [
+    private static let tints: [Color] = [
         color(242, 154, 71), color(89, 191, 242), color(120, 200, 140),
         color(230, 90, 120), color(250, 220, 90), color(180, 140, 250),
     ]

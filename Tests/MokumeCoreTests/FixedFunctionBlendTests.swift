@@ -27,15 +27,15 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct FixedFunctionBlendTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     private func picture(
-        _ canvas: Canvas, over ground: LinearRGBA, _ body: (Canvas) -> Void
+        _ canvas: Canvas, over ground: Color, _ body: (Canvas) -> Void
     ) throws -> DisplayImage {
         try canvas.draw {
             canvas.background(ground)
@@ -81,7 +81,7 @@ struct FixedFunctionBlendTests {
     @Test("重ねた結果が乗算済みの source-over と一致する", arguments: [true, false])
     func blendMatchesPremultipliedOver(_ throughForms: Bool) throws {
         let canvas = try makeCanvas()
-        let half = LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0.5)
+        let half = Color(straightRed: 0, green: 0, blue: 0, alpha: 0.5)
         let image = try picture(canvas, over: white) { canvas in
             canvas.noStroke()
             canvas.fill(half)
@@ -102,7 +102,7 @@ struct FixedFunctionBlendTests {
     @Test("置き換える混ぜ方は下地を見ない", arguments: [true, false])
     func replaceIgnoresTheGround(_ throughForms: Bool) throws {
         let canvas = try makeCanvas()
-        let half = LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0.5)
+        let half = Color(straightRed: 0, green: 0, blue: 0, alpha: 0.5)
         let image = try picture(canvas, over: white) { canvas in
             canvas.blendMode(.replace)
             canvas.noStroke()

@@ -413,7 +413,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 色を決めるのは ``stroke(_:)`` で、``fill(_:)-(LinearRGBA)`` は効かない。
+    /// 色を決めるのは ``stroke(_:)`` で、``fill(_:)-(Color)`` は効かない。
     ///
     /// @Row {
     ///   @Column(size: 3) {

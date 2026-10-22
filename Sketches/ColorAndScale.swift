@@ -6,7 +6,7 @@ import mokume
 /// 色を作る口・読む口と、それぞれの目盛り。灰色 1 値の形と、光の色を数値で渡す口。
 ///
 /// **同じ「赤」でも、口ごとに目盛りが違う。** 素の数値は 0–255、色相・彩度・明度は
-/// 360 / 100 / 100、`LinearRGBA(straightRed:…)` は線形の 0…1。読み出しはどれも
+/// 360 / 100 / 100、`Color(straightRed:…)` は線形の 0…1。読み出しはどれも
 /// 0–255 (と 360 / 100 / 100) へ戻して返すので、中段では**線形の 0.5 が 128 ではなく
 /// 188 と読める**。下段の光も素の数値なら 0–255 で受ける。
 ///
@@ -34,7 +34,7 @@ final class ColorAndScale: Sketch {
     private let warm = (red: Float(255), green: Float(210), blue: Float(40))
 
     /// 読み出す色。作り方がそれぞれ違う。
-    private var samples: [(name: String, color: LinearRGBA)] {
+    private var samples: [(name: String, color: Color)] {
         [
             ("hex: 0xFFCC00", color(hex: 0xFF_CC00)),
             // 上位バイトは落ちる — 手本の習慣で不透明度を付けても同じ色
@@ -42,10 +42,10 @@ final class ColorAndScale: Sketch {
             ("hue: 200", color(hue: 200, saturation: 70, brightness: 90)),
             ("gray: 128", color(128)),
             // 線形の 0.5 は「光の量が半分」で、画面の中くらいの灰色 (128) より明るい
-            ("linear 0.5", LinearRGBA(straightRed: 0.5, green: 0.5, blue: 0.5)),
+            ("linear 0.5", Color(straightRed: 0.5, green: 0.5, blue: 0.5)),
             // 乗算していない成分と不透明度から作る。成分は作業空間 (Display P3) の値なので、
             // sRGB の目盛りで読むと 255 を超える — 読み出しは丸めない
-            ("alpha: 0.5", LinearRGBA(straightRed: 0.9, green: 0.25, blue: 0.05, alpha: 0.5)),
+            ("alpha: 0.5", Color(straightRed: 0.9, green: 0.25, blue: 0.05, alpha: 0.5)),
             // 不透明度が 0 の色は、どの成分も 0 と読める
             ("transparent", .transparent),
         ]
@@ -122,7 +122,7 @@ final class ColorAndScale: Sketch {
 
         // 下段左 — 絵に色を掛ける。灰色 1 値と、線形の 0…1 で作った色
         fill(170)
-        text("tint(gray) / tint(LinearRGBA)", 40, 388)
+        text("tint(gray) / tint(Color)", 40, 388)
         fill(46)
         rect(40, 400, 440, 60)
         if let pad {
@@ -139,7 +139,7 @@ final class ColorAndScale: Sketch {
             image(pad, 40, 400)
             tint(120)
             image(pad, 200, 400)
-            tint(LinearRGBA(straightRed: 0.2, green: 0.55, blue: 1))
+            tint(Color(straightRed: 0.2, green: 0.55, blue: 1))
             image(pad, 360, 400)
             noTint()
         }
@@ -184,7 +184,7 @@ final class ColorAndScale: Sketch {
     }
 
     /// 読み出した成分を文字にする。0–255 と 360 / 100 / 100 の目盛りのまま、丸めて出す。
-    private func readings(of sample: LinearRGBA) -> [String] {
+    private func readings(of sample: Color) -> [String] {
         func rounded(_ value: Float) -> Int { Int(value.rounded()) }
         return [
             "rgb \(rounded(red(sample))) \(rounded(green(sample))) \(rounded(blue(sample)))",

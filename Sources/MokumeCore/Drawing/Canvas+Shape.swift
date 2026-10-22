@@ -659,7 +659,7 @@ extension Canvas {
     /// ([#1829]・[#1920])。不透明の線は記録のとき片を重ねたまま積む
     /// (``Canvas/strokeOverlapsShow``) ので、そのまま半透明にすると角と継ぎ目だけが濃くなる。
     /// 色なしと不透明の色は、これまでどおり重ねたまま置く — 差し替えるのは、置き場所の色の
-    /// 不透明度 (``LinearRGBA/alpha``) が 1 を下回るときだけである。
+    /// 不透明度 (``Color/alpha``) が 1 を下回るときだけである。
     ///
     /// **引くのは、その形を半透明の色で最初に置くとき 1 度だけ。** 引いた頂点は形の側
     /// (``CarvedStroke``) に控えるので、2 回目以降は控えた頂点を移して積むだけで済む。
@@ -884,7 +884,7 @@ extension Canvas {
 
     /// 頂点を置き場所へ移す。行列を掛け、置き場所の色を掛ける。
     @inline(__always)
-    private static func move(_ vertex: inout ShapeVertex, by matrix: simd_float4x4, tint: LinearRGBA?) {
+    private static func move(_ vertex: inout ShapeVertex, by matrix: simd_float4x4, tint: Color?) {
         let point = SIMD4<Float>(vertex.position.x, vertex.position.y, 0, 1)
         let moved = matrix * point
         vertex.position = SIMD2<Float>(moved.x, moved.y)
@@ -898,7 +898,7 @@ extension Canvas {
 
     /// 引いて積んだ頂点を、区間の頂点と同じように置き場所へ移した写し。
     static func moved(
-        _ vertices: [ShapeVertex], by matrix: simd_float4x4, tint: LinearRGBA?
+        _ vertices: [ShapeVertex], by matrix: simd_float4x4, tint: Color?
     ) -> [ShapeVertex] {
         var vertices = vertices
         for index in vertices.indices { move(&vertices[index], by: matrix, tint: tint) }
@@ -941,7 +941,7 @@ extension Canvas {
                     // 記録した頂点が色を持つので、置き場所は**白** (掛けても
                     // 変わらない)。渡された色があればそれを掛ける
                     color: placement.fill
-                        ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
+                        ?? Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
         }
         // 記録した形 1 つずつの部品 (``SolidPart``) を持ち歩く。どの部品を裏 → 表で描くかは、
         // 記録したときのスタイルと置き場所の色で決まる (``Shape/solidParts``)
@@ -1089,7 +1089,7 @@ extension Canvas {
             openGPUStroke(
                 of: stroke.source, geometry: geometry, matrix: instance.matrix * stroke.matrix,
                 weight: stroke.weight, cap: stroke.cap,
-                color: LinearRGBA(
+                color: Color(
                     premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w),
                 uv: stroke.uv, geometryScale: geometryScale)
             cursor = stroke.vertices.upperBound

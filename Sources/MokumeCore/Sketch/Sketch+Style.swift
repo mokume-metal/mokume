@@ -40,7 +40,7 @@ extension SketchPart {
     ///
     /// 色の不透明度も同じで、**下地に重ならず、面をその色で置き換える**。半透明の色を
     /// 渡せば面が半透明の色になり、前の絵は残らない。何も残さず透明へ戻すなら
-    /// ``LinearRGBA/transparent`` を渡す (`background(.transparent)`)。残像の作り方と、
+    /// ``Color/transparent`` を渡す (`background(.transparent)`)。残像の作り方と、
     /// 窓での見え方 (後ろは透けない) は ``background(_:_:)`` に書いた。
     ///
     /// **呼んだ時点の描き方は効かない。** 混ぜ方 (``blendMode(_:)``)・断片 (``shader(_:)``)・
@@ -55,7 +55,7 @@ extension SketchPart {
     /// 初回だけ理由を知らせる。
     // shot: 1 snippet=45bd9950
     // shot: 2 snippet=f68cd749
-    public func background(_ color: LinearRGBA) { Self.liveCanvas()?.background(color) }
+    public func background(_ color: Color) { Self.liveCanvas()?.background(color) }
 
     /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -117,7 +117,7 @@ extension SketchPart {
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=a705bbfd
     // shot: 2 snippet=bedf025c
-    public func fill(_ color: LinearRGBA) { Self.liveCanvas()?.fill(color) }
+    public func fill(_ color: Color) { Self.liveCanvas()?.fill(color) }
 
     /// これから描く図形の塗りを、勾配にする。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -192,7 +192,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 塗りとは別に決まるので、``fill(_:)-(LinearRGBA)`` と組み合わせれば中と縁で別の色になる。
+    /// 塗りとは別に決まるので、``fill(_:)-(Color)`` と組み合わせれば中と縁で別の色になる。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -222,7 +222,7 @@ extension SketchPart {
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=4c4fa3bb
     // shot: 2 snippet=fbfeb1bb
-    public func stroke(_ color: LinearRGBA) { Self.liveCanvas()?.stroke(color) }
+    public func stroke(_ color: Color) { Self.liveCanvas()?.stroke(color) }
 
     /// これから引く線の太さ (画素)。
     ///
@@ -282,7 +282,7 @@ extension SketchPart {
 
     /// 図形の内側を塗らない。輪郭だけの図形になる。
     ///
-    /// ``fill(_:)-(LinearRGBA)`` を呼ぶと、その時点でまた塗るようになる。
+    /// ``fill(_:)-(Color)`` を呼ぶと、その時点でまた塗るようになる。
     ///
     /// @Row {
     ///   @Column(size: 3) {

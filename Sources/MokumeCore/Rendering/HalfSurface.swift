@@ -23,7 +23,7 @@ import Metal
 /// 32 ビット浮動小数の文脈で描き直し、**非有限だった成分をここへ通して**半精度へ移す。元から
 /// ±inf・NaN の成分は、描き直しても非有限のままここを通り抜ける (他の経路と同じ)。
 ///
-/// **止めるのは面へ移す所だけで、色の値そのものは締めない。** `LinearRGBA` の成分・塗りの状態・
+/// **止めるのは面へ移す所だけで、色の値そのものは締めない。** `Color` の成分・塗りの状態・
 /// `color()` の値は範囲の外の明るさのまま残る ([ADR-0011] 決定 1・[ADR-0033] 決定 6)。
 ///
 /// **数でない値を数に化けさせない。** 分けるのは `isFinite` で、`min` / `max` の書き順に頼らない —
@@ -44,14 +44,14 @@ enum HalfSurface {
     }
 
     /// CPU で面へ書く 1 画素。
-    static func texel(_ color: LinearRGBA) -> SIMD4<Float16> {
+    static func texel(_ color: Color) -> SIMD4<Float16> {
         SIMD4(
             Float16(component(color.premultipliedRed)), Float16(component(color.premultipliedGreen)),
             Float16(component(color.premultipliedBlue)), Float16(component(color.alpha)))
     }
 
     /// 塗り直す色 (パスの clear 色)。
-    static func clearColor(_ color: LinearRGBA) -> MTLClearColor {
+    static func clearColor(_ color: Color) -> MTLClearColor {
         MTLClearColor(
             red: Double(component(color.premultipliedRed)), green: Double(component(color.premultipliedGreen)),
             blue: Double(component(color.premultipliedBlue)), alpha: Double(component(color.alpha)))

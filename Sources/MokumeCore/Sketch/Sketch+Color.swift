@@ -249,7 +249,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: `Int` の変数もそのまま渡せる (`fill(i, 0, 0)`)。
-    ///   0–1 で書きたいときは ``LinearRGBA/display(red:green:blue:alpha:)`` を渡す。
+    ///   0–1 で書きたいときは ``Color/display(red:green:blue:alpha:)`` を渡す。
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     ///
@@ -374,7 +374,7 @@ extension SketchPart {
     /// `fill(c, rate * 255)` と書く。
     ///
     /// 薄めた色を**値として**作りたいとき (``Placement/fill`` や
-    /// ``lerpColor(_:_:_:)`` の両端へ渡す色) は、同じ式の ``color(_:_:)-(LinearRGBA,_)`` を使う。
+    /// ``lerpColor(_:_:_:)`` の両端へ渡す色) は、同じ式の ``color(_:_:)-(Color,_)`` を使う。
     ///
     /// **範囲の外は締める。色の成分は締めない** — 不透明度の 400 は 255 と、-100 は 0 と同じに
     /// なる (掛ける率を 0–1 に締める)。成分の 255 を越える値は、白を越える明るさのまま残る
@@ -387,7 +387,7 @@ extension SketchPart {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=bdde8bba
     // shot: 2 snippet=676235a6
-    public func fill(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func fill(_ color: Color, _ alpha: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.fill(color, alpha.asFloat)
     }
@@ -542,7 +542,7 @@ extension SketchPart {
     /// **0–1 ではない。** `stroke(c, 0.5)` はほぼ透明になる。0–1 の率で薄めたいときは
     /// `stroke(c, rate * 255)` と書く。
     ///
-    /// 薄めた色を**値として**作りたいときは、同じ式の ``color(_:_:)-(LinearRGBA,_)`` を使う。
+    /// 薄めた色を**値として**作りたいときは、同じ式の ``color(_:_:)-(Color,_)`` を使う。
     ///
     /// **範囲の外は締める。色の成分は締めない** — 不透明度の 400 は 255 と、-100 は 0 と同じに
     /// なる (掛ける率を 0–1 に締める)。成分の 255 を越える値は、白を越える明るさのまま残る
@@ -554,7 +554,7 @@ extension SketchPart {
     ///
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=d86e117e
-    public func stroke(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func stroke(_ color: Color, _ alpha: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.stroke(color, alpha.asFloat)
     }

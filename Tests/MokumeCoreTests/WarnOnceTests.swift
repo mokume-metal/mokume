@@ -972,9 +972,9 @@ struct ShapeBegunWhileOpenWarningTests {
     /// 黒地に白の塗りだけで 1 フレーム描く。
     private func paint(_ canvas: Canvas, _ body: () -> Void) throws {
         try canvas.draw {
-            canvas.background(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+            canvas.background(Color.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
-            canvas.fill(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+            canvas.fill(Color.linear(red: 1, green: 1, blue: 1))
             body()
         }
     }

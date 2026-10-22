@@ -23,8 +23,8 @@ import Testing
     .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い")
 )
 struct ColorGlyphMeasureTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
     private static let tree = "\u{1F332}"
 
     private func makeCanvas() throws -> Canvas {

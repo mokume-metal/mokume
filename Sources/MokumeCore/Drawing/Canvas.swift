@@ -1344,7 +1344,7 @@ public final class Canvas {
     }
 
     /// このフレームで塗り直す色。`nil` なら前の内容の上に描き足す。
-    private var pendingBackground: LinearRGBA?
+    private var pendingBackground: Color?
 
     // MARK: - 初回だけ言う注意
 
@@ -2049,14 +2049,14 @@ public final class Canvas {
     ///
     /// [#780]: https://github.com/mokume-metal/mokume/issues/780
     struct Style {
-        var fill = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        var fill = Color.linear(red: 1, green: 1, blue: 1)
         /// 塗りの勾配 (#2433)。`nil` なら塗りは ``fill`` の色。**`fill(_:)` で色を渡すと外れる。**
         ///
         /// 勾配で塗る列は、面が持つ勾配の断片 (``Canvas/gradientShaderStorage``) で描く。勾配は
         /// `fill(_:)` を呼んだときの変換を覚えているので、変換の積み降ろしとは別に、スタイルと一緒に
         /// 積み降ろす。
         var gradient: ResolvedGradient?
-        var stroke = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        var stroke = Color.linear(red: 1, green: 1, blue: 1)
         var strokeWeight: Float = 1
         var strokeCap = StrokeCap.round
         var strokeJoin = StrokeJoin.miter
@@ -2087,7 +2087,7 @@ public final class Canvas {
         var textWrap = TextWrap.word
         var imageMode = ShapeMode.corner
         /// 画像に掛ける色。既定は掛けない (白・不透明)。
-        var tint = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        var tint = Color.linear(red: 1, green: 1, blue: 1)
         /// これから置く**塗り**に貼る絵。`nil` なら貼らない。
         ///
         /// **描き方なのでフレームを越える** ([ADR-0021] 決定 4) — 塗り・線・混ぜ方と
@@ -2504,7 +2504,7 @@ public final class Canvas {
 
     // MARK: - 図形
 
-    public func background(_ color: LinearRGBA) {
+    public func background(_ color: Color) {
         paintBackground(color.isFinite ? color : nil)
     }
 
@@ -2519,7 +2519,7 @@ public final class Canvas {
     /// (不透明度は色を作った口が締めている)。
     ///
     /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
-    func paintBackground(_ color: LinearRGBA?, opacity: Float? = nil) {
+    func paintBackground(_ color: Color?, opacity: Float? = nil) {
         // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
         //
         // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
@@ -2545,7 +2545,7 @@ public final class Canvas {
     /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
     enum SurfaceContent {
         /// 1 色 (`background(色)`)。
-        case color(LinearRGBA)
+        case color(Color)
         /// 視点から見た周囲 (`background(.sky)`)。
         case surroundings(Surroundings)
     }
@@ -2603,7 +2603,7 @@ public final class Canvas {
     /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
     private func appendSurfaceReplacement(_ content: SurfaceContent) {
         closeBatch()
-        let color: LinearRGBA
+        let color: Color
         let surroundings: PackedSurroundings
         switch content {
         case .color(let value):

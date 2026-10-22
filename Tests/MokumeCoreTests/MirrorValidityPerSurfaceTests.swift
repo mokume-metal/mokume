@@ -21,10 +21,10 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct MirrorValidityPerSurfaceTests {
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let green = Color.linear(red: 0, green: 1, blue: 0)
+    private let blue = Color.linear(red: 0, green: 0, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
 
     /// A とは別の面を動かす方法。**どれも A には書かない。**
     enum Movement: CaseIterable, CustomTestStringConvertible {
@@ -85,7 +85,7 @@ struct MirrorValidityPerSurfaceTests {
         try pair.gpu.settle()
     }
 
-    private func paintA(_ pair: Pair, _ color: LinearRGBA) throws {
+    private func paintA(_ pair: Pair, _ color: Color) throws {
         try pair.a.draw { pair.a.background(color) }
     }
 

@@ -24,8 +24,8 @@ import simd
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct PixelGridTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     /// 重心の差の許容 (画素)。半画素のずれを確実に捕まえ、三角形のラスタライズの
     /// 量子化 (縁に沿った 1 画素の出入り) は通す幅。
@@ -421,8 +421,8 @@ struct PixelGridTests {
         // 下地を読む混ぜ方も同じ (塗りと輪郭を別々に下地と混ぜていた頃は、比較明の
         // 太さ 1 で最悪 24%・太さ 2 で 12% 暗くなった・#1818)
         let (groundValue, inkValue) = seamPalette(mode)
-        let ground = LinearRGBA.linear(red: groundValue, green: groundValue, blue: groundValue)
-        let ink = LinearRGBA.linear(red: inkValue, green: inkValue, blue: inkValue)
+        let ground = Color.linear(red: groundValue, green: groundValue, blue: groundValue)
+        let ink = Color.linear(red: inkValue, green: inkValue, blue: inkValue)
         // 塗りだけ・重なり・帯だけに丸ごと入る画素の色は、太い輪郭の矩形を塗り → 輪郭の順に
         // 分けて描いて読む (式を写さない)。漏れは、画素の値が 3 色の範囲から地の側へ
         // はみ出した分を、範囲の端から地までの距離で割ったもの
@@ -681,8 +681,8 @@ struct PixelGridTests {
         worst: Double, total: Double, counted: Int, where: String, worstExcess: Double, excessAt: String
     ) {
         let (groundValue, inkValue) = seamPalette(mode)
-        let ground = LinearRGBA.linear(red: groundValue, green: groundValue, blue: groundValue)
-        let ink = LinearRGBA.linear(red: inkValue, green: inkValue, blue: inkValue)
+        let ground = Color.linear(red: groundValue, green: groundValue, blue: groundValue)
+        let ink = Color.linear(red: inkValue, green: inkValue, blue: inkValue)
         let whole: [Float] = try {
             let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 48, height: 48)
             try canvas.draw {
@@ -1461,7 +1461,7 @@ struct PixelGridTests {
         // 変えたとき、**輪郭だけで描けば塗り切られる画素**が、塗りを足した絵でも輪郭の色の
         // ままであることを見る。扇形の直線の辺で、塗りの距離場から輪郭をずらす近似の向きを
         // 取り違え、塗りと輪郭を両方持つ扇形からだけ直線の辺の輪郭が消えていた (#1174)
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        let red = Color.linear(red: 1, green: 0, blue: 0)
         let shapes: [(String, (Canvas) -> Void)] = [
             ("rect", { $0.rect(-14, -9, 28, 18) }),
             ("ellipse", { $0.ellipse(0, 0, 30, 20) }),
@@ -1525,8 +1525,8 @@ struct PixelGridTests {
         arguments: Placement.all,
         [BlendMode.add, .lightest, .screen, .difference, .exclusion])
     func compositeFillsStayPutUnderTheStroke(_ placement: Placement, _ mode: BlendMode) throws {
-        let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        let blue = Color.linear(red: 0, green: 0, blue: 1)
+        let red = Color.linear(red: 1, green: 0, blue: 0)
         let shapes: [(String, (Canvas) -> Void)] = [
             ("rect", { $0.rect(-14, -9, 28, 18) }),
             ("ellipse", { $0.ellipse(0, 0, 36, 22) }),

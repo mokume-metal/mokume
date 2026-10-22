@@ -20,9 +20,9 @@ private final class StoppedSketch: Sketch {
 
     func draw() {
         draws += 1
-        background(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+        background(Color.linear(red: 0, green: 0, blue: 0))
         noStroke()
-        fill(LinearRGBA.linear(red: 0, green: 1, blue: 0))
+        fill(Color.linear(red: 0, green: 1, blue: 0))
         rect(4, 4, 8, 8)
     }
 
@@ -33,7 +33,7 @@ private final class StoppedSketch: Sketch {
     private func react() {
         switch reaction {
         case .none: break
-        case .set: set(20, 20, LinearRGBA.linear(red: 1, green: 0, blue: 0))
+        case .set: set(20, 20, Color.linear(red: 1, green: 0, blue: 0))
         case .lock: requestPointerLock()
         case .unlock: exitPointerLock()
         case .exposure: exposure(0.5)

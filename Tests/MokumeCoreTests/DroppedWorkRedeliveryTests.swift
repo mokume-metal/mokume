@@ -26,8 +26,8 @@ import Testing
     .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"))
 struct DroppedWorkRedeliveryTests {
     static let victim = DroppedWorkReadersTests.victim
-    static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    static let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    static let red = Color.linear(red: 1, green: 0, blue: 0)
+    static let blue = Color.linear(red: 0, green: 0, blue: 1)
 
     /// 積んである投入の結末がすべて届くまで待つ。
     private func awaitOutcomes(_ gpu: RenderDevice) {

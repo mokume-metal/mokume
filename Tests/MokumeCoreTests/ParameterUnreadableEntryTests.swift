@@ -25,7 +25,7 @@ struct ParameterUnreadableEntryTests {
         @Param var gain: Float = 0.5
         @Param var count: Int = 3
         @Param var pair: Vector2 = Vector2(1, 2)
-        @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
+        @Param var tint: Color = Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
     }
 
     private func makeDirectory() throws -> URL {

@@ -21,7 +21,7 @@ struct ParameterSameValueTests {
     final class Knobbed: Sketch {
         @Param(0...200) var radius: Double = 80
         @Param(1...8) var count: Int = 3
-        @Param var tint: LinearRGBA = LinearRGBA(straightRed: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+        @Param var tint: Color = Color(straightRed: 0.5, green: 0.5, blue: 0.5, alpha: 1)
     }
 
     /// 面に出る表現より多くを持つ自作の型 (`note` は応答にも保存にも載らない)。
@@ -98,10 +98,10 @@ struct ParameterSameValueTests {
         let count = ParamBox<Int>(name: "c", value: 3)
         #expect(!notifies(count) { count.value = 3 })
         #expect(notifies(count) { count.value = 4 })
-        let ink = LinearRGBA(straightRed: 0.1, green: 0.2, blue: 0.3, alpha: 1)
-        let tint = ParamBox<LinearRGBA>(name: "k", value: ink)
+        let ink = Color(straightRed: 0.1, green: 0.2, blue: 0.3, alpha: 1)
+        let tint = ParamBox<Color>(name: "k", value: ink)
         #expect(!notifies(tint) { tint.value = ink })
-        #expect(notifies(tint) { tint.value = LinearRGBA(straightRed: 0.1, green: 0.2, blue: 0.4, alpha: 1) })
+        #expect(notifies(tint) { tint.value = Color(straightRed: 0.1, green: 0.2, blue: 0.4, alpha: 1) })
     }
 
     /// 通知しないだけで、値は置く。面に出ない部分 (`note`) や符号 (`-0.0`) を落とさない。

@@ -106,9 +106,9 @@ struct FrameSyncTests {
         return Bench(gpu: gpu, canvas: canvas, scratch: scratch, spin: spin)
     }
 
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
 
     @Test("描き切りは GPU の完了を待たずに返り、画素を読むときに待つ")
     func flushReturnsBeforeTheGPUFinishes() throws {
@@ -398,7 +398,7 @@ struct FrameSyncTests {
                 })
         case .image:
             let image = try canvas.createImage(2, 2)
-            func color(_ frame: Int) -> LinearRGBA { frame.isMultiple(of: 2) ? red : white }
+            func color(_ frame: Int) -> Color { frame.isMultiple(of: 2) ? red : white }
             return WriterScene(
                 use: { frame in
                     image.fill(color(frame))
@@ -633,7 +633,7 @@ struct FrameSyncTests {
     }
 
     /// 帯ごとの色。**帯どうしを区別できる**ように、番号から作る。
-    private static func bandColor(at index: Int, of count: Int) -> LinearRGBA {
+    private static func bandColor(at index: Int, of count: Int) -> Color {
         let step = Float(index + 1) / Float(count + 1)
         return .linear(red: step, green: 1 - step, blue: 0.5)
     }
@@ -901,7 +901,7 @@ struct FrameSyncTests {
         for frame in 1...(SharedFrameSurface.slotCount + 6) {
             try canvas.draw {
                 bench.keepGPUBusy()
-                canvas.background(LinearRGBA.linear(red: sharedLevel(atFrame: frame), green: 0, blue: 0))
+                canvas.background(Color.linear(red: sharedLevel(atFrame: frame), green: 0, blue: 0))
             }
             try shared.write(canvas.output, using: presenter, numbers: sharedNumbers(frame: frame))
             if frame == 1 { try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない") }

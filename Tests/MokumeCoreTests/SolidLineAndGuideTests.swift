@@ -32,7 +32,7 @@ struct SolidLineAndGuideTests {
         canvas.camera(170, -60, 220, 100, 100, 0, 0, 1, 0)
     }
 
-    private static let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private static let black = Color.linear(red: 0, green: 0, blue: 0)
 
     /// 見下ろす視点で、背景を塗ってから `scene` を描いた絵。
     private func picture(_ scene: (Canvas) -> Void) throws -> DisplayImage {
@@ -253,7 +253,7 @@ struct SolidLineAndGuideTests {
     func guidesKeepTheUsersStateApart() throws {
         let plain = try guides { $0.debugMode() }
         let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: Self.size, height: Self.size)
-        let mine = LinearRGBA.linear(red: 0.2, green: 0.9, blue: 0.9)
+        let mine = Color.linear(red: 0.2, green: 0.9, blue: 0.9)
         try canvas.draw {
             canvas.background(Self.black)
             Self.lookDown(canvas)

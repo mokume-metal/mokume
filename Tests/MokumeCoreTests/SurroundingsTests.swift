@@ -21,7 +21,7 @@ import simd
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SurroundingsTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -44,7 +44,7 @@ struct SurroundingsTests {
     }
 
     /// 球の上のほう / 下のほうの明るさ。
-    private func topAndBottom(_ pixels: PixelBuffer) -> (top: LinearRGBA, bottom: LinearRGBA) {
+    private func topAndBottom(_ pixels: PixelBuffer) -> (top: Color, bottom: Color) {
         (pixels[32, 10], pixels[32, 54])
     }
 
@@ -86,7 +86,7 @@ struct SurroundingsTests {
     @Test("周囲と底上げの光を、二重に数えない")
     func surroundingsAndAmbientAreCountedOnce() throws {
         // **足し算が成り立つことで示す。** どちらか一方でも 2 回数えていれば破れる
-        let ambient = LinearRGBA.linear(red: 0.3, green: 0.3, blue: 0.35)
+        let ambient = Color.linear(red: 0.3, green: 0.3, blue: 0.35)
         let onlySurroundings = try sphere(try makeCanvas()) { $0.surroundings(.sky) }
         let onlyAmbient = try sphere(try makeCanvas()) { $0.ambientLight(ambient) }
         let both = try sphere(try makeCanvas()) {

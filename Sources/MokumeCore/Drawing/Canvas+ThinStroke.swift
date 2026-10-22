@@ -615,7 +615,7 @@ struct ThinStrokeRecipe {
     let cap: StrokeCap
     let join: StrokeJoin
     /// 記録のときの線の色。
-    let color: LinearRGBA
+    let color: Color
     /// 記録のときの変換 (入れ子なら外側の置き場所の行列も合成したもの)。
     let transform: Transform
     let uv: SIMD2<Float>
@@ -648,10 +648,10 @@ struct ThinStrokeRecipe {
     ///
     /// - Parameter carvedNow: 置いたとき、頂点を引いて積んだものへ差し替えたか。差し替えたなら、
     ///   外側の記録の頂点は引いて積んである (``recordedCarved``)。
-    func moved(by matrix: simd_float4x4, tint: LinearRGBA?, carvedNow: Bool) -> ThinStrokeRecipe {
+    func moved(by matrix: simd_float4x4, tint: Color?, carvedNow: Bool) -> ThinStrokeRecipe {
         var color = self.color
         if let tint {
-            color = LinearRGBA(
+            color = Color(
                 premultipliedRed: color.premultipliedRed * tint.premultipliedRed, green: color.premultipliedGreen * tint.premultipliedGreen,
                 blue: color.premultipliedBlue * tint.premultipliedBlue, alpha: color.alpha * tint.alpha)
         }

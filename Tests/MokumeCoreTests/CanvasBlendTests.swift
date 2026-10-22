@@ -15,9 +15,9 @@ extension CanvasTests {
             "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
     )
     struct Blending {
-        private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-        private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-        private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
+        private let black = Color.linear(red: 0, green: 0, blue: 0)
+        private let white = Color.linear(red: 1, green: 1, blue: 1)
+        private let red = Color.display(red: 1, green: 0, blue: 0)
 
         private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
             try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -31,7 +31,7 @@ extension CanvasTests {
 
         /// 下地の上に色を 1 つ塗り、真ん中の画素を返す。
         private func blended(
-            mode: BlendMode, base: LinearRGBA, top: LinearRGBA
+            mode: BlendMode, base: Color, top: Color
         ) throws -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
             let canvas = try makeCanvas(width: 16, height: 16)
             try canvas.draw {
@@ -48,7 +48,7 @@ extension CanvasTests {
             "置き換える (replace) 以外のどの混ぜ方でも、アルファ 0 の色は下地を変えない",
             arguments: BlendMode.allCases.filter { $0 != .replace })
         func fullyTransparentColorsNeverDisturbTheBackground(_ mode: BlendMode) throws {
-            let base = LinearRGBA.display(red: 0.4, green: 0.3, blue: 0.2)
+            let base = Color.display(red: 0.4, green: 0.3, blue: 0.2)
             let untouched = try blended(
                 mode: .blend, base: base, top: .display(red: 0, green: 0, blue: 0, alpha: 0))
             let painted = try blended(
@@ -64,7 +64,7 @@ extension CanvasTests {
         /// `mokume_formFragmentReplace`、三角形の経路 (`quad`) は `mokume_fragmentDirect` で描く
         /// (一覧は `ShapePipeline.BlendStates` の doc)。片方だけがアルファ 0 を捨てるように
         /// なっても気付けるよう、両方で置く。
-        private func replaced(with color: LinearRGBA, throughForms: Bool) throws -> LinearRGBA {
+        private func replaced(with color: Color, throughForms: Bool) throws -> Color {
             let canvas = try makeCanvas(width: 16, height: 16)
             try canvas.draw {
                 canvas.background(white)
@@ -91,7 +91,7 @@ extension CanvasTests {
             let result = try replaced(
                 with: .display(red: 0.25, green: 0.55, blue: 1, alpha: 0), throughForms: throughForms)
             #expect(
-                result == LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0),
+                result == Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0),
                 "アルファ 0 の色で置き換えたのに、透明になっていない: \(result)")
         }
 
@@ -128,7 +128,7 @@ extension CanvasTests {
             }
             let placed = try canvas.target.readPixels()
 
-            let clear = LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
+            let clear = Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
             var clearInPicture = 0
             var clearWhenPlaced = 0
             for y in 0..<80 {
@@ -172,8 +172,8 @@ extension CanvasTests {
 
         @Test("明るいほうを採る混ぜ方と、暗いほうを採る混ぜ方が逆に働く")
         func lightestAndDarkestPickOppositeSides() throws {
-            let base = LinearRGBA.display(red: 0.8, green: 0.2, blue: 0.2)
-            let top = LinearRGBA.display(red: 0.2, green: 0.8, blue: 0.2)
+            let base = Color.display(red: 0.8, green: 0.2, blue: 0.2)
+            let top = Color.display(red: 0.2, green: 0.8, blue: 0.2)
             let lightest = try blended(mode: .lightest, base: base, top: top)
             let darkest = try blended(mode: .darkest, base: base, top: top)
             #expect(lightest.red > darkest.red)
@@ -182,8 +182,8 @@ extension CanvasTests {
 
         @Test("足す混ぜ方は明るくなり、引く混ぜ方は暗くなる")
         func addBrightensAndSubtractDarkens() throws {
-            let base = LinearRGBA.display(red: 0.4, green: 0.4, blue: 0.4)
-            let top = LinearRGBA.display(red: 0.3, green: 0.3, blue: 0.3)
+            let base = Color.display(red: 0.4, green: 0.4, blue: 0.4)
+            let top = Color.display(red: 0.3, green: 0.3, blue: 0.3)
             let added = try blended(mode: .add, base: base, top: top)
             let subtracted = try blended(mode: .subtract, base: base, top: top)
             let plain = try blended(mode: .blend, base: base, top: base)
@@ -193,7 +193,7 @@ extension CanvasTests {
 
         @Test("差を採る混ぜ方は、同じ色どうしで黒になる")
         func differenceOfEqualColorsIsBlack() throws {
-            let color = LinearRGBA.display(red: 0.6, green: 0.4, blue: 0.8)
+            let color = Color.display(red: 0.6, green: 0.4, blue: 0.8)
             let result = try blended(mode: .difference, base: color, top: color)
             #expect(result.red <= 1)
             #expect(result.green <= 1)
@@ -235,7 +235,7 @@ extension CanvasTests {
             let result = try blended(
                 mode: .add,
                 base: .display(red: 0.5, green: 0.5, blue: 0.5),
-                top: LinearRGBA(straightRed: 8, green: -4, blue: 0.5, alpha: 1))
+                top: Color(straightRed: 8, green: -4, blue: 0.5, alpha: 1))
             #expect(result.red == 255)  // 上へ飽和
             #expect(result.green == 0)  // 下へ飽和 (負の値が巻き返さない)
         }

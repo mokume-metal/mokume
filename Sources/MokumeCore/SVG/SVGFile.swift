@@ -84,10 +84,10 @@ nonisolated enum SVGFile {
     struct Item: Sendable, Equatable {
         var outline: Outline
         /// 塗り。`nil` なら塗らない。不透明度 (`fill-opacity` と `opacity`) は掛けてある。
-        var fill: Color?
+        var fill: SVGColor?
         var fillRule: FillRule
         /// 線。`nil` なら引かない。
-        var stroke: Color?
+        var stroke: SVGColor?
         /// 線の太さ (この要素の座標の単位)。
         var strokeWidth: Float
         var cap: StrokeCap
@@ -272,7 +272,7 @@ nonisolated enum SVGFile {
         /// SVG の既定の端は `butt` (長さちょうどで切る) で、本体の綴りでは ``StrokeCap/square``。
         var cap = StrokeCap.square
         var join = StrokeJoin.miter
-        var color = Color.black
+        var color = SVGColor.black
         var isVisible = true
         /// 破線が指定されているか。**描けないので、線を引いた要素ごとに名乗る**。
         var isDashed = false
@@ -1071,8 +1071,8 @@ nonisolated enum SVGFile {
 
         /// 輪郭に描き方を添えて、描くものに足す。塗りも線も見えなければ足さない。
         private mutating func add(_ outline: Outline, _ context: Context, line: Int) {
-            func color(_ paint: Paint, opacity: Float) -> Color? {
-                let base: Color
+            func color(_ paint: Paint, opacity: Float) -> SVGColor? {
+                let base: SVGColor
                 switch paint {
                 case .none: return nil
                 case .color(let read): base = read
@@ -1082,7 +1082,7 @@ nonisolated enum SVGFile {
                 painted.alpha *= opacity * context.opacity
                 return painted.alpha > 0 ? painted : nil
             }
-            var fill: Color?
+            var fill: SVGColor?
             if case .line = outline {
                 fill = nil
             } else {
@@ -1115,7 +1115,7 @@ nonisolated enum SVGFile {
     ///
     /// 外接矩形で見るので、形が実際には重ならないのに名乗ることがある (名乗り過ぎる側に倒す)。
     private mutating func noteOpacityApproximations(
-        _ outline: Outline, _ context: Context, fill: Color?, stroke: Color?, line: Int
+        _ outline: Outline, _ context: Context, fill: SVGColor?, stroke: SVGColor?, line: Int
     ) {
         if fill != nil, stroke != nil, context.opacity < 1 {
             approximations.note(SVGFile.fillAndStrokeOpacityNote, line: line)

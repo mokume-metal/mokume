@@ -381,12 +381,12 @@ struct OutputEncodeTests {
 
     /// 変換の特異点。描いた図形では踏めない値を並べる — 範囲を超えた明るさ / 負の明るさ /
     /// 完全な透明 / 乗算を戻すと 1 を超えるもの / 値になっていない成分。
-    private static let edgeCases: [LinearRGBA] = [
-        LinearRGBA(premultipliedRed: 4, green: 2, blue: 0, alpha: 1),
-        LinearRGBA(premultipliedRed: -1, green: 0.5, blue: 0, alpha: 1),
+    private static let edgeCases: [Color] = [
+        Color(premultipliedRed: 4, green: 2, blue: 0, alpha: 1),
+        Color(premultipliedRed: -1, green: 0.5, blue: 0, alpha: 1),
         .transparent,
-        LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5),
-        LinearRGBA(premultipliedRed: .nan, green: 0.25, blue: 1, alpha: 1),
+        Color(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5),
+        Color(premultipliedRed: .nan, green: 0.25, blue: 1, alpha: 1),
     ]
 
     /// 特異点を左上の行へ直に置く。**`draw` の中で呼ぶ** — 描画の区間の外で書いた画素は
@@ -487,7 +487,7 @@ struct OutputEncodeTests {
                 for x in 0..<width {
                     canvas.set(
                         x, y,
-                        LinearRGBA(
+                        Color(
                             premultipliedRed: Float(x) / Float(width),
                             green: Float(y) / Float(height), blue: Float((x + y) % 3) / 2,
                             alpha: 1))

@@ -29,7 +29,7 @@ struct HalfSurfaceTests {
             (-.infinity, -.infinity),
         ])
     func finiteComponentsStopAtTheLargestHalf(_ given: Float, _ expected: Float) {
-        let color = LinearRGBA(premultipliedRed: given, green: given, blue: given, alpha: given)
+        let color = Color(premultipliedRed: given, green: given, blue: given, alpha: given)
         let texel = HalfSurface.texel(color)
         let clear = HalfSurface.clearColor(color)
         for lane in 0..<4 { #expect(Float(texel[lane]) == expected, "画素の成分 \(lane)") }
@@ -42,7 +42,7 @@ struct HalfSurfaceTests {
     /// NaN が 65504 に化ける (ADR-0033 決定 3 の改訂が不透明度について名指しした罠)。
     @Test("数でない成分は、数でないまま通る")
     func notANumberStaysNotANumber() {
-        let color = LinearRGBA(premultipliedRed: .nan, green: .nan, blue: .nan, alpha: .nan)
+        let color = Color(premultipliedRed: .nan, green: .nan, blue: .nan, alpha: .nan)
         let texel = HalfSurface.texel(color)
         let clear = HalfSurface.clearColor(color)
         for lane in 0..<4 { #expect(texel[lane].isNaN, "画素の成分 \(lane)") }
@@ -325,7 +325,7 @@ struct HalfSurfaceRouteTests {
 
         var testDescription: String { rawValue }
 
-        @MainActor var color: LinearRGBA {
+        @MainActor var color: Color {
             switch self {
             case .white: MokumeCore.color(255)
             case .belowTheEdge: MokumeCore.color(27300)
@@ -360,7 +360,7 @@ struct HalfSurfaceRouteTests {
     }
 
     /// 比べる基準 (完了条件 1 の (a))。面いっぱいの図形を置き換えで塗る — 断片の出力の経路。
-    private func drawnByShape(_ color: LinearRGBA) throws -> LinearRGBA {
+    private func drawnByShape(_ color: Color) throws -> Color {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.blendMode(.replace)
@@ -374,8 +374,8 @@ struct HalfSurfaceRouteTests {
     /// 口を通して色を置き、面の値を読む。絵 (`Image`) の口では、本体へ `image` で置いた後の
     /// 本体の値も返す。
     private func written(
-        _ color: LinearRGBA, through route: Route
-    ) throws -> (surface: LinearRGBA, placed: LinearRGBA?) {
+        _ color: Color, through route: Route
+    ) throws -> (surface: Color, placed: Color?) {
         let canvas = try makeCanvas()
         switch route {
         case .background:
@@ -423,7 +423,7 @@ struct HalfSurfaceRouteTests {
     }
 
     /// 絵を黒い下地の等倍で置き、面の画素を読む。
-    private func placeOnBlack(_ image: Image, on canvas: Canvas) throws -> LinearRGBA {
+    private func placeOnBlack(_ image: Image, on canvas: Canvas) throws -> Color {
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.image(image, 0, 0)
@@ -569,7 +569,7 @@ struct HalfSurfaceRouteTests {
     }
 
     /// 矩形の内側 (400 画素) のうち、2 枚で色が割れる画素の数と、中央の画素。
-    private func compare(_ p: PixelBuffer, _ q: PixelBuffer) -> (Int, LinearRGBA, LinearRGBA) {
+    private func compare(_ p: PixelBuffer, _ q: PixelBuffer) -> (Int, Color, Color) {
         var differing = 0
         for y in 10..<30 {
             for x in 10..<30 {
@@ -583,7 +583,7 @@ struct HalfSurfaceRouteTests {
         return (differing, p[20, 20], q[20, 20])
     }
 
-    private func components(_ color: LinearRGBA) -> [Float] {
+    private func components(_ color: Color) -> [Float] {
         [color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha]
     }
 

@@ -23,8 +23,8 @@ import UniformTypeIdentifiers
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct ImageTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -695,8 +695,8 @@ struct ImageTests {
         let image = try canvas.createImage(2, 1)
         image.fill(white)
         image.write(makePicture([(0, 0, 0, 255), (0, 0, 0, 255)], width: 2, height: 1))
-        #expect(image.get(0, 0) == LinearRGBA.linear(red: 0, green: 0, blue: 0))
-        #expect(image.get(1, 0) == LinearRGBA.linear(red: 0, green: 0, blue: 0))
+        #expect(image.get(0, 0) == Color.linear(red: 0, green: 0, blue: 0))
+        #expect(image.get(1, 0) == Color.linear(red: 0, green: 0, blue: 0))
     }
 
     @Test("大きさの違う絵を書き込んでも、絵は変わらない")

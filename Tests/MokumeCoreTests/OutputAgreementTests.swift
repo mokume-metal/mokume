@@ -108,7 +108,7 @@ struct OutputAgreementTests {
                 for (index, color) in placed.enumerated() {
                     canvas.set(
                         index % 256, index / 256,
-                        LinearRGBA(
+                        Color(
                             premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w))
                 }
             }
@@ -135,7 +135,7 @@ struct OutputAgreementTests {
                 for (index, color) in placed.enumerated() {
                     canvas.set(
                         index % 256, index / 256,
-                        LinearRGBA(
+                        Color(
                             premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w))
                 }
             }
@@ -158,12 +158,12 @@ struct OutputAgreementTests {
         canvas.carriesOver = true
         if circle {
             canvas.noStroke()
-            canvas.fill(LinearRGBA.linear(red: 1, green: 0, blue: 0))
+            canvas.fill(Color.linear(red: 1, green: 0, blue: 0))
             canvas.circle(80, 80, 40)
             _ = canvas.get(0, 0)
         } else {
             for y in 38..<42 {
-                for x in 38..<42 { canvas.set(x, y, LinearRGBA.linear(red: 1, green: 0, blue: 0)) }
+                for x in 38..<42 { canvas.set(x, y, Color.linear(red: 1, green: 0, blue: 0)) }
             }
         }
         canvas.carriesOver = false
@@ -188,7 +188,7 @@ struct OutputAgreementTests {
             canvas.toneMapping(.roll)
             try canvas.draw {
                 canvas.set(
-                    0, 0, LinearRGBA(premultipliedRed: red, green: 0.25, blue: 0.75, alpha: example.alpha))
+                    0, 0, Color(premultipliedRed: red, green: 0.25, blue: 0.75, alpha: example.alpha))
             }
             let cpu = try canvas.output.encodeOnCPU()[0, 0]
             let gpu = try canvas.output.encodeToImage().read()[0, 0]

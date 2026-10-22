@@ -19,8 +19,8 @@ import Testing
 /// **Float16 へ丸める 1 段だけ**である。
 ///
 /// そこで色は作業空間の値そのもの (原色を移さない口) で渡し — 不透明な色は
-/// ``LinearRGBA/linear(red:green:blue:)``、透ける色は
-/// ``LinearRGBA/init(straightRed:green:blue:alpha:)`` — 成分も不透明度も 2 進の短い小数に
+/// ``Color/linear(red:green:blue:)``、透ける色は
+/// ``Color/init(straightRed:green:blue:alpha:)`` — 成分も不透明度も 2 進の短い小数に
 /// 取る。すると式の厳密な値が Float16 で表せる — 丸めが起きないので、**許す幅を置かずに完全一致で比べられる**。丸めを許すと、GPU の丸めが
 /// 最寄りとは限らないぶん (#911) 1 段ぶんの取り違えが隠れる。この前提 (期待値が Float16
 /// で表せる) は照合の前に検査自身が確かめる — 前提の崩れた組を足したら、照合より先に
@@ -157,12 +157,12 @@ struct BlendFormulaTests {
         var testDescription: String { rawValue }
     }
 
-    private static func color(_ components: [Double]) -> LinearRGBA {
+    private static func color(_ components: [Double]) -> Color {
         .linear(red: Float(components[0]), green: Float(components[1]), blue: Float(components[2]))
     }
 
     /// 下地の上に上の色を 1 枚重ね、真ん中の画素を読む。
-    private func drawn(_ pairing: Pairing, through route: Route) throws -> LinearRGBA {
+    private func drawn(_ pairing: Pairing, through route: Route) throws -> Color {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
         try canvas.draw {
             canvas.background(Self.color(pairing.ground))
@@ -256,8 +256,8 @@ struct BlendFormulaTests {
     /// 透ける下地の色 (乗算前)。
     private static let groundColor: [Double] = [0.5, 0.25, 0.75]
 
-    private static func color(_ straight: [Double], alpha: Double) -> LinearRGBA {
-        LinearRGBA(
+    private static func color(_ straight: [Double], alpha: Double) -> Color {
+        Color(
             straightRed: Float(straight[0]), green: Float(straight[1]),
             blue: Float(straight[2]), alpha: Float(alpha))
     }
@@ -301,7 +301,7 @@ struct BlendFormulaTests {
 
     /// 読んだ画素を、乗算済みの期待値と完全一致で比べる。
     private func expectPixel(
-        _ pixel: LinearRGBA, equals color: [Double], alpha: Double, _ context: String
+        _ pixel: Color, equals color: [Double], alpha: Double, _ context: String
     ) {
         let channels = [("赤", pixel.premultipliedRed), ("緑", pixel.premultipliedGreen), ("青", pixel.premultipliedBlue)]
         for ((name, drawn), value) in zip(channels, color) {

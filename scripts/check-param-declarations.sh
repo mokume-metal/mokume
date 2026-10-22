@@ -79,7 +79,7 @@ check "宣言した値は組み上がる" pass "" 'import mokume
 final class Tunables: Sketch {
     @Param(0...200) var radius: Double = 80
     @Param(choices: ["circle", "square"]) var shape: String = "circle"
-    @Param(name: "ink") var color: LinearRGBA = .display(red: 1, green: 0, blue: 0)
+    @Param(name: "ink") var color: Color = .display(red: 1, green: 0, blue: 0)
 }'
 
 check "同じ名前を二度宣言すると止まる" fail "invalid redeclaration" 'import mokume

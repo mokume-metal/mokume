@@ -18,7 +18,7 @@ import Testing
 struct ColorSurfaceTests {
     /// 成分ごとの差。0–255 の割り算とリテラルの 0–1 は最下位ビットで揺れるので、
     /// 「同じ色か」を等値では見ない。
-    private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-6)
+    private func isSame(_ one: Color, _ other: Color, within tolerance: Float = 1e-6)
         -> Bool
     {
         abs(one.premultipliedRed - other.premultipliedRed) < tolerance && abs(one.premultipliedGreen - other.premultipliedGreen) < tolerance
@@ -55,7 +55,7 @@ struct ColorSurfaceTests {
         // 誤っていても一致しない (ADR-0011 決定 3)
         let expected = SRGBReference.working(red: 204.0 / 255, green: 153.0 / 255, blue: 0)
         #expect(isSame(color(204, 153, 0), expected, within: 1e-4))
-        #expect(isSame(LinearRGBA.display(red: 0.8, green: 0.6, blue: 0), expected, within: 1e-4))
+        #expect(isSame(Color.display(red: 0.8, green: 0.6, blue: 0), expected, within: 1e-4))
     }
 
     @Test("灰色は原色の取り方に依らず、転送関数だけが効く")
@@ -133,13 +133,13 @@ struct ColorSurfaceTests {
     func opacityClampsOnTheUnitScaleButNotWhenPremultiplied() {
         // 締めるのは乗算する点 (ADR-0011 決定 4 の変換点) なので、straight で書くどの綴りも揃う
         #expect(
-            LinearRGBA.display(red: 1, green: 1, blue: 1, alpha: 1.5)
+            Color.display(red: 1, green: 1, blue: 1, alpha: 1.5)
                 == .display(red: 1, green: 1, blue: 1))
         #expect(
-            LinearRGBA(straightRed: 1, green: 0, blue: 0, alpha: -0.5)
-                == LinearRGBA(straightRed: 1, green: 0, blue: 0, alpha: 0))
+            Color(straightRed: 1, green: 0, blue: 0, alpha: -0.5)
+                == Color(straightRed: 1, green: 0, blue: 0, alpha: 0))
         // 乗算済みの層は作業空間の「計算のための値」(ADR-0011 決定 1) なので、渡したまま
-        let premultiplied = LinearRGBA(premultipliedRed: 1, green: 0, blue: 0, alpha: 2)
+        let premultiplied = Color(premultipliedRed: 1, green: 0, blue: 0, alpha: 2)
         #expect(premultiplied.alpha == 2)
         #expect(premultiplied.premultipliedRed == 1)
     }
@@ -149,7 +149,7 @@ struct ColorSurfaceTests {
         // Swift の `min` / `max` は第 1 引数の NaN を返すので、`max(0, min(1, a))` の順に
         // 書くと NaN が 1 (不透明) に化ける。数値の口は手前で弾く (下の検査) ので、
         // ここへ NaN が届くのは 0–1 の口から直に作ったときだけで、扱いは変えない
-        let made = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: .nan)
+        let made = Color(straightRed: 1, green: 1, blue: 1, alpha: .nan)
         #expect(made.alpha.isNaN, "NaN の不透明度が \(made.alpha) に化けた")
     }
 
@@ -159,7 +159,7 @@ struct ColorSurfaceTests {
         #expect(color(Float.infinity, 0, 0) == .transparent)
         #expect(color(255, 204, 0, Float.nan) == .transparent)
 
-        let broken = LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: .nan)
+        let broken = Color(premultipliedRed: .nan, green: 0, blue: 0, alpha: .nan)
         #expect(red(broken) == 0)
         #expect(alpha(broken) == 0)
     }

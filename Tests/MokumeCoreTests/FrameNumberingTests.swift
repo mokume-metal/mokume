@@ -34,7 +34,7 @@ struct FrameNumberingTests {
         init() {}
         var settings: SketchSettings { SketchSettings(width: 24, height: 16) }
         func draw() {
-            // 灰色は書いた数と書き出したバイトが一致する (``LinearRGBA/display(red:green:blue:alpha:)``)
+            // 灰色は書いた数と書き出したバイトが一致する (``Color/display(red:green:blue:alpha:)``)
             let level = Self.level(atFrame: frameCount)
             background(.display(red: level, green: level, blue: level))
             if frameCount == startsAt { beginRecord(pattern) }

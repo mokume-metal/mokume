@@ -29,7 +29,7 @@
 ///   }
 /// }
 ///
-/// 見た目は ``fill`` で値に持たせられる。持たせない値は、描いた時点の ``SketchPart/fill(_:)-(LinearRGBA)``
+/// 見た目は ``fill`` で値に持たせられる。持たせない値は、描いた時点の ``SketchPart/fill(_:)-(Color)``
 /// に従う。
 ///
 /// **隔離の外に置く** ([ADR-0010] 決定 1 の改訂)。判定と移動はどこからでも呼べ、走っている
@@ -84,7 +84,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     /// }
     // shot: 1 snippet=36d281b2
     public var radius: Float
-    /// この円の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)-(LinearRGBA)`` に従う。
+    /// この円の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)-(Color)`` に従う。
     ///
     /// 値が持つ塗りは、``SketchPart/noFill()`` の中でもその色で塗る。描いた後の塗りの状態は
     /// 呼ぶ前と同じである ([ADR-0045] 決定 6)。``Shape`` の色が形の中に焼き付くのと同じ規則で、
@@ -111,7 +111,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     ///
     /// [ADR-0045]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0045-game-direction.md
     // shot: 1 snippet=ab23b5b0
-    public var fill: LinearRGBA?
+    public var fill: Color?
 
     /// 中心の座標と半径から作る。
     ///
@@ -133,7 +133,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     // shot: 1 snippet=dc046896
     public init(
         x: some ScalarConvertible, y: some ScalarConvertible, radius: some ScalarConvertible,
-        fill: LinearRGBA? = nil
+        fill: Color? = nil
     ) {
         self.init(center: Vector2(x, y), radius: radius, fill: fill)
     }
@@ -159,7 +159,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     // shot: 1 snippet=28dcde00
     public init(
         x: some ScalarConvertible, y: some ScalarConvertible, diameter: some ScalarConvertible,
-        fill: LinearRGBA? = nil
+        fill: Color? = nil
     ) {
         self.init(center: Vector2(x, y), radius: diameter.asFloat / 2, fill: fill)
     }
@@ -182,7 +182,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=f796decc
-    public init(center: Vector2, radius: some ScalarConvertible, fill: LinearRGBA? = nil) {
+    public init(center: Vector2, radius: some ScalarConvertible, fill: Color? = nil) {
         self.center = center
         self.radius = radius.asFloat
         self.fill = fill
@@ -361,7 +361,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
 
     /// 走っているスケッチへ描く。
     ///
-    /// 値の ``fill`` があればその色で、無ければ今の ``SketchPart/fill(_:)-(LinearRGBA)`` で塗り、輪郭は今の
+    /// 値の ``fill`` があればその色で、無ければ今の ``SketchPart/fill(_:)-(Color)`` で塗り、輪郭は今の
     /// ``SketchPart/stroke(_:)`` に従う。``SketchPart/ellipseMode(_:)`` が何であっても、値の
     /// 中心と半径のとおりに描く (警告もしない)。描いた後の塗りと描き方の状態は呼ぶ前と同じである。
     ///

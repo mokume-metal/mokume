@@ -216,7 +216,7 @@ struct SharedFrameSurfaceTests {
     /// 1 枚が読み手から見えない — ここの検査が見ているのは運び方と中身であって、遅れ方
     /// (下の「枚数は〜」と `FrameSyncTests`) ではない。
     private func written(
-        color: LinearRGBA, size: (width: Int, height: Int) = (16, 8), times: Int = 1,
+        color: Color, size: (width: Int, height: Int) = (16, 8), times: Int = 1,
         in directory: URL
     ) throws -> SharedFrameSurface {
         let gpu = try RenderDevice()
@@ -265,7 +265,7 @@ struct SharedFrameSurfaceTests {
 
     @Test("面から読んだ画素が、同じ経路で普通のテクスチャへ書いたものと一致する")
     func surfaceMatchesTheOrdinaryDestination() throws {
-        let color = LinearRGBA.linear(red: 0.25, green: 0.5, blue: 0.75)
+        let color = Color.linear(red: 0.25, green: 0.5, blue: 0.75)
         let gpu = try RenderDevice()
         let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
         try source.fill(with: color)

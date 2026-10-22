@@ -343,8 +343,8 @@ struct InstancingTests {
         let tinted = try togetherAndOneByOne(
             squareAndTriangle,
             at: [
-                Placement(x: 120, y: 100, fill: LinearRGBA(premultipliedRed: 0.5, green: 0.25, blue: 0, alpha: 0.5)),
-                Placement(x: 100, y: 100, fill: LinearRGBA(premultipliedRed: 0, green: 0.25, blue: 0.5, alpha: 0.5)),
+                Placement(x: 120, y: 100, fill: Color(premultipliedRed: 0.5, green: 0.25, blue: 0, alpha: 0.5)),
+                Placement(x: 100, y: 100, fill: Color(premultipliedRed: 0, green: 0.25, blue: 0.5, alpha: 0.5)),
             ])
         #expect(differingPixels(tinted.together, tinted.oneByOne) == 0, "半透明の色で置いた絵が 1 つずつと違う")
 
@@ -406,11 +406,11 @@ struct InstancingTests {
             { canvas in
                 canvas.createShape {
                     canvas.noStroke()
-                    canvas.fill(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
                     canvas.sphere(14)
                     canvas.blendMode(.add)
                     canvas.translate(0, 0, 20)
-                    canvas.fill(LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
                     canvas.sphere(10)
                 }
             },
@@ -493,11 +493,11 @@ struct InstancingTests {
                 canvas.createShape {
                     canvas.stroke(0, 255, 0)
                     canvas.strokeWeight(2)
-                    canvas.fill(LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
                     canvas.box(30)
                     canvas.blendMode(.add)
                     canvas.stroke(255, 255, 0)
-                    canvas.fill(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
                     canvas.sphere(18)
                 }
             },
@@ -523,10 +523,10 @@ struct InstancingTests {
             { canvas in
                 canvas.createShape {
                     canvas.noStroke()
-                    canvas.fill(LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
                     canvas.box(30)
                     canvas.blendMode(.add)
-                    canvas.fill(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
                     canvas.sphere(18)
                 }
             },
@@ -549,10 +549,10 @@ struct InstancingTests {
             return try flatPicture(canvas) { canvas in
                 let inner = canvas.createShape {
                     canvas.noStroke()
-                    canvas.fill(LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))
                     canvas.box(30)
                     canvas.blendMode(.add)
-                    canvas.fill(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
+                    canvas.fill(Color(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))
                     canvas.sphere(18)
                 }
                 let outer = canvas.createShape {

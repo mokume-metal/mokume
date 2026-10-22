@@ -404,18 +404,18 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 
 ### 下地と色
 
-- ``SketchPart/background(_:)-9jeha``
+- ``SketchPart/background(_:)-(Color)``
 - ``SketchPart/background(_:_:)``
 - ``SketchPart/background(_:_:_:_:)``
-- ``SketchPart/fill(_:)-(LinearRGBA)``
+- ``SketchPart/fill(_:)-(Color)``
 - ``SketchPart/fill(_:)-(Gradient)``
 - ``SketchPart/fill(_:_:)-(ScalarConvertible,_)``
-- ``SketchPart/fill(_:_:)-(LinearRGBA,_)``
+- ``SketchPart/fill(_:_:)-(Color,_)``
 - ``SketchPart/fill(_:_:_:_:)``
 - ``SketchPart/noFill()``
 - ``SketchPart/stroke(_:)``
 - ``SketchPart/stroke(_:_:)-(ScalarConvertible,_)``
-- ``SketchPart/stroke(_:_:)-(LinearRGBA,_)``
+- ``SketchPart/stroke(_:_:)-(Color,_)``
 - ``SketchPart/stroke(_:_:_:_:)``
 - ``SketchPart/noStroke()``
 - ``SketchPart/tint(_:)``
@@ -425,7 +425,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/blendMode(_:)``
 - ``SketchPart/exposure(_:)``
 - ``SketchPart/toneMapping(_:)``
-- ``LinearRGBA``
+- ``Color``
 - ``Gradient``
 - ``BlendMode``
 - ``ToneMapping``
@@ -435,7 +435,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 素の数値は 0–255 の目盛りで、ラベル付きの口は名前が目盛りを名乗る ([ADR-0033](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md))。
 
 - ``color(_:_:)-(ScalarConvertible,_)``
-- ``color(_:_:)-(LinearRGBA,_)``
+- ``color(_:_:)-(Color,_)``
 - ``color(_:_:_:_:)``
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
@@ -793,7 +793,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 
 ### 光と質感
 
-- ``SketchPart/ambientLight(_:)-9q8nf``
+- ``SketchPart/ambientLight(_:)-(Color)``
 - ``SketchPart/ambientLight(_:)-9m0dl``
 - ``SketchPart/ambientLight(_:_:_:)``
 - ``SketchPart/directionalLight(_:_:_:_:)``
@@ -806,10 +806,10 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/noLights()``
 - ``SketchPart/shininess(_:)``
 - ``SketchPart/metalness(_:)``
-- ``SketchPart/ambient(_:)-8q7z3``
+- ``SketchPart/ambient(_:)-(Color)``
 - ``SketchPart/ambient(_:)-4oh49``
 - ``SketchPart/ambient(_:_:_:)``
-- ``SketchPart/emissive(_:)-4sz2r``
+- ``SketchPart/emissive(_:)-(Color)``
 - ``SketchPart/emissive(_:)-4v2ue``
 - ``SketchPart/emissive(_:_:_:)``
 - ``SketchPart/surroundings(_:)``

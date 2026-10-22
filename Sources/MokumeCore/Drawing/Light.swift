@@ -47,7 +47,7 @@ struct Light {
     var kind: Kind? { Kind(rawValue: UInt32(colorAndKind.w)) }
 
     init(
-        kind: Kind, color: LinearRGBA, position: SIMD3<Float> = .zero,
+        kind: Kind, color: Color, position: SIMD3<Float> = .zero,
         direction: SIMD3<Float> = SIMD3(0, 1, 0), coneCosine: Float = -1
     ) {
         // 光は面へ足すものなので、アルファは持ち込まない (乗算済みの成分をそのまま使う)

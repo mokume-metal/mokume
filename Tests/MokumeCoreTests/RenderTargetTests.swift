@@ -22,7 +22,7 @@ struct RenderTargetTests {
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: 8, height: 4)
 
-        let color = LinearRGBA.linear(red: 0.25, green: 0.5, blue: 0.75)
+        let color = Color.linear(red: 0.25, green: 0.5, blue: 0.75)
         try target.fill(with: color)
 
         let pixels = try target.readPixels()
@@ -65,7 +65,7 @@ struct RenderTargetTests {
         }
         try #require(opened)
 
-        #expect(try target.readPixels()[0, 0] == LinearRGBA.linear(red: 1, green: 0, blue: 0))
+        #expect(try target.readPixels()[0, 0] == Color.linear(red: 1, green: 0, blue: 0))
     }
 
     /// 完了条件「`RenderTarget.texture` が `.private`」(#753)。
@@ -125,7 +125,7 @@ struct RenderTargetTests {
         #expect(target.pixelMirror == nil, "画素を読んでいないのに写しがある")
         #expect(target.pixelMirrorsMade == 0)
 
-        #expect(try target.readPixels()[0, 0] == LinearRGBA.linear(red: 0, green: 1, blue: 0))
+        #expect(try target.readPixels()[0, 0] == Color.linear(red: 0, green: 1, blue: 0))
         #expect(target.pixelMirrorsMade == 1)
         #expect(target.pixelReadbacksEncoded == 1)
 
@@ -136,7 +136,7 @@ struct RenderTargetTests {
 
         // 絵が変わったら読み戻す
         try target.fill(with: .linear(red: 0, green: 0, blue: 1))
-        #expect(try target.readPixels()[7, 3] == LinearRGBA.linear(red: 0, green: 0, blue: 1))
+        #expect(try target.readPixels()[7, 3] == Color.linear(red: 0, green: 0, blue: 1))
         #expect(target.pixelReadbacksEncoded == 2)
         #expect(target.pixelMirrorsMade == 1)
     }

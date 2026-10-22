@@ -9,12 +9,12 @@ import simd
 extension Canvas {
 
     // 全体を底上げする光を置く。
-    public func ambientLight(_ color: LinearRGBA) {
+    public func ambientLight(_ color: Color) {
         addLight(Light(kind: .ambient, color: color), color: color, entry: .ambientLight)
     }
 
     // 向きだけを持つ光を置く。
-    public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func directionalLight(_ color: Color, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(
             Light(kind: .directional, color: color, direction: transformedDirection(x, y, z)),
@@ -22,7 +22,7 @@ extension Canvas {
     }
 
     // 位置を持つ光を置く。
-    public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func pointLight(_ color: Color, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(
             Light(kind: .point, color: color, position: transform.placed(x: x, y: y, z: z)),
@@ -31,7 +31,7 @@ extension Canvas {
 
     // 位置と向きと広がりを持つ光を置く。
     public func spotLight(
-        _ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        _ color: Color, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
         _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
         angle: some ScalarConvertible = Float.pi / 6
     ) {
@@ -98,7 +98,7 @@ extension Canvas {
     /// (``refuseLightColor(_:)``)。
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
-    private func addLight(_ light: Light, color: LinearRGBA, entry: ColorEntry) {
+    private func addLight(_ light: Light, color: Color, entry: ColorEntry) {
         guard admits(.light) else { return }
         guard color.hasFiniteRGB else { return warnNotANumberColor(entry) }
         closeBatch()

@@ -13,7 +13,7 @@ public enum ParamValue: Equatable, Sendable {
     case int(Int)
     case bool(Bool)
     case string(String)
-    case color(LinearRGBA)
+    case color(Color)
     case vector2(Vector2)
     case vector3(Vector3)
 
@@ -78,7 +78,7 @@ public enum ParamValue: Equatable, Sendable {
         case .int: .int(0)
         case .bool: .bool(false)
         case .string: .string("")
-        case .color: .color(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+        case .color: .color(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
         case .vector2: .vector2(Vector2(0, 0))
         case .vector3: .vector3(Vector3(0, 0, 0))
         }
@@ -140,7 +140,7 @@ extension String: ParamRepresentable {
     }
 }
 
-extension LinearRGBA: ParamRepresentable {
+extension Color: ParamRepresentable {
     /// 色は作業空間の表現そのものを出す。公開の面に出る色の型がそれである以上
     /// ([ADR-0020] 決定 6)、往復に変換を挟まない ([ADR-0030] 決定 4)。
     ///

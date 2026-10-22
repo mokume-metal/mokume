@@ -118,7 +118,7 @@ struct KnobTextTests {
 @Suite("色を選ぶ欄との往復")
 struct KnobColorTests {
     /// 選ぶ欄に載った色を、表示空間の 4 成分として読み直す。
-    private func picked(_ value: LinearRGBA) -> (
+    private func picked(_ value: MokumeCore.Color) -> (
         red: Float, green: Float, blue: Float, alpha: Float
     ) {
         let shown = NSColor(KnobColor.display(of: value)).usingColorSpace(.displayP3)!

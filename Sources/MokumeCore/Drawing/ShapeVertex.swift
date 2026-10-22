@@ -25,7 +25,7 @@ struct ShapeVertex {
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     var color: SIMD4<Float>
 
-    init(position: SIMD2<Float>, uv: SIMD2<Float>, color: LinearRGBA) {
+    init(position: SIMD2<Float>, uv: SIMD2<Float>, color: Color) {
         self.position = position
         self.uv = uv
         self.color = SIMD4<Float>(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha)

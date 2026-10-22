@@ -25,7 +25,7 @@ final class Probe: Sketch {
         translate(width / 2, height / 2)
         rotate(time)
         for i in 0..<24 {
-            fill(LinearRGBA(straightRed: 0.4, green: 0.85, blue: 1, alpha: 0.5))
+            fill(Color(straightRed: 0.4, green: 0.85, blue: 1, alpha: 0.5))
             rect(0, -6, 80 + Float(i) * 6, 12)
             rotate(Float.pi / 12)
         }

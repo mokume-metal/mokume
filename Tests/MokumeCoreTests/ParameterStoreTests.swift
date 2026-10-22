@@ -480,7 +480,7 @@ struct ParameterStoreTests {
             @Param(0...10) var whole: Int = 2
             @Param var flag: Bool = false
             @Param(choices: ["a", "b"]) var word: String = "a"
-            @Param var tint: LinearRGBA = .linear(red: 0.1, green: 0.2, blue: 0.3)
+            @Param var tint: Color = .linear(red: 0.1, green: 0.2, blue: 0.3)
             @Param(-1...1) var pair: Vector2 = Vector2(0, 0)
             @Param(-1...1) var triple: Vector3 = Vector3(0, 0, 0)
         }
@@ -632,7 +632,7 @@ struct ParameterStoreTests {
         @Param(0...10) var count: Int = 3
         @Param var pair: Vector2 = Vector2(1, 2)
         @Param var triple: Vector3 = Vector3(1, 2, 3)
-        @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
+        @Param var tint: Color = Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
         @Param var spinning: Bool = true
     }
 

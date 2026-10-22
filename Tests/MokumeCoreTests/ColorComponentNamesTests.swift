@@ -24,10 +24,10 @@ struct ColorComponentNamesTests {
     /// どちらも書き換え可能な入れ物なので、組む時に決まる多重定義の選びで見分ける。
     @Test("成分と不透明度は読むだけで、書き換えの口を持たない")
     func componentsAreReadOnly() {
-        #expect(!Self.isWritable(\LinearRGBA.premultipliedRed))
-        #expect(!Self.isWritable(\LinearRGBA.premultipliedGreen))
-        #expect(!Self.isWritable(\LinearRGBA.premultipliedBlue))
-        #expect(!Self.isWritable(\LinearRGBA.alpha))
+        #expect(!Self.isWritable(\Color.premultipliedRed))
+        #expect(!Self.isWritable(\Color.premultipliedGreen))
+        #expect(!Self.isWritable(\Color.premultipliedBlue))
+        #expect(!Self.isWritable(\Color.alpha))
     }
 
     private static func isWritable<Root, Value>(_ path: WritableKeyPath<Root, Value>) -> Bool { true }
@@ -58,13 +58,13 @@ struct ColorComponentNamesTests {
     @Test("成分の名前は、アルファを掛けた線形の値を読み、不透明度は掛けない")
     func namesReadThePremultipliedValues() {
         // 乗算前の (1, 0.5, 0)・不透明度 0.5 は、乗算済みの (0.5, 0.25, 0)・不透明度 0.5 になる
-        let half = LinearRGBA(straightRed: 1, green: 0.5, blue: 0, alpha: 0.5)
+        let half = Color(straightRed: 1, green: 0.5, blue: 0, alpha: 0.5)
         #expect(half.premultipliedRed == 0.5)
         #expect(half.premultipliedGreen == 0.25)
         #expect(half.premultipliedBlue == 0)
         #expect(half.alpha == 0.5)
         // 作り方の口が渡した値のままを読める (乗算済みの口は締めない)
-        let raw = LinearRGBA(premultipliedRed: 2, green: -1, blue: 0.5, alpha: 1.5)
+        let raw = Color(premultipliedRed: 2, green: -1, blue: 0.5, alpha: 1.5)
         #expect(raw.premultipliedRed == 2 && raw.premultipliedGreen == -1)
         #expect(raw.premultipliedBlue == 0.5 && raw.alpha == 1.5)
     }
@@ -73,7 +73,7 @@ struct ColorComponentNamesTests {
     @Test("キーが red・green・blue・alpha の JSON を読み、同じキーで書き出す")
     func legacyKeysStillRoundTrip() throws {
         let json = Data(#"{"red":0.5,"green":0,"blue":0.25,"alpha":0.5}"#.utf8)
-        let color = try decoder.decode(LinearRGBA.self, from: json)
+        let color = try decoder.decode(Color.self, from: json)
         #expect(color.premultipliedRed == 0.5)
         #expect(color.premultipliedGreen == 0)
         #expect(color.premultipliedBlue == 0.25)
@@ -81,12 +81,12 @@ struct ColorComponentNamesTests {
         let written = try #require(
             JSONSerialization.jsonObject(with: encoder.encode(color)) as? [String: Double])
         #expect(written == ["red": 0.5, "green": 0, "blue": 0.25, "alpha": 0.5])
-        #expect(try decoder.decode(LinearRGBA.self, from: encoder.encode(color)) == color)
+        #expect(try decoder.decode(Color.self, from: encoder.encode(color)) == color)
     }
 
     @Test("値型の fill も、改名前と同じキーで書き、読み直しても変わらない")
     func shapeValuesKeepTheirFillKeys() throws {
-        let fill = LinearRGBA(straightRed: 0.9, green: 0.3, blue: 0.3, alpha: 0.5)
+        let fill = Color(straightRed: 0.9, green: 0.3, blue: 0.3, alpha: 0.5)
         let circle = Circle(x: 1.5, y: -2, radius: 3, fill: fill)
         let written = try #require(
             JSONSerialization.jsonObject(with: encoder.encode(circle)) as? [String: Any])
@@ -102,8 +102,8 @@ struct ColorComponentNamesTests {
     func newNamesAreNotKeys() {
         let renamed = Data(
             #"{"premultipliedRed":0.5,"premultipliedGreen":0,"premultipliedBlue":0,"alpha":1}"#.utf8)
-        #expect(throws: DecodingError.self) { try decoder.decode(LinearRGBA.self, from: renamed) }
+        #expect(throws: DecodingError.self) { try decoder.decode(Color.self, from: renamed) }
         let missing = Data(#"{"red":0.5,"green":0,"alpha":1}"#.utf8)
-        #expect(throws: DecodingError.self) { try decoder.decode(LinearRGBA.self, from: missing) }
+        #expect(throws: DecodingError.self) { try decoder.decode(Color.self, from: missing) }
     }
 }

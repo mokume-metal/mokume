@@ -142,7 +142,7 @@ final class NoiseAndSeed: Sketch {
     private func ridge(_ x: Float) -> Float { lerp(448, 532, noise(x * 0.014)) }
 
     /// 木目 1 点ぶんの色。**上の断片と同じ式**を Swift で書いたもの。
-    private func wood(_ px: Float, _ py: Float) -> LinearRGBA {
+    private func wood(_ px: Float, _ py: Float) -> Color {
         let drift = (noise(px * 0.6, py * 0.6) - 0.5) * 0.9
         let dx = px - span * 0.5
         let dy = py - span * 1.6
@@ -150,7 +150,7 @@ final class NoiseAndSeed: Sketch {
         let ring = fract(radius * 0.9)
         let lateness = smoothstep(0.72, 0.9, ring) * (1 - smoothstep(0.94, 1.0, ring))
         let fibre = (noise(px * 2, py * 26) - 0.5) * 0.14
-        return LinearRGBA(
+        return Color(
             premultipliedRed: lerp(early.premultipliedRed, late.premultipliedRed, lateness) + fibre,
             green: lerp(early.premultipliedGreen, late.premultipliedGreen, lateness) + fibre,
             blue: lerp(early.premultipliedBlue, late.premultipliedBlue, lateness) + fibre,

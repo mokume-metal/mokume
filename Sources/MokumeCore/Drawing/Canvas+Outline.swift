@@ -632,7 +632,7 @@ extension Canvas {
     /// この数を使わない (0 を渡す)。
     func carveRecipe(
         _ outline: Outline, half: Float, thin: ThinOutline?, transform: Transform,
-        color: LinearRGBA, uv: SIMD2<Float>, discSegments: Int
+        color: Color, uv: SIMD2<Float>, discSegments: Int
     ) -> CarveRecipe {
         if let thin {
             let (carving, offset) = thinCarving(outline, thin: thin)

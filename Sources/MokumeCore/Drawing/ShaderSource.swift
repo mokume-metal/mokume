@@ -384,7 +384,7 @@ public enum ShaderValue: Equatable, Sendable {
     /// 2 つ組。断片からは `float2` として見える。
     case pair(Float, Float)
     /// 色。断片からは `float4` として見える (線形・アルファ乗算済み)。
-    case color(LinearRGBA)
+    case color(Color)
 
     var metalType: String {
         switch self {

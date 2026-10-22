@@ -19,8 +19,8 @@ import simd
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct ScreenCoordinateTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let red = Color.display(red: 1, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 256, height: Int = 256) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)

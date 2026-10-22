@@ -22,11 +22,11 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct FormShapeTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let green = Color.linear(red: 0, green: 1, blue: 0)
+    private let blue = Color.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas(width: Int = 96, height: Int = 96) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -173,7 +173,7 @@ struct FormShapeTests {
                     canvas.translate(scatter.next(0...96), scatter.next(0...96))
                     canvas.rotate(scatter.next(0...6))
                     canvas.fill(
-                        LinearRGBA(
+                        Color(
                             straightRed: scatter.next(0...1), green: scatter.next(0...1),
                             blue: scatter.next(0...1), alpha: scatter.next(0.2...1)))
                     canvas.stroke(.linear(red: 1, green: 1, blue: scatter.next(0...1)))
@@ -335,9 +335,9 @@ struct FormShapeTests {
             ("arc", 7, { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
         ]
         let ground = transparentGround
-            ? LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0) : black
+            ? Color(straightRed: 0, green: 0, blue: 0, alpha: 0) : black
         let fillColor = blue
-        func strokeColor(_ alpha: Float) -> LinearRGBA {
+        func strokeColor(_ alpha: Float) -> Color {
             .display(red: 1, green: 0, blue: 0, alpha: alpha / 255)
         }
         enum Route { case once, triangles, split }
@@ -374,7 +374,7 @@ struct FormShapeTests {
                 if let failure { throw failure }
                 return try canvas.target.readPixels()
             }
-            func gap(_ p: LinearRGBA, _ q: LinearRGBA) -> Float {
+            func gap(_ p: Color, _ q: Color) -> Float {
                 max(abs(p.premultipliedRed - q.premultipliedRed), abs(p.premultipliedGreen - q.premultipliedGreen), abs(p.premultipliedBlue - q.premultipliedBlue), abs(p.alpha - q.alpha))
             }
             // 帯に丸ごと入る画素: 輪郭だけを不透明な白で重ねた被覆率がちょうど 1
@@ -527,14 +527,14 @@ struct FormShapeTests {
     func replaceModeWeighsEdgePixelsByArea(_ variant: String) throws {
         let fillAlpha: Float = variant.hasPrefix("半透明の塗り") ? 0.6 : 1
         let strokeAlpha: Float = variant == "半透明の塗りと不透明な輪郭" || variant.hasPrefix("記録") ? 1 : 0.5
-        let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8, alpha: fillAlpha)
-        let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha)
+        let fillColor = Color.display(red: 0.2, green: 0.35, blue: 0.8, alpha: fillAlpha)
+        let strokeColor = Color.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha)
         // 置き場所の色 (乗算済みの成分ごとに掛かる)。記録した形を置くときだけ
         let tint = variant.hasPrefix("記録")
-            ? LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5) : nil
-        func placed(_ color: LinearRGBA) -> LinearRGBA {
+            ? Color(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5) : nil
+        func placed(_ color: Color) -> Color {
             guard let tint else { return color }
-            return LinearRGBA(
+            return Color(
                 premultipliedRed: color.premultipliedRed * tint.premultipliedRed, green: color.premultipliedGreen * tint.premultipliedGreen,
                 blue: color.premultipliedBlue * tint.premultipliedBlue, alpha: color.alpha * tint.alpha)
         }
@@ -552,7 +552,7 @@ struct FormShapeTests {
             }
             if tint != nil { try canvas.draw { recorded = canvas.createShape { draw() } } }
             try canvas.draw {
-                canvas.background(LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0))
+                canvas.background(Color(straightRed: 0, green: 0, blue: 0, alpha: 0))
                 if let tint {
                     canvas.blendMode(.replace)
                     canvas.shape(recorded, at: [Placement(fill: tint)])
@@ -618,16 +618,16 @@ struct FormShapeTests {
         ],
         ["不透明な地", "透明な地", "半透明の輪郭", "半透明の塗り"])
     func compositeModesWeighEdgePixelsByArea(_ mode: BlendMode, _ variant: String) throws {
-        let fillColor = LinearRGBA.display(
+        let fillColor = Color.display(
             red: 0.2, green: 0.35, blue: 0.8, alpha: variant == "半透明の塗り" ? 0.6 : 1)
-        let strokeColor = LinearRGBA.display(
+        let strokeColor = Color.display(
             red: 0.75, green: 0.3, blue: 0.15, alpha: variant == "半透明の輪郭" ? 0.5 : 1)
         let ground = variant == "透明な地"
-            ? LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0)
-            : LinearRGBA.display(red: 0.3, green: 0.4, blue: 0.5)
+            ? Color(straightRed: 0, green: 0, blue: 0, alpha: 0)
+            : Color.display(red: 0.3, green: 0.4, blue: 0.5)
         // 塗りだけ・重なり・帯だけ・どちらでもない所に丸ごと入る画素の色。帯は x = 8.5〜24.5、
         // 塗りは x = 16〜80
-        let whole: (fill: LinearRGBA, both: LinearRGBA, stroke: LinearRGBA, ground: LinearRGBA) = try {
+        let whole: (fill: Color, both: Color, stroke: Color, ground: Color) = try {
             let canvas = try makeCanvas()
             try canvas.draw {
                 canvas.background(ground)
@@ -643,7 +643,7 @@ struct FormShapeTests {
             let pixels = try canvas.target.readPixels()
             return (pixels[48, 48], pixels[20, 48], pixels[12, 48], pixels[2, 2])
         }()
-        func components(_ color: LinearRGBA) -> SIMD4<Float> {
+        func components(_ color: Color) -> SIMD4<Float> {
             SIMD4(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha)
         }
         for rect in Self.edgeRects {
@@ -719,8 +719,8 @@ struct FormShapeTests {
             ("ellipse", { $0.ellipse(48.3, 47.6, 84, 26) }),
             ("arc", { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
         ]
-        let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8)
-        let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha / 255)
+        let fillColor = Color.display(red: 0.2, green: 0.35, blue: 0.8)
+        let strokeColor = Color.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha / 255)
         // 縁と継ぎ目も比べるのは、被覆率について線形な 2 つだけ
         let comparesEdges = mode == .add || mode == .subtract
         for shape in shapes {

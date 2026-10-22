@@ -24,10 +24,10 @@ import Testing
 struct PixelsAfterDrawingTests {
     // 目印の色は作業空間の原色で書く。半精度でも 0 と 1 はそのまま載るので、期待値を
     // 完全一致で書ける
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let green = Color.linear(red: 0, green: 1, blue: 0)
+    private let blue = Color.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas() throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
@@ -71,7 +71,7 @@ struct PixelsAfterDrawingTests {
     @Test("画素を読んだあとに描いた図形の色を、続く get が読む", arguments: Path.allCases)
     func getReadsShapesDrawnAfterAnEarlierRead(path: Path) throws {
         let canvas = try makeCanvas()
-        var sampled = LinearRGBA.transparent
+        var sampled = Color.transparent
         try canvas.draw {
             canvas.background(black)
             _ = canvas.get(8, 8)
@@ -86,7 +86,7 @@ struct PixelsAfterDrawingTests {
     @Test("画素を読んだあとに描いた図形の色を、続く pixels が読む")
     func pixelsReadsShapesDrawnAfterAnEarlierRead() throws {
         let canvas = try makeCanvas()
-        var sampled = LinearRGBA.transparent
+        var sampled = Color.transparent
         try canvas.draw {
             canvas.background(black)
             _ = canvas.pixels[8, 8]
@@ -103,7 +103,7 @@ struct PixelsAfterDrawingTests {
     @Test("画素を読んだあとに塗り直した色を、続く get が読む")
     func getReadsABackgroundPaintedAfterAnEarlierRead() throws {
         let canvas = try makeCanvas()
-        var sampled = LinearRGBA.transparent
+        var sampled = Color.transparent
         try canvas.draw {
             canvas.background(black)
             _ = canvas.get(8, 8)
@@ -138,8 +138,8 @@ struct PixelsAfterDrawingTests {
     @Test("画素へ書いたあとに描いた図形を、続く get が書いた画素の上に読む")
     func getReadsShapesDrawnOverWrittenPixels() throws {
         let canvas = try makeCanvas()
-        var covered = LinearRGBA.transparent
-        var uncovered = LinearRGBA.transparent
+        var covered = Color.transparent
+        var uncovered = Color.transparent
         try canvas.draw {
             canvas.background(black)
             canvas.pixels.fill(red)
@@ -164,7 +164,7 @@ struct PixelsAfterDrawingTests {
     @Test("読んだあとに描いたときだけ描き切り直し、描いていなければ写しを使い回す")
     func reloadsOnlyAfterDrawing() throws {
         let canvas = try makeCanvas()
-        var written = LinearRGBA.transparent
+        var written = Color.transparent
         try canvas.draw {
             canvas.background(black)
             for y in 0..<16 {
@@ -203,9 +203,9 @@ struct PixelsAfterDrawingTests {
     @Test("読む前の描き切りに失敗したフレームでは、続く読み取りが描き切りをやり直さない")
     func aFailedLoadIsNotRetriedOnEveryRead() throws {
         let canvas = try makeCanvas()
-        var afterFailure = LinearRGBA.transparent
-        var afterExplicitLoad = LinearRGBA.transparent
-        var afterDrawingAgain = LinearRGBA.transparent
+        var afterFailure = Color.transparent
+        var afterExplicitLoad = Color.transparent
+        var afterDrawingAgain = Color.transparent
         try canvas.draw {
             canvas.background(black)
             _ = canvas.get(8, 8)

@@ -48,14 +48,14 @@ extension SketchPart {
     ///   ときや、止まっている間の入力のコールバックで置いた光はどのフレームにも
     ///   属さないので、警告して無視される。
     // shot: 1 snippet=5e98096a
-    public func ambientLight(_ color: LinearRGBA) { Self.liveCanvas()?.ambientLight(color) }
+    public func ambientLight(_ color: Color) { Self.liveCanvas()?.ambientLight(color) }
 
     /// 向きだけを持つ光を置く (無限に遠くから差す光)。
     ///
     /// 渡すのは**光が進む向き**である。縦軸は下向きなので、`(0, 1, 0)` が真上から
     /// 差す光になる。斜めの成分を入れると、陰の境目が左右どちらかへ寄る。
     ///
-    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(LinearRGBA)`` と同じ)。
+    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(Color)`` と同じ)。
     /// 素の数値で渡す同じ名前の口 ``directionalLight(_:_:_:_:_:_:)`` は塗りと同じ 0–255 の
     /// 目盛りなので、そちらへ `0.72` のように渡すとほぼ光が無くなる。
     ///
@@ -93,7 +93,7 @@ extension SketchPart {
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=97d91466
-    public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func directionalLight(_ color: Color, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.directionalLight(color, x, y, z)
@@ -101,7 +101,7 @@ extension SketchPart {
 
     /// 位置を持つ光を置く。面から光源へ向かう向きで明るさが決まる。
     ///
-    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(LinearRGBA)`` と同じ)。
+    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(Color)`` と同じ)。
     /// 素の数値で渡す同じ名前の口 ``pointLight(_:_:_:_:_:_:)`` は塗りと同じ 0–255 の
     /// 目盛りなので、そちらへ `0.72` のように渡すとほぼ光が無くなる。
     ///
@@ -136,7 +136,7 @@ extension SketchPart {
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=ebd428d6
-    public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func pointLight(_ color: Color, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.pointLight(color, x, y, z)
@@ -144,7 +144,7 @@ extension SketchPart {
 
     /// 位置と向きと広がりを持つ光を置く。広がりの外へは当たらない。
     ///
-    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(LinearRGBA)`` と同じ)。
+    /// **色の目盛りは 0…1** で、明るさの倍率を兼ねる (``ambientLight(_:)-(Color)`` と同じ)。
     /// 素の数値で渡す同じ名前の口 ``spotLight(_:_:_:_:_:_:_:_:_:angle:)`` は塗りと同じ 0–255 の
     /// 目盛りなので、そちらへ `0.72` のように渡すとほぼ光が無くなる。
     ///
@@ -222,7 +222,7 @@ extension SketchPart {
     // shot: 1 snippet=3525df13
     // shot: 2 snippet=6b577fab
     public func spotLight(
-        _ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        _ color: Color, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
         _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
         angle: some ScalarConvertible = Float.pi / 6
     ) {
@@ -234,7 +234,7 @@ extension SketchPart {
     /// ひととおりの光を置く — 底上げの光と、斜め上から差す光。
     ///
     /// 立体を「とりあえず立体らしく」見せるための組み合わせ。細かく決めたくなったら
-    /// ``ambientLight(_:)-(LinearRGBA)`` と ``directionalLight(_:_:_:_:)`` を自分で並べる。
+    /// ``ambientLight(_:)-(Color)`` と ``directionalLight(_:_:_:_:)`` を自分で並べる。
     ///
     /// **中身は絵で確かめられる。** 下は左から、底上げの光だけ・斜め上から差す光だけ・
     /// ``lights()`` の 3 つ。3 つ目には前の 2 つが両方出ている — **暗い側は 1 つ目と

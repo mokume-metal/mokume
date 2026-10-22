@@ -38,8 +38,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct CurveJoinTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     /// 1 枚の面に描いて、表示の形で読む。**比べる 2 経路は毎回新しい面に描く。**
     private func render(width: Int = 64, height: Int = 64, _ body: (Canvas) -> Void) throws

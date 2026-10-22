@@ -120,7 +120,7 @@ final class KnobsAndValues: Sketch {
     enum Figure: String, CaseIterable { case circle, square, triangle }
 
     /// 色。作業空間の色をそのまま宣言できる。
-    @Param var tint: LinearRGBA = color(250, 158, 61)
+    @Param var tint: Color = color(250, 158, 61)
 
     /// 並び全体のずれ。組は成分ごとのスライダーになる。
     @Param(-1...1) var drift: Vector2 = Vector2(0, 0)

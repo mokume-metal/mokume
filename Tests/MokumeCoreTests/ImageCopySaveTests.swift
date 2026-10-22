@@ -14,9 +14,9 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct ImageCopySaveTests {
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
-    private let teal = LinearRGBA.linear(red: 0.1, green: 0.4, blue: 0.3)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let blue = Color.linear(red: 0, green: 0, blue: 1)
+    private let teal = Color.linear(red: 0.1, green: 0.4, blue: 0.3)
 
     private func makeCanvas() throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
@@ -30,7 +30,7 @@ struct ImageCopySaveTests {
         try body(directory)
     }
 
-    private func same(_ a: LinearRGBA, _ b: LinearRGBA, within tolerance: Float = 0) -> Bool {
+    private func same(_ a: Color, _ b: Color, within tolerance: Float = 0) -> Bool {
         abs(a.premultipliedRed - b.premultipliedRed) <= tolerance && abs(a.premultipliedGreen - b.premultipliedGreen) <= tolerance
             && abs(a.premultipliedBlue - b.premultipliedBlue) <= tolerance && abs(a.alpha - b.alpha) <= tolerance
     }
@@ -65,7 +65,7 @@ struct ImageCopySaveTests {
                 a.set(x, y, .linear(red: Float(x) * 0.7, green: Float(y) * 0.3, blue: 0.123))
             }
         }
-        a.set(2, 2, LinearRGBA(premultipliedRed: 0.1, green: 0.05, blue: 0, alpha: 0.5))
+        a.set(2, 2, Color(premultipliedRed: 0.1, green: 0.05, blue: 0, alpha: 0.5))
         let b = a.copy()
         for y in 0..<4 {
             for x in 0..<5 {
@@ -106,7 +106,7 @@ struct ImageCopySaveTests {
         try withTemporaryDirectory { directory in
             let canvas = try makeCanvas()
             let a = try canvas.createImage(4, 2)
-            let half = LinearRGBA(premultipliedRed: 0.1, green: 0.05, blue: 0.0, alpha: 0.5)
+            let half = Color(premultipliedRed: 0.1, green: 0.05, blue: 0.0, alpha: 0.5)
             a.set(0, 0, teal)
             a.set(1, 0, half)
             a.set(2, 0, red)

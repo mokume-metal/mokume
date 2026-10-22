@@ -19,8 +19,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct MaterialTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -286,7 +286,7 @@ struct MaterialTests {
 
     @Test("透明な立体の自発光は下地を変えず、半透明なら下地が薄まるのと同じ割合で乗る")
     func emissiveOnAGroundFollowsTheFillOpacity() throws {
-        func box(alpha: Int) throws -> LinearRGBA {
+        func box(alpha: Int) throws -> Color {
             try translucentGlow(background: { $0.background(0, 0, 255) }) {
                 $0.emissive(255, 0, 0)
                 $0.fill(0, 0, 0, alpha)
@@ -309,7 +309,7 @@ struct MaterialTests {
 
     @Test("半透明の面では、自発光も塗り × 光と同じだけ薄まる")
     func emissiveThinsLikeTheLitPaint() throws {
-        func plane(alpha: Int) throws -> LinearRGBA {
+        func plane(alpha: Int) throws -> Color {
             let canvas = try makeCanvas(width: 160, height: 160)
             try canvas.draw {
                 canvas.background(0)

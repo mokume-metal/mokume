@@ -241,7 +241,7 @@ struct ParticleInputTests {
         try canvas.draw {
             // 塗りの口は数でない色を断るようになった (#1706) ので、状態へ直に置く。粒の受け口の
             // 検めは、塗りがどの道から数でなくなっても効く守りとして残っている
-            canvas.style.fill = LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1)
+            canvas.style.fill = Color(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1)
             canvas.emit(
                 dust, from: .point(32, 32), toward: .plane(0...0), rate: 60, speed: 0...0,
                 life: 1...1, size: 1...1, color: nil, using: &randomness)
@@ -303,7 +303,7 @@ struct ParticleInputTests {
             canvas.emit(
                 dust, from: emission.from, toward: emission.toward, rate: emission.rate,
                 speed: emission.speed, life: emission.life, size: emission.size,
-                color: LinearRGBA(
+                color: Color(
                     premultipliedRed: emission.color.x, green: emission.color.y,
                     blue: emission.color.z, alpha: emission.color.w),
                 using: &randomness)

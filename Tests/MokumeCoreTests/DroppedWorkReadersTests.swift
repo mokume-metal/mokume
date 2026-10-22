@@ -29,15 +29,15 @@ struct DroppedWorkReadersTests {
     static let victim =
         "Discarded (victim of GPU error/recovery) (00000005:kIOGPUCommandBufferCallbackErrorInnocentVictim)"
 
-    static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    static let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    static let red = Color.linear(red: 1, green: 0, blue: 0)
+    static let blue = Color.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas(_ gpu: RenderDevice) throws -> Canvas {
         try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
     }
 
     /// 1 色で塗り切る。描き切りの投入は 1 本である。
-    private func paint(_ canvas: Canvas, _ color: LinearRGBA) throws {
+    private func paint(_ canvas: Canvas, _ color: Color) throws {
         try canvas.draw { canvas.background(color) }
     }
 

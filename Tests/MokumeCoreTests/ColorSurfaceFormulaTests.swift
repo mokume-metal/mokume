@@ -72,7 +72,7 @@ struct NumericColorEntryTests {
             }
         }
 
-        func read(_ canvas: Canvas) -> LinearRGBA {
+        func read(_ canvas: Canvas) -> Color {
             switch self {
             case .fill: canvas.style.fill
             case .stroke: canvas.style.stroke
@@ -82,7 +82,7 @@ struct NumericColorEntryTests {
     }
 
     /// 渡す数と、同じ数を `color(…)` に渡した色。綴りは 4 通り (3 つ・4 つ・灰色・灰色と不透明度)。
-    private static var forms: [(values: [Float], expected: LinearRGBA)] {
+    private static var forms: [(values: [Float], expected: Color)] {
         [
             ([red, green, blue], color(red, green, blue)),
             ([red, green, blue, opacity], color(red, green, blue, opacity)),
@@ -199,9 +199,9 @@ struct NumericColorEntryTests {
     /// 白を越える (赤 1.445)。
     @Test("塗りの不透明度に範囲の外を渡した矩形は、端の値で塗った矩形と同じ画素になる")
     func fillOpacityOutsideTheScalePaintsLikeTheEnd() throws {
-        func centre(afterFillingWith opacity: Float) throws -> LinearRGBA {
+        func centre(afterFillingWith opacity: Float) throws -> Color {
             let sketch = Blank()
-            var sampled = LinearRGBA.transparent
+            var sampled = Color.transparent
             sketch.paint = { sketch in
                 sketch.background(128)
                 sketch.noStroke()
@@ -238,14 +238,14 @@ struct NumericColorEntryTests {
             }
         }
 
-        func call(_ sketch: Blank, _ color: LinearRGBA, _ alpha: Float) {
+        func call(_ sketch: Blank, _ color: Color, _ alpha: Float) {
             switch self {
             case .fill: sketch.fill(color, alpha)
             case .stroke: sketch.stroke(color, alpha)
             }
         }
 
-        func read(_ canvas: Canvas) -> LinearRGBA {
+        func read(_ canvas: Canvas) -> Color {
             switch self {
             case .fill: canvas.style.fill
             case .stroke: canvas.style.stroke
@@ -283,7 +283,7 @@ struct NumericColorEntryTests {
             #expect(abs(MokumeCore.blue(halved) - 40) < 0.01, "\(MokumeCore.blue(halved))")
 
             // 作品が手で書いていた `fade(c, 0.72)` — 乗算済みの 4 成分を同じ率で縮める式
-            let ink = LinearRGBA.display(red: 0.114, green: 0.110, blue: 0.118)
+            let ink = Color.display(red: 0.114, green: 0.110, blue: 0.118)
             entry.call(sketch, ink, 0.72 * 255)
             let faded = read()
             #expect(abs(faded.premultipliedRed - ink.premultipliedRed * 0.72) < 1e-6, "\(faded)")
@@ -300,7 +300,7 @@ struct NumericColorEntryTests {
         let sketch = Blank()
         let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
         runSketch(runtime) {
-            let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
+            let red = Color.display(red: 1, green: 0, blue: 0)
             sketch.fill(red, 128)
             let expected = runtime.canvas.style.fill
             let count = 128
@@ -368,7 +368,7 @@ struct NumericColorEntryTests {
 /// [#1385]: https://github.com/mokume-metal/mokume/issues/1385
 @Suite("色相の 6 つの区画")
 struct HueSectorTests {
-    private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-5)
+    private func isSame(_ one: Color, _ other: Color, within tolerance: Float = 1e-5)
         -> Bool
     {
         abs(one.premultipliedRed - other.premultipliedRed) < tolerance && abs(one.premultipliedGreen - other.premultipliedGreen) < tolerance

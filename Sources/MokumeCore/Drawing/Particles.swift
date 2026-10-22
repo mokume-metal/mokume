@@ -562,7 +562,7 @@ public final class Particles {
     func emit(
         rate: Float, over step: FrameStep, frame: Int, from source: Emitter,
         toward heading: Heading, speed: ClosedRange<Float>, life: ClosedRange<Float>,
-        size: ClosedRange<Float>, color: LinearRGBA?, fill: LinearRGBA,
+        size: ClosedRange<Float>, color: Color?, fill: Color,
         using randomness: inout Randomness
     ) {
         if let refused = Self.unacceptable(
@@ -589,7 +589,7 @@ public final class Particles {
     private static func unacceptable(
         rate: Float, from source: Emitter, toward heading: Heading,
         speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
-        color: LinearRGBA?, fill: LinearRGBA
+        color: Color?, fill: Color
     ) -> (name: String, value: String)? {
         func finite(_ range: ClosedRange<Float>) -> Bool {
             range.lowerBound.isFinite && range.upperBound.isFinite
@@ -638,7 +638,7 @@ public final class Particles {
     private func place(
         _ count: Int, from source: Emitter, toward heading: Heading,
         speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
-        color: LinearRGBA, over step: FrameStep, using randomness: inout Randomness
+        color: Color, over step: FrameStep, using randomness: inout Randomness
     ) {
         guard count > 0 else { return }
         // 上書きの注意の境目。**置いた粒は、このフレームの進めより先に状態へ届く** (控えは計算より
@@ -846,7 +846,7 @@ public final class Particles {
                         x: particle.x, y: particle.y, z: particle.z, size: particle.size,
                         transform: transform, basis: basis),
                     normalMatrix: basis,
-                    color: LinearRGBA(
+                    color: Color(
                         premultipliedRed: particle.red, green: particle.green,
                         blue: particle.blue, alpha: particle.alpha))
                 place.normal0.w = Self.age(life: particle.life + lifeStep, born: particle.born)

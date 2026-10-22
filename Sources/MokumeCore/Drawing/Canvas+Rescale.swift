@@ -69,7 +69,7 @@ struct RingFillRecipe {
         }
     }
     /// 記録のときの塗りの色。
-    let color: LinearRGBA
+    let color: Color
     /// 貼る絵があったか。あれば、読み取り位置は周の囲みの箱から決める。
     let hasPicture: Bool
     /// 記録のときの変換 (入れ子なら外側の置き場所の行列も合成したもの)。
@@ -78,7 +78,7 @@ struct RingFillRecipe {
     let uv: SIMD2<Float>
 
     init(
-        outline: Canvas.Outline, color: LinearRGBA, hasPicture: Bool, transform: Transform,
+        outline: Canvas.Outline, color: Color, hasPicture: Bool, transform: Transform,
         uv: SIMD2<Float>
     ) {
         source = outline.ring != nil ? .ring(outline) : .named(outline.namedFill)
@@ -89,10 +89,10 @@ struct RingFillRecipe {
     }
 
     /// 別の保持した形の中で置かれた塗り。行列と色を合成する (刻み直すのは外側を置くとき)。
-    func moved(by matrix: simd_float4x4, tint: LinearRGBA?) -> RingFillRecipe {
+    func moved(by matrix: simd_float4x4, tint: Color?) -> RingFillRecipe {
         var color = self.color
         if let tint {
-            color = LinearRGBA(
+            color = Color(
                 premultipliedRed: color.premultipliedRed * tint.premultipliedRed, green: color.premultipliedGreen * tint.premultipliedGreen,
                 blue: color.premultipliedBlue * tint.premultipliedBlue, alpha: color.alpha * tint.alpha)
         }

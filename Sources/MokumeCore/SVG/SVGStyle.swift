@@ -16,43 +16,43 @@ extension SVGFile {
     // MARK: - 色
 
     /// sRGB の成分 (0…1・乗算前) と不透明度。**作業空間へ移すのは置く側** (``Canvas``) で、
-    /// `fill(r, g, b)` と同じ入口 (``LinearRGBA/display(red:green:blue:alpha:)``) を通る。
-    nonisolated struct Color: Sendable, Equatable {
+    /// `fill(r, g, b)` と同じ入口 (``Color/display(red:green:blue:alpha:)``) を通る。
+    nonisolated struct SVGColor: Sendable, Equatable {
         var red: Float
         var green: Float
         var blue: Float
         var alpha: Float
 
-        static let black = Color(red: 0, green: 0, blue: 0, alpha: 1)
+        static let black = SVGColor(red: 0, green: 0, blue: 0, alpha: 1)
     }
 
     /// 色の文字を読む。読むのは `#rgb`・`#rgba`・`#rrggbb`・`#rrggbbaa`・`rgb()` / `rgba()`
     /// (数と百分率)・名前の色 (CSS の 148 色と `transparent`)。大文字と小文字は区別しない。
-    nonisolated static func parseColor(_ text: String) -> Color? {
+    nonisolated static func parseColor(_ text: String) -> SVGColor? {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if value.hasPrefix("#") { return hexColor(value.dropFirst()) }
         if value.hasPrefix("rgb") { return functionalColor(value) }
-        if value == "transparent" { return Color(red: 0, green: 0, blue: 0, alpha: 0) }
+        if value == "transparent" { return SVGColor(red: 0, green: 0, blue: 0, alpha: 0) }
         guard let packed = namedColors[value] else { return nil }
-        return Color(
+        return SVGColor(
             red: Float((packed >> 16) & 0xFF) / 255, green: Float((packed >> 8) & 0xFF) / 255,
             blue: Float(packed & 0xFF) / 255, alpha: 1)
     }
 
     /// `#` の後ろの 16 進。3・4・6・8 桁を読む。
-    nonisolated private static func hexColor(_ digits: Substring) -> Color? {
+    nonisolated private static func hexColor(_ digits: Substring) -> SVGColor? {
         let values = digits.compactMap { $0.hexDigitValue }
         guard values.count == digits.count else { return nil }
         func channel(_ high: Int, _ low: Int) -> Float { Float(high * 16 + low) / 255 }
         switch values.count {
         case 3, 4:
             let alpha = values.count == 4 ? channel(values[3], values[3]) : 1
-            return Color(
+            return SVGColor(
                 red: channel(values[0], values[0]), green: channel(values[1], values[1]),
                 blue: channel(values[2], values[2]), alpha: alpha)
         case 6, 8:
             let alpha = values.count == 8 ? channel(values[6], values[7]) : 1
-            return Color(
+            return SVGColor(
                 red: channel(values[0], values[1]), green: channel(values[2], values[3]),
                 blue: channel(values[4], values[5]), alpha: alpha)
         default:
@@ -62,7 +62,7 @@ extension SVGFile {
 
     /// `rgb(…)` / `rgba(…)`。成分は 0–255 の数か百分率、不透明度は 0–1 の数か百分率。
     /// 区切りはカンマでも空白でもよく、不透明度の前の `/` も受ける (CSS Color 4 の書き方)。
-    nonisolated private static func functionalColor(_ value: String) -> Color? {
+    nonisolated private static func functionalColor(_ value: String) -> SVGColor? {
         guard let open = value.firstIndex(of: "("), value.hasSuffix(")") else { return nil }
         let name = value[..<open].trimmingCharacters(in: .whitespaces)
         guard name == "rgb" || name == "rgba" else { return nil }
@@ -86,7 +86,7 @@ extension SVGFile {
             guard let read = component(parts[3], scale: 1) else { return nil }
             alpha = read
         }
-        return Color(red: red, green: green, blue: blue, alpha: alpha)
+        return SVGColor(red: red, green: green, blue: blue, alpha: alpha)
     }
 
     // MARK: - 塗り
@@ -96,7 +96,7 @@ extension SVGFile {
         /// 塗らない。
         case none
         /// その色で塗る。
-        case color(Color)
+        case color(SVGColor)
         /// 要素の `color` の値で塗る。
         case currentColor
     }

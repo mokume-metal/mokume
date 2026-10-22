@@ -184,9 +184,9 @@ struct UpscaleTests {
     func transparentAreasStayTransparent() throws {
         let canvas = try makeCanvas(density: 0.5)
         try canvas.draw {
-            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.background(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
             canvas.noStroke()
-            canvas.fill(LinearRGBA(straightRed: 1, green: 0.8, blue: 0.2, alpha: 0.5))
+            canvas.fill(Color(straightRed: 1, green: 0.8, blue: 0.2, alpha: 0.5))
             canvas.rect(32, 24, 64, 48)
         }
         let pixels = canvas.output.pixels
@@ -205,7 +205,7 @@ struct UpscaleTests {
     /// 透明と接する縁の内側では、三次補間が上へ振れて不透明度が 1 を越える。白い円の上端が
     /// 黒い四角の下辺に接する所では、色と不透明度の振れ方が食い違い、色が不透明度を越える。
     private func touchingShapes(on canvas: Canvas) {
-        canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+        canvas.background(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
         canvas.noStroke()
         canvas.fill(.display(red: 1, green: 1, blue: 1))
         canvas.circle(64, 50, 40)
@@ -251,7 +251,7 @@ struct UpscaleTests {
         try canvas.draw {
             canvas.background(.display(red: 0, green: 0, blue: 0))
             canvas.noStroke()
-            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.fill(Color(straightRed: 4, green: 4, blue: 4, alpha: 1))
             canvas.rect(32, 24, 64, 48)
         }
         // ADR-0011 決定 2 — 出力段まで捨てずに運ぶ
@@ -264,9 +264,9 @@ struct UpscaleTests {
     func brightEdgesStayWithinTheirNeighbourhood(density: Float) throws {
         let canvas = try makeCanvas(density: density)
         try canvas.draw {
-            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.background(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
             canvas.noStroke()
-            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.fill(Color(straightRed: 4, green: 4, blue: 4, alpha: 1))
             canvas.rect(32, 24, 64, 48)
         }
         let pixels = canvas.output.pixels
@@ -295,11 +295,11 @@ struct UpscaleTests {
     func straightColourStaysWithinItsNeighbourhood(density: Float) throws {
         let canvas = try makeCanvas(density: density)
         try canvas.draw {
-            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.background(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
             canvas.noStroke()
             canvas.fill(.linear(red: 1, green: 1, blue: 1))
             canvas.rect(16, 0, 24, 96)
-            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.fill(Color(straightRed: 4, green: 4, blue: 4, alpha: 1))
             canvas.rect(40, 0, 1 / density, 96)
         }
         let pixels = canvas.output.pixels
@@ -322,7 +322,7 @@ struct UpscaleTests {
     @Test("不透明度 0 で色を持つ画素は、拡大を通しても細かさ 1 と同じく残る", arguments: [Float(0.5), 0.25])
     func unboundedLightSurvivesTheEnlargement(density: Float) throws {
         let canvas = try makeCanvas(density: density)
-        let light = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 0)
+        let light = Color(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 0)
         try canvas.draw { canvas.background(light) }
         let pixels = canvas.output.pixels
         for (x, y) in [(0, 0), (64, 48), (127, 95)] {
@@ -338,13 +338,13 @@ struct UpscaleTests {
     /// 同じ値を読み戻せる。
     @Test("引いて負になった値は、拡大を通しても細かさ 1 と同じく残る")
     func negativeValuesSurviveLikeAtFullDensity() throws {
-        func centre(density: Float) throws -> LinearRGBA {
+        func centre(density: Float) throws -> Color {
             let canvas = try makeCanvas(density: density)
             try canvas.draw {
-                canvas.background(LinearRGBA(straightRed: 0.2, green: 0.2, blue: 0.2, alpha: 1))
+                canvas.background(Color(straightRed: 0.2, green: 0.2, blue: 0.2, alpha: 1))
                 canvas.noStroke()
                 canvas.blendMode(.subtract)
-                canvas.fill(LinearRGBA(straightRed: 0.6, green: 0.6, blue: 0.6, alpha: 1))
+                canvas.fill(Color(straightRed: 0.6, green: 0.6, blue: 0.6, alpha: 1))
                 canvas.rect(32, 24, 64, 48)
             }
             return canvas.output.pixels[64, 48]
@@ -439,7 +439,7 @@ struct UpscaleTests {
     @Test("拡大の段で失敗しても、落ちずに知らせ、出す先へは何も書かない")
     func leavesTheOutputAloneWhenTheUpscaleFails() throws {
         /// 出す先の写しから読む。**読む口の追い付きを通さない**ので、出す先そのものが見える。
-        func stored(_ target: RenderTarget) -> [LinearRGBA] {
+        func stored(_ target: RenderTarget) -> [Color] {
             let window = target.pixels
             return stride(from: 0, to: target.height, by: 8).flatMap { y in
                 stride(from: 0, to: target.width, by: 8).map { x in window[x, y] }

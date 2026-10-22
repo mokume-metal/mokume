@@ -30,14 +30,14 @@ import simd
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 public struct Surroundings: Equatable, Sendable {
     /// 真上の色。
-    public var top: LinearRGBA
+    public var top: Color
     /// 地平 (真横) の色。
-    public var horizon: LinearRGBA
+    public var horizon: Color
     /// 真下の色。
-    public var bottom: LinearRGBA
+    public var bottom: Color
 
     /// 3 色から作る。
-    public init(top: LinearRGBA, horizon: LinearRGBA, bottom: LinearRGBA) {
+    public init(top: Color, horizon: Color, bottom: Color) {
         self.top = top
         self.horizon = horizon
         self.bottom = bottom
@@ -70,15 +70,15 @@ public struct Surroundings: Equatable, Sendable {
             bottom: Self.scale(bottom, factor))
     }
 
-    private static func scale(_ color: LinearRGBA, _ factor: Float) -> LinearRGBA {
-        LinearRGBA(
+    private static func scale(_ color: Color, _ factor: Float) -> Color {
+        Color(
             premultipliedRed: color.premultipliedRed * factor, green: color.premultipliedGreen * factor,
             blue: color.premultipliedBlue * factor, alpha: color.alpha)
     }
 
     /// 受け取れる値か。数でない成分・負の成分を持つ周囲は置かない。不透明度は使わないので見ない。
     ///
-    /// 有限かは色の値の受け口と同じ述語 (``LinearRGBA/hasFiniteRGB``) で見る ([#1706] の反証 8)。
+    /// 有限かは色の値の受け口と同じ述語 (``Color/hasFiniteRGB``) で見る ([#1706] の反証 8)。
     /// SIMD の min は数でない成分を飛ばすので、有限と分かった後でだけまとめて見る。
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706

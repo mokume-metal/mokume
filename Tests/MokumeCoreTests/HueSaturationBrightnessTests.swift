@@ -14,7 +14,7 @@ import Testing
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 @Suite("色相・彩度・明度の面")
 struct HueSaturationBrightnessTests {
-    private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-5)
+    private func isSame(_ one: Color, _ other: Color, within tolerance: Float = 1e-5)
         -> Bool
     {
         abs(one.premultipliedRed - other.premultipliedRed) < tolerance && abs(one.premultipliedGreen - other.premultipliedGreen) < tolerance
@@ -158,7 +158,7 @@ struct HueSaturationBrightnessTests {
             for green in levels {
                 for blue in levels {
                     for alpha in alphas {
-                        let color = LinearRGBA(
+                        let color = Color(
                             premultipliedRed: red, green: green, blue: blue, alpha: alpha)
                         let expected = HueSaturationBrightness.values(
                             red: MokumeCore.red(color), green: MokumeCore.green(color),

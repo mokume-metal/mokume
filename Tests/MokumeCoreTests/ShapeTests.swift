@@ -42,7 +42,7 @@ struct ShapeTests {
         canvas.endShape()
     }
 
-    private func makeDot(_ canvas: Canvas, _ color: LinearRGBA) -> Shape {
+    private func makeDot(_ canvas: Canvas, _ color: Color) -> Shape {
         canvas.createShape {
             canvas.noStroke()
             canvas.fill(color)
@@ -1350,8 +1350,8 @@ struct ShapeTests {
         }
     }
 
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let green = Color.linear(red: 0, green: 1, blue: 0)
 
     /// #1253 の完了条件 1・2。**組んだ後で書き換えた絵は、形だけを置き直したフレームにも出る。**
     ///
@@ -1546,8 +1546,8 @@ enum PixelCallInsideShape: CaseIterable, CustomTestStringConvertible {
     var writes: Bool { self == .set || self == .writePixels || self == .updatePixels }
 
     /// 呼ぶ。`get` の戻り値だけを返す。
-    func call(on canvas: Canvas) -> LinearRGBA? {
-        let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    func call(on canvas: Canvas) -> Color? {
+        let white = Color.linear(red: 1, green: 1, blue: 1)
         switch self {
         case .get: return canvas.get(5, 5)
         case .set: canvas.set(5, 5, white)
@@ -1728,11 +1728,11 @@ final class MainFrameStartInsideLayerBuild: Sketch {
 }
 
 extension ShapeTests {
-    private static let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private static let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-    private static let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
-    private static let magenta = LinearRGBA.linear(red: 1, green: 0, blue: 1)
+    private static let black = Color.linear(red: 0, green: 0, blue: 0)
+    private static let red = Color.linear(red: 1, green: 0, blue: 0)
+    private static let green = Color.linear(red: 0, green: 1, blue: 0)
+    private static let blue = Color.linear(red: 0, green: 0, blue: 1)
+    private static let magenta = Color.linear(red: 1, green: 0, blue: 1)
 
     /// 右下に赤い三角形を置く。内側の (11, 11) が赤くなる。
     private func placeTriangle(_ canvas: Canvas) {
@@ -1804,7 +1804,7 @@ extension ShapeTests {
     func pixelsInsideABuildAreIgnored(_ call: PixelCallInsideShape) throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         var shape = Shape.empty
-        var read: LinearRGBA?
+        var read: Color?
         try canvas.draw {
             canvas.background(Self.black)
             placeTriangle(canvas)
@@ -2277,8 +2277,8 @@ extension ShapeTests {
             Comment(rawValue: "預けて戻した形が、描き切りの無い形と違う: " + difference(signature(of: drawn.shape), signature(of: plain.shape))))
 
         // 形を置いた絵も同じ
-        func picture(_ run: (shape: Shape, passes: Int, canvas: Canvas)) throws -> [LinearRGBA] {
-            var pixels: [LinearRGBA] = []
+        func picture(_ run: (shape: Shape, passes: Int, canvas: Canvas)) throws -> [Color] {
+            var pixels: [Color] = []
             try run.canvas.draw {
                 run.canvas.background(Self.black)
                 run.canvas.shape(run.shape)
@@ -2998,7 +2998,7 @@ extension ShapeTests {
         let canvas = try makeCanvas(width: 16, height: 16)
         let layer = try canvas.createGraphics(16, 16)
         var shape = Shape.empty
-        var read: LinearRGBA?
+        var read: Color?
         try canvas.draw {
             layer.beginDraw()
             layer.background(Self.green)
@@ -3048,7 +3048,7 @@ extension ShapeTests {
         let canvas = try makeCanvas(width: 16, height: 16)
         let layer = try canvas.createGraphics(16, 16)
         var shape = Shape.empty
-        var read: LinearRGBA?
+        var read: Color?
         var passes = -1
         try canvas.draw {
             canvas.background(Self.black)
@@ -3112,13 +3112,13 @@ extension ShapeTests {
     /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
     @Test("置き合う面の組み立ての中で置いた描き場所を読んでも、印を二重に引かず、形は組み立てた中身を持つ")
     func aReenteredDrawOutOnReadDoesNotRebaseTwice() throws {
-        func build(reading: Bool) throws -> (shape: Shape, canvas: Canvas, read: LinearRGBA?) {
+        func build(reading: Bool) throws -> (shape: Shape, canvas: Canvas, read: Color?) {
             let main = try makeCanvas(width: 24, height: 24)
             let p = try main.createGraphics(24, 24)
             let q = try main.createGraphics(24, 24)
             let r = try main.createGraphics(8, 8)
             var shape = Shape.empty
-            var read: LinearRGBA?
+            var read: Color?
             try main.draw {
                 // R に描いておく。読み込みが要る
                 r.beginDraw()
@@ -3163,7 +3163,7 @@ extension ShapeTests {
         let canvas = try makeCanvas(width: 16, height: 16)
         let layer = try canvas.createGraphics(16, 16)
         var shape = Shape.empty
-        var read: LinearRGBA?
+        var read: Color?
         try canvas.draw {
             layer.beginDraw()
             layer.background(Self.green)

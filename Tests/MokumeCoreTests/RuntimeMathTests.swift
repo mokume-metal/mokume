@@ -63,7 +63,7 @@ struct RuntimeMathTests {
         // 周囲そのものは引数に載せない (main actor の値を引数の並びで読めない)
         let presets = ["sky": Surroundings.sky, "studio": .studio, "sunset": .sunset]
         let preset = try #require(presets[name])
-        func display(_ offset: Int) -> LinearRGBA {
+        func display(_ offset: Int) -> Color {
             .display(
                 red: Self.opaque(written[offset]), green: Self.opaque(written[offset + 1]),
                 blue: Self.opaque(written[offset + 2]))

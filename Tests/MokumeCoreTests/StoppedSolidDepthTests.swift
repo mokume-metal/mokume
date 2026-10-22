@@ -200,7 +200,7 @@ struct StoppedSolidDepthTests {
     enum Hue {
         case red, green, blue
 
-        func matches(_ pixel: LinearRGBA) -> Bool {
+        func matches(_ pixel: Color) -> Bool {
             switch self {
             case .red: pixel.premultipliedRed > 0.4 && pixel.premultipliedGreen < 0.1 && pixel.premultipliedBlue < 0.1
             case .green: pixel.premultipliedGreen > 0.4 && pixel.premultipliedRed < 0.1 && pixel.premultipliedBlue < 0.1
@@ -218,9 +218,9 @@ struct StoppedSolidDepthTests {
         }
     }
 
-    static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    static let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-    static let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    static let red = Color.linear(red: 1, green: 0, blue: 0)
+    static let green = Color.linear(red: 0, green: 1, blue: 0)
+    static let blue = Color.linear(red: 0, green: 0, blue: 1)
     private static let darkening: [Effect] = [.vignette(amount: 0.6)]
 
     /// 止まっている間のコールバックを模す (持ち越しの区間の印を立てる)。`setup()` も同じ印である。
@@ -323,7 +323,7 @@ struct StoppedSolidDepthTests {
     }
 
     /// 描く画素の座標 (出す座標に細かさを掛ける)。
-    private static func pixel(_ picture: PixelBuffer, _ x: Float, _ y: Float) -> LinearRGBA {
+    private static func pixel(_ picture: PixelBuffer, _ x: Float, _ y: Float) -> Color {
         let scale = Float(picture.width) / 160
         return picture[Int(x * scale), Int(y * scale)]
     }

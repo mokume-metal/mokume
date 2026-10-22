@@ -16,7 +16,7 @@ struct CarveRecipe {
     let offset: SIMD2<Float>
     /// 記録のときの変換。引いた結果の点へ掛ける。**半画素寄せは掛けない** (置くときに掛かる)。
     let transform: Transform
-    let color: LinearRGBA
+    let color: Color
     let uv: SIMD2<Float>
     /// 片を描く画素の空間で組んだとき (細い線を補う・#1637)、引いた結果の点を形自身の座標へ
     /// 戻す 2x2。`nil` なら片は形自身の座標で組んである。
@@ -87,7 +87,7 @@ final class CarvedStroke {
     private enum Source {
         case recipe(CarveRecipe)
         /// 入れ子: 別の保持した形の中で置かれた輪郭。もとの頂点へ、置いたときの行列と色を掛ける。
-        case moved(CarvedStroke, simd_float4x4, LinearRGBA?)
+        case moved(CarvedStroke, simd_float4x4, Color?)
     }
 
     /// 組み終えたら手放す (持ち続けると、置いた後のメモリが引いた頂点の分と素材の分で二重になる)。
@@ -102,7 +102,7 @@ final class CarvedStroke {
     /// 再記録のたびに箱が 1 段ずつ積み重なる (`trail = createShape { shape(trail); 線を足す }` を
     /// 毎フレーム繰り返すと、k フレーム目には輪郭 j が長さ k − j の鎖になり、生きている箱が
     /// O(k²) 個になる)。畳めば、どの派生も素材の箱を直に指し、箱の数は輪郭の数のままである。
-    init(moving base: CarvedStroke, by matrix: simd_float4x4, tint: LinearRGBA?) {
+    init(moving base: CarvedStroke, by matrix: simd_float4x4, tint: Color?) {
         if base.cache == nil, case .moved(let root, let inner, let innerTint)? = base.source {
             // 先に `inner` で移し、次に `matrix` で移す = 合成した行列で 1 度に移す
             source = .moved(root, matrix * inner, Self.combined(innerTint, tint))
@@ -112,10 +112,10 @@ final class CarvedStroke {
     }
 
     /// 先に `first`、次に `second` の色を掛けたのと同じ色。渡さなければ何も掛からない。
-    private static func combined(_ first: LinearRGBA?, _ second: LinearRGBA?) -> LinearRGBA? {
+    private static func combined(_ first: Color?, _ second: Color?) -> Color? {
         guard let first else { return second }
         guard let second else { return first }
-        return LinearRGBA(
+        return Color(
             premultipliedRed: first.premultipliedRed * second.premultipliedRed, green: first.premultipliedGreen * second.premultipliedGreen,
             blue: first.premultipliedBlue * second.premultipliedBlue, alpha: first.alpha * second.alpha)
     }

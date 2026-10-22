@@ -645,7 +645,7 @@ extension SketchPart {
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=25c42a96
     // shot: 2 snippet=4775cb21
-    public func tint(_ color: LinearRGBA) { Self.liveCanvas()?.tint(color) }
+    public func tint(_ color: Color) { Self.liveCanvas()?.tint(color) }
 
     /// 色掛けをやめる。
     ///

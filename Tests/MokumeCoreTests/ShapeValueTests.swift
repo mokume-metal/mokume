@@ -165,7 +165,7 @@ struct ShapeValueTests {
 
     @Test("値が持つ塗りは初期化子とプロパティで同じものになる")
     func fillProperty() {
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        let red = Color.linear(red: 1, green: 0, blue: 0)
         var brick = Rect(left: 0, top: 0, width: 1, height: 1)
         #expect(brick.fill == nil)
         brick.fill = red
@@ -687,7 +687,7 @@ struct ShapeValueTests {
 
     @Test("Codable で往復して値が変わらない")
     func codableRoundTrip() throws {
-        let fill = LinearRGBA(straightRed: 0.9, green: 0.3, blue: 0.3, alpha: 0.5)
+        let fill = Color(straightRed: 0.9, green: 0.3, blue: 0.3, alpha: 0.5)
         let circle = Circle(x: 1.5, y: -2, radius: 3, fill: fill)
         let rect = Rect(left: 4, top: 5, width: 6, height: 7)
         let vector = Vector2(-1, 0.25)
@@ -696,7 +696,7 @@ struct ShapeValueTests {
         #expect(try decoder.decode(Circle.self, from: encoder.encode(circle)) == circle)
         #expect(try decoder.decode(Rect.self, from: encoder.encode(rect)) == rect)
         #expect(try decoder.decode(Vector2.self, from: encoder.encode(vector)) == vector)
-        #expect(try decoder.decode(LinearRGBA.self, from: encoder.encode(fill)) == fill)
+        #expect(try decoder.decode(Color.self, from: encoder.encode(fill)) == fill)
     }
 
     // MARK: - 走っていないとき

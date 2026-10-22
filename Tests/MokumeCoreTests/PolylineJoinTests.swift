@@ -1187,7 +1187,7 @@ struct PolylineJoinTests {
             view(canvas)
             canvas.openGPUStroke(
                 of: .mesh(.plane(width: 1, height: 1)), geometry: geometry, matrix: canvas.transform.matrix,
-                weight: weight, cap: .round, color: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1),
+                weight: weight, cap: .round, color: Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1),
                 uv: canvas.whiteUV, geometryScale: SIMD3(repeating: 1))
         }
         let cpu = try render { canvas in

@@ -25,8 +25,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct TextTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     /// 検査で使う書体。**版が変わりにくいものを選ぶ** — 環境の既定の書体は
     /// 更新で字形が動きうるので、位置の検査の土台には使わない。
@@ -2081,7 +2081,7 @@ struct TextTests {
 
     /// 色を持つ字を 1 つ描いて読み戻す。**引けなければ落とす** (環境に無いときは
     /// ``hasColoredGlyphs`` が先に見送っている)。
-    private func drawColoredGlyph(fill: LinearRGBA, background: LinearRGBA = .linear(
+    private func drawColoredGlyph(fill: Color, background: Color = .linear(
         red: 0, green: 0, blue: 0)) throws -> DisplayImage {
         let canvas = try makeCanvas(width: 64, height: 64)
         canvas.noTextFont()
@@ -2126,7 +2126,7 @@ struct TextTests {
         "色を持つ字形にも、塗りの透明度は効く",
         .enabled(if: TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い"))
     func theFillAlphaStillReachesAColoredGlyph() throws {
-        let half = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
+        let half = Color(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
         let opaque = try drawColoredGlyph(fill: white)
         let faded = try drawColoredGlyph(fill: half)
         let solid = mostSaturated(opaque, width: 64, height: 64)

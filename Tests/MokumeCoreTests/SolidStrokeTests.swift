@@ -23,9 +23,9 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SolidStrokeTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let blue = Color.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas(width: Int = 200, height: Int = 200) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)

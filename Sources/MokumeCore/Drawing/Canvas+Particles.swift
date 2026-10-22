@@ -119,7 +119,7 @@ extension Canvas {
     func emit(
         _ particles: Particles, from source: Emitter, toward heading: Heading, rate: Float,
         speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
-        color: LinearRGBA?, using randomness: inout Randomness
+        color: Color?, using randomness: inout Randomness
     ) {
         guard admits(.particles) else { return }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの

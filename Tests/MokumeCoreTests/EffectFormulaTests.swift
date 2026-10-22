@@ -74,7 +74,7 @@ struct EffectFormulaTests {
     ) throws -> PixelBuffer {
         try canvas.draw {
             canvas.background(
-                LinearRGBA(
+                Color(
                     premultipliedRed: Float(color.red), green: Float(color.green),
                     blue: Float(color.blue), alpha: Float(color.alpha)))
             canvas.effects(effects)
@@ -82,7 +82,7 @@ struct EffectFormulaTests {
         return try canvas.target.readPixels()
     }
 
-    private static func channels(_ pixel: LinearRGBA) -> [Double] {
+    private static func channels(_ pixel: Color) -> [Double] {
         [Double(pixel.premultipliedRed), Double(pixel.premultipliedGreen), Double(pixel.premultipliedBlue), Double(pixel.alpha)]
     }
 
@@ -109,7 +109,7 @@ struct EffectFormulaTests {
 
     /// 完全一致で比べる。
     private static func expectExact(
-        _ pixel: LinearRGBA, _ expected: Premultiplied, _ note: String
+        _ pixel: Color, _ expected: Premultiplied, _ note: String
     ) {
         for (index, (drawn, value)) in zip(channels(pixel), expected.channels).enumerated() {
             #expect(drawn == value, "\(note): \(names[index])が \(drawn) — 式からは \(value)")
@@ -118,7 +118,7 @@ struct EffectFormulaTests {
 
     /// 期待値を挟む 2 つの Float16 の値のどちらかであることを見る。
     private static func expectBracketed(
-        _ pixel: LinearRGBA, _ expected: Premultiplied, slack: Double, _ note: String
+        _ pixel: Color, _ expected: Premultiplied, slack: Double, _ note: String
     ) {
         for (index, (drawn, value)) in zip(channels(pixel), expected.channels).enumerated() {
             let range = halfBracket(value, slack: slack)
@@ -484,7 +484,7 @@ struct EffectFormulaTests {
         try canvas.draw {
             canvas.background(.display(red: 0, green: 0, blue: 0))
             canvas.noStroke()
-            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.fill(Color(straightRed: 4, green: 4, blue: 4, alpha: 1))
             canvas.rect(32, 24, 64, 48)
             canvas.effects([.fringe(amount: 1)])
         }
@@ -508,7 +508,7 @@ struct EffectFormulaTests {
     func fringeKeepsTheColourWithinTheOpacityAtATransparentEdge() throws {
         let canvas = try makeCanvas(width: 33, height: 33)
         try canvas.draw {
-            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.background(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
             canvas.noStroke()
             canvas.fill(.linear(red: 1, green: 1, blue: 1))
             canvas.rect(4, 4, 25, 25)
@@ -535,10 +535,10 @@ struct EffectFormulaTests {
     /// 縦のずれが 0 で、x = 450 の画素は赤を x ≈ 458.5、青を x ≈ 442.5 で読む (ずれ幅 ≈ 8.02 画素)。
     /// どちらも読む 2 画素が同じ帯の中に収まるよう、帯は幅を取ってある。
     private func fringeProbe(
-        red: LinearRGBA?, blue: LinearRGBA?, on canvas: Canvas
-    ) throws -> LinearRGBA {
+        red: Color?, blue: Color?, on canvas: Canvas
+    ) throws -> Color {
         try canvas.draw {
-            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.background(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
             canvas.noStroke()
             if let red {
                 canvas.fill(red)
@@ -562,7 +562,7 @@ struct EffectFormulaTests {
     func fringeKeepsTheStraightColourWithinWhatItRead() throws {
         let canvas = try makeCanvas(width: 500, height: 33)
         let pixel = try fringeProbe(
-            red: LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1), blue: nil, on: canvas)
+            red: Color(straightRed: 4, green: 4, blue: 4, alpha: 1), blue: nil, on: canvas)
         // 読む先が本当に帯に落ちている (不透明度は 1/3)
         #expect(abs(pixel.alpha - 1.0 / 3) < 0.01, "不透明度が \(pixel.alpha) — 絵の選び方の前提が崩れている")
         #expect(pixel.premultipliedRed / pixel.alpha <= 4 * (1 + 1e-3), "乗算を戻した赤が \(pixel.premultipliedRed / pixel.alpha) で、読んだ 4 を越えた")
@@ -577,7 +577,7 @@ struct EffectFormulaTests {
         let canvas = try makeCanvas(width: 500, height: 33)
         let pixel = try fringeProbe(
             red: .linear(red: 1, green: 1, blue: 1),
-            blue: LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1), on: canvas)
+            blue: Color(straightRed: 4, green: 4, blue: 4, alpha: 1), on: canvas)
         #expect(abs(pixel.alpha - 2.0 / 3) < 0.01, "不透明度が \(pixel.alpha) — 絵の選び方の前提が崩れている")
         #expect(pixel.premultipliedRed <= pixel.alpha, "赤が \(pixel.premultipliedRed) で、不透明度 \(pixel.alpha) を越えた")
         // 青は越えていた光を運ぶ (読んだ先の 4 まで)

@@ -38,7 +38,7 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct StrokeOverlapTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
 
     /// 1 回だけ混ぜたときの赤 (線形)。`stroke(255, 0, 0, 128)` を黒地に 1 回 `blend` した値。
     private static let once: Float = 0.413
@@ -540,9 +540,9 @@ struct StrokeOverlapTests {
 
     /// 置き場所で掛ける半透明の白。不透明度は `stroke(255, 0, 0, 128)` と同じ 128/255 なので、
     /// 直に半透明の線で描いた絵と画素まで揃えて比べられる。
-    private static let veil: LinearRGBA = {
+    private static let veil: Color = {
         let alpha = Float(128) / 255
-        return LinearRGBA(premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
+        return Color(premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
     }()
 
     /// 不透明の赤の線で記録した形。**記録のときは不透明なので、片を重ねたまま積む。**
@@ -608,7 +608,7 @@ struct StrokeOverlapTests {
             },
             at: [
                 Placement(
-                    fill: LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
+                    fill: Color(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
             ])
         #expect(abs(pixels[80, 45].premultipliedRed - Self.once) <= 0.01, "辺の中ほど (80, 45): \(pixels[80, 45].premultipliedRed)")
         #expect(abs(pixels[45, 45].premultipliedRed - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].premultipliedRed)")
@@ -689,7 +689,7 @@ struct StrokeOverlapTests {
         let plain = try placed({ Self.opaqueShape($0, cap: cap, draw) }, at: [Placement()])
         let opaqueTint = try placed(
             { Self.opaqueShape($0, cap: cap, draw) },
-            at: [Placement(fill: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))])
+            at: [Placement(fill: Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))])
         #expect(painted(direct) > 0)
         #expect(differingPixels(plain, direct) == 0, "色なし: \(holes(plain, direct))")
         #expect(differingPixels(opaqueTint, direct) == 0, "不透明の色: \(holes(opaqueTint, direct))")
@@ -716,7 +716,7 @@ struct StrokeOverlapTests {
                 canvas.pop()
             }
         }
-        func drawn(_ tint: LinearRGBA?, recording: Bool) throws -> PixelBuffer {
+        func drawn(_ tint: Color?, recording: Bool) throws -> PixelBuffer {
             let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
             var shape = Shape.empty
             if recording { try canvas.draw { shape = canvas.createShape { leaves(canvas) } } }
@@ -733,7 +733,7 @@ struct StrokeOverlapTests {
         let direct = try drawn(nil, recording: false)
         let plain = try drawn(nil, recording: true)
         let opaqueTint = try drawn(
-            LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1), recording: true)
+            Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1), recording: true)
         #expect(painted(direct) > 0)
         #expect(differingPixels(plain, direct) == 0, "色なし: \(holes(plain, direct))")
         #expect(differingPixels(opaqueTint, direct) == 0, "不透明の色: \(holes(opaqueTint, direct))")
@@ -825,7 +825,7 @@ struct StrokeOverlapTests {
     /// 内側で 1 度、外側で 1 度と、2 度半透明の色を掛けても、引いて積んだ片のまま。
     @Test("記録の中と外の両方で半透明の色を掛けて置いても、角で重ねて混ぜない")
     func tintedTwiceBlendsOnce() throws {
-        let half = LinearRGBA(premultipliedRed: 0.7, green: 0.7, blue: 0.7, alpha: 0.7)
+        let half = Color(premultipliedRed: 0.7, green: 0.7, blue: 0.7, alpha: 0.7)
         let pixels = try placed(
             { canvas in
                 let inner = Self.opaqueShape(canvas, Self.closedSquare)
@@ -919,15 +919,15 @@ struct StrokeOverlapTests {
 
     // MARK: 塗りと線が同じ区間にある形・線が区間の途中から始まる形 (反証で足した口)
 
-    private static let redInk = LinearRGBA(premultipliedRed: 1, green: 0, blue: 0, alpha: 1)
-    private static let blueInk = LinearRGBA(premultipliedRed: 0, green: 0, blue: 1, alpha: 1)
+    private static let redInk = Color(premultipliedRed: 1, green: 0, blue: 0, alpha: 1)
+    private static let blueInk = Color(premultipliedRed: 0, green: 0, blue: 1, alpha: 1)
     /// 半透明の赤。0.5 は 2 進で正確に表せるので、0.5 倍・0.25 倍しても成分がずれない。
-    private static let paleRedInk = LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5)
+    private static let paleRedInk = Color(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5)
     /// 半分の不透明度の白。掛けた色は、直に描く色 (0.5 倍) と成分までビット一致する。
-    private static let halfVeil = LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5)
+    private static let halfVeil = Color(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5)
 
-    private static func scaled(_ color: LinearRGBA, by factor: Float) -> LinearRGBA {
-        LinearRGBA(
+    private static func scaled(_ color: Color, by factor: Float) -> Color {
+        Color(
             premultipliedRed: color.premultipliedRed * factor, green: color.premultipliedGreen * factor,
             blue: color.premultipliedBlue * factor, alpha: color.alpha * factor)
     }
@@ -935,7 +935,7 @@ struct StrokeOverlapTests {
     /// 一辺 16 の閉じた四角。`fill` / `stroke` が無ければ、塗りだけ・線だけの形になる。
     /// `factor` は、置き場所で色を掛けた絵を直に描くときの倍率。
     private static func square(
-        _ canvas: Canvas, x: Float, y: Float, fill: LinearRGBA?, stroke: LinearRGBA?,
+        _ canvas: Canvas, x: Float, y: Float, fill: Color?, stroke: Color?,
         factor: Float = 1
     ) {
         if let fill { canvas.fill(scaled(fill, by: factor)) } else { canvas.noFill() }
@@ -1106,7 +1106,7 @@ struct StrokeOverlapTests {
         let (canvas, shape) = try recorded { Self.opaqueShape($0, Self.closedSquare) }
         let boxes = Self.carvedBoxes(shape)
         #expect(boxes.count == 1)
-        let tinted = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 1)
+        let tinted = Color(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 1)
         for placement in [
             Placement(), Placement(fill: tinted),
             Placement(x: 12, y: 8, scale: 0.9, rotation: Vector3(0, 0, 0.3)),
@@ -1187,7 +1187,7 @@ struct StrokeOverlapTests {
     func rewrappedTintsStillMultiply() throws {
         // 赤だけを半分にする。不透明度は変えないので、記録の中では引かずに素材を持ち越す。
         // 色は線形で渡す (`stroke(255, 0, 0)` は作業空間で緑と青にも小さな値を持つ)
-        let dim = LinearRGBA(premultipliedRed: 0.5, green: 1, blue: 1, alpha: 1)
+        let dim = Color(premultipliedRed: 0.5, green: 1, blue: 1, alpha: 1)
         let (canvas, shape) = try recorded { canvas in
             let inner = canvas.createShape {
                 canvas.noFill()
@@ -1206,7 +1206,7 @@ struct StrokeOverlapTests {
         // 掛ける順が変わっても成分までビット一致する
         let pixels = try drawn(canvas, shape, at: [Placement(fill: Self.halfVeil)])
         let direct = try render { canvas in
-            canvas.stroke(LinearRGBA(premultipliedRed: 0.125, green: 0, blue: 0, alpha: 0.5))
+            canvas.stroke(Color(premultipliedRed: 0.125, green: 0, blue: 0, alpha: 0.5))
             canvas.strokeWeight(20)
             Self.closedSquare(canvas)
         }

@@ -151,9 +151,9 @@ struct InterleavedBatchesDrawTheSameTests {
     }
 
     private func pieces(on canvas: Canvas) throws -> [Piece] {
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-        let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-        let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+        let red = Color.linear(red: 1, green: 0, blue: 0)
+        let green = Color.linear(red: 0, green: 1, blue: 0)
+        let blue = Color.linear(red: 0, green: 0, blue: 1)
         let sheet = try canvas.createImage(2, 2)
         sheet.set(0, 0, .linear(red: 1, green: 1, blue: 0))
         sheet.set(1, 0, .linear(red: 0, green: 1, blue: 1))

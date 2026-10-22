@@ -18,8 +18,8 @@ struct ShaderPackedSnapshotTests {
         "amount": .number(0.25),
         "zeta": .number(-3),
         "offset": .pair(0.5, -2),
-        "tint": .color(LinearRGBA(premultipliedRed: 0.1, green: 0.2, blue: 0.3, alpha: 0.4)),
-        "glow": .color(LinearRGBA(premultipliedRed: 1, green: 0, blue: 0.5, alpha: 1)),
+        "tint": .color(Color(premultipliedRed: 0.1, green: 0.2, blue: 0.3, alpha: 0.4)),
+        "glow": .color(Color(premultipliedRed: 1, green: 0, blue: 0.5, alpha: 1)),
     ]
 
     private static func bits(_ values: [Float]) -> [UInt32] { values.map(\.bitPattern) }
@@ -52,9 +52,9 @@ struct ShaderPackedSnapshotTests {
         let changes: [(String, ShaderValue)] = [
             ("amount", .number(.nan)),
             ("offset", .pair(-0.0, 7)),
-            ("tint", .color(LinearRGBA(premultipliedRed: 9, green: -1, blue: 0, alpha: 0.5))),
+            ("tint", .color(Color(premultipliedRed: 9, green: -1, blue: 0, alpha: 0.5))),
             ("zeta", .number(1e30)),
-            ("glow", .color(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))),
+            ("glow", .color(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))),
             ("amount", .number(-0.0)),
         ]
         for (name, value) in changes {
@@ -96,7 +96,7 @@ struct ShaderPackedSnapshotTests {
         let box = makeBox(Self.mixed)
         let held = box.packedValues
         let heldBits = Self.bits(held)
-        #expect(box.assign("glow", .color(LinearRGBA(premultipliedRed: 0, green: 1, blue: 0, alpha: 1))))
+        #expect(box.assign("glow", .color(Color(premultipliedRed: 0, green: 1, blue: 0, alpha: 1))))
         #expect(box.assign("zeta", .number(42)))
         #expect(Self.bits(held) == heldBits, "抱えていた写しが、後の値で書き換わった")
         #expect(Self.bits(box.packedValues) != heldBits)
@@ -117,13 +117,13 @@ struct ShaderPackedSnapshotTests {
 )
 struct ShaderPackedSnapshotPictureTests {
     private static let before: [String: ShaderValue] = [
-        "tint": .color(LinearRGBA(premultipliedRed: 0.5, green: 0.25, blue: 0.75, alpha: 1)),
+        "tint": .color(Color(premultipliedRed: 0.5, green: 0.25, blue: 0.75, alpha: 1)),
         "offset": .pair(0.125, 0.5),
         "zeta": .number(0.0625),
         "amount": .number(0.875),
     ]
     private static let after: [String: ShaderValue] = [
-        "tint": .color(LinearRGBA(premultipliedRed: 0.75, green: 0.5, blue: 0.125, alpha: 1)),
+        "tint": .color(Color(premultipliedRed: 0.75, green: 0.5, blue: 0.125, alpha: 1)),
         "offset": .pair(0.25, 0.0625),
         "zeta": .number(0.5),
         "amount": .number(0.375),

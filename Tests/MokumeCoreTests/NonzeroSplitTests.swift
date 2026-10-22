@@ -476,7 +476,7 @@ struct NonzeroSplitTests {
     /// から補間する。捨てると、交点が形の囲みの箱の値へ倒れ、継ぎ目が出る。
     @Test("片方の端だけに読み取り位置が書かれた辺でも、交点の読み取り位置を補間する")
     func crossingsInterpolateAHalfWrittenEdge() throws {
-        let white = LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
+        let white = Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
         func point(_ x: Float, _ y: Float, uv: SIMD2<Float>?) -> BuildingVertex {
             BuildingVertex(position: SIMD3(x, y, 0), normal: nil, uv: uv, fill: white)
         }

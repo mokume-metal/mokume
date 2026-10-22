@@ -223,8 +223,8 @@ struct StrokeDashGeometryTests {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct StrokeDashTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     /// 線の経路。**距離関数の経路と三角形の経路の両方で、同じ約束が成り立つ** (#2835 の完了条件 3)。
     enum Route: String, CaseIterable, CustomTestStringConvertible {

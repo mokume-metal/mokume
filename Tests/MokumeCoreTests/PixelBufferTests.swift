@@ -16,8 +16,8 @@ struct PixelBufferTests {
 
     /// 位置ごとに違う**不透明な**色。透明で埋めると、範囲の外で内側の値を返しても
     /// 透明と区別が付かず、検査が何も見なくなる。成分は半精度で正確に表せる値にする。
-    private static func color(_ x: Int, _ y: Int) -> LinearRGBA {
-        LinearRGBA(premultipliedRed: Float(x) / 4, green: Float(y) / 4, blue: 0.5, alpha: 1)
+    private static func color(_ x: Int, _ y: Int) -> Color {
+        Color(premultipliedRed: Float(x) / 4, green: Float(y) / 4, blue: 0.5, alpha: 1)
     }
 
     private static func makeBuffer() -> PixelBuffer {

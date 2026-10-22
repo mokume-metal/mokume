@@ -68,7 +68,7 @@ struct SketchRelayParityTests {
             case .numericSpotLight: "spotLight (0–255 の色・10 引数)"
             case .image: "image (切り出し・9 引数)"
             case .camera: "camera (9 引数)"
-            case .spotLight: "spotLight (LinearRGBA・8 引数)"
+            case .spotLight: "spotLight (Color・8 引数)"
             case .quad: "quad (8 引数)"
             case .bezier: "bezier (8 引数)"
             case .arc: "arc (6 引数)"
@@ -140,7 +140,7 @@ struct SketchRelayParityTests {
                 throughSketch: { $0.camera($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8]) },
                 direct: { $0.camera($1[0], $1[1], $1[2], $1[3], $1[4], $1[5], $1[6], $1[7], $1[8]) })
         case .spotLight:
-            let color = LinearRGBA.linear(red: 2.5, green: 2, blue: 1.5)
+            let color = Color.linear(red: 2.5, green: 2, blue: 1.5)
             return RelayScene(
                 arguments: [
                     ("x", 20), ("y", 14), ("z", 40),

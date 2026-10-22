@@ -1444,14 +1444,14 @@ struct ModelTests {
             var models = [first]
             for path in paths.dropFirst() { models.append(try canvas.loadModel(path)) }
             try canvas.draw {
-                canvas.stroke(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+                canvas.stroke(Color.linear(red: 1, green: 1, blue: 1))
                 canvas.model(first)
             }
             let each = try #require(canvas.solidEdges[.model(identity: first.identity)])
             canvas.solidEdges.budget = Canvas.solidEdgesWeight(each) * 3
             for model in models.dropFirst() {
                 try canvas.draw {
-                    canvas.stroke(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+                    canvas.stroke(Color.linear(red: 1, green: 1, blue: 1))
                     canvas.model(model)
                 }
             }

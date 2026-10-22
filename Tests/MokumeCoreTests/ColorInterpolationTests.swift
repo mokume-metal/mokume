@@ -37,7 +37,7 @@ struct ColorInterpolationTests {
     /// [#1552]: https://github.com/mokume-metal/mokume/issues/1552
     private enum OutsideASketch {
         /// 速さで線の色を朱へ寄せる — 0–255 の成分ごとに手で混ぜていた形。
-        static func heat(_ amount: Float) -> LinearRGBA {
+        static func heat(_ amount: Float) -> Color {
             lerpColor(color(236, 238, 240), color(232, 96, 72), amount)
         }
     }

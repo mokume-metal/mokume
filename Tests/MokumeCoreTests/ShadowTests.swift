@@ -218,9 +218,9 @@ struct ShadowTests {
     func enablingShadowsKeepsTheFrameAssembly() throws {
         // 影を後から足すと、フレームの組み立てが 2 通りに割れる。**割れていない**
         // ことを、重なりの順と読み戻しで確かめる
-        func picture(shadows: Bool) throws -> (DisplayImage, LinearRGBA) {
+        func picture(shadows: Bool) throws -> (DisplayImage, Color) {
             let canvas = try makeCanvas(width: 64, height: 64)
-            var read = LinearRGBA.transparent
+            var read = Color.transparent
             try canvas.draw {
                 canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.lights()

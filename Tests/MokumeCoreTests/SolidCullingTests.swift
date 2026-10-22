@@ -208,7 +208,7 @@ struct SolidCullingTests {
         let modes = try cullModes { canvas in
             canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.sphere(10)
-            canvas.fill(LinearRGBA(straightRed: 1, green: 0.5, blue: 0, alpha: 0.5))
+            canvas.fill(Color(straightRed: 1, green: 0.5, blue: 0, alpha: 0.5))
             canvas.push()
             canvas.translate(20, 0, 0)
             canvas.sphere(10)
@@ -419,7 +419,7 @@ struct SolidCullingTests {
             switch self {
             case .halfTransparent:
                 let image = try canvas.createImage(4, 4)
-                let half = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
+                let half = Color(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
                 for y in 0..<4 {
                     for x in 0..<4 { image.set(x, y, half) }
                 }

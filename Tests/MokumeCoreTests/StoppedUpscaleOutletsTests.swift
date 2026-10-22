@@ -200,8 +200,8 @@ struct StoppedUpscaleOutletsTests {
         try body(runtime, gpu, press)
     }
 
-    private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private static let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+    private static let red = Color.linear(red: 1, green: 0, blue: 0)
+    private static let green = Color.linear(red: 0, green: 1, blue: 0)
 
     private static func isRed(_ red: Float, _ green: Float, _ blue: Float) -> Bool {
         red > 0.9 && green < 0.1 && blue < 0.1
@@ -439,7 +439,7 @@ struct StoppedUpscaleOutletsTests {
             }
         }
 
-        func apply(to sketch: StoppedPainter, colour: LinearRGBA? = nil) {
+        func apply(to sketch: StoppedPainter, colour: Color? = nil) {
             let colour = colour ?? StoppedUpscaleOutletsTests.red
             switch self {
             case .rectThenGet:
@@ -476,13 +476,13 @@ struct StoppedUpscaleOutletsTests {
         }
     }
 
-    private static let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    private static let blue = Color.linear(red: 0, green: 0, blue: 1)
 
     private static func isBlue(_ red: Float, _ green: Float, _ blue: Float) -> Bool {
         red < 0.1 && green < 0.1 && blue > 0.9
     }
 
-    private static func isBackdrop(_ point: LinearRGBA) -> Bool {
+    private static func isBackdrop(_ point: Color) -> Bool {
         point.premultipliedRed > 0.7 && point.premultipliedGreen > 0.7 && point.premultipliedBlue > 0.7
     }
 
@@ -820,7 +820,7 @@ struct StoppedUpscaleOutletsTests {
     }
 
     /// 赤が勝っているか。立体は陰りを受けうるので、色の向きだけを見る (下地は 235 の灰)。
-    private static func leansRed(_ point: LinearRGBA) -> Bool {
+    private static func leansRed(_ point: Color) -> Bool {
         point.premultipliedRed > 0.5 && point.premultipliedGreen < 0.2 && point.premultipliedBlue < 0.2
     }
 
@@ -1092,7 +1092,7 @@ struct StoppedUpscaleOutletsTests {
             }
         }
 
-        func apply(to sketch: StoppedPainter, colour: LinearRGBA = StoppedUpscaleOutletsTests.red) {
+        func apply(to sketch: StoppedPainter, colour: Color = StoppedUpscaleOutletsTests.red) {
             sketch.noStroke()
             sketch.fill(colour)
             sketch.rect(60, 60, 40, 40)

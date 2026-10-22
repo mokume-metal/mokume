@@ -338,7 +338,7 @@ struct FlatInstancingTests {
 
     /// 単色の絵を 1 枚作る。**絵どうしは色で見分ける** — 面を取り違えたときに、
     /// どちらの絵で描かれたかが画素にそのまま出る。
-    private func sheet(_ canvas: Canvas, _ color: LinearRGBA) throws -> Image {
+    private func sheet(_ canvas: Canvas, _ color: Color) throws -> Image {
         let image = try canvas.createImage(8, 8)
         image.fill(color)
         return image

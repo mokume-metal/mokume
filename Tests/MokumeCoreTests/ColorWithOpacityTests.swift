@@ -52,7 +52,7 @@ struct ColorWithOpacityTests {
     /// 作品が手で書いていた `fade(c, 0.72)` — 乗算済みの 4 成分を同じ率で縮める式。
     @Test("0–1 の率は 255 を掛けて渡し、乗算済みの 4 成分が同じ率で縮む")
     func scalesEveryPremultipliedComponent() {
-        let ink = LinearRGBA.display(red: 0.114, green: 0.110, blue: 0.118)
+        let ink = Color.display(red: 0.114, green: 0.110, blue: 0.118)
         let faded = color(ink, 0.72 * 255)
         #expect(abs(faded.premultipliedRed - ink.premultipliedRed * 0.72) < 1e-6, "\(faded)")
         #expect(abs(faded.premultipliedGreen - ink.premultipliedGreen * 0.72) < 1e-6, "\(faded)")
@@ -67,7 +67,7 @@ struct ColorWithOpacityTests {
         #expect(color(half, count) == expected)
         let two: Double = 64
         #expect(color(half, two * 2.0) == expected)
-        let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
+        let red = Color.display(red: 1, green: 0, blue: 0)
         #expect(color(.display(red: 1, green: 0, blue: 0), 128) == color(red, 128))
     }
 
@@ -86,7 +86,7 @@ struct ColorWithOpacityTests {
 
     @Test("成分が数でない色は検めずに掛ける。断るのは受ける口")
     func doesNotInspectTheComponents() {
-        let broken = LinearRGBA(premultipliedRed: .nan, green: 0.4, blue: 0.6, alpha: 1)
+        let broken = Color(premultipliedRed: .nan, green: 0.4, blue: 0.6, alpha: 1)
         let faded = color(broken, 128)
         #expect(faded.premultipliedRed.isNaN)
         #expect(abs(faded.premultipliedGreen - 0.4 * 128 / 255) < 1e-6)
@@ -103,7 +103,7 @@ struct ColorWithOpacityTests {
 )
 struct ColorWithOpacityMatchesDrawingTests {
     /// 元の不透明度が 255・128・30 の 3 色 (番号で渡す — 色の値は検査の引数の置き場に置けない)。
-    private static func source(_ index: Int) -> LinearRGBA {
+    private static func source(_ index: Int) -> Color {
         [color(230, 120, 40), color(230, 120, 40, 128), color(28, 28, 30, 30)][index]
     }
     /// 範囲の外 (-100・400) と端 (0・255)、0.12 の率 (0.12 × 255) を含む。

@@ -56,7 +56,7 @@ enum KnobBinding {
     /// 色。**作業空間の値と画面の色の変換は境界の 1 箇所** ([ADR-0011] 決定 3・4) を通す。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-    static func color(_ box: any DeclaredParam) -> Binding<Color> {
+    static func color(_ box: any DeclaredParam) -> Binding<SwiftUI.Color> {
         Binding(
             get: {
                 guard case .color(let value) = box.declaration.value else { return .clear }

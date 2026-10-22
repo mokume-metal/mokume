@@ -514,12 +514,12 @@ def check_foreign_vocabulary(
 # 連続量を `Float` で受ける口を見張る対象 (ADR-0035 決定 2 の改訂 2026-10-20 / #2525)。
 #
 # 見るのは「利用者が変数を渡す」口で、次の持ち主の MokumeCore の宣言である — Sketch の面・Canvas・
-# `Transform`・`LinearRGBA` と、どの型にも属さないトップレベルの口。**これより外の型は見ない**:
+# `Transform`・`Color` と、どの型にも属さないトップレベルの口。**これより外の型は見ない**:
 # `Table`・`Numbers`・`TextBounds`・`Orbit`・`Placement`・`Force`・`SketchSettings` などは、
 # データや設定の値を作る口で、描く口と同じ約束 (「変数を渡すときは型を気にしなくてよい」) の射程に
 # 入れていない (ADR-0035 決定 5・#2644 が仕分けた)。音とカメラ (MokumeAudio・MokumeCamera) も別ターゲットの
 # 別の面で、射程の外と決めた (同改訂)。
-FLOAT_PORT_OWNERS = {"", "Canvas", "Transform", "LinearRGBA"} | ENTRY_TYPES
+FLOAT_PORT_OWNERS = {"", "Canvas", "Transform", "Color"} | ENTRY_TYPES
 FLOAT_PORT_MODULE = "MokumeCore"
 FLOAT_TYPE = re.compile(r"\bFloat\b")
 CLOSED_RANGE_OF_FLOAT = re.compile(r"^ClosedRange<Float>\??$")
@@ -538,9 +538,9 @@ CLOSED_RANGE_OF_FLOAT = re.compile(r"^ClosedRange<Float>\??$")
 #     引数は mokume が渡す値で、利用者が渡す口ではない
 FLOAT_ALLOWLIST = {
     "SketchPart.expose(_:_:)": "Float・Double・Int・String の口が並ぶ組で、変数はどの型で持っていても対応する口へ入る (ADR-0030)。1 本の総称に畳むと String の口との並びが崩れる",
-    "LinearRGBA.display(red:green:blue:alpha:)": "0–1 の目盛りの口で、0–255 の数を `n / 255` で直して渡す書き方が自然に出る。広げると整数リテラルの割り算が黙って 0 (黒・透明) になる — このリポジトリの中だけで 7 行と ADR-0033 の例 (ADR-0035 決定 2 の改訂 2026-10-20 で据え置き)",
-    "LinearRGBA.linear(red:green:blue:)": "display(red:green:blue:alpha:) と同じ理由で据え置く",
-    "(トップレベル).paletteLerp(_:_:)": "区切りの位置は配列の要素 `[(LinearRGBA, Float)]` の中にあり、protocol では覆えない。勾配 (`Gradient.linearGradient(_:from:to:)`) の区切りと同じ形に揃える (#2424・#2433)。割合 `amount` は `some ScalarConvertible` で受けている",
+    "Color.display(red:green:blue:alpha:)": "0–1 の目盛りの口で、0–255 の数を `n / 255` で直して渡す書き方が自然に出る。広げると整数リテラルの割り算が黙って 0 (黒・透明) になる — このリポジトリの中だけで 7 行と ADR-0033 の例 (ADR-0035 決定 2 の改訂 2026-10-20 で据え置き)",
+    "Color.linear(red:green:blue:)": "display(red:green:blue:alpha:) と同じ理由で据え置く",
+    "(トップレベル).paletteLerp(_:_:)": "区切りの位置は配列の要素 `[(Color, Float)]` の中にあり、protocol では覆えない。勾配 (`Gradient.linearGradient(_:from:to:)`) の区切りと同じ形に揃える (#2424・#2433)。割合 `amount` は `some ScalarConvertible` で受けている",
 }
 
 

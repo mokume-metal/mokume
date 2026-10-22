@@ -28,10 +28,10 @@ struct TextReplaceMarginTests {
     private static let size = 160
     private static let tolerance: Float = 0.02
 
-    private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
-    private let blue = LinearRGBA.display(red: 0, green: 0, blue: 1)
-    private let white = LinearRGBA.display(red: 1, green: 1, blue: 1)
-    private let yellow = LinearRGBA.display(red: 1, green: 1, blue: 0)
+    private let red = Color.display(red: 1, green: 0, blue: 0)
+    private let blue = Color.display(red: 0, green: 0, blue: 1)
+    private let white = Color.display(red: 1, green: 1, blue: 1)
+    private let yellow = Color.display(red: 1, green: 1, blue: 0)
 
     /// 描く字の一式。
     struct Sample: Sendable {
@@ -46,7 +46,7 @@ struct TextReplaceMarginTests {
 
     /// 下地を塗ってから、字を `mode` で描く。
     private func draw(
-        _ sample: Sample, _ ink: LinearRGBA, on ground: LinearRGBA, mode: BlendMode,
+        _ sample: Sample, _ ink: Color, on ground: Color, mode: BlendMode,
         into canvas: Canvas
     ) {
         canvas.background(ground)
@@ -58,7 +58,7 @@ struct TextReplaceMarginTests {
     }
 
     private func render(
-        _ sample: Sample, _ ink: LinearRGBA, on ground: LinearRGBA, mode: BlendMode
+        _ sample: Sample, _ ink: Color, on ground: Color, mode: BlendMode
     ) throws -> PixelBuffer {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
         try canvas.draw { draw(sample, ink, on: ground, mode: mode, into: canvas) }
@@ -66,7 +66,7 @@ struct TextReplaceMarginTests {
     }
 
     /// どれかの成分の差が許容を超えるか。
-    private func differs(_ a: LinearRGBA, _ b: LinearRGBA) -> Bool {
+    private func differs(_ a: Color, _ b: Color) -> Bool {
         abs(a.premultipliedRed - b.premultipliedRed) > Self.tolerance || abs(a.premultipliedGreen - b.premultipliedGreen) > Self.tolerance
             || abs(a.premultipliedBlue - b.premultipliedBlue) > Self.tolerance || abs(a.alpha - b.alpha) > Self.tolerance
     }
@@ -76,7 +76,7 @@ struct TextReplaceMarginTests {
     /// **値が 1 ビットも変わらない画素**を数える。許容 (0.02) の内側で下地に近い画素には、
     /// 被覆がわずかに掛かる縁 (重ねれば下地にほぼ埋もれるが、置き換えれば被覆の分の α が
     /// そのまま書かれる) が混ざる。下地は字から遠い角 (0, 0) で読む。
-    private func blankPixels(of sample: Sample, _ ink: LinearRGBA, on ground: LinearRGBA) throws
+    private func blankPixels(of sample: Sample, _ ink: Color, on ground: Color) throws
         -> [(x: Int, y: Int)]
     {
         let blended = try render(sample, ink, on: ground, mode: .blend)
@@ -91,7 +91,7 @@ struct TextReplaceMarginTests {
 
     /// 被覆 0 の画素のうち、置き換えで描いた絵で下地から変わった画素の数。
     private func disturbedBlankPixels(
-        of sample: Sample, _ ink: LinearRGBA, on ground: LinearRGBA
+        of sample: Sample, _ ink: Color, on ground: Color
     ) throws -> Int {
         let blank = try blankPixels(of: sample, ink, on: ground)
         let replaced = try render(sample, ink, on: ground, mode: .replace)
@@ -172,7 +172,7 @@ struct TextReplaceMarginTests {
         }
         let placed = try canvas.target.readPixels()
         // 絵の角 (透けた所) は透明に、円の中は白になる
-        #expect(!differs(placed[45, 45], LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0)))
+        #expect(!differs(placed[45, 45], Color(premultipliedRed: 0, green: 0, blue: 0, alpha: 0)))
         #expect(!differs(placed[80, 80], white))
         // 絵の外は下地のまま
         #expect(!differs(placed[20, 20], red))

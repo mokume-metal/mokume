@@ -270,7 +270,7 @@ struct ParticleLifetimeTests {
                 emit(
                     spark, from: .point(8, 8), toward: .plane(0...0), rate: Float(Self.fps),
                     speed: 0...0, life: 1...1, size: 8...8,
-                    color: LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 1))
+                    color: Color(straightRed: 1, green: 1, blue: 1, alpha: 1))
             }
             particles(spark)
         }

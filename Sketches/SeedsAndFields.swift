@@ -25,7 +25,7 @@ final class SeedsAndFields: Sketch {
     struct Flower: Equatable {
         let x: Float
         let y: Float
-        let tint: LinearRGBA
+        let tint: Color
     }
 
     private let palette = [color(240, 90, 60), color(250, 200, 80), color(80, 140, 220)]

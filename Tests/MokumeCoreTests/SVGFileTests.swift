@@ -9,9 +9,9 @@ import simd
 
 /// 優先の順の検査が使う色 (純色)。
 private nonisolated enum Ink {
-    static let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
-    static let green = SVGFile.Color(red: 0, green: 1, blue: 0, alpha: 1)
-    static let blue = SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1)
+    static let red = SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1)
+    static let green = SVGFile.SVGColor(red: 0, green: 1, blue: 0, alpha: 1)
+    static let blue = SVGFile.SVGColor(red: 0, green: 0, blue: 1, alpha: 1)
 }
 
 /// SVG の読み解き (``SVGFile``) と、読めないときの伝え方 ([#2019])。GPU は要らない。
@@ -198,7 +198,7 @@ struct SVGFileTests {
         for text in ["rgb(0x10, 0, 0)", "rgb(0x10%, 0%, 0%)", "rgba(0, 0, 0, 0x1p-1)", "rgb(nan, 0, 0)"] {
             #expect(SVGFile.parseColor(text) == nil, "\(text)")
         }
-        #expect(SVGFile.parseColor("rgb(16, 0, 0)") == SVGFile.Color(red: 16 / 255, green: 0, blue: 0, alpha: 1))
+        #expect(SVGFile.parseColor("rgb(16, 0, 0)") == SVGFile.SVGColor(red: 16 / 255, green: 0, blue: 0, alpha: 1))
     }
 
     @Test(
@@ -235,7 +235,7 @@ struct SVGFileTests {
         #expect(drawing.items.count == 5)
         #expect(drawing.items.first?.strokeWidth == 1)
         #expect(drawing.items.dropFirst().prefix(3).map(\.fill) == [.black, .black, .black])
-        #expect(drawing.items.last?.stroke == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
+        #expect(drawing.items.last?.stroke == SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1))
     }
 
     @Test("10 進で書いた長さ・不透明度・rgb() は変わらず読む (#2513 の陰性対照)")
@@ -247,9 +247,9 @@ struct SVGFileTests {
             """)
         #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
         #expect(drawing.items.map(\.strokeWidth) == [2, 1])
-        #expect(drawing.items[0].fill == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 0.5))
+        #expect(drawing.items[0].fill == SVGFile.SVGColor(red: 0, green: 0, blue: 0, alpha: 0.5))
         #expect(drawing.items[1].outline == .rect(x: 0, y: 0, width: 10, height: 10))
-        #expect(drawing.items[1].fill == SVGFile.Color(red: 16 / 255, green: 0, blue: 0, alpha: 0.5))
+        #expect(drawing.items[1].fill == SVGFile.SVGColor(red: 16 / 255, green: 0, blue: 0, alpha: 0.5))
     }
 
     @Test("transform の名前と括弧のあいだの改行は空白として落とす (#2513)")
@@ -268,7 +268,7 @@ struct SVGFileTests {
     /// 渡るので、`fill: rgb(255,` で折り返した規則が読めないと名乗られていた (#2513 の反証)。
     @Test("rgb() の引数のあいだの改行は空白として区切る (#2513)")
     func newlinesSeparateRgbArguments() throws {
-        let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
+        let red = SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1)
         for text in ["rgb(255,\n 0, 0)", "rgb(255\r\n0\n0)", "rgba(255, 0,\n0 /\n100%)"] {
             #expect(SVGFile.parseColor(text) == red, "\(text.debugDescription)")
         }
@@ -305,7 +305,7 @@ struct SVGFileTests {
         let rect = drawing.items[0]
         #expect(rect.outline == .rect(x: 1, y: 2, width: 3, height: 4))
         #expect(isClose(rect.transform.apply(SIMD2(1, 2)), SIMD2(102, 4)))
-        #expect(rect.fill == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
+        #expect(rect.fill == SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1))
         #expect(rect.stroke == nil, "線の既定は none")
         // 塗りの既定は黒
         #expect(drawing.items[1].fill == .black)
@@ -657,25 +657,25 @@ struct SVGFileTests {
         "全体キーワードが勝てば、塗りと線は初めの値か親の値になり、名乗らず、負けた値は残らない (#2737)",
         arguments: [
             // (本体, 塗り, 線 (nil は引かない))
-            (#"<rect width="1" height="1" fill="red" style="fill: initial"/>"#, SVGFile.Color.black, nil),
-            (#"<rect width="1" height="1" fill="red" style="fill: INITIAL "/>"#, SVGFile.Color.black, nil),
+            (#"<rect width="1" height="1" fill="red" style="fill: initial"/>"#, SVGFile.SVGColor.black, nil),
+            (#"<rect width="1" height="1" fill="red" style="fill: INITIAL "/>"#, SVGFile.SVGColor.black, nil),
             (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: unset"/></g>"#, Ink.blue, nil),
             (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: revert"/></g>"#, Ink.blue, nil),
             (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: revert-layer"/></g>"#, Ink.blue, nil),
             // 属性に書いても同じ
-            (#"<g fill="blue"><rect width="1" height="1" fill="initial"/></g>"#, SVGFile.Color.black, nil),
+            (#"<g fill="blue"><rect width="1" height="1" fill="initial"/></g>"#, SVGFile.SVGColor.black, nil),
             (#"<g fill="blue"><rect width="1" height="1" fill="unset"/></g>"#, Ink.blue, nil),
             // 規則・!important
-            (#"<style>rect { fill: initial !important }</style><rect width="1" height="1" fill="red" style="fill: blue"/>"#, SVGFile.Color.black, nil),
+            (#"<style>rect { fill: initial !important }</style><rect width="1" height="1" fill="red" style="fill: blue"/>"#, SVGFile.SVGColor.black, nil),
             (#"<style>.a { fill: unset }</style><g fill="blue"><rect class="a" width="1" height="1" fill="red"/></g>"#, Ink.blue, nil),
             // 線: 初めの値は none。unset は親の値
-            (#"<rect width="1" height="1" stroke="red" style="stroke: initial"/>"#, SVGFile.Color.black, nil),
-            (#"<g stroke="blue"><rect width="1" height="1" stroke="red" style="stroke: unset"/></g>"#, SVGFile.Color.black, Ink.blue),
+            (#"<rect width="1" height="1" stroke="red" style="stroke: initial"/>"#, SVGFile.SVGColor.black, nil),
+            (#"<g stroke="blue"><rect width="1" height="1" stroke="red" style="stroke: unset"/></g>"#, SVGFile.SVGColor.black, Ink.blue),
             // `color` も同じ (currentColor で見る)
             (#"<g color="blue"><rect width="1" height="1" fill="currentColor" color="red" style="color: unset"/></g>"#, Ink.blue, nil),
-            (#"<rect width="1" height="1" fill="currentColor" color="red" style="color: initial"/>"#, SVGFile.Color.black, nil),
+            (#"<rect width="1" height="1" fill="currentColor" color="red" style="color: initial"/>"#, SVGFile.SVGColor.black, nil),
         ])
-    func wideKeywordPaint(_ sample: (String, SVGFile.Color, SVGFile.Color?)) throws {
+    func wideKeywordPaint(_ sample: (String, SVGFile.SVGColor, SVGFile.SVGColor?)) throws {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
         let item = try #require(drawing.items.first)
@@ -1133,11 +1133,11 @@ struct SVGFileTests {
             <rect class="a" style="fill: #123456 !important" width="1" height="1"/>
             <rect class="unknown" width="1" height="1" fill="#ffffff" style="stroke:none"/>
             """)
-        let green = SVGFile.Color(red: 0, green: 1, blue: 0, alpha: 1)
-        let blue = SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1)
+        let green = SVGFile.SVGColor(red: 0, green: 1, blue: 0, alpha: 1)
+        let blue = SVGFile.SVGColor(red: 0, green: 0, blue: 1, alpha: 1)
         #expect(drawing.items[0].fill == green)
         #expect(drawing.items[0].strokeWidth == 4)
-        #expect(drawing.items[0].stroke == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
+        #expect(drawing.items[0].stroke == SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1))
         #expect(drawing.items[1].fill == blue)
         #expect(drawing.items[2].fill == SVGFile.parseColor("#123456"))
         #expect(drawing.items[3].fill == blue)
@@ -1153,7 +1153,7 @@ struct SVGFileTests {
     // [#2334]: https://github.com/mokume-metal/mokume/issues/2334
 
     /// `<style>` と 1 つの `rect` を読んで、その `rect` の塗り。
-    private func fill(sheet: String, rect attributes: String = "") throws -> SVGFile.Color? {
+    private func fill(sheet: String, rect attributes: String = "") throws -> SVGFile.SVGColor? {
         let drawing = try document(
             "<style>\(sheet)</style>\n<rect width=\"1\" height=\"1\" \(attributes)/>")
         #expect(drawing.items.count == 1, "\(sheet) / \(attributes)")
@@ -1216,7 +1216,7 @@ struct SVGFileTests {
             // 別の <style> に分けても、書いた順は文書の順
             ("rect { fill: blue !important }</style><style>rect { fill: red !important }", "", Ink.red),
         ])
-    func importantRulesFollowSpecificity(_ sample: (sheet: String, rect: String, expected: SVGFile.Color)) throws {
+    func importantRulesFollowSpecificity(_ sample: (sheet: String, rect: String, expected: SVGFile.SVGColor)) throws {
         let painted = try fill(sheet: sample.sheet, rect: sample.rect)
         #expect(painted == sample.expected, "\(sample.sheet) / \(sample.rect)")
     }
@@ -1234,7 +1234,7 @@ struct SVGFileTests {
             // 同じ `style` 属性の中でも
             ("", #"style="fill: blue; fill: red""#, Ink.red),
         ])
-    func laterWinsAtEqualSpecificity(_ sample: (sheet: String, rect: String, expected: SVGFile.Color)) throws {
+    func laterWinsAtEqualSpecificity(_ sample: (sheet: String, rect: String, expected: SVGFile.SVGColor)) throws {
         let painted = try fill(sheet: sample.sheet, rect: sample.rect)
         #expect(painted == sample.expected, "\(sample.sheet) / \(sample.rect)")
     }
@@ -1322,7 +1322,7 @@ struct SVGFileTests {
             (".a { fill: #00ff00 } * { fill: blue }", Ink.green),
             (".a { fill: #00ff00 } rect { fill: red } * { fill: blue }", Ink.green),
         ])
-    func universalRuleIsWeakerThanTypeAndClassRules(_ sample: (sheet: String, expected: SVGFile.Color)) throws {
+    func universalRuleIsWeakerThanTypeAndClassRules(_ sample: (sheet: String, expected: SVGFile.SVGColor)) throws {
         let painted = try fill(sheet: sample.sheet, rect: #"class="a""#)
         #expect(painted == sample.expected, "\(sample.sheet)")
         // クラスを持たない要素では、要素名の規則が * に勝つだけ
@@ -1351,7 +1351,7 @@ struct SVGFileTests {
             </g>
             """)
         #expect(drawing.items[0].fill?.alpha == 0.25)
-        #expect(drawing.items[0].stroke == SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 0.5))
+        #expect(drawing.items[0].stroke == SVGFile.SVGColor(red: 0, green: 0, blue: 1, alpha: 0.5))
         #expect(drawing.items[0].cap == .round)
         #expect(drawing.items[1].stroke?.green == 1, "currentColor は要素自身の color を引く")
         #expect(drawing.items[1].fill?.red == 1)
@@ -1589,12 +1589,12 @@ struct SVGFileTests {
         arguments: [
             // (SVG の本体, 載るはずの名乗り, 塗りの色)
             // 書いていないときの塗りは黒 (受け継ぐ初めの値)
-            (#"<rect width="10" height="10" fill="url(#a) abc"/>"#, [#"fill "url(#a) abc""#], SVGFile.Color.black),
-            (#"<rect width="10" height="10" fill="url(#a)abc"/>"#, [#"fill "url(#a)abc""#], SVGFile.Color.black),
-            (#"<rect width="10" height="10" fill="url(#a) inherit"/>"#, [#"fill "url(#a) inherit""#], SVGFile.Color.black),
-            (#"<rect width="10" height="10" fill="url(#a) url(#b)"/>"#, [#"fill "url(#a) url(#b)""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" fill="url(#a) abc"/>"#, [#"fill "url(#a) abc""#], SVGFile.SVGColor.black),
+            (#"<rect width="10" height="10" fill="url(#a)abc"/>"#, [#"fill "url(#a)abc""#], SVGFile.SVGColor.black),
+            (#"<rect width="10" height="10" fill="url(#a) inherit"/>"#, [#"fill "url(#a) inherit""#], SVGFile.SVGColor.black),
+            (#"<rect width="10" height="10" fill="url(#a) url(#b)"/>"#, [#"fill "url(#a) url(#b)""#], SVGFile.SVGColor.black),
             // 線は引かれないまま (初めの値の none)
-            (#"<rect width="10" height="10" stroke="url(#a) abc"/>"#, [#"stroke "url(#a) abc""#], SVGFile.Color.black),
+            (#"<rect width="10" height="10" stroke="url(#a) abc"/>"#, [#"stroke "url(#a) abc""#], SVGFile.SVGColor.black),
             // 下の順位の宣言を消さない (属性 < <style> の規則 < style 属性)
             (
                 #"<rect width="10" height="10" fill="red" style="fill: url(#a) abc"/>"#,
@@ -1606,8 +1606,8 @@ struct SVGFileTests {
             ),
             // 受け継いだ値も消さない
             (#"<g fill="red"><rect width="10" height="10" fill="url(#a) abc"/></g>"#, [#"fill "url(#a) abc""#], Ink.red),
-        ] as [(String, [String], SVGFile.Color?)])
-    func unreadablePaintFallbackIsNamed(_ sample: (String, [String], SVGFile.Color?)) throws {
+        ] as [(String, [String], SVGFile.SVGColor?)])
+    func unreadablePaintFallbackIsNamed(_ sample: (String, [String], SVGFile.SVGColor?)) throws {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
         #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
@@ -1633,9 +1633,9 @@ struct SVGFileTests {
                 [#"CSS declaration "stroke""#], Ink.red
             ),
             // 読めない規則の中身は、規則ごと名乗るので別に名乗らない
-            (#"<style>g .deep { fill red }</style><rect width="10" height="10"/>"#, [#"CSS rule "g .deep""#], SVGFile.Color.black),
+            (#"<style>g .deep { fill red }</style><rect width="10" height="10"/>"#, [#"CSS rule "g .deep""#], SVGFile.SVGColor.black),
         ])
-    func malformedDeclarationIsNamed(_ sample: (String, [String], SVGFile.Color)) throws {
+    func malformedDeclarationIsNamed(_ sample: (String, [String], SVGFile.SVGColor)) throws {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.map(\.what) == sample.1, "\(sample.0): \(drawing.skipped)")
         #expect(drawing.items.first?.fill == sample.2, "\(sample.0): \(drawing.items)")
@@ -1665,8 +1665,8 @@ struct SVGFileTests {
             (#"<rect width="10" height="10" fill="url(#a)"/>"#, nil),
             (#"<rect width="10" height="10" fill="url(#a) none"/>"#, nil),
             (##"<rect width="10" height="10" color="#00ff00" fill="url(#a) currentColor"/>"##, Ink.green),
-        ] as [(String, SVGFile.Color?)])
-    func readablePaintFallbackIsUnchanged(_ sample: (String, SVGFile.Color?)) throws {
+        ] as [(String, SVGFile.SVGColor?)])
+    func readablePaintFallbackIsUnchanged(_ sample: (String, SVGFile.SVGColor?)) throws {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.map(\.what) == [#"fill="url(…)""#], "\(sample.0): \(drawing.skipped)")
         #expect(drawing.items.first?.fill == sample.1, "\(sample.0): \(drawing.items)")
@@ -1708,8 +1708,8 @@ struct SVGFileTests {
             ),
             // 陰性対照: 勝った宣言が読める値なら、その値 (親の値を取らない)
             (#"<g fill="blue"><rect width="1" height="1" fill="inherit" style="fill: red"/></g>"#, Ink.red, nil),
-        ] as [(String, SVGFile.Color?, SVGFile.Color?)])
-    func winningInheritTakesTheParentValue(_ sample: (String, SVGFile.Color?, SVGFile.Color?)) throws {
+        ] as [(String, SVGFile.SVGColor?, SVGFile.SVGColor?)])
+    func winningInheritTakesTheParentValue(_ sample: (String, SVGFile.SVGColor?, SVGFile.SVGColor?)) throws {
         let drawing = try document(sample.0)
         #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
         #expect(drawing.items.count == 1, "\(sample.0): \(drawing.items)")
@@ -2044,7 +2044,7 @@ struct SVGFileTests {
         #expect(drawing.skipped.count == 10, "\(drawing.skipped.map(\.what))")
 
         // 代わりの色があればその色で塗り、無ければ塗らない。壊れたパスも壊れた所までは描く
-        #expect(drawing.items[0].fill == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1))
+        #expect(drawing.items[0].fill == SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1))
         #expect(drawing.items[1].fill == nil)
         #expect(drawing.items[1].stroke != nil)
         guard case .path(let subpaths) = drawing.items[2].outline else {
@@ -2100,7 +2100,7 @@ struct SVGFileTests {
         let expected = try SVGFile.parse(body, path: "plain.svg")
         let drawing = try SVGFile.parse(declaration + "\n" + body, path: "declared.svg")
         #expect(drawing.items.count == 1, "\(name)")
-        #expect(drawing.items.first?.fill == SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1), "\(name)")
+        #expect(drawing.items.first?.fill == SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1), "\(name)")
         // 宣言が使う行の数だけ下がる。字 (3 行目) を捨てたと名乗る行も、その分だけ下がる
         let used = declaration.filter { $0 == "\n" }.count + 1
         #expect(drawing.items == expected.items, "\(name)")
@@ -2237,11 +2237,11 @@ struct SVGFileTests {
             """
         let expected = try SVGFile.parse(svg, path: "lf.svg")
         // 規則が実際に効いている (どの書き方も、読めた値は同じ赤と青)
-        let red = SVGFile.Color(red: 1, green: 0, blue: 0, alpha: 1)
-        let blue = SVGFile.Color(red: 0, green: 0, blue: 1, alpha: 1)
+        let red = SVGFile.SVGColor(red: 1, green: 0, blue: 0, alpha: 1)
+        let blue = SVGFile.SVGColor(red: 0, green: 0, blue: 1, alpha: 1)
         #expect(expected.items.count == 4)
         #expect(expected.items[0].fill == red && expected.items[0].stroke == blue)
-        #expect(expected.items[1].stroke == SVGFile.Color(red: 0, green: 0, blue: 0, alpha: 1))
+        #expect(expected.items[1].stroke == SVGFile.SVGColor(red: 0, green: 0, blue: 0, alpha: 1))
         #expect(expected.items[2].fill == red && expected.items[2].stroke == blue)
         // 改行だけで区切った点の並び (属性の値の改行は空白 1 つ。消えると点がつながる)
         guard case .path(let subpaths) = expected.items[3].outline else {

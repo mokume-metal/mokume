@@ -27,7 +27,7 @@ struct MovieFrame: Equatable {
     var time: Float
     var isNewFrame: Bool
     /// 絵の画素 (作業空間の値)。
-    var pixels: [LinearRGBA]
+    var pixels: [Color]
 }
 
 /// 動画を流す入り口 (#1960)。走っているスケッチの中で回すので GPU を要する。動画は検査の中で作る。
@@ -81,14 +81,14 @@ struct MovieTests {
         return received
     }
 
-    private static func pixels(of image: Image) -> [LinearRGBA] {
+    private static func pixels(of image: Image) -> [Color] {
         (0..<image.height).flatMap { y in (0..<image.width).map { x in image.get(x, y) } }
     }
 
     /// 比べる相手 — 動画を別に頭から読んだ各コマを、同じ道 (`Image.write`) で絵にした画素。
-    private func expectedPixels(_ url: URL) async throws -> [[LinearRGBA]] {
+    private func expectedPixels(_ url: URL) async throws -> [[Color]] {
         let frames = try await TestMovie.reference(url)
-        var pixels: [[LinearRGBA]] = []
+        var pixels: [[Color]] = []
         let runtime = try run(frames: 1, setup: { sketch in
             for frame in frames {
                 let image = try sketch.createImage(frame.picture.width, frame.picture.height)
@@ -354,7 +354,7 @@ struct MovieTests {
         var movie: Movie?
         var notices: [String] = []
         var states: [SourceState] = []
-        var pixels: [[LinearRGBA]] = []
+        var pixels: [[Color]] = []
         let runtime = try run(
             frames: 60,
             setup: { sketch in

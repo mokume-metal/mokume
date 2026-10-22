@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 改訂 (2026-09-15): 決定 3 の入口で原色も作業空間へ移し、利用者が書いた数を sRGB の原色の値とする。決定 6 の「sRGB」は転送関数を指すと名乗る / 改訂 (2026-09-28): 画像入力の変換を CPU 読み取り・GPU 使用の境界まで遅らせる / 改訂 (2026-09-30): 決定 5 に、EDR 出力を有効にする口を足す日の表を置いた / 改訂 (2026-09-30): 決定 4 の「指定・取得する色は straight」を、数の口は straight・LinearRGBA の口は乗算済みの 2 段に分ける / 改訂あり (本文の「改訂 (日付)」見出し)
+採用 (2026-08-27) / 改訂 (2026-09-15): 決定 3 の入口で原色も作業空間へ移し、利用者が書いた数を sRGB の原色の値とする。決定 6 の「sRGB」は転送関数を指すと名乗る / 改訂 (2026-09-28): 画像入力の変換を CPU 読み取り・GPU 使用の境界まで遅らせる / 改訂 (2026-09-30): 決定 5 に、EDR 出力を有効にする口を足す日の表を置いた / 改訂 (2026-09-30): 決定 4 の「指定・取得する色は straight」を、数の口は straight・Color の口は乗算済みの 2 段に分ける / 改訂あり (本文の「改訂 (日付)」見出し)
 
 改訂の経緯 (当初の決定・各改訂の理由・置き換わった決定) は [history/0011.md](history/0011.md) にある。
 
@@ -71,9 +71,9 @@ SPDX-License-Identifier: MIT
 
 | 入口 | 受ける値の原色 | 入口で行う変換 |
 | --- | --- | --- |
-| 利用者が書いた数 — 0–255 の数値形 ([ADR-0033](0033-color-specification-surface.md) 決定 1) と 0–1 のエンコード値 (`LinearRGBA.display`) | **sRGB** | 転送関数を外し、linear sRGB から linear Display P3 へ 3×3 の行列で移す |
+| 利用者が書いた数 — 0–255 の数値形 ([ADR-0033](0033-color-specification-surface.md) 決定 1) と 0–1 のエンコード値 (`Color.display`) | **sRGB** | 転送関数を外し、linear sRGB から linear Display P3 へ 3×3 の行列で移す |
 | 読み込んだ画像・字形 | **絵が宣言した原色** | 同じく作業空間へ移す (CoreGraphics が行う) |
-| 作業空間の線形値 (`LinearRGBA.linear`) | **作業空間の原色 (Display P3)** | 何もしない。境界の内側の値だからである |
+| 作業空間の線形値 (`Color.linear`) | **作業空間の原色 (Display P3)** | 何もしない。境界の内側の値だからである |
 
 **読み出し (`red()` などで数へ戻す口) は、入口の逆をたどる。** 作業空間から sRGB へ移してから転送関数を掛ける。こうすると [ADR-0033](0033-color-specification-surface.md) 決定 6 の往復 (`red(color(255, 204, 0)) == 255`) が保たれる。原色の行列は範囲外の値も切らない (決定 1 の extended)。sRGB の外にある作業空間の色は、負の成分や 255 を超える成分として読める。
 
@@ -84,35 +84,35 @@ SPDX-License-Identifier: MIT
 
 代償: 彩度のある色を数で書いた既存のスケッチは絵が変わる。`fill(204, 153, 0)` で塗った面を書き出すと `196, 155, 51` になり、打った数とは一致しなくなる (書き出しは作業空間の原色 Display P3 を刻むため)。灰色 (3 成分が等しい色) は、原色の取り方に依らないので変わらない。
 
-**P3 の値を数で受ける口は残さない。** 残せば既存のスケッチを同じ絵に戻す移行手段になる。しかし、その口を必要とした実害はまだ無い ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md))。sRGB の外にある色は、`LinearRGBA.linear` で作業空間の線形値として書けば既に表せる。
+**P3 の値を数で受ける口は残さない。** 残せば既存のスケッチを同じ絵に戻す移行手段になる。しかし、その口を必要とした実害はまだ無い ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md))。sRGB の外にある色は、`Color.linear` で作業空間の線形値として書けば既に表せる。
 
 | 論点 | 足す日の答え |
 | --- | --- |
 | 何が示されたら足すか | 作品トラック ([ADR-0022](0022-production-track.md)) の作品が、P3 のエンコード値を手で線形へ戻す式を書く場面を 2 作品で踏んだとき |
 | 形 | 数値形を増やさず、原色を名乗るラベル付きの口にする ([ADR-0033](0033-color-specification-surface.md) 決定 2 の「ラベルが尺度を名乗る」に従う)。名前はその日に決める |
 
-### 4. アルファは、数の口を straight、`LinearRGBA` の口と内部合成を premultiplied とする
+### 4. アルファは、数の口を straight、`Color` の口と内部合成を premultiplied とする
 
-公開 API のアルファは、口が色を**数で**受け渡すか、**作業空間の値 (`LinearRGBA`) のまま**受け渡すかで 2 段に分かれる。
+公開 API のアルファは、口が色を**数で**受け渡すか、**作業空間の値 (`Color`) のまま**受け渡すかで 2 段に分かれる。
 
 | 段 | 表現 | 当たる口 |
 | --- | --- | --- |
-| **数の口** | straight (色成分がアルファで乗算されていない) | 数で指定する口 — `LinearRGBA.init(straightRed:green:blue:alpha:)`・`LinearRGBA.display(…)`・`color(…)`・0–255 の数を受ける `fill(…)` / `background(…)` など。数で読む口 — `red(_:)` / `green(_:)` / `blue(_:)` / `alpha(_:)` と、HSB の `hue(_:)` ほか |
-| **`LinearRGBA` の口** | premultiplied (乗算済み) | `LinearRGBA` をそのまま返す `Pixels[x, y]` / `PixelBuffer[x, y]` / `Image.get(_:_:)` / `get(_:_:)` と、それを受ける `fill(_:)` / `set(_:_:_:)` (`pixels[x, y] = c`・`Image.set` を含む) |
+| **数の口** | straight (色成分がアルファで乗算されていない) | 数で指定する口 — `Color.init(straightRed:green:blue:alpha:)`・`Color.display(…)`・`color(…)`・0–255 の数を受ける `fill(…)` / `background(…)` など。数で読む口 — `red(_:)` / `green(_:)` / `blue(_:)` / `alpha(_:)` と、HSB の `hue(_:)` ほか |
+| **`Color` の口** | premultiplied (乗算済み) | `Color` をそのまま返す `Pixels[x, y]` / `PixelBuffer[x, y]` / `Image.get(_:_:)` / `get(_:_:)` と、それを受ける `fill(_:)` / `set(_:_:_:)` (`pixels[x, y] = c`・`Image.set` を含む) |
 
 GPU 上での合成は premultiplied で行う。
 
-**変換点は、数と `LinearRGBA` の境目に固定する** — 数から作業空間の値を作る時点 (`init(straightRed:green:blue:alpha:)`) で premultiplied にし、作業空間の値を数へ読む時点 (`red(_:)` ほか) と、出力段が画面・ファイルへ出す時点 (決定 3) で straight に戻す。`LinearRGBA` の口はこの境目の内側にあるので、変換しない。中間の経路では「いま premultiplied である」ことを不変条件として扱い、その場限りの掛け戻しを書かない。だから `get(_:_:)` で読んだ値をそのまま `fill(_:)` や `set(_:_:_:)` へ渡すと、半透明の画素でも同じ色が出る。
+**変換点は、数と `Color` の境目に固定する** — 数から作業空間の値を作る時点 (`init(straightRed:green:blue:alpha:)`) で premultiplied にし、作業空間の値を数へ読む時点 (`red(_:)` ほか) と、出力段が画面・ファイルへ出す時点 (決定 3) で straight に戻す。`Color` の口はこの境目の内側にあるので、変換しない。中間の経路では「いま premultiplied である」ことを不変条件として扱い、その場限りの掛け戻しを書かない。だから `get(_:_:)` で読んだ値をそのまま `fill(_:)` や `set(_:_:_:)` へ渡すと、半透明の画素でも同じ色が出る。
 
 #### 退けた案
 
 決定 4 を、当初の文面「利用者が指定する色・取得する色は straight」から今の 2 段へ改めたときに退けた案と、その理由:
 
-- **実装を当初の文面に寄せ、`LinearRGBA` を返す口も straight にする。** `fill(_:)` は受けた `LinearRGBA` を乗算済みとしてそのまま使うので、読んだ値を塗る往復が沈むようになる。直すには `fill(_:)` の側でも乗算を掛け直すことになり、同じ `LinearRGBA` が口によって 2 つの表現を持つ — 決定 4 が避けたかった「どの時点でどちらの表現なのかがコードから読めない」状態である。既存の往復の検査 (読んで `set` で書き戻しても絵が変わらない) と `Sketch.pixels` の説明も書き換えになる
+- **実装を当初の文面に寄せ、`Color` を返す口も straight にする。** `fill(_:)` は受けた `Color` を乗算済みとしてそのまま使うので、読んだ値を塗る往復が沈むようになる。直すには `fill(_:)` の側でも乗算を掛け直すことになり、同じ `Color` が口によって 2 つの表現を持つ — 決定 4 が避けたかった「どの時点でどちらの表現なのかがコードから読めない」状態である。既存の往復の検査 (読んで `set` で書き戻しても絵が変わらない) と `Sketch.pixels` の説明も書き換えになる
 
 #### 改訂 (2026-10-23) — 成分の名前が乗算済みを名乗る。成分は書き換えられない
 
-**決定の理由は動かない。** 作業空間の値 (`LinearRGBA`) は乗算済みで、中間の経路は「いま premultiplied である」ことを不変条件にする。変えるのは、**型のメンバがそれを名前と形で名乗る**ことである ([#2756](https://github.com/mokume-metal/mokume/issues/2756))。
+**決定の理由は動かない。** 作業空間の値 (`Color`) は乗算済みで、中間の経路は「いま premultiplied である」ことを不変条件にする。変えるのは、**型のメンバがそれを名前と形で名乗る**ことである ([#2756](https://github.com/mokume-metal/mokume/issues/2756))。
 
 当初のメンバは `red`・`green`・`blue`・`alpha` の `var` だった。名前は読み出しの `red(_:)` (sRGB の 0–255・straight) と同じで、同じ語に目盛りが 2 つ並んだ。`alpha` だけを書き換えると、成分は掛けたままの値で残り、約束が壊れる。`veil.alpha = 0.3` の後の `fill(veil)` は、下地を越えて光った。
 
@@ -121,7 +121,7 @@ GPU 上での合成は premultiplied で行う。
 - **保存した値の形は変えない。** `Codable` のキーは `CodingKeys` で `red`・`green`・`blue`・`alpha` に据え置く。値型 (`Rect`・`Circle`) の `fill` と、つまみの JSON (`Schemas/`) は同じ形のまま読み書きできる
 - **#2595 の改名の後も、同じ名前を持つ。** 型名が `Color` になっても、成分は `premultipliedRed`・`premultipliedGreen`・`premultipliedBlue` と読むだけの `alpha` で、乗算済みを名乗る (この改訂の名前は型名に依らない)
 
-**残る入口がある。** JSON から入る 2 つの口 (`LinearRGBA` の `Codable` と、つまみの JSON の読み取り) は、どんな 4 つの数でも乗算済みの値として受ける。成分が不透明度を越えていても締めず、キーが `red` でも straight とは読まない (書く側が乗算する)。数で書く口 (`color(…)`・`display(…)`) と違い、この入口には変換点 (`init(straightRed:…)`) を通る道が無い。キーを据え置く決定の帰結で、`Schemas/params-report.schema.json` の `value` の説明が乗算済みを名乗る。
+**残る入口がある。** JSON から入る 2 つの口 (`Color` の `Codable` と、つまみの JSON の読み取り) は、どんな 4 つの数でも乗算済みの値として受ける。成分が不透明度を越えていても締めず、キーが `red` でも straight とは読まない (書く側が乗算する)。数で書く口 (`color(…)`・`display(…)`) と違い、この入口には変換点 (`init(straightRed:…)`) を通る道が無い。キーを据え置く決定の帰結で、`Schemas/params-report.schema.json` の `value` の説明が乗算済みを名乗る。
 
 退けた案:
 
@@ -130,6 +130,10 @@ GPU 上での合成は premultiplied で行う。
 - **成分を `var` のまま残し、説明文で注意する。** 約束を壊す書き方が組み上がる。決定的に塞げる形を文書の注意に落とさない
 
 代償: 成分を読むコード (`c.red`) は、作業空間の値のまま読むなら `c.premultipliedRed`、sRGB の 0–255 で読むなら `red(c)` に改める破壊的変更である。
+
+#### 改訂 (2026-10-23) — 色の型の名前は `Color`
+
+この ADR の `LinearRGBA` の綴りを、`Color` に直した ([#2595](https://github.com/mokume-metal/mokume/issues/2595))。**決定の中身は動かない** — 作業空間の値は線形・乗算済みで、決定 4 の 2 段 (数の口は straight・`Color` の口は premultiplied) の境目も同じである。変えたのは型の名前だけで、理由と名前の付いた色は [ADR-0033](0033-color-specification-surface.md) 決定 7 の追補 (2026-10-23) にある。上の経緯 ([history/0011.md](history/0011.md)) に残る `Color` は、改名前の綴りのままである。
 
 ### 5. EDR / HDR 出力は情報を捨てない設計を既定とし、有効化は opt-in
 
@@ -171,7 +175,7 @@ EDR レンジで出力するスケッチの検証方法は本 ADR では決め�
 ## 影響
 
 - すべてのシェーダは「入力は線形・出力も線形」を前提に書ける。エンコードの有無をシェーダごとに考える必要がない
-- 決定 4 により、半透明の合成に関わる不具合の調査は「境界の 2 箇所」に絞り込める — 数から `LinearRGBA` を作る点 (`init(straightRed:green:blue:alpha:)`) と、`LinearRGBA` を数や出力へ戻す点 (`red(_:)` ほかと出力段) である。中間経路のどこかで表現が入れ替わっている可能性を疑わなくてよい
+- 決定 4 により、半透明の合成に関わる不具合の調査は「境界の 2 箇所」に絞り込める — 数から `Color` を作る点 (`init(straightRed:green:blue:alpha:)`) と、`Color` を数や出力へ戻す点 (`red(_:)` ほかと出力段) である。中間経路のどこかで表現が入れ替わっている可能性を疑わなくてよい
 - 決定 2 により、中間バッファのメモリ使用量は 8 bit 構成の 2 倍になる。これは表現の幅と引き換えに引き受ける
 - ビュー層 ([#135](https://github.com/mokume-metal/mokume/issues/135)) は、決定 3・5 を満たせること — 出力段でのエンコードと EDR の有効化を制御できること — を選定条件に含める
 - 後処理・フィルタ・書き出し ([#138](https://github.com/mokume-metal/mokume/issues/138) を含む GPU 応用の設計) は、線形 16F を入出力の前提にできる

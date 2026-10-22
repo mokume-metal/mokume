@@ -17,9 +17,9 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct LightTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    private let grey = LinearRGBA.linear(red: 0.5, green: 0.5, blue: 0.5)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
+    private let grey = Color.linear(red: 0.5, green: 0.5, blue: 0.5)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -132,7 +132,7 @@ struct LightTests {
     @Test("たくさん置いても、全部の光が効く")
     func everyLightCounts() throws {
         // 上限を持たないので、置いた数だけ明るくなる。黙って捨てられる光は無い
-        let dim = LinearRGBA.linear(red: 0.05, green: 0.05, blue: 0.05)
+        let dim = Color.linear(red: 0.05, green: 0.05, blue: 0.05)
 
         let few = try makeCanvas()
         try sphereScene(few) { canvas in

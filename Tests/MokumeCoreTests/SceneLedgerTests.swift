@@ -971,7 +971,7 @@ enum Scene: String, CaseIterable, Sendable {
     private func drawOrigins(on canvas: Canvas) {
         // 同じ 4 つの数を、4 通りの読み方で置く。読み方が場所と大きさを決める
         canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
-        let modes: [(ShapeMode, LinearRGBA)] = [
+        let modes: [(ShapeMode, Color)] = [
             (.corner, .display(red: 0.95, green: 0.4, blue: 0.3)),
             (.corners, .display(red: 0.4, green: 0.85, blue: 0.5)),
             (.center, .display(red: 0.35, green: 0.6, blue: 0.95)),
@@ -1104,7 +1104,7 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.strokeWeight(1)
         canvas.beginShape(.quads)
         // 凸。頂点ごとに色を変えるので、1 つ目と 3 つ目を結ぶ対角線で色が移る
-        let corners: [(SIMD2<Float>, LinearRGBA)] = [
+        let corners: [(SIMD2<Float>, Color)] = [
             (SIMD2(6, 8), .display(red: 0.95, green: 0.45, blue: 0.3)),
             (SIMD2(44, 4), .display(red: 0.4, green: 0.85, blue: 0.5)),
             (SIMD2(40, 54), .display(red: 0.35, green: 0.6, blue: 0.95)),
@@ -1162,7 +1162,7 @@ enum Scene: String, CaseIterable, Sendable {
         // 下地は横 3 帯。その上に、同じ色を混ぜ方だけ変えて重ねる
         canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
         canvas.noStroke()
-        let bands: [LinearRGBA] = [
+        let bands: [Color] = [
             .display(red: 0.85, green: 0.25, blue: 0.2),
             .display(red: 0.2, green: 0.55, blue: 0.85),
             .display(red: 0.9, green: 0.85, blue: 0.3),
@@ -1171,7 +1171,7 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.fill(band)
             canvas.rect(0, Float(index) * 43, 128, 43)
         }
-        let overlay = LinearRGBA.display(red: 0.5, green: 0.9, blue: 0.6, alpha: 0.85)
+        let overlay = Color.display(red: 0.5, green: 0.9, blue: 0.6, alpha: 0.85)
         for (index, mode) in BlendMode.allCases.enumerated() {
             canvas.blendMode(mode)
             canvas.fill(overlay)
@@ -1286,9 +1286,9 @@ enum Scene: String, CaseIterable, Sendable {
         // フレームの中で起きる**ので、待つ場所が 1 つであることもここに載る
         canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))
         canvas.noStroke()
-        canvas.fill(LinearRGBA(straightRed: 0.95, green: 0.45, blue: 0.2, alpha: 0.8))
+        canvas.fill(Color(straightRed: 0.95, green: 0.45, blue: 0.2, alpha: 0.8))
         canvas.circle(48, 48, 64)
-        canvas.fill(LinearRGBA(straightRed: 0.2, green: 0.7, blue: 0.95, alpha: 0.6))
+        canvas.fill(Color(straightRed: 0.2, green: 0.7, blue: 0.95, alpha: 0.6))
         canvas.rect(56, 56, 56, 56)
 
         // 左半分は読んだ値をそのまま書き戻す (変わらないはず)。右半分は
@@ -1300,7 +1300,7 @@ enum Scene: String, CaseIterable, Sendable {
                     x, y,
                     x < 64
                         ? color
-                        : LinearRGBA(
+                        : Color(
                             premultipliedRed: color.premultipliedBlue, green: color.premultipliedGreen,
                             blue: color.premultipliedRed, alpha: color.alpha))
             }
@@ -1434,7 +1434,7 @@ enum Scene: String, CaseIterable, Sendable {
                 // **線形のまま置く。** 断片が返すのも線形なので、`display` を
                 // 通すと上下で色の空間が食い違い、同じ模様に見えなくなる
                 canvas.fill(
-                    LinearRGBA(
+                    Color(
                         premultipliedRed: level, green: level * 0.7, blue: 1 - level,
                         alpha: 1))
                 canvas.rect(Float(column) * 4, Float(row) * 4, 4, 4)
@@ -1537,7 +1537,7 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.directionalLight(.display(red: 1, green: 0.96, blue: 0.9), 0.6, -0.5, -0.6)
 
         /// 回して置く。
-        func place(x: Float, y: Float, tint: LinearRGBA, body: () -> Void) {
+        func place(x: Float, y: Float, tint: Color, body: () -> Void) {
             canvas.fill(tint)
             canvas.push()
             canvas.translate(x, y, 0)
@@ -1569,7 +1569,7 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.strokeWeight(1)
         // 3 段に並べる。**一周の割り方を粗くしてある** — 既定の細かさでは、この大きさの
         // 曲面は線で埋まって形が読めない
-        let light = LinearRGBA.display(red: 0.96, green: 0.94, blue: 0.86)
+        let light = Color.display(red: 0.96, green: 0.94, blue: 0.86)
 
         /// 回して置く。`tint` が無ければ線だけ。
         func place(

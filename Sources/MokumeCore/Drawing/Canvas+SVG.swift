@@ -127,7 +127,7 @@ extension Canvas {
     }
 
     /// sRGB の成分を作業空間の色へ。**`fill(r, g, b, a)` と同じ入口を通す。**
-    private static func linear(_ color: SVGFile.Color) -> LinearRGBA {
+    private static func linear(_ color: SVGFile.SVGColor) -> Color {
         .display(red: color.red, green: color.green, blue: color.blue, alpha: color.alpha)
     }
 

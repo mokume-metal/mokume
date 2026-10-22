@@ -19,10 +19,10 @@ import simd
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct GradientFillTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let blue = Color.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas(width: Int = 100, height: Int = 20) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -129,7 +129,7 @@ struct GradientFillTests {
     /// Swift 6.3 でも整数の位置を受けて組める (配列を括弧の中へ直に書く形は 6.3 が断る)。
     @Test("区切りを配列で渡す形は、並べて渡す形と同じ勾配になる")
     func arrayFormMatchesTheListedForm() throws {
-        let stops: [(LinearRGBA, Float)] = [(black, 0), (white, 0.25), (red, 1)]
+        let stops: [(Color, Float)] = [(black, 0), (white, 0.25), (red, 1)]
         let listed = try pixels(try makeCanvas()) { c in
             c.fill(.linearGradient((black, 0), (white, 0.25), (red, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
@@ -147,7 +147,7 @@ struct GradientFillTests {
             c.circle(50, 50, 80)
         }
         let radialArray = try pixels(try makeCanvas(width: 100, height: 100)) { c in
-            c.fill(.radialGradient([(red, 0), (blue, 1)] as [(LinearRGBA, Float)], center: [50, 50], radius: 40))
+            c.fill(.radialGradient([(red, 0), (blue, 1)] as [(Color, Float)], center: [50, 50], radius: 40))
             c.circle(50, 50, 80)
         }
         for x in [50, 60, 70, 88] {
@@ -373,11 +373,11 @@ struct GradientFillTests {
             sketch: Scene { s in
                 s.fill(
                     .linearGradient(
-                        (LinearRGBA.linear(red: 0, green: 0, blue: 0), 0), (LinearRGBA.linear(red: 1, green: 1, blue: 1), 1),
+                        (Color.linear(red: 0, green: 0, blue: 0), 0), (Color.linear(red: 1, green: 1, blue: 1), 1),
                         from: [0, 0], to: [160, 0]))
                 Rect(left: 0, top: 0, width: 160, height: 20).draw()
                 var colored = Rect(left: 0, top: 30, width: 160, height: 20)
-                colored.fill = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+                colored.fill = Color.linear(red: 0, green: 0, blue: 1)
                 colored.draw()
                 // 値を描いた後も、状態の勾配は残る
                 s.rect(0, 60, 160, 20)
@@ -435,7 +435,7 @@ struct GradientFillTests {
     func extraStopsAreDropped() throws {
         let canvas = try makeCanvas()
         // 位置 0…0.9 は黒、1.0 だけ白 (11 個目)
-        var stops: [(LinearRGBA, Float)] = (0..<10).map { (black, Float($0) / 10) }
+        var stops: [(Color, Float)] = (0..<10).map { (black, Float($0) / 10) }
         stops.append((white, 1))
         let pixels = try pixels(canvas) { c in
             c.fill(.linearGradient(stops, from: [0, 0], to: [100, 0]))
@@ -482,10 +482,10 @@ struct GradientFillTests {
     }
 }
 
-extension LinearRGBA {
+extension Color {
     /// 描いた画素と比べるための、半精度の丸めを通した値。
-    fileprivate var sameLinear: LinearRGBA {
-        LinearRGBA(
+    fileprivate var sameLinear: Color {
+        Color(
             premultipliedRed: Float(Float16(premultipliedRed)), green: Float(Float16(premultipliedGreen)),
             blue: Float(Float16(premultipliedBlue)), alpha: Float(Float16(alpha)))
     }

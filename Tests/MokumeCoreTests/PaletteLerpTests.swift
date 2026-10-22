@@ -8,7 +8,7 @@ import Testing
 /// 3 色以上の段から色を引く ``paletteLerp(_:_:)`` (#2424)。走っているスケッチも GPU も要らない。
 @Suite("パレットの補間")
 struct PaletteLerpTests {
-    private let sky: [(LinearRGBA, Float)] = [
+    private let sky: [(Color, Float)] = [
         (color(20, 30, 80), 0), (color(200, 60, 60), 0.6), (color(250, 220, 120), 1),
     ]
 
@@ -30,7 +30,7 @@ struct PaletteLerpTests {
     func acceptsAnyScalar() {
         #expect(paletteLerp(sky, Double(0.3)) == paletteLerp(sky, Float(0.3)))
         #expect(paletteLerp(sky, 1) == sky[2].0)
-        let two: [(LinearRGBA, Float)] = [(color(0), 0), (color(255), 1)]
+        let two: [(Color, Float)] = [(color(0), 0), (color(255), 1)]
         #expect(paletteLerp(two, 0) == two[0].0)
         #expect(paletteLerp(two, 1) == two[1].0)
     }
@@ -43,13 +43,13 @@ struct PaletteLerpTests {
         #expect(paletteLerp(sky, 2) == sky[2].0)
         #expect(paletteLerp(sky, -Float.greatestFiniteMagnitude) == sky[0].0)
         // 位置が 0…1 の外の区切りには、締めた amount が届く範囲でしか届かない
-        let wide: [(LinearRGBA, Float)] = [(color(0), 0), (color(255), 10)]
+        let wide: [(Color, Float)] = [(color(0), 0), (color(255), 10)]
         #expect(paletteLerp(wide, 5) == lerpColor(wide[0].0, wide[1].0, 0.1))
     }
 
     @Test("最初の位置より手前は最初の色、最後の位置より先は最後の色 (勾配と同じ)")
     func extendsBeyondTheEnds() {
-        let inner: [(LinearRGBA, Float)] = [(color(10, 20, 30), 0.25), (color(200, 100, 50), 0.75)]
+        let inner: [(Color, Float)] = [(color(10, 20, 30), 0.25), (color(200, 100, 50), 0.75)]
         #expect(paletteLerp(inner, 0) == inner[0].0)
         #expect(paletteLerp(inner, 0.25) == inner[0].0)
         #expect(paletteLerp(inner, 0.75) == inner[1].0)
@@ -59,7 +59,7 @@ struct PaletteLerpTests {
 
     @Test("区切りが 1 つなら、amount によらずその色")
     func oneStop() {
-        let only: [(LinearRGBA, Float)] = [(color(10, 200, 30), 0.4)]
+        let only: [(Color, Float)] = [(color(10, 200, 30), 0.4)]
         for amount: Float in [-1, 0, 0.4, 1, 3] {
             #expect(paletteLerp(only, amount) == only[0].0)
         }
@@ -67,14 +67,14 @@ struct PaletteLerpTests {
 
     @Test("同じ位置の区切りは段になり、位置ちょうどでは後ろの色")
     func equalPositionsStep() {
-        let step: [(LinearRGBA, Float)] = [
+        let step: [(Color, Float)] = [
             (color(255, 0, 0), 0), (color(0, 255, 0), 0.5), (color(0, 0, 255), 0.5), (color(255, 255, 255), 1),
         ]
         #expect(paletteLerp(step, 0.5) == step[2].0)
         #expect(paletteLerp(step, 0.25) == lerpColor(step[0].0, step[1].0, 0.5), "手前は緑へ向かう")
         #expect(paletteLerp(step, 0.75) == lerpColor(step[2].0, step[3].0, 0.5), "先は青から")
         // 位置がすべて同じなら、手前は最初の色、ちょうどと先は最後の色
-        let same: [(LinearRGBA, Float)] = [(color(255, 0, 0), 0.5), (color(0, 0, 255), 0.5)]
+        let same: [(Color, Float)] = [(color(255, 0, 0), 0.5), (color(0, 0, 255), 0.5)]
         #expect(paletteLerp(same, 0.2) == same[0].0)
         #expect(paletteLerp(same, 0.5) == same[1].0)
         #expect(paletteLerp(same, 0.9) == same[1].0)
@@ -99,7 +99,7 @@ struct PaletteLerpTests {
         let b = color(0, 255, 0)
         let c = color(0, 0, 255)
         let d = color(255, 255, 0)
-        let given: [(LinearRGBA, Float)] = [(c, 0.9), (a, 0.5), (d, 0.1), (b, 0.5)]
+        let given: [(Color, Float)] = [(c, 0.9), (a, 0.5), (d, 0.1), (b, 0.5)]
         let gradient = Gradient.linearGradient(given, from: [0, 0], to: [1, 0])
         let resolved = try #require(ResolvedGradient.resolve(gradient, under: .identity).gradient)
         // 勾配が並べた区切りを、そのまま読んだ値と一致する (同じ位置は書いた順)
@@ -119,7 +119,7 @@ struct PaletteLerpTests {
 
     @Test("位置が数でない・無限の区切りは捨てて読む。全部捨てれば空と同じ")
     func badPositionsAreDropped() {
-        let bad: [(LinearRGBA, Float)] = [
+        let bad: [(Color, Float)] = [
             (color(255, 0, 0), .nan), sky[0], (color(0, 0, 255), .infinity), sky[1], sky[2],
         ]
         #expect(paletteLerp(bad, 0.3) == paletteLerp(sky, 0.3))
@@ -141,7 +141,7 @@ struct PaletteLerpTests {
 
     @Test("黒と白の真ん中は lerpColor と同じ約 187.5 (手本の符号化した値の混ぜ方の 127.5 ではない)")
     func mixesInTheWorkingSpace() {
-        let ramp: [(LinearRGBA, Float)] = [(color(0), 0), (color(255), 1)]
+        let ramp: [(Color, Float)] = [(color(0), 0), (color(255), 1)]
         let middle = paletteLerp(ramp, 0.5)
         #expect(middle == lerpColor(color(0), color(255), 0.5))
         #expect(abs(red(middle) - 187.5) < 1)
@@ -149,7 +149,7 @@ struct PaletteLerpTests {
 
     @Test("透明へ寄せても暗くならない (乗算済みの値で混ぜる)")
     func premultipliedMixing() {
-        let fade: [(LinearRGBA, Float)] = [(.transparent, 0), (color(255, 0, 0), 1)]
+        let fade: [(Color, Float)] = [(.transparent, 0), (color(255, 0, 0), 1)]
         #expect(paletteLerp(fade, 0.5) == lerpColor(.transparent, color(255, 0, 0), 0.5))
     }
 }

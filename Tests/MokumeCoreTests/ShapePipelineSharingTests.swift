@@ -18,7 +18,7 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct ShapePipelineSharingTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
 
     /// パイプラインが抱える描画用の状態を、実体で見分けられる形で全部並べる。
     ///

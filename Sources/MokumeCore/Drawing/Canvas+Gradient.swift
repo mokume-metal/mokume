@@ -16,14 +16,14 @@ import simd
 extension Canvas {
     /// 勾配の頂点の色。**不透明度を負にして印にする** — 勾配の断片が見分け、色は掛け、不透明度は符号を
     /// 戻して掛ける (置き場所の色 `Placement.fill` が勾配に掛かる)。
-    static let gradientMarker = LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: -1)
+    static let gradientMarker = Color(premultipliedRed: 1, green: 1, blue: 1, alpha: -1)
 
     /// 塗りの頂点が持つ色。勾配で塗るときは印の色、そうでなければ塗りの色。
     ///
     /// **畳む雛形の頂点は印を付けない** (``buildingFlatTemplate``)。雛形の頂点の色は白で、色は置き場所
     /// (``FlatInstance/fill``) が持ち、頂点の色と掛け合わさる — 両方に印を付けると、負の不透明度どうしが
     /// 掛かって印が消える。
-    var fillVertexColor: LinearRGBA {
+    var fillVertexColor: Color {
         paintsWithGradient && !buildingFlatTemplate ? Self.gradientMarker : style.fill
     }
 

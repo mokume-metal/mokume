@@ -73,7 +73,7 @@ class PublishedReferenceTest(unittest.TestCase):
     ):
         """出来上がった面の最小の形。壊すときは引数で 1 か所だけ動かす。
 
-        `titles` は経路から索引の題への対応。本物の索引は各ノードに題 (`func fill(LinearRGBA,
+        `titles` は経路から索引の題への対応。本物の索引は各ノードに題 (`func fill(Color,
         some ScalarConvertible)`) を持ち、引数の型で区別した行はそれと突き合わせる (#2672)。
         """
         titles = titles or {}
@@ -226,14 +226,14 @@ class PublishedReferenceTest(unittest.TestCase):
 
     # `fill(_:_:)` の 2 本の重なり。公開の面と同じく、経路はハッシュの形、題に引数の型が載る
     FILL_OVERLOADS = {
-        "/documentation/mod/foo/fill(_:_:)-9z8y7": "func fill(LinearRGBA, some ScalarConvertible)",
+        "/documentation/mod/foo/fill(_:_:)-9z8y7": "func fill(Color, some ScalarConvertible)",
         "/documentation/mod/foo/fill(_:_:)-4k5m6": "func fill(some ScalarConvertible, some ScalarConvertible)",
     }
 
     def test_引数の型で区別した行は型の合う重なりが出ていれば通る(self):
-        # 目次は型の形 (`-(LinearRGBA,_)`)、公開の経路はハッシュの形 (`-9z8y7`) で書かれる。
+        # 目次は型の形 (`-(Color,_)`)、公開の経路はハッシュの形 (`-9z8y7`) で書かれる。
         # **拾えないと黙って期待から落ちる** (#2672) — 数が増えることまで見る
-        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)", "Foo/fill(_:_:)-(ScalarConvertible,_)")
+        self.add_rows("Foo/fill(_:_:)-(Color,_)", "Foo/fill(_:_:)-(ScalarConvertible,_)")
         self.build_output(
             paths=self.DEFAULT_PATHS + list(self.FILL_OVERLOADS), titles=self.FILL_OVERLOADS
         )
@@ -243,20 +243,20 @@ class PublishedReferenceTest(unittest.TestCase):
 
     def test_引数の型で区別した行は同じ基底の頁が出ていなければ赤い(self):
         # 基底の違う `fill(_:)-1a2b3` は居る。名前の頭が同じだけの頁で通さない
-        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)")
+        self.add_rows("Foo/fill(_:_:)-(Color,_)")
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("``Foo/fill(_:_:)-(LinearRGBA,_)``", result.stderr)
+        self.assertIn("``Foo/fill(_:_:)-(Color,_)``", result.stderr)
         self.assertIn("/documentation/mod/foo/fill(_:_:)", result.stderr)
 
     def test_重なりの片方が消えれば型の合う行が赤い(self):
         # 基底の下に頁が 1 つでも居れば通す判定だと、残ったもう片方の重なりで緑になる
         survivor = "/documentation/mod/foo/fill(_:_:)-4k5m6"
-        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)", "Foo/fill(_:_:)-(ScalarConvertible,_)")
+        self.add_rows("Foo/fill(_:_:)-(Color,_)", "Foo/fill(_:_:)-(ScalarConvertible,_)")
         self.build_output(paths=self.DEFAULT_PATHS + [survivor], titles=self.FILL_OVERLOADS)
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("``Foo/fill(_:_:)-(LinearRGBA,_)``", result.stderr)
+        self.assertIn("``Foo/fill(_:_:)-(Color,_)``", result.stderr)
         self.assertNotIn("``Foo/fill(_:_:)-(ScalarConvertible,_)``", result.stderr)
 
     def test_型の形の行が重なりを_1_つに決めなければ赤い(self):
@@ -275,11 +275,11 @@ class PublishedReferenceTest(unittest.TestCase):
         # 目次の型の形はどれも書かないので、畳まないと出ている頁を「出ていない」と言う
         page = "/documentation/mod/foo/tint(with:_:)-8p7q6"
         other = "/documentation/mod/foo/tint(with:_:)-2r3s4"
-        self.add_rows("Foo/tint(with:_:)-(LinearRGBA,Numeric)")
+        self.add_rows("Foo/tint(with:_:)-(Color,Numeric)")
         self.build_output(
             paths=self.DEFAULT_PATHS + [page, other],
             titles={
-                page: "func tint<T>(with: LinearRGBA, any Numeric) throws(RenderFailure) -> T",
+                page: "func tint<T>(with: Color, any Numeric) throws(RenderFailure) -> T",
                 other: "func tint(with: Float, any Numeric) -> (Int) -> Void",
             },
         )
@@ -288,7 +288,7 @@ class PublishedReferenceTest(unittest.TestCase):
 
     def test_題を読めない重なりしか無ければ名乗る(self):
         # 索引の題が無いと、どの重なりかを引けない。「出ていない」と混ぜずに理由を言う
-        self.add_rows("Foo/fill(_:_:)-(LinearRGBA,_)")
+        self.add_rows("Foo/fill(_:_:)-(Color,_)")
         self.build_output(paths=self.DEFAULT_PATHS + list(self.FILL_OVERLOADS))
         result = self.run_check()
         self.assertEqual(result.returncode, 1)

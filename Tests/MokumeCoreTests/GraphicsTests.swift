@@ -18,11 +18,11 @@ struct GraphicsTests {
 
     // 目印の色は作業空間の原色 (`.linear`) で書く。この検査の主題は色の入口ではなく、
     // 純色のまま 255 / 0 に出るので期待値をそのまま書ける (入口は ColorSurfaceTests が見る — #911)
-    private let black = LinearRGBA.display(red: 0, green: 0, blue: 0)
-    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
-    private let white = LinearRGBA.display(red: 1, green: 1, blue: 1)
+    private let black = Color.display(red: 0, green: 0, blue: 0)
+    private let green = Color.linear(red: 0, green: 1, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
+    private let blue = Color.linear(red: 0, green: 0, blue: 1)
+    private let white = Color.display(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = size, height: Int = size) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -33,7 +33,7 @@ struct GraphicsTests {
     }
 
     /// 描き場所を 1 色で塗る。
-    private func paint(_ graphics: Canvas, _ color: LinearRGBA) {
+    private func paint(_ graphics: Canvas, _ color: Color) {
         graphics.beginDraw()
         graphics.background(color)
         graphics.endDraw()
@@ -775,7 +775,7 @@ struct GraphicsTests {
         }
         func draw() {
             guard let effect, let graphics else { return }
-            let gray = LinearRGBA.display(red: 0.5, green: 0.5, blue: 0.5)
+            let gray = Color.display(red: 0.5, green: 0.5, blue: 0.5)
             if onGraphics {
                 background(.display(red: 0, green: 0, blue: 0))
                 graphics.beginDraw()
@@ -924,7 +924,7 @@ struct GraphicsTests {
         """
 
     /// 比較の断片が描いた画素から、差 (赤) を読む。**描かれていなければ (緑が 1 でなければ) 止まる。**
-    private func gap(of pixel: LinearRGBA) throws -> Float {
+    private func gap(of pixel: Color) throws -> Float {
         try #require(pixel.premultipliedGreen > 0.99, "比較の断片が描かれていない (画素 \(pixel))")
         return pixel.premultipliedRed
     }
@@ -957,7 +957,7 @@ struct GraphicsTests {
 
     /// 面に同じ断片で 8×8 を塗り、真ん中の画素を読む。描き場所は `beginDraw()` / `endDraw()`
     /// で、直に作った面は ``Canvas/draw(_:)`` で描く。
-    private func paintAndRead(_ surface: Canvas, with shader: Shader, graphics: Bool) throws -> LinearRGBA {
+    private func paintAndRead(_ surface: Canvas, with shader: Shader, graphics: Bool) throws -> Color {
         func paint() {
             surface.background(.linear(red: 0, green: 0, blue: 0))
             surface.blendMode(.replace)

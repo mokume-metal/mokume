@@ -18,8 +18,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SameStateKeepsBatchTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let white = Color.linear(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -232,7 +232,7 @@ struct SameStateKeepsBatchTests {
         #expect(
             try batchesClosed(by: { $0.surroundings(.studio) }, prepare: { $0.surroundings(.sky) }, on: canvas) == 1)
         var negative = Surroundings.sky
-        negative.top = LinearRGBA(
+        negative.top = Color(
             premultipliedRed: -1, green: negative.top.premultipliedGreen,
             blue: negative.top.premultipliedBlue, alpha: negative.top.alpha)
         #expect(try batchesClosed(by: { $0.surroundings(negative) }, on: canvas) == 0, "断った周囲で閉じた")
@@ -335,6 +335,6 @@ struct SameStateKeepsBatchTests {
                     eye: Vector3(0, 0, 0), center: Vector3(0, 0, 0), up: Vector3(0, 0, 0),
                     projection: .perspective(fieldOfView: 1, aspect: 1, near: 1, far: 2))
             ).children.count == 4)
-        #expect(Mirror(reflecting: LinearRGBA.linear(red: 0, green: 0, blue: 0)).children.count == 4)
+        #expect(Mirror(reflecting: Color.linear(red: 0, green: 0, blue: 0)).children.count == 4)
     }
 }

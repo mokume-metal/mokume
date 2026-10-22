@@ -31,7 +31,7 @@ struct FlatInstance {
     /// この置き場所の輪郭。**輪郭の頂点の色に掛かる。**
     var stroke: SIMD4<Float>
 
-    init(linear: SIMD4<Float>, offset: SIMD2<Float>, fill: LinearRGBA, stroke: LinearRGBA) {
+    init(linear: SIMD4<Float>, offset: SIMD2<Float>, fill: Color, stroke: Color) {
         self.linear = linear
         self.offset = SIMD4(offset.x, offset.y, 0, 0)
         self.fill = SIMD4(fill.premultipliedRed, fill.premultipliedGreen, fill.premultipliedBlue, fill.alpha)
@@ -45,6 +45,6 @@ struct FlatInstance {
     /// 畳む経路と畳まない経路で頂点関数が 2 本に割れない (``SolidInstance/identity``)。
     static let identity = FlatInstance(
         linear: SIMD4(1, 0, 0, 1), offset: SIMD2(0, 0),
-        fill: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1),
-        stroke: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
+        fill: Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1),
+        stroke: Color(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
 }

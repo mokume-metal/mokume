@@ -39,7 +39,7 @@ struct ScalarConvertibleTests {
         #expect(half == 0)
         let fraction: Float = lerp(0, 10, 1 / 2.0)
         #expect(fraction == 5)
-        let gray: LinearRGBA = color(255 / 2)
+        let gray: Color = color(255 / 2)
         #expect(gray == color(Float(127)))
     }
 
@@ -174,20 +174,20 @@ struct ScalarConvertibleTests {
         #expect(read == Float(0.5) * 180 / Float.pi)
 
         // 色の口。値そのものは、別の口 (4 つの数の口・成分を読む口・間を取る計算) と突き合わせる
-        let red: LinearRGBA = color(i, 0, 0)
+        let red: Color = color(i, 0, 0)
         #expect(red == color(f, Float(0), Float(0)))
         #expect(abs(MokumeCore.red(red) - 3) < 1e-3)
-        let veil: LinearRGBA = color(i, d)
+        let veil: Color = color(i, d)
         #expect(veil == color(f, f, f, Float(0.5)))
-        let gray: LinearRGBA = color(i)
+        let gray: Color = color(i)
         #expect(gray == color(f, f, f))
-        let tinted: LinearRGBA = color(hue: i, saturation: 80, brightness: 90)
+        let tinted: Color = color(hue: i, saturation: 80, brightness: 90)
         #expect(tinted == color(hue: f, saturation: Float(80), brightness: Float(90)))
         #expect(abs(hue(tinted) - 3) < 1e-2)
-        let a: LinearRGBA = color(255, 170, 60)
-        let b: LinearRGBA = color(40, 50, 120)
-        let blended: LinearRGBA = lerpColor(a, b, d)
-        let halfway = LinearRGBA(
+        let a: Color = color(255, 170, 60)
+        let b: Color = color(40, 50, 120)
+        let blended: Color = lerpColor(a, b, d)
+        let halfway = Color(
             premultipliedRed: interpolate(a.premultipliedRed, b.premultipliedRed, 0.5),
             green: interpolate(a.premultipliedGreen, b.premultipliedGreen, 0.5),
             blue: interpolate(a.premultipliedBlue, b.premultipliedBlue, 0.5),

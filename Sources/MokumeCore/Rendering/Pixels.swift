@@ -82,7 +82,7 @@ public struct Pixels {
 
     /// 指定した位置の色。原点は左上。
     ///
-    /// **読む値も書く値も、線形・アルファ乗算済みの ``LinearRGBA`` である** ([ADR-0011] 決定 4)。
+    /// **読む値も書く値も、線形・アルファ乗算済みの ``Color`` である** ([ADR-0011] 決定 4)。
     /// 変換が挟まらないので、読んだ値をそのまま書き戻しても、塗りの色 (`fill(_:)`) へ
     /// 渡しても色は沈まない。0–255 の乗算していない数で読むときは ``red(_:)`` ほかを通す。
     ///
@@ -96,12 +96,12 @@ public struct Pixels {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public subscript(x: Int, y: Int) -> LinearRGBA {
+    public subscript(x: Int, y: Int) -> Color {
         get {
             if let image { return image.get(x, y) }
             guard contains(x, y) else { return .transparent }
             let texel = address(x, y).pointee
-            return LinearRGBA(
+            return Color(
                 premultipliedRed: Float(texel.x), green: Float(texel.y),
                 blue: Float(texel.z), alpha: Float(texel.w))
         }
@@ -117,7 +117,7 @@ public struct Pixels {
     }
 
     /// 全体を 1 色で埋める。色は添字で書くときと同じく、検めずに面へ移す。
-    public func fill(_ color: LinearRGBA) {
+    public func fill(_ color: Color) {
         if let image {
             image.fill(color)
             return
@@ -150,7 +150,7 @@ public struct Pixels {
     /// 置いてよい区間の外 (``Canvas/pixels``) と形の組み立ての中では、閉包を 1 度も呼ばずに
     /// 1 度注意して何もしない。範囲の外へ書くことはない。
     ///
-    /// 読む値も書く値も、添字と同じ**線形・アルファ乗算済みの ``LinearRGBA``** である。書く色は
+    /// 読む値も書く値も、添字と同じ**線形・アルファ乗算済みの ``Color``** である。書く色は
     /// 検めずに面へ移し、有限の成分は面が表せる ±65504 で止まる。
     ///
     /// **閉包の中で同じ面を読み書きしない。** 同じ面の別の画素を読むと、書き換え済みの値と
@@ -160,7 +160,7 @@ public struct Pixels {
     /// ``Image/pixels`` から取った窓なら、その絵の画素を書き換える。**絵ごとに効果を掛けて新しい絵を
     /// 返す口 (`filtered(_:)`) とは違い、この口は自分を変える** — ``subscript(_:_:)``・
     /// ``fill(_:)`` と同じである。
-    public func update(_ transform: (_ x: Int, _ y: Int, _ color: LinearRGBA) -> LinearRGBA) {
+    public func update(_ transform: (_ x: Int, _ y: Int, _ color: Color) -> Color) {
         if let image {
             image.transformPixels(transform)
             return
@@ -171,7 +171,7 @@ public struct Pixels {
                 .assumingMemoryBound(to: SIMD4<Float16>.self)
             for x in 0..<width {
                 let texel = row[x]
-                let color = LinearRGBA(
+                let color = Color(
                     premultipliedRed: Float(texel.x), green: Float(texel.y),
                     blue: Float(texel.z), alpha: Float(texel.w))
                 row[x] = HalfSurface.texel(transform(x, y, color))

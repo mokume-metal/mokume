@@ -18,15 +18,15 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct PixelsUpdateTests {
-    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let black = Color.linear(red: 0, green: 0, blue: 0)
+    private let red = Color.linear(red: 1, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 32, height: Int = 32) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 半精度の面へ書いて読み直した値。期待値は、面が表せる丸めを通してから比べる。
-    private func quantized(_ color: LinearRGBA, on canvas: Canvas) throws -> LinearRGBA {
+    private func quantized(_ color: Color, on canvas: Canvas) throws -> Color {
         let scratch = try canvas.createImage(1, 1)
         scratch.set(0, 0, color)
         return scratch.get(0, 0)
@@ -68,7 +68,7 @@ struct PixelsUpdateTests {
         let canvas = try makeCanvas()
         let image = try canvas.createImage(3, 3)
         for y in 0..<3 { for x in 0..<3 { image.set(x, y, color(Float(x * 40 + y * 3))) } }
-        var seen: [LinearRGBA] = []
+        var seen: [Color] = []
         var visited: [[Int]] = []
         image.pixels.update { x, y, c in
             visited.append([x, y])
@@ -101,14 +101,14 @@ struct PixelsUpdateTests {
         try canvas.draw { canvas.image(image, 0, 0, 8, 8) }
         try #require(!image.needsUpload, "送り直しの印が下りていない — この検査は何も見ていない")
 
-        image.pixels.update { _, _, _ in LinearRGBA.linear(red: 0, green: 1, blue: 0) }
+        image.pixels.update { _, _, _ in Color.linear(red: 0, green: 1, blue: 0) }
         #expect(image.needsUpload)
 
         try canvas.draw {
             canvas.background(black)
             canvas.image(image, 0, 0, 8, 8)
         }
-        #expect(canvas.get(4, 4) == LinearRGBA.linear(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(4, 4) == Color.linear(red: 0, green: 1, blue: 0))
     }
 
     @Test("大きな入力 (復号を遅らせた絵) でも、書き換えは入力を読んだ値から始まる")
@@ -217,7 +217,7 @@ struct PixelsUpdateTests {
             try canvas.draw {
                 canvas.background(.display(red: 0.1, green: 0.1, blue: 0.2))
                 canvas.noStroke()
-                canvas.fill(LinearRGBA(straightRed: 1, green: 0.4, blue: 0.2, alpha: 0.5))
+                canvas.fill(Color(straightRed: 1, green: 0.4, blue: 0.2, alpha: 0.5))
                 canvas.circle(24, 20, 30)
                 rewrite()
             }
@@ -232,7 +232,7 @@ struct PixelsUpdateTests {
                 for x in 32..<width {
                     let mix = Float(x - 32) / 32
                     let c = looped.pixels[x, y]
-                    looped.pixels[x, y] = LinearRGBA(
+                    looped.pixels[x, y] = Color(
                         premultipliedRed: c.premultipliedRed * (1 - mix) + c.premultipliedBlue * mix, green: c.premultipliedGreen,
                         blue: c.premultipliedBlue * (1 - mix) + c.premultipliedRed * mix, alpha: c.alpha)
                 }
@@ -242,7 +242,7 @@ struct PixelsUpdateTests {
             bulk.pixels.update { x, _, c in
                 guard x >= 32 else { return c }
                 let mix = Float(x - 32) / 32
-                return LinearRGBA(
+                return Color(
                     premultipliedRed: c.premultipliedRed * (1 - mix) + c.premultipliedBlue * mix, green: c.premultipliedGreen,
                     blue: c.premultipliedBlue * (1 - mix) + c.premultipliedRed * mix, alpha: c.alpha)
             }
@@ -322,7 +322,7 @@ struct PixelsUpdateTests {
 
     @Test("前のフレームで取った窓で書き換えても、効果は 1 回だけ掛かる")
     func effectsAreAppliedOnceWhenAKeptWindowUpdates() throws {
-        func secondFrame(updates: Bool) throws -> LinearRGBA {
+        func secondFrame(updates: Bool) throws -> Color {
             let canvas = try makeCanvas(width: 16, height: 16)
             try canvas.draw {
                 canvas.background(black)

@@ -331,8 +331,8 @@ struct FormInstance {
 
     /// 置き場所を 1 つ組む。**色は「持つか」を旗で渡し、`Optional` にしない。**
     ///
-    /// `LinearRGBA?` を受け取る形だと、図形 1 つあたり 67 ns かかっていた (10 万個で
-    /// 6.7 ms・実測)。`Float` に余った表現が無いので `Optional<LinearRGBA>` は別の
+    /// `Color?` を受け取る形だと、図形 1 つあたり 67 ns かかっていた (10 万個で
+    /// 6.7 ms・実測)。`Float` に余った表現が無いので `Optional<Color>` は別の
     /// 印を抱えることになり、渡すたびに印の読み書きが挟まる — 中身は 16 バイトの
     /// 数の並びなのに、束ねる側と解く側の両方が値の型を跨ぐ ([#771])。
     ///
@@ -379,7 +379,7 @@ struct FormInstance {
     /// 頂点を CPU で移す代わりに 2x2 と平行移動を合成するだけなので、置く費用は形の
     /// 大きさによらない。`tint` は塗りと輪郭の両方に掛かる (置き場所の色は掛かる —
     /// ``Canvas/shape(_:at:)``)。
-    func placed(by matrix: simd_float4x4, tint: LinearRGBA?) -> FormInstance {
+    func placed(by matrix: simd_float4x4, tint: Color?) -> FormInstance {
         let columns = matrix.columns
         let c0 = SIMD2(columns.0.x, columns.0.y)
         let c1 = SIMD2(columns.1.x, columns.1.y)

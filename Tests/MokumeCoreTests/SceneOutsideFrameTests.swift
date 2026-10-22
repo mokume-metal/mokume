@@ -52,7 +52,7 @@ struct SceneOutsideFrameTests {
     /// 呼び出しだけを数え、口の多重定義の数 (`Canvas` の側) より少なければ赤にする — 文字列・
     /// 列挙子・読んだ値に同じ名前が出ても、行を足したことにはならない。
     private var mouths: [Mouth] {
-        let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        let white = Color.linear(red: 1, green: 1, blue: 1)
         // 恒等でない行列。恒等を渡すと、効いてしまっても「変換は既定のまま」に見える
         var moved = Transform.identity
         moved.translate(x: 5, y: 5)

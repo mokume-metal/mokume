@@ -27,7 +27,7 @@ struct KnobWritebackTests {
         @Param(0...10) var count: Int = 3
         @Param(-1...1) var pair: Vector2 = Vector2(0.25, -0.5)
         @Param(-1...1) var triple: Vector3 = Vector3(0.125, 0.25, 0.375)
-        @Param var tint: LinearRGBA = .linear(red: 0, green: 0, blue: 0)
+        @Param var tint: MokumeCore.Color = .linear(red: 0, green: 0, blue: 0)
     }
 
     private func knob(_ sketch: Knobbed, _ name: String) throws -> any DeclaredParam {
@@ -109,12 +109,12 @@ struct KnobWritebackTests {
     func thePickedColorArrivesInWorkingSpace(opacity: Double) throws {
         let sketch = Knobbed()
         let (red, green, blue) = (1.0, 0.5, 0.25)
-        KnobBinding.color(try knob(sketch, "tint")).wrappedValue = Color(
+        KnobBinding.color(try knob(sketch, "tint")).wrappedValue = SwiftUI.Color(
             .displayP3, red: red, green: green, blue: blue, opacity: opacity)
 
         let linear = Self.linearDisplayP3(red: red, green: green, blue: blue)
         let alpha = Float(opacity)
-        let expected = LinearRGBA(
+        let expected = MokumeCore.Color(
             straightRed: linear.red, green: linear.green, blue: linear.blue, alpha: alpha)
         let tint = sketch.tint
         #expect(abs(tint.premultipliedRed - expected.premultipliedRed) < 2e-3, "\(tint)")

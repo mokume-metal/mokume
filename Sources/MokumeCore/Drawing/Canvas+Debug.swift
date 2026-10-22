@@ -35,10 +35,10 @@ extension Canvas {
         static let axisLength: Float = 0.25
         static let gridWeight: Float = 1
         static let axisWeight: Float = 2
-        static let gridColor = LinearRGBA.display(red: 0.5, green: 0.5, blue: 0.5)
-        static let xColor = LinearRGBA.display(red: 1, green: 0, blue: 0)
-        static let yColor = LinearRGBA.display(red: 0, green: 1, blue: 0)
-        static let zColor = LinearRGBA.display(red: 0, green: 0, blue: 1)
+        static let gridColor = Color.display(red: 0.5, green: 0.5, blue: 0.5)
+        static let xColor = Color.display(red: 1, green: 0, blue: 0)
+        static let yColor = Color.display(red: 0, green: 1, blue: 0)
+        static let zColor = Color.display(red: 0, green: 0, blue: 1)
     }
 
     /// 目印の中心 (面の中心・奥行き 0)。既定の視点と ``Orbit`` の見ている先と同じ所。

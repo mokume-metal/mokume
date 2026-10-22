@@ -250,8 +250,8 @@ struct FontFileCanvasTests {
         var previous: Float = 0
         for weight in stride(from: 100, through: 900, by: 100) {
             try canvas.draw {
-                canvas.background(LinearRGBA.linear(red: 0, green: 0, blue: 0))
-                canvas.fill(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+                canvas.background(Color.linear(red: 0, green: 0, blue: 0))
+                canvas.fill(Color.linear(red: 1, green: 1, blue: 1))
                 canvas.textWeight(weight)
                 canvas.text("M", 20, 60)
             }
@@ -267,8 +267,8 @@ struct FontFileCanvasTests {
         let canvas = try makeCanvas(width: 120, height: 80)
         for weight in 100...900 where weight % 4 == 0 {
             try canvas.draw {
-                canvas.background(LinearRGBA.linear(red: 0, green: 0, blue: 0))
-                canvas.fill(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+                canvas.background(Color.linear(red: 0, green: 0, blue: 0))
+                canvas.fill(Color.linear(red: 1, green: 1, blue: 1))
                 canvas.textWeight(weight)
                 canvas.text("Mg", 20, 60)
             }

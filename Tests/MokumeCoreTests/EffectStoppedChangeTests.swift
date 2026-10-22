@@ -57,7 +57,7 @@ struct EffectStoppedChangeTests {
     /// 再現手順の下地 (`background(235)`) と効果。
     private static func paper(_ canvas: Canvas) { canvas.background(235) }
     private static let darkening: [Effect] = [.vignette(amount: 0.6)]
-    private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private static let red = Color.linear(red: 1, green: 0, blue: 0)
 
     /// 1 枚目: 下地に効果を通す。
     private static func firstFrame(_ canvas: Canvas) throws {
@@ -93,7 +93,7 @@ struct EffectStoppedChangeTests {
         return try secondFrame(canvas)
     }
 
-    private static func isRed(_ color: LinearRGBA) -> Bool {
+    private static func isRed(_ color: Color) -> Bool {
         color.premultipliedRed > 0.99 && color.premultipliedGreen < 0.01 && color.premultipliedBlue < 0.01
     }
 
@@ -111,7 +111,7 @@ struct EffectStoppedChangeTests {
             }
         }
 
-        func write(_ color: LinearRGBA, at point: (x: Int, y: Int), on canvas: Canvas) {
+        func write(_ color: Color, at point: (x: Int, y: Int), on canvas: Canvas) {
             switch self {
             case .set: canvas.set(point.x, point.y, color)
             case .subscripted: canvas.pixels[point.x, point.y] = color
@@ -234,7 +234,7 @@ struct EffectStoppedChangeTests {
     func placedAndSettledThingsStay(surface: Surface, placement: Placement) throws {
         let canvas = try surface.make()
         let centre = Self.centre(of: canvas)
-        let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+        let green = Color.linear(red: 0, green: 1, blue: 0)
         let layer = try canvas.createGraphics(40, 40)
         layer.beginDraw()
         layer.background(green)
@@ -304,11 +304,11 @@ struct EffectStoppedChangeTests {
                 // 縁が隅の近く (周辺減光がいちばん効く所) を通る大きさ
                 canvas.circle(80, 80, 224)
             case .translucent:
-                canvas.fill(LinearRGBA(straightRed: 1, green: 0, blue: 0, alpha: 0.5))
+                canvas.fill(Color(straightRed: 1, green: 0, blue: 0, alpha: 0.5))
                 canvas.rect(0, 0, 160, 160)
             case .additive:
                 canvas.blendMode(.add)
-                canvas.fill(LinearRGBA.linear(red: 0.2, green: 0.1, blue: 0))
+                canvas.fill(Color.linear(red: 0.2, green: 0.1, blue: 0))
                 canvas.rect(0, 0, 160, 160)
                 canvas.blendMode(.blend)
             case .translucentImage:
@@ -333,7 +333,7 @@ struct EffectStoppedChangeTests {
         func secondFrame(settling: Bool) throws -> PixelBuffer {
             let canvas = try surface.make()
             let picture = try canvas.createImage(4, 4)
-            picture.fill(LinearRGBA(straightRed: 0, green: 0.2, blue: 1, alpha: 0.4))
+            picture.fill(Color(straightRed: 0, green: 0.2, blue: 1, alpha: 0.4))
             try Self.firstFrame(canvas)
             Self.whileStopped(canvas) {
                 mixed.place(on: canvas, picture: picture)

@@ -185,7 +185,7 @@ struct CommandAllocatorTests {
     // MARK: - 投入されずに抜けたコマンド (#1180)
 
     /// 検査で塗る色。読み戻した値と比べるので、作業空間で丸めの出ない値にしてある。
-    private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private static let red = Color.linear(red: 1, green: 0, blue: 0)
 
     /// **組み立ての口の中で、encoder を開いたまま投げる。** 片付けにとって最悪の形である —
     /// 開いた encoder があるとコマンドを閉じられず (`endCommandBuffer()` が検証層の表明で

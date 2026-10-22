@@ -24,7 +24,7 @@ extension Canvas {
     }
 
     /// 文字を塗る色。塗りを止めていれば `nil`。
-    var textFillColor: LinearRGBA? { style.hasFill ? fillVertexColor : nil }
+    var textFillColor: Color? { style.hasFill ? fillVertexColor : nil }
 
     /// いま指定されている書体。同じ指定なら作り直さない。
     var typeface: Typeface {
@@ -232,7 +232,7 @@ extension Canvas {
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     private func appendPixelAlignedQuad(
         x: Float, y: Float, width: Float, height: Float,
-        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
+        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: Color
     ) {
         let left = x
         let top = y
@@ -259,7 +259,7 @@ extension Canvas {
         into vertices: inout [ShapeVertex],
         _ topLeft: SIMD2<Float>, _ topRight: SIMD2<Float>,
         _ bottomRight: SIMD2<Float>, _ bottomLeft: SIMD2<Float>,
-        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
+        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: Color
     ) {
         vertices.append(ShapeVertex(position: topLeft, uv: SIMD2(uvMin.x, uvMin.y), color: color))
         vertices.append(ShapeVertex(position: topRight, uv: SIMD2(uvMax.x, uvMin.y), color: color))
@@ -274,7 +274,7 @@ extension Canvas {
 
     /// 字形 1 つを四角として置く。
     func appendGlyphQuad(
-        _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
+        _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: Color
     ) {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)。断るのは置く所だけで、`text()` は
         // 送り幅と流し込みの続きを今までどおり返す
@@ -298,9 +298,9 @@ extension Canvas {
     }
 
     /// 塗りの透明度だけを持つ白 (乗算済み)。掛けても字形の色を変えない。
-    private static func whiteScaled(byAlphaOf color: LinearRGBA) -> LinearRGBA {
+    private static func whiteScaled(byAlphaOf color: Color) -> Color {
         let alpha = color.alpha
-        return LinearRGBA(
+        return Color(
             premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
     }
 
@@ -308,7 +308,7 @@ extension Canvas {
     /// (``appendPixelAlignedQuad(x:y:width:height:uvMin:uvMax:color:)``)。
     func appendImageQuad(
         _ picture: Picture, x: Float, y: Float, width: Float, height: Float,
-        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
+        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: Color
     ) {
         // 区間の外では、絵を整えることも読む面を替えることもしない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -347,7 +347,7 @@ extension Canvas {
     }
 
     func appendTriangle(
-        _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, color: LinearRGBA
+        _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, color: Color
     ) {
         appendTriangle(a, b, c, colors: (color, color, color))
     }
@@ -363,7 +363,7 @@ extension Canvas {
     /// (``useWrittenUVTexture()``)。輪郭・端点・角はここを渡さない側に居続ける。
     func appendTriangle(
         _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>,
-        colors: (LinearRGBA, LinearRGBA, LinearRGBA),
+        colors: (Color, Color, Color),
         uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)? = nil
     ) {
         // 区間の外では、読む面も切り替えない (``Canvas/canPlace``・#1672)

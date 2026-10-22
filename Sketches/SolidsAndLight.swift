@@ -123,7 +123,7 @@ final class SolidsAndLight: Sketch {
     }
 
     /// 灯りの印を置く場所と色。上で置いた点の光・スポットの光と同じ位置にする。
-    private var lamps: [(x: Float, y: Float, z: Float, color: LinearRGBA)] {
+    private var lamps: [(x: Float, y: Float, z: Float, color: Color)] {
         [
             (center.x - 260, center.y - 60, 220, .linear(red: 0.25, green: 0.45, blue: 0.95)),
             (center.x + 240, center.y - 300, 160, .linear(red: 0.95, green: 0.35, blue: 0.4)),
@@ -138,7 +138,7 @@ final class SolidsAndLight: Sketch {
     /// 楕円体は**縦に長い卵形**にしてある。3 つの半径が揃うと球と見分けが付かない。
     /// 円柱は一周を 8 つに割る (`detail:`・既定は 24) — 割り方を落とすと面が見えてくる。
     private var solids:
-        [(name: String, color: LinearRGBA, tilt: Float, spin: Float, draw: (SolidsAndLight) -> Void)]
+        [(name: String, color: Color, tilt: Float, spin: Float, draw: (SolidsAndLight) -> Void)]
     {
         [
             ("box", color(242, 115, 76), 0.3, 0.6, { $0.box(90) }),

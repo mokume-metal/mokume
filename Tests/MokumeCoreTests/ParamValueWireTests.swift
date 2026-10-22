@@ -22,7 +22,7 @@ struct ParamValueWireTests {
         case .int: .int(-7)
         case .bool: .bool(true)
         case .string: .string("あ\"い")
-        case .color: .color(LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
+        case .color: .color(Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
         case .vec2: .vector2(Vector2(1.5, -2.5))
         case .vec3: .vector3(Vector3(1.5, -2.5, 3.5))
         }

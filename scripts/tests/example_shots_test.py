@@ -1298,13 +1298,13 @@ class MemberCoverageTest(MemberTestCase):
     def test_同名の_overload_は引数の型で見分ける(self):
         source = swift(
             bare("fill", "_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255"),
-            bare("fill", "_ color: LinearRGBA, _ alpha: some ScalarConvertible"),
+            bare("fill", "_ color: Color, _ alpha: some ScalarConvertible"),
         )
         problems = self.judge(source)
         self.assertEqual(len(problems), 2, problems)
         keys = [m.key for m in self.members()]
         self.assertEqual(len(set(keys)), 2)
-        self.assertIn("fill(_:_:) (LinearRGBA, some ScalarConvertible)", keys)
+        self.assertIn("fill(_:_:) (Color, some ScalarConvertible)", keys)
 
     def test_複数行の宣言と既定値と入れ子の型を読む(self):
         source = swift(
@@ -1314,7 +1314,7 @@ class MemberCoverageTest(MemberTestCase):
             "        rate: Float = 1,\n"
             "        life: ClosedRange<Float> = 0...1,\n"
             "        body: (Int, [String: Float]) -> Void,\n"
-            "        tint: LinearRGBA? = nil,\n"
+            "        tint: Color? = nil,\n"
             "        _ forces: Force...\n"
             "    ) {}\n"
         )
@@ -1324,7 +1324,7 @@ class MemberCoverageTest(MemberTestCase):
         self.assertEqual(
             member.types,
             ("Particles", "Float", "ClosedRange<Float>", "(Int, [String: Float]) -> Void",
-             "LinearRGBA?", "Force..."),
+             "Color?", "Force..."),
         )
 
     def test_引数の無い口と変数を読む(self):
@@ -1364,7 +1364,7 @@ class MemberCoverageTest(MemberTestCase):
         self.assertGreater(len(members), 100)
         keys = {(m.path.name, m.key) for m in members}
         self.assertIn(("Sketch+Loop.swift", "noLoop()"), keys)
-        self.assertIn(("Sketch+Color.swift", "fill(_:_:) (LinearRGBA, some ScalarConvertible)"), keys)
+        self.assertIn(("Sketch+Color.swift", "fill(_:_:) (Color, some ScalarConvertible)"), keys)
 
 
 class MemberStatementTest(MemberTestCase):
@@ -1474,13 +1474,13 @@ class MemberStatementTest(MemberTestCase):
     def test_名前が複数の口に当たるときは型まで添えさせる(self):
         two = swift(
             pictured("fill", "_ gray: some ScalarConvertible, _ alpha: Int"),
-            pictured("fill", "_ color: LinearRGBA, _ alpha: Int"),
+            pictured("fill", "_ color: Color, _ alpha: Int"),
             bare("tint", extra="    // shot: 参照 fill(_:_:)\n"),
         )
         problems = self.judge(two)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("複数ある", problems[0])
-        precise = two.replace("参照 fill(_:_:)", "参照 fill(_:_:) (LinearRGBA, Int)")
+        precise = two.replace("参照 fill(_:_:)", "参照 fill(_:_:) (Color, Int)")
         self.assertEqual(self.judge(precise), [])
 
     def test_参照先は別のファイルでもよい(self):

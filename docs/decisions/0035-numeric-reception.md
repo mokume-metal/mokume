@@ -67,7 +67,7 @@ extension Int: ScalarConvertible { @inlinable public var asFloat: Float { Float(
 
 #### トップレベルの色と数の口にも広げる
 
-広げる範囲を、Sketch 層と Canvas 層の描画の口から、**どの型にも属さないトップレベルの色と数の口**へ広げた ([#2255](https://github.com/mokume-metal/mokume/issues/2255))。対象は次の 11 の口の連続量で、受け方は決定 1 と同じ `some ScalarConvertible`、返り値は決定 3 のとおり `Float` (色は `LinearRGBA`) のままである。
+広げる範囲を、Sketch 層と Canvas 層の描画の口から、**どの型にも属さないトップレベルの色と数の口**へ広げた ([#2255](https://github.com/mokume-metal/mokume/issues/2255))。対象は次の 11 の口の連続量で、受け方は決定 1 と同じ `some ScalarConvertible`、返り値は決定 3 のとおり `Float` (色は `Color`) のままである。
 
 - 数の口: `radians`・`degrees`・`map`・`lerp`・`constrain`・`norm`・`smoothstep`
 - 色の口: `color(_:_:_:_:)`・`color(_ gray:_ alpha:)`・`color(hue:saturation:brightness:alpha:)`・`lerpColor` の `amount`
@@ -85,9 +85,9 @@ extension Int: ScalarConvertible { @inlinable public var asFloat: Float { Float(
 - **型が決まらなくなる経路が、6-a のほかにもある。** 整数リテラルを渡した `atan(1)`・`sin(1)` の結果をこれらの口へ渡すと、`Float` 版と `Double` 版のどちらか決まらず赤くなる (`degrees(atan(1))`)。整数と小数を混ぜた数だけの式を引数ごとに連ねると、型検査が打ち切られて赤くなることがある (`color(255 * 0.8 + 1, 255 * 0.6 + 10 * 2, 255 * 0.2 - 5 * 3, 255 * 0.9 - 1)` は約 1.9 秒かけて打ち切られる。引数を 3 つにした形は通るが約 250 ms かかる)。どちらも描く口では採択の時点から同じで、赤くなるので黙っては変わらない。`.breaking.md` で名乗る
 - **本体が数 ns の口では、総称の入口の上乗せが本体と同じ桁になる。** 決定 1 のとおり呼ぶ側では特殊化されないので、別のパッケージから `-O` で呼ぶと `map` は 1 回 2.5 ns から 6〜11 ns、`lerp` は 1.7 ns から 4.2 ns になった。決定 1 の「1% 台」は本体 60〜70 ns の `circle` で量ったもので、この口には当てはまらない。画素ごとに `map` を呼ぶ参照スケッチ (`PixelsAndPaint`・480×540) で、1 フレームあたり 1〜2 ms の見込みである。`@inlinable` で取り戻す手は決定 1 が退けた形なので、この改訂では採らず、実害 (作品のフレームが落ちる) が出たら決め直す
 
-広げない口は決定 2 のとおりである。数え上げ (`color(hex:)` の `Int`) と、`LinearRGBA` を受けて `Float` を返す読む口 (`red`・`hue` など) は、連続量を受けないので対象に入らない。
+広げない口は決定 2 のとおりである。数え上げ (`color(hex:)` の `Int`) と、`Color` を受けて `Float` を返す読む口 (`red`・`hue` など) は、連続量を受けないので対象に入らない。
 
-#### 改訂 (2026-10-20) — `Transform` のメソッドと `jumpTime(_:)` を広げ、`LinearRGBA` の口の据え置きと音・カメラの射程の外を名乗る
+#### 改訂 (2026-10-20) — `Transform` のメソッドと `jumpTime(_:)` を広げ、`Color` の口の据え置きと音・カメラの射程の外を名乗る
 
 2026-10-13 の改訂が残した 4 つの問いを、1 つの改訂で決めた ([#2525](https://github.com/mokume-metal/mokume/issues/2525))。当初の問いは #2255 の反証役が、同じ約束 (「変数を渡すときは型を気にしなくてよい」) を破る `Float` 固定の口が型のメンバと音・カメラに残っていると指摘したことで、#2644 が `jumpTime(_:)` などを「射程に入るかはこちらの問い」として寄せた。
 
@@ -95,25 +95,25 @@ extension Int: ScalarConvertible { @inlinable public var asFloat: Float { Float(
 | --- | --- | --- |
 | `Transform` のメソッド (`translate`・`rotate(by:)`・`rotateX/Y/Z`・`scale`・`shearX/Y`) | **広げる** (`some ScalarConvertible`) | 同じ型の `apply` が総称で、積む口だけが `Float` だと、1 つの型の中で書き味が割れる。参照スケッチも使う口である。整数リテラルの割り算の罠 (決定 6-b) は、角度や倍率ではまず出ない |
 | `Sketch.jumpTime(_:)` | **広げる** | Sketch の面の連続量 (秒) で、中は `Double` に直して使う。同じ動詞の `Movie.jump` と受け方が割れるのは、ターゲットが違うこととして受ける |
-| `LinearRGBA.display(…)`・`.linear(…)` | **据え置く** | 下記 |
+| `Color.display(…)`・`.linear(…)` | **据え置く** | 下記 |
 | 音とカメラの口 (`SynthSound`・`SoundEffect`・`SoundFile`・`Movie.jump` ほか) | **射程の外** | 下記 |
 
-**`LinearRGBA.display`・`.linear` を据え置く理由は、0–1 の目盛りにある。** 0–255 の数を `n / 255` と直して渡す書き方が自然に出る口で、広げると整数リテラルの割り算が `Int` に決まり、黙って 0 (黒・透明) になる (決定 6-b)。このリポジトリの中だけで、`.display(red: 90 / 255, …)` の形が 7 行 (`LightColorTests` の 6 行と `ColorSurfaceTests` の `alpha: 128 / 255`) と ADR-0033 決定 3 の改訂 (2026-09-23) の説明にある。トップレベルの `color(…)` は 0–255 の目盛りで、割って渡す書き方がまず出ないので、2026-10-13 の改訂の天秤とは逆に倒れる。**決定 5 の「public init」の保留とは理由が違う** — あちらは protocol で覆えないこと、こちらは覆えるのに広げると黙って値が変わることである。同じ箱へは混ぜない。
+**`Color.display`・`.linear` を据え置く理由は、0–1 の目盛りにある。** 0–255 の数を `n / 255` と直して渡す書き方が自然に出る口で、広げると整数リテラルの割り算が `Int` に決まり、黙って 0 (黒・透明) になる (決定 6-b)。このリポジトリの中だけで、`.display(red: 90 / 255, …)` の形が 7 行 (`LightColorTests` の 6 行と `ColorSurfaceTests` の `alpha: 128 / 255`) と ADR-0033 決定 3 の改訂 (2026-09-23) の説明にある。トップレベルの `color(…)` は 0–255 の目盛りで、割って渡す書き方がまず出ないので、2026-10-13 の改訂の天秤とは逆に倒れる。**決定 5 の「public init」の保留とは理由が違う** — あちらは protocol で覆えないこと、こちらは覆えるのに広げると黙って値が変わることである。同じ箱へは混ぜない。
 
-**音とカメラの口は射程の外と決める。** この決定の射程は、スケッチが描く・数える面 (Sketch・Canvas とトップレベル、値を作る `Transform`・`LinearRGBA`) である。音とカメラは別ターゲット (`MokumeAudio`・`MokumeCamera`) の別の面で、変数を渡す作例で詰まった報告もまだ無い。作例で詰まったら、`Feature` として改めて起こす (ADR-0043)。
+**音とカメラの口は射程の外と決める。** この決定の射程は、スケッチが描く・数える面 (Sketch・Canvas とトップレベル、値を作る `Transform`・`Color`) である。音とカメラは別ターゲット (`MokumeAudio`・`MokumeCamera`) の別の面で、変数を渡す作例で詰まった報告もまだ無い。作例で詰まったら、`Feature` として改めて起こす (ADR-0043)。
 
-**検査を持つ。** 同じ取りこぼしが #2255 (11 の口) と #2524 (#2526 が自分の洗い出しで見落とした 3 の口) で、どちらも反証役が後から見つけた。足した本人には見えない — 組み立ては通り、`Double` の変数を渡した利用者だけが赤くなる。新しい検査を立てず、既存の `scripts/api-surface.py` (`make api`) の責務を広げた (`check_float_ports`)。見るのは MokumeCore の Sketch の面・`Canvas`・`Transform`・`LinearRGBA` とトップレベルの口で、連続量を `Float` で受ける引数があると名指しで落とす。通すのは次のとおり:
+**検査を持つ。** 同じ取りこぼしが #2255 (11 の口) と #2524 (#2526 が自分の洗い出しで見落とした 3 の口) で、どちらも反証役が後から見つけた。足した本人には見えない — 組み立ては通り、`Double` の変数を渡した利用者だけが赤くなる。新しい検査を立てず、既存の `scripts/api-surface.py` (`make api`) の責務を広げた (`check_float_ports`)。見るのは MokumeCore の Sketch の面・`Canvas`・`Transform`・`Color` とトップレベルの口で、連続量を `Float` で受ける引数があると名指しで落とす。通すのは次のとおり:
 
 - 決定 2 の数え上げ (`Int` で受ける口なので、そもそも `Float` を取らない)
 - 決定 5 の `ClosedRange<Float>`・public init (enum の case ペイロードも決定 5 だが、持ち主が見る対象に入っていない)
 - 利用者が実装する口 (プロトコルの要件と既定の実装。`mouseMoved(deltaX:deltaY:)` の引数は mokume が渡す値で、利用者が渡す口ではない)
-- 理由つきの表 (`FLOAT_ALLOWLIST`): 上の `LinearRGBA` の 2 本と、`Float`・`Double`・`Int`・`String` の口が並ぶ `expose(_:_:)`
+- 理由つきの表 (`FLOAT_ALLOWLIST`): 上の `Color` の 2 本と、`Float`・`Double`・`Int`・`String` の口が並ぶ `expose(_:_:)`
 
 `Table`・`Numbers`・`TextBounds`・`Orbit`・`Placement`・`Force`・`SketchSettings` のようなデータや設定の値を作る口と、音・カメラのモジュールが足した口は、見る対象の外である。
 
 退けた案:
 
-- **`LinearRGBA.display`・`.linear` も広げる** — 上のとおり、7 行と ADR-0033 の例が黙って 0 になる。広げたうえで検査を書き直す手もあるが、書き直す先が「割らずに 0–1 の数で渡す」になり、手本を移す書き方 (0–255 を割る) と逆を向く
+- **`Color.display`・`.linear` も広げる** — 上のとおり、7 行と ADR-0033 の例が黙って 0 になる。広げたうえで検査を書き直す手もあるが、書き直す先が「割らずに 0–1 の数で渡す」になり、手本を移す書き方 (0–255 を割る) と逆を向く
 - **`Transform` を据え置き、決定 5 に「届かない」と足す** — `apply` と積む口が 1 つの型の中で割れたまま残る。protocol で覆えるので、届かない理由にならない
 - **検査を足さず、説明文だけで案内する** — #2255・#2524 のどちらも、説明文はあったのに口が取りこぼされた。文書だけの規約は守られない (ADR-0001 原則 6)
 

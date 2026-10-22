@@ -34,7 +34,7 @@ struct ParameterNonFiniteTests {
         @Param var single: Float = 10
         @Param var pair: Vector2 = Vector2(1, 2)
         @Param var triple: Vector3 = Vector3(1, 2, 3)
-        @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
+        @Param var tint: Color = Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
         @Param var count: Int = 3
     }
 
@@ -136,13 +136,13 @@ struct ParameterNonFiniteTests {
 
         // 4 つの成分のどれでも (最後の不透明度でも)
         for bad in [
-            LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1),
-            LinearRGBA(premultipliedRed: 0, green: .infinity, blue: 0, alpha: 1),
-            LinearRGBA(premultipliedRed: 0, green: 0, blue: -.infinity, alpha: 1),
-            LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: .nan),
+            Color(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1),
+            Color(premultipliedRed: 0, green: .infinity, blue: 0, alpha: 1),
+            Color(premultipliedRed: 0, green: 0, blue: -.infinity, alpha: 1),
+            Color(premultipliedRed: 0, green: 0, blue: 0, alpha: .nan),
         ] {
             sketch.tint = bad
-            #expect(sketch.tint == LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
+            #expect(sketch.tint == Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
         }
     }
 
@@ -300,7 +300,7 @@ struct ParameterNonFiniteTests {
         #expect(sketch.count == 7, "同じ要求の他の値は入る")
         #expect(sketch.pair == Vector2(1, 2))
         #expect(sketch.triple == Vector3(1, 2, 3))
-        #expect(sketch.tint == LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
+        #expect(sketch.tint == Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
         // 応答は置かれ、要求の識別子を echo する
         let reply = try jsonObject(at: facet.appendingPathComponent("report.json"))
         #expect(reply["id"] as? String == "w1")
@@ -533,10 +533,10 @@ struct ParameterNonFiniteTests {
         #expect(triple.write(.vector3(Vector3(3, 4, Float.infinity))) == .notFinite)
         #expect(triple.value == Vector3(1, 2, 3))
 
-        let ink = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
-        let tint = ParamBox<LinearRGBA>(name: "c", value: ink)
+        let ink = Color(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
+        let tint = ParamBox<Color>(name: "c", value: ink)
         #expect(
-            tint.write(.color(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: .nan)))
+            tint.write(.color(Color(premultipliedRed: 0, green: 0, blue: 0, alpha: .nan)))
                 == .notFinite)
         #expect(tint.value == ink)
     }

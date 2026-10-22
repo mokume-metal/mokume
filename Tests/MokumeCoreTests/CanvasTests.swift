@@ -41,8 +41,8 @@ struct CanvasTests {
     /// 背景・基本図形・頂点を並べて描く形・四角の列・切り抜き。
     @Suite("背景・図形・頂点・切り抜き")
     struct ShapeDrawing {
-        private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
-        private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        private let black = Color.linear(red: 0, green: 0, blue: 0)
+        private let white = Color.linear(red: 1, green: 1, blue: 1)
 
         private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
             try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)

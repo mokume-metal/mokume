@@ -62,14 +62,14 @@ public struct Placement: Equatable, Sendable {
     ///
     /// 控えた結果は形が生きている間残る。同じ葉 2000 枚の形で、重ねて積んだ頂点 (約 57 MiB) に
     /// 加えて、最初に置いた後は引いた頂点 (約 125 MiB) も持つ。
-    public var fill: LinearRGBA?
+    public var fill: Color?
 
     /// どの軸にも同じ倍率で作る。`scale` は 3 つの軸に同じ値で入る (``scale`` は `Vector3(scale, scale, scale)`)。
     ///
     /// 軸ごとに変えるなら `init(x:y:z:scale:rotation:fill:)` の `Vector3` を受ける側を使う。
     public init(
         x: Float = 0, y: Float = 0, z: Float = 0, scale: Float = 1,
-        rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
+        rotation: Vector3 = Vector3(0, 0, 0), fill: Color? = nil
     ) {
         self.init(x: x, y: y, z: z, scale: Vector3(scale, scale, scale), rotation: rotation, fill: fill)
     }
@@ -80,7 +80,7 @@ public struct Placement: Equatable, Sendable {
     /// `translate(100, 200, 0)`・`scale(1, 4, 1)` を同じ順で書いて置いたものと同じ絵になる。
     public init(
         x: Float = 0, y: Float = 0, z: Float = 0, scale: Vector3,
-        rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
+        rotation: Vector3 = Vector3(0, 0, 0), fill: Color? = nil
     ) {
         self.x = x
         self.y = y

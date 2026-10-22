@@ -54,9 +54,9 @@ struct BackgroundReplacementTests {
         /// 面を置き換える。
         func replace(on canvas: Canvas) {
             switch self {
-            case .colour: canvas.background(LinearRGBA.linear(red: 0.8, green: 0.1, blue: 0.05))
+            case .colour: canvas.background(Color.linear(red: 0.8, green: 0.1, blue: 0.05))
             case .translucentColour:
-                canvas.background(LinearRGBA(straightRed: 0.2, green: 0.6, blue: 0.3, alpha: 0.5))
+                canvas.background(Color(straightRed: 0.2, green: 0.6, blue: 0.3, alpha: 0.5))
             case .surroundings: canvas.background(Surroundings.sky)
             }
         }
@@ -104,7 +104,7 @@ struct BackgroundReplacementTests {
     }
 
     /// 光を受ける立体を 1 つ、面の中央より左寄りに置く。`z` が大きいほど手前。
-    private static func box(_ canvas: Canvas, x: Float = 24, z: Float, size: Float = 20, fill: LinearRGBA) {
+    private static func box(_ canvas: Canvas, x: Float = 24, z: Float, size: Float = 20, fill: Color) {
         canvas.noStroke()
         canvas.fill(fill)
         canvas.push()
@@ -126,7 +126,7 @@ struct BackgroundReplacementTests {
                 canvas.blendMode(.blend)
                 // 置き換えた後に描くものは、いつもどおり重なる
                 canvas.noStroke()
-                canvas.fill(LinearRGBA.linear(red: 0.1, green: 0.3, blue: 0.9))
+                canvas.fill(Color.linear(red: 0.1, green: 0.3, blue: 0.9))
                 canvas.rect(40, 8, 16, 16)
             }
         }
@@ -189,8 +189,8 @@ struct BackgroundReplacementTests {
         /// 切り抜きは左半分 (x < 32)。
         let inside = 0..<(Self.size / 2)
         let outside = (Self.size / 2)..<Self.size
-        let blue = LinearRGBA.linear(red: 0.05, green: 0.1, blue: 0.6)
-        let green = LinearRGBA.linear(red: 0.1, green: 0.9, blue: 0.1)
+        let blue = Color.linear(red: 0.05, green: 0.1, blue: 0.6)
+        let green = Color.linear(red: 0.1, green: 0.9, blue: 0.1)
         /// 呼ぶ前に置くもの。手前の赤い箱は切り抜きの縁をまたぐ。
         func before(_ canvas: Canvas) {
             canvas.background(blue)
@@ -320,7 +320,7 @@ struct BackgroundReplacementTests {
     func ignoresTheView(_ mouth: Mouth, _ view: View) throws {
         /// `prior` で塗った面に視点を当て、置き換える。`clipped` なら面全体を囲う切り抜きの中で
         /// 置き換える (1 色でも塗り直しの道ではなく、置き換える列の道を通る)。
-        func scene(prior: LinearRGBA, clipped: Bool) -> (Canvas) -> Void {
+        func scene(prior: Color, clipped: Bool) -> (Canvas) -> Void {
             { canvas in
                 canvas.background(prior)
                 view.apply(to: canvas)
@@ -329,8 +329,8 @@ struct BackgroundReplacementTests {
                 if clipped { canvas.noClip() }
             }
         }
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-        let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+        let red = Color.linear(red: 1, green: 0, blue: 0)
+        let green = Color.linear(red: 0, green: 1, blue: 0)
         for clipped in [false, true] {
             let overRed = try picture(scene(prior: red, clipped: clipped))
             let overGreen = try picture(scene(prior: green, clipped: clipped))
@@ -361,7 +361,7 @@ struct BackgroundReplacementTests {
             return amount
         }
         let afterRepaint = try pending { canvas in
-            canvas.background(LinearRGBA.linear(red: 1, green: 0, blue: 0))
+            canvas.background(Color.linear(red: 1, green: 0, blue: 0))
             mouth.replace(on: canvas)
         }
         let alone = try pending { mouth.replace(on: $0) }

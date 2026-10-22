@@ -34,7 +34,7 @@ enum PaletteValues {
 /// ```swift
 /// background(15, 18, 23)
 /// noStroke()
-/// let sky: [(LinearRGBA, Float)] = [
+/// let sky: [(Color, Float)] = [
 ///     (color(20, 30, 80), 0), (color(200, 60, 60), 0.6), (color(250, 220, 120), 1),
 /// ]
 /// for y in 0..<Int(height) {
@@ -76,8 +76,8 @@ enum PaletteValues {
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public func paletteLerp(
-    _ stops: [(LinearRGBA, Float)], _ amount: some ScalarConvertible
-) -> LinearRGBA {
+    _ stops: [(Color, Float)], _ amount: some ScalarConvertible
+) -> Color {
     var usable = stops
     if !stops.allSatisfy({ $0.1.isFinite }) {
         PaletteValues.warnOnce(

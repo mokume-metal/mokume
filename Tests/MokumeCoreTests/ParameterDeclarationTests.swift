@@ -32,7 +32,7 @@ struct ParameterDeclarationTests {
         @Param(1...8) var count: Int = 3
         @Param var spinning: Bool = true
         @Param(choices: ["circle", "square"]) var shape: String = "circle"
-        @Param(name: "ink") var color: LinearRGBA = .display(red: 1, green: 0, blue: 0)
+        @Param(name: "ink") var color: Color = .display(red: 1, green: 0, blue: 0)
         @Param var offset: Vector2 = .init(1, 2)
     }
 

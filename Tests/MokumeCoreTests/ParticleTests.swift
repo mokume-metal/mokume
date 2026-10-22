@@ -1041,7 +1041,7 @@ struct ParticleTests {
             emit(
                 dots, from: .point(5, 10), toward: .plane(0...0), rate: Float(Self.fps),
                 speed: 1200...1200, life: 100...100, size: 2...2,
-                color: LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 1))
+                color: Color(straightRed: 1, green: 1, blue: 1, alpha: 1))
             particles(dots)
         }
     }

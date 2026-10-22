@@ -438,7 +438,7 @@ extension SketchPart {
         speed: ClosedRange<Float> = 20...60,
         life: ClosedRange<Float> = 1...2,
         size: ClosedRange<Float> = 2...6,
-        color: LinearRGBA? = nil
+        color: Color? = nil
     ) {
         guard let runtime = Self.liveRuntime() else { return }
         runtime.canvas.emit(

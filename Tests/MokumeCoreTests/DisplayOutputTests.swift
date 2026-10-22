@@ -32,7 +32,7 @@ struct DisplayOutputTests {
                 for x in 0..<width {
                     canvas.set(
                         x, y,
-                        LinearRGBA(
+                        Color(
                             premultipliedRed: random.component(), green: random.component(),
                             blue: random.component(), alpha: random.alpha()))
                 }
