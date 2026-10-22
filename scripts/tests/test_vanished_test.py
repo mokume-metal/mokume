@@ -24,6 +24,7 @@
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import fcntl
 import os
 import re
 import shutil
@@ -350,7 +351,7 @@ class MakeTestTest(unittest.TestCase):
         path.write_text(body)
         path.chmod(0o755)
 
-    def run_make(self, test_exit, record=None, console="", build_exit=0, fail=""):
+    def run_make(self, test_exit, record=None, console="", build_exit=0, fail="", extra_env=None):
         env = dict(os.environ)
         env.pop("MAKEFLAGS", None)
         env.pop("MFLAGS", None)
@@ -368,6 +369,7 @@ class MakeTestTest(unittest.TestCase):
             MOKUME_GPU_SLOT_DIR=str(self.root / "gpu-slots"),
             MOKUME_GPU_SLOT_LOG=str(self.root / "gpu-slot.jsonl"),
         )
+        env.update(extra_env or {})
         env.pop("FAKE_RECORD", None)
         if record is not None:
             self.record_src.write_text(record, encoding="utf-8")
@@ -417,6 +419,23 @@ class MakeTestTest(unittest.TestCase):
         # 検査は起きていない。build は走るが、test は走らない
         calls = (self.root / "swift-calls.txt").read_text()
         self.assertNotIn("--skip-build", calls)
+
+    def test_gpu_slot_that_could_not_get_a_slot_is_not_a_vanished_run(self):
+        """gpu-slot が枠を期限まで取れなかった回 (75) も、検査は起きていないので「消えた」と名乗らない (#2235)。"""
+        slots = self.root / "gpu-slots"
+        slots.mkdir()
+        with open(slots / "slot-0.lock", "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)  # 枠 1 つを、この検査が握る
+            code, out = self.run_make(
+                0, record=RECORD_ALL_PASSED,
+                extra_env={"MOKUME_GPU_SLOTS": "1", "MOKUME_GPU_SLOT_WAIT": "0.3", "MOKUME_GPU_SLOT_POLL": "0.05"})
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("Error 75", out)
+        self.assert_not_vanished(out)
+        self.assertIn("検査のプロセスは起こされなかった", out)
+        self.assertIn("枠を期限まで取れなかった", out)
+        self.assertIn("消えた回 (#1527) ではない", out)
+        self.assertNotIn("--skip-build", (self.root / "swift-calls.txt").read_text())
 
     def test_no_record(self):
         code, out = self.run_make(1, console="✔ Test draws() passed")

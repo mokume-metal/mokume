@@ -18,6 +18,7 @@ swift と mokume-syphon の clone 元は偽物に差し替える (本物の buil
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import fcntl
 import os
 import subprocess
 import tempfile
@@ -161,6 +162,19 @@ class SyphonCheckTest(unittest.TestCase):
         r = self.run_check(gated("passed"))
         self.assertEqual(r.returncode, 40, r.stderr)
         self.assertIn("期限を越えた記録", r.stderr)
+        self.assertNotIn("test の記録が無い", r.stderr)
+
+    def test_a_slot_that_could_not_be_taken_is_not_a_missing_record(self):
+        """gpu-slot が枠を期限まで取れなかった回 (75) も、検査は起きていない。40 で名乗り、記録が無いとは読まない (#2235)。"""
+        slots = self.tmp / "slots"
+        slots.mkdir()
+        with open(slots / "slot-0.lock", "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            r = self.run_check(
+                gated("passed"),
+                MOKUME_GPU_SLOTS="1", MOKUME_GPU_SLOT_WAIT="0.3", MOKUME_GPU_SLOT_POLL="0.05")
+        self.assertEqual(r.returncode, 40, r.stderr)
+        self.assertIn("枠を期限まで取れなかった", r.stderr)
         self.assertNotIn("test の記録が無い", r.stderr)
 
     def test_missing_record(self):

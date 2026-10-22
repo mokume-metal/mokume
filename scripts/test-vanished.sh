@@ -109,6 +109,17 @@ if [ "$CODE" -eq 76 ]; then
   exit 0
 fi
 
+# gpu-slot が GPU の枠を期限まで取れなかった回 (終了コード 75・scripts/gpu-slot.py の「## 待つ」)。同じく検査の
+# プロセスは起きていないので、記録が無いのは「消えた」(#1527) からではない。ただし 76 と違い、枠が空けば
+# 打ち直せる。枠を握っている持ち主は、gpu-slot の出力 (上) が名乗っている
+if [ "$CODE" -eq 75 ]; then
+  echo
+  echo "✘ 検査のプロセスは起こされなかった: gpu-slot が GPU の枠を期限まで取れなかった (終了コード 75)"
+  echo "   検査のプロセスが消えた回 (#1527) ではない。枠を握っている持ち主が固まっていないかを、上の gpu-slot の出力で確かめる"
+  echo "   持ち主が走り終えれば、打ち直してよい"
+  exit 0
+fi
+
 verdict="$(python3 "$(dirname "${BASH_SOURCE[0]}")/read-test-record.py" --failures "$RECORD")"
 case "$verdict" in
   missing) form="記録が無い" ;;
