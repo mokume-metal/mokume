@@ -49,8 +49,10 @@ nonisolated struct SynthCommand {
 /// ## 置き場は、手放して鳴り終えた音源のぶんだけ戻る
 ///
 /// **同時に生きている節は ``capacity`` までで、エフェクトは置いたらラックの終わりまで残る。**
-/// 音源 (オシレータ・ノイズ) は、作者が手放し (``release(_:)``)、かつ鳴り終えた (止めて消えた・包絡が
-/// 終わった — ``RackNode/isFinished``) ときに、置き場が戻る。鳴っている音は切らない。
+/// 音源 (オシレータ・ノイズ) と、エフェクトへ通した音声ファイルの節 (``FileNode``) は、作者が手放し
+/// (``release(_:)``)、かつ鳴り終えた (止めて消えた・包絡が終わった — ``RackNode/isFinished``) ときに、
+/// 置き場が戻る。ファイルの節を手放すのは、``SoundFile`` が外される (``SoundFile/close()``) とき。
+/// 鳴っている音は切らない。
 ///
 /// 戻す道筋は、音の側が確保も解放もしない形にしてある。
 /// - 音の側は、手放された音源が鳴り終えたと見たら、その節を自分の表と描く順から外し、**事前に確保した
@@ -76,7 +78,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
     // 載せる順) と列の書き手の側だけで、音の側が読むのは列から取り出した後に限る。
     // 残りの状態は音の側 (呼んだスレッド) だけが触る。
 
-    /// 同時に生きている節の数の上限。繋がりを 64 ビットの集合で持つ。手放して鳴り終えた音源の節は
+    /// 同時に生きている節の数の上限。繋がりを 64 ビットの集合で持つ。手放して鳴り終えた音源・ファイルの節は
     /// 数から外れる (エフェクトはラックの終わりまで数える)。
     static let capacity = 64
     /// 1 度に作る標本の数の上限。これより長い区切りは分けて作る。
@@ -100,6 +102,10 @@ nonisolated final class SynthRack: @unchecked Sendable {
     private let slots: UnsafeMutablePointer<Unmanaged<RackNode>?>
 
     // MARK: 操作の列
+
+    /// 列へ載せた操作を、載せた順に見る。**検査だけが使う** (主スレッドで呼ばれる)。載る順が音の側の
+    /// 効き方 (どの操作の間に音が描かれうるか) を決めるので、順を検査が読めるようにしておく。
+    nonisolated(unsafe) var observePost: ((SynthCommand) -> Void)?
 
     private let queue: UnsafeMutablePointer<SynthCommand>
     private let head = Atomic<Int>(0)
@@ -275,6 +281,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
     func post(_ command: SynthCommand) -> Bool {
         let end = tail.load(ordering: .relaxed)
         guard end - head.load(ordering: .acquiring) < Self.queueCapacity else { return false }
+        observePost?(command)
         queue[end & (Self.queueCapacity - 1)] = command
         tail.store(end + 1, ordering: .releasing)
         return true

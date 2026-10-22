@@ -88,6 +88,9 @@ public class SoundEffect: SynthSound {
     func connect(_ input: any EffectInput) -> Bool {
         guard let node, !stage.isClosed else { return false }
         let source: RackNode
+        // ファイルの節は、**入力に選んでから**鳴らし始める (``SoundFile/nodeIsConnected()``)
+        var routed: SoundFile?
+        defer { routed?.nodeIsConnected() }
         if let sound = input as? SynthSound {
             guard let inner = sound.node, sound.stage === stage else { return false }
             source = inner
@@ -95,6 +98,7 @@ public class SoundEffect: SynthSound {
             // 断った理由は、ファイルの側が 1 度だけ知らせる
             guard let inner = file.route(into: stage) else { return false }
             source = inner
+            routed = file
         } else {
             notice(
                 "process.unsupported",

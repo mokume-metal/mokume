@@ -59,8 +59,10 @@ final class SynthStage: Inlet {
     /// 鳴り終えた音源のぶんだけ戻る」)。
     private var sounds: [WeakSound] = []
     private var noticed: Set<Notice> = []
-    /// ファイルの節へ頼まれて、まだ列へ載せていない操作 (``sendToFile(_:frame:)``)。頼まれた順。
-    private var heldForFiles: [(frame: Int, command: SynthCommand)] = []
+    /// ファイルの節へ頼まれて、まだ列へ載せていない操作 (``sendToFile(_:)``)。頼まれた順。
+    private var heldForFiles: [SynthCommand] = []
+    /// 実時間で、ラックを進めたフレーム (``advanceClock()``)。
+    private var clockAdvancedFrame: Int?
     /// 閉じた (スケッチが終わった)。以後の操作は捨てる。
     private(set) var isClosed = false
 
@@ -128,37 +130,36 @@ final class SynthStage: Inlet {
         return stage
     }
 
-    /// ファイルの節 (``FileNode``) へ頼む操作。**ラックを実際に鳴らしているなら、すぐ列へ載せる。**
-    /// フレームの数え方 (書き出し・検査) と実時間では、頼んだフレームの次のフレームの頭 (``supply()``) まで
-    /// 預かり、ラックを進める前に載せる。
+    /// ファイルの節 (``FileNode``) へ頼む操作を、ラックの操作の列へ載せる。
     ///
-    /// 預かるのは、ラックを進めるのがこのステージの ``supply()`` で、ファイルの側の ``SoundFile/supply()``
-    /// と前後どちらが先に呼ばれるかに依らず、頼んだ操作が同じフレームの区切りで効くようにするため。
-    /// ファイルの位置は、`play()` を呼んだフレームの次のフレームで 1 フレームぶん進んだ数になる。ラックも
-    /// その次のフレームの `advance` で、同じ 1 フレームぶんを作る。
-    ///
-    /// - Parameters:
-    ///   - command: 節への操作。
-    ///   - frame: 頼んだフレーム (``SoundFile`` の数え方。`draw()` の中でも `supply()` の中でも同じ)。
-    func sendToFile(_ command: SynthCommand, frame: Int) {
+    /// **列が満杯で載せられなければ、控えて次の機会 (``supply()``・``catchUpForFiles()``) に載せ直す。**
+    /// 区切りを始める操作や止める操作が落ちると、節の進みが止まったまま、位置が凍る。控えがある間は、
+    /// 後から来る操作も控えに並べる — 載る順が頼んだ順から入れ替わらないようにするため。
+    func sendToFile(_ command: SynthCommand) {
         guard !isClosed else { return }
-        if case .speaker = pace {
-            rack.post(command)
-        } else {
-            heldForFiles.append((frame: frame, command: command))
-        }
+        if heldForFiles.isEmpty, rack.post(command) { return }
+        heldForFiles.append(command)
     }
 
-    /// 預かっていた操作のうち、`frame` より前のフレームで頼まれたものを列へ載せる。
-    private func releaseHeldFileCommands() {
-        var released = 0
-        let everything: Bool
-        if case .speaker = pace { everything = true } else { everything = false }
-        while released < heldForFiles.count, everything || heldForFiles[released].frame < frame {
-            rack.post(heldForFiles[released].command)
-            released += 1
-        }
-        heldForFiles.removeFirst(released)
+    /// 控えていた操作を、頼まれた順に載せられるだけ載せる。
+    private func retryHeldFileCommands() {
+        var posted = 0
+        while posted < heldForFiles.count, rack.post(heldForFiles[posted]) { posted += 1 }
+        if posted > 0 { heldForFiles.removeFirst(posted) }
+    }
+
+    /// ファイルの節が位置を決めるとき、ファイルの側が**ラックをこのフレームまで進めてから**位置を
+    /// 読めるように、先にステージの時計を進める。
+    ///
+    /// ステージと ``SoundFile`` のどちらが先に ``supply()`` を受けるかは、作った順で決まる。ステージの
+    /// 進みが後だと、ファイルは 1 フレーム前のラックから位置を読んでしまう。ここで進めれば、後から来る
+    /// ステージ自身の ``supply()`` の進みは同じ目的地になり、足されない (固定の時計では 0 標本、実時間では
+    /// 数マイクロ秒ぶん)。実機の流れ (``Pace/speaker``) は音の側が進めているので、何もしない。
+    func catchUpForFiles() {
+        guard !isClosed else { return }
+        if let owner { frame = Self.frameIndex(of: owner) }
+        retryHeldFileCommands()
+        advanceClock()
     }
 
     /// このステージが、`sketch` のものか。
@@ -182,9 +183,10 @@ final class SynthStage: Inlet {
         notice(
             .capacity,
             "No more synthesized sounds can be created: a sketch holds at most "
-                + "\(SynthRack.capacity) oscillators, noises and effects alive together. "
-                + "An oscillator or noise you no longer hold stops counting once it has finished "
-                + "sounding; effects stay until the sketch ends. Create them once in setup() "
+                + "\(SynthRack.capacity) oscillators, noises, effects and sound files passed to "
+                + "effects alive together. An oscillator or noise you no longer hold stops counting "
+                + "once it has finished sounding; a sound file stops counting once it is detached; "
+                + "effects stay until the sketch ends. Create them once in setup() "
                 + "and reuse them instead of creating new ones in draw()")
     }
 
@@ -206,7 +208,15 @@ final class SynthStage: Inlet {
 
     func supply() {
         if let owner { frame = Self.frameIndex(of: owner) }
-        releaseHeldFileCommands()
+        retryHeldFileCommands()
+        advanceClock()
+        if case .speaker(let player) = pace { resumeIfStopped(player) }
+        reapReleasedSources()
+        for entry in sounds { entry.sound?.refresh() }
+    }
+
+    /// 固定の時計と実時間で、ラックの標本を今のフレームの目的地まで進める。実機の流れでは何もしない。
+    private func advanceClock() {
         switch pace {
         case .frames(let frameRate, let origin):
             // 整数のフレーム数から掛けて割る。秒を足し込まないので、何フレーム目でも丸めがずれない
@@ -214,14 +224,14 @@ final class SynthStage: Inlet {
                 to: Int(
                     (Double(frame - origin) * rack.sampleRate / Double(frameRate)).rounded(.down)))
         case .realTime(let origin, let base):
+            // **1 フレームに 1 回だけ。** ファイルの側からも呼ばれる (``catchUpForFiles()``) ので、数えないと
+            // 1 回の進みを 2 秒で打ち切る約束 (``advance(to:)``) が、1 フレームに 2 回ぶんになる
+            guard clockAdvancedFrame != frame else { break }
+            clockAdvancedFrame = frame
             advance(to: base + Int(((now() - origin) * rack.sampleRate).rounded(.down)))
-        case .speaker(let player):
-            resumeIfStopped(player)
-        case nil:
+        case .speaker, nil:
             break
         }
-        reapReleasedSources()
-        for entry in sounds { entry.sound?.refresh() }
     }
 
     /// 手放された音をやめる。音源なら、ラックへ手放したことを伝える (鳴り終えたら置き場が戻る)。

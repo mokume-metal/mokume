@@ -321,6 +321,9 @@ struct SoundFileEffectTests {
             frames: frames, flow: try offline(), url: url, act: Self.operations)
         #expect(played.file == playedPlain.file)
         #expect(played.file == plain.file)
+        // ステージをファイルより後に作っても (ファイルの `supply()` が先に呼ばれても) 同じ
+        let lateStage = try take(frames: frames, url: url, stageFirst: false, act: Self.operations)
+        #expect(lateStage.file == plain.file)
         // 操作の列が効いている (止まって・飛んで・動いた)
         let positions = plain.file.map(\.position)
         #expect(positions.contains(240_000) || positions.contains(240_800), "5 秒へ飛んでいる")
@@ -585,5 +588,167 @@ struct SoundFileEffectTests {
         #expect(notices.first?.contains("at most 64") == true)
         // 通せなかった方は、直に鳴っている (エフェクトの出口だけではない)
         #expect(heard.left.map { abs($0) }.max() ?? 0 > 0.1)
+    }
+
+    // MARK: - 手放す・順序・時計・満杯
+
+    @Test("外したファイルは節を返し、足し直して通しても節は 1 つ (入力にも残らない)")
+    func detachingReturnsTheNode() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var stage: SynthStage?
+        var song: SoundFile?
+        var filter: LowPass?
+        var occupied: [Int] = []
+        var wired: [Int] = []
+        let runtime = try run(
+            frames: 40,
+            setup: { sketch in
+                let made = SynthStage.stage(for: sketch)
+                let loaded = try sketch.loadSound(url.path)
+                let low = LowPass(stage: made)
+                low.process(loaded)
+                loaded.loop()
+                stage = made
+                song = loaded
+                filter = low
+            },
+            draw: { sketch in
+                guard let stage, let song, let filter, let node = filter.node else { return }
+                occupied.append(stage.rack.occupiedCount)
+                wired.append(stage.rack.inputs(of: node.id).nonzeroBitCount)
+                switch sketch.frameCount {
+                case 5: sketch.detach(song)
+                case 20:
+                    sketch.attach(song)
+                    filter.process(song)
+                    song.loop()
+                default: break
+                }
+            })
+        runtime.closePlugins()
+        // 通している間は、エフェクトとファイルの 2 つ
+        #expect(occupied[2] == 2 && wired[2] == 1)
+        // 外すと、止まって消えきった後に節が返る (約 5 ミリ秒の時定数のあと数フレーム)
+        #expect(occupied[15] == 1 && wired[15] == 0, "外した後の置き場 \(occupied[15])・入力 \(wired[15])")
+        // 足し直して通すと、節は 1 つ取り直す。2 つ目が増えない
+        #expect(occupied[30] == 2 && wired[30] == 1)
+        #expect(occupied.max() == 2, "置き場の数の最大 \(occupied.max() ?? 0)")
+    }
+
+    @Test("鳴っている最中に通すとき、節を入力に選ぶ操作が、鳴らし始める操作より先に音の側へ届く")
+    func theInputIsChosenBeforeTheNodeSounds() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var log: [SynthCommand] = []
+        var recording = false
+        var song: SoundFile?
+        var filter: LowPass?
+        let runtime = try run(
+            frames: 6,
+            setup: { sketch in
+                let stage = SynthStage.stage(for: sketch)
+                stage.rack.observePost = { if recording { log.append($0) } }
+                let loaded = try sketch.loadSound(url.path)
+                loaded.loop()
+                song = loaded
+                filter = LowPass(stage: stage)
+            },
+            draw: { sketch in
+                guard sketch.frameCount == 3, let song, let filter else { return }
+                recording = true
+                filter.process(song)
+                recording = false
+            })
+        runtime.closePlugins()
+        let effect = try #require(filter?.node).id
+        let activate = try #require(log.firstIndex { $0.op == .activate })
+        let file = Int(log[activate].node)
+        let inputs = try #require(
+            log.firstIndex { $0.op == .inputs && Int($0.node) == effect && $0.bits & (1 << UInt64(file)) != 0 })
+        let segment = try #require(log.firstIndex { $0.op == .segment && Int($0.node) == file })
+        #expect(activate < inputs, "節を足してから入力に選ぶ: \(log.map(\.op))")
+        #expect(inputs < segment, "入力に選んでから鳴らし始める: \(log.map(\.op))")
+    }
+
+    @Test("実時間の時計で 2 秒を超えて止まっても、位置は聞こえている音とずれない (ラックの打ち切りに従う)")
+    func positionFollowsTheRackClockWhenTheClockStalls() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var now: TimeInterval = 0
+        var stage: SynthStage?
+        var song: SoundFile?
+        var positions: [Int] = []
+        var rendered: [Int] = []
+        var playing: [Bool] = []
+        let runtime = try run(
+            frames: 12,
+            setup: { sketch in
+                let made = SynthStage.stage(for: sketch, now: { now })
+                // 出力が開けないときの形 (実時間で進める)
+                made.pace = .realTime(origin: 0, base: made.rack.rendered)
+                let loaded = try sketch.loadSound(url.path)
+                let low = LowPass(stage: made)
+                low.process(loaded)
+                loaded.play()
+                stage = made
+                song = loaded
+            },
+            draw: { _ in
+                guard let stage, let song else { return }
+                positions.append(song.samplePosition)
+                rendered.append(stage.rack.rendered)
+                playing.append(song.isPlaying)
+            },
+            between: { frame in now += frame == 3 ? 5 : 1.0 / 60 })
+        runtime.closePlugins()
+        #expect(positions == rendered, "位置 \(positions) と、ラックが作った数 \(rendered)")
+        // 5 秒止まった後の 1 回の進みは 2 秒で打ち切られている (1 回に 96000 標本まで)
+        let steps = zip(rendered, rendered.dropFirst()).map { $1 - $0 }
+        #expect(steps.max() ?? 0 <= 96_000 && steps.max() ?? 0 >= 90_000, "1 回の進み \(steps)")
+        #expect(playing.allSatisfy { $0 }, "1 度だけ鳴らす音が早く切れていない: \(playing)")
+    }
+
+    @Test("操作の列が満杯で、止める・鳴らし始める操作が載らなくても、控えて載せ直し、位置は進み続ける")
+    func commandsThatDoNotFitAreRetried() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var stage: SynthStage?
+        var song: SoundFile?
+        var filter: LowPass?
+        var positions: [Int] = []
+        let runtime = try run(
+            frames: 16,
+            setup: { sketch in
+                let made = SynthStage.stage(for: sketch)
+                let loaded = try sketch.loadSound(url.path)
+                let low = LowPass(stage: made)
+                low.process(loaded)
+                loaded.loop()
+                stage = made
+                song = loaded
+                filter = low
+            },
+            draw: { sketch in
+                guard let stage, let song, let filter, let node = filter.node else { return }
+                positions.append(song.samplePosition)
+                if sketch.frameCount == 3 {
+                    // 列を満杯にしてから、止めて鳴らし直す (頭から)
+                    let bits = UInt64(Float(20_000).bitPattern)
+                    var full = false
+                    for _ in 0..<10_000 where !full {
+                        full = !stage.rack.post(
+                            SynthCommand(op: .set, node: UInt8(node.id), param: .cutoff, bits: bits))
+                    }
+                    #expect(full, "列を満杯にできた")
+                    song.pause()
+                    song.play()
+                }
+            })
+        runtime.closePlugins()
+        // 鳴らし直してから数フレームのうちに頭から動き出し、そのまま 1 フレームに 800 標本ずつ進む
+        let tail = Array(positions[10...])
+        #expect(tail[0] > 0, "位置が頭で凍っている: \(positions)")
+        #expect(zip(tail, tail.dropFirst()).allSatisfy { $1 - $0 == Self.perFrame }, "\(positions)")
     }
 }
