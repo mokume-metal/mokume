@@ -258,6 +258,98 @@ final class PeerGroup<Peer: LoopbackPeer> {
     }
 }
 
+/// 送り元の補助 (``sendAndCollect(_:expecting:to:senders:replacements:within:makeSender:)``・
+/// `OSCPortTests` の `sendNumberedBurst`) が、前提の段で見たことの記録 (#3001)。
+///
+/// 補助は読まれなかった番号があっても、期限で読まれた分だけを返す (救わない・期限を延ばさない)。
+/// 呼ぶ側は ``requireSent(_:_:log:receiver:probe:)`` に渡して、前提が満たされなかった回の名乗りに
+/// 送り手の様子を載せる。**送り手の名乗りの行は、受け口の知らせ (`told`) と混ぜずに、ここで数える。**
+/// 足す呼び出しが複数回あっても (台帳を足す段は回ごとに呼ぶ)、同じ記録へ足せる。
+nonisolated final class SendLog: Sendable {
+    private struct Totals {
+        var expected = 0
+        var heard = 0
+        var replacements = 0
+        var rescued = 0
+        var waited: TimeInterval = 0
+        var limit: TimeInterval = 0
+        var complaints: [String] = []
+    }
+    private let totals = Mutex(Totals())
+
+    /// 送り元の名乗り (`Could not send to …`) を 1 行足す。替えた後の古い送り元の遅れた名乗りも数える。
+    func complain(_ line: String) { totals.withLock { $0.complaints.append(line) } }
+
+    /// 補助 1 回分の結果を足す。`rescued` は、替えた先で読まれた番号 (列なら通) の数。
+    func record(
+        expected: Int, heard: Int, replacements: Int, rescued: Int, waited: TimeInterval,
+        limit: TimeInterval
+    ) {
+        totals.withLock {
+            $0.expected += expected
+            $0.heard += heard
+            $0.replacements += replacements
+            $0.rescued += rescued
+            $0.waited += waited
+            $0.limit += limit
+        }
+    }
+
+    var complaints: [String] { totals.withLock { $0.complaints } }
+
+    /// 待った秒数と期限。呼びを重ねたときは、どちらも合計。
+    var waitText: String {
+        totals.withLock {
+            "待った \(String(format: "%.1f", $0.waited)) 秒/期限 \(String(format: "%.1f", $0.limit)) 秒"
+        }
+    }
+
+    /// 送り手側の様子。**名乗りが 0 行なら、そうと言う** (黙って出ない送り元の形)。
+    var senderText: String {
+        totals.withLock {
+            let lines = $0.complaints.isEmpty ? "名乗りは 0 行 (黙っている)" : "名乗り \($0.complaints.count) 行 \($0.complaints)"
+            return "替えた \($0.replacements) 回・替えた先で読めた \($0.rescued) 本・読めたのは \($0.heard)/\($0.expected)・\(lines)"
+        }
+    }
+}
+
+/// 受け口の様子を名乗りに載せる文にする (``requireSent(_:_:log:receiver:probe:)`` の `receiver`)。
+/// 状態・移り変わりの数と最後・受け入れた数・いま持つ数 (#3001)。
+func receiverText<Message: Sendable>(_ state: SourceState, _ source: DatagramSource<Message>) -> String {
+    "\(state.rawValue)\(traceText(source))・受け入れ \(source.tally.accepted)・持つ数 \(source.connectionCount)"
+}
+
+/// 送り元から送った前提 (送った番号・列が読まれた) が満たされたことを求める。**満たされなければ、受け口側と
+/// 送り手側の様子を名乗って 1 つで止まる** (`#require`・#3001)。
+///
+/// 名乗りは、`what` (何が満たされなかったか)・待った秒数と期限・受け口の様子 (`receiver`)・送り手の
+/// 様子 (`log`)・**素の socket から 1 通送って、止まる時点の受け口が新しい送り元を受けられたか** (`probe`)。
+/// 読めれば受け口は生きていて送り手側の話 (送り元が `.waiting` のまま・黙って出ない)、読めなければ
+/// 受け口側の話と読み分けられる。
+///
+/// **この 1 通は名乗りの材料で、救いには使わない。** 読めても検査は止まる。期限は延ばさず、受け口を
+/// 閉じて開き直さず、名乗らない送り元も替えない (原因が分かっていないので、救うと次の 1 回で読み分ける
+/// 材料が消える — #2945 と同じ。#2978 の判断の材料になる)。
+///
+/// - Parameters:
+///   - ok: 前提が満たされたか。
+///   - what: 満たされなかったことの 1 文 (例: 「送り元 54 本のうち読めたのは 1 本」)。
+///   - receiver: 受け口の様子 (``receiverText(_:_:)``)。
+///   - probe: 素の socket から 1 通送り、短い期限で読めたか。満たされたときは呼ばない。
+func requireSent(
+    _ ok: Bool, _ what: @autoclosure () -> String, log: SendLog,
+    receiver: () -> String, probe: () async -> Bool
+) async throws {
+    if ok { return }
+    // 受け口の様子は、素の socket の 1 通を送る前に読む (送ると受け入れの数が 1 つ増える)
+    let receiving = receiver()
+    let probed = await probe()
+    try #require(
+        ok,
+        "\(what()) (\(log.waitText))。受け口: \(receiving)。送り手: \(log.senderText)。素の socket の 1 通: \(probed ? "読めた (受け口は新しい送り元を受けられる)" : "読めなかった (受け口が新しい送り元を受けていない)")"
+    )
+}
+
 /// 1 つの送り元から datagram の列を送り、`count` 通が届くまで (か期限まで) 集めて、読まれた文字列を返す。
 ///
 /// **送った datagram が全部読まれる前提を置かない** (#2910・#2940)。送り元の繋ぎが `Address already
@@ -268,19 +360,23 @@ final class PeerGroup<Peer: LoopbackPeer> {
 /// #2937)。替えた古い送り元は閉じ、その遅れた名乗りは数えない。
 ///
 /// 送り元は `senders` の末尾へ足す。呼ぶ側が検査の終わりに閉じる。名乗りは送り元の側の話なので、
-/// 受け口の知らせ (`told`) には流さない。
+/// 受け口の知らせ (`told`) には流さず、`log` に数える (替えた回数・替えた先で読めた数も。
+/// 読まれなかった回は、呼ぶ側が ``requireSent(_:_:log:receiver:probe:)`` で名乗る — #3001)。
 func sendAndCollect(
     _ datagrams: [[UInt8]], expecting count: Int, to port: TextPort,
     senders: inout [any DatagramSending], replacements: Int = 3, within seconds: TimeInterval = 10,
+    log: SendLog = SendLog(),
     makeSender: (_ warn: @escaping @Sendable (String) -> Void) -> any DatagramSending
 ) async throws -> [String] {
     let stuck = Mutex(false)
     let current = Mutex(1)
     var attempt = 1
     let patience = seconds / Double(replacements + 1)
+    let started = Date()
     func open() -> any DatagramSending {
         let mine = attempt
-        let sender = makeSender { _ in
+        let sender = makeSender { line in
+            log.complain(line)
             guard current.withLock({ $0 }) == mine else { return }
             stuck.withLock { $0 = true }
         }
@@ -307,6 +403,10 @@ func sendAndCollect(
         }
         try await Task.sleep(for: .milliseconds(10))
     }
+    log.record(
+        expected: count, heard: min(received.count, count), replacements: attempt - 1,
+        rescued: attempt > 1 ? min(received.count, count) : 0,
+        waited: Date().timeIntervalSince(started), limit: seconds)
     return received
 }
 

@@ -28,6 +28,28 @@ struct UDPPortTests {
         return (udp, try #require(source.boundPort))
     }
 
+    /// 列の送りで、前提 (送った列が全部読まれる) が満たされなかった回の名乗り (#3001)。受け口の様子と、
+    /// 素の socket から 1 通送って読まれるかを添えて、1 つで止まる。
+    private func requireReceived(
+        _ received: [String], expecting count: Int, log: SendLog, udp: UDPPort, port: Int
+    ) async throws {
+        try await requireSent(
+            received.count >= count, "\(count) 通のうち読めたのは \(received.count) 通", log: log,
+            receiver: {
+                guard let source = udp.source as? DatagramSource<String> else { return "出どころを読めない" }
+                return receiverText(udp.state, source)
+            },
+            probe: {
+                guard let raw = try? RawDatagramSocket() else { return false }
+                defer { raw.release() }
+                _ = raw.send(Array("probe".utf8), to: port)
+                return await until(3) {
+                    udp.supply()
+                    return udp.messages.contains("probe")
+                }
+            })
+    }
+
     // MARK: - 受ける
 
     @Test("相手から届いた文字列を届いた順に受け、末尾の改行 1 つを落とす")
@@ -41,9 +63,11 @@ struct UDPPortTests {
         // nc で打った行・CRLF で終わる行・前後の空白・改行 2 つ (落とすのは 1 つだけ)。
         // 送り元が送れないと名乗ったら、まだ 1 通も読まれていない限り新しい送り元で送り直す (#2940)
         let texts = ["0.25\n", "hit\r\n", "  spaced  ", "two\n\n"]
+        let log = SendLog()
         let received = try await sendAndCollect(
-            texts.map { Array($0.utf8) }, expecting: 4, to: udp, senders: &senders
+            texts.map { Array($0.utf8) }, expecting: 4, to: udp, senders: &senders, log: log
         ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
+        try await requireReceived(received, expecting: 4, log: log, udp: udp, port: port)
         #expect(received == ["0.25", "hit", "  spaced  ", "two\n"])
         #expect(udp.lastArrival != nil)
         #expect(udp.report == SourceReport(name: "udp :0", state: .running, lastArrival: udp.lastArrival))
@@ -62,13 +86,15 @@ struct UDPPortTests {
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
 
+        let log = SendLog()
         let received = try await sendAndCollect(
             [
                 Array("before".utf8),
                 [0x68, 0xFF, 0xFE, 0x0A],  // 'h' と、UTF-8 に現れないバイト
                 Array("after".utf8),
-            ], expecting: 2, to: udp, senders: &senders
+            ], expecting: 2, to: udp, senders: &senders, log: log
         ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
+        try await requireReceived(received, expecting: 2, log: log, udp: udp, port: port)
         #expect(received == ["before", "after"])
         #expect(udp.input.unreadable == 1)
     }
@@ -461,10 +487,13 @@ struct UDPPortTests {
         defer { live.close() }
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
         let received = try await sendAndCollect(
             textScript.map { Array("\($0)\n".utf8) }, expecting: textScript.count, to: live,
-            senders: &senders
+            senders: &senders, log: log
         ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
+        try await requireReceived(
+            received, expecting: textScript.count, log: log, udp: live, port: port)
 
         let injected = UDPPort(
             port: nil, name: "udp (recorded)",
@@ -523,9 +552,11 @@ struct UDPPortTests {
         try await requireState(told: told, tracing: source) { udp.state }
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
         let received = try await sendAndCollect(
-            [Array("back".utf8)], expecting: 1, to: udp, senders: &senders
+            [Array("back".utf8)], expecting: 1, to: udp, senders: &senders, log: log
         ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
+        try await requireReceived(received, expecting: 1, log: log, udp: udp, port: port)
         #expect(received == ["back"])
     }
 
@@ -609,6 +640,104 @@ struct UDPPortTests {
         }
         #expect(received.isEmpty)
         #expect(made == 3)
+    }
+
+    // MARK: - 前提が満たされなかった回の名乗り (#3001)
+
+    /// `requireReceived` が止まるときの名乗りを集める。止まらなければ空。
+    private func said(_ body: () async throws -> Void) async throws -> String {
+        let text = Mutex("")
+        try await withKnownIssue {
+            try await body()
+        } matching: { issue in
+            text.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
+            return true
+        }
+        return text.withLock { $0 }
+    }
+
+    @Test("列が期限までに読まれなければ、受け口の様子・替えた回数・名乗りの行・素の socket の 1 通を名乗って 1 つで止まる")
+    func requireReceivedNamesBothSidesAndStops() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let raw = try RawDatagramSocket()
+        defer { raw.release() }
+
+        // 1 つ目は名乗って何も出さず、替えた先は 2 通のうち 1 通目と 2 通目を出すが、3 通を期待する。
+        // 名乗りは送るたび (a と b の 2 通) に出るので 2 行
+        var made = 0
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
+        let received = try await sendAndCollect(
+            [Array("a".utf8), Array("b".utf8)], expecting: 3, to: udp, senders: &senders,
+            within: 1.2, log: log
+        ) { warn in
+            made += 1
+            return ScriptedSender(
+                raw: made == 1 ? nil : raw, port: port, complaint: made == 1 ? warn : nil)
+        }
+        #expect(received == ["a", "b"])
+
+        let text = try await said {
+            try await requireReceived(received, expecting: 3, log: log, udp: udp, port: port)
+        }
+        #expect(text.contains("3 通のうち読めたのは 2 通"), "名乗り: \(text)")
+        #expect(text.contains("期限 1.2 秒"), "名乗り: \(text)")
+        // 受け口: 状態・移り変わり・受け入れた数・いま持つ数 (受け入れた送り元は 1 つ)
+        #expect(text.contains("running") && text.contains("移り変わり "), "名乗り: \(text)")
+        #expect(text.contains("受け入れ 1・持つ数 1"), "名乗り: \(text)")
+        // 送り手: 替えた回数・替えた先で読めた数・名乗りの行
+        #expect(text.contains("替えた 1 回・替えた先で読めた 2 本"), "名乗り: \(text)")
+        #expect(text.contains("名乗り 2 行") && text.contains("Could not send to 127.0.0.1:\(port)"), "名乗り: \(text)")
+        // 素の socket の 1 通は読めた = 受け口は新しい送り元を受けられる (救いには使わない — 検査は止まった)
+        #expect(text.contains("素の socket の 1 通: 読めた"), "名乗り: \(text)")
+    }
+
+    @Test("黙って出ない送り元は、名乗りが 0 行で替えた回数も 0 とそのまま名乗る")
+    func requireReceivedNamesASilentSender() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
+        let received = try await sendAndCollect(
+            [Array("a".utf8)], expecting: 1, to: udp, senders: &senders, within: 0.4, log: log
+        ) { _ in ScriptedSender(raw: nil, port: port, complaint: nil) }
+
+        let text = try await said {
+            try await requireReceived(received, expecting: 1, log: log, udp: udp, port: port)
+        }
+        #expect(text.contains("1 通のうち読めたのは 0 通"), "名乗り: \(text)")
+        #expect(text.contains("替えた 0 回・替えた先で読めた 0 本"), "名乗り: \(text)")
+        #expect(text.contains("名乗りは 0 行 (黙っている)"), "名乗り: \(text)")
+        #expect(text.contains("素の socket の 1 通: 読めた"), "名乗り: \(text)")
+
+        // 受け口が受けない形 (ここでは閉じた受け口) は、素の socket の 1 通も読まれず、受け口側と読み分けられる
+        udp.close()
+        let closed = try await said {
+            try await requireReceived(received, expecting: 1, log: log, udp: udp, port: port)
+        }
+        #expect(closed.contains("受け口: stopped"), "名乗り: \(closed)")
+        #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
+    }
+
+    @Test("素の socket の 1 通が読まれなければ、受け口が新しい送り元を受けていないと名乗る。満たされたときは送らない")
+    func requireSentNamesAProbeThatWasNotRead() async throws {
+        let log = SendLog()
+        log.record(expected: 2, heard: 0, replacements: 0, rescued: 0, waited: 1, limit: 1)
+        let text = try await said {
+            try await requireSent(false, "2 通のうち読めたのは 0 通", log: log, receiver: { "stopped" }, probe: { false })
+        }
+        #expect(text.contains("受け口: stopped"), "名乗り: \(text)")
+        #expect(text.contains("素の socket の 1 通: 読めなかった (受け口が新しい送り元を受けていない)"), "名乗り: \(text)")
+
+        // 満たされたときは何も送らず、止まらない
+        let probed = Mutex(false)
+        try await requireSent(true, "名乗らない", log: log, receiver: { "" }, probe: { probed.withLock { $0 = true }; return true })
+        #expect(!probed.withLock { $0 })
     }
 
     // MARK: - 作る口
