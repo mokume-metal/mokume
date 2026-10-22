@@ -317,6 +317,10 @@ extension SketchPart {
     /// 呼び方と届く前の扱いは ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、
     /// そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
     ///
+    /// **呼んだ `Task` を取り消しても、読み込みは止まらず、読み終えて返る。** スケッチが終わった
+    /// 後に届いても落ちず、形はそのまま返る (``requestImage(_:)`` と同じ)。取消の扱いは
+    /// [#2760] と合わせて決めるので、いまの振る舞いであって約束ではない。
+    ///
     /// > Note: 届いた形の見え方は ``loadShape(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは SVG の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
@@ -324,6 +328,8 @@ extension SketchPart {
     /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。ただし走っていないときは、ファイルを
     ///   読む前に投げる。走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`)
     ///   で呼ぶと ``DataFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
         let surface = try Self.loadingCanvas(DataFailure.self)
