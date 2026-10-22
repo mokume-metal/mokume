@@ -5,6 +5,7 @@ import Darwin
 import Foundation
 import MokumeDiagnostics
 import Network
+import Synchronization
 
 // UDP の受け・送り。**中身のバイト列をどう読むかは持たない** — 上の層 (OSC の ``OSCCodec``・
 // 文字列の ``TextDecoding``) が決める。ポートを開く部分は TCP・WebSocket と ``PortListener`` を
@@ -381,6 +382,29 @@ protocol DatagramSending: AnyObject, Sendable {
     func stop()
 }
 
+/// 送り手が見たことの跡。**読むだけの値** — 振る舞いを決めない。
+///
+/// 送れないと名乗る知らせ (``DatagramSender`` の `warn`) は、繋ぎが `waiting` のときと、宛先の失敗が返った
+/// ときにしか出ない。繋ぎが `preparing` のまま進まないときや、誤り無しに完了したのに受け口で読まれない
+/// ときは黙る。検査が、送った datagram が読まれなかった回の名乗りに載せて、「送り手で出なかった」と
+/// 「出たが受け口で落ちた」を読み分ける (#3001)。
+nonisolated struct SendTrace: Sendable, Equatable {
+    /// ``DatagramSending/send(_:)`` を呼んだ数。
+    var issued = 0
+    /// 誤り無しで終わった送信の完了の数。UDP の「誤り無し」は手元のソケットから出たことだけを言う。
+    var completed = 0
+    /// 誤りつきで終わった送信の完了の数 (捨てた繋ぎに積まれていたものも数える)。
+    var failed = 0
+    /// 繋ぎが最後に名乗った状態 (`preparing`・`ready`・`waiting(…)`・`failed(…)`・`cancelled`)。
+    /// まだ何も名乗っていなければ `nil`。
+    var state: String?
+}
+
+/// 送り手の跡 (``SendTrace``) を読める送り手。
+nonisolated protocol SendTracing: AnyObject {
+    var sendTrace: SendTrace { get }
+}
+
 /// UDP で 1 つの宛先 (ホストとポート) へ送る。
 ///
 /// **送れなくても投げない。** 送れないときは理由を添えて 1 度だけ知らせ、送れたら、また知らせられる
@@ -415,7 +439,7 @@ protocol DatagramSending: AnyObject, Sendable {
 /// 名乗らず、いまの繋ぎの数え方も崩さない。
 ///
 /// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
-nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
+nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態 (``connection``・``warned``) は ``queue`` の上でだけ触る。
 
     let host: String
@@ -436,6 +460,21 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     private var refused = false
     /// いまの繋ぎで、最初に誤り無く終わった送信の完了の時刻。繋ぎを捨てる・失敗が返るたびに消える。
     private var unrefutedSince: TimeInterval?
+    /// 送り手が見たことの跡 (``SendTrace``)。検査が待ち行列の外から読むので、錠を持つ。
+    private let traced = Mutex(SendTrace())
+
+    /// 送り手が見たことの跡。読むだけで、振る舞いを決めない。
+    var sendTrace: SendTrace { traced.withLock { $0 } }
+
+    /// 繋ぎが名乗った状態を跡に残す。**跡だけ**で、読み替え (``changed(to:on:)``) には触れない。
+    func noted(_ state: NWConnection.State) {
+        traced.withLock { $0.state = "\(state)" }
+    }
+
+    /// 送信の完了を跡に残す。**跡だけ**で、読み替え (``finished(sending:on:issuedAt:)``) には触れない。
+    func noted(completion error: NWError?) {
+        traced.withLock { if error == nil { $0.completed += 1 } else { $0.failed += 1 } }
+    }
 
     /// - Parameters:
     ///   - confirmAfter: 拒否で名乗った後、送れたと読むまでに、同じ繋ぎで空ける間 (秒)。
@@ -453,12 +492,14 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     }
 
     func send(_ bytes: [UInt8]) {
+        traced.withLock { $0.issued += 1 }
         queue.async { [self] in
             let connection = connection ?? open()
             let issued = now()
             connection.send(
                 content: Data(bytes),
                 completion: .contentProcessed { [weak self, weak connection] error in
+                    self?.noted(completion: error)
                     self?.finished(sending: error, on: connection, issuedAt: issued)
                 })
         }
@@ -485,6 +526,7 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
             host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(clamping: port)) ?? .any,
             using: .udp)
         opened.stateUpdateHandler = { [weak self, weak opened] state in
+            self?.noted(state)
             self?.changed(to: state, on: opened)
         }
         opened.start(queue: queue)
