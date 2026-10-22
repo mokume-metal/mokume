@@ -74,7 +74,7 @@ python3 - <スケッチの場所>/.mokume/observe frames 70 0.5 <<'CAPTURE'
 import json, pathlib, shutil, sys, time, uuid
 
 sys.path.insert(0, "scripts")
-from observe_lib import Contested, answered, place   # 置き方と待ち方の正典はこれ 1 つ
+from observe_lib import Contested, answered, copy_image, place   # 置き方・待ち方・写し方の正典はこれ 1 つ
 
 facet, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 rounds, scale = int(sys.argv[3]), float(sys.argv[4])
@@ -90,10 +90,10 @@ for index in range(1, rounds + 1):
     name, taken, filled = f"f.{index:04d}.png", None, False
     try:
         report = answered(facet, identifier, 1.5, before=before)  # 壁時計ではなく識別子の一致で完了を知る
+        if report:                                # 写してから、応答が自分のままかを確かめる (#2992)
+            taken = copy_image(facet, report, identifier, out / name)
     except Contested as contest:                  # 別の書き手が同じ区画を使っている。撮り続けない
         sys.exit(f"{index} 枚目で止めた: {contest}")
-    if report and report.get("image"):
-        taken = shutil.copy(facet / report["image"], out / name)
 
     if taken is None and previous:                # 返らなかったら直前の絵を置く。置いたことは名乗る
         shutil.copy(previous, out / name)
@@ -115,6 +115,9 @@ CAPTURE
 - **別の書き手が同じ区画を使っていたら、撮り続けない** (`Contested`)。区画は要求も応答も 1 枚で、書き手を
   調停しない。自分の識別子の応答はもう来ず、走っていないのではない — 走らせ直すのではなく、他の書き手が
   居なくなってから撮り直す
+- **絵は応答を受けたらすぐ自分の置き場へ写し、写した後の確かめまで `copy_image` / `copy_images` に任せる**
+  ([#2992](https://github.com/mokume-metal/mokume/issues/2992))。区画の絵は固定名で、別の書き手の撮り始めが
+  読む前に書き直す。応答の `image` を後から区画で読まない。確かめられなければ `Contested` (絵は返らない)
 
 ### 撮り終えたら止める
 

@@ -34,6 +34,14 @@
 そこで、**request.json が自分の要求でなくなっていて、応答が「置く直前の応答」でも自分の応答でも
 ない識別子を echo したら**、`Contested` を投げる (`Facets.exchange` と同じ規則)。当たったかは
 分からない。呼び手は `place` が返した「置く直前の応答の識別子」を `answered` に渡す。
+
+## 返された絵は、写してから渡す (#2992)
+
+区画の絵は番号だけの固定名で、次の書き手の撮り始めが応答を消して書き直す。`answered` が返した
+応答の `image` を後から読むと、別の書き手の絵を自分の絵として読みうる。**絵は `copy_images` /
+`copy_image` で自分の置き場へ写す。** 写し終えた後に `report.json` がまだ自分の識別子を echo して
+いれば、写している間に掃除 (応答を先に、絵を後に消す) は始まっていないので、写した絵はすべて自分の
+撮影のもの。echo していなければ `Contested` を投げる (絵は返さない)。時計では見切らない。
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import time
 
 # 応答を見に行く間隔 (秒)。**呼び出し側で変えられる** — 要求を置き続けて圧をかける側は
@@ -138,3 +147,81 @@ def answered(
                 )
         time.sleep(poll)
     return None
+
+
+def image_names(report: dict) -> list[str]:
+    """応答が名乗る絵の名前。目録 (`frames`) が先で、無ければ単数形 (`image`)。
+
+    読み手は名前を組み立てない (Schemas/observe-report.schema.json)。
+    """
+    frames = report.get("frames")
+    names = [
+        frame["image"]
+        for frame in (frames if isinstance(frames, list) else [])
+        if isinstance(frame, dict) and isinstance(frame.get("image"), str)
+    ]
+    if not names and isinstance(report.get("image"), str):
+        names = [report["image"]]
+    return names
+
+
+def _copied_while_mine(
+    facet: pathlib.Path, identifier: str, copy_all, *, reason: str
+):
+    """`copy_all()` で絵を写し、写し終えた後に応答が自分の識別子のままかを確かめる。
+
+    **写せなかった回も確かめる** — 掃除は応答を先に消すので、応答が自分のままなら写せなかったのは
+    掃除のせいではなく (読めない・容量など)、その失敗をそのまま投げる。応答が自分でなければ取り合い。
+    """
+    try:
+        result = copy_all()
+    except OSError:
+        if _echo(facet) == identifier:
+            raise
+        raise Contested(f"{reason}: 写している間に別の書き手が撮り始めた (自分は {identifier!r})") from None
+    if _echo(facet) != identifier:
+        raise Contested(
+            f"{reason}: 写し終えた後の応答は {_echo(facet)!r} で、自分の {identifier!r} ではない"
+        )
+    return result
+
+
+def _require_plain(name: str) -> None:
+    """区画の外へ抜ける名前 (`../`・区切り) は写さない。"""
+    if not name or pathlib.PurePath(name).name != name or name in (".", ".."):
+        raise OSError(f"絵の名前が単なるファイル名ではない: {name!r}")
+
+
+def copy_images(
+    facet: pathlib.Path, report: dict, identifier: str, into: pathlib.Path
+) -> list[pathlib.Path]:
+    """目録の全枚を `into` へ同じ名前で写し、写し終えた後に応答が自分のままなら写した場所を返す。
+
+    1 枚でも写せなかった・応答が自分でなくなっていたら `Contested` (応答が自分のままで写せなかった
+    回だけ、元の `OSError`)。**`Contested` のときの `into` の中身は渡さない** — 消してよい。
+    """
+    names = image_names(report)
+
+    def copy_all() -> list[pathlib.Path]:
+        into.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            _require_plain(name)
+        return [pathlib.Path(shutil.copy(facet / name, into / name)) for name in names]
+
+    return _copied_while_mine(facet, identifier, copy_all, reason="絵を写せなかった")
+
+
+def copy_image(
+    facet: pathlib.Path, report: dict, identifier: str, destination: pathlib.Path
+) -> pathlib.Path | None:
+    """応答の `image` (単数形) を `destination` へ写す。無ければ None。確かめ方は `copy_images` と同じ。"""
+    name = report.get("image")
+    if not isinstance(name, str):
+        return None
+
+    def copy_one() -> pathlib.Path:
+        _require_plain(name)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        return pathlib.Path(shutil.copy(facet / name, destination))
+
+    return _copied_while_mine(facet, identifier, copy_one, reason="絵を写せなかった")
