@@ -145,6 +145,57 @@ struct AudioAnalysisTests {
         #expect(deferred.analyses == 2)
     }
 
+    // MARK: - 作業領域の再利用 (#3086)
+
+    /// 解析の入力にする窓。無音・正弦波・インパルス・固定乱数 (種が決まっているので何度作っても同じ)。
+    private static var probeWindows: [(name: String, window: [Float])] {
+        var state: UInt32 = 20_261_022
+        let noise = (0..<AudioAnalysis.windowSize).map { _ -> Float in
+            state = state &* 1_664_525 &+ 1_013_904_223
+            return Float(Int32(bitPattern: state)) / Float(Int32.max) * 0.5
+        }
+        var impulse = [Float](repeating: 0, count: AudioAnalysis.windowSize)
+        impulse[AudioAnalysis.windowSize / 2] = 1
+        return [
+            ("無音", [Float](repeating: 0, count: AudioAnalysis.windowSize)),
+            ("正弦波", sine(band: 40, amplitude: 0.5)),
+            ("インパルス", impulse),
+            ("固定乱数", noise),
+        ]
+    }
+
+    @Test("使い回す作業領域で解析した値は、毎回作る参照の値とビット一致する (前の窓の値を持ち越さない)")
+    func reusedScratchMatchesTheReference() {
+        let analyzer = AudioAnalyzer()
+        // 大きな値の後に無音・インパルスが来ても、前の窓が残らない順で、2 周する
+        let windows = Self.probeWindows
+        for window in windows + windows.reversed() + windows {
+            let reference = AudioAnalysis.analyze(window.window)
+            let reused = analyzer.analyze(window.window)
+            #expect(reused == reference, "\(window.name)")
+        }
+        #expect(analyzer.analyses == 12)
+    }
+
+    @Test("保存した前フレームの値は、次の解析で変わらない")
+    func savedLevelsAreIndependentOfTheNextAnalysis() {
+        let analyzer = AudioAnalyzer()
+        let loud = Self.probeWindows[3].window
+        let first = analyzer.analyze(loud)
+        let saved = first
+        let expected = AudioAnalysis.analyze(loud)
+        // 別の窓を解析しても、保存した値の配列は書き換わらない
+        for window in Self.probeWindows { _ = analyzer.analyze(window.window) }
+        #expect(first.spectrum == expected.spectrum)
+        #expect(first.spectrumLevels == expected.spectrumLevels)
+        #expect(saved == expected)
+        // 同じ窓を続けて 2 回解析した値は、別々の配列になる (片方を書き換えても他方に響かない)
+        var second = analyzer.analyze(loud)
+        let third = analyzer.analyze(loud)
+        second.spectrum[0] += 1
+        #expect(third.spectrum == expected.spectrum)
+    }
+
     @Test("無音にすると、置かれていた窓を解かずに捨て、無音を返す")
     func silencingDropsTheHeldWindow() {
         var deferred = DeferredLevels()
