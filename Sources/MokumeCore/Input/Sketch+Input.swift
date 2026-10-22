@@ -58,6 +58,15 @@ extension SketchPart {
     public var scrollX: Float { Self.input.scrollX }
     /// このフレームのスクロール量 (縦)。
     public var scrollY: Float { Self.input.scrollY }
+    /// このフレームのピンチの量 (トラックパッドで指を開くと正、閉じると負)。
+    ///
+    /// **倍率の差分のフレーム合計** — 0.1 は「1.1 倍に開いた」である。AppKit の `magnification` と
+    /// 同じ量なので、拡大率を持つスケッチは `zoom *= 1 + pinch` と書ける。1 フレームに届かなければ 0。
+    ///
+    /// **これはフレームの合計で、`draw()` から読むためのもの** (``scrollY`` と同じ)。窓の外から送るときは
+    /// `{"type": "pinched", "amount": 0.1}` で、同じフレームに 2 件届けば合計になる。
+    /// ``orbitControl(_:_:_:)`` はこれで寄る。
+    public var pinch: Float { Self.input.pinch }
     /// このフレームに、押したまま引きずった量 (横)。
     ///
     /// **押した瞬間には増えない。** `mouseX - pmouseX` を回す量に使うと、押した場所が

@@ -364,6 +364,9 @@ public final class SketchRuntime {
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
     /// 視点 (シーンの記述) と違ってフレームごとには戻らない。まだ触っていなければ `nil`。
     var orbit: Orbit?
+    /// 視点を戻す先。**最初に `orbitControl()` を呼んだフレームの ``orbit``** (`setup()` で書いた値か既定)。
+    /// ダブルクリックで戻す先になる ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    var orbitHome: Orbit?
     /// 視点を操る道具を、最後に進めたフレーム。
     ///
     /// 1 フレームに 2 回呼ばれても 2 回ぶん回さないための目印。同じ引きずった量を

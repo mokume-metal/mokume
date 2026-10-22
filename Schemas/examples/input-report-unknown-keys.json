@@ -5,6 +5,6 @@
   "ignored": 0,
   "dropped": 0,
   "warnings": [
-    "events[0]: Not read, so the event was taken without them: buton (the keys read are type, x, y, button, dx, dy, code, characters, isRepeat)"
+    "events[0]: Not read, so the event was taken without them: buton (the keys read are type, x, y, button, dx, dy, code, characters, isRepeat, amount, clickCount)"
   ]
 }

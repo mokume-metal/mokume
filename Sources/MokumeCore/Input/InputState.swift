@@ -18,13 +18,13 @@ import Foundation
 /// ## 見せる量と配る量は有限である
 ///
 /// 位置 (``x``・``previousX``)・動いた量 (``movedX``)・引きずった量 (``dragX``)・スクロール量
-/// (``scrollX``) と、配る量 (引きずり・移動・スクロールの 1 件ぶん) は、数でない値にも無限にも
+/// (``scrollX``)・ピンチの量 (``pinch``) と、配る量 (引きずり・移動・スクロールの 1 件ぶん) は、数でない値にも無限にも
 /// ならない ([#2731](https://github.com/mokume-metal/mokume/issues/2731))。外から送る経路は
 /// ±3.4e38 までの極端な値を運べ、その差や和は `Float` に収まらないことがある。差は原点の両側で
 /// 約 1.7e38 より遠い位置どうしで溢れ、和はずっと小さい量の繰り返しでも溢れる。``enqueue(_:)`` には
 /// 数でない値も渡せる。
 ///
-/// - **移動とスクロール** (`mouseMoved`・`mouseMovedBy`・`scrolled`) は、当てるとそうなるなら、
+/// - **移動・スクロール・ピンチ** (`mouseMoved`・`mouseMovedBy`・`scrolled`・`pinched`) は、当てるとそうなるなら、
 ///   状態にも配りにも入れずに捨て、1 度だけ言う
 /// - **押下と解放** (`mouseDown`・`mouseUp`) は、位置が有限でなければ**位置だけを捨てる**。釦の
 ///   状態は当てて、呼び出しも配る — 位置は前の値のまま。落とすと釦が押されたまま残り
@@ -64,6 +64,12 @@ public final class InputState {
     /// 直近のスクロール量 (このフレームぶん)。
     public private(set) var scrollX: Float = 0
     public private(set) var scrollY: Float = 0
+    /// 直近のピンチの量 (このフレームぶん・倍率の差分の合計)。開くと正、閉じると負
+    /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    public private(set) var pinch: Float = 0
+    /// このフレームに届いた、左ボタンの 2 回目の押下 (`clickCount == 2`) の数。**フレームの頭で 0 に戻る。**
+    /// ``SketchPart/orbitControl(_:_:_:)`` が視点を戻す合図に読む。スケッチ向けの口はまだ無い (作例が来てから)。
+    private(set) var leftDoubleClicks = 0
     /// 押したまま引きずった量 (このフレームぶん)。
     ///
     /// **押下は移動ではない。** `mouseX - pmouseX` には、押した瞬間にカーソルが押下
@@ -174,6 +180,8 @@ public final class InputState {
         previousY = y
         scrollX = 0
         scrollY = 0
+        pinch = 0
+        leftDoubleClicks = 0
         dragX = 0
         dragY = 0
         movedX = 0
@@ -270,6 +278,10 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             // 1 件ぶんが出来事にそのまま載っているので、控えずに渡せる
             dispatch(.mouseWheel(deltaX: dx, deltaY: dy))
+        case .pinched:
+            // 読むのはフレームの合計 (``pinch``) だけ。1 件ぶんを配る口は、作例が来てから
+            // ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
+            break
         }
     }
 
@@ -339,9 +351,9 @@ public final class InputState {
     private func apply(_ event: InputEvent) -> InputEvent? {
         let applied: InputEvent
         switch event {
-        case .mouseDown(let x, let y, let button) where !(x.isFinite && y.isFinite):
+        case .mouseDown(let x, let y, let button, let clickCount) where !(x.isFinite && y.isFinite):
             warnPositionKept(event)
-            applied = .mouseDown(x: self.x, y: self.y, button: button)
+            applied = .mouseDown(x: self.x, y: self.y, button: button, clickCount: clickCount)
         case .mouseUp(let x, let y, let button) where !(x.isFinite && y.isFinite):
             warnPositionKept(event)
             applied = .mouseUp(x: self.x, y: self.y, button: button)
@@ -373,8 +385,8 @@ public final class InputState {
     /// 出来事をそのまま埋めると `MouseButton(rawValue: 0)` と出る。名前の無い番号は番号で書く。
     static func spelled(_ event: InputEvent) -> String {
         switch event {
-        case .mouseDown(let x, let y, let button):
-            "mouseDown(x: \(x), y: \(y), button: \(spelled(button)))"
+        case .mouseDown(let x, let y, let button, let clickCount):
+            "mouseDown(x: \(x), y: \(y), button: \(spelled(button)), clickCount: \(clickCount))"
         case .mouseUp(let x, let y, let button):
             "mouseUp(x: \(x), y: \(y), button: \(spelled(button)))"
         default:
@@ -395,11 +407,12 @@ public final class InputState {
     /// 出来事 1 件ぶん、状態を進める。**検めは済んでいる** (``apply(_:)`` からだけ呼ぶ)。
     private func update(by event: InputEvent) {
         switch event {
-        case .mouseDown(let x, let y, let button):
+        case .mouseDown(let x, let y, let button, let clickCount):
             self.x = x
             self.y = y
             self.button = button
             pressedButtons.insert(button)
+            if button == .left, clickCount == 2 { leftDoubleClicks += 1 }
         case .mouseUp(let x, let y, let button):
             self.x = x
             self.y = y
@@ -416,6 +429,8 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             scrollX += dx
             scrollY += dy
+        case .pinched(let amount):
+            pinch += amount
         case .keyDown(let code, let characters, let isRepeat):
             let wasPressed = !pressedKeys.insert(code).inserted
             if Self.isFreshPress(wasPressed: wasPressed, isRepeat: isRepeat) {
@@ -453,7 +468,7 @@ public final class InputState {
     /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
     private func keepsQuantitiesFinite(_ event: InputEvent) -> Bool {
         switch event {
-        case .mouseDown(let x, let y, _), .mouseUp(let x, let y, _):
+        case .mouseDown(let x, let y, _, _), .mouseUp(let x, let y, _):
             x.isFinite && y.isFinite
         case .mouseMoved(let x, let y):
             x.isFinite && y.isFinite && keepsMotionFinite(deltaX: x - self.x, deltaY: y - self.y)
@@ -461,6 +476,8 @@ public final class InputState {
             keepsMotionFinite(deltaX: dx, deltaY: dy)
         case .scrolled(let dx, let dy):
             (scrollX + dx).isFinite && (scrollY + dy).isFinite
+        case .pinched(let amount):
+            amount.isFinite && (pinch + amount).isFinite
         case .keyDown, .keyUp:
             true
         }

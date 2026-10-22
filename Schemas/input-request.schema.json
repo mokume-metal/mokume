@@ -17,14 +17,14 @@
     },
     "events": {
       "type": "array",
-      "description": "The events to send. They are fed in the order they appear. **An unknown type, or an event that cannot be read at all (one without type, or with a value of the wrong type), costs only that one event**: it counts in ignored and the rest still go through. **A request whose id can be read is always answered**: events that are missing, null or not an array count as one in ignored, and nothing is fed. A request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply, and a request whose id was already answered is not processed again (see id). **A movement or scroll that would make the pointer position, a movement, a drag or a scroll amount overflow a 32-bit float is dropped when it is applied.** A difference overflows once its size passes about 3.4e38, so positions on either side of the canvas more than about 1.7e38 from it are enough (mouseMoved from x = -1.8e38 to x = 1.8e38, even across frames). A frame's total overflows the same way, even from much smaller amounts sent many times (40 scrolled events of dy = 1e37 in one frame: 34 reach the sketch and 6 are dropped). The dropped event still counts in accepted, since whether it overflows depends on the state when it is applied, and the sketch says so once as a warning on standard error. When more events arrive than can be held and the oldest is applied on the spot to make room, it is checked against the totals of the frame before, which have not been reset yet, so an amount around 1e38 can be dropped there that would have fitted at the start of the next frame. A mouseDown or mouseUp is never dropped for its position: its button change is applied and its position is left where it was. Positions outside the canvas that stay finite are applied as they are, not clamped.",
+      "description": "The events to send. They are fed in the order they appear. **An unknown type, or an event that cannot be read at all (one without type, or with a value of the wrong type), costs only that one event**: it counts in ignored and the rest still go through. **A request whose id can be read is always answered**: events that are missing, null or not an array count as one in ignored, and nothing is fed. A request whose id cannot be read (missing, not a string, or text that is not JSON) gets no reply, and a request whose id was already answered is not processed again (see id). **A movement, scroll or pinch that would make the pointer position, a movement, a drag, a scroll amount or the pinch total overflow a 32-bit float is dropped when it is applied.** A difference overflows once its size passes about 3.4e38, so positions on either side of the canvas more than about 1.7e38 from it are enough (mouseMoved from x = -1.8e38 to x = 1.8e38, even across frames). A frame's total overflows the same way, even from much smaller amounts sent many times (40 scrolled events of dy = 1e37 in one frame: 34 reach the sketch and 6 are dropped). The dropped event still counts in accepted, since whether it overflows depends on the state when it is applied, and the sketch says so once as a warning on standard error. When more events arrive than can be held and the oldest is applied on the spot to make room, it is checked against the totals of the frame before, which have not been reset yet, so an amount around 1e38 can be dropped there that would have fitted at the start of the next frame. A mouseDown or mouseUp is never dropped for its position: its button change is applied and its position is left where it was. Positions outside the canvas that stay finite are applied as they are, not clamped.",
       "items": {
         "type": "object",
         "required": [
           "type"
         ],
         "additionalProperties": false,
-        "description": "A key not listed here is not read: the event is taken without it (it is not ignored, and the request does not fail), and the reply's warnings name the key with the event's position (events[0]) and the keys that are read. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the left, primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional, and **a null for one of them reads as left out**. A null for a required field (x, y, code) is the same as leaving it out: that one event counts in ignored. mouseMoved says where the pointer went (x and y); mouseMovedBy says how far it moved (dx and dy) without moving the position, which is what the sketch's own window sends while it holds the pointer (requestPointerLock()).",
+        "description": "A key not listed here is not read: the event is taken without it (it is not ignored, and the request does not fail), and the reply's warnings name the key with the event's position (events[0]) and the keys that are read. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value; pinched needs amount, because a pinch with no amount moves nothing. button (0 = the left, primary button), clickCount (1 = a single press), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional, and **a null for one of them reads as left out**. A null for a required field (x, y, code, amount) is the same as leaving it out: that one event counts in ignored. mouseMoved says where the pointer went (x and y); mouseMovedBy says how far it moved (dx and dy) without moving the position, which is what the sketch's own window sends while it holds the pointer (requestPointerLock()).",
         "allOf": [
           {
             "if": {
@@ -67,6 +67,23 @@
                 "code"
               ]
             }
+          },
+          {
+            "if": {
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "const": "pinched"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "amount"
+              ]
+            }
           }
         ],
         "properties": {
@@ -78,6 +95,7 @@
               "mouseMoved",
               "mouseMovedBy",
               "scrolled",
+              "pinched",
               "keyDown",
               "keyUp"
             ]
@@ -93,6 +111,15 @@
           "button": {
             "type": ["integer", "null"],
             "description": "The button. **The macOS button number** (NSEvent.buttonNumber: 0 = left, the primary one; 1 = right; 2 = center), which is a different order from the browser's MouseEvent.button (1 = the middle button, 2 = the secondary one). Buttons past these three, such as back and forward, arrive as their own numbers. On the sketch's own surface this number reads as a `MouseButton`, such as `.right`."
+          },
+          "clickCount": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "For mouseDown, which press in a run this is: 1 for a single press (also what an omitted value reads as), 2 for the second press of a double-click. The sketch's own window sends NSEvent.clickCount as it is. **A value that is not an integer or is negative counts that one event in ignored.** orbitControl() returns to its first view on a second press of the left button (clickCount 2). Ignored on mouseUp."
+          },
+          "amount": {
+            "type": ["number", "null"],
+            "description": "For pinched, how much the trackpad pinch changed the scale: **the change in magnification**, as AppKit's NSEvent.magnification gives it (0.1 = opened to 1.1 times, negative = closed). The sketch reads the total of a frame as `pinch`: two events of 0.1 in one frame read as 0.2, and a frame with none reads 0. orbitControl() moves the distance by a factor of 1 / (1 + pinch), within its limits. An amount that is not a finite number, or whose total in a frame would not be, is dropped when it is applied."
           },
           "dx": {
             "type": ["number", "null"],

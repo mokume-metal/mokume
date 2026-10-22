@@ -170,7 +170,7 @@ public struct Orbit: Equatable, Sendable {
     /// [#2643]: https://github.com/mokume-metal/mokume/issues/2643
     @discardableResult
     mutating func advance(
-        dragX: Float, dragY: Float, scroll: Float, isDragging: Bool,
+        dragX: Float, dragY: Float, scroll: Float, pinch: Float = 0, isDragging: Bool,
         sensitivity: SIMD3<Float>
     ) -> HeldAxes {
         var held = HeldAxes()
@@ -200,8 +200,33 @@ public struct Orbit: Equatable, Sendable {
             let clamped = next.isNaN ? next : min(max(next, lower), upper)
             if clamped.isFinite { distance = clamped } else { held.zoom = true }
         }
+        // ピンチは、開いた倍率の分だけ寄る (距離を `1 / (1 + p)` 倍・[#2762])。**効きは寄りの感度を掛ける**
+        // — スクロールと同じ軸の操作で、感度は軸ごとの効きだから。`1 + p` が 0 以下 (閉じる側に −1 以上) や、
+        // 有限にならない量は、スクロールと同じく進めずに `held.zoom` で知らせる
+        if pinch != 0 {
+            let scale = 1 + pinch * sensitivity.z
+            let (lower, upper) = distanceLimits
+            let next = scale.isFinite && scale > 0 ? distance / scale : .nan
+            let clamped = next.isNaN ? next : min(max(next, lower), upper)
+            if clamped.isFinite { distance = clamped } else { held.zoom = true }
+        }
         clampToLimits()
         return held
+    }
+
+    /// 見ている場所 (注視点・距離・水平角・仰角) を `home` に戻し、慣性の速さを 0 にする
+    /// (ダブルクリックで始めの視点へ戻す・[#2762])。**慣性と寄れる限界は戻さない** — 戻すのは視点で、
+    /// 作者がその後に変えた設定ではない。
+    ///
+    /// [#2762]: https://github.com/mokume-metal/mokume/issues/2762
+    mutating func returnView(to home: Orbit) {
+        center = home.center
+        distance = home.distance
+        yaw = home.yaw
+        pitch = home.pitch
+        yawSpeed = 0
+        pitchSpeed = 0
+        clampToLimits()
     }
 
     /// 引きずった量だけ、見ている先を画面の面に沿って動かす (平行移動・[#2461])。

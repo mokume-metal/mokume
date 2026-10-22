@@ -220,6 +220,11 @@ final class PointerAndKeys: Sketch {
     func draw() {
         background(15, 18, 23)
 
+        // トラックパッドのピンチで大きさを変える。**開いた倍率の分だけ** (`pinch` は 0.1 で 1.1 倍)
+        // — フレームの合計なので `draw()` から読む。ピンチが無ければ 0 で、触らずに書き出した絵は変えない
+        // ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
+        size = constrain(size * (1 + pinch), 20, 400)
+
         // 矢印を押している間だけ四角が進む。**押しっぱなしは状態で読む** — `keyPressed()` は
         // 押した 1 回しか呼ばれない。押したまま ⌘Tab で窓を離れると離した扱いになり、止まる。
         // 止めていたところから描く 1 枚 (return の描き直し・space の再開) の `deltaTime` は

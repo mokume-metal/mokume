@@ -3,10 +3,10 @@
 
 import simd
 
-// 引きずって回し、スクロールで寄る。
+// 引きずって回し、スクロールとピンチで寄り、ダブルクリックで始めの視点へ戻る。
 extension SketchPart {
 
-    /// 引きずって回し、右ドラッグで覗き込み、スクロールで寄れるようにする。
+    /// 引きずって回し、右ドラッグで覗き込み、スクロールとピンチで寄り、ダブルクリックで戻れるようにする。
     ///
     /// `draw()` の中で毎フレーム 1 回呼ぶ。
     ///
@@ -15,6 +15,8 @@ extension SketchPart {
     /// | 左ドラッグ (中ボタンなど、ほかのボタンも) | 注視点のまわりを回る。**指の向きへ被写体が回る** (掴んで回す向き) |
     /// | 右ドラッグ・⌥ を押したまま左ドラッグ | 注視点を画面の面に沿ってずらす (平行移動)。**被写体が指に付いて動く** |
     /// | スクロール | 寄る・引く |
+    /// | ピンチ (トラックパッド) | 開くと寄り、閉じると引く。開いた倍率の分だけ寄る (距離が `1 / (1 + ``pinch``)` 倍) |
+    /// | ダブルクリック (左ボタン) | 始めの視点へ戻る |
     ///
     /// 平行移動の量は、注視点の奥行きで 1 画素が覆う長さで測る。注視点の奥行きにある点は、
     /// 指にぴったり付いて動く。感度の引数は回す・寄るの効きで、平行移動には掛からない。
@@ -32,6 +34,10 @@ extension SketchPart {
     /// }
     /// ```
     ///
+    /// 戻る先は、**最初にこれを呼んだフレームの ``orbit``** — `setup()` で ``orbit`` に書いた視点があれば
+    /// それ、無ければ既定の視点である。戻ると慣性の速さも 0 になる (慣性の設定と寄れる限界は変わらない)。
+    /// 戻したフレームは、ほかの操作 (引きずり・スクロール・ピンチ) を食わない。
+    ///
     /// 始まりは**既定の視点と同じ位置**なので、これを足しただけでは絵が動かない。
     /// 寄り・引きの限界も既定の投影の手前・奥の面に合わせてあるので、限界まで動かしても
     /// 被写体が切れない。
@@ -39,7 +45,7 @@ extension SketchPart {
     /// - Parameters:
     ///   - sensitivityX: 横に引きずったときの効き。負にすると回る向きが逆になる。
     ///   - sensitivityY: 縦に引きずったときの効き。
-    ///   - sensitivityZ: スクロールの効き。
+    ///   - sensitivityZ: スクロールとピンチの効き (ピンチは量に掛ける)。
     ///
     ///   数でない値・無限の感度は、警告してその軸だけ効かせない (他の軸と慣性の流れは
     ///   いつもどおり進む)。有限でも、引きずった量との積が溢れた軸はそのフレームだけ進めない。
@@ -76,6 +82,8 @@ extension SketchPart {
         // 1 段進み、「無視する」にならない。形の組み立ての中も同じく先に断る (#1529)
         guard canvas.admits(.camera) else { return }
         var orbit = runtime.orbit ?? Orbit.fitting(width: canvas.width, height: canvas.height)
+        // 戻す先は、最初に呼んだフレームの視点 (#2762)。ここで控え、以後は変えない
+        if runtime.orbitHome == nil { runtime.orbitHome = orbit }
 
         // 感度が数でない・無限なら、受け口で知らせる (#2643・ADR-0020 決定 5)。効かせない
         // のは**その軸だけ** — 進めた先が有限にならない軸を進めないのは ``Orbit/advance`` の
@@ -88,8 +96,14 @@ extension SketchPart {
                 .badOrbitSensitivity,
                 "orbitControl(): got a sensitivity that is not a number, or an infinite one, so it had no effect on its axis")
         }
-        // 同じフレームで 2 度呼ばれても、引きずった量を 2 度食わない
-        if runtime.orbitAdvancedAt != runtime.frameCount {
+        // **ダブルクリックは視点を戻す** (#2762)。戻したフレームはほかの操作を食わない — 戻した後に
+        // 2 回目の押下までの引きずりを足すと、戻った先から少しずれる。同じフレームで 2 度呼ばれても
+        // 戻すのは同じ視点なので、2 度目も同じ答えになる
+        if runtime.input.leftDoubleClicks > 0, let home = runtime.orbitHome {
+            runtime.orbitAdvancedAt = runtime.frameCount
+            orbit.returnView(to: home)
+        } else if runtime.orbitAdvancedAt != runtime.frameCount {
+            // 同じフレームで 2 度呼ばれても、引きずった量を 2 度食わない
             runtime.orbitAdvancedAt = runtime.frameCount
             let input = runtime.input
             // 右ボタンか、⌥ を押したままの左ボタンなら平行移動 (#2461)。ほかの押下は今までどおり回す
@@ -102,7 +116,7 @@ extension SketchPart {
             // 平行移動の間は回さない。回す軸は 0 の引きずりとして進め、慣性の速さも捨てる
             let held = orbit.advance(
                 dragX: pans ? 0 : input.dragX, dragY: pans ? 0 : input.dragY, scroll: input.scrollY,
-                isDragging: input.isMouseDown, sensitivity: sensitivity)
+                pinch: input.pinch, isDragging: input.isMouseDown, sensitivity: sensitivity)
             let panHeld =
                 pans
                 && !orbit.pan(
