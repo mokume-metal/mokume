@@ -745,6 +745,8 @@ class LengthTest(unittest.TestCase):
     macOS の awk (20200816) の substr は、切り出す長さによらず呼ぶたびに元の文字列の長さに
     比例してかかるので、語ごと・行ごとに `substr(src, …)` を呼んでも同じ 2 乗になる (#3115 の
     反証。いまは文字の配列から繋ぐ `rng`)。
+    断片の先頭を 1 語ずつ文字列から削る読み (前置が長く並ぶ形) と、区切り語を 1 文字ずつ継ぎ足す
+    読みも同じ 2 乗だった (語の位置を進める読みと、半分ずつ繋ぐ `hjoin` に替えた)。
 
     **守るのは「長さに対して線形」と「素の読みの数倍に収まる」で、「ある機械で何秒に収まる」では
     ない** (#3115)。CPU 時間の絶対値は機械の速さと負荷で動き、queue の CI で、guard に触れて
@@ -760,8 +762,10 @@ class LengthTest(unittest.TestCase):
     2. **素の読みとの倍率**: 同じ入力を素の awk が 1 度だけ文字ごとに読む時間 (PLAIN_READ) の
        MAX_VS_PLAIN 倍未満。線形のまま定数倍遅くなる退行は、伸びでは見えない (比は 4 倍の
        まま) が、フックの timeout (10 秒) へは近づく。この木の実測は素の読みの 1.1〜4.8 倍
-       (引用の本文が 1.1 倍、語を区切るだけの長い列が 4.8 倍) で、10 倍はその 2 倍の余裕。
-       素の読みが 500KB で 0.25 秒の機械では guard は 2.5 秒未満で、timeout の 4 分の 1。
+       (引用の本文が 1.1 倍、語を区切るだけの長い列が 4.8 倍。gh の前に前置が並ぶ形は語ごとに
+       予約語・前置の表を引くので A=1 が 5.5 倍・! が 7.9 倍で、その 2 倍の 12・16 倍を上限にする)。
+       10 倍はその 2 倍の余裕。素の読みが 500KB で 0.25 秒の機械では guard は 2.5 秒未満で、
+       timeout の 4 分の 1。
 
     **測り方** (比を、負荷の偏りと固定費に強くする):
 
@@ -834,9 +838,9 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
         return small > 0 and large / small < cls.MAX_GROWTH
 
     @classmethod
-    def reads_within_budget(cls, guard, plain):
-        """固定費を引いた guard の CPU 時間が、素の読みの MAX_VS_PLAIN 倍未満か。"""
-        return guard < plain * cls.MAX_VS_PLAIN
+    def reads_within_budget(cls, guard, plain, within=None):
+        """固定費を引いた guard の CPU 時間が、素の読みの within (既定は MAX_VS_PLAIN) 倍未満か。"""
+        return guard < plain * (within or cls.MAX_VS_PLAIN)
 
     @staticmethod
     def repeat(piece, size):
@@ -866,8 +870,12 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
         plain = min(self.plain_cpu(large_command) for _ in range(self.ROUNDS))
         return size, min(smalls) - fixed, min(larges) - fixed, plain - plain_fixed
 
-    def assert_linear(self, piece, build):
-        """build(本文) の形のコマンドの読みが、線形に伸び、素の読みの数倍に収まるかを見る。"""
+    def assert_linear(self, piece, build, within=None):
+        """build(本文) の形のコマンドの読みが、線形に伸び、素の読みの数倍に収まるかを見る。
+
+        within は素の読みとの倍率の上限 (既定は MAX_VS_PLAIN)。語ごとに予約語・前置の表を引く
+        形は素の読みの 6〜8 倍かかるので、その分だけ緩める (自然な値の 2 倍)。
+        """
         size, small, large, plain = self.measure(piece, build)
         self.assertTrue(
             self.grows_linearly(small, large),
@@ -876,9 +884,9 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
             f"{self.MAX_GROWTH:.0f} 倍以上は 2 乗の疑い",
         )
         self.assertTrue(
-            self.reads_within_budget(large, plain),
+            self.reads_within_budget(large, plain, within),
             f"{size * self.GROWTH} バイトの読みが {large:.2f} 秒で、素の読み ({plain:.2f} 秒) の"
-            f" {large / plain:.1f} 倍。{self.MAX_VS_PLAIN:.0f} 倍以上はフックの timeout (10 秒) に近づく",
+            f" {large / plain:.1f} 倍。{within or self.MAX_VS_PLAIN:.0f} 倍以上はフックの timeout (10 秒) に近づく",
         )
 
     def test_long_double_quoted_body(self):
@@ -898,6 +906,17 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
             "本文の行 <<X ; && ' \"\n",
             lambda lines: f"gh issue {COMMENT} 1 -F - <<'EOF'\n{lines}EOF",
         )
+
+    def test_long_run_of_assignment_prefixes(self):
+        """gh の前に前置が長く並ぶ形。前置を 1 語ずつ削る読みが 2 乗だった (#3115)。"""
+        self.assert_linear("A=1 ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=12)
+
+    def test_long_run_of_negations(self):
+        self.assert_linear("! ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=16)
+
+    def test_long_heredoc_delimiter(self):
+        """区切り語を 1 文字ずつ継ぎ足すと 2 乗だった (#3115)。"""
+        self.assert_linear("A", lambda word: f"cat <<{word}\n{word}\ngh issue {COMMENT} 1 -b x")
 
     # --- 物差しそのものの検査 (#3115) ---
     #
