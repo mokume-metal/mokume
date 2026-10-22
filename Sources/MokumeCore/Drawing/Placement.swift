@@ -22,21 +22,15 @@ public struct Placement: Equatable, Sendable {
     public var x: Float
     public var y: Float
     public var z: Float
-    /// 大きさの倍率 (どの軸にも同じ)。軸ごとに変えるときは ``axisScale`` を使う。
-    ///
-    /// ``axisScale`` と掛け合わさる (`scale: 2` と `axisScale: Vector3(1, 4, 1)` なら、各軸の倍率は
-    /// `2, 8, 2`)。
-    public var scale: Float
     /// 軸ごとの大きさの倍率。**既定は `Vector3(1, 1, 1)`** (どの軸も伸ばさない)。
     ///
     /// 高さだけ伸ばした箱 (棒グラフの街並み・音の柱) のように、軸ごとに大きさの違うものを
     /// まとめて置くのに使う。倍率は**形自身の軸**に掛かり、回転より先に効く (`transform` の順は
-    /// 大きさ → 回転 → 位置) ので、回して置いた形も、回す前の軸に沿って伸びる。一様の倍率
-    /// (``scale``) と掛け合わさる。
+    /// 大きさ → 回転 → 位置) ので、回して置いた形も、回す前の軸に沿って伸びる。負の値は、その軸で
+    /// 裏返す。軸のどれかが数でない値・無限の置き場所は置かれない (`shape(_:at:)` が 1 度だけ注意する)。
     ///
-    /// `Placement(scale: Vector3(…))` の形で渡すと、この値になる (そのとき ``scale`` は 1 のまま)。
-    /// 負の値は、その軸で裏返す。軸のどれかが数でない値・無限の置き場所は、``scale`` と同じく置かれない
-    /// (`shape(_:at:)` が 1 度だけ注意する)。
+    /// どの軸にも同じ倍率なら、`init(x:y:z:scale:rotation:fill:)` に数を 1 つ渡す
+    /// (`Placement(scale: 2)` は `Placement(scale: Vector3(2, 2, 2))` と等しい)。
     ///
     /// ```swift
     /// // 高さの違う 8 本の柱を、箱 1 つの形から置く
@@ -52,7 +46,7 @@ public struct Placement: Equatable, Sendable {
     /// }
     /// shape(unitBox, at: bars)
     /// ```
-    public var axisScale: Vector3
+    public var scale: Vector3
     /// 各軸まわりの回転 (ラジアン)。**横 → 縦 → 奥行き**の順に掛かる。
     public var rotation: Vector3
     /// この置き場所の塗り。`nil` なら何も掛からず、記録した色のまま出る。
@@ -70,24 +64,20 @@ public struct Placement: Equatable, Sendable {
     /// 加えて、最初に置いた後は引いた頂点 (約 125 MiB) も持つ。
     public var fill: LinearRGBA?
 
+    /// どの軸にも同じ倍率で作る。`scale` は 3 つの軸に同じ値で入る (``scale`` は `Vector3(scale, scale, scale)`)。
+    ///
+    /// 軸ごとに変えるなら `init(x:y:z:scale:rotation:fill:)` の `Vector3` を受ける側を使う。
     public init(
         x: Float = 0, y: Float = 0, z: Float = 0, scale: Float = 1,
         rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
     ) {
-        self.x = x
-        self.y = y
-        self.z = z
-        self.scale = scale
-        self.axisScale = Vector3(1, 1, 1)
-        self.rotation = rotation
-        self.fill = fill
+        self.init(x: x, y: y, z: z, scale: Vector3(scale, scale, scale), rotation: rotation, fill: fill)
     }
 
-    /// 軸ごとの倍率で作る。`scale` は ``axisScale`` に入る (一様の ``scale`` は 1)。
+    /// 軸ごとの倍率で作る。
     ///
     /// `Placement(x: 100, y: 200, scale: Vector3(1, 4, 1))` で置いた形は、`push()` のあとに
     /// `translate(100, 200, 0)`・`scale(1, 4, 1)` を同じ順で書いて置いたものと同じ絵になる。
-    /// 倍率が 1 つの数のときは ``init(x:y:z:scale:rotation:fill:)`` を使う。
     public init(
         x: Float = 0, y: Float = 0, z: Float = 0, scale: Vector3,
         rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
@@ -95,8 +85,7 @@ public struct Placement: Equatable, Sendable {
         self.x = x
         self.y = y
         self.z = z
-        self.scale = 1
-        self.axisScale = scale
+        self.scale = scale
         self.rotation = rotation
         self.fill = fill
     }
@@ -111,12 +100,9 @@ public struct Placement: Equatable, Sendable {
         if rotation.x != 0 { built.rotateX(by: rotation.x) }
         if rotation.y != 0 { built.rotateY(by: rotation.y) }
         if rotation.z != 0 { built.rotateZ(by: rotation.z) }
-        // 一様の倍率に軸ごとの倍率を掛ける。軸ごとの倍率が既定 (1) なら、一様の倍率そのまま (1 を掛けても値は
-        // 変わらないので、これまでの一様の置き方は 1 ビットも変わらない)
-        let sx = scale * axisScale.x
-        let sy = scale * axisScale.y
-        let sz = scale * axisScale.z
-        if sx != 1 || sy != 1 || sz != 1 { built.scale(x: sx, y: sy, z: sz) }
+        if scale.x != 1 || scale.y != 1 || scale.z != 1 {
+            built.scale(x: scale.x, y: scale.y, z: scale.z)
+        }
         return built
     }
 
@@ -128,7 +114,7 @@ public struct Placement: Equatable, Sendable {
 
     /// 位置・倍率 (軸ごとの倍率も)・回転がどれも有限か。
     var hasFiniteGeometry: Bool {
-        [x, y, z, scale, axisScale.x, axisScale.y, axisScale.z, rotation.x, rotation.y, rotation.z]
+        [x, y, z, scale.x, scale.y, scale.z, rotation.x, rotation.y, rotation.z]
             .allSatisfy(\.isFinite)
     }
 

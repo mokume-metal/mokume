@@ -7,7 +7,7 @@ import simd
 
 @testable import MokumeCore
 
-/// `Placement` の軸ごとの倍率 ([#2460] の D・完了条件 1〜3)。
+/// `Placement` の軸ごとの倍率 ([#2460] の D・完了条件 1〜3)。倍率は `Vector3` の 1 つの格納で、一様の倍率の書き方は各軸に同じ値を入れる。
 ///
 /// 値としての組み立て (`transform`・`isUsable`) は GPU を要さない。絵が `push()` / `translate()` /
 /// `scale()` を同じ順で書いたものと画素で一致することは、GPU のある実行環境で見る。
@@ -20,9 +20,9 @@ struct PlacementAxisScaleValueTests {
             && simd_equal(a.columns.2, b.columns.2) && simd_equal(a.columns.3, b.columns.3)
     }
 
-    @Test("既定の軸ごとの倍率は (1, 1, 1) で、一様の倍率のままの置き場所は行列が変わらない")
+    @Test("既定の倍率は (1, 1, 1) で、一様の倍率で書いた置き場所は行列が変わらない")
     func uniformPlacementsKeepTheirMatrix() {
-        #expect(Placement().axisScale == Vector3(1, 1, 1))
+        #expect(Placement().scale == Vector3(1, 1, 1))
         for scale: Float in [1, 2, -1.5, 0.25] {
             let placement = Placement(x: 3, y: 4, z: 5, scale: scale, rotation: Vector3(0.1, 0.2, 0.3))
             var expected = Transform.identity
@@ -43,15 +43,28 @@ struct PlacementAxisScaleValueTests {
         expected.rotateZ(by: 0.5)
         expected.scale(x: 1, y: 4, z: 1)
         #expect(sameMatrix(placement.transform.matrix, expected.matrix))
-        #expect(placement.scale == 1, "Vector3 で渡した倍率が一様の倍率にも入っている")
+        #expect(placement.scale == Vector3(1, 4, 1))
     }
 
-    @Test("一様の倍率と軸ごとの倍率は掛け合わさる")
-    func uniformAndAxisScaleMultiply() {
-        var placement = Placement(scale: 2)
-        placement.axisScale = Vector3(1, 4, 0.5)
+    @Test("3 つの軸にそれぞれ別の倍率を渡すと、各軸にその倍率が掛かる")
+    func eachAxisGetsItsOwnFactor() {
+        let placement = Placement(scale: Vector3(2, 3, 5))
         var expected = Transform.identity
-        expected.scale(x: 2, y: 8, z: 1)
+        expected.scale(x: 2, y: 3, z: 5)
+        #expect(sameMatrix(placement.transform.matrix, expected.matrix))
+    }
+
+    @Test("一様の倍率で渡した置き場所は、各軸に同じ値を入れた置き場所と等しい")
+    func uniformScaleFillsEveryAxis() {
+        #expect(Placement(scale: 2) == Placement(scale: Vector3(2, 2, 2)))
+        #expect(Placement(x: 1, y: 2, z: 3, scale: -1.5) == Placement(x: 1, y: 2, z: 3, scale: Vector3(-1.5, -1.5, -1.5)))
+        #expect(Placement(scale: 2).scale == Vector3(2, 2, 2))
+        #expect(Placement(scale: 2) != Placement(scale: Vector3(2, 4, 2)))
+        // 倍率は 1 つの格納なので、読んだ軸を書き換えると行列にも効く
+        var placement = Placement(scale: 2)
+        placement.scale.y = 8
+        var expected = Transform.identity
+        expected.scale(x: 2, y: 8, z: 2)
         #expect(sameMatrix(placement.transform.matrix, expected.matrix))
     }
 
@@ -197,7 +210,7 @@ struct PlacementAxisScaleDrawingTests {
                 canvas.push()
                 canvas.translate(placement.x, placement.y, 0)
                 canvas.rotateZ(placement.rotation.z)
-                canvas.scale(placement.axisScale.x, placement.axisScale.y, placement.axisScale.z)
+                canvas.scale(placement.scale.x, placement.scale.y, placement.scale.z)
                 canvas.shape(shape)
                 canvas.pop()
             }
@@ -207,22 +220,26 @@ struct PlacementAxisScaleDrawingTests {
         #expect(coveredPixels(placed) > 0, "何も描かれていない (検査の前提)")
     }
 
-    @Test("一様の倍率で書いた置き場所の絵は、軸ごとの倍率 (1, 1, 1) を足しても変わらない")
-    func uniformPlacementPictureIsUnchanged() throws {
-        let uniform = try picture(lit: true) { canvas in
+    @Test("一様の倍率で書いた置き場所の絵は、translate・rotate・scale で置いた絵と一致する")
+    func uniformPlacementMatchesDirect() throws {
+        let placed = try picture(lit: true) { canvas in
             let unit = canvas.createShape { canvas.box(20) }
             canvas.shape(
                 unit,
                 at: [Placement(x: 100, y: 150, scale: 2, rotation: Vector3(0.4, 0.3, 0.5))])
         }
-        let viaAxis = try picture(lit: true) { canvas in
-            let unit = canvas.createShape { canvas.box(20) }
-            canvas.shape(
-                unit,
-                at: [Placement(x: 100, y: 150, scale: Vector3(2, 2, 2), rotation: Vector3(0.4, 0.3, 0.5))])
+        let direct = try picture(lit: true) { canvas in
+            canvas.push()
+            canvas.translate(100, 150, 0)
+            canvas.rotateX(0.4)
+            canvas.rotateY(0.3)
+            canvas.rotateZ(0.5)
+            canvas.scale(2, 2, 2)
+            canvas.box(20)
+            canvas.pop()
         }
-        let gap = differingPixels(uniform, viaAxis)
-        #expect(gap == 0, "scale: 2 と scale: Vector3(2, 2, 2) が \(gap) 画素違う")
+        let gap = differingPixels(placed, direct)
+        #expect(gap == 0, "scale: 2 の置き場所が直に置いた絵と \(gap) 画素違う")
     }
 
     @Test("軸ごとの倍率が数でない置き場所は置かれず、ほかは置かれて、注意が 1 度出る")
