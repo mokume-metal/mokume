@@ -1,9 +1,10 @@
 # 使い捨て (merge しない)。#3010 の完了条件 2: 専用機に前の job から残った
-# CPU を食うプロセス (#2959 の yes を疑う) があるかを読むだけ。何も殺さない。
+# CPU を食うプロセスを読む。2 度目の push で、#2959 が残した yes (2026-10-19 15:36:41Z
+# に立ち、ppid=1 で残ったもの) だけを止める。
 name: runner-ps-3010
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
     paths: [.github/workflows/runner-ps-3010.yml]
 permissions:
   contents: read
@@ -20,3 +21,14 @@ jobs:
           ps -Ao pid,ppid,user,pcpu,etime,lstart,comm -r | head -25 | sed "s#$HOME#~#g; s#/[^ ]*/##"
           echo "## yes"
           ps -Ao pid,ppid,user,pcpu,etime,lstart,comm | awk 'NR==1 || $NF ~ /(^|\/)yes$/' | sed "s#$HOME#~#g"
+      - name: '#2959 の yes を止める'
+        run: |
+          # 親が launchd (ppid=1) の yes だけを止める。job の中で立てたものは無い
+          pids=$(ps -Ao pid=,ppid=,comm= | awk '$2 == 1 && $3 ~ /(^|\/)yes$/ {print $1}')
+          echo "止める: ${pids:-なし}"
+          [ -n "$pids" ] && kill $pids
+          sleep 2
+          echo "## 止めた後の yes"
+          ps -Ao pid,ppid,user,pcpu,comm | awk 'NR==1 || $NF ~ /(^|\/)yes$/'
+          sleep 60
+          sysctl -n vm.loadavg
