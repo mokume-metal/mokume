@@ -113,6 +113,9 @@ import MokumeDiagnostics
 /// ``SketchPart/jumpTime(_:)`` は音を止めない・飛ばさない。
 ///
 /// 出力の機材が開けないときは、鳴らさずに実時間で位置を進め、そのことを 1 度だけ知らせる。
+/// 外した (`detach(_:)`) ファイルを足し直して鳴らし直すときは、鳴らす分の標本を読み込んだファイルから
+/// もう 1 度読む (外している間は解析用のモノラルの標本だけを持つ)。読み直せないときも、鳴らさずに実時間で
+/// 位置を進め、読めなかった事情とともに 1 度だけ知らせる。
 /// 出力の機材が替わって音が止まったときは、止まった位置から鳴らし直す。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -124,8 +127,16 @@ public final class SoundFile: Inlet, EffectInput {
 
     /// 解析に使う標本列 (チャンネルを平均したモノラル)。
     let samples: [Float]
-    /// 読み込んだ器。鳴らすときに player へ渡し、鳴らさないと決まったら手放す。
+    /// 読み込んだ器 (左右などチャンネルごとの標本)。鳴らすときに player へ渡し、鳴らさないと決まったら
+    /// 手放す。手放した後に足し直して鳴らすときは、``source`` から読み直す。外している間に持ち続けるのは、
+    /// 解析用のモノラルの ``samples`` だけである (器の写しは持たない)。
     private var buffer: AVAudioPCMBuffer?
+    /// 読み込んだときの器の形式 (チャンネル数・標本化率)。読み直したファイルが同じものかを見分ける。
+    private let format: AVAudioFormat
+    /// 読み込んだときの標本の数。
+    private let frameLength: AVAudioFrameCount
+    /// 読み込んだファイルの場所。足し直して鳴らすとき、手放した器を読み直すのに使う。
+    private let source: URL?
     /// 渡された名前。知らせに載せる。
     private let name: String
     private weak var owner: (any Sketch)?
@@ -220,6 +231,9 @@ public final class SoundFile: Inlet, EffectInput {
         case realTime(origin: TimeInterval)
         /// 実際に鳴らしている。位置は player が描いた数から読む。
         case speaker(FilePlayer)
+        /// 足し直した後で、鳴らす流れは決まったが、器をまだ読み直していない。**器が要るのは実際に鳴らす
+        /// とき (``beginSegment()``) だけ**で、エフェクトへ通すだけなら (``route(into:)``) 読まずに済む。
+        case unloaded(SoundFlow)
         /// エフェクトへ通され、ラックの節が鳴らしている。**位置はどの流れでも節が描いた数から読む**
         /// (``Feed``) — 位置を導く時計を 1 本にするため。
         case routed
@@ -228,6 +242,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// 1 度だけ言う知らせ。
     private enum Notice: Hashable {
         case noOutput
+        case cannotReload
         case volumeOutOfRange
         case volumeNotANumber
         case jumpNotANumber
@@ -238,15 +253,19 @@ public final class SoundFile: Inlet, EffectInput {
 
     init(
         name: String, buffer: AVAudioPCMBuffer, owner: (any Sketch)?, flow: SoundFlow?,
+        source: URL? = nil,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
         self.name = name
         self.buffer = buffer
+        self.format = buffer.format
+        self.frameLength = buffer.frameLength
         self.samples = AudioFile.mono(buffer)
         self.sampleRate = Float(buffer.format.sampleRate)
         self.owner = owner
         self.injectedFlow = flow
+        self.source = source
         self.now = now
         self.warn = warn
         playhead = Playhead(length: samples.count)
@@ -578,8 +597,19 @@ public final class SoundFile: Inlet, EffectInput {
     }
 
     /// 実際に鳴らす。出力が開けなければ、鳴らさずに実時間で進める。
+    ///
+    /// 器は最初に開いたときに手放しているので、足し直したときは、鳴らし始めるまで読み直さない
+    /// (``Pace/unloaded(_:)``)。エフェクトへ通すだけなら、器は要らない。
     private func speak(through flow: SoundFlow) {
-        if let buffer, let player = FilePlayer(flow: flow, buffer: buffer) {
+        guard let buffer else {
+            pace = .unloaded(flow)
+            return
+        }
+        startPlayer(through: flow, buffer: buffer)
+    }
+
+    private func startPlayer(through flow: SoundFlow, buffer: AVAudioPCMBuffer) {
+        if let player = FilePlayer(flow: flow, buffer: buffer) {
             player.volume = volume
             pace = .speaker(player)
             return
@@ -589,6 +619,68 @@ public final class SoundFile: Inlet, EffectInput {
             .noOutput,
             "No audio output could be opened, so \"\(name)\" is not heard. Its position still "
                 + "follows the clock, and its analysis keeps working")
+    }
+
+    /// 足し直した後に初めて鳴らすとき、器を読み直して player を作る。
+    ///
+    /// 読むのは `draw()` を止める同期の読み込みなので、`loadSound(_:)` と同じく知らせる ([#2601])。
+    /// 読み直せなければ、鳴らさずに実時間で進め、読めなかった事情を 1 度だけ知らせる。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    private func loadPlayer(through flow: SoundFlow) {
+        if let owner {
+            type(of: owner).noticeBlockingLoad(
+                "play() or loop() on a SoundFile attached again", instead: nil)
+        }
+        switch reloadBuffer() {
+        case .success(let reloaded):
+            startPlayer(through: flow, buffer: reloaded)
+        case .failure(let why):
+            pace = .realTime(origin: now())
+            notice(
+                .cannotReload,
+                "\"\(name)\" could not be read again after it was attached back, so it is not heard "
+                    + "(\(why)). Its position still follows the clock, and its analysis keeps working")
+        }
+    }
+
+    /// 読み直せなかった事情。
+    private enum ReloadFailure: Error, CustomStringConvertible {
+        /// ファイルから作ったのではないので、読み直す先が無い。
+        case noSource
+        /// 読めなかった。`AudioFile.load` が名乗った事情をそのまま運ぶ
+        /// (開けない・音声として読めないを取り違えない・[#2358])。
+        ///
+        /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
+        case load(AudioFailure)
+        /// 読めたが、読み込んだときのファイルと別のもの (標本の数・チャンネル数・標本化率が違う)。
+        case changed
+
+        var description: String {
+            switch self {
+            case .noSource:
+                "it was not created from a file, so there is nothing to read it from"
+            case .load(let failure):
+                failure.description
+            case .changed:
+                "the file is no longer the one that was loaded: its length, channels or sample rate differ"
+            }
+        }
+    }
+
+    /// 手放した器を、読み込んだファイルから読み直す。
+    private func reloadBuffer() -> Result<AVAudioPCMBuffer, ReloadFailure> {
+        guard let source else { return .failure(.noSource) }
+        let reloaded: AVAudioPCMBuffer
+        do throws(AudioFailure) {
+            reloaded = try AudioFile.load(source, path: name)
+        } catch {
+            return .failure(.load(error))
+        }
+        guard reloaded.frameLength == frameLength, reloaded.format == format else {
+            return .failure(.changed)
+        }
+        return .success(reloaded)
     }
 
     /// いまの区切りの中で鳴った標本の数。
@@ -603,7 +695,7 @@ public final class SoundFile: Inlet, EffectInput {
             return player.played ?? lastPlayed
         case .routed:
             return feed.map { $0.node.played(generation: $0.generation) } ?? lastPlayed
-        case nil:
+        case .unloaded, nil:
             return 0
         }
     }
@@ -672,6 +764,8 @@ public final class SoundFile: Inlet, EffectInput {
     /// 区切りを始め直す。いまのフレーム (鳴らしているなら、いま) が区切りの始まりになる。
     private func beginSegment() {
         lastPlayed = 0
+        // 足し直した後に初めて鳴らすとき、ここで器を読み直す
+        if case .unloaded(let flow) = pace { loadPlayer(through: flow) }
         switch pace {
         case .frames(let frameRate, _):
             pace = .frames(perSecond: frameRate, origin: frame)
@@ -679,7 +773,7 @@ public final class SoundFile: Inlet, EffectInput {
             pace = .realTime(origin: now())
         case .speaker(let player):
             player.play(from: playhead.start, looping: playhead.isLooping)
-        case .routed, nil:
+        case .routed, .unloaded, nil:
             break
         }
         feed?.begin(start: playhead.start, looping: playhead.isLooping)
