@@ -742,7 +742,20 @@ class LengthTest(unittest.TestCase):
 
     1 文字ずつ文字列を継ぎ足すと長さの 2 乗かかり、480KB の二重引用の本文でガード 1 本が
     16 秒を越えた。フックの timeout は 10 秒で、越えると判定が出ずに素通しになりうる。
-    上限は手元で 1 秒前後のものに、遅い機械の分の余裕を持たせてある。
+
+    **守るのは「長さに対して線形」で、「ある機械で何秒に収まる」ではない** (#3115)。CPU 時間の
+    絶対値は機械の速さと負荷で動き、queue の CI で、guard に触れていない PR が 5.6 秒で外れた。
+    だから同じ形のコマンドを大きさ SMALL と LARGE (4 倍) で判定させ、**CPU 時間の比**で見る。
+    線形なら 4 倍前後、2 乗なら 16 倍に近づく。比は機械の速さに依らない。
+
+    - **しきい値 MAX_GROWTH (8 倍 = 長さの 1.5 乗)**: 線形の自然な伸び (この木で 3.3〜5.8 倍。
+      大きいほどメモリの扱いで少し 4 倍を越える) と、2 乗 (16 倍) の中ほど。実測では、読みの
+      中で単語ごとに先頭から切り出し直す変異 (guard の awk の空白の分岐に `substr(src, 1, i)` を足す) が
+      9.5 倍 (500KB で 4.3 秒) で、これも取る。2 乗が 10 秒の timeout に届く大きさでは 12 倍を越える。
+    - **下限 FLOOR (0.02 秒)**: SMALL の CPU 時間が bash の起動ほどに短いと、比は分母の揺れで膨らむ。
+      分母は FLOOR より小さくしない。速すぎる機械では 2 乗の傾きが埋もれるが、そこでは
+      timeout にも届かない。
+    - **外れたら 1 度だけ測り直す**。負荷の揺れで比が跳ねても、本物の 2 乗は 2 度とも外れる。
 
     **測るのは壁時計ではなく、ガード (子とその子) が使った CPU 時間** (#1857)。2 乗の退行は
     ガード自身の CPU として現れるが、壁時計は他の誰かが CPU を使った分まで足す。hooks-test を
@@ -765,40 +778,93 @@ rm -f "$out"
 exit 1
 """
 
-    LIMIT = 5.0
-    SIZE = 500_000
+    SMALL = 125_000
+    LARGE = 4 * SMALL
+    MAX_GROWTH = 8.0
+    FLOOR = 0.02
+    #: 測った CPU 時間にかける倍率。遅い機械の差し込み (test_a_slower_machine_stays_green)。
+    CPU_SCALE = 1.0
 
     @staticmethod
     def children_cpu():
         usage = resource.getrusage(resource.RUSAGE_CHILDREN)
         return usage.ru_utime + usage.ru_stime
 
+    @classmethod
+    def grows_linearly(cls, small, large):
+        """SMALL と LARGE の CPU 時間が、線形の伸びの範囲に収まるか。"""
+        return large / max(small, cls.FLOOR) < cls.MAX_GROWTH
+
     def time_of(self, command):
         start = self.children_cpu()
         self.assertEqual(judge(command, f"issue[[:space:]]+{COMMENT}", self.MEASURED), 0)
-        return self.children_cpu() - start
+        return (self.children_cpu() - start) * self.CPU_SCALE
 
-    def repeat(self, piece):
-        """piece を繰り返して SIZE バイトに届かせる。"""
-        return piece * (self.SIZE // len(piece.encode()) + 1)
+    @staticmethod
+    def repeat(piece, size):
+        """piece を繰り返して size バイトに届かせる。"""
+        return piece * (size // len(piece.encode()) + 1)
+
+    def assert_linear(self, piece, build):
+        """build(本文) の形のコマンドを SMALL と LARGE で判定させ、伸びが線形の範囲かを見る。"""
+        for _ in range(2):
+            small = self.time_of(build(self.repeat(piece, self.SMALL)))
+            large = self.time_of(build(self.repeat(piece, self.LARGE)))
+            if self.grows_linearly(small, large):
+                return
+        self.fail(
+            f"長さが {self.LARGE // self.SMALL} 倍で CPU 時間が {large / max(small, self.FLOOR):.1f} 倍"
+            f" ({small:.2f} 秒 → {large:.2f} 秒)。線形なら 4 倍前後で、{self.MAX_GROWTH:.0f} 倍以上は 2 乗の疑い"
+        )
 
     def test_long_double_quoted_body(self):
-        body = self.repeat("本文の行です。\n")
-        self.assertLess(self.time_of(f'gh issue {COMMENT} 1 --body "{body}"'), self.LIMIT)
+        self.assert_linear("本文の行です。\n", lambda body: f'gh issue {COMMENT} 1 --body "{body}"')
 
     def test_long_body_with_many_special_characters(self):
-        body = self.repeat("本文 $HOME と \\\" と `x` と -R x/y --help\n")
-        self.assertLess(self.time_of(f'gh issue {COMMENT} 1 --body "{body}"'), self.LIMIT)
+        self.assert_linear(
+            "本文 $HOME と \\\" と `x` と -R x/y --help\n",
+            lambda body: f'gh issue {COMMENT} 1 --body "{body}"',
+        )
 
     def test_long_unquoted_command(self):
-        words = self.repeat("word ")
-        self.assertLess(self.time_of(f"gh issue {COMMENT} 1 -b x {words}"), self.LIMIT)
+        self.assert_linear("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
 
     def test_long_heredoc_body(self):
-        lines = self.repeat("本文の行 <<X ; && ' \"\n")
-        self.assertLess(
-            self.time_of(f"gh issue {COMMENT} 1 -F - <<'EOF'\n{lines}EOF"), self.LIMIT
+        self.assert_linear(
+            "本文の行 <<X ; && ' \"\n",
+            lambda lines: f"gh issue {COMMENT} 1 -F - <<'EOF'\n{lines}EOF",
         )
+
+    # --- 物差しそのものの検査 (#3115) ---
+
+    def test_the_yardstick_accepts_linear_and_rejects_quadratic_growth(self):
+        self.assertTrue(self.grows_linearly(0.2, 0.8))  # 4 倍: 線形
+        self.assertTrue(self.grows_linearly(0.2, 1.1))  # 5.5 倍: この木の自然な伸びの上端
+        self.assertFalse(self.grows_linearly(0.2, 3.2))  # 16 倍: 2 乗
+        self.assertFalse(self.grows_linearly(0.2, 1.6))  # 8 倍ちょうどは外す (しきい値は未満)
+        self.assertTrue(self.grows_linearly(0.2, 1.5))  # 7.5 倍
+
+    def test_the_yardstick_does_not_depend_on_the_speed_of_the_machine(self):
+        for small, large in [(0.2, 0.8), (0.2, 3.2)]:
+            for scale in (0.5, 2.0, 10.0):
+                self.assertEqual(
+                    self.grows_linearly(small * scale, large * scale),
+                    self.grows_linearly(small, large),
+                    f"{scale} 倍の機械で判定が変わった",
+                )
+
+    def test_the_yardstick_floors_the_denominator_of_a_too_short_measurement(self):
+        # SMALL が測れないほど短くても、分母の揺れで線形を 2 乗と取り違えない
+        self.assertTrue(self.grows_linearly(0.0, 0.1))
+        self.assertTrue(self.grows_linearly(0.001, 0.15))
+        # 下限があっても、LARGE が下限の MAX_GROWTH 倍 (0.16 秒) を越えて膨らめば外す
+        self.assertFalse(self.grows_linearly(0.001, 0.5))
+
+    def test_a_slower_machine_stays_green(self):
+        """CPU 時間が 2 倍かかる機械でも緑 — 測った CPU 時間を 2 倍にして、実際に判定させる。"""
+        slow = type("SlowMachine", (LengthTest,), {"CPU_SCALE": 2.0})
+        case = slow("test_long_double_quoted_body")
+        case.assert_linear("本文の行です。\n", lambda body: f'gh issue {COMMENT} 1 --body "{body}"')
 
 
 class WiringTest(unittest.TestCase):
