@@ -639,6 +639,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Sketch/createBandPass()``
 - ``Sketch/createReverb()``
 - ``Sketch/createDelay()``
+- ``EffectInput``
 - ``SynthSound``
 - ``SynthSource``
 - ``Oscillator``

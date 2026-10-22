@@ -7,8 +7,8 @@ import Foundation
 /// ``Reverb``・``Delay`` がある。
 ///
 /// ``process(_:)`` で音を通すと、通された音は直には鳴らず、エフェクトの出口を通ってだけ鳴る。
-/// 通せるのは合成した音 (オシレータ・ノイズ・別のエフェクト) だけで、``SoundFile`` や
-/// ``AudioIn`` は通せない。
+/// 通せるのは合成した音 (オシレータ・ノイズ・別のエフェクト) と音声ファイル (``SoundFile``) で
+/// (``EffectInput``)、``AudioIn`` は通せない。
 ///
 /// ```swift
 /// final class Muffled: Sketch {
@@ -33,7 +33,8 @@ import Foundation
 ///   通し方は拒み、1 度だけ知らせる
 /// - 1 つのエフェクトへ複数の音を通すと、足し合わされて処理される。1 つの音を複数のエフェクトへ
 ///   通すと、エフェクトごとの出口が足し合わされて鳴る
-/// - エフェクトの定位は中央で、通した音の定位は引き継がない
+/// - エフェクトの定位は中央で、通した音の定位は引き継がない。**左右のある ``SoundFile`` も、エフェクトの
+///   出口ではモノラル (中央) に畳まれる**
 /// - 解析の値 (``SynthSound/level`` ほか) は、エフェクトの出口の音のものになる
 ///
 /// どの口も投げない ([ADR-0020] 決定 5)。
@@ -53,22 +54,56 @@ public class SoundEffect: SynthSound {
     /// ```
     ///
     /// 同じ音を何度通しても 1 度かかるだけ。別の音を通すと、足し合わされて処理される。
-    public func process(_ input: SynthSound) {
+    ///
+    /// ``SoundFile`` も通せる。最初に通したときから、そのファイルはラックで鳴る (左右は畳まれ、節の上限を
+    /// 1 つ使う — ``SoundFile``)。``EffectInput`` に準拠しない型は通らず、1 度だけ知らせる。
+    ///
+    /// <!-- example: 文脈 var song: SoundFile?; var reverb: Reverb? -->
+    /// ```swift
+    /// func setup() {
+    ///     song = try? loadSound("assets/song.wav")
+    ///     reverb = createReverb()
+    ///     if let song { reverb?.process(song) }
+    ///     song?.loop()
+    /// }
+    /// ```
+    public func process(_ input: any EffectInput) {
         connect(input)
     }
 
     /// エフェクトをやめる。通していた音は、直に鳴る形へ戻る。
     ///
-    /// 残響や反響の尾は残さず、すぐ途切れる。もう一度 ``process(_:)`` で通せる。
+    /// 残響や反響の尾は残さず、すぐ途切れる。もう一度 ``process(_:)`` で通せる。通していた
+    /// ``SoundFile`` は、いったんラックで鳴らした後なので、中央のモノラルのまま直に鳴り続ける。
     public func stop() {
         guard let node, !stage.isClosed else { return }
         stage.rack.setInputs(node.id, 0)
     }
 
     /// `input` を入力へ足す。足せたら `true`。
+    ///
+    /// ``SoundFile`` は、最初に通されたとき、ラックの節を足してそこから鳴らす形に切り替える
+    /// (``SoundFile/route(into:)``)。
     @discardableResult
-    func connect(_ input: SynthSound) -> Bool {
-        guard let node, let source = input.node, !stage.isClosed, input.stage === stage else {
+    func connect(_ input: any EffectInput) -> Bool {
+        guard let node, !stage.isClosed else { return false }
+        let source: RackNode
+        // ファイルの節は、**入力に選んでから**鳴らし始める (``SoundFile/nodeIsConnected()``)
+        var routed: SoundFile?
+        defer { routed?.nodeIsConnected() }
+        if let sound = input as? SynthSound {
+            guard let inner = sound.node, sound.stage === stage else { return false }
+            source = inner
+        } else if let file = input as? SoundFile {
+            // 断った理由は、ファイルの側が 1 度だけ知らせる
+            guard let inner = file.route(into: stage) else { return false }
+            source = inner
+            routed = file
+        } else {
+            notice(
+                "process.unsupported",
+                "process() was given a sound that is neither a synthesized sound nor a SoundFile, so "
+                    + "this \(name) keeps its other inputs")
             return false
         }
         guard stage.rack.canConnect(source.id, to: node.id) else {
@@ -108,7 +143,7 @@ public class Filter: SoundEffect {
     /// ```
     ///
     /// 範囲の外・数でない値は ``freq(_:)`` と同じに扱う。
-    public func process(_ input: SynthSound, _ freq: Float) {
+    public func process(_ input: any EffectInput, _ freq: Float) {
         self.freq(freq)
         process(input)
     }
@@ -116,7 +151,7 @@ public class Filter: SoundEffect {
     /// 通した音に、切れ目と山の高さを決めてエフェクトをかける。
     ///
     /// 範囲の外・数でない値は、それぞれ ``freq(_:)``・``res(_:)`` と同じに扱う。
-    public func process(_ input: SynthSound, _ freq: Float, _ res: Float) {
+    public func process(_ input: any EffectInput, _ freq: Float, _ res: Float) {
         set(freq, res)
         process(input)
     }
@@ -195,7 +230,7 @@ public final class BandPass: SoundEffect {
     /// 通した音に、中心と幅を決めてエフェクトをかける。
     ///
     /// 範囲の外・数でない値は、それぞれ ``freq(_:)``・``bw(_:)`` と同じに扱う。
-    public func process(_ input: SynthSound, _ freq: Float, _ bw: Float) {
+    public func process(_ input: any EffectInput, _ freq: Float, _ bw: Float) {
         set(freq, bw)
         process(input)
     }
@@ -257,7 +292,7 @@ public final class Reverb: SoundEffect {
     /// 通した音に、部屋の大きさ・高い音の吸われ方・残響の割合を決めてエフェクトをかける。
     ///
     /// 範囲の外・数でない値は、それぞれ ``room(_:)``・``damp(_:)``・``wet(_:)`` と同じに扱う。
-    public func process(_ input: SynthSound, _ room: Float, _ damp: Float, _ wet: Float) {
+    public func process(_ input: any EffectInput, _ room: Float, _ damp: Float, _ wet: Float) {
         set(room, damp, wet)
         process(input)
     }
@@ -342,7 +377,7 @@ public final class Delay: SoundEffect {
     /// 無限の値は無視する。どちらもそのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func process(_ input: SynthSound, _ maxDelayTime: Float) {
+    public func process(_ input: any EffectInput, _ maxDelayTime: Float) {
         if let value = accept(
             maxDelayTime, 0...Float(EchoKernel.maximumSeconds), call: "process",
             meaning: "a maxDelayTime")
@@ -355,7 +390,7 @@ public final class Delay: SoundEffect {
     /// 通した音に、遅れの上限と戻す割合を決めてエフェクトをかける。
     ///
     /// 範囲の外・数でない値は、それぞれ ``process(_:_:)``・``feedback(_:)`` と同じに扱う。
-    public func process(_ input: SynthSound, _ maxDelayTime: Float, _ feedback: Float) {
+    public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ feedback: Float) {
         self.feedback(feedback)
         process(input, maxDelayTime)
     }
