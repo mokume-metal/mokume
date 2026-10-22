@@ -149,6 +149,20 @@ def answered(
     return None
 
 
+class Unverified(Exception):
+    """確かめて渡せる写しが無い。**取り合いではない** — 応答は自分のままである (#2992)。
+
+    起きるのは 2 つ。写せなかった (読めない・容量など。掃除は応答を先に消すので、応答が自分のままなら
+    掃除のせいではない) と、応答に目録 (`frames`) が無い (#408 より前の版は、応答を消さずに絵を先に
+    上書きするので、写した後の確かめは何も言えない)。**区画の場所は `sources` にあるが、次の要求までしか
+    自分の絵でない。** 窓口の `observe` が、区画の場所に「次の要求まで」と添えて返すのと同じ扱いである。
+    """
+
+    def __init__(self, message: str, sources: list[pathlib.Path]):
+        super().__init__(message)
+        self.sources = sources
+
+
 def image_names(report: dict) -> list[str]:
     """応答が名乗る絵の名前。目録 (`frames`) が先で、無ければ単数形 (`image`)。
 
@@ -165,25 +179,12 @@ def image_names(report: dict) -> list[str]:
     return names
 
 
-def _copied_while_mine(
-    facet: pathlib.Path, identifier: str, copy_all, *, reason: str
-):
-    """`copy_all()` で絵を写し、写し終えた後に応答が自分の識別子のままかを確かめる。
-
-    **写せなかった回も確かめる** — 掃除は応答を先に消すので、応答が自分のままなら写せなかったのは
-    掃除のせいではなく (読めない・容量など)、その失敗をそのまま投げる。応答が自分でなければ取り合い。
-    """
-    try:
-        result = copy_all()
-    except OSError:
-        if _echo(facet) == identifier:
-            raise
-        raise Contested(f"{reason}: 写している間に別の書き手が撮り始めた (自分は {identifier!r})") from None
-    if _echo(facet) != identifier:
-        raise Contested(
-            f"{reason}: 写し終えた後の応答は {_echo(facet)!r} で、自分の {identifier!r} ではない"
-        )
-    return result
+def _has_catalogue(report: dict) -> bool:
+    """目録 (`frames`) を書く版の応答か。**判定は形から行う** (ADR-0018 決定 5 の追補)。"""
+    frames = report.get("frames")
+    return isinstance(frames, list) and any(
+        isinstance(frame, dict) and isinstance(frame.get("image"), str) for frame in frames
+    )
 
 
 def _require_plain(name: str) -> None:
@@ -192,23 +193,72 @@ def _require_plain(name: str) -> None:
         raise OSError(f"絵の名前が単なるファイル名ではない: {name!r}")
 
 
+def _copied_while_mine(
+    facet: pathlib.Path,
+    identifier: str,
+    copy_all,
+    written: list[pathlib.Path],
+    sources: list[pathlib.Path],
+):
+    """`copy_all()` で絵を写し、写し終えた後に応答が自分の識別子のままかを確かめる。
+
+    **取り合った回 (応答が自分でなくなった) は、写したものを消してから `Contested` を投げる** — 渡さない
+    写しを残さない。**写せなかった回も確かめる** — 掃除は応答を先に消すので、応答が自分のままなら
+    写せなかったのは掃除のせいではなく、`Unverified` (取り合いと言わない)。
+    """
+    try:
+        result = copy_all()
+    except OSError as error:
+        _discard(written)
+        if _echo(facet) != identifier:
+            raise Contested(
+                f"写している間に別の書き手が撮り始めた (自分は {identifier!r})"
+            ) from None
+        raise Unverified(f"絵を写せなかった: {error}", sources) from error
+    if _echo(facet) != identifier:
+        _discard(written)
+        raise Contested(
+            f"写し終えた後の応答は {_echo(facet)!r} で、自分の {identifier!r} ではない"
+        )
+    return result
+
+
+def _discard(written: list[pathlib.Path]) -> None:
+    for path in written:
+        path.unlink(missing_ok=True)
+
+
+_NO_CATALOGUE = (
+    "応答に目録 (frames) が無い。#408 より前の版は応答を消さずに絵を先に上書きするので、"
+    "写した後の確かめでは自分の絵と言えない"
+)
+
+
 def copy_images(
     facet: pathlib.Path, report: dict, identifier: str, into: pathlib.Path
 ) -> list[pathlib.Path]:
     """目録の全枚を `into` へ同じ名前で写し、写し終えた後に応答が自分のままなら写した場所を返す。
 
-    1 枚でも写せなかった・応答が自分でなくなっていたら `Contested` (応答が自分のままで写せなかった
-    回だけ、元の `OSError`)。**`Contested` のときの `into` の中身は渡さない** — 消してよい。
+    - 応答が自分でなくなっていた (写している間・写せなかった後) → `Contested`。写したものは消す
+    - 応答は自分のままで、写せなかった・名前が素のファイル名でない・目録が無い → `Unverified`
+      (窓口の `observe` と同じ読み)。目録の無い版では確かめが成り立たないので、写さない
     """
     names = image_names(report)
+    sources = [facet / name for name in names]
+    if names and not _has_catalogue(report):
+        raise Unverified(_NO_CATALOGUE, sources)
+    written: list[pathlib.Path] = []
 
     def copy_all() -> list[pathlib.Path]:
         into.mkdir(parents=True, exist_ok=True)
         for name in names:
             _require_plain(name)
-        return [pathlib.Path(shutil.copy(facet / name, into / name)) for name in names]
+        for name in names:
+            written.append(into / name)
+            shutil.copy(facet / name, into / name)
+        return list(written)
 
-    return _copied_while_mine(facet, identifier, copy_all, reason="絵を写せなかった")
+    return _copied_while_mine(facet, identifier, copy_all, written, sources)
 
 
 def copy_image(
@@ -218,10 +268,15 @@ def copy_image(
     name = report.get("image")
     if not isinstance(name, str):
         return None
+    sources = [facet / name]
+    if not _has_catalogue(report):
+        raise Unverified(_NO_CATALOGUE, sources)
+    written: list[pathlib.Path] = []
 
     def copy_one() -> pathlib.Path:
         _require_plain(name)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        written.append(destination)
         return pathlib.Path(shutil.copy(facet / name, destination))
 
-    return _copied_while_mine(facet, identifier, copy_one, reason="絵を写せなかった")
+    return _copied_while_mine(facet, identifier, copy_one, written, sources)

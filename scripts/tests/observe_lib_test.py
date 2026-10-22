@@ -316,18 +316,54 @@ class CopyBeforeUseTest(unittest.TestCase):
         with self.assertRaises(observe_lib.Contested):
             observe_lib.copy_images(self.observe, report, "mine", self.out)
 
-    def test_a_missing_picture_with_my_answer_standing_is_the_plain_error(self):
-        """応答が自分のままなら掃除ではない。取り合いと偽らず、元の失敗を投げる。"""
+    def test_a_missing_picture_with_my_answer_standing_is_unverified_not_contested(self):
+        """応答が自分のままなら掃除ではない。取り合いと偽らず、区画の場所を `sources` で渡す。"""
         report = self.stage("mine", {"a.png": "1"})
         (self.observe / "a.png").unlink()
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaises(observe_lib.Unverified) as caught:
             observe_lib.copy_images(self.observe, report, "mine", self.out)
+        self.assertEqual(caught.exception.sources, [self.observe / "a.png"])
+        self.assertNotIsInstance(caught.exception, observe_lib.Contested)
 
-    def test_a_name_that_leaves_the_facet_is_not_copied(self):
-        report = {"id": "mine", "image": "../report.json"}
+    def test_a_name_that_leaves_the_facet_is_unverified_like_a_failed_copy(self):
+        """素のファイル名でない名前は写さない。応答が自分のままなら、写せなかった回と同じ扱い。"""
+        report = {"id": "mine", "image": "../report.json", "frames": [{"image": "../report.json"}]}
         (self.observe / "report.json").write_text(json.dumps(report))
-        with self.assertRaises(OSError):
+        with self.assertRaises(observe_lib.Unverified):
             observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+        self.assertFalse((self.out / "f.png").exists())
+
+    def test_a_name_that_leaves_the_facet_after_a_sweep_is_contested(self):
+        report = {"id": "mine", "image": "../x", "frames": [{"image": "../x"}]}
+        (self.observe / "report.json").write_text(json.dumps({"id": "theirs"}))
+        with self.assertRaises(observe_lib.Contested):
+            observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+
+    def test_a_reply_without_a_catalogue_is_not_checked_so_it_is_not_copied(self):
+        """#408 より前の版は応答を消さずに絵を先に上書きする。確かめは何も言えないので写さない。"""
+        (self.observe / "frame.png").write_text("X")
+        report = {"id": "mine", "image": "frame.png"}
+        (self.observe / "report.json").write_text(json.dumps(report))
+        with self.assertRaises(observe_lib.Unverified) as caught:
+            observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+        self.assertEqual(caught.exception.sources, [self.observe / "frame.png"])
+        self.assertFalse((self.out / "f.png").exists())
+        with self.assertRaises(observe_lib.Unverified):
+            observe_lib.copy_images(self.observe, report, "mine", self.out)
+        self.assertFalse(self.out.exists())
+
+    def test_a_contested_copy_leaves_nothing_behind(self):
+        """取り合った回は、渡さない写しを `destination` / `into` に残さない。"""
+        report = self.stage("mine", {"a.png": "1", "b.png": "2"})
+        with self.copy_then(lambda: self.sweep({"a.png": "x"}), only_after=1):
+            with self.assertRaises(observe_lib.Contested):
+                observe_lib.copy_images(self.observe, report, "mine", self.out)
+        self.assertEqual(sorted(p.name for p in self.out.iterdir()), [])
+        single = self.stage("mine", {"c.png": "3"})
+        with self.copy_then(lambda: self.sweep({"c.png": "y"})):
+            with self.assertRaises(observe_lib.Contested):
+                observe_lib.copy_image(self.observe, single, "mine", self.out / "f.png")
+        self.assertFalse((self.out / "f.png").exists())
 
     def test_no_image_is_none_and_the_catalogue_comes_first(self):
         self.assertIsNone(observe_lib.copy_image(self.observe, {"id": "mine"}, "mine", self.out / "f"))
