@@ -60,11 +60,9 @@
 #      PR には 5 の行も出るが、掛け直しても同じ 60 分を待つだけである
 #      対処: 1) 専用機の前で runner を戻す (ssh では入れない — #1767)。戻ったかは
 #      Settings → Actions → Runners か gh api repos/<repo>/actions/runners (メンテナの権限)
-#      で見る。2) 戻せない間も merge を通すなら、メンテナが .github/rulesets/main-protection.json
-#      の必須チェックから render を外した定義を手元で scripts/apply-rulesets.sh --apply
-#      してから、その定義の PR を出す — 必須チェックを消すときは適用を merge より先にする
-#      (AGENTS.md「ブランチ保護の正本」)。戻すときは逆順 (PR を merge してから適用) にする。
-#      外している間は描画を誰も見ないので、戻した後の最初の merge_group の render を確かめる
+#      で見る。2) 戻せない間も merge を通すなら、メンテナが docs/runner-degraded-mode.md の
+#      手順で縮退 (必須チェックから render を外す) を適用する — 発動の条件・失う保証・復帰の
+#      条件は、その文書だけに書いてある (#2252)。エージェントは --apply を打たない
 #   9. 専用機は online で busy なのに、queue の先頭の render だけが queued のまま進まない
 #      原因: 専用機は queued の job を先着順に拾わない (#2062)。先頭の render が後から
 #      積まれた render-pr や後ろの group の render に抜かれ続け、60 分の期限で弾かれる。

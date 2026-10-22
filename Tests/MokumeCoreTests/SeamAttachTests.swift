@@ -214,6 +214,94 @@ struct SeamAttachTests {
         #expect(early.frames == [1, 2, 3, 4, 5])
         #expect(late.frames == [3, 4, 5])
     }
+
+    // MARK: 外す直前の 1 枚 (#2246)
+
+    /// 配るのは 1 枚遅れなので、`detach` はその時点で控えにある最後の絵を、外す出口にだけ渡してから閉じる。
+    /// 変更前は、40 フレーム目で外すと 1...38 で終わり、外す前に描き終えた 39 が一度も渡らなかった。
+    ///
+    /// **閉じてから比べる** (上の検査と同じ理由・#2743)。
+    @Test("40 フレーム目で外した出口は、1...39 を受け取ってから閉じ、外さない出口は今までどおり 1...40 を受け取る")
+    func detachingDeliversTheLastFinishedFrameToTheDetachedOutletOnly() throws {
+        let tape = ClosingFrameOutlet()
+        let kept = FrameNumberOutlet()
+        let runtime = try makeRuntime(
+            setup: { $0.attach(tape) },
+            draw: { sketch in
+                if sketch.frameCount == 40 { sketch.detach(tape) }
+            },
+            declared: [DeclaredOutlet(outlet: kept)])
+        for _ in 0..<40 { try runtime.advance() }
+        runtime.closePlugins()
+        #expect(tape.frames == Array(1...39))
+        #expect(tape.closed == 1)
+        #expect(tape.framesWhenClosed == 39, "閉じる前に 39 まで受け取った")
+        #expect(kept.frames == Array(1...40), "外さない出口は二重にも欠けもしない")
+    }
+
+    /// 別の出口の `receive` の中で頼まれた `detach` は、巡回の後へ回る。外す出口は、その巡回で配られた絵を
+    /// 受け取った後なので、同じ絵をもう 1 度受け取らない。出口の並びの前後どちらでも同じ。
+    @Test("別の出口の receive の中で外しても、外す出口は同じ絵を 1 度だけ受け取ってから閉じる", arguments: [true, false])
+    func detachingFromAnotherOutletsReceiveDeliversOnce(otherComesFirst: Bool) throws {
+        let tape = ClosingFrameOutlet()
+        let other = ClosingFrameOutlet()
+        let runtime = try makeRuntime(
+            setup: { sketch in
+                if otherComesFirst {
+                    sketch.attach(other)
+                    sketch.attach(tape)
+                } else {
+                    sketch.attach(tape)
+                    sketch.attach(other)
+                }
+            })
+        // 出口の `receive` は作者の呼び出しの外なので、公開の `SketchPart.detach` は受け付けない。
+        // 走らせている側 (`SketchRuntime`) の口を呼ぶ
+        other.onReceive = { frame in
+            if frame.frame == 20 { runtime.detach(tape) }
+        }
+        for _ in 0..<30 { try runtime.advance() }
+        runtime.closePlugins()
+        // 20 を配った時点で、次の絵が控えにあることがある (結末の持ち越し・#2743)。その絵は描き終えて
+        // いるので、外す出口はそれも受け取る。数は揺れるので、**欠けも二重も無い連番か**で見る
+        #expect(tape.frames.count >= 20 && tape.frames.count <= 22, "\(tape.frames)")
+        #expect(tape.frames == Array(1...tape.frames.count), "20 の後に欠けも二重も無い: \(tape.frames)")
+        #expect(tape.closed == 1)
+        #expect(other.frames == Array(1...30))
+    }
+
+    @Test("足したフレームより前の絵は、外すときにも渡さない")
+    func detachingAnOutletAddedInDrawDoesNotDeliverEarlierFrames() throws {
+        let tape = ClosingFrameOutlet()
+        let runtime = try makeRuntime(
+            draw: { sketch in
+                if sketch.frameCount == 5 { sketch.attach(tape) }
+                if sketch.frameCount == 5 { sketch.detach(tape) }
+            })
+        for _ in 0..<8 { try runtime.advance() }
+        runtime.closePlugins()
+        #expect(tape.frames.isEmpty, "足したフレーム (5) より前の絵 (4) は渡さない: \(tape.frames)")
+        #expect(tape.closed == 1)
+    }
+}
+
+/// 受け取った番号と、閉じた回数・閉じたときに受け取っていた数を覚える出口。
+final class ClosingFrameOutlet: Outlet {
+    private(set) var frames: [Int] = []
+    private(set) var closed = 0
+    private(set) var framesWhenClosed = 0
+    /// 受け取るたびに呼ぶ。別の出口の `receive` の中で頼む形を作るため。
+    var onReceive: ((OutputFrame) -> Void)?
+
+    func receive(_ frame: OutputFrame) {
+        frames.append(frame.frame)
+        onReceive?(frame)
+    }
+
+    func close() {
+        closed += 1
+        framesWhenClosed = frames.count
+    }
 }
 
 // MARK: - スケッチの外から
