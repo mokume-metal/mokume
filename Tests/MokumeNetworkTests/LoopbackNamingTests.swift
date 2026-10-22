@@ -152,6 +152,49 @@ struct LoopbackNamingTests {
         #expect(silent.contains("名乗りは 0 行 (黙っている)"), "\(silent)")
     }
 
+    @Test("素の socket の sendto が失敗していたら、送り手で出なかったと名乗って受け口のせいと読ませず、成功していればそう言い、戻りを記録していなければそう言う")
+    func requireSentNamesTheRawSendResult() async throws {
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        // ポート 0 へは送れない (送り手で出ない形)
+        #expect(peer.send([1, 2, 3], to: 0) == -1)
+        #expect(peer.sendRecord.attempts == 1 && peer.sendRecord.failures == 1)
+        #expect(peer.sendRecord.firstFailure?.requested == 3)
+
+        let log = SendLog(rawSocket: true)
+        log.watch(raw: peer)
+        let failed = try await said {
+            try await requireSent(
+                false, "読めなかった", log: log, landing: scripted(before: 5, after: 5, probe: true))
+        }
+        #expect(failed.contains("素の socket の sendto が失敗した: 1 回のうち 1 回・最初の失敗は errno "), "\(failed)")
+        #expect(failed.contains("3 バイトを送ろうとした"), "\(failed)")
+        #expect(failed.contains("送り手で出なかった回があり、読めなかった理由は受け口ではなく送り手側の見込み"), "\(failed)")
+        #expect(!failed.contains("とも成功"), "\(failed)")
+
+        // 送れていれば、そう言う (誰も待っていないポートへも、sendto 自体は成功する)
+        let sender = try RawDatagramSocket()
+        defer { sender.release() }
+        #expect(sender.send(Array("hello".utf8), to: 9) == 5)
+        #expect(sender.send(Array("x".utf8), to: 9) == 1)
+        let sentLog = SendLog(rawSocket: true)
+        sentLog.watch(raw: sender)
+        let sent = try await said {
+            try await requireSent(
+                false, "読めなかった", log: sentLog, landing: scripted(before: 5, after: 5, probe: true))
+        }
+        #expect(sent.contains("sendto は 2 回とも成功 (計 6 バイト)"), "\(sent)")
+        #expect(!sent.contains("送り手で出なかった"), "\(sent)")
+
+        // 戻りを記録していない記録 (送った socket を渡さなかった) は、そう言う
+        let unwatched = try await said {
+            try await requireSent(
+                false, "読めなかった", log: SendLog(rawSocket: true),
+                landing: scripted(before: 5, after: 5, probe: true))
+        }
+        #expect(unwatched.contains("sendto の戻りは記録していない"), "\(unwatched)")
+    }
+
     @Test("名乗りは、送り手の様子と受け口の様子を同じ時点で撮ってから 1 通を送り、その後にもう 1 度受け口を撮る。満たされたときは何もしない")
     func requireSentTakesSnapshotsAroundTheProbe() async throws {
         let calls = Calls()

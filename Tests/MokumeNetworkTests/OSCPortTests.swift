@@ -321,16 +321,13 @@ struct OSCPortTests {
     /// 素の socket の記録は ``collectOrName(_:count:within:landing:_:)`` と同じ。
     private func heard(
         _ osc: OSCPort, count: Int, within seconds: TimeInterval = 5, port: Int, told: Told,
-        _ note: String = ""
+        from peer: RawDatagramSocket, _ note: String = ""
     ) async throws -> [OSCMessage] {
-        let label = "素の socket"
-        let log = SendLog(rawSocket: true)
-        log.watch(label) { nil }
-        let received = await collect(osc, count: count, within: seconds, label: label, log: log)
-        try await requireHeard(
-            received.count >= count, "素の socket から送った \(count) 通のうち読めたのは \(received.count) 通\(note)",
-            log: log, osc: osc, port: port, told: told)
-        return received
+        try await collectOrName(
+            count: count, within: seconds, from: peer, landing: landing(of: osc, port: port, told: told), note
+        ) { count, seconds, label, log in
+            await collect(osc, count: count, within: seconds, label: label, log: log)
+        }
     }
 
     /// 127.0.0.1 で、OS が選んだポート (0 を頼む) で受け、送り先も同じポートにした入り口。開いて、
@@ -647,7 +644,7 @@ struct OSCPortTests {
         for packet in [blob, bundle, try Wire.encoded(next)] {
             #expect(peer.send(packet, to: port) == packet.count)
         }
-        let received = try await heard(osc, count: 1, port: port, told: told, "(/next)")
+        let received = try await heard(osc, count: 1, port: port, told: told, from: peer, "(/next)")
         #expect(received == [next])
         #expect(osc.input.unreadable == 2)
         #expect(told.lines.isEmpty)
@@ -667,16 +664,21 @@ struct OSCPortTests {
         let message = OSCMessage("/m", arguments: [])
         let packet = try Wire.encoded(message)
         #expect(peer.send(packet, to: port) == packet.count)
-        var received = try await heard(osc, count: 1, port: port, told: told, "(/m)")
+        var received = try await heard(osc, count: 1, port: port, told: told, from: peer, "(/m)")
         #expect(peer.send([], to: port) == 0)
-        #expect(await until { osc.input.unreadable == 1 })
+        try await requireRawArrival(
+            "受け口が空を読めないものとして数えなかった (数えた数: \(osc.input.unreadable))", from: peer,
+            landing: landing(of: osc, port: port, told: told)
+        ) { osc.input.unreadable == 1 }
 
         // 終わりを名乗った空を数えたら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
-        #expect(await until { source.tally.ended >= 1 })
+        try await requireWait(
+            "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
+            until: { source.tally.ended >= 1 })
         for _ in 0..<5 {
             #expect(peer.send(packet, to: port) == packet.count)
         }
-        received += try await heard(osc, count: 5, port: port, told: told, "(空の後の /m 5 通)")
+        received += try await heard(osc, count: 5, port: port, told: told, from: peer, "(空の後の /m 5 通)")
         #expect(received == Array(repeating: message, count: 6))
         #expect(osc.input.unreadable == 1)
     }
@@ -693,7 +695,7 @@ struct OSCPortTests {
 
         for index in 0..<3 {
             #expect(peer.send(packet, to: port) == packet.count)
-            let received = try await heard(osc, count: 1, port: port, told: told, "(\(index) 周目の /m)")
+            let received = try await heard(osc, count: 1, port: port, told: told, from: peer, "(\(index) 周目の /m)")
             #expect(received == [OSCMessage("/m", arguments: [])])
             #expect(peer.send([], to: port) == 0)
             try await requireWait(
@@ -721,8 +723,9 @@ struct OSCPortTests {
         var attempts: [Int: Int] = [:]
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
         let heard = try await sendNumberedBurst(
-            count: count, through: osc, senders: &senders, told: told
+            count: count, through: osc, senders: &senders, told: told, log: log
         ) { index, attempt, warn in
             attempts[index] = attempt
             // 奇数の番号の最初の送り元は、送れないと名乗って何も出さない。作り物の送り元だけで確かめる
@@ -730,6 +733,9 @@ struct OSCPortTests {
             let cannot = index % 2 == 1 && attempt == 1
             return ScriptedSender(raw: cannot ? nil : raw, port: port, complaint: cannot ? warn : nil)
         }
+        try await requireHeard(
+            heard == Set(0..<count), "送り元 \(count) 本のうち読めたのは \(heard.count) 本", log: log,
+            osc: osc, port: port, told: told)
         #expect(heard == Set(0..<count))
         // 替えたのは名乗った奇数の番号だけで、1 回で足りた
         #expect(attempts == Dictionary(uniqueKeysWithValues: (0..<count).map { ($0, $0 % 2 == 1 ? 2 : 1) }))
@@ -845,7 +851,7 @@ struct OSCPortTests {
         // 1 通だけ送って 2 通を期待する (2 通目は来ない)
         #expect(peer.send(packet, to: port) == packet.count)
         let text = try await said {
-            _ = try await heard(osc, count: 2, within: 0.5, port: port, told: told, "(2 通目は送っていない)")
+            _ = try await heard(osc, count: 2, within: 0.5, port: port, told: told, from: peer, "(2 通目は送っていない)")
         }
         #expect(text.contains("素の socket から送った 2 通のうち読めたのは 1 通(2 通目は送っていない)"), "名乗り: \(text)")
         #expect(text.contains("期限 0.5 秒"), "名乗り: \(text)")
@@ -854,11 +860,13 @@ struct OSCPortTests {
         // 送り手の欄: 素の socket は名乗りも替えも持たない。黙っているとは言わない
         #expect(text.contains("送り元の様子 {様子を読めない送り元}×1"), "名乗り: \(text)")
         #expect(!text.contains("黙っている") && !text.contains("替えた"), "名乗り: \(text)")
+        // 送った socket の sendto の戻り: 送れていたので、読めなかった理由は受け口側と読める
+        #expect(text.contains("sendto は 1 回とも成功 (計 \(packet.count) バイト)"), "名乗り: \(text)")
 
         // 受け口が受けない形 (閉じた受け口) は、素の 1 通も読まれず、受け口側と読み分けられる
         osc.close()
         let closed = try await said {
-            _ = try await heard(osc, count: 1, within: 0.3, port: port, told: told)
+            _ = try await heard(osc, count: 1, within: 0.3, port: port, told: told, from: peer)
         }
         #expect(closed.contains("受け口 (1 通の前): stopped"), "名乗り: \(closed)")
         #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
