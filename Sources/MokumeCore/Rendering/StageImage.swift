@@ -48,7 +48,12 @@ extension EffectSurface {
     let width: Int
     let height: Int
     /// GPU 専用の面。描画先と同じ形式で、段が読み書きする。
-    let texture: any MTLTexture
+    ///
+    /// **取り替えられる** — 効果の控えは、描く先と面を取り替える (``Canvas/exchangeTargetWithCarry()``・
+    /// [#2388])。取り替えるのはその 1 口だけで、取り替えても確保した面の数は変わらない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    var texture: any MTLTexture
     /// 死ぬときに面を退かせる先。
     private let gpu: RenderDevice
 

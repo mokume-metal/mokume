@@ -47,7 +47,13 @@ import MokumeDiagnostics
     /// 読むときは写し (``pixelMirror``) を取る。
     ///
     /// [#753]: https://github.com/mokume-metal/mokume/issues/753
-    let texture: any MTLTexture
+    ///
+    /// **効果を通すフレームでは、効果の控え (``StageImage``) と取り替わる** ([#2388])。取り替えるのは
+    /// ``Canvas/exchangeTargetWithCarry()`` だけで、窓・書き出し・読む画素はどれも、そのときの
+    /// この面を読めばよい (読む口に手は入れない)。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    var texture: any MTLTexture
 
     /// 奥行きを覚えておく面。
     ///
@@ -733,6 +739,19 @@ import MokumeDiagnostics
     /// ``RenderDevice/commit(_:retaining:writing:)`` が呼ぶ。
     func noteWritten(by submission: UInt64) {
         lastWriteSubmission = submission
+    }
+
+    /// 面の中身を、投入を介さずに別の絵へ持ち替えた ([#2388])。**写しの「映した」を下ろす。**
+    ///
+    /// 持ち替えは ``texture`` を効果の控えと取り替える口 (``Canvas/exchangeTargetWithCarry()``) が、
+    /// 打ち切られた投入の記帳を取り消すときに使う。投入が書いた面の番号 (``lastWriteSubmission``) は
+    /// 進まないので、映してある写しを新しいと見誤らないように下ろす。CPU が書いたまま戻していない
+    /// 写しは CPU の側が最新なので触らない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    func noteTextureReplaced() {
+        guard let pixelMirror, !pixelMirror.hasPendingWrites else { return }
+        pixelMirror.syncedThrough = 0
     }
 
     /// 投げる読む口が、返す絵の拠った範囲の投入を判定する。**範囲の投入を待ち終えてから呼ぶ。**

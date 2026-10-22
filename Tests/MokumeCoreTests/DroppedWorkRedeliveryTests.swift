@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -435,6 +436,31 @@ struct DroppedWorkRedeliveryTests {
         awaitOutcomes(gpu)
         gpu.revokeDroppedDeliveries()
         #expect(canvas.carriesPictureBeforeEffects == !dropped, "控えを戻す印の扱いが違う")
+    }
+
+    /// 効果を通した絵を出す面へ書いた投入が打ち切られると、出す面は書かれていない。面を取り替えたままだと、
+    /// 次のフレームの入りが書かれていない面になる (#2388)。取り替えを戻せば、効果を通す前の絵が描く先に残る。
+    @Test("効果を通した絵を書いた投入が打ち切られると、面の取り替えを戻す。無ければ戻さない",
+        arguments: [true, false])
+    func aDroppedEffectFrameGivesTheSurfacesBack(dropped: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let drawn = canvas.target.texture
+        try canvas.draw {
+            canvas.background(Self.blue)
+            canvas.effects([.vignette(amount: 0.6)])
+            if dropped { gpu.dropsNextSubmissionForTesting = Self.victim }
+        }
+        #expect(!Self.same(canvas.target.texture, drawn), "面を取り替えていない — 前提が崩れている")
+
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        let given = Self.same(canvas.target.texture, drawn)
+        #expect(given == dropped, "面の取り替えの扱いが違う")
+    }
+
+    private static func same(_ a: any MTLTexture, _ b: any MTLTexture) -> Bool {
+        (a as AnyObject) === (b as AnyObject)
     }
 
     /// 届けるものが無い描き切りでも、登録簿から届け終えた持ち主を降ろす (C6)。逃げ道で直接書いた

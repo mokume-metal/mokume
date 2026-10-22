@@ -187,7 +187,7 @@ enum ShapeExit {
             "carriedOverAmount": "持ち越しの区間で置いた量の印。フレームの頭の検めが読む (#1672)",
             "drawsEncodedInLastFrame": count,
             "spheresFromUnit": count,
-            "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
+            "effectOutputsExchanged": count, "effectRestoresExchanged": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
             "depthLoadsEncoded": count, "depthStoresEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
@@ -238,7 +238,7 @@ enum ShapeExit {
             "sweepPolicy": testing, "sharesUnitShapes": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
-            "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
+            "failEffectPassForTesting": testing, "failAfterEffectsForTesting": testing, "failImageInputForTesting": testing,
             "failEarlySubmissionForTesting": testing, "failPlacedPictureCopyForTesting": testing,
         ]
         return restored.map { ($0.0, .restore($0.1)) }
