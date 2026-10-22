@@ -1510,8 +1510,17 @@ public final class SketchRuntime {
     ///
     /// 起点は**最初のフレーム**で、組み立てた時刻ではない。1 枚も描かないまま持っている
     /// ランタイム (検査が作るもの) は走っているとは言えないため。
+    ///
+    /// **経過は実時間の単調な時計で数える。作者の時計 (``now``) は読まない** ([#3119])。``now`` は
+    /// 検査が差し替えて進められる (`.wallClock` の週をまたぐ検査など)。それで名乗ると、プロセス全体の
+    /// 状態 (活性化の方針・状態バー・出来事の取り出し) が変わり、同じプロセスで窓を開閉する検査の
+    /// run loop が止まって `exit(0)` で要約を残さず終わる ([#1527])。本番の ``now`` は
+    /// `CACurrentMediaTime()` なので、振る舞いは変わらない。
+    ///
+    /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
+    /// [#1527]: https://github.com/mokume-metal/mokume/issues/1527
     private func updatePresence() {
-        let now = self.now()
+        let now = Self.presenceNow()
         guard let started = firstAdvanceAt else {
             firstAdvanceAt = now
             return
@@ -1519,10 +1528,16 @@ public final class SketchRuntime {
         presence.advanced(runningFor: now - started)
     }
 
+    /// 名乗りが読む時計。**差し替えられない**実時間の単調な時計 (``now`` の本番の出どころと同じ)。
+    private static func presenceNow() -> Double { CACurrentMediaTime() }
+
+    /// 名乗っているか。検査が読む (名乗りの本体 ``presence`` は持たせたまま外へ出さない)。
+    var isPresenceAnnounced: Bool { presence.isAnnounced }
+
     /// 走り続けている時間 (秒)。名乗りが読む。
     var presenceElapsed: Double {
         guard let firstAdvanceAt else { return 0 }
-        return now() - firstAdvanceAt
+        return Self.presenceNow() - firstAdvanceAt
     }
 
     /// 名乗りのメニューが開いている間、プレビューを動かすために呼ばれる。

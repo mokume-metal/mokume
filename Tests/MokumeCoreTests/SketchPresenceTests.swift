@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Testing
 
 @testable import MokumeCore
@@ -127,5 +128,61 @@ struct SketchPresenceTests {
             title: "", executable: "evidence", pid: 1, directory: "/tmp", home: "/Users/x",
             elapsed: 0)
         #expect(description.title == "evidence")
+    }
+}
+
+/// 名乗りの**時計の出どころ**を、`SketchRuntime` を通して見る検査 (#3119)。
+///
+/// 名乗りの経過は実時間で数える。検査が差し替えた `now` (作者の時計を動かすためのもの) を
+/// 猶予より先へ進めても、プロセスの状態 (活性化の方針・状態バー) を変えてはならない。名乗ると
+/// 同じプロセスで窓を開閉する検査の run loop を止め、`exit(0)` で要約を残さず終わらせる (#1527)。
+///
+/// **この検査が破れると、同じ実行の窓の検査を巻き込んで消える。** 赤を確かめるときは
+/// `--filter` をこの検査だけに絞ること。
+@Suite("名乗りの経過は実時間で数える", .enabled(if: RenderDevice.isAvailable, "対応する GPU が必要"))
+@MainActor
+struct SketchPresenceClockTests {
+    private final class Blank: Sketch {
+        init() {}
+        let settings = SketchSettings(width: 16, height: 16)
+    }
+
+    /// 検査が進める `now`。参照で共有する。
+    private final class Clockwork {
+        var seconds = 0.0
+    }
+
+    @Test("差し替えた時計を猶予より先へ進めても、名乗らない")
+    func replacedClockDoesNotAnnounce() throws {
+        let clockwork = Clockwork()
+        let runtime = try SketchRuntime(
+            sketch: Blank(), gpu: RenderDevice(), clock: .wallClock, now: { clockwork.seconds })
+        let policy = NSApplication.shared.activationPolicy()
+        try runtime.advance()
+        for step in [SketchPresence.grace - 1, SketchPresence.grace, SketchPresence.grace * 100] {
+            clockwork.seconds = step
+            try runtime.advance()
+        }
+        // 余計に回しても、メニューバーの出来事を取り出しに行かない
+        try runtime.advance()
+        #expect(!runtime.isPresenceAnnounced)
+        #expect(NSApplication.shared.activationPolicy() == policy)
+        // 名乗りの経過 (メニューの "up ...") も、差し替えた時計の進みを写さない
+        #expect(runtime.presenceElapsed < SketchPresence.grace)
+    }
+
+    @Test("最初のフレームの前は 0 で、差し替えた時計が戻っても経過は負にならない")
+    func elapsedStartsAtZeroAndIgnoresReplacedClock() throws {
+        let clockwork = Clockwork()
+        clockwork.seconds = 1000
+        let runtime = try SketchRuntime(
+            sketch: Blank(), gpu: RenderDevice(), clock: .wallClock, now: { clockwork.seconds })
+        #expect(runtime.presenceElapsed == 0)
+        try runtime.advance()
+        clockwork.seconds = -1000
+        try runtime.advance()
+        #expect(runtime.presenceElapsed >= 0)
+        #expect(runtime.presenceElapsed < SketchPresence.grace)
+        #expect(!runtime.isPresenceAnnounced)
     }
 }
