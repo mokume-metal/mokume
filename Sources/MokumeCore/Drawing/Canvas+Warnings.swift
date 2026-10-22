@@ -396,10 +396,12 @@ extension Canvas {
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case backgroundInsideShape
-        /// 形の組み立ての中で画素を読み書きした ([#1588])。`get` / `set` / `pixels` /
-        /// `loadPixels()` の 4 つが鍵を共有する (``vertexOutsideShape`` の前例)。
+        /// 形の組み立ての中で、**組み立てている面自身の**画素を読み書きした ([#1588])。`get` / `set` /
+        /// `pixels` / `loadPixels()` の 4 つが鍵を共有する (``vertexOutsideShape`` の前例)。組み立ての
+        /// 途中の本体に置かれた描き場所の画素は、読み書きしても言わない ([#2203])。
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
         case pixelsInsideShape
         /// 形の組み立ての途中で溜め場が描き切られるか捨てられ、記録したものを失って空の形を返した
         /// ([#1588])。**mokume の不具合のときだけ出る** — 写しを持てなかった置いた描き場所の描き換えも、

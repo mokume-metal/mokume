@@ -647,6 +647,163 @@ struct SVGFileTests {
         #expect(drawing.skipped.isEmpty, "\(element): \(drawing.skipped)")
     }
 
+    // MARK: - CSS の全体キーワード (#2737)
+
+    /// 勝った宣言の全体キーワードは、読みの入口 1 か所で、性質の初めの値か親の値になる ([#2737])。名乗らず、
+    /// 負けた値は残らない。出どころ (属性・規則・`style` 属性・`!important`) を問わない。
+    ///
+    /// [#2737]: https://github.com/mokume-metal/mokume/issues/2737
+    @Test(
+        "全体キーワードが勝てば、塗りと線は初めの値か親の値になり、名乗らず、負けた値は残らない (#2737)",
+        arguments: [
+            // (本体, 塗り, 線 (nil は引かない))
+            (#"<rect width="1" height="1" fill="red" style="fill: initial"/>"#, SVGFile.Color.black, nil),
+            (#"<rect width="1" height="1" fill="red" style="fill: INITIAL "/>"#, SVGFile.Color.black, nil),
+            (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: unset"/></g>"#, Ink.blue, nil),
+            (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: revert"/></g>"#, Ink.blue, nil),
+            (#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: revert-layer"/></g>"#, Ink.blue, nil),
+            // 属性に書いても同じ
+            (#"<g fill="blue"><rect width="1" height="1" fill="initial"/></g>"#, SVGFile.Color.black, nil),
+            (#"<g fill="blue"><rect width="1" height="1" fill="unset"/></g>"#, Ink.blue, nil),
+            // 規則・!important
+            (#"<style>rect { fill: initial !important }</style><rect width="1" height="1" fill="red" style="fill: blue"/>"#, SVGFile.Color.black, nil),
+            (#"<style>.a { fill: unset }</style><g fill="blue"><rect class="a" width="1" height="1" fill="red"/></g>"#, Ink.blue, nil),
+            // 線: 初めの値は none。unset は親の値
+            (#"<rect width="1" height="1" stroke="red" style="stroke: initial"/>"#, SVGFile.Color.black, nil),
+            (#"<g stroke="blue"><rect width="1" height="1" stroke="red" style="stroke: unset"/></g>"#, SVGFile.Color.black, Ink.blue),
+            // `color` も同じ (currentColor で見る)
+            (#"<g color="blue"><rect width="1" height="1" fill="currentColor" color="red" style="color: unset"/></g>"#, Ink.blue, nil),
+            (#"<rect width="1" height="1" fill="currentColor" color="red" style="color: initial"/>"#, SVGFile.Color.black, nil),
+        ])
+    func wideKeywordPaint(_ sample: (String, SVGFile.Color, SVGFile.Color?)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        let item = try #require(drawing.items.first)
+        #expect(item.fill == sample.1, "\(sample.0): \(String(describing: item.fill))")
+        #expect(item.stroke == sample.2, "\(sample.0): \(String(describing: item.stroke))")
+    }
+
+    @Test(
+        "全体キーワードが勝てば、不透明度・線の太さ・表示は初めの値か親の値になる (#2737)",
+        arguments: [
+            // (本体, 塗りの不透明度, 線の太さ, 描くか)
+            (#"<rect width="1" height="1" opacity="0.2" style="opacity: initial"/>"#, 1 as Float, 1 as Float, true),
+            (#"<g><rect width="1" height="1" opacity="0.2" style="opacity: unset"/></g>"#, 1 as Float, 1 as Float, true),
+            (#"<rect width="1" height="1" fill-opacity="0.2" style="fill-opacity: initial"/>"#, 1 as Float, 1 as Float, true),
+            (#"<g fill-opacity="0.5"><rect width="1" height="1" fill-opacity="0.2" style="fill-opacity: unset"/></g>"#, 0.5 as Float, 1 as Float, true),
+            (#"<rect width="1" height="1" stroke="red" stroke-width="5" style="stroke-width: initial"/>"#, 1 as Float, 1 as Float, true),
+            (#"<g stroke-width="3"><rect width="1" height="1" stroke="red" stroke-width="5" style="stroke-width: unset"/></g>"#, 1 as Float, 3 as Float, true),
+            // 親の値があっても、initial は初めの値 (親の値を取らない)
+            (#"<g stroke-width="3" fill-opacity="0.5"><rect width="1" height="1" stroke="red" style="stroke-width: initial; fill-opacity: initial"/></g>"#, 1 as Float, 1 as Float, true),
+            (#"<rect width="1" height="1" visibility="hidden" style="visibility: initial"/>"#, 1 as Float, 1 as Float, true),
+            (#"<g visibility="hidden"><rect width="1" height="1" style="visibility: initial"/></g>"#, 1 as Float, 1 as Float, true),
+            (#"<g visibility="hidden"><rect width="1" height="1" style="visibility: unset"/></g>"#, 1 as Float, 1 as Float, false),
+            (#"<g visibility="hidden"><rect width="1" height="1" style="visibility: revert"/></g>"#, 1 as Float, 1 as Float, false),
+            // display は今までどおり (描く)
+            (#"<rect width="1" height="1" display="none" style="display: initial"/>"#, 1 as Float, 1 as Float, true),
+            (#"<rect width="1" height="1" style="display: unset"/>"#, 1 as Float, 1 as Float, true),
+        ])
+    func wideKeywordScalars(_ sample: (String, Float, Float, Bool)) throws {
+        let drawing = try document(sample.0)
+        #expect(drawing.skipped.isEmpty, "\(sample.0): \(drawing.skipped)")
+        #expect(drawing.items.isEmpty == !sample.3, "\(sample.0): \(drawing.items)")
+        guard let item = drawing.items.first else { return }
+        #expect(item.fill?.alpha == sample.1, "\(sample.0): \(String(describing: item.fill))")
+        #expect(item.strokeWidth == sample.2, "\(sample.0): \(item.strokeWidth)")
+    }
+
+    @Test("全体キーワードが勝てば、端・つなぎ・塗りの規則も初めの値か親の値になる (#2737)")
+    func wideKeywordStrokeShape() throws {
+        let initial = try document(
+            #"<rect width="1" height="1" stroke="red" stroke-linecap="round" stroke-linejoin="bevel" fill-rule="evenodd" style="stroke-linecap: initial; stroke-linejoin: initial; fill-rule: initial"/>"#)
+        #expect(initial.skipped.isEmpty, "\(initial.skipped)")
+        #expect(initial.items[0].cap == .square && initial.items[0].join == .miter)
+        #expect(initial.items[0].fillRule == .nonzero)
+        let inherited = try document(
+            #"<g stroke-linecap="round" stroke-linejoin="bevel" fill-rule="evenodd"><rect width="1" height="1" stroke="red" stroke-linecap="square" stroke-linejoin="miter" fill-rule="nonzero" style="stroke-linecap: unset; stroke-linejoin: revert; fill-rule: revert-layer"/></g>"#)
+        #expect(inherited.skipped.isEmpty, "\(inherited.skipped)")
+        #expect(inherited.items[0].cap == .round && inherited.items[0].join == .bevel)
+        #expect(inherited.items[0].fillRule == .evenOdd)
+    }
+
+    @Test("受け継がない効果の unset は initial で、親の効果を取らない。inherit は取る (#2737)")
+    func unsetEffectDoesNotTakeTheParents() throws {
+        // 名乗るのは効果を持つ親の g だけ (子は取らない)
+        let unset = try document(
+            #"<g clip-path="url(#c)"><rect width="1" height="1" style="clip-path: unset"/></g>"#)
+        #expect(unset.skipped.map(\.what) == ["clip-path"], "\(unset.skipped)")
+        #expect(unset.skipped.first?.count == 1)
+        // inherit なら子も取り、子の分も数える
+        let inherit = try document(
+            #"<g clip-path="url(#c)"><rect width="1" height="1" style="clip-path: inherit"/></g>"#)
+        #expect(inherit.skipped.first?.count == 2, "\(inherit.skipped)")
+    }
+
+    @Test("読めない値は今までどおり名乗り、下の宣言が残る。inherit も今までどおり (#2737 の陰性対照)")
+    func unreadableValuesAreStillNamed() throws {
+        let drawing = try document(#"<rect width="1" height="1" fill="red" style="fill: bogus"/>"#)
+        #expect(drawing.skipped.map(\.what) == [#"fill "bogus""#], "\(drawing.skipped)")
+        #expect(drawing.items[0].fill == Ink.red)
+        let inherit = try document(#"<g fill="blue"><rect width="1" height="1" fill="red" style="fill: inherit"/></g>"#)
+        #expect(inherit.skipped.isEmpty)
+        #expect(inherit.items[0].fill == Ink.blue)
+    }
+
+    @Test(
+        "根の svg の width・height の inherit・revert・revert-layer は auto と同じ。名乗らない (#2737)",
+        arguments: ["inherit", "INHERIT", "revert", "revert-layer"])
+    func rootSizeWideKeyword(_ keyword: String) throws {
+        let drawing = try document(
+            #"<rect width="1" height="1"/>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20" width="50" height="40" style="width: \#(keyword)">"#)
+        #expect(drawing.skipped.isEmpty, "\(drawing.skipped)")
+        // 幅は auto (書いていない) で、高さは 40 だけが残る: 縦横比 1:2 から幅は 20
+        #expect(isClose(drawing.items[0].transform.apply(SIMD2(10, 20)), SIMD2(20, 40)))
+    }
+
+    @Test("入れ子の svg の width の inherit は、親が svg ならその値、そうでなければ auto (#2737)")
+    func nestedSizeInherit() throws {
+        let root = #"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="20" height="20">"#
+        let nested = #"<svg viewBox="0 0 10 10" width="5" height="5" style="width: inherit">"#
+        // 親の `svg` の幅 20 を取る。meet で 0.5 倍・横の余り 15 の半分 7.5。根は 0.2 倍
+        let direct = try document(#"\#(nested)<rect width="1" height="1"/></svg>"#, root: root)
+        #expect(direct.skipped.isEmpty, "\(direct.skipped)")
+        #expect(isClose(direct.items[0].transform.apply(.zero), SIMD2(1.5, 0)))
+        #expect(isClose(direct.items[0].transform.apply(SIMD2(10, 10)), SIMD2(2.5, 1)))
+        // 親が g なら auto (親の座標の決まりの幅 100)。余りは 95 の半分 47.5
+        let viaGroup = try document(#"<g>\#(nested)<rect width="1" height="1"/></svg></g>"#, root: root)
+        #expect(viaGroup.skipped.isEmpty, "\(viaGroup.skipped)")
+        #expect(isClose(viaGroup.items[0].transform.apply(.zero), SIMD2(9.5, 0)))
+        #expect(isClose(viaGroup.items[0].transform.apply(SIMD2(10, 10)), SIMD2(10.5, 1)))
+    }
+
+    @Test(
+        "形の長さの属性の全体キーワードは、auto を取る口では auto、取らない口では 0 と読み、名乗らない (#2737)",
+        arguments: ["initial", "unset", "revert", "revert-layer", "inherit", " UNSET "])
+    func shapeLengthWideKeyword(_ keyword: String) throws {
+        let position = try document(#"<rect x="\#(keyword)" y="\#(keyword)" width="2" height="2"/>"#)
+        #expect(position.skipped.isEmpty, "\(position.skipped)")
+        #expect(position.items.map(\.outline) == [.rect(x: 0, y: 0, width: 2, height: 2)])
+        let center = try document(#"<circle cx="\#(keyword)" cy="3" r="2"/>"#)
+        #expect(center.skipped.isEmpty, "\(center.skipped)")
+        #expect(center.items.map(\.outline) == [.ellipse(centerX: 0, centerY: 3, radiusX: 2, radiusY: 2)])
+        // 半径 (circle の r) は auto を取らない口で 0。描かず、名乗らない
+        let radius = try document(#"<circle cx="1" cy="1" r="\#(keyword)"/>"#)
+        #expect(radius.skipped.isEmpty && radius.items.isEmpty, "\(radius.skipped)")
+        // auto を取る口は auto。片方が auto なら ellipse はもう片方を使う
+        let ellipse = try document(#"<ellipse cx="5" cy="5" rx="\#(keyword)" ry="3"/>"#)
+        #expect(ellipse.skipped.isEmpty, "\(ellipse.skipped)")
+        #expect(ellipse.items.map(\.outline) == [.ellipse(centerX: 5, centerY: 5, radiusX: 3, radiusY: 3)])
+        let size = try document(#"<rect width="\#(keyword)" height="2"/>"#)
+        #expect(size.skipped.isEmpty && size.items.isEmpty, "\(size.skipped)")
+        // 入れ子の svg の x・y も 0
+        let nested = try document(
+            #"<svg x="\#(keyword)" y="\#(keyword)" width="10" height="10"><rect width="1" height="1"/></svg>"#,
+            root: #"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">"#)
+        #expect(nested.skipped.isEmpty, "\(nested.skipped)")
+        #expect(isClose(nested.items[0].transform.apply(.zero), .zero))
+    }
+
     // MARK: - CSS で書いた幾何・変換と <svg> の transform (#2627)
 
     /// 属性からしか読まない幾何の性質を CSS で書いても、描き方は変えず (属性の値で描く)、効く要素に限って
@@ -861,7 +1018,9 @@ struct SVGFileTests {
 
     /// `initial` と `unset` は、`width` / `height` では初めの値 `auto` と同じ。読める宣言として名乗らず、
     /// 下の属性を消して書いていないのと同じにする (CSS の `auto` と同じ)。
-    @Test("CSS の initial と unset は auto と同じ (名乗らず、属性を消す)", arguments: ["initial", "unset", " AUTO "])
+    @Test(
+        "CSS の initial・unset・revert・revert-layer は auto と同じ (名乗らず、属性を消す)",
+        arguments: ["initial", "unset", "revert", "revert-layer", " REVERT ", " AUTO "])
     func initialAndUnsetAreAuto(_ keyword: String) throws {
         let drawing = try document(
             #"<rect width="1" height="1"/>"#,
@@ -1614,6 +1773,14 @@ struct SVGFileTests {
             // 短縮形の marker は、3 つの性質をまとめて打ち消す
             #"<path d="M0 0 L1 1" stroke="black" marker-start="url(#m)" style="marker: none"/>"#,
             #"<path d="M0 0 L1 1" stroke="black" marker="url(#m)" style="marker-start: none; marker-mid: none; marker-end: none"/>"#,
+            // 全体キーワードも、勝てば下の宣言の効果を打ち消し、名乗らない (#2737)
+            #"<rect width="1" height="1" clip-path="url(#c)" style="clip-path: initial"/>"#,
+            #"<rect width="1" height="1" clip-path="initial"/>"#,
+            #"<rect width="1" height="1" mix-blend-mode="multiply" style="mix-blend-mode: initial"/>"#,
+            #"<rect width="1" height="1" filter="url(#f)" style="filter: unset"/>"#,
+            #"<rect width="1" height="1" mask="url(#m)" style="mask: revert"/>"#,
+            #"<path d="M0 0 L1 1" stroke="black" marker-end="url(#m)" style="marker-end: revert-layer"/>"#,
+            #"<path d="M0 0 L1 1" stroke="black" marker="url(#m)" style="marker: unset"/>"#,
         ])
     func winningNoneCancelsTheEffect(_ body: String) throws {
         let drawing = try document(body)
@@ -1664,7 +1831,6 @@ struct SVGFileTests {
             (#"<rect width="1" height="1" clip-path="url(#c) fill-box"/>"#, [#"clip-path "url(#c) fill-box""#]),
             (#"<rect width="1" height="1" clip-path="circle(50%"/>"#, [#"clip-path "circle(50%""#]),
             (#"<rect width="1" height="1" clip-path="circle(1px) ellipse(1px)"/>"#, [#"clip-path "circle(1px) ellipse(1px)""#]),
-            (#"<rect width="1" height="1" clip-path="initial"/>"#, [#"clip-path "initial""#]),
             (#"<rect width="1" height="1" style="filter: bogus"/>"#, [#"filter "bogus""#]),
             (#"<rect width="1" height="1" filter="blur(2px) bogus"/>"#, [#"filter "blur(2px) bogus""#]),
             (#"<rect width="1" height="1" style="marker: bogus"/>"#, [#"marker "bogus""#]),

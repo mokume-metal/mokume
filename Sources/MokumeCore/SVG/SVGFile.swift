@@ -283,6 +283,11 @@ nonisolated enum SVGFile {
         var viewport = SIMD2<Float>(100, 100)
         /// この要素自身の受け継がない描き方。子へは受け継がず、子の `inherit` だけが親の値として取る。
         var own = Own()
+        /// この要素が `svg` なら、`width` / `height` の勝った宣言の文字 (`auto` を含む)。`svg` でなければ空。
+        /// 入れ子の `svg` の `width: inherit` が、親の値として取る (#2737)。
+        var ownSizes: [String: String] = [:]
+        /// 親要素の ``ownSizes``。
+        var parentSizes: [String: String] = [:]
 
         /// 割合で書いた半径などの基準 (対角線の長さを √2 で割ったもの)。
         var diagonal: Float { ((viewport.x * viewport.x + viewport.y * viewport.y) / 2).squareRoot() }
@@ -515,6 +520,7 @@ nonisolated enum SVGFile {
                 }
                 context.transform = context.transform * viewport.transform
                 context.viewport = viewport.size
+                context.ownSizes = viewport.texts
                 pushContainer(.render, context)
             case "g", "a":
                 context.transform = context.transform * ownTransform(attributes, line: line)
@@ -542,7 +548,10 @@ nonisolated enum SVGFile {
         /// **性質ごとに、読める宣言のうち順位が最も高い 1 つだけを当てる** (勝った宣言だけが効き、負けた
         /// 宣言の値は残らない)。読めない値の宣言は名乗って無かったことにする (下の宣言が残る)。勝った宣言が
         /// `none` なら効果は無く、`inherit` なら親の値になる (受け継がない `opacity`・`display`・描けない
-        /// 効果も、親の値を取る)。`marker` は `marker-start` / `marker-mid` / `marker-end` の短縮形として重ねる。
+        /// 効果も、親の値を取る)。**全体キーワード** (`initial`・`unset`・`revert`・`revert-layer`) も勝てば同じ
+        /// に効く (`read` の入口が解く): `initial` は性質の初めの値 (描けない効果は `none`)、`unset` は受け継ぐ
+        /// 性質なら `inherit`・受け継がない性質なら `initial`、`revert`・`revert-layer` は `unset` と同じ (#2737)。
+        /// `marker-*` は、SVG では受け継ぐ性質だが mokume は要素ごとの効果として持つので、受け継がない側に置く。`marker` は `marker-start` / `marker-mid` / `marker-end` の短縮形として重ねる。
         /// **`display` が `none` に決まれば `nil`** (中身ごと描かない。書き手の意図なので、この要素の読めない
         /// 値も名乗らない)。
         /// 描けない効果 (`clip-path` など) は、要素を描くと決まってから名乗れるよう返す。
@@ -612,7 +621,7 @@ nonisolated enum SVGFile {
                     nameUnread(property)
                 }
                 if SVGFile.sizeProperties.contains(property) {
-                    if value.lowercased() != "inherit" { sizes[property, default: []].append(value) }
+                    sizes[property, default: []].append(value)
                     continue
                 }
                 guard SVGFile.properties.contains(property) else { continue }
@@ -627,6 +636,8 @@ nonisolated enum SVGFile {
             }
 
             var context = inherited
+            context.parentSizes = inherited.ownSizes
+            context.ownSizes = [:]
             var own = Own()
             for (property, reading) in winners {
                 switch reading {
@@ -645,7 +656,7 @@ nonisolated enum SVGFile {
 
         /// 宣言 1 つの値の読み。**読むだけで、名乗りも当てもしない** (どの宣言が勝つかは `resolve` が決める)。
         private enum Reading {
-            /// 親の値を取る (`inherit`。`color` では `currentColor` も)。
+            /// 親の値を取る (`inherit`。受け継ぐ性質の `unset`・`revert`・`revert-layer`。`color` では `currentColor` も)。
             case inherit
             /// 読めない値。CSS で読めない宣言が無かったことになるのと同じく、下の宣言・受け継いだ値が残る。
             case unreadable
@@ -658,7 +669,16 @@ nonisolated enum SVGFile {
         /// 宣言 1 つの値を読む。`value` は前後の空白を落としたもの。大文字と小文字は区別しない。
         private func read(_ property: String, _ value: String, in inherited: Context) -> Reading {
             let lowered = value.lowercased()
-            guard lowered != "inherit" else { return .inherit }
+            // 全体キーワードは性質ごとの読みの前に、ここ 1 か所で受ける (#2737)。`unset` は受け継ぐ性質なら
+            // `inherit`・受け継がない性質なら `initial`。`revert`・`revert-layer` は、SVG が UA の値も層も持たない
+            // ので `unset` と同じに読む。属性・規則・`style` 属性のどの出どころでも同じ
+            switch lowered {
+            case "inherit": return .inherit
+            case "initial": return Self.initial(of: property)
+            case "unset", "revert", "revert-layer":
+                return SVGFile.inheritedProperties.contains(property) ? .inherit : Self.initial(of: property)
+            default: break
+            }
             switch property {
             case "fill", "stroke":
                 let isFill = property == "fill"
@@ -752,6 +772,34 @@ nonisolated enum SVGFile {
             }
         }
 
+        /// 性質の初めの値 (`initial`)。描けない効果は `none` (`mix-blend-mode` は `normal`) で、効果なし。
+        private static func initial(of property: String) -> Reading {
+            switch property {
+            case "fill":
+                return .set { context, _ in
+                    context.fill = .color(.black)
+                    context.fillIsReference = false
+                }
+            case "stroke":
+                return .set { context, _ in
+                    context.stroke = .none
+                    context.strokeIsReference = false
+                }
+            case "color": return .set { context, _ in context.color = .black }
+            case "fill-opacity": return .set { context, _ in context.fillOpacity = 1 }
+            case "stroke-opacity": return .set { context, _ in context.strokeOpacity = 1 }
+            case "opacity": return .set { _, own in own.opacity = 1 }
+            case "fill-rule": return .set { context, _ in context.fillRule = .nonzero }
+            case "stroke-width": return .set { context, _ in context.strokeWidth = 1 }
+            case "stroke-linecap": return .set { context, _ in context.cap = .square }
+            case "stroke-linejoin": return .set { context, _ in context.join = .miter }
+            case "stroke-dasharray": return .set { context, _ in context.isDashed = false }
+            case "visibility": return .set { context, _ in context.isVisible = true }
+            case "display": return .set { _, own in own.isDisplayed = true }
+            default: return .effect(false)  // `clip-path`・`mask`・`filter`・`marker*`・`mix-blend-mode`
+            }
+        }
+
         /// 0…1 の割合 (数か百分率) を読む。範囲の外は端へ寄せる。
         private static func fraction(_ text: String) -> Float? {
             let value: Float?
@@ -778,8 +826,8 @@ nonisolated enum SVGFile {
         private enum Written {
             /// 書いていない。
             case absent
-            /// `auto` (SVG 2 では書いていないのと同じ)。`initial` と `unset` も、`auto` が初めの値の口
-            /// (`width`・`height`・`rx`・`ry`) では同じ。
+            /// `auto` (SVG 2 では書いていないのと同じ)。全体キーワード (`initial`・`unset`・`revert`・
+            /// `revert-layer`・`inherit`) も、`auto` が初めの値の口 (`width`・`height`・`rx`・`ry`) では同じ。
             case automatic
             /// 読めない値 (`abc`・空・読めない単位)。**名乗り済み**。
             case unreadable
@@ -805,9 +853,11 @@ nonisolated enum SVGFile {
             guard let text else { return .absent }
             // 名乗りは、値の前後の空白を落とした文字で出す (根の `svg` の大きさ・`preserveAspectRatio` と揃える) (#3022)
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if allowsAuto, ["auto", "initial", "unset"].contains(trimmed.lowercased()) {
-                return .automatic
-            }
+            // 全体キーワード (#2737): `auto` が初めの値の口は `auto`、そうでない口 (`x`・`y`・`cx`・`cy`・`r`) は初めの値
+            // 0。`inherit` も同じ (親は長さを持たない)。`svg` の `width` / `height` の `inherit` は、`viewport` が先に解く
+            let keyword = trimmed.lowercased()
+            if SVGFile.wideKeywords.contains(keyword) { return allowsAuto ? .automatic : .value(0) }
+            if allowsAuto, keyword == "auto" { return .automatic }
             guard let value = SVGFile.parseLength(text, reference: reference) else {
                 tally.note(SVGFile.attributeNote(of: element, key, text), line: line)
                 return .unreadable
@@ -822,7 +872,7 @@ nonisolated enum SVGFile {
         private mutating func viewport(
             of attributes: [String: String], sizes: [String: [String]], in context: Context, isRoot: Bool,
             line: Int
-        ) -> (transform: Affine, size: SIMD2<Float>)? {
+        ) -> (transform: Affine, size: SIMD2<Float>, texts: [String: String])? {
             var box: [Float]?
             if let text = attributes["viewBox"] {
                 if let numbers = SVGFile.parseNumbers(text), numbers.count == 4, numbers[2] > 0,
@@ -853,14 +903,29 @@ nonisolated enum SVGFile {
             // 捨てられ、下の宣言が残るので、名乗って次へ進む。全部が読めなければ書いていないのと同じ
             // **負の値は別**: CSS では無効な宣言だが、ここでは読めた値として採り (描かない結果は変えていない)、
             // 名乗りは「捨てた」ではなく「この値で根を描かない」の意味。CSS との仕様差は `loadShape(_:)` の説明の「SVG と見え方が違う所」に書いてある (#2648)
+            // 勝った宣言の文字は `texts` に残し (`auto` も)、入れ子の `svg` の `inherit` が親の値として取る (#2737)
+            var texts: [String: String] = [:]
             func size(_ key: String, _ against: Float) -> Float? {
-                for text in (sizes[key] ?? []).reversed() {
+                for declared in (sizes[key] ?? []).reversed() {
+                    var text = declared
+                    if text.lowercased() == "inherit" {
+                        // 根に親は無く、初めの値 (`auto`)。入れ子は親が `svg` ならその値、そうでなければ `auto`
+                        guard !isRoot, let parent = context.parentSizes[key] else {
+                            texts[key] = "auto"
+                            return nil
+                        }
+                        text = parent
+                    }
                     switch written(
                         text, element: "svg", key: key, reference: against, allowsAuto: true, namesNegative: true,
                         line: line)
                     {
-                    case .value(let length): return length
-                    case .automatic: return nil
+                    case .value(let length):
+                        texts[key] = text
+                        return length
+                    case .automatic:
+                        texts[key] = "auto"
+                        return nil
                     case .absent, .unreadable: continue
                     }
                 }
@@ -895,11 +960,11 @@ nonisolated enum SVGFile {
             }
             guard width > 0, height > 0 else { return nil }
             var transform = Affine.translate(x, y)
-            guard let box else { return (transform, SIMD2(width, height)) }
+            guard let box else { return (transform, SIMD2(width, height), texts) }
             transform =
                 transform
                 * SVGFile.viewBoxTransform(box, width: width, height: height, aspect: aspect)
-            return (transform, SIMD2(box[2], box[3]))
+            return (transform, SIMD2(box[2], box[3]), texts)
         }
 
         // MARK: 形を作る
@@ -1128,6 +1193,16 @@ nonisolated enum SVGFile {
         default: []
         }
     }
+
+    /// CSS の全体キーワード。
+    private static let wideKeywords: Set<String> = ["inherit", "initial", "unset", "revert", "revert-layer"]
+
+    /// 受け継ぐ性質 (CSS の初期値でなく親の値から始まる)。`unset` の読みの分かれ目。`marker-*` は SVG では受け継ぐ性質
+    /// だが、mokume は描けない効果として要素ごとに持ち、子へ受け継がないので、ここには置かない (#2737)。
+    private static let inheritedProperties: Set<String> = [
+        "fill", "fill-opacity", "fill-rule", "stroke", "stroke-opacity", "stroke-width", "stroke-linecap",
+        "stroke-linejoin", "stroke-dasharray", "color", "visibility",
+    ]
 
     /// `svg` だけが、属性にも CSS にも書ける大きさの名前 (SVG 2 では CSS の性質でもある)。
     private static let sizeProperties: Set<String> = ["width", "height"]

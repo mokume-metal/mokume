@@ -105,7 +105,7 @@ public final class AudioIn: Inlet {
     /// 止める。機材を閉じ、以後の値は無音になる。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
-    /// 外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと何もせず、`AudioIn.stop()` のように型を付けた名前で 1 度だけ警告する。
+    /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`AudioIn.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
         owner?.detach(self, calledAs: "AudioIn.stop()")
     }
