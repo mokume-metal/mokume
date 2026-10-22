@@ -173,7 +173,53 @@ import simd
         /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         var weight: Int = 0
+        /// 焼く拡大の段 ([#2446])。0 は `size` の大きさそのままで焼く (拡大を掛けない・これまでの焼き方)。
+        /// `n` は ``GlyphAtlas/ratio(ofStep:)`` 倍の画素で焼く — 字形の形と並びは `size` のまま、
+        /// 描く面の画素だけを細かくする。
+        ///
+        /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+        var step: Int = 0
     }
+
+    /// 1 オクターブ (2 倍) を何段に刻むか ([#2446])。拡大を動かすと、この段の境を越えるたびに焼き直す。
+    /// 細かいほど拡大に合った画素で焼けるが、焼き直しが増える。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    static let stepsPerOctave = 8
+
+    /// 段 `step` で焼くときの、`size` に対する倍率。段 0 は厳密に 1。
+    static func ratio(ofStep step: Int) -> Float {
+        step == 0 ? 1 : exp2(Float(step) / Float(stepsPerOctave))
+    }
+
+    /// 1 フレームに、新しく焼いてよい拡大した字形 (段が 0 より上) の数の上限 ([#2446])。越えた分は、
+    /// その字形で焼いてある近い段で描く (``Canvas`` の `glyphEntry(for:step:)`)。拡大を動かす絵が
+    /// 1 フレームに焼き直す量を抑える。**初めて出る字形は、上限に関わらず焼く** — 近い段が無いので、
+    /// 抑えると欠けるか、1 枚だけ書き出すときにぼけたまま残る。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    var scaledBakesPerFrame = 64
+    /// 今のフレームで新しく焼いた、拡大した字形の数。``bakeFrame`` が変わると 0 に戻る。
+    private(set) var scaledBakesThisFrame = 0
+    private var bakeFrame = -1
+
+    /// 拡大した字形を焼いた数を、フレームの番号に合わせて返す。
+    func scaledBakes(inFrame frame: Int) -> Int {
+        if bakeFrame != frame {
+            bakeFrame = frame
+            scaledBakesThisFrame = 0
+        }
+        return scaledBakesThisFrame
+    }
+
+    /// 拡大した字形を 1 つ焼いたと数える。
+    func countScaledBake(inFrame frame: Int) {
+        _ = scaledBakes(inFrame: frame)
+        scaledBakesThisFrame += 1
+    }
+
+    /// 焼いてある字形。**焼かない** — 無ければ `nil`。
+    func cachedEntry(for key: Key) -> Entry? { entries[key] }
 
     /// 1 つの頁が控えに積んでよいバイト数・区画の数の上限 (``GlyphPage/pendingByteLimit``・
     /// ``GlyphPage/pendingRegionLimit``)。**頁を替えても引き継ぐ。** 検査が差し替える。
@@ -242,16 +288,18 @@ import simd
 
     /// 字形を CPU で描く。**焼き場も測る側も、描くときはここを通す** (数えるため)。
     func renderOnCPU(
-        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int
+        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int,
+        scale: CGFloat = 1
     ) -> [SIMD4<Float16>]? {
         cpuRenders += 1
         return Self.render(
-            glyph: glyph, font: font, width: width, height: height, penX: penX, penY: penY)
+            glyph: glyph, font: font, width: width, height: height, penX: penX, penY: penY,
+            scale: scale)
     }
 
     /// 測る側が描いた画素を預かる。同じ鍵の字形を焼くとき、同じ升目なら描き直さずに使う。
     ///
-    /// **描き方は焼き場と同じ** (``render(glyph:font:width:height:penX:penY:)``) なので、預けた画素から
+    /// **描き方は焼き場と同じ** (``render(glyph:font:width:height:penX:penY:scale:)``) なので、預けた画素から
     /// 焼いた字形は、描き直して焼いたものと 1 ビットも変わらない。
     ///
     /// [#2560]: https://github.com/mokume-metal/mokume/issues/2560
@@ -460,7 +508,11 @@ import simd
     /// 字形を焼いて面へ置く。
     private func bake(key: Key, font: CTFont) -> Lookup {
         var glyph = CGGlyph(key.glyph)
-        let bounds = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, nil, 1)
+        // **拡大の段は、書体の大きさの引数を変えずに、描く面の拡大で作る** (#2446)。大きさの引数を変えると、
+        // 光学サイズを持つ書体 (既定の SF) は大きな光学サイズの字形にすり替わる
+        let ratio = CGFloat(Self.ratio(ofStep: key.step))
+        var bounds = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, nil, 1)
+        if key.step != 0 { bounds = bounds.applying(CGAffineTransform(scaleX: ratio, y: ratio)) }
 
         // 絵を持たない字 (空白)。場所は取らないが、送り幅は持つ
         guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
@@ -486,7 +538,8 @@ import simd
         // 字形がある (#1492)
         guard Self.fitsFreshPage(width: extent.width, height: extent.height, side: Self.maximumSize)
         else {
-            warnTooLargeOnce(width: extent.width, height: extent.height)
+            // 拡大した字形が入らないときは、呼ぶ側が低い段で描く。段 0 の字形だけ知らせる
+            if key.step == 0 { warnTooLargeOnce(width: extent.width, height: extent.height) }
             return .tooLarge(
                 width: Self.saturatingInt(extent.width), height: Self.saturatingInt(extent.height))
         }
@@ -507,7 +560,7 @@ import simd
                 for: key, width: width, height: height, penX: -left, penY: -bottom)
                 ?? renderOnCPU(
                     glyph: glyph, font: font, width: width, height: height, penX: -left,
-                    penY: -bottom)
+                    penY: -bottom, scale: ratio)
         else { return .unbakeable }
 
         // **待たずに、焼いた画素を頁の控えへ積む** (#1792)。届けるのは描き切りの GPU 側のコピーで、
@@ -516,13 +569,22 @@ import simd
         page.stage(x: origin.x, y: origin.y, width: width, height: height, pixels: pixels)
 
         let side = Float(size)
+        // 拡大の段は、座標の単位 (`size` の大きさ) に戻して持つ。置く側は変わらず、拡大が段の倍率と
+        // 同じなら、焼いた画素と描く画素が 1 対 1 になる (#2446)
+        let unit = Float(ratio)
+        var offset = SIMD2(Float(left), Float(-top))
+        var drawnSize = SIMD2(Float(width), Float(height))
+        if key.step != 0 {
+            offset /= unit
+            drawnSize /= unit
+        }
         return .found(
             Entry(
                 uvMin: SIMD2(Float(origin.x) / side, Float(origin.y) / side),
                 uvMax: SIMD2(Float(origin.x + width) / side, Float(origin.y + height) / side),
                 // 縦は下向きに測るので、基準線から上端までの距離が負のずれになる
-                offset: SIMD2(Float(left), Float(-top)),
-                size: SIMD2(Float(width), Float(height)),
+                offset: offset,
+                size: drawnSize,
                 isBlank: false,
                 isColored: Self.hasOwnColor(pixels)))
     }
@@ -593,8 +655,14 @@ import simd
     /// `text()` の墨と食い違いうる。
     ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
+    ///
+    /// **`scale` は拡大の段の倍率** ([#2446])。書体の大きさの引数はそのままに、描く面を拡げて描くので、
+    /// 字形の形 (光学サイズの選び) は変わらず、画素だけが細かくなる。`penX`・`penY` は拡げた後の画素。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     static func render(
-        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int
+        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int,
+        scale: CGFloat = 1
     ) -> [SIMD4<Float16>]? {
         var pixels = [SIMD4<Float16>](repeating: .zero, count: width * height)
         let stride = width * Self.bytesPerPixel
@@ -620,6 +688,10 @@ import simd
 
             var index = glyph
             var position = CGPoint(x: CGFloat(penX), y: CGFloat(penY))
+            if scale != 1 {
+                context.scaleBy(x: scale, y: scale)
+                position = CGPoint(x: position.x / scale, y: position.y / scale)
+            }
             CTFontDrawGlyphs(font, &index, &position, 1, context)
             return true
         }

@@ -45,6 +45,12 @@ struct ResolvedGlyph {
     var fontKey: String
 }
 
+/// 拡大した段の字形を引く鍵 (``Typeface/placedScaled``)。
+struct ScaledGlyphKey: Hashable {
+    var scalar: Unicode.Scalar
+    var step: Int
+}
+
 /// 焼き場で引いた字形と、それを引いた頁 (``Typeface/placed``)。
 struct PlacedGlyph {
     var pageSerial: UInt64
@@ -92,6 +98,13 @@ final class Typeface {
     ///
     /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
     var placed: [Unicode.Scalar: PlacedGlyph] = [:]
+
+    /// ``placed`` の、拡大した段 (0 より上) の字形の控え ([#2446])。**頁の通し番号が一致し、頼んだ段と
+    /// 同じ段で焼いた字形だけが入る** — 上限を越えて近い段で描いた字形は、頼んだ段の控えに入れない
+    /// (次のフレームで頼んだ段を焼くため)。段 0 は ``placed`` を使い、これまでの経路を変えない。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    var placedScaled: [ScaledGlyphKey: PlacedGlyph] = [:]
 
     /// 頼まれた太さ・傾きの面を、書体が持っていなかったか ([#2444])。持っていなければ ``base`` は
     /// 元の面か、引けた片方の性質だけの面で、それを知らせるのは書体を作らせた側 (`Canvas`) である。
@@ -536,7 +549,7 @@ final class Typeface {
         path == nil || CTFontGetSymbolicTraits(resolved.font).contains(.traitColorGlyphs)
     }
 
-    /// 字形を**焼き場と同じ描き方** (``GlyphAtlas/render(glyph:font:width:height:penX:penY:)``)
+    /// 字形を**焼き場と同じ描き方** (``GlyphAtlas/render(glyph:font:width:height:penX:penY:scale:)``)
     /// で描いた墨の範囲を、字形の座標 (書き始めと基準線から測り、上向き) で返す。墨が無ければ
     /// `nil` ([#2308])。
     ///

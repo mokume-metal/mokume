@@ -224,10 +224,15 @@ extension Canvas {
         guard !line.isEmpty else { return }
 
         var pen = penStart(at: x, face: face, line: line)
+        // 変換が字を拡げる量から、焼く段を決める。**行ごとに 1 度** (行の中で変換は変わらない・#2446)
+        let step = glyphStep
 
         for scalar in line.unicodeScalars {
             // 同じ頁で引いたことのある字は、書体も焼き場も引かない (``Typeface/placed``)
-            if let placed = face.placed[scalar], placed.pageSerial == atlas.pageSerial {
+            let known = step == 0
+                ? face.placed[scalar]
+                : face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)]
+            if let placed = known, placed.pageSerial == atlas.pageSerial {
                 if !placed.entry.isBlank {
                     appendGlyphQuad(placed.entry, penX: pen, baseline: baseline, color: color)
                 }
@@ -235,10 +240,16 @@ extension Canvas {
                 continue
             }
             guard let resolved = face.glyph(for: scalar) else { continue }
-            if let entry = glyphEntry(for: resolved) {
+            if let entry = glyphEntry(for: resolved, step: step) {
                 // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
-                face.placed[scalar] = PlacedGlyph(
+                let placed = PlacedGlyph(
                     pageSerial: atlas.pageSerial, entry: entry, advance: resolved.advance)
+                if step == 0 {
+                    face.placed[scalar] = placed
+                } else if atlas.cachedEntry(for: glyphKey(for: resolved, step: step)) != nil {
+                    // 頼んだ段で焼けているときだけ。上限を越えて近い段で描いた字形は控えない
+                    face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)] = placed
+                }
                 if !entry.isBlank {
                     appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
                 }
