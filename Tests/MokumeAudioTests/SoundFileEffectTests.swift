@@ -53,13 +53,13 @@ struct SoundFileEffectTests {
     // MARK: - 回し方
 
     private func run(
-        frames: Int, setup: @escaping (EffectSketch) throws -> Void,
+        frames: Int, clock: Clock? = nil, setup: @escaping (EffectSketch) throws -> Void,
         draw: @escaping (EffectSketch) -> Void = { _ in },
         between: (Int) throws -> Void = { _ in }
     ) throws -> SketchRuntime {
         EffectSketch.onSetup = setup
         EffectSketch.onDraw = draw
-        let runtime = try SketchRuntime(sketch: EffectSketch(), gpu: try RenderDevice())
+        let runtime = try SketchRuntime(sketch: EffectSketch(), gpu: try RenderDevice(), clock: clock)
         for frame in 1...frames {
             try runtime.advance()
             try between(frame)
@@ -101,7 +101,8 @@ struct SoundFileEffectTests {
     ///   - start: `setup()` で、通した後に呼ぶ操作。
     ///   - act: `draw()` の記録の後に、フレームの番号で呼ぶ操作。
     private func take(
-        frames: Int, flow: SoundFlow? = nil, url: URL, stageFirst: Bool = true, route: Bool = true,
+        frames: Int, flow: SoundFlow? = nil, clock: Clock? = nil, url: URL, stageFirst: Bool = true,
+        route: Bool = true,
         routeAt: Int? = nil, cutoff: Float = 20_000,
         start: @escaping (SoundFile) -> Void = { $0.loop() },
         act: @escaping (SoundFile, Int) -> Void = { _, _ in }
@@ -110,7 +111,7 @@ struct SoundFileEffectTests {
         var song: SoundFile?
         var filter: LowPass?
         let runtime = try run(
-            frames: frames,
+            frames: frames, clock: clock,
             setup: { sketch in
                 var stage = stageFirst ? SynthStage.stage(for: sketch, flow: flow) : nil
                 let loaded = try flow.map { try sketch.loadSound(url.path, flow: $0) }
@@ -709,46 +710,161 @@ struct SoundFileEffectTests {
         #expect(playing.allSatisfy { $0 }, "1 度だけ鳴らす音が早く切れていない: \(playing)")
     }
 
-    @Test("操作の列が満杯で、止める・鳴らし始める操作が載らなくても、控えて載せ直し、位置は進み続ける")
-    func commandsThatDoNotFitAreRetried() throws {
-        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
-        defer { try? FileManager.default.removeItem(at: url) }
-        var stage: SynthStage?
+    // MARK: - 操作の列が詰まっているとき
+
+    /// 帯域 100 以降を落とさない (20 kHz の) 濾波器で、傾きの付いたファイルを鳴らして回す。`congest` を呼んだ
+    /// フレームで、操作の列を満杯にして控えを積む。聞こえた音は、フレームごとに最後の標本を残す。
+    private struct Congested {
+        var positions: [Int] = []
+        var promised: [Float] = []
+        var lastHeard: [Float] = []
+        var heard = Stereo()
         var song: SoundFile?
         var filter: LowPass?
-        var positions: [Int] = []
+        var notices: [String] = []
+    }
+
+    /// 0.2 から 0.9 まで一定の傾きで上がる 10 秒のファイル。**聞こえた標本の値から、鳴っている位置が読める。**
+    private static let slope: [Float] = (0..<480_000).map { 0.2 + Float($0) / 700_000 }
+
+    private func congested(
+        frames: Int, at congestionFrame: Int, held: Int = 9000, routedAtSetup: Bool = true,
+        act: @escaping (SoundFile, LowPass, Int) -> Void
+    ) throws -> Congested {
+        let url = try writeWAV(Self.slope, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let flow = try offline()
+        var result = Congested()
+        var stage: SynthStage?
         let runtime = try run(
-            frames: 16,
+            frames: frames,
             setup: { sketch in
-                let made = SynthStage.stage(for: sketch)
-                let loaded = try sketch.loadSound(url.path)
+                let made = SynthStage.stage(for: sketch, flow: flow)
+                let buffer = try AudioFile.load(url, path: "slope.wav")
+                let loaded = SoundFile(
+                    name: "slope.wav", buffer: buffer, owner: sketch, flow: flow,
+                    warn: { result.notices.append($0) })
+                sketch.attach(loaded)
                 let low = LowPass(stage: made)
-                low.process(loaded)
+                low.freq(20_000)
+                if routedAtSetup { low.process(loaded) }
                 loaded.loop()
                 stage = made
-                song = loaded
-                filter = low
+                result.song = loaded
+                result.filter = low
             },
             draw: { sketch in
-                guard let stage, let song, let filter, let node = filter.node else { return }
-                positions.append(song.samplePosition)
-                if sketch.frameCount == 3 {
-                    // 列を満杯にしてから、止めて鳴らし直す (頭から)
-                    let bits = UInt64(Float(20_000).bitPattern)
-                    var full = false
-                    for _ in 0..<10_000 where !full {
-                        full = !stage.rack.post(
-                            SynthCommand(op: .set, node: UInt8(node.id), param: .cutoff, bits: bits))
+                guard let stage, let song = result.song, let filter = result.filter,
+                    let node = filter.node
+                else { return }
+                result.positions.append(song.samplePosition)
+                result.promised.append(song.position)
+                result.lastHeard.append(result.heard.left.last ?? 0)
+                if sketch.frameCount == congestionFrame {
+                    // 列を満杯にして、控えを積む (描き出しごとに 4096 ずつしか載らない)
+                    while stage.rack.heldCount < held {
+                        stage.rack.set(node.id, .cutoff, 20_000)
                     }
-                    #expect(full, "列を満杯にできた")
-                    song.pause()
-                    song.play()
                 }
+                act(song, filter, sketch.frameCount)
+            },
+            between: { _ in
+                result.heard.left += try renderStereo(flow, Self.perFrame).left
             })
         runtime.closePlugins()
-        // 鳴らし直してから数フレームのうちに頭から動き出し、そのまま 1 フレームに 800 標本ずつ進む
-        let tail = Array(positions[10...])
-        #expect(tail[0] > 0, "位置が頭で凍っている: \(positions)")
-        #expect(zip(tail, tail.dropFirst()).allSatisfy { $1 - $0 == Self.perFrame }, "\(positions)")
+        return result
+    }
+
+    @Test("列が詰まっている間の止める・鳴らし直す操作は、位置と一緒に控え、聞こえている音と位置がずれない")
+    func positionFollowsTheSoundWhileTheQueueIsCongested() throws {
+        let run = try congested(frames: 14, at: 3) { song, _, frame in
+            if frame == 3 {
+                song.pause()
+                song.play()
+                // 控えた操作は、まだ効いていない (聞こえている音は鳴り続けている)
+                #expect(song.isPlaying)
+            }
+        }
+        // 位置は、詰まっている間 (3〜5 フレーム目) も、操作が効いた後も、1 フレームに 800 標本ずつ進む
+        #expect(run.positions == (0..<14).map { $0 * Self.perFrame }, "\(run.positions)")
+        // 聞こえている音は、位置の 1 つ手前の標本 (傾きのある値) と同じ。凍った位置と音のずれを見逃さない
+        for frame in 4..<14 {
+            let expected = (0.2 + Float(run.positions[frame] - 1) / 700_000) * Self.center
+            #expect(
+                abs(run.lastHeard[frame] - expected) < 1e-4,
+                "フレーム \(frame + 1): 聞こえた \(run.lastHeard[frame]) と位置から読める \(expected)")
+        }
+    }
+
+    @Test("列が詰まっている間の jump は、呼んだ直後から飛び先を返し、詰まりが解けたら飛び先から続ける")
+    func jumpWhileTheQueueIsCongested() throws {
+        var promised: Float = 0
+        let run = try congested(frames: 14, at: 3) { song, _, frame in
+            if frame == 3 {
+                song.jump(5)
+                promised = song.position
+            }
+        }
+        #expect(promised == 5)
+        // 詰まっている間 (4・5 フレーム目) も、飛び先を返す。聞こえている音は飛ぶ前のまま続いている
+        #expect(run.promised[3] == 5 && run.promised[4] == 5, "\(run.promised)")
+        #expect(run.positions[3] == 3 * Self.perFrame && run.positions[4] == 4 * Self.perFrame)
+        // 詰まりが解けた (6 フレーム目) 後は、飛び先から 800 標本ずつ
+        let landed = try #require(run.positions.firstIndex { $0 >= 240_000 })
+        #expect(landed >= 5)
+        #expect(
+            zip(run.positions[landed...], run.positions[landed...].dropFirst()).allSatisfy {
+                $1 - $0 == Self.perFrame
+            })
+        let settled = run.positions.count - 1
+        let expected = (0.2 + Float(run.positions[settled] - 1) / 700_000) * Self.center
+        #expect(abs(run.lastHeard[settled] - expected) < 1e-4)
+    }
+
+    @Test("列が詰まっているとき、エフェクトへは通さず (何も変えず) 知らせ、詰まりが解けた後に通せる")
+    func routingWhileTheQueueIsCongestedIsRefused() throws {
+        var effectInputs: [UInt64] = []
+        var refusedHeard: Float = 0
+        let run = try congested(frames: 12, at: 3, routedAtSetup: false) { song, filter, frame in
+            guard let node = filter.node else { return }
+            if frame == 3 { filter.process(song) }
+            if frame == 4 { effectInputs.append(filter.stage.rack.inputs(of: node.id)) }
+            if frame == 5 { filter.process(song) }
+            if frame == 6 {
+                effectInputs.append(filter.stage.rack.inputs(of: node.id))
+            }
+            if frame == 10 { filter.process(song) }
+            if frame == 11 { effectInputs.append(filter.stage.rack.inputs(of: node.id)) }
+        }
+        // 詰まっている間は通らず、エフェクトは入力を持たない。ファイルは直に鳴り続けている
+        #expect(effectInputs.count == 3)
+        #expect(effectInputs[0] == 0 && effectInputs[1] == 0, "\(effectInputs)")
+        refusedHeard = run.heard.left[(4 * Self.perFrame)..<(5 * Self.perFrame)].map { abs($0) }.max() ?? 0
+        #expect(refusedHeard > 0.1, "通せなかったファイルは直に鳴っている: \(refusedHeard)")
+        // 置き場の上限の知らせとは別の知らせで、1 度だけ
+        #expect(run.notices.count == 1, "\(run.notices)")
+        #expect(run.notices.first?.contains("right now") == true)
+        #expect(run.notices.first?.contains("at most") == false)
+        // 詰まりが解けた後は通る
+        #expect(effectInputs[2] != 0, "\(effectInputs)")
+    }
+
+    @Test("標本化率がラックと違い、fps が 48000 を割り切れないとき、通した位置は通さないときと最大 1 標本しかずれない")
+    func positionAgreesWithinOneSampleWhenTheRatesDoNotDivide() throws {
+        // 44100 Hz のファイル。144 fps は 48000 ÷ 144 が整数にならない (333.33 標本)
+        let url = try writeWAV(Self.slope, sampleRate: 44_100)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let frames = 40
+        for fps in [144, 60, 30, 24, 100] {
+            let clock = Clock.frameIndex(frameRate: fps)
+            let plain = try take(frames: frames, clock: clock, url: url, route: false)
+            let routed = try take(frames: frames, clock: clock, url: url)
+            let gaps = zip(plain.file, routed.file).map { abs($0.position - $1.position) }
+            #expect(gaps.max() ?? 0 <= 1, "\(fps) fps で最大 \(gaps.max() ?? 0) 標本: \(gaps)")
+            if 48_000 % fps == 0 {
+                // 割り切れるなら、通しても同じ (掛けてから割って、割り切れる所で 1 標本低くならない)
+                #expect(gaps.max() == 0, "\(fps) fps は割り切れるので同じ位置: \(gaps)")
+            }
+        }
     }
 }

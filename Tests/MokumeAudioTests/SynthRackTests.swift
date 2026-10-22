@@ -483,16 +483,82 @@ struct SynthRackTests {
         #expect(last.meter.latest(2000).map { abs($0) }.max() ?? 0 > 0.1)
     }
 
-    @Test("操作の列が埋まると載せられず、描かせて空けると載せられる")
+    @Test("操作の列が埋まると控えに回り、控えが上限に達すると捨てる。描かせて空けると載せ直せる")
     func commandQueueIsBounded() throws {
         let rack = makeRack()
         let node = try #require(rack.addSource(.wave(.sine)))
         var accepted = 0
-        // 節を足したときの 1 つが載っている
+        // 列が満杯になっても、控えが上限 (16384) になるまで受け付ける。節を足したときの 1 つが載っている
         while rack.set(node.id, .frequency, 440) { accepted += 1 }
-        #expect(accepted == 4096 - 1)
+        #expect(accepted == 4096 - 1 + 16_384)
+        #expect(rack.isCongested)
         #expect(!rack.set(node.id, .frequency, 440))
+        // 描かせて列を空けても、控えは主スレッドが載せ直すまで列へ載らない
         _ = render(rack, 10)
+        #expect(rack.isCongested)
+        while rack.isCongested {
+            rack.retryHeld()
+            _ = render(rack, 10)
+        }
         #expect(rack.set(node.id, .frequency, 880))
+    }
+
+    @Test("列が満杯のとき、控えに回った操作は、頼んだ順に 1 つも落とさず載る")
+    func heldCommandsKeepTheirOrder() throws {
+        let rack = makeRack()
+        let source = try #require(rack.addSource(.wave(.sine)))
+        let filter = try #require(rack.addFilter(.lowPass))
+        rack.set(source.id, .frequency, 500)
+        rack.set(source.id, .amplitude, 0.5)
+        rack.set(filter.id, .cutoff, 20_000)
+        _ = render(rack, 10)
+        var landed: [SynthCommand.Op] = []
+        rack.observePost = { landed.append($0.op) }
+        // 列を満杯にしてから、入力に選び、鳴らし始める (どちらも控えに回る)
+        var filler = 0
+        while rack.heldCount == 0 {
+            rack.set(source.id, .frequency, 500)
+            filler += 1
+        }
+        // 列が空いた後でも、控えがあるうちは、後から頼んだ操作は控えの後ろに並ぶ
+        _ = render(rack, 10)
+        rack.setInputs(filter.id, 1 << UInt64(source.id))
+        rack.post(SynthCommand(op: .play, node: UInt8(source.id)))
+        #expect(rack.heldCount == 3, "満杯のあと控えに回った操作 (最後の set・入力・鳴らし始め)")
+        var heard = Stereo()
+        while rack.isCongested {
+            rack.retryHeld()
+            let piece = render(rack, 64)
+            heard.left += piece.left
+        }
+        rack.retryHeld()
+        heard.left += render(rack, 2000).left
+        // 載った順は頼んだ順 (入力に選ぶ操作が、鳴らし始める操作より先)
+        #expect(landed.count == filler + 2, "落ちた操作がある: \(landed.count) と \(filler + 2)")
+        #expect(Array(landed.suffix(2)) == [.inputs, .play])
+        #expect(landed.dropLast(2).allSatisfy { $0 == .set })
+        // 入力に選ぶ操作が届いたので、音源は直には出ず、濾波器の出口だけが出る
+        #expect(filter.meter.latest(1000).map { abs($0) }.max() ?? 0 > 0.1)
+        #expect(mismatch(heard.left.suffix(1000).map { $0 }, filter.meter.latest(1000).map { $0 * Float(0.5).squareRoot() }) == nil)
+    }
+
+    @Test("列が満杯でも節は足せて、足した節への操作が届く (足せないのは置き場が埋まったときだけ)")
+    func addingANodeWhileTheQueueIsFull() throws {
+        let rack = makeRack()
+        let first = try #require(rack.addSource(.wave(.sine)))
+        while rack.heldCount == 0 { rack.set(first.id, .frequency, 440) }
+        // 列が満杯でも、節は足せる (置き場の数だけが上限)。足した節の操作も、足した後に届く
+        let added = try #require(rack.addFile(samples: [0.5, 0.5, 0.5, 0.5], fileRate: Self.rate, amplitude: 1))
+        rack.post(SynthCommand(op: .segment, node: UInt8(added.id), bits: FileNode.segment(start: 0, looping: true, generation: 1)))
+        while rack.isCongested {
+            rack.retryHeld()
+            _ = render(rack, 64)
+        }
+        rack.retryHeld()
+        let heard = render(rack, 3000).left
+        #expect(heard.suffix(100).allSatisfy { abs($0 - 0.5 * Float(0.5).squareRoot()) < 1e-5 })
+        // 置き場が埋まれば、足せない (列が満杯のせいではない)
+        for _ in 0..<(SynthRack.capacity - 2) { _ = try #require(rack.addSource(.wave(.sine))) }
+        #expect(rack.addSource(.wave(.sine)) == nil)
     }
 }

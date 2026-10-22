@@ -46,6 +46,11 @@ nonisolated struct SynthCommand {
 /// 渡す。音の側は呼ばれるたびに、列に溜まった操作をその順に適用してから標本を作る。錠は
 /// 取らず、標本を作る間は確保しない ([ADR-0042] 決定 7)。節の置き場も作るときに 1 度だけ確保する。
 ///
+/// **列が満杯のときは、操作を落とさず控え、頼んだ順に載せ直す** (``post(_:force:)``・``retryHeld()``)。
+/// 控えがある間は後から来る操作も控えの後ろに並べる — 節を足す前に節への操作が届くと、その操作は
+/// 捨てられ、入力に選ぶ前に節が鳴ると直に出てしまうので、載る順は頼んだ順のままにする。節を足せない
+/// のは置き場が埋まっているときだけ。
+///
 /// ## 置き場は、手放して鳴り終えた音源のぶんだけ戻る
 ///
 /// **同時に生きている節は ``capacity`` までで、エフェクトは置いたらラックの終わりまで残る。**
@@ -87,6 +92,12 @@ nonisolated final class SynthRack: @unchecked Sendable {
     static let meterCapacity = AudioAnalysis.windowSize * 8
     /// 操作の列の長さ。2 のべき乗。
     private static let queueCapacity = 4096
+    /// 列に載せられず控えておく操作の数の上限 (``post(_:force:)``)。音の側が止まっている (流れが開いていない・
+    /// 閉じた) ままで操作が積み上がり続けないための歯止めで、動いている間は届かない。
+    private static let heldLimit = 1 << 14
+    /// 列の空きがこれより少ないとき、**詰まっている**とみなす (``isCongested``)。1 回の呼び出しが載せる操作
+    /// (節を足す・入力に選ぶ・区切りを始める・音量を伝える) の数より多い。
+    private static let congestionMargin = 8
 
     let sampleRate: Double
 
@@ -110,6 +121,10 @@ nonisolated final class SynthRack: @unchecked Sendable {
     private let queue: UnsafeMutablePointer<SynthCommand>
     private let head = Atomic<Int>(0)
     private let tail = Atomic<Int>(0)
+    /// 列が満杯で載せられなかった操作 (頼んだ順)。主スレッドだけが触る。**列が空くまで控え、頼んだ順に
+    /// 載せ直す** (``retryHeld()``)。控えがある間は、後から来る操作も控えに並べる — 載る順が頼んだ順から
+    /// 入れ替わらないようにするため (節を足す前に節への操作が届くと、その操作は捨てられる)。
+    private var held: [SynthCommand] = []
 
     // MARK: 返す番号の列 (音の側が書き手・主スレッドが読み手)
 
@@ -230,18 +245,16 @@ nonisolated final class SynthRack: @unchecked Sendable {
         let node = make(id, created)
         // 置き場へ書いてから列へ載せる。音の側は、列を読んだ後でだけ置き場を読む
         slots[id] = Unmanaged.passRetained(node)
-        guard post(SynthCommand(op: .activate, node: UInt8(id))) else {
-            slots[id]?.release()
-            slots[id] = nil
-            return nil
-        }
+        // 列が満杯でも、控えに並べて頼んだ順に載せる (置き場の数は 64 で、控えの上限には数えない)。
+        // **節を足せないのは、置き場が埋まっているときだけ** — 呼ぶ側は、`nil` を置き場の上限と名乗ってよい
+        post(SynthCommand(op: .activate, node: UInt8(id)), force: true)
         occupied |= 1 << UInt64(id)
         created += 1
         return node
     }
 
-    /// 音源 `id` を手放した (使う側の参照が無くなった) と音の側へ伝える。入れられれば `true`、
-    /// 列が埋まっていれば `false` (呼び直す)。
+    /// 音源 `id` を手放した (使う側の参照が無くなった) と音の側へ伝える。受け付ければ `true`
+    /// (``post(_:force:)``)。
     ///
     /// **鳴っている音は切らない。** 音の側が、鳴り終えたと見てから置き場を返す。この後その節へ操作を
     /// 渡してはならない。
@@ -276,15 +289,47 @@ nonisolated final class SynthRack: @unchecked Sendable {
 
     // MARK: - 主スレッド: 操作を渡す
 
-    /// 操作を列へ載せる。列が埋まっていれば `false`。
+    /// 操作を列へ載せる。**列が満杯なら控えて、頼んだ順に載せ直す** (``retryHeld()``)。受け付ければ
+    /// `true`。`false` は、控えが上限 (``heldLimit``) に達して捨てたとき — 音の側が長く止まっている間だけ。
+    ///
+    /// - Parameter force: `true` なら、控えの上限に数えず必ず受け付ける。置き場の数で数が抑えられている
+    ///   操作 (節を足す) だけが使う。
     @discardableResult
-    func post(_ command: SynthCommand) -> Bool {
+    func post(_ command: SynthCommand, force: Bool = false) -> Bool {
+        if held.isEmpty, postNow(command) { return true }
+        guard force || held.count < Self.heldLimit else { return false }
+        held.append(command)
+        return true
+    }
+
+    /// 列に空きがあれば載せる。
+    private func postNow(_ command: SynthCommand) -> Bool {
         let end = tail.load(ordering: .relaxed)
         guard end - head.load(ordering: .acquiring) < Self.queueCapacity else { return false }
         observePost?(command)
         queue[end & (Self.queueCapacity - 1)] = command
         tail.store(end + 1, ordering: .releasing)
         return true
+    }
+
+    /// 控えていた操作を、頼まれた順に載せられるだけ載せる。**主スレッドから、フレームごとに呼ぶ**
+    /// (``SynthStage``)。
+    func retryHeld() {
+        guard !held.isEmpty else { return }
+        var posted = 0
+        while posted < held.count, postNow(held[posted]) { posted += 1 }
+        if posted > 0 { held.removeFirst(posted) }
+    }
+
+    /// 載せられずに控えている操作の数。検査が読む。
+    var heldCount: Int { held.count }
+
+    /// 列が詰まっているか — 控えがあるか、空きが少ない。**詰まっている間は、位置を動かす操作を
+    /// 音の側へ渡さず、操作を控える** (``SoundFile``): 渡した操作が控えに回ると、聞こえている音と位置がずれる。
+    var isCongested: Bool {
+        !held.isEmpty
+            || Self.queueCapacity - (tail.load(ordering: .relaxed) - head.load(ordering: .acquiring))
+                < Self.congestionMargin
     }
 
     /// 値を変える。

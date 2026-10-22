@@ -59,8 +59,6 @@ final class SynthStage: Inlet {
     /// 鳴り終えた音源のぶんだけ戻る」)。
     private var sounds: [WeakSound] = []
     private var noticed: Set<Notice> = []
-    /// ファイルの節へ頼まれて、まだ列へ載せていない操作 (``sendToFile(_:)``)。頼まれた順。
-    private var heldForFiles: [SynthCommand] = []
     /// 実時間で、ラックを進めたフレーム (``advanceClock()``)。
     private var clockAdvancedFrame: Int?
     /// 閉じた (スケッチが終わった)。以後の操作は捨てる。
@@ -130,36 +128,21 @@ final class SynthStage: Inlet {
         return stage
     }
 
-    /// ファイルの節 (``FileNode``) へ頼む操作を、ラックの操作の列へ載せる。
-    ///
-    /// **列が満杯で載せられなければ、控えて次の機会 (``supply()``・``catchUpForFiles()``) に載せ直す。**
-    /// 区切りを始める操作や止める操作が落ちると、節の進みが止まったまま、位置が凍る。控えがある間は、
-    /// 後から来る操作も控えに並べる — 載る順が頼んだ順から入れ替わらないようにするため。
-    func sendToFile(_ command: SynthCommand) {
-        guard !isClosed else { return }
-        if heldForFiles.isEmpty, rack.post(command) { return }
-        heldForFiles.append(command)
-    }
-
-    /// 控えていた操作を、頼まれた順に載せられるだけ載せる。
-    private func retryHeldFileCommands() {
-        var posted = 0
-        while posted < heldForFiles.count, rack.post(heldForFiles[posted]) { posted += 1 }
-        if posted > 0 { heldForFiles.removeFirst(posted) }
-    }
-
     /// ファイルの節が位置を決めるとき、ファイルの側が**ラックをこのフレームまで進めてから**位置を
     /// 読めるように、先にステージの時計を進める。
     ///
     /// ステージと ``SoundFile`` のどちらが先に ``supply()`` を受けるかは、作った順で決まる。ステージの
-    /// 進みが後だと、ファイルは 1 フレーム前のラックから位置を読んでしまう。ここで進めれば、後から来る
+    /// 進みが後だと、ファイルは 1 フレーム前のラックから位置を読んでしまう。控えていた操作
+    /// (``SynthRack/retryHeld()``) も、ここで載せ直す。ここで進めれば、後から来る
     /// ステージ自身の ``supply()`` の進みは同じ目的地になり、足されない (固定の時計では 0 標本、実時間では
     /// 数マイクロ秒ぶん)。実機の流れ (``Pace/speaker``) は音の側が進めているので、何もしない。
     func catchUpForFiles() {
         guard !isClosed else { return }
         if let owner { frame = Self.frameIndex(of: owner) }
-        retryHeldFileCommands()
+        rack.retryHeld()
         advanceClock()
+        // 進めて列が空いたぶんを、すぐ載せ直す (このフレームの後の描き出しで音の側へ届く)
+        rack.retryHeld()
     }
 
     /// このステージが、`sketch` のものか。
@@ -208,8 +191,9 @@ final class SynthStage: Inlet {
 
     func supply() {
         if let owner { frame = Self.frameIndex(of: owner) }
-        retryHeldFileCommands()
+        rack.retryHeld()
         advanceClock()
+        rack.retryHeld()
         if case .speaker(let player) = pace { resumeIfStopped(player) }
         reapReleasedSources()
         for entry in sounds { entry.sound?.refresh() }
@@ -252,7 +236,6 @@ final class SynthStage: Inlet {
         pace = nil
         for entry in sounds { entry.sound?.silence() }
         sounds.removeAll()
-        heldForFiles.removeAll()
         Self.stages = Self.stages.filter { $0.value.stage != nil && $0.value.stage !== self }
     }
 
