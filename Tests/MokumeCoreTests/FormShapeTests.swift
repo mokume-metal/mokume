@@ -2264,6 +2264,17 @@ struct FormShapeTests {
         #expect(form(1, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 1 (法線向きの幅 1.357 より細い)")
         #expect(!form(1.4, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 1.4")
         #expect(form(0.5, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 0.5")
+        // **法線が回る曲線の縁 (円・楕円) は、向きによらない行ノルムで測る** (#2991)。円は回しても同じ形なので、
+        // 回した直径 1.2 の円は細くない (法線向きの幅 1.357 で測ると細くなり、回すだけで境目が動く)
+        #expect(
+            !form(1.2, 1.2, kind: .ellipse, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one),
+            "回した直径 1.2 の円 (行ノルムで測る)")
+        #expect(
+            !form(1.2, 30, kind: .ellipse, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one),
+            "回した幅 1.2 の楕円 (行ノルムで測る)")
+        #expect(
+            form(0.9, 0.9, kind: .ellipse, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one),
+            "回した直径 0.9 の円")
         // 描く細かさ 0.5 では描く画素で答える: 幅 2 は描く画素で 1
         let halfDensity = SIMD2<Float>(2, 2)
         #expect(!form(2, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 2")
@@ -2279,11 +2290,16 @@ struct FormShapeTests {
     /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
     @Test("斜めの縁の判定は、軸に沿った rect・線だけ含まず、迷ったら含む側に倒す")
     func obliqueEdgeJudgementLeansToIncluding() {
-        func form(_ kind: FormInstance.Kind, _ linear: SIMD4<Float>) -> FormInstance {
+        func form(
+            _ kind: FormInstance.Kind, _ linear: SIMD4<Float>, half: SIMD2<Float> = SIMD2(8, 4),
+            cornerRadius: Float = 0, strokes: Bool = true, cap: StrokeCap = .round,
+            join: StrokeJoin = .miter
+        ) -> FormInstance {
             FormInstance(
-                kind: kind, linear: linear, offset: SIMD2(10, 10), half: SIMD2(8, 4),
-                arc: kind == .arc ? SIMD2(0, 1) : .zero, halfWeight: 0.5, fill: SIMD4(1, 1, 1, 1),
-                stroke: SIMD4(1, 1, 1, 1), fills: true, strokes: true, cap: .round, join: .miter)
+                kind: kind, linear: linear, offset: SIMD2(10, 10), half: half,
+                arc: kind == .arc ? SIMD2(0, 1) : .zero, halfWeight: 0.5, cornerRadius: cornerRadius,
+                fill: SIMD4(1, 1, 1, 1), stroke: SIMD4(1, 1, 1, 1), fills: true, strokes: strokes,
+                cap: cap, join: join)
         }
         let one = SIMD2<Float>(1, 1)
         let halfPi = Float.pi / 2
@@ -2321,6 +2337,29 @@ struct FormShapeTests {
         for kind in [FormInstance.Kind.ellipse, .arc] {
             #expect(form(kind, SIMD4(1, 0, 0, 1)).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "軸に沿う \(kind)")
         }
+        // **軸に沿う `rect` でも、曲がった部分は斜めの縁を持つので含む** (#2991): 角丸の角・輪郭の丸い折れ目・
+        // 削ぎ。輪郭が無ければ折れ目は読まれないので含まない
+        let upright = SIMD4<Float>(1, 0, 0, 1)
+        #expect(form(.rect, upright, cornerRadius: 3).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "角丸の rect")
+        #expect(form(.rect, upright, join: .round).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "丸い折れ目の輪郭")
+        #expect(form(.rect, upright, join: .bevel).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "削いだ折れ目の輪郭")
+        #expect(
+            !form(.rect, upright, strokes: false, join: .round).mayHaveObliqueEdge(unitsPerDrawnPixel: one),
+            "輪郭の無い rect は折れ目を読まない")
+        #expect(
+            !form(.rect, upright, join: .miter).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "尖った折れ目の輪郭")
+        // **既定の丸い端 (`strokeCap(.round)`) と `point()` は、軸に沿っていれば線形の渡しのまま** (含まない)。
+        // どの端の形の線も同じ。回していれば含む
+        for cap in [StrokeCap.round, .square, .project] {
+            #expect(
+                !form(.line, upright, cap: cap).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "軸に沿う線・端 \(cap)")
+            #expect(
+                !form(.line, upright, half: .zero, cap: cap).mayHaveObliqueEdge(unitsPerDrawnPixel: one),
+                "軸に沿う点・端 \(cap)")
+        }
+        let tilted = SIMD4<Float>(Float(cos(0.5)), Float(sin(0.5)), Float(-sin(0.5)), Float(cos(0.5)))
+        #expect(
+            form(.line, tilted, half: .zero, cap: .round).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "回した丸い点")
     }
 
     /// **細い線と点の判定は、太さを描く画素で測り、境目の近くは「含む」側に倒す** ([#2226])。
@@ -2355,6 +2394,12 @@ struct FormShapeTests {
         let rotated = SIMD4<Float>(cos(0.5), sin(0.5), -sin(0.5), cos(0.5))
         #expect(line(0.5, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 0.5")
         #expect(!line(2, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 2")
+        // 直線の縁の線は、描く画素の法線向きの幅 (回した 0.5 rad で 1.357) で測り、回した太さ 1.2 は細い。
+        // 丸い点 (長さ 0 の丸い端) は円なので行ノルム (1) で測り、回しても太さ 1.2 は細くない (#2991)
+        #expect(line(1.2, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 1.2 の線")
+        #expect(!line(1.4, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 1.4 の線")
+        #expect(!line(1.2, length: 0, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 1.2 の丸い点")
+        #expect(line(0.9, length: 0, linear: rotated).mayHaveThinPart(unitsPerDrawnPixel: one), "回した太さ 0.9 の丸い点")
         // 細かさ 0.5 では描く画素で答える: 太さ 2 は描く画素で 1
         let halfDensity = SIMD2<Float>(2, 2)
         #expect(!line(2).mayHaveThinPart(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の太さ 2")
@@ -2409,6 +2454,15 @@ struct FormShapeTests {
         #expect(form(40, 40, weight: 11, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "穴の半径 1.0 の扇")
         #expect(!form(40, 40, weight: 2, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "穴の太い扇")
         #expect(!form(200, 200, weight: 7, kind: .arc).mayHaveThinHole(unitsPerDrawnPixel: one), "直径 200 の扇")
+        // 扇の穴の半径は向きを持たない量 (内接円の半径) なので、回しても行ノルムで測る (#2991)。穴の半径 3.2 (画素
+        // 3 つ分の 1.07 倍) は、回しても細くない。法線向きの幅 (0.5 rad で 1.357) で測ると細くなってしまう
+        let tilted = SIMD4<Float>(Float(cos(0.5)), Float(sin(0.5)), Float(-sin(0.5)), Float(cos(0.5)))
+        #expect(
+            !form(40, 40, weight: 6.56, kind: .arc, linear: tilted).mayHaveThinHole(unitsPerDrawnPixel: one),
+            "回した扇 (穴の半径 3.2) は行ノルムで測る")
+        #expect(
+            form(40, 40, weight: 11, kind: .arc, linear: tilted).mayHaveThinHole(unitsPerDrawnPixel: one),
+            "回した扇 (穴の半径 1.0)")
         // 輪郭の無い形は枝を持たないので含まない
         #expect(!form(0.6, 20, weight: 1, kind: .arc, strokes: false).mayHaveThinHole(unitsPerDrawnPixel: one), "輪郭の無い扇")
         #expect(!form(0.6, 20, weight: 1, strokes: false).mayHaveThinHole(unitsPerDrawnPixel: one), "輪郭の無い形")

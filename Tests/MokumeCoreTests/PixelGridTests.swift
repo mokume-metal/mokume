@@ -1256,7 +1256,7 @@ struct PixelGridTests {
                     let center = local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift
                     // 帯の縁から 1 画素の内だけ見る。期待する被覆は、真の距離 (64 bit) と、その画面での勾配
                     // (中心差分) から、縁 1 本ごとに「半平面と画素の正方形の重なりの面積」を取り、外縁の面積 −
-                    // 内縁の面積とした値 — 描く側の被覆の式 (`mokume_halfPlaneCoverage` の差・#2991) と同じ形で、
+                    // 内縁の面積とした値 — 描く側の被覆の式 (`mokume_pixelCdf` の差・#2991) と同じ形で、
                     // 距離の値と弧の候補の取り違えだけを見る。画素の真の面積とは、縁を直線とみなす分だけ違う
                     guard arcEnds.contains(where: { simd_distance($0, center) <= 8 }) else { continue }
                     let distance = boundary(center)
@@ -1292,7 +1292,7 @@ struct PixelGridTests {
         return (worst, at)
     }
 
-    /// 半平面 `c + g · d ≤ 0` と、画素の正方形 [−0.5, 0.5]² の重なりの面積 (`mokume_halfPlaneCoverage` の写し・
+    /// 半平面 `c + g · d ≤ 0` と、画素の正方形 [−0.5, 0.5]² の重なりの面積 (`mokume_pixelCdf` の写し・
     /// 64 bit・#2991)。
     nonisolated static func halfPlaneArea(_ c: Double, _ g: SIMD2<Double>) -> Double {
         let hi = max(abs(g.x), abs(g.y)), lo = min(abs(g.x), abs(g.y))
