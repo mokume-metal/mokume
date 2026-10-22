@@ -52,6 +52,25 @@ struct SketchApplicationTests {
         return application
     }
 
+    /// **1 枚目が出るまでの層は黒で塗られている** ([#2876](https://github.com/mokume-metal/mokume/issues/2876))。
+    ///
+    /// 窓は `setup()` より先に前へ出るので、`setup()` が長いと、一度も present していない層の
+    /// 中身 (透明か不定) が見える。黒は絵が収まらない帯と半透明の下地が既に出している色で、
+    /// 作品の窓が出しうる表示に無いものを足さない。窓 (`NSWindow.backgroundColor`) は塗らない —
+    /// 層の外の縁まで色が変わる。
+    @Test("直に走らせる窓は、1 枚目の前の層が不透明な黒で、窓そのものは塗らない")
+    func layerIsBlackBeforeTheFirstFrame() throws {
+        let application = try makeApplication(Blank())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        let color = try #require(surface.metalLayer?.backgroundColor)
+        #expect(SketchSurfaceBackingTests.isOpaqueBlack(color), "層の背景が不透明な黒でない: \(color)")
+        #expect(window.backgroundColor != .black, "窓そのものを塗っている")
+    }
+
     /// **閉じた窓を、閉じた後に触る。**
     ///
     /// 窓を閉じるとアプリケーションは終わりに向かうが、即死ではない。加えてフレームの

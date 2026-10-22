@@ -42,6 +42,20 @@ struct SharedFrameStageTests {
             title: name, autosaveName: "mokume.test.\(name)", defaultSize: size)
     }
 
+    /// 絵が来るまでの黒は層を作る所 1 か所で塗る ([#2876](https://github.com/mokume-metal/mokume/issues/2876))。
+    /// 道具の窓も、台が個別に塗らずに黒である。
+    @Test("道具の窓も、絵が来る前の層は不透明な黒である")
+    func artworkLayerIsBlackBeforeThePictureArrives() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look("black"))
+            stage.open()
+            defer { stage.close() }
+            let surface = try #require(stage.window?.contentView as? SketchSurface)
+            let color = try #require(surface.metalLayer?.backgroundColor)
+            #expect(SketchSurfaceBackingTests.isOpaqueBlack(color))
+        }
+    }
+
     @Test("重ねる面を渡さなければ、絵の面には何も足されない")
     func artworkWindowCarriesNothing() throws {
         try withFacet { facet in

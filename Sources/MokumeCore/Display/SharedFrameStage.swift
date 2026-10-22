@@ -325,14 +325,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             device: gpu.device, input: InputState(), canvasSize: (1, 1))
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]
-        // **絵が来るまでは黒で塗る** ([#2875])。窓は作り直しより先に開くので、最初の 1 枚
-        // までは drawable を一度も受け取っていない層が見え、中身が透明か不定になる。黒は
-        // 絵が収まらない帯の色 (`FramePresenter`) と同じで、作品の表示に無いものを足さない
-        // — 言葉も印も載せないのは ADR-0032 決定 6 の追補のとおり。直に走らせる窓は
-        // 層を作る側 (`SketchSurface`) が同じなので、塗るのは道具の窓のここだけにする
+        // 絵が来るまでの黒は、層を作る側 (`SketchSurface.makeBackingLayer`) が塗る ([#2876])。
         //
-        // [#2875]: https://github.com/mokume-metal/mokume/issues/2875
-        view.metalLayer?.backgroundColor = CGColor(gray: 0, alpha: 1)
+        // [#2876]: https://github.com/mokume-metal/mokume/issues/2876
         // **窓より先に繋ぐ。** 出してから繋ぐと、その隙間に触ったぶんが落ちる
         view.relay = { [weak self] line in self?.onInput?(line) }
         window.contentView = view
