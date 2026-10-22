@@ -1240,6 +1240,8 @@ static inline float2 mokume_direction(float2 vector, float2 fallback) {
 /// 項の差を `lo · hi` で割るので、32 bit の丸めが `hi / lo` 倍に増え、画素ごとに 0.01 外れた。裾の形は
 /// `s − u ≤ lo` の小さい値だけを 2 乗するので、割っても丸めは大きくならない。**短辺が長辺の 1e-5 以下
 /// (ほぼ軸に沿う) ときは一様分布で、累積は 1 次式になる** (割ると桁が落ちるので、裾の式へ入れない)。
+/// 早期の 0 / 1 を先に置くのは、縁を含まない画素 (面の大半) の費用のため — 軸にほぼ沿う縁でも `u ≥ s` は 0 / 1 で
+/// 同じ値になる (回した面を覆う塗り・直径 700 の円で、判定の順を入れ替えると GPU 時間が 2〜3% 動いた)。
 ///
 /// 画素の和が縁の長さ×法線の向きの厚みに一致するのは、画素の軸に沿った正方形で重なりを取るときである。
 /// 線形の渡し (`0.5 − c / 長さ`) は、縁が画素の軸に沿うときだけこれと一致する。
@@ -1247,9 +1249,9 @@ static inline float2 mokume_direction(float2 vector, float2 fallback) {
 /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
 static inline float mokume_pixelCdf(float t, float hi, float lo) {
     float s = 0.5 * (hi + lo);
-    if (lo <= 1e-5 * hi) { return 0.5 + clamp(t, -s, s) / max(hi, 1e-30); }
     float u = abs(t);
     if (u >= s) { return t > 0.0 ? 1.0 : 0.0; }
+    if (lo <= 1e-5 * hi) { return 0.5 + t / max(hi, 1e-30); }
     float k = 0.5 * (hi - lo);
     float ramp = s - u;
     float tail = u >= k ? ramp * ramp / (2.0 * lo * hi) : 0.5 - u / hi;
