@@ -527,6 +527,8 @@ nonisolated final class SendLog: Sendable {
     /// 送り手が素の socket (``RawDatagramSocket``) である記録か。素の socket は `sendto` で必ず出て、名乗りも
     /// 替えもない。名乗りが 0 行なのを「黙っている」と読ませず、替えた回数も言わない (#3105)。
     let rawSocket: Bool
+    /// 素の socket の送りの戻り (``RawDatagramSocket/sendRecord``) を読む口。名乗る時点で読む (R4・#3105)。
+    private let rawSends = Mutex<(@Sendable () -> RawSendRecord)?>(nil)
 
     /// - Parameter rawSocket: 送り手が素の socket か。素の socket から送る検査は、``collectOrName(_:count:within:landing:_:)``・
     ///   ``requireRawArrival(_:within:landing:until:)`` が、この記録を作って名乗る。
@@ -541,6 +543,12 @@ nonisolated final class SendLog: Sendable {
     func watch(_ label: String = "送り", index: Int = 0, trace: @escaping () -> SendTrace?) {
         let reader = TraceReader(trace)
         state.withLock { $0.traces[Slot(label: label, index: index)] = reader }
+    }
+
+    /// 素の socket `socket` の送りの戻りを、名乗る時点で読む口を据える。**`sendto` が失敗していたら、読めなかった
+    /// 理由は受け口ではなく送り手で出なかったことだと名乗る** (`ENOBUFS` など。受け口側のせいと読ませない)。
+    func watch(raw socket: RawDatagramSocket) {
+        rawSends.withLock { $0 = { socket.sendRecord } }
     }
 
     /// 送り元 `sender` の跡を読む口を据える。跡を持たない送り元 (作り物) は「様子を読めない」と名乗る。
@@ -584,6 +592,15 @@ nonisolated final class SendLog: Sendable {
         }
     }
 
+    /// 素の socket の送りの戻りの名乗り。読む口が無ければ、戻りを記録していないと言う。
+    private static func rawText(of record: RawSendRecord?) -> String {
+        guard let record else { return "素の socket から直に送った (送り手は名乗らず、替えもしない・sendto の戻りは記録していない)" }
+        guard let failure = record.firstFailure else {
+            return "素の socket から直に送った (送り手は名乗らず、替えもしない)・sendto は \(record.attempts) 回とも成功 (計 \(record.bytes) バイト)"
+        }
+        return "素の socket の sendto が失敗した: \(record.attempts) 回のうち \(record.failures) 回・最初の失敗は errno \(failure.code) (\(String(cString: strerror(failure.code))))・\(failure.requested) バイトを送ろうとした。**送り手で出なかった回があり、読めなかった理由は受け口ではなく送り手側の見込み**"
+    }
+
     private static func text(of trace: SendTrace?) -> String {
         guard let trace else { return "様子を読めない送り元" }
         return "出 \(trace.issued)・誤り無し \(trace.completed)・誤り \(trace.failed)・最後 \(trace.state ?? "知らせ無し")"
@@ -615,7 +632,7 @@ nonisolated final class SendLog: Sendable {
                 parts.append(line)
             }
             if rawSocket {
-                parts.append("素の socket から直に送った (送り手は名乗らず、替えもしない)")
+                parts.append(Self.rawText(of: rawSends.withLock { $0 }?()))
             } else {
                 parts.append("(替えた後に読めた数は、古い送り元から遅れて届いた分も含み、出どころは区別できない)")
             }
@@ -725,12 +742,32 @@ func requireSent(
 /// - Parameters:
 ///   - note: 名乗りの末尾に足す 1 文 (どの段か)。
 func collectOrName(
-    _ port: TextPort, count: Int, within seconds: TimeInterval = 5, landing: Landing, _ note: String = ""
+    _ port: TextPort, count: Int, within seconds: TimeInterval = 5, from peer: RawDatagramSocket? = nil,
+    landing: Landing, _ note: String = ""
 ) async throws -> [String] {
+    try await collectOrName(
+        count: count, within: seconds, from: peer, landing: landing, note
+    ) { count, seconds, label, log in
+        await collect(port, count: count, within: seconds, label: label, log: log)
+    }
+}
+
+/// ``collectOrName(_:count:within:from:landing:_:)`` の、読む関数を渡す形。入り口の型 (文字列・OSC) に
+/// 依らず、名乗りの組み立てを 1 つにする (#3105)。
+///
+/// - Parameters:
+///   - peer: 送った素の socket。渡せば `sendto` の戻りを記録から読み、失敗していたら送り手で出なかったと名乗る。
+///   - collect: 読む関数。`(個数, 期限, 記録の宛名, 記録)` を受け、読めた通を返し、`log` に数える。
+func collectOrName<Message>(
+    count: Int, within seconds: TimeInterval = 5, from peer: RawDatagramSocket? = nil, landing: Landing,
+    _ note: String = "",
+    collect: (Int, TimeInterval, String, SendLog) async -> [Message]
+) async throws -> [Message] {
     let label = "素の socket"
     let log = SendLog(rawSocket: true)
     log.watch(label) { nil }
-    let received = await collect(port, count: count, within: seconds, label: label, log: log)
+    if let peer { log.watch(raw: peer) }
+    let received = await collect(count, seconds, label, log)
     try await requireSent(
         received.count >= count, "素の socket から送った \(count) 通のうち読めたのは \(received.count) 通\(note)", log: log,
         landing: landing)
@@ -738,16 +775,17 @@ func collectOrName(
 }
 
 /// 素の socket から送った結果の `condition` が満ちるのを、期限まで待つ。**満ちなければ、受け口側の様子と素の
-/// 1 通の前後の受け入れの差を名乗って 1 つで止まる** (#3105)。``collectOrName(_:count:within:landing:_:)`` が
+/// 1 通の前後の受け入れの差を名乗って 1 つで止まる** (#3105)。``collectOrName(_:count:within:from:landing:_:)`` が
 /// 使えない段 (受け口を ``TextPort`` で包まず、読んだ結果を検査が自分で持つ) の道具。
 ///
 /// - Parameter what: 満たされなかったことの 1 文。**素の 1 通を送る前に評価する** (読めたものを載せられる)。
 func requireRawArrival(
-    _ what: @autoclosure () -> String, within seconds: TimeInterval = 5, landing: Landing,
-    until condition: () -> Bool
+    _ what: @autoclosure () -> String, within seconds: TimeInterval = 5, from peer: RawDatagramSocket? = nil,
+    landing: Landing, until condition: () -> Bool
 ) async throws {
     let log = SendLog(rawSocket: true)
     log.watch("素の socket") { nil }
+    if let peer { log.watch(raw: peer) }
     let started = Date()
     let met = await until(seconds) { condition() }
     log.recordWait(waited: Date().timeIntervalSince(started), limit: seconds)
@@ -818,6 +856,33 @@ func sendAndCollect(
     return received
 }
 
+/// 素の socket (``RawDatagramSocket``) の送りの戻りの数え。
+nonisolated struct RawSendRecord: Sendable, Equatable {
+    struct Failure: Sendable, Equatable {
+        var code: Int32
+        var requested: Int
+    }
+
+    /// 送った回数 (失敗も含む)。
+    var attempts = 0
+    /// `sendto` が返したバイト数の合計 (失敗は含まない)。
+    var bytes = 0
+    /// 失敗した回数。
+    var failures = 0
+    /// 最初の失敗。
+    var firstFailure: Failure?
+
+    mutating func add(requested: Int, result: Int, code: Int32) {
+        attempts += 1
+        if result < 0 {
+            failures += 1
+            if firstFailure == nil { firstFailure = Failure(code: code, requested: requested) }
+        } else {
+            bytes += result
+        }
+    }
+}
+
 /// 127.0.0.1 のポートへ、素の BSD socket から datagram を送る相手 (他のアプリの代わり)。
 ///
 /// **1 つの socket から送るので、受け口からは 1 つの送り元に見える。** 間を空けずに続けて送れば、
@@ -842,8 +907,21 @@ nonisolated final class RawDatagramSocket: Sendable {
         self.descriptor = descriptor
     }
 
-    /// 1 つの datagram として送る。送れたバイト数を返す (送れなければ -1)。
+    /// 送りの戻りの記録。名乗りが「送り手で出なかった」を読み分ける材料 (``SendLog/watch(raw:)``)。
+    private let record = Mutex(RawSendRecord())
+
+    /// これまでの送りの戻り。
+    var sendRecord: RawSendRecord { record.withLock { $0 } }
+
+    /// 1 つの datagram として送る。送れたバイト数を返す (送れなければ -1)。戻りは ``sendRecord`` に数える。
     func send(_ bytes: [UInt8], to port: Int) -> Int {
+        let sent = sendNow(bytes, to: port)
+        let code = errno
+        record.withLock { $0.add(requested: bytes.count, result: sent, code: code) }
+        return sent
+    }
+
+    private func sendNow(_ bytes: [UInt8], to port: Int) -> Int {
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
