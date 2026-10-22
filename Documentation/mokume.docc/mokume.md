@@ -623,6 +623,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/createBandPass()``
 - ``Sketch/createReverb()``
 - ``Sketch/createDelay()``
+- ``EffectInput``
 - ``SynthSound``
 - ``SynthSource``
 - ``Oscillator``

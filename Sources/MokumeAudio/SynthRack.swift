@@ -19,6 +19,9 @@ nonisolated struct SynthCommand {
         case trigger
         /// エフェクトの入力を置き換える。`bits` に入力の節の番号の集合。
         case inputs
+        /// ファイルの節 (``FileNode``) の区切りを始める。`bits` に始まる位置・ループ・区切りの世代
+        /// (``FileNode/segment(start:looping:generation:)``)。
+        case segment
         /// 作者が音源を手放した (使う側の参照が無くなった)。音の側は、その音源が鳴り終えたら節を外して
         /// 置き場を返す。**この後その節へ操作は来ない。**
         case release
@@ -178,6 +181,21 @@ nonisolated final class SynthRack: @unchecked Sendable {
         }
     }
 
+    /// 音声ファイルの標本を読み出す音源の節を足す (``SoundFile`` がエフェクトへ通されたとき)。
+    /// 置き場が埋まっていれば `nil`。
+    ///
+    /// - Parameters:
+    ///   - samples: ファイルの標本 (チャンネルを平均したモノラル)。
+    ///   - fileRate: ファイルの標本化率 (Hz)。ラックの率と違えば、節が変換する。
+    ///   - amplitude: 音量 (0〜1)。
+    func addFile(samples: [Float], fileRate: Double, amplitude: Float) -> FileNode? {
+        add { id, _ in
+            FileNode(
+                id: id, sampleRate: sampleRate, meter: Self.makeMeter(), samples: samples,
+                fileRate: fileRate, amplitude: amplitude)
+        }
+    }
+
     /// 濾波器の節を足す。
     func addFilter(_ shape: FilterShape) -> RackNode? {
         add { id, _ in FilterNode(id: id, sampleRate: sampleRate, meter: Self.makeMeter(), shape: shape) }
@@ -198,7 +216,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
     }
 
     /// `make` は、置き場の番号と、作った順の通し番号を受けて節を作る。
-    private func add(_ make: (_ id: Int, _ serial: Int) -> RackNode) -> RackNode? {
+    private func add<Node: RackNode>(_ make: (_ id: Int, _ serial: Int) -> Node) -> Node? {
         collectFreed()
         guard occupied != .max else { return nil }
         // 空いている最小の番号。何も返らない間は、作った順の番号になる
@@ -398,6 +416,8 @@ nonisolated final class SynthRack: @unchecked Sendable {
                 inputs[id] = command.bits
                 if command.bits != 0 { armed |= bit } else { armed &= ~bit }
                 rebuild = true
+            case .segment:
+                nodes[id]?.begin(command.bits)
             case .release:
                 if nodes[id] != nil { released |= 1 << UInt64(id) }
             }

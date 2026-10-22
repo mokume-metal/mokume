@@ -61,7 +61,7 @@ import MokumeDiagnostics
 ///
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
-public class SynthSound {
+public class SynthSound: EffectInput {
     let stage: SynthStage
     let node: RackNode?
     /// 知らせに載せる型の名前。
