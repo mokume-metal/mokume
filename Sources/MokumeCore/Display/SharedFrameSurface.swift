@@ -177,16 +177,25 @@ final class SharedFrameSurface {
         /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
         /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
         let windowScale: Float?
+        /// この目録を置いた子のプロセスの番号。**どの世代の目録かを、読み手が照合する印である**
+        /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+        ///
+        /// 目録は書き手の世代の印を持たなかったので、道具の窓から見張りへの合図 (乗り換えた・受け取れない)
+        /// は、見張りが届いた時点で待っている世代に当てはめるしかなかった — 保存を続けた並びで、前の
+        /// 世代の合図が次の世代のものと読まれる。**無くても絵は出る** (``windowScale`` と同じ足し方 —
+        /// 版は据え置き)。書かない古いライブラリの子は `nil` で、読み手は今までの推定に倒れる。
+        let pid: Int32?
 
         private enum CodingKeys: String, CodingKey {
-            case schemaVersion, ids, width, height, windowScale
+            case schemaVersion, ids, width, height, windowScale, pid
         }
 
-        init(ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil) {
+        init(ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil, pid: Int32? = nil) {
             self.ids = ids
             self.width = width
             self.height = height
             self.windowScale = windowScale
+            self.pid = pid
         }
 
         /// **版が違えば読まない。** 知らない形を推測で解くと、食い違いが絵の壊れ方として出る。
@@ -217,6 +226,10 @@ final class SharedFrameSurface {
             // ので、開けない値は「頼まれていない」として扱う
             let scale = try? container.decodeIfPresent(Float.self, forKey: .windowScale)
             windowScale = scale.flatMap { $0 }.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            // **番号も読めなくても目録ごと捨てない。** 整数でない・正でない値は「印が無い」として扱い、
+            // 読み手は推定に倒れる
+            let writer = try? container.decodeIfPresent(Int32.self, forKey: .pid)
+            pid = writer.flatMap { $0 }.flatMap { $0 > 0 ? $0 : nil }
         }
     }
 
@@ -514,7 +527,9 @@ final class SharedFrameSurface {
     /// が持つので、ここは名乗らない — 判断が呼び手にある口だけが `throws` である (#989)。
     func publishManifest() throws {
         try AtomicFile.writeJSON(
-            Manifest(ids: ids, width: width, height: height, windowScale: windowScale),
+            Manifest(
+                ids: ids, width: width, height: height, windowScale: windowScale,
+                pid: ProcessInfo.processInfo.processIdentifier),
             to: manifestURL)
     }
 
