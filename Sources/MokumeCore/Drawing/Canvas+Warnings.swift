@@ -24,6 +24,23 @@ extension Canvas {
         case notANumberBackground
         /// 画像に掛ける色に、数でない値・無限の値が渡された。
         case notANumberTint
+        /// 塗りの不透明度が 0–255 の外で、締めた ([#1842])。**数でない値の注意とは鍵を分ける** —
+        /// あちらは塗りを変えずに断り、こちらは締めて塗る。口ごとに数える (下の 3 つも同じ)。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedFillOpacity
+        /// 線の色の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedStrokeOpacity
+        /// 下地の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedBackgroundOpacity
+        /// 画像に掛ける色の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedTintOpacity
         /// 底上げの光に、数でない値・無限の値が渡された。
         case notANumberAmbientLight
         /// 向きを持つ光に、数でない値・無限の値が渡された。
@@ -473,6 +490,21 @@ extension Canvas {
             "\(entry.rawValue)(): got a value that is not a number, or an infinite one, so \(entry.outcome)")
     }
 
+    /// 不透明度を締めたことを、初回だけ知らせる ([#1842])。**範囲の中・数でない値は何も言わない**
+    /// (数でない値は ``warnNotANumberColor(_:)`` が断る側)。
+    ///
+    /// 文面は ``warnRounded(_:_:_:takes:passed:used:)`` で組む。0–255 の目盛りの数の形も、色の値と
+    /// 不透明度の形 (`fill(c, alpha)`) も、同じ鍵・同じ文面で言う。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    func warnRoundedOpacity(_ entry: ColorEntry, passed alpha: Float) {
+        guard let warning = entry.roundedOpacityWarning,
+            let used = DisplayScale.roundedOpacity(alpha)
+        else { return }
+        warnRounded(
+            warning, entry.rawValue, "the opacity", takes: "0 to 255", passed: alpha, used: used)
+    }
+
     /// 色を受ける口。注意の鍵と、断ったときに何を残したかを持つ。
     enum ColorEntry: String {
         case fill, stroke, background, tint
@@ -491,6 +523,17 @@ extension Canvas {
             case .spotLight: .notANumberSpotLight
             case .ambient: .notANumberAmbient
             case .emissive: .notANumberEmissive
+            }
+        }
+
+        /// 不透明度を締めたときの鍵。不透明度を持たない口 (光と質感) は `nil`。
+        var roundedOpacityWarning: Warning? {
+            switch self {
+            case .fill: .roundedFillOpacity
+            case .stroke: .roundedStrokeOpacity
+            case .background: .roundedBackgroundOpacity
+            case .tint: .roundedTintOpacity
+            case .ambientLight, .directionalLight, .pointLight, .spotLight, .ambient, .emissive: nil
             }
         }
 

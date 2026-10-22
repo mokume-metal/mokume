@@ -84,6 +84,74 @@ struct ColorWarningTests {
         #expect(canvas.warnings.message(for: .notANumberStroke)?.hasPrefix("stroke()") == true)
     }
 
+    /// 不透明度を 0–255 へ締めたら、口の名前・範囲・渡した値・使った値を 1 度だけ言う ([#1842])。
+    /// 範囲の中の値は何も言わない。絵は変わらない (締める先は直す前と同じ)。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    @Test("不透明度を締めたら、口ごとに 1 度だけ言う")
+    func clampedOpacityIsSaidOncePerEntry() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.fill(255, 400)
+            canvas.stroke(255, 0, 0, -100)
+            canvas.tint(255, 255, 255, 300)
+            canvas.background(10, 20, 30, 256)
+            // 2 度目は組み立て直さない — 別の値でも最初の文面のまま
+            canvas.fill(255, 1000)
+            canvas.fill(255, -5)
+        }
+        #expect(
+            canvas.warnings.message(for: .roundedFillOpacity)
+                == "fill(): the opacity takes 0 to 255, but 400.0 was passed, so 255 was used")
+        #expect(
+            canvas.warnings.message(for: .roundedStrokeOpacity)
+                == "stroke(): the opacity takes 0 to 255, but -100.0 was passed, so 0 was used")
+        #expect(
+            canvas.warnings.message(for: .roundedTintOpacity)
+                == "tint(): the opacity takes 0 to 255, but 300.0 was passed, so 255 was used")
+        #expect(
+            canvas.warnings.message(for: .roundedBackgroundOpacity)
+                == "background(): the opacity takes 0 to 255, but 256.0 was passed, so 255 was used")
+        // 数でない値の注意は別の鍵で、締めただけでは鳴らない
+        #expect(!canvas.warnings.hasWarned(.notANumberFill))
+    }
+
+    @Test("色の値と不透明度の形 fill(c, alpha)・stroke(c, alpha) も、同じ鍵で言う")
+    func clampedOpacityOfTheFadingForm() throws {
+        let canvas = try makeCanvas()
+        let base = color(230, 120, 40)
+        try canvas.draw {
+            canvas.fill(base, 400)
+            canvas.stroke(base, -100)
+        }
+        #expect(
+            canvas.warnings.message(for: .roundedFillOpacity)
+                == "fill(): the opacity takes 0 to 255, but 400.0 was passed, so 255 was used")
+        #expect(
+            canvas.warnings.message(for: .roundedStrokeOpacity)
+                == "stroke(): the opacity takes 0 to 255, but -100.0 was passed, so 0 was used")
+    }
+
+    @Test("範囲の内側の不透明度と、数でない不透明度では、締めた注意を言わない")
+    func opacityInRangeIsSilent() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.fill(255, 0)
+            canvas.fill(255, 255)
+            canvas.stroke(1, 2, 3, 128)
+            canvas.tint(255, 255, 255, 0.5)
+            canvas.background(10, 20, 30, 255)
+            canvas.fill(color(230, 120, 40), 255)
+            // 数でない値は締めずに断る (別の鍵)
+            canvas.fill(255, Float.nan)
+        }
+        #expect(!canvas.warnings.hasWarned(.roundedFillOpacity))
+        #expect(!canvas.warnings.hasWarned(.roundedStrokeOpacity))
+        #expect(!canvas.warnings.hasWarned(.roundedTintOpacity))
+        #expect(!canvas.warnings.hasWarned(.roundedBackgroundOpacity))
+        #expect(canvas.warnings.hasWarned(.notANumberFill))
+    }
+
     @Test("触っていない口は、言ったことになっていない")
     func untouchedEntriesStaySilent() throws {
         let canvas = try makeCanvas()

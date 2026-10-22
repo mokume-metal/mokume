@@ -20,7 +20,7 @@ extension Canvas {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         // 作れなければ `nil` のまま渡す。区間の外の断りを先に言うのは受け口 (#1706 の反証 2)
         paintBackground(
-            DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha))
+            DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha), opacity: alpha)
     }
 
     public func fill(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
@@ -35,6 +35,7 @@ extension Canvas {
         else {
             return warnNotANumberColor(.fill)
         }
+        warnRoundedOpacity(.fill, passed: alpha)
         fill(color)
     }
 
@@ -42,6 +43,7 @@ extension Canvas {
         guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
             return warnNotANumberColor(.fill)
         }
+        warnRoundedOpacity(.fill, passed: alpha.asFloat)
         fill(faded)
     }
 
@@ -57,6 +59,7 @@ extension Canvas {
         else {
             return warnNotANumberColor(.stroke)
         }
+        warnRoundedOpacity(.stroke, passed: alpha)
         stroke(color)
     }
 
@@ -64,6 +67,7 @@ extension Canvas {
         guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
             return warnNotANumberColor(.stroke)
         }
+        warnRoundedOpacity(.stroke, passed: alpha.asFloat)
         stroke(faded)
     }
 
@@ -79,6 +83,7 @@ extension Canvas {
         else {
             return warnNotANumberColor(.tint)
         }
+        warnRoundedOpacity(.tint, passed: alpha)
         tint(color)
     }
 }
