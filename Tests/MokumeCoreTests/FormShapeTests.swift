@@ -2258,9 +2258,11 @@ struct FormShapeTests {
         let quarter = SIMD4<Float>(0.25, 0, 0, 0.25)
         #expect(!form(4, 80, linear: quarter).mayHaveThinFill(unitsPerDrawnPixel: one), "scale(0.25) の幅 4")
         #expect(form(3.9, 80, linear: quarter).mayHaveThinFill(unitsPerDrawnPixel: one), "scale(0.25) の幅 3.9")
-        // 回しても画面の大きさで答える
+        // 回しても画面の大きさで答える。**測るのは描く画素の法線向きの幅** (画素の正方形を形の軸へ射影した
+        // 幅・#2991)。0.5 rad (≈ 28.6°) では |cos| + |sin| ≈ 1.357 で、行ノルム (1) より広い
         let rotated = SIMD4<Float>(cos(0.5), sin(0.5), -sin(0.5), cos(0.5))
-        #expect(!form(1, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 1")
+        #expect(form(1, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 1 (法線向きの幅 1.357 より細い)")
+        #expect(!form(1.4, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 1.4")
         #expect(form(0.5, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 0.5")
         // 描く細かさ 0.5 では描く画素で答える: 幅 2 は描く画素で 1
         let halfDensity = SIMD2<Float>(2, 2)

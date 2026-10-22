@@ -1224,11 +1224,12 @@ static inline float mokume_formCoverage(FormField field, float4 inverseRows, boo
     float hi = max(abs(screen.x), abs(screen.y));
     float lo = min(abs(screen.x), abs(screen.y));
     if (!(keepsLinearEdge || lo <= 1e-5 * hi)) {
-        // 面積の裾 (1/256 未満) は 0 に、頂 (255/256 より上) は 1 に揃える。揃えないと、面積が 1e-4 ほどしか
-        // 掛からない画素に被覆が残り、置き換える混ぜ方 (`replace`) が下地を消す (実測)。線形の渡しの
-        // 両端の遊び (下) のように全体を縮めない — 縮めると面積が最大 0.8% ずれる
-        float area = mokume_halfPlaneCoverage(field.distance, screen);
-        return area < kFormSnap ? 0.0 : (area > 1.0 - kFormSnap ? 1.0 : area);
+        // 両端の遊び (下) は、面積にも同じく掛ける。面積の裾 (1/256 未満) を 0 に揃えないと、面積が 1e-4 ほど
+        // しか掛からない画素に被覆が残り、置き換える混ぜ方 (`replace`) が下地を消す (実測)。裾だけを
+        // 切ると、輪郭を塗りの距離場からずらす近似の経路 (勾配の向きが僅かに違う) と、輪郭の位置で解く
+        // 経路で、切る所をまたいだ画素が 1/255 を越えて食い違う。全体を同じ式で写せば食い違いは連続になる
+        return saturate(
+            mokume_halfPlaneCoverage(field.distance, screen) * (1.0 + 2.0 * kFormSnap) - kFormSnap);
     }
     float pixelsPerUnit = max(length(screen), 1e-6);
     float coverage = 0.5 - field.distance / pixelsPerUnit;
@@ -1802,7 +1803,8 @@ static inline FormPaint mokume_formPaint(
     float halfWeight = form.size.z;
     uint kind = form.meta.x;
     // 描く画素 1 つが形自身の座標でいくらか。x が形自身の x の向き、y が y の向きで、
-    // `inverseRows` の行ノルムになる (`mokume_formCoverage` の説明で n を軸に取ったもの)。
+    // `inverseRows` の行ノルムになる (`mokume_formCoverage` の説明で n を軸に取ったもの。細い枝の
+    // 境目は、これではなく下の `reachPerPixel` で測る)。
     // 線では x が長さの向き、y が太さの向きになる。描く画素で測るので、細かさ 0.5 の面の
     // 太さ 1 の線は、描く画素で太さ 0.5 の線として線の細い枝を通る (#1488)
     float2 unitsPerPixel = float2(length(in.inverseRows.xy), length(in.inverseRows.zw));
@@ -1858,8 +1860,10 @@ static inline FormPaint mokume_formPaint(
                 // ほど効きが大きくなる (幅 0.05 の帯が画素の境目をまたぐと 15% 足りなくなる)。
                 //
                 // **境目は 1 画素ちょうどではなく 256/258 画素に置く** (線の枝と同じ理由)。
-                // 幅 1 の塗りは、回しても逆行列の行ノルムの丸め (1e-7 ほど) で境目をまたが
-                // ない。それより太い塗りは縁 1 本の式のままで、絵は 1 ビットも変わらない。
+                // 測るのは描く画素の法線向きの幅 (`reachPerPixel`・45° で √2。#2991)。軸に沿う
+                // 形では行ノルムのままなので、幅 1 の塗りは丸め (1e-7 ほど) で境目をまたがない。
+                // それより太い塗りは縁 1 本の式 (斜めの縁は面積で数える) で、軸に沿う形の絵は
+                // 1 ビットも変わらない。
                 //
                 // **細い塗りを含まない列では、枝ごと原稿から外す** (`kFormHasThinFill`)
                 isThinFill = true;
@@ -2039,9 +2043,10 @@ static inline FormPaint mokume_formPaint(
             // **境目は 1 画素ちょうどではなく 256/258 画素に置く。** 遊びを込めると、それより
             // 太い帯では向こう側の縁が画素の被覆に入らない (輪郭の差と積が一致するのと同じ
             // 境目・下の説明) ので、縁 1 本の距離場のままで両縁を見たのと 1 ビットも違わない。
-            // 1 画素ちょうどに置くと、既定の太さ 1 で引いた斜めの線が、逆行列の行ノルムの
-            // 丸め (1e-7 ほど) で境目の両側へ散って絵が動く。太さ 256/258 画素以上はこの枝を
-            // 通らないので、絵は 1 ビットも変わらない
+            // 1 画素ちょうどに置くと、既定の太さ 1 で引いた線が、行の丸め (1e-7 ほど) で境目の両側へ
+            // 散って絵が動く。境目を測るのは、描く画素の法線向きの幅 (`reachPerPixel`・45° で √2。
+            // 画素の正方形を線の太さの向きへ射影した幅で、帯の両縁が 1 つの画素に入るかを決める量・#2991)。
+            // 太さが 256/258 画素以上の軸に沿う線はこの枝を通らないので、絵は 1 ビットも変わらない
             float reach = halfLength + (form.meta.y == kFormCapSquare ? 0.0 : halfWeight);
             isThinLine = true;
             thinLineCoverage = mokume_boxCoverage(

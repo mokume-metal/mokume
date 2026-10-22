@@ -224,7 +224,30 @@ struct ExactEdgeCoverageTests {
     /// 絵 (出力段を通した 8 bit) の指紋。**直す前の値をそのまま写してある** — 縁の式と境目を替えても、
     /// この絵は 1 ビットも動かない (#2991 完了条件 3)。
     static let axisAlignedFingerprints: [(name: String, digest: String)] = [
-        ("PLACEHOLDER", "")
+        ("rect の塗りと輪郭・0°・倍率 1.0 × 1.0", "808cb3d461e566a04cefd9cea78cd004da68e61cf13b9537bb9c94a843a7ffb3"),
+        ("細い rect と線・0°・倍率 1.0 × 1.0", "d978e2cac94b4ab19853f1b2646f3fe2d73af552f4b6e5db5fc0ad81f2d821b2"),
+        ("rect の塗りと輪郭・0°・倍率 3.0 × 0.4", "7002fd85b92ddd40759089a9a03fced58049b6bc8f63f7ed433af70f64690796"),
+        ("細い rect と線・0°・倍率 3.0 × 0.4", "ae63d0bc3c6945822990438ae6c596eef7cecf12478d6d987b11d6bc5c963c12"),
+        ("rect の塗りと輪郭・0°・倍率 0.7 × 2.5", "d661f258e86942a2bf92aaa755c3695a4544deae75a903f62faec4c71d85bbd0"),
+        ("細い rect と線・0°・倍率 0.7 × 2.5", "b5b9ae2d4354e375e3cee2a3596bbb43121835bd698dfdef965e9cb99c163d1a"),
+        ("rect の塗りと輪郭・90°・倍率 1.0 × 1.0", "359558c47115b9c07c879773fb1a6d206a2d6f543eb0a3213bb684e09170bd9a"),
+        ("細い rect と線・90°・倍率 1.0 × 1.0", "2d6cae1b29a488ff5168c4ff7b6a23f93380c85a530ad6b90b2205518fbc3415"),
+        ("rect の塗りと輪郭・90°・倍率 3.0 × 0.4", "abf6b7827f5842cbc308e758410a3abab901bfdde399df2f52c13e349b91086a"),
+        ("細い rect と線・90°・倍率 3.0 × 0.4", "e71e2e47ed73edbdb3df3435dcb927eb47f5e9692106af888e9f63d847ac4d70"),
+        ("rect の塗りと輪郭・90°・倍率 0.7 × 2.5", "2b738f3bab62ad9c5c8be031ac726be2974eb814772515cedc99e8de9f27e43b"),
+        ("細い rect と線・90°・倍率 0.7 × 2.5", "3adeea72ba93cd4ecf8677aaf5b46cbb8851542ac2dfdc0659e71b474001d49a"),
+        ("rect の塗りと輪郭・180°・倍率 1.0 × 1.0", "808cb3d461e566a04cefd9cea78cd004da68e61cf13b9537bb9c94a843a7ffb3"),
+        ("細い rect と線・180°・倍率 1.0 × 1.0", "c44dcda4a34f5c4eebf3a5514739d9f8391a8d3c03408bc780d63930349923e6"),
+        ("rect の塗りと輪郭・180°・倍率 3.0 × 0.4", "7002fd85b92ddd40759089a9a03fced58049b6bc8f63f7ed433af70f64690796"),
+        ("細い rect と線・180°・倍率 3.0 × 0.4", "dfd7647a5ba2f87795d5d0c50601970e8ade7165a81d470a952c5795deeebff4"),
+        ("rect の塗りと輪郭・180°・倍率 0.7 × 2.5", "d661f258e86942a2bf92aaa755c3695a4544deae75a903f62faec4c71d85bbd0"),
+        ("細い rect と線・180°・倍率 0.7 × 2.5", "11cf5bc0e2c7a36ee685740e0df71c55a31f0e853358211ff1a76b95074883de"),
+        ("rect の塗りと輪郭・270°・倍率 1.0 × 1.0", "359558c47115b9c07c879773fb1a6d206a2d6f543eb0a3213bb684e09170bd9a"),
+        ("細い rect と線・270°・倍率 1.0 × 1.0", "a4e8a2e79b268bdf60dce4548dc3fceb3236104800c61e0f5abc827df282f766"),
+        ("rect の塗りと輪郭・270°・倍率 3.0 × 0.4", "abf6b7827f5842cbc308e758410a3abab901bfdde399df2f52c13e349b91086a"),
+        ("細い rect と線・270°・倍率 3.0 × 0.4", "b6e0492d89b5f938b645e7e9535ba9f60ab5326e2fbad1be4b557007c73ca659"),
+        ("rect の塗りと輪郭・270°・倍率 0.7 × 2.5", "2b738f3bab62ad9c5c8be031ac726be2974eb814772515cedc99e8de9f27e43b"),
+        ("細い rect と線・270°・倍率 0.7 × 2.5", "a4ecf914cfa7cf9451902d4e9fdc0e353cb4e055f0a693fc08f3f085c6ad7605"),
     ]
 
     static func axisAlignedScenes() -> [(name: String, draw: (Canvas) -> Void)] {

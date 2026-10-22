@@ -1254,18 +1254,33 @@ struct PixelGridTests {
             for y in 10..<150 {
                 for x in 10..<150 {
                     let center = local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift
-                    // 帯の縁から 1 画素の内だけ見る。期待する被覆は、真の距離 (64 bit) を縁の渡し (1 画素の
-                    // 線形の傾き) に通した値 — 描く側の被覆の式 (`ramp(外縁) − ramp(内縁)`) と同じ形で、
-                    // 距離の値と弧の候補の取り違えだけを見る (画素の真の面積とは、斜めの縁の渡しの粗さ
-                    // だけ違うので、面積では比べない)
+                    // 帯の縁から 1 画素の内だけ見る。期待する被覆は、真の距離 (64 bit) と、その画面での勾配
+                    // (中心差分) から、縁 1 本ごとに「半平面と画素の正方形の重なりの面積」を取り、外縁の面積 −
+                    // 内縁の面積とした値 — 描く側の被覆の式 (`mokume_halfPlaneCoverage` の差・#2991) と同じ形で、
+                    // 距離の値と弧の候補の取り違えだけを見る。画素の真の面積とは、縁を直線とみなす分だけ違う
                     guard arcEnds.contains(where: { simd_distance($0, center) <= 8 }) else { continue }
                     let distance = boundary(center)
                     guard abs(distance - halfWeight) <= 1 else { continue }
                     // 中心の角 (2 本の半径が交わる先) は、描く側が画素の中を標本で数える (`mokume_sectorApex`) ので、
                     // 縁の渡しの式の期待値では測れない。この検査が見るのは弧の候補の取り違えなので外す
                     guard simd_length(center) > 4 else { continue }
-                    func ramp(_ value: Double) -> Double { min(1, max(0, 0.5 - value)) }
-                    let truth = max(0, ramp(distance - halfWeight) - ramp(distance + halfWeight))
+                    // 画面の勾配 (画素あたりの距離の増え方)。距離は形自身の座標で測るので、画面の点から写して差分を取る
+                    func distanceAt(_ point: SIMD2<Double>) -> Double { boundary(local(point) - shift) }
+                    let here = SIMD2(Double(x) + 0.5, Double(y) + 0.5)
+                    // 距離は弧からの**符号なしの**距離で、弧の上に折れ目がある。中心差分は折れ目で 0 になるので、
+                    // 前後の片側差分の大きいほうを取る (成分の符号は面積に効かない)
+                    let step = 1e-3
+                    func slope(_ axis: SIMD2<Double>) -> Double {
+                        let here0 = distanceAt(here)
+                        return max(
+                            abs(distanceAt(here + axis * step) - here0),
+                            abs(here0 - distanceAt(here - axis * step))) / step
+                    }
+                    let gradient = SIMD2(slope(SIMD2(1, 0)), slope(SIMD2(0, 1)))
+                    let truth = max(
+                        0,
+                        Self.halfPlaneArea(distance - halfWeight, gradient)
+                            - Self.halfPlaneArea(distance + halfWeight, gradient))
                     let error = abs(Double(pixels[x, y].red) - truth)
                     if error > worst {
                         worst = error
@@ -1275,6 +1290,20 @@ struct PixelGridTests {
             }
         }
         return (worst, at)
+    }
+
+    /// 半平面 `c + g · d ≤ 0` と、画素の正方形 [−0.5, 0.5]² の重なりの面積 (`mokume_halfPlaneCoverage` の写し・
+    /// 64 bit・#2991)。
+    nonisolated static func halfPlaneArea(_ c: Double, _ g: SIMD2<Double>) -> Double {
+        let hi = max(abs(g.x), abs(g.y)), lo = min(abs(g.x), abs(g.y))
+        if hi < 1e-12 { return c > 0 ? 0 : 1 }
+        let s = 0.5 * (hi + lo), u = abs(c)
+        if u >= s { return c > 0 ? 0 : 1 }
+        // 軸に沿う縁 (短辺 0) は、幅 hi の線形の渡し
+        if lo <= 1e-9 * hi { return min(1, max(0, 0.5 - c / hi)) }
+        let k = 0.5 * (hi - lo), ramp = s - u
+        let tail = u >= k ? ramp * ramp / (2 * lo * hi) : 0.5 - u / hi
+        return c > 0 ? tail : 1 - tail
     }
 
     nonisolated static let approximateArcEdgeShapes: [SeamShape] = ([
