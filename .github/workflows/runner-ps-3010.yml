@@ -8,6 +8,9 @@ on:
     paths: [.github/workflows/runner-ps-3010.yml]
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   ps:
     runs-on: [self-hosted, mokume-render]
@@ -18,7 +21,8 @@ jobs:
           uptime
           sysctl -n vm.loadavg hw.ncpu
           echo "## CPU の上位"
-          ps -Ao pid,ppid,user,pcpu,etime,lstart,comm -r | head -25 | sed "s#$HOME#~#g; s#/[^ ]*/##"
+          ps -Ao pid,ppid,user,pcpu,etime,lstart,comm -r > "$RUNNER_TEMP/ps.txt"
+          sed -n 1,25p "$RUNNER_TEMP/ps.txt" | sed "s#$HOME#~#g; s#/[^ ]*/##"
           echo "## yes"
           ps -Ao pid,ppid,user,pcpu,etime,lstart,comm | awk 'NR==1 || $NF ~ /(^|\/)yes$/' | sed "s#$HOME#~#g"
       - name: '#2959 の yes を止める'
