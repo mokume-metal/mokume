@@ -19,6 +19,9 @@
 /// 通る口 (``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) は main actor に
 /// 残る ([#2389])。
 ///
+/// **JSON から入る口 (`Codable` とつまみの JSON) は、どんな 4 つの数でも乗算済みの値として受ける。**
+/// 成分が不透明度を越えていても締めない。キーが `red` でも straight とは読まないので、書く側が乗算する。
+///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 /// [#2600]: https://github.com/mokume-metal/mokume/issues/2600
@@ -27,7 +30,8 @@ public struct LinearRGBA: Sendable {
     ///
     /// 成分はアルファを掛けた値なので、`alpha` だけを書き換えると乗算済みの約束が壊れる
     /// (半透明にしたつもりが下地を越えて光る)。値を変えるには作り直す —
-    /// 不透明度を変えるなら ``color(_:_:)-(LinearRGBA,_)``、成分から作るなら
+    /// 不透明度を**掛けて**薄めるなら ``color(_:_:)-(LinearRGBA,_)`` (置き換えない)、**置き換える**なら
+    /// 乗算していない値を ``red(_:)`` などで読んで ``color(_:_:_:_:)`` で作り直す、成分から作るなら
     /// ``init(premultipliedRed:green:blue:alpha:)`` ([ADR-0011] 決定 4)。
     ///
     /// 数で読む ``red(_:)`` は sRGB の 0–255 で、乗算していない値を返す。こちらは作業空間の線形の値で、

@@ -117,8 +117,11 @@ GPU 上での合成は premultiplied で行う。
 当初のメンバは `red`・`green`・`blue`・`alpha` の `var` だった。名前は読み出しの `red(_:)` (sRGB の 0–255・straight) と同じで、同じ語に目盛りが 2 つ並んだ。`alpha` だけを書き換えると、成分は掛けたままの値で残り、約束が壊れる。`veil.alpha = 0.3` の後の `fill(veil)` は、下地を越えて光った。
 
 - **名前**は `premultipliedRed`・`premultipliedGreen`・`premultipliedBlue`。既存の `init(premultipliedRed:green:blue:alpha:)` のラベルと揃える。線形であることは、型の説明 (決定 1) と作り方の `.linear(…)` が名乗る。不透明度は乗算されないので `alpha` のまま読むだけにする
-- **閉じ方**は `public private(set)`。成分も `alpha` も外から書き換えられない。値を変えるときは作り直す — 不透明度なら `color(c, alpha)` ([ADR-0033](0033-color-specification-surface.md))、成分からなら `init(premultipliedRed:green:blue:alpha:)`
+- **閉じ方**は `public private(set)`。成分も `alpha` も外から書き換えられない。値を変えるときは作り直す。不透明度を**掛けて**薄めるなら `color(c, alpha)` ([ADR-0033](0033-color-specification-surface.md) 追補 2026-10-18。置き換えない)、**置き換える**なら乗算していない値を `red(c)` ほかで読んで `color(r, g, b, a)` で作り直す。成分からなら `init(premultipliedRed:green:blue:alpha:)`
 - **保存した値の形は変えない。** `Codable` のキーは `CodingKeys` で `red`・`green`・`blue`・`alpha` に据え置く。値型 (`Rect`・`Circle`) の `fill` と、つまみの JSON (`Schemas/`) は同じ形のまま読み書きできる
+- **#2595 の改名の後も、同じ名前を持つ。** 型名が `Color` になっても、成分は `premultipliedRed`・`premultipliedGreen`・`premultipliedBlue` と読むだけの `alpha` で、乗算済みを名乗る (この改訂の名前は型名に依らない)
+
+**残る入口がある。** JSON から入る 2 つの口 (`LinearRGBA` の `Codable` と、つまみの JSON の読み取り) は、どんな 4 つの数でも乗算済みの値として受ける。成分が不透明度を越えていても締めず、キーが `red` でも straight とは読まない (書く側が乗算する)。数で書く口 (`color(…)`・`display(…)`) と違い、この入口には変換点 (`init(straightRed:…)`) を通る道が無い。キーを据え置く決定の帰結で、`Schemas/params-report.schema.json` の `value` の説明が乗算済みを名乗る。
 
 退けた案:
 
@@ -136,7 +139,7 @@ GPU 上での合成は premultiplied で行う。
 
 #### opt-in の口は、作品が踏むまで足さない。足す日の答えを表にする
 
-opt-in の口の形は決めていない。実装も口を持たず、画面へ差し出す層は `wantsExtendedDynamicRangeContent = false` を明示したままで、情報は出口まで来ているのに出す口が無い ([#906](https://github.com/mokume-metal/mokume/issues/906))。この欠けは、既にある規範が要求する一貫性の欠けに当たる ([ADR-0022](0022-production-track.md) 決定 6 の 2 行目)。それでも**いまは口を足さない。** 口の形・有効時のトーンマッピング・検証の仕方を先に決め、実装は作品トラックの作品が踏むまで待つ ([ADR-0001](0001-founding-principles.md) 原則 4)。決定 3 の改訂が「P3 の値を数で受ける口」を置いたのと同じ形である。
+opt-in の口が無いこと ([#906](https://github.com/mokume-metal/mokume/issues/906)) は、既にある規範が要求する一貫性の欠けに当たる ([ADR-0022](0022-production-track.md) 決定 6 の 2 行目)。それでも**いまは口を足さない。** 口の形・有効時のトーンマッピング・検証の仕方を先に決め、実装は作品トラックの作品が踏むまで待つ ([ADR-0001](0001-founding-principles.md) 原則 4)。決定 3 の改訂が「P3 の値を数で受ける口」を置いたのと同じ形である。
 
 | 論点 | 足す日の答え |
 | --- | --- |

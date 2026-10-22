@@ -74,7 +74,7 @@
             ]
           },
           "value": {
-            "description": "The value now. Its type is what this declaration's type says."
+            "description": "The value now. Its type is what this declaration's type says. A colour is a tuple with red, green, blue and alpha, premultiplied, in the working space (alpha multiplies the other three; to write a colour from what you see, multiply its straight components by its alpha)."
           },
           "min": {
             "type": "number",

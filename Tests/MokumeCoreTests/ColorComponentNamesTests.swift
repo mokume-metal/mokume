@@ -8,14 +8,52 @@ import Testing
 
 /// 色の値の成分の名前 (`premultipliedRed` など) と、保存した値の形が変わらないこと ([#2756])。
 ///
-/// 成分を外から書き換えられないことは、型の面の検査 (`make api-list` で setter が無いこと) が見る。
-/// 書き換えが組み上がらないことは、検査では書けない (組めないものは実行できない)。
+/// 成分を外から書き換えられないことは、`WritableKeyPath` にならないことで見る (組めないものは実行できない
+/// ので、書き換えの文そのものは書けない)。`public var` に戻すと、この検査が赤くなる。
 ///
 /// [#2756]: https://github.com/mokume-metal/mokume/issues/2756
 @Suite("色の値の成分の名前")
 struct ColorComponentNamesTests {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+
+    /// 完了条件 1: 4 成分とも、外から書き換えられない。
+    ///
+    /// 書き換えの文は組めないので、キーパスの**組み上がる型**で見る — 書き換えられる成分は
+    /// `WritableKeyPath` として組まれ、読むだけの成分は `KeyPath` にしか組まれない。実行時の型は
+    /// どちらも書き換え可能な入れ物なので、組む時に決まる多重定義の選びで見分ける。
+    @Test("成分と不透明度は読むだけで、書き換えの口を持たない")
+    func componentsAreReadOnly() {
+        #expect(!Self.isWritable(\LinearRGBA.premultipliedRed))
+        #expect(!Self.isWritable(\LinearRGBA.premultipliedGreen))
+        #expect(!Self.isWritable(\LinearRGBA.premultipliedBlue))
+        #expect(!Self.isWritable(\LinearRGBA.alpha))
+    }
+
+    private static func isWritable<Root, Value>(_ path: WritableKeyPath<Root, Value>) -> Bool { true }
+    private static func isWritable<Root, Value>(_ path: KeyPath<Root, Value>) -> Bool { false }
+
+    /// 移行の対応表 (`changelog.d/color-components-read-only.breaking.md`) の、不透明度を変える 2 通り。
+    /// **掛ける**口と**置き換える**書き方は、半透明の色では別の値になる。
+    @Test("不透明度を変える 2 通り: 掛けるのは color(c, a)・置き換えるのは読み直して作り直す")
+    func changingTheOpacityMultipliesOrReplaces() {
+        let opaque = color(255, 255, 255)
+        let half = color(255, 255, 255, 128)
+        // 不透明な色は、どちらも同じ (0.3 × 255 の不透明度)
+        for result in [
+            color(opaque, 0.3 * 255),
+            color(red(opaque), green(opaque), blue(opaque), 0.3 * 255),
+        ] {
+            #expect(abs(alpha(result) - 0.3 * 255) < 0.1, "\(alpha(result))")
+        }
+        // 半透明の色では、掛けると 128 × 0.3 になり、置き換えると 0.3 × 255 になる
+        let multiplied = color(half, 0.3 * 255)
+        let replaced = color(red(half), green(half), blue(half), 0.3 * 255)
+        #expect(abs(alpha(multiplied) - 128 * 0.3) < 0.1, "\(alpha(multiplied))")
+        #expect(abs(alpha(replaced) - 0.3 * 255) < 0.1, "\(alpha(replaced))")
+        // 置き換えても、色みは動かない (乗算していない値は同じ)
+        #expect(abs(red(replaced) - 255) < 0.5 && abs(green(replaced) - 255) < 0.5)
+    }
 
     @Test("成分の名前は、アルファを掛けた線形の値を読み、不透明度は掛けない")
     func namesReadThePremultipliedValues() {
