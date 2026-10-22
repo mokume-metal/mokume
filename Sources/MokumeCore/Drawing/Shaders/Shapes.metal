@@ -1325,7 +1325,7 @@ static inline float mokume_stripCoverage(float c, float h, float2 g) {
 
 /// 凸多角形 `poly[0..<n]` を、`k + g · d ≥ 0` の側だけに切る (Sutherland–Hodgman)。
 static inline void mokume_clipPolygon(thread float2 *poly, thread uint &n, float k, float2 g) {
-    float2 kept[12];
+    float2 kept[10];
     uint m = 0;
     for (uint i = 0; i < n; i++) {
         float2 current = poly[i];
@@ -1375,7 +1375,7 @@ static inline float mokume_boxCoverage(float2 at, float2 extent, float2 unitsPer
     if (!cutsX && !cutsY) { return 1.0; }
     if (!cutsY) { return mokume_stripCoverage(at.x, extent.x, rows.xy); }
     if (!cutsX) { return mokume_stripCoverage(at.y, extent.y, rows.zw); }
-    float2 poly[12] = {
+    float2 poly[10] = {
         float2(-0.5, -0.5), float2(0.5, -0.5), float2(0.5, 0.5), float2(-0.5, 0.5)
     };
     uint n = 4;
@@ -1401,11 +1401,13 @@ static inline float mokume_boxCoverage(float2 at, float2 extent, float2 unitsPer
 /// 回した線の境目が法線向きの幅 (45° で √2) になって、太さ 1〜1.41 の丸い端の線もこの枝に入るので、端が
 /// 効くようになった。**半円を、同じ面積の面取り (角を 45° に落とす) で数える**: 四角の端の 4 つの角を、
 /// 脚の長さ `c = halfWeight · √(2 − π/2)` の直角二等辺三角形で落とすと、落ちる面積が半円との差に等しい。
-/// 面取りは凸多角形で、画素の正方形を 8 つの半平面で切って面積を出す (`mokume_boxCoverage` の多角形と同じ道具)。
 /// 半分の長さが太さの半分の 1/4 までは `c` を縮め (長さ 0 の点は四角のまま。境目の幅のつなぎ
 /// `mokume_formReachCurved` と同じ割合)、点と長さ 1e-3 の線の間で濃さが跳ばない。
 ///
-/// 面取りの面が画素を切らないとき (線の中ほど) は箱の式のままで、端に掛かる画素だけが多角形の費用を払う。
+/// 面取りで落とす 4 つの三角形のうち、画素に触れるものだけ、画素の正方形を切って面積を出し、箱の被覆から引く
+/// (`mokume_boxCoverage` の多角形と同じ道具)。線の中ほどの画素は箱の式のままで、端に掛かる画素だけが払う。
+/// **長い線 (半分の長さが描く画素 6 つ以上) は箱のまま** — 端の差は 1 つにつき約 0.107 · w² で、長い線の光の量に対して
+/// 1% に満たず、端の画素を数える費用 (斜めの細い線 2,000 本で GPU 時間が 3 割ほど) に見合わない。
 /// **形の軸が画素の軸に沿うとき (`mokume_rowsAlignToPixels`) は、従来どおり箱の式を返す** — 軸に沿う線の絵は
 /// 1 ビットも動かない (四角の端の線も同じ)。
 ///
@@ -1415,39 +1417,42 @@ static inline float mokume_capsuleCoverage(
 {
     float2 extent = float2(halfLength + halfWeight, halfWeight);
     float box = mokume_boxCoverage(at, extent, unitsPerPixel, rows);
-    float chamfer = halfWeight * 0.65524 * saturate(halfLength / max(0.25 * halfWeight, 1e-30));
+    // 長い線 (半分の長さが描く画素 6 つ以上) は箱のまま。端の差は 1 つにつき約 0.107 · w² で、長い線の光の量に
+    // 対して 1% に満たず、端の画素を数える費用 (斜めの細い線 2,000 本で GPU 時間が 3 割ほど) に見合わない
+    if (halfLength >= 6.0 * unitsPerPixel.x) { return box; }
+    // 面取りの脚。半分の長さが太さの半分の 1/4 以上なら満額 (割り算は短い線と点のときだけ)
+    float chamfer = halfWeight * 0.65524;
+    if (halfLength < 0.25 * halfWeight) { chamfer *= saturate(halfLength / max(0.25 * halfWeight, 1e-30)); }
     if (box <= 0.0 || chamfer <= 0.0 || mokume_rowsAlignToPixels(rows)) { return box; }
-    // 面取りの面 `sx · x + sy · y ≤ b` (形自身の座標)。画素の上では `(b − n · at) − g · d ≥ 0`
+    // 面取りで落とす 4 つの直角二等辺三角形 (形自身の座標): 角 `(sx · (L + w), sy · w)` で、
+    // `sx · x ≤ L + w`・`sy · y ≤ w`・`sx · x + sy · y ≥ b`。箱の被覆から、画素との重なりの面積を引く
     float b = halfLength + 2.0 * halfWeight - chamfer;
-    float2 sign4[4] = { float2(1.0, 1.0), float2(-1.0, 1.0), float2(-1.0, -1.0), float2(1.0, -1.0) };
-    float2 plane[4];
-    float2 slope[4];
-    bool cuts = false;
+    // 画素の |x| + |y| の最大が b 以下なら、どの三角形にも触れない (線の中ほど・画素ごとの安い見切り)
+    float2 half4 = 0.5 * float2(abs(rows.x) + abs(rows.y), abs(rows.z) + abs(rows.w));
+    if (abs(at.x) + abs(at.y) + half4.x + half4.y <= b) { return box; }
+    float lost = 0.0;
     for (uint i = 0; i < 4; i++) {
-        slope[i] = sign4[i].x * rows.xy + sign4[i].y * rows.zw;
-        plane[i] = float2(b - dot(sign4[i], at), 0.5 * (abs(slope[i].x) + abs(slope[i].y)));
-        cuts = cuts || plane[i].x < plane[i].y;
+        float2 n = float2((i == 1 || i == 2) ? -1.0 : 1.0, i >= 2 ? -1.0 : 1.0);
+        float2 slope = n.x * rows.xy + n.y * rows.zw;
+        float inside = dot(n, at) - b;
+        // 面取りの面の外側 (三角形の側) に画素が触れないなら飛ばす
+        if (inside + 0.5 * (abs(slope.x) + abs(slope.y)) <= 0.0) { continue; }
+        float2 poly[7] = {
+            float2(-0.5, -0.5), float2(0.5, -0.5), float2(0.5, 0.5), float2(-0.5, 0.5)
+        };
+        uint count = 4;
+        mokume_clipPolygon(poly, count, inside, slope);
+        mokume_clipPolygon(poly, count, extent.x - n.x * at.x, -n.x * rows.xy);
+        mokume_clipPolygon(poly, count, extent.y - n.y * at.y, -n.y * rows.zw);
+        float area = 0.0;
+        for (uint j = 0; j < count; j++) {
+            float2 p0 = poly[j];
+            float2 p1 = poly[j + 1 == count ? 0 : j + 1];
+            area += p0.x * p1.y - p0.y * p1.x;
+        }
+        lost += 0.5 * abs(area);
     }
-    if (!cuts) { return box; }
-    float2 reach = 0.5 * float2(abs(rows.x) + abs(rows.y), abs(rows.z) + abs(rows.w));
-    float2 poly[12] = {
-        float2(-0.5, -0.5), float2(0.5, -0.5), float2(0.5, 0.5), float2(-0.5, 0.5)
-    };
-    uint n = 4;
-    if (at.x + reach.x > extent.x) { mokume_clipPolygon(poly, n, extent.x - at.x, -rows.xy); }
-    if (at.x - reach.x < -extent.x) { mokume_clipPolygon(poly, n, extent.x + at.x, rows.xy); }
-    if (at.y + reach.y > extent.y) { mokume_clipPolygon(poly, n, extent.y - at.y, -rows.zw); }
-    if (at.y - reach.y < -extent.y) { mokume_clipPolygon(poly, n, extent.y + at.y, rows.zw); }
-    for (uint i = 0; i < 4; i++) {
-        if (plane[i].x < plane[i].y) { mokume_clipPolygon(poly, n, plane[i].x, -slope[i]); }
-    }
-    float area = 0.0;
-    for (uint i = 0; i < n; i++) {
-        float2 a = poly[i];
-        float2 c = poly[i + 1 == n ? 0 : i + 1];
-        area += a.x * c.y - a.y * c.x;
-    }
-    return 0.5 * abs(area);
+    return max(box - lost, 0.0);
 }
 
 /// 1 画素より細い楕円の塗りの被覆 ([#1477])。`p` と `radii` は形自身の座標、
@@ -1950,9 +1955,8 @@ static inline FormPaint mokume_formPaint(
         float cornerRadius = form.size.w;
         if (kFormHasFill) {
             fill = mokume_roundedBoxField(p, extent, cornerRadius);
-            // 軸に沿う角丸の `rect`: 辺は線形のまま、角の円弧の領域 (縮めた箱の角の外) だけ面積
-            fillLinear = fillLinear
-                || (coverageMode == kCoverageLinearExceptCorners && !all(abs(p) > extent - cornerRadius));
+            // 軸に沿う角丸の `rect` の塗りは、全体を面積で数える (辺の画素では、軸に沿う辺の面積と線形の渡しは同じ値)。
+            // 領域で切り替えない — 切り替える式を足すと、回した面を覆う塗りの GPU 時間が 14% 増えた
             if (kFormHasThinFill
                 && any(2.0 * extent * (1.0 + 2.0 * kFormSnap) < reachPerPixel)) {
                 // **画面で 1 画素より細い塗りは、両縁を見る 1 次元の被覆の積で数える**
@@ -1990,8 +1994,6 @@ static inline FormPaint mokume_formPaint(
             // (#2757)
             if (form.meta.z == kFormJoinRound || cornerRadius > 0.0) {
                 outer = mokume_grown(mokume_roundedBoxField(q, extent, cornerRadius), halfWeight);
-                outerLinear = outerLinear
-                    || (coverageMode == kCoverageLinearExceptCorners && !all(abs(q) > extent - cornerRadius));
             } else {
                 outer = mokume_boxField(q, extent + halfWeight);
                 if (form.meta.z == kFormJoinBevel) {
@@ -2003,8 +2005,6 @@ static inline FormPaint mokume_formPaint(
                                              q.y < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F);
                     outer = mokume_intersect(outer, mokume_field(chamfer, gradient));
                     // 削ぎは角の領域 (箱の角の外) だけ。辺と、削ぎの外の箱の角は線形のまま
-                    outerLinear = outerLinear
-                        || (coverageMode == kCoverageLinearExceptCorners && !all(abs(q) > extent));
                 }
             }
             // 内縁 (帯の穴) は、形を太さの半分だけ縮めた箱。線幅が形より太いと半幅が負になり、
@@ -2023,9 +2023,9 @@ static inline FormPaint mokume_formPaint(
                 float innerRadius = max(cornerRadius - halfWeight, 0.0);
                 inner = mokume_roundedBoxField(q, hole, innerRadius);
                 // 内縁は角を丸めたときだけ曲がった部分を持つ。尖った穴の角は線形のまま
-                innerLinear = innerLinear
-                    || (coverageMode == kCoverageLinearExceptCorners
-                        && !(innerRadius > 0.0 && all(abs(q) > hole - innerRadius)));
+                if (coverageMode == kCoverageLinearExceptCorners) {
+                    innerLinear = !(innerRadius > 0.0 && all(abs(q) > hole - innerRadius));
+                }
             }
         }
     } else if (kind == kFormEllipse) {
@@ -2185,8 +2185,9 @@ static inline FormPaint mokume_formPaint(
                 length(away) - halfWeight, mokume_direction(away, float2(0.0, 1.0)));
             // 回した線の辺は面積、丸い端の領域 (端の円弧・長さ 0 の点は全体) は線形の渡しのまま
             // (`point()`・丸い端の例外。回転で線形と面積が切り替わると、画素の値が飛ぶ)
-            outerLinear = outerLinear
-                || (coverageMode == kCoverageLinearExceptCaps && (halfLength == 0.0 || abs(q.x) > halfLength));
+            if (coverageMode == kCoverageLinearExceptCaps) {
+                outerLinear = halfLength == 0.0 || abs(q.x) > halfLength;
+            }
         } else if (form.meta.y == kFormCapSquare) {
             outer = mokume_boxField(q, float2(halfLength, halfWeight));
         } else {

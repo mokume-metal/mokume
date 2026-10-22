@@ -175,6 +175,33 @@ struct ExactEdgeCoverageTests {
         #expect(broken.isEmpty, "太さ \(pair.0) と \(pair.1): \(broken.joined(separator: " / "))")
     }
 
+    /// **既定の丸い端の線 (長い線) も、細い枝との境目の両側で光の量が続く** (45°)。changelog の「境目で斜めの線が跳ぶ
+    /// こともなくなりました」が、四角い端だけでなく既定の線 (丸い端) でも成り立つか。長さ 100 の線の光の量を、
+    /// カプセルの面積 `100 w + π w² / 4` で割って、同じ置き方で比べる。
+    @Test(
+        "45° の丸い端の長い線は、細い枝と縁 1 本の式の境目をまたぐ太さの対で、同じ置き方の光の量が 0.01 しか違わない",
+        arguments: [(Float(0.99), Float(0.995)), (1.4, 1.407), (1.0, 1.5)])
+    func roundCapBoundaryDoesNotJump(_ pair: (Float, Float)) throws {
+        var broken: [String] = []
+        for offset in Self.offsets {
+            func measured(_ weight: Float) throws -> Double {
+                try Self.total(
+                    Self.light { canvas in
+                        canvas.stroke(255)
+                        canvas.strokeWeight(weight)
+                        canvas.strokeCap(.round)
+                        canvas.translate(64, 64 + offset)
+                        canvas.rotate(Float.pi / 4)
+                        canvas.line(-50, 0, 50, 0)
+                    }) / Double(100 * weight + Float.pi * weight * weight / 4)
+            }
+            let diff = abs(try measured(pair.0) - measured(pair.1))
+            let limit = pair.1 > 1.45 ? 0.06 : 0.01
+            if diff > limit { broken.append("ずらし \(offset): \(diff)") }
+        }
+        #expect(broken.isEmpty, "太さ \(pair.0) と \(pair.1): \(broken.joined(separator: " / "))")
+    }
+
     // MARK: - 曲線の縁は回しても同じ
 
     /// 25 × 24 通りの置き方 (小数点以下を x は 1/25・y は 1/24 ずつずらす) で、1 枚の面に並べた図形の光の総量
