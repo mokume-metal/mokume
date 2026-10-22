@@ -174,7 +174,10 @@ struct DatagramSenderLoopbackTests {
         // 開いた直後に、拒否の残りが 1 つだけ送信の失敗として返ることはある (時計が止まっていて戻らない
         // ので、名乗りは増えない)。続けて送れば届き、届き始めたら取りこぼさない
         var received: [String] = []
-        let deadline = Date().addingTimeInterval(10)
+        let log = SendLog()
+        log.watch(sender: sender)
+        let started = Date()
+        let deadline = started.addingTimeInterval(10)
         var attempt = 0
         while received.isEmpty && Date() < deadline {
             sender.send(Array("first \(attempt)".utf8))
@@ -183,12 +186,24 @@ struct DatagramSenderLoopbackTests {
             receiver.supply()
             received += receiver.messages
         }
-        #expect(!received.isEmpty, "届かなかった: \(diagnosis(told))")
+        // 読まれなかった回は、送り手と受け口の様子を名乗って止まる (#3001)
+        log.record(
+            label: "送り", expected: 1, heard: min(received.count, 1), missing: nil, replacements: 0,
+            heardAfterReplacement: 0, waited: Date().timeIntervalSince(started), limit: 10)
+        try await requireSent(
+            !received.isEmpty, "受け手が開いた後、\(attempt) 通を送っても 1 通も読まれなかった (送り手の診断: \(diagnosis(told)))",
+            log: log, landing: landing(of: receiver, port: port, told: heard))
         for index in 0..<3 {
             sender.send(Array("after \(index)".utf8))
             try await Task.sleep(for: .milliseconds(60))
         }
-        received += await collect(receiver, count: 3)
+        let heardBefore = received.count
+        let afterLog = SendLog()
+        afterLog.watch(sender: sender)
+        received += await collect(receiver, count: 3, log: afterLog)
+        try await requireSent(
+            received.count >= heardBefore + 3, "続けて送った 3 通のうち読まれたのは \(received.count - heardBefore) 通",
+            log: afterLog, landing: landing(of: receiver, port: port, told: heard))
         #expect(received.suffix(3) == ["after 0", "after 1", "after 2"], "届いた: \(received)")
         #expect(refusals(told) == 1, "診断: \(diagnosis(told))")
 
