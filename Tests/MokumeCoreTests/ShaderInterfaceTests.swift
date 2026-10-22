@@ -115,6 +115,7 @@ struct ShaderInterfaceTests {
                 "kFormHasFill": ShapePipeline.formHasFillConstantIndex,
                 "kFormHasStroke": ShapePipeline.formHasStrokeConstantIndex,
                 "kFormHasThinFill": ShapePipeline.formHasThinFillConstantIndex,
+                "kFormHasObliqueEdge": ShapePipeline.formHasObliqueEdgeConstantIndex,
                 "kShapeLitValue": ShapePipeline.shapeLitConstantIndex,
             ])
     }

@@ -68,6 +68,38 @@ struct FormInstance {
     /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
     static let thinFillsFlag: UInt32 = 4
 
+    /// 縁が画素の軸に斜めになりうる形を含む列の旗 ([#2991])。**列の旗** (``thinFillsFlag`` と同じく、
+    /// 変わっても列を切らない)。
+    ///
+    /// 立っていれば、断片に「縁の被覆を半平面と画素の正方形の重なりの面積で数える」枝を残した組
+    /// (`kFormHasObliqueEdge`) で描く。立っていない列は、その枝を原稿から外す — 軸に沿った `rect`・線だけの
+    /// 列 (面を覆う塗りなど) の費用を、枝が在るだけで増やさないため。**迷ったら「含む」と答える**
+    /// (``mayHaveObliqueEdge(unitsPerDrawnPixel:)``)。
+    ///
+    /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+    static let obliqueEdgesFlag: UInt32 = 8
+
+    /// この形が、**画素の軸に斜めの縁**を持ちうるか ([#2991])。断片の縁の被覆の枝
+    /// (`mokume_formCoverage` の面積) を残した組で描くかを決める。
+    ///
+    /// - 楕円・扇は曲線の縁を持つので、軸に沿っていても常に「含む」
+    /// - `rect`・線は直線の縁だけなので、形の軸が画素の軸に沿っていれば「含まない」。断片の
+    ///   `mokume_rowsAlignToPixels` (逆行列の各行の小さいほうの成分が、大きいほうの 1e-5 倍以下) と
+    ///   同じ式を、境目の半分 (0.5e-5) で解く — CPU と GPU の丸めの違いで、断片が斜めと読む形を
+    ///   見落とさないため。見落としても、断片は従来の式に戻るだけで、1e-5 の傾きの縁は絵に見えない
+    ///
+    /// 逆行列の行は余因子 / 行列式で、行列式は行ごとに共通なので比べるときに要らない。
+    ///
+    /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+    func mayHaveObliqueEdge(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        guard meta.x == Kind.rect.rawValue || meta.x == Kind.line.rawValue else { return true }
+        let firstRow = SIMD2(abs(linear.w) * unitsPerDrawnPixel.x, abs(linear.z) * unitsPerDrawnPixel.y)
+        let secondRow = SIMD2(abs(linear.y) * unitsPerDrawnPixel.x, abs(linear.x) * unitsPerDrawnPixel.y)
+        let tolerance: Float = 0.5e-5
+        func aligned(_ row: SIMD2<Float>) -> Bool { min(row.x, row.y) <= tolerance * max(row.x, row.y) }
+        return !(aligned(firstRow) && aligned(secondRow))
+    }
+
     /// 判定を保守側へ倒す幅 (相対)。
     ///
     /// 断片の境目 (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つ`) と同じ式を CPU で解くが、

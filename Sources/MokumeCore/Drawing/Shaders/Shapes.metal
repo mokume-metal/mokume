@@ -742,6 +742,18 @@ constant bool kFormHasStroke [[function_constant(1)]];
 /// [#2226]: https://github.com/mokume-metal/mokume/issues/2226
 constant bool kFormHasThinFill [[function_constant(2)]];
 
+/// 列に、縁が画素の軸に斜めになりうる形 (回した・剪断した `rect`・線、軸に沿っていても曲線の縁を持つ
+/// 楕円・扇) を含むか ([#2991])。決めるのは CPU で、置いた時点の変換と形の種類から保守側に倒して判定する
+/// (`FormInstance.mayHaveObliqueEdge`)。
+///
+/// **偽の列は、縁の被覆の面積の枝 (`mokume_formCoverage`) を原稿から外す。** 面積の枝は、枝が原稿に
+/// 在るだけで、面を覆う塗り 200 枚 (軸に沿う `rect`・1920×1080) の GPU 時間が 1 割以上増えた。軸に沿った
+/// `rect`・線だけの列は、従来の式だけを通るので、費用も絵も変わらない。立てるべき列で立て損なうと、斜めの縁が
+/// 線形の渡しに戻って濃さが置く位置で振れる — だから判定は迷ったら「含む」側にする。
+///
+/// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+constant bool kFormHasObliqueEdge [[function_constant(3)]];
+
 /// 縁を滑らかにする余白 (描く画素)。被覆が 0 になるのは縁から 0.5 画素なので、微分の
 /// 揺れを見込んで 2 画素取る
 constant float kFormMargin = 2.0;
@@ -1227,19 +1239,22 @@ static inline float mokume_formCoverage(FormField field, float4 inverseRows, boo
     float2 screen = float2(
         inverseRows.x * n.x + inverseRows.z * n.y,
         inverseRows.y * n.x + inverseRows.w * n.y);
-    // **縁の向きが画素の軸に斜めなら、半平面と画素の正方形の重なりの面積で数える** ([#2991])。
-    // 線形の渡しは、縁が画素の軸に沿うときだけ面積に一致する (45° の縁では、画素の中心が法線の向きに
-    // 1/√2 おきに並ぶので、渡しの和が置く位置で振れる)。軸に沿った形 (`keepsLinearEdge`) の直線の縁は、
-    // 従来の式のまま返す — 絵は 1 ビットも動かない。**曲線の縁は、軸に沿った形でも面積で数える**
-    float hi = max(abs(screen.x), abs(screen.y));
-    float lo = min(abs(screen.x), abs(screen.y));
-    if (!(keepsLinearEdge || lo <= 1e-5 * hi)) {
-        // 両端の遊び (下) は、面積にも同じく掛ける。面積の裾 (1/256 未満) を 0 に揃えないと、面積が 1e-4 ほど
-        // しか掛からない画素に被覆が残り、置き換える混ぜ方 (`replace`) が下地を消す (実測)。裾だけを
-        // 切ると、輪郭を塗りの距離場からずらす近似の経路 (勾配の向きが僅かに違う) と、輪郭の位置で解く
-        // 経路で、切る所をまたいだ画素が 1/255 を越えて食い違う。全体を同じ式で写せば食い違いは連続になる
-        return saturate(
-            mokume_halfPlaneCoverage(field.distance, screen) * (1.0 + 2.0 * kFormSnap) - kFormSnap);
+    if (kFormHasObliqueEdge && !keepsLinearEdge) {
+        // **縁の向きが画素の軸に斜めなら、半平面と画素の正方形の重なりの面積で数える** ([#2991])。
+        // 線形の渡しは、縁が画素の軸に沿うときだけ面積に一致する (45° の縁では、画素の中心が法線の向きに
+        // 1/√2 おきに並ぶので、渡しの和が置く位置で振れる)。軸に沿った形 (`keepsLinearEdge`) の直線の縁は、
+        // 従来の式のまま返す — 絵は 1 ビットも動かない。**曲線の縁は、軸に沿った形でも面積で数える**。
+        // 斜めになりうる形を含まない列 (`kFormHasObliqueEdge` が偽) は、この枝ごと原稿から外す
+        float hi = max(abs(screen.x), abs(screen.y));
+        float lo = min(abs(screen.x), abs(screen.y));
+        if (lo > 1e-5 * hi) {
+            // 両端の遊び (下) は、面積にも同じく掛ける。面積の裾 (1/256 未満) を 0 に揃えないと、面積が 1e-4 ほど
+            // しか掛からない画素に被覆が残り、置き換える混ぜ方 (`replace`) が下地を消す (実測)。裾だけを
+            // 切ると、輪郭を塗りの距離場からずらす近似の経路 (勾配の向きが僅かに違う) と、輪郭の位置で解く
+            // 経路で、切る所をまたいだ画素が 1/255 を越えて食い違う。全体を同じ式で写せば食い違いは連続になる
+            return saturate(
+                mokume_halfPlaneCoverage(field.distance, screen) * (1.0 + 2.0 * kFormSnap) - kFormSnap);
+        }
     }
     float pixelsPerUnit = max(length(screen), 1e-6);
     float coverage = 0.5 - field.distance / pixelsPerUnit;

@@ -2270,6 +2270,59 @@ struct FormShapeTests {
         #expect(form(1.9, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 1.9")
     }
 
+    /// **斜めの縁の判定は、軸に沿った `rect`・線だけ「含まない」と答え、迷ったら「含む」側に倒す** ([#2991])。
+    ///
+    /// 「含む」と答えた図形の列だけが、断片に縁の被覆の面積の枝を残した組で描かれる (`kFormHasObliqueEdge`)。
+    /// 軸に沿った列まで「含む」と答えると、面を覆う塗りの費用が増え、斜めの縁を「含まない」と答えると、
+    /// 縁が線形の渡しに戻って濃さが置く位置で振れる。曲線の縁を持つ楕円・扇は、軸に沿っていても「含む」。
+    ///
+    /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+    @Test("斜めの縁の判定は、軸に沿った rect・線だけ含まず、迷ったら含む側に倒す")
+    func obliqueEdgeJudgementLeansToIncluding() {
+        func form(_ kind: FormInstance.Kind, _ linear: SIMD4<Float>) -> FormInstance {
+            FormInstance(
+                kind: kind, linear: linear, offset: SIMD2(10, 10), half: SIMD2(8, 4),
+                arc: kind == .arc ? SIMD2(0, 1) : .zero, halfWeight: 0.5, fill: SIMD4(1, 1, 1, 1),
+                stroke: SIMD4(1, 1, 1, 1), fills: true, strokes: true, cap: .round, join: .miter)
+        }
+        let one = SIMD2<Float>(1, 1)
+        let halfPi = Float.pi / 2
+        // 軸に沿う: 回さない・90° の倍数 (cos の丸めが 4e-8 ほど残る)・縦横で違う倍率・鏡映
+        let aligned: [(String, SIMD4<Float>)] = [
+            ("回さない", SIMD4(1, 0, 0, 1)),
+            ("90°", SIMD4(cos(halfPi), sin(halfPi), -sin(halfPi), cos(halfPi))),
+            ("180°", SIMD4(cos(Float.pi), sin(Float.pi), -sin(Float.pi), cos(Float.pi))),
+            ("270°", SIMD4(cos(3 * halfPi), sin(3 * halfPi), -sin(3 * halfPi), cos(3 * halfPi))),
+            ("倍率 3 × 0.4", SIMD4(3, 0, 0, 0.4)),
+            ("鏡映", SIMD4(-1, 0, 0, 1)),
+        ]
+        for (name, linear) in aligned {
+            for kind in [FormInstance.Kind.rect, .line] {
+                for density in [one, SIMD2<Float>(2, 2), SIMD2<Float>(2, 0.5)] {
+                    #expect(
+                        !form(kind, linear).mayHaveObliqueEdge(unitsPerDrawnPixel: density),
+                        "\(name)・\(kind)・描く画素 \(density) は軸に沿うので含まない")
+                }
+            }
+        }
+        // 回した・剪断した形は含む
+        let angles: [(String, Float)] = [("45°", Float.pi / 4), ("30°", Float.pi / 6), ("1°", Float.pi / 180), ("0.001 rad", 0.001)]
+        for (name, angle) in angles {
+            let rotated = SIMD4(cos(angle), sin(angle), -sin(angle), cos(angle))
+            #expect(form(.rect, rotated).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "回した rect \(name)")
+            #expect(form(.line, rotated).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "回した線 \(name)")
+        }
+        #expect(form(.rect, SIMD4(1, 0, 0.4, 1)).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "剪断した rect")
+        // 断片の境目 (傾き 1e-5) の内側でも、半分より傾いていれば含む側に倒す
+        #expect(
+            form(.rect, SIMD4(1, 0.9e-5, -0.9e-5, 1)).mayHaveObliqueEdge(unitsPerDrawnPixel: one),
+            "境目の近くの傾きは含む側")
+        // 曲線の縁を持つ楕円・扇は、軸に沿っていても含む
+        for kind in [FormInstance.Kind.ellipse, .arc] {
+            #expect(form(kind, SIMD4(1, 0, 0, 1)).mayHaveObliqueEdge(unitsPerDrawnPixel: one), "軸に沿う \(kind)")
+        }
+    }
+
     /// **細い線と点の判定は、太さを描く画素で測り、境目の近くは「含む」側に倒す** ([#2226])。
     ///
     /// 「含む」と答えた図形の列だけが、断片に細い線の枝 (回した線の被覆が画素の四角を切る計算を持つ) を
