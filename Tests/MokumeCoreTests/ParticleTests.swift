@@ -307,7 +307,7 @@ struct ParticleTests {
         // 2 つめの先頭はスキャンの区画の大きさ。**両側に手で書いた定数がここで突き合わさる**
         #expect(Int(argumentWords[4]) == Particles.scanBlock)
 
-        // 粒。GPU は項目へ 1…14 を名前で入れた
+        // 粒。GPU は項目へ 1…15 を名前で入れた
         let particleFloats = MemoryLayout<Particle>.stride / MemoryLayout<Float>.stride
         #expect(
             Array(particleValues[0..<particleFloats])
@@ -321,6 +321,7 @@ struct ParticleTests {
         #expect(particle.life == 7)
         #expect(particle.alpha == 13)
         #expect(particle.seed == 14)
+        #expect(particle.born == 15)
 
         // 置き場所
         let placeFloats = MemoryLayout<SolidInstance>.stride / MemoryLayout<Float>.stride
@@ -1128,7 +1129,7 @@ struct ParticleTests {
 
         let living = dust.living(
             from: canvas.read(dust.state), transform: matrix_identity_float4x4,
-            basis: matrix_identity_float3x3)
+            basis: matrix_identity_float3x3, lifeStep: 0)
         #expect(living.count == tenth * 2)
         let arguments = drawArguments(of: dust, on: canvas)
         #expect(arguments.instanceCount == living.count)

@@ -65,6 +65,7 @@ struct Particle {
     float blue;
     float alpha;
     float seed;
+    float born;
 };
 
 /// 同じ形を置く 1 か所ぶん。**Swift 側の `SolidInstance` と一致していなければならない。**
@@ -174,6 +175,8 @@ kernel void mokume_particles(
     uint id [[thread_position_in_grid]])
 {
     Particle p = particles[id];
+    // 年齢は**進める前の寿命**で決める — 出して最初に描かれるフレームで 0 になる
+    float lifeBefore = p.life;
     float step = parameters[16];
     float lifeStep = parameters[36];
     uint levelCount = as_type<uint>(parameters[19]);
@@ -292,7 +295,11 @@ kernel void mokume_particles(
         float4(back * (p.size * length(world[2].xyz)), 0.0),
         world * float4(p.x, p.y, p.z, 1.0));
     // 枠は直交なので、面の向きを移す行列 (逆行列の転置) は枠そのもの
-    placed.normal0 = float4(side, 0.0);
+    // 粒の年齢 (0…1) は、面の向きの 1 列目の `w` に置く (断片の `in.particle.age`)。生まれたときの
+    // 寿命 (`born`) に対する、使った寿命の割合である。**CPU 側の `Particles.age` と同じ式でなければ
+    // ならない**
+    float age = p.born > 0.0 ? clamp(1.0 - lifeBefore / p.born, 0.0, 1.0) : 0.0;
+    placed.normal0 = float4(side, age);
     placed.normal1 = float4(above, 0.0);
     placed.normal2 = float4(back, 0.0);
     placed.color = float4(p.red, p.green, p.blue, p.alpha);
@@ -302,7 +309,7 @@ kernel void mokume_particles(
 /// 自分が見ている配置を書き出す。**検査だけが呼ぶ。**
 ///
 /// 大きさを両側に手で書いて突き合わせる形では、**両方が同時にずれたときに黙って通る**。
-/// ここは項目に 1…14 を名前で入れて 2 つ並べて書くので、順序が入れ替わっても・項目が
+/// ここは項目に 1…15 を名前で入れて 2 つ並べて書くので、順序が入れ替わっても・項目が
 /// 増減しても・間隔が違っても、CPU 側が読んだ数の並びが合わなくなる。
 kernel void mokume_particleLayout(
     device Particle *particles [[buffer(0)]],
@@ -325,6 +332,7 @@ kernel void mokume_particleLayout(
     p.blue = 12.0;
     p.alpha = 13.0;
     p.seed = 14.0;
+    p.born = 15.0;
     particles[0] = p;
     // 2 つめは先頭だけ変える。**間隔がずれれば、この値の居場所がずれる**
     p.x = 101.0;

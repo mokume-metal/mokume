@@ -120,6 +120,7 @@ vertex ShapeFragmentIn unitShapeVertexMain(
     out.shapePosition = vertex_in.shapePosition;
     out.shapeNormal = flipsNormal ? -vertex_in.shapeNormal : vertex_in.shapeNormal;
     out.coverage = isStroke ? vertex_in.stroke : 1.0;
+    out.particleAge = 0.0;
     return out;
 }
 
