@@ -28,6 +28,8 @@ struct Tools {
     var makeID: () -> String = { UUID().uuidString.prefix(8).lowercased() }
     /// 取り消して区画に置いたままにした要求 (``AbandonedRequests``)。道具を走らせる手だけが触る。
     let abandoned = AbandonedRequests()
+    /// 呼び手へ渡す観測の絵の写し (``ObservationCopies``)。窓口 1 つにつき 1 つの置き場。
+    var copies = ObservationCopies()
 
     /// 既定では 2 つの軸は重なる (区画の基準がパッケージの場所と同じ)。
     init(
@@ -278,18 +280,43 @@ struct Tools {
         let manifestMissing = names.isEmpty
         if manifestMissing, let single = report["image"] as? String { names = [single] }
 
+        // **絵は区画から自分の置き場へ写し、写し終えた後に応答がまだ自分の識別子かを確かめてから渡す**
+        // (#2992)。区画の中の場所をそのまま返すと、呼び手が読む前に別の書き手の撮り始めで同じ名前へ
+        // 書き直される。掃除は応答を先に消すので、写した後も応答が自分のままなら、写している間に
+        // 掃除は始まっていない
+        var location = facets.observeFacet
+        var elsewhere: String?
+        if !names.isEmpty {
+            switch copies.copy(names: names, from: facets.observeFacet, id: id) {
+            case .copied(let directory):
+                guard answerIsStillMine(id) else {
+                    copies.discard(id: id)
+                    return (facets.contestedWhileCopying(StartupReads.observe, repeatable: requestedTime == nil), true)
+                }
+                location = directory
+            case .failed(let reason):
+                // 掃除が始まっていて写せなかった回は取り合い。応答が自分のままなら掃除ではなく、
+                // 取り合ったとは言えない (読めない・容量など)。区画の場所を返し、次の要求までと添える
+                guard answerIsStillMine(id) else {
+                    return (facets.contestedWhileCopying(StartupReads.observe, repeatable: requestedTime == nil), true)
+                }
+                elsewhere = Self.notCopiedNote(reason: reason)
+            }
+        }
+
         if names.isEmpty {
             lines.append("No image could be taken")
         } else if names.count == 1 {
-            lines.append("Image: \(facets.observeFacet.appendingPathComponent(names[0]).path)")
+            lines.append("Image: \(location.appendingPathComponent(names[0]).path)")
         } else {
             // 何枚あるかを先に言う。頼んだ枚数と食い違っていたら、そこで気付ける
             lines.append(
                 """
-                Images (\(names.count)): \(facets.observeFacet.path)/
+                Images (\(names.count)): \(location.path)/
                   \(names.joined(separator: " "))
                 """)
         }
+        if let elsewhere { lines.append(elsewhere) }
         // **黙って寛容にはしない。** 目録は面の仕様が要求しているもの (ADR-0018 決定 4) で、
         // 無いまま読めたのは読み手が補ったからである。補ったことは読み手が名乗る
         if manifestMissing, !names.isEmpty {
@@ -297,6 +324,19 @@ struct Tools {
         }
         lines.append(pretty(report))
         return (lines.joined(separator: "\n\n"), false)
+    }
+
+    /// 区画の応答が、いまも自分の要求のものか。
+    private func answerIsStillMine(_ id: String) -> Bool {
+        facets.read(WorkDirectory.reportURL(under: facets.observeFacet))?["id"] as? String == id
+    }
+
+    /// 絵を写せず、区画の中の場所を返すときに添える。**黙って区画を指さない。**
+    static func notCopiedNote(reason: String) -> String {
+        """
+        \(reason.prefix(1).uppercased() + reason.dropFirst()), so the path above is inside the sketch's facet. \
+        It holds this picture only until the next request is placed there; read or copy it before then.
+        """
     }
 
     /// 版だけで成功とは判断しない。旧版は未知の要求を無視するため、適用の印と絵の時刻を照合する。
