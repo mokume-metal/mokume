@@ -142,11 +142,41 @@ func boundPort(of server: TextPort, source: StreamSource, told: Told) async thro
 }
 
 /// フレームを回すように取り出しを続け、繋いでいる相手の数が `count` になるまで (か期限まで) 待つ。
-func clients(_ server: TextPort, reach count: Int) async -> Bool {
-    await until {
+func clients(_ server: TextPort, reach count: Int, within seconds: TimeInterval = 5) async -> Bool {
+    await until(seconds) {
         server.supply()
         return server.connected == count
     }
+}
+
+/// 繋ぎに行く側 `client` (``TCPClient``・``WebSocketClient``) を、受け口 `server` が `count` 人として数えるのを、
+/// 期限まで待つ。数えなければ、**両側の様子を名乗って 1 つで止まる** (`#require`・#3104)。
+///
+/// `PeerGroup.reach(on:replacements:within:)` (#2940) は検査の側の相手 (``LoopbackPeer``) を束ねる。
+/// こちらは繋ぎに行くのが製品の ``ClientSource`` なので、繋ぎ直しは製品の既定のもの以外を足さない。**期限は
+/// 延ばさず、繋ぎ直さず、救わない** (#2945・#3001 と同じ。原因が分かっていないので、救うと次の 1 回で
+/// 読み分ける材料が消える)。止まると後ろの期待 (`collect`) へ連鎖しない。
+///
+/// 名乗り:
+/// - **受け口 (サーバ)**: 状態・数えた数・移り変わりの数と最後 (``EventTrace``)
+/// - **クライアント**: 状態 (``SourceState``)・移り変わりの数と最後。繋ぎ直しの試みそのものは見えず、
+///   見えるのは受けた移り変わりだけ。**`NWConnection` の `preparing`・`waiting`・`ready` は、移り変わりの
+///   「最後」に出た分だけ**
+/// - **`told` の全行**。受け口とクライアントの行が混ざるので、行の頭のラベルで見分ける
+///
+/// - Parameters:
+///   - count: 数えてほしい相手の数。数が戻ること (`0`) を待つ段は、これを通さず ``clients(_:reach:)`` を使う。
+///   - told: 受け口とクライアントの `warn:` に渡したもの。
+func requireClients(
+    _ server: TextPort, reach count: Int = 1, from client: TextPort, told: Told,
+    within seconds: TimeInterval = 5
+) async throws {
+    let met = await clients(server, reach: count, within: seconds)
+    server.supply()
+    try #require(
+        met,
+        "相手 \(count) 人のうち、受け口が数えたのは \(server.connected) 人 (期限 \(seconds) 秒)。受け口: 状態 \(server.state.rawValue)\(traceText(server.source))。クライアント: 状態 \(client.state.rawValue)\(traceText(client.source))。同じ told の全行: \(told.lines)"
+    )
 }
 
 /// 検査の側の相手の繋ぎの状態。**1 つの値で読む** — 「まだ繋がっていない」と「名乗った」を別々に

@@ -83,7 +83,7 @@ struct StreamClientTests {
         try client.open()
         defer { client.close() }
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(server, reach: 1))
+        try await requireClients(server, from: client, told: told)
 
         client.write("0.3\n")
         client.write("hit\n")
@@ -116,7 +116,7 @@ struct StreamClientTests {
         defer { second.close() }
         #expect(again == port)
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(second, reach: 1))
+        try await requireClients(second, from: client, told: told)
         client.write("back\n")
         #expect(await collect(second, count: 1) == ["back"])
 
@@ -147,7 +147,7 @@ struct StreamClientTests {
         let (server, _) = try await tcpServer(told: told, port: port)
         defer { server.close() }
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(server, reach: 1))
+        try await requireClients(server, from: client, told: told)
         server.write("hello\n")
         #expect(await collect(client, count: 1) == ["hello"])
     }
@@ -170,7 +170,7 @@ struct StreamClientTests {
         let (server, _) = try await tcpServer(told: told, port: port)
         defer { server.close() }
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(server, reach: 1))
+        try await requireClients(server, from: client, told: told)
         client.write("kept\n")
         // 繋がる前に書いたものは届かない
         #expect(await collect(server, count: 1) == ["kept"])
@@ -189,7 +189,7 @@ struct StreamClientTests {
         let client = tcpClient(port: port, told: told)
         try client.open()
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(server, reach: 1))
+        try await requireClients(server, from: client, told: told)
 
         client.close()
         #expect(client.state == .stopped)
@@ -212,7 +212,7 @@ struct StreamClientTests {
         try client.open()
         defer { client.close() }
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(server, reach: 1))
+        try await requireClients(server, from: client, told: told)
 
         server.write("before\n")
         // 'h' と、UTF-8 に現れないバイトは文字列では書けないので、別の読めない行 (長すぎる行) で見る
@@ -220,6 +220,59 @@ struct StreamClientTests {
         server.write("after\n")
         #expect(await collect(client, count: 2) == ["before", "after"])
         #expect(await until { client.input.unreadable == 1 })
+    }
+
+    // MARK: - 繋ぎに行く側の前提が満たされなかった回の名乗り (#3104)
+
+    @Test("受け口が相手を数えなければ、受け口とクライアントの状態・移り変わり・数と、知らせの全行を名乗って 1 つで止まる。数えれば何も言わない")
+    func requireClientsNamesBothSidesAndStops() async throws {
+        let told = Told()
+        let (server, port) = try await tcpServer(told: told)
+        defer { server.close() }
+
+        // 数える形: 繋がれば、何も言わずに通る
+        let connected = tcpClient(port: port, told: told)
+        try connected.open()
+        defer { connected.close() }
+        try await requireState(.running, what: "繋ぎ", told: told, tracing: connected.source) { connected.state }
+        try await requireClients(server, from: connected, told: told)
+
+        // 繋がっている 1 人を 2 人と数えてほしい形: 数えたのは 1 人と名乗る
+        let short = try await said {
+            try await requireClients(server, reach: 2, from: connected, told: told, within: 0.3)
+        }
+        #expect(short.contains("相手 2 人のうち、受け口が数えたのは 1 人 (期限 0.3 秒)"), "名乗り: \(short)")
+        #expect(short.contains("受け口: 状態 running・移り変わり "), "名乗り: \(short)")
+        #expect(short.contains("クライアント: 状態 running・移り変わり "), "名乗り: \(short)")
+
+        // 誰も待っていないポートへ繋ぎに行くクライアント (作り物の相手): 繋がらず、受け口は 0 人と数える
+        let holder = try vacantPort()
+        defer { holder.release() }
+        let lost = tcpClient(port: holder.port, told: told)
+        try lost.open()
+        defer { lost.close() }
+        try await requireTold(
+            containing: "TCP client cannot connect to 127.0.0.1:\(holder.port)", told: told,
+            tracing: lost.source) { lost.state }
+        let (alone, _) = try await tcpServer(told: told)
+        defer { alone.close() }
+        let text = try await said {
+            try await requireClients(alone, from: lost, told: told, within: 0.3)
+        }
+        #expect(text.contains("相手 1 人のうち、受け口が数えたのは 0 人 (期限 0.3 秒)"), "名乗り: \(text)")
+        // 受け口側: 状態と、移り変わりの数・最後
+        #expect(text.contains("受け口: 状態 running・移り変わり 1 回・最後: ready(port: "), "名乗り: \(text)")
+        // クライアント側: 状態と、移り変わりの数・最後 (繋げなかったので unavailable)
+        #expect(text.contains("クライアント: 状態 unavailable・移り変わり "), "名乗り: \(text)")
+        // 知らせの全行 (クライアントの「繋げない」も載る。ラベルで見分ける)
+        #expect(text.contains("TCP client cannot connect to 127.0.0.1:\(holder.port)"), "名乗り: \(text)")
+
+        // 受け口が閉じた形は、受け口の状態で読み分けられる
+        alone.close()
+        let closed = try await said {
+            try await requireClients(alone, from: connected, told: told, within: 0.3)
+        }
+        #expect(closed.contains("受け口: 状態 stopped"), "名乗り: \(closed)")
     }
 
     // MARK: - WebSocket
@@ -233,7 +286,7 @@ struct StreamClientTests {
         try client.open()
         defer { client.close() }
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(server, reach: 1))
+        try await requireClients(server, from: client, told: told)
 
         client.send("0.25")
         client.send("hit")
@@ -260,7 +313,7 @@ struct StreamClientTests {
         let (second, _) = try await webSocketServer(told: told, port: port)
         defer { second.close() }
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(second, reach: 1))
+        try await requireClients(second, from: client, told: told)
         client.send("back")
         #expect(await collect(second, count: 1) == ["back"])
     }
@@ -336,7 +389,7 @@ struct StreamClientTests {
         try client.open()
         defer { client.close() }
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
-        #expect(await clients(server, reach: 1))
+        try await requireClients(server, from: client, told: told)
         server.write(textScript.map { $0 + "\n" }.joined())
         let received = await collect(client, count: textScript.count)
 
