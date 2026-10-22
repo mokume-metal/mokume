@@ -189,11 +189,15 @@ struct AudioAnalysisTests {
         #expect(first.spectrum == expected.spectrum)
         #expect(first.spectrumLevels == expected.spectrumLevels)
         #expect(saved == expected)
-        // 同じ窓を続けて 2 回解析した値は、別々の配列になる (片方を書き換えても他方に響かない)
+        // 続けて解析した 2 つの値は別の配列になる (片方を書き換えても他方に響かず、どちらも参照の値)
+        let tone = Self.probeWindows[1].window
         var second = analyzer.analyze(loud)
-        let third = analyzer.analyze(loud)
+        let third = analyzer.analyze(tone)
+        #expect(second == expected)
+        #expect(third == AudioAnalysis.analyze(tone))
         second.spectrum[0] += 1
-        #expect(third.spectrum == expected.spectrum)
+        #expect(third == AudioAnalysis.analyze(tone))
+        #expect(analyzer.analyze(loud) == expected)
     }
 
     @Test("無音にすると、置かれていた窓を解かずに捨て、無音を返す")
