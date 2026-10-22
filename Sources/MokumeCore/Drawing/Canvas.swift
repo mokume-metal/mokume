@@ -2504,7 +2504,13 @@ public final class Canvas {
     /// 色の値の形もここを通るので、断る順は形に依らない。
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
-    func paintBackground(_ color: LinearRGBA?) {
+    ///
+    /// `opacity` は数の形で渡した 0–255 の不透明度。**締めたことは、断りを通ったあとで言う** — 区間の外や
+    /// 組み立ての中では塗り直さないので、締めたことも言わない ([#1842])。色の値の形は渡さない
+    /// (不透明度は色を作った口が締めている)。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    func paintBackground(_ color: LinearRGBA?, opacity: Float? = nil) {
         // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
         //
         // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
@@ -2521,6 +2527,7 @@ public final class Canvas {
         guard !recordingShape else { return warnInsideShape(.background) }
         // 数でない成分・無限の成分は、溜めたものを捨てる前に断る (#1706)
         guard let color else { return warnNotANumberColor(.background) }
+        if let opacity { warnRoundedOpacity(.background, passed: opacity) }
         replaceSurface(with: .color(color))
     }
 

@@ -12,6 +12,10 @@ enum PaletteValues {
         case noStops
         /// 区切りの位置に、数でない値・無限があった。
         case badPosition
+        /// `amount` が 0…1 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedAmount
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
@@ -49,8 +53,8 @@ enum PaletteValues {
 /// - 最初の位置より手前は最初の色、最後の位置より先は最後の色のまま伸びる
 /// - 区切りが 1 つなら、`amount` によらずその色を返す
 ///
-/// **`amount` は 0…1 に締める** (``lerpColor(_:_:_:)`` と同じ)。`paletteLerp(sky, -1)` は最初の色、
-/// `paletteLerp(sky, 2)` は最後の色になる。位置が 0…1 の外にある区切りには、締めた `amount` が届く範囲でしか
+/// **`amount` は 0…1 に締める (締めたときは 1 度だけ知らせる)** (``lerpColor(_:_:_:)`` と同じ)。
+/// `paletteLerp(sky, -1)` は最初の色、`paletteLerp(sky, 2)` は最後の色になる。位置が 0…1 の外にある区切りには、締めた `amount` が届く範囲でしか
 /// 届かない — 位置は 0…1 で書く。`amount` が区切りの位置にちょうど着けば、その区切りの色が**ちょうど**返る
 /// (同じ位置が並べば後ろの色)。
 ///
@@ -103,6 +107,11 @@ public func paletteLerp(
         return usable[0].0
     }
     let amount = min(max(given, 0), 1)
+    if amount != given {
+        PaletteValues.warnOnce(
+            .roundedAmount,
+            "paletteLerp(): amount takes 0 to 1, but \(given) was passed, so \(Int(amount)) was used")
+    }
 
     if amount < usable[0].1 { return usable[0].0 }
     for index in usable.indices.dropFirst() {
