@@ -185,7 +185,10 @@ extension Canvas {
         // 読むので、1 つの図形の途中で列が割れる (`useTexture`)。1 つの雛形に収まらない
         //
         // 保持する形を記録している最中も畳まない (`recordingShape`)
-        guard !(key.texture != nil && key.hasStroke), !recordingShape else {
+        // **破線の輪郭は畳まない** ([#2835])。破線の片は置き場所ごとの輪郭から刻むので、雛形にならない
+        guard !(key.texture != nil && key.hasStroke), !recordingShape,
+            !(hasStroke && style.strokeDash != nil)
+        else {
             return draw(makeOutline(key.ringSegments).moved(by: anchor))
         }
 
