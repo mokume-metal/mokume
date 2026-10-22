@@ -232,9 +232,26 @@ nonisolated public enum StartupReads {
             + "or knob facets even when they are present",
         readSite: "Sources/MokumeCore/Display/RenderRequest.swift")
 
+    /// GPU の待ちが期限を越えたことの記録の置き場 ([#2235])。
+    ///
+    /// **開発の道具 (`scripts/gpu-slot.py`) が、検査と計測を包むときだけ子へ渡す。** 渡されたプロセスは、
+    /// 待ちが期限を越えたとき記録を 1 つ書き、記録が在れば新しい発行口を作らない
+    /// (``ExpiryRecord``・``CommandQueueGate``)。渡されていなければ何も書かず何も読まない — 利用者の
+    /// スケッチ・`run`・`watch` は、この置き場に触らない。**公開しない** (開発の道具と検査だけが使う)。
+    ///
+    /// [#2235]: https://github.com/mokume-metal/mokume/issues/2235
+    static let gpuSlotExpiryRecord = Entry(
+        name: "GPU wait expiry record", origin: .environment, key: "MOKUME_GPU_SLOT_EXPIRY_RECORD",
+        decidedBy: .tool,
+        note: "Where a GPU wait that went past its limit leaves its record, and where the process "
+            + "looks for one before it sets up a new command queue. The value is a file path, and "
+            + "only the development tool that wraps tests and measurements passes it. Without it "
+            + "the process writes and reads nothing",
+        readSite: "Sources/MokumeCore/Rendering/ExpiryRecord.swift")
+
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, observe, input, params, viewport,
+        assetOrigin, gpuSlotExpiryRecord, observe, input, params, viewport,
     ]
 }

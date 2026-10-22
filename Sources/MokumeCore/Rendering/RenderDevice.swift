@@ -1136,7 +1136,11 @@ import MokumeDiagnostics
     private func signalReached(_ value: UInt64, while wait: CommandQueueGate.Wait) -> Bool {
         let milliseconds = UInt64((signalWaitLimit / .milliseconds(1)).rounded(.up))
         guard !completion.wait(untilSignaledValue: value, timeoutMS: milliseconds) else { return true }
-        if queueGate.close(after: wait, limit: signalWaitLimit), unansweredSubmissionsForTesting == 0 {
+        // 検査の差し込み (答えの来ない投入) の期限切れは、知らせと同じく記録も書かない (#2235)
+        if queueGate.close(
+            after: wait, limit: signalWaitLimit, writesRecord: unansweredSubmissionsForTesting == 0),
+            unansweredSubmissionsForTesting == 0
+        {
             Diagnostics.warn(Self.closingNotice(after: wait, limit: signalWaitLimit))
         }
         return false

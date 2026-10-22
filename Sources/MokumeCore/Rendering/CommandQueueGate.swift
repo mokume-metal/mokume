@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import MokumeDiagnostics
 import Synchronization
 
 /// コマンドの発行口 (`MTL4CommandQueue`) を作る関所。**GPU が一度答えなくなったプロセスでは、もう作らない**
@@ -94,7 +95,13 @@ import Synchronization
 /// 印はプロセスの中にしか無いので、`scripts/gpu-slot.py` の下で走っているときは、最初に印を立てた
 /// ときに ``ExpiryRecord`` を 1 つ書く。`gpu-slot.py` は、記録があれば次の検査・計測を起こさない。
 /// **書くのは ``process`` だけ**で、検査が自前で作る関所は書かない (検査の差し込みの期限切れで、機械の
-/// 検査が止まってはならない)。
+/// 検査が止まってはならない)。検査の差し込み (答えの来ない投入) が ``process`` を通っても、
+/// 知らせを黙らせるのと同じ条件で書かない (``close(after:limit:at:writesRecord:)``)。
+///
+/// **記録は読みもする。** `gpu-slot.py` が記録を読むのは起こすときだけなので、包んだ実行の中で後から
+/// 起きるプロセス (exit test の子・`mokume watch` の世代) と、既に走っている別の枠の検査は、起こすときの
+/// 検めを通らない。``process`` は、発行口を作る前に記録の有無を見て (`stat` 1 回)、あれば印が立って
+/// いるのと同じに扱う (``isClosed``)。記録を持たない関所は何も読まない。
 ///
 /// Metal 側の糸からは触らないが、``RenderDevice/isAvailable`` が隔離の外から呼ぶので、錠で
 /// 守る (``CoalescedNotices`` と同じ作法)。
@@ -165,8 +172,17 @@ nonisolated final class CommandQueueGate: Sendable {
     }
 
     /// プロセスで 1 つの関所。製品の経路と、自前の関所を渡さない検査はここを通る。
-    /// **`gpu-slot.py` の下で走っていれば、期限切れの記録を書く** (``ExpiryRecord``)。
-    static let process = CommandQueueGate(expiryRecord: .fromEnvironment())
+    /// **`gpu-slot.py` の下で走っていれば、期限切れの記録を書き、読みもする** (``ExpiryRecord``)。
+    static let process = forProcess()
+
+    /// プロセスの関所の作り方。**環境から記録をつなぐ配線は、ここ 1 箇所にある** — 外すと `gpu-slot.py` の
+    /// 下でも記録を書かず読まない関所になる (検査が `process` と環境を突き合わせて見る)。
+    ///
+    /// - Parameter environment: 検査が差す環境。`nil` なら、このプロセスの環境を読む (読み場所は
+    ///   ``ExpiryRecord/fromEnvironment(_:)`` の 1 箇所)。
+    static func forProcess(environment: [String: String]? = nil) -> CommandQueueGate {
+        CommandQueueGate(expiryRecord: .fromEnvironment(environment))
+    }
 
     /// 発行口を作る。**印が立っていれば作らずに断る。**
     ///
@@ -183,19 +199,43 @@ nonisolated final class CommandQueueGate: Sendable {
 
     /// 合図の待ちが期限を越えた。**印を立てる。** 今回立てたなら `true` を返す (既に立っていれば
     /// `false`)。呼ぶ側は、`true` のときだけ人へ伝える。控えるのは最初の 1 回だけである。
-    func close(after wait: Wait, limit: Duration, at date: Date = Date()) -> Bool {
+    ///
+    /// - Parameter writesRecord: 最初の印のとき、記録 (``ExpiryRecord``) を書くか。**検査の差し込み
+    ///   (答えの来ない投入) の期限切れでは `false` を渡す** — 知らせを黙らせているのと同じ条件で、
+    ///   本物の置き場へ書いて機械の検査を止めない (#2235)。書けなかったときは、1 度だけ名乗る。
+    func close(
+        after wait: Wait, limit: Duration, at date: Date = Date(), writesRecord: Bool = true
+    ) -> Bool {
         let first = state.withLock { state in
             guard state.closure == nil else { return false }
             state.closure = Closure(wait: wait, limit: limit, date: date)
             return true
         }
-        // 書くのは錠の外で、最初の 1 回だけ (#2235)。書けなくても投げない
-        if first { expiryRecord?.write(after: wait, limit: limit, at: date) }
+        // 書くのは錠の外で、最初の 1 回だけ (#2235)。書けなくても投げず、1 度名乗る
+        if first, writesRecord, let record = expiryRecord {
+            if case .failed(let reason) = record.write(after: wait, limit: limit, at: date) {
+                Diagnostics.warn(Self.recordFailureNotice(at: record.path, reason: reason))
+            }
+        }
         return first
     }
 
-    /// 印が立っているか。
-    var isClosed: Bool { closure != nil }
+    /// 記録を書けなかったときに 1 度出す 1 行。**記録が無いと、次の検査・計測が止まらない**と名乗る。
+    static func recordFailureNotice(at path: URL, reason: String) -> String {
+        "Could not write the record of the GPU wait that went past its limit (\(path.path): \(reason)), so the next"
+            + " test or measurement started by gpu-slot.py will not be stopped by it — check that the GPU answers"
+            + " before starting one"
+    }
+
+    /// 印が立っているか。**記録を持つ関所では、記録が在ることも印と同じに数える** (別のプロセスが期限を
+    /// 越えた — 上の「プロセスの外の記録」)。`stat` 1 回で、記録を持たない関所は何も読まない。
+    var isClosed: Bool { closure != nil || expiryRecordExists }
+
+    /// 記録を持つ関所で、記録が在るか。
+    var expiryRecordExists: Bool { expiryRecord?.exists ?? false }
+
+    /// 記録の置き場。持たなければ `nil`。
+    var expiryRecordPath: URL? { expiryRecord?.path }
 
     /// 最初に印を立てた待ち。立っていなければ `nil`。
     var closure: Closure? { state.withLock { $0.closure } }
