@@ -153,6 +153,16 @@ class SyphonCheckTest(unittest.TestCase):
         self.assertEqual(r.returncode, 4, r.stderr)
         self.assertIn("記録に落ちた検査が無い", r.stderr)
 
+    def test_an_expiry_record_stops_the_check_and_is_not_read_as_a_missing_record(self):
+        """gpu-slot が期限切れの記録 (76) で検査を起こさなかった回は、40 で名乗る (#2235)。"""
+        slots = self.tmp / "slots"
+        slots.mkdir()
+        (slots / "wait-expired.json").write_text("{}", encoding="utf-8")
+        r = self.run_check(gated("passed"))
+        self.assertEqual(r.returncode, 40, r.stderr)
+        self.assertIn("期限を越えた記録", r.stderr)
+        self.assertNotIn("test の記録が無い", r.stderr)
+
     def test_missing_record(self):
         r = self.run_check(None, FAKE_TEST_EXIT="1")
         self.assertEqual(r.returncode, 4, r.stderr)

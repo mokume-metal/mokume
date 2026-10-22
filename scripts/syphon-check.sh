@@ -31,6 +31,7 @@
 #   10 組めない (swift package edit か swift build が落ちた)
 #   20 検査が落ちた
 #   30 GPU の検査が走っていない (この機械で GPU が見えていない・Suite が記録に無い)
+#   40 GPU の待ちの期限切れの記録で、gpu-slot が検査を起こさなかった (#2235。人が確かめて記録を消す)
 #   それ以外  判定できない (clone できない・引数の誤り・記録を読めない)
 #
 # テストは scripts/tests/syphon_check_test.py。
@@ -81,6 +82,13 @@ record="$work/syphon-results-swift-testing.xml"
 rm -f "$record"
 python3 "$here/gpu-slot.py" -- swift test --skip-build --xunit-output "$work/syphon-results.xml"
 test_status=$?
+
+if [ "$test_status" -eq 76 ]; then
+  # gpu-slot の終了コード 76: 期限切れの記録があって、検査を起こさなかった (scripts/gpu-slot.py・#2235)。
+  # 検査のプロセスが消えたのでも、記録を読めないのでもない
+  echo "syphon-check: gpu-slot が、GPU の待ちが期限を越えた記録を見て、検査を起こさなかった (終了コード 76)。人が GPU の答えを確かめてから記録を消す (上の gpu-slot の出力を参照)" >&2
+  exit 40
+fi
 
 if [ ! -f "$record" ]; then
   echo "syphon-check: test の記録が無い (${record}・swift test の終了コード $test_status)" >&2

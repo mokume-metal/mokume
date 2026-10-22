@@ -87,18 +87,27 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
   `MOKUME_GPU_SLOT_EXPIRY_RECORD` (記録のパス) と `MOKUME_GPU_SLOT_PID` (包みの pid) を渡し、
   渡されていなければ (利用者のスケッチ・`mokume run` ほか) 何も書かない。起動元は子から引けないので、
   書いた子の包みが、子が終わった後に足す
-- **枠を取る前に記録があれば、記録の中身と消し方を名乗り、子を起こさずに 76 で抜ける** (期限切れの
-  75 とは別)。`--exclusive` も同じである。枠を待つ間に別のプロセスが期限を越えることもあるので、
-  **枠を取れた後にもう一度見て**、あれば枠を返して止まる
+- **枠を取る前に記録があれば、記録の中身と、人が何を確かめてから消すかを名乗り、子を起こさずに 76 で
+  抜ける** (期限切れの 75 とは別)。`--exclusive` も同じである。枠を待つ間に別のプロセスが期限を越える
+  こともあるので、**枠を取れた後にもう一度見て**、あれば枠を返して止まる。計測の内側で起こした
+  この包み (`MOKUME_GPU_SLOT_EXCLUSIVE` が立っているとき) も、枠は取らないが、記録は見て止まる —
+  1 つの計測が何本も起こすので、2 本目以降が答えない GPU に発行口を作らないように
 - **記録は手で消すまで残る。** 時間や回数で下ろす形は採らない — GPU が答えるようになったかを確かめる
   には、発行口に仕事を積んで待つほかなく、それ自体が答えない GPU への積み増しになるから
-  (`CommandQueueGate` の印が一方向なのと同じ理由)。GPU が答えること (画面が固まっていない・前の
-  検査プロセスが残っていない) を確かめてから、止まるときの文面にある 1 行で消す:
-
-      rm "${MOKUME_GPU_SLOT_DIR:-$HOME/Library/Caches/mokume/gpu-slots}/wait-expired.json"
-
-- 記録は検査と計測のどちらにも効く。**枠を通らない実行 (素の `swift test` など) は、書きも読みもしない**
-  (下の「範囲の外」)。子プロセス (exit test の子・`mokume watch` の世代) は範囲に入れない
+  (`CommandQueueGate` の印が一方向なのと同じ理由)。**消すのは人で、確かめてからである**: 画面が固まって
+  いない・前の検査プロセスが残っていない・GPU が答える。止まる文面は何を確かめるかを先に言い、記録の
+  場所を示すだけにする (そのまま打てる削除の 1 行は出さない — 読んだエージェントが、確かめずに消す)
+- **記録は、起こされた後のプロセスにも効く。** この包みが記録を読むのは起こすときだけだが、`MOKUME_GPU_SLOT_
+  EXPIRY_RECORD` を渡されたプロセスの関所 (Swift の `CommandQueueGate`) は、新しい発行口を作る前に記録の
+  有無を見て、あれば作らない。包んだ実行の中で後から起きる子 (exit test の子・`mokume watch` の世代) と、
+  既に走っている別の枠の検査は、これで止まる。**関所に記録を持たせるのは、この包みの下で走るプロセス
+  だけ**で、書きも読みもする
+- **古い版の `gpu-slot.py` (他の作業ツリー) は、記録を読まない。** 記録を知らない版が起こす検査は止まらない
+  (子へ書き先も渡さないので、その検査は記録も書かない)。順番待ちの印 (`exclusive.lock`) を知らない版を
+  「## 窓つきの計測」が認めているのと同じ、作業ツリーの版が揃うまでの形である。記録を読む版を取り込めば
+  その作業ツリーも止まるので、機械の中の版が揃うほど守りは強くなる
+- **範囲の外:** 枠を通らない実行 (素の `swift test`・`make reference-shots`・`make example-shots`・
+  エージェントが起こす `mokume watch` など) は、この包みも渡さないので書きも読みもしない (下の「範囲の外」)
 
 ## 範囲の外
 
@@ -220,7 +229,6 @@ GPU は画面の描画 (WindowServer) と共有なので、全検査が重なっ
 import fcntl
 import json
 import os
-import shlex
 import signal
 import subprocess
 import sys
@@ -579,13 +587,15 @@ def _read_expiry():
 
 
 def _refuse_for_expiry(found, subject, origin=None):
-    """期限切れの記録があるので、起こさずに止まる。記録の中身と消し方を名乗り、76 を返す。"""
+    """期限切れの記録があるので、起こさずに止まる。記録の中身と、人が確かめることを名乗り、76 を返す。
+
+    **消すためのそのまま打てる 1 行は出さない** (上の「## 期限切れの記録」)。読んだエージェントが、確かめずに消す。"""
     path, data = found
     _say(
-        f"GPU の待ちが期限を越えた記録 ({path}) があるので、{subject}を走らせずに抜ける"
-        f" (終了コード {EXIT_GPU_STUCK})。前の実行が止めた GPU は、まだ答えないかもしれない:"
+        f"GPU の待ちが期限を越えた記録があるので、{subject}を走らせずに抜ける (終了コード {EXIT_GPU_STUCK})。"
+        "前の実行が止めた GPU は、まだ答えないかもしれない:"
     )
-    if data:
+    if data is not None:
         waited = data.get("wait", "?")
         print(
             f"  - {data.get('time', '?')} · pid {data.get('pid', '?')} · {data.get('cwd', '?')}"
@@ -596,11 +606,12 @@ def _refuse_for_expiry(found, subject, origin=None):
     else:
         print("  - 記録の中身を読めない", file=sys.stderr, flush=True)
     print(
-        "  GPU が答えるのを確かめてから (画面が固まっていない・前の検査プロセスが残っていない)、"
-        "消して続ける:",
+        "  記録は人が確かめてから消す (時間では下りない)。確かめること: 画面が固まっていない・前の検査プロセスが"
+        " 残っていない (`bash scripts/orphan-processes.sh`)・GPU が答える。確かめる前に消して続けると、"
+        "答えない GPU に新しい発行口を作って、機械ごと止まりうる。",
         file=sys.stderr, flush=True,
     )
-    print(f"    rm {shlex.quote(str(path))}", file=sys.stderr, flush=True)
+    print(f"  記録のファイル: {path}", file=sys.stderr, flush=True)
     if origin is None:
         origin = _origin()
     _record("refused", reason="wait-expired", expiry_record=str(path), expiry=data, **origin)
@@ -661,6 +672,10 @@ def main(argv):
     if os.environ.get(EXCLUSIVE_VARIABLE):
         # 祖先の --exclusive が順番待ちの印と枠を全部握っている。--exclusive でも普段の実行
         # (計測の内側で打った make test) でも、取りに行けば自分の祖先を期限まで待つことになる
+        # 枠は取らない。**記録は見る** — 1 つの計測が何本も起こすので、2 本目以降が答えない GPU に発行口を作る
+        found = _read_expiry()
+        if found:
+            return _refuse_for_expiry(found, "計測の内側の" + ("計測" if exclusive else "検査"))
         _say(f"既に窓つきの計測の内側 (pid {os.environ[EXCLUSIVE_VARIABLE]} が枠を全部握っている) なので、そのまま走らせる")
         return _run(command, exclusive=exclusive, own=False)
     slots = _number("MOKUME_GPU_SLOTS", DEFAULT_SLOTS, integer=True)

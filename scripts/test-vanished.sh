@@ -97,6 +97,18 @@ readonly CAUSE_URL
 readonly LOG_DEADLINE=60
 REPORT_DIRS=${MOKUME_DIAGNOSTIC_REPORTS:-$HOME/Library/Logs/DiagnosticReports:/Library/Logs/DiagnosticReports}
 
+# gpu-slot が、GPU の待ちの期限切れの記録を見て検査を起こさなかった回 (終了コード 76・#2235)。検査の
+# プロセスは起きていないので、記録が無いのは「消えた」(#1527) からではない。材料を採る相手ではなく、
+# 打ち直しても同じで止まる。直すのは人が GPU を確かめて記録を消すことで、確かめることと記録の場所は
+# gpu-slot の出力 (上) にある。終了コードは Makefile が 76 のまま返す
+if [ "$CODE" -eq 76 ]; then
+  echo
+  echo "✘ 検査のプロセスは起こされなかった: GPU の待ちが期限を越えた記録があって、gpu-slot が止めた (終了コード 76・#2235)"
+  echo "   検査のプロセスが消えた回 (#1527) ではない。打ち直しても同じで止まる"
+  echo "   人が GPU の答えを確かめてから、記録を消す (確かめることと記録の場所は、上の gpu-slot の出力にある)"
+  exit 0
+fi
+
 verdict="$(python3 "$(dirname "${BASH_SOURCE[0]}")/read-test-record.py" --failures "$RECORD")"
 case "$verdict" in
   missing) form="記録が無い" ;;

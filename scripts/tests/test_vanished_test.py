@@ -402,6 +402,22 @@ class MakeTestTest(unittest.TestCase):
 
     # --- 名乗る回 -----------------------------------------------------------
 
+    def test_gpu_slot_stopped_by_an_expiry_record_is_not_a_vanished_run(self):
+        """gpu-slot が、期限切れの記録 (76) で検査を起こさなかった回は、「消えた」と名乗らない (#2235)。"""
+        slots = self.root / "gpu-slots"
+        slots.mkdir()
+        (slots / "wait-expired.json").write_text("{}", encoding="utf-8")
+        code, out = self.run_make(0, record=RECORD_ALL_PASSED)
+        # make は recipe の失敗を 2 で返す。gpu-slot の 76 は make の出力に残る
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("Error 76", out)
+        self.assert_not_vanished(out)
+        self.assertIn("検査のプロセスは起こされなかった", out)
+        self.assertIn("消えた回 (#1527) ではない", out)
+        # 検査は起きていない。build は走るが、test は走らない
+        calls = (self.root / "swift-calls.txt").read_text()
+        self.assertNotIn("--skip-build", calls)
+
     def test_no_record(self):
         code, out = self.run_make(1, console="✔ Test draws() passed")
         evidence = self.assert_vanished(code, out, "記録が無い")

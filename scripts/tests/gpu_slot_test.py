@@ -688,10 +688,14 @@ class ExpiryRecordTest(SlotHarness):
         result = self._run_wrapper(self.SEES + "print('child ran')")
         self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
         self._never_ran(result)
-        # 名乗りは、記録の場所・中身 (時刻・pid・cwd・待ち・期限)・消し方 1 行
-        for text in (str(self.record), "2026-10-22T09:00:00+0900", "pid 4242", "/work/tree", "5 seconds", "rm "):
+        # 名乗りは、記録の場所・中身 (時刻・pid・cwd・待ち・期限)・人が確かめてから消すこと
+        for text in (str(self.record), "2026-10-22T09:00:00+0900", "pid 4242", "/work/tree", "5 seconds", "人が確かめてから消す"):
             self.assertIn(text, result.stderr)
-        self.assertIn(f"rm {self.record}", result.stderr, "消し方が、そのままコピーできる 1 行になっていない")
+        # 確かめることを先に言い、場所を示すだけにする。読んだエージェントが、確かめずにそのまま打てる削除の
+        # 1 行は出さない
+        self.assertLess(result.stderr.index("確かめること"), result.stderr.index(f"記録のファイル: {self.record}"))
+        for line in result.stderr.splitlines():
+            self.assertNotRegex(line.strip(), r"^(rm|unlink|/bin/rm)\b", f"そのまま打てる削除の行がある: {line}")
 
     def test_a_record_stops_the_exclusive_measurement_too(self):
         self._write_record()
@@ -753,6 +757,24 @@ class ExpiryRecordTest(SlotHarness):
         self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
         self.assertNotIn("空くのを待っている", result.stderr)
         self.assertIsNone(holder.poll(), "持ち主が終わっている (待ちの検査にならない)")
+
+    def test_a_run_inside_the_exclusive_also_stops_at_a_record(self):
+        """計測の内側で起こした包みは、枠は取らないが、記録は見て止まる (1 つの計測が何本も起こす)。"""
+        for exclusive in (False, True):
+            with self.subTest(exclusive=exclusive):
+                self._write_record()
+                result = self._run_wrapper(
+                    self.SEES, exclusive=exclusive, extra={"MOKUME_GPU_SLOT_EXCLUSIVE": "4242"})
+                self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+                self._never_ran(result)
+                self.assertIn(str(self.record), result.stderr)
+                self.assertNotIn("そのまま走らせる", result.stderr)
+                self.record.unlink()
+                # 記録が無ければ、今までどおり枠を取らずにそのまま走らせる
+                clear = self._run_wrapper(
+                    self.SEES, exclusive=exclusive, extra={"MOKUME_GPU_SLOT_EXCLUSIVE": "4242"})
+                self.assertEqual(clear.returncode, 0, clear.stderr)
+                self.assertIn("そのまま走らせる", clear.stderr)
 
     def test_the_wrapper_adds_the_origin_to_the_record_its_child_wrote(self):
         result = self._run_wrapper(self.WRITES)
